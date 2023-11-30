@@ -1,0 +1,32 @@
+{    
+    "Net": "bsp2",
+    "BaseMVA": 100.0,
+    "Buses": [
+      {"bus": 1, "name": "K1","id": "","vn_kv": 110, "type": 1},
+      {"bus": 2, "name": "K2","id": "","vn_kv": 110, "type": 1},
+      {"bus": 3, "name": "K3","id": "","vn_kv": 110, "type": 1},
+      {"bus": 4, "name": "K4","id": "","vn_kv": 110, "type": 3}
+      ],    
+    "Shunts": [],    
+    "Loads": [
+      { "bus": 1, "name": "LD1", "id": "", "p_mw": 5.0, "q_mvar": 4.0, "in_service": 1 },
+      { "bus": 2, "name": "LD2", "id": "", "p_mw": 1.0, "q_mvar": 1.0, "in_service": 1 },
+      { "bus": 3, "name": "LD3", "id": "", "p_mw": 0.0, "q_mvar": 0.3, "in_service": 1 }
+    ],
+    "StaticGenerators": [],    
+    "VoltageControlledGenerators": [
+      { "bus": 4, "name": "", "id": "", "p_mw": 0.0, "max_q_mvar": 30.0,  "min_q_mvar": -30.0, "vm_pu": 1.1, "in_service": 1 }
+    ],
+    
+    "ExternalGrids": [],
+    
+    "ACLines": [
+      { "from_bus": 1,"to_bus": 2, "name": "L1_2", "id": "", "length_km": 55.0, "r_ohm_per_km": 0.157, "x_ohm_per_km": 0.410, "c_nf_per_km": 0.0, "g_us_per_km": 0.0, "max_i_ka": 0.0, "in_service": 1 },
+      { "from_bus": 1,"to_bus": 3, "name": "L1_3", "id": "", "length_km": 55.0, "r_ohm_per_km": 0.0785, "x_ohm_per_km": 0.205, "c_nf_per_km": 0.0, "g_us_per_km": 0.0, "max_i_ka": 0.0, "in_service": 1 },
+      { "from_bus": 1,"to_bus": 4, "name": "L1_4", "id": "", "length_km": 55.0, "r_ohm_per_km": 0.0785, "x_ohm_per_km": 0.205, "c_nf_per_km": 0.0, "g_us_per_km": 0.0, "max_i_ka": 0.0, "in_service": 1 },
+      { "from_bus": 2,"to_bus": 3, "name": "L2_3", "id": "", "length_km": 69.0, "r_ohm_per_km": 0.157, "x_ohm_per_km": 0.410, "c_nf_per_km": 0.0, "g_us_per_km": 0.0, "max_i_ka": 0.0, "in_service": 1 },
+      { "from_bus": 3,"to_bus": 4, "name": "L3_4", "id": "", "length_km": 46.0, "r_ohm_per_km": 0.157, "x_ohm_per_km": 0.410, "c_nf_per_km": 0.0, "g_us_per_km": 0.0, "max_i_ka": 0.0, "in_service": 1 }      
+    ],
+    
+    "TwoWindingTransformers": []
+}

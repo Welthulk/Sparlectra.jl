@@ -1,0 +1,5 @@
+indent = 2
+margin = 300
+ignore = ["*.md", "data","docs", "ttt","Fert*.jl"]
+align_assignment = true
+remove_extra_newlines = true

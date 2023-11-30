@@ -1,0 +1,46 @@
+{    
+    "Net": "bsp1",
+    "BaseMVA": 100.0,
+    "Buses": [
+      {"bus": 1, "name": "Bus_1", "id": "", "vn_kv": 110, "type": 1},
+      {"bus": 2, "name": "Bus_2", "id": "", "vn_kv": 110, "type": 3},
+      {"bus": 3, "name": "Bus_3", "id": "", "vn_kv": 22,  "type": 1},
+      {"bus": 4, "name": "Slack", "id": "", "vn_kv": 110, "type": 2}
+      ],
+    "Shunts": [ 
+    ],
+    "Loads": [
+      { "bus": 3, "name": "LD1", "id": "", "p_mw": 2.0, "q_mvar": 4.0, "in_service": 1 }
+    ],
+    "StaticGenerators": [
+      { "bus": 1, "name": "SG1", "id": "", "p_mw": 2.0, "q_mvar": -0.5, "in_service": 1 }
+    ],
+    "VoltageControlledGenerators": [
+      { "bus": 2, "name": "VG1", "id": "", "p_mw": 6.0, "max_q_mvar": 15.0,  "min_q_mvar": -15.0, "vm_pu": 1.03, "in_service": 1 }
+    ],
+    "ExternalGrids": [
+      { "bus": 4,"name": "ExG1", "id": "", "vm_pu": 1.02, "va_degree": 0.0, "in_service": 1  }
+    ],
+    "LineModelling":[
+      {"model":"STD1", "id": "", "r_ohm_per_km": 0.2, "x_ohm_per_km": 0.39, "c_nf_per_km": 9.55, "g_us_per_km": 0.0, "max_i_ka": 0.0}
+    ],
+    
+    "ACLines": [
+      { "from_bus": 4,"to_bus": 2, "name": "L4_2", "id": "", "length_km": 25.0, "line_model": "STD1", "in_service": 1 },
+      { "from_bus": 4,"to_bus": 1, "name": "L4_1","id": "", "length_km": 10.0, "r_ohm_per_km": 0.05, "x_ohm_per_km": 0.39, "c_nf_per_km": 9.55, "g_us_per_km": 0.0, "max_i_ka": 0.0, "in_service": 1}
+    ],
+    "VK-Characteristics":{
+       "model1":{
+         "tap":[1,    4,    9],
+         "vk":[7.0,  10.0,  12.0]},
+       "model2":{
+          "tap":[-9, 0, 9],
+          "vk":[19, 12, 19]}
+    },    
+    "TapChangerModelling": [
+      { "model": 1, "id": "", "tap_side": "HV", "tap_min": 1, "tap_max": 9,  "tap_neutral": 4, "tap_step_percent": 2.5, "neutralU_ratio": 1.0, "tap_step_degree": 0.0, "shift_degree": 0.0 }
+    ],
+    "TwoWindingTransformers": [
+      {"hv_bus": 2,"lv_bus": 3,"name": "T1", "id": "", "sn_mva": 25.0, "vn_hv_kv": 110.0, "vn_lv_kv": 22.0, "vk_percent": 12.0, "vkr_percent": 0.41, "pfe_kw": 14.0, "i0_percent": 0.07, "tap_model":1, "tap_pos": 4, "vk_dependence": "model1", "in_service": 1}
+      ] 
+}

@@ -1,0 +1,8 @@
+﻿ausgabe.log
+.VSCodeCounter
+.vscode/settings.json
+sparlectra/test/sparlectra/*.toml
+*.txt
+sparlectra/data/mpower/case.m
+docs/src/newton-method.html
+docs/src/newton-method.pdf

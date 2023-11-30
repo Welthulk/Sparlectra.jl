@@ -1,0 +1,58 @@
+{    
+    "Net": "bsp5",
+    "BaseMVA": 100.0,
+    "Buses": [
+      {"bus": 1,"name": "Bus1","id": "","vn_kv": 220, "type": 1},
+      {"bus": 2,"name": "Bus2","id": "","vn_kv": 220, "type": 1},
+      {"bus": 3,"name": "Bus3","id": "","vn_kv": 110, "type": 1},
+      {"bus": 4,"name": "Bus4","id": "","vn_kv": 110, "type": 1},
+      {"bus": 5,"name": "Bus5","id": "","vn_kv": 30,  "type": 1},
+      {"bus": 6,"name": "Bus6","id": "","vn_kv": 30,  "type": 1},
+      {"bus": 7,"name": "Bus7","id": "","vn_kv": 220, "type": 3}
+      ],
+    "Shunts": [
+      { "bus": 6, "name": "SH1", "id": "", "p_mw": 0.0, "q_mvar": 30.0, "vn_kv":30, "step": 1, "in_service": 1 },            
+      { "bus": 4, "name": "SH2", "id": "", "p_mw": 0.0, "q_mvar": 60.0, "vn_kv":110, "step": 1, "in_service": 1 }            
+    ],
+    "Loads": [
+      { "bus": 4, "name": "Ld1", "id": "", "p_mw": 100.0, "q_mvar": 130.0, "in_service": 1 },
+      { "bus": 6, "name": "Ld2", "id": "", "p_mw": 4.0, "q_mvar": 30.0, "in_service": 1 }
+    ],
+    "StaticGenerators": [
+      { "bus": 1, "name": "SG1", "id": "", "p_mw": 100.0, "q_mvar": 40.0, "in_service": 1 }
+    ],
+    "VoltageControlledGenerators": [      
+      { "bus": 7, "name": "VG1", "id": "", "p_mw": 400.0, "max_q_mvar": 600.0,  "min_q_mvar": -700.0, "vm_pu": 1.0, "in_service": 1 }
+    ],
+    "ExternalGrids": [],
+    "LineModelling":[
+      {"model":"STD1", "id": "", "r_ohm_per_km": 0.2, "x_ohm_per_km": 0.39, "c_nf_per_km": 9.55, "g_us_per_km": 0.0, "max_i_ka": 10000.0},
+      {"model":"STD2", "id": "", "r_ohm_per_km": 0.1, "x_ohm_per_km": 0.4, "c_nf_per_km": 9.55, "g_us_per_km": 0.0, "max_i_ka": 40000.0}
+    ],
+    
+    "ACLines": [
+      { "from_bus": 1,"to_bus": 2, "name": "L1_2", "id": "", "length_km": 25.0, "line_model": "STD2", "in_service": 1},
+      { "from_bus": 1,"to_bus": 7, "name": "L1_7", "id": "", "length_km": 10.0, "line_model": "STD1", "in_service": 1},
+      { "from_bus": 3,"to_bus": 4, "name": "L3_4","id": "", "length_km": 10.0,  "line_model": "STD2", "in_service": 1},
+      { "from_bus": 5,"to_bus": 6, "name": "L5_6","id": "", "length_km": 5.0,  "line_model": "STD2", "in_service": 1}
+    ],
+    "VK-Characteristics":{
+       "model1":{
+         "tap":[1,    4,    9],
+         "vk":[7.0,  10.0,  12.0]},
+       "model2":{
+          "tap":[-9, 0, 9],
+          "vk":[15, 10, 17]}
+    },    
+    "TapChangerModelling": [
+      { "model": 1, "id": "", "tap_side": "HV", "tap_min": 1, "tap_max": 9,  "tap_neutral": 4, "tap_step_percent": 2.5, "neutralU_ratio": 1.0, "tap_step_degree": 0.0, "shift_degree": 0.0 },
+      { "model": 2, "id": "", "tap_side": "HV", "tap_min": -9, "tap_max": 9,  "tap_neutral": 0, "tap_step_percent": 1.25, "neutralU_ratio": 1.0, "tap_step_degree": 0.0, "shift_degree": 0.0 }
+    ],
+    "TwoWindingTransformers": [ ],
+
+    "ThreeWindingTransformers":[
+      {"hv_bus": 2,"mv_bus": 3,"lv_bus": 5,"name": "T1_3WT", "id": "", "vn_hv_kv": 220.0, "vn_mv_kv": 110.0, "vn_lv_kv": 30.0, "sn_hv_mva": 250.0,"sn_mv_mva": 150.0, "sn_lv_mva": 50.0,  
+      "vk_hv_percent": 10.0, "vk_mv_percent": 11.0,  "vk_lv_percent": 12.0, "vkr_hv_percent": 0.3, "vkr_mv_percent": 0.31, "vkr_lv_percent": 0.32, "pfe_kw": 30.0, "i0_percent": 0.1, 
+      "shift_mv_degree": 0.0, "shift_lv_degree": 0.0, "tap_model":2, "tap_pos": 9, "vk_dependence": "", "in_service": 1}
+    ]   
+}
