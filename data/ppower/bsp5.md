@@ -1,4 +1,4 @@
-# Sample-Network bsp5, 3WT, mBase:100.0 MVA
+# bsp5, 7-Bus Test Network, 3WT, mBase:100.0 MVA
 
                                     b5 (30kV)         b6 (30vV)
                                     |---L5-6-----------|->Ld2
@@ -10,7 +10,7 @@
                                 b7* (220kV) 
 
 
-## 3WT -> 3 Transformers T1, T2, T3 + aux_bus
+## 3WT to 3 Transformers T1, T2, T3 + aux_bus
                                     
                                      b5 (30kV)         b6 (30kV)
                                      |---L5-6-----------|->Ld2                                    

@@ -1,4 +1,4 @@
-* Sample-Network bsp, 110kV, mBase:100.0 MVA
+#bsp7, 4-Bus Test Network, 110kV, mBase:100.0 MVA
 
 
               1                  2

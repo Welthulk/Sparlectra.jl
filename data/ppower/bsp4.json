@@ -1,0 +1,35 @@
+{    
+    "Description": "5 Bus Test System, K.F.Schäfer - Netzberechnung, Abb 3.3. Mit freundlicher Genehmigung von K.F.Schäfer",
+    "Net": "bsp4",
+    "BaseMVA": 100.0,
+    "Buses": [
+      {"bus": 1, "name": "B1","id": "","vn_kv": 110, "type": 3, "_c": "Slack"},
+      {"bus": 2, "name": "B2","id": "","vn_kv": 110, "type": 1, "_c": "PQ"},
+      {"bus": 3, "name": "B3","id": "","vn_kv": 110, "type": 1, "_c": "PQ"},      
+      {"bus": 4, "name": "B4","id": "","vn_kv": 110, "type": 1, "_c": "PQ"},     
+      {"bus": 5, "name": "B5","id": "","vn_kv": 110, "type": 1, "_c": "PQ"}      
+    ],
+    "Shunts": [ ],
+    "Loads": [
+      { "bus": 2, "name": "V2", "id": "", "p_mw": -45.0, "q_mvar": 106.0, "in_service": 1 },
+      { "bus": 4, "name": "V4", "id": "", "p_mw": -40.0, "q_mvar": 5.0, "in_service": 1 }
+    ],
+    "StaticGenerators": [
+      { "bus": 3, "name": "SG3", "id": "", "p_mw": 60.0, "q_mvar": 61.5, "in_service": 1 },
+      { "bus": 5, "name": "SG5", "id": "", "p_mw": 20.0, "q_mvar": 20.0, "in_service": 1 }
+    ],
+    "VoltageControlledGenerators": [
+      { "bus": 1, "name": "VG1", "id": "", "p_mw": 0.0, "max_q_mvar": 250.0,  "min_q_mvar": -250.0, "vm_pu": 1.09, "in_service": 1 }    
+    ],
+    "ExternalGrids": [ ],
+    "ACLines": [
+      { "from_bus": 1,"to_bus": 3, "name": "L1_3", "id": "", "length_km": 15.2, "r_ohm_per_km": 0.18, "x_ohm_per_km": 0.4, "c_nf_per_km": 8.55, "g_us_per_km": 0.0, "max_i_ka": 0.0, "in_service": 1 },
+      { "from_bus": 2,"to_bus": 1, "name": "L2_1","id": "", "length_km": 7.4, "r_ohm_per_km": 0.06, "x_ohm_per_km": 0.38, "c_nf_per_km": 8.55, "g_us_per_km": 0.0, "max_i_ka": 0.0, "in_service": 1},
+      { "from_bus": 4,"to_bus": 2, "name": "L4_2","id": "", "length_km": 19.2, "r_ohm_per_km": 0.22, "x_ohm_per_km": 0.44, "c_nf_per_km": 8.55, "g_us_per_km": 0.0, "max_i_ka": 0.0, "in_service": 1},      
+      { "from_bus": 4,"to_bus": 1, "name": "L4_1","id": "", "length_km": 21.9, "r_ohm_per_km": 0.12, "x_ohm_per_km": 0.39, "c_nf_per_km": 8.55, "g_us_per_km": 0.0, "max_i_ka": 0.0, "in_service": 1},
+      { "from_bus": 5,"to_bus": 4, "name": "L5_4","id": "", "length_km": 30.0, "r_ohm_per_km": 0.06, "x_ohm_per_km": 0.39, "c_nf_per_km": 8.55, "g_us_per_km": 0.0, "max_i_ka": 0.0, "in_service": 1},
+      { "from_bus": 5,"to_bus": 3, "name": "L5_3","id": "", "length_km": 8.0, "r_ohm_per_km": 0.06, "x_ohm_per_km": 0.39, "c_nf_per_km": 8.55, "g_us_per_km": 0.0, "max_i_ka": 0.0, "in_service": 1}
+    ],
+    "TwoWindingTransformers": []
+ 
+}
