@@ -65,7 +65,7 @@ This project is licensed under the BSD-3-Clause - [The license file](LICENSE) co
 Installation guide can be found in [development](/docs/src/development.md)
 
 ## Additional information
-Additional information can be found in the [documentation](sparlectra/docs/src/)
+Additional information can be found in the [documentation](/docs/src/toc.md)
 
 
 
