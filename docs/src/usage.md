@@ -1,18 +1,16 @@
-# Getting Started 
+# Getting Started calculation of acpflow
+## Quick Start
+For a practical example, refer to the the file [`testparser.jl`](../../test/testparser.jl). Open this file in Visual Studio Code and execute the code to observe how the `acpflow` function is implemented. To use it from the command line use the Windows Batch-File `runacpflow.bat`.
 
-The `acpflow` function (an example is provided in the file [`testparser.jl`](../../test/testparser.jl).) is designed to perform a load flow calculation. If you're looking to program your own load flow calculations, here's a guide on using this function.
+## Creating a Network
+1. **Network Data Preparation**: Prepare your network data in JSON format (see [network_configuration_guide.md](network_configuration_guide.md)). Ensure that the file includes essential information about nodes and branches.
 
-## calculation of acpflow
-
-To use the `acpflow` function for load flow calculations, follow these steps:
-
-1. **Network Data Preparation**: Prepare your network data in JSON format. Ensure that the file includes essential information about nodes, branches, and shunts.
-
-2. **Setting Up the Function Call**: Use the `acpflow` function, providing the necessary parameters:
+2. **Setting Up the Function Call**: providing the necessary parameters:
    - `casefile::String`: Filepath to your network dataset in JSON format.
-   - `writeCase::Bool`: Decide whether to write the Matpower case file.
-   - `iterations::Int`: Set the number of iterations for the Newton-Raphson algorithm.
+   - `writeCase::Bool`: Decide whether to export your networw to an Matpower case file.
+   - `iterations::Int`: Set the number of iterations for the Newton-Raphson algorithm, good values are between 3 and 8.
    - `verbose::Int`: Adjust the verbosity level for detailed output.
+   - `tol::Float`: tolerance for Newton-Raphson algorithm convergence, good values are between 1e-6 and 1e-9.
 
 ```julia
 @time acpflow("your_network_data.json", true, 10, 1)
