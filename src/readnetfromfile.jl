@@ -388,7 +388,7 @@ function createNetFromFile(filename, base_MVA::Float64 = 0.0, log::Bool = false)
     push!(t1Terminal, t1)
     push!(t2Terminal, t2)
 
-    branch = ResDataTypes.Branch(cmp, busIdx, USIdx, nID, toNodeID, r_pu, x_pu, b_pu, g_pu, ratio, shift_degree, inService, -360.0, 360.0)
+    branch = ResDataTypes.Branch(cmp, busIdx, USIdx, nID, toNodeID, r_pu, x_pu, b_pu, g_pu, ratio, shift_degree, inService)
     if log
       @show branch
     end
