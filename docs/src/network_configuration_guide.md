@@ -43,9 +43,12 @@ The order of the bus numbers is arbitrary, but each bus number and ID must be un
   - `p_mw`: Float, Active power (MW), e.g. 0.0
   - `q_mvar`: Float, Reactive power (MVAR), e.g. 100.0
   - `in_service`: String, Load in service (1: Yes, 0: No)
-
+>**Note**:
+Power values are specified as positive values.
+In the context of this network configuration, loads are treated as PQ buses.
 ## Generators
-
+>**Note**:
+Power values are specified as positive values.
 ### StaticGenerators
 
 - **Description**: List of static generators in the network
