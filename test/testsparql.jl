@@ -10,7 +10,6 @@ using Sparlectra.SparlectraResult
 using BenchmarkTools
 using Logging
 
-
 global_logger(ConsoleLogger(stderr, Logging.Info))
 
 const endpoint = "http://localhost:3030/explore2/query"
@@ -25,7 +24,6 @@ verbose = 0
 
 @time myNet = SparlectraNet.createNetFromTripleStore(endpoint, sbase_mva, Netname, slackbusName, log)
 case = myNet.name
-
 
 file = joinpath(pwd(), "data", "MiniGrid", case * ".m")
 SparlectraExport.writeMatpowerCasefile(myNet, file, case)
@@ -44,4 +42,3 @@ elseif erg == 1
 else
   @error "error during calculation of Newton-Raphson"
 end
-

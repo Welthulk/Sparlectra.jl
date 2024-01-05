@@ -51,4 +51,4 @@ function acpflow(casefile::String, writeCase::Bool, iterations::Int, verbose::In
   end
 end
 
-@time acpflow("bsp5.json", false,  5, 0)
+@time acpflow("bsp7.json", false,  6, 0)

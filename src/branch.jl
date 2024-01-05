@@ -40,7 +40,7 @@ mutable struct Branch
   ratio::Float64          # transformer off nominal turns ratio
   angle::Float64          # transformer off nominal phase shift angle
   status::Integer         # 1 = in service, 0 = out of service
-  isParallel::Bool        # is a parallel branch? (true/false)
+  isParallel::Bool        # is a parallel branch? (true/false)  
 
   function Branch(
     branchC::Component,

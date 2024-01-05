@@ -446,7 +446,7 @@ function setParallelBranches!(branches::Vector{Branch})
 
     if tupple in branchTupleSet
       b.isParallel = true
-      @info "Branch $(b) is parallel!"
+      @debug "Branch $(b) is parallel!"
 
       existing_branches = branchDict[tupple]
       b_total = 0.0
