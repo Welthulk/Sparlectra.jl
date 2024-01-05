@@ -87,18 +87,9 @@ The Ybus matrix is computed in the `CreateYBUS` function within the [`equicircui
 - `printYBUS::Bool = false`: A boolean flag indicating whether to print the YBUS matrix. Default is `false`."
 
 
+>**Note**:
+If a branch has the attribute `isParallel=true`, this branch will be ignored in the Y-bus matrix.
 
-
-
-<!-- Dies ist ein auskommentierter Abschnitt -->
-<!--┏
-<! ┣
-<! ┗
-<! ┓
-<! ┃
-<! ┛
-\( Y_{i0} \) fgfdgdfgfdg
--->
 
 
 

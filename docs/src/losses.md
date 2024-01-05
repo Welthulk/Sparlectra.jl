@@ -18,3 +18,6 @@ The `calcNetLosses!` function is implemented in this file to compute network los
 - `branchVec`: Vector of branches representing the electrical network.
 - `Sbase_MVA`: Base MVA for normalization of power values.
 - `log`: Optional Boolean parameter (default is `false`) for enabling debug logging.
+
+>**Note**:
+In the current version, at most one parallel branch is considered, where the calculated electrical power flow (P, Q) is distributed across the two branches.
