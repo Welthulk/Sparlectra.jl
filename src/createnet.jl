@@ -521,8 +521,8 @@ function createNetFromTripleStore(endpoint::String, sbase_mva::Union{Nothing,Flo
     if isMotor(e) || isExternalNetworkInjection(e) || isLoad(e)
       if haskey(nodesDict, s.nodeID)
         n = nodesDict[s.nodeID]
-        ResDataTypes.addAktivePower!(n, sign * s.pVal)
-        ResDataTypes.addReaktivePower!(n, sign * s.qVal)
+        addAktivePower!(n, sign * s.pVal)
+        addReaktivePower!(n, sign * s.qVal)
       else
         @warn "could not find node for motor $(s.nodeID), $(s.comp.cName)"
       end
@@ -532,8 +532,8 @@ function createNetFromTripleStore(endpoint::String, sbase_mva::Union{Nothing,Flo
     if isGenerator(e)
       if haskey(nodesDict, s.nodeID)
         n = nodesDict[s.nodeID]
-        ResDataTypes.AddGenAktivePower!(n, sign * s.pVal)
-        ResDataTypes.AddGenReaktivePower!(n, sign * s.qVal)
+        addGenAktivePower!(n, sign * s.pVal)
+        addGenReaktivePower!(n, sign * s.qVal)
       else
         @warn "could not find node for generator $(s.nodeID), $(s.comp.cName)"
       end
@@ -554,13 +554,13 @@ function createNetFromTripleStore(endpoint::String, sbase_mva::Union{Nothing,Flo
       ratedS = t.side1.ratedS
       tnodeId = t.comp.cID
 
-      tVec = Vector{ResDataTypes.Terminal}()
-      auxBuxCmp = ResDataTypes.Component(nodeID, cName, "AUXBUS", vn_aux_kv)
-      push!(tVec, ResDataTypes.Terminal(auxBuxCmp, ResDataTypes.Seite1))
-      push!(tVec, ResDataTypes.Terminal(auxBuxCmp, ResDataTypes.Seite2))
-      push!(tVec, ResDataTypes.Terminal(auxBuxCmp, ResDataTypes.Seite3))
+      tVec = Vector{Terminal}()
+      auxBuxCmp = Component(nodeID, cName, "AUXBUS", vn_aux_kv)
+      push!(tVec, Terminal(auxBuxCmp, ResDataTypes.Seite1))
+      push!(tVec, Terminal(auxBuxCmp, ResDataTypes.Seite2))
+      push!(tVec, Terminal(auxBuxCmp, ResDataTypes.Seite3))
 
-      auxNode = ResDataTypes.Node(auxBuxCmp, tVec, auxBusIdx, ResDataTypes.PQ, tnodeId, ratedS, 1, 1, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+      auxNode = Node(auxBuxCmp, tVec, auxBusIdx, ResDataTypes.PQ, tnodeId, ratedS, 1, 1, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
       if log
         @info "auxNode: $(auxNode)"
       end
@@ -601,13 +601,13 @@ function createNetFromTripleStore(endpoint::String, sbase_mva::Union{Nothing,Flo
 
   fixSequenceNumberInNodeVec!(nodes, trafos)
 
-  branchVec = createBranchVectorFromNodeVector!(nodes, lines, trafos, sbase_mva, log)
-
+  branchVec = createBranchVectorFromNodeVector(nodes, lines, trafos, sbase_mva, log)
+  setParallelBranches!(branchVec)              
   #findSingleConnectedBuses(branchVec, nodes)
 
   renumberNodeIdx!(branchVec, nodes, log)
 
-  net = ResDataTypes.Net(netName, sbase_mva, slackBusIdx, nodes, lines, trafos, branchVec, prosumers, shunts)
+  net = Net(netName, sbase_mva, slackBusIdx, nodes, lines, trafos, branchVec, prosumers, shunts)
 
   return net
 end
