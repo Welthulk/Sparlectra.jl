@@ -602,7 +602,9 @@ function createNetFromTripleStore(endpoint::String, sbase_mva::Union{Nothing,Flo
   fixSequenceNumberInNodeVec!(nodes, trafos)
 
   branchVec = createBranchVectorFromNodeVector(nodes, lines, trafos, sbase_mva, log)
+  # bugfix for parallel branches
   setParallelBranches!(branchVec)              
+  # not really working - need to be fixed
   #findSingleConnectedBuses(branchVec, nodes)
 
   renumberNodeIdx!(branchVec, nodes, log)

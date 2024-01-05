@@ -2,7 +2,6 @@
 # Date: 04.09.2023
 # include-file losses.jl
 
-
 function calcNetLosses!(nodes::Vector{ResDataTypes.Node}, branchVec::Vector{ResDataTypes.Branch}, Sbase_MVA::Float64, log::Bool = false)
   if debug
     println("\ncalcNetworkLosses (BaseMVA=$(Sbase_MVA))\n")
@@ -42,13 +41,30 @@ function calcNetLosses!(nodes::Vector{ResDataTypes.Node}, branchVec::Vector{ResD
   if debug
     println("Branch Power Flows:")
   end
+
+  # Parallel branches, only 2 branches per tuple!
+  branchTupleSet = Set{Tuple}()
   for br in branchVec
+    if br.isParallel
+      @debug "Parallel branch detected: $(br.fromBus) -> $(br.toBus)"
+      tupple = (br.fromBus, br.toBus)
+      push!(branchTupleSet, tupple)
+    end
+  end
+
+  for br in branchVec
+    tupple = (br.fromBus, br.toBus)
+    pCorr = 1.0
+    if tupple in branchTupleSet
+      @debug "taking parallel branch $(br.fromBus) -> $(br.toBus) into account"
+      pCorr = 0.5
+    end
+
     from = br.fromBus
     to = br.toBus
     S = calcBranchFlow(from, to, br, 1) * Sbase_MVA
-    P = real(S)
-    Q = imag(S)
-
+    P = real(S) * pCorr
+    Q = imag(S) * pCorr
 
     Pvk[from] += P
     Qvk[from] += Q
@@ -65,8 +81,8 @@ function calcNetLosses!(nodes::Vector{ResDataTypes.Node}, branchVec::Vector{ResD
     from = br.toBus
     to = br.fromBus
     S = calcBranchFlow(from, to, br, 2) * Sbase_MVA
-    P = real(S)
-    Q = imag(S)
+    P = real(S) * pCorr
+    Q = imag(S) * pCorr
 
     Pvk[from] += P
     Qvk[from] += Q
