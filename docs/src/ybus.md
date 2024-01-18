@@ -88,7 +88,7 @@ The Ybus matrix is computed in the `CreateYBUS` function within the [`equicircui
 
 
 >**Note**:
-If a branch has the attribute `isParallel=true`, this branch will be ignored in the Y-bus matrix.
+If a branch has the attribute `isParallel=true`, this branch will be ignored in the Y-bus matrix. All parallel branches are consolidated into a single branch.
 
 
 

@@ -7,5 +7,5 @@ include("testnetworks.jl")
 @testset "Sparlectra.jl" begin
   @test testNetwork() == true
   @test test_NBI_MDO() == true
-  @test test_acpflow() == true
+  @test test_acpflow(0) == true
 end
