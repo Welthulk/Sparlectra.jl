@@ -3,6 +3,16 @@
 # include-file losses.jl
 
 function calcNetLosses!(nodes::Vector{ResDataTypes.Node}, branchVec::Vector{ResDataTypes.Branch}, Sbase_MVA::Float64, log::Bool = false)
+  function countParallelBranches(branchVec, fromBus, toBus)
+    count = 0
+    for br in branchVec
+      if br.fromBus == fromBus && br.toBus == toBus
+        count += 1
+      end
+    end
+    return count
+  end
+
   if debug
     println("\ncalcNetworkLosses (BaseMVA=$(Sbase_MVA))\n")
   end
@@ -43,21 +53,24 @@ function calcNetLosses!(nodes::Vector{ResDataTypes.Node}, branchVec::Vector{ResD
   end
 
   # Parallel branches, only 2 branches per tuple!
-  branchTupleSet = Set{Tuple}()
+  branchTupleVec = Vector{Tuple{Integer, Integer, Integer}}()
   for br in branchVec
-    if br.isParallel
-      @debug "Parallel branch detected: $(br.fromBus) -> $(br.toBus)"
-      tupple = (br.fromBus, br.toBus)
-      push!(branchTupleSet, tupple)
+    if br.isParallel      
+      cnt = countParallelBranches(branchVec, br.fromBus, br.toBus)
+      @debug "Parallel branch detected: $(br.fromBus) -> $(br.toBus), cnt = $(cnt)"
+      tupple = (br.fromBus, br.toBus, cnt)
+      push!(branchTupleVec, tupple)
     end
   end
 
   for br in branchVec
     tupple = (br.fromBus, br.toBus)
     pCorr = 1.0
-    if tupple in branchTupleSet
-      @debug "taking parallel branch $(br.fromBus) -> $(br.toBus) into account"
-      pCorr = 0.5
+    cnt = countParallelBranches(branchVec, br.fromBus, br.toBus)
+    #if tupple in branchTupleSet
+    if cnt > 1      
+      pCorr = 1.0 / cnt
+      @debug "taking parallel branch $(br.fromBus) -> $(br.toBus) into account, pCorr = $(pCorr)"
     end
 
     from = br.fromBus

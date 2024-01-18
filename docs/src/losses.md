@@ -20,4 +20,4 @@ The `calcNetLosses!` function is implemented in this file to compute network los
 - `log`: Optional Boolean parameter (default is `false`) for enabling debug logging.
 
 >**Note**:
-In the current version, at most one parallel branch is considered, where the calculated electrical power flow (P, Q) is distributed across the two branches.
+Parallel branches are combined into a single branch before the load flow calculation. For calculating network losses, the power is redistributed back onto the branches.

@@ -62,7 +62,7 @@ Your understanding and collaboration are crucial in maintaining a positive and o
 This project is licensed under the BSD-3-Clause - [The license file](LICENSE) contains the complete licensing information.
 
 ## Installation
-Installation guide can be found in [development](/docs/src/development.md)
+Installation guide can be found in [usage](/docs/src/usage.md)
 
 ## Additional information
 Additional information can be found in the [documentation](/docs/src/toc.md)

@@ -25,7 +25,7 @@ function test_acpflow(verbose::Int = 0)
 
   if erg == 0
     result = result & true
-    if verbose == true
+    if verbose > 0 
       calcNetLosses!(myNet.nodeVec, myNet.branchVec, myNet.baseMVA, (verbose > 1))
       printACPFlowResults(myNet, etime, ite)
     end

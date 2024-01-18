@@ -10,7 +10,7 @@ using Sparlectra.SparlectraResult
 using BenchmarkTools
 using Logging
 
-global_logger(ConsoleLogger(stderr, Logging.Info))
+global_logger(ConsoleLogger(stderr, Logging.Warn))
 
 const endpoint = "http://localhost:3030/explore2/query"
 sparse = false
