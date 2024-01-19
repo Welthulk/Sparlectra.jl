@@ -1,6 +1,5 @@
 # Table of Contents
 
-- [Development](development.md)
 - [Usage](usage.md)
 - [Network Configuration Guide](network_configuration_guide.md)
 - [Terms](terms.md)
