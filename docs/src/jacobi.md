@@ -111,7 +111,6 @@ All rows with \(0\) values can be eliminated, resulting in:
 0 & 0 &  \mathbf{H}_{73}  & \mathbf{H}_{75} & \mathbf{J}_{76} & \mathbf{H}_{77}  \\
 \end{bmatrix} \]
 
-Certainly! Here's the expanded sentence:
 
 An example for this graph is presented in the following table, showcasing the results of the first iteration using the `printJacobian` function. The displayed output corresponds to the example with 2 PV nodes:
 ```Julia

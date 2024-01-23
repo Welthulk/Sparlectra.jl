@@ -114,7 +114,7 @@ In the context of this network configuration, external grids are designated as s
   - `parallel`: Integer, Number of parallel lines, e.g. 1, optional
   - `in_service`: Integer, Line in service (1: Yes, 0: No)
 >**Note**:
-`parallel`: ENTER TEXT HERE
+`parallel`: Obsolete. Parallel lines are detected automatically if the `parallel` parameter is not provided.
 ### ACLines
  - **Description**: List of AC lines in the network
    - `from_bus`: Integer, Starting bus ID, e.g. 1
