@@ -57,5 +57,5 @@ If the reference voltage and reference nominal apparent power change, the impeda
 
 ## Graphics
 
-- [Graphic 1: Example Network](tbd1.png)
-- [Graphic 2: Equivalent Circuit](tbd2.png)
+- [Graphic 1: Example Network](ex1.png)
+- [Graphic 2: Equivalent Circuit](ex2.png)
