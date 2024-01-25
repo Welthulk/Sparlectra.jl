@@ -4,7 +4,7 @@
 
 # Data type to describe a terminal 
 mutable struct Terminal
-  comp::Component
+  comp::AbstractComponent  
   seite::SeitenTyp # Seite1 = von, Seite2 = zu, Seite3 = 3WT, tertiäre Seite
 
   function Terminal(comp::Component, seite::SeitenTyp)
