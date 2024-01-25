@@ -92,7 +92,7 @@ end
 
 
 mutable struct PowerTransformer
-  comp::Component
+  comp::AbstractComponent  
   trafoTyp::TrafoTyp
   isControlled::Bool              # cim:TapChanger.controlEnabled 
   nS::Integer                     # Number of (aktive) Sides >=2   

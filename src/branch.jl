@@ -24,7 +24,7 @@ end
 Purpose: Branch to connect two nodes and save pq-flow-data
 """
 mutable struct Branch
-  comp::Component
+  comp::AbstractComponent
   fromBus::Integer        # Bus number of the from bus
   toBus::Integer          # Bus number of the to bus    
   _from::Integer          # original bus number of the from bus

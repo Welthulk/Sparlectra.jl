@@ -878,8 +878,7 @@ function testCreateNetworkFromScratch(verbose::Bool = false)
   # 220kV-Lines
   Vn = 220.0
   r = 0.0653
-  x = 0.398
-  max_i_ka = 1.14
+  x = 0.398  
   c_nf_per_km = 9.08
 
   # (net_cigre_hv, bus1, bus2, length_km=100, std_type='Line220kV', name='Line 1-2')
@@ -941,8 +940,7 @@ function testCreateNetworkFromScratch(verbose::Bool = false)
   # 380kV-Lines
   Vn = 380.0
   r = 0.0328
-  x = 0.312
-  max_i_ka = 1.32
+  x = 0.312  
   c_nf_per_km = 11.5
 
   # (net_cigre_hv, bus7, bus8, length_km=600, std_type='Line380kV', name='Line 7-8')

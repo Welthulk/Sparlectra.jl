@@ -4,7 +4,7 @@
 
 # Data type to describe producers and consumers
 mutable struct ProSumer
-  comp::Component
+  comp::AbstractComponent
   nodeID::Union{Nothing,String}  # ID for mapping to node, could set later
   ratedS::Union{Nothing,Float64}
   ratedU::Union{Nothing,Float64}
