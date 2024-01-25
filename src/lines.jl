@@ -3,22 +3,22 @@
 # include-file lines.jl
 
 mutable struct ACLineSegment
-  comp::Component
+  comp::AbstractComponent  
   length::Float64
   r::Float64
   x::Float64
   b::Union{Nothing,Float64}
-  g::Union{Nothing,Float64}
-  maxIka::Union{Nothing,Float64}
+  g::Union{Nothing,Float64}  
   c_nf_per_km::Union{Nothing,Float64}
 
   function ACLineSegment(c::Component, length::Float64, r::Float64, x::Float64, b::Float64)
-    new(c, length, r, x, b, nothing, nothing, nothing)
+    new(c, length, r, x, b, nothing, nothing)
   end
 
-  function ACLineSegment(id::String, name::String, Vn::Float64, length::Float64, r::Float64, x::Float64, b::Union{Nothing,Float64} = nothing, g::Union{Nothing,Float64} = nothing, maxIka::Union{Nothing,Float64} = nothing, c_nf_per_km::Union{Nothing,Float64} = nothing)
+  function ACLineSegment(id::String, name::String, Vn::Float64, length::Float64, r::Float64, x::Float64, 
+                         b::Union{Nothing,Float64} = nothing, g::Union{Nothing,Float64} = nothing, c_nf_per_km::Union{Nothing,Float64} = nothing)
     comp = Component(id, name, ResDataTypes.LineC, Vn)
-    new(comp, length, r, x, b, g, maxIka, c_nf_per_km)
+    new(comp, length, r, x, b, g, c_nf_per_km)
   end
 
   function Base.show(io::IO, acseg::ACLineSegment)
@@ -36,9 +36,6 @@ mutable struct ACLineSegment
     end
     if !isnothing(acseg.c_nf_per_km)
       print(io, "c_nf_per_km: $(acseg.c_nf_per_km), ")
-    end
-    if !isnothing(acseg.maxIka)
-      print(io, "maxIka: $(acseg.maxIka), ")
     end
     print(io, ")")
   end

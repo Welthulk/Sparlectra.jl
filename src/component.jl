@@ -28,7 +28,8 @@ end
 @enum NodeType UnknownN = 0 PQ = 1 PV = 2 Slack = 3 Isolated = 4
 @enum ProSumptionType UnknownP = 0 Injection = 1 Consumption = 2
 
-struct Component
+abstract type AbstractComponent end
+struct Component <: AbstractComponent
   cID::String
   cName::String
   cTyp::ComponentTyp

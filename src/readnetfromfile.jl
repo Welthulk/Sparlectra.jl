@@ -205,7 +205,7 @@ function createNetFromFile(filename, base_MVA::Float64 = 0.0, log::Bool = false)
     Vn = VoltageDict[Bus]
 
     status = line["in_service"]
-    asec = ACLineSegment(cID, cName, Vn, length, r, x, b, g, max_i_ka, c_nf_per_km)
+    asec = ACLineSegment(cID, cName, Vn, length, r, x, b, g, c_nf_per_km)
     if log
       println(asec)
     end
