@@ -3,7 +3,7 @@
 # include-file shunt.jl
 
 struct Shunt
-  comp::Component
+  comp::AbstractComponent
   nodeID::String           # ID for mapping to node
   busIdx::Int              # short cut to node    
   p_shunt::Float64         # aktive power

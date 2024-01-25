@@ -4,7 +4,7 @@
 
 # Data type to describe the topology
 mutable struct Node
-  comp::Component
+  comp::AbstractComponent
   terminals::Vector{Terminal}
   busIdx::Integer
   _kidx::Integer # original busnumber
