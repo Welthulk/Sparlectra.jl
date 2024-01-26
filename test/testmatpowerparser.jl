@@ -42,9 +42,6 @@ function acpflow(casefile::String, iterations::Int, verbose::Int, mdo::Bool, pri
       jpath = ""
     end
     printACPFlowResults(myNet, etime, ite, printResultToFile, jpath)
-    if printResultToFile
-      @info "...done"
-    end
   elseif erg == 1
     @warn "Newton-Raphson did not converge"
   else

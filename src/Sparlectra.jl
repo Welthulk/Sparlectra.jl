@@ -7,7 +7,7 @@ module ResDataTypes
 
 # resource data types for working with Sparlectra
 const Wurzel3 = 1.7320508075688772
-const SparlectraVersion = VersionNumber("0.4.6")
+const SparlectraVersion = VersionNumber("0.4.66")
 export
   # constants
   Wurzel3,
