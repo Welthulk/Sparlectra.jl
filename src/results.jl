@@ -10,59 +10,58 @@ function format_version(version::VersionNumber)
   return "$major.$minor.$patch"
 end
 
-function formatBranchResults(net::ResDataTypes.Net)  
-  formatted_results  = @sprintf("\n===========================================================================================================================\n")
+function formatBranchResults(net::ResDataTypes.Net)
+  formatted_results = @sprintf("\n===========================================================================================================================\n")
   formatted_results *= @sprintf("| %-25s | %-5s | %-5s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s |\n", "Branch", "From", "To", "P [MW]", "Q [MVar]", "P [MW]", "Q [MVar]", "Pv [MW]", "Qv [MVar]")
   formatted_results *= @sprintf("===========================================================================================================================\n")
 
-    ∑pv = 0.0
-    ∑qv = 0.0
-    for br in net.branchVec
-        from = br._from
-        to = br._to
-        bName = br.comp.cName
-        pfromVal = (br.fBranchFlow.pFlow === nothing) ? NaN : br.fBranchFlow.pFlow
-        qfromVal = (br.fBranchFlow.qFlow === nothing) ? NaN : br.fBranchFlow.qFlow
+  ∑pv = 0.0
+  ∑qv = 0.0
+  for br in net.branchVec
+    from = br._from
+    to = br._to
+    bName = br.comp.cName
+    pfromVal = (br.fBranchFlow.pFlow === nothing) ? NaN : br.fBranchFlow.pFlow
+    qfromVal = (br.fBranchFlow.qFlow === nothing) ? NaN : br.fBranchFlow.qFlow
 
-        ptoVal = (br.tBranchFlow.pFlow === nothing) ? NaN : br.tBranchFlow.pFlow
-        qtoVal = (br.tBranchFlow.qFlow === nothing) ? NaN : br.tBranchFlow.qFlow
+    ptoVal = (br.tBranchFlow.pFlow === nothing) ? NaN : br.tBranchFlow.pFlow
+    qtoVal = (br.tBranchFlow.qFlow === nothing) ? NaN : br.tBranchFlow.qFlow
 
-        VmFrom = (br.fBranchFlow.vm_pu === nothing) ? NaN : br.fBranchFlow.vm_pu
-        VaFrom = (br.fBranchFlow.va_deg === nothing) ? NaN : br.fBranchFlow.va_deg
+    VmFrom = (br.fBranchFlow.vm_pu === nothing) ? NaN : br.fBranchFlow.vm_pu
+    VaFrom = (br.fBranchFlow.va_deg === nothing) ? NaN : br.fBranchFlow.va_deg
 
-        VmTo = (br.tBranchFlow.vm_pu === nothing) ? NaN : br.tBranchFlow.vm_pu
-        VaTo = (br.tBranchFlow.va_deg === nothing) ? NaN : br.tBranchFlow.va_deg
+    VmTo = (br.tBranchFlow.vm_pu === nothing) ? NaN : br.tBranchFlow.vm_pu
+    VaTo = (br.tBranchFlow.va_deg === nothing) ? NaN : br.tBranchFlow.va_deg
 
-        v1 = VmFrom * exp(im * deg2rad(VaFrom))
-        v2 = VmTo * exp(im * deg2rad(VaTo))
+    v1 = VmFrom * exp(im * deg2rad(VaFrom))
+    v2 = VmTo * exp(im * deg2rad(VaTo))
 
-        tap = (br.ratio != 0.0) ? br.ratio : 1.0
+    tap = (br.ratio != 0.0) ? br.ratio : 1.0
 
-        Vdiff = v1 / tap - v2
+    Vdiff = v1 / tap - v2
 
-        y = inv((br.r_pu + br.x_pu * im)) #+ 0.5*(br.g_pu + br.b_pu*im)
+    y = inv((br.r_pu + br.x_pu * im)) #+ 0.5*(br.g_pu + br.b_pu*im)
 
-        Sdiff = Vdiff * conj(Vdiff * y) * net.baseMVA
-        pv = real(Sdiff)
-        qv = imag(Sdiff)
-        ∑pv += abs(pv)
-        ∑qv += abs(qv)
+    Sdiff = Vdiff * conj(Vdiff * y) * net.baseMVA
+    pv = real(Sdiff)
+    qv = imag(Sdiff)
+    ∑pv += abs(pv)
+    ∑qv += abs(qv)
 
-        formatted_results *= @sprintf("| %-25s | %-5s | %-5s | %-10.3f | %-10.3f | %-10.3f | %-10.3f | %-10.3f |  %-10.3f|\n", bName, from, to, pfromVal, qfromVal, ptoVal, qtoVal, abs(pv), abs(qv))
-    end
-    formatted_results *= @sprintf("---------------------------------------------------------------------------------------------------------------------------\n")
-    total_losses = @sprintf("total losses (I^2*Z): P = %10.3f [MW], Q = %10.3f [MVar]\n", ∑pv, ∑qv)
+    formatted_results *= @sprintf("| %-25s | %-5s | %-5s | %-10.3f | %-10.3f | %-10.3f | %-10.3f | %-10.3f |  %-10.3f|\n", bName, from, to, pfromVal, qfromVal, ptoVal, qtoVal, abs(pv), abs(qv))
+  end
+  formatted_results *= @sprintf("---------------------------------------------------------------------------------------------------------------------------\n")
+  total_losses = @sprintf("total losses (I^2*Z): P = %10.3f [MW], Q = %10.3f [MVar]\n", ∑pv, ∑qv)
 
-    return formatted_results, total_losses
+  return formatted_results, total_losses
 end
-
 
 function printACPFlowResults(net::ResDataTypes.Net, ct::Float64, ite::Int, toFile::Bool = false, path::String = "")
   if toFile
     filename = "result_$(net.name).txt"
-    file = joinpath(path, filename)
-    io = open(file, "w")
-    redirect_stdout(io)
+    io = open(joinpath(path, filename), "w")
+  else
+    io = Base.stdout
   end
 
   vers = ResDataTypes.SparlectraVersion
@@ -71,12 +70,11 @@ function printACPFlowResults(net::ResDataTypes.Net, ct::Float64, ite::Int, toFil
   formatted_version = format_version(vers)
   flowResults, totalLosses = formatBranchResults(net)
 
-  println("================================================================================")
-  println("| SPARLECTRA Version $formatted_version - AC Power Flow Results                          |")
-  println("================================================================================")
-
-  vers = ResDataTypes.SparlectraVersion
-  current_date = Dates.format(Dates.now(), "d-u-yy H:M:S")
+  if toFile
+    println(io, "================================================================================")
+    println(io, "| SPARLECTRA Version $formatted_version - AC Power Flow Results                          |")
+    println(io, "================================================================================")
+  end
 
   busses = length(net.nodeVec)
   branches = length(net.branchVec)
@@ -102,28 +100,29 @@ function printACPFlowResults(net::ResDataTypes.Net, ct::Float64, ite::Int, toFil
     gens += ps.proSumptionType == ResDataTypes.Injection ? 1 : 0
   end
   shunts = length(net.shuntVec)
-  @printf("Date         :%20s\n", current_date)
-  @printf("Iterations   :%10d\n", ite)
-  @printf("Converged in :%10f seconds\n", ct)
-  @printf("Case         :%15s\n", net.name)
-  @printf("BaseMVA      :%10d\n", net.baseMVA)
+
+  @printf(io, "Date         :%20s\n", current_date)
+  @printf(io, "Iterations   :%10d\n", ite)
+  @printf(io, "Converged in :%10f seconds\n", ct)
+  @printf(io, "Case         :%15s\n", net.name)
+  @printf(io, "BaseMVA      :%10d\n", net.baseMVA)
   if auxb > 0
-    @printf("Nodes        :%10d (PV: %d PQ: %d (Aux: %d) Slack: %d\n", busses, npv, npq, auxb, 1)
+    @printf(io, "Nodes        :%10d (PV: %d PQ: %d (Aux: %d) Slack: %d\n", busses, npv, npq, auxb, 1)
   else
-    @printf("Nodes        :%10d (PV: %d PQ: %d Slack: %d)\n", busses, npv, npq, 1)
+    @printf(io, "Nodes        :%10d (PV: %d PQ: %d Slack: %d)\n", busses, npv, npq, 1)
   end
-  @printf("Branches     :%10d\n", branches)
-  @printf("Lines        :%10d\n", lines)
-  @printf("Trafos       :%10d\n", trafos)
-  @printf("Generators   :%10d\n", gens)
-  @printf("Loads        :%10d\n", loads)
-  @printf("Shunts       :%10d\n", shunts)
-  
-  println("\n",totalLosses)
-  
-  @printf("======================================================================================================\n")
-  @printf("| %-20s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s |\n", "Bus", "Vn [kV]", "V [pu]", "phi [deg]", "P [MW]", "Q [MVar]", "Type")
-  @printf("======================================================================================================\n")
+  @printf(io, "Branches     :%10d\n", branches)
+  @printf(io, "Lines        :%10d\n", lines)
+  @printf(io, "Trafos       :%10d\n", trafos)
+  @printf(io, "Generators   :%10d\n", gens)
+  @printf(io, "Loads        :%10d\n", loads)
+  @printf(io, "Shunts       :%10d\n", shunts)
+
+  println(io, "\n", totalLosses)
+
+  @printf(io, "======================================================================================================\n")
+  @printf(io, "| %-20s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s |\n", "Bus", "Vn [kV]", "V [pu]", "phi [deg]", "P [MW]", "Q [MVar]", "Type")
+  @printf(io, "======================================================================================================\n")
   ∑pLoad = 0.0
   ∑pGen = 0.0
   ∑qLoad = 0.0
@@ -144,14 +143,14 @@ function printACPFlowResults(net::ResDataTypes.Net, ct::Float64, ite::Int, toFil
       ∑qLoad += qVal
     end
     typeStr = ResDataTypes.toString(n._nodeType)
-    @printf("| %-20s | %-10d | %-10.3f | %-10.3f | %-10.3f | %-10.3f | %-10s |\n", n.comp.cName, n.comp.cVN, n._vm_pu, n._va_deg, pVal, qVal, typeStr)
+    @printf(io, "| %-20s | %-10d | %-10.3f | %-10.3f | %-10.3f | %-10.3f | %-10s |\n", n.comp.cName, n.comp.cVN, n._vm_pu, n._va_deg, pVal, qVal, typeStr)
   end
-  @printf("------------------------------------------------------------------------------------------------------\n")
-  println(flowResults)
+
+  @printf(io, "------------------------------------------------------------------------------------------------------\n")
+  println(io, flowResults)
+
   if toFile
-    # Close the file after redirecting the output
-    redirect_stdout(Base.stdout)
     close(io)
-    println("Results have been written to $filename")
+    #println("Results have been written to $(joinpath(path, filename))")
   end
 end
