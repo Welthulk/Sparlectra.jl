@@ -987,3 +987,134 @@ function createNetFromFile(filename, base_MVA::Float64 = 0.0, log::Bool = false)
 
   return net
 end
+
+
+function createNetFromPGM(filename)
+  @info "create network from PGM-File: $(filename)"
+  
+  nodes, lines, wt2, sym_gens, sym_loads, shunts, source = SparlectraImport.pgmparser(filename)
+  #println("Nodes: ", nodes)
+  #println("Source: ", source)
+  base_name = basename(filename)
+  netName, ext = splitext(base_name)
+  
+  
+  sn_max = 0.0
+  for trafo in wt2
+    sn = float(trafo["sn"])
+    if sn > sn_max
+      sn_max = sn
+    end
+  end    
+  BaseMVA = sn_max
+    
+  busVec = Vector{Bus}()
+  VoltageDict = Dict{Integer,Float64}()
+  
+  ACLines = Vector{ResDataTypes.ACLineSegment}()
+
+
+  bus_types = Dict{Int, Int}()
+  for sym_gen in sym_gens
+    bus_id = sym_gen["node"]
+    bus_type = sym_gen["type"]    
+    bus_type += 1    
+    bus_types[bus_id] = bus_type
+  end
+  
+  for sym_load in sym_loads
+    bus_id = sym_load["node"]
+    bus_type = sym_load["type"]
+    bus_type += 1
+    bus_types[bus_id] = bus_type
+  end
+
+  # slack bus  
+  for s in source
+    bus_id = s["node"]
+    bus_type = 3
+    bus_types[bus_id] = bus_type
+    break # only one slack bus
+  end
+  
+  for bus in nodes
+    busIdx = Int64(bus["id"])    
+    vn_kv = float(bus["u_rated"])/1000.0
+    name = "Bus_"*string(busIdx)
+    nodeID = "#ID_"*name
+    if haskey(bus_types, busIdx)
+      btype = bus_types[busIdx]
+    else      
+      btype = 1
+    end
+    a_bus = Bus(busIdx, name, nodeID, "", vn_kv, btype)
+    push!(busVec, a_bus)
+    
+    VoltageDict[busIdx] = vn_kv
+
+
+  end
+  for (i, bus) in enumerate(busVec)
+    if bus.busIdx != i
+      @error "bus numbers are not consecutive and unique"
+    end
+  end
+  
+  for b in busVec
+    println(b)
+  end
+
+  
+  b = nothing
+  g = nothing
+
+  for line in lines
+    from = Int64(line["from_node"])
+    to = Int64(line["to_node"])
+    
+    num = line["id"]
+    cName = "Line_"*string(from)*"_"*string(to)
+    cID = "#ID_Line"*string(num)
+    r = float(line["r1"])
+    x = float(line["x1"])
+    c_nf = float(line["c1"])*1e9
+    tan_delta = float(line["tan1"])
+    if tan_delta != 0.0
+      @warn "tan_delta not zero: $tan_delta"
+    end
+    from_status = line["from_status"]
+    to_status = line["to_status"] 
+    if from_status == 1 && to_status == 1
+      inService = 1
+    else
+      inService = 0
+    end
+    Vn1 = VoltageDict[from]
+    Vn2 = VoltageDict[to]
+    if Vn1 != Vn2
+      @error "Voltage levels are different: $Vn1 != $Vn2"    
+    end
+    asec = ACLineSegment(cID, cName, Vn1, 1.0, r, x, b, g, c_nf)
+    push!(ACLines, asec)
+
+    println(asec)
+
+
+
+    
+  end
+
+  for sym_gen in sym_gens
+    println(sym_gen)    
+  end
+
+  for shunt in shunts
+    println(shunt)    
+  end
+  
+
+
+
+
+
+end

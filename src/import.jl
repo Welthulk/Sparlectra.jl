@@ -395,3 +395,24 @@ function casefileparser(filename)
   
   return case_name, baseMVA, mpc_bus, mpc_gen, mpc_branch
 end
+
+function pgmparser(filename)
+  json_data = read(filename, String)
+  data_dict = JSON.parse(json_data)
+  
+  version = data_dict["version"]
+  if version != "1.0"
+    msg = "Version $(version) of PGM-File not supported!"
+    throw(msg)
+  end
+  
+  nodes = data_dict["data"]["node"]
+  lines = data_dict["data"]["line"]
+  wt2 = data_dict["data"]["transformer"]
+  sym_gens = data_dict["data"]["sym_gen"]
+  sym_loads = data_dict["data"]["sym_load"]  
+  shunts = data_dict["data"]["shunt"]
+  source = data_dict["data"]["source"]
+  return nodes, lines, wt2, sym_gens, sym_loads, shunts, source
+  
+end
