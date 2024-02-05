@@ -992,12 +992,12 @@ end
 function createNetFromPGM(filename)
   @info "create network from PGM-File: $(filename)"
   
-  nodes, lines, wt2, sym_gens, sym_loads, shunts, source = SparlectraImport.pgmparser(filename)
+  nodes, lines, wt2, wt3, sym_gens, sym_loads, shunts, source = SparlectraImport.pgmparser(filename)
   #println("Nodes: ", nodes)
   #println("Source: ", source)
   base_name = basename(filename)
   netName, ext = splitext(base_name)
-  
+  @info "Netname: $netName"
   
   sn_max = 0.0
   for trafo in wt2
@@ -1006,14 +1006,19 @@ function createNetFromPGM(filename)
       sn_max = sn
     end
   end    
-  BaseMVA = sn_max
+  baseMVA = sn_max/1e6
+  @info "baseMVA: $baseMVA MVA"
     
   busVec = Vector{Bus}()
   VoltageDict = Dict{Integer,Float64}()
-  
+  NodeIDDict = Dict{Integer,String}()
+
   ACLines = Vector{ResDataTypes.ACLineSegment}()
-
-
+  
+  
+  branchVec = Vector{ResDataTypes.Branch}()
+  NodeTerminalsDict = Dict{Integer,Vector{Terminal}}()
+  NodeParametersDict = Dict{Integer,NodeParameters}()
   bus_types = Dict{Int, Int}()
   for sym_gen in sym_gens
     bus_id = sym_gen["node"]
@@ -1037,6 +1042,7 @@ function createNetFromPGM(filename)
     break # only one slack bus
   end
   
+  slackIdx = 0 # Counter for slack index
   for bus in nodes
     busIdx = Int64(bus["id"])    
     vn_kv = float(bus["u_rated"])/1000.0
@@ -1044,6 +1050,9 @@ function createNetFromPGM(filename)
     nodeID = "#ID_"*name
     if haskey(bus_types, busIdx)
       btype = bus_types[busIdx]
+      if btype == 3
+        slackIdx = busIdx
+      end
     else      
       btype = 1
     end
@@ -1051,19 +1060,27 @@ function createNetFromPGM(filename)
     push!(busVec, a_bus)
     
     VoltageDict[busIdx] = vn_kv
+    
+    # Set up node IDs via bus index
+    NodeIDDict[busIdx] = nodeID
 
-
+    # initialize NodeTerminalsDict
+    NodeTerminalsDict[busIdx] = Vector{ResDataTypes.Terminal}()
+    # initialize NodeParametersDict, set bus index
+    NodeParameters = ResDataTypes.NodeParameters(busIdx)
+    NodeParametersDict[busIdx] = NodeParameters
   end
+  @assert slackIdx != 0 "no slack bus found!"
   for (i, bus) in enumerate(busVec)
-    if bus.busIdx != i
-      @error "bus numbers are not consecutive and unique"
-    end
+    @assert bus.busIdx == i "bus numbers are not consecutive and unique"        
   end
   
   for b in busVec
     println(b)
   end
 
+  # Set up auxillary buses
+  @assert wt3 === nothing "3WT transformers not supported yet"
   
   b = nothing
   g = nothing
@@ -1077,7 +1094,8 @@ function createNetFromPGM(filename)
     cID = "#ID_Line"*string(num)
     r = float(line["r1"])
     x = float(line["x1"])
-    c_nf = float(line["c1"])*1e9
+    c_f = float(line["c1"])
+    c_nf = c_f*1e9
     tan_delta = float(line["tan1"])
     if tan_delta != 0.0
       @warn "tan_delta not zero: $tan_delta"
@@ -1091,17 +1109,36 @@ function createNetFromPGM(filename)
     end
     Vn1 = VoltageDict[from]
     Vn2 = VoltageDict[to]
-    if Vn1 != Vn2
-      @error "Voltage levels are different: $Vn1 != $Vn2"    
-    end
-    asec = ACLineSegment(cID, cName, Vn1, 1.0, r, x, b, g, c_nf)
+    Vn = Vn1
+    
+    @assert Vn1 == Vn2 "Voltage levels are different: $Vn1 != $Vn2"    
+    
+    asec = ACLineSegment(cID, cName, Vn, 1.0, r, x, b, g, c_nf)
     push!(ACLines, asec)
 
-    println(asec)
-
-
-
+    cLine = toComponentTyp("ACLINESEGMENT")
+    c = Component(cID, cName, cLine, Vn)
+    t1 = ResDataTypes.Terminal(c, ResDataTypes.Seite1)
+    t2 = ResDataTypes.Terminal(c, ResDataTypes.Seite2)
     
+    checkBusNumber(from, busVec)
+    checkBusNumber(to, busVec)
+
+    t1Terminal = NodeTerminalsDict[from]
+    t2Terminal = NodeTerminalsDict[to]
+    push!(t1Terminal, t1)
+    push!(t2Terminal, t2)
+    
+    bch = c_f * 2.0 * 50.0 * pi
+    g_us = 0.0 # should be calculated later ....
+    
+    r_pu, x_pu, b_pu, g_pu = calcTwoPortPU(Vn, baseMVA, r , x , bch, g_us)
+    fromNodeID = NodeIDDict[from]
+    toNodeID = NodeIDDict[to]
+    from_org = from
+    to_org = to
+    branch = Branch(c, from, to, from_org, to_org, fromNodeID, toNodeID, r_pu, x_pu, b_pu, g_pu, 0.0, 0.0, inService)
+    push!(branchVec, branch)
   end
 
   for sym_gen in sym_gens
