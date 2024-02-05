@@ -987,3 +987,171 @@ function createNetFromFile(filename, base_MVA::Float64 = 0.0, log::Bool = false)
 
   return net
 end
+
+
+function createNetFromPGM(filename)
+  @info "create network from PGM-File: $(filename)"
+  
+  nodes, lines, wt2, wt3, sym_gens, sym_loads, shunts, source = SparlectraImport.pgmparser(filename)
+  #println("Nodes: ", nodes)
+  #println("Source: ", source)
+  base_name = basename(filename)
+  netName, ext = splitext(base_name)
+  @info "Netname: $netName"
+  
+  sn_max = 0.0
+  for trafo in wt2
+    sn = float(trafo["sn"])
+    if sn > sn_max
+      sn_max = sn
+    end
+  end    
+  baseMVA = sn_max/1e6
+  @info "baseMVA: $baseMVA MVA"
+    
+  busVec = Vector{Bus}()
+  VoltageDict = Dict{Integer,Float64}()
+  NodeIDDict = Dict{Integer,String}()
+
+  ACLines = Vector{ResDataTypes.ACLineSegment}()
+  
+  
+  branchVec = Vector{ResDataTypes.Branch}()
+  NodeTerminalsDict = Dict{Integer,Vector{Terminal}}()
+  NodeParametersDict = Dict{Integer,NodeParameters}()
+  bus_types = Dict{Int, Int}()
+  for sym_gen in sym_gens
+    bus_id = sym_gen["node"]
+    bus_type = sym_gen["type"]    
+    bus_type += 1    
+    bus_types[bus_id] = bus_type
+  end
+  
+  for sym_load in sym_loads
+    bus_id = sym_load["node"]
+    bus_type = sym_load["type"]
+    bus_type += 1
+    bus_types[bus_id] = bus_type
+  end
+
+  # slack bus  
+  for s in source
+    bus_id = s["node"]
+    bus_type = 3
+    bus_types[bus_id] = bus_type
+    break # only one slack bus
+  end
+  
+  slackIdx = 0 # Counter for slack index
+  for bus in nodes
+    busIdx = Int64(bus["id"])    
+    vn_kv = float(bus["u_rated"])/1000.0
+    name = "Bus_"*string(busIdx)
+    nodeID = "#ID_"*name
+    if haskey(bus_types, busIdx)
+      btype = bus_types[busIdx]
+      if btype == 3
+        slackIdx = busIdx
+      end
+    else      
+      btype = 1
+    end
+    a_bus = Bus(busIdx, name, nodeID, "", vn_kv, btype)
+    push!(busVec, a_bus)
+    
+    VoltageDict[busIdx] = vn_kv
+    
+    # Set up node IDs via bus index
+    NodeIDDict[busIdx] = nodeID
+
+    # initialize NodeTerminalsDict
+    NodeTerminalsDict[busIdx] = Vector{ResDataTypes.Terminal}()
+    # initialize NodeParametersDict, set bus index
+    NodeParameters = ResDataTypes.NodeParameters(busIdx)
+    NodeParametersDict[busIdx] = NodeParameters
+  end
+  @assert slackIdx != 0 "no slack bus found!"
+  for (i, bus) in enumerate(busVec)
+    @assert bus.busIdx == i "bus numbers are not consecutive and unique"        
+  end
+  
+  for b in busVec
+    println(b)
+  end
+
+  # Set up auxillary buses
+  @assert wt3 === nothing "3WT transformers not supported yet"
+  
+  b = nothing
+  g = nothing
+
+  for line in lines
+    from = Int64(line["from_node"])
+    to = Int64(line["to_node"])
+    
+    num = line["id"]
+    cName = "Line_"*string(from)*"_"*string(to)
+    cID = "#ID_Line"*string(num)
+    r = float(line["r1"])
+    x = float(line["x1"])
+    c_f = float(line["c1"])
+    c_nf = c_f*1e9
+    tan_delta = float(line["tan1"])
+    if tan_delta != 0.0
+      @warn "tan_delta not zero: $tan_delta"
+    end
+    from_status = line["from_status"]
+    to_status = line["to_status"] 
+    if from_status == 1 && to_status == 1
+      inService = 1
+    else
+      inService = 0
+    end
+    Vn1 = VoltageDict[from]
+    Vn2 = VoltageDict[to]
+    Vn = Vn1
+    
+    @assert Vn1 == Vn2 "Voltage levels are different: $Vn1 != $Vn2"    
+    
+    asec = ACLineSegment(cID, cName, Vn, 1.0, r, x, b, g, c_nf)
+    push!(ACLines, asec)
+
+    cLine = toComponentTyp("ACLINESEGMENT")
+    c = Component(cID, cName, cLine, Vn)
+    t1 = ResDataTypes.Terminal(c, ResDataTypes.Seite1)
+    t2 = ResDataTypes.Terminal(c, ResDataTypes.Seite2)
+    
+    checkBusNumber(from, busVec)
+    checkBusNumber(to, busVec)
+
+    t1Terminal = NodeTerminalsDict[from]
+    t2Terminal = NodeTerminalsDict[to]
+    push!(t1Terminal, t1)
+    push!(t2Terminal, t2)
+    
+    bch = c_f * 2.0 * 50.0 * pi
+    g_us = 0.0 # should be calculated later ....
+    
+    r_pu, x_pu, b_pu, g_pu = calcTwoPortPU(Vn, baseMVA, r , x , bch, g_us)
+    fromNodeID = NodeIDDict[from]
+    toNodeID = NodeIDDict[to]
+    from_org = from
+    to_org = to
+    branch = Branch(c, from, to, from_org, to_org, fromNodeID, toNodeID, r_pu, x_pu, b_pu, g_pu, 0.0, 0.0, inService)
+    push!(branchVec, branch)
+  end
+
+  for sym_gen in sym_gens
+    println(sym_gen)    
+  end
+
+  for shunt in shunts
+    println(shunt)    
+  end
+  
+
+
+
+
+
+end
