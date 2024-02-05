@@ -409,10 +409,11 @@ function pgmparser(filename)
   nodes = data_dict["data"]["node"]
   lines = data_dict["data"]["line"]
   wt2 = data_dict["data"]["transformer"]
+  wt3 = nothing
   sym_gens = data_dict["data"]["sym_gen"]
   sym_loads = data_dict["data"]["sym_load"]  
   shunts = data_dict["data"]["shunt"]
   source = data_dict["data"]["source"]
-  return nodes, lines, wt2, sym_gens, sym_loads, shunts, source
+  return nodes, lines, wt2, wt3, sym_gens, sym_loads, shunts, source
   
 end
