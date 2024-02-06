@@ -91,7 +91,7 @@ mutable struct Node
 
     for term in terminals
       if c.cVN != term.comp.cVN
-        @warn "Voltage levels of terminals are not equal Vn = $(c.Vn) != $(term.comp.cVN), Terminal: $(term.comp.cName), Node-Name: $(name)"
+        @warn "Voltage levels of terminals are not equal Vn = $(c.cVN) != $(term.comp.cVN), Terminal: $(term.comp.cName), Node-Name: $(name)"
       end
     end
 
