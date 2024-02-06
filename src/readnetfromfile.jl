@@ -1130,8 +1130,8 @@ function createNetFromPGM(filename)
     checkBusNumber(from, busVec)
     checkBusNumber(to, busVec)
 
-    t1Terminal = NodeTerminalsDict[from]
-    t2Terminal = NodeTerminalsDict[to]
+    t2Terminal = NodeTerminalsDict[from]
+    t1Terminal = NodeTerminalsDict[to]
     push!(t1Terminal, t1)
     push!(t2Terminal, t2)
     
@@ -1180,15 +1180,10 @@ function createNetFromPGM(filename)
     cName = "Trafo_"*string(from_node)*"_"*string(to_node)
     cID = "#ID_Trafo"*string(t["id"])
     c = Component(cID, cName, "POWERTRANSFORMER", vn_hv)
-    t1 = ResDataTypes.Terminal(c, ResDataTypes.Seite1)
-    t2 = ResDataTypes.Terminal(c, ResDataTypes.Seite2)
+    t1 = Terminal(c, ResDataTypes.Seite1)
+    t2 = Terminal(c, ResDataTypes.Seite2)
     checkBusNumber(from_node, busVec)
     checkBusNumber(to_node, busVec)
-    t1Terminal = NodeTerminalsDict[from_node]
-    t2Terminal = NodeTerminalsDict[to_node]
-    push!(t1Terminal, t1)
-    push!(t2Terminal, t2)
-
 
     
     tap_side = Int64(t["tap_side"])
@@ -1199,8 +1194,8 @@ function createNetFromPGM(filename)
     tap_size_V = float(t["tap_size"])
     #side_1 = 0, side_2 = 1, side_3 = 2
     tapSeite = (tap_side == 0) ? ((from_kV > to_kV) ? 1 : 2) :
-           (tap_side == 1) ? ((from_kV > to_kV) ? 2 : 1) :
-           @error "tap_side: $tap_side, from_kV: $from_kV, to_kV: $to_kV"
+           (tap_side == 1) ? ((from_kV > to_kV) ? 2 : 1) : @error "tap_side: $tap_side, from_kV: $from_kV, to_kV: $to_kV"
+    
     
     tap_neutral = div(tap_max + tap_min,2)
     HV = VoltageDict[from_node]
@@ -1322,7 +1317,7 @@ function createNetFromPGM(filename)
     comp = Component(cID, cName, "GENERATOR", vn)
     pRS = ProSumer(comp, nID, ratedS, ratedU, qPercent, p, q, maxP, minP, maxQ, minQ, ratedPowerFactor, referencePri, nothing, nothing)
     push!(prosum, pRS)
-    t2 = Terminal(comp, ResDataTypes.Seite2)
+    t2 = Terminal(comp, ResDataTypes.Seite1)
     t2Terminal = NodeTerminalsDict[bus]
     push!(t2Terminal, t2)
 
@@ -1360,7 +1355,43 @@ function createNetFromPGM(filename)
   end
   @info "$(lanz) shunts created..."  
 
-  
+  for b in busVec
+    busIdx = b.busIdx
+    busName = b.name
+    nodeType = b.type
+    cID = b.id
+    Vn = b.vn_kv
+    terminals = NodeTerminalsDict[busIdx]
+
+    
+    println("Bus: ", busName, " busIdx: ", busIdx, " ID: ", cID, " Voltage: ", Vn, "\nTerminals: ", terminals)
+    
+    node = Node(cID, busName, Vn, terminals)
+
+    nodeType = toNodeType(nodeType)
+    setNodeType!(node, nodeType)
+    setBusIdx!(node, busIdx)
+
+    if nodeType == ResDataTypes.Isolated
+      setNodeIdx!(node, 4)
+    else
+      setNodeIdx!(node, busIdx)
+    end
+
+    nParms = NodeParametersDict[busIdx]
+    setNodeParameters!(node, nParms)
+    
+    #@show node
+    
+    push!(nodeVec, node)
+  end
+  @warn "TODO: check Seite1/Seite2, check branchVec, check Power Injektion (to big cause of SI), parallel branches, ..."
+  @info "3WT, not implemented yet"
+  checkNodeConnections(nodeVec)
+
+  net = ResDataTypes.Net(netName, baseMVA, slackIdx, nodeVec, ACLines, trafos, branchVec, prosum, shuntVec)
+
+  return net
 
 
 
