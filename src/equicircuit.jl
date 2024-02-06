@@ -59,6 +59,10 @@ function evaluateCubicSpline(x, a, b, c, d, x_new)
   return y_new
 end
 
+function calc_y_pu(Y::ComplexF64, baseS::Float64, baseV::Float64) 
+  return Y * baseS / baseV^2  
+end
+
 """
 purpos: calculation of a two port in p.u.
 + baseV: base voltage in kV
@@ -100,6 +104,14 @@ function calcComplexRatio(tapRatio::Float64, ShiftAngle_grad::Float64)::ComplexF
   return tr + ti * im
 end
 
+"""
+purpose: calculation of change of volatage per tap position in percent
++vs: change per tap
++vn: nominal voltage
+"""
+function calcTapStepPercent(vs::Float64, vn::Float64)  
+   return (vs/vn)*100.0
+end
 """
 purpose: calculate of ratio with correction of tap position
 + tapPos: tap position
@@ -144,6 +156,49 @@ purpose: calculate of neutral voltage. Tap position in neutral position.
 function calcNeutralU(neutralU_ratio::Float64, vn_hv::Float64, tap_min::Integer, tap_max::Integer, tap_step_percent::Float64)::Float64
   return round(neutralU_ratio * vn_hv + (tap_max - tap_min) * tap_step_percent / 100.0, digits = 0)
 end
+
+"""
+purpose: calculate of neutral voltage. Tap position in neutral position.
++ sbase_VA: base power in VA
++ u2_V: rated voltage in V (to_side, low voltage side)
++ uk: short circuit voltage in percent
++ sn_VA: rated power in VA
++ pk_W: short circuit power in W (Cu-losses)
++ i0_A: relativ no load current
+"""
+function calcTrafoParamsSI(sbase_VA::Float64, u2_V::Float64, uk::Float64, sn_VA::Float64, pk_W::Float64, i0::Float64, p0_W::Float64)::Tuple{Float64, Float64, Float64, Float64}
+    # Calculate base impedance
+    z_base = sbase_VA / (u2_V^2)
+    
+    # Calculate series impedance
+    z_series_mag = uk / z_base
+    re_z_series = pk_W / (sn_VA* z_base)
+    
+    im_z_series_sq = z_series_mag^2 - re_z_series^2
+
+    if im_z_series_sq < 0.0
+      @debug "im_z_series_sq < 0.0, set to 0.0"
+      im_z_series_sq = 0.0
+    end
+    im_z_series = (im_z_series_sq >= 0.0) ? sqrt(z_series_mag^2 - re_z_series^2) : 0.0
+
+    # Calculate base admittance
+    y_base = 1.0 / z_base
+    
+    # Calculate shunt admittance
+    y_shunt_mag = i0*z_base    
+    re_y_shunt = p0_W / u2_V^2    
+    im_y_shunt_sq = y_shunt_mag^2 - re_y_shunt^2
+    if im_y_shunt_sq < 0.0
+      @debug "im_y_shunt_sq < 0.0, set to 0.0"
+      im_y_shunt_sq = 0.0
+    end        
+    im_y_shunt = -1.0*sqrt(y_shunt_mag^2 - re_y_shunt^2)
+
+    return re_z_series, im_z_series, re_y_shunt, im_y_shunt
+end
+
+
 
 """
  purpose: calculates R, X, rfe and xmu of a transformer

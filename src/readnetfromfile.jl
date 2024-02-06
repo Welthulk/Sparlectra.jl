@@ -357,6 +357,7 @@ function createNetFromFile(filename, base_MVA::Float64 = 0.0, log::Bool = false)
     elseif regelungEin && tapSeite == 2
       Vtab = calcNeutralU(neutralU_ratio, vn_lv, tap_min, tap_max, tap_step_percent)
       tap = ResDataTypes.PowerTransformerTaps(tap_pos, tap_min, tap_max, tap_neutral, tap_step_percent, Vtab)
+      # maibe an error here: vn_hv?
       r_lv, x_lv, b_lv, g_lv = calcTrafoParams(sn, vn_hv, vk_percent, vkr_percent, pfe_kw, io_percent)
       r_pu, x_pu, b_pu, g_pu = calcTwoPortPU(vn_hv, sn, r_lv, x_lv, b_lv, g_lv)
       s1 = PowerTransformerWinding(vn_hv, 0.0, 0.0)
@@ -999,6 +1000,7 @@ function createNetFromPGM(filename)
   netName, ext = splitext(base_name)
   @info "Netname: $netName"
   
+  # baseMVA is not given, so we search for the maximum sn of the transformers
   sn_max = 0.0
   for trafo in wt2
     sn = float(trafo["sn"])
@@ -1014,9 +1016,12 @@ function createNetFromPGM(filename)
   NodeIDDict = Dict{Integer,String}()
 
   ACLines = Vector{ResDataTypes.ACLineSegment}()
-  
-  
+  trafos = Vector{ResDataTypes.PowerTransformer}()
+  prosum = Vector{ResDataTypes.ProSumer}()
+  shuntVec = Vector{ResDataTypes.Shunt}()
   branchVec = Vector{ResDataTypes.Branch}()
+  nodeVec = Vector{ResDataTypes.Node}()
+
   NodeTerminalsDict = Dict{Integer,Vector{Terminal}}()
   NodeParametersDict = Dict{Integer,NodeParameters}()
   bus_types = Dict{Int, Int}()
@@ -1075,10 +1080,11 @@ function createNetFromPGM(filename)
     @assert bus.busIdx == i "bus numbers are not consecutive and unique"        
   end
   
-  for b in busVec
-    println(b)
-  end
+  #for b in busVec
+  #  println(b)
+  #end
 
+  @info "$(length(busVec)) busses created..."
   # Set up auxillary buses
   @assert wt3 === nothing "3WT transformers not supported yet"
   
@@ -1140,14 +1146,220 @@ function createNetFromPGM(filename)
     branch = Branch(c, from, to, from_org, to_org, fromNodeID, toNodeID, r_pu, x_pu, b_pu, g_pu, 0.0, 0.0, inService)
     push!(branchVec, branch)
   end
+  @info "$(length(ACLines)) aclines created..."
 
+  for t in wt2
+    sn = float(t["sn"])
+    u1 = float(t["u1"])
+    u2 = float(t["u2"])
+    
+    from_kV = u1/1000.0 # rated voltage at the from side
+    to_kV = u2/1000.0 # rated voltage at the to side
+    if from_kV > to_kV
+      vn_hv = from_kV
+      vn_lv = to_kV
+    else
+      vn_hv = to_kV
+      vn_lv = from_kV
+    end
+
+    uk = float(t["uk"])
+    i0 = float(t["i0"])  
+    p0_W = float(t["p0"])
+    pk_W = float(t["pk"])
+    from_node = Int64(t["from_node"])
+    to_node = Int64(t["to_node"])
+    
+    from_status = t["from_status"]
+    to_status = t["to_status"]
+    if from_status == 1 && to_status == 1
+      inService = 1
+    else
+      inService = 0
+    end
+    cName = "Trafo_"*string(from_node)*"_"*string(to_node)
+    cID = "#ID_Trafo"*string(t["id"])
+    c = Component(cID, cName, "POWERTRANSFORMER", vn_hv)
+    t1 = ResDataTypes.Terminal(c, ResDataTypes.Seite1)
+    t2 = ResDataTypes.Terminal(c, ResDataTypes.Seite2)
+    checkBusNumber(from_node, busVec)
+    checkBusNumber(to_node, busVec)
+    t1Terminal = NodeTerminalsDict[from_node]
+    t2Terminal = NodeTerminalsDict[to_node]
+    push!(t1Terminal, t1)
+    push!(t2Terminal, t2)
+
+
+    
+    tap_side = Int64(t["tap_side"])
+    tap_pos = Int64(t["tap_pos"])
+    tap_min = Int64(t["tap_min"])
+    tap_max = Int64(t["tap_max"])
+    tap_nom = Int64(t["tap_nom"])
+    tap_size_V = float(t["tap_size"])
+    #side_1 = 0, side_2 = 1, side_3 = 2
+    tapSeite = (tap_side == 0) ? ((from_kV > to_kV) ? 1 : 2) :
+           (tap_side == 1) ? ((from_kV > to_kV) ? 2 : 1) :
+           @error "tap_side: $tap_side, from_kV: $from_kV, to_kV: $to_kV"
+    
+    tap_neutral = div(tap_max + tap_min,2)
+    HV = VoltageDict[from_node]
+    LV = VoltageDict[to_node]
+    
+    if tap_side == 0
+      tapStepPercent=calcTapStepPercent(tap_size_V, u1)
+    else
+      tapStepPercent=calcTapStepPercent(tap_size_V, u2)
+    end    
+    shift_degree = 0.0
+    sn_MVA = sn/1e6
+    ratio = calcRatio(HV,vn_hv,LV,vn_lv,tap_pos,tap_neutral,tapStepPercent, tapSeite)
+    if tapSeite == 1
+      Vtab = calcNeutralU(1.0, vn_hv, tap_min, tap_max, tapStepPercent)
+      tap = PowerTransformerTaps(tap_pos, tap_min, tap_max, tap_neutral, tapStepPercent, Vtab)
+      r,x,b,g = calcTrafoParamsSI(sn_max, u2, uk, sn, pk_W, i0, p0_W )       
+      r_pu, x_pu, b_pu, g_pu = calcTwoPortPU(vn_hv, baseMVA, r, x, b, g)
+          
+      s1 = PowerTransformerWinding(vn_hv, r, x, b, g, shift_degree, from_kV, sn_MVA, tap)
+      s2 = PowerTransformerWinding(vn_lv, 0.0, 0.0)
+    else
+      Vtab = calcNeutralU(neutralU_ratio, vn_lv, tap_min, tap_max, tapStepPercent)
+      tap = PowerTransformerTaps(tap_pos, tap_min, tap_max, tap_neutral, tapStepPercent, Vtab)
+      r,x,b,g = calcTrafoParamsSI(sn_max, u1, uk, sn, pk_W, i0, p0_W ) 
+
+      s1 = PowerTransformerWinding(vn_hv, 0.0, 0.0)
+      s2 = PowerTransformerWinding(vn_lv, r, x, b, g, shift_degree, to_kV, sn_MVA, tap)
+    end
+    #@debug "Trafo: ", cName, ", r: ", r, ", x: ", x, ", b: ", b, ", g: ", g
+    #@debug "Trafo: ", cName, ", r_pu: ", r_pu, ", x_pu: ", x_pu, ", b_pu: ", b_pu, ", g_pu: ", g_pu
+    s3 = nothing
+    cmp = Component(cID, cName, "POWERTRANSFORMER", vn_hv)
+    trafo = PowerTransformer(cmp, true, s1, s2, s3)
+    push!(trafos, trafo)
+    #@show trafo
+
+    t1 = ResDataTypes.Terminal(cmp, ResDataTypes.Seite1)
+    cmp2 = ResDataTypes.Component(cID, cName, "POWERTRANSFORMER", vn_lv)
+    t2 = ResDataTypes.Terminal(cmp2, ResDataTypes.Seite2)
+
+    t1Terminal = NodeTerminalsDict[from_node]
+    t2Terminal = NodeTerminalsDict[to_node]
+
+    fromNodeID = NodeIDDict[from_node]
+    toNodeID = NodeIDDict[to_node]
+
+    push!(t1Terminal, t1)
+    push!(t2Terminal, t2)
+
+    branch = Branch(cmp, from_node, to_node, fromNodeID, toNodeID, r_pu, x_pu, b_pu, g_pu, ratio, shift_degree, inService)
+
+    push!(branchVec, branch)
+
+
+  end
+  @info "$(length(trafos)) power transformers created..."
+  
+  
   for sym_gen in sym_gens
-    println(sym_gen)    
+    bus_id = sym_gen["node"]
+    vn = VoltageDict[bus_id]
   end
+  
+  ratedS = nothing
+  ratedU = nothing
+  qPercent = nothing
+  maxP = nothing
+  minP = nothing
+  maxQ = nothing
+  minQ = nothing
+  ratedPowerFactor = nothing
+  referencePri = nothing
+  lanz = 0
+  for sym_load in sym_loads    
+    status=sym_load["status"]
+    if status == 0
+      continue
+    end
+    lanz+=1
+    id = sym_load["id"]
+    bus = sym_load["node"]
+    vn = VoltageDict[bus]
+    cName = "Load_"*string(id)
+    cID = "#ID_Load_"*string(id)
+    nID = NodeIDDict[bus] # String
+    p = sym_load["p_specified"]
+    q = sym_load["q_specified"]
 
-  for shunt in shunts
-    println(shunt)    
+    comp = Component(cID, cName, "LOAD", vn)
+    pRS = ProSumer(comp, nID, ratedS, ratedU, qPercent, p, q, maxP, minP, maxQ, minQ, ratedPowerFactor, referencePri, nothing, nothing)
+    push!(prosum, pRS)
+    t1 = Terminal(comp, ResDataTypes.Seite1)
+    t1Terminal = NodeTerminalsDict[bus]
+    push!(t1Terminal, t1)
+
+    nParms = NodeParametersDict[bus]
+    nParms.pƩLoad = isnothing(nParms.pƩLoad) ? p : nParms.pƩLoad + p
+    nParms.qƩLoad = isnothing(nParms.qƩLoad) ? q : nParms.qƩLoad + q
+    NodeParametersDict[bus] = nParms
   end
+  @info "$(lanz) loads created..."
+    
+  lanz = 0
+  for sym_gen in sym_gens    
+    status=sym_gen["status"]
+    if status == 0
+      continue
+    end
+    lanz+=1
+    id = sym_gen["id"]
+    bus = sym_gen["node"]
+    vn = VoltageDict[bus]
+    cName = "Gen_"*string(id)
+    cID = "#ID_Gen_"*string(id)
+    nID = NodeIDDict[bus] # String
+    p = sym_gen["p_specified"]
+    q = sym_gen["q_specified"]
+    comp = Component(cID, cName, "GENERATOR", vn)
+    pRS = ProSumer(comp, nID, ratedS, ratedU, qPercent, p, q, maxP, minP, maxQ, minQ, ratedPowerFactor, referencePri, nothing, nothing)
+    push!(prosum, pRS)
+    t2 = Terminal(comp, ResDataTypes.Seite2)
+    t2Terminal = NodeTerminalsDict[bus]
+    push!(t2Terminal, t2)
+
+    nParms = NodeParametersDict[bus]
+    nParms.pƩGen = p
+    nParms.qƩGen = q
+    NodeParametersDict[bus] = nParms
+  end
+  @info "$(lanz) generators created..."
+  
+  lanz = 0
+  for shunt in shunts
+    status = shunt["status"]
+    if status == 0
+      continue
+    end
+    lanz+=1
+    bus = shunt["node"]
+    id = shunt["id"]
+    vn = VoltageDict[bus]    
+    cName = "Shunt_"*string(id)
+    cID = "#ID_Shunt_"*string(id)
+    g1 = float(shunt["g1"])
+    b1 = float(shunt["b1"])
+    comp = Component(cID, cName, "LINEARSHUNTCOMPENSATOR", vn)
+    Y = Complex(g1, b1)
+    y_pu = calc_y_pu(Y, vn, baseMVA)
+    comp = Component(cID, cName, "LINEARSHUNTCOMPENSATOR", vn)
+    sh = Shunt(comp, NodeIDDict[bus], bus, g1, b1, y_pu, status)
+    push!(shuntVec, sh)
+    t1 = Terminal(comp, ResDataTypes.Seite1)
+    t1Terminal = NodeTerminalsDict[bus]
+    push!(t1Terminal, t1)
+    # p_shunt and q_shunt are not used in the shunt model
+  end
+  @info "$(lanz) shunts created..."  
+
   
 
 

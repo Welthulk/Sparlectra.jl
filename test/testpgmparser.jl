@@ -9,7 +9,7 @@ using Sparlectra.SparlectraResult
 using BenchmarkTools
 using Logging
 
-global_logger(ConsoleLogger(stderr, Logging.Info))
+global_logger(ConsoleLogger(stderr, Logging.Debug))
 
 function acpflow(casefile::String, writeCase::Bool, iterations::Int, verbose::Int)
   sparse=true  
