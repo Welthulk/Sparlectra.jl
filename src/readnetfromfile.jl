@@ -990,16 +990,15 @@ function createNetFromFile(filename, base_MVA::Float64 = 0.0, log::Bool = false)
 end
 
 
-function createNetFromPGM(filename)
+function createNetFromPGM(filename, log = false, check = false)::ResDataTypes.Net
   @info "create network from PGM-File: $(filename)"
   
   nodes, lines, wt2, wt3, sym_gens, sym_loads, shunts, source = SparlectraImport.pgmparser(filename)
-  #println("Nodes: ", nodes)
-  #println("Source: ", source)
+    
   base_name = basename(filename)
   netName, ext = splitext(base_name)
   @info "Netname: $netName"
-  
+  umrech_MVA = 1e-6
   # baseMVA is not given, so we search for the maximum sn of the transformers
   sn_max = 0.0
   for trafo in wt2
@@ -1008,7 +1007,8 @@ function createNetFromPGM(filename)
       sn_max = sn
     end
   end    
-  baseMVA = sn_max/1e6
+  @assert sn_max > 0.0 "no transformer found!"
+  baseMVA = sn_max*umrech_MVA
   @info "baseMVA: $baseMVA MVA"
     
   busVec = Vector{Bus}()
@@ -1022,8 +1022,8 @@ function createNetFromPGM(filename)
   branchVec = Vector{ResDataTypes.Branch}()
   nodeVec = Vector{ResDataTypes.Node}()
 
-  NodeTerminalsDict = Dict{Integer,Vector{Terminal}}()
-  NodeParametersDict = Dict{Integer,NodeParameters}()
+  NodeTerminalsDict = Dict{Integer,Vector{ResDataTypes.Terminal}}()
+  NodeParametersDict = Dict{Integer,ResDataTypes.NodeParameters}()
   bus_types = Dict{Int, Int}()
   for sym_gen in sym_gens
     bus_id = sym_gen["node"]
@@ -1040,14 +1040,18 @@ function createNetFromPGM(filename)
   end
 
   # slack bus  
+  vm_pu_slack = 1.0  
+  slackIdx = 0 # Counter for slack index
   for s in source
     bus_id = s["node"]
     bus_type = 3
     bus_types[bus_id] = bus_type
+    vm_pu_slack = float(s["u_ref"])    
+    slackIdx = bus_id
     break # only one slack bus
   end
+  @assert slackIdx != 0 "no slack bus found!"
   
-  slackIdx = 0 # Counter for slack index
   for bus in nodes
     busIdx = Int64(bus["id"])    
     vn_kv = float(bus["u_rated"])/1000.0
@@ -1055,9 +1059,6 @@ function createNetFromPGM(filename)
     nodeID = "#ID_"*name
     if haskey(bus_types, busIdx)
       btype = bus_types[busIdx]
-      if btype == 3
-        slackIdx = busIdx
-      end
     else      
       btype = 1
     end
@@ -1075,7 +1076,12 @@ function createNetFromPGM(filename)
     NodeParameters = ResDataTypes.NodeParameters(busIdx)
     NodeParametersDict[busIdx] = NodeParameters
   end
-  @assert slackIdx != 0 "no slack bus found!"
+  
+  # set vm_pu for slack bus
+  NodeParameters = NodeParametersDict[slackIdx]
+  NodeParameters.vm_pu = vm_pu_slack
+  NodeParametersDict[slackIdx] = NodeParameters
+
   for (i, bus) in enumerate(busVec)
     @assert bus.busIdx == i "bus numbers are not consecutive and unique"        
   end
@@ -1209,6 +1215,10 @@ function createNetFromPGM(filename)
     shift_degree = 0.0
     sn_MVA = sn/1e6
     ratio = calcRatio(HV,vn_hv,LV,vn_lv,tap_pos,tap_neutral,tapStepPercent, tapSeite)
+    r_pu = nothing
+    x_pu = nothing
+    b_pu = nothing
+    g_pu = nothing
     if tapSeite == 1
       Vtab = calcNeutralU(1.0, vn_hv, tap_min, tap_max, tapStepPercent)
       tap = PowerTransformerTaps(tap_pos, tap_min, tap_max, tap_neutral, tapStepPercent, Vtab)
@@ -1221,6 +1231,7 @@ function createNetFromPGM(filename)
       Vtab = calcNeutralU(neutralU_ratio, vn_lv, tap_min, tap_max, tapStepPercent)
       tap = PowerTransformerTaps(tap_pos, tap_min, tap_max, tap_neutral, tapStepPercent, Vtab)
       r,x,b,g = calcTrafoParamsSI(sn_max, u1, uk, sn, pk_W, i0, p0_W ) 
+      r_pu, x_pu, b_pu, g_pu = calcTwoPortPU(vn_lv, baseMVA, r, x, b, g)
 
       s1 = PowerTransformerWinding(vn_hv, 0.0, 0.0)
       s2 = PowerTransformerWinding(vn_lv, r, x, b, g, shift_degree, to_kV, sn_MVA, tap)
@@ -1253,13 +1264,7 @@ function createNetFromPGM(filename)
 
   end
   @info "$(length(trafos)) power transformers created..."
-  
-  
-  for sym_gen in sym_gens
-    bus_id = sym_gen["node"]
-    vn = VoltageDict[bus_id]
-  end
-  
+    
   ratedS = nothing
   ratedU = nothing
   qPercent = nothing
@@ -1270,11 +1275,14 @@ function createNetFromPGM(filename)
   ratedPowerFactor = nothing
   referencePri = nothing
   lanz = 0
+  
   for sym_load in sym_loads    
     status=sym_load["status"]
     if status == 0
       continue
     end
+    type = sym_load["type"]
+    @assert type == 0 "only constant power loads are supported"
     lanz+=1
     id = sym_load["id"]
     bus = sym_load["node"]
@@ -1282,13 +1290,13 @@ function createNetFromPGM(filename)
     cName = "Load_"*string(id)
     cID = "#ID_Load_"*string(id)
     nID = NodeIDDict[bus] # String
-    p = sym_load["p_specified"]/1e9
-    q = sym_load["q_specified"]/1e9
+    p = sym_load["p_specified"]*umrech_MVA
+    q = sym_load["q_specified"]*umrech_MVA
 
     comp = Component(cID, cName, "LOAD", vn)
     pRS = ProSumer(comp, nID, ratedS, ratedU, qPercent, p, q, maxP, minP, maxQ, minQ, ratedPowerFactor, referencePri, nothing, nothing)
     push!(prosum, pRS)
-    t1 = Terminal(comp, ResDataTypes.Seite1)
+    t1 = Terminal(comp, ResDataTypes.Seite2)
     t1Terminal = NodeTerminalsDict[bus]
     push!(t1Terminal, t1)
 
@@ -1305,6 +1313,8 @@ function createNetFromPGM(filename)
     if status == 0
       continue
     end
+    type = sym_gen["type"]
+    @assert type == 0 "only constant power generators are supported"
     lanz+=1
     id = sym_gen["id"]
     bus = sym_gen["node"]
@@ -1312,8 +1322,8 @@ function createNetFromPGM(filename)
     cName = "Gen_"*string(id)
     cID = "#ID_Gen_"*string(id)
     nID = NodeIDDict[bus] # String
-    p = sym_gen["p_specified"]/1e9
-    q = sym_gen["q_specified"]/1e9
+    p = sym_gen["p_specified"]*umrech_MVA
+    q = sym_gen["q_specified"]*umrech_MVA
     comp = Component(cID, cName, "GENERATOR", vn)
     pRS = ProSumer(comp, nID, ratedS, ratedU, qPercent, p, q, maxP, minP, maxQ, minQ, ratedPowerFactor, referencePri, nothing, nothing)
     push!(prosum, pRS)
@@ -1324,9 +1334,6 @@ function createNetFromPGM(filename)
     nParms = NodeParametersDict[bus]
     nParms.pƩGen = isnothing(nParms.pƩGen) ? p : nParms.pƩGen + p
     nParms.qƩGen = isnothing(nParms.qƩGen) ? q : nParms.qƩGen + q
-
-    nParms.pƩGen = nParms.pƩGen + p
-    nParms.qƩGen = nParms.qƩGen + q
     NodeParametersDict[bus] = nParms
   end
   @info "$(lanz) generators created..."
@@ -1366,9 +1373,9 @@ function createNetFromPGM(filename)
     Vn = b.vn_kv
     terminals = NodeTerminalsDict[busIdx]
 
-    
-    println("Bus: ", busName, " busIdx: ", busIdx, " ID: ", cID, " Voltage: ", Vn, "\nTerminals: ", terminals)
-    
+    if log
+      println("Bus: ", busName, " busIdx: ", busIdx, " ID: ", cID, " Voltage: ", Vn, "\nTerminals: ", terminals)
+    end    
     node = Node(cID, busName, Vn, terminals)
 
     nodeType = toNodeType(nodeType)
@@ -1383,14 +1390,18 @@ function createNetFromPGM(filename)
 
     nParms = NodeParametersDict[busIdx]
     setNodeParameters!(node, nParms)
-    
-    #@show node
-    
+    if log
+      @show node
+    end    
     push!(nodeVec, node)
   end
-  @warn "TODO: check Seite1/Seite2, check branchVec, check Power Injektion (to big cause of SI), parallel branches, ..."
+  @warn "TODO: check Seite1/Seite2"
   @info "3WT, not implemented yet"
-  checkNodeConnections(nodeVec)
+  if check
+    checkNodeConnections(nodeVec)
+  end
+    
+  setParallelBranches!(branchVec)              
 
   net = ResDataTypes.Net(netName, baseMVA, slackIdx, nodeVec, ACLines, trafos, branchVec, prosum, shuntVec)
 
