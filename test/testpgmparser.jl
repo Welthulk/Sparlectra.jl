@@ -9,12 +9,11 @@ using Sparlectra.SparlectraResult
 using BenchmarkTools
 using Logging
 
-global_logger(ConsoleLogger(stderr, Logging.Debug))
+global_logger(ConsoleLogger(stderr, Logging.Info))
 
 function acpflow(casefile::String, writeCase::Bool, iterations::Int, verbose::Int)
   sparse=true  
-  tol = 1e-6   
-  base_MVA = 100.0
+  tol = 1e-6     
   log = verbose >= 1
 
   # load + create net
@@ -24,18 +23,12 @@ function acpflow(casefile::String, writeCase::Bool, iterations::Int, verbose::In
     return
   end
    
-  createNetFromPGM(jpath)
+  myNet =createNetFromPGM(jpath)
   
-  #myNet = createNetFromFile(jpath,base_MVA, (verbose>2))  
-  #case = myNet.name
-  
-  
-  
-  #= 
-    
-  # matpower export
-  file =joinpath(pwd(),"Sparlectra","data","ppower",case * ".m")
+  # matpower export  
   if writeCase       
+    case = myNet.name
+    file =joinpath(pwd(),"data","pgmodel",case * ".m")    
     writeMatpowerCasefile(myNet, file, case)    
   end
 
@@ -54,29 +47,7 @@ function acpflow(casefile::String, writeCase::Bool, iterations::Int, verbose::In
   else
     @error "error during calculation of Newton-Raphson"  
   end
-  =#
+  
 end
 
-#=
-# Funktion zur Berechnung von Yshunt und Umrechnung in Mikrosiemens
-function calculate_yshunt(frequency::Float64, capacitance::Float64, tan_delta::Float64)::Float64
-    omega = 2 * π * frequency
-    y_shunt = omega * capacitance / (tan_delta + im)
-
-    # Umrechnung von Siemens zu Mikrosiemens
-    y_shunt_microsiemens = abs(y_shunt) * 1e6
-    return y_shunt_microsiemens
-end
-
-# Beispielaufruf
-frequency = 50.0  # Annahme: Frequenz in Hertz
-capacitance = 1.10248e-07  # Annahme: Kapazität in Farad
-tan_delta = 0.1  # Annahme: tan delta
-
-yshunt_microsiemens = calculate_yshunt(frequency, capacitance, tan_delta)
-
-println("Yshunt in Mikrosiemens: $yshunt_microsiemens µS")
-=#
-
-
-@time acpflow("input.json", false,  6, 1)
+@time acpflow("input.json", true,  8, 1)
