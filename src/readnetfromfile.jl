@@ -1282,8 +1282,8 @@ function createNetFromPGM(filename)
     cName = "Load_"*string(id)
     cID = "#ID_Load_"*string(id)
     nID = NodeIDDict[bus] # String
-    p = sym_load["p_specified"]
-    q = sym_load["q_specified"]
+    p = sym_load["p_specified"]/1e9
+    q = sym_load["q_specified"]/1e9
 
     comp = Component(cID, cName, "LOAD", vn)
     pRS = ProSumer(comp, nID, ratedS, ratedU, qPercent, p, q, maxP, minP, maxQ, minQ, ratedPowerFactor, referencePri, nothing, nothing)
@@ -1312,8 +1312,8 @@ function createNetFromPGM(filename)
     cName = "Gen_"*string(id)
     cID = "#ID_Gen_"*string(id)
     nID = NodeIDDict[bus] # String
-    p = sym_gen["p_specified"]
-    q = sym_gen["q_specified"]
+    p = sym_gen["p_specified"]/1e9
+    q = sym_gen["q_specified"]/1e9
     comp = Component(cID, cName, "GENERATOR", vn)
     pRS = ProSumer(comp, nID, ratedS, ratedU, qPercent, p, q, maxP, minP, maxQ, minQ, ratedPowerFactor, referencePri, nothing, nothing)
     push!(prosum, pRS)
@@ -1322,8 +1322,11 @@ function createNetFromPGM(filename)
     push!(t2Terminal, t2)
 
     nParms = NodeParametersDict[bus]
-    nParms.pƩGen = p
-    nParms.qƩGen = q
+    nParms.pƩGen = isnothing(nParms.pƩGen) ? p : nParms.pƩGen + p
+    nParms.qƩGen = isnothing(nParms.qƩGen) ? q : nParms.qƩGen + q
+
+    nParms.pƩGen = nParms.pƩGen + p
+    nParms.qƩGen = nParms.qƩGen + q
     NodeParametersDict[bus] = nParms
   end
   @info "$(lanz) generators created..."
