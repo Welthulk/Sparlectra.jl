@@ -7,7 +7,7 @@ module ResDataTypes
 
 # resource data types for working with Sparlectra
 const Wurzel3 = 1.7320508075688772
-const SparlectraVersion = VersionNumber("0.4.100")
+const SparlectraVersion = VersionNumber("0.4.66")
 export
   # constants
   Wurzel3,
@@ -403,16 +403,9 @@ using Sparlectra.SparlectraTools
 using RegularExpressions
 using UUIDs
 using JSON
-export 
-  # constants
-  # classes
-  # functions
-  jsonparser, 
-  casefileparser,
-  pgmparser
+export jsonparser, casefileparser
 
 include("import.jl")
-
 
 end # module SparlectraImport
 
@@ -435,7 +428,6 @@ export
   createNetFromFile,
   createNetFromMatPowerFile,
   createNetFromTripleStore,
-  createNetFromPGM,
   casefileparser,
   calcTwoPortPU,
   calcVKDependence,
@@ -468,7 +460,6 @@ include("nbi.jl")
 include("createnet.jl")
 include("readnetfromfile.jl")
 include("readpowermat.jl")
-
 
 end
 
