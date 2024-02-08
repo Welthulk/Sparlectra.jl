@@ -1347,21 +1347,28 @@ function createNetFromPGM(filename, log = false, check = false)::ResDataTypes.Ne
     lanz+=1
     bus = shunt["node"]
     id = shunt["id"]
-    vn = VoltageDict[bus]    
+    vn_kv = VoltageDict[bus]    
     cName = "Shunt_"*string(id)
     cID = "#ID_Shunt_"*string(id)
-    g1 = float(shunt["g1"])
-    b1 = float(shunt["b1"])
-    comp = Component(cID, cName, "LINEARSHUNTCOMPENSATOR", vn)
-    Y = Complex(g1, b1)
-    y_pu = calc_y_pu(Y, vn, baseMVA)
-    comp = Component(cID, cName, "LINEARSHUNTCOMPENSATOR", vn)
-    sh = Shunt(comp, NodeIDDict[bus], bus, g1, b1, y_pu, status)
+    g1 = float(shunt["g1"])*vn_kv*vn_kv#0.5e5
+    b1 = float(shunt["b1"])*vn_kv*vn_kv#0.5e5
+    comp = Component(cID, cName, "LINEARSHUNTCOMPENSATOR", vn_kv)
+    Y = Complex(g1, b1)    
+    y_pu = calc_y_pu(Y, baseMVA, vn_kv)    
+    comp = Component(cID, cName, "LINEARSHUNTCOMPENSATOR", vn_kv)
+    p_shunt = round(g1,digits=2)
+    q_shunt = round(b1,digits=2)
+    sh = Shunt(comp, NodeIDDict[bus], bus, p_shunt, q_shunt, y_pu, status)
     push!(shuntVec, sh)
     t1 = Terminal(comp, ResDataTypes.Seite1)
     t1Terminal = NodeTerminalsDict[bus]
     push!(t1Terminal, t1)
-    # p_shunt and q_shunt are not used in the shunt model
+ 
+    nParms = NodeParametersDict[bus]
+    nParms.pShunt = isnothing(nParms.pShunt) ? p_shunt : nParms.pShunt + p_shunt
+    nParms.qShunt = isnothing(nParms.qShunt) ? q_shunt : nParms.qShunt + q_shunt
+    NodeParametersDict[bus] = nParms
+
   end
   @info "$(lanz) shunts created..."  
 
