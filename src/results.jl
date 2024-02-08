@@ -120,9 +120,9 @@ function printACPFlowResults(net::ResDataTypes.Net, ct::Float64, ite::Int, toFil
 
   println(io, "\n", totalLosses)
 
-  @printf(io, "======================================================================================================\n")
-  @printf(io, "| %-20s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s |\n", "Bus", "Vn [kV]", "V [pu]", "phi [deg]", "P [MW]", "Q [MVar]", "Type")
-  @printf(io, "======================================================================================================\n")
+  @printf(io, "===================================================================================================================\n")
+  @printf(io, "| %-20s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s |\n", "Bus", "Vn [kV]", "V [kV]", "V [pu]", "phi [deg]", "P [MW]", "Q [MVar]", "Type")
+  @printf(io, "===================================================================================================================\n")
   ∑pLoad = 0.0
   ∑pGen = 0.0
   ∑qLoad = 0.0
@@ -143,10 +143,11 @@ function printACPFlowResults(net::ResDataTypes.Net, ct::Float64, ite::Int, toFil
       ∑qLoad += qVal
     end
     typeStr = ResDataTypes.toString(n._nodeType)
-    @printf(io, "| %-20s | %-10d | %-10.3f | %-10.3f | %-10.3f | %-10.3f | %-10s |\n", n.comp.cName, n.comp.cVN, n._vm_pu, n._va_deg, pVal, qVal, typeStr)
+    v = n.comp.cVN*n._vm_pu
+    @printf(io, "| %-20s | %-10d | %-10.3f | %-10.3f | %-10.3f | %-10.3f | %-10.3f | %-10s |\n", n.comp.cName, n.comp.cVN, v, n._vm_pu, n._va_deg, pVal, qVal, typeStr)
   end
 
-  @printf(io, "------------------------------------------------------------------------------------------------------\n")
+  @printf(io, "-------------------------------------------------------------------------------------------------------------------\n")
   println(io, flowResults)
 
   if toFile
