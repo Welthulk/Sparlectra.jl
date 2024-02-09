@@ -357,6 +357,18 @@ function calcYShunt(pShunt_MW::Float64, qShunt_MVA::Float64, ratio::Float64, SBa
   return y_pu
 end
 
+function calcGB_Shunt(p_shunt::Float64, q_shunt::Float64, vn_kv::Float64)
+  g = p_shunt/vn_kv^2 
+  b = q_shunt/vn_kv^2
+  return g, b
+end
+
+function calcPQ_Shunt(g1::Float64, b1::Float64, vn_kv::Float64)
+  p_shunt = g1 * vn_kv^2
+  q_shunt = b1 * vn_kv^2
+  return p_shunt, q_shunt
+end
+
 """
 createYBUS: Create the admittance matrix YBUS from the branch vector and the slack index
 #cs: counter system (or meetering system?) (GER: "Zählpfeilsystem") [1= Consumer, 2= Producer]

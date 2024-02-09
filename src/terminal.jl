@@ -7,7 +7,7 @@ mutable struct Terminal
   comp::AbstractComponent  
   seite::SeitenTyp # Seite1 = von, Seite2 = zu, Seite3 = 3WT, tertiäre Seite
 
-  function Terminal(comp::Component, seite::SeitenTyp)
+  function Terminal(comp::AbstractComponent, seite::SeitenTyp)
     new(comp, seite)
   end
 

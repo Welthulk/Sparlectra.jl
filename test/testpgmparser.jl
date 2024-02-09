@@ -24,7 +24,8 @@ function acpflow(casefile::String, writeCase::Bool, iterations::Int, verbose::In
   end
    
   myNet =createNetFromPGM(jpath)
-  
+  filename=joinpath(pwd(),"data","pgmodel",myNet.name * "_epx")
+  exportPGM(myNet,filename)
   # matpower export  
   if writeCase       
     case = myNet.name

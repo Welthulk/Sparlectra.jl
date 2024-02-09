@@ -14,6 +14,7 @@ export
   # classes
   ComponentTyp,
   Component,
+  ImpPGMComp,
   Terminal,
   Node,
   NodeParameters,
@@ -22,6 +23,7 @@ export
   PowerTransformerTaps,
   PowerTransformerWinding,
   PowerTransformer,
+  TransformesAdditionalParameters,
   ProSumer,
   BranchFlow,
   Branch,
@@ -52,7 +54,8 @@ export
   hasPowerInjection,
   hasShuntInjection,
   setBranchFlow!,
-  setBranchStatus!
+  setBranchStatus!,
+  get_line_parameters
 
 include("component.jl")
 
@@ -158,7 +161,7 @@ include("lines.jl")
 include("transformer.jl")
 
 # helper
-function toString(o::Component)::String
+function toString(o::AbstractComponent)::String
   return "Name: " * o.cName * ", Typ: " * string(o.cTyp)
 end
 
@@ -369,6 +372,7 @@ export
   isShunt,
   isLoad,
   isMotor,
+  isSlack,
   searchNodeByTerminalId,
   findNetTrails,
   findSingleConnectedBuses,
@@ -383,20 +387,6 @@ export
 include("tools.jl")
 
 end # module SparlectraTools
-module SparlectraExport
-using Sparlectra
-using Sparlectra.ResDataTypes
-using Sparlectra.SparlectraTools
-
-export
-# constants
-# classes
-# functions
-  writeMatpowerCasefile
-
-include("exportMatPower.jl")
-end # module SparlectraExport
-
 module SparlectraImport
 using Sparlectra
 using Sparlectra.ResDataTypes
@@ -404,6 +394,7 @@ using Sparlectra.SparlectraTools
 using RegularExpressions
 using UUIDs
 using JSON
+
 export 
   # constants
   # classes
@@ -416,6 +407,27 @@ include("import.jl")
 
 
 end # module SparlectraImport
+
+
+module SparlectraExport
+using Sparlectra
+using Sparlectra.ResDataTypes
+using Sparlectra.SparlectraTools
+using JSON
+using DataStructures
+
+export
+# constants
+# classes
+# functions
+  writeMatpowerCasefile,
+  exportPGM
+
+include("exportMatPower.jl")
+include("exportPGM.jl")
+include("equicircuit.jl")
+end # module SparlectraExport
+
 
 module SparlectraNet
 using Sparlectra
@@ -439,6 +451,8 @@ export
   createNetFromPGM,
   casefileparser,
   calc_y_pu,
+  calcPQ_Shunt,
+  calcGB_Shunt,
   calcTwoPortPU,
   calcVKDependence,
   calcComplexRatio,
@@ -475,6 +489,7 @@ include("readpowermat.jl")
 
 
 end
+
 
 module SparlectraResult
 using Sparlectra

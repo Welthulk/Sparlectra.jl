@@ -26,7 +26,7 @@ mutable struct ProSumer
   # @enum ProSumptionType UnknownP=0 Injection=1 Consumption=2 
 
   function ProSumer(
-    equipment::Component,
+    comp::AbstractComponent,
     nodeID::String,
     ratedS::Union{Nothing,Float64} = nothing,
     ratedU::Union{Nothing,Float64} = nothing,
@@ -41,10 +41,17 @@ mutable struct ProSumer
     referencePri::Union{Nothing,Integer} = nothing,
     vm_pu::Union{Nothing,Float64} = nothing,
     vm_degree::Union{Nothing,Float64} = nothing,
+    proSumptionType::Union{Nothing,ProSumptionType} = nothing,
+    isAPUNode::Union{Nothing,Bool} = nothing
   )
-
-    proSumptionType = toProSumptionType(equipment.cTyp)
-    isAPUNode = isPUNode(equipment.cTyp)
+    if isnothing(proSumptionType)
+      proSumptionType = toProSumptionType(comp.cTyp)
+    end
+        
+    if isnothing(isAPUNode)
+      isAPUNode = isPUNode(comp.cTyp)
+    end
+    
 
     if isnothing(vm_pu)
       vm_pu = 1.0
@@ -54,14 +61,13 @@ mutable struct ProSumer
       vm_degree = 0.0
     end
 
-    new(equipment, nodeID, ratedS, ratedU, qPercent, p, q, maxP, minP, maxQ, minQ, ratedPowerFactor, referencePri, vm_pu, vm_degree, proSumptionType, isAPUNode)
+    new(comp, nodeID, ratedS, ratedU, qPercent, p, q, maxP, minP, maxQ, minQ, ratedPowerFactor, referencePri, vm_pu, vm_degree, proSumptionType, isAPUNode)
   end
 
   function Base.show(io::IO, prosumption::ProSumer)
     print(io, "ProSumption( ")
     print(io, prosumption.comp, ", ")
     print(io, "NodeID: ", prosumption.nodeID, ", ")
-
 
     if (!isnothing(prosumption.ratedS))
       print(io, "ratedS: ", prosumption.ratedS, " MVA, ")
@@ -117,6 +123,4 @@ mutable struct ProSumer
 
     print(io, "proSumptionType: ", prosumption.proSumptionType, ")")
   end
-
 end
-

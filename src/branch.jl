@@ -43,7 +43,7 @@ mutable struct Branch
   isParallel::Bool        # is a parallel branch? (true/false)  
 
   function Branch(
-    branchC::Component,
+    branchC::AbstractComponent,
     fromBus::Integer,
     toBus::Integer,
     fromNodeID::String,
@@ -63,7 +63,7 @@ mutable struct Branch
   end
 
   function Branch(
-    branchC::Component,
+    branchC::AbstractComponent,
     fromBus::Integer,
     toBus::Integer,
     fromOrigBus::Integer,
