@@ -2,6 +2,28 @@
 # Date: 10.05.2023
 # include-file transformer.jl
 
+mutable struct TransformesAdditionalParameters
+  sn::Float64 # PGM-Parameter sn in VA
+  uk::Float64 # PGM-Parameter sn in percent
+  pk::Float64 # PGM-Parameter sn in W
+  i0::Float64 # PGM-Parameter sn in A
+  p0::Float64 # PGM-Parameter sn in W
+
+  function TransformesAdditionalParameters(sn::Float64, uk::Float64, pk::Float64, i0::Float64, p0::Float64)
+    new(sn, uk, pk, i0, p0)
+  end
+
+  function Base.show(io::IO, x::TransformesAdditionalParameters)
+    print(io, "AdditionalParameters(")
+    print(io, "sn=$(x.sn), ")
+    print(io, "uk=$(x.uk), ")
+    print(io, "pk=$(x.pk), ")
+    print(io, "i0=$(x.i0), ")
+    print(io, "p0=$(x.p0)")
+    print(io, ")")
+  end
+
+end
 mutable struct PowerTransformerTaps
   step::Int                          # aktive step 
   lowStep::Int                       # cim:TapChanger.lowStep
@@ -78,7 +100,6 @@ mutable struct PowerTransformerWinding
     end
     print(io, ")")
   end
-
 end
 
 # helper
@@ -90,9 +111,8 @@ function hasTaps(x::Union{Nothing,PowerTransformerWinding})::Bool
   end
 end
 
-
 mutable struct PowerTransformer
-  comp::AbstractComponent  
+  comp::AbstractComponent
   trafoTyp::TrafoTyp
   isControlled::Bool              # cim:TapChanger.controlEnabled 
   nS::Integer                     # Number of (aktive) Sides >=2   
@@ -103,8 +123,12 @@ mutable struct PowerTransformer
   side1::PowerTransformerWinding
   side2::PowerTransformerWinding
   side3::Union{Nothing,PowerTransformerWinding}
+  exParms::Union{Nothing,TransformesAdditionalParameters}
 
-  function PowerTransformer(comp::Component, tapEnable::Bool, s1::PowerTransformerWinding, s2::PowerTransformerWinding, s3::Union{Nothing,PowerTransformerWinding} = nothing, trafoTyp::TrafoTyp = ResDataTypes.Ratio)
+  function PowerTransformer(comp::AbstractComponent, tapEnable::Bool, 
+                            s1::PowerTransformerWinding, s2::PowerTransformerWinding, s3::Union{Nothing,PowerTransformerWinding} = nothing, 
+                            trafoTyp::TrafoTyp = ResDataTypes.Ratio,
+                            exParms::Union{Nothing,TransformesAdditionalParameters} = nothing)
     if isnothing(s3)
       n = 2
       isBi = true
@@ -140,7 +164,7 @@ mutable struct PowerTransformer
       HVSideNumber = 3
     end
 
-    new(comp, trafoTyp, tapEnable, n, controller, isBi, HVSideNumber, TapSideNumber, s1, s2, s3)
+    new(comp, trafoTyp, tapEnable, n, controller, isBi, HVSideNumber, TapSideNumber, s1, s2, s3, exParms)
   end
 
   function Base.show(io::IO, x::PowerTransformer)
@@ -158,6 +182,9 @@ mutable struct PowerTransformer
     else
       println(io, "side2=$(x.side2), ")
       print(io, "side3=$(x.side3) ")
+    end
+    if !(isnothing(x.exParms))
+      print(io, "exParms=$(x.exParms), ")
     end
     print(io, ")")
   end

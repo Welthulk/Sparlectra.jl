@@ -11,7 +11,7 @@ struct Shunt
   y_pu_shunt::ComplexF64   # shunt admittance in p.u.
   status::Int              # 1 = in service, 0 = out of service
 
-  function Shunt(comp::Component, nodeID::String, busIdx::Int, p_shunt::Float64, q_shunt::Float64, y_pu_shunt::ComplexF64, status::Int = 1)
+  function Shunt(comp::AbstractComponent, nodeID::String, busIdx::Int, p_shunt::Float64, q_shunt::Float64, y_pu_shunt::ComplexF64, status::Int = 1)
     new(comp, nodeID, busIdx, p_shunt, q_shunt, y_pu_shunt, status)
   end
 
@@ -26,3 +26,4 @@ struct Shunt
     print(io, "status: ", shunt.status, ")")
   end
 end
+

@@ -26,7 +26,7 @@ mutable struct Node
   _qƩGen::Union{Nothing,Float64}  # Ʃ reactive power injected
 
   function Node(
-    c::Component,
+    c::AbstractComponent,
     t::Vector{Terminal},
     busIdx::Integer,
     nodeType::NodeType,
@@ -47,7 +47,7 @@ mutable struct Node
   end
 
   function Node(
-    c::Component,
+    c::AbstractComponent,
     t::Vector{Terminal},
     busIdx::Integer,
     kIdx::Integer,
@@ -100,12 +100,11 @@ mutable struct Node
     new(c, t, 0, 0, ResDataTypes.UnknownN, auxNodeID, ratedS, zone, area, vm_pu, va_deg, pƩLoad, qƩLoad, pShunt, qShunt, pƩGen, qƩGen)
   end
 
+  
+
   function Base.show(io::IO, node::Node)
     print(io, "Node( ")
-    print(io, "ID: ", node.comp.cID, ", ")
-    print(io, "Name: ", node.comp.cName, ", ")
-    print(io, "Typ: ", node.comp.cTyp, ", ")
-    print(io, "Vn: ", node.comp.cVN, ", ")
+    print(io, node.comp, ", ")
     print(io, "BusIndex: ", node.busIdx, ", ")
     print(io, "NodeIndex: ", node._kidx, ", ")
     print(io, "nodeType: ", node._nodeType, ", ")

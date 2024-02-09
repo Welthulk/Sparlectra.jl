@@ -10,15 +10,24 @@ mutable struct ACLineSegment
   b::Union{Nothing,Float64}
   g::Union{Nothing,Float64}  
   c_nf_per_km::Union{Nothing,Float64}
+  tanδ::Union{Nothing,Float64}
 
-  function ACLineSegment(c::Component, length::Float64, r::Float64, x::Float64, b::Float64)
-    new(c, length, r, x, b, nothing, nothing)
+  function ACLineSegment(c::AbstractComponent, length::Float64, r::Float64, x::Float64, b::Float64)
+    new(c, length, r, x, b, nothing, nothing, nothing)
+  end
+
+  function ACLineSegment(c::AbstractComponent, length::Float64, r::Float64, x::Float64, b::Float64, g::Float64, c_nf_per_km::Float64)
+    new(c, length, r, x, b, g, c_nf_per_km, nothing)
+  end
+  
+  function ACLineSegment(c::AbstractComponent, length::Float64, r::Float64, x::Float64, b::Float64, g::Float64, c_nf_per_km::Float64, tan_d::Float64)
+    new(c, length, r, x, b, g, c_nf_per_km, tan_d)
   end
 
   function ACLineSegment(id::String, name::String, Vn::Float64, length::Float64, r::Float64, x::Float64, 
                          b::Union{Nothing,Float64} = nothing, g::Union{Nothing,Float64} = nothing, c_nf_per_km::Union{Nothing,Float64} = nothing)
     comp = Component(id, name, ResDataTypes.LineC, Vn)
-    new(comp, length, r, x, b, g, c_nf_per_km)
+    new(comp, length, r, x, b, g, c_nf_per_km, nothing)
   end
 
   function Base.show(io::IO, acseg::ACLineSegment)
@@ -37,7 +46,22 @@ mutable struct ACLineSegment
     if !isnothing(acseg.c_nf_per_km)
       print(io, "c_nf_per_km: $(acseg.c_nf_per_km), ")
     end
+    if !isnothing(acseg.tanδ)
+      print(io, "tanδ: $(acseg.tanδ), ")
+    end
     print(io, ")")
   end
 end
+
+function get_line_parameters(line::ACLineSegment)
+    parameters = Dict{Symbol, Any}()
+
+    for field in fieldnames(ACLineSegment)
+        value = getproperty(line, field)
+        parameters[field] = value === nothing ? 0.0 : value
+    end
+
+    return parameters
+end
+
 
