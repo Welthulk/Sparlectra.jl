@@ -4,7 +4,7 @@
 # sparlectra json importer
 
 # base_MVA = 0.0 for default value in case file, otherwise set to desired value
-function createNetFromFile(filename, base_MVA::Float64 = 0.0, log::Bool = false)::ResDataTypes.Net
+function createNetFromFile(filename, base_MVA::Float64 = 0.0, log::Bool = false, check = false)::ResDataTypes.Net
   debug = false
   log_println(message) = log && println(message)
   println("create network from file: $(filename)")
@@ -49,18 +49,21 @@ function createNetFromFile(filename, base_MVA::Float64 = 0.0, log::Bool = false)
   log_println("Buses:")
   busIdx = 0 # Counter for bus index
   slackIdx = 0 # Counter for slack index
+  pgmObjectCnt = 0
+  slack_vm_pu = 1.0
+  slack_va_deg = 0.0
   for bus in buses
     busIdx = Int64(bus["bus"])
     nodeID = string(bus["id"])
     name = string(bus["name"])
     vn_kv = float(bus["vn_kv"])
     btype = Int64(bus["type"])
-
+    pgmObjectCnt+=1
     if bus["type"] == 3
       slackIdx = busIdx
     end
-
-    bus = Bus(busIdx, name, nodeID, "", vn_kv, btype)
+    
+    bus = Bus(busIdx, name, nodeID, "", vn_kv, btype, pgmObjectCnt)
     if log
       @show bus
     end
@@ -91,13 +94,14 @@ function createNetFromFile(filename, base_MVA::Float64 = 0.0, log::Bool = false)
     log_println("aux buses:")
     for t3WT in trafo3WT
       busIdx += 1
+      pgmObjectCnt = busIdx
       cName = "aux_#" * string(busIdx)
       nodeID = string(UUIDs.uuid4())
       cID = string(t3WT["id"])
 
       vn_hv_kv = float(t3WT["vn_hv_kv"])
       type = 1 # PQ
-      bus = Bus(busIdx, cName, nodeID, cID, vn_hv_kv, type)
+      bus = Bus(busIdx, cName, nodeID, cID, vn_hv_kv, type, busIdx)
       if log
         @show bus
       end
@@ -166,22 +170,23 @@ function createNetFromFile(filename, base_MVA::Float64 = 0.0, log::Bool = false)
     Vn = VoltageDict[Bus]
 
     status = line["in_service"]
-    asec = ACLineSegment(cID, cName, Vn, length, r, x, b, g, c_nf_per_km)
-    if log
-      println(asec)
-    end
-    push!(ACLines, asec)
-
-    cLine = ResDataTypes.toComponentTyp("ACLINESEGMENT")
-    c = ResDataTypes.Component(cID, cName, cLine, Vn)
-
-    t1 = ResDataTypes.Terminal(c, ResDataTypes.Seite1)
-    t2 = ResDataTypes.Terminal(c, ResDataTypes.Seite2)
+    
     from_bus = line["from_bus"]
     to_bus = line["to_bus"]
     checkBusNumber(from_bus, busVec)
     checkBusNumber(to_bus, busVec)
 
+    pgmObjectCnt+=1
+    cPGM = ImpPGMComp(cID, cName, toComponentTyp("ACLINESEGMENT"), Vn, pgmObjectCnt, from_bus, to_bus)    
+    asec = ACLineSegment(cPGM, length, r, x, b, g, c_nf_per_km, 0.0)
+    if log
+      println(asec)
+    end
+    push!(ACLines, asec)
+    
+    t1 = ResDataTypes.Terminal(cPGM, ResDataTypes.Seite1)
+    t2 = ResDataTypes.Terminal(cPGM, ResDataTypes.Seite2)
+    
     t1Terminal = NodeTerminalsDict[from_bus]
     t2Terminal = NodeTerminalsDict[to_bus]
     push!(t1Terminal, t1)
@@ -199,7 +204,7 @@ function createNetFromFile(filename, base_MVA::Float64 = 0.0, log::Bool = false)
     if log
       println("fromNodeID: ", fromNodeID, ", toNodeID: ", toNodeID, ", from_bus: ", from_bus, ", to_bus: ", to_bus, ", r_pu: ", r_pu, ", x_pu: ", x_pu, ", b_pu: ", b_pu, ", g_pu: ", g_pu, ", ratio: ", ratio, ", angle: ", angle, ", status: ", status, ", angMin: ", angMin, ", angMax: ", angMax)
     end
-    branch = ResDataTypes.Branch(c, from_bus, to_bus, from_bus, to_bus, fromNodeID, toNodeID, r_pu, x_pu, b_pu, g_pu, ratio, angle, status)
+    branch = ResDataTypes.Branch(cPGM, from_bus, to_bus, from_bus, to_bus, fromNodeID, toNodeID, r_pu, x_pu, b_pu, g_pu, ratio, angle, status)
     if log
       @show branch
     end
@@ -331,15 +336,17 @@ function createNetFromFile(filename, base_MVA::Float64 = 0.0, log::Bool = false)
       s2 = PowerTransformerWinding(vn_lv, 0.0, 0.0)
     end
     s3 = nothing
-    cmp = ResDataTypes.Component(cID, cName, "POWERTRANSFORMER", vn_hv)
-    trafo = PowerTransformer(cmp, regelungEin, s1, s2, s3)
+    pgmObjectCnt+=1    
+    addEx = TransformesAdditionalParameters(sn, 0.0, 0.0, 0.0, 0.0)
+    cImpPGMComp = ImpPGMComp(cID, cName, toComponentTyp("POWERTRANSFORMER"), vn_hv, pgmObjectCnt, busIdx, USIdx)    
+    trafo = PowerTransformer(cImpPGMComp, regelungEin, s1, s2, s3, ResDataTypes.Ratio, addEx)
     if log
       @show trafo
     end
     push!(trafos, trafo)
 
-    t1 = ResDataTypes.Terminal(cmp, ResDataTypes.Seite1)
-    cmp2 = ResDataTypes.Component(cID, cName, "POWERTRANSFORMER", vn_lv)
+    t1 = ResDataTypes.Terminal(cImpPGMComp, ResDataTypes.Seite1)
+    cmp2 = ImpPGMComp(cID, cName, toComponentTyp("POWERTRANSFORMER"), vn_lv, pgmObjectCnt, busIdx, USIdx)
     t2 = ResDataTypes.Terminal(cmp2, ResDataTypes.Seite2)
 
     t1Terminal = NodeTerminalsDict[busIdx]
@@ -350,7 +357,7 @@ function createNetFromFile(filename, base_MVA::Float64 = 0.0, log::Bool = false)
     push!(t1Terminal, t1)
     push!(t2Terminal, t2)
 
-    branch = ResDataTypes.Branch(cmp, busIdx, USIdx, nID, toNodeID, r_pu, x_pu, b_pu, g_pu, ratio, shift_degree, inService)
+    branch = ResDataTypes.Branch(cImpPGMComp, busIdx, USIdx, nID, toNodeID, r_pu, x_pu, b_pu, g_pu, ratio, shift_degree, inService)
     if log
       @show branch
     end
@@ -710,8 +717,8 @@ function createNetFromFile(filename, base_MVA::Float64 = 0.0, log::Bool = false)
       minQ = nothing
       ratedPowerFactor = nothing
       referencePri = nothing
-
-      comp = ResDataTypes.Component(cID, cName, "LOAD", Vn)
+      pgmObjectCnt+=1
+      comp = ImpPGMComp(cID, cName, toComponentTyp("LOAD"), Vn,pgmObjectCnt, Bus, Bus)
       pRS = ProSumer(comp, nID, ratedS, ratedU, qPercent, p, q, maxP, minP, maxQ, minQ, ratedPowerFactor, referencePri, nothing, nothing)
       if log
         @show pRS
@@ -756,10 +763,25 @@ function createNetFromFile(filename, base_MVA::Float64 = 0.0, log::Bool = false)
       minQ = nothing
       ratedPowerFactor = nothing
       referencePri = nothing
-
-      comp = ResDataTypes.Component(cID, cName, "GENERATOR", Vn)
-
-      pRS = ProSumer(comp, nID, ratedS, ratedU, qPercent, p, q, maxP, minP, maxQ, minQ, ratedPowerFactor, referencePri, nothing, nothing)
+      pgmObjectCnt+=1
+      vm_pu = nothing
+      vm_degree = nothing
+      
+      isPUNode = false
+      origID = Bus
+      if Bus == slackIdx
+        referencePri = slackIdx
+        vm_pu = 1.0
+        vm_degree = 0.0
+        slack_vm_pu = vm_pu
+        slack_va_deg = vm_degree   
+        # Slack is exportet a seperate component from bus vector!
+      else
+        pgmObjectCnt+=1  
+        origID = pgmObjectCnt
+      end      
+      comp = ImpPGMComp(cID, cName, toComponentTyp("GENERATOR"), Vn, origID, Bus, Bus)
+      pRS = ProSumer(comp, nID, ratedS, ratedU, qPercent, p, q, maxP, minP, maxQ, minQ, ratedPowerFactor, referencePri, vm_pu, vm_degree, ResDataTypes.Injection, isPUNode)
       if log
         @show pRS
       end
@@ -801,8 +823,23 @@ function createNetFromFile(filename, base_MVA::Float64 = 0.0, log::Bool = false)
       minQ = float(g["min_q_mvar"])
       ratedPowerFactor = nothing
       referencePri = nothing
-      comp = ResDataTypes.Component(cID, cName, "SYNCHRONOUSMACHINE", Vn)
-      pRS = ProSumer(comp, nID, ratedS, ratedU, qPercent, p, q, maxP, minP, maxQ, minQ, ratedPowerFactor, referencePri, vm_pu, nothing)
+      
+      vm_degree = nothing
+      isPUNode = false
+      origID = Bus
+      if Bus == slackIdx      
+        referencePri = slackIdx              
+        vm_degree = 0.0
+        slack_vm_pu = vm_pu
+        slack_va_deg = vm_degree   
+        isPUNode = true            
+        # Slack is exportet a seperate component from bus vector!        
+      else
+        pgmObjectCnt+=1  
+        origID = pgmObjectCnt
+      end      
+      comp = ImpPGMComp(cID, cName, toComponentTyp("SYNCHRONOUSMACHINE"), Vn, origID, Bus, Bus)
+      pRS = ProSumer(comp, nID, ratedS, ratedU, qPercent, p, q, maxP, minP, maxQ, minQ, ratedPowerFactor, referencePri, vm_pu, vm_degree, ResDataTypes.Injection, isPUNode)
       if log
         @show pRS
       end
@@ -844,8 +881,21 @@ function createNetFromFile(filename, base_MVA::Float64 = 0.0, log::Bool = false)
       minQ = nothing
       ratedPowerFactor = nothing
       referencePri = nothing
-      comp = ResDataTypes.Component(cID, cName, "EXTERNALNETWORKINJECTION", Vn)
-      pRS = ProSumer(comp, nID, ratedS, ratedU, qPercent, p, q, maxP, minP, maxQ, minQ, ratedPowerFactor, referencePri, vm_pu, vm_degree)
+      isPUNode = true      
+      origID = Bus
+      if Bus == slackIdx
+        referencePri = slackIdx 
+        slack_vm_pu = vm_pu
+        slack_va_deg = vm_degree               
+        # Slack is exportet a seperate component from bus vector!
+        
+      else
+        pgmObjectCnt+=1  
+        origID = pgmObjectCnt
+      end      
+
+      comp = ImpPGMComp(cID, cName, toComponentTyp("EXTERNALNETWORKINJECTION"), Vn, origID, Bus, Bus)      
+      pRS = ProSumer(comp, nID, ratedS, ratedU, qPercent, p, q, maxP, minP, maxQ, minQ, ratedPowerFactor, referencePri, vm_pu, vm_degree, ResDataTypes.Injection, isPUNode)
       if log
         @show pRS
       end
@@ -891,7 +941,8 @@ function createNetFromFile(filename, base_MVA::Float64 = 0.0, log::Bool = false)
 
       ratio = (Vn / vn_kv)^2
       y_pu = calcYShunt(p_shunt, q_shunt, ratio, baseMVA)
-      comp = ResDataTypes.Component(cID, cName, "LINEARSHUNTCOMPENSATOR", vn_kv)
+      pgmObjectCnt+=1
+      comp = ImpPGMComp(cID, cName, toComponentTyp("LINEARSHUNTCOMPENSATOR"), vn_kv,pgmObjectCnt, Bus, Bus )
       sh = ResDataTypes.Shunt(comp, nID, Bus, p_shunt, q_shunt, y_pu, in_service)
       if log
         @show sh
@@ -923,28 +974,34 @@ function createNetFromFile(filename, base_MVA::Float64 = 0.0, log::Bool = false)
     if log
       println("Bus: ", busName, " busIdx: ", busIdx, " ID: ", cID, " Voltage: ", Vn, "\nTerminals: ", terminals)
     end
-    node = ResDataTypes.Node(cID, busName, Vn, terminals)
-
-    nodeType = ResDataTypes.toNodeType(nodeType)
-    setNodeType!(node, nodeType)
-    setBusIdx!(node, busIdx)
-
-    if nodeType == nodeType == ResDataTypes.Isolated
-      setNodeIdx!(node, 4)
+        
+    if nodeType == 3
+      nParms = NodeParametersDict[busIdx]
+      # for PGM Export Slack should have a unique ID!
+      pgmObjectCnt+=1
+      
+      nParms.vm_pu = slack_vm_pu
+      nParms.va_deg = slack_va_deg
+      c = ImpPGMComp(cID, busName, ResDataTypes.Busbarsection, Vn, pgmObjectCnt, busIdx, busIdx)
+      node = Node(c, terminals, busIdx, busIdx, toNodeType(nodeType))
+      setNodeParameters!(node, nParms)
     else
-      setNodeIdx!(node, busIdx)
-    end
-
-    nParms = NodeParametersDict[busIdx]
-    setNodeParameters!(node, nParms)
+      c = ImpPGMComp(cID, busName, ResDataTypes.Busbarsection, Vn, b.pgmID, busIdx, busIdx)
+      node = Node(c, terminals, busIdx, busIdx, toNodeType(nodeType))
+    end    
+              
     if log
       @show node
     end
     push!(nodeVec, node)
   end
-
-  checkNodeConnections(nodeVec)
-
+  
+  if check
+    checkNodeConnections(nodeVec)
+  end
+  
+  setParallelBranches!(branchVec)
+  
   net = ResDataTypes.Net(netName, baseMVA, slackIdx, nodeVec, ACLines, trafos, branchVec, prosum, shuntVec)
 
   return net

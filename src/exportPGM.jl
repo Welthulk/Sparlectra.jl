@@ -102,12 +102,28 @@ function exportPGM(net::ResDataTypes.Net, filename::String)
       parameters = OrderedDict{String, Any}()
       @assert isa(o.comp, ImpPGMComp)
 
+      if o.isAPUNode
+        @warn "PV-Node not supported for PGM, set to PQ-Node"
+      end  
+            
       parameters["id"] = o.comp.cOrigId
       parameters["node"] = o.comp.cFrom_bus
       parameters["status"] = 1
       parameters["type"] = 0
-      parameters["p_specified"] = o.pVal*1e6
-      parameters["q_specified"] = o.qVal*1e6
+      if isnothing(o.pVal)
+        @warn "pVal is not set, set to 0.0"
+        parameters["p_specified"] = 0.0
+      else
+        parameters["p_specified"] = o.pVal*1e6
+      end
+
+      if isnothing(o.qVal)
+        @warn "qVal is not set, set to 0.0"
+        parameters["q_specified"] = 0.0
+      else
+        parameters["q_specified"] = o.qVal*1e6
+      end
+      
       return parameters
     end
 
@@ -124,14 +140,15 @@ function exportPGM(net::ResDataTypes.Net, filename::String)
 
       return parameters
     end
-    function get_source(o::ProSumer)
+
+    function get_source(o::Node)
       parameters = OrderedDict{String, Any}()
       @assert isa(o.comp, ImpPGMComp)
 
       parameters["id"] = o.comp.cOrigId
-      parameters["node"] = o.referencePri
+      parameters["node"] = o.busIdx
       parameters["status"] = 1 # default
-      parameters["u_ref"] = o.vm_pu
+      parameters["u_ref"] = o._vm_pu
       parameters["sk"] = 10000000000.0 # default
       parameters["rx_ratio"] = 0.1 # default
       parameters["z01_ratio"] = 1.0 # default
@@ -170,7 +187,7 @@ function exportPGM(net::ResDataTypes.Net, filename::String)
                 "shunt" => [get_shunt(o) for o in net.shuntVec],
                 "transformer" => [get_trafo_parameters(t, net.baseMVA) for t in net.trafos],
                 "sym_load" => [get_sym_load(o) for o in net.prosumpsVec if o.proSumptionType == ResDataTypes.Consumption],
-                "source" => [get_source(o) for o in net.prosumpsVec if isSlack(o)]
+                "source" => [get_source(o) for o in net.nodeVec if isSlack(o)]
             )
         ),
         2  # specify the indentation level for pretty printing

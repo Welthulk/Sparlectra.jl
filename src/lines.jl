@@ -3,29 +3,20 @@
 # include-file lines.jl
 
 mutable struct ACLineSegment
-  comp::AbstractComponent  
+  comp::AbstractComponent
   length::Float64
   r::Float64
   x::Float64
   b::Union{Nothing,Float64}
-  g::Union{Nothing,Float64}  
+  g::Union{Nothing,Float64}
   c_nf_per_km::Union{Nothing,Float64}
   tanδ::Union{Nothing,Float64}
 
-  function ACLineSegment(c::AbstractComponent, length::Float64, r::Float64, x::Float64, b::Float64)
-    new(c, length, r, x, b, nothing, nothing, nothing)
+  function ACLineSegment(c::AbstractComponent, length::Float64, r::Float64, x::Float64, b::Union{Nothing,Float64} = nothing, g::Union{Nothing,Float64} = nothing, c_nf_per_km::Union{Nothing,Float64} = nothing, tanδ::Union{Nothing,Float64} = nothing)
+    new(c, length, r, x, b, g, c_nf_per_km, tanδ)
   end
 
-  function ACLineSegment(c::AbstractComponent, length::Float64, r::Float64, x::Float64, b::Float64, g::Float64, c_nf_per_km::Float64)
-    new(c, length, r, x, b, g, c_nf_per_km, nothing)
-  end
-  
-  function ACLineSegment(c::AbstractComponent, length::Float64, r::Float64, x::Float64, b::Float64, g::Float64, c_nf_per_km::Float64, tan_d::Float64)
-    new(c, length, r, x, b, g, c_nf_per_km, tan_d)
-  end
-
-  function ACLineSegment(id::String, name::String, Vn::Float64, length::Float64, r::Float64, x::Float64, 
-                         b::Union{Nothing,Float64} = nothing, g::Union{Nothing,Float64} = nothing, c_nf_per_km::Union{Nothing,Float64} = nothing)
+  function ACLineSegment(id::String, name::String, Vn::Float64, length::Float64, r::Float64, x::Float64, b::Union{Nothing,Float64} = nothing, g::Union{Nothing,Float64} = nothing, c_nf_per_km::Union{Nothing,Float64} = nothing)
     comp = Component(id, name, ResDataTypes.LineC, Vn)
     new(comp, length, r, x, b, g, c_nf_per_km, nothing)
   end
@@ -54,14 +45,12 @@ mutable struct ACLineSegment
 end
 
 function get_line_parameters(line::ACLineSegment)
-    parameters = Dict{Symbol, Any}()
+  parameters = Dict{Symbol,Any}()
 
-    for field in fieldnames(ACLineSegment)
-        value = getproperty(line, field)
-        parameters[field] = value === nothing ? 0.0 : value
-    end
+  for field in fieldnames(ACLineSegment)
+    value = getproperty(line, field)
+    parameters[field] = value === nothing ? 0.0 : value
+  end
 
-    return parameters
+  return parameters
 end
-
-

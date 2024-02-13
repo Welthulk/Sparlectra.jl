@@ -11,7 +11,7 @@ using Logging
 
 global_logger(ConsoleLogger(stderr, Logging.Info))
 
-function acpflow(casefile::String, writeCase::Bool, iterations::Int, verbose::Int)
+function acpflow(casefile::String, writeCaseMP::Bool, writeCasePGM::Bool, iterations::Int, verbose::Int)
   sparse=false  
   tol = 1e-6   
   base_MVA = 100.0
@@ -26,12 +26,17 @@ function acpflow(casefile::String, writeCase::Bool, iterations::Int, verbose::In
    
   myNet = createNetFromFile(jpath,base_MVA, (verbose>2))  
   case = myNet.name
-  
-   
-  # matpower export
-  file =joinpath(pwd(),"Sparlectra","data","ppower",case * ".m")
-  if writeCase       
-    writeMatpowerCasefile(myNet, file, case)    
+     
+  if writeCaseMP       
+    # matpower export
+    file = joinpath(pwd(),"Sparlectra","data","ppower",case * ".m")
+    writeMatpowerCasefile(myNet, file, case)  
+  end
+
+  if writeCasePGM  
+    # pgm export
+    file = joinpath(pwd(),"data","pgmodel",myNet.name * "_pgm")
+    exportPGM(myNet,file)
   end
 
   # Y-Bus Matrix  
@@ -51,4 +56,4 @@ function acpflow(casefile::String, writeCase::Bool, iterations::Int, verbose::In
   end
 end
 
-@time acpflow("bsp7.json", false,  6, 0)
+@time acpflow("bsp7.json", false, true, 6, 0)

@@ -52,6 +52,15 @@ function isSlack(o::ResDataTypes.ProSumer)
   
 end
 
+function isSlack(o::ResDataTypes.Node)
+  if o._nodeType == ResDataTypes.Slack
+    return true
+  else
+    return false
+  end
+  
+end
+
 roundUpToNearest100(number) = ceil(number / 100) * 100
 """
   purpose: reports the crusial data for summarizing the network
