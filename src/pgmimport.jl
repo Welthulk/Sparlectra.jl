@@ -45,7 +45,7 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
   NodeTerminalsDict = Dict{Integer,Vector{ResDataTypes.Terminal}}()
   NodeParametersDict = Dict{Integer,ResDataTypes.NodeParameters}()
   busVec = Vector{Bus}()
-
+  # search type of the busses PV, PQ, Slack
   bus_types = Dict{Int,Int}()
   for sym_gen in sym_gens
     bus_id = sym_gen["node"]
@@ -63,11 +63,13 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
 
   # slack bus  
   vm_pu_slack = 1.0
-  slackIdx = 0 # Counter for slack index
-  pSlack = nothing
+  slackIdx = 0 # Counter for slack index  
   nodeIdSlack = ""
+  slackNodeID_num= 0
   for s in source
-    bus_id = s["node"]
+    slackNodeID_num = Int64(s["id"])
+    bus_id = Int64(s["node"])
+    vm_pu_slack = float(s["u_ref"])
     bus_type = 3
     bus_types[bus_id] = bus_type
     slackIdx = bus_id
@@ -80,15 +82,20 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
     vn_kv = float(bus["u_rated"]) / 1000.0
     name = "Bus_" * string(busIdx)
     nodeID = "#ID_" * name
+    a_bus = nothing
     if haskey(bus_types, busIdx)
       btype = bus_types[busIdx]
       if btype == 3
         nodeIdSlack = nodeID
+        global a_bus = Bus(busIdx, name, nodeID, "", vn_kv, btype, slackNodeID_num, vm_pu_slack, 0.0)        
+      else
+        global a_bus = Bus(busIdx, name, nodeID, "", vn_kv, btype, busIdx)
       end
     else
       btype = 1
-    end
-    a_bus = Bus(busIdx, name, nodeID, "", vn_kv, btype, busIdx)
+      global a_bus = Bus(busIdx, name, nodeID, "", vn_kv, btype, busIdx)
+      
+    end   
     push!(busVec, a_bus)
 
     VoltageDict[busIdx] = vn_kv
@@ -102,31 +109,10 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
     NodeParameters = ResDataTypes.NodeParameters(busIdx)
     NodeParametersDict[busIdx] = NodeParameters
   end
-
-  # set vm_pu for slack bus
-  for s in source
-    oID = Int64(s["id"])
-    bus_id = s["node"]
-
-    vm_pu_slack = float(s["u_ref"])
-    vn_kv = VoltageDict[bus_id]
-
-    cName = "Slack_" * string(bus_id)
-    cID = "#ID_Slack_" * string(bus_id)
-    comp = ImpPGMComp(cID, cName, toComponentTyp("EXTERNALNETWORKINJECTION"), vn_kv, oID)
-    pSlack = ProSumer(comp, nodeIdSlack, base_MVA, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, Int64(bus_id), vm_pu_slack, 0.0, ResDataTypes.Injection, true)
-
-    push!(prosum, pSlack)
-    NodeParameters = NodeParametersDict[slackIdx]
-    NodeParameters.vm_pu = vm_pu_slack
-    NodeParametersDict[slackIdx] = NodeParameters
-
-    break # only one slack bus
-  end
-
-  #Check if the bus numbers are consecutive and unique        
+  
+  #Check if the bus numbers are consecutive and unique          
   for (i, bus) in enumerate(busVec)
-    @assert bus.busIdx == i "bus numbers are not consecutive and unique"
+    @assert bus.busIdx == i "bus numbers are not consecutive and unique" 
   end
 
   @info "$(length(busVec)) busses created..."
@@ -167,11 +153,8 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
     asec = ACLineSegment(cPGM, 1.0, r, x, 0.0, 0.0, c_nf, 0.0)
     push!(ACLines, asec)
 
-    cLine = toComponentTyp("ACLINESEGMENT")
-    c = ImpPGMComp(cID, cName, cLine, Vn, num)
-
-    t1 = ResDataTypes.Terminal(c, ResDataTypes.Seite1)
-    t2 = ResDataTypes.Terminal(c, ResDataTypes.Seite2)
+    t1 = ResDataTypes.Terminal(cPGM, ResDataTypes.Seite1)
+    t2 = ResDataTypes.Terminal(cPGM, ResDataTypes.Seite2)
 
     checkBusNumber(from, busVec)
     checkBusNumber(to, busVec)
@@ -189,7 +172,7 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
     toNodeID = NodeIDDict[to]
     from_org = from
     to_org = to
-    branch = Branch(c, from, to, from_org, to_org, fromNodeID, toNodeID, r_pu, x_pu, b_pu, g_pu, 0.0, 0.0, inService)
+    branch = Branch(cPGM, from, to, from_org, to_org, fromNodeID, toNodeID, r_pu, x_pu, b_pu, g_pu, 0.0, 0.0, inService)
     push!(branchVec, branch)
   end
   @info "$(length(ACLines)) aclines created..."
@@ -364,7 +347,7 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
     nID = NodeIDDict[bus] # String
     p = sym_gen["p_specified"] * umrech_MVA
     q = sym_gen["q_specified"] * umrech_MVA
-
+    
     comp = ImpPGMComp(cID, cName, toComponentTyp("GENERATOR"), vn, Int64(id), bus, bus)
     pRS = ProSumer(comp, nID, ratedS, ratedU, qPercent, p, q, maxP, minP, maxQ, minQ, ratedPowerFactor, referencePri, nothing, nothing)
     push!(prosum, pRS)
@@ -422,11 +405,17 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
       println("Bus: ", busName, " busIdx: ", busIdx, " ID: ", cID, " Voltage: ", Vn, "\nTerminals: ", terminals)
     end
 
-    c = ImpPGMComp(cID, busName, ResDataTypes.Busbarsection, Vn, b.pgmID, 0, 0)
+    c = ImpPGMComp(cID, busName, ResDataTypes.Busbarsection, Vn, b.pgmID, busIdx, busIdx)
 
     node = Node(c, terminals, busIdx, busIdx, toNodeType(nodeType))
 
     nParms = NodeParametersDict[busIdx]
+    
+    if nodeType == 3      
+      nParms.vm_pu = b.vm_pu
+      nParms.va_deg = b.va_deg
+    end
+    
     setNodeParameters!(node, nParms)
     if log
       @show node
