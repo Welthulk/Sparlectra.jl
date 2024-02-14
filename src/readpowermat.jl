@@ -119,18 +119,18 @@ function createNetFromMatPowerFile(filename, base_MVA::Float64 = 0.0, log::Bool 
     return index
   end
 
-  ACLines = Vector{ResDataTypes.ACLineSegment}()
-  trafos = Vector{ResDataTypes.PowerTransformer}()
-  prosum = Vector{ResDataTypes.ProSumer}()
-  shuntVec = Vector{ResDataTypes.Shunt}()
-  branchVec = Vector{ResDataTypes.Branch}()
-  nodeVec = Vector{ResDataTypes.Node}()
+  ACLines = Vector{ACLineSegment}()
+  trafos = Vector{PowerTransformer}()
+  prosum = Vector{ProSumer}()
+  shuntVec = Vector{Shunt}()
+  branchVec = Vector{Branch}()
+  nodeVec = Vector{Node}()
 
   NodeIDDict = Dict{Integer,String}()
-  NodeDict = Dict{Integer,ResDataTypes.Node}()
+  NodeDict = Dict{Integer,Node}()
   vnDict = Dict{Integer,Float64}()
-  NodeTerminalsDict = Dict{Integer,Vector{ResDataTypes.Terminal}}()
-  proSumDict = Dict{Integer,ResDataTypes.ProSumer}()
+  NodeTerminalsDict = Dict{Integer,Vector{Terminal}}()
+  proSumDict = Dict{Integer,ProSumer}()
   busMapDict = Dict{Int,Int}()
 
   println("create network from case-file: $(filename)")
@@ -205,10 +205,10 @@ function createNetFromMatPowerFile(filename, base_MVA::Float64 = 0.0, log::Bool 
 
     cID = string(UUIDs.uuid4())
 
-    cType = ResDataTypes.toComponentTyp("BUS")
-    c = ResDataTypes.Component(cID, cName, cType, vn_kv)
+    cType = toComponentTyp("BUS")
+    c = ImpPGMComp(cID, cName, cType, vn_kv, busIdx, busIdx)
 
-    node = Node(c, Vector{ResDataTypes.Terminal}(), busIdx, kIdx, ResDataTypes.toNodeType(btype), nothing, ratedS, zone, area, vm_pu, va_deg, pƩLoad, qƩLoad, pShunt, qShunt, pƩGen, qƩGen)
+    node = Node(c, Vector{Terminal}(), busIdx, kIdx, toNodeType(btype), nothing, ratedS, zone, area, vm_pu, va_deg, pƩLoad, qƩLoad, pShunt, qShunt, pƩGen, qƩGen)
     if btype == 3 && slackIdx == 0
       slackIdx = busIdx
     elseif btype == 3
@@ -219,21 +219,21 @@ function createNetFromMatPowerFile(filename, base_MVA::Float64 = 0.0, log::Bool 
     vnDict[busIdx] = vn_kv
     NodeIDDict[busIdx] = cID
     NodeDict[busIdx] = node
-    NodeTerminalsDict[busIdx] = Vector{ResDataTypes.Terminal}()
+    NodeTerminalsDict[busIdx] = Vector{Terminal}()
     push!(nodeVec, node)
     if pShunt != 0.0 || qShunt != 0.0
       cShunt = "Sh_" * string(kIdx)#*"_"*string(busIdx)
-      c = ResDataTypes.Component(string(UUIDs.uuid4()), cShunt, ResDataTypes.toComponentTyp("SHUNT"), vn_kv)
+      c = ImpPGMComp(string(UUIDs.uuid4()), cShunt, toComponentTyp("SHUNT"), vn_kv,busIdx, busIdx)
       state = 1
       y_pu = calcYShunt(pShunt, qShunt, 1.0, baseMVA)
-      shunt = ResDataTypes.Shunt(c, cID, busIdx, pShunt, qShunt, y_pu, state)
+      shunt = Shunt(c, cID, busIdx, pShunt, qShunt, y_pu, state)
       push!(shuntVec, shunt)
     end
 
     if pƩLoad != 0.0 || qƩLoad != 0.0
       shName = "Ld_" * string(kIdx) * "_" * string(busIdx)
       shID = string(UUIDs.uuid4())
-      c = ResDataTypes.Component(shID, shName, ResDataTypes.toComponentTyp("LOAD"), vn_kv)
+      c = ImpPGMComp(shID, shName, toComponentTyp("LOAD"), vn_kv, busIdx, busIdx)
 
       qMax = mFak * qƩLoad  # approximation!
       qMin = -mFak * qƩLoad # approximation!
@@ -251,7 +251,7 @@ function createNetFromMatPowerFile(filename, base_MVA::Float64 = 0.0, log::Bool 
       ratedU = vn_kv
       p = ProSumer(c, nodeId, ratedS, ratedU, qPercent, pƩLoad, qƩLoad, pMin, pMax, qMin, qMax, ratedPowerFactor, referencePri, vm_pu, vm_degree)
       push!(prosum, p)
-      t1 = ResDataTypes.Terminal(c, ResDataTypes.Seite1)
+      t1 = Terminal(c, ResDataTypes.Seite1)
       t1Terminal = NodeTerminalsDict[busIdx]
       push!(t1Terminal, t1)
     end
@@ -285,9 +285,9 @@ function createNetFromMatPowerFile(filename, base_MVA::Float64 = 0.0, log::Bool 
 
     l_km = 1.0
     if status == 1
-      cType = ResDataTypes.toComponentTyp("BRANCH")
+      cType = toComponentTyp("BRANCH")
       vn_kv = vnDict[fbus]
-      c = ResDataTypes.Component(cID, cName, cType, vn_kv)
+      c = ImpPGMComp(cID, cName, cType, vn_kv, fbus, tbus)
       isParallel = false
       fromNodeId = NodeIDDict[fbus]
       toNodeId = NodeIDDict[tbus]
@@ -306,7 +306,7 @@ function createNetFromMatPowerFile(filename, base_MVA::Float64 = 0.0, log::Bool 
         b2.isParallel = true
         @info "branch $(cName) already in branchVec, update values: r_pu: $(rges), x_pu: $(xges), b_pu: $(bges)"
         if ratio == 0.0
-          cType = ResDataTypes.toComponentTyp("ACLINESEGMENT")
+          cType = toComponentTyp("ACLINESEGMENT")
           index = getIndex(fbus, tbus, cType)
           if index !== nothing
             l2 = ACLines[index]
@@ -315,7 +315,7 @@ function createNetFromMatPowerFile(filename, base_MVA::Float64 = 0.0, log::Bool 
             l2.b = bges
           end
         else
-          cType = ResDataTypes.toComponentTyp("POWERTRANSFORMER")
+          cType = toComponentTyp("POWERTRANSFORMER")
           index = getIndex(fbus, tbus, cType)
           if index !== nothing
             t2 = trafos[index]
@@ -328,31 +328,31 @@ function createNetFromMatPowerFile(filename, base_MVA::Float64 = 0.0, log::Bool 
         b = Branch(c, fbus, tbus, _fbus, _tbus, fromNodeId, toNodeId, r_pu, x_pu, b_pu, 0.0, ratio, angle, status, nothing, nothing, isParallel)
         addElement!(fbus, tbus, cType, b, branchVec)
 
-        t1 = ResDataTypes.Terminal(c, ResDataTypes.Seite1)
-        t2 = ResDataTypes.Terminal(c, ResDataTypes.Seite2)
+        t1 = Terminal(c, ResDataTypes.Seite1)
+        t2 = Terminal(c, ResDataTypes.Seite2)
         t1Terminal = NodeTerminalsDict[fbus]
         t2Terminal = NodeTerminalsDict[tbus]
         push!(t1Terminal, t1)
         push!(t2Terminal, t2)
         if ratio == 0.0
-          cType = ResDataTypes.toComponentTyp("ACLINESEGMENT")
+          cType = toComponentTyp("ACLINESEGMENT")
           lName = "Line_" * string(fbus) * "_" * string(tbus)
           lID = string(UUIDs.uuid4())
-          cLine = ResDataTypes.Component(lID, lName, cType, vn_kv)
+          cLine = ImpPGMComp(lID, lName, cType, vn_kv,fbus, tbus)
           z_base = (vn_kv^2) / baseMVA
           r = r_pu * z_base
           l_km = round((r / 0.1), digits = 1) <= 0.0 ? 1.0 : l_km    # approximation
           line = ACLineSegment(cLine, l_km, r_pu, x_pu, b_pu)
           addElement!(fbus, tbus, cType, line, ACLines)
         else
-          cType = ResDataTypes.toComponentTyp("POWERTRANSFORMER")
+          cType = toComponentTyp("POWERTRANSFORMER")
           vnh_kv = vnDict[fbus]
           w1 = PowerTransformerWinding(vnh_kv, r_pu, x_pu, b_pu, nothing, angle, nothing, nothing, nothing)
           vnl_kv = vnDict[tbus]
           w2 = PowerTransformerWinding(vnl_kv, 0.0, 0.0, 0.0, nothing, 0.0, nothing, nothing, nothing)
           cTName = "Trafo_" * string(fbus) * "_" * string(tbus)
           cTID = string(UUIDs.uuid4())
-          cTrafo = ResDataTypes.Component(cTID, cTName, cType, vn_kv)
+          cTrafo = ImpPGMComp(cTID, cTName, cType, vn_kv,fbus, tbus)
           tap = false
           tType = ResDataTypes.Ratio
           if angle != 0.0
@@ -411,7 +411,7 @@ function createNetFromMatPowerFile(filename, base_MVA::Float64 = 0.0, log::Bool 
       ratedS = mBase
       ratedU = vnDict[bus]
       vn_kv = vnDict[bus]
-      c = ResDataTypes.Component(cID, cName, ResDataTypes.toComponentTyp("GENERATOR"), vn_kv)
+      c = ImpPGMComp(cID, cName, ResDataTypes.toComponentTyp("GENERATOR"), vn_kv, bus, bus)
       p = ProSumer(c, nodeId, ratedS, ratedU, qPercent, pGen, qGen, pMin, pMax, qMin, qMax, ratedPowerFactor, referencePri, vm_pu, vm_degree)
       proSumDict[_bus] = p
       push!(prosum, p)
@@ -426,7 +426,7 @@ function createNetFromMatPowerFile(filename, base_MVA::Float64 = 0.0, log::Bool 
         end
         node._vm_pu = vm_pu
       end
-      t1 = ResDataTypes.Terminal(c, ResDataTypes.Seite1)
+      t1 = Terminal(c, ResDataTypes.Seite1)
       t1Terminal = NodeTerminalsDict[bus]
       push!(t1Terminal, t1)
     else

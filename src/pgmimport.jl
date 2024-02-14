@@ -95,7 +95,7 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
       vm_pu = vm_pu_slack
       va_deg = 0.0        
     end
-    @show busIdx, name, nodeID, "", vn_kv, btype, vm_pu, va_deg
+    
     a_bus = Bus(busIdx, name, nodeID, "", vn_kv, btype, vm_pu, va_deg)
     push!(busVec, a_bus)
 
