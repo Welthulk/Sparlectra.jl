@@ -40,7 +40,11 @@ function exportPGM(net::ResDataTypes.Net, filename::String)
         parameters = OrderedDict{String, Any}()
         @assert isa(o.comp, ImpPGMComp)
         @assert o.isBiWinder == true "Only BiWinder is supported"
-        @assert !isnothing(o.exParms)  "No additional parameters found"
+        use_default_params = false
+        if isnothing(o.exParms)  
+          use_default_params = true
+          @warn "No additional parameters found"
+        end
         
         tap_side = 0
         tap_pos = 0
@@ -87,11 +91,7 @@ function exportPGM(net::ResDataTypes.Net, filename::String)
         parameters["to_status"] = 1
         parameters["u1"] = u1
         parameters["u2"] = u2
-        parameters["sn"] = o.exParms.sn
-        parameters["uk"] = o.exParms.uk
-        parameters["pk"] = o.exParms.pk
-        parameters["i0"] = o.exParms.i0
-        parameters["p0"] = o.exParms.p0
+        parameters["sn"], parameters["uk"], parameters["pk"], parameters["i0"], parameters["p0"] = use_default_params ? (0.0, 0.0, 0.0, 0.0, 0.0) : (o.exParms.sn, o.exParms.uk, o.exParms.pk, o.exParms.i0, o.exParms.p0)
         parameters["winding_from"] = 1
         parameters["winding_to"] = 1
         parameters["clock"] = 0  # always zero
