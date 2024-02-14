@@ -6,34 +6,41 @@ function exportPGM(net::ResDataTypes.Net, filename::String)
     full_path = filename * ".json"
     @info "export to PGM-Files, Filename: ($full_path)"
 
-    function get_pgm_node_dict(comp::ImpPGMComp)
+    id_counter = 0
+    function get_next_id()
+        id_counter += 1
+        return id_counter
+    end
+
+    function get_pgm_nodes(o::Node)
         parameters = OrderedDict{String, Any}()
-        @assert isa(comp, ImpPGMComp)
-        parameters["id"] = comp.cOrigId
-        parameters["u_rated"] = comp.cVN * 1e3
+        @assert isa(o.comp, ImpPGMComp)
+        # busId should be origID
+        parameters["id"] = get_next_id()
+        parameters["u_rated"] = o.comp.cVN * 1e3
         return parameters
     end
 
-    function get_line_parameters(ac::ACLineSegment)
+    function get_lines(o::ACLineSegment)
         parameters = OrderedDict{String, Any}()
-        @assert isa(ac.comp, ImpPGMComp)
-        parameters["id"] = ac.comp.cOrigId
-        parameters["from_node"] = ac.comp.cFrom_bus
-        parameters["to_node"] = ac.comp.cTo_bus
+        @assert isa(o.comp, ImpPGMComp)
+        parameters["id"] = get_next_id()
+        parameters["from_node"] = o.comp.cFrom_bus
+        parameters["to_node"] = o.comp.cTo_bus
         parameters["from_status"] = 1
         parameters["to_status"] = 1
-        parameters["r1"] = ac.r
-        parameters["x1"] = ac.x
-        parameters["c1"] = isnothing(ac.c_nf_per_km) ? 0.0 : ac.c_nf_per_km * 1e-9
-        parameters["tan1"] = isnothing(ac.tanδ) ? 0.0 : ac.tanδ
+        parameters["r1"] = o.r
+        parameters["x1"] = o.x
+        parameters["c1"] = isnothing(o.c_nf_per_km) ? 0.0 : o.c_nf_per_km * 1e-9
+        parameters["tan1"] = isnothing(o.tanδ) ? 0.0 : o.tanδ
         return parameters
     end
 
-    function get_trafo_parameters(t::PowerTransformer, baseMVA::Float64)
+    function get_trafos(o::PowerTransformer)
         parameters = OrderedDict{String, Any}()
-        @assert isa(t.comp, ImpPGMComp)
-        @assert t.isBiWinder == true "Only BiWinder is supported"
-        @assert !isnothing(t.exParms)  "No additional parameters found"
+        @assert isa(o.comp, ImpPGMComp)
+        @assert o.isBiWinder == true "Only BiWinder is supported"
+        @assert !isnothing(o.exParms)  "No additional parameters found"
         
         tap_side = 0
         tap_pos = 0
@@ -44,25 +51,25 @@ function exportPGM(net::ResDataTypes.Net, filename::String)
         u1 = 0.0
         u2 = 0.0
         winding = nothing
-        if t.HVSideNumber == 1
-            u1 = t.side1.Vn*1e3
-            u2 = t.side2.Vn*1e3
-            winding = t.side1
+        if o.HVSideNumber == 1
+            u1 = o.side1.Vn*1e3
+            u2 = o.side2.Vn*1e3
+            winding = o.side1
         else
-            u1 = t.side2.Vn*1e3
-            u2 = t.side1.Vn*1e3
-            winding = t.side2
+            u1 = o.side2.Vn*1e3
+            u2 = o.side1.Vn*1e3
+            winding = o.side2
         end
 
-        if t.isControlled
-         if t.HVSideNumber == 1
-            taps = t.side1.taps
+        if o.isControlled
+         if o.HVSideNumber == 1
+            taps = o.side1.taps
             tap_side = 0
-            vn = t.side1.Vn
+            vn = o.side1.Vn
          else
-            taps = t.side2.taps
+            taps = o.side2.taps
             tap_side = 1
-            vn = t.side2.Vn
+            vn = o.side2.Vn
          end
          tap_pos = taps.step         
          tap_min = taps.lowStep
@@ -73,18 +80,18 @@ function exportPGM(net::ResDataTypes.Net, filename::String)
          tap_size = 1e3*taps.voltageIncrement*vn/100.0
         end
 
-        parameters["id"] = t.comp.cOrigId
-        parameters["from_node"] = t.comp.cFrom_bus
-        parameters["to_node"] = t.comp.cTo_bus
+        parameters["id"] = get_next_id()
+        parameters["from_node"] = o.comp.cFrom_bus
+        parameters["to_node"] = o.comp.cTo_bus
         parameters["from_status"] = 1
         parameters["to_status"] = 1
         parameters["u1"] = u1
         parameters["u2"] = u2
-        parameters["sn"] = t.exParms.sn
-        parameters["uk"] = t.exParms.uk
-        parameters["pk"] = t.exParms.pk
-        parameters["i0"] = t.exParms.i0
-        parameters["p0"] = t.exParms.p0
+        parameters["sn"] = o.exParms.sn
+        parameters["uk"] = o.exParms.uk
+        parameters["pk"] = o.exParms.pk
+        parameters["i0"] = o.exParms.i0
+        parameters["p0"] = o.exParms.p0
         parameters["winding_from"] = 1
         parameters["winding_to"] = 1
         parameters["clock"] = 0  # always zero
@@ -98,7 +105,7 @@ function exportPGM(net::ResDataTypes.Net, filename::String)
         return parameters
     end
 
-    function get_sym_gen(o::ProSumer)
+    function get_sym_gens(o::ProSumer)
       parameters = OrderedDict{String, Any}()
       @assert isa(o.comp, ImpPGMComp)
 
@@ -106,7 +113,7 @@ function exportPGM(net::ResDataTypes.Net, filename::String)
         @warn "PV-Node not supported for PGM, set to PQ-Node"
       end  
             
-      parameters["id"] = o.comp.cOrigId
+      parameters["id"] = get_next_id()
       parameters["node"] = o.comp.cFrom_bus
       parameters["status"] = 1
       parameters["type"] = 0
@@ -127,11 +134,11 @@ function exportPGM(net::ResDataTypes.Net, filename::String)
       return parameters
     end
 
-    function get_sym_load(o::ProSumer)
+    function get_sym_loads(o::ProSumer)
       parameters = OrderedDict{String, Any}()
       @assert isa(o.comp, ImpPGMComp)
 
-      parameters["id"] = o.comp.cOrigId
+      parameters["id"] = get_next_id()
       parameters["node"] = o.comp.cFrom_bus
       parameters["status"] = 1
       parameters["type"] = 0
@@ -145,7 +152,7 @@ function exportPGM(net::ResDataTypes.Net, filename::String)
       parameters = OrderedDict{String, Any}()
       @assert isa(o.comp, ImpPGMComp)
 
-      parameters["id"] = o.comp.cOrigId
+      parameters["id"] = get_next_id()
       parameters["node"] = o.busIdx
       parameters["status"] = 1 # default
       parameters["u_ref"] = o._vm_pu
@@ -157,11 +164,11 @@ function exportPGM(net::ResDataTypes.Net, filename::String)
     end
 
 
-    function get_shunt(o::Shunt)
+    function get_shunts(o::Shunt)
       parameters = OrderedDict{String, Any}()
       @assert isa(o.comp, ImpPGMComp)
 
-      parameters["id"] = o.comp.cOrigId
+      parameters["id"] = get_next_id()
       parameters["node"] = o.comp.cFrom_bus
       parameters["status"] = 1
       vn = Float64(o.comp.cVN)
@@ -181,12 +188,12 @@ function exportPGM(net::ResDataTypes.Net, filename::String)
             "is_batch" => false,
             "attributes" => OrderedDict(),
             "data" => OrderedDict(
-                "node" => [get_pgm_node_dict(node.comp) for node in net.nodeVec],
-                "line" => [get_line_parameters(ac) for ac in net.linesAC],
-                "sym_gen" => [get_sym_gen(o) for o in net.prosumpsVec if o.proSumptionType == ResDataTypes.Injection && !isSlack(o)],
-                "shunt" => [get_shunt(o) for o in net.shuntVec],
-                "transformer" => [get_trafo_parameters(t, net.baseMVA) for t in net.trafos],
-                "sym_load" => [get_sym_load(o) for o in net.prosumpsVec if o.proSumptionType == ResDataTypes.Consumption],
+                "node" => [get_pgm_nodes(node) for node in net.nodeVec],
+                "line" => [get_lines(ac) for ac in net.linesAC],
+                "sym_gen" => [get_sym_gens(o) for o in net.prosumpsVec if o.proSumptionType == ResDataTypes.Injection && !isSlack(o)],
+                "shunt" => [get_shunts(o) for o in net.shuntVec],
+                "transformer" => [get_trafos(t) for t in net.trafos],
+                "sym_load" => [get_sym_loads(o) for o in net.prosumpsVec if o.proSumptionType == ResDataTypes.Consumption],
                 "source" => [get_source(o) for o in net.nodeVec if isSlack(o)]
             )
         ),
