@@ -82,20 +82,21 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
     vn_kv = float(bus["u_rated"]) / 1000.0
     name = "Bus_" * string(busIdx)
     nodeID = "#ID_" * name
-    a_bus = nothing
+    
+    vm_pu = nothing
+    va_deg = nothing
+    btype = 1
     if haskey(bus_types, busIdx)
       btype = bus_types[busIdx]
-      if btype == 3
-        nodeIdSlack = nodeID
-        global a_bus = Bus(busIdx, name, nodeID, "", vn_kv, btype, slackNodeID_num, vm_pu_slack, 0.0)        
-      else
-        global a_bus = Bus(busIdx, name, nodeID, "", vn_kv, btype, busIdx)
-      end
-    else
-      btype = 1
-      global a_bus = Bus(busIdx, name, nodeID, "", vn_kv, btype, busIdx)
-      
     end   
+
+    if btype == 3
+      nodeIdSlack = nodeID
+      vm_pu = vm_pu_slack
+      va_deg = 0.0        
+    end
+    @show busIdx, name, nodeID, "", vn_kv, btype, vm_pu, va_deg
+    a_bus = Bus(busIdx, name, nodeID, "", vn_kv, btype, vm_pu, va_deg)
     push!(busVec, a_bus)
 
     VoltageDict[busIdx] = vn_kv
@@ -149,7 +150,7 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
 
     @assert Vn1 == Vn2 "Voltage levels are different: $Vn1 != $Vn2"
     #length not given, so set to 1.0km
-    cPGM = ImpPGMComp(cID, cName, toComponentTyp("ACLINESEGMENT"), Vn, num, from, to)
+    cPGM = ImpPGMComp(cID, cName, toComponentTyp("ACLINESEGMENT"), Vn, from, to)
     asec = ACLineSegment(cPGM, 1.0, r, x, 0.0, 0.0, c_nf, 0.0)
     push!(ACLines, asec)
 
@@ -263,7 +264,7 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
 
     
     addEx = TransformesAdditionalParameters(sn, uk, pk_W, i0, p0_W)
-    cImpPGMComp = ImpPGMComp(cID, cName, toComponentTyp("POWERTRANSFORMER"), vn_hv, oID, from_node, to_node)
+    cImpPGMComp = ImpPGMComp(cID, cName, toComponentTyp("POWERTRANSFORMER"), vn_hv, from_node, to_node)
     trafo = PowerTransformer(cImpPGMComp, true, s1, s2, s3, ResDataTypes.Ratio, addEx)
     push!(trafos, trafo)
     #@show trafo
@@ -316,7 +317,7 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
     p = sym_load["p_specified"] * umrech_MVA
     q = sym_load["q_specified"] * umrech_MVA
 
-    comp = ImpPGMComp(cID, cName, toComponentTyp("LOAD"), vn, Int64(id), bus, bus)
+    comp = ImpPGMComp(cID, cName, toComponentTyp("LOAD"), vn, bus, bus)
     pRS = ProSumer(comp, nID, ratedS, ratedU, qPercent, p, q, maxP, minP, maxQ, minQ, ratedPowerFactor, referencePri, nothing, nothing)
     push!(prosum, pRS)
     t1 = Terminal(comp, ResDataTypes.Seite2)
@@ -348,7 +349,7 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
     p = sym_gen["p_specified"] * umrech_MVA
     q = sym_gen["q_specified"] * umrech_MVA
     
-    comp = ImpPGMComp(cID, cName, toComponentTyp("GENERATOR"), vn, Int64(id), bus, bus)
+    comp = ImpPGMComp(cID, cName, toComponentTyp("GENERATOR"), vn, bus, bus)
     pRS = ProSumer(comp, nID, ratedS, ratedU, qPercent, p, q, maxP, minP, maxQ, minQ, ratedPowerFactor, referencePri, nothing, nothing)
     push!(prosum, pRS)
     t2 = Terminal(comp, ResDataTypes.Seite1)
@@ -378,7 +379,7 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
     p_shunt, q_shunt = calcPQ_Shunt(Float64(shunt["g1"]), Float64(shunt["b1"] ), vn_kv)
     Y = Complex(p_shunt, q_shunt)
     y_pu = calc_y_pu(Y, baseMVA, vn_kv)
-    comp = ImpPGMComp(cID, cName, toComponentTyp("LINEARSHUNTCOMPENSATOR"), vn_kv, Int64(id), bus, bus)
+    comp = ImpPGMComp(cID, cName, toComponentTyp("LINEARSHUNTCOMPENSATOR"), vn_kv, bus, bus)
     sh = Shunt(comp, NodeIDDict[bus], bus, p_shunt, q_shunt, y_pu, status)
     push!(shuntVec, sh)
     t1 = Terminal(comp, ResDataTypes.Seite1)
@@ -405,7 +406,7 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
       println("Bus: ", busName, " busIdx: ", busIdx, " ID: ", cID, " Voltage: ", Vn, "\nTerminals: ", terminals)
     end
 
-    c = ImpPGMComp(cID, busName, ResDataTypes.Busbarsection, Vn, b.pgmID, busIdx, busIdx)
+    c = ImpPGMComp(cID, busName, ResDataTypes.Busbarsection, Vn, busIdx, busIdx)
 
     node = Node(c, terminals, busIdx, busIdx, toNodeType(nodeType))
 

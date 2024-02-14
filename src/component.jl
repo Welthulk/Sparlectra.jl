@@ -62,17 +62,16 @@ struct ImpPGMComp <: AbstractComponent
   cID::String
   cName::String
   cTyp::ComponentTyp
-  cVN::Float64           # nominal voltage in kV
-  cOrigId::Int64
-  cFrom_bus::Int64
-  cTo_bus::Int64
+  cVN::Float64           # nominal voltage in kV  
+  cFrom_bus::Union{Nothing,Int64}
+  cTo_bus::Union{Nothing,Int64}
   
-  function ImpPGMComp(id::String, name::String, typ::ComponentTyp, vn::Float64, oID::Int64)
-    new(id, name, typ, vn, oID, 0, 0)
+  function ImpPGMComp(id::String, name::String, typ::ComponentTyp, vn::Float64)
+    new(id, name, typ, vn,  nothing, nothing)
   end
 
-  function ImpPGMComp(id::String, name::String, typ::ComponentTyp, vn::Float64, oID::Int64, fBus::Int64, tBus::Int64)
-    new(id, name, typ, vn, oID, fBus, tBus)
+  function ImpPGMComp(id::String, name::String, typ::ComponentTyp, vn::Float64, fBus::Int64, tBus::Int64)
+    new(id, name, typ, vn, fBus, tBus)
   end
 
   function Base.show(io::IO, x::ImpPGMComp)
@@ -80,10 +79,13 @@ struct ImpPGMComp <: AbstractComponent
     print(io, "ID=$(x.cID), ")
     print(io, "Name=$(x.cName), ")
     print(io, "Typ=$(x.cTyp), ")
-    print(io, "Vn=$(x.cVN), ")
-    print(io, "OrigID=$(x.cOrigId)," )
-    print(io, "from_bus=$(x.cFrom_bus), ")
-    print(io, "to_bus=$(x.cTo_bus)")
+    print(io, "Vn=$(x.cVN), ")        
+    if !isnothing(x.cFrom_bus)
+      print(io, "From_bus=$(x.cFrom_bus), ")
+    end
+    if !isnothing(x.cTo_bus)
+      print(io, "To_bus=$(x.cTo_bus), ")
+    end
     print(io, ")")
   end
 

@@ -8,29 +8,20 @@ struct Bus
   id::String
   wt3id::String
   vn_kv::Float64
-  type::Int64
-  pgmID::Union{Nothing,Int64} # original id uses for pgm import
+  type::Int64  
   vm_pu::Union{Nothing,Float64}
   va_deg::Union{Nothing,Float64}
 
   function Bus(busIdx::Int64, name::String, id::String, wt3id::String, vn_kv::Float64, type::Int64)
-    new(busIdx, name, id, wt3id, vn_kv, type, nothing, nothing, nothing)
+    new(busIdx, name, id, wt3id, vn_kv, type, nothing, nothing)
   end
 
-  function Bus(busIdx::Int64, name::String, id::String, wt3id::String, vn_kv::Float64, type::Int64, pgmID::Int64)
-    new(busIdx, name, id, wt3id, vn_kv, type, pgmID,nothing, nothing)
-  end
-
-  function Bus(busIdx::Int64, name::String, id::String, wt3id::String, vn_kv::Float64, type::Int64, pgmID::Int64, vm_pu::Float64, va_deg::Float64)
-    new(busIdx, name, id, wt3id, vn_kv, type, pgmID,vm_pu, va_deg)
+  function Bus(busIdx::Int64, name::String, id::String, wt3id::String, vn_kv::Float64, type::Int64, vm_pu::Union{Nothing,Float64}, va_deg::Union{Nothing,Float64})
+    new(busIdx, name, id, wt3id, vn_kv, type, vm_pu, va_deg)
   end
 
   function Base.show(io::IO, bus::Bus)
-    if bus.pgmID === nothing
-      print(io, "Bus(", bus.busIdx, ", ", bus.name, ", ", bus.id, ", ", bus.wt3id, ", ", bus.vn_kv, ", ", bus.type, ")")
-    else
-      print(io, "Bus(", bus.busIdx, ", ", bus.name, ", ", bus.id, ", ", bus.wt3id, ", ", bus.vn_kv, ", ", bus.type, ", ", bus.pgmID, ")")
-    end
+    print(io, "Bus(", bus.busIdx, ", ", bus.name, ", ", bus.id, ", ", bus.wt3id, ", ", bus.vn_kv, ", ", bus.type, ")")
   end
 end
 
