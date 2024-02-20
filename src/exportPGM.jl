@@ -2,7 +2,7 @@
 # Date: 8.2.24
 # include-file exportPGM.jl
 
-function exportPGM(net::ResDataTypes.Net, filename::String)
+function exportPGM(;net::ResDataTypes.Net, filename::String, useMVATrafoModell::Bool=true)
   full_path = filename * ".json"
   @info "export to PGM-Files, Filename: ($full_path)"
 
@@ -16,10 +16,15 @@ function exportPGM(net::ResDataTypes.Net, filename::String)
     parameters = OrderedDict{String,Any}()
     @assert isa(o.comp, ImpPGMComp)
     # busId should be origID
-    parameters["id"] = get_next_id()
-    parameters["u_rated"] = o.comp.cVN * 1e3
-    parameters["_cname"] = o.comp.cName
-    parameters["_cID"] = o.comp.cID
+    if o.comp.cTyp == ResDataTypes.AuxBus && !useMVATrafoModell 
+      @info "AuxBus: ", o.comp.cName, " ignored..."
+      return parameters
+    else
+      parameters["id"] = get_next_id()
+      parameters["u_rated"] = o.comp.cVN * 1e3
+      parameters["_cname"] = o.comp.cName
+      parameters["_cID"] = o.comp.cID
+    end
 
     return parameters
   end
