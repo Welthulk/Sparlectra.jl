@@ -81,8 +81,6 @@ function fixSequenceNumberInNodeVec!(nodes::Vector{ResDataTypes.Node}, trafos::V
         if VnCheck != VnNode
           # expectedSide -> Look for VnNode in the transformer-sides
 
-
-
           if VnNode == VnSide1
             expectedSide = ResDataTypes.Seite1
           elseif VnNode == VnSide2
@@ -97,14 +95,12 @@ function fixSequenceNumberInNodeVec!(nodes::Vector{ResDataTypes.Node}, trafos::V
         else
           continue
         end
-
       end # if term.equipment.Typ == ResDataTypes.Trafo 
     end # for term in terminals 
   end # for node in nodes
 end # FixSequenceNumberInNodeVec!
 
-
-function getBranchForLine(comp::ResDataTypes.Component, fromBus::Int, toBus::Int, fromNodeID::String, toNodeID::String, line::ResDataTypes.ACLineSegment, ZBase::Float64)::ResDataTypes.Branch
+function getBranchForLine(comp::ResDataTypes.AbstractComponent, fromBus::Int, toBus::Int, fromNodeID::String, toNodeID::String, line::ResDataTypes.ACLineSegment, ZBase::Float64)::ResDataTypes.Branch
   r = (line.r === nothing) ? 0.0 : line.r
   x = (line.x === nothing) ? 0.0 : line.x
   b = (line.b === nothing) ? 0.0 : line.b
@@ -118,14 +114,13 @@ function getBranchForLine(comp::ResDataTypes.Component, fromBus::Int, toBus::Int
   angle = 0.0 # line
   status = 1 # line
   angmin = -360.0 # line
-  angmax = 360.0 # line
-
+  angmax = 360.0 # line  
+  
   b = ResDataTypes.Branch(comp, fromBus, toBus, fromNodeID, toNodeID, rpu, xpu, bpu, 0.0, ratio, angle, status)
   return b
 end
 
-
-function getBranchFor2WT(comp::ResDataTypes.Component, fromBus::Int, toBus::Int, fromNodeID::String, toNodeID::String, trafo::ResDataTypes.PowerTransformer, Sbase_MVA::Float64)::ResDataTypes.Branch
+function getBranchFor2WT(comp::ResDataTypes.AbstractComponent, fromBus::Int, toBus::Int, fromNodeID::String, toNodeID::String, trafo::ResDataTypes.PowerTransformer, Sbase_MVA::Float64)::ResDataTypes.Branch
   HVSide = trafo.HVSideNumber
   tapSide = trafo.tapSideNumber
   shiftDegree = 0.0
@@ -167,7 +162,6 @@ function getBranchFor2WT(comp::ResDataTypes.Component, fromBus::Int, toBus::Int,
     ZBase = LVUbase^2 / Sbase_MVA
   end
 
-
   rpu = r / ZBase
   xpu = x / ZBase
   bpu = b * ZBase
@@ -178,9 +172,9 @@ function getBranchFor2WT(comp::ResDataTypes.Component, fromBus::Int, toBus::Int,
 
   if trafo.isControlled
     if tapSide == 1
-      taps = trafo.side1.taps      
+      taps = trafo.side1.taps
     elseif tapSide == 2
-      taps = trafo.side2.taps      
+      taps = trafo.side2.taps
     else
       @assert "$trafo has more than two tap sides!"
     end
@@ -334,32 +328,53 @@ function setBranchFor3WT!(hv_bus::Int, mv_bus::Int, lv_bus::Int, trafo::ResDataT
   @debug "branch_3", branch_3
 
   push!(bVec, branch_3)
-
 end
 
-
 #FIXME: PhaseShifter  
-function createBranchVectorFromNodeVector(nodes::Vector{ResDataTypes.Node}, lines::Vector{ResDataTypes.ACLineSegment}, trafos::Vector{ResDataTypes.PowerTransformer}, Sbase_MVA::Float64, log::Bool)::Vector{ResDataTypes.Branch}
-
+function createBranchVectorFromNodeVector!(;nodes::Vector{ResDataTypes.Node}, lines::Vector{ResDataTypes.ACLineSegment}, trafos::Vector{ResDataTypes.PowerTransformer}, Sbase_MVA::Float64, 
+                                           shunts::Union{Nothing, Vector{ResDataTypes.Shunt}}=nothing, prosumps::Union{Nothing, Vector{ResDataTypes.ProSumer}}=nothing, log::Bool= false)::Vector{ResDataTypes.Branch}
   branchVector = Vector{ResDataTypes.Branch}()
   LineDict = Dict{String,ResDataTypes.ACLineSegment}()
-  for line in lines
-    LineDict[line.comp.cID] = line
+  auxBusDict = Dict{String,ResDataTypes.Node}()
+  TrafoDict = Dict{String,ResDataTypes.PowerTransformer}()
+  NodeDict = Dict{String,ResDataTypes.Node}()
+  
+  for n in nodes
+    #@show busIdx = n.busIdx, n.comp.cID
+    pgm_comp = ImpPGMComp(n.comp, n.busIdx, n.busIdx)
+    n.comp = pgm_comp
+    if n.comp.cTyp == ResDataTypes.AuxBus
+      auxBusDict[n._auxNodeID] = n
+    end    
+    NodeDict[n.comp.cID] = n
   end
 
-  TrafoDict = Dict{String,ResDataTypes.PowerTransformer}()
+  for s in shunts
+    @show "Shunt:", s
+    pgm_comp = ImpPGMComp(s.comp, s.busIdx, s.busIdx)
+    s.comp = pgm_comp
+  end
+
+  for p in prosumps
+    if haskey(NodeDict, p.nodeID)
+      n = NodeDict[p.nodeID]
+      pgm_comp = ImpPGMComp(p.comp, n.busIdx, n.busIdx)
+      p.comp = pgm_comp
+
+    else
+      @warn "ProSumerDict not found: ", p.nodeID
+    end  
+  end  
+
+  for line in lines
+    LineDict[line.comp.cID] = line
+    @show "vorher: ", line.comp
+  end
+  
   for trafo in trafos
     TrafoDict[trafo.comp.cID] = trafo
   end
-
-  auxBusDict = Dict{String,ResDataTypes.Node}()
-
-  for node in nodes
-    if node.comp.cTyp == ResDataTypes.AuxBus
-      auxBusDict[node._auxNodeID] = node
-    end
-  end
-
+  
   eTypesArr::Array{ResDataTypes.ComponentTyp} = [ResDataTypes.LineC, ResDataTypes.Trafo]
 
   for eType in eTypesArr # automatic sorted      
@@ -370,8 +385,9 @@ function createBranchVectorFromNodeVector(nodes::Vector{ResDataTypes.Node}, line
           fNodeID = n.comp.cID
           Ubase = t.comp.cVN
           ZBase = Ubase^2 / Sbase_MVA
-          comp = t.comp
           fromBus = n.busIdx
+          comp = t.comp
+
           if seite == ResDataTypes.Seite1
             id = t.comp.cID
             node2, terminal2 = searchNodeByTerminalId(id, nodes, ResDataTypes.Seite2)
@@ -385,8 +401,13 @@ function createBranchVectorFromNodeVector(nodes::Vector{ResDataTypes.Node}, line
             if t.comp.cTyp == ResDataTypes.LineC # handle lines to create branches
               if haskey(LineDict, id)
                 line = LineDict[id]
-                b = getBranchForLine(comp, fromBus, toBus, fNodeID, tNodeID, line, ZBase)
-                push!(branchVector, b)
+                @show "Line:", line
+                newID = "#branch_"*comp.cID
+                pgm_comp = ImpPGMComp(comp, fromBus, toBus, newID)
+                b = getBranchForLine(pgm_comp, fromBus, toBus, fNodeID, tNodeID, line, ZBase)
+                push!(branchVector, b)                                
+                line.comp = ImpPGMComp(comp, fromBus, toBus)
+                @show "Line:", line.comp, fromBus, toBus
               else
                 @warn "could not handle Line $id"
               end
@@ -394,7 +415,10 @@ function createBranchVectorFromNodeVector(nodes::Vector{ResDataTypes.Node}, line
               if haskey(TrafoDict, id)
                 trafo = TrafoDict[id]
                 if trafo.isBiWinder # 2WT
-                  b = getBranchFor2WT(comp, fromBus, toBus, fNodeID, tNodeID, trafo, Sbase_MVA)
+                  newID = "#branch_"*comp.cID
+                  pgm_comp = ImpPGMComp(comp, fromBus, toBus, newID)                  
+                  b = getBranchFor2WT(pgm_comp, fromBus, toBus, fNodeID, tNodeID, trafo, Sbase_MVA)                  
+                  trafo.comp = ImpPGMComp(comp, fromBus, toBus)
                   #@show "2WT", fromBus, toBus
                   push!(branchVector, b)
                 else # 3WT                      
@@ -416,9 +440,14 @@ function createBranchVectorFromNodeVector(nodes::Vector{ResDataTypes.Node}, line
       end # for Terminal
     end # for Node
   end # eType  
+  for line in lines
+    LineDict[line.comp.cID] = line
+    @show "nacher: ", line.comp
+  end
+
+  setParallelBranches!(branchVector)
   return branchVector
 end # function
-
 
 function nodeComparison(node1::ResDataTypes.Node, node2::ResDataTypes.Node)
   node1.comp.cVN >= node2.comp.cVN
@@ -450,7 +479,6 @@ function createNetFromTripleStore(endpoint::String, sbase_mva::Union{Nothing,Flo
   shunts = Vector{ResDataTypes.Shunt}()
   puNodesIDDict = Dict{String,String}()
   nodesDict = Dict{String,ResDataTypes.Node}()
-
 
   sort!(nodes, lt = nodeComparison)
 
@@ -526,7 +554,6 @@ function createNetFromTripleStore(endpoint::String, sbase_mva::Union{Nothing,Flo
       else
         @warn "could not find node for motor $(s.nodeID), $(s.comp.cName)"
       end
-
     end
 
     if isGenerator(e)
@@ -601,11 +628,7 @@ function createNetFromTripleStore(endpoint::String, sbase_mva::Union{Nothing,Flo
 
   fixSequenceNumberInNodeVec!(nodes, trafos)
 
-  branchVec = createBranchVectorFromNodeVector(nodes, lines, trafos, sbase_mva, log)
-  # bugfix for parallel branches
-  setParallelBranches!(branchVec)              
-  # not really working - need to be fixed
-  #findSingleConnectedBuses(branchVec, nodes)
+  branchVec = createBranchVectorFromNodeVector!(nodes=nodes, lines=lines, trafos=trafos, Sbase_MVA=sbase_mva, shunts=shunts, prosumps=prosumers)
 
   renumberNodeIdx!(branchVec, nodes, log)
 
@@ -613,5 +636,3 @@ function createNetFromTripleStore(endpoint::String, sbase_mva::Union{Nothing,Flo
 
   return net
 end
-
-

@@ -278,6 +278,7 @@ function createNetFromMatPowerFile(filename, base_MVA::Float64 = 0.0, log::Bool 
     r_pu = float(row[branchDict["r"]])
     x_pu = float(row[branchDict["x"]])
     b_pu = float(row[branchDict["b"]])
+    ratedS = float(row[branchDict["rateA"]])
     ratio = float(row[branchDict["ratio"]])
     angle = float(row[branchDict["angle"]])
     status = Int64(row[branchDict["status"]])
@@ -347,9 +348,9 @@ function createNetFromMatPowerFile(filename, base_MVA::Float64 = 0.0, log::Bool 
         else
           cType = toComponentTyp("POWERTRANSFORMER")
           vnh_kv = vnDict[fbus]
-          w1 = PowerTransformerWinding(vnh_kv, r_pu, x_pu, b_pu, nothing, angle, nothing, nothing, nothing)
+          w1 = PowerTransformerWinding(Vn=vnh_kv, r=r_pu, x=x_pu, b=b_pu, shift_degree= angle, ratedS=ratedS, isPu_RXGB=true)
           vnl_kv = vnDict[tbus]
-          w2 = PowerTransformerWinding(vnl_kv, 0.0, 0.0, 0.0, nothing, 0.0, nothing, nothing, nothing)
+          w2 = PowerTransformerWinding(Vn=vnl_kv, r=0.0, x=0.0, b=0.0, shift_degree= 0.0, ratedS=ratedS, isPu_RXGB=true)
           cTName = "Trafo_" * string(fbus) * "_" * string(tbus)
           cTID = string(UUIDs.uuid4())
           cTrafo = ImpPGMComp(cTID, cTName, cType, vn_kv,fbus, tbus)

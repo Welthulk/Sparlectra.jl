@@ -198,7 +198,40 @@ function calcTrafoParamsSI(sbase_VA::Float64, u2_V::Float64, uk::Float64, sn_VA:
     return re_z_series, im_z_series, re_y_shunt, im_y_shunt
 end
 
+"""
+purpose: recalculation model data of transformer
+input:
+baseMVA: 
+Sn_MVA: rated power of transformer, MVA
+ratedU_kV: rated voltage, kV
+r_pu: short circuit resistance, p.u.
+x_pu: short circuit reaktance, p.u.
+bm: open loop magnitacation, p.u.
+hint: gm is set to zero, g_pu = 0.0!
+"""
+function recalc_trafo_model_data(;baseMVA::Float64, Sn_MVA::Float64, ratedU_kV::Float64, r_pu::Float64, x_pu::Float64, b_pu::Float64)
+  wurz3 = sqrt(3.0)
+  base_power_3p = baseMVA
+  base_power_1p = base_power_3p/3.0
+  base_i_to = base_power_3p/(ratedU_kV*wurz3)
+  base_y_to = base_i_to * base_i_to / base_power_1p
+  base_z_to = 1.0/base_y_to
 
+  Pfe_kW = 0.0 # -> g_pu = 0.0
+  # g_pu = 0.0!
+  y_shunt  = b_pu
+  Y_shunt = y_shunt*base_y_to
+  i0 = Y_shunt*ratedU_kV^2/Sn_MVA
+
+  z_ser_pu = sqrt(r_pu^2 + x_pu^2)
+  Z_Series_abs = z_ser_pu*base_z_to
+  uk = Z_Series_abs*Sn_MVA/ratedU_kV^2
+  Rk= r_pu*base_z_to
+  P_kW = Rk*Sn_MVA^2/ratedU_kV^2
+
+  return uk, P_kW, i0, Pfe_kW
+  
+end
 
 """
  purpose: calculates R, X, rfe and xmu of a transformer

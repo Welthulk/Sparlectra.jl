@@ -74,6 +74,14 @@ struct ImpPGMComp <: AbstractComponent
     new(id, name, typ, vn, fBus, tBus)
   end
 
+  function ImpPGMComp(cmp::Component, fBus::Int64, tBus::Int64, newID::Union{Nothing,String}=nothing)
+    if isnothing(newID)
+      new(cmp.cID, cmp.cName, cmp.cTyp, cmp.cVN, fBus, tBus)
+    else      
+      new(newID, cmp.cName, cmp.cTyp, cmp.cVN, fBus, tBus)
+    end    
+  end
+
   function Base.show(io::IO, x::ImpPGMComp)
     print(io, "Component(")
     print(io, "ID=$(x.cID), ")

@@ -58,11 +58,9 @@ ORDER BY ASC(?name) ASC(?endNumber)
 
 function QueryTrafos!(url::String, trafos::TrafoVector, debug::Bool)::Bool
   try
-
     response = HTTP.request("POST", url, headers = header2, body = queryTrafos)
 
     if HTTP.status(response) == 200
-
       result = JSON.parse(String(response.body))
       bindings = result["results"]["bindings"]
       anz = 0
@@ -117,7 +115,6 @@ function QueryTrafos!(url::String, trafos::TrafoVector, debug::Bool)::Bool
           push!(rangeVec, (r1:r2))
         else
           lastIndex = i
-
         end
       end
 
@@ -172,7 +169,6 @@ function QueryTrafos!(url::String, trafos::TrafoVector, debug::Bool)::Bool
             stl = getIntegerValue(binding, "Stellung")
             regelungEin = getBoolValue(binding, "enable")
 
-
             nV = getFloatValue(binding, "nU")
             incV = getFloatValue(binding, "stepV")
 
@@ -194,19 +190,19 @@ function QueryTrafos!(url::String, trafos::TrafoVector, debug::Bool)::Bool
             if debug
               @show cmp
             end
-            s1 = ResDataTypes.PowerTransformerWinding(Unenn, r, x, b, g, shift_degree, ratedU, ratedS, tap)
+            s1 = ResDataTypes.PowerTransformerWinding(Vn = Unenn, r = r, x = x, b = b, g = g, shift_degree = shift_degree, ratedU = ratedU, ratedS = ratedS, taps = tap, isPu_RXGB = false)
             if debug
               @show "Seite 1 =", s1
             end
           elseif Seite == 2
-            s2 = ResDataTypes.PowerTransformerWinding(Unenn, r, x, b, g, shift_degree, ratedU, ratedS, tap)
+            s2 = ResDataTypes.PowerTransformerWinding(Vn = Unenn, r = r, x = x, b = b, g = g, shift_degree = shift_degree, ratedU = ratedU, ratedS = ratedS, taps = tap, isPu_RXGB = false)
 
             if debug
               @show "Seite 2 =", s2
             end
 
           elseif Seite == 3
-            s3 = ResDataTypes.PowerTransformerWinding(Unenn, r, x, b, g, shift_degree, ratedU, ratedS, tap)
+            s3 = ResDataTypes.PowerTransformerWinding(Vn = Unenn, r = r, x = x, b = b, g = g, shift_degree = shift_degree, ratedU = ratedU, ratedS = ratedS, taps = tap, isPu_RXGB = false)
 
             if debug
               @show "Seite 3 =", s3
@@ -234,7 +230,4 @@ function QueryTrafos!(url::String, trafos::TrafoVector, debug::Bool)::Bool
     @error err
     return false
   end
-
 end # QueryTrafos!
-
-
