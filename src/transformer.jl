@@ -144,14 +144,21 @@ mutable struct PowerTransformer
                             s1::PowerTransformerWinding, s2::PowerTransformerWinding, s3::Union{Nothing,PowerTransformerWinding} = nothing, 
                             trafoTyp::TrafoTyp = ResDataTypes.Ratio,
                             exParms::Union{Nothing,TransformesModelParameters} = nothing)
+    equiParms = 0
     if isnothing(s3)
       n = 2
       isBi = true
+      if s1.r != 0.0 && s1.x != 0.0
+       equiParms = 1
+      elseif s2.r != 0.0 && s2.x != 0.0
+        equiParms = 2
+      end  
     else
       isBi = false
       n = 3      
+      equiParms = 3
     end
-    equiParms = 0
+    
     controller = 0
     TapSideNumber = 0
     for x in [s1, s2, s3]
@@ -162,14 +169,6 @@ mutable struct PowerTransformer
         end
       end
     end
-
-    if s1.r != 0.0 && s1.x != 0.0
-      equiParms = 1
-    elseif s2.r != 0.0 && s2.x != 0.0
-      equiParms = 2
-    elseif !isnothing(s3) && s3.r != 0.0 && s3.x != 0.0
-      equiParms = 3
-    end  
 
     v1 = s1.Vn
     v2 = s2.Vn

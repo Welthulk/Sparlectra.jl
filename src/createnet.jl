@@ -210,8 +210,12 @@ function getBranchFor2WT(comp::ResDataTypes.AbstractComponent, fromBus::Int, toB
 end
 
 function setBranchFor3WT!(hv_bus::Int, mv_bus::Int, lv_bus::Int, trafo::ResDataTypes.PowerTransformer, auxBus::ResDataTypes.Node, Sbase_MVA::Float64, bVec::Vector{ResDataTypes.Branch}, log::Bool = false)
+  #change Component for export   
+    
+  trafo.comp = ImpPGMComp3WT(trafo.comp.cID, trafo.comp.cName, trafo.comp.cTyp, trafo.comp.cVN, hv_bus, mv_bus, lv_bus)
   cID = trafo.comp.cID
   auxBuxCmp = auxBus.comp
+  
   auxBusIdx = auxBus.busIdx
   ausBusID = auxBus.comp.cID
 
@@ -226,6 +230,8 @@ function setBranchFor3WT!(hv_bus::Int, mv_bus::Int, lv_bus::Int, trafo::ResDataT
 
   shift_mv_degree = trafo.side2.shift_degree
   shift_lv_degree = trafo.side3.shift_degree
+  
+
 
   tapSide = 0
   tap_min = 0
