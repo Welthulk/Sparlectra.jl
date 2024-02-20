@@ -65,21 +65,21 @@ struct ImpPGMComp <: AbstractComponent
   cVN::Float64           # nominal voltage in kV  
   cFrom_bus::Union{Nothing,Int64}
   cTo_bus::Union{Nothing,Int64}
-  
+
   function ImpPGMComp(id::String, name::String, typ::ComponentTyp, vn::Float64)
-    new(id, name, typ, vn,  nothing, nothing)
+    new(id, name, typ, vn, nothing, nothing)
   end
 
   function ImpPGMComp(id::String, name::String, typ::ComponentTyp, vn::Float64, fBus::Int64, tBus::Int64)
     new(id, name, typ, vn, fBus, tBus)
   end
 
-  function ImpPGMComp(cmp::Component, fBus::Int64, tBus::Int64, newID::Union{Nothing,String}=nothing)
+  function ImpPGMComp(cmp::Component, fBus::Int64, tBus::Int64, newID::Union{Nothing,String} = nothing)
     if isnothing(newID)
       new(cmp.cID, cmp.cName, cmp.cTyp, cmp.cVN, fBus, tBus)
-    else      
+    else
       new(newID, cmp.cName, cmp.cTyp, cmp.cVN, fBus, tBus)
-    end    
+    end
   end
 
   function Base.show(io::IO, x::ImpPGMComp)
@@ -87,7 +87,7 @@ struct ImpPGMComp <: AbstractComponent
     print(io, "ID=$(x.cID), ")
     print(io, "Name=$(x.cName), ")
     print(io, "Typ=$(x.cTyp), ")
-    print(io, "Vn=$(x.cVN), ")        
+    print(io, "Vn=$(x.cVN), ")
     if !isnothing(x.cFrom_bus)
       print(io, "From_bus=$(x.cFrom_bus), ")
     end
@@ -96,7 +96,32 @@ struct ImpPGMComp <: AbstractComponent
     end
     print(io, ")")
   end
+end
 
+struct ImpPGMComp3WT <: AbstractComponent
+  cID::String
+  cName::String
+  cTyp::ComponentTyp
+  cVN::Float64           # nominal voltage in kV  
+  cHV_bus::Int64
+  cMV_bus::Int64
+  cLV_bus::Int64
+
+  function ImpPGMComp3WT(id::String, name::String, typ::ComponentTyp, vn::Float64, hvBus::Int64, mvBus::Int64, lvBus::Int64)
+    new(id, name, typ, vn, hvBus, mvBus, lvBus)
+  end
+
+  function Base.show(io::IO, x::ImpPGMComp3WT)
+    print(io, "Component(")
+    print(io, "ID=$(x.cID), ")
+    print(io, "Name=$(x.cName), ")
+    print(io, "Typ=$(x.cTyp), ")
+    print(io, "Vn=$(x.cVN), ")
+    print(io, "HV_bus=$(x.cHV_bus), ")
+    print(io, "MV_bus=$(x.cMV_bus), ")
+    print(io, "LV_bus=$(x.cLV_bus) ")
+    print(io, ")")
+  end
 end
 
 # helper

@@ -51,13 +51,8 @@ function exportPGM(;net::ResDataTypes.Net, filename::String, useMVATrafoModell::
 
   function get_trafos(o::PowerTransformer, baseMVA::Float64)
     parameters = OrderedDict{String,Any}()
-    #
-    if o.isBiWinder == false 
-        @warn "Only BiWinder is supported", o.comp.cName
-        @show "trafo: ", o
-    end  
-
-    if isa(o.comp, ImpPGMComp)
+    
+    if o.isBiWinder && isa(o.comp, ImpPGMComp)
       use_default_params = false
 
       if isnothing(o.exParms)
@@ -166,7 +161,111 @@ function exportPGM(;net::ResDataTypes.Net, filename::String, useMVATrafoModell::
     end
     return parameters
   end
+  
+  function get_3WTtrafos(o::PowerTransformer, baseMVA::Float64)
+    parameters = OrderedDict{String,Any}()
+    if isa(o.comp, ImpPGMComp3WT)
+      @show "trafo: ", o
+      u1 = !isnothing(o.side1.ratedU) ? o.side1.ratedU * 1e3 : o.side1.Vn * 1e3
+      u2 = !isnothing(o.side2.ratedU) ? o.side2.ratedU * 1e3 : o.side2.Vn * 1e3
+      u3 = o.side3.ratedU * 1e3
+      sn_1  = !isnothing(o.side1.ratedS) ? o.side1.ratedS : 0.0
+      sn_2  = !isnothing(o.side2.ratedS) ? o.side2.ratedS : 0.0
+      sn_3  = !isnothing(o.side3.ratedS) ? o.side3.ratedS : 0.0
+      uk_12 = 0.0
+      uk_13 = 0.0      
+      uk_23 = 0.0
+      pk_12 = 0.0
+      pk_13 = 0.0
+      pk_23 = 0.0
+      i0 = 0.0
+      p0 = 0.0
+      
+      winding_1 = 0
+      winding_2 = 0
+      winding_3 = 0
+      clock_12  = 0
+      clock_13  = 0
 
+      tap_side = 0
+      tap_pos = 0
+      tap_min = 0
+      tap_max = 0
+      tap_nom = 0
+      tap_size = 0
+
+
+      if o.tapSideNumber == 1
+        tap_side = 0
+        tap_pos = o.side1.taps.step
+        tap_min = o.side1.taps.lowStep
+        tap_max = o.side1.taps.highStep
+        tap_nom = o.side1.taps.neutralStep
+        tap_size = 1e3 * o.side1.taps.voltageIncrement * o.side1.Vn / 100.0
+      elseif o.tapSideNumber == 2
+        tap_side = 1
+        tap_pos = o.side2.taps.step
+        tap_min = o.side2.taps.lowStep
+        tap_max = o.side2.taps.highStep
+        tap_nom = o.side2.taps.neutralStep
+        tap_size = 1e3 * o.side2.taps.voltageIncrement * o.side2.Vn / 100.0
+      else
+        tap_side = 2
+        tap_pos = o.side3.taps.step
+        tap_min = o.side3.taps.lowStep
+        tap_max = o.side3.taps.highStep
+        tap_nom = o.side3.taps.neutralStep
+        tap_size = 1e3 * o.side3.taps.voltageIncrement * o.side3.Vn / 100.0
+      end
+
+      node_1  = o.comp.cHV_bus
+      node_2  = o.comp.cMV_bus
+      node_3  = o.comp.cLV_bus
+      
+      status_1 = 1
+      status_2 = 1
+      status_3 = 1
+      parameters["id"] = get_next_id()
+      parameters["u1"] = u1
+      parameters["u2"] = u2
+      parameters["u3"] = u3
+      parameters["sn_1"] = sn_1
+      parameters["sn_2"] = sn_2
+      parameters["sn_3"] = sn_3
+      parameters["uk_12"] = uk_12
+      parameters["uk_13"] = uk_13
+      parameters["uk_23"] = uk_23
+      parameters["pk_12"] = pk_12
+      parameters["pk_13"] = pk_13
+      parameters["pk_23"] = pk_23
+      parameters["i0"] = i0
+      parameters["p0"] = p0
+      parameters["winding_1"] = winding_1
+      parameters["winding_2"] = winding_2
+      parameters["winding_3"] = winding_3
+      parameters["clock_12"] = clock_12
+      parameters["clock_13"] = clock_13
+      parameters["tap_side"] = tap_side
+      parameters["tap_pos"] = tap_pos
+      parameters["tap_min"] = tap_min
+      parameters["tap_max"] = tap_max
+      parameters["tap_nom"] = tap_nom
+      parameters["tap_size"] = tap_size
+      parameters["node_1"] = node_1
+      parameters["node_2"] = node_2
+      parameters["node_3"] = node_3
+      parameters["status_1"] = status_1
+      parameters["status_2"] = status_2
+      parameters["status_3"] = status_3
+      parameters["_cname"] = o.comp.cName
+      parameters["_cID"] = o.comp.cID
+    else
+      @warn "Transformer $(o.comp.cName) is not exported to PGM (not in service?)"
+    end
+    return parameters
+  end
+  
+  
   function get_sym_gens(o::ProSumer)
     parameters = OrderedDict{String,Any}()
     @assert isa(o.comp, ImpPGMComp)
@@ -266,7 +365,8 @@ function exportPGM(;net::ResDataTypes.Net, filename::String, useMVATrafoModell::
         "line" => filter(x -> !isempty(x), [get_lines(ac) for ac in net.linesAC]),
         "sym_gen" => filter(x -> !isempty(x), [get_sym_gens(o) for o in net.prosumpsVec if o.proSumptionType == ResDataTypes.Injection && !isSlack(o)]),
         "shunt" => filter(x -> !isempty(x), [get_shunts(o) for o in net.shuntVec]),
-        "transformer" => filter(x -> !isempty(x), [get_trafos(t, net.baseMVA) for t in net.trafos]),
+        "transformer" => filter(x -> !isempty(x), [get_trafos(t, net.baseMVA) for t in net.trafos if isa(t.comp, ImpPGMComp)]),
+        "three_winding_transformer" => filter(x -> !isempty(x), [get_3WTtrafos(t, net.baseMVA) for t in net.trafos if isa(t.comp, ImpPGMComp3WT)]),
         "sym_load" => filter(x -> !isempty(x), [get_sym_loads(o) for o in net.prosumpsVec if o.proSumptionType == ResDataTypes.Consumption]),
         "source" => filter(x -> !isempty(x), [get_source(o) for o in net.nodeVec if isSlack(o)]),
       ),

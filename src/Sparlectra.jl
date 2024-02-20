@@ -15,6 +15,7 @@ export
   ComponentTyp,
   Component,
   ImpPGMComp,
+  ImpPGMComp3WT,
   Terminal,
   Node,
   NodeParameters,
