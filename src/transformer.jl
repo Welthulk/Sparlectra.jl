@@ -133,11 +133,12 @@ mutable struct PowerTransformer
   nController::Integer            # Number of Sides controlled
   isBiWinder::Bool
   HVSideNumber::Integer           # Number of HV Side [1,2,3], for 3WT HV =1, MV=2, LV=3 
-  tapSideNumber::Integer          # Number of Tap Side [1,2,3], = 0 if no Tap
+  tapSideNumber::Integer          # Number of Tap Side [1,2,3], = 0 if no Tap  
   side1::PowerTransformerWinding
   side2::PowerTransformerWinding
   side3::Union{Nothing,PowerTransformerWinding}
   exParms::Union{Nothing,TransformesModelParameters}
+  _equiParms::Integer             # Winding-Side with Short-Circuit-Parameters, 1 for side1,2 for side2, 3 for all sides (3WT)
 
   function PowerTransformer(comp::AbstractComponent, tapEnable::Bool, 
                             s1::PowerTransformerWinding, s2::PowerTransformerWinding, s3::Union{Nothing,PowerTransformerWinding} = nothing, 
@@ -148,9 +149,9 @@ mutable struct PowerTransformer
       isBi = true
     else
       isBi = false
-      n = 3
+      n = 3      
     end
-
+    equiParms = 0
     controller = 0
     TapSideNumber = 0
     for x in [s1, s2, s3]
@@ -161,6 +162,14 @@ mutable struct PowerTransformer
         end
       end
     end
+
+    if s1.r != 0.0 && s1.x != 0.0
+      equiParms = 1
+    elseif s2.r != 0.0 && s2.x != 0.0
+      equiParms = 2
+    elseif !isnothing(s3) && s3.r != 0.0 && s3.x != 0.0
+      equiParms = 3
+    end  
 
     v1 = s1.Vn
     v2 = s2.Vn
@@ -178,7 +187,7 @@ mutable struct PowerTransformer
       HVSideNumber = 3
     end
 
-    new(comp, trafoTyp, tapEnable, n, controller, isBi, HVSideNumber, TapSideNumber, s1, s2, s3, exParms)
+    new(comp, trafoTyp, tapEnable, n, controller, isBi, HVSideNumber, TapSideNumber, s1, s2, s3, exParms, equiParms)
   end
 
   function Base.show(io::IO, x::PowerTransformer)
@@ -189,6 +198,9 @@ mutable struct PowerTransformer
     print(io, "ns=$(x.nS), ")
     print(io, "nController=$(x.nController), ")
     print(io, "isBiWinder=$(x.isBiWinder), ")
+    print(io, "HVSideNumber=$(x.HVSideNumber), ")
+    print(io, "tapSideNumber=$(x.tapSideNumber), ")
+    print(io, "equiParms=$(x._equiParms), ")
     println(io, "") # next line
     println(io, "side1=$(x.side1), ")
     if (isnothing(x.side3))
@@ -200,6 +212,7 @@ mutable struct PowerTransformer
     if !(isnothing(x.exParms))
       print(io, "exParms=$(x.exParms), ")
     end
+    
     print(io, ")")
   end
 end

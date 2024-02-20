@@ -209,25 +209,36 @@ x_pu: short circuit reaktance, p.u.
 bm: open loop magnitacation, p.u.
 hint: gm is set to zero, g_pu = 0.0!
 """
-function recalc_trafo_model_data(;baseMVA::Float64, Sn_MVA::Float64, ratedU_kV::Float64, r_pu::Float64, x_pu::Float64, b_pu::Float64)
+function recalc_trafo_model_data(;baseMVA::Float64, Sn_MVA::Float64, ratedU_kV::Float64, r_pu::Float64, x_pu::Float64, b_pu::Float64, isPerUnit::Bool)::Tuple{Float64, Float64, Float64, Float64}
   wurz3 = sqrt(3.0)
-  base_power_3p = baseMVA
-  base_power_1p = base_power_3p/3.0
-  base_i_to = base_power_3p/(ratedU_kV*wurz3)
-  base_y_to = base_i_to * base_i_to / base_power_1p
-  base_z_to = 1.0/base_y_to
-
   Pfe_kW = 0.0 # -> g_pu = 0.0
-  # g_pu = 0.0!
-  y_shunt  = b_pu
-  Y_shunt = y_shunt*base_y_to
-  i0 = Y_shunt*ratedU_kV^2/Sn_MVA
+  if isPerUnit
+    base_power_3p = baseMVA
+    base_power_3p = baseMVA
+    base_power_1p = base_power_3p/3.0
+    base_i_to = base_power_3p/(ratedU_kV*wurz3)
+    base_y_to = base_i_to * base_i_to / base_power_1p
+    base_z_to = 1.0/base_y_to
 
-  z_ser_pu = sqrt(r_pu^2 + x_pu^2)
-  Z_Series_abs = z_ser_pu*base_z_to
-  uk = Z_Series_abs*Sn_MVA/ratedU_kV^2
-  Rk= r_pu*base_z_to
-  P_kW = Rk*Sn_MVA^2/ratedU_kV^2
+    
+    # g_pu = 0.0!
+    y_shunt  = b_pu
+    Y_shunt = y_shunt*base_y_to
+    i0 = Y_shunt*ratedU_kV^2/Sn_MVA
+
+    z_ser_pu = sqrt(r_pu^2 + x_pu^2)
+    Z_Series_abs = z_ser_pu*base_z_to
+    uk = Z_Series_abs*Sn_MVA/ratedU_kV^2
+    Rk= r_pu*base_z_to
+    P_kW = Rk*Sn_MVA^2/ratedU_kV^2
+  else
+    Y_shunt = b_pu
+    i0 = Y_shunt*ratedU_kV^2/Sn_MVA
+    Z_Series_abs = sqrt(r_pu^2 + x_pu^2)    
+    uk = Z_Series_abs*Sn_MVA/ratedU_kV^2
+    Rk= r_pu
+    P_kW = Rk*Sn_MVA^2/ratedU_kV^2
+  end
 
   return uk, P_kW, i0, Pfe_kW
   

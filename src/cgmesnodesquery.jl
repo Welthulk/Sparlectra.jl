@@ -80,6 +80,8 @@ function QueryNodes!(url::String, NodeVec::NodeVector, debug::Bool)::Bool
       try
 
         node = ResDataTypes.Node(lastNodeID, lastNodeName, Vn, copy(terminals))
+        #node._vm_pu = vm_pu
+        #node._vm_degree = lastVa
 
       catch err
         @error err
