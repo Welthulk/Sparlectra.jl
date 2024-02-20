@@ -46,8 +46,13 @@ function exportPGM(net::ResDataTypes.Net, filename::String)
 
   function get_trafos(o::PowerTransformer, baseMVA::Float64)
     parameters = OrderedDict{String,Any}()
+    #
+    if o.isBiWinder == false 
+        @warn "Only BiWinder is supported", o.comp.cName
+        @show "trafo: ", o
+    end  
+
     if isa(o.comp, ImpPGMComp)
-      @assert o.isBiWinder == true "Only BiWinder is supported"
       use_default_params = false
 
       if isnothing(o.exParms)
@@ -63,7 +68,6 @@ function exportPGM(net::ResDataTypes.Net, filename::String)
       tap_size = 0
       u1 = 0.0
       u2 = 0.0
-      winding = nothing
       vn = 0.0
       rk = 0.0
       xk = 0.0
@@ -72,43 +76,33 @@ function exportPGM(net::ResDataTypes.Net, filename::String)
       sn = 0.0
       isPerUnitRXGB = false
       ratedU = nothing
+      winding = (o._equiParms == 1) ? o.side1 :
+           ((o._equiParms == 2) ? o.side2 :
+            nothing)
+      #@show "winding: ", winding, o.tapSideNumber, o._equiParms
+      if !isnothing(winding)
+        vn = winding.Vn
+        rk = winding.r
+        xk = winding.x
+        bm = !isnothing(winding.b) ? winding.b : 0.0
+        gm = !isnothing(winding.g) ? winding.g : 0.0
+        
+        ratedU = !isnothing(winding.ratedU) ? winding.ratedU : vn
+        sn = !isnothing(winding.ratedS) ? winding.ratedS : 0.0
+        isPerUnitRXGB = isPerUnit_RXGB(winding)
+      end
+      
+      
       if o.HVSideNumber == 1
         u1 = o.side1.Vn * 1e3
         u2 = o.side2.Vn * 1e3
-        winding = o.side1
-        vn = o.side1.Vn
-        rk = o.side1.r
-        xk = o.side1.x
-        bm = !isnothing(o.side1.b) ? o.side1.b : 0.0
-        gm = !isnothing(o.side1.g) ? o.side1.g : 0.0
-        ratedU = o.side1.ratedU
-        sn = !isnothing(o.side1.ratedS) ? o.side1.ratedS : 0.0
-        isPerUnitRXGB = isPerUnit_RXGB(winding)
       else
         u1 = o.side2.Vn * 1e3
-        u2 = o.side1.Vn * 1e3
-        vn = o.side1.Vn
-        winding = o.side2
-        vn = o.side2.Vn
-        rk = o.side2.r
-        xk = o.side2.x
-        bm = !isnothing(o.side2.bm) ? o.side2.bm : 0.0
-        gm = !isnothing(o.side2.gm) ? o.side2.gm : 0.0
-        ratedU = o.side2.ratedU
-        sn = !isnothing(o.side2.ratedS) ? o.side2.ratedS : 0.0
-        isPerUnitRXGB = isPerUnit_RXGB(winding)
+        u2 = o.side1.Vn * 1e3        
       end
-
-      if o.isControlled
-        if o.HVSideNumber == 1
-          taps = o.side1.taps
-          tap_side = 0
-          vn = o.side1.Vn
-        else
-          taps = o.side2.taps
-          tap_side = 1
-          vn = o.side2.Vn
-        end
+      
+      if !isnothing(winding) && !isnothing(winding.taps)
+        taps = winding.taps
         tap_pos = taps.step
         tap_min = taps.lowStep
         tap_max = taps.highStep
@@ -135,20 +129,13 @@ function exportPGM(net::ResDataTypes.Net, filename::String)
           parameters["p0"] = 0.0
         else
           rated_U = !isnothing(ratedU) ? ratedU : vn
-          if isPerUnitRXGB
-            uk, P_kW, i0, Pfe_kW = recalc_trafo_model_data(baseMVA = baseMVA, Sn_MVA = sn, ratedU_kV = rated_U, r_pu = rk, x_pu = xk, b_pu = abs(bm))
-            parameters["sn"] = sn * 1e6
-            parameters["uk"] = uk
-            parameters["pk"] = P_kW * 1e3
-            parameters["i0"] = i0
-            parameters["p0"] = Pfe_kW * 1e3
-          else
-            parameters["sn"] = 0.0
-            parameters["uk"] = 0.0
-            parameters["pk"] = 0.0
-            parameters["i0"] = 0.0
-            parameters["p0"] = 0.0
-          end
+
+          uk, P_kW, i0, Pfe_kW = recalc_trafo_model_data(baseMVA = baseMVA, Sn_MVA = sn, ratedU_kV = rated_U, r_pu = rk, x_pu = xk, b_pu = abs(bm), isPerUnit=isPerUnitRXGB)
+          parameters["sn"] = sn * 1e6
+          parameters["uk"] = uk
+          parameters["pk"] = P_kW * 1e3
+          parameters["i0"] = i0
+          parameters["p0"] = Pfe_kW * 1e3
         end
       else
         parameters["sn"] = !isnothing(o.exParms.sn) ? o.exParms.sn : 0.0
@@ -191,14 +178,14 @@ function exportPGM(net::ResDataTypes.Net, filename::String)
       @warn "pVal is not set, set to 0.0"
       parameters["p_specified"] = 0.0
     else
-      parameters["p_specified"] = o.pVal * 1e6
+      parameters["p_specified"] = abs(o.pVal) * 1e6
     end
 
     if isnothing(o.qVal)
       @warn "qVal is not set, set to 0.0"
       parameters["q_specified"] = 0.0
     else
-      parameters["q_specified"] = o.qVal * 1e6
+      parameters["q_specified"] = abs(o.qVal) * 1e6
     end
     parameters["_cname"] = o.comp.cName
     parameters["_cID"] = o.comp.cID
@@ -214,8 +201,8 @@ function exportPGM(net::ResDataTypes.Net, filename::String)
     parameters["node"] = o.comp.cFrom_bus
     parameters["status"] = 1
     parameters["type"] = 0
-    parameters["p_specified"] = o.pVal * 1e6
-    parameters["q_specified"] = o.qVal * 1e6
+    parameters["p_specified"] = abs(o.pVal) * 1e6
+    parameters["q_specified"] = abs(o.qVal) * 1e6
 
     parameters["_cname"] = o.comp.cName
     parameters["_cID"] = o.comp.cID
@@ -230,7 +217,12 @@ function exportPGM(net::ResDataTypes.Net, filename::String)
     parameters["id"] = get_next_id()
     parameters["node"] = o.busIdx
     parameters["status"] = 1 # default
-    parameters["u_ref"] = o._vm_pu
+    if isnothing(o._vm_pu)
+      @warn "u_ref is not set, set to 1.0"
+      parameters["u_ref"] = 1.0
+    else
+      parameters["u_ref"] = o._vm_pu
+    end
     parameters["sk"] = 10000000000.0 # default
     parameters["rx_ratio"] = 0.1 # default
     parameters["z01_ratio"] = 1.0 # default

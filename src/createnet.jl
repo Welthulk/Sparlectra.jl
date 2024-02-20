@@ -348,6 +348,10 @@ function createBranchVectorFromNodeVector!(;nodes::Vector{ResDataTypes.Node}, li
     end    
     NodeDict[n.comp.cID] = n
   end
+  
+  for line in lines
+    LineDict[line.comp.cID] = line    
+  end
 
   for s in shunts
     @show "Shunt:", s
@@ -360,16 +364,16 @@ function createBranchVectorFromNodeVector!(;nodes::Vector{ResDataTypes.Node}, li
       n = NodeDict[p.nodeID]
       pgm_comp = ImpPGMComp(p.comp, n.busIdx, n.busIdx)
       p.comp = pgm_comp
+      if !isnothing(p.referencePri) && p.referencePri > 0
+        if isnothing(n._vm_pu) && !isnothing(p.vm_pu) && p.vm_pu > 0.0
+          @show n._vm_pu = p.vm_pu
+        end
+      end
 
     else
       @warn "ProSumerDict not found: ", p.nodeID
     end  
   end  
-
-  for line in lines
-    LineDict[line.comp.cID] = line
-    @show "vorher: ", line.comp
-  end
   
   for trafo in trafos
     TrafoDict[trafo.comp.cID] = trafo
@@ -400,14 +404,12 @@ function createBranchVectorFromNodeVector!(;nodes::Vector{ResDataTypes.Node}, li
 
             if t.comp.cTyp == ResDataTypes.LineC # handle lines to create branches
               if haskey(LineDict, id)
-                line = LineDict[id]
-                @show "Line:", line
+                line = LineDict[id]                
                 newID = "#branch_"*comp.cID
                 pgm_comp = ImpPGMComp(comp, fromBus, toBus, newID)
                 b = getBranchForLine(pgm_comp, fromBus, toBus, fNodeID, tNodeID, line, ZBase)
                 push!(branchVector, b)                                
-                line.comp = ImpPGMComp(comp, fromBus, toBus)
-                @show "Line:", line.comp, fromBus, toBus
+                line.comp = ImpPGMComp(comp, fromBus, toBus)                
               else
                 @warn "could not handle Line $id"
               end
@@ -440,10 +442,6 @@ function createBranchVectorFromNodeVector!(;nodes::Vector{ResDataTypes.Node}, li
       end # for Terminal
     end # for Node
   end # eType  
-  for line in lines
-    LineDict[line.comp.cID] = line
-    @show "nacher: ", line.comp
-  end
 
   setParallelBranches!(branchVector)
   return branchVector
