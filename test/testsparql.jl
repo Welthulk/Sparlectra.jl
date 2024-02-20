@@ -35,7 +35,7 @@ end
 if writeCasePGM  
     # pgm export
     file = joinpath(pwd(),"data","pgmodel",myNet.name * "_pgm")
-    exportPGM(myNet,file)
+    exportPGM(net=myNet,filename=file, useMVATrafoModell=false)
 end
 
 # calculate Y-Bus Matrix
