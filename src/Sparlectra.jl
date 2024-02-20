@@ -7,7 +7,7 @@ module ResDataTypes
 
 # resource data types for working with Sparlectra
 const Wurzel3 = 1.7320508075688772
-const SparlectraVersion = VersionNumber("0.4.100")
+const SparlectraVersion = VersionNumber("0.4.200")
 export
   # constants
   Wurzel3,
@@ -23,13 +23,14 @@ export
   PowerTransformerTaps,
   PowerTransformerWinding,
   PowerTransformer,
-  TransformesAdditionalParameters,
+  TransformesModelParameters,
   ProSumer,
   BranchFlow,
   Branch,
   Shunt,
   Net,
   # functions
+  isPerUnit_RXGB,
   addGenAktivePower!,
   addGenReaktivePower!,
   toComponentTyp,
@@ -461,6 +462,7 @@ export
   calcRatio,
   calcNeutralU,
   calcTrafoParamsSI,
+  recalc_trafo_model_data,
   calcTrafoParams,
   calc3WTParams,
   calcYShunt,
@@ -468,7 +470,7 @@ export
   adjacentBranches,
   getNBI,
   mdoRCM,
-  createBranchVectorFromNodeVector,
+  createBranchVectorFromNodeVector!,
   fixSequenceNumberInNodeVec!,
   setParallelBranches!,
   calcJacobian,

@@ -263,7 +263,7 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
     s3 = nothing
 
     
-    addEx = TransformesAdditionalParameters(sn, uk, pk_W, i0, p0_W)
+    addEx = TransformesModelParameters(sn, uk, pk_W, i0, p0_W)
     cImpPGMComp = ImpPGMComp(cID, cName, toComponentTyp("POWERTRANSFORMER"), vn_hv, from_node, to_node)
     trafo = PowerTransformer(cImpPGMComp, true, s1, s2, s3, ResDataTypes.Ratio, addEx)
     push!(trafos, trafo)

@@ -2,18 +2,18 @@
 # Date: 10.05.2023
 # include-file transformer.jl
 
-mutable struct TransformesAdditionalParameters
+mutable struct TransformesModelParameters
   sn::Float64 # PGM-Parameter sn in VA
   uk::Float64 # PGM-Parameter sn in percent
   pk::Float64 # PGM-Parameter sn in W
   i0::Float64 # PGM-Parameter sn in A
   p0::Float64 # PGM-Parameter sn in W
 
-  function TransformesAdditionalParameters(sn::Float64, uk::Float64, pk::Float64, i0::Float64, p0::Float64)
+  function TransformesModelParameters(sn::Float64, uk::Float64, pk::Float64, i0::Float64, p0::Float64)
     new(sn, uk, pk, i0, p0)
   end
 
-  function Base.show(io::IO, x::TransformesAdditionalParameters)
+  function Base.show(io::IO, x::TransformesModelParameters)
     print(io, "AdditionalParameters(")
     print(io, "sn=$(x.sn), ")
     print(io, "uk=$(x.uk), ")
@@ -60,8 +60,10 @@ mutable struct PowerTransformerWinding
   ratedU::Union{Nothing,Float64}             # cim:PowerTransformerEnd.ratedU
   ratedS::Union{Nothing,Float64}             # cim:PowerTransformerEnd.ratedS  
   taps::Union{Nothing,PowerTransformerTaps}
+  isPu_RXGB::Union{Nothing,Bool}          # r,x,b in p.u. given? nothing = false
 
   function PowerTransformerWinding(
+    ;
     Vn::Float64,
     r::Float64,
     x::Float64,
@@ -71,8 +73,9 @@ mutable struct PowerTransformerWinding
     ratedU::Union{Nothing,Float64} = nothing,
     ratedS::Union{Nothing,Float64} = nothing,
     taps::Union{Nothing,PowerTransformerTaps} = nothing,
+    isPu_RXGB::Union{Nothing,Bool} = nothing,
   )
-    new(Vn, r, x, b, g, shift_degree, ratedU, ratedS, taps)
+    new(Vn, r, x, b, g, shift_degree, ratedU, ratedS, taps, isPu_RXGB)
   end
 
   function Base.show(io::IO, x::PowerTransformerWinding)
@@ -98,6 +101,9 @@ mutable struct PowerTransformerWinding
     if !(isnothing(x.taps))
       print(io, "taps=$(x.taps), ")
     end
+    if !(isnothing(x.isPu_RXGB))
+      print(io, "isPu_RXGB=$(x.isPu_RXGB), ")
+    end
     print(io, ")")
   end
 end
@@ -109,6 +115,14 @@ function hasTaps(x::Union{Nothing,PowerTransformerWinding})::Bool
   else
     return !(isnothing(x.taps))
   end
+end
+
+function isPerUnit_RXGB(o::PowerTransformerWinding)
+  if isnothing(o.isPu_RXGB)
+    return false
+  else
+    return o.isPu_RXGB
+  end  
 end
 
 mutable struct PowerTransformer
@@ -123,12 +137,12 @@ mutable struct PowerTransformer
   side1::PowerTransformerWinding
   side2::PowerTransformerWinding
   side3::Union{Nothing,PowerTransformerWinding}
-  exParms::Union{Nothing,TransformesAdditionalParameters}
+  exParms::Union{Nothing,TransformesModelParameters}
 
   function PowerTransformer(comp::AbstractComponent, tapEnable::Bool, 
                             s1::PowerTransformerWinding, s2::PowerTransformerWinding, s3::Union{Nothing,PowerTransformerWinding} = nothing, 
                             trafoTyp::TrafoTyp = ResDataTypes.Ratio,
-                            exParms::Union{Nothing,TransformesAdditionalParameters} = nothing)
+                            exParms::Union{Nothing,TransformesModelParameters} = nothing)
     if isnothing(s3)
       n = 2
       isBi = true

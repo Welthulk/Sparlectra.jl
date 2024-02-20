@@ -1217,8 +1217,8 @@ function testCreateNetworkFromScratch(verbose::Bool = false)
     reports()
   end
 
-  branchVec = createBranchVectorFromNodeVector(nodeVec, ACLines, Transformers, Sbase_MVA, false)
-  setParallelBranches!(branchVec)
+  branchVec = createBranchVectorFromNodeVector!(nodeVec, ACLines, Transformers, Sbase_MVA, false)
+  
 
   myNet = Net(netName, Sbase_MVA, slackBusIdx, nodeVec, ACLines, Transformers, branchVec, proSumersVec, shuntVec)
   return myNet

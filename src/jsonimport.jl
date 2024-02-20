@@ -336,7 +336,7 @@ function createNetFromFile(filename, base_MVA::Float64 = 0.0, log::Bool = false,
     end
     s3 = nothing
     
-    addEx = TransformesAdditionalParameters(sn, 0.0, 0.0, 0.0, 0.0)
+    addEx = TransformesModelParameters(sn, 0.0, 0.0, 0.0, 0.0)
     cImpPGMComp = ImpPGMComp(cID, cName, toComponentTyp("POWERTRANSFORMER"), vn_hv, busIdx, USIdx)    
     trafo = PowerTransformer(cImpPGMComp, regelungEin, s1, s2, s3, ResDataTypes.Ratio, addEx)
     if log
