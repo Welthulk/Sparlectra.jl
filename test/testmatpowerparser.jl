@@ -28,7 +28,7 @@ function acpflow(casefile::String, iterations::Int, verbose::Int, mdo::Bool, exp
   if exportToPGM    
     filename = joinpath(pwd(), "data", "pgmodel", myNet.name * "_pgm")
     @info "...export to PGM-Files, Filename: ($filename)"
-    exportPGM(myNet, filename)
+    exportPGM(net=myNet, filename=filename, useMVATrafoModell=false)
   end
 
   # Y-Bus Matrix
@@ -56,14 +56,15 @@ function acpflow(casefile::String, iterations::Int, verbose::Int, mdo::Bool, exp
 
 end
 
-verbose = 1
+verbose = 0
 ite = 6
 mdo = false
 pgm_export = true
 showAnyResult = false
-writeResultToFile = true
+writeResultToFile = false
 #case = "case_ieee118.m"
-case = "case_ieee30.m"
+#case = "case_ieee30.m"
+case="ieee_30bus.m"
 @time acpflow(case, ite, verbose, mdo, pgm_export, showAnyResult, writeResultToFile)
 
 

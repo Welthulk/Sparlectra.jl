@@ -29,14 +29,14 @@ function acpflow(casefile::String, writeCaseMP::Bool, writeCasePGM::Bool, iterat
      
   if writeCaseMP       
     # matpower export
-    file = joinpath(pwd(),"Sparlectra","data","ppower",case * ".m")
+    file = joinpath(pwd(),"data","ppower",case * ".m")
     writeMatpowerCasefile(myNet, file, case)  
   end
 
   if writeCasePGM  
     # pgm export
     file = joinpath(pwd(),"data","pgmodel",myNet.name * "_pgm")
-    exportPGM(myNet,file)
+    exportPGM(net=myNet,filename=file,useMVATrafoModell=false)
   end
 
   # Y-Bus Matrix  
@@ -56,4 +56,4 @@ function acpflow(casefile::String, writeCaseMP::Bool, writeCasePGM::Bool, iterat
   end
 end
 
-@time acpflow("bsp7.json", false, true, 6, 0)
+@time acpflow("bsp3.json", true, true, 6, 0)

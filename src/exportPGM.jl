@@ -2,7 +2,7 @@
 # Date: 8.2.24
 # include-file exportPGM.jl
 
-function exportPGM(;net::ResDataTypes.Net, filename::String, useMVATrafoModell::Bool=true)
+function exportPGM(;net::ResDataTypes.Net, filename::String, useMVATrafoModell::Bool)
   full_path = filename * ".json"
   @info "export to PGM-Files, Filename: ($full_path)"
 
@@ -37,9 +37,9 @@ function exportPGM(;net::ResDataTypes.Net, filename::String, useMVATrafoModell::
       parameters["to_node"] = o.comp.cTo_bus
       parameters["from_status"] = 1
       parameters["to_status"] = 1
-      parameters["r1"] = o.r
-      parameters["x1"] = o.x
-      parameters["c1"] = isnothing(o.c_nf_per_km) ? 0.0 : o.c_nf_per_km * 1e-9
+      parameters["r1"] = o.r*o.length
+      parameters["x1"] = o.x*o.length
+      parameters["c1"] = isnothing(o.c_nf_per_km) ? 0.0 : o.c_nf_per_km * 1e-9*o.length
       parameters["tan1"] = isnothing(o.tanδ) ? 0.0 : o.tanδ
       parameters["_cname"] = o.comp.cName
       parameters["_cID"] = o.comp.cID
@@ -53,12 +53,8 @@ function exportPGM(;net::ResDataTypes.Net, filename::String, useMVATrafoModell::
     parameters = OrderedDict{String,Any}()
     
     if o.isBiWinder && isa(o.comp, ImpPGMComp)
-      use_default_params = false
+      has_model_data = true
 
-      if isnothing(o.exParms)
-        use_default_params = true
-        @info "no transforme model data found, recalculation is to be performed"
-      end
 
       tap_side = 0
       tap_pos = 0
@@ -90,9 +86,12 @@ function exportPGM(;net::ResDataTypes.Net, filename::String, useMVATrafoModell::
         ratedU = !isnothing(winding.ratedU) ? winding.ratedU : vn
         sn = !isnothing(winding.ratedS) ? winding.ratedS : 0.0
         isPerUnitRXGB = isPerUnit_RXGB(winding)
+        if isnothing(winding.modelData)
+          has_model_data = false
+          @info "no transforme model data found, recalculation is to be performed"
+        end
       end
-      
-      
+            
       if o.HVSideNumber == 1
         u1 = o.side1.Vn * 1e3
         u2 = o.side2.Vn * 1e3
@@ -119,7 +118,7 @@ function exportPGM(;net::ResDataTypes.Net, filename::String, useMVATrafoModell::
       parameters["to_status"] = 1
       parameters["u1"] = u1
       parameters["u2"] = u2
-      if use_default_params
+      if !has_model_data
         if sn == 0.0
           @warn "ratedS of transformer $(o.comp.cName) is set to zero, could not perform transformer model data"
           parameters["sn"] = 0.0
@@ -138,11 +137,11 @@ function exportPGM(;net::ResDataTypes.Net, filename::String, useMVATrafoModell::
           parameters["p0"] = Pfe_kW * 1e3
         end
       else
-        parameters["sn"] = !isnothing(o.exParms.sn) ? o.exParms.sn : 0.0
-        parameters["uk"] = !isnothing(o.exParms.uk) ? o.exParms.uk : 0.0
-        parameters["pk"] = !isnothing(o.exParms.pk) ? o.exParms.pk : 0.0
-        parameters["i0"] = !isnothing(o.exParms.i0) ? o.exParms.i0 : 0.0
-        parameters["p0"] = !isnothing(o.exParms.p0) ? o.exParms.p0 : 0.0
+        parameters["sn"] = !isnothing(winding.exParms.sn) ? winding.exParms.sn : 0.0
+        parameters["uk"] = !isnothing(winding.exParms.uk) ? winding.exParms.uk : 0.0
+        parameters["pk"] = !isnothing(winding.exParms.pk) ? winding.exParms.pk : 0.0
+        parameters["i0"] = !isnothing(winding.exParms.i0) ? winding.exParms.i0 : 0.0
+        parameters["p0"] = !isnothing(winding.exParms.p0) ? winding.exParms.p0 : 0.0
       end
 
       parameters["winding_from"] = 1
@@ -165,13 +164,15 @@ function exportPGM(;net::ResDataTypes.Net, filename::String, useMVATrafoModell::
   function get_3WTtrafos(o::PowerTransformer, baseMVA::Float64)
     parameters = OrderedDict{String,Any}()
     if isa(o.comp, ImpPGMComp3WT)
-      @show "trafo: ", o
+      
+      #@show "trafo: ", o
       u1 = !isnothing(o.side1.ratedU) ? o.side1.ratedU * 1e3 : o.side1.Vn * 1e3
       u2 = !isnothing(o.side2.ratedU) ? o.side2.ratedU * 1e3 : o.side2.Vn * 1e3
       u3 = o.side3.ratedU * 1e3
-      sn_1  = !isnothing(o.side1.ratedS) ? o.side1.ratedS : 0.0
-      sn_2  = !isnothing(o.side2.ratedS) ? o.side2.ratedS : 0.0
-      sn_3  = !isnothing(o.side3.ratedS) ? o.side3.ratedS : 0.0
+      sn_1  = !isnothing(o.side1.ratedS) ? o.side1.ratedS*1e6 : 0.0
+      sn_2  = !isnothing(o.side2.ratedS) ? o.side2.ratedS*1e6 : 0.0
+      sn_3  = !isnothing(o.side3.ratedS) ? o.side3.ratedS*1e6 : 0.0
+
       uk_12 = 0.0
       uk_13 = 0.0      
       uk_23 = 0.0
@@ -180,6 +181,38 @@ function exportPGM(;net::ResDataTypes.Net, filename::String, useMVATrafoModell::
       pk_23 = 0.0
       i0 = 0.0
       p0 = 0.0
+
+      @assert isnothing(o.side1.modelData) && isnothing(o.side2.modelData) && isnothing(o.side3.modelData) "modelData not supported for 3WT-trafo"
+      l = 0
+      for side in [o.side1, o.side2, o.side3]        
+        #if isnothing(side.modelData)
+        #  @info "no transforme model data found, recalculation is to be performed"
+        #end
+        l+=1
+        bm = isnothing(side) ? 0.0 : side.b
+        uk, P_kW, _i0, _Pfe_kW = recalc_trafo_model_data(baseMVA = baseMVA, Sn_MVA = side.ratedS, ratedU_kV = side.ratedU, r_pu = side.r, x_pu = side.x, b_pu = abs(bm), isPerUnit=side.isPu_RXGB)
+        
+        if _Pfe_kW*1e3 > p0
+          p0 = _Pfe_kW*1e3
+        end
+        
+        if _i0 > i0
+          i0 = _i0
+        end
+
+        if l == 1
+          uk_12 = uk
+          pk_12 = P_kW*1e3          
+        elseif l == 2
+          uk_13 = uk
+          pk_13 = P_kW*1e3
+        else
+          uk_23 = uk
+          pk_23 = P_kW*1e3
+        end
+ 
+      end
+      
       
       winding_1 = 0
       winding_2 = 0
@@ -327,9 +360,9 @@ function exportPGM(;net::ResDataTypes.Net, filename::String, useMVATrafoModell::
     else
       parameters["u_ref"] = o._vm_pu
     end
-    parameters["sk"] = 10000000000.0 # default
-    parameters["rx_ratio"] = 0.1 # default
-    parameters["z01_ratio"] = 1.0 # default
+    parameters["sk"] = 1e40  # minimize Voltage lost
+    parameters["rx_ratio"] = 0.0 # should >= 0.0
+    parameters["z01_ratio"] = 0.1 # should > 0.0
     parameters["_cname"] = o.comp.cName
     parameters["_cID"] = o.comp.cID
 

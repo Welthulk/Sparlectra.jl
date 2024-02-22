@@ -129,6 +129,7 @@ function createNetFromFile(filename, base_MVA::Float64 = 0.0, log::Bool = false,
     cName = string(line["name"])
     cID = string(line["id"])
     length = float(line["length_km"])
+    @assert length > 0 "line length must be greater than 0"
     r = 0.0
     x = 0.0
     c_nf_per_km = 0.0
@@ -316,8 +317,11 @@ function createNetFromFile(filename, base_MVA::Float64 = 0.0, log::Bool = false,
       tap = ResDataTypes.PowerTransformerTaps(tap_pos, tap_min, tap_max, tap_neutral, tap_step_percent, Vtab)
       r_hv, x_hv, b_hv, g_hv, = calcTrafoParams(sn, vn_hv, vk_percent, vkr_percent, pfe_kw, io_percent)
       r_pu, x_pu, b_pu, g_pu = calcTwoPortPU(vn_hv, sn, r_hv, x_hv, b_hv, g_hv)
-      s1 = PowerTransformerWinding(vn_hv, r_hv, x_hv, b_hv, g_hv, shift_degree, vn_hv, sn, tap)
-      s2 = PowerTransformerWinding(vn_lv, 0.0, 0.0)
+      #function PowerTransformerWinding(; Vn::Float64, r::Float64, x::Float64, b::Union{Nothing, Float64} = nothing, g::Union{Nothing, Float64} = nothing, shift_degree::Union{Nothing, Float64} = nothing, ratedU::Union{Nothing, Float64} = nothing, ratedS::Union{Nothing, Float64} = nothing, taps::Union{Nothing, PowerTransformerTaps} = nothing, isPu_RXGB::Union{Nothing, Bool} = nothing, modelData::Union{Nothing, TransformesModelParameters} = nothing)
+      #  new(Vn, r, x, b, g, shift_degree, ratedU, ratedS, taps, isPu_RXGB, modelData)
+      
+      s1 = PowerTransformerWinding(Vn=vn_hv, r=r_hv, x=x_hv, b=b_hv, g=g_hv, shift_degree=shift_degree, ratedU=vn_hv, ratedS=sn, taps=tap, isPu_RXGB=true)
+      s2 = PowerTransformerWinding(Vn=vn_lv, r=0.0, x=0.0)
 
     elseif regelungEin && tapSeite == 2
       Vtab = calcNeutralU(neutralU_ratio, vn_lv, tap_min, tap_max, tap_step_percent)
@@ -325,20 +329,19 @@ function createNetFromFile(filename, base_MVA::Float64 = 0.0, log::Bool = false,
       # maibe an error here: vn_hv?
       r_lv, x_lv, b_lv, g_lv = calcTrafoParams(sn, vn_hv, vk_percent, vkr_percent, pfe_kw, io_percent)
       r_pu, x_pu, b_pu, g_pu = calcTwoPortPU(vn_hv, sn, r_lv, x_lv, b_lv, g_lv)
-      s1 = PowerTransformerWinding(vn_hv, 0.0, 0.0)
-      s2 = PowerTransformerWinding(vn_lv, r_lv, x_lv, b_lv, g_lv, shift_degree, vn_lv, sn, tap)
+      s1 = PowerTransformerWinding(Vn=vn_hv, r=0.0, x=0.0)
+      s2 = PowerTransformerWinding(Vn=vn_lv, r=r_lv, x=x_lv, b=b_lv, g=g_lv, shift_degree=shift_degree, ratedU=vn_lv, ratedS=sn, taps=tap, isPu_RXGB=true)
 
     else
       r_hv, x_hv, b_hv, g_hv = calcTrafoParams(sn, vn_hv, vk_percent, vkr_percent, pfe_kw, io_percent)
       r_pu, x_pu, b_pu, g_pu = calcTwoPortPU(vn_hv, sn, r_hv, x_hv, b_hv, g_hv)
-      s1 = PowerTransformerWinding(vn_hv, r_hv, x_hv, g_hv, b_hv, vn_hv, sn, nothing)
-      s2 = PowerTransformerWinding(vn_lv, 0.0, 0.0)
+      s1 = PowerTransformerWinding(Vn=vn_hv, r=r_hv, x=x_hv, g=g_hv, b=b_hv, ratedU=vn_hv, ratedS=sn, isPu_RXGB=true)
+      s2 = PowerTransformerWinding(Vn=vn_lv, r=0.0, x=0.0)
     end
     s3 = nothing
     
-    addEx = TransformesModelParameters(sn, 0.0, 0.0, 0.0, 0.0)
     cImpPGMComp = ImpPGMComp(cID, cName, toComponentTyp("POWERTRANSFORMER"), vn_hv, busIdx, USIdx)    
-    trafo = PowerTransformer(cImpPGMComp, regelungEin, s1, s2, s3, ResDataTypes.Ratio, addEx)
+    trafo = PowerTransformer(cImpPGMComp, regelungEin, s1, s2, s3, ResDataTypes.Ratio)
     if log
       @show trafo
     end
@@ -960,13 +963,14 @@ function createNetFromFile(filename, base_MVA::Float64 = 0.0, log::Bool = false,
 
     c = ImpPGMComp(cID, busName, ResDataTypes.Busbarsection, Vn,  busIdx, busIdx)
     node = Node(c, terminals, busIdx, busIdx, toNodeType(nodeType))
-    if nodeType == 3
-      nParms = NodeParametersDict[busIdx]
+    nParms = NodeParametersDict[busIdx]
+    
+    if nodeType == 3      
       nParms.vm_pu = slack_vm_pu
-      nParms.va_deg = slack_va_deg      
-      setNodeParameters!(node, nParms)
+      nParms.va_deg = slack_va_deg            
     end   
-              
+    setNodeParameters!(node, nParms)          
+
     if log
       @show node
     end
