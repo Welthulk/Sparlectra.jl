@@ -14,7 +14,7 @@ mutable struct TransformesModelParameters
   end
 
   function Base.show(io::IO, x::TransformesModelParameters)
-    print(io, "AdditionalParameters(")
+    print(io, "TransformesModelParameters(")
     print(io, "sn=$(x.sn), ")
     print(io, "uk=$(x.uk), ")
     print(io, "pk=$(x.pk), ")
@@ -61,6 +61,7 @@ mutable struct PowerTransformerWinding
   ratedS::Union{Nothing,Float64}             # cim:PowerTransformerEnd.ratedS  
   taps::Union{Nothing,PowerTransformerTaps}
   isPu_RXGB::Union{Nothing,Bool}          # r,x,b in p.u. given? nothing = false
+  modelData::Union{Nothing,TransformesModelParameters}
 
   function PowerTransformerWinding(
     ;
@@ -74,8 +75,9 @@ mutable struct PowerTransformerWinding
     ratedS::Union{Nothing,Float64} = nothing,
     taps::Union{Nothing,PowerTransformerTaps} = nothing,
     isPu_RXGB::Union{Nothing,Bool} = nothing,
+    modelData::Union{Nothing,TransformesModelParameters} = nothing,
   )
-    new(Vn, r, x, b, g, shift_degree, ratedU, ratedS, taps, isPu_RXGB)
+    new(Vn, r, x, b, g, shift_degree, ratedU, ratedS, taps, isPu_RXGB, modelData)
   end
 
   function Base.show(io::IO, x::PowerTransformerWinding)
@@ -104,6 +106,10 @@ mutable struct PowerTransformerWinding
     if !(isnothing(x.isPu_RXGB))
       print(io, "isPu_RXGB=$(x.isPu_RXGB), ")
     end
+    if !(isnothing(x.modelData))
+      print(io, "$(x.modelData), ")
+    end
+
     print(io, ")")
   end
 end
@@ -136,14 +142,12 @@ mutable struct PowerTransformer
   tapSideNumber::Integer          # Number of Tap Side [1,2,3], = 0 if no Tap  
   side1::PowerTransformerWinding
   side2::PowerTransformerWinding
-  side3::Union{Nothing,PowerTransformerWinding}
-  exParms::Union{Nothing,TransformesModelParameters}
+  side3::Union{Nothing,PowerTransformerWinding}  
   _equiParms::Integer             # Winding-Side with Short-Circuit-Parameters, 1 for side1,2 for side2, 3 for all sides (3WT)
 
   function PowerTransformer(comp::AbstractComponent, tapEnable::Bool, 
                             s1::PowerTransformerWinding, s2::PowerTransformerWinding, s3::Union{Nothing,PowerTransformerWinding} = nothing, 
-                            trafoTyp::TrafoTyp = ResDataTypes.Ratio,
-                            exParms::Union{Nothing,TransformesModelParameters} = nothing)
+                            trafoTyp::TrafoTyp = ResDataTypes.Ratio,)
     equiParms = 0
     if isnothing(s3)
       n = 2
@@ -186,7 +190,7 @@ mutable struct PowerTransformer
       HVSideNumber = 3
     end
 
-    new(comp, trafoTyp, tapEnable, n, controller, isBi, HVSideNumber, TapSideNumber, s1, s2, s3, exParms, equiParms)
+    new(comp, trafoTyp, tapEnable, n, controller, isBi, HVSideNumber, TapSideNumber, s1, s2, s3, equiParms)
   end
 
   function Base.show(io::IO, x::PowerTransformer)
@@ -207,9 +211,6 @@ mutable struct PowerTransformer
     else
       println(io, "side2=$(x.side2), ")
       print(io, "side3=$(x.side3) ")
-    end
-    if !(isnothing(x.exParms))
-      print(io, "exParms=$(x.exParms), ")
     end
     
     print(io, ")")
