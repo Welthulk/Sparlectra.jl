@@ -49,7 +49,7 @@ function createNetFromFile(filename, base_MVA::Float64 = 0.0, log::Bool = false,
   log_println("Buses:")
   busIdx = 0 # Counter for bus index
   slackIdx = 0 # Counter for slack index
-  
+
   slack_vm_pu = 1.0
   slack_va_deg = 0.0
   for bus in buses
@@ -58,11 +58,11 @@ function createNetFromFile(filename, base_MVA::Float64 = 0.0, log::Bool = false,
     name = string(bus["name"])
     vn_kv = float(bus["vn_kv"])
     btype = Int64(bus["type"])
-    
+
     if bus["type"] == 3
       slackIdx = busIdx
     end
-    
+
     bus = Bus(busIdx, name, nodeID, "", vn_kv, btype)
     if log
       @show bus
@@ -86,14 +86,14 @@ function createNetFromFile(filename, base_MVA::Float64 = 0.0, log::Bool = false,
 
   #Check if the bus numbers are consecutive and unique        
   for (i, bus) in enumerate(busVec)
-    @assert bus.busIdx == i "bus numbers are not consecutive and unique"        
+    @assert bus.busIdx == i "bus numbers are not consecutive and unique"
   end
 
   # Set up auxillary buses
   if !isnothing(trafo3WT)
     log_println("aux buses:")
     for t3WT in trafo3WT
-      busIdx += 1      
+      busIdx += 1
       cName = "aux_#" * string(busIdx)
       nodeID = string(UUIDs.uuid4())
       cID = string(t3WT["id"])
@@ -170,23 +170,22 @@ function createNetFromFile(filename, base_MVA::Float64 = 0.0, log::Bool = false,
     Vn = VoltageDict[Bus]
 
     status = line["in_service"]
-    
+
     from_bus = line["from_bus"]
     to_bus = line["to_bus"]
     checkBusNumber(from_bus, busVec)
     checkBusNumber(to_bus, busVec)
 
-    
-    cPGM = ImpPGMComp(cID, cName, toComponentTyp("ACLINESEGMENT"), Vn, from_bus, to_bus)    
+    cPGM = ImpPGMComp(cID, cName, toComponentTyp("ACLINESEGMENT"), Vn, from_bus, to_bus)
     asec = ACLineSegment(cPGM, length, r, x, b, g, c_nf_per_km, 0.0)
     if log
       println(asec)
     end
     push!(ACLines, asec)
-    
+
     t1 = ResDataTypes.Terminal(cPGM, ResDataTypes.Seite1)
     t2 = ResDataTypes.Terminal(cPGM, ResDataTypes.Seite2)
-    
+
     t1Terminal = NodeTerminalsDict[from_bus]
     t2Terminal = NodeTerminalsDict[to_bus]
     push!(t1Terminal, t1)
@@ -217,7 +216,14 @@ function createNetFromFile(filename, base_MVA::Float64 = 0.0, log::Bool = false,
     vn_hv = float(t["vn_hv_kv"])
     vn_lv = float(t["vn_lv_kv"])
     vk_percent = float(t["vk_percent"])
-    vkr_percent = float(t["vkr_percent"])
+    org_vk_percent = vk_percent
+    vkr_percent = nothing
+    pk_kW = nothing
+    try
+      vkr_percent = float(t["vkr_percent"])
+      pk_kW = float(t["pk_kw"])
+    catch
+    end
     pfe_kw = float(t["pfe_kw"])
     io_percent = float(t["i0_percent"])
     shift_degree = 0.0
@@ -243,7 +249,7 @@ function createNetFromFile(filename, base_MVA::Float64 = 0.0, log::Bool = false,
     catch
     end
 
-    vk_dependence = ""
+    vk_dependence = nothing
     try
       vk_dependence = t["vk_dependence"]
     catch
@@ -283,7 +289,7 @@ function createNetFromFile(filename, base_MVA::Float64 = 0.0, log::Bool = false,
     vkVec = []
     xDependence = false
     vkcorr = 0.0
-    if vk_dependence != raw""
+    if !isnothing(vk_dependence)
       for dep in vkDepChr
         if vk_dependence in keys(vkDepChr)
           dep = vkDepChr[vk_dependence]
@@ -312,35 +318,47 @@ function createNetFromFile(filename, base_MVA::Float64 = 0.0, log::Bool = false,
     HV_Voltage = VoltageDict[busIdx]
     LV_Voltage = VoltageDict[USIdx]
     ratio = calcRatio(HV_Voltage, vn_hv, LV_Voltage, vn_lv, tap_pos, tap_neutral, tap_step_percent, tapSeite)
+    
+    mParm=nothing    
+    if !isnothing(pk_kW)             
+      vkp=org_vk_percent/100.0
+      i0p=io_percent
+      p=pk_kW*1e3
+      s=sn*1e6
+      pfe=pfe_kw*1e3
+      mParm=TransformesModelParameters(s, vkp, p, i0p, pfe)
+    end
+
     if regelungEin && tapSeite == 1
       Vtab = calcNeutralU(neutralU_ratio, vn_hv, tap_min, tap_max, tap_step_percent)
       tap = ResDataTypes.PowerTransformerTaps(tap_pos, tap_min, tap_max, tap_neutral, tap_step_percent, Vtab)
-      r_hv, x_hv, b_hv, g_hv, = calcTrafoParams(sn, vn_hv, vk_percent, vkr_percent, pfe_kw, io_percent)
+      
+      r_hv, x_hv, b_hv, g_hv, = calcTrafoParams(sn_mva=sn, vn_hv_kv=vn_hv, vk_percent=vk_percent,  pk_kw=pk_kW, vkr_percent=vkr_percent,  pfe_kw=pfe_kw, i0_percent=io_percent)
+      
       r_pu, x_pu, b_pu, g_pu = calcTwoPortPU(vn_hv, sn, r_hv, x_hv, b_hv, g_hv)
       #function PowerTransformerWinding(; Vn::Float64, r::Float64, x::Float64, b::Union{Nothing, Float64} = nothing, g::Union{Nothing, Float64} = nothing, shift_degree::Union{Nothing, Float64} = nothing, ratedU::Union{Nothing, Float64} = nothing, ratedS::Union{Nothing, Float64} = nothing, taps::Union{Nothing, PowerTransformerTaps} = nothing, isPu_RXGB::Union{Nothing, Bool} = nothing, modelData::Union{Nothing, TransformesModelParameters} = nothing)
       #  new(Vn, r, x, b, g, shift_degree, ratedU, ratedS, taps, isPu_RXGB, modelData)
-      
-      s1 = PowerTransformerWinding(Vn=vn_hv, r=r_hv, x=x_hv, b=b_hv, g=g_hv, shift_degree=shift_degree, ratedU=vn_hv, ratedS=sn, taps=tap, isPu_RXGB=true)
-      s2 = PowerTransformerWinding(Vn=vn_lv, r=0.0, x=0.0)
+      s1 = PowerTransformerWinding(Vn = vn_hv, r = r_hv, x = x_hv, b = b_hv, g = g_hv, shift_degree = shift_degree, ratedU = vn_hv, ratedS = sn, taps = tap, isPu_RXGB = false, modelData = mParm)
+      s2 = PowerTransformerWinding(Vn = vn_lv, r = 0.0, x = 0.0)
 
     elseif regelungEin && tapSeite == 2
       Vtab = calcNeutralU(neutralU_ratio, vn_lv, tap_min, tap_max, tap_step_percent)
       tap = ResDataTypes.PowerTransformerTaps(tap_pos, tap_min, tap_max, tap_neutral, tap_step_percent, Vtab)
       # maibe an error here: vn_hv?
-      r_lv, x_lv, b_lv, g_lv = calcTrafoParams(sn, vn_hv, vk_percent, vkr_percent, pfe_kw, io_percent)
+      r_lv, x_lv, b_lv, g_lv = calcTrafoParams(sn_mva=sn, vn_hv_kv=vn_hv, vk_percent=vk_percent, pk_kw=pk_kw, vkr_percent=vkr_percent, pfe_kw=pfe_kw, i0_percent=io_percent)
       r_pu, x_pu, b_pu, g_pu = calcTwoPortPU(vn_hv, sn, r_lv, x_lv, b_lv, g_lv)
-      s1 = PowerTransformerWinding(Vn=vn_hv, r=0.0, x=0.0)
-      s2 = PowerTransformerWinding(Vn=vn_lv, r=r_lv, x=x_lv, b=b_lv, g=g_lv, shift_degree=shift_degree, ratedU=vn_lv, ratedS=sn, taps=tap, isPu_RXGB=true)
+      s1 = PowerTransformerWinding(Vn = vn_hv, r = 0.0, x = 0.0)
+      s2 = PowerTransformerWinding(Vn = vn_lv, r = r_lv, x = x_lv, b = b_lv, g = g_lv, shift_degree = shift_degree, ratedU = vn_lv, ratedS = sn, taps = tap, isPu_RXGB = false, modelData = mParm)
 
     else
-      r_hv, x_hv, b_hv, g_hv = calcTrafoParams(sn, vn_hv, vk_percent, vkr_percent, pfe_kw, io_percent)
+      r_hv, x_hv, b_hv, g_hv = calcTrafoParams(sn_mva=sn, vn_hv_kv=vn_hv, vk_percent=vk_percent, pk_kw=pk_kw, vkr_percent=vkr_percent,  pfe_kw=pfe_kw, i0_percent=io_percent)
       r_pu, x_pu, b_pu, g_pu = calcTwoPortPU(vn_hv, sn, r_hv, x_hv, b_hv, g_hv)
-      s1 = PowerTransformerWinding(Vn=vn_hv, r=r_hv, x=x_hv, g=g_hv, b=b_hv, ratedU=vn_hv, ratedS=sn, isPu_RXGB=true)
-      s2 = PowerTransformerWinding(Vn=vn_lv, r=0.0, x=0.0)
+      s1 = PowerTransformerWinding(Vn = vn_hv, r = r_hv, x = x_hv, g = g_hv, b = b_hv, ratedU = vn_hv, ratedS = sn, isPu_RXGB = false, modelData = mParm)
+      s2 = PowerTransformerWinding(Vn = vn_lv, r = 0.0, x = 0.0)
     end
     s3 = nothing
-    
-    cImpPGMComp = ImpPGMComp(cID, cName, toComponentTyp("POWERTRANSFORMER"), vn_hv, busIdx, USIdx)    
+
+    cImpPGMComp = ImpPGMComp(cID, cName, toComponentTyp("POWERTRANSFORMER"), vn_hv, busIdx, USIdx)
     trafo = PowerTransformer(cImpPGMComp, regelungEin, s1, s2, s3, ResDataTypes.Ratio)
     if log
       @show trafo
@@ -718,7 +736,7 @@ function createNetFromFile(filename, base_MVA::Float64 = 0.0, log::Bool = false,
       maxQ = nothing
       minQ = nothing
       ratedPowerFactor = nothing
-      referencePri = nothing      
+      referencePri = nothing
       comp = ImpPGMComp(cID, cName, toComponentTyp("LOAD"), Vn, Bus, Bus)
       pRS = ProSumer(comp, nID, ratedS, ratedU, qPercent, p, q, maxP, minP, maxQ, minQ, ratedPowerFactor, referencePri, nothing, nothing)
       if log
@@ -764,19 +782,19 @@ function createNetFromFile(filename, base_MVA::Float64 = 0.0, log::Bool = false,
       minQ = nothing
       ratedPowerFactor = nothing
       referencePri = nothing
-      
+
       vm_pu = nothing
       vm_degree = nothing
-      
+
       isPUNode = false
-      
+
       if Bus == slackIdx
         referencePri = slackIdx
         vm_pu = 1.0
         vm_degree = 0.0
         slack_vm_pu = vm_pu
-        slack_va_deg = vm_degree   
-      end      
+        slack_va_deg = vm_degree
+      end
       comp = ImpPGMComp(cID, cName, toComponentTyp("GENERATOR"), Vn, Bus, Bus)
       pRS = ProSumer(comp, nID, ratedS, ratedU, qPercent, p, q, maxP, minP, maxQ, minQ, ratedPowerFactor, referencePri, vm_pu, vm_degree, ResDataTypes.Injection, isPUNode)
       if log
@@ -819,17 +837,17 @@ function createNetFromFile(filename, base_MVA::Float64 = 0.0, log::Bool = false,
       maxQ = float(g["max_q_mvar"])
       minQ = float(g["min_q_mvar"])
       ratedPowerFactor = nothing
-      referencePri = nothing      
+      referencePri = nothing
       vm_degree = nothing
       isPUNode = false
-      
-      if Bus == slackIdx      
-        referencePri = slackIdx              
+
+      if Bus == slackIdx
+        referencePri = slackIdx
         vm_degree = 0.0
         slack_vm_pu = vm_pu
-        slack_va_deg = vm_degree   
-        isPUNode = true            
-      end      
+        slack_va_deg = vm_degree
+        isPUNode = true
+      end
       comp = ImpPGMComp(cID, cName, toComponentTyp("SYNCHRONOUSMACHINE"), Vn, Bus, Bus)
       pRS = ProSumer(comp, nID, ratedS, ratedU, qPercent, p, q, maxP, minP, maxQ, minQ, ratedPowerFactor, referencePri, vm_pu, vm_degree, ResDataTypes.Injection, isPUNode)
       if log
@@ -873,14 +891,14 @@ function createNetFromFile(filename, base_MVA::Float64 = 0.0, log::Bool = false,
       minQ = nothing
       ratedPowerFactor = nothing
       referencePri = nothing
-      isPUNode = true            
+      isPUNode = true
       if Bus == slackIdx
-        referencePri = slackIdx 
+        referencePri = slackIdx
         slack_vm_pu = vm_pu
-        slack_va_deg = vm_degree               
-      end      
+        slack_va_deg = vm_degree
+      end
 
-      comp = ImpPGMComp(cID, cName, toComponentTyp("EXTERNALNETWORKINJECTION"), Vn, Bus, Bus)      
+      comp = ImpPGMComp(cID, cName, toComponentTyp("EXTERNALNETWORKINJECTION"), Vn, Bus, Bus)
       pRS = ProSumer(comp, nID, ratedS, ratedU, qPercent, p, q, maxP, minP, maxQ, minQ, ratedPowerFactor, referencePri, vm_pu, vm_degree, ResDataTypes.Injection, isPUNode)
       if log
         @show pRS
@@ -927,8 +945,8 @@ function createNetFromFile(filename, base_MVA::Float64 = 0.0, log::Bool = false,
 
       ratio = (Vn / vn_kv)^2
       y_pu = calcYShunt(p_shunt, q_shunt, ratio, baseMVA)
-      
-      comp = ImpPGMComp(cID, cName, toComponentTyp("LINEARSHUNTCOMPENSATOR"), vn_kv, Bus, Bus )
+
+      comp = ImpPGMComp(cID, cName, toComponentTyp("LINEARSHUNTCOMPENSATOR"), vn_kv, Bus, Bus)
       sh = ResDataTypes.Shunt(comp, nID, Bus, p_shunt, q_shunt, y_pu, in_service)
       if log
         @show sh
@@ -961,28 +979,28 @@ function createNetFromFile(filename, base_MVA::Float64 = 0.0, log::Bool = false,
       println("Bus: ", busName, " busIdx: ", busIdx, " ID: ", cID, " Voltage: ", Vn, "\nTerminals: ", terminals)
     end
 
-    c = ImpPGMComp(cID, busName, ResDataTypes.Busbarsection, Vn,  busIdx, busIdx)
+    c = ImpPGMComp(cID, busName, ResDataTypes.Busbarsection, Vn, busIdx, busIdx)
     node = Node(c, terminals, busIdx, busIdx, toNodeType(nodeType))
     nParms = NodeParametersDict[busIdx]
-    
-    if nodeType == 3      
+
+    if nodeType == 3
       nParms.vm_pu = slack_vm_pu
-      nParms.va_deg = slack_va_deg            
-    end   
-    setNodeParameters!(node, nParms)          
+      nParms.va_deg = slack_va_deg
+    end
+    setNodeParameters!(node, nParms)
 
     if log
       @show node
     end
     push!(nodeVec, node)
   end
-  
+
   if check
     checkNodeConnections(nodeVec)
   end
-  
+
   setParallelBranches!(branchVec)
-  
+
   net = ResDataTypes.Net(netName, baseMVA, slackIdx, nodeVec, ACLines, trafos, branchVec, prosum, shuntVec)
 
   return net
