@@ -239,7 +239,7 @@ function recalc_trafo_model_data(;baseMVA::Float64, Sn_MVA::Float64, ratedU_kV::
     Y_shunt = b_pu
     i0 = Y_shunt*z_base*100.0
     
-    Z_Series_abs = sqrt(round(r_pu^2,digits=2) + round(x_pu^2,digits=2))    
+    Z_Series_abs = sqrt(r_pu^2 + x_pu^2)    
     uk = Z_Series_abs*y_base
     
     Rk= r_pu
