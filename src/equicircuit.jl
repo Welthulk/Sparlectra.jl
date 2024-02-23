@@ -224,20 +224,26 @@ function recalc_trafo_model_data(;baseMVA::Float64, Sn_MVA::Float64, ratedU_kV::
     # g_pu = 0.0!
     y_shunt  = b_pu
     Y_shunt = y_shunt*base_y_to
-    i0 = Y_shunt*ratedU_kV^2/Sn_MVA
+    i0 = 100.0*Y_shunt*ratedU_kV^2/Sn_MVA
 
     z_ser_pu = sqrt(r_pu^2 + x_pu^2)
     Z_Series_abs = z_ser_pu*base_z_to
     uk = Z_Series_abs*Sn_MVA/ratedU_kV^2
     Rk= r_pu*base_z_to
-    P_kW = Rk*Sn_MVA^2/ratedU_kV^2
+    P_kW = 100.0*Rk*Sn_MVA^2/ratedU_kV^2
   else
+    u_quad = ratedU_kV^2
+    z_base = u_quad / Sn_MVA
+    y_base = Sn_MVA/u_quad
+    
     Y_shunt = b_pu
-    i0 = Y_shunt*ratedU_kV^2/Sn_MVA
-    Z_Series_abs = sqrt(r_pu^2 + x_pu^2)    
-    uk = Z_Series_abs*Sn_MVA/ratedU_kV^2
+    i0 = Y_shunt*z_base*100.0
+    
+    Z_Series_abs = sqrt(round(r_pu^2,digits=2) + round(x_pu^2,digits=2))    
+    uk = Z_Series_abs*y_base
+    
     Rk= r_pu
-    P_kW = Rk*Sn_MVA^2/ratedU_kV^2
+    P_kW = 100.0*Rk*Sn_MVA^2/u_quad
   end
 
   return uk, P_kW, i0, Pfe_kW
@@ -254,25 +260,25 @@ end
  + i0_percent: no load current in percent (open circuit)
  
 """
-function calcTrafoParams(sn_mva::Float64, vn_hv_kv::Float64, vk_percent::Float64, vkr_percent::Float64, pfe_kw::Float64 = 0.0, i0_percent::Float64 = 0.0)
+function calcTrafoParams(;sn_mva::Float64, vn_hv_kv::Float64, vk_percent::Float64, pk_kw::Union{Nothing,Float64} = nothing, vkr_percent::Union{Nothing,Float64} = nothing, pfe_kw::Union{Nothing,Float64} = nothing, i0_percent::Union{Nothing,Float64} = nothing)
   @assert sn_mva > 0.0 "sn_mva must be > 0.0"
   @assert vn_hv_kv > 0.0 "vn_hv_kv must be > 0.0"
   @assert vk_percent > 0.0 "vk_percent must be > 0.0"
-  @assert vkr_percent > 0.0 "vkr_percent must be > 0.0"
-
-  fak = vn_hv_kv^2 / sn_mva
-
+  @assert !(pk_kw === nothing && vkr_percent === nothing) "At least one of the parameters pk_kw=$(pk_kw) or vkr_percent=$(vkr_percent) must be set"
+  
+  z_base = vn_hv_kv^2 / sn_mva
   # Impedanz
-  zk = vk_percent / 100.0 * fak
-
+  zk = vk_percent / 100.0 * z_base
   # Resistanz
-  rk = vkr_percent / 100.0 * fak
-
+  if !isnothing(vkr_percent)
+    rk = vkr_percent / 100.0 * z_base
+  else
+    rk = (pk_kw/sn_mva)/z_base
+  end  
   # Reaktanz
   xk = sqrt(zk^2 - rk^2) # Reaktanz
-
   # Suszeptanz
-  if pfe_kw > 0.0 && i0_percent > 0.0
+  if !isnothing(pfe_kw)&&  pfe_kw > 0.0 && !isnothing(i0_percent) && i0_percent > 0.0
     pfe = pfe_kw / 1000.0
     v_quad = vn_hv_kv^2
     Yfe = pfe / v_quad
