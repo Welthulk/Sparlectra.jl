@@ -241,31 +241,31 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
     x_pu = nothing
     b_pu = nothing
     g_pu = nothing
+    addEx = TransformesModelParameters(sn, uk, pk_W, i0, p0_W)
     if tapSeite == 1
       Vtab = calcNeutralU(1.0, vn_hv, tap_min, tap_max, tapStepPercent)
       tap = PowerTransformerTaps(tap_pos, tap_min, tap_max, tap_neutral, tapStepPercent, Vtab)
       r, x, b, g = calcTrafoParamsSI(sn_max, u2, uk, sn, pk_W, i0, p0_W)
       r_pu, x_pu, b_pu, g_pu = calcTwoPortPU(vn_hv, baseMVA, r, x, b, g)
 
-      s1 = PowerTransformerWinding(vn_hv, r, x, b, g, shift_degree, from_kV, sn_MVA, tap)
-      s2 = PowerTransformerWinding(vn_lv, 0.0, 0.0)
+      s1 = PowerTransformerWinding(Vn=vn_hv, r=r, x=x, b=b, g=g, shift_degree=shift_degree, ratedU=from_kV, ratedS=sn_MVA, taps=tap,isPu_RXGB=false, modelData=addEx)
+      s2 = PowerTransformerWinding(Vn=vn_lv, r=0.0, x=0.0)
     else
       Vtab = calcNeutralU(neutralU_ratio, vn_lv, tap_min, tap_max, tapStepPercent)
       tap = PowerTransformerTaps(tap_pos, tap_min, tap_max, tap_neutral, tapStepPercent, Vtab)
       r, x, b, g = calcTrafoParamsSI(sn_max, u1, uk, sn, pk_W, i0, p0_W)
       r_pu, x_pu, b_pu, g_pu = calcTwoPortPU(vn_lv, baseMVA, r, x, b, g)
 
-      s1 = PowerTransformerWinding(vn_hv, 0.0, 0.0)
-      s2 = PowerTransformerWinding(vn_lv, r, x, b, g, shift_degree, to_kV, sn_MVA, tap)
+      s1 = PowerTransformerWinding(Vn=vn_hv, r=0.0, x=0.0)
+      s2 = PowerTransformerWinding(Vn=vn_lv, r=r, x=x, b=b, g=g, shift_degree=shift_degree, ratedU=to_kV, ratedS=sn_MVA, taps=tap, isPu_RXGB=false, modelData=addEx)
     end
     #@debug "Trafo: ", cName, ", r: ", r, ", x: ", x, ", b: ", b, ", g: ", g
     #@debug "Trafo: ", cName, ", r_pu: ", r_pu, ", x_pu: ", x_pu, ", b_pu: ", b_pu, ", g_pu: ", g_pu
     s3 = nothing
 
-    
-    addEx = TransformesModelParameters(sn, uk, pk_W, i0, p0_W)
+      
     cImpPGMComp = ImpPGMComp(cID, cName, toComponentTyp("POWERTRANSFORMER"), vn_hv, from_node, to_node)
-    trafo = PowerTransformer(cImpPGMComp, true, s1, s2, s3, ResDataTypes.Ratio, addEx)
+    trafo = PowerTransformer(cImpPGMComp, true, s1, s2, s3)
     push!(trafos, trafo)
     #@show trafo
     
