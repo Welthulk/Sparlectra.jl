@@ -52,7 +52,7 @@ function exportPGM(; net::ResDataTypes.Net, filename::String, useMVATrafoModell:
   function get_trafos(o::PowerTransformer, baseMVA::Float64)
     parameters = OrderedDict{String,Any}()
 
-    if o.isBiWinder && isa(o.comp, ImpPGMComp)
+    if o.isBiWinder && isa(o.comp, ImpPGMComp)      
       has_model_data = true
 
       tap_side = 0
@@ -71,8 +71,8 @@ function exportPGM(; net::ResDataTypes.Net, filename::String, useMVATrafoModell:
       sn = 0.0
       isPerUnitRXGB = false
       ratedU = nothing
-      winding = (o._equiParms == 1) ? o.side1 : ((o._equiParms == 2) ? o.side2 : nothing)
-      #@show "winding: ", winding, o.tapSideNumber, o._equiParms
+      winding = (o._equiParms == 1) ? o.side1 : ((o._equiParms == 2) ? o.side2 : nothing)      
+      @assert o._equiParms > 0
       if !isnothing(winding)
         vn = winding.Vn
         rk = winding.r
@@ -133,6 +133,7 @@ function exportPGM(; net::ResDataTypes.Net, filename::String, useMVATrafoModell:
           parameters["p0"] = Pfe_kW * 1e3
         end
       else
+        
         parameters["sn"] = !isnothing(winding.modelData.sn) ? winding.modelData.sn : 0.0
         parameters["uk"] = !isnothing(winding.modelData.uk) ? winding.modelData.uk : 0.0
         parameters["pk"] = !isnothing(winding.modelData.pk) ? winding.modelData.pk : 0.0

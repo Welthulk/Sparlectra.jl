@@ -152,9 +152,9 @@ mutable struct PowerTransformer
     if isnothing(s3)
       n = 2
       isBi = true
-      if s1.r != 0.0 && s1.x != 0.0
+      if s1.r != 0.0 || s1.x != 0.0
        equiParms = 1
-      elseif s2.r != 0.0 && s2.x != 0.0
+      elseif s2.r != 0.0 || s2.x != 0.0
         equiParms = 2
       end  
     else
