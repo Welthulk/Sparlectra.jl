@@ -2,7 +2,7 @@
 # Date: 10.05.2023
 # include-file shunt.jl
 
-struct Shunt
+mutable struct Shunt
   comp::AbstractComponent
   nodeID::String           # ID for mapping to node
   busIdx::Int              # short cut to node    

@@ -958,16 +958,17 @@ function testCreateNetworkFromScratch(verbose::Bool = false)
   vk_percent = 13.0
   vkr_percent = 0.28
   pfe_kw = 20.0
-  io_percent = 0.06
+  i0 = 0.06
   shift_degree = 0.0
 
   regelungEin = false
   cName = "Trafo 1-7"
   cID = "T1-7_20230620"
 
-  r_hv, x_hv, g_hv, b_hv = calcTrafoParams(sn, vn_hv, vk_percent, vkr_percent, pfe_kw, io_percent)
-  s1 = PowerTransformerWinding(vn_hv, r_hv, x_hv)
-  s2 = PowerTransformerWinding(vn_lv, 0.0, 0.0)
+  r_hv, x_hv, g_hv, b_hv = calcTrafoParams(sn_mva=sn, vn_hv_kv=vn_hv, vk_percent=vk_percent, vkr_percent=vkr_percent, pfe_kw=pfe_kw, i0_percent=i0)
+  
+  s1 = PowerTransformerWinding(Vn=vn_hv, r=r_hv, x=x_hv, isPu_RXGB=false, shift_degree=shift_degree)
+  s2 = PowerTransformerWinding(Vn=vn_lv, r=0.0, x=0.0, isPu_RXGB=false, shift_degree=shift_degree)
   s3 = nothing
   cmp = ResDataTypes.Component(cID, cName, "POWERTRANSFORMER", vn_hv)
   Trafo = PowerTransformer(cmp, regelungEin, s1, s2, s3)
@@ -990,9 +991,9 @@ function testCreateNetworkFromScratch(verbose::Bool = false)
   vk_percent = 18.0
   vkr_percent = 0.32
   shift_degree = 330.0
-  r_hv, x_hv, g_hv, b_hv = calcTrafoParams(sn, vn_hv, vk_percent, vkr_percent, pfe_kw, io_percent)
-  s1 = PowerTransformerWinding(vn_hv, r_hv, x_hv)
-  s2 = PowerTransformerWinding(vn_lv, 0.0, 0.0)
+  r_hv, x_hv, g_hv, b_hv = calcTrafoParams(sn_mva=sn, vn_hv_kv=vn_hv, vk_percent=vk_percent, vkr_percent=vkr_percent, pfe_kw=pfe_kw, i0_percent=i0)
+  s1 = PowerTransformerWinding(Vn=vn_hv, r=r_hv, x=x_hv, shift_degree=shift_degree, isPu_RXGB=false)
+  s2 = PowerTransformerWinding(Vn=vn_lv, r=0.0, x=0.0,shift_degree=0.0, isPu_RXGB=false)
   s3 = nothing
   cmp = ResDataTypes.Component(cID, cName, "POWERTRANSFORMER", vn_hv)
   Trafo = PowerTransformer(cmp, regelungEin, s1, s2, s3)
@@ -1021,9 +1022,9 @@ function testCreateNetworkFromScratch(verbose::Bool = false)
   vk_percent = 16.2
   vkr_percent = 0.28
   shift_degree = 330.0
-  r_hv, x_hv, g_hv, b_hv = calcTrafoParams(sn, vn_hv, vk_percent, vkr_percent, pfe_kw, io_percent)
-  s1 = PowerTransformerWinding(vn_hv, r_hv, x_hv)
-  s2 = PowerTransformerWinding(vn_lv, 0.0, 0.0)
+  r_hv, x_hv, g_hv, b_hv = calcTrafoParams(sn_mva=sn, vn_hv_kv=vn_hv, vk_percent=vk_percent, pk_kw=nothing, vkr_percent=vkr_percent, pfe_kw=pfe_kw, i0_percent=i0)
+  s1 = PowerTransformerWinding(Vn=vn_hv, r=r_hv, x=x_hv, shift_degree=shift_degree, isPu_RXGB=false)
+  s2 = PowerTransformerWinding(Vn=vn_lv, r=0.0, x=0.0,shift_degree=0.0, isPu_RXGB=false)
   s3 = nothing
   cmp = ResDataTypes.Component(cID, cName, "POWERTRANSFORMER", vn_hv)
   Trafo = PowerTransformer(cmp, regelungEin, s1, s2, s3)
@@ -1217,7 +1218,7 @@ function testCreateNetworkFromScratch(verbose::Bool = false)
     reports()
   end
 
-  branchVec = createBranchVectorFromNodeVector!(nodeVec, ACLines, Transformers, Sbase_MVA, false)
+  branchVec = createBranchVectorFromNodeVector!(nodes=nodeVec, lines=ACLines, trafos=Transformers, Sbase_MVA=Sbase_MVA, prosumps=proSumersVec, shunts=shuntVec, log=true)
   
 
   myNet = Net(netName, Sbase_MVA, slackBusIdx, nodeVec, ACLines, Transformers, branchVec, proSumersVec, shuntVec)
