@@ -179,19 +179,10 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
   @info "$(length(ACLines)) aclines created..."
 
   for t in wt2
-    sn = float(t["sn"])
-    u1 = float(t["u1"])
-    u2 = float(t["u2"])
+    sn_MVA = float(t["sn"])*1e-6
+    vn_hv_kV = float(t["u1"])*1e-3 # rated voltage at the from side
+    vn_lv_kV = float(t["u2"])*1e-3 # rated voltage at the to side
 
-    from_kV = u1 / 1000.0 # rated voltage at the from side
-    to_kV = u2 / 1000.0 # rated voltage at the to side
-    if from_kV > to_kV
-      vn_hv = from_kV
-      vn_lv = to_kV
-    else
-      vn_hv = to_kV
-      vn_lv = from_kV
-    end
     oID = Int64(t["id"])
     uk = float(t["uk"])
     i0 = float(t["i0"])
@@ -221,57 +212,61 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
     tap_min = Int64(t["tap_min"])
     tap_max = Int64(t["tap_max"])
     tap_nom = Int64(t["tap_nom"])
-    tap_size_V = float(t["tap_size"])
-    #side_1 = 0, side_2 = 1, side_3 = 2
-    tapSeite = (tap_side == 0) ? ((from_kV > to_kV) ? 1 : 2) : (tap_side == 1) ? ((from_kV > to_kV) ? 2 : 1) : @error "tap_side: $tap_side, from_kV: $from_kV, to_kV: $to_kV"
-
-    tap_neutral = div(tap_max + tap_min, 2)
+    tap_size_kV = float(t["tap_size"])*1e-3
+    tap_neutral = tap_nom
     HV = VoltageDict[from_node]
     LV = VoltageDict[to_node]
-
-    if tap_side == 0
-      tapStepPercent = calcTapStepPercent(tap_size_V, u1)
-    else
-      tapStepPercent = calcTapStepPercent(tap_size_V, u2)
-    end
+    # 0 = from_side, 1 = to_side
     shift_degree = 0.0
-    sn_MVA = sn / 1e6
-    ratio = calcRatio(HV, vn_hv, LV, vn_lv, tap_pos, tap_neutral, tapStepPercent, tapSeite)
+    
+    addEx = TransformerModelParameters(sn_MVA=sn_MVA, vk_percent=uk*100.0, vkr_percent=nothing, pk_kW=pk_W*1e-3, i0_percent=i0*100.0, p0_kW=p0_W*1e-3)
+
     r_pu = nothing
     x_pu = nothing
     b_pu = nothing
     g_pu = nothing
-    addEx = TransformesModelParameters(sn, uk, pk_W, i0, p0_W)
-    if tapSeite == 1
-      Vtab = calcNeutralU(1.0, vn_hv, tap_min, tap_max, tapStepPercent)
-      tap = PowerTransformerTaps(tap_pos, tap_min, tap_max, tap_neutral, tapStepPercent, Vtab)
-      r, x, b, g = calcTrafoParamsSI(sn_max, u2, uk, sn, pk_W, i0, p0_W)
-      r_pu, x_pu, b_pu, g_pu = calcTwoPortPU(vn_hv, baseMVA, r, x, b, g)
 
-      s1 = PowerTransformerWinding(Vn=vn_hv, r=r, x=x, b=b, g=g, shift_degree=shift_degree, ratedU=from_kV, ratedS=sn_MVA, taps=tap,isPu_RXGB=false, modelData=addEx)
-      s2 = PowerTransformerWinding(Vn=vn_lv, r=0.0, x=0.0)
-    else
-      Vtab = calcNeutralU(neutralU_ratio, vn_lv, tap_min, tap_max, tapStepPercent)
-      tap = PowerTransformerTaps(tap_pos, tap_min, tap_max, tap_neutral, tapStepPercent, Vtab)
-      r, x, b, g = calcTrafoParamsSI(sn_max, u1, uk, sn, pk_W, i0, p0_W)
-      r_pu, x_pu, b_pu, g_pu = calcTwoPortPU(vn_lv, baseMVA, r, x, b, g)
-
-      s1 = PowerTransformerWinding(Vn=vn_hv, r=0.0, x=0.0)
-      s2 = PowerTransformerWinding(Vn=vn_lv, r=r, x=x, b=b, g=g, shift_degree=shift_degree, ratedU=to_kV, ratedS=sn_MVA, taps=tap, isPu_RXGB=false, modelData=addEx)
-    end
-    #@debug "Trafo: ", cName, ", r: ", r, ", x: ", x, ", b: ", b, ", g: ", g
-    #@debug "Trafo: ", cName, ", r_pu: ", r_pu, ", x_pu: ", x_pu, ", b_pu: ", b_pu, ", g_pu: ", g_pu
+    s1 = nothing
+    s2 = nothing
     s3 = nothing
 
+    genratorTrafo = false  
+    if from_node > to_node
+      genratorTrafo = true      
+    end
+
+    if tap_side == 0 #&& !genratorTrafo
       
-    cImpPGMComp = ImpPGMComp(cID, cName, toComponentTyp("POWERTRANSFORMER"), vn_hv, from_node, to_node)
+      s2 = PowerTransformerWinding(Vn_kV=vn_lv_kV)
+      tap = PowerTransformerTaps(Vn_kV=vn_hv_kV, step=tap_pos, lowStep=tap_min, highStep=tap_max, neutralStep=tap_neutral, voltageIncrement_kV=tap_size_kV)
+      s1 = PowerTransformerWinding(Vn_kV=vn_hv_kV, modelData=addEx, shift_degree = shift_degree, ratedU = vn_hv_kV, ratedS=sn_MVA, taps=tap) 
+      
+      ratio = calcRatio(HV, vn_hv_kV, LV, vn_lv_kV, tap.step, tap.neutralStep, tap.tapStepPercent)
+    else
+
+      s1 = PowerTransformerWinding(Vn_kV=vn_hv_kV)
+      
+      tap = PowerTransformerTaps(Vn_kV=vn_lv_kV, step=tap_pos, lowStep=tap_min, highStep=tap_max, neutralStep=tap_neutral, voltageIncrement_kV=tap_size_kV)      
+      s2 = PowerTransformerWinding(Vn_kV=vn_lv_kV, modelData=addEx, shift_degree = shift_degree, ratedU = vn_hv_kV, ratedS=sn_MVA, taps=tap)       
+      
+      ratio = calcRatio(HV, vn_hv_kV, LV, vn_lv_kV, tap.step, tap.neutralStep, tap.tapStepPercent)
+    end
+
+      
+    cImpPGMComp = ImpPGMComp(cID, cName, toComponentTyp("POWERTRANSFORMER"), vn_hv_kV, from_node, to_node)
     trafo = PowerTransformer(cImpPGMComp, true, s1, s2, s3)
+    if genratorTrafo
+      @show trafo
+      @show r, x, b, g
+      @show r_pu, x_pu, b_pu, g_pu
+    end
+
     push!(trafos, trafo)
     #@show trafo
     
-    cmp1 = ResDataTypes.Component(cID, cName, "POWERTRANSFORMER", vn_hv)
+    cmp1 = ResDataTypes.Component(cID, cName, "POWERTRANSFORMER", vn_hv_kV)
     t1 = ResDataTypes.Terminal(cmp1, ResDataTypes.Seite1)
-    cmp2 = ResDataTypes.Component(cID, cName, "POWERTRANSFORMER", vn_lv)
+    cmp2 = ResDataTypes.Component(cID, cName, "POWERTRANSFORMER", vn_lv_kV)
     t2 = ResDataTypes.Terminal(cmp2, ResDataTypes.Seite2)
 
     t1Terminal = NodeTerminalsDict[from_node]
@@ -282,9 +277,8 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
 
     push!(t1Terminal, t1)
     push!(t2Terminal, t2)
-
-    branch = Branch(cImpPGMComp, from_node, to_node, fromNodeID, toNodeID, r_pu, x_pu, b_pu, g_pu, ratio, shift_degree, inService)
-
+    branch = Branch(branchC=cImpPGMComp, baseMVA=baseMVA, fromNodeID=fromNodeID, toNodeID=toNodeID, trafo=trafo, ratio=ratio, status=inService,isParallel=false) 
+        
     push!(branchVec, branch)
   end
   @info "$(length(trafos)) power transformers created..."

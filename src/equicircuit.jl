@@ -132,9 +132,8 @@ purpose: calculate of ratio with correction of tap position
 + tapNeutral: neutral tap position
 + tapStepPercent: tap step in percent
 """
-function calcRatio(bus_hv_kv::Float64, vn_hv_kv::Float64, bus_lv_kv::Float64, vn_lv_kv::Float64, tapPos::Integer, tapNeutral::Integer, tapStepPercent::Float64, side::Integer)::Float64
-  @assert side in [1, 2] "side must be 1 or 2"
-
+function calcRatio(bus_hv_kv::Float64, vn_hv_kv::Float64, bus_lv_kv::Float64, vn_lv_kv::Float64, tapPos::Integer, tapNeutral::Integer, tapStepPercent::Float64)::Float64
+  
   ratio = bus_hv_kv * vn_lv_kv / (bus_lv_kv * vn_hv_kv)
 
   if tapPos == tapNeutral
@@ -167,35 +166,7 @@ purpose: calculate of neutral voltage. Tap position in neutral position.
 + i0_A: relativ no load current
 """
 function calcTrafoParamsSI(sbase_VA::Float64, u2_V::Float64, uk::Float64, sn_VA::Float64, pk_W::Float64, i0::Float64, p0_W::Float64)::Tuple{Float64, Float64, Float64, Float64}
-    # Calculate base impedance
-    z_base = sbase_VA / (u2_V^2)
-    
-    # Calculate series impedance
-    z_series_mag = uk / z_base
-    re_z_series = pk_W / (sn_VA* z_base)
-    
-    im_z_series_sq = z_series_mag^2 - re_z_series^2
-
-    if im_z_series_sq < 0.0
-      @debug "im_z_series_sq < 0.0, set to 0.0"
-      im_z_series_sq = 0.0
-    end
-    im_z_series = (im_z_series_sq >= 0.0) ? sqrt(z_series_mag^2 - re_z_series^2) : 0.0
-
-    # Calculate base admittance
-    y_base = 1.0 / z_base
-    
-    # Calculate shunt admittance
-    y_shunt_mag = i0*z_base    
-    re_y_shunt = p0_W / u2_V^2    
-    im_y_shunt_sq = y_shunt_mag^2 - re_y_shunt^2
-    if im_y_shunt_sq < 0.0
-      @debug "im_y_shunt_sq < 0.0, set to 0.0"
-      im_y_shunt_sq = 0.0
-    end        
-    im_y_shunt = -1.0*sqrt(y_shunt_mag^2 - re_y_shunt^2)
-
-    return re_z_series, im_z_series, re_y_shunt, im_y_shunt
+    return calcTrafoParams(sn_mva=sn_VA*1e-6, vn_hv_kv=u2_V*1e-3, vk_percent=uk*100.0, pk_kw=pk_W*1e-3, pfe_kw=p0_W*1e-3, i0_percent=i0*100.0)
 end
 
 """

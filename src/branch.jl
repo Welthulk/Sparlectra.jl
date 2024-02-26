@@ -42,6 +42,29 @@ mutable struct Branch
   status::Integer         # 1 = in service, 0 = out of service
   isParallel::Bool        # is a parallel branch? (true/false)  
 
+  function Branch(;
+    branchC::ImpPGMComp,
+    baseMVA::Float64,
+    fromNodeID::String,      
+    toNodeID::String,
+    trafo::PowerTransformer,
+    ratio::Float64,
+    status::Integer,
+    isParallel::Bool,
+    ) 
+    
+    
+    w=getWinding2WT(trafo)
+    r, x, b, g = getRXBG(w)
+    baseZ = (w.Vn)^2 / baseMVA
+    r_pu = r / baseZ
+    x_pu = x / baseZ
+    b_pu = b * baseZ
+    g_pu = g * baseZ
+
+    new(branchC, branchC.cFrom_bus, branchC.cTo_bus, branchC.cFrom_bus, branchC.cTo_bus, fromNodeID, toNodeID, nothing, nothing, r_pu, x_pu, b_pu, g_pu, ratio, w.shift_degree, status, isParallel)    
+    end    
+
   function Branch(
     branchC::AbstractComponent,
     fromBus::Integer,

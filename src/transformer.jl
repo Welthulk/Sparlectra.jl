@@ -2,38 +2,98 @@
 # Date: 10.05.2023
 # include-file transformer.jl
 
-mutable struct TransformesModelParameters
-  sn::Float64 # PGM-Parameter sn in VA
-  uk::Float64 # PGM-Parameter sn in percent
-  pk::Float64 # PGM-Parameter sn in W
-  i0::Float64 # PGM-Parameter sn in A
-  p0::Float64 # PGM-Parameter sn in W
+mutable struct TransformerModelParameters
+  sn_MVA::Float64 # PGM-Parameter sn in VA
+  vk_percent::Float64 # PGM-Parameter sn in percent  
+  pk_kW::Union{Nothing,Float64} # PGM-Parameter sn in W
+  i0_percent::Float64 # PGM-Parameter sn in A
+  p0_kW::Float64 # PGM-Parameter sn in W
+  vkr_percent::Union{Nothing,Float64} # real Part of the short-circuit voltage in percent of the rated voltage, nothing = not given
 
-  function TransformesModelParameters(sn::Float64, uk::Float64, pk::Float64, i0::Float64, p0::Float64)
-    new(sn, uk, pk, i0, p0)
+  function TransformerModelParameters(; sn_MVA::Float64, vk_percent::Float64, vkr_percent::Union{Nothing,Float64}, pk_kW::Union{Nothing,Float64}, i0_percent::Float64, p0_kW::Float64)
+    @assert sn_MVA > 0.0 "sn_mva must be > 0.0"
+    @assert vk_percent > 0.0 "uk_percent must be > 0.0"
+    @assert !(pk_kW === nothing && ukr_percent === nothing) "At least one of the parameters pk_kw=$(pk_kw) or ukr_percent=$(ukr_percent) must be set"
+
+    new(sn_MVA, vk_percent, pk_kW, i0_percent, p0_kW, vkr_percent)
   end
 
-  function Base.show(io::IO, x::TransformesModelParameters)
-    print(io, "TransformesModelParameters(")
-    print(io, "sn=$(x.sn), ")
-    print(io, "uk=$(x.uk), ")
-    print(io, "pk=$(x.pk), ")
-    print(io, "i0=$(x.i0), ")
-    print(io, "p0=$(x.p0)")
+  function Base.show(io::IO, x::TransformerModelParameters)
+    print(io, "TransformerModelParameters(")
+    print(io, "sn_MVA=$(x.sn_MVA), ")
+    print(io, "vk_percent=$(x.vk_percent), ")
+    print(io, "pk_kW=$(x.pk_kW), ")
+    print(io, "i0_percent=$(x.i0_percent), ")
+    print(io, "p0_kW=$(x.p0_kW)")
+    if !isnothing(x.vkr_percent)
+      print(io, ", vkr_percent=$(x.vkr_percent)")
+    end
     print(io, ")")
   end
-
 end
+
+#helper
+function calcTransformerRXGB(Vn_kV::Float64, modelData::TransformerModelParameters)::Tuple{Float64,Float64,Float64,Float64}
+  z_base = Vn_kV^2 / modelData.sn_MVA
+  # Impedanz
+  zk = modelData.vk_percent / 100.0 * z_base
+  # Resistanz
+  if !isnothing(modelData.vkr_percent)
+    rk = modelData.vkr_percent / 100.0 * z_base
+  else
+    rk = (modelData.pk_kW / modelData.sn_MVA) / z_base
+  end
+  # Reaktanz
+  xk = sqrt(zk^2 - rk^2) # Reaktanz
+  # Suszeptanz
+  if !isnothing(modelData.p0_kW) && modelData.p0_kW > 0.0 && !isnothing(modelData.i0_percent) && modelData.i0_percent > 0.0
+    pfe = modelData.p0_kW
+    v_quad = Vn_kV^2
+    Yfe = pfe / v_quad
+    Y0 = modelData.i0_percent / 100.0 * modelData.sn_MVA / v_quad
+    gm = Yfe
+    try
+      bm = -1.0 * sqrt(Y0^2 - Yfe^2)
+    catch
+      @warn "bm is set to 0.0 (Y0^2 - Yfe^2 < 0.0)"
+      bm = 0.0
+    end
+  else
+    gm = 0.0
+    bm = 0.0
+  end
+
+  return (rk, xk, gm, bm)
+end
+
 mutable struct PowerTransformerTaps
-  step::Int                          # aktive step 
+  step::Int                          # actual step/position
   lowStep::Int                       # cim:TapChanger.lowStep
   highStep::Int                      # cim:TapChanger.highStep
   neutralStep::Int                   # cim:TapChanger.neutralStep # 
-  voltageIncrement::Float64          # cim:RatioTapChanger.stepVoltageIncrement in percent  
-  neutralU::Union{Nothing,Float64}   # cim:TapChanger.neutralU, usually = ratedU of the transformer end, but can deviate
+  voltageIncrement_kV::Float64       # cim:RatioTapChanger.stepVoltageIncrement in kV
 
-  function PowerTransformerTaps(Step::Int, LowStep::Int, HighStep::Int, NeutralStep::Int, VoltageIncrement::Float64, NeutralU::Union{Nothing,Float64})
-    new(Step, LowStep, HighStep, NeutralStep, VoltageIncrement, NeutralU)
+  neutralU::Float64                  # cim:TapChanger.neutralU, usually = ratedU of the transformer end, but can deviate
+  neutralU_ratio::Float64
+  tapStepPercent::Float64
+
+  function PowerTransformerTaps(; Vn_kV::Float64, step::Int, lowStep::Int, highStep::Int, neutralStep::Int, voltageIncrement_kV::Float64, neutralU::Union{Nothing,Float64}=nothing, neutralU_ratio::Union{Nothing,Float64}=nothing)
+    @assert Vn_kV > 0.0 "Vn_kV must be > 0.0"
+    @assert voltageIncrement_kV > 0.0 "voltageIncrement must be > 0.0"
+
+    tapStepPercent = (Vn_kV / voltageIncrement_kV) * 1e-2
+
+    #FIXME: calculation of neutralU is not correct
+    if isnothing(neutralU)
+      if isnothing(neutralU_ratio)
+        neutralU_ratio = 1.0
+        neutralU = Vn_kV
+      end
+      neutralU = Vn_kV
+    # neutralU = round(neutralU_ratio * Vn_kV + (highStep - lowStep) * tapStepPercent * 1e2, digits = 0)
+    end
+
+    new(step, lowStep, highStep, neutralStep, voltageIncrement_kV, neutralU, neutralU_ratio, tapStepPercent)
   end
 
   function Base.show(io::IO, x::PowerTransformerTaps)
@@ -42,29 +102,29 @@ mutable struct PowerTransformerTaps
     print(io, "lowStep=$(x.lowStep), ")
     print(io, "hightStep=$(x.highStep), ")
     print(io, "neutralStep=$(x.neutralStep), ")
-    print(io, "voltageIncrement=$(x.voltageIncrement), ")
-    if !isnothing(x.neutralU)
-      print(io, "neutralU=$(x.neutralU), ")
-    end
+    print(io, "voltageIncrement_kV=$(x.voltageIncrement_kV), ")
+    print(io, "neutralU=$(x.neutralU), ")
+    print(io, "neutralU_ratio=$(x.neutralU_ratio), ")
+    print(io, "tapStepPercent=$(x.tapStepPercent) ")
     print(io, ")")
   end
 end
 
 mutable struct PowerTransformerWinding
-  Vn::Float64
-  r::Float64
-  x::Float64
-  b::Union{Nothing,Float64}
-  g::Union{Nothing,Float64}
+  Vn::Float64                                # cim:PowerTransformerEnd.ratedU in kV
+  r::Float64                                 # cim:PowerTransformerEnd.r in Ohm
+  x::Float64                                 # cim:PowerTransformerEnd.x in Ohm
+  b::Union{Nothing,Float64}                  # cim:PowerTransformerEnd.b in S
+  g::Union{Nothing,Float64}                  # cim:PowerTransformerEnd.g in S
   shift_degree::Union{Nothing,Float64}       # cim:PowerTransformerEnd.phaseAngleClock 
   ratedU::Union{Nothing,Float64}             # cim:PowerTransformerEnd.ratedU
   ratedS::Union{Nothing,Float64}             # cim:PowerTransformerEnd.ratedS  
   taps::Union{Nothing,PowerTransformerTaps}
   isPu_RXGB::Union{Nothing,Bool}          # r,x,b in p.u. given? nothing = false
-  modelData::Union{Nothing,TransformesModelParameters}
+  modelData::Union{Nothing,TransformerModelParameters}
 
-  function PowerTransformerWinding(
-    ;
+  #=
+  function PowerTransformerWinding(;
     Vn::Float64,
     r::Float64,
     x::Float64,
@@ -75,9 +135,29 @@ mutable struct PowerTransformerWinding
     ratedS::Union{Nothing,Float64} = nothing,
     taps::Union{Nothing,PowerTransformerTaps} = nothing,
     isPu_RXGB::Union{Nothing,Bool} = nothing,
-    modelData::Union{Nothing,TransformesModelParameters} = nothing,
+    modelData::Union{Nothing,TransformerModelParameters} = nothing,
   )
     new(Vn, r, x, b, g, shift_degree, ratedU, ratedS, taps, isPu_RXGB, modelData)
+  end
+  =#
+  function PowerTransformerWinding(;
+    Vn_kV::Float64,
+    modelData::Union{Nothing,TransformerModelParameters} = nothing,
+    shift_degree::Union{Nothing,Float64} = nothing,
+    ratedU::Union{Nothing,Float64} = nothing,
+    ratedS::Union{Nothing,Float64} = nothing,
+    taps::Union{Nothing,PowerTransformerTaps} = nothing,
+  )
+    @assert Vn_kV > 0.0 "Vn_kv must be > 0.0"
+    if isnothing(modelData)
+      new(Vn_kV, 0, 0, nothing, nothing, nothing, nothing, nothing, nothing, false, nothing)
+    else
+      if isnothing(ratedU)
+        ratedU = Vn_kV
+      end
+      r, x, b, g = calcTransformerRXGB(ratedU, modelData)
+      new(Vn_kV, r, x, b, g, shift_degree, ratedU, ratedS, taps, false, modelData)
+    end
   end
 
   function Base.show(io::IO, x::PowerTransformerWinding)
@@ -114,6 +194,9 @@ mutable struct PowerTransformerWinding
   end
 end
 
+function getRXBG(o::PowerTransformerWinding)::Tuple{Float64,Float64,Float64,Float64}
+   return (o.r, o.x, o.b, o.g)
+end
 # helper
 function hasTaps(x::Union{Nothing,PowerTransformerWinding})::Bool
   if isnothing(x)
@@ -128,7 +211,7 @@ function isPerUnit_RXGB(o::PowerTransformerWinding)
     return false
   else
     return o.isPu_RXGB
-  end  
+  end
 end
 
 mutable struct PowerTransformer
@@ -142,27 +225,25 @@ mutable struct PowerTransformer
   tapSideNumber::Integer          # Number of Tap Side [1,2,3], = 0 if no Tap  
   side1::PowerTransformerWinding
   side2::PowerTransformerWinding
-  side3::Union{Nothing,PowerTransformerWinding}  
+  side3::Union{Nothing,PowerTransformerWinding}
   _equiParms::Integer             # Winding-Side with Short-Circuit-Parameters, 1 for side1,2 for side2, 3 for all sides (3WT)
 
-  function PowerTransformer(comp::AbstractComponent, tapEnable::Bool, 
-                            s1::PowerTransformerWinding, s2::PowerTransformerWinding, s3::Union{Nothing,PowerTransformerWinding} = nothing, 
-                            trafoTyp::TrafoTyp = ResDataTypes.Ratio,)
+  function PowerTransformer(comp::AbstractComponent, tapEnable::Bool, s1::PowerTransformerWinding, s2::PowerTransformerWinding, s3::Union{Nothing,PowerTransformerWinding} = nothing, trafoTyp::TrafoTyp = ResDataTypes.Ratio)
     equiParms = 0
     if isnothing(s3)
       n = 2
       isBi = true
       if s1.r != 0.0 || s1.x != 0.0
-       equiParms = 1
+        equiParms = 1
       elseif s2.r != 0.0 || s2.x != 0.0
         equiParms = 2
-      end  
+      end
     else
       isBi = false
-      n = 3      
+      n = 3
       equiParms = 3
     end
-    
+
     controller = 0
     TapSideNumber = 0
     for x in [s1, s2, s3]
@@ -212,12 +293,28 @@ mutable struct PowerTransformer
       println(io, "side2=$(x.side2), ")
       print(io, "side3=$(x.side3) ")
     end
-    
+
     print(io, ")")
   end
 end
 
+function getWinding2WT(x::PowerTransformer)
+  @assert x.isBiWinder "Transformer is not a 2WT"
+
+  if x.HVSideNumber == 1
+    return x.side1
+  else
+    return x.side2
+  end
+end
+
+#TODO: implement
+#function getRatio2WT(x::PowerTransformer, bus_HV_Vn::Float64, bus_LV_Vn::Float64) 
+#   @assert x.isBiWinder "Transformer is not a 2WT"
+  
+#end
 # helper
+
 function toString(o::TrafoTyp)::String
   if o == Ratio
     return "Ratio"
