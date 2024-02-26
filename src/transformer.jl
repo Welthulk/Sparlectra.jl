@@ -36,12 +36,12 @@ end
 function calcTransformerRXGB(Vn_kV::Float64, modelData::TransformerModelParameters)::Tuple{Float64,Float64,Float64,Float64}
   z_base = Vn_kV^2 / modelData.sn_MVA
   # Impedanz
-  zk = modelData.vk_percent / 100.0 * z_base
+  zk = modelData.vk_percent * 1e-2 * z_base
   # Resistanz
-  if !isnothing(modelData.vkr_percent)
-    rk = modelData.vkr_percent / 100.0 * z_base
-  else
-    rk = (modelData.pk_kW / modelData.sn_MVA) / z_base
+  if !isnothing(modelData.vkr_percent) && modelData.vkr_percent > 0.0
+    rk = modelData.vkr_percent * 1e-2 * z_base
+  else    
+    rk = (Vn_kV^2/modelData.sn_MVA^2)*modelData.pk_kW    
   end
   # Reaktanz
   xk = sqrt(zk^2 - rk^2) # Reaktanz
@@ -122,6 +122,7 @@ mutable struct PowerTransformerWinding
   taps::Union{Nothing,PowerTransformerTaps}
   isPu_RXGB::Union{Nothing,Bool}          # r,x,b in p.u. given? nothing = false
   modelData::Union{Nothing,TransformerModelParameters}
+  _isEmpty::Bool
 
   #=
   function PowerTransformerWinding(;
@@ -150,13 +151,13 @@ mutable struct PowerTransformerWinding
   )
     @assert Vn_kV > 0.0 "Vn_kv must be > 0.0"
     if isnothing(modelData)
-      new(Vn_kV, 0, 0, nothing, nothing, nothing, nothing, nothing, nothing, false, nothing)
+      new(Vn_kV, 0.0, 0.0, nothing, nothing, nothing, nothing, nothing, nothing, false, nothing, true)
     else
       if isnothing(ratedU)
         ratedU = Vn_kV
       end
       r, x, b, g = calcTransformerRXGB(ratedU, modelData)
-      new(Vn_kV, r, x, b, g, shift_degree, ratedU, ratedS, taps, false, modelData)
+      new(Vn_kV, r, x, b, g, shift_degree, ratedU, ratedS, taps, false, modelData, false)
     end
   end
 
@@ -189,7 +190,7 @@ mutable struct PowerTransformerWinding
     if !(isnothing(x.modelData))
       print(io, "$(x.modelData), ")
     end
-
+    print(io, "$(x._isEmpty) ")
     print(io, ")")
   end
 end
@@ -301,7 +302,7 @@ end
 function getWinding2WT(x::PowerTransformer)
   @assert x.isBiWinder "Transformer is not a 2WT"
 
-  if x.HVSideNumber == 1
+  if !x.side1._isEmpty
     return x.side1
   else
     return x.side2
