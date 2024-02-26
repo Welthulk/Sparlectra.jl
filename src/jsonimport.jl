@@ -326,7 +326,7 @@ function createNetFromFile(filename, base_MVA::Float64 = 0.0, log::Bool = false,
       p=pk_kW*1e3
       s=sn*1e6
       pfe=pfe_kw*1e3
-      mParm=TransformesModelParameters(s, vkp, p, i0p, pfe)
+      mParm=TransformerModelParameters(s, vkp, p, i0p, pfe)
     end
 
     if regelungEin && tapSeite == 1
@@ -336,7 +336,7 @@ function createNetFromFile(filename, base_MVA::Float64 = 0.0, log::Bool = false,
       r_hv, x_hv, b_hv, g_hv, = calcTrafoParams(sn_mva=sn, vn_hv_kv=vn_hv, vk_percent=vk_percent,  pk_kw=pk_kW, vkr_percent=vkr_percent,  pfe_kw=pfe_kw, i0_percent=io_percent)
       
       r_pu, x_pu, b_pu, g_pu = calcTwoPortPU(vn_hv, sn, r_hv, x_hv, b_hv, g_hv)
-      #function PowerTransformerWinding(; Vn::Float64, r::Float64, x::Float64, b::Union{Nothing, Float64} = nothing, g::Union{Nothing, Float64} = nothing, shift_degree::Union{Nothing, Float64} = nothing, ratedU::Union{Nothing, Float64} = nothing, ratedS::Union{Nothing, Float64} = nothing, taps::Union{Nothing, PowerTransformerTaps} = nothing, isPu_RXGB::Union{Nothing, Bool} = nothing, modelData::Union{Nothing, TransformesModelParameters} = nothing)
+      #function PowerTransformerWinding(; Vn::Float64, r::Float64, x::Float64, b::Union{Nothing, Float64} = nothing, g::Union{Nothing, Float64} = nothing, shift_degree::Union{Nothing, Float64} = nothing, ratedU::Union{Nothing, Float64} = nothing, ratedS::Union{Nothing, Float64} = nothing, taps::Union{Nothing, PowerTransformerTaps} = nothing, isPu_RXGB::Union{Nothing, Bool} = nothing, modelData::Union{Nothing, TransformerModelParameters} = nothing)
       #  new(Vn, r, x, b, g, shift_degree, ratedU, ratedS, taps, isPu_RXGB, modelData)
       s1 = PowerTransformerWinding(Vn = vn_hv, r = r_hv, x = x_hv, b = b_hv, g = g_hv, shift_degree = shift_degree, ratedU = vn_hv, ratedS = sn, taps = tap, isPu_RXGB = false, modelData = mParm)
       s2 = PowerTransformerWinding(Vn = vn_lv, r = 0.0, x = 0.0)

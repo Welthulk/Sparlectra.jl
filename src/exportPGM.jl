@@ -105,7 +105,7 @@ function exportPGM(; net::ResDataTypes.Net, filename::String, useMVATrafoModell:
         tap_nom = taps.neutralStep
         #(vs/vn)*100.0
 
-        tap_size = 1e3 * taps.voltageIncrement * vn / 100.0
+        tap_size = taps.voltageIncrement_kV*1e3
       end
 
       parameters["id"] = get_next_id()
@@ -133,12 +133,11 @@ function exportPGM(; net::ResDataTypes.Net, filename::String, useMVATrafoModell:
           parameters["p0"] = Pfe_kW * 1e3
         end
       else
-        
-        parameters["sn"] = !isnothing(winding.modelData.sn) ? winding.modelData.sn : 0.0
-        parameters["uk"] = !isnothing(winding.modelData.uk) ? winding.modelData.uk : 0.0
-        parameters["pk"] = !isnothing(winding.modelData.pk) ? winding.modelData.pk : 0.0
-        parameters["i0"] = !isnothing(winding.modelData.i0) ? winding.modelData.i0 : 0.0
-        parameters["p0"] = !isnothing(winding.modelData.p0) ? winding.modelData.p0 : 0.0
+        parameters["sn"] = !isnothing(winding.modelData.sn_MVA) ? winding.modelData.sn_MVA * 1e6 : 0.0
+        parameters["uk"] = !isnothing(winding.modelData.vk_percent) ? winding.modelData.vk_percent * 1e-2 : 0.0
+        parameters["pk"] = !isnothing(winding.modelData.pk_kW) ? winding.modelData.pk_kW * 1e3 : 0.0
+        parameters["i0"] = !isnothing(winding.modelData.i0_percent) ? winding.modelData.i0_percent * 1e-2 : 0.0
+        parameters["p0"] = !isnothing(winding.modelData.p0_kW) ? winding.modelData.p0_kW * 1e3 : 0.0
       end
 
       parameters["winding_from"] = 1
