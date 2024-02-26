@@ -132,8 +132,12 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
     r = float(line["r1"])
     x = float(line["x1"])
     c_f = float(line["c1"])
-    c_nf = c_f * 1e9
+    c_nf = c_f  * 1e9
     tan_delta = float(line["tan1"])
+ 
+    bch = c_f * 2.0 * pi * 50.0 
+    g_us = 0.0 # tan delta = 0 
+
     if tan_delta != 0.0
       @warn "tan_delta not zero: $tan_delta"
     end
@@ -144,6 +148,10 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
     else
       inService = 0
     end
+    if inService == 0
+      continue
+    end
+
     Vn1 = VoltageDict[from]
     Vn2 = VoltageDict[to]
     Vn = Vn1
@@ -151,8 +159,9 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
     @assert Vn1 == Vn2 "Voltage levels are different: $Vn1 != $Vn2"
     #length not given, so set to 1.0km
     cPGM = ImpPGMComp(cID, cName, toComponentTyp("ACLINESEGMENT"), Vn, from, to)
-    asec = ACLineSegment(cPGM, 1.0, r, x, 0.0, 0.0, c_nf, 0.0)
+    asec = ACLineSegment(cPGM, 1.0, r, x, bch, g_us, c_nf, 0.0)
     push!(ACLines, asec)
+    #@show p=get_line_parameters(asec)
 
     t1 = ResDataTypes.Terminal(cPGM, ResDataTypes.Seite1)
     t2 = ResDataTypes.Terminal(cPGM, ResDataTypes.Seite2)
@@ -165,10 +174,11 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
     push!(t1Terminal, t1)
     push!(t2Terminal, t2)
 
-    bch = c_f * 2.0 * 50.0 * pi
-    g_us = 0.0 # tan delta = 0 
-
-    r_pu, x_pu, b_pu, g_pu = calcTwoPortPU(Vn, baseMVA, r, x, bch, g_us)
+    r,x,b,g = getRXBG(asec)    
+    _g = isnothing(g) ? 0.0 : g
+    _b = isnothing(b) ? 0.0 : b
+    r_pu, x_pu, b_pu, g_pu = calcTwoPortPU(Vn, baseMVA, r, x, _b, _g)
+    
     fromNodeID = NodeIDDict[from]
     toNodeID = NodeIDDict[to]
     from_org = from

@@ -195,7 +195,7 @@ mutable struct PowerTransformerWinding
   end
 end
 
-function getRXBG(o::PowerTransformerWinding)::Tuple{Float64,Float64,Float64,Float64}
+function getRXBG(o::PowerTransformerWinding)::Tuple{Float64,Float64,Union{Nothing,Float64},Union{Nothing,Float64}}
    return (o.r, o.x, o.b, o.g)
 end
 # helper

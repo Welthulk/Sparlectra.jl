@@ -31,6 +31,7 @@ export
   Shunt,
   Net,
   # functions
+  get_line_parameters,
   getRXBG,
   getWinding2WT,
   isPerUnit_RXGB,
