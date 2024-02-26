@@ -44,6 +44,10 @@ mutable struct ACLineSegment
   end
 end
 
+function getRXBG(o::ACLineSegment)::Tuple{Float64, Float64, Union{Nothing,Float64}, Union{Nothing,Float64}}
+  return (o.r, o.x, o.b, o.g)
+end
+
 function get_line_parameters(line::ACLineSegment)
   parameters = Dict{Symbol,Any}()
 
