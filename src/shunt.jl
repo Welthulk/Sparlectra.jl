@@ -15,6 +15,16 @@ mutable struct Shunt
     new(comp, nodeID, busIdx, p_shunt, q_shunt, y_pu_shunt, status)
   end
 
+  function Shunt(;comp::ImpPGMComp, nodeID::String,  base_MVA::Float64, Vn_kV_shunt::Float64, g_shunt::Float64, b_shunt::Float64, ratio::Float64=1.0, status::Int = 1)
+    busIdx = comp.cFrom_bus
+    p_shunt = g_shunt * Vn_kV_shunt^2*ratio
+    q_shunt = b_shunt * Vn_kV_shunt^2*ratio
+    Sh_ref = Complex(p_shunt, q_shunt)
+    y_pu_shunt = Sh_ref / base_MVA
+
+    new(comp, nodeID, busIdx, p_shunt, q_shunt, y_pu_shunt, status)
+  end
+
   function Base.show(io::IO, shunt::Shunt)
     print(io, "Shunt( ")
     print(io, shunt.comp, ", ")
@@ -26,4 +36,3 @@ mutable struct Shunt
     print(io, "status: ", shunt.status, ")")
   end
 end
-

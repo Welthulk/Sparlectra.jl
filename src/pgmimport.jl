@@ -179,15 +179,15 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
   @info "$(length(ACLines)) aclines created..."
 
   for t in wt2
-    sn_MVA = float(t["sn"])*1e-6
+    sn_MVA = float(t["sn"])*umrech_MVA
     vn_hv_kV = float(t["u1"])*1e-3 # rated voltage at the from side
     vn_lv_kV = float(t["u2"])*1e-3 # rated voltage at the to side
 
     oID = Int64(t["id"])
-    uk = float(t["uk"])
-    i0 = float(t["i0"])
-    p0_W = float(t["p0"])
-    pk_W = float(t["pk"])
+    vk_percent = float(t["uk"])*100
+    i0_percent = float(t["i0"])*100
+    p0_kW = float(t["p0"])*1e-3
+    pk_kW = float(t["pk"])*1e-3
     from_node = Int64(t["from_node"])
     to_node = Int64(t["to_node"])
 
@@ -219,7 +219,7 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
     # 0 = from_side, 1 = to_side
     shift_degree = 0.0
     
-    addEx = TransformerModelParameters(sn_MVA=sn_MVA, vk_percent=uk*100.0, vkr_percent=nothing, pk_kW=pk_W*1e-3, i0_percent=i0*100.0, p0_kW=p0_W*1e-3)
+    addEx = TransformerModelParameters(sn_MVA=sn_MVA, vk_percent=vk_percent, vkr_percent=nothing, pk_kW=pk_kW, i0_percent=i0_percent, p0_kW=p0_kW)
 
     r_pu = nothing
     x_pu = nothing
@@ -229,13 +229,7 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
     s1 = nothing
     s2 = nothing
     s3 = nothing
-
-    genratorTrafo = false  
-    if from_node > to_node
-      genratorTrafo = true      
-    end
-
-    if tap_side == 0 #&& !genratorTrafo
+    if tap_side == 0 
       
       s2 = PowerTransformerWinding(Vn_kV=vn_lv_kV)
       tap = PowerTransformerTaps(Vn_kV=vn_hv_kV, step=tap_pos, lowStep=tap_min, highStep=tap_max, neutralStep=tap_neutral, voltageIncrement_kV=tap_size_kV)
@@ -255,15 +249,9 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
       
     cImpPGMComp = ImpPGMComp(cID, cName, toComponentTyp("POWERTRANSFORMER"), vn_hv_kV, from_node, to_node)
     trafo = PowerTransformer(cImpPGMComp, true, s1, s2, s3)
-    if genratorTrafo
-      @show trafo
-      @show r, x, b, g
-      @show r_pu, x_pu, b_pu, g_pu
-    end
 
     push!(trafos, trafo)
-    #@show trafo
-    
+        
     cmp1 = ResDataTypes.Component(cID, cName, "POWERTRANSFORMER", vn_hv_kV)
     t1 = ResDataTypes.Terminal(cmp1, ResDataTypes.Seite1)
     cmp2 = ResDataTypes.Component(cID, cName, "POWERTRANSFORMER", vn_lv_kV)
@@ -369,12 +357,12 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
     vn_kv = VoltageDict[bus]
     cName = "Shunt_" * string(id)
     cID = "#ID_Shunt_" * string(id)
-    
-    p_shunt, q_shunt = calcPQ_Shunt(Float64(shunt["g1"]), Float64(shunt["b1"] ), vn_kv)
-    Y = Complex(p_shunt, q_shunt)
-    y_pu = calc_y_pu(Y, baseMVA, vn_kv)
     comp = ImpPGMComp(cID, cName, toComponentTyp("LINEARSHUNTCOMPENSATOR"), vn_kv, bus, bus)
-    sh = Shunt(comp, NodeIDDict[bus], bus, p_shunt, q_shunt, y_pu, status)
+    
+    sh = Shunt(comp=comp, nodeID=NodeIDDict[bus],  base_MVA = baseMVA, Vn_kV_shunt = vn_kv, g_shunt = Float64(shunt["g1"]), b_shunt = Float64(shunt["b1"] ) )
+    p_shunt = sh.p_shunt
+    q_shunt = sh.q_shunt
+
     push!(shuntVec, sh)
     t1 = Terminal(comp, ResDataTypes.Seite1)
     t1Terminal = NodeTerminalsDict[bus]
