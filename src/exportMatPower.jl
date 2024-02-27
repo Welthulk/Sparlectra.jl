@@ -229,12 +229,10 @@ function writeBranchData(sb_mva::Float64, branchVec::Vector{ResDataTypes.Branch}
     angmax = 360 #br.angmax
 
     type = ResDataTypes.toString(br.comp)
-    if br.status == 0 && br.isParallel
-      continue
-      type = "(parallel & no service) " * type
-    elseif br.status == 0
+    
+    if br.status == 0 # out of service
       type = "(no service) " * type
-    elseif br.isParallel
+    elseif !isnothing(br.isParallel) && br.isParallel
       continue
       type = "(parallel) " * type
     end

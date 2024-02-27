@@ -25,7 +25,10 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
         sn_max = sn
       end
     end
-    @assert sn_max > 0.0 "no transformer found!"
+    if sn_max == 0.0 
+      sn_max = 100e6
+      @info "no transformer found"      
+    end  
     baseMVA = sn_max * umrech_MVA
   else
     baseMVA = base_MVA
@@ -131,13 +134,9 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
     cID = "#ID_Line" * string(num)
     r = float(line["r1"])
     x = float(line["x1"])
-    c_f = float(line["c1"])
-    c_nf = c_f  * 1e9
+    c_nf = float(line["c1"])*1e9
     tan_delta = float(line["tan1"])
  
-    bch = c_f * 2.0 * pi * 50.0 
-    g_us = 0.0 # tan delta = 0 
-
     if tan_delta != 0.0
       @warn "tan_delta not zero: $tan_delta"
     end
@@ -147,8 +146,6 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
       inService = 1
     else
       inService = 0
-    end
-    if inService == 0
       continue
     end
 
@@ -157,14 +154,15 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
     Vn = Vn1
 
     @assert Vn1 == Vn2 "Voltage levels are different: $Vn1 != $Vn2"
+    
+    cImpPGMComp = ImpPGMComp(cID, cName, toComponentTyp("ACLINESEGMENT"), Vn, from, to)
     #length not given, so set to 1.0km
-    cPGM = ImpPGMComp(cID, cName, toComponentTyp("ACLINESEGMENT"), Vn, from, to)
-    asec = ACLineSegment(cPGM, 1.0, r, x, bch, g_us, c_nf, 0.0)
+    asec = ACLineSegment(cImpPGMComp, 1.0, r, x, c_nf, tan_delta)
     push!(ACLines, asec)
     #@show p=get_line_parameters(asec)
 
-    t1 = ResDataTypes.Terminal(cPGM, ResDataTypes.Seite1)
-    t2 = ResDataTypes.Terminal(cPGM, ResDataTypes.Seite2)
+    t1 = ResDataTypes.Terminal(cImpPGMComp, ResDataTypes.Seite1)
+    t2 = ResDataTypes.Terminal(cImpPGMComp, ResDataTypes.Seite2)
 
     checkBusNumber(from, busVec)
     checkBusNumber(to, busVec)
@@ -173,17 +171,12 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
     t1Terminal = NodeTerminalsDict[to]
     push!(t1Terminal, t1)
     push!(t2Terminal, t2)
-
-    r,x,b,g = getRXBG(asec)    
-    _g = isnothing(g) ? 0.0 : g
-    _b = isnothing(b) ? 0.0 : b
-    r_pu, x_pu, b_pu, g_pu = calcTwoPortPU(Vn, baseMVA, r, x, _b, _g)
     
     fromNodeID = NodeIDDict[from]
     toNodeID = NodeIDDict[to]
-    from_org = from
-    to_org = to
-    branch = Branch(cPGM, from, to, from_org, to_org, fromNodeID, toNodeID, r_pu, x_pu, b_pu, g_pu, 0.0, 0.0, inService)
+    
+    branch = Branch(cImpPGMComp, baseMVA, fromNodeID, toNodeID, asec, inService)
+    
     push!(branchVec, branch)
   end
   @info "$(length(ACLines)) aclines created..."
@@ -231,25 +224,17 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
     
     addEx = TransformerModelParameters(sn_MVA=sn_MVA, vk_percent=vk_percent, vkr_percent=nothing, pk_kW=pk_kW, i0_percent=i0_percent, p0_kW=p0_kW)
 
-    r_pu = nothing
-    x_pu = nothing
-    b_pu = nothing
-    g_pu = nothing
-
     s1 = nothing
     s2 = nothing
     s3 = nothing
-    if tap_side == 0 
-      
+    if tap_side == 0
       s2 = PowerTransformerWinding(Vn_kV=vn_lv_kV)
       tap = PowerTransformerTaps(Vn_kV=vn_hv_kV, step=tap_pos, lowStep=tap_min, highStep=tap_max, neutralStep=tap_neutral, voltageIncrement_kV=tap_size_kV)
       s1 = PowerTransformerWinding(Vn_kV=vn_hv_kV, modelData=addEx, shift_degree = shift_degree, ratedU = vn_hv_kV, ratedS=sn_MVA, taps=tap) 
       
       ratio = calcRatio(HV, vn_hv_kV, LV, vn_lv_kV, tap.step, tap.neutralStep, tap.tapStepPercent)
     else
-
-      s1 = PowerTransformerWinding(Vn_kV=vn_hv_kV)
-      
+      s1 = PowerTransformerWinding(Vn_kV=vn_hv_kV)      
       tap = PowerTransformerTaps(Vn_kV=vn_lv_kV, step=tap_pos, lowStep=tap_min, highStep=tap_max, neutralStep=tap_neutral, voltageIncrement_kV=tap_size_kV)      
       s2 = PowerTransformerWinding(Vn_kV=vn_lv_kV, modelData=addEx, shift_degree = shift_degree, ratedU = vn_hv_kV, ratedS=sn_MVA, taps=tap)       
       
@@ -275,8 +260,7 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
 
     push!(t1Terminal, t1)
     push!(t2Terminal, t2)
-    branch = Branch(branchC=cImpPGMComp, baseMVA=baseMVA, fromNodeID=fromNodeID, toNodeID=toNodeID, trafo=trafo, ratio=ratio, status=inService,isParallel=false) 
-        
+    branch = Branch(cImpPGMComp, baseMVA, fromNodeID, toNodeID, trafo, ratio, inService)         
     push!(branchVec, branch)
   end
   @info "$(length(trafos)) power transformers created..."
@@ -369,7 +353,9 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
     cID = "#ID_Shunt_" * string(id)
     comp = ImpPGMComp(cID, cName, toComponentTyp("LINEARSHUNTCOMPENSATOR"), vn_kv, bus, bus)
     
-    sh = Shunt(comp=comp, nodeID=NodeIDDict[bus],  base_MVA = baseMVA, Vn_kV_shunt = vn_kv, g_shunt = Float64(shunt["g1"]), b_shunt = Float64(shunt["b1"] ) )
+    
+    # for PGM the voltage is set to 1.0 kV
+    sh = Shunt(comp=comp, nodeID=NodeIDDict[bus],  base_MVA = baseMVA, Vn_kV_shunt = 1.0, g_shunt = Float64(shunt["g1"]), b_shunt = Float64(shunt["b1"] ) )
     p_shunt = sh.p_shunt
     q_shunt = sh.q_shunt
 

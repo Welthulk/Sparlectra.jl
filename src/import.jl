@@ -408,11 +408,25 @@ function pgmparser(filename)
   
   nodes = data_dict["data"]["node"]
   lines = data_dict["data"]["line"]
-  wt2 = data_dict["data"]["transformer"]
+  if haskey(data_dict["data"], "transformer")
+    wt2 = data_dict["data"]["transformer"]
+  else
+    wt2 = []
+  end
+   
   wt3 = nothing
   sym_gens = data_dict["data"]["sym_gen"]
-  sym_loads = data_dict["data"]["sym_load"]  
-  shunts = data_dict["data"]["shunt"]
+  if haskey(data_dict["data"], "sym_load")
+    sym_loads = data_dict["data"]["sym_load"]  
+  else
+    sym_loads = []
+  end    
+    
+  if haskey(data_dict["data"], "shunt")
+    shunts = data_dict["data"]["shunt"]
+  else
+    shunts = []
+  end  
   source = data_dict["data"]["source"]
   return nodes, lines, wt2, wt3, sym_gens, sym_loads, shunts, source
   

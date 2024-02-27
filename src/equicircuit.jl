@@ -533,29 +533,41 @@ function setParallelBranches!(branches::Vector{Branch})
     tupple = (b.fromBus, b.toBus)
 
     if tupple in branchTupleSet
-      b.isParallel = true
-      @debug "Branch $(b) is parallel!"
-
       existing_branches = branchDict[tupple]
-      b_total = 0.0
-      g_total = 0.0
-      r_inv = 0.0
-      x_inv = 0.0
-      for existing_b in existing_branches
-        b_total += existing_b.b_pu
-        g_total += existing_b.g_pu
-        r_inv += 1 / existing_b.r_pu
-        x_inv += 1 / existing_b.x_pu
-      end
-      for existing_b in existing_branches
-        existing_b.b_pu = b_total
-        existing_b.g_pu = g_total
-        existing_b.r_pu = 1 / r_inv
-        existing_b.x_pu = 1 / x_inv
-      end
+      push!(existing_branches, b)
     else
       branchDict[tupple] = [b]
       push!(branchTupleSet, tupple)
+    end
+  end
+  for (k,b_vec) in branchDict
+    if length(b_vec) > 1
+      sum_b_pu = 0.0
+      sum_g_pu = 0.0
+      r_pu = 0.0
+      x_pu = 0.0
+      i = 0
+      z_total = 0
+      sum_z = 0      
+      for b in b_vec
+        i+=1
+        if i < length(b_vec)
+          b.isParallel = true
+          @debug "Branch $(b) is parallel!"
+        end  
+        sum_b_pu += b.b_pu
+        sum_g_pu += b.g_pu
+        sum_z += (b.r_pu - b.x_pu * im)/(b.r_pu^2 + b.x_pu^2)
+        if i == length(b_vec)          
+          z_total = 1.0 / sum_z
+          r_pu = real(z_total)
+          x_pu = imag(z_total)
+        end
+        b.b_pu = sum_b_pu
+        b.g_pu = sum_g_pu
+        b.r_pu = r_pu
+        b.x_pu = x_pu
+      end      
     end
   end
 end

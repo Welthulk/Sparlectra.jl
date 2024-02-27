@@ -12,7 +12,13 @@ mutable struct ACLineSegment
   c_nf_per_km::Union{Nothing,Float64}
   tanδ::Union{Nothing,Float64}
 
-  function ACLineSegment(c::AbstractComponent, length::Float64, r::Float64, x::Float64, b::Union{Nothing,Float64} = nothing, g::Union{Nothing,Float64} = nothing, c_nf_per_km::Union{Nothing,Float64} = nothing, tanδ::Union{Nothing,Float64} = nothing)
+  function ACLineSegment(c::AbstractComponent, length::Float64, r::Float64, x::Float64, c_nf_per_km::Union{Nothing,Float64} = nothing, tanδ::Union{Nothing,Float64} = nothing)
+    g=0.0; b=0.0
+    if !isnothing(c_nf_per_km) && !isnothing(tanδ)
+      y1_shunt_ = 2.0 * pi * 50.0 * c_nf_per_km * 1e-9  * (tanδ + im*1.0)
+      g = real(y1_shunt_)
+      b = imag(y1_shunt_)  
+    end
     new(c, length, r, x, b, g, c_nf_per_km, tanδ)
   end
 
