@@ -55,7 +55,7 @@ function calcTransformerRXGB(Vn_kV::Float64, modelData::TransformerModelParamete
     try
       bm = -1.0 * sqrt(Y0^2 - Yfe^2)
     catch
-      @warn "bm is set to 0.0 (Y0^2 - Yfe^2 < 0.0)"
+      @debug "bm is set to 0.0 (Y0^2 - Yfe^2 < 0.0)"
       bm = 0.0
     end
   else

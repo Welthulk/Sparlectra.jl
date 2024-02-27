@@ -11,7 +11,7 @@ using Logging
 
 global_logger(ConsoleLogger(stderr, Logging.Info))
 
-function acpflow(casefile::String, writeCase::Bool, iterations::Int, verbose::Int)
+function acpflow(casefile::String, writeCase::Bool, writePGM::Bool, iterations::Int, verbose::Int)
   sparse=true  
   tol = 1e-6     
   log = verbose >= 1
@@ -22,10 +22,11 @@ function acpflow(casefile::String, writeCase::Bool, iterations::Int, verbose::In
     @error "File $(jpath) not found"
     return
   end
-   
-  myNet =createNetFromPGM(jpath)
-  filename=joinpath(pwd(),"data","pgmodel",myNet.name * "_epx")
-  exportPGM(net=myNet,filename=filename,useMVATrafoModell=false,exportSlackGen=true)
+  myNet =createNetFromPGM(jpath) 
+  if writePGM
+    filename=joinpath(pwd(),"data","pgmodel",myNet.name * "_epx")
+    exportPGM(net=myNet,filename=filename,useMVATrafoModell=false,exportSlackGen=true)
+  end
   # matpower export  
   if writeCase       
     case = myNet.name
@@ -51,4 +52,5 @@ function acpflow(casefile::String, writeCase::Bool, iterations::Int, verbose::In
   
 end
 
-@time acpflow("input.json", true,  8, 1)
+@time acpflow("input.json", true, true, 20, 1)
+#@time acpflow("MGrid_2.json", true, true, 20, 1)
