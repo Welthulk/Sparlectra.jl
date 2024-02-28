@@ -2,24 +2,16 @@
 # Date: 04.09.2023
 # include-file losses.jl
 
-function calcNetLosses!(nodes::Vector{ResDataTypes.Node}, branchVec::Vector{ResDataTypes.Branch}, Sbase_MVA::Float64, log::Bool = false)
-  function countParallelBranches(branchVec, fromBus, toBus)
-    count = 0
-    for br in branchVec
-      if br.fromBus == fromBus && br.toBus == toBus
-        count += 1
-      end
-    end
-    return count
-  end
-
-  if debug
-    println("\ncalcNetworkLosses (BaseMVA=$(Sbase_MVA))\n")
-  end
-
+function calcNetLosses!(nodes::Vector{ResDataTypes.Node}, branchVec::Vector{ResDataTypes.Branch}, Sbase_MVA::Float64)
+  @debug "\ncalcNetworkLosses (BaseMVA=$(Sbase_MVA))\n"
   # Sij = vi*exp(j*phi_i)*( (vi*exp(j*phi_i) - vk*exp(j*phi_k)*Y_ik +  vi*exp(j*phi_i)*Y0ik)*                     
   # Y0ik: Queradmittanz
   function calcBranchFlow(from::Int, to::Int, br::ResDataTypes.Branch, tapSide::Int)
+    @assert tapSide == 1 || tapSide == 2
+    if br.status < 0
+      return (0.0 + 0.0im)
+    end
+
     argi = deg2rad(nodes[from]._va_deg)
     argj = deg2rad(nodes[to]._va_deg)
 
@@ -36,11 +28,18 @@ function calcNetLosses!(nodes::Vector{ResDataTypes.Node}, branchVec::Vector{ResD
     end
 
     u_diff = ui - uj
-    Yik = inv((br.r_pu + im * br.x_pu))
-    Y0ik = 0.5 * (br.g_pu + im * br.b_pu)
+
+    rpu = br.r_pu
+    xpu = br.x_pu
+    bpu = br.b_pu
+    gpu = br.g_pu
+
+    Yik = inv((rpu + im * xpu))
+    Y0ik = 0.5 * (gpu + im * bpu)
+
     s = ui * conj(u_diff * Yik + ui * Y0ik)
     return (s)
-  end
+  end # calcBranchFlow
 
   n = length(nodes)
   Pvk = zeros(n)
@@ -52,32 +51,12 @@ function calcNetLosses!(nodes::Vector{ResDataTypes.Node}, branchVec::Vector{ResD
     println("Branch Power Flows:")
   end
 
-  # Parallel branches, only 2 branches per tuple!
-  branchTupleVec = Vector{Tuple{Integer, Integer, Integer}}()
-  for br in branchVec
-    if br.isParallel      
-      cnt = countParallelBranches(branchVec, br.fromBus, br.toBus)
-      @debug "Parallel branch detected: $(br.fromBus) -> $(br.toBus), cnt = $(cnt)"
-      tupple = (br.fromBus, br.toBus, cnt)
-      push!(branchTupleVec, tupple)
-    end
-  end
-
-  for br in branchVec
-    tupple = (br.fromBus, br.toBus)
-    pCorr = 1.0
-    cnt = countParallelBranches(branchVec, br.fromBus, br.toBus)
-    #if tupple in branchTupleSet
-    if cnt > 1      
-      pCorr = 1.0 / cnt
-      @debug "taking parallel branch $(br.fromBus) -> $(br.toBus) into account, pCorr = $(pCorr)"
-    end
-
+  for br in branchVec    
     from = br.fromBus
     to = br.toBus
     S = calcBranchFlow(from, to, br, 1) * Sbase_MVA
-    P = real(S) * pCorr
-    Q = imag(S) * pCorr
+    P = real(S)
+    Q = imag(S)
 
     Pvk[from] += P
     Qvk[from] += Q
@@ -94,8 +73,8 @@ function calcNetLosses!(nodes::Vector{ResDataTypes.Node}, branchVec::Vector{ResD
     from = br.toBus
     to = br.fromBus
     S = calcBranchFlow(from, to, br, 2) * Sbase_MVA
-    P = real(S) * pCorr
-    Q = imag(S) * pCorr
+    P = real(S)
+    Q = imag(S)
 
     Pvk[from] += P
     Qvk[from] += Q
@@ -110,6 +89,7 @@ function calcNetLosses!(nodes::Vector{ResDataTypes.Node}, branchVec::Vector{ResD
     brToFlow = BranchFlow(nodes[br.toBus]._vm_pu, nodes[br.toBus]._va_deg, P, Q)
     setBranchFlow!(brToFlow, brFromFlow, br)
   end
+
   if debug
     p_val = round(p_total, digits = 2)
     q_val = round(q_total, digits = 2)
@@ -123,7 +103,7 @@ function calcNetLosses!(nodes::Vector{ResDataTypes.Node}, branchVec::Vector{ResD
     end
   end
 
-  #TODO: Node PQ vs. GenPower
+  #FIXME: Node PQ vs. GenPower
   for n in nodes
     if Pvk[n.busIdx] <= 0.0
       setNodePQ!(n, -Pvk[n.busIdx], -Qvk[n.busIdx])

@@ -422,15 +422,26 @@ function createYBUS(branchVec::Vector{Branch}, shuntVec::Vector{ResDataTypes.Shu
       continue
     end
 
-    if branch.isParallel
-      @info "createYBUS: Branch $(branch) is parallel, skipping "
+    r = x = b = g = 0.0
+    if branch.status < 1
+      sign = -1.0
+      @debug "createYBUS: Branch $(branch) out of service, skipping "
+      continue    
+    elseif branch.skipYBus
+      @debug "createYBUS: Branch $(branch) skipping "
       continue
+    elseif branch.isParallel && !isnothing(branch.adjRXGB) && !branch.skipYBus
+      @debug "createYBUS: Branch $(branch) is parallel, using adjustes parameters "
+      r = branch.adjRXGB.r_pu
+      x = branch.adjRXGB.x_pu
+      b = branch.adjRXGB.b_pu
+      g = branch.adjRXGB.g_pu
+    else
+      r = branch.r_pu
+      x = branch.x_pu
+      b = branch.b_pu
+      g = branch.g_pu
     end
-
-    r = branch.r_pu
-    x = branch.x_pu
-    b = branch.b_pu
-    g = branch.g_pu
 
     yik = inv((r + x * im))
     susceptance = g / 2 + b / 2 * im # pi-model
@@ -537,36 +548,36 @@ function setParallelBranches!(branches::Vector{Branch})
       push!(branchTupleSet, tupple)
     end
   end
+
   for (k, b_vec) in branchDict
     if length(b_vec) > 1
       sum_b_pu = 0.0
       sum_g_pu = 0.0
-      r_pu = 0.0
-      x_pu = 0.0
-      i = 0
-      z_total = 0
-      sum_z = 0
+      sum_z = 0.0
+
       for b in b_vec
-        if b.status == 1
-          i += 1
-          b.isParallel = false
-          if i < length(b_vec)
-            b.isParallel = true
-            @debug "branch (1): $(b)"            
-          end
+        b.isParallel = true
+        b.skipYBus = true
+        if b.status == 1          
           sum_b_pu += b.b_pu
           sum_g_pu += b.g_pu
           sum_z += (b.r_pu - b.x_pu * im) / (b.r_pu^2 + b.x_pu^2)
-          if i == length(b_vec)
-            z_total = 1.0 / sum_z
-            r_pu = real(z_total)
-            x_pu = imag(z_total)
-          
-            b.b_pu = sum_b_pu
-            b.g_pu = sum_g_pu
-            b.r_pu = r_pu
-            b.x_pu = x_pu
-            @debug "branch (2): $(b)"
+        end
+      end
+
+      z_total = 1.0 / sum_z
+      r_pu = real(z_total)
+      x_pu = imag(z_total)
+
+      last_b = b_vec[end]
+      for (i,b) in enumerate(b_vec)
+        if b.status == 1
+          adjP = AdjElecParams(r_pu = r_pu, x_pu = x_pu, b_pu = sum_b_pu, g_pu = sum_g_pu)
+          setAdjElecParam!(adjP, b)
+          @debug "branch (2): $(b)"
+          if i==1
+            @debug "last parallel element (3): $(b)"
+            b.skipYBus = false
           end
         end
       end

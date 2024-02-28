@@ -27,6 +27,7 @@ export
   TransformerModelParameters,
   ProSumer,
   BranchFlow,
+  AdjElecParams,
   Branch,
   Shunt,
   Net,
@@ -60,6 +61,7 @@ export
   hasShuntInjection,
   setBranchFlow!,
   setBranchStatus!,
+  setAdjElecParam!,
   get_line_parameters
 
 include("component.jl")

@@ -20,6 +20,26 @@ struct BranchFlow
     println(io, ")")
   end
 end
+
+struct AdjElecParams
+  r_pu::Float64           # resistance
+  x_pu::Float64           # reactance
+  b_pu::Float64           # total line charging susceptance, kapazitiver Anteil
+  g_pu::Float64           # total line charging conductance, ohmscher Anteil
+
+  function AdjElecParams(;r_pu::Float64, x_pu::Float64, b_pu::Float64, g_pu::Float64)
+    new(r_pu, x_pu, b_pu, g_pu)
+  end
+
+  function Base.show(io::IO, b::AdjElecParams)
+    print(io, "AdjElecParams( ")
+    print(io, "r_pu: ", b.r_pu, ", ")
+    print(io, "x_pu: ", b.x_pu, ", ")
+    print(io, "b_pu: ", b.b_pu, ", ")
+    println(io, "g_pu: ", b.g_pu, ")")
+  end
+
+end
 """
 Purpose: Branch to connect two nodes and save pq-flow-data
 """
@@ -41,6 +61,8 @@ mutable struct Branch
   angle::Float64          # transformer off nominal phase shift angle
   status::Integer                        # 1 = in service, 0 = out of service
   isParallel::Bool        # is a parallel branch? (true/false)  
+  adjRXGB::Union{Nothing,AdjElecParams} # adjusted electrical parameters
+  skipYBus::Bool         # skip Y-Bus calculation for this branch
 
   
   function Branch(branchC::ImpPGMComp, baseMVA::Float64, fromNodeID::String, toNodeID::String, acLine::ResDataTypes.ACLineSegment, status::Integer)     
@@ -53,7 +75,7 @@ mutable struct Branch
     g_pu = g * baseZ
   
   
-    new(branchC, branchC.cFrom_bus, branchC.cTo_bus, branchC.cFrom_bus, branchC.cTo_bus, fromNodeID, toNodeID, nothing, nothing, r_pu, x_pu, b_pu, g_pu, 0.0, 0.0, status, false)    
+    new(branchC, branchC.cFrom_bus, branchC.cTo_bus, branchC.cFrom_bus, branchC.cTo_bus, fromNodeID, toNodeID, nothing, nothing, r_pu, x_pu, b_pu, g_pu, 0.0, 0.0, status, false, nothing, false)    
   
   end
     
@@ -66,7 +88,7 @@ mutable struct Branch
     b_pu = b * baseZ
     g_pu = g * baseZ
 
-    new(branchC, branchC.cFrom_bus, branchC.cTo_bus, branchC.cFrom_bus, branchC.cTo_bus, fromNodeID, toNodeID, nothing, nothing, r_pu, x_pu, b_pu, g_pu, ratio, w.shift_degree, status, false)    
+    new(branchC, branchC.cFrom_bus, branchC.cTo_bus, branchC.cFrom_bus, branchC.cTo_bus, fromNodeID, toNodeID, nothing, nothing, r_pu, x_pu, b_pu, g_pu, ratio, w.shift_degree, status, false, nothing, false)    
     end 
   
   function Branch(
@@ -84,9 +106,11 @@ mutable struct Branch
     status::Integer,
     fBracnhFlow::Union{Nothing,BranchFlow} = nothing,
     tBracnhFlow::Union{Nothing,BranchFlow} = nothing,
-    isParallel::Bool = false,
+    isParallel::Bool = false, 
+    adjRXGB::Union{Nothing,AdjElecParams} = nothing,
+    skipYBus::Bool = false   
   )
-    new(branchC, fromBus, toBus, fromBus, toBus, fromNodeID, toNodeID, fBracnhFlow, tBracnhFlow, r_pu, x_pu, b_pu, g_pu, ratio, angle, status, isParallel)
+    new(branchC, fromBus, toBus, fromBus, toBus, fromNodeID, toNodeID, fBracnhFlow, tBracnhFlow, r_pu, x_pu, b_pu, g_pu, ratio, angle, status, isParallel, adjRXGB, skipYBus)
   end
 
   function Branch(
@@ -107,8 +131,10 @@ mutable struct Branch
     fBracnhFlow::Union{Nothing,BranchFlow} = nothing,
     tBracnhFlow::Union{Nothing,BranchFlow} = nothing,
     isParallel::Bool = false,
+    adjRXGB::Union{Nothing,AdjElecParams} = nothing,
+    skipYBus::Bool = false,  
   )
-    new(branchC, fromBus, toBus, fromOrigBus, toOrigBus, fromNodeID, toNodeID, fBracnhFlow, tBracnhFlow, r_pu, x_pu, b_pu, g_pu, ratio, angle, status, isParallel)
+    new(branchC, fromBus, toBus, fromOrigBus, toOrigBus, fromNodeID, toNodeID, fBracnhFlow, tBracnhFlow, r_pu, x_pu, b_pu, g_pu, ratio, angle, status, isParallel, adjRXGB, skipYBus)
   end
 
   function Base.show(io::IO, b::Branch)
@@ -134,7 +160,12 @@ mutable struct Branch
     print(io, "ratio: ", b.ratio, ", ")
     print(io, "angle: ", b.angle, ", ")
     print(io, "status: ", b.status, ", ")    
-    print(io, "parallel: ", b.isParallel, ")")      
+    print(io, "parallel: ", b.isParallel, ", ")   
+    if b.isParallel && !isnothing(b.adjRXGB)
+      print(io, "adjRXGB: ", b.adjRXGB, ", ")
+    end 
+    print(io, "skipYBus: ", b.skipYBus, ", ")
+    println(io, ")")  
   end
 end
 
@@ -151,4 +182,8 @@ function setBranchStatus!(service::Bool, branch::Branch)
   else
     branch.status = 0
   end
+end
+
+function setAdjElecParam!(p::AdjElecParams, branch::Branch)
+  branch.adjRXGB = p  
 end
