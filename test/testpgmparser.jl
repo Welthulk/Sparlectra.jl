@@ -42,7 +42,7 @@ function acpflow(casefile::String, writeCase::Bool, writePGM::Bool, iterations::
   end      
   
   if erg == 0
-   calcNetLosses!(myNet.nodeVec, myNet.branchVec, myNet.baseMVA, log)    
+   calcNetLosses!(myNet.nodeVec, myNet.branchVec, myNet.baseMVA)    
    printACPFlowResults(myNet, etime, ite)
   elseif erg == 1
     @warn "Newton-Raphson did not converge"
