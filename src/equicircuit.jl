@@ -59,8 +59,8 @@ function evaluateCubicSpline(x, a, b, c, d, x_new)
   return y_new
 end
 
-function calc_y_pu(Y::ComplexF64, baseS::Float64, baseV::Float64) 
-  return Y * baseS / baseV^2  
+function calc_y_pu(Y::ComplexF64, baseS::Float64, baseV::Float64)
+  return Y * baseS / baseV^2
 end
 
 """
@@ -109,8 +109,8 @@ purpose: calculation of change of volatage per tap position in percent
 +vs: change per tap
 +vn: nominal voltage
 """
-function calcTapStepPercent(vs::Float64, vn::Float64)  
-   return (vs/vn)*100.0
+function calcTapStepPercent(vs::Float64, vn::Float64)
+  return (vs / vn) * 100.0
 end
 """
 purpose: calculate of ratio with correction of tap position
@@ -133,7 +133,6 @@ purpose: calculate of ratio with correction of tap position
 + tapStepPercent: tap step in percent
 """
 function calcRatio(bus_hv_kv::Float64, vn_hv_kv::Float64, bus_lv_kv::Float64, vn_lv_kv::Float64, tapPos::Integer, tapNeutral::Integer, tapStepPercent::Float64)::Float64
-  
   ratio = bus_hv_kv * vn_lv_kv / (bus_lv_kv * vn_hv_kv)
 
   if tapPos == tapNeutral
@@ -165,8 +164,8 @@ purpose: calculate of neutral voltage. Tap position in neutral position.
 + pk_W: short circuit power in W (Cu-losses)
 + i0_A: relativ no load current
 """
-function calcTrafoParamsSI(sbase_VA::Float64, u2_V::Float64, uk::Float64, sn_VA::Float64, pk_W::Float64, i0::Float64, p0_W::Float64)::Tuple{Float64, Float64, Float64, Float64}
-    return calcTrafoParams(sn_mva=sn_VA*1e-6, vn_hv_kv=u2_V*1e-3, vk_percent=uk*100.0, pk_kw=pk_W*1e-3, pfe_kw=p0_W*1e-3, i0_percent=i0*100.0)
+function calcTrafoParamsSI(sbase_VA::Float64, u2_V::Float64, uk::Float64, sn_VA::Float64, pk_W::Float64, i0::Float64, p0_W::Float64)::Tuple{Float64,Float64,Float64,Float64}
+  return calcTrafoParams(sn_mva = sn_VA * 1e-6, vn_hv_kv = u2_V * 1e-3, vk_percent = uk * 100.0, pk_kw = pk_W * 1e-3, pfe_kw = p0_W * 1e-3, i0_percent = i0 * 100.0)
 end
 
 """
@@ -180,45 +179,43 @@ x_pu: short circuit reaktance, p.u.
 bm: open loop magnitacation, p.u.
 hint: gm is set to zero, g_pu = 0.0!
 """
-function recalc_trafo_model_data(;baseMVA::Float64, Sn_MVA::Float64, ratedU_kV::Float64, r_pu::Float64, x_pu::Float64, b_pu::Float64, isPerUnit::Bool)::Tuple{Float64, Float64, Float64, Float64}
+function recalc_trafo_model_data(; baseMVA::Float64, Sn_MVA::Float64, ratedU_kV::Float64, r_pu::Float64, x_pu::Float64, b_pu::Float64, isPerUnit::Bool)::Tuple{Float64,Float64,Float64,Float64}
   wurz3 = sqrt(3.0)
   Pfe_kW = 0.0 # -> g_pu = 0.0
   if isPerUnit
     base_power_3p = baseMVA
     base_power_3p = baseMVA
-    base_power_1p = base_power_3p/3.0
-    base_i_to = base_power_3p/(ratedU_kV*wurz3)
+    base_power_1p = base_power_3p / 3.0
+    base_i_to = base_power_3p / (ratedU_kV * wurz3)
     base_y_to = base_i_to * base_i_to / base_power_1p
-    base_z_to = 1.0/base_y_to
+    base_z_to = 1.0 / base_y_to
 
-    
     # g_pu = 0.0!
-    y_shunt  = b_pu
-    Y_shunt = y_shunt*base_y_to
-    i0 = 100.0*Y_shunt*ratedU_kV^2/Sn_MVA
+    y_shunt = b_pu
+    Y_shunt = y_shunt * base_y_to
+    i0 = 100.0 * Y_shunt * ratedU_kV^2 / Sn_MVA
 
     z_ser_pu = sqrt(r_pu^2 + x_pu^2)
-    Z_Series_abs = z_ser_pu*base_z_to
-    uk = Z_Series_abs*Sn_MVA/ratedU_kV^2
-    Rk= r_pu*base_z_to
-    P_kW = 100.0*Rk*Sn_MVA^2/ratedU_kV^2
+    Z_Series_abs = z_ser_pu * base_z_to
+    uk = Z_Series_abs * Sn_MVA / ratedU_kV^2
+    Rk = r_pu * base_z_to
+    P_kW = 100.0 * Rk * Sn_MVA^2 / ratedU_kV^2
   else
     u_quad = ratedU_kV^2
     z_base = u_quad / Sn_MVA
-    y_base = Sn_MVA/u_quad
-    
+    y_base = Sn_MVA / u_quad
+
     Y_shunt = b_pu
-    i0 = Y_shunt*z_base*100.0
-    
-    Z_Series_abs = sqrt(r_pu^2 + x_pu^2)    
-    uk = Z_Series_abs*y_base
-    
-    Rk= r_pu
-    P_kW = 100.0*Rk*Sn_MVA^2/u_quad
+    i0 = Y_shunt * z_base * 100.0
+
+    Z_Series_abs = sqrt(r_pu^2 + x_pu^2)
+    uk = Z_Series_abs * y_base
+
+    Rk = r_pu
+    P_kW = 100.0 * Rk * Sn_MVA^2 / u_quad
   end
 
   return uk, P_kW, i0, Pfe_kW
-  
 end
 
 """
@@ -231,12 +228,12 @@ end
  + i0_percent: no load current in percent (open circuit)
  
 """
-function calcTrafoParams(;sn_mva::Float64, vn_hv_kv::Float64, vk_percent::Float64, pk_kw::Union{Nothing,Float64} = nothing, vkr_percent::Union{Nothing,Float64} = nothing, pfe_kw::Union{Nothing,Float64} = nothing, i0_percent::Union{Nothing,Float64} = nothing)
+function calcTrafoParams(; sn_mva::Float64, vn_hv_kv::Float64, vk_percent::Float64, pk_kw::Union{Nothing,Float64} = nothing, vkr_percent::Union{Nothing,Float64} = nothing, pfe_kw::Union{Nothing,Float64} = nothing, i0_percent::Union{Nothing,Float64} = nothing)
   @assert sn_mva > 0.0 "sn_mva must be > 0.0"
   @assert vn_hv_kv > 0.0 "vn_hv_kv must be > 0.0"
   @assert vk_percent > 0.0 "vk_percent must be > 0.0"
   @assert !(pk_kw === nothing && vkr_percent === nothing) "At least one of the parameters pk_kw=$(pk_kw) or vkr_percent=$(vkr_percent) must be set"
-  
+
   z_base = vn_hv_kv^2 / sn_mva
   # Impedanz
   zk = vk_percent / 100.0 * z_base
@@ -244,12 +241,12 @@ function calcTrafoParams(;sn_mva::Float64, vn_hv_kv::Float64, vk_percent::Float6
   if !isnothing(vkr_percent)
     rk = vkr_percent / 100.0 * z_base
   else
-    rk = (pk_kw/sn_mva)/z_base
-  end  
+    rk = (pk_kw / sn_mva) / z_base
+  end
   # Reaktanz
   xk = sqrt(zk^2 - rk^2) # Reaktanz
   # Suszeptanz
-  if !isnothing(pfe_kw)&&  pfe_kw > 0.0 && !isnothing(i0_percent) && i0_percent > 0.0
+  if !isnothing(pfe_kw) && pfe_kw > 0.0 && !isnothing(i0_percent) && i0_percent > 0.0
     pfe = pfe_kw / 1000.0
     v_quad = vn_hv_kv^2
     Yfe = pfe / v_quad
@@ -379,8 +376,8 @@ function calcYShunt(pShunt_MW::Float64, qShunt_MVA::Float64, ratio::Float64, SBa
 end
 
 function calcGB_Shunt(p_shunt::Float64, q_shunt::Float64, vn_kv::Float64)
-  g = p_shunt/vn_kv^2 
-  b = q_shunt/vn_kv^2
+  g = p_shunt / vn_kv^2
+  b = q_shunt / vn_kv^2
   return g, b
 end
 
@@ -426,7 +423,7 @@ function createYBUS(branchVec::Vector{Branch}, shuntVec::Vector{ResDataTypes.Shu
     end
 
     if branch.isParallel
-      @debug "createYBUS: Branch $(branch.comp.cName) is parallel, skipping "
+      @info "createYBUS: Branch $(branch) is parallel, skipping "
       continue
     end
 
@@ -540,7 +537,7 @@ function setParallelBranches!(branches::Vector{Branch})
       push!(branchTupleSet, tupple)
     end
   end
-  for (k,b_vec) in branchDict
+  for (k, b_vec) in branchDict
     if length(b_vec) > 1
       sum_b_pu = 0.0
       sum_g_pu = 0.0
@@ -548,26 +545,31 @@ function setParallelBranches!(branches::Vector{Branch})
       x_pu = 0.0
       i = 0
       z_total = 0
-      sum_z = 0      
+      sum_z = 0
       for b in b_vec
-        i+=1
-        if i < length(b_vec)
-          b.isParallel = true
-          @debug "Branch $(b) is parallel!"
-        end  
-        sum_b_pu += b.b_pu
-        sum_g_pu += b.g_pu
-        sum_z += (b.r_pu - b.x_pu * im)/(b.r_pu^2 + b.x_pu^2)
-        if i == length(b_vec)          
-          z_total = 1.0 / sum_z
-          r_pu = real(z_total)
-          x_pu = imag(z_total)
+        if b.status == 1
+          i += 1
+          b.isParallel = false
+          if i < length(b_vec)
+            b.isParallel = true
+            @debug "branch (1): $(b)"            
+          end
+          sum_b_pu += b.b_pu
+          sum_g_pu += b.g_pu
+          sum_z += (b.r_pu - b.x_pu * im) / (b.r_pu^2 + b.x_pu^2)
+          if i == length(b_vec)
+            z_total = 1.0 / sum_z
+            r_pu = real(z_total)
+            x_pu = imag(z_total)
+          
+            b.b_pu = sum_b_pu
+            b.g_pu = sum_g_pu
+            b.r_pu = r_pu
+            b.x_pu = x_pu
+            @debug "branch (2): $(b)"
+          end
         end
-        b.b_pu = sum_b_pu
-        b.g_pu = sum_g_pu
-        b.r_pu = r_pu
-        b.x_pu = x_pu
-      end      
+      end
     end
   end
 end
