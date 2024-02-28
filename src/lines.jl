@@ -34,11 +34,11 @@ mutable struct ACLineSegment
     print(io, "length: $(acseg.length), ")
     print(io, "r: $(acseg.r), ")
     print(io, "x: $(acseg.x), ")
-    if !isnothing(acseg.b)
-      print(io, "b: $(acseg.b), ")
-    end
     if !isnothing(acseg.g)
       print(io, "g: $(acseg.g), ")
+    end
+    if !isnothing(acseg.b)
+      print(io, "b: $(acseg.b), ")
     end
     if !isnothing(acseg.c_nf_per_km)
       print(io, "c_nf_per_km: $(acseg.c_nf_per_km), ")
