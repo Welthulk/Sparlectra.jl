@@ -171,7 +171,7 @@ function writeGeneratorData(sb_mva::Float64, NodeDict::Dict{String,ResDataTypes.
     end # if   
   end # for
   if !hasPVBus && !slackGeneratorFound
-    @warn "No PV-Bus found and no Slack-Generator defined -> add a Slack-Generator"
+    @info "No PV-Bus found and no Slack-Generator defined -> add a Slack-Generator"
     line = getLineSlackGenerator()
     write(file, line)
   end # if
@@ -196,7 +196,7 @@ function writeBranchData(sb_mva::Float64, branchVec::Vector{ResDataTypes.Branch}
 
     ratio = br.ratio
     angle = br.angle
-    status = br.status
+    status = Int(br.status)
     angmin = -360 #br.angmin
     angmax = 360 #br.angmax
 

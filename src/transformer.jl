@@ -33,18 +33,45 @@ mutable struct TransformerModelParameters
 end
 
 #helper
+#=
+function tap_adjust_impedance(tap_pos, tap_min, tap_max, tap_nom, xk, xk_min, xk_max)
+    if tap_pos <= max(tap_nom, tap_max) && tap_pos >= min(tap_nom, tap_max)
+        if tap_max == tap_nom
+            return xk
+        end
+
+        xk_increment_per_tap = (xk_max - xk) / (tap_max - tap_nom)
+        return xk + (tap_pos - tap_nom) * xk_increment_per_tap
+    end
+
+    if tap_min == tap_nom
+        return xk
+    end
+
+    xk_increment_per_tap = (xk_min - xk) / (tap_min - tap_nom)
+    return xk + (tap_pos - tap_nom) * xk_increment_per_tap
+end
+=#
+
 function calcTransformerRXGB(Vn_kV::Float64, modelData::TransformerModelParameters)::Tuple{Float64,Float64,Float64,Float64}
   z_base = Vn_kV^2 / modelData.sn_MVA
   # Impedanz
   zk = modelData.vk_percent * 1e-2 * z_base
+
   # Resistanz
   if !isnothing(modelData.vkr_percent) && modelData.vkr_percent > 0.0
     rk = modelData.vkr_percent * 1e-2 * z_base
-  else    
-    rk = (Vn_kV^2/modelData.sn_MVA^2)*modelData.pk_kW    
+  else
+    rk = (Vn_kV^2 / modelData.sn_MVA^2) * modelData.pk_kW
   end
   # Reaktanz
-  xk = sqrt(zk^2 - rk^2) # Reaktanz
+  xk = 0.0
+  try
+    xk = sqrt(zk^2 - rk^2) # Reaktanz
+  catch
+    @debug "xk is set to 0.0 (zk^2 - rk^2 < 0.0)"
+    xk = 0.0
+  end
   # Suszeptanz
   if !isnothing(modelData.p0_kW) && modelData.p0_kW > 0.0 && !isnothing(modelData.i0_percent) && modelData.i0_percent > 0.0
     pfe = modelData.p0_kW
@@ -76,12 +103,16 @@ mutable struct PowerTransformerTaps
   neutralU::Float64                  # cim:TapChanger.neutralU, usually = ratedU of the transformer end, but can deviate
   neutralU_ratio::Float64
   tapStepPercent::Float64
+  tapSign::Integer
 
-  function PowerTransformerTaps(; Vn_kV::Float64, step::Int, lowStep::Int, highStep::Int, neutralStep::Int, voltageIncrement_kV::Float64, neutralU::Union{Nothing,Float64}=nothing, neutralU_ratio::Union{Nothing,Float64}=nothing)
+  function PowerTransformerTaps(; Vn_kV::Float64, step::Int, lowStep::Int, highStep::Int, neutralStep::Int, voltageIncrement_kV::Float64, neutralU::Union{Nothing,Float64} = nothing, neutralU_ratio::Union{Nothing,Float64} = nothing)
     @assert Vn_kV > 0.0 "Vn_kV must be > 0.0"
-    @assert voltageIncrement_kV > 0.0 "voltageIncrement must be > 0.0"
+    @assert highStep != lowStep "tap high position equals low position $(highStep) = $(lowStep)"
 
-    tapStepPercent = (Vn_kV / voltageIncrement_kV) * 1e-2
+    tapStepPercent = 0
+    if voltageIncrement_kV != 0.0
+      tapStepPercent = (Vn_kV / voltageIncrement_kV) * 1e-2
+    end
 
     #FIXME: calculation of neutralU is not correct
     if isnothing(neutralU)
@@ -90,10 +121,10 @@ mutable struct PowerTransformerTaps
         neutralU = Vn_kV
       end
       neutralU = Vn_kV
-    # neutralU = round(neutralU_ratio * Vn_kV + (highStep - lowStep) * tapStepPercent * 1e2, digits = 0)
+      # neutralU = round(neutralU_ratio * Vn_kV + (highStep - lowStep) * tapStepPercent * 1e2, digits = 0)
     end
-
-    new(step, lowStep, highStep, neutralStep, voltageIncrement_kV, neutralU, neutralU_ratio, tapStepPercent)
+    tapSign = (highStep > lowStep) ? 1 : -1
+    new(step, lowStep, highStep, neutralStep, voltageIncrement_kV, neutralU, neutralU_ratio, tapStepPercent, tapSign)
   end
 
   function Base.show(io::IO, x::PowerTransformerTaps)
@@ -124,8 +155,7 @@ mutable struct PowerTransformerWinding
   modelData::Union{Nothing,TransformerModelParameters}
   _isEmpty::Bool
 
-  #=
-  function PowerTransformerWinding(;
+  function PowerTransformerWinding(
     Vn::Float64,
     r::Float64,
     x::Float64,
@@ -138,9 +168,9 @@ mutable struct PowerTransformerWinding
     isPu_RXGB::Union{Nothing,Bool} = nothing,
     modelData::Union{Nothing,TransformerModelParameters} = nothing,
   )
-    new(Vn, r, x, b, g, shift_degree, ratedU, ratedS, taps, isPu_RXGB, modelData)
+    new(Vn, r, x, b, g, shift_degree, ratedU, ratedS, taps, isPu_RXGB, modelData, isnothing(modelData))
   end
-  =#
+
   function PowerTransformerWinding(;
     Vn_kV::Float64,
     modelData::Union{Nothing,TransformerModelParameters} = nothing,
@@ -196,7 +226,7 @@ mutable struct PowerTransformerWinding
 end
 
 function getRXBG(o::PowerTransformerWinding)::Tuple{Float64,Float64,Union{Nothing,Float64},Union{Nothing,Float64}}
-   return (o.r, o.x, o.b, o.g)
+  return (o.r, o.x, o.b, o.g)
 end
 # helper
 function hasTaps(x::Union{Nothing,PowerTransformerWinding})::Bool
@@ -301,18 +331,18 @@ end
 
 function getWinding2WT(x::PowerTransformer)
   @assert x.isBiWinder "Transformer is not a 2WT"
+  return !x.side1._isEmpty ? x.side1 : x.side2
+end
 
-  if !x.side1._isEmpty
-    return x.side1
-  else
-    return x.side2
-  end
+function getSideNumber2WT(x::PowerTransformer)
+  @assert x.isBiWinder "Transformer is not a 2WT"
+  return !x.side1._isEmpty ? 1 : 2
 end
 
 #TODO: implement
 #function getRatio2WT(x::PowerTransformer, bus_HV_Vn::Float64, bus_LV_Vn::Float64) 
 #   @assert x.isBiWinder "Transformer is not a 2WT"
-  
+
 #end
 # helper
 
@@ -326,4 +356,80 @@ function toString(o::TrafoTyp)::String
   else
     return "UnknownT"
   end
+end
+
+# purpose: creates Windings for 3WT using MVA Method, see: "MVA Method for Three-Winding Transformer" by Ver Pangonilo
+#
+#                              hv_bus
+#                                |
+#                                T1                               
+#                                |    
+#                                *auxilary_bus -> V = hv_bus
+#                               / \
+#                              /   \ 
+#                             T2    T3
+#                            /       \  
+#                         mv_bus    lv_bus   
+#
+function create3WTWindings!(; u_kV::Array{Float64,1}, sn_MVA::Array{Float64,1}, addEx_Side::Array{TransformerModelParameters,1}, sh_deg::Array{Float64,1}, tap_side::Int, tap::PowerTransformerTaps)::Tuple{PowerTransformerWinding,PowerTransformerWinding,PowerTransformerWinding}
+  for side = 1:3
+    if isnothing(addEx_Side[side].vkr_percent)
+      @assert !isnothing(addEx_Side[side].pk_kW) "Either pk_kW or vkr_percent must be set!"
+      addEx_Side[side].vkr_percent = addEx_Side[side].pk_kW / addEx_Side[side].sn_MVA
+    end
+  end
+
+  vkVec = []
+  vkrVec = []
+  for side = 1:3
+    fak = addEx_Side[1].sn_MVA / (min(addEx_Side[side].sn_MVA, addEx_Side[(side%3)+1].sn_MVA))
+    push!(vkVec, (addEx_Side[side].vk_percent * fak))
+    push!(vkrVec, (addEx_Side[side].vkr_percent * fak))
+  end
+
+  vkVec[1] = 0.5 * (vkVec[1] + vkVec[3] - vkVec[2]) * 1.0
+  vkVec[2] = 0.5 * (vkVec[2] + vkVec[1] - vkVec[3]) * addEx_Side[2].sn_MVA / addEx_Side[1].sn_MVA
+  vkVec[3] = 0.5 * (vkVec[2] + vkVec[3] - vkVec[1]) * addEx_Side[3].sn_MVA / addEx_Side[1].sn_MVA
+
+  vkrVec[1] = 0.5 * (vkrVec[1] + vkrVec[3] - vkVec[2]) * 1.0
+  vkrVec[2] = 0.5 * (vkrVec[2] + vkrVec[1] - vkVec[3]) * addEx_Side[2].sn_MVA / addEx_Side[1].sn_MVA
+  vkrVec[3] = 0.5 * (vkrVec[2] + vkrVec[3] - vkVec[1]) * addEx_Side[3].sn_MVA / addEx_Side[1].sn_MVA
+
+  pVec = []
+  for side = 1:3
+    push!(pVec, calcTransformerRXGB(u_kV[side], addEx_Side[side]))
+  end
+
+  wVec = []
+  for side = 1:3
+    tap = taps = (side - 1 == tap_side) ? tap : nothing
+    w = PowerTransformerWinding(u_kV[side], pVec[side][1], pVec[side][2], pVec[side][3], pVec[side][4], sh_deg[side], u_kV[side], sn_MVA[side], tap, false, addEx_Side[side])
+    push!(wVec, w)
+  end
+
+  return (wVec[1], wVec[2], wVec[3])
+end
+
+function getWT2BusID(Vn::Float64, from::Int, to::Int)
+  name = "2WT_$(string(round(Vn,digits=1)))"
+  id = "#$name\\_$from\\_$to"
+  return name, id
+end
+
+function getWT3BusID(Vn::Float64, from::Int, to::Int, to3::Int)
+  name = "3WT_$(string(round(Vn,digits=1)))"
+  id = "#$name\\_$from\\_$to\\_$to3"
+  return name, id
+end
+
+# in the case of parallel transformers, the `to3` connections should always be distinct
+function getWT3AuxBusID(Vn::Float64, from::Int, to::Int, to3::Int)
+  name = "3WT_Aux_$(string(round(Vn,digits=1)))"
+  id = "#$name\\_$from\\_$to\\_$to3"
+  return name, id
+end
+
+function getTrafoImpPGMComp(aux::Bool, Vn::Float64, from::Int, to::Int, to3::Union{Nothing,Int} = nothing)
+  cName, cID = aux ? getWT3AuxBusID(Vn, from, to, to3) : isnothing(to3) ? getWT2BusID(Vn, from, to) : getWT3BusID(Vn, from, to, to3)
+  return aux ? ImpPGMComp3WT(cID, cName, toComponentTyp("POWERTRANSFORMER"), Vn, from, to, to3) : ImpPGMComp(cID, cName, toComponentTyp("POWERTRANSFORMER"), Vn, from, to)
 end

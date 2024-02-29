@@ -178,7 +178,12 @@ function exportPGM(; net::ResDataTypes.Net, filename::String, useMVATrafoModell:
       i0 = 0.0
       p0 = 0.0
 
-      @assert isnothing(o.side1.modelData) && isnothing(o.side2.modelData) && isnothing(o.side3.modelData) "modelData not supported for 3WT-trafo"
+      @show o.side1.modelData
+      @show o.side2.modelData
+      @show o.side3.modelData
+
+      @assert !(isnothing(o.side1.modelData) || isnothing(o.side2.modelData) || isnothing(o.side3.modelData)) "modelData not supported for 3WT-trafo"
+      #=
       l = 0
       for side in [o.side1, o.side2, o.side3]
         #if isnothing(side.modelData)
@@ -207,7 +212,7 @@ function exportPGM(; net::ResDataTypes.Net, filename::String, useMVATrafoModell:
           pk_23 = P_kW * 1e3
         end
       end
-
+      =#
       winding_1 = 0
       winding_2 = 0
       winding_3 = 0
@@ -220,7 +225,7 @@ function exportPGM(; net::ResDataTypes.Net, filename::String, useMVATrafoModell:
       tap_max = 0
       tap_nom = 0
       tap_size = 0
-
+      
       if o.tapSideNumber == 1
         tap_side = 0
         tap_pos = o.side1.taps.step
@@ -235,13 +240,20 @@ function exportPGM(; net::ResDataTypes.Net, filename::String, useMVATrafoModell:
         tap_max = o.side2.taps.highStep
         tap_nom = o.side2.taps.neutralStep
         tap_size = 1e3 * o.side2.taps.voltageIncrement * o.side2.Vn / 100.0
-      else
+      elseif o.tapSideNumber == 3
         tap_side = 2
         tap_pos = o.side3.taps.step
         tap_min = o.side3.taps.lowStep
         tap_max = o.side3.taps.highStep
         tap_nom = o.side3.taps.neutralStep
         tap_size = 1e3 * o.side3.taps.voltageIncrement * o.side3.Vn / 100.0
+      else
+        tap_side = 0
+        tap_pos = 0
+        tap_min = 0
+        tap_max = 0
+        tap_nom = 0
+        tap_size = 0
       end
 
       node_1 = o.comp.cHV_bus

@@ -13,11 +13,12 @@ mutable struct ACLineSegment
   tanδ::Union{Nothing,Float64}
 
   function ACLineSegment(c::AbstractComponent, length::Float64, r::Float64, x::Float64, c_nf_per_km::Union{Nothing,Float64} = nothing, tanδ::Union{Nothing,Float64} = nothing)
-    g=0.0; b=0.0
+    g = 0.0
+    b = 0.0
     if !isnothing(c_nf_per_km) && !isnothing(tanδ)
-      y1_shunt_ = 2.0 * pi * 50.0 * c_nf_per_km * 1e-9  * (tanδ + im*1.0)
+      y1_shunt_ = 2.0 * pi * 50.0 * c_nf_per_km * 1e-9 * (tanδ + im * 1.0)
       g = real(y1_shunt_)
-      b = imag(y1_shunt_)  
+      b = imag(y1_shunt_)
     end
     new(c, length, r, x, b, g, c_nf_per_km, tanδ)
   end
@@ -50,7 +51,7 @@ mutable struct ACLineSegment
   end
 end
 
-function getRXBG(o::ACLineSegment)::Tuple{Float64, Float64, Union{Nothing,Float64}, Union{Nothing,Float64}}
+function getRXBG(o::ACLineSegment)::Tuple{Float64,Float64,Union{Nothing,Float64},Union{Nothing,Float64}}
   return (o.r, o.x, o.b, o.g)
 end
 
@@ -63,4 +64,15 @@ function get_line_parameters(line::ACLineSegment)
   end
 
   return parameters
+end
+
+function getLineBusID(Vn::Float64, from::Int, to::Int)
+  name = "ACL_$(string(round(Vn,digits=1)))"
+  id = "#$name\\_$from\\_$to"
+  return name, id
+end
+
+function getLineImpPGMComp(Vn::Float64, from::Int, to::Int)
+  cName, cID = getLineBusID(Vn, from, to)
+  return ImpPGMComp(cID, cName, toComponentTyp("ACLINESEGMENT"), Vn, from, to)
 end

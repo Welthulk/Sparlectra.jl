@@ -541,8 +541,8 @@ function createNetFromFile(filename, base_MVA::Float64 = 0.0, log::Bool = false,
       # handle vk dependence
       tapVec = []
       vkVec = []
-      xDependence = false
-      vkcorr = 0.0
+      
+      vkcorr = 1.0
       if vk_dependence != raw"" && !isnothing(vk_dependence)
         for dep in vkDepChr
           if vk_dependence in keys(vkDepChr)
@@ -556,8 +556,8 @@ function createNetFromFile(filename, base_MVA::Float64 = 0.0, log::Bool = false,
 
             vkcorr = calcVKDependence(xTaps, yVKs, Float64(tap_pos))
 
-            xDependence = true
-            break
+            
+            
           end
         end
       end
@@ -568,22 +568,16 @@ function createNetFromFile(filename, base_MVA::Float64 = 0.0, log::Bool = false,
 
       if tapSide == 1
         neutralU = vn_hv_kv
-        vn_hv_kv = neutralU * ntap
-        if xDependence
-          vk_hv_percent = vkcorr
-        end
+        vn_hv_kv = neutralU * ntap        
+        vk_hv_percent = vkcorr        
       elseif tapSide == 2
         neutralU = vn_mv_kv
-        vn_mv_kv = neutralU * ntap
-        if xDependence
-          vk_mv_percent = vkcorr
-        end
+        vn_mv_kv = neutralU * ntap        
+        vk_mv_percent = vkcorr        
       elseif tapSide == 3
         neutralU = vn_lv_kv
-        vn_lv_kv = neutralU * ntap
-        if xDependence
-          vk_lv_percent = vkcorr
-        end
+        vn_lv_kv = neutralU * ntap        
+        vk_lv_percent = vkcorr        
       end
       rk_T1, xk_T1, bm_T1, gm_T1 = calc3WTParams(1, sn_hv_mva, sn_mv_mva, sn_lv_mva, HV_kv, MV_kv, LV_kv, vk_hv_percent, vk_mv_percent, vk_lv_percent, vkr_hv_percent, vkr_mv_percent, vkr_lv_percent, pfe_kw, i0_percent)
 
