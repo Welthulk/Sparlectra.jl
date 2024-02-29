@@ -59,7 +59,7 @@ mutable struct Branch
   g_pu::Float64           # total line charging conductance, ohmscher Anteil
   ratio::Float64          # transformer off nominal turns ratio
   angle::Float64          # transformer off nominal phase shift angle
-  status::Integer                        # 1 = in service, 0 = out of service
+  status::Integer         # 1 = in service, 0 = out of service
   isParallel::Bool        # is a parallel branch? (true/false)  
   adjRXGB::Union{Nothing,AdjElecParams} # adjusted electrical parameters
   skipYBus::Bool         # skip Y-Bus calculation for this branch
@@ -72,24 +72,38 @@ mutable struct Branch
     r_pu = r / baseZ
     x_pu = x / baseZ
     b_pu = b * baseZ
-    g_pu = g * baseZ
-  
-  
-    new(branchC, branchC.cFrom_bus, branchC.cTo_bus, branchC.cFrom_bus, branchC.cTo_bus, fromNodeID, toNodeID, nothing, nothing, r_pu, x_pu, b_pu, g_pu, 0.0, 0.0, status, false, nothing, false)    
-  
+    g_pu = g * baseZ  
+    
+    new(branchC, branchC.cFrom_bus, branchC.cTo_bus, branchC.cFrom_bus, branchC.cTo_bus, fromNodeID, toNodeID, nothing, nothing, r_pu, x_pu, b_pu, g_pu, 0.0, 0.0, status, false, nothing, false)      
   end
     
-  function Branch(branchC::ImpPGMComp, baseMVA::Float64,fromNodeID::String, toNodeID::String, trafo::ResDataTypes.PowerTransformer,  ratio::Float64,  status::Integer)         
-    w=getWinding2WT(trafo)
+  function Branch(baseMVA::Float64, from::Int, to::Int, acLine::ACLineSegment, id::Int, status::Integer=1)         
+    
+    Vn = acLine.comp.cVN
+    r, x, b, g = getRXBG(acLine)
+    baseZ = (Vn)^2 / baseMVA
+    r_pu = r / baseZ
+    x_pu = x / baseZ
+    b_pu = b * baseZ
+    g_pu = g * baseZ  
+    
+    c = getBranchComp(Vn, from, to, id)
+    new(c, from, to, from, to, "", "", nothing, nothing, r_pu, x_pu, b_pu, g_pu, 0.0, 0.0, status, false, nothing, false)    
+  end 
+
+  function Branch(baseMVA::Float64, from::Int, to::Int, trafo::PowerTransformer, side::Int, id::Int, ratio::Float64=1.0,  status::Integer=1)         
+    w = (side in [1, 2, 3]) ? (side == 1 ? trafo.side1 : (side == 2 ? trafo.side2 : trafo.side3)) : error("wrong value for 'side'")
+    
     r, x, b, g = getRXBG(w)
     baseZ = (w.Vn)^2 / baseMVA
     r_pu = r / baseZ
     x_pu = x / baseZ
     b_pu = b * baseZ
     g_pu = g * baseZ
-
-    new(branchC, branchC.cFrom_bus, branchC.cTo_bus, branchC.cFrom_bus, branchC.cTo_bus, fromNodeID, toNodeID, nothing, nothing, r_pu, x_pu, b_pu, g_pu, ratio, w.shift_degree, status, false, nothing, false)    
-    end 
+    
+    c = getBranchComp(w.Vn, from, to, id)
+    new(c, from, to, from, to, "", "", nothing, nothing, r_pu, x_pu, b_pu, g_pu, ratio, w.shift_degree, status, false, nothing, false)    
+  end 
   
   function Branch(
     branchC::AbstractComponent,
@@ -186,4 +200,11 @@ end
 
 function setAdjElecParam!(p::AdjElecParams, branch::Branch)
   branch.adjRXGB = p  
+end
+
+function getBranchComp(Vn_kV::Float64, from::Int, to::Int, idx::Int)
+  cTyp = toComponentTyp("Branch")
+  name = "Branch_$(string(round(Vn_kV,digits=1)))_$(Int(from))_$(Int(to))"
+  cID = "#"*name*"#"*string(idx)
+  return ImpPGMComp(cID,name,cTyp,Vn_kV,from,to)
 end

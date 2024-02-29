@@ -12,6 +12,12 @@ struct Bus
   vm_pu::Union{Nothing,Float64}
   va_deg::Union{Nothing,Float64}
 
+  function Bus(busIdx::Int64, vn_kv::Float64, type::Int64, vm_pu::Float64=1.0, va_deg::Float64=0.0)    
+   name = "Bus_$(string(round(vn_kv,digits=1)))"
+   id = "#$name\\_#$(string(busIdx))"
+    
+   new(busIdx, name, id, "", vn_kv, type, vm_pu, va_deg)
+  end
   function Bus(busIdx::Int64, name::String, id::String, wt3id::String, vn_kv::Float64, type::Int64)
     new(busIdx, name, id, wt3id, vn_kv, type, nothing, nothing)
   end

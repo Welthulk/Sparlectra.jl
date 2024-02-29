@@ -27,7 +27,7 @@ mutable struct ProSumer
 
   function ProSumer(
     comp::AbstractComponent,
-    nodeID::String,
+    nodeID::Union{Nothing,String} = nothing,
     ratedS::Union{Nothing,Float64} = nothing,
     ratedU::Union{Nothing,Float64} = nothing,
     qPercent::Union{Nothing,Float64} = nothing,
@@ -124,3 +124,12 @@ mutable struct ProSumer
     print(io, "proSumptionType: ", prosumption.proSumptionType, ")")
   end
 end
+
+
+function getProSumPGMComp(Vn::Float64, from::Int, isGen::Bool, id::Int)
+  cTyp = isGen ? toComponentTyp("GENERATOR") : toComponentTyp("LOAD")
+  cName = isGen ? "Gen_$(string(round(Vn,digits=1)))" : "Ld_$(string(round(Vn,digits=1)))"
+  cID = "#$cName\\_$from\\_#$(string(id))"
+  return ImpPGMComp(cID, cName, cTyp, Vn, from, from)  
+end
+

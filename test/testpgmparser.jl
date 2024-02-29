@@ -22,7 +22,8 @@ function acpflow(casefile::String, writeCase::Bool, writePGM::Bool, iterations::
     @error "File $(jpath) not found"
     return
   end
-  myNet =createNetFromPGM(jpath) 
+  myNet =createNetFromPGM(jpath)
+  
   if writePGM
     filename=joinpath(pwd(),"data","pgmodel",myNet.name * "_epx")
     exportPGM(net=myNet,filename=filename,useMVATrafoModell=false,exportSlackGen=true)
@@ -52,5 +53,5 @@ function acpflow(casefile::String, writeCase::Bool, writePGM::Bool, iterations::
   
 end
 
-@time acpflow("input.json", true, true, 20, 1)
-#@time acpflow("MGrid_2.json", true, true, 20, 1)
+#@time acpflow("input.json", true, true, 20, 1)
+@time acpflow("Mini_Grid_Lars_v2.json", true, true, 20, 1)
