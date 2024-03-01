@@ -128,7 +128,7 @@ end
 
 function getProSumPGMComp(Vn::Float64, from::Int, isGen::Bool, id::Int)
   cTyp = isGen ? toComponentTyp("GENERATOR") : toComponentTyp("LOAD")
-  cName = isGen ? "Gen_$(string(round(Vn,digits=1)))" : "Ld_$(string(round(Vn,digits=1)))"
+  cName = isGen ? "Gen_$(string(convert(Int,trunc(Vn))))" : "Ld_$(string(round(Vn,digits=1)))"
   cID = "#$cName\\_$from\\_#$(string(id))"
   return ImpPGMComp(cID, cName, cTyp, Vn, from, from)  
 end
