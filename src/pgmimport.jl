@@ -4,45 +4,153 @@
 # power grid model json importer
 
 function identifyIsolatedBuses(nodes, lines, wt2, wt3)
-    isolated_buses = Set{Int}()    
-    connected_buses = Set{Int}()
-    
-    for o in lines
-        if o["from_status"] == 0 || o["to_status"] == 0
-            continue
-        end        
-        push!(connected_buses, o["from_node"])
-        push!(connected_buses, o["to_node"])        
+  isolated_buses = Set{Int}()
+  connected_buses = Set{Int}()
+
+  for o in lines
+    if o["from_status"] == 0 || o["to_status"] == 0
+      continue
     end
-    
-    for o in wt2
-        if o["from_status"] == 0 || o["to_status"] == 0
-            continue
-        end        
-        push!(connected_buses, o["from_node"])
-        push!(connected_buses, o["to_node"])
+    push!(connected_buses, o["from_node"])
+    push!(connected_buses, o["to_node"])
+  end
+
+  for o in wt2
+    if o["from_status"] == 0 || o["to_status"] == 0
+      continue
+    end
+    push!(connected_buses, o["from_node"])
+    push!(connected_buses, o["to_node"])
+  end
+
+  for o in wt3
+    if o["status_1"] == 0 || o["status_2"] == 0 || o["status_3"] == 0
+      continue
+    end
+    push!(connected_buses, o["node_1"])
+    push!(connected_buses, o["node_2"])
+    push!(connected_buses, o["node_3"])
+  end
+
+  for node in nodes
+    node_id = node["id"]
+    if !(node_id in connected_buses)
+      push!(isolated_buses, node_id)
+    end
+  end
+
+  return isolated_buses
+end
+
+function reassignBusNumbers!(nodes, lines, wt2, wt3, s_gen, s_load, shunt, source)
+  isolated_buses = identifyIsolatedBuses(nodes, lines, wt2, wt3)
+  if length(isolated_buses) > 0
+    @debug "Isolated busses found: $(isolated_buses)"
+  end
+
+  # Erstelle Dictionary zur Zuordnung alter zu neuer Busnummern
+  bus_mapping = Dict{Int,Int}()
+  # type of the busses PV, PQ, Slack
+  bus_types = Dict{Int,Int}()
+
+  new_bus_number = 1
+
+  for node in nodes
+    old_bus_number = node["id"]
+
+    # Überspringe isolierte Busse
+    if old_bus_number in isolated_buses
+      node["o_id"] = old_bus_number
+      #@show "isolated bus found: $(old_bus_number)"      
+      node["type"] = 4
+      continue
     end
 
-    for o in wt3
-        if o["status_1"] == 0 || o["status_2"] == 0|| o["status_3"] == 0
-            continue
-        end        
-        push!(connected_buses, o["node_1"])
-        push!(connected_buses, o["node_2"])
-        push!(connected_buses, o["node_3"])
+    # Ordne neue Busnummer zu
+    bus_mapping[old_bus_number] = new_bus_number
+    node["id"] = new_bus_number
+    node["o_id"] = old_bus_number
+    new_bus_number += 1
+  end
+
+  # Aktualisiere Busnummern in Leitungen
+  for line in lines
+    line["o_from"] = line["from_node"]
+    line["o_to"] = line["to_node"]
+    line["from_node"] = get(bus_mapping, line["from_node"], line["from_node"])
+    line["to_node"] = get(bus_mapping, line["to_node"], line["to_node"])
+  end
+
+  for transformer in wt2
+    transformer["o_from"] = transformer["from_node"]
+    transformer["o_to"] = transformer["to_node"]
+
+    transformer["from_node"] = get(bus_mapping, transformer["from_node"], transformer["from_node"])
+    transformer["to_node"] = get(bus_mapping, transformer["to_node"], transformer["to_node"])
+  end
+
+  for transformer in wt3
+    for i = 1:3
+      node_key = "node_$(i)"
+      if haskey(transformer, node_key)
+        transformer["o_$(node_key)"] = transformer[node_key]
+        transformer[node_key] = get(bus_mapping, transformer[node_key], transformer[node_key])
+      end
+    end
+  end
+
+  for gen in s_gen
+    gen["o_node"] = gen["node"]
+    gen["node"] = get(bus_mapping, gen["node"], gen["node"])
+
+    bus_id = Int(gen["node"])
+    bus_type = gen["type"]
+    bus_type += 1
+    bus_types[bus_id] = bus_type
+  end
+
+  for load in s_load
+    load["o_node"] = load["node"]
+    load["node"] = get(bus_mapping, load["node"], load["node"])
+
+    bus_id = Int(load["node"])
+    bus_type = load["type"]
+    bus_type += 1
+    bus_types[bus_id] = bus_type
+  end
+
+  for s in shunt
+    s["o_node"] = s["node"]
+    s["node"] = get(bus_mapping, s["node"], s["node"])
+
+    bus_id = Int(s["node"])
+    if !haskey(bus_types, bus_id)
+      bus_types[bus_id] = 1
+    end
+  end
+
+  for s in source
+    s["o_node"] = s["node"]
+    s["node"] = get(bus_mapping, s["node"], s["node"])
+    bus_id = Int(s["node"])
+    bus_types[bus_id] = 3
+  end
+
+  for node in nodes
+    bus_id = node["id"]
+    if haskey(node, "type")
+      type = node["type"]
+      #@show "bus type already set for bus $(bus_id), type: $(type)"
+      continue
     end
 
-
-
-    # Identifiziere isolierte Busse
-    for node in nodes
-        node_id = node["id"]
-        if !(node_id in connected_buses)
-            push!(isolated_buses, node_id)
-        end
+    if haskey(bus_types, bus_id)
+      node["type"] = bus_types[bus_id]
+    else
+      #@show "bus type not found for bus $(bus_id)"
+      node["type"] = 1
     end
-
-    return isolated_buses
+  end
 end
 
 function searchMaxS(wt2, wt3, gens)
@@ -86,7 +194,25 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
 
   nodes, lines, wt2, wt3, sym_gens, sym_loads, shunts, source = pgmparser(filename)
 
-  isoBus = identifyIsolatedBuses(nodes, lines, wt2, wt3)
+  @info "search for isolated busses (reassign bus numbers...)"
+  reassignBusNumbers!(nodes, lines, wt2, wt3, sym_gens, sym_loads, shunts, source)
+
+  if check
+    for n in nodes
+      id   = Int64(n["id"])
+      o_id = Int64(n["o_id"])
+      type = Int64(n["type"])
+      if id != o_id
+        @info "bus number re-assigned: $o_id -> $id"
+      end
+
+      if type == 4
+        @info "isolated bus found: $id"
+      elseif type == 3
+        @info "slack bus found: $id"
+      end
+    end
+  end
 
   base_name = basename(filename)
   netName, ext = splitext(base_name)
@@ -102,7 +228,7 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
   @info "baseMVA: $baseMVA MVA"
 
   VoltageDict = Dict{Integer,Float64}()
-  
+
   AuxBusDict = Dict{String,Integer}()
 
   ACLines = Vector{ResDataTypes.ACLineSegment}()
@@ -117,65 +243,28 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
   NodeTerminalsDict = Dict{Integer,Vector{ResDataTypes.Terminal}}()
   NodeParametersDict = Dict{Integer,ResDataTypes.NodeParameters}()
   busVec = Vector{Bus}()
-  # search type of the busses PV, PQ, Slack
-  bus_types = Dict{Int,Int}()
-  for sym_gen in sym_gens
-    bus_id = sym_gen["node"]
-    bus_type = sym_gen["type"]
-    bus_type += 1
-    bus_types[bus_id] = bus_type
-  end
-
-  for sym_load in sym_loads
-    bus_id = sym_load["node"]
-    bus_type = sym_load["type"]
-    bus_type += 1
-    bus_types[bus_id] = bus_type
-  end
 
   # slack bus  
   vm_pu_slack = 1.0
   slackIdx = 0 # Counter for slack index  
-  
-
-  for s in source
-    status = s["status"]
-    if status == 0
+  busIdx = 0 # busses are numbered from 1 to n ?
+  for bus in nodes
+    #@assert Int64(bus["id"]) == busIdx + 1 "bus numbers are not consecutive and unique"
+    busIdx = Int64(bus["id"])
+    vn_kv = float(bus["u_rated"]) * 1e-3
+    btype = Int64(bus["type"])
+    if btype == 4
+      @info "isolated bus found, bus number: $busIdx, vn_kv: $vn_kv, type: $btype, skip..."
       continue
     end
 
-    bus_id = Int64(s["node"])
-    vm_pu_slack = float(s["u_ref"])
-    
-    bus_types[bus_id] = 3
-    slackIdx = bus_id
-    break # only one slack bus
-  end
-  @assert slackIdx != 0 "no slack bus found!"
-
-  for i in isoBus
-    bus_types[i] = 4
-    @info "isolated bus: $i"
-  end
-
-  busIdx = 0 # busses are numbered from 1 to n ?
-  for bus in nodes
-    @assert Int64(bus["id"]) == busIdx + 1 "bus numbers are not consecutive and unique"
-    busIdx = Int64(bus["id"])
-    vn_kv = float(bus["u_rated"]) * 1e-3
-  
     vm_pu = 1.0
     va_deg = 0.0
-    btype = 1
-    if haskey(bus_types, busIdx)
-      btype = bus_types[busIdx]
-    end
-
     if btype == 3
       vm_pu = vm_pu_slack
       va_deg = 0.0
+      slackIdx = busIdx
     end
-      
     a_bus = Bus(busIdx, vn_kv, btype, vm_pu, va_deg)
     busIDStringDict[busIdx] = a_bus.id
 
@@ -189,13 +278,13 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
     NodeParametersDict[busIdx] = NodeParameters
   end
   @info "$(length(busVec)) busses created..."
-  
+
   # Set up auxillary buses
-  auxAnz=0
+  auxAnz = 0
   if !isnothing(wt3)
     for t in wt3
       busIdx += 1
-      auxAnz+=1
+      auxAnz += 1
       u1 = float(t["u1"]) * 1e-3
       from_node = Int64(t["node_1"])
       to_node = Int64(t["node_2"])
@@ -213,12 +302,11 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
       NodeParameters = ResDataTypes.NodeParameters(busIdx)
       NodeParametersDict[busIdx] = NodeParameters
     end
-  end
-  @info "$auxAnz auxillary busses created..."
-
+  end  
+  auxAnz > 0 ? (@info "$auxAnz auxillary busses created...") : (@info "no aux busses created...")
+  
   b = nothing
   g = nothing
-
   for line in lines
     from = Int64(line["from_node"])
     to = Int64(line["to_node"])
@@ -230,7 +318,7 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
     tan_delta = float(line["tan1"])
 
     if tan_delta != 0.0
-      @debug "tan_delta not zero: $tan_delta"
+      @warn "tan_delta not zero: $tan_delta, not handelt yet!"
     end
 
     from_status = line["from_status"]
@@ -264,12 +352,11 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
     push!(t1Terminal, t1)
     push!(t2Terminal, t2)
 
-    
     branch = Branch(baseMVA, from, to, asec, Int(oID), inService)
-    push!(branchVec, branch)  
+    push!(branchVec, branch)
   end
-  @info "$(length(ACLines)) aclines created..."
-
+  length(ACLines) > 0 ? (@info "$(length(ACLines)) aclines created...") : (@info "no aclines found...")
+  
   for t in wt2
     sn_MVA = float(t["sn"]) * umrech_MVA
     vn_hv_kV = float(t["u1"]) * 1e-3 # rated voltage at the from side
@@ -351,7 +438,7 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
 
     push!(branchVec, branch)
   end
-  @info "$(length(trafos)) 2WTs created..."
+  (length(trafos) > 0) ? (@info "$(length(trafos)) 2WTs created......") : (@info "no 2WTs found...")
 
   anz_3wt = 0
   for t in wt3
@@ -454,7 +541,7 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
     branch = Branch(baseMVA, AuxBusIdx, to_node_3, wt3Trafo, 3, oID, 1.0, inService)
     push!(branchVec, branch)
   end
-  @info "$(anz_3wt) 3WTs created..."
+  (anz_3wt > 0) ? (@info "$(anz_3wt) 3WTs created......") : (@info "no 3WTs found...")
 
   ratedS = nothing
   ratedU = nothing
@@ -477,13 +564,13 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
     type = sym_load["type"]
     @assert type == 0 "only constant power loads are supported"
     lanz += 1
-    
+
     bus = sym_load["node"]
     vn = VoltageDict[bus]
 
     p = sym_load["p_specified"] * umrech_MVA
     q = sym_load["q_specified"] * umrech_MVA
-    comp = getProSumPGMComp(vn, bus, false, Int(oID))    
+    comp = getProSumPGMComp(vn, bus, false, Int(oID))
     pRS = ProSumer(comp, nothing, ratedS, ratedU, qPercent, p, q, maxP, minP, maxQ, minQ, ratedPowerFactor, referencePri, nothing, nothing)
     push!(prosum, pRS)
     t1 = Terminal(comp, ResDataTypes.Seite2)
@@ -495,13 +582,12 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
     nParms.qƩLoad = isnothing(nParms.qƩLoad) ? q : nParms.qƩLoad + q
     NodeParametersDict[bus] = nParms
   end
-  @info "$(lanz) loads created..."
+  (lanz > 0) ? (@info "$(lanz) loads created...") : (@info "no loads found...")
 
   lanz = 0
   for sym_gen in sym_gens
     type = sym_gen["type"]
     @assert type == 0 "only constant power generators are supported"
-
 
     oID = sym_gen["id"]
     bus = sym_gen["node"]
@@ -512,7 +598,7 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
       @info "generator $(oID) not in service"
       continue
     end
-    lanz += 1            
+    lanz += 1
     p = sym_gen["p_specified"] * umrech_MVA
     q = sym_gen["q_specified"] * umrech_MVA
     comp = getProSumPGMComp(vn, bus, true, Int(oID))
@@ -528,7 +614,7 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
     nParms.qƩGen = isnothing(nParms.qƩGen) ? q : nParms.qƩGen + q
     NodeParametersDict[bus] = nParms
   end
-  @info "$(lanz) generators created..."
+  (lanz > 0) ? (@info "$(lanz) generators created...") : (@assert false, "no generators found")
 
   lanz = 0
   for shunt in shunts
@@ -540,11 +626,10 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
     end
     lanz += 1
     bus = shunt["node"]
-    
+
     vn_kv = VoltageDict[bus]
-    
+
     comp = getShuntPGMComp(vn_kv, bus, Int(oID))
-    
 
     # for PGM the voltage is set to 1.0 kV
     sh = Shunt(comp = comp, base_MVA = baseMVA, Vn_kV_shunt = 1.0, g_shunt = Float64(shunt["g1"]), b_shunt = Float64(shunt["b1"]), status)
@@ -561,7 +646,7 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
     nParms.qShunt = isnothing(nParms.qShunt) ? q_shunt : nParms.qShunt + q_shunt
     NodeParametersDict[bus] = nParms
   end
-  @info "$(lanz) shunts created..."
+  (lanz > 0) ? (@info "$(lanz) shunts created...") : (@info "no shunts found...")
 
   for b in busVec
     busIdx = b.busIdx
@@ -571,14 +656,8 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
     Vn = b.vn_kv
     terminals = NodeTerminalsDict[busIdx]
 
-    if log
-      println("Bus: ", busName, " busIdx: ", busIdx, " ID: ", cID, " Voltage: ", Vn, "\nTerminals: ", terminals)
-    end
-
     c = ImpPGMComp(cID, busName, ResDataTypes.Busbarsection, Vn, busIdx, busIdx)
-
     node = Node(c, terminals, busIdx, busIdx, toNodeType(nodeType))
-
     nParms = NodeParametersDict[busIdx]
 
     if nodeType == 3
@@ -593,7 +672,8 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
   if check
     checkNodeConnections(nodeVec)
   end
-
+  
+  length(branchVec) > 0 ? (@info "$(length(branchVec)) branches created...") : (@assert "no branches found!")
   setParallelBranches!(branchVec)
 
   net = ResDataTypes.Net(netName, baseMVA, slackIdx, nodeVec, ACLines, trafos, branchVec, prosum, shuntVec)
