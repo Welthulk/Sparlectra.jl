@@ -44,11 +44,12 @@ end
 
 function reassignBusNumbers!(nodes, lines, wt2, wt3, s_gen, s_load, shunt, source)
   isolated_buses = identifyIsolatedBuses(nodes, lines, wt2, wt3)
+  vm_pu = 1.0
+  slack_bus = 0
   if length(isolated_buses) > 0
     @debug "Isolated busses found: $(isolated_buses)"
   end
 
-  # Erstelle Dictionary zur Zuordnung alter zu neuer Busnummern
   bus_mapping = Dict{Int,Int}()
   # type of the busses PV, PQ, Slack
   bus_types = Dict{Int,Int}()
@@ -65,20 +66,21 @@ function reassignBusNumbers!(nodes, lines, wt2, wt3, s_gen, s_load, shunt, sourc
       node["type"] = 4
       continue
     end
-
-    # Ordne neue Busnummer zu
+    
     bus_mapping[old_bus_number] = new_bus_number
     node["id"] = new_bus_number
     node["o_id"] = old_bus_number
     new_bus_number += 1
   end
-
-  # Aktualisiere Busnummern in Leitungen
+  
   for line in lines
     line["o_from"] = line["from_node"]
     line["o_to"] = line["to_node"]
     line["from_node"] = get(bus_mapping, line["from_node"], line["from_node"])
     line["to_node"] = get(bus_mapping, line["to_node"], line["to_node"])
+    if !haskey(line, "length")    
+      line["length"] = 1.0
+    end  
   end
 
   for transformer in wt2
@@ -132,6 +134,8 @@ function reassignBusNumbers!(nodes, lines, wt2, wt3, s_gen, s_load, shunt, sourc
   for s in source
     s["o_node"] = s["node"]
     s["node"] = get(bus_mapping, s["node"], s["node"])
+    vm_pu = float(s["u_ref"])
+    slack_bus = Int(s["node"])
     bus_id = Int(s["node"])
     bus_types[bus_id] = 3
   end
@@ -139,7 +143,7 @@ function reassignBusNumbers!(nodes, lines, wt2, wt3, s_gen, s_load, shunt, sourc
   for node in nodes
     bus_id = node["id"]
     if haskey(node, "type")
-      type = node["type"]
+      #type = node["type"]
       #@show "bus type already set for bus $(bus_id), type: $(type)"
       continue
     end
@@ -151,6 +155,7 @@ function reassignBusNumbers!(nodes, lines, wt2, wt3, s_gen, s_load, shunt, sourc
       node["type"] = 1
     end
   end
+  return vm_pu, slack_bus
 end
 
 function searchMaxS(wt2, wt3, gens)
@@ -195,8 +200,9 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
   nodes, lines, wt2, wt3, sym_gens, sym_loads, shunts, source = pgmparser(filename)
 
   @info "search for isolated busses (reassign bus numbers...)"
-  reassignBusNumbers!(nodes, lines, wt2, wt3, sym_gens, sym_loads, shunts, source)
-
+  vm_pu_slack, slackIdx = reassignBusNumbers!(nodes, lines, wt2, wt3, sym_gens, sym_loads, shunts, source)
+  @assert slackIdx != 0 "no slack bus found"
+  @info "slack: $slackIdx, vm_pu: $vm_pu_slack"
   if check
     for n in nodes
       id   = Int64(n["id"])
@@ -244,9 +250,6 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
   NodeParametersDict = Dict{Integer,ResDataTypes.NodeParameters}()
   busVec = Vector{Bus}()
 
-  # slack bus  
-  vm_pu_slack = 1.0
-  slackIdx = 0 # Counter for slack index  
   busIdx = 0 # busses are numbered from 1 to n ?
   for bus in nodes
     #@assert Int64(bus["id"]) == busIdx + 1 "bus numbers are not consecutive and unique"
@@ -257,14 +260,10 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
       @info "isolated bus found, bus number: $busIdx, vn_kv: $vn_kv, type: $btype, skip..."
       continue
     end
-
-    vm_pu = 1.0
+    
+    vm_pu = (btype == 3) ? vm_pu_slack : 1.0
     va_deg = 0.0
-    if btype == 3
-      vm_pu = vm_pu_slack
-      va_deg = 0.0
-      slackIdx = busIdx
-    end
+
     a_bus = Bus(busIdx, vn_kv, btype, vm_pu, va_deg)
     busIDStringDict[busIdx] = a_bus.id
 
