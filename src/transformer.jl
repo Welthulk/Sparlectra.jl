@@ -411,20 +411,20 @@ function create3WTWindings!(; u_kV::Array{Float64,1}, sn_MVA::Array{Float64,1}, 
 end
 
 function getWT2BusID(Vn::Float64, from::Int, to::Int)
-  name = "2WT_$(string(round(Vn,digits=1)))"
+  name = "2WT_$(string(convert(Int,trunc(Vn))))"
   id = "#$name\\_$from\\_$to"
   return name, id
 end
 
 function getWT3BusID(Vn::Float64, from::Int, to::Int, to3::Int)
-  name = "3WT_$(string(round(Vn,digits=1)))"
+  name = "3WT_$(string(convert(Int,trunc(Vn))))"
   id = "#$name\\_$from\\_$to\\_$to3"
   return name, id
 end
 
 # in the case of parallel transformers, the `to3` connections should always be distinct
 function getWT3AuxBusID(Vn::Float64, from::Int, to::Int, to3::Int)
-  name = "3WT_Aux_$(string(round(Vn,digits=1)))"
+  name = "3WT_Aux_$(string(convert(Int, trunc(Vn))))"
   id = "#$name\\_$from\\_$to\\_$to3"
   return name, id
 end

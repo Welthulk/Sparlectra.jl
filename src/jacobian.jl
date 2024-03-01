@@ -47,7 +47,13 @@ function getBusData(nodes::Vector{ResDataTypes.Node}, Sbase_MVA::Float64, verbos
 
     p = 0
     q = 0
-
+    #=
+    @show n.busIdx
+    @show n._pƩLoad
+    @show n._qƩLoad
+    @show n._pƩGen
+    @show n._qƩGen
+    =#
     p += n._pƩLoad === nothing ? 0.0 : n._pƩLoad * -1.0
     q += n._qƩLoad === nothing ? 0.0 : n._qƩLoad * -1.0
 

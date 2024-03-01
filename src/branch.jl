@@ -202,9 +202,9 @@ function setAdjElecParam!(p::AdjElecParams, branch::Branch)
   branch.adjRXGB = p  
 end
 
-function getBranchComp(Vn_kV::Float64, from::Int, to::Int, idx::Int)
+function getBranchComp(Vn_kV::Float64, from::Int, to::Int, idx::Int)  
   cTyp = toComponentTyp("Branch")
-  name = "Branch_$(string(round(Vn_kV,digits=1)))_$(Int(from))_$(Int(to))"
+  name = "Branch_$(string(convert(Int,trunc(Vn_kV))))_$(Int(from))_$(Int(to))"
   cID = "#"*name*"#"*string(idx)
   return ImpPGMComp(cID,name,cTyp,Vn_kV,from,to)
 end

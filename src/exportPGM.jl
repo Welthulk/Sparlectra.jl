@@ -2,7 +2,7 @@
 # Date: 8.2.24
 # include-file exportPGM.jl
 
-function exportPGM(; net::ResDataTypes.Net, filename::String, useMVATrafoModell::Bool, exportSlackGen::Bool=false)
+function exportPGM(; net::ResDataTypes.Net, filename::String, useMVATrafoModell::Bool, exportSlackGen::Bool = false)
   full_path = filename * ".json"
   @info "export to PGM-Files, Filename: ($full_path)"
 
@@ -52,7 +52,7 @@ function exportPGM(; net::ResDataTypes.Net, filename::String, useMVATrafoModell:
   function get_trafos(o::PowerTransformer, baseMVA::Float64)
     parameters = OrderedDict{String,Any}()
 
-    if o.isBiWinder && isa(o.comp, ImpPGMComp)      
+    if o.isBiWinder && isa(o.comp, ImpPGMComp)
       has_model_data = true
 
       tap_side = 0
@@ -71,7 +71,7 @@ function exportPGM(; net::ResDataTypes.Net, filename::String, useMVATrafoModell:
       sn = 0.0
       isPerUnitRXGB = false
       ratedU = nothing
-      winding = (o._equiParms == 1) ? o.side1 : ((o._equiParms == 2) ? o.side2 : nothing)      
+      winding = (o._equiParms == 1) ? o.side1 : ((o._equiParms == 2) ? o.side2 : nothing)
       @assert o._equiParms > 0
       if !isnothing(winding)
         vn = winding.Vn
@@ -105,7 +105,7 @@ function exportPGM(; net::ResDataTypes.Net, filename::String, useMVATrafoModell:
         tap_nom = taps.neutralStep
         #(vs/vn)*100.0
 
-        tap_size = taps.voltageIncrement_kV*1e3
+        tap_size = taps.voltageIncrement_kV * 1e3
       end
 
       parameters["id"] = get_next_id()
@@ -124,8 +124,8 @@ function exportPGM(; net::ResDataTypes.Net, filename::String, useMVATrafoModell:
           parameters["i0"] = 0.0
           parameters["p0"] = 0.0
         else
-          rated_U = !isnothing(ratedU) ? ratedU : vn                    
-          uk, P_kW, i0, Pfe_kW = recalc_trafo_model_data(baseMVA = baseMVA, Sn_MVA = sn, ratedU_kV = rated_U, r_pu = rk, x_pu = xk, b_pu = abs(bm), isPerUnit = isPerUnitRXGB)                  
+          rated_U = !isnothing(ratedU) ? ratedU : vn
+          uk, P_kW, i0, Pfe_kW = recalc_trafo_model_data(baseMVA = baseMVA, Sn_MVA = sn, ratedU_kV = rated_U, r_pu = rk, x_pu = xk, b_pu = abs(bm), isPerUnit = isPerUnitRXGB)
           parameters["sn"] = sn * 1e6
           parameters["uk"] = uk
           parameters["pk"] = P_kW * 1e3
@@ -178,41 +178,64 @@ function exportPGM(; net::ResDataTypes.Net, filename::String, useMVATrafoModell:
       i0 = 0.0
       p0 = 0.0
 
-      @show o.side1.modelData
-      @show o.side2.modelData
-      @show o.side3.modelData
+      #@show o.side1.modelData
+      #@show o.side2.modelData
+      #@show o.side3.modelData
 
-      @assert !(isnothing(o.side1.modelData) || isnothing(o.side2.modelData) || isnothing(o.side3.modelData)) "modelData not supported for 3WT-trafo"
-      #=
+      #@assert !(isnothing(o.side1.modelData) || isnothing(o.side2.modelData) || isnothing(o.side3.modelData)) "modelData not supported for 3WT-trafo"
+
       l = 0
       for side in [o.side1, o.side2, o.side3]
-        #if isnothing(side.modelData)
-        #  @info "no transforme model data found, recalculation is to be performed"
-        #end
         l += 1
-        bm = isnothing(side) ? 0.0 : side.b
-        uk, P_kW, _i0, _Pfe_kW = recalc_trafo_model_data(baseMVA = baseMVA, Sn_MVA = side.ratedS, ratedU_kV = side.ratedU, r_pu = side.r, x_pu = side.x, b_pu = abs(bm), isPerUnit = side.isPu_RXGB)
+        if isnothing(side.modelData)
+          @info "no transforme model data found, recalculation is to be performed"          
+          bm = isnothing(side) ? 0.0 : side.b
+          uk, P_kW, _i0, _Pfe_kW = recalc_trafo_model_data(baseMVA = baseMVA, Sn_MVA = side.ratedS, ratedU_kV = side.ratedU, r_pu = side.r, x_pu = side.x, b_pu = abs(bm), isPerUnit = side.isPu_RXGB)
 
-        if _Pfe_kW * 1e3 > p0
-          p0 = _Pfe_kW * 1e3
-        end
+          if _Pfe_kW * 1e3 > p0
+            p0 = _Pfe_kW * 1e3
+          end
 
-        if _i0 > i0
-          i0 = _i0
-        end
+          if _i0 > i0
+            i0 = _i0
+          end
 
-        if l == 1
-          uk_12 = uk
-          pk_12 = P_kW * 1e3
-        elseif l == 2
-          uk_13 = uk
-          pk_13 = P_kW * 1e3
+          if l == 1
+            uk_12 = uk
+            pk_12 = P_kW * 1e3
+          elseif l == 2
+            uk_13 = uk
+            pk_13 = P_kW * 1e3
+          else
+            uk_23 = uk
+            pk_23 = P_kW * 1e3
+          end
         else
-          uk_23 = uk
-          pk_23 = P_kW * 1e3
+          if l == 1
+            uk_12 = side.modelData.vk_percent * 1e-2
+            pk_12 = side.modelData.pk_kW * 1e3
+            _i0 = side.modelData.i0_percent * 1e-2
+            _p0 = side.modelData.p0_kW * 1e3
+            i0 = max(i0, _i0)
+            p0 = max(p0, _p0)
+          elseif l == 2
+            uk_13 = side.modelData.vk_percent * 1e-2
+            pk_13 = side.modelData.pk_kW * 1e3
+            _i0 = side.modelData.i0_percent * 1e-2
+            _p0 = side.modelData.p0_kW * 1e3
+            i0 = max(i0, _i0)
+            p0 = max(p0, _p0)
+          else
+            uk_23 = side.modelData.vk_percent * 1e-2
+            pk_23 = side.modelData.pk_kW * 1e3
+            _i0 = side.modelData.i0_percent * 1e-2
+            _p0 = side.modelData.p0_kW * 1e3
+            i0 = max(i0, _i0)
+            p0 = max(p0, _p0)
+          end
         end
       end
-      =#
+
       winding_1 = 0
       winding_2 = 0
       winding_3 = 0
@@ -225,7 +248,7 @@ function exportPGM(; net::ResDataTypes.Net, filename::String, useMVATrafoModell:
       tap_max = 0
       tap_nom = 0
       tap_size = 0
-      
+
       if o.tapSideNumber == 1
         tap_side = 0
         tap_pos = o.side1.taps.step
@@ -407,7 +430,7 @@ function exportPGM(; net::ResDataTypes.Net, filename::String, useMVATrafoModell:
       "data" => OrderedDict(
         "node" => filter(x -> !isempty(x), [get_pgm_nodes(node) for node in net.nodeVec]),
         "line" => filter(x -> !isempty(x), [get_lines(ac) for ac in net.linesAC]),
-        "sym_gen" => filter(x -> !isempty(x), [get_sym_gens(o) for o in net.prosumpsVec if filter_gens(o)]),        
+        "sym_gen" => filter(x -> !isempty(x), [get_sym_gens(o) for o in net.prosumpsVec if filter_gens(o)]),
         "shunt" => filter(x -> !isempty(x), [get_shunts(o) for o in net.shuntVec]),
         "transformer" => filter(x -> !isempty(x), [get_trafos(t, net.baseMVA) for t in net.trafos if isa(t.comp, ImpPGMComp)]),
         "three_winding_transformer" => filter(x -> !isempty(x), [get_3WTtrafos(t, net.baseMVA) for t in net.trafos if isa(t.comp, ImpPGMComp3WT)]),

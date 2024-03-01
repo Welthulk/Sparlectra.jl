@@ -36,6 +36,7 @@ function calcNetLosses!(nodes::Vector{ResDataTypes.Node}, branchVec::Vector{ResD
 
     Yik = inv((rpu + im * xpu))
     Y0ik = 0.5 * (gpu + im * bpu)
+    
 
     s = ui * conj(u_diff * Yik + ui * Y0ik)
     return (s)
@@ -104,11 +105,18 @@ function calcNetLosses!(nodes::Vector{ResDataTypes.Node}, branchVec::Vector{ResD
   end
 
   #FIXME: Node PQ vs. GenPower
+  
   for n in nodes
-    if Pvk[n.busIdx] <= 0.0
-      setNodePQ!(n, -Pvk[n.busIdx], -Qvk[n.busIdx])
-    elseif Pvk[n.busIdx] > 0.0
-      setGenPower!(n, Pvk[n.busIdx], Qvk[n.busIdx])
+    if n._nodeType == ResDataTypes.Slack      
+      if Pvk[n.busIdx] < -1e-12
+        setNodePQ!(n, -Pvk[n.busIdx], -Qvk[n.busIdx])
+      elseif Pvk[n.busIdx] > 1e-12
+        setGenPower!(n, Pvk[n.busIdx], Qvk[n.busIdx])
+      else
+        setNodePQ!(n, 0.0, 0.0)
+        setGenPower!(n, 0.0, 0.0)
+      end
     end
   end
+  
 end

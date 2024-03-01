@@ -66,21 +66,21 @@ function reassignBusNumbers!(nodes, lines, wt2, wt3, s_gen, s_load, shunt, sourc
       node["type"] = 4
       continue
     end
-    
+
     bus_mapping[old_bus_number] = new_bus_number
     node["id"] = new_bus_number
     node["o_id"] = old_bus_number
     new_bus_number += 1
   end
-  
+
   for line in lines
     line["o_from"] = line["from_node"]
     line["o_to"] = line["to_node"]
     line["from_node"] = get(bus_mapping, line["from_node"], line["from_node"])
     line["to_node"] = get(bus_mapping, line["to_node"], line["to_node"])
-    if !haskey(line, "length")    
+    if !haskey(line, "length")
       line["length"] = 1.0
-    end  
+    end
   end
 
   for transformer in wt2
@@ -195,6 +195,22 @@ end
 
 # base_MVA = 0.0 for default value in case file, otherwise set to desired value
 function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check = false)::ResDataTypes.Net
+  function printRefVals(bus)
+    nParms = NodeParametersDict[bus]
+
+    if !(isnothing(nParms.pƩGen) && isnothing(nParms.qƩGen))
+      println("bus:", bus)
+      println("GEN p:", nParms.pƩGen)
+      println("GEN q:", nParms.qƩGen)
+    end
+
+    if !(isnothing(nParms.pƩLoad) && isnothing(nParms.qƩLoad))
+      println("bus:", bus)
+      println("LOAD p:", nParms.pƩLoad)
+      println("LOAD q:", nParms.qƩLoad)
+    end
+  end
+
   @info "create network from PGM-File: $(filename)"
 
   nodes, lines, wt2, wt3, sym_gens, sym_loads, shunts, source = pgmparser(filename)
@@ -260,7 +276,7 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
       @info "isolated bus found, bus number: $busIdx, vn_kv: $vn_kv, type: $btype, skip..."
       continue
     end
-    
+
     vm_pu = (btype == 3) ? vm_pu_slack : 1.0
     va_deg = 0.0
 
@@ -301,9 +317,9 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
       NodeParameters = ResDataTypes.NodeParameters(busIdx)
       NodeParametersDict[busIdx] = NodeParameters
     end
-  end  
+  end
   auxAnz > 0 ? (@info "$auxAnz auxillary busses created...") : (@info "no aux busses created...")
-  
+
   b = nothing
   g = nothing
   for line in lines
@@ -355,7 +371,7 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
     push!(branchVec, branch)
   end
   length(ACLines) > 0 ? (@info "$(length(ACLines)) aclines created...") : (@info "no aclines found...")
-  
+
   for t in wt2
     sn_MVA = float(t["sn"]) * umrech_MVA
     vn_hv_kV = float(t["u1"]) * 1e-3 # rated voltage at the from side
@@ -569,6 +585,10 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
 
     p = sym_load["p_specified"] * umrech_MVA
     q = sym_load["q_specified"] * umrech_MVA
+    if abs(p) < 1e-8 && abs(q) < 1e-8
+      @info "load $(oID) has no power"
+      continue
+    end
     comp = getProSumPGMComp(vn, bus, false, Int(oID))
     pRS = ProSumer(comp, nothing, ratedS, ratedU, qPercent, p, q, maxP, minP, maxQ, minQ, ratedPowerFactor, referencePri, nothing, nothing)
     push!(prosum, pRS)
@@ -579,6 +599,7 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
     nParms = NodeParametersDict[bus]
     nParms.pƩLoad = isnothing(nParms.pƩLoad) ? p : nParms.pƩLoad + p
     nParms.qƩLoad = isnothing(nParms.qƩLoad) ? q : nParms.qƩLoad + q
+
     NodeParametersDict[bus] = nParms
   end
   (lanz > 0) ? (@info "$(lanz) loads created...") : (@info "no loads found...")
@@ -600,6 +621,10 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
     lanz += 1
     p = sym_gen["p_specified"] * umrech_MVA
     q = sym_gen["q_specified"] * umrech_MVA
+    if abs(p) < 1e-8 && abs(q) < 1e-8
+      @info "generator $(oID) has no power"
+      continue
+    end
     comp = getProSumPGMComp(vn, bus, true, Int(oID))
     busIDString = busIDStringDict[bus]
     pRS = ProSumer(comp, busIDString, ratedS, ratedU, qPercent, p, q, maxP, minP, maxQ, minQ, ratedPowerFactor, referencePri, nothing, nothing)
@@ -663,7 +688,11 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
       nParms.vm_pu = b.vm_pu
       nParms.va_deg = b.va_deg
     end
-
+    
+    if check
+      printRefVals(busIdx)
+    end
+    
     setNodeParameters!(node, nParms)
     push!(nodeVec, node)
   end
@@ -671,7 +700,7 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
   if check
     checkNodeConnections(nodeVec)
   end
-  
+
   length(branchVec) > 0 ? (@info "$(length(branchVec)) branches created...") : (@assert "no branches found!")
   setParallelBranches!(branchVec)
 

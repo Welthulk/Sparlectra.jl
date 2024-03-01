@@ -13,8 +13,8 @@ struct Bus
   va_deg::Union{Nothing,Float64}
 
   function Bus(busIdx::Int64, vn_kv::Float64, type::Int64, vm_pu::Float64=1.0, va_deg::Float64=0.0)    
-   name = "Bus_$(string(round(vn_kv,digits=1)))"
-   id = "#$name\\_#$(string(busIdx))"
+   name = "Bus_$(string(busIdx))_$(string(convert(Int,trunc(vn_kv))))"
+   id = "#$name"
     
    new(busIdx, name, id, "", vn_kv, type, vm_pu, va_deg)
   end
