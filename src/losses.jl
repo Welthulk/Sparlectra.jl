@@ -38,85 +38,69 @@ function calcNetLosses!(nodes::Vector{ResDataTypes.Node}, branchVec::Vector{ResD
     Y0ik = 0.5 * (gpu + im * bpu)
     
 
-    s = ui * conj(u_diff * Yik + ui * Y0ik)
+    #s = ui * conj(u_diff * Yik + ui * Y0ik)
+    s = ui * conj(ui*Yik-uj*Yik + ui * Y0ik)
+    
     return (s)
   end # calcBranchFlow
 
   n = length(nodes)
-  Pvk = zeros(n)
-  Qvk = zeros(n)
-
-  p_total = 0.0
-  q_total = 0.0
-  if debug
-    println("Branch Power Flows:")
-  end
-
+  
+  ∑pfrom=∑qfrom=∑pto=∑qto=0.0
   for br in branchVec    
     from = br.fromBus
     to = br.toBus
+    #@show "losses", br.status, br.isParallel, br.skipYBus
     S = calcBranchFlow(from, to, br, 1) * Sbase_MVA
-    P = real(S)
-    Q = imag(S)
+    
 
-    Pvk[from] += P
-    Qvk[from] += Q
 
-    brFromFlow = BranchFlow(nodes[br.fromBus]._vm_pu, nodes[br.fromBus]._va_deg, P, Q)
-    if debug
-      p_val = round(P, digits = 2)
-      q_val = round(Q, digits = 2)
-      println("Bus_$(from) -> Bus_$(to): P = $(p_val), Q = $(q_val)")
-    end
-    p_total += P
-    q_total += Q
+    brFromFlow = BranchFlow(nodes[br.fromBus]._vm_pu, nodes[br.fromBus]._va_deg, real(S), imag(S))
 
     from = br.toBus
     to = br.fromBus
-    S = calcBranchFlow(from, to, br, 2) * Sbase_MVA
-    P = real(S)
-    Q = imag(S)
+    S = calcBranchFlow(from, to, br, 2) * Sbase_MVA    
+    
 
-    Pvk[from] += P
-    Qvk[from] += Q
-
-    p_total += P
-    q_total += Q
-    if debug
-      p_val = round(P, digits = 2)
-      q_val = round(Q, digits = 2)
-      println("Bus_$(from) -> Bus_$(to): P = $(p_val), Q = $(q_val)\n")
-    end
-    brToFlow = BranchFlow(nodes[br.toBus]._vm_pu, nodes[br.toBus]._va_deg, P, Q)
+    brToFlow = BranchFlow(nodes[br.toBus]._vm_pu, nodes[br.toBus]._va_deg, real(S), imag(S))
     setBranchFlow!(brToFlow, brFromFlow, br)
+
+    
+    ∑pfrom += brFromFlow.pFlow
+    ∑qfrom += brFromFlow.qFlow
+    ∑pto += brToFlow.pFlow
+    ∑qto += brToFlow.qFlow
   end
 
-  if debug
-    p_val = round(p_total, digits = 2)
-    q_val = round(q_total, digits = 2)
-    println("Losses:")
-    println("∑Pv = $(p_val), ∑Qv = $(q_val)\n")
-    println("Bus Powers:")
-    for i = 1:n
-      p_val = round(Pvk[i], digits = 3)
-      q_val = round(Qvk[i], digits = 3)
-      println("Bus_[$(i)]: P = $(p_val), Q = $(q_val) ")
-    end
-  end
-
-  #FIXME: Node PQ vs. GenPower
   
+  ∑pv = ∑pfrom+∑pto
+  ∑qv = ∑qfrom+∑qto
+  ∑pl = ∑qg = ∑pg = ∑ql = 0.0
+  idx = 0
   for n in nodes
-    if n._nodeType == ResDataTypes.Slack      
-      if Pvk[n.busIdx] < -1e-12
-        setNodePQ!(n, -Pvk[n.busIdx], -Qvk[n.busIdx])
-      elseif Pvk[n.busIdx] > 1e-12
-        setGenPower!(n, Pvk[n.busIdx], Qvk[n.busIdx])
-      else
-        setNodePQ!(n, 0.0, 0.0)
-        setGenPower!(n, 0.0, 0.0)
-      end
+    if n._nodeType == ResDataTypes.Slack
+      idx = n.busIdx
+      continue
     end
+    ∑pl += isnothing(n._pƩLoad) ? 0.0 : n._pƩLoad
+    ∑ql += isnothing(n._qƩLoad) ? 0.0 : n._qƩLoad
+    ∑pg += isnothing(n._pƩGen) ? 0.0 : n._pƩGen
+    ∑qg += isnothing(n._qƩGen) ? 0.0 : n._qƩGen
   end
+  
+  pSlack = abs(∑pg-∑pl) + ∑pv
+  qSlack = abs(∑qg-∑ql) + ∑qv
+  if pSlack > 1e-12
+    @debug "Slack-Generator is feeding power into the network (P=$pSlack MW, Q=$qSlack MVar)"
+    setGenPower!(nodes[idx], pSlack, qSlack)
+  elseif pSlack < -1e-12
+    @debug "Slack-Generator is consuming power from the network (P=$pSlack MW, Q=$qSlack MVar)"
+    setNodePQ!(nodes[idx], pSlack, qSlack)
+  else
+    @debug "Slack-Generator is not feeding or consuming power (P=$pSlack MW, Q=$qSlack MVar)"
+    setNodePQ!(nodes[idx], 0.0, 0.0)
+    setGenPower!(nodes[idx], 0.0, 0.0)
+  end  
+
   
 end

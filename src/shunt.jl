@@ -21,6 +21,15 @@ mutable struct Shunt
     Sh_ref = Complex(p_shunt, q_shunt)
     y_pu_shunt = Sh_ref / base_MVA
 
+    #=
+    %% compute shunt admittance
+    %% if Psh is the real power consumed by the shunt at V = 1.0 p.u.
+    %% and Qsh is the reactive power injected by the shunt at V = 1.0 p.u.
+    %% then Psh - j Qsh = V * conj(Ysh * V) = conj(Ysh) = Gs - j Bs,
+    %% i.e. Ysh = Psh + j Qsh, so ...
+    Ysh = (bus(:, GS) + 1j * bus(:, BS)) / baseMVA; %% vector of shunt admittances
+    =#
+
     new(comp, busIdx, p_shunt, q_shunt, y_pu_shunt, status)
   end
 

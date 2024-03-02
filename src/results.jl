@@ -15,8 +15,9 @@ function formatBranchResults(net::ResDataTypes.Net)
   formatted_results *= @sprintf("| %-25s | %-5s | %-5s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s |\n", "Branch", "From", "To", "P [MW]", "Q [MVar]", "P [MW]", "Q [MVar]", "Pv [MW]", "Qv [MVar]")
   formatted_results *= @sprintf("===========================================================================================================================\n")
 
-  ∑pv = 0.0
-  ∑qv = 0.0
+  ∑pv = ∑qv = 0.0
+  ∑pfrom=∑qfrom=∑pto=∑qto=0.0
+  
   for br in net.branchVec
     from = br._from
     to = br._to
@@ -32,6 +33,11 @@ function formatBranchResults(net::ResDataTypes.Net)
 
     VmTo = (br.tBranchFlow.vm_pu === nothing) ? NaN : br.tBranchFlow.vm_pu
     VaTo = (br.tBranchFlow.va_deg === nothing) ? NaN : br.tBranchFlow.va_deg
+
+    ∑pfrom += pfromVal
+    ∑qfrom += qfromVal
+    ∑pto += ptoVal
+    ∑qto += qtoVal
 
     v1 = VmFrom * exp(im * deg2rad(VaFrom))
     v2 = VmTo * exp(im * deg2rad(VaTo))
@@ -51,6 +57,8 @@ function formatBranchResults(net::ResDataTypes.Net)
     formatted_results *= @sprintf("| %-25s | %-5s | %-5s | %-10.3f | %-10.3f | %-10.3f | %-10.3f | %-10.3f |  %-10.3f|\n", bName, from, to, pfromVal, qfromVal, ptoVal, qtoVal, abs(pv), abs(qv))
   end
   formatted_results *= @sprintf("---------------------------------------------------------------------------------------------------------------------------\n")
+  #formatted_results *= @sprintf("| %-10.3f | %-10.3f | %-10.3f | %-10.3f |\n", ∑pfrom, ∑qfrom, ∑pto, ∑qto)
+
   total_losses = @sprintf("total losses (I^2*Z): P = %10.3f [MW], Q = %10.3f [MVar]\n", ∑pv, ∑qv)
 
   return formatted_results, total_losses
