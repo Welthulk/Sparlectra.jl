@@ -403,8 +403,6 @@ function createYBUS(branchVec::Vector{Branch}, shuntVec::Vector{ResDataTypes.Shu
     Y = zeros(ComplexF64, n, n)
   end
 
-  sign = 1.0
-
   if debug
     if sparse
       t = "sparse"
@@ -417,20 +415,14 @@ function createYBUS(branchVec::Vector{Branch}, shuntVec::Vector{ResDataTypes.Shu
   for branch in branchVec
     fromNode = branch.fromBus
     toNode = branch.toBus
-    if (branch.status == 0)
-      @debug "createYBUS: Branch $(branch.comp.cName) not in use, skipping "
-      continue
-    end
-
     r = x = b = g = 0.0
-    if branch.status < 1
-      sign = -1.0
+    if Int(branch.status) == 0      
       @debug "createYBUS: Branch $(branch) out of service, skipping "
       continue    
     elseif branch.skipYBus
       @debug "createYBUS: Branch $(branch) skipping "
       continue
-    elseif branch.isParallel && !isnothing(branch.adjRXGB) && !branch.skipYBus
+    elseif branch.isParallel
       @debug "createYBUS: Branch $(branch) is parallel, using adjustes parameters "
       r = branch.adjRXGB.r_pu
       x = branch.adjRXGB.x_pu
@@ -453,10 +445,11 @@ function createYBUS(branchVec::Vector{Branch}, shuntVec::Vector{ResDataTypes.Shu
       t = calcComplexRatio(ratio, shift_degree)
     end
 
-    Y[fromNode, fromNode] = Y[fromNode, fromNode] + sign * ((yik + susceptance)) / abs2(t)
-    Y[toNode, toNode] = Y[toNode, toNode] + sign * (yik + susceptance)
-    Y[fromNode, toNode] = -sign * yik / conj(t)
-    Y[toNode, fromNode] = -sign * yik / t
+    Y[toNode, toNode] = Y[toNode, toNode] +  (yik + susceptance)
+    Y[fromNode, fromNode] = Y[fromNode, fromNode] + ((yik + susceptance)) / abs2(t)
+    
+    Y[fromNode, toNode] = -1.0 * yik / conj(t)
+    Y[toNode, fromNode] = -1.0* yik / t
   end
 
   for sh in shuntVec

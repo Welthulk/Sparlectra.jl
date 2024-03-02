@@ -189,6 +189,8 @@ function writeBranchData(sb_mva::Float64, branchVec::Vector{ResDataTypes.Branch}
     r = round(br.r_pu, digits = 8)
     x = round(br.x_pu, digits = 8)
     b = round(br.b_pu, digits = 8)
+    #g = round(br.g_pu, digits = 8)
+    #@show "export matpower g=", g
 
     rateA = 0 # 0 for unlimited
     rateB = 0 # 0 for unlimited

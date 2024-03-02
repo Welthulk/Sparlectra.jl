@@ -13,7 +13,7 @@ global_logger(ConsoleLogger(stderr, Logging.Info))
 
 function acpflow(casefile::String, writeCase::Bool, writePGM::Bool, iterations::Int, verbose::Int)
   sparse=true  
-  tol = 1e-6     
+  tol = 1e-8   
   log = verbose >= 1
 
   # load + create net
