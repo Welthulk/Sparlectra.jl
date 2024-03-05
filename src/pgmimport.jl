@@ -38,7 +38,7 @@ function identifyIsolatedBuses(nodes, lines, wt2, wt3)
       push!(isolated_buses, node_id)
     end
   end
-
+  @info "isolated busses: $(isolated_buses)"
   return isolated_buses
 end
 
@@ -47,7 +47,7 @@ function reassignBusNumbers!(nodes, lines, wt2, wt3, s_gen, s_load, shunt, sourc
   vm_pu = 1.0
   slack_bus = 0
   if length(isolated_buses) > 0
-    @debug "Isolated busses found: $(isolated_buses)"
+    @info "reassignBusNumbers!: Isolated busses found: $(isolated_buses)"
   end
 
   bus_mapping = Dict{Int,Int}()
@@ -62,7 +62,7 @@ function reassignBusNumbers!(nodes, lines, wt2, wt3, s_gen, s_load, shunt, sourc
     # Überspringe isolierte Busse
     if old_bus_number in isolated_buses
       node["o_id"] = old_bus_number
-      #@show "isolated bus found: $(old_bus_number)"      
+      @debug "isolated bus found: $(old_bus_number)"      
       node["type"] = 4
       continue
     end
@@ -143,15 +143,15 @@ function reassignBusNumbers!(nodes, lines, wt2, wt3, s_gen, s_load, shunt, sourc
   for node in nodes
     bus_id = node["id"]
     if haskey(node, "type")
-      #type = node["type"]
-      #@show "bus type already set for bus $(bus_id), type: $(type)"
+      type = node["type"]
+      @debug "bus type already set for bus $(bus_id), type: $(type)"
       continue
     end
 
     if haskey(bus_types, bus_id)
       node["type"] = bus_types[bus_id]
     else
-      #@show "bus type not found for bus $(bus_id)"
+      @debug "bus type not found for bus $(bus_id), set to PQ"
       node["type"] = 1
     end
   end
@@ -220,7 +220,9 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
   @assert slackIdx != 0 "no slack bus found"
   @info "slack: $slackIdx, vm_pu: $vm_pu_slack"
   if check
+    @info "check for isolated busses and slack bus"
     for n in nodes
+      @debug n
       id   = Int64(n["id"])
       o_id = Int64(n["o_id"])
       type = Int64(n["type"])
@@ -269,14 +271,14 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
   busIdx = 0 # busses are numbered from 1 to n ?
   for bus in nodes
     #@assert Int64(bus["id"]) == busIdx + 1 "bus numbers are not consecutive and unique"
-    busIdx = Int64(bus["id"])
+    idx = Int64(bus["id"])
     vn_kv = float(bus["u_rated"]) * 1e-3
     btype = Int64(bus["type"])
     if btype == 4
-      @info "isolated bus found, bus number: $busIdx, vn_kv: $vn_kv, type: $btype, skip..."
+      @info "isolated bus found, bus number: $idx, vn_kv: $vn_kv, type: $btype, skip..."
       continue
     end
-
+    busIdx = idx
     vm_pu = (btype == 3) ? vm_pu_slack : 1.0
     va_deg = 0.0
 
@@ -298,6 +300,7 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
   auxAnz = 0
   if !isnothing(wt3)
     for t in wt3
+      @debug "wt3 found..."
       busIdx += 1
       auxAnz += 1
       u1 = float(t["u1"]) * 1e-3
@@ -419,23 +422,19 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
     s1 = nothing
     s2 = nothing
     s3 = nothing
-    if tap_side == 0
-      s2 = PowerTransformerWinding(Vn_kV = vn_lv_kV)
+    
+    if tap_side == 0      
       tap = (tap_min == tap_max) ? nothing : PowerTransformerTaps(Vn_kV = vn_hv_kV, step = tap_pos, lowStep = tap_min, highStep = tap_max, neutralStep = tap_neutral, voltageIncrement_kV = tap_size_kV)
-      s1 = PowerTransformerWinding(Vn_kV = vn_hv_kV, modelData = addEx, shift_degree = shift_degree, ratedU = vn_hv_kV, ratedS = sn_MVA, taps = tap)
-
-      ratio = isnothing(tap) ? 1.0 : calcRatio(HV, vn_hv_kV, LV, vn_lv_kV, tap.step, tap.neutralStep, tap.tapStepPercent)
-    else
-      s1 = PowerTransformerWinding(Vn_kV = vn_hv_kV)
+      s1 = PowerTransformerWinding(Vn_kV = HV, ratedU = vn_hv_kV, ratedS = sn_MVA, modelData = addEx, shift_degree = shift_degree,  taps = tap)      
+      s2 = PowerTransformerWinding(Vn_kV = LV, ratedU = vn_lv_kV, ratedS = sn_MVA)
+    else            
       tap = (tap_min == tap_max) ? nothing : PowerTransformerTaps(Vn_kV = vn_lv_kV, step = tap_pos, lowStep = tap_min, highStep = tap_max, neutralStep = tap_neutral, voltageIncrement_kV = tap_size_kV)
-      s2 = PowerTransformerWinding(Vn_kV = vn_lv_kV, modelData = addEx, shift_degree = shift_degree, ratedU = vn_hv_kV, ratedS = sn_MVA, taps = tap)
-
-      ratio = isnothing(tap) ? 1.0 : calcRatio(HV, vn_hv_kV, LV, vn_lv_kV, tap.step, tap.neutralStep, tap.tapStepPercent)
+      s1 = PowerTransformerWinding(Vn_kV = HV, ratedU = vn_hv_kV, ratedS = sn_MVA)      
+      s2 = PowerTransformerWinding(Vn_kV = LV, ratedU = vn_lv_kV, ratedS = sn_MVA, modelData = addEx, shift_degree = shift_degree,  taps = tap)
     end
-
     cmp = getTrafoImpPGMComp(false, vn_hv_kV, from_node, to_node)
     trafo = PowerTransformer(cmp, true, s1, s2, s3)
-
+    ratio = calcTransformerRatio(trafo)
     push!(trafos, trafo)
 
     cmp1 = ResDataTypes.Component(cmp.cID, cmp.cName, "POWERTRANSFORMER", vn_hv_kV)
@@ -449,7 +448,7 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
     push!(t1Terminal, t1)
     push!(t2Terminal, t2)
 
-    branch = Branch(baseMVA, from_node, to_node, trafo, getSideNumber2WT(trafo), Int(oID))
+    branch = Branch(baseMVA, from_node, to_node, trafo, getSideNumber2WT(trafo), Int(oID), ratio, inService)
 
     push!(branchVec, branch)
   end
@@ -459,9 +458,9 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
   for t in wt3
     anz_3wt += 1
     oID = Int64(t["id"])
-    u1 = float(t["u1"]) * 1e-3
-    u2 = float(t["u2"]) * 1e-3
-    u3 = float(t["u3"]) * 1e-3
+    u1 = float(t["u1"]) * 1e-3 # HV
+    u2 = float(t["u2"]) * 1e-3 # MV
+    u3 = float(t["u3"]) * 1e-3 # LV
     sn1 = float(t["sn_1"]) * umrech_MVA
     sn2 = float(t["sn_2"]) * umrech_MVA
     sn3 = float(t["sn_3"]) * umrech_MVA
@@ -488,6 +487,11 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
     tap_size_kV = float(t["tap_size"]) * 1e-3
     tap_neutral = tap_nom
 
+    HV = VoltageDict[from_node]
+    MV = VoltageDict[to_node]
+    LV = VoltageDict[to_node_3]
+
+
     # create a 3WT - Transformer
     addEx_s1 = TransformerModelParameters(sn_MVA = sn1, vk_percent = uk12, vkr_percent = nothing, pk_kW = pk12, i0_percent = i0, p0_kW = p0)
     addEx_s2 = TransformerModelParameters(sn_MVA = sn2, vk_percent = uk13, vkr_percent = nothing, pk_kW = pk13, i0_percent = i0, p0_kW = p0)
@@ -509,7 +513,6 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
     push!(trafos, wt3Trafo)
 
     # aux bus
-
     auxBusName, auxID = getWT3AuxBusID(u1, from_node, to_node, to_node_3)
     # search aux bus    
     AuxBusIdx = AuxBusDict[auxID]
@@ -526,7 +529,10 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
     push!(t1Terminal, t_hv)
     push!(auxTerminal, t_aux)
     inService = t["status_1"] == 1
-    branch = Branch(baseMVA, from_node, AuxBusIdx, wt3Trafo, 1, oID, 1.0, inService)
+    
+    side = 1
+    ratio = 1.0  
+    branch = Branch(baseMVA, from_node, AuxBusIdx, wt3Trafo, side, oID, ratio, inService)
     push!(branchVec, branch)
 
     # create branch for the T2 Aux -> MV (u2)
@@ -539,7 +545,10 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
     push!(t2Terminal, t_T2_mvbus)
 
     inService = t["status_2"] == 1
-    branch = Branch(baseMVA, to_node, AuxBusIdx, wt3Trafo, 2, oID, 1.0, inService)
+    side = 2
+    ratio = (vn_aux_kv/MV)*(u2/u1)
+    @debug "3WT side2 ratio: ", ratio
+    branch = Branch(baseMVA, to_node, AuxBusIdx, wt3Trafo, side, oID, ratio, inService)
     push!(branchVec, branch)
 
     # create branch for the T3 AUX-> LV (u3)
@@ -553,7 +562,10 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
     push!(t3Terminal, t_T3_lvbus)
 
     inService = t["status_3"] == 1
-    branch = Branch(baseMVA, AuxBusIdx, to_node_3, wt3Trafo, 3, oID, 1.0, inService)
+    side = 3
+    ratio = (vn_aux_kv/LV)*(u3/u1)
+    @debug "3WT side3 ratio: ", ratio
+    branch = Branch(baseMVA, AuxBusIdx, to_node_3, wt3Trafo, side, oID, ratio, inService)
     push!(branchVec, branch)
   end
   (anz_3wt > 0) ? (@info "$(anz_3wt) 3WTs created......") : (@info "no 3WTs found...")
