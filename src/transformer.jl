@@ -77,7 +77,7 @@ function calcTransformerRXGB(Vn_kV::Float64, modelData::TransformerModelParamete
     pfe = modelData.p0_kW
     v_quad = Vn_kV^2
     Yfe = pfe / v_quad
-    Y0 = modelData.i0_percent / 100.0 * modelData.sn_MVA / v_quad
+    Y0 = modelData.i0_percent * 1e-2 * modelData.sn_MVA / v_quad
     gm = Yfe
     try
       bm = -1.0 * sqrt(Y0^2 - Yfe^2)
@@ -141,6 +141,29 @@ mutable struct PowerTransformerTaps
   end
 end
 
+#=
+function adjustVkDep(Vk::Float64, Vkmax::Float64, Vkmin::Float64, tap::PowerTransformerTaps)
+  if isnothing(tap)
+    return Vk
+  end
+
+   #if tap.neutralStep <= max(tap.neutralStep, tap.highStep) >= min(tap.neutralStep, tap.highStep)
+
+    if tap.step <= max(tap.neutralStep, tap.highStep) && tap.step >= min(tap.neutralStep, tap.highStep)
+        if tap_max == tap_nom
+            return xk
+        end
+        cor = (xk_max - xk) / (tap_max - tap_nom)
+        return xk + (tap_pos - tap_nom) * xk_increment_per_tap
+    end
+    if tap_min == tap_nom
+        return xk
+    end
+    xk_increment_per_tap = (xk_min - xk) / (tap_min - tap_nom)
+    return xk + (tap_pos - tap_nom) * xk_increment_per_tap
+end
+=#
+
 mutable struct PowerTransformerWinding
   Vn::Float64                                # cim:PowerTransformerEnd.ratedU in kV
   r::Float64                                 # cim:PowerTransformerEnd.r in Ohm
@@ -181,7 +204,7 @@ mutable struct PowerTransformerWinding
   )
     @assert Vn_kV > 0.0 "Vn_kv must be > 0.0"
     if isnothing(modelData)
-      new(Vn_kV, 0.0, 0.0, nothing, nothing, nothing, nothing, nothing, nothing, false, nothing, true)
+      new(Vn_kV, 0.0, 0.0, 0.0, 0.0, shift_degree, ratedU, ratedS, taps, false, nothing, true)
     else
       if isnothing(ratedU)
         ratedU = Vn_kV
@@ -339,6 +362,60 @@ function getSideNumber2WT(x::PowerTransformer)
   return !x.side1._isEmpty ? 1 : 2
 end
 
+function getVn2WT(x::PowerTransformer)
+  side = getSideNumber2WT(x)
+  vn = (side == 1) ? x.side1 : x.side2
+  return vn
+end
+
+function getTapStepPercent(x::PowerTransformer)
+  @assert x.isBiWinder "Transformer is not a 2WT"
+  tap = x.tapSideNumber == 1 ? x.side1.taps : (x.tapSideNumber == 2 ? x.side2.taps : nothing)
+  if isnothing(tap)
+    return false, 0.0
+  end
+  vn = getVn2WT(x)
+  return true, (tap.voltageIncrement_kV / vn) * 100.0
+end
+
+function isTapInNeutralPosition(x::PowerTransformer)
+  @assert x.isBiWinder "Transformer is not a 2WT"
+  tap = x.tapSideNumber == 1 ? x.side1.taps : (x.tapSideNumber == 2 ? x.side2.taps : nothing)
+  if isnothing(tap)
+    return true
+  else
+    return (tap.step == tap.neutralStep) ? true : false
+  end
+end
+
+function calcTransformerRatio(x::PowerTransformer)
+  @assert x.isBiWinder "Transformer is not a 2WT"
+  @assert !isnothing(x.side1.Vn) "Vn must be set for winding 1"
+  @assert !isnothing(x.side2.Vn) "Vn must be set for winding 2"
+  @assert !isnothing(x.side1.ratedU) "ratedU must be set for winding 1"
+  @assert !isnothing(x.side2.ratedU) "ratedU must be set for winding 2"
+
+  v1 = x.side1.Vn
+  v2 = x.side2.Vn
+  r1 = x.side1.ratedU
+  r2 = x.side2.ratedU
+  ratio = (v1 * r2) / (v2 * r1)
+
+  if isTapInNeutralPosition(x)
+    return ratio
+  else
+    stat, tapStepPercent = getTapStepPercent(x)
+    if stat
+      tapStepPercent = (taps.voltageIncrement_kV / getVn2WT(x)) * 100.0
+      corr = 1 + (taps.step - taps.neutralStep) * tapStepPercent / 100
+      return ratio / corr
+    else
+      @warn "no taps, but tapSideNumber != 0!"
+      return ratio
+    end
+  end
+end
+
 #TODO: implement
 #function getRatio2WT(x::PowerTransformer, bus_HV_Vn::Float64, bus_LV_Vn::Float64) 
 #   @assert x.isBiWinder "Transformer is not a 2WT"
@@ -371,11 +448,15 @@ end
 #                            /       \  
 #                         mv_bus    lv_bus   
 #
+
+#ajustVkTap = 1.0 # FIXME: implement adjustVkTap!
 function create3WTWindings!(; u_kV::Array{Float64,1}, sn_MVA::Array{Float64,1}, addEx_Side::Array{TransformerModelParameters,1}, sh_deg::Array{Float64,1}, tap_side::Int, tap::PowerTransformerTaps)::Tuple{PowerTransformerWinding,PowerTransformerWinding,PowerTransformerWinding}
   for side = 1:3
     if isnothing(addEx_Side[side].vkr_percent)
       @assert !isnothing(addEx_Side[side].pk_kW) "Either pk_kW or vkr_percent must be set!"
-      addEx_Side[side].vkr_percent = addEx_Side[side].pk_kW / addEx_Side[side].sn_MVA
+      # Rk = (U^2/S^2) * Pk; Rk = Ukr * U^2/S * 1e-2 => Ukr = Pk * 100 / S
+      # pk -> kW, S -> MVA; kW/MVA = 1e-3 => faktor = 1e-3*100 = 0.1
+      addEx_Side[side].vkr_percent = addEx_Side[side].pk_kW * 0.1 / addEx_Side[side].sn_MVA
     end
   end
 
@@ -402,7 +483,7 @@ function create3WTWindings!(; u_kV::Array{Float64,1}, sn_MVA::Array{Float64,1}, 
 
   wVec = []
   for side = 1:3
-    tap = taps = (side - 1 == tap_side) ? tap : nothing
+    tap = (side - 1 == tap_side) ? tap : nothing
     w = PowerTransformerWinding(u_kV[side], pVec[side][1], pVec[side][2], pVec[side][3], pVec[side][4], sh_deg[side], u_kV[side], sn_MVA[side], tap, false, addEx_Side[side])
     push!(wVec, w)
   end

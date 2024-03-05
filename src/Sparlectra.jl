@@ -38,6 +38,7 @@ export
   getRXBG,
   getSideNumber2WT,
   getWinding2WT,
+  calcTransformerRatio,
   create3WTWindings!,
   getWT2BusID,
   getWT3BusID,
