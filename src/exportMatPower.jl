@@ -193,6 +193,9 @@ function writeBranchData(sb_mva::Float64, branchVec::Vector{ResDataTypes.Branch}
     #@show "export matpower g=", g
 
     rateA = 0 # 0 for unlimited
+    if !isnothing(br.sn_MVA)
+      rateA = br.sn_MVA
+    end
     rateB = 0 # 0 for unlimited
     rateC = 0 # 0 for unlimited
 
