@@ -4,7 +4,8 @@
 
 function calcNetLosses!(nodes::Vector{ResDataTypes.Node}, branchVec::Vector{ResDataTypes.Branch}, Sbase_MVA::Float64)
   @debug "\ncalcNetworkLosses (BaseMVA=$(Sbase_MVA))\n"
-  # Sij = vi*exp(j*phi_i)*( (vi*exp(j*phi_i) - vk*exp(j*phi_k)*Y_ik +  vi*exp(j*phi_i)*Y0ik)*                     
+  # Sij = vi*exp(j*phi_i)*( (vi*exp(j*phi_i) - vk*exp(j*phi_k)*Y_ik +  vi*exp(j*phi_i)*Y0ik)*  
+  # Sij = vi^2*conj(Y0ik+Yik)-vi*conj(vk)*conj(Yik)                   
   # Y0ik: Queradmittanz
   function calcBranchFlow(from::Int, to::Int, br::ResDataTypes.Branch, tapSide::Int)
     @assert tapSide == 1 || tapSide == 2
@@ -27,7 +28,9 @@ function calcNetLosses!(nodes::Vector{ResDataTypes.Node}, branchVec::Vector{ResD
       uj = uj / tap
     end
 
-    u_diff = ui - uj
+    #u_diff = ui - uj
+    #@show "u_diff", u_diff, ui, uj, br.ratio, br.angle, from, to
+    
 
     rpu = br.r_pu
     xpu = br.x_pu
@@ -35,13 +38,15 @@ function calcNetLosses!(nodes::Vector{ResDataTypes.Node}, branchVec::Vector{ResD
     gpu = br.g_pu
 
     Yik = inv((rpu + im * xpu))
-    Y0ik = 0.5 * (gpu + im * bpu)
     
-
+    #Y0ik = 0.5*(gpu + im * bpu)
+    Y0ik = gpu + im * bpu
+    
     #s = ui * conj(u_diff * Yik + ui * Y0ik)
-    s = ui * conj(ui*Yik-uj*Yik + ui * Y0ik)
+
+    s = abs(ui)^2*conj(Y0ik+Yik)-ui*conj(uj)*conj(Yik) 
     
-    return (s)
+    return s
   end # calcBranchFlow
 
   n = length(nodes)
