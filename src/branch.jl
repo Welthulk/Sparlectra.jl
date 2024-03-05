@@ -63,9 +63,10 @@ mutable struct Branch
   isParallel::Bool        # is a parallel branch? (true/false)  
   adjRXGB::Union{Nothing,AdjElecParams} # adjusted electrical parameters
   skipYBus::Bool         # skip Y-Bus calculation for this branch
+  sn_MVA::Union{Nothing,Float64} # nominal power of the branch = rateA
 
   
-  function Branch(branchC::ImpPGMComp, baseMVA::Float64, fromNodeID::String, toNodeID::String, acLine::ResDataTypes.ACLineSegment, status::Integer)     
+  function Branch(branchC::ImpPGMComp, baseMVA::Float64, fromNodeID::String, toNodeID::String, acLine::ResDataTypes.ACLineSegment, status::Integer, sn_MVA::Union{Nothing,Float64} = nothing)     
     Vn = branchC.cVN
     r, x, b, g = getRXBG(acLine)
     baseZ = (Vn)^2 / baseMVA
@@ -74,7 +75,7 @@ mutable struct Branch
     b_pu = b * baseZ
     g_pu = g * baseZ  
     
-    new(branchC, branchC.cFrom_bus, branchC.cTo_bus, branchC.cFrom_bus, branchC.cTo_bus, fromNodeID, toNodeID, nothing, nothing, r_pu, x_pu, b_pu, g_pu, 0.0, 0.0, status, false, nothing, false)      
+    new(branchC, branchC.cFrom_bus, branchC.cTo_bus, branchC.cFrom_bus, branchC.cTo_bus, fromNodeID, toNodeID, nothing, nothing, r_pu, x_pu, b_pu, g_pu, 0.0, 0.0, status, false, nothing, false, sn_MVA)      
   end
     
   function Branch(baseMVA::Float64, from::Int, to::Int, acLine::ACLineSegment, id::Int, status::Integer=1)         
@@ -87,13 +88,13 @@ mutable struct Branch
     b_pu = b * baseZ
     g_pu = g * baseZ  
     
-    c = getBranchComp(Vn, from, to, id)
-    new(c, from, to, from, to, "", "", nothing, nothing, r_pu, x_pu, b_pu, g_pu, 0.0, 0.0, status, false, nothing, false)    
+    c = getBranchComp(Vn, from, to, id, "ACLine")
+    new(c, from, to, from, to, "", "", nothing, nothing, r_pu, x_pu, b_pu, g_pu, 0.0, 0.0, status, false, nothing, false, nothing)    
   end 
 
   function Branch(baseMVA::Float64, from::Int, to::Int, trafo::PowerTransformer, side::Int, id::Int, ratio::Float64=1.0,  status::Integer=1)         
     w = (side in [1, 2, 3]) ? (side == 1 ? trafo.side1 : (side == 2 ? trafo.side2 : trafo.side3)) : error("wrong value for 'side'")
-    
+    sn_MVA = w.ratedS
     r, x, b, g = getRXBG(w)
     baseZ = (w.Vn)^2 / baseMVA
     r_pu = r / baseZ
@@ -101,8 +102,8 @@ mutable struct Branch
     b_pu = b * baseZ
     g_pu = g * baseZ
     
-    c = getBranchComp(w.Vn, from, to, id)
-    new(c, from, to, from, to, "", "", nothing, nothing, r_pu, x_pu, b_pu, g_pu, ratio, w.shift_degree, status, false, nothing, false)    
+    c = getBranchComp(w.Vn, from, to, id,"Transformer")
+    new(c, from, to, from, to, "", "", nothing, nothing, r_pu, x_pu, b_pu, g_pu, ratio, w.shift_degree, status, false, nothing, false, sn_MVA)    
   end 
   
   function Branch(
@@ -122,9 +123,10 @@ mutable struct Branch
     tBracnhFlow::Union{Nothing,BranchFlow} = nothing,
     isParallel::Bool = false, 
     adjRXGB::Union{Nothing,AdjElecParams} = nothing,
-    skipYBus::Bool = false   
+    skipYBus::Bool = false,
+    sn_MVA::Union{Nothing,Float64} = nothing,  
   )
-    new(branchC, fromBus, toBus, fromBus, toBus, fromNodeID, toNodeID, fBracnhFlow, tBracnhFlow, r_pu, x_pu, b_pu, g_pu, ratio, angle, status, isParallel, adjRXGB, skipYBus)
+    new(branchC, fromBus, toBus, fromBus, toBus, fromNodeID, toNodeID, fBracnhFlow, tBracnhFlow, r_pu, x_pu, b_pu, g_pu, ratio, angle, status, isParallel, adjRXGB, skipYBus, sn_MVA)
   end
 
   function Branch(
@@ -147,8 +149,9 @@ mutable struct Branch
     isParallel::Bool = false,
     adjRXGB::Union{Nothing,AdjElecParams} = nothing,
     skipYBus::Bool = false,  
+    sn_MVA::Union{Nothing,Float64} = nothing,
   )
-    new(branchC, fromBus, toBus, fromOrigBus, toOrigBus, fromNodeID, toNodeID, fBracnhFlow, tBracnhFlow, r_pu, x_pu, b_pu, g_pu, ratio, angle, status, isParallel, adjRXGB, skipYBus)
+    new(branchC, fromBus, toBus, fromOrigBus, toOrigBus, fromNodeID, toNodeID, fBracnhFlow, tBracnhFlow, r_pu, x_pu, b_pu, g_pu, ratio, angle, status, isParallel, adjRXGB, skipYBus, sn_MVA)
   end
 
   function Base.show(io::IO, b::Branch)
@@ -166,7 +169,9 @@ mutable struct Branch
     if (!isnothing(b.tBranchFlow))
       print(io, "BranchFlow (to): ", b.tBranchFlow, ", ")
     end
-
+    if !isnothing(b.sn_MVA)
+      print(io, "sn_MVA: ", b.sn_MVA, ", ")
+    end
     print(io, "r_pu: ", b.r_pu, ", ")
     print(io, "x_pu: ", b.x_pu, ", ")
     print(io, "b_pu: ", b.b_pu, ", ")
@@ -202,9 +207,9 @@ function setAdjElecParam!(p::AdjElecParams, branch::Branch)
   branch.adjRXGB = p  
 end
 
-function getBranchComp(Vn_kV::Float64, from::Int, to::Int, idx::Int)  
+function getBranchComp(Vn_kV::Float64, from::Int, to::Int, idx::Int, kind::String)  
   cTyp = toComponentTyp("Branch")
-  name = "Branch_$(string(convert(Int,trunc(Vn_kV))))_$(Int(from))_$(Int(to))"
+  name = "B_$(kind)_$(string(convert(Int,trunc(Vn_kV))))_$(Int(from))_$(Int(to))"
   cID = "#"*name*"#"*string(idx)
   return ImpPGMComp(cID,name,cTyp,Vn_kV,from,to)
 end
