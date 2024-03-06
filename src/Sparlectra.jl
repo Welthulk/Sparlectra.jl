@@ -73,6 +73,10 @@ export
   setBranchFlow!,
   setBranchStatus!,
   setAdjElecParam!,
+  # Shunt
+  getGBShunt,
+  getPQShunt,
+  # ACLineSegment
   get_line_parameters
 
 include("component.jl")
@@ -468,23 +472,10 @@ export
   createNetFromTripleStore,
   createNetFromPGM,
   casefileparser,
-  calc_y_pu,
-  calcPQ_Shunt,
-  calcGB_Shunt,
-  calcTwoPortPU,
-  calcVKDependence,
-  calcComplexRatio,
-  calcTapStepPercent,
-  calcTapCorr,
-  calcRatio,
   calcNeutralU,
-  calcTrafoParamsSI,
   recalc_trafo_model_data,
-  calcTrafoParams,
-  calc3WTParams,
-  calcYShunt,
   createYBUS,
-  adjacentBranches,
+
   getNBI,
   mdoRCM,
   createBranchVectorFromNodeVector!,
