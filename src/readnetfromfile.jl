@@ -1,7 +1,7 @@
 # Author: Udo Schmitz (https://github.com/Welthulk)
 # Date: 01.8.2023
 # include-file readnetfromfile.jl
-# Bus
+# Bus helper
 struct Bus
   busIdx::Int64
   name::String
