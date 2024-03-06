@@ -664,16 +664,13 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
     bus = shunt["node"]
 
     vn_kv = VoltageDict[bus]
-
-    comp = getShuntPGMComp(vn_kv, bus, Int(oID))
-
-    # for PGM the voltage is set to 1.0 kV
-    sh = Shunt(comp = comp, base_MVA = baseMVA, Vn_kV_shunt = 1.0, g_shunt = Float64(shunt["g1"]), b_shunt = Float64(shunt["b1"]), status)
-    p_shunt = sh.p_shunt
-    q_shunt = sh.q_shunt
+    # for PGM the voltage is set to 1.0 kV    
+    sh = Shunt(fromBus=bus, id=oID, base_MVA=baseMVA, Vn_kV_shunt=vn_kv, g_shunt= Float64(shunt["g1"]), b_shunt= Float64(shunt["b1"]), ratio=1.0, status = status)
+    
+    p_shunt, q_shunt = getPQShunt(sh)
 
     push!(shuntVec, sh)
-    t1 = Terminal(comp, ResDataTypes.Seite1)
+    t1 = Terminal(sh.comp, ResDataTypes.Seite1)
     t1Terminal = NodeTerminalsDict[bus]
     push!(t1Terminal, t1)
 
@@ -714,7 +711,7 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
   end
 
   length(branchVec) > 0 ? (@info "$(length(branchVec)) branches created...") : (@assert "no branches found!")
-  setParallelBranches!(branchVec)
+  #setParallelBranches!(branchVec)
 
   net = ResDataTypes.Net(netName, baseMVA, slackIdx, nodeVec, ACLines, trafos, branchVec, prosum, shuntVec)
 

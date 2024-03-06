@@ -189,9 +189,10 @@ function writeBranchData(sb_mva::Float64, branchVec::Vector{ResDataTypes.Branch}
     r = round(br.r_pu, digits = 8)
     x = round(br.x_pu, digits = 8)
     b = round(br.b_pu, digits = 8)
-    #g = round(br.g_pu, digits = 8)
-    #@show "export matpower g=", g
-
+    g = round(br.g_pu, digits = 8)
+    if abs(g) >1e-6
+      @info "Conductance g not zero and negleted in matpower export, g=", g
+    end
     rateA = 0 # 0 for unlimited
     if !isnothing(br.sn_MVA)
       rateA = br.sn_MVA

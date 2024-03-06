@@ -402,9 +402,8 @@ function exportPGM(; net::ResDataTypes.Net, filename::String, useMVATrafoModell:
 
     parameters["id"] = get_next_id()
     parameters["node"] = o.comp.cFrom_bus
-    parameters["status"] = 1
-    vn = Float64(o.comp.cVN)
-    g1, b1 = calcGB_Shunt(o.p_shunt, o.q_shunt, vn)
+    parameters["status"] = 1    
+    g1, b1 = getGBShunt(o)    
     parameters["g1"] = g1
     parameters["b1"] = b1
     parameters["_cname"] = o.comp.cName
