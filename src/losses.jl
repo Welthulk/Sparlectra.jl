@@ -27,23 +27,13 @@ function calcNetLosses!(nodes::Vector{ResDataTypes.Node}, branchVec::Vector{ResD
     if tapSide == 2
       uj = uj / tap
     end
-
-    #u_diff = ui - uj
-    #@show "u_diff", u_diff, ui, uj, br.ratio, br.angle, from, to
-    
-
     rpu = br.r_pu
     xpu = br.x_pu
     bpu = br.b_pu
     gpu = br.g_pu
 
-    Yik = inv((rpu + im * xpu))
-    
-    #Y0ik = 0.5*(gpu + im * bpu)
-    Y0ik = gpu + im * bpu
-    
-    #s = ui * conj(u_diff * Yik + ui * Y0ik)
-
+    Yik = inv((rpu + im * xpu))      
+    Y0ik = 0.5*(gpu + im * bpu)
     s = abs(ui)^2*conj(Y0ik+Yik)-ui*conj(uj)*conj(Yik) 
     
     return s
@@ -51,11 +41,11 @@ function calcNetLosses!(nodes::Vector{ResDataTypes.Node}, branchVec::Vector{ResD
 
   n = length(nodes)
   
-  ∑pfrom=∑qfrom=∑pto=∑qto=0.0
+  #∑pfrom=∑qfrom=∑pto=∑qto=0.0
   for br in branchVec    
     from = br.fromBus
     to = br.toBus
-    #@show "losses", br.status, br.isParallel, br.skipYBus
+    
     S = calcBranchFlow(from, to, br, 1) * Sbase_MVA
     
 
@@ -70,14 +60,15 @@ function calcNetLosses!(nodes::Vector{ResDataTypes.Node}, branchVec::Vector{ResD
     brToFlow = BranchFlow(nodes[br.toBus]._vm_pu, nodes[br.toBus]._va_deg, real(S), imag(S))
     setBranchFlow!(brToFlow, brFromFlow, br)
 
-    
+    #=
     ∑pfrom += brFromFlow.pFlow
     ∑qfrom += brFromFlow.qFlow
     ∑pto += brToFlow.pFlow
     ∑qto += brToFlow.qFlow
+    =#
   end
 
-  
+  #=
   ∑pv = ∑pfrom+∑pto
   ∑qv = ∑qfrom+∑qto
   ∑pl = ∑qg = ∑pg = ∑ql = 0.0
@@ -106,6 +97,6 @@ function calcNetLosses!(nodes::Vector{ResDataTypes.Node}, branchVec::Vector{ResD
     setNodePQ!(nodes[idx], 0.0, 0.0)
     setGenPower!(nodes[idx], 0.0, 0.0)
   end  
-
+  =#
   
 end
