@@ -226,15 +226,15 @@ end
  V: vector of complex voltages, 
  Y: Y-Bus Matrix
 """
-function residuum(Y::AbstractMatrix{ComplexF64}, busVec::Vector{BusData}, feeders::Vector{Float64}, n_pq::Int, n_pv::Int, log::Bool)
+function residuum(Y::AbstractMatrix{ComplexF64}, busVec::Vector{BusData}, feeders::Vector{Float64}, n_pq::Int, n_pv::Int, log::Bool)::Tuple{Vector{Float64}, ComplexF64}
   # create complex vector of voltages
   V = [bus.vm_pu * exp(im * bus.va_rad) for bus in busVec]
   # create diagonal matrix of voltages
   Vdiag = Diagonal(V)
 
-  # Power Calculation
+  # Power Calculation (Knotenleistung)
   S = Vdiag * conj(Y * V)
-
+  S_slack = 0.0 + 0.0im
   size = n_pq * 2 + n_pv
   Δpq = zeros(Float64, size)
 
@@ -257,6 +257,8 @@ function residuum(Y::AbstractMatrix{ComplexF64}, busVec::Vector{BusData}, feeder
       vindex += 1
       index_p = vindex
       Δpq[index_p] = feeders[index_p] - real(S[pfIdx])
+    elseif bus.type == ResDataTypes.Slack
+     S_slack = S[pfIdx]
     end
   end
 
@@ -268,7 +270,7 @@ function residuum(Y::AbstractMatrix{ComplexF64}, busVec::Vector{BusData}, feeder
     println("feeders: $feeders")
   end
 
-  return Δpq
+  return Δpq, S_slack
 end
 
 """
@@ -564,12 +566,12 @@ function calcNewtonRaphson!(Y::AbstractMatrix{ComplexF64}, nodes::Vector{ResData
 
   if verbose > 0
     tn = num_pq_nodes + num_pv_nodes
-    println("\ncalcNewtonRaphson: Matrix-Size: $(size) x $(size), Sbase_MVA: $(Sbase_MVA), total number of nodes: $(tn), number of PQ nodes: $num_pq_nodes, number of PV nodes: $num_pv_nodes")
+    println("\ncalcNewtonRaphson: Matrix-Size: $(size) x $(size), Sbase_MVA: $(Sbase_MVA), total number of nodes: $(tn), number of PQ nodes: $num_pq_nodes, number of PV nodes: $num_pv_nodes\n")
   end
 
   iteration_count = 0
   power_feeds = getPowerFeeds(busVec, num_pq_nodes, num_pv_nodes, (verbose > 1))
-
+  s_slack = 0.0 + 0.0im
   while iteration_count <= maxIte
     # Calculation of the power flows
     #=
@@ -579,9 +581,9 @@ function calcNewtonRaphson!(Y::AbstractMatrix{ComplexF64}, nodes::Vector{ResData
     end 
     delta_P = power_feeds - power_flows
     =#
-
+    
     # Calculation of the residual
-    delta_P = residuum(Y, busVec, power_feeds, num_pq_nodes, num_pv_nodes, (verbose > 1))
+    delta_P, s_slack = residuum(Y, busVec, power_feeds, num_pq_nodes, num_pv_nodes, (verbose > 1))
     if verbose > 1
       println("\ndelta_P: Iteration $(iteration_count)")
       printVector(delta_P, busVec, "p", "q", false, 0.0)
@@ -589,11 +591,11 @@ function calcNewtonRaphson!(Y::AbstractMatrix{ComplexF64}, nodes::Vector{ResData
 
     norm_p = norm(delta_P)
     if verbose > 0
-      @printf "norm %e, tol %e, ite %d\n" norm_p tolerance iteration_count
+      @printf " norm %e, tol %e, ite %d\n" norm_p tolerance iteration_count
     end
 
     if norm_p < tolerance
-      println("Convergence is reached after $iteration_count iterations.")
+      println("\nConvergence is reached after $(iteration_count) iterations")
       erg = 0
       break
     end
@@ -668,7 +670,10 @@ function calcNewtonRaphson!(Y::AbstractMatrix{ComplexF64}, nodes::Vector{ResData
     va_deg = rad2deg(bus.va_rad)
 
     setVmVa!(nodes[i], vm_pu, va_deg)
-
+    if i == slackIdx
+      s_slack = s_slack*Sbase_MVA
+      setGenPower!(nodes[i], real(s_slack), imag(s_slack))    
+    end
     if verbose > 1
       vm_pu = round(nodes[i]._vm_pu, digits = 3)
       va_deg = round(nodes[i]._va_deg, digits = 3)
