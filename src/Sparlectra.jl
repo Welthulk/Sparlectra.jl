@@ -473,10 +473,8 @@ export
   # constants
   # classes
   # functions
-  createNetFromFile,
-  createNetFromMatPowerFile,
-  createNetFromTripleStore,
   createNetFromPGM,
+  createNetFromMatPowerFile,
   casefileparser,
   calcNeutralU,
   recalc_trafo_model_data,

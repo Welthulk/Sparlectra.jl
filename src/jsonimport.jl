@@ -1,39 +1,258 @@
 # Author: Udo Schmitz (https://github.com/Welthulk)
-# Date: 01.8.2023
-# include-file jsonimport.jl
-# sparlectra json importer
+# Date: 08.02.2024
+# power grid model json importer
+
+function identifyIsolatedBuses(nodes, lines, wt2, wt3)
+  isolated_buses = Set{Int}()
+  connected_buses = Set{Int}()
+
+  for o in lines
+    if o["from_status"] == 0 || o["to_status"] == 0
+      continue
+    end
+    push!(connected_buses, o["from_node"])
+    push!(connected_buses, o["to_node"])
+  end
+
+  for o in wt2
+    if o["from_status"] == 0 || o["to_status"] == 0
+      continue
+    end
+    push!(connected_buses, o["from_node"])
+    push!(connected_buses, o["to_node"])
+  end
+
+  for o in wt3
+    if o["status_1"] == 0 || o["status_2"] == 0 || o["status_3"] == 0
+      continue
+    end
+    push!(connected_buses, o["node_1"])
+    push!(connected_buses, o["node_2"])
+    push!(connected_buses, o["node_3"])
+  end
+
+  for node in nodes
+    node_id = node["id"]
+    if !(node_id in connected_buses)
+      push!(isolated_buses, node_id)
+    end
+  end
+  @info "isolated busses: $(isolated_buses)"
+  return isolated_buses
+end
+
+function reassignBusNumbers!(nodes, lines, wt2, wt3, s_gen, s_load, shunt, source)
+  isolated_buses = identifyIsolatedBuses(nodes, lines, wt2, wt3)
+  vm_pu = 1.0
+  slack_bus = 0
+  if length(isolated_buses) > 0
+    @info "reassignBusNumbers!: Isolated busses found: $(isolated_buses)"
+  end
+
+  bus_mapping = Dict{Int,Int}()
+  # type of the busses PV, PQ, Slack
+  bus_types = Dict{Int,Int}()
+
+  new_bus_number = 1
+
+  for node in nodes
+    old_bus_number = node["id"]
+
+    # Überspringe isolierte Busse
+    if old_bus_number in isolated_buses
+      node["o_id"] = old_bus_number
+      @debug "isolated bus found: $(old_bus_number)"      
+      node["type"] = 4
+      continue
+    end
+
+    bus_mapping[old_bus_number] = new_bus_number
+    node["id"] = new_bus_number
+    node["o_id"] = old_bus_number
+    new_bus_number += 1
+  end
+
+  for line in lines
+    line["o_from"] = line["from_node"]
+    line["o_to"] = line["to_node"]
+    line["from_node"] = get(bus_mapping, line["from_node"], line["from_node"])
+    line["to_node"] = get(bus_mapping, line["to_node"], line["to_node"])
+    if !haskey(line, "length")
+      line["length"] = 1.0
+    end
+  end
+
+  for transformer in wt2
+    transformer["o_from"] = transformer["from_node"]
+    transformer["o_to"] = transformer["to_node"]
+
+    transformer["from_node"] = get(bus_mapping, transformer["from_node"], transformer["from_node"])
+    transformer["to_node"] = get(bus_mapping, transformer["to_node"], transformer["to_node"])
+  end
+
+  for transformer in wt3
+    for i = 1:3
+      node_key = "node_$(i)"
+      if haskey(transformer, node_key)
+        transformer["o_$(node_key)"] = transformer[node_key]
+        transformer[node_key] = get(bus_mapping, transformer[node_key], transformer[node_key])
+      end
+    end
+  end
+
+  for gen in s_gen
+    gen["o_node"] = gen["node"]
+    gen["node"] = get(bus_mapping, gen["node"], gen["node"])
+
+    bus_id = Int(gen["node"])
+    bus_type = gen["type"]
+    bus_type += 1
+    bus_types[bus_id] = bus_type
+  end
+
+  for load in s_load
+    load["o_node"] = load["node"]
+    load["node"] = get(bus_mapping, load["node"], load["node"])
+
+    bus_id = Int(load["node"])
+    bus_type = load["type"]
+    bus_type += 1
+    bus_types[bus_id] = bus_type
+  end
+
+  for s in shunt
+    s["o_node"] = s["node"]
+    s["node"] = get(bus_mapping, s["node"], s["node"])
+
+    bus_id = Int(s["node"])
+    if !haskey(bus_types, bus_id)
+      bus_types[bus_id] = 1
+    end
+  end
+
+  for s in source
+    s["o_node"] = s["node"]
+    s["node"] = get(bus_mapping, s["node"], s["node"])
+    vm_pu = float(s["u_ref"])
+    slack_bus = Int(s["node"])
+    bus_id = Int(s["node"])
+    bus_types[bus_id] = 3
+  end
+
+  for node in nodes
+    bus_id = node["id"]
+    if haskey(node, "type")
+      type = node["type"]
+      @debug "bus type already set for bus $(bus_id), type: $(type)"
+      continue
+    end
+
+    if haskey(bus_types, bus_id)
+      node["type"] = bus_types[bus_id]
+    else
+      @debug "bus type not found for bus $(bus_id), set to PQ"
+      node["type"] = 1
+    end
+  end
+  return vm_pu, slack_bus
+end
+
+function searchMaxS(wt2, wt3, gens)
+  sn_max = 0.0
+  if !isnothing(wt2)
+    for trafo in wt2
+      sn = float(trafo["sn"])
+      if sn > sn_max
+        sn_max = sn
+      end
+    end
+  end
+  if !isnothing(wt3)
+    for t in wt3
+      sn_1 = float(t["sn_1"])
+      sn_2 = float(t["sn_2"])
+      sn_3 = float(t["sn_3"])
+      sn = max(sn_1, sn_2, sn_3)
+      if sn > sn_max
+        sn_max = sn
+      end
+    end
+  end
+  if !isnothing(gens)
+    for gen in gens
+      p = float(gen["p_specified"])
+      q = float(gen["q_specified"])
+      sn = sqrt(p^2 + q^2)
+      if sn > sn_max
+        sn_max = sn
+      end
+    end
+  end
+  @assert sn_max != 0.0 "no sn found"
+  return sn_max
+end
 
 # base_MVA = 0.0 for default value in case file, otherwise set to desired value
-function createNetFromFile(filename, base_MVA::Float64 = 0.0, log::Bool = false, check = false)::ResDataTypes.Net
-  debug = false
-  log_println(message) = log && println(message)
-  println("create network from file: $(filename)")
-  netName, baseMVA, parsed_data = SparlectraImport.jsonparser(filename, debug)
-  if base_MVA > 0.0
+function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check = false)::ResDataTypes.Net
+  function printRefVals(bus)
+    nParms = NodeParametersDict[bus]
+
+    if !(isnothing(nParms.pƩGen) && isnothing(nParms.qƩGen))
+      println("bus:", bus)
+      println("GEN p:", nParms.pƩGen)
+      println("GEN q:", nParms.qƩGen)
+    end
+
+    if !(isnothing(nParms.pƩLoad) && isnothing(nParms.qƩLoad))
+      println("bus:", bus)
+      println("LOAD p:", nParms.pƩLoad)
+      println("LOAD q:", nParms.qƩLoad)
+    end
+  end
+
+  @info "create network from PGM-File: $(filename)"
+
+  nodes, lines, wt2, wt3, sym_gens, sym_loads, shunts, source = pgmparser(filename)
+
+  @info "search for isolated busses (reassign bus numbers...)"
+  vm_pu_slack, slackIdx = reassignBusNumbers!(nodes, lines, wt2, wt3, sym_gens, sym_loads, shunts, source)
+  @assert slackIdx != 0 "no slack bus found"
+  @info "slack: $slackIdx, vm_pu: $vm_pu_slack"
+  if check
+    @info "check for isolated busses and slack bus"
+    for n in nodes
+      @debug n
+      id   = Int64(n["id"])
+      o_id = Int64(n["o_id"])
+      type = Int64(n["type"])
+      if id != o_id
+        @info "bus number re-assigned: $o_id -> $id"
+      end
+
+      if type == 4
+        @info "isolated bus found: $id"
+      elseif type == 3
+        @info "slack bus found: $id"
+      end
+    end
+  end
+
+  base_name = basename(filename)
+  netName, ext = splitext(base_name)
+  @info "Netname: $netName"
+  umrech_MVA = 1e-6
+
+  if base_MVA == 0.0
+    # if baseMVA is not given, so we search for the maximum sn of the transformers
+    baseMVA = searchMaxS(wt2, wt3, sym_gens) * umrech_MVA
+  else
     baseMVA = base_MVA
   end
-  # parsing the data
-  if log
-    println("Parsing the data...")
-    println("Netname: ", netName)
-    println("BaseMVA: ", baseMVA, "\n")
-  end
-
-  buses = parsed_data["buses"]
-  linemod = parsed_data["linemod"]
-  lines = parsed_data["lines"]
-  vkDepChr = parsed_data["vkDepChr"]
-  tapMod = parsed_data["tapmod"]
-  trafo2WT = parsed_data["trafowt2"]
-  trafo3WT = parsed_data["trafowt3"]
-  shunts = parsed_data["shunts"]
-  loads = parsed_data["loads"]
-  sgens = parsed_data["sgens"]
-  vgens = parsed_data["vgens"]
-  grids = parsed_data["ext_grids"]
+  @info "baseMVA: $baseMVA MVA"
 
   VoltageDict = Dict{Integer,Float64}()
-  NodeIDDict = Dict{Integer,String}()
+
+  AuxBusDict = Dict{String,Integer}()
 
   ACLines = Vector{ResDataTypes.ACLineSegment}()
   trafos = Vector{ResDataTypes.PowerTransformer}()
@@ -42,950 +261,400 @@ function createNetFromFile(filename, base_MVA::Float64 = 0.0, log::Bool = false,
   branchVec = Vector{ResDataTypes.Branch}()
   nodeVec = Vector{ResDataTypes.Node}()
 
-  NodeTerminalsDict = Dict{Integer,Vector{ResDataTypes.Terminal}}()
+  busIDStringDict = Dict{Int,String}()
+
   NodeParametersDict = Dict{Integer,ResDataTypes.NodeParameters}()
   busVec = Vector{Bus}()
 
-  log_println("Buses:")
-  busIdx = 0 # Counter for bus index
-  slackIdx = 0 # Counter for slack index
-
-  slack_vm_pu = 1.0
-  slack_va_deg = 0.0
-  for bus in buses
-    busIdx = Int64(bus["bus"])
-    nodeID = string(bus["id"])
-    name = string(bus["name"])
-    vn_kv = float(bus["vn_kv"])
+  busIdx = 0 # busses are numbered from 1 to n ?
+  for bus in nodes
+    #@assert Int64(bus["id"]) == busIdx + 1 "bus numbers are not consecutive and unique"
+    idx = Int64(bus["id"])
+    vn_kv = float(bus["u_rated"]) * 1e-3
     btype = Int64(bus["type"])
-
-    if bus["type"] == 3
-      slackIdx = busIdx
+    if btype == 4
+      @info "isolated bus found, bus number: $idx, vn_kv: $vn_kv, type: $btype, skip..."
+      continue
     end
+    busIdx = idx
+    vm_pu = (btype == 3) ? vm_pu_slack : 1.0
+    va_deg = 0.0
 
-    bus = Bus(busIdx, name, nodeID, "", vn_kv, btype)
-    if log
-      @show bus
-    end
-    push!(busVec, bus)
+    a_bus = Bus(busIdx, vn_kv, btype, vm_pu, va_deg)
+    busIDStringDict[busIdx] = a_bus.id
 
-    # Set up voltage levels via bus index
-    Voltage = vn_kv
-    VoltageDict[busIdx] = Voltage
+    push!(busVec, a_bus)
 
-    # Set up node IDs via bus index
-    NodeIDDict[busIdx] = nodeID
-
-    # initialize NodeTerminalsDict
-    NodeTerminalsDict[busIdx] = Vector{ResDataTypes.Terminal}()
+    VoltageDict[busIdx] = vn_kv
     # initialize NodeParametersDict, set bus index
     NodeParameters = ResDataTypes.NodeParameters(busIdx)
     NodeParametersDict[busIdx] = NodeParameters
   end
-  @assert slackIdx != 0 "no slack bus found!"
-
-  #Check if the bus numbers are consecutive and unique        
-  for (i, bus) in enumerate(busVec)
-    @assert bus.busIdx == i "bus numbers are not consecutive and unique"
-  end
+  @info "$(length(busVec)) busses created..."
 
   # Set up auxillary buses
-  if !isnothing(trafo3WT)
-    log_println("aux buses:")
-    for t3WT in trafo3WT
+  auxAnz = 0
+  if !isnothing(wt3)
+    for t in wt3
+      @debug "wt3 found..."
       busIdx += 1
-      cName = "aux_#" * string(busIdx)
-      nodeID = string(UUIDs.uuid4())
-      cID = string(t3WT["id"])
+      auxAnz += 1
+      u1 = float(t["u1"]) * 1e-3
+      from_node = Int64(t["node_1"])
+      to_node = Int64(t["node_2"])
+      to_node_3 = Int64(t["node_3"])
 
-      vn_hv_kv = float(t3WT["vn_hv_kv"])
-      type = 1 # PQ
-      bus = Bus(busIdx, cName, nodeID, cID, vn_hv_kv, type)
-      if log
-        @show bus
-      end
+      cName, auxID = getWT3AuxBusID(u1, from_node, to_node, to_node_3)
+      bus = Bus(busIdx, cName, auxID, "", u1, 1) # PQ-Bus
       push!(busVec, bus)
 
-      VoltageDict[busIdx] = vn_hv_kv
-      NodeIDDict[busIdx] = nodeID
-      # initialize NodeTerminalsDict
-      NodeTerminalsDict[busIdx] = Vector{ResDataTypes.Terminal}()
-      # initialize NodeParametersDict, set bus index
+      VoltageDict[busIdx] = u1
+      AuxBusDict[auxID] = busIdx
+
       NodeParameters = ResDataTypes.NodeParameters(busIdx)
       NodeParametersDict[busIdx] = NodeParameters
     end
   end
-  @assert slackIdx != 0 "no slack bus found!"
+  auxAnz > 0 ? (@info "$auxAnz auxillary busses created...") : (@info "no aux busses created...")
 
-  log_println("\nLines:")
   b = nothing
   g = nothing
-  angMin = -360.0
-  angMax = 360.0
-  ratio = 0.0 # ratio = 0.0 for ACLineSegment
-  angle = 0.0 # angle = 0.0 for ACLineSegment
-  mod = "" # 
   for line in lines
-    cName = string(line["name"])
-    cID = string(line["id"])
-    length = float(line["length_km"])
-    @assert length > 0 "line length must be greater than 0"
-    r = 0.0
-    x = 0.0
-    c_nf_per_km = 0.0
-    g_us = 0.0
-    max_i_ka = 0.0
-    try
-      mod = line["line_model"]
-    catch
-      mod = ""
-    end
-    if mod != "" && !isnothing(mod)
-      found = false
-      for m in linemod
-        if m["model"] == mod
-          r = float(m["r_ohm_per_km"])
-          x = float(m["x_ohm_per_km"])
-          c_nf_per_km = float(m["c_nf_per_km"])
-          g_us = float(m["g_us_per_km"])
-          max_i_ka = float(m["max_i_ka"])
-          found = true
-          if log
-            println("found model: ", mod)
-          end
-          break
-        end
-      end
-      @assert found == true "line model $mod not found"
-    else
-      r = float(line["r_ohm_per_km"])
-      x = float(line["x_ohm_per_km"])
-      c_nf_per_km = float(line["c_nf_per_km"])
-      g_us = float(line["g_us_per_km"])
-      max_i_ka = float(line["max_i_ka"])
+    from = Int64(line["from_node"])
+    to = Int64(line["to_node"])
+    oID = Int64(line["id"])
+
+    r = float(line["r1"])
+    x = float(line["x1"])
+    c_nf = float(line["c1"]) * 1e9
+    tan_delta = float(line["tan1"])
+
+    if tan_delta != 0.0
+      @warn "tan_delta not zero: $tan_delta, not handelt yet!"
     end
 
-    Bus = line["from_bus"]
-
-    Vn = VoltageDict[Bus]
-
-    status = line["in_service"]
-
-    from_bus = line["from_bus"]
-    to_bus = line["to_bus"]
-    checkBusNumber(from_bus, busVec)
-    checkBusNumber(to_bus, busVec)
-
-    cPGM = ImpPGMComp(cID, cName, toComponentTyp("ACLINESEGMENT"), Vn, from_bus, to_bus)
-    asec = ACLineSegment(cPGM, length, r, x, b, g, c_nf_per_km, 0.0)
-    if log
-      println(asec)
+    from_status = line["from_status"]
+    to_status = line["to_status"]
+    inService = (from_status == 1 && to_status == 1) ? 1 : 0
+    if inService == 0
+      @info "line $oID not in service"
+      continue
     end
+
+    Vn1 = VoltageDict[from]
+    Vn2 = VoltageDict[to]
+    Vn = Vn1
+
+    @assert Vn1 == Vn2 "Voltage levels are different: $Vn1 != $Vn2"
+    cImpPGMComp = getLineImpPGMComp(Vn, from, to)
+
+    #length not given, so set to 1.0km
+    asec = ACLineSegment(cImpPGMComp, 1.0, r, x, c_nf, tan_delta)
     push!(ACLines, asec)
-
-    t1 = ResDataTypes.Terminal(cPGM, ResDataTypes.Seite1)
-    t2 = ResDataTypes.Terminal(cPGM, ResDataTypes.Seite2)
-
-    t1Terminal = NodeTerminalsDict[from_bus]
-    t2Terminal = NodeTerminalsDict[to_bus]
-    push!(t1Terminal, t1)
-    push!(t2Terminal, t2)
-    bch = c_nf_per_km * 1e-9 * length * 2.0 * 50.0 * pi
-
-    r_pu, x_pu, b_pu, g_pu = calcTwoPortPU(Vn, baseMVA, r * length, x * length, bch, g_us * length)
-
-    if log
-      println("r_pu: ", r_pu, ", x_pu: ", x_pu, ", b_pu: ", b_pu, ", g_pu: ", g_pu)
-    end
-
-    fromNodeID = NodeIDDict[from_bus]
-    toNodeID = NodeIDDict[to_bus]
-    if log
-      println("fromNodeID: ", fromNodeID, ", toNodeID: ", toNodeID, ", from_bus: ", from_bus, ", to_bus: ", to_bus, ", r_pu: ", r_pu, ", x_pu: ", x_pu, ", b_pu: ", b_pu, ", g_pu: ", g_pu, ", ratio: ", ratio, ", angle: ", angle, ", status: ", status, ", angMin: ", angMin, ", angMax: ", angMax)
-    end
-    branch = ResDataTypes.Branch(cPGM, from_bus, to_bus, from_bus, to_bus, fromNodeID, toNodeID, r_pu, x_pu, b_pu, g_pu, ratio, angle, status)
-    if log
-      @show branch
-    end
+    #@show p=get_line_parameters(asec)
+    
+    branch = Branch(vn_kV= Vn, baseMVA=baseMVA, from=from, to=to, branch=asec, id=Int(oID), status=inService)
     push!(branchVec, branch)
   end
+  length(ACLines) > 0 ? (@info "$(length(ACLines)) aclines created...") : (@info "no aclines found...")
 
-  log_println("\nTransformers (2WT):")
-  for t in trafo2WT
-    sn = float(t["sn_mva"])
-    vn_hv = float(t["vn_hv_kv"])
-    vn_lv = float(t["vn_lv_kv"])
-    vk_percent = float(t["vk_percent"])
-    org_vk_percent = vk_percent
-    vkr_percent = nothing
-    pk_kW = nothing
-    try
-      vkr_percent = float(t["vkr_percent"])
-      pk_kW = float(t["pk_kw"])
-    catch
+  for t in wt2
+    sn_MVA = float(t["sn"]) * umrech_MVA
+    vn_hv_kV = float(t["u1"]) * 1e-3 # rated voltage at the from side
+    vn_lv_kV = float(t["u2"]) * 1e-3 # rated voltage at the to side
+
+    oID = Int64(t["id"])
+    vk_percent = float(t["uk"]) * 100
+    i0_percent = float(t["i0"]) * 100
+    p0_kW = float(t["p0"]) * 1e-3
+    pk_kW = float(t["pk"]) * 1e-3
+    from_node = Int64(t["from_node"])
+    to_node = Int64(t["to_node"])
+
+    from_status = t["from_status"]
+    to_status = t["to_status"]
+    if from_status == 1 && to_status == 1
+      inService = 1
+    else
+      inService = 0
     end
-    pfe_kw = float(t["pfe_kw"])
-    io_percent = float(t["i0_percent"])
+    if inService == 0
+      @info "trafo $oID not in service"
+      continue
+    end
+
+    if check
+      checkBusNumber(from_node, busVec)
+      checkBusNumber(to_node, busVec)
+    end
+
+    tap_side = Int64(t["tap_side"])
+    tap_pos = Int64(t["tap_pos"])
+    tap_min = Int64(t["tap_min"])
+    tap_max = Int64(t["tap_max"])
+    tap_nom = Int64(t["tap_nom"])
+    tap_size_kV = float(t["tap_size"]) * 1e-3
+    tap_neutral = tap_nom
+    HV = VoltageDict[from_node]
+    LV = VoltageDict[to_node]
+    # 0 = from_side, 1 = to_side
     shift_degree = 0.0
 
-    cName = string(t["name"])
-    cID = string(t["id"])
-    busIdx = t["hv_bus"]
-    USIdx = t["lv_bus"]
-    checkBusNumber(busIdx, busVec)
-    checkBusNumber(USIdx, busVec)
-    inService = t["in_service"]
-    nID = NodeIDDict[busIdx]
+    addEx = TransformerModelParameters(sn_MVA = sn_MVA, vk_percent = vk_percent, vkr_percent = nothing, pk_kW = pk_kW, i0_percent = i0_percent, p0_kW = p0_kW)
 
-    tMod = 0
-    try
-      tMod = t["tap_model"]
-    catch
-    end
-
-    tap_pos = 0
-    try
-      tap_pos = t["tap_pos"]
-    catch
-    end
-
-    vk_dependence = nothing
-    try
-      vk_dependence = t["vk_dependence"]
-    catch
-    end
-
-    tapSeite = 0
-    tap_min = 0
-    tap_max = 0
-    tap_neutral = 0
-    tap_step_percent = 0.0
-    neutralU_ratio = 1.0
-    regelungEin = false
-    if tMod > 0
-      regelungEin = true
-      for tap in tapMod
-        m = tap["model"]
-        if m == tMod
-          side, tap_min, tap_max, tap_neutral, tap_step_percent, shift_degree, neutralU_ratio = readTapMod(tap)
-
-          if side == "HV" || side == "hv" || side == "H" || side == "h" || side == "1" || side == 1
-            tapSeite = 1
-          else
-            tapSeite = 2
-          end
-
-          if log
-            println("tap_side: ", side, ", tap_min: ", tap_min, ", tap_max: ", tap_max, ", tap_neutral: ", tap_neutral, ", tap_step_percent: ", tap_step_percent, ", neutralU_ratio:", neutralU_ratio)
-          end
-
-          break
-        end
-      end
-    end
-
-    # handle vk dependence
-    tapVec = []
-    vkVec = []
-    xDependence = false
-    vkcorr = 0.0
-    if !isnothing(vk_dependence)
-      for dep in vkDepChr
-        if vk_dependence in keys(vkDepChr)
-          dep = vkDepChr[vk_dependence]
-
-          tapVec = dep["tap"]
-          vkVec = dep["vk"]
-
-          xTaps = [Int64(x) for x in tapVec]
-          yVKs = [Float64(y) for y in vkVec]
-
-          vkcorr = calcVKDependence(xTaps, yVKs, Float64(tap_pos))
-
-          xDependence = true
-          break
-        end
-      end
-    end
-
-    if xDependence
-      vk_percent = vkcorr
-    end
-    r_pu = 0.0
-    x_pu = 0.0
-    b_pu = 0.0
-    g_pu = 0.0
-    HV_Voltage = VoltageDict[busIdx]
-    LV_Voltage = VoltageDict[USIdx]
-    ratio = calcRatio(HV_Voltage, vn_hv, LV_Voltage, vn_lv, tap_pos, tap_neutral, tap_step_percent, tapSeite)
-    
-    mParm=nothing    
-    if !isnothing(pk_kW)             
-      vkp=org_vk_percent/100.0
-      i0p=io_percent
-      p=pk_kW*1e3
-      s=sn*1e6
-      pfe=pfe_kw*1e3
-      mParm=TransformerModelParameters(s, vkp, p, i0p, pfe)
-    end
-
-    if regelungEin && tapSeite == 1
-      Vtab = calcNeutralU(neutralU_ratio, vn_hv, tap_min, tap_max, tap_step_percent)
-      tap = ResDataTypes.PowerTransformerTaps(tap_pos, tap_min, tap_max, tap_neutral, tap_step_percent, Vtab)
-      
-      r_hv, x_hv, b_hv, g_hv, = calcTrafoParams(sn_mva=sn, vn_hv_kv=vn_hv, vk_percent=vk_percent,  pk_kw=pk_kW, vkr_percent=vkr_percent,  pfe_kw=pfe_kw, i0_percent=io_percent)
-      
-      r_pu, x_pu, b_pu, g_pu = calcTwoPortPU(vn_hv, sn, r_hv, x_hv, b_hv, g_hv)
-      #function PowerTransformerWinding(; Vn::Float64, r::Float64, x::Float64, b::Union{Nothing, Float64} = nothing, g::Union{Nothing, Float64} = nothing, shift_degree::Union{Nothing, Float64} = nothing, ratedU::Union{Nothing, Float64} = nothing, ratedS::Union{Nothing, Float64} = nothing, taps::Union{Nothing, PowerTransformerTaps} = nothing, isPu_RXGB::Union{Nothing, Bool} = nothing, modelData::Union{Nothing, TransformerModelParameters} = nothing)
-      #  new(Vn, r, x, b, g, shift_degree, ratedU, ratedS, taps, isPu_RXGB, modelData)
-      s1 = PowerTransformerWinding(Vn = vn_hv, r = r_hv, x = x_hv, b = b_hv, g = g_hv, shift_degree = shift_degree, ratedU = vn_hv, ratedS = sn, taps = tap, isPu_RXGB = false, modelData = mParm)
-      s2 = PowerTransformerWinding(Vn = vn_lv, r = 0.0, x = 0.0)
-
-    elseif regelungEin && tapSeite == 2
-      Vtab = calcNeutralU(neutralU_ratio, vn_lv, tap_min, tap_max, tap_step_percent)
-      tap = ResDataTypes.PowerTransformerTaps(tap_pos, tap_min, tap_max, tap_neutral, tap_step_percent, Vtab)
-      # maibe an error here: vn_hv?
-      r_lv, x_lv, b_lv, g_lv = calcTrafoParams(sn_mva=sn, vn_hv_kv=vn_hv, vk_percent=vk_percent, pk_kw=pk_kw, vkr_percent=vkr_percent, pfe_kw=pfe_kw, i0_percent=io_percent)
-      r_pu, x_pu, b_pu, g_pu = calcTwoPortPU(vn_hv, sn, r_lv, x_lv, b_lv, g_lv)
-      s1 = PowerTransformerWinding(Vn = vn_hv, r = 0.0, x = 0.0)
-      s2 = PowerTransformerWinding(Vn = vn_lv, r = r_lv, x = x_lv, b = b_lv, g = g_lv, shift_degree = shift_degree, ratedU = vn_lv, ratedS = sn, taps = tap, isPu_RXGB = false, modelData = mParm)
-
-    else
-      r_hv, x_hv, b_hv, g_hv = calcTrafoParams(sn_mva=sn, vn_hv_kv=vn_hv, vk_percent=vk_percent, pk_kw=pk_kw, vkr_percent=vkr_percent,  pfe_kw=pfe_kw, i0_percent=io_percent)
-      r_pu, x_pu, b_pu, g_pu = calcTwoPortPU(vn_hv, sn, r_hv, x_hv, b_hv, g_hv)
-      s1 = PowerTransformerWinding(Vn = vn_hv, r = r_hv, x = x_hv, g = g_hv, b = b_hv, ratedU = vn_hv, ratedS = sn, isPu_RXGB = false, modelData = mParm)
-      s2 = PowerTransformerWinding(Vn = vn_lv, r = 0.0, x = 0.0)
-    end
+    s1 = nothing
+    s2 = nothing
     s3 = nothing
-
-    cImpPGMComp = ImpPGMComp(cID, cName, toComponentTyp("POWERTRANSFORMER"), vn_hv, busIdx, USIdx)
-    trafo = PowerTransformer(cImpPGMComp, regelungEin, s1, s2, s3, ResDataTypes.Ratio)
-    if log
-      @show trafo
+    
+    if tap_side == 0      
+      tap = (tap_min == tap_max) ? nothing : PowerTransformerTaps(Vn_kV = vn_hv_kV, step = tap_pos, lowStep = tap_min, highStep = tap_max, neutralStep = tap_neutral, voltageIncrement_kV = tap_size_kV)
+      s1 = PowerTransformerWinding(Vn_kV = HV, ratedU = vn_hv_kV, ratedS = sn_MVA, modelData = addEx, shift_degree = shift_degree,  taps = tap)      
+      s2 = PowerTransformerWinding(Vn_kV = LV, ratedU = vn_lv_kV, ratedS = sn_MVA)
+    else            
+      tap = (tap_min == tap_max) ? nothing : PowerTransformerTaps(Vn_kV = vn_lv_kV, step = tap_pos, lowStep = tap_min, highStep = tap_max, neutralStep = tap_neutral, voltageIncrement_kV = tap_size_kV)
+      s1 = PowerTransformerWinding(Vn_kV = HV, ratedU = vn_hv_kV, ratedS = sn_MVA)      
+      s2 = PowerTransformerWinding(Vn_kV = LV, ratedU = vn_lv_kV, ratedS = sn_MVA, modelData = addEx, shift_degree = shift_degree,  taps = tap)
     end
+    cmp = getTrafoImpPGMComp(false, vn_hv_kV, from_node, to_node)
+    trafo = PowerTransformer(cmp, true, s1, s2, s3)
+    ratio = calcTransformerRatio(trafo)
     push!(trafos, trafo)
 
-    t1 = ResDataTypes.Terminal(cImpPGMComp, ResDataTypes.Seite1)
-    cmp2 = ImpPGMComp(cID, cName, toComponentTyp("POWERTRANSFORMER"), vn_lv, busIdx, USIdx)
-    t2 = ResDataTypes.Terminal(cmp2, ResDataTypes.Seite2)
-
-    t1Terminal = NodeTerminalsDict[busIdx]
-    t2Terminal = NodeTerminalsDict[USIdx]
-
-    toNodeID = NodeIDDict[USIdx]
-
-    push!(t1Terminal, t1)
-    push!(t2Terminal, t2)
-
-    branch = ResDataTypes.Branch(cImpPGMComp, busIdx, USIdx, nID, toNodeID, r_pu, x_pu, b_pu, g_pu, ratio, shift_degree, inService)
-    if log
-      @show branch
-    end
+    branch = Branch(baseMVA=baseMVA, from=from_node, to=to_node, branch=trafo, id=Int(oID), status=Int(inService), ratio=ratio)
     push!(branchVec, branch)
   end
+  (length(trafos) > 0) ? (@info "$(length(trafos)) 2WTs created......") : (@info "no 2WTs found...")
 
-  if !isnothing(trafo3WT)
-    log_println("\nTransformers (3WT):")
-    for t3WT in trafo3WT
-      """
-       comment: This code section is programmed "straight forward" to better understand the model. 
-       But because of this, the section contains many code duplications.         
-      """
-      hv_bus = t3WT["hv_bus"]
-      checkBusNumber(hv_bus, busVec)
+  anz_3wt = 0
+  for t in wt3
+    anz_3wt += 1
+    oID = Int64(t["id"])
+    u1 = float(t["u1"]) * 1e-3 # HV
+    u2 = float(t["u2"]) * 1e-3 # MV
+    u3 = float(t["u3"]) * 1e-3 # LV
+    sn1 = float(t["sn_1"]) * umrech_MVA
+    sn2 = float(t["sn_2"]) * umrech_MVA
+    sn3 = float(t["sn_3"]) * umrech_MVA
+    uk12 = float(t["uk_12"]) * 100
+    uk13 = float(t["uk_13"]) * 100
+    uk23 = float(t["uk_23"]) * 100
+    pk12 = float(t["pk_12"]) * 1e-3
+    pk13 = float(t["pk_13"]) * 1e-3
+    pk23 = float(t["pk_23"]) * 1e-3
+    i0 = float(t["i0"]) * 100
+    p0 = float(t["p0"]) * 1e-3
+    from_node = Int64(t["node_1"])
+    to_node = Int64(t["node_2"])
+    to_node_3 = Int64(t["node_3"])
 
-      mv_bus = t3WT["mv_bus"]
-      checkBusNumber(mv_bus, busVec)
+    cName = "3WTTrafo_" * string(oID) * "_" * string(from_node) * "_" * string(to_node) * "_" * string(to_node_3)
+    cID = "#ID_3WTTrafo_" * string(oID) * "_" * string(from_node) * "_" * string(to_node) * "_" * string(to_node_3)
 
-      lv_bus = t3WT["lv_bus"]
-      checkBusNumber(lv_bus, busVec)
+    tap_side = Int64(t["tap_side"])
+    tap_pos = Int64(t["tap_pos"])
+    tap_min = Int64(t["tap_min"])
+    tap_max = Int64(t["tap_max"])
+    tap_nom = Int64(t["tap_nom"])
+    tap_size_kV = float(t["tap_size"]) * 1e-3
+    tap_neutral = tap_nom
 
-      cName = t3WT["name"]
-      cID = string(t3WT["id"])
+    HV = VoltageDict[from_node]
+    MV = VoltageDict[to_node]
+    LV = VoltageDict[to_node_3]
 
-      vn_hv_kv = t3WT["vn_hv_kv"]
-      vn_mv_kv = t3WT["vn_mv_kv"]
-      vn_lv_kv = t3WT["vn_lv_kv"]
 
-      HV_kv = vn_hv_kv
-      MV_kv = vn_mv_kv
-      LV_kv = vn_lv_kv
+    # create a 3WT - Transformer
+    addEx_s1 = TransformerModelParameters(sn_MVA = sn1, vk_percent = uk12, vkr_percent = nothing, pk_kW = pk12, i0_percent = i0, p0_kW = p0)
+    addEx_s2 = TransformerModelParameters(sn_MVA = sn2, vk_percent = uk13, vkr_percent = nothing, pk_kW = pk13, i0_percent = i0, p0_kW = p0)
+    addEx_s3 = TransformerModelParameters(sn_MVA = sn3, vk_percent = uk23, vkr_percent = nothing, pk_kW = pk23, i0_percent = i0, p0_kW = p0)
 
-      sn_hv_mva = t3WT["sn_hv_mva"]
-      sn_mv_mva = t3WT["sn_mv_mva"]
-      sn_lv_mva = t3WT["sn_lv_mva"]
+    neutral_U = tap_side == 0 ? u1 : tap_side == 1 ? u2 : u3
 
-      vk_hv_percent = t3WT["vk_hv_percent"]
-      vk_mv_percent = t3WT["vk_mv_percent"]
-      vk_lv_percent = t3WT["vk_lv_percent"]
+    tap = (tap_min == tap_max) ? nothing : PowerTransformerTaps(Vn_kV = neutral_U, step = tap_pos, lowStep = tap_min, highStep = tap_max, neutralStep = tap_neutral, voltageIncrement_kV = tap_size_kV)
 
-      vkr_hv_percent = t3WT["vkr_hv_percent"]
-      vkr_mv_percent = t3WT["vkr_mv_percent"]
-      vkr_lv_percent = t3WT["vkr_lv_percent"]
+    u = [u1, u2, u3]
+    sn = [sn1, sn2, sn3]
 
-      pfe_kw = t3WT["pfe_kw"]
-      i0_percent = t3WT["i0_percent"]
+    addEx = [addEx_s1, addEx_s2, addEx_s3]
+    sh_deg = [0.0, 0.0, 0.0]
+    s1, s2, s3 = create3WTWindings!(u_kV = u, sn_MVA = sn, addEx_Side = addEx, sh_deg = sh_deg, tap_side = (tap_side + 1), tap = tap)
 
-      shift_mv_degree = t3WT["shift_mv_degree"]
-      shift_lv_degree = t3WT["shift_lv_degree"]
-      tap_model = 0
-      try
-        tap_model = t3WT["tap_model"]
-      catch
-      end
-      tap_pos = nothing
-      try
-        tap_pos = t3WT["tap_pos"]
-      catch
-      end
-      vk_dependence = nothing
-      try
-        vk_dependence = t3WT["vk_dependence"]
-      catch
-      end
-      in_service = 1
-      try
-        in_service = t3WT["in_service"]
-      catch
-      end
-      if log
-        println(
-          "hv_bus: ",
-          hv_bus,
-          ", mv_bus: ",
-          mv_bus,
-          ", lv_bus: ",
-          lv_bus,
-          ", name: ",
-          cName,
-          ", id: ",
-          cID,
-          ", vn_hv_kv: ",
-          vn_hv_kv,
-          ", vn_mv_kv: ",
-          vn_mv_kv,
-          ", vn_lv_kv: ",
-          vn_lv_kv,
-          ", sn_hv_mva: ",
-          sn_hv_mva,
-          ", sn_mv_mva: ",
-          sn_mv_mva,
-          ", sn_lv_mva: ",
-          sn_lv_mva,
-          ", vk_hv_percent: ",
-          vk_hv_percent,
-          ", vk_mv_percent: ",
-          vk_mv_percent,
-          ", vk_lv_percent: ",
-          vk_lv_percent,
-          ", vkr_hv_percent: ",
-          vkr_hv_percent,
-          ", vkr_mv_percent: ",
-          vkr_mv_percent,
-          ", vkr_lv_percent: ",
-          vkr_lv_percent,
-          ", pfe_kw: ",
-          pfe_kw,
-          ", i0_percent: ",
-          i0_percent,
-          ", shift_mv_degree: ",
-          shift_mv_degree,
-          ", shift_lv_degree: ",
-          shift_lv_degree,
-          ", tap_model: ",
-          tap_model,
-          ", tap_pos: ",
-          tap_pos,
-          ", vk_dependence: ",
-          vk_dependence,
-          ", in_service: ",
-          in_service,
-        )
-      end
-      tapSide = 0
-      tap_min = 0
-      tap_max = 0
-      tap_neutral = 0
-      tap_step_percent = 0.0
-      shift_degree = 0.0
-      neutralU_ratio = 1.0
-      if isnothing(tap_pos)
-        regelungEin = false
-      else
-        regelungEin = true
-      end
-      if tap_model > 0
-        for tap in tapMod
-          m = tap["model"]
-          if m == tap_model
-            side, tap_min, tap_max, tap_neutral, tap_step_percent, shift_degree, neutralU_ratio = readTapMod(tap)
+    cImpPGMComp = ImpPGMComp3WT(cID, cName, toComponentTyp("POWERTRANSFORMER"), u[1], from_node, to_node, to_node_3)
+    wt3Trafo = PowerTransformer(cImpPGMComp, (!isnothing(tap)), s1, s2, s3)
+    push!(trafos, wt3Trafo)
 
-            if side == "HV" || side == "hv" || side == "H" || side == "h" || side == "1" || side == 1
-              tapSide = 1
-            elseif side == "MV" || side == "mv" || side == "M" || side == "m" || side == "2" || side == 2
-              tapSide = 2
-            elseif side == "LV" || side == "lv" || side == "L" || side == "l" || side == "3" || side == 3
-              tapSide = 3
-            else
-              @error "tap side $side not found"
-            end
+    # aux bus
+    auxBusName, auxID = getWT3AuxBusID(u1, from_node, to_node, to_node_3)
+    # search aux bus    
+    AuxBusIdx = AuxBusDict[auxID]
+    vn_aux_kv = VoltageDict[AuxBusIdx]
 
-            if log
-              println("tap_side: ", side, ", tap_min: ", tap_min, ", tap_max: ", tap_max, ", tap_neutral: ", tap_neutral, ", tap_step_percent: ", tap_step_percent, ", neutralU_ratio:", neutralU_ratio)
-            end
+    auxBuxCmp = ImpPGMComp(auxID, auxBusName, toComponentTyp("POWERTRANSFORMER"), vn_aux_kv, from_node, AuxBusIdx)
 
-            break
-          end
-        end
-      end
-      # handle vk dependence
-      tapVec = []
-      vkVec = []
-      
-      vkcorr = 1.0
-      if vk_dependence != raw"" && !isnothing(vk_dependence)
-        for dep in vkDepChr
-          if vk_dependence in keys(vkDepChr)
-            dep = vkDepChr[vk_dependence]
+    inService = t["status_1"] == 1
+    
+    side = 1
+    ratio = 1.0  
+    
+    branch = Branch(baseMVA=baseMVA, from=from_node, to=to_node, branch=wt3Trafo, id=Int(oID), status=Int(inService), side=side, ratio=ratio)
+    push!(branchVec, branch)
 
-            tapVec = dep["tap"]
-            vkVec = dep["vk"]
+    # create branch for the T2 Aux -> MV (u2)
+    
+    #=
+    auxBusName2, auxID2 = getWT3AuxBusID(u2, from_node, to_node, to_node_3)
+    
+    auxBuxCmp2 = ImpPGMComp(auxID2, auxBusName2, toComponentTyp("POWERTRANSFORMER"), u2, to_node, AuxBusIdx)
+    t_T2_mvbus = ResDataTypes.Terminal(auxBuxCmp2)
+    push!(auxTerminal, t_T2_aux)
+    push!(t2Terminal, t_T2_mvbus)
+    =#
+    inService = t["status_2"] == 1
+    side = 2
+    ratio = (vn_aux_kv/MV)*(u2/u1)
+    @debug "3WT side2 ratio: ", ratio
+    branch = Branch(baseMVA=baseMVA, from=to_node, to=AuxBusIdx, branch=wt3Trafo, id=Int(oID), status=Int(inService), side=side, ratio=ratio)    
+    push!(branchVec, branch)
 
-            xTaps = [Int64(x) for x in tapVec]
-            yVKs = [Float64(y) for y in vkVec]
+    # create branch for the T3 AUX-> LV (u3)
+    #=
+    t3Terminal = NodeTerminalsDict[to_node_3]
+    t_T3_aux = ResDataTypes.Terminal(auxBuxCmp)
 
-            vkcorr = calcVKDependence(xTaps, yVKs, Float64(tap_pos))
-
-            
-            
-          end
-        end
-      end
-
-      tap = nothing
-      neutralU = 0.0
-      ntap = calcTapCorr(tap_pos, tap_neutral, tap_step_percent)
-
-      if tapSide == 1
-        neutralU = vn_hv_kv
-        vn_hv_kv = neutralU * ntap        
-        vk_hv_percent = vkcorr        
-      elseif tapSide == 2
-        neutralU = vn_mv_kv
-        vn_mv_kv = neutralU * ntap        
-        vk_mv_percent = vkcorr        
-      elseif tapSide == 3
-        neutralU = vn_lv_kv
-        vn_lv_kv = neutralU * ntap        
-        vk_lv_percent = vkcorr        
-      end
-      rk_T1, xk_T1, bm_T1, gm_T1 = calc3WTParams(1, sn_hv_mva, sn_mv_mva, sn_lv_mva, HV_kv, MV_kv, LV_kv, vk_hv_percent, vk_mv_percent, vk_lv_percent, vkr_hv_percent, vkr_mv_percent, vkr_lv_percent, pfe_kw, i0_percent)
-
-      rk_T2, xk_T2, bm_T2, gm_T2 = calc3WTParams(2, sn_hv_mva, sn_mv_mva, sn_lv_mva, HV_kv, MV_kv, LV_kv, vk_hv_percent, vk_mv_percent, vk_lv_percent, vkr_hv_percent, vkr_mv_percent, vkr_lv_percent, 0.0, 0.0)
-
-      rk_T3, xk_T3, bm_T3, gm_T3 = calc3WTParams(3, sn_hv_mva, sn_mv_mva, sn_lv_mva, HV_kv, MV_kv, LV_kv, vk_hv_percent, vk_mv_percent, vk_lv_percent, vkr_hv_percent, vkr_mv_percent, vkr_lv_percent, 0.0, 0.0)
-
-      if log
-        println("rk_T1: ", rk_T1, ", xk_T1: ", xk_T1, ", bm_T1: ", bm_T1, ", gm_T1: ", gm_T1)
-        println("rk_T2: ", rk_T2, ", xk_T2: ", xk_T2, ", bm_T2: ", bm_T2, ", gm_T2: ", gm_T2)
-        println("rk_T3: ", rk_T3, ", xk_T3: ", xk_T3, ", bm_T3: ", bm_T3, ", gm_T3: ", gm_T3)
-      end
-
-      if regelungEin
-        tap = ResDataTypes.PowerTransformerTaps(tap_pos, tap_min, tap_max, tap_neutral, tap_step_percent, neutralU)
-      end
-
-      if tapSide == 1
-        s1 = PowerTransformerWinding(vn_hv_kv, rk_T1, xk_T1, bm_T1, gm_T1, 0.0, neutralU, sn_hv_mva, tap)
-        s2 = PowerTransformerWinding(vn_mv_kv, rk_T2, xk_T2, bm_T2, gm_T2, shift_mv_degree, nothing, sn_mv_mva, nothing)
-        s3 = PowerTransformerWinding(vn_lv_kv, rk_T3, xk_T3, bm_T3, gm_T3, shift_lv_degree, nothing, sn_lv_mva, nothing)
-      elseif tapSide == 2
-        s1 = PowerTransformerWinding(vn_mv_kv, rk_T1, xk_T1, bm_T1, gm_T1, 0.0, nothing, sn_hv_mva, nothing)
-        s2 = PowerTransformerWinding(vn_hv_kv, rk_T2, xk_T2, bm_T2, gm_T2, shift_mv_degree, neutralU, sn_mv_mva, tap)
-        s3 = PowerTransformerWinding(vn_lv_kv, rk_T3, xk_T3, bm_T3, gm_T3, shift_lv_degree, nothing, sn_lv_mva, nothing)
-      elseif tapSide == 3
-        s1 = PowerTransformerWinding(vn_lv_kv, rk_T1, xk_T1, bm_T1, gm_T1, 0.0, nothing, sn_hv_mva, nothing)
-        s2 = PowerTransformerWinding(vn_mv_kv, rk_T2, xk_T2, bm_T2, gm_T2, shift_mv_degree, nothing, sn_mv_mva, nothing)
-        s3 = PowerTransformerWinding(vn_hv_kv, rk_T3, xk_T3, bm_T3, gm_T3, shift_lv_degree, neutralU, sn_lv_mva, tap)
-      else
-        s1 = PowerTransformerWinding(vn_hv_kv, rk_T1, xk_T1, bm_T1, gm_T1, 0.0, vn_hv_kv, sn_hv_mva, nothing)
-        s2 = PowerTransformerWinding(vn_mv_kv, rk_T2, xk_T2, bm_T2, gm_T2, shift_mv_degree, vn_mv_kv, sn_mv_mva, nothing)
-        s3 = PowerTransformerWinding(vn_lv_kv, rk_T3, xk_T3, bm_T3, gm_T3, shift_lv_degree, vn_lv_kv, sn_lv_mva, nothing)
-      end
-
-      t1_cmp = ResDataTypes.Component(cID, cName, "POWERTRANSFORMER", HV_kv)
-      trafo = PowerTransformer(t1_cmp, regelungEin, s1, s2, s3)
-      if log
-        @show trafo
-      end
-      push!(trafos, trafo)
-      AuxBusName = ""
-      AuxBusIdx = 0
-      AuxBusID = ""
-      vn_aux_kv = 0.0
-      for b in busVec
-        if b.wt3id == cID
-          AuxBusIdx = b.busIdx
-          AuxBusName = b.name
-          AuxBusID = b.id
-          vn_aux_kv = b.vn_kv
-          break
-        end
-      end
-      auxBuxCmp = ResDataTypes.Component(AuxBusID, AuxBusName, "POWERTRANSFORMER", vn_aux_kv)
-      if log
-        println("AuxBusIdx: ", AuxBusIdx, ", AuxBusID: ", AuxBusID, ", vn_aux_kv: ", vn_aux_kv, ", AuxBusName: ", AuxBusName)
-        @show auxBuxCmp
-      end
-
-      # create terminals for T1, HV_BUS -> AuxBus        
-      terminal_T1_aux = ResDataTypes.Terminal(auxBuxCmp, ResDataTypes.Seite2)
-      terminal_T1_HV = ResDataTypes.Terminal(t1_cmp, ResDataTypes.Seite1)
-      # search for terminals of HV_BUS              
-      t1Terminal = NodeTerminalsDict[hv_bus]
-      AuxTerminal = NodeTerminalsDict[AuxBusIdx]
-      # push terminals to terminal vector
-      push!(t1Terminal, terminal_T1_HV)
-      push!(AuxTerminal, terminal_T1_aux)
-      r_pu, x_pu, b_pu, g_pu = calcTwoPortPU(HV_kv, baseMVA, rk_T1, xk_T1, bm_T1, gm_T1)
-      if tapSide != 1
-        tapPos = tap_neutral
-      else
-        tapPos = tap_pos
-      end
-      T1_ratio = calcRatio(HV_kv, vn_hv_kv, HV_kv, vn_hv_kv, tapPos, tap_neutral, tap_step_percent, 1)
-      branch = ResDataTypes.Branch(t1_cmp, hv_bus, AuxBusIdx, cID, AuxBusID, r_pu, x_pu, b_pu, g_pu, T1_ratio, shift_degree, in_service)
-      if log
-        @show branch
-      end
-      push!(branchVec, branch)
-
-      # create terminals for T2, AuxBux -> MV_BUS
-
-      t2Terminal = NodeTerminalsDict[mv_bus]
-      t2_cmp = ResDataTypes.Component(cID, cName, "POWERTRANSFORMER", MV_kv)
-      terminal_T2_aux = ResDataTypes.Terminal(auxBuxCmp, ResDataTypes.Seite1)
-      terminal_T2_mvbus = ResDataTypes.Terminal(t2_cmp, ResDataTypes.Seite2)
-      push!(AuxTerminal, terminal_T2_aux)
-      push!(t2Terminal, terminal_T2_mvbus)
-      r_pu, x_pu, b_pu, g_pu = calcTwoPortPU(MV_kv, baseMVA, rk_T2, xk_T2, bm_T2, gm_T2)
-      if tapSide != 2
-        tapPos = tap_neutral
-      else
-        tapPos = tap_pos
-      end
-
-      T2_ratio = calcRatio(HV_kv, vn_aux_kv, MV_kv, vn_mv_kv, tapPos, tap_neutral, tap_step_percent, 1)
-      mvID = NodeIDDict[mv_bus]
-      branch = ResDataTypes.Branch(t2_cmp, AuxBusIdx, mv_bus, AuxBusID, mvID, r_pu, x_pu, b_pu, g_pu, T2_ratio, shift_degree, in_service)
-      if log
-        @show branch
-      end
-      push!(branchVec, branch)
-
-      # create terminals for T3, AuxBux -> LV_BUS
-
-      t3Terminal = NodeTerminalsDict[lv_bus]
-      t3_cmp = ResDataTypes.Component(cID, cName, "POWERTRANSFORMER", LV_kv)
-      terminal_T3_aux = ResDataTypes.Terminal(auxBuxCmp, ResDataTypes.Seite1)
-      terminal_T3_lvbus = ResDataTypes.Terminal(t3_cmp, ResDataTypes.Seite2)
-      push!(AuxTerminal, terminal_T3_aux)
-      push!(t3Terminal, terminal_T3_lvbus)
-      r_pu, x_pu, b_pu, g_pu = calcTwoPortPU(LV_kv, baseMVA, rk_T3, xk_T3, bm_T3, gm_T3)
-      if tapSide != 3
-        tapPos = tap_neutral
-      else
-        tapPos = tap_pos
-      end
-
-      T3_ratio = calcRatio(HV_kv, vn_aux_kv, LV_kv, vn_lv_kv, tapPos, tap_neutral, tap_step_percent, 1)
-      lvID = NodeIDDict[lv_bus]
-      branch = ResDataTypes.Branch(t3_cmp, AuxBusIdx, lv_bus, AuxBusID, lvID, r_pu, x_pu, b_pu, g_pu, T3_ratio, shift_degree, in_service)
-      if log
-        @show branch
-      end
-      push!(branchVec, branch)
-    end
+    auxBusName3, auxID3 = getWT3AuxBusID(u3, from_node, to_node, to_node_3)
+    auxBuxCmp3 = ImpPGMComp(auxID3, auxBusName3, toComponentTyp("POWERTRANSFORMER"), u3, AuxBusIdx, to_node_3)
+    t_T3_lvbus = ResDataTypes.Terminal(auxBuxCmp3)
+    push!(auxTerminal, t_T3_aux)
+    push!(t3Terminal, t_T3_lvbus)
+    =#
+    inService = t["status_3"] == 1
+    side = 3
+    ratio = (vn_aux_kv/LV)*(u3/u1)
+    @debug "3WT side3 ratio: ", ratio    
+    branch = Branch(baseMVA=baseMVA, from=AuxBusIdx, to=to_node_3, branch=wt3Trafo, id=Int(oID), status=Int(inService), side=side, ratio=ratio)    
+    push!(branchVec, branch)
   end
+  (anz_3wt > 0) ? (@info "$(anz_3wt) 3WTs created......") : (@info "no 3WTs found...")
 
-  if !isnothing(loads)
-    log_println("\nLoads:")
+  ratedS = nothing
+  ratedU = nothing
+  qPercent = nothing
+  maxP = nothing
+  minP = nothing
+  maxQ = nothing
+  minQ = nothing
+  ratedPowerFactor = nothing
+  referencePri = nothing
+  lanz = 0
 
-    for l in loads
-      Bus = l["bus"]
-      checkBusNumber(Bus, busVec)
-      Vn = VoltageDict[Bus]
-
-      cName = string(l["name"])
-      cID = string(l["id"])
-      nID = NodeIDDict[Bus]
-
-      p = l["p_mw"]
-      q = l["q_mvar"]
-      ratedS = nothing
-      ratedU = nothing
-      qPercent = nothing
-      maxP = nothing
-      minP = nothing
-      maxQ = nothing
-      minQ = nothing
-      ratedPowerFactor = nothing
-      referencePri = nothing
-      comp = ImpPGMComp(cID, cName, toComponentTyp("LOAD"), Vn, Bus, Bus)
-      pRS = ProSumer(comp, nID, ratedS, ratedU, qPercent, p, q, maxP, minP, maxQ, minQ, ratedPowerFactor, referencePri, nothing, nothing)
-      if log
-        @show pRS
-      end
-      push!(prosum, pRS)
-
-      t1 = ResDataTypes.Terminal(comp, ResDataTypes.Seite1)
-      t1Terminal = NodeTerminalsDict[Bus]
-      push!(t1Terminal, t1)
-
-      nParms = NodeParametersDict[Bus]
-      nParms.pƩLoad = isnothing(nParms.pƩLoad) ? p : nParms.pƩLoad + p
-      nParms.qƩLoad = isnothing(nParms.qƩLoad) ? q : nParms.qƩLoad + q
-      NodeParametersDict[Bus] = nParms
-      if log
-        println("nParms: ", nParms)
-      end
+  for sym_load in sym_loads
+    oID = sym_load["id"]
+    status = sym_load["status"]
+    if status == 0
+      @info "load $(oID) not in service"
+      continue
     end
-  end
+    type = sym_load["type"]
+    @assert type == 0 "only constant power loads are supported"
+    lanz += 1
 
-  # static Generators     
-  if !isnothing(sgens)
-    log_println("\n\nStatic Generators:")
-    for g in sgens
-      Bus = g["bus"]
-      checkBusNumber(Bus, busVec)
-      Vn = VoltageDict[Bus]
+    bus = sym_load["node"]
+    vn = VoltageDict[bus]
 
-      cName = string(g["name"])
-      cID = string(g["id"])
-      nID = NodeIDDict[Bus] # String
-
-      p = float(g["p_mw"])
-      q = float(g["q_mvar"])
-
-      ratedS = nothing
-      ratedU = nothing
-      qPercent = nothing
-      maxP = nothing
-      minP = nothing
-      maxQ = nothing
-      minQ = nothing
-      ratedPowerFactor = nothing
-      referencePri = nothing
-
-      vm_pu = nothing
-      vm_degree = nothing
-
-      isPUNode = false
-
-      if Bus == slackIdx
-        referencePri = slackIdx
-        vm_pu = 1.0
-        vm_degree = 0.0
-        slack_vm_pu = vm_pu
-        slack_va_deg = vm_degree
-      end
-      comp = ImpPGMComp(cID, cName, toComponentTyp("GENERATOR"), Vn, Bus, Bus)
-      pRS = ProSumer(comp, nID, ratedS, ratedU, qPercent, p, q, maxP, minP, maxQ, minQ, ratedPowerFactor, referencePri, vm_pu, vm_degree, ResDataTypes.Injection, isPUNode)
-      if log
-        @show pRS
-      end
-      push!(prosum, pRS)
-
-      t2 = ResDataTypes.Terminal(comp, ResDataTypes.Seite2)
-      t2Terminal = NodeTerminalsDict[Bus]
-      push!(t2Terminal, t2)
-
-      nParms = NodeParametersDict[Bus]
-      nParms.pƩGen = p
-      nParms.qƩGen = q
-      NodeParametersDict[Bus] = nParms
-      if log
-        println("nParms: ", nParms)
-      end
+    p = sym_load["p_specified"] * umrech_MVA
+    q = sym_load["q_specified"] * umrech_MVA
+    if abs(p) < 1e-8 && abs(q) < 1e-8
+      @info "load $(oID) has no power"
+      continue
     end
+    comp = getProSumPGMComp(vn, bus, false, Int(oID))
+    pRS = ProSumer(comp, ratedS, ratedU, qPercent, p, q, maxP, minP, maxQ, minQ, ratedPowerFactor, referencePri, nothing, nothing)    
+    push!(prosum, pRS)
+
+    nParms = NodeParametersDict[bus]
+    nParms.pƩLoad = isnothing(nParms.pƩLoad) ? p : nParms.pƩLoad + p
+    nParms.qƩLoad = isnothing(nParms.qƩLoad) ? q : nParms.qƩLoad + q
+
+    NodeParametersDict[bus] = nParms
   end
+  (lanz > 0) ? (@info "$(lanz) loads created...") : (@info "no loads found...")
 
-  # Voltage controlled Generators    
-  if !isnothing(vgens)
-    log_println("\nVoltage controlled Generators:")
-    for g in vgens
-      vm_pu = float(g["vm_pu"])
-      Bus = g["bus"]
-      checkBusNumber(Bus, busVec)
-      Vn = VoltageDict[Bus]
-      cName = string(g["name"])
-      cID = string(g["id"])
-      nID = NodeIDDict[Bus]
-      p = float(g["p_mw"])
-      q = nothing
-      ratedS = nothing
-      ratedU = nothing
-      qPercent = nothing
-      maxP = nothing
-      minP = nothing
-      maxQ = float(g["max_q_mvar"])
-      minQ = float(g["min_q_mvar"])
-      ratedPowerFactor = nothing
-      referencePri = nothing
-      vm_degree = nothing
-      isPUNode = false
+  lanz = 0
+  for sym_gen in sym_gens
+    type = sym_gen["type"]
+    @assert type == 0 "only constant power generators are supported"
 
-      if Bus == slackIdx
-        referencePri = slackIdx
-        vm_degree = 0.0
-        slack_vm_pu = vm_pu
-        slack_va_deg = vm_degree
-        isPUNode = true
-      end
-      comp = ImpPGMComp(cID, cName, toComponentTyp("SYNCHRONOUSMACHINE"), Vn, Bus, Bus)
-      pRS = ProSumer(comp, nID, ratedS, ratedU, qPercent, p, q, maxP, minP, maxQ, minQ, ratedPowerFactor, referencePri, vm_pu, vm_degree, ResDataTypes.Injection, isPUNode)
-      if log
-        @show pRS
-      end
-      push!(prosum, pRS)
+    oID = sym_gen["id"]
+    bus = sym_gen["node"]
 
-      t2 = ResDataTypes.Terminal(comp, ResDataTypes.Seite2)
-      t2Terminal = NodeTerminalsDict[Bus]
-      push!(t2Terminal, t2)
-
-      nParms = NodeParametersDict[Bus]
-      nParms.vm_pu = vm_pu
-      nParms.pƩGen = p
-      NodeParametersDict[Bus] = nParms
-      if log
-        println("nParms: ", nParms)
-      end
+    vn = VoltageDict[bus]
+    status = sym_gen["status"]
+    if status == 0
+      @info "generator $(oID) not in service"
+      continue
     end
-  end
-  if !isnothing(grids)
-    log_println("\nGrids:")
-    for g in grids
-      #EXG: bus=1, name=ex1, id=, vm_pu=1.02, va_degree=50.0
-      Bus = g["bus"]
-      checkBusNumber(Bus, busVec)
-      Vn = VoltageDict[Bus]
-      cName = string(g["name"])
-      cID = string(g["id"])
-      nID = NodeIDDict[Bus]
-      vm_pu = float(g["vm_pu"])
-      vm_degree = float(g["va_degree"])
-      p = nothing
-      q = nothing
-      ratedS = nothing
-      ratedU = nothing
-      qPercent = nothing
-      maxP = nothing
-      minP = nothing
-      maxQ = nothing
-      minQ = nothing
-      ratedPowerFactor = nothing
-      referencePri = nothing
-      isPUNode = true
-      if Bus == slackIdx
-        referencePri = slackIdx
-        slack_vm_pu = vm_pu
-        slack_va_deg = vm_degree
-      end
-
-      comp = ImpPGMComp(cID, cName, toComponentTyp("EXTERNALNETWORKINJECTION"), Vn, Bus, Bus)
-      pRS = ProSumer(comp, nID, ratedS, ratedU, qPercent, p, q, maxP, minP, maxQ, minQ, ratedPowerFactor, referencePri, vm_pu, vm_degree, ResDataTypes.Injection, isPUNode)
-      if log
-        @show pRS
-      end
-      push!(prosum, pRS)
-
-      t2 = ResDataTypes.Terminal(comp, ResDataTypes.Seite2)
-      t2Terminal = NodeTerminalsDict[Bus]
-      push!(t2Terminal, t2)
-
-      nParms = NodeParametersDict[Bus]
-      nParms.vm_pu = vm_pu
-      nParms.va_deg = vm_degree
-      NodeParametersDict[Bus] = nParms
-      if log
-        println("nParms: ", nParms)
-      end
+    lanz += 1
+    p = sym_gen["p_specified"] * umrech_MVA
+    q = sym_gen["q_specified"] * umrech_MVA
+    if abs(p) < 1e-8 && abs(q) < 1e-8
+      @info "generator $(oID) has no power"
+      continue
     end
+    comp = getProSumPGMComp(vn, bus, true, Int(oID))    
+    pRS = ProSumer(comp, ratedS, ratedU, qPercent, p, q, maxP, minP, maxQ, minQ, ratedPowerFactor, referencePri, nothing, nothing)    
+    push!(prosum, pRS)    
+
+    nParms = NodeParametersDict[bus]
+    nParms.pƩGen = isnothing(nParms.pƩGen) ? p : nParms.pƩGen + p
+    nParms.qƩGen = isnothing(nParms.qƩGen) ? q : nParms.qƩGen + q
+    NodeParametersDict[bus] = nParms
   end
-  if !isnothing(shunts)
-    log_println("\nShunts:")
-    for s in shunts
-      # Attention: 
-      # Bus is a used as a short cut to find the busnumber for calculating Y-Bus. 
-      # When the bus numbers are rearranged, this number must also be adjusted.
-      Bus = s["bus"]
-      checkBusNumber(Bus, busVec)
-      Vn = VoltageDict[Bus]
-      vn_kv = (s["vn_kv"] === "") ? Vn : float(s["vn_kv"])
+  (lanz > 0) ? (@info "$(lanz) generators created...") : (@assert false, "no generators found")
 
-      cName = string(s["name"])
-      cID = string(s["id"])
-      nID = NodeIDDict[Bus]
-      in_service = Int(s["in_service"])
-
-      if in_service < 1
-        state = 0.0
-      else
-        state = 1.0
-      end
-
-      p_shunt = float(s["p_mw"])
-      q_shunt = float(s["q_mvar"])
-
-      ratio = (Vn / vn_kv)^2
-      y_pu = calcYShunt(p_shunt, q_shunt, ratio, baseMVA)
-
-      comp = ImpPGMComp(cID, cName, toComponentTyp("LINEARSHUNTCOMPENSATOR"), vn_kv, Bus, Bus)
-      sh = ResDataTypes.Shunt(comp, nID, Bus, p_shunt, q_shunt, y_pu, in_service)
-      if log
-        @show sh
-      end
-      push!(shuntVec, sh)
-      t1 = ResDataTypes.Terminal(comp, ResDataTypes.Seite1)
-      t1Terminal = NodeTerminalsDict[Bus]
-      push!(t1Terminal, t1)
-
-      nParms = NodeParametersDict[Bus]
-      nParms.pShunt = isnothing(nParms.pShunt) ? p_shunt : nParms.pShunt + p_shunt
-      nParms.qShunt = isnothing(nParms.qShunt) ? q_shunt : nParms.qShunt + q_shunt
-      NodeParametersDict[Bus] = nParms
-      if log
-        println("nParms: ", nParms)
-      end
+  lanz = 0
+  for shunt in shunts
+    oID = shunt["id"]
+    status = shunt["status"]
+    if status == 0
+      @info "shunt $(oID) not in service"
+      continue
     end
+    lanz += 1
+    bus = shunt["node"]
+
+    vn_kv = VoltageDict[bus]
+    # for PGM the voltage is set to 1.0 kV    
+    sh = Shunt(fromBus=bus, id=oID, base_MVA=baseMVA, Vn_kV_shunt=vn_kv, g_shunt= Float64(shunt["g1"]), b_shunt= Float64(shunt["b1"]), ratio=1.0, status = status)
+    
+    p_shunt, q_shunt = getPQShunt(sh)
+
+    push!(shuntVec, sh)
+
+    nParms = NodeParametersDict[bus]
+    nParms.pShunt = isnothing(nParms.pShunt) ? p_shunt : nParms.pShunt + p_shunt
+    nParms.qShunt = isnothing(nParms.qShunt) ? q_shunt : nParms.qShunt + q_shunt
+    NodeParametersDict[bus] = nParms
   end
-  log_println("\ncreate network:")
+  (lanz > 0) ? (@info "$(lanz) shunts created...") : (@info "no shunts found...")
 
   for b in busVec
-    busIdx = b.busIdx
-    busName = b.name
-    nodeType = b.type
-    cID = b.id
+    busIdx = b.busIdx    
+    nodeType = b.type    
     Vn = b.vn_kv
-    terminals = NodeTerminalsDict[busIdx]
-
-    if log
-      println("Bus: ", busName, " busIdx: ", busIdx, " ID: ", cID, " Voltage: ", Vn, "\nTerminals: ", terminals)
-    end
-
-    c = ImpPGMComp(cID, busName, ResDataTypes.Busbarsection, Vn, busIdx, busIdx)
-    node = Node(c, terminals, busIdx, busIdx, toNodeType(nodeType))
+        
+    node = Node(busIdx= busIdx, Vn_kV = Vn, nodeType = toNodeType(nodeType))
     nParms = NodeParametersDict[busIdx]
 
     if nodeType == 3
-      nParms.vm_pu = slack_vm_pu
-      nParms.va_deg = slack_va_deg
+      nParms.vm_pu = b.vm_pu
+      nParms.va_deg = b.va_deg
     end
+    
+    if check
+      printRefVals(busIdx)
+    end
+    
     setNodeParameters!(node, nParms)
-
-    if log
-      @show node
-    end
     push!(nodeVec, node)
   end
 
@@ -993,7 +662,8 @@ function createNetFromFile(filename, base_MVA::Float64 = 0.0, log::Bool = false,
     checkNodeConnections(nodeVec)
   end
 
-  setParallelBranches!(branchVec)
+  length(branchVec) > 0 ? (@info "$(length(branchVec)) branches created...") : (@assert "no branches found!")
+  
 
   net = ResDataTypes.Net(netName, baseMVA, slackIdx, nodeVec, ACLines, trafos, branchVec, prosum, shuntVec)
 

@@ -4,8 +4,7 @@
 
 # Data type to describe the topology
 mutable struct Node
-  comp::AbstractComponent
-  terminals::Vector{Terminal}
+  comp::AbstractComponent  
   busIdx::Integer  
   _nodeType::NodeType
   _auxNodeID::Union{Nothing,String} # auxiliary node ID for mapping to node
@@ -27,8 +26,7 @@ mutable struct Node
   function Node(;  
     busIdx::Integer,    
     Vn_kV::Float64,
-    nodeType::NodeType,
-    t::Vector{Terminal},    
+    nodeType::NodeType,    
     auxNodeID::Union{Nothing,String} = nothing,
     ratedS::Union{Nothing,Float64} = nothing,
     zone::Union{Nothing,Integer} = nothing,
@@ -43,7 +41,7 @@ mutable struct Node
     qƩGen::Union{Nothing,Float64} = nothing,
   )
     c = getNocdeComp(Vn_kV, busIdx, nodeType)
-    new(c, t, busIdx, nodeType, auxNodeID, ratedS, zone, area, vm_pu, va_deg, pƩLoad, qƩLoad, pShunt, qShunt, pƩGen, qƩGen)
+    new(c, busIdx, nodeType, auxNodeID, ratedS, zone, area, vm_pu, va_deg, pƩLoad, qƩLoad, pShunt, qShunt, pƩGen, qƩGen)
   end
 
 
@@ -51,7 +49,7 @@ mutable struct Node
     print(io, "Node( ")
     print(io, node.comp, ", ")
     print(io, "BusIndex: ", node.busIdx, ", ")
-    print(io, "NodeIndex: ", node._kidx, ", ")
+    
     print(io, "nodeType: ", node._nodeType, ", ")
     if (!isnothing(node._lZone))
       print(io, "Loss Zone: ", node._lZone, ", ")
@@ -87,9 +85,6 @@ mutable struct Node
       print(io, "ƩQGen: ", node._qƩGen, ", ")
     end
     println(io, ")")
-    for t in node.terminals
-      println(io, t)
-    end
   end
 end
 
@@ -312,11 +307,6 @@ function hasShuntInjection(node::Node)
     return false
   end
   return true
-end
-
-# helper for sorting
-function nodeComparison(node1::Node, node2::Node)
-  node1._kidx < node2._kidx
 end
 
 function busComparison(node1::Node, node2::Node)

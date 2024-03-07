@@ -55,7 +55,7 @@ mutable struct Branch
     elseif isa(branch, PowerTransformer)      
       if (isnothing(side) && branch.isBiWinder)        
         side = getSideNumber2WT(branch)
-      else
+      elseif (isnothing(side) && !branch.isBiWinder)
         error("side must be set for a PowerTransformer")      
       end
       
