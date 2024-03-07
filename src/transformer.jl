@@ -268,7 +268,7 @@ function isPerUnit_RXGB(o::PowerTransformerWinding)
   end
 end
 
-mutable struct PowerTransformer
+mutable struct PowerTransformer <: AbstractBranch
   comp::AbstractComponent
   trafoTyp::TrafoTyp
   isControlled::Bool              # cim:TapChanger.controlEnabled 

@@ -206,8 +206,6 @@ function writeBranchData(sb_mva::Float64, branchVec::Vector{ResDataTypes.Branch}
 
     if br.status == 0 # out of service
       type = "(no service) " * type
-    elseif br.isParallel      
-      type = "(parallel) " * type
     end
 
     cID = br.comp.cID

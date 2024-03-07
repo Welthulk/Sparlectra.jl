@@ -2,7 +2,7 @@
 # Date: 10.05.2023
 # include-file lines.jl
 
-mutable struct ACLineSegment
+mutable struct ACLineSegment <: AbstractBranch
   comp::AbstractComponent
   length::Float64
   r::Float64

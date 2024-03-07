@@ -19,8 +19,8 @@ function formatBranchResults(net::ResDataTypes.Net)
   ∑pfrom=∑qfrom=∑pto=∑qto=0.0
   
   for br in net.branchVec
-    from = br._from
-    to = br._to
+    from = br.fromBus
+    to = br.toBus
     bName = br.comp.cName
     pfromVal = (br.fBranchFlow.pFlow === nothing) ? NaN : br.fBranchFlow.pFlow
     qfromVal = (br.fBranchFlow.qFlow === nothing) ? NaN : br.fBranchFlow.qFlow

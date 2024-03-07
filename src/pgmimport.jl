@@ -369,8 +369,8 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
     t1Terminal = NodeTerminalsDict[to]
     push!(t1Terminal, t1)
     push!(t2Terminal, t2)
-
-    branch = Branch(baseMVA, from, to, asec, Int(oID), inService)
+    
+    branch = Branch(vn_kV= Vn, baseMVA=baseMVA, from=from, to=to, branch=asec, id=Int(oID), status=inService)
     push!(branchVec, branch)
   end
   length(ACLines) > 0 ? (@info "$(length(ACLines)) aclines created...") : (@info "no aclines found...")
@@ -447,9 +447,7 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
 
     push!(t1Terminal, t1)
     push!(t2Terminal, t2)
-
-    branch = Branch(baseMVA, from_node, to_node, trafo, getSideNumber2WT(trafo), Int(oID), ratio, inService)
-
+    branch = Branch(baseMVA=baseMVA, from=from_node, to=to_node, branch=trafo, id=Int(oID), status=Int(inService))
     push!(branchVec, branch)
   end
   (length(trafos) > 0) ? (@info "$(length(trafos)) 2WTs created......") : (@info "no 2WTs found...")
@@ -532,7 +530,8 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
     
     side = 1
     ratio = 1.0  
-    branch = Branch(baseMVA, from_node, AuxBusIdx, wt3Trafo, side, oID, ratio, inService)
+    
+    branch = Branch(baseMVA=baseMVA, from=from_node, to=to_node, branch=wt3Trafo, id=Int(oID), status=Int(inService), side=side, ratio=ratio)
     push!(branchVec, branch)
 
     # create branch for the T2 Aux -> MV (u2)
@@ -548,7 +547,7 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
     side = 2
     ratio = (vn_aux_kv/MV)*(u2/u1)
     @debug "3WT side2 ratio: ", ratio
-    branch = Branch(baseMVA, to_node, AuxBusIdx, wt3Trafo, side, oID, ratio, inService)
+    branch = Branch(baseMVA=baseMVA, from=to_node, to=AuxBusIdx, branch=wt3Trafo, id=Int(oID), status=Int(inService), side=side, ratio=ratio)    
     push!(branchVec, branch)
 
     # create branch for the T3 AUX-> LV (u3)
@@ -564,8 +563,8 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
     inService = t["status_3"] == 1
     side = 3
     ratio = (vn_aux_kv/LV)*(u3/u1)
-    @debug "3WT side3 ratio: ", ratio
-    branch = Branch(baseMVA, AuxBusIdx, to_node_3, wt3Trafo, side, oID, ratio, inService)
+    @debug "3WT side3 ratio: ", ratio    
+    branch = Branch(baseMVA=baseMVA, from=AuxBusIdx, to=to_node_3, branch=wt3Trafo, id=Int(oID), status=Int(inService), side=side, ratio=ratio)    
     push!(branchVec, branch)
   end
   (anz_3wt > 0) ? (@info "$(anz_3wt) 3WTs created......") : (@info "no 3WTs found...")
@@ -709,7 +708,7 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
   end
 
   length(branchVec) > 0 ? (@info "$(length(branchVec)) branches created...") : (@assert "no branches found!")
-  #setParallelBranches!(branchVec)
+  
 
   net = ResDataTypes.Net(netName, baseMVA, slackIdx, nodeVec, ACLines, trafos, branchVec, prosum, shuntVec)
 

@@ -7,7 +7,7 @@ module ResDataTypes
 
 # resource data types for working with Sparlectra
 const Wurzel3 = 1.7320508075688772
-const SparlectraVersion = VersionNumber("0.4.200")
+const SparlectraVersion = VersionNumber("0.5.003")
 export
   # constants
   Wurzel3,
@@ -182,6 +182,8 @@ function toString(o::ProSumptionType)::String
     return "UnknownP"
   end
 end
+
+abstract type AbstractBranch end
 
 include("lines.jl")
 include("transformer.jl")
