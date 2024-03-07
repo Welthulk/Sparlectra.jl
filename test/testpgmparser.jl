@@ -13,7 +13,7 @@ global_logger(ConsoleLogger(stderr, Logging.Info))
 
 function acpflow(casefile::String, writeCase::Bool, writePGM::Bool, iterations::Int, verbose::Int)
   sparse=true  
-  tol = 1e-8   
+  tol = 1e-6   
   log = verbose >= 1
 
   # load + create net
@@ -53,5 +53,5 @@ function acpflow(casefile::String, writeCase::Bool, writePGM::Bool, iterations::
   
 end
 
-#@time acpflow("input.json", true, true, 20, 1)
-@time acpflow("Mini_Grid_Lars_v2.json", true, true, 20, 1)
+#@time acpflow("input.json", true, true, 10, 1)
+@time acpflow("MiniGrid_v3.json", true, true, 10, 1)
