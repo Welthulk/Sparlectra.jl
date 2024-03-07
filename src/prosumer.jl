@@ -4,8 +4,7 @@
 
 # Data type to describe producers and consumers
 mutable struct ProSumer
-  comp::AbstractComponent
-  nodeID::Union{Nothing,String}  # ID for mapping to node, could set later
+  comp::AbstractComponent  
   ratedS::Union{Nothing,Float64}
   ratedU::Union{Nothing,Float64}
   qPercent::Union{Nothing,Float64}
@@ -26,8 +25,7 @@ mutable struct ProSumer
   # @enum ProSumptionType UnknownP=0 Injection=1 Consumption=2 
 
   function ProSumer(
-    comp::AbstractComponent,
-    nodeID::Union{Nothing,String} = nothing,
+    comp::AbstractComponent,    
     ratedS::Union{Nothing,Float64} = nothing,
     ratedU::Union{Nothing,Float64} = nothing,
     qPercent::Union{Nothing,Float64} = nothing,
@@ -61,13 +59,12 @@ mutable struct ProSumer
       vm_degree = 0.0
     end
 
-    new(comp, nodeID, ratedS, ratedU, qPercent, p, q, maxP, minP, maxQ, minQ, ratedPowerFactor, referencePri, vm_pu, vm_degree, proSumptionType, isAPUNode)
+    new(comp, ratedS, ratedU, qPercent, p, q, maxP, minP, maxQ, minQ, ratedPowerFactor, referencePri, vm_pu, vm_degree, proSumptionType, isAPUNode)
   end
 
   function Base.show(io::IO, prosumption::ProSumer)
     print(io, "ProSumption( ")
-    print(io, prosumption.comp, ", ")
-    print(io, "NodeID: ", prosumption.nodeID, ", ")
+    print(io, prosumption.comp, ", ")    
 
     if (!isnothing(prosumption.ratedS))
       print(io, "ratedS: ", prosumption.ratedS, " MVA, ")

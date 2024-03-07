@@ -93,7 +93,7 @@ function printACPFlowResults(net::ResDataTypes.Net, ct::Float64, ite::Int, toFil
   shunts = 0
   auxb = 0
 
-  nodes = sort(net.nodeVec, by = x -> x._kidx)
+  nodes = sort(net.nodeVec, by = x -> x.busIdx)
 
   npv = 0
   npq = 0

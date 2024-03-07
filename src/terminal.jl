@@ -3,21 +3,15 @@
 # include-file termina.jl
 
 # Data type to describe a terminal 
-mutable struct Terminal
+struct Terminal
   comp::AbstractComponent  
-  seite::SeitenTyp # Seite1 = von, Seite2 = zu, Seite3 = 3WT, tertiäre Seite
-
-  function Terminal(comp::AbstractComponent, seite::SeitenTyp)
-    new(comp, seite)
+  
+  function Terminal(comp::AbstractComponent)    
+    new(comp)
   end
 
   function Base.show(io::IO, terminal::Terminal)
     print(io, "Terminal(")
-    print(io, terminal.comp)
-    print(io, " Seite: ", terminal.seite, ")")
+    print(io, terminal.comp)    
   end
-end
-
-function ChageSequnceNumber!(t::Terminal, n::SeitenTyp)
-  t.seite = n
 end

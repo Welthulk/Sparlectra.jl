@@ -359,8 +359,8 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
     push!(ACLines, asec)
     #@show p=get_line_parameters(asec)
 
-    t1 = ResDataTypes.Terminal(cImpPGMComp, ResDataTypes.Seite1)
-    t2 = ResDataTypes.Terminal(cImpPGMComp, ResDataTypes.Seite2)
+    t1 = ResDataTypes.Terminal(cImpPGMComp)
+    t2 = ResDataTypes.Terminal(cImpPGMComp)
 
     checkBusNumber(from, busVec)
     checkBusNumber(to, busVec)
@@ -438,9 +438,9 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
     push!(trafos, trafo)
 
     cmp1 = ResDataTypes.Component(cmp.cID, cmp.cName, "POWERTRANSFORMER", vn_hv_kV)
-    t1 = ResDataTypes.Terminal(cmp1, ResDataTypes.Seite1)
+    t1 = ResDataTypes.Terminal(cmp1)
     cmp2 = ResDataTypes.Component(cmp.cID, cmp.cName, "POWERTRANSFORMER", vn_lv_kV)
-    t2 = ResDataTypes.Terminal(cmp2, ResDataTypes.Seite2)
+    t2 = ResDataTypes.Terminal(cmp2)
 
     t1Terminal = NodeTerminalsDict[from_node]
     t2Terminal = NodeTerminalsDict[to_node]
@@ -520,8 +520,8 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
 
     auxBuxCmp = ImpPGMComp(auxID, auxBusName, toComponentTyp("POWERTRANSFORMER"), vn_aux_kv, from_node, AuxBusIdx)
     # create terminals for HV_Bus -> Aux_Bus
-    t_aux = Terminal(auxBuxCmp, ResDataTypes.Seite2)
-    t_hv  = Terminal(cImpPGMComp, ResDataTypes.Seite1)
+    t_aux = Terminal(auxBuxCmp)
+    t_hv  = Terminal(cImpPGMComp)
     # search terminals 
     t1Terminal = NodeTerminalsDict[from_node]
     auxTerminal = NodeTerminalsDict[AuxBusIdx]
@@ -537,10 +537,10 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
 
     # create branch for the T2 Aux -> MV (u2)
     t2Terminal = NodeTerminalsDict[to_node]
-    t_T2_aux = ResDataTypes.Terminal(auxBuxCmp, ResDataTypes.Seite1)
+    t_T2_aux = ResDataTypes.Terminal(auxBuxCmp)
     auxBusName2, auxID2 = getWT3AuxBusID(u2, from_node, to_node, to_node_3)
     auxBuxCmp2 = ImpPGMComp(auxID2, auxBusName2, toComponentTyp("POWERTRANSFORMER"), u2, to_node, AuxBusIdx)
-    t_T2_mvbus = ResDataTypes.Terminal(auxBuxCmp2, ResDataTypes.Seite2)
+    t_T2_mvbus = ResDataTypes.Terminal(auxBuxCmp2)
     push!(auxTerminal, t_T2_aux)
     push!(t2Terminal, t_T2_mvbus)
 
@@ -553,11 +553,11 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
 
     # create branch for the T3 AUX-> LV (u3)
     t3Terminal = NodeTerminalsDict[to_node_3]
-    t_T3_aux = ResDataTypes.Terminal(auxBuxCmp, ResDataTypes.Seite1)
+    t_T3_aux = ResDataTypes.Terminal(auxBuxCmp)
 
     auxBusName3, auxID3 = getWT3AuxBusID(u3, from_node, to_node, to_node_3)
     auxBuxCmp3 = ImpPGMComp(auxID3, auxBusName3, toComponentTyp("POWERTRANSFORMER"), u3, AuxBusIdx, to_node_3)
-    t_T3_lvbus = ResDataTypes.Terminal(auxBuxCmp3, ResDataTypes.Seite2)
+    t_T3_lvbus = ResDataTypes.Terminal(auxBuxCmp3)
     push!(auxTerminal, t_T3_aux)
     push!(t3Terminal, t_T3_lvbus)
 
@@ -602,9 +602,9 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
       continue
     end
     comp = getProSumPGMComp(vn, bus, false, Int(oID))
-    pRS = ProSumer(comp, nothing, ratedS, ratedU, qPercent, p, q, maxP, minP, maxQ, minQ, ratedPowerFactor, referencePri, nothing, nothing)
+    pRS = ProSumer(comp, ratedS, ratedU, qPercent, p, q, maxP, minP, maxQ, minQ, ratedPowerFactor, referencePri, nothing, nothing)    
     push!(prosum, pRS)
-    t1 = Terminal(comp, ResDataTypes.Seite2)
+    t1 = Terminal(comp)
     t1Terminal = NodeTerminalsDict[bus]
     push!(t1Terminal, t1)
 
@@ -637,11 +637,10 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
       @info "generator $(oID) has no power"
       continue
     end
-    comp = getProSumPGMComp(vn, bus, true, Int(oID))
-    busIDString = busIDStringDict[bus]
-    pRS = ProSumer(comp, busIDString, ratedS, ratedU, qPercent, p, q, maxP, minP, maxQ, minQ, ratedPowerFactor, referencePri, nothing, nothing)
+    comp = getProSumPGMComp(vn, bus, true, Int(oID))    
+    pRS = ProSumer(comp, ratedS, ratedU, qPercent, p, q, maxP, minP, maxQ, minQ, ratedPowerFactor, referencePri, nothing, nothing)    
     push!(prosum, pRS)
-    t2 = Terminal(comp, ResDataTypes.Seite1)
+    t2 = Terminal(comp)
     t2Terminal = NodeTerminalsDict[bus]
     push!(t2Terminal, t2)
 
@@ -670,7 +669,7 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
     p_shunt, q_shunt = getPQShunt(sh)
 
     push!(shuntVec, sh)
-    t1 = Terminal(sh.comp, ResDataTypes.Seite1)
+    t1 = Terminal(sh.comp)
     t1Terminal = NodeTerminalsDict[bus]
     push!(t1Terminal, t1)
 
@@ -683,14 +682,13 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
 
   for b in busVec
     busIdx = b.busIdx
-    busName = b.name
+    #busName = b.name
     nodeType = b.type
-    cID = b.id
+    #cID = b.id
     Vn = b.vn_kv
     terminals = NodeTerminalsDict[busIdx]
-
-    c = ImpPGMComp(cID, busName, ResDataTypes.Busbarsection, Vn, busIdx, busIdx)
-    node = Node(c, terminals, busIdx, busIdx, toNodeType(nodeType))
+    
+    node = Node(busIdx= busIdx, Vn_kV = Vn, t=terminals, nodeType = toNodeType(nodeType))
     nParms = NodeParametersDict[busIdx]
 
     if nodeType == 3
