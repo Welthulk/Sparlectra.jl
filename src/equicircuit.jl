@@ -178,15 +178,6 @@ function createYBUS(branchVec::Vector{Branch}, shuntVec::Vector{ResDataTypes.Shu
     if Int(branch.status) == 0      
       @debug "createYBUS: Branch $(branch) out of service, skipping "
       continue    
-    elseif branch.skipYBus
-      @debug "createYBUS: Branch $(branch) skipping "
-      continue
-    elseif branch.isParallel
-      @debug "createYBUS: Branch $(branch) is parallel, using adjustes parameters "
-      r = branch.adjRXGB.r_pu
-      x = branch.adjRXGB.x_pu
-      b = branch.adjRXGB.b_pu
-      g = branch.adjRXGB.g_pu
     else
       r = branch.r_pu
       x = branch.x_pu
