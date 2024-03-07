@@ -6,8 +6,7 @@
 mutable struct Node
   comp::AbstractComponent
   terminals::Vector{Terminal}
-  busIdx::Integer
-  _kidx::Integer # original busnumber
+  busIdx::Integer  
   _nodeType::NodeType
   _auxNodeID::Union{Nothing,String} # auxiliary node ID for mapping to node
 
@@ -25,11 +24,11 @@ mutable struct Node
   _pƩGen::Union{Nothing,Float64}  # Ʃ active power injected
   _qƩGen::Union{Nothing,Float64}  # Ʃ reactive power injected
 
-  function Node(
-    c::AbstractComponent,
-    t::Vector{Terminal},
-    busIdx::Integer,
+  function Node(;  
+    busIdx::Integer,    
+    Vn_kV::Float64,
     nodeType::NodeType,
+    t::Vector{Terminal},    
     auxNodeID::Union{Nothing,String} = nothing,
     ratedS::Union{Nothing,Float64} = nothing,
     zone::Union{Nothing,Integer} = nothing,
@@ -43,64 +42,10 @@ mutable struct Node
     pƩGen::Union{Nothing,Float64} = nothing,
     qƩGen::Union{Nothing,Float64} = nothing,
   )
-    new(c, t, busIdx, busIdx, nodeType, auxNodeID, ratedS, zone, area, vm_pu, va_deg, pƩLoad, qƩLoad, pShunt, qShunt, pƩGen, qƩGen)
+    c = getNocdeComp(Vn_kV, busIdx, nodeType)
+    new(c, t, busIdx, nodeType, auxNodeID, ratedS, zone, area, vm_pu, va_deg, pƩLoad, qƩLoad, pShunt, qShunt, pƩGen, qƩGen)
   end
 
-  function Node(
-    c::AbstractComponent,
-    t::Vector{Terminal},
-    busIdx::Integer,
-    kIdx::Integer,
-    nodeType::NodeType,
-    auxNodeID::Union{Nothing,String} = nothing,
-    ratedS::Union{Nothing,Float64} = nothing,
-    zone::Union{Nothing,Integer} = nothing,
-    area::Union{Nothing,Integer} = nothing,
-    vm_pu::Union{Nothing,Float64} = nothing,
-    va_deg::Union{Nothing,Float64} = nothing,
-    pƩLoad::Union{Nothing,Float64} = nothing,
-    qƩLoad::Union{Nothing,Float64} = nothing,
-    pShunt::Union{Nothing,Float64} = nothing,
-    qShunt::Union{Nothing,Float64} = nothing,
-    pƩGen::Union{Nothing,Float64} = nothing,
-    qƩGen::Union{Nothing,Float64} = nothing,
-  )
-    new(c, t, busIdx, kIdx, nodeType, auxNodeID, ratedS, zone, area, vm_pu, va_deg, pƩLoad, qƩLoad, pShunt, qShunt, pƩGen, qƩGen)
-  end
-
-  function Node(
-    id::String,
-    name::String,
-    vn::Float64,
-    terminals::Vector{Terminal},
-    auxNodeID::Union{Nothing,String} = nothing,
-    ratedS::Union{Nothing,Float64} = nothing,
-    zone::Union{Nothing,Integer} = nothing,
-    area::Union{Nothing,Integer} = nothing,
-    vm_pu::Union{Nothing,Float64} = nothing,
-    va_deg::Union{Nothing,Float64} = nothing,
-    pƩLoad::Union{Nothing,Float64} = nothing,
-    qƩLoad::Union{Nothing,Float64} = nothing,
-    pShunt::Union{Nothing,Float64} = nothing,
-    qShunt::Union{Nothing,Float64} = nothing,
-    pƩGen::Union{Nothing,Float64} = nothing,
-    qƩGen::Union{Nothing,Float64} = nothing,
-  )
-    nodeType = ResDataTypes.Busbarsection
-    c = Component(id, name, nodeType, vn)
-
-    for term in terminals
-      if c.cVN != term.comp.cVN
-        @warn "Voltage levels of terminals are not equal Vn = $(c.cVN) != $(term.comp.cVN), Terminal: $(term.comp.cName), Node-Name: $(name)"
-      end
-    end
-
-    t = copy(terminals)
-    sort!(t, by = x -> x.seite)
-    new(c, t, 0, 0, ResDataTypes.UnknownN, auxNodeID, ratedS, zone, area, vm_pu, va_deg, pƩLoad, qƩLoad, pShunt, qShunt, pƩGen, qƩGen)
-  end
-
-  
 
   function Base.show(io::IO, node::Node)
     print(io, "Node( ")
@@ -146,6 +91,17 @@ mutable struct Node
       println(io, t)
     end
   end
+end
+
+function getNocdeComp(Vn_kV::Float64, node_idx::Int, nodeType)::ImpPGMComp  
+  cTyp = toComponentTyp("Busbarsection")
+  if (nodeType == Slack)
+    name = "Bus_$(Int(node_idx))_$(string(convert(Int,trunc(Vn_kV))))*"
+  else
+    name = "Bus_$(Int(node_idx))_$(string(convert(Int,trunc(Vn_kV))))"
+  end
+  cID = "#"*name*"#"
+  return ImpPGMComp(cID, name, cTyp, Vn_kV, node_idx, node_idx)
 end
 
 #helper 

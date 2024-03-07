@@ -7,21 +7,20 @@
 debug = false
 
 mutable struct BusData
-  idx::Int        # index of the bus, necessary for sorting
-  originBus::Int  # original index of the bus
+  idx::Int        # index of the bus, necessary for sorting  
   vm_pu::Float64  # voltage in pu
   va_rad::Float64 # angle in rad
   pƩ::Float64     # sum of real power
   qƩ::Float64     # sum of reactive power  
   type::ResDataTypes.NodeType
 
-  function BusData(idx::Int, originBus::Int, vm_pu::Float64, va_deg::Float64, sumP::Float64, sumQ::Float64, type::ResDataTypes.NodeType)
-    new(idx, originBus, vm_pu, va_deg, sumP, sumQ, type)
+  function BusData(idx::Int, vm_pu::Float64, va_deg::Float64, sumP::Float64, sumQ::Float64, type::ResDataTypes.NodeType)
+    new(idx, vm_pu, va_deg, sumP, sumQ, type)
   end
 
   function Base.show(io::IO, bus::BusData)
     va_deg = round(rad2deg(bus.va_rad), digits = 3)
-    print(io, "BusData($(bus.idx) [$(bus.originBus)], $(bus.vm_pu), $(va_deg)°), $(bus.pƩ), $(bus.qƩ), $(bus.type))")
+    print(io, "BusData($(bus.idx), $(bus.vm_pu), $(va_deg)°), $(bus.pƩ), $(bus.qƩ), $(bus.type))")
   end
 end
 
@@ -85,7 +84,7 @@ function getBusData(nodes::Vector{ResDataTypes.Node}, Sbase_MVA::Float64, verbos
       vm_pu = n._vm_pu === nothing ? 1.0 : n._vm_pu
       va_deg = n._va_deg === nothing ? 0.0 : deg2rad(n._va_deg)
     end
-    b = BusData(n.busIdx, n._kidx, vm_pu, va_deg, p, q, type)
+    b = BusData(n.busIdx, vm_pu, va_deg, p, q, type)
     push!(busVec, b)
   end
 

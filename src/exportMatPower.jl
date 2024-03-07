@@ -29,8 +29,7 @@ function writeBusData(NodeVec::Vector{ResDataTypes.Node}, file)
     rows += 1
     bus_i = node.busIdx
     Name = node.comp.cName
-    ID = node.comp.cID
-    kIdx = string(node._kidx)
+    ID = node.comp.cID    
 
     val = Int(node._nodeType)
     if val <= 0 || val > 4
@@ -75,7 +74,7 @@ function writeBusData(NodeVec::Vector{ResDataTypes.Node}, file)
     Vmax = 1.1
     Vmin = 0.9
 
-    line = string(bus_i, "\t", num, "\t", pSum, "\t", qSum, "\t", GS, "\t", BS, "\t", area, "\t", vm_pu, "\t", va_deg, "\t", baseKV, "\t", lZone, "\t", Vmax, "\t", Vmin, "; %Bus: " * Name * " (ID: " * ID * " kIdx: " * kIdx * ")\n")
+    line = string(bus_i, "\t", num, "\t", pSum, "\t", qSum, "\t", GS, "\t", BS, "\t", area, "\t", vm_pu, "\t", va_deg, "\t", baseKV, "\t", lZone, "\t", Vmax, "\t", Vmin, "; %Bus: " * Name * " (ID: " * ID * ")\n")
     write(file, line)
   end
   write(file, "];\n")
@@ -83,7 +82,7 @@ function writeBusData(NodeVec::Vector{ResDataTypes.Node}, file)
 end # writeBusData
 
 
-function writeGeneratorData(sb_mva::Float64, NodeDict::Dict{String,ResDataTypes.Node}, ProSumVec::Vector{ResDataTypes.ProSumer}, file, hasPVBus::Bool, slackIdx::Int, vgSlack::Float64)
+function writeGeneratorData(sb_mva::Float64, NodeDict::Dict{Int,ResDataTypes.Node}, ProSumVec::Vector{ResDataTypes.ProSumer}, file, hasPVBus::Bool, slackIdx::Int, vgSlack::Float64)
   write(file, "%% generator data\n")
   write(file, "mpc.gen = [\n")
   write(file, "%bus\tPg\tQg\tQmax\tQmin\tVg\tmBase\tstatus\tPmax\tPmin\tPc1\tPc2\tQc1min\tQc1max\tQc2min\tQc2max\tramp_agc\tramp_10\tramp_30\tramp_q\tapf\n")
@@ -91,7 +90,7 @@ function writeGeneratorData(sb_mva::Float64, NodeDict::Dict{String,ResDataTypes.
 
   function getLine(node::ResDataTypes.Node, prosum::ResDataTypes.ProSumer)
     
-    nodeID = prosum.nodeID
+    
     name = prosum.comp.cName
     cTypStr = string(prosum.comp.cTyp)
     pc1 = pc2 = qc1min = qc1max = qc2min = qc2max = ramp_agc = ramp_10 = ramp_30 = ramp_q = apf = 0.0
@@ -116,7 +115,7 @@ function writeGeneratorData(sb_mva::Float64, NodeDict::Dict{String,ResDataTypes.
         Vg, "\t", mbase, "\t", status, "\t", pmax, "\t", pmin, "\t",
         pc1, "\t", pc2, "\t", qc1min, "\t", qc1max, "\t", qc2min, "\t",
         qc2max, "\t", ramp_agc, "\t", ramp_10, "\t", ramp_30, "\t", ramp_q, "\t", apf,
-        "; %Gen: ", cTypStr, "_", name, " (ID: ", nodeID, ")\n")
+        "; %Gen: ", cTypStr, "_", name, ")\n")
     return true, line
   end
 
@@ -141,25 +140,22 @@ function writeGeneratorData(sb_mva::Float64, NodeDict::Dict{String,ResDataTypes.
 
   for prosum in ProSumVec
     
-    if isGenerator(prosum.comp) || isExternalNetworkInjection(prosum.comp)
-      nodeID = prosum.nodeID
-      name = prosum.comp.cName
-      cTypStr = string(prosum.comp.cTyp)
+    if isGenerator(prosum.comp) || isExternalNetworkInjection(prosum.comp)      
+      bus_i = prosum.comp.cFrom_bus
       
-      if haskey(NodeDict, nodeID)
-        node = NodeDict[nodeID]
+      if haskey(NodeDict, bus_i)
+        node = NodeDict[bus_i]
       else
-        @warn "Node $nodeID not found in NodeDict"
+        @warn "Node $(bus_i) not found"
         continue
       end
       
-
       if node.busIdx == 0
         @warn "Node $nodeID has no kidx: $(node.busIdx), $(node)"
         continue
       end
 
-      bus_i = node.busIdx
+      
       if bus_i == slackIdx
         slackGeneratorFound = true
       end
@@ -226,9 +222,9 @@ function writeMatpowerCasefile(net::ResDataTypes.Net, filename::String, testcase
   @info "convertion to Matpower CASE-Files, Testcase: ($testcase), Filename: ($filename)"
   base, ext = splitext(filename)
   base = base * ".m"
-  NodeDict = Dict{String,ResDataTypes.Node}()
+  NodeDict = Dict{Int,ResDataTypes.Node}()
   for n in net.nodeVec
-    NodeDict[n.comp.cID] = n
+    NodeDict[n.busIdx] = n
   end
 
   file = open(filename, "w")

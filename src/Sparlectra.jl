@@ -31,20 +31,23 @@ export
   Branch,
   Shunt,
   Net,
-  # functions
-  get_line_parameters,
+  # functions  
   getLineBusID,
   getLineImpPGMComp,
   getRXBG,
+  # Transformers
   getSideNumber2WT,
   getWinding2WT,
   calcTransformerRatio,
   create3WTWindings!,
+ 
   getWT2BusID,
   getWT3BusID,
   getWT3AuxBusID,
   getTrafoImpPGMComp,
+  
   isPerUnit_RXGB,
+  # nodes
   addGenAktivePower!,
   addGenReaktivePower!,
   toComponentTyp,
@@ -70,6 +73,7 @@ export
   getProSumPGMComp,
   hasPowerInjection,
   hasShuntInjection,
+  # shunts
   setBranchFlow!,
   setBranchStatus!,
   setAdjElecParam!,
