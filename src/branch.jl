@@ -23,6 +23,20 @@ struct BranchFlow
   end  
 end
 
+struct BranchModel <:AbstractBranch  
+  r_pu::Float64
+  x_pu::Float64
+  b_pu::Float64
+  g_pu::Float64
+  ratio::Float64
+  angle::Float64
+  sn_MVA::Union{Nothing,Float64}
+  function BranchModel(;r_pu::Float64, x_pu::Float64, b_pu::Float64, g_pu::Float64, ratio::Float64, angle::Float64, sn_MVA::Union{Nothing,Float64}=nothing)
+    new(r_pu, x_pu, b_pu, g_pu, ratio, angle, sn_MVA)
+  end
+
+end
+
 mutable struct Branch
   comp::AbstractComponent
   fromBus::Integer        
@@ -76,6 +90,11 @@ mutable struct Branch
       end
 
       new(c, from, to, r_pu, x_pu, b_pu, g_pu, ratio, w.shift_degree, status, sn_MVA, nothing, nothing)
+    elseif isa(branch, BranchModel)
+      c = getBranchComp(0.0, from, to, id, "Branch")
+      new(c, from, to, branch.r_pu, branch.x_pu, branch.b_pu, branch.g_pu, branch.ratio, branch.angle, status, branch.sn_MVA, nothing, nothing)
+    else
+      error("Branch type not supported")
     end
   end
 

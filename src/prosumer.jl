@@ -24,8 +24,11 @@ mutable struct ProSumer
   # @enum NodeType UnknownN=0 PQ=1 PV=2 Slack=3
   # @enum ProSumptionType UnknownP=0 Injection=1 Consumption=2 
 
-  function ProSumer(
-    comp::AbstractComponent,    
+  function ProSumer(;    
+    vn_kv::Float64,
+    busIdx::Int,
+    oID::Int, 
+    type::ProSumptionType,   
     ratedS::Union{Nothing,Float64} = nothing,
     ratedU::Union{Nothing,Float64} = nothing,
     qPercent::Union{Nothing,Float64} = nothing,
@@ -39,18 +42,10 @@ mutable struct ProSumer
     referencePri::Union{Nothing,Integer} = nothing,
     vm_pu::Union{Nothing,Float64} = nothing,
     vm_degree::Union{Nothing,Float64} = nothing,
-    proSumptionType::Union{Nothing,ProSumptionType} = nothing,
-    isAPUNode::Union{Nothing,Bool} = nothing
   )
-    if isnothing(proSumptionType)
-      proSumptionType = toProSumptionType(comp.cTyp)
-    end
-        
-    if isnothing(isAPUNode)
-      isAPUNode = isPUNode(comp.cTyp)
-    end
     
-
+    comp = getProSumPGMComp(vn_kv, busIdx, isGenerator(type), oID)
+    isAPUNode = isPUNode(comp.cTyp)
     if isnothing(vm_pu)
       vm_pu = 1.0
     end
@@ -59,7 +54,7 @@ mutable struct ProSumer
       vm_degree = 0.0
     end
 
-    new(comp, ratedS, ratedU, qPercent, p, q, maxP, minP, maxQ, minQ, ratedPowerFactor, referencePri, vm_pu, vm_degree, proSumptionType, isAPUNode)
+    new(comp, ratedS, ratedU, qPercent, p, q, maxP, minP, maxQ, minQ, ratedPowerFactor, referencePri, vm_pu, vm_degree, type, isAPUNode)
   end
 
   function Base.show(io::IO, prosumption::ProSumer)
@@ -122,6 +117,26 @@ mutable struct ProSumer
   end
 end
 
+function isPUNode(type::ComponentTyp)::Bool
+  if type == SynchronousMachine
+    return true
+  else
+    return false
+  end
+end
+
+
+function isGenerator(c::ResDataTypes.ProSumptionType)::Bool
+  if c == ResDataTypes.Generator || c == ResDataTypes.SynchronousMachine || c == ResDataTypes.ExternalNetworkInjection
+    return true
+  else
+    return false
+  end
+end # isGenerator
+
+function isGenerator(o::ResDataTypes.ProSumer)::Bool
+  return isGenerator(o.proSumptionType)  
+end # isGenerator
 
 function getProSumPGMComp(Vn::Float64, from::Int, isGen::Bool, id::Int)
   cTyp = isGen ? toComponentTyp("GENERATOR") : toComponentTyp("LOAD")
@@ -130,3 +145,43 @@ function getProSumPGMComp(Vn::Float64, from::Int, isGen::Bool, id::Int)
   return ImpPGMComp(cID, cName, cTyp, Vn, from, from)  
 end
 
+function isSlack(o::ResDataTypes.ProSumer)
+  if !isnothing(o.referencePri) && o.referencePri > 0
+    return true
+  else
+    return false
+  end
+  
+end
+
+function toProSumptionType(o::ComponentTyp)::ProSumptionType
+  if o == Generator || o == ExternalNetworkInjection || o == SynchronousMachine
+    return Injection
+  elseif o == AsynchronousMachine || o == Load || o == EnergyConsumer
+    return Consumption
+  else
+    return UnknownP
+  end
+end
+
+function toProSumptionType(o::String)::ProSumptionType
+  val = uppercase(o)
+  if val == "GENERATOR" || val == "EXTERNALNETWORKINJECTION" || val == "SYNCHRONOUSMACHINE"
+    return Injection
+  elseif val == "ASYNCHRONOUSMACHINE" || val == "LOAD" || val == "ENERGYCONSUMER"
+    return Consumption
+  else
+    return UnknownP
+  end
+end
+
+# helper
+function toString(o::ProSumptionType)::String
+  if o == Injection
+    return "Injection"
+  elseif o == Consumption
+    return "Consumption"
+  else
+    return "UnknownP"
+  end
+end

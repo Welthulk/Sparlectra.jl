@@ -46,7 +46,7 @@ function makeMDO!(busMapDict::Dict{Int,Int}, busData::Matrix{Float64}, branchDat
   end
 
   if !isempty(nodeIsolateSet)
-    @error "isolated nodes that are not marked as isolated found: $(nodeIsolateSet)"    
+    @error "isolated nodes that are not marked as isolated found: $(nodeIsolateSet)"
   end
 
   if checkOnly
@@ -54,7 +54,7 @@ function makeMDO!(busMapDict::Dict{Int,Int}, busData::Matrix{Float64}, branchDat
       _bus = rtransDict[i]
       busMapDict[_bus] = i
     end
-  else    
+  else
     order = mdoRCM(length(nodeNumberSet), branchTupleSet)
     for i in order
       _bus = rtransDict[i]
@@ -93,31 +93,13 @@ function _createDict()
   end
 
   return busDict, genDict, branchDict
-
 end
 
 # base_MVA = 0.0 for default value in case file, otherwise set to desired value
 function createNetFromMatPowerFile(filename, base_MVA::Float64 = 0.0, log::Bool = false, mdo::Bool = true)::ResDataTypes.Net
   debug = false
   @debug debug = true
-  mFak = 4.0 # approximation factor for load and shunt for qMax, qMin, pMax, pMin
-  elemDict = Dict{Tuple,Int}()
-  function addElement!(fromBus, toBus, type, element, vector)
-    push!(vector, element)
-    index = length(vector)
-    key = (fromBus, toBus, type)
-    elemDict[key] = index
-  end
-
-  function getIndex(fromBus, toBus, type)
-    key = (fromBus, toBus, type)
-    index = nothing
-    if haskey(elemDict, key)
-      index = elemDict[key]
-    end
-
-    return index
-  end
+  mFak = 10.0 # approximation factor for load and shunt for qMax, qMin, pMax, pMin
 
   ACLines = Vector{ACLineSegment}()
   trafos = Vector{PowerTransformer}()
@@ -126,10 +108,10 @@ function createNetFromMatPowerFile(filename, base_MVA::Float64 = 0.0, log::Bool 
   branchVec = Vector{Branch}()
   nodeVec = Vector{Node}()
 
-  NodeIDDict = Dict{Integer,String}()
+  
   NodeDict = Dict{Integer,Node}()
   vnDict = Dict{Integer,Float64}()
-  NodeTerminalsDict = Dict{Integer,Vector{Terminal}}()
+
   proSumDict = Dict{Integer,ProSumer}()
   busMapDict = Dict{Int,Int}()
 
@@ -167,7 +149,6 @@ function createNetFromMatPowerFile(filename, base_MVA::Float64 = 0.0, log::Bool 
   busDict, genDict, branchDict = _createDict()
   makeMDO!(busMapDict, busData, branchData, busDict, branchDict, mdo == false)
 
-
   col = size(busData, 2)
   numb = 0
   lastBus = 0
@@ -181,21 +162,21 @@ function createNetFromMatPowerFile(filename, base_MVA::Float64 = 0.0, log::Bool 
     numb += 1
     kIdx = Int64(row[busDict["bus"]]) # original bus number    
     if kIdx <= lastBus
-      msg= "bus numbers are not consecutive and unique, lastBus: $(lastBus), current bus: $(kIdx)"
-      throw(msg) 
+      msg = "bus numbers are not consecutive and unique, lastBus: $(lastBus), current bus: $(kIdx)"
+      throw(msg)
     end
     lastBus = kIdx
 
     busIdx = busMapDict[kIdx]
-    cName = "Bus_" * string(kIdx)
+
     vn_kv = float(row[busDict["baseKV"]]) <= 0.0 ? (@warn("Warnung: vn_kv at bus $(kIdx) <= 0"); 1.0) : float(row[busDict["baseKV"]])
     va_deg = float(row[busDict["Va"]])
     vm_pu = float(row[busDict["Vm"]]) <= 0.0 ? (@warn("vm_pu at bus $(kIdx) <= 0"); 1.0) : float(row[busDict["Vm"]])
-    pƩLoad = float(row[busDict["Pd"]]) < 0.0 ? (@info("pLoad at bus $(kIdx) p < 0"); float(row[busDict["Pd"]]) ) : float(row[busDict["Pd"]])
-    qƩLoad = float(row[busDict["Qd"]]) < 0.0 ? (@info("qLoad at bus $(kIdx) q < 0"); float(row[busDict["Qd"]]) ) : float(row[busDict["Qd"]])
+    pƩLoad = float(row[busDict["Pd"]]) < 0.0 ? (@info("pLoad at bus $(kIdx) p < 0"); float(row[busDict["Pd"]])) : float(row[busDict["Pd"]])
+    qƩLoad = float(row[busDict["Qd"]]) < 0.0 ? (@info("qLoad at bus $(kIdx) q < 0"); float(row[busDict["Qd"]])) : float(row[busDict["Qd"]])
 
-    pShunt = float(row[busDict["Gs"]]) < 0.0 ? (@info("pShunt at bus $(kIdx) p < 0"); float(row[busDict["Gs"]]) ) : float(row[busDict["Gs"]])
-    qShunt = float(row[busDict["Bs"]]) < 0.0 ? (@info("qShunt at bus $(kIdx) q < 0"); float(row[busDict["Bs"]]) ) : float(row[busDict["Bs"]])
+    pShunt = float(row[busDict["Gs"]]) < 0.0 ? (@info("pShunt at bus $(kIdx) p < 0"); float(row[busDict["Gs"]])) : float(row[busDict["Gs"]])
+    qShunt = float(row[busDict["Bs"]]) < 0.0 ? (@info("qShunt at bus $(kIdx) q < 0"); float(row[busDict["Bs"]])) : float(row[busDict["Bs"]])
 
     pƩGen = 0.0
     qƩGen = 0.0
@@ -203,12 +184,8 @@ function createNetFromMatPowerFile(filename, base_MVA::Float64 = 0.0, log::Bool 
     zone = Int64(row[busDict["zone"]])
     area = Int64(row[busDict["area"]])
 
-    cID = string(UUIDs.uuid4())
+    node = Node(busIdx = busIdx, Vn_kV = vn_kv, nodeType = toNodeType(btype), ratedS = ratedS, zone = zone, area = area, vm_pu = vm_pu, va_deg = va_deg, pƩLoad = pƩLoad, qƩLoad = qƩLoad, pShunt = pShunt, qShunt = qShunt, pƩGen = pƩGen, qƩGen = qƩGen)
 
-    cType = toComponentTyp("BUS")
-    c = ImpPGMComp(cID, cName, cType, vn_kv, busIdx, busIdx)
-
-    node = Node(c, Vector{Terminal}(), busIdx, kIdx, toNodeType(btype), nothing, ratedS, zone, area, vm_pu, va_deg, pƩLoad, qƩLoad, pShunt, qShunt, pƩGen, qƩGen)
     if btype == 3 && slackIdx == 0
       slackIdx = busIdx
     elseif btype == 3
@@ -217,45 +194,24 @@ function createNetFromMatPowerFile(filename, base_MVA::Float64 = 0.0, log::Bool 
     end
 
     vnDict[busIdx] = vn_kv
-    NodeIDDict[busIdx] = cID
-    NodeDict[busIdx] = node
-    NodeTerminalsDict[busIdx] = Vector{Terminal}()
+    NodeDict[busIdx] = node    
     push!(nodeVec, node)
     if pShunt != 0.0 || qShunt != 0.0
-      cShunt = "Sh_" * string(kIdx)#*"_"*string(busIdx)
-      c = ImpPGMComp(string(UUIDs.uuid4()), cShunt, toComponentTyp("SHUNT"), vn_kv,busIdx, busIdx)
-      state = 1
-      y_pu = calcYShunt(pShunt, qShunt, 1.0, baseMVA)
-      shunt = Shunt(c, cID, busIdx, pShunt, qShunt, y_pu, state)
+      shunt = Shunt(fromBus = busIdx, id=kIdx, base_MVA = baseMVA, Vn_kV_shunt = vn_kv, p_shunt = pShunt, q_shunt = q_shunt)
       push!(shuntVec, shunt)
     end
 
     if pƩLoad != 0.0 || qƩLoad != 0.0
-      shName = "Ld_" * string(kIdx) * "_" * string(busIdx)
-      shID = string(UUIDs.uuid4())
-      c = ImpPGMComp(shID, shName, toComponentTyp("LOAD"), vn_kv, busIdx, busIdx)
-
-      qMax = mFak * qƩLoad  # approximation!
-      qMin = -mFak * qƩLoad # approximation!
-      pMax = mFak * pƩLoad  # approximation!
-      pMin = -mFak * pƩLoad # approximation!
-      nodeId = cID
-      ratedPowerFactor = nothing
+      qMax = abs(mFak * qƩLoad <= baseMVA) ? abs(mFak * qƩLoad) : baseMVA  # approximation!
+      qMin = -qMax  # approximation!
+      pMax = abs(mFak * pƩLoad) <= baseMVA ? abs(mFak * pƩLoad) : base_MVA # approximation!
+      pMin = -pMax # approximation!
       referencePri = slackIdx == busIdx ? busIdx : nothing
 
       vm_degree = 0.0
-      qPercent = nothing
-
-      Sber = sqrt(pƩLoad^2 + qƩLoad^2)
-      ratedS = Sber
-      ratedU = vn_kv
-      p = ProSumer(c, nodeId, ratedS, ratedU, qPercent, pƩLoad, qƩLoad, pMin, pMax, qMin, qMax, ratedPowerFactor, referencePri, vm_pu, vm_degree)
+      p = ProSumer(vn_kv = vn_kv, oID= kIdx, busIdx = busIdx, type = toProSumptionType("LOAD"), p = pƩLoad, q = qƩLoad, maxP = pMax, minP = pMin, maxQ = qMax, minQ = qMin, referencePri = referencePri, vm_pu = vm_pu, vm_degree = vm_degree)
       push!(prosum, p)
-      t1 = Terminal(c, ResDataTypes.Seite1)
-      t1Terminal = NodeTerminalsDict[busIdx]
-      push!(t1Terminal, t1)
     end
-
   end# read bus
 
   # branches: 
@@ -263,14 +219,10 @@ function createNetFromMatPowerFile(filename, base_MVA::Float64 = 0.0, log::Bool 
   for row in eachrow(branchData[:, 1:col])
     _fbus = Int64(row[branchDict["fbus"]])
     _tbus = Int64(row[branchDict["tbus"]])
-    cName = "Branch_" * string(_fbus) * "_" * string(_tbus)
-
-
     if haskey(busMapDict, _fbus) == false || haskey(busMapDict, _tbus) == false
       @info "branch $(cName) not in service"
       continue
     else
-
       fbus = busMapDict[_fbus]
       tbus = busMapDict[_tbus]
     end
@@ -282,138 +234,62 @@ function createNetFromMatPowerFile(filename, base_MVA::Float64 = 0.0, log::Bool 
     ratio = float(row[branchDict["ratio"]])
     angle = float(row[branchDict["angle"]])
     status = Int64(row[branchDict["status"]])
-    cID = string(UUIDs.uuid4())
+    vn_kv = vnDict[fbus]
+    
+    piModel = BranchModel(r_pu=r_pu, x_pu=x_pu, b_pu=b_pu, g_pu= 0.0, ratio=ratio, angle=angle, sn_MVA=ratedS)
+    b = Branch(vn_kV=vn_kv, baseMVA=baseMVA, from=fbus, to=tbus, branch=piModel, id=_fbus, status=status)
+    push!(branchVec, b)
+     
+    #=
+    if ratio == 0.0 # line
+      z_base = (vn_kv^2) / baseMVA
+      r = r_pu * z_base
+      x = x_pu * z_base
+      l_km = round((r / 0.1), digits = 1) <= 0.0 ? 1.0 : l_km    # approximation
+      line =  ACLineSegment(vn_kv=vn_kv, from=from, to=to, length=l_km, r=r, x=x)            
+    else # transformer
+      vnh_kv = vnDict[fbus]
+      vnl_kv = vnDict[tbus]
+      c = getTrafoImpPGMComp(false, vnh_kv, fbus, tbus)
+      w1 = PowerTransformerWinding(Vn_kV=vnh_kv)
+      w2 = PowerTransformerWinding(Vn_kV=vnl_kv)
 
-    l_km = 1.0
-    if status == 1
-      cType = toComponentTyp("BRANCH")
-      vn_kv = vnDict[fbus]
-      c = ImpPGMComp(cID, cName, cType, vn_kv, fbus, tbus)
-      isParallel = false
-      fromNodeId = NodeIDDict[fbus]
-      toNodeId = NodeIDDict[tbus]
 
-      index = getIndex(fbus, tbus, cType)
-      if index !== nothing
-        b2 = branchVec[index]
-        rges = 1.0 / (1.0 / b2.r_pu + 1.0 / r_pu)
-        xges = 1.0 / (1.0 / b2.x_pu + 1.0 / x_pu)
-        bges = b2.b_pu + b_pu
-
-        b2.r_pu = rges
-        b2.x_pu = xges
-        b2.b_pu = bges
-
-        b2.isParallel = true
-        @info "branch $(cName) already in branchVec, update values: r_pu: $(rges), x_pu: $(xges), b_pu: $(bges)"
-        if ratio == 0.0
-          cType = toComponentTyp("ACLINESEGMENT")
-          index = getIndex(fbus, tbus, cType)
-          if index !== nothing
-            l2 = ACLines[index]
-            l2.r = rges
-            l2.x = xges
-            l2.b = bges
-          end
-        else
-          cType = toComponentTyp("POWERTRANSFORMER")
-          index = getIndex(fbus, tbus, cType)
-          if index !== nothing
-            t2 = trafos[index]
-            t2.side1.r = rges
-            t2.side1.x = xges
-            t2.side1.b = bges
-          end
-        end
-      else
-        b = Branch(c, fbus, tbus, _fbus, _tbus, fromNodeId, toNodeId, r_pu, x_pu, b_pu, 0.0, ratio, angle, status, nothing, nothing, isParallel)
-        addElement!(fbus, tbus, cType, b, branchVec)
-
-        t1 = Terminal(c, ResDataTypes.Seite1)
-        t2 = Terminal(c, ResDataTypes.Seite2)
-        t1Terminal = NodeTerminalsDict[fbus]
-        t2Terminal = NodeTerminalsDict[tbus]
-        push!(t1Terminal, t1)
-        push!(t2Terminal, t2)
-        if ratio == 0.0
-          cType = toComponentTyp("ACLINESEGMENT")
-          lName = "Line_" * string(fbus) * "_" * string(tbus)
-          lID = string(UUIDs.uuid4())
-          cLine = ImpPGMComp(lID, lName, cType, vn_kv,fbus, tbus)
-          z_base = (vn_kv^2) / baseMVA
-          r = r_pu * z_base
-          l_km = round((r / 0.1), digits = 1) <= 0.0 ? 1.0 : l_km    # approximation
-          line = ACLineSegment(cLine, l_km, r_pu, x_pu, b_pu)
-          addElement!(fbus, tbus, cType, line, ACLines)
-        else
-          cType = toComponentTyp("POWERTRANSFORMER")
-          vnh_kv = vnDict[fbus]
-          w1 = PowerTransformerWinding(Vn=vnh_kv, r=r_pu, x=x_pu, b=b_pu, shift_degree= angle, ratedS=ratedS, isPu_RXGB=true)
-          vnl_kv = vnDict[tbus]
-          w2 = PowerTransformerWinding(Vn=vnl_kv, r=0.0, x=0.0, b=0.0, shift_degree= 0.0, ratedS=ratedS, isPu_RXGB=true)
-          cTName = "Trafo_" * string(fbus) * "_" * string(tbus)
-          cTID = string(UUIDs.uuid4())
-          cTrafo = ImpPGMComp(cTID, cTName, cType, vn_kv,fbus, tbus)
-          tap = false
-          tType = ResDataTypes.Ratio
-          if angle != 0.0
-            @info "found phase shifter in casefile $(netName) (fbus: $(fbus), tbus: $(tbus))"
-            tType = ResDataTypes.PhaseShifter
-          end
-          trafo = PowerTransformer(cTrafo, tap, w1, w2, nothing, tType)
-          addElement!(fbus, tbus, cType, trafo, trafos)
-        end
+      tap = false
+      tType = ResDataTypes.Ratio
+      if angle != 0.0
+        @info "found phase shifter in casefile $(netName) (fbus: $(fbus), tbus: $(tbus))"
+        tType = ResDataTypes.PhaseShifter
       end
-    else
-      @info "branch $(cName) not in service"
+      trafo = PowerTransformer(c, tap, w1, w2, nothing, tType)      
     end
+    =#
   end
 
   # Generators:   
   col = size(genData, 2)
   for row in eachrow(genData[:, 1:col])
     _bus = Int64(row[genDict["bus"]])
-    pGen = float(row[genDict["Pg"]]) < 0.0 ? (@info("pGen at bus $(_bus) p < 0"); float(row[genDict["Pg"]]) ) : float(row[genDict["Pg"]])
-    qGen = float(row[genDict["Qg"]]) < 0.0 ? (@info("qGen at bus $(_bus) q < 0"); float(row[genDict["Qg"]]) ) : float(row[genDict["Qg"]])
+    pGen = float(row[genDict["Pg"]]) < 0.0 ? (@info("pGen at bus $(_bus) p < 0"); float(row[genDict["Pg"]])) : float(row[genDict["Pg"]])
+    qGen = float(row[genDict["Qg"]]) < 0.0 ? (@info("qGen at bus $(_bus) q < 0"); float(row[genDict["Qg"]])) : float(row[genDict["Qg"]])
 
-    
     bus = busMapDict[_bus]
-    cName = "Gen_" * string(_bus)
 
     qMax = float(row[genDict["Qmax"]])
     qMin = float(row[genDict["Qmin"]])
-    vm_pu = float(row[genDict["Vg"]])
-    mBase = float(row[genDict["mBase"]])
-    status = Int64(row[genDict["status"]])
     pMax = float(row[genDict["Pmax"]])
     pMin = float(row[genDict["Pmin"]])
 
-    cID = string(UUIDs.uuid4())
-    nodeId = NodeIDDict[bus]
-    ratedPowerFactor = nothing
+    vm_pu = float(row[genDict["Vg"]])
+    mBase = float(row[genDict["mBase"]])
+    status = Int64(row[genDict["status"]])
 
     if status == 1
-      if haskey(proSumDict, _bus)
-        proSum = proSumDict[_bus]
-        _maxP = proSum.maxP
-        _minP = proSum.minP
-        _maxQ = proSum.maxQ
-        _minQ = proSum.minQ
-        pMax = max(_maxP, pMax)
-        pMin = min(_minP, pMin)
-        qMax = max(_maxQ, qMax)
-        qMin = min(_minQ, qMin)
-        @info "generator $(cName) already in prosumption list, update values: pGen: $(pGen), qGen: $(qGen), pMax: $(pMax), pMin: $(pMin), qMax: $(qMax), qMin: $(qMin)"
-      end
-
       referencePri = slackIdx == bus ? bus : nothing
       vm_degree = 0.0
-      qPercent = nothing
-      ratedS = mBase
-      ratedU = vnDict[bus]
       vn_kv = vnDict[bus]
-      c = ImpPGMComp(cID, cName, ResDataTypes.toComponentTyp("GENERATOR"), vn_kv, bus, bus)
-      p = ProSumer(c, nodeId, ratedS, ratedU, qPercent, pGen, qGen, pMin, pMax, qMin, qMax, ratedPowerFactor, referencePri, vm_pu, vm_degree)
+      p = ProSumer(vn_kv = vn_kv, busIdx = bus, oID = _bus, type = toProSumptionType("GENERATOR"), p = pGen, q = qGen, maxP = pMax, minP = pMin, maxQ = qMax, minQ = qMin, referencePri = referencePri, vm_pu = vm_pu)
+
       proSumDict[_bus] = p
       push!(prosum, p)
 
@@ -427,20 +303,10 @@ function createNetFromMatPowerFile(filename, base_MVA::Float64 = 0.0, log::Bool 
         end
         node._vm_pu = vm_pu
       end
-      t1 = Terminal(c, ResDataTypes.Seite1)
-      t1Terminal = NodeTerminalsDict[bus]
-      push!(t1Terminal, t1)
     else
       @info "generator $(cName) not in service"
     end
   end# read Generators
-
-  for t in NodeTerminalsDict
-    busIdx = t[1]
-    terminals = t[2]
-    node = NodeDict[busIdx]
-    node.terminals = terminals
-  end
 
   sort!(nodeVec, by = x -> x.busIdx)
   @debug begin
@@ -452,6 +318,3 @@ function createNetFromMatPowerFile(filename, base_MVA::Float64 = 0.0, log::Bool 
   net = ResDataTypes.Net(netName, baseMVA, slackIdx, nodeVec, ACLines, trafos, branchVec, prosum, shuntVec)
   return net
 end
-
-
-

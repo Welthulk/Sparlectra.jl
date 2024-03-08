@@ -1050,4 +1050,342 @@ function createNetFromFile(filename, base_MVA::Float64 = 0.0, log::Bool = false,
   net = ResDataTypes.Net(netName, baseMVA, slackIdx, nodeVec, ACLines, trafos, branchVec, prosum, shuntVec)
 
   return net
+
+end
+
+function readTapMod(tap::Dict{String,Any})
+  side = tap["tap_side"]
+  tap_min = Int(tap["tap_min"])
+  tap_max = Int(tap["tap_max"])
+  tap_neutral = Int(tap["tap_neutral"])
+  tap_step_percent = float(tap["tap_step_percent"])
+  shift_degree = float(tap["shift_degree"])
+  neutralU_ratio = float(tap["neutralU_ratio"])
+
+  return side, tap_min, tap_max, tap_neutral, tap_step_percent, shift_degree, neutralU_ratio
+end
+
+
+## S P A R Q L Q U E R Y C G M E S ###############################################################################################################################################################################################
+module SparqlQueryCGMES
+
+using HTTP
+using JSON
+using Sparlectra.ResDataTypes
+
+export
+  # constants
+  # classes
+  # functions
+  getNodes,
+  getLines,
+  getTrafos,
+  getProSumption
+
+const NodeVector = Vector{ResDataTypes.Node}
+const ACLineVector = Vector{ResDataTypes.ACLineSegment}
+const TrafoVector = Vector{ResDataTypes.PowerTransformer}
+const ProSumptionVector = Vector{ResDataTypes.ProSumer}
+const ShuntVector = Vector{ResDataTypes.Shunt}
+
+# helper
+function isStringEmpty(str::AbstractString)
+  if str == "" || length(str) == 0
+    return true
+  else
+    return false
+  end
+end
+
+# helper
+function getFloatValue(b::AbstractDict, k::String, v::String = "value")
+  try
+    str = b[k][v]
+    result = parse(Float64, str)
+  catch
+    result = nothing
+  end
+end
+# helper
+function getIntegerValue(b::AbstractDict, k::String, v::String = "value")
+  try
+    str = b[k][v]
+    result = parse(Int64, str)
+  catch
+    result = nothing
+  end
+end
+# helper
+function getBoolValue(b::AbstractDict, k::String, v::String = "value")
+  try
+    str = b[k][v]
+    result = parse(Bool, str)
+  catch
+    result = nothing
+  end
+end
+# helper
+function getStringValue(b::AbstractDict, k::String, v::String = "value")
+  try
+    str = b[k][v]
+    result = str
+  catch
+    result = ""
+  end
+end
+
+include("cgmesprosumptionquery.jl")
+include("cgmestrafoquery.jl")
+include("cgmesnodesquery.jl")
+include("cgmeslinesquery.jl")
+
+header2 = Dict("Accept" => "application/sparql-results+json", "Content-Type" => "application/sparql-query")
+
+function getNodes(url::String, debug::Bool)::NodeVector
+  myurl = url #endpoint
+  mynodes = NodeVector()
+
+  success = SparqlQueryCGMES.QueryNodes!(myurl, mynodes, debug)
+  if !success
+    @warn "No result found"
+  end
+  return mynodes
+end
+
+function getLines(url::String, debug::Bool)
+  myurl = url #endpoint
+  ACLines = ACLineVector()
+  success = QueryLines!(myurl, ACLines, debug)
+  if success
+    if debug
+      for acseg in ACLines
+        @show acseg
+      end
+    end
+    return ACLines
+  else
+    #println("No result found")
+    return nothing
+  end
+end
+
+function getTrafos(url::String, debug::Bool)
+  myurl = url #endpoint
+  trafosVec = TrafoVector()
+  success = QueryTrafos!(myurl, trafosVec, debug)
+  if success
+    if debug
+      for trafo in trafosVec
+        @show trafo
+      end
+    end
+    return trafosVec
+  else
+    return nothing
+  end
+end
+
+function getProSumption(url::String, debug::Bool)
+  myurl = url #endpoint
+  prosumptionVec = ProSumptionVector()
+  success = QueryProSumption!(myurl, prosumptionVec, debug)
+  if success
+    if debug
+      for prosumption in prosumptionVec
+        @show prosumption
+      end
+    end
+    return prosumptionVec
+  else
+    #println("kein Ergebnis")
+    return nothing
+  end
+end
+
+end # module SparqlQueryCGMES
+
+
+
+function createNetFromTripleStore(endpoint::String, sbase_mva::Union{Nothing,Float64}, netName::String, slackBusName::String, log::Bool)::ResDataTypes.Net
+  # Create a Sparlectra network from a triple store
+  nodes = Sparlectra.SparqlQueryCGMES.getNodes(endpoint, false)
+  lines = Sparlectra.SparqlQueryCGMES.getLines(endpoint, false)
+  prosumers = Sparlectra.SparqlQueryCGMES.getProSumption(endpoint, false)
+  trafos = Sparlectra.SparqlQueryCGMES.getTrafos(endpoint, false)
+
+  debug = false
+  if debug
+    for n in nodes
+      println(n)
+    end
+    for l in lines
+      println(l)
+    end
+    for p in prosumers
+      println(p)
+    end
+    for t in trafos
+      println(t)
+    end
+  end
+
+  shunts = Vector{ResDataTypes.Shunt}()
+  puNodesIDDict = Dict{String,String}()
+  nodesDict = Dict{String,ResDataTypes.Node}()
+
+  sort!(nodes, lt = nodeComparison)
+
+  posibleSlackBusID = ""
+  for s in prosumers
+    if s.referencePri == 1
+      posibleSlackBusID = s.nodeID
+
+      #if s.proSumptionType == ResDataTypes.ProSumptionType.PQ
+      #  shunt = ResDataTypes.Shunt(s.nodeID, s.pVal, s.qVal)
+      #  push!(shunts, shunt)
+      #end
+    elseif s.isAPUNode
+      if log
+        @info "createNetFromTripleStore: PU Node - $(s.nodeID)"
+      end
+      puNodesIDDict[s.nodeID] = s.nodeID
+    end
+  end
+
+  idx = 0
+  slackBusIdx = 0
+  slackBusID = ""
+  slackName = ""
+  slackNameFound = false
+  # set bus numbers
+  for n in nodes
+    idx += 1
+    n.busIdx = idx
+    n._kidx = idx
+    if !slackNameFound && occursin(slackBusName, n.comp.cName)
+      slackNameFound = true
+      slackBusIdx = idx
+      @info "createNetFromTripleStore: slackBusName - $(slackBusName), slackBusIdx: $(slackBusIdx)"
+      slackName = n.comp.cName
+      slackBusID = n.comp.cID
+    end
+    nodesDict[n.comp.cID] = n
+  end
+  auxBusIdx = idx
+
+  if isnothing(sbase_mva)
+    sbase_mva = 0.0
+    for s in prosumers
+      if isnothing(sbase_mva)
+        if !isnothing(s.ratedS)
+          if sbase_mva < s.ratedS
+            sbase_mva = s.ratedS
+          end
+        elseif !isnothing(s.pVal) && isnothing(s.qVal)
+          s_mva = sqrt(s.pVal^2 + s.qVal^2)
+          if sbase_mva < s_mva
+            sbase_mva = s_mva
+          end
+        elseif !isnothing(s.maxP) && !isnothing(s.maxQ)
+          s_mva = sqrt(s.maxP^2 + s.maxQ^2)
+          if sbase_mva < s_mva
+            sbase_mva = s_mva
+          end
+        end
+      end
+    end
+  end
+  sbase_mva = roundUpToNearest100(sbase_mva) # round up to nearest 100's
+  sign = -1.0
+  for s in prosumers
+    e = s.comp
+    if isMotor(e) || isExternalNetworkInjection(e) || isLoad(e)
+      if haskey(nodesDict, s.nodeID)
+        n = nodesDict[s.nodeID]
+        addAktivePower!(n, sign * s.pVal)
+        addReaktivePower!(n, sign * s.qVal)
+      else
+        @warn "could not find node for motor $(s.nodeID), $(s.comp.cName)"
+      end
+    end
+
+    if isGenerator(e)
+      if haskey(nodesDict, s.nodeID)
+        n = nodesDict[s.nodeID]
+        addGenAktivePower!(n, sign * s.pVal)
+        addGenReaktivePower!(n, sign * s.qVal)
+      else
+        @warn "could not find node for generator $(s.nodeID), $(s.comp.cName)"
+      end
+    end
+
+    if isShunt(e)
+      setShuntPower!(n, s.pVal, s.qVal)
+    end
+  end
+
+  # set up aux-busses for 3WT
+  for t in trafos
+    if !t.isBiWinder
+      auxBusIdx += 1
+      cName = "aux_#" * string(auxBusIdx)
+      nodeID = string(UUIDs.uuid4())
+      vn_aux_kv = t.side1.Vn
+      ratedS = t.side1.ratedS
+      tnodeId = t.comp.cID
+
+      tVec = Vector{Terminal}()
+      auxBuxCmp = Component(nodeID, cName, "AUXBUS", vn_aux_kv)
+      push!(tVec, Terminal(auxBuxCmp, ResDataTypes.Seite1))
+      push!(tVec, Terminal(auxBuxCmp, ResDataTypes.Seite2))
+      push!(tVec, Terminal(auxBuxCmp, ResDataTypes.Seite3))
+
+      auxNode = Node(auxBuxCmp, tVec, auxBusIdx, ResDataTypes.PQ, tnodeId, ratedS, 1, 1, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+      if log
+        @info "auxNode: $(auxNode)"
+      end
+      push!(nodes, auxNode)
+    end
+  end
+
+  for node in nodes
+    if !isnothing(node._ratedS)
+      if node._ratedS > sbase_mva
+        sbase_mva = node._ratedS
+      end
+    end
+
+    if node.busIdx == slackBusIdx
+      node._nodeType = ResDataTypes.Slack
+      #@info "found slackBusIdx: $(slackBusIdx), Name: $(slackName), origin name: $(slackBusID)"
+    else
+      if haskey(puNodesIDDict, node.comp.cID)
+        node._nodeType = ResDataTypes.PV
+      else
+        node._nodeType = ResDataTypes.PQ
+      end
+    end
+  end
+
+  if log
+    @info "SBase = $(sbase_mva) MVA"
+    @info "choosen SlackBus-Number: $(slackBusIdx), Name: $(slackName), origin name: $(slackBusID)"
+    if posibleSlackBusID != ""
+      p = nodesDict[posibleSlackBusID]
+      busIdx = p.busIdx
+      name = p.comp.cName
+
+      @info "posible SlackBus-Number: $(busIdx), Name: $(name), SlackBusID: $(posibleSlackBusID)"
+    end
+  end
+
+  fixSequenceNumberInNodeVec!(nodes, trafos)
+
+  branchVec = createBranchVectorFromNodeVector!(nodes = nodes, lines = lines, trafos = trafos, Sbase_MVA = sbase_mva, shunts = shunts, prosumps = prosumers)
+
+  renumberNodeIdx!(branchVec, nodes, log)
+
+  net = Net(netName, sbase_mva, slackBusIdx, nodes, lines, trafos, branchVec, prosumers, shunts)
+
+  return net
 end

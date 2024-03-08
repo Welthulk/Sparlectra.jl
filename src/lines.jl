@@ -12,7 +12,8 @@ mutable struct ACLineSegment <: AbstractBranch
   c_nf_per_km::Union{Nothing,Float64}
   tanδ::Union{Nothing,Float64}
 
-  function ACLineSegment(c::AbstractComponent, length::Float64, r::Float64, x::Float64, c_nf_per_km::Union{Nothing,Float64} = nothing, tanδ::Union{Nothing,Float64} = nothing)
+  function ACLineSegment(;vn_kv::Float64, from::Int, to::Int, length::Float64, r::Float64, x::Float64, c_nf_per_km::Union{Nothing,Float64} = nothing, tanδ::Union{Nothing,Float64} = nothing)
+    c= getLineImpPGMComp(vn_kv, from, to)
     g = 0.0
     b = 0.0
     if !isnothing(c_nf_per_km) && !isnothing(tanδ)
@@ -22,12 +23,7 @@ mutable struct ACLineSegment <: AbstractBranch
     end
     new(c, length, r, x, b, g, c_nf_per_km, tanδ)
   end
-
-  function ACLineSegment(id::String, name::String, Vn::Float64, length::Float64, r::Float64, x::Float64, b::Union{Nothing,Float64} = nothing, g::Union{Nothing,Float64} = nothing, c_nf_per_km::Union{Nothing,Float64} = nothing)
-    comp = Component(id, name, ResDataTypes.LineC, Vn)
-    new(comp, length, r, x, b, g, c_nf_per_km, nothing)
-  end
-
+  
   function Base.show(io::IO, acseg::ACLineSegment)
     print(io, "ACLineSegment( ")
     print(io, acseg.comp)

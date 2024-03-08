@@ -1,7 +1,6 @@
 using Test
 using Sparlectra
 using Sparlectra.ResDataTypes
-using Sparlectra.SparlectraTools
 using Sparlectra.SparlectraExport
 using Sparlectra.SparlectraImport
 using Sparlectra.SparlectraNet
@@ -39,8 +38,8 @@ function acpflow(casefile::String, iterations::Int, verbose::Int, mdo::Bool, exp
     ite, erg = calcNewtonRaphson!(Y, myNet.nodeVec, myNet.baseMVA, iterations, tol, verbose, sparse)
   end
 
-  if erg == 0 || printResultAnyCase
-    calcNetLosses!(myNet.nodeVec, myNet.branchVec, myNet.baseMVA, (verbose > 1))
+  if erg == 0 || printResultAnyCase    
+    calcNetLosses!(myNet.nodeVec, myNet.branchVec, myNet.baseMVA)
     if printResultToFile
       jpath = joinpath(pwd(), "data", "mpower")
       @info "...export results to $(jpath)"
