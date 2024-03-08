@@ -179,7 +179,6 @@ module SparlectraImport
 using Sparlectra
 using Sparlectra.ResDataTypes
 using RegularExpressions
-using UUIDs
 using JSON
 
 export 
