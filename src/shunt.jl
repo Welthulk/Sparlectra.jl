@@ -15,7 +15,7 @@ mutable struct Shunt
   function Shunt(;fromBus::Int, id::Int, base_MVA::Float64, Vn_kV_shunt::Float64, p_shunt::Union{Nothing,Float64}=nothing, q_shunt::Union{Nothing,Float64}=nothing, g_shunt::Union{Nothing,Float64}=nothing, b_shunt::Union{Nothing,Float64}=nothing, ratio::Float64 = 1.0, status::Int = 1)
     comp = getShuntPGMComp(Vn_kV_shunt, fromBus, id)
     busIdx = fromBus
-    if isnothing(p_shunt) && isnothing(q_shunt) || isnothing(g_shunt) && isnothing(b_shunt)
+    if (isnothing(p_shunt) && isnothing(q_shunt)) && (isnothing(g_shunt) && isnothing(b_shunt))      
       error("Either p_shunt and q_shunt or g_shunt and b_shunt must be given")      
     end
 
