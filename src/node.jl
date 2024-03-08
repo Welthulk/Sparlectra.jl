@@ -4,13 +4,9 @@
 
 # Data type to describe the topology
 mutable struct Node
-  comp::AbstractComponent
-  terminals::Vector{Terminal}
-  busIdx::Integer
-  _kidx::Integer # original busnumber
+  comp::AbstractComponent  
+  busIdx::Integer  
   _nodeType::NodeType
-  _auxNodeID::Union{Nothing,String} # auxiliary node ID for mapping to node
-
   _ratedS::Union{Nothing,Float64}
   _lZone::Union{Nothing,Integer} # loss Zone
   _area::Union{Nothing,Integer}
@@ -25,12 +21,10 @@ mutable struct Node
   _pƩGen::Union{Nothing,Float64}  # Ʃ active power injected
   _qƩGen::Union{Nothing,Float64}  # Ʃ reactive power injected
 
-  function Node(
-    c::Component,
-    t::Vector{Terminal},
-    busIdx::Integer,
-    nodeType::NodeType,
-    auxNodeID::Union{Nothing,String} = nothing,
+  function Node(;  
+    busIdx::Integer,    
+    Vn_kV::Float64,
+    nodeType::NodeType,        
     ratedS::Union{Nothing,Float64} = nothing,
     zone::Union{Nothing,Integer} = nothing,
     area::Union{Nothing,Integer} = nothing,
@@ -43,71 +37,16 @@ mutable struct Node
     pƩGen::Union{Nothing,Float64} = nothing,
     qƩGen::Union{Nothing,Float64} = nothing,
   )
-    new(c, t, busIdx, busIdx, nodeType, auxNodeID, ratedS, zone, area, vm_pu, va_deg, pƩLoad, qƩLoad, pShunt, qShunt, pƩGen, qƩGen)
+    c = getNocdeComp(Vn_kV, busIdx, nodeType)
+    new(c, busIdx, nodeType, ratedS, zone, area, vm_pu, va_deg, pƩLoad, qƩLoad, pShunt, qShunt, pƩGen, qƩGen)
   end
 
-  function Node(
-    c::Component,
-    t::Vector{Terminal},
-    busIdx::Integer,
-    kIdx::Integer,
-    nodeType::NodeType,
-    auxNodeID::Union{Nothing,String} = nothing,
-    ratedS::Union{Nothing,Float64} = nothing,
-    zone::Union{Nothing,Integer} = nothing,
-    area::Union{Nothing,Integer} = nothing,
-    vm_pu::Union{Nothing,Float64} = nothing,
-    va_deg::Union{Nothing,Float64} = nothing,
-    pƩLoad::Union{Nothing,Float64} = nothing,
-    qƩLoad::Union{Nothing,Float64} = nothing,
-    pShunt::Union{Nothing,Float64} = nothing,
-    qShunt::Union{Nothing,Float64} = nothing,
-    pƩGen::Union{Nothing,Float64} = nothing,
-    qƩGen::Union{Nothing,Float64} = nothing,
-  )
-    new(c, t, busIdx, kIdx, nodeType, auxNodeID, ratedS, zone, area, vm_pu, va_deg, pƩLoad, qƩLoad, pShunt, qShunt, pƩGen, qƩGen)
-  end
-
-  function Node(
-    id::String,
-    name::String,
-    vn::Float64,
-    terminals::Vector{Terminal},
-    auxNodeID::Union{Nothing,String} = nothing,
-    ratedS::Union{Nothing,Float64} = nothing,
-    zone::Union{Nothing,Integer} = nothing,
-    area::Union{Nothing,Integer} = nothing,
-    vm_pu::Union{Nothing,Float64} = nothing,
-    va_deg::Union{Nothing,Float64} = nothing,
-    pƩLoad::Union{Nothing,Float64} = nothing,
-    qƩLoad::Union{Nothing,Float64} = nothing,
-    pShunt::Union{Nothing,Float64} = nothing,
-    qShunt::Union{Nothing,Float64} = nothing,
-    pƩGen::Union{Nothing,Float64} = nothing,
-    qƩGen::Union{Nothing,Float64} = nothing,
-  )
-    nodeType = ResDataTypes.Busbarsection
-    c = Component(id, name, nodeType, vn)
-
-    for term in terminals
-      if c.cVN != term.comp.cVN
-        @warn "Voltage levels of terminals are not equal Vn = $(c.Vn) != $(term.comp.cVN), Terminal: $(term.comp.cName), Node-Name: $(name)"
-      end
-    end
-
-    t = copy(terminals)
-    sort!(t, by = x -> x.seite)
-    new(c, t, 0, 0, ResDataTypes.UnknownN, auxNodeID, ratedS, zone, area, vm_pu, va_deg, pƩLoad, qƩLoad, pShunt, qShunt, pƩGen, qƩGen)
-  end
 
   function Base.show(io::IO, node::Node)
     print(io, "Node( ")
-    print(io, "ID: ", node.comp.cID, ", ")
-    print(io, "Name: ", node.comp.cName, ", ")
-    print(io, "Typ: ", node.comp.cTyp, ", ")
-    print(io, "Vn: ", node.comp.cVN, ", ")
+    print(io, node.comp, ", ")
     print(io, "BusIndex: ", node.busIdx, ", ")
-    print(io, "NodeIndex: ", node._kidx, ", ")
+    
     print(io, "nodeType: ", node._nodeType, ", ")
     if (!isnothing(node._lZone))
       print(io, "Loss Zone: ", node._lZone, ", ")
@@ -143,27 +82,18 @@ mutable struct Node
       print(io, "ƩQGen: ", node._qƩGen, ", ")
     end
     println(io, ")")
-    for t in node.terminals
-      println(io, t)
-    end
   end
 end
 
-#helper 
-function getNodeName(node::Node)::String
-  return node.comp.cName
-end
-
-function getNodeID(node::Node)::String
-  return node.comp.cID
-end
-
-function getNodeVn(node::Node)::Float64
-  return node.comp.cVN
-end
-
-function getNodeType(node::Node)::NodeType
-  return node._nodeType
+function getNocdeComp(Vn_kV::Float64, node_idx::Int, nodeType)::ImpPGMComp  
+  cTyp = toComponentTyp("Busbarsection")
+  if (nodeType == Slack)
+    name = "Bus_$(Int(node_idx))_$(string(convert(Int,trunc(Vn_kV))))*"
+  else
+    name = "Bus_$(Int(node_idx))_$(string(convert(Int,trunc(Vn_kV))))"
+  end
+  cID = "#"*name*"#"
+  return ImpPGMComp(cID, name, cTyp, Vn_kV, node_idx, node_idx)
 end
 
 mutable struct NodeParameters
@@ -267,27 +197,6 @@ function setNodeParameters!(node::Node, nodeParam::NodeParameters)
   end
 end
 
-function setNodeIdx!(node::Node, kIdx::Integer)
-  node._kidx = kIdx
-end
-
-function setBusIdx!(node::Node, bIdx::Integer)
-  node.busIdx = bIdx
-end
-
-function setNodeType!(node::Node, nodeType::NodeType)
-  node._nodeType = nodeType
-end
-
-function setNodeType!(node::Node, type::String)
-  nodeType = toNodeType(type)
-  node._nodeType = nodeType
-end
-
-function setRatedS!(node::Node, ratedS::Float64)
-  node._ratedS = ratedS
-end
-
 function setNodePQ!(node::Node, p::Union{Nothing,Float64}, q::Union{Nothing,Float64})
   if !isnothing(p)
     node._pƩLoad = p
@@ -359,11 +268,6 @@ function hasShuntInjection(node::Node)
   return true
 end
 
-# helper for sorting
-function nodeComparison(node1::Node, node2::Node)
-  node1._kidx < node2._kidx
-end
-
 function busComparison(node1::Node, node2::Node)
   node1.busIdx < node2.busIdx
 end
@@ -387,4 +291,12 @@ end
 function setVmVa!(node::Node, vm_pu::Float64, va_deg::Float64)
   node._vm_pu = vm_pu
   node._va_deg = va_deg
+end
+
+function isSlack(o::ResDataTypes.Node)
+  if o._nodeType == ResDataTypes.Slack
+    return true
+  else
+    return false
+  end  
 end

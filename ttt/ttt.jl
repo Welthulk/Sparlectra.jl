@@ -1,47 +1,62 @@
 # Author: Udo Schmitz (https://github.com/Welthulk)
-# Date: 01.8.2023
-# include-file readnetfromfile.jl
-# Bus
-struct Bus
-  busIdx::Int64
-  name::String
-  id::String
-  wt3id::String
-  vn_kv::Float64
-  type::Int64
+# Date: 05.03.2024
+# experimental arae
 
-  function Bus(busIdx::Int64, name::String, id::String, wt3id::String, vn_kv::Float64, type::Int64)
-    new(busIdx, name, id, wt3id, vn_kv, type)
-  end
-  function Base.show(io::IO, bus::Bus)
-    print(io, "busIdx:", bus.busIdx, ", bus: ", bus.name, ", id: ", bus.id, ", wt3id: ", bus.wt3id, ", vn: ", bus.vn_kv, ", type: ", bus.type)
-  end
-end
+# outdated functions:
+function setParallelBranches!(branches::Vector{Branch})
+  branchTupleSet = Set{Tuple}()
+  branchDict = Dict{Tuple{Integer,Integer},Vector{Branch}}()
 
-function readTapMod(tap::Dict{String,Any})
-  side = tap["tap_side"]
-  tap_min = Int(tap["tap_min"])
-  tap_max = Int(tap["tap_max"])
-  tap_neutral = Int(tap["tap_neutral"])
-  tap_step_percent = float(tap["tap_step_percent"])
-  shift_degree = float(tap["shift_degree"])
-  neutralU_ratio = float(tap["neutralU_ratio"])
+  for b in branches
+    tupple = (b.fromBus, b.toBus)
 
-  return side, tap_min, tap_max, tap_neutral, tap_step_percent, shift_degree, neutralU_ratio
-end
-
-function checkBusNumber(bus::Int64, busVec::Vector{Bus})::Bool
-  for b in busVec
-    if b.busIdx == bus
-      return true
+    if tupple in branchTupleSet
+      existing_branches = branchDict[tupple]
+      push!(existing_branches, b)
+    else
+      branchDict[tupple] = [b]
+      push!(branchTupleSet, tupple)
     end
   end
-  @warn "bus $bus not found!"
-  return false
+
+  for (k, b_vec) in branchDict
+    if length(b_vec) > 1
+      sum_b_pu = 0.0
+      sum_g_pu = 0.0
+      sum_z = 0.0
+
+      for b in b_vec
+        b.isParallel = true
+        b.skipYBus = true
+        if b.status == 1          
+          sum_b_pu += b.b_pu
+          sum_g_pu += b.g_pu
+          sum_z += (b.r_pu - b.x_pu * im) / (b.r_pu^2 + b.x_pu^2)
+        end
+      end
+
+      z_total = 1.0 / sum_z
+      r_pu = real(z_total)
+      x_pu = imag(z_total)
+
+      last_b = b_vec[end]
+      for (i,b) in enumerate(b_vec)
+        if b.status == 1
+          adjP = AdjElecParams(r_pu = r_pu, x_pu = x_pu, b_pu = sum_b_pu, g_pu = sum_g_pu)
+          setAdjElecParam!(adjP, b)
+          @debug "branch (2): $(b)"
+          if i==1
+            @debug "last parallel element (3): $(b)"
+            b.skipYBus = false
+          end
+        end
+      end
+    end
+  end
 end
 
-# base_MVA = 0.0 for default value in case file, otherwise set to desired value
-function createNetFromFile(filename, base_MVA::Float64 = 0.0, log::Bool = false)::ResDataTypes.Net
+
+function createNetFromFile(filename, base_MVA::Float64 = 0.0, log::Bool = false, check = false)::ResDataTypes.Net
   debug = false
   log_println(message) = log && println(message)
   println("create network from file: $(filename)")
@@ -86,6 +101,9 @@ function createNetFromFile(filename, base_MVA::Float64 = 0.0, log::Bool = false)
   log_println("Buses:")
   busIdx = 0 # Counter for bus index
   slackIdx = 0 # Counter for slack index
+
+  slack_vm_pu = 1.0
+  slack_va_deg = 0.0
   for bus in buses
     busIdx = Int64(bus["bus"])
     nodeID = string(bus["id"])
@@ -120,9 +138,7 @@ function createNetFromFile(filename, base_MVA::Float64 = 0.0, log::Bool = false)
 
   #Check if the bus numbers are consecutive and unique        
   for (i, bus) in enumerate(busVec)
-    if bus.busIdx != i
-      @error "bus numbers are not consecutive and unique"
-    end
+    @assert bus.busIdx == i "bus numbers are not consecutive and unique"
   end
 
   # Set up auxillary buses
@@ -165,6 +181,7 @@ function createNetFromFile(filename, base_MVA::Float64 = 0.0, log::Bool = false)
     cName = string(line["name"])
     cID = string(line["id"])
     length = float(line["length_km"])
+    @assert length > 0 "line length must be greater than 0"
     r = 0.0
     x = 0.0
     c_nf_per_km = 0.0
@@ -205,21 +222,21 @@ function createNetFromFile(filename, base_MVA::Float64 = 0.0, log::Bool = false)
     Vn = VoltageDict[Bus]
 
     status = line["in_service"]
-    asec = ACLineSegment(cID, cName, Vn, length, r, x, b, g, c_nf_per_km)
+
+    from_bus = line["from_bus"]
+    to_bus = line["to_bus"]
+    checkBusNumber(from_bus, busVec)
+    checkBusNumber(to_bus, busVec)
+
+    cPGM = ImpPGMComp(cID, cName, toComponentTyp("ACLINESEGMENT"), Vn, from_bus, to_bus)
+    asec = ACLineSegment(cPGM, length, r, x, b, g, c_nf_per_km, 0.0)
     if log
       println(asec)
     end
     push!(ACLines, asec)
 
-    cLine = ResDataTypes.toComponentTyp("ACLINESEGMENT")
-    c = ResDataTypes.Component(cID, cName, cLine, Vn)
-
-    t1 = ResDataTypes.Terminal(c, ResDataTypes.Seite1)
-    t2 = ResDataTypes.Terminal(c, ResDataTypes.Seite2)
-    from_bus = line["from_bus"]
-    to_bus = line["to_bus"]
-    checkBusNumber(from_bus, busVec)
-    checkBusNumber(to_bus, busVec)
+    t1 = ResDataTypes.Terminal(cPGM, ResDataTypes.Seite1)
+    t2 = ResDataTypes.Terminal(cPGM, ResDataTypes.Seite2)
 
     t1Terminal = NodeTerminalsDict[from_bus]
     t2Terminal = NodeTerminalsDict[to_bus]
@@ -238,7 +255,7 @@ function createNetFromFile(filename, base_MVA::Float64 = 0.0, log::Bool = false)
     if log
       println("fromNodeID: ", fromNodeID, ", toNodeID: ", toNodeID, ", from_bus: ", from_bus, ", to_bus: ", to_bus, ", r_pu: ", r_pu, ", x_pu: ", x_pu, ", b_pu: ", b_pu, ", g_pu: ", g_pu, ", ratio: ", ratio, ", angle: ", angle, ", status: ", status, ", angMin: ", angMin, ", angMax: ", angMax)
     end
-    branch = ResDataTypes.Branch(c, from_bus, to_bus, from_bus, to_bus, fromNodeID, toNodeID, r_pu, x_pu, b_pu, g_pu, ratio, angle, status)
+    branch = ResDataTypes.Branch(cPGM, from_bus, to_bus, from_bus, to_bus, fromNodeID, toNodeID, r_pu, x_pu, b_pu, g_pu, ratio, angle, status)
     if log
       @show branch
     end
@@ -251,7 +268,14 @@ function createNetFromFile(filename, base_MVA::Float64 = 0.0, log::Bool = false)
     vn_hv = float(t["vn_hv_kv"])
     vn_lv = float(t["vn_lv_kv"])
     vk_percent = float(t["vk_percent"])
-    vkr_percent = float(t["vkr_percent"])
+    org_vk_percent = vk_percent
+    vkr_percent = nothing
+    pk_kW = nothing
+    try
+      vkr_percent = float(t["vkr_percent"])
+      pk_kW = float(t["pk_kw"])
+    catch
+    end
     pfe_kw = float(t["pfe_kw"])
     io_percent = float(t["i0_percent"])
     shift_degree = 0.0
@@ -277,7 +301,7 @@ function createNetFromFile(filename, base_MVA::Float64 = 0.0, log::Bool = false)
     catch
     end
 
-    vk_dependence = ""
+    vk_dependence = nothing
     try
       vk_dependence = t["vk_dependence"]
     catch
@@ -317,7 +341,7 @@ function createNetFromFile(filename, base_MVA::Float64 = 0.0, log::Bool = false)
     vkVec = []
     xDependence = false
     vkcorr = 0.0
-    if vk_dependence != raw""
+    if !isnothing(vk_dependence)
       for dep in vkDepChr
         if vk_dependence in keys(vkDepChr)
           dep = vkDepChr[vk_dependence]
@@ -346,38 +370,55 @@ function createNetFromFile(filename, base_MVA::Float64 = 0.0, log::Bool = false)
     HV_Voltage = VoltageDict[busIdx]
     LV_Voltage = VoltageDict[USIdx]
     ratio = calcRatio(HV_Voltage, vn_hv, LV_Voltage, vn_lv, tap_pos, tap_neutral, tap_step_percent, tapSeite)
+    
+    mParm=nothing    
+    if !isnothing(pk_kW)             
+      vkp=org_vk_percent/100.0
+      i0p=io_percent
+      p=pk_kW*1e3
+      s=sn*1e6
+      pfe=pfe_kw*1e3
+      mParm=TransformerModelParameters(s, vkp, p, i0p, pfe)
+    end
+
     if regelungEin && tapSeite == 1
       Vtab = calcNeutralU(neutralU_ratio, vn_hv, tap_min, tap_max, tap_step_percent)
       tap = ResDataTypes.PowerTransformerTaps(tap_pos, tap_min, tap_max, tap_neutral, tap_step_percent, Vtab)
-      r_hv, x_hv, b_hv, g_hv, = calcTrafoParams(sn, vn_hv, vk_percent, vkr_percent, pfe_kw, io_percent)
+      
+      r_hv, x_hv, b_hv, g_hv, = calcTrafoParams(sn_mva=sn, vn_hv_kv=vn_hv, vk_percent=vk_percent,  pk_kw=pk_kW, vkr_percent=vkr_percent,  pfe_kw=pfe_kw, i0_percent=io_percent)
+      
       r_pu, x_pu, b_pu, g_pu = calcTwoPortPU(vn_hv, sn, r_hv, x_hv, b_hv, g_hv)
-      s1 = PowerTransformerWinding(vn_hv, r_hv, x_hv, b_hv, g_hv, shift_degree, vn_hv, sn, tap)
-      s2 = PowerTransformerWinding(vn_lv, 0.0, 0.0)
+      #function PowerTransformerWinding(; Vn::Float64, r::Float64, x::Float64, b::Union{Nothing, Float64} = nothing, g::Union{Nothing, Float64} = nothing, shift_degree::Union{Nothing, Float64} = nothing, ratedU::Union{Nothing, Float64} = nothing, ratedS::Union{Nothing, Float64} = nothing, taps::Union{Nothing, PowerTransformerTaps} = nothing, isPu_RXGB::Union{Nothing, Bool} = nothing, modelData::Union{Nothing, TransformerModelParameters} = nothing)
+      #  new(Vn, r, x, b, g, shift_degree, ratedU, ratedS, taps, isPu_RXGB, modelData)
+      s1 = PowerTransformerWinding(Vn = vn_hv, r = r_hv, x = x_hv, b = b_hv, g = g_hv, shift_degree = shift_degree, ratedU = vn_hv, ratedS = sn, taps = tap, isPu_RXGB = false, modelData = mParm)
+      s2 = PowerTransformerWinding(Vn = vn_lv, r = 0.0, x = 0.0)
 
     elseif regelungEin && tapSeite == 2
       Vtab = calcNeutralU(neutralU_ratio, vn_lv, tap_min, tap_max, tap_step_percent)
       tap = ResDataTypes.PowerTransformerTaps(tap_pos, tap_min, tap_max, tap_neutral, tap_step_percent, Vtab)
-      r_lv, x_lv, b_lv, g_lv = calcTrafoParams(sn, vn_hv, vk_percent, vkr_percent, pfe_kw, io_percent)
+      # maibe an error here: vn_hv?
+      r_lv, x_lv, b_lv, g_lv = calcTrafoParams(sn_mva=sn, vn_hv_kv=vn_hv, vk_percent=vk_percent, pk_kw=pk_kw, vkr_percent=vkr_percent, pfe_kw=pfe_kw, i0_percent=io_percent)
       r_pu, x_pu, b_pu, g_pu = calcTwoPortPU(vn_hv, sn, r_lv, x_lv, b_lv, g_lv)
-      s1 = PowerTransformerWinding(vn_hv, 0.0, 0.0)
-      s2 = PowerTransformerWinding(vn_lv, r_lv, x_lv, b_lv, g_lv, shift_degree, vn_lv, sn, tap)
+      s1 = PowerTransformerWinding(Vn = vn_hv, r = 0.0, x = 0.0)
+      s2 = PowerTransformerWinding(Vn = vn_lv, r = r_lv, x = x_lv, b = b_lv, g = g_lv, shift_degree = shift_degree, ratedU = vn_lv, ratedS = sn, taps = tap, isPu_RXGB = false, modelData = mParm)
 
     else
-      r_hv, x_hv, b_hv, g_hv = calcTrafoParams(sn, vn_hv, vk_percent, vkr_percent, pfe_kw, io_percent)
+      r_hv, x_hv, b_hv, g_hv = calcTrafoParams(sn_mva=sn, vn_hv_kv=vn_hv, vk_percent=vk_percent, pk_kw=pk_kw, vkr_percent=vkr_percent,  pfe_kw=pfe_kw, i0_percent=io_percent)
       r_pu, x_pu, b_pu, g_pu = calcTwoPortPU(vn_hv, sn, r_hv, x_hv, b_hv, g_hv)
-      s1 = PowerTransformerWinding(vn_hv, r_hv, x_hv, g_hv, b_hv, vn_hv, sn, nothing)
-      s2 = PowerTransformerWinding(vn_lv, 0.0, 0.0)
+      s1 = PowerTransformerWinding(Vn = vn_hv, r = r_hv, x = x_hv, g = g_hv, b = b_hv, ratedU = vn_hv, ratedS = sn, isPu_RXGB = false, modelData = mParm)
+      s2 = PowerTransformerWinding(Vn = vn_lv, r = 0.0, x = 0.0)
     end
     s3 = nothing
-    cmp = ResDataTypes.Component(cID, cName, "POWERTRANSFORMER", vn_hv)
-    trafo = PowerTransformer(cmp, regelungEin, s1, s2, s3)
+
+    cImpPGMComp = ImpPGMComp(cID, cName, toComponentTyp("POWERTRANSFORMER"), vn_hv, busIdx, USIdx)
+    trafo = PowerTransformer(cImpPGMComp, regelungEin, s1, s2, s3, ResDataTypes.Ratio)
     if log
       @show trafo
     end
     push!(trafos, trafo)
 
-    t1 = ResDataTypes.Terminal(cmp, ResDataTypes.Seite1)
-    cmp2 = ResDataTypes.Component(cID, cName, "POWERTRANSFORMER", vn_lv)
+    t1 = ResDataTypes.Terminal(cImpPGMComp, ResDataTypes.Seite1)
+    cmp2 = ImpPGMComp(cID, cName, toComponentTyp("POWERTRANSFORMER"), vn_lv, busIdx, USIdx)
     t2 = ResDataTypes.Terminal(cmp2, ResDataTypes.Seite2)
 
     t1Terminal = NodeTerminalsDict[busIdx]
@@ -388,7 +429,7 @@ function createNetFromFile(filename, base_MVA::Float64 = 0.0, log::Bool = false)
     push!(t1Terminal, t1)
     push!(t2Terminal, t2)
 
-    branch = ResDataTypes.Branch(cmp, busIdx, USIdx, nID, toNodeID, r_pu, x_pu, b_pu, g_pu, ratio, shift_degree, inService)
+    branch = ResDataTypes.Branch(cImpPGMComp, busIdx, USIdx, nID, toNodeID, r_pu, x_pu, b_pu, g_pu, ratio, shift_degree, inService)
     if log
       @show branch
     end
@@ -552,8 +593,8 @@ function createNetFromFile(filename, base_MVA::Float64 = 0.0, log::Bool = false)
       # handle vk dependence
       tapVec = []
       vkVec = []
-      xDependence = false
-      vkcorr = 0.0
+      
+      vkcorr = 1.0
       if vk_dependence != raw"" && !isnothing(vk_dependence)
         for dep in vkDepChr
           if vk_dependence in keys(vkDepChr)
@@ -567,8 +608,8 @@ function createNetFromFile(filename, base_MVA::Float64 = 0.0, log::Bool = false)
 
             vkcorr = calcVKDependence(xTaps, yVKs, Float64(tap_pos))
 
-            xDependence = true
-            break
+            
+            
           end
         end
       end
@@ -579,22 +620,16 @@ function createNetFromFile(filename, base_MVA::Float64 = 0.0, log::Bool = false)
 
       if tapSide == 1
         neutralU = vn_hv_kv
-        vn_hv_kv = neutralU * ntap
-        if xDependence
-          vk_hv_percent = vkcorr
-        end
+        vn_hv_kv = neutralU * ntap        
+        vk_hv_percent = vkcorr        
       elseif tapSide == 2
         neutralU = vn_mv_kv
-        vn_mv_kv = neutralU * ntap
-        if xDependence
-          vk_mv_percent = vkcorr
-        end
+        vn_mv_kv = neutralU * ntap        
+        vk_mv_percent = vkcorr        
       elseif tapSide == 3
         neutralU = vn_lv_kv
-        vn_lv_kv = neutralU * ntap
-        if xDependence
-          vk_lv_percent = vkcorr
-        end
+        vn_lv_kv = neutralU * ntap        
+        vk_lv_percent = vkcorr        
       end
       rk_T1, xk_T1, bm_T1, gm_T1 = calc3WTParams(1, sn_hv_mva, sn_mv_mva, sn_lv_mva, HV_kv, MV_kv, LV_kv, vk_hv_percent, vk_mv_percent, vk_lv_percent, vkr_hv_percent, vkr_mv_percent, vkr_lv_percent, pfe_kw, i0_percent)
 
@@ -748,8 +783,7 @@ function createNetFromFile(filename, base_MVA::Float64 = 0.0, log::Bool = false)
       minQ = nothing
       ratedPowerFactor = nothing
       referencePri = nothing
-
-      comp = ResDataTypes.Component(cID, cName, "LOAD", Vn)
+      comp = ImpPGMComp(cID, cName, toComponentTyp("LOAD"), Vn, Bus, Bus)
       pRS = ProSumer(comp, nID, ratedS, ratedU, qPercent, p, q, maxP, minP, maxQ, minQ, ratedPowerFactor, referencePri, nothing, nothing)
       if log
         @show pRS
@@ -795,9 +829,20 @@ function createNetFromFile(filename, base_MVA::Float64 = 0.0, log::Bool = false)
       ratedPowerFactor = nothing
       referencePri = nothing
 
-      comp = ResDataTypes.Component(cID, cName, "GENERATOR", Vn)
+      vm_pu = nothing
+      vm_degree = nothing
 
-      pRS = ProSumer(comp, nID, ratedS, ratedU, qPercent, p, q, maxP, minP, maxQ, minQ, ratedPowerFactor, referencePri, nothing, nothing)
+      isPUNode = false
+
+      if Bus == slackIdx
+        referencePri = slackIdx
+        vm_pu = 1.0
+        vm_degree = 0.0
+        slack_vm_pu = vm_pu
+        slack_va_deg = vm_degree
+      end
+      comp = ImpPGMComp(cID, cName, toComponentTyp("GENERATOR"), Vn, Bus, Bus)
+      pRS = ProSumer(comp, nID, ratedS, ratedU, qPercent, p, q, maxP, minP, maxQ, minQ, ratedPowerFactor, referencePri, vm_pu, vm_degree, ResDataTypes.Injection, isPUNode)
       if log
         @show pRS
       end
@@ -839,8 +884,18 @@ function createNetFromFile(filename, base_MVA::Float64 = 0.0, log::Bool = false)
       minQ = float(g["min_q_mvar"])
       ratedPowerFactor = nothing
       referencePri = nothing
-      comp = ResDataTypes.Component(cID, cName, "SYNCHRONOUSMACHINE", Vn)
-      pRS = ProSumer(comp, nID, ratedS, ratedU, qPercent, p, q, maxP, minP, maxQ, minQ, ratedPowerFactor, referencePri, vm_pu, nothing)
+      vm_degree = nothing
+      isPUNode = false
+
+      if Bus == slackIdx
+        referencePri = slackIdx
+        vm_degree = 0.0
+        slack_vm_pu = vm_pu
+        slack_va_deg = vm_degree
+        isPUNode = true
+      end
+      comp = ImpPGMComp(cID, cName, toComponentTyp("SYNCHRONOUSMACHINE"), Vn, Bus, Bus)
+      pRS = ProSumer(comp, nID, ratedS, ratedU, qPercent, p, q, maxP, minP, maxQ, minQ, ratedPowerFactor, referencePri, vm_pu, vm_degree, ResDataTypes.Injection, isPUNode)
       if log
         @show pRS
       end
@@ -882,8 +937,15 @@ function createNetFromFile(filename, base_MVA::Float64 = 0.0, log::Bool = false)
       minQ = nothing
       ratedPowerFactor = nothing
       referencePri = nothing
-      comp = ResDataTypes.Component(cID, cName, "EXTERNALNETWORKINJECTION", Vn)
-      pRS = ProSumer(comp, nID, ratedS, ratedU, qPercent, p, q, maxP, minP, maxQ, minQ, ratedPowerFactor, referencePri, vm_pu, vm_degree)
+      isPUNode = true
+      if Bus == slackIdx
+        referencePri = slackIdx
+        slack_vm_pu = vm_pu
+        slack_va_deg = vm_degree
+      end
+
+      comp = ImpPGMComp(cID, cName, toComponentTyp("EXTERNALNETWORKINJECTION"), Vn, Bus, Bus)
+      pRS = ProSumer(comp, nID, ratedS, ratedU, qPercent, p, q, maxP, minP, maxQ, minQ, ratedPowerFactor, referencePri, vm_pu, vm_degree, ResDataTypes.Injection, isPUNode)
       if log
         @show pRS
       end
@@ -929,7 +991,8 @@ function createNetFromFile(filename, base_MVA::Float64 = 0.0, log::Bool = false)
 
       ratio = (Vn / vn_kv)^2
       y_pu = calcYShunt(p_shunt, q_shunt, ratio, baseMVA)
-      comp = ResDataTypes.Component(cID, cName, "LINEARSHUNTCOMPENSATOR", vn_kv)
+
+      comp = ImpPGMComp(cID, cName, toComponentTyp("LINEARSHUNTCOMPENSATOR"), vn_kv, Bus, Bus)
       sh = ResDataTypes.Shunt(comp, nID, Bus, p_shunt, q_shunt, y_pu, in_service)
       if log
         @show sh
@@ -961,29 +1024,609 @@ function createNetFromFile(filename, base_MVA::Float64 = 0.0, log::Bool = false)
     if log
       println("Bus: ", busName, " busIdx: ", busIdx, " ID: ", cID, " Voltage: ", Vn, "\nTerminals: ", terminals)
     end
-    node = ResDataTypes.Node(cID, busName, Vn, terminals)
 
-    nodeType = ResDataTypes.toNodeType(nodeType)
-    setNodeType!(node, nodeType)
-    setBusIdx!(node, busIdx)
-
-    if nodeType == nodeType == ResDataTypes.Isolated
-      setNodeIdx!(node, 4)
-    else
-      setNodeIdx!(node, busIdx)
-    end
-
+    c = ImpPGMComp(cID, busName, ResDataTypes.Busbarsection, Vn, busIdx, busIdx)
+    node = Node(c, terminals, busIdx, busIdx, toNodeType(nodeType))
     nParms = NodeParametersDict[busIdx]
+
+    if nodeType == 3
+      nParms.vm_pu = slack_vm_pu
+      nParms.va_deg = slack_va_deg
+    end
     setNodeParameters!(node, nParms)
+
     if log
       @show node
     end
     push!(nodeVec, node)
   end
 
-  checkNodeConnections(nodeVec)
+  if check
+    checkNodeConnections(nodeVec)
+  end
+
+  setParallelBranches!(branchVec)
 
   net = ResDataTypes.Net(netName, baseMVA, slackIdx, nodeVec, ACLines, trafos, branchVec, prosum, shuntVec)
 
   return net
+
+end
+
+function readTapMod(tap::Dict{String,Any})
+  side = tap["tap_side"]
+  tap_min = Int(tap["tap_min"])
+  tap_max = Int(tap["tap_max"])
+  tap_neutral = Int(tap["tap_neutral"])
+  tap_step_percent = float(tap["tap_step_percent"])
+  shift_degree = float(tap["shift_degree"])
+  neutralU_ratio = float(tap["neutralU_ratio"])
+
+  return side, tap_min, tap_max, tap_neutral, tap_step_percent, shift_degree, neutralU_ratio
+end
+
+
+## S P A R Q L Q U E R Y C G M E S ###############################################################################################################################################################################################
+module SparqlQueryCGMES
+
+using HTTP
+using JSON
+using Sparlectra.ResDataTypes
+
+export
+  # constants
+  # classes
+  # functions
+  getNodes,
+  getLines,
+  getTrafos,
+  getProSumption
+
+const NodeVector = Vector{ResDataTypes.Node}
+const ACLineVector = Vector{ResDataTypes.ACLineSegment}
+const TrafoVector = Vector{ResDataTypes.PowerTransformer}
+const ProSumptionVector = Vector{ResDataTypes.ProSumer}
+const ShuntVector = Vector{ResDataTypes.Shunt}
+
+# helper
+function isStringEmpty(str::AbstractString)
+  if str == "" || length(str) == 0
+    return true
+  else
+    return false
+  end
+end
+
+# helper
+function getFloatValue(b::AbstractDict, k::String, v::String = "value")
+  try
+    str = b[k][v]
+    result = parse(Float64, str)
+  catch
+    result = nothing
+  end
+end
+# helper
+function getIntegerValue(b::AbstractDict, k::String, v::String = "value")
+  try
+    str = b[k][v]
+    result = parse(Int64, str)
+  catch
+    result = nothing
+  end
+end
+# helper
+function getBoolValue(b::AbstractDict, k::String, v::String = "value")
+  try
+    str = b[k][v]
+    result = parse(Bool, str)
+  catch
+    result = nothing
+  end
+end
+# helper
+function getStringValue(b::AbstractDict, k::String, v::String = "value")
+  try
+    str = b[k][v]
+    result = str
+  catch
+    result = ""
+  end
+end
+
+include("cgmesprosumptionquery.jl")
+include("cgmestrafoquery.jl")
+include("cgmesnodesquery.jl")
+include("cgmeslinesquery.jl")
+
+header2 = Dict("Accept" => "application/sparql-results+json", "Content-Type" => "application/sparql-query")
+
+function getNodes(url::String, debug::Bool)::NodeVector
+  myurl = url #endpoint
+  mynodes = NodeVector()
+
+  success = SparqlQueryCGMES.QueryNodes!(myurl, mynodes, debug)
+  if !success
+    @warn "No result found"
+  end
+  return mynodes
+end
+
+function getLines(url::String, debug::Bool)
+  myurl = url #endpoint
+  ACLines = ACLineVector()
+  success = QueryLines!(myurl, ACLines, debug)
+  if success
+    if debug
+      for acseg in ACLines
+        @show acseg
+      end
+    end
+    return ACLines
+  else
+    #println("No result found")
+    return nothing
+  end
+end
+
+function getTrafos(url::String, debug::Bool)
+  myurl = url #endpoint
+  trafosVec = TrafoVector()
+  success = QueryTrafos!(myurl, trafosVec, debug)
+  if success
+    if debug
+      for trafo in trafosVec
+        @show trafo
+      end
+    end
+    return trafosVec
+  else
+    return nothing
+  end
+end
+
+function getProSumption(url::String, debug::Bool)
+  myurl = url #endpoint
+  prosumptionVec = ProSumptionVector()
+  success = QueryProSumption!(myurl, prosumptionVec, debug)
+  if success
+    if debug
+      for prosumption in prosumptionVec
+        @show prosumption
+      end
+    end
+    return prosumptionVec
+  else
+    #println("kein Ergebnis")
+    return nothing
+  end
+end
+
+end # module SparqlQueryCGMES
+
+
+
+function createNetFromTripleStore(endpoint::String, sbase_mva::Union{Nothing,Float64}, netName::String, slackBusName::String, log::Bool)::ResDataTypes.Net
+  # Create a Sparlectra network from a triple store
+  nodes = Sparlectra.SparqlQueryCGMES.getNodes(endpoint, false)
+  lines = Sparlectra.SparqlQueryCGMES.getLines(endpoint, false)
+  prosumers = Sparlectra.SparqlQueryCGMES.getProSumption(endpoint, false)
+  trafos = Sparlectra.SparqlQueryCGMES.getTrafos(endpoint, false)
+
+  debug = false
+  if debug
+    for n in nodes
+      println(n)
+    end
+    for l in lines
+      println(l)
+    end
+    for p in prosumers
+      println(p)
+    end
+    for t in trafos
+      println(t)
+    end
+  end
+
+  shunts = Vector{ResDataTypes.Shunt}()
+  puNodesIDDict = Dict{String,String}()
+  nodesDict = Dict{String,ResDataTypes.Node}()
+
+  sort!(nodes, lt = nodeComparison)
+
+  posibleSlackBusID = ""
+  for s in prosumers
+    if s.referencePri == 1
+      posibleSlackBusID = s.nodeID
+
+      #if s.proSumptionType == ResDataTypes.ProSumptionType.PQ
+      #  shunt = ResDataTypes.Shunt(s.nodeID, s.pVal, s.qVal)
+      #  push!(shunts, shunt)
+      #end
+    elseif s.isAPUNode
+      if log
+        @info "createNetFromTripleStore: PU Node - $(s.nodeID)"
+      end
+      puNodesIDDict[s.nodeID] = s.nodeID
+    end
+  end
+
+  idx = 0
+  slackBusIdx = 0
+  slackBusID = ""
+  slackName = ""
+  slackNameFound = false
+  # set bus numbers
+  for n in nodes
+    idx += 1
+    n.busIdx = idx
+    n._kidx = idx
+    if !slackNameFound && occursin(slackBusName, n.comp.cName)
+      slackNameFound = true
+      slackBusIdx = idx
+      @info "createNetFromTripleStore: slackBusName - $(slackBusName), slackBusIdx: $(slackBusIdx)"
+      slackName = n.comp.cName
+      slackBusID = n.comp.cID
+    end
+    nodesDict[n.comp.cID] = n
+  end
+  auxBusIdx = idx
+
+  if isnothing(sbase_mva)
+    sbase_mva = 0.0
+    for s in prosumers
+      if isnothing(sbase_mva)
+        if !isnothing(s.ratedS)
+          if sbase_mva < s.ratedS
+            sbase_mva = s.ratedS
+          end
+        elseif !isnothing(s.pVal) && isnothing(s.qVal)
+          s_mva = sqrt(s.pVal^2 + s.qVal^2)
+          if sbase_mva < s_mva
+            sbase_mva = s_mva
+          end
+        elseif !isnothing(s.maxP) && !isnothing(s.maxQ)
+          s_mva = sqrt(s.maxP^2 + s.maxQ^2)
+          if sbase_mva < s_mva
+            sbase_mva = s_mva
+          end
+        end
+      end
+    end
+  end
+  sbase_mva = roundUpToNearest100(sbase_mva) # round up to nearest 100's
+  sign = -1.0
+  for s in prosumers
+    e = s.comp
+    if isMotor(e) || isExternalNetworkInjection(e) || isLoad(e)
+      if haskey(nodesDict, s.nodeID)
+        n = nodesDict[s.nodeID]
+        addAktivePower!(n, sign * s.pVal)
+        addReaktivePower!(n, sign * s.qVal)
+      else
+        @warn "could not find node for motor $(s.nodeID), $(s.comp.cName)"
+      end
+    end
+
+    if isGenerator(e)
+      if haskey(nodesDict, s.nodeID)
+        n = nodesDict[s.nodeID]
+        addGenAktivePower!(n, sign * s.pVal)
+        addGenReaktivePower!(n, sign * s.qVal)
+      else
+        @warn "could not find node for generator $(s.nodeID), $(s.comp.cName)"
+      end
+    end
+
+    if isShunt(e)
+      setShuntPower!(n, s.pVal, s.qVal)
+    end
+  end
+
+  # set up aux-busses for 3WT
+  for t in trafos
+    if !t.isBiWinder
+      auxBusIdx += 1
+      cName = "aux_#" * string(auxBusIdx)
+      nodeID = string(UUIDs.uuid4())
+      vn_aux_kv = t.side1.Vn
+      ratedS = t.side1.ratedS
+      tnodeId = t.comp.cID
+
+      tVec = Vector{Terminal}()
+      auxBuxCmp = Component(nodeID, cName, "AUXBUS", vn_aux_kv)
+      push!(tVec, Terminal(auxBuxCmp, ResDataTypes.Seite1))
+      push!(tVec, Terminal(auxBuxCmp, ResDataTypes.Seite2))
+      push!(tVec, Terminal(auxBuxCmp, ResDataTypes.Seite3))
+
+      auxNode = Node(auxBuxCmp, tVec, auxBusIdx, ResDataTypes.PQ, tnodeId, ratedS, 1, 1, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+      if log
+        @info "auxNode: $(auxNode)"
+      end
+      push!(nodes, auxNode)
+    end
+  end
+
+  for node in nodes
+    if !isnothing(node._ratedS)
+      if node._ratedS > sbase_mva
+        sbase_mva = node._ratedS
+      end
+    end
+
+    if node.busIdx == slackBusIdx
+      node._nodeType = ResDataTypes.Slack
+      #@info "found slackBusIdx: $(slackBusIdx), Name: $(slackName), origin name: $(slackBusID)"
+    else
+      if haskey(puNodesIDDict, node.comp.cID)
+        node._nodeType = ResDataTypes.PV
+      else
+        node._nodeType = ResDataTypes.PQ
+      end
+    end
+  end
+
+  if log
+    @info "SBase = $(sbase_mva) MVA"
+    @info "choosen SlackBus-Number: $(slackBusIdx), Name: $(slackName), origin name: $(slackBusID)"
+    if posibleSlackBusID != ""
+      p = nodesDict[posibleSlackBusID]
+      busIdx = p.busIdx
+      name = p.comp.cName
+
+      @info "posible SlackBus-Number: $(busIdx), Name: $(name), SlackBusID: $(posibleSlackBusID)"
+    end
+  end
+
+  fixSequenceNumberInNodeVec!(nodes, trafos)
+
+  branchVec = createBranchVectorFromNodeVector!(nodes = nodes, lines = lines, trafos = trafos, Sbase_MVA = sbase_mva, shunts = shunts, prosumps = prosumers)
+
+  renumberNodeIdx!(branchVec, nodes, log)
+
+  net = Net(netName, sbase_mva, slackBusIdx, nodes, lines, trafos, branchVec, prosumers, shunts)
+
+  return net
+end
+
+
+function jsonparser(filename, debug::Bool = false)
+  json_data = read(filename, String)
+  data_dict = JSON.parse(json_data)
+  netName = data_dict["Net"]
+  baseMVA = data_dict["BaseMVA"]
+
+  buses = data_dict["Buses"]
+  idx = 0
+  for bus in buses
+    idx += 1
+    if haskey(bus, "bus")
+      if bus["bus"] == ""
+        msg = "bus number is empty!"
+        throw(msg)
+      else
+        idx = bus["bus"]
+      end
+    else
+      msg = "No bus number in this net!"
+      throw(msg)
+    end
+
+    if bus["name"] == ""
+      bus["name"] = "Bus_#" * string(idx)
+    end
+
+    if bus["id"] == ""
+      bus["id"] = UUIDs.uuid4()
+    end
+  end
+
+  linemod = nothing
+  try
+    linemod = data_dict["LineModelling"]
+    #idx=0
+    for lm in linemod
+      idx += 1
+      #if line["model"]== ""            
+      #    line["model"] = "LineMod_#" * string(idx)
+      #end
+      if lm["id"] == ""
+        lm["id"] = UUIDs.uuid4()
+      end
+    end
+  catch
+    if debug
+      println("No LineModelling in this net")
+    end
+  end
+
+  lines = data_dict["ACLines"]
+  #idx=0
+  for line in lines
+    idx += 1
+    #if line["name"]== ""            
+    #    line["name"] = "ACL_#" * string(idx)
+    #end
+    if line["id"] == ""
+      line["id"] = UUIDs.uuid4()
+    end
+  end
+
+  vkDepChr = nothing
+  try
+    vkDepChr = data_dict["VK-Characteristics"]
+  catch
+    if debug
+      println("No VK-Characteristics in this net")
+    end
+  end
+
+  tapMod = nothing
+  try
+    tapMod = data_dict["TapChangerModelling"]
+    idx = 0
+    for tap in tapMod
+      idx += 1
+      if tap["model"] == ""
+        tap["model"] = "TapMod_#" * string(idx)
+      end
+      if tap["id"] == ""
+        tap["id"] = UUIDs.uuid4()
+      end
+    end
+  catch
+    if debug
+      println("No TapChangerModelling in this net")
+    end
+  end
+
+  trafoWT2 = nothing
+  try
+    trafoWT2 = data_dict["TwoWindingTransformers"]
+    idx = 0
+    for trafo in trafoWT2
+      idx += 1
+      if trafo["name"] == ""
+        trafo["name"] = "2WT_#" * string(idx)
+      end
+      if trafo["id"] == ""
+        trafo["id"] = UUIDs.uuid4()
+      end
+    end
+  catch
+    if debug
+      println("No TwoWindingTransformers in this net")
+    end
+  end
+
+  trafoWT3 = nothing
+  try
+    trafoWT3 = data_dict["ThreeWindingTransformers"]
+    idx = 0
+    for trafo in trafoWT3
+      idx += 1
+      if trafo["name"] == ""
+        trafo["name"] = "3WT_#" * string(idx)
+      end
+      if trafo["id"] == ""
+        trafo["id"] = UUIDs.uuid4()
+      end
+    end
+  catch
+    if debug
+      println("No ThreeWindingTransformers in this net")
+    end
+  end
+
+  shunts = nothing
+  try
+    shunts = data_dict["Shunts"]
+    idx = 0
+    for shunt in shunts
+      idx += 1
+      if shunt["name"] == ""
+        shunt["name"] = "SH_#" * string(idx)
+      end
+      if shunt["id"] == ""
+        shunt["id"] = UUIDs.uuid4()
+      end
+    end
+  catch
+    if debug
+      println("No Shunts in this net")
+    end
+  end
+
+  loads = nothing
+  try
+    loads = data_dict["Loads"]
+    idx = 0
+    for load in loads
+      idx += 1
+      if load["name"] == ""
+        load["name"] = "LD_#" * string(idx)
+      end
+      if load["id"] == ""
+        load["id"] = UUIDs.uuid4()
+      end
+    end
+  catch
+    if debug
+      println("No Loads in this net")
+    end
+  end
+  sgens = nothing
+  try
+    sgens = data_dict["StaticGenerators"]
+    idx = 0
+    for sgen in sgens
+      idx += 1
+      if sgen["name"] == ""
+        sgen["name"] = "SGEN_#" * string(idx)
+      end
+      if sgen["id"] == ""
+        sgen["id"] = UUIDs.uuid4()
+      end
+    end
+  catch
+    if debug
+      println("No StaticGenerators in this net")
+    end
+  end
+  vgens = nothing
+  try
+    vgens = data_dict["VoltageControlledGenerators"]
+    idx = 0
+    for vgen in vgens
+      idx += 1
+      if vgen["name"] == ""
+        vgen["name"] = "VGEN_#" * string(idx)
+      end
+      if vgen["id"] == ""
+        vgen["id"] = UUIDs.uuid4()
+      end
+    end
+  catch
+    if debug
+      println("No VoltageControlledGenerators in this net")
+    end
+  end
+  ext_grids = nothing
+  try
+    ext_grids = data_dict["ExternalGrids"]
+    idx = 0
+    for ext_grid in ext_grids
+      idx += 1
+      if ext_grid["name"] == ""
+        ext_grid["name"] = "ExtGrid_#" * string(idx)
+      end
+      if ext_grid["id"] == ""
+        ext_grid["id"] = UUIDs.uuid4()
+      end
+    end
+  catch
+    if debug
+      println("No ExternalGrids in this net")
+    end
+  end
+
+  if debug
+    println("Net: ", netName, "\n")
+    println("BaseMVA: ", baseMVA, "\n")
+    println("Buses: ", buses, "\n")
+    println("linemod: ", linemod, "\n")
+    println("Lines: ", lines, "\n")
+    println("VkDep: ", vkDepChr, "\n")
+    println("TapMod: ", tapMod, "\n")
+    println("Trafowt2: ", trafoWT2, "\n")
+    println("Trafowt3: ", trafoWT3, "\n")
+    println("Shunts: ", shunts, "\n")
+    println("Loads: ", loads, "\n")
+    println("Sgens: ", sgens, "\n")
+    println("Vgens: ", vgens, "\n")
+    println("Ext Grids: ", ext_grids, "\n")
+  end
+
+  return netName, baseMVA, Dict("buses" => buses, "linemod" => linemod, "lines" => lines, "vkDepChr" => vkDepChr, "tapmod" => tapMod, "trafowt2" => trafoWT2, "trafowt3" => trafoWT3, "shunts" => shunts, "loads" => loads, "sgens" => sgens, "vgens" => vgens, "ext_grids" => ext_grids)
 end

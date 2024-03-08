@@ -7,21 +7,20 @@
 debug = false
 
 mutable struct BusData
-  idx::Int        # index of the bus, necessary for sorting
-  originBus::Int  # original index of the bus
+  idx::Int        # index of the bus, necessary for sorting  
   vm_pu::Float64  # voltage in pu
   va_rad::Float64 # angle in rad
   pƩ::Float64     # sum of real power
   qƩ::Float64     # sum of reactive power  
   type::ResDataTypes.NodeType
 
-  function BusData(idx::Int, originBus::Int, vm_pu::Float64, va_deg::Float64, sumP::Float64, sumQ::Float64, type::ResDataTypes.NodeType)
-    new(idx, originBus, vm_pu, va_deg, sumP, sumQ, type)
+  function BusData(idx::Int, vm_pu::Float64, va_deg::Float64, sumP::Float64, sumQ::Float64, type::ResDataTypes.NodeType)
+    new(idx, vm_pu, va_deg, sumP, sumQ, type)
   end
 
   function Base.show(io::IO, bus::BusData)
     va_deg = round(rad2deg(bus.va_rad), digits = 3)
-    print(io, "BusData($(bus.idx) [$(bus.originBus)], $(bus.vm_pu), $(va_deg)°), $(bus.pƩ), $(bus.qƩ), $(bus.type))")
+    print(io, "BusData($(bus.idx), $(bus.vm_pu), $(va_deg)°), $(bus.pƩ), $(bus.qƩ), $(bus.type))")
   end
 end
 
@@ -47,7 +46,13 @@ function getBusData(nodes::Vector{ResDataTypes.Node}, Sbase_MVA::Float64, verbos
 
     p = 0
     q = 0
-
+    #=
+    @show n.busIdx
+    @show n._pƩLoad
+    @show n._qƩLoad
+    @show n._pƩGen
+    @show n._qƩGen
+    =#
     p += n._pƩLoad === nothing ? 0.0 : n._pƩLoad * -1.0
     q += n._qƩLoad === nothing ? 0.0 : n._qƩLoad * -1.0
 
@@ -79,7 +84,7 @@ function getBusData(nodes::Vector{ResDataTypes.Node}, Sbase_MVA::Float64, verbos
       vm_pu = n._vm_pu === nothing ? 1.0 : n._vm_pu
       va_deg = n._va_deg === nothing ? 0.0 : deg2rad(n._va_deg)
     end
-    b = BusData(n.busIdx, n._kidx, vm_pu, va_deg, p, q, type)
+    b = BusData(n.busIdx, vm_pu, va_deg, p, q, type)
     push!(busVec, b)
   end
 
@@ -220,15 +225,15 @@ end
  V: vector of complex voltages, 
  Y: Y-Bus Matrix
 """
-function residuum(Y::AbstractMatrix{ComplexF64}, busVec::Vector{BusData}, feeders::Vector{Float64}, n_pq::Int, n_pv::Int, log::Bool)
+function residuum(Y::AbstractMatrix{ComplexF64}, busVec::Vector{BusData}, feeders::Vector{Float64}, n_pq::Int, n_pv::Int, log::Bool)::Tuple{Vector{Float64}, ComplexF64}
   # create complex vector of voltages
   V = [bus.vm_pu * exp(im * bus.va_rad) for bus in busVec]
   # create diagonal matrix of voltages
   Vdiag = Diagonal(V)
 
-  # Power Calculation
+  # Power Calculation (Knotenleistung)
   S = Vdiag * conj(Y * V)
-
+  S_slack = 0.0 + 0.0im
   size = n_pq * 2 + n_pv
   Δpq = zeros(Float64, size)
 
@@ -251,6 +256,8 @@ function residuum(Y::AbstractMatrix{ComplexF64}, busVec::Vector{BusData}, feeder
       vindex += 1
       index_p = vindex
       Δpq[index_p] = feeders[index_p] - real(S[pfIdx])
+    elseif bus.type == ResDataTypes.Slack
+     S_slack = S[pfIdx]
     end
   end
 
@@ -262,7 +269,7 @@ function residuum(Y::AbstractMatrix{ComplexF64}, busVec::Vector{BusData}, feeder
     println("feeders: $feeders")
   end
 
-  return Δpq
+  return Δpq, S_slack
 end
 
 """
@@ -558,12 +565,12 @@ function calcNewtonRaphson!(Y::AbstractMatrix{ComplexF64}, nodes::Vector{ResData
 
   if verbose > 0
     tn = num_pq_nodes + num_pv_nodes
-    println("\ncalcNewtonRaphson: Matrix-Size: $(size) x $(size), Sbase_MVA: $(Sbase_MVA), total number of nodes: $(tn), number of PQ nodes: $num_pq_nodes, number of PV nodes: $num_pv_nodes")
+    println("\ncalcNewtonRaphson: Matrix-Size: $(size) x $(size), Sbase_MVA: $(Sbase_MVA), total number of nodes: $(tn), number of PQ nodes: $num_pq_nodes, number of PV nodes: $num_pv_nodes\n")
   end
 
   iteration_count = 0
   power_feeds = getPowerFeeds(busVec, num_pq_nodes, num_pv_nodes, (verbose > 1))
-
+  s_slack = 0.0 + 0.0im
   while iteration_count <= maxIte
     # Calculation of the power flows
     #=
@@ -573,9 +580,9 @@ function calcNewtonRaphson!(Y::AbstractMatrix{ComplexF64}, nodes::Vector{ResData
     end 
     delta_P = power_feeds - power_flows
     =#
-
+    
     # Calculation of the residual
-    delta_P = residuum(Y, busVec, power_feeds, num_pq_nodes, num_pv_nodes, (verbose > 1))
+    delta_P, s_slack = residuum(Y, busVec, power_feeds, num_pq_nodes, num_pv_nodes, (verbose > 1))
     if verbose > 1
       println("\ndelta_P: Iteration $(iteration_count)")
       printVector(delta_P, busVec, "p", "q", false, 0.0)
@@ -583,11 +590,11 @@ function calcNewtonRaphson!(Y::AbstractMatrix{ComplexF64}, nodes::Vector{ResData
 
     norm_p = norm(delta_P)
     if verbose > 0
-      @printf "norm %e, tol %e, ite %d\n" norm_p tolerance iteration_count
+      @printf " norm %e, tol %e, ite %d\n" norm_p tolerance iteration_count
     end
 
     if norm_p < tolerance
-      println("Convergence is reached after $iteration_count iterations.")
+      println("\nConvergence is reached after $(iteration_count) iterations")
       erg = 0
       break
     end
@@ -662,7 +669,10 @@ function calcNewtonRaphson!(Y::AbstractMatrix{ComplexF64}, nodes::Vector{ResData
     va_deg = rad2deg(bus.va_rad)
 
     setVmVa!(nodes[i], vm_pu, va_deg)
-
+    if i == slackIdx
+      s_slack = s_slack*Sbase_MVA
+      setGenPower!(nodes[i], real(s_slack), imag(s_slack))    
+    end
     if verbose > 1
       vm_pu = round(nodes[i]._vm_pu, digits = 3)
       va_deg = round(nodes[i]._va_deg, digits = 3)
