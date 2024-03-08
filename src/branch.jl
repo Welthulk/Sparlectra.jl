@@ -53,7 +53,8 @@ mutable struct Branch
   tBranchFlow::Union{Nothing,BranchFlow} # flow from toNodeID to fromNodeID
 
   function Branch(; from::Int, to::Int, baseMVA::Float64, branch::AbstractBranch, id::Int, status::Integer=1,  ratio::Union{Nothing,Float64}=nothing,  side::Union{Nothing,Int}=nothing, vn_kV::Union{Nothing,Float64}=nothing )    
-    if isa(branch, ACLineSegment)
+    
+    if isa(branch, ACLineSegment) # Line
       @assert !isnothing(vn_kV) "vn_kV must be set for an ACLineSegment"
       c = getBranchComp(vn_kV, from, to, id, "ACLine")
       r, x, b, g = getRXBG(branch)
@@ -66,7 +67,7 @@ mutable struct Branch
         ratio = 0.0
       end
       new(c, from, to, r_pu, x_pu, b_pu, g_pu, ratio, 0.0, status, nothing, nothing, nothing)
-    elseif isa(branch, PowerTransformer)      
+    elseif isa(branch, PowerTransformer) # Transformer     
       if (isnothing(side) && branch.isBiWinder)        
         side = getSideNumber2WT(branch)
       elseif (isnothing(side) && !branch.isBiWinder)
@@ -90,7 +91,7 @@ mutable struct Branch
       end
 
       new(c, from, to, r_pu, x_pu, b_pu, g_pu, ratio, w.shift_degree, status, sn_MVA, nothing, nothing)
-    elseif isa(branch, BranchModel)
+    elseif isa(branch, BranchModel) # PI-Model
       c = getBranchComp(0.0, from, to, id, "Branch")
       new(c, from, to, branch.r_pu, branch.x_pu, branch.b_pu, branch.g_pu, branch.ratio, branch.angle, status, branch.sn_MVA, nothing, nothing)
     else

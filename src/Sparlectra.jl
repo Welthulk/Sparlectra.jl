@@ -252,8 +252,8 @@ include("equicircuit.jl")
 include("jacobian.jl")
 include("losses.jl")
 include("nbi.jl")
-include("readnetfromfile.jl")
-include("readpowermat.jl")
+include("createnet_pgm.jl")
+include("createnet_powermat.jl")
 
 
 end

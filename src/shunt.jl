@@ -12,14 +12,6 @@ mutable struct Shunt
   y_pu_shunt::ComplexF64   # shunt admittance in p.u.
   status::Int              # 1 = in service, 0 = out of service
 
-  function Shunt(comp::AbstractComponent, busIdx::Int, base_MVA::Float64, p_shunt::Float64, q_shunt::Float64, status::Int = 1)
-    g_shunt = p_shunt / comp.cVN^2
-    q_shunt = q_shunt / comp.cVN^2
-    y_pu_shunt = Complex(g_shunt, q_shunt) / base_MVA
-
-    new(comp, busIdx, p_shunt, q_shunt, G_shunt, B_shunt, y_pu_shunt, status)
-  end
-
   function Shunt(;fromBus::Int, id::Int, base_MVA::Float64, Vn_kV_shunt::Float64, p_shunt::Union{Nothing,Float64}=nothing, q_shunt::Union{Nothing,Float64}=nothing, g_shunt::Union{Nothing,Float64}=nothing, b_shunt::Union{Nothing,Float64}=nothing, ratio::Float64 = 1.0, status::Int = 1)
     comp = getShuntPGMComp(Vn_kV_shunt, fromBus, id)
     busIdx = fromBus
