@@ -1,6 +1,6 @@
 # Author: Udo Schmitz (https://github.com/Welthulk)
 # Date: 01.10.2023
-# include-file readpowermate.jl
+# include-file createnet_powermat.jl
 
 # get minimum degree ordering
 

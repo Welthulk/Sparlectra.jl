@@ -1,6 +1,6 @@
 # Author: Udo Schmitz (https://github.com/Welthulk)
 # Date: 01.8.2023
-# include-file readnetfromfile.jl
+# include-file createnet_pgm.jl
 # Bus helper
 struct Bus
   busIdx::Int64
