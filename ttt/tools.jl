@@ -3,46 +3,6 @@
 # include-file SparlectraTools.jl
 
 
-function isGenerator(c::ResDataTypes.Component)
-  if c.cTyp == ResDataTypes.Generator || c.cTyp == ResDataTypes.SynchronousMachine
-    return true
-  else
-    return false
-  end
-end # isGenerator
-
-function isMotor(c::ResDataTypes.Component)
-  if c.cTyp == ResDataTypes.AsynchronousMachine
-    return true
-  else
-    return false
-  end
-end # isMotor
-
-function isLoad(c::ResDataTypes.Component)
-  if c.cTyp == ResDataTypes.Load || c.cTyp == ResDataTypes.ExternalNetworkInjection || c.cTyp == ResDataTypes.EnergyConsumer
-    return true
-  else
-    return false
-  end
-end # isLoad
-
-function isExternalNetworkInjection(c::ResDataTypes.Component)
-  if c.cTyp == ResDataTypes.ExternalNetworkInjection
-    return true
-  else
-    return false
-  end
-end # isExternalNetworkInjection
-
-function isShunt(c::ResDataTypes.Component)
-  if c.cTyp == ResDataTypes.LinearShuntCompensator || c.cTyp == ResDataTypes.StaticVarCompensator
-    return true
-  else
-    return false
-  end
-end
-
 roundUpToNearest100(number) = ceil(number / 100) * 100
 """
   purpose: reports the crusial data for summarizing the network

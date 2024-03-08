@@ -15,11 +15,12 @@ function formatBranchResults(net::ResDataTypes.Net)
   formatted_results *= @sprintf("| %-25s | %-5s | %-5s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s |\n", "Branch", "From", "To", "P [MW]", "Q [MVar]", "P [MW]", "Q [MVar]", "Pv [MW]", "Qv [MVar]")
   formatted_results *= @sprintf("===========================================================================================================================\n")
 
-  ∑pv = 0.0
-  ∑qv = 0.0
+  ∑pv = ∑qv = 0.0
+  ∑pfrom=∑qfrom=∑pto=∑qto=0.0
+  
   for br in net.branchVec
-    from = br._from
-    to = br._to
+    from = br.fromBus
+    to = br.toBus
     bName = br.comp.cName
     pfromVal = (br.fBranchFlow.pFlow === nothing) ? NaN : br.fBranchFlow.pFlow
     qfromVal = (br.fBranchFlow.qFlow === nothing) ? NaN : br.fBranchFlow.qFlow
@@ -32,6 +33,11 @@ function formatBranchResults(net::ResDataTypes.Net)
 
     VmTo = (br.tBranchFlow.vm_pu === nothing) ? NaN : br.tBranchFlow.vm_pu
     VaTo = (br.tBranchFlow.va_deg === nothing) ? NaN : br.tBranchFlow.va_deg
+
+    ∑pfrom += pfromVal
+    ∑qfrom += qfromVal
+    ∑pto += ptoVal
+    ∑qto += qtoVal
 
     v1 = VmFrom * exp(im * deg2rad(VaFrom))
     v2 = VmTo * exp(im * deg2rad(VaTo))
@@ -51,6 +57,8 @@ function formatBranchResults(net::ResDataTypes.Net)
     formatted_results *= @sprintf("| %-25s | %-5s | %-5s | %-10.3f | %-10.3f | %-10.3f | %-10.3f | %-10.3f |  %-10.3f|\n", bName, from, to, pfromVal, qfromVal, ptoVal, qtoVal, abs(pv), abs(qv))
   end
   formatted_results *= @sprintf("---------------------------------------------------------------------------------------------------------------------------\n")
+  #formatted_results *= @sprintf("| %-10.3f | %-10.3f | %-10.3f | %-10.3f |\n", ∑pfrom, ∑qfrom, ∑pto, ∑qto)
+
   total_losses = @sprintf("total losses (I^2*Z): P = %10.3f [MW], Q = %10.3f [MVar]\n", ∑pv, ∑qv)
 
   return formatted_results, total_losses
@@ -85,13 +93,14 @@ function printACPFlowResults(net::ResDataTypes.Net, ct::Float64, ite::Int, toFil
   shunts = 0
   auxb = 0
 
-  nodes = sort(net.nodeVec, by = x -> x._kidx)
+  nodes = sort(net.nodeVec, by = x -> x.busIdx)
+
   npv = 0
   npq = 0
   for n in nodes
     npv += n._nodeType == ResDataTypes.PV ? 1 : 0
     npq += n._nodeType == ResDataTypes.PQ ? 1 : 0
-    if occursin("aux_#", n.comp.cName)
+    if occursin("_Aux_", n.comp.cName)
       auxb += 1
     end
   end
@@ -120,33 +129,40 @@ function printACPFlowResults(net::ResDataTypes.Net, ct::Float64, ite::Int, toFil
 
   println(io, "\n", totalLosses)
 
-  @printf(io, "======================================================================================================\n")
-  @printf(io, "| %-20s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s |\n", "Bus", "Vn [kV]", "V [pu]", "phi [deg]", "P [MW]", "Q [MVar]", "Type")
-  @printf(io, "======================================================================================================\n")
-  ∑pLoad = 0.0
-  ∑pGen = 0.0
-  ∑qLoad = 0.0
-  ∑qGen = 0.0
-  pVal = 0.0
-  qVal = 0.0
-
-  for n in nodes
-    if !isnothing(n._pƩGen) && n._pƩGen > 0.0
-      pVal = (n._pƩGen === nothing) ? 0.0 : n._pƩGen
-      qVal = (n._qƩGen === nothing) ? 0.0 : n._qƩGen
-      ∑pGen += pVal
-      ∑qGen += qVal
-    elseif !isnothing(n._pƩLoad) && n._pƩLoad > 0.0
-      pVal = (-n._pƩLoad === nothing) ? 0.0 : -n._pƩLoad
-      qVal = (-n._qƩLoad === nothing) ? 0.0 : -n._qƩLoad
-      ∑pLoad += pVal
-      ∑qLoad += qVal
+  @printf(io, "================================================================================================================================================\n")
+  @printf(io, "| %-5s | %-20s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-5s |\n", "Nr", "Bus", "Vn [kV]", "V [kV]", "V [pu]", "phi [deg]", "Pg [MW]", "Qg [MVar]", "Pl [MW]", "Ql [MVar]", "Type")
+  @printf(io, "================================================================================================================================================\n")
+  
+  pGS = qGS = pLS = qLS = ""
+  for n in nodes    
+    if !isnothing(n._pƩGen) abs(n._pƩGen) > 1e-6
+      pGS = @sprintf("%10.3f", n._pƩGen)
+    else
+      pGS = ""
+    end 
+    if !isnothing(n._qƩGen) && abs(n._qƩGen) > 1e-6 
+      qGS = @sprintf("%10.3f", n._qƩGen)
+    else
+      qGS = ""
     end
+
+    if !isnothing(n._pƩLoad) && abs(n._pƩLoad) > 1e-6
+      pLS = @sprintf("%10.3f", n._pƩLoad)
+    else
+      pLS = ""
+    end
+    if !isnothing(n._qƩLoad) && abs(n._qƩLoad) > 1e-6  
+      qLS = @sprintf("%10.3f", n._qƩLoad)
+    else
+      qLS = ""
+    end
+
     typeStr = ResDataTypes.toString(n._nodeType)
-    @printf(io, "| %-20s | %-10d | %-10.3f | %-10.3f | %-10.3f | %-10.3f | %-10s |\n", n.comp.cName, n.comp.cVN, n._vm_pu, n._va_deg, pVal, qVal, typeStr)
+    v = n.comp.cVN*n._vm_pu
+    @printf(io, "| %-5d | %-20s | %-10d | %-10.3f | %-10.3f | %-10.3f | %-10s | %-10s | %-10s | %-10s | %-5s |\n", n.busIdx, n.comp.cName, n.comp.cVN, v, n._vm_pu, n._va_deg, pGS, qGS, pLS, qLS, typeStr)
   end
 
-  @printf(io, "------------------------------------------------------------------------------------------------------\n")
+  @printf(io, "------------------------------------------------------------------------------------------------------------------------------------------------\n")
   println(io, flowResults)
 
   if toFile

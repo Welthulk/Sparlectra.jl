@@ -5,14 +5,13 @@ using Sparlectra.SparlectraExport
 using Sparlectra.SparlectraImport
 using Sparlectra.SparlectraNet
 using Sparlectra.SparlectraResult
-using Sparlectra.SparlectraTools
 using BenchmarkTools
 using Logging
 
 
 global_logger(ConsoleLogger(stderr, Logging.Info))
 
-function acpflow(casefile::String, iterations::Int, verbose::Int, mdo::Bool, printResultAnyCase::Bool=false, printResultToFile::Bool=false)
+function acpflow(casefile::String, iterations::Int, verbose::Int, mdo::Bool, exportToPGM::Bool=false, printResultAnyCase::Bool=false, printResultToFile::Bool=false)
   sparse = true
   tol = 1e-6
   base_MVA = 0.0 # # Set a value to a non-zero value to override the corresponding value in the case file.
@@ -25,6 +24,12 @@ function acpflow(casefile::String, iterations::Int, verbose::Int, mdo::Bool, pri
 
   @time myNet = SparlectraNet.createNetFromMatPowerFile(jpath, base_MVA, (verbose >= 1), mdo)
 
+  if exportToPGM    
+    filename = joinpath(pwd(), "data", "pgmodel", myNet.name * "_pgm")
+    @info "...export to PGM-Files, Filename: ($filename)"
+    exportPGM(net=myNet, filename=filename, useMVATrafoModell=false)
+  end
+
   # Y-Bus Matrix
   @time Y = SparlectraNet.createYBUS(myNet.branchVec, myNet.shuntVec, sparse, (verbose > 2))
 
@@ -33,8 +38,8 @@ function acpflow(casefile::String, iterations::Int, verbose::Int, mdo::Bool, pri
     ite, erg = calcNewtonRaphson!(Y, myNet.nodeVec, myNet.baseMVA, iterations, tol, verbose, sparse)
   end
 
-  if erg == 0 || printResultAnyCase
-    calcNetLosses!(myNet.nodeVec, myNet.branchVec, myNet.baseMVA, (verbose > 1))
+  if erg == 0 || printResultAnyCase    
+    calcNetLosses!(myNet.nodeVec, myNet.branchVec, myNet.baseMVA)
     if printResultToFile
       jpath = joinpath(pwd(), "data", "mpower")
       @info "...export results to $(jpath)"
@@ -50,13 +55,15 @@ function acpflow(casefile::String, iterations::Int, verbose::Int, mdo::Bool, pri
 
 end
 
-verbose = 1
+verbose = 0
 ite = 6
 mdo = false
+pgm_export = true
 showAnyResult = false
-writeResultToFile = true
-case = "case_ieee118.m"
-
-@time acpflow(case, ite, verbose, mdo, showAnyResult, writeResultToFile)
+writeResultToFile = false
+#case = "case_ieee118.m"
+#case = "case_ieee30.m"
+case="ieee_30bus.m"
+@time acpflow(case, ite, verbose, mdo, pgm_export, showAnyResult, writeResultToFile)
 
 

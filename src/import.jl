@@ -2,247 +2,7 @@
 # Date: 28.6.2023
 # include-file import.jl
 
-function jsonparser(filename, debug::Bool = false)
-  json_data = read(filename, String)
-  data_dict = JSON.parse(json_data)
-  netName = data_dict["Net"]
-  baseMVA = data_dict["BaseMVA"]
-
-  buses = data_dict["Buses"]
-  idx = 0
-  for bus in buses
-    idx += 1
-    if haskey(bus, "bus")
-      if bus["bus"] == ""
-        msg = "bus number is empty!"
-        throw(msg)
-      else
-        idx = bus["bus"]
-      end
-    else
-      msg = "No bus number in this net!"
-      throw(msg)
-    end
-
-    if bus["name"] == ""
-      bus["name"] = "Bus_#" * string(idx)
-    end
-
-    if bus["id"] == ""
-      bus["id"] = UUIDs.uuid4()
-    end
-  end
-
-  linemod = nothing
-  try
-    linemod = data_dict["LineModelling"]
-    #idx=0
-    for lm in linemod
-      idx += 1
-      #if line["model"]== ""            
-      #    line["model"] = "LineMod_#" * string(idx)
-      #end
-      if lm["id"] == ""
-        lm["id"] = UUIDs.uuid4()
-      end
-    end
-  catch
-    if debug
-      println("No LineModelling in this net")
-    end
-  end
-
-  lines = data_dict["ACLines"]
-  #idx=0
-  for line in lines
-    idx += 1
-    #if line["name"]== ""            
-    #    line["name"] = "ACL_#" * string(idx)
-    #end
-    if line["id"] == ""
-      line["id"] = UUIDs.uuid4()
-    end
-  end
-
-  vkDepChr = nothing
-  try
-    vkDepChr = data_dict["VK-Characteristics"]
-  catch
-    if debug
-      println("No VK-Characteristics in this net")
-    end
-  end
-
-  tapMod = nothing
-  try
-    tapMod = data_dict["TapChangerModelling"]
-    idx = 0
-    for tap in tapMod
-      idx += 1
-      if tap["model"] == ""
-        tap["model"] = "TapMod_#" * string(idx)
-      end
-      if tap["id"] == ""
-        tap["id"] = UUIDs.uuid4()
-      end
-    end
-  catch
-    if debug
-      println("No TapChangerModelling in this net")
-    end
-  end
-
-  trafoWT2 = nothing
-  try
-    trafoWT2 = data_dict["TwoWindingTransformers"]
-    idx = 0
-    for trafo in trafoWT2
-      idx += 1
-      if trafo["name"] == ""
-        trafo["name"] = "2WT_#" * string(idx)
-      end
-      if trafo["id"] == ""
-        trafo["id"] = UUIDs.uuid4()
-      end
-    end
-  catch
-    if debug
-      println("No TwoWindingTransformers in this net")
-    end
-  end
-
-  trafoWT3 = nothing
-  try
-    trafoWT3 = data_dict["ThreeWindingTransformers"]
-    idx = 0
-    for trafo in trafoWT3
-      idx += 1
-      if trafo["name"] == ""
-        trafo["name"] = "3WT_#" * string(idx)
-      end
-      if trafo["id"] == ""
-        trafo["id"] = UUIDs.uuid4()
-      end
-    end
-  catch
-    if debug
-      println("No ThreeWindingTransformers in this net")
-    end
-  end
-
-  shunts = nothing
-  try
-    shunts = data_dict["Shunts"]
-    idx = 0
-    for shunt in shunts
-      idx += 1
-      if shunt["name"] == ""
-        shunt["name"] = "SH_#" * string(idx)
-      end
-      if shunt["id"] == ""
-        shunt["id"] = UUIDs.uuid4()
-      end
-    end
-  catch
-    if debug
-      println("No Shunts in this net")
-    end
-  end
-
-  loads = nothing
-  try
-    loads = data_dict["Loads"]
-    idx = 0
-    for load in loads
-      idx += 1
-      if load["name"] == ""
-        load["name"] = "LD_#" * string(idx)
-      end
-      if load["id"] == ""
-        load["id"] = UUIDs.uuid4()
-      end
-    end
-  catch
-    if debug
-      println("No Loads in this net")
-    end
-  end
-  sgens = nothing
-  try
-    sgens = data_dict["StaticGenerators"]
-    idx = 0
-    for sgen in sgens
-      idx += 1
-      if sgen["name"] == ""
-        sgen["name"] = "SGEN_#" * string(idx)
-      end
-      if sgen["id"] == ""
-        sgen["id"] = UUIDs.uuid4()
-      end
-    end
-  catch
-    if debug
-      println("No StaticGenerators in this net")
-    end
-  end
-  vgens = nothing
-  try
-    vgens = data_dict["VoltageControlledGenerators"]
-    idx = 0
-    for vgen in vgens
-      idx += 1
-      if vgen["name"] == ""
-        vgen["name"] = "VGEN_#" * string(idx)
-      end
-      if vgen["id"] == ""
-        vgen["id"] = UUIDs.uuid4()
-      end
-    end
-  catch
-    if debug
-      println("No VoltageControlledGenerators in this net")
-    end
-  end
-  ext_grids = nothing
-  try
-    ext_grids = data_dict["ExternalGrids"]
-    idx = 0
-    for ext_grid in ext_grids
-      idx += 1
-      if ext_grid["name"] == ""
-        ext_grid["name"] = "ExtGrid_#" * string(idx)
-      end
-      if ext_grid["id"] == ""
-        ext_grid["id"] = UUIDs.uuid4()
-      end
-    end
-  catch
-    if debug
-      println("No ExternalGrids in this net")
-    end
-  end
-
-  if debug
-    println("Net: ", netName, "\n")
-    println("BaseMVA: ", baseMVA, "\n")
-    println("Buses: ", buses, "\n")
-    println("linemod: ", linemod, "\n")
-    println("Lines: ", lines, "\n")
-    println("VkDep: ", vkDepChr, "\n")
-    println("TapMod: ", tapMod, "\n")
-    println("Trafowt2: ", trafoWT2, "\n")
-    println("Trafowt3: ", trafoWT3, "\n")
-    println("Shunts: ", shunts, "\n")
-    println("Loads: ", loads, "\n")
-    println("Sgens: ", sgens, "\n")
-    println("Vgens: ", vgens, "\n")
-    println("Ext Grids: ", ext_grids, "\n")
-  end
-
-  return netName, baseMVA, Dict("buses" => buses, "linemod" => linemod, "lines" => lines, "vkDepChr" => vkDepChr, "tapmod" => tapMod, "trafowt2" => trafoWT2, "trafowt3" => trafoWT3, "shunts" => shunts, "loads" => loads, "sgens" => sgens, "vgens" => vgens, "ext_grids" => ext_grids)
-end
-
-# brute force reading of matpower casefiles
+# Parser for MATPOWER case files
 function casefileparser(filename)
   function processLine(line::AbstractString)::Vector{Float64}
     line = chop(line)  # Run chop here to remove unnecessary characters at the end of the line
@@ -394,4 +154,55 @@ function casefileparser(filename)
   mpc_bus = mpc_bus[busSequence, :]
   
   return case_name, baseMVA, mpc_bus, mpc_gen, mpc_branch
+end
+
+# Parser for Power Grid Model (PGM) files
+function pgmparser(filename)
+  
+  json_data = read(filename, String)
+  data_dict = JSON.parse(json_data)
+    
+  try
+   version = data_dict["version"]
+  catch
+    @warn "No version in PGM-File"
+  end
+  
+  nodes = data_dict["data"]["node"]
+  lines = []
+  if haskey(data_dict["data"], "line")
+    lines = data_dict["data"]["line"]
+  end
+  
+  wt2 = []
+  if haskey(data_dict["data"], "transformer")
+    wt2 = data_dict["data"]["transformer"]      
+  end
+
+  wt3 = []
+  if haskey(data_dict["data"], "three_winding_transformer")
+    wt3 = data_dict["data"]["three_winding_transformer"]
+  end
+  
+  sym_gens = []  
+  if haskey(data_dict["data"], "sym_gen")
+    sym_gens = data_dict["data"]["sym_gen"]
+  end  
+  
+  sym_loads = []
+  if haskey(data_dict["data"], "sym_load")
+    sym_loads = data_dict["data"]["sym_load"]  
+  end    
+    
+  shunts = []
+  if haskey(data_dict["data"], "shunt")
+    shunts = data_dict["data"]["shunt"]
+  end  
+  
+  source = []
+  if haskey(data_dict["data"], "source")  
+    source = data_dict["data"]["source"]
+  end  
+  return nodes, lines, wt2, wt3, sym_gens, sym_loads, shunts, source
+  
 end
