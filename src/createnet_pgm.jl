@@ -670,8 +670,8 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
     busIdx = b.busIdx    
     nodeType = b.type    
     Vn = b.vn_kv
-        
-    node = Node(busIdx= busIdx, Vn_kV = Vn, nodeType = toNodeType(nodeType))
+    isAux = b.id in keys(AuxBusDict)    
+    node = Node(busIdx= busIdx, Vn_kV = Vn, nodeType = toNodeType(nodeType), isAux=isAux)
     nParms = NodeParametersDict[busIdx]
 
     if nodeType == 3

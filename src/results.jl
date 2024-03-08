@@ -157,7 +157,7 @@ function printACPFlowResults(net::ResDataTypes.Net, ct::Float64, ite::Int, toFil
       qLS = ""
     end
 
-    typeStr = ResDataTypes.toString(n._nodeType)
+    typeStr = toString(n._nodeType)
     v = n.comp.cVN*n._vm_pu
     @printf(io, "| %-5d | %-20s | %-10d | %-10.3f | %-10.3f | %-10.3f | %-10s | %-10s | %-10s | %-10s | %-5s |\n", n.busIdx, n.comp.cName, n.comp.cVN, v, n._vm_pu, n._va_deg, pGS, qGS, pLS, qLS, typeStr)
   end

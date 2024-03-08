@@ -78,13 +78,13 @@ function calcTransformerRXGB(Vn_kV::Float64, modelData::TransformerModelParamete
   if !isnothing(modelData.p0_kW) && modelData.p0_kW > 0.0 && !isnothing(modelData.i0_percent) && modelData.i0_percent > 0.0
     pfe = modelData.p0_kW
     v_quad = Vn_kV^2
-    Yfe = pfe / v_quad
-    Y0 = modelData.i0_percent * 1e-2 * modelData.sn_MVA / v_quad
+    Yfe = pfe / v_quad # realpart
+    Yabs = modelData.i0_percent * 1e-2 * modelData.sn_MVA / v_quad # = sqrt(Yfe^2 + Yx^2)
     gm = Yfe
     try
-      bm = -1.0 * sqrt(Y0^2 - Yfe^2)
+      bm = -1.0 * sqrt(Yabs^2 - Yfe^2)
     catch
-      @debug "bm is set to 0.0 (Y0^2 - Yfe^2 < 0.0)"
+      @debug "bm is set to 0.0 (Yabs^2 - Yfe^2 < 0.0)"
       bm = 0.0
     end
   else
@@ -178,7 +178,7 @@ mutable struct PowerTransformerWinding
   taps::Union{Nothing,PowerTransformerTaps}
   isPu_RXGB::Union{Nothing,Bool}          # r,x,b in p.u. given? nothing = false
   modelData::Union{Nothing,TransformerModelParameters}
-  _isEmpty::Bool
+  _isEmpty::Bool  
 
   function PowerTransformerWinding(
     Vn::Float64,
@@ -211,7 +211,7 @@ mutable struct PowerTransformerWinding
       if isnothing(ratedU)
         ratedU = Vn_kV
       end
-      @show r, x, b, g = calcTransformerRXGB(ratedU, modelData)
+      r, x, b, g = calcTransformerRXGB(ratedU, modelData)
       new(Vn_kV, r, x, b, g, shift_degree, ratedU, ratedS, taps, false, modelData, false)
     end
   end
@@ -417,13 +417,6 @@ function calcTransformerRatio(x::PowerTransformer)
     end
   end
 end
-
-#TODO: implement
-#function getRatio2WT(x::PowerTransformer, bus_HV_Vn::Float64, bus_LV_Vn::Float64) 
-#   @assert x.isBiWinder "Transformer is not a 2WT"
-
-#end
-# helper
 
 function toString(o::TrafoTyp)::String
   if o == Ratio

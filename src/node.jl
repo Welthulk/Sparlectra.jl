@@ -36,8 +36,9 @@ mutable struct Node
     qShunt::Union{Nothing,Float64} = nothing,
     pƩGen::Union{Nothing,Float64} = nothing,
     qƩGen::Union{Nothing,Float64} = nothing,
+    isAux::Bool = false,
   )
-    c = getNocdeComp(Vn_kV, busIdx, nodeType)
+    c = getNocdeComp(Vn_kV, busIdx, nodeType, isAux)
     new(c, busIdx, nodeType, ratedS, zone, area, vm_pu, va_deg, pƩLoad, qƩLoad, pShunt, qShunt, pƩGen, qƩGen)
   end
 
@@ -85,10 +86,12 @@ mutable struct Node
   end
 end
 
-function getNocdeComp(Vn_kV::Float64, node_idx::Int, nodeType)::ImpPGMComp  
+function getNocdeComp(Vn_kV::Float64, node_idx::Int, nodeType, isAux::Bool = false)::ImpPGMComp  
   cTyp = toComponentTyp("Busbarsection")
   if (nodeType == Slack)
     name = "Bus_$(Int(node_idx))_$(string(convert(Int,trunc(Vn_kV))))*"
+  elseif isAux
+    name = "Aux_$(Int(node_idx))_$(string(convert(Int,trunc(Vn_kV))))"
   else
     name = "Bus_$(Int(node_idx))_$(string(convert(Int,trunc(Vn_kV))))"
   end
@@ -299,4 +302,47 @@ function isSlack(o::ResDataTypes.Node)
   else
     return false
   end  
+end
+
+function toNodeType(o::Int)::NodeType
+  if o == 1
+    return PQ
+  elseif o == 2
+    return PV
+  elseif o == 3
+    return Slack
+  elseif o == 4
+    return Isolated
+  else
+    return UnknownN
+  end
+end
+
+function toNodeType(o::String)::NodeType
+  val = uppercase(o)
+  if val == "PQ"
+    return PQ
+  elseif val == "PV"
+    return PV
+  elseif val == "SLACK"
+    return Slack
+  elseif val == "ISOLATED"
+    return Isolated
+  else
+    return UnknownN
+  end
+end
+
+function toString(o::NodeType)::String
+  if o == PQ
+    return "PQ"
+  elseif o == PV
+    return "PV"
+  elseif o == Slack
+    return "SLACK"
+  elseif o == Isolated
+    return "ISOLATED"
+  else
+    return "UNKNOWN"
+  end
 end
