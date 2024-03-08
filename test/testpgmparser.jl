@@ -53,4 +53,4 @@ function acpflow(casefile::String, writeCase::Bool, writePGM::Bool, iterations::
 end
 
 #@time acpflow("input.json", true, true, 10, 1)
-@time acpflow("MiniGrid_v3.json", true, true, 10, 1)
+@time acpflow("MiniGrid_v4.json", true, true, 10, 1)
