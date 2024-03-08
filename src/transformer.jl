@@ -55,23 +55,25 @@ end
 
 function calcTransformerRXGB(Vn_kV::Float64, modelData::TransformerModelParameters)::Tuple{Float64,Float64,Float64,Float64}
   z_base = Vn_kV^2 / modelData.sn_MVA
-  # Impedanz
+  # Impedanz  
   zk = modelData.vk_percent * 1e-2 * z_base
 
   # Resistanz
   if !isnothing(modelData.vkr_percent) && modelData.vkr_percent > 0.0
     rk = modelData.vkr_percent * 1e-2 * z_base
-  else
-    rk = (Vn_kV^2 / modelData.sn_MVA^2) * modelData.pk_kW
+  else    
+    rk = (Vn_kV^2 / modelData.sn_MVA^2) * modelData.pk_kW * 1e-9
   end
+  
   # Reaktanz
-  xk = 0.0
-  try
-    xk = sqrt(zk^2 - rk^2) # Reaktanz
-  catch
-    @debug "xk is set to 0.0 (zk^2 - rk^2 < 0.0)"
-    xk = 0.0
+  xk = 0.0  
+  if rk < zk
+    xk = sqrt(zk^2 - rk^2)    
+  else
+    @warn "rk >= zk, xk is set to 0.0"
   end
+      
+    
   # Suszeptanz
   if !isnothing(modelData.p0_kW) && modelData.p0_kW > 0.0 && !isnothing(modelData.i0_percent) && modelData.i0_percent > 0.0
     pfe = modelData.p0_kW
@@ -209,7 +211,7 @@ mutable struct PowerTransformerWinding
       if isnothing(ratedU)
         ratedU = Vn_kV
       end
-      r, x, b, g = calcTransformerRXGB(ratedU, modelData)
+      @show r, x, b, g = calcTransformerRXGB(ratedU, modelData)
       new(Vn_kV, r, x, b, g, shift_degree, ratedU, ratedS, taps, false, modelData, false)
     end
   end
