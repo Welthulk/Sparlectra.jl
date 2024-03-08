@@ -3,64 +3,6 @@
 # include-file SparlectraTools.jl
 
 
-function isGenerator(c::ResDataTypes.AbstractComponent)
-  if c.cTyp == ResDataTypes.Generator || c.cTyp == ResDataTypes.SynchronousMachine
-    return true
-  else
-    return false
-  end
-end # isGenerator
-
-function isMotor(c::ResDataTypes.AbstractComponent)
-  if c.cTyp == ResDataTypes.AsynchronousMachine
-    return true
-  else
-    return false
-  end
-end # isMotor
-
-function isLoad(c::ResDataTypes.AbstractComponent)
-  if c.cTyp == ResDataTypes.Load || c.cTyp == ResDataTypes.ExternalNetworkInjection || c.cTyp == ResDataTypes.EnergyConsumer
-    return true
-  else
-    return false
-  end
-end # isLoad
-
-function isExternalNetworkInjection(c::ResDataTypes.AbstractComponent)
-  if c.cTyp == ResDataTypes.ExternalNetworkInjection
-    return true
-  else
-    return false
-  end
-end # isExternalNetworkInjection
-
-function isShunt(c::ResDataTypes.AbstractComponent)
-  if c.cTyp == ResDataTypes.LinearShuntCompensator || c.cTyp == ResDataTypes.StaticVarCompensator
-    return true
-  else
-    return false
-  end
-end
-
-function isSlack(o::ResDataTypes.ProSumer)
-  if o.proSumptionType == ResDataTypes.Injection && !isnothing(o.referencePri) && o.referencePri > 0
-    return true
-  else
-    return false
-  end
-  
-end
-
-function isSlack(o::ResDataTypes.Node)
-  if o._nodeType == ResDataTypes.Slack
-    return true
-  else
-    return false
-  end
-  
-end
-
 roundUpToNearest100(number) = ceil(number / 100) * 100
 """
   purpose: reports the crusial data for summarizing the network

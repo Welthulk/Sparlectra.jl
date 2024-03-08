@@ -1,7 +1,6 @@
 using Test
 using Sparlectra
 using Sparlectra.ResDataTypes
-using Sparlectra.SparlectraTools
 using Sparlectra.SparlectraExport
 using Sparlectra.SparlectraImport
 using Sparlectra.SparlectraNet

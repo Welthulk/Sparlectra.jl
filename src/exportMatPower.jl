@@ -140,7 +140,7 @@ function writeGeneratorData(sb_mva::Float64, NodeDict::Dict{Int,ResDataTypes.Nod
 
   for prosum in ProSumVec
     
-    if isGenerator(prosum.comp) || isExternalNetworkInjection(prosum.comp)      
+    if isGenerator(prosum.proSumptionType)
       bus_i = prosum.comp.cFrom_bus
       
       if haskey(NodeDict, bus_i)
@@ -202,7 +202,7 @@ function writeBranchData(sb_mva::Float64, branchVec::Vector{ResDataTypes.Branch}
     angmin = -360 #br.angmin
     angmax = 360 #br.angmax
 
-    type = ResDataTypes.toString(br.comp)
+    type = br.comp.cName
 
     if br.status == 0 # out of service
       type = "(no service) " * type

@@ -7,8 +7,6 @@ mutable struct Node
   comp::AbstractComponent  
   busIdx::Integer  
   _nodeType::NodeType
-  _auxNodeID::Union{Nothing,String} # auxiliary node ID for mapping to node
-
   _ratedS::Union{Nothing,Float64}
   _lZone::Union{Nothing,Integer} # loss Zone
   _area::Union{Nothing,Integer}
@@ -26,8 +24,7 @@ mutable struct Node
   function Node(;  
     busIdx::Integer,    
     Vn_kV::Float64,
-    nodeType::NodeType,    
-    auxNodeID::Union{Nothing,String} = nothing,
+    nodeType::NodeType,        
     ratedS::Union{Nothing,Float64} = nothing,
     zone::Union{Nothing,Integer} = nothing,
     area::Union{Nothing,Integer} = nothing,
@@ -41,7 +38,7 @@ mutable struct Node
     qƩGen::Union{Nothing,Float64} = nothing,
   )
     c = getNocdeComp(Vn_kV, busIdx, nodeType)
-    new(c, busIdx, nodeType, auxNodeID, ratedS, zone, area, vm_pu, va_deg, pƩLoad, qƩLoad, pShunt, qShunt, pƩGen, qƩGen)
+    new(c, busIdx, nodeType, ratedS, zone, area, vm_pu, va_deg, pƩLoad, qƩLoad, pShunt, qShunt, pƩGen, qƩGen)
   end
 
 
@@ -97,23 +94,6 @@ function getNocdeComp(Vn_kV::Float64, node_idx::Int, nodeType)::ImpPGMComp
   end
   cID = "#"*name*"#"
   return ImpPGMComp(cID, name, cTyp, Vn_kV, node_idx, node_idx)
-end
-
-#helper 
-function getNodeName(node::Node)::String
-  return node.comp.cName
-end
-
-function getNodeID(node::Node)::String
-  return node.comp.cID
-end
-
-function getNodeVn(node::Node)::Float64
-  return node.comp.cVN
-end
-
-function getNodeType(node::Node)::NodeType
-  return node._nodeType
 end
 
 mutable struct NodeParameters
@@ -217,27 +197,6 @@ function setNodeParameters!(node::Node, nodeParam::NodeParameters)
   end
 end
 
-function setNodeIdx!(node::Node, kIdx::Integer)
-  node._kidx = kIdx
-end
-
-function setBusIdx!(node::Node, bIdx::Integer)
-  node.busIdx = bIdx
-end
-
-function setNodeType!(node::Node, nodeType::NodeType)
-  node._nodeType = nodeType
-end
-
-function setNodeType!(node::Node, type::String)
-  nodeType = toNodeType(type)
-  node._nodeType = nodeType
-end
-
-function setRatedS!(node::Node, ratedS::Float64)
-  node._ratedS = ratedS
-end
-
 function setNodePQ!(node::Node, p::Union{Nothing,Float64}, q::Union{Nothing,Float64})
   if !isnothing(p)
     node._pƩLoad = p
@@ -332,4 +291,12 @@ end
 function setVmVa!(node::Node, vm_pu::Float64, va_deg::Float64)
   node._vm_pu = vm_pu
   node._va_deg = va_deg
+end
+
+function isSlack(o::ResDataTypes.Node)
+  if o._nodeType == ResDataTypes.Slack
+    return true
+  else
+    return false
+  end  
 end

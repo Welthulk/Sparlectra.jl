@@ -20,15 +20,24 @@ mutable struct Shunt
     new(comp, busIdx, p_shunt, q_shunt, G_shunt, B_shunt, y_pu_shunt, status)
   end
 
-  function Shunt(; fromBus::Int, id::Int, base_MVA::Float64, Vn_kV_shunt::Float64, g_shunt::Float64, b_shunt::Float64, ratio::Float64 = 1.0, status::Int = 1)
+  function Shunt(;fromBus::Int, id::Int, base_MVA::Float64, Vn_kV_shunt::Float64, p_shunt::Union{Nothing,Float64}=nothing, q_shunt::Union{Nothing,Float64}=nothing, g_shunt::Union{Nothing,Float64}=nothing, b_shunt::Union{Nothing,Float64}=nothing, ratio::Float64 = 1.0, status::Int = 1)
     comp = getShuntPGMComp(Vn_kV_shunt, fromBus, id)
     busIdx = fromBus
+    if isnothing(p_shunt) && isnothing(q_shunt) || isnothing(g_shunt) && isnothing(b_shunt)
+      error("Either p_shunt and q_shunt or g_shunt and b_shunt must be given")      
+    end
 
-    p_shunt = g_shunt * Vn_kV_shunt^2 * ratio
-    q_shunt = b_shunt * Vn_kV_shunt^2 * ratio
-    y_pu_shunt = Complex(p_shunt, q_shunt) / base_MVA
-
-    new(comp, busIdx, p_shunt, q_shunt, g_shunt, b_shunt, y_pu_shunt, status)
+    if isnothing(p_shunt) && isnothing(q_shunt)
+      p_shunt = g_shunt * Vn_kV_shunt^2 * ratio
+      q_shunt = b_shunt * Vn_kV_shunt^2 * ratio
+      y_pu_shunt = Complex(p_shunt, q_shunt) / base_MVA
+      new(comp, busIdx, p_shunt, q_shunt, g_shunt, b_shunt, y_pu_shunt, status)
+    else
+      g_shunt = p_shunt / Vn_kV_shunt^2
+      q_shunt = q_shunt / Vn_kV_shunt^2
+      y_pu_shunt = Complex(g_shunt, q_shunt) / base_MVA
+      new(comp, busIdx, p_shunt, q_shunt, g_shunt, b_shunt, y_pu_shunt, status)    
+    end      
   end
 
   function Base.show(io::IO, shunt::Shunt)
