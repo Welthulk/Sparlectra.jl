@@ -200,98 +200,47 @@ function setNodeParameters!(node::Node, nodeParam::NodeParameters)
   end
 end
 
-function setNodePQ!(node::Node, p::Union{Nothing,Float64}, q::Union{Nothing,Float64})
-  if !isnothing(p)
-    node._pƩLoad = p
+function addShuntPower!(;node::Node, p::Float64, q::Float64)
+  if (isnothing(node._pShunt))
+    node._pShunt = 0.0
   end
-  if !isnothing(q)
-    node._qƩLoad = q
+  node._pShunt = node._pShunt + p
+
+  if (isnothing(node._qShunt))
+    node._qShunt = 0.0
   end
+  node._qShunt = node._qShunt + q  
 end
 
-function setShuntPower!(node::Node, p::Union{Nothing,Float64}, q::Union{Nothing,Float64})
-  if !isnothing(p)
-    node._pShunt = p
-  end
-
-  if !isnothing(q)
-    node._qShunt = q
-  end
-end
-
-function setGenPower!(node::Node, p::Union{Nothing,Float64}, q::Union{Nothing,Float64})
-  if !isnothing(p)
-    node._pƩGen = p
-  end
-
-  if !isnothing(q)
-    node._qƩGen = q
-  end
-end
-
-function addAktivePower!(node::Node, p::Float64)
+function addLoadPower!(;node::Node, p::Float64, q::Float64)
   if (isnothing(node._pƩLoad))
     node._pƩLoad = 0.0
   end
   node._pƩLoad = node._pƩLoad + p
-end
 
-function addReaktivePower!(node::Node, q::Float64)
   if (isnothing(node._qƩLoad))
     node._qƩLoad = 0.0
   end
   node._qƩLoad = node._qƩLoad + q
 end
 
-function addGenAktivePower!(node::Node, p::Float64)
+function addGenPower!(;node::Node, p::Float64, q::Float64)
   if (isnothing(node._pƩGen))
     node._pƩGen = 0.0
   end
   node._pƩGen = node._pƩGen + p
-end
 
-function addGenReaktivePower!(node::Node, q::Float64)
   if (isnothing(node._qƩGen))
     node._qƩGen = 0.0
   end
   node._qƩGen = node._qƩGen + q
 end
 
-function hasPowerInjection(node::Node)
-  if (isnothing(node._pƩLoad) && isnothing(node._qƩLoad))
-    return false
-  end
-  return true
-end
-
-function hasShuntInjection(node::Node)
-  if (isnothing(node._pShunt) && isnothing(node._qShunt))
-    return false
-  end
-  return true
-end
-
 function busComparison(node1::Node, node2::Node)
   node1.busIdx < node2.busIdx
 end
 
-function setLossZone!(node::Node, lZone::Integer)
-  node._lZone = lZone
-end
-
-function setArea!(node::Node, area::Integer)
-  node._area = area
-end
-
-function setVm!(node::Node, Vm::Float64)
-  node._Vm_pu = Vm
-end
-
-function setVa!(node::Node, Va::Float64)
-  node._Va_deg = Va
-end
-
-function setVmVa!(node::Node, vm_pu::Float64, va_deg::Float64)
+function setVmVa!(;node::Node, vm_pu::Float64, va_deg::Float64)
   node._vm_pu = vm_pu
   node._va_deg = va_deg
 end

@@ -108,7 +108,6 @@ function createNetFromMatPowerFile(filename, base_MVA::Float64 = 0.0, log::Bool 
   branchVec = Vector{Branch}()
   nodeVec = Vector{Node}()
 
-  
   NodeDict = Dict{Integer,Node}()
   vnDict = Dict{Integer,Float64}()
 
@@ -178,13 +177,11 @@ function createNetFromMatPowerFile(filename, base_MVA::Float64 = 0.0, log::Bool 
     pShunt = float(row[busDict["Gs"]]) < 0.0 ? (@info("pShunt at bus $(kIdx) p < 0"); float(row[busDict["Gs"]])) : float(row[busDict["Gs"]])
     qShunt = float(row[busDict["Bs"]]) < 0.0 ? (@info("qShunt at bus $(kIdx) q < 0"); float(row[busDict["Bs"]])) : float(row[busDict["Bs"]])
 
-    pƩGen = 0.0
-    qƩGen = 0.0
     ratedS = baseMVA
     zone = Int64(row[busDict["zone"]])
     area = Int64(row[busDict["area"]])
 
-    node = Node(busIdx = busIdx, Vn_kV = vn_kv, nodeType = toNodeType(btype), ratedS = ratedS, zone = zone, area = area, vm_pu = vm_pu, va_deg = va_deg, pƩLoad = pƩLoad, qƩLoad = qƩLoad, pShunt = pShunt, qShunt = qShunt, pƩGen = pƩGen, qƩGen = qƩGen)
+    node = Node(busIdx = busIdx, Vn_kV = vn_kv, nodeType = toNodeType(btype), ratedS = ratedS, zone = zone, area = area, vm_pu = vm_pu, va_deg = va_deg, pƩLoad = pƩLoad, qƩLoad = qƩLoad, pShunt = pShunt, qShunt = qShunt)
 
     if btype == 3 && slackIdx == 0
       slackIdx = busIdx
@@ -194,10 +191,10 @@ function createNetFromMatPowerFile(filename, base_MVA::Float64 = 0.0, log::Bool 
     end
 
     vnDict[busIdx] = vn_kv
-    NodeDict[busIdx] = node    
+    NodeDict[busIdx] = node
     push!(nodeVec, node)
     if pShunt != 0.0 || qShunt != 0.0
-      shunt = Shunt(fromBus = busIdx, id=kIdx, base_MVA = baseMVA, Vn_kV_shunt = vn_kv, p_shunt = pShunt, q_shunt = qShunt)
+      shunt = Shunt(fromBus = busIdx, id = kIdx, base_MVA = baseMVA, Vn_kV_shunt = vn_kv, p_shunt = pShunt, q_shunt = qShunt)
       push!(shuntVec, shunt)
     end
 
@@ -209,7 +206,7 @@ function createNetFromMatPowerFile(filename, base_MVA::Float64 = 0.0, log::Bool 
       referencePri = slackIdx == busIdx ? busIdx : nothing
 
       vm_degree = 0.0
-      p = ProSumer(vn_kv = vn_kv, oID= kIdx, busIdx = busIdx, type = toProSumptionType("LOAD"), p = pƩLoad, q = qƩLoad, maxP = pMax, minP = pMin, maxQ = qMax, minQ = qMin, referencePri = referencePri, vm_pu = vm_pu, vm_degree = vm_degree)
+      p = ProSumer(vn_kv = vn_kv, oID = kIdx, busIdx = busIdx, type = toProSumptionType("LOAD"), p = pƩLoad, q = qƩLoad, maxP = pMax, minP = pMin, maxQ = qMax, minQ = qMin, referencePri = referencePri, vm_pu = vm_pu, vm_degree = vm_degree)
       push!(prosum, p)
     end
   end# read bus
@@ -235,11 +232,11 @@ function createNetFromMatPowerFile(filename, base_MVA::Float64 = 0.0, log::Bool 
     angle = float(row[branchDict["angle"]])
     status = Int64(row[branchDict["status"]])
     vn_kv = vnDict[fbus]
-    
-    piModel = BranchModel(r_pu=r_pu, x_pu=x_pu, b_pu=b_pu, g_pu= 0.0, ratio=ratio, angle=angle, sn_MVA=ratedS)
-    b = Branch(vn_kV=vn_kv, baseMVA=baseMVA, from=fbus, to=tbus, branch=piModel, id=_fbus, status=status)
+
+    piModel = BranchModel(r_pu = r_pu, x_pu = x_pu, b_pu = b_pu, g_pu = 0.0, ratio = ratio, angle = angle, sn_MVA = ratedS)
+    b = Branch(vn_kV = vn_kv, baseMVA = baseMVA, from = fbus, to = tbus, branch = piModel, id = _fbus, status = status)
     push!(branchVec, b)
-     
+
     #=
     if ratio == 0.0 # line
       z_base = (vn_kv^2) / baseMVA
@@ -253,7 +250,6 @@ function createNetFromMatPowerFile(filename, base_MVA::Float64 = 0.0, log::Bool 
       c = getTrafoImpPGMComp(false, vnh_kv, fbus, tbus)
       w1 = PowerTransformerWinding(Vn_kV=vnh_kv)
       w2 = PowerTransformerWinding(Vn_kV=vnl_kv)
-
 
       tap = false
       tType = ResDataTypes.Ratio
@@ -269,9 +265,19 @@ function createNetFromMatPowerFile(filename, base_MVA::Float64 = 0.0, log::Bool 
   # Generators:   
   col = size(genData, 2)
   for row in eachrow(genData[:, 1:col])
+    status = Int64(row[genDict["status"]])
     _bus = Int64(row[genDict["bus"]])
+    if status < 1
+      @info "generator $(_bus) not in service"
+      continue
+    end
     pGen = float(row[genDict["Pg"]]) < 0.0 ? (@info("pGen at bus $(_bus) p < 0"); float(row[genDict["Pg"]])) : float(row[genDict["Pg"]])
     qGen = float(row[genDict["Qg"]]) < 0.0 ? (@info("qGen at bus $(_bus) q < 0"); float(row[genDict["Qg"]])) : float(row[genDict["Qg"]])
+
+    if abs(pGen) < 1e-6 && abs(qGen) < 1e-6
+      @info "generator $(_bus) has no power output, ignored"
+      continue
+    end
 
     bus = busMapDict[_bus]
 
@@ -282,29 +288,24 @@ function createNetFromMatPowerFile(filename, base_MVA::Float64 = 0.0, log::Bool 
 
     vm_pu = float(row[genDict["Vg"]])
     mBase = float(row[genDict["mBase"]])
-    status = Int64(row[genDict["status"]])
+    
 
-    if status == 1
-      referencePri = slackIdx == bus ? bus : nothing
-      vm_degree = 0.0
-      vn_kv = vnDict[bus]
-      p = ProSumer(vn_kv = vn_kv, busIdx = bus, oID = _bus, type = toProSumptionType("GENERATOR"), p = pGen, q = qGen, maxP = pMax, minP = pMin, maxQ = qMax, minQ = qMin, referencePri = referencePri, vm_pu = vm_pu)
+    referencePri = slackIdx == bus ? bus : nothing
+    vm_degree = 0.0
+    vn_kv = vnDict[bus]
+    p = ProSumer(vn_kv = vn_kv, busIdx = bus, oID = _bus, type = toProSumptionType("GENERATOR"), p = pGen, q = qGen, maxP = pMax, minP = pMin, maxQ = qMax, minQ = qMin, referencePri = referencePri, vm_pu = vm_pu)
 
-      proSumDict[_bus] = p
-      push!(prosum, p)
+    proSumDict[_bus] = p
+    push!(prosum, p)
 
-      # set generation power for node
-      node = NodeDict[bus]
-      node._pƩGen = pGen
-      node._qƩGen = qGen
-      if node._vm_pu != vm_pu
-        if log
-          @info "node voltage mismatch: Bus $(bus): $(node._vm_pu), Gen $(bus): $(vm_pu)"
-        end
-        node._vm_pu = vm_pu
+    # set generation power for node
+    node = NodeDict[bus]
+    addGenPower!(node=node, p=pGen, q=qGen)
+    if node._vm_pu != vm_pu
+      if log
+        @info "node voltage mismatch: Bus $(bus): $(node._vm_pu), Gen $(bus): $(vm_pu)"
       end
-    else
-      @info "generator $(_bus) not in service"
+      node._vm_pu = vm_pu
     end
   end# read Generators
 

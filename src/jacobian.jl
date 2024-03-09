@@ -12,15 +12,17 @@ mutable struct BusData
   va_rad::Float64 # angle in rad
   pƩ::Float64     # sum of real power
   qƩ::Float64     # sum of reactive power  
+  _pRes::Float64  # result power
+  _qRes::Float64  # result power
   type::ResDataTypes.NodeType
 
   function BusData(idx::Int, vm_pu::Float64, va_deg::Float64, sumP::Float64, sumQ::Float64, type::ResDataTypes.NodeType)
-    new(idx, vm_pu, va_deg, sumP, sumQ, type)
+    new(idx, vm_pu, va_deg, sumP, sumQ, 0.0, 0.0, type)
   end
 
   function Base.show(io::IO, bus::BusData)
     va_deg = round(rad2deg(bus.va_rad), digits = 3)
-    print(io, "BusData($(bus.idx), $(bus.vm_pu), $(va_deg)°), $(bus.pƩ), $(bus.qƩ), $(bus.type))")
+    print(io, "BusData($(bus.idx), $(bus.vm_pu), $(va_deg)°), $(bus.pƩ), $(bus.qƩ), $(bus._pRes), $(bus._qRes), $(bus.type))")
   end
 end
 
@@ -225,17 +227,17 @@ end
  V: vector of complex voltages, 
  Y: Y-Bus Matrix
 """
-function residuum(Y::AbstractMatrix{ComplexF64}, busVec::Vector{BusData}, feeders::Vector{Float64}, n_pq::Int, n_pv::Int, log::Bool)::Tuple{Vector{Float64}, ComplexF64}
+function residuum(Y::AbstractMatrix{ComplexF64}, busVec::Vector{BusData}, feeders::Vector{Float64}, n_pq::Int, n_pv::Int, log::Bool)::Vector{Float64}
   # create complex vector of voltages
   V = [bus.vm_pu * exp(im * bus.va_rad) for bus in busVec]
   # create diagonal matrix of voltages
   Vdiag = Diagonal(V)
 
   # Power Calculation (Knotenleistung)
-  S = Vdiag * conj(Y * V)
-  S_slack = 0.0 + 0.0im
+  S = Vdiag * conj(Y * V)  
   size = n_pq * 2 + n_pv
   Δpq = zeros(Float64, size)
+
 
   if log
     println("\nresiduum: Vector-Size = $(size)")
@@ -252,12 +254,17 @@ function residuum(Y::AbstractMatrix{ComplexF64}, busVec::Vector{BusData}, feeder
       vindex += 1
       index_q = vindex
       Δpq[index_q] = feeders[index_q] - imag(S[pfIdx])
+      bus._pRes = real(S[pfIdx])
+      bus._qRes = imag(S[pfIdx])
     elseif bus.type == ResDataTypes.PV
       vindex += 1
       index_p = vindex
       Δpq[index_p] = feeders[index_p] - real(S[pfIdx])
+      bus._pRes = real(S[pfIdx])
+      bus._qRes = imag(S[pfIdx])
     elseif bus.type == ResDataTypes.Slack
-     S_slack = S[pfIdx]
+      bus._pRes = real(S[pfIdx])
+      bus._qRes = imag(S[pfIdx])      
     end
   end
 
@@ -269,7 +276,7 @@ function residuum(Y::AbstractMatrix{ComplexF64}, busVec::Vector{BusData}, feeder
     println("feeders: $feeders")
   end
 
-  return Δpq, S_slack
+  return Δpq
 end
 
 """
@@ -582,7 +589,7 @@ function calcNewtonRaphson!(Y::AbstractMatrix{ComplexF64}, nodes::Vector{ResData
     =#
     
     # Calculation of the residual
-    delta_P, s_slack = residuum(Y, busVec, power_feeds, num_pq_nodes, num_pv_nodes, (verbose > 1))
+    delta_P = residuum(Y, busVec, power_feeds, num_pq_nodes, num_pv_nodes, (verbose > 1))
     if verbose > 1
       println("\ndelta_P: Iteration $(iteration_count)")
       printVector(delta_P, busVec, "p", "q", false, 0.0)
@@ -668,11 +675,14 @@ function calcNewtonRaphson!(Y::AbstractMatrix{ComplexF64}, nodes::Vector{ResData
     vm_pu = bus.vm_pu
     va_deg = rad2deg(bus.va_rad)
 
-    setVmVa!(nodes[i], vm_pu, va_deg)
-    if i == slackIdx
-      s_slack = s_slack*Sbase_MVA
-      setGenPower!(nodes[i], real(s_slack), imag(s_slack))    
+    setVmVa!(node=nodes[i], vm_pu=vm_pu, va_deg=va_deg)
+    if bus.type == ResDataTypes.PV      
+      nodes[i]._qƩGen = bus._qRes*Sbase_MVA
+    elseif bus.type == ResDataTypes.Slack
+      nodes[i]._pƩGen = bus._pRes*Sbase_MVA
+      nodes[i]._qƩGen = bus._qRes*Sbase_MVA
     end
+
     if verbose > 1
       vm_pu = round(nodes[i]._vm_pu, digits = 3)
       va_deg = round(nodes[i]._va_deg, digits = 3)
