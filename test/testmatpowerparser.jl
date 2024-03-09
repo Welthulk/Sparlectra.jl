@@ -24,11 +24,6 @@ function acpflow(casefile::String, iterations::Int, verbose::Int, mdo::Bool, exp
 
   @time myNet = SparlectraNet.createNetFromMatPowerFile(jpath, base_MVA, (verbose >= 1), mdo)
 
-  if exportToPGM    
-    filename = joinpath(pwd(), "data", "pgmodel", myNet.name * "_pgm")
-    @info "...export to PGM-Files, Filename: ($filename)"
-    exportPGM(net=myNet, filename=filename, useMVATrafoModell=false)
-  end
 
   # Y-Bus Matrix
   @time Y = SparlectraNet.createYBUS(myNet.branchVec, myNet.shuntVec, sparse, (verbose > 2))
@@ -47,6 +42,14 @@ function acpflow(casefile::String, iterations::Int, verbose::Int, mdo::Bool, exp
       jpath = ""
     end
     printACPFlowResults(myNet, etime, ite, printResultToFile, jpath)
+    
+    if exportToPGM    
+      convertPVtoPQ!(myNet)
+      filename = joinpath(pwd(), "data", "pgmodel", myNet.name * "_pgm")
+      @info "...export to PGM-Files, Filename: ($filename)"
+      exportPGM(net=myNet, filename=filename, useMVATrafoModell=false)
+    end
+
   elseif erg == 1
     @warn "Newton-Raphson did not converge"
   else
@@ -60,10 +63,12 @@ ite = 6
 mdo = false
 pgm_export = true
 showAnyResult = false
-writeResultToFile = false
+writeResultToFile = true
 #case = "case_ieee118.m"
 #case = "case_ieee30.m"
-case="ieee_30bus.m"
+#case="ieee_30bus.m"
+#case="case.m"
+case="case30.m"
 @time acpflow(case, ite, verbose, mdo, pgm_export, showAnyResult, writeResultToFile)
 
 

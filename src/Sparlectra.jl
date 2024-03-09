@@ -182,7 +182,7 @@ using Sparlectra
 using Sparlectra.ResDataTypes
 using Printf
 
-export printACPFlowResults
+export printACPFlowResults, convertPVtoPQ!
 
 include("results.jl")
 
