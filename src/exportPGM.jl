@@ -349,6 +349,9 @@ function exportPGM(; net::ResDataTypes.Net, filename::String, useMVATrafoModell:
     else
       parameters["q_specified"] = o.qVal * 1e6
     end
+    if isAPUNode(o)
+      parameters["_c"] = "converted to PQ-Node"
+    end
     parameters["_cname"] = o.comp.cName
     parameters["_cID"] = o.comp.cID
 
