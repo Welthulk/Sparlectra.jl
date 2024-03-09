@@ -26,7 +26,7 @@ mutable struct Shunt
       new(comp, busIdx, p_shunt, q_shunt, g_shunt, b_shunt, y_pu_shunt, status)
     else
       g_shunt = p_shunt / Vn_kV_shunt^2
-      q_shunt = q_shunt / Vn_kV_shunt^2
+      b_shunt = q_shunt / Vn_kV_shunt^2
       y_pu_shunt = Complex(g_shunt, q_shunt) / base_MVA
       new(comp, busIdx, p_shunt, q_shunt, g_shunt, b_shunt, y_pu_shunt, status)    
     end      

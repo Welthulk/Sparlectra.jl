@@ -197,7 +197,7 @@ function createNetFromMatPowerFile(filename, base_MVA::Float64 = 0.0, log::Bool 
     NodeDict[busIdx] = node    
     push!(nodeVec, node)
     if pShunt != 0.0 || qShunt != 0.0
-      shunt = Shunt(fromBus = busIdx, id=kIdx, base_MVA = baseMVA, Vn_kV_shunt = vn_kv, p_shunt = pShunt, q_shunt = q_shunt)
+      shunt = Shunt(fromBus = busIdx, id=kIdx, base_MVA = baseMVA, Vn_kV_shunt = vn_kv, p_shunt = pShunt, q_shunt = qShunt)
       push!(shuntVec, shunt)
     end
 
@@ -304,7 +304,7 @@ function createNetFromMatPowerFile(filename, base_MVA::Float64 = 0.0, log::Bool 
         node._vm_pu = vm_pu
       end
     else
-      @info "generator $(cName) not in service"
+      @info "generator $(_bus) not in service"
     end
   end# read Generators
 
