@@ -45,6 +45,7 @@ mutable struct ProSumer
     isAPUNode::Bool = false
   )
     
+    @show "generator?", isGenerator(type)
     comp = getProSumPGMComp(vn_kv, busIdx, isGenerator(type), oID)
     
     if isnothing(vm_pu)
@@ -123,7 +124,7 @@ function isAPUNode(o::ResDataTypes.ProSumer)
 end
 
 function isGenerator(c::ResDataTypes.ProSumptionType)::Bool
-  if c == ResDataTypes.Generator || c == ResDataTypes.SynchronousMachine || c == ResDataTypes.ExternalNetworkInjection
+  if c == Injection
     return true
   else
     return false
