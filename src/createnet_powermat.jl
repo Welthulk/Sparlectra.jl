@@ -237,19 +237,20 @@ function createNetFromMatPowerFile(filename, base_MVA::Float64 = 0.0, log::Bool 
     b = Branch(vn_kV = vn_kv, baseMVA = baseMVA, from = fbus, to = tbus, branch = piModel, id = _fbus, status = status)
     push!(branchVec, b)
 
-    #=
+    l_km = 1.0
     if ratio == 0.0 # line
       z_base = (vn_kv^2) / baseMVA
       r = r_pu * z_base
       x = x_pu * z_base
       l_km = round((r / 0.1), digits = 1) <= 0.0 ? 1.0 : l_km    # approximation
-      line =  ACLineSegment(vn_kv=vn_kv, from=from, to=to, length=l_km, r=r, x=x)            
+      line = ACLineSegment(vn_kv = vn_kv, from = fbus, to = tbus, length = l_km, r = r, x = x)
+      push!(ACLines, line)
     else # transformer
       vnh_kv = vnDict[fbus]
       vnl_kv = vnDict[tbus]
       c = getTrafoImpPGMComp(false, vnh_kv, fbus, tbus)
-      w1 = PowerTransformerWinding(Vn_kV=vnh_kv)
-      w2 = PowerTransformerWinding(Vn_kV=vnl_kv)
+      w1 = PowerTransformerWinding(Vn_kV = vnh_kv)
+      w2 = PowerTransformerWinding(Vn_kV = vnl_kv)
 
       tap = false
       tType = ResDataTypes.Ratio
@@ -257,9 +258,9 @@ function createNetFromMatPowerFile(filename, base_MVA::Float64 = 0.0, log::Bool 
         @info "found phase shifter in casefile $(netName) (fbus: $(fbus), tbus: $(tbus))"
         tType = ResDataTypes.PhaseShifter
       end
-      trafo = PowerTransformer(c, tap, w1, w2, nothing, tType)      
+      trafo = PowerTransformer(c, tap, w1, w2, nothing, tType)
+      push!(trafos, trafo)
     end
-    =#
   end
 
   # Generators:   
@@ -288,7 +289,6 @@ function createNetFromMatPowerFile(filename, base_MVA::Float64 = 0.0, log::Bool 
 
     vm_pu = float(row[genDict["Vg"]])
     mBase = float(row[genDict["mBase"]])
-    
 
     referencePri = slackIdx == bus ? bus : nothing
     vm_degree = 0.0
@@ -300,7 +300,7 @@ function createNetFromMatPowerFile(filename, base_MVA::Float64 = 0.0, log::Bool 
 
     # set generation power for node
     node = NodeDict[bus]
-    addGenPower!(node=node, p=pGen, q=qGen)
+    addGenPower!(node = node, p = pGen, q = qGen)
     if node._vm_pu != vm_pu
       if log
         @info "node voltage mismatch: Bus $(bus): $(node._vm_pu), Gen $(bus): $(vm_pu)"
