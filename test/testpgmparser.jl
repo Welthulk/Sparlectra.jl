@@ -23,10 +23,6 @@ function acpflow(casefile::String, writeCase::Bool, writePGM::Bool, iterations::
   end
   myNet =createNetFromPGM(jpath)
   
-  if writePGM
-    filename=joinpath(pwd(),"data","pgmodel",myNet.name * "_epx")
-    exportPGM(net=myNet,filename=filename,useMVATrafoModell=false,exportSlackGen=true)
-  end
   # matpower export  
   if writeCase       
     case = myNet.name
@@ -44,6 +40,11 @@ function acpflow(casefile::String, writeCase::Bool, writePGM::Bool, iterations::
   if erg == 0
    calcNetLosses!(myNet.nodeVec, myNet.branchVec, myNet.baseMVA)    
    printACPFlowResults(myNet, etime, ite)
+   if writePGM
+    convertPVtoPQ!(myNet)
+    filename=joinpath(pwd(),"data","pgmodel",myNet.name * "_epx")
+    exportPGM(net=myNet,filename=filename,useMVATrafoModell=false,exportSlackGen=true)
+   end
   elseif erg == 1
     @warn "Newton-Raphson did not converge"
   else
@@ -52,5 +53,5 @@ function acpflow(casefile::String, writeCase::Bool, writePGM::Bool, iterations::
   
 end
 
-#@time acpflow("input.json", true, true, 10, 1)
-@time acpflow("MiniGrid_v4.json", true, true, 10, 1)
+@time acpflow("input.json", true, true, 10, 1)
+#]@time acpflow("MiniGrid_v4.json", true, true, 10, 1)

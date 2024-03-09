@@ -42,10 +42,11 @@ mutable struct ProSumer
     referencePri::Union{Nothing,Integer} = nothing,
     vm_pu::Union{Nothing,Float64} = nothing,
     vm_degree::Union{Nothing,Float64} = nothing,
+    isAPUNode::Bool = false
   )
     
     comp = getProSumPGMComp(vn_kv, busIdx, isGenerator(type), oID)
-    isAPUNode = isPUNode(comp.cTyp)
+    
     if isnothing(vm_pu)
       vm_pu = 1.0
     end
@@ -117,14 +118,9 @@ mutable struct ProSumer
   end
 end
 
-function isPUNode(type::ComponentTyp)::Bool
-  if type == SynchronousMachine
-    return true
-  else
-    return false
-  end
+function isAPUNode(o::ResDataTypes.ProSumer)
+  return o.isAPUNode  
 end
-
 
 function isGenerator(c::ResDataTypes.ProSumptionType)::Bool
   if c == ResDataTypes.Generator || c == ResDataTypes.SynchronousMachine || c == ResDataTypes.ExternalNetworkInjection

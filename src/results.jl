@@ -170,3 +170,17 @@ function printACPFlowResults(net::ResDataTypes.Net, ct::Float64, ite::Int, toFil
     #println("Results have been written to $(joinpath(path, filename))")
   end
 end
+
+
+function convertPVtoPQ!(net::ResDataTypes.Net)
+  for n in net.nodeVec
+    if n._nodeType == ResDataTypes.PV
+      busIdx = n.busIdx
+      for p in net.prosumpsVec
+        if p.comp.cFrom_bus == busIdx          
+          p.qVal = n._qƩGen
+        end
+      end
+    end
+  end
+end

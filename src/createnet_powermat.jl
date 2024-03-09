@@ -281,7 +281,12 @@ function createNetFromMatPowerFile(filename, base_MVA::Float64 = 0.0, log::Bool 
     end
 
     bus = busMapDict[_bus]
-
+    n = NodeDict[bus]
+    isPUNode = false
+    if n._nodeType == ResDataTypes.PV
+      isPUNode = true      
+    end
+    
     qMax = float(row[genDict["Qmax"]])
     qMin = float(row[genDict["Qmin"]])
     pMax = float(row[genDict["Pmax"]])
@@ -293,7 +298,7 @@ function createNetFromMatPowerFile(filename, base_MVA::Float64 = 0.0, log::Bool 
     referencePri = slackIdx == bus ? bus : nothing
     vm_degree = 0.0
     vn_kv = vnDict[bus]
-    p = ProSumer(vn_kv = vn_kv, busIdx = bus, oID = _bus, type = toProSumptionType("GENERATOR"), p = pGen, q = qGen, maxP = pMax, minP = pMin, maxQ = qMax, minQ = qMin, referencePri = referencePri, vm_pu = vm_pu)
+    p = ProSumer(vn_kv = vn_kv, busIdx = bus, oID = _bus, type = toProSumptionType("GENERATOR"), p = pGen, q = qGen, maxP = pMax, minP = pMin, maxQ = qMax, minQ = qMin, referencePri = referencePri, vm_pu = vm_pu, isAPUNode = isPUNode)
 
     proSumDict[_bus] = p
     push!(prosum, p)

@@ -3,7 +3,7 @@
 # include-file exportPGM.jl
 
 function exportPGM(; net::ResDataTypes.Net, filename::String, useMVATrafoModell::Bool, exportSlackGen::Bool = false)
-  full_path = filename * ".json"
+  full_path = strip(filename) * ".json"
   @info "export to PGM-Files, Filename: ($full_path)"
 
   id_counter = 0
@@ -330,14 +330,12 @@ function exportPGM(; net::ResDataTypes.Net, filename::String, useMVATrafoModell:
     parameters = OrderedDict{String,Any}()
     @assert isa(o.comp, ImpPGMComp)
 
-    if o.isAPUNode
-      @warn "PV-Node not supported for PGM, set to PQ-Node"
-    end
 
     parameters["id"] = get_next_id()
     parameters["node"] = o.comp.cFrom_bus
     parameters["status"] = 1
     parameters["type"] = 0
+
     if isnothing(o.pVal)
       @warn "pVal is not set, set to 0.0"
       parameters["p_specified"] = 0.0
