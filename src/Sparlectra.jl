@@ -66,6 +66,7 @@ export
   # ProSumer
   isSlack,
   isGenerator,
+  isAPUNode,
   toProSumptionType
 
 include("component.jl")
