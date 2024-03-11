@@ -129,40 +129,59 @@ function printACPFlowResults(net::ResDataTypes.Net, ct::Float64, ite::Int, toFil
 
   println(io, "\n", totalLosses)
 
-  @printf(io, "================================================================================================================================================\n")
-  @printf(io, "| %-5s | %-20s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-5s |\n", "Nr", "Bus", "Vn [kV]", "V [kV]", "V [pu]", "phi [deg]", "Pg [MW]", "Qg [MVar]", "Pl [MW]", "Ql [MVar]", "Type")
-  @printf(io, "================================================================================================================================================\n")
+  @printf(io, "==========================================================================================================================================================================\n")
+  @printf(io, "| %-5s | %-20s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-5s |\n", "Nr", "Bus", "Vn [kV]", "V [kV]", "V [pu]", "phi [deg]", "Pg [MW]", "Qg [MVar]", "Pl [MW]", "Ql [MVar]", "Ps [MW]", "Qs [MVar]", "Type")
+  @printf(io, "==========================================================================================================================================================================\n")
   
   pGS = qGS = pLS = qLS = ""
+  tpGS = tqGS = tpLS = tqLS = 0.0
+  pShunt_str = qShunt_str = ""
+  tpShunt = tqShunt = 0.0
   for n in nodes    
     if !isnothing(n._pƩGen) abs(n._pƩGen) > 1e-6
       pGS = @sprintf("%10.3f", n._pƩGen)
+      tpGS += n._pƩGen
     else
       pGS = ""
     end 
     if !isnothing(n._qƩGen) && abs(n._qƩGen) > 1e-6 
       qGS = @sprintf("%10.3f", n._qƩGen)
+      tqGS += n._qƩGen
     else
       qGS = ""
     end
 
     if !isnothing(n._pƩLoad) && abs(n._pƩLoad) > 1e-6
       pLS = @sprintf("%10.3f", n._pƩLoad)
+      tpLS += n._pƩLoad
     else
       pLS = ""
     end
     if !isnothing(n._qƩLoad) && abs(n._qƩLoad) > 1e-6  
       qLS = @sprintf("%10.3f", n._qƩLoad)
+      tqLS += n._qƩLoad
     else
       qLS = ""
     end
-
+    if !isnothing(n._pShunt) && abs(n._pShunt) > 1e-6
+      pShunt_str = @sprintf("%10.3f", n._pShunt)
+      tpShunt += n._pShunt
+    else
+      pShunt_str = ""
+    end
+    if !isnothing(n._qShunt) && abs(n._qShunt) > 1e-6
+      qShunt_str = @sprintf("%10.3f", n._qShunt)
+      tqShunt += n._qShunt
+    else
+      qShunt_str = ""
+    end
     typeStr = toString(n._nodeType)
     v = n.comp.cVN*n._vm_pu
-    @printf(io, "| %-5d | %-20s | %-10d | %-10.3f | %-10.3f | %-10.3f | %-10s | %-10s | %-10s | %-10s | %-5s |\n", n.busIdx, n.comp.cName, n.comp.cVN, v, n._vm_pu, n._va_deg, pGS, qGS, pLS, qLS, typeStr)
+    @printf(io, "| %-5d | %-20s | %-10d | %-10.3f | %-10.3f | %-10.3f | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-5s |\n", n.busIdx, n.comp.cName, n.comp.cVN, v, n._vm_pu, n._va_deg, pGS, qGS, pLS, qLS, pShunt_str, qShunt_str, typeStr)
   end
 
-  @printf(io, "------------------------------------------------------------------------------------------------------------------------------------------------\n")
+  @printf(io, "--------------------------------------------------------------------------------------------------------------------------------------------------------------------------\n")
+  #@show tpGS, tqGS, tpLS, tqLS, tpShunt, tqShunt
   println(io, flowResults)
 
   if toFile

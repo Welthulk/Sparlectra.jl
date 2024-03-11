@@ -16,7 +16,7 @@ function makeMDO!(busMapDict::Dict{Int,Int}, busData::Matrix{Float64}, branchDat
   for row in eachrow(busData[:, 1:col])
     btype = Int64(row[busDict["type"]])
     if btype == 4 # isolated      
-      @info "isolated bus found, skipped"
+      @debug "isolated bus found, skipped"
       continue
     end
     idx += 1

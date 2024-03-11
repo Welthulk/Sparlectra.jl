@@ -10,11 +10,8 @@ using Logging
 
 global_logger(ConsoleLogger(stderr, Logging.Info))
 
-function acpflow(casefile::String, writeCase::Bool, writePGM::Bool, iterations::Int, verbose::Int)
-  sparse=true  
-  tol = 1e-6   
-  log = verbose >= 1
-
+function acpflow(casefile::String, writeCase::Bool, writePGM::Bool, iterations::Int, verbose::Int, tol::Float64=1e-6)
+  sparse=false  
   # load + create net
   jpath=joinpath(pwd(),"data","pgmodel",casefile)
   if !isfile(jpath)
@@ -22,7 +19,12 @@ function acpflow(casefile::String, writeCase::Bool, writePGM::Bool, iterations::
     return
   end
   myNet =createNetFromPGM(jpath)
-  
+  if length(myNet.nodeVec) == 0
+    @error "No nodes found in $(jpath)"
+    return
+  elseif length(myNet.nodeVec) > 30
+    sparse = true
+  end
   # matpower export  
   if writeCase       
     case = myNet.name
@@ -31,7 +33,7 @@ function acpflow(casefile::String, writeCase::Bool, writePGM::Bool, iterations::
   end
 
   # Y-Bus Matrix  
-  Y = createYBUS(myNet.branchVec, myNet.shuntVec, (verbose>2), sparse)
+  Y = createYBUS(myNet.branchVec, myNet.shuntVec, sparse, (verbose>2))
   ite = 0
   etime = @elapsed begin
     ite,erg = calcNewtonRaphson!(Y, myNet.nodeVec, myNet.baseMVA, iterations, tol, verbose, sparse)      
@@ -53,5 +55,6 @@ function acpflow(casefile::String, writeCase::Bool, writePGM::Bool, iterations::
   
 end
 
-@time acpflow("input.json", true, true, 10, 1)
+#@time acpflow("input.json", true, true, 10, 1)
 #]@time acpflow("MiniGrid_v4.json", true, true, 10, 1)
+@time acpflow("SmallGrid.json", true, true, 20, 1, 1e-6)
