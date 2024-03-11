@@ -441,7 +441,7 @@ function exportPGM(; net::ResDataTypes.Net, filename::String, useMVATrafoModell:
     2,  # specify the indentation level for pretty printing
   )
 
-  open(full_path, "w") do file
+  open(full_path, "w") do file    
     write(file, json_data)
-  end
+  end  
 end
