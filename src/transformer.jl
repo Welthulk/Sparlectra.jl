@@ -366,7 +366,7 @@ end
 
 function getVn2WT(x::PowerTransformer)
   side = getSideNumber2WT(x)
-  vn = (side == 1) ? x.side1 : x.side2
+  vn = (side == 1) ? x.side1.Vn : x.side2.Vn
   return vn
 end
 
@@ -374,10 +374,12 @@ function getTapStepPercent(x::PowerTransformer)
   @assert x.isBiWinder "Transformer is not a 2WT"
   tap = x.tapSideNumber == 1 ? x.side1.taps : (x.tapSideNumber == 2 ? x.side2.taps : nothing)
   if isnothing(tap)
-    return false, 0.0
+    return (false, 0.0)
   end
   vn = getVn2WT(x)
-  return true, (tap.voltageIncrement_kV / vn) * 100.0
+  @show vn
+  @show tap
+  return (true, (tap.voltageIncrement_kV / vn) * 100.0)
 end
 
 function isTapInNeutralPosition(x::PowerTransformer)
@@ -402,7 +404,7 @@ function calcTransformerRatio(x::PowerTransformer)
   r1 = x.side1.ratedU
   r2 = x.side2.ratedU
   ratio = (v1 * r2) / (v2 * r1)
-
+  taps = x.tapSideNumber == 1 ? x.side1.taps : (x.tapSideNumber == 2 ? x.side2.taps : nothing)
   if isTapInNeutralPosition(x)
     return ratio
   else
