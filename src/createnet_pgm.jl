@@ -79,7 +79,7 @@ function identifyIsolatedBuses(nodes, lines, wt2, wt3)
       push!(isolated_buses, node_id)
     end
   end
-  @info "isolated busses: $(isolated_buses)"
+  @info "isolated busses: number: $(length(isolated_buses)), $(isolated_buses)"
   return isolated_buses
 end
 
@@ -145,10 +145,17 @@ function reassignBusNumbers!(nodes, lines, wt2, wt3, s_gen, s_load, shunt, sourc
   for gen in s_gen
     gen["o_node"] = gen["node"]
     gen["node"] = get(bus_mapping, gen["node"], gen["node"])
-
-    bus_id = Int(gen["node"])
-    bus_type = gen["type"]
-    bus_type += 1
+    oid = gen["id"]
+    bus_id = Int(gen["node"])    
+    p = gen["p_specified"]
+    q = gen["q_specified"]
+    bus_type = 1
+    if abs(p) > 1e-6 && abs(q) > 1e-6
+      bus_type = 1      
+    elseif abs(p) > 1e-6 && abs(q) < 1e-6
+      bus_type = 2
+      @info "created PV-Bus for generator $(oid) at node $(gen["o_node"])"
+    end  
     bus_types[bus_id] = bus_type
   end
 
@@ -156,10 +163,11 @@ function reassignBusNumbers!(nodes, lines, wt2, wt3, s_gen, s_load, shunt, sourc
     load["o_node"] = load["node"]
     load["node"] = get(bus_mapping, load["node"], load["node"])
 
-    bus_id = Int(load["node"])
-    bus_type = load["type"]
-    bus_type += 1
-    bus_types[bus_id] = bus_type
+    bus_id = Int(load["node"])    
+    if !haskey(bus_types, bus_id)          
+      bus_type = 1
+      bus_types[bus_id] = bus_type
+    end
   end
 
   for s in shunt
@@ -231,6 +239,17 @@ function searchMaxS(wt2, wt3, gens)
     end
   end
   @assert sn_max != 0.0 "no sn found"
+  
+  
+  sn_max = sn_max* 1e-6
+  if sn_max <= 100.0
+    sn_max = ceil(sn_max / 10.0) * 10.0
+  elseif sn_max <= 1000.0
+    sn_max = ceil(sn_max / 100.0) * 100.0
+  else
+    sn_max = ceil(sn_max / 1000.0) * 1000.0
+  end
+
   return sn_max
 end
 
@@ -272,9 +291,9 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
       end
 
       if type == 4
-        @info "isolated bus found: $id"
+        @debug "isolated bus found: $id"
       elseif type == 3
-        @info "slack bus found: $id"
+        @debug "slack bus found: $id"
       end
     end
   end
@@ -286,7 +305,7 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
 
   if base_MVA == 0.0
     # if baseMVA is not given, so we search for the maximum sn of the transformers
-    baseMVA = searchMaxS(wt2, wt3, sym_gens) * umrech_MVA
+    baseMVA = searchMaxS(wt2, wt3, sym_gens)
   else
     baseMVA = base_MVA
   end
@@ -315,7 +334,7 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
     vn_kv = float(bus["u_rated"]) * 1e-3
     btype = Int64(bus["type"])
     if btype == 4
-      @info "isolated bus found, bus number: $idx, vn_kv: $vn_kv, type: $btype, skip..."
+      @debug "isolated bus found, bus number: $idx, vn_kv: $vn_kv, type: $btype, skip..."
       continue
     end
     busIdx = idx
