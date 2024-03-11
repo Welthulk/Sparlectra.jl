@@ -44,8 +44,6 @@ mutable struct ProSumer
     vm_degree::Union{Nothing,Float64} = nothing,
     isAPUNode::Bool = false
   )
-    
-    @show "generator?", isGenerator(type)
     comp = getProSumPGMComp(vn_kv, busIdx, isGenerator(type), oID)
     
     if isnothing(vm_pu)
