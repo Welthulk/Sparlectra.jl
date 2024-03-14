@@ -29,6 +29,7 @@ The four-terminal network representation of a line segment is as follows:
 
 \[ \begin{bmatrix} U_1 \\ U_2 \end{bmatrix} = \begin{bmatrix} Y_{11} & Y_{12} \\ Y_{21} & Y_{22} \end{bmatrix} \cdot \begin{bmatrix} I_1 \\ I_2 \end{bmatrix} \]
 
+
 Neglecting \(G\) results in:
 
 \[ \begin{bmatrix} U_1 \\ U_2 \end{bmatrix} = \begin{bmatrix} \frac{1}{R} + j\omega L & -j\omega C \\ -j\omega C & \frac{1}{R} + j\omega L \end{bmatrix} \cdot \begin{bmatrix} I_1 \\ I_2 \end{bmatrix} \]
