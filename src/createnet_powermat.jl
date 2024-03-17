@@ -28,7 +28,7 @@ function makeMDO!(busMapDict::Dict{Int,Int}, busData::Matrix{Float64}, branchDat
     push!(nodeIsolateSet, idx)
   end
 
-  col = size(branchData, 2)
+  col = size(branchData, 2)  
   for row in eachrow(branchData[:, 1:col])
     status = Int64(row[branchDict["status"]])
     if status == 1
@@ -114,8 +114,9 @@ function createNetFromMatPowerFile(filename, base_MVA::Float64 = 0.0, log::Bool 
   proSumDict = Dict{Integer,ProSumer}()
   busMapDict = Dict{Int,Int}()
 
-  println("create network from case-file: $(filename)")
+  @info "create network from case-file: $(filename)"
   netName, baseMVA, busData, genData, branchData = casefileparser(filename)
+  
   slackIdx = 0
   if base_MVA > 0.0
     baseMVA = base_MVA
@@ -276,8 +277,11 @@ function createNetFromMatPowerFile(filename, base_MVA::Float64 = 0.0, log::Bool 
     qGen = float(row[genDict["Qg"]]) < 0.0 ? (@info("qGen at bus $(_bus) q < 0"); float(row[genDict["Qg"]])) : float(row[genDict["Qg"]])
 
     if abs(pGen) < 1e-6 && abs(qGen) < 1e-6
-      @info "generator $(_bus) has no power output, ignored"
-      continue
+      node = NodeDict[_bus]
+      if node._nodeType == ResDataTypes.PV || node._nodeType == ResDataTypes.PQ
+        @info "generator $(_bus) has no power output, ignored"
+        continue
+      end
     end
 
     bus = busMapDict[_bus]
