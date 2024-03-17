@@ -41,7 +41,7 @@ function acpflow(casefile::String, iterations::Int, verbose::Int, mdo::Bool, exp
     else
       jpath = ""
     end
-    printACPFlowResults(myNet, etime, ite, printResultToFile, jpath)
+    printACPFlowResults(myNet, etime, ite, tol, printResultToFile, jpath)
     
     if exportToPGM    
       convertPVtoPQ!(myNet)
