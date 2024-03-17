@@ -416,11 +416,11 @@ function calcJacobian(Y::AbstractMatrix{ComplexF64}, busVec::Vector{BusData}, ad
             # Jii = ∂qi/∂𝜑i    = - vi*[gii * vi * cos(𝜑i-𝜑i-αi)] + vi * [∑ gik * vk * cos(𝜑i-𝜑j-αik)]  : k = 1 .. n -> neighbors                    
             jacobian[i2, j1] = -vm_i * (Yii * vm_i * cos(arg)) + vm_i * sum(abs(Y[i, k]) * busVec[k].vm_pu * cos(va_i - busVec[k].va_rad - angle(Y[i, k])) for k in adjBranch[i])
             # Nii = Vi*∂pi/∂vi = vi * (gii * vi * cos(𝜑i-𝜑i-αii)) +vi * [∑ gik* vk * cos(𝜑i-𝜑j-αik)]
-            #jacobian[i1, j2] = vm_i * (Yii * vm_i * cos(arg)) + vm_i * sum(abs(Y[i, k]) * busVec[k].vm_pu * cos(va_i - busVec[k].va_rad - angle(Y[i, k])) for k in adjBranch[i])
-            jacobian[i1, j2] = - jacobian[i2, j1]
+            jacobian[i1, j2] = vm_i * (Yii * vm_i * cos(arg)) + vm_i * sum(abs(Y[i, k]) * busVec[k].vm_pu * cos(va_i - busVec[k].va_rad - angle(Y[i, k])) for k in adjBranch[i])
+            #jacobian[i1, j2] = - jacobian[i2, j1]
             # Lii = Vi*∂qi/∂vi = + vi*( gii * vi * sin(𝜑i-𝜑i-αii))  + vi * [∑ gik* vk * sin(𝜑i-𝜑j-αik)]          
-            #jacobian[i2, j2] = vm_i * (Yii * vm_i * sin(arg)) + vm_i * sum(abs(Y[i, k]) * busVec[k].vm_pu * sin(va_i - busVec[k].va_rad - angle(Y[i, k])) for k in adjBranch[i])
-            jacobian[i2, j2] = jacobian[i1, j1]
+            jacobian[i2, j2] = vm_i * (Yii * vm_i * sin(arg)) + vm_i * sum(abs(Y[i, k]) * busVec[k].vm_pu * sin(va_i - busVec[k].va_rad - angle(Y[i, k])) for k in adjBranch[i])
+            #jacobian[i2, j2] = jacobian[i1, j1]
             printdebug(case, "Hii", i1, j1, jacobian[i1, j1], i, j)
             printdebug(case, "Jii", i2, j1, jacobian[i2, j1], i, j)
             printdebug(case, "Nii", i1, j2, jacobian[i1, j2], i, j)
@@ -437,11 +437,11 @@ function calcJacobian(Y::AbstractMatrix{ComplexF64}, busVec::Vector{BusData}, ad
             # Jij = ∂qi/∂𝜑j    = -vi * [gij * vj * cos(𝜑i-𝜑j-αij)]                
             jacobian[i2, j1] = -vm_i * Yij * vm_j * cos(arg)
             # Nij = Vj*∂pi/∂vj = +vi * gij * vj * cos(𝜑i-𝜑j-αij)                
-            #jacobian[i1, j2] = vm_i * Yij * vm_j * cos(arg)
-            jacobian[i1, j2] = - jacobian[i2, j1]
+            jacobian[i1, j2] = vm_i * Yij * vm_j * cos(arg)
+            #jacobian[i1, j2] = - jacobian[i2, j1]
             # Lij = Vj*∂qi/∂vj = +vi * [ gij * vj * sin(𝜑i-𝜑j-αij) ] }                
-            #jacobian[i2, j2] = vm_i * Yij * vm_j * sin(arg)
-            jacobian[i2, j2] = jacobian[i1, j1]
+            jacobian[i2, j2] = vm_i * Yij * vm_j * sin(arg)
+            #jacobian[i2, j2] = jacobian[i1, j1]
             printdebug(case, "Hij", i1, j1, jacobian[i1, j1], i, j)
             printdebug(case, "Jij", i2, j1, jacobian[i2, j1], i, j)
             printdebug(case, "Nij", i1, j2, jacobian[i1, j2], i, j)
