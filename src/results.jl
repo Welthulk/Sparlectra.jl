@@ -64,7 +64,7 @@ function formatBranchResults(net::ResDataTypes.Net)
   return formatted_results, total_losses
 end
 
-function printACPFlowResults(net::ResDataTypes.Net, ct::Float64, ite::Int, toFile::Bool = false, path::String = "")
+function printACPFlowResults(net::ResDataTypes.Net, ct::Float64, ite::Int, tol::Float64, toFile::Bool = false, path::String = "")
   if toFile
     filename = "result_$(net.name).txt"
     io = open(joinpath(path, filename), "w")
@@ -112,6 +112,7 @@ function printACPFlowResults(net::ResDataTypes.Net, ct::Float64, ite::Int, toFil
 
   @printf(io, "Date         :%20s\n", current_date)
   @printf(io, "Iterations   :%10d\n", ite)
+  @printf(io, "Tolerance    : %.1e\n", tol) 
   @printf(io, "Converged in :%10f seconds\n", ct)
   @printf(io, "Case         :%15s\n", net.name)
   @printf(io, "BaseMVA      :%10d\n", net.baseMVA)
