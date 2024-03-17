@@ -6,18 +6,21 @@
 function casefileparser(filename)
   function processLine(line::AbstractString)::Vector{Float64}
     line = chop(line)  # Run chop here to remove unnecessary characters at the end of the line
+    # Ignore comments after ;
+    if contains(line, "; ")
+      line = split(line, "; ")[1]
+    end
     if endswith(line, ';')
       line = chop(line[1:end-1])  # Remove semicolon at end if present
     end
     try
-
       # Split by tabs and spaces
       values = split(line, ['\t', ' '])
 
       # Removing empty strings
       values = filter(x -> x ≠ "", values)
 
-      # Parsing the values ​​as Float64
+      # Parsing the values as Float64
       values = parse.(Float64, values)
 
       if isempty(values)
@@ -72,7 +75,7 @@ function casefileparser(filename)
         branch_data_block *= "\n$line"
         break
       end
-    elseif occursin("%", line)
+    elseif startswith(line, "%")
       continue
     elseif !isempty(bus_data_block) && block == 1
       # Add the line to the block
@@ -152,57 +155,55 @@ function casefileparser(filename)
 
   # apply the order to the mpc_bus array
   mpc_bus = mpc_bus[busSequence, :]
-  
+
   return case_name, baseMVA, mpc_bus, mpc_gen, mpc_branch
 end
 
 # Parser for Power Grid Model (PGM) files
 function pgmparser(filename)
-  
   json_data = read(filename, String)
   data_dict = JSON.parse(json_data)
-    
+
   try
-   version = data_dict["version"]
+    version = data_dict["version"]
   catch
     @warn "No version in PGM-File"
   end
-  
+
   nodes = data_dict["data"]["node"]
   lines = []
   if haskey(data_dict["data"], "line")
     lines = data_dict["data"]["line"]
   end
-  
+
   wt2 = []
   if haskey(data_dict["data"], "transformer")
-    wt2 = data_dict["data"]["transformer"]      
+    wt2 = data_dict["data"]["transformer"]
   end
 
   wt3 = []
   if haskey(data_dict["data"], "three_winding_transformer")
     wt3 = data_dict["data"]["three_winding_transformer"]
   end
-  
-  sym_gens = []  
+
+  sym_gens = []
   if haskey(data_dict["data"], "sym_gen")
     sym_gens = data_dict["data"]["sym_gen"]
-  end  
-  
+  end
+
   sym_loads = []
   if haskey(data_dict["data"], "sym_load")
-    sym_loads = data_dict["data"]["sym_load"]  
-  end    
-    
+    sym_loads = data_dict["data"]["sym_load"]
+  end
+
   shunts = []
   if haskey(data_dict["data"], "shunt")
     shunts = data_dict["data"]["shunt"]
-  end  
-  
+  end
+
   source = []
-  if haskey(data_dict["data"], "source")  
+  if haskey(data_dict["data"], "source")
     source = data_dict["data"]["source"]
-  end  
+  end
   return nodes, lines, wt2, wt3, sym_gens, sym_loads, shunts, source
-  
 end
