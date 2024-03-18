@@ -198,7 +198,7 @@ function convertPVtoPQ!(net::ResDataTypes.Net)
       busIdx = n.busIdx
       for p in net.prosumpsVec
         if p.comp.cFrom_bus == busIdx          
-          p.qVal = n._qƩGen
+          setQGenReplacement!(p, n._qƩGen)          
         end
       end
     end

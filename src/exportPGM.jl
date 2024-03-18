@@ -155,8 +155,6 @@ function exportPGM(; net::ResDataTypes.Net, filename::String, useMVATrafoModell:
   function get_3WTtrafos(o::PowerTransformer, baseMVA::Float64)
     parameters = OrderedDict{String,Any}()
     if isa(o.comp, ImpPGMComp3WT)
-
-      #@show "trafo: ", o
       u1   = !isnothing(o.side1.ratedU) ? o.side1.ratedU * 1e3 : o.side1.Vn * 1e3
       u2   = !isnothing(o.side2.ratedU) ? o.side2.ratedU * 1e3 : o.side2.Vn * 1e3
       u3   = o.side3.ratedU * 1e3
@@ -172,14 +170,8 @@ function exportPGM(; net::ResDataTypes.Net, filename::String, useMVATrafoModell:
       pk_23 = 0.0
       i0 = 0.0
       p0 = 0.0
-
-      #@show o.side1.modelData
-      #@show o.side2.modelData
-      #@show o.side3.modelData
-
-      #@assert !(isnothing(o.side1.modelData) || isnothing(o.side2.modelData) || isnothing(o.side3.modelData)) "modelData not supported for 3WT-trafo"
-
       l = 0
+
       for side in [o.side1, o.side2, o.side3]
         l += 1
         if isnothing(side.modelData)
@@ -337,15 +329,16 @@ function exportPGM(; net::ResDataTypes.Net, filename::String, useMVATrafoModell:
       parameters["p_specified"] = o.pVal * 1e6
     end
 
-    if isnothing(o.qVal)
+    if isAPUNode(o)
+      parameters["q_specified"] = isnothing(getQGenReplacement(o)) ? 0.0 : getQGenReplacement(o) * 1e6
+      parameters["_c"] = "converted to PQ-Node"
+    elseif isnothing(o.qVal)
       @warn "qVal is not set, set to 0.0"
       parameters["q_specified"] = 0.0
     else
       parameters["q_specified"] = o.qVal * 1e6
     end
-    if isAPUNode(o)
-      parameters["_c"] = "converted to PQ-Node"
-    end
+
     parameters["_cname"] = o.comp.cName
     parameters["_cID"] = o.comp.cID
 
@@ -355,7 +348,6 @@ function exportPGM(; net::ResDataTypes.Net, filename::String, useMVATrafoModell:
   function get_sym_loads(o::ProSumer)
     parameters = OrderedDict{String,Any}()
     @assert isa(o.comp, ImpPGMComp)
-
     parameters["id"] = get_next_id()
     parameters["node"] = o.comp.cFrom_bus
     parameters["status"] = 1

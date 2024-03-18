@@ -20,6 +20,7 @@ mutable struct ProSumer
   vm_degree::Union{Nothing,Float64}
   proSumptionType::ProSumptionType
   isAPUNode::Bool
+  qGenRepl::Union{Nothing,Float64}
 
   # @enum NodeType UnknownN=0 PQ=1 PV=2 Slack=3
   # @enum ProSumptionType UnknownP=0 Injection=1 Consumption=2 
@@ -33,7 +34,7 @@ mutable struct ProSumer
     ratedU::Union{Nothing,Float64} = nothing,
     qPercent::Union{Nothing,Float64} = nothing,
     p::Union{Nothing,Float64} = nothing,
-    q::Union{Nothing,Float64} = nothing,
+    q::Union{Nothing,Float64} = nothing,    
     maxP::Union{Nothing,Float64} = nothing,
     minP::Union{Nothing,Float64} = nothing,
     maxQ::Union{Nothing,Float64} = nothing,
@@ -42,7 +43,7 @@ mutable struct ProSumer
     referencePri::Union{Nothing,Integer} = nothing,
     vm_pu::Union{Nothing,Float64} = nothing,
     vm_degree::Union{Nothing,Float64} = nothing,
-    isAPUNode::Bool = false
+    isAPUNode::Bool = false    
   )
     comp = getProSumPGMComp(vn_kv, busIdx, isGenerator(type), oID)
     
@@ -54,7 +55,7 @@ mutable struct ProSumer
       vm_degree = 0.0
     end
 
-    new(comp, ratedS, ratedU, qPercent, p, q, maxP, minP, maxQ, minQ, ratedPowerFactor, referencePri, vm_pu, vm_degree, type, isAPUNode)
+    new(comp, ratedS, ratedU, qPercent, p, q, maxP, minP, maxQ, minQ, ratedPowerFactor, referencePri, vm_pu, vm_degree, type, isAPUNode, nothing)
   end
 
   function Base.show(io::IO, prosumption::ProSumer)
@@ -113,6 +114,10 @@ mutable struct ProSumer
       print(io, "vm_degree: ", prosumption.vm_degree, ", ")
     end
 
+    if (!isnothing(prosumption.qGenRepl))
+      print(io, "qGenRepl: ", prosumption.qGenRepl, ", ")
+    end
+
     print(io, "proSumptionType: ", prosumption.proSumptionType, ")")
   end
 end
@@ -138,6 +143,14 @@ function getProSumPGMComp(Vn::Float64, from::Int, isGen::Bool, id::Int)
   cName = isGen ? "Gen_$(string(convert(Int,trunc(Vn))))" : "Ld_$(string(round(Vn,digits=1)))"
   cID = "#$cName\\_$from\\_#$(string(id))"
   return ImpPGMComp(cID, cName, cTyp, Vn, from, from)  
+end
+
+function setQGenReplacement!(o::ResDataTypes.ProSumer, q::Float64)
+  o.qGenRepl = q
+end
+
+function getQGenReplacement(o::ResDataTypes.ProSumer)::Union{Nothing,Float64}  
+  return o.qGenRepl
 end
 
 function isSlack(o::ResDataTypes.ProSumer)
