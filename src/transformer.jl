@@ -10,7 +10,7 @@ mutable struct TransformerModelParameters
   p0_kW::Float64 # PGM-Parameter sn in W
   vkr_percent::Union{Nothing,Float64} # real Part of the short-circuit voltage in percent of the rated voltage, nothing = not given
 
-  function TransformerModelParameters(; sn_MVA::Float64, vk_percent::Float64, vkr_percent::Union{Nothing,Float64}, pk_kW::Union{Nothing,Float64}, i0_percent::Float64, p0_kW::Float64)
+  function TransformerModelParameters(; sn_MVA::Float64, vk_percent::Float64, vkr_percent::Union{Nothing,Float64} = nothing, pk_kW::Union{Nothing,Float64} = nothing, i0_percent::Float64, p0_kW::Float64)
     @assert sn_MVA > 0.0 "sn_mva must be > 0.0"
     @assert vk_percent > 0.0 "uk_percent must be > 0.0"
     @assert !(pk_kW === nothing && ukr_percent === nothing) "At least one of the parameters pk_kw=$(pk_kw) or ukr_percent=$(ukr_percent) must be set"
@@ -61,19 +61,18 @@ function calcTransformerRXGB(Vn_kV::Float64, modelData::TransformerModelParamete
   # Resistanz
   if !isnothing(modelData.vkr_percent) && modelData.vkr_percent > 0.0
     rk = modelData.vkr_percent * 1e-2 * z_base
-  else    
+  else
     rk = (Vn_kV^2 / modelData.sn_MVA^2) * modelData.pk_kW * 1e-9
   end
-  
+
   # Reaktanz
-  xk = 0.0  
+  xk = 0.0
   if rk < zk
-    xk = sqrt(zk^2 - rk^2)    
+    xk = sqrt(zk^2 - rk^2)
   else
     @warn "rk >= zk, xk is set to 0.0"
   end
-      
-    
+
   # Suszeptanz
   if !isnothing(modelData.p0_kW) && modelData.p0_kW > 0.0 && !isnothing(modelData.i0_percent) && modelData.i0_percent > 0.0
     pfe = modelData.p0_kW
@@ -178,7 +177,7 @@ mutable struct PowerTransformerWinding
   taps::Union{Nothing,PowerTransformerTaps}
   isPu_RXGB::Union{Nothing,Bool}          # r,x,b in p.u. given? nothing = false
   modelData::Union{Nothing,TransformerModelParameters}
-  _isEmpty::Bool  
+  _isEmpty::Bool
 
   function PowerTransformerWinding(
     Vn::Float64,
@@ -319,6 +318,7 @@ mutable struct PowerTransformer <: AbstractBranch
       v3 = 0.0
     end
     # find HV Side
+
     if v1 >= v2 && v1 >= v3
       HVSideNumber = 1
     elseif v2 >= v1 && v2 >= v3
