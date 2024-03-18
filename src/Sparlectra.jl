@@ -41,6 +41,7 @@ export
   getSideNumber2WT,
   getWinding2WT,
   calcTransformerRatio,
+  recalc_trafo_model_data,
   create3WTWindings!,
   getTrafoImpPGMComp,
   getWT3AuxBusID,
@@ -160,8 +161,7 @@ export
   # functions
   createNetFromPGM,
   createNetFromMatPowerFile,
-  calcNeutralU,
-  recalc_trafo_model_data,
+  calcNeutralU,  
   createYBUS,
   getNBI,
   mdoRCM,
