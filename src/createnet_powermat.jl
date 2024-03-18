@@ -253,8 +253,7 @@ function createNetFromMatPowerFile(filename, base_MVA::Float64 = 0.0, log::Bool 
       w1 = w2 = nothing
       if ratedS > 0.0
         vnh_kv > vnl_kv ? (ratedU = vnh_kv) : (ratedU = vnh_kv)
-        uk, P_kW, i0, Pfe_kW = recalc_trafo_model_data(baseMVA = baseMVA, Sn_MVA = ratedS, ratedU_kV = ratedU, r_pu = r_pu, x_pu = x_pu, b_pu = b_pu, isPerUnit = true)
-        modelData = TransformerModelParameters(sn_MVA = ratedS, vk_percent = uk, pk_kW = P_kW, i0_percent = i0, p0_kW = Pfe_kW)
+        modelData = recalc_trafo_model_data(baseMVA = baseMVA, Sn_MVA = ratedS, ratedU_kV = ratedU, r_pu = r_pu, x_pu = x_pu, b_pu = b_pu, isPerUnit = true)        
         vnh_kv > vnl_kv ? (w1 = PowerTransformerWinding(Vn_kV = vnh_kv, modelData = modelData); w2 = PowerTransformerWinding(Vn_kV = vnl_kv)) : (w1 = PowerTransformerWinding(Vn_kV = vnh_kv); w2 = PowerTransformerWinding(Vn_kV = vnl_kv, modelData = modelData))
       else
         vnh_kv > vnl_kv ? (w1 = PowerTransformerWinding(Vn_kV = vnh_kv); w2 = PowerTransformerWinding(Vn_kV = vnl_kv)) : (w1 = PowerTransformerWinding(Vn_kV = vnh_kv); w2 = PowerTransformerWinding(Vn_kV = vnl_kv))
