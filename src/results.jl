@@ -78,11 +78,10 @@ function printACPFlowResults(net::ResDataTypes.Net, ct::Float64, ite::Int, tol::
   formatted_version = format_version(vers)
   flowResults, totalLosses = formatBranchResults(net)
 
-  if toFile
-    println(io, "================================================================================")
-    println(io, "| SPARLECTRA Version $formatted_version - AC Power Flow Results                          |")
-    println(io, "================================================================================")
-  end
+  @printf(io,"================================================================================\n")
+  @printf(io,"| SPARLECTRA Version %-10s - AC Power Flow Results                        |\n", formatted_version)
+  @printf(io,"================================================================================\n")
+
 
   busses = length(net.nodeVec)
   branches = length(net.branchVec)
