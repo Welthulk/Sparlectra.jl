@@ -11,7 +11,7 @@ using Logging
 global_logger(ConsoleLogger(stderr, Logging.Info))
 
 function acpflow(casefile::String, writeCase::Bool, writePGM::Bool, iterations::Int, verbose::Int, mdo::Bool = false, tol::Float64 = 1e-6, base_MVA::Float64 = 0.0, printResultToFile::Bool = false, printResultAnyCase::Bool = false)
-  sparse = false
+  
   ext = splitext(casefile)[2]
   myNet = nothing
   path = ""
@@ -42,24 +42,17 @@ function acpflow(casefile::String, writeCase::Bool, writePGM::Bool, iterations::
     return
   end
 
-  if length(myNet.nodeVec) == 0
-    @error "No nodes found in $(jpath)"
-    return
-  elseif length(myNet.nodeVec) > 30
-    sparse = true
-  end
   # matpower export  
   if writeCase
     case = myNet.name
     file = joinpath(pwd(), "data", path, case * ".m")
     writeMatpowerCasefile(myNet, file, case)
   end
-
-  # Y-Bus Matrix  
-  Y = createYBUS(myNet.branchVec, myNet.shuntVec, sparse, (verbose > 0))
+  
+  # run power flow
   ite = 0
   etime = @elapsed begin
-    ite, erg = calcNewtonRaphson!(Y, myNet.nodeVec, myNet.baseMVA, iterations, tol, verbose, sparse)
+    ite, erg = runpf!(myNet, iterations, tol, verbose) 
   end
 
   if erg == 0 || printResultAnyCase
@@ -94,6 +87,6 @@ writePGM = true
 mdo = false
 tol = 1e-6
 ite = 20
-verbose = 0
+verbose = 0 # 0: no output, 1: iteration norm, 2: + Y-Bus, 3: + Jacobian, 4: + Power Flow
 base_MVA = 0.0 # # Set a value to a non-zero value to override the corresponding value in the case file.
 @time acpflow(file, writeCase, writePGM, ite, verbose, mdo, 1e-6, base_MVA, printResultToFile, printResultAnyCase)
