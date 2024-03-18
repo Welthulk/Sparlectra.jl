@@ -67,6 +67,8 @@ export
   isSlack,
   isGenerator,
   isAPUNode,
+  setQGenReplacement!,
+  getQGenReplacement,
   toProSumptionType
 
 include("component.jl")
