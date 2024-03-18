@@ -169,6 +169,7 @@ export
   calcPowerFlow,
   adjacentBranches,
   calcNewtonRaphson!,
+  runpf!,
   calcNetLosses!
 
 include("equicircuit.jl")

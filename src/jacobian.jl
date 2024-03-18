@@ -578,13 +578,13 @@ function calcNewtonRaphson!(Y::AbstractMatrix{ComplexF64}, nodes::Vector{ResData
 
   busVec, slackNum = getBusData(nodes, Sbase_MVA, verbose)
 
-  adjBranch = adjacentBranches(Y, (verbose > 1))
+  adjBranch = adjacentBranches(Y, (verbose > 2))
   num_pv_nodes = count(bus -> bus.type == ResDataTypes.PV, busVec)
   num_pq_nodes = count(bus -> bus.type == ResDataTypes.PQ, busVec)
 
   size = num_pq_nodes * 2 + num_pv_nodes
 
-  busTypeVec, slackIdx = getBusTypeVec(busVec, (verbose >= 2))
+  busTypeVec, slackIdx = getBusTypeVec(busVec, (verbose > 2))
   @assert slackIdx == slackNum "Error: Number of slack nodes is not equal to the number of slack nodes in the bus vector ($(slackIdx) /= $(slackNum))."
 
   erg = 1 # result of calculation
@@ -599,7 +599,7 @@ function calcNewtonRaphson!(Y::AbstractMatrix{ComplexF64}, nodes::Vector{ResData
   end
 
   iteration_count = 0
-  power_feeds = getPowerFeeds(busVec, num_pq_nodes, num_pv_nodes, (verbose > 1))
+  power_feeds = getPowerFeeds(busVec, num_pq_nodes, num_pv_nodes, (verbose > 2))
   s_slack = 0.0 + 0.0im
   while iteration_count <= maxIte
     # Calculation of the power flows
@@ -612,8 +612,8 @@ function calcNewtonRaphson!(Y::AbstractMatrix{ComplexF64}, nodes::Vector{ResData
     =#
 
     # Calculation of the residual
-    delta_P = residuum(Y, busVec, power_feeds, num_pq_nodes, num_pv_nodes, (verbose > 1))
-    if verbose > 1
+    delta_P = residuum(Y, busVec, power_feeds, num_pq_nodes, num_pv_nodes, (verbose > 2))
+    if verbose > 2
       println("\ndelta_P: Iteration $(iteration_count)")
       printVector(delta_P, busVec, "p", "q", false, 0.0)
     end
@@ -630,7 +630,7 @@ function calcNewtonRaphson!(Y::AbstractMatrix{ComplexF64}, nodes::Vector{ResData
     end
 
     # Calculation of the Jacobian matrix      
-    jacobian = calcJacobian(Y, busVec, adjBranch, busTypeVec, slackIdx, num_pq_nodes, num_pv_nodes, (verbose > 2), sparse)
+    jacobian = calcJacobian(Y, busVec, adjBranch, busTypeVec, slackIdx, num_pq_nodes, num_pv_nodes, (verbose >= 3), sparse)
 
     # Solution of the linear system of equations for delta_x        
     delta_x = nothing
@@ -643,7 +643,7 @@ function calcNewtonRaphson!(Y::AbstractMatrix{ComplexF64}, nodes::Vector{ResData
       #iterative Solvers:      
       #delta_x = cg(jacobian, delta_P)
 
-      if verbose > 1
+      if verbose > 2
         println("\ndelta_x: Iteration $(iteration_count)")
         printVector(delta_x, busVec, "Δφ", "ΔU/U", true, 0.0)
       end
@@ -688,7 +688,7 @@ function calcNewtonRaphson!(Y::AbstractMatrix{ComplexF64}, nodes::Vector{ResData
     iteration_count += 1
   end
 
-  if verbose > 1
+  if verbose > 2
     println("\nSolution: Iteration $(iteration_count)\n")
   end
 
@@ -706,7 +706,7 @@ function calcNewtonRaphson!(Y::AbstractMatrix{ComplexF64}, nodes::Vector{ResData
       nodes[i]._qƩGen = bus._qRes * Sbase_MVA
     end
 
-    if verbose > 1
+    if verbose > 2
       vm_pu = round(nodes[i]._vm_pu, digits = 3)
       va_deg = round(nodes[i]._va_deg, digits = 3)
       if va_deg > 180
@@ -722,4 +722,24 @@ function calcNewtonRaphson!(Y::AbstractMatrix{ComplexF64}, nodes::Vector{ResData
   end
 
   return iteration_count, erg
+end
+
+
+function runpf!(net::Net, maxIte::Int, tolerance::Float64 = 1e-6, verbose::Int = 0)
+  sparse = false
+  printYBus = false
+  if length(net.nodeVec) == 0
+    @error "No nodes found in $(jpath)"
+    return
+  elseif length(net.nodeVec) > 30
+    sparse = true    
+  end
+  
+  if length(net.nodeVec) < 20
+    printYBus = (verbose > 1)
+  end
+
+  Y = createYBUS(net.branchVec, net.shuntVec, sparse, printYBus)
+
+  return calcNewtonRaphson!(Y, net.nodeVec, net.baseMVA, maxIte, tolerance, verbose, sparse)
 end
