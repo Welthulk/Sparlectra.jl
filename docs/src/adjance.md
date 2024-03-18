@@ -6,8 +6,6 @@
 
 ## 1. Adjacency Matrix
 
-### Representation in the Matrix
-
 In the context of electrical networks, consider buses as nodes and branches (lines and transformers) as connections between these nodes. The adjacency matrix represents the relationships between buses and branches. If there is a connection (branch) between two buses, the corresponding matrix entry is set to 1; otherwise, it remains at 0.
 
 ### Example
@@ -27,11 +25,9 @@ In this example, there is a connection between A and B, B and C, and C and A.
 
 ## 2. Node-Branch Incidence Matrix
 
-### Representation in the Matrix
-
 The node-branch incidence matrix considers the direction of the branches. If a branch is connected to a node and the current flows out, the matrix entry is set to 1. If the current flows into the node, the entry is set to -1. Connections to the ground are not considered.
 
-### Example
+### Example 1
 
 Consider an electrical network with nodes (Buses: A, B, C) and branches (Branches: AB, BC, CA). The node-branch incidence matrix would look like this:
 
@@ -80,7 +76,7 @@ The YBus matrix represents the admittance of an electrical network and is crucia
    - \(Y_d\) is the diagonal admittance matrix.
    - \(A^T\) is the transpose of matrix \(A\).
 
-#### Example
+#### Example 2
 
 Let's consider an example with three buses (A, B, C) and three branches (AB, BC, CA). The incidence matrix (\(A\)) and diagonal admittance matrix (\(Y_d\)) are as follows:
 
@@ -107,9 +103,9 @@ Let's consider an example with three buses (A, B, C) and three branches (AB, BC,
    \[
    Y_{\text{Bus}} = A \cdot Y_d \cdot A^T
    \]
-   
+
    Substituting the matrices with the example values:
-   
+
    \[
    Y_{\text{Bus}} =
    \begin{bmatrix}
@@ -146,8 +142,8 @@ This YBus matrix represents the network's admittance and is essential for power 
 
 > **Note:** In the Sparlectra project, the YBus matrix is created directly. Details about the creation of the YBus matrix and its implementation can be found in the `ybus.md` file within the Sparlectra project. For the calculation of the Jacobian matrix, it is recommended to use the 'adjacentBranches()' function.
 
+### Functions to create NBI and Adjacency Matrices in Sparlectra
 
-### Functions to create NBI and Adjacency Matrices in Sparlectra 
 The function `adjacentBranches`, used for creating the adjacency matrix, can be found in the file `equicircuit.jl`. The function expects the following parameters:
 
 - `Y`: An AbstractMatrix of ComplexF64 representing the admittance matrix of the electrical network.

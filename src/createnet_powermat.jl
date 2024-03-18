@@ -28,7 +28,7 @@ function makeMDO!(busMapDict::Dict{Int,Int}, busData::Matrix{Float64}, branchDat
     push!(nodeIsolateSet, idx)
   end
 
-  col = size(branchData, 2)  
+  col = size(branchData, 2)
   for row in eachrow(branchData[:, 1:col])
     status = Int64(row[branchDict["status"]])
     if status == 1
@@ -116,7 +116,7 @@ function createNetFromMatPowerFile(filename, base_MVA::Float64 = 0.0, log::Bool 
 
   @info "create network from case-file: $(filename)"
   netName, baseMVA, busData, genData, branchData = casefileparser(filename)
-  
+
   slackIdx = 0
   if base_MVA > 0.0
     baseMVA = base_MVA
@@ -250,9 +250,15 @@ function createNetFromMatPowerFile(filename, base_MVA::Float64 = 0.0, log::Bool 
       vnh_kv = vnDict[fbus]
       vnl_kv = vnDict[tbus]
       c = getTrafoImpPGMComp(false, vnh_kv, fbus, tbus)
-      w1 = PowerTransformerWinding(Vn_kV = vnh_kv)
-      w2 = PowerTransformerWinding(Vn_kV = vnl_kv)
-
+      w1 = w2 = nothing
+      if ratedS > 0.0
+        vnh_kv > vnl_kv ? (ratedU = vnh_kv)  : (ratedU = vnh_kv)
+        uk, P_kW, i0, Pfe_kW = recalc_trafo_model_data(baseMVA = baseMVA, Sn_MVA = ratedS, ratedU_kV = ratedU, r_pu = r_pu, x_pu = x_pu, b_pu = b_pu, isPerUnit = true)
+        modelData = TransformerModelParameters(sn_MVA = ratedS, vk_percent = uk, pk_kW = P_kW, i0_percent = i0, p0_kW = Pfe_kW)
+        vnh_kv > vnl_kv ? (w1 = PowerTransformerWinding(Vn_kV = vnh_kv, modelData = modelData); w2 = PowerTransformerWinding(Vn_kV = vnl_kv)) : (w1 = PowerTransformerWinding(Vn_kV = vnh_kv); w2 = PowerTransformerWinding(Vn_kV = vnl_kv, modelData = modelData))
+      else
+        vnh_kv > vnl_kv ? (w1 = PowerTransformerWinding(Vn_kV = vnh_kv); w2 = PowerTransformerWinding(Vn_kV = vnl_kv)) : (w1 = PowerTransformerWinding(Vn_kV = vnh_kv); w2 = PowerTransformerWinding(Vn_kV = vnl_kv))
+      end
       tap = false
       tType = ResDataTypes.Ratio
       if angle != 0.0
@@ -288,9 +294,9 @@ function createNetFromMatPowerFile(filename, base_MVA::Float64 = 0.0, log::Bool 
     n = NodeDict[bus]
     isPUNode = false
     if n._nodeType == ResDataTypes.PV
-      isPUNode = true      
+      isPUNode = true
     end
-    
+
     qMax = float(row[genDict["Qmax"]])
     qMin = float(row[genDict["Qmin"]])
     pMax = float(row[genDict["Pmax"]])
@@ -319,11 +325,6 @@ function createNetFromMatPowerFile(filename, base_MVA::Float64 = 0.0, log::Bool 
   end# read Generators
 
   sort!(nodeVec, by = x -> x.busIdx)
-  @debug begin
-    for n in nodeVec
-      println("original bus number: $(n._kidx), new bus $(n.busIdx) number")
-    end
-  end
 
   net = ResDataTypes.Net(netName, baseMVA, slackIdx, nodeVec, ACLines, trafos, branchVec, prosum, shuntVec)
   return net

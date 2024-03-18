@@ -72,7 +72,7 @@ function exportPGM(; net::ResDataTypes.Net, filename::String, useMVATrafoModell:
       isPerUnitRXGB = false
       ratedU = nothing
       winding = (o._equiParms == 1) ? o.side1 : ((o._equiParms == 2) ? o.side2 : nothing)
-      @assert o._equiParms > 0
+      @assert o._equiParms > 0 "no mode data found for transformer $(o.comp.cName)"
       if !isnothing(winding)
         vn = winding.Vn
         rk = winding.r
@@ -89,13 +89,8 @@ function exportPGM(; net::ResDataTypes.Net, filename::String, useMVATrafoModell:
         end
       end
 
-      if o.HVSideNumber == 1
-        u1 = o.side1.Vn * 1e3
-        u2 = o.side2.Vn * 1e3
-      else
-        u1 = o.side2.Vn * 1e3
-        u2 = o.side1.Vn * 1e3
-      end
+      u1 = o.side1.Vn * 1e3
+      u2 = o.side2.Vn * 1e3
 
       if !isnothing(winding) && !isnothing(winding.taps)
         taps = winding.taps
@@ -188,7 +183,7 @@ function exportPGM(; net::ResDataTypes.Net, filename::String, useMVATrafoModell:
       for side in [o.side1, o.side2, o.side3]
         l += 1
         if isnothing(side.modelData)
-          @info "no transforme model data found, recalculation is to be performed"          
+          @info "no transforme model data found, recalculation is to be performed"
           bm = isnothing(side) ? 0.0 : side.b
           uk, P_kW, _i0, _Pfe_kW = recalc_trafo_model_data(baseMVA = baseMVA, Sn_MVA = side.ratedS, ratedU_kV = side.ratedU, r_pu = side.r, x_pu = side.x, b_pu = abs(bm), isPerUnit = side.isPu_RXGB)
 
@@ -330,7 +325,6 @@ function exportPGM(; net::ResDataTypes.Net, filename::String, useMVATrafoModell:
     parameters = OrderedDict{String,Any}()
     @assert isa(o.comp, ImpPGMComp)
 
-
     parameters["id"] = get_next_id()
     parameters["node"] = o.comp.cFrom_bus
     parameters["status"] = 1
@@ -403,8 +397,8 @@ function exportPGM(; net::ResDataTypes.Net, filename::String, useMVATrafoModell:
 
     parameters["id"] = get_next_id()
     parameters["node"] = o.comp.cFrom_bus
-    parameters["status"] = 1    
-    g1, b1 = getGBShunt(o)    
+    parameters["status"] = 1
+    g1, b1 = getGBShunt(o)
     parameters["g1"] = g1
     parameters["b1"] = b1
     parameters["_cname"] = o.comp.cName
@@ -441,7 +435,7 @@ function exportPGM(; net::ResDataTypes.Net, filename::String, useMVATrafoModell:
     2,  # specify the indentation level for pretty printing
   )
 
-  open(full_path, "w") do file    
+  open(full_path, "w") do file
     write(file, json_data)
-  end  
+  end
 end

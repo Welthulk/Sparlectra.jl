@@ -437,11 +437,11 @@ function calcJacobian(Y::AbstractMatrix{ComplexF64}, busVec::Vector{BusData}, ad
             # Jij = ∂qi/∂𝜑j    = -vi * [gij * vj * cos(𝜑i-𝜑j-αij)]                
             jacobian[i2, j1] = -vm_i * Yij * vm_j * cos(arg)
             # Nij = Vj*∂pi/∂vj = +vi * gij * vj * cos(𝜑i-𝜑j-αij)                
-            jacobian[i1, j2] = vm_i * Yij * vm_j * cos(arg)
-            #jacobian[i1, j2] = - jacobian[i2, j1]
+            #jacobian[i1, j2] = vm_i * Yij * vm_j * cos(arg)
+            jacobian[i1, j2] = - jacobian[i2, j1]
             # Lij = Vj*∂qi/∂vj = +vi * [ gij * vj * sin(𝜑i-𝜑j-αij) ] }                
-            jacobian[i2, j2] = vm_i * Yij * vm_j * sin(arg)
-            #jacobian[i2, j2] = jacobian[i1, j1]
+            #jacobian[i2, j2] = vm_i * Yij * vm_j * sin(arg)
+            jacobian[i2, j2] = jacobian[i1, j1]
             printdebug(case, "Hij", i1, j1, jacobian[i1, j1], i, j)
             printdebug(case, "Jij", i2, j1, jacobian[i2, j1], i, j)
             printdebug(case, "Nij", i1, j2, jacobian[i1, j2], i, j)

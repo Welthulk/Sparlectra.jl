@@ -15,8 +15,10 @@ function acpflow(casefile::String, writeCase::Bool, writePGM::Bool, iterations::
   ext = splitext(casefile)[2]
   myNet = nothing
   path = ""
+  pgmpath = "pgmodel"
   if ext == ".json"
     # load + create net    
+    writePGM = false
     path = "pgmodel"
     jpath = joinpath(pwd(), "data", path, casefile)
     path = joinpath(pwd(), "data", "pgmodel")
@@ -27,6 +29,7 @@ function acpflow(casefile::String, writeCase::Bool, writePGM::Bool, iterations::
 
     myNet = createNetFromPGM(jpath)
   elseif ext == ".m"
+    writeCase = false
     path = "mpower"
     jpath = joinpath(pwd(), "data", path, casefile)
     if !isfile(jpath)
@@ -70,7 +73,7 @@ function acpflow(casefile::String, writeCase::Bool, writePGM::Bool, iterations::
     printACPFlowResults(myNet, etime, ite, tol, printResultToFile, jpath)
     if writePGM
       convertPVtoPQ!(myNet)
-      filename = joinpath(pwd(), "data", path, myNet.name * "_epx")
+      filename = joinpath(pwd(), "data", pgmpath, strip(myNet.name) * "_epx")
       exportPGM(net = myNet, filename = filename, useMVATrafoModell = false, exportSlackGen = true)
     end
   elseif erg == 1
@@ -87,7 +90,7 @@ file = "case7.m"
 printResultToFile = false
 printResultAnyCase = false
 writeCase = false
-writePGM = false
+writePGM = true
 mdo = false
 tol = 1e-6
 ite = 20

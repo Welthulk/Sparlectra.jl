@@ -8,7 +8,7 @@ In power system analysis, the Jacobian matrix is a fundamental tool used to repr
 
 ## Purpose
 
-The purpose of the Jacobian matrix is to facilitate the calculation of the derivatives of real and reactive power injections with respect to the system variables, such as bus voltages (\(V\)) and phase angles (\(\phi\)). The Jacobian matrix is structured using superelements to enhance its clarity.
+The purpose of the Jacobian matrix is to facilitate the calculation of the derivatives of real and reactive power injections with respect to the system variables, such as bus voltages (\(V\)) and phase angles (\(\varphi\)). The Jacobian matrix is structured using superelements to enhance its clarity.
 
 ## Example
 
@@ -20,9 +20,6 @@ Consider the following graph:
     3 ----- 4----5 (Slack-Bus)
 
 For the 5-bus system, the Jacobian matrix \(\mathbf{J}\) has a size of \(\mathbf{8 \times 8}\), excluding the slack bus (Bus 5), and follows this structure:
-
-
-
 
 \[ \mathbf{J} = \begin{bmatrix}
 \mathbf{H}_{11} & \mathbf{J}_{12} & \mathbf{H}_{13} & \mathbf{J}_{14} & \mathbf{H}_{15} & \mathbf{J}_{16} & 0 & 0\\
@@ -44,8 +41,6 @@ where:
 
 Each node of the graph forms a supercell in the Jacobian matrix with elements \(\mathbf{H}_{ij}\), \(\mathbf{J}_{ij}\), \(\mathbf{N}_{ji}\), and \(\mathbf{L}_{ij}\). The nodes are arranged in the order of bus numbers. The node-branch relationships are depicted in the following table:
 
-
-
   | Node  | **1**                  | **2**                  | **3**                  | **4**                  |  
   |-------|------------------------|------------------------|------------------------|------------------------|
   | **1** | \(H_{11}\)  \(J_{12}\) | \(H_{13}\)  \(J_{14}\) | \(H_{15}\)  \(J_{16}\) | \(0\)   \(0\)  |
@@ -56,7 +51,6 @@ Each node of the graph forms a supercell in the Jacobian matrix with elements \(
   |       | \(N_{61}\)  \(L_{62}\) | \(0\)   \(0\)  | \(N_{65}\)  \(L_{66}\) | \(N_{67}\)  \(L_{68}\) |
   | **4** | \(0\)   \(0\)  | \(H_{73}\)  \(J_{74}\) | \(H_{75}\)  \(J_{76}\) | \(H_{77}\)  \(J_{78}\) |
   |       | \(0\)   \(0\)  | \(N_{83}\)  \(L_{84}\) | \(N_{85}\)  \(L_{86}\) | \(N_{87}\)  \(L_{88}\) |
-
 
 An example for this graph is presented in the following table, showcasing the results of the first iteration through the utilization of the `printJacobian` function:
 ```Julia
@@ -111,8 +105,8 @@ All rows with \(0\) values can be eliminated, resulting in:
 0 & 0 &  \mathbf{H}_{73}  & \mathbf{H}_{75} & \mathbf{J}_{76} & \mathbf{H}_{77}  \\
 \end{bmatrix} \]
 
-
 An example for this graph is presented in the following table, showcasing the results of the first iteration using the `printJacobian` function. The displayed output corresponds to the example with 2 PV nodes:
+
 ```Julia
 Jacobian: 6 x 6, number of PQ nodes:2,  number of PV nodes: 2
         1:      2:      3:      4:      5:      6:
@@ -123,6 +117,7 @@ Jacobian: 6 x 6, number of PQ nodes:2,  number of PV nodes: 2
 5:      5.0     -9.8    0.0     -10.1   19.6    5.0
 6:      0.0     0.0     -9.8    -9.8    -5.0    29.5
 ```
+
 ## Number of Superelements
 The size of the Jacobian matrix is determined by the relationship: 
 \[ N_s = 2 \cdot (N - 1) - N_{\text{PV}} \] 
