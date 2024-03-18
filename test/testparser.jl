@@ -10,7 +10,7 @@ using Logging
 
 global_logger(ConsoleLogger(stderr, Logging.Info))
 
-function acpflow(casefile::String, writeCase::Bool, writePGM::Bool, iterations::Int, verbose::Int, mdo::Bool = false, tol::Float64 = 1e-6, base_MVA::Float64 = 0.0, printResultToFile::Bool = false, printResultAnyCase::Bool = false)
+function acpflow(casefile::String, writeCase::Bool=false, writePGM::Bool=false, iterations::Int=10, verbose::Int=0, mdo::Bool = false, tol::Float64 = 1e-6, base_MVA::Float64 = 0.0, printResultToFile::Bool = false, printResultAnyCase::Bool = false)
   
   ext = splitext(casefile)[2]
   myNet = nothing
@@ -78,12 +78,14 @@ end
 
 #file = "MiniGrid_v4.json"
 #file = "SmallGrid.json"
-file = "case7.m"
+#file = "case7.m"
+#file = "case7a.m"
+file = "case7b.m"
 #file = "case30.m"
 printResultToFile = false
 printResultAnyCase = false
 writeCase = false
-writePGM = true
+writePGM = false
 mdo = false
 tol = 1e-6
 ite = 20
