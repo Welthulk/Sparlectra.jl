@@ -72,7 +72,9 @@ function exportPGM(; net::ResDataTypes.Net, filename::String, useMVATrafoModell:
       isPerUnitRXGB = false
       ratedU = nothing
       winding = (o._equiParms == 1) ? o.side1 : ((o._equiParms == 2) ? o.side2 : nothing)
-      @assert o._equiParms > 0 "no mode data found for transformer $(o.comp.cName)"
+      if isnothing(winding)
+        @warn "no winding found for transformer $(o.comp.cName)"
+      end      
       if !isnothing(winding)
         vn = winding.Vn
         rk = winding.r
@@ -128,11 +130,19 @@ function exportPGM(; net::ResDataTypes.Net, filename::String, useMVATrafoModell:
           parameters["p0"] = Pfe_kW * 1e3
         end
       else
-        parameters["sn"] = !isnothing(winding.modelData.sn_MVA) ? winding.modelData.sn_MVA * 1e6 : 0.0
-        parameters["uk"] = !isnothing(winding.modelData.vk_percent) ? winding.modelData.vk_percent * 1e-2 : 0.0
-        parameters["pk"] = !isnothing(winding.modelData.pk_kW) ? winding.modelData.pk_kW * 1e3 : 0.0
-        parameters["i0"] = !isnothing(winding.modelData.i0_percent) ? winding.modelData.i0_percent * 1e-2 : 0.0
-        parameters["p0"] = !isnothing(winding.modelData.p0_kW) ? winding.modelData.p0_kW * 1e3 : 0.0
+        if !isnothing(winding)
+          parameters["sn"] = !isnothing(winding.modelData.sn_MVA) ? winding.modelData.sn_MVA * 1e6 : 0.0
+          parameters["uk"] = !isnothing(winding.modelData.vk_percent) ? winding.modelData.vk_percent * 1e-2 : 0.0
+          parameters["pk"] = !isnothing(winding.modelData.pk_kW) ? winding.modelData.pk_kW * 1e3 : 0.0
+          parameters["i0"] = !isnothing(winding.modelData.i0_percent) ? winding.modelData.i0_percent * 1e-2 : 0.0
+          parameters["p0"] = !isnothing(winding.modelData.p0_kW) ? winding.modelData.p0_kW * 1e3 : 0.0
+        else
+          parameters["sn"] = 0.0
+          parameters["uk"] = 0.0
+          parameters["pk"] = 0.0
+          parameters["i0"] = 0.0
+          parameters["p0"] = 0.0
+        end
       end
 
       parameters["winding_from"] = 1

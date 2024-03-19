@@ -426,8 +426,6 @@ function getTapStepPercent(x::PowerTransformer)
     return (false, 0.0)
   end
   vn = getVn2WT(x)
-  @show vn
-  @show tap
   return (true, (tap.voltageIncrement_kV / vn) * 100.0)
 end
 
