@@ -209,15 +209,7 @@ mutable struct PowerTransformerWinding
     end
 
     if isnothing(modelData)
-      if isnothing(ratedS)
-         new(Vn_kV, 0.0, 0.0, 0.0, 0.0, shift_degree, ratedU, ratedS, taps, false, nothing, true)  
-      else
-         uk, P_kW, i0, Pfe_kW = recalc_trafo_model_data(baseMVA = baseMVA, Sn_MVA = ratedS, ratedU_kV = ratedU, r_pu = r_pu, x_pu = x_pu, b_pu = b_pu, isPerUnit = true)
-         modelData = TransformerModelParameters(sn_MVA = ratedS, vk_percent = uk, pk_kW = P_kW, i0_percent = i0, p0_kW = Pfe_kW)
-
-      end
-
-      
+      new(Vn_kV, 0.0, 0.0, 0.0, 0.0, shift_degree, ratedU, ratedS, taps, false, nothing, true)  
     else
       r, x, b, g = calcTransformerRXGB(ratedU, modelData)
       new(Vn_kV, r, x, b, g, shift_degree, ratedU, ratedS, taps, false, modelData, false)

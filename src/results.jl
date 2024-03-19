@@ -11,7 +11,9 @@ function format_version(version::VersionNumber)
 end
 
 function formatBranchResults(net::ResDataTypes.Net)
+
   formatted_results = @sprintf("\n===========================================================================================================================\n")
+
   formatted_results *= @sprintf("| %-25s | %-5s | %-5s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s |\n", "Branch", "From", "To", "P [MW]", "Q [MVar]", "P [MW]", "Q [MVar]", "Pv [MW]", "Qv [MVar]")
   formatted_results *= @sprintf("===========================================================================================================================\n")
 
@@ -33,7 +35,7 @@ function formatBranchResults(net::ResDataTypes.Net)
 
     VmTo = (br.tBranchFlow.vm_pu === nothing) ? NaN : br.tBranchFlow.vm_pu
     VaTo = (br.tBranchFlow.va_deg === nothing) ? NaN : br.tBranchFlow.va_deg
-
+    ratedS = isnothing(br.sn_MVA) ? 0.0 : br.sn_MVA
     ∑pfrom += pfromVal
     ∑qfrom += qfromVal
     ∑pto += ptoVal
@@ -53,10 +55,20 @@ function formatBranchResults(net::ResDataTypes.Net)
     qv = imag(Sdiff)
     ∑pv += abs(pv)
     ∑qv += abs(qv)
-
+    check = false
+    if ratedS > 0.0
+      if max(abs(pfromVal), abs(ptoVal)) > ratedS
+        check = true
+      end
+    end
+    
+    if check
+      bName *= " !"
+    end  
     formatted_results *= @sprintf("| %-25s | %-5s | %-5s | %-10.3f | %-10.3f | %-10.3f | %-10.3f | %-10.3f |  %-10.3f|\n", bName, from, to, pfromVal, qfromVal, ptoVal, qtoVal, abs(pv), abs(qv))
+    
   end
-  formatted_results *= @sprintf("---------------------------------------------------------------------------------------------------------------------------\n")
+  formatted_results *= @sprintf("---------------------------------------------------------------------------------------------------------------------------\n")  
   #formatted_results *= @sprintf("| %-10.3f | %-10.3f | %-10.3f | %-10.3f |\n", ∑pfrom, ∑qfrom, ∑pto, ∑qto)
 
   total_losses = @sprintf("total losses (I^2*Z): P = %10.3f [MW], Q = %10.3f [MVar]\n", ∑pv, ∑qv)
@@ -177,7 +189,14 @@ function printACPFlowResults(net::ResDataTypes.Net, ct::Float64, ite::Int, tol::
     end
     typeStr = toString(n._nodeType)
     v = n.comp.cVN*n._vm_pu
-    @printf(io, "| %-5d | %-20s | %-10d | %-10.3f | %-10.3f | %-10.3f | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-5s |\n", n.busIdx, n.comp.cName, n.comp.cVN, v, n._vm_pu, n._va_deg, pGS, qGS, pLS, qLS, pShunt_str, qShunt_str, typeStr)
+    nodeName = n.comp.cName
+    if !isnothing(n._vmin_pu) && !isnothing(n._vmax_pu)
+      if n._vm_pu < n._vmin_pu || n._vm_pu > n._vmax_pu
+        nodeName *= " !"
+      end
+    end
+
+    @printf(io, "| %-5d | %-20s | %-10d | %-10.3f | %-10.3f | %-10.3f | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-5s |\n", n.busIdx, nodeName, n.comp.cVN, v, n._vm_pu, n._va_deg, pGS, qGS, pLS, qLS, pShunt_str, qShunt_str, typeStr)
   end
 
   @printf(io, "--------------------------------------------------------------------------------------------------------------------------------------------------------------------------\n")

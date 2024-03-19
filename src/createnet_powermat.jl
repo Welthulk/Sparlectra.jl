@@ -181,9 +181,11 @@ function createNetFromMatPowerFile(filename, base_MVA::Float64 = 0.0, log::Bool 
     ratedS = baseMVA
     zone = Int64(row[busDict["zone"]])
     area = Int64(row[busDict["area"]])
+    vmin = float(row[busDict["Vmin"]])
+    vmax = float(row[busDict["Vmax"]])
 
-    node = Node(busIdx = busIdx, Vn_kV = vn_kv, nodeType = toNodeType(btype), ratedS = ratedS, zone = zone, area = area, vm_pu = vm_pu, va_deg = va_deg, pƩLoad = pƩLoad, qƩLoad = qƩLoad, pShunt = pShunt, qShunt = qShunt)
-
+    node = Node(busIdx = busIdx, Vn_kV = vn_kv, nodeType = toNodeType(btype), ratedS = ratedS, zone = zone, area = area, vm_pu = vm_pu, va_deg = va_deg, pƩLoad = pƩLoad, qƩLoad = qƩLoad, pShunt = pShunt, qShunt = qShunt, vmin_pu = vmin, vmax_pu = vmax)
+    
     if btype == 3 && slackIdx == 0
       slackIdx = busIdx
     elseif btype == 3
