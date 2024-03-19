@@ -155,7 +155,7 @@ function reassignBusNumbers!(nodes, lines, wt2, wt3, s_gen, s_load, shunt, sourc
     elseif abs(p) > 1e-6 && abs(q) < 1e-6
       bus_type = 2
       @info "created PV-Bus for generator $(oid) at node $(gen["o_node"])"
-    end  
+    end     
     bus_types[bus_id] = bus_type
   end
 
@@ -323,6 +323,7 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
   nodeVec = Vector{ResDataTypes.Node}()
 
   busIDStringDict = Dict{Int,String}()
+  busTypeDict = Dict{Int,Int}()
 
   NodeParametersDict = Dict{Integer,ResDataTypes.NodeParameters}()
   busVec = Vector{Bus}()
@@ -343,7 +344,7 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
 
     a_bus = Bus(busIdx, vn_kv, btype, vm_pu, va_deg)
     busIDStringDict[busIdx] = a_bus.id
-
+    busTypeDict[busIdx] = btype
     push!(busVec, a_bus)
 
     VoltageDict[busIdx] = vn_kv
@@ -558,16 +559,6 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
     branch = Branch(baseMVA=baseMVA, from=from_node, to=to_node, branch=wt3Trafo, id=Int(oID), status=Int(inService), side=side, ratio=ratio)
     push!(branchVec, branch)
 
-    # create branch for the T2 Aux -> MV (u2)
-    
-    #=
-    auxBusName2, auxID2 = getWT3AuxBusID(u2, from_node, to_node, to_node_3)
-    
-    auxBuxCmp2 = ImpPGMComp(auxID2, auxBusName2, toComponentTyp("POWERTRANSFORMER"), u2, to_node, AuxBusIdx)
-    t_T2_mvbus = ResDataTypes.Terminal(auxBuxCmp2)
-    push!(auxTerminal, t_T2_aux)
-    push!(t2Terminal, t_T2_mvbus)
-    =#
     inService = t["status_2"] == 1
     side = 2
     ratio = (vn_aux_kv/MV)*(u2/u1)
@@ -575,17 +566,6 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
     branch = Branch(baseMVA=baseMVA, from=to_node, to=AuxBusIdx, branch=wt3Trafo, id=Int(oID), status=Int(inService), side=side, ratio=ratio)    
     push!(branchVec, branch)
 
-    # create branch for the T3 AUX-> LV (u3)
-    #=
-    t3Terminal = NodeTerminalsDict[to_node_3]
-    t_T3_aux = ResDataTypes.Terminal(auxBuxCmp)
-
-    auxBusName3, auxID3 = getWT3AuxBusID(u3, from_node, to_node, to_node_3)
-    auxBuxCmp3 = ImpPGMComp(auxID3, auxBusName3, toComponentTyp("POWERTRANSFORMER"), u3, AuxBusIdx, to_node_3)
-    t_T3_lvbus = ResDataTypes.Terminal(auxBuxCmp3)
-    push!(auxTerminal, t_T3_aux)
-    push!(t3Terminal, t_T3_lvbus)
-    =#
     inService = t["status_3"] == 1
     side = 3
     ratio = (vn_aux_kv/LV)*(u3/u1)
@@ -644,12 +624,20 @@ function createNetFromPGM(filename, base_MVA::Float64 = 0.0, log = false, check 
     lanz += 1
     p = sym_gen["p_specified"] * umrech_MVA
     q = sym_gen["q_specified"] * umrech_MVA
+
     if abs(p) < 1e-8 && abs(q) < 1e-8
       @info "generator $(oID) has no power"
       continue
     end
+    
+    isPUNode = false
+    bType = busTypeDict[bus]
+    
+    if bType == 2    
+      isPUNode = true
+    end
 
-    pRS = ProSumer(vn_kv=vn, busIdx=bus, oID=Int(oID), type=toProSumptionType("Generator"), p=p, q=q)    
+    pRS = ProSumer(vn_kv=vn, busIdx=bus, oID=Int(oID), type=toProSumptionType("Generator"), p=p, q=q, isAPUNode = true)    
     push!(prosum, pRS)    
 
     nParms = NodeParametersDict[bus]
