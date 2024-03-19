@@ -20,6 +20,8 @@ mutable struct Node
   _qShunt::Union{Nothing,Float64} # Ʃ reactive power
   _pƩGen::Union{Nothing,Float64}  # Ʃ active power injected
   _qƩGen::Union{Nothing,Float64}  # Ʃ reactive power injected
+  _vmin_pu::Union{Nothing,Float64} # Minimum voltage magnitude in p.u
+  _vmax_pu::Union{Nothing,Float64} # Maximum voltage magnitude in p.u
 
   function Node(;  
     busIdx::Integer,    
@@ -36,10 +38,12 @@ mutable struct Node
     qShunt::Union{Nothing,Float64} = nothing,
     pƩGen::Union{Nothing,Float64} = nothing,
     qƩGen::Union{Nothing,Float64} = nothing,
-    isAux::Bool = false,
+    vmin_pu::Union{Nothing,Float64} = nothing,
+    vmax_pu::Union{Nothing,Float64} = nothing,
+    isAux::Bool = false,    
   )
     c = getNocdeComp(Vn_kV, busIdx, nodeType, isAux)
-    new(c, busIdx, nodeType, ratedS, zone, area, vm_pu, va_deg, pƩLoad, qƩLoad, pShunt, qShunt, pƩGen, qƩGen)
+    new(c, busIdx, nodeType, ratedS, zone, area, vm_pu, va_deg, pƩLoad, qƩLoad, pShunt, qShunt, pƩGen, qƩGen, vmin_pu, vmax_pu)
   end
 
 
@@ -82,6 +86,12 @@ mutable struct Node
     if (!isnothing(node._qƩGen))
       print(io, "ƩQGen: ", node._qƩGen, ", ")
     end
+    if (!isnothing(node._vmin_pu))
+      print(io, "Vmin: ", node._vmin_pu, ", ")
+    end
+    if (!isnothing(node._vmax_pu))
+      print(io, "Vmax: ", node._vmax_pu, ", ")
+    end
     println(io, ")")
   end
 end
@@ -110,6 +120,9 @@ mutable struct NodeParameters
   qShunt::Union{Nothing,Float64}  # Ʃ reactive power
   pƩGen::Union{Nothing,Float64}   # Ʃ active power injected
   qƩGen::Union{Nothing,Float64}   # Ʃ reactive power injected
+  vmin_pu::Union{Nothing,Float64} # Minimum voltage magnitude in p.u
+  vmax_pu::Union{Nothing,Float64} # Maximum voltage magnitude in p.u
+
   function NodeParameters(
     kIdx::Integer,
     ratedS::Union{Nothing,Float64} = nothing,
@@ -121,8 +134,10 @@ mutable struct NodeParameters
     qShunt::Union{Nothing,Float64} = nothing,
     pƩGen::Union{Nothing,Float64} = nothing,
     qƩGen::Union{Nothing,Float64} = nothing,
+    vmin_pu::Union{Nothing,Float64} = nothing,
+    vmax_pu::Union{Nothing,Float64} = nothing,
   )
-    new(kIdx, ratedS, vm_pu, va_deg, pƩLoad, qƩLoad, pShunt, qShunt, pƩGen, qƩGen)
+    new(kIdx, ratedS, vm_pu, va_deg, pƩLoad, qƩLoad, pShunt, qShunt, pƩGen, qƩGen, vmin_pu, vmax_pu)
   end
 
   function Base.show(io::IO, nodeParam::NodeParameters)
@@ -136,6 +151,12 @@ mutable struct NodeParameters
     end
     if (!isnothing(nodeParam.va_deg))
       print(io, "Va: ", nodeParam.va_deg, ", ")
+    end
+    if (!isnothing(nodeParam.vmin_pu))
+      print(io, "Vmin: ", nodeParam.vmin_pu, ", ")
+    end
+    if (!isnothing(nodeParam.vmax_pu))
+      print(io, "Vmax: ", nodeParam.vmax_pu, ", ")
     end
     if (!isnothing(nodeParam.pƩLoad))
       print(io, "ƩP: ", nodeParam.pƩLoad, ", ")
@@ -198,6 +219,15 @@ function setNodeParameters!(node::Node, nodeParam::NodeParameters)
   if (!isnothing(nodeParam.qƩGen))
     node._qƩGen = nodeParam.qƩGen
   end
+  
+  if (!isnothing(nodeParam.vmin_pu))
+    node._vmin_pu = nodeParam.vmin_pu
+  end
+
+  if (!isnothing(nodeParam.vmax_pu))
+    node._vmax_pu = nodeParam.vmax_pu
+  end
+
 end
 
 function addShuntPower!(;node::Node, p::Float64, q::Float64)
