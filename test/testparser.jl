@@ -10,28 +10,13 @@ using Logging
 
 global_logger(ConsoleLogger(stderr, Logging.Info))
 
-function acpflow(casefile::String, writeCase::Bool=false, writePGM::Bool=false, iterations::Int=10, verbose::Int=0, mdo::Bool = false, tol::Float64 = 1e-6, base_MVA::Float64 = 0.0, printResultToFile::Bool = false, printResultAnyCase::Bool = false)
+function acpflow(casefile::String, iterations::Int=10, verbose::Int=0, mdo::Bool = false, tol::Float64 = 1e-6, base_MVA::Float64 = 0.0, printResultToFile::Bool = false, printResultAnyCase::Bool = false)
   
   ext = splitext(casefile)[2]
   myNet = nothing
-  path = ""
-  pgmpath = "pgmodel"
-  if ext == ".json"
-    # load + create net    
-    writePGM = false
-    path = "pgmodel"
-    jpath = joinpath(pwd(), "data", path, casefile)
-    path = joinpath(pwd(), "data", "pgmodel")
-    if !isfile(jpath)
-      @error "File $(jpath) not found"
-      return
-    end
-
-    myNet = createNetFromPGM(jpath)
-  elseif ext == ".m"
-    writeCase = false
+  if ext == ".m"    
     path = "mpower"
-    jpath = joinpath(pwd(), "data", path, casefile)
+    jpath = joinpath(pwd(), "data", path, strip(casefile))
     if !isfile(jpath)
       @error "File $(jpath) not found"
       return
@@ -42,12 +27,6 @@ function acpflow(casefile::String, writeCase::Bool=false, writePGM::Bool=false, 
     return
   end
 
-  # matpower export  
-  if writeCase
-    case = myNet.name
-    file = joinpath(pwd(), "data", path, case * ".m")
-    writeMatpowerCasefile(myNet, file, case)
-  end
   
   # run power flow
   ite = 0
@@ -57,18 +36,8 @@ function acpflow(casefile::String, writeCase::Bool=false, writePGM::Bool=false, 
 
   if erg == 0 || printResultAnyCase
     calcNetLosses!(myNet.nodeVec, myNet.branchVec, myNet.baseMVA)
-    if printResultToFile
-      jpath = joinpath(pwd(), "data", path)
-      @info "...export results to $(jpath)"
-    else
-      jpath = ""
-    end
+    jpath = printResultToFile ? joinpath(pwd(), "data", path) : ""
     printACPFlowResults(myNet, etime, ite, tol, printResultToFile, jpath)
-    if writePGM
-      convertPVtoPQ!(myNet)
-      filename = joinpath(pwd(), "data", pgmpath, strip(myNet.name) * "_epx")
-      exportPGM(net = myNet, filename = filename, useMVATrafoModell = false, exportSlackGen = true)
-    end
   elseif erg == 1
     @warn "Newton-Raphson did not converge"
   else
@@ -76,19 +45,16 @@ function acpflow(casefile::String, writeCase::Bool=false, writePGM::Bool=false, 
   end
 end
 
-#file = "MiniGrid_v4.json"
-#file = "SmallGrid.json"
-#file = "case7.m"
+file = "case7.m"
 #file = "case7a.m"
-file = "case7b.m"
-#file = "case30.m"
-printResultToFile = false
+#file = "case7b.m"
+#file = "case7c.m"
+#file = "case_ieee30.m"
+printResultToFile = true
 printResultAnyCase = false
-writeCase = false
-writePGM = false
 mdo = false
-tol = 1e-6
-ite = 20
-verbose = 0 # 0: no output, 1: iteration norm, 2: + Y-Bus, 3: + Jacobian, 4: + Power Flow
+tol = 1e-8
+ite = 25
+verbose = 2 # 0: no output, 1: iteration norm, 2: + Y-Bus, 3: + Jacobian, 4: + Power Flow
 base_MVA = 0.0 # # Set a value to a non-zero value to override the corresponding value in the case file.
-@time acpflow(file, writeCase, writePGM, ite, verbose, mdo, 1e-6, base_MVA, printResultToFile, printResultAnyCase)
+@time acpflow(file, ite, verbose, mdo, 1e-6, base_MVA, printResultToFile, printResultAnyCase)

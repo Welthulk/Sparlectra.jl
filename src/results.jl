@@ -78,8 +78,9 @@ end
 
 function printACPFlowResults(net::ResDataTypes.Net, ct::Float64, ite::Int, tol::Float64, toFile::Bool = false, path::String = "")
   if toFile
-    filename = "result_$(net.name).txt"
+    filename = strip("result_$(net.name).txt")
     io = open(joinpath(path, filename), "w")
+    @info "Results are written to $(joinpath(path, filename))"
   else
     io = Base.stdout
   end

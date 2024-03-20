@@ -7,7 +7,7 @@ module ResDataTypes
 
 # resource data types for working with Sparlectra
 const Wurzel3 = 1.7320508075688772
-const SparlectraVersion = VersionNumber("0.5.004")
+const SparlectraVersion = VersionNumber("0.4.004")
 export
   # constants
   Wurzel3,
@@ -121,9 +121,8 @@ export
   # constants
   # classes
   # functions
-  casefileparser,
-  pgmparser
-
+  casefileparser
+  
 include("import.jl")
 
 end # module SparlectraImport
@@ -138,11 +137,10 @@ export
   # constants
   # classes
   # functions
-  writeMatpowerCasefile,
-  exportPGM
+  writeMatpowerCasefile
+
 
 include("exportMatPower.jl")
-include("exportPGM.jl")
 include("equicircuit.jl")
 end # module SparlectraExport
 
@@ -158,8 +156,7 @@ using Logging
 export
   # constants
   # classes
-  # functions
-  createNetFromPGM,
+  # functions  
   createNetFromMatPowerFile,
   calcNeutralU,  
   createYBUS,
@@ -176,7 +173,6 @@ include("equicircuit.jl")
 include("jacobian.jl")
 include("losses.jl")
 include("nbi.jl")
-include("createnet_pgm.jl")
 include("createnet_powermat.jl")
 
 end
