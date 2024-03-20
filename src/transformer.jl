@@ -142,7 +142,7 @@ mutable struct PowerTransformerTaps
   end
 end
 
-#=
+#= TODO not implemented
 function adjustVkDep(Vk::Float64, Vkmax::Float64, Vkmin::Float64, tap::PowerTransformerTaps)
   if isnothing(tap)
     return Vk

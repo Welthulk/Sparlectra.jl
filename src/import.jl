@@ -156,54 +156,5 @@ function casefileparser(filename)
   # apply the order to the mpc_bus array
   mpc_bus = mpc_bus[busSequence, :]
 
-  return case_name, baseMVA, mpc_bus, mpc_gen, mpc_branch
-end
-
-# Parser for Power Grid Model (PGM) files
-function pgmparser(filename)
-  json_data = read(filename, String)
-  data_dict = JSON.parse(json_data)
-
-  try
-    version = data_dict["version"]
-  catch
-    @warn "No version in PGM-File"
-  end
-
-  nodes = data_dict["data"]["node"]
-  lines = []
-  if haskey(data_dict["data"], "line")
-    lines = data_dict["data"]["line"]
-  end
-
-  wt2 = []
-  if haskey(data_dict["data"], "transformer")
-    wt2 = data_dict["data"]["transformer"]
-  end
-
-  wt3 = []
-  if haskey(data_dict["data"], "three_winding_transformer")
-    wt3 = data_dict["data"]["three_winding_transformer"]
-  end
-
-  sym_gens = []
-  if haskey(data_dict["data"], "sym_gen")
-    sym_gens = data_dict["data"]["sym_gen"]
-  end
-
-  sym_loads = []
-  if haskey(data_dict["data"], "sym_load")
-    sym_loads = data_dict["data"]["sym_load"]
-  end
-
-  shunts = []
-  if haskey(data_dict["data"], "shunt")
-    shunts = data_dict["data"]["shunt"]
-  end
-
-  source = []
-  if haskey(data_dict["data"], "source")
-    source = data_dict["data"]["source"]
-  end
-  return nodes, lines, wt2, wt3, sym_gens, sym_loads, shunts, source
+  return strip(case_name), baseMVA, mpc_bus, mpc_gen, mpc_branch
 end
