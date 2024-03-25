@@ -7,7 +7,7 @@ module ResDataTypes
 
 # resource data types for working with Sparlectra
 const Wurzel3 = 1.7320508075688772
-const SparlectraVersion = VersionNumber("0.4.004")
+const SparlectraVersion = VersionNumber("0.4.010")
 export
   # constants
   Wurzel3,
@@ -46,7 +46,7 @@ export
   getTrafoImpPGMComp,
   getWT3AuxBusID,
   isPerUnit_RXGB,
-  # nodes  
+  # Nodes  
   setRatedS!,
   setVmVa!,
   setNodeParameters!,
@@ -111,43 +111,9 @@ end
 
 end # module ResDataTypes
 
-module SparlectraImport
-using Sparlectra
-using Sparlectra.ResDataTypes
-using RegularExpressions
-using JSON
-
-export
-  # constants
-  # classes
-  # functions
-  casefileparser
-  
-include("import.jl")
-
-end # module SparlectraImport
-
-module SparlectraExport
-using Sparlectra
-using Sparlectra.ResDataTypes
-using JSON
-using DataStructures
-
-export
-  # constants
-  # classes
-  # functions  
-  writeMatpowerCasefile
-
-
-include("exportMatPower.jl")
-include("equicircuit.jl")
-end # module SparlectraExport
-
 module SparlectraNet
 using Sparlectra
 using Sparlectra.ResDataTypes
-using Sparlectra.SparlectraImport
 using LinearAlgebra
 using SparseArrays
 using Printf
@@ -157,6 +123,7 @@ export
   # constants
   # classes
   # functions  
+  casefileparser,
   createNetFromMatPowerFile,
   calcComplexRatio,
   calcNeutralU,  
@@ -168,25 +135,19 @@ export
   adjacentBranches,
   calcNewtonRaphson!,
   runpf!,
-  calcNetLosses!
+  calcNetLosses!,
+  writeMatpowerCasefile,
+  printACPFlowResults, 
+  convertPVtoPQ!
 
+include("import.jl")
 include("equicircuit.jl")
 include("jacobian.jl")
 include("losses.jl")
 include("nbi.jl")
 include("createnet_powermat.jl")
-
-end
-
-module SparlectraResult
-using Sparlectra
-using Sparlectra.SparlectraNet
-using Sparlectra.ResDataTypes
-using Printf
-
-export printACPFlowResults, convertPVtoPQ!
-
+include("exportMatPower.jl")
 include("results.jl")
-
 end
+
 end # module Sparlectra

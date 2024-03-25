@@ -1,10 +1,7 @@
 using Test
 using Sparlectra
 using Sparlectra.ResDataTypes
-using Sparlectra.SparlectraExport
-using Sparlectra.SparlectraImport
 using Sparlectra.SparlectraNet
-using Sparlectra.SparlectraResult
 using BenchmarkTools
 using Logging
 
