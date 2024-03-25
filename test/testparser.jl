@@ -45,16 +45,17 @@ function acpflow(casefile::String, iterations::Int=10, verbose::Int=0, mdo::Bool
   end
 end
 
-file = "case7.m"
+file = "case2.m"
+#file = "case7.m"
 #file = "case7a.m"
 #file = "case7b.m"
 #file = "case7c.m"
 #file = "case_ieee30.m"
-printResultToFile = true
+printResultToFile = false
 printResultAnyCase = false
 mdo = false
 tol = 1e-8
 ite = 25
 verbose = 2 # 0: no output, 1: iteration norm, 2: + Y-Bus, 3: + Jacobian, 4: + Power Flow
 base_MVA = 0.0 # # Set a value to a non-zero value to override the corresponding value in the case file.
-@time acpflow(file, ite, verbose, mdo, 1e-6, base_MVA, printResultToFile, printResultAnyCase)
+@time acpflow(file, ite, verbose, mdo, tol, base_MVA, printResultToFile, printResultAnyCase)

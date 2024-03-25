@@ -144,8 +144,9 @@ function createYBUS(branchVec::Vector{Branch}, shuntVec::Vector{ResDataTypes.Shu
       t = calcComplexRatio(ratio, shift_degree)
     end
 
-    Y[toNode, toNode] = Y[toNode, toNode] +  (yik + susceptance)
     Y[fromNode, fromNode] = Y[fromNode, fromNode] + ((yik + susceptance)) / abs2(t)
+    Y[toNode, toNode] = Y[toNode, toNode] +  (yik + susceptance)
+
     
     Y[fromNode, toNode] = Y[fromNode, toNode] + (-1.0 * yik / conj(t))
     Y[toNode, fromNode] = Y[toNode, fromNode] + (-1.0* yik / t)

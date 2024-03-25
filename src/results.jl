@@ -44,7 +44,10 @@ function formatBranchResults(net::ResDataTypes.Net)
     v1 = VmFrom * exp(im * deg2rad(VaFrom))
     v2 = VmTo * exp(im * deg2rad(VaTo))
 
-    tap = (br.ratio != 0.0) ? br.ratio : 1.0
+    ratio = (br.ratio != 0.0) ? br.ratio : 1.0
+    angle = (br.ratio != 0.0) ? br.angle : 0.0
+    tap = calcComplexRatio(ratio, angle)
+    
 
     Vdiff = v1 / tap - v2
 
