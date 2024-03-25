@@ -7,9 +7,9 @@ SPARLECTRA requires the Julia programming language. You can download Julia from 
 ### Installing Program Files
 To add and register the Sparlectra package, open the Julia REPL and press `]` to enter the Package Manager. Then, execute the following command:
 
-```julia
-add https://github.com/Welthulk/Sparlectra.jl
 ```
+add https://github.com/Welthulk/Sparlectra.jl
+```	
 
 The Julia package manager will automatically download the required packages.
 
