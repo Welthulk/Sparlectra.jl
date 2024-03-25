@@ -16,7 +16,9 @@ function calcNetLosses!(nodes::Vector{ResDataTypes.Node}, branchVec::Vector{ResD
     argi = deg2rad(nodes[from]._va_deg)
     argj = deg2rad(nodes[to]._va_deg)
 
-    tap = (br.ratio != 0.0) ? br.ratio : 1.0
+    ratio = (br.ratio != 0.0) ? br.ratio : 1.0
+    angle = (br.ratio != 0.0) ? br.angle : 0.0        
+    tap = calcComplexRatio(ratio,angle)
 
     ui = nodes[from]._vm_pu * exp(im * argi)
     if tapSide == 1

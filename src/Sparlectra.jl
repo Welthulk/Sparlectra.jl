@@ -136,7 +136,7 @@ using DataStructures
 export
   # constants
   # classes
-  # functions
+  # functions  
   writeMatpowerCasefile
 
 
@@ -158,6 +158,7 @@ export
   # classes
   # functions  
   createNetFromMatPowerFile,
+  calcComplexRatio,
   calcNeutralU,  
   createYBUS,
   getNBI,
@@ -179,6 +180,7 @@ end
 
 module SparlectraResult
 using Sparlectra
+using Sparlectra.SparlectraNet
 using Sparlectra.ResDataTypes
 using Printf
 
