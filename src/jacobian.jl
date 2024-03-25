@@ -548,6 +548,7 @@ function calcJacobian(Y::AbstractMatrix{ComplexF64}, busVec::Vector{BusData}, ad
   return jacobian
 end
 
+#=
 function calcJacobianCart(Y::AbstractMatrix{ComplexF64}, busVec::Vector{BusData}, adjBranch::Vector{Vector{Int}}, busTypeVec::Vector{ResDataTypes.NodeType}, slackIdx::Int, n_pq::Int, n_pv::Int, log::Bool = false, sparse::Bool = true)
   function get_c_ik(V_k::ComplexF64, i::Int, k::Int)
     return real(Y[i, k]) * real(V_k) - imag(Y[i, k]) * imag(V_k)
@@ -569,6 +570,7 @@ function calcJacobianCart(Y::AbstractMatrix{ComplexF64}, busVec::Vector{BusData}
   end
 
 end
+=#
 
 # main function for calculation Newton-Raphson
 function calcNewtonRaphson!(Y::AbstractMatrix{ComplexF64}, nodes::Vector{ResDataTypes.Node}, Sbase_MVA::Float64, maxIte::Int, tolerance::Float64 = 1e-6, verbose::Int = 0, sparse::Bool = false)
