@@ -21,6 +21,9 @@ function formatBranchResults(net::ResDataTypes.Net)
   ∑pfrom=∑qfrom=∑pto=∑qto=0.0
   
   for br in net.branchVec
+    if br.status == 0
+      continue
+    end
     from = br.fromBus
     to = br.toBus
     bName = br.comp.cName
@@ -191,7 +194,7 @@ function printACPFlowResults(net::ResDataTypes.Net, ct::Float64, ite::Int, tol::
     else
       qShunt_str = ""
     end
-    typeStr = toString(n._nodeType)
+    typeStr = toString(n._nodeType)    
     v = n.comp.cVN*n._vm_pu
     nodeName = n.comp.cName
     if !isnothing(n._vmin_pu) && !isnothing(n._vmax_pu)
@@ -200,7 +203,7 @@ function printACPFlowResults(net::ResDataTypes.Net, ct::Float64, ite::Int, tol::
       end
     end
 
-    @printf(io, "| %-5d | %-20s | %-10d | %-10.3f | %-10.3f | %-10.3f | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-5s |\n", n.busIdx, nodeName, n.comp.cVN, v, n._vm_pu, n._va_deg, pGS, qGS, pLS, qLS, pShunt_str, qShunt_str, typeStr)
+    @printf(io, "| %-5d | %-20s | %-10.1f | %-10.3f | %-10.3f | %-10.3f | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-5s |\n", n.busIdx, nodeName, n.comp.cVN, v, n._vm_pu, n._va_deg, pGS, qGS, pLS, qLS, pShunt_str, qShunt_str, typeStr)
   end
 
   @printf(io, "--------------------------------------------------------------------------------------------------------------------------------------------------------------------------\n")

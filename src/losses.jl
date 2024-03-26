@@ -45,6 +45,10 @@ function calcNetLosses!(nodes::Vector{ResDataTypes.Node}, branchVec::Vector{ResD
   
   #∑pfrom=∑qfrom=∑pto=∑qto=0.0
   for br in branchVec    
+    if br.status == 0
+      continue
+    end
+    
     from = br.fromBus
     to = br.toBus
     
