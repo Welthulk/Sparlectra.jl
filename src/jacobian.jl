@@ -26,6 +26,10 @@ mutable struct BusData
   end
 end
 
+function setJacobianDebug(value::Bool)
+  global debug = value
+end
+
 # return vector of BusData
 function getBusData(nodes::Vector{ResDataTypes.Node}, Sbase_MVA::Float64, verbose::Int, flatStart::Bool = false)
   busVec = Vector{BusData}()
@@ -278,50 +282,6 @@ function residuum(Y::AbstractMatrix{ComplexF64}, busVec::Vector{BusData}, feeder
   return Δpq
 end
 
-"""
-classical formulation of calculation of node powers
-si = ui ∑ gik**uik* (k = 1...n) # only neighbors!
-ui = vi exp(j𝜑i)
-uk = vk exp(j𝜑k)
-gik* = gik exp(-jαk) = Gik - jBik
-
-si = vi*[∑ vk*(Gik*cos(𝜑i-𝜑k)+Bik*sin(𝜑i-𝜑k)) +jvk*(Gik*sin(𝜑i-𝜑k) - Bik*cos(𝜑i-𝜑k))]
-
-p = vi* (∑ vk * (Gik*cos(𝜑i-𝜑k) + Bik*sin(𝜑i-𝜑k)))
-q = vi* (∑ vk * (Gik*sin(𝜑i-𝜑k) - Bik*cos(𝜑i-𝜑k)))
-"""
-function calcPowerFlow(Y::AbstractMatrix{ComplexF64}, busVec::Vector{BusData}, adjBranch::Vector{Vector{Int}}, n_pq::Int, n_pv::Int, log::Bool = false)::Vector{Float64}
-  size = n_pq * 2 + n_pv
-
-  if log
-    println("\nPower Flow: Vector-Size = $(size)")
-  end
-
-  power_flows = zeros(Float64, size)
-
-  vindex = 0 # index of vector of power flows    
-  for (i, bus) in enumerate(busVec)
-    if bus.type == ResDataTypes.PQ
-      vindex += 1
-      index_p = vindex
-      vindex += 1
-      index_q = vindex
-
-      power_flows[index_p] = bus.vm_pu * sum(abs(Y[i, k]) * busVec[k].vm_pu * cos(busVec[i].va_rad - busVec[k].va_rad - angle(Y[i, k])) for k in adjBranch[i]) # k: index of adjanced bus
-      power_flows[index_q] = bus.vm_pu * sum(abs(Y[i, k]) * busVec[k].vm_pu * sin(busVec[i].va_rad - busVec[k].va_rad - angle(Y[i, k])) for k in adjBranch[i]) # k: index of adjanced bus
-    elseif bus.type == ResDataTypes.PV
-      vindex += 1
-      index_p = vindex
-      power_flows[index_p] = bus.vm_pu * sum(abs(Y[i, k]) * busVec[k].vm_pu * cos(busVec[i].va_rad - busVec[k].va_rad - angle(Y[i, k])) for k in adjBranch[i]) # k: index of adjanced bus         
-    end
-  end
-
-  if log
-    printVector(power_flows, busVec)
-  end
-  return power_flows
-end
-
 #=
 purpose: Calculation of Jacobian-Matrix
 Date: 16.8.23
@@ -375,7 +335,7 @@ function calcJacobian(Y::AbstractMatrix{ComplexF64}, busVec::Vector{BusData}, ad
   size_j = n_pq * 2 + n_pv
   size_i = size_j
 
-  if log
+  if debug
     println("\nJacobian: $(size_j) x $(size_i), number of PQ nodes:$num_q_nodes,  number of PV nodes: $num_pv_nodes")
   end
 
@@ -405,8 +365,7 @@ function calcJacobian(Y::AbstractMatrix{ComplexF64}, busVec::Vector{BusData}, ad
 
       if bus_type_i == ResDataTypes.PQ
         if bus_type_j == ResDataTypes.PQ
-          case = "PQ + PQ"
-          @debug "i:$(i), j:$(j), i1:$(i1), i2:$(i2), j1:$(j1), j2:$(j2)"
+          case = "PQ + PQ"          
           if i == j
             Yii = abs(Y[i, i])
             arg = -angle(Y[i, i])
@@ -416,11 +375,10 @@ function calcJacobian(Y::AbstractMatrix{ComplexF64}, busVec::Vector{BusData}, ad
             # Jii = ∂qi/∂𝜑i    = - vi*[gii * vi * cos(𝜑i-𝜑i-αi)] + vi * [∑ gik * vk * cos(𝜑i-𝜑j-αik)]  : k = 1 .. n -> neighbors                    
             jacobian[i2, j1] = -vm_i * (Yii * vm_i * cos(arg)) + vm_i * sum(abs(Y[i, k]) * busVec[k].vm_pu * cos(va_i - busVec[k].va_rad - angle(Y[i, k])) for k in adjBranch[i])
             # Nii = Vi*∂pi/∂vi = vi * (gii * vi * cos(𝜑i-𝜑i-αii)) +vi * [∑ gik* vk * cos(𝜑i-𝜑j-αik)]
-            jacobian[i1, j2] = vm_i * (Yii * vm_i * cos(arg)) + vm_i * sum(abs(Y[i, k]) * busVec[k].vm_pu * cos(va_i - busVec[k].va_rad - angle(Y[i, k])) for k in adjBranch[i])
-            #jacobian[i1, j2] = - jacobian[i2, j1]
+            jacobian[i1, j2] = vm_i * (Yii * vm_i * cos(arg)) + vm_i * sum(abs(Y[i, k]) * busVec[k].vm_pu * cos(va_i - busVec[k].va_rad - angle(Y[i, k])) for k in adjBranch[i])            
             # Lii = Vi*∂qi/∂vi = + vi*( gii * vi * sin(𝜑i-𝜑i-αii))  + vi * [∑ gik* vk * sin(𝜑i-𝜑j-αik)]          
             jacobian[i2, j2] = vm_i * (Yii * vm_i * sin(arg)) + vm_i * sum(abs(Y[i, k]) * busVec[k].vm_pu * sin(va_i - busVec[k].va_rad - angle(Y[i, k])) for k in adjBranch[i])
-            #jacobian[i2, j2] = jacobian[i1, j1]
+            
             printdebug(case, "Hii", i1, j1, jacobian[i1, j1], i, j)
             printdebug(case, "Jii", i2, j1, jacobian[i2, j1], i, j)
             printdebug(case, "Nii", i1, j2, jacobian[i1, j2], i, j)
@@ -529,7 +487,8 @@ function calcJacobian(Y::AbstractMatrix{ComplexF64}, busVec::Vector{BusData}, ad
     end # for j in adjBranch[i] 
   end # for i in 1:n
 
-  if log
+  if debug
+    println()
     for j = 1:size_i
       print("\t$(j):")
     end
@@ -547,30 +506,6 @@ function calcJacobian(Y::AbstractMatrix{ComplexF64}, busVec::Vector{BusData}, ad
 
   return jacobian
 end
-
-#=
-function calcJacobianCart(Y::AbstractMatrix{ComplexF64}, busVec::Vector{BusData}, adjBranch::Vector{Vector{Int}}, busTypeVec::Vector{ResDataTypes.NodeType}, slackIdx::Int, n_pq::Int, n_pv::Int, log::Bool = false, sparse::Bool = true)
-  function get_c_ik(V_k::ComplexF64, i::Int, k::Int)
-    return real(Y[i, k]) * real(V_k) - imag(Y[i, k]) * imag(V_k)
-  end
-  function get_d_ik(V_k::ComplexF64, i::Int, k::Int)
-    return imag(Y[i, k]) * real(V_k) + real(Y[i, k]) * imag(V_k)
-  end
-  function get_p_ik(V_i::ComplexF64, V_k::ComplexF64, i::Int, k::Int)    
-    return real(V_i)*get_c_ik(V_k, i, k) + imag(V_i)*get_d_ik(V_k, i, k)
-  end
-  function get_q_ik(V_i::ComplexF64, V_k::ComplexF64, i::Int, k::Int)    
-    return imag(V_i)*get_c_ik(V_k, i, k) - real(V_i)*get_d_ik(V_k, i, k)
-  end
-  function get_p_ii(V_i::ComplexF64, i::Int)
-    return abs(V_i)^2 * real(Y[i, i])
-  end
-  function get_q_ii(V_i::ComplexF64, i::Int)
-    return -abs(V_i)^2 * imag(Y[i, i])
-  end
-
-end
-=#
 
 # main function for calculation Newton-Raphson
 function calcNewtonRaphson!(Y::AbstractMatrix{ComplexF64}, nodes::Vector{ResDataTypes.Node}, Sbase_MVA::Float64, maxIte::Int, tolerance::Float64 = 1e-6, verbose::Int = 0, sparse::Bool = false)
