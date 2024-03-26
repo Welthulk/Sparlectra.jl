@@ -10,3 +10,4 @@ announce.md
 data/cigre.png
 data/MiniGrid/MiniGrid.m
 data/pgmodel/input.m
+test/workshop.jl
