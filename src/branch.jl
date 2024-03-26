@@ -102,8 +102,8 @@ mutable struct Branch
   function Base.show(io::IO, b::Branch)
     print(io, "Branch( ")
     print(io, b.comp, ", ")
-    print(io, "fromBus: ", b.fromBus, " ($(b._from))", ", ")
-    print(io, "toBus: ", b.toBus, " ($(b._to))", ", ")
+    print(io, "fromBus: ", b.fromBus, ", ")
+    print(io, "toBus: ", b.toBus,  ", ")
 
     print(io, "r_pu: ", b.r_pu, ", ")
     print(io, "x_pu: ", b.x_pu, ", ")
@@ -112,7 +112,6 @@ mutable struct Branch
     print(io, "ratio: ", b.ratio, ", ")
     print(io, "angle: ", b.angle, ", ")
     print(io, "status: ", b.status, ", ")
-    print(io, "parallel: ", b.isParallel, ", ")
 
     if !isnothing(b.sn_MVA)
       print(io, "sn_MVA: ", b.sn_MVA, ", ")
