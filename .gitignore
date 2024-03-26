@@ -11,3 +11,5 @@ data/cigre.png
 data/MiniGrid/MiniGrid.m
 data/pgmodel/input.m
 test/workshop.jl
+data/mpower/case1888_rte.m
+data/mpower/case30.m
