@@ -130,6 +130,7 @@ export
   createYBUS,
   getNBI,
   mdoRCM,
+  setJacobianDebug,
   calcJacobian,
   calcPowerFlow,
   adjacentBranches,
