@@ -10,6 +10,8 @@ The load flow calculation will be expanded in the future to include additional m
 
 ## Network Data Files
 
+> Note: Since there are already many CGMES converters available, in the upcoming versions, I will concentrate more on the Matpower format to ensure optimal support and performance. Additionally, I have developed an experimental parser for the Power Grid Model. Please refer to the Experimental Branch for more information.
+
 This package supports the use of various network data file formats, allowing users to leverage different sources for load flow calculations. Below are the supported formats:
 
 1. **CGMES Version 2.4.15:**
