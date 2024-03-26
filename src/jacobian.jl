@@ -437,11 +437,9 @@ function calcJacobian(Y::AbstractMatrix{ComplexF64}, busVec::Vector{BusData}, ad
             # Jij = ∂qi/∂𝜑j    = -vi * [gij * vj * cos(𝜑i-𝜑j-αij)]                
             jacobian[i2, j1] = -vm_i * Yij * vm_j * cos(arg)
             # Nij = Vj*∂pi/∂vj = +vi * gij * vj * cos(𝜑i-𝜑j-αij)                
-            #jacobian[i1, j2] = vm_i * Yij * vm_j * cos(arg)
-            jacobian[i1, j2] = - jacobian[i2, j1]
+            jacobian[i1, j2] = vm_i * Yij * vm_j * cos(arg)            
             # Lij = Vj*∂qi/∂vj = +vi * [ gij * vj * sin(𝜑i-𝜑j-αij) ] }                
-            #jacobian[i2, j2] = vm_i * Yij * vm_j * sin(arg)
-            jacobian[i2, j2] = jacobian[i1, j1]
+            jacobian[i2, j2] = vm_i * Yij * vm_j * sin(arg)            
             printdebug(case, "Hij", i1, j1, jacobian[i1, j1], i, j)
             printdebug(case, "Jij", i2, j1, jacobian[i2, j1], i, j)
             printdebug(case, "Nij", i1, j2, jacobian[i1, j2], i, j)
@@ -550,6 +548,7 @@ function calcJacobian(Y::AbstractMatrix{ComplexF64}, busVec::Vector{BusData}, ad
   return jacobian
 end
 
+#=
 function calcJacobianCart(Y::AbstractMatrix{ComplexF64}, busVec::Vector{BusData}, adjBranch::Vector{Vector{Int}}, busTypeVec::Vector{ResDataTypes.NodeType}, slackIdx::Int, n_pq::Int, n_pv::Int, log::Bool = false, sparse::Bool = true)
   function get_c_ik(V_k::ComplexF64, i::Int, k::Int)
     return real(Y[i, k]) * real(V_k) - imag(Y[i, k]) * imag(V_k)
@@ -571,6 +570,7 @@ function calcJacobianCart(Y::AbstractMatrix{ComplexF64}, busVec::Vector{BusData}
   end
 
 end
+=#
 
 # main function for calculation Newton-Raphson
 function calcNewtonRaphson!(Y::AbstractMatrix{ComplexF64}, nodes::Vector{ResDataTypes.Node}, Sbase_MVA::Float64, maxIte::Int, tolerance::Float64 = 1e-6, verbose::Int = 0, sparse::Bool = false)

@@ -43,8 +43,11 @@ function formatBranchResults(net::ResDataTypes.Net)
 
     v1 = VmFrom * exp(im * deg2rad(VaFrom))
     v2 = VmTo * exp(im * deg2rad(VaTo))
-
-    tap = (br.ratio != 0.0) ? br.ratio : 1.0
+    # Losses: abs( Vf / tau - Vt ) ^ 2 / (Rs - j Xs)
+    ratio = (br.ratio != 0.0) ? br.ratio : 1.0
+    angle = (br.ratio != 0.0) ? br.angle : 0.0
+    tap = calcComplexRatio(ratio, angle)
+    
 
     Vdiff = v1 / tap - v2
 
@@ -78,8 +81,9 @@ end
 
 function printACPFlowResults(net::ResDataTypes.Net, ct::Float64, ite::Int, tol::Float64, toFile::Bool = false, path::String = "")
   if toFile
-    filename = "result_$(net.name).txt"
+    filename = strip("result_$(net.name).txt")
     io = open(joinpath(path, filename), "w")
+    @info "Results are written to $(joinpath(path, filename))"
   else
     io = Base.stdout
   end
