@@ -98,7 +98,7 @@ function testCreateNetworkFromScratch(verbose::Bool = false)
   proSumersVec = Vector{ProSumer}()
   
   busDict = Dict{String, Int}()
-
+  idBus = 0
   idShunt = 0
   idBrunch = 0
   idProsSum = 0
@@ -151,13 +151,20 @@ function testCreateNetworkFromScratch(verbose::Bool = false)
     return busDict[busName]    
   end
   
-  function addBus!(;busIdx::Int, busType::String, vn_kV::Float64, pLoad::Union{Nothing, Float64}= nothing, qLoad::Union{Nothing,Float64}= nothing, 
-                  pGen::Union{Nothing, Float64}= nothing,  qGen::Union{Nothing, Float64}= nothing, pShunt::Union{Nothing, Float64}= nothing, qShunt::Union{Nothing, Float64}= nothing, 
-                  vm::Union{Nothing, Float64}= nothing, va::Union{Nothing, Float64}= nothing, isAux::Bool = false)
+  
+
+  
+  function addBus!(;busName::String, busType::String, vn_kV::Float64, 
+                   pLoad::Union{Nothing, Float64}= nothing, qLoad::Union{Nothing,Float64}= nothing, 
+                   pGen::Union{Nothing, Float64}= nothing, qGen::Union{Nothing, Float64}= nothing, 
+                   pShunt::Union{Nothing, Float64}= nothing, qShunt::Union{Nothing, Float64}= nothing, 
+                   vm::Union{Nothing, Float64}= nothing, va::Union{Nothing, Float64}= nothing, isAux::Bool = false)
     vmin=0.9
     vmax=1.1
-    node = Node(busIdx = busIdx, vn_kV = vn_kV, nodeType = toNodeType(busType), vm_pu = vm, va_deg = va, vmin_pu = vmin, vmax_pu = vmax, pƩLoad = pLoad, qƩLoad = qLoad, pShunt = pShunt, qShunt = qShunt, pƩGen = pGen, qƩGen = qGen, isAux = isAux)
+    idBus += 1
+    node = Node(busIdx = idBus, vn_kV = vn_kV, nodeType = toNodeType(busType), vm_pu = vm, va_deg = va, vmin_pu = vmin, vmax_pu = vmax, pƩLoad = pLoad, qƩLoad = qLoad, pShunt = pShunt, qShunt = qShunt, pƩGen = pGen, qƩGen = qGen, isAux = isAux)
     push!(nodeVec, node)   
+    addBusDict!(idBus, busName)
   end
 
   function addShunt!(;busIdx::Int, pShunt::Float64, qShunt::Float64, vn::Float64, in_service::Int = 1)
@@ -199,50 +206,37 @@ function testCreateNetworkFromScratch(verbose::Bool = false)
   end
 
   # A R E A 1
-  # Bus 1, 220kV
-  addBusDict!(1, "B1")  
-  addBus!(busIdx = 1, busType = "PQ", vn_kV = 220.0, vm = 1.0, va = 0.0)
-  # Bus 9, 22kV
-  addBusDict!(9, "B9")
+  # Bus 1, 220kV  
+  addBus!(busName = "B1", busType = "PQ", vn_kV = 220.0, vm = 1.0, va = 0.0)
+  # Bus 9, 22kV  
   slackBusIdx = 9
-  addBus!(busIdx = 9, busType = "Slack", vn_kV =22.0, vm = 1.03, va = 0.0)
-  # Bus 7, 22kV
-  addBusDict!(7, "B7")
-  addBus!(busIdx = 7, busType = "PQ", vn_kV = 22.0,  vm = 1.0, va = 0.0)
-  # Bus 2, 220kV
-  addBusDict!(2, "B2")
-  addBus!(busIdx = 2, busType = "PQ", vn_kV = 220.0,  pLoad = 250.0, qLoad = 200.0, vm = 1.0, va = 0.0)
-  # Bus 10, 22kV
-  addBusDict!(10, "B10")
-  addBus!(busIdx = 10, busType = "PV", vn_kV = 22.0,  pGen = 500.0, vm = 1.03, va = 0.0)
+  addBus!(busName = "B9", busType = "Slack", vn_kV =22.0, vm = 1.03, va = 0.0)
+  # Bus 7, 22kV  
+  addBus!(busName = "B7", busType = "PQ", vn_kV = 22.0,  vm = 1.0, va = 0.0)
+  # Bus 2, 220kV  
+  addBus!(busName = "B2", busType = "PQ", vn_kV = 220.0,  pLoad = 250.0, qLoad = 200.0, vm = 1.0, va = 0.0)
+  # Bus 10, 22kV  
+  addBus!(busName = "B10", busType = "PV", vn_kV = 22.0,  pGen = 500.0, vm = 1.03, va = 0.0)
   
   # A R E A 2
-  # B6a, 220kV
-  addBusDict!(6, "B6a")  
-  addBus!(busIdx = 6, busType = "PQ", vn_kV = 220.0, pLoad = 435.0, qLoad = 296.0, pShunt = 0.0, qShunt = 180.0, vm = 1.0, va = 0.0)
-  # B6b, 220kV 
-  addBusDict!(13, "B6b")
-  addBus!(busIdx = 13, busType = "PQ", vn_kV = 220.0, vm = 1.0, va = 0.0)  
-  # Bus 12, 22kV
-  addBusDict!(12, "B12")
-  addBus!(busIdx = 12, busType = "PV", vn_kV = 22.0, pGen = 300.0, vm = 1.03, va = 0.0)
+  # B6a, 220kV  
+  addBus!(busName = "B6a", busType = "PQ", vn_kV = 220.0, pLoad = 435.0, qLoad = 296.0, pShunt = 0.0, qShunt = 180.0, vm = 1.0, va = 0.0)
+  # B6b, 220kV   
+  addBus!(busName = "B6b", busType = "PQ", vn_kV = 220.0, vm = 1.0, va = 0.0)  
+  # Bus 12, 22kV  
+  addBus!(busName = "B12", busType = "PV", vn_kV = 22.0, pGen = 300.0, vm = 1.03, va = 0.0)
   
   # A R E A 3
-  # Bus 5, 220kV
-  addBusDict!(5, "B5")
-  addBus!(busIdx = 5, busType = "PQ", vn_kV = 220.0, vm = 1.0, va = 0.0, pLoad = 103.0, qLoad = 62.0, pShunt = 0.0, qShunt = 80.0)
-  # Bus 4, 220kV
-  addBusDict!(4, "B4")
-  addBus!(busIdx = 4, busType = "PQ", vn_kV = 220.0, vm = 1.0, va = 0.0, qShunt = 160.0)
+  # Bus 5, 220kV  
+  addBus!(busName = "B5", busType = "PQ", vn_kV = 220.0, vm = 1.0, va = 0.0, pLoad = 103.0, qLoad = 62.0, pShunt = 0.0, qShunt = 80.0)
+  # Bus 4, 220kV  
+  addBus!(busName = "B4", busType = "PQ", vn_kV = 220.0, vm = 1.0, va = 0.0, qShunt = 160.0)
   # Bus 3, 220kV
-  addBusDict!(3, "B3")
-  addBus!(busIdx = 3, busType = "PQ", vn_kV = 220.0, vm = 1.0, va = 0.0, pLoad = 103.0, qLoad = 62.0, isAux = false)
-  # Bus 8, 380kV
-  addBusDict!(8, "B8")
-  addBus!(busIdx = 8, busType = "PQ", vn_kV = 380.0, vm = 1.0, va = 0.0)
-  # Bus 11, 22kV
-  addBusDict!(11, "B11")
-  addBus!(busIdx = 11, busType = "PV", vn_kV = 22.0, pGen = 200.0, vm = 1.03, va = 0.0)
+  addBus!(busName = "B3", busType = "PQ", vn_kV = 220.0, vm = 1.0, va = 0.0, pLoad = 103.0, qLoad = 62.0, isAux = false)
+  # Bus 8, 380kV  
+  addBus!(busName = "B8", busType = "PQ", vn_kV = 380.0, vm = 1.0, va = 0.0)
+  # Bus 11, 22kV  
+  addBus!(busName = "B11", busType = "PV", vn_kV = 22.0, pGen = 200.0, vm = 1.03, va = 0.0)
   
   ##### Shunt  
   addShunt!(busIdx = 6, pShunt = 0.0, qShunt = 180.0, vn = 220.0)
