@@ -479,6 +479,19 @@ function toString(o::TrafoTyp)::String
   end
 end
 
+function create2WTRatioTransformerNoTaps(;from::Int, to::Int, vn_hv_kv::Float64, vn_lv_kv::Float64, sn_mva::Float64,vk_percent::Float64, vkr_percent::Float64, pfe_kw::Float64, i0_percent::Float64)::PowerTransformer
+  
+  c = getTrafoImpPGMComp(false, vn_hv_kv, from, to)
+
+  modelData = TransformerModelParameters(sn_MVA = sn_mva, vk_percent = vk_percent, vkr_percent = vkr_percent, pk_kW = pfe_kw, i0_percent = i0_percent, p0_kW = 0.0)
+  w1 = PowerTransformerWinding(Vn_kV = vn_hv_kv, modelData = modelData)
+  w2 = PowerTransformerWinding(Vn_kV = vn_lv_kv, modelData = modelData)
+  
+  trafo = PowerTransformer(c, false, w1, w2, nothing, ResDataTypes.Ratio)  
+  return trafo
+  
+end
+
 # purpose: creates Windings for 3WT using MVA Method, see: "MVA Method for Three-Winding Transformer" by Ver Pangonilo
 #
 #                              hv_bus

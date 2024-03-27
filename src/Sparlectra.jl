@@ -8,6 +8,7 @@ module ResDataTypes
 # resource data types for working with Sparlectra
 const Wurzel3 = 1.7320508075688772
 const SparlectraVersion = VersionNumber("0.4.10")
+abstract type AbstractBranch end
 export
   # constants
   Wurzel3,
@@ -29,6 +30,7 @@ export
   ProSumer,
   BranchModel,
   BranchFlow,
+  AbstractBranch,
   Branch,
   Shunt,
   Net,
@@ -42,6 +44,7 @@ export
   getWinding2WT,
   calcTransformerRatio,
   recalc_trafo_model_data,
+  create2WTRatioTransformerNoTaps,
   create3WTWindings!,
   getTrafoImpPGMComp,
   getWT3AuxBusID,
@@ -75,9 +78,6 @@ export
   toProSumptionType
 
 include("component.jl")
-
-abstract type AbstractBranch end
-
 include("lines.jl")
 include("transformer.jl")
 include("prosumer.jl")
