@@ -283,6 +283,15 @@ function isSlack(o::ResDataTypes.Node)
   end  
 end
 
+function isPVNode(o::Node)
+  if o._nodeType == ResDataTypes.PV
+    return true
+  else
+    return false
+  end
+end
+
+
 function toNodeType(o::Int)::NodeType
   if o == 1
     return PQ

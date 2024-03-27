@@ -96,7 +96,7 @@ function _createDict()
 end
 
 # base_MVA = 0.0 for default value in case file, otherwise set to desired value
-function createNetFromMatPowerFile(filename, base_MVA::Float64 = 0.0, log::Bool = false, mdo::Bool = true)::ResDataTypes.Net
+function createNetFromMatPowerFile(filename, base_MVA::Float64 = 0.0, log::Bool = false, mdo::Bool = true)::Net
   debug = false
   @debug debug = true
   mFak = 10.0 # approximation factor for load and shunt for qMax, qMin, pMax, pMin
@@ -325,6 +325,15 @@ function createNetFromMatPowerFile(filename, base_MVA::Float64 = 0.0, log::Bool 
     end
   end# read Generators
 
+  #check
+  for node in nodeVec
+    if isPVNode(node)      
+      if !haskey(proSumDict, node.busIdx)
+        @warn "no generator data for bus $(node.busIdx) found, change bus type to PQ"
+        node._nodeType = ResDataTypes.PQ
+      end
+    end
+  end
   sort!(nodeVec, by = x -> x.busIdx)
 
   net = ResDataTypes.Net(netName, baseMVA, slackIdx, nodeVec, ACLines, trafos, branchVec, prosum, shuntVec)

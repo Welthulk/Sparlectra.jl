@@ -348,7 +348,8 @@ function calcJacobian(Y::AbstractMatrix{ComplexF64}, busVec::Vector{BusData}, ad
 
   # i: Index of Bus
   # j: Index of Bus
-  for (i, b) in enumerate(busVec)
+  # @inbounds: no bounds checking
+  @inbounds for (i, b) in enumerate(busVec)
     vm_i = busVec[i].vm_pu
     va_i = busVec[i].va_rad
     bus_type_i = busVec[i].type

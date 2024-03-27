@@ -53,6 +53,8 @@ export
   addShuntPower!,
   addLoadPower!,
   addGenPower!,    
+  isSlack,
+  isPVNode,
   toNodeType,
   busComparison,  
   toString,
