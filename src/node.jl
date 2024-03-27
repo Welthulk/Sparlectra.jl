@@ -25,7 +25,7 @@ mutable struct Node
 
   function Node(;  
     busIdx::Integer,    
-    Vn_kV::Float64,
+    vn_kV::Float64,
     nodeType::NodeType,        
     ratedS::Union{Nothing,Float64} = nothing,
     zone::Union{Nothing,Integer} = nothing,
@@ -42,7 +42,7 @@ mutable struct Node
     vmax_pu::Union{Nothing,Float64} = nothing,
     isAux::Bool = false,    
   )
-    c = getNocdeComp(Vn_kV, busIdx, nodeType, isAux)
+    c = getNocdeComp(vn_kV, busIdx, nodeType, isAux)
     new(c, busIdx, nodeType, ratedS, zone, area, vm_pu, va_deg, pƩLoad, qƩLoad, pShunt, qShunt, pƩGen, qƩGen, vmin_pu, vmax_pu)
   end
 

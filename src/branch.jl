@@ -87,10 +87,14 @@ mutable struct Branch
       b_pu = b * baseZ
       g_pu = g * baseZ
       if isnothing(ratio)
-        ratio = 0.0
+        ratio = 1.0
+      end
+      angle = 0.0
+      if !isnothing(w.shift_degree)
+        angle = w.shift_degree
       end
 
-      new(c, from, to, r_pu, x_pu, b_pu, g_pu, ratio, w.shift_degree, status, sn_MVA, nothing, nothing)
+      new(c, from, to, r_pu, x_pu, b_pu, g_pu, ratio, angle, status, sn_MVA, nothing, nothing)
     elseif isa(branch, BranchModel) # PI-Model
       c = getBranchComp(0.0, from, to, id, "Branch")
       new(c, from, to, branch.r_pu, branch.x_pu, branch.b_pu, branch.g_pu, branch.ratio, branch.angle, status, branch.sn_MVA, nothing, nothing)
