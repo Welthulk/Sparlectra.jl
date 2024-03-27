@@ -3,7 +3,7 @@ function mpc = case3
 %
 % Network diagram:
 %
-%    1 ---- 2 ---- 3
+%   SG->1 ---- 2 ---- 3
 %
 % Generator at Bus 1.
 %
