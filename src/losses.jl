@@ -2,11 +2,15 @@
 # Date: 04.09.2023
 # include-file losses.jl
 
-function calcNetLosses!(nodes::Vector{ResDataTypes.Node}, branchVec::Vector{ResDataTypes.Branch}, Sbase_MVA::Float64)
+function calcNetLosses!(net::Net)
   @debug "\ncalcNetworkLosses (BaseMVA=$(Sbase_MVA))\n"
   # Sij = vi*exp(j*phi_i)*( (vi*exp(j*phi_i) - vk*exp(j*phi_k)*Y_ik +  vi*exp(j*phi_i)*Y0ik)*  
   # Sij = vi^2*conj(Y0ik+Yik)-vi*conj(vk)*conj(Yik)                   
   # Y0ik: Queradmittanz
+  nodes = net.nodeVec
+  branchVec = net.branchVec
+  Sbase_MVA = net.baseMVA
+
   function calcBranchFlow(from::Int, to::Int, br::ResDataTypes.Branch, tapSide::Int)
     @assert tapSide == 1 || tapSide == 2
     if br.status < 0

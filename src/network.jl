@@ -81,12 +81,14 @@ function addBranch!(; net::Net, from::Int, to::Int, branch::AbstractBranch, stat
   push!(net.branchVec, br)
 end
 
-function addACLine!(; net::Net, vn_kv::Float64, fromBus::String, toBus::String, length::Float64, r::Float64, x::Float64, c_nf_per_km::Union{Nothing,Float64} = nothing, tanδ::Union{Nothing,Float64} = nothing)
+function addACLine!(; net::Net, fromBus::String, toBus::String, length::Float64, r::Float64, x::Float64, c_nf_per_km::Union{Nothing,Float64} = nothing, tanδ::Union{Nothing,Float64} = nothing)
   from = geNetBusIdx(net = net, busName = fromBus)
   to = geNetBusIdx(net = net, busName = toBus)
-
-  acseg = ACLineSegment(vn_kv = vn_kv, from = from, to = to, length = length, r = r, x = x, c_nf_per_km = c_nf_per_km, tanδ = tanδ)
-  addBranch!(net = net, from = from, to = to, branch = acseg, status = 1, vn_kV = vn_kv)
+  vn_kV = getNodeVn(net.nodeVec[from])
+  vn_2_kV = getNodeVn(net.nodeVec[to])
+  @assert vn_kV == vn_2_kV "Voltage level of the from bus $(vn_kV) does not match the to bus $(vn_2_kV)"
+  acseg = ACLineSegment(vn_kv = vn_kV, from = from, to = to, length = length, r = r, x = x, c_nf_per_km = c_nf_per_km, tanδ = tanδ)
+  addBranch!(net = net, from = from, to = to, branch = acseg, status = 1, vn_kV = vn_kV)
   push!(net.linesAC, acseg)
 end
 
@@ -111,7 +113,7 @@ function addProsumer!(; net::Net, busName::String, type::String, p::Union{Nothin
   busIdx = geNetBusIdx(net = net, busName = busName)
   idProsSum = length(net.prosumpsVec) + 1
   isAPUNode = false
-  if !isnothing(vm_pu) || !isnothing(va_deg)
+  if !isnothing(vm_pu) && !isnothing(va_deg)
     isAPUNode = true
     node = net.nodeVec[busIdx]
     setVmVa!(node = node, vm_pu = vm_pu, va_deg = va_deg)
@@ -128,4 +130,24 @@ function addProsumer!(; net::Net, busName::String, type::String, p::Union{Nothin
   else
     addLoadPower!(node = node, p = p, q = q)
   end
+end
+
+function validate(; net = Net)
+  val = true
+  if length(net.nodeVec) == 0
+    @warn "No buses defined in the network"
+    val = false
+  end
+  if length(net.slackVec) == 0
+    @warn "No slack bus defined in the network"
+    val = false
+  end
+  if length(net.slackVec) > 1
+    @warn "More than one slack bus defined in the network"    
+  end
+  if length(net.branchVec) == 0
+    @warn "No branches defined in the network"
+    val = false
+  end  
+  return val
 end
