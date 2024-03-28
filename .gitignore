@@ -14,3 +14,5 @@ test/workshop.jl
 data/mpower/case1888_rte.m
 data/mpower/case30.m
 data/mpower/cigre.m
+data/mpower/_
+data/mpower/_*
