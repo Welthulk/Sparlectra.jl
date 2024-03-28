@@ -70,6 +70,22 @@ function testNetwork()::Bool
   return validate(net = myNet)
 end
 
+function testExportMatpower()
+  myNet = testCreateNetworkFromScratch(false)
+  filename = "cigre.m"
+  jpath = joinpath(pwd(), "data", "mpower", filename)  
+  case = myNet.name
+  writeMatpowerCasefile(myNet, jpath, case)
+  return true
+end
+
+function testReadMatpower()
+  #filename = "cigre.m"
+  #jpath = joinpath(pwd(), "data", "mpower", filename)
+  #net = readMatpowerCasefile(jpath)
+  #return validate(net = net)
+end
+
 function testCreateNetworkFromScratch(verbose::Bool = false)::Net
   Sbase_MVA = 1000.0
   netName = "cigre"

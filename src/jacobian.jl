@@ -560,7 +560,9 @@ function calcNewtonRaphson!(Y::AbstractMatrix{ComplexF64}, nodes::Vector{ResData
     end
 
     if norm_p < tolerance
-      println("\nConvergence is reached after $(iteration_count) iterations")
+      if (verbose > 0)
+        println("\nConvergence is reached after $(iteration_count) iterations")
+      end
       erg = 0
       break
     end

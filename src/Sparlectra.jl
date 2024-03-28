@@ -83,6 +83,7 @@ export
   addACLine!,
   add2WTrafo!,
   addProsumer!,
+  validate,
   geNetBusIdx
 
 include("component.jl")
