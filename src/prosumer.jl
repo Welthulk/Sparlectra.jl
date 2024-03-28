@@ -122,11 +122,11 @@ mutable struct ProSumer
   end
 end
 
-function isAPUNode(o::ResDataTypes.ProSumer)
+function isAPUNode(o::ProSumer)
   return o.isAPUNode  
 end
 
-function isGenerator(c::ResDataTypes.ProSumptionType)::Bool
+function isGenerator(c::Sparlectra.ProSumptionType)::Bool
   if c == Injection
     return true
   else
@@ -134,7 +134,7 @@ function isGenerator(c::ResDataTypes.ProSumptionType)::Bool
   end
 end # isGenerator
 
-function isGenerator(o::ResDataTypes.ProSumer)::Bool
+function isGenerator(o::ProSumer)::Bool
   return isGenerator(o.proSumptionType)  
 end # isGenerator
 
@@ -145,15 +145,15 @@ function getProSumPGMComp(Vn::Float64, from::Int, isGen::Bool, id::Int)
   return ImpPGMComp(cID, cName, cTyp, Vn, from, from)  
 end
 
-function setQGenReplacement!(o::ResDataTypes.ProSumer, q::Float64)
+function setQGenReplacement!(o::ProSumer, q::Float64)
   o.qGenRepl = q
 end
 
-function getQGenReplacement(o::ResDataTypes.ProSumer)::Union{Nothing,Float64}  
+function getQGenReplacement(o::ProSumer)::Union{Nothing,Float64}  
   return o.qGenRepl
 end
 
-function isSlack(o::ResDataTypes.ProSumer)
+function isSlack(o::ProSumer)
   if !isnothing(o.referencePri) && o.referencePri > 0
     return true
   else

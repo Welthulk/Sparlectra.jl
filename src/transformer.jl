@@ -332,7 +332,7 @@ mutable struct PowerTransformer <: AbstractBranch
   side3::Union{Nothing,PowerTransformerWinding}
   _equiParms::Integer             # Winding-Side with Short-Circuit-Parameters, 1 for side1,2 for side2, 3 for all sides (3WT)
 
-  function PowerTransformer(comp::AbstractComponent, tapEnable::Bool, s1::PowerTransformerWinding, s2::PowerTransformerWinding, s3::Union{Nothing,PowerTransformerWinding} = nothing, trafoTyp::TrafoTyp = ResDataTypes.Ratio)
+  function PowerTransformer(comp::AbstractComponent, tapEnable::Bool, s1::PowerTransformerWinding, s2::PowerTransformerWinding, s3::Union{Nothing,PowerTransformerWinding} = nothing, trafoTyp::TrafoTyp = Sparlectra.Ratio)
     equiParms = 0
     if isnothing(s3)
       n = 2
@@ -487,7 +487,7 @@ function create2WTRatioTransformerNoTaps(;from::Int, to::Int, vn_hv_kv::Float64,
   w1 = PowerTransformerWinding(Vn_kV = vn_hv_kv, modelData = modelData)
   w2 = PowerTransformerWinding(Vn_kV = vn_lv_kv, modelData = modelData)
   
-  trafo = PowerTransformer(c, false, w1, w2, nothing, ResDataTypes.Ratio)  
+  trafo = PowerTransformer(c, false, w1, w2, nothing, Sparlectra.Ratio)  
   return trafo
   
 end

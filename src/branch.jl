@@ -37,6 +37,8 @@ struct BranchModel <:AbstractBranch
 
 end
 
+
+
 mutable struct Branch
   comp::AbstractComponent
   fromBus::Integer        

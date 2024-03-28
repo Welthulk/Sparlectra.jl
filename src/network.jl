@@ -16,12 +16,12 @@ struct Net
     name,
     baseMVA::Float64,
     slack::Integer,
-    nodeVec::Vector{ResDataTypes.Node},
-    linesAC::Vector{ResDataTypes.ACLineSegment},
-    trafos::Vector{ResDataTypes.PowerTransformer},
-    branchVec::Vector{ResDataTypes.Branch},
-    prosumpsVec::Vector{ResDataTypes.ProSumer},
-    shuntVec::Vector{ResDataTypes.Shunt},
+    nodeVec::Vector{Node},
+    linesAC::Vector{ACLineSegment},
+    trafos::Vector{PowerTransformer},
+    branchVec::Vector{Branch},
+    prosumpsVec::Vector{ProSumer},
+    shuntVec::Vector{Shunt},
   )
     slackVec = Vector{Int}()
     push!(slackVec, slack)
