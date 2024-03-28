@@ -17,7 +17,7 @@ mutable struct ProSumer
   ratedPowerFactor::Union{Nothing,Float64}
   referencePri::Union{Nothing,Integer}
   vm_pu::Union{Nothing,Float64}
-  vm_degree::Union{Nothing,Float64}
+  va_deg::Union{Nothing,Float64}
   proSumptionType::ProSumptionType
   isAPUNode::Bool
   qGenRepl::Union{Nothing,Float64}
@@ -42,7 +42,7 @@ mutable struct ProSumer
     ratedPowerFactor::Union{Nothing,Float64} = nothing,
     referencePri::Union{Nothing,Integer} = nothing,
     vm_pu::Union{Nothing,Float64} = nothing,
-    vm_degree::Union{Nothing,Float64} = nothing,
+    va_deg::Union{Nothing,Float64} = nothing,
     isAPUNode::Bool = false    
   )
     comp = getProSumPGMComp(vn_kv, busIdx, isGenerator(type), oID)
@@ -51,11 +51,11 @@ mutable struct ProSumer
       vm_pu = 1.0
     end
 
-    if isnothing(vm_degree)
-      vm_degree = 0.0
+    if isnothing(va_deg)
+      va_deg = 0.0
     end
 
-    new(comp, ratedS, ratedU, qPercent, p, q, maxP, minP, maxQ, minQ, ratedPowerFactor, referencePri, vm_pu, vm_degree, type, isAPUNode, nothing)
+    new(comp, ratedS, ratedU, qPercent, p, q, maxP, minP, maxQ, minQ, ratedPowerFactor, referencePri, vm_pu, va_deg, type, isAPUNode, nothing)
   end
 
   function Base.show(io::IO, prosumption::ProSumer)
@@ -111,7 +111,7 @@ mutable struct ProSumer
     end
 
     if (!isnothing(prosumption.vm_degree))
-      print(io, "vm_degree: ", prosumption.vm_degree, ", ")
+      print(io, "va_deg: ", prosumption.va_deg, ", ")
     end
 
     if (!isnothing(prosumption.qGenRepl))
