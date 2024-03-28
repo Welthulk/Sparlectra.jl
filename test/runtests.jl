@@ -10,4 +10,6 @@ include("testgrid.jl")
   @test test_NBI_MDO() == true
   @test test_acpflow(0) == true
   @test testExportMatpower() == true
+  @test testImportMatpower() == true  
 end
+rmTestfiles()

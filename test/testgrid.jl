@@ -70,20 +70,32 @@ function testNetwork()::Bool
   return validate(net = myNet)
 end
 
-function testExportMatpower()
-  myNet = testCreateNetworkFromScratch(false)
+function getTestFilePathName()
   filename = "cigre.m"
   jpath = joinpath(pwd(), "data", "mpower", filename)  
+  return jpath
+end
+
+function testExportMatpower()
+  myNet = testCreateNetworkFromScratch(false)
   case = myNet.name
-  writeMatpowerCasefile(myNet, jpath, case)
+  writeMatpowerCasefile(myNet, getTestFilePathName(), case)
   return true
 end
 
-function testReadMatpower()
-  #filename = "cigre.m"
-  #jpath = joinpath(pwd(), "data", "mpower", filename)
-  #net = readMatpowerCasefile(jpath)
-  #return validate(net = net)
+function testImportMatpower()
+  mdo = true
+  log = false
+  net = createNetFromMatPowerFile(getTestFilePathName(), 1000.0, log, mdo)
+  return validate(net = net)
+end
+
+function rmTestfiles()
+  file = getTestFilePathName()
+  if isfile(file)
+    rm(file)
+  end
+  return true
 end
 
 function testCreateNetworkFromScratch(verbose::Bool = false)::Net
