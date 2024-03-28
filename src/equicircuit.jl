@@ -100,7 +100,7 @@ createYBUS: Create the admittance matrix YBUS from the branch vector and the sla
 #cs: counter system (or meetering system?) (GER: "Zählpfeilsystem") [1= Consumer, 2= Producer]
 #tc: tap Changer side in equicircuit: [fromBus=1, toBus=2]
 """
-function createYBUS(branchVec::Vector{Branch}, shuntVec::Vector{ResDataTypes.Shunt}, sparse::Bool = true, printYBUS::Bool = false)
+function createYBUS(branchVec::Vector{Branch}, shuntVec::Vector{Shunt}, sparse::Bool = true, printYBUS::Bool = false)
   @assert length(branchVec) > 0 "branchVec must not be empty"
 
   n = maximum(max(branch.fromBus, branch.toBus) for branch in branchVec)

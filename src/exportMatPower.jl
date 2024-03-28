@@ -16,7 +16,7 @@ function writeHeader(sb_mva::Float64, file, case::AbstractString)
   write(file, "mpc.baseMVA = $sb_mva;\n")
 end # writeHeader
 
-function writeBusData(NodeVec::Vector{ResDataTypes.Node}, file)
+function writeBusData(NodeVec::Vector{Node}, file)
   write(file, "%% bus data\n")
   write(file, "mpc.bus = [\n")
   write(file, "%bus\ttype\tPd\tQd\tGs\tBs\tarea\tVm\tVa\tbaseKV\tzone\tVmax\tVmin\n")
@@ -82,13 +82,13 @@ function writeBusData(NodeVec::Vector{ResDataTypes.Node}, file)
 end # writeBusData
 
 
-function writeGeneratorData(sb_mva::Float64, NodeDict::Dict{Int,ResDataTypes.Node}, ProSumVec::Vector{ResDataTypes.ProSumer}, file, hasPVBus::Bool, slackIdx::Int, vgSlack::Float64)
+function writeGeneratorData(sb_mva::Float64, NodeDict::Dict{Int,Node}, ProSumVec::Vector{ProSumer}, file, hasPVBus::Bool, slackIdx::Int, vgSlack::Float64)
   write(file, "%% generator data\n")
   write(file, "mpc.gen = [\n")
   write(file, "%bus\tPg\tQg\tQmax\tQmin\tVg\tmBase\tstatus\tPmax\tPmin\tPc1\tPc2\tQc1min\tQc1max\tQc2min\tQc2max\tramp_agc\tramp_10\tramp_30\tramp_q\tapf\n")
   slackGeneratorFound = false
 
-  function getLine(node::ResDataTypes.Node, prosum::ResDataTypes.ProSumer)
+  function getLine(node::Node, prosum::ProSumer)
     
     
     name = prosum.comp.cName
@@ -174,7 +174,7 @@ function writeGeneratorData(sb_mva::Float64, NodeDict::Dict{Int,ResDataTypes.Nod
   write(file, "];\n")
 end # WriteGeneratorData
 
-function writeBranchData(sb_mva::Float64, branchVec::Vector{ResDataTypes.Branch}, file)
+function writeBranchData(sb_mva::Float64, branchVec::Vector{Branch}, file)
   write(file, "%% branch data\n")
   write(file, "mpc.branch = [\n")
   write(file, "%fbus\ttbus\tr\tx\tb\trateA\trateB\trateC\tratio\tangle\tstatus\tangmin\tangmax\n")
@@ -216,11 +216,11 @@ function writeBranchData(sb_mva::Float64, branchVec::Vector{ResDataTypes.Branch}
   write(file, "];\n")
 end # writeBranchData
 
-function writeMatpowerCasefile(net::ResDataTypes.Net, filename::String, testcase::String)
+function writeMatpowerCasefile(net::Net, filename::String, testcase::String)
   @info "convertion to Matpower CASE-Files, Testcase: ($testcase), Filename: ($filename)"
   base, ext = splitext(filename)
   base = base * ".m"
-  NodeDict = Dict{Int,ResDataTypes.Node}()
+  NodeDict = Dict{Int,Node}()
   for n in net.nodeVec
     NodeDict[n.busIdx] = n
   end

@@ -11,7 +11,7 @@ function calcNetLosses!(net::Net)
   branchVec = net.branchVec
   Sbase_MVA = net.baseMVA
 
-  function calcBranchFlow(from::Int, to::Int, br::ResDataTypes.Branch, tapSide::Int)
+  function calcBranchFlow(from::Int, to::Int, br::Sparlectra.Branch, tapSide::Int)
     @assert tapSide == 1 || tapSide == 2
     if br.status < 0
       return (0.0 + 0.0im)
@@ -84,7 +84,7 @@ function calcNetLosses!(net::Net)
   ∑pl = ∑qg = ∑pg = ∑ql = 0.0
   idx = 0
   for n in nodes
-    if n._nodeType == ResDataTypes.Slack
+    if n._nodeType == Sparlectra.Slack
       idx = n.busIdx
       continue
     end

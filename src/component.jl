@@ -2,7 +2,6 @@
 # Date: 10.05.2023
 # include-file component.jl
 
-# Data type to describe a component
 @enum ComponentTyp begin
   UnknownC
   NodeC
@@ -20,8 +19,6 @@
   AuxBus
   BranchC
 end
-
-@enum SeitenTyp UnknownS = 0 Seite1 = 1 Seite2 = 2 Seite3 = 3
 
 @enum TrafoTyp UnknownT = 0 Ratio = 1 PhaseShifter = 2 PhaseTapChanger = 3
 

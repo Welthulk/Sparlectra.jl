@@ -108,126 +108,6 @@ function getNocdeComp(Vn_kV::Float64, node_idx::Int, nodeType, isAux::Bool = fal
   return ImpPGMComp(cID, name, cTyp, Vn_kV, node_idx, node_idx)
 end
 
-mutable struct NodeParameters
-  kIdx::Integer # Knoten Index
-  ratedS::Union{Nothing,Float64}
-  vm_pu::Union{Nothing,Float64}   # Voltage magnitude in p.u
-  va_deg::Union{Nothing,Float64}  # Voltage angle in degree  
-  pƩLoad::Union{Nothing,Float64}  # Ʃ active power
-  qƩLoad::Union{Nothing,Float64}  # Ʃ reactive power
-  pShunt::Union{Nothing,Float64}  # Ʃ active power
-  qShunt::Union{Nothing,Float64}  # Ʃ reactive power
-  pƩGen::Union{Nothing,Float64}   # Ʃ active power injected
-  qƩGen::Union{Nothing,Float64}   # Ʃ reactive power injected
-  vmin_pu::Union{Nothing,Float64} # Minimum voltage magnitude in p.u
-  vmax_pu::Union{Nothing,Float64} # Maximum voltage magnitude in p.u
-
-  function NodeParameters(
-    kIdx::Integer,
-    ratedS::Union{Nothing,Float64} = nothing,
-    vm_pu::Union{Nothing,Float64} = nothing,
-    va_deg::Union{Nothing,Float64} = nothing,
-    pƩLoad::Union{Nothing,Float64} = nothing,
-    qƩLoad::Union{Nothing,Float64} = nothing,
-    pShunt::Union{Nothing,Float64} = nothing,
-    qShunt::Union{Nothing,Float64} = nothing,
-    pƩGen::Union{Nothing,Float64} = nothing,
-    qƩGen::Union{Nothing,Float64} = nothing,
-    vmin_pu::Union{Nothing,Float64} = nothing,
-    vmax_pu::Union{Nothing,Float64} = nothing,
-  )
-    new(kIdx, ratedS, vm_pu, va_deg, pƩLoad, qƩLoad, pShunt, qShunt, pƩGen, qƩGen, vmin_pu, vmax_pu)
-  end
-
-  function Base.show(io::IO, nodeParam::NodeParameters)
-    print(io, "NodeParameters( ")
-    print(io, "kIdx: ", nodeParam.kIdx, ", ")
-    if (!isnothing(nodeParam.ratedS))
-      print(io, "RatedS: ", nodeParam.ratedS, ", ")
-    end
-    if (!isnothing(nodeParam.vm_pu))
-      print(io, "Vm: ", nodeParam.vm_pu, ", ")
-    end
-    if (!isnothing(nodeParam.va_deg))
-      print(io, "Va: ", nodeParam.va_deg, ", ")
-    end
-    if (!isnothing(nodeParam.vmin_pu))
-      print(io, "Vmin: ", nodeParam.vmin_pu, ", ")
-    end
-    if (!isnothing(nodeParam.vmax_pu))
-      print(io, "Vmax: ", nodeParam.vmax_pu, ", ")
-    end
-    if (!isnothing(nodeParam.pƩLoad))
-      print(io, "ƩP: ", nodeParam.pƩLoad, ", ")
-    end
-    if (!isnothing(nodeParam.qƩLoad))
-      print(io, "ƩQ: ", nodeParam.qƩLoad, ", ")
-    end
-    if (!isnothing(nodeParam.pShunt))
-      print(io, "pShunt: ", nodeParam.pShunt, ", ")
-    end
-    if (!isnothing(nodeParam.qShunt))
-      print(io, "qShunt: ", nodeParam.qShunt, ", ")
-    end
-    if (!isnothing(nodeParam.pƩGen))
-      print(io, "ƩPGen: ", nodeParam.pƩGen, ", ")
-    end
-    if (!isnothing(nodeParam.qƩGen))
-      print(io, "ƩQGen: ", nodeParam.qƩGen, ", ")
-    end
-    println(io, ")")
-  end
-end
-
-"""
-Purpose: Set node parameters
-"""
-function setNodeParameters!(node::Node, nodeParam::NodeParameters)
-  if (!isnothing(nodeParam.ratedS))
-    node._ratedS = nodeParam.ratedS
-  end
-
-  if (!isnothing(nodeParam.vm_pu))
-    node._vm_pu = nodeParam.vm_pu
-  end
-
-  if (!isnothing(nodeParam.va_deg))
-    node._va_deg = nodeParam.va_deg
-  end
-
-  if (!isnothing(nodeParam.pƩLoad))
-    node._pƩLoad = nodeParam.pƩLoad
-  end
-
-  if (!isnothing(nodeParam.qƩLoad))
-    node._qƩLoad = nodeParam.qƩLoad
-  end
-
-  if (!isnothing(nodeParam.pShunt))
-    node._pShunt = nodeParam.pShunt
-  end
-
-  if (!isnothing(nodeParam.qShunt))
-    node._qShunt = nodeParam.qShunt
-  end
-
-  if (!isnothing(nodeParam.pƩGen))
-    node._pƩGen = nodeParam.pƩGen
-  end
-
-  if (!isnothing(nodeParam.qƩGen))
-    node._qƩGen = nodeParam.qƩGen
-  end
-
-  if (!isnothing(nodeParam.vmin_pu))
-    node._vmin_pu = nodeParam.vmin_pu
-  end
-
-  if (!isnothing(nodeParam.vmax_pu))
-    node._vmax_pu = nodeParam.vmax_pu
-  end
-end
-
 function addShuntPower!(; node::Node, p::Float64, q::Float64)
   if (isnothing(node._pShunt))
     node._pShunt = 0.0
@@ -280,8 +160,8 @@ function setVmVa!(; node::Node, vm_pu::Float64, va_deg::Float64)
   node._va_deg = va_deg
 end
 
-function isSlack(o::ResDataTypes.Node)
-  if o._nodeType == ResDataTypes.Slack
+function isSlack(o::Sparlectra.Node)
+  if o._nodeType == Sparlectra.Slack
     return true
   else
     return false
@@ -293,7 +173,7 @@ function getNodeVn(o::Node)::Float64
 end
 
 function isPVNode(o::Node)
-  if o._nodeType == ResDataTypes.PV
+  if o._nodeType == Sparlectra.PV
     return true
   else
     return false

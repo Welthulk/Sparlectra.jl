@@ -4,8 +4,6 @@
 # Source of this network can be found here (Task Force C6.04.02 ): https://www.researchgate.net/publication/271963972_TF_C60402_TB_575_--_Benchmark_Systems_for_Network_Integration_of_Renewable_and_Distributed_Energy_Resources
 
 using Sparlectra
-using Sparlectra.ResDataTypes
-using Sparlectra.SparlectraNet
 using BenchmarkTools
 using Logging
 

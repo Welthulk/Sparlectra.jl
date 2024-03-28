@@ -10,7 +10,7 @@ function format_version(version::VersionNumber)
   return "$major.$minor.$patch"
 end
 
-function formatBranchResults(net::ResDataTypes.Net)
+function formatBranchResults(net::Net)
   formatted_results = @sprintf("\n===========================================================================================================================\n")
 
   formatted_results *= @sprintf("| %-25s | %-5s | %-5s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s |\n", "Branch", "From", "To", "P [MW]", "Q [MVar]", "P [MW]", "Q [MVar]", "Pv [MW]", "Qv [MVar]")
@@ -80,7 +80,7 @@ function formatBranchResults(net::ResDataTypes.Net)
   return formatted_results, total_losses
 end
 
-function printACPFlowResults(net::ResDataTypes.Net, ct::Float64, ite::Int, tol::Float64, toFile::Bool = false, path::String = "")
+function printACPFlowResults(net::Net, ct::Float64, ite::Int, tol::Float64, toFile::Bool = false, path::String = "")
   if toFile
     filename = strip("result_$(net.name).txt")
     io = open(joinpath(path, filename), "w")
@@ -89,7 +89,7 @@ function printACPFlowResults(net::ResDataTypes.Net, ct::Float64, ite::Int, tol::
     io = Base.stdout
   end
 
-  vers = ResDataTypes.SparlectraVersion
+  vers = Sparlectra.SparlectraVersion
   current_date = Dates.format(Dates.now(), "d-u-yy H:M:S")
 
   formatted_version = format_version(vers)
@@ -113,15 +113,15 @@ function printACPFlowResults(net::ResDataTypes.Net, ct::Float64, ite::Int, tol::
   npv = 0
   npq = 0
   for n in nodes
-    npv += n._nodeType == ResDataTypes.PV ? 1 : 0
-    npq += n._nodeType == ResDataTypes.PQ ? 1 : 0
+    npv += n._nodeType == Sparlectra.PV ? 1 : 0
+    npq += n._nodeType == Sparlectra.PQ ? 1 : 0
     if occursin("_Aux_", n.comp.cName)
       auxb += 1
     end
   end
   for ps in net.prosumpsVec
-    loads += ps.proSumptionType == ResDataTypes.Consumption ? 1 : 0
-    gens += ps.proSumptionType == ResDataTypes.Injection ? 1 : 0
+    loads += ps.proSumptionType == Sparlectra.Consumption ? 1 : 0
+    gens += ps.proSumptionType == Sparlectra.Injection ? 1 : 0
   end
   shunts = length(net.shuntVec)
 
@@ -214,9 +214,9 @@ function printACPFlowResults(net::ResDataTypes.Net, ct::Float64, ite::Int, tol::
   end
 end
 
-function convertPVtoPQ!(net::ResDataTypes.Net)
+function convertPVtoPQ!(net::Net)
   for n in net.nodeVec
-    if n._nodeType == ResDataTypes.PV
+    if n._nodeType == Sparlectra.PV
       busIdx = n.busIdx
       for p in net.prosumpsVec
         if p.comp.cFrom_bus == busIdx

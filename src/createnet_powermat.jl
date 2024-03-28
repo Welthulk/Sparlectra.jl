@@ -260,10 +260,10 @@ function createNetFromMatPowerFile(filename, base_MVA::Float64 = 0.0, log::Bool 
         vnh_kv > vnl_kv ? (w1 = PowerTransformerWinding(Vn_kV = vnh_kv); w2 = PowerTransformerWinding(Vn_kV = vnl_kv)) : (w1 = PowerTransformerWinding(Vn_kV = vnh_kv); w2 = PowerTransformerWinding(Vn_kV = vnl_kv))
       end
       tap = false
-      tType = ResDataTypes.Ratio
+      tType = Sparlectra.Ratio
       if angle != 0.0
         @info "found phase shifter in casefile $(netName) (fbus: $(fbus), tbus: $(tbus))"
-        tType = ResDataTypes.PhaseShifter
+        tType = Sparlectra.PhaseShifter
       end
       trafo = PowerTransformer(c, tap, w1, w2, nothing, tType)
       push!(trafos, trafo)
@@ -284,7 +284,7 @@ function createNetFromMatPowerFile(filename, base_MVA::Float64 = 0.0, log::Bool 
 
     if abs(pGen) < 1e-6 && abs(qGen) < 1e-6
       node = NodeDict[_bus]
-      if node._nodeType == ResDataTypes.PV || node._nodeType == ResDataTypes.PQ
+      if node._nodeType == Sparlectra.PV || node._nodeType == Sparlectra.PQ
         @info "generator $(_bus) has no power output, ignored"
         continue
       end
@@ -293,7 +293,7 @@ function createNetFromMatPowerFile(filename, base_MVA::Float64 = 0.0, log::Bool 
     bus = busMapDict[_bus]
     n = NodeDict[bus]
     isPUNode = false
-    if n._nodeType == ResDataTypes.PV
+    if n._nodeType == Sparlectra.PV
       isPUNode = true
     end
 
@@ -329,12 +329,12 @@ function createNetFromMatPowerFile(filename, base_MVA::Float64 = 0.0, log::Bool 
     if isPVNode(node)      
       if !haskey(proSumDict, node.busIdx)
         @warn "no generator data for bus $(node.busIdx) found, change bus type to PQ"
-        node._nodeType = ResDataTypes.PQ
+        node._nodeType = Sparlectra.PQ
       end
     end
   end
   sort!(nodeVec, by = x -> x.busIdx)
   
-  net = ResDataTypes.Net(netName, baseMVA, slackIdx, nodeVec, ACLines, trafos, branchVec, prosum, shuntVec)
+  net = Sparlectra.Net(netName, baseMVA, slackIdx, nodeVec, ACLines, trafos, branchVec, prosum, shuntVec)
   return net
 end

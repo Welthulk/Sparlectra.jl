@@ -1,9 +1,11 @@
 module Sparlectra
 # Author: Udo Schmitz (https://github.com/Welthulk)
 # Purpose: network calculation
+using LinearAlgebra
+using SparseArrays
+using Printf
+using Logging
 
-## resource data types for working with Sparlectra
-module ResDataTypes
 
 # resource data types for working with Sparlectra
 const Wurzel3 = 1.7320508075688772
@@ -11,80 +13,60 @@ const SparlectraVersion = VersionNumber("0.4.10")
 abstract type AbstractBranch end
 export
   # constants
-  Wurzel3,
-  
-  # classes
-  ComponentTyp,
-  Component,
-  ImpPGMComp,
-  ImpPGMComp3WT,
-  Terminal,
-  Node,
-  NodeParameters,
+  Wurzel3, ComponentTyp,
+  # classes  
+  # Component
+  AbstractComponent, Component, ImpPGMComp, ImpPGMComp3WT, 
+  # Node
+  Node, 
+  # Line
   ACLineSegment,
-  TrafoTyp,
-  PowerTransformerTaps,
-  PowerTransformerWinding,
-  PowerTransformer,
-  TransformerModelParameters,
+  # Trafo
+  TrafoTyp, PowerTransformerTaps,  PowerTransformerWinding,  PowerTransformer, TransformerModelParameters,
+  # ProSumer
   ProSumer,
-  BranchModel,
-  BranchFlow,
-  AbstractBranch,
-  Branch,
+  # Branch
+  AbstractBranch, Branch,BranchModel,  BranchFlow,
+  # Shunt
   Shunt,
+  # Net
   Net,
   
   # functions  
   # Compomnent
-  toComponentTyp,
-  getRXBG,
+  toComponentTyp,  getRXBG,
   # Transformers
-  getSideNumber2WT,
-  getWinding2WT,
-  calcTransformerRatio,
-  recalc_trafo_model_data,
-  create2WTRatioTransformerNoTaps,
-  create3WTWindings!,
-  getTrafoImpPGMComp,
-  getWT3AuxBusID,
-  isPerUnit_RXGB,
+  getSideNumber2WT,  getWinding2WT,  calcTransformerRatio,  recalc_trafo_model_data,  create2WTRatioTransformerNoTaps,  create3WTWindings!,
+  getTrafoImpPGMComp,  getWT3AuxBusID,  isPerUnit_RXGB,
   # Nodes  
-  setRatedS!,
-  setVmVa!,
-  setNodeParameters!,
-  addShuntPower!,
-  addLoadPower!,
-  addGenPower!,    
-  getNodeVn,
-  isSlack,
-  isPVNode,
-  toNodeType,
-  busComparison,  
-  toString,
+  setRatedS!,  setVmVa!,  addShuntPower!,  addLoadPower!,  addGenPower!,  getNodeVn,  isSlack,  isPVNode,  toNodeType,
+  busComparison,   toString,
   # Branch
-  setBranchFlow!,
-  setBranchStatus!,
+  setBranchFlow!,  setBranchStatus!,
   # Shunt
-  getGBShunt,
-  getPQShunt,
+  getGBShunt,  getPQShunt,
   # ACLineSegment
   get_line_parameters,
   # ProSumer
-  isSlack,
-  isGenerator,
-  isAPUNode,
-  setQGenReplacement!,
-  getQGenReplacement,
-  toProSumptionType,
+  isSlack, isGenerator, isAPUNode, setQGenReplacement!, getQGenReplacement, toProSumptionType,
   # Net
-  addBus!,
-  addShunt!,
-  addACLine!,
-  add2WTrafo!,
-  addProsumer!,
-  validate,
-  geNetBusIdx
+  addBus!, addShunt!, addACLine!, add2WTrafo!, addProsumer!, validate, geNetBusIdx,
+  # create_powermat.jl
+  casefileparser, createNetFromMatPowerFile,
+  # exportMatPower.jl
+  writeMatpowerCasefile,
+  # equicircuit.jl
+  calcComplexRatio, calcNeutralU,  createYBUS, adjacentBranches,
+  # nbi.jl
+  getNBI, mdoRCM,
+  # jacobian.jl
+  setJacobianDebug, runpf!,
+  # losses.jl
+  calcNetLosses!,
+  
+  # results.jl
+  printACPFlowResults, convertPVtoPQ!
+
 
 include("component.jl")
 include("lines.jl")
@@ -94,39 +76,6 @@ include("node.jl")
 include("branch.jl")
 include("shunt.jl")
 include("network.jl")
-
-end # module ResDataTypes
-
-module SparlectraNet
-using Sparlectra
-using Sparlectra.ResDataTypes
-using LinearAlgebra
-using SparseArrays
-using Printf
-using Logging
-
-export
-  # constants
-  # classes
-  # functions  
-  casefileparser,
-  createNetFromMatPowerFile,
-  calcComplexRatio,
-  calcNeutralU,  
-  createYBUS,
-  getNBI,
-  mdoRCM,
-  setJacobianDebug,
-  calcJacobian,
-  calcPowerFlow,
-  adjacentBranches,
-  calcNewtonRaphson!,
-  runpf!,
-  calcNetLosses!,
-  writeMatpowerCasefile,
-  printACPFlowResults, 
-  convertPVtoPQ!
-
 include("import.jl")
 include("equicircuit.jl")
 include("jacobian.jl")
@@ -135,6 +84,6 @@ include("nbi.jl")
 include("createnet_powermat.jl")
 include("exportMatPower.jl")
 include("results.jl")
-end
+
 
 end # module Sparlectra
