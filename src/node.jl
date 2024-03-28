@@ -4,8 +4,8 @@
 
 # Data type to describe the topology
 mutable struct Node
-  comp::AbstractComponent  
-  busIdx::Integer  
+  comp::AbstractComponent
+  busIdx::Integer
   _nodeType::NodeType
   _ratedS::Union{Nothing,Float64}
   _lZone::Union{Nothing,Integer} # loss Zone
@@ -23,10 +23,10 @@ mutable struct Node
   _vmin_pu::Union{Nothing,Float64} # Minimum voltage magnitude in p.u
   _vmax_pu::Union{Nothing,Float64} # Maximum voltage magnitude in p.u
 
-  function Node(;  
-    busIdx::Integer,    
+  function Node(;
+    busIdx::Integer,
     vn_kV::Float64,
-    nodeType::NodeType,        
+    nodeType::NodeType,
     ratedS::Union{Nothing,Float64} = nothing,
     zone::Union{Nothing,Integer} = nothing,
     area::Union{Nothing,Integer} = nothing,
@@ -40,18 +40,17 @@ mutable struct Node
     qƩGen::Union{Nothing,Float64} = nothing,
     vmin_pu::Union{Nothing,Float64} = nothing,
     vmax_pu::Union{Nothing,Float64} = nothing,
-    isAux::Bool = false,    
+    isAux::Bool = false,
   )
     c = getNocdeComp(vn_kV, busIdx, nodeType, isAux)
     new(c, busIdx, nodeType, ratedS, zone, area, vm_pu, va_deg, pƩLoad, qƩLoad, pShunt, qShunt, pƩGen, qƩGen, vmin_pu, vmax_pu)
   end
 
-
   function Base.show(io::IO, node::Node)
     print(io, "Node( ")
     print(io, node.comp, ", ")
     print(io, "BusIndex: ", node.busIdx, ", ")
-    
+
     print(io, "nodeType: ", node._nodeType, ", ")
     if (!isnothing(node._lZone))
       print(io, "Loss Zone: ", node._lZone, ", ")
@@ -96,7 +95,7 @@ mutable struct Node
   end
 end
 
-function getNocdeComp(Vn_kV::Float64, node_idx::Int, nodeType, isAux::Bool = false)::ImpPGMComp  
+function getNocdeComp(Vn_kV::Float64, node_idx::Int, nodeType, isAux::Bool = false)::ImpPGMComp
   cTyp = toComponentTyp("Busbarsection")
   if (nodeType == Slack)
     name = "Bus_$(Int(node_idx))_$(string(convert(Int,trunc(Vn_kV))))*"
@@ -105,7 +104,7 @@ function getNocdeComp(Vn_kV::Float64, node_idx::Int, nodeType, isAux::Bool = fal
   else
     name = "Bus_$(Int(node_idx))_$(string(convert(Int,trunc(Vn_kV))))"
   end
-  cID = "#"*name*"#"
+  cID = "#" * name * "#"
   return ImpPGMComp(cID, name, cTyp, Vn_kV, node_idx, node_idx)
 end
 
@@ -219,7 +218,7 @@ function setNodeParameters!(node::Node, nodeParam::NodeParameters)
   if (!isnothing(nodeParam.qƩGen))
     node._qƩGen = nodeParam.qƩGen
   end
-  
+
   if (!isnothing(nodeParam.vmin_pu))
     node._vmin_pu = nodeParam.vmin_pu
   end
@@ -227,10 +226,9 @@ function setNodeParameters!(node::Node, nodeParam::NodeParameters)
   if (!isnothing(nodeParam.vmax_pu))
     node._vmax_pu = nodeParam.vmax_pu
   end
-
 end
 
-function addShuntPower!(;node::Node, p::Float64, q::Float64)
+function addShuntPower!(; node::Node, p::Float64, q::Float64)
   if (isnothing(node._pShunt))
     node._pShunt = 0.0
   end
@@ -239,38 +237,45 @@ function addShuntPower!(;node::Node, p::Float64, q::Float64)
   if (isnothing(node._qShunt))
     node._qShunt = 0.0
   end
-  node._qShunt = node._qShunt + q  
+  node._qShunt = node._qShunt + q
 end
 
-function addLoadPower!(;node::Node, p::Float64, q::Float64)
-  if (isnothing(node._pƩLoad))
-    node._pƩLoad = 0.0
+function addLoadPower!(; node::Node, p::Union{Nothing,Float64}, q::Union{Nothing,Float64})
+  if !isnothing(p)
+    if (isnothing(node._pƩLoad))
+      node._pƩLoad = 0.0
+    end
+    node._pƩLoad = node._pƩLoad + p
   end
-  node._pƩLoad = node._pƩLoad + p
-
-  if (isnothing(node._qƩLoad))
-    node._qƩLoad = 0.0
+  if !isnothing(q)
+    if (isnothing(node._qƩLoad))
+      node._qƩLoad = 0.0
+    end
+    node._qƩLoad = node._qƩLoad + q
   end
-  node._qƩLoad = node._qƩLoad + q
 end
 
-function addGenPower!(;node::Node, p::Float64, q::Float64)
-  if (isnothing(node._pƩGen))
-    node._pƩGen = 0.0
+function addGenPower!(; node::Node, p::Union{Nothing,Float64}, q::Union{Nothing,Float64})
+  if !isnothing(p)
+    if (isnothing(node._pƩGen))
+      node._pƩGen = 0.0
+    end
+    node._pƩGen = node._pƩGen + p
   end
-  node._pƩGen = node._pƩGen + p
 
-  if (isnothing(node._qƩGen))
-    node._qƩGen = 0.0
+  if !isnothing(q)
+    if (isnothing(node._qƩGen))
+      node._qƩGen = 0.0
+    end
+    node._qƩGen = node._qƩGen + q
   end
-  node._qƩGen = node._qƩGen + q
 end
 
 function busComparison(node1::Node, node2::Node)
   node1.busIdx < node2.busIdx
 end
 
-function setVmVa!(;node::Node, vm_pu::Float64, va_deg::Float64)
+function setVmVa!(; node::Node, vm_pu::Float64, va_deg::Float64)
   node._vm_pu = vm_pu
   node._va_deg = va_deg
 end
@@ -280,7 +285,11 @@ function isSlack(o::ResDataTypes.Node)
     return true
   else
     return false
-  end  
+  end
+end
+
+function getNodeVn(o::Node)::Float64
+  return o.comp.cVN
 end
 
 function isPVNode(o::Node)
@@ -290,7 +299,6 @@ function isPVNode(o::Node)
     return false
   end
 end
-
 
 function toNodeType(o::Int)::NodeType
   if o == 1

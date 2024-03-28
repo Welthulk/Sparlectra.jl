@@ -56,6 +56,7 @@ export
   addShuntPower!,
   addLoadPower!,
   addGenPower!,    
+  getNodeVn,
   isSlack,
   isPVNode,
   toNodeType,
@@ -75,7 +76,14 @@ export
   isAPUNode,
   setQGenReplacement!,
   getQGenReplacement,
-  toProSumptionType
+  toProSumptionType,
+  # Net
+  addBus!,
+  addShunt!,
+  addACLine!,
+  add2WTrafo!,
+  addProsumer!,
+  geNetBusIdx
 
 include("component.jl")
 include("lines.jl")
@@ -84,32 +92,7 @@ include("prosumer.jl")
 include("node.jl")
 include("branch.jl")
 include("shunt.jl")
-
-struct Net
-  name::String
-  baseMVA::Float64
-  slack::Integer
-  nodeVec::Vector{ResDataTypes.Node}
-  linesAC::Vector{ResDataTypes.ACLineSegment}
-  trafos::Vector{ResDataTypes.PowerTransformer}
-  branchVec::Vector{ResDataTypes.Branch}
-  prosumpsVec::Vector{ResDataTypes.ProSumer}
-  shuntVec::Vector{ResDataTypes.Shunt}
-
-  function Net(
-    name,
-    baseMVA::Float64,
-    slack::Integer,
-    nodeVec::Vector{ResDataTypes.Node},
-    linesAC::Vector{ResDataTypes.ACLineSegment},
-    trafos::Vector{ResDataTypes.PowerTransformer},
-    branchVec::Vector{ResDataTypes.Branch},
-    prosumpsVec::Vector{ResDataTypes.ProSumer},
-    shuntVec::Vector{ResDataTypes.Shunt},
-  )
-    new(name, baseMVA, slack, nodeVec, linesAC, trafos, branchVec, prosumpsVec, shuntVec)
-  end
-end
+include("network.jl")
 
 end # module ResDataTypes
 

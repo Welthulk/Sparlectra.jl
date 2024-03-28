@@ -312,4 +312,5 @@ function testCreateNetworkFromScratch(verbose::Bool = false)
   return myNet
 end
 
-test_acpflow(0)
+test_acpflow(1
+)
