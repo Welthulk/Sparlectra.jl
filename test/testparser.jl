@@ -47,7 +47,7 @@ function acpflow(casefile::String, iterations::Int=10, verbose::Int=0, mdo::Bool
 
     if erg == 0 || printResultAnyCase
         # Calculate network losses and print results
-        calcNetLosses!(myNet.nodeVec, myNet.branchVec, myNet.baseMVA)
+        calcNetLosses!(myNet)
         jpath = printResultToFile ? joinpath(pwd(), "data", path) : ""
         printACPFlowResults(myNet, etime, ite, tol, printResultToFile, jpath)
     elseif erg == 1

@@ -184,7 +184,7 @@ function createNetFromMatPowerFile(filename, base_MVA::Float64 = 0.0, log::Bool 
     vmin = float(row[busDict["Vmin"]])
     vmax = float(row[busDict["Vmax"]])
 
-    node = Node(busIdx = busIdx, Vn_kV = vn_kv, nodeType = toNodeType(btype), ratedS = ratedS, zone = zone, area = area, vm_pu = vm_pu, va_deg = va_deg, pƩLoad = pƩLoad, qƩLoad = qƩLoad, pShunt = pShunt, qShunt = qShunt, vmin_pu = vmin, vmax_pu = vmax)
+    node = Node(busIdx = busIdx, vn_kV = vn_kv, nodeType = toNodeType(btype), ratedS = ratedS, zone = zone, area = area, vm_pu = vm_pu, va_deg = va_deg, pƩLoad = pƩLoad, qƩLoad = qƩLoad, pShunt = pShunt, qShunt = qShunt, vmin_pu = vmin, vmax_pu = vmax)
     
     if btype == 3 && slackIdx == 0
       slackIdx = busIdx
@@ -207,9 +207,8 @@ function createNetFromMatPowerFile(filename, base_MVA::Float64 = 0.0, log::Bool 
       pMax = abs(mFak * pƩLoad) <= baseMVA ? abs(mFak * pƩLoad) : base_MVA # approximation!
       pMin = -pMax # approximation!
       referencePri = slackIdx == busIdx ? busIdx : nothing
-
-      vm_degree = 0.0
-      p = ProSumer(vn_kv = vn_kv, oID = kIdx, busIdx = busIdx, type = toProSumptionType("LOAD"), p = pƩLoad, q = qƩLoad, maxP = pMax, minP = pMin, maxQ = qMax, minQ = qMin, referencePri = referencePri, vm_pu = vm_pu, vm_degree = vm_degree)
+      
+      p = ProSumer(vn_kv = vn_kv, oID = kIdx, busIdx = busIdx, type = toProSumptionType("LOAD"), p = pƩLoad, q = qƩLoad, maxP = pMax, minP = pMin, maxQ = qMax, minQ = qMin, referencePri = referencePri, vm_pu = vm_pu, va_deg = 0.0)
       push!(prosum, p)
     end
   end# read bus
@@ -335,7 +334,7 @@ function createNetFromMatPowerFile(filename, base_MVA::Float64 = 0.0, log::Bool 
     end
   end
   sort!(nodeVec, by = x -> x.busIdx)
-
+  
   net = ResDataTypes.Net(netName, baseMVA, slackIdx, nodeVec, ACLines, trafos, branchVec, prosum, shuntVec)
   return net
 end

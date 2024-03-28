@@ -23,7 +23,9 @@ struct Net
     prosumpsVec::Vector{ResDataTypes.ProSumer},
     shuntVec::Vector{ResDataTypes.Shunt},
   )
-    new(name, baseMVA, slack, 0.9, 1.1, nodeVec, linesAC, trafos, branchVec, prosumpsVec, shuntVec, Dict{String,Int}())
+    slackVec = Vector{Int}()
+    push!(slackVec, slack)
+    new(name, baseMVA, slackVec, 0.9, 1.1, nodeVec, linesAC, trafos, branchVec, prosumpsVec, shuntVec, Dict{String,Int}())
   end
 
   function Net(; name::String, baseMVA::Float64, vmin_pu::Float64 = 0.9, vmax_pu::Float64 = 1.1)
