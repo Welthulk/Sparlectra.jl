@@ -84,7 +84,7 @@ end
 function testImportMatpower()
   mdo = true
   log = false
-  net = createNetFromMatPowerFile(getTestFilePathName(), 1000.0, log, mdo)
+  net = createNetFromMatPowerFile(getTestFilePathName(), 0.0, log, mdo)
   return validate(net = net)
 end
 
