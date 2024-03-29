@@ -26,7 +26,7 @@ export
   # ProSumer
   ProSumer,
   # Branch
-  AbstractBranch, Branch,BranchModel,  BranchFlow,
+  AbstractBranch, Branch,BranchModel,  BranchFlow, getBranchFlow, setBranchFlow!, setBranchStatus!,getBranchLosses, setBranchLosses!,
   # Shunt
   Shunt,
   # Net
@@ -50,7 +50,7 @@ export
   # ProSumer
   isSlack, isGenerator, isAPUNode, setQGenReplacement!, getQGenReplacement, toProSumptionType,
   # Net
-  addBus!, addShunt!, addACLine!, add2WTrafo!, addProsumer!, validate, geNetBusIdx,
+  addBus!, addShunt!, addACLine!, add2WTrafo!, addProsumer!, validate, geNetBusIdx, setTotalLosses!, getTotalLosses,
   # create_powermat.jl
   casefileparser, createNetFromMatPowerFile,
   # exportMatPower.jl
