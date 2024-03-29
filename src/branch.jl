@@ -53,6 +53,8 @@ mutable struct Branch
   sn_MVA::Union{Nothing,Float64}         # nominal power of the branch = rateA
   fBranchFlow::Union{Nothing,BranchFlow} # flow from fromNodeID to toNodeID
   tBranchFlow::Union{Nothing,BranchFlow} # flow from toNodeID to fromNodeID
+  pLosses::Union{Nothing,Float64}        # active power losses
+  qLosses::Union{Nothing,Float64}        # reactive power losses
 
   function Branch(; from::Int, to::Int, baseMVA::Float64, branch::AbstractBranch, id::Int, status::Integer=1,  ratio::Union{Nothing,Float64}=nothing,  side::Union{Nothing,Int}=nothing, vn_kV::Union{Nothing,Float64}=nothing )    
     
@@ -68,7 +70,7 @@ mutable struct Branch
       if isnothing(ratio)
         ratio = 0.0
       end
-      new(c, from, to, r_pu, x_pu, b_pu, g_pu, ratio, 0.0, status, nothing, nothing, nothing)
+      new(c, from, to, r_pu, x_pu, b_pu, g_pu, ratio, 0.0, status, nothing, nothing, nothing, nothing, nothing)
     elseif isa(branch, PowerTransformer) # Transformer     
       if (isnothing(side) && branch.isBiWinder)        
         side = getSideNumber2WT(branch)
@@ -99,7 +101,7 @@ mutable struct Branch
       new(c, from, to, r_pu, x_pu, b_pu, g_pu, ratio, angle, status, sn_MVA, nothing, nothing)
     elseif isa(branch, BranchModel) # PI-Model
       c = getBranchComp(0.0, from, to, id, "Branch")
-      new(c, from, to, branch.r_pu, branch.x_pu, branch.b_pu, branch.g_pu, branch.ratio, branch.angle, status, branch.sn_MVA, nothing, nothing)
+      new(c, from, to, branch.r_pu, branch.x_pu, branch.b_pu, branch.g_pu, branch.ratio, branch.angle, status, branch.sn_MVA, nothing, nothing, nothing, nothing)
     else
       error("Branch type not supported")
     end
@@ -118,17 +120,20 @@ mutable struct Branch
     print(io, "ratio: ", b.ratio, ", ")
     print(io, "angle: ", b.angle, ", ")
     print(io, "status: ", b.status, ", ")
-
     if !isnothing(b.sn_MVA)
       print(io, "sn_MVA: ", b.sn_MVA, ", ")
     end
-
     if (!isnothing(b.fBranchFlow))
       print(io, "BranchFlow (from): ", b.fBranchFlow, ", ")
     end
-
     if (!isnothing(b.tBranchFlow))
       print(io, "BranchFlow (to): ", b.tBranchFlow, ", ")
+    end
+    if (!isnothing(b.pLosses))
+      print(io, "pLosses: ", b.pLosses, ", ")
+    end
+    if (!isnothing(b.qLosses))
+      print(io, "qLosses: ", b.qLosses, ", ")
     end
 
     println(io, ")")
@@ -149,6 +154,26 @@ function setBranchStatus!(service::Bool, branch::Branch)
     branch.status = 0
   end
 end
+
+function getBranchFlow(branch::Branch, from::Node, to::Node)
+  if (branch.fromBus == from.busIdx && branch.toBus == to.busIdx)
+    return branch.fBranchFlow
+  elseif (branch.fromBus == to.busIdx && branch.toBus == from.busIdx)
+    return branch.tBranchFlow
+  else
+    error("Nodes do not match the branch")
+  end
+end
+
+function getBranchLosses(branch::Branch)
+  return branch.pLosses, branch.qLosses
+end
+
+function setBranchLosses!(branch::Branch, pLosses::Float64, qLosses::Float64 )
+  branch.pLosses = pLosses
+  branch.qLosses = qLosses  
+end
+
 
 function getBranchComp(Vn_kV::Float64, from::Int, to::Int, idx::Int, kind::String)
   cTyp = toComponentTyp("Branch")

@@ -15,10 +15,7 @@ function formatBranchResults(net::Net)
 
   formatted_results *= @sprintf("| %-25s | %-5s | %-5s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s |\n", "Branch", "From", "To", "P [MW]", "Q [MVar]", "P [MW]", "Q [MVar]", "Pv [MW]", "Qv [MVar]")
   formatted_results *= @sprintf("===========================================================================================================================\n")
-
-  ∑pv = ∑qv = 0.0
-  ∑pfrom = ∑qfrom = ∑pto = ∑qto = 0.0
-
+  
   for br in net.branchVec
     from = br.fromBus
     to = br.toBus
@@ -30,33 +27,9 @@ function formatBranchResults(net::Net)
       ptoVal = (br.tBranchFlow.pFlow === nothing) ? NaN : br.tBranchFlow.pFlow
       qtoVal = (br.tBranchFlow.qFlow === nothing) ? NaN : br.tBranchFlow.qFlow
 
-      VmFrom = (br.fBranchFlow.vm_pu === nothing) ? NaN : br.fBranchFlow.vm_pu
-      VaFrom = (br.fBranchFlow.va_deg === nothing) ? NaN : br.fBranchFlow.va_deg
-
-      VmTo = (br.tBranchFlow.vm_pu === nothing) ? NaN : br.tBranchFlow.vm_pu
-      VaTo = (br.tBranchFlow.va_deg === nothing) ? NaN : br.tBranchFlow.va_deg
+      pLossval = (br.pLosses === nothing) ? NaN : br.pLosses
+      qLossval = (br.qLosses === nothing) ? NaN : br.qLosses
       ratedS = isnothing(br.sn_MVA) ? 0.0 : br.sn_MVA
-      ∑pfrom += pfromVal
-      ∑qfrom += qfromVal
-      ∑pto += ptoVal
-      ∑qto += qtoVal
-
-      v1 = VmFrom * exp(im * deg2rad(VaFrom))
-      v2 = VmTo * exp(im * deg2rad(VaTo))
-      # Losses: abs( Vf / tau - Vt ) ^ 2 / (Rs - j Xs)
-      ratio = (br.ratio != 0.0) ? br.ratio : 1.0
-      angle = (br.ratio != 0.0) ? br.angle : 0.0
-      tap = calcComplexRatio(ratio, angle)
-
-      Vdiff = v1 / tap - v2
-
-      y = inv((br.r_pu + br.x_pu * im)) #+ 0.5*(br.g_pu + br.b_pu*im)
-
-      Sdiff = Vdiff * conj(Vdiff * y) * net.baseMVA
-      pv = real(Sdiff)
-      qv = imag(Sdiff)
-      ∑pv += abs(pv)
-      ∑qv += abs(qv)
       check = false
       if ratedS > 0.0
         if max(abs(pfromVal), abs(ptoVal)) > ratedS
@@ -68,13 +41,12 @@ function formatBranchResults(net::Net)
         bName *= " !"
       end
     else
-      pfromVal = qfromVal = ptoVal = qtoVal = pv = qv = 0.0 
+      pfromVal = qfromVal = ptoVal = qtoVal = pLossval = qLossval = 0.0 
     end
-    formatted_results *= @sprintf("| %-25s | %-5s | %-5s | %-10.3f | %-10.3f | %-10.3f | %-10.3f | %-10.3f |  %-10.3f|\n", bName, from, to, pfromVal, qfromVal, ptoVal, qtoVal, abs(pv), abs(qv))
+    formatted_results *= @sprintf("| %-25s | %-5s | %-5s | %-10.3f | %-10.3f | %-10.3f | %-10.3f | %-10.3f |  %-10.3f|\n", bName, from, to, pfromVal, qfromVal, ptoVal, qtoVal, pLossval, qLossval)
   end
   formatted_results *= @sprintf("---------------------------------------------------------------------------------------------------------------------------\n")
-  #formatted_results *= @sprintf("| %-10.3f | %-10.3f | %-10.3f | %-10.3f |\n", ∑pfrom, ∑qfrom, ∑pto, ∑qto)
-
+  (∑pv, ∑qv) = getTotalLosses(net=net)
   total_losses = @sprintf("total losses (I^2*Z): P = %10.3f [MW], Q = %10.3f [MVar]\n", ∑pv, ∑qv)
 
   return formatted_results, total_losses

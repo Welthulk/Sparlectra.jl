@@ -11,6 +11,7 @@ struct Net
   prosumpsVec::Vector{ProSumer}
   shuntVec::Vector{Shunt}
   busDict::Dict{String,Int}
+  totalLosses::Vector{Tuple{Float64, Float64}}
 
   function Net(
     name,
@@ -25,11 +26,11 @@ struct Net
   )
     slackVec = Vector{Int}()
     push!(slackVec, slack)
-    new(name, baseMVA, slackVec, 0.9, 1.1, nodeVec, linesAC, trafos, branchVec, prosumpsVec, shuntVec, Dict{String,Int}())
+    new(name, baseMVA, slackVec, 0.9, 1.1, nodeVec, linesAC, trafos, branchVec, prosumpsVec, shuntVec, Dict{String,Int}(),[])
   end
 
   function Net(; name::String, baseMVA::Float64, vmin_pu::Float64 = 0.9, vmax_pu::Float64 = 1.1)
-    new(name, baseMVA, [], vmin_pu, vmax_pu, [], [], [], [], [], [], Dict{String,Int}())
+    new(name, baseMVA, [], vmin_pu, vmax_pu, [], [], [], [], [], [], Dict{String,Int}(), [])
   end
 
   function Base.show(io::IO, o::Net)
@@ -152,4 +153,16 @@ function validate(; net = Net)
     val = false
   end  
   return val
+end
+
+function setTotalLosses!(; net::Net, pLosses::Float64, qLosses::Float64)  
+  push!(net.totalLosses, (pLosses, qLosses))
+end
+
+function getTotalLosses(;net::Net)
+  if !isempty(net.totalLosses)
+    n = net.totalLosses[end]
+  else
+    n = (0.0, 0.0)
+  end  
 end
