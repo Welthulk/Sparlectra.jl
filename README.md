@@ -1,57 +1,22 @@
 # SPARLECTRA
 
-This package contains tools for subsequent network calculations. It primarily features a program for calculating load flow using the Newton-Raphson method. The program has been developed through self-directed learning and is designed to provide valuable insights into load flow calculations for both students and ambitious professionals. 
+<a href="https://github.com/Welthulk/Sparlectra.jl/main/"><img align="left" width="250" src="docs/src/png/logo.png" /></a>
 
+This package contains tools for subsequent network calculations. It primarily features a program for calculating load flow using the Newton-Raphson method. The program has been developed through self-directed learning and is designed to provide valuable insights into load flow calculations for both students and ambitious professionals.
+  
+  
+## Installation
+```julia
+using Pkg
+Pkg.add("Sparlectra")
+```
 
-## About the Program
+### Network Creation
+This package supports the import and export of Matpower .m files, although currently it only reads bus, generator, and branch data from these files. Please note that additional Matlab functions within the .m file are not supported. Additionally, you can create your own network using easy-to-use functions provided by the package.
 
-The load flow calculation will be expanded in the future to include additional methods. My goal is to create a comprehensive platform that not only caters to students but also provides insights and resources for advanced load flow calculations to experienced professionals.
-
-## Network Data Files
-This package supports Matpower .m files. Currently, only bus, generator, and branch data are read from these files. Please note that additional Matlab functions within the .m file are not supported. Since there are already many CGMES converters available, in the upcoming versions, I will concentrate more on the Matpower format to ensure optimal support and performance. Additionally, I have developed an experimental parser for the Power Grid Model. Please refer to the Experimental Branch for more information.
-
-## Contribution Guidelines
-
-This project encourages and welcomes contributions. If you have improvements or new features in mind, feel free to submit a pull request. Collaborative efforts are key to enhancing the functionality and robustness of the tool.
-
-### Naming Conventions
-The project follows the Julia Naming Conventions for the most part, but it's important to note that the naming convention for functions might deviate. In this module, functions are written in CamelCase with a lowercase initial letter.
-
-Contributors are welcome to adhere to the Julia Naming Conventions for functions or choose to follow the CamelCase convention used in this module; the choice is yours. Consistency within the module is encouraged, but flexibility is provided to accommodate different preferences.
-
-### How to Contribute
-
-1. Fork the repository.
-2. Create a new branch for your feature or bug fix.
-3. Make your changes and ensure they adhere to the chosen naming convention.
-4. Test your changes thoroughly.
-5. Submit a pull request.
-
-### Project Ownership
-
-Sparlectra.jl is a project developed by a hobbyist, and it is not maintained or supported by any organization. As such, contributions are voluntary, and there is no official organization overseeing the project.
-
-### Code Style
-
-- Use consistent indentation.
-- Follow Julia best practices where possible.
-- Document your code for better understanding.
-
-### Network Data
-
-While contributions to the project are appreciated, please note that providing support for individualized network data issues is beyond the scope of this project, as it is not maintained by an organization. Users are encouraged to take initiative in resolving such issues independently and sharing their results with the community.
-
-Your understanding and collaboration are crucial in maintaining a positive and open-source development environment.
-
-
-## License
+### License
 This project is licensed under the BSD-3-Clause - [The license file](LICENSE) contains the complete licensing information.
 
-## Installation
-Installation guide can be found in [usage](/docs/src/usage.md)
-
-## Additional information
-Additional information can be found in the [documentation](/docs/src/toc.md)
 
 
 
