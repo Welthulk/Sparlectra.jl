@@ -21,8 +21,8 @@ function calcNetLosses!(net::Net)
     argj = deg2rad(nodes[to]._va_deg)
 
     ratio = (br.ratio != 0.0) ? br.ratio : 1.0
-    angle = (br.ratio != 0.0) ? br.angle : 0.0        
-    tap = calcComplexRatio(ratio,angle)
+    angle = (br.ratio != 0.0) ? br.angle : 0.0
+    tap = calcComplexRatio(ratio, angle)
 
     ui = nodes[from]._vm_pu * exp(im * argi)
     if tapSide == 1
@@ -38,10 +38,10 @@ function calcNetLosses!(net::Net)
     bpu = br.b_pu
     gpu = br.g_pu
 
-    Yik = inv((rpu + im * xpu))      
-    Y0ik = 0.5*(gpu + im * bpu)
-    s = abs(ui)^2*conj(Y0ik+Yik)-ui*conj(uj)*conj(Yik) 
-    
+    Yik = inv((rpu + im * xpu))
+    Y0ik = 0.5 * (gpu + im * bpu)
+    s = abs(ui)^2 * conj(Y0ik + Yik) - ui * conj(uj) * conj(Yik)
+
     return s
   end # calcBranchFlow
 
@@ -69,13 +69,13 @@ function calcNetLosses!(net::Net)
   end
 
   n = length(nodes)
-  
-  ∑pfrom=∑qfrom=∑pv=∑qv=∑pto=∑qto=0.0
-  for br in branchVec    
+
+  ∑pfrom = ∑qfrom = ∑pv = ∑qv = ∑pto = ∑qto = 0.0
+  for br in branchVec
     from = br.fromBus
     to = br.toBus
     if br.status == 0
-      setBranchLosses!(br, 0.0, 0.0)      
+      setBranchLosses!(br, 0.0, 0.0)
       continue
     end
     S = calcBranchFlow(from, to, br, 1) * Sbase_MVA
@@ -83,7 +83,7 @@ function calcNetLosses!(net::Net)
 
     from = br.toBus
     to = br.fromBus
-    S = calcBranchFlow(from, to, br, 2) * Sbase_MVA    
+    S = calcBranchFlow(from, to, br, 2) * Sbase_MVA
     brToFlow = BranchFlow(nodes[br.toBus]._vm_pu, nodes[br.toBus]._va_deg, real(S), imag(S))
 
     setBranchFlow!(brToFlow, brFromFlow, br)
@@ -94,13 +94,11 @@ function calcNetLosses!(net::Net)
     ∑pto += brToFlow.pFlow
     ∑qto += brToFlow.qFlow
     =#
-    
+
     pv, qv = calcLosses(br)
     setBranchLosses!(br, abs(pv), abs(qv))
     ∑pv += abs(pv)
     ∑qv += abs(qv)
-    
   end
-  setTotalLosses!(net=net, pLosses=∑pv, qLosses=∑qv)
-  
+  setTotalLosses!(net = net, pLosses = ∑pv, qLosses = ∑qv)
 end

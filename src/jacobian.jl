@@ -52,13 +52,6 @@ function getBusData(nodes::Vector{Sparlectra.Node}, Sbase_MVA::Float64, verbose:
 
     p = 0
     q = 0
-    #=
-    @show n.busIdx
-    @show n._pƩLoad
-    @show n._qƩLoad
-    @show n._pƩGen
-    @show n._qƩGen
-    =#
     p += n._pƩLoad === nothing ? 0.0 : n._pƩLoad * -1.0
     q += n._qƩLoad === nothing ? 0.0 : n._qƩLoad * -1.0
 
@@ -366,7 +359,7 @@ function calcJacobian(Y::AbstractMatrix{ComplexF64}, busVec::Vector{BusData}, ad
 
       if bus_type_i == Sparlectra.PQ
         if bus_type_j == Sparlectra.PQ
-          case = "PQ + PQ"          
+          case = "PQ + PQ"
           if i == j
             Yii = abs(Y[i, i])
             arg = -angle(Y[i, i])
@@ -376,10 +369,10 @@ function calcJacobian(Y::AbstractMatrix{ComplexF64}, busVec::Vector{BusData}, ad
             # Jii = ∂qi/∂𝜑i    = - vi*[gii * vi * cos(𝜑i-𝜑i-αi)] + vi * [∑ gik * vk * cos(𝜑i-𝜑j-αik)]  : k = 1 .. n -> neighbors                    
             jacobian[i2, j1] = -vm_i * (Yii * vm_i * cos(arg)) + vm_i * sum(abs(Y[i, k]) * busVec[k].vm_pu * cos(va_i - busVec[k].va_rad - angle(Y[i, k])) for k in adjBranch[i])
             # Nii = Vi*∂pi/∂vi = vi * (gii * vi * cos(𝜑i-𝜑i-αii)) +vi * [∑ gik* vk * cos(𝜑i-𝜑j-αik)]
-            jacobian[i1, j2] = vm_i * (Yii * vm_i * cos(arg)) + vm_i * sum(abs(Y[i, k]) * busVec[k].vm_pu * cos(va_i - busVec[k].va_rad - angle(Y[i, k])) for k in adjBranch[i])            
+            jacobian[i1, j2] = vm_i * (Yii * vm_i * cos(arg)) + vm_i * sum(abs(Y[i, k]) * busVec[k].vm_pu * cos(va_i - busVec[k].va_rad - angle(Y[i, k])) for k in adjBranch[i])
             # Lii = Vi*∂qi/∂vi = + vi*( gii * vi * sin(𝜑i-𝜑i-αii))  + vi * [∑ gik* vk * sin(𝜑i-𝜑j-αik)]          
             jacobian[i2, j2] = vm_i * (Yii * vm_i * sin(arg)) + vm_i * sum(abs(Y[i, k]) * busVec[k].vm_pu * sin(va_i - busVec[k].va_rad - angle(Y[i, k])) for k in adjBranch[i])
-            
+
             printdebug(case, "Hii", i1, j1, jacobian[i1, j1], i, j)
             printdebug(case, "Jii", i2, j1, jacobian[i2, j1], i, j)
             printdebug(case, "Nii", i1, j2, jacobian[i1, j2], i, j)
@@ -396,9 +389,9 @@ function calcJacobian(Y::AbstractMatrix{ComplexF64}, busVec::Vector{BusData}, ad
             # Jij = ∂qi/∂𝜑j    = -vi * [gij * vj * cos(𝜑i-𝜑j-αij)]                
             jacobian[i2, j1] = -vm_i * Yij * vm_j * cos(arg)
             # Nij = Vj*∂pi/∂vj = +vi * gij * vj * cos(𝜑i-𝜑j-αij)                
-            jacobian[i1, j2] = vm_i * Yij * vm_j * cos(arg)            
+            jacobian[i1, j2] = vm_i * Yij * vm_j * cos(arg)
             # Lij = Vj*∂qi/∂vj = +vi * [ gij * vj * sin(𝜑i-𝜑j-αij) ] }                
-            jacobian[i2, j2] = vm_i * Yij * vm_j * sin(arg)            
+            jacobian[i2, j2] = vm_i * Yij * vm_j * sin(arg)
             printdebug(case, "Hij", i1, j1, jacobian[i1, j1], i, j)
             printdebug(case, "Jij", i2, j1, jacobian[i2, j1], i, j)
             printdebug(case, "Nij", i1, j2, jacobian[i1, j2], i, j)
@@ -536,17 +529,8 @@ function calcNewtonRaphson!(Y::AbstractMatrix{ComplexF64}, nodes::Vector{Node}, 
 
   iteration_count = 0
   power_feeds = getPowerFeeds(busVec, num_pq_nodes, num_pv_nodes, (verbose > 2))
-  s_slack = 0.0 + 0.0im
-  while iteration_count <= maxIte
-    # Calculation of the power flows
-    #=
-    power_flows = calcPowerFlow(Y, busVec, adjBranch, num_pq_nodes, num_pv_nodes, (verbose >= 2))      
-    if verbose > 0
-      printVector(power_flows, busVec, "pFlow","qFlow", false, 0.0)  
-    end 
-    delta_P = power_feeds - power_flows
-    =#
-
+  
+  while iteration_count <= maxIte  
     # Calculation of the residual
     delta_P = residuum(Y, busVec, power_feeds, num_pq_nodes, num_pv_nodes, (verbose > 2))
     if verbose > 2
@@ -573,13 +557,8 @@ function calcNewtonRaphson!(Y::AbstractMatrix{ComplexF64}, nodes::Vector{Node}, 
     # Solution of the linear system of equations for delta_x        
     delta_x = nothing
     try
+      # Solver => \
       delta_x = jacobian \ delta_P
-
-      #LU-Decomposition:
-      # lu_decomposition = lu(jacobian)       
-      #delta_x = lu_decomposition \ delta_P
-      #iterative Solvers:      
-      #delta_x = cg(jacobian, delta_P)
 
       if verbose > 2
         println("\ndelta_x: Iteration $(iteration_count)")
@@ -662,7 +641,6 @@ function calcNewtonRaphson!(Y::AbstractMatrix{ComplexF64}, nodes::Vector{Node}, 
   return iteration_count, erg
 end
 
-
 function runpf!(net::Net, maxIte::Int, tolerance::Float64 = 1e-6, verbose::Int = 0)
   sparse = false
   printYBus = false
@@ -670,9 +648,9 @@ function runpf!(net::Net, maxIte::Int, tolerance::Float64 = 1e-6, verbose::Int =
     @error "No nodes found in $(jpath)"
     return
   elseif length(net.nodeVec) > 30
-    sparse = true    
+    sparse = true
   end
-  
+
   if length(net.nodeVec) < 20
     printYBus = (verbose > 1)
   end

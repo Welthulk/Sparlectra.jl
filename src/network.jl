@@ -11,22 +11,12 @@ struct Net
   prosumpsVec::Vector{ProSumer}
   shuntVec::Vector{Shunt}
   busDict::Dict{String,Int}
-  totalLosses::Vector{Tuple{Float64, Float64}}
+  totalLosses::Vector{Tuple{Float64,Float64}}
 
-  function Net(
-    name,
-    baseMVA::Float64,
-    slack::Integer,
-    nodeVec::Vector{Node},
-    linesAC::Vector{ACLineSegment},
-    trafos::Vector{PowerTransformer},
-    branchVec::Vector{Branch},
-    prosumpsVec::Vector{ProSumer},
-    shuntVec::Vector{Shunt},
-  )
+  function Net(name, baseMVA::Float64, slack::Integer, nodeVec::Vector{Node}, linesAC::Vector{ACLineSegment}, trafos::Vector{PowerTransformer}, branchVec::Vector{Branch}, prosumpsVec::Vector{ProSumer}, shuntVec::Vector{Shunt})
     slackVec = Vector{Int}()
     push!(slackVec, slack)
-    new(name, baseMVA, slackVec, 0.9, 1.1, nodeVec, linesAC, trafos, branchVec, prosumpsVec, shuntVec, Dict{String,Int}(),[])
+    new(name, baseMVA, slackVec, 0.9, 1.1, nodeVec, linesAC, trafos, branchVec, prosumpsVec, shuntVec, Dict{String,Int}(), [])
   end
 
   function Net(; name::String, baseMVA::Float64, vmin_pu::Float64 = 0.9, vmax_pu::Float64 = 1.1)
@@ -110,9 +100,7 @@ function add2WTrafo!(; net::Net, fromBus::String, toBus::String, sn_mva::Float64
   push!(net.trafos, trafo)
 end
 
-function addProsumer!(; net::Net, busName::String, type::String, p::Union{Nothing,Float64} = nothing, q::Union{Nothing,Float64} = nothing, 
-                        referencePri::Union{Nothing,String} = nothing, vm_pu::Union{Nothing,Float64} = nothing, va_deg::Union{Nothing,Float64} = nothing)
-
+function addProsumer!(; net::Net, busName::String, type::String, p::Union{Nothing,Float64} = nothing, q::Union{Nothing,Float64} = nothing, referencePri::Union{Nothing,String} = nothing, vm_pu::Union{Nothing,Float64} = nothing, va_deg::Union{Nothing,Float64} = nothing)
   busIdx = geNetBusIdx(net = net, busName = busName)
   idProsSum = length(net.prosumpsVec) + 1
   isAPUNode = false
@@ -146,23 +134,23 @@ function validate(; net = Net)
     val = false
   end
   if length(net.slackVec) > 1
-    @warn "More than one slack bus defined in the network"    
+    @warn "More than one slack bus defined in the network"
   end
   if length(net.branchVec) == 0
     @warn "No branches defined in the network"
     val = false
-  end  
+  end
   return val
 end
 
-function setTotalLosses!(; net::Net, pLosses::Float64, qLosses::Float64)  
+function setTotalLosses!(; net::Net, pLosses::Float64, qLosses::Float64)
   push!(net.totalLosses, (pLosses, qLosses))
 end
 
-function getTotalLosses(;net::Net)
+function getTotalLosses(; net::Net)
   if !isempty(net.totalLosses)
     n = net.totalLosses[end]
   else
     n = (0.0, 0.0)
-  end  
+  end
 end
