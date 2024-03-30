@@ -5,7 +5,7 @@ using Dates
 
 function format_version(version::VersionNumber)
   major = lpad(version.major, 2, '0')
-  minor = lpad(version.minor, 2, '0')
+  minor = lpad(version.minor, 1, '0')
   patch = lpad(version.patch, 2, '0')
   return "$major.$minor.$patch"
 end

@@ -6,6 +6,10 @@ module Sparlectra
 # The project follows the Julia Naming Conventions for the most part, 
 # but it's important to note that the naming convention for functions might deviate. 
 # In this module, functions are written in CamelCase with a lowercase initial letter. 
+using LinearAlgebra
+using SparseArrays
+using Printf
+using Logging
 
 
 # resource data types for working with Sparlectra
