@@ -1,8 +1,7 @@
 # SPARLECTRA
 <a href="https://github.com/Welthulk/Sparlectra.jl/tree/main/"><img align="left" width="100" src="docs/src/png/logo.png" style="margin-right: 20px" /></a>
 
-This package contains tools for subsequent network calculations. It primarily features a program for calculating load flow using the Newton-Raphson method. The program has been developed through self-directed learning and is designed to provide valuable insights into load flow calculations for both students and ambitious professionals.
-
+This package contains tools for subsequent network calculations. It primarily features a program for calculating load flow using the Newton-Raphson method. The focus is to provide valuable insights into load flow calculations for both students and ambitious professionals.
 
 
 ---
