@@ -25,10 +25,8 @@ function getNBI(nodeNumberVec, branchTupleVec)
   return NBI_matrix
 end
 
-
 # RCM-algorithm: Reverse Cuthill-McKeen algorithm (https://en.wikipedia.org/wiki/Cuthill%E2%80%93McKee_algorithm)
 function mdoRCM(n, branchTupleVec)::Vector{Int}
-  
   adjacency = zeros(Int, n, n)
 
   for (i, branch) in enumerate(branchTupleVec)

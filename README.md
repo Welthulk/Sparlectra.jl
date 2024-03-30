@@ -3,28 +3,12 @@
 This package contains tools for subsequent network calculations. It primarily features a program for calculating load flow using the Newton-Raphson method. The program has been developed through self-directed learning and is designed to provide valuable insights into load flow calculations for both students and ambitious professionals. 
 
 
-
 ## About the Program
 
 The load flow calculation will be expanded in the future to include additional methods. My goal is to create a comprehensive platform that not only caters to students but also provides insights and resources for advanced load flow calculations to experienced professionals.
 
 ## Network Data Files
-
-> Note: Since there are already many CGMES converters available, in the upcoming versions, I will concentrate more on the Matpower format to ensure optimal support and performance. Additionally, I have developed an experimental parser for the Power Grid Model. Please refer to the Experimental Branch for more information.
-
-This package supports the use of various network data file formats, allowing users to leverage different sources for load flow calculations. Below are the supported formats:
-
-1. **CGMES Version 2.4.15:**
-   The network data files should be loaded into a Jena Fuseki Graph Database. The CGMES data format is partially supported, with testing conducted on the ENTSOE example MiniGrid.
-
-2. **Matpower .m-Files:**
-   This package also supports Matpower .m-files. Currently, only bus, generator, and branch data are read from these files. Note that additional Matlab functions within the .m file are not supported.
-
-3. **Proprietary JSON Format:**
-   There is a proprietary network data format in JSON. Users can leverage this format for their load flow calculations.
-
-It's important to note that while CGMES Version 2.4.15 is partially supported, testing has been conducted primarily on the ENTSOE example MiniGrid. Additionally, Matpower .m-files are supported for bus, generator, and branch data, with limitations on additional Matlab functions within the files. Users are encouraged to review the documentation for specific details on supported features and limitations.
-
+This package supports Matpower .m files. Currently, only bus, generator, and branch data are read from these files. Please note that additional Matlab functions within the .m file are not supported. Since there are already many CGMES converters available, in the upcoming versions, I will concentrate more on the Matpower format to ensure optimal support and performance. Additionally, I have developed an experimental parser for the Power Grid Model. Please refer to the Experimental Branch for more information.
 
 ## Contribution Guidelines
 

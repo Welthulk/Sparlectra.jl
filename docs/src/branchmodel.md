@@ -24,7 +24,7 @@ where:
 
 ##### Circuit diagram
 
-   
+```plaintext	   
                     ys
       x--┓┏---------###----------x
          ||   |             |
@@ -33,8 +33,7 @@ where:
       x--┛┗----------------------x 
          N (complex number)             
 
-
-
+```
 <!-- Dies ist ein auskommentierter Abschnitt -->
 <!--┏
 <! ┣
