@@ -8,7 +8,7 @@ struct BranchFlow
   va_deg::Union{Nothing,Float64} # voltage angle
   pFlow::Union{Nothing,Float64} # active power flow
   qFlow::Union{Nothing,Float64} # reactive power flow
-  
+
   function BranchFlow(vm_pu::Union{Nothing,Float64} = nothing, va_deg::Union{Nothing,Float64} = nothing, pFlow::Union{Nothing,Float64} = nothing, qFlow::Union{Nothing,Float64} = nothing)
     new(vm_pu, va_deg, pFlow, qFlow)
   end
@@ -20,10 +20,10 @@ struct BranchFlow
     print(io, "pFlow: ", b.pFlow, ", ")
     print(io, "qFlow: ", b.qFlow, ", ")
     println(io, ")")
-  end  
+  end
 end
 
-struct BranchModel <:AbstractBranch  
+struct BranchModel <: AbstractBranch
   r_pu::Float64
   x_pu::Float64
   b_pu::Float64
@@ -31,18 +31,15 @@ struct BranchModel <:AbstractBranch
   ratio::Float64
   angle::Float64
   sn_MVA::Union{Nothing,Float64}
-  function BranchModel(;r_pu::Float64, x_pu::Float64, b_pu::Float64, g_pu::Float64, ratio::Float64, angle::Float64, sn_MVA::Union{Nothing,Float64}=nothing)
+  function BranchModel(; r_pu::Float64, x_pu::Float64, b_pu::Float64, g_pu::Float64, ratio::Float64, angle::Float64, sn_MVA::Union{Nothing,Float64} = nothing)
     new(r_pu, x_pu, b_pu, g_pu, ratio, angle, sn_MVA)
   end
-
 end
-
-
 
 mutable struct Branch
   comp::AbstractComponent
-  fromBus::Integer        
-  toBus::Integer          
+  fromBus::Integer
+  toBus::Integer
   r_pu::Float64                          # resistance
   x_pu::Float64                          # reactance
   b_pu::Float64                          # total line charging susceptance
@@ -56,8 +53,7 @@ mutable struct Branch
   pLosses::Union{Nothing,Float64}        # active power losses
   qLosses::Union{Nothing,Float64}        # reactive power losses
 
-  function Branch(; from::Int, to::Int, baseMVA::Float64, branch::AbstractBranch, id::Int, status::Integer=1,  ratio::Union{Nothing,Float64}=nothing,  side::Union{Nothing,Int}=nothing, vn_kV::Union{Nothing,Float64}=nothing )    
-    
+  function Branch(; from::Int, to::Int, baseMVA::Float64, branch::AbstractBranch, id::Int, status::Integer = 1, ratio::Union{Nothing,Float64} = nothing, side::Union{Nothing,Int} = nothing, vn_kV::Union{Nothing,Float64} = nothing)
     if isa(branch, ACLineSegment) # Line
       @assert !isnothing(vn_kV) "vn_kV must be set for an ACLineSegment"
       c = getBranchComp(vn_kV, from, to, id, "ACLine")
@@ -72,16 +68,16 @@ mutable struct Branch
       end
       new(c, from, to, r_pu, x_pu, b_pu, g_pu, ratio, 0.0, status, nothing, nothing, nothing, nothing, nothing)
     elseif isa(branch, PowerTransformer) # Transformer     
-      if (isnothing(side) && branch.isBiWinder)        
+      if (isnothing(side) && branch.isBiWinder)
         side = getSideNumber2WT(branch)
       elseif (isnothing(side) && !branch.isBiWinder)
-        error("side must be set for a PowerTransformer")      
+        error("side must be set for a PowerTransformer")
       end
-      
+
       w = (side in [1, 2, 3]) ? (side == 1 ? branch.side1 : (side == 2 ? branch.side2 : branch.side3)) : error("wrong value for 'side'")
       if isnothing(vn_kV)
-        vn_kV = w.Vn 
-      end   
+        vn_kV = w.Vn
+      end
       c = getBranchComp(vn_kV, from, to, id, "Transformer")
       sn_MVA = w.ratedS
       r, x, b, g = getRXBG(w)
@@ -111,7 +107,7 @@ mutable struct Branch
     print(io, "Branch( ")
     print(io, b.comp, ", ")
     print(io, "fromBus: ", b.fromBus, ", ")
-    print(io, "toBus: ", b.toBus,  ", ")
+    print(io, "toBus: ", b.toBus, ", ")
 
     print(io, "r_pu: ", b.r_pu, ", ")
     print(io, "x_pu: ", b.x_pu, ", ")
@@ -169,11 +165,10 @@ function getBranchLosses(branch::Branch)
   return branch.pLosses, branch.qLosses
 end
 
-function setBranchLosses!(branch::Branch, pLosses::Float64, qLosses::Float64 )
+function setBranchLosses!(branch::Branch, pLosses::Float64, qLosses::Float64)
   branch.pLosses = pLosses
-  branch.qLosses = qLosses  
+  branch.qLosses = qLosses
 end
-
 
 function getBranchComp(Vn_kV::Float64, from::Int, to::Int, idx::Int, kind::String)
   cTyp = toComponentTyp("Branch")

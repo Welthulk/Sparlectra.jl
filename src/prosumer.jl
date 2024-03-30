@@ -4,7 +4,7 @@
 
 # Data type to describe producers and consumers
 mutable struct ProSumer
-  comp::AbstractComponent  
+  comp::AbstractComponent
   ratedS::Union{Nothing,Float64}
   ratedU::Union{Nothing,Float64}
   qPercent::Union{Nothing,Float64}
@@ -25,16 +25,16 @@ mutable struct ProSumer
   # @enum NodeType UnknownN=0 PQ=1 PV=2 Slack=3
   # @enum ProSumptionType UnknownP=0 Injection=1 Consumption=2 
 
-  function ProSumer(;    
+  function ProSumer(;
     vn_kv::Float64,
     busIdx::Int,
-    oID::Int, 
-    type::ProSumptionType,   
+    oID::Int,
+    type::ProSumptionType,
     ratedS::Union{Nothing,Float64} = nothing,
     ratedU::Union{Nothing,Float64} = nothing,
     qPercent::Union{Nothing,Float64} = nothing,
     p::Union{Nothing,Float64} = nothing,
-    q::Union{Nothing,Float64} = nothing,    
+    q::Union{Nothing,Float64} = nothing,
     maxP::Union{Nothing,Float64} = nothing,
     minP::Union{Nothing,Float64} = nothing,
     maxQ::Union{Nothing,Float64} = nothing,
@@ -43,10 +43,10 @@ mutable struct ProSumer
     referencePri::Union{Nothing,Integer} = nothing,
     vm_pu::Union{Nothing,Float64} = nothing,
     va_deg::Union{Nothing,Float64} = nothing,
-    isAPUNode::Bool = false    
+    isAPUNode::Bool = false,
   )
     comp = getProSumPGMComp(vn_kv, busIdx, isGenerator(type), oID)
-    
+
     if isnothing(vm_pu)
       vm_pu = 1.0
     end
@@ -60,7 +60,7 @@ mutable struct ProSumer
 
   function Base.show(io::IO, prosumption::ProSumer)
     print(io, "ProSumption( ")
-    print(io, prosumption.comp, ", ")    
+    print(io, prosumption.comp, ", ")
 
     if (!isnothing(prosumption.ratedS))
       print(io, "ratedS: ", prosumption.ratedS, " MVA, ")
@@ -123,7 +123,7 @@ mutable struct ProSumer
 end
 
 function isAPUNode(o::ProSumer)
-  return o.isAPUNode  
+  return o.isAPUNode
 end
 
 function isGenerator(c::Sparlectra.ProSumptionType)::Bool
@@ -135,21 +135,21 @@ function isGenerator(c::Sparlectra.ProSumptionType)::Bool
 end # isGenerator
 
 function isGenerator(o::ProSumer)::Bool
-  return isGenerator(o.proSumptionType)  
+  return isGenerator(o.proSumptionType)
 end # isGenerator
 
 function getProSumPGMComp(Vn::Float64, from::Int, isGen::Bool, id::Int)
   cTyp = isGen ? toComponentTyp("GENERATOR") : toComponentTyp("LOAD")
   cName = isGen ? "Gen_$(string(convert(Int,trunc(Vn))))" : "Ld_$(string(round(Vn,digits=1)))"
   cID = "#$cName\\_$from\\_#$(string(id))"
-  return ImpPGMComp(cID, cName, cTyp, Vn, from, from)  
+  return ImpPGMComp(cID, cName, cTyp, Vn, from, from)
 end
 
 function setQGenReplacement!(o::ProSumer, q::Float64)
   o.qGenRepl = q
 end
 
-function getQGenReplacement(o::ProSumer)::Union{Nothing,Float64}  
+function getQGenReplacement(o::ProSumer)::Union{Nothing,Float64}
   return o.qGenRepl
 end
 
@@ -159,7 +159,6 @@ function isSlack(o::ProSumer)
   else
     return false
   end
-  
 end
 
 function toProSumptionType(o::ComponentTyp)::ProSumptionType

@@ -185,7 +185,7 @@ function createNetFromMatPowerFile(filename, base_MVA::Float64 = 0.0, log::Bool 
     vmax = float(row[busDict["Vmax"]])
 
     node = Node(busIdx = busIdx, vn_kV = vn_kv, nodeType = toNodeType(btype), ratedS = ratedS, zone = zone, area = area, vm_pu = vm_pu, va_deg = va_deg, pƩLoad = pƩLoad, qƩLoad = qƩLoad, pShunt = pShunt, qShunt = qShunt, vmin_pu = vmin, vmax_pu = vmax)
-    
+
     if btype == 3 && slackIdx == 0
       slackIdx = busIdx
     elseif btype == 3
@@ -207,7 +207,7 @@ function createNetFromMatPowerFile(filename, base_MVA::Float64 = 0.0, log::Bool 
       pMax = abs(mFak * pƩLoad) <= baseMVA ? abs(mFak * pƩLoad) : base_MVA # approximation!
       pMin = -pMax # approximation!
       referencePri = slackIdx == busIdx ? busIdx : nothing
-      
+
       p = ProSumer(vn_kv = vn_kv, oID = kIdx, busIdx = busIdx, type = toProSumptionType("LOAD"), p = pƩLoad, q = qƩLoad, maxP = pMax, minP = pMin, maxQ = qMax, minQ = qMin, referencePri = referencePri, vm_pu = vm_pu, va_deg = 0.0)
       push!(prosum, p)
     end
@@ -254,7 +254,7 @@ function createNetFromMatPowerFile(filename, base_MVA::Float64 = 0.0, log::Bool 
       w1 = w2 = nothing
       if ratedS > 0.0
         vnh_kv > vnl_kv ? (ratedU = vnh_kv) : (ratedU = vnh_kv)
-        modelData = recalc_trafo_model_data(baseMVA = baseMVA, Sn_MVA = ratedS, ratedU_kV = ratedU, r_pu = r_pu, x_pu = x_pu, b_pu = b_pu, isPerUnit = true)        
+        modelData = recalc_trafo_model_data(baseMVA = baseMVA, Sn_MVA = ratedS, ratedU_kV = ratedU, r_pu = r_pu, x_pu = x_pu, b_pu = b_pu, isPerUnit = true)
         vnh_kv > vnl_kv ? (w1 = PowerTransformerWinding(Vn_kV = vnh_kv, modelData = modelData); w2 = PowerTransformerWinding(Vn_kV = vnl_kv)) : (w1 = PowerTransformerWinding(Vn_kV = vnh_kv); w2 = PowerTransformerWinding(Vn_kV = vnl_kv, modelData = modelData))
       else
         vnh_kv > vnl_kv ? (w1 = PowerTransformerWinding(Vn_kV = vnh_kv); w2 = PowerTransformerWinding(Vn_kV = vnl_kv)) : (w1 = PowerTransformerWinding(Vn_kV = vnh_kv); w2 = PowerTransformerWinding(Vn_kV = vnl_kv))
@@ -326,7 +326,7 @@ function createNetFromMatPowerFile(filename, base_MVA::Float64 = 0.0, log::Bool 
 
   #check
   for node in nodeVec
-    if isPVNode(node)      
+    if isPVNode(node)
       if !haskey(proSumDict, node.busIdx)
         @warn "no generator data for bus $(node.busIdx) found, change bus type to PQ"
         node._nodeType = Sparlectra.PQ
@@ -334,7 +334,7 @@ function createNetFromMatPowerFile(filename, base_MVA::Float64 = 0.0, log::Bool 
     end
   end
   sort!(nodeVec, by = x -> x.busIdx)
-  
+
   net = Sparlectra.Net(netName, baseMVA, slackIdx, nodeVec, ACLines, trafos, branchVec, prosum, shuntVec)
   return net
 end

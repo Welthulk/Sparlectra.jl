@@ -94,7 +94,6 @@ function calcNeutralU(neutralU_ratio::Float64, vn_hv::Float64, tap_min::Integer,
   return round(neutralU_ratio * vn_hv + (tap_max - tap_min) * tap_step_percent / 100.0, digits = 0)
 end
 
-
 """
 createYBUS: Create the admittance matrix YBUS from the branch vector and the slack index
 #cs: counter system (or meetering system?) (GER: "Zählpfeilsystem") [1= Consumer, 2= Producer]
@@ -124,9 +123,9 @@ function createYBUS(branchVec::Vector{Branch}, shuntVec::Vector{Shunt}, sparse::
     fromNode = branch.fromBus
     toNode = branch.toBus
     r = x = b = g = 0.0
-    if Int(branch.status) == 0      
+    if Int(branch.status) == 0
       @debug "createYBUS: Branch $(branch) out of service, skipping "
-      continue    
+      continue
     else
       r = branch.r_pu
       x = branch.x_pu
@@ -135,7 +134,7 @@ function createYBUS(branchVec::Vector{Branch}, shuntVec::Vector{Shunt}, sparse::
     end
 
     yik = inv((r + x * im))
-    susceptance = 0.5*(g + b * im) # pi-model
+    susceptance = 0.5 * (g + b * im) # pi-model
 
     t = 1.0 + 0.0 * im
     ratio = branch.ratio
@@ -145,11 +144,10 @@ function createYBUS(branchVec::Vector{Branch}, shuntVec::Vector{Shunt}, sparse::
     end
 
     Y[fromNode, fromNode] = Y[fromNode, fromNode] + ((yik + susceptance)) / abs2(t)
-    Y[toNode, toNode] = Y[toNode, toNode] +  (yik + susceptance)
+    Y[toNode, toNode] = Y[toNode, toNode] + (yik + susceptance)
 
-    
     Y[fromNode, toNode] = Y[fromNode, toNode] + (-1.0 * yik / conj(t))
-    Y[toNode, fromNode] = Y[toNode, fromNode] + (-1.0* yik / t)
+    Y[toNode, fromNode] = Y[toNode, fromNode] + (-1.0 * yik / t)
   end
 
   for sh in shuntVec
@@ -225,4 +223,3 @@ function adjacentBranches(Y::AbstractMatrix{ComplexF64}, log::Bool = false)::Vec
   end
   return adjList
 end
-

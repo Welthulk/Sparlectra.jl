@@ -209,7 +209,7 @@ mutable struct PowerTransformerWinding
     end
 
     if isnothing(modelData)
-      new(Vn_kV, 0.0, 0.0, 0.0, 0.0, shift_degree, ratedU, ratedS, taps, false, nothing, true)  
+      new(Vn_kV, 0.0, 0.0, 0.0, 0.0, shift_degree, ratedU, ratedS, taps, false, nothing, true)
     else
       r, x, b, g = calcTransformerRXGB(ratedU, modelData)
       new(Vn_kV, r, x, b, g, shift_degree, ratedU, ratedS, taps, false, modelData, false)
@@ -264,7 +264,7 @@ hint: gm is set to zero, g_pu = 0.0!
 function recalc_trafo_model_data(; baseMVA::Float64, Sn_MVA::Float64, ratedU_kV::Float64, r_pu::Float64, x_pu::Float64, b_pu::Float64, isPerUnit::Bool)::TransformerModelParameters
   Pfe_kW = 0.0 # -> g_pu = 0.0
   if isPerUnit
-    base_power_3p = baseMVA    
+    base_power_3p = baseMVA
     base_power_1p = base_power_3p / 3.0
     base_i_to = base_power_3p / (ratedU_kV * Wurzel3)
     base_y_to = base_i_to * base_i_to / base_power_1p
@@ -277,7 +277,7 @@ function recalc_trafo_model_data(; baseMVA::Float64, Sn_MVA::Float64, ratedU_kV:
 
     z_ser_pu = sqrt(r_pu^2 + x_pu^2)
     Z_Series_abs = z_ser_pu * base_z_to
-    uk = 100.0*Z_Series_abs * Sn_MVA / ratedU_kV^2
+    uk = 100.0 * Z_Series_abs * Sn_MVA / ratedU_kV^2
     Rk = r_pu * base_z_to
     P_kW = 100.0 * Rk * Sn_MVA^2 / ratedU_kV^2
   else
@@ -294,7 +294,7 @@ function recalc_trafo_model_data(; baseMVA::Float64, Sn_MVA::Float64, ratedU_kV:
     Rk = r_pu
     P_kW = 100.0 * Rk * Sn_MVA^2 / u_quad
   end
-  
+
   return TransformerModelParameters(sn_MVA = Sn_MVA, vk_percent = uk, pk_kW = P_kW, i0_percent = i0, p0_kW = Pfe_kW)
 end
 
@@ -479,17 +479,15 @@ function toString(o::TrafoTyp)::String
   end
 end
 
-function create2WTRatioTransformerNoTaps(;from::Int, to::Int, vn_hv_kv::Float64, vn_lv_kv::Float64, sn_mva::Float64,vk_percent::Float64, vkr_percent::Float64, pfe_kw::Float64, i0_percent::Float64)::PowerTransformer
-  
+function create2WTRatioTransformerNoTaps(; from::Int, to::Int, vn_hv_kv::Float64, vn_lv_kv::Float64, sn_mva::Float64, vk_percent::Float64, vkr_percent::Float64, pfe_kw::Float64, i0_percent::Float64)::PowerTransformer
   c = getTrafoImpPGMComp(false, vn_hv_kv, from, to)
 
   modelData = TransformerModelParameters(sn_MVA = sn_mva, vk_percent = vk_percent, vkr_percent = vkr_percent, pk_kW = pfe_kw, i0_percent = i0_percent, p0_kW = 0.0)
   w1 = PowerTransformerWinding(Vn_kV = vn_hv_kv, modelData = modelData)
   w2 = PowerTransformerWinding(Vn_kV = vn_lv_kv, modelData = modelData)
-  
-  trafo = PowerTransformer(c, false, w1, w2, nothing, Sparlectra.Ratio)  
+
+  trafo = PowerTransformer(c, false, w1, w2, nothing, Sparlectra.Ratio)
   return trafo
-  
 end
 
 # purpose: creates Windings for 3WT using MVA Method, see: "MVA Method for Three-Winding Transformer" by Ver Pangonilo
