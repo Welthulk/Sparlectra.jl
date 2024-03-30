@@ -9,3 +9,10 @@ docs/src/newton-method.pdf
 announce.md
 data/cigre.png
 data/MiniGrid/MiniGrid.m
+data/pgmodel/input.m
+test/workshop.jl
+data/mpower/case1888_rte.m
+data/mpower/case30.m
+data/mpower/cigre.m
+data/mpower/_
+data/mpower/_*

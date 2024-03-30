@@ -7,26 +7,31 @@
 debug = false
 
 mutable struct BusData
-  idx::Int        # index of the bus, necessary for sorting
-  originBus::Int  # original index of the bus
+  idx::Int        # index of the bus, necessary for sorting  
   vm_pu::Float64  # voltage in pu
   va_rad::Float64 # angle in rad
   pƩ::Float64     # sum of real power
   qƩ::Float64     # sum of reactive power  
-  type::ResDataTypes.NodeType
+  _pRes::Float64  # result power
+  _qRes::Float64  # result power
+  type::Sparlectra.NodeType
 
-  function BusData(idx::Int, originBus::Int, vm_pu::Float64, va_deg::Float64, sumP::Float64, sumQ::Float64, type::ResDataTypes.NodeType)
-    new(idx, originBus, vm_pu, va_deg, sumP, sumQ, type)
+  function BusData(idx::Int, vm_pu::Float64, va_deg::Float64, sumP::Float64, sumQ::Float64, type::Sparlectra.NodeType)
+    new(idx, vm_pu, va_deg, sumP, sumQ, 0.0, 0.0, type)
   end
 
   function Base.show(io::IO, bus::BusData)
     va_deg = round(rad2deg(bus.va_rad), digits = 3)
-    print(io, "BusData($(bus.idx) [$(bus.originBus)], $(bus.vm_pu), $(va_deg)°), $(bus.pƩ), $(bus.qƩ), $(bus.type))")
+    print(io, "BusData($(bus.idx), $(bus.vm_pu), $(va_deg)°), $(bus.pƩ), $(bus.qƩ), $(bus._pRes), $(bus._qRes), $(bus.type))")
   end
 end
 
+function setJacobianDebug(value::Bool)
+  global debug = value
+end
+
 # return vector of BusData
-function getBusData(nodes::Vector{ResDataTypes.Node}, Sbase_MVA::Float64, verbose::Int, flatStart::Bool = false)
+function getBusData(nodes::Vector{Sparlectra.Node}, Sbase_MVA::Float64, verbose::Int, flatStart::Bool = false)
   busVec = Vector{BusData}()
 
   slackIdx = 0
@@ -40,14 +45,13 @@ function getBusData(nodes::Vector{ResDataTypes.Node}, Sbase_MVA::Float64, verbos
   sumGen_q = 0.0
 
   for (i, n) in enumerate(nodes)
-    if n._nodeType == ResDataTypes.Slack
+    if n._nodeType == Sparlectra.Slack
       slackIdx = i
     end
     type = n._nodeType
 
     p = 0
     q = 0
-
     p += n._pƩLoad === nothing ? 0.0 : n._pƩLoad * -1.0
     q += n._qƩLoad === nothing ? 0.0 : n._qƩLoad * -1.0
 
@@ -65,13 +69,13 @@ function getBusData(nodes::Vector{ResDataTypes.Node}, Sbase_MVA::Float64, verbos
     q = q / Sbase_MVA
 
     if flatStart
-      if type == ResDataTypes.PQ
+      if type == Sparlectra.PQ
         vm_pu = 1.0
         va_deg = 0.0
-      elseif type == ResDataTypes.PV
+      elseif type == Sparlectra.PV
         vm_pu = n._vm_pu === nothing ? 1.0 : n._vm_pu
         va_deg = 0.0
-      elseif type == ResDataTypes.Slack
+      elseif type == Sparlectra.Slack
         vm_pu = n._vm_pu === nothing ? 1.0 : n._vm_pu
         va_deg = n._va_deg === nothing ? 0.0 : deg2rad(n._va_deg)
       end
@@ -79,7 +83,7 @@ function getBusData(nodes::Vector{ResDataTypes.Node}, Sbase_MVA::Float64, verbos
       vm_pu = n._vm_pu === nothing ? 1.0 : n._vm_pu
       va_deg = n._va_deg === nothing ? 0.0 : deg2rad(n._va_deg)
     end
-    b = BusData(n.busIdx, n._kidx, vm_pu, va_deg, p, q, type)
+    b = BusData(n.busIdx, vm_pu, va_deg, p, q, type)
     push!(busVec, b)
   end
 
@@ -110,10 +114,10 @@ end # getBusData
 
 # helper function to count number of nodes of type = value [PQ, PV]
 function getBusTypeVec(busVec::Vector{BusData}, log::Bool = false)
-  busTypeVec = Vector{ResDataTypes.NodeType}()
+  busTypeVec = Vector{Sparlectra.NodeType}()
   slackIdx = 0
   for (i, bus) in enumerate(busVec) #1:n    
-    if bus.type == ResDataTypes.Slack
+    if bus.type == Sparlectra.Slack
       slackIdx = i
     end
     push!(busTypeVec, bus.type)
@@ -127,7 +131,7 @@ function getBusTypeVec(busVec::Vector{BusData}, log::Bool = false)
 end
 
 # count number of nodes of type = value [PQ, PV]
-function countNodes(busTypeVec::Vector{ResDataTypes.NodeType}, pos, value::ResDataTypes.NodeType)
+function countNodes(busTypeVec::Vector{NodeType}, pos, value::NodeType)
   sum = 0
 
   for (index, bus_type) in enumerate(busTypeVec)
@@ -149,7 +153,7 @@ function printVector(power::Vector{Float64}, busVec::Vector{BusData}, first::Str
   n = length(busVec)
 
   for (index, bus) in enumerate(busVec)
-    if bus.type == ResDataTypes.PQ
+    if bus.type == Sparlectra.PQ
       i += 1
       index_p = i
       i += 1
@@ -168,7 +172,7 @@ function printVector(power::Vector{Float64}, busVec::Vector{BusData}, first::Str
       elseif abs(p_val) >= delta_min || abs(q_val) >= delta_min
         print("(bus:$(index) [$(index_p),$(index_q)] $(first)=$(p), $(second)=$(q))")
       end
-    elseif bus.type == ResDataTypes.PV
+    elseif bus.type == Sparlectra.PV
       i += 1
       index_p = i
       p = round(power[index_p], digits = 2)
@@ -194,14 +198,14 @@ function getPowerFeeds(busVec::Vector{BusData}, n_pq::Int, n_pv::Int, log::Bool 
 
   vindex = 0 # index of vector of power flows    
   for bus in busVec
-    if bus.type == ResDataTypes.PQ
+    if bus.type == Sparlectra.PQ
       vindex += 1
       index_p = vindex
       power_feeds[index_p] = bus.pƩ
       vindex += 1
       index_q = vindex
       power_feeds[index_q] = bus.qƩ
-    elseif bus.type == ResDataTypes.PV
+    elseif bus.type == Sparlectra.PV
       vindex += 1
       index_p = vindex
       power_feeds[index_p] = bus.pƩ
@@ -220,15 +224,14 @@ end
  V: vector of complex voltages, 
  Y: Y-Bus Matrix
 """
-function residuum(Y::AbstractMatrix{ComplexF64}, busVec::Vector{BusData}, feeders::Vector{Float64}, n_pq::Int, n_pv::Int, log::Bool)
+function residuum(Y::AbstractMatrix{ComplexF64}, busVec::Vector{BusData}, feeders::Vector{Float64}, n_pq::Int, n_pv::Int, log::Bool)::Vector{Float64}
   # create complex vector of voltages
   V = [bus.vm_pu * exp(im * bus.va_rad) for bus in busVec]
   # create diagonal matrix of voltages
   Vdiag = Diagonal(V)
 
-  # Power Calculation
+  # Power Calculation (Knotenleistung)
   S = Vdiag * conj(Y * V)
-
   size = n_pq * 2 + n_pv
   Δpq = zeros(Float64, size)
 
@@ -240,17 +243,24 @@ function residuum(Y::AbstractMatrix{ComplexF64}, busVec::Vector{BusData}, feeder
   pfIdx = 0
   for bus in busVec
     pfIdx += 1
-    if bus.type == ResDataTypes.PQ
+    if bus.type == Sparlectra.PQ
       vindex += 1
       index_p = vindex
       Δpq[index_p] = feeders[index_p] - real(S[pfIdx])
       vindex += 1
       index_q = vindex
       Δpq[index_q] = feeders[index_q] - imag(S[pfIdx])
-    elseif bus.type == ResDataTypes.PV
+      bus._pRes = real(S[pfIdx])
+      bus._qRes = imag(S[pfIdx])
+    elseif bus.type == Sparlectra.PV
       vindex += 1
       index_p = vindex
       Δpq[index_p] = feeders[index_p] - real(S[pfIdx])
+      bus._pRes = real(S[pfIdx])
+      bus._qRes = imag(S[pfIdx])
+    elseif bus.type == Sparlectra.Slack
+      bus._pRes = real(S[pfIdx])
+      bus._qRes = imag(S[pfIdx])
     end
   end
 
@@ -263,50 +273,6 @@ function residuum(Y::AbstractMatrix{ComplexF64}, busVec::Vector{BusData}, feeder
   end
 
   return Δpq
-end
-
-"""
-classical formulation of calculation of node powers
-si = ui ∑ gik**uik* (k = 1...n) # only neighbors!
-ui = vi exp(j𝜑i)
-uk = vk exp(j𝜑k)
-gik* = gik exp(-jαk) = Gik - jBik
-
-si = vi*[∑ vk*(Gik*cos(𝜑i-𝜑k)+Bik*sin(𝜑i-𝜑k)) +jvk*(Gik*sin(𝜑i-𝜑k) - Bik*cos(𝜑i-𝜑k))]
-
-p = vi* (∑ vk * (Gik*cos(𝜑i-𝜑k) + Bik*sin(𝜑i-𝜑k)))
-q = vi* (∑ vk * (Gik*sin(𝜑i-𝜑k) - Bik*cos(𝜑i-𝜑k)))
-"""
-function calcPowerFlow(Y::AbstractMatrix{ComplexF64}, busVec::Vector{BusData}, adjBranch::Vector{Vector{Int}}, n_pq::Int, n_pv::Int, log::Bool = false)::Vector{Float64}
-  size = n_pq * 2 + n_pv
-
-  if log
-    println("\nPower Flow: Vector-Size = $(size)")
-  end
-
-  power_flows = zeros(Float64, size)
-
-  vindex = 0 # index of vector of power flows    
-  for (i, bus) in enumerate(busVec)
-    if bus.type == ResDataTypes.PQ
-      vindex += 1
-      index_p = vindex
-      vindex += 1
-      index_q = vindex
-
-      power_flows[index_p] = bus.vm_pu * sum(abs(Y[i, k]) * busVec[k].vm_pu * cos(busVec[i].va_rad - busVec[k].va_rad - angle(Y[i, k])) for k in adjBranch[i]) # k: index of adjanced bus
-      power_flows[index_q] = bus.vm_pu * sum(abs(Y[i, k]) * busVec[k].vm_pu * sin(busVec[i].va_rad - busVec[k].va_rad - angle(Y[i, k])) for k in adjBranch[i]) # k: index of adjanced bus
-    elseif bus.type == ResDataTypes.PV
-      vindex += 1
-      index_p = vindex
-      power_flows[index_p] = bus.vm_pu * sum(abs(Y[i, k]) * busVec[k].vm_pu * cos(busVec[i].va_rad - busVec[k].va_rad - angle(Y[i, k])) for k in adjBranch[i]) # k: index of adjanced bus         
-    end
-  end
-
-  if log
-    printVector(power_flows, busVec)
-  end
-  return power_flows
 end
 
 #=
@@ -338,7 +304,7 @@ Jii = ∂qi/∂𝜑i    = +vi * [∑ gik * vk * cos(𝜑i-𝜑j-αik)] - vi*[gii
 Lij = Vj*∂qi/∂vj = +vi * [ gij * vj * sin(𝜑i-𝜑j-αij) ] }
 Lii = Vi*∂qi/∂vi = +vi * [∑ gik* vk * sin(𝜑i-𝜑j-αik)] + vi*( gii * vi * sin(𝜑i-𝜑i-αii) )}
 =#
-function calcJacobian(Y::AbstractMatrix{ComplexF64}, busVec::Vector{BusData}, adjBranch::Vector{Vector{Int}}, busTypeVec::Vector{ResDataTypes.NodeType}, slackIdx::Int, n_pq::Int, n_pv::Int, log::Bool = false, sparse::Bool = true)
+function calcJacobian(Y::AbstractMatrix{ComplexF64}, busVec::Vector{BusData}, adjBranch::Vector{Vector{Int}}, busTypeVec::Vector{Sparlectra.NodeType}, slackIdx::Int, n_pq::Int, n_pv::Int, log::Bool = false, sparse::Bool = true)
   global debug
   function printdebug(case::String, grad::String, i::Int, j::Int, val::Float64 = 0.0, bus_i::Int = 0, bus_j::Int = 0)
     if debug
@@ -362,7 +328,7 @@ function calcJacobian(Y::AbstractMatrix{ComplexF64}, busVec::Vector{BusData}, ad
   size_j = n_pq * 2 + n_pv
   size_i = size_j
 
-  if log
+  if debug
     println("\nJacobian: $(size_j) x $(size_i), number of PQ nodes:$num_q_nodes,  number of PV nodes: $num_pv_nodes")
   end
 
@@ -375,25 +341,25 @@ function calcJacobian(Y::AbstractMatrix{ComplexF64}, busVec::Vector{BusData}, ad
 
   # i: Index of Bus
   # j: Index of Bus
-  for (i, b) in enumerate(busVec)
+  # @inbounds: no bounds checking
+  @inbounds for (i, b) in enumerate(busVec)
     vm_i = busVec[i].vm_pu
     va_i = busVec[i].va_rad
     bus_type_i = busVec[i].type
 
-    cnt_pv_i = countNodes(busTypeVec, i, ResDataTypes.PV)
+    cnt_pv_i = countNodes(busTypeVec, i, Sparlectra.PV)
     for j in adjBranch[i]
       bus_type_j = busVec[j].type
-      cnt_pv_j = countNodes(busTypeVec, j, ResDataTypes.PV)
+      cnt_pv_j = countNodes(busTypeVec, j, Sparlectra.PV)
 
       i1 = (2 * shiftIJ(i) - 1) - cnt_pv_i
       i2 = 2 * shiftIJ(i) - cnt_pv_i
       j1 = (2 * shiftIJ(j) - 1) - cnt_pv_j
       j2 = 2 * shiftIJ(j) - cnt_pv_j
 
-      if bus_type_i == ResDataTypes.PQ
-        if bus_type_j == ResDataTypes.PQ
+      if bus_type_i == Sparlectra.PQ
+        if bus_type_j == Sparlectra.PQ
           case = "PQ + PQ"
-          @debug "i:$(i), j:$(j), i1:$(i1), i2:$(i2), j1:$(j1), j2:$(j2)"
           if i == j
             Yii = abs(Y[i, i])
             arg = -angle(Y[i, i])
@@ -426,13 +392,12 @@ function calcJacobian(Y::AbstractMatrix{ComplexF64}, busVec::Vector{BusData}, ad
             jacobian[i1, j2] = vm_i * Yij * vm_j * cos(arg)
             # Lij = Vj*∂qi/∂vj = +vi * [ gij * vj * sin(𝜑i-𝜑j-αij) ] }                
             jacobian[i2, j2] = vm_i * Yij * vm_j * sin(arg)
-
             printdebug(case, "Hij", i1, j1, jacobian[i1, j1], i, j)
             printdebug(case, "Jij", i2, j1, jacobian[i2, j1], i, j)
             printdebug(case, "Nij", i1, j2, jacobian[i1, j2], i, j)
             printdebug(case, "Lij", i2, j2, jacobian[i2, j2], i, j)
           end
-        elseif bus_type_j == ResDataTypes.PV
+        elseif bus_type_j == Sparlectra.PV
           case = "PQ + PV"
 
           if i == j
@@ -460,9 +425,9 @@ function calcJacobian(Y::AbstractMatrix{ComplexF64}, busVec::Vector{BusData}, ad
             printdebug(case, "Hij", i1, j1, jacobian[i1, j1], i, j)
             printdebug(case, "Jij", i2, j1, jacobian[i2, j1], i, j)
           end
-        end # if bus_type_j == ResDataTypes.PQ           
-      elseif bus_type_i == ResDataTypes.PV
-        if bus_type_j == ResDataTypes.PQ
+        end # if bus_type_j == Sparlectra.PQ           
+      elseif bus_type_i == Sparlectra.PV
+        if bus_type_j == Sparlectra.PQ
           case = "PV + PQ"
           # H, N
           if i == j
@@ -490,7 +455,7 @@ function calcJacobian(Y::AbstractMatrix{ComplexF64}, busVec::Vector{BusData}, ad
             printdebug(case, "Hij", i1, j1, jacobian[i1, j1], i, j)
             printdebug(case, "Nij", i1, j2, jacobian[i1, j2], i, j)
           end
-        elseif bus_type_j == ResDataTypes.PV
+        elseif bus_type_j == Sparlectra.PV
           case = "PV + PV"
 
           if i == j
@@ -511,12 +476,13 @@ function calcJacobian(Y::AbstractMatrix{ComplexF64}, busVec::Vector{BusData}, ad
 
             printdebug(case, "Hij", i1, j1, jacobian[i1, j1], i, j)
           end # if i == j
-        end # if bus_type_j == ResDataTypes.PV           
-      end # if bus_type_i == ResDataTypes.PQ                      
+        end # if bus_type_j == Sparlectra.PV           
+      end # if bus_type_i == Sparlectra.PQ                      
     end # for j in adjBranch[i] 
   end # for i in 1:n
 
-  if log
+  if debug
+    println()
     for j = 1:size_i
       print("\t$(j):")
     end
@@ -536,18 +502,18 @@ function calcJacobian(Y::AbstractMatrix{ComplexF64}, busVec::Vector{BusData}, ad
 end
 
 # main function for calculation Newton-Raphson
-function calcNewtonRaphson!(Y::AbstractMatrix{ComplexF64}, nodes::Vector{ResDataTypes.Node}, Sbase_MVA::Float64, maxIte::Int, tolerance::Float64 = 1e-6, verbose::Int = 0, sparse::Bool = false)
+function calcNewtonRaphson!(Y::AbstractMatrix{ComplexF64}, nodes::Vector{Node}, Sbase_MVA::Float64, maxIte::Int, tolerance::Float64 = 1e-6, verbose::Int = 0, sparse::Bool = false)
   @debug global debug = true
 
   busVec, slackNum = getBusData(nodes, Sbase_MVA, verbose)
-  
-  adjBranch = adjacentBranches(Y, (verbose > 1))
-  num_pv_nodes = count(bus -> bus.type == ResDataTypes.PV, busVec)
-  num_pq_nodes = count(bus -> bus.type == ResDataTypes.PQ, busVec)
+
+  adjBranch = adjacentBranches(Y, (verbose > 2))
+  num_pv_nodes = count(bus -> bus.type == Sparlectra.PV, busVec)
+  num_pq_nodes = count(bus -> bus.type == Sparlectra.PQ, busVec)
 
   size = num_pq_nodes * 2 + num_pv_nodes
 
-  busTypeVec, slackIdx = getBusTypeVec(busVec, (verbose >= 2))
+  busTypeVec, slackIdx = getBusTypeVec(busVec, (verbose > 2))
   @assert slackIdx == slackNum "Error: Number of slack nodes is not equal to the number of slack nodes in the bus vector ($(slackIdx) /= $(slackNum))."
 
   erg = 1 # result of calculation
@@ -558,55 +524,43 @@ function calcNewtonRaphson!(Y::AbstractMatrix{ComplexF64}, nodes::Vector{ResData
 
   if verbose > 0
     tn = num_pq_nodes + num_pv_nodes
-    println("\ncalcNewtonRaphson: Matrix-Size: $(size) x $(size), Sbase_MVA: $(Sbase_MVA), total number of nodes: $(tn), number of PQ nodes: $num_pq_nodes, number of PV nodes: $num_pv_nodes")
+    println("\ncalcNewtonRaphson: Matrix-Size: $(size) x $(size), Sbase_MVA: $(Sbase_MVA), total number of nodes: $(tn), number of PQ nodes: $num_pq_nodes, number of PV nodes: $num_pv_nodes\n")
   end
 
   iteration_count = 0
-  power_feeds = getPowerFeeds(busVec, num_pq_nodes, num_pv_nodes, (verbose > 1))
-
-  while iteration_count <= maxIte
-    # Calculation of the power flows
-    #=
-    power_flows = calcPowerFlow(Y, busVec, adjBranch, num_pq_nodes, num_pv_nodes, (verbose >= 2))      
-    if verbose > 0
-      printVector(power_flows, busVec, "pFlow","qFlow", false, 0.0)  
-    end 
-    delta_P = power_feeds - power_flows
-    =#
-
+  power_feeds = getPowerFeeds(busVec, num_pq_nodes, num_pv_nodes, (verbose > 2))
+  
+  while iteration_count <= maxIte  
     # Calculation of the residual
-    delta_P = residuum(Y, busVec, power_feeds, num_pq_nodes, num_pv_nodes, (verbose > 1))
-    if verbose > 1
+    delta_P = residuum(Y, busVec, power_feeds, num_pq_nodes, num_pv_nodes, (verbose > 2))
+    if verbose > 2
       println("\ndelta_P: Iteration $(iteration_count)")
       printVector(delta_P, busVec, "p", "q", false, 0.0)
     end
 
     norm_p = norm(delta_P)
     if verbose > 0
-      @printf "norm %e, tol %e, ite %d\n" norm_p tolerance iteration_count
+      @printf " norm %e, tol %e, ite %d\n" norm_p tolerance iteration_count
     end
 
     if norm_p < tolerance
-      println("Convergence is reached after $iteration_count iterations.")
+      if (verbose > 0)
+        println("\nConvergence is reached after $(iteration_count) iterations")
+      end
       erg = 0
       break
     end
 
     # Calculation of the Jacobian matrix      
-    jacobian = calcJacobian(Y, busVec, adjBranch, busTypeVec, slackIdx, num_pq_nodes, num_pv_nodes, (verbose > 2), sparse)
+    jacobian = calcJacobian(Y, busVec, adjBranch, busTypeVec, slackIdx, num_pq_nodes, num_pv_nodes, (verbose >= 3), sparse)
 
     # Solution of the linear system of equations for delta_x        
     delta_x = nothing
     try
+      # Solver => \
       delta_x = jacobian \ delta_P
 
-      #LU-Decomposition:
-      # lu_decomposition = lu(jacobian)       
-      #delta_x = lu_decomposition \ delta_P
-      #iterative Solvers:      
-      #delta_x = cg(jacobian, delta_P)
-
-      if verbose > 1
+      if verbose > 2
         println("\ndelta_x: Iteration $(iteration_count)")
         printVector(delta_x, busVec, "Δφ", "ΔU/U", true, 0.0)
       end
@@ -623,17 +577,17 @@ function calcNewtonRaphson!(Y::AbstractMatrix{ComplexF64}, nodes::Vector{ResData
       sidx = 0 # counter for slack node
 
       for (i, bus) in enumerate(busVec)
-        if bus.type == ResDataTypes.Slack
+        if bus.type == Sparlectra.Slack
           sidx += 1 # for slack node
           continue
         end
 
         index_1 = 2 * (i - sidx) - 1 - kidx
         index_2 = 2 * (i - sidx) - kidx
-        if bus.type == ResDataTypes.PQ
+        if bus.type == Sparlectra.PQ
           busVec[i].va_rad += delta_x[index_1]
           busVec[i].vm_pu += busVec[i].vm_pu * delta_x[index_2]
-        elseif bus.type == ResDataTypes.PV
+        elseif bus.type == Sparlectra.PV
           busVec[i].va_rad += delta_x[index_1]
           kidx += 1
         end
@@ -651,7 +605,7 @@ function calcNewtonRaphson!(Y::AbstractMatrix{ComplexF64}, nodes::Vector{ResData
     iteration_count += 1
   end
 
-  if verbose > 1
+  if verbose > 2
     println("\nSolution: Iteration $(iteration_count)\n")
   end
 
@@ -661,9 +615,15 @@ function calcNewtonRaphson!(Y::AbstractMatrix{ComplexF64}, nodes::Vector{ResData
     vm_pu = bus.vm_pu
     va_deg = rad2deg(bus.va_rad)
 
-    setVmVa!(nodes[i], vm_pu, va_deg)
+    setVmVa!(node = nodes[i], vm_pu = vm_pu, va_deg = va_deg)
+    if bus.type == Sparlectra.PV
+      nodes[i]._qƩGen = bus._qRes * Sbase_MVA
+    elseif bus.type == Sparlectra.Slack
+      nodes[i]._pƩGen = bus._pRes * Sbase_MVA
+      nodes[i]._qƩGen = bus._qRes * Sbase_MVA
+    end
 
-    if verbose > 1
+    if verbose > 2
       vm_pu = round(nodes[i]._vm_pu, digits = 3)
       va_deg = round(nodes[i]._va_deg, digits = 3)
       if va_deg > 180
@@ -679,4 +639,23 @@ function calcNewtonRaphson!(Y::AbstractMatrix{ComplexF64}, nodes::Vector{ResData
   end
 
   return iteration_count, erg
+end
+
+function runpf!(net::Net, maxIte::Int, tolerance::Float64 = 1e-6, verbose::Int = 0)
+  sparse = false
+  printYBus = false
+  if length(net.nodeVec) == 0
+    @error "No nodes found in $(jpath)"
+    return
+  elseif length(net.nodeVec) > 30
+    sparse = true
+  end
+
+  if length(net.nodeVec) < 20
+    printYBus = (verbose > 1)
+  end
+
+  Y = createYBUS(net.branchVec, net.shuntVec, sparse, printYBus)
+
+  return calcNewtonRaphson!(Y, net.nodeVec, net.baseMVA, maxIte, tolerance, verbose, sparse)
 end
