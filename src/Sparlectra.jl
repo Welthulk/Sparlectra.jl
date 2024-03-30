@@ -2,6 +2,11 @@ module Sparlectra
 # Author: Udo Schmitz (https://github.com/Welthulk)
 # Purpose: network calculation
 
+# Naming Conventions:
+# The project follows the Julia Naming Conventions for the most part, 
+# but it's important to note that the naming convention for functions might deviate. 
+# In this module, functions are written in CamelCase with a lowercase initial letter. 
+
 
 # resource data types for working with Sparlectra
 const Wurzel3 = 1.7320508075688772
@@ -61,7 +66,10 @@ export
   calcNetLosses!,
   
   # results.jl
-  printACPFlowResults, convertPVtoPQ!
+  printACPFlowResults, convertPVtoPQ!,
+
+  # run_acpflow.jl
+  run_acpflow
 
 
 include("component.jl")
@@ -80,6 +88,7 @@ include("nbi.jl")
 include("createnet_powermat.jl")
 include("exportMatPower.jl")
 include("results.jl")
+include("run_acpflow.jl")
 
 
 end # module Sparlectra
