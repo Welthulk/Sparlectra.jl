@@ -125,6 +125,17 @@ function testCreateNetworkFromScratch(verbose::Bool = false)
     @info "Number of Prosumers: ", anzP
   end
 
+  function addBus(;busIdx::Int, busName::String, busType::String, vn_kV::Float64, pLoad::Union{Nothing, Float64}= nothing, qLoad::Union{Nothing,Float64}= nothing, pGen::Union{Nothing, Float64}= nothing, 
+                  qGen::Union{Nothing, Float64}= nothing, pShunt::Union{Nothing, Float64}= nothing, qShunt::Union{Nothing, Float64}= nothing, vm::Union{Nothing, Float64}= nothing, va::Union{Nothing, Float64}= nothing, 
+                  nArea::Int, nZone::Int)
+    tVec = ResDataTypes.Terminal[]
+    cNodeType = ResDataTypes.Busbarsection
+    c = Component("B" * string(busIdx) * "_20230620", busName, cNodeType, Vn)
+    nodeType = toNodeType(busType)
+    node = Node(c, tVec, busIdx, nodeType, nothing, Sbase_MVA, nZone, nArea, vm, va, pLoad, qLoad, pShunt, qShunt, pGen, qGen)
+    push!(nodeVec, node)
+  end
+
   Sbase_MVA = 1000.0
   netName = "testNetWork"
 
@@ -290,58 +301,18 @@ function testCreateNetworkFromScratch(verbose::Bool = false)
   # Seite 1, 'Line 2-5' (net_cigre_hv, bus2, bus5, length_km=300, std_type='Line220kV', name='Line 2-5')
   # Seite 1, 'Trafo 10-2' (net_cigre_hv, bus2, bus10, sn_mva=1000, vn_hv_kv=220, vn_lv_kv=22, vkr_percent=0.0, vk_percent=13.0, pfe_kw=0, i0_percent=0, shift_degree=330.0, name='Trafo 10-2')
   # Seite 2, 'Load 2' (net_cigre_hv, bus2, p_mw=285, q_mvar=200, name='Load 2')
-  Vn = 220.0
-  tVec = ResDataTypes.Terminal[]
-  # ACLINESEGMENT
-  cName = "Line 1-2"
-  cID = "L1-2_20230620"
-  cLine = ResDataTypes.toComponentTyp("ACLINESEGMENT")
-  c = ResDataTypes.Component(cID, cName, cLine, Vn)
-  tL1_2_B2 = ResDataTypes.Terminal(c, Seite2)
-  push!(tVec, tL1_2_B2)
-
-  # ACLINESEGMENT
-  cName = "Line 2-5"
-  cID = "L2-5_20230620"
-  cLine = ResDataTypes.toComponentTyp("ACLINESEGMENT")
-  c = ResDataTypes.Component(cID, cName, cLine, Vn)
-  tL2_5_B2 = ResDataTypes.Terminal(c, Seite1)
-  push!(tVec, tL2_5_B2)
-
-  # POWERTRANSFORMER
-  cName = "Trafo 10-2"
-  cID = "T10-2_20230620"
-  cTrafo = ResDataTypes.toComponentTyp("POWERTRANSFORMER")
-  c = ResDataTypes.Component(cID, cName, cTrafo, Vn)
-  tT10_2_B2 = ResDataTypes.Terminal(c, Seite1)
-  push!(tVec, tT10_2_B2)
-
-  # EnergyConsumer
-  cName = "Load 2"
-  cID = "Load2_20230620"
-  cLoad = ResDataTypes.toComponentTyp("EnergyConsumer")
-  c = ResDataTypes.Component(cID, cName, cLoad, Vn)
-  tLoad2_B2 = ResDataTypes.Terminal(c, Seite2)
-  push!(tVec, tLoad2_B2)
-
-  # Bus 2
-  nName = "B2"
-  nID = "B002_20230620"
+  vn_kV = 220.0
+  
+ # Bus 2
   busIdx = 2
   nArea = 1
   nZone = 1
 
   vm = 1.0
   va = 0.0
-  p_gen = 0.0
-  q_gen = 0.0
-  p_load = 285.0
-  q_load = 200.0
-  p_shunt = 0.0
-  q_shunt = 0.0
-  cNodeType = ResDataTypes.Busbarsection
-  c = Component(nID, nName, cNodeType, Vn)
-  nodeType = toNodeType("PQ")
+  pl = 285.0
+  ql = 200.0
+  btype = "PQ"
   node = Node(c, tVec, busIdx, nodeType, nothing, 1000.0, nZone, nArea, vm, va, p_load, q_load, p_shunt, q_shunt, p_gen, q_gen)
   push!(nodeVec, node)
 
