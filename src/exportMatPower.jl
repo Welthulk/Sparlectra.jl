@@ -290,12 +290,12 @@ function writeBranchData(sb_mva::Float64, branchVec::Vector{Branch}, file)
 end # writeBranchData
 
 function writeMatpowerCasefile(net::Net, pathfilename::String)
-  @info "convertion to Matpower CASE-Files, Testcase: ($testcase), Filename: ($filename)"
+  
   base, ext = splitext(pathfilename)
 
   case = basename(base)
   base = base * ".m"
-
+  @info "convertion to Matpower CASE-Files, Testcase: ($case), Filename: ($filename)"
   NodeDict = Dict{Int,Node}()
   for n in net.nodeVec
     NodeDict[n.busIdx] = n
