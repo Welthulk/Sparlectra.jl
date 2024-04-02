@@ -9,12 +9,11 @@ Parameters:
 - casefile: String, the name of the case file to load.
 - path: Union{Nothing,String}, the path to the case file (default: nothing).
 - verbose: Int, verbosity level for output (default: 0).
-- base_MVA: Float64, base MVA for the network (default: 0.0).
 - printResultToFile: Bool, flag to print results to a file (default: false).
 - printResultAnyCase: Bool, flag to print results even if the power flow fails (default: false).
 """
 
-function run_acpflow(;max_ite::Int = 10, tol::Float64 = 1e-6, casefile::String, path::Union{Nothing,String} = nothing, base_MVA::Float64 = 0.0, verbose::Int = 0, printResultToFile::Bool = false, printResultAnyCase::Bool = false)
+function run_acpflow(;max_ite::Int = 10, tol::Float64 = 1e-6, casefile::String, path::Union{Nothing,String} = nothing, verbose::Int = 0, printResultToFile::Bool = false, printResultAnyCase::Bool = false)
   ext = splitext(casefile)[2]  # Get the file extension
   myNet = nothing              # Initialize myNet variable
   in_path = nothing
@@ -32,7 +31,7 @@ function run_acpflow(;max_ite::Int = 10, tol::Float64 = 1e-6, casefile::String, 
       println("Error: File $(in_path) not found")
       return
     end
-    myNet = createNetFromMatPowerFile(in_path, base_MVA, (verbose >= 1), false)
+    myNet = createNetFromMatPowerFile(in_path, (verbose >= 1), false)
   else
     println("Error: File extension $(ext) not supported!")
     return
