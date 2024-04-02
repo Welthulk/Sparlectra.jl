@@ -241,7 +241,7 @@ function residuum(Y::AbstractMatrix{ComplexF64}, busVec::Vector{BusData}, feeder
 
   vindex = 0
   pfIdx = 0
-  for bus in busVec
+  @inbounds for bus in busVec
     pfIdx += 1
     if bus.type == Sparlectra.PQ
       vindex += 1
