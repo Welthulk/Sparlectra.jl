@@ -4,7 +4,7 @@
 
 # get minimum degree ordering
 
-function makeMDO!(busMapDict::Dict{Int,Int}, busData::Matrix{Float64}, branchData::Matrix{Float64}, busDict::Dict{String,Int64}, branchDict::Dict{String,Int64}, checkOnly::Bool)
+function makeMDO!(busMapDict::Dict{String,Int}, busData::Matrix{Float64}, branchData::Matrix{Float64}, busDict::Dict{String,Int64}, branchDict::Dict{String,Int64}, checkOnly::Bool)
   nodeIsolateSet = Set{Int}()
   nodeNumberSet = Set{Int}()
   branchTupleSet = Set{Tuple}()
@@ -52,13 +52,13 @@ function makeMDO!(busMapDict::Dict{Int,Int}, busData::Matrix{Float64}, branchDat
   if checkOnly
     for i in nodeNumberSet
       _bus = rtransDict[i]
-      busMapDict[_bus] = i
+      busMapDict[string(_bus)] = i
     end
   else
     order = mdoRCM(length(nodeNumberSet), branchTupleSet)
     for i in order
       _bus = rtransDict[i]
-      busMapDict[_bus] = i
+      busMapDict[string(_bus)] = i
     end
 
     @debug begin
@@ -82,7 +82,7 @@ function _createDict()
 
   genKeys = ["bus", "Pg", "Qg", "Qmax", "Qmin", "Vg", "mBase", "status", "Pmax", "Pmin", "Pc1", "Pc2", "Qc1min", "Qc1max", "Qc2min", "Qc2max", "ramp_agc", "ramp_10", "ramp_30", "ramp_q", "apf"]
   genDict = Dict{String,Int}()
-  for (idx, key) in enumerate(genKeys)
+  for (idx, key) in enumerate(genKeys)    
     genDict[key] = idx
   end
 
@@ -96,11 +96,18 @@ function _createDict()
 end
 
 # base_MVA = 0.0 for default value in case file, otherwise set to desired value
-function createNetFromMatPowerFile(filename, base_MVA::Float64 = 0.0, log::Bool = false, mdo::Bool = true)::Net
+function createNetFromMatPowerFile(filename, log::Bool = false, mdo::Bool = true)::Net
+
+  getIntBusStr(Float64) = string(Int(Float64))
+  getFloatBusStr(Int64) = string(Int64)
+
   debug = false
   @debug debug = true
   mFak = 10.0 # approximation factor for load and shunt for qMax, qMin, pMax, pMin
 
+  @info "create network from case-file: $(filename)"
+  netName, baseMVA, busData, genData, branchData = casefileparser(filename)
+  
   ACLines = Vector{ACLineSegment}()
   trafos = Vector{PowerTransformer}()
   prosum = Vector{ProSumer}()
@@ -112,15 +119,10 @@ function createNetFromMatPowerFile(filename, base_MVA::Float64 = 0.0, log::Bool 
   vnDict = Dict{Integer,Float64}()
 
   proSumDict = Dict{Integer,ProSumer}()
-  busMapDict = Dict{Int,Int}()
+  busMapDict = Dict{String,Int}()
 
-  @info "create network from case-file: $(filename)"
-  netName, baseMVA, busData, genData, branchData = casefileparser(filename)
-
+  
   slackIdx = 0
-  if base_MVA > 0.0
-    baseMVA = base_MVA
-  end
   # parsing the data
   if debug
     println("Parsing the data...")
@@ -149,6 +151,8 @@ function createNetFromMatPowerFile(filename, base_MVA::Float64 = 0.0, log::Bool 
   busDict, genDict, branchDict = _createDict()
   makeMDO!(busMapDict, busData, branchData, busDict, branchDict, mdo == false)
 
+  myNet = Net(netName, baseMVA, busMapDict)
+
   col = size(busData, 2)
   numb = 0
   lastBus = 0
@@ -167,7 +171,7 @@ function createNetFromMatPowerFile(filename, base_MVA::Float64 = 0.0, log::Bool 
     end
     lastBus = kIdx
 
-    busIdx = busMapDict[kIdx]
+    busIdx = busMapDict[getIntBusStr(kIdx)]
 
     vn_kv = float(row[busDict["baseKV"]]) <= 0.0 ? (@warn("Warnung: vn_kv at bus $(kIdx) <= 0"); 1.0) : float(row[busDict["baseKV"]])
     va_deg = float(row[busDict["Va"]])
@@ -193,6 +197,9 @@ function createNetFromMatPowerFile(filename, base_MVA::Float64 = 0.0, log::Bool 
       throw(msg)
     end
 
+    addBus!(net = myNet, busName = string(kIdx), busType = toString(toNodeType(btype)), vn_kV = vn_kv, vm_pu = vm_pu, va_deg = va_deg)
+
+
     vnDict[busIdx] = vn_kv
     NodeDict[busIdx] = node
     push!(nodeVec, node)
@@ -204,7 +211,7 @@ function createNetFromMatPowerFile(filename, base_MVA::Float64 = 0.0, log::Bool 
     if pƩLoad != 0.0 || qƩLoad != 0.0
       qMax = abs(mFak * qƩLoad <= baseMVA) ? abs(mFak * qƩLoad) : baseMVA  # approximation!
       qMin = -qMax  # approximation!
-      pMax = abs(mFak * pƩLoad) <= baseMVA ? abs(mFak * pƩLoad) : base_MVA # approximation!
+      pMax = abs(mFak * pƩLoad) <= baseMVA ? abs(mFak * pƩLoad) : baseMVA # approximation!
       pMin = -pMax # approximation!
       referencePri = slackIdx == busIdx ? busIdx : nothing
 
@@ -216,10 +223,15 @@ function createNetFromMatPowerFile(filename, base_MVA::Float64 = 0.0, log::Bool 
   # branches: 
   col = size(branchData, 2)
   for row in eachrow(branchData[:, 1:col])
-    _fbus = Int64(row[branchDict["fbus"]])
-    _tbus = Int64(row[branchDict["tbus"]])
+    _fbusID = Int(row[branchDict["fbus"]])
+    _tbusID = Int(row[branchDict["tbus"]])
+    _fbus = getIntBusStr(_fbusID)
+    _tbus = getIntBusStr(_tbusID)
+
+
+    @show _fbus, _tbus, haskey(busMapDict, _fbus), haskey(busMapDict, _tbus)
     if haskey(busMapDict, _fbus) == false || haskey(busMapDict, _tbus) == false
-      @info "branch $(cName) not in service"
+      @info "branch $(_fbus)->$(_tbus) not in service"
       continue
     else
       fbus = busMapDict[_fbus]
@@ -236,7 +248,7 @@ function createNetFromMatPowerFile(filename, base_MVA::Float64 = 0.0, log::Bool 
     vn_kv = vnDict[fbus]
 
     piModel = BranchModel(r_pu = r_pu, x_pu = x_pu, b_pu = b_pu, g_pu = 0.0, ratio = ratio, angle = angle, sn_MVA = ratedS)
-    b = Branch(vn_kV = vn_kv, baseMVA = baseMVA, from = fbus, to = tbus, branch = piModel, id = _fbus, status = status)
+    b = Branch(vn_kV = vn_kv, baseMVA = baseMVA, from = fbus, to = tbus, branch = piModel, id = _fbusID, status = status)
     push!(branchVec, b)
 
     l_km = 1.0
@@ -272,9 +284,10 @@ function createNetFromMatPowerFile(filename, base_MVA::Float64 = 0.0, log::Bool 
 
   # Generators:   
   col = size(genData, 2)
+  
   for row in eachrow(genData[:, 1:col])
     status = Int64(row[genDict["status"]])
-    _bus = Int64(row[genDict["bus"]])
+     _bus =Int(row[genDict["bus"]])
     if status < 1
       @info "generator $(_bus) not in service"
       continue
@@ -288,9 +301,9 @@ function createNetFromMatPowerFile(filename, base_MVA::Float64 = 0.0, log::Bool 
         @info "generator $(_bus) has no power output, ignored"
         continue
       end
-    end
-
-    bus = busMapDict[_bus]
+    end    
+    bus = busMapDict[getIntBusStr(_bus)]
+    
     n = NodeDict[bus]
     isPUNode = false
     if n._nodeType == Sparlectra.PV
@@ -334,7 +347,7 @@ function createNetFromMatPowerFile(filename, base_MVA::Float64 = 0.0, log::Bool 
     end
   end
   sort!(nodeVec, by = x -> x.busIdx)
-
-  net = Sparlectra.Net(netName, baseMVA, slackIdx, nodeVec, ACLines, trafos, branchVec, prosum, shuntVec)
+    
+  net = Sparlectra.Net(netName, baseMVA, slackIdx, nodeVec, ACLines, trafos, branchVec, prosum, shuntVec, busMapDict)
   return net
 end

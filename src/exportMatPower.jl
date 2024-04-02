@@ -165,8 +165,7 @@ function writeGeneratorData(sb_mva::Float64, NodeDict::Dict{Int,Node}, ProSumVec
     pmax = sb_mva
     pmin = -1.0 * sb_mva
     pc1 = pc2 = qc1min = qc1max = qc2min = qc2max = ramp_agc = ramp_10 = ramp_30 = ramp_q = apf = 0.0
-    line = string(
-      slackIdx,
+    line = string(slackIdx,
       "\t",
       p,
       "\t",

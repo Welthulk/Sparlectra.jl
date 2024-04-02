@@ -12,15 +12,20 @@ struct Net
   shuntVec::Vector{Shunt}
   busDict::Dict{String,Int}
   totalLosses::Vector{Tuple{Float64,Float64}}
+  _fabri::Bool
 
-  function Net(name, baseMVA::Float64, slack::Integer, nodeVec::Vector{Node}, linesAC::Vector{ACLineSegment}, trafos::Vector{PowerTransformer}, branchVec::Vector{Branch}, prosumpsVec::Vector{ProSumer}, shuntVec::Vector{Shunt})
+  function Net(name, baseMVA::Float64, busMapDict::Dict{String,Int}, vmin::Float64 = 0.9, vmax::Float64 = 1.1 )
+    new(name, baseMVA, [], vmin, vmax, [], [], [], [], [], [], busMapDict, [], false)
+  end
+  
+  function Net(name, baseMVA::Float64, slack::Integer, nodeVec::Vector{Node}, linesAC::Vector{ACLineSegment}, trafos::Vector{PowerTransformer}, branchVec::Vector{Branch}, prosumpsVec::Vector{ProSumer}, shuntVec::Vector{Shunt}, busMapDict::Dict{String,Int})
     slackVec = Vector{Int}()
     push!(slackVec, slack)
-    new(name, baseMVA, slackVec, 0.9, 1.1, nodeVec, linesAC, trafos, branchVec, prosumpsVec, shuntVec, Dict{String,Int}(), [])
+    new(name, baseMVA, slackVec, 0.9, 1.1, nodeVec, linesAC, trafos, branchVec, prosumpsVec, shuntVec, busMapDict, [], false)
   end
 
   function Net(; name::String, baseMVA::Float64, vmin_pu::Float64 = 0.9, vmax_pu::Float64 = 1.1)
-    new(name, baseMVA, [], vmin_pu, vmax_pu, [], [], [], [], [], [], Dict{String,Int}(), [])
+    new(name, baseMVA, [], vmin_pu, vmax_pu, [], [], [], [], [], [], Dict{String,Int}(), [], true)
   end
 
   function Base.show(io::IO, o::Net)
@@ -42,17 +47,30 @@ function geNetBusIdx(; net::Net, busName::String)::Int
   try
     return net.busDict[busName]
   catch
-    error("Bus $busName not found in the network")
+    error("Bus $(busName) not found in the network")
   end
 end
 
 function addBus!(; net::Net, busName::String, busType::String, vn_kV::Float64, vm_pu::Float64 = 1.0, va_deg::Float64 = 0.0, isAux::Bool = false)
-  @assert busType in ["Slack", "PQ", "PV"] "Invalid bus type: $busType"
-  busIdx = length(net.nodeVec) + 1
+  @assert busType in ["Slack", "SLACK", "PQ", "PV"] "Invalid bus type: $busType"
+  
+  if net._fabri == true
+    if haskey(net.busDict, busName)
+      error("Bus $busName already exists in the network")
+    end
+    busIdx = length(net.nodeVec) + 1
+    net.busDict[busName] = busIdx
+  else
+    busIdx = geNetBusIdx(net = net, busName = busName)
+  end
+
+    
+
+  
   node = Node(busIdx = busIdx, vn_kV = vn_kV, nodeType = toNodeType(busType), vm_pu = vm_pu, va_deg = va_deg, vmin_pu = net.vmin_pu, vmax_pu = net.vmax_pu, isAux = isAux)
   push!(net.nodeVec, node)
-  net.busDict[busName] = busIdx
-  if (busType == "Slack")
+  
+  if (busType == uppercase("Slack") )
     push!(net.slackVec, busIdx)
   end
 end
@@ -139,6 +157,13 @@ function validate(; net = Net)
   if length(net.branchVec) == 0
     @warn "No branches defined in the network"
     val = false
+  end
+  # Check if bus indices in ascending sequence
+  for (i,key) in enumerate(net.busDict)
+    if i != key[2]
+      @warn "Bus index mismatch for bus $(key[1])"
+      val = false
+    end
   end
   return val
 end
