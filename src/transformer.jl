@@ -193,7 +193,7 @@ mutable struct PowerTransformerWinding
     taps::Union{Nothing,PowerTransformerTaps} = nothing,
     isPu_RXGB::Union{Nothing,Bool} = nothing,
     modelData::Union{Nothing,TransformerModelParameters} = nothing,
-  )
+  )    
     new(Vn, r, x, b, g, ratio, shift_degree, ratedU, ratedS, taps, isPu_RXGB, modelData, isnothing(modelData))
   end
 
@@ -320,6 +320,18 @@ function isPerUnit_RXGB(o::PowerTransformerWinding)
     return false
   else
     return o.isPu_RXGB
+  end
+end
+
+function getWindingRatedS(o::PowerTransformerWinding)
+  if isnothing(o.ratedS)
+    if isnothing(o.modelData)
+      return nothing
+    else
+      return o.modelData.sn_MVA
+    end
+  else
+    return o.ratedS
   end
 end
 
@@ -484,12 +496,15 @@ function toString(o::TrafoTyp)::String
   end
 end
 
-function create2WTRatioTransformerNoTaps(; from::Int, to::Int, vn_hv_kv::Float64, vn_lv_kv::Float64, sn_mva::Float64, vk_percent::Float64, vkr_percent::Float64, pfe_kw::Float64, i0_percent::Float64)::PowerTransformer
-  c = getTrafoImpPGMComp(false, vn_hv_kv, from, to)
+function create2WTRatioTransformerNoTaps(; from::Int, to::Int, vn_hv_kV::Float64, vn_lv_kV::Float64, sn_mva::Float64, vk_percent::Float64, vkr_percent::Float64, pfe_kw::Float64, i0_percent::Float64)::PowerTransformer
+  c = getTrafoImpPGMComp(false, vn_hv_kV, from, to)
 
   modelData = TransformerModelParameters(sn_MVA = sn_mva, vk_percent = vk_percent, vkr_percent = vkr_percent, pk_kW = pfe_kw, i0_percent = i0_percent, p0_kW = 0.0)
-  w1 = PowerTransformerWinding(Vn_kV = vn_hv_kv, modelData = modelData)
-  w2 = PowerTransformerWinding(Vn_kV = vn_lv_kv, modelData = modelData)
+  w1 = PowerTransformerWinding(Vn_kV = vn_hv_kV, modelData = (vn_hv_kV >= vn_lv_kV ? modelData : nothing))
+  w2 = PowerTransformerWinding(Vn_kV = vn_lv_kV, modelData = (vn_hv_kV >= vn_lv_kV ? nothing : modelData))
+
+  @show w1
+  @show w2
 
   trafo = PowerTransformer(c, false, w1, w2, nothing, Sparlectra.Ratio)
   return trafo

@@ -43,7 +43,7 @@ export
   toComponentTyp,  getRXBG,
   # Transformers
   getSideNumber2WT,  getWinding2WT,  calcTransformerRatio, recalc_trafo_model_data, create2WTRatioTransformerNoTaps, create3WTWindings!,
-  getTrafoImpPGMComp,  getWT3AuxBusID,  isPerUnit_RXGB,
+  getTrafoImpPGMComp,  getWT3AuxBusID,  isPerUnit_RXGB, getWindingRatedS,
   # Nodes  
   setRatedS!,  setVmVa!,  addShuntPower!,  addLoadPower!,  addGenPower!,  getNodeVn,  isSlack,  isPVNode,  isPQNode, toNodeType,
   busComparison,   toString,
