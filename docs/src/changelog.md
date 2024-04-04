@@ -1,5 +1,12 @@
 # Change Log
 
+## Version 0.4.11 (2024-05-01)
+### New Features
+
+### Enhancements
+
+### Bug Fixes
+
 ## Version 0.4.10 (2024-05-01)
 
 ### New Features

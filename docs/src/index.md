@@ -1,21 +1,25 @@
-# Getting Started
+Sparlectra
+=============
 
-## Installation
+Sparlectra is a Julia package for the simulation of electrical power systems. It primarily features a program for calculating load flow using the Newton-Raphson method. The focus is to provide valuable insights into load flow calculations for both students and ambitious professionals. The package supports the import and export of Matpower .m files, although currently it only reads bus, generator, and branch data from these files. Please note that additional Matlab functions within the .m file are not supported. Additionally, you can create your own network using easy-to-use functions provided by the package.
 
+---
+
+#### Installation
+For installation, run the following command in the Julia REPL:
 ```julia
-using Pkg
+import Pkg
 Pkg.add("Sparlectra")
 ```
-
-## Importing a Matpower Network Configuration
+---
+#### Importing a Matpower Network Configuration
 
 This example demonstrates how to import a network configuration from a Matpower case file and run a power flow analysis on it. The casefile is located in the `data` directory of the package. The `run_acpflow` function is used to run the power flow analysis.
 
-### Example
+##### Example
 ```julia
 using Sparlectra
 using Logging
-global_logger(ConsoleLogger(stderr, Logging.Warn))  # Set global logger to log to stderr with WARN level
 
 file = "case3.m"
 tol = 1e-8
@@ -26,37 +30,12 @@ verbose = 0 # 0: no output, 1: iteration norm, 2: + Y-Bus, 3: + Jacobian, 4: + P
 run_acpflow(max_ite= ite,tol = tol, casefile=file)
 ```
 
+!!! Note 
+    Please note that providing support for individualized network data issues is beyond the scope of this project, as it is not maintained by an organization. Users are encouraged to take initiative in resolving such issues independently and sharing their results with the community.
 
-> Note: Network Data
-While contributions to the project are appreciated, please note that providing support for individualized network data issues is beyond the scope of this project, as it is not maintained by an organization. Users are encouraged to take initiative in resolving such issues independently and sharing their results with the community.
+---
 
-
-
-
-
-## Usage Guide for `Net` Module
-
-### Introduction
-The `Net` module provides functionality for creating and manipulating power system network models in Julia. It includes features for defining buses, branches, transformers, prosumers, and shunts, as well as methods for running power flow analysis.
-
-### Overview of `Net` Module
-
-The `Net` module consists of the following components:
-
-- `Net` struct: Represents a power system network.
-- Functions for adding components to the network:
-  - `addBus!`: Adds a bus to the network.
-  - `addShunt!`: Adds a shunt to a bus in the network.
-  - `addACLine!`: Adds an AC line segment between two buses in the network.
-  - `add2WTrafo!`: Adds a two-winding transformer between two buses in the network.
-  - `addProsumer!`: Adds a prosumer (generator or load) to a bus in the network.
-- Validation function:
-  - `validate`: Validates the network configuration.
-- Utility functions:
-  - `geNetBusIdx`: Gets the index of a bus in the network.
-
-
-### Creating a Network
+#### Creating a Network
 ```julia
 # Import the Net module
   using Sparlectra
@@ -98,15 +77,14 @@ The `Net` module consists of the following components:
   end
   
 ```
-### Exporting a Matpower Network Configuration
+---
+
+#### Exporting a Matpower Network Configuration
 Once you have created a network configuration, you can export it to a Matpower case file using the following function:
 ```julia
   writeMatpowerCasefile(myNet, filename)
 ```
+---
 
-
-
-
-
-
-
+#### Contributors
+- [Udo Schmitz](https://www.linkedin.com/in/udo-schmitz-315536250/) - Electrical Engineer
