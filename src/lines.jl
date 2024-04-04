@@ -11,17 +11,24 @@ mutable struct ACLineSegment <: AbstractBranch
   g::Union{Nothing,Float64}
   c_nf_per_km::Union{Nothing,Float64}
   tanδ::Union{Nothing,Float64}
+  ratedS::Union{Nothing,Float64}
 
-  function ACLineSegment(; vn_kv::Float64, from::Int, to::Int, length::Float64, r::Float64, x::Float64, c_nf_per_km::Union{Nothing,Float64} = nothing, tanδ::Union{Nothing,Float64} = nothing)
+  function ACLineSegment(; vn_kv::Float64, from::Int, to::Int, length::Float64, r::Float64, x::Float64, b::Union{Nothing,Float64} = nothing, c_nf_per_km::Union{Nothing,Float64} = nothing, 
+                           tanδ::Union{Nothing,Float64} = nothing, ratedS::Union{Nothing,Float64} = nothing)
+    
     c = getLineImpPGMComp(vn_kv, from, to)
-    g = 0.0
-    b = 0.0
-    if !isnothing(c_nf_per_km) && !isnothing(tanδ)
+    g = 0.0    
+    if !isnothing(b)      
+      b = b
+    elseif !isnothing(c_nf_per_km) && !isnothing(tanδ)
       y1_shunt_ = 2.0 * pi * 50.0 * c_nf_per_km * 1e-9 * (tanδ + im * 1.0)
       g = real(y1_shunt_)
       b = imag(y1_shunt_)
+    else
+      b = 0.0
     end
-    new(c, length, r, x, b, g, c_nf_per_km, tanδ)
+    
+    new(c, length, r, x, b, g, c_nf_per_km, tanδ, ratedS)
   end
 
   function Base.show(io::IO, acseg::ACLineSegment)
@@ -42,6 +49,9 @@ mutable struct ACLineSegment <: AbstractBranch
     end
     if !isnothing(acseg.tanδ)
       print(io, "tanδ: $(acseg.tanδ), ")
+    end
+    if !isnothing(acseg.ratedS)
+      print(io, "ratedS: $(acseg.ratedS), ")
     end
     print(io, ")")
   end

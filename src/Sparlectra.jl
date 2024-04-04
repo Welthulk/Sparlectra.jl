@@ -16,6 +16,7 @@ using Logging
 const Wurzel3 = 1.7320508075688772
 const SparlectraVersion = VersionNumber("0.4.10")
 abstract type AbstractBranch end
+
 export
   # constants
   Wurzel3, ComponentTyp,
@@ -41,10 +42,10 @@ export
   # Compomnent
   toComponentTyp,  getRXBG,
   # Transformers
-  getSideNumber2WT,  getWinding2WT,  calcTransformerRatio,  recalc_trafo_model_data,  create2WTRatioTransformerNoTaps,  create3WTWindings!,
+  getSideNumber2WT,  getWinding2WT,  calcTransformerRatio, recalc_trafo_model_data, create2WTRatioTransformerNoTaps, create3WTWindings!,
   getTrafoImpPGMComp,  getWT3AuxBusID,  isPerUnit_RXGB,
   # Nodes  
-  setRatedS!,  setVmVa!,  addShuntPower!,  addLoadPower!,  addGenPower!,  getNodeVn,  isSlack,  isPVNode,  toNodeType,
+  setRatedS!,  setVmVa!,  addShuntPower!,  addLoadPower!,  addGenPower!,  getNodeVn,  isSlack,  isPVNode,  isPQNode, toNodeType,
   busComparison,   toString,
   # Branch
   setBranchFlow!,  setBranchStatus!,
@@ -55,7 +56,7 @@ export
   # ProSumer
   isSlack, isGenerator, isAPUNode, setQGenReplacement!, getQGenReplacement, toProSumptionType,
   # Net
-  addBus!, addShunt!, addACLine!, add2WTrafo!, addProsumer!, validate, geNetBusIdx, setTotalLosses!, getTotalLosses,
+  addBus!, addShunt!, addACLine!, add2WTrafo!, addPIModellTrafo!, addProsumer!, lockNet!, validate, hasBusInNet, getNetOrigBusIdx, geNetBusIdx, setTotalLosses!, getTotalLosses, getBusType, get_bus_vn_kV, get_vn_kV,
   # create_powermat.jl
   casefileparser, createNetFromMatPowerFile,
   # exportMatPower.jl

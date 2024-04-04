@@ -20,7 +20,7 @@
   BranchC
 end
 
-@enum TrafoTyp UnknownT = 0 Ratio = 1 PhaseShifter = 2 PhaseTapChanger = 3
+@enum TrafoTyp UnknownT = 0 Ratio = 1 PhaseShifter = 2 PhaseTapChanger = 3 PIModel = 4
 
 @enum NodeType UnknownN = 0 PQ = 1 PV = 2 Slack = 3 Isolated = 4
 

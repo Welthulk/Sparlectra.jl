@@ -31,7 +31,7 @@ function run_acpflow(;max_ite::Int = 10, tol::Float64 = 1e-6, casefile::String, 
       println("Error: File $(in_path) not found")
       return
     end
-    myNet = createNetFromMatPowerFile(in_path, (verbose >= 1), false)
+    myNet = createNetFromMatPowerFile(in_path)
   else
     println("Error: File extension $(ext) not supported!")
     return
