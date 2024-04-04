@@ -53,10 +53,19 @@ mutable struct Branch
   pLosses::Union{Nothing,Float64}        # active power losses
   qLosses::Union{Nothing,Float64}        # reactive power losses
 
-  function Branch(; from::Int, to::Int, baseMVA::Float64, branch::AbstractBranch, id::Int, status::Integer = 1, ratio::Union{Nothing,Float64} = nothing, side::Union{Nothing,Int} = nothing, vn_kV::Union{Nothing,Float64} = nothing)
+  function Branch(; from::Int, to::Int, baseMVA::Float64, branch::AbstractBranch, id::Int, status::Integer = 1, ratio::Union{Nothing,Float64} = nothing, side::Union{Nothing,Int} = nothing, vn_kV::Union{Nothing,Float64} = nothing,
+                    fromOid::Union{Nothing,Int} = nothing, toOid::Union{Nothing,Int} = nothing)    
     if isa(branch, ACLineSegment) # Line
       @assert !isnothing(vn_kV) "vn_kV must be set for an ACLineSegment"
-      c = getBranchComp(vn_kV, from, to, id, "ACLine")
+      if isnothing(ratio)
+        ratio = 0.0
+      end
+      if !isnothing(fromOid) && !isnothing(toOid)
+        c = getBranchComp(vn_kV, fromOid, toOid, id, "ACL")
+      else
+        c = getBranchComp(vn_kV, from, to, id, "ACL")
+      end
+      c = getBranchComp(vn_kV, from, to, id, "ACL")
       r, x, b, g = getRXBG(branch)
       baseZ = (vn_kV)^2 / baseMVA
       r_pu = r / baseZ
@@ -65,8 +74,8 @@ mutable struct Branch
       g_pu = g * baseZ
       if isnothing(ratio)
         ratio = 0.0
-      end
-      new(c, from, to, r_pu, x_pu, b_pu, g_pu, ratio, 0.0, status, nothing, nothing, nothing, nothing, nothing)
+      end      
+      new(c, from, to, r_pu, x_pu, b_pu, g_pu, ratio, 0.0, status, branch.ratedS, nothing, nothing, nothing, nothing)
     elseif isa(branch, PowerTransformer) # Transformer     
       if (isnothing(side) && branch.isBiWinder)
         side = getSideNumber2WT(branch)
@@ -78,14 +87,25 @@ mutable struct Branch
       if isnothing(vn_kV)
         vn_kV = w.Vn
       end
-      c = getBranchComp(vn_kV, from, to, id, "Transformer")
+      if !isnothing(fromOid) && !isnothing(toOid)
+        c = getBranchComp(vn_kV, fromOid, toOid, id, "2WT")
+      else
+        c = getBranchComp(vn_kV, from, to, id, "2WT")
+      end
       sn_MVA = w.ratedS
       r, x, b, g = getRXBG(w)
-      baseZ = (vn_kV)^2 / baseMVA
-      r_pu = r / baseZ
-      x_pu = x / baseZ
-      b_pu = b * baseZ
-      g_pu = g * baseZ
+      if isPerUnit_RXGB(w)
+        r_pu = r
+        x_pu = x
+        b_pu = b
+        g_pu = g
+      else
+        baseZ = (vn_kV)^2 / sn_MVA
+        r_pu = r / baseZ
+        x_pu = x / baseZ
+        b_pu = b * baseZ
+        g_pu = g * baseZ
+      end
       if isnothing(ratio)
         ratio = 1.0
       end
@@ -96,7 +116,15 @@ mutable struct Branch
 
       new(c, from, to, r_pu, x_pu, b_pu, g_pu, ratio, angle, status, sn_MVA, nothing, nothing)
     elseif isa(branch, BranchModel) # PI-Model
-      c = getBranchComp(0.0, from, to, id, "Branch")
+      
+      vn = isnothing(vn_kV) ? 1.0 : vn_kV
+      
+      if !isnothing(fromOid) && !isnothing(toOid)
+        c = getBranchComp(vn, fromOid, toOid, id, "PI")
+      else
+        c = getBranchComp(vn, from, to, id, "PI")
+      end
+
       new(c, from, to, branch.r_pu, branch.x_pu, branch.b_pu, branch.g_pu, branch.ratio, branch.angle, status, branch.sn_MVA, nothing, nothing, nothing, nothing)
     else
       error("Branch type not supported")

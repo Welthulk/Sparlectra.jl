@@ -7,12 +7,10 @@ function casefileparser(filename)
   function processLine(line::AbstractString)::Vector{Float64}
     line = chop(line)  # Run chop here to remove unnecessary characters at the end of the line
     # Ignore comments after ;
-    if contains(line, "; ")
-      line = split(line, "; ")[1]
-    end
     if endswith(line, ';')
       line = chop(line[1:end-1])  # Remove semicolon at end if present
     end
+    
     try
       # Split by tabs and spaces
       values = split(line, ['\t', ' '])
@@ -101,7 +99,9 @@ function casefileparser(filename)
 
   isempty(bus_data_block) && error("Pattern not found")
 
-  bus_data_block = replace(bus_data_block, r"#.*\n" => "\n")
+  bus_data_block = replace(bus_data_block, r"%.*\n" => "\n")
+  branch_data_block = replace(branch_data_block, r"%.*\n" => "\n")
+  gen_data_block = replace(gen_data_block, r"%.*\n" => "\n")
 
   bus_zeilen = split(bus_data_block, '\n')
   gen_zeilen = split(gen_data_block, '\n')
