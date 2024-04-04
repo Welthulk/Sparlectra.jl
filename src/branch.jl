@@ -91,8 +91,10 @@ mutable struct Branch
         c = getBranchComp(vn_kV, fromOid, toOid, id, "2WT")
       else
         c = getBranchComp(vn_kV, from, to, id, "2WT")
-      end
-      sn_MVA = w.ratedS
+      end      
+      
+      sn_MVA = getWindingRatedS(w) 
+      @show sn_MVA
       r, x, b, g = getRXBG(w)
       if isPerUnit_RXGB(w)
         r_pu = r
@@ -100,6 +102,7 @@ mutable struct Branch
         b_pu = b
         g_pu = g
       else
+        @assert !isnothing(sn_MVA) "sn_MVA must be set for a PowerTransformer"
         baseZ = (vn_kV)^2 / sn_MVA
         r_pu = r / baseZ
         x_pu = x / baseZ
@@ -116,13 +119,12 @@ mutable struct Branch
 
       new(c, from, to, r_pu, x_pu, b_pu, g_pu, ratio, angle, status, sn_MVA, nothing, nothing)
     elseif isa(branch, BranchModel) # PI-Model
-      
-      vn = isnothing(vn_kV) ? 1.0 : vn_kV
+      @assert !isnothing(vn_kV) "vn_kV must be set for PI-Model"      
       
       if !isnothing(fromOid) && !isnothing(toOid)
-        c = getBranchComp(vn, fromOid, toOid, id, "PI")
+        c = getBranchComp(vn_kV, fromOid, toOid, id, "PI")
       else
-        c = getBranchComp(vn, from, to, id, "PI")
+        c = getBranchComp(vn_kV, from, to, id, "PI")
       end
 
       new(c, from, to, branch.r_pu, branch.x_pu, branch.b_pu, branch.g_pu, branch.ratio, branch.angle, status, branch.sn_MVA, nothing, nothing, nothing, nothing)
