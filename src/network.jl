@@ -18,6 +18,7 @@ Fields:
 - `shuntVec::Vector{Shunt}`: Vector containing shunts in the network.
 - `busDict::Dict{String,Int}`: Dictionary mapping bus names to indices.
 - `busOrigIdxDict::Dict{Int,Int}`: Dictionary mapping current bus indices to original indices.
+- `branchDict::Dict{Tuple{Int, Int},Int} : Dictionary mapping branch tuples to indices.
 - `totalLosses::Vector{Tuple{Float64,Float64}}`: Vector containing tuples of total power losses.
 - `_locked::Bool`: Boolean indicating if the network is locked.
 
@@ -37,6 +38,7 @@ Functions:
 - `get_vn_kV(; net::Net, busIdx::Int)`: Gets the voltage level of a bus by index.
 - `getBusType(; net::Net, busName::String)`: Gets the type of a bus by name.
 - `lockNet!(; net::Net, locked::Bool)`: Locks or unlocks the network.
+- `setBranchStatus!(; net::Net, branchIdx::Int, status::Int)`: Sets the status of a branch.
 - `setTotalLosses!(; net::Net, pLosses::Float64, qLosses::Float64)`: Sets the total losses of the network.
 - `getTotalLosses(; net::Net)`: Gets the total losses of the network.
 """
