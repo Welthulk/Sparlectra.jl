@@ -1,7 +1,6 @@
 # Author: Udo Schmitz (https://github.com/Welthulk)
 # Date: 22.05.2023
 # include-file equicircuit.jl
-
 function cubicSplineCoefs(x, y)
   n = length(x)
   h = diff(x)
@@ -59,45 +58,33 @@ function evaluateCubicSpline(x, a, b, c, d, x_new)
   return y_new
 end
 
-"""
-purpose: calculate the voltage dependence of a tap position
-+ xTaps: vector of tap positions
-+ yVKs: vector of voltage ratios
-+ tapPos: tap position
-"""
 function calcVKDependence(xTaps::Vector{Int}, yVKs::Vector{Float64}, tapPos::Float64)::Float64
   a, b, c, d = cubicSplineCoefs(xTaps, yVKs)
   vk = evaluateCubicSpline(xTaps, a, b, c, d, [tapPos])[1]
   return vk
 end
 
-"""
-purpose: calculate the complex tap ratio
-+ tapRatio: tap ratio
-+ ShiftAngle_grad: shift angle in degree
-"""
 function calcComplexRatio(tapRatio::Float64, ShiftAngle_grad::Float64)::ComplexF64
   tr = tapRatio * cosd(ShiftAngle_grad)
   ti = tapRatio * sind(ShiftAngle_grad)
   return tr + ti * im
 end
 
-"""
-purpose: calculate of neutral voltage. Tap position in neutral position.
-+ neutralU_ratio: neutral voltage ratio
-+ vn_hv: rated voltage high voltage side in kV
-+ tap_min: minimum tap position
-+ tap_max: maximum tap position
-+ tap_step_percent: tap step in percent
-"""
 function calcNeutralU(neutralU_ratio::Float64, vn_hv::Float64, tap_min::Integer, tap_max::Integer, tap_step_percent::Float64)::Float64
   return round(neutralU_ratio * vn_hv + (tap_max - tap_min) * tap_step_percent / 100.0, digits = 0)
 end
 
 """
-createYBUS: Create the admittance matrix YBUS from the branch vector and the slack index
-#cs: counter system (or meetering system?) (GER: "Zählpfeilsystem") [1= Consumer, 2= Producer]
-#tc: tap Changer side in equicircuit: [fromBus=1, toBus=2]
+createYBUS: Create the admittance matrix YBUS from the branch vector and the slack index.
+
+Parameters:
+- `branchVec::Vector{Branch}`: Vector of branch objects representing the network branches.
+- `shuntVec::Vector{Shunt}`: Vector of shunt objects representing shunt elements in the network.
+- `sparse::Bool = true`: Optional parameter indicating whether to create a sparse YBUS matrix (default is true).
+- `printYBUS::Bool = false`: Optional parameter indicating whether to print the YBUS matrix (default is false).
+
+Returns:
+- `Y::SparseMatrixCSC{ComplexF64}` or `Array{ComplexF64}`: The YBUS admittance matrix.
 """
 function createYBUS(branchVec::Vector{Branch}, shuntVec::Vector{Shunt}, sparse::Bool = true, printYBUS::Bool = false)
   @assert length(branchVec) > 0 "branchVec must not be empty"
@@ -202,6 +189,17 @@ function createYBUS(branchVec::Vector{Branch}, shuntVec::Vector{Shunt}, sparse::
   return Y
 end
 
+"""
+adjacentBranches: Find adjacent branches for each node in the network.
+
+Parameters:
+- `Y::AbstractMatrix{ComplexF64}`: Admittance matrix of the network.
+- `log::Bool = false`: Optional parameter indicating whether to print the adjacent branches (default is false).
+
+Returns:
+- `adjList::Vector{Vector{Int}}`: Vector of vectors containing the indices of adjacent branches for each node.
+
+"""
 function adjacentBranches(Y::AbstractMatrix{ComplexF64}, log::Bool = false)::Vector{Vector{Int}}
   n = size(Y, 1)
   adjList = Vector{Vector{Int}}(undef, n)

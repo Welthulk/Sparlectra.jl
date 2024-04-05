@@ -255,7 +255,7 @@ mutable struct PowerTransformerWinding
   end
 end
 
-"""
+#=
 purpose: recalculation model data of transformer
 input:
 baseMVA: 
@@ -265,7 +265,7 @@ r_pu: short circuit resistance, p.u.
 x_pu: short circuit reaktance, p.u.
 bm: open loop magnitacation, p.u.
 hint: gm is set to zero, g_pu = 0.0!
-"""
+=#
 function recalc_trafo_model_data(; baseMVA::Float64, Sn_MVA::Float64, ratedU_kV::Float64, r_pu::Float64, x_pu::Float64, b_pu::Float64, isPerUnit::Bool)::TransformerModelParameters
   Pfe_kW = 0.0 # -> g_pu = 0.0
   if isPerUnit
