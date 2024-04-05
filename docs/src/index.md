@@ -11,6 +11,7 @@ For installation, run the following command in the Julia REPL:
 import Pkg
 Pkg.add("Sparlectra")
 ```
+
 ---
 
 #### Contributors

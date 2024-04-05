@@ -1,4 +1,4 @@
-Netowrks Module
+Network Module
 =============
 The `Net` module provides functionality for creating and manipulating power system network models in Julia. It includes features for defining buses, branches, transformers, prosumers, and shunts, as well as methods for running power flow analysis.
 

@@ -15,8 +15,3 @@ makedocs(
     "changelog.md"
   ]
 )
-
-deploydocs(
-    repo = "github.com/Welthulk/Sparlectra.jl.git",
-    target = "build",
-)
