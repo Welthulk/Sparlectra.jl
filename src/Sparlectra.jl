@@ -6,16 +6,13 @@ module Sparlectra
 # The project follows the Julia Naming Conventions for the most part, 
 # but it's important to note that the naming convention for functions might deviate. 
 # In this module, functions are written in CamelCase with a lowercase initial letter. 
-using LinearAlgebra
-using SparseArrays
-using Printf
-using Logging
-
+using LinearAlgebra, SparseArrays, Printf, Logging
 
 # resource data types for working with Sparlectra
 const Wurzel3 = 1.7320508075688772
 const SparlectraVersion = VersionNumber("0.4.10")
 abstract type AbstractBranch end
+
 export
   # constants
   Wurzel3, ComponentTyp,
@@ -41,10 +38,10 @@ export
   # Compomnent
   toComponentTyp,  getRXBG,
   # Transformers
-  getSideNumber2WT,  getWinding2WT,  calcTransformerRatio,  recalc_trafo_model_data,  create2WTRatioTransformerNoTaps,  create3WTWindings!,
-  getTrafoImpPGMComp,  getWT3AuxBusID,  isPerUnit_RXGB,
+  getSideNumber2WT,  getWinding2WT,  calcTransformerRatio, recalc_trafo_model_data, create2WTRatioTransformerNoTaps, create3WTWindings!,
+  getTrafoImpPGMComp,  getWT3AuxBusID,  isPerUnit_RXGB, getWindingRatedS,
   # Nodes  
-  setRatedS!,  setVmVa!,  addShuntPower!,  addLoadPower!,  addGenPower!,  getNodeVn,  isSlack,  isPVNode,  toNodeType,
+  setRatedS!,  setVmVa!,  addShuntPower!,  addLoadPower!,  addGenPower!,  getNodeVn,  isSlack,  isPVNode,  isPQNode, toNodeType,
   busComparison,   toString,
   # Branch
   setBranchFlow!,  setBranchStatus!,
@@ -55,7 +52,8 @@ export
   # ProSumer
   isSlack, isGenerator, isAPUNode, setQGenReplacement!, getQGenReplacement, toProSumptionType,
   # Net
-  addBus!, addShunt!, addACLine!, add2WTrafo!, addProsumer!, validate, geNetBusIdx, setTotalLosses!, getTotalLosses,
+  addBus!, addShunt!, addACLine!, add2WTrafo!, addPIModellTrafo!, addProsumer!, lockNet!, validate, hasBusInNet, 
+  getNetOrigBusIdx, geNetBusIdx, setBranchStatus!, setTotalLosses!, getTotalLosses, getBusType, get_bus_vn_kV, get_vn_kV,
   # create_powermat.jl
   casefileparser, createNetFromMatPowerFile,
   # exportMatPower.jl
@@ -73,7 +71,7 @@ export
   printACPFlowResults, convertPVtoPQ!,
 
   # run_acpflow.jl
-  run_acpflow
+  run_acpflow, run_net_acpflow
 
 
 include("component.jl")

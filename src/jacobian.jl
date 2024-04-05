@@ -218,12 +218,20 @@ function getPowerFeeds(busVec::Vector{BusData}, n_pq::Int, n_pv::Int, log::Bool 
   return power_feeds
 end
 
-"""
- Matrix formulation of calculation of node powers
- S = Vdiag * conj(Y*V) 
- V: vector of complex voltages, 
- Y: Y-Bus Matrix
-"""
+#=
+Matrix formulation of calculation of node powers.
+S = Vdiag * conj(Y*V)
+
+- `Y::AbstractMatrix{ComplexF64}`: Y-Bus matrix.
+- `busVec::Vector{BusData}`: Vector of bus data.
+- `feeders::Vector{Float64}`: Vector of feeders.
+- `n_pq::Int`: Number of PQ buses.
+- `n_pv::Int`: Number of PV buses.
+- `log::Bool`: Whether to log intermediate results.
+
+# Returns
+A vector representing the residuum.
+=#
 function residuum(Y::AbstractMatrix{ComplexF64}, busVec::Vector{BusData}, feeders::Vector{Float64}, n_pq::Int, n_pv::Int, log::Bool)::Vector{Float64}
   # create complex vector of voltages
   V = [bus.vm_pu * exp(im * bus.va_rad) for bus in busVec]
@@ -241,7 +249,7 @@ function residuum(Y::AbstractMatrix{ComplexF64}, busVec::Vector{BusData}, feeder
 
   vindex = 0
   pfIdx = 0
-  for bus in busVec
+  @inbounds for bus in busVec
     pfIdx += 1
     if bus.type == Sparlectra.PQ
       vindex += 1
@@ -501,7 +509,25 @@ function calcJacobian(Y::AbstractMatrix{ComplexF64}, busVec::Vector{BusData}, ad
   return jacobian
 end
 
-# main function for calculation Newton-Raphson
+#=
+Performs the Newton-Raphson power flow calculation.
+
+# Arguments
+- `Y::AbstractMatrix{ComplexF64}`: Y-Bus matrix.
+- `nodes::Vector{Node}`: Vector of nodes.
+- `Sbase_MVA::Float64`: Base MVA of the system.
+- `maxIte::Int`: Maximum number of iterations.
+- `tolerance::Float64 = 1e-6`: Tolerance for convergence (default: 1e-6).
+- `verbose::Int = 0`: Verbosity level (default: 0).
+- `sparse::Bool = false`: Whether to use sparse matrices (default: false).
+
+# Returns
+A tuple containing the number of iterations and the result of the calculation:
+- `0`: Convergence reached.
+- `1`: No convergence.
+- `2`: Unsolvable system of equations.
+- `3`: Error.
+=#
 function calcNewtonRaphson!(Y::AbstractMatrix{ComplexF64}, nodes::Vector{Node}, Sbase_MVA::Float64, maxIte::Int, tolerance::Float64 = 1e-6, verbose::Int = 0, sparse::Bool = false)
   @debug global debug = true
 
@@ -641,6 +667,22 @@ function calcNewtonRaphson!(Y::AbstractMatrix{ComplexF64}, nodes::Vector{Node}, 
   return iteration_count, erg
 end
 
+"""
+Runs the power flow calculation using the Newton-Raphson method.
+
+# Arguments
+- `net::Net`: Network data structure.
+- `maxIte::Int`: Maximum number of iterations.
+- `tolerance::Float64 = 1e-6`: Tolerance for convergence (default: 1e-6).
+- `verbose::Int = 0`: Verbosity level (default: 0).
+
+# Returns
+A tuple containing the number of iterations and the result of the calculation:
+- `0`: Convergence reached.
+- `1`: No convergence.
+- `2`: Unsolvable system of equations.
+- `3`: Error.
+"""
 function runpf!(net::Net, maxIte::Int, tolerance::Float64 = 1e-6, verbose::Int = 0)
   sparse = false
   printYBus = false

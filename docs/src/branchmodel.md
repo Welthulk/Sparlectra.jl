@@ -1,5 +1,5 @@
-## Branch Model
-
+Network Branch Model
+=============
 Each branch is treated with the same four-terminal network model. It is a four-terminal network with an ideal transformer connected upstream. For power lines, the transmission ratio \(N\) is set to 1. For transformers, the transformation ratio \(N\) is given as a complex value. The admittance matrix \(Y\) looks like this:
 
 

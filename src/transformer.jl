@@ -171,6 +171,7 @@ mutable struct PowerTransformerWinding
   x::Float64                                 # cim:PowerTransformerEnd.x in Ohm
   b::Union{Nothing,Float64}                  # cim:PowerTransformerEnd.b in S
   g::Union{Nothing,Float64}                  # cim:PowerTransformerEnd.g in S
+  ratio::Union{Nothing,Float64}              # cim:PowerTransformerEnd.ratio
   shift_degree::Union{Nothing,Float64}       # cim:PowerTransformerEnd.phaseAngleClock 
   ratedU::Union{Nothing,Float64}             # cim:PowerTransformerEnd.ratedU
   ratedS::Union{Nothing,Float64}             # cim:PowerTransformerEnd.ratedS  
@@ -185,19 +186,21 @@ mutable struct PowerTransformerWinding
     x::Float64,
     b::Union{Nothing,Float64} = nothing,
     g::Union{Nothing,Float64} = nothing,
+    ratio::Union{Nothing,Float64} = nothing,
     shift_degree::Union{Nothing,Float64} = nothing,
     ratedU::Union{Nothing,Float64} = nothing,
     ratedS::Union{Nothing,Float64} = nothing,
     taps::Union{Nothing,PowerTransformerTaps} = nothing,
     isPu_RXGB::Union{Nothing,Bool} = nothing,
     modelData::Union{Nothing,TransformerModelParameters} = nothing,
-  )
-    new(Vn, r, x, b, g, shift_degree, ratedU, ratedS, taps, isPu_RXGB, modelData, isnothing(modelData))
+  )    
+    new(Vn, r, x, b, g, ratio, shift_degree, ratedU, ratedS, taps, isPu_RXGB, modelData, isnothing(modelData))
   end
 
   function PowerTransformerWinding(;
     Vn_kV::Float64,
     modelData::Union{Nothing,TransformerModelParameters} = nothing,
+    ratio::Union{Nothing,Float64} = nothing,
     shift_degree::Union{Nothing,Float64} = nothing,
     ratedU::Union{Nothing,Float64} = nothing,
     ratedS::Union{Nothing,Float64} = nothing,
@@ -209,10 +212,10 @@ mutable struct PowerTransformerWinding
     end
 
     if isnothing(modelData)
-      new(Vn_kV, 0.0, 0.0, 0.0, 0.0, shift_degree, ratedU, ratedS, taps, false, nothing, true)
+      new(Vn_kV, 0.0, 0.0, 0.0, 0.0, ratio, shift_degree, ratedU, ratedS, taps, false, nothing, true)
     else
       r, x, b, g = calcTransformerRXGB(ratedU, modelData)
-      new(Vn_kV, r, x, b, g, shift_degree, ratedU, ratedS, taps, false, modelData, false)
+      new(Vn_kV, r, x, b, g, ratio, shift_degree, ratedU, ratedS, taps, false, modelData, false)
     end
   end
 
@@ -221,36 +224,38 @@ mutable struct PowerTransformerWinding
     print(io, "Vn=$(x.Vn), ")
     print(io, "r=$(x.r), ")
     print(io, "x=$(x.x), ")
-    if !(isnothing(x.b))
+    if !isnothing(x.b)
       print(io, "b=$(x.b), ")
     end
-    if !(isnothing(x.g))
+    if !isnothing(x.g)
       print(io, "g=$(x.g), ")
     end
-    if !(isnothing(x.shift_degree))
+    if !isnothing(x.ratio)
+      print(io, "ratio=$(x.ratio), ")
+    end
+    if !isnothing(x.shift_degree)
       print(io, "shift_degree=$(x.shift_degree), ")
     end
-    if !(isnothing(x.ratedU))
+    if !isnothing(x.ratedU)
       print(io, "ratedU=$(x.ratedU), ")
     end
-    if !(isnothing(x.ratedS))
+    if !isnothing(x.ratedS)
       print(io, "ratedS=$(x.ratedS), ")
     end
-    if !(isnothing(x.taps))
+    if !isnothing(x.taps)
       print(io, "taps=$(x.taps), ")
     end
-    if !(isnothing(x.isPu_RXGB))
+    if !isnothing(x.isPu_RXGB)
       print(io, "isPu_RXGB=$(x.isPu_RXGB), ")
     end
-    if !(isnothing(x.modelData))
-      print(io, "$(x.modelData), ")
+    if !isnothing(x.modelData)
+      print(io, "modelData=$(x.modelData), ")
     end
-    print(io, "$(x._isEmpty) ")
     print(io, ")")
   end
 end
 
-"""
+#=
 purpose: recalculation model data of transformer
 input:
 baseMVA: 
@@ -260,7 +265,7 @@ r_pu: short circuit resistance, p.u.
 x_pu: short circuit reaktance, p.u.
 bm: open loop magnitacation, p.u.
 hint: gm is set to zero, g_pu = 0.0!
-"""
+=#
 function recalc_trafo_model_data(; baseMVA::Float64, Sn_MVA::Float64, ratedU_kV::Float64, r_pu::Float64, x_pu::Float64, b_pu::Float64, isPerUnit::Bool)::TransformerModelParameters
   Pfe_kW = 0.0 # -> g_pu = 0.0
   if isPerUnit
@@ -315,6 +320,18 @@ function isPerUnit_RXGB(o::PowerTransformerWinding)
     return false
   else
     return o.isPu_RXGB
+  end
+end
+
+function getWindingRatedS(o::PowerTransformerWinding)
+  if isnothing(o.ratedS)
+    if isnothing(o.modelData)
+      return nothing
+    else
+      return o.modelData.sn_MVA
+    end
+  else
+    return o.ratedS
   end
 end
 
@@ -391,7 +408,7 @@ mutable struct PowerTransformer <: AbstractBranch
     print(io, "tapSideNumber=$(x.tapSideNumber), ")
     print(io, "equiParms=$(x._equiParms), ")
     println(io, "") # next line
-    println(io, "side1=$(x.side1), ")
+    println(io, "side1=$(x.side1), ")    
     if (isnothing(x.side3))
       print(io, "side2=$(x.side2) ")
     else
@@ -479,12 +496,12 @@ function toString(o::TrafoTyp)::String
   end
 end
 
-function create2WTRatioTransformerNoTaps(; from::Int, to::Int, vn_hv_kv::Float64, vn_lv_kv::Float64, sn_mva::Float64, vk_percent::Float64, vkr_percent::Float64, pfe_kw::Float64, i0_percent::Float64)::PowerTransformer
-  c = getTrafoImpPGMComp(false, vn_hv_kv, from, to)
+function create2WTRatioTransformerNoTaps(; from::Int, to::Int, vn_hv_kV::Float64, vn_lv_kV::Float64, sn_mva::Float64, vk_percent::Float64, vkr_percent::Float64, pfe_kw::Float64, i0_percent::Float64)::PowerTransformer
+  c = getTrafoImpPGMComp(false, vn_hv_kV, from, to)
 
   modelData = TransformerModelParameters(sn_MVA = sn_mva, vk_percent = vk_percent, vkr_percent = vkr_percent, pk_kW = pfe_kw, i0_percent = i0_percent, p0_kW = 0.0)
-  w1 = PowerTransformerWinding(Vn_kV = vn_hv_kv, modelData = modelData)
-  w2 = PowerTransformerWinding(Vn_kV = vn_lv_kv, modelData = modelData)
+  w1 = PowerTransformerWinding(Vn_kV = vn_hv_kV, modelData = (vn_hv_kV >= vn_lv_kV ? modelData : nothing))
+  w2 = PowerTransformerWinding(Vn_kV = vn_lv_kV, modelData = (vn_hv_kV >= vn_lv_kV ? nothing : modelData))
 
   trafo = PowerTransformer(c, false, w1, w2, nothing, Sparlectra.Ratio)
   return trafo

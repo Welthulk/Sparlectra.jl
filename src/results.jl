@@ -30,6 +30,7 @@ function formatBranchResults(net::Net)
       pLossval = (br.pLosses === nothing) ? NaN : br.pLosses
       qLossval = (br.qLosses === nothing) ? NaN : br.qLosses
       ratedS = isnothing(br.sn_MVA) ? 0.0 : br.sn_MVA
+      
       check = false
       if ratedS > 0.0
         if max(abs(pfromVal), abs(ptoVal)) > ratedS

@@ -41,8 +41,14 @@ mutable struct Node
     vmin_pu::Union{Nothing,Float64} = nothing,
     vmax_pu::Union{Nothing,Float64} = nothing,
     isAux::Bool = false,
+    oBusIdx::Union{Nothing,Int} = nothing,
   )
-    c = getNocdeComp(vn_kV, busIdx, nodeType, isAux)
+    bIdx = busIdx
+    if !isnothing(oBusIdx)
+      bIdx = oBusIdx      
+    end
+    c = getNocdeComp(vn_kV, bIdx, nodeType, isAux)
+    
     new(c, busIdx, nodeType, ratedS, zone, area, vm_pu, va_deg, pƩLoad, qƩLoad, pShunt, qShunt, pƩGen, qƩGen, vmin_pu, vmax_pu)
   end
 
@@ -155,9 +161,11 @@ function busComparison(node1::Node, node2::Node)
   node1.busIdx < node2.busIdx
 end
 
-function setVmVa!(; node::Node, vm_pu::Float64, va_deg::Float64)
+function setVmVa!(; node::Node, vm_pu::Float64, va_deg::Union{Nothing, Float64} = nothing)
   node._vm_pu = vm_pu
-  node._va_deg = va_deg
+  if !isnothing(va_deg)
+    node._va_deg = va_deg
+  end  
 end
 
 function isSlack(o::Sparlectra.Node)
@@ -172,8 +180,16 @@ function getNodeVn(o::Node)::Float64
   return o.comp.cVN
 end
 
+function isPQNode(o::Node)
+  if o._nodeType == Sparlectra.PQ
+    return true
+  else
+    return false
+  end
+end
+
 function isPVNode(o::Node)
-  if o._nodeType == Sparlectra.PV
+  if o._nodeType == Sparlectra.PV || o._nodeType == Sparlectra.Slack
     return true
   else
     return false
