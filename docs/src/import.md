@@ -1,4 +1,4 @@
-Import and Export Netowrks Module
+Import and Export Network Configuration
 =============
 #### Importing a Matpower Network Configuration
 
