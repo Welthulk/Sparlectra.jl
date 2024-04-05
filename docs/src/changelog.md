@@ -4,8 +4,11 @@
 ### New Features
 
 ### Enhancements
+- added functions to facilitate the creation of networks
+- added documentation make file
 
 ### Bug Fixes
+- import and parser for Matpower .m files
 
 ## Version 0.4.10 (2024-05-01)
 

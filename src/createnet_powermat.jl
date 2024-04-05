@@ -25,6 +25,17 @@ function _createDict()
   return busDict, genDict, branchDict
 end
 
+"""
+Creates a network from a MatPower case file.
+
+# Arguments
+- `filename`: Path to the MatPower case file.
+- `log::Bool = false`: Whether to log information (default: false).
+
+# Returns
+A Net object representing the network.
+
+"""
 function createNetFromMatPowerFile(filename, log::Bool = false)::Net
   function pInfo(msg::String)
     if log

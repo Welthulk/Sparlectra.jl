@@ -12,8 +12,7 @@ Parameters:
 - printResultToFile: Bool, flag to print results to a file (default: false).
 - printResultAnyCase: Bool, flag to print results even if the power flow fails (default: false).
 """
-
-function run_acpflow(;max_ite::Int = 10, tol::Float64 = 1e-6, casefile::String, path::Union{Nothing,String} = nothing, verbose::Int = 0, printResultToFile::Bool = false, printResultAnyCase::Bool = false)
+function run_acpflow(;max_ite::Int = 10, tol::Float64 = 1e-6, casefile::String, path::Union{Nothing,String} = nothing, verbose::Int = 0, printResultToFile::Bool = false, printResultAnyCase::Bool = false)::Net
   ext = splitext(casefile)[2]  # Get the file extension
   myNet = nothing              # Initialize myNet variable
   in_path = nothing
@@ -53,4 +52,39 @@ function run_acpflow(;max_ite::Int = 10, tol::Float64 = 1e-6, casefile::String, 
   else
     @error "Errors during calculation of Newton-Raphson"
   end
+
+  return myNet
+end
+
+"""
+Function to perform AC power flow analysis.
+
+Parameters:
+- net: Net, the network object.
+- max_ite: Int, the maximum number of iterations for the power flow algorithm (default: 10).
+- tol: Float64, tolerance for convergence criterion (default: 1e-6).
+- verbose: Int, verbosity level for output (default: 0).
+- printResultToFile: Bool, flag to print results to a file (default: false).
+- printResultAnyCase: Bool, flag to print results even if the power flow fails (default: false).
+"""
+function run_net_acpflow(;net::Net, max_ite::Int = 10, tol::Float64 = 1e-6, verbose::Int = 0, printResultToFile::Bool = false, printResultAnyCase::Bool = false)
+  
+  # Run power flow
+  ite = 0
+  etime = @elapsed begin
+    ite, erg = runpf!(net, max_ite, tol, verbose)
+  end
+
+  if erg == 0 || printResultAnyCase
+    # Calculate network losses and print results
+    calcNetLosses!(net)
+    jpath = printResultToFile ? out_path : ""
+    printACPFlowResults(net, etime, ite, tol, printResultToFile, jpath)
+  elseif erg == 1
+    println("Newton-Raphson did not converge")
+  else
+    @error "Errors during calculation of Newton-Raphson"
+  end
+
+  
 end

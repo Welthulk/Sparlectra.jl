@@ -288,6 +288,21 @@ function writeBranchData(sb_mva::Float64, branchVec::Vector{Branch}, file)
   write(file, "];\n")
 end # writeBranchData
 
+"""
+    writeMatpowerCasefile(net::Net, pathfilename::String)
+
+Write Matpower case files.
+
+# Arguments
+- `net::Net`: Network object.
+- `pathfilename::String`: Path and filename to write the Matpower case file.
+
+# Example
+```julia
+net = Net(...)
+writeMatpowerCasefile(net, "casefile.m")
+```
+"""
 function writeMatpowerCasefile(net::Net, pathfilename::String)
   
   base, ext = splitext(pathfilename)
