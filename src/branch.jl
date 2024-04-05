@@ -93,8 +93,7 @@ mutable struct Branch
         c = getBranchComp(vn_kV, from, to, id, "2WT")
       end      
       
-      sn_MVA = getWindingRatedS(w) 
-      @show sn_MVA
+      sn_MVA = getWindingRatedS(w)       
       r, x, b, g = getRXBG(w)
       if isPerUnit_RXGB(w)
         r_pu = r

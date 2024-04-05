@@ -503,9 +503,6 @@ function create2WTRatioTransformerNoTaps(; from::Int, to::Int, vn_hv_kV::Float64
   w1 = PowerTransformerWinding(Vn_kV = vn_hv_kV, modelData = (vn_hv_kV >= vn_lv_kV ? modelData : nothing))
   w2 = PowerTransformerWinding(Vn_kV = vn_lv_kV, modelData = (vn_hv_kV >= vn_lv_kV ? nothing : modelData))
 
-  @show w1
-  @show w2
-
   trafo = PowerTransformer(c, false, w1, w2, nothing, Sparlectra.Ratio)
   return trafo
 end

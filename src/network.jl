@@ -75,12 +75,13 @@ function addBus!(; net::Net, busName::String, busType::String, vn_kV::Float64, v
     end
   end
 
+  if (uppercase(busType) == "SLACK")    
+    push!(net.slackVec, busIdx)
+  end
+
   node = Node(busIdx = busIdx, vn_kV = vn_kV, nodeType = toNodeType(busType), vm_pu = vm_pu, va_deg = va_deg, vmin_pu = vmin_pu, vmax_pu = vmax_pu, isAux = isAux, oBusIdx = oBusIdx, zone = zone, area = area, ratedS = ratedS)
   push!(net.nodeVec, node)
   
-  if (busType == uppercase("Slack") )
-    push!(net.slackVec, busIdx)
-  end
 end
 
 function addShunt!(; net::Net, busName::String, pShunt::Float64, qShunt::Float64, in_service::Int = 1)  
@@ -124,8 +125,10 @@ function addACLine!(; net::Net, fromBus::String, toBus::String, length::Float64,
   vn_2_kV = getNodeVn(net.nodeVec[to])
   @assert vn_kV == vn_2_kV "Voltage level of the from bus $(vn_kV) does not match the to bus $(vn_2_kV)"
   acseg = ACLineSegment(vn_kv = vn_kV, from = from, to = to, length = length, r = r, x = x, b = b, c_nf_per_km = c_nf_per_km, tanδ = tanδ, ratedS = ratedS)
-  addBranch!(net = net, from = from, to = to, branch = acseg, vn_kV = vn_kV, status = status)
   push!(net.linesAC, acseg)
+
+  addBranch!(net = net, from = from, to = to, branch = acseg, vn_kV = vn_kV, status = status)
+  
 end
 
 # Transformer from Matpower Data
@@ -139,8 +142,10 @@ function addPIModellTrafo!(; net::Net, fromBus::String, toBus::String, r_pu::Flo
   w2 = PowerTransformerWinding(vn_lv_kV, 0.0, 0.0)
   comp = getTrafoImpPGMComp(isAux, vn_hv_kV, from, to)
   trafo = PowerTransformer(comp, false, w1, w2, nothing, Sparlectra.PIModel)
-  addBranch!(net = net, from = from, to = to, branch = trafo, status = status, ratio = ratio, side = 1, vn_kV = vn_hv_kV)
   push!(net.trafos, trafo)
+  
+  addBranch!(net = net, from = from, to = to, branch = trafo, status = status, ratio = ratio, side = 1, vn_kV = vn_hv_kV)
+  
 end
 
 function add2WTrafo!(; net::Net, fromBus::String, toBus::String, sn_mva::Float64, vk_percent::Float64, vkr_percent::Float64, pfe_kw::Float64, i0_percent::Float64, status::Int = 1)
@@ -148,14 +153,14 @@ function add2WTrafo!(; net::Net, fromBus::String, toBus::String, sn_mva::Float64
   to = geNetBusIdx(net = net, busName = toBus)
   vn_hv_kV = getNodeVn(net.nodeVec[from])
   vn_lv_kV = getNodeVn(net.nodeVec[to])
-  #@assert n_hv_kV == vn_hv_kV "Voltage level of the from bus $(n_hv_kV) does not match the transformer's high voltage side $(vn_hv_kV)"
-  #@assert n_lv_kV == vn_lv_kV "Voltage level of the to bus $(n_lv_kV) does not match the transformer's low voltage side $(vn_lv_kV)"
 
-  trafo = create2WTRatioTransfor>merNoTaps(from = from, to = to, vn_hv_kv = vn_hv_kV, vn_lv_kv = vn_lv_kV, sn_mva = sn_mva, vk_percent = vk_percent, vkr_percent = vkr_percent, pfe_kw = pfe_kw, i0_percent = i0_percent)
+  trafo = create2WTRatioTransformerNoTaps(from = from, to = to, vn_hv_kV = vn_hv_kV, vn_lv_kV = vn_lv_kV, sn_mva = sn_mva, vk_percent = vk_percent, vkr_percent = vkr_percent, pfe_kw = pfe_kw, i0_percent = i0_percent)
   side = getSideNumber2WT(trafo)
   ratio = calcTransformerRatio(trafo)
-  addBranch!(net = net, from = from, to = to, branch = trafo, status = status, ratio = ratio, side = side, vn_kV = vn_hv_kV)
   push!(net.trafos, trafo)
+  
+  addBranch!(net = net, from = from, to = to, branch = trafo, status = status, ratio = ratio, side = side, vn_kV = vn_hv_kV)
+  
 end
 
 function addProsumer!(; net::Net, busName::String, type::String, p::Union{Nothing,Float64} = nothing, q::Union{Nothing,Float64} = nothing, pMin::Union{Nothing,Float64} = nothing, pMax::Union{Nothing,Float64} = nothing, 
