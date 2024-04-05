@@ -165,8 +165,7 @@ function writeGeneratorData(sb_mva::Float64, NodeDict::Dict{Int,Node}, ProSumVec
     pmax = sb_mva
     pmin = -1.0 * sb_mva
     pc1 = pc2 = qc1min = qc1max = qc2min = qc2max = ramp_agc = ramp_10 = ramp_30 = ramp_q = apf = 0.0
-    line = string(
-      slackIdx,
+    line = string(slackIdx,
       "\t",
       p,
       "\t",
@@ -289,13 +288,28 @@ function writeBranchData(sb_mva::Float64, branchVec::Vector{Branch}, file)
   write(file, "];\n")
 end # writeBranchData
 
+"""
+    writeMatpowerCasefile(net::Net, pathfilename::String)
+
+Write Matpower case files.
+
+# Arguments
+- `net::Net`: Network object.
+- `pathfilename::String`: Path and filename to write the Matpower case file.
+
+# Example
+```julia
+net = Net(...)
+writeMatpowerCasefile(net, "casefile.m")
+```
+"""
 function writeMatpowerCasefile(net::Net, pathfilename::String)
   
   base, ext = splitext(pathfilename)
 
   case = basename(base)
   base = base * ".m"
-  @info "convertion to Matpower CASE-Files, Testcase: ($case), Filename: ($filename)"
+  @info "convertion to Matpower CASE-Files, Testcase: ($case)"
   NodeDict = Dict{Int,Node}()
   for n in net.nodeVec
     NodeDict[n.busIdx] = n

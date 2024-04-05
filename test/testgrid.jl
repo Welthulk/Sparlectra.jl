@@ -8,7 +8,7 @@ using BenchmarkTools
 using Logging
 
 function test_acpflow(verbose::Int = 0)
-  net = testCreateNetworkFromScratch(false)
+  net = testCreateNetworkFromScratch()
   tol = 1e-6
   maxIte = 10  
   print_results = (verbose > 0)
@@ -30,7 +30,7 @@ function test_acpflow(verbose::Int = 0)
 end
 
 function test_NBI_MDO()
-  myNet = testCreateNetworkFromScratch(false)
+  myNet = testCreateNetworkFromScratch()
   result = true
 
   nodeNumberVec = Vector{Int}()
@@ -64,8 +64,9 @@ function test_NBI_MDO()
 end
 
 function testNetwork()::Bool
-  myNet = testCreateNetworkFromScratch(false)  
-  return validate(net = myNet)
+  myNet = testCreateNetworkFromScratch()  
+  result, msg = validate(net = myNet)
+  return result
 end
 
 function getTestFilePathName()
@@ -96,7 +97,7 @@ function rmTestfiles()
   return true
 end
 
-function testCreateNetworkFromScratch(verbose::Bool = false)::Net
+function testCreateNetworkFromScratch()::Net
   Sbase_MVA = 1000.0
   netName = "cigre"
   # length of coupling bus 6b-6a
@@ -199,14 +200,10 @@ function testCreateNetworkFromScratch(verbose::Bool = false)::Net
   # 'Generator 12' (bus12, vm_pu=1.03, p_mw=300)
   addProsumer!(net = net, busName = "B12", type = "SYNCHRONOUSMACHINE", p = 300.0, vm_pu = 1.03, va_deg = 0.0)
   
-  if verbose
-    printNet(net)
-  end
-
   return net
 end
 
-function test3BusNet(verbose::Int = 0, print_results::Bool = false)::Bool
+function test3BusNet(verbose::Int = 0, print_results::Bool = false, writeCase::Bool = false)::Bool
 # Create a network
 # Slack bus B1 at 220 kV with 1.0 pu voltage and 0.0 pu angle
 # PQ bus B2 at 220 kV with 1.0 pu voltage and 0.0 pu angle
@@ -227,8 +224,20 @@ function test3BusNet(verbose::Int = 0, print_results::Bool = false)::Bool
   addShunt!(net = net, busName = "B3", pShunt = 0.0, qShunt = 150.0)
   addACLine!(net = net, fromBus = "B1", toBus = "B2", length = 100.0, r = 0.0653, x = 0.398, c_nf_per_km = 9.08, tanδ = 0.0)
   add2WTrafo!(net = net, fromBus = "B2", toBus = "B3", sn_mva = 1000.0, vk_percent = 13.0, vkr_percent = 0.28, pfe_kw = 20.0, i0_percent = 0.06)
-  addProsumer!(net = net, busName = "B3", type = "ENERGYCONSUMER", p = 285.0, q = 200.0)
+  addProsumer!(net = net, busName = "B3", type = "ENERGYCONSUMER", p = 85.0, q = 200.0)
   addProsumer!(net = net, busName = "B1", type = "SYNCHRONOUSMACHINE", referencePri = "B1", vm_pu = 1.02, va_deg = 0.0)
+  
+  result, msg = validate(net = net)
+  if !result
+    @warn msg
+    return false
+  end
+
+  if writeCase
+    filename = "testnet.m"
+    jpath = joinpath(pwd(), "data", "mpower", filename)  
+    writeMatpowerCasefile(net, jpath)
+  end  
 
   # Run power flow
   tol = 1e-6
@@ -244,7 +253,9 @@ function test3BusNet(verbose::Int = 0, print_results::Bool = false)::Bool
     calcNetLosses!(net)
     printACPFlowResults(net, etime, ite, tol)
   end
-  return validate(net = net)
+  
+  return true
 end
 
+#test3BusNet(1, true, true)
 #test_acpflow(1)
