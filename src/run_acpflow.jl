@@ -11,15 +11,18 @@ Parameters:
 - verbose: Int, verbosity level for output (default: 0).
 - printResultToFile: Bool, flag to print results to a file (default: false).
 - printResultAnyCase: Bool, flag to print results even if the power flow fails (default: false).
+
+Returns:
+- Net, the network object.
 """
-function run_acpflow(;max_ite::Int = 10, tol::Float64 = 1e-6, casefile::String, path::Union{Nothing,String} = nothing, verbose::Int = 0, printResultToFile::Bool = false, printResultAnyCase::Bool = false)::Net
+function run_acpflow(; max_ite::Int = 10, tol::Float64 = 1e-6, casefile::String, path::Union{Nothing,String} = nothing, verbose::Int = 0, printResultToFile::Bool = false, printResultAnyCase::Bool = false)::Net
   ext = splitext(casefile)[2]  # Get the file extension
   myNet = nothing              # Initialize myNet variable
   in_path = nothing
-  out_path = nothing  
+  out_path = nothing
   if ext == ".m"
     # Read network data from Matpower .m file    
-    if path === nothing      
+    if path === nothing
       in_path = joinpath(pwd(), "data", "mpower", strip(casefile))
       out_path = joinpath(pwd(), "data", "mpower")
     else
@@ -67,8 +70,8 @@ Parameters:
 - printResultToFile: Bool, flag to print results to a file (default: false).
 - printResultAnyCase: Bool, flag to print results even if the power flow fails (default: false).
 """
-function run_net_acpflow(;net::Net, max_ite::Int = 10, tol::Float64 = 1e-6, verbose::Int = 0, printResultToFile::Bool = false, printResultAnyCase::Bool = false)
-  
+function run_net_acpflow(; net::Net, max_ite::Int = 10, tol::Float64 = 1e-6, verbose::Int = 0, printResultToFile::Bool = false, printResultAnyCase::Bool = false)
+
   # Run power flow
   ite = 0
   etime = @elapsed begin
@@ -85,6 +88,4 @@ function run_net_acpflow(;net::Net, max_ite::Int = 10, tol::Float64 = 1e-6, verb
   else
     @error "Errors during calculation of Newton-Raphson"
   end
-
-  
 end

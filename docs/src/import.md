@@ -25,7 +25,7 @@ run_acpflow(max_ite= ite,tol = tol, casefile=file)
 
 ```@autodocs 
   Modules = [Sparlectra]   
-  Pages = ["import.jl","createnet_powermat.jl", "exportMatPower.jl"]
+  Pages = ["import.jl","createnet_powermat.jl", "exportMatPower.jl","run_acpflow.jl"]
   Order = [:type, :function]
 ```  
 
