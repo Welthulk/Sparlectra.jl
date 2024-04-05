@@ -294,7 +294,7 @@ function writeMatpowerCasefile(net::Net, pathfilename::String)
 
   case = basename(base)
   base = base * ".m"
-  @info "convertion to Matpower CASE-Files, Testcase: ($case), Filename: ($filename)"
+  @info "convertion to Matpower CASE-Files, Testcase: ($case)"
   NodeDict = Dict{Int,Node}()
   for n in net.nodeVec
     NodeDict[n.busIdx] = n
