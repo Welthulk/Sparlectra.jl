@@ -1,17 +1,27 @@
 # Change Log
 
-## Version 0.4.11 (2024-05-01)
+## Version 0.4.12 (2024-04-08)
 ### New Features
-- make changes to imported Matpower networks after import.
+- added functions to facilitate the modification of networks.
+- documentation available at https://sparlectra.github.io/Sparlectra.jl.
 
 ### Enhancements
-- added functions to facilitate the creation of networks
+
+### Bug Fixes
+- print prosumers
+
+## Version 0.4.11 (2024-04-05)
+### New Features
+- make changes to imported Matpower networks after import.
+- added functions to facilitate the creation of networks.
+
+### Enhancements
 - added documentation make file
 
 ### Bug Fixes
 - import and parser for Matpower .m files
 
-## Version 0.4.10 (2024-05-01)
+## Version 0.4.10 (2024-03-30)
 
 ### New Features
  - removed numerous redundant functions, partially restructured classes

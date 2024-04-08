@@ -26,7 +26,7 @@ The `Net` module provides functionality for creating and manipulating power syst
   addShunt!(net = net, busName = "B3", pShunt = 0.0, qShunt = 150.0)
   addACLine!(net = net, fromBus = "B1", toBus = "B2", length = 100.0, r = 0.0653, x = 0.398, c_nf_per_km = 9.08, tanδ = 0.0)
   add2WTrafo!(net = net, fromBus = "B2", toBus = "B3", sn_mva = 1000.0, vk_percent = 13.0, vkr_percent = 0.28, pfe_kw = 20.0, i0_percent = 0.06)
-  addProsumer!(net = net, busName = "B3", type = "ENERGYCONSUMER", p = 285.0, q = 200.0)
+  addProsumer!(net = net, busName = "B3", type = "ENERGYCONSUMER", p = 85.0, q = 200.0)
   addProsumer!(net = net, busName = "B1", type = "SYNCHRONOUSMACHINE", referencePri = "B1", vm_pu = 1.02, va_deg = 0.0)
 
   # Run power flow
