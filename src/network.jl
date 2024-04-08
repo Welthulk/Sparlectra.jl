@@ -33,14 +33,20 @@ Functions:
 - `addPIModellTrafo!(; net::Net, ...)`: Adds a transformer with PI model to the network.
 - `add2WTrafo!(; net::Net, ...)`: Adds a two-winding transformer to the network.
 - `addProsumer!(; net::Net, ...)`: Adds a prosumer to the network.
+- `lockNet!(; net::Net, locked::Bool)`: Locks or unlocks the network.
 - `validate(; net::Net)`: Validates the network.
 - `get_bus_vn_kV(; net::Net, busName::String)`: Gets the voltage level of a bus by name.
 - `get_vn_kV(; net::Net, busIdx::Int)`: Gets the voltage level of a bus by index.
 - `getBusType(; net::Net, busName::String)`: Gets the type of a bus by name.
-- `lockNet!(; net::Net, locked::Bool)`: Locks or unlocks the network.
 - `setBranchStatus!(; net::Net, branchIdx::Int, status::Int)`: Sets the status of a branch.
 - `setTotalLosses!(; net::Net, pLosses::Float64, qLosses::Float64)`: Sets the total losses of the network.
 - `getTotalLosses(; net::Net)`: Gets the total losses of the network.
+- `getNetOrigBusIdx(; net::Net, busName::String)`: Gets the original index of a bus in the network.
+- `geNetBusIdx(; net::Net, busName::String)`: Gets the index of a bus in the network.
+- `hasBusInNet(; net::Net, busName::String)`: Checks if a bus exists in the network.
+- `addBusGenPower!(; net::Net, busName::String, pGen::Float64, qGen::Float64)`: Adds generator power to a bus.
+- `addBusLoadPower!(; net::Net, busName::String, pLoad::Float64, qLoad::Float64)`: Adds load power to a bus.
+- `addBusShuntPower!(; net::Net, busName::String, pShunt::Float64, qShunt::Float64)`: Adds shunt power to a bus.
 """
 struct Net
   name::String
@@ -56,7 +62,7 @@ struct Net
   shuntVec::Vector{Shunt}
   busDict::Dict{String,Int}
   busOrigIdxDict::Dict{Int,Int}
-  branchDict::Dict{Tuple{Int, Int},Int}
+  branchDict::Dict{Tuple{Int, Int},Int}  
   totalLosses::Vector{Tuple{Float64,Float64}}
   _locked::Bool
 
@@ -368,6 +374,75 @@ function addProsumer!(; net::Net, busName::String, type::String, p::Union{Nothin
   else
     addLoadPower!(node = node, p = p, q = q)
   end
+end
+
+"""
+Update the active and reactive power of a generator connected to a bus in the network.
+
+# Arguments
+- `net::Net`: The network object.
+- `busName::String`: The name of the bus.
+- `p::Union{Nothing, Float64}`: The active power to update. Default is `nothing`.
+- `q::Union{Nothing, Float64}`: The reactive power to update. Default is `nothing`.
+
+>Note: the corresponding prosumer object will not be updated.
+
+# Examples
+```julia
+net = run_acpflow(max_ite= 7,tol = 1e-6, casefile='a_case.m') # run the power flow on the network and get the network object
+updateBusPower!(net = net, busName = "Bus1", p = 0.5, q = 0.2) # Update the power of Bus1 to 0.5 MW and 0.2 MVar
+run_net_acpflow(net = net, max_ite= 7,tol = 1e-6) # rerun the power flow with the updated network
+```
+"""
+function addBusGenPower!(; net::Net, busName::String, p::Union{Nothing,Float64} = nothing, q::Union{Nothing,Float64} = nothing)
+  busIdx = geNetBusIdx(net = net, busName = busName)
+  addGenPower!(node = net.nodeVec[busIdx], p = p, q = q)    
+end
+
+"""
+Update the active and reactive power of a load connected to a bus in the network.
+
+# Arguments
+- `net::Net`: The network object.
+- `busName::String`: The name of the bus.
+- `p::Union{Nothing, Float64}`: The active power to update. Default is `nothing`.
+- `q::Union{Nothing, Float64}`: The reactive power to update. Default is `nothing`.
+
+>Note: the corresponding prosumer object will not be updated.
+
+# Examples
+```julia
+net = run_acpflow(max_ite= 7,tol = 1e-6, casefile='a_case.m') # run the power flow on the network and get the network object
+updateBusPower!(net = net, busName = "Bus1", p = 0.5, q = 0.2) # Update the power of Bus1 to 0.5 MW and 0.2 MVar
+run_net_acpflow(net = net, max_ite= 7,tol = 1e-6) # rerun the power flow with the updated network
+```
+"""
+function addBusLoadPower!(; net::Net, busName::String, p::Union{Nothing,Float64} = nothing, q::Union{Nothing,Float64} = nothing)
+  busIdx = geNetBusIdx(net = net, busName = busName)
+  addLoadPower!(node = net.nodeVec[busIdx], p = p, q = q)  
+end
+
+"""
+Update the active and reactive power of a shunt connected to a bus in the network.
+
+# Arguments
+- `net::Net`: The network object.
+- `busName::String`: The name of the bus.
+- `p::Union{Nothing, Float64}`: The active power to update. Default is `nothing`.
+- `q::Union{Nothing, Float64}`: The reactive power to update. Default is `nothing`.
+
+>Note: the corresponding prosumer object will not be updated.
+
+# Examples
+```julia
+net = run_acpflow(max_ite= 7,tol = 1e-6, casefile='a_case.m') # run the power flow on the network and get the network object
+updateBusPower!(net = net, busName = "Bus1", p = 0.5, q = 0.2) # Update the power of Bus1 to 0.5 MW and 0.2 MVar
+run_net_acpflow(net = net, max_ite= 7,tol = 1e-6) # rerun the power flow with the updated network
+```
+"""
+function addBusShuntPower!(; net::Net, busName::String, p::Union{Nothing,Float64} = nothing, q::Union{Nothing,Float64} = nothing)
+  busIdx = geNetBusIdx(net = net, busName = busName)
+  addShuntPower!(node = net.nodeVec[busIdx], p = p, q = q)  
 end
 
 """

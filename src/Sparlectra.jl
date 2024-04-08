@@ -1,3 +1,16 @@
+"""
+    Sparlectra
+
+Sparlectra is a Julia package for the calculation of electrical networks. It is designed to be used in the context of power system analysis and optimization. 
+
+- [GitHub Repository](https://github.com/welthulk/Sparlectra.jl)
+- [Website](https://welthulk.github.io/Sparlectra.jl)
+
+**Naming Conventions:**
+The project follows the Julia Naming Conventions for the most part, 
+but it's important to note that the naming convention for functions might deviate. 
+In this module, functions are written in CamelCase with a lowercase initial letter. 
+"""
 module Sparlectra
 # Author: Udo Schmitz (https://github.com/Welthulk)
 # Purpose: network calculation
@@ -50,9 +63,9 @@ export
   # ACLineSegment
   get_line_parameters,
   # ProSumer
-  isSlack, isGenerator, isAPUNode, setQGenReplacement!, getQGenReplacement, toProSumptionType,
+  isSlack, isGenerator, isAPUNode, setQGenReplacement!, getQGenReplacement, toProSumptionType, updatePQ!,
   # Net
-  addBus!, addShunt!, addACLine!, add2WTrafo!, addPIModellTrafo!, addProsumer!, lockNet!, validate, hasBusInNet, 
+  addBus!, addShunt!, addACLine!, add2WTrafo!, addPIModellTrafo!, addProsumer!, lockNet!, validate, hasBusInNet, addBusGenPower!, addBusLoadPower!, addBusShuntPower!,
   getNetOrigBusIdx, geNetBusIdx, setBranchStatus!, setTotalLosses!, getTotalLosses, getBusType, get_bus_vn_kV, get_vn_kV,
   # create_powermat.jl
   casefileparser, createNetFromMatPowerFile,

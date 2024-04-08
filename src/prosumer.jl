@@ -110,7 +110,7 @@ mutable struct ProSumer
       print(io, "vm_pu: ", prosumption.vm_pu, ", ")
     end
 
-    if (!isnothing(prosumption.vm_degree))
+    if (!isnothing(prosumption.va_deg))
       print(io, "va_deg: ", prosumption.va_deg, ", ")
     end
 
@@ -151,6 +151,15 @@ end
 
 function getQGenReplacement(o::ProSumer)::Union{Nothing,Float64}
   return o.qGenRepl
+end
+
+function updatePQ!(o::ProSumer, p::Union{Nothing,Float64}, q::Union{Nothing,Float64})
+  if !isnothing(p)
+    o.pVal = p
+  end
+  if !isnothing(q)
+    o.qVal = q
+  end
 end
 
 function isSlack(o::ProSumer)
