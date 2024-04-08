@@ -1,5 +1,5 @@
 """
-    Sparlectra
+    Sparlectra 0.4.12
 
 Sparlectra is a Julia package for the calculation of electrical networks. It is designed to be used in the context of power system analysis and optimization. 
 
@@ -10,8 +10,10 @@ Sparlectra is a Julia package for the calculation of electrical networks. It is 
 The project follows the Julia Naming Conventions for the most part, 
 but it's important to note that the naming convention for functions might deviate. 
 In this module, functions are written in CamelCase with a lowercase initial letter. 
+
 """
 module Sparlectra
+
 # Author: Udo Schmitz (https://github.com/Welthulk)
 # Purpose: network calculation
 
@@ -23,7 +25,7 @@ using LinearAlgebra, SparseArrays, Printf, Logging
 
 # resource data types for working with Sparlectra
 const Wurzel3 = 1.7320508075688772
-const SparlectraVersion = VersionNumber("0.4.10")
+const SparlectraVersion = VersionNumber("0.4.12")
 abstract type AbstractBranch end
 
 export
