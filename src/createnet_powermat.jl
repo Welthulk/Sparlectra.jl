@@ -129,7 +129,9 @@ function createNetFromMatPowerFile(filename, log::Bool = false)::Net
     
     fbus = string(_fbus)
     tbus = string(_tbus)
-    
+    vn_kv_fromBus = get_bus_vn_kV(net = myNet,  busName = fbus)
+    vn_kv_toBus = get_bus_vn_kV(net = myNet,  busName = tbus)
+
     hasBusInNet(net = myNet, busName = fbus) || (@warn("bus $(fbus) not found, branch ignored."); continue)
     hasBusInNet(net = myNet, busName = tbus) || (@warn("bus $(tbus) not found, branch ignored."); continue)
     
@@ -140,8 +142,12 @@ function createNetFromMatPowerFile(filename, log::Bool = false)::Net
     ratio = float(row[branchDict["ratio"]])
     angle = float(row[branchDict["angle"]])
     status = Int64(row[branchDict["status"]])
+    isLine = false    
+    if (ratio == 1.0 && angle == 0.0 || ratio == 0.0) && vn_kv_fromBus == vn_kv_toBus
+      isLine = true      
+    end
     
-    if ratio == 0.0 # line
+    if isLine
       vn_kv = get_bus_vn_kV(net = myNet,  busName = fbus)      
       z_base = (vn_kv^2) / baseMVA
       r = r_pu * z_base
