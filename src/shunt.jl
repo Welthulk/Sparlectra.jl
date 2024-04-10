@@ -1,7 +1,27 @@
 # Author: Udo Schmitz (https://github.com/Welthulk)
 # Date: 10.05.2023
 # include-file shunt.jl
+"""
+    Shunt
 
+A mutable structure representing a shunt in a power system.
+
+# Fields
+- `comp::AbstractComponent`: The component of the shunt.
+- `busIdx::Int`: The index of the bus.
+- `p_shunt::Float64`: The active power of the shunt.
+- `q_shunt::Float64`: The reactive power of the shunt.
+- `G_shunt::Float64`: The conductance of the shunt.
+- `B_shunt::Float64`: The susceptance of the shunt.
+- `y_pu_shunt::ComplexF64`: The shunt admittance in per unit.
+- `status::Int`: The status of the shunt. 1 = in service, 0 = out of service.
+
+# Constructors
+- `Shunt(; fromBus::Int, id::Int, base_MVA::Float64, Vn_kV_shunt::Float64, p_shunt::Union{Nothing,Float64} = nothing, q_shunt::Union{Nothing,Float64} = nothing, g_shunt::Union{Nothing,Float64} = nothing, b_shunt::Union{Nothing,Float64} = nothing, ratio::Float64 = 1.0, status::Int = 1)`: Creates a new `Shunt` instance.
+
+# Methods
+- `Base.show(io::IO, shunt::Shunt)`: Prints the `Shunt` instance.
+"""
 mutable struct Shunt
   comp::AbstractComponent
   busIdx::Int              # short cut to node    

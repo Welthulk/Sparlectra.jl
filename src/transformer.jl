@@ -93,7 +93,28 @@ function calcTransformerRXGB(Vn_kV::Float64, modelData::TransformerModelParamete
 
   return (rk, xk, gm, bm)
 end
+"""
+    PowerTransformerTaps
 
+A mutable structure representing the tap settings of a power transformer.
+
+# Fields
+- `step::Int`: The actual step/position.
+- `lowStep::Int`: The lowest step/position.
+- `highStep::Int`: The highest step/position.
+- `neutralStep::Int`: The neutral step/position.
+- `voltageIncrement_kV::Float64`: The voltage increment per step in kV.
+- `neutralU::Float64`: The voltage at the neutral step, usually equal to the rated voltage of the transformer end, but can deviate.
+- `neutralU_ratio::Float64`: The ratio of the neutral voltage to the rated voltage.
+- `tapStepPercent::Float64`: The percentage change in voltage per step.
+- `tapSign::Integer`: The direction of the tap changer, 1 for increasing voltage with increasing step, -1 for decreasing.
+
+# Constructors
+- `PowerTransformerTaps(; Vn_kV::Float64, step::Int, lowStep::Int, highStep::Int, neutralStep::Int, voltageIncrement_kV::Float64, neutralU::Union{Nothing,Float64} = nothing, neutralU_ratio::Union{Nothing,Float64} = nothing)`: Creates a new `PowerTransformerTaps` instance.
+
+# Methods
+- `Base.show(io::IO, x::PowerTransformerTaps)`: Prints the `PowerTransformerTaps` instance.
+"""
 mutable struct PowerTransformerTaps
   step::Int                          # actual step/position
   lowStep::Int                       # cim:TapChanger.lowStep
@@ -165,6 +186,33 @@ function adjustVkDep(Vk::Float64, Vkmax::Float64, Vkmin::Float64, tap::PowerTran
 end
 =#
 
+"""
+    PowerTransformerWinding
+
+A mutable structure representing a winding of a power transformer.
+
+# Fields
+- `Vn::Float64`: The rated voltage of the winding in kV.
+- `r::Float64`: The resistance of the winding in Ohm.
+- `x::Float64`: The reactance of the winding in Ohm.
+- `b::Union{Nothing,Float64}`: The susceptance of the winding in S.
+- `g::Union{Nothing,Float64}`: The conductance of the winding in S.
+- `ratio::Union{Nothing,Float64}`: The turns ratio of the winding.
+- `shift_degree::Union{Nothing,Float64}`: The phase shift of the winding in degrees.
+- `ratedU::Union{Nothing,Float64}`: The rated voltage of the winding.
+- `ratedS::Union{Nothing,Float64}`: The rated power of the winding.
+- `taps::Union{Nothing,PowerTransformerTaps}`: The tap settings of the winding.
+- `isPu_RXGB::Union{Nothing,Bool}`: Whether the resistance, reactance, susceptance, and conductance are given in per unit.
+- `modelData::Union{Nothing,TransformerModelParameters}`: The model parameters of the transformer.
+- `_isEmpty::Bool`: Whether the has no model data.
+
+# Constructors
+- `PowerTransformerWinding(Vn::Float64, r::Float64, x::Float64, b::Union{Nothing,Float64} = nothing, g::Union{Nothing,Float64} = nothing, ratio::Union{Nothing,Float64} = nothing, shift_degree::Union{Nothing,Float64} = nothing, ratedU::Union{Nothing,Float64} = nothing, ratedS::Union{Nothing,Float64} = nothing, taps::Union{Nothing,PowerTransformerTaps} = nothing, isPu_RXGB::Union{Nothing,Bool} = nothing, modelData::Union{Nothing,TransformerModelParameters} = nothing)`: Creates a new `PowerTransformerWinding` instance.
+- `PowerTransformerWinding(; Vn_kV::Float64, modelData::Union{Nothing,TransformerModelParameters} = nothing, ratio::Union{Nothing,Float64} = nothing, shift_degree::Union{Nothing,Float64} = nothing, ratedU::Union{Nothing,Float64} = nothing, ratedS::Union{Nothing,Float64} = nothing, taps::Union{Nothing,PowerTransformerTaps} = nothing)`: Creates a new `PowerTransformerWinding` instance.
+
+# Methods
+- `Base.show(io::IO, x::PowerTransformerWinding)`: Prints the `PowerTransformerWinding` instance.
+"""
 mutable struct PowerTransformerWinding
   Vn::Float64                                # cim:PowerTransformerEnd.ratedU in kV
   r::Float64                                 # cim:PowerTransformerEnd.r in Ohm
@@ -334,7 +382,31 @@ function getWindingRatedS(o::PowerTransformerWinding)
     return o.ratedS
   end
 end
+"""
+    PowerTransformer
 
+A mutable structure representing a power transformer in a power system.
+
+# Fields
+- `comp::AbstractComponent`: The component of the power transformer.
+- `trafoTyp::TrafoTyp`: The type of the transformer.
+- `isControlled::Bool`: Whether the tap changer is enabled.
+- `nS::Integer`: The number of active sides, >=2.
+- `nController::Integer`: The number of sides controlled.
+- `isBiWinder::Bool`: Whether the transformer is a bi-winder.
+- `HVSideNumber::Integer`: The number of the high voltage side [1,2,3]. For a 3-winding transformer, HV =1, MV=2, LV=3.
+- `tapSideNumber::Integer`: The number of the tap side [1,2,3]. It is 0 if there is no tap.
+- `side1::PowerTransformerWinding`: The first winding of the transformer.
+- `side2::PowerTransformerWinding`: The second winding of the transformer.
+- `side3::Union{Nothing,PowerTransformerWinding}`: The third winding of the transformer. It can be `Nothing` or a `PowerTransformerWinding` instance.
+- `_equiParms::Integer`: The winding side with short-circuit parameters. 1 for side1, 2 for side2, 3 for all sides (3-winding transformer).
+
+# Constructors
+- `PowerTransformer(comp::AbstractComponent, tapEnable::Bool, s1::PowerTransformerWinding, s2::PowerTransformerWinding, s3::Union{Nothing,PowerTransformerWinding} = nothing, trafoTyp::TrafoTyp = Sparlectra.Ratio)`: Creates a new `PowerTransformer` instance.
+
+# Methods
+- `Base.show(io::IO, x::PowerTransformer)`: Prints the `PowerTransformer` instance.
+"""
 mutable struct PowerTransformer <: AbstractBranch
   comp::AbstractComponent
   trafoTyp::TrafoTyp
@@ -522,6 +594,28 @@ end
 #
 
 #ajustVkTap = 1.0 # FIXME: implement adjustVkTap!
+
+"""
+    create3WTWindings!(; u_kV::Array{Float64,1}, sn_MVA::Array{Float64,1}, addEx_Side::Array{TransformerModelParameters,1}, sh_deg::Array{Float64,1}, tap_side::Int, tap::PowerTransformerTaps)::Tuple{PowerTransformerWinding,PowerTransformerWinding,PowerTransformerWinding}
+
+Creates windings for a three-winding transformer using the MVA method.
+
+# Arguments
+- `u_kV::Array{Float64,1}`: The rated voltages of the windings in kV.
+- `sn_MVA::Array{Float64,1}`: The rated powers of the windings in MVA.
+- `addEx_Side::Array{TransformerModelParameters,1}`: The additional parameters for each side of the transformer.
+- `sh_deg::Array{Float64,1}`: The phase shift of each winding in degrees.
+- `tap_side::Int`: The number of the tap side [1,2,3]. It is 0 if there is no tap.
+- `tap::PowerTransformerTaps`: The tap settings of the winding.
+
+# Returns
+Returns a tuple of `PowerTransformerWinding` instances for the three windings of the transformer.
+
+# Example
+```julia
+create3WTWindings!(u_kV = [110.0, 20.0, 10.0], sn_MVA = [100.0, 80.0, 20.0], addEx_Side = [tmp1, tmp2, tmp3], sh_deg = [0.0, 0.0, 0.0], tap_side = 1, tap = tapSettings)
+```
+"""	
 function create3WTWindings!(; u_kV::Array{Float64,1}, sn_MVA::Array{Float64,1}, addEx_Side::Array{TransformerModelParameters,1}, sh_deg::Array{Float64,1}, tap_side::Int, tap::PowerTransformerTaps)::Tuple{PowerTransformerWinding,PowerTransformerWinding,PowerTransformerWinding}
   for side = 1:3
     if isnothing(addEx_Side[side].vkr_percent)

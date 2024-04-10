@@ -35,7 +35,35 @@ struct BranchModel <: AbstractBranch
     new(r_pu, x_pu, b_pu, g_pu, ratio, angle, sn_MVA)
   end
 end
+"""
+    Branch
 
+A mutable structure representing a branch in a power system.
+
+# Fields
+- `comp::AbstractComponent`: The component of the branch.
+- `fromBus::Integer`: The index of the bus where the branch starts.
+- `toBus::Integer`: The index of the bus where the branch ends.
+- `r_pu::Float64`: The per unit resistance of the branch.
+- `x_pu::Float64`: The per unit reactance of the branch.
+- `b_pu::Float64`: The per unit total line charging susceptance of the branch.
+- `g_pu::Float64`: The per unit total line charging conductance of the branch.
+- `ratio::Float64`: The transformer off nominal turns ratio.
+- `angle::Float64`: The transformer off nominal phase shift angle.
+- `status::Integer`: The status of the branch. 1 = in service, 0 = out of service.
+- `sn_MVA::Union{Nothing,Float64}`: The nominal power of the branch = rateA.
+- `fBranchFlow::Union{Nothing,BranchFlow}`: The flow from fromNodeID to toNodeID.
+- `tBranchFlow::Union{Nothing,BranchFlow}`: The flow from toNodeID to fromNodeID.
+- `pLosses::Union{Nothing,Float64}`: The active power losses.
+- `qLosses::Union{Nothing,Float64}`: The reactive power losses.
+
+# Constructors
+- `Branch(; from::Int, to::Int, baseMVA::Float64, branch::AbstractBranch, id::Int, status::Integer = 1, ratio::Union{Nothing,Float64} = nothing, side::Union{Nothing,Int} = nothing, vn_kV::Union{Nothing,Float64} = nothing,
+                    fromOid::Union{Nothing,Int} = nothing, toOid::Union{Nothing,Int} = nothing)`: Creates a new `Branch` instance.
+
+# Methods
+- `Base.show(io::IO, b::Branch)`: Prints the `Branch` instance.
+"""
 mutable struct Branch
   comp::AbstractComponent
   fromBus::Integer
