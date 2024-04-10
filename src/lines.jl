@@ -2,6 +2,29 @@
 # Date: 10.05.2023
 # include-file lines.jl
 
+"""
+    ACLineSegment
+
+A mutable structure representing an AC line segment in a power system.
+
+# Fields
+- `comp::AbstractComponent`: The component of the AC line segment.
+- `length::Float64`: The length of the AC line segment.
+- `r::Float64`: The resistance of the AC line segment.
+- `x::Float64`: The reactance of the AC line segment.
+- `b::Union{Nothing,Float64}`: The susceptance of the AC line segment. It can be `Nothing` or a `Float64` value.
+- `g::Union{Nothing,Float64}`: The conductance of the AC line segment. It can be `Nothing` or a `Float64` value.
+- `c_nf_per_km::Union{Nothing,Float64}`: The capacitance per kilometer of the AC line segment. It can be `Nothing` or a `Float64` value.
+- `tanδ::Union{Nothing,Float64}`: The tangent of the loss angle of the AC line segment. It can be `Nothing` or a `Float64` value.
+- `ratedS::Union{Nothing,Float64}`: The rated power of the AC line segment. It can be `Nothing` or a `Float64` value.
+
+# Constructors
+- `ACLineSegment(; vn_kv::Float64, from::Int, to::Int, length::Float64, r::Float64, x::Float64, b::Union{Nothing,Float64} = nothing, c_nf_per_km::Union{Nothing,Float64} = nothing, 
+                           tanδ::Union{Nothing,Float64} = nothing, ratedS::Union{Nothing,Float64} = nothing)`: Creates a new `ACLineSegment` instance.
+
+# Methods
+- `Base.show(io::IO, acseg::ACLineSegment)`: Prints the `ACLineSegment` instance.
+"""
 mutable struct ACLineSegment <: AbstractBranch
   comp::AbstractComponent
   length::Float64

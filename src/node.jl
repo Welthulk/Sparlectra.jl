@@ -3,6 +3,54 @@
 # include-file nodes.jl
 
 # Data type to describe the topology
+"""
+    Node
+
+A mutable structure representing a node in a power system.
+
+# Fields
+- `comp::AbstractComponent`: The component of the node.
+- `busIdx::Integer`: The index of the bus.
+- `_nodeType::NodeType`: The type of the node.
+- `_ratedS::Union{Nothing,Float64}`: The rated power of the node.
+- `_lZone::Union{Nothing,Integer}`: The loss zone of the node.
+- `_area::Union{Nothing,Integer}`: The area of the node.
+- `_vm_pu::Union{Nothing,Float64}`: The voltage magnitude of the node in per unit.
+- `_va_deg::Union{Nothing,Float64}`: The voltage angle of the node in degrees.
+- `_pƩLoad::Union{Nothing,Float64}`: The total active power load at the node.
+- `_qƩLoad::Union{Nothing,Float64}`: The total reactive power load at the node.
+- `_pShunt::Union{Nothing,Float64}`: The total active power shunt at the node.
+- `_qShunt::Union{Nothing,Float64}`: The total reactive power shunt at the node.
+- `_pƩGen::Union{Nothing,Float64}`: The total active power generation at the node.
+- `_qƩGen::Union{Nothing,Float64}`: The total reactive power generation at the node.
+- `_vmin_pu::Union{Nothing,Float64}`: The minimum voltage magnitude at the node in per unit.
+- `_vmax_pu::Union{Nothing,Float64}`: The maximum voltage magnitude at the node in per unit.
+
+# Constructors
+- `Node(;
+    busIdx::Integer,
+    vn_kV::Float64,
+    nodeType::NodeType,
+    ratedS::Union{Nothing,Float64} = nothing,
+    zone::Union{Nothing,Integer} = nothing,
+    area::Union{Nothing,Integer} = nothing,
+    vm_pu::Union{Nothing,Float64} = nothing,
+    va_deg::Union{Nothing,Float64} = nothing,
+    pƩLoad::Union{Nothing,Float64} = nothing,
+    qƩLoad::Union{Nothing,Float64} = nothing,
+    pShunt::Union{Nothing,Float64} = nothing,
+    qShunt::Union{Nothing,Float64} = nothing,
+    pƩGen::Union{Nothing,Float64} = nothing,
+    qƩGen::Union{Nothing,Float64} = nothing,
+    vmin_pu::Union{Nothing,Float64} = nothing,
+    vmax_pu::Union{Nothing,Float64} = nothing,
+    isAux::Bool = false,
+    oBusIdx::Union{Nothing,Int} = nothing,
+  )`: Creates a new `Node` instance.
+
+# Methods
+- `Base.show(io::IO, node::Node)`: Prints the `Node` instance.
+"""
 mutable struct Node
   comp::AbstractComponent
   busIdx::Integer

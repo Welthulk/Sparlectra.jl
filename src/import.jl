@@ -3,6 +3,26 @@
 # include-file import.jl
 
 # Parser for MATPOWER case files
+"""
+    casefileparser(filename)
+
+Parses a MATPOWER case file and returns the case name, base power, and bus, generator, and branch data.
+
+# Arguments
+- `filename`: The name of the file to parse.
+
+# Returns
+- `case_name`: The name of the case.
+- `baseMVA`: The base power in MVA.
+- `mpc_bus`: The bus data matrix.
+- `mpc_gen`: The generator data matrix.
+- `mpc_branch`: The branch data matrix.
+
+# Example
+```julia
+case_name, baseMVA, mpc_bus, mpc_gen, mpc_branch = casefileparser("case9.m")
+```
+"""
 function casefileparser(filename)
   function processLine(line::AbstractString)::Vector{Float64}
     line = chop(line)  # Run chop here to remove unnecessary characters at the end of the line
@@ -160,6 +180,6 @@ function casefileparser(filename)
 
   # apply the order to the mpc_bus array
   mpc_bus = mpc_bus[busSequence, :]
-  @show mpc_branch
+  
   return strip(case_name), baseMVA, mpc_bus, mpc_gen, mpc_branch
 end
