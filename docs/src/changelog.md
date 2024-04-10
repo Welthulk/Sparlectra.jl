@@ -10,7 +10,8 @@ planned:
 
 
 ### Bug Fixes
-- detection of lines in Matpowerfiles
+- parsing emtpy lines of Matpowerfiles
+- documentation rendering
 
 ## Version 0.4.12 (2024-04-08)
 ### New Features
