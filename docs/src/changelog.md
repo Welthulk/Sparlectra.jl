@@ -1,9 +1,21 @@
 # Change Log
 
+## Version 0.4.13 (2024-0x-0x)
+### New Features
+planned:
+- transformer tap changer
+- serialization of networks
+
+### Enhancements
+
+
+### Bug Fixes
+- detection of lines in Matpowerfiles
+
 ## Version 0.4.12 (2024-04-08)
 ### New Features
 - added functions to facilitate the modification of networks.
-- documentation available at https://sparlectra.github.io/Sparlectra.jl.
+- documentation available at https://welthulk.github.io/Sparlectra.jl/.
 
 ### Enhancements
 
