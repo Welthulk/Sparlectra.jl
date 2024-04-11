@@ -76,7 +76,7 @@ function getTestFilePathName()
 end
 
 function testExportMatpower()
-  myNet = testCreateNetworkFromScratch(false)
+  myNet = testCreateNetworkFromScratch()
   case = myNet.name
   writeMatpowerCasefile(myNet, getTestFilePathName())
   return true

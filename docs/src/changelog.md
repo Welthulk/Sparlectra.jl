@@ -2,12 +2,8 @@
 
 ## Version 0.4.13 (2024-0x-0x)
 ### New Features
-planned:
-- transformer tap changer
-- serialization of networks
-
-### Enhancements
-
+- added attribute for Lineparameters based on length
+- added update parameter function for network
 
 ### Bug Fixes
 - parsing emtpy lines of Matpowerfiles
