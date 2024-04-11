@@ -1,6 +1,6 @@
 # Change Log
 
-## Version 0.4.13 (2024-0x-0x)
+## Version 0.4.13 (2024-04-11)
 ### New Features
 - added attribute for Lineparameters based on length
 - added update parameter function for network
@@ -13,8 +13,6 @@
 ### New Features
 - added functions to facilitate the modification of networks.
 - documentation available at https://welthulk.github.io/Sparlectra.jl/.
-
-### Enhancements
 
 ### Bug Fixes
 - print prosumers
@@ -36,11 +34,9 @@
  - removed numerous redundant functions, partially restructured classes
  - removed support for CGMES due to the availability of numerous alternative libraries
  - removed support for the legacy custom JSON data format (potentially subject to reintroduction at a later stage)
+ - added functions to facilitate the creation of networks
+ - better performance
  
-### Enhancements
-- added functions to facilitate the creation of networks
-- better performance
-
 ### Bug Fixes
 - calculation of branch flow and losses
 - branches out of service
