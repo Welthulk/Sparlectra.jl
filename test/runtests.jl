@@ -9,7 +9,7 @@ include("testgrid.jl")
   @test testNetwork() == true
   @test test_NBI_MDO() == true
   @test test_acpflow(0) == true
-#  @test testExportMatpower() == true #does not run, can´t create testfile, add these test manually
-#  @test testImportMatpower() == true 
-#  @test rmTestfiles() == true 
+  #  @test testExportMatpower() == true #does not run, can´t create testfile, add these test manually
+  #  @test testImportMatpower() == true 
+  #  @test rmTestfiles() == true 
 end
