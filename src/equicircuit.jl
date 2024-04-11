@@ -75,6 +75,43 @@ function calcNeutralU(neutralU_ratio::Float64, vn_hv::Float64, tap_min::Integer,
 end
 
 """
+    toPU_RXGB(; r::Float64, x::Float64, g::Union{Nothing, Float64}=nothing, b::Union{Nothing, Float64}=nothing, v_kv::Float64, baseMVA::Float64)::Tuple{Float64, Float64, Float64, Float64}
+
+Converts the resistance, reactance, conductance, and susceptance from physical units to per unit.
+
+# Arguments
+- `r::Float64`: The resistance in Ohm.
+- `x::Float64`: The reactance in Ohm.
+- `g::Union{Nothing, Float64}`: The conductance in S. It can be `Nothing` or a `Float64` value.
+- `b::Union{Nothing, Float64}`: The susceptance in S. It can be `Nothing` or a `Float64` value.
+- `v_kv::Float64`: The voltage in kV.
+- `baseMVA::Float64`: The base power in MVA.
+
+# Returns
+- `r_pu::Float64`: The per unit resistance.
+- `x_pu::Float64`: The per unit reactance.
+- `g_pu::Float64`: The per unit conductance.
+- `b_pu::Float64`: The per unit susceptance.
+
+# Example
+```julia
+toPU_RXGB(r = 0.01, x = 0.1, g = 0.02, b = 0.02, v_kv = 110.0, baseMVA = 100.0)
+```
+"""
+function toPU_RXGB(; r::Float64, x::Float64, g::Union{Nothing, Float64}=nothing, b::Union{Nothing, Float64}=nothing, v_kv::Float64, baseMVA::Float64)::Tuple{Float64, Float64, Float64, Float64}
+  z_base = (v_kv*v_kv) / baseMVA
+  y_base = 1.0 / z_base
+  r_pu = r / z_base
+  x_pu = x / z_base
+  
+  g_pu = b_pu = 0.0
+  !isnothing(g) ? g_pu = g * y_base : 0.0
+  !isnothing(b) ? b_pu = b * y_base : 0.0
+
+  return r_pu, x_pu, g_pu, b_pu  
+end
+
+"""
 createYBUS: Create the admittance matrix YBUS from the branch vector and the slack index.
 
 Parameters:

@@ -3,6 +3,28 @@
 # include-file branch.jl
 
 # helper
+"""
+    BranchFlow
+
+A structure representing the flow in a branch of a power system.
+
+# Fields
+- `vm_pu::Union{Nothing,Float64}`: The voltage magnitude in per unit.
+- `va_deg::Union{Nothing,Float64}`: The voltage angle in degrees.
+- `pFlow::Union{Nothing,Float64}`: The active power flow.
+- `qFlow::Union{Nothing,Float64}`: The reactive power flow.
+
+# Constructors
+- `BranchFlow(vm_pu::Union{Nothing,Float64} = nothing, va_deg::Union{Nothing,Float64} = nothing, pFlow::Union{Nothing,Float64} = nothing, qFlow::Union{Nothing,Float64} = nothing)`: Creates a new `BranchFlow` instance.
+
+# Methods
+- `Base.show(io::IO, b::BranchFlow)`: Prints the `BranchFlow` instance.
+
+# Example
+```julia
+BranchFlow(vm_pu = 1.0, va_deg = 0.0, pFlow = 100.0, qFlow = 50.0)
+```
+"""
 struct BranchFlow
   vm_pu::Union{Nothing,Float64} # voltage magnitude
   va_deg::Union{Nothing,Float64} # voltage angle
@@ -22,7 +44,28 @@ struct BranchFlow
     println(io, ")")
   end
 end
+"""
+    BranchModel
 
+A structure representing a branch model in a power system.
+
+# Fields
+- `r_pu::Float64`: The per unit resistance of the branch.
+- `x_pu::Float64`: The per unit reactance of the branch.
+- `b_pu::Float64`: The per unit total line charging susceptance of the branch.
+- `g_pu::Float64`: The per unit total line charging conductance of the branch.
+- `ratio::Float64`: The transformer off nominal turns ratio.
+- `angle::Float64`: The transformer off nominal phase shift angle.
+- `sn_MVA::Union{Nothing,Float64}`: The nominal power of the branch = rateA.
+
+# Constructors
+- `BranchModel(; r_pu::Float64, x_pu::Float64, b_pu::Float64, g_pu::Float64, ratio::Float64, angle::Float64, sn_MVA::Union{Nothing,Float64} = nothing)`: Creates a new `BranchModel` instance.
+
+# Example
+```julia
+BranchModel(r_pu = 0.01, x_pu = 0.1, b_pu = 0.02, g_pu = 0.02, ratio = 1.0, angle = 0.0, sn_MVA = 100.0)
+```
+"""
 struct BranchModel <: AbstractBranch
   r_pu::Float64
   x_pu::Float64
@@ -35,6 +78,8 @@ struct BranchModel <: AbstractBranch
     new(r_pu, x_pu, b_pu, g_pu, ratio, angle, sn_MVA)
   end
 end
+
+
 """
     Branch
 

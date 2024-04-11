@@ -1,6 +1,7 @@
 # Author: Udo Schmitz (https://github.com/Welthulk)
 # Date: 01.04.2024
 # include-file network.jl
+
 """
 Net: Represents an electrical network.
 
@@ -222,7 +223,7 @@ Parameters:
 function addBranch!(; net::Net, from::Int, to::Int, branch::AbstractBranch, status::Int = 1, ratio::Union{Nothing,Float64} = nothing, side::Union{Nothing,Int} = nothing, vn_kV::Union{Nothing,Float64} = nothing)
   
   idBrunch = length(net.branchVec) + 1
-   fOrig = nothing
+  fOrig = nothing
   tOrig = nothing
   if haskey(net.busOrigIdxDict, from)
     fOrig = net.busOrigIdxDict[from]
@@ -244,6 +245,40 @@ function addBranch!(; net::Net, from::Int, to::Int, branch::AbstractBranch, stat
 end
 
 """
+    updateBranchParameters!(;net::Net, fromBus::String, toBus::String, branch::AbstractBranch)
+
+Updates the parameters of a branch in the network.
+
+# Arguments
+- `net::Net`: The network.
+- `fromBus::String`: The name of the bus where the branch starts.
+- `toBus::String`: The name of the bus where the branch ends.
+- `branch::BranchModel`: The branch with the updated parameters.
+
+# Example
+```julia
+updateBranchParameters!(net = network, fromBus = "Bus1", toBus = "Bus2", branch = updatedBranch)
+```
+"""
+function updateBranchParameters!(;net::Net, fromBus::String, toBus::String, branch::BranchModel)
+    from = geNetBusIdx(net = net, busName = fromBus)
+    to = geNetBusIdx(net = net, busName = toBus)   
+    branchTuple = (from, to)   
+    @show idx = net.branchDict[branchTuple]
+    @show net.branchVec[idx]
+    br = net.branchVec[idx]
+    br.r_pu = branch.r_pu
+    br.x_pu = branch.x_pu
+    br.b_pu = branch.b_pu
+    br.g_pu = branch.g_pu
+    br.ratio = branch.ratio
+    br.angle = branch.angle
+    br.sn_MVA = branch.sn_MVA
+    net.branchVec[idx] = br
+    @show net.branchVec[idx]
+end
+
+"""
 addACLine!: Adds an AC line segment to the network.
 
 Parameters:
@@ -251,10 +286,10 @@ Parameters:
 - `fromBus::String`: Name of the "from" bus.
 - `toBus::String`: Name of the "to" bus.
 - `length::Float64`: Length of the line segment.
-- `r::Float64`: Resistance of the line segment.
-- `x::Float64`: Reactance of the line segment.
-- `b::Union{Nothing,Float64} = nothing`: Susceptance of the line segment (default is nothing).
-- `c_nf_per_km::Union{Nothing,Float64} = nothing`: Capacitance of the line segment in nF/km (default is nothing).
+- `r::Float64`: Resistance per Meter of the line segment.
+- `x::Float64`: Reactance per Meter of the line segment.
+- `b::Union{Nothing,Float64} = nothing`: Susceptance per Meter of the line segment (default is nothing).
+- `c_nf_per_km::Union{Nothing,Float64} = nothing`: Capacitance per Meter of the line segment in nF/km (default is nothing).
 - `tanδ::Union{Nothing,Float64} = nothing`: Tangent of the loss angle (default is nothing).
 - `ratedS::Union{Nothing, Float64}= nothing`: Rated power of the line segment in MVA (default is nothing).
 - `status::Int = 1`: Status of the line segment (default is 1).
@@ -266,7 +301,7 @@ function addACLine!(; net::Net, fromBus::String, toBus::String, length::Float64,
   vn_kV = getNodeVn(net.nodeVec[from])
   vn_2_kV = getNodeVn(net.nodeVec[to])
   @assert vn_kV == vn_2_kV "Voltage level of the from bus $(vn_kV) does not match the to bus $(vn_2_kV)"
-  acseg = ACLineSegment(vn_kv = vn_kV, from = from, to = to, length = length, r = r, x = x, b = b, c_nf_per_km = c_nf_per_km, tanδ = tanδ, ratedS = ratedS)
+  acseg = ACLineSegment(vn_kv = vn_kV, from = from, to = to, length = length, r = r, x = x, b = b, c_nf_per_km = c_nf_per_km, tanδ = tanδ, ratedS = ratedS, paramsBasedOnLength = false)
   push!(net.linesAC, acseg)
 
   addBranch!(net = net, from = from, to = to, branch = acseg, vn_kV = vn_kV, status = status)

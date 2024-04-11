@@ -68,13 +68,13 @@ export
   isSlack, isGenerator, isAPUNode, setQGenReplacement!, getQGenReplacement, toProSumptionType, updatePQ!,
   # Net
   addBus!, addShunt!, addACLine!, add2WTrafo!, addPIModellTrafo!, addProsumer!, lockNet!, validate, hasBusInNet, addBusGenPower!, addBusLoadPower!, addBusShuntPower!,
-  getNetOrigBusIdx, geNetBusIdx, setBranchStatus!, setTotalLosses!, getTotalLosses, getBusType, get_bus_vn_kV, get_vn_kV,
+  getNetOrigBusIdx, geNetBusIdx, setBranchStatus!, setTotalLosses!, getTotalLosses, getBusType, get_bus_vn_kV, get_vn_kV, updateBranchParameters!,
   # create_powermat.jl
   casefileparser, createNetFromMatPowerFile,
   # exportMatPower.jl
   writeMatpowerCasefile,
   # equicircuit.jl
-  calcComplexRatio, calcNeutralU,  createYBUS, adjacentBranches,
+  calcComplexRatio, calcNeutralU,  createYBUS, adjacentBranches, toPU_RXGB,
   # nbi.jl
   getNBI, mdoRCM,
   # jacobian.jl
