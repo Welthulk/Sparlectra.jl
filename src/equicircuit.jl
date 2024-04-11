@@ -98,17 +98,51 @@ Converts the resistance, reactance, conductance, and susceptance from physical u
 toPU_RXGB(r = 0.01, x = 0.1, g = 0.02, b = 0.02, v_kv = 110.0, baseMVA = 100.0)
 ```
 """
-function toPU_RXGB(; r::Float64, x::Float64, g::Union{Nothing, Float64}=nothing, b::Union{Nothing, Float64}=nothing, v_kv::Float64, baseMVA::Float64)::Tuple{Float64, Float64, Float64, Float64}
-  z_base = (v_kv*v_kv) / baseMVA
+function toPU_RXGB(; r::Float64, x::Float64, g::Union{Nothing,Float64} = nothing, b::Union{Nothing,Float64} = nothing, v_kv::Float64, baseMVA::Float64)::Tuple{Float64,Float64,Float64,Float64}
+  z_base = (v_kv * v_kv) / baseMVA
   y_base = 1.0 / z_base
   r_pu = r / z_base
   x_pu = x / z_base
-  
+
   g_pu = b_pu = 0.0
   !isnothing(g) ? g_pu = g * y_base : 0.0
   !isnothing(b) ? b_pu = b * y_base : 0.0
 
-  return r_pu, x_pu, g_pu, b_pu  
+  return r_pu, x_pu, g_pu, b_pu
+end
+
+"""
+    to_RXGB(r_pu::Float64, x_pu::Float64, g_pu::Union{Nothing,Float64} = nothing, b_pu::Union{Nothing,Float64} = nothing, v_kv::Float64, baseMVA::Float64)::Tuple{Float64,Float64,Float64,Float64}
+
+Converts the resistance, reactance, conductance, and susceptance from per unit to physical units.
+
+# Arguments
+- `r_pu::Float64`: The per unit resistance.
+- `x_pu::Float64`: The per unit reactance.
+- `g_pu::Union{Nothing, Float64}`: The per unit conductance. It can be `Nothing` or a `Float64` value.
+- `b_pu::Union{Nothing, Float64}`: The per unit susceptance. It can be `Nothing` or a `Float64` value.
+- `v_kv::Float64`: The voltage in kV.
+- `baseMVA::Float64`: The base power in MVA.
+
+# Returns
+- `r::Float64`: The resistance in Ohm.
+- `x::Float64`: The reactance in Ohm.
+- `g::Float64`: The conductance in S.
+- `b::Float64`: The susceptance in S.
+
+# Example
+```julia
+to_RXGB(r_pu = 0.01, x_pu = 0.1, g_pu = 0.02, b_pu = 0.02, v_kv = 110.0, baseMVA = 100.0)
+```
+"""
+function to_RXGB(;r_pu::Float64, x_pu::Float64, g_pu::Union{Nothing,Float64} = nothing, b_pu::Union{Nothing,Float64} = nothing, v_kv::Float64, baseMVA::Float64)::Tuple{Float64,Float64,Float64,Float64}
+  z_base = (v_kv^2) / baseMVA
+  r = r_pu * z_base
+  x = x_pu * z_base
+  g = b = 0.0
+  !isnothing(g_pu) ? g = g_pu / z_base : 0.0
+  !isnothing(b_pu) ? b = b_pu / z_base : 0.0
+  return r, x, g, b
 end
 
 """

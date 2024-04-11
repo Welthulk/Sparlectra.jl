@@ -31,7 +31,7 @@ Functions:
 - `addShunt!(; net::Net, ...)`: Adds a shunt to the network.
 - `addBranch!(; net::Net, ...)`: Adds a branch to the network.
 - `addACLine!(; net::Net, ...)`: Adds an AC line segment to the network.
-- `addPIModellTrafo!(; net::Net, ...)`: Adds a transformer with PI model to the network.
+- `addPIModelTrafo!(; net::Net, ...)`: Adds a transformer with PI model to the network.
 - `add2WTrafo!(; net::Net, ...)`: Adds a two-winding transformer to the network.
 - `addProsumer!(; net::Net, ...)`: Adds a prosumer to the network.
 - `lockNet!(; net::Net, locked::Bool)`: Locks or unlocks the network.
@@ -264,8 +264,7 @@ function updateBranchParameters!(;net::Net, fromBus::String, toBus::String, bran
     from = geNetBusIdx(net = net, busName = fromBus)
     to = geNetBusIdx(net = net, busName = toBus)   
     branchTuple = (from, to)   
-    @show idx = net.branchDict[branchTuple]
-    @show net.branchVec[idx]
+    idx = net.branchDict[branchTuple]    
     br = net.branchVec[idx]
     br.r_pu = branch.r_pu
     br.x_pu = branch.x_pu
@@ -274,8 +273,7 @@ function updateBranchParameters!(;net::Net, fromBus::String, toBus::String, bran
     br.ratio = branch.ratio
     br.angle = branch.angle
     br.sn_MVA = branch.sn_MVA
-    net.branchVec[idx] = br
-    @show net.branchVec[idx]
+    net.branchVec[idx] = br    
 end
 
 """
@@ -301,7 +299,40 @@ function addACLine!(; net::Net, fromBus::String, toBus::String, length::Float64,
   vn_kV = getNodeVn(net.nodeVec[from])
   vn_2_kV = getNodeVn(net.nodeVec[to])
   @assert vn_kV == vn_2_kV "Voltage level of the from bus $(vn_kV) does not match the to bus $(vn_2_kV)"
-  acseg = ACLineSegment(vn_kv = vn_kV, from = from, to = to, length = length, r = r, x = x, b = b, c_nf_per_km = c_nf_per_km, tanδ = tanδ, ratedS = ratedS, paramsBasedOnLength = false)
+  acseg = ACLineSegment(vn_kv = vn_kV, from = from, to = to, length = length, r = r, x = x, b = b, c_nf_per_km = c_nf_per_km, tanδ = tanδ, ratedS = ratedS, paramsBasedOnLength = false, isPIModel = false)
+  push!(net.linesAC, acseg)
+
+  addBranch!(net = net, from = from, to = to, branch = acseg, vn_kV = vn_kV, status = status)
+  
+end
+
+"""
+    addPIModelACLine!(; net::Net, fromBus::String, toBus::String, r_pu::Float64, x_pu::Float64, b_pu::Float64, status::Int, ratedS::Union{Nothing,Float64}=nothing)
+
+Adds a PI model AC line to the network.
+
+# Arguments
+- `net::Net`: The network.
+- `fromBus::String`: The name of the bus where the line starts.
+- `toBus::String`: The name of the bus where the line ends.
+- `r_pu::Float64`: The per unit resistance of the line.
+- `x_pu::Float64`: The per unit reactance of the line.
+- `b_pu::Float64`: The per unit total line charging susceptance of the line.
+- `status::Int`: The status of the line. 1 = in service, 0 = out of service.
+- `ratedS::Union{Nothing,Float64}`: The rated power of the line.
+
+# Example
+```julia
+addPIModelACLine!(net = network, fromBus = "Bus1", toBus = "Bus2", r_pu = 0.01, x_pu = 0.1, b_pu = 0.02, status = 1, ratedS = 100.0)
+```
+"""
+function addPIModelACLine!(; net::Net, fromBus::String, toBus::String, r_pu::Float64, x_pu::Float64, b_pu::Float64, status::Int, ratedS::Union{Nothing,Float64}=nothing)
+  from = geNetBusIdx(net = net, busName = fromBus)
+  to = geNetBusIdx(net = net, busName = toBus)
+  vn_kV = getNodeVn(net.nodeVec[from])
+  vn_2_kV = getNodeVn(net.nodeVec[to])
+  @assert vn_kV == vn_2_kV "Voltage level of the from bus $(vn_kV) does not match the to bus $(vn_2_kV)"
+  acseg = ACLineSegment(vn_kv = vn_kV, from = from, to = to, length = 1.0, r = r_pu, x = x_pu, b = b_pu, ratedS = ratedS, paramsBasedOnLength = true, isPIModel = true)
   push!(net.linesAC, acseg)
 
   addBranch!(net = net, from = from, to = to, branch = acseg, vn_kV = vn_kV, status = status)
@@ -325,7 +356,7 @@ Add a transformer with PI model to the network.
 - `shift_deg::Union{Nothing, Float64}`: Phase shift angle of the transformer. Default is `nothing`.
 - `isAux::Bool`: Whether the transformer is an auxiliary transformer. Default is `false`.
 """
-function addPIModellTrafo!(; net::Net, fromBus::String, toBus::String, r_pu::Float64, x_pu::Float64, b_pu::Float64, status::Int, ratedU::Union{Nothing,Float64}=nothing, ratedS::Union{Nothing,Float64} = nothing, 
+function addPIModelTrafo!(; net::Net, fromBus::String, toBus::String, r_pu::Float64, x_pu::Float64, b_pu::Float64, status::Int, ratedU::Union{Nothing,Float64}=nothing, ratedS::Union{Nothing,Float64} = nothing, 
                             ratio::Union{Nothing,Float64} = nothing, shift_deg::Union{Nothing,Float64} = nothing, isAux::Bool = false)
   from = geNetBusIdx(net = net, busName = fromBus)
   to = geNetBusIdx(net = net, busName = toBus)
