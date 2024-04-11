@@ -63,18 +63,18 @@ export
   # Shunt
   getGBShunt,  getPQShunt,
   # ACLineSegment
-  get_line_parameters,
+  get_line_parameters, isPIModel,
   # ProSumer
   isSlack, isGenerator, isAPUNode, setQGenReplacement!, getQGenReplacement, toProSumptionType, updatePQ!,
   # Net
-  addBus!, addShunt!, addACLine!, add2WTrafo!, addPIModellTrafo!, addProsumer!, lockNet!, validate, hasBusInNet, addBusGenPower!, addBusLoadPower!, addBusShuntPower!,
+  addBus!, addShunt!, addACLine!, addPIModelACLine!, add2WTrafo!, addPIModelTrafo!, addProsumer!, lockNet!, validate, hasBusInNet, addBusGenPower!, addBusLoadPower!, addBusShuntPower!,
   getNetOrigBusIdx, geNetBusIdx, setBranchStatus!, setTotalLosses!, getTotalLosses, getBusType, get_bus_vn_kV, get_vn_kV, updateBranchParameters!,
   # create_powermat.jl
   casefileparser, createNetFromMatPowerFile,
   # exportMatPower.jl
   writeMatpowerCasefile,
   # equicircuit.jl
-  calcComplexRatio, calcNeutralU,  createYBUS, adjacentBranches, toPU_RXGB,
+  calcComplexRatio, calcNeutralU,  createYBUS, adjacentBranches, toPU_RXGB, to_RXGB,
   # nbi.jl
   getNBI, mdoRCM,
   # jacobian.jl

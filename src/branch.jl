@@ -79,7 +79,6 @@ struct BranchModel <: AbstractBranch
   end
 end
 
-
 """
     Branch
 
@@ -126,8 +125,8 @@ mutable struct Branch
   pLosses::Union{Nothing,Float64}        # active power losses
   qLosses::Union{Nothing,Float64}        # reactive power losses
 
-  function Branch(; from::Int, to::Int, baseMVA::Float64, branch::AbstractBranch, id::Int, status::Integer = 1, ratio::Union{Nothing,Float64} = nothing, side::Union{Nothing,Int} = nothing, vn_kV::Union{Nothing,Float64} = nothing,
-                    fromOid::Union{Nothing,Int} = nothing, toOid::Union{Nothing,Int} = nothing)    
+  function Branch(; from::Int, to::Int, baseMVA::Float64, branch::AbstractBranch, id::Int, status::Integer = 1, ratio::Union{Nothing,Float64} = nothing,
+                    side::Union{Nothing,Int} = nothing, vn_kV::Union{Nothing,Float64} = nothing, fromOid::Union{Nothing,Int} = nothing, toOid::Union{Nothing,Int} = nothing, )
     if isa(branch, ACLineSegment) # Line
       @assert !isnothing(vn_kV) "vn_kV must be set for an ACLineSegment"
       if isnothing(ratio)
@@ -139,16 +138,13 @@ mutable struct Branch
         c = getBranchComp(vn_kV, from, to, id, "ACL")
       end
       c = getBranchComp(vn_kV, from, to, id, "ACL")
-      r, x, b, g = getRXBG(branch)
-      baseZ = (vn_kV)^2 / baseMVA
-      r_pu = r / baseZ
-      x_pu = x / baseZ
-      b_pu = b * baseZ
-      g_pu = g * baseZ
-      if isnothing(ratio)
-        ratio = 0.0
-      end      
-      new(c, from, to, r_pu, x_pu, b_pu, g_pu, ratio, 0.0, status, branch.ratedS, nothing, nothing, nothing, nothing)
+      if isPIModel(branch)
+        new(c, from, to, branch.r, branch.x, branch.b, branch.g, 0.0, 0.0, status, branch.ratedS, nothing, nothing, nothing, nothing)
+      else
+        r, x, b, g = getRXBG(branch)
+        r_pu, x_pu, g_pu, b_pu = toPU_RXGB(r = r, x = x, g = g, b = b, v_kv = vn_kV, baseMVA = baseMVA)
+        new(c, from, to, r_pu, x_pu, b_pu, g_pu, 0.0, 0.0, status, branch.ratedS, nothing, nothing, nothing, nothing)
+      end
     elseif isa(branch, PowerTransformer) # Transformer     
       if (isnothing(side) && branch.isBiWinder)
         side = getSideNumber2WT(branch)
@@ -164,9 +160,9 @@ mutable struct Branch
         c = getBranchComp(vn_kV, fromOid, toOid, id, "2WT")
       else
         c = getBranchComp(vn_kV, from, to, id, "2WT")
-      end      
-      
-      sn_MVA = getWindingRatedS(w)       
+      end
+
+      sn_MVA = getWindingRatedS(w)
       r, x, b, g = getRXBG(w)
       if isPerUnit_RXGB(w)
         r_pu = r
@@ -191,8 +187,8 @@ mutable struct Branch
 
       new(c, from, to, r_pu, x_pu, b_pu, g_pu, ratio, angle, status, sn_MVA, nothing, nothing)
     elseif isa(branch, BranchModel) # PI-Model
-      @assert !isnothing(vn_kV) "vn_kV must be set for PI-Model"      
-      
+      @assert !isnothing(vn_kV) "vn_kV must be set for PI-Model"
+
       if !isnothing(fromOid) && !isnothing(toOid)
         c = getBranchComp(vn_kV, fromOid, toOid, id, "PI")
       else

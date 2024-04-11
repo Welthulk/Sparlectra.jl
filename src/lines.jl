@@ -18,6 +18,7 @@ A mutable structure representing an AC line segment in a power system.
 - `tanδ::Union{Nothing,Float64}`: The tangent of the loss angle of the AC line segment. It can be `Nothing` or a `Float64` value.
 - `ratedS::Union{Nothing,Float64}`: The rated power of the AC line segment. It can be `Nothing` or a `Float64` value.
 - `paramsBasedOnLength::Bool`: A boolean indicating whether the parameters are based on the length of the AC line segment, if false, the parameters (r,x,g,b) have to multiply by length.
+- `_isPIModel::Bool`: A boolean indicating whether the AC line segment is a PI model, all parameters are p.u. .
 
 # Constructors
 - `ACLineSegment(; vn_kv::Float64, from::Int, to::Int, length::Float64, r::Float64, x::Float64, b::Union{Nothing,Float64} = nothing, c_nf_per_km::Union{Nothing,Float64} = nothing, 
@@ -37,23 +38,29 @@ mutable struct ACLineSegment <: AbstractBranch
   tanδ::Union{Nothing,Float64}
   ratedS::Union{Nothing,Float64}
   paramsBasedOnLength::Bool
+  _isPIModel::Bool
 
-  function ACLineSegment(; vn_kv::Float64, from::Int, to::Int, length::Float64, r::Float64, x::Float64, b::Union{Nothing,Float64} = nothing, c_nf_per_km::Union{Nothing,Float64} = nothing, 
-                           tanδ::Union{Nothing,Float64} = nothing, ratedS::Union{Nothing,Float64} = nothing, paramsBasedOnLength=true)
-    
+  function ACLineSegment(; vn_kv::Float64,  from::Int,  to::Int,  length::Float64, r::Float64, x::Float64, b::Union{Nothing,Float64} = nothing,
+                           c_nf_per_km::Union{Nothing,Float64} = nothing, tanδ::Union{Nothing,Float64} = nothing, ratedS::Union{Nothing,Float64} = nothing,
+                           paramsBasedOnLength::Bool = true, isPIModel::Bool = false)
     c = getLineImpPGMComp(vn_kv, from, to)
-    g = 0.0    
-    if !isnothing(b)      
-      b = b
-    elseif !isnothing(c_nf_per_km) && !isnothing(tanδ)
-      y1_shunt_ = 2.0 * pi * 50.0 * c_nf_per_km * 1e-9 * (tanδ + im * 1.0)
-      g = real(y1_shunt_)
-      b = imag(y1_shunt_)
-    else
-      b = 0.0
-    end
+    g = 0.0
     
-    new(c, length, r, x, b, g, c_nf_per_km, tanδ, ratedS, paramsBasedOnLength)
+    if isPIModel
+      new(c, length, r, x, b, g, nothing, nothing, ratedS, paramsBasedOnLength, true)
+    else
+      if !isnothing(b)
+        b = b
+      elseif !isnothing(c_nf_per_km) && !isnothing(tanδ)
+        y1_shunt_ = 2.0 * pi * 50.0 * c_nf_per_km * 1e-9 * (tanδ + im * 1.0)
+        g = real(y1_shunt_)
+        b = imag(y1_shunt_)
+      else
+        b = 0.0
+      end
+
+      new(c, length, r, x, b, g, c_nf_per_km, tanδ, ratedS, paramsBasedOnLength, isPU)
+    end
   end
 
   function Base.show(io::IO, acseg::ACLineSegment)
@@ -103,10 +110,10 @@ getRXBG(acLineSegment)
 ```
 """
 function getRXBG(o::ACLineSegment)::Tuple{Float64,Float64,Union{Nothing,Float64},Union{Nothing,Float64}}
-  if o.paramsBasedOnLength
+  if o.paramsBasedOnLength || o._isPIModel
     return (o.r, o.x, o.b, o.g)
   else
-    return (o.r*o.length, o.x*o.length, o.b*o.length, o.g*o.length)    
+    return (o.r * o.length, o.x * o.length, o.b * o.length, o.g * o.length)
   end
 end
 
@@ -135,6 +142,10 @@ function get_line_parameters(line::ACLineSegment)
   end
 
   return parameters
+end
+
+function isPIModel(line::ACLineSegment)
+  return line._isPIModel
 end
 
 function getLineBusID(Vn::Float64, from::Int, to::Int)
