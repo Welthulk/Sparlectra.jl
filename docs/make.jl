@@ -10,7 +10,8 @@ makedocs(
         collapselevel = 1),
   pages = [
     "index.md",    
-    "API" => ["networks.md","reference.md", "import.md"],
+    "workshop.md",
+    "API" => ["reference.md", "networks.md", "import.md"],    
     "branchmodel.md",
     "changelog.md"
   ]

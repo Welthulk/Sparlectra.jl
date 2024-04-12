@@ -215,6 +215,7 @@ function createYBUS(branchVec::Vector{Branch}, shuntVec::Vector{Shunt}, sparse::
   end
 
   if printYBUS
+    println("\nYBUS:\n")
     red_text = "\x1b[31m"  # ANSI escape code for red text
     reset_text = "\x1b[0m"  # ANSI escape code to reset text color
     green_text = "\x1b[32m"  # ANSI escape code for green text

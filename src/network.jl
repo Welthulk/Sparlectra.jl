@@ -30,6 +30,7 @@ Functions:
 - `addBus!(; net::Net, ...)`: Adds a bus to the network.
 - `addShunt!(; net::Net, ...)`: Adds a shunt to the network.
 - `addBranch!(; net::Net, ...)`: Adds a branch to the network.
+- `addPIModelACLine!(; net::Net, ...)`: Adds a PI model AC line to the network.
 - `addACLine!(; net::Net, ...)`: Adds an AC line segment to the network.
 - `addPIModelTrafo!(; net::Net, ...)`: Adds a transformer with PI model to the network.
 - `add2WTrafo!(; net::Net, ...)`: Adds a two-winding transformer to the network.
@@ -39,6 +40,7 @@ Functions:
 - `get_bus_vn_kV(; net::Net, busName::String)`: Gets the voltage level of a bus by name.
 - `get_vn_kV(; net::Net, busIdx::Int)`: Gets the voltage level of a bus by index.
 - `getBusType(; net::Net, busName::String)`: Gets the type of a bus by name.
+- `updateBranchParameters!(; net::Net, fromBus::String, toBus::String, branch::BranchModel)`: Updates the parameters of a branch in the network.
 - `setBranchStatus!(; net::Net, branchIdx::Int, status::Int)`: Sets the status of a branch.
 - `setTotalLosses!(; net::Net, pLosses::Float64, qLosses::Float64)`: Sets the total losses of the network.
 - `getTotalLosses(; net::Net)`: Gets the total losses of the network.
@@ -49,6 +51,7 @@ Functions:
 - `addBusLoadPower!(; net::Net, busName::String, pLoad::Float64, qLoad::Float64)`: Adds load power to a bus.
 - `addBusShuntPower!(; net::Net, busName::String, pShunt::Float64, qShunt::Float64)`: Adds shunt power to a bus.
 """
+
 struct Net
   name::String
   baseMVA::Float64
