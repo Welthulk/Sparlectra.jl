@@ -27,6 +27,30 @@ end
 @enum ProSumptionType UnknownP = 0 Injection = 1 Consumption = 2
 
 abstract type AbstractComponent end
+"""
+    Component
+
+A structure representing a component in a power system.
+
+# Fields
+- `cID::String`: The ID of the component.
+- `cName::String`: The name of the component.
+- `cTyp::ComponentTyp`: The type of the component.
+- `cVN::Float64`: The nominal voltage of the component in kV.
+
+# Constructors
+- `Component(id::String, name::String, typ::ComponentTyp, vn::Float64)`: Creates a new `Component` instance with a specified nominal voltage.
+- `Component(id::String, name::String, typ::ComponentTyp)`: Creates a new `Component` instance with a nominal voltage of 1 kV.
+- `Component(id, name, cmp::String, Unenn::Float64)`: Creates a new `Component` instance with a specified nominal voltage and component type as a string.
+
+# Methods
+- `Base.show(io::IO, x::Component)`: Prints the `Component` instance.
+
+# Example
+```julia
+Component("1", "Generator", "GENERATOR", 110.0)
+```
+"""
 struct Component <: AbstractComponent
   cID::String
   cName::String

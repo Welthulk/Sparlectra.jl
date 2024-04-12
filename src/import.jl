@@ -3,6 +3,26 @@
 # include-file import.jl
 
 # Parser for MATPOWER case files
+"""
+    casefileparser(filename)
+
+Parses a MATPOWER case file and returns the case name, base power, and bus, generator, and branch data.
+
+# Arguments
+- `filename`: The name of the file to parse.
+
+# Returns
+- `case_name`: The name of the case.
+- `baseMVA`: The base power in MVA.
+- `mpc_bus`: The bus data matrix.
+- `mpc_gen`: The generator data matrix.
+- `mpc_branch`: The branch data matrix.
+
+# Example
+```julia
+case_name, baseMVA, mpc_bus, mpc_gen, mpc_branch = casefileparser("case9.m")
+```
+"""
 function casefileparser(filename)
   function processLine(line::AbstractString)::Vector{Float64}
     line = chop(line)  # Run chop here to remove unnecessary characters at the end of the line
@@ -73,6 +93,8 @@ function casefileparser(filename)
         branch_data_block *= "\n$line"
         break
       end
+    elseif isempty(strip(line))
+      continue
     elseif startswith(line, "%")
       continue
     elseif !isempty(bus_data_block) && block == 1
@@ -83,7 +105,7 @@ function casefileparser(filename)
       # Add the line to the block
       gen_data_block *= "\n$line"
       len_gen += 1
-    elseif !isempty(branch_data_block) && block == 3
+    elseif !isempty(strip(branch_data_block)) && block == 3
       # Add the line to the block
       branch_data_block *= "\n$line"
       len_branch += 1
@@ -97,15 +119,18 @@ function casefileparser(filename)
 
   close(file)
 
-  isempty(bus_data_block) && error("Pattern not found")
+  isempty(bus_data_block) && error("Bus Pattern not found")
+  isempty(gen_data_block) && error("Gen Pattern not found")
+  isempty(branch_data_block) && error("Branch Pattern not found")
 
-  bus_data_block = replace(bus_data_block, r"%.*\n" => "\n")
-  branch_data_block = replace(branch_data_block, r"%.*\n" => "\n")
+  bus_data_block = replace(bus_data_block, r"%.*\n" => "\n")  
+  branch_data_block = replace(branch_data_block, r"%.*\n" => "\n")  
   gen_data_block = replace(gen_data_block, r"%.*\n" => "\n")
 
   bus_zeilen = split(bus_data_block, '\n')
   gen_zeilen = split(gen_data_block, '\n')
   branch_zeilen = split(branch_data_block, '\n')
+  
 
   mpc_bus = zeros(Float64, len_bus, 13)
   mpc_gen = zeros(Float64, len_gen, 21)
@@ -134,9 +159,9 @@ function casefileparser(filename)
       mpc_gen[i-1, :] = werte[1:21]
     end#
   end
-
-  for (i, zeile) in enumerate(branch_zeilen)
-    if occursin("[", zeile)
+  
+  for (i, zeile) in enumerate(branch_zeilen)      
+    if occursin("[", zeile)      
       continue
     elseif occursin("];", zeile)
       break
@@ -155,6 +180,6 @@ function casefileparser(filename)
 
   # apply the order to the mpc_bus array
   mpc_bus = mpc_bus[busSequence, :]
-
+  
   return strip(case_name), baseMVA, mpc_bus, mpc_gen, mpc_branch
 end
