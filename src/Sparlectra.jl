@@ -1,5 +1,5 @@
 """
-    Sparlectra 0.4.13
+    Sparlectra 0.4.14
 
 Sparlectra is a Julia package for the calculation of electrical networks. It is designed to be used in the context of power system analysis and optimization. 
 
@@ -25,7 +25,7 @@ using LinearAlgebra, SparseArrays, Printf, Logging
 
 # resource data types for working with Sparlectra
 const Wurzel3 = 1.7320508075688772
-const SparlectraVersion = VersionNumber("0.4.13")
+const SparlectraVersion = VersionNumber("0.4.14")
 abstract type AbstractBranch end
 
 export
@@ -61,14 +61,14 @@ export
   # Branch
   setBranchFlow!,  setBranchStatus!,
   # Shunt
-  getGBShunt,  getPQShunt,
+  getGBShunt,  getPQShunt, updatePQShunt!,
   # ACLineSegment
   get_line_parameters, isPIModel,
   # ProSumer
   isSlack, isGenerator, isAPUNode, setQGenReplacement!, getQGenReplacement, toProSumptionType, updatePQ!,
   # Net
   addBus!, addShunt!, addACLine!, addPIModelACLine!, add2WTrafo!, addPIModelTrafo!, addProsumer!, lockNet!, validate, hasBusInNet, addBusGenPower!, addBusLoadPower!, addBusShuntPower!,
-  getNetOrigBusIdx, geNetBusIdx, setBranchStatus!, setTotalLosses!, getTotalLosses, getBusType, get_bus_vn_kV, get_vn_kV, updateBranchParameters!,
+  getNetOrigBusIdx, geNetBusIdx, setBranchStatus!, setTotalLosses!, getTotalLosses, getBusType, get_bus_vn_kV, get_vn_kV, updateBranchParameters!, hasShunt!, getShunt!,
   # create_powermat.jl
   casefileparser, createNetFromMatPowerFile,
   # exportMatPower.jl

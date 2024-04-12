@@ -163,15 +163,19 @@ function getNocdeComp(Vn_kV::Float64, node_idx::Int, nodeType, isAux::Bool = fal
 end
 
 function addShuntPower!(; node::Node, p::Float64, q::Float64)
-  if (isnothing(node._pShunt))
-    node._pShunt = 0.0
+  if !isnothing(p)
+    if (isnothing(node._pShunt))
+      node._pShunt = 0.0
+    end
+    node._pShunt = node._pShunt + p
   end
-  node._pShunt = node._pShunt + p
 
-  if (isnothing(node._qShunt))
-    node._qShunt = 0.0
+  if !isnothing(q)
+    if (isnothing(node._qShunt))
+      node._qShunt = 0.0
+    end
+    node._qShunt = node._qShunt + q
   end
-  node._qShunt = node._qShunt + q
 end
 
 function addLoadPower!(; node::Node, p::Union{Nothing,Float64}, q::Union{Nothing,Float64})
