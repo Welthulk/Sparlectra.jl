@@ -59,7 +59,7 @@ mutable struct ACLineSegment <: AbstractBranch
         b = 0.0
       end
 
-      new(c, length, r, x, b, g, c_nf_per_km, tanδ, ratedS, paramsBasedOnLength, isPU)
+      new(c, length, r, x, b, g, c_nf_per_km, tanδ, ratedS, paramsBasedOnLength, isPIModel)
     end
   end
 

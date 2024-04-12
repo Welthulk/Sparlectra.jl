@@ -78,7 +78,7 @@ export
   # nbi.jl
   getNBI, mdoRCM,
   # jacobian.jl
-  setJacobianDebug, runpf!,
+  setJacobianDebug, setJacobianAngleLimit, runpf!,
   # losses.jl
   calcNetLosses!,
   
