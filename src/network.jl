@@ -69,9 +69,10 @@ struct Net
   branchDict::Dict{Tuple{Int, Int},Int}  
   totalLosses::Vector{Tuple{Float64,Float64}}
   _locked::Bool
+  shuntDict::Dict{Int,Int}
 
   function Net(; name::String, baseMVA::Float64, vmin_pu::Float64 = 0.9, vmax_pu::Float64 = 1.1)
-    new(name, baseMVA, [], vmin_pu, vmax_pu, [], [], [], [], [], [], Dict{String,Int}(), Dict{Int,Int}(), Dict{Tuple{Int, Int},Int}(), [], false)
+    new(name, baseMVA, [], vmin_pu, vmax_pu, [], [], [], [], [], [], Dict{String,Int}(), Dict{Int,Int}(), Dict{Tuple{Int, Int},Int}(), [], false, Dict{Int,Int}())
   end
 
   function Base.show(io::IO, o::Net)
@@ -200,14 +201,24 @@ Parameters:
 function addShunt!(; net::Net, busName::String, pShunt::Float64, qShunt::Float64, in_service::Int = 1)  
   busIdx  = geNetBusIdx(net = net, busName = busName)  
   idShunt = length(net.shuntVec) + 1
-    
+  net.shuntDict[busIdx] = idShunt
   vn_kV = getNodeVn(net.nodeVec[busIdx])
-  sh = Shunt(fromBus = busIdx, id = idShunt, base_MVA = net.baseMVA, Vn_kV_shunt = vn_kV, p_shunt = pShunt, q_shunt = qShunt, status = in_service)
-  push!(net.shuntVec, sh)
-  node = net.nodeVec[busIdx]
+  sh = Shunt(fromBus = busIdx, id = idShunt, base_MVA = net.baseMVA, vn_kV_shunt = vn_kV, p_shunt = pShunt, q_shunt = qShunt, status = in_service)
+  push!(net.shuntVec, sh)  
   if in_service == 1
-    addShuntPower!(node = node, p = pShunt, q = qShunt)
+    addShuntPower!(node = net.nodeVec[busIdx], p = pShunt, q = qShunt)
   end  
+end
+
+function hasShunt!(; net::Net, busName::String)::Bool
+  busIdx  = geNetBusIdx(net = net, busName = busName)  
+  return haskey(net.shuntDict, busIdx)
+end
+
+function getShunt!(; net::Net, busName::String)::Shunt
+  busIdx  = geNetBusIdx(net = net, busName = busName)  
+  idShunt = net.shuntDict[busIdx]
+  return net.shuntVec[idShunt]
 end
 
 """
@@ -497,10 +508,8 @@ Update the active and reactive power of a shunt connected to a bus in the networ
 # Arguments
 - `net::Net`: The network object.
 - `busName::String`: The name of the bus.
-- `p::Union{Nothing, Float64}`: The active power to update. Default is `nothing`.
-- `q::Union{Nothing, Float64}`: The reactive power to update. Default is `nothing`.
-
->Note: the corresponding prosumer object will not be updated.
+- `p::Float64`: The active power to update. 
+- `q::Float64`: The reactive power to update.
 
 # Examples
 ```julia
@@ -509,9 +518,20 @@ updateBusPower!(net = net, busName = "Bus1", p = 0.5, q = 0.2) # Update the powe
 run_net_acpflow(net = net, max_ite= 7,tol = 1e-6) # rerun the power flow with the updated network
 ```
 """
-function addBusShuntPower!(; net::Net, busName::String, p::Union{Nothing,Float64} = nothing, q::Union{Nothing,Float64} = nothing)
-  busIdx = geNetBusIdx(net = net, busName = busName)
-  addShuntPower!(node = net.nodeVec[busIdx], p = p, q = q)  
+function addBusShuntPower!(; net::Net, busName::String, p::Float64, q::Float64)
+  if !hasShunt!(net = net, busName = busName)
+    @info "add a new shunt to bus $busName"
+    addShunt!(net = net, busName = busName, pShunt = p, qShunt = q)
+  else
+    @info "update shunt power at bus $busName to $p MW and $q MVar"
+    sh = getShunt!(net = net, busName = busName) # get the shunt-reference(!) connected to the bus, we are manipulating the shunt-reference!
+    _p, _q = getPQShunt(sh)    
+    pVal = isnothing(_p) ? p : p + _p
+    qVal = isnothing(_q) ? q : q + _q
+    updatePQShunt!(sh, pVal, qVal) # we need updated values to update shunt power
+    busIdx = geNetBusIdx(net = net, busName = busName)
+    addShuntPower!(node = net.nodeVec[busIdx], p = p, q = q) # we need given values to update the bus power
+  end
 end
 
 """
