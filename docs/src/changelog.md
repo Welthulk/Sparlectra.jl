@@ -1,11 +1,13 @@
 # Change Log
 
-## Version 0.4.13 (2024-04-11)
+## Version 0.4.13 (2024-04-12)
 ### New Features
 - added attribute for Lineparameters based on length
 - added update parameter function for network
+- added workshop documentation
 
 ### Bug Fixes
+- taking line length not (always) into account for line parameters
 - parsing emtpy lines of Matpowerfiles
 - documentation rendering
 
