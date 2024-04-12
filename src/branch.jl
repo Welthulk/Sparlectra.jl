@@ -3,6 +3,28 @@
 # include-file branch.jl
 
 # helper
+"""
+    BranchFlow
+
+A structure representing the flow in a branch of a power system.
+
+# Fields
+- `vm_pu::Union{Nothing,Float64}`: The voltage magnitude in per unit.
+- `va_deg::Union{Nothing,Float64}`: The voltage angle in degrees.
+- `pFlow::Union{Nothing,Float64}`: The active power flow.
+- `qFlow::Union{Nothing,Float64}`: The reactive power flow.
+
+# Constructors
+- `BranchFlow(vm_pu::Union{Nothing,Float64} = nothing, va_deg::Union{Nothing,Float64} = nothing, pFlow::Union{Nothing,Float64} = nothing, qFlow::Union{Nothing,Float64} = nothing)`: Creates a new `BranchFlow` instance.
+
+# Methods
+- `Base.show(io::IO, b::BranchFlow)`: Prints the `BranchFlow` instance.
+
+# Example
+```julia
+BranchFlow(vm_pu = 1.0, va_deg = 0.0, pFlow = 100.0, qFlow = 50.0)
+```
+"""
 struct BranchFlow
   vm_pu::Union{Nothing,Float64} # voltage magnitude
   va_deg::Union{Nothing,Float64} # voltage angle
@@ -22,7 +44,28 @@ struct BranchFlow
     println(io, ")")
   end
 end
+"""
+    BranchModel
 
+A structure representing a branch model in a power system.
+
+# Fields
+- `r_pu::Float64`: The per unit resistance of the branch.
+- `x_pu::Float64`: The per unit reactance of the branch.
+- `b_pu::Float64`: The per unit total line charging susceptance of the branch.
+- `g_pu::Float64`: The per unit total line charging conductance of the branch.
+- `ratio::Float64`: The transformer off nominal turns ratio.
+- `angle::Float64`: The transformer off nominal phase shift angle.
+- `sn_MVA::Union{Nothing,Float64}`: The nominal power of the branch = rateA.
+
+# Constructors
+- `BranchModel(; r_pu::Float64, x_pu::Float64, b_pu::Float64, g_pu::Float64, ratio::Float64, angle::Float64, sn_MVA::Union{Nothing,Float64} = nothing)`: Creates a new `BranchModel` instance.
+
+# Example
+```julia
+BranchModel(r_pu = 0.01, x_pu = 0.1, b_pu = 0.02, g_pu = 0.02, ratio = 1.0, angle = 0.0, sn_MVA = 100.0)
+```
+"""
 struct BranchModel <: AbstractBranch
   r_pu::Float64
   x_pu::Float64
@@ -36,6 +79,35 @@ struct BranchModel <: AbstractBranch
   end
 end
 
+"""
+    Branch
+
+A mutable structure representing a branch in a power system.
+
+# Fields
+- `comp::AbstractComponent`: The component of the branch.
+- `fromBus::Integer`: The index of the bus where the branch starts.
+- `toBus::Integer`: The index of the bus where the branch ends.
+- `r_pu::Float64`: The per unit resistance of the branch.
+- `x_pu::Float64`: The per unit reactance of the branch.
+- `b_pu::Float64`: The per unit total line charging susceptance of the branch.
+- `g_pu::Float64`: The per unit total line charging conductance of the branch.
+- `ratio::Float64`: The transformer off nominal turns ratio.
+- `angle::Float64`: The transformer off nominal phase shift angle.
+- `status::Integer`: The status of the branch. 1 = in service, 0 = out of service.
+- `sn_MVA::Union{Nothing,Float64}`: The nominal power of the branch = rateA.
+- `fBranchFlow::Union{Nothing,BranchFlow}`: The flow from fromNodeID to toNodeID.
+- `tBranchFlow::Union{Nothing,BranchFlow}`: The flow from toNodeID to fromNodeID.
+- `pLosses::Union{Nothing,Float64}`: The active power losses.
+- `qLosses::Union{Nothing,Float64}`: The reactive power losses.
+
+# Constructors
+- `Branch(; from::Int, to::Int, baseMVA::Float64, branch::AbstractBranch, id::Int, status::Integer = 1, ratio::Union{Nothing,Float64} = nothing, side::Union{Nothing,Int} = nothing, vn_kV::Union{Nothing,Float64} = nothing,
+                    fromOid::Union{Nothing,Int} = nothing, toOid::Union{Nothing,Int} = nothing)`: Creates a new `Branch` instance.
+
+# Methods
+- `Base.show(io::IO, b::Branch)`: Prints the `Branch` instance.
+"""
 mutable struct Branch
   comp::AbstractComponent
   fromBus::Integer
@@ -53,8 +125,8 @@ mutable struct Branch
   pLosses::Union{Nothing,Float64}        # active power losses
   qLosses::Union{Nothing,Float64}        # reactive power losses
 
-  function Branch(; from::Int, to::Int, baseMVA::Float64, branch::AbstractBranch, id::Int, status::Integer = 1, ratio::Union{Nothing,Float64} = nothing, side::Union{Nothing,Int} = nothing, vn_kV::Union{Nothing,Float64} = nothing,
-                    fromOid::Union{Nothing,Int} = nothing, toOid::Union{Nothing,Int} = nothing)    
+  function Branch(; from::Int, to::Int, baseMVA::Float64, branch::AbstractBranch, id::Int, status::Integer = 1, ratio::Union{Nothing,Float64} = nothing,
+                    side::Union{Nothing,Int} = nothing, vn_kV::Union{Nothing,Float64} = nothing, fromOid::Union{Nothing,Int} = nothing, toOid::Union{Nothing,Int} = nothing, )
     if isa(branch, ACLineSegment) # Line
       @assert !isnothing(vn_kV) "vn_kV must be set for an ACLineSegment"
       if isnothing(ratio)
@@ -66,16 +138,13 @@ mutable struct Branch
         c = getBranchComp(vn_kV, from, to, id, "ACL")
       end
       c = getBranchComp(vn_kV, from, to, id, "ACL")
-      r, x, b, g = getRXBG(branch)
-      baseZ = (vn_kV)^2 / baseMVA
-      r_pu = r / baseZ
-      x_pu = x / baseZ
-      b_pu = b * baseZ
-      g_pu = g * baseZ
-      if isnothing(ratio)
-        ratio = 0.0
-      end      
-      new(c, from, to, r_pu, x_pu, b_pu, g_pu, ratio, 0.0, status, branch.ratedS, nothing, nothing, nothing, nothing)
+      if isPIModel(branch)
+        new(c, from, to, branch.r, branch.x, branch.b, branch.g, 0.0, 0.0, status, branch.ratedS, nothing, nothing, nothing, nothing)
+      else
+        r, x, b, g = getRXBG(branch)
+        r_pu, x_pu, g_pu, b_pu = toPU_RXGB(r = r, x = x, g = g, b = b, v_kv = vn_kV, baseMVA = baseMVA)
+        new(c, from, to, r_pu, x_pu, b_pu, g_pu, 0.0, 0.0, status, branch.ratedS, nothing, nothing, nothing, nothing)
+      end
     elseif isa(branch, PowerTransformer) # Transformer     
       if (isnothing(side) && branch.isBiWinder)
         side = getSideNumber2WT(branch)
@@ -91,9 +160,9 @@ mutable struct Branch
         c = getBranchComp(vn_kV, fromOid, toOid, id, "2WT")
       else
         c = getBranchComp(vn_kV, from, to, id, "2WT")
-      end      
-      
-      sn_MVA = getWindingRatedS(w)       
+      end
+
+      sn_MVA = getWindingRatedS(w)
       r, x, b, g = getRXBG(w)
       if isPerUnit_RXGB(w)
         r_pu = r
@@ -118,8 +187,8 @@ mutable struct Branch
 
       new(c, from, to, r_pu, x_pu, b_pu, g_pu, ratio, angle, status, sn_MVA, nothing, nothing)
     elseif isa(branch, BranchModel) # PI-Model
-      @assert !isnothing(vn_kV) "vn_kV must be set for PI-Model"      
-      
+      @assert !isnothing(vn_kV) "vn_kV must be set for PI-Model"
+
       if !isnothing(fromOid) && !isnothing(toOid)
         c = getBranchComp(vn_kV, fromOid, toOid, id, "PI")
       else

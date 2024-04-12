@@ -148,16 +148,9 @@ function createNetFromMatPowerFile(filename, log::Bool = false)::Net
     end
     
     if isLine
-      vn_kv = get_bus_vn_kV(net = myNet,  busName = fbus)      
-      z_base = (vn_kv^2) / baseMVA
-      r = r_pu * z_base
-      x = x_pu * z_base
-      b = b_pu / z_base
-      appro = round((r / 0.1), digits = 0)
-      l_km = appro > 1.0 ? appro : 1.0    # approximation      
-      addACLine!(net = myNet, fromBus = fbus, toBus = tbus, length = l_km, r = r, x = x, b = b, status = status, ratedS = ratedS)  
+      addPIModelACLine!(net = myNet, fromBus = fbus, toBus = tbus, r_pu = r_pu, x_pu = x_pu, b_pu = b_pu, status = status, ratedS = ratedS)  
     else # transformer
-      addPIModellTrafo!(net = myNet, fromBus = fbus, toBus = tbus, r_pu = r_pu, x_pu = x_pu, b_pu = b_pu, status = status, ratedS = ratedS, ratio = ratio, shift_deg = angle)
+      addPIModelTrafo!(net = myNet, fromBus = fbus, toBus = tbus, r_pu = r_pu, x_pu = x_pu, b_pu = b_pu, status = status, ratedS = ratedS, ratio = ratio, shift_deg = angle)
     end
   end
 

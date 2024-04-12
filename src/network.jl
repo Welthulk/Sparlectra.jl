@@ -1,6 +1,7 @@
 # Author: Udo Schmitz (https://github.com/Welthulk)
 # Date: 01.04.2024
 # include-file network.jl
+
 """
 Net: Represents an electrical network.
 
@@ -29,8 +30,9 @@ Functions:
 - `addBus!(; net::Net, ...)`: Adds a bus to the network.
 - `addShunt!(; net::Net, ...)`: Adds a shunt to the network.
 - `addBranch!(; net::Net, ...)`: Adds a branch to the network.
+- `addPIModelACLine!(; net::Net, ...)`: Adds a PI model AC line to the network.
 - `addACLine!(; net::Net, ...)`: Adds an AC line segment to the network.
-- `addPIModellTrafo!(; net::Net, ...)`: Adds a transformer with PI model to the network.
+- `addPIModelTrafo!(; net::Net, ...)`: Adds a transformer with PI model to the network.
 - `add2WTrafo!(; net::Net, ...)`: Adds a two-winding transformer to the network.
 - `addProsumer!(; net::Net, ...)`: Adds a prosumer to the network.
 - `lockNet!(; net::Net, locked::Bool)`: Locks or unlocks the network.
@@ -38,6 +40,7 @@ Functions:
 - `get_bus_vn_kV(; net::Net, busName::String)`: Gets the voltage level of a bus by name.
 - `get_vn_kV(; net::Net, busIdx::Int)`: Gets the voltage level of a bus by index.
 - `getBusType(; net::Net, busName::String)`: Gets the type of a bus by name.
+- `updateBranchParameters!(; net::Net, fromBus::String, toBus::String, branch::BranchModel)`: Updates the parameters of a branch in the network.
 - `setBranchStatus!(; net::Net, branchIdx::Int, status::Int)`: Sets the status of a branch.
 - `setTotalLosses!(; net::Net, pLosses::Float64, qLosses::Float64)`: Sets the total losses of the network.
 - `getTotalLosses(; net::Net)`: Gets the total losses of the network.
@@ -48,6 +51,7 @@ Functions:
 - `addBusLoadPower!(; net::Net, busName::String, pLoad::Float64, qLoad::Float64)`: Adds load power to a bus.
 - `addBusShuntPower!(; net::Net, busName::String, pShunt::Float64, qShunt::Float64)`: Adds shunt power to a bus.
 """
+
 struct Net
   name::String
   baseMVA::Float64
@@ -222,7 +226,7 @@ Parameters:
 function addBranch!(; net::Net, from::Int, to::Int, branch::AbstractBranch, status::Int = 1, ratio::Union{Nothing,Float64} = nothing, side::Union{Nothing,Int} = nothing, vn_kV::Union{Nothing,Float64} = nothing)
   
   idBrunch = length(net.branchVec) + 1
-   fOrig = nothing
+  fOrig = nothing
   tOrig = nothing
   if haskey(net.busOrigIdxDict, from)
     fOrig = net.busOrigIdxDict[from]
@@ -244,6 +248,38 @@ function addBranch!(; net::Net, from::Int, to::Int, branch::AbstractBranch, stat
 end
 
 """
+    updateBranchParameters!(;net::Net, fromBus::String, toBus::String, branch::AbstractBranch)
+
+Updates the parameters of a branch in the network.
+
+# Arguments
+- `net::Net`: The network.
+- `fromBus::String`: The name of the bus where the branch starts.
+- `toBus::String`: The name of the bus where the branch ends.
+- `branch::BranchModel`: The branch with the updated parameters.
+
+# Example
+```julia
+updateBranchParameters!(net = network, fromBus = "Bus1", toBus = "Bus2", branch = updatedBranch)
+```
+"""
+function updateBranchParameters!(;net::Net, fromBus::String, toBus::String, branch::BranchModel)
+    from = geNetBusIdx(net = net, busName = fromBus)
+    to = geNetBusIdx(net = net, busName = toBus)   
+    branchTuple = (from, to)   
+    idx = net.branchDict[branchTuple]    
+    br = net.branchVec[idx]
+    br.r_pu = branch.r_pu
+    br.x_pu = branch.x_pu
+    br.b_pu = branch.b_pu
+    br.g_pu = branch.g_pu
+    br.ratio = branch.ratio
+    br.angle = branch.angle
+    br.sn_MVA = branch.sn_MVA
+    net.branchVec[idx] = br    
+end
+
+"""
 addACLine!: Adds an AC line segment to the network.
 
 Parameters:
@@ -251,10 +287,10 @@ Parameters:
 - `fromBus::String`: Name of the "from" bus.
 - `toBus::String`: Name of the "to" bus.
 - `length::Float64`: Length of the line segment.
-- `r::Float64`: Resistance of the line segment.
-- `x::Float64`: Reactance of the line segment.
-- `b::Union{Nothing,Float64} = nothing`: Susceptance of the line segment (default is nothing).
-- `c_nf_per_km::Union{Nothing,Float64} = nothing`: Capacitance of the line segment in nF/km (default is nothing).
+- `r::Float64`: Resistance per Meter of the line segment.
+- `x::Float64`: Reactance per Meter of the line segment.
+- `b::Union{Nothing,Float64} = nothing`: Susceptance per Meter of the line segment (default is nothing).
+- `c_nf_per_km::Union{Nothing,Float64} = nothing`: Capacitance per Meter of the line segment in nF/km (default is nothing).
 - `tanδ::Union{Nothing,Float64} = nothing`: Tangent of the loss angle (default is nothing).
 - `ratedS::Union{Nothing, Float64}= nothing`: Rated power of the line segment in MVA (default is nothing).
 - `status::Int = 1`: Status of the line segment (default is 1).
@@ -266,7 +302,40 @@ function addACLine!(; net::Net, fromBus::String, toBus::String, length::Float64,
   vn_kV = getNodeVn(net.nodeVec[from])
   vn_2_kV = getNodeVn(net.nodeVec[to])
   @assert vn_kV == vn_2_kV "Voltage level of the from bus $(vn_kV) does not match the to bus $(vn_2_kV)"
-  acseg = ACLineSegment(vn_kv = vn_kV, from = from, to = to, length = length, r = r, x = x, b = b, c_nf_per_km = c_nf_per_km, tanδ = tanδ, ratedS = ratedS)
+  acseg = ACLineSegment(vn_kv = vn_kV, from = from, to = to, length = length, r = r, x = x, b = b, c_nf_per_km = c_nf_per_km, tanδ = tanδ, ratedS = ratedS, paramsBasedOnLength = false, isPIModel = false)
+  push!(net.linesAC, acseg)
+
+  addBranch!(net = net, from = from, to = to, branch = acseg, vn_kV = vn_kV, status = status)
+  
+end
+
+"""
+    addPIModelACLine!(; net::Net, fromBus::String, toBus::String, r_pu::Float64, x_pu::Float64, b_pu::Float64, status::Int, ratedS::Union{Nothing,Float64}=nothing)
+
+Adds a PI model AC line to the network.
+
+# Arguments
+- `net::Net`: The network.
+- `fromBus::String`: The name of the bus where the line starts.
+- `toBus::String`: The name of the bus where the line ends.
+- `r_pu::Float64`: The per unit resistance of the line.
+- `x_pu::Float64`: The per unit reactance of the line.
+- `b_pu::Float64`: The per unit total line charging susceptance of the line.
+- `status::Int`: The status of the line. 1 = in service, 0 = out of service.
+- `ratedS::Union{Nothing,Float64}`: The rated power of the line.
+
+# Example
+```julia
+addPIModelACLine!(net = network, fromBus = "Bus1", toBus = "Bus2", r_pu = 0.01, x_pu = 0.1, b_pu = 0.02, status = 1, ratedS = 100.0)
+```
+"""
+function addPIModelACLine!(; net::Net, fromBus::String, toBus::String, r_pu::Float64, x_pu::Float64, b_pu::Float64, status::Int, ratedS::Union{Nothing,Float64}=nothing)
+  from = geNetBusIdx(net = net, busName = fromBus)
+  to = geNetBusIdx(net = net, busName = toBus)
+  vn_kV = getNodeVn(net.nodeVec[from])
+  vn_2_kV = getNodeVn(net.nodeVec[to])
+  @assert vn_kV == vn_2_kV "Voltage level of the from bus $(vn_kV) does not match the to bus $(vn_2_kV)"
+  acseg = ACLineSegment(vn_kv = vn_kV, from = from, to = to, length = 1.0, r = r_pu, x = x_pu, b = b_pu, ratedS = ratedS, paramsBasedOnLength = true, isPIModel = true)
   push!(net.linesAC, acseg)
 
   addBranch!(net = net, from = from, to = to, branch = acseg, vn_kV = vn_kV, status = status)
@@ -290,7 +359,7 @@ Add a transformer with PI model to the network.
 - `shift_deg::Union{Nothing, Float64}`: Phase shift angle of the transformer. Default is `nothing`.
 - `isAux::Bool`: Whether the transformer is an auxiliary transformer. Default is `false`.
 """
-function addPIModellTrafo!(; net::Net, fromBus::String, toBus::String, r_pu::Float64, x_pu::Float64, b_pu::Float64, status::Int, ratedU::Union{Nothing,Float64}=nothing, ratedS::Union{Nothing,Float64} = nothing, 
+function addPIModelTrafo!(; net::Net, fromBus::String, toBus::String, r_pu::Float64, x_pu::Float64, b_pu::Float64, status::Int, ratedU::Union{Nothing,Float64}=nothing, ratedS::Union{Nothing,Float64} = nothing, 
                             ratio::Union{Nothing,Float64} = nothing, shift_deg::Union{Nothing,Float64} = nothing, isAux::Bool = false)
   from = geNetBusIdx(net = net, busName = fromBus)
   to = geNetBusIdx(net = net, busName = toBus)

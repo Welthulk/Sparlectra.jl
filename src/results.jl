@@ -177,8 +177,7 @@ function printACPFlowResults(net::Net, ct::Float64, ite::Int, tol::Float64, toFi
     @printf(io, "| %-5d | %-20s | %-10.1f | %-10.3f | %-10.3f | %-10.3f | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-5s |\n", n.busIdx, nodeName, n.comp.cVN, v, n._vm_pu, n._va_deg, pGS, qGS, pLS, qLS, pShunt_str, qShunt_str, typeStr)
   end
 
-  @printf(io, "--------------------------------------------------------------------------------------------------------------------------------------------------------------------------\n")
-  #@show tpGS, tqGS, tpLS, tqLS, tpShunt, tqShunt
+  @printf(io, "--------------------------------------------------------------------------------------------------------------------------------------------------------------------------\n")  
   println(io, flowResults)
 
   if toFile

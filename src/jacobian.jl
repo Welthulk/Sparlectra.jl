@@ -5,7 +5,7 @@
 # classical Newton-Raphson method
 
 debug = false
-
+angle_limit = false
 mutable struct BusData
   idx::Int        # index of the bus, necessary for sorting  
   vm_pu::Float64  # voltage in pu
@@ -26,16 +26,20 @@ mutable struct BusData
   end
 end
 
+function setJacobianAngleLimit(value::Bool)
+  global angle_limit = value
+end
+
 function setJacobianDebug(value::Bool)
   global debug = value
 end
 
 # return vector of BusData
-function getBusData(nodes::Vector{Sparlectra.Node}, Sbase_MVA::Float64, verbose::Int, flatStart::Bool = false)
+function getBusData(nodes::Vector{Sparlectra.Node}, Sbase_MVA::Float64, flatStart::Bool = false)
   busVec = Vector{BusData}()
 
   slackIdx = 0
-  if verbose > 2
+  if debug
     println("\ngetBusData:")
   end
 
@@ -98,11 +102,11 @@ function getBusData(nodes::Vector{Sparlectra.Node}, Sbase_MVA::Float64, verbose:
   delta_p = round((sumGen_p - sumLoad_p), digits = 3)
   delta_q = round((sumGen_q - sumLoad_q), digits = 3)
 
-  if verbose > 0
+  if debug
     println("\n∑Load: [$(sumLoad_p), $(sumLoad_q)], ∑Gen [$(sumGen_p), $(sumGen_q)]  Δp, Δq: [$(delta_p), $(delta_q)]")
   end
 
-  if verbose > 2
+  if debug
     println("\nslack bus: $(slackIdx)")
     for b in busVec
       println("$(b)")
@@ -113,7 +117,7 @@ function getBusData(nodes::Vector{Sparlectra.Node}, Sbase_MVA::Float64, verbose:
 end # getBusData
 
 # helper function to count number of nodes of type = value [PQ, PV]
-function getBusTypeVec(busVec::Vector{BusData}, log::Bool = false)
+function getBusTypeVec(busVec::Vector{BusData})
   busTypeVec = Vector{Sparlectra.NodeType}()
   slackIdx = 0
   for (i, bus) in enumerate(busVec) #1:n    
@@ -122,7 +126,7 @@ function getBusTypeVec(busVec::Vector{BusData}, log::Bool = false)
     end
     push!(busTypeVec, bus.type)
   end
-  if log
+  if debug
     for (i, bus) in enumerate(busTypeVec)
       print("busVec[$(i)]: $(bus), ")
     end
@@ -186,12 +190,12 @@ function printVector(power::Vector{Float64}, busVec::Vector{BusData}, first::Str
   print("]'\n")
 end
 
-function getPowerFeeds(busVec::Vector{BusData}, n_pq::Int, n_pv::Int, log::Bool = false)::Vector{Float64}
+function getPowerFeeds(busVec::Vector{BusData}, n_pq::Int, n_pv::Int)::Vector{Float64}
   size = n_pq * 2 + n_pv
 
   power_feeds = zeros(Float64, size)
 
-  if log
+  if debug
     n = n_pq + n_pv
     println("\nPower Feeds: Elements = $(n), Vector-Size = $(size)")
   end
@@ -212,7 +216,7 @@ function getPowerFeeds(busVec::Vector{BusData}, n_pq::Int, n_pv::Int, log::Bool 
     end
   end
 
-  if log
+  if debug
     printVector(power_feeds, busVec)
   end
   return power_feeds
@@ -275,9 +279,11 @@ function residuum(Y::AbstractMatrix{ComplexF64}, busVec::Vector{BusData}, feeder
   if log
     printVector(Δpq, busVec, "Δp", "Δq", false, 0.0)
     norm_delta_p = norm(Δpq)
-    println("residuum: $(norm_delta_p)")
-    println("S: $S")
-    println("feeders: $feeders")
+    if debug 
+      println("residuum: $(norm_delta_p)")    
+      println("S: $S")
+      println("feeders: $feeders")
+    end  
   end
 
   return Δpq
@@ -315,7 +321,7 @@ Lii = Vi*∂qi/∂vi = +vi * [∑ gik* vk * sin(𝜑i-𝜑j-αik)] + vi*( gii * 
 function calcJacobian(Y::AbstractMatrix{ComplexF64}, busVec::Vector{BusData}, adjBranch::Vector{Vector{Int}}, busTypeVec::Vector{Sparlectra.NodeType}, slackIdx::Int, n_pq::Int, n_pv::Int, log::Bool = false, sparse::Bool = true)
   global debug
   function printdebug(case::String, grad::String, i::Int, j::Int, val::Float64 = 0.0, bus_i::Int = 0, bus_j::Int = 0)
-    if debug
+    if debug     
       value = round(val, digits = 3)
       println("$(case): $(grad) [$(i),$(j),$(value)] bus[$(bus_i),$(bus_j)]")
     end
@@ -489,8 +495,8 @@ function calcJacobian(Y::AbstractMatrix{ComplexF64}, busVec::Vector{BusData}, ad
     end # for j in adjBranch[i] 
   end # for i in 1:n
 
-  if debug
-    println()
+  if log
+    println("\nJacobian:\n")    
     for j = 1:size_i
       print("\t$(j):")
     end
@@ -529,17 +535,15 @@ A tuple containing the number of iterations and the result of the calculation:
 - `3`: Error.
 =#
 function calcNewtonRaphson!(Y::AbstractMatrix{ComplexF64}, nodes::Vector{Node}, Sbase_MVA::Float64, maxIte::Int, tolerance::Float64 = 1e-6, verbose::Int = 0, sparse::Bool = false)
-  @debug global debug = true
+  busVec, slackNum = getBusData(nodes, Sbase_MVA)
 
-  busVec, slackNum = getBusData(nodes, Sbase_MVA, verbose)
-
-  adjBranch = adjacentBranches(Y, (verbose > 2))
+  adjBranch = adjacentBranches(Y, debug)
   num_pv_nodes = count(bus -> bus.type == Sparlectra.PV, busVec)
   num_pq_nodes = count(bus -> bus.type == Sparlectra.PQ, busVec)
 
   size = num_pq_nodes * 2 + num_pv_nodes
 
-  busTypeVec, slackIdx = getBusTypeVec(busVec, (verbose > 2))
+  busTypeVec, slackIdx = getBusTypeVec(busVec)
   @assert slackIdx == slackNum "Error: Number of slack nodes is not equal to the number of slack nodes in the bus vector ($(slackIdx) /= $(slackNum))."
 
   erg = 1 # result of calculation
@@ -548,19 +552,19 @@ function calcNewtonRaphson!(Y::AbstractMatrix{ComplexF64}, nodes::Vector{Node}, 
   # 2 unsolvable system of equations
   # 3 error
 
-  if verbose > 0
+  if debug
     tn = num_pq_nodes + num_pv_nodes
     println("\ncalcNewtonRaphson: Matrix-Size: $(size) x $(size), Sbase_MVA: $(Sbase_MVA), total number of nodes: $(tn), number of PQ nodes: $num_pq_nodes, number of PV nodes: $num_pv_nodes\n")
   end
 
   iteration_count = 0
-  power_feeds = getPowerFeeds(busVec, num_pq_nodes, num_pv_nodes, (verbose > 2))
+  power_feeds = getPowerFeeds(busVec, num_pq_nodes, num_pv_nodes)
   
   while iteration_count <= maxIte  
     # Calculation of the residual
     delta_P = residuum(Y, busVec, power_feeds, num_pq_nodes, num_pv_nodes, (verbose > 2))
     if verbose > 2
-      println("\ndelta_P: Iteration $(iteration_count)")
+      println("\ndelta_s: Iteration $(iteration_count)")
       printVector(delta_P, busVec, "p", "q", false, 0.0)
     end
 
@@ -586,8 +590,8 @@ function calcNewtonRaphson!(Y::AbstractMatrix{ComplexF64}, nodes::Vector{Node}, 
       # Solver => \
       delta_x = jacobian \ delta_P
 
-      if verbose > 2
-        println("\ndelta_x: Iteration $(iteration_count)")
+      if verbose > 3
+        println("\ndelta_v: Iteration $(iteration_count)")
         printVector(delta_x, busVec, "Δφ", "ΔU/U", true, 0.0)
       end
     catch err
@@ -611,10 +615,18 @@ function calcNewtonRaphson!(Y::AbstractMatrix{ComplexF64}, nodes::Vector{Node}, 
         index_1 = 2 * (i - sidx) - 1 - kidx
         index_2 = 2 * (i - sidx) - kidx
         if bus.type == Sparlectra.PQ
-          busVec[i].va_rad += delta_x[index_1]
+          if angle_limit
+            busVec[i].va_rad += min(delta_x[index_1], 0.7)
+          else
+            busVec[i].va_rad += delta_x[index_1]
+          end            
           busVec[i].vm_pu += busVec[i].vm_pu * delta_x[index_2]
         elseif bus.type == Sparlectra.PV
-          busVec[i].va_rad += delta_x[index_1]
+          if angle_limit
+            busVec[i].va_rad += min(delta_x[index_1], 0.7)
+          else
+            busVec[i].va_rad += delta_x[index_1]
+          end
           kidx += 1
         end
 
@@ -649,7 +661,7 @@ function calcNewtonRaphson!(Y::AbstractMatrix{ComplexF64}, nodes::Vector{Node}, 
       nodes[i]._qƩGen = bus._qRes * Sbase_MVA
     end
 
-    if verbose > 2
+    if verbose > 3
       vm_pu = round(nodes[i]._vm_pu, digits = 3)
       va_deg = round(nodes[i]._va_deg, digits = 3)
       if va_deg > 180
