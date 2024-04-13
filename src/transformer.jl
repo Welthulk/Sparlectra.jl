@@ -241,7 +241,7 @@ mutable struct PowerTransformerWinding
     taps::Union{Nothing,PowerTransformerTaps} = nothing,
     isPu_RXGB::Union{Nothing,Bool} = nothing,
     modelData::Union{Nothing,TransformerModelParameters} = nothing,
-  )    
+  )
     new(Vn, r, x, b, g, ratio, shift_degree, ratedU, ratedS, taps, isPu_RXGB, modelData, isnothing(modelData))
   end
 
@@ -480,7 +480,7 @@ mutable struct PowerTransformer <: AbstractBranch
     print(io, "tapSideNumber=$(x.tapSideNumber), ")
     print(io, "equiParms=$(x._equiParms), ")
     println(io, "") # next line
-    println(io, "side1=$(x.side1), ")    
+    println(io, "side1=$(x.side1), ")
     if (isnothing(x.side3))
       print(io, "side2=$(x.side2) ")
     else
@@ -615,7 +615,7 @@ Returns a tuple of `PowerTransformerWinding` instances for the three windings of
 ```julia
 create3WTWindings!(u_kV = [110.0, 20.0, 10.0], sn_MVA = [100.0, 80.0, 20.0], addEx_Side = [tmp1, tmp2, tmp3], sh_deg = [0.0, 0.0, 0.0], tap_side = 1, tap = tapSettings)
 ```
-"""	
+"""
 function create3WTWindings!(; u_kV::Array{Float64,1}, sn_MVA::Array{Float64,1}, addEx_Side::Array{TransformerModelParameters,1}, sh_deg::Array{Float64,1}, tap_side::Int, tap::PowerTransformerTaps)::Tuple{PowerTransformerWinding,PowerTransformerWinding,PowerTransformerWinding}
   for side = 1:3
     if isnothing(addEx_Side[side].vkr_percent)

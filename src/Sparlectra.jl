@@ -21,6 +21,8 @@ module Sparlectra
 # The project follows the Julia Naming Conventions for the most part, 
 # but it's important to note that the naming convention for functions might deviate. 
 # In this module, functions are written in CamelCase with a lowercase initial letter. 
+
+#! format: off
 using LinearAlgebra, SparseArrays, Printf, Logging
 
 # resource data types for working with Sparlectra
@@ -29,6 +31,7 @@ const SparlectraVersion = VersionNumber("0.4.15")
 abstract type AbstractBranch end
 
 export
+  
   # constants
   Wurzel3, ComponentTyp,
   # classes  
@@ -107,5 +110,5 @@ include("exportMatPower.jl")
 include("results.jl")
 include("run_acpflow.jl")
 
-
+#! format: on
 end # module Sparlectra
