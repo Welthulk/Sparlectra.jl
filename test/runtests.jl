@@ -8,4 +8,5 @@ include("testgrid.jl")
   @test testNetwork() == true
   @test test_NBI_MDO() == true
   @test test_acpflow(0) == true
+  @test testISOBusses() == true
 end

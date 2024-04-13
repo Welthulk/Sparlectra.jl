@@ -70,7 +70,7 @@ export
   # ProSumer
   isSlack, isGenerator, isAPUNode, setQGenReplacement!, getQGenReplacement, toProSumptionType, updatePQ!,
   # Net
-  addBus!, addShunt!, addACLine!, addPIModelACLine!, add2WTrafo!, addPIModelTrafo!, addProsumer!, lockNet!, validate, hasBusInNet, addBusGenPower!, addBusLoadPower!, addBusShuntPower!,
+  addBus!, addShunt!, addACLine!, addPIModelACLine!, add2WTrafo!, addPIModelTrafo!, addProsumer!, lockNet!, validate!, hasBusInNet, addBusGenPower!, addBusLoadPower!, addBusShuntPower!,
   getNetOrigBusIdx, geNetBusIdx, setBranchStatus!, setTotalLosses!, getTotalLosses, getBusType, get_bus_vn_kV, get_vn_kV, updateBranchParameters!, hasShunt!, getShunt!, markIsolatedBuses!,
   # create_powermat.jl
   casefileparser, createNetFromMatPowerFile,
