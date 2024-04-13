@@ -1,4 +1,10 @@
 # Change Log
+## Version 0.4.16 (2024-04-17)
+### New Features
+
+### Bug Fixes
+- bugfix shunt index for isolated buses, closes issue #38
+
 ## Version 0.4.15 (2024-04-16)
 ### New Features
 - Implemented a function to detect isolated buses and incorporate them into the network calculation (Issue #38)
