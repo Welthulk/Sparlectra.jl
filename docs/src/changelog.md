@@ -1,4 +1,9 @@
 # Change Log
+## Version 0.4.16 (2024-xx-xx)
+### New Features
+
+### Bug Fixes
+
 ## Version 0.4.15 (2024-04-16)
 ### New Features
 - Implemented a function to detect isolated buses and incorporate them into the network calculation (Issue #38)."
