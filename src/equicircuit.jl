@@ -243,6 +243,10 @@ function createYBUS(;net::Net, sparse::Bool = true, printYBUS::Bool = false)
 
   for sh in net.shuntVec
     node = sh.busIdx
+    if node in net.isoNodes      
+      continue
+    end
+    node -= count(i -> i < node, net.isoNodes)    
     y = sh.y_pu_shunt
     Y[node, node] += y
   end
