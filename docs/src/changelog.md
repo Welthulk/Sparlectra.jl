@@ -1,7 +1,7 @@
 # Change Log
 ## Version 0.4.15 (2024-xx-xx)
 ### New Features
-
+ - added function to find isolated busses (issue#38)
 ### Bug Fixes
 
 

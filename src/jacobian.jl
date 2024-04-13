@@ -49,9 +49,14 @@ function getBusData(nodes::Vector{Sparlectra.Node}, Sbase_MVA::Float64, flatStar
   sumGen_q = 0.0
 
   for (i, n) in enumerate(nodes)
-    if n._nodeType == Sparlectra.Slack
+    if isSlack(n)        
       slackIdx = i
     end
+
+    if isIsolated(n)
+      continue
+    end  
+
     type = n._nodeType
 
     p = 0
@@ -241,7 +246,7 @@ function residuum(Y::AbstractMatrix{ComplexF64}, busVec::Vector{BusData}, feeder
   V = [bus.vm_pu * exp(im * bus.va_rad) for bus in busVec]
   # create diagonal matrix of voltages
   Vdiag = Diagonal(V)
-
+  
   # Power Calculation (Knotenleistung)
   S = Vdiag * conj(Y * V)
   size = n_pq * 2 + n_pv
@@ -701,7 +706,7 @@ function runpf!(net::Net, maxIte::Int, tolerance::Float64 = 1e-6, verbose::Int =
   if length(net.nodeVec) == 0
     @error "No nodes found in $(jpath)"
     return
-  elseif length(net.nodeVec) > 30
+  elseif length(net.nodeVec) > 60
     sparse = true
   end
 

@@ -161,7 +161,9 @@ function createYBUS(branchVec::Vector{Branch}, shuntVec::Vector{Shunt}, sparse::
   @assert length(branchVec) > 0 "branchVec must not be empty"
 
   n = maximum(max(branch.fromBus, branch.toBus) for branch in branchVec)
-
+  
+  @debug "Dimension YBus:", n
+  
   if sparse
     Y = spzeros(ComplexF64, n, n)
   else
