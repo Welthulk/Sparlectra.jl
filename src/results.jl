@@ -20,7 +20,9 @@ function formatBranchResults(net::Net)
     from = br.fromBus
     to = br.toBus
     bName = br.comp.cName
-    if br.status == 1
+    if br.status == 0 || (isnothing(br.fBranchFlow)) || (isnothing(br.tBranchFlow))
+      pfromVal = qfromVal = ptoVal = qtoVal = pLossval = qLossval = 0.0
+    else
       pfromVal = (br.fBranchFlow.pFlow === nothing) ? NaN : br.fBranchFlow.pFlow
       qfromVal = (br.fBranchFlow.qFlow === nothing) ? NaN : br.fBranchFlow.qFlow
 
@@ -41,8 +43,6 @@ function formatBranchResults(net::Net)
       if check
         bName *= " !"
       end
-    else
-      pfromVal = qfromVal = ptoVal = qtoVal = pLossval = qLossval = 0.0
     end
     formatted_results *= @sprintf("| %-25s | %-5s | %-5s | %-10.3f | %-10.3f | %-10.3f | %-10.3f | %-10.3f |  %-10.3f|\n", bName, from, to, pfromVal, qfromVal, ptoVal, qtoVal, pLossval, qLossval)
   end
@@ -85,9 +85,11 @@ function printACPFlowResults(net::Net, ct::Float64, ite::Int, tol::Float64, toFi
 
   npv = 0
   npq = 0
+  niso = 0
   for n in nodes
     npv += n._nodeType == Sparlectra.PV ? 1 : 0
-    npq += n._nodeType == Sparlectra.PQ ? 1 : 0
+    npq += isPQNode(n) ? 1 : 0
+    niso += isIsolated(n) ? 1 : 0
     if occursin("_Aux_", n.comp.cName)
       auxb += 1
     end
@@ -104,7 +106,9 @@ function printACPFlowResults(net::Net, ct::Float64, ite::Int, tol::Float64, toFi
   @printf(io, "Converged in :%10f seconds\n", ct)
   @printf(io, "Case         :%15s\n", net.name)
   @printf(io, "BaseMVA      :%10d\n", net.baseMVA)
-  if auxb > 0
+  if auxb > 0 && niso > 0
+    @printf(io, "Nodes        :%10d (PV: %d PQ: %d (Aux: %d) Iso: %d Slack: %d\n", busses, npv, npq, auxb, niso, 1)
+  elseif auxb > 0
     @printf(io, "Nodes        :%10d (PV: %d PQ: %d (Aux: %d) Slack: %d\n", busses, npv, npq, auxb, 1)
   else
     @printf(io, "Nodes        :%10d (PV: %d PQ: %d Slack: %d)\n", busses, npv, npq, 1)
@@ -118,9 +122,9 @@ function printACPFlowResults(net::Net, ct::Float64, ite::Int, tol::Float64, toFi
 
   println(io, "\n", totalLosses)
 
-  @printf(io, "==========================================================================================================================================================================\n")
-  @printf(io, "| %-5s | %-20s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-5s |\n", "Nr", "Bus", "Vn [kV]", "V [kV]", "V [pu]", "phi [deg]", "Pg [MW]", "Qg [MVar]", "Pl [MW]", "Ql [MVar]", "Ps [MW]", "Qs [MVar]", "Type")
-  @printf(io, "==========================================================================================================================================================================\n")
+  @printf(io, "===============================================================================================================================================================================\n")
+  @printf(io, "| %-5s | %-20s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s |\n", "Nr", "Bus", "Vn [kV]", "V [kV]", "V [pu]", "phi [deg]", "Pg [MW]", "Qg [MVar]", "Pl [MW]", "Ql [MVar]", "Ps [MW]", "Qs [MVar]", "Type")
+  @printf(io, "===============================================================================================================================================================================\n")
 
   pGS = qGS = pLS = qLS = ""
   tpGS = tqGS = tpLS = tqLS = 0.0
@@ -169,15 +173,15 @@ function printACPFlowResults(net::Net, ct::Float64, ite::Int, tol::Float64, toFi
     v = n.comp.cVN * n._vm_pu
     nodeName = n.comp.cName
     if !isnothing(n._vmin_pu) && !isnothing(n._vmax_pu)
-      if n._vm_pu < n._vmin_pu || n._vm_pu > n._vmax_pu
+      if !isIsolated(n) && (n._vm_pu < n._vmin_pu || n._vm_pu > n._vmax_pu)
         nodeName *= " !"
       end
     end
 
-    @printf(io, "| %-5d | %-20s | %-10.1f | %-10.3f | %-10.3f | %-10.3f | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-5s |\n", n.busIdx, nodeName, n.comp.cVN, v, n._vm_pu, n._va_deg, pGS, qGS, pLS, qLS, pShunt_str, qShunt_str, typeStr)
+    @printf(io, "| %-5d | %-20s | %-10.1f | %-10.3f | %-10.3f | %-10.3f | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s |\n", n.busIdx, nodeName, n.comp.cVN, v, n._vm_pu, n._va_deg, pGS, qGS, pLS, qLS, pShunt_str, qShunt_str, typeStr)
   end
 
-  @printf(io, "--------------------------------------------------------------------------------------------------------------------------------------------------------------------------\n")  
+  @printf(io, "-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------\n")  
   println(io, flowResults)
 
   if toFile

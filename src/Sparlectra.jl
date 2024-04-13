@@ -1,5 +1,5 @@
 """
-    Sparlectra 0.4.14
+    Sparlectra 0.4.15
 
 Sparlectra is a Julia package for the calculation of electrical networks. It is designed to be used in the context of power system analysis and optimization. 
 
@@ -21,14 +21,17 @@ module Sparlectra
 # The project follows the Julia Naming Conventions for the most part, 
 # but it's important to note that the naming convention for functions might deviate. 
 # In this module, functions are written in CamelCase with a lowercase initial letter. 
+
+#! format: off
 using LinearAlgebra, SparseArrays, Printf, Logging
 
 # resource data types for working with Sparlectra
 const Wurzel3 = 1.7320508075688772
-const SparlectraVersion = VersionNumber("0.4.14")
+const SparlectraVersion = VersionNumber("0.4.15")
 abstract type AbstractBranch end
 
 export
+  
   # constants
   Wurzel3, ComponentTyp,
   # classes  
@@ -51,12 +54,12 @@ export
   
   # functions  
   # Compomnent
-  toComponentTyp,  getRXBG,
+  toComponentTyp,  getRXBG, getCompName,
   # Transformers
   getSideNumber2WT,  getWinding2WT,  calcTransformerRatio, recalc_trafo_model_data, create2WTRatioTransformerNoTaps, create3WTWindings!,
   getTrafoImpPGMComp,  getWT3AuxBusID,  isPerUnit_RXGB, getWindingRatedS,
   # Nodes  
-  setRatedS!,  setVmVa!,  addShuntPower!,  addLoadPower!,  addGenPower!,  getNodeVn,  isSlack,  isPVNode,  isPQNode, toNodeType,
+  setRatedS!,  setVmVa!,  addShuntPower!,  addLoadPower!,  addGenPower!,  getNodeVn,  isSlack,  isPVNode,  isPQNode, isIsolated, toNodeType, setNodeType!,
   busComparison,   toString,
   # Branch
   setBranchFlow!,  setBranchStatus!,
@@ -67,8 +70,8 @@ export
   # ProSumer
   isSlack, isGenerator, isAPUNode, setQGenReplacement!, getQGenReplacement, toProSumptionType, updatePQ!,
   # Net
-  addBus!, addShunt!, addACLine!, addPIModelACLine!, add2WTrafo!, addPIModelTrafo!, addProsumer!, lockNet!, validate, hasBusInNet, addBusGenPower!, addBusLoadPower!, addBusShuntPower!,
-  getNetOrigBusIdx, geNetBusIdx, setBranchStatus!, setTotalLosses!, getTotalLosses, getBusType, get_bus_vn_kV, get_vn_kV, updateBranchParameters!, hasShunt!, getShunt!,
+  addBus!, addShunt!, addACLine!, addPIModelACLine!, add2WTrafo!, addPIModelTrafo!, addProsumer!, lockNet!, validate!, hasBusInNet, addBusGenPower!, addBusLoadPower!, addBusShuntPower!,
+  getNetOrigBusIdx, geNetBusIdx, setBranchStatus!, setTotalLosses!, getTotalLosses, getBusType, get_bus_vn_kV, get_vn_kV, updateBranchParameters!, hasShunt!, getShunt!, markIsolatedBuses!,
   # create_powermat.jl
   casefileparser, createNetFromMatPowerFile,
   # exportMatPower.jl
@@ -107,5 +110,5 @@ include("exportMatPower.jl")
 include("results.jl")
 include("run_acpflow.jl")
 
-
+#! format: on
 end # module Sparlectra
