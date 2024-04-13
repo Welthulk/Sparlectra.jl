@@ -183,3 +183,7 @@ function toComponentTyp(o::String)::ComponentTyp
     return UnknownC
   end
 end
+
+function getCompName(c::AbstractComponent)::String
+  return c.cName
+end

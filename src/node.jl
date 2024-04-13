@@ -93,10 +93,10 @@ mutable struct Node
   )
     bIdx = busIdx
     if !isnothing(oBusIdx)
-      bIdx = oBusIdx      
+      bIdx = oBusIdx
     end
     c = getNocdeComp(vn_kV, bIdx, nodeType, isAux)
-    
+
     new(c, busIdx, nodeType, ratedS, zone, area, vm_pu, va_deg, pƩLoad, qƩLoad, pShunt, qShunt, pƩGen, qƩGen, vmin_pu, vmax_pu)
   end
 
@@ -213,14 +213,14 @@ function busComparison(node1::Node, node2::Node)
   node1.busIdx < node2.busIdx
 end
 
-function setVmVa!(; node::Node, vm_pu::Float64, va_deg::Union{Nothing, Float64} = nothing)
+function setVmVa!(; node::Node, vm_pu::Float64, va_deg::Union{Nothing,Float64} = nothing)
   node._vm_pu = vm_pu
   if !isnothing(va_deg)
     node._va_deg = va_deg
-  end  
+  end
 end
 
-function isSlack(o::Sparlectra.Node)
+function isSlack(o::Node)
   if o._nodeType == Sparlectra.Slack
     return true
   else
@@ -242,6 +242,14 @@ end
 
 function isPVNode(o::Node)
   if o._nodeType == Sparlectra.PV || o._nodeType == Sparlectra.Slack
+    return true
+  else
+    return false
+  end
+end
+
+function isIsolated(o::Node)
+  if o._nodeType == Sparlectra.Isolated
     return true
   else
     return false
@@ -289,4 +297,8 @@ function toString(o::NodeType)::String
   else
     return "UNKNOWN"
   end
+end
+
+function setNodeType!(o::Node, typ::String)
+  o._nodeType = toNodeType(typ)
 end

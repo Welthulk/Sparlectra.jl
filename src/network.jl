@@ -36,7 +36,7 @@ Functions:
 - `add2WTrafo!(; net::Net, ...)`: Adds a two-winding transformer to the network.
 - `addProsumer!(; net::Net, ...)`: Adds a prosumer to the network.
 - `lockNet!(; net::Net, locked::Bool)`: Locks or unlocks the network.
-- `validate(; net::Net)`: Validates the network.
+- `validate!(; net::Net)`: Validates the network.
 - `get_bus_vn_kV(; net::Net, busName::String)`: Gets the voltage level of a bus by name.
 - `get_vn_kV(; net::Net, busIdx::Int)`: Gets the voltage level of a bus by index.
 - `getBusType(; net::Net, busName::String)`: Gets the type of a bus by name.
@@ -66,15 +66,16 @@ struct Net
   shuntVec::Vector{Shunt}
   busDict::Dict{String,Int}
   busOrigIdxDict::Dict{Int,Int}
-  branchDict::Dict{Tuple{Int, Int},Int}  
+  branchDict::Dict{Tuple{Int,Int},Int}
   totalLosses::Vector{Tuple{Float64,Float64}}
   _locked::Bool
   shuntDict::Dict{Int,Int}
-
+  isoNodes::Vector{Int}
+  #! format: off
   function Net(; name::String, baseMVA::Float64, vmin_pu::Float64 = 0.9, vmax_pu::Float64 = 1.1)
-    new(name, baseMVA, [], vmin_pu, vmax_pu, [], [], [], [], [], [], Dict{String,Int}(), Dict{Int,Int}(), Dict{Tuple{Int, Int},Int}(), [], false, Dict{Int,Int}())
+    new(name, baseMVA, [], vmin_pu, vmax_pu, [], [], [], [], [], [], Dict{String,Int}(), Dict{Int,Int}(), Dict{Tuple{Int,Int},Int}(), [], false, Dict{Int,Int}(), [])
   end
-
+  #! format: on
   function Base.show(io::IO, o::Net)
     println(io, "Net: ", o.name)
     println(io, "Base MVA: ", o.baseMVA)
@@ -117,7 +118,7 @@ Returns:
 function geNetBusIdx(; net::Net, busName::String)::Int
   if !haskey(net.busDict, busName)
     error("Bus $(busName) not found in the network")
-  end   
+  end
   return net.busDict[busName]
 end
 
@@ -154,20 +155,32 @@ Parameters:
 - `area::Union{Nothing,Int} = nothing`: Area index (default is nothing).
 - `ratedS::Union{Nothing,Float64} = nothing`: Rated power of the bus in MVA (default is nothing).
 """
-function addBus!(; net::Net, busName::String, busType::String, vn_kV::Float64, vm_pu::Float64 = 1.0, va_deg::Float64 = 0.0, vmin_pu::Union{Nothing,Float64} = nothing, vmax_pu::Union{Nothing,Float64} = nothing, isAux::Bool = false, 
-                   oBusIdx::Union{Nothing,Int} = nothing, zone::Union{Nothing,Int} = nothing, area::Union{Nothing,Int} = nothing, ratedS::Union{Nothing,Float64} = nothing)
-  
+function addBus!(;
+  net::Net,
+  busName::String,
+  busType::String,
+  vn_kV::Float64,
+  vm_pu::Float64 = 1.0,
+  va_deg::Float64 = 0.0,
+  vmin_pu::Union{Nothing,Float64} = nothing,
+  vmax_pu::Union{Nothing,Float64} = nothing,
+  isAux::Bool = false,
+  oBusIdx::Union{Nothing,Int} = nothing,
+  zone::Union{Nothing,Int} = nothing,
+  area::Union{Nothing,Int} = nothing,
+  ratedS::Union{Nothing,Float64} = nothing,
+)
   @assert busType in ["Slack", "SLACK", "PQ", "PV"] "Invalid bus type: $busType"
-  
-  if net._locked 
+
+  if net._locked
     @error "Network is locked"
-  end  
+  end
   if haskey(net.busDict, busName)
     @error "Bus $busName already exists in the network"
   end
   busIdx = length(net.nodeVec) + 1
   net.busDict[busName] = busIdx
-  
+
   vmin_pu = isnothing(vmin_pu) ? net.vmin_pu : vmin_pu
   vmax_pu = isnothing(vmax_pu) ? net.vmax_pu : vmax_pu
 
@@ -179,13 +192,12 @@ function addBus!(; net::Net, busName::String, busType::String, vn_kV::Float64, v
     end
   end
 
-  if (uppercase(busType) == "SLACK")    
+  if (uppercase(busType) == "SLACK")
     push!(net.slackVec, busIdx)
   end
 
   node = Node(busIdx = busIdx, vn_kV = vn_kV, nodeType = toNodeType(busType), vm_pu = vm_pu, va_deg = va_deg, vmin_pu = vmin_pu, vmax_pu = vmax_pu, isAux = isAux, oBusIdx = oBusIdx, zone = zone, area = area, ratedS = ratedS)
   push!(net.nodeVec, node)
-  
 end
 
 """
@@ -198,25 +210,25 @@ Parameters:
 - `qShunt::Float64`: Reactive power of the shunt in MVar.
 - `in_service::Int = 1`: Indicator for shunt's in-service status (default is 1).
 """
-function addShunt!(; net::Net, busName::String, pShunt::Float64, qShunt::Float64, in_service::Int = 1)  
-  busIdx  = geNetBusIdx(net = net, busName = busName)  
+function addShunt!(; net::Net, busName::String, pShunt::Float64, qShunt::Float64, in_service::Int = 1)
+  busIdx = geNetBusIdx(net = net, busName = busName)
   idShunt = length(net.shuntVec) + 1
   net.shuntDict[busIdx] = idShunt
   vn_kV = getNodeVn(net.nodeVec[busIdx])
   sh = Shunt(fromBus = busIdx, id = idShunt, base_MVA = net.baseMVA, vn_kV_shunt = vn_kV, p_shunt = pShunt, q_shunt = qShunt, status = in_service)
-  push!(net.shuntVec, sh)  
+  push!(net.shuntVec, sh)
   if in_service == 1
     addShuntPower!(node = net.nodeVec[busIdx], p = pShunt, q = qShunt)
-  end  
+  end
 end
 
 function hasShunt!(; net::Net, busName::String)::Bool
-  busIdx  = geNetBusIdx(net = net, busName = busName)  
+  busIdx = geNetBusIdx(net = net, busName = busName)
   return haskey(net.shuntDict, busIdx)
 end
 
 function getShunt!(; net::Net, busName::String)::Shunt
-  busIdx  = geNetBusIdx(net = net, busName = busName)  
+  busIdx  = geNetBusIdx(net = net, busName = busName)
   idShunt = net.shuntDict[busIdx]
   return net.shuntVec[idShunt]
 end
@@ -235,7 +247,6 @@ Parameters:
 - `vn_kV::Union{Nothing,Float64} = nothing`: Nominal voltage of the branch in kV (default is nothing).
 """
 function addBranch!(; net::Net, from::Int, to::Int, branch::AbstractBranch, status::Int = 1, ratio::Union{Nothing,Float64} = nothing, side::Union{Nothing,Int} = nothing, vn_kV::Union{Nothing,Float64} = nothing)
-  
   idBrunch = length(net.branchVec) + 1
   fOrig = nothing
   tOrig = nothing
@@ -249,8 +260,7 @@ function addBranch!(; net::Net, from::Int, to::Int, branch::AbstractBranch, stat
   if isnothing(vn_kV)
     vn_kV = getNodeVn(net.nodeVec[from])
   end
-  
-  
+
   br = Branch(from = from, to = to, baseMVA = net.baseMVA, branch = branch, id = idBrunch, status = status, ratio = ratio, side = side, vn_kV = vn_kV, fromOid = fOrig, toOid = tOrig)
   push!(net.branchVec, br)
   index = length(net.branchVec)
@@ -274,20 +284,20 @@ Updates the parameters of a branch in the network.
 updateBranchParameters!(net = network, fromBus = "Bus1", toBus = "Bus2", branch = updatedBranch)
 ```
 """
-function updateBranchParameters!(;net::Net, fromBus::String, toBus::String, branch::BranchModel)
-    from = geNetBusIdx(net = net, busName = fromBus)
-    to = geNetBusIdx(net = net, busName = toBus)   
-    branchTuple = (from, to)   
-    idx = net.branchDict[branchTuple]    
-    br = net.branchVec[idx]
-    br.r_pu = branch.r_pu
-    br.x_pu = branch.x_pu
-    br.b_pu = branch.b_pu
-    br.g_pu = branch.g_pu
-    br.ratio = branch.ratio
-    br.angle = branch.angle
-    br.sn_MVA = branch.sn_MVA
-    net.branchVec[idx] = br    
+function updateBranchParameters!(; net::Net, fromBus::String, toBus::String, branch::BranchModel)
+  from = geNetBusIdx(net = net, busName = fromBus)
+  to = geNetBusIdx(net = net, busName = toBus)
+  branchTuple = (from, to)
+  idx = net.branchDict[branchTuple]
+  br = net.branchVec[idx]
+  br.r_pu = branch.r_pu
+  br.x_pu = branch.x_pu
+  br.b_pu = branch.b_pu
+  br.g_pu = branch.g_pu
+  br.ratio = branch.ratio
+  br.angle = branch.angle
+  br.sn_MVA = branch.sn_MVA
+  net.branchVec[idx] = br
 end
 
 """
@@ -306,8 +316,7 @@ Parameters:
 - `ratedS::Union{Nothing, Float64}= nothing`: Rated power of the line segment in MVA (default is nothing).
 - `status::Int = 1`: Status of the line segment (default is 1).
 """
-function addACLine!(; net::Net, fromBus::String, toBus::String, length::Float64, r::Float64, x::Float64, b::Union{Nothing,Float64} = nothing, c_nf_per_km::Union{Nothing,Float64} = nothing, tanδ::Union{Nothing,Float64} = nothing, 
-                      ratedS::Union{Nothing, Float64}= nothing, status::Int = 1)
+function addACLine!(; net::Net, fromBus::String, toBus::String, length::Float64, r::Float64, x::Float64, b::Union{Nothing,Float64} = nothing, c_nf_per_km::Union{Nothing,Float64} = nothing, tanδ::Union{Nothing,Float64} = nothing, ratedS::Union{Nothing,Float64} = nothing, status::Int = 1)
   from = geNetBusIdx(net = net, busName = fromBus)
   to = geNetBusIdx(net = net, busName = toBus)
   vn_kV = getNodeVn(net.nodeVec[from])
@@ -317,7 +326,6 @@ function addACLine!(; net::Net, fromBus::String, toBus::String, length::Float64,
   push!(net.linesAC, acseg)
 
   addBranch!(net = net, from = from, to = to, branch = acseg, vn_kV = vn_kV, status = status)
-  
 end
 
 """
@@ -340,7 +348,7 @@ Adds a PI model AC line to the network.
 addPIModelACLine!(net = network, fromBus = "Bus1", toBus = "Bus2", r_pu = 0.01, x_pu = 0.1, b_pu = 0.02, status = 1, ratedS = 100.0)
 ```
 """
-function addPIModelACLine!(; net::Net, fromBus::String, toBus::String, r_pu::Float64, x_pu::Float64, b_pu::Float64, status::Int, ratedS::Union{Nothing,Float64}=nothing)
+function addPIModelACLine!(; net::Net, fromBus::String, toBus::String, r_pu::Float64, x_pu::Float64, b_pu::Float64, status::Int, ratedS::Union{Nothing,Float64} = nothing)
   from = geNetBusIdx(net = net, busName = fromBus)
   to = geNetBusIdx(net = net, busName = toBus)
   vn_kV = getNodeVn(net.nodeVec[from])
@@ -350,7 +358,6 @@ function addPIModelACLine!(; net::Net, fromBus::String, toBus::String, r_pu::Flo
   push!(net.linesAC, acseg)
 
   addBranch!(net = net, from = from, to = to, branch = acseg, vn_kV = vn_kV, status = status)
-  
 end
 
 """
@@ -370,20 +377,31 @@ Add a transformer with PI model to the network.
 - `shift_deg::Union{Nothing, Float64}`: Phase shift angle of the transformer. Default is `nothing`.
 - `isAux::Bool`: Whether the transformer is an auxiliary transformer. Default is `false`.
 """
-function addPIModelTrafo!(; net::Net, fromBus::String, toBus::String, r_pu::Float64, x_pu::Float64, b_pu::Float64, status::Int, ratedU::Union{Nothing,Float64}=nothing, ratedS::Union{Nothing,Float64} = nothing, 
-                            ratio::Union{Nothing,Float64} = nothing, shift_deg::Union{Nothing,Float64} = nothing, isAux::Bool = false)
+function addPIModelTrafo!(;
+  net::Net,
+  fromBus::String,
+  toBus::String,
+  r_pu::Float64,
+  x_pu::Float64,
+  b_pu::Float64,
+  status::Int,
+  ratedU::Union{Nothing,Float64} = nothing,
+  ratedS::Union{Nothing,Float64} = nothing,
+  ratio::Union{Nothing,Float64} = nothing,
+  shift_deg::Union{Nothing,Float64} = nothing,
+  isAux::Bool = false,
+)
   from = geNetBusIdx(net = net, busName = fromBus)
   to = geNetBusIdx(net = net, busName = toBus)
   vn_hv_kV = getNodeVn(net.nodeVec[from])
   vn_lv_kV = getNodeVn(net.nodeVec[to])
-  w1 = PowerTransformerWinding(vn_hv_kV, r_pu, x_pu, b_pu, 0.0, ratio, shift_deg, ratedU, ratedS, nothing, true )
+  w1 = PowerTransformerWinding(vn_hv_kV, r_pu, x_pu, b_pu, 0.0, ratio, shift_deg, ratedU, ratedS, nothing, true)
   w2 = PowerTransformerWinding(vn_lv_kV, 0.0, 0.0)
   comp = getTrafoImpPGMComp(isAux, vn_hv_kV, from, to)
   trafo = PowerTransformer(comp, false, w1, w2, nothing, Sparlectra.PIModel)
   push!(net.trafos, trafo)
-  
+
   addBranch!(net = net, from = from, to = to, branch = trafo, status = status, ratio = ratio, side = 1, vn_kV = vn_hv_kV)
-  
 end
 
 """
@@ -410,9 +428,8 @@ function add2WTrafo!(; net::Net, fromBus::String, toBus::String, sn_mva::Float64
   side = getSideNumber2WT(trafo)
   ratio = calcTransformerRatio(trafo)
   push!(net.trafos, trafo)
-  
+
   addBranch!(net = net, from = from, to = to, branch = trafo, status = status, ratio = ratio, side = side, vn_kV = vn_hv_kV)
-  
 end
 
 """
@@ -432,11 +449,23 @@ Add a prosumer (combination of a producer and consumer) to the network.
 - `vm_pu::Union{Nothing, Float64}`: Voltage magnitude setpoint. Default is `nothing`.
 - `va_deg::Union{Nothing, Float64}`: Voltage angle setpoint. Default is `nothing`.
 """
-function addProsumer!(; net::Net, busName::String, type::String, p::Union{Nothing,Float64} = nothing, q::Union{Nothing,Float64} = nothing, pMin::Union{Nothing,Float64} = nothing, pMax::Union{Nothing,Float64} = nothing, 
-                        qMin::Union{Nothing,Float64} = nothing, qMax::Union{Nothing,Float64} = nothing, referencePri::Union{Nothing,String} = nothing, vm_pu::Union{Nothing,Float64} = nothing, va_deg::Union{Nothing,Float64} = nothing)
-  busIdx = geNetBusIdx(net = net, busName = busName)  
+function addProsumer!(;
+  net::Net,
+  busName::String,
+  type::String,
+  p::Union{Nothing,Float64} = nothing,
+  q::Union{Nothing,Float64} = nothing,
+  pMin::Union{Nothing,Float64} = nothing,
+  pMax::Union{Nothing,Float64} = nothing,
+  qMin::Union{Nothing,Float64} = nothing,
+  qMax::Union{Nothing,Float64} = nothing,
+  referencePri::Union{Nothing,String} = nothing,
+  vm_pu::Union{Nothing,Float64} = nothing,
+  va_deg::Union{Nothing,Float64} = nothing,
+)
+  busIdx = geNetBusIdx(net = net, busName = busName)
   idProsSum = length(net.prosumpsVec) + 1
-  isAPUNode = false   
+  isAPUNode = false
   if !isnothing(vm_pu)
     node = net.nodeVec[busIdx]
     isAPUNode = isPVNode(node)
@@ -445,7 +474,7 @@ function addProsumer!(; net::Net, busName::String, type::String, p::Union{Nothin
   proTy = toProSumptionType(type)
   refPriIdx = isnothing(referencePri) ? nothing : geNetBusIdx(net = net, busName = referencePri)
   vn_kV = getNodeVn(net.nodeVec[busIdx])
-  prosumer = ProSumer(vn_kv = vn_kV, busIdx = busIdx, oID = idProsSum, type = proTy, p = p, q = q, minP=pMin, maxP=pMax, minQ=qMin, maxQ=qMax, referencePri = refPriIdx, vm_pu = vm_pu, va_deg = va_deg, isAPUNode = isAPUNode)
+  prosumer = ProSumer(vn_kv = vn_kV, busIdx = busIdx, oID = idProsSum, type = proTy, p = p, q = q, minP = pMin, maxP = pMax, minQ = qMin, maxQ = qMax, referencePri = refPriIdx, vm_pu = vm_pu, va_deg = va_deg, isAPUNode = isAPUNode)
   push!(net.prosumpsVec, prosumer)
 
   node = net.nodeVec[busIdx]
@@ -476,7 +505,7 @@ run_net_acpflow(net = net, max_ite= 7,tol = 1e-6) # rerun the power flow with th
 """
 function addBusGenPower!(; net::Net, busName::String, p::Union{Nothing,Float64} = nothing, q::Union{Nothing,Float64} = nothing)
   busIdx = geNetBusIdx(net = net, busName = busName)
-  addGenPower!(node = net.nodeVec[busIdx], p = p, q = q)    
+  addGenPower!(node = net.nodeVec[busIdx], p = p, q = q)
 end
 
 """
@@ -499,7 +528,7 @@ run_net_acpflow(net = net, max_ite= 7,tol = 1e-6) # rerun the power flow with th
 """
 function addBusLoadPower!(; net::Net, busName::String, p::Union{Nothing,Float64} = nothing, q::Union{Nothing,Float64} = nothing)
   busIdx = geNetBusIdx(net = net, busName = busName)
-  addLoadPower!(node = net.nodeVec[busIdx], p = p, q = q)  
+  addLoadPower!(node = net.nodeVec[busIdx], p = p, q = q)
 end
 
 """
@@ -525,7 +554,7 @@ function addBusShuntPower!(; net::Net, busName::String, p::Float64, q::Float64)
   else
     @info "update shunt power at bus $busName to $p MW and $q MVar"
     sh = getShunt!(net = net, busName = busName) # get the shunt-reference(!) connected to the bus, we are manipulating the shunt-reference!
-    _p, _q = getPQShunt(sh)    
+    _p, _q = getPQShunt(sh)
     pVal = isnothing(_p) ? p : p + _p
     qVal = isnothing(_q) ? q : q + _q
     updatePQShunt!(sh, pVal, qVal) # we need updated values to update shunt power
@@ -554,8 +583,9 @@ function setBranchStatus!(; net::Net, fromBus::String, toBus::String, status::In
   from = geNetBusIdx(net = net, busName = fromBus)
   to = geNetBusIdx(net = net, busName = toBus)
   BranchTupple = (from, to)
-  index = net.branchDict[BranchTupple]  
-  net.branchVec[index].status = status  
+  index = net.branchDict[BranchTupple]
+  net.branchVec[index].status = status
+  markIsolatedBuses!(net = net, log = false)
 end
 
 """
@@ -567,27 +597,27 @@ Validate the network configuration.
 # Returns
 A tuple `(valid::Bool, message::String)` where `valid` is a boolean indicating whether the network is valid, and `message` is a string containing an error message if the network is invalid.
 """
-function validate(; net = Net)
-  
-  if length(net.nodeVec) == 0    
-    return false, "No buses defined in the network" 
+function validate!(; net = Net, log::Bool = false)::Tuple{Bool,String}
+  if length(net.nodeVec) == 0
+    return false, "No buses defined in the network"
   end
-  if length(net.slackVec) == 0    
+  if length(net.slackVec) == 0
     return false, "No slack bus defined in the network"
   end
   if length(net.slackVec) > 1
-    @warn "More than one slack bus defined in the network"    
+    @info "More than one slack bus defined in the network"
   end
   if length(net.branchVec) == 0
     return false, "No branches defined in the network"
   end
   # Check if bus indices in ascending sequence
   sort!(net.nodeVec, by = x -> x.busIdx)
-  for (i,key) in enumerate(net.nodeVec)
-    if i != key.busIdx      
+  for (i, key) in enumerate(net.nodeVec)
+    if i != key.busIdx
       return false, "Bus index mismatch for bus $(key.busIdx)"
     end
   end
+  markIsolatedBuses!(net = net, log = log)
   return true, "Network is valid"
 end
 
@@ -642,7 +672,7 @@ Lock or unlock the network.
 - `net::Net`: The network to be locked or unlocked.
 - `locked::Bool`: Boolean indicating whether to lock the network.
 """
-function lockNet!(; net::Net, locked::Bool)  
+function lockNet!(; net::Net, locked::Bool)
   net._locked = locked
 end
 
@@ -672,5 +702,42 @@ function getTotalLosses(; net::Net)
     n = net.totalLosses[end]
   else
     n = (0.0, 0.0)
+  end
+end
+
+"""
+    markIsolatedBuses!(;net::Net)
+
+Finds and marks isolated buses in the network.
+
+# Arguments
+- `net::Net`: The network.
+
+"""
+function markIsolatedBuses!(; net::Net, log::Bool = false)
+  # Erstelle ein Set, um die Busse zu speichern, die in den Zweigen im branchVec vorkommen
+  connected_buses = Set{Int}()
+
+  # Durchlaufe jeden Zweig im branchVec und füge die entsprechenden Busse in das Set ein
+  for br in net.branchVec
+    if br.status == 0
+      continue
+    end
+
+    push!(connected_buses, br.fromBus)
+    push!(connected_buses, br.toBus)
+  end
+
+  # Durchlaufe alle Busse im nodeVec und markiere die isolierten Busse
+  for bus in net.nodeVec
+    # Überprüfe, ob die Busnummer nicht im Set der verbundenen Busse enthalten ist
+    if !(bus.busIdx in connected_buses)
+      setNodeType!(bus, "Isolated")
+      setVmVa!(node = bus, vm_pu = 0.0, va_deg = 0.0)
+      push!(net.isoNodes, bus.busIdx)
+      if log
+        @info "Bus $(getCompName(bus.comp)) is isolated"
+      end
+    end
   end
 end

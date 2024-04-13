@@ -51,7 +51,7 @@ addProsumer!(net = net, busName = "B3", type = "ENERGYCONSUMER", p = 1.0, q = 2.
 addProsumer!(net = net, busName = "B5", type = "SYNCHRONMASCHINE", referencePri = "B5", vm_pu = 1.0, va_deg = 0.0)
 addProsumer!(net = net, busName = "B1", type = "GENERATOR", p = 1.1, q = 2.0)
 
-result, msg = validate(net = net)
+result, msg = validate!(net = net)
 if !result
   @warn msg
   return false
