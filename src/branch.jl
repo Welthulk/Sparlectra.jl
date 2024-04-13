@@ -142,6 +142,7 @@ mutable struct Branch
         new(c, from, to, branch.r, branch.x, branch.b, branch.g, 0.0, 0.0, status, branch.ratedS, nothing, nothing, nothing, nothing)
       else
         r, x, b, g = getRXBG(branch)
+        @assert !isnothing(r) && !isnothing(x) "r or x must be set for an ACLineSegment"
         r_pu, x_pu, g_pu, b_pu = toPU_RXGB(r = r, x = x, g = g, b = b, v_kv = vn_kV, baseMVA = baseMVA)
         new(c, from, to, r_pu, x_pu, b_pu, g_pu, 0.0, 0.0, status, branch.ratedS, nothing, nothing, nothing, nothing)
       end
