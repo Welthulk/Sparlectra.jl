@@ -47,15 +47,16 @@ function getBusData(nodes::Vector{Sparlectra.Node}, Sbase_MVA::Float64, flatStar
   sumLoad_q = 0.0
   sumGen_p = 0.0
   sumGen_q = 0.0
-
+  idx=0
   for (i, n) in enumerate(nodes)
-    if isSlack(n)        
-      slackIdx = i
-    end
-
     if isIsolated(n)
       continue
     end  
+    idx+=1
+    if isSlack(n)        
+      slackIdx = idx
+    end
+
 
     type = n._nodeType
 
@@ -92,7 +93,9 @@ function getBusData(nodes::Vector{Sparlectra.Node}, Sbase_MVA::Float64, flatStar
       vm_pu = n._vm_pu === nothing ? 1.0 : n._vm_pu
       va_deg = n._va_deg === nothing ? 0.0 : deg2rad(n._va_deg)
     end
-    b = BusData(n.busIdx, vm_pu, va_deg, p, q, type)
+    busIdx = idx
+    #b = BusData(n.busIdx, vm_pu, va_deg, p, q, type)
+    b = BusData(busIdx, vm_pu, va_deg, p, q, type)
     push!(busVec, b)
   end
 
@@ -125,9 +128,11 @@ end # getBusData
 function getBusTypeVec(busVec::Vector{BusData})
   busTypeVec = Vector{Sparlectra.NodeType}()
   slackIdx = 0
+  idx=0
   for (i, bus) in enumerate(busVec) #1:n    
+    idx+=1
     if bus.type == Sparlectra.Slack
-      slackIdx = i
+      slackIdx = idx
     end
     push!(busTypeVec, bus.type)
   end
@@ -539,7 +544,7 @@ A tuple containing the number of iterations and the result of the calculation:
 - `2`: Unsolvable system of equations.
 - `3`: Error.
 =#
-function calcNewtonRaphson!(Y::AbstractMatrix{ComplexF64}, nodes::Vector{Node}, Sbase_MVA::Float64, maxIte::Int, tolerance::Float64 = 1e-6, verbose::Int = 0, sparse::Bool = false)
+function calcNewtonRaphson!(Y::AbstractMatrix{ComplexF64}, nodes::Vector{Node}, isoNodes::Vector{Int}, Sbase_MVA::Float64, maxIte::Int, tolerance::Float64 = 1e-6, verbose::Int = 0, sparse::Bool = false)
   busVec, slackNum = getBusData(nodes, Sbase_MVA)
 
   adjBranch = adjacentBranches(Y, debug)
@@ -654,16 +659,20 @@ function calcNewtonRaphson!(Y::AbstractMatrix{ComplexF64}, nodes::Vector{Node}, 
 
   lastNode = length(nodes)
   for bus in busVec
-    i = bus.idx
+    idx = bus.idx
+    if idx in isoNodes      
+      continue
+    end
+    idx += count(i -> i < idx, isoNodes)
     vm_pu = bus.vm_pu
     va_deg = rad2deg(bus.va_rad)
 
-    setVmVa!(node = nodes[i], vm_pu = vm_pu, va_deg = va_deg)
+    setVmVa!(node = nodes[idx], vm_pu = vm_pu, va_deg = va_deg)
     if bus.type == Sparlectra.PV
-      nodes[i]._qƩGen = bus._qRes * Sbase_MVA
+      nodes[idx]._qƩGen = bus._qRes * Sbase_MVA
     elseif bus.type == Sparlectra.Slack
-      nodes[i]._pƩGen = bus._pRes * Sbase_MVA
-      nodes[i]._qƩGen = bus._qRes * Sbase_MVA
+      nodes[idx]._pƩGen = bus._pRes * Sbase_MVA
+      nodes[idx]._qƩGen = bus._qRes * Sbase_MVA
     end
 
     if verbose > 3
@@ -714,7 +723,7 @@ function runpf!(net::Net, maxIte::Int, tolerance::Float64 = 1e-6, verbose::Int =
     printYBus = (verbose > 1)
   end
 
-  Y = createYBUS(net.branchVec, net.shuntVec, sparse, printYBus)
+  Y = createYBUS(net=net, sparse=sparse, printYBUS=printYBus)
 
-  return calcNewtonRaphson!(Y, net.nodeVec, net.baseMVA, maxIte, tolerance, verbose, sparse)
+  return calcNewtonRaphson!(Y, net.nodeVec, net.isoNodes, net.baseMVA, maxIte, tolerance, verbose, sparse)
 end

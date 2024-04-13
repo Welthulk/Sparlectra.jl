@@ -135,7 +135,7 @@ Converts the resistance, reactance, conductance, and susceptance from per unit t
 to_RXGB(r_pu = 0.01, x_pu = 0.1, g_pu = 0.02, b_pu = 0.02, v_kv = 110.0, baseMVA = 100.0)
 ```
 """
-function to_RXGB(;r_pu::Float64, x_pu::Float64, g_pu::Union{Nothing,Float64} = nothing, b_pu::Union{Nothing,Float64} = nothing, v_kv::Float64, baseMVA::Float64)::Tuple{Float64,Float64,Float64,Float64}
+function to_RXGB(; r_pu::Float64, x_pu::Float64, g_pu::Union{Nothing,Float64} = nothing, b_pu::Union{Nothing,Float64} = nothing, v_kv::Float64, baseMVA::Float64)::Tuple{Float64,Float64,Float64,Float64}
   z_base = (v_kv^2) / baseMVA
   r = r_pu * z_base
   x = x_pu * z_base
@@ -144,26 +144,47 @@ function to_RXGB(;r_pu::Float64, x_pu::Float64, g_pu::Union{Nothing,Float64} = n
   !isnothing(b_pu) ? b = b_pu / z_base : 0.0
   return r, x, g, b
 end
+#=
+function removeIsolatedNodesFromYBUS(Y::AbstractMatrix{ComplexF64}, isolated_nodes::Vector{Int})
+    if issparse(Y)
+        # Entferne die Zeilen und Spalten der isolierten Knoten aus der Sparse-Matrix
+        n = size(Y, 1)
+        rows_to_keep = setdiff(1:n, isolated_nodes)
+        Y = Y[rows_to_keep, rows_to_keep]
+    else
+        # Entferne die Zeilen und Spalten der isolierten Knoten aus der Dense-Matrix
+        Y = Y[setdiff(1:end, isolated_nodes), setdiff(1:end, isolated_nodes)]
+    end
+    return Y
+end
+=#
+
 
 """
-createYBUS: Create the admittance matrix YBUS from the branch vector and the slack index.
+    createYBUS(branchVec::Vector{Branch}, shuntVec::Vector{Shunt}, isoNodes::Vector{Int}, sparse::Bool = true, printYBUS::Bool = false)
 
-Parameters:
-- `branchVec::Vector{Branch}`: Vector of branch objects representing the network branches.
-- `shuntVec::Vector{Shunt}`: Vector of shunt objects representing shunt elements in the network.
-- `sparse::Bool = true`: Optional parameter indicating whether to create a sparse YBUS matrix (default is true).
-- `printYBUS::Bool = false`: Optional parameter indicating whether to print the YBUS matrix (default is false).
+Creates the bus admittance matrix (YBUS) of the network.
 
-Returns:
-- `Y::SparseMatrixCSC{ComplexF64}` or `Array{ComplexF64}`: The YBUS admittance matrix.
+# Arguments
+- `branchVec::Vector{Branch}`: The vector of branches in the network.
+- `shuntVec::Vector{Shunt}`: The vector of shunts in the network.
+- `isoNodes::Vector{Int}`: The vector of isolated nodes in the network.
+- `sparse::Bool`: A flag to indicate if the YBUS matrix should be sparse. Default is `true`.
+- `printYBUS::Bool`: A flag to indicate if the YBUS matrix should be printed. Default is `false`.
+
+# Returns
+- `Y::Matrix{ComplexF64}`: The bus admittance matrix (YBUS).
+
 """
-function createYBUS(branchVec::Vector{Branch}, shuntVec::Vector{Shunt}, sparse::Bool = true, printYBUS::Bool = false)
-  @assert length(branchVec) > 0 "branchVec must not be empty"
 
-  n = maximum(max(branch.fromBus, branch.toBus) for branch in branchVec)
+function createYBUS(;net::Net, sparse::Bool = true, printYBUS::Bool = false)
   
+  # Bestimme die maximale Busnummer im Netzwerk, unter Berücksichtigung isolierter Busse
+  max_bus = maximum(max(branch.fromBus, branch.toBus) for branch in net.branchVec)
+  n = max_bus - length(net.isoNodes)
+
   @debug "Dimension YBus:", n
-  
+
   if sparse
     Y = spzeros(ComplexF64, n, n)
   else
@@ -179,19 +200,25 @@ function createYBUS(branchVec::Vector{Branch}, shuntVec::Vector{Shunt}, sparse::
     println("\nYBUS: Size = $(n)x$(n) ($(t))\n")
   end
 
-  for branch in branchVec
+  for branch in net.branchVec
     fromNode = branch.fromBus
     toNode = branch.toBus
-    r = x = b = g = 0.0
-    if Int(branch.status) == 0
+
+    # Überspringe Zweige, die außer Betrieb sind
+    if branch.status == 0
       @debug "createYBUS: Branch $(branch) out of service, skipping "
       continue
-    else
-      r = branch.r_pu
-      x = branch.x_pu
-      b = branch.b_pu
-      g = branch.g_pu
     end
+
+    # Überspringe Zweige, die isolierte Busse verbinden
+    if fromNode in net.isoNodes || toNode in net.isoNodes
+      continue
+    end
+
+    r = branch.r_pu
+    x = branch.x_pu
+    b = branch.b_pu
+    g = branch.g_pu
 
     yik = inv((r + x * im))
     susceptance = 0.5 * (g + b * im) # pi-model
@@ -203,17 +230,21 @@ function createYBUS(branchVec::Vector{Branch}, shuntVec::Vector{Shunt}, sparse::
       t = calcComplexRatio(ratio, shift_degree)
     end
 
-    Y[fromNode, fromNode] = Y[fromNode, fromNode] + ((yik + susceptance)) / abs2(t)
-    Y[toNode, toNode] = Y[toNode, toNode] + (yik + susceptance)
+    # Korrigiere die Indizes basierend auf den isolierten Knoten
+    fromNode -= count(i -> i < fromNode, net.isoNodes)
+    toNode -= count(i -> i < toNode, net.isoNodes)
 
-    Y[fromNode, toNode] = Y[fromNode, toNode] + (-1.0 * yik / conj(t))
-    Y[toNode, fromNode] = Y[toNode, fromNode] + (-1.0 * yik / t)
+    Y[fromNode, fromNode] += ((yik + susceptance)) / abs2(t)
+    Y[toNode, toNode] += (yik + susceptance)
+
+    Y[fromNode, toNode] += (-1.0 * yik / conj(t))
+    Y[toNode, fromNode] += (-1.0 * yik / t)
   end
 
-  for sh in shuntVec
+  for sh in net.shuntVec
     node = sh.busIdx
     y = sh.y_pu_shunt
-    Y[node, node] = Y[node, node] + y
+    Y[node, node] += y
   end
 
   if printYBUS
@@ -260,6 +291,7 @@ function createYBUS(branchVec::Vector{Branch}, shuntVec::Vector{Shunt}, sparse::
       println()
     end
   end
+
   return Y
 end
 

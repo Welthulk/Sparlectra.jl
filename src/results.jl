@@ -20,7 +20,9 @@ function formatBranchResults(net::Net)
     from = br.fromBus
     to = br.toBus
     bName = br.comp.cName
-    if br.status == 1
+    if br.status == 0 || (isnothing(br.fBranchFlow)) || (isnothing(br.tBranchFlow))
+      pfromVal = qfromVal = ptoVal = qtoVal = pLossval = qLossval = 0.0
+    else
       pfromVal = (br.fBranchFlow.pFlow === nothing) ? NaN : br.fBranchFlow.pFlow
       qfromVal = (br.fBranchFlow.qFlow === nothing) ? NaN : br.fBranchFlow.qFlow
 
@@ -41,8 +43,6 @@ function formatBranchResults(net::Net)
       if check
         bName *= " !"
       end
-    else
-      pfromVal = qfromVal = ptoVal = qtoVal = pLossval = qLossval = 0.0
     end
     formatted_results *= @sprintf("| %-25s | %-5s | %-5s | %-10.3f | %-10.3f | %-10.3f | %-10.3f | %-10.3f |  %-10.3f|\n", bName, from, to, pfromVal, qfromVal, ptoVal, qtoVal, pLossval, qLossval)
   end
@@ -85,9 +85,11 @@ function printACPFlowResults(net::Net, ct::Float64, ite::Int, tol::Float64, toFi
 
   npv = 0
   npq = 0
+  niso = 0
   for n in nodes
     npv += n._nodeType == Sparlectra.PV ? 1 : 0
-    npq += n._nodeType == Sparlectra.PQ ? 1 : 0
+    npq += isPQNode(n) ? 1 : 0
+    niso += isIsolated(n) ? 1 : 0
     if occursin("_Aux_", n.comp.cName)
       auxb += 1
     end
@@ -104,7 +106,9 @@ function printACPFlowResults(net::Net, ct::Float64, ite::Int, tol::Float64, toFi
   @printf(io, "Converged in :%10f seconds\n", ct)
   @printf(io, "Case         :%15s\n", net.name)
   @printf(io, "BaseMVA      :%10d\n", net.baseMVA)
-  if auxb > 0
+  if auxb > 0 && niso > 0
+    @printf(io, "Nodes        :%10d (PV: %d PQ: %d (Aux: %d) Iso: %d Slack: %d\n", busses, npv, npq, auxb, niso, 1)
+  elseif auxb > 0
     @printf(io, "Nodes        :%10d (PV: %d PQ: %d (Aux: %d) Slack: %d\n", busses, npv, npq, auxb, 1)
   else
     @printf(io, "Nodes        :%10d (PV: %d PQ: %d Slack: %d)\n", busses, npv, npq, 1)

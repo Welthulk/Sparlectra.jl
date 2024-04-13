@@ -36,7 +36,7 @@ Functions:
 - `add2WTrafo!(; net::Net, ...)`: Adds a two-winding transformer to the network.
 - `addProsumer!(; net::Net, ...)`: Adds a prosumer to the network.
 - `lockNet!(; net::Net, locked::Bool)`: Locks or unlocks the network.
-- `validate(; net::Net)`: Validates the network.
+- `validate!(; net::Net)`: Validates the network.
 - `get_bus_vn_kV(; net::Net, busName::String)`: Gets the voltage level of a bus by name.
 - `get_vn_kV(; net::Net, busIdx::Int)`: Gets the voltage level of a bus by index.
 - `getBusType(; net::Net, busName::String)`: Gets the type of a bus by name.
@@ -70,11 +70,12 @@ struct Net
   totalLosses::Vector{Tuple{Float64,Float64}}
   _locked::Bool
   shuntDict::Dict{Int,Int}
-
+  isoNodes::Vector{Int}
+  #! format: off
   function Net(; name::String, baseMVA::Float64, vmin_pu::Float64 = 0.9, vmax_pu::Float64 = 1.1)
-    new(name, baseMVA, [], vmin_pu, vmax_pu, [], [], [], [], [], [], Dict{String,Int}(), Dict{Int,Int}(), Dict{Tuple{Int,Int},Int}(), [], false, Dict{Int,Int}())
+    new(name, baseMVA, [], vmin_pu, vmax_pu, [], [], [], [], [], [], Dict{String,Int}(), Dict{Int,Int}(), Dict{Tuple{Int,Int},Int}(), [], false, Dict{Int,Int}(), [])
   end
-
+  #! format: on
   function Base.show(io::IO, o::Net)
     println(io, "Net: ", o.name)
     println(io, "Base MVA: ", o.baseMVA)
@@ -584,6 +585,7 @@ function setBranchStatus!(; net::Net, fromBus::String, toBus::String, status::In
   BranchTupple = (from, to)
   index = net.branchDict[BranchTupple]
   net.branchVec[index].status = status
+  markIsolatedBuses!(net = net, log = false)
 end
 
 """
@@ -595,7 +597,7 @@ Validate the network configuration.
 # Returns
 A tuple `(valid::Bool, message::String)` where `valid` is a boolean indicating whether the network is valid, and `message` is a string containing an error message if the network is invalid.
 """
-function validate(; net = Net)
+function validate!(; net = Net, log::Bool = false)::Tuple{Bool,String}
   if length(net.nodeVec) == 0
     return false, "No buses defined in the network"
   end
@@ -603,7 +605,7 @@ function validate(; net = Net)
     return false, "No slack bus defined in the network"
   end
   if length(net.slackVec) > 1
-    @warn "More than one slack bus defined in the network"
+    @info "More than one slack bus defined in the network"
   end
   if length(net.branchVec) == 0
     return false, "No branches defined in the network"
@@ -615,7 +617,7 @@ function validate(; net = Net)
       return false, "Bus index mismatch for bus $(key.busIdx)"
     end
   end
-  markIsolatedBuses!(net = net)
+  markIsolatedBuses!(net = net, log = log)
   return true, "Network is valid"
 end
 
@@ -712,7 +714,7 @@ Finds and marks isolated buses in the network.
 - `net::Net`: The network.
 
 """
-function markIsolatedBuses!(; net::Net)
+function markIsolatedBuses!(; net::Net, log::Bool = false)
   # Erstelle ein Set, um die Busse zu speichern, die in den Zweigen im branchVec vorkommen
   connected_buses = Set{Int}()
 
@@ -732,7 +734,10 @@ function markIsolatedBuses!(; net::Net)
     if !(bus.busIdx in connected_buses)
       setNodeType!(bus, "Isolated")
       setVmVa!(node = bus, vm_pu = 0.0, va_deg = 0.0)
-      @debug "Bus $(getCompName(bus.comp)) is isolated"
+      push!(net.isoNodes, bus.busIdx)
+      if log
+        @info "Bus $(getCompName(bus.comp)) is isolated"
+      end
     end
   end
 end
