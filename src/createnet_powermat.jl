@@ -3,7 +3,9 @@
 # include-file createnet_powermat.jl
 
 # helper
+#! format: off
 function _createDict()
+
   busKeys = ["bus", "type", "Pd", "Qd", "Gs", "Bs", "area", "Vm", "Va", "baseKV", "zone", "Vmax", "Vmin"]
   busDict = Dict{String,Int}()
   for (idx, key) in enumerate(busKeys)
@@ -24,7 +26,7 @@ function _createDict()
 
   return busDict, genDict, branchDict
 end
-
+#! format: on
 """
 Creates a network from a MatPower case file.
 
@@ -51,7 +53,7 @@ function createNetFromMatPowerFile(filename, log::Bool = false)::Net
 
   @info "create network from case-file: $(filename)"
   netName, baseMVA, busData, genData, branchData = casefileparser(filename)
-  
+
   slackIdx = 0
   # parsing the data
   if debug
@@ -79,7 +81,7 @@ function createNetFromMatPowerFile(filename, log::Bool = false)::Net
   end
 
   busDict, genDict, branchDict = _createDict()
-  myNet = Net(name= string(netName), baseMVA= baseMVA)
+  myNet = Net(name = string(netName), baseMVA = baseMVA)
 
   col = size(busData, 2)
 
@@ -104,10 +106,10 @@ function createNetFromMatPowerFile(filename, log::Bool = false)::Net
     if btype == 3 && slackIdx == 0
       slackIdx = kIdx
     end
-    busName = string(kIdx)    
+    busName = string(kIdx)
 
     addBus!(net = myNet, busName = busName, busType = toString(toNodeType(btype)), vn_kV = vn_kv, vm_pu = vm_pu, va_deg = va_deg, vmin_pu = vmin, vmax_pu = vmax, isAux = false, oBusIdx = kIdx, zone = zone, area = area)
-    
+
     if pShunt != 0.0 || qShunt != 0.0
       addShunt!(net = myNet, busName = busName, pShunt = pShunt, qShunt = qShunt)
     end
@@ -117,7 +119,7 @@ function createNetFromMatPowerFile(filename, log::Bool = false)::Net
       qMin = -qMax  # approximation!
       pMax = abs(mFak * pƩLoad) <= baseMVA ? abs(mFak * pƩLoad) : baseMVA # approximation!
       pMin = -pMax # approximation!
-      addProsumer!(net = myNet, busName = busName, type = "ENERGYCONSUMER", p = pƩLoad, q = qƩLoad, pMin = pMin, pMax = pMax, qMin= qMin, qMax = qMax)
+      addProsumer!(net = myNet, busName = busName, type = "ENERGYCONSUMER", p = pƩLoad, q = qƩLoad, pMin = pMin, pMax = pMax, qMin = qMin, qMax = qMax)
     end
   end# read bus
 
@@ -126,15 +128,15 @@ function createNetFromMatPowerFile(filename, log::Bool = false)::Net
   for row in eachrow(branchData[:, 1:col])
     _fbus = Int(row[branchDict["fbus"]])
     _tbus = Int(row[branchDict["tbus"]])
-    
+
     fbus = string(_fbus)
     tbus = string(_tbus)
-    vn_kv_fromBus = get_bus_vn_kV(net = myNet,  busName = fbus)
-    vn_kv_toBus = get_bus_vn_kV(net = myNet,  busName = tbus)
+    vn_kv_fromBus = get_bus_vn_kV(net = myNet, busName = fbus)
+    vn_kv_toBus = get_bus_vn_kV(net = myNet, busName = tbus)
 
     hasBusInNet(net = myNet, busName = fbus) || (@warn("bus $(fbus) not found, branch ignored."); continue)
     hasBusInNet(net = myNet, busName = tbus) || (@warn("bus $(tbus) not found, branch ignored."); continue)
-    
+
     r_pu = float(row[branchDict["r"]])
     x_pu = float(row[branchDict["x"]])
     b_pu = float(row[branchDict["b"]])
@@ -142,20 +144,20 @@ function createNetFromMatPowerFile(filename, log::Bool = false)::Net
     ratio = float(row[branchDict["ratio"]])
     angle = float(row[branchDict["angle"]])
     status = Int64(row[branchDict["status"]])
-    isLine = false    
+    isLine = false
     if (ratio == 1.0 && angle == 0.0 || ratio == 0.0) && vn_kv_fromBus == vn_kv_toBus
-      isLine = true      
+      isLine = true
     end
-    
+
     if isLine
-      addPIModelACLine!(net = myNet, fromBus = fbus, toBus = tbus, r_pu = r_pu, x_pu = x_pu, b_pu = b_pu, status = status, ratedS = ratedS)  
+      addPIModelACLine!(net = myNet, fromBus = fbus, toBus = tbus, r_pu = r_pu, x_pu = x_pu, b_pu = b_pu, status = status, ratedS = ratedS)
     else # transformer
       addPIModelTrafo!(net = myNet, fromBus = fbus, toBus = tbus, r_pu = r_pu, x_pu = x_pu, b_pu = b_pu, status = status, ratedS = ratedS, ratio = ratio, shift_deg = angle)
     end
   end
 
   # Generators:   
-  col = size(genData, 2)  
+  col = size(genData, 2)
   for row in eachrow(genData[:, 1:col])
     status = Int64(row[genDict["status"]])
     _bus = Int(row[genDict["bus"]])
@@ -164,17 +166,17 @@ function createNetFromMatPowerFile(filename, log::Bool = false)::Net
       pInfo("generator $(_bus) not in service, ignored")
       continue
     end
-    
+
     pGen = float(row[genDict["Pg"]]) < 0.0 ? (pInfo("pGen at bus $(_bus) p < 0"); float(row[genDict["Pg"]])) : float(row[genDict["Pg"]])
     qGen = float(row[genDict["Qg"]]) < 0.0 ? (@debug("qGen at bus $(_bus) q < 0"); float(row[genDict["Qg"]])) : float(row[genDict["Qg"]])
 
-    if abs(pGen) < 1e-6 && abs(qGen) < 1e-6      
+    if abs(pGen) < 1e-6 && abs(qGen) < 1e-6
       busType = getBusType(net = myNet, busName = bus)
       if busType == Sparlectra.PQ
         pInfo("generator $(_bus) has no power output, ignored")
-        continue      
+        continue
       end
-    end    
+    end
 
     qMax = float(row[genDict["Qmax"]])
     qMin = float(row[genDict["Qmin"]])
@@ -182,17 +184,17 @@ function createNetFromMatPowerFile(filename, log::Bool = false)::Net
     pMin = float(row[genDict["Pmin"]])
     vm_pu = float(row[genDict["Vg"]])
     mBase = float(row[genDict["mBase"]])
-    
+
     referencePri = slackIdx == _bus ? bus : nothing
 
     if mBase != baseMVA
       @warn "generator $(_bus) has different baseMVA than network baseMVA"
     end
-        
+
     addProsumer!(net = myNet, busName = bus, type = "GENERATOR", vm_pu = vm_pu, referencePri = referencePri, p = pGen, q = qGen, pMax = pMax, pMin = pMin, qMax = qMax, qMin = qMin)
   end# read Generators
 
-  erg, msg = validate(net=myNet) 
+  erg, msg = validate(net = myNet)
   if erg == false
     @error "network is invalid: $msg"
   end

@@ -39,13 +39,14 @@ mutable struct ACLineSegment <: AbstractBranch
   ratedS::Union{Nothing,Float64}
   paramsBasedOnLength::Bool
   _isPIModel::Bool
-
+  #! format: off
   function ACLineSegment(; vn_kv::Float64,  from::Int,  to::Int,  length::Float64, r::Float64, x::Float64, b::Union{Nothing,Float64} = nothing,
                            c_nf_per_km::Union{Nothing,Float64} = nothing, tanδ::Union{Nothing,Float64} = nothing, ratedS::Union{Nothing,Float64} = nothing,
                            paramsBasedOnLength::Bool = true, isPIModel::Bool = false)
+  #! format: on
     c = getLineImpPGMComp(vn_kv, from, to)
     g = 0.0
-    
+
     if isPIModel
       new(c, length, r, x, b, g, nothing, nothing, ratedS, paramsBasedOnLength, true)
     else
