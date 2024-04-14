@@ -1,4 +1,9 @@
 # Change Log
+## Version 0.4.18 (2024-04-14)
+
+### Bug Fixes
+ - closes issue#48 "printout jacobian runs into error"
+
 ## Version 0.4.17 (2024-04-14)
 ### New Features
  - added testcase for importing Matpower files
