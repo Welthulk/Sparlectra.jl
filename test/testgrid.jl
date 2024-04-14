@@ -82,11 +82,26 @@ function testExportMatpower()
   return true
 end
 
-function testImportMatpower()
-  mdo = true
-  log = false
-  net = createNetFromMatPowerFile(getTestFilePathName(), 0.0, log, mdo)
-  return validate!(net = net)
+function testImportMatpower()  
+  filename = "case5.m"
+  path = joinpath(pwd(), "data", "mpower", filename)
+
+  net = createNetFromMatPowerFile(path, false)
+  if strip(net.name) != "case5"
+    @warn "Failed to import network case5.m from file: $path"
+    return false
+  end
+
+  if length(net.nodeVec) != 5
+    @warn "Expected 5 nodes, found: $(length(net.nodeVec))"
+    return false
+  end
+  if length(net.branchVec) != 5
+    @warn "Expected 5 branches, found: $(length(net.branchVec))"
+    return false
+  end
+  
+  return true
 end
 
 function rmTestfiles()

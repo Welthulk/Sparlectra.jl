@@ -1,17 +1,18 @@
 # Change Log
-## Version 0.4.17 (2024-xx-xx)
+## Version 0.4.17 (2024-04-14)
 ### New Features
+ - added testcase for importing Matpower files
 
 ### Bug Fixes
+ - bugfix wrong function call in `createnet_powermat`
 
-
-## Version 0.4.16 (2024-04-17)
+## Version 0.4.16 (2024-04-13)
 ### New Features
 
 ### Bug Fixes
 - bugfix shunt index for isolated buses, closes issue #38
 
-## Version 0.4.15 (2024-04-16)
+## Version 0.4.15 (2024-04-12)
 ### New Features
 - Implemented a function to detect isolated buses and incorporate them into the network calculation (Issue #38)
 ### Bug Fixes

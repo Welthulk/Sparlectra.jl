@@ -194,7 +194,7 @@ function createNetFromMatPowerFile(filename, log::Bool = false)::Net
     addProsumer!(net = myNet, busName = bus, type = "GENERATOR", vm_pu = vm_pu, referencePri = referencePri, p = pGen, q = qGen, pMax = pMax, pMin = pMin, qMax = qMax, qMin = qMin)
   end# read Generators
 
-  erg, msg = validate(net = myNet)
+  erg, msg = validate!(net = myNet)
   if erg == false
     @error "network is invalid: $msg"
   end
