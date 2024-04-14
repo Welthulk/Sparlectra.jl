@@ -676,16 +676,16 @@ function calcNewtonRaphson!(Y::AbstractMatrix{ComplexF64}, nodes::Vector{Node}, 
     end
 
     if verbose > 3
-      vm_pu = round(nodes[i]._vm_pu, digits = 3)
-      va_deg = round(nodes[i]._va_deg, digits = 3)
+      vm_pu = round(nodes[idx]._vm_pu, digits = 3)
+      va_deg = round(nodes[idx]._va_deg, digits = 3)
       if va_deg > 180
         va_deg -= 360
         va_deg = round(va_deg, digits = 3)
       end
-      if i == lastNode
-        println("(Bus=$(i), vm=$(vm_pu), va=$(va_deg))")
+      if idx == lastNode
+        println("(Bus=$(idx), vm=$(vm_pu), va=$(va_deg))")
       else
-        print("(Bus=$(i), vm=$(vm_pu), va=$(va_deg)), ")
+        print("(Bus=$(idx), vm=$(vm_pu), va=$(va_deg)), ")
       end
     end
   end
