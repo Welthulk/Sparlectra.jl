@@ -187,3 +187,7 @@ end
 function getCompName(c::AbstractComponent)::String
   return c.cName
 end
+
+function getCompID(c::AbstractComponent)::String
+  return c.cID
+end

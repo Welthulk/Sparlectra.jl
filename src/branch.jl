@@ -110,6 +110,7 @@ A mutable structure representing a branch in a power system.
 """
 mutable struct Branch
   comp::AbstractComponent
+  branchIdx::Int
   fromBus::Integer
   toBus::Integer
   r_pu::Float64                          # resistance
@@ -119,14 +120,23 @@ mutable struct Branch
   ratio::Float64                         # transformer off nominal turns ratio
   angle::Float64                         # transformer off nominal phase shift angle
   status::Integer                        # 1 = in service, 0 = out of service
+  fromBusSwitch::Union{Nothing,Int}      # switch at fromBus, 1 = closed, 0 = open
+  toBusSwitch::Union{Nothing,Int}        # switch at toBus, 1 = closed, 0 = open
   sn_MVA::Union{Nothing,Float64}         # nominal power of the branch = rateA
   fBranchFlow::Union{Nothing,BranchFlow} # flow from fromNodeID to toNodeID
   tBranchFlow::Union{Nothing,BranchFlow} # flow from toNodeID to fromNodeID
   pLosses::Union{Nothing,Float64}        # active power losses
   qLosses::Union{Nothing,Float64}        # reactive power losses
 
-  function Branch(; from::Int, to::Int, baseMVA::Float64, branch::AbstractBranch, id::Int, status::Integer = 1, ratio::Union{Nothing,Float64} = nothing,
+  function Branch(; branchIdx::Int, from::Int, to::Int, baseMVA::Float64, branch::AbstractBranch, id::Int, status::Integer = 1, ratio::Union{Nothing,Float64} = nothing,
                     side::Union{Nothing,Int} = nothing, vn_kV::Union{Nothing,Float64} = nothing, fromOid::Union{Nothing,Int} = nothing, toOid::Union{Nothing,Int} = nothing, )
+    if status == 1
+      fromBusSwitch = 1
+      toBusSwitch = 1
+    else
+      fromBusSwitch = 0
+      toBusSwitch = 0
+    end
     if isa(branch, ACLineSegment) # Line
       @assert !isnothing(vn_kV) "vn_kV must be set for an ACLineSegment"
       if isnothing(ratio)
@@ -139,12 +149,12 @@ mutable struct Branch
       end
       c = getBranchComp(vn_kV, from, to, id, "ACL")
       if isPIModel(branch)
-        new(c, from, to, branch.r, branch.x, branch.b, branch.g, 0.0, 0.0, status, branch.ratedS, nothing, nothing, nothing, nothing)
+        new(c, branchIdx, from, to, branch.r, branch.x, branch.b, branch.g, 0.0, 0.0, status, fromBusSwitch, toBusSwitch, branch.ratedS, nothing, nothing, nothing, nothing)
       else
         r, x, b, g = getRXBG(branch)
         @assert !isnothing(r) && !isnothing(x) "r or x must be set for an ACLineSegment"
         r_pu, x_pu, g_pu, b_pu = toPU_RXGB(r = r, x = x, g = g, b = b, v_kv = vn_kV, baseMVA = baseMVA)
-        new(c, from, to, r_pu, x_pu, b_pu, g_pu, 0.0, 0.0, status, branch.ratedS, nothing, nothing, nothing, nothing)
+        new(c, branchIdx, from, to, r_pu, x_pu, b_pu, g_pu, 0.0, 0.0, status, branch.ratedS, nothing, nothing, nothing, nothing)
       end
     elseif isa(branch, PowerTransformer) # Transformer     
       if (isnothing(side) && branch.isBiWinder)
@@ -186,7 +196,7 @@ mutable struct Branch
         angle = w.shift_degree
       end
 
-      new(c, from, to, r_pu, x_pu, b_pu, g_pu, ratio, angle, status, sn_MVA, nothing, nothing)
+      new(c, branchIdx, from, to, r_pu, x_pu, b_pu, g_pu, ratio, angle, status, nothing, nothing, sn_MVA, nothing, nothing)
     elseif isa(branch, BranchModel) # PI-Model
       @assert !isnothing(vn_kV) "vn_kV must be set for PI-Model"
 
@@ -196,7 +206,7 @@ mutable struct Branch
         c = getBranchComp(vn_kV, from, to, id, "PI")
       end
 
-      new(c, from, to, branch.r_pu, branch.x_pu, branch.b_pu, branch.g_pu, branch.ratio, branch.angle, status, branch.sn_MVA, nothing, nothing, nothing, nothing)
+      new(c, branchIdx, from, to, branch.r_pu, branch.x_pu, branch.b_pu, branch.g_pu, branch.ratio, branch.angle, status, fromBusSwitch, toBusSwitch, branch.sn_MVA, nothing, nothing, nothing, nothing)
     else
       error("Branch type not supported")
     end
@@ -205,9 +215,9 @@ mutable struct Branch
   function Base.show(io::IO, b::Branch)
     print(io, "Branch( ")
     print(io, b.comp, ", ")
+    print(io, "branchIdx: ", b.branchIdx, ", ")
     print(io, "fromBus: ", b.fromBus, ", ")
     print(io, "toBus: ", b.toBus, ", ")
-
     print(io, "r_pu: ", b.r_pu, ", ")
     print(io, "x_pu: ", b.x_pu, ", ")
     print(io, "b_pu: ", b.b_pu, ", ")
@@ -215,6 +225,12 @@ mutable struct Branch
     print(io, "ratio: ", b.ratio, ", ")
     print(io, "angle: ", b.angle, ", ")
     print(io, "status: ", b.status, ", ")
+    if !isnothing(b.fromBusSwitch)
+      print(io, "fromBusSwitch: ", b.fromBusSwitch, ", ")
+    end
+    if !isnothing(b.toBusSwitch)
+      print(io, "toBusSwitch: ", b.toBusSwitch, ", ")
+    end    
     if !isnothing(b.sn_MVA)
       print(io, "sn_MVA: ", b.sn_MVA, ", ")
     end
@@ -258,6 +274,11 @@ function getBranchFlow(branch::Branch, from::Node, to::Node)
   else
     error("Nodes do not match the branch")
   end
+end
+
+function getBranchIdx(branch::Branch)
+  return branch.branchIdx
+  
 end
 
 function getBranchLosses(branch::Branch)

@@ -11,12 +11,16 @@ function format_version(version::VersionNumber)
 end
 
 function formatBranchResults(net::Net)
-  formatted_results = @sprintf("\n===========================================================================================================================\n")
+  #! format: off
+  formatted_results = @sprintf("\n=======================================================================================================================================================\n")
 
-  formatted_results *= @sprintf("| %-25s | %-5s | %-5s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s |\n", "Branch", "From", "To", "P [MW]", "Q [MVar]", "P [MW]", "Q [MVar]", "Pv [MW]", "Qv [MVar]")
-  formatted_results *= @sprintf("===========================================================================================================================\n")
-
+  formatted_results *= @sprintf("| %-5s | %-25s |  %-5s | %-5s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s |\n", "Nr", "Branch", "From", "To", "P [MW]", "Q [MVar]", "P [MW]", "Q [MVar]", "Pv [MW]", "Qv [MVar]", "State (From, To)")
+  formatted_results *= @sprintf("=======================================================================================================================================================\n")
+  #! format: on
   for br in net.branchVec
+    bidx = br.branchIdx
+    fromState = br.fromBusSwitch
+    toState = br.toBusSwitch
     from = br.fromBus
     to = br.toBus
     bName = br.comp.cName
@@ -44,9 +48,13 @@ function formatBranchResults(net::Net)
         bName *= " !"
       end
     end
-    formatted_results *= @sprintf("| %-25s | %-5s | %-5s | %-10.3f | %-10.3f | %-10.3f | %-10.3f | %-10.3f |  %-10.3f|\n", bName, from, to, pfromVal, qfromVal, ptoVal, qtoVal, pLossval, qLossval)
+    #! format: off
+    formatted_results *= @sprintf("| %-5s | %-25s | %-5s | %-5s | %-10.3f | %-10.3f | %-10.3f | %-10.3f | %-10.3f |  %-10.3f|  %-2d, %-2d           |\n", bidx, bName,  from, to, pfromVal, qfromVal, ptoVal, qtoVal, pLossval, qLossval, fromState, toState)
+    #! format: on
   end
-  formatted_results *= @sprintf("---------------------------------------------------------------------------------------------------------------------------\n")
+  #! format: off
+  formatted_results *= @sprintf("-------------------------------------------------------------------------------------------------------------------------------------------------------\n")
+  #! format: on
   (∑pv, ∑qv) = getTotalLosses(net = net)
   total_losses = @sprintf("total losses (I^2*Z): P = %10.3f [MW], Q = %10.3f [MVar]\n", ∑pv, ∑qv)
 

@@ -65,15 +65,14 @@ struct Net
   prosumpsVec::Vector{ProSumer}
   shuntVec::Vector{Shunt}
   busDict::Dict{String,Int}
-  busOrigIdxDict::Dict{Int,Int}
-  branchDict::Dict{Tuple{Int,Int},Int}
+  busOrigIdxDict::Dict{Int,Int}  
   totalLosses::Vector{Tuple{Float64,Float64}}
   _locked::Bool
   shuntDict::Dict{Int,Int}
   isoNodes::Vector{Int}
   #! format: off
   function Net(; name::String, baseMVA::Float64, vmin_pu::Float64 = 0.9, vmax_pu::Float64 = 1.1)
-    new(name, baseMVA, [], vmin_pu, vmax_pu, [], [], [], [], [], [], Dict{String,Int}(), Dict{Int,Int}(), Dict{Tuple{Int,Int},Int}(), [], false, Dict{Int,Int}(), [])
+    new(name, baseMVA, [], vmin_pu, vmax_pu, [], [], [], [], [], [], Dict{String,Int}(), Dict{Int,Int}(), [], false, Dict{Int,Int}(), [])
   end
   #! format: on
   function Base.show(io::IO, o::Net)
@@ -261,11 +260,8 @@ function addBranch!(; net::Net, from::Int, to::Int, branch::AbstractBranch, stat
     vn_kV = getNodeVn(net.nodeVec[from])
   end
 
-  br = Branch(from = from, to = to, baseMVA = net.baseMVA, branch = branch, id = idBrunch, status = status, ratio = ratio, side = side, vn_kV = vn_kV, fromOid = fOrig, toOid = tOrig)
+  br = Branch(branchIdx = idBrunch, from = from, to = to, baseMVA = net.baseMVA, branch = branch, id = idBrunch, status = status, ratio = ratio, side = side, vn_kV = vn_kV, fromOid = fOrig, toOid = tOrig)
   push!(net.branchVec, br)
-  index = length(net.branchVec)
-  branchTupple = (from, to)
-  net.branchDict[branchTupple] = index
 end
 
 """
@@ -284,20 +280,15 @@ Updates the parameters of a branch in the network.
 updateBranchParameters!(net = network, fromBus = "Bus1", toBus = "Bus2", branch = updatedBranch)
 ```
 """
-function updateBranchParameters!(; net::Net, fromBus::String, toBus::String, branch::BranchModel)
-  from = geNetBusIdx(net = net, busName = fromBus)
-  to = geNetBusIdx(net = net, busName = toBus)
-  branchTuple = (from, to)
-  idx = net.branchDict[branchTuple]
-  br = net.branchVec[idx]
+function updateBranchParameters!(; net::Net, branchNr::Int, branch::BranchModel)
+  br = net.branchVec[branchNr]
   br.r_pu = branch.r_pu
   br.x_pu = branch.x_pu
   br.b_pu = branch.b_pu
   br.g_pu = branch.g_pu
   br.ratio = branch.ratio
   br.angle = branch.angle
-  br.sn_MVA = branch.sn_MVA
-  net.branchVec[idx] = br
+  br.sn_MVA = branch.sn_MVA  
 end
 
 """
@@ -579,12 +570,14 @@ setBranchStatus!(net, "Bus1", "Bus2", 1)  # Set the status of the branch from Bu
 run_net_acpflow(net = net, max_ite= 7,tol = 1e-6) # rerun the power flow with the updated network
 ```
 """
-function setBranchStatus!(; net::Net, fromBus::String, toBus::String, status::Int)
-  from = geNetBusIdx(net = net, busName = fromBus)
-  to = geNetBusIdx(net = net, busName = toBus)
-  BranchTupple = (from, to)
-  index = net.branchDict[BranchTupple]
-  net.branchVec[index].status = status
+function setBranchStatus!(; net::Net, BranchNr::Int, fromBusSwitch::Int, toBusSwitch::Int)
+  if fromBusSwitch == 1 || toBusSwitch == 1
+    net.branchVec[BranchNr].status = 1
+  elseif fromBusSwitch == 0 && toBusSwitch == 0
+    net.branchVec[BranchNr].status = 0
+  end  
+  net.branchVec[BranchNr].fromBusSwitch = fromBusSwitch
+  net.branchVec[BranchNr].toBusSwitch = toBusSwitch  
   markIsolatedBuses!(net = net, log = false)
 end
 
