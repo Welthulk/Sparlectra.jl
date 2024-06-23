@@ -18,9 +18,9 @@ function formatBranchResults(net::Net)
   formatted_results *= @sprintf("=======================================================================================================================================================\n")
   #! format: on
   for br in net.branchVec
-    bidx = br.branchIdx
-    fromState = br.fromBusSwitch
-    toState = br.toBusSwitch
+    bidx = br.branchIdx    
+    fromState = isnothing(br.fromBusSwitch) ? 0 : br.fromBusSwitch
+    toState = isnothing(br.toBusSwitch) ? 0 : br.toBusSwitch
     from = br.fromBus
     to = br.toBus
     bName = br.comp.cName
@@ -47,7 +47,7 @@ function formatBranchResults(net::Net)
       if check
         bName *= " !"
       end
-    end
+    end    
     #! format: off
     formatted_results *= @sprintf("| %-5s | %-25s | %-5s | %-5s | %-10.3f | %-10.3f | %-10.3f | %-10.3f | %-10.3f |  %-10.3f|  %-2d, %-2d           |\n", bidx, bName,  from, to, pfromVal, qfromVal, ptoVal, qtoVal, pLossval, qLossval, fromState, toState)
     #! format: on
@@ -60,6 +60,7 @@ function formatBranchResults(net::Net)
 
   return formatted_results, total_losses
 end
+
 
 function printACPFlowResults(net::Net, ct::Float64, ite::Int, tol::Float64, toFile::Bool = false, path::String = "")
   if toFile

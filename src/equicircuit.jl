@@ -233,12 +233,29 @@ function createYBUS(;net::Net, sparse::Bool = true, printYBUS::Bool = false)
     # Korrigiere die Indizes basierend auf den isolierten Knoten
     fromNode -= count(i -> i < fromNode, net.isoNodes)
     toNode -= count(i -> i < toNode, net.isoNodes)
+    
+    if branch.fromBusSwitch == 1
+      Y[fromNode, fromNode] += (yik + susceptance) / abs2(t)
+    else
+      Y[fromNode, fromNode] += susceptance + (yik*susceptance/(yik + susceptance))      
+    end  
+    
+    if branch.toBusSwitch == 1
+      Y[toNode, toNode] += (yik + susceptance)
+    else
+      Y[toNode, toNode] += susceptance + (yik*susceptance/(yik + susceptance))      
+    end
+    
+    if branch.fromBusSwitch == 1 
+      Y[fromNode, toNode] += (-1.0 * yik / conj(t))
+    end
+    
+    if branch.toBusSwitch == 1  
+      Y[toNode, fromNode] += (-1.0 * yik / t)
+    end
 
-    Y[fromNode, fromNode] += ((yik + susceptance)) / abs2(t)
-    Y[toNode, toNode] += (yik + susceptance)
 
-    Y[fromNode, toNode] += (-1.0 * yik / conj(t))
-    Y[toNode, fromNode] += (-1.0 * yik / t)
+
   end
 
   for sh in net.shuntVec

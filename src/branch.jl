@@ -120,8 +120,8 @@ mutable struct Branch
   ratio::Float64                         # transformer off nominal turns ratio
   angle::Float64                         # transformer off nominal phase shift angle
   status::Integer                        # 1 = in service, 0 = out of service
-  fromBusSwitch::Union{Nothing,Int}      # switch at fromBus, 1 = closed, 0 = open
-  toBusSwitch::Union{Nothing,Int}        # switch at toBus, 1 = closed, 0 = open
+  fromBusSwitch::Union{Nothing,Integer}      # switch at fromBus, 1 = closed, 0 = open
+  toBusSwitch::Union{Nothing,Integer}        # switch at toBus, 1 = closed, 0 = open
   sn_MVA::Union{Nothing,Float64}         # nominal power of the branch = rateA
   fBranchFlow::Union{Nothing,BranchFlow} # flow from fromNodeID to toNodeID
   tBranchFlow::Union{Nothing,BranchFlow} # flow from toNodeID to fromNodeID
@@ -137,6 +137,7 @@ mutable struct Branch
       fromBusSwitch = 0
       toBusSwitch = 0
     end
+    #@debug "Branch: $(branchIdx) from: $(from) to: $(to) status: $(status), fromBusSwitch: $(fromBusSwitch), toBusSwitch: $(toBusSwitch)"
     if isa(branch, ACLineSegment) # Line
       @assert !isnothing(vn_kV) "vn_kV must be set for an ACLineSegment"
       if isnothing(ratio)
@@ -154,7 +155,7 @@ mutable struct Branch
         r, x, b, g = getRXBG(branch)
         @assert !isnothing(r) && !isnothing(x) "r or x must be set for an ACLineSegment"
         r_pu, x_pu, g_pu, b_pu = toPU_RXGB(r = r, x = x, g = g, b = b, v_kv = vn_kV, baseMVA = baseMVA)
-        new(c, branchIdx, from, to, r_pu, x_pu, b_pu, g_pu, 0.0, 0.0, status, branch.ratedS, nothing, nothing, nothing, nothing)
+        new(c, branchIdx, from, to, r_pu, x_pu, b_pu, g_pu, 0.0, 0.0, status, fromBusSwitch, toBusSwitch, branch.ratedS, nothing, nothing, nothing, nothing)
       end
     elseif isa(branch, PowerTransformer) # Transformer     
       if (isnothing(side) && branch.isBiWinder)
@@ -196,7 +197,7 @@ mutable struct Branch
         angle = w.shift_degree
       end
 
-      new(c, branchIdx, from, to, r_pu, x_pu, b_pu, g_pu, ratio, angle, status, nothing, nothing, sn_MVA, nothing, nothing)
+      new(c, branchIdx, from, to, r_pu, x_pu, b_pu, g_pu, ratio, angle, status, fromBusSwitch, toBusSwitch, sn_MVA, nothing, nothing)
     elseif isa(branch, BranchModel) # PI-Model
       @assert !isnothing(vn_kV) "vn_kV must be set for PI-Model"
 
@@ -261,8 +262,12 @@ end
 function setBranchStatus!(service::Bool, branch::Branch)
   if (service)
     branch.status = 1
+    branch.fromBusSwitch = 1
+    branch.toBusSwitch = 1
   else
     branch.status = 0
+    branch.fromBusSwitch = 0
+    branch.toBusSwitch = 0
   end
 end
 

@@ -46,7 +46,7 @@ export
   # ProSumer
   ProSumer,
   # Branch
-  AbstractBranch, Branch,BranchModel,  BranchFlow, getBranchFlow, setBranchFlow!, setBranchStatus!,getBranchLosses, setBranchLosses!,
+  AbstractBranch, Branch,BranchModel,  BranchFlow, getBranchFlow, setBranchFlow!, setBranchStatus!,getBranchNumber, getBranchLosses, setBranchLosses!,
   # Shunt
   Shunt,
   # Net
@@ -62,7 +62,7 @@ export
   setRatedS!,  setVmVa!,  addShuntPower!,  addLoadPower!,  addGenPower!,  getNodeVn,  isSlack,  isPVNode,  isPQNode, isIsolated, toNodeType, setNodeType!,
   busComparison,   toString,
   # Branch
-  setBranchFlow!,  setBranchStatus!, getBranchIdx,
+  setBranchFlow!, setBranchStatus!, getBranchIdx,
   # Shunt
   getGBShunt,  getPQShunt, updatePQShunt!,
   # ACLineSegment
@@ -71,7 +71,7 @@ export
   isSlack, isGenerator, isAPUNode, setQGenReplacement!, getQGenReplacement, toProSumptionType, updatePQ!,
   # Net
   addBus!, addShunt!, addACLine!, addPIModelACLine!, add2WTrafo!, addPIModelTrafo!, addProsumer!, lockNet!, validate!, hasBusInNet, addBusGenPower!, addBusLoadPower!, addBusShuntPower!,
-  getNetOrigBusIdx, geNetBusIdx, setBranchStatus!, setTotalLosses!, getTotalLosses, getBusType, get_bus_vn_kV, get_vn_kV, updateBranchParameters!, hasShunt!, getShunt!, markIsolatedBuses!,
+  getNetOrigBusIdx, geNetBusIdx, setNetBranchStatus!, getNetBrunchNumber, setTotalLosses!, getTotalLosses, getBusType, get_bus_vn_kV, get_vn_kV, updateBranchParameters!, hasShunt!, getShunt!, markIsolatedBuses!,setTotalBusPower!,
   # create_powermat.jl
   casefileparser, createNetFromMatPowerFile,
   # exportMatPower.jl

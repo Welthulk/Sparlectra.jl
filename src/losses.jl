@@ -3,7 +3,7 @@
 # include-file losses.jl
 
 function calcNetLosses!(net::Net)
-  @debug "\ncalcNetworkLosses (BaseMVA=$(Sbase_MVA))\n"
+  @debug "\ncalcNetworkLosses\n"
   # Sij = vi*exp(j*phi_i)*( (vi*exp(j*phi_i) - vk*exp(j*phi_k)*Y_ik +  vi*exp(j*phi_i)*Y0ik)*  
   # Sij = vi^2*conj(Y0ik+Yik)-vi*conj(vk)*conj(Yik)                   
   # Y0ik: Queradmittanz
@@ -13,7 +13,7 @@ function calcNetLosses!(net::Net)
 
   function calcBranchFlow(from::Int, to::Int, br::Branch, tapSide::Int)
     @assert tapSide == 1 || tapSide == 2
-    if br.status < 0
+    if br.fromBusSwitch == 0 || br.toBusSwitch == 0 || br.status == 0
       return (0.0 + 0.0im)
     end
 

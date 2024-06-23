@@ -67,12 +67,13 @@ struct Net
   busDict::Dict{String,Int}
   busOrigIdxDict::Dict{Int,Int}  
   totalLosses::Vector{Tuple{Float64,Float64}}
+  totalBusPower::Vector{Tuple{Float64,Float64}}
   _locked::Bool
   shuntDict::Dict{Int,Int}
   isoNodes::Vector{Int}
   #! format: off
   function Net(; name::String, baseMVA::Float64, vmin_pu::Float64 = 0.9, vmax_pu::Float64 = 1.1)
-    new(name, baseMVA, [], vmin_pu, vmax_pu, [], [], [], [], [], [], Dict{String,Int}(), Dict{Int,Int}(), [], false, Dict{Int,Int}(), [])
+    new(name, baseMVA, [], vmin_pu, vmax_pu, [], [], [], [], [], [], Dict{String,Int}(), Dict{Int,Int}(), [], [], false, Dict{Int,Int}(), [])
   end
   #! format: on
   function Base.show(io::IO, o::Net)
@@ -245,7 +246,7 @@ Parameters:
 - `side::Union{Nothing,Int} = nothing`: Side of the branch (default is nothing).
 - `vn_kV::Union{Nothing,Float64} = nothing`: Nominal voltage of the branch in kV (default is nothing).
 """
-function addBranch!(; net::Net, from::Int, to::Int, branch::AbstractBranch, status::Int = 1, ratio::Union{Nothing,Float64} = nothing, side::Union{Nothing,Int} = nothing, vn_kV::Union{Nothing,Float64} = nothing)
+function addBranch!(; net::Net, from::Int, to::Int, branch::AbstractBranch, status::Integer = 1, ratio::Union{Nothing,Float64} = nothing, side::Union{Nothing,Int} = nothing, vn_kV::Union{Nothing,Float64} = nothing)
   idBrunch = length(net.branchVec) + 1
   fOrig = nothing
   tOrig = nothing
@@ -307,15 +308,14 @@ Parameters:
 - `ratedS::Union{Nothing, Float64}= nothing`: Rated power of the line segment in MVA (default is nothing).
 - `status::Int = 1`: Status of the line segment (default is 1).
 """
-function addACLine!(; net::Net, fromBus::String, toBus::String, length::Float64, r::Float64, x::Float64, b::Union{Nothing,Float64} = nothing, c_nf_per_km::Union{Nothing,Float64} = nothing, tanδ::Union{Nothing,Float64} = nothing, ratedS::Union{Nothing,Float64} = nothing, status::Int = 1)
+function addACLine!(; net::Net, fromBus::String, toBus::String, length::Float64, r::Float64, x::Float64, b::Union{Nothing,Float64} = nothing, c_nf_per_km::Union{Nothing,Float64} = nothing, tanδ::Union{Nothing,Float64} = nothing, ratedS::Union{Nothing,Float64} = nothing, status::Integer = 1)
   from = geNetBusIdx(net = net, busName = fromBus)
   to = geNetBusIdx(net = net, busName = toBus)
   vn_kV = getNodeVn(net.nodeVec[from])
   vn_2_kV = getNodeVn(net.nodeVec[to])
   @assert vn_kV == vn_2_kV "Voltage level of the from bus $(vn_kV) does not match the to bus $(vn_2_kV)"
   acseg = ACLineSegment(vn_kv = vn_kV, from = from, to = to, length = length, r = r, x = x, b = b, c_nf_per_km = c_nf_per_km, tanδ = tanδ, ratedS = ratedS, paramsBasedOnLength = false, isPIModel = false)
-  push!(net.linesAC, acseg)
-
+  push!(net.linesAC, acseg)  
   addBranch!(net = net, from = from, to = to, branch = acseg, vn_kV = vn_kV, status = status)
 end
 
@@ -339,7 +339,7 @@ Adds a PI model AC line to the network.
 addPIModelACLine!(net = network, fromBus = "Bus1", toBus = "Bus2", r_pu = 0.01, x_pu = 0.1, b_pu = 0.02, status = 1, ratedS = 100.0)
 ```
 """
-function addPIModelACLine!(; net::Net, fromBus::String, toBus::String, r_pu::Float64, x_pu::Float64, b_pu::Float64, status::Int, ratedS::Union{Nothing,Float64} = nothing)
+function addPIModelACLine!(; net::Net, fromBus::String, toBus::String, r_pu::Float64, x_pu::Float64, b_pu::Float64, status::Integer=1, ratedS::Union{Nothing,Float64} = nothing)
   from = geNetBusIdx(net = net, busName = fromBus)
   to = geNetBusIdx(net = net, busName = toBus)
   vn_kV = getNodeVn(net.nodeVec[from])
@@ -409,7 +409,7 @@ Add a two-winding transformer to the network.
 - `i0_percent::Float64`: No-load current percent of the transformer.
 - `status::Int`: The status of the transformer. Default is 1.
 """
-function add2WTrafo!(; net::Net, fromBus::String, toBus::String, sn_mva::Float64, vk_percent::Float64, vkr_percent::Float64, pfe_kw::Float64, i0_percent::Float64, status::Int = 1)
+function add2WTrafo!(; net::Net, fromBus::String, toBus::String, sn_mva::Float64, vk_percent::Float64, vkr_percent::Float64, pfe_kw::Float64, i0_percent::Float64, status::Integer = 1)
   from = geNetBusIdx(net = net, busName = fromBus)
   to = geNetBusIdx(net = net, busName = toBus)
   vn_hv_kV = getNodeVn(net.nodeVec[from])
@@ -570,15 +570,28 @@ setBranchStatus!(net, "Bus1", "Bus2", 1)  # Set the status of the branch from Bu
 run_net_acpflow(net = net, max_ite= 7,tol = 1e-6) # rerun the power flow with the updated network
 ```
 """
-function setBranchStatus!(; net::Net, BranchNr::Int, fromBusSwitch::Int, toBusSwitch::Int)
+function setNetBranchStatus!(; net::Net, branchNr::Int, fromBusSwitch::Int, toBusSwitch::Int)  
+  @debug "Set branch status to $fromBusSwitch and $toBusSwitch"
   if fromBusSwitch == 1 || toBusSwitch == 1
-    net.branchVec[BranchNr].status = 1
+    net.branchVec[branchNr].status = 1
   elseif fromBusSwitch == 0 && toBusSwitch == 0
-    net.branchVec[BranchNr].status = 0
+    net.branchVec[branchNr].status = 0
   end  
-  net.branchVec[BranchNr].fromBusSwitch = fromBusSwitch
-  net.branchVec[BranchNr].toBusSwitch = toBusSwitch  
+  net.branchVec[branchNr].fromBusSwitch = fromBusSwitch
+  net.branchVec[branchNr].toBusSwitch = toBusSwitch  
   markIsolatedBuses!(net = net, log = false)
+end
+
+function getNetBrunchNumber(; net::Net, fromBus::String, toBus::String)::Int
+  from = geNetBusIdx(net = net, busName = fromBus)
+  to = geNetBusIdx(net = net, busName = toBus)
+
+  for (i, br) in enumerate(net.branchVec)
+    if br.fromBus == from && br.toBus == to
+      return i
+    end
+  end
+  return 0
 end
 
 """
@@ -670,6 +683,49 @@ function lockNet!(; net::Net, locked::Bool)
 end
 
 """
+    setTotalBusPower!(; net::Net, p::Float64, q::Float64)
+
+Sets the total active and reactive power at the buses in the network.
+
+# Arguments
+- `net::Net`: The network.
+- `p::Float64`: The total active power for the network.
+- `q::Float64`: The total reactive power for the network.
+
+# Example
+```julia
+setTotalBusPower!(net = network, p = 100.0, q = 50.0)
+```
+"""
+function setTotalBusPower!(; net::Net, p::Float64, q::Float64)
+  push!(net.totalBusPower, (p, q))  
+end
+
+"""
+    getTotalBusPower(; net::Net)::Tuple{Float64, Float64}
+
+Gets the total active and reactive power for the network.
+
+# Arguments
+- `net::Net`: The network.
+
+# Returns
+- `n::Tuple{Float64, Float64}`: 
+
+# Example
+```julia
+getTotalBusPower(net = network)
+```
+"""
+function getTotalBusPower(; net::Net)
+  if !isempty(net.totalBusPower)
+    n = net.totalBusPower[end]
+  else
+    n = (0.0, 0.0)
+  end
+end
+
+"""
 Set the total losses in the network.
 
 # Arguments
@@ -680,6 +736,7 @@ Set the total losses in the network.
 function setTotalLosses!(; net::Net, pLosses::Float64, qLosses::Float64)
   push!(net.totalLosses, (pLosses, qLosses))
 end
+
 
 """
 Get the total losses in the network.
