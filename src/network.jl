@@ -308,7 +308,8 @@ Parameters:
 - `ratedS::Union{Nothing, Float64}= nothing`: Rated power of the line segment in MVA (default is nothing).
 - `status::Int = 1`: Status of the line segment (default is 1).
 """
-function addACLine!(; net::Net, fromBus::String, toBus::String, length::Float64, r::Float64, x::Float64, b::Union{Nothing,Float64} = nothing, c_nf_per_km::Union{Nothing,Float64} = nothing, tanδ::Union{Nothing,Float64} = nothing, ratedS::Union{Nothing,Float64} = nothing, status::Integer = 1)
+function addACLine!(; net::Net, fromBus::String, toBus::String, length::Float64, r::Float64, x::Float64, b::Union{Nothing,Float64} = nothing, c_nf_per_km::Union{Nothing,Float64} = nothing, tanδ::Union{Nothing,Float64} = nothing, ratedS::Union{Nothing,Float64} = nothing, status::Integer = 1)  
+  @assert fromBus != toBus "From and to bus must be different"
   from = geNetBusIdx(net = net, busName = fromBus)
   to = geNetBusIdx(net = net, busName = toBus)
   vn_kV = getNodeVn(net.nodeVec[from])
@@ -340,6 +341,7 @@ addPIModelACLine!(net = network, fromBus = "Bus1", toBus = "Bus2", r_pu = 0.01, 
 ```
 """
 function addPIModelACLine!(; net::Net, fromBus::String, toBus::String, r_pu::Float64, x_pu::Float64, b_pu::Float64, status::Integer=1, ratedS::Union{Nothing,Float64} = nothing)
+  @assert fromBus != toBus "From and to bus must be different"
   from = geNetBusIdx(net = net, busName = fromBus)
   to = geNetBusIdx(net = net, busName = toBus)
   vn_kV = getNodeVn(net.nodeVec[from])
@@ -368,20 +370,9 @@ Add a transformer with PI model to the network.
 - `shift_deg::Union{Nothing, Float64}`: Phase shift angle of the transformer. Default is `nothing`.
 - `isAux::Bool`: Whether the transformer is an auxiliary transformer. Default is `false`.
 """
-function addPIModelTrafo!(;
-  net::Net,
-  fromBus::String,
-  toBus::String,
-  r_pu::Float64,
-  x_pu::Float64,
-  b_pu::Float64,
-  status::Int,
-  ratedU::Union{Nothing,Float64} = nothing,
-  ratedS::Union{Nothing,Float64} = nothing,
-  ratio::Union{Nothing,Float64} = nothing,
-  shift_deg::Union{Nothing,Float64} = nothing,
-  isAux::Bool = false,
-)
+function addPIModelTrafo!(; net::Net, fromBus::String, toBus::String, r_pu::Float64, x_pu::Float64, b_pu::Float64, status::Int, ratedU::Union{Nothing,Float64} = nothing,  ratedS::Union{Nothing,Float64} = nothing,  ratio::Union{Nothing,Float64} = nothing,
+                            shift_deg::Union{Nothing,Float64} = nothing,  isAux::Bool = false,)
+  @assert fromBus != toBus "From and to bus must be different"
   from = geNetBusIdx(net = net, busName = fromBus)
   to = geNetBusIdx(net = net, busName = toBus)
   vn_hv_kV = getNodeVn(net.nodeVec[from])
@@ -410,6 +401,7 @@ Add a two-winding transformer to the network.
 - `status::Int`: The status of the transformer. Default is 1.
 """
 function add2WTrafo!(; net::Net, fromBus::String, toBus::String, sn_mva::Float64, vk_percent::Float64, vkr_percent::Float64, pfe_kw::Float64, i0_percent::Float64, status::Integer = 1)
+  @assert fromBus != toBus "From and to bus must be different"
   from = geNetBusIdx(net = net, busName = fromBus)
   to = geNetBusIdx(net = net, busName = toBus)
   vn_hv_kV = getNodeVn(net.nodeVec[from])
@@ -572,6 +564,11 @@ run_net_acpflow(net = net, max_ite= 7,tol = 1e-6) # rerun the power flow with th
 """
 function setNetBranchStatus!(; net::Net, branchNr::Int, fromBusSwitch::Int, toBusSwitch::Int)  
   @debug "Set branch status to $fromBusSwitch and $toBusSwitch"
+  @assert fromBusSwitch in [0, 1] "Invalid status for from bus"
+  @assert toBusSwitch in [0, 1] "Invalid status for to bus"
+  @assert branchNr > 0 "Branch number must be greater than 0"
+  @assert branchNr <= length(net.branchVec) "Branch $branchNr not found in the network"
+
   if fromBusSwitch == 1 || toBusSwitch == 1
     net.branchVec[branchNr].status = 1
   elseif fromBusSwitch == 0 && toBusSwitch == 0
@@ -591,6 +588,7 @@ function getNetBrunchNumber(; net::Net, fromBus::String, toBus::String)::Int
       return i
     end
   end
+  @warn "Branch $fromBus -> $toBus not found!"
   return 0
 end
 

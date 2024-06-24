@@ -24,7 +24,10 @@ function formatBranchResults(net::Net)
     from = br.fromBus
     to = br.toBus
     bName = br.comp.cName
-    if br.status == 0 || (isnothing(br.fBranchFlow)) || (isnothing(br.tBranchFlow))
+    state = br.status
+    @debug "Branch: $bName, from: $from, to: $to, state: $state,  fromState: $fromState, toState: $toState"
+    if state == 0 || (isnothing(br.fBranchFlow)) || (isnothing(br.tBranchFlow))
+      @debug "Branch: $bName, status: $state, from: $from, to: $to, fromState: $fromState, toState: $toState"
       pfromVal = qfromVal = ptoVal = qtoVal = pLossval = qLossval = 0.0
     else
       pfromVal = (br.fBranchFlow.pFlow === nothing) ? NaN : br.fBranchFlow.pFlow

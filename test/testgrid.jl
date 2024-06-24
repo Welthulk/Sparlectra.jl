@@ -127,8 +127,7 @@ function testISOBusses()
   addACLine!(net = net, fromBus = "B1", toBus = "B3", length = 100.0, r = 0.0653, x = 0.398, c_nf_per_km = 9.08, tanδ = 0.0, ratedS = 250.0)
   addACLine!(net = net, fromBus = "B2", toBus = "B4", length = 100.0, r = 0.0653, x = 0.398, c_nf_per_km = 9.08, tanδ = 0.0, ratedS = 250.0)
   addACLine!(net = net, fromBus = "B3", toBus = "B4", length = 100.0, r = 0.0653, x = 0.398, c_nf_per_km = 9.08, tanδ = 0.0, ratedS = 250.0)
-  addACLine!(net = net, fromBus = "B4", toBus = "B4", length = 300.0, r = 0.0653, x = 0.398, c_nf_per_km = 9.08, tanδ = 0.0, ratedS = 250.0)
-  addACLine!(net = net, fromBus = "B5", toBus = "B4", length = 300.0, r = 0.0653, x = 0.398, c_nf_per_km = 9.08, tanδ = 0.0, ratedS = 250.0)
+  addACLine!(net = net, fromBus = "B4", toBus = "B5", length = 300.0, r = 0.0653, x = 0.398, c_nf_per_km = 9.08, tanδ = 0.0, ratedS = 250.0)
 
   addShunt!(net = net, busName = "B3", pShunt = 0.0, qShunt = 180.0)
   addShunt!(net = net, busName = "B2", pShunt = 0.0, qShunt = 180.0)
@@ -171,6 +170,60 @@ function testISOBusses()
   if net.isoNodes[1] != 1
     @warn "Expected isolated node 1, found: $(net.isoNodes[1])"
     return false
+  end
+
+  return true
+end
+
+function testOpenBranches(verbose::Int = 0)
+   # 0: no output, 1: iteration norm, 2: + Y-Bus, 3: + Jacobian, 4: + Power Flow
+  Sbase_MVA = 1000.0
+  netName = "isobus"
+  net = Net(name = netName, baseMVA = Sbase_MVA)
+
+  addBus!(net = net, busName = "B1", busType = "PQ", vn_kV = 220.0)
+  addBus!(net = net, busName = "B2", busType = "PV", vn_kV = 220.0)
+  addBus!(net = net, busName = "B3", busType = "PQ", vn_kV = 220.0)
+  addBus!(net = net, busName = "B4", busType = "PQ", vn_kV = 220.0)
+  addBus!(net = net, busName = "B5", busType = "SLACK", vn_kV = 220.0)
+
+  addACLine!(net = net, fromBus = "B1", toBus = "B2", length = 100.0, r = 0.0653, x = 0.398, c_nf_per_km = 9.08, tanδ = 0.0, ratedS = 250.0)
+  addACLine!(net = net, fromBus = "B1", toBus = "B3", length = 100.0, r = 0.0653, x = 0.398, c_nf_per_km = 9.08, tanδ = 0.0, ratedS = 250.0)
+  addACLine!(net = net, fromBus = "B2", toBus = "B4", length = 100.0, r = 0.0653, x = 0.398, c_nf_per_km = 9.08, tanδ = 0.0, ratedS = 250.0)
+  addACLine!(net = net, fromBus = "B3", toBus = "B4", length = 100.0, r = 0.0653, x = 0.398, c_nf_per_km = 9.08, tanδ = 0.0, ratedS = 250.0)  
+  addACLine!(net = net, fromBus = "B4", toBus = "B5", length = 300.0, r = 0.0653, x = 0.398, c_nf_per_km = 9.08, tanδ = 0.0, ratedS = 250.0)
+
+  addShunt!(net = net, busName = "B3", pShunt = 0.0, qShunt = 180.0)
+  addShunt!(net = net, busName = "B2", pShunt = 0.0, qShunt = 180.0)
+  addShunt!(net = net, busName = "B4", pShunt = 0.0, qShunt = 180.0)
+
+  addProsumer!(net = net, busName = "B3", type = "ENERGYCONSUMER", p = 285.0, q = 200.0)
+  addProsumer!(net = net, busName = "B4", type = "ENERGYCONSUMER", p = 103.0, q = 62.0)
+
+  addProsumer!(net = net, busName = "B5", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.03, va_deg = 0.0, referencePri = "B5")
+  addProsumer!(net = net, busName = "B2", type = "SYNCHRONOUSMACHINE", p = 600.0, vm_pu = 1.03, va_deg = 0.0)
+
+  branchNr = getNetBrunchNumber(net = net, fromBus = "B3", toBus = "B4")
+  setNetBranchStatus!(net= net, branchNr = branchNr, fromBusSwitch=1, toBusSwitch=0)    
+
+  result, msg = validate!(net = net, log = true)
+  if !result
+    @warn msg
+    return false
+  end
+  tol = 1e-6
+  maxIte = 10
+
+  etime = @elapsed begin
+    ite, erg = runpf!(net, maxIte, tol, verbose)
+  end
+  if erg != 0
+    @warn "Power flow did not converge"
+  end
+
+  if verbose > 0
+    calcNetLosses!(net)
+    printACPFlowResults(net, etime, ite, tol)
   end
 
   return true
@@ -229,7 +282,7 @@ function testCreateNetworkFromScratch()::Net
   # (bus3, bus4, length_km=100)
   addACLine!(net = net, fromBus = "B3", toBus = "B4", length = 100.0, r = 0.0653, x = 0.398, c_nf_per_km = 9.08, tanδ = 0.0)
   # (bus3, bus4, length_km=100)
-  addACLine!(net = net, fromBus = "B4", toBus = "B4", length = 300.0, r = 0.0653, x = 0.398, c_nf_per_km = 9.08, tanδ = 0.0)
+  addACLine!(net = net, fromBus = "B3", toBus = "B4", length = 300.0, r = 0.0653, x = 0.398, c_nf_per_km = 9.08, tanδ = 0.0)
   # (bus4, bus5, length_km=300)
   addACLine!(net = net, fromBus = "B4", toBus = "B5", length = 300.0, r = 0.0653, x = 0.398, c_nf_per_km = 9.08, tanδ = 0.0)
   # (bus4, bus6a, length_km=300)

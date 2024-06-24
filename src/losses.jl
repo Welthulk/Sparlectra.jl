@@ -75,6 +75,7 @@ function calcNetLosses!(net::Net)
     from = br.fromBus
     to = br.toBus
     if br.status == 0
+      @debug "Branch: $(br.comp.cName) is out of service"
       setBranchLosses!(br, 0.0, 0.0)
       continue
     end
