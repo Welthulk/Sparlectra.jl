@@ -70,9 +70,11 @@ struct Net
   totalBusPower::Vector{Tuple{Float64,Float64}}
   _locked::Bool
   shuntDict::Dict{Int,Int}
-  isoNodes::Vector{Int}
+  isoNodes::Vector{Int}  
+  #branchDict::Dict{Tuple{String,String}, Branch}  # fast search for existing branches
   #! format: off
-  function Net(; name::String, baseMVA::Float64, vmin_pu::Float64 = 0.9, vmax_pu::Float64 = 1.1)
+  function Net(; name::String, baseMVA::Float64, vmin_pu::Float64 = 0.9, vmax_pu::Float64 = 1.1)    
+    #new(name, baseMVA, [], vmin_pu, vmax_pu, [], [], [], [], [], [], Dict{String,Int}(), Dict{Int,Int}(), [], [], false, Dict{Int,Int}(), [], Dict{Tuple{String,String}, Branch}())
     new(name, baseMVA, [], vmin_pu, vmax_pu, [], [], [], [], [], [], Dict{String,Int}(), Dict{Int,Int}(), [], [], false, Dict{Int,Int}(), [])
   end
   #! format: on
@@ -233,6 +235,7 @@ function getShunt!(; net::Net, busName::String)::Shunt
   return net.shuntVec[idShunt]
 end
 
+
 """
 addBranch!: Adds a branch to the network.
 
@@ -247,6 +250,7 @@ Parameters:
 - `vn_kV::Union{Nothing,Float64} = nothing`: Nominal voltage of the branch in kV (default is nothing).
 """
 function addBranch!(; net::Net, from::Int, to::Int, branch::AbstractBranch, status::Integer = 1, ratio::Union{Nothing,Float64} = nothing, side::Union{Nothing,Int} = nothing, vn_kV::Union{Nothing,Float64} = nothing)
+  @assert from != to "From and to bus must be different"
   idBrunch = length(net.branchVec) + 1
   fOrig = nothing
   tOrig = nothing
@@ -259,9 +263,8 @@ function addBranch!(; net::Net, from::Int, to::Int, branch::AbstractBranch, stat
 
   if isnothing(vn_kV)
     vn_kV = getNodeVn(net.nodeVec[from])
-  end
-
-  br = Branch(branchIdx = idBrunch, from = from, to = to, baseMVA = net.baseMVA, branch = branch, id = idBrunch, status = status, ratio = ratio, side = side, vn_kV = vn_kV, fromOid = fOrig, toOid = tOrig)
+  end  
+  br = Branch(branchIdx = idBrunch, from = from, to = to, baseMVA = net.baseMVA, branch = branch, id = idBrunch, status = status, ratio = ratio, side = side, vn_kV = vn_kV, fromOid = fOrig, toOid = tOrig)  
   push!(net.branchVec, br)
 end
 
@@ -579,17 +582,16 @@ function setNetBranchStatus!(; net::Net, branchNr::Int, fromBusSwitch::Int, toBu
   markIsolatedBuses!(net = net, log = false)
 end
 
-function getNetBrunchNumber(; net::Net, fromBus::String, toBus::String)::Int
+function getNetBranchNumberVec(; net::Net, fromBus::String, toBus::String)::Vector{Int}
   from = geNetBusIdx(net = net, busName = fromBus)
   to = geNetBusIdx(net = net, busName = toBus)
-
+  brNumberVec = Int[]
   for (i, br) in enumerate(net.branchVec)
     if br.fromBus == from && br.toBus == to
-      return i
+      push!(brNumberVec, i)
     end
   end
-  @warn "Branch $fromBus -> $toBus not found!"
-  return 0
+  return brNumberVec
 end
 
 """

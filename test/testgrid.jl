@@ -159,10 +159,21 @@ function testISOBusses()
     printACPFlowResults(net, etime, ite, tol)
     return false
   end
-  branchNr = getNetBrunchNumber(net = net, fromBus = "B1", toBus = "B2")
-  setNetBranchStatus!(net= net, branchNr = branchNr, fromBusSwitch=0, toBusSwitch=0)    
-  branchNr = getNetBrunchNumber(net = net, fromBus = "B1", toBus = "B3")
-  setNetBranchStatus!(net = net, branchNr = branchNr, fromBusSwitch = 0, toBusSwitch = 0)
+  
+  branchNrVec = getNetBranchNumberVec(net = net, fromBus = "B1", toBus = "B2")
+  if length(branchNrVec) != 1
+    @warn "Expected 1 branch, found: $(length(branchNrVec))"
+    return false
+  end
+  setNetBranchStatus!(net= net, branchNr = branchNrVec[1], fromBusSwitch=0, toBusSwitch=0)    
+    
+  branchNrVec = getNetBranchNumberVec(net = net, fromBus = "B1", toBus = "B3")
+  if length(branchNrVec) != 1
+    @warn "Expected 1 branch, found: $(length(branchNrVec))"
+    return false
+  end
+  setNetBranchStatus!(net = net, branchNr = branchNrVec[1], fromBusSwitch = 0, toBusSwitch = 0)
+  
   if length(net.isoNodes) != 1
     @warn "Expected 1 isolated node, found: $(length(net.isoNodes))"
     return false
@@ -187,7 +198,7 @@ function testOpenBranches(verbose::Int = 0)
   addBus!(net = net, busName = "B4", busType = "PQ", vn_kV = 220.0)
   addBus!(net = net, busName = "B5", busType = "SLACK", vn_kV = 220.0)
 
-  addACLine!(net = net, fromBus = "B1", toBus = "B2", length = 100.0, r = 0.0653, x = 0.398, c_nf_per_km = 9.08, tanδ = 0.0, ratedS = 250.0)
+  addACLine!(net = net, fromBus = "B1", toBus = "B2", length = 100.0, r = 0.0653, x = 0.398, c_nf_per_km = 9.08, tanδ = 0.0, ratedS = 250.0)  
   addACLine!(net = net, fromBus = "B1", toBus = "B3", length = 100.0, r = 0.0653, x = 0.398, c_nf_per_km = 9.08, tanδ = 0.0, ratedS = 250.0)
   addACLine!(net = net, fromBus = "B2", toBus = "B4", length = 100.0, r = 0.0653, x = 0.398, c_nf_per_km = 9.08, tanδ = 0.0, ratedS = 250.0)
   addACLine!(net = net, fromBus = "B3", toBus = "B4", length = 100.0, r = 0.0653, x = 0.398, c_nf_per_km = 9.08, tanδ = 0.0, ratedS = 250.0)  
@@ -203,8 +214,107 @@ function testOpenBranches(verbose::Int = 0)
   addProsumer!(net = net, busName = "B5", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.03, va_deg = 0.0, referencePri = "B5")
   addProsumer!(net = net, busName = "B2", type = "SYNCHRONOUSMACHINE", p = 600.0, vm_pu = 1.03, va_deg = 0.0)
 
-  branchNr = getNetBrunchNumber(net = net, fromBus = "B3", toBus = "B4")
-  setNetBranchStatus!(net= net, branchNr = branchNr, fromBusSwitch=1, toBusSwitch=0)    
+  branchNrVec = getNetBranchNumberVec(net = net, fromBus = "B3", toBus = "B4")
+  if length(branchNrVec) != 1
+    @warn "Expected 1 branch, found: $(length(branchNrVec))"
+    return false
+  end
+  setNetBranchStatus!(net= net, branchNr = branchNrVec[1], fromBusSwitch=1, toBusSwitch=0)    
+
+  result, msg = validate!(net = net, log = true)
+  if !result
+    @warn msg
+    return false
+  end
+  tol = 1e-6
+  maxIte = 10
+
+  etime = @elapsed begin
+    ite, erg = runpf!(net, maxIte, tol, verbose)
+  end
+  if erg != 0
+    @warn "Power flow did not converge"
+  end
+
+  if verbose > 0
+    calcNetLosses!(net)
+    printACPFlowResults(net, etime, ite, tol)
+  end
+
+  return true
+end
+
+function testParallelBranches(verbose::Int = 0)
+   # 0: no output, 1: iteration norm, 2: + Y-Bus, 3: + Jacobian, 4: + Power Flow
+  Sbase_MVA = 1000.0
+  netName = "isobus"
+  net = Net(name = netName, baseMVA = Sbase_MVA)
+
+  addBus!(net = net, busName = "B1", busType = "PQ", vn_kV = 220.0)  
+  addBus!(net = net, busName = "B2", busType = "PV", vn_kV = 220.0)
+  addBus!(net = net, busName = "B3", busType = "PQ", vn_kV = 220.0)
+  addBus!(net = net, busName = "B4", busType = "PQ", vn_kV = 220.0)
+  addBus!(net = net, busName = "B5", busType = "SLACK", vn_kV = 220.0)
+
+  addACLine!(net = net, fromBus = "B1", toBus = "B2", length = 100.0, r = 0.0653, x = 0.398, c_nf_per_km = 9.08, tanδ = 0.0, ratedS = 250.0)  
+  addACLine!(net = net, fromBus = "B1", toBus = "B2", length = 100.0, r = 0.0653, x = 0.398, c_nf_per_km = 9.08, tanδ = 0.0, ratedS = 250.0)  
+  branchNrVec = getNetBranchNumberVec(net = net, fromBus = "B1", toBus = "B2")
+  if length(branchNrVec) != 2
+    @warn "Expected 2 branches, found: $(length(branchNrVec))"
+    return false
+  end
+
+  addACLine!(net = net, fromBus = "B1", toBus = "B3", length = 100.0, r = 0.0653, x = 0.398, c_nf_per_km = 9.08, tanδ = 0.0, ratedS = 250.0)
+  addACLine!(net = net, fromBus = "B1", toBus = "B3", length = 100.0, r = 0.0653, x = 0.398, c_nf_per_km = 9.08, tanδ = 0.0, ratedS = 250.0)
+  branchNrVec = getNetBranchNumberVec(net = net, fromBus = "B1", toBus = "B3")
+  if length(branchNrVec) != 2
+    @warn "Expected 2 branches, found: $(length(branchNrVec))"
+    return false
+  end
+  
+  addACLine!(net = net, fromBus = "B2", toBus = "B4", length = 100.0, r = 0.0653, x = 0.398, c_nf_per_km = 9.08, tanδ = 0.0, ratedS = 250.0)
+  addACLine!(net = net, fromBus = "B2", toBus = "B4", length = 100.0, r = 0.0653, x = 0.398, c_nf_per_km = 9.08, tanδ = 0.0, ratedS = 250.0)
+  branchNrVec = getNetBranchNumberVec(net = net, fromBus = "B2", toBus = "B4")
+  if length(branchNrVec) != 2
+    @warn "Expected 2 branches, found: $(length(branchNrVec))"
+    return false
+  end
+
+  addACLine!(net = net, fromBus = "B3", toBus = "B4", length = 100.0, r = 0.0653, x = 0.398, c_nf_per_km = 9.08, tanδ = 0.0, ratedS = 250.0)  
+  addACLine!(net = net, fromBus = "B3", toBus = "B4", length = 100.0, r = 0.0653, x = 0.398, c_nf_per_km = 9.08, tanδ = 0.0, ratedS = 250.0)  
+  branchNrVec = getNetBranchNumberVec(net = net, fromBus = "B3", toBus = "B4")
+  if length(branchNrVec) != 2
+    @warn "Expected 2 branches, found: $(length(branchNrVec))"
+    return false
+  end
+
+  addACLine!(net = net, fromBus = "B4", toBus = "B5", length = 300.0, r = 0.0653, x = 0.398, c_nf_per_km = 9.08, tanδ = 0.0, ratedS = 250.0)
+  addACLine!(net = net, fromBus = "B4", toBus = "B5", length = 300.0, r = 0.0653, x = 0.398, c_nf_per_km = 9.08, tanδ = 0.0, ratedS = 250.0)
+  branchNrVec = getNetBranchNumberVec(net = net, fromBus = "B4", toBus = "B5")
+  if length(branchNrVec) != 2
+    @warn "Expected 2 branches, found: $(length(branchNrVec))"
+    return false
+  end
+  
+  # insanity check
+  branchNrVec = getNetBranchNumberVec(net = net, fromBus = "B1", toBus = "B5")
+  if length(branchNrVec) != 0
+    @warn "Expected 0 branches, found: $(length(branchNrVec))"
+    return false
+  end
+
+
+  addShunt!(net = net, busName = "B3", pShunt = 0.0, qShunt = 180.0)
+  addShunt!(net = net, busName = "B2", pShunt = 0.0, qShunt = 180.0)
+  addShunt!(net = net, busName = "B4", pShunt = 0.0, qShunt = 180.0)
+
+  addProsumer!(net = net, busName = "B3", type = "ENERGYCONSUMER", p = 285.0, q = 200.0)
+  addProsumer!(net = net, busName = "B4", type = "ENERGYCONSUMER", p = 103.0, q = 62.0)
+
+  addProsumer!(net = net, busName = "B5", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.03, va_deg = 0.0, referencePri = "B5")
+  addProsumer!(net = net, busName = "B2", type = "SYNCHRONOUSMACHINE", p = 600.0, vm_pu = 1.03, va_deg = 0.0)
+
+  #setNetBranchStatus!(net= net, branchNr = branchNrVec[1], fromBusSwitch=1, toBusSwitch=0)    
 
   result, msg = validate!(net = net, log = true)
   if !result
