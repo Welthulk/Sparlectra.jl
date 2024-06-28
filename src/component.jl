@@ -18,6 +18,7 @@
   StaticVarCompensator
   AuxBus
   BranchC
+  SymmetricalPhaseShifterC
 end
 
 @enum TrafoTyp UnknownT = 0 Ratio = 1 PhaseShifter = 2 PhaseTapChanger = 3 PIModel = 4
@@ -179,6 +180,8 @@ function toComponentTyp(o::String)::ComponentTyp
     return AuxBus
   elseif val == "BRANCH"
     return BranchC
+  elseif val == "SYMMETRICALPHASESHIFTER"  
+    return SymmetricalPhaseShifterC
   else
     return UnknownC
   end

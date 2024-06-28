@@ -4,6 +4,7 @@ using Logging
 
 global_logger(ConsoleLogger(stderr, Logging.Warn))
 include("testgrid.jl")
+include("testpst.jl")
 @testset "Sparlectra.jl" begin  
   @test testNetwork() == true
   @test test_NBI_MDO() == true
@@ -12,4 +13,5 @@ include("testgrid.jl")
   @test testParallelBranches(0) == true
   @test testISOBusses() == true
   @test testImportMatpower() == true # This test is not working because the file is not found in github
+  @test test_phaseshifters() == true
 end
