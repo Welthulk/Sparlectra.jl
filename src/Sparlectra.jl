@@ -43,10 +43,12 @@ export
   ACLineSegment,
   # Trafo
   TrafoTyp, PowerTransformerTaps,  PowerTransformerWinding,  PowerTransformer, TransformerModelParameters,
+  # pst
+  SymmetricalPhaseShifter,
   # ProSumer
   ProSumer,
   # Branch
-  AbstractBranch, Branch,BranchModel,  BranchFlow, getBranchFlow, setBranchFlow!, setBranchStatus!,getBranchNumber, getBranchLosses, setBranchLosses!,
+  AbstractBranch, Branch, BranchModel, BranchFlow, getBranchFlow, setBranchFlow!, setBranchStatus!,getBranchNumber, getBranchLosses, setBranchLosses!,
   # Shunt
   Shunt,
   # Net
@@ -58,6 +60,8 @@ export
   # Transformers
   getSideNumber2WT,  getWinding2WT,  calcTransformerRatio, recalc_trafo_model_data, create2WTRatioTransformerNoTaps, create3WTWindings!,
   getTrafoImpPGMComp,  getWT3AuxBusID,  isPerUnit_RXGB, getWindingRatedS,
+  # PST
+  setCurrentStep, getCurrentAngle, getCurrentX,
   # Nodes  
   setRatedS!,  setVmVa!,  addShuntPower!,  addLoadPower!,  addGenPower!,  getNodeVn,  isSlack,  isPVNode,  isPQNode, isIsolated, toNodeType, setNodeType!,
   busComparison,   toString,
@@ -98,6 +102,7 @@ include("transformer.jl")
 include("prosumer.jl")
 include("node.jl")
 include("branch.jl")
+include("pst.jl")
 include("shunt.jl")
 include("network.jl")
 include("import.jl")
