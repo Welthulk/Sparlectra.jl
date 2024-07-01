@@ -61,8 +61,15 @@ end
 function getABCDParms(; r_pu, x_pu, g_pu, b_pu, ratio, angle_deg::Float64)
   # Calculate series admittance ys
   ys = 1 / Complex(r_pu, x_pu)
-    
+  ysh = Complex(g_pu, b_pu)
+
+  A = 1 + ys * ysh / 2
+  B = ys
+  C = ysh
+  D = 1 + ys * ysh / 2
+
   # Complex transformation factor N
+  #=
   phi = deg2rad(angle_deg)
   N = ratio * exp(im * phi)
     
@@ -71,6 +78,7 @@ function getABCDParms(; r_pu, x_pu, g_pu, b_pu, ratio, angle_deg::Float64)
   B = -ys / N
   C = -ys * N
   D = ys + im * (b_pu/2.0 + g_pu)    
+  =#
   return A, B, C, D
 end
 
@@ -270,9 +278,6 @@ function createYBUS(;net::Net, sparse::Bool = true, printYBUS::Bool = false)
     if branch.toBusSwitch == 1  
       Y[toNode, fromNode] += (-1.0 * yik / t)
     end
-
-
-
   end
 
   for sh in net.shuntVec
@@ -332,6 +337,126 @@ function createYBUS(;net::Net, sparse::Bool = true, printYBUS::Bool = false)
 
   return Y
 end
+
+function createYBUS_ABCD(; net::Net, sparse::Bool = true, printYBUS::Bool = false)
+    # Bestimme die maximale Busnummer im Netzwerk, unter Berücksichtigung isolierter Busse
+    max_bus = maximum(max(branch.fromBus, branch.toBus) for branch in net.branchVec)
+    n = max_bus - length(net.isoNodes)
+
+    @debug "Dimension YBus:", n
+
+    if sparse
+        Y = spzeros(ComplexF64, n, n)
+    else
+        Y = zeros(ComplexF64, n, n)
+    end
+
+    if debug
+        t = sparse ? "sparse" : "normal"
+        println("\nYBUS: Size = $(n)x$(n) ($(t))\n")
+    end
+
+    for branch in net.branchVec
+        fromNode = branch.fromBus
+        toNode = branch.toBus
+
+        # Überspringe Zweige, die außer Betrieb sind
+        if branch.status == 0
+            @debug "createYBUS: Branch $(branch) out of service, skipping "
+            continue
+        end
+
+        # Überspringe Zweige, die isolierte Busse verbinden
+        if fromNode in net.isoNodes || toNode in net.isoNodes
+            continue
+        end
+
+        # Hole die Vierpolparameter
+        A, B, C, D = branch.A, branch.B, branch.C, branch.D
+
+        # Berechne die Admittanzen basierend auf den Vierpolparametern
+        #y_from_from = (A * D - 1) / B
+        #y_from_to = -A / B
+        #y_to_from = -D / B
+        #y_to_to = (A * D - 1) / B
+        y_from_from = A
+        y_from_to = B
+        y_to_from = C
+        y_to_to = D
+        
+        # Korrigiere die Indizes basierend auf den isolierten Knoten
+        fromNode -= count(i -> i < fromNode, net.isoNodes)
+        toNode -= count(i -> i < toNode, net.isoNodes)
+
+        
+        Y[fromNode, fromNode] += y_from_from
+        Y[toNode, toNode] += y_to_to
+        Y[fromNode, toNode] += y_from_to
+        Y[toNode, fromNode] += y_to_from
+        
+    end
+
+      for sh in net.shuntVec
+    node = sh.busIdx
+    if node in net.isoNodes      
+      continue
+    end
+    node -= count(i -> i < node, net.isoNodes)    
+    y = sh.y_pu_shunt
+    Y[node, node] += y
+  end
+
+  if printYBUS
+    println("\nYBUS:\n")
+    red_text = "\x1b[31m"  # ANSI escape code for red text
+    reset_text = "\x1b[0m"  # ANSI escape code to reset text color
+    green_text = "\x1b[32m"  # ANSI escape code for green text
+
+    for j = 1:n
+      farbe = reset_text
+      if j > 1
+        print("\t\t$farbe$j:$reset_text")
+      else
+        print("\t$farbe$j:$reset_text")
+      end
+    end
+    println()
+
+    for i = 1:n
+      farbe = reset_text
+      print("$farbe$i$reset_text:\t")
+      for j = 1:n
+        mag = abs(Y[i, j])
+        real_part = real(Y[i, j])
+        if real_part <= 0
+          mag = -mag
+          phase = angle(-1 * Y[i, j])
+        else
+          phase = angle(Y[i, j])
+        end
+        mag = round(mag, digits = 2)
+        phase_deg = round(rad2deg(phase), digits = 3)
+
+        farbe = reset_text
+
+        if isnan(mag) || isnan(phase_deg)
+          print("$red_text NaN \t\t$reset_text")
+        elseif mag == 0
+          print("$(farbe)0.0$(reset_text) \t\t")  # Print extra space for pure zeros
+        else
+          print("$(farbe)$(mag)∠$(phase_deg)$(reset_text)\t")
+        end
+      end
+      println()
+    end
+  end
+
+
+    return Y
+end
+
+
+
 
 """
 adjacentBranches: Find adjacent branches for each node in the network.

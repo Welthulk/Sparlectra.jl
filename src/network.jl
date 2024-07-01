@@ -312,13 +312,14 @@ Parameters:
 - `status::Int = 1`: Status of the line segment (default is 1).
 """
 function addACLine!(; net::Net, fromBus::String, toBus::String, length::Float64, r::Float64, x::Float64, b::Union{Nothing,Float64} = nothing, c_nf_per_km::Union{Nothing,Float64} = nothing, tanδ::Union{Nothing,Float64} = nothing, ratedS::Union{Nothing,Float64} = nothing, status::Integer = 1)  
+  @debug "Adding AC line segment from $fromBus to $toBus"
   @assert fromBus != toBus "From and to bus must be different"
   from = geNetBusIdx(net = net, busName = fromBus)
   to = geNetBusIdx(net = net, busName = toBus)
   vn_kV = getNodeVn(net.nodeVec[from])
   vn_2_kV = getNodeVn(net.nodeVec[to])
   @assert vn_kV == vn_2_kV "Voltage level of the from bus $(vn_kV) does not match the to bus $(vn_2_kV)"
-  acseg = ACLineSegment(vn_kv = vn_kV, from = from, to = to, length = length, r = r, x = x, b = b, c_nf_per_km = c_nf_per_km, tanδ = tanδ, ratedS = ratedS, paramsBasedOnLength = false, isPIModel = false)
+  acseg = ACLineSegment(vn_kv = vn_kV, from = from, to = to, length = length, r = r, x = x, b = b, c_nf_per_km = c_nf_per_km, tanδ = tanδ, ratedS = ratedS, paramsBasedOnLength = false, isPIModel=false)
   push!(net.linesAC, acseg)  
   addBranch!(net = net, from = from, to = to, branch = acseg, vn_kV = vn_kV, status = status)
 end
@@ -592,6 +593,18 @@ function getNetBranchNumberVec(; net::Net, fromBus::String, toBus::String)::Vect
     end
   end
   return brNumberVec
+end
+
+function getNetBranch(; net::Net, fromBus::String, toBus::String)
+  from = geNetBusIdx(net = net, busName = fromBus)
+  to = geNetBusIdx(net = net, busName = toBus)
+
+  for (i, br) in enumerate(net.branchVec)
+    if br.fromBus == from && br.toBus == to
+      return br
+    end
+  end
+  return nothing
 end
 
 """

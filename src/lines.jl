@@ -54,7 +54,12 @@ mutable struct ACLineSegment <: AbstractBranch
       if !isnothing(b)
         b = b
       elseif !isnothing(c_nf_per_km) && !isnothing(tanδ)
-        y1_shunt_ = 2.0 * pi * 50.0 * c_nf_per_km * 1e-9 * (tanδ + im * 1.0)
+        if !paramsBasedOnLength
+          c_nf = c_nf_per_km * length
+        else
+           c_nf = c_nf_per_km
+        end  
+        y1_shunt_ = 2.0 * pi * 50.0 * c_nf * 1e-9 *  (tanδ + im * 1.0)
         g = real(y1_shunt_)
         b = imag(y1_shunt_)
       else
@@ -87,13 +92,22 @@ mutable struct ACLineSegment <: AbstractBranch
     if !isnothing(acseg.ratedS)
       print(io, "ratedS: $(acseg.ratedS), ")
     end
+    if !isnothing(acseg.ratedS)
+      print(io, "ratedS: $(acseg.ratedS), ")
+    end  
+    print(io, "paramsBasedOnLength: $(acseg.paramsBasedOnLength), ")
+    print(io, "_isPIModel: $(acseg._isPIModel), ")
+    print(io, "isLongLine: $(acseg.isLongLine)")
     print(io, ")")
   end
 end
 
 function getABCDParms(branch::ACLineSegment, u_rated::Float64, s_rated::Float64)
-  r,x,g,b = getRXBG(branch)  
+  @debug "getABCDParms", branch
+  
+  r,x,g,b = getRXBG(branch)    
   r_pu, x_pu, g_pu, b_pu = toPU_RXGB(r = r, x = x, g = g, b = b, v_kv = u_rated, baseMVA = s_rated)
+
   if branch.isLongLine
     Z = Complex(r_pu, x_pu)
     Y = Complex(g_pu, b_pu)
@@ -106,13 +120,16 @@ function getABCDParms(branch::ACLineSegment, u_rated::Float64, s_rated::Float64)
     C = sinh(γ) / Z_c
     D = cosh(γ)
   else    
-    Z = Complex(r_pu, x_pu)
-    Y = Complex(g_pu, b_pu)
-        
-    A = 1 + Z * Y / 2
-    B = Z
-    C = Y * (1 + Z * Y / 4)
-    D = 1 + Z * Y / 2
+    # Series Admittance ys
+    ys = inv(r_pu + x_pu * im)    
+    # Shunt Admittance ysh
+    ysh = g_pu + im * b_pu
+    
+    # Calculate Y_from_from, Y_from_to, Y_to_from, Y_to_to
+    A = ys + 0.5 * ysh
+    B = -ys
+    C = -ys
+    D = ys + 0.5 * ysh
   end
   return A, B, C, D    
 end
@@ -141,7 +158,8 @@ getRXBG(acLineSegment)
 function getRXBG(o::ACLineSegment)::Tuple{Float64,Float64,Union{Nothing,Float64},Union{Nothing,Float64}}
   if o.paramsBasedOnLength || o._isPIModel
     return (o.r, o.x, o.b, o.g)
-  else
+  else    
+
     return (o.r * o.length, o.x * o.length, o.b * o.length, o.g * o.length)
   end
 end
