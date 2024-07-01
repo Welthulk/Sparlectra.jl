@@ -12,6 +12,6 @@ include("testpst.jl")
   @test testOpenBranches(0) == true
   @test testParallelBranches(0) == true
   @test testISOBusses() == true
-  @test testImportMatpower() == true # This test is not working because the file is not found in github
+  @test testImportMatpower() == true
   @test test_phaseshifters() == true
 end

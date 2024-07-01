@@ -39,10 +39,11 @@ mutable struct ACLineSegment <: AbstractBranch
   ratedS::Union{Nothing,Float64}
   paramsBasedOnLength::Bool
   _isPIModel::Bool
+  isLongLine::Bool
   #! format: off
   function ACLineSegment(; vn_kv::Float64,  from::Int,  to::Int,  length::Float64, r::Float64, x::Float64, b::Union{Nothing,Float64} = nothing,
                            c_nf_per_km::Union{Nothing,Float64} = nothing, tanδ::Union{Nothing,Float64} = nothing, ratedS::Union{Nothing,Float64} = nothing,
-                           paramsBasedOnLength::Bool = true, isPIModel::Bool = false)
+                           paramsBasedOnLength::Bool = true, isPIModel::Bool = false, isLongLine::Bool = false)
   #! format: on
     c = getLineImpPGMComp(vn_kv, from, to)
     g = 0.0
@@ -60,7 +61,7 @@ mutable struct ACLineSegment <: AbstractBranch
         b = 0.0
       end
 
-      new(c, length, r, x, b, g, c_nf_per_km, tanδ, ratedS, paramsBasedOnLength, isPIModel)
+      new(c, length, r, x, b, g, c_nf_per_km, tanδ, ratedS, paramsBasedOnLength, isPIModel, isLongLine)
     end
   end
 
@@ -89,6 +90,33 @@ mutable struct ACLineSegment <: AbstractBranch
     print(io, ")")
   end
 end
+
+function getABCDParms(branch::ACLineSegment, u_rated::Float64, s_rated::Float64)
+  r,x,g,b = getRXBG(branch)  
+  r_pu, x_pu, g_pu, b_pu = toPU_RXGB(r = r, x = x, g = g, b = b, v_kv = u_rated, baseMVA = s_rated)
+  if branch.isLongLine
+    Z = Complex(r_pu, x_pu)
+    Y = Complex(g_pu, b_pu)
+    
+    γ = sqrt(Z * Y)          # Propagation constant    
+    Z_c = sqrt(Z / Y)        # Characteristic impedance
+    
+    A = cosh(γ)
+    B = Z_c * sinh(γ)
+    C = sinh(γ) / Z_c
+    D = cosh(γ)
+  else    
+    Z = Complex(r_pu, x_pu)
+    Y = Complex(g_pu, b_pu)
+        
+    A = 1 + Z * Y / 2
+    B = Z
+    C = Y * (1 + Z * Y / 4)
+    D = 1 + Z * Y / 2
+  end
+  return A, B, C, D    
+end
+
 
 """
     getRXBG(o::ACLineSegment)::Tuple{Float64,Float64,Union{Nothing,Float64},Union{Nothing,Float64}}
@@ -159,3 +187,105 @@ function getLineImpPGMComp(Vn::Float64, from::Int, to::Int)
   cName, cID = getLineBusID(Vn, from, to)
   return ImpPGMComp(cID, cName, toComponentTyp("ACLINESEGMENT"), Vn, from, to)
 end
+
+
+#=
+using LinearAlgebra
+
+function calculate_PI_ABCD_parameters(r, x, g, b, d)
+    # Serienschaltung und Paralleladmittanzen
+    Z = Complex(r, x) * d
+    Y = Complex(g, b) * d
+    
+    # Berechnung der ABCD-Parameter
+    A = 1 + Z * Y / 2
+    B = Z
+    C = Y * (1 + Z * Y / 4)
+    D = 1 + Z * Y / 2
+    
+    return A, B, C, D
+end
+
+# Beispielparameter für das PI-Ersatzschaltbild
+r = 0.1       # Ω/km
+x = 0.314     # Ω/km
+g = 0.0       # S/km
+b = 3.14e-3   # S/km
+d = 100.0     # km
+
+A, B, C, D = calculate_PI_ABCD_parameters(r, x, g, b, d)
+
+println("A: ", A)
+println("B: ", B)
+println("C: ", C)
+println("D: ", D)
+
+
+
+
+
+using LinearAlgebra
+
+function calculate_ABCD_parameters(r, l, g, c, d, f)
+    ω = 2π * f
+    Z = Complex(r, ω * l)
+    Y = Complex(g, ω * c)
+    
+    γ = sqrt(Z * Y)
+    Z_c = sqrt(Z / Y)
+    
+    A = cosh(γ * d)
+    B = Z_c * sinh(γ * d)
+    C = sinh(γ * d) / Z_c
+    D = cosh(γ * d)
+    
+    return A, B, C, D
+end
+
+# Beispielparameter
+r = 0.1
+l = 0.001
+g = 0.0
+c = 0.01e-6
+d = 100.0
+f = 50.0
+
+A, B, C, D = calculate_ABCD_parameters(r, l, g, c, d, f)
+
+println("A: ", A)
+println("B: ", B)
+println("C: ", C)
+println("D: ", D)
+
+using LinearAlgebra
+
+function calculate_ABCD_parameters(r, x, g, b, d)
+    Z = Complex(r, x)
+    Y = Complex(g, b)
+    
+    γ = sqrt(Z * Y)
+    Z_c = sqrt(Z / Y)
+    
+    A = cosh(γ * d)
+    B = Z_c * sinh(γ * d)
+    C = sinh(γ * d) / Z_c
+    D = cosh(γ * d)
+    
+    return A, B, C, D
+end
+
+# Beispielparameter
+r = 0.1       # Ω/km
+x = 0.314     # Ω/km
+g = 0.0       # S/km
+b = 3.14e-3   # S/km
+d = 100.0     # km
+
+A, B, C, D = calculate_ABCD_parameters(r, x, g, b, d)
+
+println("A: ", A)
+println("B: ", B)
+println("C: ", C)
+println("D: ", D)
+
+=#

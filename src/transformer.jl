@@ -528,6 +528,25 @@ function isTapInNeutralPosition(x::PowerTransformer)
   end
 end
 
+function getABCDParms(branch::PowerTransformer, u_rated::Float64, s_rated::Float64)
+  @assert branch.isBiWinder "Transformer is not a 2WT" # interim solution
+  
+  side = getSideNumber2WT(branch)      
+  w = (side in [1, 2, 3]) ? (side == 1 ? branch.side1 : (side == 2 ? branch.side2 : branch.side3)) : error("wrong value for 'side'")
+  vn_kV = w.Vn
+  sn_MVA = getWindingRatedS(w)
+  r, x, b, g = getRXBG(w)
+  r_pu, x_pu, b_pu, g_pu = isPerUnit_RXGB(w) ? (r, x, b, g) : begin
+    @assert !isnothing(sn_MVA) "sn_MVA must be set for a PowerTransformer"
+    baseZ = (vn_kV)^2 / sn_MVA
+    (r / baseZ, x / baseZ, b * baseZ, g * baseZ)
+  end
+  ratio = isnothing(w.ratio) ? 1.0 : w.ratio
+  angle_deg = isnothing(w.shift_degree) ? 0.0 : w.shift_degree
+  return getABCDParms(r_pu = r_pu, x_pu = x_pu, g_pu = g_pu, b_pu = b_pu, ratio = ratio, angle_deg = angle_deg)  
+
+end
+
 function calcTransformerRatio(x::PowerTransformer)
   @assert x.isBiWinder "Transformer is not a 2WT"
   @assert !isnothing(x.side1.Vn) "Vn must be set for winding 1"

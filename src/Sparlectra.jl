@@ -30,6 +30,10 @@ const Wurzel3 = 1.7320508075688772
 const SparlectraVersion = VersionNumber("0.4.19")
 abstract type AbstractBranch end
 
+function getABCDParms(branch::AbstractBranch, u_rated::Float64, s_rated::Float64)
+    throw(NotImplementedError("Method get2PortABCDParam not implemented for $(typeof(branch))"))
+end
+
 export
   
   # constants
@@ -81,7 +85,7 @@ export
   # exportMatPower.jl
   writeMatpowerCasefile,
   # equicircuit.jl
-  calcComplexRatio, calcNeutralU,  createYBUS, adjacentBranches, toPU_RXGB, to_RXGB,
+  calcComplexRatio, calcNeutralU,  createYBUS, adjacentBranches, toPU_RXGB, to_RXGB, getABCDParms,
   # nbi.jl
   getNBI, mdoRCM,
   # jacobian.jl
