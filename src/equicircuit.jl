@@ -58,31 +58,6 @@ function evaluateCubicSpline(x, a, b, c, d, x_new)
   return y_new
 end
 
-function getABCDParms(; r_pu, x_pu, g_pu, b_pu, ratio, angle_deg::Float64)
-  # Calculate series admittance ys
-  ys = 1 / Complex(r_pu, x_pu)
-  ysh = Complex(g_pu, b_pu)
-
-  A = 1 + ys * ysh / 2
-  B = ys
-  C = ysh
-  D = 1 + ys * ysh / 2
-
-  # Complex transformation factor N
-  #=
-  phi = deg2rad(angle_deg)
-  N = ratio * exp(im * phi)
-    
-  # Calculate ABCD parameters
-  A = (ys + im * b_pu/2.0) / (ratio^2)
-  B = -ys / N
-  C = -ys * N
-  D = ys + im * (b_pu/2.0 + g_pu)    
-  =#
-  return A, B, C, D
-end
-
-
 function calcVKDependence(xTaps::Vector{Int}, yVKs::Vector{Float64}, tapPos::Float64)::Float64
   a, b, c, d = cubicSplineCoefs(xTaps, yVKs)
   vk = evaluateCubicSpline(xTaps, a, b, c, d, [tapPos])[1]
