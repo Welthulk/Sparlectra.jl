@@ -3,9 +3,12 @@ using Test
 using Logging
 
 global_logger(ConsoleLogger(stderr, Logging.Warn))
+
 include("testgrid.jl")
 include("testpst.jl")
-@testset "Sparlectra.jl" begin  
+include("testABCD.jl")
+
+@testset "Sparlectra.jl" begin    
   @test testNetwork() == true
   @test test_NBI_MDO() == true
   @test test_acpflow(0) == true
@@ -14,4 +17,6 @@ include("testpst.jl")
   @test testISOBusses() == true
   @test testImportMatpower() == true
   @test test_phaseshifters() == true
+  @test test_ABCD(0) == true
+  
 end

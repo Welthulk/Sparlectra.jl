@@ -29,51 +29,70 @@ function test_ABCD(verbose::Int = 0)
   end
 
   function createNet(mode)
+    @debug "createNet: $mode"
     Sbase_MVA = 100.0  # Basis-Scheinleistung in MVA
     netName = "testnet-ABCD"
     net = Net(name=netName, baseMVA=Sbase_MVA)  
     if mode == "line"
      vn_kV_b1 = 220.0
      vn_kV_b2 = 220.0
+
     elseif mode =="2WT"
       vn_kV_b1 = 110.0
       vn_kV_b2 = 10.0
+
+    elseif mode =="combine"
+     vn_kV_b1 = 220.0
+     vn_kV_b2 = 220.0
+     vn_kV_b3 = 110.0
+
     else
      @error "Unknown mode: $mode"
      return
     end
     # Busse hinzufügen
-    addBus!(net = net, busName = "B1", busType = "Slack", vn_kV = vn_kV_b1)  
-    addBus!(net= net,  busName=  "B2", busType = "PQ", vn_kV = vn_kV_b2)
-    if mode == "line"
+     addBus!(net = net, busName = "B1", busType = "Slack", vn_kV = vn_kV_b1)  
+     addBus!(net= net,  busName=  "B2", busType = "PQ", vn_kV = vn_kV_b2)
+     if mode == "combine"
+       addBus!(net= net,  busName=  "B3", busType = "PQ", vn_kV = vn_kV_b3)
+     end
+    
+    if mode == "line" 
       addACLine!(net = net, fromBus = "B1", toBus = "B2", length = 100.0, r = 0.0653, x = 0.398, c_nf_per_km = 9.08, tanδ = 0.0)
-    elseif mode =="2WT"
+    elseif mode =="2WT" 
       add2WTrafo!(net=net, fromBus="B1", toBus="B2", sn_mva = Sbase_MVA, vk_percent = 10.0, vkr_percent = 0.1, pfe_kw = 0.0, i0_percent = 0.0)
+    elseif mode == "combine"
+      addACLine!(net = net, fromBus = "B1", toBus = "B2", length = 100.0, r = 0.0653, x = 0.398, c_nf_per_km = 9.08, tanδ = 0.0)
+      add2WTrafo!(net=net, fromBus="B2", toBus="B3", sn_mva = Sbase_MVA, vk_percent = 10.0, vkr_percent = 0.1, pfe_kw = 0.0, i0_percent = 0.0)
     end  
-    addProsumer!(net = net, busName = "B1", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "B1")
-    addProsumer!(net = net, busName = "B2", type = "ENERGYCONSUMER", p = 200.0, q = 10.0)
+
+    if mode == "combine"
+      addProsumer!(net = net, busName = "B1", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "B1")
+      addProsumer!(net = net, busName = "B3", type = "ENERGYCONSUMER", p = 200.0, q = 10.0)
+    else
+      addProsumer!(net = net, busName = "B1", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "B1")
+      addProsumer!(net = net, busName = "B2", type = "ENERGYCONSUMER", p = 200.0, q = 10.0)
+    end
 
 
     return net
   end
   result = true  
-  # Netzwerk erstellen  
-  net = createNet("line")
-  # YBus-Matrix berechnen
-  Y_bus_1 = createYBUS(net=net, sparse=false, printYBUS=(verbose > 0))
-  Y_bus_2 = createYBUS_ABCD(net=net, sparse=false, printYBUS=(verbose > 0))
   
+  # --------------------------------------------------------------------------------
+  net = createNet("line")  
+  Y_bus_1 = createYBUS(net=net, sparse=false, printYBUS=(verbose > 0))
+  Y_bus_2 = createYBUS_ABCD(net=net, sparse=false, printYBUS=(verbose > 0))  
   br = getNetBranch(net = net, fromBus = "B1", toBus = "B2")
   if verbose > 0
     @show br
   end
   if !isapprox(Y_bus_1, Y_bus_2, atol=1e-6)
     result =  false
-  end
-  
+  end  
   run_acpflow(net, verbose)
-
-  netName = "testnet-trafo"
+  
+  # --------------------------------------------------------------------------------
   net = createNet("2WT")  
   Y_bus_1 = createYBUS(net=net, sparse=false, printYBUS=(verbose > 0))
   Y_bus_2 = createYBUS_ABCD(net=net, sparse=false, printYBUS=(verbose > 0))
@@ -84,8 +103,17 @@ function test_ABCD(verbose::Int = 0)
   if !isapprox(Y_bus_1, Y_bus_2, atol=1e-6)
     result =  false
   end
-
+  run_acpflow(net, verbose)  
+  
+  # --------------------------------------------------------------------------------
+  net = createNet("combine")  
+  Y_bus_1 = createYBUS(net=net, sparse=false, printYBUS=(verbose > 0))
+  Y_bus_2 = createYBUS_ABCD(net=net, sparse=false, printYBUS=(verbose > 0))
+  if !isapprox(Y_bus_1, Y_bus_2, atol=1e-6)
+    result =  false
+  end
   run_acpflow(net, verbose)
+
 
   return result
 end
