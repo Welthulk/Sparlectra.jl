@@ -529,22 +529,39 @@ function isTapInNeutralPosition(x::PowerTransformer)
 end
 
 function getABCDParms(branch::PowerTransformer, u_rated::Float64, s_rated::Float64)
+  @debug "getABCDParms: Transformer $(branch.comp) u_rated=$(u_rated) s_rated=$(s_rated)"
   @assert branch.isBiWinder "Transformer is not a 2WT" # interim solution
   
   side = getSideNumber2WT(branch)      
   w = (side in [1, 2, 3]) ? (side == 1 ? branch.side1 : (side == 2 ? branch.side2 : branch.side3)) : error("wrong value for 'side'")
   vn_kV = w.Vn
+  
   sn_MVA = getWindingRatedS(w)
+  
   r, x, b, g = getRXBG(w)
+  
   r_pu, x_pu, b_pu, g_pu = isPerUnit_RXGB(w) ? (r, x, b, g) : begin
     @assert !isnothing(sn_MVA) "sn_MVA must be set for a PowerTransformer"
     baseZ = (vn_kV)^2 / sn_MVA
     (r / baseZ, x / baseZ, b * baseZ, g * baseZ)
   end
-  ratio = isnothing(w.ratio) ? 1.0 : w.ratio
-  angle_deg = isnothing(w.shift_degree) ? 0.0 : w.shift_degree
-  return getABCDParms(r_pu = r_pu, x_pu = x_pu, g_pu = g_pu, b_pu = b_pu, ratio = ratio, angle_deg = angle_deg)  
+  
+  t = (isnothing(w.ratio) ? 1.0 : w.ratio) != 0.0 || (isnothing(w.shift_degree) ? 0.0 : w.shift_degree) != 0.0 ? 
+    calcComplexRatio(isnothing(w.ratio) ? 1.0 : w.ratio, isnothing(w.shift_degree) ? 0.0 : w.shift_degree) : 
+    1.0 + 0.0im
 
+
+  # Series Admittance ys
+  ys = inv(r_pu + x_pu * im)    
+  # Shunt Admittance ysh
+  ysh = g_pu + im * b_pu
+    
+  # Calculate Y_from_from, Y_from_to, Y_to_from, Y_to_to
+  A = (ys + 0.5 * ysh) / abs2(t)
+  B = -ys/conj(t)
+  C = -ys/t
+  D = ys + 0.5 * ysh
+  return (A, B, C, D)
 end
 
 function calcTransformerRatio(x::PowerTransformer)
