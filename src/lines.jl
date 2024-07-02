@@ -53,11 +53,12 @@ mutable struct ACLineSegment <: AbstractBranch
     else
       if !isnothing(b)
         b = b
-      elseif !isnothing(c_nf_per_km) && !isnothing(tanδ)
+      elseif !isnothing(c_nf_per_km) && !isnothing(tanδ)        
         if !paramsBasedOnLength
-          c_nf = c_nf_per_km * length
+          # b and g are multiplied by length in the getRXBG function
+          c_nf = c_nf_per_km          
         else
-           c_nf = c_nf_per_km
+          c_nf = c_nf_per_km * length
         end  
         y1_shunt_ = 2.0 * pi * 50.0 * c_nf * 1e-9 *  (tanδ + im * 1.0)
         g = real(y1_shunt_)
@@ -159,7 +160,6 @@ function getRXBG(o::ACLineSegment)::Tuple{Float64,Float64,Union{Nothing,Float64}
   if o.paramsBasedOnLength || o._isPIModel
     return (o.r, o.x, o.b, o.g)
   else    
-
     return (o.r * o.length, o.x * o.length, o.b * o.length, o.g * o.length)
   end
 end
