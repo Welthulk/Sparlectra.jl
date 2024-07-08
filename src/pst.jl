@@ -21,6 +21,7 @@ The `SymmetricalPhaseShifter` struct represents a symmetrical phase shifter comp
 
 mutable struct SymmetricalPhaseShifter <: AbstractBranch
   comp::AbstractComponent            # component
+  sn_mva::Float64                    # cim:PowerTransformer.ratedS, rated power in MVA
   neutralStep::Int                   # cim:TapChanger.neutralStep, neutral step/position
   maxStep::Int                       # maximum step/position 
   step::Int                          # cim:PhaseTapChangerTablePoint.step, actual step/position
@@ -32,17 +33,21 @@ mutable struct SymmetricalPhaseShifter <: AbstractBranch
   α_rad::Float64                     # cim:PhaseTapChangerTablePoint.angle in radians  
 
   
-  function SymmetricalPhaseShifter(; vn::Float64, from::Int, to::Int, neutralStep::Int, maxStep::Int, step::Int, δu::Float64, x_0::Float64 = 0.0, x_α_max::Float64)
-    comp = getPSTImpPGMComp(vn, from, to)
-    obj = new(comp, neutralStep, maxStep, step, δu, x_0, x_α_max, 0.0, 0.0, 0.0)
-    calcAlphaMax(obj)
-    setCurrentStep(obj, step)
+  function SymmetricalPhaseShifter(; sn_mva::Float64, vn_kV::Float64, from::Int, to::Int, neutralStep::Int, maxStep::Int, step::Int, δu::Float64, x_0::Float64 = 0.0, x_α_max::Float64)
+    comp = getPSTImpPGMComp(vn_kV::Float64, from, to)
+    obj = new(comp, sn_mva, neutralStep, maxStep, step, δu, x_0, x_α_max, 0.0, 0.0, 0.0)
+    calcAlphaMax!(obj)
+    setCurrentStep!(obj, step)
+    calcCurrentAngle!(obj)
+    calcCurrentX!(obj)
+    
     return obj
   end
 
   function Base.show(io::IO, x::SymmetricalPhaseShifter)
     print(io, "SymmetricalPhaseShifter(")
     print(io, "comp=$(x.comp), ")
+    print(io, "sn_mva=$(x.sn_mva), ")
     print(io, "neutralStep=$(x.neutralStep), ")
     print(io, "maxStep=$(x.maxStep), ")
     print(io, "step=$(x.step), ")
@@ -57,15 +62,19 @@ mutable struct SymmetricalPhaseShifter <: AbstractBranch
 
 end
 
-function calcAlphaMax(o::SymmetricalPhaseShifter)
+function setCurrentStep!(o::SymmetricalPhaseShifter, step::Int)
+  o.step = step
+end
+
+function calcAlphaMax!(o::SymmetricalPhaseShifter)
   o.α_max_rad = 2.0 * atan((o.maxStep - o.neutralStep) * o.δu / 2.0)  
 end
 
-function calcCurrentAngle(o::SymmetricalPhaseShifter)
+function calcCurrentAngle!(o::SymmetricalPhaseShifter)
   o.α_rad = 2.0 * atan((o.step - o.neutralStep) * o.δu / 2.0)
 end
 
-function calcCurrentX(o::SymmetricalPhaseShifter)
+function calcCurrentX!(o::SymmetricalPhaseShifter)
   o.x_α = o.x_0 + (o.x_α_max - o.x_0) * (sin(o.α_rad / 2.0) / sin(o.α_max_rad / 2.0))^2
 end
 
@@ -81,10 +90,9 @@ Set the current step of a symmetrical phase shifter.
 """
 function setCurrentStep(o::SymmetricalPhaseShifter, n::Int)
   @assert n >= 0 && n <= o.maxStep
-  
-  o.step = n
-  calcCurrentAngle(o)
-  calcCurrentX(o)
+  setCurrentStep!(o,n)  
+  calcCurrentAngle!(o)
+  calcCurrentX!(o)
 end
 
 function getCurrentAngle(o::SymmetricalPhaseShifter)::Float64
@@ -95,9 +103,24 @@ function getCurrentX(o::SymmetricalPhaseShifter)::Float64
   return o.x_α
 end
 
+function calcAdmittance(branch::SymmetricalPhaseShifter, v_kV::Float64, baseMVA::Float64)::Tuple{ComplexF64,ComplexF64,ComplexF64,ComplexF64}
+  z_base = (v_kV*v_kV) / baseMVA
+  z_ser_pu = getCurrentX(branch)/z_base
+  angle = getCurrentAngle(branch)
+  y_11 = 1.0 / getCurrentX(z_ser_pu)  
+  y_12= -z_ser_pu*exp(-im*angle)
+  y_21 = -z_ser_pu*exp(im*angle)  
+  y_22 = y_11
+  return (y_11, y_12, y_21, y_22)
+end
+
 function getPSTImpPGMComp(Vn::Float64, from::Int, to::Int)
   cName = "PST_$(string(round(Vn,digits=1)))"
   cID = "#$cName\\_$from\\_$to"  
   return ImpPGMComp(cID, cName, toComponentTyp("SYMMETRICALPHASESHIFTER"), Vn, from, to)
 end
 
+#=
+
+
+=#

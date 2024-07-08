@@ -103,36 +103,61 @@ mutable struct ACLineSegment <: AbstractBranch
   end
 end
 
-function getABCDParms(branch::ACLineSegment, u_rated::Float64, s_rated::Float64)
-  @debug "getABCDParms", branch
-  
-  r,x,g,b = getRXBG(branch)    
+"""
+  pi-model of a long line:
+
+  ------*-------------Zw*sinh(γ*s)---------------*------
+        |                                        |  
+        |                                        |
+    Zw*coth(γ*s/2)                        Zw*coth(γ*s/2)
+        |                                        |  
+        |                                        |
+  ------*----------------------------------------*------
+  γ = j * β = j * sqrt(L*C)
+  Zw = sqrt(Z/Y)
+  Snat = Pnat = V_n^2 / Zw
+
+"""
+
+function calcAdmittance(branch::ACLineSegment, u_rated::Float64, s_rated::Float64)::Tuple{ComplexF64,ComplexF64,ComplexF64,ComplexF64}
+  @debug "calcAdmittance", branch
+  r, x, b, g = getRXBG(branch)    
   r_pu, x_pu, g_pu, b_pu = toPU_RXGB(r = r, x = x, g = g, b = b, v_kv = u_rated, baseMVA = s_rated)
 
   if branch.isLongLine
-    Z = Complex(r_pu, x_pu)
-    Y = Complex(g_pu, b_pu)
+
+    if branch.paramsBasedOnLength
+      s = branch.length
+    else
+      s = 1.0
+    end
     
-    γ = sqrt(Z * Y)          # Propagation constant    
+    Z = Complex(r_pu, x_pu)    
+    Y = Complex(g_pu, b_pu)
+        
+    γ = sqrt(Z * Y)          # Propagation constant        
     Z_c = sqrt(Z / Y)        # Characteristic impedance
     
-    A = cosh(γ)
-    B = Z_c * sinh(γ)
-    C = sinh(γ) / Z_c
-    D = cosh(γ)
+    ys = 1.0 / (Z_c * sinh(γ * s))
+    ysh = 1.0 / (Z_c*coth(γ * s / 2.0))
+    Y_11 = ys + 0.5 * ysh
+    Y_12 = -ys
+    Y_21 = -ys
+    Y_22 = ys + 0.5 * ysh  
+    @debug "long line: Y=", Y_11, Y_12, Y_21, Y_22
   else    
     # Series Admittance ys
     ys = inv(r_pu + x_pu * im)    
     # Shunt Admittance ysh
     ysh = g_pu + im * b_pu
-    
-    # Calculate Y_from_from, Y_from_to, Y_to_from, Y_to_to
-    A = ys + 0.5 * ysh
-    B = -ys
-    C = -ys
-    D = ys + 0.5 * ysh
+        
+    Y_11 = ys + 0.5 * ysh
+    Y_12 = -ys
+    Y_21 = -ys
+    Y_22 = ys + 0.5 * ysh    
   end
-  return A, B, C, D    
+
+  return (Y_11, Y_12, Y_21, Y_22)
 end
 
 
@@ -162,6 +187,11 @@ function getRXBG(o::ACLineSegment)::Tuple{Float64,Float64,Union{Nothing,Float64}
   else    
     return (o.r * o.length, o.x * o.length, o.b * o.length, o.g * o.length)
   end
+end
+
+function getRXBG_pu(o::ACLineSegment, vn_kV::Float64, baseMVA::Float64)::Tuple{Float64,Float64,Union{Nothing,Float64},Union{Nothing,Float64}}
+  r, x, b, g = getRXBG(o)
+  return toPU_RXBG(r = r, x = x, g = g, b = b, v_kv = vn_kV, baseMVA = baseMVA)
 end
 
 """
@@ -205,105 +235,3 @@ function getLineImpPGMComp(Vn::Float64, from::Int, to::Int)
   cName, cID = getLineBusID(Vn, from, to)
   return ImpPGMComp(cID, cName, toComponentTyp("ACLINESEGMENT"), Vn, from, to)
 end
-
-
-#=
-using LinearAlgebra
-
-function calculate_PI_ABCD_parameters(r, x, g, b, d)
-    # Serienschaltung und Paralleladmittanzen
-    Z = Complex(r, x) * d
-    Y = Complex(g, b) * d
-    
-    # Berechnung der ABCD-Parameter
-    A = 1 + Z * Y / 2
-    B = Z
-    C = Y * (1 + Z * Y / 4)
-    D = 1 + Z * Y / 2
-    
-    return A, B, C, D
-end
-
-# Beispielparameter für das PI-Ersatzschaltbild
-r = 0.1       # Ω/km
-x = 0.314     # Ω/km
-g = 0.0       # S/km
-b = 3.14e-3   # S/km
-d = 100.0     # km
-
-A, B, C, D = calculate_PI_ABCD_parameters(r, x, g, b, d)
-
-println("A: ", A)
-println("B: ", B)
-println("C: ", C)
-println("D: ", D)
-
-
-
-
-
-using LinearAlgebra
-
-function calculate_ABCD_parameters(r, l, g, c, d, f)
-    ω = 2π * f
-    Z = Complex(r, ω * l)
-    Y = Complex(g, ω * c)
-    
-    γ = sqrt(Z * Y)
-    Z_c = sqrt(Z / Y)
-    
-    A = cosh(γ * d)
-    B = Z_c * sinh(γ * d)
-    C = sinh(γ * d) / Z_c
-    D = cosh(γ * d)
-    
-    return A, B, C, D
-end
-
-# Beispielparameter
-r = 0.1
-l = 0.001
-g = 0.0
-c = 0.01e-6
-d = 100.0
-f = 50.0
-
-A, B, C, D = calculate_ABCD_parameters(r, l, g, c, d, f)
-
-println("A: ", A)
-println("B: ", B)
-println("C: ", C)
-println("D: ", D)
-
-using LinearAlgebra
-
-function calculate_ABCD_parameters(r, x, g, b, d)
-    Z = Complex(r, x)
-    Y = Complex(g, b)
-    
-    γ = sqrt(Z * Y)
-    Z_c = sqrt(Z / Y)
-    
-    A = cosh(γ * d)
-    B = Z_c * sinh(γ * d)
-    C = sinh(γ * d) / Z_c
-    D = cosh(γ * d)
-    
-    return A, B, C, D
-end
-
-# Beispielparameter
-r = 0.1       # Ω/km
-x = 0.314     # Ω/km
-g = 0.0       # S/km
-b = 3.14e-3   # S/km
-d = 100.0     # km
-
-A, B, C, D = calculate_ABCD_parameters(r, x, g, b, d)
-
-println("A: ", A)
-println("B: ", B)
-println("C: ", C)
-println("D: ", D)
-
-=#

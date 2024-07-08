@@ -64,6 +64,7 @@ struct Net
   branchVec::Vector{Branch}
   prosumpsVec::Vector{ProSumer}
   shuntVec::Vector{Shunt}
+  #pstVect::Vector{}
   busDict::Dict{String,Int}
   busOrigIdxDict::Dict{Int,Int}  
   totalLosses::Vector{Tuple{Float64,Float64}}
@@ -311,7 +312,7 @@ Parameters:
 - `ratedS::Union{Nothing, Float64}= nothing`: Rated power of the line segment in MVA (default is nothing).
 - `status::Int = 1`: Status of the line segment (default is 1).
 """
-function addACLine!(; net::Net, fromBus::String, toBus::String, length::Float64, r::Float64, x::Float64, b::Union{Nothing,Float64} = nothing, c_nf_per_km::Union{Nothing,Float64} = nothing, tanδ::Union{Nothing,Float64} = nothing, ratedS::Union{Nothing,Float64} = nothing, status::Integer = 1)  
+function addACLine!(; net::Net, fromBus::String, toBus::String, length::Float64, r::Float64, x::Float64, b::Union{Nothing,Float64} = nothing, c_nf_per_km::Union{Nothing,Float64} = nothing, tanδ::Union{Nothing,Float64} = nothing, ratedS::Union{Nothing,Float64} = nothing, status::Integer = 1, isLongLine::Bool = false)  
   @debug "Adding AC line segment from $fromBus to $toBus"
   @assert fromBus != toBus "From and to bus must be different"
   from = geNetBusIdx(net = net, busName = fromBus)
@@ -319,7 +320,7 @@ function addACLine!(; net::Net, fromBus::String, toBus::String, length::Float64,
   vn_kV = getNodeVn(net.nodeVec[from])
   vn_2_kV = getNodeVn(net.nodeVec[to])
   @assert vn_kV == vn_2_kV "Voltage level of the from bus $(vn_kV) does not match the to bus $(vn_2_kV)"
-  acseg = ACLineSegment(vn_kv = vn_kV, from = from, to = to, length = length, r = r, x = x, b = b, c_nf_per_km = c_nf_per_km, tanδ = tanδ, ratedS = ratedS, paramsBasedOnLength = false, isPIModel=false)
+  acseg = ACLineSegment(vn_kv = vn_kV, from = from, to = to, length = length, r = r, x = x, b = b, c_nf_per_km = c_nf_per_km, tanδ = tanδ, ratedS = ratedS, paramsBasedOnLength = false, isPIModel=false, isLongLine=isLongLine)
   push!(net.linesAC, acseg)  
   addBranch!(net = net, from = from, to = to, branch = acseg, vn_kV = vn_kV, status = status)
 end
@@ -417,6 +418,17 @@ function add2WTrafo!(; net::Net, fromBus::String, toBus::String, sn_mva::Float64
   push!(net.trafos, trafo)
 
   addBranch!(net = net, from = from, to = to, branch = trafo, status = status, ratio = ratio, side = side, vn_kV = vn_hv_kV)
+end
+
+function addPST!(; net::Net, fromBus::String, toBus::String, sn_mva::Float64, neutralStep::Int , maxStep::Int, step::Int, x_0::Float64, x_α_max::Float64, δu::Float64, status::Integer = 1)
+  from = geNetBusIdx(net = net, busName = fromBus)
+  to = geNetBusIdx(net = net, busName = toBus)
+  vn_kV = getNodeVn(net.nodeVec[from])
+
+  myPST = SymmetricalPhaseShifter(sn_mva=sn_mva, vn_kV=vn_kV, from=from, to=to, neutralStep=neutralStep, step=step, maxStep=maxStep, δu=δu, x_0=x_0, x_α_max=x_α_max)
+  ratio = 1.0
+  @debug "adding PST:", myPST
+  addBranch!(net = net, from = from, to = to, branch = myPST, status = status, ratio = ratio, side = 1, vn_kV = vn_kV)
 end
 
 """

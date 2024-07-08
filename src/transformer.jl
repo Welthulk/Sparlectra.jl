@@ -354,6 +354,15 @@ end
 function getRXBG(o::PowerTransformerWinding)::Tuple{Float64,Float64,Union{Nothing,Float64},Union{Nothing,Float64}}
   return (o.r, o.x, o.b, o.g)
 end
+
+function getRXBG_pu(o::PowerTransformerWinding, vn_kV::Float64, baseMVA::Float64)::Tuple{Float64,Float64,Union{Nothing,Float64},Union{Nothing,Float64}}
+  if isPerUnit_RXGB(o)
+    return (o.r, o.x, o.b, o.g)
+  else
+    return toPU_RXBG(r = o.r, x = o.x, g = o.g, b = o.b, v_kv = vn_kV, baseMVA = baseMVA)
+  end  
+end
+
 # helper
 function hasTaps(x::Union{Nothing,PowerTransformerWinding})::Bool
   if isnothing(x)
@@ -528,7 +537,7 @@ function isTapInNeutralPosition(x::PowerTransformer)
   end
 end
 
-function getABCDParms(branch::PowerTransformer, u_rated::Float64, s_rated::Float64)
+function calcAdmittance(branch::PowerTransformer, u_rated::Float64, s_rated::Float64)::Tuple{ComplexF64,ComplexF64,ComplexF64,ComplexF64}
   @debug "getABCDParms: Transformer $(branch.comp) u_rated=$(u_rated) s_rated=$(s_rated)"
   @assert branch.isBiWinder "Transformer is not a 2WT" # interim solution
   
@@ -557,11 +566,11 @@ function getABCDParms(branch::PowerTransformer, u_rated::Float64, s_rated::Float
   ysh = g_pu + im * b_pu
     
   # Calculate Y_from_from, Y_from_to, Y_to_from, Y_to_to
-  A = (ys + 0.5 * ysh) / abs2(t)
-  B = -ys/conj(t)
-  C = -ys/t
-  D = ys + 0.5 * ysh
-  return (A, B, C, D)
+  Y_11 = (ys + 0.5 * ysh) / abs2(t)
+  Y_12 = -ys/conj(t)
+  Y_21 = -ys/t
+  Y_22 = ys + 0.5 * ysh
+  return (Y_11, Y_12, Y_21, Y_22)
 end
 
 function calcTransformerRatio(x::PowerTransformer)

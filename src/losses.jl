@@ -21,26 +21,64 @@ function calcNetLosses!(net::Net)
     argj = deg2rad(nodes[to]._va_deg)
 
     ratio = (br.ratio != 0.0) ? br.ratio : 1.0
-    angle = (br.ratio != 0.0) ? br.angle : 0.0
-    tap = calcComplexRatio(ratio, angle)
+    _angle = (br.ratio != 0.0) ? br.angle : 0.0
+    
+    
+    if !br.meeden
+      ui = nodes[from]._vm_pu * exp(im * argi)
+      tap = calcComplexRatio(ratio, _angle)
+      if tapSide == 1
+        ui = ui / tap
+      end
 
-    ui = nodes[from]._vm_pu * exp(im * argi)
-    if tapSide == 1
-      ui = ui / tap
+      uj = nodes[to]._vm_pu * exp(im * argj)
+      if tapSide == 2
+        uj = uj / tap
+      end
+      rpu = br.r_pu
+      xpu = br.x_pu
+      bpu = br.b_pu
+      gpu = br.g_pu
+
+      Yik = inv((rpu + im * xpu))
+      Y0ik = 0.5 * (gpu + im * bpu)
+      s = abs(ui)^2 * conj(Y0ik + Yik) - ui * conj(uj) * conj(Yik)
+    
+    else      
+      zus = br.angle
+      y_ser = inv(0.0 + im* br.x_pu)
+      
+      phi = angle(y_ser)
+      
+      y = abs(y_ser)
+      d1 = phi + zus
+      d2 = phi - zus
+      
+      @show y_21 = -y*(cos(d2) + im*sin(d2))
+
+      
+      if tapSide == 1
+        ui = nodes[from]._vm_pu * exp(im * argi)
+        uj = nodes[to]._vm_pu * exp(im * argj)
+
+        tap = calcComplexRatio(1.0, rad2deg(-zus))
+        Yik = -y * (cos(d1) + im*sin(d1))
+        
+        ui = ui / tap
+      else
+        ui = nodes[from]._vm_pu * exp(im * argi)
+        uj = nodes[to]._vm_pu * exp(im * argj)
+
+        tap = calcComplexRatio(1.0, rad2deg(-zus))
+        
+        Yik = -y * (cos(d2) + im*sin(d2))
+        
+        uj = uj / tap
+      end  
+      s = abs(ui)^2 * conj(Yik) - ui * conj(uj) * conj(Yik)
     end
-
-    uj = nodes[to]._vm_pu * exp(im * argj)
-    if tapSide == 2
-      uj = uj / tap
-    end
-    rpu = br.r_pu
-    xpu = br.x_pu
-    bpu = br.b_pu
-    gpu = br.g_pu
-
-    Yik = inv((rpu + im * xpu))
-    Y0ik = 0.5 * (gpu + im * bpu)
-    s = abs(ui)^2 * conj(Y0ik + Yik) - ui * conj(uj) * conj(Yik)
+    
+    
 
     return s
   end # calcBranchFlow

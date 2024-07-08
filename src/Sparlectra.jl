@@ -30,10 +30,13 @@ const Wurzel3 = 1.7320508075688772
 const SparlectraVersion = VersionNumber("0.4.19")
 abstract type AbstractBranch end
 
-function getABCDParms(branch::AbstractBranch, u_rated::Float64, s_rated::Float64)
-    throw(NotImplementedError("Method get2PortABCDParam not implemented for $(typeof(branch))"))
-end
 
+#=
+abstract type AsymetricalBranchse end
+function calcAdmittance(branch::AsymetricalBranchse, v_kV::Float64, baseMVA::Float64)::Tuple{ComplexF64,ComplexF64,ComplexF64,ComplexF64}
+  throw(NotImplementedError("Method get2PortABCDParam not implemented for $(typeof(branch))"))
+end
+=#
 export
   
   # constants
@@ -52,7 +55,7 @@ export
   # ProSumer
   ProSumer,
   # Branch
-  AbstractBranch, Branch, BranchModel, BranchFlow, getBranchFlow, setBranchFlow!, setBranchStatus!,getBranchNumber, getBranchLosses, setBranchLosses!,
+  AbstractBranch, Branch, BranchModel, BranchFlow, getBranchFlow, setBranchFlow!, setBranchStatus!, getBranchNumber, getBranchLosses, setBranchLosses!,
   # Shunt
   Shunt,
   # Net
@@ -60,32 +63,32 @@ export
   
   # functions  
   # Compomnent
-  toComponentTyp,  getRXBG, getCompName, getCompID,
+  toComponentTyp, getCompName, getCompID, 
   # Transformers
   getSideNumber2WT,  getWinding2WT,  calcTransformerRatio, recalc_trafo_model_data, create2WTRatioTransformerNoTaps, create3WTWindings!,
-  getTrafoImpPGMComp,  getWT3AuxBusID,  isPerUnit_RXGB, getWindingRatedS,
+  getTrafoImpPGMComp,  getWT3AuxBusID,  isPerUnit_RXGB, getWindingRatedS, getRXBG, getRXBG_pu, 
   # PST
   setCurrentStep, getCurrentAngle, getCurrentX,
   # Nodes  
   setRatedS!,  setVmVa!,  addShuntPower!,  addLoadPower!,  addGenPower!,  getNodeVn,  isSlack,  isPVNode,  isPQNode, isIsolated, toNodeType, setNodeType!,
-  busComparison,   toString,
+  busComparison, toString,
   # Branch
-  setBranchFlow!, setBranchStatus!, getBranchIdx,
+  setBranchFlow!, setBranchStatus!, getBranchIdx, calcBranchYser, calcBranchYshunt, calcBranchRatio,
   # Shunt
   getGBShunt,  getPQShunt, updatePQShunt!,
   # ACLineSegment
-  get_line_parameters, isPIModel,
+  get_line_parameters, isPIModel, getRXBG, getRXBG_pu,
   # ProSumer
   isSlack, isGenerator, isAPUNode, setQGenReplacement!, getQGenReplacement, toProSumptionType, updatePQ!,
   # Net
-  addBus!, addShunt!, addACLine!, addPIModelACLine!, add2WTrafo!, addPIModelTrafo!, addProsumer!, lockNet!, validate!, hasBusInNet, addBusGenPower!, addBusLoadPower!, addBusShuntPower!,
+  addBus!, addShunt!, addACLine!, addPIModelACLine!, add2WTrafo!, addPST!, addPIModelTrafo!, addProsumer!, lockNet!, validate!, hasBusInNet, addBusGenPower!, addBusLoadPower!, addBusShuntPower!,
   getNetOrigBusIdx, geNetBusIdx, setNetBranchStatus!, getNetBranch, getNetBranchNumberVec, setTotalLosses!, getTotalLosses, getBusType, get_bus_vn_kV, get_vn_kV, updateBranchParameters!, hasShunt!, getShunt!, markIsolatedBuses!,setTotalBusPower!,
   # create_powermat.jl
   casefileparser, createNetFromMatPowerFile,
   # exportMatPower.jl
   writeMatpowerCasefile,
   # equicircuit.jl
-  calcComplexRatio, calcNeutralU,  createYBUS, createYBUS_ABCD, adjacentBranches, toPU_RXGB, to_RXGB, getABCDParms,
+  calcComplexRatio, calcNeutralU,  createYBUS, createYBUS_ABCD, adjacentBranches, toPU_RXBG, to_RXBG, 
   # nbi.jl
   getNBI, mdoRCM,
   # jacobian.jl

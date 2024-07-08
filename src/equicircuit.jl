@@ -98,7 +98,7 @@ Converts the resistance, reactance, conductance, and susceptance from physical u
 toPU_RXGB(r = 0.01, x = 0.1, g = 0.02, b = 0.02, v_kv = 110.0, baseMVA = 100.0)
 ```
 """
-function toPU_RXGB(; r::Float64, x::Float64, g::Union{Nothing,Float64} = nothing, b::Union{Nothing,Float64} = nothing, v_kv::Float64, baseMVA::Float64)::Tuple{Float64,Float64,Float64,Float64}
+function toPU_RXBG(; r::Float64, x::Float64, g::Union{Nothing,Float64} = nothing, b::Union{Nothing,Float64} = nothing, v_kv::Float64, baseMVA::Float64)::Tuple{Float64,Float64,Float64,Float64}
   z_base = (v_kv * v_kv) / baseMVA
   y_base = 1.0 / z_base
   r_pu = r / z_base
@@ -108,7 +108,7 @@ function toPU_RXGB(; r::Float64, x::Float64, g::Union{Nothing,Float64} = nothing
   !isnothing(g) ? g_pu = g * y_base : 0.0
   !isnothing(b) ? b_pu = b * y_base : 0.0
 
-  return r_pu, x_pu, g_pu, b_pu
+  return r_pu, x_pu, b_pu, g_pu
 end
 
 """
@@ -135,14 +135,14 @@ Converts the resistance, reactance, conductance, and susceptance from per unit t
 to_RXGB(r_pu = 0.01, x_pu = 0.1, g_pu = 0.02, b_pu = 0.02, v_kv = 110.0, baseMVA = 100.0)
 ```
 """
-function to_RXGB(; r_pu::Float64, x_pu::Float64, g_pu::Union{Nothing,Float64} = nothing, b_pu::Union{Nothing,Float64} = nothing, v_kv::Float64, baseMVA::Float64)::Tuple{Float64,Float64,Float64,Float64}
+function to_RXBG(; r_pu::Float64, x_pu::Float64, g_pu::Union{Nothing,Float64} = nothing, b_pu::Union{Nothing,Float64} = nothing, v_kv::Float64, baseMVA::Float64)::Tuple{Float64,Float64,Float64,Float64}
   z_base = (v_kv^2) / baseMVA
   r = r_pu * z_base
   x = x_pu * z_base
   g = b = 0.0
   !isnothing(g_pu) ? g = g_pu / z_base : 0.0
   !isnothing(b_pu) ? b = b_pu / z_base : 0.0
-  return r, x, g, b
+  return r, x, b, g
 end
 #=
 function removeIsolatedNodesFromYBUS(Y::AbstractMatrix{ComplexF64}, isolated_nodes::Vector{Int})
@@ -182,76 +182,71 @@ function createYBUS(;net::Net, sparse::Bool = true, printYBUS::Bool = false)
   # Bestimme die maximale Busnummer im Netzwerk, unter Berücksichtigung isolierter Busse
   max_bus = maximum(max(branch.fromBus, branch.toBus) for branch in net.branchVec)
   n = max_bus - length(net.isoNodes)
+  
+  Y = sparse ? spzeros(ComplexF64, n, n) : zeros(ComplexF64, n, n)
 
   @debug "Dimension YBus:", n
-
-  if sparse
-    Y = spzeros(ComplexF64, n, n)
-  else
-    Y = zeros(ComplexF64, n, n)
-  end
-
-  if debug
-    if sparse
-      t = "sparse"
-    else
-      t = "normal"
-    end
-    println("\nYBUS: Size = $(n)x$(n) ($(t))\n")
-  end
+  @debug "YBUS: Size = $(n)x$(n) ($(sparse ? "sparse" : "normal"))"
 
   for branch in net.branchVec
     fromNode = branch.fromBus
     toNode = branch.toBus
 
-    # Überspringe Zweige, die außer Betrieb sind
+    # Skip branches that are out of service
     if branch.status == 0
       @debug "createYBUS: Branch $(branch) out of service, skipping "
       continue
     end
 
-    # Überspringe Zweige, die isolierte Busse verbinden
+    # skip isolated nodes
     if fromNode in net.isoNodes || toNode in net.isoNodes
       continue
     end
 
-    r = branch.r_pu
-    x = branch.x_pu
-    b = branch.b_pu
-    g = branch.g_pu
-
-    yik = inv((r + x * im))
-    susceptance = 0.5 * (g + b * im) # pi-model
-
-    t = 1.0 + 0.0 * im
-    ratio = branch.ratio
-    shift_degree = branch.angle
-    if ratio != 0.0 || shift_degree != 0.0
-      t = calcComplexRatio(ratio, shift_degree)
-    end
-
-    # Korrigiere die Indizes basierend auf den isolierten Knoten
+    # correct the indices based on the isolated nodes
     fromNode -= count(i -> i < fromNode, net.isoNodes)
     toNode -= count(i -> i < toNode, net.isoNodes)
-    
-    if branch.fromBusSwitch == 1
-      Y[fromNode, fromNode] += (yik + susceptance) / abs2(t)
+    if !branch.meeden 
+      yik = calcBranchYser(branch)
+      susceptance = 0.5 * calcBranchYshunt(branch)
+      t = calcBranchRatio(branch)
+
+      if branch.fromBusSwitch == 1
+        Y[fromNode, fromNode] += (yik + susceptance) / abs2(t)
+      else
+        Y[fromNode, fromNode] += susceptance + (yik*susceptance/(yik + susceptance))      
+      end  
+      
+      if branch.toBusSwitch == 1
+        Y[toNode, toNode] += (yik + susceptance)
+      else
+        Y[toNode, toNode] += susceptance + (yik*susceptance/(yik + susceptance))      
+      end
+      
+      if branch.fromBusSwitch == 1 
+        Y[fromNode, toNode] += (-1.0 * yik / conj(t))
+      end
+      
+      if branch.toBusSwitch == 1  
+        Y[toNode, fromNode] += (-1.0 * yik / t)
+      end
     else
-      Y[fromNode, fromNode] += susceptance + (yik*susceptance/(yik + susceptance))      
-    end  
-    
-    if branch.toBusSwitch == 1
-      Y[toNode, toNode] += (yik + susceptance)
-    else
-      Y[toNode, toNode] += susceptance + (yik*susceptance/(yik + susceptance))      
-    end
-    
-    if branch.fromBusSwitch == 1 
-      Y[fromNode, toNode] += (-1.0 * yik / conj(t))
-    end
-    
-    if branch.toBusSwitch == 1  
-      Y[toNode, fromNode] += (-1.0 * yik / t)
+      @debug "pst=", branch
+      y_ser = inv(0.0 + im* branch.x_pu)
+      @show zus = branch.angle
+      @show phi = angle(y_ser)
+      @show y = abs(y_ser)
+      d1= phi - zus
+      d2= phi + zus
+      @show y_11 = -y_ser
+      @show y_12 = -y*(cos(d1) + im*sin(d1))
+      @show y_21 = -y*(cos(d2) + im*sin(d2))
+      @show y_22 = y_11
+
+      Y[fromNode, fromNode] += y_11
+      Y[fromNode, toNode] += y_12
+      Y[toNode, fromNode] += y_21
+      Y[toNode, toNode] += y_22
     end
   end
 
@@ -332,42 +327,37 @@ function createYBUS_ABCD(; net::Net, sparse::Bool = true, printYBUS::Bool = fals
     end
 
     for branch in net.branchVec
+        @assert branch isa AbstractBranch
         fromNode = branch.fromBus
         toNode = branch.toBus
 
-        # Überspringe Zweige, die außer Betrieb sind
+        # Skip branches that are out of service
         if branch.status == 0
             @debug "createYBUS: Branch $(branch) out of service, skipping "
             continue
         end
 
-        # Überspringe Zweige, die isolierte Busse verbinden
+        # Skip branches that connect isolated buses
         if fromNode in net.isoNodes || toNode in net.isoNodes
             continue
         end
 
-        # Hole die Vierpolparameter
-        A, B, C, D = branch.A, branch.B, branch.C, branch.D
-
-        # Berechne die Admittanzen basierend auf den Vierpolparametern
-        #y_from_from = (A * D - 1) / B
-        #y_from_to = -A / B
-        #y_to_from = -D / B
-        #y_to_to = (A * D - 1) / B
-        y_from_from = A
-        y_from_to = B
-        y_to_from = C
-        y_to_to = D
+        # Get the y-parameters
+        @show branch.vn_kV
+        @show branch
+        y_11, y_12, y_21, y_22 = calcAdmittance(branch, branch.vn_kV, net.baseMVA)
         
-        # Korrigiere die Indizes basierend auf den isolierten Knoten
+        # Adjust the indices based on the isolated nodes
+        fromNode -= count(i -> i < fromNode, net.isoNodes)
+        toNode -= count(i -> i < toNode, net.isoNodes)
         fromNode -= count(i -> i < fromNode, net.isoNodes)
         toNode -= count(i -> i < toNode, net.isoNodes)
 
         
-        Y[fromNode, fromNode] += y_from_from
-        Y[toNode, toNode] += y_to_to
-        Y[fromNode, toNode] += y_from_to
-        Y[toNode, fromNode] += y_to_from
+        Y[fromNode, fromNode] += y_11
+        Y[toNode, toNode] += y_21
+        Y[fromNode, toNode] += y_12
+        Y[toNode, fromNode] += y_22
         
     end
 
