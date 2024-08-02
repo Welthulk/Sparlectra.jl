@@ -102,6 +102,19 @@ mutable struct ACLineSegment <: AbstractBranch
     print(io, ")")
   end
 end
+"""
+! Die Laenge einer Leitung berechnet sich naeherungsweise aus:
+      !
+      ! L = 3 / PI * SQRT ( X/OHM * B/YS )
+      ! RLFAK = 3 / PI * SQRT(10.0**6)
+      !
+      ! RLFAK = 3.0 / ACOS(-1.0) * 1000.0 ! ==> 954,92965855137201461330258023509
+
+
+
+"""
+
+
 
 """
   pi-model of a long line:

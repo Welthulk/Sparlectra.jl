@@ -57,7 +57,7 @@ function test_phaseshifters(verbose::Int = 0)
   vn_kV_b2 = 220.0
   addBus!(net = net, busName = "B1", busType = "Slack", vn_kV = vn_kV_b1)  
   addBus!(net= net,  busName=  "B2", busType = "PV", vn_kV = vn_kV_b2)
-  addBus!(net= net,  busName=  "B3", busType = "PV", vn_kV = vn_kV_b2)
+  addBus!(net= net,  busName=  "B3", busType = "PQ", vn_kV = vn_kV_b2)
   
   addBus!(net= net,  busName=  "B4", busType = "PV", vn_kV = vn_kV_b2)
   #addBus!(net= net,  busName=  "B5", busType = "Slack", vn_kV = vn_kV_b2)
@@ -70,7 +70,7 @@ function test_phaseshifters(verbose::Int = 0)
   addACLine!(net = net, fromBus = "B3", toBus = "B2", length = 200.0, r = 0.02, x = 0.4, c_nf_per_km = 9.08, tanδ = 0.0)
   addACLine!(net = net, fromBus = "B5", toBus = "B4", length = 10.0, r = 0.02, x = 0.4, c_nf_per_km = 9.08, tanδ = 0.0)
   addACLine!(net = net, fromBus = "B4", toBus = "B6", length = 10.0, r = 0.02, x = 0.4, c_nf_per_km = 9.08, tanδ = 0.0)
-  addPST!(net = net, fromBus = "B4", toBus = "B2", sn_mva=1000.0, neutralStep = 0, maxStep = 12, step = 7, δu = 0.1, x_0 = 4.0, x_α_max = 8.0, status=1)
+  addPST!(net = net, fromBus = "B4", toBus = "B2", sn_mva=1000.0, neutralStep = 0, maxStep = 12, step = 0, δu = 0.1, x_0 = 4.0, x_α_max = 8.0, status=1)
   
   
   addProsumer!(net = net, busName = "B1", type = "SYNCHRONOUSMACHINE", p = 500.0, vm_pu = 1.0, va_deg = 0.0, referencePri = "B1")  
