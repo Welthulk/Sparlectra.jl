@@ -3,7 +3,7 @@
 # include-file losses.jl
 
 function calcNetLosses!(net::Net)
-  @debug "\ncalcNetworkLosses (BaseMVA=$(Sbase_MVA))\n"
+  @debug "\ncalcNetworkLosses\n"
   # Sij = vi*exp(j*phi_i)*( (vi*exp(j*phi_i) - vk*exp(j*phi_k)*Y_ik +  vi*exp(j*phi_i)*Y0ik)*  
   # Sij = vi^2*conj(Y0ik+Yik)-vi*conj(vk)*conj(Yik)                   
   # Y0ik: Queradmittanz
@@ -75,6 +75,7 @@ function calcNetLosses!(net::Net)
     from = br.fromBus
     to = br.toBus
     if br.status == 0
+      @debug "Branch: $(br.comp.cName) is out of service"
       setBranchLosses!(br, 0.0, 0.0)
       continue
     end

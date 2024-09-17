@@ -182,57 +182,37 @@ function createYBUS(;net::Net, sparse::Bool = true, printYBUS::Bool = false)
   # Bestimme die maximale Busnummer im Netzwerk, unter Berücksichtigung isolierter Busse
   max_bus = maximum(max(branch.fromBus, branch.toBus) for branch in net.branchVec)
   n = max_bus - length(net.isoNodes)
+  
+  Y = sparse ? spzeros(ComplexF64, n, n) : zeros(ComplexF64, n, n)
 
   @debug "Dimension YBus:", n
-
-  if sparse
-    Y = spzeros(ComplexF64, n, n)
-  else
-    Y = zeros(ComplexF64, n, n)
-  end
-
-  if debug
-    if sparse
-      t = "sparse"
-    else
-      t = "normal"
-    end
-    println("\nYBUS: Size = $(n)x$(n) ($(t))\n")
-  end
+  @debug "YBUS: Size = $(n)x$(n) ($(sparse ? "sparse" : "normal"))"
 
   for branch in net.branchVec
     fromNode = branch.fromBus
     toNode = branch.toBus
 
-    # Überspringe Zweige, die außer Betrieb sind
+    # Skip branches that are out of service
     if branch.status == 0
       @debug "createYBUS: Branch $(branch) out of service, skipping "
       continue
     end
 
-    # Überspringe Zweige, die isolierte Busse verbinden
+    # skip isolated nodes
     if fromNode in net.isoNodes || toNode in net.isoNodes
       continue
     end
 
-    r = branch.r_pu
-    x = branch.x_pu
-    b = branch.b_pu
-    g = branch.g_pu
-
-    yik = inv((r + x * im))
-    susceptance = 0.5 * (g + b * im) # pi-model
-
-    t = 1.0 + 0.0 * im
-    ratio = branch.ratio
-    shift_degree = branch.angle
-    if ratio != 0.0 || shift_degree != 0.0
-      t = calcComplexRatio(ratio, shift_degree)
-    end
-
-    # Korrigiere die Indizes basierend auf den isolierten Knoten
+    # correct the indices based on the isolated nodes
     fromNode -= count(i -> i < fromNode, net.isoNodes)
     toNode -= count(i -> i < toNode, net.isoNodes)
+
+
+    yik = calcBranchYser(branch)
+    susceptance = 0.5 * calcBranchYshunt(branch)
+    t = calcBranchRatio(branch)
+    
+
 
     Y[fromNode, fromNode] += ((yik + susceptance)) / abs2(t)
     Y[toNode, toNode] += (yik + susceptance)

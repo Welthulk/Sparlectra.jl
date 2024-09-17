@@ -228,7 +228,7 @@ function testCreateNetworkFromScratch()::Net
   # (bus3, bus4, length_km=100)
   addACLine!(net = net, fromBus = "B3", toBus = "B4", length = 100.0, r = 0.0653, x = 0.398, c_nf_per_km = 9.08, tanδ = 0.0)
   # (bus3, bus4, length_km=100)
-  addACLine!(net = net, fromBus = "B4", toBus = "B4", length = 300.0, r = 0.0653, x = 0.398, c_nf_per_km = 9.08, tanδ = 0.0)
+  addACLine!(net = net, fromBus = "B3", toBus = "B4", length = 300.0, r = 0.0653, x = 0.398, c_nf_per_km = 9.08, tanδ = 0.0)
   # (bus4, bus5, length_km=300)
   addACLine!(net = net, fromBus = "B4", toBus = "B5", length = 300.0, r = 0.0653, x = 0.398, c_nf_per_km = 9.08, tanδ = 0.0)
   # (bus4, bus6a, length_km=300)

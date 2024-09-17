@@ -64,16 +64,19 @@ struct Net
   branchVec::Vector{Branch}
   prosumpsVec::Vector{ProSumer}
   shuntVec::Vector{Shunt}
+  #pstVect::Vector{}
   busDict::Dict{String,Int}
-  busOrigIdxDict::Dict{Int,Int}
-  branchDict::Dict{Tuple{Int,Int},Int}
+  busOrigIdxDict::Dict{Int,Int}  
   totalLosses::Vector{Tuple{Float64,Float64}}
+  totalBusPower::Vector{Tuple{Float64,Float64}}
   _locked::Bool
   shuntDict::Dict{Int,Int}
-  isoNodes::Vector{Int}
+  isoNodes::Vector{Int}  
+  #branchDict::Dict{Tuple{String,String}, Branch}  # fast search for existing branches
   #! format: off
-  function Net(; name::String, baseMVA::Float64, vmin_pu::Float64 = 0.9, vmax_pu::Float64 = 1.1)
-    new(name, baseMVA, [], vmin_pu, vmax_pu, [], [], [], [], [], [], Dict{String,Int}(), Dict{Int,Int}(), Dict{Tuple{Int,Int},Int}(), [], false, Dict{Int,Int}(), [])
+  function Net(; name::String, baseMVA::Float64, vmin_pu::Float64 = 0.9, vmax_pu::Float64 = 1.1)    
+    #new(name, baseMVA, [], vmin_pu, vmax_pu, [], [], [], [], [], [], Dict{String,Int}(), Dict{Int,Int}(), [], [], false, Dict{Int,Int}(), [], Dict{Tuple{String,String}, Branch}())
+    new(name, baseMVA, [], vmin_pu, vmax_pu, [], [], [], [], [], [], Dict{String,Int}(), Dict{Int,Int}(), [], [], false, Dict{Int,Int}(), [])
   end
   #! format: on
   function Base.show(io::IO, o::Net)
@@ -246,7 +249,8 @@ Parameters:
 - `side::Union{Nothing,Int} = nothing`: Side of the branch (default is nothing).
 - `vn_kV::Union{Nothing,Float64} = nothing`: Nominal voltage of the branch in kV (default is nothing).
 """
-function addBranch!(; net::Net, from::Int, to::Int, branch::AbstractBranch, status::Int = 1, ratio::Union{Nothing,Float64} = nothing, side::Union{Nothing,Int} = nothing, vn_kV::Union{Nothing,Float64} = nothing)
+function addBranch!(; net::Net, from::Int, to::Int, branch::AbstractBranch, status::Integer = 1, ratio::Union{Nothing,Float64} = nothing, side::Union{Nothing,Int} = nothing, vn_kV::Union{Nothing,Float64} = nothing)
+  @assert from != to "From and to bus must be different"
   idBrunch = length(net.branchVec) + 1
   fOrig = nothing
   tOrig = nothing
@@ -259,13 +263,9 @@ function addBranch!(; net::Net, from::Int, to::Int, branch::AbstractBranch, stat
 
   if isnothing(vn_kV)
     vn_kV = getNodeVn(net.nodeVec[from])
-  end
-
-  br = Branch(from = from, to = to, baseMVA = net.baseMVA, branch = branch, id = idBrunch, status = status, ratio = ratio, side = side, vn_kV = vn_kV, fromOid = fOrig, toOid = tOrig)
+  end  
+  br = Branch(branchIdx = idBrunch, from = from, to = to, baseMVA = net.baseMVA, branch = branch, id = idBrunch, status = status, ratio = ratio, side = side, vn_kV = vn_kV, fromOid = fOrig, toOid = tOrig)  
   push!(net.branchVec, br)
-  index = length(net.branchVec)
-  branchTupple = (from, to)
-  net.branchDict[branchTupple] = index
 end
 
 """
@@ -284,20 +284,15 @@ Updates the parameters of a branch in the network.
 updateBranchParameters!(net = network, fromBus = "Bus1", toBus = "Bus2", branch = updatedBranch)
 ```
 """
-function updateBranchParameters!(; net::Net, fromBus::String, toBus::String, branch::BranchModel)
-  from = geNetBusIdx(net = net, busName = fromBus)
-  to = geNetBusIdx(net = net, busName = toBus)
-  branchTuple = (from, to)
-  idx = net.branchDict[branchTuple]
-  br = net.branchVec[idx]
+function updateBranchParameters!(; net::Net, branchNr::Int, branch::BranchModel)
+  br = net.branchVec[branchNr]
   br.r_pu = branch.r_pu
   br.x_pu = branch.x_pu
   br.b_pu = branch.b_pu
   br.g_pu = branch.g_pu
   br.ratio = branch.ratio
   br.angle = branch.angle
-  br.sn_MVA = branch.sn_MVA
-  net.branchVec[idx] = br
+  br.sn_MVA = branch.sn_MVA  
 end
 
 """
@@ -317,6 +312,8 @@ Parameters:
 - `status::Int = 1`: Status of the line segment (default is 1).
 """
 function addACLine!(; net::Net, fromBus::String, toBus::String, length::Float64, r::Float64, x::Float64, b::Union{Nothing,Float64} = nothing, c_nf_per_km::Union{Nothing,Float64} = nothing, tanδ::Union{Nothing,Float64} = nothing, ratedS::Union{Nothing,Float64} = nothing, status::Int = 1)
+  @debug "Adding AC line segment from $fromBus to $toBus"
+  @assert fromBus != toBus "From and to bus must be different"
   from = geNetBusIdx(net = net, busName = fromBus)
   to = geNetBusIdx(net = net, busName = toBus)
   vn_kV = getNodeVn(net.nodeVec[from])
@@ -349,6 +346,7 @@ addPIModelACLine!(net = network, fromBus = "Bus1", toBus = "Bus2", r_pu = 0.01, 
 ```
 """
 function addPIModelACLine!(; net::Net, fromBus::String, toBus::String, r_pu::Float64, x_pu::Float64, b_pu::Float64, status::Int, ratedS::Union{Nothing,Float64} = nothing)
+  @assert fromBus != toBus "From and to bus must be different"
   from = geNetBusIdx(net = net, busName = fromBus)
   to = geNetBusIdx(net = net, busName = toBus)
   vn_kV = getNodeVn(net.nodeVec[from])
@@ -377,20 +375,9 @@ Add a transformer with PI model to the network.
 - `shift_deg::Union{Nothing, Float64}`: Phase shift angle of the transformer. Default is `nothing`.
 - `isAux::Bool`: Whether the transformer is an auxiliary transformer. Default is `false`.
 """
-function addPIModelTrafo!(;
-  net::Net,
-  fromBus::String,
-  toBus::String,
-  r_pu::Float64,
-  x_pu::Float64,
-  b_pu::Float64,
-  status::Int,
-  ratedU::Union{Nothing,Float64} = nothing,
-  ratedS::Union{Nothing,Float64} = nothing,
-  ratio::Union{Nothing,Float64} = nothing,
-  shift_deg::Union{Nothing,Float64} = nothing,
-  isAux::Bool = false,
-)
+function addPIModelTrafo!(; net::Net, fromBus::String, toBus::String, r_pu::Float64, x_pu::Float64, b_pu::Float64, status::Int, ratedU::Union{Nothing,Float64} = nothing,  ratedS::Union{Nothing,Float64} = nothing,  ratio::Union{Nothing,Float64} = nothing,
+                            shift_deg::Union{Nothing,Float64} = nothing,  isAux::Bool = false,)
+  @assert fromBus != toBus "From and to bus must be different"
   from = geNetBusIdx(net = net, busName = fromBus)
   to = geNetBusIdx(net = net, busName = toBus)
   vn_hv_kV = getNodeVn(net.nodeVec[from])
@@ -419,6 +406,7 @@ Add a two-winding transformer to the network.
 - `status::Int`: The status of the transformer. Default is 1.
 """
 function add2WTrafo!(; net::Net, fromBus::String, toBus::String, sn_mva::Float64, vk_percent::Float64, vkr_percent::Float64, pfe_kw::Float64, i0_percent::Float64, status::Int = 1)
+  @assert fromBus != toBus "From and to bus must be different"
   from = geNetBusIdx(net = net, busName = fromBus)
   to = geNetBusIdx(net = net, busName = toBus)
   vn_hv_kV = getNodeVn(net.nodeVec[from])
@@ -579,13 +567,38 @@ setBranchStatus!(net, "Bus1", "Bus2", 1)  # Set the status of the branch from Bu
 run_net_acpflow(net = net, max_ite= 7,tol = 1e-6) # rerun the power flow with the updated network
 ```
 """
-function setBranchStatus!(; net::Net, fromBus::String, toBus::String, status::Int)
+function setNetBranchStatus!(; net::Net, branchNr::Int, fromBus::String, toBus::String, status::Int)
+  @debug "Set branch status to $fromBusSwitch and $toBusSwitch"
+  
+  
+  @assert branchNr > 0 "Branch number must be greater than 0"
+  @assert branchNr <= length(net.branchVec) "Branch $branchNr not found in the network"
+  net.branchVec[branchNr].status = status
+  markIsolatedBuses!(net = net, log = false)
+end
+
+function getNetBranchNumberVec(; net::Net, fromBus::String, toBus::String)::Vector{Int}
   from = geNetBusIdx(net = net, busName = fromBus)
   to = geNetBusIdx(net = net, busName = toBus)
-  BranchTupple = (from, to)
-  index = net.branchDict[BranchTupple]
-  net.branchVec[index].status = status
-  markIsolatedBuses!(net = net, log = false)
+  brNumberVec = Int[]
+  for (i, br) in enumerate(net.branchVec)
+    if br.fromBus == from && br.toBus == to
+      push!(brNumberVec, i)
+    end
+  end
+  return brNumberVec
+end
+
+function getNetBranch(; net::Net, fromBus::String, toBus::String)
+  from = geNetBusIdx(net = net, busName = fromBus)
+  to = geNetBusIdx(net = net, busName = toBus)
+
+  for (i, br) in enumerate(net.branchVec)
+    if br.fromBus == from && br.toBus == to
+      return br
+    end
+  end
+  return nothing
 end
 
 """
@@ -677,6 +690,49 @@ function lockNet!(; net::Net, locked::Bool)
 end
 
 """
+    setTotalBusPower!(; net::Net, p::Float64, q::Float64)
+
+Sets the total active and reactive power at the buses in the network.
+
+# Arguments
+- `net::Net`: The network.
+- `p::Float64`: The total active power for the network.
+- `q::Float64`: The total reactive power for the network.
+
+# Example
+```julia
+setTotalBusPower!(net = network, p = 100.0, q = 50.0)
+```
+"""
+function setTotalBusPower!(; net::Net, p::Float64, q::Float64)
+  push!(net.totalBusPower, (p, q))  
+end
+
+"""
+    getTotalBusPower(; net::Net)::Tuple{Float64, Float64}
+
+Gets the total active and reactive power for the network.
+
+# Arguments
+- `net::Net`: The network.
+
+# Returns
+- `n::Tuple{Float64, Float64}`: 
+
+# Example
+```julia
+getTotalBusPower(net = network)
+```
+"""
+function getTotalBusPower(; net::Net)
+  if !isempty(net.totalBusPower)
+    n = net.totalBusPower[end]
+  else
+    n = (0.0, 0.0)
+  end
+end
+
+"""
 Set the total losses in the network.
 
 # Arguments
@@ -687,6 +743,7 @@ Set the total losses in the network.
 function setTotalLosses!(; net::Net, pLosses::Float64, qLosses::Float64)
   push!(net.totalLosses, (pLosses, qLosses))
 end
+
 
 """
 Get the total losses in the network.
