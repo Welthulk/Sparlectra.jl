@@ -1,5 +1,5 @@
 """
-    Sparlectra 0.4.18
+    Sparlectra 0.4.19
 
 Sparlectra is a Julia package for the calculation of electrical networks. It is designed to be used in the context of power system analysis and optimization. 
 
@@ -27,8 +27,9 @@ using LinearAlgebra, SparseArrays, Printf, Logging
 
 # resource data types for working with Sparlectra
 const Wurzel3 = 1.7320508075688772
-const SparlectraVersion = VersionNumber("0.4.18")
+const SparlectraVersion = VersionNumber("0.4.19")
 abstract type AbstractBranch end
+
 
 export
   
@@ -43,10 +44,12 @@ export
   ACLineSegment,
   # Trafo
   TrafoTyp, PowerTransformerTaps,  PowerTransformerWinding,  PowerTransformer, TransformerModelParameters,
+  # pst
+  #SymmetricalPhaseShifter,
   # ProSumer
   ProSumer,
   # Branch
-  AbstractBranch, Branch,BranchModel,  BranchFlow, getBranchFlow, setBranchFlow!, setBranchStatus!,getBranchLosses, setBranchLosses!,
+  AbstractBranch, Branch, BranchModel, BranchFlow, getBranchFlow, setBranchFlow!, getBranchNumber, getBranchLosses, setBranchLosses!,
   # Shunt
   Shunt,
   # Net
@@ -54,30 +57,32 @@ export
   
   # functions  
   # Compomnent
-  toComponentTyp,  getRXBG, getCompName,
+  toComponentTyp, getCompName, getCompID, 
   # Transformers
   getSideNumber2WT,  getWinding2WT,  calcTransformerRatio, recalc_trafo_model_data, create2WTRatioTransformerNoTaps, create3WTWindings!,
-  getTrafoImpPGMComp,  getWT3AuxBusID,  isPerUnit_RXGB, getWindingRatedS,
+  getTrafoImpPGMComp,  getWT3AuxBusID,  isPerUnit_RXGB, getWindingRatedS, getRXBG, getRXBG_pu, 
+  # PST
+  #setCurrentStep, getCurrentAngle, getCurrentX,
   # Nodes  
   setRatedS!,  setVmVa!,  addShuntPower!,  addLoadPower!,  addGenPower!,  getNodeVn,  isSlack,  isPVNode,  isPQNode, isIsolated, toNodeType, setNodeType!,
   busComparison,   toString,
   # Branch
-  setBranchFlow!,  setBranchStatus!,
+  setBranchFlow!, setBranchStatus!, getBranchIdx, calcBranchYser, calcBranchYshunt, calcBranchRatio,
   # Shunt
   getGBShunt,  getPQShunt, updatePQShunt!,
   # ACLineSegment
-  get_line_parameters, isPIModel,
+  get_line_parameters, isPIModel, getRXBG, getRXBG_pu,
   # ProSumer
   isSlack, isGenerator, isAPUNode, setQGenReplacement!, getQGenReplacement, toProSumptionType, updatePQ!,
   # Net
   addBus!, addShunt!, addACLine!, addPIModelACLine!, add2WTrafo!, addPIModelTrafo!, addProsumer!, lockNet!, validate!, hasBusInNet, addBusGenPower!, addBusLoadPower!, addBusShuntPower!,
-  getNetOrigBusIdx, geNetBusIdx, setBranchStatus!, setTotalLosses!, getTotalLosses, getBusType, get_bus_vn_kV, get_vn_kV, updateBranchParameters!, hasShunt!, getShunt!, markIsolatedBuses!,
+  getNetOrigBusIdx, geNetBusIdx, setNetBranchStatus!, getNetBranch, getNetBranchNumberVec, setTotalLosses!, getTotalLosses, getBusType, get_bus_vn_kV, get_vn_kV, updateBranchParameters!, hasShunt!, getShunt!, markIsolatedBuses!,setTotalBusPower!,
   # create_powermat.jl
   casefileparser, createNetFromMatPowerFile,
   # exportMatPower.jl
   writeMatpowerCasefile,
   # equicircuit.jl
-  calcComplexRatio, calcNeutralU,  createYBUS, adjacentBranches, toPU_RXGB, to_RXGB,
+  calcComplexRatio, calcNeutralU,  createYBUS, adjacentBranches, toPU_RXBG, to_RXBG, 
   # nbi.jl
   getNBI, mdoRCM,
   # jacobian.jl

@@ -127,7 +127,7 @@ function testISOBusses()
   addACLine!(net = net, fromBus = "B1", toBus = "B3", length = 100.0, r = 0.0653, x = 0.398, c_nf_per_km = 9.08, tanδ = 0.0, ratedS = 250.0, status = 1)
   addACLine!(net = net, fromBus = "B2", toBus = "B4", length = 100.0, r = 0.0653, x = 0.398, c_nf_per_km = 9.08, tanδ = 0.0, ratedS = 250.0, status = 1)
   addACLine!(net = net, fromBus = "B3", toBus = "B4", length = 100.0, r = 0.0653, x = 0.398, c_nf_per_km = 9.08, tanδ = 0.0, ratedS = 250.0, status = 1)
-  addACLine!(net = net, fromBus = "B4", toBus = "B4", length = 300.0, r = 0.0653, x = 0.398, c_nf_per_km = 9.08, tanδ = 0.0, ratedS = 250.0, status = 1)
+  addACLine!(net = net, fromBus = "B5", toBus = "B4", length = 300.0, r = 0.0653, x = 0.398, c_nf_per_km = 9.08, tanδ = 0.0, ratedS = 250.0, status = 1)
   addACLine!(net = net, fromBus = "B5", toBus = "B4", length = 300.0, r = 0.0653, x = 0.398, c_nf_per_km = 9.08, tanδ = 0.0, ratedS = 250.0, status = 1)
 
   addShunt!(net = net, busName = "B3", pShunt = 0.0, qShunt = 180.0)
@@ -136,13 +136,10 @@ function testISOBusses()
 
   addProsumer!(net = net, busName = "B3", type = "ENERGYCONSUMER", p = 285.0, q = 200.0)
   addProsumer!(net = net, busName = "B4", type = "ENERGYCONSUMER", p = 103.0, q = 62.0)
-  #addProsumer!(net = net, busName = "B3", type = "ENERGYCONSUMER", p = 5.0, q = 2.0)
-  #addProsumer!(net = net, busName = "B4", type = "ENERGYCONSUMER", p = 3.0, q = 6.0)
-
+  
   addProsumer!(net = net, busName = "B5", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.03, va_deg = 0.0, referencePri = "B5")
   addProsumer!(net = net, busName = "B2", type = "SYNCHRONOUSMACHINE", p = 600.0, vm_pu = 1.03, va_deg = 0.0)
-  #addProsumer!(net = net, busName = "B2", type = "SYNCHRONOUSMACHINE", p = 10.0, vm_pu = 1.03, va_deg = 0.0)
-
+  
   result, msg = validate!(net = net, log = true)
   if !result
     @warn msg
@@ -160,9 +157,12 @@ function testISOBusses()
     printACPFlowResults(net, etime, ite, tol)
     return false
   end
-
-  setBranchStatus!(net = net, fromBus = "B1", toBus = "B2", status = 0)
-  setBranchStatus!(net = net, fromBus = "B1", toBus = "B3", status = 0)
+  
+  brVec = getNetBranchNumberVec(net = net, fromBus = "B1", toBus = "B2")  
+  setNetBranchStatus!(net = net, branchNr = brVec[1], status = 0)
+  brVec = getNetBranchNumberVec(net = net, fromBus = "B1", toBus = "B3")
+  setNetBranchStatus!(net = net, branchNr = brVec[1], status = 0)
+  
   if length(net.isoNodes) != 1
     @warn "Expected 1 isolated node, found: $(length(net.isoNodes))"
     return false
@@ -228,7 +228,7 @@ function testCreateNetworkFromScratch()::Net
   # (bus3, bus4, length_km=100)
   addACLine!(net = net, fromBus = "B3", toBus = "B4", length = 100.0, r = 0.0653, x = 0.398, c_nf_per_km = 9.08, tanδ = 0.0)
   # (bus3, bus4, length_km=100)
-  addACLine!(net = net, fromBus = "B4", toBus = "B4", length = 300.0, r = 0.0653, x = 0.398, c_nf_per_km = 9.08, tanδ = 0.0)
+  addACLine!(net = net, fromBus = "B3", toBus = "B4", length = 300.0, r = 0.0653, x = 0.398, c_nf_per_km = 9.08, tanδ = 0.0)
   # (bus4, bus5, length_km=300)
   addACLine!(net = net, fromBus = "B4", toBus = "B5", length = 300.0, r = 0.0653, x = 0.398, c_nf_per_km = 9.08, tanδ = 0.0)
   # (bus4, bus6a, length_km=300)
