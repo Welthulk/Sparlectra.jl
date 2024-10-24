@@ -11,11 +11,12 @@ function format_version(version::VersionNumber)
 end
 
 function formatBranchResults(net::Net)
+  #! format: off
   formatted_results = @sprintf("\n===========================================================================================================================\n")
 
   formatted_results *= @sprintf("| %-25s | %-5s | %-5s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s |\n", "Branch", "From", "To", "P [MW]", "Q [MVar]", "P [MW]", "Q [MVar]", "Pv [MW]", "Qv [MVar]")
   formatted_results *= @sprintf("===========================================================================================================================\n")
-
+  #! format: on
   for br in net.branchVec
     from = br.fromBus
     to = br.toBus
@@ -44,7 +45,9 @@ function formatBranchResults(net::Net)
         bName *= " !"
       end
     end
+    #! format: off
     formatted_results *= @sprintf("| %-25s | %-5s | %-5s | %-10.3f | %-10.3f | %-10.3f | %-10.3f | %-10.3f |  %-10.3f|\n", bName, from, to, pfromVal, qfromVal, ptoVal, qtoVal, pLossval, qLossval)
+    #! format: on
   end
   formatted_results *= @sprintf("---------------------------------------------------------------------------------------------------------------------------\n")
   (∑pv, ∑qv) = getTotalLosses(net = net)

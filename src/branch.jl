@@ -79,6 +79,21 @@ struct BranchModel <: AbstractBranch
   end
 end
 
+function calcAdmittance(branch::BranchModel, u_rated::Float64, s_rated::Float64)::Tuple{ComplexF64,ComplexF64,ComplexF64,ComplexF64}
+  # Series Admittance ys
+  ys = inv(branch.r_pu + im * branch.x_pu)    
+  # Shunt Admittance ysh
+  ysh = branch,g_pu + im * branch.b_pu
+    
+  # Calculate Y_from_from, Y_from_to, Y_to_from, Y_to_to
+  Y_11 = (ys + 0.5 * ysh) / abs2(t)
+  Y_12 = -ys/conj(t)
+  Y_21 = -ys/t
+  Y_22 = ys + 0.5 * ysh
+  return (Y_11, Y_12, Y_21, Y_22)
+
+end
+
 """
     Branch
 
@@ -110,6 +125,7 @@ A mutable structure representing a branch in a power system.
 """
 mutable struct Branch
   comp::AbstractComponent
+  branchIdx::Int
   fromBus::Integer
   toBus::Integer
   r_pu::Float64                          # resistance
@@ -125,7 +141,7 @@ mutable struct Branch
   pLosses::Union{Nothing,Float64}        # active power losses
   qLosses::Union{Nothing,Float64}        # reactive power losses
 
-  function Branch(; from::Int, to::Int, baseMVA::Float64, branch::AbstractBranch, id::Int, status::Integer = 1, ratio::Union{Nothing,Float64} = nothing,
+  function Branch(; branchIdx::Int, from::Int, to::Int, baseMVA::Float64, branch::AbstractBranch, id::Int, status::Integer = 1, ratio::Union{Nothing,Float64} = nothing,
                     side::Union{Nothing,Int} = nothing, vn_kV::Union{Nothing,Float64} = nothing, fromOid::Union{Nothing,Int} = nothing, toOid::Union{Nothing,Int} = nothing, )
     if isa(branch, ACLineSegment) # Line
       @assert !isnothing(vn_kV) "vn_kV must be set for an ACLineSegment"
@@ -138,14 +154,9 @@ mutable struct Branch
         c = getBranchComp(vn_kV, from, to, id, "ACL")
       end
       c = getBranchComp(vn_kV, from, to, id, "ACL")
-      if isPIModel(branch)
-        new(c, from, to, branch.r, branch.x, branch.b, branch.g, 0.0, 0.0, status, branch.ratedS, nothing, nothing, nothing, nothing)
-      else
-        r, x, b, g = getRXBG(branch)
-        @assert !isnothing(r) && !isnothing(x) "r or x must be set for an ACLineSegment"
-        r_pu, x_pu, g_pu, b_pu = toPU_RXGB(r = r, x = x, g = g, b = b, v_kv = vn_kV, baseMVA = baseMVA)
-        new(c, from, to, r_pu, x_pu, b_pu, g_pu, 0.0, 0.0, status, branch.ratedS, nothing, nothing, nothing, nothing)
-      end
+      
+      r_pu, x_pu, b_pu, g_pu = getRXBG_pu(branch, vn_kV, baseMVA)
+      new(c, branchIdx, from, to, r_pu, x_pu, b_pu, g_pu, 0.0, 0.0, status, branch.ratedS, nothing, nothing, nothing, nothing)
     elseif isa(branch, PowerTransformer) # Transformer     
       if (isnothing(side) && branch.isBiWinder)
         side = getSideNumber2WT(branch)
@@ -153,40 +164,21 @@ mutable struct Branch
         error("side must be set for a PowerTransformer")
       end
 
-      w = (side in [1, 2, 3]) ? (side == 1 ? branch.side1 : (side == 2 ? branch.side2 : branch.side3)) : error("wrong value for 'side'")
-      if isnothing(vn_kV)
-        vn_kV = w.Vn
-      end
-      if !isnothing(fromOid) && !isnothing(toOid)
-        c = getBranchComp(vn_kV, fromOid, toOid, id, "2WT")
-      else
-        c = getBranchComp(vn_kV, from, to, id, "2WT")
-      end
+      c = if !isnothing(fromOid) && !isnothing(toOid)
+            getBranchComp(vn_kV, fromOid, toOid, id, "2WT")
+          else
+            getBranchComp(vn_kV, from, to, id, "2WT")
+          end
 
+      w = (side in [1, 2, 3]) ? (side == 1 ? branch.side1 : (side == 2 ? branch.side2 : branch.side3)) : error("wrong value for 'side'")      
+      vn_kV = isnothing(vn_kV) ? w.Vn : vn_kV
       sn_MVA = getWindingRatedS(w)
-      r, x, b, g = getRXBG(w)
-      if isPerUnit_RXGB(w)
-        r_pu = r
-        x_pu = x
-        b_pu = b
-        g_pu = g
-      else
-        @assert !isnothing(sn_MVA) "sn_MVA must be set for a PowerTransformer"
-        baseZ = (vn_kV)^2 / sn_MVA
-        r_pu = r / baseZ
-        x_pu = x / baseZ
-        b_pu = b * baseZ
-        g_pu = g * baseZ
-      end
-      if isnothing(ratio)
-        ratio = 1.0
-      end
-      angle = 0.0
-      if !isnothing(w.shift_degree)
-        angle = w.shift_degree
-      end
+      r_pu, x_pu, b_pu, g_pu = getRXBG_pu(w, vn_kV, baseMVA)
 
-      new(c, from, to, r_pu, x_pu, b_pu, g_pu, ratio, angle, status, sn_MVA, nothing, nothing)
+      ratio = isnothing(ratio) ? 1.0 : ratio
+      angle = isnothing(w.shift_degree) ? 0.0 : w.shift_degree
+
+      new(c, branchIdx, from, to, r_pu, x_pu, b_pu, g_pu, ratio, angle, status, sn_MVA, nothing, nothing, nothing, nothing)
     elseif isa(branch, BranchModel) # PI-Model
       @assert !isnothing(vn_kV) "vn_kV must be set for PI-Model"
 
@@ -196,7 +188,7 @@ mutable struct Branch
         c = getBranchComp(vn_kV, from, to, id, "PI")
       end
 
-      new(c, from, to, branch.r_pu, branch.x_pu, branch.b_pu, branch.g_pu, branch.ratio, branch.angle, status, branch.sn_MVA, nothing, nothing, nothing, nothing)
+      new(c, branchIdx, from, to, branch.r_pu, branch.x_pu, branch.b_pu, branch.g_pu, branch.ratio, branch.angle, status, branch.sn_MVA, nothing, nothing, nothing, nothing)
     else
       error("Branch type not supported")
     end
@@ -205,6 +197,7 @@ mutable struct Branch
   function Base.show(io::IO, b::Branch)
     print(io, "Branch( ")
     print(io, b.comp, ", ")
+    print(io, "branchIdx: ", b.branchIdx, ", ")
     print(io, "fromBus: ", b.fromBus, ", ")
     print(io, "toBus: ", b.toBus, ", ")
 
@@ -260,6 +253,14 @@ function getBranchFlow(branch::Branch, from::Node, to::Node)
   end
 end
 
+function getBranch2PortParm(branch::Branch)::Tuple{Float64,Float64,Float64,Float64}
+  return branch.A, branch.B, branch.C, branch.D
+end
+
+function getBranchIdx(branch::Branch)
+  return branch.branchIdx  
+end
+
 function getBranchLosses(branch::Branch)
   return branch.pLosses, branch.qLosses
 end
@@ -267,6 +268,24 @@ end
 function setBranchLosses!(branch::Branch, pLosses::Float64, qLosses::Float64)
   branch.pLosses = pLosses
   branch.qLosses = qLosses
+end
+
+function calcBranchYser(branch::Branch)::ComplexF64
+  return inv((branch.r_pu + branch.x_pu * im))
+end
+
+function calcBranchYshunt(branch::Branch)::ComplexF64
+  return (branch.g_pu + branch.b_pu * im)
+end
+
+function calcBranchRatio(branch::Branch)::ComplexF64
+    t = 1.0 + 0.0 * im
+    ratio = branch.ratio
+    shift_degree = branch.angle
+    if ratio != 0.0 || shift_degree != 0.0
+      t = calcComplexRatio(ratio, shift_degree)
+    end
+    return t
 end
 
 function getBranchComp(Vn_kV::Float64, from::Int, to::Int, idx::Int, kind::String)

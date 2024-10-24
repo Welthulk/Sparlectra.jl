@@ -52,8 +52,14 @@ mutable struct ACLineSegment <: AbstractBranch
     else
       if !isnothing(b)
         b = b
-      elseif !isnothing(c_nf_per_km) && !isnothing(tanδ)
-        y1_shunt_ = 2.0 * pi * 50.0 * c_nf_per_km * 1e-9 * (tanδ + im * 1.0)
+      elseif !isnothing(c_nf_per_km) && !isnothing(tanδ)        
+        if !paramsBasedOnLength
+          # b and g are multiplied by length in the getRXBG function
+          c_nf = c_nf_per_km          
+        else
+          c_nf = c_nf_per_km * length
+        end  
+        y1_shunt_ = 2.0 * pi * 50.0 * c_nf * 1e-9 *  (tanδ + im * 1.0)
         g = real(y1_shunt_)
         b = imag(y1_shunt_)
       else
@@ -113,9 +119,14 @@ getRXBG(acLineSegment)
 function getRXBG(o::ACLineSegment)::Tuple{Float64,Float64,Union{Nothing,Float64},Union{Nothing,Float64}}
   if o.paramsBasedOnLength || o._isPIModel
     return (o.r, o.x, o.b, o.g)
-  else
+  else    
     return (o.r * o.length, o.x * o.length, o.b * o.length, o.g * o.length)
   end
+end
+
+function getRXBG_pu(o::ACLineSegment, vn_kV::Float64, baseMVA::Float64)::Tuple{Float64,Float64,Union{Nothing,Float64},Union{Nothing,Float64}}
+  r, x, b, g = getRXBG(o)
+  return toPU_RXGB(r = r, x = x, g = g, b = b, v_kv = vn_kV, baseMVA = baseMVA)
 end
 
 """
