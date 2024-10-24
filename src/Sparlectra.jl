@@ -1,5 +1,5 @@
 """
-    Sparlectra 0.4.18
+    Sparlectra 0.4.19
 
 Sparlectra is a Julia package for the calculation of electrical networks. It is designed to be used in the context of power system analysis and optimization. 
 
@@ -49,7 +49,7 @@ export
   # ProSumer
   ProSumer,
   # Branch
-  AbstractBranch, Branch, BranchModel, BranchFlow, getBranchFlow, setBranchFlow!, setBranchStatus!, getBranchNumber, getBranchLosses, setBranchLosses!,
+  AbstractBranch, Branch, BranchModel, BranchFlow, getBranchFlow, setBranchFlow!, getBranchNumber, getBranchLosses, setBranchLosses!,
   # Shunt
   Shunt,
   # Net

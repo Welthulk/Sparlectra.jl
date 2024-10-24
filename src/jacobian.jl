@@ -544,7 +544,10 @@ A tuple containing the number of iterations and the result of the calculation:
 - `2`: Unsolvable system of equations.
 - `3`: Error.
 =#
-function calcNewtonRaphson!(Y::AbstractMatrix{ComplexF64}, nodes::Vector{Node}, isoNodes::Vector{Int}, Sbase_MVA::Float64, maxIte::Int, tolerance::Float64 = 1e-6, verbose::Int = 0, sparse::Bool = false)
+function calcNewtonRaphson!(net::Net, Y::AbstractMatrix{ComplexF64}, maxIte::Int, tolerance::Float64 = 1e-6, verbose::Int = 0, sparse::Bool = false)
+  nodes = net.nodeVec 
+  isoNodes = net.isoNodes
+  Sbase_MVA = net.baseMVA
   busVec, slackNum = getBusData(nodes, Sbase_MVA)
 
   adjBranch = adjacentBranches(Y, debug)
@@ -690,6 +693,10 @@ function calcNewtonRaphson!(Y::AbstractMatrix{ComplexF64}, nodes::Vector{Node}, 
     end
   end
 
+  totalBusP = sum(bus -> bus._pRes, busVec)
+  totalBusQ = sum(bus -> bus._qRes, busVec)  
+  setTotalBusPower!(net=net, p=totalBusP, q=totalBusQ)
+
   return iteration_count, erg
 end
 
@@ -725,5 +732,5 @@ function runpf!(net::Net, maxIte::Int, tolerance::Float64 = 1e-6, verbose::Int =
 
   Y = createYBUS(net=net, sparse=sparse, printYBUS=printYBus)
 
-  return calcNewtonRaphson!(Y, net.nodeVec, net.isoNodes, net.baseMVA, maxIte, tolerance, verbose, sparse)
+  return calcNewtonRaphson!(net, Y, maxIte, tolerance, verbose, sparse)
 end

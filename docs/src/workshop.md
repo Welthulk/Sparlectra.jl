@@ -85,7 +85,8 @@ using Sparlectra
 file = "case5.m" # load a case file from the data folder
 net = run_acpflow(casefile=file) # run the power flow calculation
 
-setBranchStatus!(net=net, fromBus="1", toBus="2", status=0) # set the status of the branch between Bus1 and 
+brVec = getNetBranchNumberVec(net = net, fromBus = "1", toBus = "2")  
+setNetBranchStatus!(net = net, branchNr = brVec[1], status = 0) # set the status of the branch between Bus1 and Bus2 to 0
 run_net_acpflow(net = net) # run the power flow calculation again
 addBusShuntPower!(net = net, busName = "1", p = 0.0, q = 1.0) # Update the power of Bus1 to 0.0 MW and 1.0 MVar
 run_net_acpflow(net = net) # run the power flow calculation again
