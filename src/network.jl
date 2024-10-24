@@ -41,7 +41,7 @@ Functions:
 - `get_vn_kV(; net::Net, busIdx::Int)`: Gets the voltage level of a bus by index.
 - `getBusType(; net::Net, busName::String)`: Gets the type of a bus by name.
 - `updateBranchParameters!(; net::Net, fromBus::String, toBus::String, branch::BranchModel)`: Updates the parameters of a branch in the network.
-- `setBranchStatus!(; net::Net, branchIdx::Int, status::Int)`: Sets the status of a branch.
+- `setNetBranchStatus!(; net::Net, branchIdx::Int, status::Int)`: Sets the status of a branch.
 - `setTotalLosses!(; net::Net, pLosses::Float64, qLosses::Float64)`: Sets the total losses of the network.
 - `getTotalLosses(; net::Net)`: Gets the total losses of the network.
 - `getNetOrigBusIdx(; net::Net, busName::String)`: Gets the original index of a bus in the network.
@@ -552,22 +552,21 @@ function addBusShuntPower!(; net::Net, busName::String, p::Float64, q::Float64)
 end
 
 """
-Set the status of a branch in the network.
+    setNetBranchStatus!(; net::Net, branchNr::Int, status::Int)
+
+Sets the status of a branch in the network.
 
 # Arguments
-- `net::Net`: The network object.
-- `fromBus::String`: The name of the bus where the branch originates.
-- `toBus::String`: The name of the bus where the branch terminates.
-- `status::Int`: The new status of the branch.
+- `net::Net`: The network.
+- `branchNr::Int`: The number of the branch.
+- `status::Int`: The status of the branch. 1 = in service, 0 = out of service.
 
-# Examples
+# Example
 ```julia
-net = run_acpflow(max_ite= 7,tol = 1e-6, casefile='a_case.m') # run the power flow on the network and get the network object
-setBranchStatus!(net, "Bus1", "Bus2", 1)  # Set the status of the branch from Bus1 to Bus2 to 1.
-run_net_acpflow(net = net, max_ite= 7,tol = 1e-6) # rerun the power flow with the updated network
+setNetBranchStatus!(net = network, branchNr = 1, status = 1)
 ```
 """
-function setNetBranchStatus!(; net::Net, branchNr::Int, fromBus::String, toBus::String, status::Int)
+function setNetBranchStatus!(; net::Net, branchNr::Int, status::Int)
   @debug "Set branch status to $fromBusSwitch and $toBusSwitch"
   
   
@@ -577,6 +576,22 @@ function setNetBranchStatus!(; net::Net, branchNr::Int, fromBus::String, toBus::
   markIsolatedBuses!(net = net, log = false)
 end
 
+"""
+    setNetBranchStatus!(; net::Net, branchNr::Int, status::Int)
+
+Sets the status of a branch in the network.
+
+# Arguments
+- `net::Net`: The network.
+- `branchNr::Int`: The number of the branch.
+- `status::Int`: The status of the branch. 1 = in service, 0 = out of service.
+
+# Example
+```julia
+  brVec = getNetBranchNumberVec(net = net, fromBus = "B1", toBus = "B2")  
+  setNetBranchStatus!(net = net, branchNr = brVec[1], status = 0)
+```
+"""
 function getNetBranchNumberVec(; net::Net, fromBus::String, toBus::String)::Vector{Int}
   from = geNetBusIdx(net = net, busName = fromBus)
   to = geNetBusIdx(net = net, busName = toBus)
