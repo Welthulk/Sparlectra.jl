@@ -3,6 +3,30 @@
 # include-file prosumer.jl
 
 # Data type to describe producers and consumers
+"""
+    ProSumer
+
+A mutable structure representing a prosumer in a power system. A prosumer is an entity that either produces or consumes power.
+
+# Fields
+- `comp::AbstractComponent`: The component of the prosumer.
+- `busIdx::Int`: The index of the bus where the prosumer is connected.
+- `pGen::Float64`: The active power generation of the prosumer.
+- `qGen::Float64`: The reactive power generation of the prosumer.
+- `pLoad::Float64`: The active power consumption of the prosumer.
+- `qLoad::Float64`: The reactive power consumption of the prosumer.
+- `status::Int`: The status of the prosumer. 1 = in service, 0 = out of service.
+
+# Constructors
+- `ProSumer(comp::AbstractComponent, busIdx::Int, pGen::Float64, qGen::Float64, pLoad::Float64, qLoad::Float64, status::Int)`: Creates a new `ProSumer` instance.
+
+# Methods
+- `Base.show(io::IO, prosumer::ProSumer)`: Prints the `ProSumer` instance.
+
+# Example
+```julia
+prosumer = ProSumer(comp, 1, 100.0, 50.0, 80.0, 40.0, 1)
+"""
 mutable struct ProSumer
   comp::AbstractComponent
   ratedS::Union{Nothing,Float64}

@@ -2,6 +2,18 @@
 # Date: 04.09.2023
 # include-file losses.jl
 
+"""
+    calcNetLosses!(net::Net)
+
+Calculates the network losses for the given network.
+
+# Arguments
+- `net::Net`: The network.
+
+# Example
+```julia
+calcNetLosses!(net = network)
+"""
 function calcNetLosses!(net::Net)
   @debug "\ncalcNetworkLosses\n"
   # Sij = vi*exp(j*phi_i)*( (vi*exp(j*phi_i) - vk*exp(j*phi_k)*Y_ik +  vi*exp(j*phi_i)*Y0ik)*  

@@ -95,7 +95,7 @@ mutable struct Node
     if !isnothing(oBusIdx)
       bIdx = oBusIdx
     end
-    c = getNocdeComp(vn_kV, bIdx, nodeType, isAux)
+    c = getNodeComp(vn_kV, bIdx, nodeType, isAux)
 
     new(c, busIdx, nodeType, ratedS, zone, area, vm_pu, va_deg, pƩLoad, qƩLoad, pShunt, qShunt, pƩGen, qƩGen, vmin_pu, vmax_pu)
   end
@@ -149,7 +149,7 @@ mutable struct Node
   end
 end
 
-function getNocdeComp(Vn_kV::Float64, node_idx::Int, nodeType, isAux::Bool = false)::ImpPGMComp
+function getNodeComp(Vn_kV::Float64, node_idx::Int, nodeType, isAux::Bool = false)::ImpPGMComp
   cTyp = toComponentTyp("Busbarsection")
   if (nodeType == Slack)
     name = "Bus_$(Int(node_idx))_$(string(convert(Int,trunc(Vn_kV))))*"
