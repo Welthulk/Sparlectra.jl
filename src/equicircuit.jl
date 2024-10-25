@@ -235,6 +235,7 @@ Creates the bus admittance matrix (YBUS) of the network.
 - `Y::Matrix{ComplexF64}`: The bus admittance matrix (YBUS).
 
 """
+# TODO: use calcAdmittanceMatrix instead of inside the function
 function createYBUS(; net::Net, sparse::Bool = true, printYBUS::Bool = false)
 
   # Determine the maximum bus number in the network, taking isolated buses into account
@@ -247,6 +248,7 @@ function createYBUS(; net::Net, sparse::Bool = true, printYBUS::Bool = false)
   @debug "YBUS: Size = $(n)x$(n) ($(sparse ? "sparse" : "normal"))"
 
   for branch in net.branchVec
+    @assert branch isa AbstractBranch "branch $(branch) is not of type AbstractBranch"
     fromNode = branch.fromBus
     toNode = branch.toBus
 

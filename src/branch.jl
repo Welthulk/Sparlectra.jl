@@ -66,6 +66,7 @@ A structure representing a branch model in a power system.
 BranchModel(r_pu = 0.01, x_pu = 0.1, b_pu = 0.02, g_pu = 0.02, ratio = 1.0, angle = 0.0, sn_MVA = 100.0)
 ```
 """
+# TODO check if BranchModel is needed
 struct BranchModel <: AbstractBranch
   r_pu::Float64
   x_pu::Float64
@@ -84,6 +85,10 @@ function calcAdmittance(branch::BranchModel, u_rated::Float64, s_rated::Float64)
   ys = inv(branch.r_pu + im * branch.x_pu)
   # Shunt Admittance ysh
   ysh = branch, g_pu + im * branch.b_pu
+
+  ratio = (isnothing(branch.ratio) || branch.ratio == 0.0) ? 1.0 : branch.ratio
+  shift_degree = isnothing(branch.shift_degree) ? 0.0 : branch.shift_degree
+  t = (shift_degree != 0.0) ? calcComplexRatio(ratio, shift_degree) : 1.0 + 0.0im
 
   # Calculate Y_from_from, Y_from_to, Y_to_from, Y_to_to
   Y_11 = (ys + 0.5 * ysh) / abs2(t)
@@ -122,7 +127,7 @@ A mutable structure representing a branch in a power system.
 # Methods
 - `Base.show(io::IO, b::Branch)`: Prints the `Branch` instance.
 """
-mutable struct Branch
+mutable struct Branch <: AbstractBranch
   comp::AbstractComponent
   branchIdx::Int
   fromBus::Integer
@@ -238,6 +243,23 @@ mutable struct Branch
 
     println(io, ")")
   end
+end
+
+function calcAdmittance(branch::Branch, u_rated::Float64, s_rated::Float64)::Tuple{ComplexF64,ComplexF64,ComplexF64,ComplexF64}
+  # Series Admittance ys
+  ys = inv(branch.r_pu + im * branch.x_pu)
+  # Shunt Admittance ysh
+  ysh = branch, g_pu + im * branch.b_pu
+  # calc complex ratio
+  ratio = (isnothing(branch.ratio) || branch.ratio == 0.0) ? 1.0 : branch.ratio
+  shift_degree = isnothing(branch.shift_degree) ? 0.0 : branch.shift_degree
+  t = (shift_degree != 0.0) ? calcComplexRatio(ratio, shift_degree) : 1.0 + 0.0im
+  # Calculate Y_from_from, Y_from_to, Y_to_from, Y_to_to
+  Y_11 = (ys + 0.5 * ysh) / abs2(t)
+  Y_12 = -ys / conj(t)
+  Y_21 = -ys / t
+  Y_22 = ys + 0.5 * ysh
+  return (Y_11, Y_12, Y_21, Y_22)
 end
 
 # helper
