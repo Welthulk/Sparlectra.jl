@@ -81,17 +81,16 @@ end
 
 function calcAdmittance(branch::BranchModel, u_rated::Float64, s_rated::Float64)::Tuple{ComplexF64,ComplexF64,ComplexF64,ComplexF64}
   # Series Admittance ys
-  ys = inv(branch.r_pu + im * branch.x_pu)    
+  ys = inv(branch.r_pu + im * branch.x_pu)
   # Shunt Admittance ysh
-  ysh = branch,g_pu + im * branch.b_pu
-    
+  ysh = branch, g_pu + im * branch.b_pu
+
   # Calculate Y_from_from, Y_from_to, Y_to_from, Y_to_to
   Y_11 = (ys + 0.5 * ysh) / abs2(t)
-  Y_12 = -ys/conj(t)
-  Y_21 = -ys/t
+  Y_12 = -ys / conj(t)
+  Y_21 = -ys / t
   Y_22 = ys + 0.5 * ysh
   return (Y_11, Y_12, Y_21, Y_22)
-
 end
 
 """
@@ -141,8 +140,20 @@ mutable struct Branch
   pLosses::Union{Nothing,Float64}        # active power losses
   qLosses::Union{Nothing,Float64}        # reactive power losses
 
-  function Branch(; branchIdx::Int, from::Int, to::Int, baseMVA::Float64, branch::AbstractBranch, id::Int, status::Integer = 1, ratio::Union{Nothing,Float64} = nothing,
-                    side::Union{Nothing,Int} = nothing, vn_kV::Union{Nothing,Float64} = nothing, fromOid::Union{Nothing,Int} = nothing, toOid::Union{Nothing,Int} = nothing, )
+  function Branch(;
+    branchIdx::Int,
+    from::Int,
+    to::Int,
+    baseMVA::Float64,
+    branch::AbstractBranch,
+    id::Int,
+    status::Integer = 1,
+    ratio::Union{Nothing,Float64} = nothing,
+    side::Union{Nothing,Int} = nothing,
+    vn_kV::Union{Nothing,Float64} = nothing,
+    fromOid::Union{Nothing,Int} = nothing,
+    toOid::Union{Nothing,Int} = nothing,
+  )
     if isa(branch, ACLineSegment) # Line
       @assert !isnothing(vn_kV) "vn_kV must be set for an ACLineSegment"
       if isnothing(ratio)
@@ -154,7 +165,7 @@ mutable struct Branch
         c = getBranchComp(vn_kV, from, to, id, "ACL")
       end
       c = getBranchComp(vn_kV, from, to, id, "ACL")
-      
+
       r_pu, x_pu, b_pu, g_pu = getRXBG_pu(branch, vn_kV, baseMVA)
       new(c, branchIdx, from, to, r_pu, x_pu, b_pu, g_pu, 0.0, 0.0, status, branch.ratedS, nothing, nothing, nothing, nothing)
     elseif isa(branch, PowerTransformer) # Transformer     
@@ -165,17 +176,18 @@ mutable struct Branch
       end
 
       c = if !isnothing(fromOid) && !isnothing(toOid)
-            getBranchComp(vn_kV, fromOid, toOid, id, "2WT")
-          else
-            getBranchComp(vn_kV, from, to, id, "2WT")
-          end
+        getBranchComp(vn_kV, fromOid, toOid, id, "2WT")
+      else
+        getBranchComp(vn_kV, from, to, id, "2WT")
+      end
 
-      w = (side in [1, 2, 3]) ? (side == 1 ? branch.side1 : (side == 2 ? branch.side2 : branch.side3)) : error("wrong value for 'side'")      
+      w = (side in [1, 2, 3]) ? (side == 1 ? branch.side1 : (side == 2 ? branch.side2 : branch.side3)) : error("wrong value for 'side'")
       vn_kV = isnothing(vn_kV) ? w.Vn : vn_kV
       sn_MVA = getWindingRatedS(w)
       r_pu, x_pu, b_pu, g_pu = getRXBG_pu(w, vn_kV, baseMVA)
 
       ratio = isnothing(ratio) ? 1.0 : ratio
+      @assert ratio != 0.0 "ratio must not be 0.0 for transformers"
       angle = isnothing(w.shift_degree) ? 0.0 : w.shift_degree
 
       new(c, branchIdx, from, to, r_pu, x_pu, b_pu, g_pu, ratio, angle, status, sn_MVA, nothing, nothing, nothing, nothing)
@@ -258,7 +270,7 @@ function getBranch2PortParm(branch::Branch)::Tuple{Float64,Float64,Float64,Float
 end
 
 function getBranchIdx(branch::Branch)
-  return branch.branchIdx  
+  return branch.branchIdx
 end
 
 function getBranchLosses(branch::Branch)
@@ -279,13 +291,13 @@ function calcBranchYshunt(branch::Branch)::ComplexF64
 end
 
 function calcBranchRatio(branch::Branch)::ComplexF64
-    t = 1.0 + 0.0 * im
-    ratio = branch.ratio
-    shift_degree = branch.angle
-    if ratio != 0.0 || shift_degree != 0.0
-      t = calcComplexRatio(ratio, shift_degree)
-    end
-    return t
+  t = 1.0 + 0.0 * im
+  ratio = branch.ratio
+  shift_degree = branch.angle
+  if ratio != 0.0 || shift_degree != 0.0
+    t = calcComplexRatio(ratio, shift_degree)
+  end
+  return t
 end
 
 function getBranchComp(Vn_kV::Float64, from::Int, to::Int, idx::Int, kind::String)

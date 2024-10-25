@@ -237,7 +237,7 @@ Creates the bus admittance matrix (YBUS) of the network.
 """
 function createYBUS(; net::Net, sparse::Bool = true, printYBUS::Bool = false)
 
-  # Bestimme die maximale Busnummer im Netzwerk, unter Berücksichtigung isolierter Busse
+  # Determine the maximum bus number in the network, taking isolated buses into account
   max_bus = maximum(max(branch.fromBus, branch.toBus) for branch in net.branchVec)
   n = max_bus - length(net.isoNodes)
 
