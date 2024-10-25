@@ -1,5 +1,5 @@
 """
-    Sparlectra 0.4.19
+    Sparlectra 0.4.20
 
 Sparlectra is a Julia package for the calculation of electrical networks. It is designed to be used in the context of power system analysis and optimization. 
 
@@ -27,9 +27,10 @@ using LinearAlgebra, SparseArrays, Printf, Logging
 
 # resource data types for working with Sparlectra
 const Wurzel3 = 1.7320508075688772
-const SparlectraVersion = VersionNumber("0.4.19")
+const SparlectraVersion = VersionNumber("0.4.20")
 abstract type AbstractBranch end
 
+version() = SparlectraVersion
 
 export
   
