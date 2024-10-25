@@ -1,7 +1,21 @@
 # Author: Udo Schmitz (https://github.com/Welthulk)
 # Date: 08.05.2023
 # include-file nbi.jl
+"""
+    getNBI(nodeNumberVec, branchTupleVec)
 
+Generates the Node-Branch Incidence (NBI) matrix for a given set of nodes and branches.
+
+# Arguments
+- `nodeNumberVec::Vector{Int}`: A vector containing the node numbers.
+- `branchTupleVec::Vector{Tuple{Int, Int}}`: A vector of tuples where each tuple represents a branch with the from and to bus numbers.
+
+# Returns
+- `NBI_matrix::Matrix{Int}`: The Node-Branch Incidence matrix.
+
+# Example
+see function test_NBI_MDO()
+"""
 function getNBI(nodeNumberVec, branchTupleVec)
   num_nodes = length(nodeNumberVec)
   num_branches = length(branchTupleVec)
@@ -26,6 +40,21 @@ function getNBI(nodeNumberVec, branchTupleVec)
 end
 
 # RCM-algorithm: Reverse Cuthill-McKeen algorithm (https://en.wikipedia.org/wiki/Cuthill%E2%80%93McKee_algorithm)
+"""
+    mdoRCM(n::Int, branchTupleVec::Vector{Tuple{Int, Int}})::Vector{Int}
+
+Performs the Modified Reverse Cuthill-McKee (RCM) algorithm to reorder the nodes of a graph to reduce its bandwidth.
+
+# Arguments
+- `n::Int`: The number of nodes in the graph.
+- `branchTupleVec::Vector{Tuple{Int, Int}}`: A vector of tuples where each tuple represents a branch with the from and to bus numbers.
+
+# Returns
+- `order::Vector{Int}`: A vector representing the new order of the nodes after applying the RCM algorithm.
+
+# Example
+  see function test_NBI_MDO()
+"""
 function mdoRCM(n, branchTupleVec)::Vector{Int}
   adjacency = zeros(Int, n, n)
 

@@ -1,11 +1,12 @@
 # Author: Udo Schmitz (https://github.com/Welthulk)
 # Date: 01.04.2024
 # include-file network.jl
-
 """
-Net: Represents an electrical network.
+    Net
 
-Fields:
+Represents an electrical network.
+
+# Fields
 - `name::String`: Name of the network.
 - `baseMVA::Float64`: Base MVA of the network.
 - `slackVec::Vector{Int}`: Vector containing indices of slack buses.
@@ -19,14 +20,14 @@ Fields:
 - `shuntVec::Vector{Shunt}`: Vector containing shunts in the network.
 - `busDict::Dict{String,Int}`: Dictionary mapping bus names to indices.
 - `busOrigIdxDict::Dict{Int,Int}`: Dictionary mapping current bus indices to original indices.
-- `branchDict::Dict{Tuple{Int, Int},Int} : Dictionary mapping branch tuples to indices.
+- `branchDict::Dict{Tuple{Int, Int},Int}`: Dictionary mapping branch tuples to indices.
 - `totalLosses::Vector{Tuple{Float64,Float64}}`: Vector containing tuples of total power losses.
 - `_locked::Bool`: Boolean indicating if the network is locked.
 
-Constructors:
+# Constructors
 - `Net(name::String, baseMVA::Float64, vmin_pu::Float64 = 0.9, vmax_pu::Float64 = 1.1)`: Creates a new `Net` object with the given name, base MVA, and optional voltage limits.
 
-Functions:
+# Functions
 - `addBus!(; net::Net, ...)`: Adds a bus to the network.
 - `addShunt!(; net::Net, ...)`: Adds a shunt to the network.
 - `addBranch!(; net::Net, ...)`: Adds a branch to the network.
@@ -41,15 +42,16 @@ Functions:
 - `get_vn_kV(; net::Net, busIdx::Int)`: Gets the voltage level of a bus by index.
 - `getBusType(; net::Net, busName::String)`: Gets the type of a bus by name.
 - `updateBranchParameters!(; net::Net, fromBus::String, toBus::String, branch::BranchModel)`: Updates the parameters of a branch in the network.
-- `setNetBranchStatus!(; net::Net, branchIdx::Int, status::Int)`: Sets the status of a branch.
+- `setNetBranchStatus!(; net::Net, branchNr::Int, status::Int)`: Sets the status of a branch.
 - `setTotalLosses!(; net::Net, pLosses::Float64, qLosses::Float64)`: Sets the total losses of the network.
 - `getTotalLosses(; net::Net)`: Gets the total losses of the network.
 - `getNetOrigBusIdx(; net::Net, busName::String)`: Gets the original index of a bus in the network.
-- `geNetBusIdx(; net::Net, busName::String)`: Gets the index of a bus in the network.
+- `getNetBusIdx(; net::Net, busName::String)`: Gets the index of a bus in the network.
 - `hasBusInNet(; net::Net, busName::String)`: Checks if a bus exists in the network.
 - `addBusGenPower!(; net::Net, busName::String, pGen::Float64, qGen::Float64)`: Adds generator power to a bus.
 - `addBusLoadPower!(; net::Net, busName::String, pLoad::Float64, qLoad::Float64)`: Adds load power to a bus.
 - `addBusShuntPower!(; net::Net, busName::String, pShunt::Float64, qShunt::Float64)`: Adds shunt power to a bus.
+- `getNetBranch(; net::Net, fromBus::String, toBus::String)`: Retrieves the branch between two specified buses in the network.
 """
 
 struct Net
@@ -66,12 +68,12 @@ struct Net
   shuntVec::Vector{Shunt}
   #pstVect::Vector{}
   busDict::Dict{String,Int}
-  busOrigIdxDict::Dict{Int,Int}  
+  busOrigIdxDict::Dict{Int,Int}
   totalLosses::Vector{Tuple{Float64,Float64}}
   totalBusPower::Vector{Tuple{Float64,Float64}}
   _locked::Bool
   shuntDict::Dict{Int,Int}
-  isoNodes::Vector{Int}  
+  isoNodes::Vector{Int}
   #branchDict::Dict{Tuple{String,String}, Branch}  # fast search for existing branches
   #! format: off
   function Net(; name::String, baseMVA::Float64, vmin_pu::Float64 = 0.9, vmax_pu::Float64 = 1.1)    
@@ -225,11 +227,43 @@ function addShunt!(; net::Net, busName::String, pShunt::Float64, qShunt::Float64
   end
 end
 
+"""
+    hasShunt!(; net::Net, busName::String)::Bool
+
+Checks if a shunt exists at the specified bus in the network.
+
+# Arguments
+- `net::Net`: The network.
+- `busName::String`: The name of the bus.
+
+# Returns
+- `Bool`: True if a shunt exists at the specified bus, false otherwise.
+
+# Example
+```julia
+hasShunt!(net = network, busName = "Bus1")
+"""
 function hasShunt!(; net::Net, busName::String)::Bool
   busIdx = geNetBusIdx(net = net, busName = busName)
   return haskey(net.shuntDict, busIdx)
 end
 
+"""
+    getShunt!(; net::Net, busName::String)::Shunt
+
+Retrieves the shunt at the specified bus in the network.
+
+# Arguments
+- `net::Net`: The network.
+- `busName::String`: The name of the bus.
+
+# Returns
+- `Shunt`: The shunt at the specified bus.
+
+# Example
+```julia
+getShunt!(net = network, busName = "Bus1")
+"""
 function getShunt!(; net::Net, busName::String)::Shunt
   busIdx  = geNetBusIdx(net = net, busName = busName)
   idShunt = net.shuntDict[busIdx]
@@ -263,8 +297,8 @@ function addBranch!(; net::Net, from::Int, to::Int, branch::AbstractBranch, stat
 
   if isnothing(vn_kV)
     vn_kV = getNodeVn(net.nodeVec[from])
-  end  
-  br = Branch(branchIdx = idBrunch, from = from, to = to, baseMVA = net.baseMVA, branch = branch, id = idBrunch, status = status, ratio = ratio, side = side, vn_kV = vn_kV, fromOid = fOrig, toOid = tOrig)  
+  end
+  br = Branch(branchIdx = idBrunch, from = from, to = to, baseMVA = net.baseMVA, branch = branch, id = idBrunch, status = status, ratio = ratio, side = side, vn_kV = vn_kV, fromOid = fOrig, toOid = tOrig)
   push!(net.branchVec, br)
 end
 
@@ -292,7 +326,7 @@ function updateBranchParameters!(; net::Net, branchNr::Int, branch::BranchModel)
   br.g_pu = branch.g_pu
   br.ratio = branch.ratio
   br.angle = branch.angle
-  br.sn_MVA = branch.sn_MVA  
+  br.sn_MVA = branch.sn_MVA
 end
 
 """
@@ -375,8 +409,20 @@ Add a transformer with PI model to the network.
 - `shift_deg::Union{Nothing, Float64}`: Phase shift angle of the transformer. Default is `nothing`.
 - `isAux::Bool`: Whether the transformer is an auxiliary transformer. Default is `false`.
 """
-function addPIModelTrafo!(; net::Net, fromBus::String, toBus::String, r_pu::Float64, x_pu::Float64, b_pu::Float64, status::Int, ratedU::Union{Nothing,Float64} = nothing,  ratedS::Union{Nothing,Float64} = nothing,  ratio::Union{Nothing,Float64} = nothing,
-                            shift_deg::Union{Nothing,Float64} = nothing,  isAux::Bool = false,)
+function addPIModelTrafo!(;
+  net::Net,
+  fromBus::String,
+  toBus::String,
+  r_pu::Float64,
+  x_pu::Float64,
+  b_pu::Float64,
+  status::Int,
+  ratedU::Union{Nothing,Float64} = nothing,
+  ratedS::Union{Nothing,Float64} = nothing,
+  ratio::Union{Nothing,Float64} = nothing,
+  shift_deg::Union{Nothing,Float64} = nothing,
+  isAux::Bool = false,
+)
   @assert fromBus != toBus "From and to bus must be different"
   from = geNetBusIdx(net = net, busName = fromBus)
   to = geNetBusIdx(net = net, busName = toBus)
@@ -568,8 +614,7 @@ setNetBranchStatus!(net = network, branchNr = 1, status = 1)
 """
 function setNetBranchStatus!(; net::Net, branchNr::Int, status::Int)
   @debug "Set branch status to $fromBusSwitch and $toBusSwitch"
-  
-  
+
   @assert branchNr > 0 "Branch number must be greater than 0"
   @assert branchNr <= length(net.branchVec) "Branch $branchNr not found in the network"
   net.branchVec[branchNr].status = status
@@ -604,7 +649,24 @@ function getNetBranchNumberVec(; net::Net, fromBus::String, toBus::String)::Vect
   return brNumberVec
 end
 
-function getNetBranch(; net::Net, fromBus::String, toBus::String)
+"""
+    getNetBranch(; net::Net, fromBus::String, toBus::String)::Union{Branch,Nothing}
+
+Retrieves the first branch found between two specified buses in the network.
+
+# Arguments
+- `net::Net`: The network.
+- `fromBus::String`: The name of the bus where the branch starts.
+- `toBus::String`: The name of the bus where the branch ends.
+
+# Returns
+- `Union{Branch,Nothing}`: The branch between the specified buses, or `nothing` if no such branch exists.
+
+# Example
+```julia
+getNetBranch(net = network, fromBus = "Bus1", toBus = "Bus2")
+"""
+function getNetBranch(; net::Net, fromBus::String, toBus::String)::Union{Branch,Nothing}
   from = geNetBusIdx(net = net, busName = fromBus)
   to = geNetBusIdx(net = net, busName = toBus)
 
@@ -720,7 +782,7 @@ setTotalBusPower!(net = network, p = 100.0, q = 50.0)
 ```
 """
 function setTotalBusPower!(; net::Net, p::Float64, q::Float64)
-  push!(net.totalBusPower, (p, q))  
+  push!(net.totalBusPower, (p, q))
 end
 
 """
@@ -758,7 +820,6 @@ Set the total losses in the network.
 function setTotalLosses!(; net::Net, pLosses::Float64, qLosses::Float64)
   push!(net.totalLosses, (pLosses, qLosses))
 end
-
 
 """
 Get the total losses in the network.

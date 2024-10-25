@@ -1,6 +1,27 @@
 # Author: Udo Schmitz (https://github.com/Welthulk)
 # Date: 22.05.2023
 # include-file equicircuit.jl
+"""
+    cubicSplineCoefs(x::Vector{Float64}, y::Vector{Float64})::Tuple{Vector{Float64}, Vector{Float64}, Vector{Float64}, Vector{Float64}}
+
+Calculates the coefficients of the cubic spline interpolation for the given data points.
+
+# Arguments
+- `x::Vector{Float64}`: A vector of x-coordinates of the data points.
+- `y::Vector{Float64}`: A vector of y-coordinates of the data points.
+
+# Returns
+- `a::Vector{Float64}`: The coefficients for the cubic term.
+- `b::Vector{Float64}`: The coefficients for the quadratic term.
+- `c::Vector{Float64}`: The coefficients for the linear term.
+- `d::Vector{Float64}`: The coefficients for the constant term.
+
+# Example
+```julia
+x = [1.0, 2.0, 3.0, 4.0]
+y = [1.0, 4.0, 9.0, 16.0]
+a, b, c, d = cubicSplineCoefs(x, y)
+"""
 function cubicSplineCoefs(x, y)
   n = length(x)
   h = diff(x)
@@ -58,6 +79,26 @@ function evaluateCubicSpline(x, a, b, c, d, x_new)
   return y_new
 end
 
+"""
+    calcVKDependence(xTaps::Vector{Int}, yVKs::Vector{Float64}, tapPos::Float64)::Float64
+
+Calculates the voltage dependence on the tap position using cubic spline interpolation.
+
+# Arguments
+- `xTaps::Vector{Int}`: A vector of tap positions.
+- `yVKs::Vector{Float64}`: A vector of corresponding voltage values.
+- `tapPos::Float64`: The current tap position for which the voltage is to be calculated.
+
+# Returns
+- `Float64`: The interpolated voltage value at the given tap position.
+
+# Example
+```julia
+xTaps = [1, 2, 3, 4, 5]
+yVKs = [1.0, 1.1, 1.2, 1.3, 1.4]
+tapPos = 2.5
+voltage = calcVKDependence(xTaps, yVKs, tapPos)
+"""
 function calcVKDependence(xTaps::Vector{Int}, yVKs::Vector{Float64}, tapPos::Float64)::Float64
   a, b, c, d = cubicSplineCoefs(xTaps, yVKs)
   vk = evaluateCubicSpline(xTaps, a, b, c, d, [tapPos])[1]
@@ -70,6 +111,25 @@ function calcComplexRatio(tapRatio::Float64, ShiftAngle_grad::Float64)::ComplexF
   return tr + ti * im
 end
 
+"""
+    calcNeutralU(neutralU_ratio::Float64, vn_hv::Float64, tap_min::Integer, tap_max::Integer, tap_step_percent::Float64)::Float64
+
+Calculates the neutral voltage of a transformer based on the given parameters.
+
+# Arguments
+- `neutralU_ratio::Float64`: The ratio of the neutral voltage to the rated high voltage.
+- `vn_hv::Float64`: The rated high voltage of the transformer.
+- `tap_min::Integer`: The minimum tap position.
+- `tap_max::Integer`: The maximum tap position.
+- `tap_step_percent::Float64`: The percentage change in voltage per tap step.
+
+# Returns
+- `Float64`: The calculated neutral voltage.
+
+# Example
+```julia
+neutral_voltage = calcNeutralU(1.0, 110.0, -10, 10, 1.25)
+"""
 function calcNeutralU(neutralU_ratio::Float64, vn_hv::Float64, tap_min::Integer, tap_max::Integer, tap_step_percent::Float64)::Float64
   return round(neutralU_ratio * vn_hv + (tap_max - tap_min) * tap_step_percent / 100.0, digits = 0)
 end
@@ -159,7 +219,6 @@ function removeIsolatedNodesFromYBUS(Y::AbstractMatrix{ComplexF64}, isolated_nod
 end
 =#
 
-
 """
     createYBUS(branchVec::Vector{Branch}, shuntVec::Vector{Shunt}, isoNodes::Vector{Int}, sparse::Bool = true, printYBUS::Bool = false)
 
@@ -176,13 +235,12 @@ Creates the bus admittance matrix (YBUS) of the network.
 - `Y::Matrix{ComplexF64}`: The bus admittance matrix (YBUS).
 
 """
+function createYBUS(; net::Net, sparse::Bool = true, printYBUS::Bool = false)
 
-function createYBUS(;net::Net, sparse::Bool = true, printYBUS::Bool = false)
-  
   # Bestimme die maximale Busnummer im Netzwerk, unter Berücksichtigung isolierter Busse
   max_bus = maximum(max(branch.fromBus, branch.toBus) for branch in net.branchVec)
   n = max_bus - length(net.isoNodes)
-  
+
   Y = sparse ? spzeros(ComplexF64, n, n) : zeros(ComplexF64, n, n)
 
   @debug "Dimension YBus:", n
@@ -207,12 +265,9 @@ function createYBUS(;net::Net, sparse::Bool = true, printYBUS::Bool = false)
     fromNode -= count(i -> i < fromNode, net.isoNodes)
     toNode -= count(i -> i < toNode, net.isoNodes)
 
-
     yik = calcBranchYser(branch)
     susceptance = 0.5 * calcBranchYshunt(branch)
     t = calcBranchRatio(branch)
-    
-
 
     Y[fromNode, fromNode] += ((yik + susceptance)) / abs2(t)
     Y[toNode, toNode] += (yik + susceptance)
@@ -223,10 +278,10 @@ function createYBUS(;net::Net, sparse::Bool = true, printYBUS::Bool = false)
 
   for sh in net.shuntVec
     node = sh.busIdx
-    if node in net.isoNodes      
+    if node in net.isoNodes
       continue
     end
-    node -= count(i -> i < node, net.isoNodes)    
+    node -= count(i -> i < node, net.isoNodes)
     y = sh.y_pu_shunt
     Y[node, node] += y
   end
