@@ -4,30 +4,42 @@ Each branch is treated with the same four-terminal network model. It is a four-t
 
 ```math
 Y_{br} = \begin{bmatrix}
-    \frac{1}{{\tau^2}} \cdot (y_s + j\frac{b_c}{2}) & -y_s \cdot \frac{1}{{\tau e^{-j\phi}}} \\
-    -y_s \cdot \frac{1}{{\tau e^{j\phi}}} & (y_s + j\frac{b_c}{2})
+    \frac{1}{{\tau^2}} \cdot (y_{ser} + 0.5 \cdot y_{shunt}) & -y_{ser} \cdot \frac{1}{{\tau e^{-j\phi}}} \\
+    -y_{ser} \cdot \frac{1}{{\tau e^{j\phi}}} & (y_{ser} + 0.5 \cdot y_{shunt})
 \end{bmatrix}
 ```
 
 where:
--  ``y_s = \frac{1}{R + jX}``  is the series admittance,
+-  ``y_ser``  is the series admittance,
+-  ``y_shunt``  is the shunt admittance,
 -  ``R``  is the resistance component, and
 -  ``X``  is the reactance component,
--  ``b_c``  is the transverse admittance,
--  ``N = \tau \cdot e^{j\phi}`` is a complex transformation factor (eg 1 for power lines)
+-  ``G``  is the conductance component, and
+-  ``B``  is the susceptance component,
+-  ``N `` is the complex transformation factor (eg 1 for power lines)
+```math
+N = \tau \cdot e^{j\phi}
+```
+
+```math
+y_{ser} = \frac{1}{R + jX}
+```
+```math
+y_{shunt} = G + j \cdot B
+```
 
 
-##### Circuit diagram
+#### Circuit diagram
+```
 
-```plaintext	   
-                    ys
+                    y_ser
       x--┓┏---------###----------x
          ||   |             |
-         ||   # jbc/2       # jbc/2
+         ||   # y_shunt     # y_shunt
          ||   |             |
       x--┛┗----------------------x 
-         N (complex number)             
-
+         N = tau * e^(j*phi)
 ```
+
 
 
