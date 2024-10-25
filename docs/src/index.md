@@ -15,4 +15,4 @@ Pkg.add("Sparlectra")
 ---
 
 #### Contributors
-- [Udo Schmitz](https://www.linkedin.com/in/udo-schmitz-315536250/) - Electrical Engineer
+- [Udo Schmitz](https://www.linkedin.com/in/udo-schmitz-315536250/)
