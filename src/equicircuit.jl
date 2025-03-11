@@ -105,9 +105,9 @@ function calcVKDependence(xTaps::Vector{Int}, yVKs::Vector{Float64}, tapPos::Flo
   return vk
 end
 
-function calcComplexRatio(tapRatio::Float64, ShiftAngle_grad::Float64)::ComplexF64
-  tr = tapRatio * cosd(ShiftAngle_grad)
-  ti = tapRatio * sind(ShiftAngle_grad)
+function calcComplexRatio(; tapRatio::Float64, angleInDegrees::Float64)::ComplexF64
+  tr = tapRatio * cosd(angleInDegrees)
+  ti = tapRatio * sind(angleInDegrees)
   return tr + ti * im
 end
 
@@ -158,7 +158,7 @@ Converts the resistance, reactance, conductance, and susceptance from physical u
 toPU_RXGB(r = 0.01, x = 0.1, g = 0.02, b = 0.02, v_kv = 110.0, baseMVA = 100.0)
 ```
 """
-function toPU_RXGB(; r::Float64, x::Float64, g::Union{Nothing,Float64} = nothing, b::Union{Nothing,Float64} = nothing, v_kv::Float64, baseMVA::Float64)::Tuple{Float64,Float64,Float64,Float64}
+function toPU_RXBG(; r::Float64, x::Float64, g::Union{Nothing,Float64} = nothing, b::Union{Nothing,Float64} = nothing, v_kv::Float64, baseMVA::Float64)::Tuple{Float64,Float64,Float64,Float64}
   z_base = (v_kv * v_kv) / baseMVA
   y_base = 1.0 / z_base
   r_pu = r / z_base
@@ -168,7 +168,7 @@ function toPU_RXGB(; r::Float64, x::Float64, g::Union{Nothing,Float64} = nothing
   !isnothing(g) ? g_pu = g * y_base : 0.0
   !isnothing(b) ? b_pu = b * y_base : 0.0
 
-  return r_pu, x_pu, g_pu, b_pu
+  return r_pu, x_pu, b_pu, g_pu
 end
 
 """
@@ -235,7 +235,6 @@ Creates the bus admittance matrix (YBUS) of the network.
 - `Y::Matrix{ComplexF64}`: The bus admittance matrix (YBUS).
 
 """
-# TODO: use calcAdmittanceMatrix instead of inside the function
 function createYBUS(; net::Net, sparse::Bool = true, printYBUS::Bool = false)
 
   # Determine the maximum bus number in the network, taking isolated buses into account
@@ -251,13 +250,11 @@ function createYBUS(; net::Net, sparse::Bool = true, printYBUS::Bool = false)
     @assert branch isa AbstractBranch "branch $(branch) is not of type AbstractBranch"
     fromNode = branch.fromBus
     toNode = branch.toBus
-
     # Skip branches that are out of service
     if branch.status == 0
       @debug "createYBUS: Branch $(branch) out of service, skipping "
       continue
     end
-
     # skip isolated nodes
     if fromNode in net.isoNodes || toNode in net.isoNodes
       continue
@@ -266,16 +263,12 @@ function createYBUS(; net::Net, sparse::Bool = true, printYBUS::Bool = false)
     # correct the indices based on the isolated nodes
     fromNode -= count(i -> i < fromNode, net.isoNodes)
     toNode -= count(i -> i < toNode, net.isoNodes)
-
-    yik = calcBranchYser(branch)
-    susceptance = 0.5 * calcBranchYshunt(branch)
-    t = calcBranchRatio(branch)
-
-    Y[fromNode, fromNode] += ((yik + susceptance)) / abs2(t)
-    Y[toNode, toNode] += (yik + susceptance)
-
-    Y[fromNode, toNode] += (-1.0 * yik / conj(t))
-    Y[toNode, fromNode] += (-1.0 * yik / t)
+    # Y-Matrix
+    y_11, y_12, y_21, y_22 = calcAdmittance(branch, branch.comp.cVN, net.baseMVA)
+    Y[fromNode, fromNode] += y_11
+    Y[toNode, toNode] += y_22
+    Y[fromNode, toNode] += y_12
+    Y[toNode, fromNode] += y_21
   end
 
   for sh in net.shuntVec

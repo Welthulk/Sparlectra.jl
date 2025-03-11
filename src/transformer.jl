@@ -163,7 +163,7 @@ mutable struct PowerTransformerTaps
   end
 end
 
-#= TODO not implemented
+#= not implemented
 function adjustVkDep(Vk::Float64, Vkmax::Float64, Vkmin::Float64, tap::PowerTransformerTaps)
   if isnothing(tap)
     return Vk
@@ -351,15 +351,15 @@ function recalc_trafo_model_data(; baseMVA::Float64, Sn_MVA::Float64, ratedU_kV:
   return TransformerModelParameters(sn_MVA = Sn_MVA, vk_percent = uk, pk_kW = P_kW, i0_percent = i0, p0_kW = Pfe_kW)
 end
 
-function getRXBG(o::PowerTransformerWinding)::Tuple{Float64,Float64,Union{Nothing,Float64},Union{Nothing,Float64}}
+function getTrafoRXBG(o::PowerTransformerWinding)::Tuple{Float64,Float64,Union{Nothing,Float64},Union{Nothing,Float64}}
   return (o.r, o.x, o.b, o.g)
 end
 
-function getRXBG_pu(o::PowerTransformerWinding, vn_kV::Float64, baseMVA::Float64)::Tuple{Float64,Float64,Union{Nothing,Float64},Union{Nothing,Float64}}
+function getTrafoRXBG_pu(o::PowerTransformerWinding, vn_kV::Float64, baseMVA::Float64)::Tuple{Float64,Float64,Union{Nothing,Float64},Union{Nothing,Float64}}
   if isPerUnit_RXGB(o)
     return (o.r, o.x, o.b, o.g)
   else
-    return toPU_RXGB(r = o.r, x = o.x, g = o.g, b = o.b, v_kv = vn_kV, baseMVA = baseMVA)
+    return toPU_RXBG(r = o.r, x = o.x, g = o.g, b = o.b, v_kv = vn_kV, baseMVA = baseMVA)
   end
 end
 
@@ -416,6 +416,7 @@ A mutable structure representing a power transformer in a power system.
 # Methods
 - `Base.show(io::IO, x::PowerTransformer)`: Prints the `PowerTransformer` instance.
 """
+# PowerTransformer should be a subtype of AbstractBranch
 mutable struct PowerTransformer <: AbstractBranch
   comp::AbstractComponent
   trafoTyp::TrafoTyp
@@ -535,41 +536,6 @@ function isTapInNeutralPosition(x::PowerTransformer)
   else
     return (tap.step == tap.neutralStep) ? true : false
   end
-end
-
-# TODO check if this function is used and needed  
-# TODO check is pu function is used in branch
-function calcAdmittance(branch::PowerTransformer, u_rated::Float64, s_rated::Float64)::Tuple{ComplexF64,ComplexF64,ComplexF64,ComplexF64}
-  @debug "getABCDParms: Transformer $(branch.comp) u_rated=$(u_rated) s_rated=$(s_rated)"
-  @assert branch.isBiWinder "Transformer is not a 2WT" # interim solution
-
-  side = getSideNumber2WT(branch)
-  w = (side in [1, 2, 3]) ? (side == 1 ? branch.side1 : (side == 2 ? branch.side2 : branch.side3)) : error("wrong value for 'side'")
-  vn_kV = w.Vn
-
-  sn_MVA = getWindingRatedS(w)
-
-  r, x, b, g = getRXBG(w)
-
-  r_pu, x_pu, b_pu, g_pu = isPerUnit_RXGB(w) ? (r, x, b, g) : begin
-    @assert !isnothing(sn_MVA) "sn_MVA must be set for a PowerTransformer"
-    baseZ = (vn_kV)^2 / sn_MVA
-    (r / baseZ, x / baseZ, b * baseZ, g * baseZ)
-  end
-
-  t = (isnothing(w.ratio) ? 1.0 : w.ratio) != 0.0 || (isnothing(w.shift_degree) ? 0.0 : w.shift_degree) != 0.0 ? calcComplexRatio(isnothing(w.ratio) ? 1.0 : w.ratio, isnothing(w.shift_degree) ? 0.0 : w.shift_degree) : 1.0 + 0.0im
-
-  # Series Admittance ys
-  ys = inv(r_pu + x_pu * im)
-  # Shunt Admittance ysh
-  ysh = g_pu + im * b_pu
-
-  # Calculate Y_from_from, Y_from_to, Y_to_from, Y_to_to
-  Y_11 = (ys + 0.5 * ysh) / abs2(t)
-  Y_12 = -ys / conj(t)
-  Y_21 = -ys / t
-  Y_22 = ys + 0.5 * ysh
-  return (Y_11, Y_12, Y_21, Y_22)
 end
 
 function calcTransformerRatio(x::PowerTransformer)
