@@ -1,5 +1,8 @@
 # Change Log
-## Version 0.4.19 (2024-04-14)
+## Version 0.4.20 (2025-03-11)
+   Internal reorganization and small bugfixes 
+ 
+## Version 0.4.19 (2024-10-14)
 ### Bug Fixes
  - pu calculation for transformer impedance
 
