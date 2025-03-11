@@ -27,6 +27,7 @@ A mutable structure representing an AC line segment in a power system.
 # Methods
 - `Base.show(io::IO, acseg::ACLineSegment)`: Prints the `ACLineSegment` instance.
 """
+# ACLineSegment should be a subtype of AbstractBranch
 mutable struct ACLineSegment <: AbstractBranch
   comp::AbstractComponent
   length::Float64
@@ -54,7 +55,7 @@ mutable struct ACLineSegment <: AbstractBranch
         b = b
       elseif !isnothing(c_nf_per_km) && !isnothing(tanδ)
         if !paramsBasedOnLength
-          # b and g are multiplied by length in the getRXBG function
+          # b and g are multiplied by length in the getLineRXBG function
           c_nf = c_nf_per_km
         else
           c_nf = c_nf_per_km * length
@@ -96,50 +97,8 @@ mutable struct ACLineSegment <: AbstractBranch
   end
 end
 
-# TODO check if this function is used or can be removed
-function calcAdmittance(branch::ACLineSegment, u_rated::Float64, s_rated::Float64)::Tuple{ComplexF64,ComplexF64,ComplexF64,ComplexF64}
-  @debug "calcAdmittance", branch
-  r_pu, x_pu, g_pu, b_pu = getRXBG_pu(branch, u_rated, s_rated)
-
-  #= Long line model
-  if branch.isLongLine
-    if branch.paramsBasedOnLength
-      s = branch.length
-    else
-      s = 1.0
-    end
-
-    Z = Complex(r_pu, x_pu)
-    Y = Complex(g_pu, b_pu)
-
-    γ = sqrt(Z * Y)          # Propagation constant        
-    Z_c = sqrt(Z / Y)        # Characteristic impedance
-
-    ys = 1.0 / (Z_c * sinh(γ * s))
-    ysh = 1.0 / (Z_c * coth(γ * s / 2.0))
-    Y_11 = ys + 0.5 * ysh
-    Y_12 = -ys
-    Y_21 = -ys
-    Y_22 = ys + 0.5 * ysh
-    @debug "long line: Y=", Y_11, Y_12, Y_21, Y_22
-  else
-  =#
-  # Series Admittance ys
-  ys = inv(r_pu + x_pu * im)
-  # Shunt Admittance ysh
-  ysh = g_pu + im * b_pu
-
-  Y_11 = ys + 0.5 * ysh
-  Y_12 = -ys
-  Y_21 = -ys
-  Y_22 = ys + 0.5 * ysh
-  #end
-
-  return (Y_11, Y_12, Y_21, Y_22)
-end
-
 """
-    getRXBG(o::ACLineSegment)::Tuple{Float64,Float64,Union{Nothing,Float64},Union{Nothing,Float64}}
+    getLineRXBG(o::ACLineSegment)::Tuple{Float64,Float64,Union{Nothing,Float64},Union{Nothing,Float64}}
 
 Returns the resistance, reactance, susceptance, and conductance of an AC line segment. 
 If the parameters are based on length, they are multiplied by the length of the line segment.
@@ -155,10 +114,10 @@ If the parameters are based on length, they are multiplied by the length of the 
 
 # Example
 ```julia
-getRXBG(acLineSegment)
+getLineRXBG(acLineSegment)
 ```
 """
-function getRXBG(o::ACLineSegment)::Tuple{Float64,Float64,Union{Nothing,Float64},Union{Nothing,Float64}}
+function getLineRXBG(o::ACLineSegment)::Tuple{Float64,Float64,Union{Nothing,Float64},Union{Nothing,Float64}}
   if o.paramsBasedOnLength || o._isPIModel
     return (o.r, o.x, o.b, o.g)
   else
@@ -166,9 +125,9 @@ function getRXBG(o::ACLineSegment)::Tuple{Float64,Float64,Union{Nothing,Float64}
   end
 end
 
-function getRXBG_pu(o::ACLineSegment, vn_kV::Float64, baseMVA::Float64)::Tuple{Float64,Float64,Union{Nothing,Float64},Union{Nothing,Float64}}
-  r, x, b, g = getRXBG(o)
-  return toPU_RXGB(r = r, x = x, g = g, b = b, v_kv = vn_kV, baseMVA = baseMVA)
+function getLineRXBG_pu(o::ACLineSegment, vn_kV::Float64, baseMVA::Float64)::Tuple{Float64,Float64,Union{Nothing,Float64},Union{Nothing,Float64}}
+  r, x, b, g = getLineRXBG(o)
+  return toPU_RXBG(r = r, x = x, g = g, b = b, v_kv = vn_kV, baseMVA = baseMVA)
 end
 
 """
@@ -198,7 +157,7 @@ function get_line_parameters(line::ACLineSegment)
   return parameters
 end
 
-function isPIModel(line::ACLineSegment)
+function isLinePIModel(line::ACLineSegment)
   return line._isPIModel
 end
 

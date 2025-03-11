@@ -34,7 +34,8 @@ function calcNetLosses!(net::Net)
 
     ratio = (br.ratio != 0.0) ? br.ratio : 1.0
     angle = (br.ratio != 0.0) ? br.angle : 0.0
-    tap = calcComplexRatio(ratio, angle)
+
+    tap = calcComplexRatio(tapRatio = ratio, angleInDegrees = angle)
 
     ui = nodes[from]._vm_pu * exp(im * argi)
     if tapSide == 1
@@ -68,7 +69,7 @@ function calcNetLosses!(net::Net)
     # Losses: abs( Vf / tau - Vt ) ^ 2 / (Rs - j Xs)
     ratio = (br.ratio != 0.0) ? br.ratio : 1.0
     angle = (br.ratio != 0.0) ? br.angle : 0.0
-    tap = calcComplexRatio(ratio, angle)
+    tap = calcComplexRatio(tapRatio = ratio, angleInDegrees = angle)
 
     Vdiff = v1 / tap - v2
 
@@ -99,7 +100,7 @@ function calcNetLosses!(net::Net)
     S = calcBranchFlow(from, to, br, 2) * Sbase_MVA
     brToFlow = BranchFlow(nodes[br.toBus]._vm_pu, nodes[br.toBus]._va_deg, real(S), imag(S))
 
-    setBranchFlow!(brToFlow, brFromFlow, br)
+    setBranchFlow!(br, brToFlow, brFromFlow)
 
     #= for later use...
     ∑pfrom += brFromFlow.pFlow

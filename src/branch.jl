@@ -66,8 +66,7 @@ A structure representing a branch model in a power system.
 BranchModel(r_pu = 0.01, x_pu = 0.1, b_pu = 0.02, g_pu = 0.02, ratio = 1.0, angle = 0.0, sn_MVA = 100.0)
 ```
 """
-# TODO check if BranchModel is needed
-struct BranchModel <: AbstractBranch
+struct BranchModel
   r_pu::Float64
   x_pu::Float64
   b_pu::Float64
@@ -75,27 +74,6 @@ struct BranchModel <: AbstractBranch
   ratio::Float64
   angle::Float64
   sn_MVA::Union{Nothing,Float64}
-  function BranchModel(; r_pu::Float64, x_pu::Float64, b_pu::Float64, g_pu::Float64, ratio::Float64, angle::Float64, sn_MVA::Union{Nothing,Float64} = nothing)
-    new(r_pu, x_pu, b_pu, g_pu, ratio, angle, sn_MVA)
-  end
-end
-
-function calcAdmittance(branch::BranchModel, u_rated::Float64, s_rated::Float64)::Tuple{ComplexF64,ComplexF64,ComplexF64,ComplexF64}
-  # Series Admittance ys
-  ys = inv(branch.r_pu + im * branch.x_pu)
-  # Shunt Admittance ysh
-  ysh = branch, g_pu + im * branch.b_pu
-
-  ratio = (isnothing(branch.ratio) || branch.ratio == 0.0) ? 1.0 : branch.ratio
-  shift_degree = isnothing(branch.shift_degree) ? 0.0 : branch.shift_degree
-  t = (shift_degree != 0.0) ? calcComplexRatio(ratio, shift_degree) : 1.0 + 0.0im
-
-  # Calculate Y_from_from, Y_from_to, Y_to_from, Y_to_to
-  Y_11 = (ys + 0.5 * ysh) / abs2(t)
-  Y_12 = -ys / conj(t)
-  Y_21 = -ys / t
-  Y_22 = ys + 0.5 * ysh
-  return (Y_11, Y_12, Y_21, Y_22)
 end
 
 """
@@ -136,8 +114,8 @@ mutable struct Branch <: AbstractBranch
   x_pu::Float64                          # reactance
   b_pu::Float64                          # total line charging susceptance
   g_pu::Float64                          # total line charging conductance
-  ratio::Float64                         # transformer off nominal turns ratio
-  angle::Float64                         # transformer off nominal phase shift angle
+  ratio::Float64                         # nominal turns ratio
+  angle::Float64                         # nominal phase shift angle in degrees
   status::Integer                        # 1 = in service, 0 = out of service
   sn_MVA::Union{Nothing,Float64}         # nominal power of the branch = rateA
   fBranchFlow::Union{Nothing,BranchFlow} # flow from fromNodeID to toNodeID
@@ -171,7 +149,7 @@ mutable struct Branch <: AbstractBranch
       end
       c = getBranchComp(vn_kV, from, to, id, "ACL")
 
-      r_pu, x_pu, b_pu, g_pu = getRXBG_pu(branch, vn_kV, baseMVA)
+      r_pu, x_pu, b_pu, g_pu = getLineRXBG_pu(branch, vn_kV, baseMVA)
       new(c, branchIdx, from, to, r_pu, x_pu, b_pu, g_pu, 0.0, 0.0, status, branch.ratedS, nothing, nothing, nothing, nothing)
     elseif isa(branch, PowerTransformer) # Transformer     
       if (isnothing(side) && branch.isBiWinder)
@@ -189,7 +167,7 @@ mutable struct Branch <: AbstractBranch
       w = (side in [1, 2, 3]) ? (side == 1 ? branch.side1 : (side == 2 ? branch.side2 : branch.side3)) : error("wrong value for 'side'")
       vn_kV = isnothing(vn_kV) ? w.Vn : vn_kV
       sn_MVA = getWindingRatedS(w)
-      r_pu, x_pu, b_pu, g_pu = getRXBG_pu(w, vn_kV, baseMVA)
+      r_pu, x_pu, b_pu, g_pu = getTrafoRXBG_pu(w, vn_kV, baseMVA)
 
       ratio = isnothing(ratio) ? 1.0 : ratio
       @assert ratio != 0.0 "ratio must not be 0.0 for transformers"
@@ -247,29 +225,27 @@ end
 
 function calcAdmittance(branch::Branch, u_rated::Float64, s_rated::Float64)::Tuple{ComplexF64,ComplexF64,ComplexF64,ComplexF64}
   # Series Admittance ys
-  ys = inv(branch.r_pu + im * branch.x_pu)
+  ys = calcBranchYser(branch)
   # Shunt Admittance ysh
-  ysh = branch, g_pu + im * branch.b_pu
+  ysh = calcBranchYshunt(branch)
   # calc complex ratio
-  ratio = (isnothing(branch.ratio) || branch.ratio == 0.0) ? 1.0 : branch.ratio
-  shift_degree = isnothing(branch.shift_degree) ? 0.0 : branch.shift_degree
-  t = (shift_degree != 0.0) ? calcComplexRatio(ratio, shift_degree) : 1.0 + 0.0im
+  t = calcBranchRatio(branch)
   # Calculate Y_from_from, Y_from_to, Y_to_from, Y_to_to
   Y_11 = (ys + 0.5 * ysh) / abs2(t)
-  Y_12 = -ys / conj(t)
-  Y_21 = -ys / t
+  Y_12 = -1.0 * ys / conj(t)
+  Y_21 = -1.0 * ys / t
   Y_22 = ys + 0.5 * ysh
   return (Y_11, Y_12, Y_21, Y_22)
 end
 
 # helper
-function setBranchFlow!(tfBranchFlow::BranchFlow, fBranchFlow::BranchFlow, branch::Branch)
+function setBranchFlow!(branch::Branch, tfBranchFlow::BranchFlow, fBranchFlow::BranchFlow)
   branch.tBranchFlow = tfBranchFlow
   branch.fBranchFlow = fBranchFlow
 end
 
 # helper
-function setBranchStatus!(service::Bool, branch::Branch)
+function setBranchStatus!(branch::Branch, service::Bool)
   if (service)
     branch.status = 1
   else
@@ -285,10 +261,6 @@ function getBranchFlow(branch::Branch, from::Node, to::Node)
   else
     error("Nodes do not match the branch")
   end
-end
-
-function getBranch2PortParm(branch::Branch)::Tuple{Float64,Float64,Float64,Float64}
-  return branch.A, branch.B, branch.C, branch.D
 end
 
 function getBranchIdx(branch::Branch)
@@ -314,11 +286,9 @@ end
 
 function calcBranchRatio(branch::Branch)::ComplexF64
   t = 1.0 + 0.0 * im
-  ratio = branch.ratio
-  shift_degree = branch.angle
-  if ratio != 0.0 || shift_degree != 0.0
-    t = calcComplexRatio(ratio, shift_degree)
-  end
+  ratio = (isnothing(branch.ratio) || branch.ratio == 0.0) ? 1.0 : branch.ratio
+  shift = isnothing(branch.angle) ? 0.0 : branch.angle
+  t = (shift != 0.0) ? calcComplexRatio(tapRatio = ratio, angleInDegrees = shift) : 1.0 + 0.0im
   return t
 end
 

@@ -45,12 +45,10 @@ export
   ACLineSegment,
   # Trafo
   TrafoTyp, PowerTransformerTaps,  PowerTransformerWinding,  PowerTransformer, TransformerModelParameters,
-  # pst
-  #SymmetricalPhaseShifter,
   # ProSumer
   ProSumer,
   # Branch
-  AbstractBranch, Branch, BranchModel, BranchFlow, getBranchFlow, setBranchFlow!, getBranchNumber, getBranchLosses, setBranchLosses!,
+  AbstractBranch, Branch, BranchModel, BranchFlow, getBranchFlow, setBranchFlow!, getBranchNumber, getBranchLosses, setBranchLosses!, setBranchStatus!,
   # Shunt
   Shunt,
   # Net
@@ -61,18 +59,16 @@ export
   toComponentTyp, getCompName, getCompID, 
   # Transformers
   getSideNumber2WT,  getWinding2WT,  calcTransformerRatio, recalc_trafo_model_data, create2WTRatioTransformerNoTaps, create3WTWindings!,
-  getTrafoImpPGMComp,  getWT3AuxBusID,  isPerUnit_RXGB, getWindingRatedS, getRXBG, getRXBG_pu, 
-  # PST
-  #setCurrentStep, getCurrentAngle, getCurrentX,
+  getTrafoImpPGMComp,  getWT3AuxBusID,  isPerUnit_RXGB, getWindingRatedS, getTrafoRXBG, getTrafoRXBG_pu, 
   # Nodes  
   setRatedS!,  setVmVa!,  addShuntPower!,  addLoadPower!,  addGenPower!,  getNodeVn,  isSlack,  isPVNode,  isPQNode, isIsolated, toNodeType, setNodeType!,
   busComparison,   toString,
   # Branch
-  setBranchFlow!, setBranchStatus!, getBranchIdx, calcBranchYser, calcBranchYshunt, calcBranchRatio,
+  getBranchIdx, calcBranchYser, calcBranchYshunt, calcBranchRatio, calcAdmittance,
   # Shunt
   getGBShunt,  getPQShunt, updatePQShunt!,
   # ACLineSegment
-  get_line_parameters, isPIModel, getRXBG, getRXBG_pu,
+  get_line_parameters, isLinePIModel, getLineRXBG, getLineRXBG_pu,
   # ProSumer
   isSlack, isGenerator, isAPUNode, setQGenReplacement!, getQGenReplacement, toProSumptionType, updatePQ!,
   # Net
