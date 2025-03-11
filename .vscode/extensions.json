@@ -1,5 +1,6 @@
 {
   "recommendations": [
-    "0h7z.vscode-julia-format"
+    "0h7z.vscode-julia-format",
+    "gruntfuggly.todo-tree"
   ]
 }
