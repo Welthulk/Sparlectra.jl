@@ -3,11 +3,6 @@
 # test/testremove.jl
 
 # DO NOT add 'using' statements here as they're already in runtest.jl
-# The file is included in runtest.jl which already has these imports
-
-using Sparlectra
-using BenchmarkTools
-using Logging
 
 function analyze_network(net::Net)
   println("\n--- NETWORK ANALYSIS ---")
@@ -241,7 +236,6 @@ function testRemoveSpecialCases()
 end
 
 function testRemoveFunctions()
-  # This is called by runtest.jl with @test, so we need to return a boolean
   println("Testing branch removal...")
   if !testRemoveBranch()
     return false

@@ -1,5 +1,4 @@
 # Network Analyzer for Sparlectra
-# Save this as network_analyzer.jl and run with: include("network_analyzer.jl")
 
 using Sparlectra
 
@@ -125,4 +124,4 @@ function test_debug()
 end
 
 # Call the test_debug function
-# net = test_debug()
+net = test_debug()
