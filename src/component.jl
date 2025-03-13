@@ -52,7 +52,7 @@ A structure representing a component in a power system.
 Component("1", "Generator", "GENERATOR", 110.0)
 ```
 """
-struct Component <: AbstractComponent
+mutable struct Component <: AbstractComponent
   cID::String
   cName::String
   cTyp::ComponentTyp
@@ -81,7 +81,7 @@ struct Component <: AbstractComponent
   end
 end
 
-struct ImpPGMComp <: AbstractComponent
+mutable struct ImpPGMComp <: AbstractComponent
   cID::String
   cName::String
   cTyp::ComponentTyp
@@ -121,7 +121,7 @@ struct ImpPGMComp <: AbstractComponent
   end
 end
 
-struct ImpPGMComp3WT <: AbstractComponent
+mutable struct ImpPGMComp3WT <: AbstractComponent
   cID::String
   cName::String
   cTyp::ComponentTyp
@@ -180,7 +180,7 @@ function toComponentTyp(o::String)::ComponentTyp
     return AuxBus
   elseif val == "BRANCH"
     return BranchC
-  elseif val == "SYMMETRICALPHASESHIFTER"  
+  elseif val == "SYMMETRICALPHASESHIFTER"
     return SymmetricalPhaseShifterC
   else
     return UnknownC
