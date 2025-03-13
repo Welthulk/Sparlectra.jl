@@ -456,7 +456,70 @@ removeProsumer!(net = network, busName = "Bus1", type = "GENERATOR")
 """
 
 function removeProsumer!(; net::Net, busName::String, type::String = "")::Bool
-  # is missing !
+  if net._locked
+    @error "Network is locked"
+    return false
+  end
+
+  if !haskey(net.busDict, busName)
+    @error "Bus $busName not found in the network"
+    return false
+  end
+
+  busIdx = net.busDict[busName]
+
+  # Find prosumers connected to this bus
+  prosumerIndices = Int[]
+  for (i, prosumer) in enumerate(net.prosumpsVec)
+    if prosumer.comp.cFrom_bus == busIdx
+      # If type is specified, check if the prosumer is of that type
+      if type != ""
+        proType = toProSumptionType(type)
+        if prosumer.proSumptionType != proType
+          continue
+        end
+      end
+      push!(prosumerIndices, i)
+    end
+  end
+
+  if isempty(prosumerIndices)
+    if type != ""
+      @error "No prosumer of type $type found at bus $busName"
+    else
+      @error "No prosumers found at bus $busName"
+    end
+    return false
+  end
+
+  # Remove prosumers from highest index to lowest to avoid reindexing issues
+  sort!(prosumerIndices, rev = true)
+
+  # Store prosumer types before deletion to properly update node power
+  prosumerTypes = [net.prosumpsVec[idx].proSumptionType for idx in prosumerIndices]
+  hasGenerator = any(isGenerator.(prosumerTypes))
+  hasConsumer = any(x -> !isGenerator(x), prosumerTypes)
+
+  # Remove the prosumers
+  for idx in prosumerIndices
+    deleteat!(net.prosumpsVec, idx)
+  end
+
+  # Update node by removing the prosumer power
+  node = net.nodeVec[busIdx]
+
+  # Reset the node's generation or load power based on what was removed
+  if type == "" || hasGenerator || uppercase(type) in ["GENERATOR", "EXTERNALNETWORKINJECTION", "SYNCHRONOUSMACHINE"]
+    node._pƩGen = 0.0
+    node._qƩGen = 0.0
+  end
+
+  if type == "" || hasConsumer || uppercase(type) in ["ENERGYCONSUMER", "ASYNCHRONOUSMACHINE", "LOAD"]
+    node._pƩLoad = 0.0
+    node._qƩLoad = 0.0
+  end
+
+  return true
 end
 
 """
