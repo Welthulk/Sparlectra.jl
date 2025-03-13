@@ -3,6 +3,8 @@
 # CIGRE HV network
 # Source of this network can be found here (Task Force C6.04.02 ): https://www.researchgate.net/publication/271963972_TF_C60402_TB_575_--_Benchmark_Systems_for_Network_Integration_of_Renewable_and_Distributed_Energy_Resources
 
+# DO NOT add 'using' statements here as they're already in runtest.jl
+
 function test_acpflow(verbose::Int = 0)
   net = testCreateNetworkFromScratch()
   tol = 1e-6
