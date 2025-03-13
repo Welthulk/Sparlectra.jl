@@ -402,52 +402,44 @@ Removes a shunt at the specified bus from the network.
 # Example
 ```julia
 removeShunt!(net = network, busName = "Bus1")
-```
 """
+
 function removeShunt!(; net::Net, busName::String)::Bool
+  # is missing !
+
   if net._locked
     @error "Network is locked"
     return false
   end
-
   if !haskey(net.busDict, busName)
     @error "Bus $busName not found in the network"
     return false
   end
-
   busIdx = net.busDict[busName]
-
   if !haskey(net.shuntDict, busIdx)
     @error "No shunt found at bus $busName"
     return false
   end
-
   shuntIdx = net.shuntDict[busIdx]
   shunt = net.shuntVec[shuntIdx]
-
   # Update the node by removing the shunt power
   node = net.nodeVec[busIdx]
   node._pShunt = 0.0
   node._qShunt = 0.0
-
   # Remove the shunt
   deleteat!(net.shuntVec, shuntIdx)
   delete!(net.shuntDict, busIdx)
-
   # Update shunt indices in shuntDict
   for (idx, sIdx) in pairs(net.shuntDict)
     if sIdx > shuntIdx
       net.shuntDict[idx] = sIdx - 1
     end
   end
-
   return true
 end
 
 """
-    removeProsumer!(; net::Net, busName::String, type::String="")
-
-Removes a prosumer at the specified bus from the network.
+      removeProsumer!(; net::Net, busName::String, type::String)
 
 # Arguments
 - `net::Net`: The network from which to remove the prosumer.
@@ -462,104 +454,9 @@ Removes a prosumer at the specified bus from the network.
 removeProsumer!(net = network, busName = "Bus1", type = "GENERATOR")
 ```
 """
+
 function removeProsumer!(; net::Net, busName::String, type::String = "")::Bool
-  if net._locked
-    @error "Network is locked"
-    return false
-  end
-
-  if !haskey(net.busDict, busName)
-    @error "Bus $busName not found in the network"
-    return false
-  end
-
-  busIdx = net.busDict[busName]
-
-  # Find prosumer indices to remove
-  prosumerIndices = Int[]
-
-  for (i, ps) in enumerate(net.prosumpsVec)
-    if ps.comp.cFrom_bus == busIdx
-      typeMatch = false
-
-      if type == ""
-        typeMatch = true
-      elseif uppercase(type) == "GENERATOR" && isGenerator(ps.proSumptionType)
-        typeMatch = true
-      elseif uppercase(type) == "ENERGYCONSUMER" && !isGenerator(ps.proSumptionType)
-        typeMatch = true
-      elseif uppercase(type) == string(ps.comp.cTyp)
-        typeMatch = true
-      end
-
-      if typeMatch
-        push!(prosumerIndices, i)
-      end
-    end
-  end
-
-  if isempty(prosumerIndices)
-    # Print debug information about existing prosumers
-    for (i, ps) in enumerate(net.prosumpsVec)
-      if ps.comp.cFrom_bus == busIdx
-        @info "Found prosumer at bus $busName: type=$(ps.comp.cTyp), isGenerator=$(isGenerator(ps.proSumptionType))"
-      end
-    end
-
-    @error "No prosumer found at bus $busName with type $type"
-    return false
-  end
-
-  # Update the node power
-  node = net.nodeVec[busIdx]
-
-  # Calculate the power to remove
-  totalPGen = 0.0
-  totalQGen = 0.0
-  totalPLoad = 0.0
-  totalQLoad = 0.0
-
-  for idx in prosumerIndices
-    ps = net.prosumpsVec[idx]
-
-    if isGenerator(ps.proSumptionType)
-      if !isnothing(ps.pVal)
-        totalPGen += ps.pVal
-      end
-      if !isnothing(ps.qVal)
-        totalQGen += ps.qVal
-      end
-    else
-      if !isnothing(ps.pVal)
-        totalPLoad += ps.pVal
-      end
-      if !isnothing(ps.qVal)
-        totalQLoad += ps.qVal
-      end
-    end
-  end
-
-  # Update the node power
-  if !isnothing(node._pƩGen) && totalPGen > 0
-    node._pƩGen -= totalPGen
-  end
-  if !isnothing(node._qƩGen) && totalQGen > 0
-    node._qƩGen -= totalQGen
-  end
-  if !isnothing(node._pƩLoad) && totalPLoad > 0
-    node._pƩLoad -= totalPLoad
-  end
-  if !isnothing(node._qƩLoad) && totalQLoad > 0
-    node._qƩLoad -= totalQLoad
-  end
-
-  # Remove prosumers from highest index to lowest to avoid reindexing issues
-  sort!(prosumerIndices, rev = true)
-  for idx in prosumerIndices
-    deleteat!(net.prosumpsVec, idx)
-  end
-
-  return true
+  # is missing !
 end
 
 """

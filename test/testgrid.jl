@@ -3,10 +3,6 @@
 # CIGRE HV network
 # Source of this network can be found here (Task Force C6.04.02 ): https://www.researchgate.net/publication/271963972_TF_C60402_TB_575_--_Benchmark_Systems_for_Network_Integration_of_Renewable_and_Distributed_Energy_Resources
 
-using Sparlectra
-using BenchmarkTools
-using Logging
-
 function test_acpflow(verbose::Int = 0)
   net = testCreateNetworkFromScratch()
   tol = 1e-6
@@ -82,7 +78,7 @@ function testExportMatpower()
   return true
 end
 
-function testImportMatpower()  
+function testImportMatpower()
   filename = "case5.m"
   path = joinpath(pwd(), "data", "mpower", filename)
 
@@ -100,7 +96,7 @@ function testImportMatpower()
     @warn "Expected 5 branches, found: $(length(net.branchVec))"
     return false
   end
-  
+
   return true
 end
 
@@ -136,10 +132,10 @@ function testISOBusses()
 
   addProsumer!(net = net, busName = "B3", type = "ENERGYCONSUMER", p = 285.0, q = 200.0)
   addProsumer!(net = net, busName = "B4", type = "ENERGYCONSUMER", p = 103.0, q = 62.0)
-  
+
   addProsumer!(net = net, busName = "B5", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.03, va_deg = 0.0, referencePri = "B5")
   addProsumer!(net = net, busName = "B2", type = "SYNCHRONOUSMACHINE", p = 600.0, vm_pu = 1.03, va_deg = 0.0)
-  
+
   result, msg = validate!(net = net, log = true)
   if !result
     @warn msg
@@ -157,12 +153,12 @@ function testISOBusses()
     printACPFlowResults(net, etime, ite, tol)
     return false
   end
-  
-  brVec = getNetBranchNumberVec(net = net, fromBus = "B1", toBus = "B2")  
+
+  brVec = getNetBranchNumberVec(net = net, fromBus = "B1", toBus = "B2")
   setNetBranchStatus!(net = net, branchNr = brVec[1], status = 0)
   brVec = getNetBranchNumberVec(net = net, fromBus = "B1", toBus = "B3")
   setNetBranchStatus!(net = net, branchNr = brVec[1], status = 0)
-  
+
   if length(net.isoNodes) != 1
     @warn "Expected 1 isolated node, found: $(length(net.isoNodes))"
     return false
