@@ -5,6 +5,7 @@ using Logging
 global_logger(ConsoleLogger(stderr, Logging.Warn))
 include("testgrid.jl")
 include("testremove.jl")
+
 @testset "Sparlectra.jl" begin
   @test testNetwork() == true
   @test test_NBI_MDO() == true
