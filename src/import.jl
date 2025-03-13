@@ -182,3 +182,5 @@ function casefileparser(filename)
 
   return strip(case_name), baseMVA, mpc_bus, mpc_gen, mpc_branch
 end
+
+export casefileparser

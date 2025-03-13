@@ -73,8 +73,10 @@ export
   isSlack, isGenerator, isAPUNode, setQGenReplacement!, getQGenReplacement, toProSumptionType, updatePQ!,
   # Net
   addBus!, addShunt!, addACLine!, addPIModelACLine!, add2WTrafo!, addPIModelTrafo!, addProsumer!, lockNet!, validate!, hasBusInNet, addBusGenPower!, addBusLoadPower!, addBusShuntPower!,
-  getNetOrigBusIdx, geNetBusIdx, setNetBranchStatus!, getNetBranch, getNetBranchNumberVec, setTotalLosses!, getTotalLosses, getBusType, get_bus_vn_kV, get_vn_kV, updateBranchParameters!, hasShunt!, getShunt!, markIsolatedBuses!,setTotalBusPower!,
-  # create_powermat.jl
+  getNetOrigBusIdx, geNetBusIdx, setNetBranchStatus!, getNetBranch, getNetBranchNumberVec, setTotalLosses!, getTotalLosses, getBusType, get_bus_vn_kV, get_vn_kV, updateBranchParameters!, hasShunt!, getShunt!, markIsolatedBuses!,setTotalBusPower!,  
+  # remove_functions.jl
+  removeBus!, removeBranch!, removeACLine!, removeTrafo!, removeShunt!, removeProsumer!, clearIsolatedBuses!,
+  # import.jl
   casefileparser, createNetFromMatPowerFile,
   # exportMatPower.jl
   writeMatpowerCasefile,
@@ -111,6 +113,7 @@ include("createnet_powermat.jl")
 include("exportMatPower.jl")
 include("results.jl")
 include("run_acpflow.jl")
+include("remove_functions.jl") 
 
 #! format: on
 end # module Sparlectra
