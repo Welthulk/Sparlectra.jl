@@ -1,8 +1,10 @@
 # Change Log
-## Version 0.4.21 (2025-03-25)
+## Version 0.4.21 (2025-03-14)
+### New Features
+ - adding functions to remove elements from a net
 
 ## Version 0.4.20 (2025-03-11)
-   Internal reorganization and small bugfixes 
+ -  internal reorganization and small bugfixes 
  
 ## Version 0.4.19 (2024-10-14)
 ### Bug Fixes
@@ -21,20 +23,14 @@
  - bugfix wrong function call in `createnet_powermat`
 
 ## Version 0.4.16 (2024-04-13)
-### New Features
-
 ### Bug Fixes
 - bugfix shunt index for isolated buses, closes issue #38
 
 ## Version 0.4.15 (2024-04-12)
 ### New Features
 - Implemented a function to detect isolated buses and incorporate them into the network calculation (Issue #38)
-### Bug Fixes
-
 
 ## Version 0.4.14 (2024-04-12)
-### New Features
-
 ### Bug Fixes
 - bugfix addShuntPower, closes issue #36
 
