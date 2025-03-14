@@ -8,7 +8,7 @@ This page documents the main component types used in Sparlectra for power system
 
 The main container for a power system network.
 
-```@docs
+```
 Sparlectra.Net
 ```
 
@@ -16,13 +16,13 @@ Sparlectra.Net
 
 Represents a bus in the power system.
 
-```@docs
+```
 Sparlectra.Node
 ```
 
 ### Branch Components
 
-```@docs
+```
 Sparlectra.Branch
 Sparlectra.BranchFlow
 Sparlectra.BranchModel
@@ -30,19 +30,19 @@ Sparlectra.BranchModel
 
 ### Prosumer Components
 
-```@docs
+```
 Sparlectra.ProSumer
 ```
 
 ### Shunt Components
 
-```@docs
+```
 Sparlectra.Shunt
 ```
 
 ### Transformer Components
 
-```@docs
+```
 Sparlectra.PowerTransformer
 Sparlectra.PowerTransformerWinding
 Sparlectra.PowerTransformerTaps
@@ -50,13 +50,13 @@ Sparlectra.PowerTransformerTaps
 
 ### Line Components
 
-```@docs
+```
 Sparlectra.ACLineSegment
 ```
 
 ## Basic Components
 
-```@docs
+```
 Sparlectra.Component
 Sparlectra.ImpPGMComp
 Sparlectra.ImpPGMComp3WT
@@ -66,7 +66,7 @@ Sparlectra.ImpPGMComp3WT
 
 These enumerations are used to define types and states for various components:
 
-```@docs
+```
 Sparlectra.ComponentTyp
 Sparlectra.TrafoTyp
 Sparlectra.NodeType
