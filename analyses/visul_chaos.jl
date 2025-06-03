@@ -1,12 +1,12 @@
-# Erweiterte Chaos-Analyse mit Visualisierung und detaillierter Untersuchung
-# Ziel: Visualisierung der Basin of Attraction und kritische Bereiche
+# Advanced Chaos Analysis with Visualization and Detailed Investigation
+# Goal: Visualization of Basin of Attraction and critical regions
 
 using Sparlectra
 using Logging
 using Printf
 global_logger(ConsoleLogger(stderr, Logging.Info))
 
-# Hilfsfunktionen für sichere Netzwerk-Operationen
+# Helper functions for safe network operations
 function create_base_network()
   net = Net(name = "BaseNetwork", baseMVA = 100.0, vmin_pu = 0.1, vmax_pu = 2.0)
   addBus!(net = net, busName = "B1", busType = "Slack", vn_kV = 110.0)
@@ -77,18 +77,18 @@ function test_convergence(; voltage_B2 = 1.0, angle_B2 = 0.0, angle_B3 = 0.0, re
   end
 end
 
-# 1. Basin of Attraction Analyse für Startwerte
+# 1. Basin of Attraction Analysis for Starting Values
 function basin_of_attraction_analysis()
-  println("🔬 BASIN OF ATTRACTION ANALYSE - STARTWERTE")
+  println("🔬 BASIN OF ATTRACTION ANALYSIS - STARTING VALUES")
   println(repeat("=", 60))
 
-  # Definiere Auflösung für die Analyse
+  # Define resolution for analysis
   voltage_range = 0.4:0.1:1.6
   angle_range = -20:5:25
 
-  println("Analysiere $(length(voltage_range)) × $(length(angle_range)) = $(length(voltage_range) * length(angle_range)) Startwert-Kombinationen")
-  println("Spannungsbereich: $(first(voltage_range)) - $(last(voltage_range)) pu")
-  println("Winkelbereich: $(first(angle_range))° - $(last(angle_range))°")
+  println("Analyzing $(length(voltage_range)) × $(length(angle_range)) = $(length(voltage_range) * length(angle_range)) starting value combinations")
+  println("Voltage range: $(first(voltage_range)) - $(last(voltage_range)) pu")
+  println("Angle range: $(first(angle_range))° - $(last(angle_range))°")
   println()
 
   convergence_map = zeros(Int, length(voltage_range), length(angle_range))
@@ -119,20 +119,20 @@ function basin_of_attraction_analysis()
   println("]")
   println()
 
-  # Analyse der Ergebnisse
+  # Analysis of results
   total_points = length(convergence_map)
   converged_points = sum(convergence_map)
   chaos_rate = round(100 * (total_points - converged_points) / total_points, digits = 1)
 
-  println("📊 BASIN OF ATTRACTION ERGEBNISSE:")
-  println("Getestete Punkte: $total_points")
-  println("Konvergierte Punkte: $converged_points")
-  println("Chaos-Rate: $chaos_rate%")
+  println("📊 BASIN OF ATTRACTION RESULTS:")
+  println("Tested points: $total_points")
+  println("Converged points: $converged_points")
+  println("Chaos rate: $chaos_rate%")
   println()
 
-  # ASCII Visualisierung
-  println("🎨 BASIN OF ATTRACTION KARTE:")
-  println("Legende: ✓ = Konvergiert, ✗ = Divergiert")
+  # ASCII Visualization
+  println("🎨 BASIN OF ATTRACTION MAP:")
+  println("Legend: ✓ = Converged, ✗ = Diverged")
   println()
   print("V\\θ ")
   for angle in angle_range
@@ -152,10 +152,10 @@ function basin_of_attraction_analysis()
     println()
   end
 
-  # Detaillierte Iteration-Karte
+  # Detailed iteration map
   println()
-  println("🔢 ITERATIONS-KARTE:")
-  println("Zeigt Anzahl der Iterationen bis zur Konvergenz (0 = Divergiert)")
+  println("🔢 ITERATION MAP:")
+  println("Shows number of iterations until convergence (0 = Diverged)")
   println()
   print("V\\θ ")
   for angle in angle_range
@@ -174,18 +174,18 @@ function basin_of_attraction_analysis()
   return convergence_map, iteration_map, collect(voltage_range), collect(angle_range)
 end
 
-# 2. Parameter-Sensitivitäts-Analyse
+# 2. Parameter Sensitivity Analysis
 function parameter_sensitivity_analysis()
-  println("\n⚙️ PARAMETER-SENSITIVITÄTS-ANALYSE")
+  println("\n⚙️ PARAMETER SENSITIVITY ANALYSIS")
   println(repeat("=", 60))
 
-  # Definiere Parameter-Bereiche
+  # Define parameter ranges
   resistance_range = [1.0, 2.0, 3.0, 5.0, 8.0, 10.0]
   load_range = [1.0, 1.5, 2.0, 2.5, 3.0, 4.0]
 
-  println("Analysiere $(length(resistance_range)) × $(length(load_range)) Parameter-Kombinationen")
-  println("Widerstands-Faktoren: $resistance_range")
-  println("Last-Faktoren: $load_range")
+  println("Analyzing $(length(resistance_range)) × $(length(load_range)) parameter combinations")
+  println("Resistance factors: $resistance_range")
+  println("Load factors: $load_range")
   println()
 
   param_convergence_map = zeros(Int, length(resistance_range), length(load_range))
@@ -213,12 +213,12 @@ function parameter_sensitivity_analysis()
   param_chaos_rate = round(100 * (total_param_points - converged_param_points) / total_param_points, digits = 1)
 
   println()
-  println("📊 PARAMETER-SENSITIVITÄTS ERGEBNISSE:")
-  println("Parameter-Chaos-Rate: $param_chaos_rate%")
+  println("📊 PARAMETER SENSITIVITY RESULTS:")
+  println("Parameter chaos rate: $param_chaos_rate%")
 
-  # Parameter-Karte
+  # Parameter map
   println()
-  println("🗺️ PARAMETER-STABILITÄTS-KARTE:")
+  println("🗺️ PARAMETER STABILITY MAP:")
   print("R\\L ")
   for l_factor in load_range
     @printf("%6.1fx", l_factor)
@@ -240,15 +240,15 @@ function parameter_sensitivity_analysis()
   return param_convergence_map, param_iteration_map, resistance_range, load_range
 end
 
-# 3. Kritische Grenzen-Analyse
+# 3. Critical Boundary Analysis
 function critical_boundary_analysis()
-  println("\n🎯 KRITISCHE GRENZEN-ANALYSE")
+  println("\n🎯 CRITICAL BOUNDARY ANALYSIS")
   println(repeat("=", 60))
 
-  println("Suche exakte Übergänge zwischen Konvergenz und Divergenz...")
+  println("Searching for exact transitions between convergence and divergence...")
 
-  # Finde kritische Spannungsgrenze
-  println("\n🔍 Kritische Spannungsgrenze (bei θ=0°):")
+  # Find critical voltage boundary
+  println("\n🔍 Critical voltage boundary (at θ=0°):")
   critical_voltages = []
 
   for voltage = 0.3:0.05:0.6
@@ -263,8 +263,8 @@ function critical_boundary_analysis()
     end
   end
 
-  # Finde kritische Winkelgrenze
-  println("\n🔍 Kritische Winkelgrenze (bei V=1.0 pu):")
+  # Find critical angle boundary
+  println("\n🔍 Critical angle boundary (at V=1.0 pu):")
   critical_angles = []
 
   for angle = 20:5:45
@@ -279,8 +279,8 @@ function critical_boundary_analysis()
     end
   end
 
-  # Finde kritische Parameter-Kombinationen
-  println("\n🔍 Kritische Parameter-Kombinationen:")
+  # Find critical parameter combinations
+  println("\n🔍 Critical parameter combinations:")
   critical_params = []
 
   for r_factor in [3.0, 5.0, 8.0, 10.0]
@@ -297,42 +297,42 @@ function critical_boundary_analysis()
     end
   end
 
-  println("\n📋 KRITISCHE BEREICHE ZUSAMMENFASSUNG:")
+  println("\n📋 CRITICAL REGIONS SUMMARY:")
   if !isempty(critical_voltages)
-    println("Kritische Spannungen: $(minimum(critical_voltages)) - $(maximum(critical_voltages)) pu")
+    println("Critical voltages: $(minimum(critical_voltages)) - $(maximum(critical_voltages)) pu")
   end
   if !isempty(critical_angles)
-    println("Kritische Winkel: $(minimum(critical_angles))° - $(maximum(critical_angles))°")
+    println("Critical angles: $(minimum(critical_angles))° - $(maximum(critical_angles))°")
   end
   if !isempty(critical_params)
-    println("Kritische Parameter-Kombinationen: $(length(critical_params)) gefunden")
+    println("Critical parameter combinations found: $(length(critical_params))")
   end
 
   return critical_voltages, critical_angles, critical_params
 end
 
-# 4. Kombinierte 3D-Analyse
+# 4. Combined 3D Analysis
 function combined_3d_analysis()
-  println("\n🌪️ KOMBINIERTE 3D-CHAOS-ANALYSE")
+  println("\n🌪️ COMBINED 3D CHAOS ANALYSIS")
   println(repeat("=", 60))
 
-  println("Analysiere Interaktion zwischen Startwerten UND Parametern...")
+  println("Analyzing interaction between starting values AND parameters...")
 
-  # Reduzierte Auflösung für 3D-Analyse
+  # Reduced resolution for 3D analysis
   voltage_range = [0.6, 0.8, 1.0, 1.2, 1.4]
   angle_range = [-15, -5, 0, 5, 15]
   param_range = [(1.0, 1.0), (2.0, 1.5), (3.0, 2.0), (5.0, 2.5), (8.0, 3.0)]
 
   chaos_scenarios = []
 
-  println("Teste $(length(voltage_range))×$(length(angle_range))×$(length(param_range)) = $(length(voltage_range)*length(angle_range)*length(param_range)) Kombinationen")
+  println("Testing $(length(voltage_range))×$(length(angle_range))×$(length(param_range)) = $(length(voltage_range)*length(angle_range)*length(param_range)) combinations")
   println()
 
   scenario_count = 0
   chaos_count = 0
 
-  for (v_start) in voltage_range
-    for (a_start) in angle_range
+  for v_start in voltage_range
+    for a_start in angle_range
       for (r_factor, l_factor) in param_range
         scenario_count += 1
 
@@ -348,15 +348,15 @@ function combined_3d_analysis()
 
   combined_chaos_rate = round(100 * chaos_count / scenario_count, digits = 1)
 
-  println("📊 KOMBINIERTE 3D-ANALYSE ERGEBNISSE:")
-  println("Getestete Szenarien: $scenario_count")
-  println("Chaos-Szenarien: $chaos_count")
-  println("3D-Chaos-Rate: $combined_chaos_rate%")
+  println("📊 COMBINED 3D ANALYSIS RESULTS:")
+  println("Tested scenarios: $scenario_count")
+  println("Chaos scenarios: $chaos_count")
+  println("3D chaos rate: $combined_chaos_rate%")
   println()
 
   if !isempty(chaos_scenarios)
-    println("🎯 TOP-10 CHAOS-HOTSPOTS:")
-    # Sortiere nach "Extremheit" (niedrige Spannung + hohe Parameter)
+    println("🎯 TOP-10 CHAOS HOTSPOTS:")
+    # Sort by "extremeness" (low voltage + high parameters)
     sorted_chaos = sort(chaos_scenarios, by = x -> x[1] + x[3] + x[4], rev = false)
 
     for i = 1:min(10, length(sorted_chaos))
@@ -368,22 +368,22 @@ function combined_3d_analysis()
   return chaos_scenarios, combined_chaos_rate
 end
 
-# 5. Statistischer Chaos-Report
+# 5. Statistical Chaos Report
 function generate_chaos_report()
-  println("\n📊 STATISTISCHER CHAOS-REPORT")
+  println("\n📊 STATISTICAL CHAOS REPORT")
   println(repeat("=", 60))
 
-  # Sammle Daten für verschiedene Kategorien
+  # Collect data for different categories
   categories = [
-    ("Startwert_mild", [(1.0, 0.0, 1.0, 1.0), (0.9, -5.0, 1.0, 1.0), (1.1, 5.0, 1.0, 1.0)]),
-    ("Startwert_extrem", [(0.5, -20.0, 1.0, 1.0), (1.8, 25.0, 1.0, 1.0), (0.3, 35.0, 1.0, 1.0)]),
-    ("Parameter_mild", [(1.0, 0.0, 2.0, 1.5), (1.0, 0.0, 1.5, 2.0), (1.0, 0.0, 2.5, 1.0)]),
-    ("Parameter_extrem", [(1.0, 0.0, 8.0, 3.0), (1.0, 0.0, 10.0, 4.0), (1.0, 0.0, 15.0, 5.0)]),
-    ("Kombiniert_mild", [(0.8, -10.0, 2.0, 2.0), (1.2, 10.0, 2.0, 2.0), (0.9, -5.0, 3.0, 1.5)]),
-    ("Kombiniert_extrem", [(0.4, -25.0, 8.0, 4.0), (1.6, 30.0, 10.0, 5.0), (0.2, 40.0, 15.0, 6.0)]),
+    ("StartVal_Mild", [(1.0, 0.0, 1.0, 1.0), (0.9, -5.0, 1.0, 1.0), (1.1, 5.0, 1.0, 1.0)]),
+    ("StartVal_Extreme", [(0.5, -20.0, 1.0, 1.0), (1.8, 25.0, 1.0, 1.0), (0.3, 35.0, 1.0, 1.0)]),
+    ("Param_Mild", [(1.0, 0.0, 2.0, 1.5), (1.0, 0.0, 1.5, 2.0), (1.0, 0.0, 2.5, 1.0)]),
+    ("Param_Extreme", [(1.0, 0.0, 8.0, 3.0), (1.0, 0.0, 10.0, 4.0), (1.0, 0.0, 15.0, 5.0)]),
+    ("Combined_Mild", [(0.8, -10.0, 2.0, 2.0), (1.2, 10.0, 2.0, 2.0), (0.9, -5.0, 3.0, 1.5)]),
+    ("Combined_Extreme", [(0.4, -25.0, 8.0, 4.0), (1.6, 30.0, 10.0, 5.0), (0.2, 40.0, 15.0, 6.0)]),
   ]
 
-  println("Kategorie                | Chaos-Rate | Avg. Iter. | Stabilität")
+  println("Category             | Chaos Rate | Avg. Iter. | Stability")
   println(repeat("-", 60))
 
   for (category_name, scenarios) in categories
@@ -401,55 +401,55 @@ function generate_chaos_report()
 
     chaos_rate = round(100 * chaos_count / length(scenarios), digits = 1)
     avg_iterations = round(total_iterations / length(scenarios), digits = 1)
-    stability = chaos_rate < 30 ? "Stabil" : chaos_rate < 70 ? "Moderat" : "Instabil"
+    stability = chaos_rate < 30 ? "Stable" : chaos_rate < 70 ? "Moderate" : "Unstable"
 
     @printf("%-20s | %7.1f%% | %8.1f | %-8s\n", category_name, chaos_rate, avg_iterations, stability)
   end
 
   println()
-  println("🎯 CHAOS-CHARAKTERISTIKA:")
-  println("• Startwerte: Lokale Instabilitäten")
-  println("• Parameter: Globale Systemschwäche")
-  println("• Kombination: Verstärkte Nichtlinearität")
-  println("• Iteration: Konvergenz-Geschwindigkeit als Indikator")
+  println("🎯 CHAOS CHARACTERISTICS:")
+  println("• Starting values: Local instabilities")
+  println("• Parameters: Global system weakness")
+  println("• Combination: Enhanced nonlinearity")
+  println("• Iterations: Convergence speed as indicator")
 end
 
-# Hauptfunktion: Umfassende Chaos-Visualisierung
+# Main function: Comprehensive Chaos Visualization
 function comprehensive_chaos_visualization()
-  println("🎨 UMFASSENDE CHAOS-VISUALISIERUNG UND ANALYSE")
-  println("="^70)
-  println("Führt detaillierte Untersuchung aller Chaos-Aspekte durch")
+  println("🎨 COMPREHENSIVE CHAOS VISUALIZATION AND ANALYSIS")
+  println(repeat("=", 70))
+  println("Performing detailed investigation of all chaos aspects")
   println()
 
   # 1. Basin of Attraction
   basin_conv, basin_iter, v_range, a_range = basin_of_attraction_analysis()
 
-  # 2. Parameter-Sensitivität  
+  # 2. Parameter Sensitivity  
   param_conv, param_iter, r_range, l_range = parameter_sensitivity_analysis()
 
-  # 3. Kritische Grenzen
+  # 3. Critical Boundaries
   crit_v, crit_a, crit_p = critical_boundary_analysis()
 
-  # 4. 3D-Kombination
+  # 4. 3D Combination
   chaos_hotspots, combined_rate = combined_3d_analysis()
 
-  # 5. Statistischer Report
+  # 5. Statistical Report
   generate_chaos_report()
 
   println("\n" * repeat("=", 70))
-  println("🏆 CHAOS-VISUALISIERUNG ABGESCHLOSSEN")
-  println("Alle kritischen Bereiche und Chaos-Muster identifiziert!")
+  println("🏆 CHAOS VISUALIZATION COMPLETED")
+  println("All critical regions and chaos patterns identified!")
 
   return (basin_data = (basin_conv, basin_iter, v_range, a_range), param_data = (param_conv, param_iter, r_range, l_range), critical_data = (crit_v, crit_a, crit_p), hotspots = chaos_hotspots, combined_chaos_rate = combined_rate)
 end
 
-# === HAUPTAUSFÜHRUNG ===
-println("🚀 Starte umfassende Chaos-Visualisierung und Analyse...")
+# === MAIN EXECUTION ===
+println("🚀 Starting comprehensive chaos visualization and analysis...")
 println()
 
-# Führe vollständige Analyse durch
+# Perform complete analysis
 results = comprehensive_chaos_visualization()
 
-println("\n🎉 CHAOS-ANALYSE KOMPLETT!")
-println("Alle Basin of Attraction, kritischen Bereiche und Chaos-Hotspots wurden identifiziert!")
-println("Diese Daten können für wissenschaftliche Visualisierungen verwendet werden.")
+println("\n🎉 CHAOS ANALYSIS COMPLETE!")
+println("All Basin of Attraction, critical regions and chaos hotspots have been identified!")
+println("This data can be used for scientific visualizations.")
