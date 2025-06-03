@@ -35,7 +35,7 @@ function setJacobianDebug(value::Bool)
 end
 
 # return vector of BusData
-function getBusData(nodes::Vector{Sparlectra.Node}, Sbase_MVA::Float64, flatStart::Bool = false)
+function getBusData(nodes::Vector{Sparlectra.Node}, Sbase_MVA::Float64, flatStart)
   busVec = Vector{BusData}()
 
   slackIdx = 0
@@ -47,16 +47,15 @@ function getBusData(nodes::Vector{Sparlectra.Node}, Sbase_MVA::Float64, flatStar
   sumLoad_q = 0.0
   sumGen_p = 0.0
   sumGen_q = 0.0
-  idx=0
+  idx = 0
   for (i, n) in enumerate(nodes)
     if isIsolated(n)
       continue
-    end  
-    idx+=1
-    if isSlack(n)        
+    end
+    idx += 1
+    if isSlack(n)
       slackIdx = idx
     end
-
 
     type = n._nodeType
 
@@ -92,6 +91,13 @@ function getBusData(nodes::Vector{Sparlectra.Node}, Sbase_MVA::Float64, flatStar
     else
       vm_pu = n._vm_pu === nothing ? 1.0 : n._vm_pu
       va_deg = n._va_deg === nothing ? 0.0 : deg2rad(n._va_deg)
+      #@info "getBusData: bus $(idx) type=$(type), vm_pu=$(vm_pu), va_deg=$(n._va_deg), p=$(p), q=$(q)" if debug
+      if angle_limit && type == Sparlectra.PQ
+        if abs(va_deg) > deg2rad(30.0)
+          va_deg = sign(va_deg) * deg2rad(30.0)
+          @warn "getBusData: bus $(idx) type=$(type), va_deg=$(va_deg) exceeds angle limit, set to 30°"
+        end
+      end
     end
     busIdx = idx
     #b = BusData(n.busIdx, vm_pu, va_deg, p, q, type)
@@ -128,9 +134,9 @@ end # getBusData
 function getBusTypeVec(busVec::Vector{BusData})
   busTypeVec = Vector{Sparlectra.NodeType}()
   slackIdx = 0
-  idx=0
+  idx = 0
   for (i, bus) in enumerate(busVec) #1:n    
-    idx+=1
+    idx += 1
     if bus.type == Sparlectra.Slack
       slackIdx = idx
     end
@@ -251,7 +257,7 @@ function residuum(Y::AbstractMatrix{ComplexF64}, busVec::Vector{BusData}, feeder
   V = [bus.vm_pu * exp(im * bus.va_rad) for bus in busVec]
   # create diagonal matrix of voltages
   Vdiag = Diagonal(V)
-  
+
   # Power Calculation (Knotenleistung)
   S = Vdiag * conj(Y * V)
   size = n_pq * 2 + n_pv
@@ -289,11 +295,11 @@ function residuum(Y::AbstractMatrix{ComplexF64}, busVec::Vector{BusData}, feeder
   if log
     printVector(Δpq, busVec, "Δp", "Δq", false, 0.0)
     norm_delta_p = norm(Δpq)
-    if debug 
-      println("residuum: $(norm_delta_p)")    
+    if debug
+      println("residuum: $(norm_delta_p)")
       println("S: $S")
       println("feeders: $feeders")
-    end  
+    end
   end
 
   return Δpq
@@ -331,7 +337,7 @@ Lii = Vi*∂qi/∂vi = +vi * [∑ gik* vk * sin(𝜑i-𝜑j-αik)] + vi*( gii * 
 function calcJacobian(Y::AbstractMatrix{ComplexF64}, busVec::Vector{BusData}, adjBranch::Vector{Vector{Int}}, busTypeVec::Vector{Sparlectra.NodeType}, slackIdx::Int, n_pq::Int, n_pv::Int, log::Bool = false, sparse::Bool = true)
   global debug
   function printdebug(case::String, grad::String, i::Int, j::Int, val::Float64 = 0.0, bus_i::Int = 0, bus_j::Int = 0)
-    if debug     
+    if debug
       value = round(val, digits = 3)
       println("$(case): $(grad) [$(i),$(j),$(value)] bus[$(bus_i),$(bus_j)]")
     end
@@ -506,7 +512,7 @@ function calcJacobian(Y::AbstractMatrix{ComplexF64}, busVec::Vector{BusData}, ad
   end # for i in 1:n
 
   if log
-    println("\nJacobian:\n")    
+    println("\nJacobian:\n")
     for j = 1:size_i
       print("\t$(j):")
     end
@@ -544,11 +550,14 @@ A tuple containing the number of iterations and the result of the calculation:
 - `2`: Unsolvable system of equations.
 - `3`: Error.
 =#
-function calcNewtonRaphson!(net::Net, Y::AbstractMatrix{ComplexF64}, maxIte::Int, tolerance::Float64 = 1e-6, verbose::Int = 0, sparse::Bool = false)
-  nodes = net.nodeVec 
+function calcNewtonRaphson!(net::Net, Y::AbstractMatrix{ComplexF64}, maxIte::Int, tolerance::Float64 = 1e-6, verbose::Int = 0, sparse::Bool = false, flatStart::Bool = false, angle_limit::Bool = false, debug::Bool = false)
+  nodes = net.nodeVec
   isoNodes = net.isoNodes
   Sbase_MVA = net.baseMVA
-  busVec, slackNum = getBusData(nodes, Sbase_MVA)
+  setJacobianAngleLimit(angle_limit)
+  setJacobianDebug(debug)
+
+  busVec, slackNum = getBusData(nodes, Sbase_MVA, flatStart)
 
   adjBranch = adjacentBranches(Y, debug)
   num_pv_nodes = count(bus -> bus.type == Sparlectra.PV, busVec)
@@ -572,8 +581,8 @@ function calcNewtonRaphson!(net::Net, Y::AbstractMatrix{ComplexF64}, maxIte::Int
 
   iteration_count = 0
   power_feeds = getPowerFeeds(busVec, num_pq_nodes, num_pv_nodes)
-  
-  while iteration_count <= maxIte  
+
+  while iteration_count <= maxIte
     # Calculation of the residual
     delta_P = residuum(Y, busVec, power_feeds, num_pq_nodes, num_pv_nodes, (verbose > 2))
     if verbose > 2
@@ -632,7 +641,7 @@ function calcNewtonRaphson!(net::Net, Y::AbstractMatrix{ComplexF64}, maxIte::Int
             busVec[i].va_rad += min(delta_x[index_1], 0.7)
           else
             busVec[i].va_rad += delta_x[index_1]
-          end            
+          end
           busVec[i].vm_pu += busVec[i].vm_pu * delta_x[index_2]
         elseif bus.type == Sparlectra.PV
           if angle_limit
@@ -663,7 +672,7 @@ function calcNewtonRaphson!(net::Net, Y::AbstractMatrix{ComplexF64}, maxIte::Int
   lastNode = length(nodes)
   for bus in busVec
     idx = bus.idx
-    if idx in isoNodes      
+    if idx in isoNodes
       continue
     end
     idx += count(i -> i < idx, isoNodes)
@@ -694,8 +703,8 @@ function calcNewtonRaphson!(net::Net, Y::AbstractMatrix{ComplexF64}, maxIte::Int
   end
 
   totalBusP = sum(bus -> bus._pRes, busVec)
-  totalBusQ = sum(bus -> bus._qRes, busVec)  
-  setTotalBusPower!(net=net, p=totalBusP, q=totalBusQ)
+  totalBusQ = sum(bus -> bus._qRes, busVec)
+  setTotalBusPower!(net = net, p = totalBusP, q = totalBusQ)
 
   return iteration_count, erg
 end
@@ -730,7 +739,7 @@ function runpf!(net::Net, maxIte::Int, tolerance::Float64 = 1e-6, verbose::Int =
     printYBus = (verbose > 1)
   end
 
-  Y = createYBUS(net=net, sparse=sparse, printYBUS=printYBus)
+  Y = createYBUS(net = net, sparse = sparse, printYBUS = printYBus)
 
   return calcNewtonRaphson!(net, Y, maxIte, tolerance, verbose, sparse)
 end
