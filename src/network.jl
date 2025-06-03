@@ -622,6 +622,48 @@ function setNetBranchStatus!(; net::Net, branchNr::Int, status::Int)
 end
 
 """
+    setBusVoltage!(; net::Net, busName::String, vm_pu::Float64, va_deg::Float64)
+Sets the voltage magnitude and angle of a bus in the network.
+# Arguments
+- `net::Net`: The network.
+- `busName::String`: The name of the bus.
+- `vm_pu::Float64`: The voltage magnitude in per unit.
+- `va_deg::Float64`: The voltage angle in degrees.
+# Example 
+```julia
+setBusVoltage!(net = network, busName = "Bus1", vm_pu = 1.02, va_deg = 5.0) 
+```
+"""
+
+function setNodeVoltage!(; net::Net, busName::String, vm_pu::Float64, va_deg::Float64)
+  @debug "Set bus voltage for $busName to vm_pu = $vm_pu and va_deg = $va_deg"
+  busIdx = geNetBusIdx(net = net, busName = busName)
+  node = net.nodeVec[busIdx]
+  setVmVa!(node = node, vm_pu = vm_pu, va_deg = va_deg)
+end
+
+"""
+    setBusAngle!(; net::Net, busName::String, va_deg::Float64)
+Sets the voltage angle of a bus in the network.
+# Arguments
+- `net::Net`: The network.
+- `busName::String`: The name of the bus.
+- `va_deg::Float64`: The voltage angle in degrees.
+# Example
+```julia
+setBusAngle!(net = network, busName = "Bus1", va_deg = 5.0)
+```
+"""
+function setNodeAngle!(; net::Net, busName::String, va_deg::Float64)
+  @debug "Set bus angle for $busName to va_deg = $va_deg"
+  @assert va_deg >= -360 && va_deg <= 360 "Voltage angle must be between -360 and 360 degrees"
+  busIdx = geNetBusIdx(net = net, busName = busName)
+  node = net.nodeVec[busIdx]
+  vm_pu = node._vm_pu
+  setVmVa!(node = node, vm_pu = vm_pu, va_deg = va_deg)
+end
+
+"""
     setNetBranchStatus!(; net::Net, branchNr::Int, status::Int)
 
 Sets the status of a branch in the network.
