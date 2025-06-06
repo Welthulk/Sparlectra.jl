@@ -84,7 +84,7 @@ function basin_of_attraction_analysis()
 
   # Define resolution for analysis
   voltage_range = 0.4:0.1:1.6
-  angle_range = -25:5:25
+  angle_range = -20:5:25
 
   println("Analyzing $(length(voltage_range)) × $(length(angle_range)) = $(length(voltage_range) * length(angle_range)) starting value combinations")
   println("Voltage range: $(first(voltage_range)) - $(last(voltage_range)) pu")
@@ -97,7 +97,7 @@ function basin_of_attraction_analysis()
   total_tests = length(voltage_range) * length(angle_range)
   current_test = 0
 
-  #print("Progress: [" * repeat(" ", 50) * "]")
+  println("Progress: [" * repeat(" ", 50) * "]")
   print("Progress: [")
 
   for (i, v_start) in enumerate(voltage_range)
