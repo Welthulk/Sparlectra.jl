@@ -1,4 +1,5 @@
-﻿ausgabe.log
+﻿Manifest.toml
+ausgabe.log
 .VSCodeCounter
 .vscode/settings.json
 test/workshop*.jl
