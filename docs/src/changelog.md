@@ -1,4 +1,8 @@
 # Change Log
+## Version 0.4.22 (2025-08-27)
+### Bug Fixes
+ - small fixes
+
 ## Version 0.4.21 (2025-03-14)
 ### New Features
  - adding functions to remove elements from a net
