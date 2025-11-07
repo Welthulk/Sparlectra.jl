@@ -172,7 +172,7 @@ function createNetFromMatPowerFile(filename, log::Bool = false)::Net
 
     if abs(pGen) < 1e-6 && abs(qGen) < 1e-6
       busType = getBusType(net = myNet, busName = bus)
-      if busType == Sparlectra.PQ
+      if busType == PQ
         pInfo("generator $(_bus) has no power output, ignored")
         continue
       end

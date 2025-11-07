@@ -6,25 +6,6 @@
 
 debug = false
 angle_limit = false
-mutable struct BusData
-  idx::Int        # index of the bus, necessary for sorting  
-  vm_pu::Float64  # voltage in pu
-  va_rad::Float64 # angle in rad
-  pƩ::Float64     # sum of real power
-  qƩ::Float64     # sum of reactive power  
-  _pRes::Float64  # result power
-  _qRes::Float64  # result power
-  type::Sparlectra.NodeType
-
-  function BusData(idx::Int, vm_pu::Float64, va_deg::Float64, sumP::Float64, sumQ::Float64, type::Sparlectra.NodeType)
-    new(idx, vm_pu, va_deg, sumP, sumQ, 0.0, 0.0, type)
-  end
-
-  function Base.show(io::IO, bus::BusData)
-    va_deg = round(rad2deg(bus.va_rad), digits = 3)
-    print(io, "BusData($(bus.idx), $(bus.vm_pu), $(va_deg)°), $(bus.pƩ), $(bus.qƩ), $(bus._pRes), $(bus._qRes), $(bus.type))")
-  end
-end
 
 function setJacobianAngleLimit(value::Bool)
   global angle_limit = value
@@ -78,13 +59,13 @@ function getBusData(nodes::Vector{Sparlectra.Node}, Sbase_MVA::Float64, flatStar
     q = q / Sbase_MVA
 
     if flatStart
-      if type == Sparlectra.PQ
+      if type == PQ
         vm_pu = 1.0
         va_deg = 0.0
-      elseif type == Sparlectra.PV
+      elseif type == PV
         vm_pu = n._vm_pu === nothing ? 1.0 : n._vm_pu
         va_deg = 0.0
-      elseif type == Sparlectra.Slack
+      elseif type == Slack
         vm_pu = n._vm_pu === nothing ? 1.0 : n._vm_pu
         va_deg = n._va_deg === nothing ? 0.0 : deg2rad(n._va_deg)
       end

@@ -1,5 +1,5 @@
 """
-    Sparlectra 0.4.22
+    Sparlectra 0.5.00
 
 Sparlectra is a Julia package for the calculation of electrical networks. It is designed to be used in the context of power system analysis and optimization. 
 
@@ -27,13 +27,12 @@ using LinearAlgebra, SparseArrays, Printf, Logging
 
 # resource data types for working with Sparlectra
 const Wurzel3 = 1.7320508075688772
-const SparlectraVersion = VersionNumber("0.4.21")
+const SparlectraVersion = VersionNumber("0.5.00")
 abstract type AbstractBranch end
 
 version() = SparlectraVersion
 
 export
-  
   # constants
   Wurzel3, ComponentTyp,
   # classes  
@@ -86,6 +85,8 @@ export
   getNBI, mdoRCM,
   # jacobian.jl
   setJacobianDebug, setJacobianAngleLimit, runpf!,
+  # jacobian_full.jl (neu)
+  getPowerFeeds_full, residuum_full_withPV, calcJacobian_withPVIdentity, calcNewtonRaphson_withPVIdentity!, runpf_full!,
   # losses.jl
   calcNetLosses!,
   
@@ -94,7 +95,6 @@ export
 
   # run_acpflow.jl
   run_acpflow, run_net_acpflow
-
 
 include("component.jl")
 include("lines.jl")
@@ -106,7 +106,16 @@ include("shunt.jl")
 include("network.jl")
 include("import.jl")
 include("equicircuit.jl")
+
+# Neu: ausgelagerter BusData-Typ
+include("busdata.jl")
+
+# Bestehende reduzierte NR-Variante
 include("jacobian.jl")
+
+# Neu: Vollsystem mit PV-Identitätszeilen (parallel, nicht invasiv)
+include("jacobian_full.jl")
+
 include("losses.jl")
 include("nbi.jl")
 include("createnet_powermat.jl")
