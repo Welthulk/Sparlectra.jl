@@ -121,8 +121,10 @@ function test_jacobian_full_structure(verbose::Int=0)
             # Count nonzeros in row i2
             nnz_row = 0
             last_val = 0.0
-            for c in 1:size(J,2)
-                if J[i2,c] != 0.0
+#            for c in 1:size(J,2)
+ #               if J[i2,c] != 0.0
+             for c in axes(J, 2)
+                if J[i2, c] != 0.0
                     nnz_row += 1
                     last_val = J[i2,c]
                     if c != vcol

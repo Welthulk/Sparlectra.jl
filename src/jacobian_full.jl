@@ -64,12 +64,16 @@ end
 # Utility: set a full row of a CSC matrix to zero
 # ------------------------------
 function zero_row!(J::SparseMatrixCSC, r::Int)
-    @inbounds for c in 1:size(J,2)
-        if J[r,c] != 0.0
-            J[r,c] = 0.0
+    @inbounds for c in axes(J, 2)
+        for k in nzrange(J, c)
+            if rowvals(J)[k] == r
+                J.nzval[k] = 0.0
+            end
         end
     end
+    return J
 end
+
 
 function zero_row!(J::AbstractMatrix, r::Int)
     @views J[r, :] .= zero(eltype(J))
