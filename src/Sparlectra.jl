@@ -88,6 +88,8 @@ export
   setJacobianDebug, setJacobianAngleLimit, runpf!,
   # jacobian_full.jl (neu)
   getPowerFeeds_full, residuum_full_withPV, calcJacobian_withPVIdentity, calcNewtonRaphson_withPVIdentity!, runpf_full!,
+  # limits.jl
+  get_Q_limits_pu,
   # losses.jl
   calcNetLosses!,
   
@@ -107,14 +109,9 @@ include("shunt.jl")
 include("network.jl")
 include("import.jl")
 include("equicircuit.jl")
-
-# Neu: ausgelagerter BusData-Typ
+include("limits.jl")
 include("busdata.jl")
-
-# Bestehende reduzierte NR-Variante
 include("jacobian.jl")
-
-# Neu: Vollsystem mit PV-Identitätszeilen (parallel, nicht invasiv)
 include("jacobian_full.jl")
 
 include("losses.jl")
