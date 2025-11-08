@@ -157,115 +157,57 @@ function _force_pv!(net, busname::String; vm_pu::Float64=1.16)
     return nothing
 end
 
-# --- Test: PV→PQ-Umschaltung über Q-Limits (nutzt die tatsächlich vorhandenen PV-Busse) ---
-function test_pv_q_limit_switch!(net; verbose::Int=0)
-    n = deepcopy(net)  # keine Nebenwirkungen
-    tol    = 1e-6
-    maxIte = 30
+# --- Test: PV→PQ-Umschaltung über Q-Limits mit öffentlichen Settern ---
+function test_pv_q_limit_switch!(net::Net; verbose::Int=0)
+    n     = deepcopy(net)
+    tol   = 1e-6
+    maxIt = 30
 
-    # Warmstart (falls verfügbar), damit Full-NR leichter konvergiert
+    # Wir wissen aus testCreateNetworkFromScratch(): PV-Busse sind B10, B11, B12
+    pv_names = ["B10","B11","B12"]
+
+    # 1) Vset anheben, damit Q nach oben gedrückt wird
+    for name in pv_names
+        setPVBusVset!(n, name; vm_pu = 1.06)   # bei Bedarf auf 1.07 erhöhen
+    end
+
+    # 2) Enge Q-Limits in MVar für diese PV-Busse setzen
+    for name in pv_names
+        setPVBusQLimits!(n, name; qmin_MVar = -30.0, qmax_MVar = 30.0)
+    end
+    rebuildQLimits!(net = n)  # Aggregation p.u. neu aufbauen
+
+    # 3) Logs leeren (robust)
     try
-        _, erg_r = runpf!(n, maxIte, tol, 0)
-        if erg_r != 0 && verbose > 0
-            @warn "Reduced NR did not converge; continuing anyway"
-        end
+        resetQLimitLog!(n)
     catch
-        # ok, ohne Warmstart
+        n.qLimitLog = Any[]
+    end
+    if !hasproperty(n, :qLimitEvents); n.qLimitEvents = Dict{Int,Symbol}(); end
+    empty!(n.qLimitEvents)
+
+    # 4) Full-System NR laufen lassen
+    ite, erg = runpf_full!(n, maxIt, tol, verbose)
+    converged = (erg == 0)
+
+    # 5) Hat ein PV-Bus ein Limit gerissen?
+    # Name→Index (aus busDict)
+    idx = i -> geNetBusIdx(net = n, busName = i)
+    pv_idx = map(idx, pv_names)
+    hit = any(haskey(n.qLimitEvents, i) for i in pv_idx)
+
+    if verbose > 0
+        @info "iters=$(ite) erg=$(erg) converged=$(converged)"
+        @info "PV targets" pv_names pv_idx
+        @info "qLimitEvents" n.qLimitEvents
+        printQLimitLog(n)
     end
 
-    # Busdaten der aktuellen Netzlage
-    Y0 = createYBUS(net = n, sparse = true, printYBUS = false)
-    Sbase = n.baseMVA
-    busVec, slackIdx1 = Sparlectra.getBusData(n.nodeVec, Sbase, false)
-    _,       slackIdx = Sparlectra.getBusTypeVec(busVec)
-    @assert slackIdx == slackIdx1
-
-    # Nimm die echten PV-Busse aus busVec (ohne Slack)
-    pv_idxs = [i for i in eachindex(busVec) if busVec[i].type == Sparlectra.PV && i != slackIdx]
-    @assert !isempty(pv_idxs) "Keine PV-Busse im Netz – Test nicht anwendbar."
-
-    # Wähle bis zu 3 PV-Busse
-    targets = pv_idxs[1:min(3, length(pv_idxs))]
-
-    # Helper: Busname zu Index (robust auf verschiedene Feldnamen)
-    _busname(i) = begin
-        nnode = n.nodeVec[i]
-        if hasproperty(nnode, :name)      ; getfield(nnode, :name)
-        elseif hasproperty(nnode, :_name) ; getfield(nnode, :_name)
-        else                               "B$(i)"
-        end
-    end
-    names = map(_busname, targets)
-
-    # Q-Limits moderat eng + Logs resetten
-    try
-        buildQLimits!(n)
-    catch
-    end
-    @assert hasproperty(n, :qmin_pu) && hasproperty(n, :qmax_pu) "qmin_pu/qmax_pu fehlen im Net!"
-    n.qmin_pu .= -Inf;  n.qmax_pu .=  Inf
-
-    # zwei Versuche mit zunehmendem „Druck“ auf Q
-    attempts = (
-        (1.05, 0.03),   # Vset leicht anheben, ±0.03 p.u. Band
-        (1.07, 0.05),   # stärker anheben, Band etwas breiter (bessere Feasibility)
-    )
-
-    conv = false
-    hit  = false
-
-    for (vset, qband) in attempts
-        # enge Bänder nur für die Ziel-PV-Busse
-        for i in targets
-            n.qmin_pu[i] = -qband
-            n.qmax_pu[i] =  qband
-        end
-
-        # Logs leeren
-        try
-            resetQLimitLog!(n)
-        catch
-            if !hasproperty(n, :qLimitLog)   ; n.qLimitLog    = NamedTuple[]          ; end
-            if !hasproperty(n, :qLimitEvents); n.qLimitEvents = Dict{Int,Symbol}()    ; end
-            empty!(n.qLimitLog); empty!(n.qLimitEvents)
-        end
-
-        # Vset für die ausgewählten PVs setzen (per Namen, wie deine API es erwartet)
-        for name in names
-            setPVBusVset!(n, name; vm_pu = vset)
-        end
-
-        # Nach Änderungen an den Setpoints Busdaten/Slack **neu** bestimmen,
-        # YBUS kann gleich bleiben (Vset ändert Y nicht)
-        busVec2, slackIdxA = Sparlectra.getBusData(n.nodeVec, Sbase, false)
-        _,       slackIdxB = Sparlectra.getBusTypeVec(busVec2)
-        @assert slackIdxA == slackIdxB
-        Y = Y0  # identisch zu oben; reicht aus
-
-        ite, erg = calcNewtonRaphson_withPVIdentity!(n, Y, slackIdxA;
-                                                     tolerance = tol,
-                                                     verbose   = verbose,
-                                                     sparse    = true,
-                                                     flatStart = false)
-        conv = (erg == 0)
-        hit  = any(haskey(n.qLimitEvents, i) for i in targets)
-
-        if verbose > 0
-            @info "try(vset=$(vset), qband=$(qband)) => ite=$(ite), erg=$(erg), hit=$(hit)"
-            @info "targets" targets names
-            @info "qLimitEvents" n.qLimitEvents
-            @info "qLimitLog"    n.qLimitLog
-        end
-
-        if conv && hit
-            break
-        end
-    end
-
-    @test conv === true
-    @test hit  === true
+    @test converged === true
+    @test hit       === true
     return true
 end
+
 
 # Wrapper für runtests.jl – baut das Netz wie die anderen Full-System-Tests
 function test_pv_q_limit_switch(; verbose::Int=0)

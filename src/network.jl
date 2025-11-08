@@ -65,8 +65,7 @@ struct Net
   trafos::Vector{PowerTransformer}
   branchVec::Vector{Branch}
   prosumpsVec::Vector{ProSumer}
-  shuntVec::Vector{Shunt}
-  #pstVect::Vector{}
+  shuntVec::Vector{Shunt}  
   busDict::Dict{String,Int}
   busOrigIdxDict::Dict{Int,Int}
   totalLosses::Vector{Tuple{Float64,Float64}}
@@ -77,7 +76,7 @@ struct Net
   _locked::Bool
   shuntDict::Dict{Int,Int}
   isoNodes::Vector{Int}
-  qLimitLog::Vector{NamedTuple{(:iter,:bus,:side),Tuple{Int,Int,Symbol}}}
+  qLimitLog::Vector{Any}
   cooldown_iters::Int 
   q_hyst_pu::Float64  
   #! format: off
@@ -89,7 +88,7 @@ struct Net
         Dict{String,Int}(), Dict{Int,Int}(), [], [],                  # totalLosses, totalBusPower
         Float64[], Float64[], Dict{Int,Symbol}(),                     # qmin_pu, qmax_pu, qLimitEvents
         false, Dict{Int,Int}(), [],                                   # _locked, shuntDict, isoNodes
-        NamedTuple{(:iter,:bus,:side),Tuple{Int,Int,Symbol}}[],       # qLimitLog 
+        Any[],                                                        # qLimitLog 
         0,                                                            # cooldown_iters (0=aus)
         0.0)                                                          # q_hyst_pu    
 
@@ -1065,10 +1064,9 @@ end
 # ------------------------------------------------------------
 function setPVBusVset!(net::Net; bus::Int, vm_pu::Float64)
     node = net.nodeVec[bus]
-    if !(hasproperty(node, :type) && node.type == PV)
+    if !isPVNode(node)   # richtiger PV/Slack-Check
         @warn "setPVBusVset!: Bus $bus is not PV; setting _vm_pu anyway (the solver will ignore it for non-PV)."
     end
-    # Node-Objekte sind mutabel: nur das Feld setzen.
     setfield!(node, :_vm_pu, vm_pu)
     return nothing
 end

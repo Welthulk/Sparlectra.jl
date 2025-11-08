@@ -74,7 +74,7 @@ export
   # Net
   addBus!, addShunt!, addACLine!, addPIModelACLine!, add2WTrafo!, addPIModelTrafo!, addProsumer!, lockNet!, validate!, hasBusInNet, addBusGenPower!, addBusLoadPower!, addBusShuntPower!, setNodeVoltage!, setNodeAngle!,
   getNetOrigBusIdx, geNetBusIdx, setNetBranchStatus!, getNetBranch, getNetBranchNumberVec, setTotalLosses!, getTotalLosses, getBusType, get_bus_vn_kV, get_vn_kV, updateBranchParameters!, hasShunt!, 
-  getShunt!, markIsolatedBuses!,setTotalBusPower!, setPVGeneratorQLimitsAll!, setPVBusVset!,setPVBusQLimits!,setAllPVVset!,
+  getShunt!, markIsolatedBuses!,setTotalBusPower!, setPVGeneratorQLimitsAll!, setPVBusVset!,setPVBusQLimits!,setAllPVVset!,rebuildQLimits!,
   # remove_functions.jl
   removeBus!, removeBranch!, removeACLine!, removeTrafo!, removeShunt!, removeProsumer!, clearIsolatedBuses!,
   # import.jl
@@ -90,7 +90,7 @@ export
   # jacobian_full.jl (neu)
   getPowerFeeds_full, residuum_full_withPV, calcJacobian_withPVIdentity, calcNewtonRaphson_withPVIdentity!, runpf_full!,
   # limits.jl
-  printQLimitLog,logQLimitHit!, lastQLimitIter, get_Q_limits_pu, buildQLimits!,logQLimitHit!,lastQLimitIter,
+  printQLimitLog,logQLimitHit!, lastQLimitIter, get_Q_limits_pu, buildQLimits!,logQLimitHit!,lastQLimitIter, resetQLimitLog!,
   # losses.jl
   calcNetLosses!,
   
