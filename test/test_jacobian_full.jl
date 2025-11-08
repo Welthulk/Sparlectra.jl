@@ -147,3 +147,25 @@ function test_jacobian_full_structure(verbose::Int=0)
 
     return ok
 end
+
+function test_pv_q_limit_switch(; verbose::Int=1)
+    net = testCreateNetworkFromScratch()
+
+    # Lauf
+    ite, erg = runpf_full!(net, 30, 1e-6, verbose)
+    erg == 0 || return false
+
+    # Hat es einen Limit-Hit gegeben?
+    # (limits.jl legt net.qLimitEvents als Dict{Int,Symbol} an: BusIdx => :min | :max)
+    hit = !isempty(net.qLimitEvents)
+
+    if verbose > 0
+        println("qLimitEvents: ", net.qLimitEvents)
+        if hasproperty(net, :qLimitLog)
+            println("qLimitLog: ", net.qLimitLog)
+        end
+    end
+
+    return hit
+end
+

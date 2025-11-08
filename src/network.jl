@@ -78,8 +78,8 @@ struct Net
   shuntDict::Dict{Int,Int}
   isoNodes::Vector{Int}
   qLimitLog::Vector{NamedTuple{(:iter,:bus,:side),Tuple{Int,Int,Symbol}}}
-  cooldown_iters::Int  
-  #branchDict::Dict{Tuple{String,String}, Branch}  # fast search for existing branches
+  cooldown_iters::Int 
+  q_hyst_pu::Float64  
   #! format: off
   function Net(; name::String, baseMVA::Float64, vmin_pu::Float64 = 0.9, vmax_pu::Float64 = 1.1)    
 
@@ -89,8 +89,9 @@ struct Net
         Dict{String,Int}(), Dict{Int,Int}(), [], [],                  # totalLosses, totalBusPower
         Float64[], Float64[], Dict{Int,Symbol}(),                     # qmin_pu, qmax_pu, qLimitEvents
         false, Dict{Int,Int}(), [],                                   # _locked, shuntDict, isoNodes
-        NamedTuple{(:iter,:bus,:side),Tuple{Int,Int,Symbol}}[],        # qLimitLog 
-        0)                                                             # cooldown_iters (0=aus) 
+        NamedTuple{(:iter,:bus,:side),Tuple{Int,Int,Symbol}}[],       # qLimitLog 
+        0,                                                            # cooldown_iters (0=aus)
+        0.0)                                                          # q_hyst_pu    
 
 
   end
@@ -937,3 +938,57 @@ function markIsolatedBuses!(; net::Net, log::Bool = false)
     end
   end
 end
+
+"""
+    setBusGeneratorQLimits!(; net::Net, busName::String, qmin_MVar::Float64, qmax_MVar::Float64)
+
+Setzt für **alle Generator-ProSumer** am Bus `busName` die reaktiven Grenzwerte
+in MVar und baut anschließend die Bus-aggregierten Q-Limits neu auf.
+"""
+function setBusGeneratorQLimits!(; net::Net, busName::String, qmin_MVar::Float64, qmax_MVar::Float64)
+    busIdx = geNetBusIdx(net = net, busName = busName)
+    for ps in net.prosumpsVec
+        if isGenerator(ps)
+            c = ps.comp
+            if !isnothing(c.cFrom_bus) && c.cFrom_bus == busIdx
+                ps.minQ = qmin_MVar
+                ps.maxQ = qmax_MVar
+            end
+        end
+    end
+    buildQLimits!(net)   # aggregierte per-Bus-Limits (p.u.) neu aufbauen
+    return nothing
+end
+
+"""
+    setPVGeneratorQLimitsAll!(; net::Net, qmin_MVar::Float64, qmax_MVar::Float64)
+
+Setzt auf **allen PV-Bussen** die Generator-Q-Grenzen (für alle Generator-ProSumer,
+die an einem PV-Bus hängen) und baut anschließend die Aggregation neu auf.
+"""
+function setPVGeneratorQLimitsAll!(; net::Net, qmin_MVar::Float64, qmax_MVar::Float64)
+    pv_set = Set{Int}()
+    for n in net.nodeVec
+        if isPVNode(n)
+            push!(pv_set, n.busIdx)
+        end
+    end
+    for ps in net.prosumpsVec
+        if isGenerator(ps)
+            c = ps.comp
+            if !isnothing(c.cFrom_bus) && (c.cFrom_bus in pv_set)
+                ps.minQ = qmin_MVar
+                ps.maxQ = qmax_MVar
+            end
+        end
+    end
+    buildQLimits!(net)
+    return nothing
+end
+
+"""
+    rebuildQLimits!(; net::Net)
+
+Bequemer Wrapper auf `buildQLimits!`.
+"""
+rebuildQLimits!(; net::Net) = (buildQLimits!(net); nothing)
