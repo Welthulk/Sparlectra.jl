@@ -151,12 +151,17 @@ end
 function test_pv_q_limit_switch(; verbose::Int=1)
     net = testCreateNetworkFromScratch()
 
-    # Lauf
+    # Einen konkreten PV-Bus „zwicken“, z. B. B10 (22 kV-PV)
+    setPVBusVset!(net, "B10"; vm_pu=1.06)
+    setPVBusQLimits!(net, "B10"; qmin_MVar=0.0, qmax_MVar=0.0)
+
+    # Optional: sicherstellen, dass Limits neu aggregiert werden
+    # (falls du das nicht sowieso beim ersten Zugriff machst)
+    # buildQLimits!(net)   # nur falls nötig
+
     ite, erg = runpf_full!(net, 30, 1e-6, verbose)
     erg == 0 || return false
 
-    # Hat es einen Limit-Hit gegeben?
-    # (limits.jl legt net.qLimitEvents als Dict{Int,Symbol} an: BusIdx => :min | :max)
     hit = !isempty(net.qLimitEvents)
     if verbose > 0
         println("qLimitEvents: ", net.qLimitEvents)
@@ -164,7 +169,7 @@ function test_pv_q_limit_switch(; verbose::Int=1)
             println("qLimitLog: ", net.qLimitLog)
         end
     end
-
     return hit
 end
+
 
