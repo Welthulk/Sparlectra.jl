@@ -186,7 +186,17 @@ function calcNewtonRaphson_withPVIdentity!(
 
     n_pv = count(b->b.type==PV, busVec)
     n_pq = count(b->b.type==PQ, busVec)
+    n_pv = count(b->b.type==PV, busVec)
+    n_pq = count(b->b.type==PQ, busVec)
     n    = n_pq + n_pv
+
+    # Q-Limits (p.u.) 
+    qmin_pu, qmax_pu = get_Q_limits_pu(net, length(busVec))
+
+    # Tracking 
+    pv2pq = Set{Int}()                # 1-basiert: Index in busVec
+    qlimit_side = Dict{Int,Symbol}()  # :min oder :max
+
 
     # Vset: actual setpoints for PV, 1.0 (dummy) otherwise
     Vset = [ (b.type==Sparlectra.PV) ?
@@ -202,6 +212,34 @@ function calcNewtonRaphson_withPVIdentity!(
 
     while it <= maxIte
         Δ = residuum_full_withPV(Y, busVec, Vset, n_pq, n_pv, (verbose>2))
+
+        # --- Active-Set: Q-Limits für PV-Busse prüfen und ggf. PV->PQ umschalten ---
+        changed = false
+        @inbounds for k in eachindex(busVec)
+            b = busVec[k]
+            if b.type == PV
+                qreq = b._qRes   # aktuell benötigte Q-Einspeisung (p.u.)
+                if qreq > qmax_pu[k]
+                    b.type = PQ
+                    b.qƩ  = qmax_pu[k]   # an Grenze „klemmen“
+                    changed = true
+                    push!(pv2pq, k); qlimit_side[k] = :max
+                    (verbose>0) && @printf "  PV->PQ an Bus %d (Q=%.4f > Qmax=%.4f)\n" k qreq qmax_pu[k]
+                elseif qreq < qmin_pu[k]
+                    b.type = PQ
+                    b.qƩ  = qmin_pu[k]
+                    changed = true
+                    push!(pv2pq, k); qlimit_side[k] = :min
+                    (verbose>0) && @printf "  PV->PQ an Bus %d (Q=%.4f < Qmin=%.4f)\n" k qreq qmin_pu[k]
+                end
+            end
+        end
+
+        # Wenn sich aktive Restriktionen geändert haben, Residuum mit neuem Typenbild nachziehen
+        if changed
+            Δ = residuum_full_withPV(Y, busVec, Vset, n_pq, n_pv, (verbose>2))
+        end
+
         nrm = norm(Δ)
         (verbose>0) && @printf " norm %e, tol %e, ite %d\n" nrm tolerance it
 
@@ -268,6 +306,21 @@ function calcNewtonRaphson_withPVIdentity!(
 
     setTotalBusPower!(net=net,
         p=sum(b->b._pRes, busVec), q=sum(b->b._qRes, busVec))
+
+    if !haskey(net, :_qLimitEvents)
+        # falls Net kein Feld hat: dynamisch als Dict am Net-Objekt anhängen (Idiom für Logging)
+        try
+            setfield!(net, :_qLimitEvents, Dict{Int,Symbol}())
+        catch
+            # falls Net strikt ist: alternativ eigenes Logging weglassen oder ein offizielles Feld ergänzen
+        end
+    end
+    if hasfield(typeof(net), :_qLimitEvents)
+        for k in pv2pq
+            idx = busVec[k].idx
+            net._qLimitEvents[idx] = qlimit_side[k]
+        end
+    end        
 
     return it, erg
 end
