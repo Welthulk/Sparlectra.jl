@@ -158,7 +158,6 @@ function test_pv_q_limit_switch(; verbose::Int=1)
     # Hat es einen Limit-Hit gegeben?
     # (limits.jl legt net.qLimitEvents als Dict{Int,Symbol} an: BusIdx => :min | :max)
     hit = !isempty(net.qLimitEvents)
-
     if verbose > 0
         println("qLimitEvents: ", net.qLimitEvents)
         if hasproperty(net, :qLimitLog)

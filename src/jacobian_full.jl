@@ -1,4 +1,19 @@
-# jacobian_full.jl — Full-system Newton-Raphson including PV identity rows (minimal invasive)
+# jacobian_full.jl — Full-system Newton-Raphson including PV identity rows
+#
+# Features:
+# - Full-state NR: θ and V for all non-slack buses
+# - PV buses: second equation is replaced by identity row enforcing rPV := V - Vset = 0
+# - Active-set handling of PV Q-limits: PV→PQ when Q demand violates limits
+# - Optional re-enable PQ→PV with hysteresis band and cooldown (robust to missing fields)
+#
+# Assumptions:
+# - Q-limits per bus are provided by get_Q_limits_pu(net) and backed by buildQLimits!(net).
+# - Structured logging helpers exist: logQLimitHit!(net, iter, busIdx, side) and lastQLimitIter(net, busIdx)
+# - net.qLimitEvents is a Dict{Int,Symbol} (ensured by buildQLimits!)
+#
+# Robustness:
+# - If the Net type does not have fields `q_hyst_pu` or `cooldown_iters`, defaults (0.0, 0) are used.
+# - If Q-limit arrays don't match the current bus count, we (re)build once.
 
 using LinearAlgebra
 using SparseArrays
@@ -10,8 +25,7 @@ using Printf
 # ------------------------------
 function getPowerFeeds_full(busVec::Vector{BusData}, n_pq::Int, n_pv::Int)::Vector{Float64}
     n = n_pq + n_pv
-    size = 2*n
-    pf = zeros(Float64, size)
+    pf = zeros(Float64, 2n)
     vindex = 0
     @inbounds for bus in busVec
         if bus.type == PQ
@@ -39,7 +53,7 @@ function residuum_full_withPV(
     S = Diagonal(V) * conj(Y * V)
 
     n = n_pq + n_pv
-    Δ = zeros(Float64, 2*n)
+    Δ = zeros(Float64, 2n)
 
     vindex = 0
     @inbounds for k in eachindex(busVec)
@@ -74,7 +88,6 @@ function zero_row!(J::SparseMatrixCSC, r::Int)
     return J
 end
 
-
 function zero_row!(J::AbstractMatrix, r::Int)
     @views J[r, :] .= zero(eltype(J))
     return J
@@ -95,7 +108,7 @@ function calcJacobian_withPVIdentity(
     shiftIJ(idx::Int) = (idx >= slackIdx) ? idx - 1 : idx
 
     n = n_pq + n_pv
-    size = 2*n
+    size = 2n
     J = sparse ? spzeros(Float64, size, size) : zeros(Float64, size, size)
 
     @inbounds for i in eachindex(busVec)
@@ -103,7 +116,7 @@ function calcJacobian_withPVIdentity(
         if busVec[i].type == Sparlectra.Slack
             continue
         end
-        
+
         vm_i = busVec[i].vm_pu
         va_i = busVec[i].va_rad
         type_i = busVec[i].type
@@ -116,7 +129,7 @@ function calcJacobian_withPVIdentity(
             if busVec[j].type == Sparlectra.Slack
                 continue
             end
-            
+
             vm_j = busVec[j].vm_pu
             va_j = busVec[j].va_rad
 
@@ -178,128 +191,111 @@ function calcNewtonRaphson_withPVIdentity!(
     setJacobianAngleLimit(angle_limit)
     setJacobianDebug(debug)
 
-    # Q-Limits (p.u.) 
-    qmin_pu, qmax_pu = get_Q_limits_pu(net)
+    # Defaults if these fields do not exist on the Net type
+    cooldown_iters = hasfield(typeof(net), :cooldown_iters) ? net.cooldown_iters : 0
+    q_hyst_pu      = hasfield(typeof(net), :q_hyst_pu)      ? net.q_hyst_pu      : 0.0
 
-    nodes = net.nodeVec
+    nodes     = net.nodeVec
     Sbase_MVA = net.baseMVA
 
-    busVec, slackNum = getBusData(nodes, Sbase_MVA, flatStart)
-    busTypeVec, slackIdx = getBusTypeVec(busVec)
+    busVec, slackNum      = getBusData(nodes, Sbase_MVA, flatStart)
+    busTypeVec, slackIdx  = getBusTypeVec(busVec)
 
     n_pv = count(b->b.type==PV, busVec)
     n_pq = count(b->b.type==PQ, busVec)
     n    = n_pq + n_pv
 
-    # Q-Limits vorbereiten (falls Zahl der Busse nicht passt → (re)build)
+    # Q-Limits: build once if necessary
     if length(net.qmin_pu) != length(busVec) || length(net.qmax_pu) != length(busVec)
         buildQLimits!(net)
     end
-    # Logging-Reset am Start
-    resetQLimitLog!(net)
+    qmin_pu, qmax_pu = get_Q_limits_pu(net)
 
+    # Reset structured Q-limit log at iteration start
+    resetQLimitLog!(net)
 
     # Vset: actual setpoints for PV, 1.0 (dummy) otherwise
     Vset = [ (b.type==Sparlectra.PV) ?
-         (isnothing(net.nodeVec[b.idx]._vm_pu) ? b.vm_pu : net.nodeVec[b.idx]._vm_pu) :
-         1.0
-       for b in busVec ]
-
+             (isnothing(net.nodeVec[b.idx]._vm_pu) ? b.vm_pu : net.nodeVec[b.idx]._vm_pu) :
+             1.0
+             for b in busVec ]
 
     adjBranch = adjacentBranches(Y, debug)
 
     it = 0; erg = 1
-    feeders = getPowerFeeds_full(busVec, n_pq, n_pv)
+    # feeders = getPowerFeeds_full(busVec, n_pq, n_pv)  # not needed here
 
     while it <= maxIte
         Δ = residuum_full_withPV(Y, busVec, Vset, n_pq, n_pv, (verbose>2))
 
-        # --- Active-Set: check Q-Limits of PV buses and switch PV->PQ if necessary ---
+        # --- Active set: PV -> PQ when Q-limit violated -------------------------
         changed = false
         @inbounds for k in eachindex(busVec)
             b = busVec[k]
             if b.type == PV
-                qreq = b._qRes                      # aktueller Q-Bedarf (p.u.)
+                qreq   = b._qRes        # current Q (p.u.)
                 busIdx = b.idx
-
-                # -----------------------------------------------------------
-                # [OPTIONAL: Cooldown benutzen, wenn du irgendwann PQ->PV
-                #  re-enablen willst. Hier NICHTS tun: wir schalten nur PV->PQ.
-                #  Den Cooldown brauchst du beim Rückschalten (siehe unten).]
-                # -----------------------------------------------------------
-
-                if qreq > net.qmax_pu[k]
-                    # trifft obere Grenze
+                if qreq > qmax_pu[k]
                     b.type = PQ
-                    b.qƩ  = net.qmax_pu[k]
+                    b.qƩ   = qmax_pu[k]
                     changed = true
                     net.qLimitEvents[busIdx] = :max
-                    logQLimitHit!(net, it, busIdx, :max)   # <— strukturierter Log
-                    (verbose>0) && @printf "  PV->PQ Bus %d: Q=%.4f > Qmax=%.4f\n" busIdx qreq net.qmax_pu[k]
-
-                elseif qreq < net.qmin_pu[k]
-                    # trifft untere Grenze
+                    logQLimitHit!(net, it, busIdx, :max)
+                    (verbose>0) && @printf "  PV->PQ Bus %d: Q=%.4f > Qmax=%.4f\n" busIdx qreq qmax_pu[k]
+                elseif qreq < qmin_pu[k]
                     b.type = PQ
-                    b.qƩ  = net.qmin_pu[k]
+                    b.qƩ   = qmin_pu[k]
                     changed = true
                     net.qLimitEvents[busIdx] = :min
-                    logQLimitHit!(net, it, busIdx, :min)   # <— strukturierter Log
-                    (verbose>0) && @printf "  PV->PQ Bus %d: Q=%.4f < Qmin=%.4f\n" busIdx qreq net.qmin_pu[k]
+                    logQLimitHit!(net, it, busIdx, :min)
+                    (verbose>0) && @printf "  PV->PQ Bus %d: Q=%.4f < Qmin=%.4f\n" busIdx qreq qmin_pu[k]
                 end
             end
         end
         if changed
             Δ = residuum_full_withPV(Y, busVec, Vset, n_pq, n_pv, (verbose>2))
         end
-        # --- Optionales Re-Enable: PQ -> PV, wenn Q wieder "sicher" im Band liegt,
-        #     Hysterese erfüllt und der Cooldown abgelaufen ist ----------------------
+
+        # --- Optional re-enable: PQ -> PV when Q back inside band, hysteresis and cooldown ok
         reenabled = false
         @inbounds for k in eachindex(busVec)
             b = busVec[k]
-
-            # Kandidaten sind nur Busse, die aktuell PQ sind und zuvor wegen Q-Limit
-            # umgeschaltet wurden (stehen in net.qLimitEvents)
             if b.type == PQ && haskey(net.qLimitEvents, b.idx)
-                qreq = b._qRes                    # aktueller Q-Bedarf (p.u.)
-                lo = net.qmin_pu[k] + net.q_hyst_pu
-                hi = net.qmax_pu[k] - net.q_hyst_pu
-
+                qreq = b._qRes
+                lo   = qmin_pu[k] + q_hyst_pu
+                hi   = qmax_pu[k] - q_hyst_pu
                 ready = (qreq > lo) && (qreq < hi)
 
-                # Cooldown prüfen (falls konfiguriert)
-                if ready && net.cooldown_iters > 0
+                if ready && cooldown_iters > 0
                     last_it = Sparlectra.lastQLimitIter(net, b.idx)
-                    if !isnothing(last_it) && (it - last_it) < net.cooldown_iters
+                    if !isnothing(last_it) && (it - last_it) < cooldown_iters
                         ready = false
                     end
                 end
 
                 if ready
                     b.type = PV
-                    delete!(net.qLimitEvents, b.idx)   # Bus ist nicht mehr "geklammert"
+                    delete!(net.qLimitEvents, b.idx)
                     reenabled = true
-                    (verbose>0) && @printf "  PQ->PV Bus %d: Q=%.4f back in [%.4f, %.4f] (cooldown=%d)\n" b.idx qreq lo hi net.cooldown_iters
+                    (verbose>0) && @printf "  PQ->PV Bus %d: Q=%.4f back in [%.4f, %.4f] (cooldown=%d)\n" b.idx qreq lo hi cooldown_iters
                 end
             end
         end
-
         if reenabled
-            # Residuum neu, weil sich die Struktur (PQ/PV) geändert hat
             Δ = residuum_full_withPV(Y, busVec, Vset, n_pq, n_pv, (verbose>2))
         end
 
+        # Convergence check
         nrm = norm(Δ)
         (verbose>0) && @printf " norm %e, tol %e, ite %d\n" nrm tolerance it
-
         if nrm < tolerance
             (verbose>0) && println("Convergence after $(it) iterations")
             erg = 0; break
         end
 
+        # Solve J * Δx = Δ
         J = calcJacobian_withPVIdentity(Y, busVec, adjBranch, slackIdx, n_pq, n_pv;
                                         log=(verbose>=3), sparse=sparse)
-
-        # Solve
         Δx = nothing
         try
             Δx = J \ Δ
@@ -311,7 +307,7 @@ function calcNewtonRaphson_withPVIdentity!(
             erg = 2; break
         end
 
-        # Update (PV buses get ΔV_rel from the identity row)
+        # State update (PV buses get ΔV_rel from the identity row)
         kSlack = 0
         for i in eachindex(busVec)
             if busVec[i].type == Slack
@@ -328,7 +324,7 @@ function calcNewtonRaphson_withPVIdentity!(
             end
             busVec[i].vm_pu += busVec[i].vm_pu * Δx[idx2]
 
-            # Reprojection (keep polar form consistent)
+            # Reproject to polar consistency
             Vc = busVec[i].vm_pu * exp(im*busVec[i].va_rad)
             busVec[i].vm_pu = abs(Vc)
             busVec[i].va_rad = angle(Vc)
@@ -355,7 +351,6 @@ function calcNewtonRaphson_withPVIdentity!(
     setTotalBusPower!(net=net,
         p=sum(b->b._pRes, busVec), q=sum(b->b._qRes, busVec))
 
-
     if !isempty(net.qLimitEvents) && verbose>0
         println("Q-limit events (BusIdx => side): ", net.qLimitEvents)
     end
@@ -367,7 +362,7 @@ end
 # Convenience wrapper similar to runpf!, but for the full system
 # ------------------------------
 function runpf_full!(net::Net, maxIte::Int, tolerance::Float64=1e-6, verbose::Int=0)
-    sparse = length(net.nodeVec) > 60
+    sparse   = length(net.nodeVec) > 60
     printYBus = (length(net.nodeVec) < 20) && (verbose > 1)
     Y = createYBUS(net=net, sparse=sparse, printYBUS=printYBus)
     return calcNewtonRaphson_withPVIdentity!(net, Y, maxIte;
