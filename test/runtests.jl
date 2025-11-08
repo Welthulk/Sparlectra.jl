@@ -24,5 +24,6 @@ include("test_jacobian_full.jl")
         @test test_acpflow_full(0) == true
         @test test_full_matches_reduced() == true
         @test test_jacobian_full_structure() == true
+        @test test_pv_q_limit_switch(verbose=1) == true
     end
 end

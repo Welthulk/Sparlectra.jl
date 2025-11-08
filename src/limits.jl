@@ -95,18 +95,6 @@ function resetQLimitLog!(net::Net)
 end
 
 """
-    logQLimitHit!(net::Net, iter::Int, bus::Int, side::Symbol)
-
-Append a structured Q-limit event: `side` is `:min` or `:max`.
-Also mirrors the last state per bus into `net.qLimitEvents[bus]`.
-"""
-function logQLimitHit!(net::Net, iter::Int, bus::Int, side::Symbol)
-    push!(net.qLimitLog, (iter=iter, bus=bus, side=side))
-    net.qLimitEvents[bus] = side
-    return nothing
-end
-
-"""
     get_Q_limits_pu(net::Net) -> (qmin_pu, qmax_pu)
 
 Return per-bus Q limits in p.u. (build once if empty).
@@ -122,21 +110,6 @@ end
 function get_Q_limits_pu(net::Net, ::Int)
     @warn "get_Q_limits_pu: additional argument ignored (compatibility fallback)."
     return get_Q_limits_pu(net)
-end
-
-"""
-    lastQLimitIter(net::Net, bus::Int) -> Union{Nothing,Int}
-
-Return the iteration index of the most recent Q-limit event for the given bus, if any.
-"""
-function lastQLimitIter(net::Net, bus::Int)::Union{Nothing,Int}
-    for i = length(net.qLimitLog):-1:1
-        ev = net.qLimitLog[i]
-        if ev.bus == bus
-            return ev.iter
-        end
-    end
-    return nothing
 end
 
 """
@@ -175,4 +148,25 @@ function printQLimitLog(net::Net; sort_by::Symbol=:iter, io::IO=stdout)
 
     println(io, "─"^34)
     println(io, "Total events: ", length(logdata))
+end
+
+Base.@kwdef struct QLimitEvent
+    iter::Int
+    bus::Int
+    side::Symbol   # :min | :max
+end
+
+function logQLimitHit!(net::Net, iter::Int, bus::Int, side::Symbol)
+    push!(net.qLimitLog, QLimitEvent(iter=iter, bus=bus, side=side))
+    net.qLimitEvents[bus] = side
+end
+
+"Returns the last iteration number where `bus` hit a Q-limit, or `nothing`."
+function lastQLimitIter(net::Net, bus::Int)
+    for i = length(net.qLimitLog):-1:1
+        if net.qLimitLog[i].bus == bus
+            return net.qLimitLog[i].iter
+        end
+    end
+    return nothing
 end

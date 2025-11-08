@@ -234,7 +234,7 @@ function calcNewtonRaphson_withPVIdentity!(
                     b.qƩ  = net.qmax_pu[k]
                     changed = true
                     net.qLimitEvents[busIdx] = :max
-                    Sparlectra.logQLimitHit!(net, it, busIdx, :max)   # <— strukturierter Log
+                    logQLimitHit!(net, it, busIdx, :max)   # <— strukturierter Log
                     (verbose>0) && @printf "  PV->PQ Bus %d: Q=%.4f > Qmax=%.4f\n" busIdx qreq net.qmax_pu[k]
 
                 elseif qreq < net.qmin_pu[k]
@@ -243,7 +243,7 @@ function calcNewtonRaphson_withPVIdentity!(
                     b.qƩ  = net.qmin_pu[k]
                     changed = true
                     net.qLimitEvents[busIdx] = :min
-                    Sparlectra.logQLimitHit!(net, it, busIdx, :min)   # <— strukturierter Log
+                    logQLimitHit!(net, it, busIdx, :min)   # <— strukturierter Log
                     (verbose>0) && @printf "  PV->PQ Bus %d: Q=%.4f < Qmin=%.4f\n" busIdx qreq net.qmin_pu[k]
                 end
             end
@@ -251,6 +251,43 @@ function calcNewtonRaphson_withPVIdentity!(
         if changed
             Δ = residuum_full_withPV(Y, busVec, Vset, n_pq, n_pv, (verbose>2))
         end
+        # --- Optionales Re-Enable: PQ -> PV, wenn Q wieder "sicher" im Band liegt,
+        #     Hysterese erfüllt und der Cooldown abgelaufen ist ----------------------
+        reenabled = false
+        @inbounds for k in eachindex(busVec)
+            b = busVec[k]
+
+            # Kandidaten sind nur Busse, die aktuell PQ sind und zuvor wegen Q-Limit
+            # umgeschaltet wurden (stehen in net.qLimitEvents)
+            if b.type == PQ && haskey(net.qLimitEvents, b.idx)
+                qreq = b._qRes                    # aktueller Q-Bedarf (p.u.)
+                lo = net.qmin_pu[k] + net.q_hyst_pu
+                hi = net.qmax_pu[k] - net.q_hyst_pu
+
+                ready = (qreq > lo) && (qreq < hi)
+
+                # Cooldown prüfen (falls konfiguriert)
+                if ready && net.cooldown_iters > 0
+                    last_it = Sparlectra.lastQLimitIter(net, b.idx)
+                    if !isnothing(last_it) && (it - last_it) < net.cooldown_iters
+                        ready = false
+                    end
+                end
+
+                if ready
+                    b.type = PV
+                    delete!(net.qLimitEvents, b.idx)   # Bus ist nicht mehr "geklammert"
+                    reenabled = true
+                    (verbose>0) && @printf "  PQ->PV Bus %d: Q=%.4f back in [%.4f, %.4f] (cooldown=%d)\n" b.idx qreq lo hi net.cooldown_iters
+                end
+            end
+        end
+
+        if reenabled
+            # Residuum neu, weil sich die Struktur (PQ/PV) geändert hat
+            Δ = residuum_full_withPV(Y, busVec, Vset, n_pq, n_pv, (verbose>2))
+        end
+
         nrm = norm(Δ)
         (verbose>0) && @printf " norm %e, tol %e, ite %d\n" nrm tolerance it
 
