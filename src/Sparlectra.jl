@@ -1,19 +1,3 @@
-"""
-    Sparlectra 0.5.00
-
-Sparlectra is a Julia package for the calculation of electrical networks. It is designed to be used in the context of power system analysis and optimization. 
-
-- [GitHub Repository](https://github.com/welthulk/Sparlectra.jl)
-- [Website](https://welthulk.github.io/Sparlectra.jl)
-
-**Naming Conventions:**
-The project follows the Julia Naming Conventions for the most part, 
-but it's important to note that the naming convention for functions might deviate. 
-In this module, functions are written in CamelCase with a lowercase initial letter. 
-
-"""
-module Sparlectra
-
 # Author: Udo Schmitz (https://github.com/Welthulk)
 # Purpose: network calculation
 
@@ -23,16 +7,33 @@ module Sparlectra
 # In this module, functions are written in CamelCase with a lowercase initial letter. 
 
 #! format: off
+
+module Sparlectra
 using LinearAlgebra, SparseArrays, Printf, Logging
 
 # resource data types for working with Sparlectra
 const Wurzel3 = 1.7320508075688772
-const SparlectraVersion = VersionNumber("0.5.00")
+const SparlectraVersion = v"0.4.23"
+version() = SparlectraVersion
 abstract type AbstractBranch end
 
-version() = SparlectraVersion
+const _MODULE_DOC = """
+    Sparlectra $(SparlectraVersion)
 
+Sparlectra is a Julia package for the calculation of electrical networks. 
+It is designed to be used in the context of power system analysis and optimization. 
+
+- GitHub Repository: https://github.com/welthulk/Sparlectra.jl
+- Website: https://welthulk.github.io/Sparlectra.jl
+
+**Naming Conventions:**
+The project follows the Julia Naming Conventions for the most part, 
+but it's important to note that the naming convention for functions might deviate. 
+In this module, functions are written in CamelCase with a lowercase initial letter.
+"""
+@doc _MODULE_DOC Sparlectra
 export
+  version,
   # constants
   Wurzel3, ComponentTyp,
   # classes  
