@@ -73,17 +73,25 @@ struct Net
   totalBusPower::Vector{Tuple{Float64,Float64}}
   qmin_pu::Vector{Float64}            # pro Bus Qmin (p.u.)
   qmax_pu::Vector{Float64}            # pro Bus Qmax (p.u.)
-  qLimitEvents::Dict{Int,Symbol}      # BusIdx -> :min | :max (PV→PQ-Umschaltung)
+  qLimitEvents::Dict{Int,Symbol}      # BusIdx -> :min | :max (PV→PQ-Umschaltung)  
   _locked::Bool
   shuntDict::Dict{Int,Int}
   isoNodes::Vector{Int}
+  qLimitLog::Vector{NamedTuple{(:iter,:bus,:side),Tuple{Int,Int,Symbol}}}
+  cooldown_iters::Int  
   #branchDict::Dict{Tuple{String,String}, Branch}  # fast search for existing branches
   #! format: off
   function Net(; name::String, baseMVA::Float64, vmin_pu::Float64 = 0.9, vmax_pu::Float64 = 1.1)    
-    new(name, baseMVA, [], vmin_pu, vmax_pu, [], [], [], [], [], [],
-    Dict{String,Int}(), Dict{Int,Int}(), [], [],    # totalLosses, totalBusPower
-    Float64[], Float64[], Dict{Int,Symbol}(),       # qmin_pu, qmax_pu, qLimitEvents  <-- NEU
-    false, Dict{Int,Int}(), [])
+
+
+    # letzte Zeile im new(...) ersetzen/erweitern:
+    new(name, baseMVA, [], vmin_pu, vmax_pu, [], [], [], [], [], [], 
+        Dict{String,Int}(), Dict{Int,Int}(), [], [],                  # totalLosses, totalBusPower
+        Float64[], Float64[], Dict{Int,Symbol}(),                     # qmin_pu, qmax_pu, qLimitEvents
+        false, Dict{Int,Int}(), [],                                   # _locked, shuntDict, isoNodes
+        NamedTuple{(:iter,:bus,:side),Tuple{Int,Int,Symbol}}[],        # qLimitLog 
+        0)                                                             # cooldown_iters (0=aus) 
+
 
   end
   #! format: on
@@ -102,6 +110,10 @@ struct Net
     if !isempty(o.qLimitEvents)
         println(io, "Q-limit events: ", length(o.qLimitEvents))
     end
+    if !isempty(o.qLimitLog)
+        println(io, "Q-limit log entries: ", length(o.qLimitLog))
+    end
+
   end
 end
 
