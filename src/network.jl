@@ -117,6 +117,48 @@ struct Net
 
   end
 end
+# --- helpers (lokal) ---
+@inline function _push_unique!(v::Vector{Int}, x::Int)
+    (findfirst(==(x), v) === nothing) && push!(v, x)
+    return v
+end
+@inline function _delete_item!(v::Vector{Int}, x::Int)
+    idx = findfirst(==(x), v)
+    (idx !== nothing) && deleteat!(v, idx)
+    return v
+end
+
+# --- positionsbasierte Kern-APIs ---
+function setBusType!(net::Net, bus::Int, busType::String)
+    @assert 1 <= bus <= length(net.nodeVec) "Bus-Index $bus ist ungültig."
+    node  = net.nodeVec[bus]
+    oldTy = getfield(node, :_nodeType)
+
+    # delegiere an Node-Variante
+    setBusType!(node, busType)
+
+    newTy = getfield(node, :_nodeType)
+    if newTy == Slack && oldTy != Slack
+        _push_unique!(net.slackVec, bus)
+    elseif oldTy == Slack && newTy != Slack
+        _delete_item!(net.slackVec, bus)
+    end
+    return nothing
+end
+
+function setBusType!(net::Net, busName::String, busType::String)
+    bus = geNetBusIdx(net = net, busName = busName)
+    return setBusType!(net, bus, busType)
+end
+
+# --- Keyword-kompatible Wrapper (für Tests wie in deiner Meldung) ---
+function setBusType!(; net::Net, bus::Integer, busType::AbstractString)
+    return setBusType!(net, Int(bus), String(busType))
+end
+
+function setBusType!(; net::Net, busName::AbstractString, busType::AbstractString)
+    return setBusType!(net, String(busName), String(busType))
+end
 
 """
 hasBusInNet: Checks if a bus exists in the network.
@@ -1017,17 +1059,6 @@ function _find_bus_index_by_name(net::Net, busName::String)::Int
     return idx
 end
 
-# Busindex aus ProSumer-Komponente auslesen (analog zu limits.jl, aber lokal und defensiv)
-function _prosumer_bus_index(ps::ProSumer)::Int
-    c = ps.comp
-    if hasproperty(c, :cFrom_bus) && getfield(c, :cFrom_bus) !== nothing
-        return getfield(c, :cFrom_bus)
-    elseif hasproperty(c, :cHV_bus)  # 3W-Varianten absichern
-        return getfield(c, :cHV_bus)
-    end
-    error("ProSumer: cannot determine bus index from comp (has neither :cFrom_bus nor :cHV_bus).")
-end
-
 # ------------------------------------------------------------
 # Setze den Spannungs-Sollwert (Vset) eines PV-Busses über das Node-Feld _vm_pu.
 # Diese Information greift der Full-NR über Vset = node._vm_pu (falls vorhanden) ab.
@@ -1057,7 +1088,7 @@ function setPVBusQLimits!(net::Net; bus::Int, qmin_MVar::Float64, qmax_MVar::Flo
     end
     for ps in net.prosumpsVec
         try
-            if isGenerator(ps) && _prosumer_bus_index(ps) == bus
+            if isGenerator(ps) && Sparlectra._prosumer_bus_index(ps) == bus
                 setfield!(ps, :minQ, qmin_MVar)
                 setfield!(ps, :maxQ, qmax_MVar)
             end
