@@ -174,7 +174,8 @@ function calcNewtonRaphson_withPVIdentity!(
     net::Net, Y::AbstractMatrix{ComplexF64}, maxIte::Int;
     tolerance::Float64=1e-6, verbose::Int=0, sparse::Bool=false,
     flatStart::Bool=false, angle_limit::Bool=false, debug::Bool=false)
-
+    # ensure Q-limits are built once
+    qmin_pu, qmax_pu = get_Q_limits_pu(net)
     setJacobianAngleLimit(angle_limit)
     setJacobianDebug(debug)
 
@@ -191,7 +192,7 @@ function calcNewtonRaphson_withPVIdentity!(
     n    = n_pq + n_pv
 
     # Q-Limits (p.u.) 
-    qmin_pu, qmax_pu = get_Q_limits_pu(net, length(busVec))
+    qmin_pu, qmax_pu = get_Q_limits_pu(net)
 
     # Tracking 
     pv2pq = Set{Int}()                # 1-basiert: Index in busVec
@@ -220,8 +221,7 @@ function calcNewtonRaphson_withPVIdentity!(
     while it <= maxIte
         Δ = residuum_full_withPV(Y, busVec, Vset, n_pq, n_pv, (verbose>2))
 
-        # --- Active-Set: Q-Limits für PV-Busse prüfen und ggf. PV->PQ umschalten ---
-                # --- Active-Set: Q-Limits prüfen & ggf. PV->PQ umschalten ---
+        # --- Active-Set: check Q-Limits of PV buses and switch PV->PQ if necessary ---
         changed = false
         @inbounds for k in eachindex(busVec)
             b = busVec[k]
@@ -314,7 +314,7 @@ function calcNewtonRaphson_withPVIdentity!(
     setTotalBusPower!(net=net,
         p=sum(b->b._pRes, busVec), q=sum(b->b._qRes, busVec))
 
-    if !haskey(net, :_qLimitEvents)
+    if hasproperty(net, :qLimitEvents) && !isempty(net.qLimitEvents)
         # falls Net kein Feld hat: dynamisch als Dict am Net-Objekt anhängen (Idiom für Logging)
         try
             setfield!(net, :_qLimitEvents, Dict{Int,Symbol}())
