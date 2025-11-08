@@ -5,11 +5,8 @@ using Logging
 # keep logs quiet unless there's a warning or error
 global_logger(ConsoleLogger(stderr, Logging.Warn))
 
-# existing tests
 include("testgrid.jl")
 include("testremove.jl")
-
-# NEW: full Jacobian / PV-identity tests
 include("test_jacobian_full.jl")
 
 @testset "Sparlectra.jl" begin
