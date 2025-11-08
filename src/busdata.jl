@@ -12,7 +12,7 @@ mutable struct BusData
     type::NodeType
 
     function BusData(idx::Int, vm_pu::Float64, va_rad::Float64,
-                     sumP::Float64, sumQ::Float64, type::Sparlectra.NodeType)
+                     sumP::Float64, sumQ::Float64, type::NodeType)
         new(idx, vm_pu, va_rad, sumP, sumQ, 0.0, 0.0, type)
     end
 end

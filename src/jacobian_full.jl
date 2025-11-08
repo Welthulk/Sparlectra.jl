@@ -174,10 +174,12 @@ function calcNewtonRaphson_withPVIdentity!(
     net::Net, Y::AbstractMatrix{ComplexF64}, maxIte::Int;
     tolerance::Float64=1e-6, verbose::Int=0, sparse::Bool=false,
     flatStart::Bool=false, angle_limit::Bool=false, debug::Bool=false)
-    # ensure Q-limits are built once
-    qmin_pu, qmax_pu = get_Q_limits_pu(net)
+
     setJacobianAngleLimit(angle_limit)
     setJacobianDebug(debug)
+
+    # Q-Limits (p.u.) 
+    qmin_pu, qmax_pu = get_Q_limits_pu(net)
 
     nodes = net.nodeVec
     Sbase_MVA = net.baseMVA
@@ -187,16 +189,7 @@ function calcNewtonRaphson_withPVIdentity!(
 
     n_pv = count(b->b.type==PV, busVec)
     n_pq = count(b->b.type==PQ, busVec)
-    n_pv = count(b->b.type==PV, busVec)
-    n_pq = count(b->b.type==PQ, busVec)
     n    = n_pq + n_pv
-
-    # Q-Limits (p.u.) 
-    qmin_pu, qmax_pu = get_Q_limits_pu(net)
-
-    # Tracking 
-    pv2pq = Set{Int}()                # 1-basiert: Index in busVec
-    qlimit_side = Dict{Int,Symbol}()  # :min oder :max
 
     # Q-Limits vorbereiten (falls Zahl der Busse nicht passt → (re)build)
     if length(net.qmin_pu) != length(busVec) || length(net.qmax_pu) != length(busVec)
@@ -226,27 +219,38 @@ function calcNewtonRaphson_withPVIdentity!(
         @inbounds for k in eachindex(busVec)
             b = busVec[k]
             if b.type == PV
-                qreq = b._qRes  # aktueller Q-Bedarf (p.u.)
+                qreq = b._qRes                      # aktueller Q-Bedarf (p.u.)
+                busIdx = b.idx
+
+                # -----------------------------------------------------------
+                # [OPTIONAL: Cooldown benutzen, wenn du irgendwann PQ->PV
+                #  re-enablen willst. Hier NICHTS tun: wir schalten nur PV->PQ.
+                #  Den Cooldown brauchst du beim Rückschalten (siehe unten).]
+                # -----------------------------------------------------------
+
                 if qreq > net.qmax_pu[k]
+                    # trifft obere Grenze
                     b.type = PQ
                     b.qƩ  = net.qmax_pu[k]
                     changed = true
-                    net.qLimitEvents[b.idx] = :max
-                    (verbose>0) && @printf "  PV->PQ Bus %d: Q=%.4f > Qmax=%.4f\n" b.idx qreq net.qmax_pu[k]
+                    net.qLimitEvents[busIdx] = :max
+                    Sparlectra.logQLimitHit!(net, it, busIdx, :max)   # <— strukturierter Log
+                    (verbose>0) && @printf "  PV->PQ Bus %d: Q=%.4f > Qmax=%.4f\n" busIdx qreq net.qmax_pu[k]
+
                 elseif qreq < net.qmin_pu[k]
+                    # trifft untere Grenze
                     b.type = PQ
                     b.qƩ  = net.qmin_pu[k]
                     changed = true
-                    net.qLimitEvents[b.idx] = :min
-                    (verbose>0) && @printf "  PV->PQ Bus %d: Q=%.4f < Qmin=%.4f\n" b.idx qreq net.qmin_pu[k]
+                    net.qLimitEvents[busIdx] = :min
+                    Sparlectra.logQLimitHit!(net, it, busIdx, :min)   # <— strukturierter Log
+                    (verbose>0) && @printf "  PV->PQ Bus %d: Q=%.4f < Qmin=%.4f\n" busIdx qreq net.qmin_pu[k]
                 end
             end
         end
         if changed
             Δ = residuum_full_withPV(Y, busVec, Vset, n_pq, n_pv, (verbose>2))
         end
-
-
         nrm = norm(Δ)
         (verbose>0) && @printf " norm %e, tol %e, ite %d\n" nrm tolerance it
 
@@ -314,20 +318,6 @@ function calcNewtonRaphson_withPVIdentity!(
     setTotalBusPower!(net=net,
         p=sum(b->b._pRes, busVec), q=sum(b->b._qRes, busVec))
 
-    if hasproperty(net, :qLimitEvents) && !isempty(net.qLimitEvents)
-        # falls Net kein Feld hat: dynamisch als Dict am Net-Objekt anhängen (Idiom für Logging)
-        try
-            setfield!(net, :_qLimitEvents, Dict{Int,Symbol}())
-        catch
-            # falls Net strikt ist: alternativ eigenes Logging weglassen oder ein offizielles Feld ergänzen
-        end
-    end
-    if hasfield(typeof(net), :_qLimitEvents)
-        for k in pv2pq
-            idx = busVec[k].idx
-            net._qLimitEvents[idx] = qlimit_side[k]
-        end
-    end        
 
     if !isempty(net.qLimitEvents) && verbose>0
         println("Q-limit events (BusIdx => side): ", net.qLimitEvents)

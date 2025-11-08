@@ -221,7 +221,7 @@ function setVmVa!(; node::Node, vm_pu::Float64, va_deg::Union{Nothing,Float64} =
 end
 
 function isSlack(o::Node)
-  if o._nodeType == Sparlectra.Slack
+  if o._nodeType == Slack
     return true
   else
     return false
@@ -233,7 +233,7 @@ function getNodeVn(o::Node)::Float64
 end
 
 function isPQNode(o::Node)
-  if o._nodeType == Sparlectra.PQ
+  if o._nodeType == PQ
     return true
   else
     return false
@@ -241,7 +241,7 @@ function isPQNode(o::Node)
 end
 
 function isPVNode(o::Node)
-  if o._nodeType == Sparlectra.PV || o._nodeType == Sparlectra.Slack
+  if o._nodeType == PV || o._nodeType == Slack
     return true
   else
     return false
@@ -249,7 +249,7 @@ function isPVNode(o::Node)
 end
 
 function isIsolated(o::Node)
-  if o._nodeType == Sparlectra.Isolated
+  if o._nodeType == Isolated
     return true
   else
     return false
