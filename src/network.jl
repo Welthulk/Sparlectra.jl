@@ -992,3 +992,95 @@ end
 Bequemer Wrapper auf `buildQLimits!`.
 """
 rebuildQLimits!(; net::Net) = (buildQLimits!(net); nothing)
+
+
+# ------------------------------------------------------------
+# Helpers to tweak PV setpoints and Q-limits *without* mutating Net fields
+# ------------------------------------------------------------
+
+# Robust bus lookup by name (falls Knotenname mal "busName" oder "name" heißt)
+# Fallback: akzeptiere "B<idx>"-Strings.
+function _find_bus_index_by_name(net::Net, busName::String)::Int
+    idx = findfirst(n ->
+        (hasproperty(n, :busName) && n.busName == busName) ||
+        (hasproperty(n, :name)    && n.name    == busName), net.nodeVec)
+    if isnothing(idx)
+        # Allow "B12" → 12
+        if startswith(busName, "B")
+            parsed = tryparse(Int, busName[2:end])
+            if parsed !== nothing && 1 <= parsed <= length(net.nodeVec)
+                return parsed
+            end
+        end
+        error("Bus name '$busName' not found in net.nodeVec.")
+    end
+    return idx
+end
+
+# Busindex aus ProSumer-Komponente auslesen (analog zu limits.jl, aber lokal und defensiv)
+function _prosumer_bus_index(ps::ProSumer)::Int
+    c = ps.comp
+    if hasproperty(c, :cFrom_bus) && getfield(c, :cFrom_bus) !== nothing
+        return getfield(c, :cFrom_bus)
+    elseif hasproperty(c, :cHV_bus)  # 3W-Varianten absichern
+        return getfield(c, :cHV_bus)
+    end
+    error("ProSumer: cannot determine bus index from comp (has neither :cFrom_bus nor :cHV_bus).")
+end
+
+# ------------------------------------------------------------
+# Setze den Spannungs-Sollwert (Vset) eines PV-Busses über das Node-Feld _vm_pu.
+# Diese Information greift der Full-NR über Vset = node._vm_pu (falls vorhanden) ab.
+# ------------------------------------------------------------
+function setPVBusVset!(net::Net; bus::Int, vm_pu::Float64)
+    node = net.nodeVec[bus]
+    if !(hasproperty(node, :type) && node.type == PV)
+        @warn "setPVBusVset!: Bus $bus is not PV; setting _vm_pu anyway (the solver will ignore it for non-PV)."
+    end
+    # Node-Objekte sind mutabel: nur das Feld setzen.
+    setfield!(node, :_vm_pu, vm_pu)
+    return nothing
+end
+
+function setPVBusVset!(net::Net, busName::String; vm_pu::Float64)
+    bus = _find_bus_index_by_name(net, busName)
+    return setPVBusVset!(net; bus=bus, vm_pu=vm_pu)
+end
+
+# ------------------------------------------------------------
+# Setze Q-Limits (MVar) für alle Generator-ProSumer an einem Bus.
+# Achtung: Werte sind in MVar (nicht p.u.); die Aggregation nach p.u. macht limits.jl.
+# ------------------------------------------------------------
+function setPVBusQLimits!(net::Net; bus::Int, qmin_MVar::Float64, qmax_MVar::Float64)
+    if qmax_MVar < qmin_MVar
+        error("setPVBusQLimits!: qmax_MVar < qmin_MVar (got $qmax_MVar < $qmin_MVar)")
+    end
+    for ps in net.prosumpsVec
+        try
+            if isGenerator(ps) && _prosumer_bus_index(ps) == bus
+                setfield!(ps, :minQ, qmin_MVar)
+                setfield!(ps, :maxQ, qmax_MVar)
+            end
+        catch err
+            @warn "setPVBusQLimits!: skipping a prosumer due to $err"
+        end
+    end
+    return nothing
+end
+
+function setPVBusQLimits!(net::Net, busName::String; qmin_MVar::Float64, qmax_MVar::Float64)
+    bus = _find_bus_index_by_name(net, busName)
+    return setPVBusQLimits!(net; bus=bus, qmin_MVar=qmin_MVar, qmax_MVar=qmax_MVar)
+end
+
+# ------------------------------------------------------------
+# Optionales Convenience: Setze denselben Vset für *alle* PV-Busse.
+# ------------------------------------------------------------
+function setAllPVVset!(net::Net; vm_pu::Float64)
+    for n in net.nodeVec
+        if hasproperty(n, :type) && n.type == PV
+            setfield!(n, :_vm_pu, vm_pu)
+        end
+    end
+    return nothing
+end

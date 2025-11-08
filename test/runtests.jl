@@ -1,6 +1,7 @@
 using Sparlectra
 using Test
 using Logging
+using Printf
 
 # keep logs quiet unless there's a warning or error
 global_logger(ConsoleLogger(stderr, Logging.Warn))
