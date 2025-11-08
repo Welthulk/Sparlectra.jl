@@ -71,14 +71,20 @@ struct Net
   busOrigIdxDict::Dict{Int,Int}
   totalLosses::Vector{Tuple{Float64,Float64}}
   totalBusPower::Vector{Tuple{Float64,Float64}}
+  qmin_pu::Vector{Float64}            # pro Bus Qmin (p.u.)
+  qmax_pu::Vector{Float64}            # pro Bus Qmax (p.u.)
+  qLimitEvents::Dict{Int,Symbol}      # BusIdx -> :min | :max (PV→PQ-Umschaltung)
   _locked::Bool
   shuntDict::Dict{Int,Int}
   isoNodes::Vector{Int}
   #branchDict::Dict{Tuple{String,String}, Branch}  # fast search for existing branches
   #! format: off
   function Net(; name::String, baseMVA::Float64, vmin_pu::Float64 = 0.9, vmax_pu::Float64 = 1.1)    
-    #new(name, baseMVA, [], vmin_pu, vmax_pu, [], [], [], [], [], [], Dict{String,Int}(), Dict{Int,Int}(), [], [], false, Dict{Int,Int}(), [], Dict{Tuple{String,String}, Branch}())
-    new(name, baseMVA, [], vmin_pu, vmax_pu, [], [], [], [], [], [], Dict{String,Int}(), Dict{Int,Int}(), [], [], false, Dict{Int,Int}(), [])
+    new(name, baseMVA, [], vmin_pu, vmax_pu, [], [], [], [], [], [],
+    Dict{String,Int}(), Dict{Int,Int}(), [], [],    # totalLosses, totalBusPower
+    Float64[], Float64[], Dict{Int,Symbol}(),       # qmin_pu, qmax_pu, qLimitEvents  <-- NEU
+    false, Dict{Int,Int}(), [])
+
   end
   #! format: on
   function Base.show(io::IO, o::Net)
@@ -93,6 +99,9 @@ struct Net
     println(io, "Branches: ", length(o.branchVec))
     println(io, "Prosumers: ", length(o.prosumpsVec))
     println(io, "Shunts: ", length(o.shuntVec))
+    if !isempty(o.qLimitEvents)
+        println(io, "Q-limit events: ", length(o.qLimitEvents))
+    end
   end
 end
 

@@ -197,6 +197,13 @@ function calcNewtonRaphson_withPVIdentity!(
     pv2pq = Set{Int}()                # 1-basiert: Index in busVec
     qlimit_side = Dict{Int,Symbol}()  # :min oder :max
 
+    # Q-Limits vorbereiten (falls Zahl der Busse nicht passt → (re)build)
+    if length(net.qmin_pu) != length(busVec) || length(net.qmax_pu) != length(busVec)
+        buildQLimits!(net)
+    end
+    # Logging-Reset am Start
+    resetQLimitLog!(net)
+
 
     # Vset: actual setpoints for PV, 1.0 (dummy) otherwise
     Vset = [ (b.type==Sparlectra.PV) ?
@@ -214,31 +221,31 @@ function calcNewtonRaphson_withPVIdentity!(
         Δ = residuum_full_withPV(Y, busVec, Vset, n_pq, n_pv, (verbose>2))
 
         # --- Active-Set: Q-Limits für PV-Busse prüfen und ggf. PV->PQ umschalten ---
+                # --- Active-Set: Q-Limits prüfen & ggf. PV->PQ umschalten ---
         changed = false
         @inbounds for k in eachindex(busVec)
             b = busVec[k]
             if b.type == PV
-                qreq = b._qRes   # aktuell benötigte Q-Einspeisung (p.u.)
-                if qreq > qmax_pu[k]
+                qreq = b._qRes  # aktueller Q-Bedarf (p.u.)
+                if qreq > net.qmax_pu[k]
                     b.type = PQ
-                    b.qƩ  = qmax_pu[k]   # an Grenze „klemmen“
+                    b.qƩ  = net.qmax_pu[k]
                     changed = true
-                    push!(pv2pq, k); qlimit_side[k] = :max
-                    (verbose>0) && @printf "  PV->PQ an Bus %d (Q=%.4f > Qmax=%.4f)\n" k qreq qmax_pu[k]
-                elseif qreq < qmin_pu[k]
+                    net.qLimitEvents[b.idx] = :max
+                    (verbose>0) && @printf "  PV->PQ Bus %d: Q=%.4f > Qmax=%.4f\n" b.idx qreq net.qmax_pu[k]
+                elseif qreq < net.qmin_pu[k]
                     b.type = PQ
-                    b.qƩ  = qmin_pu[k]
+                    b.qƩ  = net.qmin_pu[k]
                     changed = true
-                    push!(pv2pq, k); qlimit_side[k] = :min
-                    (verbose>0) && @printf "  PV->PQ an Bus %d (Q=%.4f < Qmin=%.4f)\n" k qreq qmin_pu[k]
+                    net.qLimitEvents[b.idx] = :min
+                    (verbose>0) && @printf "  PV->PQ Bus %d: Q=%.4f < Qmin=%.4f\n" b.idx qreq net.qmin_pu[k]
                 end
             end
         end
-
-        # Wenn sich aktive Restriktionen geändert haben, Residuum mit neuem Typenbild nachziehen
         if changed
             Δ = residuum_full_withPV(Y, busVec, Vset, n_pq, n_pv, (verbose>2))
         end
+
 
         nrm = norm(Δ)
         (verbose>0) && @printf " norm %e, tol %e, ite %d\n" nrm tolerance it
@@ -321,6 +328,10 @@ function calcNewtonRaphson_withPVIdentity!(
             net._qLimitEvents[idx] = qlimit_side[k]
         end
     end        
+
+    if !isempty(net.qLimitEvents) && verbose>0
+        println("Q-limit events (BusIdx => side): ", net.qLimitEvents)
+    end
 
     return it, erg
 end
