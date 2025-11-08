@@ -302,3 +302,12 @@ end
 function setNodeType!(o::Node, typ::String)
   o._nodeType = toNodeType(typ)
 end
+
+function setBusType!(node::Node, busType::String)
+    if @isdefined setNodeType!
+        setNodeType!(node, busType)              # nutzt deine bestehende Logik
+    else
+        setfield!(node, :_nodeType, toNodeType(busType))  # Fallback
+    end
+    return nothing
+end

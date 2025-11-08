@@ -61,8 +61,8 @@ export
   getSideNumber2WT,  getWinding2WT,  calcTransformerRatio, recalc_trafo_model_data, create2WTRatioTransformerNoTaps, create3WTWindings!,
   getTrafoImpPGMComp,  getWT3AuxBusID,  isPerUnit_RXGB, getWindingRatedS, getTrafoRXBG, getTrafoRXBG_pu, 
   # Nodes  
-  setRatedS!,  setVmVa!,  addShuntPower!,  addLoadPower!,  addGenPower!,  getNodeVn,  isSlack,  isPVNode,  isPQNode, isIsolated, toNodeType, setNodeType!,
-  busComparison,   toString,
+  setRatedS!,  setVmVa!,  addShuntPower!,  addLoadPower!,  addGenPower!,  getNodeVn,  isSlack,  isPVNode,  isPQNode, isIsolated, toNodeType, setNodeType!, setBusType!,
+  busComparison, toString,
   # Branch
   getBranchIdx, calcBranchYser, calcBranchYshunt, calcBranchRatio, calcAdmittance,
   # Shunt
@@ -90,10 +90,7 @@ export
   # jacobian_full.jl (neu)
   getPowerFeeds_full, residuum_full_withPV, calcJacobian_withPVIdentity, calcNewtonRaphson_withPVIdentity!, runpf_full!,
   # limits.jl
-  printQLimitLog,
-  logQLimitHit!,
-  lastQLimitIter,
-  get_Q_limits_pu,
+  printQLimitLog,logQLimitHit!, lastQLimitIter, get_Q_limits_pu, buildQLimits!,logQLimitHit!,lastQLimitIter,
   # losses.jl
   calcNetLosses!,
   
