@@ -133,8 +133,7 @@ function setBusType!(net::Net, bus::Int, busType::String)
     node  = net.nodeVec[bus]
     oldTy = getfield(node, :_nodeType)
 
-    # delegiere an Node-Variante
-    setBusType!(node, busType)
+    setNodeType!(node, busType)
 
     newTy = getfield(node, :_nodeType)
     if newTy == Slack && oldTy != Slack
@@ -148,15 +147,6 @@ end
 function setBusType!(net::Net, busName::String, busType::String)
     bus = geNetBusIdx(net = net, busName = busName)
     return setBusType!(net, bus, busType)
-end
-
-# --- Keyword-kompatible Wrapper (für Tests wie in deiner Meldung) ---
-function setBusType!(; net::Net, bus::Integer, busType::AbstractString)
-    return setBusType!(net, Int(bus), String(busType))
-end
-
-function setBusType!(; net::Net, busName::AbstractString, busType::AbstractString)
-    return setBusType!(net, String(busName), String(busType))
 end
 
 """
@@ -1072,7 +1062,8 @@ function setPVBusVset!(net::Net; bus::Int, vm_pu::Float64)
 end
 
 function setPVBusVset!(net::Net, busName::String; vm_pu::Float64)
-    bus = _find_bus_index_by_name(net, busName)
+    bus = geNetBusIdx(net = net, busName = busName)
+    #bus = _find_bus_index_by_name(net, busName)
     return setPVBusVset!(net; bus=bus, vm_pu=vm_pu)
 end
 
@@ -1089,6 +1080,8 @@ function setPVBusQLimits!(net::Net; bus::Int, qmin_MVar::Float64, qmax_MVar::Flo
             if isGenerator(ps) && Sparlectra._prosumer_bus_index(ps) == bus
                 setfield!(ps, :minQ, qmin_MVar)
                 setfield!(ps, :maxQ, qmax_MVar)
+            else
+              @warn "setPVBusQLimits!: skipping a non-generator or prosumer at a different bus."
             end
         catch err
             @warn "setPVBusQLimits!: skipping a prosumer due to $err"

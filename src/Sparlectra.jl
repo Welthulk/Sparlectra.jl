@@ -61,7 +61,7 @@ export
   getSideNumber2WT,  getWinding2WT,  calcTransformerRatio, recalc_trafo_model_data, create2WTRatioTransformerNoTaps, create3WTWindings!,
   getTrafoImpPGMComp,  getWT3AuxBusID,  isPerUnit_RXGB, getWindingRatedS, getTrafoRXBG, getTrafoRXBG_pu, 
   # Nodes  
-  setRatedS!,  setVmVa!,  addShuntPower!,  addLoadPower!,  addGenPower!,  getNodeVn,  isSlack,  isPVNode,  isPQNode, isIsolated, toNodeType, setNodeType!, setBusType!,
+  setRatedS!,  setVmVa!,  addShuntPower!,  addLoadPower!,  addGenPower!,  getNodeVn,  isSlack,  isPVNode,  isPQNode, isIsolated, toNodeType, setNodeType!, 
   busComparison, toString,
   # Branch
   getBranchIdx, calcBranchYser, calcBranchYshunt, calcBranchRatio, calcAdmittance,
@@ -71,10 +71,10 @@ export
   get_line_parameters, isLinePIModel, getLineRXBG, getLineRXBG_pu,
   # ProSumer
   isSlack, isGenerator, isAPUNode, setQGenReplacement!, getQGenReplacement, toProSumptionType, updatePQ!,
-  # Net
+  # Network
   addBus!, addShunt!, addACLine!, addPIModelACLine!, add2WTrafo!, addPIModelTrafo!, addProsumer!, lockNet!, validate!, hasBusInNet, addBusGenPower!, addBusLoadPower!, addBusShuntPower!, setNodeVoltage!, setNodeAngle!,
   getNetOrigBusIdx, geNetBusIdx, setNetBranchStatus!, getNetBranch, getNetBranchNumberVec, setTotalLosses!, getTotalLosses, getBusType, get_bus_vn_kV, get_vn_kV, updateBranchParameters!, hasShunt!, 
-  getShunt!, markIsolatedBuses!,setTotalBusPower!, setPVGeneratorQLimitsAll!, setPVBusVset!,setPVBusQLimits!,setAllPVVset!,rebuildQLimits!,
+  getShunt!, markIsolatedBuses!,setTotalBusPower!, setPVGeneratorQLimitsAll!, setPVBusVset!,setPVBusQLimits!,setAllPVVset!,rebuildQLimits!, setBusType!,
   # remove_functions.jl
   removeBus!, removeBranch!, removeACLine!, removeTrafo!, removeShunt!, removeProsumer!, clearIsolatedBuses!,
   # import.jl

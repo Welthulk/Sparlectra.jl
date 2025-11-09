@@ -105,8 +105,8 @@ function test_jacobian_full_structure(verbose::Int=0)
     expected = 2*n
     ok = true
     if size(J,1) != expected || size(J,2) != expected
-        @warn "Jacobian shape mismatch: got $(size(J)), expected ($(expected), $(expected))"
-        ok = false
+        @error "Jacobian shape mismatch: got $(size(J)), expected ($(expected), $(expected))"
+        exit(false)
     end
 
     # helper matching the production code shiftIJ
@@ -168,7 +168,7 @@ function test_pv_q_limit_switch!(net::Net; verbose::Int=0)
 
     # 1) Vset anheben, damit Q nach oben gedrückt wird
     for name in pv_names
-        setPVBusVset!(n, name; vm_pu = 1.06)   # bei Bedarf auf 1.07 erhöhen
+        setPVBusVset!(n, name; vm_pu = 1.07) 
     end
 
     # 2) Enge Q-Limits in MVar für diese PV-Busse setzen
@@ -210,7 +210,7 @@ end
 
 
 # Wrapper für runtests.jl – baut das Netz wie die anderen Full-System-Tests
-function test_pv_q_limit_switch(; verbose::Int=0)
+function test_pv_q_limit_switch(; verbose::Int=1)
     net = testCreateNetworkFromScratch()
     return test_pv_q_limit_switch!(net; verbose=verbose)
 end
