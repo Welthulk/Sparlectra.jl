@@ -243,9 +243,6 @@ function createYBUS(; net::Net, sparse::Bool = true, printYBUS::Bool = false)
 
   Y = sparse ? spzeros(ComplexF64, n, n) : zeros(ComplexF64, n, n)
 
-  @debug "Dimension YBus:", n
-  @debug "YBUS: Size = $(n)x$(n) ($(sparse ? "sparse" : "normal"))"
-
   for branch in net.branchVec
     @assert branch isa AbstractBranch "branch $(branch) is not of type AbstractBranch"
     fromNode = branch.fromBus
