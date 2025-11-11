@@ -162,7 +162,7 @@ function test_pv_q_limit_switch!(net::Net; verbose::Int=0)
     for name in pv_names
         setPVBusVset!(net, name; vm_pu = 1.07)
     end
-    setPVGeneratorQLimitsAll!(net = net, qmin_MVar = -600.0, qmax_MVar = 600.0)
+    setPVGeneratorQLimitsAll!(net = net, qmin_MVar = -350.0, qmax_MVar = 350.0)
     buildQLimits!(net, reset=true)
 
     etime = @elapsed begin

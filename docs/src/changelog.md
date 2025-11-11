@@ -1,4 +1,60 @@
 # Change Log
+
+## Version 0.4.23 (2025-11-11)
+
+###  **New Features**
+
+* **Full-state Newton–Raphson solver** (`calcNewtonRaphson_withPVIdentity!`)
+
+  * Solves for all non-slack bus states (θ, V) in a unified system.
+  * PV buses use an identity constraint row enforcing `V − Vset = 0`.
+* **Active Q-limit handling**
+
+  * Automatic PV → PQ switching when reactive generation hits min/max limits.
+  * Optional hysteresis band (`q_hyst_pu`) and cooldown iterations for stable re-enabling.
+  * Limit events logged in `net.qLimitEvents` and accessible via `printQLimitLog()`.
+* **New convenience wrappers**
+
+  * `runpf_full!()` for running the full-system power flow.
+  * Q-limit utilities: `buildQLimits!`, `resetQLimitLog!`, `getQLimits_pu()`.
+* **Improved result tracking**
+
+  * `Net` objects now record per-bus and total P/Q residuals after each iteration.
+  * PV/Q-limit state changes visible in `net` result fields.
+
+
+### **Technical Changes**
+
+* PV identity rows replace Q-balance equations in the Jacobian.
+* Robust fallback defaults for missing fields (`q_hyst_pu`, `cooldown_iters`).
+* Q-limit clipping operates directly in p.u., using aggregated generator data.
+* Improved compatibility with `printACPFlowResults()` and other result tools.
+
+
+### **Known Limitations (to be addressed next)**
+
+1. **Q-limits are not yet parameterizable at network creation.**
+   They must still be constructed via `buildQLimits!()` after the network is loaded.
+2. **MATPOWER import currently ignores Qmin/Qmax columns.**
+3. **Jacobian still uses `sin()`/`cos()` formulations.**
+   Future versions will use a rectangular (non-trigonometric) derivative form for speed and stability.
+4. **Branch flow and loss post-processing** must still be called manually (e.g. `calcBranchFlow(net)`).
+
+---
+
+### **Planned Next Steps**
+
+* Implement parameterized Q-limits in network constructors (#39)
+* Extend MATPOWER import to parse Qmin/Qmax (#63)
+* Redesign Jacobian in rectangular coordinates (#62)
+* Integrate full flow/loss post-processing into `runpf_full!()`
+
+---
+
+### **Developer Notes**
+* Compatible Julia version: ≥ 1.11.1
+
+
 ## Version 0.4.22 (2025-08-27)
 ### Bug Fixes
  - small fixes
