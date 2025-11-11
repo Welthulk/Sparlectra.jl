@@ -6,8 +6,6 @@
 # - Active-set handling of PV Q-limits: PV→PQ when Q demand violates limits
 # - Optional re-enable PQ→PV with hysteresis band and cooldown (robust to missing fields)
 #
-
-
 # Robustness:
 # - If the Net type does not have fields `q_hyst_pu` or `cooldown_iters`, defaults (0.0, 0) are used.
 # - If Q-limit arrays don't match the current bus count, we (re)build once.
@@ -25,10 +23,10 @@ function getPowerFeeds_full(busVec::Vector{BusData}, n_pq::Int, n_pv::Int)::Vect
     pf = zeros(Float64, 2n)
     vindex = 0
     @inbounds for bus in busVec
-        if bus.type == PQ
+        if bus.type == Sparlectra.PQ
             vindex += 1; pf[vindex] = bus.pƩ   # P
             vindex += 1; pf[vindex] = bus.qƩ   # Q
-        elseif bus.type == PV
+        elseif bus.type == Sparlectra.PV
             vindex += 1; pf[vindex] = bus.pƩ   # P
             vindex += 1; pf[vindex] = 0.0      # rPV placeholder
         end
@@ -55,10 +53,10 @@ function residuum_full_withPV(
     vindex = 0
     @inbounds for k in eachindex(busVec)
         bus = busVec[k]
-        if bus.type == PQ
+        if bus.type == Sparlectra.PQ
             vindex += 1; Δ[vindex] = bus.pƩ - real(S[k])        # ΔP
             vindex += 1; Δ[vindex] = bus.qƩ - imag(S[k])        # ΔQ
-        elseif bus.type == PV
+        elseif bus.type == Sparlectra.PV
             vindex += 1; Δ[vindex] = bus.pƩ - real(S[k])        # ΔP
             vindex += 1; Δ[vindex] = bus.vm_pu - Vset[k]        # rPV
         end
@@ -199,8 +197,12 @@ function calcNewtonRaphson_withPVIdentity!(
     busVec, slackNum      = getBusData(nodes, Sbase_MVA, flatStart)
     busTypeVec, slackIdx  = getBusTypeVec(busVec)
 
-    n_pv = count(b->b.type==PV, busVec)
-    n_pq = count(b->b.type==PQ, busVec)
+    # Track original PV buses to guard re-enable logic.
+    # Only buses that were PV at the beginning of THIS power flow should be considered for re-enable.
+    pv_orig = Set(b.idx for b in busVec if b.type == Sparlectra.PV)
+
+    n_pv = count(b->b.type==Sparlectra.PV, busVec)
+    n_pq = count(b->b.type==Sparlectra.PQ, busVec)
     n    = n_pq + n_pv
 
     # Vset: actual setpoints for PV, 1.0 (dummy) otherwise
@@ -210,11 +212,12 @@ function calcNewtonRaphson_withPVIdentity!(
              for b in busVec ]
 
     adjBranch = adjacentBranches(Y, debug)
-     # Q-Limits: build once if necessary
+    # Q-Limits: build once if necessary
     if length(net.qmin_pu) != length(busVec) || length(net.qmax_pu) != length(busVec)
         buildQLimits!(net)
     end
     qmin_pu, qmax_pu = getQLimits_pu(net)
+
     it = 0; erg = 1
     resetQLimitLog!(net)
     while it <= maxIte
@@ -225,25 +228,24 @@ function calcNewtonRaphson_withPVIdentity!(
         if it > 1
             @inbounds for k in eachindex(busVec) # iterate over all buses
                 b = busVec[k]
-                if b.type == PV
-                    qreq   = b._qRes        # current Q (p.u.)                
+                if b.type == Sparlectra.PV
+                    qreq   = b._qRes        # current Q (p.u.)
                     busIdx = b.idx
-                    @info "jacobian: Bus $(busIdx): Qreq=$(qreq), Qmin=$(qmin_pu[k]), Qmax=$(qmax_pu[k]), qreq*Sbase_MVA=$(qreq), it =$(it)"                
-                    @info "jacobian: Bus $(busIdx): QƩ updated to $(qreq * Sbase_MVA) MVA, limits [$(qmin_pu[k]*Sbase_MVA), $(qmax_pu[k]*Sbase_MVA)] MVA"
-                    b.qƩ   = net.qmax_pu[k]
+                    # NOTE: Only set b.qƩ when a limit is actually violated
                     if qreq > qmax_pu[k]
-                        b.type = PQ
-                        b.qƩ   = net.qmax_pu[k]
+                        b.type = Sparlectra.PQ
+                        b.qƩ   = net.qmax_pu[k]          # clamp to Qmax (p.u.)
                         changed = true
-                        net.qLimitEvents[busIdx] = :max # log event
+                        net.qLimitEvents[busIdx] = :max  # log event (used for re-enable guard)
                         logQLimitHit!(net, it, busIdx, :max)
-                        (verbose>0) && @printf "jacobian:  PV->PQ Bus %d: Q=%.4f > Qmax=%.4f (Iteration = %d)\n" busIdx qreq net.qmax_pu[k] it
+                        (verbose>0) && @printf "PV->PQ Bus %d: Q=%.4f > Qmax=%.4f (it=%d)\n" busIdx qreq qmax_pu[k] it
                     elseif qreq < qmin_pu[k]
-                        b.type = PQ
+                        b.type = Sparlectra.PQ
+                        b.qƩ   = net.qmin_pu[k]          # clamp to Qmin (p.u.)
                         changed = true
-                        net.qLimitEvents[busIdx] = :min # log event
+                        net.qLimitEvents[busIdx] = :min
                         logQLimitHit!(net, it, busIdx, :min)
-                        (verbose>0) && @printf "jacobian:  PV->PQ Bus %d: Q=%.4f < Qmin=%.4f (Iteration = %d)\n" busIdx qreq net.qmin_pu[k] it
+                        (verbose>0) && @printf "PV->PQ Bus %d: Q=%.4f < Qmin=%.4f (it=%d)\n" busIdx qreq qmin_pu[k] it
                     end
                 end
             end
@@ -253,16 +255,25 @@ function calcNewtonRaphson_withPVIdentity!(
             end
 
             # --- Optional re-enable: PQ -> PV when Q back inside band, hysteresis and cooldown ok
+            #      with GUARDS to prevent enabling PQ buses that were never PV or never hit a limit.
             reenabled = false
             @inbounds for k in eachindex(busVec)
                 b = busVec[k]
-                
+
+                # Guards:
+                # (1) must currently be PQ
+                # (2) must have been PV at the beginning (pv_orig)
+                # (3) must have recorded a Q-limit event in this PF run
+                if b.type != Sparlectra.PQ;           continue; end
+                if !(b.idx in pv_orig);               continue; end
+                if !haskey(net.qLimitEvents, b.idx);  continue; end
+
                 qreq = b._qRes
                 lo   = net.qmin_pu[k] + q_hyst_pu
                 hi   = net.qmax_pu[k] - q_hyst_pu
                 ready = (qreq > lo) && (qreq < hi)
 
-                if ready && cooldown_iters > 0
+                if ready && (cooldown_iters > 0)
                     last_it = Sparlectra.lastQLimitIter(net, b.idx)
                     if !isnothing(last_it) && (it - last_it) < cooldown_iters
                         ready = false
@@ -270,17 +281,17 @@ function calcNewtonRaphson_withPVIdentity!(
                 end
 
                 if ready
-                    b.type = PV
-                    delete!(net.qLimitEvents, b.idx)
+                    b.type = Sparlectra.PV
+                    delete!(net.qLimitEvents, b.idx)  # clear event after successful re-enable
                     reenabled = true
-                    (verbose>0) && @printf "  PQ->PV Bus %d: Q=%.4f back in [%.4f, %.4f] (cooldown=%d)\n" b.idx qreq lo hi cooldown_iters
+                    (verbose>0) && @printf "PQ->PV Bus %d: Q=%.4f within [%.4f, %.4f] (cooldown=%d)\n" b.idx qreq lo hi cooldown_iters
                 end
-                
             end
             if reenabled
                 Δ = residuum_full_withPV(Y, busVec, Vset, n_pq, n_pv, (verbose>2))
             end
         end
+
         # Convergence check
         nrm = norm(Δ)
         (verbose>0) && @printf " norm %e, tol %e, ite %d\n" nrm tolerance it
@@ -306,7 +317,7 @@ function calcNewtonRaphson_withPVIdentity!(
         # State update (PV buses get ΔV_rel from the identity row)
         kSlack = 0
         for i in eachindex(busVec)
-            if busVec[i].type == Slack
+            if busVec[i].type == Sparlectra.Slack
                 kSlack += 1; continue
             end
             # Full index without elimination (only shift for slack)
@@ -336,9 +347,9 @@ function calcNewtonRaphson_withPVIdentity!(
         if idx in isoNodes; continue; end
         idx += count(i -> i < idx, isoNodes)
         setVmVa!(node=nodes[idx], vm_pu=bus.vm_pu, va_deg=rad2deg(bus.va_rad))
-        if bus.type == PV
+        if bus.type == Sparlectra.PV
             nodes[idx]._qƩGen = bus._qRes * Sbase_MVA
-        elseif bus.type == Slack
+        elseif bus.type == Sparlectra.Slack
             nodes[idx]._pƩGen = bus._pRes * Sbase_MVA
             nodes[idx]._qƩGen = bus._qRes * Sbase_MVA
         end
