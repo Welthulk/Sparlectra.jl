@@ -1,116 +1,54 @@
 # src/limits.jl
-
-"""
-    _prosumer_bus_index(ps::ProSumer) -> Int
-
-Internal helper: derive the prosumer's bus index from its component.
-Prefers `cFrom_bus`, then falls back to `cTo_bus`. Throws a clear error
-if neither is available.
-"""
-function _prosumer_bus_index(ps::ProSumer)::Int
-    c = ps.comp
-    if hasproperty(c, :cFrom_bus) && getfield(c, :cFrom_bus) !== nothing
-        return Int(getfield(c, :cFrom_bus))
-    elseif hasproperty(c, :cTo_bus) && getfield(c, :cTo_bus) !== nothing
-        return Int(getfield(c, :cTo_bus))
+# Hilfsfunktion: stellt sicher, dass der Vektor bis mind. 'bus' gefüllt ist
+# und füllt mit einem Defaultwert (per append!) bis zur benötigten Länge auf.
+function _ensure_bus_index!(v::Vector{T}, bus::Int, default::T) where T
+    if length(v) < bus
+        append!(v, fill(default, bus - length(v)))
     end
-    error("ProSumer: cannot determine bus index (component has neither :cFrom_bus nor :cTo_bus).")
+    return v
 end
 
-# ---------- Storage helpers (immutable Net: never rebind fields) ----------
-
-"""
-    _ensure_limit_storage!(net::Net, nbus::Int)
-
-Make sure `net.qmin_pu`/`net.qmax_pu` exist with length `nbus`.
-No field rebinds; only mutate/resize/fill.
-"""
-function _ensure_limit_storage!(net::Net, nbus::Int)
-    if length(net.qmin_pu) != nbus
-        empty!(net.qmin_pu); empty!(net.qmax_pu)
-        append!(net.qmin_pu, fill(-Inf, nbus))
-        append!(net.qmax_pu, fill( Inf, nbus))
-    else
-        fill!(net.qmin_pu, -Inf)
-        fill!(net.qmax_pu,  Inf)
-    end
-    return nothing
-end
-
-"""
-    _ensure_log_storage!(net::Net)
-
-Ensure logging containers exist (mutating only).
-"""
-function _ensure_log_storage!(net::Net)
-    # Dict exists by type; just ensure it's empty or usable
-    if net.qLimitEvents === nothing
-        # very defensive; with typed field this should not happen
-        empty!(net.qLimitEvents)
-    end
-    # qLimitLog is a Vector{NamedTuple{(:iter,:bus,:side),...}}; it exists by construction
-    return nothing
-end
-
-# ---------- Public API ----------
-
-"""
-    buildQLimits!(net::Net)
-
-Aggregate generator Q-limits per bus and store them in `net.qmin_pu`/`net.qmax_pu`
-(in p.u., base on `net.baseMVA`). Only generators contribute.
-
-- If multiple generators are connected to a bus, take min of all `minQ` and max of all `maxQ`.
-- Missing limits remain at ±Inf.
-"""
-function buildQLimits!(net::Net)
+function buildQLimits!(net::Net; reset::Bool=false)
+    # Anzahl Busse, falls bekannt über nodeVec (sonst wachsen wir on-demand)
     nbus = length(net.nodeVec)
-    _ensure_limit_storage!(net, nbus)
 
+    # Basisgröße sicherstellen (ohne Feld-Reassignment, nur Mutationen)
+    if reset
+        empty!(net.qmin_pu); empty!(net.qmax_pu)
+        resetQLimitLog!(net)
+    end
+    if length(net.qmin_pu) < nbus
+        append!(net.qmin_pu, fill(Inf,  nbus - length(net.qmin_pu)))
+    end
+    if length(net.qmax_pu) < nbus
+        append!(net.qmax_pu, fill(-Inf, nbus - length(net.qmax_pu)))
+    end
+
+    # Aggregation über Prosumer/Generatoren
     for ps in net.prosumpsVec
         isGenerator(ps) || continue
-        bus = _prosumer_bus_index(ps)
+        bus = getPosumerBusIndex(ps)
+
+        # On-demand bis zum Busindex auffüllen (falls Bus > nbus)
+        _ensure_bus_index!(net.qmin_pu, bus,  Inf)
+        _ensure_bus_index!(net.qmax_pu, bus, -Inf)
 
         qmin_pu = isnothing(ps.minQ) ? -Inf : ps.minQ / net.baseMVA
         qmax_pu = isnothing(ps.maxQ) ?  Inf : ps.maxQ / net.baseMVA
 
-        # aggregate
-        net.qmin_pu[bus] = min(net.qmin_pu[bus], qmin_pu)
-        net.qmax_pu[bus] = max(net.qmax_pu[bus], qmax_pu)
+        # Nur schreiben, wenn „noch nicht gesetzt“ (Sentinel) ODER der neue Wert strenger ist:
+        # - Für qmin: kleiner = strenger (minimieren), Sentinel +Inf => setze direkt
+        cur_qmin = net.qmin_pu[bus]
+        net.qmin_pu[bus] = isfinite(cur_qmin) ? min(cur_qmin, qmin_pu) : qmin_pu
+
+        # - Für qmax: größer = weiter (maximieren), Sentinel -Inf => setze direkt
+        cur_qmax = net.qmax_pu[bus]
+        net.qmax_pu[bus] = isfinite(cur_qmax) ? max(cur_qmax, qmax_pu) : qmax_pu
     end
 
-    _ensure_log_storage!(net)
     return nothing
 end
 
-"""
-    resetQLimitLog!(net::Net)
-
-Clears PV→PQ switch events and the structured log.
-"""
-function resetQLimitLog!(net::Net)
-    empty!(net.qLimitEvents)
-    empty!(net.qLimitLog)
-    return nothing
-end
-
-"""
-    get_Q_limits_pu(net::Net) -> (qmin_pu, qmax_pu)
-
-Return per-bus Q limits in p.u. (build once if empty).
-"""
-function get_Q_limits_pu(net::Net)
-    if isempty(net.qmin_pu) || isempty(net.qmax_pu)
-        buildQLimits!(net)
-    end
-    return net.qmin_pu, net.qmax_pu
-end
-
-# Legacy compatibility: some callers pass a second parameter (e.g., bus count)
-function get_Q_limits_pu(net::Net, ::Int)
-    @warn "get_Q_limits_pu: additional argument ignored (compatibility fallback)."
-    return get_Q_limits_pu(net)
-end
 
 """
     printQLimitLog(net::Net; sort_by=:iter, io::IO=stdout)
@@ -169,4 +107,22 @@ function lastQLimitIter(net::Net, bus::Int)
         end
     end
     return nothing
+end
+
+function resetQLimitLog!(net::Net)
+    empty!(net.qLimitEvents)
+    empty!(net.qLimitLog)
+    return nothing
+end
+
+"""
+    getQLimits_pu(net::Net) -> (qmin_pu, qmax_pu)
+
+Return per-bus Q limits in p.u. (build once if empty).
+"""
+function getQLimits_pu(net::Net)
+    if isempty(net.qmin_pu) || isempty(net.qmax_pu)
+        buildQLimits!(net)
+    end
+    return net.qmin_pu, net.qmax_pu
 end

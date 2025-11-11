@@ -6,11 +6,8 @@
 # - Active-set handling of PV Q-limits: PV→PQ when Q demand violates limits
 # - Optional re-enable PQ→PV with hysteresis band and cooldown (robust to missing fields)
 #
-# Assumptions:
-# - Q-limits per bus are provided by get_Q_limits_pu(net) and backed by buildQLimits!(net).
-# - Structured logging helpers exist: logQLimitHit!(net, iter, busIdx, side) and lastQLimitIter(net, busIdx)
-# - net.qLimitEvents is a Dict{Int,Symbol} (ensured by buildQLimits!)
-#
+
+
 # Robustness:
 # - If the Net type does not have fields `q_hyst_pu` or `cooldown_iters`, defaults (0.0, 0) are used.
 # - If Q-limit arrays don't match the current bus count, we (re)build once.
@@ -188,6 +185,7 @@ function calcNewtonRaphson_withPVIdentity!(
     tolerance::Float64=1e-6, verbose::Int=0, sparse::Bool=false,
     flatStart::Bool=false, angle_limit::Bool=false, debug::Bool=false)
 
+
     setJacobianAngleLimit(angle_limit)
     setJacobianDebug(debug)
 
@@ -205,15 +203,6 @@ function calcNewtonRaphson_withPVIdentity!(
     n_pq = count(b->b.type==PQ, busVec)
     n    = n_pq + n_pv
 
-    # Q-Limits: build once if necessary
-    if length(net.qmin_pu) != length(busVec) || length(net.qmax_pu) != length(busVec)
-        buildQLimits!(net)
-    end
-    qmin_pu, qmax_pu = get_Q_limits_pu(net)
-
-    # Reset structured Q-limit log at iteration start
-    resetQLimitLog!(net)
-
     # Vset: actual setpoints for PV, 1.0 (dummy) otherwise
     Vset = [ (b.type==Sparlectra.PV) ?
              (isnothing(net.nodeVec[b.idx]._vm_pu) ? b.vm_pu : net.nodeVec[b.idx]._vm_pu) :
@@ -221,49 +210,56 @@ function calcNewtonRaphson_withPVIdentity!(
              for b in busVec ]
 
     adjBranch = adjacentBranches(Y, debug)
-
+     # Q-Limits: build once if necessary
+    if length(net.qmin_pu) != length(busVec) || length(net.qmax_pu) != length(busVec)
+        buildQLimits!(net)
+    end
+    qmin_pu, qmax_pu = getQLimits_pu(net)
     it = 0; erg = 1
-    # feeders = getPowerFeeds_full(busVec, n_pq, n_pv)  # not needed here
-
+    resetQLimitLog!(net)
     while it <= maxIte
         Δ = residuum_full_withPV(Y, busVec, Vset, n_pq, n_pv, (verbose>2))
 
         # --- Active set: PV -> PQ when Q-limit violated -------------------------
         changed = false
-        @inbounds for k in eachindex(busVec)
-            b = busVec[k]
-            if b.type == PV
-                qreq   = b._qRes        # current Q (p.u.)
-                busIdx = b.idx
-                if qreq > qmax_pu[k]
-                    b.type = PQ
-                    b.qƩ   = qmax_pu[k]
-                    changed = true
-                    net.qLimitEvents[busIdx] = :max
-                    logQLimitHit!(net, it, busIdx, :max)
-                    (verbose>0) && @printf "  PV->PQ Bus %d: Q=%.4f > Qmax=%.4f\n" busIdx qreq qmax_pu[k]
-                elseif qreq < qmin_pu[k]
-                    b.type = PQ
-                    b.qƩ   = qmin_pu[k]
-                    changed = true
-                    net.qLimitEvents[busIdx] = :min
-                    logQLimitHit!(net, it, busIdx, :min)
-                    (verbose>0) && @printf "  PV->PQ Bus %d: Q=%.4f < Qmin=%.4f\n" busIdx qreq qmin_pu[k]
+        if it > 1
+            @inbounds for k in eachindex(busVec) # iterate over all buses
+                b = busVec[k]
+                if b.type == PV
+                    qreq   = b._qRes        # current Q (p.u.)                
+                    busIdx = b.idx
+                    @info "jacobian: Bus $(busIdx): Qreq=$(qreq), Qmin=$(qmin_pu[k]), Qmax=$(qmax_pu[k]), qreq*Sbase_MVA=$(qreq), it =$(it)"                
+                    @info "jacobian: Bus $(busIdx): QƩ updated to $(qreq * Sbase_MVA) MVA, limits [$(qmin_pu[k]*Sbase_MVA), $(qmax_pu[k]*Sbase_MVA)] MVA"
+                    b.qƩ   = net.qmax_pu[k]
+                    if qreq > qmax_pu[k]
+                        b.type = PQ
+                        b.qƩ   = net.qmax_pu[k]
+                        changed = true
+                        net.qLimitEvents[busIdx] = :max # log event
+                        logQLimitHit!(net, it, busIdx, :max)
+                        (verbose>0) && @printf "jacobian:  PV->PQ Bus %d: Q=%.4f > Qmax=%.4f (Iteration = %d)\n" busIdx qreq net.qmax_pu[k] it
+                    elseif qreq < qmin_pu[k]
+                        b.type = PQ
+                        changed = true
+                        net.qLimitEvents[busIdx] = :min # log event
+                        logQLimitHit!(net, it, busIdx, :min)
+                        (verbose>0) && @printf "jacobian:  PV->PQ Bus %d: Q=%.4f < Qmin=%.4f (Iteration = %d)\n" busIdx qreq net.qmin_pu[k] it
+                    end
                 end
             end
-        end
-        if changed
-            Δ = residuum_full_withPV(Y, busVec, Vset, n_pq, n_pv, (verbose>2))
-        end
 
-        # --- Optional re-enable: PQ -> PV when Q back inside band, hysteresis and cooldown ok
-        reenabled = false
-        @inbounds for k in eachindex(busVec)
-            b = busVec[k]
-            if b.type == PQ && haskey(net.qLimitEvents, b.idx)
+            if changed
+                Δ = residuum_full_withPV(Y, busVec, Vset, n_pq, n_pv, (verbose>2))
+            end
+
+            # --- Optional re-enable: PQ -> PV when Q back inside band, hysteresis and cooldown ok
+            reenabled = false
+            @inbounds for k in eachindex(busVec)
+                b = busVec[k]
+                
                 qreq = b._qRes
-                lo   = qmin_pu[k] + q_hyst_pu
-                hi   = qmax_pu[k] - q_hyst_pu
+                lo   = net.qmin_pu[k] + q_hyst_pu
+                hi   = net.qmax_pu[k] - q_hyst_pu
                 ready = (qreq > lo) && (qreq < hi)
 
                 if ready && cooldown_iters > 0
@@ -279,12 +275,12 @@ function calcNewtonRaphson_withPVIdentity!(
                     reenabled = true
                     (verbose>0) && @printf "  PQ->PV Bus %d: Q=%.4f back in [%.4f, %.4f] (cooldown=%d)\n" b.idx qreq lo hi cooldown_iters
                 end
+                
+            end
+            if reenabled
+                Δ = residuum_full_withPV(Y, busVec, Vset, n_pq, n_pv, (verbose>2))
             end
         end
-        if reenabled
-            Δ = residuum_full_withPV(Y, busVec, Vset, n_pq, n_pv, (verbose>2))
-        end
-
         # Convergence check
         nrm = norm(Δ)
         (verbose>0) && @printf " norm %e, tol %e, ite %d\n" nrm tolerance it
@@ -351,9 +347,6 @@ function calcNewtonRaphson_withPVIdentity!(
     setTotalBusPower!(net=net,
         p=sum(b->b._pRes, busVec), q=sum(b->b._qRes, busVec))
 
-    if !isempty(net.qLimitEvents) && verbose>0
-        println("Q-limit events (BusIdx => side): ", net.qLimitEvents)
-    end
 
     return it, erg
 end

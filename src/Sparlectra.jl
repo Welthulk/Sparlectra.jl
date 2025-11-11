@@ -55,6 +55,8 @@ export
   Net,
   
   # functions  
+  # BusData
+  BusData, getBusData, getBusTypeVec, countNodes,
   # Compomnent
   toComponentTyp, getCompName, getCompID, 
   # Transformers
@@ -70,11 +72,11 @@ export
   # ACLineSegment
   get_line_parameters, isLinePIModel, getLineRXBG, getLineRXBG_pu,
   # ProSumer
-  isSlack, isGenerator, isAPUNode, setQGenReplacement!, getQGenReplacement, toProSumptionType, updatePQ!,
+  isSlack, isGenerator, isAPUNode, setQGenReplacement!, getQGenReplacement, toProSumptionType, updatePQ!, getPosumerBusIndex,
   # Network
   addBus!, addShunt!, addACLine!, addPIModelACLine!, add2WTrafo!, addPIModelTrafo!, addProsumer!, lockNet!, validate!, hasBusInNet, addBusGenPower!, addBusLoadPower!, addBusShuntPower!, setNodeVoltage!, setNodeAngle!,
   getNetOrigBusIdx, geNetBusIdx, setNetBranchStatus!, getNetBranch, getNetBranchNumberVec, setTotalLosses!, getTotalLosses, getBusType, get_bus_vn_kV, get_vn_kV, updateBranchParameters!, hasShunt!, 
-  getShunt!, markIsolatedBuses!,setTotalBusPower!, setPVGeneratorQLimitsAll!, setPVBusVset!,setPVBusQLimits!,setAllPVVset!,rebuildQLimits!, setBusType!,
+  getShunt!, markIsolatedBuses!,setTotalBusPower!, setPVGeneratorQLimitsAll!, setPVGeneratorQLimits, setPVBusVset!, 
   # remove_functions.jl
   removeBus!, removeBranch!, removeACLine!, removeTrafo!, removeShunt!, removeProsumer!, clearIsolatedBuses!,
   # import.jl
@@ -86,17 +88,15 @@ export
   # nbi.jl
   getNBI, mdoRCM,
   # jacobian.jl
-  setJacobianDebug, setJacobianAngleLimit, runpf!,
+  setJacobianDebug, setJacobianAngleLimit, runpf!, runpf_full!,
   # jacobian_full.jl (neu)
   getPowerFeeds_full, residuum_full_withPV, calcJacobian_withPVIdentity, calcNewtonRaphson_withPVIdentity!, runpf_full!,
   # limits.jl
-  printQLimitLog,logQLimitHit!, lastQLimitIter, get_Q_limits_pu, buildQLimits!,logQLimitHit!,lastQLimitIter, resetQLimitLog!,
+  printQLimitLog,logQLimitHit!, lastQLimitIter, getQLimits_pu, logQLimitHit!,lastQLimitIter, resetQLimitLog!, buildQLimits!,
   # losses.jl
   calcNetLosses!,
-  
   # results.jl
   printACPFlowResults, convertPVtoPQ!,
-
   # run_acpflow.jl
   run_acpflow, run_net_acpflow
 
@@ -107,8 +107,8 @@ include("prosumer.jl")
 include("node.jl")
 include("branch.jl")
 include("shunt.jl")
-include("busdata.jl")
 include("network.jl")
+include("busdata.jl")
 include("import.jl")
 include("equicircuit.jl")
 include("jacobian.jl")

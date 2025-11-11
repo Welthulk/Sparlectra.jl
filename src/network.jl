@@ -70,27 +70,43 @@ struct Net
   busOrigIdxDict::Dict{Int,Int}
   totalLosses::Vector{Tuple{Float64,Float64}}
   totalBusPower::Vector{Tuple{Float64,Float64}}
-  qmin_pu::Vector{Float64}            # pro Bus Qmin (p.u.)
-  qmax_pu::Vector{Float64}            # pro Bus Qmax (p.u.)
-  qLimitEvents::Dict{Int,Symbol}      # BusIdx -> :min | :max (PV→PQ-Umschaltung)  
   _locked::Bool
   shuntDict::Dict{Int,Int}
   isoNodes::Vector{Int}
   qLimitLog::Vector{Any}
   cooldown_iters::Int 
-  q_hyst_pu::Float64  
+  q_hyst_pu::Float64
+  qmin_pu::Vector{Float64}            # pro Bus Qmin (p.u.)
+  qmax_pu::Vector{Float64}            # pro Bus Qmax (p.u.)
+  qLimitEvents::Dict{Int,Symbol}      # BusIdx -> :min | :max (PV→PQ Change)  
+  
   #! format: off
   function Net(; name::String, baseMVA::Float64, vmin_pu::Float64 = 0.9, vmax_pu::Float64 = 1.1)    
 
-
-    # letzte Zeile im new(...) ersetzen/erweitern:
-    new(name, baseMVA, [], vmin_pu, vmax_pu, [], [], [], [], [], [], 
-        Dict{String,Int}(), Dict{Int,Int}(), [], [],                  # totalLosses, totalBusPower
-        Float64[], Float64[], Dict{Int,Symbol}(),                     # qmin_pu, qmax_pu, qLimitEvents
-        false, Dict{Int,Int}(), [],                                   # _locked, shuntDict, isoNodes
-        Any[],                                                        # qLimitLog 
-        0,                                                            # cooldown_iters (0=aus)
-        0.0)                                                          # q_hyst_pu    
+    new(name, # name
+        baseMVA, # baseMVA
+        [], # slackVec
+        vmin_pu, # vmin_pu
+        vmax_pu, # vmax_pu
+        [], # nodeVec
+        [], # linesAC
+        [], # trafos
+        [], # branchVec
+        [], # prosumpsVec
+        [], # shuntVec
+        Dict{String,Int}(), # busDict
+        Dict{Int,Int}(), # busOrigIdxDict
+        [], # totalLosses
+        [], # totalBusPower
+        false, # _locked
+        Dict{Int,Symbol}(),  # shuntDict
+        [],                                    # isoNodes
+        Any[],                                 # qLimitLog                     
+        0,                                     # cooldown_iters
+        0.0,
+        [],                                    # qmin_pu
+        [],                                    # qmax_pu
+        Dict{Int,Symbol}())                                  
 
 
   end
@@ -107,9 +123,6 @@ struct Net
     println(io, "Branches: ", length(o.branchVec))
     println(io, "Prosumers: ", length(o.prosumpsVec))
     println(io, "Shunts: ", length(o.shuntVec))
-    if !isempty(o.qLimitEvents)
-        println(io, "Q-limit events: ", length(o.qLimitEvents))
-    end
     if !isempty(o.qLimitLog)
         println(io, "Q-limit log entries: ", length(o.qLimitLog))
     end
@@ -126,6 +139,17 @@ end
     (idx !== nothing) && deleteat!(v, idx)
     return v
 end
+
+
+
+#function hasChangedBusTypes(net::Net)::Bool
+#  for ps in net.prosumpsVec
+#     if ps.typeChanged
+#         return true
+#     end
+#   end  
+#end
+
 
 # --- positionsbasierte Kern-APIs ---
 function setBusType!(net::Net, bus::Int, busType::String)
@@ -398,8 +422,7 @@ Parameters:
 - `ratedS::Union{Nothing, Float64}= nothing`: Rated power of the line segment in MVA (default is nothing).
 - `status::Int = 1`: Status of the line segment (default is 1).
 """
-function addACLine!(; net::Net, fromBus::String, toBus::String, length::Float64, r::Float64, x::Float64, b::Union{Nothing,Float64} = nothing, c_nf_per_km::Union{Nothing,Float64} = nothing, tanδ::Union{Nothing,Float64} = nothing, ratedS::Union{Nothing,Float64} = nothing, status::Int = 1)
-  @debug "Adding AC line segment from $fromBus to $toBus"
+function addACLine!(; net::Net, fromBus::String, toBus::String, length::Float64, r::Float64, x::Float64, b::Union{Nothing,Float64} = nothing, c_nf_per_km::Union{Nothing,Float64} = nothing, tanδ::Union{Nothing,Float64} = nothing, ratedS::Union{Nothing,Float64} = nothing, status::Int = 1)  
   @assert fromBus != toBus "From and to bus must be different"
   from = geNetBusIdx(net = net, busName = fromBus)
   to = geNetBusIdx(net = net, busName = toBus)
@@ -666,8 +689,6 @@ setNetBranchStatus!(net = network, branchNr = 1, status = 1)
 ```
 """
 function setNetBranchStatus!(; net::Net, branchNr::Int, status::Int)
-  @debug "Set branch status to $fromBusSwitch and $toBusSwitch"
-
   @assert branchNr > 0 "Branch number must be greater than 0"
   @assert branchNr <= length(net.branchVec) "Branch $branchNr not found in the network"
   net.branchVec[branchNr].status = status
@@ -970,6 +991,22 @@ function markIsolatedBuses!(; net::Net, log::Bool = false)
   end
 end
 
+
+function setPVGeneratorQLimitsAll!(; net::Net, qmin_MVar::Float64, qmax_MVar::Float64)
+    for ps in net.prosumpsVec
+        if isGenerator(ps)
+            ps.minQ = qmin_MVar
+            ps.maxQ = qmax_MVar                            
+        end
+    end
+end
+
+
+function setPVBusVset!(net::Net, busName::String; vm_pu::Float64)
+    bus = geNetBusIdx(net = net, busName = busName)    
+    net.nodeVec[bus]._vm_pu = vm_pu
+end
+
 """
     setBusGeneratorQLimits!(; net::Net, busName::String, qmin_MVar::Float64, qmax_MVar::Float64)
 
@@ -986,123 +1023,8 @@ function setBusGeneratorQLimits!(; net::Net, busName::String, qmin_MVar::Float64
                 ps.maxQ = qmax_MVar
             end
         end
-    end
-    buildQLimits!(net)   # aggregierte per-Bus-Limits (p.u.) neu aufbauen
+    end    
     return nothing
 end
 
-"""
-    setPVGeneratorQLimitsAll!(; net::Net, qmin_MVar::Float64, qmax_MVar::Float64)
-
-Setzt auf **allen PV-Bussen** die Generator-Q-Grenzen (für alle Generator-ProSumer,
-die an einem PV-Bus hängen) und baut anschließend die Aggregation neu auf.
-"""
-function setPVGeneratorQLimitsAll!(; net::Net, qmin_MVar::Float64, qmax_MVar::Float64)
-    pv_set = Set{Int}()
-    for n in net.nodeVec
-        if isPVNode(n)
-            push!(pv_set, n.busIdx)
-        end
-    end
-    for ps in net.prosumpsVec
-        if isGenerator(ps)
-            c = ps.comp
-            if !isnothing(c.cFrom_bus) && (c.cFrom_bus in pv_set)
-                ps.minQ = qmin_MVar
-                ps.maxQ = qmax_MVar
-            end
-        end
-    end
-    buildQLimits!(net)
-    return nothing
-end
-
-"""
-    rebuildQLimits!(; net::Net)
-
-Bequemer Wrapper auf `buildQLimits!`.
-"""
-rebuildQLimits!(; net::Net) = (buildQLimits!(net); nothing)
-
-
-# ------------------------------------------------------------
-# Helpers to tweak PV setpoints and Q-limits *without* mutating Net fields
-# ------------------------------------------------------------
-
-# Robust bus lookup by name (falls Knotenname mal "busName" oder "name" heißt)
-# Fallback: akzeptiere "B<idx>"-Strings.
-function _find_bus_index_by_name(net::Net, busName::String)::Int
-    idx = findfirst(n ->
-        (hasproperty(n, :busName) && n.busName == busName) ||
-        (hasproperty(n, :name)    && n.name    == busName), net.nodeVec)
-    if isnothing(idx)
-        # Allow "B12" → 12
-        if startswith(busName, "B")
-            parsed = tryparse(Int, busName[2:end])
-            if parsed !== nothing && 1 <= parsed <= length(net.nodeVec)
-                return parsed
-            end
-        end
-        error("Bus name '$busName' not found in net.nodeVec.")
-    end
-    return idx
-end
-
-# ------------------------------------------------------------
-# Setze den Spannungs-Sollwert (Vset) eines PV-Busses über das Node-Feld _vm_pu.
-# Diese Information greift der Full-NR über Vset = node._vm_pu (falls vorhanden) ab.
-# ------------------------------------------------------------
-function setPVBusVset!(net::Net; bus::Int, vm_pu::Float64)
-    node = net.nodeVec[bus]
-    if !isPVNode(node)   # richtiger PV/Slack-Check
-        @warn "setPVBusVset!: Bus $bus is not PV; setting _vm_pu anyway (the solver will ignore it for non-PV)."
-    end
-    setfield!(node, :_vm_pu, vm_pu)
-    return nothing
-end
-
-function setPVBusVset!(net::Net, busName::String; vm_pu::Float64)
-    bus = geNetBusIdx(net = net, busName = busName)
-    #bus = _find_bus_index_by_name(net, busName)
-    return setPVBusVset!(net; bus=bus, vm_pu=vm_pu)
-end
-
-# ------------------------------------------------------------
-# Setze Q-Limits (MVar) für alle Generator-ProSumer an einem Bus.
-# Achtung: Werte sind in MVar (nicht p.u.); die Aggregation nach p.u. macht limits.jl.
-# ------------------------------------------------------------
-function setPVBusQLimits!(net::Net; bus::Int, qmin_MVar::Float64, qmax_MVar::Float64)
-    if qmax_MVar < qmin_MVar
-        error("setPVBusQLimits!: qmax_MVar < qmin_MVar (got $qmax_MVar < $qmin_MVar)")
-    end
-    for ps in net.prosumpsVec
-        try
-            if isGenerator(ps) && Sparlectra._prosumer_bus_index(ps) == bus
-                setfield!(ps, :minQ, qmin_MVar)
-                setfield!(ps, :maxQ, qmax_MVar)
-            else
-              @warn "setPVBusQLimits!: skipping a non-generator or prosumer at a different bus."
-            end
-        catch err
-            @warn "setPVBusQLimits!: skipping a prosumer due to $err"
-        end
-    end
-    return nothing
-end
-
-function setPVBusQLimits!(net::Net, busName::String; qmin_MVar::Float64, qmax_MVar::Float64)
-    bus = _find_bus_index_by_name(net, busName)
-    return setPVBusQLimits!(net; bus=bus, qmin_MVar=qmin_MVar, qmax_MVar=qmax_MVar)
-end
-
-# ------------------------------------------------------------
-# Optionales Convenience: Setze denselben Vset für *alle* PV-Busse.
-# ------------------------------------------------------------
-function setAllPVVset!(net::Net; vm_pu::Float64)
-    for n in net.nodeVec
-        if hasproperty(n, :type) && n.type == PV
-            setfield!(n, :_vm_pu, vm_pu)
-        end
-    end
-    return nothing
-end
+# 
