@@ -10,6 +10,8 @@ function test_acpflow_full(verbose::Int = 0)
     maxIte = 20
     print_results = (verbose > 0)
     result = true
+    setPVGeneratorQLimitsAll!(net = net, qmin_MVar = -350.0, qmax_MVar = 350.0)
+    buildQLimits!(net, reset=true)
 
     etime = @elapsed begin
         ite, erg = runpf_full!(net, maxIte, tol, verbose)
@@ -45,6 +47,8 @@ function test_full_matches_reduced(; tol_vm::Float64=5e-4, tol_va_deg::Float64=5
         @warn "Reduced NR did not converge"
         return false
     end
+    setPVGeneratorQLimitsAll!(net = net2, qmin_MVar = -350.0, qmax_MVar = 350.0)
+    buildQLimits!(net2, reset=true)
 
     # Full (PV identity rows)
     ite_f, erg_f = runpf_full!(net2, maxIte, tol, verbose)
@@ -96,10 +100,12 @@ function test_jacobian_full_structure(;verbose::Int=0)
     busTypeVec, slackIdx2 = Sparlectra.getBusTypeVec(busVec)
     @assert slackIdx == slackIdx2
 
-    n_pv = count(b->b.type==PV, busVec)
-    n_pq = count(b->b.type==PQ, busVec)
+    n_pv = count(b->b.type==Sparlectra.PV, busVec)
+    n_pq = count(b->b.type==Sparlectra.PQ, busVec)
     n = n_pq + n_pv
 
+    setPVGeneratorQLimitsAll!(net = net, qmin_MVar = -350.0, qmax_MVar = 350.0)
+    buildQLimits!(net, reset=true)
     adj = adjacentBranches(Y, false)  # this one is exported; unqualified is fine
     J = calcJacobian_withPVIdentity(Y, busVec, adj, slackIdx, n_pq, n_pv; log=false, sparse=true)
     expected = 2*n
@@ -148,13 +154,11 @@ function test_jacobian_full_structure(;verbose::Int=0)
     return ok
 end
 
-# --- Test: PV→PQ-Umschaltung über Q-Limits mit öffentlichen Settern ---
-# --- Test: PV→PQ switch via Q-limits with public setters ---
 # --- Test: PV→PQ switching via Q-limits using public setters ---
 function test_pv_q_limit_switch!(net::Net; verbose::Int=0)
     tol   = 1e-6
     maxIt = 30
-
+    print_results = (verbose > 0)
     # PV buses known from testCreateNetworkFromScratch()
     pv_names = ["B10","B11","B12"]
 
@@ -184,15 +188,16 @@ function test_pv_q_limit_switch!(net::Net; verbose::Int=0)
     # Was there any PV->PQ switch? (expected: no)
     pv_idx = map(name -> geNetBusIdx(net = net, busName = name), pv_names)
     hit = any(haskey(net.qLimitEvents, i) for i in pv_idx)
-
-    printQLimitLog(net; sort_by=:bus)
-    printACPFlowResults(net, etime, ite, tol)
+    if print_results
+        printQLimitLog(net; sort_by=:bus)
+        calcNetLosses!(net)
+        printACPFlowResults(net, etime, ite, tol)
+    end
 
     return hit == false
 end
 
-
-# Wrapper für runtests.jl – baut das Netz wie die anderen Full-System-Tests
+# Wrapper for runtests.jl – builds the network like the other full-system tests
 function test_pv_q_limit_switch(; verbose::Int=1)
     net = testCreateNetworkFromScratch()
     return test_pv_q_limit_switch!(net; verbose=verbose)
