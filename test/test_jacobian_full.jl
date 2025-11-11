@@ -149,36 +149,46 @@ function test_jacobian_full_structure(;verbose::Int=0)
 end
 
 # --- Test: PV→PQ-Umschaltung über Q-Limits mit öffentlichen Settern ---
+# --- Test: PV→PQ switch via Q-limits with public setters ---
+# --- Test: PV→PQ switching via Q-limits using public setters ---
 function test_pv_q_limit_switch!(net::Net; verbose::Int=0)
-    
     tol   = 1e-6
     maxIt = 30
 
-    # Wir wissen aus testCreateNetworkFromScratch(): PV-Busse sind B10, B11, B12
+    # PV buses known from testCreateNetworkFromScratch()
     pv_names = ["B10","B11","B12"]
 
-    # 1) Vset anheben, damit Q nach oben gedrückt wird
+    # 1) Raise Vset a bit; keep generous Q-limits so no PV->PQ is expected
     for name in pv_names
-        setPVBusVset!(net, name; vm_pu = 1.07) 
-    end    
+        setPVBusVset!(net, name; vm_pu = 1.07)
+    end
     setPVGeneratorQLimitsAll!(net = net, qmin_MVar = -600.0, qmax_MVar = 600.0)
     buildQLimits!(net, reset=true)
 
-    # 4) Full-System NR laufen lassen
-    ite, erg = runpf_full!(net, maxIt, tol, verbose)
-    converged = (erg == 0)
-    if !converged
-        @warn "test_pv_q_limit_switch!: Full NR did not converge in step 1"        
+    etime = @elapsed begin
+        ite, erg = runpf_full!(net, maxIt, tol, verbose)
     end
-    hit = false    
+    converged = (erg == 0)
 
-    idx = i -> geNetBusIdx(net = net, busName = i)
-    pv_idx = map(idx, pv_names)
+    if !converged
+        @warn "Full NR did not converge"
+    else
+        # Optional but nice: compute total network losses after per-branch flows exist
+        try
+            Sparlectra.calcNetLosses!(net)
+        catch err
+            @warn "Sparlectra.calcNetLosses!(net) failed or not found" error=err
+        end
+    end
+
+    # Was there any PV->PQ switch? (expected: no)
+    pv_idx = map(name -> geNetBusIdx(net = net, busName = name), pv_names)
     hit = any(haskey(net.qLimitEvents, i) for i in pv_idx)
 
     printQLimitLog(net; sort_by=:bus)
-    return hit 
+    printACPFlowResults(net, etime, ite, tol)
 
+    return hit == false
 end
 
 
