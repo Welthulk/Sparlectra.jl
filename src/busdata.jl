@@ -1,14 +1,13 @@
-# busdata.jl — Datentyp für NR / Lastfluss
-# Dieser Typ war zuvor lokal in jacobian.jl; ausgelagert zur gemeinsamen Nutzung.
+# busdata.jl — Data type for NR / power flow
 
 mutable struct BusData
-    idx::Int         # Index des Busses (nach Sortierung)
-    vm_pu::Float64   # Spannung in p.u.
-    va_rad::Float64  # Winkel in rad
-    pƩ::Float64      # Summe Wirkleistung (p.u.)
-    qƩ::Float64      # Summe Blindleistung (p.u.)
-    _pRes::Float64   # berechnete Wirkleistung (p.u.)
-    _qRes::Float64   # berechnete Blindleistung (p.u.)
+    idx::Int         # Bus index (after sorting)
+    vm_pu::Float64   # Voltage in p.u.
+    va_rad::Float64  # Angle in rad
+    pƩ::Float64      # Sum active power (p.u.)
+    qƩ::Float64      # Sum reactive power (p.u.)
+    _pRes::Float64   # calculated active power (p.u.)
+    _qRes::Float64   # calculated reactive power (p.u.)
     type::NodeType
 
     function BusData(idx::Int, vm_pu::Float64, va_rad::Float64,
@@ -21,7 +20,6 @@ function Base.show(io::IO, bus::BusData)
     va_deg = round(rad2deg(bus.va_rad), digits = 3)
     print(io, "BusData($(bus.idx), $(bus.vm_pu), $(va_deg)°), $(bus.pƩ), $(bus.qƩ), $(bus._pRes), $(bus._qRes), $(bus.type))")
 end
-
 
 function getBusData(nodes::Vector{Node}, Sbase_MVA::Float64, flatStart)
   busVec = Vector{BusData}()
@@ -51,7 +49,7 @@ function getBusData(nodes::Vector{Node}, Sbase_MVA::Float64, flatStart)
 
     sumLoad_p += n._pƩLoad === nothing ? 0.0 : n._pƩLoad * -1.0
     sumLoad_q += n._qƩLoad === nothing ? 0.0 : n._qƩLoad * -1.0
-    # Hint: Shunts are considered in Y-Bus Matrix
+    # Note: Shunts are considered in Y-Bus Matrix
 
     p += n._pƩGen === nothing ? 0.0 : n._pƩGen
     q += n._qƩGen === nothing ? 0.0 : n._qƩGen
@@ -76,7 +74,7 @@ function getBusData(nodes::Vector{Node}, Sbase_MVA::Float64, flatStart)
     else
       vm_pu = n._vm_pu === nothing ? 1.0 : n._vm_pu
       va_deg = n._va_deg === nothing ? 0.0 : deg2rad(n._va_deg)
-      #@info "getBusData: bus $(idx) type=$(type), vm_pu=$(vm_pu), va_deg=$(n._va_deg), p=$(p), q=$(q)" if debug
+      
       if angle_limit && type == PQ
         if abs(va_deg) > deg2rad(30.0)
           va_deg = sign(va_deg) * deg2rad(30.0)
@@ -84,8 +82,7 @@ function getBusData(nodes::Vector{Node}, Sbase_MVA::Float64, flatStart)
         end
       end
     end
-    busIdx = idx
-    #b = BusData(n.busIdx, vm_pu, va_deg, p, q, type)
+    busIdx = idx    
     b = BusData(busIdx, vm_pu, va_deg, p, q, type)
     push!(busVec, b)
   end
@@ -114,7 +111,6 @@ function getBusData(nodes::Vector{Node}, Sbase_MVA::Float64, flatStart)
 
   return busVec, slackIdx
 end # getBusData
-
 
 # helper function to count number of nodes of type = value [PQ, PV]
 function getBusTypeVec(busVec::Vector{BusData})
@@ -152,4 +148,3 @@ function countNodes(busTypeVec::Vector{NodeType}, pos, value::NodeType)
 
   return sum
 end
-
