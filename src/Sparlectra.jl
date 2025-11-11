@@ -1,19 +1,3 @@
-"""
-    Sparlectra 0.4.22
-
-Sparlectra is a Julia package for the calculation of electrical networks. It is designed to be used in the context of power system analysis and optimization. 
-
-- [GitHub Repository](https://github.com/welthulk/Sparlectra.jl)
-- [Website](https://welthulk.github.io/Sparlectra.jl)
-
-**Naming Conventions:**
-The project follows the Julia Naming Conventions for the most part, 
-but it's important to note that the naming convention for functions might deviate. 
-In this module, functions are written in CamelCase with a lowercase initial letter. 
-
-"""
-module Sparlectra
-
 # Author: Udo Schmitz (https://github.com/Welthulk)
 # Purpose: network calculation
 
@@ -23,17 +7,33 @@ module Sparlectra
 # In this module, functions are written in CamelCase with a lowercase initial letter. 
 
 #! format: off
+
+module Sparlectra
 using LinearAlgebra, SparseArrays, Printf, Logging
 
 # resource data types for working with Sparlectra
 const Wurzel3 = 1.7320508075688772
-const SparlectraVersion = VersionNumber("0.4.21")
+const SparlectraVersion = v"0.4.23"
+version() = SparlectraVersion
 abstract type AbstractBranch end
 
-version() = SparlectraVersion
+const _MODULE_DOC = """
+    Sparlectra $(SparlectraVersion)
 
+Sparlectra is a Julia package for the calculation of electrical networks. 
+It is designed to be used in the context of power system analysis and optimization. 
+
+- GitHub Repository: https://github.com/welthulk/Sparlectra.jl
+- Website: https://welthulk.github.io/Sparlectra.jl
+
+**Naming Conventions:**
+The project follows the Julia Naming Conventions for the most part, 
+but it's important to note that the naming convention for functions might deviate. 
+In this module, functions are written in CamelCase with a lowercase initial letter.
+"""
+@doc _MODULE_DOC Sparlectra
 export
-  
+  version,
   # constants
   Wurzel3, ComponentTyp,
   # classes  
@@ -55,14 +55,16 @@ export
   Net,
   
   # functions  
+  # BusData
+  BusData, getBusData, getBusTypeVec, countNodes,
   # Compomnent
   toComponentTyp, getCompName, getCompID, 
   # Transformers
   getSideNumber2WT,  getWinding2WT,  calcTransformerRatio, recalc_trafo_model_data, create2WTRatioTransformerNoTaps, create3WTWindings!,
   getTrafoImpPGMComp,  getWT3AuxBusID,  isPerUnit_RXGB, getWindingRatedS, getTrafoRXBG, getTrafoRXBG_pu, 
   # Nodes  
-  setRatedS!,  setVmVa!,  addShuntPower!,  addLoadPower!,  addGenPower!,  getNodeVn,  isSlack,  isPVNode,  isPQNode, isIsolated, toNodeType, setNodeType!,
-  busComparison,   toString,
+  setRatedS!,  setVmVa!,  addShuntPower!,  addLoadPower!,  addGenPower!,  getNodeVn,  isSlack,  isPVNode,  isPQNode, isIsolated, toNodeType, setNodeType!, 
+  busComparison, toString,
   # Branch
   getBranchIdx, calcBranchYser, calcBranchYshunt, calcBranchRatio, calcAdmittance,
   # Shunt
@@ -70,10 +72,11 @@ export
   # ACLineSegment
   get_line_parameters, isLinePIModel, getLineRXBG, getLineRXBG_pu,
   # ProSumer
-  isSlack, isGenerator, isAPUNode, setQGenReplacement!, getQGenReplacement, toProSumptionType, updatePQ!,
-  # Net
+  isSlack, isGenerator, isAPUNode, setQGenReplacement!, getQGenReplacement, toProSumptionType, updatePQ!, getPosumerBusIndex,
+  # Network
   addBus!, addShunt!, addACLine!, addPIModelACLine!, add2WTrafo!, addPIModelTrafo!, addProsumer!, lockNet!, validate!, hasBusInNet, addBusGenPower!, addBusLoadPower!, addBusShuntPower!, setNodeVoltage!, setNodeAngle!,
-  getNetOrigBusIdx, geNetBusIdx, setNetBranchStatus!, getNetBranch, getNetBranchNumberVec, setTotalLosses!, getTotalLosses, getBusType, get_bus_vn_kV, get_vn_kV, updateBranchParameters!, hasShunt!, getShunt!, markIsolatedBuses!,setTotalBusPower!,  
+  getNetOrigBusIdx, geNetBusIdx, setNetBranchStatus!, getNetBranch, getNetBranchNumberVec, setTotalLosses!, getTotalLosses, getBusType, get_bus_vn_kV, get_vn_kV, updateBranchParameters!, hasShunt!, 
+  getShunt!, markIsolatedBuses!,setTotalBusPower!, setPVGeneratorQLimitsAll!, setPVGeneratorQLimits, setPVBusVset!, 
   # remove_functions.jl
   removeBus!, removeBranch!, removeACLine!, removeTrafo!, removeShunt!, removeProsumer!, clearIsolatedBuses!,
   # import.jl
@@ -85,16 +88,17 @@ export
   # nbi.jl
   getNBI, mdoRCM,
   # jacobian.jl
-  setJacobianDebug, setJacobianAngleLimit, runpf!,
+  setJacobianDebug, setJacobianAngleLimit, runpf!, runpf_full!,
+  # jacobian_full.jl (neu)
+  getPowerFeeds_full, residuum_full_withPV, calcJacobian_withPVIdentity, calcNewtonRaphson_withPVIdentity!, runpf_full!,
+  # limits.jl
+  printQLimitLog,logQLimitHit!, lastQLimitIter, getQLimits_pu, logQLimitHit!,lastQLimitIter, resetQLimitLog!, buildQLimits!,
   # losses.jl
   calcNetLosses!,
-  
   # results.jl
   printACPFlowResults, convertPVtoPQ!,
-
   # run_acpflow.jl
   run_acpflow, run_net_acpflow
-
 
 include("component.jl")
 include("lines.jl")
@@ -104,9 +108,12 @@ include("node.jl")
 include("branch.jl")
 include("shunt.jl")
 include("network.jl")
+include("busdata.jl")
 include("import.jl")
 include("equicircuit.jl")
 include("jacobian.jl")
+include("limits.jl")
+include("jacobian_full.jl")
 include("losses.jl")
 include("nbi.jl")
 include("createnet_powermat.jl")
