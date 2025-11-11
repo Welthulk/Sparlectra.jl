@@ -1,6 +1,6 @@
 # src/limits.jl
-# Hilfsfunktion: stellt sicher, dass der Vektor bis mind. 'bus' gefüllt ist
-# und füllt mit einem Defaultwert (per append!) bis zur benötigten Länge auf.
+# Helper function: ensures that the vector is filled to at least 'bus'
+# and fills with a default value (via append!) up to the required length.
 function _ensure_bus_index!(v::Vector{T}, bus::Int, default::T) where T
     if length(v) < bus
         append!(v, fill(default, bus - length(v)))
@@ -9,10 +9,10 @@ function _ensure_bus_index!(v::Vector{T}, bus::Int, default::T) where T
 end
 
 function buildQLimits!(net::Net; reset::Bool=false)
-    # Anzahl Busse, falls bekannt über nodeVec (sonst wachsen wir on-demand)
+    # Number of buses, if known via nodeVec (otherwise we grow on-demand)
     nbus = length(net.nodeVec)
 
-    # Basisgröße sicherstellen (ohne Feld-Reassignment, nur Mutationen)
+    # Ensure base size (without field reassignment, only mutations)
     if reset
         empty!(net.qmin_pu); empty!(net.qmax_pu)
         resetQLimitLog!(net)
@@ -24,24 +24,24 @@ function buildQLimits!(net::Net; reset::Bool=false)
         append!(net.qmax_pu, fill(-Inf, nbus - length(net.qmax_pu)))
     end
 
-    # Aggregation über Prosumer/Generatoren
+    # Aggregation over prosumers/generators
     for ps in net.prosumpsVec
         isGenerator(ps) || continue
         bus = getPosumerBusIndex(ps)
 
-        # On-demand bis zum Busindex auffüllen (falls Bus > nbus)
+        # Fill on-demand up to bus index (if Bus > nbus)
         _ensure_bus_index!(net.qmin_pu, bus,  Inf)
         _ensure_bus_index!(net.qmax_pu, bus, -Inf)
 
         qmin_pu = isnothing(ps.minQ) ? -Inf : ps.minQ / net.baseMVA
         qmax_pu = isnothing(ps.maxQ) ?  Inf : ps.maxQ / net.baseMVA
 
-        # Nur schreiben, wenn „noch nicht gesetzt“ (Sentinel) ODER der neue Wert strenger ist:
-        # - Für qmin: kleiner = strenger (minimieren), Sentinel +Inf => setze direkt
+        # Only write if "not yet set" (Sentinel) OR the new value is stricter:
+        # - For qmin: smaller = stricter (minimize), Sentinel +Inf => set directly
         cur_qmin = net.qmin_pu[bus]
         net.qmin_pu[bus] = isfinite(cur_qmin) ? min(cur_qmin, qmin_pu) : qmin_pu
 
-        # - Für qmax: größer = weiter (maximieren), Sentinel -Inf => setze direkt
+        # - For qmax: larger = wider (maximize), Sentinel -Inf => set directly
         cur_qmax = net.qmax_pu[bus]
         net.qmax_pu[bus] = isfinite(cur_qmax) ? max(cur_qmax, qmax_pu) : qmax_pu
     end
