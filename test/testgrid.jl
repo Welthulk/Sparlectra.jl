@@ -275,6 +275,11 @@ function testCreateNetworkFromScratch()::Net
   # 'Generator 12' (bus12, vm_pu=1.03, p_mw=300)
   addProsumer!(net = net, busName = "B12", type = "SYNCHRONOUSMACHINE", p = 300.0, vm_pu = 1.03, va_deg = 0.0)
 
+  
+  #TODO: quick hack, as parameter would be nice...
+  setPVGeneratorQLimitsAll!(net = net, qmin_MVar = 1000.0, qmax_MVar = -1000.0)
+  buildQLimits!(net)
+
   return net
 end
 #@show test = testISOBusses()

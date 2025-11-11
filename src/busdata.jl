@@ -1,0 +1,150 @@
+# busdata.jl — Data type for NR / power flow
+
+mutable struct BusData
+    idx::Int         # Bus index (after sorting)
+    vm_pu::Float64   # Voltage in p.u.
+    va_rad::Float64  # Angle in rad
+    pƩ::Float64      # Sum active power (p.u.)
+    qƩ::Float64      # Sum reactive power (p.u.)
+    _pRes::Float64   # calculated active power (p.u.)
+    _qRes::Float64   # calculated reactive power (p.u.)
+    type::NodeType
+
+    function BusData(idx::Int, vm_pu::Float64, va_rad::Float64,
+                     sumP::Float64, sumQ::Float64, type::NodeType)
+        new(idx, vm_pu, va_rad, sumP, sumQ, 0.0, 0.0, type)
+    end
+end
+
+function Base.show(io::IO, bus::BusData)
+    va_deg = round(rad2deg(bus.va_rad), digits = 3)
+    print(io, "BusData($(bus.idx), $(bus.vm_pu), $(va_deg)°), $(bus.pƩ), $(bus.qƩ), $(bus._pRes), $(bus._qRes), $(bus.type))")
+end
+
+function getBusData(nodes::Vector{Node}, Sbase_MVA::Float64, flatStart)
+  busVec = Vector{BusData}()
+
+  slackIdx = 0
+
+  sumLoad_p = 0.0
+  sumLoad_q = 0.0
+  sumGen_p = 0.0
+  sumGen_q = 0.0
+  idx = 0
+  for (i, n) in enumerate(nodes)
+    if isIsolated(n)
+      continue
+    end
+    idx += 1
+    if isSlack(n)
+      slackIdx = idx
+    end
+
+    type = n._nodeType
+
+    p = 0
+    q = 0
+    p += n._pƩLoad === nothing ? 0.0 : n._pƩLoad * -1.0
+    q += n._qƩLoad === nothing ? 0.0 : n._qƩLoad * -1.0
+
+    sumLoad_p += n._pƩLoad === nothing ? 0.0 : n._pƩLoad * -1.0
+    sumLoad_q += n._qƩLoad === nothing ? 0.0 : n._qƩLoad * -1.0
+    # Note: Shunts are considered in Y-Bus Matrix
+
+    p += n._pƩGen === nothing ? 0.0 : n._pƩGen
+    q += n._qƩGen === nothing ? 0.0 : n._qƩGen
+
+    sumGen_p += n._pƩGen === nothing ? 0.0 : n._pƩGen
+    sumGen_q += n._qƩGen === nothing ? 0.0 : n._qƩGen
+
+    p = p / Sbase_MVA
+    q = q / Sbase_MVA
+
+    if flatStart
+      if type == PQ
+        vm_pu = 1.0
+        va_deg = 0.0
+      elseif type == PV
+        vm_pu = n._vm_pu === nothing ? 1.0 : n._vm_pu
+        va_deg = 0.0
+      elseif type == Slack
+        vm_pu = n._vm_pu === nothing ? 1.0 : n._vm_pu
+        va_deg = n._va_deg === nothing ? 0.0 : deg2rad(n._va_deg)
+      end
+    else
+      vm_pu = n._vm_pu === nothing ? 1.0 : n._vm_pu
+      va_deg = n._va_deg === nothing ? 0.0 : deg2rad(n._va_deg)
+      
+      if angle_limit && type == PQ
+        if abs(va_deg) > deg2rad(30.0)
+          va_deg = sign(va_deg) * deg2rad(30.0)
+          @warn "getBusData: bus $(idx) type=$(type), va_deg=$(va_deg) exceeds angle limit, set to 30°"
+        end
+      end
+    end
+    busIdx = idx    
+    b = BusData(busIdx, vm_pu, va_deg, p, q, type)
+    push!(busVec, b)
+  end
+
+  if slackIdx == 0
+    throw("No slack node found")
+  end
+
+  sort!(busVec, by = x -> x.idx)
+
+  sumLoad_p = sumLoad_p * -1.0
+  sumLoad_q = sumLoad_q * -1.0
+  delta_p = round((sumGen_p - sumLoad_p), digits = 3)
+  delta_q = round((sumGen_q - sumLoad_q), digits = 3)
+
+  if debug
+    println("\n∑Load: [$(sumLoad_p), $(sumLoad_q)], ∑Gen [$(sumGen_p), $(sumGen_q)]  Δp, Δq: [$(delta_p), $(delta_q)]")
+  end
+
+  if debug
+    println("\nslack bus: $(slackIdx)")
+    for b in busVec
+      println("$(b)")
+    end
+  end
+
+  return busVec, slackIdx
+end # getBusData
+
+# helper function to count number of nodes of type = value [PQ, PV]
+function getBusTypeVec(busVec::Vector{BusData})
+  busTypeVec = Vector{NodeType}()
+  slackIdx = 0
+  idx = 0
+  for (i, bus) in enumerate(busVec) #1:n    
+    idx += 1
+    if bus.type == Slack
+      slackIdx = idx
+    end
+    push!(busTypeVec, bus.type)
+  end
+  if debug
+    for (i, bus) in enumerate(busTypeVec)
+      print("busVec[$(i)]: $(bus), ")
+    end
+  end
+  return busTypeVec, slackIdx
+end
+
+# count number of nodes of type = value [PQ, PV]
+function countNodes(busTypeVec::Vector{NodeType}, pos, value::NodeType)
+  sum = 0
+
+  for (index, bus_type) in enumerate(busTypeVec)
+    if index >= pos
+      break
+    end
+
+    if bus_type == value
+      sum += 1
+    end
+  end
+
+  return sum
+end

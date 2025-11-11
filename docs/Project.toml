@@ -1,5 +1,7 @@
 [deps]
 Documenter = "e30172f5-a6a5-5a46-863b-614d45cd2de4"
+Sparlectra = "31ce9bba-fd9d-44a1-b005-f5f509afda38"
 
 [compat]
-Documenter = "1.0.0"
+Documenter = "1.14"
+julia = "1.10, 1.11"

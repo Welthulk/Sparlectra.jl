@@ -65,8 +65,7 @@ struct Net
   trafos::Vector{PowerTransformer}
   branchVec::Vector{Branch}
   prosumpsVec::Vector{ProSumer}
-  shuntVec::Vector{Shunt}
-  #pstVect::Vector{}
+  shuntVec::Vector{Shunt}  
   busDict::Dict{String,Int}
   busOrigIdxDict::Dict{Int,Int}
   totalLosses::Vector{Tuple{Float64,Float64}}
@@ -74,11 +73,42 @@ struct Net
   _locked::Bool
   shuntDict::Dict{Int,Int}
   isoNodes::Vector{Int}
-  #branchDict::Dict{Tuple{String,String}, Branch}  # fast search for existing branches
+  qLimitLog::Vector{Any}
+  cooldown_iters::Int 
+  q_hyst_pu::Float64
+  qmin_pu::Vector{Float64}            # pro Bus Qmin (p.u.)
+  qmax_pu::Vector{Float64}            # pro Bus Qmax (p.u.)
+  qLimitEvents::Dict{Int,Symbol}      # BusIdx -> :min | :max (PV→PQ Change)  
+  
   #! format: off
   function Net(; name::String, baseMVA::Float64, vmin_pu::Float64 = 0.9, vmax_pu::Float64 = 1.1)    
-    #new(name, baseMVA, [], vmin_pu, vmax_pu, [], [], [], [], [], [], Dict{String,Int}(), Dict{Int,Int}(), [], [], false, Dict{Int,Int}(), [], Dict{Tuple{String,String}, Branch}())
-    new(name, baseMVA, [], vmin_pu, vmax_pu, [], [], [], [], [], [], Dict{String,Int}(), Dict{Int,Int}(), [], [], false, Dict{Int,Int}(), [])
+
+    new(name, # name
+        baseMVA, # baseMVA
+        [], # slackVec
+        vmin_pu, # vmin_pu
+        vmax_pu, # vmax_pu
+        [], # nodeVec
+        [], # linesAC
+        [], # trafos
+        [], # branchVec
+        [], # prosumpsVec
+        [], # shuntVec
+        Dict{String,Int}(), # busDict
+        Dict{Int,Int}(), # busOrigIdxDict
+        [], # totalLosses
+        [], # totalBusPower
+        false, # _locked
+        Dict{Int,Symbol}(),  # shuntDict
+        [],                                    # isoNodes
+        Any[],                                 # qLimitLog                     
+        0,                                     # cooldown_iters
+        0.0,
+        [],                                    # qmin_pu
+        [],                                    # qmax_pu
+        Dict{Int,Symbol}())                                  
+
+
   end
   #! format: on
   function Base.show(io::IO, o::Net)
@@ -93,7 +123,54 @@ struct Net
     println(io, "Branches: ", length(o.branchVec))
     println(io, "Prosumers: ", length(o.prosumpsVec))
     println(io, "Shunts: ", length(o.shuntVec))
+    if !isempty(o.qLimitLog)
+        println(io, "Q-limit log entries: ", length(o.qLimitLog))
+    end
+
   end
+end
+# --- helpers (lokal) ---
+@inline function _push_unique!(v::Vector{Int}, x::Int)
+    (findfirst(==(x), v) === nothing) && push!(v, x)
+    return v
+end
+@inline function _delete_item!(v::Vector{Int}, x::Int)
+    idx = findfirst(==(x), v)
+    (idx !== nothing) && deleteat!(v, idx)
+    return v
+end
+
+
+
+#function hasChangedBusTypes(net::Net)::Bool
+#  for ps in net.prosumpsVec
+#     if ps.typeChanged
+#         return true
+#     end
+#   end  
+#end
+
+
+# --- positionsbasierte Kern-APIs ---
+function setBusType!(net::Net, bus::Int, busType::String)
+    @assert 1 <= bus <= length(net.nodeVec) "Bus-Index $bus ist ungültig."
+    node  = net.nodeVec[bus]
+    oldTy = getfield(node, :_nodeType)
+
+    setNodeType!(node, busType)
+
+    newTy = getfield(node, :_nodeType)
+    if newTy == Slack && oldTy != Slack
+        _push_unique!(net.slackVec, bus)
+    elseif oldTy == Slack && newTy != Slack
+        _delete_item!(net.slackVec, bus)
+    end
+    return nothing
+end
+
+function setBusType!(net::Net, busName::String, busType::String)
+    bus = geNetBusIdx(net = net, busName = busName)
+    return setBusType!(net, bus, busType)
 end
 
 """
@@ -345,8 +422,7 @@ Parameters:
 - `ratedS::Union{Nothing, Float64}= nothing`: Rated power of the line segment in MVA (default is nothing).
 - `status::Int = 1`: Status of the line segment (default is 1).
 """
-function addACLine!(; net::Net, fromBus::String, toBus::String, length::Float64, r::Float64, x::Float64, b::Union{Nothing,Float64} = nothing, c_nf_per_km::Union{Nothing,Float64} = nothing, tanδ::Union{Nothing,Float64} = nothing, ratedS::Union{Nothing,Float64} = nothing, status::Int = 1)
-  @debug "Adding AC line segment from $fromBus to $toBus"
+function addACLine!(; net::Net, fromBus::String, toBus::String, length::Float64, r::Float64, x::Float64, b::Union{Nothing,Float64} = nothing, c_nf_per_km::Union{Nothing,Float64} = nothing, tanδ::Union{Nothing,Float64} = nothing, ratedS::Union{Nothing,Float64} = nothing, status::Int = 1)  
   @assert fromBus != toBus "From and to bus must be different"
   from = geNetBusIdx(net = net, busName = fromBus)
   to = geNetBusIdx(net = net, busName = toBus)
@@ -613,8 +689,6 @@ setNetBranchStatus!(net = network, branchNr = 1, status = 1)
 ```
 """
 function setNetBranchStatus!(; net::Net, branchNr::Int, status::Int)
-  @debug "Set branch status to $fromBusSwitch and $toBusSwitch"
-
   @assert branchNr > 0 "Branch number must be greater than 0"
   @assert branchNr <= length(net.branchVec) "Branch $branchNr not found in the network"
   net.branchVec[branchNr].status = status
@@ -916,3 +990,41 @@ function markIsolatedBuses!(; net::Net, log::Bool = false)
     end
   end
 end
+
+
+function setPVGeneratorQLimitsAll!(; net::Net, qmin_MVar::Float64, qmax_MVar::Float64)
+    for ps in net.prosumpsVec
+        if isGenerator(ps)
+            ps.minQ = qmin_MVar
+            ps.maxQ = qmax_MVar                            
+        end
+    end
+end
+
+
+function setPVBusVset!(net::Net, busName::String; vm_pu::Float64)
+    bus = geNetBusIdx(net = net, busName = busName)    
+    net.nodeVec[bus]._vm_pu = vm_pu
+end
+
+"""
+    setBusGeneratorQLimits!(; net::Net, busName::String, qmin_MVar::Float64, qmax_MVar::Float64)
+
+Setzt für **alle Generator-ProSumer** am Bus `busName` die reaktiven Grenzwerte
+in MVar und baut anschließend die Bus-aggregierten Q-Limits neu auf.
+"""
+function setBusGeneratorQLimits!(; net::Net, busName::String, qmin_MVar::Float64, qmax_MVar::Float64)
+    busIdx = geNetBusIdx(net = net, busName = busName)
+    for ps in net.prosumpsVec
+        if isGenerator(ps)
+            c = ps.comp
+            if !isnothing(c.cFrom_bus) && c.cFrom_bus == busIdx
+                ps.minQ = qmin_MVar
+                ps.maxQ = qmax_MVar
+            end
+        end
+    end    
+    return nothing
+end
+
+# 

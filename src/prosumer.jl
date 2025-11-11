@@ -67,7 +67,7 @@ mutable struct ProSumer
     referencePri::Union{Nothing,Integer} = nothing,
     vm_pu::Union{Nothing,Float64} = nothing,
     va_deg::Union{Nothing,Float64} = nothing,
-    isAPUNode::Bool = false,
+    isAPUNode::Bool = false,    
   )
     comp = getProSumPGMComp(vn_kv, busIdx, isGenerator(type), oID)
 
@@ -145,6 +145,17 @@ mutable struct ProSumer
     print(io, "proSumptionType: ", prosumption.proSumptionType, ")")
   end
 end
+
+function getPosumerBusIndex(ps::ProSumer)::Int    
+    c = ps.comp
+    if hasproperty(c, :cFrom_bus) && getfield(c, :cFrom_bus) !== nothing
+        return Int(getfield(c, :cFrom_bus))
+    elseif hasproperty(c, :cTo_bus) && getfield(c, :cTo_bus) !== nothing
+        return Int(getfield(c, :cTo_bus))
+    end
+    error("ProSumer: cannot determine bus index (component has neither :cFrom_bus nor :cTo_bus).")
+end
+
 
 function isAPUNode(o::ProSumer)
   return o.isAPUNode
@@ -225,3 +236,4 @@ function toString(o::ProSumptionType)::String
     return "UnknownP"
   end
 end
+
