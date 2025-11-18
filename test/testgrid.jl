@@ -173,7 +173,7 @@ function testISOBusses()
   return true
 end
 
-function testCreateNetworkFromScratch()::Net
+function testCreateNetworkFromScratch()
   Sbase_MVA = 1000.0
   netName = "cigre"
   # length of coupling bus 6b-6a
@@ -282,4 +282,39 @@ function testCreateNetworkFromScratch()::Net
 
   return net
 end
-#@show test = testISOBusses()
+
+
+function createTest5BusNet(cooldown=0, hyst_pu=0.0)::Net
+  Sbase_MVA = 100.0
+  netName = "test5bus"  
+  r = 0.05
+  x = 0.5
+  c_nf_per_km = 10.0
+  tanδ = 0.0
+  
+  Bus5Net = Net(name = netName, baseMVA = Sbase_MVA, cooldown_iters = cooldown, q_hyst_pu = hyst_pu)
+  addBus!(net = Bus5Net, busName = "B1", busType = "Slack", vn_kV = 110.0)
+  addBus!(net = Bus5Net, busName = "B2", busType = "PQ", vn_kV = 110.0)
+  addBus!(net = Bus5Net, busName = "B3", busType = "PV", vn_kV = 110.0)
+  addBus!(net = Bus5Net, busName = "B4", busType = "PQ", vn_kV = 110.0)
+  addBus!(net = Bus5Net, busName = "B5", busType = "PQ", vn_kV = 110.0)
+
+
+  addACLine!(net = Bus5Net, fromBus = "B1", toBus = "B3", length = 20.0, r = r, x = x, c_nf_per_km = c_nf_per_km, tanδ = tanδ)
+  addACLine!(net = Bus5Net, fromBus = "B3", toBus = "B5", length = 50.0, r = r, x = x, c_nf_per_km = c_nf_per_km, tanδ = tanδ)
+  addACLine!(net = Bus5Net, fromBus = "B5", toBus = "B4", length = 100.0, r = r, x = x, c_nf_per_km = c_nf_per_km, tanδ = tanδ)
+  addACLine!(net = Bus5Net, fromBus = "B4", toBus = "B1", length = 100.0, r = r, x = x, c_nf_per_km = c_nf_per_km, tanδ = tanδ)
+  addACLine!(net = Bus5Net, fromBus = "B4", toBus = "B2", length = 100.0, r = r, x = x, c_nf_per_km = c_nf_per_km, tanδ = tanδ)
+  addACLine!(net = Bus5Net, fromBus = "B2", toBus = "B1", length = 20.0, r = r, x = x, c_nf_per_km = c_nf_per_km, tanδ = tanδ)
+
+  addProsumer!(net = Bus5Net, busName = "B1", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "B1")  
+  addProsumer!(net = Bus5Net, busName = "B2", type = "ENERGYCONSUMER", p = 50.0, q = 15.0)
+  addProsumer!(net = Bus5Net, busName = "B3", type = "SYNCHRONOUSMACHINE", p = 20.0, vm_pu = 1.0, va_deg = 0.0)
+  addProsumer!(net = Bus5Net, busName = "B4", type = "ENERGYCONSUMER", p = 50.0, q = 15.0)
+  addProsumer!(net = Bus5Net, busName = "B5", type = "ENERGYCONSUMER", p = 25.0, q = 10.0)
+
+  return Bus5Net
+end
+
+
+
