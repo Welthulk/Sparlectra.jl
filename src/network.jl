@@ -140,18 +140,14 @@ end
     return v
 end
 
+"""
+Sets the type of a bus in the network.
 
-
-#function hasChangedBusTypes(net::Net)::Bool
-#  for ps in net.prosumpsVec
-#     if ps.typeChanged
-#         return true
-#     end
-#   end  
-#end
-
-
-# --- positionsbasierte Kern-APIs ---
+# Parameters:
+- `net::Net`: Network object.
+- `bus::Int`: Index of the bus.
+- `busType::String`: Type of the bus (e.g., "Slack", "PQ", "PV")
+"""
 function setBusType!(net::Net, bus::Int, busType::String)
     @assert 1 <= bus <= length(net.nodeVec) "Bus-Index $bus ist ungültig."
     node  = net.nodeVec[bus]
@@ -251,6 +247,8 @@ function addBus!(;
   zone::Union{Nothing,Int} = nothing,
   area::Union{Nothing,Int} = nothing,
   ratedS::Union{Nothing,Float64} = nothing,
+  qmin_MVar::Union{Nothing,Float64} = nothing,
+  qmax_MVar::Union{Nothing,Float64} = nothing,
 )
   @assert busType in ["Slack", "SLACK", "PQ", "PV"] "Invalid bus type: $busType"
 
@@ -280,6 +278,12 @@ function addBus!(;
 
   node = Node(busIdx = busIdx, vn_kV = vn_kV, nodeType = toNodeType(busType), vm_pu = vm_pu, va_deg = va_deg, vmin_pu = vmin_pu, vmax_pu = vmax_pu, isAux = isAux, oBusIdx = oBusIdx, zone = zone, area = area, ratedS = ratedS)
   push!(net.nodeVec, node)
+
+
+  push!(net.qmin_pu, isnothing(qmin_MVar) ? -Inf : qmin_MVar / net.baseMVA)
+  push!(net.qmax_pu, isnothing(qmax_MVar) ?  Inf : qmax_MVar / net.baseMVA)
+
+  
 end
 
 """
@@ -992,39 +996,98 @@ function markIsolatedBuses!(; net::Net, log::Bool = false)
 end
 
 
-function setPVGeneratorQLimitsAll!(; net::Net, qmin_MVar::Float64, qmax_MVar::Float64)
-    for ps in net.prosumpsVec
-        if isGenerator(ps)
-            ps.minQ = qmin_MVar
-            ps.maxQ = qmax_MVar                            
-        end
+function _buildQLimits!(net::Net; reset::Bool=false)
+    # Number of buses, if known via nodeVec (otherwise we grow on-demand)
+    nbus = length(net.nodeVec)
+
+    # Ensure base size (without field reassignment, only mutations)
+    if reset
+        empty!(net.qmin_pu); empty!(net.qmax_pu)
+        resetQLimitLog!(net)
     end
-end
+    if length(net.qmin_pu) < nbus
+        append!(net.qmin_pu, fill( Inf, nbus - length(net.qmin_pu)))
+    end
+    if length(net.qmax_pu) < nbus
+        append!(net.qmax_pu, fill(-Inf, nbus - length(net.qmax_pu)))
+    end
 
-
-function setPVBusVset!(net::Net, busName::String; vm_pu::Float64)
-    bus = geNetBusIdx(net = net, busName = busName)    
-    net.nodeVec[bus]._vm_pu = vm_pu
-end
-
-"""
-    setBusGeneratorQLimits!(; net::Net, busName::String, qmin_MVar::Float64, qmax_MVar::Float64)
-
-Setzt für **alle Generator-ProSumer** am Bus `busName` die reaktiven Grenzwerte
-in MVar und baut anschließend die Bus-aggregierten Q-Limits neu auf.
-"""
-function setBusGeneratorQLimits!(; net::Net, busName::String, qmin_MVar::Float64, qmax_MVar::Float64)
-    busIdx = geNetBusIdx(net = net, busName = busName)
+    # Aggregation over prosumers/generators
     for ps in net.prosumpsVec
-        if isGenerator(ps)
+        isGenerator(ps) || continue
+        bus = getPosumerBusIndex(ps)
+
+        # Fill on-demand up to bus index (if Bus > nbus)
+        _ensure_bus_index!(net.qmin_pu, bus,  Inf)
+        _ensure_bus_index!(net.qmax_pu, bus, -Inf)
+
+        qmin_pu = isnothing(ps.minQ) ? -Inf : ps.minQ / net.baseMVA
+        qmax_pu = isnothing(ps.maxQ) ?  Inf : ps.maxQ / net.baseMVA
+
+        # qmin: kleiner = strenger
+        cur_qmin = net.qmin_pu[bus]
+        net.qmin_pu[bus] = isfinite(cur_qmin) ? min(cur_qmin, qmin_pu) : qmin_pu
+
+        # qmax: größer = weiter
+        cur_qmax = net.qmax_pu[bus]
+        net.qmax_pu[bus] = isfinite(cur_qmax) ? max(cur_qmax, qmax_pu) : qmax_pu
+    end
+
+    return nothing
+end
+
+"""
+    setQLimits!(; net::Net,
+                 qmin_MVar::Float64,
+                 qmax_MVar::Float64,
+                 busName::Union{Nothing,String}=nothing)
+
+Sets the reactive power (Q) limits of generator prosumers and then rebuilds
+the aggregated bus-level Q-limits (`qmin_pu`, `qmax_pu`).
+
+- Without `busName`: all generators receive the specified `qmin_MVar`/`qmax_MVar`.
+- With `busName`: only generators connected to the specified bus receive the new limits.
+"""
+function setQLimits!(; net::Net,
+                        qmin_MVar::Float64,
+                        qmax_MVar::Float64,
+                        busName::Union{Nothing,String}=nothing)
+
+    
+    busIdx = isnothing(busName) ? nothing : geNetBusIdx(net = net, busName = busName)
+
+    for ps in net.prosumpsVec
+        isGenerator(ps) || continue
+
+        if isnothing(busIdx)
+            
+            ps.minQ = qmin_MVar
+            ps.maxQ = qmax_MVar
+        else
+            
             c = ps.comp
             if !isnothing(c.cFrom_bus) && c.cFrom_bus == busIdx
                 ps.minQ = qmin_MVar
                 ps.maxQ = qmax_MVar
             end
         end
-    end    
+    end
+
+    
+    _buildQLimits!(net; reset = true)
+
     return nothing
 end
 
-# 
+
+"""
+    setPVBusVset!(net::Net, busName::String; vm_pu::Float64)
+"""
+
+function setPVBusVset!(;net::Net, busName::String, vm_pu::Float64)
+    bus = geNetBusIdx(net = net, busName = busName)    
+    net.nodeVec[bus]._vm_pu = vm_pu
+end
+
+
+
