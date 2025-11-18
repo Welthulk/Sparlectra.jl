@@ -19,10 +19,10 @@ function test_acpflow_full(verbose::Int = 0)
             @warn "Full-system power flow did not converge"
             result = false
         end
-        if print_results
-            calcNetLosses!(net)
-            printACPFlowResults(net, etime, ite, tol)
-        end
+    end
+    if print_results
+        calcNetLosses!(net)
+        printACPFlowResults(net, etime, ite, tol)
     end
 
     return result
@@ -201,4 +201,35 @@ end
 function test_pv_q_limit_switch(; verbose::Int=1)
     net = testCreateNetworkFromScratch()
     return test_pv_q_limit_switch!(net; verbose=verbose)
+end
+
+function test_5BusNet(verbose::Int = 0, qlim::Float64 = 20.0)
+    net = createTest5BusNet(2, 0.000)
+    tol = 1e-9
+    maxIte = 50
+    print_results = (verbose > 0)
+    result = true
+    #qlim = 20.0
+    pv_names = ["B3"]
+    setPVGeneratorQLimitsAll!(net = net, qmin_MVar = -qlim, qmax_MVar = qlim)
+    buildQLimits!(net, reset=true)
+    etim = 0.0
+    etim = @elapsed begin
+        ite, erg = runpf_full!(net, maxIte, tol, verbose)
+        if erg != 0
+            @info "Full-system power flow did not converge"
+            result = false
+        end
+    end    
+    pv_idx = map(name -> geNetBusIdx(net = net, busName = name), pv_names)
+    hit = any(haskey(net.qLimitEvents, i) for i in pv_idx)
+
+    if print_results
+        calcNetLosses!(net)
+        printACPFlowResults(net, etim, ite, tol)
+        printQLimitLog(net; sort_by=:bus)
+    end
+    
+
+    return hit==true
 end

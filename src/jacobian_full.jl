@@ -225,7 +225,7 @@ function calcNewtonRaphson_withPVIdentity!(
 
         # --- Active set: PV -> PQ when Q-limit violated -------------------------
         changed = false
-        if it > 1
+        if it > 2
             @inbounds for k in eachindex(busVec) # iterate over all buses
                 b = busVec[k]
                 if b.type == Sparlectra.PV
