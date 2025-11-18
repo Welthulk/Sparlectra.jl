@@ -81,7 +81,7 @@ struct Net
   qLimitEvents::Dict{Int,Symbol}      # BusIdx -> :min | :max (PV→PQ Change)  
   
   #! format: off
-  function Net(; name::String, baseMVA::Float64, vmin_pu::Float64 = 0.9, vmax_pu::Float64 = 1.1)    
+  function Net(; name::String, baseMVA::Float64, vmin_pu::Float64 = 0.9, vmax_pu::Float64 = 1.1, cooldown_iters::Int = 0, q_hyst_pu::Float64 = 0.0)    
 
     new(name, # name
         baseMVA, # baseMVA
@@ -102,8 +102,8 @@ struct Net
         Dict{Int,Symbol}(),  # shuntDict
         [],                                    # isoNodes
         Any[],                                 # qLimitLog                     
-        0,                                     # cooldown_iters
-        0.0,
+        cooldown_iters,                                     # cooldown_iters
+        q_hyst_pu,
         [],                                    # qmin_pu
         [],                                    # qmax_pu
         Dict{Int,Symbol}())                                  
