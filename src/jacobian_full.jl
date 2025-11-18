@@ -212,10 +212,6 @@ function calcNewtonRaphson_withPVIdentity!(
              for b in busVec ]
 
     adjBranch = adjacentBranches(Y, debug)
-    # Q-Limits: build once if necessary
-    if length(net.qmin_pu) != length(busVec) || length(net.qmax_pu) != length(busVec)
-        buildQLimits!(net)
-    end
     qmin_pu, qmax_pu = getQLimits_pu(net)
 
     it = 0; erg = 1
