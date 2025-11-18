@@ -22,6 +22,5 @@ include("test_jacobian_full.jl")
         @test test_jacobian_full_structure() == true        
         @test test_5BusNet(0,15.0) == true
         @test test_5BusNet(0,30.0) == false
-
     end
 end

@@ -10,9 +10,7 @@ function test_acpflow_full(verbose::Int = 0)
     maxIte = 20
     print_results = (verbose > 0)
     result = true
-    setPVGeneratorQLimitsAll!(net = net, qmin_MVar = -350.0, qmax_MVar = 350.0)
-    buildQLimits!(net, reset=true)
-
+    setQLimits!(net = net, qmin_MVar = -350.0, qmax_MVar = 350.0)
     etime = @elapsed begin
         ite, erg = runpf_full!(net, maxIte, tol, verbose)
         if erg != 0
@@ -47,9 +45,8 @@ function test_full_matches_reduced(; tol_vm::Float64=5e-4, tol_va_deg::Float64=5
         @warn "Reduced NR did not converge"
         return false
     end
-    setPVGeneratorQLimitsAll!(net = net2, qmin_MVar = -350.0, qmax_MVar = 350.0)
-    buildQLimits!(net2, reset=true)
-
+    setQLimits!(net = net2, qmin_MVar = -350.0, qmax_MVar = 350.0)
+    
     # Full (PV identity rows)
     ite_f, erg_f = runpf_full!(net2, maxIte, tol, verbose)
     if erg_f != 0
@@ -104,8 +101,8 @@ function test_jacobian_full_structure(;verbose::Int=0)
     n_pq = count(b->b.type==Sparlectra.PQ, busVec)
     n = n_pq + n_pv
 
-    setPVGeneratorQLimitsAll!(net = net, qmin_MVar = -350.0, qmax_MVar = 350.0)
-    buildQLimits!(net, reset=true)
+    setQLimits!(net = net, qmin_MVar = -350.0, qmax_MVar = 350.0)
+    
     adj = adjacentBranches(Y, false)  # this one is exported; unqualified is fine
     J = calcJacobian_withPVIdentity(Y, busVec, adj, slackIdx, n_pq, n_pv; log=false, sparse=true)
     expected = 2*n
@@ -166,9 +163,8 @@ function test_pv_q_limit_switch!(net::Net; verbose::Int=0)
     for name in pv_names
         setPVBusVset!(net, name; vm_pu = 1.07)
     end
-    setPVGeneratorQLimitsAll!(net = net, qmin_MVar = -350.0, qmax_MVar = 350.0)
-    buildQLimits!(net, reset=true)
-
+    setQLimits!(net = net, qmin_MVar = -350.0, qmax_MVar = 350.0)
+    
     etime = @elapsed begin
         ite, erg = runpf_full!(net, maxIt, tol, verbose)
     end
@@ -209,10 +205,11 @@ function test_5BusNet(verbose::Int = 0, qlim::Float64 = 20.0)
     maxIte = 50
     print_results = (verbose > 0)
     result = true
-    #qlim = 20.0
+
     pv_names = ["B3"]
-    setPVGeneratorQLimitsAll!(net = net, qmin_MVar = -qlim, qmax_MVar = qlim)
-    buildQLimits!(net, reset=true)
+
+    setQLimits!(net = net, qmin_MVar = -qlim, qmax_MVar = qlim)
+    
     etim = 0.0
     etim = @elapsed begin
         ite, erg = runpf_full!(net, maxIte, tol, verbose)
@@ -221,8 +218,8 @@ function test_5BusNet(verbose::Int = 0, qlim::Float64 = 20.0)
             result = false
         end
     end    
-    pv_idx = map(name -> geNetBusIdx(net = net, busName = name), pv_names)
-    hit = any(haskey(net.qLimitEvents, i) for i in pv_idx)
+
+    hit = pv_hit_q_limit(net, pv_names)  
 
     if print_results
         calcNetLosses!(net)

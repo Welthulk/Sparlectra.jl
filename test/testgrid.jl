@@ -274,12 +274,7 @@ function testCreateNetworkFromScratch()
   addProsumer!(net = net, busName = "B11", type = "SYNCHRONOUSMACHINE", p = 200.0, vm_pu = 1.03, va_deg = 0.0)
   # 'Generator 12' (bus12, vm_pu=1.03, p_mw=300)
   addProsumer!(net = net, busName = "B12", type = "SYNCHRONOUSMACHINE", p = 300.0, vm_pu = 1.03, va_deg = 0.0)
-
   
-  #TODO: quick hack, as parameter would be nice...
-  setPVGeneratorQLimitsAll!(net = net, qmin_MVar = 1000.0, qmax_MVar = -1000.0)
-  buildQLimits!(net)
-
   return net
 end
 
@@ -295,7 +290,7 @@ function createTest5BusNet(cooldown=0, hyst_pu=0.0)::Net
   Bus5Net = Net(name = netName, baseMVA = Sbase_MVA, cooldown_iters = cooldown, q_hyst_pu = hyst_pu)
   addBus!(net = Bus5Net, busName = "B1", busType = "Slack", vn_kV = 110.0)
   addBus!(net = Bus5Net, busName = "B2", busType = "PQ", vn_kV = 110.0)
-  addBus!(net = Bus5Net, busName = "B3", busType = "PV", vn_kV = 110.0)
+  addBus!(net = Bus5Net, busName = "B3", busType = "PV", vn_kV = 110.0, qmin_MVar = -50.0, qmax_MVar = 50.0)
   addBus!(net = Bus5Net, busName = "B4", busType = "PQ", vn_kV = 110.0)
   addBus!(net = Bus5Net, busName = "B5", busType = "PQ", vn_kV = 110.0)
 
