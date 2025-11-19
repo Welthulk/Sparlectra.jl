@@ -169,9 +169,32 @@ function calcJacobian_withPVIdentity(
         end
     end
 
+
+
     if log
-        println("calcJacobian_withPVIdentity: size = ", size, " × ", size)
+        # Basic info
+        nrows, ncols = size(J)
+        println("calcJacobian_withPVIdentity: size = ", nrows, " × ", ncols)
+
+        println("\nJacobian (rounded):")
+        # Column header
+        print("i\\j\t")
+        for j in 1:ncols
+            print("$(j)\t")
+        end
+        println()
+
+        # Rows
+        for i in 1:nrows
+            print("$(i)\t")
+            for j in 1:ncols
+                val = round(J[i, j]; digits = 3)
+                print("$(val)\t")
+            end
+            println()
+        end
     end
+
     return J
 end
 
