@@ -114,7 +114,7 @@ function testISOBusses()
   Sbase_MVA = 1000.0
   netName = "isobus"
   net = Net(name = netName, baseMVA = Sbase_MVA)
-
+  @info "Creating $netName test network"
   addBus!(net = net, busName = "B1", busType = "PQ", vn_kV = 220.0)
   addBus!(net = net, busName = "B2", busType = "PV", vn_kV = 220.0)
   addBus!(net = net, busName = "B3", busType = "PQ", vn_kV = 220.0)
@@ -179,7 +179,7 @@ function testCreateNetworkFromScratch()
   # length of coupling bus 6b-6a
   lLine_6a6b = 0.01
   net = Net(name = netName, baseMVA = Sbase_MVA)
-
+  @info "Creating $netName test network"
   # A R E A 1
   # Bus 1, 220kV  
   addBus!(net = net, busName = "B1", busType = "PQ", vn_kV = 220.0)
@@ -287,7 +287,7 @@ function createTest5BusNet(;cooldown=0, hyst_pu=0.0, qlim_min = nothing, qlim_ma
   c_nf_per_km = 10.0
   tanδ = 0.0
 
-  @info "Creating 5-bus test network with qlim_min=$qlim_min, qlim_max=$qlim_max"
+  @info "Creating $netName test network with qlim_min=$qlim_min, qlim_max=$qlim_max"
   
   Bus5Net = Net(name = netName, baseMVA = Sbase_MVA, cooldown_iters = cooldown, q_hyst_pu = hyst_pu)
   addBus!(net = Bus5Net, busName = "B1", busType = "Slack", vn_kV = 110.0)
@@ -309,17 +309,16 @@ function createTest5BusNet(;cooldown=0, hyst_pu=0.0, qlim_min = nothing, qlim_ma
   addProsumer!(net = Bus5Net, busName = "B3", type = "SYNCHRONOUSMACHINE", p = 20.0, vm_pu = 1.0, va_deg = 0.0, qMax=qlim_max, qMin=qlim_min)
   addProsumer!(net = Bus5Net, busName = "B4", type = "ENERGYCONSUMER", p = 50.0, q = 15.0)
   addProsumer!(net = Bus5Net, busName = "B5", type = "ENERGYCONSUMER", p = 25.0, q = 10.0)
-
-
-
   return Bus5Net
 end
 
 
-# |---------------|<--- Generator
-# Slack           PV
 
 function createTest2BusNet(;cooldown=0, hyst_pu=0.0, qlim_min = nothing, qlim_max = nothing)::Net
+# Simple 2-bus network
+#   Bus1            Bus2
+#  ->|---------------|<--- Generator
+#   Slack           PV
   Sbase_MVA = 100.0
   netName = "test2bus"  
   r = 0.05
@@ -327,20 +326,16 @@ function createTest2BusNet(;cooldown=0, hyst_pu=0.0, qlim_min = nothing, qlim_ma
   c_nf_per_km = 10.0
   tanδ = 0.0
 
-  @info "Creating 2-bus test network with qlim_min=$qlim_min, qlim_max=$qlim_max"
+  @info "Creating $netName test network with qlim_min=$qlim_min, qlim_max=$qlim_max"
   
   Bus2Net = Net(name = netName, baseMVA = Sbase_MVA, cooldown_iters = cooldown, q_hyst_pu = hyst_pu)
   addBus!(net = Bus2Net, busName = "B1", busType = "Slack", vn_kV = 110.0)
   addBus!(net = Bus2Net, busName = "B2", busType = "PV", vn_kV = 110.0)
   
-
   addACLine!(net = Bus2Net, fromBus = "B1", toBus = "B2", length = 20.0, r = r, x = x, c_nf_per_km = c_nf_per_km, tanδ = tanδ)
-  
+
   addProsumer!(net = Bus2Net, busName = "B1", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "B1")  
   addProsumer!(net = Bus2Net, busName = "B2", type = "SYNCHRONOUSMACHINE", p = 20.0, vm_pu = 1.0, va_deg = 0.0, qMax=qlim_max, qMin=qlim_min)  
-  
-
-
 
   return Bus2Net
 end
