@@ -1037,7 +1037,7 @@ function _buildQLimits!(net::Net; reset::Bool = true)
             nbus = bus
         end
 
-        @info "Bus $bus: current minQ=$(ps.minQ), maxQ=$(ps.maxQ)"
+        @debug "Bus $bus: current minQ=$(ps.minQ), maxQ=$(ps.maxQ)"
 
         # Convert to p.u., handle 'no limit' as ±Inf
         qmin_pu = isnothing(ps.minQ) ? -Inf : ps.minQ / net.baseMVA
@@ -1046,11 +1046,11 @@ function _buildQLimits!(net::Net; reset::Bool = true)
         # Sum instead of min/max; respect sentinel values
         cur_qmin = net.qmin_pu[bus]
         net.qmin_pu[bus] = isfinite(cur_qmin) ? (cur_qmin + qmin_pu) : qmin_pu
-        @info "Bus $bus: updated Qmin_pu to $(net.qmin_pu[bus])"
+        @debug "Bus $bus: updated Qmin_pu to $(net.qmin_pu[bus])"
 
         cur_qmax = net.qmax_pu[bus]
         net.qmax_pu[bus] = isfinite(cur_qmax) ? (cur_qmax + qmax_pu) : qmax_pu
-        @info "Bus $bus: updated Qmax_pu to $(net.qmax_pu[bus])"
+        @debug "Bus $bus: updated Qmax_pu to $(net.qmax_pu[bus])"
     end
 
     return nothing
