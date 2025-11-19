@@ -200,7 +200,8 @@ function test_pv_q_limit_switch(; verbose::Int=1)
 end
 
 function test_5BusNet(verbose::Int = 0, qlim::Float64 = 20.0)
-    net = createTest5BusNet(2, 0.000)
+    
+    net = createTest5BusNet(cooldown = 2, hyst_pu = 0.000, qlim_min = -qlim, qlim_max = qlim)
     tol = 1e-9
     maxIte = 50
     print_results = (verbose > 0)
@@ -208,8 +209,6 @@ function test_5BusNet(verbose::Int = 0, qlim::Float64 = 20.0)
 
     pv_names = ["B3"]
 
-    setQLimits!(net = net, qmin_MVar = -qlim, qmax_MVar = qlim)
-    
     etim = 0.0
     etim = @elapsed begin
         ite, erg = runpf_full!(net, maxIte, tol, verbose)
