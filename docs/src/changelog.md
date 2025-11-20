@@ -1,5 +1,19 @@
 # Change Log
 
+## Version 0.4.24 – 2025-11-20
+
+### Added
+- Q-limit handling with automatic PV→PQ switching when a generator hits its reactive power limits.
+- New field `isPVactive::Union{Nothing,Bool}` to track current PV/PQ status.
+- Q-limit logging utilities (recording, resetting, inspecting limit hits).
+- New Jacobian debugging helpers (`zero_a_row!`, `print_jacobian`).
+
+### Changed
+- Q-limits are now collected from prosumer/generator data and aggregated per bus.
+- Newton–Raphson flow and Jacobian updated to use the new active-set Q-limit logic.
+- API cleanup related to deprecated PV-generator Q-limit functions.
+
+
 ## Version 0.4.23 (2025-11-11)
 
 ###  **New Features**
