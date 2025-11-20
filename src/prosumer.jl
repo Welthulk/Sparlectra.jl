@@ -26,14 +26,15 @@ A mutable structure representing a prosumer in a power system. A prosumer is an 
 # Example
 ```julia
 prosumer = ProSumer(comp, 1, 100.0, 50.0, 80.0, 40.0, 1)
+```
 """
 mutable struct ProSumer
   comp::AbstractComponent
   ratedS::Union{Nothing,Float64}
   ratedU::Union{Nothing,Float64}
   qPercent::Union{Nothing,Float64}
-  pVal::Union{Nothing,Float64}      # aktive power
-  qVal::Union{Nothing,Float64}      # reactive power
+  pVal::Union{Nothing,Float64}      
+  qVal::Union{Nothing,Float64}      
   maxP::Union{Nothing,Float64}
   minP::Union{Nothing,Float64}
   maxQ::Union{Nothing,Float64}
@@ -45,9 +46,6 @@ mutable struct ProSumer
   proSumptionType::ProSumptionType
   isAPUNode::Bool
   qGenRepl::Union{Nothing,Float64}
-
-  # @enum NodeType UnknownN=0 PQ=1 PV=2 Slack=3
-  # @enum ProSumptionType UnknownP=0 Injection=1 Consumption=2 
 
   function ProSumer(;
     vn_kv::Float64,
@@ -226,7 +224,6 @@ function toProSumptionType(o::String)::ProSumptionType
   end
 end
 
-# helper
 function toString(o::ProSumptionType)::String
   if o == Injection
     return "Injection"

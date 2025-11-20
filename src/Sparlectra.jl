@@ -55,6 +55,8 @@ export
   Net,
   
   # functions  
+  # utilities.jl
+  zero_a_row!, print_jacobian,
   # BusData
   BusData, getBusData, getBusTypeVec, countNodes,
   # Compomnent
@@ -89,8 +91,8 @@ export
   getNBI, mdoRCM,
   # jacobian.jl
   setJacobianDebug, setJacobianAngleLimit, runpf!, runpf_full!,
-  # jacobian_full.jl (neu)
-  getPowerFeeds_full, residuum_full_withPV, calcJacobian_withPVIdentity, calcNewtonRaphson_withPVIdentity!, runpf_full!,
+  # jacobian_full.jl
+  getPowerFeeds_full, residuum_full_withPV, calcJacobian_withPVIdentity, calcNewtonRaphson_withPVIdentity!, runpf_full!, 
   # limits.jl
   printQLimitLog,logQLimitHit!, lastQLimitIter, getQLimits_pu, logQLimitHit!,lastQLimitIter, resetQLimitLog!, pv_hit_q_limit,
   # losses.jl
@@ -100,6 +102,7 @@ export
   # run_acpflow.jl
   run_acpflow, run_net_acpflow
 
+include("utilities.jl")
 include("component.jl")
 include("lines.jl")
 include("transformer.jl")
