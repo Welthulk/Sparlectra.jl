@@ -4,7 +4,7 @@ using Logging
 using Printf
 
 # keep logs quiet unless there's a warning or error
-global_logger(ConsoleLogger(stderr, Logging.Info))
+global_logger(ConsoleLogger(stderr, Logging.Warn))
 
 include("testgrid.jl")
 include("testremove.jl")
@@ -22,6 +22,5 @@ include("test_jacobian_full.jl")
         @test test_jacobian_full_structure() == true        
         @test test_5BusNet(0,15.0) == true
         @test test_5BusNet(0,30.0) == false
-
     end
 end
