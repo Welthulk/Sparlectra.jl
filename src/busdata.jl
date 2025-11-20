@@ -1,18 +1,25 @@
 # busdata.jl — Data type for NR / power flow
 
 mutable struct BusData
-    idx::Int         # Bus index (after sorting)
-    vm_pu::Float64   # Voltage in p.u.
-    va_rad::Float64  # Angle in rad
-    pƩ::Float64      # Sum active power (p.u.)
-    qƩ::Float64      # Sum reactive power (p.u.)
-    _pRes::Float64   # calculated active power (p.u.)
-    _qRes::Float64   # calculated reactive power (p.u.)
+    idx::Int          # Bus index (after sorting)
+    vm_pu::Float64    # Voltage in p.u.
+    va_rad::Float64   # Angle in rad
+    pƩ::Float64       # Sum active power (p.u.)
+    qƩ::Float64       # Sum reactive power (p.u.)
+    _pRes::Float64    # calculated active power (p.u.)
+    _qRes::Float64    # calculated reactive power (p.u.)
     type::NodeType
+    isPVactive::Union{Nothing,Bool}
 
     function BusData(idx::Int, vm_pu::Float64, va_rad::Float64,
                      sumP::Float64, sumQ::Float64, type::NodeType)
-        new(idx, vm_pu, va_rad, sumP, sumQ, 0.0, 0.0, type)
+        if type == PV
+          isPV = true
+        else
+          isPV = nothing
+        end
+            
+        new(idx, vm_pu, va_rad, sumP, sumQ, 0.0, 0.0, type, isPV)
     end
 end
 
@@ -111,6 +118,8 @@ function getBusData(nodes::Vector{Node}, Sbase_MVA::Float64, flatStart)
 
   return busVec, slackIdx
 end # getBusData
+
+
 
 # helper function to count number of nodes of type = value [PQ, PV]
 function getBusTypeVec(busVec::Vector{BusData})

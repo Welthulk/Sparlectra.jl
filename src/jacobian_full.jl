@@ -69,10 +69,7 @@ function residuum_full_withPV(
     return Δ
 end
 
-# ------------------------------
-# Utility: set a full row of a CSC matrix to zero
-# ------------------------------
-function zero_row!(J::SparseMatrixCSC, r::Int)
+@inline function zero_row!(J::SparseMatrixCSC, r::Int)
     @inbounds for c in axes(J, 2)
         for k in nzrange(J, c)
             if rowvals(J)[k] == r
@@ -83,10 +80,6 @@ function zero_row!(J::SparseMatrixCSC, r::Int)
     return J
 end
 
-function zero_row!(J::AbstractMatrix, r::Int)
-    @views J[r, :] .= zero(eltype(J))
-    return J
-end
 
 # ------------------------------
 # Full Jacobian matrix including PV voltage columns and PV identity rows
@@ -103,8 +96,9 @@ function calcJacobian_withPVIdentity(
     shiftIJ(idx::Int) = (idx >= slackIdx) ? idx - 1 : idx
 
     n = n_pq + n_pv
-    size = 2n
-    J = sparse ? spzeros(Float64, size, size) : zeros(Float64, size, size)
+    dim = 2n
+    
+    J = sparse ? spzeros(Float64, dim, dim) : zeros(Float64, dim, dim)
 
     @inbounds for i in eachindex(busVec)
         # SKIP: never build Jacobian rows for the slack bus
@@ -170,8 +164,10 @@ function calcJacobian_withPVIdentity(
     end
 
     if log
-        println("calcJacobian_withPVIdentity: size = ", size, " × ", size)
+       print_jacobian(J)
     end
+
+
     return J
 end
 
@@ -212,10 +208,6 @@ function calcNewtonRaphson_withPVIdentity!(
              for b in busVec ]
 
     adjBranch = adjacentBranches(Y, debug)
-    # Q-Limits: build once if necessary
-    if length(net.qmin_pu) != length(busVec) || length(net.qmax_pu) != length(busVec)
-        buildQLimits!(net)
-    end
     qmin_pu, qmax_pu = getQLimits_pu(net)
 
     it = 0; erg = 1
@@ -237,6 +229,7 @@ function calcNewtonRaphson_withPVIdentity!(
                         b.qƩ   = net.qmax_pu[k]          # clamp to Qmax (p.u.)
                         changed = true
                         net.qLimitEvents[busIdx] = :max  # log event (used for re-enable guard)
+                        b.isPVactive = false
                         logQLimitHit!(net, it, busIdx, :max)
                         (verbose>0) && @printf "PV->PQ Bus %d: Q=%.4f > Qmax=%.4f (it=%d)\n" busIdx qreq qmax_pu[k] it
                     elseif qreq < qmin_pu[k]
@@ -244,6 +237,7 @@ function calcNewtonRaphson_withPVIdentity!(
                         b.qƩ   = net.qmin_pu[k]          # clamp to Qmin (p.u.)
                         changed = true
                         net.qLimitEvents[busIdx] = :min
+                        b.isPVactive = false
                         logQLimitHit!(net, it, busIdx, :min)
                         (verbose>0) && @printf "PV->PQ Bus %d: Q=%.4f < Qmin=%.4f (it=%d)\n" busIdx qreq qmin_pu[k] it
                     end
@@ -282,6 +276,7 @@ function calcNewtonRaphson_withPVIdentity!(
 
                 if ready
                     b.type = Sparlectra.PV
+                    b.isPVactive = true
                     delete!(net.qLimitEvents, b.idx)  # clear event after successful re-enable
                     reenabled = true
                     (verbose>0) && @printf "PQ->PV Bus %d: Q=%.4f within [%.4f, %.4f] (cooldown=%d)\n" b.idx qreq lo hi cooldown_iters
@@ -347,16 +342,22 @@ function calcNewtonRaphson_withPVIdentity!(
         if idx in isoNodes; continue; end
         idx += count(i -> i < idx, isoNodes)
         setVmVa!(node=nodes[idx], vm_pu=bus.vm_pu, va_deg=rad2deg(bus.va_rad))
-        if bus.type == Sparlectra.PV
+        
+        if bus.isPVactive == false
+            nodes[idx]._pƩGen = bus._pRes * Sbase_MVA
             nodes[idx]._qƩGen = bus._qRes * Sbase_MVA
+            @info "Bus $(bus.idx) hit Q limit; set as PQ bus."
+        end    
+
+        if bus.type == Sparlectra.PV 
+            nodes[idx]._pƩGen = bus._pRes * Sbase_MVA
         elseif bus.type == Sparlectra.Slack
             nodes[idx]._pƩGen = bus._pRes * Sbase_MVA
             nodes[idx]._qƩGen = bus._qRes * Sbase_MVA
         end
     end
 
-    setTotalBusPower!(net=net,
-        p=sum(b->b._pRes, busVec), q=sum(b->b._qRes, busVec))
+    setTotalBusPower!(net=net, p=sum(b->b._pRes, busVec), q=sum(b->b._qRes, busVec))
 
 
     return it, erg

@@ -8,47 +8,6 @@ function _ensure_bus_index!(v::Vector{T}, bus::Int, default::T) where T
     return v
 end
 
-function buildQLimits!(net::Net; reset::Bool=false)
-    # Number of buses, if known via nodeVec (otherwise we grow on-demand)
-    nbus = length(net.nodeVec)
-
-    # Ensure base size (without field reassignment, only mutations)
-    if reset
-        empty!(net.qmin_pu); empty!(net.qmax_pu)
-        resetQLimitLog!(net)
-    end
-    if length(net.qmin_pu) < nbus
-        append!(net.qmin_pu, fill(Inf,  nbus - length(net.qmin_pu)))
-    end
-    if length(net.qmax_pu) < nbus
-        append!(net.qmax_pu, fill(-Inf, nbus - length(net.qmax_pu)))
-    end
-
-    # Aggregation over prosumers/generators
-    for ps in net.prosumpsVec
-        isGenerator(ps) || continue
-        bus = getPosumerBusIndex(ps)
-
-        # Fill on-demand up to bus index (if Bus > nbus)
-        _ensure_bus_index!(net.qmin_pu, bus,  Inf)
-        _ensure_bus_index!(net.qmax_pu, bus, -Inf)
-
-        qmin_pu = isnothing(ps.minQ) ? -Inf : ps.minQ / net.baseMVA
-        qmax_pu = isnothing(ps.maxQ) ?  Inf : ps.maxQ / net.baseMVA
-
-        # Only write if "not yet set" (Sentinel) OR the new value is stricter:
-        # - For qmin: smaller = stricter (minimize), Sentinel +Inf => set directly
-        cur_qmin = net.qmin_pu[bus]
-        net.qmin_pu[bus] = isfinite(cur_qmin) ? min(cur_qmin, qmin_pu) : qmin_pu
-
-        # - For qmax: larger = wider (maximize), Sentinel -Inf => set directly
-        cur_qmax = net.qmax_pu[bus]
-        net.qmax_pu[bus] = isfinite(cur_qmax) ? max(cur_qmax, qmax_pu) : qmax_pu
-    end
-
-    return nothing
-end
-
 
 """
     printQLimitLog(net::Net; sort_by=:iter, io::IO=stdout)
@@ -125,4 +84,17 @@ function getQLimits_pu(net::Net)
         buildQLimits!(net)
     end
     return net.qmin_pu, net.qmax_pu
+end
+
+"""
+    pv_hit_q_limit(net, pv_names)
+
+Gibt `true` zurück, wenn einer der PV-Busse aus `pv_names`
+in `net.qLimitEvents` vorkommt.
+
+`pv_names` ist eine Liste von Busnamen (Strings).
+"""
+function pv_hit_q_limit(net, pv_names)
+    pv_idx = map(name -> geNetBusIdx(net = net, busName = name), pv_names)
+    return any(haskey(net.qLimitEvents, i) for i in pv_idx)
 end

@@ -13,7 +13,7 @@ using LinearAlgebra, SparseArrays, Printf, Logging
 
 # resource data types for working with Sparlectra
 const Wurzel3 = 1.7320508075688772
-const SparlectraVersion = v"0.4.23"
+const SparlectraVersion = v"0.4.24"
 version() = SparlectraVersion
 abstract type AbstractBranch end
 
@@ -55,6 +55,8 @@ export
   Net,
   
   # functions  
+  # utilities.jl
+  zero_a_row!, print_jacobian,
   # BusData
   BusData, getBusData, getBusTypeVec, countNodes,
   # Compomnent
@@ -76,7 +78,7 @@ export
   # Network
   addBus!, addShunt!, addACLine!, addPIModelACLine!, add2WTrafo!, addPIModelTrafo!, addProsumer!, lockNet!, validate!, hasBusInNet, addBusGenPower!, addBusLoadPower!, addBusShuntPower!, setNodeVoltage!, setNodeAngle!,
   getNetOrigBusIdx, geNetBusIdx, setNetBranchStatus!, getNetBranch, getNetBranchNumberVec, setTotalLosses!, getTotalLosses, getBusType, get_bus_vn_kV, get_vn_kV, updateBranchParameters!, hasShunt!, 
-  getShunt!, markIsolatedBuses!,setTotalBusPower!, setPVGeneratorQLimitsAll!, setPVGeneratorQLimits, setPVBusVset!, 
+  getShunt!, markIsolatedBuses!,setTotalBusPower!, setPVBusVset!, setQLimits!, 
   # remove_functions.jl
   removeBus!, removeBranch!, removeACLine!, removeTrafo!, removeShunt!, removeProsumer!, clearIsolatedBuses!,
   # import.jl
@@ -89,10 +91,10 @@ export
   getNBI, mdoRCM,
   # jacobian.jl
   setJacobianDebug, setJacobianAngleLimit, runpf!, runpf_full!,
-  # jacobian_full.jl (neu)
-  getPowerFeeds_full, residuum_full_withPV, calcJacobian_withPVIdentity, calcNewtonRaphson_withPVIdentity!, runpf_full!,
+  # jacobian_full.jl
+  getPowerFeeds_full, residuum_full_withPV, calcJacobian_withPVIdentity, calcNewtonRaphson_withPVIdentity!, runpf_full!, 
   # limits.jl
-  printQLimitLog,logQLimitHit!, lastQLimitIter, getQLimits_pu, logQLimitHit!,lastQLimitIter, resetQLimitLog!, buildQLimits!,
+  printQLimitLog,logQLimitHit!, lastQLimitIter, getQLimits_pu, logQLimitHit!,lastQLimitIter, resetQLimitLog!, pv_hit_q_limit,
   # losses.jl
   calcNetLosses!,
   # results.jl
@@ -100,6 +102,7 @@ export
   # run_acpflow.jl
   run_acpflow, run_net_acpflow
 
+include("utilities.jl")
 include("component.jl")
 include("lines.jl")
 include("transformer.jl")
