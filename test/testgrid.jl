@@ -335,7 +335,7 @@ function createTest2BusNet(;cooldown=0, hyst_pu=0.0, qlim_min = nothing, qlim_ma
   addACLine!(net = Bus2Net, fromBus = "B1", toBus = "B2", length = 20.0, r = r, x = x, c_nf_per_km = c_nf_per_km, tanδ = tanδ)
 
   addProsumer!(net = Bus2Net, busName = "B1", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "B1")  
-  addProsumer!(net = Bus2Net, busName = "B2", type = "SYNCHRONOUSMACHINE", p = 20.0, vm_pu = 1.0, va_deg = 0.0, qMax=qlim_max, qMin=qlim_min)  
+  addProsumer!(net = Bus2Net, busName = "B2", type = "SYNCHRONOUSMACHINE", p = 20.0, vm_pu = 1.05, va_deg = 0.0, qMax=qlim_max, qMin=qlim_min)  
 
   return Bus2Net
 end
