@@ -247,8 +247,6 @@ function addBus!(;
   zone::Union{Nothing,Int} = nothing,
   area::Union{Nothing,Int} = nothing,
   ratedS::Union{Nothing,Float64} = nothing,
-  qmin_MVar::Union{Nothing,Float64} = nothing,
-  qmax_MVar::Union{Nothing,Float64} = nothing,
 )
   @assert busType in ["Slack", "SLACK", "PQ", "PV"] "Invalid bus type: $busType"
 
@@ -279,11 +277,6 @@ function addBus!(;
   node = Node(busIdx = busIdx, vn_kV = vn_kV, nodeType = toNodeType(busType), vm_pu = vm_pu, va_deg = va_deg, vmin_pu = vmin_pu, vmax_pu = vmax_pu, isAux = isAux, oBusIdx = oBusIdx, zone = zone, area = area, ratedS = ratedS)
   push!(net.nodeVec, node)
 
-
-  push!(net.qmin_pu, isnothing(qmin_MVar) ? -Inf : qmin_MVar / net.baseMVA)
-  push!(net.qmax_pu, isnothing(qmax_MVar) ?  Inf : qmax_MVar / net.baseMVA)
-
-  
 end
 
 """
