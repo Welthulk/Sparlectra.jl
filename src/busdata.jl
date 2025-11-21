@@ -183,3 +183,19 @@ function map_NR_voltage_to_net!(V_nr::Vector{ComplexF64},
 
     return V_net
 end
+
+
+"""
+    buildVoltageVector_from_busVec(busVec::Vector{BusData}) -> Vector{ComplexF64}
+
+Builds the complex voltage vector in NR ordering:
+    V_nr[k] = busVec[k].vm_pu * exp(j * busVec[k].va_rad)
+"""
+function buildVoltageVector_from_busVec(busVec::Vector{BusData})
+    V_nr = Vector{ComplexF64}(undef, length(busVec))
+    @inbounds for k in eachindex(busVec)
+        bus = busVec[k]
+        V_nr[k] = bus.vm_pu * exp(im * bus.va_rad)
+    end
+    return V_nr
+end

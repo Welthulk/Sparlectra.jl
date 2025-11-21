@@ -17,21 +17,20 @@ function test_2BusNet(verbose::Int = 0, qlim::Float64 = 20.0)
     
     etim = 0.0
     etim = @elapsed begin
-        ite, erg = runpf_full!(net, maxIte, tol, verbose)
+        ite, erg, V_net = runpf_full_withV!(net, maxIte, tol, verbose)
         if erg != 0
             @info "Full-system power flow did not converge"
             result = false
         end
     end  
-          
+
     hit = pv_hit_q_limit(net, pv_names)  
 
     if print_results
-        calcNetLosses!(net)
+        calcNetLosses!(net, V_net)   # nutzt jetzt direkt NR-Spannungen
         printACPFlowResults(net, etim, ite, tol)
         printQLimitLog(net; sort_by=:bus)
-    end
-    
+    end    
 
     return hit==true
 end
