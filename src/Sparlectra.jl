@@ -13,7 +13,7 @@ using LinearAlgebra, SparseArrays, Printf, Logging
 
 # resource data types for working with Sparlectra
 const Wurzel3 = 1.7320508075688772
-const SparlectraVersion = v"0.4.24"
+const SparlectraVersion = v"0.4.25"
 version() = SparlectraVersion
 abstract type AbstractBranch end
 
@@ -56,9 +56,9 @@ export
   
   # functions  
   # utilities.jl
-  zero_a_row!, print_jacobian,
+  zero_row!, print_jacobian,
   # BusData
-  BusData, getBusData, getBusTypeVec, countNodes,
+  BusData, getBusData, getBusTypeVec, countNodes, map_NR_voltage_to_net!,buildVoltageVector_from_busVec,
   # Compomnent
   toComponentTyp, getCompName, getCompID, 
   # Transformers
@@ -92,11 +92,11 @@ export
   # jacobian.jl
   setJacobianDebug, setJacobianAngleLimit, runpf!, runpf_full!,
   # jacobian_full.jl
-  getPowerFeeds_full, residuum_full_withPV, calcJacobian_withPVIdentity, calcNewtonRaphson_withPVIdentity!, runpf_full!, 
+  getPowerFeeds_full, residuum_full_withPV, calcJacobian_withPVIdentity, calcNewtonRaphson_withPVIdentity!, runpf_full!, residuum_state_full_withPV,
   # limits.jl
   printQLimitLog,logQLimitHit!, lastQLimitIter, getQLimits_pu, logQLimitHit!,lastQLimitIter, resetQLimitLog!, pv_hit_q_limit,
   # losses.jl
-  calcNetLosses!,
+  calcNetLosses!, buildVoltageVector,
   # results.jl
   printACPFlowResults, convertPVtoPQ!,
   # run_acpflow.jl
