@@ -2,11 +2,10 @@
 # Utility: set a full row of a CSC matrix to zero
 # ------------------------------
 
-function zero_a_row!(J::AbstractMatrix, r::Int)
+function zero_row!(J::AbstractMatrix, r::Int)
     @views J[r, :] .= zero(eltype(J))
     return J
 end
-
 
 function print_jacobian(J::AbstractMatrix;
                         label::AbstractString = "Jacobian",

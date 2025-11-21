@@ -2,7 +2,7 @@ name = "Sparlectra"
 uuid = "31ce9bba-fd9d-44a1-b005-f5f509afda38"
 authors = ["Udo Schmitz"]
 description = "load flow calculation using newton-raphson"
-version = "0.4.24"
+version = "0.4.25"
 
 [deps]
 Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
