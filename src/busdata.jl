@@ -157,3 +157,29 @@ function countNodes(busTypeVec::Vector{NodeType}, pos, value::NodeType)
 
   return sum
 end
+
+
+"""
+    map_NR_voltage_to_net!(V_nr, busVec, net) -> V_net
+
+Maps the NR-solver voltage vector `V_nr` (in busVec order)
+into the original bus index order used by `net.nodeVec`.
+
+Returns a Vector{ComplexF64} such that:
+    V_net[busIdx] == V_nr[k]
+where `k` is the index in busVec with `busVec[k].idx == busIdx`.
+"""
+function map_NR_voltage_to_net!(V_nr::Vector{ComplexF64},
+                                busVec::Vector{BusData},
+                                net::Net)
+
+    V_net = Vector{ComplexF64}(undef, length(net.nodeVec))
+
+    @inbounds for k in eachindex(busVec)
+        original_idx = busVec[k].idx
+        # original_idx corresponds directly to net.nodeVec[original_idx].busIdx
+        V_net[original_idx] = V_nr[k]
+    end
+
+    return V_net
+end
