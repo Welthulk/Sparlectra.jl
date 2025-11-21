@@ -37,10 +37,6 @@ end
 # ------------------------------
 # Residual for the full system: PV’s second equation becomes rPV = V − Vset
 # ------------------------------
-# ------------------------------
-# Residual for the full system: PV’s second equation becomes rPV = V − Vset
-# ------------------------------
-
 """
     residuum_state_full_withPV(
         Y, busVec, Vset, n_pq, n_pv, log
@@ -55,6 +51,11 @@ Returns a `NamedTuple` with:
 - `V::Vector{ComplexF64}` : complex bus voltages V = Vm * exp(j*Va)
 - `S::Vector{ComplexF64}` : complex bus powers S = P + jQ = V .* conj(Y*V)
 """
+# Extended residual function used internally by the NR solver.
+# Besides the residual Δ, it returns complex bus voltages (V_nr) and nodal
+# powers (S_nr). This enables downstream modules (branch flows, losses,
+# diagnostics) to use exactly the same voltage vector as the NR residual
+# calculation.
 function residuum_state_full_withPV(
     Y::AbstractMatrix{ComplexF64},
     busVec::Vector{BusData},
@@ -93,6 +94,7 @@ function residuum_state_full_withPV(
     return (Δ = Δ, V = V, S = S)
 end
 
+
 """
     residuum_full_withPV(
         Y, busVec, Vset, n_pq, n_pv, log
@@ -103,6 +105,11 @@ Compatibility wrapper that returns only the residual vector Δ.
 Internally calls `residuum_state_full_withPV` which also provides the
 complex bus voltages and bus powers for further post-processing.
 """
+# Compatibility wrapper that returns only the residual vector Δ.
+# Internally calls `residuum_state_full_withPV`, which also provides the
+# complex bus voltages and bus powers for further post-processing. This
+# simpler API is kept for existing solver code.
+
 function residuum_full_withPV(
     Y::AbstractMatrix{ComplexF64},
     busVec::Vector{BusData},
