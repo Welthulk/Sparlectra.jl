@@ -57,11 +57,11 @@ function test_5BusNet(verbose::Int = 0, qlim::Float64 = 20.0)
     hit = pv_hit_q_limit(net, pv_names)  
 
     if print_results
-        calcNetLosses!(net)
+        V = buildVoltageVector(net)
+        calcNetLosses!(net, V)
         printACPFlowResults(net, etim, ite, tol)
         printQLimitLog(net; sort_by=:bus)
-    end
-    
+    end    
 
     return hit==true
 end

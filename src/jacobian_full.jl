@@ -37,14 +37,35 @@ end
 # ------------------------------
 # Residual for the full system: PV’s second equation becomes rPV = V − Vset
 # ------------------------------
-function residuum_full_withPV(
+# ------------------------------
+# Residual for the full system: PV’s second equation becomes rPV = V − Vset
+# ------------------------------
+
+"""
+    residuum_state_full_withPV(
+        Y, busVec, Vset, n_pq, n_pv, log
+    ) -> NamedTuple
+
+Compute the full-system residual Δ for the Newton-Raphson iteration including
+PV identity rows, and additionally return the complex bus voltages and bus
+power injections.
+
+Returns a `NamedTuple` with:
+- `Δ::Vector{Float64}`  : stacked active/reactive residuals (P/Q and rPV)
+- `V::Vector{ComplexF64}` : complex bus voltages V = Vm * exp(j*Va)
+- `S::Vector{ComplexF64}` : complex bus powers S = P + jQ = V .* conj(Y*V)
+"""
+function residuum_state_full_withPV(
     Y::AbstractMatrix{ComplexF64},
     busVec::Vector{BusData},
     Vset::Vector{Float64},           # length = number of buses (only relevant for PV)
     n_pq::Int, n_pv::Int,
-    log::Bool)::Vector{Float64}
+    log::Bool)
 
+    # Complex bus voltages
     V = [bus.vm_pu * exp(im * bus.va_rad) for bus in busVec]
+
+    # Bus power injections from network model
     S = Diagonal(V) * conj(Y * V)
 
     n = n_pq + n_pv
@@ -60,26 +81,38 @@ function residuum_full_withPV(
             vindex += 1; Δ[vindex] = bus.pƩ - real(S[k])        # ΔP
             vindex += 1; Δ[vindex] = bus.vm_pu - Vset[k]        # rPV
         end
-        bus._pRes = real(S[k]); bus._qRes = imag(S[k])
+        # Store calculated bus powers for later use in the Net object
+        bus._pRes = real(S[k])
+        bus._qRes = imag(S[k])
     end
 
     if log
         println("residuum_full_withPV: ‖Δ‖ = ", norm(Δ))
     end
-    return Δ
+
+    return (Δ = Δ, V = V, S = S)
 end
 
-@inline function zero_row!(J::SparseMatrixCSC, r::Int)
-    @inbounds for c in axes(J, 2)
-        for k in nzrange(J, c)
-            if rowvals(J)[k] == r
-                J.nzval[k] = 0.0
-            end
-        end
-    end
-    return J
-end
+"""
+    residuum_full_withPV(
+        Y, busVec, Vset, n_pq, n_pv, log
+    ) -> Vector{Float64}
 
+Compatibility wrapper that returns only the residual vector Δ.
+
+Internally calls `residuum_state_full_withPV` which also provides the
+complex bus voltages and bus powers for further post-processing.
+"""
+function residuum_full_withPV(
+    Y::AbstractMatrix{ComplexF64},
+    busVec::Vector{BusData},
+    Vset::Vector{Float64},
+    n_pq::Int, n_pv::Int,
+    log::Bool)::Vector{Float64}
+
+    state = residuum_state_full_withPV(Y, busVec, Vset, n_pq, n_pv, log)
+    return state.Δ
+end
 
 # ------------------------------
 # Full Jacobian matrix including PV voltage columns and PV identity rows

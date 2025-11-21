@@ -4,57 +4,48 @@
 using Dates
 
 # Implementation see: https://chatgpt.com/s/t_69203131a7b08191a6a93b053b81266d
-
-# ====================================================================================
-# Roadmap: Reuse NR residual data to compute branch power flows
+#                     https://chatgpt.com/s/t_69205a8294348191bc89bed79b7e1c6e
+# ==============================================================================
+# Roadmap: Clean up branch flow and loss computation
 #
-# 1) Expose final complex bus voltages V
-#    - After the Newton–Raphson loop converges, construct the complex voltage vector
-#      V[k] = vm_pu[k] * exp(im * va_rad[k]) in a single place.
-#    - Either:
-#        a) return V from the NR solver, or
-#        b) store V in the Net struct (e.g. net._V) for post-processing.
+# 1) Centralize complex bus voltage construction
+#    - After NR convergence, build a single complex voltage vector:
+#        V[k] = vm_pu[k] * exp(im * va_rad[k])
+#    - Optionally store it in `net` (e.g. `net._V`) or pass it as an argument
+#      to functions that need it (e.g. loss/flow calculation).
 #
-# 2) Define a dedicated branch-flow update function
-#    - Implement:
-#        updateBranchFlows!(net::Net, V::Vector{ComplexF64})
-#      which, for each in-service branch:
-#        - reads V_from = V[br.fromBus], V_to = V[br.toBus]
-#        - uses branch series admittance (y_series) and shunt admittance (y_shunt)
-#        - computes I_from, I_to, S_from, S_to in per unit
-#        - stores:
-#            br.fBranchFlow.pFlow, br.fBranchFlow.qFlow
-#            br.tBranchFlow.pFlow, br.tBranchFlow.qFlow
-#            br.pLosses, br.qLosses (in MW / MVar using net.baseMVA)
+# 2) Reuse V in calcNetLosses!
+#    - Refactor `calcBranchFlow` to take V instead of recomputing ui, uj from
+#      (vm, va) each time:
+#        calcBranchFlow(from, to, br, tapSide, V)
+#      where:
+#        ui = V[from], uj = V[to], with tap adjustment applied accordingly.
 #
-# 3) Integrate branch-flow computation into the PF pipeline
-#    - After NR convergence and before printing results:
-#        - call updateBranchFlows!(net, V)
-#        - ensure that formatBranchResults(net) only reads from the updated fields
-#          (no duplicate calculations of flows inside formatting code).
+# 3) Unify branch flow and loss calculation
+#    - Currently:
+#        - `calcBranchFlow` computes S_from / S_to
+#        - `calcLosses` recomputes voltages and series currents to get losses
+#    - Target:
+#        - Derive losses directly from the already computed branch powers:
+#            S_loss = S_from + S_to
+#          or, if necessary, keep a single, well-documented formula for losses
+#          that uses the same parameters as `calcBranchFlow`.
 #
-# 4) Handle transformers and special branches
-#    - Extend updateBranchFlows! to support:
-#        - off-nominal tap ratios and phase shifts (complex tap a = |a| * exp(im * φ))
-#        - different branch types (line vs transformer), using their specific parameters.
-#    - Make sure that loss calculation (S_from + S_to) remains consistent for all types.
+# 4) Document transformer handling
+#    - Make sure the tap handling (ratio + angle) in `calcBranchFlow` and
+#      `calcLosses` is consistent and add short comments explaining the model:
+#        - which side is "from"/"to"
+#        - how the complex tap is applied
+#        - which losses are included (series only, series + shunt, etc.).
 #
-# 5) Consistency checks and validation
-#    - Add sanity checks:
-#        - sum of all branch losses ≈ getTotalLosses(net)
-#        - for each bus, injected power from branches + shunts ≈ S[k] from residuals.
-#    - Create a few regression test cases:
-#        - small networks with known solutions
-#        - comparison with previous implementation to ensure numerical agreement.
-#
-# 6) (Optional, later) Vectorized MATPOWER-style formulation
-#    - Build matrices Yf, Yt and selector matrices Cf, Ct.
-#    - Compute:
-#        If = Yf * V, It = Yt * V
-#        Vf = Cf * V, Vt = Ct * V
-#        Sf = Vf .* conj(If), St = Vt .* conj(It)
-#    - Replace per-branch loops with vectorized operations for better performance.
-# ====================================================================================
+# 5) Add consistency checks
+#    - Verify for a few test cases that:
+#        - sum of per-branch losses ≈ total network losses reported elsewhere
+#        - branch flows are compatible with bus injections obtained from
+#          Y*V and S = V .* conj(Y*V).
+#    - This will help to ensure that the residual/jacobian computations and
+#      the reporting in `calcNetLosses!` are fully aligned.
+# ==============================================================================
 
 
 function format_version(version::VersionNumber)
