@@ -58,7 +58,7 @@ export
   # utilities.jl
   zero_row!, print_jacobian,
   # BusData
-  BusData, getBusData, getBusTypeVec, countNodes, map_NR_voltage_to_net!,
+  BusData, getBusData, getBusTypeVec, countNodes, map_NR_voltage_to_net!,buildVoltageVector_from_busVec,
   # Compomnent
   toComponentTyp, getCompName, getCompID, 
   # Transformers
