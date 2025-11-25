@@ -30,8 +30,17 @@ S = ComplexF64[
 slack_idx = 1
 
 # Run full complex NR prototype
-V, converged, iters, history = run_complex_nr(Ybus, V0, S; slack_idx=slack_idx,
-                                              maxiter=20, tol=1e-6, verbose=false)
+#V, converged, iters, history = run_complex_nr(Ybus, V0, S; slack_idx=slack_idx,
+#                                              maxiter=20, tol=1e-6, verbose=false)
+
+V, converged, iters, history = run_complex_nr_rectangular(
+    Ybus, V0, S;
+    slack_idx = slack_idx,
+    maxiter   = 20,
+    tol       = 1e-6,
+    verbose   = true,   # ruhig mal einschalten um Verlauf zu sehen
+)
+
 
 println("Updated complex voltages after ", iters, " iterations:")
 println(V)
@@ -44,3 +53,5 @@ println("History of mismatches = ", history)
 @test all(.!isnan.(imag.(V)))
 @test length(history) == iters                             # one value per iteration
 @test iters <= 20
+#@test converged
+#@test history[end] <= 1e-6

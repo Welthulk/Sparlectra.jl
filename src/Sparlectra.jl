@@ -102,7 +102,7 @@ export
   # run_acpflow.jl
   run_acpflow, run_net_acpflow,
   # complex_state_nr.jl
-  complex_newton_step, build_complex_state_vector, run_complex_nr
+  complex_newton_step, build_complex_state_vector, run_complex_nr, complex_newton_step_rectangular, run_complex_nr_rectangular
 
 include("utilities.jl")
 include("component.jl")

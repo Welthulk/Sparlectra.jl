@@ -1,27 +1,40 @@
 # jacobian_complex.jl
-# Jacobian prototype for complex-state NR
+# Complex Jacobian for complex-state Newton–Raphson using Wirtinger calculus
 
 """
     build_complex_jacobian(Ybus, V)
 
-Constructs the Jacobian matrix ∂S/∂V* for the complex-state
+Builds the 2n × 2n Wirtinger-type Jacobian blocks for the complex-state
 Newton–Raphson formulation.
 
-This is a prototype — replace the placeholder expression with
-the correct Wirtinger derivative.
+Given:
+    I = Ybus * V
+    S = V .* conj.(I)
+
+We construct the blocks:
+    J11 = ∂S/∂V
+    J12 = ∂S/∂V*
+    J21 = ∂conj(S)/∂V
+    J22 = ∂conj(S)/∂V*
+
+Returns:
+    J11, J12, J21, J22  (all full matrices, not Diagonal)
 """
 function build_complex_jacobian(Ybus, V)
+    I = Ybus * V
     n = length(V)
-    J = zeros(ComplexF64, n, n)
 
-    # TODO: correct derivative of
-    #       S_i = V_i * conj((Ybus * V)_i)
-    for i in 1:n
-        for k in 1:n
-            # Placeholder approximation
-            J[i, k] = conj(Ybus[i, k]) * V[i]
-        end
-    end
+    # J11 = diag(conj(I))
+    J11 = Matrix(Diagonal(conj.(I)))
 
-    return J
+    # J12 = diag(V) * conj(Ybus)
+    J12 = Matrix(Diagonal(V)) * conj.(Ybus)
+
+    # J21 = conj(J12)
+    J21 = conj.(J12)
+
+    # J22 = conj(J11)
+    J22 = conj.(J11)
+
+    return J11, J12, J21, J22
 end
