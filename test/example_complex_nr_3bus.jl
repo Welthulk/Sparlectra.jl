@@ -39,6 +39,7 @@ V, converged, iters, history = run_complex_nr_rectangular(
     maxiter   = 20,
     tol       = 1e-6,
     verbose   = true,   # ruhig mal einschalten um Verlauf zu sehen
+    damp      = 0.2
 )
 
 
