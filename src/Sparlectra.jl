@@ -100,7 +100,9 @@ export
   # results.jl
   printACPFlowResults, convertPVtoPQ!,
   # run_acpflow.jl
-  run_acpflow, run_net_acpflow
+  run_acpflow, run_net_acpflow,
+  # complex_state_nr.jl
+  complex_newton_step, build_complex_state_vector, run_complex_nr
 
 include("utilities.jl")
 include("component.jl")
@@ -124,6 +126,9 @@ include("exportMatPower.jl")
 include("results.jl")
 include("run_acpflow.jl")
 include("remove_functions.jl") 
+include("complex_state_nr.jl")
+include("jacobian_complex.jl")
+
 
 #! format: on
 end # module Sparlectra
