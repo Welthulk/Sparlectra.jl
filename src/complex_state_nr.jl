@@ -105,11 +105,10 @@ end
 
 
 """
-    complex_newton_step_rectangular(Ybus, V, S)
+    complex_newton_step_rectangular(Ybus, V, S; damp=1.0)
 
 Performs one Newton–Raphson step in rectangular coordinates using
 the complex bus voltages V = Vr + j*Vi as state. The mismatch is
-defined as
 
     F(Vr, Vi) = [ real(S_calc - S_spec);
                   imag(S_calc - S_spec) ]
@@ -120,11 +119,12 @@ Arguments:
 - `Ybus`: bus admittance matrix (n×n, Complex)
 - `V`: current complex bus voltage vector (length n)
 - `S`: specified complex power injections P + jQ (length n)
+- `damp`: scalar damping factor for the Newton step (0 < damp ≤ 1)
 
 Returns:
 - updated complex voltage vector `V_new`
 """
-function complex_newton_step_rectangular(Ybus, V, S)
+function complex_newton_step_rectangular(Ybus, V, S; damp=1.0)
     n = length(V)
 
     # Currents and complex power
@@ -176,7 +176,7 @@ function complex_newton_step_rectangular(Ybus, V, S)
     # Real mismatch vector
     F = vcat(real.(ΔS), imag.(ΔS))
 
-    # Solve J * δx = -F for δx = [δVr; δVi] (robust gegen Singularität)
+    # Solve J * δx = -F for δx = [δVr; δVi] (robust against singularity)
     δx = nothing
     try
         δx = J \ (-F)
@@ -187,6 +187,9 @@ function complex_newton_step_rectangular(Ybus, V, S)
             rethrow(e)
         end
     end
+
+    # Apply damping
+    δx .*= damp
 
     δVr = δx[1:n]
     δVi = δx[n+1:2n]
@@ -221,7 +224,8 @@ function run_complex_nr_rectangular(Ybus, V0, S;
                                     slack_idx=1,
                                     maxiter=20,
                                     tol=1e-8,
-                                    verbose=false)
+                                    verbose=false,
+                                    damp=0.2)
     V = copy(V0)
     history = Float64[]
 
@@ -242,7 +246,7 @@ function run_complex_nr_rectangular(Ybus, V0, S;
         end
 
         # Newton step in rectangular coordinates
-        V = complex_newton_step_rectangular(Ybus, V, S)
+        V = complex_newton_step_rectangular(Ybus, V, S; damp=damp)
 
         # Enforce slack bus voltage
         V[slack_idx] = V0[slack_idx]
