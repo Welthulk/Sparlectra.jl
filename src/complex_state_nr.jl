@@ -1,4 +1,42 @@
 """
+    build_complex_jacobian(Ybus, V)
+
+Builds the 2n × 2n Wirtinger-type Jacobian blocks for the complex-state
+Newton–Raphson formulation.
+
+Given:
+    I = Ybus * V
+    S = V .* conj.(I)
+
+We construct the blocks:
+    J11 = ∂S/∂V
+    J12 = ∂S/∂V*
+    J21 = ∂conj(S)/∂V
+    J22 = ∂conj(S)/∂V*
+
+Returns:
+    J11, J12, J21, J22  (all full matrices, not Diagonal)
+"""
+function build_complex_jacobian(Ybus, V)
+    I = Ybus * V
+    n = length(V)
+
+    # J11 = diag(conj(I))
+    J11 = Matrix(Diagonal(conj.(I)))
+
+    # J12 = diag(V) * conj(Ybus)
+    J12 = Matrix(Diagonal(V)) * conj.(Ybus)
+
+    # J21 = conj(J12)
+    J21 = conj.(J12)
+
+    # J22 = conj(J11)
+    J22 = conj.(J11)
+
+    return J11, J12, J21, J22
+end
+
+"""
     complex_newton_step(Ybus, V, S)
 
 Performs one Newton–Raphson step in the complex formulation using
@@ -201,42 +239,38 @@ end
 
 
 """
-    run_complex_nr_rectangular(Ybus, V0, S; slack_idx=1, maxiter=20, tol=1e-8, verbose=false)
+    run_complex_nr_rectangular(Ybus, V0, S;
+                               slack_idx=1,
+                               maxiter=20,
+                               tol=1e-8,
+                               verbose=false,
+                               damp=0.2)
 
 Runs an iterative Newton–Raphson power flow in rectangular coordinates
-using complex bus voltages as state and the function
-    complex_newton_step_rectangular.
+using the finite-difference complex-state step.
 
-Arguments:
-- `Ybus`: bus admittance matrix
-- `V0`: initial complex voltages
-- `S`: specified power injections (P + jQ)
-- `slack_idx`: index of the slack bus (its voltage is kept fixed at V0[slack_idx])
-- `maxiter`: maximum number of iterations
-- `tol`: convergence tolerance on max |ΔS|
-- `verbose`: print mismatch per iteration if true
-
-Returns:
-- `V`: final complex voltages
-- `converged`: Bool
-- `iters`: performed iterations
-- `history`: Vector of mismatch norms per iteration
+Convergence is checked only on the mismatch of the non-slack buses.
 """
 function run_complex_nr_rectangular(Ybus, V0, S;
-                                    slack_idx,
-                                    maxiter=20,
-                                    tol=1e-8,
-                                    verbose=false,
-                                    damp=0.2)
+                                    slack_idx::Int=1,
+                                    maxiter::Int=20,
+                                    tol::Float64=1e-8,
+                                    verbose::Bool=false,
+                                    damp::Float64=0.2)
     V = copy(V0)
     history = Float64[]
+
+    n = length(V)
+    non_slack = collect(1:n)
+    deleteat!(non_slack, slack_idx)
 
     for iter in 1:maxiter
         I = Ybus * V
         S_calc = V .* conj.(I)
         ΔS = S_calc .- S
 
-        max_mis = maximum(abs.(ΔS))
+        # Convergence: ONLY non-slack buses
+        max_mis = maximum(abs.(ΔS[non_slack]))
         push!(history, max_mis)
 
         if verbose
@@ -247,16 +281,20 @@ function run_complex_nr_rectangular(Ybus, V0, S;
             return V, true, iter, history
         end
 
-        # Newton step in rectangular coordinates
-        V = complex_newton_step_rectangular_fd(Ybus, V, S; slack_idx=slack_idx, damp=damp)
+        # Newton step in rectangular coordinates (finite difference Jacobian)
+        V = complex_newton_step_rectangular_fd(
+            Ybus, V, S;
+            slack_idx = slack_idx,
+            damp      = damp,
+            h         = 1e-6,
+        )
 
-        # Enforce slack bus voltage
+        # keep slack exactly at its reference voltage
         V[slack_idx] = V0[slack_idx]
     end
 
     return V, false, maxiter, history
 end
-
 
 """
     run_complex_nr_rectangular_for_net!(net; maxiter=20, tol=1e-8, damp=0.2, verbose=false)
@@ -423,11 +461,11 @@ end
 Compute the real-valued mismatch vector F(V) for the rectangular
 complex-state formulation:
 
-    F(V) = [ real(ΔS_non_slack);
-             imag(ΔS_non_slack) ]
+    ΔS = S_calc(V) - S_spec
+    F  = [ real(ΔS_non_slack);
+           imag(ΔS_non_slack) ]
 
-where ΔS = S_calc(V) - S_spec, and entries corresponding to the
-slack bus are removed (no equations at the slack bus).
+where entries corresponding to the slack bus are removed from ΔS.
 """
 function mismatch_rectangular(Ybus, V, S, slack_idx::Int)
     n = length(V)
@@ -447,7 +485,10 @@ function mismatch_rectangular(Ybus, V, S, slack_idx::Int)
 end
 
 """
-    complex_newton_step_rectangular_fd(Ybus, V, S; slack_idx=1, damp=1.0, h=1e-6)
+    complex_newton_step_rectangular_fd(Ybus, V, S;
+                                       slack_idx=1,
+                                       damp=1.0,
+                                       h=1e-6)
 
 Performs one Newton–Raphson step in rectangular coordinates using a
 finite-difference Jacobian on the mismatch
@@ -460,7 +501,7 @@ Arguments:
 - `Ybus`: bus admittance matrix (n×n, Complex)
 - `V`: current complex bus voltage vector (length n)
 - `S`: specified complex power injections P + jQ (length n)
-- `slack_idx`: index of the slack bus
+- `slack_idx`: index of the slack bus (no equations / no variables)
 - `damp`: scalar damping factor for the Newton step (0 < damp ≤ 1)
 - `h`: perturbation step for finite differences
 
@@ -473,29 +514,25 @@ function complex_newton_step_rectangular_fd(Ybus, V, S;
                                             h::Float64=1e-6)
     n = length(V)
 
-    # --- Basis-Residuum F(V)
+    # Base mismatch F(V)
     F0 = mismatch_rectangular(Ybus, V, S, slack_idx)
     m = length(F0)  # = 2 * (n-1)
 
-    # Nicht-Slack-Busse
+    # Non-slack buses
     non_slack = collect(1:n)
     deleteat!(non_slack, slack_idx)
 
-    # Variablen: Vr(non_slack) und Vi(non_slack) => 2*(n-1) Unbekannte
+    # Variables: Vr(non_slack) and Vi(non_slack)
     nvar = 2 * (n - 1)
+    @assert nvar == m "Rectangular FD-Newton: nvar and m should both equal 2*(n-1)"
 
     J = zeros(Float64, m, nvar)
 
-    # Hilfsfunktion: baue V aus Vr/Vi-Änderung
     Vr = real.(V)
     Vi = imag.(V)
 
-    # Spaltenweise finite Differenzen
-    # Reihenfolge der Variablen:
-    #   1..(n-1):   Vr(non_slack[k])
-    #   (n)..2(n-1): Vi(non_slack[k])
+    # Columns 1..(n-1): perturb Vr(non_slack[k])
     for (col_idx, bus) in enumerate(non_slack)
-        # --- Perturbation in Vr(bus)
         V_pert = copy(V)
         V_pert[bus] = ComplexF64(Vr[bus] + h, Vi[bus])
 
@@ -503,9 +540,9 @@ function complex_newton_step_rectangular_fd(Ybus, V, S;
         J[:, col_idx] .= (Fp .- F0) ./ h
     end
 
+    # Columns (n)..2(n-1): perturb Vi(non_slack[k])
     for (offset, bus) in enumerate(non_slack)
         col_idx = (n - 1) + offset
-        # --- Perturbation in Vi(bus)
         V_pert = copy(V)
         V_pert[bus] = ComplexF64(Vr[bus], Vi[bus] + h)
 
@@ -513,7 +550,7 @@ function complex_newton_step_rectangular_fd(Ybus, V, S;
         J[:, col_idx] .= (Fp .- F0) ./ h
     end
 
-    # --- Newton-Gleichung: J * δx = -F0
+    # Solve J * δx = -F0
     δx = nothing
     try
         δx = J \ (-F0)
@@ -525,19 +562,19 @@ function complex_newton_step_rectangular_fd(Ybus, V, S;
         end
     end
 
-    # Dämpfung
+    # Damping
     δx .*= damp
 
-    # Auf VR/VI der Nicht-Slack-Busse verteilen
     Vr_new = copy(Vr)
     Vi_new = copy(Vi)
 
+    # Apply update to non-slack buses
     for (idx, bus) in enumerate(non_slack)
         Vr_new[bus] += δx[idx]
         Vi_new[bus] += δx[(n - 1) + idx]
     end
 
-    # Slack bleibt unverändert
+    # Keep slack bus fixed
     Vr_new[slack_idx] = Vr[slack_idx]
     Vi_new[slack_idx] = Vi[slack_idx]
 
