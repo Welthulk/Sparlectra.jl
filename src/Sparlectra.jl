@@ -65,7 +65,7 @@ export
   getSideNumber2WT,  getWinding2WT,  calcTransformerRatio, recalc_trafo_model_data, create2WTRatioTransformerNoTaps, create3WTWindings!,
   getTrafoImpPGMComp,  getWT3AuxBusID,  isPerUnit_RXGB, getWindingRatedS, getTrafoRXBG, getTrafoRXBG_pu, 
   # Nodes  
-  setRatedS!,  setVmVa!,  addShuntPower!,  addLoadPower!,  addGenPower!,  getNodeVn,  isSlack,  isPVNode,  isPQNode, isIsolated, toNodeType, setNodeType!, 
+  setRatedS!,  setVmVa!,  addShuntPower!,  addLoadPower!,  addGenPower!,  getNodeVn,  isSlack,  isPVNode,  isPQNode, isIsolated, toNodeType, setNodeType!,getNodeType, 
   busComparison, toString,
   # Branch
   getBranchIdx, calcBranchYser, calcBranchYshunt, calcBranchRatio, calcAdmittance,
@@ -127,7 +127,6 @@ include("results.jl")
 include("run_acpflow.jl")
 include("remove_functions.jl") 
 include("complex_state_nr.jl")
-include("jacobian_complex.jl")
 
 
 #! format: on

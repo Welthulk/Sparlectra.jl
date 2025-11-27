@@ -256,7 +256,9 @@ function run_complex_nr_rectangular(Ybus, V0, S;
                                     maxiter::Int=20,
                                     tol::Float64=1e-8,
                                     verbose::Bool=false,
-                                    damp::Float64=0.2)
+                                    damp::Float64=0.2,
+                                    bus_types::Vector{Symbol},
+                                    Vset::Vector{Float64})
     V = copy(V0)
     history = Float64[]
 
@@ -265,12 +267,9 @@ function run_complex_nr_rectangular(Ybus, V0, S;
     deleteat!(non_slack, slack_idx)
 
     for iter in 1:maxiter
-        I = Ybus * V
-        S_calc = V .* conj.(I)
-        ΔS = S_calc .- S
-
-        # Convergence: ONLY non-slack buses
-        max_mis = maximum(abs.(ΔS[non_slack]))
+        # Mismatch nur über Nicht-Slack-Busse und mit PV-Logik
+        F = mismatch_rectangular(Ybus, V, S, bus_types, Vset, slack_idx)
+        max_mis = maximum(abs.(F))   # F hat schon nur Nicht-Slack-Residuals
         push!(history, max_mis)
 
         if verbose
@@ -281,15 +280,15 @@ function run_complex_nr_rectangular(Ybus, V0, S;
             return V, true, iter, history
         end
 
-        # Newton step in rectangular coordinates (finite difference Jacobian)
         V = complex_newton_step_rectangular_fd(
             Ybus, V, S;
             slack_idx = slack_idx,
             damp      = damp,
             h         = 1e-6,
+            bus_types = bus_types,
+            Vset      = Vset,
         )
 
-        # keep slack exactly at its reference voltage
         V[slack_idx] = V0[slack_idx]
     end
 
@@ -328,6 +327,27 @@ function run_complex_nr_rectangular_for_net!(net::Net;
 
     # 3) Build specified complex power injections S = P + jQ from bus data
     S = build_S_from_net(net)
+        # 3a) Build bus type vector and PV voltage setpoints
+    nodes = net.nodeVec
+    n = length(nodes)
+
+    bus_types = Vector{Symbol}(undef, n)
+    Vset      = Vector{Float64}(undef, n)
+
+    for (k, node) in enumerate(nodes)
+        BusType = getNodeType(node)        
+        if BusType == Slack
+            bus_types[k] = :Slack
+        elseif BusType == PV
+            bus_types[k] = :PV
+        elseif BusType == PQ
+            bus_types[k] = :PQ
+        else
+            error("Unsupported bus type for complex NR rectangular PF")    
+        end
+        Vset[k] = node._vm_pu  
+    end
+
     
     if verbose > 0
         @info "Starting rectangular complex NR power flow..."
@@ -345,7 +365,10 @@ function run_complex_nr_rectangular_for_net!(net::Net;
         tol       = tol,
         verbose   = (verbose>0),
         damp      = damp,
+        bus_types = bus_types,
+        Vset      = Vset,
     )
+
 
         # 5) Write back voltages to network (vm_pu, va_deg)
     update_net_voltages_from_complex!(net, V)
@@ -482,31 +505,68 @@ function update_net_voltages_from_complex!(net::Net, V::Vector{ComplexF64})
 end
 
 """
-    mismatch_rectangular(Ybus, V, S, slack_idx) -> F::Vector{Float64}
+    mismatch_rectangular(Ybus, V, S, bus_types, Vset, slack_idx) -> F::Vector{Float64}
 
 Compute the real-valued mismatch vector F(V) for the rectangular
-complex-state formulation:
+complex-state formulation with PQ and PV buses.
 
-    ΔS = S_calc(V) - S_spec
-    F  = [ real(ΔS_non_slack);
-           imag(ΔS_non_slack) ]
+For each non-slack bus i:
+- if bus_types[i] == :PQ:
+      ΔP_i = Re(S_calc[i]) - Re(S_spec[i])
+      ΔQ_i = Im(S_calc[i]) - Im(S_spec[i])
 
-where entries corresponding to the slack bus are removed from ΔS.
+- if bus_types[i] == :PV:
+      ΔP_i = Re(S_calc[i]) - Re(S_spec[i])
+      ΔV_i = |V[i]| - Vset[i]
+
+F is stacked as [ΔP_2, ΔQ/ΔV_2, ..., ΔP_n, ΔQ/ΔV_n] over all non-slack buses.
 """
-function mismatch_rectangular(Ybus, V, S, slack_idx::Int)
+function mismatch_rectangular(Ybus,
+                              V::Vector{ComplexF64},
+                              S::Vector{ComplexF64},
+                              bus_types::Vector{Symbol},
+                              Vset::Vector{Float64},
+                              slack_idx::Int)
+
     n = length(V)
+    @assert length(S)         == n
+    @assert length(bus_types) == n
+    @assert length(Vset)      == n
 
-    I = Ybus * V
+    I      = Ybus * V
     S_calc = V .* conj.(I)
-    ΔS = S_calc .- S
 
-    # remove slack bus from equations
-    non_slack = collect(1:n)
-    deleteat!(non_slack, slack_idx)
+    # F has 2*(n-1) entries: for each non-slack bus two residuals
+    F = Vector{Float64}(undef, 2*(n-1))
+    row = 1
 
-    ΔS_ns = ΔS[non_slack]
+    for i in 1:n
+        if i == slack_idx
+            continue
+        end
 
-    F = vcat(real.(ΔS_ns), imag.(ΔS_ns))
+        S_ci = S_calc[i]
+        S_si = S[i]
+
+        if bus_types[i] == :PQ
+            ΔP = real(S_ci) - real(S_si)
+            ΔQ = imag(S_ci) - imag(S_si)
+
+            F[row]   = ΔP
+            F[row+1] = ΔQ
+        elseif bus_types[i] == :PV
+            ΔP = real(S_ci) - real(S_si)
+            ΔV = abs(V[i]) - Vset[i]
+
+            F[row]   = ΔP
+            F[row+1] = ΔV
+        else
+            error("mismatch_rectangular: unsupported bus type $(bus_types[i]) at bus $i")
+        end
+
+        row += 2
+    end
+
     return F
 end
 
@@ -537,11 +597,13 @@ Returns:
 function complex_newton_step_rectangular_fd(Ybus, V, S;
                                             slack_idx::Int=1,
                                             damp::Float64=1.0,
-                                            h::Float64=1e-6)
+                                            h::Float64=1e-6,
+                                            bus_types::Vector{Symbol},
+                                            Vset::Vector{Float64})
     n = length(V)
 
     # Base mismatch F(V)
-    F0 = mismatch_rectangular(Ybus, V, S, slack_idx)
+    F0 = mismatch_rectangular(Ybus, V, S, bus_types, Vset, slack_idx)
     m = length(F0)  # = 2 * (n-1)
 
     # Non-slack buses
@@ -562,7 +624,7 @@ function complex_newton_step_rectangular_fd(Ybus, V, S;
         V_pert = copy(V)
         V_pert[bus] = ComplexF64(Vr[bus] + h, Vi[bus])
 
-        Fp = mismatch_rectangular(Ybus, V_pert, S, slack_idx)
+        Fp = mismatch_rectangular(Ybus, V_pert, S, bus_types, Vset, slack_idx)
         J[:, col_idx] .= (Fp .- F0) ./ h
     end
 
@@ -572,7 +634,7 @@ function complex_newton_step_rectangular_fd(Ybus, V, S;
         V_pert = copy(V)
         V_pert[bus] = ComplexF64(Vr[bus], Vi[bus] + h)
 
-        Fp = mismatch_rectangular(Ybus, V_pert, S, slack_idx)
+        Fp = mismatch_rectangular(Ybus, V_pert, S, bus_types, Vset, slack_idx)
         J[:, col_idx] .= (Fp .- F0) ./ h
     end
 
