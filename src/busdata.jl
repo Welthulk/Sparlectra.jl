@@ -190,6 +190,8 @@ end
 
 Builds the complex voltage vector in NR ordering:
     V_nr[k] = busVec[k].vm_pu * exp(j * busVec[k].va_rad)
+
+This is the canonical source of V_nr for mapping and post-processing.
 """
 function buildVoltageVector_from_busVec(busVec::Vector{BusData})
     V_nr = Vector{ComplexF64}(undef, length(busVec))

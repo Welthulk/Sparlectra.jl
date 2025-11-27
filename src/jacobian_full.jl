@@ -414,6 +414,10 @@ order used by `net.nodeVec`.
 This variant does not change any internal logic compared to
 `calcNewtonRaphson_withPVIdentity!`, it only builds and returns `V_net`
 after convergence (or failure).
+
+Variant of the full-system NR solver that returns the mapped network voltage
+vector V_net in addition to the usual (iterations, status) result. Convergence
+behavior and internal NR logic are identical to `calcNewtonRaphson_withPVIdentity!`.
 """
 function calcNewtonRaphson_withPVIdentity_withV!(
     net::Net, Y::AbstractMatrix{ComplexF64}, maxIte::Int;
@@ -626,7 +630,7 @@ end
     runpf_full_withV!(net, maxIte, tolerance=1e-6, verbose=0)
 
 Convenience wrapper similar to `runpf_full!`, but returns
-   (iterations, status, V_net)
+    (iterations, status, V_net)
 where `V_net` is the complex bus voltage vector in the original bus index
 order (compatible with `calcNetLosses!(net, V_net)`).
 """
