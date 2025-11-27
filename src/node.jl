@@ -89,7 +89,7 @@ mutable struct Node
     vmin_pu::Union{Nothing,Float64} = nothing,
     vmax_pu::Union{Nothing,Float64} = nothing,
     isAux::Bool = false,
-    oBusIdx::Union{Nothing,Int} = nothing,
+    oBusIdx::Union{Nothing,Int} = nothing,    
   )
     bIdx = busIdx
     if !isnothing(oBusIdx)
@@ -246,6 +246,10 @@ function isPVNode(o::Node)
   else
     return false
   end
+end
+
+function getNodeType(o::Node)::NodeType
+  return o._nodeType
 end
 
 function isIsolated(o::Node)

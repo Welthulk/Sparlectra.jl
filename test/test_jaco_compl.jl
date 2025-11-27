@@ -1,13 +1,13 @@
 using Test
 using Sparlectra
 include("testgrid.jl")
-
-net = createTest5BusNet(pq_only=true)
+pq_pv = false
+net = createTest5BusNet(pq_only=pq_pv)
 
 maxIte = 20
 tol    = 1e-6
 
-ite, erg = run_complex_nr_rectangular_for_net!(net; maxiter=maxIte, tol=tol, damp=0.9, verbose=2)
+ite, erg = run_complex_nr_rectangular_for_net!(net; maxiter=maxIte, tol=tol, damp=1.0, verbose=2)
 
 if erg == 0
     calcNetLosses!(net)
