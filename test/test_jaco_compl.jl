@@ -7,7 +7,7 @@ net = createTest5BusNet(pq_only=true)
 maxIte = 20
 tol    = 1e-6
 
-ite, erg = run_complex_nr_rectangular_for_net!(net; maxiter=maxIte, tol=tol, damp=0.1, verbose=2)
+ite, erg = run_complex_nr_rectangular_for_net!(net; maxiter=maxIte, tol=tol, damp=0.9, verbose=2)
 
 if erg == 0
     calcNetLosses!(net)

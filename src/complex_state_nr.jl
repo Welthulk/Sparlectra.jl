@@ -347,8 +347,34 @@ function run_complex_nr_rectangular_for_net!(net::Net;
         damp      = damp,
     )
 
-    # 5) Write back voltages to network (vm_pu, va_deg)
+        # 5) Write back voltages to network (vm_pu, va_deg)
     update_net_voltages_from_complex!(net, V)
+
+    # 6) Recompute bus powers from final voltages and Ybus
+    nodes   = net.nodeVec
+    Sbase   = net.baseMVA
+    Ibus    = Ybus * V
+    Sbus_pu = V .* conj.(Ibus)   # S in pu
+
+    #TODO: write back to net bus data structure
+    for (k, node) in enumerate(nodes)   
+        if isSlack(node)
+           Sbus = Sbus_pu[k] * Sbase
+           Pbus_MW = real(Sbus)
+           Qbus_MVar = imag(Sbus)
+
+           if Pbus_MW < 0.0
+               node._pƩLoad = Pbus_MW
+               node._qƩLoad = Qbus_MVar
+           else
+               node._pƩGen = Pbus_MW
+               node._qƩGen = Qbus_MVar
+           end           
+        end        
+    end
+
+    # Total bus power in pu (wie im klassischen Solver)
+    setTotalBusPower!(net = net,p = sum(real.(Sbus_pu)),  q = sum(imag.(Sbus_pu)))
 
     erg = converged ? 0 : 1
     return iters, erg
