@@ -279,7 +279,7 @@ function testCreateNetworkFromScratch()
 end
 
 
-function createTest5BusNet(;cooldown=0, hyst_pu=0.0, qlim_min = nothing, qlim_max = nothing)::Net
+function createTest5BusNet(;cooldown=0, hyst_pu=0.0, qlim_min = nothing, qlim_max = nothing, pq_only=false)::Net
   Sbase_MVA = 100.0
   netName = "test5bus"  
   r = 0.05
@@ -287,12 +287,18 @@ function createTest5BusNet(;cooldown=0, hyst_pu=0.0, qlim_min = nothing, qlim_ma
   c_nf_per_km = 10.0
   tanδ = 0.0
 
-  @info "Creating $netName test network with qlim_min=$qlim_min, qlim_max=$qlim_max"
+  if pq_only
+    busTypeBus3 = "PQ"
+  else
+    busTypeBus3 = "PV"
+  end    
+
+  @info "Creating $netName test network with qlim_min=$qlim_min, qlim_max=$qlim_max, pq_only=$pq_only"
   
   Bus5Net = Net(name = netName, baseMVA = Sbase_MVA, cooldown_iters = cooldown, q_hyst_pu = hyst_pu)
   addBus!(net = Bus5Net, busName = "B1", busType = "Slack", vn_kV = 110.0)
   addBus!(net = Bus5Net, busName = "B2", busType = "PQ", vn_kV = 110.0)
-  addBus!(net = Bus5Net, busName = "B3", busType = "PV", vn_kV = 110.0)
+  addBus!(net = Bus5Net, busName = "B3", busType = busTypeBus3, vn_kV = 110.0)
   addBus!(net = Bus5Net, busName = "B4", busType = "PQ", vn_kV = 110.0)
   addBus!(net = Bus5Net, busName = "B5", busType = "PQ", vn_kV = 110.0)
 
@@ -306,7 +312,7 @@ function createTest5BusNet(;cooldown=0, hyst_pu=0.0, qlim_min = nothing, qlim_ma
 
   addProsumer!(net = Bus5Net, busName = "B1", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "B1")  
   addProsumer!(net = Bus5Net, busName = "B2", type = "ENERGYCONSUMER", p = 50.0, q = 15.0)
-  addProsumer!(net = Bus5Net, busName = "B3", type = "SYNCHRONOUSMACHINE", p = 20.0, vm_pu = 1.0, va_deg = 0.0, qMax=qlim_max, qMin=qlim_min)
+  addProsumer!(net = Bus5Net, busName = "B3", type = "SYNCHRONOUSMACHINE", p = 20.0, q=15.0, vm_pu = 1.0, va_deg = 0.0, qMax=qlim_max, qMin=qlim_min)
   addProsumer!(net = Bus5Net, busName = "B4", type = "ENERGYCONSUMER", p = 50.0, q = 15.0)
   addProsumer!(net = Bus5Net, busName = "B5", type = "ENERGYCONSUMER", p = 25.0, q = 10.0)
   return Bus5Net
