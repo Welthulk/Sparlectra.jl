@@ -1,4 +1,37 @@
-# jacobian_complex.jl - Complex-State Newton–Raphson Formulation
+# jacobian_complex.jl — Complex-State Newton-Raphson Power Flow Formulation
+#
+# This module implements a Newton-Raphson power flow solver using complex voltages
+# in rectangular coordinates (Vr + jVi) as state variables, as an alternative to
+# the conventional polar formulation (Vm, θ).
+#
+# Features:
+# - Rectangular complex-state Newton-Raphson with PQ and PV bus handling
+# - Wirtinger calculus-based Jacobian construction for complex power equations
+# - Active-set Q-limit management for PV→PQ switching with optional re-enable
+# - Both analytic and finite-difference Jacobian options
+# - Hysteresis and cooldown mechanisms for robust PV bus management
+# - Direct integration with Sparlectra.jl network data structures
+#
+# Mathematical Foundation:
+# - State vector: x = [Vr(non-slack); Vi(non-slack)] ∈ ℝ^(2(n-1))
+# - Complex power: S = V .* conj(Y * V) where Y is the bus admittance matrix  
+# - PQ buses: ΔP = Re(S_calc - S_spec), ΔQ = Im(S_calc - S_spec)
+# - PV buses: ΔP = Re(S_calc - S_spec), ΔV = |V| - V_set
+# - Slack bus voltage is held constant throughout the iteration
+#
+# Key Functions:
+# - run_complex_nr_rectangular_for_net!(): Main solver interface
+# - runpf_rectangular!(): Convenience wrapper matching runpf!() signature
+# - build_complex_jacobian(): Wirtinger-based Jacobian block construction
+# - mismatch_rectangular(): Residual function for PQ/PV bus constraints
+#
+# References:
+# - Wirtinger calculus for complex derivatives
+
+using LinearAlgebra
+using SparseArrays
+using Printf
+
 """
     build_complex_jacobian(Ybus, V)
 
@@ -39,6 +72,42 @@ end
 
 
 
+
+"""
+    complex_newton_step_rectangular(Ybus, V, S; slack_idx::Int, damp::Float64=1.0)
+
+Perform one Newton-Raphson step in rectangular coordinates using analytic Jacobian.
+
+# Arguments
+- `Ybus::AbstractMatrix{ComplexF64}`: Bus admittance matrix (n×n)
+- `V::Vector{ComplexF64}`: Current complex bus voltage vector (length n)
+- `S::Vector{ComplexF64}`: Specified complex power injections P + jQ (length n)
+- `slack_idx::Int`: Index of the slack bus (excluded from equations/variables)
+- `damp::Float64=1.0`: Damping factor for Newton step (0 < damp ≤ 1)
+- `bus_types::Vector{Symbol}`: Bus type classification (:PQ, :PV, :Slack)
+- `Vset::Vector{Float64}`: Voltage magnitude setpoints for PV buses
+
+# Returns
+- `Vector{ComplexF64}`: Updated complex voltage vector V_new
+
+# Details
+This function performs one Newton-Raphson iteration using:
+- State variables: [Vr(non-slack); Vi(non-slack)] - real and imaginary parts
+- Mismatch function matching `mismatch_rectangular`:
+  * PQ buses: ΔP_i, ΔQ_i (active and reactive power mismatches)
+  * PV buses: ΔP_i, ΔV_i where ΔV_i = |V_i| - Vset[i]
+- Analytic Jacobian derived from Wirtinger calculus
+- Slack bus voltage remains fixed throughout the step
+
+The function builds the analytic Jacobian via `build_rectangular_jacobian_pq_pv`,
+solves the linear system J·δx = -F, applies damping, and updates voltages.
+
+# Mathematical Foundation
+Uses Wirtinger derivatives for complex power S = V .* conj(Y * V):
+- ∂S/∂Vr and ∂S/∂Vi computed analytically
+- PV constraint ΔV = |V| - Vset handled via chain rule
+- Robust linear solver with pseudoinverse fallback for singular cases
+"""
 
 function complex_newton_step_rectangular(Ybus, V, S; slack_idx::Int, damp::Float64=1.0)
     n = length(V)
@@ -242,7 +311,7 @@ function build_S_from_net(net::Net)
     n = length(nodes)
     S = Vector{ComplexF64}(undef, n)
 
-    baseMVA = net.baseMVA  # laut Doku vorhanden :contentReference[oaicite:3]{index=3}
+    baseMVA = net.baseMVA 
 
     for (k, node) in enumerate(nodes)
         Pgen_MW   = isnothing(node._pƩGen) ? 0.0 : node._pƩGen
@@ -281,13 +350,9 @@ function update_net_voltages_from_complex!(net::Net, V::Vector{ComplexF64})
         vm = abs(Vk)
         va_rad = angle(Vk)
         va_deg = rad2deg(va_rad)
-
-        # TODO: adjust field names to your Node type
         node._vm_pu = vm
         node._va_deg = va_deg
     end
-
-    return nothing
 end
 
 """
@@ -640,117 +705,59 @@ function complex_newton_step_rectangular(
     return V_new
 end
 
-
 """
-    run_complex_nr_rectangular_for_net!(net; maxiter=20, tol=1e-8, damp=0.2, verbose=false)
+    run_complex_nr_rectangular_for_net!(net; maxiter=20, tol=1e-8, damp=0.2, verbose=0, use_fd=false)
 
-Run a complex-state Newton–Raphson power flow in rectangular coordinates
-on the given `net::Net` object.
+Run a complex-state Newton-Raphson power flow in rectangular coordinates on a Sparlectra network.
 
-The function:
-- builds Ybus, the complex voltage start vector V0 and the power injections S
-  from the network data,
-- runs `run_complex_nr_rectangular` on this data,
-- writes the resulting voltages back into the network (vm_pu / va_deg),
-- and returns (iters, erg), similar to `runpf!`.
+# Arguments
+- `net::Net`: Network object containing bus, branch, and generation data
+- `maxiter::Int=20`: Maximum number of Newton-Raphson iterations
+- `tol::Float64=1e-8`: Convergence tolerance for maximum mismatch
+- `damp::Float64=0.2`: Damping factor for Newton step (0 < damp ≤ 1)
+- `verbose::Int=0`: Verbosity level (0=quiet, 1=basic info, 2=detailed)
+- `use_fd::Bool=false`: Use finite-difference Jacobian instead of analytic
 
-Returns:
-- `iters::Int`: number of iterations performed
-- `erg::Int`: 0 if converged, nonzero otherwise
+# Returns
+- `Tuple{Int, Int}`: (iterations_used, error_code)
+  - error_code: 0=converged, 1=max_iterations_reached
 
+# Details
+This function implements a complete power flow solver using complex voltages in rectangular 
+coordinates (Vr + jVi) as state variables, providing an alternative to conventional 
+polar formulations.
+
+## Mathematical Foundation
+- **State vector**: x = [Vr(non-slack); Vi(non-slack)] ∈ ℝ^(2(n-1))
+- **Complex power**: S = V .* conj(Y * V) where Y is the bus admittance matrix
+- **PQ buses**: ΔP = Re(S_calc - S_spec), ΔQ = Im(S_calc - S_spec)
+- **PV buses**: ΔP = Re(S_calc - S_spec), ΔV = |V| - V_set
+- **Slack bus**: Voltage held constant throughout iterations
+
+## Active Set Q-Limit Management
+- **PV→PQ switching**: When reactive power demand violates generator Q-limits
+- **Optional PQ→PV re-enable**: With hysteresis band and cooldown mechanisms
+- **Robust handling**: Guards against inappropriate switching of non-generator buses
+
+## Algorithm Steps
+1. **Initialization**: Extract voltages, build Y-bus, classify bus types
+2. **Power specification**: Build S = P + jQ from network loads/generation
+3. **Iterative solution**: Newton-Raphson with mismatch function for PQ/PV constraints
+4. **Q-limit enforcement**: Active-set management during iterations
+5. **Result update**: Write final voltages and computed powers back to network
+
+## Network Integration
+- **Input**: Uses `net.nodeVec` for bus data, `net.baseMVA` for per-unit conversion
+- **Output**: Updates `node._vm_pu`, `node._va_deg`, `node._pƩGen`, `node._qƩGen`
+- **Q-limits**: Integrates with `net.qLimitEvents` and `net.qLimitLog` for tracking
+- **Compatibility**: Maintains same interface as `runpf!()` for easy substitution
+
+# See Also
+- `runpf_rectangular!()`: Convenience wrapper matching `runpf!()` signature
+- `mismatch_rectangular()`: Core mismatch function for PQ/PV constraints
+- `build_rectangular_jacobian_pq_pv()`: Analytic Jacobian construction
 """
-#=
-function run_complex_nr_rectangular_for_net!(net::Net;
-                                             maxiter::Int = 20,
-                                             tol::Float64 = 1e-8,
-                                             damp::Float64 = 0.2,
-                                             verbose::Int = 0)
-    
-    sparse = length(net.nodeVec) > 60
-    Ybus   = createYBUS(net=net, sparse=sparse, printYBUS = (verbose > 1))    
-    
 
-    # 2) Build initial complex voltages V0 from bus data
-    V0, slack_idx = initial_Vrect_from_net(net)
-
-    # 3) Build specified complex power injections S = P + jQ from bus data
-    S = build_S_from_net(net)
-        # 3a) Build bus type vector and PV voltage setpoints
-    nodes = net.nodeVec
-    n = length(nodes)
-
-    bus_types = Vector{Symbol}(undef, n)
-    Vset      = Vector{Float64}(undef, n)
-
-    for (k, node) in enumerate(nodes)
-        BusType = getNodeType(node)        
-        if BusType == Slack
-            bus_types[k] = :Slack
-        elseif BusType == PV
-            bus_types[k] = :PV
-        elseif BusType == PQ
-            bus_types[k] = :PQ
-        else
-            error("Unsupported bus type for complex NR rectangular PF")    
-        end
-        Vset[k] = node._vm_pu  
-    end
-
-    
-    if verbose > 0
-        @info "Starting rectangular complex NR power flow..."
-        @info "Initial complex voltages V0:" V0
-        @info "Specified complex power injections S (pu):" S
-        @info "Slack bus index:" slack_idx
-        @info "max iter:" maxiter "tolerance:" tol "damping:" damp
-    end
-
-    # 4) Run rectangular NR
-    V, converged, iters, history = run_complex_nr_rectangular(
-        Ybus, V0, S;
-        slack_idx = slack_idx,
-        maxiter   = maxiter,
-        tol       = tol,
-        verbose   = (verbose>0),
-        damp      = damp,
-        bus_types = bus_types,
-        Vset      = Vset,
-    )
-
-
-        # 5) Write back voltages to network (vm_pu, va_deg)
-    update_net_voltages_from_complex!(net, V)
-
-    # 6) Recompute bus powers from final voltages and Ybus
-    nodes   = net.nodeVec
-    Sbase   = net.baseMVA
-    Ibus    = Ybus * V
-    Sbus_pu = V .* conj.(Ibus)   # S in pu
-
-    #TODO: write back to net bus data structure
-    for (k, node) in enumerate(nodes)   
-        if isSlack(node)
-           Sbus = Sbus_pu[k] * Sbase
-           Pbus_MW = real(Sbus)
-           Qbus_MVar = imag(Sbus)
-
-           if Pbus_MW < 0.0
-               node._pƩLoad = Pbus_MW
-               node._qƩLoad = Qbus_MVar
-           else
-               node._pƩGen = Pbus_MW
-               node._qƩGen = Qbus_MVar
-           end           
-        end        
-    end
-
-    # Total bus power in pu (wie im klassischen Solver)
-    setTotalBusPower!(net = net,p = sum(real.(Sbus_pu)),  q = sum(imag.(Sbus_pu)))
-
-    erg = converged ? 0 : 1
-    return iters, erg
-end
-=#
 function run_complex_nr_rectangular_for_net!(net::Net;
                                              maxiter::Int = 20,
                                              tol::Float64 = 1e-8,
@@ -788,17 +795,17 @@ function run_complex_nr_rectangular_for_net!(net::Net;
         Vset[k] = isnothing(node._vm_pu) ? 1.0 : node._vm_pu
     end
 
-    # 4) Q-limit data (analog zu calcNewtonRaphson_withPVIdentity!)
+    # 4) Q-limit data 
     qmin_pu, qmax_pu = getQLimits_pu(net)
     resetQLimitLog!(net)
 
     cooldown_iters = hasfield(typeof(net), :cooldown_iters) ? net.cooldown_iters : 0
     q_hyst_pu      = hasfield(typeof(net), :q_hyst_pu)      ? net.q_hyst_pu      : 0.0
 
-    # PV-Busse am Anfang (Guard für PQ->PV-Reenable)
+    # Original PV buses at start (Guard for PQ->PV re-enable)
     pv_orig = [k for k in 1:n if bus_types[k] == :PV]
 
-    # 5) NR-Schleife
+    # 5) NR-Loop
     V        = copy(V0)
     history  = Float64[]
     converged = false
@@ -814,7 +821,7 @@ function run_complex_nr_rectangular_for_net!(net::Net;
     for it in 1:maxiter
         iters = it
 
-        # Mismatch mit aktuellem bus_types & S
+        # Mismatch with current bus_types & S
         F = mismatch_rectangular(Ybus, V, S, bus_types, Vset, slack_idx)
         max_mis = maximum(abs.(F))
         push!(history, max_mis)
@@ -830,8 +837,7 @@ function run_complex_nr_rectangular_for_net!(net::Net;
         changed   = false
         reenabled = false
 
-        if it > 2    # kleine Verzögerung wie im Polar-NR
-            # aktuelles S(V) aus Netz
+        if it > 2    
             I      = Ybus * V
             S_calc = V .* conj.(I)
 
@@ -844,11 +850,11 @@ function run_complex_nr_rectangular_for_net!(net::Net;
                     continue
                 end
 
-                qreq   = imag(S_calc[k])    # aktuelle Q-Anforderung (p.u.)
-                busIdx = k                  # hier ist Busindex = Position in nodeVec
+                qreq   = imag(S_calc[k])    # current Q requirement (p.u.)
+                busIdx = k                  # here busIdx = position in nodeVec
 
                 if qreq > qmax_pu[k]
-                    # Bus wird PQ, Q auf Qmax geklemmt
+                    # Bus becomes PQ, Q clamped to Qmax
                     bus_types[k] = :PQ
                     S[k] = complex(real(S[k]), net.qmax_pu[k])
                     changed = true
@@ -873,14 +879,13 @@ function run_complex_nr_rectangular_for_net!(net::Net;
                 max_mis = maximum(abs.(F))
             end
 
-            # 4b) Optional PQ -> PV Re-enable (Hysterese + Cooldown)
-            #     Wenn du das erstmal nicht willst: kompletten Block auskommentieren.
+            # 4b) Optional PQ -> PV Re-enable (Hysterese + Cooldown)            
             if q_hyst_pu > 0.0 || cooldown_iters > 0
                 @inbounds for k in 1:n
                     # Guards:
-                    # (1) aktuell PQ
-                    # (2) war am Anfang PV
-                    # (3) hat einen Q-Limit-Event in dieser Rechnung
+                    # (1) currently PQ
+                    # (2) was originally PV
+                    # (3) has a Q-limit event in this calculation
                     if bus_types[k] != :PQ
                         continue
                     end
@@ -918,7 +923,7 @@ function run_complex_nr_rectangular_for_net!(net::Net;
             end
         end
 
-        # --- Newton-Schritt (FD oder analytisch) -----------------------------
+        # --- Newton-Stepp (FD oder analytisch) -----------------------------
         if use_fd
             V = complex_newton_step_rectangular_fd(
                 Ybus, V, S;
@@ -938,14 +943,14 @@ function run_complex_nr_rectangular_for_net!(net::Net;
             )
         end
 
-        # Slackspannung festhalten (Sicherheitsgurt)
+        # Keep slack voltage fixed (safety belt)
         V[slack_idx] = V0[slack_idx]
     end
 
-    # 6) Spannungen zurück ins Netz schreiben
+    # 6) Update voltages back to network
     update_net_voltages_from_complex!(net, V)
 
-    # 7) Busleistungen (wie im klassischen Solver) zurückrechnen
+    # 7) Calculate bus powers (as in classical solver)
     Ibus     = Ybus * V
     Sbus_pu  = V .* conj.(Ibus)
     Sbus_MVA = Sbus_pu .* Sbase
@@ -955,7 +960,7 @@ function run_complex_nr_rectangular_for_net!(net::Net;
         Pbus_MW   = real(Sbus)
         Qbus_MVar = imag(Sbus)
 
-        # sehr einfache Heuristik: P<0 → Load, P>=0 → Gen
+        # simple heuristic: P<0 → Load, P>=0 → Gen
         if Pbus_MW < 0.0
             node._pƩLoad = Pbus_MW
             node._qƩLoad = Qbus_MVar
@@ -965,7 +970,7 @@ function run_complex_nr_rectangular_for_net!(net::Net;
         end
     end
 
-    # 8) Gesamtbusleistung wie im Polar-NR aktualisieren    
+    # 8) Update total bus power as in polar NR    
     setTotalBusPower!(net = net,p = sum(real.(Sbus_pu)),  q = sum(imag.(Sbus_pu)))
     return iters, converged ? 0 : 1
 end
