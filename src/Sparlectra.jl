@@ -102,8 +102,8 @@ export
   # run_acpflow.jl
   run_acpflow, run_net_acpflow,
   # jacobian_complex.jl
-  complex_newton_step, build_complex_state_vector, run_complex_nr, complex_newton_step_rectangular, run_complex_nr_rectangular, run_complex_nr_rectangular_for_net!
-
+  runpf_rectangular!
+  
 include("utilities.jl")
 include("component.jl")
 include("lines.jl")

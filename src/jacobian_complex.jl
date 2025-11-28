@@ -37,110 +37,8 @@ function build_complex_jacobian(Ybus, V)
     return J11, J12, J21, J22
 end
 
-"""
-    complex_newton_step(Ybus, V, S)
-
-Performs one Newton–Raphson step in the complex formulation using
-a Wirtinger-type Jacobian on the complex power injections.
-
-Arguments:
-- `Ybus`: bus admittance matrix
-- `V`: current complex bus voltage vector
-- `S`: specified power injections (P + jQ)
-
-Returns:
-- updated complex voltage vector `V_new`
-"""
-function complex_newton_step(Ybus, V, S)
-    # Compute currents and complex power
-    I = Ybus * V
-    S_calc = V .* conj.(I)
-
-    # Complex power mismatch ΔS = S_calc − S_spec
-    ΔS = S_calc .- S
-
-    # Build Jacobian blocks
-    J11, J12, J21, J22 = build_complex_jacobian(Ybus, V)
-
-    n = length(V)
-
-    # Assemble full 2n × 2n Jacobian
-    J_top = hcat(J11, J12)
-    J_bot = hcat(J21, J22)
-    J = vcat(J_top, J_bot)
-
-    # Right-hand side: -[ΔS; conj(ΔS)]
-    rhs = vcat(-ΔS, -conj.(ΔS))
-
-    # Solve for [ΔV; ΔV*] in a robust way
-    sol = nothing
-    try
-        sol = J \ rhs
-    catch e
-        if e isa LinearAlgebra.SingularException
-            # Fallback: use pseudoinverse (minimum-norm solution)
-            sol = pinv(J) * rhs
-        else
-            rethrow(e)
-        end
-    end
-
-    ΔV = sol[1:n]  # upper block is the actual voltage correction
-
-    return V .+ ΔV
-end
 
 
-"""
-    run_complex_nr(Ybus, V0, S; slack_idx=1, maxiter=20, tol=1e-8, verbose=false)
-
-Runs an iterative complex-state Newton–Raphson prototype on a given test system.
-
-Arguments:
-- `Ybus`: bus admittance matrix
-- `V0`: initial complex voltage vector
-- `S`: specified complex power injections (P + jQ)
-- `slack_idx`: index of the slack bus (its voltage is kept fixed at V0[slack_idx])
-- `maxiter`: maximum number of iterations
-- `tol`: convergence tolerance on the maximum power mismatch |ΔS|
-- `verbose`: if true, prints the mismatch per iteration
-
-Returns:
-- `V`: final complex voltage vector
-- `converged`: Bool, true if `maximum(abs.(ΔS)) <= tol`
-- `iters`: number of performed iterations
-- `history`: Vector of mismatch norms per iteration
-"""
-function run_complex_nr(Ybus, V0, S; slack_idx=1, maxiter=20, tol=1e-8, verbose=false)
-    V = copy(V0)
-    history = Float64[]
-
-    for iter in 1:maxiter
-        # Compute mismatch for current voltages
-        I = Ybus * V
-        S_calc = V .* conj.(I)
-        ΔS = S_calc .- S
-
-        max_mis = maximum(abs.(ΔS))
-        push!(history, max_mis)
-
-        if verbose
-            @info "Complex NR iteration" iter=iter max_mismatch=max_mis
-        end
-
-        if max_mis <= tol
-            return V, true, iter, history
-        end
-
-        # Take one prototype Newton step
-        V = complex_newton_step(Ybus, V, S)
-
-        # Enforce slack bus voltage
-        V[slack_idx] = V0[slack_idx]
-    end
-
-    return V, false, maxiter, history
-end
 
 function complex_newton_step_rectangular(Ybus, V, S; slack_idx::Int, damp::Float64=1.0)
     n = length(V)
@@ -844,3 +742,22 @@ function complex_newton_step_rectangular(
     return V_new
 end
 
+"""
+    runpf_rectangular!(net, maxIte, tolerance=1e-6, verbose=0)
+
+Runs a rectangular complex-state Newton–Raphson power flow on `net::Net`.
+
+Returns:
+    (iterations::Int, status::Int)
+where `status == 0` indicates convergence.
+"""
+function runpf_rectangular!(net::Net, maxIte::Int, tolerance::Float64=1e-6, verbose::Int=0)
+    iters, erg = run_complex_nr_rectangular_for_net!(
+        net;
+        maxiter = maxIte,
+        tol     = tolerance,
+        damp    = 1.0,
+        verbose = verbose,
+    )
+    return iters, erg
+end
