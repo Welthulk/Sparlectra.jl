@@ -1239,28 +1239,50 @@ function run_complex_nr_rectangular_for_net!(net::Net;
     # 6) Update voltages back to network
     update_net_voltages_from_complex!(net, V)
 
-    # 7) Calculate bus powers (as in classical solver)
+        # 7) Compute bus injections from final voltages
     Ibus     = Ybus * V
     Sbus_pu  = V .* conj.(Ibus)
     Sbus_MVA = Sbus_pu .* Sbase
 
+    isoNodes = net.isoNodes
+
     @inbounds for (k, node) in enumerate(nodes)
+        # Skip isolated nodes (if any)
+        if k in isoNodes
+            continue
+        end
+
         Sbus      = Sbus_MVA[k]
         Pbus_MW   = real(Sbus)
         Qbus_MVar = imag(Sbus)
 
-        # simple heuristic: P<0 → Load, P>=0 → Gen
-        if Pbus_MW < 0.0
-            node._pƩLoad = Pbus_MW
-            node._qƩLoad = Qbus_MVar
-        else
+        # Slack bus: always write P and Q generation from the solved state
+        if node._nodeType == Sparlectra.Slack
             node._pƩGen = Pbus_MW
             node._qƩGen = Qbus_MVar
+
+        # PV buses: write Pgen for all, and Qgen only if a Q-limit was hit
+        elseif node._nodeType == Sparlectra.PV
+            # Always update active power generation from the solved state
+            node._pƩGen = Pbus_MW
+
+            # If this PV bus hit a Q-limit (PV->PQ in the solver),
+            # write back the reactive power generation as well.
+            if haskey(net.qLimitEvents, k)
+                node._qƩGen = Qbus_MVar
+                @info "Bus $(k) hit Q limit; set as PQ bus (rectangular solver)."
+            end
         end
+
+        # PQ buses / pure loads: do not touch _pƩLoad / _pƩGen here.
+        # The original load/generation specification remains intact.
     end
 
-    # 8) Update total bus power as in polar NR    
-    setTotalBusPower!(net = net,p = sum(real.(Sbus_pu)),  q = sum(imag.(Sbus_pu)))
+    # 8) Update total bus power (sum of complex injections in p.u.)
+    setTotalBusPower!(net = net,
+                      p = sum(real.(Sbus_pu)),
+                      q = sum(imag.(Sbus_pu)))
+
     return iters, converged ? 0 : 1
 end
 
