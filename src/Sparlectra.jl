@@ -90,7 +90,7 @@ export
   # nbi.jl
   getNBI, mdoRCM,
   # jacobian.jl
-  setJacobianDebug, setJacobianAngleLimit, runpf!, runpf_full!,
+  runpf!, setJacobianDebug, setJacobianAngleLimit,
   # jacobian_full.jl
   getPowerFeeds_full, residuum_full_withPV, calcJacobian_withPVIdentity, calcNewtonRaphson_withPVIdentity!, runpf_full!, residuum_state_full_withPV,
   # limits.jl
@@ -127,7 +127,6 @@ include("results.jl")
 include("run_acpflow.jl")
 include("remove_functions.jl") 
 include("jacobian_complex.jl")
-
 
 #! format: on
 end # module Sparlectra
