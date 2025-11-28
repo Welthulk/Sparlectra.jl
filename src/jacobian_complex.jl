@@ -235,22 +235,6 @@ function complex_newton_step_rectangular(Ybus, V, S; slack_idx::Int, damp::Float
     return V_new
 end
 
-
-
-
-"""
-    run_complex_nr_rectangular(Ybus, V0, S;
-                               slack_idx=1,
-                               maxiter=20,
-                               tol=1e-8,
-                               verbose=false,
-                               damp=0.2)
-
-Runs an iterative Newton–Raphson power flow in rectangular coordinates
-using the finite-difference complex-state step.
-
-Convergence is checked only on the mismatch of the non-slack buses.
-"""
 function run_complex_nr_rectangular(Ybus, V0, S;
                                     slack_idx::Int=1,
                                     maxiter::Int=20,
@@ -258,7 +242,8 @@ function run_complex_nr_rectangular(Ybus, V0, S;
                                     verbose::Bool=false,
                                     damp::Float64=0.2,
                                     bus_types::Vector{Symbol},
-                                    Vset::Vector{Float64})
+                                    Vset::Vector{Float64},
+                                    use_fd::Bool=true)
     V = copy(V0)
     history = Float64[]
 
@@ -267,9 +252,8 @@ function run_complex_nr_rectangular(Ybus, V0, S;
     deleteat!(non_slack, slack_idx)
 
     for iter in 1:maxiter
-        # Mismatch nur über Nicht-Slack-Busse und mit PV-Logik
         F = mismatch_rectangular(Ybus, V, S, bus_types, Vset, slack_idx)
-        max_mis = maximum(abs.(F))   # F hat schon nur Nicht-Slack-Residuals
+        max_mis = maximum(abs.(F))
         push!(history, max_mis)
 
         if verbose
@@ -280,14 +264,24 @@ function run_complex_nr_rectangular(Ybus, V0, S;
             return V, true, iter, history
         end
 
-        V = complex_newton_step_rectangular_fd(
-            Ybus, V, S;
-            slack_idx = slack_idx,
-            damp      = damp,
-            h         = 1e-6,
-            bus_types = bus_types,
-            Vset      = Vset,
-        )
+        if use_fd
+            V = complex_newton_step_rectangular_fd(
+                Ybus, V, S;
+                slack_idx = slack_idx,
+                damp      = damp,
+                h         = 1e-6,
+                bus_types = bus_types,
+                Vset      = Vset,
+            )
+        else
+            V = complex_newton_step_rectangular(
+                Ybus, V, S;
+                slack_idx = slack_idx,
+                damp      = damp,
+                bus_types = bus_types,
+                Vset      = Vset,
+            )
+        end
 
         V[slack_idx] = V0[slack_idx]
     end
@@ -669,3 +663,183 @@ function complex_newton_step_rectangular_fd(Ybus, V, S;
     V_new = ComplexF64.(Vr_new, Vi_new)
     return V_new
 end
+
+"""
+    build_rectangular_jacobian_pq_pv(
+        Ybus, V, bus_types, Vset, slack_idx
+    ) -> J::Matrix{Float64}
+
+Build the analytic rectangular Jacobian for the mismatch vector `F(V)`
+defined in `mismatch_rectangular`.
+
+- State vector: x = [Vr(non-slack); Vi(non-slack)]
+- Rows: for each non-slack bus i
+    * PQ: [ΔP_i; ΔQ_i]
+    * PV: [ΔP_i; ΔV_i]  with ΔV_i = |V_i| - Vset[i]
+
+`bus_types` and `Vset` must be consistent with `mismatch_rectangular`.
+"""
+function build_rectangular_jacobian_pq_pv(
+    Ybus,
+    V::Vector{ComplexF64},
+    bus_types::Vector{Symbol},
+    Vset::Vector{Float64},
+    slack_idx::Int
+)
+    n = length(V)
+    @assert length(bus_types) == n
+    @assert length(Vset)      == n
+
+    # --- 1) Wirtinger blocks for S(V) = V .* conj(Ybus * V)
+    J11, J12, J21, J22 = build_complex_jacobian(Ybus, V)
+
+    # --- 2) Full 2n×2n rectangular J for ΔP/ΔQ wrt Vr/Vi (all buses)
+    # Rows: [ΔP_1..ΔP_n; ΔQ_1..ΔQ_n]
+    # Cols: [Vr_1..Vr_n; Vi_1..Vi_n]
+    Jrect_full = zeros(Float64, 2n, 2n)
+
+    @inbounds for j in 1:n
+        col_sum  = J11[:, j] .+ J12[:, j]  # corresponds to dS/dVr_j
+        col_diff = J11[:, j] .- J12[:, j]  # used for dS/dVi_j
+
+        # dP/dVr_j, dQ/dVr_j
+        @views Jrect_full[1:n,        j] .= real.(col_sum)
+        @views Jrect_full[n+1:2n,     j] .= imag.(col_sum)
+
+        # dP/dVi_j, dQ/dVi_j
+        @views Jrect_full[1:n,    n + j] .= -imag.(col_diff)
+        @views Jrect_full[n+1:2n, n + j] .=  real.(col_diff)
+    end
+
+    # --- 3) Reduce to non-slack variables and rows matching mismatch_rectangular
+
+    non_slack = collect(1:n)
+    deleteat!(non_slack, slack_idx)
+
+    nvar = 2 * (n - 1)
+    m    = 2 * (n - 1)
+    @assert nvar == m
+
+    # Column indices in the full rectangular J that correspond to
+    # [Vr(non_slack); Vi(non_slack)]
+    col_idx_full = vcat(non_slack, n .+ non_slack)
+
+    J = zeros(Float64, m, nvar)
+
+    row = 1
+    @inbounds for i in 1:n
+        if i == slack_idx
+            continue
+        end
+
+        # First row for this bus: ΔP_i
+        rowP_full = i                  # P row index in full J
+        @views J[row, :] .= Jrect_full[rowP_full, col_idx_full]
+
+        # Second row: ΔQ_i (PQ) or ΔV_i (PV)
+        if bus_types[i] == :PQ
+            rowQ_full = n + i          # Q row index in full J
+            @views J[row + 1, :] .= Jrect_full[rowQ_full, col_idx_full]
+
+        elseif bus_types[i] == :PV
+            # ΔV_i = |V_i| - Vset[i]
+            J[row + 1, :] .= 0.0
+
+            pos = findfirst(==(i), non_slack)
+            if pos !== nothing
+                vm = abs(V[i])
+                if vm > 0.0
+                    dVr = real(V[i]) / vm
+                    dVi = imag(V[i]) / vm
+
+                    # Columns in reduced J:
+                    #   Vr_i -> index pos
+                    #   Vi_i -> index (n-1) + pos
+                    J[row + 1, pos]           = dVr
+                    J[row + 1, (n - 1) + pos] = dVi
+                end
+            end
+        else
+            error("build_rectangular_jacobian_pq_pv: unsupported bus type $(bus_types[i]) at bus $i")
+        end
+
+        row += 2
+    end
+
+    return J
+end
+
+"""
+    complex_newton_step_rectangular(
+        Ybus, V, S;
+        slack_idx=1,
+        damp=1.0,
+        bus_types,
+        Vset
+    )
+
+Perform one Newton–Raphson step in rectangular coordinates using an
+analytic Jacobian that matches `mismatch_rectangular`.
+
+The mismatch vector F(V) is defined as in `mismatch_rectangular`:
+- PQ buses: ΔP_i, ΔQ_i
+- PV buses: ΔP_i, ΔV_i with ΔV_i = |V_i| - Vset[i]
+
+Only non-slack buses are treated as variables (Vr/Vi), the slack bus
+voltage is kept fixed.
+"""
+function complex_newton_step_rectangular(
+    Ybus,
+    V::Vector{ComplexF64},
+    S::Vector{ComplexF64};
+    slack_idx::Int = 1,
+    damp::Float64  = 1.0,
+    bus_types::Vector{Symbol},
+    Vset::Vector{Float64}
+)
+    n = length(V)
+    @assert length(S)         == n
+    @assert length(bus_types) == n
+    @assert length(Vset)      == n
+
+    # Non-slack bus indices
+    non_slack = collect(1:n)
+    deleteat!(non_slack, slack_idx)
+
+    # Base mismatch F(V)
+    F0 = mismatch_rectangular(Ybus, V, S, bus_types, Vset, slack_idx)
+
+    # Analytic Jacobian for the same F(V)
+    J  = build_rectangular_jacobian_pq_pv(Ybus, V, bus_types, Vset, slack_idx)
+
+    # Solve J * δx = -F0
+    δx = nothing
+    try
+        δx = J \ (-F0)
+    catch e
+        if e isa LinearAlgebra.SingularException
+            δx = pinv(J) * (-F0)
+        else
+            rethrow(e)
+        end
+    end
+
+    # Damping
+    δx .*= damp
+
+    Vr = real.(V)
+    Vi = imag.(V)
+
+    # Apply corrections only to non-slack buses
+    @inbounds for (k, bus) in enumerate(non_slack)
+        Vr[bus] += δx[k]
+        Vi[bus] += δx[(n - 1) + k]
+    end
+
+    V_new = ComplexF64.(Vr, Vi)
+    # keep slack fixed (defensive, sollte schon passen)
+    V_new[slack_idx] = V[slack_idx]
+
+    return V_new
+end
+

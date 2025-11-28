@@ -101,7 +101,7 @@ export
   printACPFlowResults, convertPVtoPQ!,
   # run_acpflow.jl
   run_acpflow, run_net_acpflow,
-  # complex_state_nr.jl
+  # jacobian_complex.jl
   complex_newton_step, build_complex_state_vector, run_complex_nr, complex_newton_step_rectangular, run_complex_nr_rectangular, run_complex_nr_rectangular_for_net!
 
 include("utilities.jl")
@@ -126,7 +126,7 @@ include("exportMatPower.jl")
 include("results.jl")
 include("run_acpflow.jl")
 include("remove_functions.jl") 
-include("complex_state_nr.jl")
+include("jacobian_complex.jl")
 
 
 #! format: on
