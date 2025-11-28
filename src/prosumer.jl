@@ -33,8 +33,8 @@ mutable struct ProSumer
   ratedS::Union{Nothing,Float64}
   ratedU::Union{Nothing,Float64}
   qPercent::Union{Nothing,Float64}
-  pVal::Union{Nothing,Float64}      
-  qVal::Union{Nothing,Float64}      
+  pVal::Union{Nothing,Float64}
+  qVal::Union{Nothing,Float64}
   maxP::Union{Nothing,Float64}
   minP::Union{Nothing,Float64}
   maxQ::Union{Nothing,Float64}
@@ -65,7 +65,7 @@ mutable struct ProSumer
     referencePri::Union{Nothing,Integer} = nothing,
     vm_pu::Union{Nothing,Float64} = nothing,
     va_deg::Union{Nothing,Float64} = nothing,
-    isAPUNode::Bool = false,    
+    isAPUNode::Bool = false,
   )
     comp = getProSumPGMComp(vn_kv, busIdx, isGenerator(type), oID)
 
@@ -144,16 +144,15 @@ mutable struct ProSumer
   end
 end
 
-function getPosumerBusIndex(ps::ProSumer)::Int    
-    c = ps.comp
-    if hasproperty(c, :cFrom_bus) && getfield(c, :cFrom_bus) !== nothing
-        return Int(getfield(c, :cFrom_bus))
-    elseif hasproperty(c, :cTo_bus) && getfield(c, :cTo_bus) !== nothing
-        return Int(getfield(c, :cTo_bus))
-    end
-    error("ProSumer: cannot determine bus index (component has neither :cFrom_bus nor :cTo_bus).")
+function getPosumerBusIndex(ps::ProSumer)::Int
+  c = ps.comp
+  if hasproperty(c, :cFrom_bus) && getfield(c, :cFrom_bus) !== nothing
+    return Int(getfield(c, :cFrom_bus))
+  elseif hasproperty(c, :cTo_bus) && getfield(c, :cTo_bus) !== nothing
+    return Int(getfield(c, :cTo_bus))
+  end
+  error("ProSumer: cannot determine bus index (component has neither :cFrom_bus nor :cTo_bus).")
 end
-
 
 function isAPUNode(o::ProSumer)
   return o.isAPUNode
