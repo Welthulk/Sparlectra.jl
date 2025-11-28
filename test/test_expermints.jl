@@ -9,19 +9,17 @@ include("testgrid.jl")
 global_logger(ConsoleLogger(stderr, Logging.Info))
 
 
-function test_5BusNet(verbose::Int = 0, qlim::Float64 = 20.0)
+function test_5BusNet(verbose::Int = 0, qlim::Float64 = 20.0, methode::Symbol = :rectangular    )
     net = createTest5BusNet(cooldown = 2, hyst_pu = 0.000, qlim_min = -qlim, qlim_max = qlim)
     tol = 1e-9
     maxIte = 50
     print_results = (verbose > 0)
     result = true
     
-    pv_names = ["B2"]    
-    
+    pv_names = ["B2"]        
     etim = 0.0
-    etim = @elapsed begin
-        #ite, erg = runpf_full!(net, maxIte, tol, verbose)
-        ite, erg = runpf_rectangular!(net, maxIte, tol, verbose)
+    etim = @elapsed begin        
+        ite, erg = runpf!(net, maxIte, tol, verbose, method = methode)
         if erg != 0
             @info "Full-system power flow did not converge"
             result = false
@@ -42,4 +40,6 @@ function test_5BusNet(verbose::Int = 0, qlim::Float64 = 20.0)
     return hit==true
 end
 
-test_5BusNet(1,5.0)
+test_5BusNet(1,5.0, :polar_full)
+test_5BusNet(1,5.0, :rectangular)
+test_5BusNet(1,5.0, :classic)
