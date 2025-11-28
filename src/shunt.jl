@@ -44,7 +44,7 @@ mutable struct Shunt
     if isnothing(p_shunt) && isnothing(q_shunt)
       p_shunt = g_shunt * vn_kV_shunt^2 * ratio
       q_shunt = b_shunt * vn_kV_shunt^2 * ratio
-      y_pu_shunt = Complex(g_shunt, b_shunt) * base_MVA      
+      y_pu_shunt = Complex(g_shunt, b_shunt) * base_MVA
       new(comp, vn_kV_shunt, base_MVA, busIdx, p_shunt, q_shunt, g_shunt, b_shunt, y_pu_shunt, status)
     else
       g_shunt = p_shunt / vn_kV_shunt^2

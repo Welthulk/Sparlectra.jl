@@ -33,7 +33,7 @@ function formatBranchResults(net::Net)
       pLossval = (br.pLosses === nothing) ? NaN : br.pLosses
       qLossval = (br.qLosses === nothing) ? NaN : br.qLosses
       ratedS = isnothing(br.sn_MVA) ? 0.0 : br.sn_MVA
-      
+
       check = false
       if ratedS > 0.0
         if max(abs(pfromVal), abs(ptoVal)) > ratedS
@@ -184,7 +184,7 @@ function printACPFlowResults(net::Net, ct::Float64, ite::Int, tol::Float64, toFi
     @printf(io, "| %-5d | %-20s | %-10.1f | %-10.3f | %-10.3f | %-10.3f | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s |\n", n.busIdx, nodeName, n.comp.cVN, v, n._vm_pu, n._va_deg, pGS, qGS, pLS, qLS, pShunt_str, qShunt_str, typeStr)
   end
 
-  @printf(io, "-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------\n")  
+  @printf(io, "-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------\n")
   println(io, flowResults)
 
   if toFile

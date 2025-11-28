@@ -31,7 +31,7 @@ function cubicSplineCoefs(x, y)
   A[1, 1] = 1.0
   A[n, n] = 1.0
 
-  for i = 2:n-1
+  for i = 2:(n-1)
     A[i, i-1] = h[i-1]
     A[i, i] = 2 * (h[i-1] + h[i])
     A[i, i+1] = h[i]
@@ -39,7 +39,7 @@ function cubicSplineCoefs(x, y)
 
   b = zeros(n)
 
-  for i = 2:n-1
+  for i = 2:(n-1)
     b[i] = 3 * ((y[i+1] - y[i]) / h[i] - (y[i] - y[i-1]) / h[i-1])
   end
 
@@ -47,9 +47,9 @@ function cubicSplineCoefs(x, y)
   c = A \ b
 
   # Calculate the remaining coefficients
-  a = y[1:n-1]
-  b = (y[2:n] - y[1:n-1]) ./ h - h .* (c[2:n] + 2 * c[1:n-1]) / 3
-  d = (c[2:n] - c[1:n-1]) ./ (3 * h)
+  a = y[1:(n-1)]
+  b = (y[2:n] - y[1:(n-1)]) ./ h - h .* (c[2:n] + 2 * c[1:(n-1)]) / 3
+  d = (c[2:n] - c[1:(n-1)]) ./ (3 * h)
 
   return a, b, c, d
 end
