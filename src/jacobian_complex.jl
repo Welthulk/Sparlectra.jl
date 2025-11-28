@@ -25,8 +25,11 @@
 # - build_complex_jacobian(): Wirtinger-based Jacobian block construction
 # - mismatch_rectangular(): Residual function for PQ/PV bus constraints
 #
-# Note: No sparse matrix optimizations are currently used, as the matrices are fully populated.
-#       For larger networks (N > 2000), this may lead to performance issues.
+# Note:
+# - The FD Jacobian is mathematically dense; sparse storage does not bring much benefit.
+# - The analytic Jacobian currently uses a dense rectangular build, even though the
+#   underlying structure is sparse (Ybus-like). A true sparse implementation would
+#   require a dedicated builder similar to `calcJacobian(...; sparse=true)`.
 #
 # References:
 # - Wirtinger calculus for complex derivatives
