@@ -1,4 +1,4 @@
-# file: test/test_expermints.jl
+# file: test/test_experments.jl
 # for expermimental work and testing of new features
 using Test
 using Sparlectra
@@ -7,24 +7,16 @@ using Logging
 
 include("testgrid.jl")
 global_logger(ConsoleLogger(stderr, Logging.Info))
-#=
-case = "case5.m"   # oder irgendein anderes .m im Pfad
 
-# Test 1 – Standard Newton (polar), aber mit Sparse:
-run_acpflow(casefile = case, opt_sparse = true, method = :polar_full)
+function importCaseFile()
+    case = "case5.m"   
+    run_acpflow(casefile = case, opt_sparse = true, method = :polar_full)
+    run_acpflow(casefile = case, opt_fd = true, method = :polar_full)
+    run_acpflow(casefile = case, opt_fd = true, opt_sparse = true, method = :polar_full)
+    run_acpflow(casefile = case, opt_sparse = true, opt_fd = false, method = :rectangular)
+    run_acpflow(casefile = case, opt_sparse = true, opt_fd = false, method = :classic)
+end    
 
-# Test 2 – FD-Jacobian aktivieren:
-run_acpflow(casefile = case, opt_fd = true, method = :polar_full)
-
-# Test 3 – Polar-NR: FD + Sparse zusammen:
-run_acpflow(casefile = case, opt_fd = true, opt_sparse = true, method = :polar_full)
-
-# Test 4 – Vergleich: Rectangular-NR (als Referenz)
-run_acpflow(casefile = case, opt_sparse = true, opt_fd = false, method = :rectangular)
-
-# Test 4 – Vergleich: Classic-NR (als Referenz)
-run_acpflow(casefile = case, opt_sparse = true, opt_fd = false, method = :classic)
-=#
 
 
 function test_5BusNet(verbose::Int = 0, qlim::Float64 = 20.0, methode::Symbol = :rectangular, opt_fd::Bool = false, opt_sparse::Bool = false)
