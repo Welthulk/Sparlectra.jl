@@ -1,31 +1,30 @@
 # busdata.jl — Data type for NR / power flow
 
 mutable struct BusData
-    idx::Int          # Bus index (after sorting)
-    vm_pu::Float64    # Voltage in p.u.
-    va_rad::Float64   # Angle in rad
-    pƩ::Float64       # Sum active power (p.u.)
-    qƩ::Float64       # Sum reactive power (p.u.)
-    _pRes::Float64    # calculated active power (p.u.)
-    _qRes::Float64    # calculated reactive power (p.u.)
-    type::NodeType
-    isPVactive::Union{Nothing,Bool}
+  idx::Int          # Bus index (after sorting)
+  vm_pu::Float64    # Voltage in p.u.
+  va_rad::Float64   # Angle in rad
+  pƩ::Float64       # Sum active power (p.u.)
+  qƩ::Float64       # Sum reactive power (p.u.)
+  _pRes::Float64    # calculated active power (p.u.)
+  _qRes::Float64    # calculated reactive power (p.u.)
+  type::NodeType
+  isPVactive::Union{Nothing,Bool}
 
-    function BusData(idx::Int, vm_pu::Float64, va_rad::Float64,
-                     sumP::Float64, sumQ::Float64, type::NodeType)
-        if type == PV
-          isPV = true
-        else
-          isPV = nothing
-        end
-            
-        new(idx, vm_pu, va_rad, sumP, sumQ, 0.0, 0.0, type, isPV)
+  function BusData(idx::Int, vm_pu::Float64, va_rad::Float64, sumP::Float64, sumQ::Float64, type::NodeType)
+    if type == PV
+      isPV = true
+    else
+      isPV = nothing
     end
+
+    new(idx, vm_pu, va_rad, sumP, sumQ, 0.0, 0.0, type, isPV)
+  end
 end
 
 function Base.show(io::IO, bus::BusData)
-    va_deg = round(rad2deg(bus.va_rad), digits = 3)
-    print(io, "BusData($(bus.idx), $(bus.vm_pu), $(va_deg)°), $(bus.pƩ), $(bus.qƩ), $(bus._pRes), $(bus._qRes), $(bus.type))")
+  va_deg = round(rad2deg(bus.va_rad), digits = 3)
+  print(io, "BusData($(bus.idx), $(bus.vm_pu), $(va_deg)°), $(bus.pƩ), $(bus.qƩ), $(bus._pRes), $(bus._qRes), $(bus.type))")
 end
 
 function getBusData(nodes::Vector{Node}, Sbase_MVA::Float64, flatStart)
@@ -81,7 +80,7 @@ function getBusData(nodes::Vector{Node}, Sbase_MVA::Float64, flatStart)
     else
       vm_pu = n._vm_pu === nothing ? 1.0 : n._vm_pu
       va_deg = n._va_deg === nothing ? 0.0 : deg2rad(n._va_deg)
-      
+
       if angle_limit && type == PQ
         if abs(va_deg) > deg2rad(30.0)
           va_deg = sign(va_deg) * deg2rad(30.0)
@@ -89,7 +88,7 @@ function getBusData(nodes::Vector{Node}, Sbase_MVA::Float64, flatStart)
         end
       end
     end
-    busIdx = idx    
+    busIdx = idx
     b = BusData(busIdx, vm_pu, va_deg, p, q, type)
     push!(busVec, b)
   end
@@ -118,8 +117,6 @@ function getBusData(nodes::Vector{Node}, Sbase_MVA::Float64, flatStart)
 
   return busVec, slackIdx
 end # getBusData
-
-
 
 # helper function to count number of nodes of type = value [PQ, PV]
 function getBusTypeVec(busVec::Vector{BusData})
@@ -158,7 +155,6 @@ function countNodes(busTypeVec::Vector{NodeType}, pos, value::NodeType)
   return sum
 end
 
-
 """
     map_NR_voltage_to_net!(V_nr, busVec, net) -> V_net
 
@@ -169,33 +165,31 @@ Returns a Vector{ComplexF64} such that:
     V_net[busIdx] == V_nr[k]
 where `k` is the index in busVec with `busVec[k].idx == busIdx`.
 """
-function map_NR_voltage_to_net!(V_nr::Vector{ComplexF64},
-                                busVec::Vector{BusData},
-                                net::Net)
+function map_NR_voltage_to_net!(V_nr::Vector{ComplexF64}, busVec::Vector{BusData}, net::Net)
+  V_net = Vector{ComplexF64}(undef, length(net.nodeVec))
 
-    V_net = Vector{ComplexF64}(undef, length(net.nodeVec))
+  @inbounds for k in eachindex(busVec)
+    original_idx = busVec[k].idx
+    # original_idx corresponds directly to net.nodeVec[original_idx].busIdx
+    V_net[original_idx] = V_nr[k]
+  end
 
-    @inbounds for k in eachindex(busVec)
-        original_idx = busVec[k].idx
-        # original_idx corresponds directly to net.nodeVec[original_idx].busIdx
-        V_net[original_idx] = V_nr[k]
-    end
-
-    return V_net
+  return V_net
 end
-
 
 """
     buildVoltageVector_from_busVec(busVec::Vector{BusData}) -> Vector{ComplexF64}
 
 Builds the complex voltage vector in NR ordering:
     V_nr[k] = busVec[k].vm_pu * exp(j * busVec[k].va_rad)
+
+This is the canonical source of V_nr for mapping and post-processing.
 """
 function buildVoltageVector_from_busVec(busVec::Vector{BusData})
-    V_nr = Vector{ComplexF64}(undef, length(busVec))
-    @inbounds for k in eachindex(busVec)
-        bus = busVec[k]
-        V_nr[k] = bus.vm_pu * exp(im * bus.va_rad)
-    end
-    return V_nr
+  V_nr = Vector{ComplexF64}(undef, length(busVec))
+  @inbounds for k in eachindex(busVec)
+    bus = busVec[k]
+    V_nr[k] = bus.vm_pu * exp(im * bus.va_rad)
+  end
+  return V_nr
 end

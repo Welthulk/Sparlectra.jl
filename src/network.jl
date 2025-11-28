@@ -65,7 +65,7 @@ struct Net
   trafos::Vector{PowerTransformer}
   branchVec::Vector{Branch}
   prosumpsVec::Vector{ProSumer}
-  shuntVec::Vector{Shunt}  
+  shuntVec::Vector{Shunt}
   busDict::Dict{String,Int}
   busOrigIdxDict::Dict{Int,Int}
   totalLosses::Vector{Tuple{Float64,Float64}}
@@ -74,7 +74,7 @@ struct Net
   shuntDict::Dict{Int,Int}
   isoNodes::Vector{Int}
   qLimitLog::Vector{Any}
-  cooldown_iters::Int 
+  cooldown_iters::Int
   q_hyst_pu::Float64
   qmin_pu::Vector{Float64}            # pro Bus Qmin (p.u.)
   qmax_pu::Vector{Float64}            # pro Bus Qmax (p.u.)
@@ -125,20 +125,19 @@ struct Net
     println(io, "Prosumers: ", length(o.prosumpsVec))
     println(io, "Shunts: ", length(o.shuntVec))
     if !isempty(o.qLimitLog)
-        println(io, "Q-limit log entries: ", length(o.qLimitLog))
+      println(io, "Q-limit log entries: ", length(o.qLimitLog))
     end
-
   end
 end
 # --- helpers (lokal) ---
 @inline function _push_unique!(v::Vector{Int}, x::Int)
-    (findfirst(==(x), v) === nothing) && push!(v, x)
-    return v
+  (findfirst(==(x), v) === nothing) && push!(v, x)
+  return v
 end
 @inline function _delete_item!(v::Vector{Int}, x::Int)
-    idx = findfirst(==(x), v)
-    (idx !== nothing) && deleteat!(v, idx)
-    return v
+  idx = findfirst(==(x), v)
+  (idx !== nothing) && deleteat!(v, idx)
+  return v
 end
 
 """
@@ -150,24 +149,24 @@ Sets the type of a bus in the network.
 - `busType::String`: Type of the bus (e.g., "Slack", "PQ", "PV")
 """
 function setBusType!(net::Net, bus::Int, busType::String)
-    @assert 1 <= bus <= length(net.nodeVec) "Bus-Index $bus ist ungültig."
-    node  = net.nodeVec[bus]
-    oldTy = getfield(node, :_nodeType)
+  @assert 1 <= bus <= length(net.nodeVec) "Bus-Index $bus ist ungültig."
+  node  = net.nodeVec[bus]
+  oldTy = getfield(node, :_nodeType)
 
-    setNodeType!(node, busType)
+  setNodeType!(node, busType)
 
-    newTy = getfield(node, :_nodeType)
-    if newTy == Slack && oldTy != Slack
-        _push_unique!(net.slackVec, bus)
-    elseif oldTy == Slack && newTy != Slack
-        _delete_item!(net.slackVec, bus)
-    end
-    return nothing
+  newTy = getfield(node, :_nodeType)
+  if newTy == Slack && oldTy != Slack
+    _push_unique!(net.slackVec, bus)
+  elseif oldTy == Slack && newTy != Slack
+    _delete_item!(net.slackVec, bus)
+  end
+  return nothing
 end
 
 function setBusType!(net::Net, busName::String, busType::String)
-    bus = geNetBusIdx(net = net, busName = busName)
-    return setBusType!(net, bus, busType)
+  bus = geNetBusIdx(net = net, busName = busName)
+  return setBusType!(net, bus, busType)
 end
 
 """
@@ -277,7 +276,6 @@ function addBus!(;
 
   node = Node(busIdx = busIdx, vn_kV = vn_kV, nodeType = toNodeType(busType), vm_pu = vm_pu, va_deg = va_deg, vmin_pu = vmin_pu, vmax_pu = vmax_pu, isAux = isAux, oBusIdx = oBusIdx, zone = zone, area = area, ratedS = ratedS)
   push!(net.nodeVec, node)
-
 end
 
 """
@@ -420,7 +418,7 @@ Parameters:
 - `ratedS::Union{Nothing, Float64}= nothing`: Rated power of the line segment in MVA (default is nothing).
 - `status::Int = 1`: Status of the line segment (default is 1).
 """
-function addACLine!(; net::Net, fromBus::String, toBus::String, length::Float64, r::Float64, x::Float64, b::Union{Nothing,Float64} = nothing, c_nf_per_km::Union{Nothing,Float64} = nothing, tanδ::Union{Nothing,Float64} = nothing, ratedS::Union{Nothing,Float64} = nothing, status::Int = 1)  
+function addACLine!(; net::Net, fromBus::String, toBus::String, length::Float64, r::Float64, x::Float64, b::Union{Nothing,Float64} = nothing, c_nf_per_km::Union{Nothing,Float64} = nothing, tanδ::Union{Nothing,Float64} = nothing, ratedS::Union{Nothing,Float64} = nothing, status::Int = 1)
   @assert fromBus != toBus "From and to bus must be different"
   from = geNetBusIdx(net = net, busName = fromBus)
   to = geNetBusIdx(net = net, busName = toBus)
@@ -990,64 +988,63 @@ function markIsolatedBuses!(; net::Net, log::Bool = false)
   end
 end
 
-
 function _buildQLimits!(net::Net; reset::Bool = true)
-    # Number of buses from nodeVec
-    nbus = length(net.nodeVec)
+  # Number of buses from nodeVec
+  nbus = length(net.nodeVec)
 
-    # Ensure arrays have correct length
-    if length(net.qmin_pu) != nbus
-        resize!(net.qmin_pu, nbus)
-    end
-    if length(net.qmax_pu) != nbus
-        resize!(net.qmax_pu, nbus)
-    end
+  # Ensure arrays have correct length
+  if length(net.qmin_pu) != nbus
+    resize!(net.qmin_pu, nbus)
+  end
+  if length(net.qmax_pu) != nbus
+    resize!(net.qmax_pu, nbus)
+  end
 
-    # Reinitialize limits on every call (derived data -> safe to overwrite)
-    # qmin_pu starts at +Inf (will be replaced by first finite sum)
-    # qmax_pu starts at -Inf (will be replaced by first finite sum)
-    fill!(net.qmin_pu,  Inf)
-    fill!(net.qmax_pu, -Inf)
+  # Reinitialize limits on every call (derived data -> safe to overwrite)
+  # qmin_pu starts at +Inf (will be replaced by first finite sum)
+  # qmax_pu starts at -Inf (will be replaced by first finite sum)
+  fill!(net.qmin_pu, Inf)
+  fill!(net.qmax_pu, -Inf)
 
-    # Optionally reset Q-limit log
-    if reset
-        resetQLimitLog!(net)
-    end
+  # Optionally reset Q-limit log
+  if reset
+    resetQLimitLog!(net)
+  end
 
-    # Aggregate generator Q-limits per bus
-    for ps in net.prosumpsVec
-        isGenerator(ps) || continue
-        bus = getPosumerBusIndex(ps)
+  # Aggregate generator Q-limits per bus
+  for ps in net.prosumpsVec
+    isGenerator(ps) || continue
+    bus = getPosumerBusIndex(ps)
 
-        # Safety: allow for buses beyond nodeVec if that can happen in your data
-        if bus > nbus
-            # grow arrays if needed
-            resize!(net.qmin_pu, bus)
-            resize!(net.qmax_pu, bus)
-            for b in (nbus+1):bus
-                net.qmin_pu[b] =  Inf
-                net.qmax_pu[b] = -Inf
-            end
-            nbus = bus
-        end
-
-        @debug "Bus $bus: current minQ=$(ps.minQ), maxQ=$(ps.maxQ)"
-
-        # Convert to p.u., handle 'no limit' as ±Inf
-        qmin_pu = isnothing(ps.minQ) ? -Inf : ps.minQ / net.baseMVA
-        qmax_pu = isnothing(ps.maxQ) ?  Inf : ps.maxQ / net.baseMVA
-
-        # Sum instead of min/max; respect sentinel values
-        cur_qmin = net.qmin_pu[bus]
-        net.qmin_pu[bus] = isfinite(cur_qmin) ? (cur_qmin + qmin_pu) : qmin_pu
-        @debug "Bus $bus: updated Qmin_pu to $(net.qmin_pu[bus])"
-
-        cur_qmax = net.qmax_pu[bus]
-        net.qmax_pu[bus] = isfinite(cur_qmax) ? (cur_qmax + qmax_pu) : qmax_pu
-        @debug "Bus $bus: updated Qmax_pu to $(net.qmax_pu[bus])"
+    # Safety: allow for buses beyond nodeVec if that can happen in your data
+    if bus > nbus
+      # grow arrays if needed
+      resize!(net.qmin_pu, bus)
+      resize!(net.qmax_pu, bus)
+      for b = (nbus+1):bus
+        net.qmin_pu[b] = Inf
+        net.qmax_pu[b] = -Inf
+      end
+      nbus = bus
     end
 
-    return nothing
+    @debug "Bus $bus: current minQ=$(ps.minQ), maxQ=$(ps.maxQ)"
+
+    # Convert to p.u., handle 'no limit' as ±Inf
+    qmin_pu = isnothing(ps.minQ) ? -Inf : ps.minQ / net.baseMVA
+    qmax_pu = isnothing(ps.maxQ) ? Inf : ps.maxQ / net.baseMVA
+
+    # Sum instead of min/max; respect sentinel values
+    cur_qmin = net.qmin_pu[bus]
+    net.qmin_pu[bus] = isfinite(cur_qmin) ? (cur_qmin + qmin_pu) : qmin_pu
+    @debug "Bus $bus: updated Qmin_pu to $(net.qmin_pu[bus])"
+
+    cur_qmax = net.qmax_pu[bus]
+    net.qmax_pu[bus] = isfinite(cur_qmax) ? (cur_qmax + qmax_pu) : qmax_pu
+    @debug "Bus $bus: updated Qmax_pu to $(net.qmax_pu[bus])"
+  end
+
+  return nothing
 end
 
 """
@@ -1063,49 +1060,44 @@ the aggregated bus-level Q-limits (`qmin_pu`, `qmax_pu`).
 - With `busName`: only generators connected to the specified bus receive the new limits.
 """
 
-function setQLimits!(; net::Net,
-                     qmin_MVar::Float64,
-                     qmax_MVar::Float64,
-                     busName::Union{Nothing,AbstractString,AbstractVector{<:AbstractString}} = nothing)
+function setQLimits!(; net::Net, qmin_MVar::Float64, qmax_MVar::Float64, busName::Union{Nothing,AbstractString,AbstractVector{<:AbstractString}} = nothing)
 
-    # Normalize busName to a set of bus indices or `nothing`
-    busIdxSet = nothing
-    if !isnothing(busName)
-        # Ensure we always iterate over a collection of names
-        names = busName isa AbstractString ? (busName,) : busName
-        busIdxSet = Set(geNetBusIdx(net = net, busName = bn) for bn in names)
+  # Normalize busName to a set of bus indices or `nothing`
+  busIdxSet = nothing
+  if !isnothing(busName)
+    # Ensure we always iterate over a collection of names
+    names = busName isa AbstractString ? (busName,) : busName
+    busIdxSet = Set(geNetBusIdx(net = net, busName = bn) for bn in names)
+  end
+
+  for ps in net.prosumpsVec
+    isGenerator(ps) || continue
+
+    if isnothing(busIdxSet)
+      # No bus filter: apply to all generators
+      ps.minQ = qmin_MVar
+      ps.maxQ = qmax_MVar
+    else
+      # Apply only to generators connected to the selected buses
+      c = ps.comp
+      if !isnothing(c.cFrom_bus) && (c.cFrom_bus in busIdxSet)
+        ps.minQ = qmin_MVar
+        ps.maxQ = qmax_MVar
+      end
     end
+  end
 
-    for ps in net.prosumpsVec
-        isGenerator(ps) || continue
+  _buildQLimits!(net; reset = true)
 
-        if isnothing(busIdxSet)
-            # No bus filter: apply to all generators
-            ps.minQ = qmin_MVar
-            ps.maxQ = qmax_MVar
-        else
-            # Apply only to generators connected to the selected buses
-            c = ps.comp
-            if !isnothing(c.cFrom_bus) && (c.cFrom_bus in busIdxSet)
-                ps.minQ = qmin_MVar
-                ps.maxQ = qmax_MVar
-            end
-        end
-    end
-
-    _buildQLimits!(net; reset = true)
-
-    return nothing
+  return nothing
 end
 
 """
     setPVBusVset!(net::Net, busName::String; vm_pu::Float64)
 """
 
-function setPVBusVset!(;net::Net, busName::String, vm_pu::Float64)
-    bus = geNetBusIdx(net = net, busName = busName)    
-    net.nodeVec[bus]._vm_pu = vm_pu
+function setPVBusVset!(; net::Net, busName::String, vm_pu::Float64)
+  bus = geNetBusIdx(net = net, busName = busName)
+  net.nodeVec[bus]._vm_pu = vm_pu
 end
-
-
 

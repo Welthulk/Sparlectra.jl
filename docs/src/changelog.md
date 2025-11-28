@@ -1,5 +1,41 @@
 # Change Log
 
+## **Version 0.4.25 – 2025-11-28**
+
+### **Added**
+
+* **Rectangular (Complex-State) Newton–Raphson Solver**
+
+  * New solver path via `runpf_rectangular!` and `run_complex_nr_rectangular_for_net!`.
+  * Supports PQ, PV and Slack buses using *rectangular complex voltage state* (Vr, Vi).
+  * Supports both **analytic** Jacobian (Wirtinger-based) and **finite-difference** Jacobian.
+  * Optional **sparse analytic Jacobian** via `build_rectangular_jacobian_pq_pv_sparse`.
+* **PV→PQ active-set logic** now implemented also for the rectangular solver.
+
+  * Automatically clips Q to limits and switches bus type during iteration.
+  * Writes Q values back for former PV buses (same behavior as full/polar solver).
+* **Unified solver options**
+
+  * New flags: `opt_fd`, `opt_sparse`, `method=:rectangular`.
+  * Integrated in `run_acpflow` and `run_net_acpflow`.
+
+### **Changed**
+
+* Rectangular solver now mirrors the behavior of `calcNewtonRaphson_withPVIdentity!` regarding Q-limits.
+* Improved solver interface: shared options for sparse/FD variants across all NR solvers.
+* Clean-up of deprecated code and migration of complex-state NR into `jacobian_complex.jl`.
+
+### **Fixed**
+
+* Sign inconsistency in rectangular Q-residuals after PV→PQ switching.
+* Correct propagation of updated Q values into network structures after PV→PQ conversion.
+
+### **Notes**
+
+* Sparse rectangular Jacobian is supported but yields limited speedup (dense FD path still heavy).
+* Full documentation update planned next.
+
+
 ## Version 0.4.24 – 2025-11-20
 
 ### Added
@@ -53,15 +89,6 @@
 3. **Jacobian still uses `sin()`/`cos()` formulations.**
    Future versions will use a rectangular (non-trigonometric) derivative form for speed and stability.
 4. **Branch flow and loss post-processing** must still be called manually (e.g. `calcBranchFlow(net)`).
-
----
-
-### **Planned Next Steps**
-
-* Implement parameterized Q-limits in network constructors (#39)
-* Extend MATPOWER import to parse Qmin/Qmax (#63)
-* Redesign Jacobian in rectangular coordinates (#62)
-* Integrate full flow/loss post-processing into `runpf_full!()`
 
 ---
 
