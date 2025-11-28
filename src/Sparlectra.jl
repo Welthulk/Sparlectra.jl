@@ -65,7 +65,7 @@ export
   getSideNumber2WT,  getWinding2WT,  calcTransformerRatio, recalc_trafo_model_data, create2WTRatioTransformerNoTaps, create3WTWindings!,
   getTrafoImpPGMComp,  getWT3AuxBusID,  isPerUnit_RXGB, getWindingRatedS, getTrafoRXBG, getTrafoRXBG_pu, 
   # Nodes  
-  setRatedS!,  setVmVa!,  addShuntPower!,  addLoadPower!,  addGenPower!,  getNodeVn,  isSlack,  isPVNode,  isPQNode, isIsolated, toNodeType, setNodeType!, 
+  setRatedS!,  setVmVa!,  addShuntPower!,  addLoadPower!,  addGenPower!,  getNodeVn,  isSlack,  isPVNode,  isPQNode, isIsolated, toNodeType, setNodeType!,getNodeType, 
   busComparison, toString,
   # Branch
   getBranchIdx, calcBranchYser, calcBranchYshunt, calcBranchRatio, calcAdmittance,
@@ -90,7 +90,7 @@ export
   # nbi.jl
   getNBI, mdoRCM,
   # jacobian.jl
-  setJacobianDebug, setJacobianAngleLimit, runpf!, runpf_full!,
+  runpf!, setJacobianDebug, setJacobianAngleLimit,
   # jacobian_full.jl
   getPowerFeeds_full, residuum_full_withPV, calcJacobian_withPVIdentity, calcNewtonRaphson_withPVIdentity!, runpf_full!, residuum_state_full_withPV,
   # limits.jl
@@ -100,8 +100,10 @@ export
   # results.jl
   printACPFlowResults, convertPVtoPQ!,
   # run_acpflow.jl
-  run_acpflow, run_net_acpflow
-
+  run_acpflow, run_net_acpflow,
+  # jacobian_complex.jl
+  runpf_rectangular!
+  
 include("utilities.jl")
 include("component.jl")
 include("lines.jl")
@@ -124,6 +126,7 @@ include("exportMatPower.jl")
 include("results.jl")
 include("run_acpflow.jl")
 include("remove_functions.jl") 
+include("jacobian_complex.jl")
 
 #! format: on
 end # module Sparlectra

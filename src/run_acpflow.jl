@@ -13,7 +13,7 @@ Parameters:
 Returns:
 - Net, the network object.
 """
-function run_acpflow(; max_ite::Int = 10, tol::Float64 = 1e-6, casefile::String, path::Union{Nothing,String} = nothing, verbose::Int = 0, printResultToFile::Bool = false, printResultAnyCase::Bool = false)::Net
+function run_acpflow(; max_ite::Int = 10, tol::Float64 = 1e-6, casefile::String, path::Union{Nothing,String} = nothing, verbose::Int = 0, printResultToFile::Bool = false, printResultAnyCase::Bool = false, opt_fd::Bool = false, opt_sparse::Bool = false, method::Symbol = :polar_full)::Net
   ext = splitext(casefile)[2]  # Get the file extension
   myNet = nothing              # Initialize myNet variable
   in_path = nothing
@@ -40,7 +40,7 @@ function run_acpflow(; max_ite::Int = 10, tol::Float64 = 1e-6, casefile::String,
   # Run power flow
   ite = 0
   etime = @elapsed begin
-    ite, erg = runpf!(myNet, max_ite, tol, verbose)
+    ite, erg = runpf!(myNet, max_ite, tol, verbose; opt_fd = opt_fd, opt_sparse = opt_sparse, method = method)
   end
 
   if erg == 0 || printResultAnyCase
@@ -68,12 +68,12 @@ Parameters:
 - printResultToFile: Bool, flag to print results to a file (default: false).
 - printResultAnyCase: Bool, flag to print results even if the power flow fails (default: false).
 """
-function run_net_acpflow(; net::Net, max_ite::Int = 10, tol::Float64 = 1e-6, verbose::Int = 0, printResultToFile::Bool = false, printResultAnyCase::Bool = false)
+function run_net_acpflow(; net::Net, max_ite::Int = 10, tol::Float64 = 1e-6, verbose::Int = 0, printResultToFile::Bool = false, printResultAnyCase::Bool = false, opt_fd::Bool = false, opt_sparse::Bool = false, method::Symbol = :polar_full)
 
   # Run power flow
   ite = 0
   etime = @elapsed begin
-    ite, erg = runpf!(net, max_ite, tol, verbose)
+    ite, erg = runpf!(net, max_ite, tol, verbose; opt_fd = opt_fd, opt_sparse = opt_sparse, method = method)
   end
 
   if erg == 0 || printResultAnyCase

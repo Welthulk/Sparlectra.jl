@@ -573,8 +573,7 @@ A tuple containing the number of iterations and the result of the calculation:
 - `2`: Unsolvable system of equations.
 - `3`: Error.
 """
-function runpf!(net::Net, maxIte::Int, tolerance::Float64 = 1e-6, verbose::Int = 0)
-  sparse = false
+function runpf_classic!(net::Net, maxIte::Int, tolerance::Float64 = 1e-6, verbose::Int = 0; opt_sparse::Bool = false)
   printYBus = false
   if length(net.nodeVec) == 0
     @error "No nodes found in $(jpath)"
@@ -587,7 +586,37 @@ function runpf!(net::Net, maxIte::Int, tolerance::Float64 = 1e-6, verbose::Int =
     printYBus = (verbose > 1)
   end
 
-  Y = createYBUS(net = net, sparse = sparse, printYBUS = printYBus)
+  Y = createYBUS(net = net, sparse = opt_sparse, printYBUS = printYBus)
 
-  return calcNewtonRaphson!(net, Y, maxIte, tolerance, verbose, sparse)
+  return calcNewtonRaphson!(net, Y, maxIte, tolerance, verbose, opt_sparse)
+end
+
+"""
+    runpf!(net, maxIte, tolerance=1e-6, verbose=0; method=:polar_full)
+
+Unified AC power flow interface.
+
+Arguments:
+- `net::Net`: network
+- `maxIte::Int`: maximum iterations
+- `tolerance::Float64`: mismatch tolerance
+- `verbose::Int`: verbosity level
+- `method::Symbol`: `:polar_full` (default) or `:rectangular`
+
+Returns:
+    (iterations::Int, status::Int)
+
+where `status == 0` indicates convergence.
+"""
+function runpf!(net::Net, maxIte::Int, tolerance::Float64 = 1e-6, verbose::Int = 0; method::Symbol = :polar_full, opt_fd::Bool = false, opt_sparse::Bool = false)
+  @info "Running AC Power Flow using method: $(method)"
+  if method === :polar_full
+    return runpf_full!(net, maxIte, tolerance, verbose; opt_sparse = opt_sparse)
+  elseif method === :rectangular
+    return runpf_rectangular!(net, maxIte, tolerance, verbose; opt_fd = opt_fd, opt_sparse = opt_sparse)
+  elseif method === :classic
+    return runpf_classic!(net, maxIte, tolerance, verbose; opt_sparse = opt_sparse)
+  else
+    error("runpf!: unknown method $(method). Use :polar_full or :rectangular.")
+  end
 end

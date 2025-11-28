@@ -248,6 +248,10 @@ function isPVNode(o::Node)
   end
 end
 
+function getNodeType(o::Node)::NodeType
+  return o._nodeType
+end
+
 function isIsolated(o::Node)
   if o._nodeType == Isolated
     return true

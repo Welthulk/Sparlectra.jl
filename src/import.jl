@@ -28,7 +28,7 @@ function casefileparser(filename)
     line = chop(line)  # Run chop here to remove unnecessary characters at the end of the line
     # Ignore comments after ;
     if endswith(line, ';')
-      line = chop(line[1:end-1])  # Remove semicolon at end if present
+      line = chop(line[1:(end-1)])  # Remove semicolon at end if present
     end
 
     try
