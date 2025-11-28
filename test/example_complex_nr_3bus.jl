@@ -1,6 +1,6 @@
 using Test
 using Sparlectra
-
+global_logger(ConsoleLogger(stderr, Logging.Info))
 # 3-bus example Ybus matrix (3×3)
 Ydata = ComplexF64[
     10 - 5im,
@@ -32,7 +32,7 @@ slack_idx = 1
 # Run full complex NR prototype
 #V, converged, iters, history = run_complex_nr(Ybus, V0, S; slack_idx=slack_idx,
 #                                              maxiter=20, tol=1e-6, verbose=false)
-
+_use_fd = false  # set to false to use analytic Jacobian
 bus_types = [:Slack, :PQ, :PQ]      # hier alles PQ außer Slack
 Vset      = [1.0, 1.0, 1.0]         # PV-Setpoints, für PQ egal
 
@@ -42,14 +42,15 @@ V, converged, iters, history = run_complex_nr_rectangular(
     maxiter   = 20,
     tol       = 1e-6,
     verbose   = true,
-    damp      = 0.2,
+    damp      = 1.0,
     bus_types = bus_types,
     Vset      = Vset,
-    use_fd    = true  # oder false, wenn du gleich die analytische probieren willst
+    use_fd    = _use_fd  # oder false, wenn du gleich die analytische probieren willst
 )
 
 
 println("Updated complex voltages after ", iters, " iterations:")
+println("Use FD Jacobian: ", _use_fd)
 println(V)
 println("Converged = ", converged)
 println("History of mismatches = ", history)
@@ -60,5 +61,5 @@ println("History of mismatches = ", history)
 @test all(.!isnan.(imag.(V)))
 @test length(history) == iters                             # one value per iteration
 @test iters <= 20
-#@test converged
-#@test history[end] <= 1e-6
+@test converged
+@test history[end] <= 1e-6

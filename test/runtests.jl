@@ -2,6 +2,7 @@ using Sparlectra
 using Test
 using Logging
 using Printf
+using LinearAlgebra
 
 # keep logs quiet unless there's a warning or error
 global_logger(ConsoleLogger(stderr, Logging.Warn))
