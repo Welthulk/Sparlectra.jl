@@ -188,113 +188,6 @@ function run_complex_nr_rectangular(Ybus, V0, S;
     return V, false, maxiter, history
 end
 
-"""
-    run_complex_nr_rectangular_for_net!(net; maxiter=20, tol=1e-8, damp=0.2, verbose=false)
-
-Run a complex-state Newton–Raphson power flow in rectangular coordinates
-on the given `net::Net` object.
-
-The function:
-- builds Ybus, the complex voltage start vector V0 and the power injections S
-  from the network data,
-- runs `run_complex_nr_rectangular` on this data,
-- writes the resulting voltages back into the network (vm_pu / va_deg),
-- and returns (iters, erg), similar to `runpf!`.
-
-Returns:
-- `iters::Int`: number of iterations performed
-- `erg::Int`: 0 if converged, nonzero otherwise
-"""
-function run_complex_nr_rectangular_for_net!(net::Net;
-                                             maxiter::Int = 20,
-                                             tol::Float64 = 1e-8,
-                                             damp::Float64 = 0.2,
-                                             verbose::Int = 0)
-    
-    sparse    = length(net.nodeVec) > 60
-    Ybus = createYBUS(net=net, sparse=sparse, printYBUS = (verbose > 1))    
-    
-
-    # 2) Build initial complex voltages V0 from bus data
-    V0, slack_idx = initial_Vrect_from_net(net)
-
-    # 3) Build specified complex power injections S = P + jQ from bus data
-    S = build_S_from_net(net)
-        # 3a) Build bus type vector and PV voltage setpoints
-    nodes = net.nodeVec
-    n = length(nodes)
-
-    bus_types = Vector{Symbol}(undef, n)
-    Vset      = Vector{Float64}(undef, n)
-
-    for (k, node) in enumerate(nodes)
-        BusType = getNodeType(node)        
-        if BusType == Slack
-            bus_types[k] = :Slack
-        elseif BusType == PV
-            bus_types[k] = :PV
-        elseif BusType == PQ
-            bus_types[k] = :PQ
-        else
-            error("Unsupported bus type for complex NR rectangular PF")    
-        end
-        Vset[k] = node._vm_pu  
-    end
-
-    
-    if verbose > 0
-        @info "Starting rectangular complex NR power flow..."
-        @info "Initial complex voltages V0:" V0
-        @info "Specified complex power injections S (pu):" S
-        @info "Slack bus index:" slack_idx
-        @info "max iter:" maxiter "tolerance:" tol "damping:" damp
-    end
-
-    # 4) Run rectangular NR
-    V, converged, iters, history = run_complex_nr_rectangular(
-        Ybus, V0, S;
-        slack_idx = slack_idx,
-        maxiter   = maxiter,
-        tol       = tol,
-        verbose   = (verbose>0),
-        damp      = damp,
-        bus_types = bus_types,
-        Vset      = Vset,
-    )
-
-
-        # 5) Write back voltages to network (vm_pu, va_deg)
-    update_net_voltages_from_complex!(net, V)
-
-    # 6) Recompute bus powers from final voltages and Ybus
-    nodes   = net.nodeVec
-    Sbase   = net.baseMVA
-    Ibus    = Ybus * V
-    Sbus_pu = V .* conj.(Ibus)   # S in pu
-
-    #TODO: write back to net bus data structure
-    for (k, node) in enumerate(nodes)   
-        if isSlack(node)
-           Sbus = Sbus_pu[k] * Sbase
-           Pbus_MW = real(Sbus)
-           Qbus_MVar = imag(Sbus)
-
-           if Pbus_MW < 0.0
-               node._pƩLoad = Pbus_MW
-               node._qƩLoad = Qbus_MVar
-           else
-               node._pƩGen = Pbus_MW
-               node._qƩGen = Qbus_MVar
-           end           
-        end        
-    end
-
-    # Total bus power in pu (wie im klassischen Solver)
-    setTotalBusPower!(net = net,p = sum(real.(Sbus_pu)),  q = sum(imag.(Sbus_pu)))
-
-    erg = converged ? 0 : 1
-    return iters, erg
-end
 
 
 """
@@ -426,14 +319,17 @@ function mismatch_rectangular(Ybus,
     @assert length(bus_types) == n
     @assert length(Vset)      == n
 
+    # Network-based injections for the current state
     I      = Ybus * V
     S_calc = V .* conj.(I)
 
     # F has 2*(n-1) entries: for each non-slack bus two residuals
-    F = Vector{Float64}(undef, 2*(n-1))
-    row = 1
+    # PQ:  ΔP_i, ΔQ_i
+    # PV:  ΔP_i, ΔV_i
+    F = zeros(Float64, 2*(n-1))
 
-    for i in 1:n
+    row = 1
+    @inbounds for i in 1:n
         if i == slack_idx
             continue
         end
@@ -447,12 +343,14 @@ function mismatch_rectangular(Ybus,
 
             F[row]   = ΔP
             F[row+1] = ΔQ
+
         elseif bus_types[i] == :PV
             ΔP = real(S_ci) - real(S_si)
             ΔV = abs(V[i]) - Vset[i]
 
             F[row]   = ΔP
             F[row+1] = ΔV
+
         else
             error("mismatch_rectangular: unsupported bus type $(bus_types[i]) at bus $i")
         end
@@ -740,6 +638,336 @@ function complex_newton_step_rectangular(
     V_new[slack_idx] = V[slack_idx]
 
     return V_new
+end
+
+
+"""
+    run_complex_nr_rectangular_for_net!(net; maxiter=20, tol=1e-8, damp=0.2, verbose=false)
+
+Run a complex-state Newton–Raphson power flow in rectangular coordinates
+on the given `net::Net` object.
+
+The function:
+- builds Ybus, the complex voltage start vector V0 and the power injections S
+  from the network data,
+- runs `run_complex_nr_rectangular` on this data,
+- writes the resulting voltages back into the network (vm_pu / va_deg),
+- and returns (iters, erg), similar to `runpf!`.
+
+Returns:
+- `iters::Int`: number of iterations performed
+- `erg::Int`: 0 if converged, nonzero otherwise
+
+"""
+#=
+function run_complex_nr_rectangular_for_net!(net::Net;
+                                             maxiter::Int = 20,
+                                             tol::Float64 = 1e-8,
+                                             damp::Float64 = 0.2,
+                                             verbose::Int = 0)
+    
+    sparse = length(net.nodeVec) > 60
+    Ybus   = createYBUS(net=net, sparse=sparse, printYBUS = (verbose > 1))    
+    
+
+    # 2) Build initial complex voltages V0 from bus data
+    V0, slack_idx = initial_Vrect_from_net(net)
+
+    # 3) Build specified complex power injections S = P + jQ from bus data
+    S = build_S_from_net(net)
+        # 3a) Build bus type vector and PV voltage setpoints
+    nodes = net.nodeVec
+    n = length(nodes)
+
+    bus_types = Vector{Symbol}(undef, n)
+    Vset      = Vector{Float64}(undef, n)
+
+    for (k, node) in enumerate(nodes)
+        BusType = getNodeType(node)        
+        if BusType == Slack
+            bus_types[k] = :Slack
+        elseif BusType == PV
+            bus_types[k] = :PV
+        elseif BusType == PQ
+            bus_types[k] = :PQ
+        else
+            error("Unsupported bus type for complex NR rectangular PF")    
+        end
+        Vset[k] = node._vm_pu  
+    end
+
+    
+    if verbose > 0
+        @info "Starting rectangular complex NR power flow..."
+        @info "Initial complex voltages V0:" V0
+        @info "Specified complex power injections S (pu):" S
+        @info "Slack bus index:" slack_idx
+        @info "max iter:" maxiter "tolerance:" tol "damping:" damp
+    end
+
+    # 4) Run rectangular NR
+    V, converged, iters, history = run_complex_nr_rectangular(
+        Ybus, V0, S;
+        slack_idx = slack_idx,
+        maxiter   = maxiter,
+        tol       = tol,
+        verbose   = (verbose>0),
+        damp      = damp,
+        bus_types = bus_types,
+        Vset      = Vset,
+    )
+
+
+        # 5) Write back voltages to network (vm_pu, va_deg)
+    update_net_voltages_from_complex!(net, V)
+
+    # 6) Recompute bus powers from final voltages and Ybus
+    nodes   = net.nodeVec
+    Sbase   = net.baseMVA
+    Ibus    = Ybus * V
+    Sbus_pu = V .* conj.(Ibus)   # S in pu
+
+    #TODO: write back to net bus data structure
+    for (k, node) in enumerate(nodes)   
+        if isSlack(node)
+           Sbus = Sbus_pu[k] * Sbase
+           Pbus_MW = real(Sbus)
+           Qbus_MVar = imag(Sbus)
+
+           if Pbus_MW < 0.0
+               node._pƩLoad = Pbus_MW
+               node._qƩLoad = Qbus_MVar
+           else
+               node._pƩGen = Pbus_MW
+               node._qƩGen = Qbus_MVar
+           end           
+        end        
+    end
+
+    # Total bus power in pu (wie im klassischen Solver)
+    setTotalBusPower!(net = net,p = sum(real.(Sbus_pu)),  q = sum(imag.(Sbus_pu)))
+
+    erg = converged ? 0 : 1
+    return iters, erg
+end
+=#
+function run_complex_nr_rectangular_for_net!(net::Net;
+                                             maxiter::Int = 20,
+                                             tol::Float64 = 1e-8,
+                                             damp::Float64 = 0.2,
+                                             verbose::Int = 0,
+                                             use_fd::Bool = false)
+
+    nodes  = net.nodeVec
+    n      = length(nodes)
+    Sbase  = net.baseMVA
+    sparse = n > 60
+    Ybus   = createYBUS(net=net, sparse=sparse, printYBUS = (verbose > 1))
+
+    # 1) Initial complex voltages V0 and slack index
+    V0, slack_idx = initial_Vrect_from_net(net)
+
+    # 2) Specified complex power injections S (p.u.), sign convention wie im Polar-NR
+    S = build_S_from_net(net)
+
+    # 3) Bus types and PV setpoints from Node data
+    bus_types = Vector{Symbol}(undef, n)
+    Vset      = Vector{Float64}(undef, n)
+
+    @inbounds for (k, node) in enumerate(nodes)
+        BusType = getNodeType(node)
+        if BusType == Slack
+            bus_types[k] = :Slack
+        elseif BusType == PV
+            bus_types[k] = :PV
+        elseif BusType == PQ
+            bus_types[k] = :PQ
+        else
+            error("run_complex_nr_rectangular_for_net!: unsupported bus type at bus $k")
+        end
+        Vset[k] = isnothing(node._vm_pu) ? 1.0 : node._vm_pu
+    end
+
+    # 4) Q-limit data (analog zu calcNewtonRaphson_withPVIdentity!)
+    qmin_pu, qmax_pu = getQLimits_pu(net)
+    resetQLimitLog!(net)
+
+    cooldown_iters = hasfield(typeof(net), :cooldown_iters) ? net.cooldown_iters : 0
+    q_hyst_pu      = hasfield(typeof(net), :q_hyst_pu)      ? net.q_hyst_pu      : 0.0
+
+    # PV-Busse am Anfang (Guard für PQ->PV-Reenable)
+    pv_orig = [k for k in 1:n if bus_types[k] == :PV]
+
+    # 5) NR-Schleife
+    V        = copy(V0)
+    history  = Float64[]
+    converged = false
+    iters     = 0
+
+    if verbose > 0
+        @info "Starting rectangular complex NR power flow..."
+        @info "Initial complex voltages V0:" V0
+        @info "Slack bus index:" slack_idx
+        @info "maxiter = $maxiter, tol = $tol, damp = $damp"
+    end
+
+    for it in 1:maxiter
+        iters = it
+
+        # Mismatch mit aktuellem bus_types & S
+        F = mismatch_rectangular(Ybus, V, S, bus_types, Vset, slack_idx)
+        max_mis = maximum(abs.(F))
+        push!(history, max_mis)
+
+        (verbose > 0) && @info "Rectangular NR iteration" iter=it max_mismatch=max_mis
+
+        if max_mis <= tol
+            converged = true
+            break
+        end
+
+        # --- Q-Limit Active Set: PV -> PQ, optional PQ -> PV -------------------
+        changed   = false
+        reenabled = false
+
+        if it > 2    # kleine Verzögerung wie im Polar-NR
+            # aktuelles S(V) aus Netz
+            I      = Ybus * V
+            S_calc = V .* conj.(I)
+
+            # 4a) PV -> PQ
+            @inbounds for k in 1:n
+                if k == slack_idx
+                    continue
+                end
+                if bus_types[k] != :PV
+                    continue
+                end
+
+                qreq   = imag(S_calc[k])    # aktuelle Q-Anforderung (p.u.)
+                busIdx = k                  # hier ist Busindex = Position in nodeVec
+
+                if qreq > qmax_pu[k]
+                    # Bus wird PQ, Q auf Qmax geklemmt
+                    bus_types[k] = :PQ
+                    S[k] = complex(real(S[k]), net.qmax_pu[k])
+                    changed = true
+
+                    net.qLimitEvents[busIdx] = :max
+                    logQLimitHit!(net, it, busIdx, :max)
+                    (verbose>0) && @printf "PV->PQ Bus %d: Q=%.4f > Qmax=%.4f (it=%d)\n" busIdx qreq qmax_pu[k] it
+
+                elseif qreq < qmin_pu[k]
+                    bus_types[k] = :PQ
+                    S[k] = complex(real(S[k]), net.qmin_pu[k])
+                    changed = true
+
+                    net.qLimitEvents[busIdx] = :min
+                    logQLimitHit!(net, it, busIdx, :min)
+                    (verbose>0) && @printf "PV->PQ Bus %d: Q=%.4f < Qmin=%.4f (it=%d)\n" busIdx qreq qmin_pu[k] it
+                end
+            end
+
+            if changed
+                F = mismatch_rectangular(Ybus, V, S, bus_types, Vset, slack_idx)
+                max_mis = maximum(abs.(F))
+            end
+
+            # 4b) Optional PQ -> PV Re-enable (Hysterese + Cooldown)
+            #     Wenn du das erstmal nicht willst: kompletten Block auskommentieren.
+            if q_hyst_pu > 0.0 || cooldown_iters > 0
+                @inbounds for k in 1:n
+                    # Guards:
+                    # (1) aktuell PQ
+                    # (2) war am Anfang PV
+                    # (3) hat einen Q-Limit-Event in dieser Rechnung
+                    if bus_types[k] != :PQ
+                        continue
+                    end
+                    if !(k in pv_orig)
+                        continue
+                    end
+                    if !haskey(net.qLimitEvents, k)
+                        continue
+                    end
+
+                    qreq = imag(S_calc[k])
+                    lo   = net.qmin_pu[k] + q_hyst_pu
+                    hi   = net.qmax_pu[k] - q_hyst_pu
+                    ready = (qreq > lo) && (qreq < hi)
+
+                    if ready && (cooldown_iters > 0)
+                        last_it = lastQLimitIter(net, k)
+                        if !isnothing(last_it) && (it - last_it) < cooldown_iters
+                            ready = false
+                        end
+                    end
+
+                    if ready
+                        bus_types[k] = :PV
+                        delete!(net.qLimitEvents, k)
+                        reenabled = true
+                        (verbose>0) && @printf "PQ->PV Bus %d: Q=%.4f in [%.4f, %.4f] (cooldown=%d)\n" k qreq lo hi cooldown_iters
+                    end
+                end
+
+                if reenabled
+                    F = mismatch_rectangular(Ybus, V, S, bus_types, Vset, slack_idx)
+                    max_mis = maximum(abs.(F))
+                end
+            end
+        end
+
+        # --- Newton-Schritt (FD oder analytisch) -----------------------------
+        if use_fd
+            V = complex_newton_step_rectangular_fd(
+                Ybus, V, S;
+                slack_idx = slack_idx,
+                damp      = damp,
+                h         = 1e-6,
+                bus_types = bus_types,
+                Vset      = Vset,
+            )
+        else
+            V = complex_newton_step_rectangular(
+                Ybus, V, S;
+                slack_idx = slack_idx,
+                damp      = damp,
+                bus_types = bus_types,
+                Vset      = Vset,
+            )
+        end
+
+        # Slackspannung festhalten (Sicherheitsgurt)
+        V[slack_idx] = V0[slack_idx]
+    end
+
+    # 6) Spannungen zurück ins Netz schreiben
+    update_net_voltages_from_complex!(net, V)
+
+    # 7) Busleistungen (wie im klassischen Solver) zurückrechnen
+    Ibus     = Ybus * V
+    Sbus_pu  = V .* conj.(Ibus)
+    Sbus_MVA = Sbus_pu .* Sbase
+
+    @inbounds for (k, node) in enumerate(nodes)
+        Sbus      = Sbus_MVA[k]
+        Pbus_MW   = real(Sbus)
+        Qbus_MVar = imag(Sbus)
+
+        # sehr einfache Heuristik: P<0 → Load, P>=0 → Gen
+        if Pbus_MW < 0.0
+            node._pƩLoad = Pbus_MW
+            node._qƩLoad = Qbus_MVar
+        else
+            node._pƩGen = Pbus_MW
+            node._qƩGen = Qbus_MVar
+        end
+    end
+
+    # 8) Gesamtbusleistung wie im Polar-NR aktualisieren    
+    setTotalBusPower!(net = net,p = sum(real.(Sbus_pu)),  q = sum(imag.(Sbus_pu)))
+    return iters, converged ? 0 : 1
 end
 
 """
