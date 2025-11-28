@@ -214,16 +214,13 @@ function run_complex_nr_rectangular(Ybus, V0, S;
                                     maxiter::Int=20,
                                     tol::Float64=1e-8,
                                     verbose::Bool=false,
-                                    damp::Float64=0.2,
+                                    damp::Float64=1.0,
                                     bus_types::Vector{Symbol},
                                     Vset::Vector{Float64},
-                                    use_fd::Bool=true)
+                                    use_fd::Bool=false,
+                                    use_sparse::Bool=false)
     V = copy(V0)
     history = Float64[]
-
-    n = length(V)
-    non_slack = collect(1:n)
-    deleteat!(non_slack, slack_idx)
 
     for iter in 1:maxiter
         F = mismatch_rectangular(Ybus, V, S, bus_types, Vset, slack_idx)
@@ -233,7 +230,6 @@ function run_complex_nr_rectangular(Ybus, V0, S;
         if verbose
             @info "Rectangular NR iteration" iter=iter max_mismatch=max_mis
         end
-
         if max_mis <= tol
             return V, true, iter, history
         end
@@ -254,10 +250,9 @@ function run_complex_nr_rectangular(Ybus, V0, S;
                 damp      = damp,
                 bus_types = bus_types,
                 Vset      = Vset,
+                use_sparse = use_sparse,
             )
         end
-
-        V[slack_idx] = V0[slack_idx]
     end
 
     return V, false, maxiter, history
@@ -432,6 +427,226 @@ function mismatch_rectangular(Ybus,
     return F
 end
 
+using SparseArrays
+
+"""
+    build_rectangular_jacobian_pq_pv_sparse(
+        Ybus,
+        V,
+        bus_types,
+        Vset,
+        slack_idx,
+    ) -> SparseMatrixCSC{Float64}
+
+Builds the analytic rectangular Jacobian corresponding to `mismatch_rectangular`
+using the sparsity pattern of `Ybus`.
+
+State vector:
+    x = [Vr(non-slack); Vi(non-slack)] ∈ ℝ^(2(n-1))
+
+Residual F(V):
+    - PQ buses: ΔP_i, ΔQ_i
+    - PV buses: ΔP_i, ΔV_i
+    - Slack bus: no equations
+
+Jacobian entries are derived from
+    S_i(V) = V_i * conj( (Ybus * V)_i )
+
+Wirtinger-based identities:
+    ∂S/∂V   = diag(conj(I)) + diag(V) * conj(Ybus)
+    ∂S/∂V*  = diag(V) * conj(Ybus)
+
+Chain rule to rectangular:
+    ∂S/∂Vr = ∂S/∂V + ∂S/∂V*
+    ∂S/∂Vi = j(∂S/∂V - ∂S/∂V*)
+
+With ΔP_i = Re(ΔS_i), ΔQ_i = Im(ΔS_i), ΔV_i = |V_i| - Vset[i].
+
+Returns:
+    J :: SparseMatrixCSC{Float64} with size (2(n-1)) × (2(n-1)).
+"""
+function build_rectangular_jacobian_pq_pv_sparse(
+    Ybus::SparseMatrixCSC{ComplexF64},
+    V::Vector{ComplexF64},
+    bus_types::Vector{Symbol},
+    Vset::Vector{Float64},
+    slack_idx::Int,
+)
+    n = length(V)
+    @assert length(bus_types) == n
+    @assert length(Vset)      == n
+
+    # Network currents
+    I = Ybus * V
+
+    # Non-slack bus indices and mapping bus -> position in state vector
+    non_slack = collect(1:n)
+    deleteat!(non_slack, slack_idx)
+
+    nvar = 2 * (n - 1)   # [Vr(non-slack); Vi(non-slack)]
+    m    = nvar          # F has 2 equations per non-slack bus
+
+    # bus index -> position in non_slack (1..n-1), 0 if slack
+    pos_non_slack = zeros(Int, n)
+    for (k, b) in enumerate(non_slack)
+        pos_non_slack[b] = k
+    end
+
+    # Row blocks: for each non-slack bus i
+    #   row_block[i]   = index of ΔP row for bus i
+    #   row_block[i]+1 = index of ΔQ / ΔV row for bus i
+    row_block = zeros(Int, n)
+    row = 0
+    for i in 1:n
+        if i == slack_idx
+            continue
+        end
+        row += 2
+        row_block[i] = row - 1  # ΔP row
+    end
+
+    # Triplet storage
+    Iidx = Int[]
+    Jidx = Int[]
+    Vals = Float64[]
+    # Rough capacity hint (purely heuristic)
+    sizehint!(Iidx, 16 * nnz(Ybus))
+    sizehint!(Jidx, 16 * nnz(Ybus))
+    sizehint!(Vals, 16 * nnz(Ybus))
+
+    # Helpers for sparse access
+    rv    = rowvals(Ybus)
+    nzval = nonzeros(Ybus)
+
+    # --- 1) Contributions from complex power equations (ΔP, ΔQ) ---------------
+    #
+    # For bus i, bus j:
+    #   ∂S_i/∂Vr_j = conj(I_i) * δ_ij + V_i * conj(Y_ij)
+    #   ∂S_i/∂Vi_j = j*(conj(I_i) * δ_ij - V_i * conj(Y_ij))
+    #
+    # Then:
+    #   ∂P_i/∂Vr_j = Re(∂S_i/∂Vr_j)
+    #   ∂P_i/∂Vi_j = Re(∂S_i/∂Vi_j)
+    #   ∂Q_i/∂Vr_j = Im(∂S_i/∂Vr_j)
+    #   ∂Q_i/∂Vi_j = Im(∂S_i/∂Vi_j)
+    #
+    # For PV buses, only the ΔP row uses these derivatives; the second row is ΔV.
+
+    for j in 1:n
+        col_pos = pos_non_slack[j]
+        if col_pos == 0
+            # Slack bus column -> no state variable
+            continue
+        end
+
+        colVr = col_pos
+        colVi = (n - 1) + col_pos
+
+        for ptr in nzrange(Ybus, j)
+            i = rv[ptr]
+
+            # Slack bus has no equations
+            if i == slack_idx
+                continue
+            end
+
+            rb = row_block[i]
+            if rb == 0
+                continue
+            end
+
+            rowP = rb          # ΔP row for bus i
+            rowQ = rb + 1      # ΔQ/ΔV row for bus i
+
+            Yij = nzval[ptr]
+
+            # Base contributions from V_i * conj(Y_ij)
+            S_dVr = V[i] * conj(Yij)
+            S_dVi = im * (-V[i] * conj(Yij))
+
+            # Diagonal term from conj(I_i) * δ_ij
+            if i == j
+                Ii = I[i]
+                S_dVr += conj(Ii)
+                S_dVi += im * conj(Ii)
+            end
+
+            # Real / imaginary parts
+            ∂P_Vr = real(S_dVr)
+            ∂P_Vi = real(S_dVi)
+            ∂Q_Vr = imag(S_dVr)
+            ∂Q_Vi = imag(S_dVi)
+
+            # First equation: always ΔP_i for PQ and PV
+            if abs(∂P_Vr) > 0.0
+                push!(Iidx, rowP); push!(Jidx, colVr); push!(Vals, ∂P_Vr)
+            end
+            if abs(∂P_Vi) > 0.0
+                push!(Iidx, rowP); push!(Jidx, colVi); push!(Vals, ∂P_Vi)
+            end
+
+            # Second equation:
+            #   - PQ: ΔQ_i -> uses Q derivatives
+            #   - PV: ΔV_i -> no contribution from S, handled separately
+            bt = bus_types[i]
+            if bt == :PQ
+                if abs(∂Q_Vr) > 0.0
+                    push!(Iidx, rowQ); push!(Jidx, colVr); push!(Vals, ∂Q_Vr)
+                end
+                if abs(∂Q_Vi) > 0.0
+                    push!(Iidx, rowQ); push!(Jidx, colVi); push!(Vals, ∂Q_Vi)
+                end
+            elseif bt == :PV
+                # nothing here, ΔV row added below
+            else
+                error("build_rectangular_jacobian_pq_pv_sparse: unsupported bus type $(bt) at bus $i")
+            end
+        end
+    end
+
+    # --- 2) Contributions for ΔV_i = |V_i| - Vset[i] on PV buses --------------
+    #
+    # Only depends on local Vr_i, Vi_i:
+    #   |V_i| = sqrt(Vr_i^2 + Vi_i^2)
+    #   ∂|V_i|/∂Vr_i = Vr_i / |V_i|
+    #   ∂|V_i|/∂Vi_i = Vi_i / |V_i|
+
+    for i in 1:n
+        if i == slack_idx || bus_types[i] != :PV
+            continue
+        end
+
+        rb   = row_block[i]
+        rowV = rb + 1  # second row for that bus
+
+        pos  = pos_non_slack[i]
+        if pos == 0
+            continue
+        end
+
+        vm = abs(V[i])
+        if vm == 0.0
+            continue
+        end
+
+        dVr = real(V[i]) / vm
+        dVi = imag(V[i]) / vm
+
+        colVr = pos
+        colVi = (n - 1) + pos
+
+        if abs(dVr) > 0.0
+            push!(Iidx, rowV); push!(Jidx, colVr); push!(Vals, dVr)
+        end
+        if abs(dVi) > 0.0
+            push!(Iidx, rowV); push!(Jidx, colVi); push!(Vals, dVi)
+        end
+    end
+
+    return sparse(Iidx, Jidx, Vals, m, nvar)
+end
+
+
 """
     complex_newton_step_rectangular_fd(Ybus, V, S;
                                        slack_idx=1,
@@ -533,7 +748,7 @@ function complex_newton_step_rectangular_fd(Ybus, V, S;
 end
 
 """
-    build_rectangular_jacobian_pq_pv(
+    build_rectangular_jacobian_pq_pv_dense(
         Ybus, V, bus_types, Vset, slack_idx
     ) -> J::Matrix{Float64}
 
@@ -547,7 +762,7 @@ defined in `mismatch_rectangular`.
 
 `bus_types` and `Vset` must be consistent with `mismatch_rectangular`.
 """
-function build_rectangular_jacobian_pq_pv(
+function build_rectangular_jacobian_pq_pv_dense(
     Ybus,
     V::Vector{ComplexF64},
     bus_types::Vector{Symbol},
@@ -637,100 +852,137 @@ function build_rectangular_jacobian_pq_pv(
     return J
 end
 
+
 """
-    complex_newton_step_rectangular(
-        Ybus, V, S;
-        slack_idx=1,
-        damp=1.0,
+    build_rectangular_jacobian_pq_pv(
+        Ybus,
+        V,
         bus_types,
-        Vset
+        Vset,
+        slack_idx;
+        use_sparse::Bool = false,
     )
 
-Perform one Newton–Raphson step in rectangular coordinates using an
-analytic Jacobian that matches `mismatch_rectangular`.
+Dispatches to either the dense or sparse rectangular Jacobian builder matching
+`mismatch_rectangular`.
 
-The mismatch vector F(V) is defined as in `mismatch_rectangular`:
-- PQ buses: ΔP_i, ΔQ_i
-- PV buses: ΔP_i, ΔV_i with ΔV_i = |V_i| - Vset[i]
+- If `use_sparse == true` and `Ybus` is a `SparseMatrixCSC{ComplexF64}`, the
+  sparse builder is used.
+- Otherwise, the dense builder is used.
+"""
+function build_rectangular_jacobian_pq_pv(
+    Ybus,
+    V::Vector{ComplexF64},
+    bus_types::Vector{Symbol},
+    Vset::Vector{Float64},
+    slack_idx::Int;
+    use_sparse::Bool = false,
+)
+    if use_sparse && Ybus isa SparseMatrixCSC{ComplexF64}
+        return build_rectangular_jacobian_pq_pv_sparse(
+            Ybus,
+            V,
+            bus_types,
+            Vset,
+            slack_idx,
+        )
+    else
+        return build_rectangular_jacobian_pq_pv_dense(
+            Ybus,
+            V,
+            bus_types,
+            Vset,
+            slack_idx,
+        )
+    end
+end
 
-Only non-slack buses are treated as variables (Vr/Vi), the slack bus
-voltage is kept fixed.
+
+"""
+    complex_newton_step_rectangular(
+        Ybus,
+        V,
+        S;
+        slack_idx,
+        damp,
+        bus_types,
+        Vset,
+        use_sparse=false,
+    )
+
+Performs one Newton–Raphson step in rectangular coordinates using the analytic
+Jacobian that matches `mismatch_rectangular`.
+
+- State: x = [Vr(non-slack); Vi(non-slack)]
+- Residual: F(x) = mismatch_rectangular(...)
 """
 function complex_newton_step_rectangular(
     Ybus,
     V::Vector{ComplexF64},
     S::Vector{ComplexF64};
-    slack_idx::Int = 1,
-    damp::Float64  = 1.0,
+    slack_idx::Int,
+    damp::Float64 = 1.0,
     bus_types::Vector{Symbol},
-    Vset::Vector{Float64}
+    Vset::Vector{Float64},
+    use_sparse::Bool = false,
 )
     n = length(V)
     @assert length(S)         == n
     @assert length(bus_types) == n
     @assert length(Vset)      == n
 
-    # --- 1) Non-slack indices and mismatch -----------------------------------
+    # Non-slack indices
     non_slack = collect(1:n)
     deleteat!(non_slack, slack_idx)
 
-    # F(V) from mismatch_rectangular:
-    #  - PQ: ΔP_i, ΔQ_i
-    #  - PV: ΔP_i, ΔV_i
+    # Residual matching the FD variant
     F0 = mismatch_rectangular(Ybus, V, S, bus_types, Vset, slack_idx)
-    m  = length(F0)                   # should be 2 * (n - 1)
-
-    # number of real state variables: [Vr(non-slack); Vi(non-slack)]
+    m  = length(F0)
     nvar = 2 * (n - 1)
-    @assert m == nvar "complex_newton_step_rectangular: mismatch length and state dimension differ"
+    @assert m == nvar "complex_newton_step_rectangular: mismatch and state dimension differ"
 
-    # --- 2) Analytic Jacobian passend zu mismatch_rectangular ----------------
+    # Analytic Jacobian (dense or sparse)
     J = build_rectangular_jacobian_pq_pv(
         Ybus,
         V,
         bus_types,
         Vset,
-        slack_idx,
+        slack_idx;
+        use_sparse = use_sparse,
     )
-    @assert size(J, 1) == m && size(J, 2) == nvar
 
-    # --- 3) Solve J * δx = -F -----------------------------------------------
+    # Solve J * δx = -F
     δx = nothing
     try
         δx = J \ (-F0)
     catch e
         if e isa LinearAlgebra.SingularException
-            # Fallback: pseudo-inverse if Jacobian is singular/ill-conditioned
-            δx = pinv(J) * (-F0)
+            δx = pinv(Matrix(J)) * (-F0)
         else
             rethrow(e)
         end
     end
 
-    # --- 4) Damping ----------------------------------------------------------
+    # Damping
     δx .*= damp
 
-    # --- 5) Map δx back to full Vr/Vi state ---------------------------------
+    # Map update back to Vr/Vi
     Vr = real.(V)
     Vi = imag.(V)
 
     Vr_new = copy(Vr)
     Vi_new = copy(Vi)
 
-    # δx layout:
-    #   δx[1:(n-1)]        -> ΔVr(non-slack)
-    #   δx[(n-1)+1:end]    -> ΔVi(non-slack)
     @inbounds for (idx, bus) in enumerate(non_slack)
         Vr_new[bus] += δx[idx]
         Vi_new[bus] += δx[(n - 1) + idx]
     end
 
-    # Keep slack bus fixed (defensive, should already be excluded)
+    # Keep slack voltage fixed
     Vr_new[slack_idx] = Vr[slack_idx]
     Vi_new[slack_idx] = Vi[slack_idx]
 
-    V_new = ComplexF64.(Vr_new, Vi_new)
-    return V_new
+    return ComplexF64.(Vr_new, Vi_new)
 end
 
 """
@@ -791,12 +1043,20 @@ function run_complex_nr_rectangular_for_net!(net::Net;
                                              tol::Float64 = 1e-8,
                                              damp::Float64 = 0.2,
                                              verbose::Int = 0,
-                                             use_fd::Bool = false)
+                                             use_fd::Bool = false,
+                                             opt_sparse::Bool = false)
+
+
+    @info "Running complex rectangular NR power flow... use_fd=$use_fd, opt_sparse=$opt_sparse"                                             
 
     nodes  = net.nodeVec
     n      = length(nodes)
     Sbase  = net.baseMVA
-    sparse = n > 60
+    if !opt_sparse
+       sparse = n > 1000
+    else
+       sparse = opt_sparse
+    end   
     Ybus   = createYBUS(net=net, sparse=sparse, printYBUS = (verbose > 1))
 
     # 1) Initial complex voltages V0 and slack index
@@ -968,6 +1228,7 @@ function run_complex_nr_rectangular_for_net!(net::Net;
                 damp      = damp,
                 bus_types = bus_types,
                 Vset      = Vset,
+                use_sparse= sparse
             )
         end
 
@@ -1012,13 +1273,15 @@ Returns:
     (iterations::Int, status::Int)
 where `status == 0` indicates convergence.
 """
-function runpf_rectangular!(net::Net, maxIte::Int, tolerance::Float64=1e-6, verbose::Int=0)
+function runpf_rectangular!(net::Net, maxIte::Int, tolerance::Float64=1e-6, verbose::Int=0;opt_fd::Bool = false,opt_sparse::Bool=false)
     iters, erg = run_complex_nr_rectangular_for_net!(
         net;
         maxiter = maxIte,
         tol     = tolerance,
         damp    = 1.0,
         verbose = verbose,
+        use_fd  = opt_fd,
+        opt_sparse = opt_sparse,
     )
     return iters, erg
 end

@@ -9,7 +9,7 @@ include("testgrid.jl")
 global_logger(ConsoleLogger(stderr, Logging.Info))
 
 
-function test_5BusNet(verbose::Int = 0, qlim::Float64 = 20.0, methode::Symbol = :rectangular    )
+function test_5BusNet(verbose::Int = 0, qlim::Float64 = 20.0, methode::Symbol = :rectangular, opt_fd::Bool = false, opt_sparse::Bool = false)
     net = createTest5BusNet(cooldown = 2, hyst_pu = 0.000, qlim_min = -qlim, qlim_max = qlim)
     tol = 1e-9
     maxIte = 50
@@ -19,7 +19,7 @@ function test_5BusNet(verbose::Int = 0, qlim::Float64 = 20.0, methode::Symbol = 
     pv_names = ["B2"]        
     etim = 0.0
     etim = @elapsed begin        
-        ite, erg = runpf!(net, maxIte, tol, verbose, method = methode)
+        ite, erg = runpf!(net, maxIte, tol, verbose, method = methode, opt_fd = opt_fd, opt_sparse = opt_sparse)
         if erg != 0
             @info "Full-system power flow did not converge"
             result = false
@@ -39,7 +39,10 @@ function test_5BusNet(verbose::Int = 0, qlim::Float64 = 20.0, methode::Symbol = 
 
     return hit==true
 end
+opt_fd = true
+opt_sparse = true
 
-test_5BusNet(1,5.0, :polar_full)
-test_5BusNet(1,5.0, :rectangular)
-test_5BusNet(1,5.0, :classic)
+
+test_5BusNet(1,5.0, :polar_full, opt_fd, opt_sparse)
+test_5BusNet(1,5.0, :rectangular, opt_fd, opt_sparse)
+test_5BusNet(1,5.0, :classic, opt_fd, opt_sparse)

@@ -223,6 +223,7 @@ function calcNewtonRaphson_withPVIdentity!(
     flatStart::Bool=false, angle_limit::Bool=false, debug::Bool=false)
 
 
+    @info "Running full-system Newton-Raphson with PV identity rows...sparse=$sparse, flatStart=$flatStart, angle_limit=$angle_limit, debug=$debug"
     setJacobianAngleLimit(angle_limit)
     setJacobianDebug(debug)
 
@@ -409,12 +410,11 @@ end
 # ------------------------------
 # Convenience wrapper similar to runpf!, but for the full system
 # ------------------------------
-function runpf_full!(net::Net, maxIte::Int, tolerance::Float64=1e-6, verbose::Int=0)
-    sparse   = length(net.nodeVec) > 60
+function runpf_full!(net::Net, maxIte::Int, tolerance::Float64=1e-6, verbose::Int=0; opt_sparse::Bool=false)    
     printYBus = (length(net.nodeVec) < 20) && (verbose > 1)
-    Y = createYBUS(net=net, sparse=sparse, printYBUS=printYBus)
+    Y = createYBUS(net=net, sparse=opt_sparse, printYBUS=printYBus)
     return calcNewtonRaphson_withPVIdentity!(net, Y, maxIte;
-        tolerance=tolerance, verbose=verbose, sparse=sparse,
+        tolerance=tolerance, verbose=verbose, sparse=opt_sparse,
         flatStart=false, angle_limit=false, debug=false)
 end
 
