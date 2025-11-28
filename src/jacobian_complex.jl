@@ -25,6 +25,9 @@
 # - build_complex_jacobian(): Wirtinger-based Jacobian block construction
 # - mismatch_rectangular(): Residual function for PQ/PV bus constraints
 #
+# Note: No sparse matrix optimizations are currently used, as the matrices are fully populated.
+#       For larger networks (N > 2000), this may lead to performance issues.
+#
 # References:
 # - Wirtinger calculus for complex derivatives
 
@@ -664,44 +667,66 @@ function complex_newton_step_rectangular(
     @assert length(bus_types) == n
     @assert length(Vset)      == n
 
-    # Non-slack bus indices
+    # --- 1) Non-slack indices and mismatch -----------------------------------
     non_slack = collect(1:n)
     deleteat!(non_slack, slack_idx)
 
-    # Base mismatch F(V)
+    # F(V) from mismatch_rectangular:
+    #  - PQ: ΔP_i, ΔQ_i
+    #  - PV: ΔP_i, ΔV_i
     F0 = mismatch_rectangular(Ybus, V, S, bus_types, Vset, slack_idx)
+    m  = length(F0)                   # should be 2 * (n - 1)
 
-    # Analytic Jacobian for the same F(V)
-    J  = build_rectangular_jacobian_pq_pv(Ybus, V, bus_types, Vset, slack_idx)
+    # number of real state variables: [Vr(non-slack); Vi(non-slack)]
+    nvar = 2 * (n - 1)
+    @assert m == nvar "complex_newton_step_rectangular: mismatch length and state dimension differ"
 
-    # Solve J * δx = -F0
+    # --- 2) Analytic Jacobian passend zu mismatch_rectangular ----------------
+    J = build_rectangular_jacobian_pq_pv(
+        Ybus,
+        V,
+        bus_types,
+        Vset,
+        slack_idx,
+    )
+    @assert size(J, 1) == m && size(J, 2) == nvar
+
+    # --- 3) Solve J * δx = -F -----------------------------------------------
     δx = nothing
     try
         δx = J \ (-F0)
     catch e
         if e isa LinearAlgebra.SingularException
+            # Fallback: pseudo-inverse if Jacobian is singular/ill-conditioned
             δx = pinv(J) * (-F0)
         else
             rethrow(e)
         end
     end
 
-    # Damping
+    # --- 4) Damping ----------------------------------------------------------
     δx .*= damp
 
+    # --- 5) Map δx back to full Vr/Vi state ---------------------------------
     Vr = real.(V)
     Vi = imag.(V)
 
-    # Apply corrections only to non-slack buses
-    @inbounds for (k, bus) in enumerate(non_slack)
-        Vr[bus] += δx[k]
-        Vi[bus] += δx[(n - 1) + k]
+    Vr_new = copy(Vr)
+    Vi_new = copy(Vi)
+
+    # δx layout:
+    #   δx[1:(n-1)]        -> ΔVr(non-slack)
+    #   δx[(n-1)+1:end]    -> ΔVi(non-slack)
+    @inbounds for (idx, bus) in enumerate(non_slack)
+        Vr_new[bus] += δx[idx]
+        Vi_new[bus] += δx[(n - 1) + idx]
     end
 
-    V_new = ComplexF64.(Vr, Vi)
-    # keep slack fixed (defensive, sollte schon passen)
-    V_new[slack_idx] = V[slack_idx]
+    # Keep slack bus fixed (defensive, should already be excluded)
+    Vr_new[slack_idx] = Vr[slack_idx]
+    Vi_new[slack_idx] = Vi[slack_idx]
 
+    V_new = ComplexF64.(Vr_new, Vi_new)
     return V_new
 end
 
