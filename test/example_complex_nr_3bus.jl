@@ -33,13 +33,19 @@ slack_idx = 1
 #V, converged, iters, history = run_complex_nr(Ybus, V0, S; slack_idx=slack_idx,
 #                                              maxiter=20, tol=1e-6, verbose=false)
 
+bus_types = [:Slack, :PQ, :PQ]      # hier alles PQ außer Slack
+Vset      = [1.0, 1.0, 1.0]         # PV-Setpoints, für PQ egal
+
 V, converged, iters, history = run_complex_nr_rectangular(
     Ybus, V0, S;
     slack_idx = slack_idx,
     maxiter   = 20,
     tol       = 1e-6,
-    verbose   = true,   # ruhig mal einschalten um Verlauf zu sehen
-    damp      = 0.2
+    verbose   = true,
+    damp      = 0.2,
+    bus_types = bus_types,
+    Vset      = Vset,
+    use_fd    = true  # oder false, wenn du gleich die analytische probieren willst
 )
 
 
