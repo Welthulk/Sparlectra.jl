@@ -13,7 +13,7 @@ using LinearAlgebra, SparseArrays, Printf, Logging
 
 # resource data types for working with Sparlectra
 const Wurzel3 = 1.7320508075688772
-const SparlectraVersion = v"0.4.25"
+const SparlectraVersion = v"0.4.26"
 version() = SparlectraVersion
 abstract type AbstractBranch end
 
@@ -78,7 +78,7 @@ export
   # Network
   addBus!, addShunt!, addACLine!, addPIModelACLine!, add2WTrafo!, addPIModelTrafo!, addProsumer!, lockNet!, validate!, hasBusInNet, addBusGenPower!, addBusLoadPower!, addBusShuntPower!, setNodeVoltage!, setNodeAngle!,
   getNetOrigBusIdx, geNetBusIdx, setNetBranchStatus!, getNetBranch, getNetBranchNumberVec, setTotalLosses!, getTotalLosses, getBusType, get_bus_vn_kV, get_vn_kV, updateBranchParameters!, hasShunt!, 
-  getShunt!, markIsolatedBuses!,setTotalBusPower!, setPVBusVset!, setQLimits!, 
+  getShunt!, markIsolatedBuses!,setTotalBusPower!, setPVBusVset!, setQLimits!, getNodeVm,
   # remove_functions.jl
   removeBus!, removeBranch!, removeACLine!, removeTrafo!, removeShunt!, removeProsumer!, clearIsolatedBuses!,
   # import.jl
@@ -92,7 +92,7 @@ export
   # jacobian.jl
   runpf!, setJacobianDebug, setJacobianAngleLimit,
   # jacobian_full.jl
-  getPowerFeeds_full, residuum_full_withPV, calcJacobian_withPVIdentity, calcNewtonRaphson_withPVIdentity!, runpf_full!, residuum_state_full_withPV,
+  runpf_full!, 
   # limits.jl
   printQLimitLog,logQLimitHit!, lastQLimitIter, getQLimits_pu, logQLimitHit!,lastQLimitIter, resetQLimitLog!, pv_hit_q_limit,
   # losses.jl

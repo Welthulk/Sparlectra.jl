@@ -575,14 +575,20 @@ function addProsumer!(;
   if !isnothing(vm_pu)
     node = net.nodeVec[busIdx]
     isAPUNode = isPVNode(node)
-    setVmVa!(node = node, vm_pu = vm_pu, va_deg = va_deg)
+    nodeVm = getNodeVm(node)
+    if coalesce(nodeVm, Inf) < vm_pu
+      @warn "Voltage setpoint (vm_pu) already provided for prosumer at bus $busName, vm_pu will be ignored!"      
+    else     
+     setVmVa!(node = node, vm_pu = vm_pu, va_deg = va_deg)
+    end  
   end
   proTy = toProSumptionType(type)
   refPriIdx = isnothing(referencePri) ? nothing : geNetBusIdx(net = net, busName = referencePri)
   vn_kV = getNodeVn(net.nodeVec[busIdx])
   prosumer = ProSumer(vn_kv = vn_kV, busIdx = busIdx, oID = idProsSum, type = proTy, p = p, q = q, minP = pMin, maxP = pMax, minQ = qMin, maxQ = qMax, referencePri = refPriIdx, vm_pu = vm_pu, va_deg = va_deg, isAPUNode = isAPUNode)
   push!(net.prosumpsVec, prosumer)
-
+  #TODO "Implement prosumer-specific Q limits handling"
+  @warn "Prosumer-specific Q limits handling is not yet implemented!"
   node = net.nodeVec[busIdx]
   if (isGenerator(proTy))
     addGenPower!(node = node, p = p, q = q)

@@ -191,11 +191,11 @@ function complex_newton_step_rectangular(Ybus, V, S; slack_idx::Int, damp::Float
     end
   end
 
-  # Auf vollen Zustandsvektor zurückheben (Slack hat Δ=0)
+  # Map back to full state vector (slack has Δ=0)
   δx = zeros(Float64, 2n)
   δx[col_idx] .= δx_red
 
-  # Dämpfung
+  # Damping
   δx .*= damp
 
   δVr = δx[1:n]
