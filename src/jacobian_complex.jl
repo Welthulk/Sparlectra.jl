@@ -215,9 +215,6 @@ function run_complex_nr_rectangular(Ybus, V0, S; slack_idx::Int = 1, maxiter::In
     max_mis = maximum(abs.(F))
     push!(history, max_mis)
 
-    if verbose
-      @info "Rectangular NR iteration" iter=iter max_mismatch=max_mis
-    end
     if max_mis <= tol
       return V, true, iter, history
     end
@@ -960,7 +957,10 @@ polar formulations.
 """
 
 function run_complex_nr_rectangular_for_net!(net::Net; maxiter::Int = 20, tol::Float64 = 1e-8, damp::Float64 = 0.2, verbose::Int = 0, use_fd::Bool = false, opt_sparse::Bool = false)
-  @info "Running complex rectangular NR power flow... use_fd=$use_fd, opt_sparse=$opt_sparse"
+  if verbose > 1
+    @info "Running complex rectangular NR power flow... use_fd=$use_fd, opt_sparse=$opt_sparse"    
+  end
+  
 
   nodes = net.nodeVec
   n     = length(nodes)
@@ -1012,7 +1012,7 @@ function run_complex_nr_rectangular_for_net!(net::Net; maxiter::Int = 20, tol::F
   converged = false
   iters     = 0
 
-  if verbose > 0
+  if verbose > 1
     @info "Starting rectangular complex NR power flow..."
     @info "Initial complex voltages V0:" V0
     @info "Slack bus index:" slack_idx
@@ -1027,7 +1027,7 @@ function run_complex_nr_rectangular_for_net!(net::Net; maxiter::Int = 20, tol::F
     max_mis = maximum(abs.(F))
     push!(history, max_mis)
 
-    (verbose > 0) && @info "Rectangular NR iteration" iter=it max_mismatch=max_mis
+    (verbose > 1) && @debug "Rectangular NR iteration" iter=it max_mismatch=max_mis
 
     if max_mis <= tol
       converged = true
@@ -1062,7 +1062,7 @@ function run_complex_nr_rectangular_for_net!(net::Net; maxiter::Int = 20, tol::F
 
           net.qLimitEvents[busIdx] = :max
           logQLimitHit!(net, it, busIdx, :max)
-          (verbose>0) && @printf "PV->PQ Bus %d: Q=%.4f > Qmax=%.4f (it=%d)\n" busIdx qreq qmax_pu[k] it
+          (verbose>2) && @printf "PV->PQ Bus %d: Q=%.4f > Qmax=%.4f (it=%d)\n" busIdx qreq qmax_pu[k] it
 
         elseif qreq < qmin_pu[k]
           bus_types[k] = :PQ
@@ -1071,7 +1071,7 @@ function run_complex_nr_rectangular_for_net!(net::Net; maxiter::Int = 20, tol::F
 
           net.qLimitEvents[busIdx] = :min
           logQLimitHit!(net, it, busIdx, :min)
-          (verbose>0) && @printf "PV->PQ Bus %d: Q=%.4f < Qmin=%.4f (it=%d)\n" busIdx qreq qmin_pu[k] it
+          (verbose>2) && @printf "PV->PQ Bus %d: Q=%.4f < Qmin=%.4f (it=%d)\n" busIdx qreq qmin_pu[k] it
         end
       end
 

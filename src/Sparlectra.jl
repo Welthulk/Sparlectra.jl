@@ -9,7 +9,7 @@
 #! format: off
 
 module Sparlectra
-using LinearAlgebra, SparseArrays, Printf, Logging
+using LinearAlgebra, Dates, SparseArrays, Printf, Logging
 
 # resource data types for working with Sparlectra
 const Wurzel3 = 1.7320508075688772
@@ -98,7 +98,7 @@ export
   # losses.jl
   calcNetLosses!, buildVoltageVector,
   # results.jl
-  printACPFlowResults, convertPVtoPQ!,formatProsumerResults,
+  printACPFlowResults, printProsumerResults,
   # run_acpflow.jl
   run_acpflow, run_net_acpflow,
   # jacobian_complex.jl
