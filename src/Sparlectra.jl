@@ -74,11 +74,11 @@ export
   # ACLineSegment
   get_line_parameters, isLinePIModel, getLineRXBG, getLineRXBG_pu,
   # ProSumer
-  isSlack, isGenerator, isAPUNode, setQGenReplacement!, getQGenReplacement, toProSumptionType, updatePQ!, getPosumerBusIndex,
+  isSlack, isGenerator, isAPUNode, setQGenReplacement!, getQGenReplacement, toProSumptionType, updatePQ!, getPosumerBusIndex, setPQResult!,
   # Network
   addBus!, addShunt!, addACLine!, addPIModelACLine!, add2WTrafo!, addPIModelTrafo!, addProsumer!, lockNet!, validate!, hasBusInNet, addBusGenPower!, addBusLoadPower!, addBusShuntPower!, setNodeVoltage!, setNodeAngle!,
   getNetOrigBusIdx, geNetBusIdx, setNetBranchStatus!, getNetBranch, getNetBranchNumberVec, setTotalLosses!, getTotalLosses, getBusType, get_bus_vn_kV, get_vn_kV, updateBranchParameters!, hasShunt!, 
-  getShunt!, markIsolatedBuses!,setTotalBusPower!, setPVBusVset!, setQLimits!, getNodeVm,
+  getShunt!, markIsolatedBuses!,setTotalBusPower!, setPVBusVset!, setQLimits!, getNodeVm,distribute_all_bus_results!,
   # remove_functions.jl
   removeBus!, removeBranch!, removeACLine!, removeTrafo!, removeShunt!, removeProsumer!, clearIsolatedBuses!,
   # import.jl
@@ -98,7 +98,7 @@ export
   # losses.jl
   calcNetLosses!, buildVoltageVector,
   # results.jl
-  printACPFlowResults, convertPVtoPQ!,
+  printACPFlowResults, convertPVtoPQ!,formatProsumerResults,
   # run_acpflow.jl
   run_acpflow, run_net_acpflow,
   # jacobian_complex.jl

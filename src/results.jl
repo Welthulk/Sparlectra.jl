@@ -205,3 +205,44 @@ function convertPVtoPQ!(net::Net)
     end
   end
 end
+
+
+function formatProsumerResults(net::Net)
+    buf = IOBuffer()
+    println(buf, "\nProsumer results (per generator/load):")
+    println(buf, "===================================================================================================================")
+    @printf(buf, "| %-5s | %-20s | %-20s | %-8s | %-10s | %-10s |\n",
+                 "Bus", "BusName", "ProsumName", "Type", "P [MW]", "Q [MVar]")
+    println(buf, "===================================================================================================================")
+
+    # Busnamen rekonstruieren (umgekehrtes Mapping von net.busDict)
+    busNameByIdx = Dict{Int,String}()
+    for (name, idx) in net.busDict
+        busNameByIdx[idx] = name
+    end
+
+    for (k, ps) in enumerate(net.prosumpsVec)
+        bus = getPosumerBusIndex(ps)
+        busName = get(busNameByIdx, bus, "Bus_$bus")
+        p = ps.pRes
+        q = ps.qRes
+
+        # Wenn noch nichts verteilt wurde, ggf. spec drucken
+        if isnothing(p) && !isnothing(ps.pVal)
+            p = ps.pVal
+        end
+        if isnothing(q) && !isnothing(ps.qVal)
+            q = ps.qVal
+        end
+
+        typ = isGenerator(ps) ? "Gen" : "Load"
+
+        @printf(buf, "| %-5d | %-20s | %-20s | %-8s | %10.3f | %10.3f |\n",
+                    bus, busName, ps.comp.cName, typ,
+                    p === nothing ? 0.0 : p,
+                    q === nothing ? 0.0 : q)
+    end
+
+    println(buf, "-------------------------------------------------------------------------------------------------------------------")
+    return String(take!(buf))
+end
