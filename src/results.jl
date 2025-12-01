@@ -1,8 +1,7 @@
 # Author: Udo Schmitz (https://github.com/Welthulk)
 # Date: 07.09.2023
-# include-file results.jl
-using Dates
-
+# file results.jl
+# Purpose: functions for formatting and printing results of power flow calculations
 function format_version(version::VersionNumber)
   major = lpad(version.major, 2, '0')
   minor = lpad(version.minor, 1, '0')
@@ -193,21 +192,7 @@ function printACPFlowResults(net::Net, ct::Float64, ite::Int, tol::Float64, toFi
   end
 end
 
-function convertPVtoPQ!(net::Net)
-  for n in net.nodeVec
-    if n._nodeType == Sparlectra.PV
-      busIdx = n.busIdx
-      for p in net.prosumpsVec
-        if p.comp.cFrom_bus == busIdx
-          setQGenReplacement!(p, n._qƩGen)
-        end
-      end
-    end
-  end
-end
-
-
-function formatProsumerResults(net::Net)
+function _formatProsumerResults(net::Net)
     buf = IOBuffer()
     println(buf, "\nProsumer results (per generator/load):")
     println(buf, "===================================================================================================================")
@@ -245,4 +230,10 @@ function formatProsumerResults(net::Net)
 
     println(buf, "-------------------------------------------------------------------------------------------------------------------")
     return String(take!(buf))
+end
+
+function printProsumerResults(net::Net; io::IO = stdout)
+    prosText = _formatProsumerResults(net)    
+    println(prosText, io)
+    
 end

@@ -1093,6 +1093,8 @@ end
 
 """
     setPVBusVset!(net::Net, busName::String; vm_pu::Float64)
+  Sets the voltage magnitude setpoint for a PV bus in the network.
+  Only applicable for buses of type "PV" and for testing purpose.
 """
 
 function setPVBusVset!(; net::Net, busName::String, vm_pu::Float64)
@@ -1101,7 +1103,7 @@ function setPVBusVset!(; net::Net, busName::String, vm_pu::Float64)
 end
 
 
-function waterfill_q(Q_target::Float64,
+function _wattterfillQ(Q_target::Float64,
                      q_spec::Vector{Float64},
                      qmin::Vector{Float64},
                      qmax::Vector{Float64};
@@ -1200,7 +1202,7 @@ function distribute_bus_generation!(net::Net, bus::Int)
     end
 
     # --- Q-Verteilung mit Waterfilling ---
-    Q_alloc = waterfill_q(Q_target, Q_spec, qmin, qmax)
+    Q_alloc = _wattterfillQ(Q_target, Q_spec, qmin, qmax)
 
     # Ergebnisse zurück in Prosumer
     for (pq, idx) in enumerate(gens_idx)

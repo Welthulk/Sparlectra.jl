@@ -42,10 +42,9 @@ function test_5BusNet(verbose::Int = 0, qlim::Float64 = 20.0, methode::Symbol = 
     V = buildVoltageVector(net)
     calcNetLosses!(net, V)
     distribute_all_bus_results!(net)
-    printACPFlowResults(net, etim, ite, tol)
+    printACPFlowResults(net, etim, ite, tol)    
+    printProsumerResults(net)    
     printQLimitLog(net; sort_by = :bus)
-    prosText = formatProsumerResults(net)
-    println(io, prosText)
   end
 
   return hit==true
