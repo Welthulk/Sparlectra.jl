@@ -6,7 +6,7 @@ using Printf
 using Logging
 
 include("testgrid.jl")
-global_logger(ConsoleLogger(stderr, Logging.Info))
+global_logger(ConsoleLogger(stderr, Logging.Debug))
 
 function importCaseFile()
   case = "case5.m"
@@ -41,8 +41,11 @@ function test_5BusNet(verbose::Int = 0, qlim::Float64 = 20.0, methode::Symbol = 
   if print_results
     V = buildVoltageVector(net)
     calcNetLosses!(net, V)
+    distribute_all_bus_results!(net)
     printACPFlowResults(net, etim, ite, tol)
     printQLimitLog(net; sort_by = :bus)
+    prosText = formatProsumerResults(net)
+    println(io, prosText)
   end
 
   return hit==true
@@ -50,6 +53,6 @@ end
 opt_fd = true
 opt_sparse = true
 
-test_5BusNet(1, 5.0, :polar_full, opt_fd, opt_sparse)
 test_5BusNet(1, 5.0, :rectangular, opt_fd, opt_sparse)
-test_5BusNet(1, 5.0, :classic, opt_fd, opt_sparse)
+#test_5BusNet(1, 5.0, :polar_full, opt_fd, opt_sparse)
+#test_5BusNet(1, 5.0, :classic, opt_fd, opt_sparse)
