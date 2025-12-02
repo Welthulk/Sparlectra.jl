@@ -388,8 +388,6 @@ function mismatch_rectangular(Ybus, V::Vector{ComplexF64}, S::Vector{ComplexF64}
   return F
 end
 
-using SparseArrays
-
 """
     build_rectangular_jacobian_pq_pv_sparse(
         Ybus,
@@ -613,100 +611,6 @@ function build_rectangular_jacobian_pq_pv_sparse(Ybus::SparseMatrixCSC{ComplexF6
   return sparse(Iidx, Jidx, Vals, m, nvar)
 end
 
-"""
-    complex_newton_step_rectangular_fd(Ybus, V, S;
-                                       slack_idx=1,
-                                       damp=1.0,
-                                       h=1e-6)
-
-Performs one Newton–Raphson step in rectangular coordinates using a
-finite-difference Jacobian on the mismatch
-
-    F(V) = [ real(ΔS_non_slack); imag(ΔS_non_slack) ]
-
-with ΔS = S_calc(V) - S_spec.
-
-Arguments:
-- `Ybus`: bus admittance matrix (n×n, Complex)
-- `V`: current complex bus voltage vector (length n)
-- `S`: specified complex power injections P + jQ (length n)
-- `slack_idx`: index of the slack bus (no equations / no variables)
-- `damp`: scalar damping factor for the Newton step (0 < damp ≤ 1)
-- `h`: perturbation step for finite differences
-
-Returns:
-- updated complex voltage vector `V_new`
-"""
-function complex_newton_step_rectangular_fd(Ybus, V, S; slack_idx::Int = 1, damp::Float64 = 1.0, h::Float64 = 1e-6, bus_types::Vector{Symbol}, Vset::Vector{Float64})
-  n = length(V)
-
-  # Base mismatch F(V)
-  F0 = mismatch_rectangular(Ybus, V, S, bus_types, Vset, slack_idx)
-  m = length(F0)  # = 2 * (n-1)
-
-  # Non-slack buses
-  non_slack = collect(1:n)
-  deleteat!(non_slack, slack_idx)
-
-  # Variables: Vr(non_slack) and Vi(non_slack)
-  nvar = 2 * (n - 1)
-  @assert nvar == m "Rectangular FD-Newton: nvar and m should both equal 2*(n-1)"
-
-  J = zeros(Float64, m, nvar)
-
-  Vr = real.(V)
-  Vi = imag.(V)
-
-  # Columns 1..(n-1): perturb Vr(non_slack[k])
-  for (col_idx, bus) in enumerate(non_slack)
-    V_pert = copy(V)
-    V_pert[bus] = ComplexF64(Vr[bus] + h, Vi[bus])
-
-    Fp = mismatch_rectangular(Ybus, V_pert, S, bus_types, Vset, slack_idx)
-    J[:, col_idx] .= (Fp .- F0) ./ h
-  end
-
-  # Columns (n)..2(n-1): perturb Vi(non_slack[k])
-  for (offset, bus) in enumerate(non_slack)
-    col_idx = (n - 1) + offset
-    V_pert = copy(V)
-    V_pert[bus] = ComplexF64(Vr[bus], Vi[bus] + h)
-
-    Fp = mismatch_rectangular(Ybus, V_pert, S, bus_types, Vset, slack_idx)
-    J[:, col_idx] .= (Fp .- F0) ./ h
-  end
-
-  # Solve J * δx = -F0
-  δx = nothing
-  try
-    δx = J \ (-F0)
-  catch e
-    if e isa LinearAlgebra.SingularException
-      δx = pinv(J) * (-F0)
-    else
-      rethrow(e)
-    end
-  end
-
-  # Damping
-  δx .*= damp
-
-  Vr_new = copy(Vr)
-  Vi_new = copy(Vi)
-
-  # Apply update to non-slack buses
-  for (idx, bus) in enumerate(non_slack)
-    Vr_new[bus] += δx[idx]
-    Vi_new[bus] += δx[(n-1)+idx]
-  end
-
-  # Keep slack bus fixed
-  Vr_new[slack_idx] = Vr[slack_idx]
-  Vi_new[slack_idx] = Vi[slack_idx]
-
-  V_new = ComplexF64.(Vr_new, Vi_new)
-  return V_new
-end
 
 """
     build_rectangular_jacobian_pq_pv_dense(
