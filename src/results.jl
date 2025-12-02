@@ -232,8 +232,8 @@ function _formatProsumerResults(net::Net)
     return String(take!(buf))
 end
 
-function printProsumerResults(net::Net; io::IO = stdout)
+function printProsumerResults(net::Net)
     prosText = _formatProsumerResults(net)    
-    println(prosText, io)
+    println(prosText)
     
 end

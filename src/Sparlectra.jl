@@ -102,7 +102,7 @@ export
   # run_acpflow.jl
   run_acpflow, run_net_acpflow,
   # jacobian_complex.jl
-  runpf_rectangular!
+  runpf_rectangular!, mismatch_rectangular
   
 include("utilities.jl")
 include("component.jl")
@@ -127,6 +127,7 @@ include("results.jl")
 include("run_acpflow.jl")
 include("remove_functions.jl") 
 include("jacobian_complex.jl")
+include("jacobian_fd.jl")
 
 #! format: on
 end # module Sparlectra

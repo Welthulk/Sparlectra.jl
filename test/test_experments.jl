@@ -24,7 +24,7 @@ function test_5BusNet(verbose::Int = 0, qlim::Float64 = 20.0, methode::Symbol = 
   print_results = (verbose > 0)
   result = true
 
-  pv_names = ["B2"]
+  pv_names = ["B3"]
   etim = 0.0
   etim = @elapsed begin
     ite, erg = runpf!(net, maxIte, tol, verbose, method = methode, opt_fd = opt_fd, opt_sparse = opt_sparse)
