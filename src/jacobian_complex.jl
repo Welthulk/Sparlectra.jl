@@ -283,15 +283,17 @@ function build_S_from_net(net::Net)
   baseMVA = net.baseMVA
 
   for (k, node) in enumerate(nodes)
-    Pgen_MW    = isnothing(node._pƩGen) ? 0.0 : node._pƩGen
+        Pgen_MW    = isnothing(node._pƩGen) ? 0.0 : node._pƩGen
     Qgen_MVar  = isnothing(node._qƩGen) ? 0.0 : node._qƩGen
     Pload_MW   = isnothing(node._pƩLoad) ? 0.0 : node._pƩLoad
     Qload_MVar = isnothing(node._qƩLoad) ? 0.0 : node._qƩLoad
-    Psh_MW     = isnothing(node._pShunt) ? 0.0 : node._pShunt
-    Qsh_MVar   = isnothing(node._qShunt) ? 0.0 : node._qShunt
+    # Shunt powers are already represented via Ybus (shunt admittance),
+    # so they must NOT be subtracted again in the specified injections.
+    # Psh_MW     = isnothing(node._pShunt) ? 0.0 : node._pShunt
+    # Qsh_MVar   = isnothing(node._qShunt) ? 0.0 : node._qShunt
 
-    Pinj_MW   = Pgen_MW - Pload_MW - Psh_MW
-    Qinj_MVar = Qgen_MVar - Qload_MVar - Qsh_MVar
+    Pinj_MW   = Pgen_MW - Pload_MW
+    Qinj_MVar = Qgen_MVar - Qload_MVar
 
     Ppu = Pinj_MW / baseMVA
     Qpu = Qinj_MVar / baseMVA
