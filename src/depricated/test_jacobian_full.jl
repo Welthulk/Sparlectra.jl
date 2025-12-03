@@ -5,7 +5,7 @@
 # 1) Basic convergence test using the same CIGRE-HV builder
 # -----------------------------------------------------------------------------
 function test_acpflow_full(verbose::Int = 0)
-  net = testCreateNetworkFromScratch()
+  net = createCIGRE()
   tol = 1e-6
   maxIte = 20
   print_results = (verbose > 0)
@@ -33,8 +33,8 @@ end
 #    - Additionally check that PV buses satisfy |V - Vset| ≤ tol_vm_pv.
 # -----------------------------------------------------------------------------
 function test_full_matches_reduced(; tol_vm::Float64 = 5e-4, tol_va_deg::Float64 = 5e-3, tol_vm_pv::Float64 = 5e-4, verbose::Int = 0)
-  net1 = testCreateNetworkFromScratch()
-  net2 = testCreateNetworkFromScratch()
+  net1 = createCIGRE()
+  net2 = createCIGRE()
 
   tol = 1e-6
   maxIte = 30
@@ -88,7 +88,7 @@ end
 #      only one nonzero at its local V-column with value ≈ V_i (relative scaling)
 # -----------------------------------------------------------------------------
 function test_jacobian_full_structure(; verbose::Int = 0)
-  net = testCreateNetworkFromScratch()
+  net = createCIGRE()
   Y = createYBUS(net = net, sparse = true, printYBUS = false)
 
   # build bus vectors like in calcNewtonRaphson_withPVIdentity!
@@ -156,7 +156,7 @@ function test_pv_q_limit_switch!(net::Net; verbose::Int = 0)
   tol = 1e-6
   maxIt = 30
   print_results = (verbose > 0)
-  # PV buses known from testCreateNetworkFromScratch()
+  # PV buses known from createCIGRE()
   pv_names = ["B10", "B11", "B12"]
 
   # 1) Raise Vset a bit; keep generous Q-limits so no PV->PQ is expected
@@ -195,7 +195,7 @@ end
 
 # Wrapper for runtests.jl – builds the network like the other full-system tests
 function test_pv_q_limit_switch(; verbose::Int = 1)
-  net = testCreateNetworkFromScratch()
+  net = createCIGRE()
   return test_pv_q_limit_switch!(net; verbose = verbose)
 end
 

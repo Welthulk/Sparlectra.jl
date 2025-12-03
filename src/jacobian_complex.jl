@@ -862,7 +862,7 @@ polar formulations.
 - `build_rectangular_jacobian_pq_pv()`: Analytic Jacobian construction
 """
 
-function run_complex_nr_rectangular_for_net!(net::Net; maxiter::Int = 20, tol::Float64 = 1e-8, damp::Float64 = 0.2, verbose::Int = 0, use_fd::Bool = false, opt_sparse::Bool = false)
+function run_complex_nr_rectangular_for_net!(net::Net; maxiter::Int = 20, tol::Float64 = 1e-8, damp::Float64 = 0.2, verbose::Int = 0, use_fd::Bool = false, opt_sparse::Bool = true)
   if verbose > 1
     @info "Running complex rectangular NR power flow... use_fd=$use_fd, opt_sparse=$opt_sparse"    
   end
@@ -1098,7 +1098,37 @@ Returns:
     (iterations::Int, status::Int)
 where `status == 0` indicates convergence.
 """
-function runpf_rectangular!(net::Net, maxIte::Int, tolerance::Float64 = 1e-6, verbose::Int = 0; opt_fd::Bool = false, opt_sparse::Bool = false)
-  iters, erg = run_complex_nr_rectangular_for_net!(net; maxiter = maxIte, tol = tolerance, damp = 1.0, verbose = verbose, use_fd = opt_fd, opt_sparse = opt_sparse)  
+function runpf_rectangular!(net::Net, maxIte::Int, tolerance::Float64 = 1e-6, verbose::Int = 0; opt_fd::Bool = false, opt_sparse::Bool = true, damp = 1.0)
+  iters, erg = run_complex_nr_rectangular_for_net!(net; maxiter = maxIte, tol = tolerance, damp = damp, verbose = verbose, use_fd = opt_fd, opt_sparse = opt_sparse)  
   return iters, erg
+end
+
+"""
+    runpf!(net, maxIte, tolerance=1e-6, verbose=0; method=:polar_full)
+
+Unified AC power flow interface.
+
+Arguments:
+- `net::Net`: network
+- `maxIte::Int`: maximum iterations
+- `tolerance::Float64`: mismatch tolerance
+- `verbose::Int`: verbosity level
+- `method::Symbol`: `:polar_full` (default) or `:rectangular`
+
+Returns:
+    (iterations::Int, status::Int)
+
+where `status == 0` indicates convergence.
+"""
+function runpf!(net::Net, maxIte::Int, tolerance::Float64 = 1e-6, verbose::Int = 0; method::Symbol = :rectangular, opt_fd::Bool = false, opt_sparse::Bool = true, damp = 1.0)
+  @info "Running AC Power Flow using method: $(method)"
+  if method === :polar_full
+    return runpf_full!(net, maxIte, tolerance, verbose;  opt_sparse = opt_sparse)
+  elseif method === :rectangular
+    return runpf_rectangular!(net, maxIte, tolerance, verbose; opt_fd = opt_fd, opt_sparse = opt_sparse, damp = damp)
+  elseif method === :classic
+    return runpf_classic!(net, maxIte, tolerance, verbose; opt_sparse = opt_sparse)
+  else
+    error("runpf!: unknown method $(method). Use :polar_full or :rectangular.")
+  end
 end

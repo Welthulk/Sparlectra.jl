@@ -3,16 +3,14 @@
 # CIGRE HV network
 # Source of this network can be found here (Task Force C6.04.02 ): https://www.researchgate.net/publication/271963972_TF_C60402_TB_575_--_Benchmark_Systems_for_Network_Integration_of_Renewable_and_Distributed_Energy_Resources
 
-# DO NOT add 'using' statements here as they're already in runtest.jl
-
-function test_acpflow(verbose::Int = 0)
-  net = testCreateNetworkFromScratch()
+function test_acpflow(verbose::Int = 0; lLine_6a6b::Float64 = 0.01, damp::Float64 = 1.0, method::Symbol = :rectangular, opt_sparse = true)::Bool
+  net = createCIGRE(lLine_6a6b)
   tol = 1e-6
-  maxIte = 10
+  maxIte = 25
   print_results = (verbose > 0)
   result = true
   etime = @elapsed begin
-    ite, erg = runpf!(net, maxIte, tol, verbose)
+    ite, erg = runpf!(net, maxIte, tol, verbose; method = method, damp = damp, opt_sparse = opt_sparse)
   end
   if erg != 0
     @warn "Power flow did not converge"
@@ -28,7 +26,7 @@ function test_acpflow(verbose::Int = 0)
 end
 
 function test_NBI_MDO()
-  myNet = testCreateNetworkFromScratch()
+  myNet =createCIGRE()
   result = true
 
   nodeNumberVec = Vector{Int}()
@@ -62,7 +60,7 @@ function test_NBI_MDO()
 end
 
 function testNetwork()::Bool
-  myNet = testCreateNetworkFromScratch()
+  myNet = createCIGRE()
   result, msg = validate!(net = myNet)
   return result
 end
@@ -74,7 +72,7 @@ function getTestFilePathName()
 end
 
 function testExportMatpower()
-  myNet = testCreateNetworkFromScratch()
+  myNet = createCIGRE()
   case = myNet.name
   writeMatpowerCasefile(myNet, getTestFilePathName())
   return true
@@ -173,11 +171,9 @@ function testISOBusses()
   return true
 end
 
-function testCreateNetworkFromScratch()
+function createCIGRE(lLine_6a6b = 0.01)::Net
   Sbase_MVA = 1000.0
   netName = "cigre"
-  # length of coupling bus 6b-6a
-  lLine_6a6b = 0.01
   net = Net(name = netName, baseMVA = Sbase_MVA)
   @info "Creating $netName test network"
   # A R E A 1
@@ -257,11 +253,11 @@ function testCreateNetworkFromScratch()
   # addProsumer!(net = net, busName = "B3", type = "ENERGYCONSUMER", p = 285.0, q = 200.0)
   addProsumer!(net = net, busName = "B2", type = "ENERGYCONSUMER", p = 285.0, q = 200.0)
   # 'Load 3' (bus3, p_mw=103.0, q_mvar=62.0)
-  addProsumer!(net = net, busName = "B3", type = "ENERGYCONSUMER", p = 103.0, q = 62.0)
+  addProsumer!(net = net, busName = "B3", type = "ENERGYCONSUMER", p = 80.0, q = 30.0)
   # 'Load 4' (net_cigre_hv, bus4, p_mw=326.0, q_mvar=244.0, name='Load 4')
-  addProsumer!(net = net, busName = "B4", type = "ENERGYCONSUMER", p = 326.0, q = 244.0)
+  addProsumer!(net = net, busName = "B4", type = "ENERGYCONSUMER", p = 320.0, q = 200.0)
   # 'Load 5' (net_cigre_hv, bus5, p_mw=103, q_mvar=62, name='Load 5')	
-  addProsumer!(net = net, busName = "B5", type = "ENERGYCONSUMER", p = 103.0, q = 62.0)
+  addProsumer!(net = net, busName = "B5", type = "ENERGYCONSUMER", p = 80.0, q = 30.0)
   # 'Load 6a' (net_cigre_hv, bus6a, p_mw=435, q_mvar=296, name='Load 6a')
   addProsumer!(net = net, busName = "B6a", type = "ENERGYCONSUMER", p = 435.0, q = 296.0)
 
@@ -343,3 +339,35 @@ function createTest2BusNet(; cooldown = 0, hyst_pu = 0.0, qlim_min = nothing, ql
   return Bus2Net
 end
 
+function test_5BusNet(verbose::Int = 0, qlim::Float64 = 20.0, opt_fd::Bool = false, opt_sparse::Bool = false)
+  net = createTest5BusNet(cooldown = 2, hyst_pu = 0.000, qlim_min = -qlim, qlim_max = qlim)
+  tol = 1e-9
+  maxIte = 50
+  print_results = (verbose > 0)
+  result = true
+
+  pv_names = ["B3"]
+  etim = 0.0
+  etim = @elapsed begin
+    ite, erg = runpf!(net, maxIte, tol, verbose, opt_fd = opt_fd, opt_sparse = opt_sparse)
+    if erg != 0
+      @info "Full-system power flow did not converge"
+      result = false
+    end
+  end
+
+  #
+
+  hit = pv_hit_q_limit(net, pv_names)
+
+  if print_results
+    V = buildVoltageVector(net)
+    calcNetLosses!(net, V)
+    distribute_all_bus_results!(net)
+    printACPFlowResults(net, etim, ite, tol)    
+    printProsumerResults(net)    
+    printQLimitLog(net; sort_by = :bus)
+  end
+
+  return hit==true
+end

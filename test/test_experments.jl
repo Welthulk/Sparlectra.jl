@@ -17,7 +17,7 @@ function importCaseFile()
   run_acpflow(casefile = case, opt_sparse = true, opt_fd = false, method = :classic)
 end
 
-function test_5BusNet(verbose::Int = 0, qlim::Float64 = 20.0, methode::Symbol = :rectangular, opt_fd::Bool = false, opt_sparse::Bool = false)
+function test_5BusNet(verbose::Int = 0, qlim::Float64 = 20.0,  opt_fd::Bool = false, opt_sparse::Bool = false)
   net = createTest5BusNet(cooldown = 2, hyst_pu = 0.000, qlim_min = -qlim, qlim_max = qlim)
   tol = 1e-9
   maxIte = 50
@@ -27,7 +27,7 @@ function test_5BusNet(verbose::Int = 0, qlim::Float64 = 20.0, methode::Symbol = 
   pv_names = ["B3"]
   etim = 0.0
   etim = @elapsed begin
-    ite, erg = runpf!(net, maxIte, tol, verbose, method = methode, opt_fd = opt_fd, opt_sparse = opt_sparse)
+    ite, erg = runpf!(net, maxIte, tol, verbose; method = :polar_full, opt_fd = opt_fd, opt_sparse = opt_sparse)
     if erg != 0
       @info "Full-system power flow did not converge"
       result = false
@@ -49,9 +49,43 @@ function test_5BusNet(verbose::Int = 0, qlim::Float64 = 20.0, methode::Symbol = 
 
   return hit==true
 end
-opt_fd = true
-opt_sparse = true
 
-test_5BusNet(1, 5.0, :rectangular, opt_fd, opt_sparse)
+function cross_check()
+
+  net = createCIGRE()
+  open("network_dump.txt", "w") do io
+      println(io, "=== TRANSFORMERS ===")
+      show(io, "text/plain", net.trafos)
+
+      println(io, "\n\n=== AC LINES ===")
+      show(io, "text/plain", net.linesAC)
+  end
+
+
+  # 1) Referenz: polar_full (should convergen)
+  iters_polar, status_polar = runpf!(net, 10, 1e-8, 2; method = :polar_full, opt_fd = false)
+  println("polar_full: iters = $iters_polar, status = $status_polar")
+  println("---------------------------------------------------")
+
+  ## 2) FD-Jacobian
+  #net = createCIGRE()
+  iters_fd, status_fd = runpf!(net, 10, 1e-8, 1; method = :rectangular, opt_fd = true)
+  println("rectangular FD: iters = $iters_fd, status = $status_fd")
+  println("---------------------------------------------------")
+  # 3) analytic Jacobian
+  net = createCIGRE()
+  iters_ana, status_ana = runpf!(net, 10, 1e-8, 1; method = :rectangular, opt_fd = false)
+  println("rectangular analytic: iters = $iters_ana, status = $status_ana")
+  println("---------------------------------------------------")
+  # 4) classic Jacobian
+  net = createCIGRE()
+  iters_cl, status_cl = runpf!(net, 10, 1e-8, 1; method = :classic, opt_fd = false)
+  println("jacobian classic: iters = $iters_cl, status = $status_cl")
+  println("---------------------------------------------------")
+end
+
+#test_5BusNet(1, 5.0, :rectangular, false, false)
 #test_5BusNet(1, 5.0, :polar_full, opt_fd, opt_sparse)
 #test_5BusNet(1, 5.0, :classic, opt_fd, opt_sparse)
+test_acpflow(1;lLine_6a6b = 0.01, damp = 1.0, method = :rectangular, opt_sparse = true)
+#test_5BusNet(1, 25.0, false, false)
