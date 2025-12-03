@@ -576,8 +576,8 @@ function addProsumer!(;
     node = net.nodeVec[busIdx]
     isAPUNode = isPVNode(node)
     nodeVm = getNodeVm(node)
-    if coalesce(nodeVm, Inf) < vm_pu
-      @warn "Voltage setpoint (vm_pu) already provided for prosumer at bus $busName, vm_pu will be ignored!"      
+    if !isnothing(nodeVm) && nodeVm > vm_pu
+      @warn "Voltage setpoint $nodeVm already provided for prosumer at bus $busName, $vm_pu will be ignored!"      
     else     
      setVmVa!(node = node, vm_pu = vm_pu, va_deg = va_deg)
     end  
