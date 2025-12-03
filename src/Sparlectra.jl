@@ -102,7 +102,7 @@ export
   # run_acpflow.jl
   run_acpflow, run_net_acpflow,
   # jacobian_complex.jl
-  runpf_rectangular!, mismatch_rectangular
+  runpf_rectangular!, mismatch_rectangular, complex_newton_step_rectangular_fd, initial_Vrect_from_net, build_S_from_net
   
 include("utilities.jl")
 include("component.jl")
