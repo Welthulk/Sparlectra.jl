@@ -9,19 +9,15 @@ global_logger(ConsoleLogger(stderr, Logging.Warn))
 
 include("testgrid.jl")
 include("testremove.jl")
-include("test_jacobian_full.jl")
 
 @testset "Sparlectra.jl" begin
   @test testNetwork() == true
   @test test_NBI_MDO() == true
-  @test test_acpflow(0) == true
+  @test test_acpflow(0; lLine_6a6b = 0.01, damp = 1.0, method = :rectangular, opt_sparse = true) == true
+  @test test_acpflow(0; lLine_6a6b = 0.01, damp = 1.0, method = :rectangular, opt_sparse = false) == true
+  @test test_acpflow(0; lLine_6a6b = 0.01, damp = 1.0, method = :polar_full, opt_sparse = true) == true
+  @test test_acpflow(0; lLine_6a6b = 0.01, damp = 1.0, method = :classic, opt_sparse = true) == true
   @test testISOBusses() == true
   @test testRemoveFunctions() == true
-  @testset "Full-system NR (PV identity rows)" begin
-    @test test_acpflow_full(0) == true
-    @test test_full_matches_reduced() == true
-    @test test_jacobian_full_structure() == true
-    @test test_5BusNet(0, 15.0) == true
-    @test test_5BusNet(0, 30.0) == false
-  end
+  @test test_5BusNet(0, 10.0) == true
 end

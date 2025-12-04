@@ -27,12 +27,14 @@ makedocs(
         "workshop.md",
         "branchmodel.md",
         "changelog.md",
+        "powerlimits_solvers.md",
         raw"API" => [
             "reference.md",
             "component_types.md",
             "networks.md",
             "import.md",
             "remove_functions.md",
+            "powerlimits_solvers.md",
         ],
     ],
 )

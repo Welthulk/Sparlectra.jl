@@ -96,3 +96,116 @@ jpath = joinpath(pwd(), "data", "mpower", filename)
 writeMatpowerCasefile(net, jpath) # write the net to a matpower case file
 
 ```
+## How to enable rectangular NR with Q-limits in your script
+### 1. Prepare / load a network
+You can build the workshop network from the earlier example and
+reuse the resulting `net`.
+
+### 2. Define PV buses and Q-limits
+
+Make sure your generator buses are of type `PV` and set
+reactive power limits (in MVar)
+
+```julia
+# Example: set bus types if needed
+setBusType!(net, "B5", "Slack")   # Slack bus
+setBusType!(net, "B1", "PV")      # PV bus with generator
+...
+addProsumer!(net = net, busName = "B1", type = "SYNCHRONOUSMACHINE", p = 10.0, q = 10.0, vm_pu = 1.03, va_deg = 0.0, qMax = 50, qMin = -50)
+```
+
+### 3. Validate the network
+
+```julia
+result, msg = validate!(net = net)
+if !result
+    @error "Network validation failed: $msg"
+    return
+end
+#lockNet!(net)  # Prevent further structural modifications
+```
+
+### 4. Run rectangular NR with Q-limits
+
+Use `runpf!` with `method = :rectangular` to select the complex-state solver.
+You can also switch between analytic and finite-difference Jacobian and control
+sparsity and damping.
+
+```julia
+maxIte   = 20
+tol      = 1e-8
+verbose  = 1      # 0: silent, 1: NR norm, 2+: more detail
+damp     = 0.2    # damping for Newton steps
+opt_fd   = false  # use finite-difference Jacobian if true
+opt_sparse = true # use sparse Ybus / Jacobian where applicable
+
+etime = @elapsed begin
+    ite, status = runpf!(
+        net,
+        maxIte,
+        tol,
+        verbose;
+        method     = :rectangular,
+        damp       = damp,
+        opt_fd     = opt_fd,
+        opt_sparse = opt_sparse,
+    )
+end
+
+if status != 0
+    @warn "Rectangular NR did not converge (status = $status)"
+    return
+end
+```
+
+Internally this calls `runpf_rectangular!` / `run_complex_nr_rectangular_for_net!`,
+which:
+
+* uses `mismatch_rectangular` for PQ/PV constraints,
+* enforces Q-limits with an active set (PV→PQ if limits are hit, optional PQ→PV),
+* writes final voltages and bus injections back into `net`.
+
+### 5. Distribute bus results to prosumers (loads / generators)
+
+After a successful run, node powers have been computed. To see individual
+loads and generators, distribute the bus results to all attached `ProSumer`s:
+
+```julia
+# Map solved bus results back down to all prosumers
+distribute_all_bus_results!(net)
+```
+
+If multiple generators are connected to the same bus and one of them is at
+its Q-limit, Sparlectra uses a simple “water-filling” style redistribution
+so that:
+
+* total bus P/Q stays consistent with the solved power flow,
+* individual generator Q stays within its limits,
+* remaining reactive power is redistributed among non-limited generators at
+  that bus.
+
+### 6. Print results (branches, buses, prosumers, Q-limit log)
+
+You can now print the usual branch results plus the new prosumer summary and
+Q-limit events.
+
+```julia
+# Branch flows and losses
+calcNetLosses!(net)
+printACPFlowResults(net, etime, ite, tol)
+
+# Prosumers: list loads and generators per bus (after water-filling)
+printProsumerResults(net)
+
+# Optional: list all buses that hit Q-limits during the NR iterations
+printQLimitLog(net)
+```
+
+This gives you a compact workflow:
+
+1. Load / build the network
+2. Set PV buses and Q-limits
+3. Run rectangular NR via `runpf!(…; method = :rectangular, …)`
+4. Call `distribute_all_bus_results!(net)`
+5. Use `printACPFlowResults`, `printProsumerResults`, and `printQLimitLog`
+   to inspect the outcome.

@@ -191,11 +191,11 @@ function complex_newton_step_rectangular(Ybus, V, S; slack_idx::Int, damp::Float
     end
   end
 
-  # Auf vollen Zustandsvektor zurückheben (Slack hat Δ=0)
+  # Map back to full state vector (slack has Δ=0)
   δx = zeros(Float64, 2n)
   δx[col_idx] .= δx_red
 
-  # Dämpfung
+  # Damping
   δx .*= damp
 
   δVr = δx[1:n]
@@ -215,15 +215,12 @@ function run_complex_nr_rectangular(Ybus, V0, S; slack_idx::Int = 1, maxiter::In
     max_mis = maximum(abs.(F))
     push!(history, max_mis)
 
-    if verbose
-      @info "Rectangular NR iteration" iter=iter max_mismatch=max_mis
-    end
     if max_mis <= tol
       return V, true, iter, history
     end
 
     if use_fd
-      V = complex_newton_step_rectangular_fd(Ybus, V, S; slack_idx = slack_idx, damp      = damp, h         = 1e-6, bus_types = bus_types, Vset      = Vset)
+      V = complex_newton_step_rectangular_fd(Ybus, V, S; slack_idx = slack_idx, damp = damp, h = 1e-6, bus_types = bus_types, Vset = Vset)
     else
       V = complex_newton_step_rectangular(Ybus, V, S; slack_idx = slack_idx, damp = damp, bus_types = bus_types, Vset = Vset, use_sparse = use_sparse)
     end
@@ -290,11 +287,13 @@ function build_S_from_net(net::Net)
     Qgen_MVar  = isnothing(node._qƩGen) ? 0.0 : node._qƩGen
     Pload_MW   = isnothing(node._pƩLoad) ? 0.0 : node._pƩLoad
     Qload_MVar = isnothing(node._qƩLoad) ? 0.0 : node._qƩLoad
-    Psh_MW     = isnothing(node._pShunt) ? 0.0 : node._pShunt
-    Qsh_MVar   = isnothing(node._qShunt) ? 0.0 : node._qShunt
+    # Shunt powers are already represented via Ybus (shunt admittance),
+    # so they must NOT be subtracted again in the specified injections.
+    # Psh_MW     = isnothing(node._pShunt) ? 0.0 : node._pShunt
+    # Qsh_MVar   = isnothing(node._qShunt) ? 0.0 : node._qShunt
 
-    Pinj_MW   = Pgen_MW - Pload_MW - Psh_MW
-    Qinj_MVar = Qgen_MVar - Qload_MVar - Qsh_MVar
+    Pinj_MW   = Pgen_MW - Pload_MW
+    Qinj_MVar = Qgen_MVar - Qload_MVar
 
     Ppu = Pinj_MW / baseMVA
     Qpu = Qinj_MVar / baseMVA
@@ -390,8 +389,6 @@ function mismatch_rectangular(Ybus, V::Vector{ComplexF64}, S::Vector{ComplexF64}
 
   return F
 end
-
-using SparseArrays
 
 """
     build_rectangular_jacobian_pq_pv_sparse(
@@ -614,101 +611,6 @@ function build_rectangular_jacobian_pq_pv_sparse(Ybus::SparseMatrixCSC{ComplexF6
   end
 
   return sparse(Iidx, Jidx, Vals, m, nvar)
-end
-
-"""
-    complex_newton_step_rectangular_fd(Ybus, V, S;
-                                       slack_idx=1,
-                                       damp=1.0,
-                                       h=1e-6)
-
-Performs one Newton–Raphson step in rectangular coordinates using a
-finite-difference Jacobian on the mismatch
-
-    F(V) = [ real(ΔS_non_slack); imag(ΔS_non_slack) ]
-
-with ΔS = S_calc(V) - S_spec.
-
-Arguments:
-- `Ybus`: bus admittance matrix (n×n, Complex)
-- `V`: current complex bus voltage vector (length n)
-- `S`: specified complex power injections P + jQ (length n)
-- `slack_idx`: index of the slack bus (no equations / no variables)
-- `damp`: scalar damping factor for the Newton step (0 < damp ≤ 1)
-- `h`: perturbation step for finite differences
-
-Returns:
-- updated complex voltage vector `V_new`
-"""
-function complex_newton_step_rectangular_fd(Ybus, V, S; slack_idx::Int = 1, damp::Float64 = 1.0, h::Float64 = 1e-6, bus_types::Vector{Symbol}, Vset::Vector{Float64})
-  n = length(V)
-
-  # Base mismatch F(V)
-  F0 = mismatch_rectangular(Ybus, V, S, bus_types, Vset, slack_idx)
-  m = length(F0)  # = 2 * (n-1)
-
-  # Non-slack buses
-  non_slack = collect(1:n)
-  deleteat!(non_slack, slack_idx)
-
-  # Variables: Vr(non_slack) and Vi(non_slack)
-  nvar = 2 * (n - 1)
-  @assert nvar == m "Rectangular FD-Newton: nvar and m should both equal 2*(n-1)"
-
-  J = zeros(Float64, m, nvar)
-
-  Vr = real.(V)
-  Vi = imag.(V)
-
-  # Columns 1..(n-1): perturb Vr(non_slack[k])
-  for (col_idx, bus) in enumerate(non_slack)
-    V_pert = copy(V)
-    V_pert[bus] = ComplexF64(Vr[bus] + h, Vi[bus])
-
-    Fp = mismatch_rectangular(Ybus, V_pert, S, bus_types, Vset, slack_idx)
-    J[:, col_idx] .= (Fp .- F0) ./ h
-  end
-
-  # Columns (n)..2(n-1): perturb Vi(non_slack[k])
-  for (offset, bus) in enumerate(non_slack)
-    col_idx = (n - 1) + offset
-    V_pert = copy(V)
-    V_pert[bus] = ComplexF64(Vr[bus], Vi[bus] + h)
-
-    Fp = mismatch_rectangular(Ybus, V_pert, S, bus_types, Vset, slack_idx)
-    J[:, col_idx] .= (Fp .- F0) ./ h
-  end
-
-  # Solve J * δx = -F0
-  δx = nothing
-  try
-    δx = J \ (-F0)
-  catch e
-    if e isa LinearAlgebra.SingularException
-      δx = pinv(J) * (-F0)
-    else
-      rethrow(e)
-    end
-  end
-
-  # Damping
-  δx .*= damp
-
-  Vr_new = copy(Vr)
-  Vi_new = copy(Vi)
-
-  # Apply update to non-slack buses
-  for (idx, bus) in enumerate(non_slack)
-    Vr_new[bus] += δx[idx]
-    Vi_new[bus] += δx[(n-1)+idx]
-  end
-
-  # Keep slack bus fixed
-  Vr_new[slack_idx] = Vr[slack_idx]
-  Vi_new[slack_idx] = Vi[slack_idx]
-
-  V_new = ComplexF64.(Vr_new, Vi_new)
-  return V_new
 end
 
 """
@@ -959,8 +861,10 @@ polar formulations.
 - `build_rectangular_jacobian_pq_pv()`: Analytic Jacobian construction
 """
 
-function run_complex_nr_rectangular_for_net!(net::Net; maxiter::Int = 20, tol::Float64 = 1e-8, damp::Float64 = 0.2, verbose::Int = 0, use_fd::Bool = false, opt_sparse::Bool = false)
-  @info "Running complex rectangular NR power flow... use_fd=$use_fd, opt_sparse=$opt_sparse"
+function run_complex_nr_rectangular_for_net!(net::Net; maxiter::Int = 20, tol::Float64 = 1e-8, damp::Float64 = 0.2, verbose::Int = 0, use_fd::Bool = false, opt_sparse::Bool = true)
+  if verbose > 1
+    @info "Running complex rectangular NR power flow... use_fd=$use_fd, opt_sparse=$opt_sparse"
+  end
 
   nodes = net.nodeVec
   n     = length(nodes)
@@ -1012,7 +916,7 @@ function run_complex_nr_rectangular_for_net!(net::Net; maxiter::Int = 20, tol::F
   converged = false
   iters     = 0
 
-  if verbose > 0
+  if verbose > 1
     @info "Starting rectangular complex NR power flow..."
     @info "Initial complex voltages V0:" V0
     @info "Slack bus index:" slack_idx
@@ -1027,7 +931,7 @@ function run_complex_nr_rectangular_for_net!(net::Net; maxiter::Int = 20, tol::F
     max_mis = maximum(abs.(F))
     push!(history, max_mis)
 
-    (verbose > 0) && @info "Rectangular NR iteration" iter=it max_mismatch=max_mis
+    (verbose > 1) && @debug "Rectangular NR iteration" iter=it max_mismatch=max_mis
 
     if max_mis <= tol
       converged = true
@@ -1062,7 +966,7 @@ function run_complex_nr_rectangular_for_net!(net::Net; maxiter::Int = 20, tol::F
 
           net.qLimitEvents[busIdx] = :max
           logQLimitHit!(net, it, busIdx, :max)
-          (verbose>0) && @printf "PV->PQ Bus %d: Q=%.4f > Qmax=%.4f (it=%d)\n" busIdx qreq qmax_pu[k] it
+          (verbose>2) && @printf "PV->PQ Bus %d: Q=%.4f > Qmax=%.4f (it=%d)\n" busIdx qreq qmax_pu[k] it
 
         elseif qreq < qmin_pu[k]
           bus_types[k] = :PQ
@@ -1071,7 +975,7 @@ function run_complex_nr_rectangular_for_net!(net::Net; maxiter::Int = 20, tol::F
 
           net.qLimitEvents[busIdx] = :min
           logQLimitHit!(net, it, busIdx, :min)
-          (verbose>0) && @printf "PV->PQ Bus %d: Q=%.4f < Qmin=%.4f (it=%d)\n" busIdx qreq qmin_pu[k] it
+          (verbose>2) && @printf "PV->PQ Bus %d: Q=%.4f < Qmin=%.4f (it=%d)\n" busIdx qreq qmin_pu[k] it
         end
       end
 
@@ -1126,9 +1030,9 @@ function run_complex_nr_rectangular_for_net!(net::Net; maxiter::Int = 20, tol::F
 
     # --- Newton-Stepp (FD oder analytisch) -----------------------------
     if use_fd
-      V = complex_newton_step_rectangular_fd(Ybus, V, S; slack_idx = slack_idx, damp      = damp, h         = 1e-6, bus_types = bus_types, Vset      = Vset)
+      V = complex_newton_step_rectangular_fd(Ybus, V, S; slack_idx = slack_idx, damp = damp, h = 1e-6, bus_types = bus_types, Vset = Vset)
     else
-      V = complex_newton_step_rectangular(Ybus, V, S; slack_idx  = slack_idx, damp       = damp, bus_types  = bus_types, Vset       = Vset, use_sparse = sparse)
+      V = complex_newton_step_rectangular(Ybus, V, S; slack_idx = slack_idx, damp = damp, bus_types = bus_types, Vset = Vset, use_sparse = sparse)
     end
 
     # Keep slack voltage fixed (safety belt)
@@ -1192,7 +1096,37 @@ Returns:
     (iterations::Int, status::Int)
 where `status == 0` indicates convergence.
 """
-function runpf_rectangular!(net::Net, maxIte::Int, tolerance::Float64 = 1e-6, verbose::Int = 0; opt_fd::Bool = false, opt_sparse::Bool = false)
-  iters, erg = run_complex_nr_rectangular_for_net!(net; maxiter = maxIte, tol = tolerance, damp = 1.0, verbose = verbose, use_fd = opt_fd, opt_sparse = opt_sparse)
+function runpf_rectangular!(net::Net, maxIte::Int, tolerance::Float64 = 1e-6, verbose::Int = 0; opt_fd::Bool = false, opt_sparse::Bool = true, damp = 1.0)
+  iters, erg = run_complex_nr_rectangular_for_net!(net; maxiter = maxIte, tol = tolerance, damp = damp, verbose = verbose, use_fd = opt_fd, opt_sparse = opt_sparse)
   return iters, erg
+end
+
+"""
+    runpf!(net, maxIte, tolerance=1e-6, verbose=0; method=:polar_full)
+
+Unified AC power flow interface.
+
+Arguments:
+- `net::Net`: network
+- `maxIte::Int`: maximum iterations
+- `tolerance::Float64`: mismatch tolerance
+- `verbose::Int`: verbosity level
+- `method::Symbol`: `:polar_full` (default) or `:rectangular`
+
+Returns:
+    (iterations::Int, status::Int)
+
+where `status == 0` indicates convergence.
+"""
+function runpf!(net::Net, maxIte::Int, tolerance::Float64 = 1e-6, verbose::Int = 0; method::Symbol = :rectangular, opt_fd::Bool = false, opt_sparse::Bool = true, damp = 1.0)
+  @info "Running AC Power Flow using method: $(method)"
+  if method === :polar_full
+    return runpf_full!(net, maxIte, tolerance, verbose; opt_sparse = opt_sparse)
+  elseif method === :rectangular
+    return runpf_rectangular!(net, maxIte, tolerance, verbose; opt_fd = opt_fd, opt_sparse = opt_sparse, damp = damp)
+  elseif method === :classic
+    return runpf_classic!(net, maxIte, tolerance, verbose; opt_sparse = opt_sparse)
+  else
+    error("runpf!: unknown method $(method). Use :polar_full or :rectangular.")
+  end
 end
