@@ -575,20 +575,25 @@ function addProsumer!(;
   if !isnothing(vm_pu)
     node = net.nodeVec[busIdx]
     isAPUNode = isPVNode(node)
-    setVmVa!(node = node, vm_pu = vm_pu, va_deg = va_deg)
+    nodeVm = getNodeVm(node)
+    if !isnothing(nodeVm) && nodeVm > vm_pu
+      @warn "Voltage setpoint $nodeVm already provided for prosumer at bus $busName, $vm_pu will be ignored!"
+    else
+      setVmVa!(node = node, vm_pu = vm_pu, va_deg = va_deg)
+    end
   end
   proTy = toProSumptionType(type)
   refPriIdx = isnothing(referencePri) ? nothing : geNetBusIdx(net = net, busName = referencePri)
   vn_kV = getNodeVn(net.nodeVec[busIdx])
-  prosumer = ProSumer(vn_kv = vn_kV, busIdx = busIdx, oID = idProsSum, type = proTy, p = p, q = q, minP = pMin, maxP = pMax, minQ = qMin, maxQ = qMax, referencePri = refPriIdx, vm_pu = vm_pu, va_deg = va_deg, isAPUNode = isAPUNode)
-  push!(net.prosumpsVec, prosumer)
-
+  ps = ProSumer(vn_kv = vn_kV, busIdx = busIdx, oID = idProsSum, type = proTy, p = p, q = q, minP = pMin, maxP = pMax, minQ = qMin, maxQ = qMax, referencePri = refPriIdx, vm_pu = vm_pu, va_deg = va_deg, isAPUNode = isAPUNode)
+  push!(net.prosumpsVec, ps)
   node = net.nodeVec[busIdx]
   if (isGenerator(proTy))
     addGenPower!(node = node, p = p, q = q)
   else
     addLoadPower!(node = node, p = p, q = q)
   end
+
   _buildQLimits!(net)
 end
 
@@ -1015,7 +1020,6 @@ function _buildQLimits!(net::Net; reset::Bool = true)
   for ps in net.prosumpsVec
     isGenerator(ps) || continue
     bus = getPosumerBusIndex(ps)
-
     # Safety: allow for buses beyond nodeVec if that can happen in your data
     if bus > nbus
       # grow arrays if needed
@@ -1027,21 +1031,14 @@ function _buildQLimits!(net::Net; reset::Bool = true)
       end
       nbus = bus
     end
-
-    @debug "Bus $bus: current minQ=$(ps.minQ), maxQ=$(ps.maxQ)"
-
     # Convert to p.u., handle 'no limit' as ±Inf
     qmin_pu = isnothing(ps.minQ) ? -Inf : ps.minQ / net.baseMVA
     qmax_pu = isnothing(ps.maxQ) ? Inf : ps.maxQ / net.baseMVA
-
     # Sum instead of min/max; respect sentinel values
     cur_qmin = net.qmin_pu[bus]
     net.qmin_pu[bus] = isfinite(cur_qmin) ? (cur_qmin + qmin_pu) : qmin_pu
-    @debug "Bus $bus: updated Qmin_pu to $(net.qmin_pu[bus])"
-
     cur_qmax = net.qmax_pu[bus]
     net.qmax_pu[bus] = isfinite(cur_qmax) ? (cur_qmax + qmax_pu) : qmax_pu
-    @debug "Bus $bus: updated Qmax_pu to $(net.qmax_pu[bus])"
   end
 
   return nothing
@@ -1071,6 +1068,7 @@ function setQLimits!(; net::Net, qmin_MVar::Float64, qmax_MVar::Float64, busName
   end
 
   for ps in net.prosumpsVec
+    #TODO is load also possible?
     isGenerator(ps) || continue
 
     if isnothing(busIdxSet)
@@ -1094,10 +1092,158 @@ end
 
 """
     setPVBusVset!(net::Net, busName::String; vm_pu::Float64)
+  Sets the voltage magnitude setpoint for a PV bus in the network.
+  Only applicable for buses of type "PV" and for testing purpose.
 """
 
 function setPVBusVset!(; net::Net, busName::String, vm_pu::Float64)
   bus = geNetBusIdx(net = net, busName = busName)
   net.nodeVec[bus]._vm_pu = vm_pu
+end
+
+function _wattterfillQ(Q_target::Float64, q_spec::Vector{Float64}, qmin::Vector{Float64}, qmax::Vector{Float64}; tol::Float64 = 1e-6, maxiter::Int = 50)
+  n = length(q_spec)
+  @assert length(qmin) == n && length(qmax) == n
+
+  # Start: clamp specs in their box
+  q = similar(q_spec)
+  for i = 1:n
+    q[i] = clamp(q_spec[i], qmin[i], qmax[i])
+  end
+
+  for it = 1:maxiter
+    Δ = Q_target - sum(q)
+    if abs(Δ) <= tol
+      return q
+    end
+
+    # Frei je nach Richtung (nach oben oder unten noch Bewegungsfreiheit)
+    free = if Δ > 0
+      [i for i = 1:n if q[i] < qmax[i] - tol]
+    else
+      [i for i = 1:n if q[i] > qmin[i] + tol]
+    end
+
+    isempty(free) && return q  # nichts mehr zu holen, Ziel nicht exakt erreichbar
+
+    step = Δ / length(free)
+    for i in free
+      q[i] = clamp(q[i] + step, qmin[i], qmax[i])
+    end
+  end
+
+  return q
+end
+
+function _generators_at_bus(net::Net, bus::Int)
+  idx = Int[]
+  for (k, ps) in enumerate(net.prosumpsVec)
+    if isGenerator(ps) && getPosumerBusIndex(ps) == bus
+      push!(idx, k)
+    end
+  end
+  return idx
+end
+
+function _loads_at_bus(net::Net, bus::Int)
+  idx = Int[]
+  for (k, ps) in enumerate(net.prosumpsVec)
+    if !isGenerator(ps) && getPosumerBusIndex(ps) == bus
+      push!(idx, k)
+    end
+  end
+  return idx
+end
+
+function distribute_bus_generation!(net::Net, bus::Int)
+  node = net.nodeVec[bus]
+
+  gens_idx = _generators_at_bus(net, bus)
+  isempty(gens_idx) && return
+
+  # Zielwerte am Bus (hier: aus Node – kannst du anpassen)
+  P_target = node._pƩGen === nothing ? 0.0 : node._pƩGen
+  Q_target = node._qƩGen === nothing ? 0.0 : node._qƩGen
+
+  # Eingabewerte + Limits pro Generator
+  P_spec = Float64[]
+  Q_spec = Float64[]
+  qmin   = Float64[]
+  qmax   = Float64[]
+
+  for idx in gens_idx
+    ps = net.prosumpsVec[idx]
+    push!(P_spec, isnothing(ps.pVal) ? 0.0 : ps.pVal)
+    push!(Q_spec, isnothing(ps.qVal) ? 0.0 : ps.qVal)
+    push!(qmin, isnothing(ps.minQ) ? -Inf : ps.minQ)
+    push!(qmax, isnothing(ps.maxQ) ? Inf : ps.maxQ)
+  end
+
+  # --- P-Verteilung (ohne Limits, meist einfacher) ---
+  P_alloc = similar(P_spec)
+  P_sum   = sum(P_spec)
+
+  if abs(P_sum) < 1e-9
+    # gleichmäßig, wenn keine sinnvollen spec-Werte
+    fill!(P_alloc, P_target / length(P_alloc))
+  else
+    # proportional zu den specs
+    P_alloc .= P_target .* (P_spec ./ P_sum)
+  end
+
+  # --- Q-Verteilung mit Waterfilling ---
+  Q_alloc = _wattterfillQ(Q_target, Q_spec, qmin, qmax)
+
+  # Ergebnisse zurück in Prosumer
+  for (pq, idx) in enumerate(gens_idx)
+    ps = net.prosumpsVec[idx]
+    setPQResult!(ps, P_alloc[pq], Q_alloc[pq])
+  end
+end
+
+function distribute_bus_loads!(net::Net, bus::Int)
+  node = net.nodeVec[bus]
+  loads_idx = _loads_at_bus(net, bus)
+  isempty(loads_idx) && return
+
+  P_target = node._pƩLoad === nothing ? 0.0 : node._pƩLoad
+  Q_target = node._qƩLoad === nothing ? 0.0 : node._qƩLoad
+
+  P_spec = [isnothing(ps.pVal) ? 0.0 : ps.pVal for ps in net.prosumpsVec[loads_idx]]
+  Q_spec = [isnothing(ps.qVal) ? 0.0 : ps.qVal for ps in net.prosumpsVec[loads_idx]]
+
+  P_alloc = similar(P_spec)
+  Q_alloc = similar(Q_spec)
+
+  # einfache Variante: spec = result
+  if abs(sum(P_spec)) < 1e-9
+    P_alloc .= P_target / length(P_alloc)
+  else
+    P_alloc .= P_target .* (P_spec ./ sum(P_spec))
+  end
+
+  if abs(sum(Q_spec)) < 1e-9
+    Q_alloc .= Q_target / length(Q_alloc)
+  else
+    Q_alloc .= Q_target .* (Q_spec ./ sum(Q_spec))
+  end
+
+  for (pq, idx) in enumerate(loads_idx)
+    ps = net.prosumpsVec[idx]
+    setPQResult!(ps, -P_alloc[pq], -Q_alloc[pq])  # Vorzeichen je nach Konvention
+  end
+end
+
+function distribute_all_bus_results!(net::Net)
+  # reset results
+  for ps in net.prosumpsVec
+    ps.pRes = nothing
+    ps.qRes = nothing
+  end
+
+  for node in net.nodeVec
+    distribute_bus_generation!(net, node.busIdx)
+    distribute_bus_loads!(net, node.busIdx)
+  end
 end
 
