@@ -26,7 +26,7 @@ function test_acpflow(verbose::Int = 0; lLine_6a6b::Float64 = 0.01, damp::Float6
 end
 
 function test_NBI_MDO()
-  myNet =createCIGRE()
+  myNet = createCIGRE()
   result = true
 
   nodeNumberVec = Vector{Int}()
@@ -274,7 +274,7 @@ function createCIGRE(lLine_6a6b = 0.01)::Net
   return net
 end
 
-function createTest5BusNet(; cooldown = 0, hyst_pu = 0.0, qlim_min = nothing, qlim_max = nothing, pq_only = false)::Net
+function createTest5BusNet(; cooldown = 0, hyst_pu = 0.0, qlim_min = nothing, qlim_max = nothing, pq_only = false, mul_gens::Bool = true)::Net
   Sbase_MVA = 100.0
   netName = "test5bus"
   r = 0.05
@@ -295,7 +295,7 @@ function createTest5BusNet(; cooldown = 0, hyst_pu = 0.0, qlim_min = nothing, ql
   addBus!(net = Bus5Net, busName = "B2", busType = "PQ", vn_kV = 110.0)
   addBus!(net = Bus5Net, busName = "B3", busType = busTypeBus3, vn_kV = 110.0)
   addBus!(net = Bus5Net, busName = "B4", busType = "PQ", vn_kV = 110.0)
-  addBus!(net = Bus5Net, busName = "B5", busType = "PQ", vn_kV = 110.0)
+  addBus!(net = Bus5Net, busName = "B5", busType = "PV", vn_kV = 110.0)
 
   addACLine!(net = Bus5Net, fromBus = "B1", toBus = "B3", length = 20.0, r = r, x = x, c_nf_per_km = c_nf_per_km, tanδ = tanδ)
   addACLine!(net = Bus5Net, fromBus = "B3", toBus = "B5", length = 50.0, r = r, x = x, c_nf_per_km = c_nf_per_km, tanδ = tanδ)
@@ -305,11 +305,23 @@ function createTest5BusNet(; cooldown = 0, hyst_pu = 0.0, qlim_min = nothing, ql
   addACLine!(net = Bus5Net, fromBus = "B2", toBus = "B1", length = 20.0, r = r, x = x, c_nf_per_km = c_nf_per_km, tanδ = tanδ)
 
   addProsumer!(net = Bus5Net, busName = "B1", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "B1")
-  addProsumer!(net = Bus5Net, busName = "B2", type = "ENERGYCONSUMER", p = 50.0, q = 15.0)
-  addProsumer!(net = Bus5Net, busName = "B3", type = "SYNCHRONOUSMACHINE", p = 20.0, q = 15.0, vm_pu = 1.0, va_deg = 0.0, qMax = qlim_max, qMin = qlim_min)
-  addProsumer!(net = Bus5Net, busName = "B3", type = "SYNCHRONOUSMACHINE", p = 10.0, q = 10.0, vm_pu = 1.0, va_deg = 0.0, qMax = qlim_max, qMin = qlim_min)
-  addProsumer!(net = Bus5Net, busName = "B4", type = "ENERGYCONSUMER", p = 50.0, q = 15.0)
-  addProsumer!(net = Bus5Net, busName = "B5", type = "ENERGYCONSUMER", p = 25.0, q = 10.0)
+  if mul_gens
+    addProsumer!(net = Bus5Net, busName = "B2", type = "ENERGYCONSUMER", p = 25.0, q = 8.0)
+    addProsumer!(net = Bus5Net, busName = "B2", type = "ENERGYCONSUMER", p = 25.0, q = 7.0)
+    addProsumer!(net = Bus5Net, busName = "B3", type = "SYNCHRONOUSMACHINE", p = 20.0, q = 15.0, vm_pu = 1.03, va_deg = 0.0, qMax = 0.6*qlim_max, qMin = 0.6*qlim_min)
+    addProsumer!(net = Bus5Net, busName = "B3", type = "SYNCHRONOUSMACHINE", p = 10.0, q = 10.0, vm_pu = 1.03, va_deg = 0.0, qMax = 0.4*qlim_max, qMin = 0.4*qlim_min)
+    addProsumer!(net = Bus5Net, busName = "B4", type = "ENERGYCONSUMER", p = 25.0, q = 7.0)
+    addProsumer!(net = Bus5Net, busName = "B4", type = "ENERGYCONSUMER", p = 25.0, q = 8.0)
+    addProsumer!(net = Bus5Net, busName = "B5", type = "ENERGYCONSUMER", p = 10.0, q = 5.0)
+    addProsumer!(net = Bus5Net, busName = "B5", type = "ENERGYCONSUMER", p = 15.0, q = 5.0)
+    addProsumer!(net = Bus5Net, busName = "B5", type = "SYNCHRONOUSMACHINE", p = 0.0, q = 0.0, vm_pu = 1.0, va_deg = 0.0, qMax = qlim_max, qMin = qlim_min)
+  else
+    addProsumer!(net = Bus5Net, busName = "B2", type = "ENERGYCONSUMER", p = 50.0, q = 15.0)
+    addProsumer!(net = Bus5Net, busName = "B3", type = "SYNCHRONOUSMACHINE", p = 30.0, q = 25.0, vm_pu = 1.0, va_deg = 0.0, qMax = qlim_max, qMin = qlim_min)
+    addProsumer!(net = Bus5Net, busName = "B4", type = "ENERGYCONSUMER", p = 50.0, q = 15.0)
+    addProsumer!(net = Bus5Net, busName = "B5", type = "ENERGYCONSUMER", p = 25.0, q = 10.0)
+  end
+
   return Bus5Net
 end
 
@@ -340,7 +352,7 @@ function createTest2BusNet(; cooldown = 0, hyst_pu = 0.0, qlim_min = nothing, ql
 end
 
 function test_5BusNet(verbose::Int = 0, qlim::Float64 = 20.0, opt_fd::Bool = false, opt_sparse::Bool = false)
-  net = createTest5BusNet(cooldown = 2, hyst_pu = 0.000, qlim_min = -qlim, qlim_max = qlim)
+  net = createTest5BusNet(cooldown = 2, hyst_pu = 0.01, qlim_min = -qlim, qlim_max = qlim)
   tol = 1e-9
   maxIte = 50
   print_results = (verbose > 0)
@@ -364,8 +376,8 @@ function test_5BusNet(verbose::Int = 0, qlim::Float64 = 20.0, opt_fd::Bool = fal
     V = buildVoltageVector(net)
     calcNetLosses!(net, V)
     distribute_all_bus_results!(net)
-    printACPFlowResults(net, etim, ite, tol)    
-    printProsumerResults(net)    
+    printACPFlowResults(net, etim, ite, tol)
+    printProsumerResults(net)
     printQLimitLog(net; sort_by = :bus)
   end
 

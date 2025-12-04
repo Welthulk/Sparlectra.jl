@@ -1,5 +1,9 @@
 # Change Log
 
+## Version 0.4.26 – 2025-12-04
+* Issue #74: Multiple Generators at One Bus Not Handled Correctly
+* Documentation Updates 
+
 ## Version 0.4.25 – 2025-11-29
 
 ### Added

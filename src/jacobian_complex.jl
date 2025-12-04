@@ -220,7 +220,7 @@ function run_complex_nr_rectangular(Ybus, V0, S; slack_idx::Int = 1, maxiter::In
     end
 
     if use_fd
-      V = complex_newton_step_rectangular_fd(Ybus, V, S; slack_idx = slack_idx, damp      = damp, h         = 1e-6, bus_types = bus_types, Vset      = Vset)
+      V = complex_newton_step_rectangular_fd(Ybus, V, S; slack_idx = slack_idx, damp = damp, h = 1e-6, bus_types = bus_types, Vset = Vset)
     else
       V = complex_newton_step_rectangular(Ybus, V, S; slack_idx = slack_idx, damp = damp, bus_types = bus_types, Vset = Vset, use_sparse = use_sparse)
     end
@@ -283,7 +283,7 @@ function build_S_from_net(net::Net)
   baseMVA = net.baseMVA
 
   for (k, node) in enumerate(nodes)
-        Pgen_MW    = isnothing(node._pƩGen) ? 0.0 : node._pƩGen
+    Pgen_MW    = isnothing(node._pƩGen) ? 0.0 : node._pƩGen
     Qgen_MVar  = isnothing(node._qƩGen) ? 0.0 : node._qƩGen
     Pload_MW   = isnothing(node._pƩLoad) ? 0.0 : node._pƩLoad
     Qload_MVar = isnothing(node._qƩLoad) ? 0.0 : node._qƩLoad
@@ -613,7 +613,6 @@ function build_rectangular_jacobian_pq_pv_sparse(Ybus::SparseMatrixCSC{ComplexF6
   return sparse(Iidx, Jidx, Vals, m, nvar)
 end
 
-
 """
     build_rectangular_jacobian_pq_pv_dense(
         Ybus, V, bus_types, Vset, slack_idx
@@ -864,9 +863,8 @@ polar formulations.
 
 function run_complex_nr_rectangular_for_net!(net::Net; maxiter::Int = 20, tol::Float64 = 1e-8, damp::Float64 = 0.2, verbose::Int = 0, use_fd::Bool = false, opt_sparse::Bool = true)
   if verbose > 1
-    @info "Running complex rectangular NR power flow... use_fd=$use_fd, opt_sparse=$opt_sparse"    
+    @info "Running complex rectangular NR power flow... use_fd=$use_fd, opt_sparse=$opt_sparse"
   end
-  
 
   nodes = net.nodeVec
   n     = length(nodes)
@@ -1032,9 +1030,9 @@ function run_complex_nr_rectangular_for_net!(net::Net; maxiter::Int = 20, tol::F
 
     # --- Newton-Stepp (FD oder analytisch) -----------------------------
     if use_fd
-      V = complex_newton_step_rectangular_fd(Ybus, V, S; slack_idx = slack_idx, damp      = damp, h         = 1e-6, bus_types = bus_types, Vset      = Vset)
+      V = complex_newton_step_rectangular_fd(Ybus, V, S; slack_idx = slack_idx, damp = damp, h = 1e-6, bus_types = bus_types, Vset = Vset)
     else
-      V = complex_newton_step_rectangular(Ybus, V, S; slack_idx  = slack_idx, damp       = damp, bus_types  = bus_types, Vset       = Vset, use_sparse = sparse)
+      V = complex_newton_step_rectangular(Ybus, V, S; slack_idx = slack_idx, damp = damp, bus_types = bus_types, Vset = Vset, use_sparse = sparse)
     end
 
     # Keep slack voltage fixed (safety belt)
@@ -1099,7 +1097,7 @@ Returns:
 where `status == 0` indicates convergence.
 """
 function runpf_rectangular!(net::Net, maxIte::Int, tolerance::Float64 = 1e-6, verbose::Int = 0; opt_fd::Bool = false, opt_sparse::Bool = true, damp = 1.0)
-  iters, erg = run_complex_nr_rectangular_for_net!(net; maxiter = maxIte, tol = tolerance, damp = damp, verbose = verbose, use_fd = opt_fd, opt_sparse = opt_sparse)  
+  iters, erg = run_complex_nr_rectangular_for_net!(net; maxiter = maxIte, tol = tolerance, damp = damp, verbose = verbose, use_fd = opt_fd, opt_sparse = opt_sparse)
   return iters, erg
 end
 
@@ -1123,7 +1121,7 @@ where `status == 0` indicates convergence.
 function runpf!(net::Net, maxIte::Int, tolerance::Float64 = 1e-6, verbose::Int = 0; method::Symbol = :rectangular, opt_fd::Bool = false, opt_sparse::Bool = true, damp = 1.0)
   @info "Running AC Power Flow using method: $(method)"
   if method === :polar_full
-    return runpf_full!(net, maxIte, tolerance, verbose;  opt_sparse = opt_sparse)
+    return runpf_full!(net, maxIte, tolerance, verbose; opt_sparse = opt_sparse)
   elseif method === :rectangular
     return runpf_rectangular!(net, maxIte, tolerance, verbose; opt_fd = opt_fd, opt_sparse = opt_sparse, damp = damp)
   elseif method === :classic

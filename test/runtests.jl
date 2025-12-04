@@ -12,13 +12,12 @@ include("testremove.jl")
 
 @testset "Sparlectra.jl" begin
   @test testNetwork() == true
-  @test test_NBI_MDO() == true  
-  @test test_acpflow(0;lLine_6a6b = 0.01, damp = 1.0, method = :rectangular, opt_sparse = true) == true
-  @test test_acpflow(0;lLine_6a6b = 0.01, damp = 1.0, method = :rectangular, opt_sparse = false) == true
-  @test test_acpflow(0;lLine_6a6b = 0.01, damp = 1.0, method = :polar_full, opt_sparse = true) == true
-  @test test_acpflow(0;lLine_6a6b = 0.01, damp = 1.0, method = :classic, opt_sparse = true) == true
+  @test test_NBI_MDO() == true
+  @test test_acpflow(0; lLine_6a6b = 0.01, damp = 1.0, method = :rectangular, opt_sparse = true) == true
+  @test test_acpflow(0; lLine_6a6b = 0.01, damp = 1.0, method = :rectangular, opt_sparse = false) == true
+  @test test_acpflow(0; lLine_6a6b = 0.01, damp = 1.0, method = :polar_full, opt_sparse = true) == true
+  @test test_acpflow(0; lLine_6a6b = 0.01, damp = 1.0, method = :classic, opt_sparse = true) == true
   @test testISOBusses() == true
   @test testRemoveFunctions() == true
-  @test test_5BusNet(0, 5.0) == true
-  @test test_5BusNet(0, 30.0) == false
+  @test test_5BusNet(0, 10.0) == true
 end

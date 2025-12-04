@@ -17,7 +17,7 @@ function importCaseFile()
   run_acpflow(casefile = case, opt_sparse = true, opt_fd = false, method = :classic)
 end
 
-function test_5BusNet(verbose::Int = 0, qlim::Float64 = 20.0,  opt_fd::Bool = false, opt_sparse::Bool = false)
+function test_5BusNet(verbose::Int = 0, qlim::Float64 = 20.0, opt_fd::Bool = false, opt_sparse::Bool = true)
   net = createTest5BusNet(cooldown = 2, hyst_pu = 0.000, qlim_min = -qlim, qlim_max = qlim)
   tol = 1e-9
   maxIte = 50
@@ -27,7 +27,7 @@ function test_5BusNet(verbose::Int = 0, qlim::Float64 = 20.0,  opt_fd::Bool = fa
   pv_names = ["B3"]
   etim = 0.0
   etim = @elapsed begin
-    ite, erg = runpf!(net, maxIte, tol, verbose; method = :polar_full, opt_fd = opt_fd, opt_sparse = opt_sparse)
+    ite, erg = runpf!(net, maxIte, tol, verbose; method = :rectangular, opt_fd = opt_fd, opt_sparse = opt_sparse)
     if erg != 0
       @info "Full-system power flow did not converge"
       result = false
@@ -42,8 +42,8 @@ function test_5BusNet(verbose::Int = 0, qlim::Float64 = 20.0,  opt_fd::Bool = fa
     V = buildVoltageVector(net)
     calcNetLosses!(net, V)
     distribute_all_bus_results!(net)
-    printACPFlowResults(net, etim, ite, tol)    
-    printProsumerResults(net)    
+    printACPFlowResults(net, etim, ite, tol)
+    printProsumerResults(net)
     printQLimitLog(net; sort_by = :bus)
   end
 
@@ -51,16 +51,14 @@ function test_5BusNet(verbose::Int = 0, qlim::Float64 = 20.0,  opt_fd::Bool = fa
 end
 
 function cross_check()
-
   net = createCIGRE()
   open("network_dump.txt", "w") do io
-      println(io, "=== TRANSFORMERS ===")
-      show(io, "text/plain", net.trafos)
+    println(io, "=== TRANSFORMERS ===")
+    show(io, "text/plain", net.trafos)
 
-      println(io, "\n\n=== AC LINES ===")
-      show(io, "text/plain", net.linesAC)
+    println(io, "\n\n=== AC LINES ===")
+    show(io, "text/plain", net.linesAC)
   end
-
 
   # 1) Referenz: polar_full (should convergen)
   iters_polar, status_polar = runpf!(net, 10, 1e-8, 2; method = :polar_full, opt_fd = false)
@@ -84,8 +82,8 @@ function cross_check()
   println("---------------------------------------------------")
 end
 
-#test_5BusNet(1, 5.0, :rectangular, false, false)
+#test_5BusNet(1, 20.0 )
 #test_5BusNet(1, 5.0, :polar_full, opt_fd, opt_sparse)
 #test_5BusNet(1, 5.0, :classic, opt_fd, opt_sparse)
-test_acpflow(1;lLine_6a6b = 0.01, damp = 1.0, method = :rectangular, opt_sparse = true)
+#test_acpflow(1;lLine_6a6b = 0.01, damp = 1.0, method = :rectangular, opt_sparse = true)
 #test_5BusNet(1, 25.0, false, false)
