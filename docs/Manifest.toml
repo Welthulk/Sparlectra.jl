@@ -342,7 +342,7 @@ version = "1.11.0"
 deps = ["Dates", "JuliaFormatter", "LinearAlgebra", "Logging", "Printf", "Revise", "SparseArrays"]
 path = "c:\\Users\\scud\\.julia\\dev\\Sparlectra\\docs\\.."
 uuid = "31ce9bba-fd9d-44a1-b005-f5f509afda38"
-version = "0.4.25"
+version = "0.4.26"
 
 [[deps.SparseArrays]]
 deps = ["Libdl", "LinearAlgebra", "Random", "Serialization", "SuiteSparse_jll"]

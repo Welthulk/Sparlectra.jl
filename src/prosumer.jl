@@ -48,7 +48,7 @@ mutable struct ProSumer
   qGenRepl::Union{Nothing,Float64}
   pRes::Union{Nothing,Float64}
   qRes::Union{Nothing,Float64}
-  
+
   function ProSumer(;
     vn_kv::Float64,
     busIdx::Int,
@@ -71,7 +71,6 @@ mutable struct ProSumer
   )
     comp = getProSumPGMComp(vn_kv, busIdx, isGenerator(type), oID)
 
-    
     if isnothing(vm_pu)
       vm_pu = 1.0
     end
@@ -79,7 +78,7 @@ mutable struct ProSumer
     if isnothing(va_deg)
       va_deg = 0.0
     end
-    
+
     new(comp, ratedS, ratedU, qPercent, p, q, maxP, minP, maxQ, minQ, ratedPowerFactor, referencePri, vm_pu, va_deg, type, isAPUNode, nothing, nothing, nothing)
   end
 
@@ -155,8 +154,8 @@ mutable struct ProSumer
 end
 
 function setPQResult!(ps::ProSumer, p::Float64, q::Float64)
-    ps.pRes = p
-    ps.qRes = q
+  ps.pRes = p
+  ps.qRes = q
 end
 
 function getPosumerBusIndex(ps::ProSumer)::Int

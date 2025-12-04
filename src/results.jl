@@ -192,48 +192,110 @@ function printACPFlowResults(net::Net, ct::Float64, ite::Int, tol::Float64, toFi
   end
 end
 
-function _formatProsumerResults(net::Net)
-    buf = IOBuffer()
-    println(buf, "\nProsumer results (per generator/load):")
-    println(buf, "===================================================================================================================")
-    @printf(buf, "| %-5s | %-20s | %-20s | %-8s | %-10s | %-10s |\n",
-                 "Bus", "BusName", "ProsumName", "Type", "P [MW]", "Q [MVar]")
-    println(buf, "===================================================================================================================")
+function formatProsumerResults(net::Net)
+  buf = IOBuffer()
 
-    # Busnamen rekonstruieren (umgekehrtes Mapping von net.busDict)
-    busNameByIdx = Dict{Int,String}()
-    for (name, idx) in net.busDict
-        busNameByIdx[idx] = name
+  # Rebuild mapping: bus index -> bus name
+  busNameByIdx = Dict{Int,String}()
+  for (name, idx) in net.busDict
+    busNameByIdx[idx] = name
+  end
+
+  # Collect indices per bus, separated into generators and loads
+  gens_by_bus  = Dict{Int,Vector{Int}}()
+  loads_by_bus = Dict{Int,Vector{Int}}()
+
+  for (idx, ps) in enumerate(net.prosumpsVec)
+    bus = getPosumerBusIndex(ps)
+    if isGenerator(ps)
+      push!(get!(gens_by_bus, bus, Int[]), idx)
+    else
+      push!(get!(loads_by_bus, bus, Int[]), idx)
+    end
+  end
+
+  # Helper: compute generator status from Q and minQ/maxQ
+  status_from_Q = function (ps, qres)
+    # default status
+    status = "ok"
+    isnothing(qres) && return status
+
+    # tolerance for limit detection
+    tol = 1e-6
+
+    if !isnothing(ps.maxQ) && qres >= ps.maxQ - tol
+      status = "Q-max limit"
+    elseif !isnothing(ps.minQ) && qres <= ps.minQ + tol
+      status = "Q-min limit"
     end
 
-    for (k, ps) in enumerate(net.prosumpsVec)
-        bus = getPosumerBusIndex(ps)
-        busName = get(busNameByIdx, bus, "Bus_$bus")
-        p = ps.pRes
-        q = ps.qRes
+    return status
+  end
 
-        # Wenn noch nichts verteilt wurde, ggf. spec drucken
-        if isnothing(p) && !isnothing(ps.pVal)
-            p = ps.pVal
-        end
-        if isnothing(q) && !isnothing(ps.qVal)
-            q = ps.qVal
-        end
+  # =========================
+  # Generator section
+  # =========================
+  println(buf, "\nGenerator results:")
+  println(buf, "────────────────────────────────────────────────────────")
+  @printf(buf, "%-8s %4s %12s %12s   %-14s\n", "Bus", "Gen#", "P [MW]", "Q [MVar]", "Status")
+  println(buf, "────────────────────────────────────────────────────────")
 
-        typ = isGenerator(ps) ? "Gen" : "Load"
+  for bus in sort(collect(keys(gens_by_bus)))
+    gens_idx = gens_by_bus[bus]
 
-        @printf(buf, "| %-5d | %-20s | %-20s | %-8s | %10.3f | %10.3f |\n",
-                    bus, busName, ps.comp.cName, typ,
-                    p === nothing ? 0.0 : p,
-                    q === nothing ? 0.0 : q)
+    # optional: sort generators at a bus by component name
+    sort!(gens_idx, by = i -> net.prosumpsVec[i].comp.cName)
+
+    busName = get(busNameByIdx, bus, "Bus_$bus")
+
+    for (k, idx) in enumerate(gens_idx)
+      ps = net.prosumpsVec[idx]
+
+      # Prefer results (pRes/qRes); fall back to spec values
+      p = ps.pRes === nothing ? ps.pVal : ps.pRes
+      q = ps.qRes === nothing ? ps.qVal : ps.qRes
+
+      status = status_from_Q(ps, q)
+
+      @printf(buf, "%-8s %4d %12.3f %12.3f   %-14s\n", busName, k, p === nothing ? 0.0 : p, q === nothing ? 0.0 : q, status)
     end
+  end
 
-    println(buf, "-------------------------------------------------------------------------------------------------------------------")
-    return String(take!(buf))
+  println(buf, "────────────────────────────────────────────────────────")
+
+  # =========================
+  # Load section
+  # =========================
+  println(buf, "\nLoad results:")
+  println(buf, "────────────────────────────────────────")
+  @printf(buf, "%-8s %5s %12s %12s\n", "Bus", "Load#", "P [MW]", "Q [MVar]")
+  println(buf, "────────────────────────────────────────")
+
+  for bus in sort(collect(keys(loads_by_bus)))
+    loads_idx = loads_by_bus[bus]
+
+    # optional: sort loads at a bus by component name
+    sort!(loads_idx, by = i -> net.prosumpsVec[i].comp.cName)
+
+    busName = get(busNameByIdx, bus, "Bus_$bus")
+
+    for (k, idx) in enumerate(loads_idx)
+      ps = net.prosumpsVec[idx]
+
+      # Prefer results (pRes/qRes); fall back to spec values
+      p = ps.pRes === nothing ? ps.pVal : ps.pRes
+      q = ps.qRes === nothing ? ps.qVal : ps.qRes
+
+      @printf(buf, "%-8s %5d %12.3f %12.3f\n", busName, k, p === nothing ? 0.0 : p, q === nothing ? 0.0 : q)
+    end
+  end
+
+  println(buf, "────────────────────────────────────────────────────────")
+
+  return String(take!(buf))
 end
 
 function printProsumerResults(net::Net)
-    prosText = _formatProsumerResults(net)    
-    println(prosText)
-    
+  prosText = formatProsumerResults(net)
+  println(prosText)
 end

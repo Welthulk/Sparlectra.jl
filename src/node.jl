@@ -229,7 +229,7 @@ function isSlack(o::Node)
 end
 
 function getNodeVm(o::Node)::Float64
-  return o._vm_pu  
+  return o._vm_pu
 end
 
 function getNodeVn(o::Node)::Float64
