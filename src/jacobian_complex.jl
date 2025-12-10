@@ -1047,6 +1047,9 @@ function run_complex_nr_rectangular_for_net!(net::Net; maxiter::Int = 20, tol::F
   Sbus_pu  = V .* conj.(Ibus)
   Sbus_MVA = Sbus_pu .* Sbase
 
+  @debug "Final Voltages Mag = " [abs.(V)...]
+  @debug "Final Voltages Ang = " [angle.(V) .* (180.0 / π)...]
+
   isoNodes = net.isoNodes
 
   @inbounds for (k, node) in enumerate(nodes)
@@ -1062,28 +1065,25 @@ function run_complex_nr_rectangular_for_net!(net::Net; maxiter::Int = 20, tol::F
     # Slack bus: always write P and Q generation from the solved state
     if node._nodeType == Sparlectra.Slack
       node._pƩGen = Pbus_MW
-      node._qƩGen = Qbus_MVar
-
-      # PV buses: write Pgen for all, and Qgen only if a Q-limit was hit
+      node._qƩGen = Qbus_MVar 
+      
     elseif node._nodeType == Sparlectra.PV
-      # Always update active power generation from the solved state
-      node._pƩGen = Pbus_MW
-
-      # If this PV bus hit a Q-limit (PV->PQ in the solver),
-      # write back the reactive power generation as well.
-      if haskey(net.qLimitEvents, k)
-        node._qƩGen = Qbus_MVar
+      node._qƩGen = Qbus_MVar
+      if haskey(net.qLimitEvents, k)        
         @info "Bus $(k) hit Q limit; set as PQ bus (rectangular solver)."
       end
     end
-
     # PQ buses / pure loads: do not touch _pƩLoad / _pƩGen here.
     # The original load/generation specification remains intact.
   end
 
   # 8) Update total bus power (sum of complex injections in p.u.)
-  setTotalBusPower!(net = net, p = sum(real.(Sbus_pu)), q = sum(imag.(Sbus_pu)))
-
+  p = (sum(real.(Sbus_pu)))* Sbase
+  q = (sum(imag.(Sbus_pu)))* Sbase
+  
+  @debug "Set total bus power to p = $p MW and q = $q MVar"
+  setTotalBusPower!(net = net, p = p, q = q)
+  
   return iters, converged ? 0 : 1
 end
 

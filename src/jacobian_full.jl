@@ -379,21 +379,19 @@ function calcNewtonRaphson_withPVIdentity!(net::Net, Y::AbstractMatrix{ComplexF6
   isoNodes = net.isoNodes
   for bus in busVec
     idx = bus.idx
-    if idx in isoNodes
-      ;
-      continue;
+    if idx in isoNodes      
+      continue
     end
     idx += count(i -> i < idx, isoNodes)
     setVmVa!(node = nodes[idx], vm_pu = bus.vm_pu, va_deg = rad2deg(bus.va_rad))
 
-    if bus.isPVactive == false
-      nodes[idx]._pƩGen = bus._pRes * Sbase_MVA
+    if bus.isPVactive == false      
       nodes[idx]._qƩGen = bus._qRes * Sbase_MVA
       @info "Bus $(bus.idx) hit Q limit; set as PQ bus."
     end
 
-    if bus.type == Sparlectra.PV
-      nodes[idx]._pƩGen = bus._pRes * Sbase_MVA
+    if bus.type == Sparlectra.PV      
+      nodes[idx]._qƩGen = bus._qRes * Sbase_MVA
     elseif bus.type == Sparlectra.Slack
       nodes[idx]._pƩGen = bus._pRes * Sbase_MVA
       nodes[idx]._qƩGen = bus._qRes * Sbase_MVA
