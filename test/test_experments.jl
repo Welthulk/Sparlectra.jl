@@ -50,11 +50,8 @@ function cross_check()
   println("---------------------------------------------------")
 end
 
-#test_5BusNet(1, 20.0 )
-#test_5BusNet(1, 5.0, :polar_full, opt_fd, opt_sparse)
-#test_5BusNet(1, 5.0, :classic, opt_fd, opt_sparse)
 #test_acpflow(1;lLine_6a6b = 0.01, damp = 1.0, method = :rectangular, opt_sparse = true)
 #test_5BusNet(1, 500.0, :rectangular, false, false)
-
-
-test_3BusNet(1, 150.0, :rectangular, false, false)
+#test_5BusNet(1, 500.0, :polar_full, false, false)
+#test_5BusNet(1, 500.0, :classic, false, false)
+#test_3BusNet(1, 5.0, :rectangular, false, false)
