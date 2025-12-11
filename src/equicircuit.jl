@@ -158,17 +158,9 @@ Converts the resistance, reactance, conductance, and susceptance from physical u
 toPU_RXGB(r = 0.01, x = 0.1, g = 0.02, b = 0.02, v_kv = 110.0, baseMVA = 100.0)
 ```
 """
-function toPU_RXBG(; r::Float64, x::Float64, g::Union{Nothing,Float64} = nothing, b::Union{Nothing,Float64} = nothing, v_kv::Float64, baseMVA::Float64)::Tuple{Float64,Float64,Float64,Float64}
-  z_base = (v_kv * v_kv) / baseMVA
-  y_base = 1.0 / z_base
-  r_pu = r / z_base
-  x_pu = x / z_base
-
-  g_pu = b_pu = 0.0
-  !isnothing(g) ? g_pu = g * y_base : 0.0
-  !isnothing(b) ? b_pu = b * y_base : 0.0
-
-  return r_pu, x_pu, b_pu, g_pu
+function toPU_RXBG(; r::T, x::T, g::Union{Nothing,T} = nothing,  b::Union{Nothing,T} = nothing,  v_kv::T,  baseMVA::T)::NTuple{4,T} where {T<:Real}
+    r_pu, x_pu, g_pu, b_pu  = to_RXGB(r_pu = r, x_pu = x, g_pu = g, b_pu = b, v_kv = v_kv, baseMVA = baseMVA)
+    return r_pu, x_pu, b_pu, g_pu
 end
 
 """
@@ -195,15 +187,20 @@ Converts the resistance, reactance, conductance, and susceptance from per unit t
 to_RXGB(r_pu = 0.01, x_pu = 0.1, g_pu = 0.02, b_pu = 0.02, v_kv = 110.0, baseMVA = 100.0)
 ```
 """
-function to_RXGB(; r_pu::Float64, x_pu::Float64, g_pu::Union{Nothing,Float64} = nothing, b_pu::Union{Nothing,Float64} = nothing, v_kv::Float64, baseMVA::Float64)::Tuple{Float64,Float64,Float64,Float64}
-  z_base = (v_kv^2) / baseMVA
-  r = r_pu * z_base
-  x = x_pu * z_base
-  g = b = 0.0
-  !isnothing(g_pu) ? g = g_pu / z_base : 0.0
-  !isnothing(b_pu) ? b = b_pu / z_base : 0.0
-  return r, x, g, b
+function to_RXGB(; r_pu::T, x_pu::T, g_pu::Union{Nothing,T} = nothing,  b_pu::Union{Nothing,T} = nothing, v_kv::T, baseMVA::T)::NTuple{4,T} where {T<:Real}
+    # z_base = V^2 / S_base
+    z_base = (v_kv * v_kv) / baseMVA
+    y_base = 1.0 / z_base
+    
+    r = r_pu * y_base
+    x = x_pu * y_base
+
+    g = isnothing(g_pu) ? zero(T) : g_pu * z_base
+    b = isnothing(b_pu) ? zero(T) : b_pu * z_base
+
+    return r, x, g, b
 end
+
 #=
 function removeIsolatedNodesFromYBUS(Y::AbstractMatrix{ComplexF64}, isolated_nodes::Vector{Int})
     if issparse(Y)

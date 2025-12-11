@@ -230,81 +230,6 @@ function run_complex_nr_rectangular(Ybus, V0, S; slack_idx::Int = 1, maxiter::In
 end
 
 """
-    initial_Vrect_from_net(net) -> (V0, slack_idx)
-
-Build the initial complex voltage vector V0 from the network bus data
-(Vm, Va), and detect the slack bus index.
-
-Returns:
-- V0::Vector{ComplexF64}
-- slack_idx::Int
-"""
-function initial_Vrect_from_net(net::Net)
-  nodes = net.nodeVec
-  n = length(nodes)
-  V0 = Vector{ComplexF64}(undef, n)
-
-  slack_idx = 0
-
-  for (k, node) in enumerate(nodes)
-    vm = node._vm_pu
-    va_deg = node._va_deg
-    va_rad = deg2rad(va_deg)
-
-    V0[k] = vm * cis(va_rad)
-
-    if isSlack(node)
-      @assert slack_idx == 0 "Multiple slack buses detected"
-      slack_idx = k
-    end
-  end
-
-  if slack_idx == 0
-    error("No slack bus found in network")
-  end
-
-  return V0, slack_idx
-end
-
-"""
-    build_S_from_net(net) -> S::Vector{ComplexF64}
-
-Build the specified complex power injection vector S = P + jQ in per-unit
-for each bus, based on the net's bus load / generation / shunt data.
-Positive P/Q means net injection into the bus (generation),
-negative means net consumption (load).
-
-"""
-function build_S_from_net(net::Net)
-  nodes = net.nodeVec
-  n = length(nodes)
-  S = Vector{ComplexF64}(undef, n)
-
-  baseMVA = net.baseMVA
-
-  for (k, node) in enumerate(nodes)
-    Pgen_MW    = isnothing(node._pƩGen) ? 0.0 : node._pƩGen
-    Qgen_MVar  = isnothing(node._qƩGen) ? 0.0 : node._qƩGen
-    Pload_MW   = isnothing(node._pƩLoad) ? 0.0 : node._pƩLoad
-    Qload_MVar = isnothing(node._qƩLoad) ? 0.0 : node._qƩLoad
-    # Shunt powers are already represented via Ybus (shunt admittance),
-    # so they must NOT be subtracted again in the specified injections.
-    # Psh_MW     = isnothing(node._pShunt) ? 0.0 : node._pShunt
-    # Qsh_MVar   = isnothing(node._qShunt) ? 0.0 : node._qShunt
-
-    Pinj_MW   = Pgen_MW - Pload_MW
-    Qinj_MVar = Qgen_MVar - Qload_MVar
-
-    Ppu = Pinj_MW / baseMVA
-    Qpu = Qinj_MVar / baseMVA
-
-    S[k] = ComplexF64(Ppu, Qpu)
-  end
-
-  return S
-end
-
-"""
     update_net_voltages_from_complex!(net, V)
 
 Update the bus voltage magnitudes and angles in the network from the
@@ -877,10 +802,10 @@ function run_complex_nr_rectangular_for_net!(net::Net; maxiter::Int = 20, tol::F
   Ybus = createYBUS(net = net, sparse = sparse, printYBUS = (verbose > 1))
 
   # 1) Initial complex voltages V0 and slack index
-  V0, slack_idx = initial_Vrect_from_net(net)
+  V0, slack_idx = initialVrect(net)
 
   # 2) Specified complex power injections S (p.u.), sign convention wie im Polar-NR
-  S = build_S_from_net(net)
+  S = buildComplexSVec(net)
 
   # 3) Bus types and PV setpoints from Node data
   bus_types = Vector{Symbol}(undef, n)
@@ -1047,6 +972,9 @@ function run_complex_nr_rectangular_for_net!(net::Net; maxiter::Int = 20, tol::F
   Sbus_pu  = V .* conj.(Ibus)
   Sbus_MVA = Sbus_pu .* Sbase
 
+  @debug "Final Voltages Mag = " [abs.(V)...]
+  @debug "Final Voltages Ang = " [angle.(V) .* (180.0 / π)...]
+
   isoNodes = net.isoNodes
 
   @inbounds for (k, node) in enumerate(nodes)
@@ -1062,28 +990,25 @@ function run_complex_nr_rectangular_for_net!(net::Net; maxiter::Int = 20, tol::F
     # Slack bus: always write P and Q generation from the solved state
     if node._nodeType == Sparlectra.Slack
       node._pƩGen = Pbus_MW
-      node._qƩGen = Qbus_MVar
-
-      # PV buses: write Pgen for all, and Qgen only if a Q-limit was hit
+      node._qƩGen = Qbus_MVar 
+      
     elseif node._nodeType == Sparlectra.PV
-      # Always update active power generation from the solved state
-      node._pƩGen = Pbus_MW
-
-      # If this PV bus hit a Q-limit (PV->PQ in the solver),
-      # write back the reactive power generation as well.
-      if haskey(net.qLimitEvents, k)
-        node._qƩGen = Qbus_MVar
-        @info "Bus $(k) hit Q limit; set as PQ bus (rectangular solver)."
+      node._qƩGen = Qbus_MVar
+      if haskey(net.qLimitEvents, k)        
+        @debug "Bus $(k) hit Q limit; set as PQ bus (rectangular solver)."
       end
     end
-
     # PQ buses / pure loads: do not touch _pƩLoad / _pƩGen here.
     # The original load/generation specification remains intact.
   end
 
   # 8) Update total bus power (sum of complex injections in p.u.)
-  setTotalBusPower!(net = net, p = sum(real.(Sbus_pu)), q = sum(imag.(Sbus_pu)))
-
+  p = (sum(real.(Sbus_pu)))* Sbase
+  q = (sum(imag.(Sbus_pu)))* Sbase
+  
+  @debug "Set total bus power to p = $p MW and q = $q MVar"
+  setTotalBusPower!(net = net, p = p, q = q)
+  
   return iters, converged ? 0 : 1
 end
 
@@ -1119,7 +1044,7 @@ Returns:
 where `status == 0` indicates convergence.
 """
 function runpf!(net::Net, maxIte::Int, tolerance::Float64 = 1e-6, verbose::Int = 0; method::Symbol = :rectangular, opt_fd::Bool = false, opt_sparse::Bool = true, damp = 1.0)
-  @info "Running AC Power Flow using method: $(method)"
+  @debug "Running AC Power Flow using method: $(method)"
   if method === :polar_full
     return runpf_full!(net, maxIte, tolerance, verbose; opt_sparse = opt_sparse)
   elseif method === :rectangular

@@ -47,7 +47,7 @@ function run_acpflow(; max_ite::Int = 10, tol::Float64 = 1e-6, casefile::String,
     # Calculate network losses and print results
     calcNetLosses!(myNet)
     jpath = printResultToFile ? out_path : ""
-    printACPFlowResults(myNet, etime, ite, tol, printResultToFile, jpath)
+    printACPFlowResults(myNet, etime, ite, tol, printResultToFile, jpath; converged = (erg == 0), solver = method)
   elseif erg == 1
     println("Newton-Raphson did not converge")
   else
@@ -80,7 +80,7 @@ function run_net_acpflow(; net::Net, max_ite::Int = 10, tol::Float64 = 1e-6, ver
     # Calculate network losses and print results
     calcNetLosses!(net)
     jpath = printResultToFile ? out_path : ""
-    printACPFlowResults(net, etime, ite, tol, printResultToFile, jpath)
+    printACPFlowResults(net, etime, ite, tol, printResultToFile, jpath; converged = (erg == 0), solver = method)
   elseif erg == 1
     println("Newton-Raphson did not converge")
   else

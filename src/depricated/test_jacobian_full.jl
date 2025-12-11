@@ -20,7 +20,7 @@ function test_acpflow_full(verbose::Int = 0)
   end
   if print_results
     calcNetLosses!(net)
-    printACPFlowResults(net, etime, ite, tol)
+    printACPFlowResults(net, etime, ite, tol; converged = (erg == 0))
   end
 
   return result
@@ -187,7 +187,7 @@ function test_pv_q_limit_switch!(net::Net; verbose::Int = 0)
   if print_results
     printQLimitLog(net; sort_by = :bus)
     calcNetLosses!(net)
-    printACPFlowResults(net, etime, ite, tol)
+    printACPFlowResults(net, etime, ite, tol; converged = converged)
   end
 
   return hit == false
@@ -221,7 +221,7 @@ function test_5BusNet(verbose::Int = 0, qlim::Float64 = 20.0)
 
   if print_results
     calcNetLosses!(net)
-    printACPFlowResults(net, etim, ite, tol)
+    printACPFlowResults(net, etim, ite, tol; converged = (erg == 0))
     printQLimitLog(net; sort_by = :bus)
   end
 

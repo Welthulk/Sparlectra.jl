@@ -1,4 +1,15 @@
 # Change Log
+## Version 0.4.27 – 2025-12-11
+### New Features
+* Added 3Bus Testcase with PV Generator
+* Added createTest5BusNet with multiple generators at one bus and zero injection generator
+* Issue #81 Fix Calculatation of Generators with Zero Injektion
+* Mark PV->PQ switching in printACPFlowResults Log 
+  
+### Bug Fixes
+* fixes per unit calculation for line shunt admittance
+* fixes calculation of losses
+
 
 ## Version 0.4.26 – 2025-12-04
 * Issue #74: Multiple Generators at One Bus Not Handled Correctly

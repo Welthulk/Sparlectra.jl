@@ -19,5 +19,6 @@ include("testremove.jl")
   @test test_acpflow(0; lLine_6a6b = 0.01, damp = 1.0, method = :classic, opt_sparse = true) == true
   @test testISOBusses() == true
   @test testRemoveFunctions() == true
-  @test test_5BusNet(0, 10.0) == true
+  @test test_5BusNet(0, 10.0) == true  
+  @test test_3BusNet(0, 150.0, :rectangular, false, false) == true
 end
