@@ -54,4 +54,4 @@ end
 #test_5BusNet(1, 500.0, :rectangular, false, false)
 #test_5BusNet(1, 500.0, :polar_full, false, false)
 #test_5BusNet(1, 500.0, :classic, false, false)
-#test_3BusNet(1, 5.0, :rectangular, false, false)
+#test_3BusNet(1, 50.0, :rectangular, false, false)
