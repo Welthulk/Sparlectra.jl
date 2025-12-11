@@ -1234,7 +1234,7 @@ function distribute_bus_loads!(net::Net, bus::Int)
   end
 end
 
-function distribute_all_bus_results!(net::Net)
+function distributeBusResults!(net::Net)
   # reset results
   for ps in net.prosumpsVec
     ps.pRes = nothing
@@ -1247,3 +1247,91 @@ function distribute_all_bus_results!(net::Net)
   end
 end
 
+"""
+    buildVoltageVector(net::Net) -> Vector{ComplexF64}
+
+Builds the complex bus voltage vector V[k] = vm_pu[k] * exp(j * va_rad[k])
+using the current nodal state stored in `net.nodeVec`.
+"""
+function buildVoltageVector(net::Net)
+  V = Vector{ComplexF64}(undef, length(net.nodeVec))
+  @inbounds for n in net.nodeVec
+    V[n.busIdx] = n._vm_pu * cis(deg2rad(n._va_deg))
+  end
+  return V
+end
+
+"""
+    initial_Vrect_from_net(net) -> (V0, slack_idx)
+
+Build the initial complex voltage vector V0 from the network bus data
+(Vm, Va), and detect the slack bus index.
+
+Returns:
+- V0::Vector{ComplexF64}
+- slack_idx::Int
+"""
+function initialVrect(net::Net)
+  nodes = net.nodeVec
+  n = length(nodes)
+  V0 = Vector{ComplexF64}(undef, n)
+
+  slack_idx = 0
+
+  for (k, node) in enumerate(nodes)
+    vm = node._vm_pu
+    va_deg = node._va_deg
+    va_rad = deg2rad(va_deg)
+
+    V0[k] = vm * cis(va_rad)
+
+    if isSlack(node)
+      @assert slack_idx == 0 "Multiple slack buses detected"
+      slack_idx = k
+    end
+  end
+
+  if slack_idx == 0
+    error("No slack bus found in network")
+  end
+
+  return V0, slack_idx
+end
+
+"""
+    buildComplexSVec(net) -> S::Vector{ComplexF64}
+
+Build the specified complex power injection vector S = P + jQ in per-unit
+for each bus, based on the net's bus load / generation / shunt data.
+Positive P/Q means net injection into the bus (generation),
+negative means net consumption (load).
+
+"""
+function buildComplexSVec(net::Net)
+  nodes = net.nodeVec
+  n = length(nodes)
+  S = Vector{ComplexF64}(undef, n)
+
+  baseMVA = net.baseMVA
+
+  for (k, node) in enumerate(nodes)
+    Pgen_MW    = isnothing(node._pƩGen) ? 0.0 : node._pƩGen
+    Qgen_MVar  = isnothing(node._qƩGen) ? 0.0 : node._qƩGen
+    Pload_MW   = isnothing(node._pƩLoad) ? 0.0 : node._pƩLoad
+    Qload_MVar = isnothing(node._qƩLoad) ? 0.0 : node._qƩLoad
+    # Shunt powers are already represented via Ybus (shunt admittance),
+    # so they must NOT be subtracted again in the specified injections.
+    # Psh_MW     = isnothing(node._pShunt) ? 0.0 : node._pShunt
+    # Qsh_MVar   = isnothing(node._qShunt) ? 0.0 : node._qShunt
+
+    Pinj_MW   = Pgen_MW - Pload_MW
+    Qinj_MVar = Qgen_MVar - Qload_MVar
+
+    Ppu = Pinj_MW / baseMVA
+    Qpu = Qinj_MVar / baseMVA
+
+    S[k] = ComplexF64(Ppu, Qpu)
+  end
+
+  return S
+end
