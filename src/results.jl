@@ -50,12 +50,12 @@ function formatBranchResults(net::Net)
   end
   formatted_results *= @sprintf("---------------------------------------------------------------------------------------------------------------------------\n")
   (∑pv, ∑qv) = getTotalLosses(net = net)
-  total_losses = @sprintf("total losses (I^2*Z): P = %10.3f [MW], Q = %10.3f [MVar]\n", ∑pv, ∑qv)
+  total_losses = @sprintf("total network power balance (Σ S_branch): P = %10.3f [MW], Q = %10.3f [MVar]\n", ∑pv, ∑qv)
 
   return formatted_results, total_losses
 end
 
-function printACPFlowResults(net::Net, ct::Float64, ite::Int, tol::Float64, toFile::Bool = false, path::String = "")
+function printACPFlowResults(net::Net, ct::Float64, ite::Int, tol::Float64, toFile::Bool = false, path::String = ""; converged::Bool = true)
   if toFile
     filename = strip("result_$(net.name).txt")
     io = open(joinpath(path, filename), "w")
@@ -105,7 +105,11 @@ function printACPFlowResults(net::Net, ct::Float64, ite::Int, tol::Float64, toFi
   @printf(io, "Date         :%20s\n", current_date)
   @printf(io, "Iterations   :%10d\n", ite)
   @printf(io, "Tolerance    : %.1e\n", tol)
-  @printf(io, "Converged in :%10f seconds\n", ct)
+  if converged
+    @printf(io, "Converged in :%10f seconds\n", ct)
+  else
+    @printf(io, "Status       :%10s\n", "Not Converged")
+  end  
   @printf(io, "Case         :%15s\n", net.name)
   @printf(io, "BaseMVA      :%10d\n", net.baseMVA)
   if auxb > 0 && niso > 0

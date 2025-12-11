@@ -56,5 +56,5 @@ end
 #test_acpflow(1;lLine_6a6b = 0.01, damp = 1.0, method = :rectangular, opt_sparse = true)
 #test_5BusNet(1, 500.0, :rectangular, false, false)
 
-#test_3BusNet(1, 30.0, :polar_full, false, true)
-#test_3BusNet(2, 150.0, :rectangular, false, false)
+
+test_3BusNet(1, 150.0, :rectangular, false, false)
