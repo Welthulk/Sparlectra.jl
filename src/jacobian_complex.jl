@@ -995,7 +995,7 @@ function run_complex_nr_rectangular_for_net!(net::Net; maxiter::Int = 20, tol::F
     elseif node._nodeType == Sparlectra.PV
       node._qƩGen = Qbus_MVar
       if haskey(net.qLimitEvents, k)        
-        @info "Bus $(k) hit Q limit; set as PQ bus (rectangular solver)."
+        @debug "Bus $(k) hit Q limit; set as PQ bus (rectangular solver)."
       end
     end
     # PQ buses / pure loads: do not touch _pƩLoad / _pƩGen here.
@@ -1044,7 +1044,7 @@ Returns:
 where `status == 0` indicates convergence.
 """
 function runpf!(net::Net, maxIte::Int, tolerance::Float64 = 1e-6, verbose::Int = 0; method::Symbol = :rectangular, opt_fd::Bool = false, opt_sparse::Bool = true, damp = 1.0)
-  @info "Running AC Power Flow using method: $(method)"
+  @debug "Running AC Power Flow using method: $(method)"
   if method === :polar_full
     return runpf_full!(net, maxIte, tolerance, verbose; opt_sparse = opt_sparse)
   elseif method === :rectangular
