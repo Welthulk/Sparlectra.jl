@@ -57,12 +57,14 @@ end
 
 ## Documentation Structure
 
+- **[Changelog](changelog.md)**: Version history and updates
 - **[Networks](networks.md)**: Creating and manipulating network models
 - **[Branch Model](branchmodel.md)**: Details of the network branch model
 - **[Import/Export](import.md)**: Importing and exporting network configurations
 - **[Component Removal](remove_functions.md)**: Removing components from networks
 - **[Workshop](workshop.md)**: Guided exercises and examples
 - **[Function Reference](reference.md)**: Complete API documentation
+- **[Powerlimit Guide](powerlimits_solvers.md)**: Handling of power limits
 
 ## Contributors
 
