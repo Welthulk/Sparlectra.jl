@@ -899,7 +899,7 @@ Sets the total active and reactive power at the buses in the network.
 setTotalBusPower!(net = network, p = 100.0, q = 50.0)
 ```
 """
-function setTotalBusPower!(; net::Net, p::Float64, q::Float64)
+function setTotalBusPower!(; net::Net, p::Float64, q::Float64)  
   push!(net.totalBusPower, (p, q))
 end
 
