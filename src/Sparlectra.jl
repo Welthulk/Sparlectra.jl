@@ -13,7 +13,7 @@ using LinearAlgebra, Dates, SparseArrays, Printf, Logging
 
 # resource data types for working with Sparlectra
 const Wurzel3 = 1.7320508075688772
-const SparlectraVersion = v"0.4.26"
+const SparlectraVersion = v"0.4.27"
 version() = SparlectraVersion
 abstract type AbstractBranch end
 
