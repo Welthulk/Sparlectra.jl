@@ -230,81 +230,6 @@ function run_complex_nr_rectangular(Ybus, V0, S; slack_idx::Int = 1, maxiter::In
 end
 
 """
-    initial_Vrect_from_net(net) -> (V0, slack_idx)
-
-Build the initial complex voltage vector V0 from the network bus data
-(Vm, Va), and detect the slack bus index.
-
-Returns:
-- V0::Vector{ComplexF64}
-- slack_idx::Int
-"""
-function initial_Vrect_from_net(net::Net)
-  nodes = net.nodeVec
-  n = length(nodes)
-  V0 = Vector{ComplexF64}(undef, n)
-
-  slack_idx = 0
-
-  for (k, node) in enumerate(nodes)
-    vm = node._vm_pu
-    va_deg = node._va_deg
-    va_rad = deg2rad(va_deg)
-
-    V0[k] = vm * cis(va_rad)
-
-    if isSlack(node)
-      @assert slack_idx == 0 "Multiple slack buses detected"
-      slack_idx = k
-    end
-  end
-
-  if slack_idx == 0
-    error("No slack bus found in network")
-  end
-
-  return V0, slack_idx
-end
-
-"""
-    build_S_from_net(net) -> S::Vector{ComplexF64}
-
-Build the specified complex power injection vector S = P + jQ in per-unit
-for each bus, based on the net's bus load / generation / shunt data.
-Positive P/Q means net injection into the bus (generation),
-negative means net consumption (load).
-
-"""
-function build_S_from_net(net::Net)
-  nodes = net.nodeVec
-  n = length(nodes)
-  S = Vector{ComplexF64}(undef, n)
-
-  baseMVA = net.baseMVA
-
-  for (k, node) in enumerate(nodes)
-    Pgen_MW    = isnothing(node._pƩGen) ? 0.0 : node._pƩGen
-    Qgen_MVar  = isnothing(node._qƩGen) ? 0.0 : node._qƩGen
-    Pload_MW   = isnothing(node._pƩLoad) ? 0.0 : node._pƩLoad
-    Qload_MVar = isnothing(node._qƩLoad) ? 0.0 : node._qƩLoad
-    # Shunt powers are already represented via Ybus (shunt admittance),
-    # so they must NOT be subtracted again in the specified injections.
-    # Psh_MW     = isnothing(node._pShunt) ? 0.0 : node._pShunt
-    # Qsh_MVar   = isnothing(node._qShunt) ? 0.0 : node._qShunt
-
-    Pinj_MW   = Pgen_MW - Pload_MW
-    Qinj_MVar = Qgen_MVar - Qload_MVar
-
-    Ppu = Pinj_MW / baseMVA
-    Qpu = Qinj_MVar / baseMVA
-
-    S[k] = ComplexF64(Ppu, Qpu)
-  end
-
-  return S
-end
-
-"""
     update_net_voltages_from_complex!(net, V)
 
 Update the bus voltage magnitudes and angles in the network from the
@@ -877,10 +802,10 @@ function run_complex_nr_rectangular_for_net!(net::Net; maxiter::Int = 20, tol::F
   Ybus = createYBUS(net = net, sparse = sparse, printYBUS = (verbose > 1))
 
   # 1) Initial complex voltages V0 and slack index
-  V0, slack_idx = initial_Vrect_from_net(net)
+  V0, slack_idx = initialVrect(net)
 
   # 2) Specified complex power injections S (p.u.), sign convention wie im Polar-NR
-  S = build_S_from_net(net)
+  S = buildComplexSVec(net)
 
   # 3) Bus types and PV setpoints from Node data
   bus_types = Vector{Symbol}(undef, n)

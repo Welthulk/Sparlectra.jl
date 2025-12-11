@@ -172,7 +172,7 @@ loads and generators, distribute the bus results to all attached `ProSumer`s:
 
 ```julia
 # Map solved bus results back down to all prosumers
-distribute_all_bus_results!(net)
+distributeBusResults!(net)
 ```
 
 If multiple generators are connected to the same bus and one of them is at
@@ -206,6 +206,6 @@ This gives you a compact workflow:
 1. Load / build the network
 2. Set PV buses and Q-limits
 3. Run rectangular NR via `runpf!(…; method = :rectangular, …)`
-4. Call `distribute_all_bus_results!(net)`
+4. Call `distributeBusResults!(net)`
 5. Use `printACPFlowResults`, `printProsumerResults`, and `printQLimitLog`
    to inspect the outcome.

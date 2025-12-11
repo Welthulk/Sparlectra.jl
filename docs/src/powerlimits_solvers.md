@@ -349,8 +349,8 @@ run_complex_nr_rectangular(
 
 Integration with `Net` happens über Hilfsfunktionen:
 
-* `initial_Vrect_from_net(net) -> (V0, slack_idx)`
-* `build_S_from_net(net) -> S`
+* `initialVrect(net) -> (V0, slack_idx)`
+* `buildComplexSVec(net) -> S`
 * `update_net_voltages_from_complex!(net, V)`
 * `run_complex_nr_rectangular_for_net!(net, ...)` (High-level wrapper, ruft intern `run_complex_nr_rectangular` auf und verbindet alles mit `runpf!`).
 
