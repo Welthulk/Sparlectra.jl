@@ -525,15 +525,6 @@ When a PV bus hits its Q-limit, the following updates take place conceptually:
    
    !!! Hint: In many practical applications, however, a bus remains in the state it was switched to during a single power flow calculation (i.e., no PQ→PV return during the same calculation).
 
-Gerne – hier ist **nur der fehlende Teil**, den du direkt *unten an deinen bestehenden workshop.md anhängen* kannst.
-Er ergänzt:
-
-1. **Ausgabe der Generatorleistungen** nach dem Power-Flow
-2. **Waterfilling-Methode** zur fairen Q-Verteilung bei mehreren Generatoren pro Bus
-3. **Einbettung in typische Sparlectra-Workflows** (rectangular & polar)
-
-Formulierung ist bewusst **knapp, technisch, nachvollziehbar**, wie für einen Workshop.
-
 ---
 
 # Generator Power Output and Waterfilling Allocation
