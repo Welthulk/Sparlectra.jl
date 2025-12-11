@@ -20,8 +20,8 @@ function test_acpflow(verbose::Int = 0; lLine_6a6b::Float64 = 0.01, damp::Float6
   if print_results
     V = buildVoltageVector(net)
     calcNetLosses!(net, V)
-    distribute_all_bus_results!(net)
-    printACPFlowResults(net, etime, ite, tol)
+    distributeBusResults!(net)
+    printACPFlowResults(net, etime, ite, tol, toFile = false;  converged = (erg == 0))
     printProsumerResults(net)
     printQLimitLog(net; sort_by = :bus)
   end
@@ -154,7 +154,7 @@ function testISOBusses()
   end
   if erg != 0
     @warn "Power flow did not converge"
-    printACPFlowResults(net, etime, ite, tol)
+    printACPFlowResults(net, etime, ite, tol; converged = false)
     return false
   end
 
@@ -422,17 +422,27 @@ function test_3BusNet(verbose::Int = 0, qlim::Float64 = 15.0, method::Symbol = :
   #
 
   hit = pv_hit_q_limit(net, pv_names)
-
-  if print_results
-    V = buildVoltageVector(net)
-    calcNetLosses!(net, V)
-    distribute_all_bus_results!(net)
-    printACPFlowResults(net, etim, ite, tol)
+  calcNetLosses!(net)
+  distributeBusResults!(net)
+  if print_results    
+    printACPFlowResults(net, etim, ite, tol; converged = result)
     printProsumerResults(net)
     printQLimitLog(net; sort_by = :bus)
   end
 
-  return hit==true
+  tp = getTotalBusPower(net = net)
+  tl = getTotalLosses(net= net)
+  
+
+  @test all(isapprox.(tp, tl; atol = 1e-6))
+  
+
+  if qlim < 33.2
+    return hit==true
+  else
+    return hit==false
+  end
+  
 end
 
 function test_5BusNet(verbose::Int = 0, qlim::Float64 = 20.0, method::Symbol = :rectangular, opt_fd::Bool = false, opt_sparse::Bool = false)
@@ -459,8 +469,8 @@ function test_5BusNet(verbose::Int = 0, qlim::Float64 = 20.0, method::Symbol = :
   if print_results
     V = buildVoltageVector(net)
     calcNetLosses!(net, V)
-    distribute_all_bus_results!(net)
-    printACPFlowResults(net, etim, ite, tol)
+    distributeBusResults!(net)
+    printACPFlowResults(net, etim, ite, tol; converged = result)
     printProsumerResults(net)
     printQLimitLog(net; sort_by = :bus)
   end
