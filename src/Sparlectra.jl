@@ -13,7 +13,7 @@ using LinearAlgebra, Dates, SparseArrays, Printf, Logging
 
 # resource data types for working with Sparlectra
 const Wurzel3 = 1.7320508075688772
-const SparlectraVersion = v"0.4.26"
+const SparlectraVersion = v"0.4.27"
 version() = SparlectraVersion
 abstract type AbstractBranch end
 
@@ -78,7 +78,7 @@ export
   # Network
   addBus!, addShunt!, addACLine!, addPIModelACLine!, add2WTrafo!, addPIModelTrafo!, addProsumer!, lockNet!, validate!, hasBusInNet, addBusGenPower!, addBusLoadPower!, addBusShuntPower!, setNodeVoltage!, setNodeAngle!,
   getNetOrigBusIdx, geNetBusIdx, setNetBranchStatus!, getNetBranch, getNetBranchNumberVec, setTotalLosses!, getTotalLosses, getBusType, get_bus_vn_kV, get_vn_kV, updateBranchParameters!, hasShunt!, 
-  getShunt!, markIsolatedBuses!,setTotalBusPower!, setPVBusVset!, setQLimits!, getNodeVm,distribute_all_bus_results!,
+  getShunt!, markIsolatedBuses!,setTotalBusPower!, setPVBusVset!, setQLimits!, getNodeVm,distributeBusResults!, getTotalBusPower, getTotalLosses, buildVoltageVector,initialVrect, buildComplexSVec,
   # remove_functions.jl
   removeBus!, removeBranch!, removeACLine!, removeTrafo!, removeShunt!, removeProsumer!, clearIsolatedBuses!,
   # import.jl
@@ -96,13 +96,13 @@ export
   # limits.jl
   printQLimitLog,logQLimitHit!, lastQLimitIter, getQLimits_pu, logQLimitHit!,lastQLimitIter, resetQLimitLog!, pv_hit_q_limit,
   # losses.jl
-  calcNetLosses!, buildVoltageVector,
+  calcNetLosses!, 
   # results.jl
   printACPFlowResults, printProsumerResults,
   # run_acpflow.jl
   run_acpflow, run_net_acpflow,
   # jacobian_complex.jl
-  runpf_rectangular!, mismatch_rectangular, complex_newton_step_rectangular_fd, initial_Vrect_from_net, build_S_from_net
+  runpf_rectangular!, mismatch_rectangular, complex_newton_step_rectangular_fd 
   
 include("utilities.jl")
 include("component.jl")

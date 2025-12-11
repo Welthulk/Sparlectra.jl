@@ -50,12 +50,12 @@ function formatBranchResults(net::Net)
   end
   formatted_results *= @sprintf("---------------------------------------------------------------------------------------------------------------------------\n")
   (∑pv, ∑qv) = getTotalLosses(net = net)
-  total_losses = @sprintf("total losses (I^2*Z): P = %10.3f [MW], Q = %10.3f [MVar]\n", ∑pv, ∑qv)
+  total_losses = @sprintf("total network power balance (Σ S_branch): P = %10.3f [MW], Q = %10.3f [MVar]\n", ∑pv, ∑qv)
 
   return formatted_results, total_losses
 end
 
-function printACPFlowResults(net::Net, ct::Float64, ite::Int, tol::Float64, toFile::Bool = false, path::String = "")
+function printACPFlowResults(net::Net, ct::Float64, ite::Int, tol::Float64, toFile::Bool = false, path::String = ""; converged::Bool = true, solver::Symbol = :NR)
   if toFile
     filename = strip("result_$(net.name).txt")
     io = open(joinpath(path, filename), "w")
@@ -102,25 +102,34 @@ function printACPFlowResults(net::Net, ct::Float64, ite::Int, tol::Float64, toFi
   end
   shunts = length(net.shuntVec)
 
-  @printf(io, "Date         :%20s\n", current_date)
-  @printf(io, "Iterations   :%10d\n", ite)
-  @printf(io, "Tolerance    : %.1e\n", tol)
-  @printf(io, "Converged in :%10f seconds\n", ct)
-  @printf(io, "Case         :%15s\n", net.name)
-  @printf(io, "BaseMVA      :%10d\n", net.baseMVA)
-  if auxb > 0 && niso > 0
-    @printf(io, "Nodes        :%10d (PV: %d PQ: %d (Aux: %d) Iso: %d Slack: %d\n", busses, npv, npq, auxb, niso, 1)
-  elseif auxb > 0
-    @printf(io, "Nodes        :%10d (PV: %d PQ: %d (Aux: %d) Slack: %d\n", busses, npv, npq, auxb, 1)
+  @printf(io, "Date           :%20s\n", current_date)
+  @printf(io, "Iterations     :%10d\n", ite)
+  @printf(io, "Tolerance      : %.1e\n", tol)
+  @printf(io, "Solver         :%15s\n", string(solver))
+  if converged
+    @printf(io, "Converged in   :%10f seconds\n", ct)
   else
-    @printf(io, "Nodes        :%10d (PV: %d PQ: %d Slack: %d)\n", busses, npv, npq, 1)
+    @printf(io, "Status         :%10s\n", "Not Converged")
+  end  
+  @printf(io, "Case           :%15s\n", net.name)
+  @printf(io, "BaseMVA        :%10d\n", net.baseMVA)
+  if auxb > 0 && niso > 0
+    @printf(io, "Nodes          :%10d (PV: %d PQ: %d (Aux: %d) Iso: %d Slack: %d\n", busses, npv, npq, auxb, niso, 1)
+  elseif auxb > 0
+    @printf(io, "Nodes          :%10d (PV: %d PQ: %d (Aux: %d) Slack: %d\n", busses, npv, npq, auxb, 1)
+  else
+    @printf(io, "Nodes          :%10d (PV: %d PQ: %d Slack: %d)\n", busses, npv, npq, 1)
   end
-  @printf(io, "Branches     :%10d\n", branches)
-  @printf(io, "Lines        :%10d\n", lines)
-  @printf(io, "Trafos       :%10d\n", trafos)
-  @printf(io, "Generators   :%10d\n", gens)
-  @printf(io, "Loads        :%10d\n", loads)
-  @printf(io, "Shunts       :%10d\n", shunts)
+  @printf(io, "Branches       :%10d\n", branches)
+  @printf(io, "Lines          :%10d\n", lines)
+  @printf(io, "Trafos         :%10d\n", trafos)
+  @printf(io, "Generators     :%10d\n", gens)
+  @printf(io, "Loads          :%10d\n", loads)
+  @printf(io, "Shunts         :%10d\n", shunts)
+  
+  num_q_limit = length(net.qLimitEvents)
+  @printf(io, "PV→PQ (Q-Limit):%10d\n", num_q_limit)
+
 
   println(io, "\n", totalLosses)
 
@@ -172,6 +181,12 @@ function printACPFlowResults(net::Net, ct::Float64, ite::Int, tol::Float64, toFi
       qShunt_str = ""
     end
     typeStr = toString(n._nodeType)
+    
+    # Mark PV→PQ buses (hit Q-limit) with a star in the Type column
+    if haskey(net.qLimitEvents, n.busIdx)
+        typeStr *= "*"
+    end
+
     v = n.comp.cVN * n._vm_pu
     nodeName = n.comp.cName
     if !isnothing(n._vmin_pu) && !isnothing(n._vmax_pu)

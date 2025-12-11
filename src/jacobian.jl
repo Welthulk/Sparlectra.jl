@@ -439,12 +439,12 @@ function calcNewtonRaphson!(net::Net, Y::AbstractMatrix{ComplexF64}, maxIte::Int
     end
 
     norm_p = norm(delta_P)
-    if verbose > 0
+    if verbose > 1
       @printf " norm %e, tol %e, ite %d\n" norm_p tolerance iteration_count
     end
 
     if norm_p < tolerance
-      if (verbose > 0)
+      if (verbose > 1)
         println("\nConvergence is reached after $(iteration_count) iterations")
       end
       erg = 0

@@ -11,10 +11,12 @@
     "nbi.jl", 
     "equicircuit.jl", 
     "losses.jl", 
-    "jacobian.jl", 
+    "jacobian_complex.jl", 
+    "jacobian_fd.jl",    
     "remove_functions.jl",         
+    "limits.jl", 
+    "import_export.jl",
+    "losses.jl",
     "results.jl"
-    
-    
   ]
 ```
