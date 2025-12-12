@@ -453,7 +453,7 @@ function calcNewtonRaphson!(net::Net, Y::AbstractMatrix{ComplexF64}, maxIte::Int
       # Solver => \
       delta_x = jacobian \ delta_P
 
-      if verbose > 1        
+      if verbose > 1
         printVector(delta_x, busVec, "Δφ", "ΔU/U", true, 0.0)
       end
     catch err

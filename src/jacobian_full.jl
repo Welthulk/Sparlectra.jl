@@ -213,7 +213,7 @@ function calcNewtonRaphson_withPVIdentity!(net::Net, Y::AbstractMatrix{ComplexF6
   if verbose > 0
     @info "Running full-system Newton-Raphson with PV identity rows...sparse=$sparse, flatStart=$flatStart, angle_limit=$angle_limit, debug=$debug"
   end
-  
+
   setJacobianAngleLimit(angle_limit)
   setJacobianDebug(debug)
 
@@ -335,7 +335,7 @@ function calcNewtonRaphson_withPVIdentity!(net::Net, Y::AbstractMatrix{ComplexF6
     end
 
     if nrm < tolerance
-      (verbose>0) &&  @info "Convergence after $(it) iterations"
+      (verbose>0) && @info "Convergence after $(it) iterations"
       erg = 0;
       break
     end
@@ -385,25 +385,25 @@ function calcNewtonRaphson_withPVIdentity!(net::Net, Y::AbstractMatrix{ComplexF6
   isoNodes = net.isoNodes
   for bus in busVec
     idx = bus.idx
-    if idx in isoNodes      
+    if idx in isoNodes
       continue
     end
     idx += count(i -> i < idx, isoNodes)
     setVmVa!(node = nodes[idx], vm_pu = bus.vm_pu, va_deg = rad2deg(bus.va_rad))
 
-    if bus.isPVactive == false      
+    if bus.isPVactive == false
       nodes[idx]._qƩGen = bus._qRes * Sbase_MVA
       @debug "Bus $(bus.idx) hit Q limit; set as PQ bus."
     end
 
-    if bus.type == Sparlectra.PV      
+    if bus.type == Sparlectra.PV
       nodes[idx]._qƩGen = bus._qRes * Sbase_MVA
     elseif bus.type == Sparlectra.Slack
       nodes[idx]._pƩGen = bus._pRes * Sbase_MVA
       nodes[idx]._qƩGen = bus._qRes * Sbase_MVA
     end
   end
-  
+
   p_pu = sum(b -> b._pRes, busVec)
   q_pu = sum(b -> b._qRes, busVec)
 
