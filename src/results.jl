@@ -110,7 +110,7 @@ function printACPFlowResults(net::Net, ct::Float64, ite::Int, tol::Float64, toFi
     @printf(io, "Converged in   :%10f seconds\n", ct)
   else
     @printf(io, "Status         :%10s\n", "Not Converged")
-  end  
+  end
   @printf(io, "Case           :%15s\n", net.name)
   @printf(io, "BaseMVA        :%10d\n", net.baseMVA)
   if auxb > 0 && niso > 0
@@ -126,10 +126,9 @@ function printACPFlowResults(net::Net, ct::Float64, ite::Int, tol::Float64, toFi
   @printf(io, "Generators     :%10d\n", gens)
   @printf(io, "Loads          :%10d\n", loads)
   @printf(io, "Shunts         :%10d\n", shunts)
-  
+
   num_q_limit = length(net.qLimitEvents)
   @printf(io, "PV→PQ (Q-Limit):%10d\n", num_q_limit)
-
 
   println(io, "\n", totalLosses)
 
@@ -181,10 +180,10 @@ function printACPFlowResults(net::Net, ct::Float64, ite::Int, tol::Float64, toFi
       qShunt_str = ""
     end
     typeStr = toString(n._nodeType)
-    
+
     # Mark PV→PQ buses (hit Q-limit) with a star in the Type column
     if haskey(net.qLimitEvents, n.busIdx)
-        typeStr *= "*"
+      typeStr *= "*"
     end
 
     v = n.comp.cVN * n._vm_pu

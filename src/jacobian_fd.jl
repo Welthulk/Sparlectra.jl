@@ -47,7 +47,7 @@ Arguments:
 Returns:
 - Updated complex voltage vector `V_new` (length n)
 """
-function complex_newton_step_rectangular_fd(Ybus, V, S; slack_idx::Int = 1, damp::Float64  = 1.0, h::Float64     = 1e-6, bus_types::Vector{Symbol}, Vset::Vector{Float64})
+function complex_newton_step_rectangular_fd(Ybus, V, S; slack_idx::Int = 1, damp::Float64 = 1.0, h::Float64 = 1e-6, bus_types::Vector{Symbol}, Vset::Vector{Float64})
   n = length(V)
 
   # Base mismatch F(V)
