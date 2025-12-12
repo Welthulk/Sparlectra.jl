@@ -21,4 +21,5 @@ include("testremove.jl")
   @test testRemoveFunctions() == true
   @test test_5BusNet(0, 10.0) == true  
   @test test_3BusNet(0, 150.0, :rectangular, false, false) == true
+  @test test_3BusNet(0, 150.0, :polar_full, false, false) == true
 end

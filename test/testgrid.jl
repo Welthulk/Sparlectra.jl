@@ -432,11 +432,14 @@ function test_3BusNet(verbose::Int = 0, qlim::Float64 = 15.0, method::Symbol = :
 
   tp = getTotalBusPower(net = net)
   tl = getTotalLosses(net= net)
+  if verbose > 1
+    @info "Total Power: P=$(tp[1]), Q=$(tp[2])"
+    @info "Total Losses: P=$(tl[1]), Q=$(tl[2])"
+  end
   
-
   @test all(isapprox.(tp, tl; atol = 1e-6))
   
-
+  
   if qlim < 33.2
     return hit==true
   else

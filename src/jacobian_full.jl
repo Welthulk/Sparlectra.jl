@@ -210,7 +210,10 @@ end
 # Full Newton-Raphson including PV identity rows (separate from the reduced version)
 # ------------------------------
 function calcNewtonRaphson_withPVIdentity!(net::Net, Y::AbstractMatrix{ComplexF64}, maxIte::Int; tolerance::Float64 = 1e-6, verbose::Int = 0, sparse::Bool = false, flatStart::Bool = false, angle_limit::Bool = false, debug::Bool = false)
-  @debug "Running full-system Newton-Raphson with PV identity rows...sparse=$sparse, flatStart=$flatStart, angle_limit=$angle_limit, debug=$debug"
+  if verbose > 0
+    @info "Running full-system Newton-Raphson with PV identity rows...sparse=$sparse, flatStart=$flatStart, angle_limit=$angle_limit, debug=$debug"
+  end
+  
   setJacobianAngleLimit(angle_limit)
   setJacobianDebug(debug)
 
@@ -327,9 +330,12 @@ function calcNewtonRaphson_withPVIdentity!(net::Net, Y::AbstractMatrix{ComplexF6
 
     # Convergence check
     nrm = norm(Δ)
-    (verbose>1) && @printf " norm %e, tol %e, ite %d\n" nrm tolerance it
+    if verbose > 0
+      @info "2-norm = $(nrm), tol = $(tolerance), ite = $(it)"
+    end
+
     if nrm < tolerance
-      (verbose>1) && println("Convergence after $(it) iterations")
+      (verbose>0) &&  @info "Convergence after $(it) iterations"
       erg = 0;
       break
     end
@@ -397,8 +403,18 @@ function calcNewtonRaphson_withPVIdentity!(net::Net, Y::AbstractMatrix{ComplexF6
       nodes[idx]._qƩGen = bus._qRes * Sbase_MVA
     end
   end
+  
+  p_pu = sum(b -> b._pRes, busVec)
+  q_pu = sum(b -> b._qRes, busVec)
 
-  setTotalBusPower!(net = net, p = sum(b->b._pRes, busVec), q = sum(b->b._qRes, busVec))
+  p_MW   = p_pu * net.baseMVA
+  q_MVar = q_pu * net.baseMVA
+
+  if verbose > 1
+    @info "Set total bus power to p = $p_MW MW and q = $q_MVar MVar"
+  end
+
+  setTotalBusPower!(net = net, p = p_MW, q = q_MVar)
 
   return it, erg
 end
