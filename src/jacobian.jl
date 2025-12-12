@@ -422,7 +422,7 @@ function calcNewtonRaphson!(net::Net, Y::AbstractMatrix{ComplexF64}, maxIte::Int
   # 2 unsolvable system of equations
   # 3 error
 
-  if debug
+  if verbose > 3
     tn = num_pq_nodes + num_pv_nodes
     println("\ncalcNewtonRaphson: Matrix-Size: $(size) x $(size), Sbase_MVA: $(Sbase_MVA), total number of nodes: $(tn), number of PQ nodes: $num_pq_nodes, number of PV nodes: $num_pv_nodes\n")
   end
@@ -433,20 +433,13 @@ function calcNewtonRaphson!(net::Net, Y::AbstractMatrix{ComplexF64}, maxIte::Int
   while iteration_count <= maxIte
     # Calculation of the residual
     delta_P = residuum(Y, busVec, power_feeds, num_pq_nodes, num_pv_nodes, (verbose > 2))
-    if verbose > 2
-      println("\ndelta_s: Iteration $(iteration_count)")
-      printVector(delta_P, busVec, "p", "q", false, 0.0)
-    end
 
     norm_p = norm(delta_P)
-    if verbose > 1
-      @printf " norm %e, tol %e, ite %d\n" norm_p tolerance iteration_count
+    if verbose > 0
+      @info "2-norm = $(norm_p), tol = $(tolerance), ite = $(iteration_count)"
     end
 
     if norm_p < tolerance
-      if (verbose > 1)
-        println("\nConvergence is reached after $(iteration_count) iterations")
-      end
       erg = 0
       break
     end
@@ -460,13 +453,12 @@ function calcNewtonRaphson!(net::Net, Y::AbstractMatrix{ComplexF64}, maxIte::Int
       # Solver => \
       delta_x = jacobian \ delta_P
 
-      if verbose > 3
-        println("\ndelta_v: Iteration $(iteration_count)")
+      if verbose > 1        
         printVector(delta_x, busVec, "Δφ", "ΔU/U", true, 0.0)
       end
     catch err
       D = det(jacobian)
-      println("\nUnsolvable system of equations. Determinate J = $(D), Error = $(err))")
+      @warn "Unsolvable system of equations" determinant=D error=err
       erg = 2
       break
     end
@@ -505,16 +497,12 @@ function calcNewtonRaphson!(net::Net, Y::AbstractMatrix{ComplexF64}, maxIte::Int
         busVec[i].va_rad = angle(V)
       end
     catch err
-      println("\nError: $(err)")
       erg = 3
+      @error "Error: $(err)"
       break
     end
 
     iteration_count += 1
-  end
-
-  if verbose > 2
-    println("\nSolution: Iteration $(iteration_count)\n")
   end
 
   lastNode = length(nodes)
@@ -535,24 +523,28 @@ function calcNewtonRaphson!(net::Net, Y::AbstractMatrix{ComplexF64}, maxIte::Int
       nodes[idx]._qƩGen = bus._qRes * Sbase_MVA
     end
 
-    if verbose > 3
+    if verbose > 1
       vm_pu = round(nodes[idx]._vm_pu, digits = 3)
       va_deg = round(nodes[idx]._va_deg, digits = 3)
       if va_deg > 180
         va_deg -= 360
         va_deg = round(va_deg, digits = 3)
       end
-      if idx == lastNode
-        println("(Bus=$(idx), vm=$(vm_pu), va=$(va_deg))")
-      else
-        print("(Bus=$(idx), vm=$(vm_pu), va=$(va_deg)), ")
-      end
+      @info "Bus voltage state" bus=idx vm_pu=vm_pu va_deg=va_deg
     end
   end
 
-  totalBusP = sum(bus -> bus._pRes, busVec)
-  totalBusQ = sum(bus -> bus._qRes, busVec)
-  setTotalBusPower!(net = net, p = totalBusP, q = totalBusQ)
+  p_pu = sum(b -> b._pRes, busVec)
+  q_pu = sum(b -> b._qRes, busVec)
+
+  p_MW   = p_pu * net.baseMVA
+  q_MVar = q_pu * net.baseMVA
+
+  if verbose > 1
+    @info "Set total bus power to p = $p_MW MW and q = $q_MVar MVar"
+  end
+
+  setTotalBusPower!(net = net, p = p_MW, q = q_MVar)
 
   return iteration_count, erg
 end

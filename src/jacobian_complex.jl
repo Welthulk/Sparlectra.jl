@@ -1006,7 +1006,10 @@ function run_complex_nr_rectangular_for_net!(net::Net; maxiter::Int = 20, tol::F
   p = (sum(real.(Sbus_pu)))* Sbase
   q = (sum(imag.(Sbus_pu)))* Sbase
   
-  @debug "Set total bus power to p = $p MW and q = $q MVar"
+  if verbose > 1
+    @info "Set total bus power to p = $p MW and q = $q MVar"
+  end
+  
   setTotalBusPower!(net = net, p = p, q = q)
   
   return iters, converged ? 0 : 1
