@@ -990,11 +990,11 @@ function run_complex_nr_rectangular_for_net!(net::Net; maxiter::Int = 20, tol::F
     # Slack bus: always write P and Q generation from the solved state
     if node._nodeType == Sparlectra.Slack
       node._pƩGen = Pbus_MW
-      node._qƩGen = Qbus_MVar 
-      
+      node._qƩGen = Qbus_MVar
+
     elseif node._nodeType == Sparlectra.PV
       node._qƩGen = Qbus_MVar
-      if haskey(net.qLimitEvents, k)        
+      if haskey(net.qLimitEvents, k)
         @debug "Bus $(k) hit Q limit; set as PQ bus (rectangular solver)."
       end
     end
@@ -1003,12 +1003,15 @@ function run_complex_nr_rectangular_for_net!(net::Net; maxiter::Int = 20, tol::F
   end
 
   # 8) Update total bus power (sum of complex injections in p.u.)
-  p = (sum(real.(Sbus_pu)))* Sbase
-  q = (sum(imag.(Sbus_pu)))* Sbase
-  
-  @debug "Set total bus power to p = $p MW and q = $q MVar"
+  p = (sum(real.(Sbus_pu))) * Sbase
+  q = (sum(imag.(Sbus_pu))) * Sbase
+
+  if verbose > 1
+    @info "Set total bus power to p = $p MW and q = $q MVar"
+  end
+
   setTotalBusPower!(net = net, p = p, q = q)
-  
+
   return iters, converged ? 0 : 1
 end
 
