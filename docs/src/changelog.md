@@ -1,4 +1,8 @@
 # Change Log
+## Version 0.4.28 – 2025-12-12
+### Bug Fixes
+* Close Issue #85: test totalBusPower vs. TotalLosses failed for solver != rectangular
+
 ## Version 0.4.27 – 2025-12-11
 ### New Features
 * Added 3Bus Testcase with PV Generator
