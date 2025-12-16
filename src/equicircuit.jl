@@ -266,13 +266,13 @@ function createYBUS(; net::Net, sparse::Bool = true, printYBUS::Bool = false)
   end
 
   for sh in net.shuntVec
-    node = sh.busIdx
-    if node in net.isoNodes
-      continue
-    end
-    node -= count(i -> i < node, net.isoNodes)
-    y = sh.y_pu_shunt
-    Y[node, node] += y
+    sh.status == 0 && continue
+    bus = sh.busIdx
+    bus in net.isoNodes && continue
+    bus -= count(i -> i < bus, net.isoNodes)
+
+    # Shunt-Admittanz diagonal addieren
+    Y[bus, bus] += sh.y_pu_shunt 
   end
 
   if printYBUS
