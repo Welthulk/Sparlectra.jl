@@ -527,15 +527,154 @@ Add a transformer with PI model to the network.
 - `shift_deg::Union{Nothing, Float64}`: Phase shift angle of the transformer. Default is `nothing`.
 - `isAux::Bool`: Whether the transformer is an auxiliary transformer. Default is `false`.
 """
-function addPIModelTrafo!(; net::Net, fromBus::String, toBus::String, side::Int, r::Float64, x::Float64, b::Float64, status::Int, ratedU::Union{Nothing,Float64} = nothing, ratedS::Union{Nothing,Float64} = nothing, ratio::Union{Nothing,Float64} = nothing, shift_deg::Union{Nothing,Float64} = nothing)
+function add2WTPIModelTrafo!(; 
+  net::Net, 
+  fromBus::String, 
+  toBus::String, 
+  side::Int = 1, 
+  r::Float64, 
+  x::Float64, 
+  b::Float64 = 0.0, 
+  status::Int = 1 , 
+  ratedU::Union{Nothing,Float64} = nothing, 
+  ratedS::Union{Nothing,Float64} = nothing, 
+  ratio::Union{Nothing,Float64} = nothing, 
+  shift_deg::Union{Nothing,Float64} = nothing,
+)
   @assert fromBus != toBus "From and to bus must be different"
   from = geNetBusIdx(net = net, busName = fromBus)
   to = geNetBusIdx(net = net, busName = toBus)
   if isnothing(ratedU)
     ratedU = side == 1 ? getNodeVn(net.nodeVec[from]) : getNodeVn(net.nodeVec[to])
   end
-  r_pu, x_pu, b_pu, g_pu = toPU_RXBG(r = r, x = x, g = g, b = b, v_kv = ratedU, baseMVA = net.baseMVA)
-  addPIModelTrafo!(net = net, fromBus = fromBus, toBus = toBus, r_pu = r_pu, x_pu = x_pu, b_pu = b_pu, status = status, ratedU = ratedU, ratedS = ratedS, ratio = ratio, shift_deg = shift_deg, isAux = false, side = side)
+  r_pu, x_pu, b_pu, g_pu = toPU_RXBG(r = r, x = x, g = 0.0, b = b, v_kv = ratedU, baseMVA = net.baseMVA)
+  addPIModelTrafo!(net = net, fromBus = fromBus, toBus = toBus, r_pu = r_pu, x_pu = x_pu, b_pu = b_pu, 
+                   status = status, ratedU = ratedU, ratedS = ratedS, ratio = ratio, shift_deg = shift_deg, isAux = false, side = side)
+end
+
+
+"""
+Add a 3-winding transformer using a star-equivalent with an internal AUX bus.
+
+Implementation strategy:
+- Ensure an AUX bus exists (PQ, isAux=true) at the HV-side nominal voltage.
+- Add three 2-winding PI-model transformers:
+    AUX -- HB, AUX -- MB, AUX -- LV
+- Convert r/x/b to PU (using toPU_RXBG) for each branch (mainly for validation/logging).
+  The actual insertion uses add2WTPIModelTrafo!, which performs the conversion internally.
+
+Notes:
+- `ratio` is set to U_aux / U_side (HV/MV/LV) for MV and LV, and 1.0 for HB.
+- `ratedU` passed to add2WTPIModelTrafo! is the AUX-side rated voltage (HV), because the
+  branch is defined from AUX (HV base) to the respective side.
+"""
+function add3WTPiModelTrafo!(;
+    net::Net,
+    HBBus::String,
+    MBBus::String,
+    LVBus::String,
+    r::NTuple{3,Float64},
+    x::NTuple{3,Float64},
+    b::NTuple{3,Float64},
+    ratedU_kV::NTuple{3,Float64},
+    ratedS_MVA::NTuple{3,Float64},
+    status::Int = 1,
+)
+    @assert status in (0, 1) "status must be 0 or 1"
+
+    # --- basic existence checks (will throw from geNetBusIdx if missing) ---
+    hb_idx = geNetBusIdx(net = net, busName = HBBus)
+    mb_idx = geNetBusIdx(net = net, busName = MBBus)
+    lv_idx = geNetBusIdx(net = net, busName = LVBus)
+
+    # --- choose AUX-side (HV) voltage base ---
+    # Prefer ratedU_kV[1] as HV side, but be robust and take the maximum.
+    U_aux_kV = maximum(ratedU_kV)
+    @assert U_aux_kV > 0.0 "ratedU_kV must be > 0"
+
+    # --- build a deterministic AUX bus name (unique-ish, stable) ---
+    # Keep it simple and reproducible; avoid special chars.
+    function _sanitize(s::AbstractString)
+        return replace(String(s), r"[^A-Za-z0-9_]" => "_")
+    end
+
+    aux_bus = "Aux3WT_" * _sanitize(HBBus) * "_" * _sanitize(MBBus) * "_" * _sanitize(LVBus)
+
+    # --- create AUX bus if missing ---
+    if !hasBusInNet(net = net, busName = aux_bus)
+        addBus!(
+            net = net,
+            busName = aux_bus,
+            busType = "PQ",
+            vn_kV = U_aux_kV,
+            isAux = true,
+        )
+    end
+
+    # --- define ratios for each branch AUX->side ---
+    # ratio is interpreted as turns ratio; here we use U_aux / U_side.
+    # For the HV bus branch, this is typically ~1 if HB is the HV side.
+    
+    ratio_hb = 1.0 #U_aux_kV / ratedU_kV[1]
+    ratio_mb = 1.0 #U_aux_kV / ratedU_kV[2]
+    ratio_lv = 1.0 #U_aux_kV / ratedU_kV[3]
+
+    # --- optional PU conversion (for validation/logging/debug) ---
+    # Note: add2WTPIModelTrafo! will do this conversion again internally.
+    r1_pu, x1_pu, b1_pu, _g1_pu = toPU_RXBG(r = r[1], x = x[1], g = 0.0, b = b[1], v_kv = U_aux_kV, baseMVA = net.baseMVA)
+    r2_pu, x2_pu, b2_pu, _g2_pu = toPU_RXBG(r = r[2], x = x[2], g = 0.0, b = b[2], v_kv = U_aux_kV, baseMVA = net.baseMVA)
+    r3_pu, x3_pu, b3_pu, _g3_pu = toPU_RXBG(r = r[3], x = x[3], g = 0.0, b = b[3], v_kv = U_aux_kV, baseMVA = net.baseMVA)
+
+    # If you want: add @debug lines here using (r*_pu, x*_pu, b*_pu)
+
+    # --- add three 2W PI branches (AUX -> side buses) ---
+    # Use side=1 because fromBus is the AUX (HV base).
+    add2WTPIModelTrafo!(
+        net = net,
+        fromBus = aux_bus,
+        toBus = HBBus,
+        side = 1,
+        r = r[1],
+        x = x[1],
+        b = b[1],
+        status = status,
+        ratedU = U_aux_kV,
+        ratedS = ratedS_MVA[1],
+        ratio = ratio_hb,
+        shift_deg = 0.0,
+    )
+
+    add2WTPIModelTrafo!(
+        net = net,
+        fromBus = aux_bus,
+        toBus = MBBus,
+        side = 1,
+        r = r[2],
+        x = x[2],
+        b = b[2],
+        status = status,
+        ratedU = U_aux_kV,
+        ratedS = ratedS_MVA[2],
+        ratio = ratio_mb,
+        shift_deg = 0.0,
+    )
+
+    add2WTPIModelTrafo!(
+        net = net,
+        fromBus = aux_bus,
+        toBus = LVBus,
+        side = 1,
+        r = r[3],
+        x = x[3],
+        b = b[3],
+        status = status,
+        ratedU = U_aux_kV,
+        ratedS = ratedS_MVA[3],
+        ratio = ratio_lv,
+        shift_deg = 0.0,
+    )
+
+    return aux_bus
 end
 
 """
