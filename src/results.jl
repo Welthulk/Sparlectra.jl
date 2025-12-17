@@ -284,23 +284,30 @@ function formatProsumerResults(net::Net)
   println(buf, "────────────────────────────────────────")
   @printf(buf, "%-8s %5s %12s %12s\n", "Bus", "Load#", "P [MW]", "Q [MVar]")
   println(buf, "────────────────────────────────────────")
+  
 
-  for bus in sort(collect(keys(loads_by_bus)))
-    loads_idx = loads_by_bus[bus]
+  if !isnothing(loads_by_bus)    
+    for bus in sort(collect(keys(loads_by_bus)))
+      try
+        loads_idx = loads_by_bus[bus]
 
-    # optional: sort loads at a bus by component name
-    sort!(loads_idx, by = i -> net.prosumpsVec[i].comp.cName)
+        # optional: sort loads at a bus by component name
+        sort!(loads_idx, by = i -> net.prosumpsVec[i].comp.cName)
 
-    busName = get(busNameByIdx, bus, "Bus_$bus")
+        busName = get(busNameByIdx, bus, "Bus_$bus")
 
-    for (k, idx) in enumerate(loads_idx)
-      ps = net.prosumpsVec[idx]
+        for (k, idx) in enumerate(loads_idx)
+          ps = net.prosumpsVec[idx]
 
-      # Prefer results (pRes/qRes); fall back to spec values
-      p = ps.pRes === nothing ? ps.pVal : ps.pRes
-      q = ps.qRes === nothing ? ps.qVal : ps.qRes
+          # Prefer results (pRes/qRes); fall back to spec values
+          p = ps.pRes === nothing ? ps.pVal : ps.pRes
+          q = ps.qRes === nothing ? ps.qVal : ps.qRes
 
-      @printf(buf, "%-8s %5d %12.3f %12.3f\n", busName, k, p === nothing ? 0.0 : p, q === nothing ? 0.0 : q)
+          @printf(buf, "%-8s %5d %12.3f %12.3f\n", busName, k, p === nothing ? 0.0 : p, q === nothing ? 0.0 : q)
+        end
+      catch e
+        @warn "Error formatting load results for bus index $bus: $e"
+      end 
     end
   end
 
