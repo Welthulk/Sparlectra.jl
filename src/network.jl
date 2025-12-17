@@ -484,7 +484,7 @@ Add a transformer with PI model to the network.
 function addPIModelTrafo!(;
   net::Net,
   fromBus::String,
-  toBus::String,
+  toBus::String,  
   r_pu::Float64,
   x_pu::Float64,
   b_pu::Float64,
@@ -676,6 +676,51 @@ function add3WTPiModelTrafo!(;
 
     return aux_bus
 end
+
+"""
+Add a transformer with PI model to the network.
+
+# Arguments
+- `net::Net`: The network to which the transformer will be added.
+- `fromBus::String`: The name of the bus where the transformer originates.
+- `toBus::String`: The name of the bus where the transformer terminates.
+- `r_pu::Float64`: The per-unit resistance of the transformer.
+- `x_pu::Float64`: The per-unit reactance of the transformer.
+- `b_pu::Float64`: The per-unit susceptance of the transformer.
+- `status::Int`: The status of the transformer.
+- `ratedU::Union{Nothing, Float64}`: Rated voltage of the transformer. Default is `nothing`.
+- `ratedS::Union{Nothing, Float64}`: Rated apparent power of the transformer. Default is `nothing`.
+- `ratio::Union{Nothing, Float64}`: Ratio of the transformer. Default is `nothing`.
+- `shift_deg::Union{Nothing, Float64}`: Phase shift angle of the transformer. Default is `nothing`.
+"""
+function add2WTTrafo!(;
+  net::Net,
+  fromBus::String,
+  toBus::String,
+  side::Int = 1,
+  r::Float64,
+  x::Float64,
+  b::Float64,
+  status::Int,  
+  ratedU::Union{Nothing,Float64} = nothing,
+  ratedS::Union{Nothing,Float64} = nothing,
+  ratio::Union{Nothing,Float64} = nothing,
+  shift_deg::Union{Nothing,Float64} = nothing,  
+)
+  @assert fromBus != toBus "From and to bus must be different"
+  if isnothing(ratedU)
+    from = geNetBusIdx(net = net, busName = fromBus)
+    V1 = getNodeVn(net.nodeVec[from])
+    to = geNetBusIdx(net = net, busName = toBus)
+    V2 = getNodeVn(net.nodeVec[to])
+    ratedU = max(V1, V2)
+  end
+  r_pu, x_pu, b_pu, g_pu = toPU_RXBG(r = r,  x = x,   g = 0.0,  b = b, v_kv = ratedU,  baseMVA = net.baseMVA)
+  addPIModelTrafo!(net = net,fromBus = fromBus, toBus = toBus, r_pu = r_pu, x_pu = x_pu, b_pu = b_pu, 
+                   status = status, ratedU = ratedU, ratedS = ratedS, ratio = ratio, shift_deg = shift_deg, isAux = false, side = side)
+end
+
+
 
 """
 Add a two-winding transformer to the network.
