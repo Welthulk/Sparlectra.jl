@@ -274,7 +274,7 @@ function createYBUS(; net::Net, sparse::Bool = true, printYBUS::Bool = false)
     # Shunt-Admittanz diagonal addieren
     Y[bus, bus] += sh.y_pu_shunt 
   end
-
+  
   if printYBUS
     println("\nYBUS:\n")
     red_text = "\x1b[31m"  # ANSI escape code for red text
