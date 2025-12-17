@@ -1,4 +1,9 @@
 # Change Log
+## Version 0.4.29 – 2025-12-13
+### New Features
+* Support native 3-winding transformers in Sparlectra without AUX bus generation and allow non-PU parameterization #90
+* Support 2-winding transformers as well in non-PU parameterization #90
+  
 ## Version 0.4.28 – 2025-12-12
 ### Bug Fixes
 * Close Issue #85: test totalBusPower vs. TotalLosses failed for solver != rectangular
