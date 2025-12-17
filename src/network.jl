@@ -494,6 +494,7 @@ function addPIModelTrafo!(;
   ratio::Union{Nothing,Float64} = nothing,
   shift_deg::Union{Nothing,Float64} = nothing,
   isAux::Bool = false,
+  side::Int = 1,
 )
   @assert fromBus != toBus "From and to bus must be different"
   from = geNetBusIdx(net = net, busName = fromBus)
@@ -506,7 +507,35 @@ function addPIModelTrafo!(;
   trafo = PowerTransformer(comp, false, w1, w2, nothing, Sparlectra.PIModel)
   push!(net.trafos, trafo)
 
-  addBranch!(net = net, from = from, to = to, branch = trafo, status = status, ratio = ratio, side = 1, vn_kV = vn_hv_kV)
+  addBranch!(net = net, from = from, to = to, branch = trafo, status = status, ratio = ratio, side = side, vn_kV = vn_hv_kV)
+end
+
+"""
+Add a transformer with PI model to the network.
+
+# Arguments
+- `net::Net`: The network to which the transformer will be added.
+- `fromBus::String`: The name of the bus where the transformer originates.
+- `toBus::String`: The name of the bus where the transformer terminates.
+- `r_pu::Float64`: The per-unit resistance of the transformer.
+- `x_pu::Float64`: The per-unit reactance of the transformer.
+- `b_pu::Float64`: The per-unit susceptance of the transformer.
+- `status::Int`: The status of the transformer.
+- `ratedU::Union{Nothing, Float64}`: Rated voltage of the transformer. Default is `nothing`.
+- `ratedS::Union{Nothing, Float64}`: Rated apparent power of the transformer. Default is `nothing`.
+- `ratio::Union{Nothing, Float64}`: Ratio of the transformer. Default is `nothing`.
+- `shift_deg::Union{Nothing, Float64}`: Phase shift angle of the transformer. Default is `nothing`.
+- `isAux::Bool`: Whether the transformer is an auxiliary transformer. Default is `false`.
+"""
+function addPIModelTrafo!(; net::Net, fromBus::String, toBus::String, side::Int, r::Float64, x::Float64, b::Float64, status::Int, ratedU::Union{Nothing,Float64} = nothing, ratedS::Union{Nothing,Float64} = nothing, ratio::Union{Nothing,Float64} = nothing, shift_deg::Union{Nothing,Float64} = nothing)
+  @assert fromBus != toBus "From and to bus must be different"
+  from = geNetBusIdx(net = net, busName = fromBus)
+  to = geNetBusIdx(net = net, busName = toBus)
+  if isnothing(ratedU)
+    ratedU = side == 1 ? getNodeVn(net.nodeVec[from]) : getNodeVn(net.nodeVec[to])
+  end
+  r_pu, x_pu, b_pu, g_pu = toPU_RXBG(r = r, x = x, g = g, b = b, v_kv = ratedU, baseMVA = net.baseMVA)
+  addPIModelTrafo!(net = net, fromBus = fromBus, toBus = toBus, r_pu = r_pu, x_pu = x_pu, b_pu = b_pu, status = status, ratedU = ratedU, ratedS = ratedS, ratio = ratio, shift_deg = shift_deg, isAux = false, side = side)
 end
 
 """

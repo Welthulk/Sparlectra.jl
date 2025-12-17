@@ -284,9 +284,8 @@ function formatProsumerResults(net::Net)
   println(buf, "────────────────────────────────────────")
   @printf(buf, "%-8s %5s %12s %12s\n", "Bus", "Load#", "P [MW]", "Q [MVar]")
   println(buf, "────────────────────────────────────────")
-  
 
-  if !isnothing(loads_by_bus)    
+  if !isnothing(loads_by_bus)
     for bus in sort(collect(keys(loads_by_bus)))
       try
         loads_idx = loads_by_bus[bus]
@@ -307,7 +306,7 @@ function formatProsumerResults(net::Net)
         end
       catch e
         @warn "Error formatting load results for bus index $bus: $e"
-      end 
+      end
     end
   end
 
