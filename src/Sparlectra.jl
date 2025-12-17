@@ -13,7 +13,7 @@ using LinearAlgebra, Dates, SparseArrays, Printf, Logging
 
 # resource data types for working with Sparlectra
 const Wurzel3 = 1.7320508075688772
-const SparlectraVersion = v"0.4.28"
+const SparlectraVersion = v"0.4.29"
 version() = SparlectraVersion
 abstract type AbstractBranch end
 
@@ -79,6 +79,7 @@ export
   addBus!, addShunt!, addACLine!, addPIModelACLine!, add2WTrafo!, addPIModelTrafo!, addProsumer!, lockNet!, validate!, hasBusInNet, addBusGenPower!, addBusLoadPower!, addBusShuntPower!, setNodeVoltage!, setNodeAngle!,
   getNetOrigBusIdx, geNetBusIdx, setNetBranchStatus!, getNetBranch, getNetBranchNumberVec, setTotalLosses!, getTotalLosses, getBusType, get_bus_vn_kV, get_vn_kV, updateBranchParameters!, hasShunt!, 
   getShunt!, markIsolatedBuses!,setTotalBusPower!, setPVBusVset!, setQLimits!, getNodeVm,distributeBusResults!, getTotalBusPower, getTotalLosses, buildVoltageVector,initialVrect, buildComplexSVec,
+  add2WTPIModelTrafo!, add3WTPiModelTrafo!,
   # remove_functions.jl
   removeBus!, removeBranch!, removeACLine!, removeTrafo!, removeShunt!, removeProsumer!, clearIsolatedBuses!,
   # import.jl
