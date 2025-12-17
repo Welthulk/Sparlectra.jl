@@ -49,13 +49,76 @@ function cross_check()
   println("---------------------------------------------------")
 end
 
+function PGMTestBusNet()::Net
+  # Simple 2-bus network
+  #   Bus1            Bus2
+  #  S->|---------------|
+  #     # 
+  #  Slack           
+
+  Sbase_MVA = 1.0
+  netName = "PGMBus"
+  r = 0.01
+  x = 0.1
+  c_nf_per_km = 0.0
+  tanδ = 0.0
+  length_km = 20.0
+  method = :polar_full
+  @debug "Creating $netName test network for PGM experiments"
+
+  Bus2Net = Net(name = netName, baseMVA = Sbase_MVA, cooldown_iters = 0, q_hyst_pu = 0.1)
+
+  addBus!(net = Bus2Net, busName = "B1", busType = "Slack", vn_kV = 110.0)
+  addBus!(net = Bus2Net, busName = "B2", busType = "PQ", vn_kV = 110.0)
+
+  addACLine!(net = Bus2Net, fromBus = "B1", toBus = "B2", length = length_km, r = r, x = x, c_nf_per_km = c_nf_per_km, tanδ = tanδ)
+
+  addProsumer!(net = Bus2Net, busName = "B1", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "B1")
+  addShunt!(net = Bus2Net, busName = "B1", pShunt = 0.0, qShunt = 5.0)
+
+  tol = 1e-9
+  maxIte = 50
+  print_results = true
+  result = true
+  verbose = 2
+  pv_names = ["B3"]
+
+  etim = 0.0
+  etim = @elapsed begin
+    ite, erg = runpf!(Bus2Net, maxIte, tol, verbose, method = :polar_full, opt_fd = false, opt_sparse = false)
+    if erg != 0
+      @info "Full-system power flow did not converge"
+      result = false
+    end
+  end
+
+  #
+
+  #hit = pv_hit_q_limit(net, pv_names)
+
+  calcNetLosses!(Bus2Net)
+  distributeBusResults!(Bus2Net)
+  if print_results
+    printACPFlowResults(Bus2Net, etim, ite, tol; converged = result, solver = method)
+    println("---------------------------------------------------")
+    println(Bus2Net)
+    printProsumerResults(Bus2Net)
+    #printQLimitLog(Bus2Net; sort_by = :bus)
+  end
+
+  return Bus2Net
+end
+
 #test_acpflow(1;lLine_6a6b = 0.01, damp = 1.0, method = :rectangular, opt_sparse = true)
 #test_5BusNet(1, 500.0, :rectangular, false, false)
 #test_5BusNet(1, 500.0, :polar_full, false, false)
 #test_5BusNet(1, 500.0, :classic, false, false)
 #test_3BusNet(2, 50.0, :rectangular, false, false)
-test_3BusNet(2, 30.0, :rectangular, true, true)
-test_3BusNet(2, 30.0, :rectangular, true, false)
-test_3BusNet(2, 30.0, :rectangular, false, false)
-test_3BusNet(2, 30.0, :classic, false, false)
-test_3BusNet(2, 30.0, :polar_full, false, false)
+#test_3BusNet(2, 30.0, :rectangular, true, true)
+#test_3BusNet(2, 30.0, :rectangular, true, false)
+#test_3BusNet(2, 30.0, :rectangular, false, false)
+#test_3BusNet(2, 30.0, :classic, false, false)
+#test_3BusNet(2, 30.0, :polar_full, false, false)
+#PGMTestBusNet()
+test_2WTPITrafo()
+test_3WTPITrafo(2; method = :rectangular, opt_fd = false, opt_sparse = true)

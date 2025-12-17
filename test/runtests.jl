@@ -11,6 +11,8 @@ include("testgrid.jl")
 include("testremove.jl")
 
 @testset "Sparlectra.jl" begin
+  @test test_2WTPITrafo() == true
+  @test test_3WTPITrafo() == true
   @test testNetwork() == true
   @test test_NBI_MDO() == true
   @test test_acpflow(0; lLine_6a6b = 0.01, damp = 1.0, method = :rectangular, opt_sparse = true) == true
