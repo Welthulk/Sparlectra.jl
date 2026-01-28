@@ -71,6 +71,7 @@ struct Net
   totalLosses::Vector{Tuple{Float64,Float64}}
   totalBusPower::Vector{Tuple{Float64,Float64}}
   _locked::Bool
+  flatstart::Bool                     # flatstart flag for power flow initialization
   shuntDict::Dict{Int,Int}
   isoNodes::Vector{Int}
   qLimitLog::Vector{Any}
@@ -79,11 +80,11 @@ struct Net
   qmin_pu::Vector{Float64}            # pro Bus Qmin (p.u.)
   qmax_pu::Vector{Float64}            # pro Bus Qmax (p.u.)
   qLimitEvents::Dict{Int,Symbol}      # BusIdx -> :min | :max (PV→PQ Change)  
-
+  
   
   #! format: off
-  function Net(; name::String, baseMVA::Float64, vmin_pu::Float64 = 0.9, vmax_pu::Float64 = 1.1, cooldown_iters::Int = 0, q_hyst_pu::Float64 = 0.0)    
-
+  function Net(; name::String, baseMVA::Float64, vmin_pu::Float64 = 0.9, vmax_pu::Float64 = 1.1, cooldown_iters::Int = 0, q_hyst_pu::Float64 = 0.0, flatstart::Bool = false)    
+    @info "Creating new Net: $(name) with baseMVA=$(baseMVA), vmin_pu=$(vmin_pu), vmax_pu=$(vmax_pu), flatstart=$(flatstart)"
     new(name, # name
         baseMVA, # baseMVA
         [], # slackVec
@@ -100,6 +101,7 @@ struct Net
         [], # totalLosses
         [], # totalBusPower
         false, # _locked
+        flatstart,                     # flatstart
         Dict{Int,Symbol}(),  # shuntDict
         [],                                    # isoNodes
         Any[],                                 # qLimitLog                     
@@ -107,28 +109,97 @@ struct Net
         q_hyst_pu,
         [],                                    # qmin_pu
         [],                                    # qmax_pu
-        Dict{Int,Symbol}())                                  
-
-
+        Dict{Int,Symbol}())                                          
   end
   #! format: on
-  function Base.show(io::IO, o::Net)
-    println(io, "Net: ", o.name)
-    println(io, "Base MVA: ", o.baseMVA)
-    println(io, "Slack: ", o.slackVec)
-    println(io, "Vmin: ", o.vmin_pu)
-    println(io, "Vmax: ", o.vmax_pu)
-    println(io, "Nodes: ", length(o.nodeVec))
-    println(io, "Lines: ", length(o.linesAC))
-    println(io, "Transformers: ", length(o.trafos))
-    println(io, "Branches: ", length(o.branchVec))
-    println(io, "Prosumers: ", length(o.prosumpsVec))
-    println(io, "Shunts: ", length(o.shuntVec))
-    if !isempty(o.qLimitLog)
-      println(io, "Q-limit log entries: ", length(o.qLimitLog))
-    end
+  function Base.show(io::IO, net::Net)
+    println(io, "Net: ", net.name)
+    println(io, "Base MVA: ", net.baseMVA)
+    println(io, "Nodes: ", length(net.nodeVec), ", Lines: ", length(net.linesAC), ", Transformers: ", length(net.trafos), ", Branches: ", length(net.branchVec))
+    println(io, "Slack buses: ", net.slackVec, ", flatstart: ", net.flatstart, ", locked: ", net._locked)
+    println(io, "Vmin / Vmax: ", net.vmin_pu, " / ", net.vmax_pu)
   end
 end
+
+function showNet(io::IO, net::Net; verbose::Bool = false)
+  if !verbose
+    Base.show(io, net)
+    return
+  end
+
+  println(io, "==================== Net ====================")
+  println(io, "Name:          ", net.name)
+  println(io, "Base MVA:      ", net.baseMVA)
+  println(io, "Slack buses:   ", net.slackVec)
+  println(io, "Vmin / Vmax:   ", net.vmin_pu, " / ", net.vmax_pu)
+  println(io, "flatstart:     ", net.flatstart)
+  println(io, "_locked:       ", net._locked)
+
+  println(io, "\n--- Dictionaries ---")
+  println(io, "busDict:        ", net.busDict)
+  println(io, "busOrigIdxDict: ", net.busOrigIdxDict)
+  println(io, "shuntDict:      ", net.shuntDict)
+
+  println(io, "\n--- Topology / State ---")
+  println(io, "isoNodes:       ", net.isoNodes)
+
+  println(io, "\n--- Q-limit handling ---")
+  println(io, "cooldown_iters: ", net.cooldown_iters)
+  println(io, "q_hyst_pu:      ", net.q_hyst_pu)
+  println(io, "qmin_pu:        ", net.qmin_pu)
+  println(io, "qmax_pu:        ", net.qmax_pu)
+  println(io, "qLimitEvents:   ", net.qLimitEvents)
+
+  println(io, "\n--- Aggregates ---")
+  println(io, "totalLosses:    ", net.totalLosses)
+  println(io, "totalBusPower:  ", net.totalBusPower)
+
+  println(io, "\n--- Q-limit log (", length(net.qLimitLog), ") ---")
+  for (i, e) in enumerate(net.qLimitLog)
+    println(io, "  [", i, "] ", e)
+  end
+
+  println(io, "\n==================== Nodes (", length(net.nodeVec), ") ====================")
+  for (i, n) in enumerate(net.nodeVec)
+    println(io, "\n[node ", i, "]")
+    Base.show(io, n)
+  end
+
+  println(io, "\n==================== AC Lines (", length(net.linesAC), ") ====================")
+  for (i, l) in enumerate(net.linesAC)
+    println(io, "\n[line ", i, "]")
+    Base.show(io, l)
+  end
+
+  println(io, "\n==================== Transformers (", length(net.trafos), ") ====================")
+  for (i, t) in enumerate(net.trafos)
+    println(io, "\n[trafo ", i, "]")
+    Base.show(io, t)
+  end
+
+  println(io, "\n==================== Branches (", length(net.branchVec), ") ====================")
+  for (i, b) in enumerate(net.branchVec)
+    println(io, "\n[branch ", i, "]")
+    Base.show(io, b)
+  end
+
+  println(io, "\n==================== Prosumers (", length(net.prosumpsVec), ") ====================")
+  for (i, p) in enumerate(net.prosumpsVec)
+    println(io, "\n[prosumer ", i, "]")
+    Base.show(io, p)
+  end
+
+  println(io, "\n==================== Shunts (", length(net.shuntVec), ") ====================")
+  for (i, s) in enumerate(net.shuntVec)
+    println(io, "\n[shunt ", i, "]")
+    Base.show(io, s)
+  end
+
+  println(io, "\n==================== END Net ====================")
+end
+# convenience overloads
+showNet(net::Net; verbose::Bool = false) = showNet(stdout, net; verbose = verbose)
+
 # --- helpers (lokal) ---
 @inline function _push_unique!(v::Vector{Int}, x::Int)
   (findfirst(==(x), v) === nothing) && push!(v, x)
@@ -484,7 +555,7 @@ Add a transformer with PI model to the network.
 function addPIModelTrafo!(;
   net::Net,
   fromBus::String,
-  toBus::String,  
+  toBus::String,
   r_pu::Float64,
   x_pu::Float64,
   b_pu::Float64,
@@ -527,18 +598,18 @@ Add a transformer with PI model to the network.
 - `shift_deg::Union{Nothing, Float64}`: Phase shift angle of the transformer. Default is `nothing`.
 - `isAux::Bool`: Whether the transformer is an auxiliary transformer. Default is `false`.
 """
-function add2WTPIModelTrafo!(; 
-  net::Net, 
-  fromBus::String, 
-  toBus::String, 
-  side::Int = 1, 
-  r::Float64, 
-  x::Float64, 
-  b::Float64 = 0.0, 
-  status::Int = 1 , 
-  ratedU::Union{Nothing,Float64} = nothing, 
-  ratedS::Union{Nothing,Float64} = nothing, 
-  ratio::Union{Nothing,Float64} = nothing, 
+function add2WTPIModelTrafo!(;
+  net::Net,
+  fromBus::String,
+  toBus::String,
+  side::Int = 1,
+  r::Float64,
+  x::Float64,
+  b::Float64 = 0.0,
+  status::Int = 1,
+  ratedU::Union{Nothing,Float64} = nothing,
+  ratedS::Union{Nothing,Float64} = nothing,
+  ratio::Union{Nothing,Float64} = nothing,
   shift_deg::Union{Nothing,Float64} = nothing,
 )
   @assert fromBus != toBus "From and to bus must be different"
@@ -548,10 +619,8 @@ function add2WTPIModelTrafo!(;
     ratedU = side == 1 ? getNodeVn(net.nodeVec[from]) : getNodeVn(net.nodeVec[to])
   end
   r_pu, x_pu, b_pu, g_pu = toPU_RXBG(r = r, x = x, g = 0.0, b = b, v_kv = ratedU, baseMVA = net.baseMVA)
-  addPIModelTrafo!(net = net, fromBus = fromBus, toBus = toBus, r_pu = r_pu, x_pu = x_pu, b_pu = b_pu, 
-                   status = status, ratedU = ratedU, ratedS = ratedS, ratio = ratio, shift_deg = shift_deg, isAux = false, side = side)
+  addPIModelTrafo!(net = net, fromBus = fromBus, toBus = toBus, r_pu = r_pu, x_pu = x_pu, b_pu = b_pu, status = status, ratedU = ratedU, ratedS = ratedS, ratio = ratio, shift_deg = shift_deg, isAux = false, side = side)
 end
-
 
 """
 Add a 3-winding transformer using a star-equivalent with an internal AUX bus.
@@ -568,113 +637,57 @@ Notes:
 - `ratedU` passed to add2WTPIModelTrafo! is the AUX-side rated voltage (HV), because the
   branch is defined from AUX (HV base) to the respective side.
 """
-function add3WTPiModelTrafo!(;
-    net::Net,
-    HBBus::String,
-    MBBus::String,
-    LVBus::String,
-    r::NTuple{3,Float64},
-    x::NTuple{3,Float64},
-    b::NTuple{3,Float64},
-    ratedU_kV::NTuple{3,Float64},
-    ratedS_MVA::NTuple{3,Float64},
-    status::Int = 1,
-)
-    @assert status in (0, 1) "status must be 0 or 1"
+function add3WTPiModelTrafo!(; net::Net, HBBus::String, MBBus::String, LVBus::String, r::NTuple{3,Float64}, x::NTuple{3,Float64}, b::NTuple{3,Float64}, ratedU_kV::NTuple{3,Float64}, ratedS_MVA::NTuple{3,Float64}, status::Int = 1)
+  @assert status in (0, 1) "status must be 0 or 1"
 
-    # --- basic existence checks (will throw from geNetBusIdx if missing) ---
-    hb_idx = geNetBusIdx(net = net, busName = HBBus)
-    mb_idx = geNetBusIdx(net = net, busName = MBBus)
-    lv_idx = geNetBusIdx(net = net, busName = LVBus)
+  # --- basic existence checks (will throw from geNetBusIdx if missing) ---
+  hb_idx = geNetBusIdx(net = net, busName = HBBus)
+  mb_idx = geNetBusIdx(net = net, busName = MBBus)
+  lv_idx = geNetBusIdx(net = net, busName = LVBus)
 
-    # --- choose AUX-side (HV) voltage base ---
-    # Prefer ratedU_kV[1] as HV side, but be robust and take the maximum.
-    U_aux_kV = maximum(ratedU_kV)
-    @assert U_aux_kV > 0.0 "ratedU_kV must be > 0"
+  # --- choose AUX-side (HV) voltage base ---
+  # Prefer ratedU_kV[1] as HV side, but be robust and take the maximum.
+  U_aux_kV = maximum(ratedU_kV)
+  @assert U_aux_kV > 0.0 "ratedU_kV must be > 0"
 
-    # --- build a deterministic AUX bus name (unique-ish, stable) ---
-    # Keep it simple and reproducible; avoid special chars.
-    function _sanitize(s::AbstractString)
-        return replace(String(s), r"[^A-Za-z0-9_]" => "_")
-    end
+  # --- build a deterministic AUX bus name (unique-ish, stable) ---
+  # Keep it simple and reproducible; avoid special chars.
+  function _sanitize(s::AbstractString)
+    return replace(String(s), r"[^A-Za-z0-9_]" => "_")
+  end
 
-    aux_bus = "Aux3WT_" * _sanitize(HBBus) * "_" * _sanitize(MBBus) * "_" * _sanitize(LVBus)
+  aux_bus = "Aux3WT_" * _sanitize(HBBus) * "_" * _sanitize(MBBus) * "_" * _sanitize(LVBus)
 
-    # --- create AUX bus if missing ---
-    if !hasBusInNet(net = net, busName = aux_bus)
-        addBus!(
-            net = net,
-            busName = aux_bus,
-            busType = "PQ",
-            vn_kV = U_aux_kV,
-            isAux = true,
-        )
-    end
+  # --- create AUX bus if missing ---
+  if !hasBusInNet(net = net, busName = aux_bus)
+    addBus!(net = net, busName = aux_bus, busType = "PQ", vn_kV = U_aux_kV, isAux = true)
+  end
 
-    # --- define ratios for each branch AUX->side ---
-    # ratio is interpreted as turns ratio; here we use U_aux / U_side.
-    # For the HV bus branch, this is typically ~1 if HB is the HV side.
-    
-    ratio_hb = 1.0 #U_aux_kV / ratedU_kV[1]
-    ratio_mb = 1.0 #U_aux_kV / ratedU_kV[2]
-    ratio_lv = 1.0 #U_aux_kV / ratedU_kV[3]
+  # --- define ratios for each branch AUX->side ---
+  # ratio is interpreted as turns ratio; here we use U_aux / U_side.
+  # For the HV bus branch, this is typically ~1 if HB is the HV side.
 
-    # --- optional PU conversion (for validation/logging/debug) ---
-    # Note: add2WTPIModelTrafo! will do this conversion again internally.
-    r1_pu, x1_pu, b1_pu, _g1_pu = toPU_RXBG(r = r[1], x = x[1], g = 0.0, b = b[1], v_kv = U_aux_kV, baseMVA = net.baseMVA)
-    r2_pu, x2_pu, b2_pu, _g2_pu = toPU_RXBG(r = r[2], x = x[2], g = 0.0, b = b[2], v_kv = U_aux_kV, baseMVA = net.baseMVA)
-    r3_pu, x3_pu, b3_pu, _g3_pu = toPU_RXBG(r = r[3], x = x[3], g = 0.0, b = b[3], v_kv = U_aux_kV, baseMVA = net.baseMVA)
+  ratio_hb = 1.0 #U_aux_kV / ratedU_kV[1]
+  ratio_mb = 1.0 #U_aux_kV / ratedU_kV[2]
+  ratio_lv = 1.0 #U_aux_kV / ratedU_kV[3]
 
-    # If you want: add @debug lines here using (r*_pu, x*_pu, b*_pu)
+  # --- optional PU conversion (for validation/logging/debug) ---
+  # Note: add2WTPIModelTrafo! will do this conversion again internally.
+  r1_pu, x1_pu, b1_pu, _g1_pu = toPU_RXBG(r = r[1], x = x[1], g = 0.0, b = b[1], v_kv = U_aux_kV, baseMVA = net.baseMVA)
+  r2_pu, x2_pu, b2_pu, _g2_pu = toPU_RXBG(r = r[2], x = x[2], g = 0.0, b = b[2], v_kv = U_aux_kV, baseMVA = net.baseMVA)
+  r3_pu, x3_pu, b3_pu, _g3_pu = toPU_RXBG(r = r[3], x = x[3], g = 0.0, b = b[3], v_kv = U_aux_kV, baseMVA = net.baseMVA)
 
-    # --- add three 2W PI branches (AUX -> side buses) ---
-    # Use side=1 because fromBus is the AUX (HV base).
-    add2WTPIModelTrafo!(
-        net = net,
-        fromBus = aux_bus,
-        toBus = HBBus,
-        side = 1,
-        r = r[1],
-        x = x[1],
-        b = b[1],
-        status = status,
-        ratedU = U_aux_kV,
-        ratedS = ratedS_MVA[1],
-        ratio = ratio_hb,
-        shift_deg = 0.0,
-    )
+  # If you want: add @debug lines here using (r*_pu, x*_pu, b*_pu)
 
-    add2WTPIModelTrafo!(
-        net = net,
-        fromBus = aux_bus,
-        toBus = MBBus,
-        side = 1,
-        r = r[2],
-        x = x[2],
-        b = b[2],
-        status = status,
-        ratedU = U_aux_kV,
-        ratedS = ratedS_MVA[2],
-        ratio = ratio_mb,
-        shift_deg = 0.0,
-    )
+  # --- add three 2W PI branches (AUX -> side buses) ---
+  # Use side=1 because fromBus is the AUX (HV base).
+  add2WTPIModelTrafo!(net = net, fromBus = aux_bus, toBus = HBBus, side = 1, r = r[1], x = x[1], b = b[1], status = status, ratedU = U_aux_kV, ratedS = ratedS_MVA[1], ratio = ratio_hb, shift_deg = 0.0)
 
-    add2WTPIModelTrafo!(
-        net = net,
-        fromBus = aux_bus,
-        toBus = LVBus,
-        side = 1,
-        r = r[3],
-        x = x[3],
-        b = b[3],
-        status = status,
-        ratedU = U_aux_kV,
-        ratedS = ratedS_MVA[3],
-        ratio = ratio_lv,
-        shift_deg = 0.0,
-    )
+  add2WTPIModelTrafo!(net = net, fromBus = aux_bus, toBus = MBBus, side = 1, r = r[2], x = x[2], b = b[2], status = status, ratedU = U_aux_kV, ratedS = ratedS_MVA[2], ratio = ratio_mb, shift_deg = 0.0)
 
-    return aux_bus
+  add2WTPIModelTrafo!(net = net, fromBus = aux_bus, toBus = LVBus, side = 1, r = r[3], x = x[3], b = b[3], status = status, ratedU = U_aux_kV, ratedS = ratedS_MVA[3], ratio = ratio_lv, shift_deg = 0.0)
+
+  return aux_bus
 end
 
 """
@@ -693,20 +706,7 @@ Add a transformer with PI model to the network.
 - `ratio::Union{Nothing, Float64}`: Ratio of the transformer. Default is `nothing`.
 - `shift_deg::Union{Nothing, Float64}`: Phase shift angle of the transformer. Default is `nothing`.
 """
-function add2WTTrafo!(;
-  net::Net,
-  fromBus::String,
-  toBus::String,
-  side::Int = 1,
-  r::Float64,
-  x::Float64,
-  b::Float64,
-  status::Int,  
-  ratedU::Union{Nothing,Float64} = nothing,
-  ratedS::Union{Nothing,Float64} = nothing,
-  ratio::Union{Nothing,Float64} = nothing,
-  shift_deg::Union{Nothing,Float64} = nothing,  
-)
+function add2WTTrafo!(; net::Net, fromBus::String, toBus::String, side::Int = 1, r::Float64, x::Float64, b::Float64, status::Int, ratedU::Union{Nothing,Float64} = nothing, ratedS::Union{Nothing,Float64} = nothing, ratio::Union{Nothing,Float64} = nothing, shift_deg::Union{Nothing,Float64} = nothing)
   @assert fromBus != toBus "From and to bus must be different"
   if isnothing(ratedU)
     from = geNetBusIdx(net = net, busName = fromBus)
@@ -715,12 +715,9 @@ function add2WTTrafo!(;
     V2 = getNodeVn(net.nodeVec[to])
     ratedU = max(V1, V2)
   end
-  r_pu, x_pu, b_pu, g_pu = toPU_RXBG(r = r,  x = x,   g = 0.0,  b = b, v_kv = ratedU,  baseMVA = net.baseMVA)
-  addPIModelTrafo!(net = net,fromBus = fromBus, toBus = toBus, r_pu = r_pu, x_pu = x_pu, b_pu = b_pu, 
-                   status = status, ratedU = ratedU, ratedS = ratedS, ratio = ratio, shift_deg = shift_deg, isAux = false, side = side)
+  r_pu, x_pu, b_pu, g_pu = toPU_RXBG(r = r, x = x, g = 0.0, b = b, v_kv = ratedU, baseMVA = net.baseMVA)
+  addPIModelTrafo!(net = net, fromBus = fromBus, toBus = toBus, r_pu = r_pu, x_pu = x_pu, b_pu = b_pu, status = status, ratedU = ratedU, ratedS = ratedS, ratio = ratio, shift_deg = shift_deg, isAux = false, side = side)
 end
-
-
 
 """
 Add a two-winding transformer to the network.

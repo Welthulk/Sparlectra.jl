@@ -79,7 +79,7 @@ export
   addBus!, addShunt!, addACLine!, addPIModelACLine!, add2WTrafo!, addPIModelTrafo!, addProsumer!, lockNet!, validate!, hasBusInNet, addBusGenPower!, addBusLoadPower!, addBusShuntPower!, setNodeVoltage!, setNodeAngle!,
   getNetOrigBusIdx, geNetBusIdx, setNetBranchStatus!, getNetBranch, getNetBranchNumberVec, setTotalLosses!, getTotalLosses, getBusType, get_bus_vn_kV, get_vn_kV, updateBranchParameters!, hasShunt!, 
   getShunt!, markIsolatedBuses!,setTotalBusPower!, setPVBusVset!, setQLimits!, getNodeVm,distributeBusResults!, getTotalBusPower, getTotalLosses, buildVoltageVector,initialVrect, buildComplexSVec,
-  add2WTPIModelTrafo!, add3WTPiModelTrafo!,
+  add2WTPIModelTrafo!, add3WTPiModelTrafo!,showNet,
   # remove_functions.jl
   removeBus!, removeBranch!, removeACLine!, removeTrafo!, removeShunt!, removeProsumer!, clearIsolatedBuses!,
   # import.jl
@@ -87,7 +87,7 @@ export
   # exportMatPower.jl
   writeMatpowerCasefile,
   # equicircuit.jl
-  calcComplexRatio, calcNeutralU,  createYBUS, adjacentBranches, toPU_RXBG, to_RXBG, 
+  calcComplexRatio, calcNeutralU,  createYBUS, adjacentBranches, toPU_RXBG, fromPU_RXBG, 
   # nbi.jl
   getNBI, mdoRCM,
   # jacobian.jl
