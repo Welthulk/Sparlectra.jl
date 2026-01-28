@@ -3,7 +3,6 @@
 # CIGRE HV network
 # Source of this network can be found here (Task Force C6.04.02 ): https://www.researchgate.net/publication/271963972_TF_C60402_TB_575_--_Benchmark_Systems_for_Network_Integration_of_Renewable_and_Distributed_Energy_Resources
 
-
 function test_2WTPITrafo()
   Sbase_MVA = 1000.0
   netName = "trafo_2W_PIT"
@@ -11,8 +10,8 @@ function test_2WTPITrafo()
   @debug "Creating $netName test network"
   addBus!(net = net, busName = "B1", busType = "PQ", vn_kV = 220.0)
   addBus!(net = net, busName = "B2", busType = "SLACK", vn_kV = 20.0)
-  
-  add2WTPIModelTrafo!(net = net, fromBus = "B1", toBus = "B2", r = 0.0, x = 0.4, ratedU = 220.0, ratedS = 1000.0 )  
+
+  add2WTPIModelTrafo!(net = net, fromBus = "B1", toBus = "B2", r = 0.0, x = 0.4, ratedU = 220.0, ratedS = 1000.0)
   addProsumer!(net = net, busName = "B2", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "B1")
   result, msg = validate!(net = net)
   if !result
@@ -22,7 +21,7 @@ function test_2WTPITrafo()
   return result
 end
 
-function test_3WTPITrafo(verbose ::Int = 0; method::Symbol = :rectangular, opt_fd::Bool = false, opt_sparse::Bool = true)::Bool
+function test_3WTPITrafo(verbose::Int = 0; method::Symbol = :rectangular, opt_fd::Bool = false, opt_sparse::Bool = true)::Bool
   #
   #                                                  380kV      AUX*        110kV
   # 380kV              -----------------------AC-LINE--o----------o----------o----------------AC-LINE---------o  Load: p=80 MW, q=30 MVar
@@ -38,20 +37,13 @@ function test_3WTPITrafo(verbose ::Int = 0; method::Symbol = :rectangular, opt_f
 
   # --- buses ---
   addBus!(net = net, busName = "B1", busType = "SLACK", vn_kV = 380.0)
-  addBus!(net = net, busName = "B2", busType = "PQ",    vn_kV = 380.0)  # HV side of 3W trafo
-  addBus!(net = net, busName = "B3", busType = "PQ",    vn_kV = 110.0)  # MV side
-  addBus!(net = net, busName = "B4", busType = "PQ",    vn_kV = 20.0)   # LV side (shunt bus)
-  addBus!(net = net, busName = "B5", busType = "PQ",    vn_kV = 110.0)  # load bus at 110kV
+  addBus!(net = net, busName = "B2", busType = "PQ", vn_kV = 380.0)  # HV side of 3W trafo
+  addBus!(net = net, busName = "B3", busType = "PQ", vn_kV = 110.0)  # MV side
+  addBus!(net = net, busName = "B4", busType = "PQ", vn_kV = 20.0)   # LV side (shunt bus)
+  addBus!(net = net, busName = "B5", busType = "PQ", vn_kV = 110.0)  # load bus at 110kV
 
   # --- slack injection ---
-  addProsumer!(
-    net = net,
-    busName = "B1",
-    type = "EXTERNALNETWORKINJECTION",
-    vm_pu = 1.0,
-    va_deg = 0.0,
-    referencePri = "B1",
-  )
+  addProsumer!(net = net, busName = "B1", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "B1")
 
   # --- line 380 kV: B1 -- B2 ---
   addACLine!(net = net, fromBus = "B1", toBus = "B2", length = 1.0, r = 0.01, x = 0.10)
@@ -104,13 +96,11 @@ function test_3WTPITrafo(verbose ::Int = 0; method::Symbol = :rectangular, opt_f
     return false
   end
 
-
   tol = 1e-9
   maxIte = 50
   print_results = (verbose > 0)
   result = true
 
-  
   etim = 0.0
   etim = @elapsed begin
     ite, erg = runpf!(net, maxIte, tol, verbose, method = method, opt_fd = opt_fd, opt_sparse = opt_sparse)
@@ -120,10 +110,9 @@ function test_3WTPITrafo(verbose ::Int = 0; method::Symbol = :rectangular, opt_f
     end
   end
 
-  
   V = buildVoltageVector(net)
   calcNetLosses!(net, V)
-  distributeBusResults!(net)  
+  distributeBusResults!(net)
   if print_results
     printACPFlowResults(net, etim, ite, tol; converged = result, solver = method)
     printProsumerResults(net)
@@ -132,7 +121,6 @@ function test_3WTPITrafo(verbose ::Int = 0; method::Symbol = :rectangular, opt_f
 
   return true
 end
-
 
 function test_acpflow(verbose::Int = 0; lLine_6a6b::Float64 = 0.01, damp::Float64 = 1.0, method::Symbol = :rectangular, opt_sparse = true)::Bool
   net = createCIGRE(lLine_6a6b)

@@ -125,8 +125,15 @@ function getLineRXBG(o::ACLineSegment)::Tuple{Float64,Float64,Union{Nothing,Floa
   end
 end
 
-function getLineRXBG_pu(o::ACLineSegment, vn_kV::Float64, baseMVA::Float64)::Tuple{Float64,Float64,Union{Nothing,Float64},Union{Nothing,Float64}}
-  r, x, b, g = getLineRXBG(o)
+function getLineRXBG_pu(o::ACLineSegment, vn_kV::Float64, baseMVA::Float64)
+  # Matpower import stores r/x/b already in pu -> do NOT convert again
+  # If you have a proper flag, use it; otherwise this vn_kV==1.0 check is a temporary guard.
+  if vn_kV == 1.0
+    r, x, b, g = getLineRXBG(o)   # <-- returns the stored values
+    return r, x, b, g
+  end
+
+  r, x, b, g = getLineRXBG(o)       # these would be Ohm/S in other importers
   return toPU_RXBG(r = r, x = x, g = g, b = b, v_kv = vn_kV, baseMVA = baseMVA)
 end
 

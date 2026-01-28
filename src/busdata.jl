@@ -66,30 +66,32 @@ function getBusData(nodes::Vector{Node}, Sbase_MVA::Float64, flatStart)
     p = p / Sbase_MVA
     q = q / Sbase_MVA
 
+    va_rad = 0.0
     if flatStart
       if type == PQ
         vm_pu = 1.0
-        va_deg = 0.0
+        va_rad = 0.0
       elseif type == PV
         vm_pu = n._vm_pu === nothing ? 1.0 : n._vm_pu
-        va_deg = 0.0
+        va_rad = 0.0
       elseif type == Slack
         vm_pu = n._vm_pu === nothing ? 1.0 : n._vm_pu
-        va_deg = n._va_deg === nothing ? 0.0 : deg2rad(n._va_deg)
+        #va_rad = n._va_deg === nothing ? 0.0 : deg2rad(n._va_deg)
+        va_rad = 0.0
       end
     else
       vm_pu = n._vm_pu === nothing ? 1.0 : n._vm_pu
-      va_deg = n._va_deg === nothing ? 0.0 : deg2rad(n._va_deg)
+      va_rad = n._va_deg === nothing ? 0.0 : deg2rad(n._va_deg)
 
       if angle_limit && type == PQ
-        if abs(va_deg) > deg2rad(30.0)
-          va_deg = sign(va_deg) * deg2rad(30.0)
-          @warn "getBusData: bus $(idx) type=$(type), va_deg=$(va_deg) exceeds angle limit, set to 30°"
+        if abs(n._va_deg) > deg2rad(30.0)
+          va_rad = sign(n._va_deg) * deg2rad(30.0)
+          @warn "getBusData: bus $(idx) type=$(type), va_deg=$(n._va_deg) exceeds angle limit, set to 30°"
         end
       end
     end
     busIdx = idx
-    b = BusData(busIdx, vm_pu, va_deg, p, q, type)
+    b = BusData(busIdx, vm_pu, va_rad, p, q, type)
     push!(busVec, b)
   end
 

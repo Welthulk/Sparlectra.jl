@@ -398,13 +398,14 @@ A tuple containing the number of iterations and the result of the calculation:
 - `2`: Unsolvable system of equations.
 - `3`: Error.
 =#
-function calcNewtonRaphson!(net::Net, Y::AbstractMatrix{ComplexF64}, maxIte::Int, tolerance::Float64 = 1e-6, verbose::Int = 0, sparse::Bool = false, flatStart::Bool = false, angle_limit::Bool = false, debug::Bool = false)
+function calcNewtonRaphson!(net::Net, Y::AbstractMatrix{ComplexF64}, maxIte::Int, tolerance::Float64 = 1e-6, verbose::Int = 0, sparse::Bool = false, angle_limit::Bool = false, debug::Bool = false)
   nodes = net.nodeVec
   isoNodes = net.isoNodes
   Sbase_MVA = net.baseMVA
   setJacobianAngleLimit(angle_limit)
   setJacobianDebug(debug)
-
+  flatStart = net.flatstart
+  @info "flatStart=$(flatStart)"
   busVec, slackNum = getBusData(nodes, Sbase_MVA, flatStart)
 
   adjBranch = adjacentBranches(Y, debug)
@@ -567,6 +568,7 @@ A tuple containing the number of iterations and the result of the calculation:
 """
 function runpf_classic!(net::Net, maxIte::Int, tolerance::Float64 = 1e-6, verbose::Int = 0; opt_sparse::Bool = false)
   printYBus = false
+  sparse = opt_sparse
   if length(net.nodeVec) == 0
     @error "No nodes found in $(jpath)"
     return

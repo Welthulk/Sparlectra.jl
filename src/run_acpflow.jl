@@ -13,7 +13,19 @@ Parameters:
 Returns:
 - Net, the network object.
 """
-function run_acpflow(; max_ite::Int = 10, tol::Float64 = 1e-6, casefile::String, path::Union{Nothing,String} = nothing, verbose::Int = 0, printResultToFile::Bool = false, printResultAnyCase::Bool = false, opt_fd::Bool = false, opt_sparse::Bool = false, method::Symbol = :polar_full)::Net
+function run_acpflow(;
+  max_ite::Int = 10,
+  tol::Float64 = 1e-6,
+  casefile::String,
+  path::Union{Nothing,String} = nothing,
+  verbose::Int = 0,
+  printResultToFile::Bool = false,
+  printResultAnyCase::Bool = false,
+  opt_fd::Bool = false,
+  opt_sparse::Bool = false,
+  method::Symbol = :polar_full,
+  opt_flatstart::Bool = false,
+)::Net
   ext = splitext(casefile)[2]  # Get the file extension
   myNet = nothing              # Initialize myNet variable
   in_path = nothing
@@ -31,7 +43,7 @@ function run_acpflow(; max_ite::Int = 10, tol::Float64 = 1e-6, casefile::String,
       println("Error: File $(in_path) not found")
       return
     end
-    myNet = createNetFromMatPowerFile(in_path, (verbose > 0))
+    myNet = createNetFromMatPowerFile(filename = in_path, log = (verbose > 0), flatstart = opt_flatstart)
   else
     println("Error: File extension $(ext) not supported!")
     return

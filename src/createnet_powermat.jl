@@ -38,7 +38,7 @@ Creates a network from a MatPower case file.
 A Net object representing the network.
 
 """
-function createNetFromMatPowerFile(filename, log::Bool = false)::Net
+function createNetFromMatPowerFile(; filename::String, log::Bool = false, flatstart::Bool = false)::Net
   function pInfo(msg::String)
     if log
       @info msg
@@ -51,7 +51,7 @@ function createNetFromMatPowerFile(filename, log::Bool = false)::Net
   @debug debug = true
   mFak = 10.0 # approximation factor for load and shunt for qMax, qMin, pMax, pMin
 
-  @info "create network from case-file: $(filename)"
+  @info "create network from case-file: $(filename), flatstart = $(flatstart)"
   netName, baseMVA, busData, genData, branchData = casefileparser(filename)
 
   slackIdx = 0
@@ -81,16 +81,24 @@ function createNetFromMatPowerFile(filename, log::Bool = false)::Net
   end
 
   busDict, genDict, branchDict = _createDict()
-  myNet = Net(name = string(netName), baseMVA = baseMVA)
+  flat = flatstart
+  myNet = Net(name = string(netName), baseMVA = baseMVA, flatstart = flat)
 
   col = size(busData, 2)
 
   for row in eachrow(busData[:, 1:col])
     btype = Int64(row[busDict["type"]])
     kIdx = Int64(row[busDict["bus"]]) # original bus number    
+    raw_vn = float(row[busDict["baseKV"]])
+    if raw_vn <= 0.0
+      log && @warn("Warnung: vn_kv at bus $(kIdx) <= 0")
+      vn_kv = 1.0
+    else
+      vn_kv = raw_vn
+    end
 
-    vn_kv = float(row[busDict["baseKV"]]) <= 0.0 ? (@warn("Warnung: vn_kv at bus $(kIdx) <= 0"); 1.0) : float(row[busDict["baseKV"]])
     va_deg = float(row[busDict["Va"]])
+
     vm_pu = float(row[busDict["Vm"]]) <= 0.0 ? (@warn("vm_pu at bus $(kIdx) <= 0"); 1.0) : float(row[busDict["Vm"]])
     pƩLoad = float(row[busDict["Pd"]]) < 0.0 ? (pInfo("pLoad at bus $(kIdx) p < 0"); float(row[busDict["Pd"]])) : float(row[busDict["Pd"]])
     qƩLoad = float(row[busDict["Qd"]]) < 0.0 ? (@debug("qLoad at bus $(kIdx) q < 0"); float(row[busDict["Qd"]])) : float(row[busDict["Qd"]])
@@ -140,8 +148,12 @@ function createNetFromMatPowerFile(filename, log::Bool = false)::Net
     r_pu = float(row[branchDict["r"]])
     x_pu = float(row[branchDict["x"]])
     b_pu = float(row[branchDict["b"]])
-    ratedS = float(row[branchDict["rateA"]])
+    ratedS_raw = float(row[branchDict["rateA"]])
+    ratedS = ratedS_raw > 0.0 ? ratedS_raw : Inf
+
+    #ratedS = float(row[branchDict["rateA"]])
     ratio = float(row[branchDict["ratio"]])
+    ratio == 0.0 && (ratio = 1.0) # avoid division by zero
     angle = float(row[branchDict["angle"]])
     status = Int64(row[branchDict["status"]])
     isLine = false
