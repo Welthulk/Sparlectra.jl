@@ -3,7 +3,6 @@
 # CIGRE HV network
 # Source of this network can be found here (Task Force C6.04.02 ): https://www.researchgate.net/publication/271963972_TF_C60402_TB_575_--_Benchmark_Systems_for_Network_Integration_of_Renewable_and_Distributed_Energy_Resources
 
-
 function test_2WTPITrafo()
   Sbase_MVA = 1000.0
   netName = "trafo_2W_PIT"
@@ -11,8 +10,8 @@ function test_2WTPITrafo()
   @debug "Creating $netName test network"
   addBus!(net = net, busName = "B1", busType = "PQ", vn_kV = 220.0)
   addBus!(net = net, busName = "B2", busType = "SLACK", vn_kV = 20.0)
-  
-  add2WTPIModelTrafo!(net = net, fromBus = "B1", toBus = "B2", r = 0.0, x = 0.4, ratedU = 220.0, ratedS = 1000.0 )  
+
+  add2WTPIModelTrafo!(net = net, fromBus = "B1", toBus = "B2", r = 0.0, x = 0.4, ratedU = 220.0, ratedS = 1000.0)
   addProsumer!(net = net, busName = "B2", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "B1")
   result, msg = validate!(net = net)
   if !result
@@ -22,7 +21,7 @@ function test_2WTPITrafo()
   return result
 end
 
-function test_3WTPITrafo(verbose ::Int = 0; method::Symbol = :rectangular, opt_fd::Bool = false, opt_sparse::Bool = true)::Bool
+function test_3WTPITrafo(verbose::Int = 0; method::Symbol = :rectangular, opt_fd::Bool = false, opt_sparse::Bool = true)::Bool
   #
   #                                                  380kV      AUX*        110kV
   # 380kV              -----------------------AC-LINE--o----------o----------o----------------AC-LINE---------o  Load: p=80 MW, q=30 MVar
@@ -38,20 +37,13 @@ function test_3WTPITrafo(verbose ::Int = 0; method::Symbol = :rectangular, opt_f
 
   # --- buses ---
   addBus!(net = net, busName = "B1", busType = "SLACK", vn_kV = 380.0)
-  addBus!(net = net, busName = "B2", busType = "PQ",    vn_kV = 380.0)  # HV side of 3W trafo
-  addBus!(net = net, busName = "B3", busType = "PQ",    vn_kV = 110.0)  # MV side
-  addBus!(net = net, busName = "B4", busType = "PQ",    vn_kV = 20.0)   # LV side (shunt bus)
-  addBus!(net = net, busName = "B5", busType = "PQ",    vn_kV = 110.0)  # load bus at 110kV
+  addBus!(net = net, busName = "B2", busType = "PQ", vn_kV = 380.0)  # HV side of 3W trafo
+  addBus!(net = net, busName = "B3", busType = "PQ", vn_kV = 110.0)  # MV side
+  addBus!(net = net, busName = "B4", busType = "PQ", vn_kV = 20.0)   # LV side (shunt bus)
+  addBus!(net = net, busName = "B5", busType = "PQ", vn_kV = 110.0)  # load bus at 110kV
 
   # --- slack injection ---
-  addProsumer!(
-    net = net,
-    busName = "B1",
-    type = "EXTERNALNETWORKINJECTION",
-    vm_pu = 1.0,
-    va_deg = 0.0,
-    referencePri = "B1",
-  )
+  addProsumer!(net = net, busName = "B1", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "B1")
 
   # --- line 380 kV: B1 -- B2 ---
   addACLine!(net = net, fromBus = "B1", toBus = "B2", length = 1.0, r = 0.01, x = 0.10)
@@ -104,13 +96,11 @@ function test_3WTPITrafo(verbose ::Int = 0; method::Symbol = :rectangular, opt_f
     return false
   end
 
-
   tol = 1e-9
   maxIte = 50
   print_results = (verbose > 0)
   result = true
 
-  
   etim = 0.0
   etim = @elapsed begin
     ite, erg = runpf!(net, maxIte, tol, verbose, method = method, opt_fd = opt_fd, opt_sparse = opt_sparse)
@@ -120,10 +110,9 @@ function test_3WTPITrafo(verbose ::Int = 0; method::Symbol = :rectangular, opt_f
     end
   end
 
-  
   V = buildVoltageVector(net)
   calcNetLosses!(net, V)
-  distributeBusResults!(net)  
+  distributeBusResults!(net)
   if print_results
     printACPFlowResults(net, etim, ite, tol; converged = result, solver = method)
     printProsumerResults(net)
@@ -132,7 +121,6 @@ function test_3WTPITrafo(verbose ::Int = 0; method::Symbol = :rectangular, opt_f
 
   return true
 end
-
 
 function test_acpflow(verbose::Int = 0; lLine_6a6b::Float64 = 0.01, damp::Float64 = 1.0, method::Symbol = :rectangular, opt_sparse = true)::Bool
   net = createCIGRE(lLine_6a6b)
@@ -213,35 +201,52 @@ function testExportMatpower()
   return true
 end
 
-function testImportMatpower()
-  filename = "case5.m"
-  path = joinpath(pwd(), "data", "mpower", filename)
+function testImportMatpower()::Bool
+  mpc = (
+    name = "case2_inline",
+    baseMVA = 100.0,
 
-  net = createNetFromMatPowerFile(path, false)
-  if strip(net.name) != "case5"
-    @warn "Failed to import network case5.m from file: $path"
+    # bus: [bus_i type Pd Qd Gs Bs area Vm Va baseKV zone Vmax Vmin]
+    bus = [
+      1  3   0.0   0.0  0.0  0.0  1  1.0  0.0  110.0  1  1.1  0.9;
+      2  1  50.0  30.0  0.0  0.0  1  1.0  0.0  110.0  1  1.1  0.9;
+    ],
+
+    # gen: 21 cols (MATPOWER v2)
+    gen = [
+      1  0.0  0.0  999.0  -999.0  1.0  100.0  1  999.0  0.0  0 0  0 0  0 0  0 0  0 0  0;
+    ],
+
+    # branch: [fbus tbus r x b rateA rateB rateC ratio angle status angmin angmax]
+    branch = [
+      1  2  0.01  0.05  0.0  9999.0  0.0  0.0  0.0  0.0  1  -60.0  60.0;
+    ],
+
+    gencost = nothing,
+    bus_name = nothing,
+  )
+
+  net = createNetFromMatPowerCase(; mpc=mpc, log=false, flatstart=true)
+
+  if strip(net.name) != "case2_inline"
+    @warn "Unexpected net.name" got=net.name
+    return false
+  end
+  if length(net.nodeVec) != 2
+    @warn "Expected 2 nodes" got=length(net.nodeVec)
+    return false
+  end
+  if length(net.branchVec) != 1
+    @warn "Expected 1 branch" got=length(net.branchVec)
     return false
   end
 
-  if length(net.nodeVec) != 5
-    @warn "Expected 5 nodes, found: $(length(net.nodeVec))"
-    return false
-  end
-  if length(net.branchVec) != 5
-    @warn "Expected 5 branches, found: $(length(net.branchVec))"
-    return false
-  end
+  ok, msg = validate!(net=net)
+  ok || (@warn msg; return false)
 
   return true
 end
 
-function rmTestfiles()
-  file = getTestFilePathName()
-  if isfile(file)
-    rm(file)
-  end
-  return true
-end
 
 function testISOBusses()
   Sbase_MVA = 1000.0
