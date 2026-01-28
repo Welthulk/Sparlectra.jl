@@ -84,7 +84,7 @@ struct Net
   
   #! format: off
   function Net(; name::String, baseMVA::Float64, vmin_pu::Float64 = 0.9, vmax_pu::Float64 = 1.1, cooldown_iters::Int = 0, q_hyst_pu::Float64 = 0.0, flatstart::Bool = false)    
-    @info "Creating new Net: $(name) with baseMVA=$(baseMVA), vmin_pu=$(vmin_pu), vmax_pu=$(vmax_pu), flatstart=$(flatstart)"
+    
     new(name, # name
         baseMVA, # baseMVA
         [], # slackVec
@@ -1481,28 +1481,30 @@ Returns:
 - V0::Vector{ComplexF64}
 - slack_idx::Int
 """
-function initialVrect(net::Net)
+function initialVrect(net::Net; flatstart::Bool = net.flatstart)
   nodes = net.nodeVec
   n = length(nodes)
+
+  slack_idx = findfirst(n -> getNodeType(n) == Slack, nodes)
+  slack_idx === nothing && error("initialVrect: no slack bus found")
+
   V0 = Vector{ComplexF64}(undef, n)
 
-  slack_idx = 0
+  @inbounds for k = 1:n
+    node = nodes[k]
 
-  for (k, node) in enumerate(nodes)
-    vm = node._vm_pu
-    va_deg = node._va_deg
-    va_rad = deg2rad(va_deg)
+    # Voltage magnitude guess
+    vm = (node._vm_pu === nothing || node._vm_pu <= 0.0) ? 1.0 : Float64(node._vm_pu)
 
-    V0[k] = vm * cis(va_rad)
-
-    if isSlack(node)
-      @assert slack_idx == 0 "Multiple slack buses detected"
-      slack_idx = k
+    if flatstart
+      # Flat start: 1∠0 for all non-slack, slack uses vm∠0
+      V0[k] = ComplexF64(vm, 0.0)  # vm + j0
+    else
+      # Use stored angle if available, else 0
+      va_deg = (node._va_deg === nothing) ? 0.0 : Float64(node._va_deg)
+      va = deg2rad(va_deg)
+      V0[k] = ComplexF64(vm * cos(va), vm * sin(va))
     end
-  end
-
-  if slack_idx == 0
-    error("No slack bus found in network")
   end
 
   return V0, slack_idx

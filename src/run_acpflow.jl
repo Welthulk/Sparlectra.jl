@@ -52,7 +52,7 @@ function run_acpflow(;
   # Run power flow
   ite = 0
   etime = @elapsed begin
-    ite, erg = runpf!(myNet, max_ite, tol, verbose; opt_fd = opt_fd, opt_sparse = opt_sparse, method = method)
+    ite, erg = runpf!(myNet, max_ite, tol, verbose; opt_fd = opt_fd, opt_sparse = opt_sparse, method = method, opt_flatstart = opt_flatstart)
   end
 
   if erg == 0 || printResultAnyCase
