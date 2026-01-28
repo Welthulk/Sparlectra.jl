@@ -4,7 +4,9 @@
 
 # helper
 #! format: off
-function _creaDict()
+
+
+function _createDict()
 
   busKeys = ["bus", "type", "Pd", "Qd", "Gs", "Bs", "area", "Vm", "Va", "baseKV", "zone", "Vmax", "Vmin"]
   busDict = Dict{String,Int}()
@@ -26,196 +28,208 @@ function _creaDict()
 
   return busDict, genDict, branchDict
 end
+
+
 #! format: on
-"""
-Creates a network from a MatPower case file.
-
-# Arguments
-- `filename`: Path to the MatPower case file.
-- `log::Bool = false`: Whether to log information (default: false).
-
-# Returns
-A Net object representing the network.
 
 """
+    createNetFromMatPowerCase(; mpc, log=false, flatstart=false) -> Net
 
-createNetFromMatPowerFile(filename::String, log::Bool = false, flatstart::Bool = false) = createNetFromMatPowerFile(; filename = filename, log = log, flatstart = flatstart)
+Builds a Sparlectra `Net` from a MATPOWER-like container `mpc`.
 
-function createNetFromMatPowerFile(; filename::String, log::Bool = false, flatstart::Bool = false)::Net
-  function pInfo(msg::String)
-    if log
-      @info msg
-    end
-  end
-  getIntBusStr(Float64) = string(Int(Float64))
-  getFloatBusStr(Int64) = string(Int64)
+`mpc` can be either:
+- a `NamedTuple` with fields `name, baseMVA, bus, gen, branch` (optionally `gencost, bus_name`)
+- or a struct with the same field names (e.g. `MatpowerCase`)
 
-  debug = false
-  @debug debug = true
-  mFak = 10.0 # approximation factor for load and shunt for qMax, qMin, pMax, pMin
+All matrices are expected in MATPOWER v2 column conventions.
+"""
+function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false)::Net
+  # Small logger helper
+  pInfo(msg::String) = (log ? (@info msg) : nothing)
 
-  mpc        = MatpowerIO.read_case(filename; legacy_compat = true)
-  netName    = mpc.name
-  baseMVA    = mpc.baseMVA
-  busData    = mpc.bus
-  genData    = mpc.gen
-  branchData = mpc.branch
+  # --- Extract fields from NamedTuple / struct uniformly ---
+  name    = hasproperty(mpc, :name)    ? getproperty(mpc, :name)    : "mpc"
+  baseMVA = hasproperty(mpc, :baseMVA) ? Float64(getproperty(mpc, :baseMVA)) : error("mpc.baseMVA missing")
+  busData = hasproperty(mpc, :bus)     ? Matrix{Float64}(getproperty(mpc, :bus)) : error("mpc.bus missing")
+  genData = hasproperty(mpc, :gen)     ? Matrix{Float64}(getproperty(mpc, :gen)) : error("mpc.gen missing")
+  brData  = hasproperty(mpc, :branch)  ? Matrix{Float64}(getproperty(mpc, :branch)) : error("mpc.branch missing")
 
+  # --- Legacy-compatible dicts (same as your old importer) ---
+  busDict, genDict, branchDict = _createDict()
+
+
+  @info "Creating new Net: $(name) with baseMVA=$(baseMVA), flatstart=$(flatstart)"
+  myNet = Net(name = String(name), baseMVA = baseMVA, flatstart = flatstart)
+
+  # --- Find slack bus index from BUS_TYPE==3 (MATPOWER) ---
   slackIdx = 0
-  # parsing the data
-  if debug
-    println("Parsing the data...")
-    println("Netname: ", netName)
-    println("BaseMVA: ", baseMVA, "\n")
-    println("Buses: len=", size(busData))
-    col = size(busData, 2)
-
-    for row in eachrow(busData[:, 1:col])
-      println(row)
-    end
-    println("\nGenerators: len=", size(genData))
-    col = size(genData, 2)
-
-    for row in eachrow(genData[:, 1:col])
-      println(row)
-    end
-    println("\nBranches: len=", size(branchData))
-    col = size(branchData, 2)
-
-    for row in eachrow(branchData[:, 1:col])
-      println(row)
+  for row in eachrow(busData)
+    btype = Int(row[busDict["type"]])
+    if btype == 3
+      slackIdx = Int(row[busDict["bus"]])
+      break
     end
   end
 
-  busDict, genDict, branchDict = _creaDict()
-  flat = flatstart
-  myNet = Net(name = string(netName), baseMVA = baseMVA, flatstart = flat)
+  # --- Buses + Loads + Shunts (same semantics as your existing importer) ---
+  mFak = 10.0
 
-  col = size(busData, 2)
-
-  for row in eachrow(busData[:, 1:col])
-    btype = Int64(row[busDict["type"]])
-    kIdx = Int64(row[busDict["bus"]]) # original bus number    
-    raw_vn = float(row[busDict["baseKV"]])
-    if raw_vn <= 0.0
-      log && @warn("Warnung: vn_kv at bus $(kIdx) <= 0")
-      vn_kv = 1.0
-    else
-      vn_kv = raw_vn
-    end
-
-    va_deg = float(row[busDict["Va"]])
-
-    vm_pu = float(row[busDict["Vm"]]) <= 0.0 ? (@warn("vm_pu at bus $(kIdx) <= 0"); 1.0) : float(row[busDict["Vm"]])
-    pƩLoad = float(row[busDict["Pd"]]) < 0.0 ? (pInfo("pLoad at bus $(kIdx) p < 0"); float(row[busDict["Pd"]])) : float(row[busDict["Pd"]])
-    qƩLoad = float(row[busDict["Qd"]]) < 0.0 ? (@debug("qLoad at bus $(kIdx) q < 0"); float(row[busDict["Qd"]])) : float(row[busDict["Qd"]])
-
-    pShunt = float(row[busDict["Gs"]]) < 0.0 ? (pInfo("pShunt at bus $(kIdx) p < 0"); float(row[busDict["Gs"]])) : float(row[busDict["Gs"]])
-    qShunt = float(row[busDict["Bs"]]) < 0.0 ? (@debug("qShunt at bus $(kIdx) q < 0"); float(row[busDict["Bs"]])) : float(row[busDict["Bs"]])
-
-    zone = Int64(row[busDict["zone"]])
-    area = Int64(row[busDict["area"]])
-    vmin = float(row[busDict["Vmin"]])
-    vmax = float(row[busDict["Vmax"]])
-
-    if btype == 3 && slackIdx == 0
-      slackIdx = kIdx
-    end
+  for row in eachrow(busData)
+    btype = Int(row[busDict["type"]])
+    kIdx  = Int(row[busDict["bus"]])     # original bus number
     busName = string(kIdx)
 
-    addBus!(net = myNet, busName = busName, busType = toString(toNodeType(btype)), vn_kV = vn_kv, vm_pu = vm_pu, va_deg = va_deg, vmin_pu = vmin, vmax_pu = vmax, isAux = false, oBusIdx = kIdx, zone = zone, area = area)
+    raw_vn = Float64(row[busDict["baseKV"]])
+    vn_kv  = raw_vn <= 0.0 ? 1.0 : raw_vn
+
+    va_deg = Float64(row[busDict["Va"]])
+    vm_pu  = Float64(row[busDict["Vm"]])
+    vm_pu  = vm_pu <= 0.0 ? 1.0 : vm_pu
+
+    pLoad  = Float64(row[busDict["Pd"]])
+    qLoad  = Float64(row[busDict["Qd"]])
+
+    pShunt = Float64(row[busDict["Gs"]])
+    qShunt = Float64(row[busDict["Bs"]])
+
+    zone = Int(row[busDict["zone"]])
+    area = Int(row[busDict["area"]])
+    vmin = Float64(row[busDict["Vmin"]])
+    vmax = Float64(row[busDict["Vmax"]])
+
+    addBus!(
+      net = myNet,
+      busName = busName,
+      busType = toString(toNodeType(btype)),
+      vn_kV = vn_kv,
+      vm_pu = vm_pu,
+      va_deg = va_deg,
+      vmin_pu = vmin,
+      vmax_pu = vmax,
+      isAux = false,
+      oBusIdx = kIdx,
+      zone = zone,
+      area = area,
+    )
 
     if pShunt != 0.0 || qShunt != 0.0
       addShunt!(net = myNet, busName = busName, pShunt = pShunt, qShunt = qShunt)
     end
 
-    if pƩLoad != 0.0 || qƩLoad != 0.0
-      qMax = abs(mFak * qƩLoad <= baseMVA) ? abs(mFak * qƩLoad) : baseMVA  # approximation!
-      qMin = -qMax  # approximation!
-      pMax = abs(mFak * pƩLoad) <= baseMVA ? abs(mFak * pƩLoad) : baseMVA # approximation!
-      pMin = -pMax # approximation!
-      addProsumer!(net = myNet, busName = busName, type = "ENERGYCONSUMER", p = pƩLoad, q = qƩLoad, pMin = pMin, pMax = pMax, qMin = qMin, qMax = qMax)
+    if pLoad != 0.0 || qLoad != 0.0
+      qMax = min(abs(mFak * qLoad), baseMVA)
+      qMin = -qMax
+      pMax = min(abs(mFak * pLoad), baseMVA)
+      pMin = -pMax
+      addProsumer!(
+        net = myNet,
+        busName = busName,
+        type = "ENERGYCONSUMER",
+        p = pLoad,
+        q = qLoad,
+        pMin = pMin,
+        pMax = pMax,
+        qMin = qMin,
+        qMax = qMax,
+      )
     end
-  end# read bus
+  end
 
-  # branches: 
-  col = size(branchData, 2)
-  for row in eachrow(branchData[:, 1:col])
-    _fbus = Int(row[branchDict["fbus"]])
-    _tbus = Int(row[branchDict["tbus"]])
+  # --- Branches (line vs transformer decision same as old importer) ---
+  for row in eachrow(brData)
+    fbus = string(Int(row[branchDict["fbus"]]))
+    tbus = string(Int(row[branchDict["tbus"]]))
 
-    fbus = string(_fbus)
-    tbus = string(_tbus)
-    vn_kv_fromBus = get_bus_vn_kV(net = myNet, busName = fbus)
-    vn_kv_toBus = get_bus_vn_kV(net = myNet, busName = tbus)
+    hasBusInNet(net = myNet, busName = fbus) || (@warn "bus $(fbus) not found, branch ignored."; continue)
+    hasBusInNet(net = myNet, busName = tbus) || (@warn "bus $(tbus) not found, branch ignored."; continue)
 
-    hasBusInNet(net = myNet, busName = fbus) || (@warn("bus $(fbus) not found, branch ignored."); continue)
-    hasBusInNet(net = myNet, busName = tbus) || (@warn("bus $(tbus) not found, branch ignored."); continue)
+    r_pu = Float64(row[branchDict["r"]])
+    x_pu = Float64(row[branchDict["x"]])
+    b_pu = Float64(row[branchDict["b"]])
 
-    r_pu = float(row[branchDict["r"]])
-    x_pu = float(row[branchDict["x"]])
-    b_pu = float(row[branchDict["b"]])
-    ratedS_raw = float(row[branchDict["rateA"]])
+    ratedS_raw = Float64(row[branchDict["rateA"]])
     ratedS = ratedS_raw > 0.0 ? ratedS_raw : Inf
 
-    #ratedS = float(row[branchDict["rateA"]])
-    ratio = float(row[branchDict["ratio"]])
-    ratio == 0.0 && (ratio = 1.0) # avoid division by zero
-    angle = float(row[branchDict["angle"]])
-    status = Int64(row[branchDict["status"]])
-    isLine = false
-    if (ratio == 1.0 && angle == 0.0 || ratio == 0.0) && vn_kv_fromBus == vn_kv_toBus
-      isLine = true
-    end
+    ratio = Float64(row[branchDict["ratio"]])
+    ratio = (ratio == 0.0) ? 1.0 : ratio
+
+    angle  = Float64(row[branchDict["angle"]])
+    status = Int(row[branchDict["status"]])
+
+    vn_from = get_bus_vn_kV(net = myNet, busName = fbus)
+    vn_to   = get_bus_vn_kV(net = myNet, busName = tbus)
+
+    isLine = ((ratio == 1.0 && angle == 0.0) && (vn_from == vn_to))
 
     if isLine
-      addPIModelACLine!(net = myNet, fromBus = fbus, toBus = tbus, r_pu = r_pu, x_pu = x_pu, b_pu = b_pu, status = status, ratedS = ratedS)
-    else # transformer
-      addPIModelTrafo!(net = myNet, fromBus = fbus, toBus = tbus, r_pu = r_pu, x_pu = x_pu, b_pu = b_pu, status = status, ratedS = ratedS, ratio = ratio, shift_deg = angle)
+      addPIModelACLine!(
+        net = myNet,
+        fromBus = fbus,
+        toBus = tbus,
+        r_pu = r_pu,
+        x_pu = x_pu,
+        b_pu = b_pu,
+        status = status,
+        ratedS = ratedS,
+      )
+    else
+      addPIModelTrafo!(
+        net = myNet,
+        fromBus = fbus,
+        toBus = tbus,
+        r_pu = r_pu,
+        x_pu = x_pu,
+        b_pu = b_pu,
+        status = status,
+        ratedS = ratedS,
+        ratio = ratio,
+        shift_deg = angle,
+      )
     end
   end
 
-  # Generators:   
-  col = size(genData, 2)
-  for row in eachrow(genData[:, 1:col])
-    status = Int64(row[genDict["status"]])
-    _bus = Int(row[genDict["bus"]])
-    bus = string(_bus)
-    if status < 1
-      pInfo("generator $(_bus) not in service, ignored")
-      continue
-    end
+  # --- Generators ---
+  for row in eachrow(genData)
+    status = Int(row[genDict["status"]])
+    status < 1 && continue
 
-    pGen = float(row[genDict["Pg"]]) < 0.0 ? (pInfo("pGen at bus $(_bus) p < 0"); float(row[genDict["Pg"]])) : float(row[genDict["Pg"]])
-    qGen = float(row[genDict["Qg"]]) < 0.0 ? (@debug("qGen at bus $(_bus) q < 0"); float(row[genDict["Qg"]])) : float(row[genDict["Qg"]])
+    bus = string(Int(row[genDict["bus"]]))
 
-    if abs(pGen) < 1e-6 && abs(qGen) < 1e-6
-      busType = getBusType(net = myNet, busName = bus)
-      if busType == PQ
-        pInfo("generator $(_bus) has no power output, ignored")
-        continue
-      end
-    end
+    pGen = Float64(row[genDict["Pg"]])
+    qGen = Float64(row[genDict["Qg"]])
 
-    qMax = float(row[genDict["Qmax"]])
-    qMin = float(row[genDict["Qmin"]])
-    pMax = float(row[genDict["Pmax"]])
-    pMin = float(row[genDict["Pmin"]])
-    vm_pu = float(row[genDict["Vg"]])
-    mBase = float(row[genDict["mBase"]])
+    qMax = Float64(row[genDict["Qmax"]])
+    qMin = Float64(row[genDict["Qmin"]])
+    pMax = Float64(row[genDict["Pmax"]])
+    pMin = Float64(row[genDict["Pmin"]])
+    vm_pu = Float64(row[genDict["Vg"]])
+    mBase = Float64(row[genDict["mBase"]])
 
-    referencePri = slackIdx == _bus ? bus : nothing
+    referencePri = (slackIdx == Int(row[genDict["bus"]])) ? bus : nothing
+    (mBase != baseMVA) && @warn "generator $(bus) has different baseMVA than network baseMVA"
 
-    if mBase != baseMVA
-      @warn "generator $(_bus) has different baseMVA than network baseMVA"
-    end
-
-    addProsumer!(net = myNet, busName = bus, type = "GENERATOR", vm_pu = vm_pu, referencePri = referencePri, p = pGen, q = qGen, pMax = pMax, pMin = pMin, qMax = qMax, qMin = qMin)
-  end# read Generators
-
-  erg, msg = validate!(net = myNet)
-  if erg == false
-    @error "network is invalid: $msg"
+    addProsumer!(
+      net = myNet,
+      busName = bus,
+      type = "GENERATOR",
+      vm_pu = vm_pu,
+      referencePri = referencePri,
+      p = pGen,
+      q = qGen,
+      pMax = pMax,
+      pMin = pMin,
+      qMax = qMax,
+      qMin = qMin,
+    )
   end
+
+  ok, msg = validate!(net = myNet)
+  ok || @error "network is invalid: $msg"
+
   return myNet
+end
+
+function createNetFromMatPowerFile(; filename::String, log::Bool=false, flatstart::Bool=false)::Net
+  mpc = MatpowerIO.read_case(filename; legacy_compat=true)
+  return createNetFromMatPowerCase(; mpc=mpc, log=log, flatstart=flatstart)
 end

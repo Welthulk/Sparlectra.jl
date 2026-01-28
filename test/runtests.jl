@@ -15,6 +15,7 @@ include("testremove.jl")
   @test test_3WTPITrafo() == true
   @test testNetwork() == true
   @test test_NBI_MDO() == true
+  @test testImportMatpower() == true
   @test test_acpflow(0; lLine_6a6b = 0.01, damp = 1.0, method = :rectangular, opt_sparse = true) == true
   @test test_acpflow(0; lLine_6a6b = 0.01, damp = 1.0, method = :rectangular, opt_sparse = false) == true
   @test test_acpflow(0; lLine_6a6b = 0.01, damp = 1.0, method = :polar_full, opt_sparse = true) == true
