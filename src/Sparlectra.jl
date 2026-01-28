@@ -83,7 +83,7 @@ export
   # remove_functions.jl
   removeBus!, removeBranch!, removeACLine!, removeTrafo!, removeShunt!, removeProsumer!, clearIsolatedBuses!,
   # import.jl
-  casefileparser, createNetFromMatPowerFile,
+  createNetFromMatPowerFile,
   # exportMatPower.jl
   writeMatpowerCasefile,
   # equicircuit.jl
@@ -115,14 +115,14 @@ include("branch.jl")
 include("shunt.jl")
 include("network.jl")
 include("busdata.jl")
-include("import.jl")
+include("MatpowerIO.jl")   
+include("createnet_powermat.jl")
 include("equicircuit.jl")
 include("jacobian.jl")
 include("limits.jl")
 include("jacobian_full.jl")
 include("losses.jl")
 include("nbi.jl")
-include("createnet_powermat.jl")
 include("exportMatPower.jl")
 include("results.jl")
 include("run_acpflow.jl")
