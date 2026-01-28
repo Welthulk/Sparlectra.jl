@@ -18,7 +18,9 @@ Pkg.add("Sparlectra")
 This package supports the import and export of Matpower .m files, although currently it only reads bus, generator, and branch data from these files. Please note that additional Matlab functions within the .m file are not supported. Additionally, you can modify the imported Matpower files or you can create your own network using easy-to-use functions provided by the package.
 
 ### License
-This project is licensed under the BSD-3-Clause - [The license file](LICENSE) contains the complete licensing information.
+This project is licensed under the Apache License, Version 2.0.
+[The license file](LICENSE) contains the complete licensing information.
+
 
 
 
