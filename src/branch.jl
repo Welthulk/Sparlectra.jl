@@ -136,6 +136,7 @@ mutable struct Branch <: AbstractBranch
     vn_kV::Union{Nothing,Float64} = nothing,
     fromOid::Union{Nothing,Int} = nothing,
     toOid::Union{Nothing,Int} = nothing,
+    angle::Union{Nothing,Float64} = nothing,
   )
     if isa(branch, ACLineSegment) # Line
       @assert !isnothing(vn_kV) "vn_kV must be set for an ACLineSegment"
@@ -147,7 +148,6 @@ mutable struct Branch <: AbstractBranch
       else
         c = getBranchComp(vn_kV, from, to, id, "ACL")
       end
-      c = getBranchComp(vn_kV, from, to, id, "ACL")
 
       r_pu, x_pu, b_pu, g_pu = getLineRXBG_pu(branch, vn_kV, baseMVA)
       new(c, branchIdx, from, to, r_pu, x_pu, b_pu, g_pu, 0.0, 0.0, status, branch.ratedS, nothing, nothing, nothing, nothing)
@@ -171,7 +171,8 @@ mutable struct Branch <: AbstractBranch
 
       ratio = isnothing(ratio) ? 1.0 : ratio
       @assert ratio != 0.0 "ratio must not be 0.0 for transformers"
-      angle = isnothing(w.shift_degree) ? 0.0 : w.shift_degree
+      #angle = isnothing(w.shift_degree) ? 0.0 : w.shift_degree
+      angle = isnothing(angle) ? (isnothing(w.shift_degree) ? 0.0 : w.shift_degree) : angle
 
       new(c, branchIdx, from, to, r_pu, x_pu, b_pu, g_pu, ratio, angle, status, sn_MVA, nothing, nothing, nothing, nothing)
     elseif isa(branch, BranchModel) # PI-Model
@@ -285,11 +286,15 @@ function calcBranchYshunt(branch::Branch)::ComplexF64
 end
 
 function calcBranchRatio(branch::Branch)::ComplexF64
-  t = 1.0 + 0.0 * im
   ratio = (isnothing(branch.ratio) || branch.ratio == 0.0) ? 1.0 : branch.ratio
   shift = isnothing(branch.angle) ? 0.0 : branch.angle
-  t = (shift != 0.0) ? calcComplexRatio(tapRatio = ratio, angleInDegrees = shift) : 1.0 + 0.0im
-  return t
+
+  # use ratio even if shift is 0
+  if ratio != 1.0 || shift != 0.0
+    return calcComplexRatio(tapRatio = ratio, angleInDegrees = shift)
+  else
+    return 1.0 + 0.0im
+  end
 end
 
 function getBranchComp(Vn_kV::Float64, from::Int, to::Int, idx::Int, kind::String)

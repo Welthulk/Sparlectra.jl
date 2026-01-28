@@ -1,4 +1,11 @@
 # Change Log
+ 
+## Version 0.4.30 – 2026-28-01
+### Bug Fixes
+* Importing Matpower files, wrong conversion to per unit system 
+### New Features
+* Option to choose flatstart 
+
 ## Version 0.4.29 – 2025-12-13
 ### New Features
 * Support native 3-winding transformers in Sparlectra without AUX bus generation and allow non-PU parameterization #90
