@@ -83,7 +83,7 @@ export
   # remove_functions.jl
   removeBus!, removeBranch!, removeACLine!, removeTrafo!, removeShunt!, removeProsumer!, clearIsolatedBuses!,
   # import.jl
-  createNetFromMatPowerFile,
+  createNetFromMatPowerFile, _createDict,
   # exportMatPower.jl
   writeMatpowerCasefile,
   # equicircuit.jl

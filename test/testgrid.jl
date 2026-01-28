@@ -201,35 +201,52 @@ function testExportMatpower()
   return true
 end
 
-function testImportMatpower()
-  filename = "case5.m"
-  path = joinpath(pwd(), "data", "mpower", filename)
+function testImportMatpower()::Bool
+  mpc = (
+    name = "case2_inline",
+    baseMVA = 100.0,
 
-  net = createNetFromMatPowerFile(path, false)
-  if strip(net.name) != "case5"
-    @warn "Failed to import network case5.m from file: $path"
+    # bus: [bus_i type Pd Qd Gs Bs area Vm Va baseKV zone Vmax Vmin]
+    bus = [
+      1  3   0.0   0.0  0.0  0.0  1  1.0  0.0  110.0  1  1.1  0.9;
+      2  1  50.0  30.0  0.0  0.0  1  1.0  0.0  110.0  1  1.1  0.9;
+    ],
+
+    # gen: 21 cols (MATPOWER v2)
+    gen = [
+      1  0.0  0.0  999.0  -999.0  1.0  100.0  1  999.0  0.0  0 0  0 0  0 0  0 0  0 0  0;
+    ],
+
+    # branch: [fbus tbus r x b rateA rateB rateC ratio angle status angmin angmax]
+    branch = [
+      1  2  0.01  0.05  0.0  9999.0  0.0  0.0  0.0  0.0  1  -60.0  60.0;
+    ],
+
+    gencost = nothing,
+    bus_name = nothing,
+  )
+
+  net = createNetFromMatPowerCase(; mpc=mpc, log=false, flatstart=true)
+
+  if strip(net.name) != "case2_inline"
+    @warn "Unexpected net.name" got=net.name
+    return false
+  end
+  if length(net.nodeVec) != 2
+    @warn "Expected 2 nodes" got=length(net.nodeVec)
+    return false
+  end
+  if length(net.branchVec) != 1
+    @warn "Expected 1 branch" got=length(net.branchVec)
     return false
   end
 
-  if length(net.nodeVec) != 5
-    @warn "Expected 5 nodes, found: $(length(net.nodeVec))"
-    return false
-  end
-  if length(net.branchVec) != 5
-    @warn "Expected 5 branches, found: $(length(net.branchVec))"
-    return false
-  end
+  ok, msg = validate!(net=net)
+  ok || (@warn msg; return false)
 
   return true
 end
 
-function rmTestfiles()
-  file = getTestFilePathName()
-  if isfile(file)
-    rm(file)
-  end
-  return true
-end
 
 function testISOBusses()
   Sbase_MVA = 1000.0
