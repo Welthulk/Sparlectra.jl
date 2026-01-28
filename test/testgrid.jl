@@ -226,7 +226,8 @@ function testImportMatpower()::Bool
     bus_name = nothing,
   )
 
-  net = createNetFromMatPowerCase(; mpc=mpc, log=false, flatstart=true)
+  net = Sparlectra.createNetFromMatPowerCase(mpc = mpc, log=false, flatstart=false)
+  
 
   if strip(net.name) != "case2_inline"
     @warn "Unexpected net.name" got=net.name
