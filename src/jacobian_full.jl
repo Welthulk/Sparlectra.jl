@@ -249,7 +249,7 @@ function calcNewtonRaphson_withPVIdentity!(net::Net, Y::AbstractMatrix{ComplexF6
 
     # --- Active set: PV -> PQ when Q-limit violated -------------------------
     changed = false
-    if it > 2
+    if it > 1
       @inbounds for k in eachindex(busVec) # iterate over all buses
         b = busVec[k]
         if b.type == Sparlectra.PV
@@ -422,9 +422,9 @@ end
 # ------------------------------
 # Convenience wrapper similar to runpf!, but for the full system
 # ------------------------------
-function runpf_full!(net::Net, maxIte::Int, tolerance::Float64 = 1e-6, verbose::Int = 0; opt_sparse::Bool = false)
+function runpf_full!(net::Net, maxIte::Int, tolerance::Float64 = 1e-6, verbose::Int = 0; opt_sparse::Bool = false, opt_flatstart::Bool = net.flatstart)
   printYBus = (length(net.nodeVec) < 20) && (verbose > 1)
   Y = createYBUS(net = net, sparse = opt_sparse, printYBUS = printYBus)
-  return calcNewtonRaphson_withPVIdentity!(net, Y, maxIte; tolerance = tolerance, verbose = verbose, sparse = opt_sparse, flatStart = false, angle_limit = false, debug = false)
+  return calcNewtonRaphson_withPVIdentity!(net, Y, maxIte; tolerance = tolerance, verbose = verbose, sparse = opt_sparse, flatStart = opt_flatstart, angle_limit = false, debug = false)
 end
 

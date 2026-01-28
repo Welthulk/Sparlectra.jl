@@ -104,6 +104,7 @@ function printACPFlowResults(net::Net, ct::Float64, ite::Int, tol::Float64, toFi
 
   @printf(io, "Date           :%20s\n", current_date)
   @printf(io, "Iterations     :%10d\n", ite)
+  @printf(io, "Flatstart      :%10s\n", net.flatstart ? "Yes" : "No")
   @printf(io, "Tolerance      : %.1e\n", tol)
   @printf(io, "Solver         :%15s\n", string(solver))
   if converged
