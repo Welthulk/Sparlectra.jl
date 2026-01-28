@@ -399,20 +399,15 @@ A tuple containing the number of iterations and the result of the calculation:
 - `2`: Unsolvable system of equations.
 - `3`: Error.
 =#
-function calcNewtonRaphson!(net::Net, Y::AbstractMatrix{ComplexF64}, maxIte::Int, tolerance::Float64 = 1e-6, 
-                            verbose::Int = 0, sparse::Bool = false, angle_limit::Bool = false, 
-                            debug::Bool = false, opt_flatstart::Bool = false)
-  
-  
+function calcNewtonRaphson!(net::Net, Y::AbstractMatrix{ComplexF64}, maxIte::Int, tolerance::Float64 = 1e-6, verbose::Int = 0, sparse::Bool = false, angle_limit::Bool = false, debug::Bool = false, opt_flatstart::Bool = false)
   @debug "Starting Newton-Raphson Power Flow Calculation with maxIte=$(maxIte), tolerance=$(tolerance), sparse=$(sparse), angle_limit=$(angle_limit), debug=$(debug), opt_flatstart=$(opt_flatstart)"
-
 
   nodes = net.nodeVec
   isoNodes = net.isoNodes
   Sbase_MVA = net.baseMVA
   setJacobianAngleLimit(angle_limit)
   setJacobianDebug(debug)
-  
+
   busVec, slackNum = getBusData(nodes, Sbase_MVA, opt_flatstart)
 
   adjBranch = adjacentBranches(Y, debug)
@@ -574,14 +569,13 @@ A tuple containing the number of iterations and the result of the calculation:
 - `3`: Error.
 """
 function runpf_classic!(net::Net, maxIte::Int, tolerance::Float64 = 1e-6, verbose::Int = 0, opt_sparse::Bool = false, opt_flatstart::Bool = net.flatstart)
-  
   if length(net.nodeVec) == 0
     @error "No nodes found in the network."
-    return  
+    return
   end
 
   Y = createYBUS(net = net, sparse = opt_sparse, printYBUS = (verbose > 1))
-  
+
   return calcNewtonRaphson!(net, Y, maxIte, tolerance, verbose, opt_sparse, false, (verbose > 3), opt_flatstart)
 end
 
