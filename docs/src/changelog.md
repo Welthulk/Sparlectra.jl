@@ -1,5 +1,9 @@
 # Change Log
  
+## Version 0.4.31 – 2026-28-01
+### Title
+* Change license from BSD-3-Clause to Apache License 2.0
+
 ## Version 0.4.30 – 2026-28-01
 ### Bug Fixes
 * Importing Matpower files, wrong conversion to per unit system 
