@@ -25,28 +25,28 @@ function run_acpflow(;
   opt_sparse::Bool = false,
   method::Symbol = :polar_full,
   opt_flatstart::Bool = false,
-)::Net
-  ext = splitext(casefile)[2]  # Get the file extension
+)::Net  
+  ext = lowercase(splitext(casefile)[2])
   myNet = nothing              # Initialize myNet variable
   in_path = nothing
   out_path = nothing
-  if ext == ".m"
-    # Read network data from Matpower .m file    
+  if ext in (".m", ".jl")
     if path === nothing
-      in_path = joinpath(pwd(), "data", "mpower", strip(casefile))
+      in_path  = joinpath(pwd(), "data", "mpower", strip(casefile))
       out_path = joinpath(pwd(), "data", "mpower")
     else
-      in_path = joinpath(path, strip(casefile))
+      in_path  = joinpath(path, strip(casefile))
       out_path = joinpath(path)
     end
+
     if !isfile(in_path)
-      println("Error: File $(in_path) not found")
-      return
+      error("File $(in_path) not found")
     end
+
     myNet = createNetFromMatPowerFile(filename = in_path, log = (verbose > 0), flatstart = opt_flatstart)
+
   else
-    println("Error: File extension $(ext) not supported!")
-    return
+    error("File extension $(ext) not supported! Use .m or .jl")
   end
 
   # Run power flow

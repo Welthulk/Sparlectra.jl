@@ -39,7 +39,7 @@ A Net object representing the network.
 
 """
 
-createNetFromMatPowerFile(filename::String, log::Bool=false, flatstart::Bool=false) = createNetFromMatPowerFile(; filename=filename, log=log, flatstart=flatstart)
+createNetFromMatPowerFile(filename::String, log::Bool = false, flatstart::Bool = false) = createNetFromMatPowerFile(; filename = filename, log = log, flatstart = flatstart)
 
 function createNetFromMatPowerFile(; filename::String, log::Bool = false, flatstart::Bool = false)::Net
   function pInfo(msg::String)
@@ -54,13 +54,12 @@ function createNetFromMatPowerFile(; filename::String, log::Bool = false, flatst
   @debug debug = true
   mFak = 10.0 # approximation factor for load and shunt for qMax, qMin, pMax, pMin
 
-  mpc = MatpowerIO.read_case(filename; legacy_compat = true)
+  mpc        = MatpowerIO.read_case(filename; legacy_compat = true)
   netName    = mpc.name
   baseMVA    = mpc.baseMVA
   busData    = mpc.bus
   genData    = mpc.gen
   branchData = mpc.branch
-
 
   slackIdx = 0
   # parsing the data

@@ -1,7 +1,8 @@
 using Sparlectra
-#case = "case14.m"
+
 case = "case14.m"
-flatstart = true
+case = "case14.jl"
+flatstart = false
 filename = joinpath(@__DIR__, "..", "..", "data", "mpower", case)
 log = true
 #net = createNetFromMatPowerFile(filename = filename, log = false, flatstart = true)
@@ -21,6 +22,4 @@ log = true
 run_acpflow(casefile = case, opt_fd = true, opt_sparse = true, method = :polar_full, opt_flatstart = flatstart)
 #run_acpflow(casefile = case, opt_sparse = true, opt_fd = false, method = :rectangular, opt_flatstart = flatstart)
 #run_acpflow(casefile = case, opt_sparse = true, opt_fd = false, method = :classic, opt_flatstart = flatstart)
-
-
 

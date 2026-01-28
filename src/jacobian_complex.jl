@@ -786,17 +786,7 @@ polar formulations.
 - `build_rectangular_jacobian_pq_pv()`: Analytic Jacobian construction
 """
 
-function run_complex_nr_rectangular_for_net!(
-  net::Net;
-  maxiter::Int = 20,
-  tol::Float64 = 1e-8,
-  damp::Float64 = 0.2,
-  verbose::Int = 0,
-  use_fd::Bool = false,
-  opt_sparse::Bool = true,
-  opt_flatstart::Bool = net.flatstart,
-)
-
+function run_complex_nr_rectangular_for_net!(net::Net; maxiter::Int = 20, tol::Float64 = 1e-8, damp::Float64 = 0.2, verbose::Int = 0, use_fd::Bool = false, opt_sparse::Bool = true, opt_flatstart::Bool = net.flatstart)
   if verbose > 1
     @info "Running complex rectangular NR power flow... use_fd=$use_fd, opt_sparse=$opt_sparse"
   end
@@ -812,7 +802,7 @@ function run_complex_nr_rectangular_for_net!(
   Ybus = createYBUS(net = net, sparse = sparse, printYBUS = (verbose > 1))
 
   # 1) Initial complex voltages V0 and slack index
-  V0, slack_idx = initialVrect(net; flatstart = opt_flatstart) 
+  V0, slack_idx = initialVrect(net; flatstart = opt_flatstart)
 
   # 2) Specified complex power injections S (p.u.), sign convention wie im Polar-NR
   S = buildComplexSVec(net)
@@ -834,7 +824,6 @@ function run_complex_nr_rectangular_for_net!(
     end
 
     Vset[k] = isnothing(node._vm_pu) ? 1.0 : node._vm_pu
-
   end
 
   # 4) Q-limit data 
@@ -1036,8 +1025,7 @@ Returns:
     (iterations::Int, status::Int)
 where `status == 0` indicates convergence.
 """
-function runpf_rectangular!(net::Net, maxIte::Int, tolerance::Float64 = 1e-6, verbose::Int = 0; 
-                            opt_fd::Bool = false, opt_sparse::Bool = true, damp = 1.0, opt_flatstart::Bool = net.flatstart)
+function runpf_rectangular!(net::Net, maxIte::Int, tolerance::Float64 = 1e-6, verbose::Int = 0; opt_fd::Bool = false, opt_sparse::Bool = true, damp = 1.0, opt_flatstart::Bool = net.flatstart)
   iters, erg = run_complex_nr_rectangular_for_net!(net; maxiter = maxIte, tol = tolerance, damp = damp, verbose = verbose, use_fd = opt_fd, opt_sparse = opt_sparse, opt_flatstart = opt_flatstart)
   return iters, erg
 end
@@ -1059,32 +1047,13 @@ Returns:
 
 where `status == 0` indicates convergence.
 """
-function runpf!(
-  net::Net,
-  maxIte::Int,
-  tolerance::Float64 = 1e-6,
-  verbose::Int = 0;
-  method::Symbol = :rectangular,
-  opt_fd::Bool = false,
-  opt_sparse::Bool = true,
-  opt_flatstart::Bool = net.flatstart,  
-  damp = 1.0,
-)
+function runpf!(net::Net, maxIte::Int, tolerance::Float64 = 1e-6, verbose::Int = 0; method::Symbol = :rectangular, opt_fd::Bool = false, opt_sparse::Bool = true, opt_flatstart::Bool = net.flatstart, damp = 1.0)
   #@info "Running AC Power Flow using method: $(method)"
   if method === :polar_full
-    return runpf_full!(net, maxIte, tolerance, verbose;
-      opt_sparse    = opt_sparse,
-      opt_flatstart = opt_flatstart,
-    )
+    return runpf_full!(net, maxIte, tolerance, verbose; opt_sparse    = opt_sparse, opt_flatstart = opt_flatstart)
   elseif method === :rectangular
-    return runpf_rectangular!(net, maxIte, tolerance, verbose;
-      opt_fd       = opt_fd,
-      opt_sparse   = opt_sparse,
-      damp         = damp,
-      opt_flatstart = opt_flatstart,  
-    )
+    return runpf_rectangular!(net, maxIte, tolerance, verbose; opt_fd = opt_fd, opt_sparse = opt_sparse, damp = damp, opt_flatstart = opt_flatstart)
   elseif method === :classic
-    
     return runpf_classic!(net, maxIte, tolerance, verbose, opt_sparse, opt_flatstart)
   else
     error("runpf!: unknown method $(method). Use :polar_full or :rectangular.")
