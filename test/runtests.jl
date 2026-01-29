@@ -25,10 +25,10 @@ include("testgrid.jl")
 include("testremove.jl")
 include("test_solver_interface.jl")
 
-@testset "Sparlectra.jl" begin
-  @test test_external_solver_interface() == true
+@testset "Sparlectra.jl" begin  
   @test test_2WTPITrafo() == true
   @test test_3WTPITrafo() == true
+  @test test_external_solver_interface() == true
   @test testNetwork() == true
   @test test_NBI_MDO() == true
   @test testImportMatpower() == true  
