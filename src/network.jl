@@ -137,7 +137,7 @@ end
 
 function showNet(io::IO, net::Net; verbose::Bool = false)
   if !verbose
-    Base.show(io, net)
+    show(io, net)
     return
   end
 
@@ -176,37 +176,37 @@ function showNet(io::IO, net::Net; verbose::Bool = false)
   println(io, "\n==================== Nodes (", length(net.nodeVec), ") ====================")
   for (i, n) in enumerate(net.nodeVec)
     println(io, "\n[node ", i, "]")
-    Base.show(io, n)
+    show(io, n)
   end
 
   println(io, "\n==================== AC Lines (", length(net.linesAC), ") ====================")
   for (i, l) in enumerate(net.linesAC)
     println(io, "\n[line ", i, "]")
-    Base.show(io, l)
+    show(io, l)
   end
 
   println(io, "\n==================== Transformers (", length(net.trafos), ") ====================")
   for (i, t) in enumerate(net.trafos)
     println(io, "\n[trafo ", i, "]")
-    Base.show(io, t)
+    show(io, t)
   end
 
   println(io, "\n==================== Branches (", length(net.branchVec), ") ====================")
   for (i, b) in enumerate(net.branchVec)
     println(io, "\n[branch ", i, "]")
-    Base.show(io, b)
+    show(io, b)
   end
 
   println(io, "\n==================== Prosumers (", length(net.prosumpsVec), ") ====================")
   for (i, p) in enumerate(net.prosumpsVec)
     println(io, "\n[prosumer ", i, "]")
-    Base.show(io, p)
+    show(io, p)
   end
 
   println(io, "\n==================== Shunts (", length(net.shuntVec), ") ====================")
   for (i, s) in enumerate(net.shuntVec)
     println(io, "\n[shunt ", i, "]")
-    Base.show(io, s)
+    show(io, s)
   end
 
   println(io, "\n==================== END Net ====================")
