@@ -27,7 +27,7 @@ using LinearAlgebra, Dates, SparseArrays, Printf, Logging
 
 # resource data types for working with Sparlectra
 const Wurzel3 = 1.7320508075688772
-const SparlectraVersion = v"0.4.31"
+const SparlectraVersion = v"0.4.32"
 version() = SparlectraVersion
 abstract type AbstractBranch end
 
@@ -117,7 +117,11 @@ export
   # run_acpflow.jl
   run_acpflow, run_net_acpflow,
   # jacobian_complex.jl
-  runpf_rectangular!, mismatch_rectangular, complex_newton_step_rectangular_fd 
+  runpf_rectangular!, mismatch_rectangular, complex_newton_step_rectangular_fd,
+  # External solver interface
+  PFModel, PFSolution, AbstractExternalSolver,
+  buildPfModel, mismatchInf, applyPfSolution!, solvePf, runpf_external!
+
   
 include("utilities.jl")
 include("component.jl")
@@ -143,6 +147,6 @@ include("run_acpflow.jl")
 include("remove_functions.jl") 
 include("jacobian_complex.jl")
 include("jacobian_fd.jl")
-
+include("solver_interface.jl")
 #! format: on
 end # module Sparlectra
