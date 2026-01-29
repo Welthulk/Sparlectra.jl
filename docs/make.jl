@@ -28,6 +28,7 @@ makedocs(
         "branchmodel.md",
         "changelog.md",
         "powerlimits_solvers.md",
+        "external_solvers.md",
         raw"API" => [
             "reference.md",
             "component_types.md",

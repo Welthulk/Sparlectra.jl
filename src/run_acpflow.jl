@@ -32,13 +32,14 @@ function run_acpflow(;
   tol::Float64 = 1e-6,
   casefile::String,
   path::Union{Nothing,String} = nothing,
-  verbose::Int = 0,
+  verbose::Int = 0,  
   printResultToFile::Bool = false,
   printResultAnyCase::Bool = false,
   opt_fd::Bool = false,
   opt_sparse::Bool = false,
   method::Symbol = :polar_full,
   opt_flatstart::Bool = false,
+  show_results::Bool = true,
 )::Net  
   ext = lowercase(splitext(casefile)[2])
   myNet = nothing              # Initialize myNet variable
@@ -68,12 +69,14 @@ function run_acpflow(;
   etime = @elapsed begin
     ite, erg = runpf!(myNet, max_ite, tol, verbose; opt_fd = opt_fd, opt_sparse = opt_sparse, method = method, opt_flatstart = opt_flatstart)
   end
-
+  
   if erg == 0 || printResultAnyCase
     # Calculate network losses and print results
     calcNetLosses!(myNet)
     jpath = printResultToFile ? out_path : ""
-    printACPFlowResults(myNet, etime, ite, tol, printResultToFile, jpath; converged = (erg == 0), solver = method)
+    if show_results || printResultAnyCase
+      printACPFlowResults(myNet, etime, ite, tol, printResultToFile, jpath; converged = (erg == 0), solver = method)
+    end
   elseif erg == 1
     println("Newton-Raphson did not converge")
   else

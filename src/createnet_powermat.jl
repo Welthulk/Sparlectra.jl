@@ -71,8 +71,10 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
   # --- Legacy-compatible dicts (same as your old importer) ---
   busDict, genDict, branchDict = _createDict()
 
-
-  @info "Creating new Net: $(name) with baseMVA=$(baseMVA), flatstart=$(flatstart)"
+  if log
+    @info "Creating new Net: $(name) with baseMVA=$(baseMVA), flatstart=$(flatstart)"
+  end
+  
   myNet = Net(name = String(name), baseMVA = baseMVA, flatstart = flatstart)
 
   # --- Find slack bus index from BUS_TYPE==3 (MATPOWER) ---
