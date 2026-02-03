@@ -13,27 +13,43 @@
 # limitations under the License.
 
 using Sparlectra
+import Sparlectra: MatpowerIO
 
-case = "case14.m"
-case = "case14.jl"
+# -----------------------------------------------------------------------------
+# Configuration
+# -----------------------------------------------------------------------------
+
+case = "case14.jl"      # or "case14.m"
 flatstart = false
-filename = joinpath(@__DIR__, "..", "..", "data", "mpower", case)
-log = true
-#net = createNetFromMatPowerFile(filename = filename, log = false, flatstart = true)
 
-#showNet(net, verbose = true) 
+# -----------------------------------------------------------------------------
+# Ensure case is available locally (download on demand)
+# -----------------------------------------------------------------------------
 
-#run_acpflow(casefile = case, opt_sparse = true, opt_fd = false, method = :classic, opt_flatstart = flatstart)
+# This will:
+# - download case14.m into data/mpower/ if missing
+# - generate case14.jl if requested and missing
+local_case = Sparlectra.FetchMatpowerCase.ensure_casefile(
+    case;
+    outdir = Sparlectra.MPOWER_DIR,
+    to_jl = true,
+    overwrite = false,
+)
 
-#status, iters = runpf!(net, 25)
+# -----------------------------------------------------------------------------
+# Read case (Julia or MATPOWER)
+# -----------------------------------------------------------------------------
 
-#println("status = ", status, "   iters = ", iters)
-#println("converged = ", status == 1)
+mpc = MatpowerIO.read_case(local_case)
 
-#mynet = run_acpflow(casefile = case, opt_sparse = true, method = :polar_full, opt_flatstart = flatstart)
-#printQLimitLog(mynet; sort_by = :bus)
-#run_acpflow(casefile = case, opt_fd = true, method = :polar_full, opt_flatstart = flatstart)
-run_acpflow(casefile = case, opt_fd = true, opt_sparse = true, method = :polar_full, opt_flatstart = flatstart)
-#run_acpflow(casefile = case, opt_sparse = true, opt_fd = false, method = :rectangular, opt_flatstart = flatstart)
-#run_acpflow(casefile = case, opt_sparse = true, opt_fd = false, method = :classic, opt_flatstart = flatstart)
+# -----------------------------------------------------------------------------
+# Run power flow
+# -----------------------------------------------------------------------------
 
+run_acpflow(
+    casefile = basename(local_case),   # run_acpflow expects name under data/mpower
+    opt_fd = true,
+    opt_sparse = true,
+    method = :polar_full,
+    opt_flatstart = flatstart,
+)

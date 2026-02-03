@@ -1,4 +1,14 @@
 # Change Log
+## Version 0.4.33 – 2026-02-02
+
+### New Features
+* Added on-demand MATPOWER case handling via `FetchMatpowerCase.ensure_casefile`
+  (automatic download of `.m` cases and optional generation of `.jl` cases)
+* Added option to control flat start behaviour in AC power flow (`flatstart`)
+
+### Internal Changes
+* Refactored MATPOWER case import logic and removed redundant example-based loaders
+
 ## Version 0.4.32 – 2026-30-01
 ## New Features
 * Added function to export calculated network

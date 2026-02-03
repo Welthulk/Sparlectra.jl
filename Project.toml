@@ -2,7 +2,7 @@ name = "Sparlectra"
 uuid = "31ce9bba-fd9d-44a1-b005-f5f509afda38"
 authors = ["Udo Schmitz"]
 description = "load flow calculation using newton-raphson"
-version = "0.4.32"
+version = "0.4.33"
 
 [deps]
 Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
@@ -10,6 +10,10 @@ LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 Logging = "56ddb016-857b-54e1-b83d-db4d58db5568"
 Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
 SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
+Downloads = "f43a241f-c20a-4ad4-852c-f6b1247861c6"
+SHA = "ea8e919c-243c-51af-8825-aaa63cd721ce"
+
+
 
 [compat]
 julia = "1.10, 1.11"
