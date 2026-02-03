@@ -25,6 +25,9 @@
 module Sparlectra
 using LinearAlgebra, Dates, SparseArrays, Printf, Logging
 
+const MPOWER_DIR = normpath(joinpath(pkgdir(@__MODULE__), "data", "mpower"))
+
+
 # resource data types for working with Sparlectra
 const Wurzel3 = 1.7320508075688772
 const SparlectraVersion = v"0.4.32"
@@ -120,9 +123,9 @@ export
   runpf_rectangular!, mismatch_rectangular, complex_newton_step_rectangular_fd,
   # External solver interface
   PFModel, PFSolution, AbstractExternalSolver,
-  buildPfModel, mismatchInf, applyPfSolution!, solvePf, runpf_external!
+  buildPfModel, mismatchInf, applyPfSolution!, solvePf, runpf_external!,
+  ensure_casefile
 
-  
 include("utilities.jl")
 include("component.jl")
 include("lines.jl")

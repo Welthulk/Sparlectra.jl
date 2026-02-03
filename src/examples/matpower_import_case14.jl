@@ -15,20 +15,41 @@
 using Sparlectra
 import Sparlectra: MatpowerIO
 
+# -----------------------------------------------------------------------------
+# Configuration
+# -----------------------------------------------------------------------------
 
-outdir = joinpath(@__DIR__, "..", "..", "data", "mpower")
-url_case = "https://raw.githubusercontent.com/MATPOWER/matpower/master/data/case14.m"
-
-Sparlectra.FetchMatpowerCase.ensure_matpower_case(
-    url=url_case,
-    outdir=outdir,
-    to_jl=true,
-    overwrite=false,
-)
-case="case14.jl"
-mpc = MatpowerIO.read_case(joinpath(outdir, case))
-
+case = "case14.jl"      # or "case14.m"
 flatstart = false
-filename = joinpath(@__DIR__, "..", "..", "data", "mpower", case)
-run_acpflow(casefile = case, opt_fd = true, opt_sparse = true, method = :polar_full, opt_flatstart = flatstart)
 
+# -----------------------------------------------------------------------------
+# Ensure case is available locally (download on demand)
+# -----------------------------------------------------------------------------
+
+# This will:
+# - download case14.m into data/mpower/ if missing
+# - generate case14.jl if requested and missing
+local_case = Sparlectra.FetchMatpowerCase.ensure_casefile(
+    case;
+    outdir = Sparlectra.MPOWER_DIR,
+    to_jl = true,
+    overwrite = false,
+)
+
+# -----------------------------------------------------------------------------
+# Read case (Julia or MATPOWER)
+# -----------------------------------------------------------------------------
+
+mpc = MatpowerIO.read_case(local_case)
+
+# -----------------------------------------------------------------------------
+# Run power flow
+# -----------------------------------------------------------------------------
+
+run_acpflow(
+    casefile = basename(local_case),   # run_acpflow expects name under data/mpower
+    opt_fd = true,
+    opt_sparse = true,
+    method = :polar_full,
+    opt_flatstart = flatstart,
+)

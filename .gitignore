@@ -3,10 +3,9 @@ ausgabe.log
 .VSCodeCounter
 .vscode/settings.json
 test/workshop*.jl
-data/mpower/case1888_rte.m
-data/mpower/case30.m
-data/mpower/cigre.m
-data/mpower/_*
+# Ignore downloaded MATPOWER cases
+data/mpower/*.m
+data/mpower/*.jl
 data/mpower/result_*
 docs/build
 TODO.md
