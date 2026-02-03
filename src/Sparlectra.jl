@@ -30,7 +30,7 @@ const MPOWER_DIR = normpath(joinpath(pkgdir(@__MODULE__), "data", "mpower"))
 
 # resource data types for working with Sparlectra
 const Wurzel3 = 1.7320508075688772
-const SparlectraVersion = v"0.4.32"
+const SparlectraVersion = v"0.4.33"
 version() = SparlectraVersion
 abstract type AbstractBranch end
 
