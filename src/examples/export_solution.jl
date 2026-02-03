@@ -27,6 +27,62 @@ What you can toggle:
 """
 
 using Sparlectra
+const MPOWER_DIR = normpath(joinpath(@__DIR__, "..", "..", "data", "mpower"))
+
+# Ensure a MATPOWER case file exists locally under data/mpower/ by downloading it on demand.
+# If `case` is *.jl and missing, it is generated from the corresponding *.m.
+function ensure_case_available!(case::AbstractString; overwrite::Bool=false, to_jl::Bool=true)
+  mkpath(MPOWER_DIR)
+
+  lcase = lowercase(case)
+
+  if endswith(lcase, ".m")
+    local_m = joinpath(MPOWER_DIR, case)
+    if !isfile(local_m) || overwrite
+      url = "https://raw.githubusercontent.com/MATPOWER/matpower/master/data/$(case)"
+      Sparlectra.FetchMatpowerCase.ensure_matpower_case(
+        url = url,
+        outdir = MPOWER_DIR,
+        to_jl = to_jl,
+        overwrite = overwrite,
+      )
+    end
+    return nothing
+  end
+
+  if endswith(lcase, ".jl")
+    local_jl = joinpath(MPOWER_DIR, case)
+    if isfile(local_jl) && !overwrite
+      return nothing
+    end
+
+    base = case[1:end-3]
+    mname = base * ".m"
+    url = "https://raw.githubusercontent.com/MATPOWER/matpower/master/data/$(mname)"
+    Sparlectra.FetchMatpowerCase.ensure_matpower_case(
+      url = url,
+      outdir = MPOWER_DIR,
+      to_jl = true,
+      overwrite = overwrite,
+    )
+    return nothing
+  end
+
+  # Otherwise: user may pass a path; do nothing.
+  return nothing
+end
+
+# Helper: return a local *.m filename under data/mpower/ for a given case (*.m or *.jl).
+function local_case_m_path(case::AbstractString)::String
+  if endswith(lowercase(case), ".m")
+    return joinpath(MPOWER_DIR, case)
+  elseif endswith(lowercase(case), ".jl")
+    return joinpath(MPOWER_DIR, case[1:end-3] * ".m")
+  else
+    return joinpath(MPOWER_DIR, case)  # fallback
+  end
+end
+
 
 # =============================================================================
 # Configuration
@@ -49,8 +105,11 @@ show_model = true              # interface show option (runpf_external!)
 show_solution = true           # interface show option (runpf_external!)
 show_export_summary = true     # prints export summary from this script
 
-# Input file
-filename = joinpath(@__DIR__, "..", "..", "data", "mpower", case)
+# Ensure the case exists locally (download on demand)
+ensure_case_available!(case; overwrite=false, to_jl=true)
+# Local input path (for createNetFromMatPowerFile in this script)
+filename = joinpath(MPOWER_DIR, case)
+
 
 # =============================================================================
 # Helpers
@@ -73,8 +132,13 @@ end
 struct DummyExternalSolver <: Sparlectra.AbstractExternalSolver end
 
 function Sparlectra.solvePf(::DummyExternalSolver, model::Sparlectra.PFModel; tol=1e-8, kwargs...)
-    # pretend "external" solver magically found the exact solution by running internal NR
-    net_tmp = createNetFromMatPowerFile(filename=filename, log=false, flatstart=false)
+    # Always use the MATPOWER .m for the internal reference inside this stub:
+    mfile = local_case_m_path(case)
+    
+
+    ensure_case_available!(splitpath(mfile)[end]; overwrite=false, to_jl=false)
+
+    net_tmp = createNetFromMatPowerFile(filename=mfile, log=false, flatstart=false)
     runpf!(net_tmp, 25)
     model_tmp = buildPfModel(net_tmp; opt_sparse=true, flatstart=false, include_limits=false, verbose=0)
     V = build_V_pf_from_net(net_tmp, model_tmp)
