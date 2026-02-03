@@ -27,15 +27,13 @@ Note:
 module FetchMatpowerCase
 
 
-export ensure_matpower_case, fetch_matpower_case, emit_julia_case, main
+export ensure_matpower_case, fetch_matpower_case, emit_julia_case, ensure_casefile, main
 
 using Downloads
 using SHA
 using Printf
+using ..MatpowerIO
 
-# Depend on local MatpowerIO (same repo)
-include(joinpath(@__DIR__, "MatpowerIO.jl"))
-using .MatpowerIO
 
 basename(path::AbstractString) = splitpath(path)[end]
 
@@ -127,9 +125,11 @@ end
 # Write a Matrix{Float64} as a Julia literal in MATPOWER table style.
 function write_matrix_literal(io::IO, M::AbstractMatrix{<:Real}; indent::String="    ")
     println(io, "[")
-    for i in 1:size(M, 1)
+    maxrows = size(M, 1)
+    for i in 1:maxrows
         print(io, indent)
-        for j in 1:size(M, 2)
+        maxcols = size(M, 2)
+        for j in 1:maxcols
             # Use %.12g: compact, stable, enough digits for cases
             if j == 1
                 @printf(io, "%.12g", Float64(M[i, j]))
@@ -271,4 +271,58 @@ function main(args=ARGS)
     return nothing
 end
 
+"""
+    ensure_casefile(casefile; outdir=nothing, overwrite=false, to_jl=true) -> String
+
+Ensure a MATPOWER-compatible case file exists locally.
+
+- If `casefile` is an existing path, it is returned unchanged.
+- If `casefile` is a bare filename (e.g. `case14.m`), it is downloaded into `outdir`.
+- If `casefile` ends with `.jl` and is missing, the corresponding `.m` is downloaded and `.jl` is generated.
+
+Returns the local path to the requested case file.
+"""
+function ensure_casefile(casefile::AbstractString;
+                         outdir::Union{Nothing,AbstractString}=nothing,
+                         overwrite::Bool=false,
+                         to_jl::Bool=true)::String
+
+  # 1) If user passed an existing file path, just use it.
+  if isfile(casefile)
+    return normpath(casefile)
+  end
+
+  # 2) Decide output directory.
+  # Prefer repo root: <repo>/data/mpower
+  if outdir === nothing
+    # Find package root from Sparlectra source file location:
+    # <pkg>/src/Sparlectra.jl -> <pkg>
+    pkgroot = normpath(joinpath(@__DIR__, ".."))
+    outdir = normpath(joinpath(pkgroot, "data", "mpower"))
+  end
+  mkpath(outdir)
+
+  # 3) If looks like a path but does not exist, fail explicitly.
+  if occursin(r"[\\/]", casefile)
+    error("Case file not found: $casefile")
+  end
+
+  lcase = lowercase(casefile)
+
+  if endswith(lcase, ".m")
+    url = "https://raw.githubusercontent.com/MATPOWER/matpower/master/data/$(casefile)"
+    ensure_matpower_case(url=url, outdir=outdir, to_jl=to_jl, overwrite=overwrite)
+    return joinpath(outdir, casefile)
+  elseif endswith(lcase, ".jl")
+    mname = casefile[1:end-3] * ".m"
+    url = "https://raw.githubusercontent.com/MATPOWER/matpower/master/data/$(mname)"
+    ensure_matpower_case(url=url, outdir=outdir, to_jl=true, overwrite=overwrite)
+    return joinpath(outdir, casefile)
+  else
+    error("Unsupported casefile extension: $casefile (expected .m or .jl)")
+  end
+end
+
+
 end # module
+
