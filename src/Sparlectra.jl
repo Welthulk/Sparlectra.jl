@@ -148,5 +148,6 @@ include("remove_functions.jl")
 include("jacobian_complex.jl")
 include("jacobian_fd.jl")
 include("solver_interface.jl")
+include("FetchMatpowerCase.jl")
 #! format: on
 end # module Sparlectra
