@@ -111,3 +111,12 @@ function pv_hit_q_limit(net, pv_names)
   pv_idx = map(name -> geNetBusIdx(net = net, busName = name), pv_names)
   return any(haskey(net.qLimitEvents, i) for i in pv_idx)
 end
+
+@inline function has_q_limits(net::Net, i::Int)
+    return isfinite(net.qmin_pu[i]) || isfinite(net.qmax_pu[i])
+end
+
+@inline function has_q_limits(qmin_pu::AbstractVector, qmax_pu::AbstractVector, i::Int)
+    return (i <= length(qmin_pu) && isfinite(qmin_pu[i])) ||
+           (i <= length(qmax_pu) && isfinite(qmax_pu[i]))
+end

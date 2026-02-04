@@ -64,23 +64,23 @@ function run_acpflow(;
     if verbose > 1
       # --- DEBUG START ---
       @info "DEBUG Full net after import:"
+      @printf "DEBUG Full net after import:\n"
       showNet(myNet, verbose = true)
 
       Y = createYBUS(net=myNet, sparse=false, printYBUS=false)  # dense for inspection
       V0, slack = initialVrect(myNet; flatstart=myNet.flatstart)
       S = buildComplexSVec(myNet)
-      
-      @info "DEBUG Yabs_max" maximum(abs.(Y))
-      @info "DEBUG Ydiag_max" maximum(abs.(diag(Y)))
-      @info "DEBUG Ydiag_imag_max" maximum(abs.(imag.(diag(Y))))
-      
-      
-      @info "DEBUG slack bus index" slackIdx=slack
-      @info "DEBUG initial V0" V0=V0
-      @info "DEBUG case" myNet.name myNet.baseMVA myNet.flatstart slack
-      @info "DEBUG sums (pu)" sumP=sum(real.(S)) sumQ=sum(imag.(S))
-      @info "DEBUG V0" Vslack=V0[slack] Vmin=minimum(abs.(V0)) Vmax=maximum(abs.(V0))
-      @info "DEBUG Y" Ydiag_min=minimum(abs.(diag(Y))) Ydiag_max=maximum(abs.(diag(Y))) Yabs_max=maximum(abs.(Y))
+
+      @printf "DEBUG Yabs_max: %.6e\n" maximum(abs.(Y))
+      @printf "DEBUG Ydiag_max: %.6e\n" maximum(abs.(diag(Y)))
+      @printf "DEBUG Ydiag_imag_max: %.6e\n" maximum(abs.(imag.(diag(Y))))
+
+      @printf "DEBUG slack bus index: %d\n" slack
+      @printf "DEBUG initial V0: %s\n" string(V0)
+      @printf "DEBUG case: name=%s baseMVA=%.1f flatstart=%s slack=%d\n" myNet.name myNet.baseMVA myNet.flatstart slack
+      @printf "DEBUG sums (pu): sumP=%.6f sumQ=%.6f\n" sum(real.(S)) sum(imag.(S))
+      @printf "DEBUG V0: Vslack=%s Vmin=%.6f Vmax=%.6f\n" string(V0[slack]) minimum(abs.(V0)) maximum(abs.(V0))
+      @printf "DEBUG Y: Ydiag_min=%.6e Ydiag_max=%.6e Yabs_max=%.6e\n" minimum(abs.(diag(Y))) maximum(abs.(diag(Y))) maximum(abs.(Y))
       # --- DEBUG END ---
     end
 
