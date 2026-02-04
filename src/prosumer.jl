@@ -261,3 +261,16 @@ function toString(o::ProSumptionType)::String
   end
 end
 
+"Return effective reactive power of a prosumer in MVar (qGenRepl overrides qVal)."
+function getQEff_MVar(ps::ProSumer)::Union{Nothing,Float64}
+    if isnothing(ps.qGenRepl)
+        return ps.qVal
+    else
+        return ps.qGenRepl
+    end
+end
+
+function clearQGenReplacement!(ps::ProSumer)
+    ps.qGenRepl = nothing
+    return nothing
+end

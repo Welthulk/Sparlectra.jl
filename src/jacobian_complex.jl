@@ -12,7 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+#
 # file: src/jacobian_complex.jl
+#
+
 # jacobian_complex.jl — Complex-State Newton-Raphson Power Flow Formulation
 #
 # This module implements a Newton-Raphson power flow solver using complex voltages
@@ -843,6 +846,14 @@ function run_complex_nr_rectangular_for_net!(net::Net; maxiter::Int = 20, tol::F
 
   # 4) Q-limit data 
   qmin_pu, qmax_pu = getQLimits_pu(net)
+  if verbose > 1
+    nshow = min(10, length(qmin_pu))
+    println("Q-limits preview (first $nshow buses):")
+    for i = 1:nshow
+      @printf "  bus %d: qmin=%g  qmax=%g\n" i qmin_pu[i] qmax_pu[i]
+    end
+  end
+
   resetQLimitLog!(net)
 
   cooldown_iters = hasfield(typeof(net), :cooldown_iters) ? net.cooldown_iters : 0
@@ -850,6 +861,9 @@ function run_complex_nr_rectangular_for_net!(net::Net; maxiter::Int = 20, tol::F
 
   # Original PV buses at start (Guard for PQ->PV re-enable)
   pv_orig = [k for k = 1:n if bus_types[k] == :PV]
+
+  # Once a PV bus is switched to PQ in this PF run, keep it PQ until the run ends.
+  pv_locked = falses(n)
 
   # 5) NR-Loop
   V         = copy(V0)
@@ -898,25 +912,49 @@ function run_complex_nr_rectangular_for_net!(net::Net; maxiter::Int = 20, tol::F
 
         qreq   = imag(S_calc[k])    # current Q requirement (p.u.)
         busIdx = k                  # here busIdx = position in nodeVec
+        if (verbose > 1)
+          has_hi = (busIdx <= length(qmax_pu)) && isfinite(qmax_pu[busIdx])
+          has_lo = (busIdx <= length(qmin_pu)) && isfinite(qmin_pu[busIdx])
+          if !(has_hi || has_lo)
+            @printf "Q-limits: Bus %d (PV) has no finite limits (qmin=%g, qmax=%g) -> skip\n" busIdx qmin_pu[busIdx] qmax_pu[busIdx]
+          end
+        end
 
-        if qreq > qmax_pu[k]
-          # Bus becomes PQ, Q clamped to Qmax
+
+        # Only apply limits if they exist (finite)
+        has_hi = (busIdx <= length(qmax_pu)) && isfinite(qmax_pu[busIdx])
+        has_lo = (busIdx <= length(qmin_pu)) && isfinite(qmin_pu[busIdx])
+
+        if has_hi && (qreq > qmax_pu[busIdx])
           bus_types[k] = :PQ
-          S[k] = complex(real(S[k]), net.qmax_pu[k])
+
+          # Clamp Q in the *specified* injections vector S (p.u.)
+          S[k] = complex(real(S[k]), qmax_pu[busIdx])
           changed = true
+
+          # Mirror clamp into Net/Node state (MVar) so buildComplexSVec stays consistent
+          net.nodeVec[busIdx]._qƩGen = qmax_pu[busIdx] * net.baseMVA
 
           net.qLimitEvents[busIdx] = :max
           logQLimitHit!(net, it, busIdx, :max)
-          (verbose>2) && @printf "PV->PQ Bus %d: Q=%.4f > Qmax=%.4f (it=%d)\n" busIdx qreq qmax_pu[k] it
+          pv_locked[k] = true
 
-        elseif qreq < qmin_pu[k]
+          (verbose > 0) && @printf "PV->PQ Bus %d: Q=%.4f > Qmax=%.4f (it=%d)\n" busIdx qreq qmax_pu[busIdx] it
+          (verbose > 1) && @printf "Q-limits: CLAMP Bus %d -> Qmax (qreq=%+.6f pu, qmax=%+.6f pu)\n" busIdx qreq qmax_pu[busIdx]
+
+        elseif has_lo && (qreq < qmin_pu[busIdx])
           bus_types[k] = :PQ
-          S[k] = complex(real(S[k]), net.qmin_pu[k])
+          S[k] = complex(real(S[k]), qmin_pu[busIdx])
           changed = true
+
+          net.nodeVec[busIdx]._qƩGen = qmin_pu[busIdx] * net.baseMVA
 
           net.qLimitEvents[busIdx] = :min
           logQLimitHit!(net, it, busIdx, :min)
-          (verbose>2) && @printf "PV->PQ Bus %d: Q=%.4f < Qmin=%.4f (it=%d)\n" busIdx qreq qmin_pu[k] it
+          pv_locked[k] = true
+          (verbose > 0) && @printf "PV->PQ Bus %d: Q=%.4f < Qmin=%.4f (it=%d)\n" busIdx qreq qmin_pu[busIdx] it
+          (verbose > 1) && @printf "Q-limits: CLAMP Bus %d -> Qmin (qreq=%+.6f pu, qmin=%+.6f pu)\n" busIdx qreq qmin_pu[busIdx]
+
         end
       end
 
@@ -935,6 +973,11 @@ function run_complex_nr_rectangular_for_net!(net::Net; maxiter::Int = 20, tol::F
           if bus_types[k] != :PQ
             continue
           end
+          
+          if pv_locked[k]
+            continue
+          end
+
           if !(k in pv_orig)
             continue
           end
@@ -945,6 +988,7 @@ function run_complex_nr_rectangular_for_net!(net::Net; maxiter::Int = 20, tol::F
           qreq = imag(S_calc[k])
           lo = net.qmin_pu[k] + q_hyst_pu
           hi = net.qmax_pu[k] - q_hyst_pu
+
           ready = (qreq > lo) && (qreq < hi)
 
           if ready && (cooldown_iters > 0)

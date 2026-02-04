@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# file: examples/matpower_import_case14.jl
 using Sparlectra
 import Sparlectra: MatpowerIO
 
@@ -21,7 +22,10 @@ import Sparlectra: MatpowerIO
 
 case = "case30.m"      # or "case14.m"
 flatstart = true
-verbose = 1
+verbose = 2  # 0=quiet, 1=normal, 2=debug
+cooldown_iters = 3  # number of iterations to continue after convergence (for logging)
+q_hyst_pu = 0.01  # hysteresis for Q-limit enforcement (pu of max Q)
+
 println("Sparlectra version: ", Sparlectra.version(), "\n")
 println("Importing MATPOWER case file: $case\n")
 println("DEMO: Matpower_import_case14.jl\n  ------------------------------\n")
@@ -47,14 +51,14 @@ local_case = Sparlectra.FetchMatpowerCase.ensure_casefile(
 
 mpc = MatpowerIO.read_case(local_case)
 
-net = createNetFromMatPowerFile(filename = local_case, log = (verbose > 0), flatstart = flatstart)
+net = createNetFromMatPowerFile(filename = local_case, log = (verbose > 0), flatstart = flatstart, cooldown = cooldown_iters, q_hyst_pu = q_hyst_pu)
 
 # -----------------------------------------------------------------------------
 # Run power flow
 # -----------------------------------------------------------------------------
 iters, status = runpf!(net, 50, 1e-8, 2; method=:rectangular, damp=0.2, opt_fd=true, opt_sparse=true, opt_flatstart=true)
-print(showNet(net, verbose = true))
-print("Power flow  $iters iterations with status $status\n")
+#showNet(net, verbose = true)
+#print("Power flow  $iters iterations with status $status\n")
 run_acpflow(
     casefile = basename(local_case),   # run_acpflow expects name under data/mpower
     opt_fd = true,
