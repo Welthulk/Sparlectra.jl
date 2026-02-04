@@ -56,7 +56,7 @@ Builds a Sparlectra `Net` from a MATPOWER-like container `mpc`.
 
 All matrices are expected in MATPOWER v2 column conventions.
 """
-function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false)::Net
+function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false, cooldown::Int = 2, q_hyst_pu::Float64 = 0.01)::Net
   # Small logger helper
   pInfo(msg::String) = (log ? (@info msg) : nothing)
 
@@ -74,7 +74,7 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
     @info "Creating new Net: $(name) with baseMVA=$(baseMVA), flatstart=$(flatstart)"
   end
   
-  myNet = Net(name = String(name), baseMVA = baseMVA, flatstart = flatstart)
+  myNet = Net(name = String(name), baseMVA = baseMVA, flatstart = flatstart, cooldown_iters = cooldown, q_hyst_pu = q_hyst_pu)
 
   # --- Find slack bus index from BUS_TYPE==3 (MATPOWER) ---
   slackIdx = 0
@@ -188,7 +188,7 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
         x_pu = x_pu,
         b_pu = b_pu,
         status = status,
-        ratedS = ratedS,
+        ratedS = ratedS,        
       )
     else
       addPIModelTrafo!(
@@ -247,7 +247,7 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
   return myNet
 end
 
-function createNetFromMatPowerFile(; filename::String, log::Bool=false, flatstart::Bool=false)::Net
+function createNetFromMatPowerFile(; filename::String, log::Bool=false, flatstart::Bool=false, cooldown::Int = 2, q_hyst_pu::Float64 = 0.01)::Net
   mpc = MatpowerIO.read_case(filename; legacy_compat=true)
-  return createNetFromMatPowerCase(; mpc=mpc, log=log, flatstart=flatstart)
+  return createNetFromMatPowerCase(; mpc=mpc, log=log, flatstart=flatstart, cooldown = cooldown, q_hyst_pu = q_hyst_pu)
 end

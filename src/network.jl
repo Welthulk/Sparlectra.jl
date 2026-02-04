@@ -1545,30 +1545,31 @@ negative means net consumption (load).
 
 """
 function buildComplexSVec(net::Net)
-  nodes = net.nodeVec
-  n = length(nodes)
+  n = length(net.nodeVec)
   S = Vector{ComplexF64}(undef, n)
-
   baseMVA = net.baseMVA
 
-  for (k, node) in enumerate(nodes)
-    Pgen_MW    = isnothing(node._pƩGen) ? 0.0 : node._pƩGen
-    Qgen_MVar  = isnothing(node._qƩGen) ? 0.0 : node._qƩGen
-    Pload_MW   = isnothing(node._pƩLoad) ? 0.0 : node._pƩLoad
-    Qload_MVar = isnothing(node._qƩLoad) ? 0.0 : node._qƩLoad
-    # Shunt powers are already represented via Ybus (shunt admittance),
-    # so they must NOT be subtracted again in the specified injections.
-    # Psh_MW     = isnothing(node._pShunt) ? 0.0 : node._pShunt
-    # Qsh_MVar   = isnothing(node._qShunt) ? 0.0 : node._qShunt
+  for bus = 1:n
+    Pgen = 0.0; Qgen = 0.0
+    Pload = 0.0; Qload = 0.0
 
-    Pinj_MW   = Pgen_MW - Pload_MW
-    Qinj_MVar = Qgen_MVar - Qload_MVar
+    for ps in net.prosumpsVec
+      getPosumerBusIndex(ps) == bus || continue
+      p = isnothing(ps.pVal) ? 0.0 : ps.pVal
+      q = isnothing(ps.qVal) ? 0.0 : ps.qVal
 
-    Ppu = Pinj_MW / baseMVA
-    Qpu = Qinj_MVar / baseMVA
+      if isGenerator(ps)
+        Pgen += p; Qgen += q
+      else
+        Pload += p; Qload += q
+      end
+    end
 
-    S[k] = ComplexF64(Ppu, Qpu)
+    Pinj = (Pgen - Pload) / baseMVA
+    Qinj = (Qgen - Qload) / baseMVA
+    S[bus] = ComplexF64(Pinj, Qinj)
   end
 
   return S
 end
+

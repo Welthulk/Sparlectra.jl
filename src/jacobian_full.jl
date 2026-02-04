@@ -245,6 +245,9 @@ function calcNewtonRaphson_withPVIdentity!(net::Net, Y::AbstractMatrix{ComplexF6
   # Track original PV buses to guard re-enable logic.
   # Only buses that were PV at the beginning of THIS power flow should be considered for re-enable.
   pv_orig = Set(b.idx for b in busVec if b.type == Sparlectra.PV)
+  
+  pv_locked = Dict{Int,Bool}()  # key: busIdx
+
 
   n_pv = count(b->b.type==Sparlectra.PV, busVec)
   n_pq = count(b->b.type==Sparlectra.PQ, busVec)
@@ -255,6 +258,14 @@ function calcNewtonRaphson_withPVIdentity!(net::Net, Y::AbstractMatrix{ComplexF6
 
   adjBranch = adjacentBranches(Y, debug)
   qmin_pu, qmax_pu = getQLimits_pu(net)
+  if verbose > 1
+    nshow = min(10, length(qmin_pu))
+    println("Q-limits preview (first $nshow buses):")
+    for i = 1:nshow
+      @printf "  bus %d: qmin=%g  qmax=%g\n" i qmin_pu[i] qmax_pu[i]
+    end
+  end
+
 
   it = 0;
   erg = 1
@@ -263,37 +274,64 @@ function calcNewtonRaphson_withPVIdentity!(net::Net, Y::AbstractMatrix{ComplexF6
     Δ = residuum_full_withPV(Y, busVec, Vset, n_pq, n_pv, (verbose>2))
 
     # --- Active set: PV -> PQ when Q-limit violated -------------------------
-    changed = false
-    if it > 1
-      @inbounds for k in eachindex(busVec) # iterate over all buses
-        b = busVec[k]
-        if b.type == Sparlectra.PV
-          qreq   = b._qRes        # current Q (p.u.)
-          busIdx = b.idx
-          # NOTE: Only set b.qƩ when a limit is actually violated
-          if qreq > qmax_pu[k]
-            b.type = Sparlectra.PQ
-            b.qƩ = net.qmax_pu[k]          # clamp to Qmax (p.u.)
-            changed = true
-            net.qLimitEvents[busIdx] = :max  # log event (used for re-enable guard)
-            b.isPVactive = false
-            logQLimitHit!(net, it, busIdx, :max)
-            (verbose>0) && @printf "PV->PQ Bus %d: Q=%.4f > Qmax=%.4f (it=%d)\n" busIdx qreq qmax_pu[k] it
-          elseif qreq < qmin_pu[k]
-            b.type = Sparlectra.PQ
-            b.qƩ = net.qmin_pu[k]          # clamp to Qmin (p.u.)
-            changed = true
-            net.qLimitEvents[busIdx] = :min
-            b.isPVactive = false
-            logQLimitHit!(net, it, busIdx, :min)
-            (verbose>0) && @printf "PV->PQ Bus %d: Q=%.4f < Qmin=%.4f (it=%d)\n" busIdx qreq qmin_pu[k] it
+      changed = false
+      if it > 1
+        @inbounds for k in eachindex(busVec)
+          b = busVec[k]
+          if b.type == Sparlectra.PV
+            qreq   = b._qRes        # current Q (p.u.)
+            busIdx = b.idx          # index in net.nodeVec (and your log dict)
+            if (verbose > 1)
+              has_hi = (busIdx <= length(qmax_pu)) && isfinite(qmax_pu[busIdx])
+              has_lo = (busIdx <= length(qmin_pu)) && isfinite(qmin_pu[busIdx])
+              if !(has_hi || has_lo)
+                @printf "Q-limits: Bus %d (PV) has no finite limits (qmin=%g, qmax=%g) -> skip\n" busIdx qmin_pu[busIdx] qmax_pu[busIdx]
+              end
+            end
+
+
+            # Only apply limits if they exist (finite)
+            has_hi = (busIdx <= length(qmax_pu)) && isfinite(qmax_pu[busIdx])
+            has_lo = (busIdx <= length(qmin_pu)) && isfinite(qmin_pu[busIdx])
+
+            if has_hi && (qreq > qmax_pu[busIdx])
+              b.type = Sparlectra.PQ
+              b.qƩ   = qmax_pu[busIdx]                 # clamp to Qmax (p.u.)
+              changed = true
+
+              # Mirror clamp into Net/Node state (MVar)
+              net.nodeVec[busIdx]._qƩGen = qmax_pu[busIdx] * net.baseMVA
+
+              net.qLimitEvents[busIdx] = :max
+              b.isPVactive = false
+              logQLimitHit!(net, it, busIdx, :max)
+              pv_locked[busIdx] = true
+
+              (verbose>0) && @printf "PV->PQ Bus %d: Q=%.4f > Qmax=%.4f (it=%d)\n" busIdx qreq qmax_pu[busIdx] it
+              (verbose > 1) && @printf "Q-limits: CLAMP Bus %d -> Qmax (qreq=%+.6f pu, qmax=%+.6f pu)\n" busIdx qreq qmax_pu[busIdx]
+
+            elseif has_lo && (qreq < qmin_pu[busIdx])
+              b.type = Sparlectra.PQ
+              b.qƩ   = qmin_pu[busIdx]                 # clamp to Qmin (p.u.)
+              changed = true
+
+              # Mirror clamp into Net/Node state (MVar)
+              net.nodeVec[busIdx]._qƩGen = qmin_pu[busIdx] * net.baseMVA
+
+              net.qLimitEvents[busIdx] = :min
+              b.isPVactive = false
+              logQLimitHit!(net, it, busIdx, :min)
+              pv_locked[busIdx] = true
+              (verbose>0) && @printf "PV->PQ Bus %d: Q=%.4f < Qmin=%.4f (it=%d)\n" busIdx qreq qmin_pu[busIdx] it
+              (verbose > 1) && @printf "Q-limits: CLAMP Bus %d -> Qmin (qreq=%+.6f pu, qmin=%+.6f pu)\n" busIdx qreq qmin_pu[busIdx]
+            end
           end
         end
-      end
 
-      if changed
-        Δ = residuum_full_withPV(Y, busVec, Vset, n_pq, n_pv, (verbose>2))
-      end
+        if changed
+          Δ = residuum_full_withPV(Y, busVec, Vset, n_pq, n_pv, (verbose>2))
+        end
+      
 
       # --- Optional re-enable: PQ -> PV when Q back inside band, hysteresis and cooldown ok
       #      with GUARDS to prevent enabling PQ buses that were never PV or never hit a limit.
@@ -317,10 +355,14 @@ function calcNewtonRaphson_withPVIdentity!(net::Net, Y::AbstractMatrix{ComplexF6
           ;
           continue;
         end
+        if get(pv_locked, b.idx, false)
+          continue
+        end
 
         qreq = b._qRes
-        lo = net.qmin_pu[k] + q_hyst_pu
-        hi = net.qmax_pu[k] - q_hyst_pu
+        busIdx = b.idx
+        lo = net.qmin_pu[busIdx] + q_hyst_pu
+        hi = net.qmax_pu[busIdx] - q_hyst_pu
         ready = (qreq > lo) && (qreq < hi)
 
         if ready && (cooldown_iters > 0)
