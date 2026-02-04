@@ -40,6 +40,8 @@ function run_acpflow(;
   method::Symbol = :polar_full,
   opt_flatstart::Bool = false,
   show_results::Bool = true,
+  cooldown_iters::Int = 3,
+  q_hyst_pu::Float64 = 0.01,
 )::Net  
   ext = lowercase(splitext(casefile)[2])
   myNet = nothing              # Initialize myNet variable
@@ -58,18 +60,29 @@ function run_acpflow(;
       error("File $(in_path) not found")
     end
 
-    myNet = createNetFromMatPowerFile(filename = in_path, log = (verbose > 0), flatstart = opt_flatstart)
-# --- DEBUG START ---
-Y = createYBUS(net=myNet, sparse=false, printYBUS=false)  # dense for inspection
-V0, slack = initialVrect(myNet; flatstart=myNet.flatstart)
-S = buildComplexSVec(myNet)
+    myNet = createNetFromMatPowerFile(filename = in_path, log = (verbose > 0), flatstart = opt_flatstart, cooldown = cooldown_iters, q_hyst_pu = q_hyst_pu)
+    if verbose > 1
+      # --- DEBUG START ---
+      @info "DEBUG Full net after import:"
+      showNet(myNet, verbose = true)
 
-@info "DEBUG case" myNet.name myNet.baseMVA myNet.flatstart slack
-@info "DEBUG sums (pu)" sumP=sum(real.(S)) sumQ=sum(imag.(S))
-@info "DEBUG V0" Vslack=V0[slack] Vmin=minimum(abs.(V0)) Vmax=maximum(abs.(V0))
-@info "DEBUG Y" Ydiag_min=minimum(abs.(diag(Y))) Ydiag_max=maximum(abs.(diag(Y))) Yabs_max=maximum(abs.(Y))
-# --- DEBUG END ---
-
+      Y = createYBUS(net=myNet, sparse=false, printYBUS=false)  # dense for inspection
+      V0, slack = initialVrect(myNet; flatstart=myNet.flatstart)
+      S = buildComplexSVec(myNet)
+      
+      @info "DEBUG Yabs_max" maximum(abs.(Y))
+      @info "DEBUG Ydiag_max" maximum(abs.(diag(Y)))
+      @info "DEBUG Ydiag_imag_max" maximum(abs.(imag.(diag(Y))))
+      
+      
+      @info "DEBUG slack bus index" slackIdx=slack
+      @info "DEBUG initial V0" V0=V0
+      @info "DEBUG case" myNet.name myNet.baseMVA myNet.flatstart slack
+      @info "DEBUG sums (pu)" sumP=sum(real.(S)) sumQ=sum(imag.(S))
+      @info "DEBUG V0" Vslack=V0[slack] Vmin=minimum(abs.(V0)) Vmax=maximum(abs.(V0))
+      @info "DEBUG Y" Ydiag_min=minimum(abs.(diag(Y))) Ydiag_max=maximum(abs.(diag(Y))) Yabs_max=maximum(abs.(Y))
+      # --- DEBUG END ---
+    end
 
   else
     error("File extension $(ext) not supported! Use .m or .jl")
