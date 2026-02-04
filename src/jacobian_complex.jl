@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# file: src/jacobian_complex.jl
 # jacobian_complex.jl — Complex-State Newton-Raphson Power Flow Formulation
 #
 # This module implements a Newton-Raphson power flow solver using complex voltages

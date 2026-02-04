@@ -14,7 +14,8 @@
 
 # Author: Udo Schmitz (https://github.com/Welthulk)
 # Date: 08.05.2023
-# include-file nbi.jl
+# file: src/nbi.jl
+
 """
     getNBI(nodeNumberVec, branchTupleVec)
 

@@ -14,7 +14,8 @@
 
 # Author: Udo Schmitz (https://github.com/Welthulk)
 # Date: 22.05.2023
-# include-file equicircuit.jl
+# file: src/equicircuit.jl
+
 """
     cubicSplineCoefs(x::Vector{Float64}, y::Vector{Float64})::Tuple{Vector{Float64}, Vector{Float64}, Vector{Float64}, Vector{Float64}}
 

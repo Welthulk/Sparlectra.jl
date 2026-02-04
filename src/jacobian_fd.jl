@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# file: src/jacobian_fd.jl
 # jacobian_fd.jl — Finite-difference Jacobian step for rectangular complex-state NR
 #
 # This file provides the finite-difference Newton step

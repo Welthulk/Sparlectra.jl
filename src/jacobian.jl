@@ -14,8 +14,7 @@
 
 # Author: Udo Schmitz (https://github.com/Welthulk)
 # Date: 09.8.2023
-# include-file jacobian.jl
-
+# file: src/jacobian.jl
 # classical Newton-Raphson method
 
 debug = false

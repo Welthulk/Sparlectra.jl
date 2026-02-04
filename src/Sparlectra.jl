@@ -20,6 +20,7 @@
 # but it's important to note that the naming convention for functions might deviate. 
 # In this module, functions are written in CamelCase with a lowercase initial letter. 
 
+# file: src/Sparlectra.jl
 #! format: off
 
 module Sparlectra

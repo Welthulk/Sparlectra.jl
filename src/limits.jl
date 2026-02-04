@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# src/limits.jl
+# file: src/limits.jl
 # Helper function: ensures that the vector is filled to at least 'bus'
 # and fills with a default value (via append!) up to the required length.
 function _ensure_bus_index!(v::Vector{T}, bus::Int, default::T) where {T}
