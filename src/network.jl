@@ -14,7 +14,7 @@
 
 # Author: Udo Schmitz (https://github.com/Welthulk)
 # Date: 01.04.2024
-# include-file network.jl
+# file: src/network.jl
 """
     Net
 
@@ -355,7 +355,8 @@ function addBus!(;
     end
   end
 
-  if (uppercase(busType) == "SLACK")
+  
+  if (uppercase(busType) == "SLACK") || (uppercase(busType) == "Slack ")
     push!(net.slackVec, busIdx)
   end
 
@@ -543,7 +544,7 @@ function addPIModelACLine!(; net::Net, fromBus::String, toBus::String, r_pu::Flo
   vn_kV = getNodeVn(net.nodeVec[from])
   vn_2_kV = getNodeVn(net.nodeVec[to])
   @assert vn_kV == vn_2_kV "Voltage level of the from bus $(vn_kV) does not match the to bus $(vn_2_kV)"
-  acseg = ACLineSegment(vn_kv = vn_kV, from = from, to = to, length = 1.0, r = r_pu, x = x_pu, b = b_pu, ratedS = ratedS, paramsBasedOnLength = true, isPIModel = true)
+  acseg = ACLineSegment(vn_kv = vn_kV, from = from, to = to, length = 1.0, r = r_pu, x = x_pu, b = b_pu, ratedS = ratedS, paramsBasedOnLength = false, isPIModel = true)
   push!(net.linesAC, acseg)
 
   addBranch!(net = net, from = from, to = to, branch = acseg, vn_kV = vn_kV, status = status)
@@ -1511,8 +1512,14 @@ function initialVrect(net::Net; flatstart::Bool = net.flatstart)
     vm = (node._vm_pu === nothing || node._vm_pu <= 0.0) ? 1.0 : Float64(node._vm_pu)
 
     if flatstart
-      # Flat start: 1∠0 for all non-slack, slack uses vm∠0
-      V0[k] = ComplexF64(vm, 0.0)  # vm + j0
+      # fix: 04.02.2026: slack bus gets its Vm (or 1.0 if missing), angle 0
+      if k == slack_idx
+        # Slack: keep its Vm (or 1.0 if missing), angle 0
+        V0[k] = ComplexF64(vm, 0.0)
+      else
+        # All others: true flat start
+        V0[k] = ComplexF64(1.0, 0.0)
+      end
     else
       # Use stored angle if available, else 0
       va_deg = (node._va_deg === nothing) ? 0.0 : Float64(node._va_deg)

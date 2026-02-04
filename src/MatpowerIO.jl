@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# file: src/MatpowerIO.jl
+
 module MatpowerIO
 
 export MatpowerCase, read_case, read_case_m, read_case_julia, build_ybus_matpower

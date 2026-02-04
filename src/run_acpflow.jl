@@ -59,6 +59,17 @@ function run_acpflow(;
     end
 
     myNet = createNetFromMatPowerFile(filename = in_path, log = (verbose > 0), flatstart = opt_flatstart)
+# --- DEBUG START ---
+Y = createYBUS(net=myNet, sparse=false, printYBUS=false)  # dense for inspection
+V0, slack = initialVrect(myNet; flatstart=myNet.flatstart)
+S = buildComplexSVec(myNet)
+
+@info "DEBUG case" myNet.name myNet.baseMVA myNet.flatstart slack
+@info "DEBUG sums (pu)" sumP=sum(real.(S)) sumQ=sum(imag.(S))
+@info "DEBUG V0" Vslack=V0[slack] Vmin=minimum(abs.(V0)) Vmax=maximum(abs.(V0))
+@info "DEBUG Y" Ydiag_min=minimum(abs.(diag(Y))) Ydiag_max=maximum(abs.(diag(Y))) Yabs_max=maximum(abs.(Y))
+# --- DEBUG END ---
+
 
   else
     error("File extension $(ext) not supported! Use .m or .jl")

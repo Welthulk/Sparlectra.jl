@@ -13,7 +13,7 @@
 # limitations under the License.
 
 
-# busdata.jl — Data type for NR / power flow
+# file: src/busdata.jl — Data type for NR / power flow
 
 mutable struct BusData
   idx::Int          # Bus index (after sorting)

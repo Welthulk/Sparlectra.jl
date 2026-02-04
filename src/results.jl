@@ -14,7 +14,7 @@
 
 # Author: Udo Schmitz (https://github.com/Welthulk)
 # Date: 07.09.2023
-# file results.jl
+# file: src/results.jl
 # Purpose: functions for formatting and printing results of power flow calculations
 function format_version(version::VersionNumber)
   major = lpad(version.major, 2, '0')

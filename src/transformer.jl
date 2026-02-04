@@ -14,7 +14,8 @@
 
 # Author: Udo Schmitz (https://github.com/Welthulk)
 # Date: 10.05.2023
-# include-file transformer.jl
+# file: src/transformer.jl
+
 
 mutable struct TransformerModelParameters
   sn_MVA::Float64 # PGM-Parameter sn in VA

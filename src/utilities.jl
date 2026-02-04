@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# file: src/utilities.jl
 # ------------------------------
 # Utility: set a full row of a CSC matrix to zero
 # ------------------------------
