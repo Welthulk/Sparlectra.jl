@@ -441,8 +441,12 @@ Parameters:
 - `ratio::Union{Nothing,Float64} = nothing`: Ratio of the branch (default is nothing).
 - `side::Union{Nothing,Int} = nothing`: Side of the branch (default is nothing).
 - `vn_kV::Union{Nothing,Float64} = nothing`: Nominal voltage of the branch in kV (default is nothing).
+- `values_are_pu = false`: Boolean indicating if the values are in per unit (default is false).
 """
-function addBranch!(; net::Net, from::Int, to::Int, branch::AbstractBranch, status::Integer = 1, ratio::Union{Nothing,Float64} = nothing, side::Union{Nothing,Int} = nothing, vn_kV::Union{Nothing,Float64} = nothing)
+
+function addBranch!(; net::Net, from::Int, to::Int, branch::AbstractBranch, status::Integer=1,
+                    ratio=nothing, side=nothing, vn_kV=nothing,
+                    values_are_pu::Bool=false)
   @assert from != to "From and to bus must be different"
   idBrunch = length(net.branchVec) + 1
   fOrig = nothing
@@ -457,7 +461,7 @@ function addBranch!(; net::Net, from::Int, to::Int, branch::AbstractBranch, stat
   if isnothing(vn_kV)
     vn_kV = getNodeVn(net.nodeVec[from])
   end
-  br = Branch(branchIdx = idBrunch, from = from, to = to, baseMVA = net.baseMVA, branch = branch, id = idBrunch, status = status, ratio = ratio, side = side, vn_kV = vn_kV, fromOid = fOrig, toOid = tOrig)
+  br = Branch(branchIdx = idBrunch, from = from, to = to, baseMVA = net.baseMVA, branch = branch, id = idBrunch, status = status, ratio = ratio, side = side, vn_kV = vn_kV, fromOid = fOrig, toOid = tOrig, values_are_pu = values_are_pu)
   push!(net.branchVec, br)
 end
 
@@ -514,7 +518,7 @@ function addACLine!(; net::Net, fromBus::String, toBus::String, length::Float64,
   acseg = ACLineSegment(vn_kv = vn_kV, from = from, to = to, length = length, r = r, x = x, b = b, c_nf_per_km = c_nf_per_km, tanδ = tanδ, ratedS = ratedS, paramsBasedOnLength = false, isPIModel = false)
   push!(net.linesAC, acseg)
 
-  addBranch!(net = net, from = from, to = to, branch = acseg, vn_kV = vn_kV, status = status)
+  addBranch!(net = net, from = from, to = to, branch = acseg, vn_kV = vn_kV, status = status, values_are_pu = true)
 end
 
 """
@@ -547,7 +551,7 @@ function addPIModelACLine!(; net::Net, fromBus::String, toBus::String, r_pu::Flo
   acseg = ACLineSegment(vn_kv = vn_kV, from = from, to = to, length = 1.0, r = r_pu, x = x_pu, b = b_pu, ratedS = ratedS, paramsBasedOnLength = false, isPIModel = true)
   push!(net.linesAC, acseg)
 
-  addBranch!(net = net, from = from, to = to, branch = acseg, vn_kV = vn_kV, status = status)
+  addBranch!(net = net, from = from, to = to, branch = acseg, vn_kV = vn_kV, status = status, values_are_pu = true)
 end
 
 """
@@ -593,7 +597,7 @@ function addPIModelTrafo!(;
   trafo = PowerTransformer(comp, false, w1, w2, nothing, Sparlectra.PIModel)
   push!(net.trafos, trafo)
 
-  addBranch!(net = net, from = from, to = to, branch = trafo, status = status, ratio = ratio, side = side, vn_kV = vn_hv_kV)
+  addBranch!(net = net, from = from, to = to, branch = trafo, status = status, ratio = ratio, side = side, vn_kV = vn_hv_kV, values_are_pu = true)
 end
 
 """
