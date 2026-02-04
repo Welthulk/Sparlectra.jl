@@ -228,7 +228,7 @@ function calcNewtonRaphson_withPVIdentity!(net::Net, Y::AbstractMatrix{ComplexF6
   if verbose > 0
     @info "Running full-system Newton-Raphson with PV identity rows...sparse=$sparse, flatStart=$flatStart, angle_limit=$angle_limit, debug=$debug"
   end
-
+  
   setJacobianAngleLimit(angle_limit)
   setJacobianDebug(debug)
 
@@ -262,7 +262,9 @@ function calcNewtonRaphson_withPVIdentity!(net::Net, Y::AbstractMatrix{ComplexF6
     nshow = min(30, length(qmin_pu))
     println("Q-limits preview (first $nshow buses):")
     for i = 1:nshow
-      @printf "  bus %d: qmin=%g  qmax=%g\n" i qmin_pu[i] qmax_pu[i]
+      qmin = isfinite(qmin_pu[i]) ? qmin_pu[i] : NaN
+      qmax = isfinite(qmax_pu[i]) ? qmax_pu[i] : NaN    
+      @printf "  bus %d: qmin=%g  qmax=%g\n" i qmin qmax
     end
   end
 
@@ -281,6 +283,9 @@ function calcNewtonRaphson_withPVIdentity!(net::Net, Y::AbstractMatrix{ComplexF6
           if b.type == Sparlectra.PV
             qreq   = b._qRes        # current Q (p.u.)
             busIdx = b.idx          # index in net.nodeVec (and your log dict)
+            if !has_q_limits(qmin_pu, qmax_pu, busIdx)
+              continue
+            end
             if (verbose > 1)
               has_hi = (busIdx <= length(qmax_pu)) && isfinite(qmax_pu[busIdx])
               has_lo = (busIdx <= length(qmin_pu)) && isfinite(qmin_pu[busIdx])
@@ -343,17 +348,14 @@ function calcNewtonRaphson_withPVIdentity!(net::Net, Y::AbstractMatrix{ComplexF6
         # (1) must currently be PQ
         # (2) must have been PV at the beginning (pv_orig)
         # (3) must have recorded a Q-limit event in this PF run
-        if b.type != Sparlectra.PQ
-          ;
-          continue;
+        if b.type != Sparlectra.PQ          
+          continue
         end
-        if !(b.idx in pv_orig)
-          ;
-          continue;
+        if !(b.idx in pv_orig)          
+          continue
         end
-        if !haskey(net.qLimitEvents, b.idx)
-          ;
-          continue;
+        if !haskey(net.qLimitEvents, b.idx)          
+          continue
         end
         if get(pv_locked, b.idx, false)
           continue
@@ -388,7 +390,7 @@ function calcNewtonRaphson_withPVIdentity!(net::Net, Y::AbstractMatrix{ComplexF6
     # Convergence check
     nrm = norm(Δ)
     if verbose > 0
-      @info "2-norm = $(nrm), tol = $(tolerance), ite = $(it)"
+      @printf "2-norm = %.6e, tol = %.6e, ite = %d\n" nrm tolerance it
     end
 
     if nrm < tolerance
