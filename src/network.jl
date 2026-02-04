@@ -132,6 +132,7 @@ struct Net
     println(io, "Nodes: ", length(net.nodeVec), ", Lines: ", length(net.linesAC), ", Transformers: ", length(net.trafos), ", Branches: ", length(net.branchVec))
     println(io, "Slack buses: ", net.slackVec, ", flatstart: ", net.flatstart, ", locked: ", net._locked)
     println(io, "Vmin / Vmax: ", net.vmin_pu, " / ", net.vmax_pu)
+    println(io, "cooldown_iters: ", net.cooldown_iters, ", q_hyst_pu: ", net.q_hyst_pu)
   end
 end
 

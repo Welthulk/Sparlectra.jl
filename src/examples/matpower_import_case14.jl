@@ -52,7 +52,7 @@ local_case = Sparlectra.FetchMatpowerCase.ensure_casefile(
 mpc = MatpowerIO.read_case(local_case)
 
 net = createNetFromMatPowerFile(filename = local_case, log = (verbose > 0), flatstart = flatstart, cooldown = cooldown_iters, q_hyst_pu = q_hyst_pu)
-
+@show net
 # -----------------------------------------------------------------------------
 # Run power flow
 # -----------------------------------------------------------------------------
@@ -67,4 +67,6 @@ run_acpflow(
     opt_flatstart = flatstart,
     show_results = true,
     verbose = verbose,
+    cooldown_iters = cooldown_iters,
+    q_hyst_pu = q_hyst_pu,
 )

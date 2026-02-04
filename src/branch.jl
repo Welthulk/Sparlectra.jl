@@ -156,7 +156,8 @@ mutable struct Branch <: AbstractBranch
     if isa(branch, ACLineSegment) # Line
       @assert !isnothing(vn_kV) "vn_kV must be set for an ACLineSegment"
       if isnothing(ratio)
-        ratio = 0.0
+        # to distinguish line from transformer
+        ratio  = 0.0
       end
       if !isnothing(fromOid) && !isnothing(toOid)
         c = getBranchComp(vn_kV, fromOid, toOid, id, "ACL")
@@ -164,9 +165,9 @@ mutable struct Branch <: AbstractBranch
         c = getBranchComp(vn_kV, from, to, id, "ACL")
       end
       if values_are_pu
-        r_pu, x_pu, b_pu, g_pu = getLineRXBG_pu(branch, vn_kV, baseMVA)
-      else 
         r_pu, x_pu, b_pu, g_pu = getLineRXBG(branch)
+      else 
+        r_pu, x_pu, b_pu, g_pu = getLineRXBG_pu(branch, vn_kV, baseMVA)        
       end    
       new(c, branchIdx, from, to, r_pu, x_pu, b_pu, g_pu, 0.0, 0.0, status, branch.ratedS, nothing, nothing, nothing, nothing)
     elseif isa(branch, PowerTransformer) # Transformer     
@@ -187,9 +188,9 @@ mutable struct Branch <: AbstractBranch
       sn_MVA = getWindingRatedS(w)
       
       if values_are_pu
-        r_pu, x_pu, b_pu, g_pu = getTrafoRXBG_pu(w, vn_kV, baseMVA)
-      else 
         r_pu, x_pu, b_pu, g_pu = getTrafoRXBG(w)
+      else 
+        r_pu, x_pu, b_pu, g_pu = getTrafoRXBG_pu(w, vn_kV, baseMVA)        
       end
       
 

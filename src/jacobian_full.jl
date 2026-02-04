@@ -259,7 +259,7 @@ function calcNewtonRaphson_withPVIdentity!(net::Net, Y::AbstractMatrix{ComplexF6
   adjBranch = adjacentBranches(Y, debug)
   qmin_pu, qmax_pu = getQLimits_pu(net)
   if verbose > 1
-    nshow = min(10, length(qmin_pu))
+    nshow = min(30, length(qmin_pu))
     println("Q-limits preview (first $nshow buses):")
     for i = 1:nshow
       @printf "  bus %d: qmin=%g  qmax=%g\n" i qmin_pu[i] qmax_pu[i]
