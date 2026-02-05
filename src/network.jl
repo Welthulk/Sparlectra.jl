@@ -87,7 +87,7 @@ struct Net
   _locked::Bool
   flatstart::Bool                     # flatstart flag for power flow initialization
   shuntDict::Dict{Int,Int}
-  isoNodes::Vector{Int}
+  isoNodes::Vector{Int}  
   qLimitLog::Vector{Any}
   cooldown_iters::Int
   q_hyst_pu::Float64
@@ -119,7 +119,7 @@ struct Net
         Dict{Int,Symbol}(),  # shuntDict
         [],                                    # isoNodes
         Any[],                                 # qLimitLog                     
-        cooldown_iters,                                     # cooldown_iters
+        cooldown_iters,                        # cooldown_iters
         q_hyst_pu,
         [],                                    # qmin_pu
         [],                                    # qmax_pu
@@ -1272,6 +1272,15 @@ function _buildQLimits!(net::Net; reset::Bool = true)
   end
 
   return nothing
+end
+
+"""
+    buildQLimits!(net; reset=true)
+
+Public wrapper to (re)build aggregated per-bus Q limits in p.u.
+"""
+function buildQLimits!(net::Net; reset::Bool = true)
+  return _buildQLimits!(net; reset = reset)
 end
 
 """
