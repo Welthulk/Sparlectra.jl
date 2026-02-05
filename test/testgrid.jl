@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# file: test/testgrid.jl
+
 # Author: Udo Schmitz (https://github.com/Welthulk)
 # Date: 20.6.2023
 # CIGRE HV network
