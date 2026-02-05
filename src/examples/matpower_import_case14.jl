@@ -88,6 +88,7 @@ function bench_run_acpflow(; casefile::String, methods::Vector{Symbol},
   println("seconds/method  = ", seconds, "   samples = ", samples)
   println("===============================================================\n")
 
+
     for m in methods
     benchable = @benchmarkable run_acpflow(
         casefile = casefile_,
@@ -159,6 +160,6 @@ bench = bench_run_acpflow(
   cooldown_iters = cooldown_iters,
   q_hyst_pu = q_hyst_pu,
   seconds = 2.0,
-  samples = 10,
+  samples = 50,
   show_once = true, 
 )

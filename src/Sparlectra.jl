@@ -113,7 +113,7 @@ export
   # jacobian_full.jl
   runpf_full!, 
   # limits.jl
-  printQLimitLog,logQLimitHit!, lastQLimitIter, getQLimits_pu, logQLimitHit!,lastQLimitIter, resetQLimitLog!, pv_hit_q_limit,has_q_limits,
+  printQLimitLog,logQLimitHit!, lastQLimitIter, getQLimits_pu, logQLimitHit!,lastQLimitIter, resetQLimitLog!, pv_hit_q_limit,has_q_limits,active_set_q_limits!,
   # losses.jl
   calcNetLosses!, 
   # results.jl
