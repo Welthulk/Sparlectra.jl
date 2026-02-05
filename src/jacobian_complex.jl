@@ -856,16 +856,21 @@ function run_complex_nr_rectangular_for_net!(net::Net; maxiter::Int = 20, tol::F
     end
   end
 
-  resetQLimitLog!(net)
+  # --- Active-set bookkeeping (rectangular solver) ------------------------
+  nb = n  # number of buses
+
+  # PV origin mask (guards for PQ->PV re-enable)
+  pv_orig_mask = falses(nb)
+  @inbounds for k = 1:nb
+    pv_orig_mask[k] = (bus_types[k] == :PV)
+  end
 
   cooldown_iters = hasfield(typeof(net), :cooldown_iters) ? net.cooldown_iters : 0
-  q_hyst_pu      = hasfield(typeof(net), :q_hyst_pu) ? net.q_hyst_pu : 0.0
+  q_hyst_pu      = hasfield(typeof(net), :q_hyst_pu)      ? net.q_hyst_pu      : 0.0
+  allow_reenable = (cooldown_iters > 0) || (q_hyst_pu > 0.0)
 
-  # Original PV buses at start (Guard for PQ->PV re-enable)
-  pv_orig = [k for k = 1:n if bus_types[k] == :PV]
-
-  # Once a PV bus is switched to PQ in this PF run, keep it PQ until the run ends.
-  pv_locked = falses(n)
+  # Start fresh each PF run
+  resetQLimitLog!(net)
 
   # 5) NR-Loop
   V         = copy(V0)
@@ -878,6 +883,17 @@ function run_complex_nr_rectangular_for_net!(net::Net; maxiter::Int = 20, tol::F
     @info "Initial complex voltages V0:" V0
     @info "Slack bus index:" slack_idx
     @info "maxiter = $maxiter, tol = $tol, damp = $damp"
+  end
+  # --- helper: reactive load at bus (p.u.) to translate between net Qinj and generator Q ---
+  qload_pu = function(bus::Int)
+    qL = 0.0
+    @inbounds for ps in net.prosumpsVec
+      getPosumerBusIndex(ps) == bus || continue
+      isGenerator(ps) && continue
+      q = isnothing(ps.qVal) ? 0.0 : ps.qVal
+      qL += q
+    end
+    return qL / net.baseMVA
   end
 
   for it = 1:maxiter
@@ -895,126 +911,78 @@ function run_complex_nr_rectangular_for_net!(net::Net; maxiter::Int = 20, tol::F
       break
     end
 
-    # --- Q-Limit Active Set: PV -> PQ, optional PQ -> PV -------------------
+    # --- Q-Limit Active Set: PV -> PQ, optional PQ -> PV (rectangular) ------
     changed   = false
     reenabled = false
 
     if it > 1
-      I      = Ybus * V
-      S_calc = V .* conj.(I)
-
-      # 4a) PV -> PQ
-      @inbounds for k = 1:n
-        if k == slack_idx
-          continue
-        end
-        if bus_types[k] != :PV
-          continue
-        end
-
-        qreq   = imag(S_calc[k])    # current Q requirement (p.u.)
-        busIdx = k                  # here busIdx = position in nodeVec
-        if (verbose > 1)
-          has_hi = (busIdx <= length(qmax_pu)) && isfinite(qmax_pu[busIdx])
-          has_lo = (busIdx <= length(qmin_pu)) && isfinite(qmin_pu[busIdx])
-          if !(has_hi || has_lo)
-            @printf "Q-limits: Bus %d (PV) has no finite limits (qmin=%g, qmax=%g) -> skip\n" busIdx qmin_pu[busIdx] qmax_pu[busIdx]
-          end
-        end
-
-
-        # Only apply limits if they exist (finite)
-        has_hi = (busIdx <= length(qmax_pu)) && isfinite(qmax_pu[busIdx])
-        has_lo = (busIdx <= length(qmin_pu)) && isfinite(qmin_pu[busIdx])
-
-        if has_hi && (qreq > qmax_pu[busIdx])
-          bus_types[k] = :PQ
-
-          # Clamp Q in the *specified* injections vector S (p.u.)
-          S[k] = complex(real(S[k]), qmax_pu[busIdx])
-          changed = true
-
-          # Mirror clamp into Net/Node state (MVar) so buildComplexSVec stays consistent
-          net.nodeVec[busIdx]._qƩGen = qmax_pu[busIdx] * net.baseMVA
-
-          net.qLimitEvents[busIdx] = :max
-          logQLimitHit!(net, it, busIdx, :max)
-          pv_locked[k] = true
-
-          (verbose > 0) && @printf "PV->PQ Bus %d: Q=%.4f > Qmax=%.4f (it=%d)\n" busIdx qreq qmax_pu[busIdx] it
-          (verbose > 1) && @printf "Q-limits: CLAMP Bus %d -> Qmax (qreq=%+.6f pu, qmax=%+.6f pu)\n" busIdx qreq qmax_pu[busIdx]
-
-        elseif has_lo && (qreq < qmin_pu[busIdx])
-          bus_types[k] = :PQ
-          S[k] = complex(real(S[k]), qmin_pu[busIdx])
-          changed = true
-
-          net.nodeVec[busIdx]._qƩGen = qmin_pu[busIdx] * net.baseMVA
-
-          net.qLimitEvents[busIdx] = :min
-          logQLimitHit!(net, it, busIdx, :min)
-          pv_locked[k] = true
-          (verbose > 0) && @printf "PV->PQ Bus %d: Q=%.4f < Qmin=%.4f (it=%d)\n" busIdx qreq qmin_pu[busIdx] it
-          (verbose > 1) && @printf "Q-limits: CLAMP Bus %d -> Qmin (qreq=%+.6f pu, qmin=%+.6f pu)\n" busIdx qreq qmin_pu[busIdx]
-
+      # Compute current net injections from present V (p.u.)
+      Ibus    = Ybus * V
+      Scalc_pu = V .* conj.(Ibus)   # net injection at bus in p.u.
+      
+      # Precompute Qload per bus (p.u.) once per iteration
+      Qload_pu = zeros(Float64, nb)
+      @inbounds for ps in net.prosumpsVec
+        isGenerator(ps) && continue
+        bus = getPosumerBusIndex(ps)
+        q   = isnothing(ps.qVal) ? 0.0 : ps.qVal
+        if 1 <= bus <= nb
+          Qload_pu[bus] += q / net.baseMVA
         end
       end
 
-      if changed
+      changed, reenabled = active_set_q_limits!(
+        net, it, nb;
+        qmin_pu = qmin_pu,
+        qmax_pu = qmax_pu,
+        pv_orig_mask = pv_orig_mask,
+        allow_reenable = allow_reenable,
+        q_hyst_pu = q_hyst_pu,
+        cooldown_iters = cooldown_iters,
+        verbose = verbose,
+
+        # Q required at bus in terms of GENERATOR Q (p.u.)
+        # generator Q = net Qinj + Qload
+        get_qreq_pu = bus -> begin
+          (bus_types[bus] == :Slack) && return 0.0
+          return imag(Scalc_pu[bus]) + Qload_pu[bus]
+        end,
+
+        # PV status from bus_types (rectangular solver!)
+        is_pv = bus -> (bus_types[bus] == :PV),
+
+        # Enforce PV->PQ with generator-Q clamp:
+        # set bus_types to PQ, and set specified net Qinj accordingly.
+        make_pq! = (bus, qclamp_gen_pu, side) -> begin
+          bus_types[bus] = :PQ
+
+          # Convert generator clamp to net injection clamp: Qinj = Qgen - Qload
+          qinj_pu = qclamp_gen_pu - qload_pu(bus)
+          S[bus]  = ComplexF64(real(S[bus]), qinj_pu)
+
+          # Mirror clamp into Net/Node (MVar)
+          net.nodeVec[bus]._qƩGen = qclamp_gen_pu * net.baseMVA
+        end,
+
+        # Optional PQ->PV re-enable:
+        # set bus_types to PV; Qspec is unused for PV, but keep S consistent.
+        make_pv! = (bus) -> begin
+          bus_types[bus] = :PV
+
+          # For PV buses, Qspec is unused (2nd equation is ΔV).
+          # Keep S[bus].im *unchanged* to avoid "drift" if we later switch back to PQ.
+          # (Only Pspec matters for PV mismatch.)
+        end,
+      )
+
+      # If bus_types/spec changed, mismatch definition changed (ΔQ ↔ ΔV) => rebuild F
+      if changed || reenabled
         F = mismatch_rectangular(Ybus, V, S, bus_types, Vset, slack_idx)
         max_mis = maximum(abs.(F))
+        history[end] = max_mis  # optional: overwrite last stored value for this iteration
       end
-
-      # 4b) Optional PQ -> PV Re-enable (Hysterese + Cooldown)            
-      if q_hyst_pu > 0.0 || cooldown_iters > 0
-        @inbounds for k = 1:n
-          # Guards:
-          # (1) currently PQ
-          # (2) was originally PV
-          # (3) has a Q-limit event in this calculation
-          if bus_types[k] != :PQ
-            continue
-          end
-          
-          if pv_locked[k]
-            continue
-          end
-
-          if !(k in pv_orig)
-            continue
-          end
-          if !haskey(net.qLimitEvents, k)
-            continue
-          end
-
-          qreq = imag(S_calc[k])
-          lo = net.qmin_pu[k] + q_hyst_pu
-          hi = net.qmax_pu[k] - q_hyst_pu
-
-          ready = (qreq > lo) && (qreq < hi)
-
-          if ready && (cooldown_iters > 0)
-            last_it = lastQLimitIter(net, k)
-            if !isnothing(last_it) && (it - last_it) < cooldown_iters
-              ready = false
-            end
-          end
-
-          if ready
-            bus_types[k] = :PV
-            delete!(net.qLimitEvents, k)
-            reenabled = true
-            (verbose>0) && @printf "PQ->PV Bus %d: Q=%.4f in [%.4f, %.4f] (cooldown=%d)\n" k qreq lo hi cooldown_iters
-          end
-        end
-
-        if reenabled
-          F = mismatch_rectangular(Ybus, V, S, bus_types, Vset, slack_idx)
-          max_mis = maximum(abs.(F))
-        end
-      end
+      
     end
-
     # --- Newton-Stepp (FD oder analytisch) -----------------------------
     if use_fd
       V = complex_newton_step_rectangular_fd(Ybus, V, S; slack_idx = slack_idx, damp = damp, h = 1e-6, bus_types = bus_types, Vset = Vset)
@@ -1027,6 +995,14 @@ function run_complex_nr_rectangular_for_net!(net::Net; maxiter::Int = 20, tol::F
   end
 
   # 6) Update voltages back to network
+  # --- mirror bus_types back into Net/node types (PV->PQ switching) ---
+  @inbounds for k = 1:n
+    if bus_types[k] == :PQ
+      setBusType!(net, k, "PQ")
+    elseif bus_types[k] == :PV
+      setBusType!(net, k, "PV")
+    end
+  end
   update_net_voltages_from_complex!(net, V)
 
   # 7) Compute bus injections from final voltages
@@ -1055,9 +1031,14 @@ function run_complex_nr_rectangular_for_net!(net::Net; maxiter::Int = 20, tol::F
       node._qƩGen = Qbus_MVar
 
     elseif node._nodeType == Sparlectra.PV
+      # PV bus: Qgen is a result (unless it later switches)
       node._qƩGen = Qbus_MVar
+
+    elseif node._nodeType == Sparlectra.PQ
+      # If this bus was forced PV->PQ by Q-limit, keep the clamped generator Q
+      # (already written in make_pq! as MVar).
       if haskey(net.qLimitEvents, k)
-        @debug "Bus $(k) hit Q limit; set as PQ bus (rectangular solver)."
+        @debug "Bus $(k) is PQ due to Q-limit; keeping clamped Qgen = $(node._qƩGen) MVar."
       end
     end
     # PQ buses / pure loads: do not touch _pƩLoad / _pƩGen here.

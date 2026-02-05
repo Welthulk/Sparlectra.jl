@@ -242,13 +242,16 @@ function calcNewtonRaphson_withPVIdentity!(net::Net, Y::AbstractMatrix{ComplexF6
   busVec, slackNum     = getBusData(nodes, Sbase_MVA, flatStart)
   busTypeVec, slackIdx = getBusTypeVec(busVec)
 
-  # Track original PV buses to guard re-enable logic.
-  # Only buses that were PV at the beginning of THIS power flow should be considered for re-enable.
-  pv_orig = Set(b.idx for b in busVec if b.type == Sparlectra.PV)
+  # --- Active-set bookkeeping (PV origin mask for guarded re-enable) ---
+  nb = length(busVec)
+  pv_orig_mask = falses(nb)
+  @inbounds for k = 1:nb
+    pv_orig_mask[k] = (busVec[k].type == Sparlectra.PV)
+  end
+
+  # Re-enable only if hysteresis or cooldown configured (otherwise keep behavior: no re-enable).
+  allow_reenable = (q_hyst_pu > 0.0) || (cooldown_iters > 0)
   
-  pv_locked = Dict{Int,Bool}()  # key: busIdx
-
-
   n_pv = count(b->b.type==Sparlectra.PV, busVec)
   n_pq = count(b->b.type==Sparlectra.PQ, busVec)
   n    = n_pq + n_pv
@@ -273,118 +276,47 @@ function calcNewtonRaphson_withPVIdentity!(net::Net, Y::AbstractMatrix{ComplexF6
   erg = 1
   resetQLimitLog!(net)
   while it <= maxIte
-    Δ = residuum_full_withPV(Y, busVec, Vset, n_pq, n_pv, (verbose>2))
+    Δ = residuum_full_withPV(Y, busVec, Vset, n_pq, n_pv, (verbose>2))    
+    # --- Active-set PV/Q-limits (shared helper in limits.jl) ----------------
+    if it > 1
+      changed, reenabled = active_set_q_limits!(
+        net, it, nb;
+        qmin_pu = qmin_pu,
+        qmax_pu = qmax_pu,
+        pv_orig_mask = pv_orig_mask,
+        allow_reenable = allow_reenable,
+        q_hyst_pu = q_hyst_pu,
+        cooldown_iters = cooldown_iters,
+        verbose = verbose,
 
-    # --- Active set: PV -> PQ when Q-limit violated -------------------------
-      changed = false
-      if it > 1
-        @inbounds for k in eachindex(busVec)
-          b = busVec[k]
-          if b.type == Sparlectra.PV
-            
-            
-            qreq   = b._qRes        # current Q (p.u.)
-            busIdx = b.idx          # bus index (1-based)
+        # Q required at bus (p.u.) from last residuum evaluation
+        get_qreq_pu = bus -> busVec[bus]._qRes,
 
-            # Skip if no finite limits are defined for this bus
-            if !has_q_limits(qmin_pu, qmax_pu, busIdx)
-              continue
-            end
+        # Current PV status in busVec
+        is_pv = bus -> (busVec[bus].type == Sparlectra.PV),
 
-            # Only apply limits if they exist (finite)
-            has_hi = (busIdx <= length(qmax_pu)) && isfinite(qmax_pu[busIdx])
-            has_lo = (busIdx <= length(qmin_pu)) && isfinite(qmin_pu[busIdx])
-            if !(has_hi || has_lo) && (verbose > 1)              
-              @printf "Q-limits: Bus %d (PV) has no finite limits (qmin=%g, qmax=%g) -> skip\n" busIdx qmin_pu[busIdx] qmax_pu[busIdx]              
-            end
+        # Enforce PV->PQ with Q clamp
+        make_pq! = (bus, qclamp_pu, side) -> begin
+          busVec[bus].type = Sparlectra.PQ
+          busVec[bus].qƩ   = qclamp_pu
+          busVec[bus].isPVactive = false
 
-            if has_hi && (qreq > qmax_pu[busIdx])
-              b.type = Sparlectra.PQ
-              b.qƩ   = qmax_pu[busIdx]                 # clamp to Qmax (p.u.)
-              changed = true
+          # Mirror clamp into Net/Node (MVar)
+          net.nodeVec[bus]._qƩGen = qclamp_pu * net.baseMVA
+        end,
 
-              # Mirror clamp into Net/Node state (MVar)
-              net.nodeVec[busIdx]._qƩGen = qmax_pu[busIdx] * net.baseMVA
+        # Optional PQ->PV re-enable
+        make_pv! = (bus) -> begin
+          busVec[bus].type = Sparlectra.PV
+          busVec[bus].isPVactive = true
+        end,
+      )
 
-              net.qLimitEvents[busIdx] = :max
-              b.isPVactive = false
-              logQLimitHit!(net, it, busIdx, :max)
-              
-
-              (verbose>0) && @printf "PV->PQ Bus %d: Q=%.4f > Qmax=%.4f (it=%d)\n" busIdx qreq qmax_pu[busIdx] it
-              (verbose > 1) && @printf "Q-limits: CLAMP Bus %d -> Qmax (qreq=%+.6f pu, qmax=%+.6f pu)\n" busIdx qreq qmax_pu[busIdx]
-
-            elseif has_lo && (qreq < qmin_pu[busIdx])
-              b.type = Sparlectra.PQ
-              b.qƩ   = qmin_pu[busIdx]                 # clamp to Qmin (p.u.)
-              changed = true
-
-              # Mirror clamp into Net/Node state (MVar)
-              net.nodeVec[busIdx]._qƩGen = qmin_pu[busIdx] * net.baseMVA
-
-              net.qLimitEvents[busIdx] = :min
-              b.isPVactive = false
-              logQLimitHit!(net, it, busIdx, :min)
-              pv_locked[busIdx] = true
-              (verbose>0) && @printf "PV->PQ Bus %d: Q=%.4f < Qmin=%.4f (it=%d)\n" busIdx qreq qmin_pu[busIdx] it
-              (verbose > 1) && @printf "Q-limits: CLAMP Bus %d -> Qmin (qreq=%+.6f pu, qmin=%+.6f pu)\n" busIdx qreq qmin_pu[busIdx]
-            end
-          end
-        end
-
-        if changed
-          Δ = residuum_full_withPV(Y, busVec, Vset, n_pq, n_pv, (verbose>2))
-        end
-      
-
-      # --- Optional re-enable: PQ -> PV when Q back inside band, hysteresis and cooldown ok
-      #      with GUARDS to prevent enabling PQ buses that were never PV or never hit a limit.
-      reenabled = false
-      @inbounds for k in eachindex(busVec)
-        b = busVec[k]
-
-        # Guards:
-        # (1) must currently be PQ
-        # (2) must have been PV at the beginning (pv_orig)
-        # (3) must have recorded a Q-limit event in this PF run
-        if b.type != Sparlectra.PQ          
-          continue
-        end
-        if !(b.idx in pv_orig)          
-          continue
-        end
-        if !haskey(net.qLimitEvents, b.idx)          
-          continue
-        end
-
-        qreq   = b._qRes
-        busIdx = b.idx
-
-        # Skip if no finite limits are defined for this bus
-        if !has_q_limits(qmin_pu, qmax_pu, busIdx)
-          continue
-        end
-
-        lo, hi = q_limit_band(qmin_pu, qmax_pu, busIdx, q_hyst_pu)
-        ready  = (qreq > lo) && (qreq < hi)
-        if ready && (cooldown_iters > 0)
-          last_it = Sparlectra.lastQLimitIter(net, b.idx)
-          if !isnothing(last_it) && (it - last_it) < cooldown_iters
-            ready = false
-          end
-        end
-
-        if ready
-          b.type = Sparlectra.PV
-          b.isPVactive = true
-          delete!(net.qLimitEvents, b.idx)  # clear event after successful re-enable
-          reenabled = true
-          (verbose>0) && @printf "PQ->PV Bus %d: Q=%.4f within (%.4f, %.4f) (cooldown=%d)\n" busIdx qreq lo hi cooldown_iters
-        end
-      end
-      if reenabled
+      # If the active-set changed bus types/specs, recompute residuum immediately
+      if changed || reenabled
         Δ = residuum_full_withPV(Y, busVec, Vset, n_pq, n_pv, (verbose>2))
       end
+
     end
 
     # Convergence check
