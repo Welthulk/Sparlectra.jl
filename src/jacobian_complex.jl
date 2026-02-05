@@ -850,8 +850,8 @@ function run_complex_nr_rectangular_for_net!(net::Net; maxiter::Int = 20, tol::F
     nshow = min(30, length(qmin_pu))
     println("Q-limits preview (first $nshow buses):")
     for i = 1:nshow   
-      qmin = isfinite(qmin_pu[i]) ? qmin_pu[i] : NaN
-      qmax = isfinite(qmax_pu[i]) ? qmax_pu[i] : NaN    
+      qmin = isfinite(qmin_pu[i]) ? qmin_pu[i] : -Inf
+      qmax = isfinite(qmax_pu[i]) ? qmax_pu[i] : Inf
       @printf "  bus %d: qmin=%g  qmax=%g\n" i qmin qmax
     end
   end

@@ -96,9 +96,9 @@ function getQLimits_pu(net::Net)
   if isempty(net.qmin_pu) || isempty(net.qmax_pu)
     buildQLimits!(net)
   end
+  _sanitize_q_limits!(net.qmin_pu, net.qmax_pu, length(net.nodeVec))
   return net.qmin_pu, net.qmax_pu
 end
-
 """
     pv_hit_q_limit(net, pv_names)
 
@@ -112,11 +112,38 @@ function pv_hit_q_limit(net, pv_names)
   return any(haskey(net.qLimitEvents, i) for i in pv_idx)
 end
 
-@inline function has_q_limits(net::Net, i::Int)
-    return isfinite(net.qmin_pu[i]) || isfinite(net.qmax_pu[i])
+
+
+# ------------------------------
+# Q-limit helpers (local arrays)
+# ------------------------------
+@inline function has_q_limits(qmin_pu::AbstractVector, qmax_pu::AbstractVector, i::Int)::Bool
+  has_lo = (i <= length(qmin_pu)) && isfinite(qmin_pu[i])
+  has_hi = (i <= length(qmax_pu)) && isfinite(qmax_pu[i])
+  return has_lo || has_hi
 end
 
-@inline function has_q_limits(qmin_pu::AbstractVector, qmax_pu::AbstractVector, i::Int)
-    return (i <= length(qmin_pu) && isfinite(qmin_pu[i])) ||
-           (i <= length(qmax_pu) && isfinite(qmax_pu[i]))
+@inline function q_limit_band(qmin_pu::AbstractVector, qmax_pu::AbstractVector, i::Int, q_hyst_pu::Float64)::Tuple{Float64,Float64}
+  lo = ((i <= length(qmin_pu)) && isfinite(qmin_pu[i])) ? (qmin_pu[i] + q_hyst_pu) : -Inf
+  hi = ((i <= length(qmax_pu)) && isfinite(qmax_pu[i])) ? (qmax_pu[i] - q_hyst_pu) :  Inf
+  return lo, hi
+end
+
+# ------------------------------
+# Q-limit sanitizing (drop-in)
+# ------------------------------
+function _sanitize_q_limits!(qmin_pu::Vector{Float64}, qmax_pu::Vector{Float64}, nb::Int)
+  _ensure_bus_index!(qmin_pu, nb, -Inf)
+  _ensure_bus_index!(qmax_pu, nb,  Inf)
+
+  @inbounds for i in 1:nb
+    # Treat NaN as "no limit"
+    if isnan(qmin_pu[i])
+      qmin_pu[i] = -Inf
+    end
+    if isnan(qmax_pu[i])
+      qmax_pu[i] =  Inf
+    end
+  end
+  return qmin_pu, qmax_pu
 end
