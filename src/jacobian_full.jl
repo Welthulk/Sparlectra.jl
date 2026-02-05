@@ -262,8 +262,8 @@ function calcNewtonRaphson_withPVIdentity!(net::Net, Y::AbstractMatrix{ComplexF6
     nshow = min(30, length(qmin_pu))
     println("Q-limits preview (first $nshow buses):")
     for i = 1:nshow
-      qmin = isfinite(qmin_pu[i]) ? qmin_pu[i] : NaN
-      qmax = isfinite(qmax_pu[i]) ? qmax_pu[i] : NaN    
+      qmin = isfinite(qmin_pu[i]) ? qmin_pu[i] : -Inf
+      qmax = isfinite(qmax_pu[i]) ? qmax_pu[i] : Inf
       @printf "  bus %d: qmin=%g  qmax=%g\n" i qmin qmax
     end
   end
@@ -281,23 +281,22 @@ function calcNewtonRaphson_withPVIdentity!(net::Net, Y::AbstractMatrix{ComplexF6
         @inbounds for k in eachindex(busVec)
           b = busVec[k]
           if b.type == Sparlectra.PV
+            
+            
             qreq   = b._qRes        # current Q (p.u.)
-            busIdx = b.idx          # index in net.nodeVec (and your log dict)
+            busIdx = b.idx          # bus index (1-based)
+
+            # Skip if no finite limits are defined for this bus
             if !has_q_limits(qmin_pu, qmax_pu, busIdx)
               continue
             end
-            if (verbose > 1)
-              has_hi = (busIdx <= length(qmax_pu)) && isfinite(qmax_pu[busIdx])
-              has_lo = (busIdx <= length(qmin_pu)) && isfinite(qmin_pu[busIdx])
-              if !(has_hi || has_lo)
-                @printf "Q-limits: Bus %d (PV) has no finite limits (qmin=%g, qmax=%g) -> skip\n" busIdx qmin_pu[busIdx] qmax_pu[busIdx]
-              end
-            end
-
 
             # Only apply limits if they exist (finite)
             has_hi = (busIdx <= length(qmax_pu)) && isfinite(qmax_pu[busIdx])
             has_lo = (busIdx <= length(qmin_pu)) && isfinite(qmin_pu[busIdx])
+            if !(has_hi || has_lo) && (verbose > 1)              
+              @printf "Q-limits: Bus %d (PV) has no finite limits (qmin=%g, qmax=%g) -> skip\n" busIdx qmin_pu[busIdx] qmax_pu[busIdx]              
+            end
 
             if has_hi && (qreq > qmax_pu[busIdx])
               b.type = Sparlectra.PQ
@@ -310,7 +309,7 @@ function calcNewtonRaphson_withPVIdentity!(net::Net, Y::AbstractMatrix{ComplexF6
               net.qLimitEvents[busIdx] = :max
               b.isPVactive = false
               logQLimitHit!(net, it, busIdx, :max)
-              pv_locked[busIdx] = true
+              
 
               (verbose>0) && @printf "PV->PQ Bus %d: Q=%.4f > Qmax=%.4f (it=%d)\n" busIdx qreq qmax_pu[busIdx] it
               (verbose > 1) && @printf "Q-limits: CLAMP Bus %d -> Qmax (qreq=%+.6f pu, qmax=%+.6f pu)\n" busIdx qreq qmax_pu[busIdx]
@@ -357,16 +356,17 @@ function calcNewtonRaphson_withPVIdentity!(net::Net, Y::AbstractMatrix{ComplexF6
         if !haskey(net.qLimitEvents, b.idx)          
           continue
         end
-        if get(pv_locked, b.idx, false)
+
+        qreq   = b._qRes
+        busIdx = b.idx
+
+        # Skip if no finite limits are defined for this bus
+        if !has_q_limits(qmin_pu, qmax_pu, busIdx)
           continue
         end
 
-        qreq = b._qRes
-        busIdx = b.idx
-        lo = net.qmin_pu[busIdx] + q_hyst_pu
-        hi = net.qmax_pu[busIdx] - q_hyst_pu
-        ready = (qreq > lo) && (qreq < hi)
-
+        lo, hi = q_limit_band(qmin_pu, qmax_pu, busIdx, q_hyst_pu)
+        ready  = (qreq > lo) && (qreq < hi)
         if ready && (cooldown_iters > 0)
           last_it = Sparlectra.lastQLimitIter(net, b.idx)
           if !isnothing(last_it) && (it - last_it) < cooldown_iters
@@ -379,7 +379,7 @@ function calcNewtonRaphson_withPVIdentity!(net::Net, Y::AbstractMatrix{ComplexF6
           b.isPVactive = true
           delete!(net.qLimitEvents, b.idx)  # clear event after successful re-enable
           reenabled = true
-          (verbose>0) && @printf "PQ->PV Bus %d: Q=%.4f within [%.4f, %.4f] (cooldown=%d)\n" b.idx qreq lo hi cooldown_iters
+          (verbose>0) && @printf "PQ->PV Bus %d: Q=%.4f within (%.4f, %.4f) (cooldown=%d)\n" busIdx qreq lo hi cooldown_iters
         end
       end
       if reenabled
