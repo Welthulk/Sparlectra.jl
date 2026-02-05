@@ -516,7 +516,12 @@ function addACLine!(; net::Net, fromBus::String, toBus::String, length::Float64,
   vn_kV = getNodeVn(net.nodeVec[from])
   vn_2_kV = getNodeVn(net.nodeVec[to])
   @assert vn_kV == vn_2_kV "Voltage level of the from bus $(vn_kV) does not match the to bus $(vn_2_kV)"
-  acseg = ACLineSegment(vn_kv = vn_kV, from = from, to = to, length = length, r = r, x = x, b = b, c_nf_per_km = c_nf_per_km, tanδ = tanδ, ratedS = ratedS, paramsBasedOnLength = false, isPIModel = false)
+  if length > 1.0 
+    _par_length = true
+  else
+    _par_length = false
+  end
+  acseg = ACLineSegment(vn_kv = vn_kV, from = from, to = to, length = length, r = r, x = x, b = b, c_nf_per_km = c_nf_per_km, tanδ = tanδ, ratedS = ratedS, paramsBasedOnLength = _par_length, isPIModel = false)
   push!(net.linesAC, acseg)
 
   addBranch!(net = net, from = from, to = to, branch = acseg, vn_kV = vn_kV, status = status, values_are_pu = true)
