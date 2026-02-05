@@ -387,10 +387,22 @@ function calcNewtonRaphson_withPVIdentity!(net::Net, Y::AbstractMatrix{ComplexF6
       @debug "Bus $(bus.idx) hit Q limit; set as PQ bus."
     end
 
+    if bus.type == Sparlectra.PQ
+      setBusType!(net, bus.idx, "PQ")  # oder: nodes[idx]._nodeType = Sparlectra.PQ
+    elseif bus.type == Sparlectra.PV
+      setBusType!(net, bus.idx, "PV")
+    elseif bus.type == Sparlectra.Slack
+      setBusType!(net, bus.idx, "Slack")  # optional, falls nötig
+    end
+
     if bus.type == Sparlectra.PV
       nodes[idx]._qƩGen = bus._qRes * Sbase_MVA
     elseif bus.type == Sparlectra.Slack
       nodes[idx]._pƩGen = bus._pRes * Sbase_MVA
+      nodes[idx]._qƩGen = bus._qRes * Sbase_MVA
+    end
+
+    if bus.isPVactive == false
       nodes[idx]._qƩGen = bus._qRes * Sbase_MVA
     end
   end
