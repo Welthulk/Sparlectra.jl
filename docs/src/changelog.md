@@ -1,4 +1,14 @@
 # Change Log
+### Fixes
+* Closed Issue 110:
+* Corrected per‑unit conversion issues discovered during the refactoring of the MATPOWER import interface, including proper handling of line, transformer, and shunt parameters.
+* Fixed PU conversion inconsistencies for shunts and aligned all shunt handling with the unified Y‑model.
+* Harmonized Q‑limit checking across all solvers and ensured consistent PV/PQ switching behavior.
+
+### New Features
+* Updated shunt modeling: addShunts now exclusively supports the Y‑model; voltage‑dependent shunt power must be represented via loads or generators.
+* Unified solver logic for reactive power limits and PV/PQ switching
+
 ## Version 0.4.33 – 2026-02-02
 
 ### New Features

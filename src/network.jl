@@ -366,27 +366,56 @@ function addBus!(;
 end
 
 """
-addShunt!: Adds a shunt to the network.
+    addShunt!(; net, busName, pShunt, qShunt, in_service=1)
 
-Parameters:
-- `net::Net`: Network object.
-- `busName::String`: Name of the bus to which the shunt is added.
-- `pShunt::Float64`: Active power of the shunt in MW.
-- `qShunt::Float64`: Reactive power of the shunt in MVar.
-- `in_service::Int = 1`: Indicator for shunt's in-service status (default is 1).
+Adds a *Y-model* shunt to the network.
+
+Semantics:
+- `pShunt`, `qShunt` are interpreted as MW/MVar at V = 1.0 pu (MATPOWER-style).
+- Internally, the shunt is represented as a pu-admittance stamped into YBUS:
+      y_pu = (pShunt + j*qShunt) / baseMVA
+- The shunt power is *not* constant; it depends on |V|² and will be computed
+  after solving via `updateShuntPowers!(net)`.
+
+IMPORTANT:
+- This does NOT add anything to the S-vector and does NOT call `addShuntPower!`.
 """
 function addShunt!(; net::Net, busName::String, pShunt::Float64, qShunt::Float64, in_service::Int = 1)
+  @assert in_service in (0, 1) "in_service must be 0 or 1"
+
   busIdx = geNetBusIdx(net = net, busName = busName)
   idShunt = length(net.shuntVec) + 1
   net.shuntDict[busIdx] = idShunt
-  vn_kV = getNodeVn(net.nodeVec[busIdx])
-  sh = Shunt(fromBus = busIdx, id = idShunt, base_MVA = net.baseMVA, vn_kV_shunt = vn_kV, p_shunt = pShunt, q_shunt = qShunt, status = in_service)
-  push!(net.shuntVec, sh)
-  if in_service == 1
-    addShuntPower!(node = net.nodeVec[busIdx], p = pShunt, q = qShunt)
-  end
-end
 
+  vn_kV = getNodeVn(net.nodeVec[busIdx])
+
+  # Build shunt as Y-model:
+  # y_pu = (P+jQ)/baseMVA  (P,Q in MW/MVar at 1pu)
+  ypu = ComplexF64(pShunt, qShunt) / net.baseMVA
+
+  # Create via constructor (p/q here are ONLY used to set y_pu_shunt in this new semantics)
+  sh = Shunt(fromBus = busIdx,
+             id = idShunt,
+             base_MVA = net.baseMVA,
+             vn_kV_shunt = vn_kV,
+             p_shunt = pShunt,
+             q_shunt = qShunt,
+             status = in_service)
+
+  # Enforce the intended semantics explicitly (in case constructor changes again)
+  sh.y_pu_shunt = ypu
+
+  # Optional: keep the "G/B" fields consistent with y_pu (pu values)
+  sh.G_shunt = real(ypu)
+  sh.B_shunt = imag(ypu)
+
+  # NOTE:
+  # Do NOT call addShuntPower!(...) here, otherwise you'd treat it as constant PQ.
+  # p_shunt/q_shunt will be updated after PF using updateShuntPowers!(net).
+  push!(net.shuntVec, sh)
+
+  return nothing
+end
 """
     hasShunt!(; net::Net, busName::String)::Bool
 
@@ -895,6 +924,8 @@ run_net_acpflow(net = net, max_ite= 7,tol = 1e-6) # rerun the power flow with th
 ```
 """
 function addBusShuntPower!(; net::Net, busName::String, p::Float64, q::Float64)
+  @warn "addBusShuntPower! is deprecated"
+  #=
   if !hasShunt!(net = net, busName = busName)
     @info "add a new shunt to bus $busName"
     addShunt!(net = net, busName = busName, pShunt = p, qShunt = q)
@@ -908,6 +939,43 @@ function addBusShuntPower!(; net::Net, busName::String, p::Float64, q::Float64)
     busIdx = geNetBusIdx(net = net, busName = busName)
     addShuntPower!(node = net.nodeVec[busIdx], p = p, q = q) # we need given values to update the bus power
   end
+  =#
+end
+
+"""
+    addShuntMatpower!(; net, busName, Gs, Bs, in_service=1)
+
+MATPOWER semantics:
+- Gs/Bs are shunt admittance parameters given as MW/MVAr at V = 1.0 pu.
+- Internally we stamp them as pu-admittance: y_pu = (Gs + j*Bs)/baseMVA.
+- IMPORTANT: do NOT add fixed P/Q to the bus power balance.
+"""
+function addShuntMatpower!(; net::Net, busName::String, Gs::Float64, Bs::Float64, in_service::Int=1)
+    busIdx  = geNetBusIdx(net = net, busName = busName)
+    idShunt = length(net.shuntVec) + 1
+    net.shuntDict[busIdx] = idShunt
+
+    vn_kV = getNodeVn(net.nodeVec[busIdx])
+
+    # Create shunt as "PQ-style" just to populate p_shunt/q_shunt fields meaningfully
+    # (report values at 1.0 pu). This is NOT used for stamping.
+    sh = Shunt(fromBus = busIdx, id = idShunt,
+               base_MVA = net.baseMVA, vn_kV_shunt = vn_kV,
+               p_shunt = Gs, q_shunt = Bs,
+               status = in_service)
+
+    # Override stamping admittance to MATPOWER semantics:
+    # MATPOWER: Gs/Bs are MW/MVAr at 1 pu -> y_pu = (Gs + j Bs)/baseMVA
+    sh.y_pu_shunt = ComplexF64(Gs, Bs) / net.baseMVA
+
+    push!(net.shuntVec, sh)
+
+    #if in_service == 1
+    #    # IMPORTANT: report only (do NOT affect bus injection spec)
+    #    addShuntReportPower!(node = net.nodeVec[busIdx], p = Gs, q = Bs)
+    #end
+
+    return nothing
 end
 
 """
@@ -1586,5 +1654,52 @@ function buildComplexSVec(net::Net)
   end
 
   return S
+
+end
+
+
+
+  """
+    updateShuntPowers!(net; reset_node=true)
+
+Recomputes shunt P/Q (MW/MVar) from solved bus voltages and shunt pu-admittances.
+Writes back:
+- sh.p_shunt / sh.q_shunt (results)
+- node._pShunt / node._qShunt (for reporting)
+"""
+function updateShuntPowers!(;net::Net, reset_node::Bool=true)
+  # Optionally reset node aggregates (recommended)
+  if reset_node
+    for n in net.nodeVec
+      n._pShunt = 0.0
+      n._qShunt = 0.0
+    end
+  end
+
+  base = net.baseMVA
+
+  for sh in net.shuntVec
+    sh.status == 0 && continue
+    sh.model == :Y || continue
+
+    bus = sh.busIdx
+    # ignore isolated buses if you want:
+    (bus in net.isoNodes) && continue
+
+    vm = net.nodeVec[bus]._vm_pu
+    vm2 = vm * vm
+
+    # S_pu = |V|^2 * conj(y_pu)
+    S_pu = vm2 * conj(sh.y_pu_shunt)
+    P = real(S_pu) * base
+    Q = imag(S_pu) * base
+
+    sh.p_shunt = P
+    sh.q_shunt = Q
+
+    # add to node report aggregate
+    net.nodeVec[bus]._pShunt += P
+    net.nodeVec[bus]._qShunt += Q
+  end
 end
 
