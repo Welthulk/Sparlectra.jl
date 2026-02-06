@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# file: test/testgrid.jl
+
 # Author: Udo Schmitz (https://github.com/Welthulk)
 # Date: 20.6.2023
 # CIGRE HV network
@@ -479,8 +481,6 @@ function createTest5BusNet(; cooldown = 0, hyst_pu = 0.0, qlim_min = nothing, ql
     addProsumer!(net = Bus5Net, busName = "B5", type = "ENERGYCONSUMER", p = 25.0, q = 10.0)
   end
 
-  #addShunt!(net = Bus5Net, busName = "B5", pShunt = 0.0, qShunt = -5.7)
-
   return Bus5Net
 end
 
@@ -627,3 +627,165 @@ function test_5BusNet(verbose::Int = 0, qlim::Float64 = 20.0, method::Symbol = :
   return hit==true
 end
 
+# ------------------------------------------------------------
+# Test: MATPOWER inline case vs manual Net build (with SHUNTS)
+# ------------------------------------------------------------
+function test_mp_inline_vs_manual_shunt(verbose::Int = 0;  method::Symbol = :rectangular,  opt_sparse::Bool = true)::Bool
+    tol_pf  = 1e-10
+    maxIte  = 40
+    tol_cmp = 5e-4
+    print_results = (verbose > 0)
+
+    # -------------------------
+    # 1) MATPOWER inline case
+    # -------------------------
+    mpc = (
+        name = "case3_mp_vs_manual_shunt",
+        baseMVA = 100.0,
+
+        # bus: [bus_i type Pd Qd Gs Bs area Vm Va baseKV zone Vmax Vmin]
+        # Shunts:
+        #  - Bus2: Bs=+6 MVAr  => Qsh = -6 MVAr (capacitive) at |V|=1
+        #  - Bus3: Bs=+12 MVAr => Qsh = -12 MVAr (capacitive) at |V|=1
+        bus = [
+            1  3    0.0   0.0   0.0   0.0   1  1.06   0.0  110.0  1  1.10  0.90;
+            2  2   20.0   5.0   0.0   6.0   1  1.03   0.0  110.0  1  1.10  0.90;
+            3  1   90.0  30.0   0.0  12.0   1  1.00   0.0  110.0  1  1.10  0.90;
+        ],
+
+        # gen: 21 cols (MATPOWER v2)
+        # bus Pg Qg Qmax Qmin Vg mBase status Pmax Pmin ...
+        gen = [
+            1  120.0  0.0  300.0  -300.0  1.06  100.0  1  300.0  0.0  0 0 0 0 0 0 0 0 0 0 0;
+            2   60.0  0.0  200.0  -200.0  1.03  100.0  1  200.0  0.0  0 0 0 0 0 0 0 0 0 0 0;
+        ],
+
+        # branch: [fbus tbus r x b rateA rateB rateC ratio angle status angmin angmax]
+        # NOTE: line charging b=0 here (we test shunts via bus Gs/Bs).
+        branch = [
+            1  2  0.02  0.06  0.0  0 0 0  0.0  0.0  1  -360  360;
+            1  3  0.08  0.24  0.0  0 0 0  0.0  0.0  1  -360  360;
+            2  3  0.06  0.18  0.0  0 0 0  0.0  0.0  1  -360  360;
+        ],
+
+        gencost = nothing,
+        bus_name = ["BUS1 (Slack)", "BUS2 (PV)", "BUS3 (PQ)"],
+    )
+
+    # Net aus MATPOWER erstellen (dein existierender Pfad)
+    net_mp = Sparlectra.createNetFromMatPowerCase(mpc = mpc, log=false, flatstart=false)
+
+    ok, msg = validate!(net=net_mp)
+    ok || (@warn msg; return false)
+
+    # PF rechnen
+    erg_mp = 0
+    ite_mp = 0
+    et_mp = @elapsed begin
+        ite_mp, erg_mp = runpf!(net_mp, maxIte, tol_pf, verbose; method=method, opt_sparse=opt_sparse)
+    end
+    if erg_mp != 0
+        @warn "MATPOWER-derived net: power flow did not converge"
+        return false
+    end
+    
+    updateShuntPowers!(net=net_mp)
+    
+
+    Y_mp  = createYBUS(net = net_mp,  sparse = opt_sparse, printYBUS = false)
+    V_mp  = buildVoltageVector(net_mp)
+    Sinj_mp = calc_injections(Y_mp, V_mp)
+    # -------------------------
+    # 2) Manual Net build
+    # -------------------------
+    netName = "case3_manual_vs_mp_shunt"
+    net_man = Net(name = netName, baseMVA = mpc.baseMVA)
+    
+    addBus!(net=net_man, busName="B1", busType="SLACK", vn_kV=110.0, vm_pu=1.06, va_deg=0.0)
+    addBus!(net=net_man, busName="B2", busType="PV",    vn_kV=110.0, vm_pu=1.03, va_deg=0.0)
+    addBus!(net=net_man, busName="B3", busType="PQ",    vn_kV=110.0, vm_pu=1.00, va_deg=0.0)
+    
+    # Leitungen (ohne line charging, damit Vergleich sauber nur über Bus-Shunts läuft)
+    addACLine!(net=net_man, fromBus="B1", toBus="B2", length=1.0, r=0.02, x=0.06)
+    addACLine!(net=net_man, fromBus="B1", toBus="B3", length=1.0, r=0.08, x=0.24)
+    addACLine!(net=net_man, fromBus="B2", toBus="B3", length=1.0, r=0.06, x=0.18)
+
+    # Loads (ENERGYCONSUMER): Pd/Qd
+    addProsumer!(net=net_man, busName="B2", type="ENERGYCONSUMER", p=20.0, q=5.0)
+    addProsumer!(net=net_man, busName="B3", type="ENERGYCONSUMER", p=90.0, q=30.0)
+
+    # Slack injection (V setpoint)
+    addProsumer!(net=net_man, busName="B1", type="EXTERNALNETWORKINJECTION", referencePri="B1")
+
+    # PV generator at B2 (P + Vm setpoint)
+    addProsumer!(net=net_man, busName="B2", type="SYNCHRONOUSMACHINE",
+                 p=60.0, vm_pu=1.03, va_deg=0.0,
+                 qMin=-200.0, qMax=200.0)
+
+    # Bus-Shunts: MATPOWER Bs>0 => Q = -Bs (kapazitiv)
+    addShunt!(net=net_man, busName="B2", pShunt=0.0, qShunt=6.0,  in_service=1)
+    addShunt!(net=net_man, busName="B3", pShunt=0.0, qShunt=12.0, in_service=1)
+
+    ok2, msg2 = validate!(net=net_man)
+    ok2 || (@warn msg2; return false)
+
+    erg_man = 0
+    ite_man = 0
+
+
+    et_man = @elapsed begin
+        ite_man, erg_man = runpf!(net_man, maxIte, tol_pf, verbose; method=method, opt_sparse=opt_sparse)
+    end
+    if erg_man != 0
+        @warn "Manual net: power flow did not converge"
+        return false
+    end
+    updateShuntPowers!(net=net_man)
+    
+    Y_man = createYBUS(net = net_man, sparse = opt_sparse, printYBUS = false)
+    V_man = buildVoltageVector(net_man)
+    Sinj_man = calc_injections(Y_man, V_man)
+    # -------------------------
+    # 3) Compare results
+    # -------------------------
+    # Compare complex voltages (magnitude+angle implicit)
+    if length(V_mp) != length(V_man)
+        @warn "Voltage vector length mismatch" n_mp=length(V_mp) n_man=length(V_man)
+        return false
+    end
+
+    # Bus order: Matpower bus_i are 1..3; manual bus order is creation order B1,B2,B3 -> should match
+    len = length(V_mp)
+    for i in 1:len
+        if !isapprox(V_mp[i], V_man[i]; atol=tol_cmp, rtol=0.0)
+            @warn "Voltage mismatch" bus=i V_mp=V_mp[i] V_man=V_man[i]
+            return false
+        end
+    end
+
+    # Compare slack injections (P,Q) in MW/MVAr
+    slack_idx = 1
+    Psl_mp  = real(Sinj_mp[slack_idx])  * mpc.baseMVA
+    Qsl_mp  = imag(Sinj_mp[slack_idx])  * mpc.baseMVA
+    Psl_man = real(Sinj_man[slack_idx]) * mpc.baseMVA
+    Qsl_man = imag(Sinj_man[slack_idx]) * mpc.baseMVA
+
+    if !(isapprox(Psl_mp, Psl_man; atol=1e-4, rtol=0.0) && isapprox(Qsl_mp, Qsl_man; atol=1e-4, rtol=0.0))
+        @warn "Slack P/Q mismatch" Psl_mp=Psl_mp Qsl_mp=Qsl_mp Psl_man=Psl_man Qsl_man=Qsl_man
+        return false
+    end
+
+    if print_results
+        @info "Qsh MAN" B2=net_man.nodeVec[2]._qShunt B3=net_man.nodeVec[3]._qShunt
+        @info "Qsh MP"  B2=net_mp.nodeVec[2]._qShunt  B3=net_mp.nodeVec[3]._qShunt
+        @info "manual setpoints" B1_vm=net_man.nodeVec[1]._vm_pu B1_va=net_man.nodeVec[1]._va_deg B2_vm=net_man.nodeVec[2]._vm_pu
+        @info "mp setpoints"     B1_vm=net_mp.nodeVec[1]._vm_pu  B1_va=net_mp.nodeVec[1]._va_deg  B2_vm=net_mp.nodeVec[2]._vm_pu
+
+        @info "MP net PF ok"  et=et_mp  ite=ite_mp
+        @info "MAN net PF ok" et=et_man ite=ite_man
+        printACPFlowResults(net_mp,  et_mp,  ite_mp,  tol_pf; converged=true, solver=method)
+        printACPFlowResults(net_man, et_man, ite_man, tol_pf; converged=true, solver=method)
+    end
+
+    return true
+end

@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# file: src/solver_interface.jl
 # solver_interface.jl — external solver bridge
 #
 # Goal:
@@ -168,7 +169,7 @@ function buildPfModel(
   n == 0 && error("buildPfModel: empty busVec (no active buses).")
 
   # 2) Build Ybus (internally skips isoNodes and compresses indices)
-  Ybus = createYBUS(net = net, sparse = opt_sparse, printYBUS = (verbose > 2))
+  Ybus = createYBUS(net = net, sparse = opt_sparse, printYBUS = (verbose > 1))
   @assert size(Ybus, 1) == n "buildPfModel: Ybus size $(size(Ybus)) does not match busVec length $n. Check isoNodes / numbering assumptions."
   @assert size(Ybus, 2) == n
 

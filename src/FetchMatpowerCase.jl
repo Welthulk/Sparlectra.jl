@@ -15,6 +15,8 @@
 # file: src/FetchMatpowerCase.jl
 #
 
+using Printf
+
 """
 Utilities for downloading MATPOWER-compatible case files on demand.
 
@@ -166,16 +168,16 @@ function ensure_matpower_case(; url::AbstractString,
         mfile = fetch_matpower_case(url, outdir; overwrite=overwrite)
         if verbose
             bytes = read(mfile)
-            @info "downloaded" file=basename(mfile) sha256=bytes2hex(sha256(bytes))
+            @printf("downloaded %s %s\n", basename(mfile), bytes2hex(sha256(bytes)))
         end
     else
-        verbose && @info "exists" file=basename(mfile) path=mfile
+        verbose && @printf("exists: %s\n", basename(mfile))
     end
 
     jlfile = nothing
     if to_jl
         jlfile = emit_julia_case(mfile, outdir; legacy_compat=legacy_compat, overwrite=overwrite)
-        verbose && @info "ready" file=basename(jlfile) path=jlfile
+        verbose && @printf("ready: %s\n", basename(jlfile))
     end
 
     return (mfile=mfile, jlfile=jlfile)

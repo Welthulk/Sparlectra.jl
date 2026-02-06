@@ -13,10 +13,11 @@
 # limitations under the License.
 
 
-# busdata.jl — Data type for NR / power flow
+# file: src/busdata.jl — Data type for NR / power flow
 
 mutable struct BusData
-  idx::Int          # Bus index (after sorting)
+  idx::Int          # # PF index (non-iso compact), Bus index (after sorting)
+  nodeIdx::Int      # index in net.nodeVec (original)
   vm_pu::Float64    # Voltage in p.u.
   va_rad::Float64   # Angle in rad
   pƩ::Float64       # Sum active power (p.u.)
@@ -26,14 +27,14 @@ mutable struct BusData
   type::NodeType
   isPVactive::Union{Nothing,Bool}
 
-  function BusData(idx::Int, vm_pu::Float64, va_rad::Float64, sumP::Float64, sumQ::Float64, type::NodeType)
+  function BusData(idx::Int, nodeIdx::Int, vm_pu::Float64, va_rad::Float64, sumP::Float64, sumQ::Float64, type::NodeType)
     if type == PV
       isPV = true
     else
       isPV = nothing
     end
 
-    new(idx, vm_pu, va_rad, sumP, sumQ, 0.0, 0.0, type, isPV)
+    new(idx, nodeIdx, vm_pu, va_rad, sumP, sumQ, 0.0, 0.0, type, isPV)
   end
 end
 
@@ -53,10 +54,9 @@ function getBusData(nodes::Vector{Node}, Sbase_MVA::Float64, flatStart)
   sumGen_q = 0.0
   idx = 0
   for (i, n) in enumerate(nodes)
-    if isIsolated(n)
-      continue
-    end
+    isIsolated(n) && continue
     idx += 1
+    nodeIdx = i
     if isSlack(n)
       slackIdx = idx
     end
@@ -106,7 +106,7 @@ function getBusData(nodes::Vector{Node}, Sbase_MVA::Float64, flatStart)
       end
     end
     busIdx = idx
-    b = BusData(busIdx, vm_pu, va_rad, p, q, type)
+    b = BusData(busIdx, nodeIdx, vm_pu, va_rad, p, q, type)    
     push!(busVec, b)
   end
 
@@ -186,9 +186,7 @@ function map_NR_voltage_to_net!(V_nr::Vector{ComplexF64}, busVec::Vector{BusData
   V_net = Vector{ComplexF64}(undef, length(net.nodeVec))
 
   @inbounds for k in eachindex(busVec)
-    original_idx = busVec[k].idx
-    # original_idx corresponds directly to net.nodeVec[original_idx].busIdx
-    V_net[original_idx] = V_nr[k]
+    V_net[busVec[k].nodeIdx] = V_nr[k]
   end
 
   return V_net

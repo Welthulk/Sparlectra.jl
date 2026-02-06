@@ -14,7 +14,8 @@
 
 # Author: Udo Schmitz (https://github.com/Welthulk)
 # Date: 22.05.2023
-# include-file equicircuit.jl
+# file: src/equicircuit.jl
+
 """
     cubicSplineCoefs(x::Vector{Float64}, y::Vector{Float64})::Tuple{Vector{Float64}, Vector{Float64}, Vector{Float64}, Vector{Float64}}
 
@@ -220,21 +221,6 @@ function fromPU_RXBG(; r_pu::T, x_pu::T, g_pu::Union{Nothing,T} = nothing, b_pu:
 
   return r, x, b, g
 end
-
-#=
-function removeIsolatedNodesFromYBUS(Y::AbstractMatrix{ComplexF64}, isolated_nodes::Vector{Int})
-    if issparse(Y)
-        # Entferne die Zeilen und Spalten der isolierten Knoten aus der Sparse-Matrix
-        n = size(Y, 1)
-        rows_to_keep = setdiff(1:n, isolated_nodes)
-        Y = Y[rows_to_keep, rows_to_keep]
-    else
-        # Entferne die Zeilen und Spalten der isolierten Knoten aus der Dense-Matrix
-        Y = Y[setdiff(1:end, isolated_nodes), setdiff(1:end, isolated_nodes)]
-    end
-    return Y
-end
-=#
 
 """
     createYBUS(branchVec::Vector{Branch}, shuntVec::Vector{Shunt}, isoNodes::Vector{Int}, sparse::Bool = true, printYBUS::Bool = false)

@@ -88,7 +88,7 @@ function PGMTestBusNet()::Net
   addACLine!(net = Bus2Net, fromBus = "B1", toBus = "B2", length = length_km, r = r, x = x, c_nf_per_km = c_nf_per_km, tanδ = tanδ)
 
   addProsumer!(net = Bus2Net, busName = "B1", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "B1")
-  addShunt!(net = Bus2Net, busName = "B1", pShunt = 0.0, qShunt = 5.0)
+  addShunt!(net = Bus2Net, busName = "B1", pShunt = 0.0, qShunt = -5.0)
 
   tol = 1e-9
   maxIte = 50

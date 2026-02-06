@@ -14,7 +14,7 @@
 
 # Author: Udo Schmitz (https://github.com/Welthulk)
 # Date: 10.05.2023
-# include-file nodes.jl
+# file: src/node.jl
 
 # Data type to describe the topology
 """
