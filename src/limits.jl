@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# src/limits.jl
+# file: src/limits.jl
 # Helper function: ensures that the vector is filled to at least 'bus'
 # and fills with a default value (via append!) up to the required length.
 function _ensure_bus_index!(v::Vector{T}, bus::Int, default::T) where {T}
@@ -96,9 +96,9 @@ function getQLimits_pu(net::Net)
   if isempty(net.qmin_pu) || isempty(net.qmax_pu)
     buildQLimits!(net)
   end
+  _sanitize_q_limits!(net.qmin_pu, net.qmax_pu, length(net.nodeVec))
   return net.qmin_pu, net.qmax_pu
 end
-
 """
     pv_hit_q_limit(net, pv_names)
 
@@ -110,4 +110,141 @@ in `net.qLimitEvents` vorkommt.
 function pv_hit_q_limit(net, pv_names)
   pv_idx = map(name -> geNetBusIdx(net = net, busName = name), pv_names)
   return any(haskey(net.qLimitEvents, i) for i in pv_idx)
+end
+
+
+
+# ------------------------------
+# Q-limit helpers (local arrays)
+# ------------------------------
+@inline function has_q_limits(qmin_pu::AbstractVector, qmax_pu::AbstractVector, i::Int)::Bool
+  has_lo = (i <= length(qmin_pu)) && isfinite(qmin_pu[i])
+  has_hi = (i <= length(qmax_pu)) && isfinite(qmax_pu[i])
+  return has_lo || has_hi
+end
+
+@inline function q_limit_band(qmin_pu::AbstractVector, qmax_pu::AbstractVector, i::Int, q_hyst_pu::Float64)::Tuple{Float64,Float64}
+  lo = ((i <= length(qmin_pu)) && isfinite(qmin_pu[i])) ? (qmin_pu[i] + q_hyst_pu) : -Inf
+  hi = ((i <= length(qmax_pu)) && isfinite(qmax_pu[i])) ? (qmax_pu[i] - q_hyst_pu) :  Inf
+  return lo, hi
+end
+
+# ------------------------------
+# Q-limit sanitizing (drop-in)
+# ------------------------------
+function _sanitize_q_limits!(qmin_pu::Vector{Float64}, qmax_pu::Vector{Float64}, nb::Int)
+  _ensure_bus_index!(qmin_pu, nb, -Inf)
+  _ensure_bus_index!(qmax_pu, nb,  Inf)
+
+  @inbounds for i in 1:nb
+    # Treat NaN as "no limit"
+    if isnan(qmin_pu[i])
+      qmin_pu[i] = -Inf
+    end
+    if isnan(qmax_pu[i])
+      qmax_pu[i] =  Inf
+    end
+  end
+  return qmin_pu, qmax_pu
+end
+
+
+
+"""
+    active_set_q_limits!(
+        net, it, nb;
+        get_qreq_pu,
+        is_pv,
+        make_pq!,
+        make_pv!,
+        qmin_pu,
+        qmax_pu,
+        pv_orig_mask,
+        allow_reenable::Bool,
+        q_hyst_pu::Float64,
+        cooldown_iters::Int,
+        verbose::Int=0,
+    ) -> (changed::Bool, reenabled::Bool)
+
+Core PV/Q-limit active-set logic shared by solvers.
+
+Callbacks:
+- get_qreq_pu(bus) -> Float64
+- is_pv(bus) -> Bool
+- make_pq!(bus, q_clamp_pu::Float64, side::Symbol)  # side = :min/:max
+- make_pv!(bus)
+"""
+function active_set_q_limits!(
+  net::Net, it::Int, nb::Int;
+  get_qreq_pu,
+  is_pv,
+  make_pq!,
+  make_pv!,
+  qmin_pu::AbstractVector,
+  qmax_pu::AbstractVector,
+  pv_orig_mask,                      # AbstractVector{Bool} length nb
+  allow_reenable::Bool,
+  q_hyst_pu::Float64,
+  cooldown_iters::Int,
+  verbose::Int = 0,
+)
+  changed   = false
+  reenabled = false
+
+  # --- PV -> PQ ------------------------------------------------------------
+  @inbounds for bus = 1:nb
+    is_pv(bus) || continue
+    qreq = get_qreq_pu(bus)
+
+    has_q_limits(qmin_pu, qmax_pu, bus) || continue
+
+    has_hi = (bus <= length(qmax_pu)) && isfinite(qmax_pu[bus])
+    has_lo = (bus <= length(qmin_pu)) && isfinite(qmin_pu[bus])
+
+    if has_hi && (qreq > qmax_pu[bus])
+      make_pq!(bus, qmax_pu[bus], :max)
+      logQLimitHit!(net, it, bus, :max)
+      changed = true
+      (verbose > 0) && @printf "PV->PQ Bus %d: Q=%.6f > Qmax=%.6f (it=%d)\n" bus qreq qmax_pu[bus] it
+
+    elseif has_lo && (qreq < qmin_pu[bus])
+      make_pq!(bus, qmin_pu[bus], :min)
+      logQLimitHit!(net, it, bus, :min)
+      changed = true
+      (verbose > 0) && @printf "PV->PQ Bus %d: Q=%.6f < Qmin=%.6f (it=%d)\n" bus qreq qmin_pu[bus] it
+    end
+  end
+
+  # --- Optional PQ -> PV ---------------------------------------------------
+  if allow_reenable
+    @inbounds for bus = 1:nb
+      # Guards: was PV originally + has event + currently NOT PV
+      pv_orig_mask[bus] || continue
+      haskey(net.qLimitEvents, bus) || continue
+      is_pv(bus) && continue
+
+      has_q_limits(qmin_pu, qmax_pu, bus) || continue
+
+      qreq = get_qreq_pu(bus)
+      lo, hi = q_limit_band(qmin_pu, qmax_pu, bus, q_hyst_pu)
+
+      ready = (qreq > lo) && (qreq < hi)
+
+      if ready && (cooldown_iters > 0)
+        last_it = lastQLimitIter(net, bus)
+        if !isnothing(last_it) && (it - last_it) < cooldown_iters
+          ready = false
+        end
+      end
+
+      if ready
+        make_pv!(bus)
+        delete!(net.qLimitEvents, bus)   # clear event after re-enable
+        reenabled = true
+        (verbose > 0) && @printf "PQ->PV Bus %d: Q=%.6f within (%.6f, %.6f)\n" bus qreq lo hi
+      end
+    end
+  end
+
+  return changed, reenabled
 end

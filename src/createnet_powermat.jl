@@ -14,8 +14,7 @@
 
 # Author: Udo Schmitz (https://github.com/Welthulk)
 # Date: 01.10.2023
-# include-file createnet_powermat.jl
-
+# file: src/createnet_powermat.jl
 # helper
 #! format: off
 
@@ -57,7 +56,7 @@ Builds a Sparlectra `Net` from a MATPOWER-like container `mpc`.
 
 All matrices are expected in MATPOWER v2 column conventions.
 """
-function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false)::Net
+function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false, cooldown::Int = 2, q_hyst_pu::Float64 = 0.01)::Net
   # Small logger helper
   pInfo(msg::String) = (log ? (@info msg) : nothing)
 
@@ -75,7 +74,7 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
     @info "Creating new Net: $(name) with baseMVA=$(baseMVA), flatstart=$(flatstart)"
   end
   
-  myNet = Net(name = String(name), baseMVA = baseMVA, flatstart = flatstart)
+  myNet = Net(name = String(name), baseMVA = baseMVA, flatstart = flatstart, cooldown_iters = cooldown, q_hyst_pu = q_hyst_pu)
 
   # --- Find slack bus index from BUS_TYPE==3 (MATPOWER) ---
   slackIdx = 0
@@ -113,6 +112,7 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
     vmin = Float64(row[busDict["Vmin"]])
     vmax = Float64(row[busDict["Vmax"]])
 
+
     addBus!(
       net = myNet,
       busName = busName,
@@ -127,11 +127,22 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
       zone = zone,
       area = area,
     )
+    # fix 04.02.2026: MATPOWER -> p.u. admittance components:
+    #=
+    pShunt_pu = pShunt / baseMVA
+    qShunt_pu = qShunt / baseMVA
+    if pShunt != 0.0 || qShunt != 0.0
+      addShunt!(net=myNet, busName=busName, pShunt=pShunt_pu, qShunt=qShunt_pu)
+    end
+    =#
+    # new 04.02.2026: directly add shunt as bus shunt
+    pShunt = Float64(row[busDict["Gs"]])
+    qShunt = Float64(row[busDict["Bs"]])
 
     if pShunt != 0.0 || qShunt != 0.0
-      addShunt!(net = myNet, busName = busName, pShunt = pShunt, qShunt = qShunt)
+      addShuntMatpower!(net=myNet, busName=busName, Gs=pShunt, Bs=qShunt)
     end
-
+    
     if pLoad != 0.0 || qLoad != 0.0
       qMax = min(abs(mFak * qLoad), baseMVA)
       qMin = -qMax
@@ -186,7 +197,7 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
         x_pu = x_pu,
         b_pu = b_pu,
         status = status,
-        ratedS = ratedS,
+        ratedS = ratedS,        
       )
     else
       addPIModelTrafo!(
@@ -245,7 +256,7 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
   return myNet
 end
 
-function createNetFromMatPowerFile(; filename::String, log::Bool=false, flatstart::Bool=false)::Net
+function createNetFromMatPowerFile(; filename::String, log::Bool=false, flatstart::Bool=false, cooldown::Int = 2, q_hyst_pu::Float64 = 0.01)::Net
   mpc = MatpowerIO.read_case(filename; legacy_compat=true)
-  return createNetFromMatPowerCase(; mpc=mpc, log=log, flatstart=flatstart)
+  return createNetFromMatPowerCase(; mpc=mpc, log=log, flatstart=flatstart, cooldown = cooldown, q_hyst_pu = q_hyst_pu)
 end

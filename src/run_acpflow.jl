@@ -40,6 +40,8 @@ function run_acpflow(;
   method::Symbol = :polar_full,
   opt_flatstart::Bool = false,
   show_results::Bool = true,
+  cooldown_iters::Int = 3,
+  q_hyst_pu::Float64 = 0.01,
 )::Net  
   ext = lowercase(splitext(casefile)[2])
   myNet = nothing              # Initialize myNet variable
@@ -58,7 +60,30 @@ function run_acpflow(;
       error("File $(in_path) not found")
     end
 
-    myNet = createNetFromMatPowerFile(filename = in_path, log = (verbose > 0), flatstart = opt_flatstart)
+    myNet = createNetFromMatPowerFile(filename = in_path, log = (verbose > 0), flatstart = opt_flatstart, cooldown = cooldown_iters, q_hyst_pu = q_hyst_pu)
+    
+    if verbose > 1
+      # --- DEBUG START ---
+      @info "DEBUG Full net after import:"
+      @printf "DEBUG Full net after import:\n"
+      showNet(myNet, verbose = true)
+
+      Y = createYBUS(net=myNet, sparse=false, printYBUS=false)  # dense for inspection      
+      V0, slack = initialVrect(myNet; flatstart=myNet.flatstart)
+      S = buildComplexSVec(myNet)
+
+      @printf "DEBUG Yabs_max: %.6e\n" maximum(abs.(Y))
+      @printf "DEBUG Ydiag_max: %.6e\n" maximum(abs.(diag(Y)))
+      @printf "DEBUG Ydiag_imag_max: %.6e\n" maximum(abs.(imag.(diag(Y))))
+
+      @printf "DEBUG slack bus index: %d\n" slack
+      @printf "DEBUG initial V0: %s\n" string(V0)
+      @printf "DEBUG case: name=%s baseMVA=%.1f flatstart=%s slack=%d\n" myNet.name myNet.baseMVA myNet.flatstart slack
+      @printf "DEBUG sums (pu): sumP=%.6f sumQ=%.6f\n" sum(real.(S)) sum(imag.(S))
+      @printf "DEBUG V0: Vslack=%s Vmin=%.6f Vmax=%.6f\n" string(V0[slack]) minimum(abs.(V0)) maximum(abs.(V0))
+      @printf "DEBUG Y: Ydiag_min=%.6e Ydiag_max=%.6e Yabs_max=%.6e\n" minimum(abs.(diag(Y))) maximum(abs.(diag(Y))) maximum(abs.(Y))
+      # --- DEBUG END ---
+    end
 
   else
     error("File extension $(ext) not supported! Use .m or .jl")

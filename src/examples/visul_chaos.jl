@@ -20,22 +20,136 @@ using Logging
 using Printf
 global_logger(ConsoleLogger(stderr, Logging.Info))
 
+
+function converges_for(r_factor, l_factor; v0=1.0, a0=0.0, max_iter=50, tol=1e-6,
+                       method=:rectangular, opt_sparse=true, verbose=0)
+  res = test_convergence(
+    voltage_B2 = v0,
+    angle_B2   = a0,
+    angle_B3   = 0.0,
+    resistance_factor = r_factor,
+    load_factor       = l_factor,
+    impedance_factor  = r_factor,
+    max_iter = max_iter,
+    tolerance = tol,
+    method = method,
+    opt_sparse = opt_sparse,
+    verbose = verbose,
+  )
+  return res.converged, res.iterations
+end
+
+# --- Drop-in: adaptive critical-load search (expand upper bound + bisection) ---
+# Put this block near your existing helper functions.
+
+"""
+    find_load_critical_adaptive(r_factor;
+        l_lo=1.0, l_hi=6.0,
+        grow=2.0, l_max=50.0,
+        itmax=30, eps=1e-3,
+        kwargs...)
+
+Find approximate critical load factor L_crit for a given r_factor.
+Strategy:
+1) Ensure l_lo converges (otherwise return immediately: "already diverged at lower bound")
+2) Expand l_hi geometrically until divergence is observed or l_max reached
+3) Bisection on [l_ok, l_fail] until eps
+
+Returns a NamedTuple: (lcrit, bracket=(a,b), note)
+- lcrit is the last known convergent value (≈ lower end of boundary)
+- bracket is (l_ok, l_fail) if divergence found, else (l_lo, l_hi)
+"""
+function find_load_critical_adaptive(r_factor;
+    l_lo::Float64 = 1.0,
+    l_hi::Float64 = 6.0,
+    grow::Float64 = 2.0,
+    l_max::Float64 = 50.0,
+    itmax::Int = 30,
+    eps::Float64 = 1e-3,
+    kwargs...,
+)
+    ok_lo, _ = converges_for(r_factor, l_lo; kwargs...)
+    if !ok_lo
+        return (lcrit = l_lo, bracket = (l_lo, l_hi), note = "already diverged at lower bound")
+    end
+
+    # Expand upper bound until it fails (or we hit l_max)
+    a = l_lo
+    b = l_hi
+    ok_b, _ = converges_for(r_factor, b; kwargs...)
+
+    while ok_b && b < l_max
+        a = b
+        b = min(l_max, b * grow)
+        ok_b, _ = converges_for(r_factor, b; kwargs...)
+        # If b == l_max and still ok, we're done
+        if b >= l_max && ok_b
+            return (lcrit = b, bracket = (l_lo, b), note = "still converged at l_max")
+        end
+    end
+
+    # If it fails already at initial l_hi, we already have a bracket [a,b] with a ok, b fail
+    # If it only failed after expansion, also bracketed.
+    # Now bisection on [a,b] (a converged, b diverged)
+    for _ = 1:itmax
+        m = 0.5 * (a + b)
+        ok_m, _ = converges_for(r_factor, m; kwargs...)
+        if ok_m
+            a = m
+        else
+            b = m
+        end
+        (b - a) < eps && break
+    end
+
+    return (lcrit = a, bracket = (a, b), note = "adaptive+bisection")
+end
+
+function find_load_critical(r_factor; l_lo=1.0, l_hi=6.0, itmax=25, eps=1e-3, kwargs...)
+  ok_lo, _ = converges_for(r_factor, l_lo; kwargs...)
+  ok_hi, _ = converges_for(r_factor, l_hi; kwargs...)
+
+  # Falls hi noch konvergiert: Grenze liegt höher als l_hi
+  if ok_hi
+    return (lcrit = l_hi, bracket = (l_lo, l_hi), note = "still converged at upper bound")
+  end
+  # Falls lo schon nicht konvergiert: Grenze liegt unter l_lo
+  if !ok_lo
+    return (lcrit = l_lo, bracket = (l_lo, l_hi), note = "already diverged at lower bound")
+  end
+
+  a = l_lo
+  b = l_hi
+  for _ = 1:itmax
+    m = 0.5*(a+b)
+    ok, _ = converges_for(r_factor, m; kwargs...)
+    if ok
+      a = m
+    else
+      b = m
+    end
+    (b-a) < eps && break
+  end
+  return (lcrit = a, bracket = (a, b), note = "bisection")
+end
+
 # Helper functions for safe network operations
 function create_base_network()
   net = Net(name = "BaseNetwork", baseMVA = 100.0, vmin_pu = 0.1, vmax_pu = 2.0)
+  base_r, base_x = 0.02, 0.08
+
   addBus!(net = net, busName = "B1", busType = "Slack", vn_kV = 110.0)
   addBus!(net = net, busName = "B2", busType = "PQ", vn_kV = 110.0)
   addBus!(net = net, busName = "B3", busType = "PV", vn_kV = 110.0)
 
-  base_r, base_x = 0.02, 0.08
-  addACLine!(net = net, fromBus = "B1", toBus = "B2", length = 15.0, r = 15.0 * base_r, x = 15.0 * base_x, b = 0.0, ratedS = 100.0)
-  addACLine!(net = net, fromBus = "B2", toBus = "B3", length = 20.0, r = 20.0 * (base_r + 0.01), x = 20.0 * (base_x + 0.02), b = 0.0, ratedS = 100.0)
-  addACLine!(net = net, fromBus = "B1", toBus = "B3", length = 25.0, r = 25.0 * (base_r + 0.02), x = 25.0 * (base_x + 0.04), b = 0.0, ratedS = 100.0)
+  
+  addACLine!(net = net, fromBus = "B1", toBus = "B2", length = 15.0, r =  base_r, x =  base_x, b = 0.0, ratedS = 100.0)
+  addACLine!(net = net, fromBus = "B2", toBus = "B3", length = 20.0, r =  (base_r + 0.01), x =  (base_x + 0.02), b = 0.0, ratedS = 100.0)
+  addACLine!(net = net, fromBus = "B1", toBus = "B3", length = 25.0, r =  (base_r + 0.02), x =  (base_x + 0.04), b = 0.0, ratedS = 100.0)
 
   addProsumer!(net = net, busName = "B2", type = "ENERGYCONSUMER", p = 40.0, q = 30.0)
-  addProsumer!(net = net, busName = "B3", type = "SYNCHRONMASCHINE", p = 50.0, vm_pu = 1.05)
-  addProsumer!(net = net, busName = "B1", type = "SYNCHRONMASCHINE", referencePri = "B1")
-
+  addProsumer!(net=net, busName="B3", type="SYNCHRONOUSMACHINE",  p=50.0, vm_pu=1.05, qMin=-300.0, qMax=300.0)  
+  addProsumer!(net=net, busName="B1", type="EXTERNALNETWORKINJECTION",  vm_pu=1.0, va_deg=0.0, referencePri="B1")
   return net
 end
 
@@ -50,14 +164,14 @@ function create_variable_network(; resistance_factor = 1.0, load_factor = 1.0, i
   r_mult = resistance_factor
   x_mult = impedance_factor
 
-  addACLine!(net = net, fromBus = "B1", toBus = "B2", length = 15.0, r = 15.0 * base_r * r_mult, x = 15.0 * base_x * x_mult, b = 0.0, ratedS = 100.0)
-  addACLine!(net = net, fromBus = "B2", toBus = "B3", length = 20.0, r = 20.0 * (base_r + 0.01) * r_mult, x = 20.0 * (base_x + 0.02) * x_mult, b = 0.0, ratedS = 100.0)
-  addACLine!(net = net, fromBus = "B1", toBus = "B3", length = 25.0, r = 25.0 * (base_r + 0.02) * r_mult, x = 25.0 * (base_x + 0.04) * x_mult, b = 0.0, ratedS = 100.0)
+  addACLine!(net = net, fromBus = "B1", toBus = "B2", length = 15.0, r =  base_r * r_mult, x =  base_x * x_mult, b = 0.0, ratedS = 100.0)
+  addACLine!(net = net, fromBus = "B2", toBus = "B3", length = 20.0, r =  (base_r + 0.01) * r_mult, x =  (base_x + 0.02) * x_mult, b = 0.0, ratedS = 100.0)
+  addACLine!(net = net, fromBus = "B1", toBus = "B3", length = 25.0, r =  (base_r + 0.02) * r_mult, x =  (base_x + 0.04) * x_mult, b = 0.0, ratedS = 100.0)
 
   base_p, base_q = 40.0, 30.0
   addProsumer!(net = net, busName = "B2", type = "ENERGYCONSUMER", p = base_p * load_factor, q = base_q * load_factor)
-  addProsumer!(net = net, busName = "B3", type = "SYNCHRONMASCHINE", p = 50.0, vm_pu = 1.05)
-  addProsumer!(net = net, busName = "B1", type = "SYNCHRONMASCHINE", referencePri = "B1")
+  addProsumer!(net=net, busName="B3", type="SYNCHRONOUSMACHINE",  p=50.0, vm_pu=1.05, qMin=-300.0, qMax=300.0)  
+  addProsumer!(net=net, busName="B1", type="EXTERNALNETWORKINJECTION",  vm_pu=1.0, va_deg=0.0, referencePri="B1")
 
   return net
 end
@@ -77,16 +191,43 @@ function safe_set_initial_values!(net; voltage_B2 = 1.0, angle_B2 = 0.0, angle_B
   return success
 end
 
-function test_convergence(; voltage_B2 = 1.0, angle_B2 = 0.0, angle_B3 = 0.0, resistance_factor = 1.0, load_factor = 1.0, impedance_factor = 1.0, max_iter = 50, tolerance = 1e-6)
+function test_convergence(;
+    voltage_B2 = 1.0,
+    angle_B2   = 0.0,
+    angle_B3   = 0.0,
+    resistance_factor = 1.0,
+    load_factor       = 1.0,
+    impedance_factor  = 1.0,
+    max_iter::Int = 50,
+    tolerance::Float64 = 1e-6,
+    method::Symbol = :rectangular,
+    opt_sparse::Bool = true,
+    verbose::Int = 0,
+)
   try
-    net = create_variable_network(resistance_factor = resistance_factor, load_factor = load_factor, impedance_factor = impedance_factor)
+    net = create_variable_network(
+      resistance_factor = resistance_factor,
+      load_factor       = load_factor,
+      impedance_factor  = impedance_factor,
+    )
 
-    safe_set_initial_values!(net, voltage_B2 = voltage_B2, angle_B2 = angle_B2, angle_B3 = angle_B3)
+    ok, msg = validate!(net = net)
+    ok || return (converged = false, iterations = 0)
 
-    iterations, result = runpf!(net, max_iter, tolerance, 0)
+    safe_set_initial_values!(net,
+      voltage_B2 = float(voltage_B2),
+      angle_B2   = float(angle_B2),
+      angle_B3   = float(angle_B3),
+    )
+
+    iterations, result = runpf!(
+      net, max_iter, tolerance, verbose;
+      method = method,
+      opt_sparse = opt_sparse,
+    )
 
     return (converged = (result == 0), iterations = iterations)
-  catch e
+  catch
     return (converged = false, iterations = 0)
   end
 end
@@ -190,68 +331,26 @@ end
 
 # 2. Parameter Sensitivity Analysis
 function parameter_sensitivity_analysis()
-  println("\n⚙️ PARAMETER SENSITIVITY ANALYSIS")
-  println(repeat("=", 60))
+  println("\n⚙️ PARAMETER SENSITIVITY ANALYSIS (critical load boundary, adaptive)")
+  println(repeat("=", 72))
 
-  # Define parameter ranges
   resistance_range = [1.0, 2.0, 3.0, 5.0, 8.0, 10.0]
-  load_range = [1.0, 1.5, 2.0, 2.5, 3.0, 4.0]
 
-  println("Analyzing $(length(resistance_range)) × $(length(load_range)) parameter combinations")
-  println("Resistance factors: $resistance_range")
-  println("Load factors: $load_range")
-  println()
+  println("R-factor | L_crit (approx) | bracket            | note")
+  println(repeat("-", 72))
 
-  param_convergence_map = zeros(Int, length(resistance_range), length(load_range))
-  param_iteration_map = zeros(Int, length(resistance_range), length(load_range))
-
-  for (i, r_factor) in enumerate(resistance_range)
-    print("R=$(r_factor)x: ")
-    for (j, l_factor) in enumerate(load_range)
-      result = test_convergence(voltage_B2 = 1.0, angle_B2 = 0.0, angle_B3 = 0.0, resistance_factor = r_factor, load_factor = l_factor, impedance_factor = r_factor)
-
-      param_convergence_map[i, j] = result.converged ? 1 : 0
-      param_iteration_map[i, j] = result.iterations
-
-      if result.converged
-        print("✓")
-      else
-        print("✗")
-      end
-    end
-    println()
+  for r in resistance_range
+    res = find_load_critical_adaptive(r;
+      l_lo=1.0, l_hi=6.0, grow=2.0, l_max=50.0, eps=1e-3, itmax=30,
+      method=:rectangular, opt_sparse=true, verbose=0,
+      max_iter=50, tol=1e-6,
+    )
+    @printf("%7.1fx | %14.3f | [%-7.3f, %-7.3f] | %s\n",
+      r, res.lcrit, res.bracket[1], res.bracket[2], res.note)
   end
 
-  total_param_points = length(param_convergence_map)
-  converged_param_points = sum(param_convergence_map)
-  param_chaos_rate = round(100 * (total_param_points - converged_param_points) / total_param_points, digits = 1)
-
-  println()
-  println("📊 PARAMETER SENSITIVITY RESULTS:")
-  println("Parameter chaos rate: $param_chaos_rate%")
-
-  # Parameter map
-  println()
-  println("🗺️ PARAMETER STABILITY MAP:")
-  print("R\\L ")
-  for l_factor in load_range
-    @printf("%6.1fx", l_factor)
-  end
-  println()
-
-  for (i, r_factor) in enumerate(resistance_range)
-    @printf("%.1fx", r_factor)
-    for j = 1:length(load_range)
-      if param_convergence_map[i, j] == 1
-        print("    ✓ ")
-      else
-        print("    ✗ ")
-      end
-    end
-    println()
-  end
-
-  return param_convergence_map, param_iteration_map, resistance_range, load_range
+  # Keep return shape compatible with your existing call site (expects 4 things).
+  return nothing, nothing, resistance_range, nothing
 end
 
 # 3. Critical Boundary Analysis
@@ -457,13 +556,60 @@ function comprehensive_chaos_visualization()
   return (basin_data = (basin_conv, basin_iter, v_range, a_range), param_data = (param_conv, param_iter, r_range, l_range), critical_data = (crit_v, crit_a, crit_p), hotspots = chaos_hotspots, combined_chaos_rate = combined_rate)
 end
 
+function parameter_sensitivity_plot_ascii(; method=:rectangular, opt_sparse=true, verbose=0,
+                                          max_iter=50, tol=1e-6)
+  resistance_range = [1.0, 2.0, 3.0, 5.0, 8.0, 10.0]
+
+  # collect results
+  R = Float64[]
+  L = Float64[]
+  br_lo = Float64[]
+  br_hi = Float64[]
+  note = String[]
+
+  for r in resistance_range
+    res = find_load_critical(r;
+      l_lo=1.0, l_hi=2.0,   # start low; adaptive will grow
+      eps=1e-3, itmax=25,
+      method=method, opt_sparse=opt_sparse, verbose=verbose,
+      max_iter=max_iter, tol=tol,
+    )
+    push!(R, r)
+    push!(L, res.lcrit)
+    push!(br_lo, res.bracket[1])
+    push!(br_hi, res.bracket[2])
+    push!(note, res.note)
+  end
+
+  println("\n📈 Lcrit vs R (ASCII)")
+  println("R-factor | L_crit | bracket                | note")
+  println(repeat("-", 72))
+  for i in eachindex(R)
+    @printf("%7.1fx | %6.3f | [%-6.3f, %-6.3f] | %s\n",
+            R[i], L[i], br_lo[i], br_hi[i], note[i])
+  end
+
+  # ASCII bar plot
+  # scale bars to max Lcrit
+  Lmax = maximum(L)
+  width = 50
+  println("\nASCII plot (bar length ~ Lcrit):")
+  for i in eachindex(R)
+    n = Int(round(width * (L[i] / Lmax)))
+    bar = repeat("█", n)
+    @printf("R=%4.1fx | %-50s  %.3f\n", R[i], bar, L[i])
+  end
+
+  return (R=R, L=L, br_lo=br_lo, br_hi=br_hi, note=note)
+end
+
 # === MAIN EXECUTION ===
 println("🚀 Starting comprehensive chaos visualization and analysis...")
 println()
 
 # Perform complete analysis
 results = comprehensive_chaos_visualization()
-
+sens = parameter_sensitivity_plot_ascii()
 println("\n🎉 CHAOS ANALYSIS COMPLETE!")
 println("All Basin of Attraction, critical regions and chaos hotspots have been identified!")
 println("This data can be used for scientific visualizations.")

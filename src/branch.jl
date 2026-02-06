@@ -14,7 +14,7 @@
 
 # Author: Udo Schmitz (https://github.com/Welthulk)
 # Date: 10.05.2023
-# include-file branch.jl
+# file: src/branch.jl
 
 # helper
 """
@@ -151,19 +151,24 @@ mutable struct Branch <: AbstractBranch
     fromOid::Union{Nothing,Int} = nothing,
     toOid::Union{Nothing,Int} = nothing,
     angle::Union{Nothing,Float64} = nothing,
+    values_are_pu::Bool=false,
   )
     if isa(branch, ACLineSegment) # Line
       @assert !isnothing(vn_kV) "vn_kV must be set for an ACLineSegment"
       if isnothing(ratio)
-        ratio = 0.0
+        # to distinguish line from transformer
+        ratio  = 0.0
       end
       if !isnothing(fromOid) && !isnothing(toOid)
         c = getBranchComp(vn_kV, fromOid, toOid, id, "ACL")
       else
         c = getBranchComp(vn_kV, from, to, id, "ACL")
       end
-
-      r_pu, x_pu, b_pu, g_pu = getLineRXBG_pu(branch, vn_kV, baseMVA)
+      if values_are_pu
+        r_pu, x_pu, b_pu, g_pu = getLineRXBG(branch)
+      else 
+        r_pu, x_pu, b_pu, g_pu = getLineRXBG_pu(branch, vn_kV, baseMVA)        
+      end    
       new(c, branchIdx, from, to, r_pu, x_pu, b_pu, g_pu, 0.0, 0.0, status, branch.ratedS, nothing, nothing, nothing, nothing)
     elseif isa(branch, PowerTransformer) # Transformer     
       if (isnothing(side) && branch.isBiWinder)
@@ -181,7 +186,13 @@ mutable struct Branch <: AbstractBranch
       w = (side in [1, 2, 3]) ? (side == 1 ? branch.side1 : (side == 2 ? branch.side2 : branch.side3)) : error("wrong value for 'side'")
       vn_kV = isnothing(vn_kV) ? w.Vn : vn_kV
       sn_MVA = getWindingRatedS(w)
-      r_pu, x_pu, b_pu, g_pu = getTrafoRXBG_pu(w, vn_kV, baseMVA)
+      
+      if values_are_pu
+        r_pu, x_pu, b_pu, g_pu = getTrafoRXBG(w)
+      else 
+        r_pu, x_pu, b_pu, g_pu = getTrafoRXBG_pu(w, vn_kV, baseMVA)        
+      end
+      
 
       ratio = isnothing(ratio) ? 1.0 : ratio
       @assert ratio != 0.0 "ratio must not be 0.0 for transformers"

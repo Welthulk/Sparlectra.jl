@@ -14,7 +14,7 @@
 
 # Author: Udo Schmitz (https://github.com/Welthulk)
 # Date: 13.03.2025
-# include-file remove_functions.jl
+# file: src/remove_functions.jl
 
 """
     removeBus!(; net::Net, busName::String)

@@ -20,6 +20,7 @@
 # but it's important to note that the naming convention for functions might deviate. 
 # In this module, functions are written in CamelCase with a lowercase initial letter. 
 
+# file: src/Sparlectra.jl
 #! format: off
 
 module Sparlectra
@@ -30,7 +31,7 @@ const MPOWER_DIR = normpath(joinpath(pkgdir(@__MODULE__), "data", "mpower"))
 
 # resource data types for working with Sparlectra
 const Wurzel3 = 1.7320508075688772
-const SparlectraVersion = v"0.4.33"
+const SparlectraVersion = v"0.4.34"
 version() = SparlectraVersion
 abstract type AbstractBranch end
 
@@ -95,8 +96,8 @@ export
   # Network
   addBus!, addShunt!, addACLine!, addPIModelACLine!, add2WTrafo!, addPIModelTrafo!, addProsumer!, lockNet!, validate!, hasBusInNet, addBusGenPower!, addBusLoadPower!, addBusShuntPower!, setNodeVoltage!, setNodeAngle!,
   getNetOrigBusIdx, geNetBusIdx, setNetBranchStatus!, getNetBranch, getNetBranchNumberVec, setTotalLosses!, getTotalLosses, getBusType, get_bus_vn_kV, get_vn_kV, updateBranchParameters!, hasShunt!, 
-  getShunt!, markIsolatedBuses!,setTotalBusPower!, setPVBusVset!, setQLimits!, getNodeVm,distributeBusResults!, getTotalBusPower, getTotalLosses, buildVoltageVector,initialVrect, buildComplexSVec,
-  add2WTPIModelTrafo!, add3WTPiModelTrafo!,showNet,
+  getShunt!, markIsolatedBuses!,setTotalBusPower!, setPVBusVset!, setQLimits!, getNodeVm,distributeBusResults!, getTotalBusPower, getTotalLosses, buildVoltageVector,initialVrect, buildComplexSVec,addShuntMatpower!,
+  add2WTPIModelTrafo!, add3WTPiModelTrafo!,showNet, buildQLimits!,updateShuntPowers!,
   # remove_functions.jl
   removeBus!, removeBranch!, removeACLine!, removeTrafo!, removeShunt!, removeProsumer!, clearIsolatedBuses!,
   # import.jl
@@ -112,13 +113,16 @@ export
   # jacobian_full.jl
   runpf_full!, 
   # limits.jl
-  printQLimitLog,logQLimitHit!, lastQLimitIter, getQLimits_pu, logQLimitHit!,lastQLimitIter, resetQLimitLog!, pv_hit_q_limit,
+  printQLimitLog,logQLimitHit!, lastQLimitIter, getQLimits_pu, logQLimitHit!,lastQLimitIter, resetQLimitLog!, pv_hit_q_limit,has_q_limits,active_set_q_limits!,
   # losses.jl
   calcNetLosses!, 
   # results.jl
   printACPFlowResults, printProsumerResults,
-  # run_acpflow.jl
+  # run_acpflow.jl  
   run_acpflow, run_net_acpflow,
+  # solver_core.jl
+  calc_injections, calc_currents, solve_linear, build_pos_map, slack_elimination_indices,extract_bus_types_and_vset, 
+  build_qload_pu, build_voltage_vector, compute_sbus_and_totals, 
   # jacobian_complex.jl
   runpf_rectangular!, mismatch_rectangular, complex_newton_step_rectangular_fd,
   # External solver interface
@@ -147,7 +151,8 @@ include("nbi.jl")
 include("exportMatPower.jl")
 include("results.jl")
 include("run_acpflow.jl")
-include("remove_functions.jl") 
+include("remove_functions.jl")
+include("solver_core.jl") 
 include("jacobian_complex.jl")
 include("jacobian_fd.jl")
 include("solver_interface.jl")

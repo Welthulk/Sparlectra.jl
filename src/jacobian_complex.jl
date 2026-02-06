@@ -12,6 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+#
+# file: src/jacobian_complex.jl
+#
+
 # jacobian_complex.jl — Complex-State Newton-Raphson Power Flow Formulation
 #
 # This module implements a Newton-Raphson power flow solver using complex voltages
@@ -91,134 +95,69 @@ function build_complex_jacobian(Ybus, V)
 end
 
 """
-    complex_newton_step_rectangular(Ybus, V, S; slack_idx::Int, damp::Float64=1.0)
+    mismatch_rectangular(Ybus, V, S, bus_types, Vset, slack_idx) -> F::Vector{Float64}
 
-Perform one Newton-Raphson step in rectangular coordinates using analytic Jacobian.
+Compute the real-valued mismatch vector F(V) for the rectangular
+complex-state formulation with PQ and PV buses.
 
-# Arguments
-- `Ybus::AbstractMatrix{ComplexF64}`: Bus admittance matrix (n×n)
-- `V::Vector{ComplexF64}`: Current complex bus voltage vector (length n)
-- `S::Vector{ComplexF64}`: Specified complex power injections P + jQ (length n)
-- `slack_idx::Int`: Index of the slack bus (excluded from equations/variables)
-- `damp::Float64=1.0`: Damping factor for Newton step (0 < damp ≤ 1)
-- `bus_types::Vector{Symbol}`: Bus type classification (:PQ, :PV, :Slack)
-- `Vset::Vector{Float64}`: Voltage magnitude setpoints for PV buses
+For each non-slack bus i:
+- if bus_types[i] == :PQ:
+      ΔP_i = Re(S_calc[i]) - Re(S_spec[i])
+      ΔQ_i = Im(S_calc[i]) - Im(S_spec[i])
 
-# Returns
-- `Vector{ComplexF64}`: Updated complex voltage vector V_new
+- if bus_types[i] == :PV:
+      ΔP_i = Re(S_calc[i]) - Re(S_spec[i])
+      ΔV_i = |V[i]| - Vset[i]
 
-# Details
-This function performs one Newton-Raphson iteration using:
-- State variables: [Vr(non-slack); Vi(non-slack)] - real and imaginary parts
-- Mismatch function matching `mismatch_rectangular`:
-  * PQ buses: ΔP_i, ΔQ_i (active and reactive power mismatches)
-  * PV buses: ΔP_i, ΔV_i where ΔV_i = |V_i| - Vset[i]
-- Analytic Jacobian derived from Wirtinger calculus
-- Slack bus voltage remains fixed throughout the step
-
-The function builds the analytic Jacobian via `build_rectangular_jacobian_pq_pv`,
-solves the linear system J·δx = -F, applies damping, and updates voltages.
-
-# Mathematical Foundation
-Uses Wirtinger derivatives for complex power S = V .* conj(Y * V):
-- ∂S/∂Vr and ∂S/∂Vi computed analytically
-- PV constraint ΔV = |V| - Vset handled via chain rule
-- Robust linear solver with pseudoinverse fallback for singular cases
+F is stacked as [ΔP_2, ΔQ/ΔV_2, ..., ΔP_n, ΔQ/ΔV_n] over all non-slack buses.
 """
-
-function complex_newton_step_rectangular(Ybus, V, S; slack_idx::Int, damp::Float64 = 1.0)
+function mismatch_rectangular(Ybus, V::Vector{ComplexF64}, S::Vector{ComplexF64}, bus_types::Vector{Symbol}, Vset::Vector{Float64}, slack_idx::Int)
   n = length(V)
+  @assert length(S) == n
+  @assert length(bus_types) == n
+  @assert length(Vset) == n
 
-  # Currents and complex power
-  I = Ybus * V
-  S_calc = V .* conj.(I)
-  ΔS = S_calc .- S
+  # Network-based injections for the current state
+  S_calc = calc_injections(Ybus, V)
 
-  # Real state representation
-  Vr = real.(V)
-  Vi = imag.(V)
+  # F has 2*(n-1) entries: for each non-slack bus two residuals
+  # PQ:  ΔP_i, ΔQ_i
+  # PV:  ΔP_i, ΔV_i
+  F = zeros(Float64, 2*(n-1))
 
-  # Complex Jacobian Jc: n × 2n, mapping [dVr; dVi] → dS (complex)
-  Jc = Matrix{ComplexF64}(undef, n, 2n)
-
-  # Derivative wrt Vr: perturb dVr = e_k, dVi = 0
-  for k = 1:n
-    dVr = zeros(Float64, n)
-    dVi = zeros(Float64, n)
-    dVr[k] = 1.0
-    dV = ComplexF64.(dVr, dVi)
-
-    dI = Ybus * dV
-    dS = dV .* conj.(I) .+ V .* conj.(dI)
-
-    Jc[:, k] = dS
-  end
-
-  # Derivative wrt Vi: perturb dVi = e_k, dVr = 0
-  for k = 1:n
-    dVr = zeros(Float64, n)
-    dVi = zeros(Float64, n)
-    dVi[k] = 1.0
-    dV = ComplexF64.(dVr, dVi)
-
-    dI = Ybus * dV
-    dS = dV .* conj.(I) .+ V .* conj.(dI)
-
-    Jc[:, n+k] = dS
-  end
-
-  # Build real 2n × 2n Jacobian for F = [real(ΔS); imag(ΔS)]
-  J = zeros(Float64, 2n, 2n)
-  for k = 1:2n
-    col            = Jc[:, k]
-    J[1:n, k]      .= real.(col)
-    J[(n+1):2n, k] .= imag.(col)
-  end
-
-  # Real mismatch vector F = [Re(ΔS); Im(ΔS)]
-  F = vcat(real.(ΔS), imag.(ΔS))
-
-  # --- Slack-Elimination: nur Nicht-Slack-Busse als Unbekannte/ Gleichungen ---
-
-  # Bus-Indizes ohne Slack
-  non_slack = collect(1:n)
-  deleteat!(non_slack, slack_idx)
-
-  # Zeilen/Gleichungen: P/Q für alle Nicht-Slack-Busse
-  row_idx = vcat(non_slack, n .+ non_slack)  # erst P, dann Q
-
-  # Spalten/Variablen: Vr/Vi für alle Nicht-Slack-Busse
-  col_idx = vcat(non_slack, n .+ non_slack)
-
-  Jred = J[row_idx, col_idx]
-  Fred = F[row_idx]
-
-  # Solve Jred * δx_red = -Fred (robust gegen Singularität)
-  δx_red = nothing
-  try
-    δx_red = Jred \ (-Fred)
-  catch e
-    if e isa LinearAlgebra.SingularException
-      δx_red = pinv(Jred) * (-Fred)
-    else
-      rethrow(e)
+  row = 1
+  @inbounds for i = 1:n
+    if i == slack_idx
+      continue
     end
+
+    S_ci = S_calc[i]
+    S_si = S[i]
+
+    if bus_types[i] == :PQ
+      ΔP = real(S_ci) - real(S_si)
+      ΔQ = imag(S_ci) - imag(S_si)
+
+      F[row]   = ΔP
+      F[row+1] = ΔQ
+
+    elseif bus_types[i] == :PV
+      ΔP = real(S_ci) - real(S_si)
+      ΔV = abs(V[i]) - Vset[i]
+
+      F[row]   = ΔP
+      F[row+1] = ΔV
+
+    else
+      error("mismatch_rectangular: unsupported bus type $(bus_types[i]) at bus $i")
+    end
+
+    row += 2
   end
 
-  # Map back to full state vector (slack has Δ=0)
-  δx = zeros(Float64, 2n)
-  δx[col_idx] .= δx_red
-
-  # Damping
-  δx .*= damp
-
-  δVr = δx[1:n]
-  δVi = δx[(n+1):2n]
-
-  V_new = ComplexF64.(Vr .+ δVr, Vi .+ δVi)
-
-  return V_new
+  return F
 end
+
 
 function run_complex_nr_rectangular(Ybus, V0, S; slack_idx::Int = 1, maxiter::Int = 20, tol::Float64 = 1e-8, verbose::Bool = false, damp::Float64 = 1.0, bus_types::Vector{Symbol}, Vset::Vector{Float64}, use_fd::Bool = false, use_sparse::Bool = false)
   V = copy(V0)
@@ -264,70 +203,6 @@ function update_net_voltages_from_complex!(net::Net, V::Vector{ComplexF64})
   end
 end
 
-"""
-    mismatch_rectangular(Ybus, V, S, bus_types, Vset, slack_idx) -> F::Vector{Float64}
-
-Compute the real-valued mismatch vector F(V) for the rectangular
-complex-state formulation with PQ and PV buses.
-
-For each non-slack bus i:
-- if bus_types[i] == :PQ:
-      ΔP_i = Re(S_calc[i]) - Re(S_spec[i])
-      ΔQ_i = Im(S_calc[i]) - Im(S_spec[i])
-
-- if bus_types[i] == :PV:
-      ΔP_i = Re(S_calc[i]) - Re(S_spec[i])
-      ΔV_i = |V[i]| - Vset[i]
-
-F is stacked as [ΔP_2, ΔQ/ΔV_2, ..., ΔP_n, ΔQ/ΔV_n] over all non-slack buses.
-"""
-function mismatch_rectangular(Ybus, V::Vector{ComplexF64}, S::Vector{ComplexF64}, bus_types::Vector{Symbol}, Vset::Vector{Float64}, slack_idx::Int)
-  n = length(V)
-  @assert length(S) == n
-  @assert length(bus_types) == n
-  @assert length(Vset) == n
-
-  # Network-based injections for the current state
-  I      = Ybus * V
-  S_calc = V .* conj.(I)
-
-  # F has 2*(n-1) entries: for each non-slack bus two residuals
-  # PQ:  ΔP_i, ΔQ_i
-  # PV:  ΔP_i, ΔV_i
-  F = zeros(Float64, 2*(n-1))
-
-  row = 1
-  @inbounds for i = 1:n
-    if i == slack_idx
-      continue
-    end
-
-    S_ci = S_calc[i]
-    S_si = S[i]
-
-    if bus_types[i] == :PQ
-      ΔP = real(S_ci) - real(S_si)
-      ΔQ = imag(S_ci) - imag(S_si)
-
-      F[row]   = ΔP
-      F[row+1] = ΔQ
-
-    elseif bus_types[i] == :PV
-      ΔP = real(S_ci) - real(S_si)
-      ΔV = abs(V[i]) - Vset[i]
-
-      F[row]   = ΔP
-      F[row+1] = ΔV
-
-    else
-      error("mismatch_rectangular: unsupported bus type $(bus_types[i]) at bus $i")
-    end
-
-    row += 2
-  end
-
-  return F
-end
 
 """
     build_rectangular_jacobian_pq_pv_sparse(
@@ -369,22 +244,13 @@ function build_rectangular_jacobian_pq_pv_sparse(Ybus::SparseMatrixCSC{ComplexF6
   n = length(V)
   @assert length(bus_types) == n
   @assert length(Vset) == n
-
-  # Network currents
+  
   I = Ybus * V
 
-  # Non-slack bus indices and mapping bus -> position in state vector
-  non_slack = collect(1:n)
-  deleteat!(non_slack, slack_idx)
-
+  non_slack = non_slack_indices(n, slack_idx)
+  pos_non_slack = build_pos_map(non_slack, n)
   nvar = 2 * (n - 1)   # [Vr(non-slack); Vi(non-slack)]
   m    = nvar          # F has 2 equations per non-slack bus
-
-  # bus index -> position in non_slack (1..n-1), 0 if slack
-  pos_non_slack = zeros(Int, n)
-  for (k, b) in enumerate(non_slack)
-    pos_non_slack[b] = k
-  end
 
   # Row blocks: for each non-slack bus i
   #   row_block[i]   = index of ΔP row for bus i
@@ -601,6 +467,8 @@ function build_rectangular_jacobian_pq_pv_dense(Ybus, V::Vector{ComplexF64}, bus
   nvar = 2 * (n - 1)
   m    = 2 * (n - 1)
   @assert nvar == m
+  
+  pos_map = build_pos_map(non_slack, n)
 
   # Column indices in the full rectangular J that correspond to
   # [Vr(non_slack); Vi(non_slack)]
@@ -627,8 +495,8 @@ function build_rectangular_jacobian_pq_pv_dense(Ybus, V::Vector{ComplexF64}, bus
       # ΔV_i = |V_i| - Vset[i]
       J[row+1, :] .= 0.0
 
-      pos = findfirst(==(i), non_slack)
-      if pos !== nothing
+      pos = pos_map[i]
+      if pos != 0
         vm = abs(V[i])
         if vm > 0.0
           dVr = real(V[i]) / vm
@@ -701,9 +569,7 @@ function complex_newton_step_rectangular(Ybus, V::Vector{ComplexF64}, S::Vector{
   @assert length(Vset) == n
 
   # Non-slack indices
-  non_slack = collect(1:n)
-  deleteat!(non_slack, slack_idx)
-
+  non_slack = non_slack_indices(n, slack_idx)
   # Residual matching the FD variant
   F0 = mismatch_rectangular(Ybus, V, S, bus_types, Vset, slack_idx)
   m = length(F0)
@@ -714,17 +580,7 @@ function complex_newton_step_rectangular(Ybus, V::Vector{ComplexF64}, S::Vector{
   J = build_rectangular_jacobian_pq_pv(Ybus, V, bus_types, Vset, slack_idx; use_sparse = use_sparse)
 
   # Solve J * δx = -F
-  δx = nothing
-  try
-    δx = J \ (-F0)
-  catch e
-    if e isa LinearAlgebra.SingularException
-      δx = pinv(Matrix(J)) * (-F0)
-    else
-      rethrow(e)
-    end
-  end
-
+  δx = solve_linear(J, -F0; allow_pinv = true)
   # Damping
   δx .*= damp
 
@@ -842,13 +698,31 @@ function run_complex_nr_rectangular_for_net!(net::Net; maxiter::Int = 20, tol::F
 
   # 4) Q-limit data 
   qmin_pu, qmax_pu = getQLimits_pu(net)
-  resetQLimitLog!(net)
+  if verbose > 1
+    nshow = min(30, length(qmin_pu))
+    println("Q-limits preview (first $nshow buses):")
+    for i = 1:nshow   
+      qmin = isfinite(qmin_pu[i]) ? qmin_pu[i] : -Inf
+      qmax = isfinite(qmax_pu[i]) ? qmax_pu[i] : Inf
+      @printf "  bus %d: qmin=%g  qmax=%g\n" i qmin qmax
+    end
+  end
+
+  # --- Active-set bookkeeping (rectangular solver) ------------------------
+  nb = n  # number of buses
+
+  # PV origin mask (guards for PQ->PV re-enable)
+  pv_orig_mask = falses(nb)
+  @inbounds for k = 1:nb
+    pv_orig_mask[k] = (bus_types[k] == :PV)
+  end
 
   cooldown_iters = hasfield(typeof(net), :cooldown_iters) ? net.cooldown_iters : 0
-  q_hyst_pu      = hasfield(typeof(net), :q_hyst_pu) ? net.q_hyst_pu : 0.0
+  q_hyst_pu      = hasfield(typeof(net), :q_hyst_pu)      ? net.q_hyst_pu      : 0.0
+  allow_reenable = (cooldown_iters > 0) || (q_hyst_pu > 0.0)
 
-  # Original PV buses at start (Guard for PQ->PV re-enable)
-  pv_orig = [k for k = 1:n if bus_types[k] == :PV]
+  # Start fresh each PF run
+  resetQLimitLog!(net)
 
   # 5) NR-Loop
   V         = copy(V0)
@@ -878,96 +752,67 @@ function run_complex_nr_rectangular_for_net!(net::Net; maxiter::Int = 20, tol::F
       break
     end
 
-    # --- Q-Limit Active Set: PV -> PQ, optional PQ -> PV -------------------
+    # --- Q-Limit Active Set: PV -> PQ, optional PQ -> PV (rectangular) ------
     changed   = false
     reenabled = false
+    
+    Qload_pu = build_qload_pu(net)
 
     if it > 1
-      I      = Ybus * V
-      S_calc = V .* conj.(I)
+      Scalc_pu = calc_injections(Ybus, V)
 
-      # 4a) PV -> PQ
-      @inbounds for k = 1:n
-        if k == slack_idx
-          continue
-        end
-        if bus_types[k] != :PV
-          continue
-        end
+      changed, reenabled = active_set_q_limits!(
+        net, it, nb;
+        qmin_pu = qmin_pu,
+        qmax_pu = qmax_pu,
+        pv_orig_mask = pv_orig_mask,
+        allow_reenable = allow_reenable,
+        q_hyst_pu = q_hyst_pu,
+        cooldown_iters = cooldown_iters,
+        verbose = verbose,
 
-        qreq   = imag(S_calc[k])    # current Q requirement (p.u.)
-        busIdx = k                  # here busIdx = position in nodeVec
+        # Q required at bus in terms of GENERATOR Q (p.u.)
+        # generator Q = net Qinj + Qload
+        get_qreq_pu = bus -> begin
+          (bus_types[bus] == :Slack) && return 0.0
+          return imag(Scalc_pu[bus]) + Qload_pu[bus]
+        end,
 
-        if qreq > qmax_pu[k]
-          # Bus becomes PQ, Q clamped to Qmax
-          bus_types[k] = :PQ
-          S[k] = complex(real(S[k]), net.qmax_pu[k])
-          changed = true
+        # PV status from bus_types (rectangular solver!)
+        is_pv = bus -> (bus_types[bus] == :PV),
 
-          net.qLimitEvents[busIdx] = :max
-          logQLimitHit!(net, it, busIdx, :max)
-          (verbose>2) && @printf "PV->PQ Bus %d: Q=%.4f > Qmax=%.4f (it=%d)\n" busIdx qreq qmax_pu[k] it
+        # Enforce PV->PQ with generator-Q clamp:
+        # set bus_types to PQ, and set specified net Qinj accordingly.
+        make_pq! = (bus, qclamp_gen_pu, side) -> begin
+          bus_types[bus] = :PQ
 
-        elseif qreq < qmin_pu[k]
-          bus_types[k] = :PQ
-          S[k] = complex(real(S[k]), net.qmin_pu[k])
-          changed = true
+          # Convert generator clamp to net injection clamp: Qinj = Qgen - Qload
+          qinj_pu = qclamp_gen_pu - Qload_pu[bus]
+          S[bus]  = ComplexF64(real(S[bus]), qinj_pu)
 
-          net.qLimitEvents[busIdx] = :min
-          logQLimitHit!(net, it, busIdx, :min)
-          (verbose>2) && @printf "PV->PQ Bus %d: Q=%.4f < Qmin=%.4f (it=%d)\n" busIdx qreq qmin_pu[k] it
-        end
-      end
+          # Mirror clamp into Net/Node (MVar)
+          net.nodeVec[bus]._qƩGen = qclamp_gen_pu * net.baseMVA
+        end,
 
-      if changed
+        # Optional PQ->PV re-enable:
+        # set bus_types to PV; Qspec is unused for PV, but keep S consistent.
+        make_pv! = (bus) -> begin
+          bus_types[bus] = :PV
+
+          # For PV buses, Qspec is unused (2nd equation is ΔV).
+          # Keep S[bus].im *unchanged* to avoid "drift" if we later switch back to PQ.
+          # (Only Pspec matters for PV mismatch.)
+        end,
+      )
+
+      # If bus_types/spec changed, mismatch definition changed (ΔQ ↔ ΔV) => rebuild F
+      if changed || reenabled
         F = mismatch_rectangular(Ybus, V, S, bus_types, Vset, slack_idx)
         max_mis = maximum(abs.(F))
+        history[end] = max_mis  # optional: overwrite last stored value for this iteration
       end
-
-      # 4b) Optional PQ -> PV Re-enable (Hysterese + Cooldown)            
-      if q_hyst_pu > 0.0 || cooldown_iters > 0
-        @inbounds for k = 1:n
-          # Guards:
-          # (1) currently PQ
-          # (2) was originally PV
-          # (3) has a Q-limit event in this calculation
-          if bus_types[k] != :PQ
-            continue
-          end
-          if !(k in pv_orig)
-            continue
-          end
-          if !haskey(net.qLimitEvents, k)
-            continue
-          end
-
-          qreq = imag(S_calc[k])
-          lo = net.qmin_pu[k] + q_hyst_pu
-          hi = net.qmax_pu[k] - q_hyst_pu
-          ready = (qreq > lo) && (qreq < hi)
-
-          if ready && (cooldown_iters > 0)
-            last_it = lastQLimitIter(net, k)
-            if !isnothing(last_it) && (it - last_it) < cooldown_iters
-              ready = false
-            end
-          end
-
-          if ready
-            bus_types[k] = :PV
-            delete!(net.qLimitEvents, k)
-            reenabled = true
-            (verbose>0) && @printf "PQ->PV Bus %d: Q=%.4f in [%.4f, %.4f] (cooldown=%d)\n" k qreq lo hi cooldown_iters
-          end
-        end
-
-        if reenabled
-          F = mismatch_rectangular(Ybus, V, S, bus_types, Vset, slack_idx)
-          max_mis = maximum(abs.(F))
-        end
-      end
+      
     end
-
     # --- Newton-Stepp (FD oder analytisch) -----------------------------
     if use_fd
       V = complex_newton_step_rectangular_fd(Ybus, V, S; slack_idx = slack_idx, damp = damp, h = 1e-6, bus_types = bus_types, Vset = Vset)
@@ -980,11 +825,18 @@ function run_complex_nr_rectangular_for_net!(net::Net; maxiter::Int = 20, tol::F
   end
 
   # 6) Update voltages back to network
+  # --- mirror bus_types back into Net/node types (PV->PQ switching) ---
+  @inbounds for k = 1:n
+    if bus_types[k] == :PQ
+      setBusType!(net, k, "PQ")
+    elseif bus_types[k] == :PV
+      setBusType!(net, k, "PV")
+    end
+  end
   update_net_voltages_from_complex!(net, V)
 
-  # 7) Compute bus injections from final voltages
-  Ibus     = Ybus * V
-  Sbus_pu  = V .* conj.(Ibus)
+  # 7) Compute bus injections from final voltages  
+  Sbus_pu = calc_injections(Ybus, V)
   Sbus_MVA = Sbus_pu .* Sbase
 
   @debug "Final Voltages Mag = " [abs.(V)...]
@@ -1008,9 +860,14 @@ function run_complex_nr_rectangular_for_net!(net::Net; maxiter::Int = 20, tol::F
       node._qƩGen = Qbus_MVar
 
     elseif node._nodeType == Sparlectra.PV
+      # PV bus: Qgen is a result (unless it later switches)
       node._qƩGen = Qbus_MVar
+
+    elseif node._nodeType == Sparlectra.PQ
+      # If this bus was forced PV->PQ by Q-limit, keep the clamped generator Q
+      # (already written in make_pq! as MVar).
       if haskey(net.qLimitEvents, k)
-        @debug "Bus $(k) hit Q limit; set as PQ bus (rectangular solver)."
+        @debug "Bus $(k) is PQ due to Q-limit; keeping clamped Qgen = $(node._qƩGen) MVar."
       end
     end
     # PQ buses / pure loads: do not touch _pƩLoad / _pƩGen here.
@@ -1026,6 +883,7 @@ function run_complex_nr_rectangular_for_net!(net::Net; maxiter::Int = 20, tol::F
   end
 
   setTotalBusPower!(net = net, p = p, q = q)
+  updateShuntPowers!(net = net)
 
   return iters, converged ? 0 : 1
 end
@@ -1072,4 +930,5 @@ function runpf!(net::Net, maxIte::Int, tolerance::Float64 = 1e-6, verbose::Int =
   else
     error("runpf!: unknown method $(method). Use :polar_full or :rectangular.")
   end
+
 end

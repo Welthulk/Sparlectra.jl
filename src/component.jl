@@ -15,7 +15,8 @@
 
 # Author: Udo Schmitz (https://github.com/Welthulk)
 # Date: 10.05.2023
-# include-file component.jl
+# file: src/component.jl
+
 
 @enum ComponentTyp begin
   UnknownC

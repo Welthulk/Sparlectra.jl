@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# file: test/runtests.jl
+
 using Sparlectra
 using Test
 using Logging
@@ -19,7 +21,7 @@ using Printf
 using LinearAlgebra
 
 # keep logs quiet unless there's a warning or error
-global_logger(ConsoleLogger(stderr, Logging.Warn))
+global_logger(ConsoleLogger(stderr, Logging.Info))
 
 include("testgrid.jl")
 include("testremove.jl")
@@ -32,13 +34,15 @@ include("test_solver_interface.jl")
   @test testNetwork() == true
   @test test_NBI_MDO() == true
   @test testImportMatpower() == true  
-  @test test_acpflow(0; lLine_6a6b = 0.01, damp = 1.0, method = :rectangular, opt_sparse = true) == true
-  @test test_acpflow(0; lLine_6a6b = 0.01, damp = 1.0, method = :rectangular, opt_sparse = false) == true
-  @test test_acpflow(0; lLine_6a6b = 0.01, damp = 1.0, method = :polar_full, opt_sparse = true) == true
-  @test test_acpflow(0; lLine_6a6b = 0.01, damp = 1.0, method = :classic, opt_sparse = true) == true
-  @test testISOBusses() == true
   @test testRemoveFunctions() == true
+  @test testISOBusses() == true
+  @test test_mp_inline_vs_manual_shunt() == true
+
   @test test_5BusNet(0, 10.0) == true
   @test test_3BusNet(0, 150.0, :rectangular, false, false) == true
   @test test_3BusNet(0, 150.0, :polar_full, false, false) == true
+  @test test_acpflow(0; lLine_6a6b = 0.01, damp = 1.0, method = :classic, opt_sparse = true) == true  
+  @test test_acpflow(0; lLine_6a6b = 0.01, damp = 1.0, method = :rectangular, opt_sparse = true) == true
+  @test test_acpflow(0; lLine_6a6b = 0.01, damp = 1.0, method = :rectangular, opt_sparse = false) == true
+  @test test_acpflow(0; lLine_6a6b = 0.01, damp = 1.0, method = :polar_full, opt_sparse = true) == true  
 end

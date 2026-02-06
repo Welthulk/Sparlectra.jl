@@ -14,7 +14,7 @@
 
 # Author: Udo Schmitz (https://github.com/Welthulk)
 # Date: 07.09.2023
-# file results.jl
+# file: src/results.jl
 # Purpose: functions for formatting and printing results of power flow calculations
 function format_version(version::VersionNumber)
   major = lpad(version.major, 2, '0')
@@ -126,7 +126,10 @@ function printACPFlowResults(net::Net, ct::Float64, ite::Int, tol::Float64, toFi
   else
     @printf(io, "Status         :%10s\n", "Not Converged")
   end
-  @printf(io, "Case           :%15s\n", net.name)
+  @printf(io, "Case           :%15s\n", net.name)  
+  @printf(io, "Cooldown iters :%10d\n", net.cooldown_iters)
+  @printf(io, "Q-hysteresis   :%10.4f pu\n", net.q_hyst_pu)
+  
   @printf(io, "BaseMVA        :%10d\n", net.baseMVA)
   if auxb > 0 && niso > 0
     @printf(io, "Nodes          :%10d (PV: %d PQ: %d (Aux: %d) Iso: %d Slack: %d\n", busses, npv, npq, auxb, niso, 1)

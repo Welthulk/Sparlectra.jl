@@ -14,7 +14,7 @@
 
 # Author: Udo Schmitz (https://github.com/Welthulk)
 # Date: 04.09.2023
-# file losses.jl
+# file: src/losses.jl
 
 """
     calcNetLosses!(net::Net)

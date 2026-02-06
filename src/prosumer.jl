@@ -14,7 +14,7 @@
 
 # Author: Udo Schmitz (https://github.com/Welthulk)
 # Date: 10.05.2023
-# include-file prosumer.jl
+# file: src/prosumer.jl
 
 # Data type to describe producers and consumers
 """
@@ -260,4 +260,3 @@ function toString(o::ProSumptionType)::String
     return "UnknownP"
   end
 end
-

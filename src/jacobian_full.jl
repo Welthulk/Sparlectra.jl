@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# file: src/jacobian_full.jl
 # jacobian_full.jl — Full-system Newton-Raphson including PV identity rows
 #
 # Features:
@@ -83,11 +84,10 @@ function residuum_state_full_withPV(
   log::Bool,
 )
 
-  # Complex bus voltages
-  V = [bus.vm_pu * exp(im * bus.va_rad) for bus in busVec]
-
-  # Bus power injections from network model
-  S = Diagonal(V) * conj(Y * V)
+  # Complex bus voltages  
+  V = build_voltage_vector(busVec)
+  # Bus power injections from network model  
+  S = calc_injections(Y, V)
 
   n = n_pq + n_pv
   Δ = zeros(Float64, 2n)
@@ -227,7 +227,7 @@ function calcNewtonRaphson_withPVIdentity!(net::Net, Y::AbstractMatrix{ComplexF6
   if verbose > 0
     @info "Running full-system Newton-Raphson with PV identity rows...sparse=$sparse, flatStart=$flatStart, angle_limit=$angle_limit, debug=$debug"
   end
-
+  
   setJacobianAngleLimit(angle_limit)
   setJacobianDebug(debug)
 
@@ -241,10 +241,16 @@ function calcNewtonRaphson_withPVIdentity!(net::Net, Y::AbstractMatrix{ComplexF6
   busVec, slackNum     = getBusData(nodes, Sbase_MVA, flatStart)
   busTypeVec, slackIdx = getBusTypeVec(busVec)
 
-  # Track original PV buses to guard re-enable logic.
-  # Only buses that were PV at the beginning of THIS power flow should be considered for re-enable.
-  pv_orig = Set(b.idx for b in busVec if b.type == Sparlectra.PV)
+  # --- Active-set bookkeeping (PV origin mask for guarded re-enable) ---
+  nb = length(busVec)
+  pv_orig_mask = falses(nb)
+  @inbounds for k = 1:nb
+    pv_orig_mask[k] = (busVec[k].type == Sparlectra.PV)
+  end
 
+  # Re-enable only if hysteresis or cooldown configured (otherwise keep behavior: no re-enable).
+  allow_reenable = (q_hyst_pu > 0.0) || (cooldown_iters > 0)
+  
   n_pv = count(b->b.type==Sparlectra.PV, busVec)
   n_pq = count(b->b.type==Sparlectra.PQ, busVec)
   n    = n_pq + n_pv
@@ -254,98 +260,78 @@ function calcNewtonRaphson_withPVIdentity!(net::Net, Y::AbstractMatrix{ComplexF6
 
   adjBranch = adjacentBranches(Y, debug)
   qmin_pu, qmax_pu = getQLimits_pu(net)
+  if verbose > 1
+    nshow = min(30, length(qmin_pu))
+    println("Q-limits preview (first $nshow buses):")
+    for i = 1:nshow
+      qmin = isfinite(qmin_pu[i]) ? qmin_pu[i] : -Inf
+      qmax = isfinite(qmax_pu[i]) ? qmax_pu[i] : Inf
+      @printf "  bus %d: qmin=%g  qmax=%g\n" i qmin qmax
+    end
+  end
+
 
   it = 0;
   erg = 1
   resetQLimitLog!(net)
-  while it <= maxIte
-    Δ = residuum_full_withPV(Y, busVec, Vset, n_pq, n_pv, (verbose>2))
+  
+  # aggregated reactive load per bus in p.u.
+  Qload_pu = build_qload_pu(net)
 
-    # --- Active set: PV -> PQ when Q-limit violated -------------------------
-    changed = false
+  while it < maxIte
+    Δ = residuum_full_withPV(Y, busVec, Vset, n_pq, n_pv, (verbose>2))    
+    # --- Active-set PV/Q-limits (shared helper in limits.jl) ----------------
     if it > 1
-      @inbounds for k in eachindex(busVec) # iterate over all buses
-        b = busVec[k]
-        if b.type == Sparlectra.PV
-          qreq   = b._qRes        # current Q (p.u.)
-          busIdx = b.idx
-          # NOTE: Only set b.qƩ when a limit is actually violated
-          if qreq > qmax_pu[k]
-            b.type = Sparlectra.PQ
-            b.qƩ = net.qmax_pu[k]          # clamp to Qmax (p.u.)
-            changed = true
-            net.qLimitEvents[busIdx] = :max  # log event (used for re-enable guard)
-            b.isPVactive = false
-            logQLimitHit!(net, it, busIdx, :max)
-            (verbose>0) && @printf "PV->PQ Bus %d: Q=%.4f > Qmax=%.4f (it=%d)\n" busIdx qreq qmax_pu[k] it
-          elseif qreq < qmin_pu[k]
-            b.type = Sparlectra.PQ
-            b.qƩ = net.qmin_pu[k]          # clamp to Qmin (p.u.)
-            changed = true
-            net.qLimitEvents[busIdx] = :min
-            b.isPVactive = false
-            logQLimitHit!(net, it, busIdx, :min)
-            (verbose>0) && @printf "PV->PQ Bus %d: Q=%.4f < Qmin=%.4f (it=%d)\n" busIdx qreq qmin_pu[k] it
-          end
-        end
-      end
+      changed, reenabled = active_set_q_limits!(
+        net, it, nb;
+        qmin_pu = qmin_pu,
+        qmax_pu = qmax_pu,
+        pv_orig_mask = pv_orig_mask,
+        allow_reenable = allow_reenable,
+        q_hyst_pu = q_hyst_pu,
+        cooldown_iters = cooldown_iters,
+        verbose = verbose,
 
-      if changed
+        # Q required at bus (p.u.) from last residuum evaluation
+        get_qreq_pu = bus -> begin
+         # Qgen = Qinj + Qload
+         return busVec[bus]._qRes + Qload_pu[bus]
+        end,
+
+        # Current PV status in busVec
+        is_pv = bus -> (busVec[bus].type == Sparlectra.PV),
+
+        # Enforce PV->PQ with Q clamp
+        make_pq! = (bus, qclamp_gen_pu, side) -> begin
+          busVec[bus].type = Sparlectra.PQ
+          busVec[bus].isPVactive = false
+
+          # convert Qgen clamp to Qinj spec for PQ equation:
+          qinj_pu = qclamp_gen_pu - Qload_pu[bus]
+          busVec[bus].qƩ = qinj_pu
+
+          # mirror generator clamp into node (MVar)
+          net.nodeVec[busVec[bus].nodeIdx]._qƩGen = qclamp_gen_pu * net.baseMVA
+        end,
+
+        # Optional PQ->PV re-enable
+        make_pv! = (bus) -> begin
+          busVec[bus].type = Sparlectra.PV
+          busVec[bus].isPVactive = true
+        end,
+      )
+
+      # If the active-set changed bus types/specs, recompute residuum immediately
+      if changed || reenabled
         Δ = residuum_full_withPV(Y, busVec, Vset, n_pq, n_pv, (verbose>2))
       end
 
-      # --- Optional re-enable: PQ -> PV when Q back inside band, hysteresis and cooldown ok
-      #      with GUARDS to prevent enabling PQ buses that were never PV or never hit a limit.
-      reenabled = false
-      @inbounds for k in eachindex(busVec)
-        b = busVec[k]
-
-        # Guards:
-        # (1) must currently be PQ
-        # (2) must have been PV at the beginning (pv_orig)
-        # (3) must have recorded a Q-limit event in this PF run
-        if b.type != Sparlectra.PQ
-          ;
-          continue;
-        end
-        if !(b.idx in pv_orig)
-          ;
-          continue;
-        end
-        if !haskey(net.qLimitEvents, b.idx)
-          ;
-          continue;
-        end
-
-        qreq = b._qRes
-        lo = net.qmin_pu[k] + q_hyst_pu
-        hi = net.qmax_pu[k] - q_hyst_pu
-        ready = (qreq > lo) && (qreq < hi)
-
-        if ready && (cooldown_iters > 0)
-          last_it = Sparlectra.lastQLimitIter(net, b.idx)
-          if !isnothing(last_it) && (it - last_it) < cooldown_iters
-            ready = false
-          end
-        end
-
-        if ready
-          b.type = Sparlectra.PV
-          b.isPVactive = true
-          delete!(net.qLimitEvents, b.idx)  # clear event after successful re-enable
-          reenabled = true
-          (verbose>0) && @printf "PQ->PV Bus %d: Q=%.4f within [%.4f, %.4f] (cooldown=%d)\n" b.idx qreq lo hi cooldown_iters
-        end
-      end
-      if reenabled
-        Δ = residuum_full_withPV(Y, busVec, Vset, n_pq, n_pv, (verbose>2))
-      end
     end
 
     # Convergence check
     nrm = norm(Δ)
     if verbose > 0
-      @info "2-norm = $(nrm), tol = $(tolerance), ite = $(it)"
+      @printf "2-norm = %.6e, tol = %.6e, ite = %d\n" nrm tolerance it
     end
 
     if nrm < tolerance
@@ -405,16 +391,14 @@ function calcNewtonRaphson_withPVIdentity!(net::Net, Y::AbstractMatrix{ComplexF6
     idx += count(i -> i < idx, isoNodes)
     setVmVa!(node = nodes[idx], vm_pu = bus.vm_pu, va_deg = rad2deg(bus.va_rad))
 
-    if bus.isPVactive == false
-      nodes[idx]._qƩGen = bus._qRes * Sbase_MVA
-      @debug "Bus $(bus.idx) hit Q limit; set as PQ bus."
-    end
-
-    if bus.type == Sparlectra.PV
-      nodes[idx]._qƩGen = bus._qRes * Sbase_MVA
-    elseif bus.type == Sparlectra.Slack
+    if bus.type == Sparlectra.Slack
       nodes[idx]._pƩGen = bus._pRes * Sbase_MVA
       nodes[idx]._qƩGen = bus._qRes * Sbase_MVA
+    elseif bus.type == Sparlectra.PV
+      nodes[idx]._qƩGen = bus._qRes * Sbase_MVA
+    else
+      # PQ: do not touch _qƩGen here
+      # (if this PQ is due to Q-limit, make_pq! already wrote the clamp into net.nodeVec[bus]._qƩGen)
     end
   end
 
@@ -429,7 +413,7 @@ function calcNewtonRaphson_withPVIdentity!(net::Net, Y::AbstractMatrix{ComplexF6
   end
 
   setTotalBusPower!(net = net, p = p_MW, q = q_MVar)
-
+  updateShuntPowers!(net = net)
   return it, erg
 end
 
@@ -439,6 +423,12 @@ end
 function runpf_full!(net::Net, maxIte::Int, tolerance::Float64 = 1e-6, verbose::Int = 0; opt_sparse::Bool = false, opt_flatstart::Bool = net.flatstart)
   printYBus = (length(net.nodeVec) < 20) && (verbose > 1)
   Y = createYBUS(net = net, sparse = opt_sparse, printYBUS = printYBus)
-  return calcNewtonRaphson_withPVIdentity!(net, Y, maxIte; tolerance = tolerance, verbose = verbose, sparse = opt_sparse, flatStart = opt_flatstart, angle_limit = false, debug = false)
+  if verbose > 1
+    Yabs_max = maximum(abs.(Y))
+    Ydiag_max = maximum(abs.(diag(Y)))
+    Ydiag_imag_max = maximum(abs.(imag.(diag(Y))))
+    @printf "Ybus summary: Yabs_max=%.6e, Ydiag_max=%.6e, Ydiag_imag_max=%.6e\n" Yabs_max Ydiag_max Ydiag_imag_max
+  end
+  return calcNewtonRaphson_withPVIdentity!(net, Y, maxIte; tolerance = tolerance, verbose = verbose, sparse = opt_sparse, flatStart = opt_flatstart, angle_limit = false, debug = false)  
 end
 
