@@ -36,6 +36,8 @@ include("test_solver_interface.jl")
   @test testImportMatpower() == true  
   @test testRemoveFunctions() == true
   @test testISOBusses() == true
+  @test test_mp_inline_vs_manual_shunt() == true
+
   @test test_5BusNet(0, 10.0) == true
   @test test_3BusNet(0, 150.0, :rectangular, false, false) == true
   @test test_3BusNet(0, 150.0, :polar_full, false, false) == true

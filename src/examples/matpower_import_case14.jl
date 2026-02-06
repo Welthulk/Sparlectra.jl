@@ -23,15 +23,22 @@ using Printf
 # -----------------------------------------------------------------------------
 
 case = "case30.m"      # or "case14.m"
+#case = "case39.m"      # or "case30.m"
+#case = "case57.m"     # or "case39.m"
+#case = "case300.m"     # or "case39.m"
+#case = "case18.m"     # or "case14.m"
+#case = "case141.m"     # or "case14.m"
+#case = "case69.m"     # or "case14.m"
+#case = "case85.m"     # or "case14.m"
+
 flatstart = true
 verbose = 1  # 0=quiet, 1=normal, 2=debug
-cooldown_iters = 3  # number of iterations to continue after convergence (for logging)
-q_hyst_pu = 0.01  # hysteresis for Q-limit enforcement (pu of max Q)
-
+cooldown_iters = 10  # number of iterations to continue after convergence (for logging)
+q_hyst_pu = 0.1  # hysteresis for Q-limit enforcement (pu of max Q)
+print("\e[2J\e[H") # clear screen and move cursor to home position
+println("----------------------------------------------------------------------------------------------")
 println("Sparlectra version: ", Sparlectra.version(), "\n")
 println("Importing MATPOWER case file: $case\n")
-println("DEMO: Matpower_import_case14.jl\n  ------------------------------\n")
-
 
 # -----------------------------------------------------------------------------
 # Ensure case is available locally (download on demand)

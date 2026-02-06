@@ -128,12 +128,21 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
       area = area,
     )
     # fix 04.02.2026: MATPOWER -> p.u. admittance components:
+    #=
     pShunt_pu = pShunt / baseMVA
     qShunt_pu = qShunt / baseMVA
     if pShunt != 0.0 || qShunt != 0.0
       addShunt!(net=myNet, busName=busName, pShunt=pShunt_pu, qShunt=qShunt_pu)
     end
+    =#
+    # new 04.02.2026: directly add shunt as bus shunt
+    pShunt = Float64(row[busDict["Gs"]])
+    qShunt = Float64(row[busDict["Bs"]])
 
+    if pShunt != 0.0 || qShunt != 0.0
+      addShuntMatpower!(net=myNet, busName=busName, Gs=pShunt, Bs=qShunt)
+    end
+    
     if pLoad != 0.0 || qLoad != 0.0
       qMax = min(abs(mFak * qLoad), baseMVA)
       qMin = -qMax

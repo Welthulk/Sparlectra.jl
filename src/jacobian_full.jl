@@ -87,8 +87,8 @@ function residuum_state_full_withPV(
   # Complex bus voltages
   V = [bus.vm_pu * exp(im * bus.va_rad) for bus in busVec]
 
-  # Bus power injections from network model
-  S = Diagonal(V) * conj(Y * V)
+  # Bus power injections from network model  
+  S = calc_injections(Y, V)
 
   n = n_pq + n_pv
   Δ = zeros(Float64, 2n)
@@ -418,7 +418,7 @@ function calcNewtonRaphson_withPVIdentity!(net::Net, Y::AbstractMatrix{ComplexF6
   end
 
   setTotalBusPower!(net = net, p = p_MW, q = q_MVar)
-
+  updateShuntPowers!(net = net)
   return it, erg
 end
 
@@ -428,6 +428,12 @@ end
 function runpf_full!(net::Net, maxIte::Int, tolerance::Float64 = 1e-6, verbose::Int = 0; opt_sparse::Bool = false, opt_flatstart::Bool = net.flatstart)
   printYBus = (length(net.nodeVec) < 20) && (verbose > 1)
   Y = createYBUS(net = net, sparse = opt_sparse, printYBUS = printYBus)
-  return calcNewtonRaphson_withPVIdentity!(net, Y, maxIte; tolerance = tolerance, verbose = verbose, sparse = opt_sparse, flatStart = opt_flatstart, angle_limit = false, debug = false)
+  if verbose > 1
+    Yabs_max = maximum(abs.(Y))
+    Ydiag_max = maximum(abs.(diag(Y)))
+    Ydiag_imag_max = maximum(abs.(imag.(diag(Y))))
+    @printf "Ybus summary: Yabs_max=%.6e, Ydiag_max=%.6e, Ydiag_imag_max=%.6e\n" Yabs_max Ydiag_max Ydiag_imag_max
+  end
+  return calcNewtonRaphson_withPVIdentity!(net, Y, maxIte; tolerance = tolerance, verbose = verbose, sparse = opt_sparse, flatStart = opt_flatstart, angle_limit = false, debug = false)  
 end
 

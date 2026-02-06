@@ -916,10 +916,7 @@ function run_complex_nr_rectangular_for_net!(net::Net; maxiter::Int = 20, tol::F
     reenabled = false
 
     if it > 1
-      # Compute current net injections from present V (p.u.)
-      Ibus    = Ybus * V
-      Scalc_pu = V .* conj.(Ibus)   # net injection at bus in p.u.
-      
+      Scalc_pu = calc_injections(Ybus, V)
       # Precompute Qload per bus (p.u.) once per iteration
       Qload_pu = zeros(Float64, nb)
       @inbounds for ps in net.prosumpsVec
@@ -1005,9 +1002,8 @@ function run_complex_nr_rectangular_for_net!(net::Net; maxiter::Int = 20, tol::F
   end
   update_net_voltages_from_complex!(net, V)
 
-  # 7) Compute bus injections from final voltages
-  Ibus     = Ybus * V
-  Sbus_pu  = V .* conj.(Ibus)
+  # 7) Compute bus injections from final voltages  
+  Sbus_pu = calc_injections(Ybus, V)
   Sbus_MVA = Sbus_pu .* Sbase
 
   @debug "Final Voltages Mag = " [abs.(V)...]
@@ -1054,6 +1050,7 @@ function run_complex_nr_rectangular_for_net!(net::Net; maxiter::Int = 20, tol::F
   end
 
   setTotalBusPower!(net = net, p = p, q = q)
+  updateShuntPowers!(net = net)
 
   return iters, converged ? 0 : 1
 end
@@ -1100,4 +1097,5 @@ function runpf!(net::Net, maxIte::Int, tolerance::Float64 = 1e-6, verbose::Int =
   else
     error("runpf!: unknown method $(method). Use :polar_full or :rectangular.")
   end
+
 end

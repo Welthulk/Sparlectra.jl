@@ -61,13 +61,14 @@ function run_acpflow(;
     end
 
     myNet = createNetFromMatPowerFile(filename = in_path, log = (verbose > 0), flatstart = opt_flatstart, cooldown = cooldown_iters, q_hyst_pu = q_hyst_pu)
+    
     if verbose > 1
       # --- DEBUG START ---
       @info "DEBUG Full net after import:"
       @printf "DEBUG Full net after import:\n"
       showNet(myNet, verbose = true)
 
-      Y = createYBUS(net=myNet, sparse=false, printYBUS=false)  # dense for inspection
+      Y = createYBUS(net=myNet, sparse=false, printYBUS=false)  # dense for inspection      
       V0, slack = initialVrect(myNet; flatstart=myNet.flatstart)
       S = buildComplexSVec(myNet)
 

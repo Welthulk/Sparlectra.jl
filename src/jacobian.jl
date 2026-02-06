@@ -561,7 +561,7 @@ function calcNewtonRaphson!(net::Net, Y::AbstractMatrix{ComplexF64}, maxIte::Int
   end
 
   setTotalBusPower!(net = net, p = p_MW, q = q_MVar)
-
+  updateShuntPowers!(net = net)
   return iteration_count, erg
 end
 
@@ -588,7 +588,12 @@ function runpf_classic!(net::Net, maxIte::Int, tolerance::Float64 = 1e-6, verbos
   end
 
   Y = createYBUS(net = net, sparse = opt_sparse, printYBUS = (verbose > 1))
-
+  if verbose > 1
+    Yabs_max = maximum(abs.(Y))
+    Ydiag_max = maximum(abs.(diag(Y)))
+    Ydiag_imag_max = maximum(abs.(imag.(diag(Y))))
+    @printf "Ybus summary: Yabs_max=%.6e, Ydiag_max=%.6e, Ydiag_imag_max=%.6e\n" Yabs_max Ydiag_max Ydiag_imag_max
+  end
   return calcNewtonRaphson!(net, Y, maxIte, tolerance, verbose, opt_sparse, false, (verbose > 3), opt_flatstart)
 end
 
