@@ -70,8 +70,7 @@ function complex_newton_step_rectangular_fd(Ybus, V, S; slack_idx::Int = 1, damp
   m  = length(F0)  # expected = 2 * (n-1)
 
   # Non-slack buses
-  non_slack = collect(1:n)
-  deleteat!(non_slack, slack_idx)
+  non_slack = non_slack_indices(n, slack_idx)
 
   # Variables: Vr(non-slack) and Vi(non-slack)
   nvar = 2 * (n - 1)
@@ -102,18 +101,7 @@ function complex_newton_step_rectangular_fd(Ybus, V, S; slack_idx::Int = 1, damp
   end
 
   # Solve J * δx = -F0
-  δx = nothing
-  try
-    δx = J \ (-F0)
-  catch e
-    if e isa LinearAlgebra.SingularException
-      # Fallback to pseudo-inverse if J is singular/ill-conditioned
-      δx = pinv(J) * (-F0)
-    else
-      rethrow(e)
-    end
-  end
-
+  δx = solve_linear(J, -F0; allow_pinv = true)
   # Damping
   δx .*= damp
 
