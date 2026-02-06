@@ -84,9 +84,8 @@ function residuum_state_full_withPV(
   log::Bool,
 )
 
-  # Complex bus voltages
-  V = [bus.vm_pu * exp(im * bus.va_rad) for bus in busVec]
-
+  # Complex bus voltages  
+  V = build_voltage_vector(busVec)
   # Bus power injections from network model  
   S = calc_injections(Y, V)
 
@@ -275,7 +274,11 @@ function calcNewtonRaphson_withPVIdentity!(net::Net, Y::AbstractMatrix{ComplexF6
   it = 0;
   erg = 1
   resetQLimitLog!(net)
-  while it <= maxIte
+  
+  # aggregated reactive load per bus in p.u.
+  Qload_pu = build_qload_pu(net)
+
+  while it < maxIte
     Δ = residuum_full_withPV(Y, busVec, Vset, n_pq, n_pv, (verbose>2))    
     # --- Active-set PV/Q-limits (shared helper in limits.jl) ----------------
     if it > 1
@@ -290,19 +293,25 @@ function calcNewtonRaphson_withPVIdentity!(net::Net, Y::AbstractMatrix{ComplexF6
         verbose = verbose,
 
         # Q required at bus (p.u.) from last residuum evaluation
-        get_qreq_pu = bus -> busVec[bus]._qRes,
+        get_qreq_pu = bus -> begin
+         # Qgen = Qinj + Qload
+         return busVec[bus]._qRes + Qload_pu[bus]
+        end,
 
         # Current PV status in busVec
         is_pv = bus -> (busVec[bus].type == Sparlectra.PV),
 
         # Enforce PV->PQ with Q clamp
-        make_pq! = (bus, qclamp_pu, side) -> begin
+        make_pq! = (bus, qclamp_gen_pu, side) -> begin
           busVec[bus].type = Sparlectra.PQ
-          busVec[bus].qƩ   = qclamp_pu
           busVec[bus].isPVactive = false
 
-          # Mirror clamp into Net/Node (MVar)
-          net.nodeVec[bus]._qƩGen = qclamp_pu * net.baseMVA
+          # convert Qgen clamp to Qinj spec for PQ equation:
+          qinj_pu = qclamp_gen_pu - Qload_pu[bus]
+          busVec[bus].qƩ = qinj_pu
+
+          # mirror generator clamp into node (MVar)
+          net.nodeVec[busVec[bus].nodeIdx]._qƩGen = qclamp_gen_pu * net.baseMVA
         end,
 
         # Optional PQ->PV re-enable
@@ -382,28 +391,14 @@ function calcNewtonRaphson_withPVIdentity!(net::Net, Y::AbstractMatrix{ComplexF6
     idx += count(i -> i < idx, isoNodes)
     setVmVa!(node = nodes[idx], vm_pu = bus.vm_pu, va_deg = rad2deg(bus.va_rad))
 
-    if bus.isPVactive == false
-      nodes[idx]._qƩGen = bus._qRes * Sbase_MVA
-      @debug "Bus $(bus.idx) hit Q limit; set as PQ bus."
-    end
-
-    if bus.type == Sparlectra.PQ
-      setBusType!(net, bus.idx, "PQ")  # oder: nodes[idx]._nodeType = Sparlectra.PQ
-    elseif bus.type == Sparlectra.PV
-      setBusType!(net, bus.idx, "PV")
-    elseif bus.type == Sparlectra.Slack
-      setBusType!(net, bus.idx, "Slack")  # optional, falls nötig
-    end
-
-    if bus.type == Sparlectra.PV
-      nodes[idx]._qƩGen = bus._qRes * Sbase_MVA
-    elseif bus.type == Sparlectra.Slack
+    if bus.type == Sparlectra.Slack
       nodes[idx]._pƩGen = bus._pRes * Sbase_MVA
       nodes[idx]._qƩGen = bus._qRes * Sbase_MVA
-    end
-
-    if bus.isPVactive == false
+    elseif bus.type == Sparlectra.PV
       nodes[idx]._qƩGen = bus._qRes * Sbase_MVA
+    else
+      # PQ: do not touch _qƩGen here
+      # (if this PQ is due to Q-limit, make_pq! already wrote the clamp into net.nodeVec[bus]._qƩGen)
     end
   end
 
