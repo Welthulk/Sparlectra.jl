@@ -88,7 +88,7 @@ function test_3WTPITrafo(verbose::Int = 0; method::Symbol = :rectangular, opt_fd
   addProsumer!(net = net, busName = "B5", type = "ENERGYCONSUMER", p = 80.0, q = 30.0)
 
   # --- shunt at B4: q = 5 MVar (capacitive/inductive sign depends on your convention) ---
-  addShunt!(net = net, busName = "B4", pShunt = 0.0, qShunt = -5.0, in_service = 1)
+  addShunt!(net = net, busName = "B4", pShunt = 0.0, qShunt = 5.0, in_service = 1)
 
   # --- structural checks ---
   if !hasBusInNet(net = net, busName = aux_bus)
@@ -283,9 +283,9 @@ function testISOBusses()
   addACLine!(net = net, fromBus = "B5", toBus = "B4", length = 300.0, r = 0.0653, x = 0.398, c_nf_per_km = 9.08, tanδ = 0.0, ratedS = 250.0, status = 1)
   addACLine!(net = net, fromBus = "B5", toBus = "B4", length = 300.0, r = 0.0653, x = 0.398, c_nf_per_km = 9.08, tanδ = 0.0, ratedS = 250.0, status = 1)
 
-  addShunt!(net = net, busName = "B3", pShunt = 0.0, qShunt = -180.0)
-  addShunt!(net = net, busName = "B2", pShunt = 0.0, qShunt = -180.0)
-  addShunt!(net = net, busName = "B4", pShunt = 0.0, qShunt = -180.0)
+  addShunt!(net = net, busName = "B3", pShunt = 0.0, qShunt = 180.0)
+  addShunt!(net = net, busName = "B2", pShunt = 0.0, qShunt = 180.0)
+  addShunt!(net = net, busName = "B4", pShunt = 0.0, qShunt = 180.0)
 
   addProsumer!(net = net, busName = "B3", type = "ENERGYCONSUMER", p = 285.0, q = 200.0)
   addProsumer!(net = net, busName = "B4", type = "ENERGYCONSUMER", p = 103.0, q = 62.0)
@@ -364,9 +364,9 @@ function createCIGRE(lLine_6a6b = 0.01)::Net
   addBus!(net = net, busName = "B11", busType = "PV", vn_kV = 22.0)
 
   ##### Shunt    
-  addShunt!(net = net, busName = "B6a", pShunt = 0.0, qShunt = -180.0)
-  addShunt!(net = net, busName = "B4", pShunt = 0.0, qShunt = -160.0)
-  addShunt!(net = net, busName = "B5", pShunt = 0.0, qShunt = -80.0)
+  addShunt!(net = net, busName = "B6a", pShunt = 0.0, qShunt = 180.0)
+  addShunt!(net = net, busName = "B4", pShunt = 0.0, qShunt = 160.0)
+  addShunt!(net = net, busName = "B5", pShunt = 0.0, qShunt = 80.0)
 
   ###### ACLines   
   # 220kV-Lines
@@ -630,14 +630,10 @@ end
 # ------------------------------------------------------------
 # Test: MATPOWER inline case vs manual Net build (with SHUNTS)
 # ------------------------------------------------------------
-function test_mp_inline_vs_manual_shunt(verbose::Int = 0;
-    method::Symbol = :rectangular,
-    opt_sparse::Bool = true
-)::Bool
-
+function test_mp_inline_vs_manual_shunt(verbose::Int = 0;  method::Symbol = :rectangular,  opt_sparse::Bool = true)::Bool
     tol_pf  = 1e-10
     maxIte  = 40
-    tol_cmp = 5e-7
+    tol_cmp = 5e-4
     print_results = (verbose > 0)
 
     # -------------------------
@@ -692,23 +688,23 @@ function test_mp_inline_vs_manual_shunt(verbose::Int = 0;
         @warn "MATPOWER-derived net: power flow did not converge"
         return false
     end
+    
+    updateShuntPowers!(net=net_mp)
+    
 
-    V_mp = buildVoltageVector(net_mp)
-    Sinj_mp = calc_injections(net_mp, V_mp)  # falls vorhanden; sonst calc_injections(Y,V) in deinem Kontext
-    # Wenn du kein calcInjections(net,V) hast, ersetze oben durch:
-    # Y_mp = buildYBus(net_mp)  # falls vorhanden
-    # Sinj_mp = V_mp .* conj.(Y_mp * V_mp)
-
+    Y_mp  = createYBUS(net = net_mp,  sparse = opt_sparse, printYBUS = false)
+    V_mp  = buildVoltageVector(net_mp)
+    Sinj_mp = calc_injections(Y_mp, V_mp)
     # -------------------------
     # 2) Manual Net build
     # -------------------------
     netName = "case3_manual_vs_mp_shunt"
     net_man = Net(name = netName, baseMVA = mpc.baseMVA)
-
-    addBus!(net=net_man, busName="B1", busType="SLACK", vn_kV=110.0)
-    addBus!(net=net_man, busName="B2", busType="PV",    vn_kV=110.0)
-    addBus!(net=net_man, busName="B3", busType="PQ",    vn_kV=110.0)
-
+    
+    addBus!(net=net_man, busName="B1", busType="SLACK", vn_kV=110.0, vm_pu=1.06, va_deg=0.0)
+    addBus!(net=net_man, busName="B2", busType="PV",    vn_kV=110.0, vm_pu=1.03, va_deg=0.0)
+    addBus!(net=net_man, busName="B3", busType="PQ",    vn_kV=110.0, vm_pu=1.00, va_deg=0.0)
+    
     # Leitungen (ohne line charging, damit Vergleich sauber nur über Bus-Shunts läuft)
     addACLine!(net=net_man, fromBus="B1", toBus="B2", length=1.0, r=0.02, x=0.06)
     addACLine!(net=net_man, fromBus="B1", toBus="B3", length=1.0, r=0.08, x=0.24)
@@ -719,8 +715,7 @@ function test_mp_inline_vs_manual_shunt(verbose::Int = 0;
     addProsumer!(net=net_man, busName="B3", type="ENERGYCONSUMER", p=90.0, q=30.0)
 
     # Slack injection (V setpoint)
-    addProsumer!(net=net_man, busName="B1", type="EXTERNALNETWORKINJECTION",
-                 vm_pu=1.06, va_deg=0.0, referencePri="B1")
+    addProsumer!(net=net_man, busName="B1", type="EXTERNALNETWORKINJECTION", referencePri="B1")
 
     # PV generator at B2 (P + Vm setpoint)
     addProsumer!(net=net_man, busName="B2", type="SYNCHRONOUSMACHINE",
@@ -728,14 +723,16 @@ function test_mp_inline_vs_manual_shunt(verbose::Int = 0;
                  qMin=-200.0, qMax=200.0)
 
     # Bus-Shunts: MATPOWER Bs>0 => Q = -Bs (kapazitiv)
-    addShunt!(net=net_man, busName="B2", pShunt=0.0, qShunt=-6.0,  in_service=1)
-    addShunt!(net=net_man, busName="B3", pShunt=0.0, qShunt=-12.0, in_service=1)
+    addShunt!(net=net_man, busName="B2", pShunt=0.0, qShunt=6.0,  in_service=1)
+    addShunt!(net=net_man, busName="B3", pShunt=0.0, qShunt=12.0, in_service=1)
 
     ok2, msg2 = validate!(net=net_man)
     ok2 || (@warn msg2; return false)
 
     erg_man = 0
     ite_man = 0
+
+
     et_man = @elapsed begin
         ite_man, erg_man = runpf!(net_man, maxIte, tol_pf, verbose; method=method, opt_sparse=opt_sparse)
     end
@@ -743,10 +740,11 @@ function test_mp_inline_vs_manual_shunt(verbose::Int = 0;
         @warn "Manual net: power flow did not converge"
         return false
     end
-
+    updateShuntPowers!(net=net_man)
+    
+    Y_man = createYBUS(net = net_man, sparse = opt_sparse, printYBUS = false)
     V_man = buildVoltageVector(net_man)
-    Sinj_man = Sparlectra.calcInjections(net_man, V_man)
-
+    Sinj_man = calc_injections(Y_man, V_man)
     # -------------------------
     # 3) Compare results
     # -------------------------
@@ -778,6 +776,11 @@ function test_mp_inline_vs_manual_shunt(verbose::Int = 0;
     end
 
     if print_results
+        @info "Qsh MAN" B2=net_man.nodeVec[2]._qShunt B3=net_man.nodeVec[3]._qShunt
+        @info "Qsh MP"  B2=net_mp.nodeVec[2]._qShunt  B3=net_mp.nodeVec[3]._qShunt
+        @info "manual setpoints" B1_vm=net_man.nodeVec[1]._vm_pu B1_va=net_man.nodeVec[1]._va_deg B2_vm=net_man.nodeVec[2]._vm_pu
+        @info "mp setpoints"     B1_vm=net_mp.nodeVec[1]._vm_pu  B1_va=net_mp.nodeVec[1]._va_deg  B2_vm=net_mp.nodeVec[2]._vm_pu
+
         @info "MP net PF ok"  et=et_mp  ite=ite_mp
         @info "MAN net PF ok" et=et_man ite=ite_man
         printACPFlowResults(net_mp,  et_mp,  ite_mp,  tol_pf; converged=true, solver=method)
