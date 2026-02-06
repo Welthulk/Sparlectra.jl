@@ -8,6 +8,7 @@
 ### New Features
 * Updated shunt modeling: addShunts now exclusively supports the Y‑model; voltage‑dependent shunt power must be represented via loads or generators.
 * Unified solver logic for reactive power limits and PV/PQ switching
+* added new testcase matpower vs manual network
 
 ## Version 0.4.33 – 2026-02-02
 
