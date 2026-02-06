@@ -1,4 +1,5 @@
 # Change Log
+## Version 0.4.34 – 2026-06-02
 ### Fixes
 * Closed Issue 110:
 * Corrected per‑unit conversion issues discovered during the refactoring of the MATPOWER import interface, including proper handling of line, transformer, and shunt parameters.
