@@ -256,7 +256,24 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
   return myNet
 end
 
-function createNetFromMatPowerFile(; filename::String, log::Bool=false, flatstart::Bool=false, cooldown::Int = 2, q_hyst_pu::Float64 = 0.01)::Net
+function createNetFromMatPowerFile(; filename::String,
+    log::Bool=false,
+    flatstart::Bool=false,
+    cooldown::Int = 2,
+    q_hyst_pu::Float64 = 0.01,
+    verbose::Int = 0)::Net
+
   mpc = MatpowerIO.read_case(filename; legacy_compat=true)
-  return createNetFromMatPowerCase(; mpc=mpc, log=log, flatstart=flatstart, cooldown = cooldown, q_hyst_pu = q_hyst_pu)
+
+  # Build the network first
+  net = createNetFromMatPowerCase(; mpc=mpc, log=log, flatstart=flatstart,
+                                  cooldown=cooldown, q_hyst_pu=q_hyst_pu)
+
+  # Always apply MATPOWER isolated flags (BUS_TYPE==4) onto net
+  MatpowerIO.apply_mp_isolated_buses!(net, mpc; verbose=verbose)
+
+  # Only if not flatstart: take VM/VA from mpc.bus as initial guess
+  MatpowerIO.apply_mp_bus_vmva_init!(net, mpc; flatstart=flatstart, verbose=verbose)
+
+  return net
 end

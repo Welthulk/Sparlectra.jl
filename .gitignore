@@ -12,3 +12,4 @@ TODO.md
 network_dump.txt
 test/test_experments.jl
 test/test_experment.jl
+*.log

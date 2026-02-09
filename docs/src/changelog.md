@@ -1,4 +1,15 @@
 # Change Log
+## Version 0.4.35 – 2026-09-02
+### Fixes
+* Stabilized MATPOWER case import and bus indexing in the presence of isolated buses.
+* Fixed bus classification and ordering to ensure consistent solver input for flatstart and non-flatstart runs.
+* Improved internal consistency checks for network topology before solver execution.
+
+### Improvements
+* Refined MATPOWER comparison tooling (Vm/Va diff diagnostics and angle alignment).
+* Minor internal cleanups in MatpowerIO and network initialization to improve robustness.
+
+## Version 0.4.34 – 2026-06-02
 ### Fixes
 * Closed Issue 110:
 * Corrected per‑unit conversion issues discovered during the refactoring of the MATPOWER import interface, including proper handling of line, transformer, and shunt parameters.
