@@ -31,7 +31,7 @@ const MPOWER_DIR = normpath(joinpath(pkgdir(@__MODULE__), "data", "mpower"))
 
 # resource data types for working with Sparlectra
 const Wurzel3 = 1.7320508075688772
-const SparlectraVersion = v"0.4.34"
+const SparlectraVersion = v"0.4.35"
 version() = SparlectraVersion
 abstract type AbstractBranch end
 
@@ -99,9 +99,9 @@ export
   getShunt!, markIsolatedBuses!,setTotalBusPower!, setPVBusVset!, setQLimits!, getNodeVm,distributeBusResults!, getTotalBusPower, getTotalLosses, buildVoltageVector,initialVrect, buildComplexSVec,addShuntMatpower!,
   add2WTPIModelTrafo!, add3WTPiModelTrafo!,showNet, buildQLimits!,updateShuntPowers!,
   # remove_functions.jl
-  removeBus!, removeBranch!, removeACLine!, removeTrafo!, removeShunt!, removeProsumer!, clearIsolatedBuses!,
+  removeBus!, removeBranch!, removeACLine!, removeTrafo!, removeShunt!, removeProsumer!, clearIsolatedBuses!,apply_mp_isolated_buses!,
   # import.jl
-  createNetFromMatPowerFile, _createDict,
+  createNetFromMatPowerFile, _createDict, apply_matpower_bus_voltage!,apply_mp_bus_vmva_init!,
   # exportMatPower.jl
   writeMatpowerCasefile,
   # equicircuit.jl
