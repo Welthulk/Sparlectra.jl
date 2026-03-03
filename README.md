@@ -8,10 +8,33 @@ This package contains tools for subsequent network calculations. It primarily fe
 
 ---
 
+## Documentation
+
+- User documentation: <https://welthulk.github.io/Sparlectra.jl/>
+- API reference: <https://welthulk.github.io/Sparlectra.jl/reference/>
+
 ## Installation
 ```julia
 using Pkg
 Pkg.add("Sparlectra")
+```
+
+## Quick Start
+
+```julia
+using Sparlectra
+
+# Ensure case file exists locally (downloads on demand into data/mpower)
+case_path = ensure_casefile("case14.m")
+
+# Build network and run Newton-Raphson power flow
+net = createNetFromMatPowerFile(case_path, false)
+ite, erg = runpf!(net, 10, 1e-6, 0)
+
+if erg == 0
+    calcNetLosses!(net)
+    printACPFlowResults(net, 0.0, ite, 1e-6)
+end
 ```
 
 ### Network Creation
@@ -33,7 +56,6 @@ data while still allowing reproducible experiments and benchmarks.
 ### License
 This project is licensed under the Apache License, Version 2.0.
 [The license file](LICENSE) contains the complete licensing information.
-
 
 
 
