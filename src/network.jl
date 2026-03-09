@@ -78,6 +78,7 @@ struct Net
   linesAC::Vector{ACLineSegment}
   trafos::Vector{PowerTransformer}
   branchVec::Vector{Branch}
+  linkVec::Vector{BusLink}
   prosumpsVec::Vector{ProSumer}
   shuntVec::Vector{Shunt}
   busDict::Dict{String,Int}
@@ -87,15 +88,14 @@ struct Net
   _locked::Bool
   flatstart::Bool                     # flatstart flag for power flow initialization
   shuntDict::Dict{Int,Int}
-  isoNodes::Vector{Int}  
+  isoNodes::Vector{Int}
   qLimitLog::Vector{Any}
   cooldown_iters::Int
   q_hyst_pu::Float64
   qmin_pu::Vector{Float64}            # pro Bus Qmin (p.u.)
   qmax_pu::Vector{Float64}            # pro Bus Qmax (p.u.)
   qLimitEvents::Dict{Int,Symbol}      # BusIdx -> :min | :max (PV→PQ Change)  
-  
-  
+
   #! format: off
   function Net(; name::String, baseMVA::Float64, vmin_pu::Float64 = 0.9, vmax_pu::Float64 = 1.1, cooldown_iters::Int = 0, q_hyst_pu::Float64 = 0.0, flatstart::Bool = false)    
     
@@ -108,6 +108,7 @@ struct Net
         [], # linesAC
         [], # trafos
         [], # branchVec
+        [], # linkVec
         [], # prosumpsVec
         [], # shuntVec
         Dict{String,Int}(), # busDict
@@ -129,7 +130,7 @@ struct Net
   function Base.show(io::IO, net::Net)
     println(io, "Net: ", net.name)
     println(io, "Base MVA: ", net.baseMVA)
-    println(io, "Nodes: ", length(net.nodeVec), ", Lines: ", length(net.linesAC), ", Transformers: ", length(net.trafos), ", Branches: ", length(net.branchVec))
+    println(io, "Nodes: ", length(net.nodeVec), ", Lines: ", length(net.linesAC), ", Transformers: ", length(net.trafos), ", Branches: ", length(net.branchVec), "Links: ", length(net.linkVec), ", Prosumers: ", length(net.prosumpsVec), ", Shunts: ", length(net.shuntVec))
     println(io, "Slack buses: ", net.slackVec, ", flatstart: ", net.flatstart, ", locked: ", net._locked)
     println(io, "Vmin / Vmax: ", net.vmin_pu, " / ", net.vmax_pu)
     println(io, "cooldown_iters: ", net.cooldown_iters, ", q_hyst_pu: ", net.q_hyst_pu)
@@ -161,7 +162,6 @@ function showNet(io::IO, net::Net; verbose::Bool = false)
   println(io, "\n--- Q-limit handling ---")
   println(io, "cooldown_iters: ", net.cooldown_iters)
   println(io, "q_hyst_pu:      ", net.q_hyst_pu)
-  println(io, "qmin_pu:        ", net.qmin_pu)
   println(io, "qmax_pu:        ", net.qmax_pu)
   println(io, "qLimitEvents:   ", net.qLimitEvents)
 
@@ -208,6 +208,12 @@ function showNet(io::IO, net::Net; verbose::Bool = false)
   for (i, s) in enumerate(net.shuntVec)
     println(io, "\n[shunt ", i, "]")
     show(io, s)
+  end
+
+  println(io, "\n==================== Links (", length(net.linkVec), ") ====================")
+  for (i, l) in enumerate(net.linkVec)
+    println(io, "\n[link ", i, "]")
+    show(io, l)
   end
 
   println(io, "\n==================== END Net ====================")
@@ -356,7 +362,6 @@ function addBus!(;
     end
   end
 
-  
   if (uppercase(busType) == "SLACK") || (uppercase(busType) == "Slack ")
     push!(net.slackVec, busIdx)
   end
@@ -394,13 +399,7 @@ function addShunt!(; net::Net, busName::String, pShunt::Float64, qShunt::Float64
   ypu = ComplexF64(pShunt, qShunt) / net.baseMVA
 
   # Create via constructor (p/q here are ONLY used to set y_pu_shunt in this new semantics)
-  sh = Shunt(fromBus = busIdx,
-             id = idShunt,
-             base_MVA = net.baseMVA,
-             vn_kV_shunt = vn_kV,
-             p_shunt = pShunt,
-             q_shunt = qShunt,
-             status = in_service)
+  sh = Shunt(fromBus = busIdx, id = idShunt, base_MVA = net.baseMVA, vn_kV_shunt = vn_kV, p_shunt = pShunt, q_shunt = qShunt, status = in_service)
 
   # Enforce the intended semantics explicitly (in case constructor changes again)
   sh.y_pu_shunt = ypu
@@ -474,9 +473,7 @@ Parameters:
 - `values_are_pu = false`: Boolean indicating if the values are in per unit (default is false).
 """
 
-function addBranch!(; net::Net, from::Int, to::Int, branch::AbstractBranch, status::Integer=1,
-                    ratio=nothing, side=nothing, vn_kV=nothing,
-                    values_are_pu::Bool=false)
+function addBranch!(; net::Net, from::Int, to::Int, branch::AbstractBranch, status::Integer = 1, ratio = nothing, side = nothing, vn_kV = nothing, values_are_pu::Bool = false)
   @assert from != to "From and to bus must be different"
   idBrunch = length(net.branchVec) + 1
   fOrig = nothing
@@ -493,6 +490,44 @@ function addBranch!(; net::Net, from::Int, to::Int, branch::AbstractBranch, stat
   end
   br = Branch(branchIdx = idBrunch, from = from, to = to, baseMVA = net.baseMVA, branch = branch, id = idBrunch, status = status, ratio = ratio, side = side, vn_kV = vn_kV, fromOid = fOrig, toOid = tOrig, values_are_pu = values_are_pu)
   push!(net.branchVec, br)
+end
+
+"""
+    addLink!(; net::Net, fromBus::String, toBus::String, status::Int = 1)::Int
+
+Adds an impedance-less topological bus link (e.g. busbar coupler) used for
+post-power-flow KCL allocation.
+"""
+function addLink!(; net::Net, fromBus::String, toBus::String, status::Int = 1)::Int
+  @assert !net._locked "Network is locked"
+  from = geNetBusIdx(net = net, busName = fromBus)
+  to = geNetBusIdx(net = net, busName = toBus)
+  @assert from != to "fromBus and toBus must be different"
+
+  idLink = length(net.linkVec) + 1
+  push!(net.linkVec, BusLink(linkIdx = idLink, fromBus = from, toBus = to, status = status))
+  return idLink
+end
+
+"""
+    setNetLinkStatus!(; net::Net, linkNr::Int, status::Int)
+
+Sets an existing link status (0/1).
+"""
+function setNetLinkStatus!(; net::Net, linkNr::Int, status::Int)
+  @assert 1 <= linkNr <= length(net.linkVec) "linkNr out of range"
+  setLinkStatus!(net.linkVec[linkNr], status)
+end
+
+"""
+    getNetLinks(; net::Net, fromBus::String, toBus::String)::Vector{BusLink}
+
+Returns all links between two buses (both directions).
+"""
+function getNetLinks(; net::Net, fromBus::String, toBus::String)::Vector{BusLink}
+  from = geNetBusIdx(net = net, busName = fromBus)
+  to = geNetBusIdx(net = net, busName = toBus)
+  return [l for l in net.linkVec if (l.fromBus == from && l.toBus == to) || (l.fromBus == to && l.toBus == from)]
 end
 
 """
@@ -545,7 +580,7 @@ function addACLine!(; net::Net, fromBus::String, toBus::String, length::Float64,
   vn_kV = getNodeVn(net.nodeVec[from])
   vn_2_kV = getNodeVn(net.nodeVec[to])
   @assert vn_kV == vn_2_kV "Voltage level of the from bus $(vn_kV) does not match the to bus $(vn_2_kV)"
-  if length > 1.0 
+  if length > 1.0
     _par_length = true
   else
     _par_length = false
@@ -950,32 +985,29 @@ MATPOWER semantics:
 - Internally we stamp them as pu-admittance: y_pu = (Gs + j*Bs)/baseMVA.
 - IMPORTANT: do NOT add fixed P/Q to the bus power balance.
 """
-function addShuntMatpower!(; net::Net, busName::String, Gs::Float64, Bs::Float64, in_service::Int=1)
-    busIdx  = geNetBusIdx(net = net, busName = busName)
-    idShunt = length(net.shuntVec) + 1
-    net.shuntDict[busIdx] = idShunt
+function addShuntMatpower!(; net::Net, busName::String, Gs::Float64, Bs::Float64, in_service::Int = 1)
+  busIdx = geNetBusIdx(net = net, busName = busName)
+  idShunt = length(net.shuntVec) + 1
+  net.shuntDict[busIdx] = idShunt
 
-    vn_kV = getNodeVn(net.nodeVec[busIdx])
+  vn_kV = getNodeVn(net.nodeVec[busIdx])
 
-    # Create shunt as "PQ-style" just to populate p_shunt/q_shunt fields meaningfully
-    # (report values at 1.0 pu). This is NOT used for stamping.
-    sh = Shunt(fromBus = busIdx, id = idShunt,
-               base_MVA = net.baseMVA, vn_kV_shunt = vn_kV,
-               p_shunt = Gs, q_shunt = Bs,
-               status = in_service)
+  # Create shunt as "PQ-style" just to populate p_shunt/q_shunt fields meaningfully
+  # (report values at 1.0 pu). This is NOT used for stamping.
+  sh = Shunt(fromBus = busIdx, id = idShunt, base_MVA = net.baseMVA, vn_kV_shunt = vn_kV, p_shunt = Gs, q_shunt = Bs, status = in_service)
 
-    # Override stamping admittance to MATPOWER semantics:
-    # MATPOWER: Gs/Bs are MW/MVAr at 1 pu -> y_pu = (Gs + j Bs)/baseMVA
-    sh.y_pu_shunt = ComplexF64(Gs, Bs) / net.baseMVA
+  # Override stamping admittance to MATPOWER semantics:
+  # MATPOWER: Gs/Bs are MW/MVAr at 1 pu -> y_pu = (Gs + j Bs)/baseMVA
+  sh.y_pu_shunt = ComplexF64(Gs, Bs) / net.baseMVA
 
-    push!(net.shuntVec, sh)
+  push!(net.shuntVec, sh)
 
-    #if in_service == 1
-    #    # IMPORTANT: report only (do NOT affect bus injection spec)
-    #    addShuntReportPower!(node = net.nodeVec[busIdx], p = Gs, q = Bs)
-    #end
+  #if in_service == 1
+  #    # IMPORTANT: report only (do NOT affect bus injection spec)
+  #    addShuntReportPower!(node = net.nodeVec[busIdx], p = Gs, q = Bs)
+  #end
 
-    return nothing
+  return nothing
 end
 
 """
@@ -1633,8 +1665,10 @@ function buildComplexSVec(net::Net)
   baseMVA = net.baseMVA
 
   for bus = 1:n
-    Pgen = 0.0; Qgen = 0.0
-    Pload = 0.0; Qload = 0.0
+    Pgen = 0.0
+    Qgen = 0.0
+    Pload = 0.0
+    Qload = 0.0
 
     for ps in net.prosumpsVec
       getPosumerBusIndex(ps) == bus || continue
@@ -1642,9 +1676,11 @@ function buildComplexSVec(net::Net)
       q = isnothing(ps.qVal) ? 0.0 : ps.qVal
 
       if isGenerator(ps)
-        Pgen += p; Qgen += q
+        Pgen += p
+        Qgen += q
       else
-        Pload += p; Qload += q
+        Pload += p
+        Qload += q
       end
     end
 
@@ -1654,12 +1690,9 @@ function buildComplexSVec(net::Net)
   end
 
   return S
-
 end
 
-
-
-  """
+"""
     updateShuntPowers!(net; reset_node=true)
 
 Recomputes shunt P/Q (MW/MVar) from solved bus voltages and shunt pu-admittances.
@@ -1667,7 +1700,7 @@ Writes back:
 - sh.p_shunt / sh.q_shunt (results)
 - node._pShunt / node._qShunt (for reporting)
 """
-function updateShuntPowers!(;net::Net, reset_node::Bool=true)
+function updateShuntPowers!(; net::Net, reset_node::Bool = true)
   # Optionally reset node aggregates (recommended)
   if reset_node
     for n in net.nodeVec
@@ -1702,4 +1735,3 @@ function updateShuntPowers!(;net::Net, reset_node::Bool=true)
     net.nodeVec[bus]._qShunt += Q
   end
 end
-

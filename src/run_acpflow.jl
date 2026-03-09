@@ -98,6 +98,7 @@ function run_acpflow(;
   if erg == 0 || printResultAnyCase
     # Calculate network losses and print results
     calcNetLosses!(myNet)
+    calcLinkFlowsKCL!(myNet)
     jpath = printResultToFile ? out_path : ""
     if show_results || printResultAnyCase
       printACPFlowResults(myNet, etime, ite, tol, printResultToFile, jpath; converged = (erg == 0), solver = method)
@@ -133,6 +134,7 @@ function run_net_acpflow(; net::Net, max_ite::Int = 10, tol::Float64 = 1e-6, ver
   if erg == 0 || printResultAnyCase
     # Calculate network losses and print results
     calcNetLosses!(net)
+    calcLinkFlowsKCL!(net)
     jpath = printResultToFile ? out_path : ""
     printACPFlowResults(net, etime, ite, tol, printResultToFile, jpath; converged = (erg == 0), solver = method)
   elseif erg == 1
