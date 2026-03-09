@@ -69,7 +69,11 @@ end
 
 function run_link_demo(; link_closed::Bool)
   net = build_link_demo_net(link_closed = link_closed)
-  iterations, status = runpf!(net, 25)
+  iterations = 0
+  status = -1
+  elapsed_s = @elapsed begin
+    iterations, status = runpf!(net, 25)
+  end
 
   println("\n====================")
   println("Scenario: ", link_closed ? "Link CLOSED (Bus1-Bus1a)" : "Link OPEN (Bus1-Bus1a)")
@@ -80,7 +84,7 @@ function run_link_demo(; link_closed::Bool)
     # Branch flow/loss tables in printACPFlowResults are populated by calcNetLosses!.
     calcNetLosses!(net)
     calcLinkFlowsKCL!(net)
-    printACPFlowResults(net, 0.0, iterations, 1e-8)
+    printACPFlowResults(net, elapsed_s, iterations, 1e-8)
   else
     println("Power flow did not converge.")
   end
