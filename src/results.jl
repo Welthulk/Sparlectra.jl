@@ -23,6 +23,140 @@ function format_version(version::VersionNumber)
   return "$major.$minor.$patch"
 end
 
+"""
+    ACPFlowReport
+
+Structured container for AC power flow results.
+
+The vectors (`nodes`, `branches`, `links`, `q_limit_events`) are table-like and can
+be converted directly to `DataFrame`s if `DataFrames.jl` is available, e.g.
+`DataFrame(report.nodes)`.
+"""
+struct ACPFlowReport
+  metadata::NamedTuple
+  nodes::Vector{NamedTuple}
+  branches::Vector{NamedTuple}
+  links::Vector{NamedTuple}
+  q_limit_events::Vector{NamedTuple}
+end
+
+function Base.show(io::IO, report::ACPFlowReport)
+  print(io,
+    "ACPFlowReport(",
+    "case=", report.metadata.case,
+    ", converged=", report.metadata.converged,
+    ", nodes=", length(report.nodes),
+    ", branches=", length(report.branches),
+    ", links=", length(report.links),
+    ", q_limit_events=", length(report.q_limit_events),
+    ")")
+end
+
+_default0(x) = isnothing(x) ? 0.0 : x
+
+"""
+    buildACPFlowReport(net::Net; ...)
+
+Builds a structured report object from solved network data.
+This provides a machine-readable alternative to `printACPFlowResults`.
+"""
+function buildACPFlowReport(net::Net;
+  ct::Float64 = 0.0,
+  ite::Int = 0,
+  tol::Float64 = 1e-6,
+  converged::Bool = true,
+  solver::Symbol = :NR,
+)::ACPFlowReport
+  nodes_sorted = sort(net.nodeVec, by = x -> x.busIdx)
+
+  node_rows = NamedTuple[]
+  for n in nodes_sorted
+    push!(node_rows, (
+      bus = n.busIdx,
+      bus_name = n.comp.cName,
+      type = toString(n._nodeType),
+      vm_pu = n._vm_pu,
+      va_deg = n._va_deg,
+      vn_kV = n.comp.cVN,
+      v_kV = n.comp.cVN * n._vm_pu,
+      p_gen_MW = _default0(n._pƩGen),
+      q_gen_MVar = _default0(n._qƩGen),
+      p_load_MW = _default0(n._pƩLoad),
+      q_load_MVar = _default0(n._qƩLoad),
+      p_shunt_MW = _default0(n._pShunt),
+      q_shunt_MVar = _default0(n._qShunt),
+      is_isolated = isIsolated(n),
+      q_limit_hit = haskey(net.qLimitEvents, n.busIdx),
+    ))
+  end
+
+  branch_rows = NamedTuple[]
+  for br in net.branchVec
+    f = br.fBranchFlow
+    t = br.tBranchFlow
+    p_from = isnothing(f) || isnothing(f.pFlow) ? 0.0 : f.pFlow
+    q_from = isnothing(f) || isnothing(f.qFlow) ? 0.0 : f.qFlow
+    p_to = isnothing(t) || isnothing(t.pFlow) ? 0.0 : t.pFlow
+    q_to = isnothing(t) || isnothing(t.qFlow) ? 0.0 : t.qFlow
+    p_loss = _default0(br.pLosses)
+    q_loss = _default0(br.qLosses)
+    rated = isnothing(br.sn_MVA) ? 0.0 : br.sn_MVA
+    overload = rated > 0.0 && max(abs(p_from), abs(p_to)) > rated
+
+    push!(branch_rows, (
+      branch = br.comp.cName,
+      branch_index = br.branchIdx,
+      from_bus = br.fromBus,
+      to_bus = br.toBus,
+      status = br.status,
+      p_from_MW = p_from,
+      q_from_MVar = q_from,
+      p_to_MW = p_to,
+      q_to_MVar = q_to,
+      p_loss_MW = p_loss,
+      q_loss_MVar = q_loss,
+      rated_MVA = rated,
+      overloaded = overload,
+    ))
+  end
+
+  link_rows = NamedTuple[]
+  for l in net.linkVec
+    push!(link_rows, (
+      link = l.cName,
+      link_index = l.linkIdx,
+      from_bus = l.fromBus,
+      to_bus = l.toBus,
+      status = l.status,
+      p_MW = _default0(l.pFlow_MW),
+      q_MVar = _default0(l.qFlow_MVar),
+      ifrom_kA = _default0(l.iFrom_kA),
+      ito_kA = _default0(l.iTo_kA),
+    ))
+  end
+
+  q_events = NamedTuple[]
+  for (bus, hit) in sort(collect(net.qLimitEvents), by = x -> x[1])
+    push!(q_events, (bus = bus, hit = hit))
+  end
+
+  p_loss_total, q_loss_total = getTotalLosses(net = net)
+  metadata = (
+    case = net.name,
+    baseMVA = net.baseMVA,
+    converged = converged,
+    elapsed_s = ct,
+    iterations = ite,
+    tolerance = tol,
+    solver = solver,
+    timestamp = Dates.now(),
+    total_p_loss_MW = p_loss_total,
+    total_q_loss_MVar = q_loss_total,
+  )
+
+  return ACPFlowReport(metadata, node_rows, branch_rows, link_rows, q_events)
+end
+
 function formatBranchResults(net::Net)
   #! format: off
   formatted_results = @sprintf("\n===========================================================================================================================\n")
@@ -90,6 +224,7 @@ function printACPFlowResults(net::Net, ct::Float64, ite::Int, tol::Float64, toFi
 
   busses = length(net.nodeVec)
   branches = length(net.branchVec)
+  links = length(net.linkVec)
   lines = length(net.linesAC)
   trafos = length(net.trafos)
   gens = 0
@@ -139,6 +274,7 @@ function printACPFlowResults(net::Net, ct::Float64, ite::Int, tol::Float64, toFi
     @printf(io, "Nodes          :%10d (PV: %d PQ: %d Slack: %d)\n", busses, npv, npq, 1)
   end
   @printf(io, "Branches       :%10d\n", branches)
+  @printf(io, "Links          :%10d\n", links)
   @printf(io, "Lines          :%10d\n", lines)
   @printf(io, "Trafos         :%10d\n", trafos)
   @printf(io, "Generators     :%10d\n", gens)
@@ -218,6 +354,19 @@ function printACPFlowResults(net::Net, ct::Float64, ite::Int, tol::Float64, toFi
   @printf(io, "-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------\n")
   println(io, flowResults)
 
+
+  if !isempty(net.linkVec)
+    @printf(io, "\n----------------------------------- Link Flows (KCL) -----------------------------------\n")
+    @printf(io, "| %-5s | %-8s | %-8s | %-6s | %-12s | %-12s | %-12s | %-12s |\n", "Nr", "From", "To", "Stat", "P [MW]", "Q [MVar]", "Ifrom [kA]", "Ito [kA]")
+    @printf(io, "----------------------------------------------------------------------------------------------------------------\n")
+    for l in net.linkVec
+      p = isnothing(l.pFlow_MW) ? NaN : l.pFlow_MW
+      q = isnothing(l.qFlow_MVar) ? NaN : l.qFlow_MVar
+      ifrom = isnothing(l.iFrom_kA) ? NaN : l.iFrom_kA
+      ito = isnothing(l.iTo_kA) ? NaN : l.iTo_kA
+      @printf(io, "| %-5d | %-8d | %-8d | %-6d | %-12.3f | %-12.3f | %-12.4f | %-12.4f |\n", l.linkIdx, l.fromBus, l.toBus, l.status, p, q, ifrom, ito)
+    end
+  end
   if toFile
     close(io)
     #println("Results have been written to $(joinpath(path, filename))")

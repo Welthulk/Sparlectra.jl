@@ -17,80 +17,86 @@
 using Sparlectra
 
 """
-    analyze_network(net::Net; verbose_components::Bool=true, io::IO=stdout)
+    analyze_network(net::Net)
 
-Analyze a `Sparlectra.Net` and print:
-- a compact summary (number of buses/branches/shunts/prosumers),
-- optional component-level details,
-- dictionary mappings,
-- consistency checks (invalid references/mismatches).
-
-Useful for debugging network edits and remove operations.
+Analyze a Sparlectra network structure and print detailed information about its components.
+Helpful for debugging issues with removal operations.
 """
-function analyze_network(net::Net; verbose_components::Bool=true, io::IO=stdout)
-  bus_name_by_idx = Dict{Int, String}(idx => String(name) for (name, idx) in net.busDict)
+function analyze_network(net::Net)
+  println("\n====================== NETWORK ANALYSIS ======================")
+  println("Network: $(net.name) (BaseMVA: $(net.baseMVA))")
 
-  println(io, "\n====================== NETWORK ANALYSIS ======================")
-  println(io, "Network: $(net.name) (BaseMVA: $(net.baseMVA))")
-  println(io, "Summary: buses=$(length(net.nodeVec)), branches=$(length(net.branchVec)), shunts=$(length(net.shuntVec)), prosumers=$(length(net.prosumpsVec)), isolated=$(length(net.isoNodes))")
-
-  if verbose_components
-    println(io, "\n--- BUSES ($(length(net.nodeVec))) ---")
-    for (i, node) in enumerate(net.nodeVec)
-      bus_type = toString(node._nodeType)
-      slack = isSlack(node) ? " [SLACK]" : ""
-      println(io, "$i: $(node.comp.cName) (busIdx=$(node.busIdx), type=$bus_type)$slack")
-    end
-
-    println(io, "\n--- BRANCHES ($(length(net.branchVec))) ---")
-    for (i, branch) in enumerate(net.branchVec)
-      from_name = get(bus_name_by_idx, branch.fromBus, "Unknown")
-      to_name = get(bus_name_by_idx, branch.toBus, "Unknown")
-      println(io, "$i: $(branch.comp.cName) (from=$(branch.fromBus):$from_name, to=$(branch.toBus):$to_name, status=$(branch.status))")
-    end
-
-    println(io, "\n--- SHUNTS ($(length(net.shuntVec))) ---")
-    for (i, shunt) in enumerate(net.shuntVec)
-      bus_name = get(bus_name_by_idx, shunt.busIdx, "Unknown")
-      println(io, "$i: $(shunt.comp.cName) (busIdx=$(shunt.busIdx):$bus_name)")
-    end
-
-    println(io, "\n--- PROSUMERS ($(length(net.prosumpsVec))) ---")
-    for (i, prosumer) in enumerate(net.prosumpsVec)
-      p_type = toString(prosumer.proSumptionType)
-      bus_idx = prosumer.comp.cFrom_bus
-      bus_name = get(bus_name_by_idx, bus_idx, "Unknown")
-      println(io, "$i: $(prosumer.comp.cName) (busIdx=$bus_idx:$bus_name, type=$p_type)")
-    end
+  # Bus analysis
+  println("\n--- BUSES ($(length(net.nodeVec))) ---")
+  for (i, node) in enumerate(net.nodeVec)
+    bus_type = toString(node._nodeType)
+    slack = isSlack(node) ? "SLACK" : ""
+    println("$i: $(node.comp.cName) (busIdx: $(node.busIdx), type: $bus_type) $slack")
   end
 
-  println(io, "\n--- BUS DICTIONARY ---")
-  for (name, idx) in sort(collect(net.busDict); by=x -> x[2])
-    println(io, "$name => $idx")
+  # Branch analysis
+  println("\n--- BRANCHES ($(length(net.branchVec))) ---")
+  for (i, branch) in enumerate(net.branchVec)
+    println("$i: $(branch.comp.cName) (from: $(branch.fromBus), to: $(branch.toBus), status: $(branch.status))")
   end
 
-  println(io, "\n--- SHUNT DICTIONARY ---")
-  for (busIdx, shuntIdx) in sort(collect(net.shuntDict); by=x -> x[1])
-    bus_name = get(bus_name_by_idx, busIdx, "Unknown")
-    println(io, "Bus $busIdx ($bus_name) => Shunt $shuntIdx")
+  # Bus dictionary mapping
+  println("\n--- BUS DICTIONARY ---")
+  for (name, idx) in net.busDict
+    println("$name => $idx")
   end
 
-  println(io, "\n--- ISOLATED NODES ($(length(net.isoNodes))) ---")
-  for idx in sort(collect(net.isoNodes))
-    bus_name = get(bus_name_by_idx, idx, "Unknown")
-    println(io, "$idx ($bus_name)")
+  # Shunt analysis
+  println("\n--- SHUNTS ($(length(net.shuntVec))) ---")
+  for (i, shunt) in enumerate(net.shuntVec)
+    println("$i: $(shunt.comp.cName) (busIdx: $(shunt.busIdx))")
   end
 
-  _print_consistency_report(net, bus_name_by_idx; io)
-  println(io, "\n================================================================")
+  # Shunt dictionary mapping
+  println("\n--- SHUNT DICTIONARY ---")
+  for (busIdx, shuntIdx) in net.shuntDict
+    bus_name = "Unknown"
+    for (name, idx) in net.busDict
+      if idx == busIdx
+        bus_name = name
+        break
+      end
+    end
+    println("Bus $busIdx ($bus_name) => Shunt $shuntIdx")
+  end
+
+  # Prosumer analysis
+  println("\n--- PROSUMERS ($(length(net.prosumpsVec))) ---")
+  for (i, prosumer) in enumerate(net.prosumpsVec)
+    p_type = toString(prosumer.proSumptionType)
+    bus_idx = prosumer.comp.cFrom_bus
+    bus_name = "Unknown"
+    for (name, idx) in net.busDict
+      if idx == bus_idx
+        bus_name = name
+        break
+      end
+    end
+    println("$i: $(prosumer.comp.cName) (busIdx: $bus_idx ($bus_name), type: $p_type)")
+  end
+
+  # Isolated nodes
+  println("\n--- ISOLATED NODES ($(length(net.isoNodes))) ---")
+  for idx in net.isoNodes
+    println("$idx")
+  end
+
+  println("\n================================================================")
 end
 
 """
-    build_demo_network() -> Net
+    test_debug()
 
-Build a compact demo grid that can be used for analyzer debugging.
+Create a test network and analyze it with detailed debug information.
+This helps understand the network structure before and after removal operations.
 """
-function build_demo_network()::Net
+function test_debug()
+  # Create a test network as in testremove.jl
   net = Net(name = "remove_test", baseMVA = 100.0)
 
   # Add buses
@@ -119,21 +125,10 @@ function build_demo_network()::Net
   addProsumer!(net = net, busName = "B5", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.03, va_deg = 0.0, referencePri = "B5")
   addProsumer!(net = net, busName = "B6", type = "GENERATOR", p = 80.0, q = 30.0, vm_pu = 1.02)
 
-  return net
-end
-
-"""
-    run_demo() -> Net
-
-Build a demo network, run analysis before and after removing branch 2.
-Returns the modified network.
-"""
-function run_demo()::Net
-  net = build_demo_network()
-
   println("\n=================== INITIAL NETWORK STATE ===================")
   analyze_network(net)
 
+  # Test removing a branch
   println("\n\n=================== AFTER BRANCH REMOVAL ===================")
   println("Removing branch 2...")
   removeBranch!(net = net, branchNr = 2)
@@ -142,77 +137,5 @@ function run_demo()::Net
   return net
 end
 
-function _print_consistency_report(net::Net, bus_name_by_idx::Dict{Int, String}; io::IO=stdout)
-  issues = String[]
-  bus_count = length(net.nodeVec)
-  shunt_count = length(net.shuntVec)
-
-  # busDict indices should point to valid nodes
-  for (name, idx) in net.busDict
-    if !(1 <= idx <= bus_count)
-      push!(issues, "busDict[$name] = $idx is out of bounds (1:$bus_count)")
-    elseif String(name) != net.nodeVec[idx].comp.cName
-      push!(issues, "busDict[$name] = $idx points to node $(net.nodeVec[idx].comp.cName)")
-    end
-  end
-
-  # branch endpoints should reference valid buses
-  for (i, branch) in enumerate(net.branchVec)
-    if !(1 <= branch.fromBus <= bus_count)
-      push!(issues, "branch[$i] has invalid fromBus=$(branch.fromBus)")
-    end
-    if !(1 <= branch.toBus <= bus_count)
-      push!(issues, "branch[$i] has invalid toBus=$(branch.toBus)")
-    end
-  end
-
-  # shunt vector and shuntDict should reference valid buses/shunt indices
-  for (i, shunt) in enumerate(net.shuntVec)
-    if !(1 <= shunt.busIdx <= bus_count)
-      push!(issues, "shunt[$i] has invalid busIdx=$(shunt.busIdx)")
-    end
-  end
-  for (busIdx, shuntIdx) in net.shuntDict
-    if !(1 <= busIdx <= bus_count)
-      push!(issues, "shuntDict has invalid busIdx=$busIdx")
-    end
-    if !(1 <= shuntIdx <= shunt_count)
-      push!(issues, "shuntDict[$busIdx] has invalid shunt index=$shuntIdx")
-    end
-  end
-
-  # prosumers must point to valid buses
-  for (i, prosumer) in enumerate(net.prosumpsVec)
-    bus_idx = prosumer.comp.cFrom_bus
-    if !(1 <= bus_idx <= bus_count)
-      push!(issues, "prosumer[$i] has invalid cFrom_bus=$bus_idx")
-    end
-  end
-
-  # isolated node list should reference existing buses
-  for idx in net.isoNodes
-    if !(1 <= idx <= bus_count)
-      push!(issues, "isoNodes contains invalid bus index=$idx")
-    end
-  end
-
-  println(io, "\n--- CONSISTENCY CHECKS ---")
-  if isempty(issues)
-    println(io, "OK: no structural issues detected.")
-  else
-    println(io, "Found $(length(issues)) issue(s):")
-    for msg in issues
-      println(io, "- $msg")
-    end
-  end
-
-  # quick reachability info for isolated nodes
-  if !isempty(net.isoNodes)
-    names = [get(bus_name_by_idx, idx, "Unknown") for idx in sort(collect(net.isoNodes))]
-    println(io, "Isolated buses: ", join(names, ", "))
-  end
-end
-
-if abspath(PROGRAM_FILE) == @__FILE__
-  run_demo()
-end
+# Call the test_debug function
+net = test_debug()

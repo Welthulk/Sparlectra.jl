@@ -100,6 +100,35 @@ addProsumer!(
 addShunt!(net = net, busName = "B1", pShunt = 0.0, qShunt = 1.0)
 ```
 
+### Bus Links (Topological Couplers)
+
+Use links to model ideal busbar couplers/sectionalizers without adding impedance to the YBUS.
+`BusLink` is represented as a network component with type `LinkC`.
+
+```julia
+# Add a topological link between two existing buses
+addLink!(net = net, fromBus = "B1", toBus = "B2", status = 1)
+
+# Open/close a link by index
+setNetLinkStatus!(net = net, linkNr = 1, status = 0)  # 0=open, 1=closed
+```
+
+How links are handled:
+
+- Closed links are treated as ideal couplers during `runpf!`.
+- Buses connected by active links share voltage magnitude and angle in the internal power-flow model.
+- After convergence, call `calcLinkFlowsKCL!` to allocate/report link exchange on the original topology.
+
+```julia
+ite, erg = runpf!(net, 25; method = :polar_full)
+if erg == 0
+  calcNetLosses!(net)
+  calcLinkFlowsKCL!(net)
+end
+```
+
+For a complete scenario with open/closed link comparison, see `src/examples/using_links.jl`.
+
 ## Running Power Flow
 
 ```julia

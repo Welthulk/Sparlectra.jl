@@ -1,5 +1,10 @@
 # Change Log
-## Version 0.4.35 – 2026-09-02
+## Version 0.5.0 – 2026-03-11
+### Highlights
+* Introduced bus-links +  documentation 
+* Consolidated recent documentation
+
+## Version 0.4.35 – 2026-02-02
 ### Fixes
 * Stabilized MATPOWER case import and bus indexing in the presence of isolated buses.
 * Fixed bus classification and ordering to ensure consistent solver input for flatstart and non-flatstart runs.
