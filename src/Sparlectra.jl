@@ -67,6 +67,8 @@ export
   ProSumer,
   # Branch
   AbstractBranch, Branch, BranchModel, BranchFlow, getBranchFlow, setBranchFlow!, getBranchNumber, getBranchLosses, setBranchLosses!, setBranchStatus!,
+  # Link
+  BusLink, setLinkStatus!, setLinkFlow!, setLinkCurrent!,
   # Shunt
   Shunt,
   # Net
@@ -137,6 +139,7 @@ include("transformer.jl")
 include("prosumer.jl")
 include("node.jl")
 include("branch.jl")
+include("link.jl")
 include("shunt.jl")
 include("network.jl")
 include("busdata.jl")
