@@ -49,6 +49,8 @@ export
   ProSumer,
   # Branch
   AbstractBranch, Branch, BranchModel, BranchFlow, getBranchFlow, setBranchFlow!, getBranchNumber, getBranchLosses, setBranchLosses!, setBranchStatus!,
+  # Link
+  BusLink, setLinkStatus!, setLinkFlow!, setLinkCurrent!,
   # Shunt
   Shunt,
   # Net
@@ -79,7 +81,7 @@ export
   addBus!, addShunt!, addACLine!, addPIModelACLine!, add2WTrafo!, addPIModelTrafo!, addProsumer!, lockNet!, validate!, hasBusInNet, addBusGenPower!, addBusLoadPower!, addBusShuntPower!, setNodeVoltage!, setNodeAngle!,
   getNetOrigBusIdx, geNetBusIdx, setNetBranchStatus!, getNetBranch, getNetBranchNumberVec, setTotalLosses!, getTotalLosses, getBusType, get_bus_vn_kV, get_vn_kV, updateBranchParameters!, hasShunt!, 
   getShunt!, markIsolatedBuses!,setTotalBusPower!, setPVBusVset!, setQLimits!, getNodeVm,distributeBusResults!, getTotalBusPower, getTotalLosses, buildVoltageVector,initialVrect, buildComplexSVec,
-  add2WTPIModelTrafo!, add3WTPiModelTrafo!,
+  add2WTPIModelTrafo!, add3WTPiModelTrafo!, addLink!, setNetLinkStatus!, getNetLinks, calcLinkFlowsKCL!,
   # remove_functions.jl
   removeBus!, removeBranch!, removeACLine!, removeTrafo!, removeShunt!, removeProsumer!, clearIsolatedBuses!,
   # import.jl
@@ -112,6 +114,7 @@ include("transformer.jl")
 include("prosumer.jl")
 include("node.jl")
 include("branch.jl")
+include("link.jl")
 include("shunt.jl")
 include("network.jl")
 include("busdata.jl")
