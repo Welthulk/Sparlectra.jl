@@ -135,7 +135,7 @@ function test_3WTPITrafo(verbose::Int = 0; method::Symbol = :rectangular, opt_fd
     printQLimitLog(net; sort_by = :bus)
   end
 
-  return true
+  return result
 end
 
 function test_acpflow(verbose::Int = 0; lLine_6a6b::Float64 = 0.01, damp::Float64 = 1.0, method::Symbol = :rectangular, opt_sparse = true)::Bool
@@ -180,9 +180,9 @@ function test_NBI_MDO()
   end
 
   for b in myNet.branchVec
-    tupple = (b.fromBus, b.toBus)
-    if tupple ∉ branchTupleSet
-      push!(branchTupleSet, tupple)
+    tuple = (b.fromBus, b.toBus)
+    if tuple ∉ branchTupleSet
+      push!(branchTupleSet, tuple)
     end
   end
 
