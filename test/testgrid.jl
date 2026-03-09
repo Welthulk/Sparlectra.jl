@@ -689,21 +689,27 @@ function test_mp_inline_vs_manual_shunt(verbose::Int = 0; method::Symbol = :rect
 
   Y_mp = createYBUS(net = net_mp, sparse = opt_sparse, printYBUS = false)
   V_mp = buildVoltageVector(net_mp)
+  Sinj_mp = calc_injections(Y_mp, V_mp)
   # -------------------------
   # 2) Manual Net build
   # -------------------------
   netName = "case3_manual_vs_mp_shunt"
   net_man = Net(name = netName, baseMVA = 100.0)
-
+  addBus!(net = net_man, busName = "B1", busType = "SLACK", vn_kV = 110.0, vm_pu = 1.06, va_deg = 0.0)
+  addBus!(net = net_man, busName = "B2", busType = "PV", vn_kV = 110.0, vm_pu = 1.03, va_deg = 0.0)
   addBus!(net = net_man, busName = "B3", busType = "PQ", vn_kV = 110.0, vm_pu = 1.00, va_deg = 0.0)
   # Leitungen (ohne line charging, damit Vergleich sauber nur über Bus-Shunts läuft)
+  addACLine!(net = net_man, fromBus = "B1", toBus = "B2", length = 1.0, r = 0.02, x = 0.06)
   addACLine!(net = net_man, fromBus = "B1", toBus = "B3", length = 1.0, r = 0.08, x = 0.24)
   addACLine!(net = net_man, fromBus = "B2", toBus = "B3", length = 1.0, r = 0.06, x = 0.18)
 
   # Loads (ENERGYCONSUMER): Pd/Qd
+  # Loads (ENERGYCONSUMER): Pd/Qd
   addProsumer!(net = net_man, busName = "B3", type = "ENERGYCONSUMER", p = 90.0, q = 30.0)
 
-  addLink!(net = net, fromBus = "B1", toBus = "B2", status = 1)
+  # MATPOWER bus 2 also has load: Pd=20 MW, Qd=5 MVAr
+  addProsumer!(net = net_man, busName = "B2", type = "ENERGYCONSUMER", p = 20.0, q = 5.0)
+
   addProsumer!(net = net_man, busName = "B1", type = "EXTERNALNETWORKINJECTION", referencePri = "B1")
 
   # PV generator at B2 (P + Vm setpoint)
@@ -778,8 +784,8 @@ function test_link_kcl_simple()
   addBus!(net = net, busName = "B1", busType = "SLACK", vn_kV = 110.0)
   addBus!(net = net, busName = "B2", busType = "PQ", vn_kV = 110.0)
 
-  addBusGenPower!(net = net, busName = "B1", pGen = 10.0, qGen = 2.0)
-  addBusLoadPower!(net = net, busName = "B2", pLoad = 10.0, qLoad = 2.0)
+  addBusGenPower!(net = net, busName = "B1", p = 10.0, q = 2.0)
+  addBusLoadPower!(net = net, busName = "B2", p = 10.0, q = 2.0)
 
   addLink!(net = net, fromBus = "B1", toBus = "B2", status = 1)
   calcLinkFlowsKCL!(net)
