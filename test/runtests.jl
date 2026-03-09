@@ -27,13 +27,13 @@ include("testgrid.jl")
 include("testremove.jl")
 include("test_solver_interface.jl")
 
-@testset "Sparlectra.jl" begin  
+@testset "Sparlectra.jl" begin
   @test test_2WTPITrafo() == true
   @test test_3WTPITrafo() == true
   @test test_external_solver_interface() == true
   @test testNetwork() == true
   @test test_NBI_MDO() == true
-  @test testImportMatpower() == true  
+  @test testImportMatpower() == true
   @test testRemoveFunctions() == true
   @test testISOBusses() == true
   @test test_mp_inline_vs_manual_shunt() == true
@@ -41,8 +41,9 @@ include("test_solver_interface.jl")
   @test test_5BusNet(0, 10.0) == true
   @test test_3BusNet(0, 150.0, :rectangular, false, false) == true
   @test test_3BusNet(0, 150.0, :polar_full, false, false) == true
-  @test test_acpflow(0; lLine_6a6b = 0.01, damp = 1.0, method = :classic, opt_sparse = true) == true  
+  @test test_acpflow(0; lLine_6a6b = 0.01, damp = 1.0, method = :classic, opt_sparse = true) == true
   @test test_acpflow(0; lLine_6a6b = 0.01, damp = 1.0, method = :rectangular, opt_sparse = true) == true
   @test test_acpflow(0; lLine_6a6b = 0.01, damp = 1.0, method = :rectangular, opt_sparse = false) == true
-  @test test_acpflow(0; lLine_6a6b = 0.01, damp = 1.0, method = :polar_full, opt_sparse = true) == true  
+  @test test_acpflow(0; lLine_6a6b = 0.01, damp = 1.0, method = :polar_full, opt_sparse = true) == true
+  @test test_link_kcl_simple() == true
 end
