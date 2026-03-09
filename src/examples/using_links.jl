@@ -23,14 +23,22 @@ Requested topology:
 - Additional topological link: Bus1↔Bus1a
 - Injections at Bus1, Bus4 and Bus5 (Bus5 is slack)
 
+Important note:
+- Links are not part of YBUS and are evaluated afterwards by KCL allocation.
+- Therefore, if all branch terminal powers already satisfy nodal KCL exactly,
+  link flow is expected to be ~0 even for a closed link.
+
 The script runs two scenarios:
 1) Link closed (`status = 1`)
 2) Link open   (`status = 0`)
+
+Additionally, set `force_link_transfer=true` to create a case where the closed
+link must carry power in the post-KCL allocation.
 """
 
 using Sparlectra
 
-function build_link_demo_net(; link_closed::Bool)
+function build_link_demo_net(; link_closed::Bool, force_link_transfer::Bool = false)
   net = Net(name = link_closed ? "using_links_closed" : "using_links_open", baseMVA = 100.0)
 
   # Buses: five base buses + additional Bus1a.
@@ -45,7 +53,11 @@ function build_link_demo_net(; link_closed::Bool)
   addPIModelACLine!(net = net, fromBus = "Bus1", toBus = "Bus3", r_pu = 0.010, x_pu = 0.080, b_pu = 0.0, status = 1)
   addPIModelACLine!(net = net, fromBus = "Bus2", toBus = "Bus4", r_pu = 0.012, x_pu = 0.090, b_pu = 0.0, status = 1)
   addPIModelACLine!(net = net, fromBus = "Bus3", toBus = "Bus4", r_pu = 0.008, x_pu = 0.060, b_pu = 0.0, status = 1)
-  addPIModelACLine!(net = net, fromBus = "Bus1a", toBus = "Bus4", r_pu = 0.009, x_pu = 0.070, b_pu = 0.0, status = 1)
+
+  # In the "force" variant we keep the topology definition but set the physical
+  # branch Bus1a->Bus4 out of service so Bus1a can exchange through the link only.
+  bus1a_to_bus4_status = force_link_transfer ? 0 : 1
+  addPIModelACLine!(net = net, fromBus = "Bus1a", toBus = "Bus4", r_pu = 0.009, x_pu = 0.070, b_pu = 0.0, status = bus1a_to_bus4_status)
 
   # Tie to slack area.
   addPIModelACLine!(net = net, fromBus = "Bus4", toBus = "Bus5", r_pu = 0.006, x_pu = 0.050, b_pu = 0.0, status = 1)
@@ -62,13 +74,13 @@ function build_link_demo_net(; link_closed::Bool)
   addProsumer!(net = net, busName = "Bus2", type = "LOAD", p = 20.0, q = 6.0)
   addProsumer!(net = net, busName = "Bus3", type = "LOAD", p = 30.0, q = 4.0)
   addProsumer!(net = net, busName = "Bus4", type = "LOAD", p = 25.0, q = 8.0)
-  addProsumer!(net = net, busName = "Bus1a", type = "LOAD", p = 30.0, q = 10.0)
+  addProsumer!(net = net, busName = "Bus1a", type = "LOAD", p = force_link_transfer ? 45.0 : 30.0, q = force_link_transfer ? 14.0 : 10.0)
 
   return net
 end
 
-function run_link_demo(; link_closed::Bool)
-  net = build_link_demo_net(link_closed = link_closed)
+function run_link_demo(; link_closed::Bool, force_link_transfer::Bool = false)
+  net = build_link_demo_net(link_closed = link_closed, force_link_transfer = force_link_transfer)
   iterations = 0
   status = -1
   elapsed_s = @elapsed begin
@@ -77,6 +89,7 @@ function run_link_demo(; link_closed::Bool)
 
   println("\n====================")
   println("Scenario: ", link_closed ? "Link CLOSED (Bus1-Bus1a)" : "Link OPEN (Bus1-Bus1a)")
+  println("Force link transfer mode: ", force_link_transfer)
   println("Converged: ", status == 0, " (status=", status, ", iterations=", iterations, ")")
 
   if status == 0
@@ -85,6 +98,11 @@ function run_link_demo(; link_closed::Bool)
     calcNetLosses!(net)
     calcLinkFlowsKCL!(net)
     printACPFlowResults(net, elapsed_s, iterations, 1e-8)
+
+    if !isempty(net.linkVec)
+      l = net.linkVec[1]
+      println("Link 1 flow (MW/MVar): ", l.pFlow_MW, " / ", l.qFlow_MVar, "  [status=", l.status, "]")
+    end
   else
     println("Power flow did not converge.")
   end
@@ -93,5 +111,11 @@ function run_link_demo(; link_closed::Bool)
 end
 
 # Run both variants for direct comparison.
-run_link_demo(link_closed = true)
-run_link_demo(link_closed = false)
+run_link_demo(link_closed = true, force_link_transfer = true)
+run_link_demo(link_closed = false, force_link_transfer = true)
+
+# Optional variant: explicitly create a non-zero closed-link transfer.
+# In this mode, branch Bus1a->Bus4 is out of service and Bus1a has larger load.
+# Expected: closed link shows non-zero flow; open link cannot supply Bus1a.
+# run_link_demo(link_closed = true, force_link_transfer = true)
+# run_link_demo(link_closed = false, force_link_transfer = true)
