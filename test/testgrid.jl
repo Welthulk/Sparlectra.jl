@@ -180,9 +180,9 @@ function test_NBI_MDO()
   end
 
   for b in myNet.branchVec
-    branch_tuple = (b.fromBus, b.toBus)
-    if branch_tuple ∉ branchTupleSet
-      push!(branchTupleSet, branch_tuple)
+    tuple = (b.fromBus, b.toBus)
+    if tuple ∉ branchTupleSet
+      push!(branchTupleSet, tuple)
     end
   end
 
