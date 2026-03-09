@@ -98,6 +98,7 @@ function run_acpflow(;
   if erg == 0 || printResultAnyCase
     # Calculate network losses and print results
     calcNetLosses!(myNet)
+    calcLinkFlowsKCL!(myNet)
     jpath = printResultToFile ? out_path : ""
     if show_results || printResultAnyCase
       printACPFlowResults(myNet, etime, ite, tol, printResultToFile, jpath; converged = (erg == 0), solver = method)
@@ -122,7 +123,7 @@ Parameters:
 - printResultToFile: Bool, flag to print results to a file (default: false).
 - printResultAnyCase: Bool, flag to print results even if the power flow fails (default: false).
 """
-function run_net_acpflow(; net::Net, max_ite::Int = 10, tol::Float64 = 1e-6, verbose::Int = 0, printResultToFile::Bool = false, printResultAnyCase::Bool = false, opt_fd::Bool = false, opt_sparse::Bool = false, method::Symbol = :polar_full)
+function run_net_acpflow(; net::Net, max_ite::Int = 10, tol::Float64 = 1e-6, verbose::Int = 0, printResultToFile::Bool = false, printResultAnyCase::Bool = false, opt_fd::Bool = false, opt_sparse::Bool = false, method::Symbol = :polar_full, show_results::Bool = true)
 
   # Run power flow
   ite = 0
@@ -133,11 +134,16 @@ function run_net_acpflow(; net::Net, max_ite::Int = 10, tol::Float64 = 1e-6, ver
   if erg == 0 || printResultAnyCase
     # Calculate network losses and print results
     calcNetLosses!(net)
-    jpath = printResultToFile ? out_path : ""
-    printACPFlowResults(net, etime, ite, tol, printResultToFile, jpath; converged = (erg == 0), solver = method)
+    calcLinkFlowsKCL!(net)
+    jpath = ""
+    if show_results
+      printACPFlowResults(net, etime, ite, tol, printResultToFile, jpath; converged = (erg == 0), solver = method)
+    end
   elseif erg == 1
     println("Newton-Raphson did not converge")
   else
     @error "Errors during calculation of Newton-Raphson"
   end
+
+  return (ite, erg, etime)
 end

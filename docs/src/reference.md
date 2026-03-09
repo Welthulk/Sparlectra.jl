@@ -11,6 +11,7 @@
     "nbi.jl", 
     "equicircuit.jl", 
     "losses.jl", 
+    "links.jl",
     "jacobian_complex.jl", 
     "jacobian_fd.jl",    
     "remove_functions.jl",         

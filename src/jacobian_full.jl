@@ -382,13 +382,8 @@ function calcNewtonRaphson_withPVIdentity!(net::Net, Y::AbstractMatrix{ComplexF6
   end
 
   # Write results back to the network object
-  isoNodes = net.isoNodes
   for bus in busVec
-    idx = bus.idx
-    if idx in isoNodes
-      continue
-    end
-    idx += count(i -> i < idx, isoNodes)
+    idx = bus.nodeIdx
     setVmVa!(node = nodes[idx], vm_pu = bus.vm_pu, va_deg = rad2deg(bus.va_rad))
 
     if bus.type == Sparlectra.Slack
@@ -431,4 +426,3 @@ function runpf_full!(net::Net, maxIte::Int, tolerance::Float64 = 1e-6, verbose::
   end
   return calcNewtonRaphson_withPVIdentity!(net, Y, maxIte; tolerance = tolerance, verbose = verbose, sparse = opt_sparse, flatStart = opt_flatstart, angle_limit = false, debug = false)  
 end
-

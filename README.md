@@ -6,6 +6,21 @@
 
 This package contains tools for subsequent network calculations. It primarily features a program for calculating load flow using the Newton-Raphson method. The focus is to provide valuable insights into load flow calculations for both students and ambitious professionals.
 
+## Features
+
+- AC power flow with multiple internal Newton-Raphson formulations (`:polar_full`, `:rectangular`, `:classic`).
+- Network Modeling: Comprehensive modeling of electrical network components
+    Buses (PQ, PV, Slack)
+    Transmission lines
+    Transformers (2-winding and 3-winding)
+    Generators and loads
+    Shunts
+- Transmission lines and transformers can be represented using π-equivalent models,
+allowing direct use of CIM and manufacturer data without additional model conversions.    
+- Topological bus links (`addLink!`) for busbar couplers and sectionalizer modeling.
+- Canonical external solver interface (`PFModel`/`PFSolution`) to integrate third-party solvers.
+- MATPOWER-compatible import/export utilities and local casefile helper workflow.
+
 ---
 
 ## Documentation
