@@ -76,6 +76,7 @@ function printACPFlowResults(net::Net, ct::Float64, ite::Int, tol::Float64, toFi
 
   busses = length(net.nodeVec)
   branches = length(net.branchVec)
+  links = length(net.linkVec)
   lines = length(net.linesAC)
   trafos = length(net.trafos)
   gens = 0
@@ -121,6 +122,7 @@ function printACPFlowResults(net::Net, ct::Float64, ite::Int, tol::Float64, toFi
     @printf(io, "Nodes          :%10d (PV: %d PQ: %d Slack: %d)\n", busses, npv, npq, 1)
   end
   @printf(io, "Branches       :%10d\n", branches)
+  @printf(io, "Links          :%10d\n", links)
   @printf(io, "Lines          :%10d\n", lines)
   @printf(io, "Trafos         :%10d\n", trafos)
   @printf(io, "Generators     :%10d\n", gens)
@@ -200,6 +202,19 @@ function printACPFlowResults(net::Net, ct::Float64, ite::Int, tol::Float64, toFi
   @printf(io, "-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------\n")
   println(io, flowResults)
 
+
+  if !isempty(net.linkVec)
+    @printf(io, "\n----------------------------------- Link Flows (KCL) -----------------------------------\n")
+    @printf(io, "| %-5s | %-8s | %-8s | %-6s | %-12s | %-12s | %-12s | %-12s |\n", "Nr", "From", "To", "Stat", "P [MW]", "Q [MVar]", "Ifrom [kA]", "Ito [kA]")
+    @printf(io, "----------------------------------------------------------------------------------------------------------------\n")
+    for l in net.linkVec
+      p = isnothing(l.pFlow_MW) ? NaN : l.pFlow_MW
+      q = isnothing(l.qFlow_MVar) ? NaN : l.qFlow_MVar
+      ifrom = isnothing(l.iFrom_kA) ? NaN : l.iFrom_kA
+      ito = isnothing(l.iTo_kA) ? NaN : l.iTo_kA
+      @printf(io, "| %-5d | %-8d | %-8d | %-6d | %-12.3f | %-12.3f | %-12.4f | %-12.4f |\n", l.linkIdx, l.fromBus, l.toBus, l.status, p, q, ifrom, ito)
+    end
+  end
   if toFile
     close(io)
     #println("Results have been written to $(joinpath(path, filename))")

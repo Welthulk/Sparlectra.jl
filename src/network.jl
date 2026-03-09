@@ -64,6 +64,7 @@ struct Net
   linesAC::Vector{ACLineSegment}
   trafos::Vector{PowerTransformer}
   branchVec::Vector{Branch}
+  linkVec::Vector{BusLink}
   prosumpsVec::Vector{ProSumer}
   shuntVec::Vector{Shunt}
   busDict::Dict{String,Int}
@@ -93,6 +94,7 @@ struct Net
         [], # linesAC
         [], # trafos
         [], # branchVec
+        [], # linkVec
         [], # prosumpsVec
         [], # shuntVec
         Dict{String,Int}(), # busDict
@@ -122,6 +124,7 @@ struct Net
     println(io, "Lines: ", length(o.linesAC))
     println(io, "Transformers: ", length(o.trafos))
     println(io, "Branches: ", length(o.branchVec))
+    println(io, "Links: ", length(o.linkVec))
     println(io, "Prosumers: ", length(o.prosumpsVec))
     println(io, "Shunts: ", length(o.shuntVec))
     if !isempty(o.qLimitLog)
@@ -373,6 +376,45 @@ function addBranch!(; net::Net, from::Int, to::Int, branch::AbstractBranch, stat
   end
   br = Branch(branchIdx = idBrunch, from = from, to = to, baseMVA = net.baseMVA, branch = branch, id = idBrunch, status = status, ratio = ratio, side = side, vn_kV = vn_kV, fromOid = fOrig, toOid = tOrig)
   push!(net.branchVec, br)
+end
+
+
+"""
+    addLink!(; net::Net, fromBus::String, toBus::String, status::Int = 1)::Int
+
+Adds an impedance-less topological bus link (e.g. busbar coupler) used for
+post-power-flow KCL allocation.
+"""
+function addLink!(; net::Net, fromBus::String, toBus::String, status::Int = 1)::Int
+  @assert !net._locked "Network is locked"
+  from = geNetBusIdx(net = net, busName = fromBus)
+  to = geNetBusIdx(net = net, busName = toBus)
+  @assert from != to "fromBus and toBus must be different"
+
+  idLink = length(net.linkVec) + 1
+  push!(net.linkVec, BusLink(linkIdx = idLink, fromBus = from, toBus = to, status = status))
+  return idLink
+end
+
+"""
+    setNetLinkStatus!(; net::Net, linkNr::Int, status::Int)
+
+Sets an existing link status (0/1).
+"""
+function setNetLinkStatus!(; net::Net, linkNr::Int, status::Int)
+  @assert 1 <= linkNr <= length(net.linkVec) "linkNr out of range"
+  setLinkStatus!(net.linkVec[linkNr], status)
+end
+
+"""
+    getNetLinks(; net::Net, fromBus::String, toBus::String)::Vector{BusLink}
+
+Returns all links between two buses (both directions).
+"""
+function getNetLinks(; net::Net, fromBus::String, toBus::String)::Vector{BusLink}
+  from = geNetBusIdx(net = net, busName = fromBus)
+  to = geNetBusIdx(net = net, busName = toBus)
+  return [l for l in net.linkVec if (l.fromBus == from && l.toBus == to) || (l.fromBus == to && l.toBus == from)]
 end
 
 """

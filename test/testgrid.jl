@@ -607,3 +607,22 @@ function test_5BusNet(verbose::Int = 0, qlim::Float64 = 20.0, method::Symbol = :
   return hit==true
 end
 export test_3BusNet, test_5BusNet
+
+function test_link_kcl_simple()
+  net = Net(name = "link_kcl", baseMVA = 100.0)
+  addBus!(net = net, busName = "B1", busType = "SLACK", vn_kV = 110.0)
+  addBus!(net = net, busName = "B2", busType = "PQ", vn_kV = 110.0)
+
+  addBusGenPower!(net = net, busName = "B1", pGen = 10.0, qGen = 2.0)
+  addBusLoadPower!(net = net, busName = "B2", pLoad = 10.0, qLoad = 2.0)
+
+  addLink!(net = net, fromBus = "B1", toBus = "B2", status = 1)
+  calcLinkFlowsKCL!(net)
+
+  l = net.linkVec[1]
+  iexp = hypot(10.0, 2.0) / (Sparlectra.Wurzel3 * 110.0)
+  return isapprox(l.pFlow_MW, 10.0; atol = 1e-8) &&
+         isapprox(l.qFlow_MVar, 2.0; atol = 1e-8) &&
+         isapprox(l.iFrom_kA, iexp; atol = 1e-10) &&
+         isapprox(l.iTo_kA, iexp; atol = 1e-10)
+end

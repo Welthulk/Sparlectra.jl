@@ -24,4 +24,5 @@ include("testremove.jl")
   @test test_5BusNet(0, 10.0) == true
   @test test_3BusNet(0, 150.0, :rectangular, false, false) == true
   @test test_3BusNet(0, 150.0, :polar_full, false, false) == true
+  @test test_link_kcl_simple() == true
 end
