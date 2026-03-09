@@ -27,6 +27,8 @@ Important note:
 - Links are not part of YBUS and are evaluated afterwards by KCL allocation.
 - Therefore, if all branch terminal powers already satisfy nodal KCL exactly,
   link flow is expected to be ~0 even for a closed link.
+- A shunt connected at Bus1a can still create a non-zero reactive link flow,
+  because KCL post-allocation must balance local Q demand.
 
 The script runs two scenarios:
 1) Link closed (`status = 1`)
@@ -64,6 +66,7 @@ function build_link_demo_net(; link_closed::Bool, force_link_transfer::Bool = fa
 
   # Busbar coupler / sectionalizer between Bus1 and Bus1a.
   addLink!(net = net, fromBus = "Bus1", toBus = "Bus1a", status = link_closed ? 1 : 0)
+  addShunt!(net = net, busName = "Bus1a", pShunt = 0.0, qShunt = 5.0)
 
   # Injections as requested: Bus1, Bus4 and Bus5 (Slack).
   addProsumer!(net = net, busName = "Bus1", type = "GENERATOR", p = 45.0, q = 0.0, vm_pu = 1.01)
@@ -111,8 +114,8 @@ function run_link_demo(; link_closed::Bool, force_link_transfer::Bool = false)
 end
 
 # Run both variants for direct comparison.
-run_link_demo(link_closed = true, force_link_transfer = true)
-run_link_demo(link_closed = false, force_link_transfer = true)
+run_link_demo(link_closed = true, force_link_transfer = false)
+run_link_demo(link_closed = false, force_link_transfer = false)
 
 # Optional variant: explicitly create a non-zero closed-link transfer.
 # In this mode, branch Bus1a->Bus4 is out of service and Bus1a has larger load.
