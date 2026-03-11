@@ -240,11 +240,15 @@ Creates the bus admittance matrix (YBUS) of the network.
 """
 function createYBUS(; net::Net, sparse::Bool = true, printYBUS::Bool = false)
 
-  # Determine the maximum bus number in the network, taking isolated buses into account
-  max_bus = maximum(max(branch.fromBus, branch.toBus) for branch in net.branchVec)
-  n = max_bus - length(net.isoNodes)
+  # Determine active bus count from node list and isolated-bus markers.
+  # Using max(branch bus index) is not robust after link-based bus merging,
+  # where branch endpoints can be remapped to low representative indices.
+  n = length(net.nodeVec) - length(net.isoNodes)
+  n = max(n, 0)
 
   Y = sparse ? spzeros(ComplexF64, n, n) : zeros(ComplexF64, n, n)
+
+  n == 0 && return Y
 
   for branch in net.branchVec
     @assert branch isa AbstractBranch "branch $(branch) is not of type AbstractBranch"

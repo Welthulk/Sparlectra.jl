@@ -1,6 +1,7 @@
 # Change Log
 ## Version 0.5.0 – 2026-03-11
 ### Highlights
+* Create and use machine-readable `ACPFlowReport` output
 * Introduced bus-links +  documentation 
 * Consolidated recent documentation
 

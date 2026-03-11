@@ -240,9 +240,9 @@ function calcLinkFlowsKCL!(net::Net; tol::Float64 = 1e-6)
       bbQ .-= sumQ / length(bbQ)
     end
 
-    # least-squares (handles tree and meshed components)
-    fp = Ab \ bbP
-    fq = Ab \ bbQ
+    # least-squares (handles tree and meshed components, including singular meshed rings)
+    fp = pinv(Ab) * bbP
+    fq = pinv(Ab) * bbQ
 
     for (k, gj) in enumerate(comp_links)
       flowsP[gj] = fp[k]
