@@ -1304,6 +1304,8 @@ Finds and marks isolated buses in the network.
 
 """
 function markIsolatedBuses!(; net::Net, log::Bool = false)
+  empty!(net.isoNodes)
+
   # Erstelle ein Set, um die Busse zu speichern, die in den Zweigen im branchVec vorkommen
   connected_buses = Set{Int}()
 
@@ -1329,6 +1331,8 @@ function markIsolatedBuses!(; net::Net, log::Bool = false)
       end
     end
   end
+
+  sort!(net.isoNodes)
 end
 
 function _buildQLimits!(net::Net; reset::Bool = true)

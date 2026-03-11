@@ -34,6 +34,14 @@ using Pkg
 Pkg.add("Sparlectra")
 ```
 
+## Development Toolchain
+
+This repository tracks a `Manifest.toml` generated with Julia `1.12.5`.
+For development and CI parity, use Julia `1.12.5` (see `.julia-version`).
+
+If you intentionally work with another Julia minor version, regenerate the
+manifest locally with that version before running `Pkg.instantiate()`.
+
 ## Quick Start
 
 ```julia
@@ -71,7 +79,6 @@ data while still allowing reproducible experiments and benchmarks.
 ### License
 This project is licensed under the Apache License, Version 2.0.
 [The license file](LICENSE) contains the complete licensing information.
-
 
 
 

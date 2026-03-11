@@ -34,6 +34,9 @@ include("test_solver_interface.jl")
   @test testNetwork() == true
   @test test_NBI_MDO() == true
   @test testImportMatpower() == true
+  @test test_matpower_import_defaults_no_reenable() == true
+  @test test_matpower_vmva_selfcheck_noncontiguous_bus_numbers() == true
+  @test test_matpower_vmva_selfcheck_ignores_slack_pq_spec() == true
   @test testRemoveFunctions() == true
   @test testISOBusses() == true
   @test test_mp_inline_vs_manual_shunt() == true
@@ -52,5 +55,7 @@ include("test_solver_interface.jl")
   @test test_link_bus_merge_pf() == true
   @test test_link_bus_merge_pf_default_method() == true
   @test test_link_closed_keeps_shunt_reporting_on_original_bus() == true
+  @test test_link_kcl_ring_allocation() == true
+  @test test_link_ring_pf_stability() == true
   @test test_acpflow_report_object() == true
 end

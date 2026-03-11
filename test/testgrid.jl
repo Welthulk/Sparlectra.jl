@@ -262,6 +262,87 @@ function testImportMatpower()::Bool
   return true
 end
 
+function test_matpower_import_defaults_no_reenable()::Bool
+  mpc = (
+    name = "case2_defaults",
+    baseMVA = 100.0,
+    bus = [
+      1 3 0.0 0.0 0.0 0.0 1 1.0 0.0 110.0 1 1.1 0.9
+      2 1 20.0 10.0 0.0 0.0 1 1.0 0.0 110.0 1 1.1 0.9
+    ],
+    gen = [
+      1 30.0 0.0 999.0 -999.0 1.0 100.0 1 999.0 0.0 0 0 0 0 0 0 0 0 0 0 0
+    ],
+    branch = [
+      1 2 0.01 0.05 0.0 9999.0 0.0 0.0 0.0 0.0 1 -60.0 60.0
+    ],
+    gencost = nothing,
+    bus_name = nothing,
+  )
+
+  net = Sparlectra.createNetFromMatPowerCase(mpc = mpc, log = false, flatstart = false)
+
+  if net.cooldown_iters != 0
+    @warn "Expected default cooldown_iters = 0 for MATPOWER import" got = net.cooldown_iters
+    return false
+  end
+
+  if !isapprox(net.q_hyst_pu, 0.0; atol = 0.0, rtol = 0.0)
+    @warn "Expected default q_hyst_pu = 0.0 for MATPOWER import" got = net.q_hyst_pu
+    return false
+  end
+
+  return true
+end
+
+function test_matpower_vmva_selfcheck_noncontiguous_bus_numbers()::Bool
+  mpc = Sparlectra.MatpowerIO.MatpowerCase(
+    "case_noncontig",
+    100.0,
+    # bus_i includes non-contiguous high id (9001)
+    [
+      1 3 0.0 0.0 0.0 0.0 1 1.00 0.0 110.0 1 1.1 0.9
+      9001 1 0.0 0.0 0.0 0.0 1 0.99 -3.0 110.0 1 1.1 0.9
+    ],
+    [
+      1 0.0 0.0 999.0 -999.0 1.0 100.0 1 999.0 0.0 0 0 0 0 0 0 0 0 0 0 0
+    ],
+    [
+      1 9001 0.01 0.05 0.0 9999.0 0.0 0.0 0.0 0.0 1 -60.0 60.0
+    ],
+    nothing,
+    nothing,
+  )
+
+  stats = Sparlectra.MatpowerIO.vmva_power_mismatch_stats(mpc)
+  return get(stats, :ok, false) && get(stats, :n_p, 0) == 1 && get(stats, :n_q, 0) == 1 && isfinite(get(stats, :max_p_mis_pu, NaN)) && isfinite(get(stats, :max_q_mis_pu, NaN))
+end
+
+function test_matpower_vmva_selfcheck_ignores_slack_pq_spec()::Bool
+  mpc = Sparlectra.MatpowerIO.MatpowerCase(
+    "case_slack_spec_ignored",
+    100.0,
+    [
+      1 3 0.0 0.0 0.0 0.0 1 1.0 0.0 110.0 1 1.1 0.9
+      2 1 0.0 0.0 0.0 0.0 1 1.0 0.0 110.0 1 1.1 0.9
+    ],
+    [
+      # very large slack Pg/Qg that should NOT be enforced by PF equations
+      1 500.0 300.0 999.0 -999.0 1.0 100.0 1 999.0 0.0 0 0 0 0 0 0 0 0 0 0 0
+    ],
+    [
+      # no branch -> Scalc = 0 at all buses
+      # keep out-of-service branch to satisfy matrix width expectations
+      1 2 0.01 0.05 0.0 9999.0 0.0 0.0 0.0 0.0 0 -60.0 60.0
+    ],
+    nothing,
+    nothing,
+  )
+
+  stats = Sparlectra.MatpowerIO.vmva_power_mismatch_stats(mpc)
+  return get(stats, :ok, false) && isapprox(get(stats, :max_p_mis_pu, NaN), 0.0; atol = 1e-12) && isapprox(get(stats, :max_q_mis_pu, NaN), 0.0; atol = 1e-12)
+end
+
 function testISOBusses()
   Sbase_MVA = 1000.0
   netName = "isobus"
@@ -930,6 +1011,120 @@ function test_link_closed_keeps_shunt_reporting_on_original_bus()
   return isapprox(sh.q_shunt, expected_q; atol = 1e-8) && isapprox(net.nodeVec[b2_idx]._qShunt, expected_q; atol = 1e-8)
 end
 
+function test_link_kcl_ring_allocation()
+  net = Net(name = "link_kcl_ring", baseMVA = 100.0)
+  addBus!(net = net, busName = "B1", busType = "PQ", vn_kV = 110.0)
+  addBus!(net = net, busName = "B2", busType = "PQ", vn_kV = 110.0)
+  addBus!(net = net, busName = "B3", busType = "PQ", vn_kV = 110.0)
+
+  addBusGenPower!(net = net, busName = "B1", p = 15.0, q = 6.0)
+  addBusLoadPower!(net = net, busName = "B2", p = 10.0, q = 4.0)
+  addBusLoadPower!(net = net, busName = "B3", p = 5.0, q = 2.0)
+
+  addLink!(net = net, fromBus = "B1", toBus = "B2", status = 1)
+  addLink!(net = net, fromBus = "B2", toBus = "B3", status = 1)
+  addLink!(net = net, fromBus = "B3", toBus = "B1", status = 1)
+
+  calcLinkFlowsKCL!(net)
+
+  A = [1.0 0.0 -1.0;
+       -1.0 1.0 0.0;
+       0.0 -1.0 1.0]
+  bP = [15.0, -10.0, -5.0]
+  bQ = [6.0, -4.0, -2.0]
+  fP_expected = pinv(A) * bP
+  fQ_expected = pinv(A) * bQ
+
+  flowsP = [net.linkVec[1].pFlow_MW, net.linkVec[2].pFlow_MW, net.linkVec[3].pFlow_MW]
+  flowsQ = [net.linkVec[1].qFlow_MVar, net.linkVec[2].qFlow_MVar, net.linkVec[3].qFlow_MVar]
+
+  return isapprox.(flowsP, fP_expected; atol = 1e-10, rtol = 0.0) |> all &&
+         isapprox.(flowsQ, fQ_expected; atol = 1e-10, rtol = 0.0) |> all &&
+         isapprox.(A * flowsP, bP; atol = 1e-10, rtol = 0.0) |> all &&
+         isapprox.(A * flowsQ, bQ; atol = 1e-10, rtol = 0.0) |> all
+end
+
+function test_link_ring_pf_stability()
+  net = Net(name = "link_ring_pf_stability", baseMVA = 100.0)
+  addBus!(net = net, busName = "B0", busType = "SLACK", vn_kV = 110.0)
+  addBus!(net = net, busName = "B1", busType = "PQ", vn_kV = 110.0)
+  addBus!(net = net, busName = "B2", busType = "PQ", vn_kV = 110.0)
+  addBus!(net = net, busName = "B3", busType = "PQ", vn_kV = 110.0)
+
+  addACLine!(net = net, fromBus = "B0", toBus = "B1", length = 10.0, r = 0.05, x = 0.4, c_nf_per_km = 10.0, tanδ = 0.0)
+  addACLine!(net = net, fromBus = "B0", toBus = "B2", length = 12.0, r = 0.05, x = 0.4, c_nf_per_km = 10.0, tanδ = 0.0)
+
+  addLink!(net = net, fromBus = "B1", toBus = "B2", status = 1)
+  addLink!(net = net, fromBus = "B2", toBus = "B3", status = 1)
+  addLink!(net = net, fromBus = "B3", toBus = "B1", status = 1)
+
+  addProsumer!(net = net, busName = "B0", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "B0")
+  addProsumer!(net = net, busName = "B1", type = "GENERATOR", p = 6.0, q = 1.0)
+  addProsumer!(net = net, busName = "B2", type = "ENERGYCONSUMER", p = 18.0, q = 5.0)
+  addProsumer!(net = net, busName = "B3", type = "ENERGYCONSUMER", p = 8.0, q = 3.0)
+
+  _, erg = runpf!(net, 40, 1e-9, 0; method = :polar_full, opt_sparse = false)
+  erg == 0 || return false
+
+  calcLinkFlowsKCL!(net)
+
+  b1 = geNetBusIdx(net = net, busName = "B1")
+  b2 = geNetBusIdx(net = net, busName = "B2")
+  b3 = geNetBusIdx(net = net, busName = "B3")
+
+  vm_equal = isapprox(net.nodeVec[b1]._vm_pu, net.nodeVec[b2]._vm_pu; atol = 1e-10) &&
+             isapprox(net.nodeVec[b1]._vm_pu, net.nodeVec[b3]._vm_pu; atol = 1e-10)
+  va_equal = isapprox(net.nodeVec[b1]._va_deg, net.nodeVec[b2]._va_deg; atol = 1e-8) &&
+             isapprox(net.nodeVec[b1]._va_deg, net.nodeVec[b3]._va_deg; atol = 1e-8)
+
+  A = zeros(Float64, 3, 3)
+  for (j, l) in enumerate(net.linkVec)
+    A[l.fromBus - 1, j] += 1.0
+    A[l.toBus - 1, j] -= 1.0
+  end
+
+  P_inj = zeros(Float64, 3)
+  Q_inj = zeros(Float64, 3)
+  P_branch_out = zeros(Float64, 3)
+  Q_branch_out = zeros(Float64, 3)
+
+  for (k, busidx) in enumerate((b1, b2, b3))
+    node = net.nodeVec[busidx]
+    P_inj[k] = (isnothing(node._pƩGen) ? 0.0 : node._pƩGen) - (isnothing(node._pƩLoad) ? 0.0 : node._pƩLoad)
+    Q_inj[k] = (isnothing(node._qƩGen) ? 0.0 : node._qƩGen) - (isnothing(node._qƩLoad) ? 0.0 : node._qƩLoad)
+  end
+
+  for br in net.branchVec
+    br.status == 1 || continue
+    if br.fromBus in (b1, b2, b3)
+      k = br.fromBus == b1 ? 1 : (br.fromBus == b2 ? 2 : 3)
+      if !isnothing(br.fBranchFlow)
+        P_branch_out[k] += br.fBranchFlow.pFlow
+        Q_branch_out[k] += br.fBranchFlow.qFlow
+      end
+    end
+    if br.toBus in (b1, b2, b3)
+      k = br.toBus == b1 ? 1 : (br.toBus == b2 ? 2 : 3)
+      if !isnothing(br.tBranchFlow)
+        P_branch_out[k] += br.tBranchFlow.pFlow
+        Q_branch_out[k] += br.tBranchFlow.qFlow
+      end
+    end
+  end
+
+  bP = P_inj .- P_branch_out
+  bQ = Q_inj .- Q_branch_out
+  bP .-= sum(bP) / 3
+  bQ .-= sum(bQ) / 3
+
+  flowsP = [l.pFlow_MW for l in net.linkVec]
+  flowsQ = [l.qFlow_MVar for l in net.linkVec]
+
+  return vm_equal && va_equal &&
+         isapprox.(A * flowsP, bP; atol = 1e-7, rtol = 0.0) |> all &&
+         isapprox.(A * flowsQ, bQ; atol = 1e-7, rtol = 0.0) |> all
+end
+
 function test_acpflow_report_object()
   net = createTest3BusNet(cooldown = 2, hyst_pu = 0.01, qlim_min = -15.0, qlim_max = 15.0)
   ite, erg = runpf!(net, 50, 1e-10, 0; method = :polar_full, opt_sparse = true)
@@ -944,8 +1139,7 @@ function test_acpflow_report_object()
   branch_count_ok = length(report.branches) == length(net.branchVec)
   link_count_ok = length(report.links) == length(net.linkVec)
 
-  total_losses_ok = isapprox(report.metadata.total_p_loss_MW, getTotalLosses(net = net)[1]; atol = 1e-8) &&
-                    isapprox(report.metadata.total_q_loss_MVar, getTotalLosses(net = net)[2]; atol = 1e-8)
+  total_losses_ok = isapprox(report.metadata.total_p_loss_MW, getTotalLosses(net = net)[1]; atol = 1e-8) && isapprox(report.metadata.total_q_loss_MVar, getTotalLosses(net = net)[2]; atol = 1e-8)
 
   first_node = report.nodes[1]
   first_branch = report.branches[1]

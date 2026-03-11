@@ -22,15 +22,15 @@ using Dates
 # Configuration
 # -----------------------------------------------------------------------------
 
-#case = "case30.m"      # or "case14.m"
-case = "case118.m"      # or "case14.m"
-#case = "case39.m"      # or "case30.m"
-#case = "case57.m"     # or "case39.m"
-#case = "case300.m"     # or "case39.m"
-#case = "case18.m"     # or "case14.m"
-#case = "case141.m"     # or "case14.m"
-#case = "case69.m"     # or "case14.m"
-#case = "case85.m"     # or "case14.m"
+#case = "case30.m"     
+#case = "case118.m"    
+#case = "case39.m"     
+#case = "case57.m"     
+case = "case300.m"
+#case = "case18.m"     
+#case = "case141.m"    
+#case = "case69.m"     
+#case = "case85.m"     
 
 print("\e[2J\e[H") # clear screen and move cursor to home position
 println("----------------------------------------------------------------------------------------------")
@@ -60,6 +60,18 @@ local_case = Sparlectra.FetchMatpowerCase.ensure_casefile(case; outdir = Sparlec
 # -----------------------------------------------------------------------------
 
 mpc = MatpowerIO.read_case(local_case)
+
+# quick consistency check: are mpc.bus VM/VA a solved operating point?
+vmva_chk = MatpowerIO.vmva_power_mismatch_stats(mpc)
+if get(vmva_chk, :ok, false)
+  println("==================== MATPOWER VM/VA self-check ====================")
+  println("checked eqns     : P(PQ+PV)=", vmva_chk.n_p, "  Q(PQ)=", vmva_chk.n_q)
+  println("max |ΔP| (PQ+PV) : ", vmva_chk.max_p_mis_pu, " pu  (", vmva_chk.max_p_mis_MW, " MW)")
+  println("max |ΔQ| (PQ)    : ", vmva_chk.max_q_mis_pu, " pu  (", vmva_chk.max_q_mis_MVar, " MVar)")
+  println("===================================================================\n")
+else
+  println("MATPOWER VM/VA self-check skipped: ", get(vmva_chk, :msg, "unknown reason"))
+end
 
 # -----------------------------------------------------------------------------
 # Compare against MATPOWER reference (if present)
@@ -178,7 +190,7 @@ methods = [:polar_full, :rectangular, :classic]
 function main()
   methods = [:polar_full, :rectangular, :classic]
 
-  bench = bench_run_acpflow(casefile = basename(local_case), methods = methods, opt_fd = false, opt_sparse = true, opt_flatstart = true, verbose = 1, cooldown_iters = 3, q_hyst_pu = 0.01, seconds = 2.0, samples = 50, show_once = true)
+  bench = bench_run_acpflow(casefile = basename(local_case), methods = methods, opt_fd = false, opt_sparse = true, opt_flatstart = false, verbose = 1, cooldown_iters = 0, q_hyst_pu = 0.0, seconds = 2.0, samples = 50, show_once = true)
   return bench
 end
 

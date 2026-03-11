@@ -26,7 +26,7 @@ This example demonstrates:
 - solving power flow with `run_net_acpflow`,
 - reading structured results from `ACPFlowReport`,
 - including bus-link flows (`report.links`),
-- optional conversion to DataFrame (`DataFrames.jl` installed by user).
+- conversion to DataFrame.
 """
 function main()
   net = Net(name = "netreport_demo", baseMVA = 100.0)
@@ -80,9 +80,5 @@ function main()
 
   return report
 end
-
-#if abspath(PROGRAM_FILE) == @__FILE__
-#  main()
-#end
 
 main()
