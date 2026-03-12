@@ -36,8 +36,8 @@ Pkg.add("Sparlectra")
 
 ## Development Toolchain
 
-This repository tracks a `Manifest.toml` generated with Julia `1.12.5`.
-For development and CI parity, use Julia `1.12.5` (see `.julia-version`).
+This repository tracks a `Manifest.toml` generated with Julia version specified in `.julia-version`.
+For development and CI parity, use the Julia version from `.julia-version` (currently tracked version can be found there).
 
 If you intentionally work with another Julia minor version, regenerate the
 manifest locally with that version before running `Pkg.instantiate()`.
