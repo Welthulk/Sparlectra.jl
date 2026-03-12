@@ -31,7 +31,7 @@ const MPOWER_DIR = normpath(joinpath(pkgdir(@__MODULE__), "data", "mpower"))
 
 # resource data types for working with Sparlectra
 const Wurzel3 = 1.7320508075688772
-const SparlectraVersion = v"0.4.35"
+const SparlectraVersion = v"0.5.0"
 version() = SparlectraVersion
 abstract type AbstractBranch end
 
@@ -67,6 +67,8 @@ export
   ProSumer,
   # Branch
   AbstractBranch, Branch, BranchModel, BranchFlow, getBranchFlow, setBranchFlow!, getBranchNumber, getBranchLosses, setBranchLosses!, setBranchStatus!,
+  # Link
+  BusLink, setLinkStatus!, setLinkFlow!, setLinkCurrent!,
   # Shunt
   Shunt,
   # Net
@@ -87,6 +89,8 @@ export
   busComparison, toString,
   # Branch
   getBranchIdx, calcBranchYser, calcBranchYshunt, calcBranchRatio, calcAdmittance,
+   # Link
+  BusLink, setLinkStatus!, setLinkFlow!, setLinkCurrent!,
   # Shunt
   getGBShunt,  getPQShunt, updatePQShunt!,
   # ACLineSegment
@@ -97,13 +101,13 @@ export
   addBus!, addShunt!, addACLine!, addPIModelACLine!, add2WTrafo!, addPIModelTrafo!, addProsumer!, lockNet!, validate!, hasBusInNet, addBusGenPower!, addBusLoadPower!, addBusShuntPower!, setNodeVoltage!, setNodeAngle!,
   getNetOrigBusIdx, geNetBusIdx, setNetBranchStatus!, getNetBranch, getNetBranchNumberVec, setTotalLosses!, getTotalLosses, getBusType, get_bus_vn_kV, get_vn_kV, updateBranchParameters!, hasShunt!, 
   getShunt!, markIsolatedBuses!,setTotalBusPower!, setPVBusVset!, setQLimits!, getNodeVm,distributeBusResults!, getTotalBusPower, getTotalLosses, buildVoltageVector,initialVrect, buildComplexSVec,addShuntMatpower!,
-  add2WTPIModelTrafo!, add3WTPiModelTrafo!,showNet, buildQLimits!,updateShuntPowers!,
+  add2WTPIModelTrafo!, add3WTPiModelTrafo!,showNet, buildQLimits!,updateShuntPowers!, addLink!, setNetLinkStatus!, getNetLinks, calcLinkFlowsKCL!,
   # remove_functions.jl
   removeBus!, removeBranch!, removeACLine!, removeTrafo!, removeShunt!, removeProsumer!, clearIsolatedBuses!,apply_mp_isolated_buses!,
   # import.jl
   createNetFromMatPowerFile, _createDict, apply_matpower_bus_voltage!,apply_mp_bus_vmva_init!,
   # exportMatPower.jl
-  writeMatpowerCasefile,
+  writeMatpowerCasefile, 
   # equicircuit.jl
   calcComplexRatio, calcNeutralU,  createYBUS, adjacentBranches, toPU_RXBG, fromPU_RXBG, 
   # nbi.jl
@@ -117,7 +121,7 @@ export
   # losses.jl
   calcNetLosses!, 
   # results.jl
-  printACPFlowResults, printProsumerResults,
+  ACPFlowReport, buildACPFlowReport, printACPFlowResults, printProsumerResults,
   # run_acpflow.jl  
   run_acpflow, run_net_acpflow,
   # solver_core.jl
@@ -137,6 +141,7 @@ include("transformer.jl")
 include("prosumer.jl")
 include("node.jl")
 include("branch.jl")
+include("link.jl")
 include("shunt.jl")
 include("network.jl")
 include("busdata.jl")

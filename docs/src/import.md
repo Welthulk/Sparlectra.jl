@@ -36,6 +36,25 @@ file_path = "path/to/case5.m"
 net = createNetFromMatPowerFile(file_path, false)  # Second parameter controls logging
 ```
 
+### Ensuring Test Cases Exist Locally
+
+When working with standard MATPOWER test cases (for example `case14.m`), you can
+let Sparlectra download the file on demand:
+
+```julia
+using Sparlectra
+
+# Downloads to Sparlectra.data/mpower if missing and returns absolute path
+case_path = ensure_casefile("case14.m")
+net = createNetFromMatPowerFile(case_path, false)
+```
+
+You can also request a generated `.jl` companion file by passing a `.jl` name:
+
+```julia
+case_jl_path = ensure_casefile("case14.jl")
+```
+
 ### Import Parser
 
 The `casefileparser` function parses Matpower case files and returns the raw data arrays:
@@ -134,6 +153,6 @@ writeMatpowerCasefile(net, output_path)
 
 ```@autodocs 
   Modules = [Sparlectra]   
-  Pages = ["import.jl", "createnet_powermat.jl", "exportMatPower.jl", "run_acpflow.jl"]
+  Pages = ["FetchMatpowerCase.jl", "createnet_powermat.jl", "exportMatPower.jl", "run_acpflow.jl"]
   Order = [:type, :function]
 ```

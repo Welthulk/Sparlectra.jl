@@ -135,7 +135,7 @@ function test_3WTPITrafo(verbose::Int = 0; method::Symbol = :rectangular, opt_fd
     printQLimitLog(net; sort_by = :bus)
   end
 
-  return true
+  return result
 end
 
 function test_acpflow(verbose::Int = 0; lLine_6a6b::Float64 = 0.01, damp::Float64 = 1.0, method::Symbol = :rectangular, opt_sparse = true)::Bool
@@ -180,9 +180,9 @@ function test_NBI_MDO()
   end
 
   for b in myNet.branchVec
-    tupple = (b.fromBus, b.toBus)
-    if tupple ∉ branchTupleSet
-      push!(branchTupleSet, tupple)
+    tuple = (b.fromBus, b.toBus)
+    if tuple ∉ branchTupleSet
+      push!(branchTupleSet, tuple)
     end
   end
 
@@ -224,46 +224,124 @@ function testImportMatpower()::Bool
 
     # bus: [bus_i type Pd Qd Gs Bs area Vm Va baseKV zone Vmax Vmin]
     bus = [
-      1  3   0.0   0.0  0.0  0.0  1  1.0  0.0  110.0  1  1.1  0.9;
-      2  1  50.0  30.0  0.0  0.0  1  1.0  0.0  110.0  1  1.1  0.9;
+      1 3 0.0 0.0 0.0 0.0 1 1.0 0.0 110.0 1 1.1 0.9
+      2 1 50.0 30.0 0.0 0.0 1 1.0 0.0 110.0 1 1.1 0.9
     ],
 
     # gen: 21 cols (MATPOWER v2)
     gen = [
-      1  0.0  0.0  999.0  -999.0  1.0  100.0  1  999.0  0.0  0 0  0 0  0 0  0 0  0 0  0;
+      1 0.0 0.0 999.0 -999.0 1.0 100.0 1 999.0 0.0 0 0 0 0 0 0 0 0 0 0 0;
     ],
 
     # branch: [fbus tbus r x b rateA rateB rateC ratio angle status angmin angmax]
     branch = [
-      1  2  0.01  0.05  0.0  9999.0  0.0  0.0  0.0  0.0  1  -60.0  60.0;
+      1 2 0.01 0.05 0.0 9999.0 0.0 0.0 0.0 0.0 1 -60.0 60.0;
     ],
-
     gencost = nothing,
     bus_name = nothing,
   )
 
-  net = Sparlectra.createNetFromMatPowerCase(mpc = mpc, log=false, flatstart=false)
-  
+  net = Sparlectra.createNetFromMatPowerCase(mpc = mpc, log = false, flatstart = false)
 
   if strip(net.name) != "case2_inline"
-    @warn "Unexpected net.name" got=net.name
+    @warn "Unexpected net.name" got = net.name
     return false
   end
   if length(net.nodeVec) != 2
-    @warn "Expected 2 nodes" got=length(net.nodeVec)
+    @warn "Expected 2 nodes" got = length(net.nodeVec)
     return false
   end
   if length(net.branchVec) != 1
-    @warn "Expected 1 branch" got=length(net.branchVec)
+    @warn "Expected 1 branch" got = length(net.branchVec)
     return false
   end
 
-  ok, msg = validate!(net=net)
+  ok, msg = validate!(net = net)
   ok || (@warn msg; return false)
 
   return true
 end
 
+function test_matpower_import_defaults_no_reenable()::Bool
+  mpc = (
+    name = "case2_defaults",
+    baseMVA = 100.0,
+    bus = [
+      1 3 0.0 0.0 0.0 0.0 1 1.0 0.0 110.0 1 1.1 0.9
+      2 1 20.0 10.0 0.0 0.0 1 1.0 0.0 110.0 1 1.1 0.9
+    ],
+    gen = [
+      1 30.0 0.0 999.0 -999.0 1.0 100.0 1 999.0 0.0 0 0 0 0 0 0 0 0 0 0 0
+    ],
+    branch = [
+      1 2 0.01 0.05 0.0 9999.0 0.0 0.0 0.0 0.0 1 -60.0 60.0
+    ],
+    gencost = nothing,
+    bus_name = nothing,
+  )
+
+  net = Sparlectra.createNetFromMatPowerCase(mpc = mpc, log = false, flatstart = false)
+
+  if net.cooldown_iters != 0
+    @warn "Expected default cooldown_iters = 0 for MATPOWER import" got = net.cooldown_iters
+    return false
+  end
+
+  if !isapprox(net.q_hyst_pu, 0.0; atol = 0.0, rtol = 0.0)
+    @warn "Expected default q_hyst_pu = 0.0 for MATPOWER import" got = net.q_hyst_pu
+    return false
+  end
+
+  return true
+end
+
+function test_matpower_vmva_selfcheck_noncontiguous_bus_numbers()::Bool
+  mpc = Sparlectra.MatpowerIO.MatpowerCase(
+    "case_noncontig",
+    100.0,
+    # bus_i includes non-contiguous high id (9001)
+    [
+      1 3 0.0 0.0 0.0 0.0 1 1.00 0.0 110.0 1 1.1 0.9
+      9001 1 0.0 0.0 0.0 0.0 1 0.99 -3.0 110.0 1 1.1 0.9
+    ],
+    [
+      1 0.0 0.0 999.0 -999.0 1.0 100.0 1 999.0 0.0 0 0 0 0 0 0 0 0 0 0 0
+    ],
+    [
+      1 9001 0.01 0.05 0.0 9999.0 0.0 0.0 0.0 0.0 1 -60.0 60.0
+    ],
+    nothing,
+    nothing,
+  )
+
+  stats = Sparlectra.MatpowerIO.vmva_power_mismatch_stats(mpc)
+  return get(stats, :ok, false) && get(stats, :n_p, 0) == 1 && get(stats, :n_q, 0) == 1 && isfinite(get(stats, :max_p_mis_pu, NaN)) && isfinite(get(stats, :max_q_mis_pu, NaN))
+end
+
+function test_matpower_vmva_selfcheck_ignores_slack_pq_spec()::Bool
+  mpc = Sparlectra.MatpowerIO.MatpowerCase(
+    "case_slack_spec_ignored",
+    100.0,
+    [
+      1 3 0.0 0.0 0.0 0.0 1 1.0 0.0 110.0 1 1.1 0.9
+      2 1 0.0 0.0 0.0 0.0 1 1.0 0.0 110.0 1 1.1 0.9
+    ],
+    [
+      # very large slack Pg/Qg that should NOT be enforced by PF equations
+      1 500.0 300.0 999.0 -999.0 1.0 100.0 1 999.0 0.0 0 0 0 0 0 0 0 0 0 0 0
+    ],
+    [
+      # no branch -> Scalc = 0 at all buses
+      # keep out-of-service branch to satisfy matrix width expectations
+      1 2 0.01 0.05 0.0 9999.0 0.0 0.0 0.0 0.0 0 -60.0 60.0
+    ],
+    nothing,
+    nothing,
+  )
+
+  stats = Sparlectra.MatpowerIO.vmva_power_mismatch_stats(mpc)
+  return get(stats, :ok, false) && isapprox(get(stats, :max_p_mis_pu, NaN), 0.0; atol = 1e-12) && isapprox(get(stats, :max_q_mis_pu, NaN), 0.0; atol = 1e-12)
+end
 
 function testISOBusses()
   Sbase_MVA = 1000.0
@@ -465,8 +543,8 @@ function createTest5BusNet(; cooldown = 0, hyst_pu = 0.0, qlim_min = nothing, ql
   if mul_gens
     addProsumer!(net = Bus5Net, busName = "B2", type = "ENERGYCONSUMER", p = 25.0, q = 8.0)
     addProsumer!(net = Bus5Net, busName = "B2", type = "ENERGYCONSUMER", p = 25.0, q = 7.0)
-    addProsumer!(net = Bus5Net, busName = "B3", type = "SYNCHRONOUSMACHINE", p = 20.0, q = 15.0, vm_pu = 1.03, va_deg = 0.0, qMax = 0.6*qlim_max, qMin = 0.6*qlim_min)
-    addProsumer!(net = Bus5Net, busName = "B3", type = "SYNCHRONOUSMACHINE", p = 10.0, q = 10.0, vm_pu = 1.03, va_deg = 0.0, qMax = 0.4*qlim_max, qMin = 0.4*qlim_min)
+    addProsumer!(net = Bus5Net, busName = "B3", type = "SYNCHRONOUSMACHINE", p = 20.0, q = 15.0, vm_pu = 1.03, va_deg = 0.0, qMax = 0.6 * qlim_max, qMin = 0.6 * qlim_min)
+    addProsumer!(net = Bus5Net, busName = "B3", type = "SYNCHRONOUSMACHINE", p = 10.0, q = 10.0, vm_pu = 1.03, va_deg = 0.0, qMax = 0.4 * qlim_max, qMin = 0.4 * qlim_min)
     addProsumer!(net = Bus5Net, busName = "B4", type = "ENERGYCONSUMER", p = 25.0, q = 7.0)
     addProsumer!(net = Bus5Net, busName = "B4", type = "ENERGYCONSUMER", p = 25.0, q = 8.0)
     addProsumer!(net = Bus5Net, busName = "B5", type = "ENERGYCONSUMER", p = 10.0, q = 5.0)
@@ -588,9 +666,9 @@ function test_3BusNet(verbose::Int = 0, qlim::Float64 = 15.0, method::Symbol = :
   @test all(isapprox.(tp, tl; atol = 1e-6))
 
   if qlim < 33.2
-    return hit==true
+    return hit == true
   else
-    return hit==false
+    return hit == false
   end
 end
 
@@ -624,168 +702,450 @@ function test_5BusNet(verbose::Int = 0, qlim::Float64 = 20.0, method::Symbol = :
     printQLimitLog(net; sort_by = :bus)
   end
 
-  return hit==true
+  return hit == true
 end
 
 # ------------------------------------------------------------
 # Test: MATPOWER inline case vs manual Net build (with SHUNTS)
 # ------------------------------------------------------------
-function test_mp_inline_vs_manual_shunt(verbose::Int = 0;  method::Symbol = :rectangular,  opt_sparse::Bool = true)::Bool
-    tol_pf  = 1e-10
-    maxIte  = 40
-    tol_cmp = 5e-4
-    print_results = (verbose > 0)
+function test_mp_inline_vs_manual_shunt(verbose::Int = 0; method::Symbol = :rectangular, opt_sparse::Bool = true)::Bool
+  tol_pf = 1e-10
+  maxIte = 40
+  tol_cmp = 5e-4
+  print_results = (verbose > 0)
 
-    # -------------------------
-    # 1) MATPOWER inline case
-    # -------------------------
-    mpc = (
-        name = "case3_mp_vs_manual_shunt",
-        baseMVA = 100.0,
+  # -------------------------
+  # 1) MATPOWER inline case
+  # -------------------------
+  mpc = (
+    name = "case3_mp_vs_manual_shunt",
+    baseMVA = 100.0,
 
-        # bus: [bus_i type Pd Qd Gs Bs area Vm Va baseKV zone Vmax Vmin]
-        # Shunts:
-        #  - Bus2: Bs=+6 MVAr  => Qsh = -6 MVAr (capacitive) at |V|=1
-        #  - Bus3: Bs=+12 MVAr => Qsh = -12 MVAr (capacitive) at |V|=1
-        bus = [
-            1  3    0.0   0.0   0.0   0.0   1  1.06   0.0  110.0  1  1.10  0.90;
-            2  2   20.0   5.0   0.0   6.0   1  1.03   0.0  110.0  1  1.10  0.90;
-            3  1   90.0  30.0   0.0  12.0   1  1.00   0.0  110.0  1  1.10  0.90;
-        ],
+    # bus: [bus_i type Pd Qd Gs Bs area Vm Va baseKV zone Vmax Vmin]
+    # Shunts:
+    #  - Bus2: Bs=+6 MVAr  => Qsh = -6 MVAr (capacitive) at |V|=1
+    #  - Bus3: Bs=+12 MVAr => Qsh = -12 MVAr (capacitive) at |V|=1
+    bus = [
+      1 3 0.0 0.0 0.0 0.0 1 1.06 0.0 110.0 1 1.10 0.90
+      2 2 20.0 5.0 0.0 6.0 1 1.03 0.0 110.0 1 1.10 0.90
+      3 1 90.0 30.0 0.0 12.0 1 1.00 0.0 110.0 1 1.10 0.90
+    ],
 
-        # gen: 21 cols (MATPOWER v2)
-        # bus Pg Qg Qmax Qmin Vg mBase status Pmax Pmin ...
-        gen = [
-            1  120.0  0.0  300.0  -300.0  1.06  100.0  1  300.0  0.0  0 0 0 0 0 0 0 0 0 0 0;
-            2   60.0  0.0  200.0  -200.0  1.03  100.0  1  200.0  0.0  0 0 0 0 0 0 0 0 0 0 0;
-        ],
+    # gen: 21 cols (MATPOWER v2)
+    # bus Pg Qg Qmax Qmin Vg mBase status Pmax Pmin ...
+    gen = [
+      1 120.0 0.0 300.0 -300.0 1.06 100.0 1 300.0 0.0 0 0 0 0 0 0 0 0 0 0 0
+      2 60.0 0.0 200.0 -200.0 1.03 100.0 1 200.0 0.0 0 0 0 0 0 0 0 0 0 0 0
+    ],
 
-        # branch: [fbus tbus r x b rateA rateB rateC ratio angle status angmin angmax]
-        # NOTE: line charging b=0 here (we test shunts via bus Gs/Bs).
-        branch = [
-            1  2  0.02  0.06  0.0  0 0 0  0.0  0.0  1  -360  360;
-            1  3  0.08  0.24  0.0  0 0 0  0.0  0.0  1  -360  360;
-            2  3  0.06  0.18  0.0  0 0 0  0.0  0.0  1  -360  360;
-        ],
+    # branch: [fbus tbus r x b rateA rateB rateC ratio angle status angmin angmax]
+    # NOTE: line charging b=0 here (we test shunts via bus Gs/Bs).
+    branch = [
+      1 2 0.02 0.06 0.0 0 0 0 0.0 0.0 1 -360 360
+      1 3 0.08 0.24 0.0 0 0 0 0.0 0.0 1 -360 360
+      2 3 0.06 0.18 0.0 0 0 0 0.0 0.0 1 -360 360
+    ],
+    gencost = nothing,
+    bus_name = ["BUS1 (Slack)", "BUS2 (PV)", "BUS3 (PQ)"],
+  )
 
-        gencost = nothing,
-        bus_name = ["BUS1 (Slack)", "BUS2 (PV)", "BUS3 (PQ)"],
-    )
+  # Net aus MATPOWER erstellen (dein existierender Pfad)
+  net_mp = Sparlectra.createNetFromMatPowerCase(mpc = mpc, log = false, flatstart = false)
 
-    # Net aus MATPOWER erstellen (dein existierender Pfad)
-    net_mp = Sparlectra.createNetFromMatPowerCase(mpc = mpc, log=false, flatstart=false)
+  ok, msg = validate!(net = net_mp)
+  ok || (@warn msg; return false)
 
-    ok, msg = validate!(net=net_mp)
-    ok || (@warn msg; return false)
+  # PF rechnen
+  erg_mp = 0
+  ite_mp = 0
+  et_mp = @elapsed begin
+    ite_mp, erg_mp = runpf!(net_mp, maxIte, tol_pf, verbose; method = method, opt_sparse = opt_sparse)
+  end
+  if erg_mp != 0
+    @warn "MATPOWER-derived net: power flow did not converge"
+    return false
+  end
 
-    # PF rechnen
-    erg_mp = 0
-    ite_mp = 0
-    et_mp = @elapsed begin
-        ite_mp, erg_mp = runpf!(net_mp, maxIte, tol_pf, verbose; method=method, opt_sparse=opt_sparse)
+  updateShuntPowers!(net = net_mp)
+
+  Y_mp = createYBUS(net = net_mp, sparse = opt_sparse, printYBUS = false)
+  V_mp = buildVoltageVector(net_mp)
+  Sinj_mp = calc_injections(Y_mp, V_mp)
+  # -------------------------
+  # 2) Manual Net build
+  # -------------------------
+  netName = "case3_manual_vs_mp_shunt"
+  net_man = Net(name = netName, baseMVA = 100.0)
+  addBus!(net = net_man, busName = "B1", busType = "SLACK", vn_kV = 110.0, vm_pu = 1.06, va_deg = 0.0)
+  addBus!(net = net_man, busName = "B2", busType = "PV", vn_kV = 110.0, vm_pu = 1.03, va_deg = 0.0)
+  addBus!(net = net_man, busName = "B3", busType = "PQ", vn_kV = 110.0, vm_pu = 1.00, va_deg = 0.0)
+  # Leitungen (ohne line charging, damit Vergleich sauber nur über Bus-Shunts läuft)
+  addACLine!(net = net_man, fromBus = "B1", toBus = "B2", length = 1.0, r = 0.02, x = 0.06)
+  addACLine!(net = net_man, fromBus = "B1", toBus = "B3", length = 1.0, r = 0.08, x = 0.24)
+  addACLine!(net = net_man, fromBus = "B2", toBus = "B3", length = 1.0, r = 0.06, x = 0.18)
+
+  # Loads (ENERGYCONSUMER): Pd/Qd
+  # Loads (ENERGYCONSUMER): Pd/Qd
+  addProsumer!(net = net_man, busName = "B3", type = "ENERGYCONSUMER", p = 90.0, q = 30.0)
+
+  # MATPOWER bus 2 also has load: Pd=20 MW, Qd=5 MVAr
+  addProsumer!(net = net_man, busName = "B2", type = "ENERGYCONSUMER", p = 20.0, q = 5.0)
+
+  addProsumer!(net = net_man, busName = "B1", type = "EXTERNALNETWORKINJECTION", referencePri = "B1")
+
+  # PV generator at B2 (P + Vm setpoint)
+  addProsumer!(net = net_man, busName = "B2", type = "SYNCHRONOUSMACHINE", p = 60.0, vm_pu = 1.03, va_deg = 0.0, qMin = -200.0, qMax = 200.0)
+
+  # Bus-Shunts: MATPOWER Bs>0 => Q = -Bs (kapazitiv)
+  addShunt!(net = net_man, busName = "B2", pShunt = 0.0, qShunt = 6.0, in_service = 1)
+  addShunt!(net = net_man, busName = "B3", pShunt = 0.0, qShunt = 12.0, in_service = 1)
+
+  ok2, msg2 = validate!(net = net_man)
+  ok2 || (@warn msg2; return false)
+
+  erg_man = 0
+  ite_man = 0
+
+  et_man = @elapsed begin
+    ite_man, erg_man = runpf!(net_man, maxIte, tol_pf, verbose; method = method, opt_sparse = opt_sparse)
+  end
+  if erg_man != 0
+    @warn "Manual net: power flow did not converge"
+    return false
+  end
+  updateShuntPowers!(net = net_man)
+
+  Y_man = createYBUS(net = net_man, sparse = opt_sparse, printYBUS = false)
+  V_man = buildVoltageVector(net_man)
+  Sinj_man = calc_injections(Y_man, V_man)
+  # -------------------------
+  # 3) Compare results
+  # -------------------------
+  # Compare complex voltages (magnitude+angle implicit)
+  if length(V_mp) != length(V_man)
+    @warn "Voltage vector length mismatch" n_mp = length(V_mp) n_man = length(V_man)
+    return false
+  end
+
+  # Bus order: Matpower bus_i are 1..3; manual bus order is creation order B1,B2,B3 -> should match
+  if !all(isapprox.(V_mp, V_man; atol = tol_cmp, rtol = 0.0))
+    @warn "Voltage mismatch between MATPOWER-derived and manual net" V_mp = V_mp V_man = V_man
+    return false
+  end
+
+  # Compare slack injections (P,Q) in MW/MVAr
+  slack_idx = 1
+  Psl_mp = real(Sinj_mp[slack_idx]) * mpc.baseMVA
+  Qsl_mp = imag(Sinj_mp[slack_idx]) * mpc.baseMVA
+  Psl_man = real(Sinj_man[slack_idx]) * mpc.baseMVA
+  Qsl_man = imag(Sinj_man[slack_idx]) * mpc.baseMVA
+
+  if !(isapprox(Psl_mp, Psl_man; atol = 1e-4, rtol = 0.0) && isapprox(Qsl_mp, Qsl_man; atol = 1e-4, rtol = 0.0))
+    @warn "Slack P/Q mismatch" Psl_mp = Psl_mp Qsl_mp = Qsl_mp Psl_man = Psl_man Qsl_man = Qsl_man
+    return false
+  end
+
+  if print_results
+    @info "Qsh MAN" B2 = net_man.nodeVec[2]._qShunt B3 = net_man.nodeVec[3]._qShunt
+    @info "Qsh MP" B2 = net_mp.nodeVec[2]._qShunt B3 = net_mp.nodeVec[3]._qShunt
+    @info "manual setpoints" B1_vm = net_man.nodeVec[1]._vm_pu B1_va = net_man.nodeVec[1]._va_deg B2_vm = net_man.nodeVec[2]._vm_pu
+    @info "mp setpoints" B1_vm = net_mp.nodeVec[1]._vm_pu B1_va = net_mp.nodeVec[1]._va_deg B2_vm = net_mp.nodeVec[2]._vm_pu
+
+    @info "MP net PF ok" et = et_mp ite = ite_mp
+    @info "MAN net PF ok" et = et_man ite = ite_man
+    printACPFlowResults(net_mp, et_mp, ite_mp, tol_pf; converged = true, solver = method)
+    printACPFlowResults(net_man, et_man, ite_man, tol_pf; converged = true, solver = method)
+  end
+
+  return true
+end
+
+function test_link_kcl_simple()
+  net = Net(name = "link_kcl", baseMVA = 100.0)
+  addBus!(net = net, busName = "B1", busType = "PQ", vn_kV = 110.0)
+  addBus!(net = net, busName = "B2", busType = "PQ", vn_kV = 110.0)
+
+  addBusGenPower!(net = net, busName = "B1", p = 10.0, q = 2.0)
+  addBusLoadPower!(net = net, busName = "B2", p = 10.0, q = 2.0)
+
+  addLink!(net = net, fromBus = "B1", toBus = "B2", status = 1)
+  calcLinkFlowsKCL!(net)
+
+  l = net.linkVec[1]
+  iexp = hypot(10.0, 2.0) / (Sparlectra.Wurzel3 * 110.0)
+  return isapprox(l.pFlow_MW, 10.0; atol = 1e-8) && isapprox(l.qFlow_MVar, 2.0; atol = 1e-8) && isapprox(l.iFrom_kA, iexp; atol = 1e-10) && isapprox(l.iTo_kA, iexp; atol = 1e-10)
+end
+
+function test_link_component_type()
+  net = Net(name = "link_component", baseMVA = 100.0)
+  addBus!(net = net, busName = "B1", busType = "PQ", vn_kV = 110.0)
+  addBus!(net = net, busName = "B2", busType = "PQ", vn_kV = 110.0)
+  addLink!(net = net, fromBus = "B1", toBus = "B2", status = 1)
+
+  l = net.linkVec[1]
+  return (l isa AbstractComponent) && l.cTyp == Sparlectra.LinkC && toComponentTyp("BUSLINK") == Sparlectra.LinkC && toComponentTyp("LINK") == Sparlectra.LinkC
+end
+
+function test_link_rejects_slack_connection()
+  net = Net(name = "link_slack_reject", baseMVA = 100.0)
+  addBus!(net = net, busName = "B1", busType = "SLACK", vn_kV = 110.0)
+  addBus!(net = net, busName = "B2", busType = "PQ", vn_kV = 110.0)
+
+  try
+    addLink!(net = net, fromBus = "B1", toBus = "B2", status = 1)
+    return false
+  catch err
+    return err isa AssertionError && occursin("slack", lowercase(string(err)))
+  end
+end
+
+function test_link_rejects_mixed_bus_types()
+  net = Net(name = "link_type_reject", baseMVA = 100.0)
+  addBus!(net = net, busName = "B1", busType = "PQ", vn_kV = 110.0)
+  addBus!(net = net, busName = "B2", busType = "PV", vn_kV = 110.0)
+
+  try
+    addLink!(net = net, fromBus = "B1", toBus = "B2", status = 1)
+    return false
+  catch err
+    return err isa AssertionError && occursin("same bus type", lowercase(string(err)))
+  end
+end
+
+function test_link_bus_merge_pf()
+  tol = 1e-8
+  maxIte = 30
+
+  net_link = Net(name = "link_merge_pf", baseMVA = 100.0)
+  addBus!(net = net_link, busName = "B0", busType = "SLACK", vn_kV = 110.0)
+  addBus!(net = net_link, busName = "B1", busType = "PQ", vn_kV = 110.0)
+  addBus!(net = net_link, busName = "B2", busType = "PQ", vn_kV = 110.0)
+  addBus!(net = net_link, busName = "B3", busType = "PQ", vn_kV = 110.0)
+
+  addACLine!(net = net_link, fromBus = "B0", toBus = "B1", length = 5.0, r = 0.05, x = 0.5, c_nf_per_km = 10.0, tanδ = 0.0)
+  addACLine!(net = net_link, fromBus = "B2", toBus = "B3", length = 20.0, r = 0.05, x = 0.5, c_nf_per_km = 10.0, tanδ = 0.0)
+  addLink!(net = net_link, fromBus = "B1", toBus = "B2", status = 1)
+
+  addProsumer!(net = net_link, busName = "B0", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "B0")
+  addProsumer!(net = net_link, busName = "B1", type = "GENERATOR", p = 10.0, q = 1.0)
+  addProsumer!(net = net_link, busName = "B2", type = "ENERGYCONSUMER", p = 15.0, q = 5.0)
+  addProsumer!(net = net_link, busName = "B3", type = "ENERGYCONSUMER", p = 25.0, q = 10.0)
+
+  ite_link, erg_link = runpf!(net_link, maxIte, tol, 0; method = :polar_full, opt_sparse = true)
+  if erg_link != 0
+    @warn "Link network did not converge" ite = ite_link
+    return false
+  end
+
+  b1_idx = geNetBusIdx(net = net_link, busName = "B1")
+  b2_idx = geNetBusIdx(net = net_link, busName = "B2")
+  b3_idx = geNetBusIdx(net = net_link, busName = "B3")
+
+  if !isapprox(net_link.nodeVec[b1_idx]._vm_pu, net_link.nodeVec[b2_idx]._vm_pu; atol = 1e-10)
+    @warn "Merged link buses do not share voltage magnitude" vm1 = net_link.nodeVec[b1_idx]._vm_pu vm2 = net_link.nodeVec[b2_idx]._vm_pu
+    return false
+  end
+  if !isapprox(net_link.nodeVec[b1_idx]._va_deg, net_link.nodeVec[b2_idx]._va_deg; atol = 1e-8)
+    @warn "Merged link buses do not share voltage angle" va1 = net_link.nodeVec[b1_idx]._va_deg va2 = net_link.nodeVec[b2_idx]._va_deg
+    return false
+  end
+
+  net_eq = Net(name = "merge_reference", baseMVA = 100.0)
+  addBus!(net = net_eq, busName = "B0", busType = "SLACK", vn_kV = 110.0)
+  addBus!(net = net_eq, busName = "B12", busType = "PQ", vn_kV = 110.0)
+  addBus!(net = net_eq, busName = "B3", busType = "PQ", vn_kV = 110.0)
+
+  addACLine!(net = net_eq, fromBus = "B0", toBus = "B12", length = 5.0, r = 0.05, x = 0.5, c_nf_per_km = 10.0, tanδ = 0.0)
+  addACLine!(net = net_eq, fromBus = "B12", toBus = "B3", length = 20.0, r = 0.05, x = 0.5, c_nf_per_km = 10.0, tanδ = 0.0)
+  addProsumer!(net = net_eq, busName = "B0", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "B0")
+  addProsumer!(net = net_eq, busName = "B12", type = "GENERATOR", p = 10.0, q = 1.0)
+  addProsumer!(net = net_eq, busName = "B12", type = "ENERGYCONSUMER", p = 15.0, q = 5.0)
+  addProsumer!(net = net_eq, busName = "B3", type = "ENERGYCONSUMER", p = 25.0, q = 10.0)
+
+  ite_eq, erg_eq = runpf!(net_eq, maxIte, tol, 0; method = :polar_full, opt_sparse = true)
+  if erg_eq != 0
+    @warn "Reference network did not converge" ite = ite_eq
+    return false
+  end
+
+  b12_idx = geNetBusIdx(net = net_eq, busName = "B12")
+  b3_eq_idx = geNetBusIdx(net = net_eq, busName = "B3")
+
+  vm_link_b3 = net_link.nodeVec[b3_idx]._vm_pu
+  va_link_b3 = net_link.nodeVec[b3_idx]._va_deg
+  vm_eq_b3 = net_eq.nodeVec[b3_eq_idx]._vm_pu
+  va_eq_b3 = net_eq.nodeVec[b3_eq_idx]._va_deg
+
+  return isapprox(net_link.nodeVec[b1_idx]._vm_pu, net_eq.nodeVec[b12_idx]._vm_pu; atol = 1e-8) && isapprox(net_link.nodeVec[b1_idx]._va_deg, net_eq.nodeVec[b12_idx]._va_deg; atol = 1e-7) && isapprox(vm_link_b3, vm_eq_b3; atol = 1e-8) && isapprox(va_link_b3, va_eq_b3; atol = 1e-7)
+end
+
+function test_link_bus_merge_pf_default_method()
+  return test_link_bus_merge_pf()
+end
+
+function test_link_closed_keeps_shunt_reporting_on_original_bus()
+  net = Net(name = "link_shunt_reporting", baseMVA = 100.0)
+  addBus!(net = net, busName = "B0", busType = "SLACK", vn_kV = 110.0)
+  addBus!(net = net, busName = "B1", busType = "PQ", vn_kV = 110.0)
+  addBus!(net = net, busName = "B2", busType = "PQ", vn_kV = 110.0)
+  addBus!(net = net, busName = "B3", busType = "PQ", vn_kV = 110.0)
+
+  addACLine!(net = net, fromBus = "B0", toBus = "B1", length = 5.0, r = 0.05, x = 0.5, c_nf_per_km = 10.0, tanδ = 0.0)
+  addACLine!(net = net, fromBus = "B2", toBus = "B3", length = 20.0, r = 0.05, x = 0.5, c_nf_per_km = 10.0, tanδ = 0.0)
+  addLink!(net = net, fromBus = "B1", toBus = "B2", status = 1)
+  addShunt!(net = net, busName = "B2", pShunt = 0.0, qShunt = 5.0)
+
+  addProsumer!(net = net, busName = "B0", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "B0")
+  addProsumer!(net = net, busName = "B1", type = "GENERATOR", p = 10.0, q = 1.0)
+  addProsumer!(net = net, busName = "B2", type = "ENERGYCONSUMER", p = 15.0, q = 5.0)
+  addProsumer!(net = net, busName = "B3", type = "ENERGYCONSUMER", p = 25.0, q = 10.0)
+
+  _, erg = runpf!(net, 25, 1e-8, 0; method = :polar_full, opt_sparse = true)
+  erg == 0 || return false
+
+  b2_idx = geNetBusIdx(net = net, busName = "B2")
+  sh = net.shuntVec[1]
+  vm = net.nodeVec[b2_idx]._vm_pu
+  expected_q = -vm^2 * 5.0
+
+  return isapprox(sh.q_shunt, expected_q; atol = 1e-8) && isapprox(net.nodeVec[b2_idx]._qShunt, expected_q; atol = 1e-8)
+end
+
+function test_link_kcl_ring_allocation()
+  net = Net(name = "link_kcl_ring", baseMVA = 100.0)
+  addBus!(net = net, busName = "B1", busType = "PQ", vn_kV = 110.0)
+  addBus!(net = net, busName = "B2", busType = "PQ", vn_kV = 110.0)
+  addBus!(net = net, busName = "B3", busType = "PQ", vn_kV = 110.0)
+
+  addBusGenPower!(net = net, busName = "B1", p = 15.0, q = 6.0)
+  addBusLoadPower!(net = net, busName = "B2", p = 10.0, q = 4.0)
+  addBusLoadPower!(net = net, busName = "B3", p = 5.0, q = 2.0)
+
+  addLink!(net = net, fromBus = "B1", toBus = "B2", status = 1)
+  addLink!(net = net, fromBus = "B2", toBus = "B3", status = 1)
+  addLink!(net = net, fromBus = "B3", toBus = "B1", status = 1)
+
+  calcLinkFlowsKCL!(net)
+
+  A = [1.0 0.0 -1.0;
+       -1.0 1.0 0.0;
+       0.0 -1.0 1.0]
+  bP = [15.0, -10.0, -5.0]
+  bQ = [6.0, -4.0, -2.0]
+  fP_expected = pinv(A) * bP
+  fQ_expected = pinv(A) * bQ
+
+  flowsP = [net.linkVec[1].pFlow_MW, net.linkVec[2].pFlow_MW, net.linkVec[3].pFlow_MW]
+  flowsQ = [net.linkVec[1].qFlow_MVar, net.linkVec[2].qFlow_MVar, net.linkVec[3].qFlow_MVar]
+
+  return isapprox.(flowsP, fP_expected; atol = 1e-10, rtol = 0.0) |> all &&
+         isapprox.(flowsQ, fQ_expected; atol = 1e-10, rtol = 0.0) |> all &&
+         isapprox.(A * flowsP, bP; atol = 1e-10, rtol = 0.0) |> all &&
+         isapprox.(A * flowsQ, bQ; atol = 1e-10, rtol = 0.0) |> all
+end
+
+function test_link_ring_pf_stability()
+  net = Net(name = "link_ring_pf_stability", baseMVA = 100.0)
+  addBus!(net = net, busName = "B0", busType = "SLACK", vn_kV = 110.0)
+  addBus!(net = net, busName = "B1", busType = "PQ", vn_kV = 110.0)
+  addBus!(net = net, busName = "B2", busType = "PQ", vn_kV = 110.0)
+  addBus!(net = net, busName = "B3", busType = "PQ", vn_kV = 110.0)
+
+  addACLine!(net = net, fromBus = "B0", toBus = "B1", length = 10.0, r = 0.05, x = 0.4, c_nf_per_km = 10.0, tanδ = 0.0)
+  addACLine!(net = net, fromBus = "B0", toBus = "B2", length = 12.0, r = 0.05, x = 0.4, c_nf_per_km = 10.0, tanδ = 0.0)
+
+  addLink!(net = net, fromBus = "B1", toBus = "B2", status = 1)
+  addLink!(net = net, fromBus = "B2", toBus = "B3", status = 1)
+  addLink!(net = net, fromBus = "B3", toBus = "B1", status = 1)
+
+  addProsumer!(net = net, busName = "B0", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "B0")
+  addProsumer!(net = net, busName = "B1", type = "GENERATOR", p = 6.0, q = 1.0)
+  addProsumer!(net = net, busName = "B2", type = "ENERGYCONSUMER", p = 18.0, q = 5.0)
+  addProsumer!(net = net, busName = "B3", type = "ENERGYCONSUMER", p = 8.0, q = 3.0)
+
+  _, erg = runpf!(net, 40, 1e-9, 0; method = :polar_full, opt_sparse = false)
+  erg == 0 || return false
+
+  calcLinkFlowsKCL!(net)
+
+  b1 = geNetBusIdx(net = net, busName = "B1")
+  b2 = geNetBusIdx(net = net, busName = "B2")
+  b3 = geNetBusIdx(net = net, busName = "B3")
+
+  vm_equal = isapprox(net.nodeVec[b1]._vm_pu, net.nodeVec[b2]._vm_pu; atol = 1e-10) &&
+             isapprox(net.nodeVec[b1]._vm_pu, net.nodeVec[b3]._vm_pu; atol = 1e-10)
+  va_equal = isapprox(net.nodeVec[b1]._va_deg, net.nodeVec[b2]._va_deg; atol = 1e-8) &&
+             isapprox(net.nodeVec[b1]._va_deg, net.nodeVec[b3]._va_deg; atol = 1e-8)
+
+  A = zeros(Float64, 3, 3)
+  for (j, l) in enumerate(net.linkVec)
+    A[l.fromBus - 1, j] += 1.0
+    A[l.toBus - 1, j] -= 1.0
+  end
+
+  P_inj = zeros(Float64, 3)
+  Q_inj = zeros(Float64, 3)
+  P_branch_out = zeros(Float64, 3)
+  Q_branch_out = zeros(Float64, 3)
+
+  for (k, busidx) in enumerate((b1, b2, b3))
+    node = net.nodeVec[busidx]
+    P_inj[k] = (isnothing(node._pƩGen) ? 0.0 : node._pƩGen) - (isnothing(node._pƩLoad) ? 0.0 : node._pƩLoad)
+    Q_inj[k] = (isnothing(node._qƩGen) ? 0.0 : node._qƩGen) - (isnothing(node._qƩLoad) ? 0.0 : node._qƩLoad)
+  end
+
+  for br in net.branchVec
+    br.status == 1 || continue
+    if br.fromBus in (b1, b2, b3)
+      k = br.fromBus == b1 ? 1 : (br.fromBus == b2 ? 2 : 3)
+      if !isnothing(br.fBranchFlow)
+        P_branch_out[k] += br.fBranchFlow.pFlow
+        Q_branch_out[k] += br.fBranchFlow.qFlow
+      end
     end
-    if erg_mp != 0
-        @warn "MATPOWER-derived net: power flow did not converge"
-        return false
+    if br.toBus in (b1, b2, b3)
+      k = br.toBus == b1 ? 1 : (br.toBus == b2 ? 2 : 3)
+      if !isnothing(br.tBranchFlow)
+        P_branch_out[k] += br.tBranchFlow.pFlow
+        Q_branch_out[k] += br.tBranchFlow.qFlow
+      end
     end
-    
-    updateShuntPowers!(net=net_mp)
-    
+  end
 
-    Y_mp  = createYBUS(net = net_mp,  sparse = opt_sparse, printYBUS = false)
-    V_mp  = buildVoltageVector(net_mp)
-    Sinj_mp = calc_injections(Y_mp, V_mp)
-    # -------------------------
-    # 2) Manual Net build
-    # -------------------------
-    netName = "case3_manual_vs_mp_shunt"
-    net_man = Net(name = netName, baseMVA = mpc.baseMVA)
-    
-    addBus!(net=net_man, busName="B1", busType="SLACK", vn_kV=110.0, vm_pu=1.06, va_deg=0.0)
-    addBus!(net=net_man, busName="B2", busType="PV",    vn_kV=110.0, vm_pu=1.03, va_deg=0.0)
-    addBus!(net=net_man, busName="B3", busType="PQ",    vn_kV=110.0, vm_pu=1.00, va_deg=0.0)
-    
-    # Leitungen (ohne line charging, damit Vergleich sauber nur über Bus-Shunts läuft)
-    addACLine!(net=net_man, fromBus="B1", toBus="B2", length=1.0, r=0.02, x=0.06)
-    addACLine!(net=net_man, fromBus="B1", toBus="B3", length=1.0, r=0.08, x=0.24)
-    addACLine!(net=net_man, fromBus="B2", toBus="B3", length=1.0, r=0.06, x=0.18)
+  bP = P_inj .- P_branch_out
+  bQ = Q_inj .- Q_branch_out
+  bP .-= sum(bP) / 3
+  bQ .-= sum(bQ) / 3
 
-    # Loads (ENERGYCONSUMER): Pd/Qd
-    addProsumer!(net=net_man, busName="B2", type="ENERGYCONSUMER", p=20.0, q=5.0)
-    addProsumer!(net=net_man, busName="B3", type="ENERGYCONSUMER", p=90.0, q=30.0)
+  flowsP = [l.pFlow_MW for l in net.linkVec]
+  flowsQ = [l.qFlow_MVar for l in net.linkVec]
 
-    # Slack injection (V setpoint)
-    addProsumer!(net=net_man, busName="B1", type="EXTERNALNETWORKINJECTION", referencePri="B1")
+  return vm_equal && va_equal &&
+         isapprox.(A * flowsP, bP; atol = 1e-7, rtol = 0.0) |> all &&
+         isapprox.(A * flowsQ, bQ; atol = 1e-7, rtol = 0.0) |> all
+end
 
-    # PV generator at B2 (P + Vm setpoint)
-    addProsumer!(net=net_man, busName="B2", type="SYNCHRONOUSMACHINE",
-                 p=60.0, vm_pu=1.03, va_deg=0.0,
-                 qMin=-200.0, qMax=200.0)
+function test_acpflow_report_object()
+  net = createTest3BusNet(cooldown = 2, hyst_pu = 0.01, qlim_min = -15.0, qlim_max = 15.0)
+  ite, erg = runpf!(net, 50, 1e-10, 0; method = :polar_full, opt_sparse = true)
+  erg == 0 || return false
 
-    # Bus-Shunts: MATPOWER Bs>0 => Q = -Bs (kapazitiv)
-    addShunt!(net=net_man, busName="B2", pShunt=0.0, qShunt=6.0,  in_service=1)
-    addShunt!(net=net_man, busName="B3", pShunt=0.0, qShunt=12.0, in_service=1)
+  calcNetLosses!(net)
+  calcLinkFlowsKCL!(net)
 
-    ok2, msg2 = validate!(net=net_man)
-    ok2 || (@warn msg2; return false)
+  report = buildACPFlowReport(net; ct = 0.123, ite = ite, tol = 1e-10, converged = true, solver = :polar_full)
 
-    erg_man = 0
-    ite_man = 0
+  node_count_ok = length(report.nodes) == length(net.nodeVec)
+  branch_count_ok = length(report.branches) == length(net.branchVec)
+  link_count_ok = length(report.links) == length(net.linkVec)
 
+  total_losses_ok = isapprox(report.metadata.total_p_loss_MW, getTotalLosses(net = net)[1]; atol = 1e-8) && isapprox(report.metadata.total_q_loss_MVar, getTotalLosses(net = net)[2]; atol = 1e-8)
 
-    et_man = @elapsed begin
-        ite_man, erg_man = runpf!(net_man, maxIte, tol_pf, verbose; method=method, opt_sparse=opt_sparse)
-    end
-    if erg_man != 0
-        @warn "Manual net: power flow did not converge"
-        return false
-    end
-    updateShuntPowers!(net=net_man)
-    
-    Y_man = createYBUS(net = net_man, sparse = opt_sparse, printYBUS = false)
-    V_man = buildVoltageVector(net_man)
-    Sinj_man = calc_injections(Y_man, V_man)
-    # -------------------------
-    # 3) Compare results
-    # -------------------------
-    # Compare complex voltages (magnitude+angle implicit)
-    if length(V_mp) != length(V_man)
-        @warn "Voltage vector length mismatch" n_mp=length(V_mp) n_man=length(V_man)
-        return false
-    end
+  first_node = report.nodes[1]
+  first_branch = report.branches[1]
 
-    # Bus order: Matpower bus_i are 1..3; manual bus order is creation order B1,B2,B3 -> should match
-    len = length(V_mp)
-    for i in 1:len
-        if !isapprox(V_mp[i], V_man[i]; atol=tol_cmp, rtol=0.0)
-            @warn "Voltage mismatch" bus=i V_mp=V_mp[i] V_man=V_man[i]
-            return false
-        end
-    end
+  has_node_keys = haskey(first_node, :bus) && haskey(first_node, :vm_pu) && haskey(first_node, :q_limit_hit)
+  has_branch_keys = haskey(first_branch, :from_bus) && haskey(first_branch, :p_from_MW) && haskey(first_branch, :overloaded)
 
-    # Compare slack injections (P,Q) in MW/MVAr
-    slack_idx = 1
-    Psl_mp  = real(Sinj_mp[slack_idx])  * mpc.baseMVA
-    Qsl_mp  = imag(Sinj_mp[slack_idx])  * mpc.baseMVA
-    Psl_man = real(Sinj_man[slack_idx]) * mpc.baseMVA
-    Qsl_man = imag(Sinj_man[slack_idx]) * mpc.baseMVA
-
-    if !(isapprox(Psl_mp, Psl_man; atol=1e-4, rtol=0.0) && isapprox(Qsl_mp, Qsl_man; atol=1e-4, rtol=0.0))
-        @warn "Slack P/Q mismatch" Psl_mp=Psl_mp Qsl_mp=Qsl_mp Psl_man=Psl_man Qsl_man=Qsl_man
-        return false
-    end
-
-    if print_results
-        @info "Qsh MAN" B2=net_man.nodeVec[2]._qShunt B3=net_man.nodeVec[3]._qShunt
-        @info "Qsh MP"  B2=net_mp.nodeVec[2]._qShunt  B3=net_mp.nodeVec[3]._qShunt
-        @info "manual setpoints" B1_vm=net_man.nodeVec[1]._vm_pu B1_va=net_man.nodeVec[1]._va_deg B2_vm=net_man.nodeVec[2]._vm_pu
-        @info "mp setpoints"     B1_vm=net_mp.nodeVec[1]._vm_pu  B1_va=net_mp.nodeVec[1]._va_deg  B2_vm=net_mp.nodeVec[2]._vm_pu
-
-        @info "MP net PF ok"  et=et_mp  ite=ite_mp
-        @info "MAN net PF ok" et=et_man ite=ite_man
-        printACPFlowResults(net_mp,  et_mp,  ite_mp,  tol_pf; converged=true, solver=method)
-        printACPFlowResults(net_man, et_man, ite_man, tol_pf; converged=true, solver=method)
-    end
-
-    return true
+  return node_count_ok && branch_count_ok && link_count_ok && total_losses_ok && has_node_keys && has_branch_keys
 end
