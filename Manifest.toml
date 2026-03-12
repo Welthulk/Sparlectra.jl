@@ -2,7 +2,7 @@
 
 julia_version = "1.12.5"
 manifest_format = "2.0"
-project_hash = "569a1006cc11c018c3b3956699d4ec1b6de5f97b"
+project_hash = "5d874bb2826ec9877f39309d8ac07ff8060d27f9"
 
 [[deps.ArgTools]]
 uuid = "0dad84c5-d112-42e6-8d28-ef12dabb789f"
@@ -209,9 +209,9 @@ version = "1.4.3"
 
 [[deps.PrecompileTools]]
 deps = ["Preferences"]
-git-tree-sha1 = "5aa36f7049a63a1528fe8f7c3f2113413ffd4e1f"
+git-tree-sha1 = "07a921781cab75691315adc645096ed5e370cb77"
 uuid = "aea7be01-6a6a-4083-8856-8a6e6704d82a"
-version = "1.2.1"
+version = "1.3.3"
 
 [[deps.Preferences]]
 deps = ["TOML"]
@@ -281,7 +281,7 @@ uuid = "a2af1166-a08f-5f64-846c-94a0d3cef48c"
 version = "1.2.2"
 
 [[deps.Sparlectra]]
-deps = ["BenchmarkTools", "DataFrames", "Dates", "Downloads", "LinearAlgebra", "Logging", "Printf", "SHA", "SparseArrays"]
+deps = ["BenchmarkTools", "DataFrames", "Dates", "Downloads", "InlineStrings", "LinearAlgebra", "Logging", "Printf", "SHA", "SparseArrays"]
 path = "."
 uuid = "31ce9bba-fd9d-44a1-b005-f5f509afda38"
 version = "0.5.0"
