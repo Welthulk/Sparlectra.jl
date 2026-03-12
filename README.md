@@ -42,11 +42,6 @@ For development and CI parity, use the Julia version from `.julia-version` (curr
 If you intentionally work with another Julia minor version, regenerate the
 manifest locally with that version before running `Pkg.instantiate()`.
 
-Starting with version `0.5.0`, I also use an assistant AI in my maintenance
-workflow to improve validation of results, especially around development
-toolchain quality and the development of unit tests. As the current sole
-maintainer of this project, this support helps me keep development quality and
-test coverage moving forward.
 
 ## Quick Start
 
