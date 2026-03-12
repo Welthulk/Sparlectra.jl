@@ -6,6 +6,7 @@
 
 This package contains tools for subsequent network calculations. It primarily features a program for calculating load flow using the Newton-Raphson method. The focus is to provide valuable insights into load flow calculations for both students and ambitious professionals.
 
+
 ## Features
 
 - AC power flow with multiple internal Newton-Raphson formulations (`:polar_full`, `:rectangular`, `:classic`).
@@ -33,14 +34,6 @@ allowing direct use of CIM and manufacturer data without additional model conver
 using Pkg
 Pkg.add("Sparlectra")
 ```
-
-## Development Toolchain
-
-This repository tracks a `Manifest.toml` generated with Julia version specified in `.julia-version`.
-For development and CI parity, use the Julia version from `.julia-version` (currently tracked version can be found there).
-
-If you intentionally work with another Julia minor version, regenerate the
-manifest locally with that version before running `Pkg.instantiate()`.
 
 
 ## Quick Start
