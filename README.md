@@ -6,12 +6,64 @@
 
 This package contains tools for subsequent network calculations. It primarily features a program for calculating load flow using the Newton-Raphson method. The focus is to provide valuable insights into load flow calculations for both students and ambitious professionals.
 
+## Features
+
+- AC power flow with multiple internal Newton-Raphson formulations (`:polar_full`, `:rectangular`, `:classic`).
+- Network Modeling: Comprehensive modeling of electrical network components
+    Buses (PQ, PV, Slack)
+    Transmission lines
+    Transformers (2-winding and 3-winding)
+    Generators and loads
+    Shunts
+- Transmission lines and transformers can be represented using π-equivalent models,
+allowing direct use of CIM and manufacturer data without additional model conversions.    
+- Topological bus links (`addLink!`) for busbar couplers and sectionalizer modeling.
+- Canonical external solver interface (`PFModel`/`PFSolution`) to integrate third-party solvers.
+- MATPOWER-compatible import/export utilities and local casefile helper workflow.
+
 ---
+
+## Documentation
+
+- User documentation: <https://welthulk.github.io/Sparlectra.jl/>
+- API reference: <https://welthulk.github.io/Sparlectra.jl/reference/>
 
 ## Installation
 ```julia
 using Pkg
 Pkg.add("Sparlectra")
+```
+
+## Development Toolchain
+
+This repository tracks a `Manifest.toml` generated with Julia version specified in `.julia-version`.
+For development and CI parity, use the Julia version from `.julia-version` (currently tracked version can be found there).
+
+If you intentionally work with another Julia minor version, regenerate the
+manifest locally with that version before running `Pkg.instantiate()`.
+
+Starting with version `0.5.0`, I also use an assistant AI in my maintenance
+workflow to improve validation of results, especially around development
+toolchain quality and the development of unit tests. As the current sole
+maintainer of this project, this support helps me keep development quality and
+test coverage moving forward.
+
+## Quick Start
+
+```julia
+using Sparlectra
+
+# Ensure case file exists locally (downloads on demand into data/mpower)
+case_path = ensure_casefile("case14.m")
+
+# Build network and run Newton-Raphson power flow
+net = createNetFromMatPowerFile(case_path, false)
+ite, erg = runpf!(net, 10, 1e-6, 0)
+
+if erg == 0
+    calcNetLosses!(net)
+    printACPFlowResults(net, 0.0, ite, 1e-6)
+end
 ```
 
 ### Network Creation
@@ -33,9 +85,6 @@ data while still allowing reproducible experiments and benchmarks.
 ### License
 This project is licensed under the Apache License, Version 2.0.
 [The license file](LICENSE) contains the complete licensing information.
-
-
-
 
 
 

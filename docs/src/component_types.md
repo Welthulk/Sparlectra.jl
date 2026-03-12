@@ -54,6 +54,12 @@ Sparlectra.PowerTransformerTaps
 Sparlectra.ACLineSegment
 ```
 
+### Link Components
+
+```
+Sparlectra.BusLink
+```
+
 ## Basic Components
 
 ```

@@ -56,7 +56,7 @@ Builds a Sparlectra `Net` from a MATPOWER-like container `mpc`.
 
 All matrices are expected in MATPOWER v2 column conventions.
 """
-function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false, cooldown::Int = 2, q_hyst_pu::Float64 = 0.01)::Net
+function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false, cooldown::Int = 0, q_hyst_pu::Float64 = 0.0)::Net
   # Small logger helper
   pInfo(msg::String) = (log ? (@info msg) : nothing)
 
@@ -259,8 +259,8 @@ end
 function createNetFromMatPowerFile(; filename::String,
     log::Bool=false,
     flatstart::Bool=false,
-    cooldown::Int = 2,
-    q_hyst_pu::Float64 = 0.01,
+    cooldown::Int = 0,
+    q_hyst_pu::Float64 = 0.0,
     verbose::Int = 0)::Net
 
   mpc = MatpowerIO.read_case(filename; legacy_compat=true)

@@ -34,6 +34,7 @@
   StaticVarCompensator
   AuxBus
   BranchC
+  LinkC
   SymmetricalPhaseShifterC
 end
 
@@ -196,6 +197,8 @@ function toComponentTyp(o::String)::ComponentTyp
     return AuxBus
   elseif val == "BRANCH"
     return BranchC
+  elseif val == "LINK" || val == "BUSLINK"
+    return LinkC
   elseif val == "SYMMETRICALPHASESHIFTER"
     return SymmetricalPhaseShifterC
   else

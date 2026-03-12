@@ -130,3 +130,144 @@ function calcNetLosses!(net::Net, V::Vector{ComplexF64})
 
   setTotalLosses!(net = net, pLosses = ∑pv, qLosses = ∑qv)
 end
+
+"""
+    calcLinkFlowsKCL!(net::Net; tol::Float64 = 1e-6)
+
+Computes active bus-link flows after power flow via nodal KCL, without adding
+links to YBUS. Link directions follow `fromBus -> toBus` sign convention.
+
+For each bus i:
+    sum(P_link,out - P_link,in) = P_inj(i) - P_branch,out(i)
+(and analog for Q).
+
+If a connected link component has a small non-zero residual sum, the residual is
+uniformly distributed across buses in that component to enforce solvability.
+"""
+function calcLinkFlowsKCL!(net::Net; tol::Float64 = 1e-6)
+  isempty(net.linkVec) && return
+
+  active = [l for l in net.linkVec if l.status == 1]
+  isempty(active) && return
+
+  nbus = length(net.nodeVec)
+
+  # Bus injections from static specs in MW/MVar (same sign convention as PF setup)
+  P_inj = zeros(Float64, nbus)
+  Q_inj = zeros(Float64, nbus)
+  for (k, node) in enumerate(net.nodeVec)
+    Pgen = isnothing(node._pƩGen) ? 0.0 : node._pƩGen
+    Qgen = isnothing(node._qƩGen) ? 0.0 : node._qƩGen
+    Pload = isnothing(node._pƩLoad) ? 0.0 : node._pƩLoad
+    Qload = isnothing(node._qƩLoad) ? 0.0 : node._qƩLoad
+    P_inj[k] = Pgen - Pload
+    Q_inj[k] = Qgen - Qload
+  end
+
+  # Outgoing branch terminal powers per bus in MW/MVar
+  P_branch_out = zeros(Float64, nbus)
+  Q_branch_out = zeros(Float64, nbus)
+  for br in net.branchVec
+    br.status == 0 && continue
+    if !isnothing(br.fBranchFlow)
+      P_branch_out[br.fromBus] += br.fBranchFlow.pFlow
+      Q_branch_out[br.fromBus] += br.fBranchFlow.qFlow
+    end
+    if !isnothing(br.tBranchFlow)
+      P_branch_out[br.toBus] += br.tBranchFlow.pFlow
+      Q_branch_out[br.toBus] += br.tBranchFlow.qFlow
+    end
+  end
+
+  bP = P_inj .- P_branch_out
+  bQ = Q_inj .- Q_branch_out
+
+  m = length(active)
+  A = zeros(Float64, nbus, m)
+  for (j, l) in enumerate(active)
+    A[l.fromBus, j] += 1.0
+    A[l.toBus, j] -= 1.0
+  end
+
+  # Split by connected components in link graph for robust solving
+  bus_to_links = [Int[] for _ in 1:nbus]
+  for (j, l) in enumerate(active)
+    push!(bus_to_links[l.fromBus], j)
+    push!(bus_to_links[l.toBus], j)
+  end
+
+  visited = falses(nbus)
+  flowsP = zeros(Float64, m)
+  flowsQ = zeros(Float64, m)
+
+  for b0 in 1:nbus
+    if visited[b0] || isempty(bus_to_links[b0])
+      continue
+    end
+
+    # BFS buses in this link component
+    q = [b0]
+    comp_buses = Int[]
+    comp_links_set = Set{Int}()
+    visited[b0] = true
+
+    while !isempty(q)
+      b = popfirst!(q)
+      push!(comp_buses, b)
+      for lj in bus_to_links[b]
+        push!(comp_links_set, lj)
+        l = active[lj]
+        nb = (l.fromBus == b) ? l.toBus : l.fromBus
+        if !visited[nb]
+          visited[nb] = true
+          push!(q, nb)
+        end
+      end
+    end
+
+    comp_links = sort!(collect(comp_links_set))
+    Ab = A[comp_buses, comp_links]
+    bbP = copy(bP[comp_buses])
+    bbQ = copy(bQ[comp_buses])
+
+    # enforce sum(b)=0 for each connected component
+    sumP = sum(bbP)
+    sumQ = sum(bbQ)
+    if abs(sumP) > tol
+      bbP .-= sumP / length(bbP)
+    end
+    if abs(sumQ) > tol
+      bbQ .-= sumQ / length(bbQ)
+    end
+
+    # least-squares (handles tree and meshed components, including singular meshed rings)
+    fp = pinv(Ab) * bbP
+    fq = pinv(Ab) * bbQ
+
+    for (k, gj) in enumerate(comp_links)
+      flowsP[gj] = fp[k]
+      flowsQ[gj] = fq[k]
+    end
+  end
+
+  # reset + write back to original link objects
+  for l in net.linkVec
+    setLinkFlow!(l, 0.0, 0.0)
+    setLinkCurrent!(l, 0.0, 0.0)
+  end
+  for (j, l) in enumerate(active)
+    p = flowsP[j]
+    q = flowsQ[j]
+    setLinkFlow!(l, p, q)
+
+    # Three-phase current magnitudes per terminal:
+    # |I|[kA] = |S|[MVA] / (sqrt(3) * V_LL[kV])
+    s_abs = hypot(p, q)
+    vf_kV = net.nodeVec[l.fromBus]._vm_pu * net.nodeVec[l.fromBus].comp.cVN
+    vt_kV = net.nodeVec[l.toBus]._vm_pu * net.nodeVec[l.toBus].comp.cVN
+
+    ifrom = (vf_kV > 1e-12) ? (s_abs / (Wurzel3 * vf_kV)) : NaN
+    ito = (vt_kV > 1e-12) ? (s_abs / (Wurzel3 * vt_kV)) : NaN
+    setLinkCurrent!(l, ifrom, ito)
+  end
+end

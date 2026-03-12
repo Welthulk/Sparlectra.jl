@@ -1,6 +1,4 @@
-﻿Manifest.toml
-ausgabe.log
-.VSCodeCounter
+﻿.VSCodeCounter
 .vscode/settings.json
 test/workshop*.jl
 # Ignore downloaded MATPOWER cases
@@ -13,3 +11,4 @@ network_dump.txt
 test/test_experments.jl
 test/test_experment.jl
 *.log
+julia-*.tar.gz

@@ -63,6 +63,7 @@ end
 - **[Import/Export](import.md)**: Importing and exporting network configurations
 - **[Component Removal](remove_functions.md)**: Removing components from networks
 - **[Workshop](workshop.md)**: Guided exercises and examples
+- **[Network Reports](netreports.md)**: Create and use machine-readable `ACPFlowReport` output
 - **[Function Reference](reference.md)**: Complete API documentation
 - **[Powerlimit Guide](powerlimits_solvers.md)**: Handling of power limits
 

@@ -123,7 +123,7 @@ function mismatch_rectangular(Ybus, V::Vector{ComplexF64}, S::Vector{ComplexF64}
   # F has 2*(n-1) entries: for each non-slack bus two residuals
   # PQ:  ΔP_i, ΔQ_i
   # PV:  ΔP_i, ΔV_i
-  F = zeros(Float64, 2*(n-1))
+  F = zeros(Float64, 2 * (n - 1))
 
   row = 1
   @inbounds for i = 1:n
@@ -157,7 +157,6 @@ function mismatch_rectangular(Ybus, V::Vector{ComplexF64}, S::Vector{ComplexF64}
 
   return F
 end
-
 
 function run_complex_nr_rectangular(Ybus, V0, S; slack_idx::Int = 1, maxiter::Int = 20, tol::Float64 = 1e-8, verbose::Bool = false, damp::Float64 = 1.0, bus_types::Vector{Symbol}, Vset::Vector{Float64}, use_fd::Bool = false, use_sparse::Bool = false)
   V = copy(V0)
@@ -203,7 +202,6 @@ function update_net_voltages_from_complex!(net::Net, V::Vector{ComplexF64})
   end
 end
 
-
 """
     build_rectangular_jacobian_pq_pv_sparse(
         Ybus,
@@ -244,13 +242,13 @@ function build_rectangular_jacobian_pq_pv_sparse(Ybus::SparseMatrixCSC{ComplexF6
   n = length(V)
   @assert length(bus_types) == n
   @assert length(Vset) == n
-  
+
   I = Ybus * V
 
   non_slack = non_slack_indices(n, slack_idx)
   pos_non_slack = build_pos_map(non_slack, n)
   nvar = 2 * (n - 1)   # [Vr(non-slack); Vi(non-slack)]
-  m    = nvar          # F has 2 equations per non-slack bus
+  m = nvar          # F has 2 equations per non-slack bus
 
   # Row blocks: for each non-slack bus i
   #   row_block[i]   = index of ΔP row for bus i
@@ -339,13 +337,13 @@ function build_rectangular_jacobian_pq_pv_sparse(Ybus::SparseMatrixCSC{ComplexF6
 
       # First equation: always ΔP_i for PQ and PV
       if abs(∂P_Vr) > 0.0
-        push!(Iidx, rowP);
-        push!(Jidx, colVr);
+        push!(Iidx, rowP)
+        push!(Jidx, colVr)
         push!(Vals, ∂P_Vr)
       end
       if abs(∂P_Vi) > 0.0
-        push!(Iidx, rowP);
-        push!(Jidx, colVi);
+        push!(Iidx, rowP)
+        push!(Jidx, colVi)
         push!(Vals, ∂P_Vi)
       end
 
@@ -355,13 +353,13 @@ function build_rectangular_jacobian_pq_pv_sparse(Ybus::SparseMatrixCSC{ComplexF6
       bt = bus_types[i]
       if bt == :PQ
         if abs(∂Q_Vr) > 0.0
-          push!(Iidx, rowQ);
-          push!(Jidx, colVr);
+          push!(Iidx, rowQ)
+          push!(Jidx, colVr)
           push!(Vals, ∂Q_Vr)
         end
         if abs(∂Q_Vi) > 0.0
-          push!(Iidx, rowQ);
-          push!(Jidx, colVi);
+          push!(Iidx, rowQ)
+          push!(Jidx, colVi)
           push!(Vals, ∂Q_Vi)
         end
       elseif bt == :PV
@@ -404,13 +402,13 @@ function build_rectangular_jacobian_pq_pv_sparse(Ybus::SparseMatrixCSC{ComplexF6
     colVi = (n - 1) + pos
 
     if abs(dVr) > 0.0
-      push!(Iidx, rowV);
-      push!(Jidx, colVr);
+      push!(Iidx, rowV)
+      push!(Jidx, colVr)
       push!(Vals, dVr)
     end
     if abs(dVi) > 0.0
-      push!(Iidx, rowV);
-      push!(Jidx, colVi);
+      push!(Iidx, rowV)
+      push!(Jidx, colVi)
       push!(Vals, dVi)
     end
   end
@@ -467,7 +465,7 @@ function build_rectangular_jacobian_pq_pv_dense(Ybus, V::Vector{ComplexF64}, bus
   nvar = 2 * (n - 1)
   m    = 2 * (n - 1)
   @assert nvar == m
-  
+
   pos_map = build_pos_map(non_slack, n)
 
   # Column indices in the full rectangular J that correspond to
@@ -690,7 +688,7 @@ function run_complex_nr_rectangular_for_net!(net::Net; maxiter::Int = 20, tol::F
     elseif BusType == PQ
       bus_types[k] = :PQ
     else
-      error("run_complex_nr_rectangular_for_net!: unsupported bus type at bus $k")
+      error("run_complex_nr_rectangular_for_net!: unsupported bus type at bus $k, given: $(BusType)")
     end
 
     Vset[k] = isnothing(node._vm_pu) ? 1.0 : node._vm_pu
@@ -701,7 +699,7 @@ function run_complex_nr_rectangular_for_net!(net::Net; maxiter::Int = 20, tol::F
   if verbose > 1
     nshow = min(30, length(qmin_pu))
     println("Q-limits preview (first $nshow buses):")
-    for i = 1:nshow   
+    for i = 1:nshow
       qmin = isfinite(qmin_pu[i]) ? qmin_pu[i] : -Inf
       qmax = isfinite(qmax_pu[i]) ? qmax_pu[i] : Inf
       @printf "  bus %d: qmin=%g  qmax=%g\n" i qmin qmax
@@ -718,7 +716,7 @@ function run_complex_nr_rectangular_for_net!(net::Net; maxiter::Int = 20, tol::F
   end
 
   cooldown_iters = hasfield(typeof(net), :cooldown_iters) ? net.cooldown_iters : 0
-  q_hyst_pu      = hasfield(typeof(net), :q_hyst_pu)      ? net.q_hyst_pu      : 0.0
+  q_hyst_pu      = hasfield(typeof(net), :q_hyst_pu) ? net.q_hyst_pu : 0.0
   allow_reenable = (cooldown_iters > 0) || (q_hyst_pu > 0.0)
 
   # Start fresh each PF run
@@ -745,7 +743,7 @@ function run_complex_nr_rectangular_for_net!(net::Net; maxiter::Int = 20, tol::F
     max_mis = maximum(abs.(F))
     push!(history, max_mis)
 
-    (verbose > 1) && @debug "Rectangular NR iteration" iter=it max_mismatch=max_mis
+    (verbose > 1) && @debug "Rectangular NR iteration" iter = it max_mismatch = max_mis
 
     if max_mis <= tol
       converged = true
@@ -755,14 +753,16 @@ function run_complex_nr_rectangular_for_net!(net::Net; maxiter::Int = 20, tol::F
     # --- Q-Limit Active Set: PV -> PQ, optional PQ -> PV (rectangular) ------
     changed   = false
     reenabled = false
-    
+
     Qload_pu = build_qload_pu(net)
 
     if it > 1
       Scalc_pu = calc_injections(Ybus, V)
 
       changed, reenabled = active_set_q_limits!(
-        net, it, nb;
+        net,
+        it,
+        nb;
         qmin_pu = qmin_pu,
         qmax_pu = qmax_pu,
         pv_orig_mask = pv_orig_mask,
@@ -811,7 +811,6 @@ function run_complex_nr_rectangular_for_net!(net::Net; maxiter::Int = 20, tol::F
         max_mis = maximum(abs.(F))
         history[end] = max_mis  # optional: overwrite last stored value for this iteration
       end
-      
     end
     # --- Newton-Stepp (FD oder analytisch) -----------------------------
     if use_fd
@@ -902,6 +901,128 @@ function runpf_rectangular!(net::Net, maxIte::Int, tolerance::Float64 = 1e-6, ve
   return iters, erg
 end
 
+function _active_link_representative_map(net::Net)
+  n = length(net.nodeVec)
+  parent = collect(1:n)
+
+  function find_root(i::Int)
+    while parent[i] != i
+      parent[i] = parent[parent[i]]
+      i = parent[i]
+    end
+    return i
+  end
+
+  function union_set(a::Int, b::Int)
+    ra = find_root(a)
+    rb = find_root(b)
+    ra == rb && return
+    if ra < rb
+      parent[rb] = ra
+    else
+      parent[ra] = rb
+    end
+  end
+
+  for l in net.linkVec
+    l.status == 1 || continue
+    union_set(Int(l.fromBus), Int(l.toBus))
+  end
+
+  return [find_root(i) for i = 1:n]
+end
+
+function _merged_pf_net(net::Net)
+  reps = _active_link_representative_map(net)
+  all(reps[i] == i for i in eachindex(reps)) && return net, reps, false
+
+  wnet = deepcopy(net)
+  n = length(wnet.nodeVec)
+  cluster_members = [Int[] for _ = 1:n]
+  for bus = 1:n
+    push!(cluster_members[reps[bus]], bus)
+  end
+
+  for rep = 1:n
+    members = cluster_members[rep]
+    isempty(members) && continue
+
+    ref = wnet.nodeVec[rep]
+    p_load = 0.0
+    q_load = 0.0
+    p_gen = 0.0
+    q_gen = 0.0
+    p_sh = 0.0
+    q_sh = 0.0
+    has_slack = false
+    has_pv = false
+
+    for b in members
+      nref = wnet.nodeVec[b]
+      p_load += isnothing(nref._pƩLoad) ? 0.0 : nref._pƩLoad
+      q_load += isnothing(nref._qƩLoad) ? 0.0 : nref._qƩLoad
+      p_gen += isnothing(nref._pƩGen) ? 0.0 : nref._pƩGen
+      q_gen += isnothing(nref._qƩGen) ? 0.0 : nref._qƩGen
+      p_sh += isnothing(nref._pShunt) ? 0.0 : nref._pShunt
+      q_sh += isnothing(nref._qShunt) ? 0.0 : nref._qShunt
+      has_slack |= (nref._nodeType == Slack)
+      has_pv |= (nref._nodeType == PV)
+    end
+
+    ref._pƩLoad = p_load
+    ref._qƩLoad = q_load
+    ref._pƩGen = p_gen
+    ref._qƩGen = q_gen
+    ref._pShunt = p_sh
+    ref._qShunt = q_sh
+    ref._nodeType = has_slack ? Slack : (has_pv ? PV : PQ)
+
+    for b in members
+      b == rep && continue
+      nref = wnet.nodeVec[b]
+      nref._pƩLoad = 0.0
+      nref._qƩLoad = 0.0
+      nref._pƩGen = 0.0
+      nref._qƩGen = 0.0
+      nref._pShunt = 0.0
+      nref._qShunt = 0.0
+      nref._nodeType = Isolated
+    end
+  end
+
+  for br in wnet.branchVec
+    f = reps[Int(br.fromBus)]
+    t = reps[Int(br.toBus)]
+    br.fromBus = f
+    br.toBus = t
+    if f == t
+      br.status = 0
+    end
+  end
+
+  for sh in wnet.shuntVec
+    sh.busIdx = reps[Int(sh.busIdx)]
+    if hasproperty(sh.comp, :cFrom_bus) && getfield(sh.comp, :cFrom_bus) !== nothing
+      setfield!(sh.comp, :cFrom_bus, sh.busIdx)
+    end
+  end
+
+  for ps in wnet.prosumpsVec
+    if hasproperty(ps.comp, :cFrom_bus) && getfield(ps.comp, :cFrom_bus) !== nothing
+      new_bus = reps[Int(getfield(ps.comp, :cFrom_bus))]
+      setfield!(ps.comp, :cFrom_bus, new_bus)
+    end
+    if hasproperty(ps.comp, :cTo_bus) && getfield(ps.comp, :cTo_bus) !== nothing
+      new_bus = reps[Int(getfield(ps.comp, :cTo_bus))]
+      setfield!(ps.comp, :cTo_bus, new_bus)
+    end
+  end
+
+  empty!(wnet.isoNodes)
+  markIsolatedBuses!(net = wnet, log = false)
+  return wnet, reps, true
+end
+
 """
     runpf!(net, maxIte, tolerance=1e-6, verbose=0; method=:polar_full)
 
@@ -920,15 +1041,44 @@ Returns:
 where `status == 0` indicates convergence.
 """
 function runpf!(net::Net, maxIte::Int, tolerance::Float64 = 1e-6, verbose::Int = 0; method::Symbol = :rectangular, opt_fd::Bool = false, opt_sparse::Bool = true, opt_flatstart::Bool = net.flatstart, damp = 1.0)
+  wnet, reps, has_merges = _merged_pf_net(net)
+
+  function _sync_merged_results_to_original!()
+    for i in eachindex(net.nodeVec)
+      src = wnet.nodeVec[reps[i]]
+      net.nodeVec[i]._vm_pu = src._vm_pu
+      net.nodeVec[i]._va_deg = src._va_deg
+    end
+    updateShuntPowers!(net = net)
+  end
+
   #@info "Running AC Power Flow using method: $(method)"
   if method === :polar_full
-    return runpf_full!(net, maxIte, tolerance, verbose; opt_sparse    = opt_sparse, opt_flatstart = opt_flatstart)
+    iters, erg = runpf_full!(wnet, maxIte, tolerance, verbose; opt_sparse = opt_sparse, opt_flatstart = opt_flatstart)
+    if erg == 0 && has_merges
+      _sync_merged_results_to_original!()
+    end
+    return iters, erg
   elseif method === :rectangular
-    return runpf_rectangular!(net, maxIte, tolerance, verbose; opt_fd = opt_fd, opt_sparse = opt_sparse, damp = damp, opt_flatstart = opt_flatstart)
+    if has_merges
+      if verbose > 0
+        @warn "runpf!: rectangular solver does not support internal Isolated buses from active-link merges; falling back to :polar_full"
+      end
+      iters, erg = runpf_full!(wnet, maxIte, tolerance, verbose; opt_sparse = opt_sparse, opt_flatstart = opt_flatstart)
+    else
+      iters, erg = runpf_rectangular!(wnet, maxIte, tolerance, verbose; opt_fd = opt_fd, opt_sparse = opt_sparse, damp = damp, opt_flatstart = opt_flatstart)
+    end
+    if erg == 0 && has_merges
+      _sync_merged_results_to_original!()
+    end
+    return iters, erg
   elseif method === :classic
-    return runpf_classic!(net, maxIte, tolerance, verbose, opt_sparse, opt_flatstart)
+    iters, erg = runpf_classic!(wnet, maxIte, tolerance, verbose, opt_sparse, opt_flatstart)
+    if erg == 0 && has_merges
+      _sync_merged_results_to_original!()
+    end
+    return iters, erg
   else
     error("runpf!: unknown method $(method). Use :polar_full or :rectangular.")
   end
-
 end

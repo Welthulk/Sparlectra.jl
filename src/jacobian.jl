@@ -521,13 +521,8 @@ function calcNewtonRaphson!(net::Net, Y::AbstractMatrix{ComplexF64}, maxIte::Int
     iteration_count += 1
   end
 
-  lastNode = length(nodes)
   for bus in busVec
-    idx = bus.idx
-    if idx in isoNodes
-      continue
-    end
-    idx += count(i -> i < idx, isoNodes)
+    idx = bus.nodeIdx
     vm_pu = bus.vm_pu
     va_deg = rad2deg(bus.va_rad)
 
@@ -596,4 +591,3 @@ function runpf_classic!(net::Net, maxIte::Int, tolerance::Float64 = 1e-6, verbos
   end
   return calcNewtonRaphson!(net, Y, maxIte, tolerance, verbose, opt_sparse, false, (verbose > 3), opt_flatstart)
 end
-
