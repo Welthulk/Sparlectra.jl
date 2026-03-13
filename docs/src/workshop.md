@@ -96,6 +96,86 @@ jpath = joinpath(pwd(), "data", "mpower", filename)
 writeMatpowerCasefile(net, jpath) # write the net to a matpower case file
 
 ```
+
+## Working with links (bus couplers / sectionalizers)
+
+Links are impedance-less topological connections between two buses. They are
+useful to model busbar couplers or sectionalizers.
+
+Important behavior:
+
+* Links are **not** electrical branches and are therefore not stamped into Y-Bus.
+* During `runpf!`, active links (`status = 1`) are treated as ideal couplers.
+* Linked buses share the same solved voltage state when the link is closed.
+* Link flows are reported after the solve via KCL-based allocation.
+
+```julia
+using Sparlectra
+
+net = Net(name = "workshop_links", baseMVA = 100.0)
+
+# Two buses that can be coupled by a link
+addBus!(net = net, busName = "Bus1",  busType = "PQ",    vn_kV = 110.0)
+addBus!(net = net, busName = "Bus1a", busType = "PQ",    vn_kV = 110.0)
+addBus!(net = net, busName = "Bus4",  busType = "PQ",    vn_kV = 110.0)
+addBus!(net = net, busName = "Bus5",  busType = "Slack", vn_kV = 110.0)
+
+# Regular branches
+addPIModelACLine!(net = net, fromBus = "Bus1",  toBus = "Bus4", r_pu = 0.010, x_pu = 0.080, b_pu = 0.0)
+addPIModelACLine!(net = net, fromBus = "Bus1a", toBus = "Bus4", r_pu = 0.009, x_pu = 0.070, b_pu = 0.0)
+addPIModelACLine!(net = net, fromBus = "Bus4",  toBus = "Bus5", r_pu = 0.006, x_pu = 0.050, b_pu = 0.0)
+
+# Add a bus link (closed)
+linkNr = addLink!(net = net, fromBus = "Bus1", toBus = "Bus1a", status = 1)
+
+# Injections / loads
+addProsumer!(net = net, busName = "Bus1", type = "GENERATOR", p = 45.0, q = 0.0, vm_pu = 1.01)
+addProsumer!(net = net, busName = "Bus5", type = "EXTERNALNETWORKINJECTION", referencePri = "Bus5", vm_pu = 1.02, va_deg = 0.0)
+addProsumer!(net = net, busName = "Bus1a", type = "LOAD", p = 30.0, q = 10.0)
+
+ite, status, etime = run_net_acpflow(
+    net = net,
+    max_ite = 25,
+    tol = 1e-8,
+    method = :polar_full,
+    opt_sparse = true,
+    show_results = false,
+)
+
+# Toggle link state and rerun
+setNetLinkStatus!(net = net, linkNr = linkNr, status = 0)  # open link
+ite2, status2, etime2 = run_net_acpflow(
+    net = net,
+    max_ite = 25,
+    tol = 1e-8,
+    method = :polar_full,
+    opt_sparse = true,
+    show_results = false,
+)
+
+# Build machine-readable report object (new reporting workflow)
+report = buildACPFlowReport(
+    net;
+    ct = etime2,
+    ite = ite2,
+    tol = 1e-8,
+    converged = (status2 == 0),
+    solver = :polar_full,
+)
+
+println(report)
+println("Link rows in report: ", length(report.links))
+
+# Optional classic text report
+printACPFlowResults(net, etime2, ite2, 1e-8)
+```
+
+Notes:
+
+* Do not connect links to a slack bus.
+* Linked buses should use the same bus type (e.g. both PQ).
+* Use links for topology switching logic, not for physical impedance modeling.
+
 ## How to enable rectangular NR with Q-limits in your script
 ### 1. Prepare / load a network
 You can build the workshop network from the earlier example and

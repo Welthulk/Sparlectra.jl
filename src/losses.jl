@@ -134,15 +134,28 @@ end
 """
     calcLinkFlowsKCL!(net::Net; tol::Float64 = 1e-6)
 
-Computes active bus-link flows after power flow via nodal KCL, without adding
-links to YBUS. Link directions follow `fromBus -> toBus` sign convention.
+Compute bus-link active/reactive flows from nodal KCL after a power-flow run,
+without introducing links into the YBUS matrix. Link direction uses the
+`fromBus -> toBus` sign convention.
 
 For each bus i:
     sum(P_link,out - P_link,in) = P_inj(i) - P_branch,out(i)
 (and analog for Q).
 
-If a connected link component has a small non-zero residual sum, the residual is
-uniformly distributed across buses in that component to enforce solvability.
+Algorithm overview:
+1. Build net nodal injections `P_inj/Q_inj` from static generation minus load.
+2. Add solved shunt injections (`node._pShunt/_qShunt`) to nodal injections.
+3. Subtract outgoing terminal branch powers to get the link right-hand side `b`.
+4. Build oriented incidence matrix `A` for active links.
+5. Solve per connected link component (BFS) using `pinv(A_component) * b_component`.
+6. If `sum(b_component)` is not near zero, distribute the residual uniformly
+   before solving so the component system becomes consistent.
+7. Write resulting link P/Q flows and derive terminal currents from |S| and V_LL.
+
+Notes:
+- `tol` is only used for the component residual-balancing step.
+- For meshed/singular components (e.g., rings), `pinv` yields the minimum-norm
+  least-squares solution consistent with KCL.
 """
 function calcLinkFlowsKCL!(net::Net; tol::Float64 = 1e-6)
   isempty(net.linkVec) && return
@@ -152,7 +165,8 @@ function calcLinkFlowsKCL!(net::Net; tol::Float64 = 1e-6)
 
   nbus = length(net.nodeVec)
 
-  # Bus injections from static specs in MW/MVar (same sign convention as PF setup)
+  # 1) Build nodal injections from static specs in MW/MVar
+  #    (same sign convention as the PF setup).
   P_inj = zeros(Float64, nbus)
   Q_inj = zeros(Float64, nbus)
   for (k, node) in enumerate(net.nodeVec)
@@ -164,7 +178,8 @@ function calcLinkFlowsKCL!(net::Net; tol::Float64 = 1e-6)
     Q_inj[k] = Qgen - Qload
   end
 
-  # Outgoing branch terminal powers per bus in MW/MVar
+  # 2) Collect outgoing branch terminal powers per bus in MW/MVar.
+  #    These are already available after PF and represent non-link network exchange.
   P_branch_out = zeros(Float64, nbus)
   Q_branch_out = zeros(Float64, nbus)
   for br in net.branchVec
@@ -179,8 +194,18 @@ function calcLinkFlowsKCL!(net::Net; tol::Float64 = 1e-6)
     end
   end
 
-  bP = P_inj .- P_branch_out
-  bQ = Q_inj .- Q_branch_out
+  # 3) Include shunt bus injections (results from PF) if available.
+  #    node._pShunt/node._qShunt are signed injections at the bus.
+  P_shunt = zeros(Float64, nbus)
+  Q_shunt = zeros(Float64, nbus)
+  for (k, node) in enumerate(net.nodeVec)
+    P_shunt[k] = isnothing(node._pShunt) ? 0.0 : node._pShunt
+    Q_shunt[k] = isnothing(node._qShunt) ? 0.0 : node._qShunt
+  end
+
+  # 4) Remaining nodal balance that must be carried by links.
+  bP = P_inj .+ P_shunt .- P_branch_out
+  bQ = Q_inj .+ Q_shunt .- Q_branch_out
 
   m = length(active)
   A = zeros(Float64, nbus, m)
@@ -189,7 +214,8 @@ function calcLinkFlowsKCL!(net::Net; tol::Float64 = 1e-6)
     A[l.toBus, j] -= 1.0
   end
 
-  # Split by connected components in link graph for robust solving
+  # 5) Split by connected components in the link graph for robust solving.
+  #    Each component can be solved independently.
   bus_to_links = [Int[] for _ in 1:nbus]
   for (j, l) in enumerate(active)
     push!(bus_to_links[l.fromBus], j)
@@ -205,7 +231,7 @@ function calcLinkFlowsKCL!(net::Net; tol::Float64 = 1e-6)
       continue
     end
 
-    # BFS buses in this link component
+    # BFS buses in this link component and collect all incident links.
     q = [b0]
     comp_buses = Int[]
     comp_links_set = Set{Int}()
@@ -230,7 +256,9 @@ function calcLinkFlowsKCL!(net::Net; tol::Float64 = 1e-6)
     bbP = copy(bP[comp_buses])
     bbQ = copy(bQ[comp_buses])
 
-    # enforce sum(b)=0 for each connected component
+    # 6) Enforce component solvability condition sum(b)=0.
+    #    If a small mismatch exists (numerics/modeling residual), distribute it
+    #    uniformly across component buses.
     sumP = sum(bbP)
     sumQ = sum(bbQ)
     if abs(sumP) > tol
@@ -240,7 +268,8 @@ function calcLinkFlowsKCL!(net::Net; tol::Float64 = 1e-6)
       bbQ .-= sumQ / length(bbQ)
     end
 
-    # least-squares (handles tree and meshed components, including singular meshed rings)
+    # 7) Least-squares solve. `pinv` also handles singular meshed components
+    #    (e.g., rings) by returning the minimum-norm solution.
     fp = pinv(Ab) * bbP
     fq = pinv(Ab) * bbQ
 
@@ -250,7 +279,7 @@ function calcLinkFlowsKCL!(net::Net; tol::Float64 = 1e-6)
     end
   end
 
-  # reset + write back to original link objects
+  # 8) Reset all link outputs, then write back solved values for active links.
   for l in net.linkVec
     setLinkFlow!(l, 0.0, 0.0)
     setLinkCurrent!(l, 0.0, 0.0)
@@ -260,7 +289,7 @@ function calcLinkFlowsKCL!(net::Net; tol::Float64 = 1e-6)
     q = flowsQ[j]
     setLinkFlow!(l, p, q)
 
-    # Three-phase current magnitudes per terminal:
+    # 9) Three-phase current magnitudes per terminal:
     # |I|[kA] = |S|[MVA] / (sqrt(3) * V_LL[kV])
     s_abs = hypot(p, q)
     vf_kV = net.nodeVec[l.fromBus]._vm_pu * net.nodeVec[l.fromBus].comp.cVN
