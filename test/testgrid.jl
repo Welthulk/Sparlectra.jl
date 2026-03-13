@@ -705,9 +705,23 @@ function test_5BusNet(verbose::Int = 0, qlim::Float64 = 20.0, method::Symbol = :
   return hit == true
 end
 
-# ------------------------------------------------------------
-# Test: MATPOWER inline case vs manual Net build (with SHUNTS)
-# ------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# Test intent: MATPOWER inline case vs manually assembled Net (with bus shunts)
+#
+# Why this exists:
+# - We want to verify that `createNetFromMatPowerCase` builds the same electrical
+#   model as the explicit Sparlectra API calls (`addBus!`, `addACLine!`,
+#   `addProsumer!`, `addShunt!`).
+# - This specifically guards the bus-shunt mapping from MATPOWER bus columns
+#   `Gs/Bs` into Sparlectra's internal shunt representation.
+#
+# What is compared:
+# 1) Converged PF state (complex bus voltages V)
+# 2) Slack-bus complex injection (P/Q)
+#
+# If these are equal within tolerance, both model construction paths are
+# considered equivalent for this scenario.
+# -----------------------------------------------------------------------------
 function test_mp_inline_vs_manual_shunt(verbose::Int = 0; method::Symbol = :rectangular, opt_sparse::Bool = true)::Bool
   tol_pf = 1e-10
   maxIte = 40
@@ -722,9 +736,8 @@ function test_mp_inline_vs_manual_shunt(verbose::Int = 0; method::Symbol = :rect
     baseMVA = 100.0,
 
     # bus: [bus_i type Pd Qd Gs Bs area Vm Va baseKV zone Vmax Vmin]
-    # Shunts:
-    #  - Bus2: Bs=+6 MVAr  => Qsh = -6 MVAr (capacitive) at |V|=1
-    #  - Bus3: Bs=+12 MVAr => Qsh = -12 MVAr (capacitive) at |V|=1
+    # We place non-zero Bs on buses 2 and 3 and keep line charging at 0.
+    # This isolates the test to *bus shunts* (no branch-charging side effects).
     bus = [
       1 3 0.0 0.0 0.0 0.0 1 1.06 0.0 110.0 1 1.10 0.90
       2 2 20.0 5.0 0.0 6.0 1 1.03 0.0 110.0 1 1.10 0.90
@@ -749,13 +762,13 @@ function test_mp_inline_vs_manual_shunt(verbose::Int = 0; method::Symbol = :rect
     bus_name = ["BUS1 (Slack)", "BUS2 (PV)", "BUS3 (PQ)"],
   )
 
-  # Net aus MATPOWER erstellen (dein existierender Pfad)
+  # Build network via MATPOWER import path.
   net_mp = Sparlectra.createNetFromMatPowerCase(mpc = mpc, log = false, flatstart = false)
 
   ok, msg = validate!(net = net_mp)
   ok || (@warn msg; return false)
 
-  # PF rechnen
+  # Run PF for MATPOWER-derived net.
   erg_mp = 0
   ite_mp = 0
   et_mp = @elapsed begin
@@ -779,13 +792,12 @@ function test_mp_inline_vs_manual_shunt(verbose::Int = 0; method::Symbol = :rect
   addBus!(net = net_man, busName = "B1", busType = "SLACK", vn_kV = 110.0, vm_pu = 1.06, va_deg = 0.0)
   addBus!(net = net_man, busName = "B2", busType = "PV", vn_kV = 110.0, vm_pu = 1.03, va_deg = 0.0)
   addBus!(net = net_man, busName = "B3", busType = "PQ", vn_kV = 110.0, vm_pu = 1.00, va_deg = 0.0)
-  # Leitungen (ohne line charging, damit Vergleich sauber nur über Bus-Shunts läuft)
+  # Lines without line charging, so only bus shunts differ/drive this check.
   addACLine!(net = net_man, fromBus = "B1", toBus = "B2", length = 1.0, r = 0.02, x = 0.06)
   addACLine!(net = net_man, fromBus = "B1", toBus = "B3", length = 1.0, r = 0.08, x = 0.24)
   addACLine!(net = net_man, fromBus = "B2", toBus = "B3", length = 1.0, r = 0.06, x = 0.18)
 
-  # Loads (ENERGYCONSUMER): Pd/Qd
-  # Loads (ENERGYCONSUMER): Pd/Qd
+  # Loads from MATPOWER Pd/Qd mapped to ENERGYCONSUMER.
   addProsumer!(net = net_man, busName = "B3", type = "ENERGYCONSUMER", p = 90.0, q = 30.0)
 
   # MATPOWER bus 2 also has load: Pd=20 MW, Qd=5 MVAr
@@ -796,7 +808,10 @@ function test_mp_inline_vs_manual_shunt(verbose::Int = 0; method::Symbol = :rect
   # PV generator at B2 (P + Vm setpoint)
   addProsumer!(net = net_man, busName = "B2", type = "SYNCHRONOUSMACHINE", p = 60.0, vm_pu = 1.03, va_deg = 0.0, qMin = -200.0, qMax = 200.0)
 
-  # Bus-Shunts: MATPOWER Bs>0 => Q = -Bs (kapazitiv)
+  # Manual shunts chosen to match the MATPOWER case after import.
+  # NOTE: this test validates *equivalence of assembled network models*,
+  # not a standalone sign-convention proof. The numerical checks below
+  # (V and slack P/Q) are the actual acceptance criteria.
   addShunt!(net = net_man, busName = "B2", pShunt = 0.0, qShunt = 6.0, in_service = 1)
   addShunt!(net = net_man, busName = "B3", pShunt = 0.0, qShunt = 12.0, in_service = 1)
 
@@ -821,19 +836,22 @@ function test_mp_inline_vs_manual_shunt(verbose::Int = 0; method::Symbol = :rect
   # -------------------------
   # 3) Compare results
   # -------------------------
-  # Compare complex voltages (magnitude+angle implicit)
+  # Compare complex voltages directly (magnitude and angle are implicit in V).
   if length(V_mp) != length(V_man)
     @warn "Voltage vector length mismatch" n_mp = length(V_mp) n_man = length(V_man)
     return false
   end
 
-  # Bus order: Matpower bus_i are 1..3; manual bus order is creation order B1,B2,B3 -> should match
+  # Bus order assumption:
+  # - MATPOWER buses are indexed 1..3
+  # - Manual net is created in order B1, B2, B3
+  # So vectors are expected to be aligned index-wise.
   if !all(isapprox.(V_mp, V_man; atol = tol_cmp, rtol = 0.0))
     @warn "Voltage mismatch between MATPOWER-derived and manual net" V_mp = V_mp V_man = V_man
     return false
   end
 
-  # Compare slack injections (P,Q) in MW/MVAr
+  # Compare slack injections (P,Q) in MW/MVAr as system-level consistency check.
   slack_idx = 1
   Psl_mp = real(Sinj_mp[slack_idx]) * mpc.baseMVA
   Qsl_mp = imag(Sinj_mp[slack_idx]) * mpc.baseMVA
@@ -1075,9 +1093,11 @@ function test_link_kcl_ring_allocation_with_shunt()
 
   calcLinkFlowsKCL!(net)
 
-  A = [1.0 0.0 -1.0;
-       -1.0 1.0 0.0;
-       0.0 -1.0 1.0]
+  A = [
+    1.0 0.0 -1.0
+    -1.0 1.0 0.0
+    0.0 -1.0 1.0
+  ]
   bP = [15.0, -10.0, -5.0]
   bQ = [12.0, -10.0, -2.0]
   fP_expected = pinv(A) * bP
@@ -1086,10 +1106,7 @@ function test_link_kcl_ring_allocation_with_shunt()
   flowsP = [net.linkVec[1].pFlow_MW, net.linkVec[2].pFlow_MW, net.linkVec[3].pFlow_MW]
   flowsQ = [net.linkVec[1].qFlow_MVar, net.linkVec[2].qFlow_MVar, net.linkVec[3].qFlow_MVar]
 
-  return isapprox.(flowsP, fP_expected; atol = 1e-10, rtol = 0.0) |> all &&
-         isapprox.(flowsQ, fQ_expected; atol = 1e-10, rtol = 0.0) |> all &&
-         isapprox.(A * flowsP, bP; atol = 1e-10, rtol = 0.0) |> all &&
-         isapprox.(A * flowsQ, bQ; atol = 1e-10, rtol = 0.0) |> all
+  return isapprox.(flowsP, fP_expected; atol = 1e-10, rtol = 0.0) |> all && isapprox.(flowsQ, fQ_expected; atol = 1e-10, rtol = 0.0) |> all && isapprox.(A * flowsP, bP; atol = 1e-10, rtol = 0.0) |> all && isapprox.(A * flowsQ, bQ; atol = 1e-10, rtol = 0.0) |> all
 end
 
 function test_link_kcl_ring_allocation_with_shunt()
@@ -1115,9 +1132,11 @@ function test_link_kcl_ring_allocation_with_shunt()
 
   calcLinkFlowsKCL!(net)
 
-  A = [1.0 0.0 -1.0;
-       -1.0 1.0 0.0;
-       0.0 -1.0 1.0]
+  A = [
+    1.0 0.0 -1.0
+    -1.0 1.0 0.0
+    0.0 -1.0 1.0
+  ]
   bP = [15.0, -10.0, -5.0]
   bQ = [12.0, -10.0, -2.0]
   fP_expected = pinv(A) * bP
@@ -1126,10 +1145,7 @@ function test_link_kcl_ring_allocation_with_shunt()
   flowsP = [net.linkVec[1].pFlow_MW, net.linkVec[2].pFlow_MW, net.linkVec[3].pFlow_MW]
   flowsQ = [net.linkVec[1].qFlow_MVar, net.linkVec[2].qFlow_MVar, net.linkVec[3].qFlow_MVar]
 
-  return isapprox.(flowsP, fP_expected; atol = 1e-10, rtol = 0.0) |> all &&
-         isapprox.(flowsQ, fQ_expected; atol = 1e-10, rtol = 0.0) |> all &&
-         isapprox.(A * flowsP, bP; atol = 1e-10, rtol = 0.0) |> all &&
-         isapprox.(A * flowsQ, bQ; atol = 1e-10, rtol = 0.0) |> all
+  return isapprox.(flowsP, fP_expected; atol = 1e-10, rtol = 0.0) |> all && isapprox.(flowsQ, fQ_expected; atol = 1e-10, rtol = 0.0) |> all && isapprox.(A * flowsP, bP; atol = 1e-10, rtol = 0.0) |> all && isapprox.(A * flowsQ, bQ; atol = 1e-10, rtol = 0.0) |> all
 end
 
 function test_link_ring_pf_stability()
@@ -1166,10 +1182,8 @@ function test_link_ring_pf_stability()
   b3 = geNetBusIdx(net = net, busName = "B3")
 
   # In this symmetric setup, ring buses should settle to (nearly) equal V magnitude/angle.
-  vm_equal = isapprox(net.nodeVec[b1]._vm_pu, net.nodeVec[b2]._vm_pu; atol = 1e-10) &&
-             isapprox(net.nodeVec[b1]._vm_pu, net.nodeVec[b3]._vm_pu; atol = 1e-10)
-  va_equal = isapprox(net.nodeVec[b1]._va_deg, net.nodeVec[b2]._va_deg; atol = 1e-8) &&
-             isapprox(net.nodeVec[b1]._va_deg, net.nodeVec[b3]._va_deg; atol = 1e-8)
+  vm_equal = isapprox(net.nodeVec[b1]._vm_pu, net.nodeVec[b2]._vm_pu; atol = 1e-10) && isapprox(net.nodeVec[b1]._vm_pu, net.nodeVec[b3]._vm_pu; atol = 1e-10)
+  va_equal = isapprox(net.nodeVec[b1]._va_deg, net.nodeVec[b2]._va_deg; atol = 1e-8) && isapprox(net.nodeVec[b1]._va_deg, net.nodeVec[b3]._va_deg; atol = 1e-8)
 
   # Build link incidence matrix A for (B1,B2,B3) in link order.
   A = zeros(Float64, 3, 3)

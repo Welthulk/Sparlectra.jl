@@ -24,6 +24,20 @@ This repository is a Julia project.
 - Before editing, inspect current tests that cover the affected code.
 - After code changes, run the smallest relevant test first, then broader tests if needed.
 
+### Julia indexing style
+To avoid linter warnings (`IndexFromLength`):
+
+- Do **not** write loops like:
+  `for i = 1:size(A,1)`
+
+- Prefer array axes:
+  `for i in axes(A,1)`
+
+- Prefer `eachindex` when iterating over arrays:
+  `for i in eachindex(A)`
+
+This keeps the code compatible with non-standard array indices and avoids StaticLint warnings.
+
 ## For this repo
 - Main language: Julia
 - Project root must be used as Julia project

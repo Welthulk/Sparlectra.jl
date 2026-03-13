@@ -96,6 +96,86 @@ jpath = joinpath(pwd(), "data", "mpower", filename)
 writeMatpowerCasefile(net, jpath) # write the net to a matpower case file
 
 ```
+
+## Working with links (bus couplers / sectionalizers)
+
+Links are impedance-less topological connections between two buses. They are
+useful to model busbar couplers or sectionalizers.
+
+Important behavior:
+
+* Links are **not** electrical branches and are therefore not stamped into Y-Bus.
+* During `runpf!`, active links (`status = 1`) are treated as ideal couplers.
+* Linked buses share the same solved voltage state when the link is closed.
+* Link flows are reported after the solve via KCL-based allocation.
+
+```julia
+using Sparlectra
+
+net = Net(name = "workshop_links", baseMVA = 100.0)
+
+# Two buses that can be coupled by a link
+addBus!(net = net, busName = "Bus1",  busType = "PQ",    vn_kV = 110.0)
+addBus!(net = net, busName = "Bus1a", busType = "PQ",    vn_kV = 110.0)
+addBus!(net = net, busName = "Bus4",  busType = "PQ",    vn_kV = 110.0)
+addBus!(net = net, busName = "Bus5",  busType = "Slack", vn_kV = 110.0)
+
+# Regular branches
+addPIModelACLine!(net = net, fromBus = "Bus1",  toBus = "Bus4", r_pu = 0.010, x_pu = 0.080, b_pu = 0.0)
+addPIModelACLine!(net = net, fromBus = "Bus1a", toBus = "Bus4", r_pu = 0.009, x_pu = 0.070, b_pu = 0.0)
+addPIModelACLine!(net = net, fromBus = "Bus4",  toBus = "Bus5", r_pu = 0.006, x_pu = 0.050, b_pu = 0.0)
+
+# Add a bus link (closed)
+linkNr = addLink!(net = net, fromBus = "Bus1", toBus = "Bus1a", status = 1)
+
+# Injections / loads
+addProsumer!(net = net, busName = "Bus1", type = "GENERATOR", p = 45.0, q = 0.0, vm_pu = 1.01)
+addProsumer!(net = net, busName = "Bus5", type = "EXTERNALNETWORKINJECTION", referencePri = "Bus5", vm_pu = 1.02, va_deg = 0.0)
+addProsumer!(net = net, busName = "Bus1a", type = "LOAD", p = 30.0, q = 10.0)
+
+ite, status, etime = run_net_acpflow(
+    net = net,
+    max_ite = 25,
+    tol = 1e-8,
+    method = :polar_full,
+    opt_sparse = true,
+    show_results = false,
+)
+
+# Toggle link state and rerun
+setNetLinkStatus!(net = net, linkNr = linkNr, status = 0)  # open link
+ite2, status2, etime2 = run_net_acpflow(
+    net = net,
+    max_ite = 25,
+    tol = 1e-8,
+    method = :polar_full,
+    opt_sparse = true,
+    show_results = false,
+)
+
+# Build machine-readable report object (new reporting workflow)
+report = buildACPFlowReport(
+    net;
+    ct = etime2,
+    ite = ite2,
+    tol = 1e-8,
+    converged = (status2 == 0),
+    solver = :polar_full,
+)
+
+println(report)
+println("Link rows in report: ", length(report.links))
+
+# Optional classic text report
+printACPFlowResults(net, etime2, ite2, 1e-8)
+```
+
+Notes:
+
+* Do not connect links to a slack bus.
+* Linked buses should use the same bus type (e.g. both PQ).
+* Use links for topology switching logic, not for physical impedance modeling.
+
 ## How to enable rectangular NR with Q-limits in your script
 ### 1. Prepare / load a network
 You can build the workshop network from the earlier example and
@@ -209,3 +289,129 @@ This gives you a compact workflow:
 4. Call `distributeBusResults!(net)`
 5. Use `printACPFlowResults`, `printProsumerResults`, and `printQLimitLog`
    to inspect the outcome.
+
+
+## State Estimation (SE) in Sparlectra
+
+Short method overview:
+
+* Sparlectra uses a classical **Weighted Least Squares (WLS)** state estimator.
+* The estimated state is `x = [θ(non-slack); Vm(all buses)]`, i.e. bus voltage
+  angles (except slack) and voltage magnitudes.
+* Measurements `z` (voltage, injections, branch flows) are linked to the
+  network model through `h(x)`.
+* The algorithm iteratively minimizes the weighted residual objective:
+  `J(x) = (z - h(x))' * W * (z - h(x))`.
+
+### Supported measurement types
+
+The current SE workflow supports:
+
+* `VmMeas` (bus voltage magnitude)
+* `PinjMeas`, `QinjMeas` (bus active/reactive injection)
+* `PflowMeas`, `QflowMeas` (branch active/reactive flow, direction-aware)
+
+In most studies, measurements are generated from a converged power-flow result
+with `generateMeasurementsFromPF`, optionally with Gaussian noise and
+measurement-specific standard deviations.
+
+### Observability
+
+Sparlectra provides two levels:
+
+* **Global observability** for the complete state (`evaluate_global_observability`)
+* **Local observability** for selected state columns (`evaluate_local_observability`)
+
+Useful indicators include:
+
+* Jacobian rank / reduced Jacobian rank
+* Redundancy `r = m - n` and ratio `ρ = m / n`
+* Quality labels such as `:observable`, `:critical`, `:not_observable`
+
+### Integration into network workflows
+
+SE is integrated into the same `Net` object used by power flow:
+
+1. Build or import a network
+2. Run power flow (reference / initialization)
+3. Define or generate measurements
+4. Check observability
+5. Run `runse!`
+6. Optionally write estimated states back to `net` (`updateNet = true`)
+
+## State-estimation example: simple 7-bus network
+
+```julia
+using Sparlectra
+using Random
+
+# 1) Build a simple 7-bus network
+net = Net(name = "workshop_se_7bus", baseMVA = 100.0)
+
+addBus!(net = net, busName = "B1", busType = "Slack", vn_kV = 110.0, vm_pu = 1.02, va_deg = 0.0)
+for i in 2:7
+    addBus!(net = net, busName = "B$(i)", busType = "PQ", vn_kV = 110.0, vm_pu = 1.0, va_deg = 0.0)
+end
+
+# Ring + cross-connections
+addPIModelACLine!(net = net, fromBus = "B1", toBus = "B2", r_pu = 0.010, x_pu = 0.080, b_pu = 0.0)
+addPIModelACLine!(net = net, fromBus = "B2", toBus = "B3", r_pu = 0.011, x_pu = 0.085, b_pu = 0.0)
+addPIModelACLine!(net = net, fromBus = "B3", toBus = "B4", r_pu = 0.012, x_pu = 0.090, b_pu = 0.0)
+addPIModelACLine!(net = net, fromBus = "B4", toBus = "B5", r_pu = 0.010, x_pu = 0.080, b_pu = 0.0)
+addPIModelACLine!(net = net, fromBus = "B5", toBus = "B6", r_pu = 0.011, x_pu = 0.085, b_pu = 0.0)
+addPIModelACLine!(net = net, fromBus = "B6", toBus = "B7", r_pu = 0.012, x_pu = 0.090, b_pu = 0.0)
+addPIModelACLine!(net = net, fromBus = "B7", toBus = "B1", r_pu = 0.010, x_pu = 0.080, b_pu = 0.0)
+addPIModelACLine!(net = net, fromBus = "B2", toBus = "B5", r_pu = 0.009, x_pu = 0.070, b_pu = 0.0)
+addPIModelACLine!(net = net, fromBus = "B3", toBus = "B6", r_pu = 0.009, x_pu = 0.070, b_pu = 0.0)
+
+# Source / generation / loads
+addProsumer!(net = net, busName = "B1", type = "EXTERNALNETWORKINJECTION", referencePri = "B1", vm_pu = 1.02, va_deg = 0.0)
+addProsumer!(net = net, busName = "B3", type = "GENERATOR", p = 60.0, q = 10.0)
+addProsumer!(net = net, busName = "B2", type = "LOAD", p = 35.0, q = 10.0)
+addProsumer!(net = net, busName = "B4", type = "LOAD", p = 45.0, q = 15.0)
+addProsumer!(net = net, busName = "B5", type = "LOAD", p = 25.0, q = 8.0)
+addProsumer!(net = net, busName = "B6", type = "LOAD", p = 30.0, q = 10.0)
+addProsumer!(net = net, busName = "B7", type = "LOAD", p = 20.0, q = 6.0)
+
+ok, msg = validate!(net = net)
+ok || error("Validation failed: $msg")
+
+# 2) Solve reference power flow
+ite_pf, status_pf = runpf!(net, 40, 1e-10, 0; method = :polar_full, opt_sparse = true)
+status_pf == 0 || error("Power flow did not converge")
+
+# 3) Build synthetic measurements (with light noise)
+std = measurementStdDevs(vm = 1e-3, pinj = 0.8, qinj = 0.8, pflow = 0.5, qflow = 0.5)
+meas = generateMeasurementsFromPF(
+    net;
+    includeVm = true,
+    includePinj = true,
+    includeQinj = true,
+    includePflow = true,
+    includeQflow = true,
+    noise = true,
+    stddev = std,
+    rng = MersenneTwister(7),
+)
+
+# 4) Observability checks
+gobs = evaluate_global_observability(net, meas; flatstart = true, jacEps = 1e-6)
+println("Global quality: ", gobs.quality, ", redundancy: ", gobs.redundancy)
+
+state_map = buildSEStateMap(net)
+θ4 = state_map.theta_col_by_bus[4]
+v4 = state_map.vm_col_by_bus[4]
+lobs = evaluate_local_observability(net, meas, [θ4, v4]; flatstart = true, jacEps = 1e-6)
+println("Local quality@bus4: ", lobs.quality, ", redundancy: ", lobs.redundancy)
+
+# 5) Run state estimation
+se = runse!(net, meas; maxIte = 12, tol = 1e-6, flatstart = true, jacEps = 1e-6, updateNet = true)
+println("SE converged: ", se.converged, ", iterations: ", se.iterations, ", J: ", se.objectiveJ)
+```
+
+Workshop tips:
+
+* Start with `noise = false`, then increase realism gradually.
+* Deactivate selected measurements (`active = false`) and re-check
+  global/local observability.
+* Pay attention to `quality = :critical` for fragile configurations.
