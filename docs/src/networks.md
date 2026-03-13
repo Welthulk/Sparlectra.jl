@@ -118,6 +118,10 @@ How links are handled:
 - Closed links are treated as ideal couplers during `runpf!`.
 - Buses connected by active links share voltage magnitude and angle in the internal power-flow model.
 - After convergence, call `calcLinkFlowsKCL!` to allocate/report link exchange on the original topology.
+- `calcLinkFlowsKCL!` is independent of the selected PF formulation (`:polar_full`,
+  `:rectangular`, `:classic`) and uses solved bus/branch/shunt results.
+- Note: for some active-link merge scenarios, `runpf!(...; method = :rectangular)`
+  may internally fall back to `:polar_full`.
 
 ```julia
 ite, erg = runpf!(net, 25; method = :polar_full)

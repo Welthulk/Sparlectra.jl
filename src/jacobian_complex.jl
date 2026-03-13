@@ -1033,7 +1033,12 @@ Arguments:
 - `maxIte::Int`: maximum iterations
 - `tolerance::Float64`: mismatch tolerance
 - `verbose::Int`: verbosity level
-- `method::Symbol`: `:polar_full` (default) or `:rectangular`
+- `method::Symbol`: `:polar_full`, `:rectangular`, or `:classic`
+
+Notes:
+- Link-flow recovery (`calcLinkFlowsKCL!`) is method-agnostic and uses solved PF results.
+- If active-link merges create internal isolated buses, `:rectangular` currently falls
+  back to `:polar_full` for robustness.
 
 Returns:
     (iterations::Int, status::Int)
