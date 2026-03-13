@@ -56,6 +56,7 @@ include("test_solver_interface.jl")
   @test test_link_bus_merge_pf_default_method() == true
   @test test_link_closed_keeps_shunt_reporting_on_original_bus() == true
   @test test_link_kcl_ring_allocation() == true
+  @test test_link_kcl_ring_allocation_with_shunt() == true
   @test test_link_ring_pf_stability() == true
   @test test_acpflow_report_object() == true
 end
