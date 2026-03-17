@@ -30,12 +30,15 @@ The current implementation supports these measurement types:
 * `PinjMeas`, `QinjMeas` (bus injections)
 * `PflowMeas`, `QflowMeas` (branch flows with direction)
 
-Typical workflow for generating measurements:
+Typical synthetic-data workflow (for studies/tests):
 
 1. Solve a power flow to get a physically consistent reference state.
 2. Create synthetic measurements using `generateMeasurementsFromPF`.
 3. Configure standard deviations via `measurementStdDevs`.
 4. Optionally add Gaussian noise.
+
+In real operation, SE uses field measurements directly and does not require a
+preceding power-flow run to create data.
 
 ## Observability
 
@@ -67,11 +70,18 @@ This is useful for sensor-placement studies and for identifying vulnerable areas
 SE is designed to run on the same `Net` data model used for power flow:
 
 1. Build/import `Net`
-2. Run AC power flow (`runpf!`)
-3. Build measurements (`generateMeasurementsFromPF` or custom)
+2. Build measurements (SCADA/PMU/custom)
+3. Optional for synthetic studies: run `runpf!` + `generateMeasurementsFromPF`
 4. Check observability (global/local)
 5. Run estimator (`runse!`)
 6. Optionally write estimates back into the network (`updateNet = true`)
+
+Conceptually, SE is the measurement-driven counterpart of power flow:
+
+* Power flow computes states from setpoints.
+* SE computes states from measured values.
+* Measurement redundancy improves robustness and enables bad-data detection
+  using residual statistics.
 
 ## Minimal example
 
@@ -99,6 +109,38 @@ println("Global observability quality: ", gobs.quality)
 
 se = runse!(net, meas; maxIte = 12, tol = 1e-6, flatstart = true, jacEps = 1e-6, updateNet = true)
 println("Converged: ", se.converged, ", iterations: ", se.iterations)
+```
+
+## Example without PF pre-step (measurement-driven)
+
+```julia
+using Sparlectra
+
+net = Net(name = "se_measurement_driven", baseMVA = 100.0)
+addBus!(net = net, busName = "B1", busType = "Slack", vn_kV = 110.0)
+addBus!(net = net, busName = "B2", busType = "PQ", vn_kV = 110.0)
+addBus!(net = net, busName = "B3", busType = "PQ", vn_kV = 110.0)
+addPIModelACLine!(net = net, fromBus = "B1", toBus = "B2", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0)
+addPIModelACLine!(net = net, fromBus = "B2", toBus = "B3", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0)
+addPIModelACLine!(net = net, fromBus = "B3", toBus = "B1", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0)
+
+ok, msg = validate!(net = net)
+ok || error("Validation failed: $msg")
+
+meas = Measurement[
+    Measurement(typ = VmMeas, value = 1.01, sigma = 0.002, busIdx = 1, id = "VM_B1"),
+    Measurement(typ = VmMeas, value = 0.99, sigma = 0.004, busIdx = 2, id = "VM_B2"),
+    Measurement(typ = PinjMeas, value = -25.0, sigma = 1.0, busIdx = 2, id = "PINJ_B2"),
+    Measurement(typ = QinjMeas, value = -8.0, sigma = 1.0, busIdx = 2, id = "QINJ_B2"),
+    Measurement(typ = PflowMeas, value = 24.0, sigma = 0.8, branchIdx = 1, direction = :from, id = "PF_12"),
+    Measurement(typ = PflowMeas, value = 23.5, sigma = 0.8, branchIdx = 1, direction = :from, id = "PF_12_REDUNDANT"),
+]
+
+obs = evaluate_global_observability(net, meas; flatstart = true, jacEps = 1e-6)
+println("Observable quality: ", obs.quality)
+
+se = runse!(net, meas; maxIte = 12, tol = 1e-6, flatstart = true, jacEps = 1e-6, updateNet = true)
+println("Converged: ", se.converged)
 ```
 
 ## Further examples and workshop material
