@@ -148,3 +148,31 @@ println("Converged: ", se.converged)
 * Extended tutorial and a simple 7-bus setup: [Workshop](workshop.md)
 * Detailed WLS reporting example script: `src/examples/state_estimation_wls.jl`
 * Observability-focused scenario script: `src/examples/state_estimation_observability.jl`
+* Matrix-based observability/redundancy demo: `src/examples/h_matrix_observability_demo.jl`
+
+## H-matrix observability demo (A..E)
+
+If you want to study observability directly on Jacobian-like matrices `H` without
+building a full network first, use:
+
+```bash
+julia --project=. src/examples/h_matrix_observability_demo.jl
+```
+
+The script evaluates each matrix with:
+
+* Structural observability via sparsity matching
+* Numerical observability via rank test
+* Per-row redundancy classification (critical vs. redundant)
+* Local observability on selected state-column subsets
+
+Included demo matrices:
+
+* `H_A`: fully observable with duplicate information (clear redundancy).
+* `H_B`: minimal square observable case (`m = n`), therefore every row is critical.
+* `H_C`: structurally observable but numerically fragile (near linear dependence).
+* `H_D`: sparse case highlighting matching behavior and extra measurements.
+* `H_E`: incidence-like matrix paired with a toy graph/spanning-tree interpretation.
+
+This is intended as a compact didactic companion to
+`evaluate_global_observability` / `evaluate_local_observability`.

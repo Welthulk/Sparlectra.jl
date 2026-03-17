@@ -374,6 +374,89 @@ function _evaluate_observability_from_jacobian(H::Matrix{Float64}, activeOrigina
 end
 
 """
+    numerical_observable(H; tol=nothing) -> Bool
+
+Numerical observability test on a Jacobian-like matrix `H`.
+Returns `true` when `rank(H) == n` (full column rank).
+"""
+function numerical_observable(H::AbstractMatrix{<:Real}; tol = nothing)
+  _, n = size(H)
+  return numeric_rank(H; tol = tol) == n
+end
+
+"""
+    structural_observable(H) -> Bool
+
+Structural observability test on a Jacobian-like matrix `H`.
+Returns `true` when the maximum bipartite matching size equals the number of
+state columns `n`.
+"""
+function structural_observable(H::AbstractMatrix{<:Real})
+  _, n = size(H)
+  adj, _ = _adjacency_from_sparsity(H)
+  return _hopcroft_karp(adj, n) == n
+end
+
+"""
+    numerical_row_redundant(H, i; tol=nothing) -> Bool
+
+Check if row `i` remains numerically redundant in `H`.
+"""
+function numerical_row_redundant(H::AbstractMatrix{<:Real}, i::Int; tol = nothing)
+  return _numerical_row_redundant(H, i; tol = tol)
+end
+
+"""
+    structural_row_redundant(H, i) -> Bool
+
+Check if row `i` remains structurally redundant in `H`.
+"""
+function structural_row_redundant(H::AbstractMatrix{<:Real}, i::Int)
+  return _structural_row_redundant(H, i)
+end
+
+"""
+    evaluate_observability_matrix(H; tol=nothing) -> NamedTuple
+
+Evaluate global observability and single-row criticality directly on a matrix
+`H` (without building a network model).
+"""
+function evaluate_observability_matrix(H::AbstractMatrix{<:Real}; tol = nothing)
+  m, _ = size(H)
+  idx = collect(1:m)
+  return _evaluate_observability_from_jacobian(Matrix{Float64}(H), idx; tol = tol)
+end
+
+"""
+    evaluate_local_observability_matrix(H, stateCols; tol=nothing) -> NamedTuple
+
+Evaluate local observability on a matrix `H` restricted to selected
+`stateCols`.
+"""
+function evaluate_local_observability_matrix(H::AbstractMatrix{<:Real}, stateCols::Vector{Int}; tol = nothing)
+  isempty(stateCols) && error("evaluate_local_observability_matrix: stateCols must not be empty")
+  nstates = size(H, 2)
+  for c in stateCols
+    1 <= c <= nstates || error("evaluate_local_observability_matrix: state column out of bounds: $(c)")
+  end
+
+  rows = Int[]
+  for i in axes(H, 1)
+    for j in stateCols
+      if !iszero(H[i, j])
+        push!(rows, i)
+        break
+      end
+    end
+  end
+
+  isempty(rows) && error("evaluate_local_observability_matrix: no row touches selected stateCols")
+  local_idx = [rows[k] for k in eachindex(rows)]
+  base = _evaluate_observability_from_jacobian(Matrix{Float64}(H[rows, stateCols]), local_idx; tol = tol)
+  return merge(base, (rows = rows, stateCols = copy(stateCols)))
+end
+
+"""
     evaluate_global_observability(net, measurements; kwargs...) -> NamedTuple
 
 Evaluate global observability on active measurements using the finite-difference

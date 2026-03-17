@@ -62,4 +62,5 @@ include("test_state_estimation.jl")
   @test test_acpflow_report_object() == true
   @test test_state_estimation_wls_first_version() == true
   @test test_state_estimation_observability_metrics() == true
+  @test test_state_estimation_matrix_observability_helpers() == true
 end
