@@ -102,17 +102,14 @@ end
 """
     pv_hit_q_limit(net, pv_names)
 
-Gibt `true` zurück, wenn einer der PV-Busse aus `pv_names`
-in `net.qLimitEvents` vorkommt.
-
-`pv_names` ist eine Liste von Busnamen (Strings).
+Returns `true` if any of the PV buses from `pv_names`
+appears in `net.qLimitEvents`.
+`pv_names` is a list of bus names (strings).
 """
 function pv_hit_q_limit(net, pv_names)
   pv_idx = map(name -> geNetBusIdx(net = net, busName = name), pv_names)
   return any(haskey(net.qLimitEvents, i) for i in pv_idx)
 end
-
-
 
 # ------------------------------
 # Q-limit helpers (local arrays)
@@ -125,7 +122,7 @@ end
 
 @inline function q_limit_band(qmin_pu::AbstractVector, qmax_pu::AbstractVector, i::Int, q_hyst_pu::Float64)::Tuple{Float64,Float64}
   lo = ((i <= length(qmin_pu)) && isfinite(qmin_pu[i])) ? (qmin_pu[i] + q_hyst_pu) : -Inf
-  hi = ((i <= length(qmax_pu)) && isfinite(qmax_pu[i])) ? (qmax_pu[i] - q_hyst_pu) :  Inf
+  hi = ((i <= length(qmax_pu)) && isfinite(qmax_pu[i])) ? (qmax_pu[i] - q_hyst_pu) : Inf
   return lo, hi
 end
 
@@ -134,21 +131,19 @@ end
 # ------------------------------
 function _sanitize_q_limits!(qmin_pu::Vector{Float64}, qmax_pu::Vector{Float64}, nb::Int)
   _ensure_bus_index!(qmin_pu, nb, -Inf)
-  _ensure_bus_index!(qmax_pu, nb,  Inf)
+  _ensure_bus_index!(qmax_pu, nb, Inf)
 
-  @inbounds for i in 1:nb
+  @inbounds for i = 1:nb
     # Treat NaN as "no limit"
     if isnan(qmin_pu[i])
       qmin_pu[i] = -Inf
     end
     if isnan(qmax_pu[i])
-      qmax_pu[i] =  Inf
+      qmax_pu[i] = Inf
     end
   end
   return qmin_pu, qmax_pu
 end
-
-
 
 """
     active_set_q_limits!(
@@ -175,7 +170,9 @@ Callbacks:
 - make_pv!(bus)
 """
 function active_set_q_limits!(
-  net::Net, it::Int, nb::Int;
+  net::Net,
+  it::Int,
+  nb::Int;
   get_qreq_pu,
   is_pv,
   make_pq!,

@@ -242,7 +242,7 @@ Sets the type of a bus in the network.
 - `busType::String`: Type of the bus (e.g., "Slack", "PQ", "PV")
 """
 function setBusType!(net::Net, bus::Int, busType::String)
-  @assert 1 <= bus <= length(net.nodeVec) "Bus-Index $bus ist ungültig."
+  @assert 1 <= bus <= length(net.nodeVec) "The $bus index is invalid. It must be between 1 and $(length(net.nodeVec))."
   node  = net.nodeVec[bus]
   oldTy = getfield(node, :_nodeType)
 
@@ -1306,10 +1306,10 @@ Finds and marks isolated buses in the network.
 function markIsolatedBuses!(; net::Net, log::Bool = false)
   empty!(net.isoNodes)
 
-  # Erstelle ein Set, um die Busse zu speichern, die in den Zweigen im branchVec vorkommen
+  # Create a set to store the buses that appear in the branches in branchVec
   connected_buses = Set{Int}()
 
-  # Durchlaufe jeden Zweig im branchVec und füge die entsprechenden Busse in das Set ein
+  # Iterate through each branch in branchVec and add the corresponding buses to the set
   for br in net.branchVec
     if br.status == 0
       continue
@@ -1319,9 +1319,9 @@ function markIsolatedBuses!(; net::Net, log::Bool = false)
     push!(connected_buses, br.toBus)
   end
 
-  # Durchlaufe alle Busse im nodeVec und markiere die isolierten Busse
+  # Iterate through all buses in nodeVec and mark the isolated buses
   for bus in net.nodeVec
-    # Überprüfe, ob die Busnummer nicht im Set der verbundenen Busse enthalten ist
+    # Check whether the bus number is not included in the set of connected buses
     if !(bus.busIdx in connected_buses)
       setNodeType!(bus, "Isolated")
       setVmVa!(node = bus, vm_pu = 0.0, va_deg = 0.0)
