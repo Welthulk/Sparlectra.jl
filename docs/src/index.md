@@ -79,4 +79,4 @@ data while still allowing reproducible experiments and benchmarks.
 ## License
 
 This project is licensed under the Apache License, Version 2.0.
-[The license file](LICENSE) contains the complete licensing information.
+[The license file](https://github.com/welthulk/Sparlectra.jl/blob/main/LICENSE) contains the complete licensing information.
