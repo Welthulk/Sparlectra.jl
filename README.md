@@ -11,6 +11,7 @@ This package contains tools for subsequent network calculations. It primarily fe
 ## Features
 
 - AC power flow with multiple internal Newton-Raphson formulations (`:polar_full`, `:rectangular`, `:classic`) and many options.
+- State Estimation (WLS) as an **experimental** feature (API and behavior may change in upcoming releases).
 - Canonical external solver interface (`PFModel`/`PFSolution`) to integrate third-party solvers.
 - PV-to-PQ bus switching.
 - MATPOWER-compatible import/export utilities and local casefile helper workflow.
@@ -25,22 +26,19 @@ This package contains tools for subsequent network calculations. It primarily fe
 - Transmission lines and transformers can be represented using π-equivalent models,
 allowing direct use of CIM and manufacturer data without additional model conversions.    
 
-
 ---
 
-## Documentation
-
-- User documentation: <https://welthulk.github.io/Sparlectra.jl/>
-- API reference: <https://welthulk.github.io/Sparlectra.jl/reference/>
-
 ## Installation
+
+For installation, run the following command in the Julia REPL:
 ```julia
 using Pkg
 Pkg.add("Sparlectra")
 ```
 
-
 ## Quick Start
+
+Here's a simple example to get you started:
 
 ```julia
 using Sparlectra
@@ -57,6 +55,22 @@ if erg == 0
     printACPFlowResults(net, 0.0, ite, 1e-6)
 end
 ```
+
+## Documentation Structure
+
+- **[Changelog](changelog.md)**: Version history and updates
+- **[Networks](networks.md)**: Creating and manipulating network models
+- **[Branch Model](branchmodel.md)**: Details of the network branch model
+- **[Import/Export](import.md)**: Importing and exporting network configurations
+- **[Component Removal](remove_functions.md)**: Removing components from networks
+- **[Workshop](workshop.md)**: Guided exercises and examples
+- **[State Estimation](state_estimation.md)**: Experimental SE workflow, observability, and examples
+- **[Network Reports](netreports.md)**: Create and use machine-readable `ACPFlowReport` output
+- **[Function Reference](reference.md)**: Complete API documentation
+- **[Powerlimit Guide](powerlimits_solvers.md)**: Handling of power limits
+
+
+
 
 ### Network Creation
 This package supports the import and export of Matpower .m files, although currently it only reads bus, generator, and branch data from these files. Please note that additional Matlab functions within the .m file are not supported. Additionally, you can modify the imported Matpower files or you can create your own network using easy-to-use functions provided by the package.
@@ -77,7 +91,6 @@ data while still allowing reproducible experiments and benchmarks.
 ### License
 This project is licensed under the Apache License, Version 2.0.
 [The license file](LICENSE) contains the complete licensing information.
-
 
 
 

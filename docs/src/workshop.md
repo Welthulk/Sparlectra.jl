@@ -289,3 +289,197 @@ This gives you a compact workflow:
 4. Call `distributeBusResults!(net)`
 5. Use `printACPFlowResults`, `printProsumerResults`, and `printQLimitLog`
    to inspect the outcome.
+
+
+## State Estimation (SE) in Sparlectra
+
+Short method overview:
+
+* Sparlectra uses a classical **Weighted Least Squares (WLS)** state estimator.
+* The estimated state is `x = [θ(non-slack); Vm(all buses)]`, i.e. bus voltage
+  angles (except slack) and voltage magnitudes.
+* Measurements `z` (voltage, injections, branch flows) are linked to the
+  network model through `h(x)`.
+* The algorithm iteratively minimizes the weighted residual objective:
+  `J(x) = (z - h(x))' * W * (z - h(x))`.
+
+### Supported measurement types
+
+The current SE workflow supports:
+
+* `VmMeas` (bus voltage magnitude)
+* `PinjMeas`, `QinjMeas` (bus active/reactive injection)
+* `PflowMeas`, `QflowMeas` (branch active/reactive flow, direction-aware)
+
+In most studies, measurements are generated from a converged power-flow result
+with `generateMeasurementsFromPF`, optionally with Gaussian noise and
+measurement-specific standard deviations.
+
+Important: this power-flow step is only required when you want synthetic
+measurements (teaching, validation, benchmarking, Monte-Carlo studies).
+In real operation, SE starts from actual SCADA/PMU measurements.
+
+### Observability
+
+Sparlectra provides two levels:
+
+* **Global observability** for the complete state (`evaluate_global_observability`)
+* **Local observability** for selected state columns (`evaluate_local_observability`)
+
+Useful indicators include:
+
+* Jacobian rank / reduced Jacobian rank
+* Redundancy `r = m - n` and ratio `ρ = m / n`
+* Quality labels such as `:observable`, `:critical`, `:not_observable`
+
+### Integration into network workflows
+
+SE is integrated into the same `Net` object used by power flow:
+
+1. Build or import a network
+2. Define measurements (real telemetry or synthetic data)
+3. Optional for studies only: run power flow to generate synthetic measurements
+4. Check observability
+5. Run `runse!`
+6. Optionally write estimated states back to `net` (`updateNet = true`)
+
+Conceptual mapping:
+
+* Power flow computes system states from setpoints and model assumptions.
+* State estimation computes system states from measured values and the model.
+* With redundant measurements, SE can statistically suppress bad/noisy data and
+  provide a more robust state than any single measurement channel.
+
+## State-estimation example: simple 7-bus network
+
+```julia
+using Sparlectra
+using Random
+
+# 1) Build a simple 7-bus network
+net = Net(name = "workshop_se_7bus", baseMVA = 100.0)
+
+addBus!(net = net, busName = "B1", busType = "Slack", vn_kV = 110.0, vm_pu = 1.02, va_deg = 0.0)
+for i in 2:7
+    addBus!(net = net, busName = "B$(i)", busType = "PQ", vn_kV = 110.0, vm_pu = 1.0, va_deg = 0.0)
+end
+
+# Ring + cross-connections
+addPIModelACLine!(net = net, fromBus = "B1", toBus = "B2", r_pu = 0.010, x_pu = 0.080, b_pu = 0.0)
+addPIModelACLine!(net = net, fromBus = "B2", toBus = "B3", r_pu = 0.011, x_pu = 0.085, b_pu = 0.0)
+addPIModelACLine!(net = net, fromBus = "B3", toBus = "B4", r_pu = 0.012, x_pu = 0.090, b_pu = 0.0)
+addPIModelACLine!(net = net, fromBus = "B4", toBus = "B5", r_pu = 0.010, x_pu = 0.080, b_pu = 0.0)
+addPIModelACLine!(net = net, fromBus = "B5", toBus = "B6", r_pu = 0.011, x_pu = 0.085, b_pu = 0.0)
+addPIModelACLine!(net = net, fromBus = "B6", toBus = "B7", r_pu = 0.012, x_pu = 0.090, b_pu = 0.0)
+addPIModelACLine!(net = net, fromBus = "B7", toBus = "B1", r_pu = 0.010, x_pu = 0.080, b_pu = 0.0)
+addPIModelACLine!(net = net, fromBus = "B2", toBus = "B5", r_pu = 0.009, x_pu = 0.070, b_pu = 0.0)
+addPIModelACLine!(net = net, fromBus = "B3", toBus = "B6", r_pu = 0.009, x_pu = 0.070, b_pu = 0.0)
+
+# Source / generation / loads
+addProsumer!(net = net, busName = "B1", type = "EXTERNALNETWORKINJECTION", referencePri = "B1", vm_pu = 1.02, va_deg = 0.0)
+addProsumer!(net = net, busName = "B3", type = "GENERATOR", p = 60.0, q = 10.0)
+addProsumer!(net = net, busName = "B2", type = "LOAD", p = 35.0, q = 10.0)
+addProsumer!(net = net, busName = "B4", type = "LOAD", p = 45.0, q = 15.0)
+addProsumer!(net = net, busName = "B5", type = "LOAD", p = 25.0, q = 8.0)
+addProsumer!(net = net, busName = "B6", type = "LOAD", p = 30.0, q = 10.0)
+addProsumer!(net = net, busName = "B7", type = "LOAD", p = 20.0, q = 6.0)
+
+ok, msg = validate!(net = net)
+ok || error("Validation failed: $msg")
+
+# 2) Solve reference power flow
+ite_pf, status_pf = runpf!(net, 40, 1e-10, 0; method = :polar_full, opt_sparse = true)
+status_pf == 0 || error("Power flow did not converge")
+
+# 3) Build synthetic measurements (with light noise)
+std = measurementStdDevs(vm = 1e-3, pinj = 0.8, qinj = 0.8, pflow = 0.5, qflow = 0.5)
+meas = generateMeasurementsFromPF(
+    net;
+    includeVm = true,
+    includePinj = true,
+    includeQinj = true,
+    includePflow = true,
+    includeQflow = true,
+    noise = true,
+    stddev = std,
+    rng = MersenneTwister(7),
+)
+
+# 4) Observability checks
+gobs = evaluate_global_observability(net, meas; flatstart = true, jacEps = 1e-6)
+println("Global quality: ", gobs.quality, ", redundancy: ", gobs.redundancy)
+
+state_map = buildSEStateMap(net)
+θ4 = state_map.theta_col_by_bus[4]
+v4 = state_map.vm_col_by_bus[4]
+lobs = evaluate_local_observability(net, meas, [θ4, v4]; flatstart = true, jacEps = 1e-6)
+println("Local quality@bus4: ", lobs.quality, ", redundancy: ", lobs.redundancy)
+
+# 5) Run state estimation
+se = runse!(net, meas; maxIte = 12, tol = 1e-6, flatstart = true, jacEps = 1e-6, updateNet = true)
+println("SE converged: ", se.converged, ", iterations: ", se.iterations, ", J: ", se.objectiveJ)
+```
+
+Workshop tips:
+
+* Start with `noise = false`, then increase realism gradually.
+* Deactivate selected measurements (`active = false`) and re-check
+  global/local observability.
+* Pay attention to `quality = :critical` for fragile configurations.
+
+## State-estimation example: network + measurement set (no PF pre-step)
+
+This variant reflects a real measurement-driven workflow: you have a network
+model and a telemetry set, then run SE directly.
+
+```julia
+using Sparlectra
+
+# 1) Build the same 7-bus network model
+net = Net(name = "workshop_se_7bus_meas_only", baseMVA = 100.0)
+
+addBus!(net = net, busName = "B1", busType = "Slack", vn_kV = 110.0, vm_pu = 1.0, va_deg = 0.0)
+for i in 2:7
+    addBus!(net = net, busName = "B$(i)", busType = "PQ", vn_kV = 110.0, vm_pu = 1.0, va_deg = 0.0)
+end
+
+addPIModelACLine!(net = net, fromBus = "B1", toBus = "B2", r_pu = 0.010, x_pu = 0.080, b_pu = 0.0)
+addPIModelACLine!(net = net, fromBus = "B2", toBus = "B3", r_pu = 0.011, x_pu = 0.085, b_pu = 0.0)
+addPIModelACLine!(net = net, fromBus = "B3", toBus = "B4", r_pu = 0.012, x_pu = 0.090, b_pu = 0.0)
+addPIModelACLine!(net = net, fromBus = "B4", toBus = "B5", r_pu = 0.010, x_pu = 0.080, b_pu = 0.0)
+addPIModelACLine!(net = net, fromBus = "B5", toBus = "B6", r_pu = 0.011, x_pu = 0.085, b_pu = 0.0)
+addPIModelACLine!(net = net, fromBus = "B6", toBus = "B7", r_pu = 0.012, x_pu = 0.090, b_pu = 0.0)
+addPIModelACLine!(net = net, fromBus = "B7", toBus = "B1", r_pu = 0.010, x_pu = 0.080, b_pu = 0.0)
+
+ok, msg = validate!(net = net)
+ok || error("Validation failed: $msg")
+
+# 2) Example telemetry set (e.g. SCADA snapshot)
+meas = Measurement[
+    Measurement(typ = VmMeas,   value = 1.019, sigma = 0.002, busIdx = 1, id = "VM_B1"),
+    Measurement(typ = VmMeas,   value = 0.997, sigma = 0.004, busIdx = 3, id = "VM_B3"),
+    Measurement(typ = VmMeas,   value = 0.989, sigma = 0.004, busIdx = 5, id = "VM_B5"),
+
+    Measurement(typ = PinjMeas, value = -33.0, sigma = 1.0, busIdx = 2, id = "PINJ_B2"),
+    Measurement(typ = QinjMeas, value = -9.0,  sigma = 1.0, busIdx = 2, id = "QINJ_B2"),
+    Measurement(typ = PinjMeas, value = -44.0, sigma = 1.0, busIdx = 4, id = "PINJ_B4"),
+    Measurement(typ = QinjMeas, value = -14.0, sigma = 1.0, busIdx = 4, id = "QINJ_B4"),
+
+    Measurement(typ = PflowMeas, value = 28.0, sigma = 0.8, branchIdx = 1, direction = :from, id = "PF_1_FROM"),
+    Measurement(typ = QflowMeas, value = 8.0,  sigma = 0.8, branchIdx = 1, direction = :from, id = "QF_1_FROM"),
+    Measurement(typ = PflowMeas, value = 21.0, sigma = 0.8, branchIdx = 3, direction = :from, id = "PF_3_FROM"),
+    Measurement(typ = PflowMeas, value = 20.6, sigma = 0.8, branchIdx = 3, direction = :from, id = "PF_3_FROM_REDUNDANT"),
+]
+
+# 3) Observability and estimation
+gobs = evaluate_global_observability(net, meas; flatstart = true, jacEps = 1e-6)
+println("Global quality: ", gobs.quality, ", redundancy: ", gobs.redundancy)
+
+se = runse!(net, meas; maxIte = 12, tol = 1e-6, flatstart = true, jacEps = 1e-6, updateNet = true)
+println("SE converged: ", se.converged, ", iterations: ", se.iterations, ", J: ", se.objectiveJ)
+
+# Optional: inspect largest normalized residuals for bad-data screening
+for i in eachindex(se.normalizedResiduals)
+    println("meas[", i, "] |r|/σ = ", abs(se.normalizedResiduals[i]))
+end
+```
