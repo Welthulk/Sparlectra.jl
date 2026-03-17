@@ -31,7 +31,7 @@ const MPOWER_DIR = normpath(joinpath(pkgdir(@__MODULE__), "data", "mpower"))
 
 # resource data types for working with Sparlectra
 const Wurzel3 = 1.7320508075688772
-const SparlectraVersion = v"0.5.0"
+const SparlectraVersion = v"0.6.0"
 version() = SparlectraVersion
 abstract type AbstractBranch end
 
@@ -127,6 +127,9 @@ export
   # solver_core.jl
   calc_injections, calc_currents, solve_linear, build_pos_map, slack_elimination_indices,extract_bus_types_and_vset, 
   build_qload_pu, build_voltage_vector, compute_sbus_and_totals, 
+  # measurements.jl / state_estimation.jl
+  MeasurementType, Measurement, measurementStdDevs, generateMeasurementsFromPF,
+  SEResult, runse!, numeric_rank, evaluate_global_observability, evaluate_local_observability,
   # jacobian_complex.jl
   runpf_rectangular!, mismatch_rectangular, complex_newton_step_rectangular_fd,
   # External solver interface
@@ -162,5 +165,7 @@ include("jacobian_complex.jl")
 include("jacobian_fd.jl")
 include("solver_interface.jl")
 include("FetchMatpowerCase.jl")
+include("measurements.jl")
+include("state_estimation.jl")
 #! format: on
 end # module Sparlectra

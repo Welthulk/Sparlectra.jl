@@ -1,4 +1,12 @@
 # Change Log
+## Version 0.6.0 – 2026-03-17
+### New Features
+* Added initial State Estimation (SE, WLS) documentation and examples.
+
+### Notes
+* State Estimation is currently marked as **experimental**.
+* API details and behavior may change in upcoming releases.
+
 ## Version 0.5.0 – 2026-03-11
 ### Highlights
 * Create and use machine-readable `ACPFlowReport` output
