@@ -137,3 +137,37 @@ function test_state_estimation_observability_metrics()::Bool
 
   return true
 end
+
+function test_state_estimation_matrix_observability_helpers()::Bool
+  @testset "State estimation matrix observability helpers" begin
+    H = [
+      1.0 0.0 0.0
+      0.0 1.0 0.0
+      0.0 0.0 1.0
+      1.0 1.0 0.0
+      1.0 1.0 0.0
+    ]
+
+    obs = evaluate_observability_matrix(H)
+    @test obs.numerical_observable == true
+    @test obs.structural_observable == true
+    @test obs.n_states == 3
+    @test obs.n_measurements == 5
+    @test obs.redundancy == 2
+
+    @test numerical_observable(H) == true
+    @test structural_observable(H) == true
+    @test numerical_row_redundant(H, 3) == false
+    @test structural_row_redundant(H, 3) == false
+
+    lobs = evaluate_local_observability_matrix(H, [1, 2])
+    @test lobs.n_states == 2
+    @test lobs.n_measurements == 4
+    @test !isempty(lobs.rows)
+
+    @test_throws ErrorException evaluate_local_observability_matrix(H, Int[])
+    @test_throws ErrorException evaluate_local_observability_matrix(H, [10])
+  end
+
+  return true
+end

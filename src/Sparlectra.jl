@@ -129,7 +129,10 @@ export
   build_qload_pu, build_voltage_vector, compute_sbus_and_totals, 
   # measurements.jl / state_estimation.jl
   MeasurementType, Measurement, measurementStdDevs, generateMeasurementsFromPF,
-  SEResult, runse!, numeric_rank, evaluate_global_observability, evaluate_local_observability,
+  SEResult, runse!, numeric_rank,
+  numerical_observable, structural_observable, numerical_row_redundant, structural_row_redundant,
+  evaluate_observability_matrix, evaluate_local_observability_matrix,
+  evaluate_global_observability, evaluate_local_observability,
   # jacobian_complex.jl
   runpf_rectangular!, mismatch_rectangular, complex_newton_step_rectangular_fd,
   # External solver interface
