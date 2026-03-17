@@ -4,7 +4,7 @@
 # SPARLECTRA
 <a href="https://github.com/Welthulk/Sparlectra.jl/tree/main/"><img align="left" width="100" src="docs/src/assets/logo.png" style="margin-right: 20px" /></a>
 
-This package contains tools for subsequent network calculations. It primarily features a program for calculating load flow using the Newton-Raphson method. The focus is to provide valuable insights into load flow calculations for both students and ambitious professionals.
+This package contains tools for subsequent network calculations. It primarily features a program for calculating load flow and state estimaton. The focus is to provide valuable insights into load flow calculations for both students and ambitious professionals.
 
 ---
 
@@ -90,7 +90,7 @@ data while still allowing reproducible experiments and benchmarks.
 
 ### License
 This project is licensed under the Apache License, Version 2.0.
-[The license file](LICENSE) contains the complete licensing information.
+[The license file](https://github.com/welthulk/Sparlectra.jl/blob/main/LICENSE) contains the complete licensing information.
 
 
 
