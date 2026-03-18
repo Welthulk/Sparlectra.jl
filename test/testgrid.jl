@@ -1263,3 +1263,36 @@ function test_acpflow_report_object()
 
   return node_count_ok && branch_count_ok && link_count_ok && total_losses_ok && has_node_keys && has_branch_keys
 end
+
+function test_report_uses_user_bus_names_and_pf_node_count()
+  net = Net(name = "report_link_names", baseMVA = 100.0)
+  addBus!(net = net, busName = "Slack", busType = "SLACK", vn_kV = 110.0)
+  addBus!(net = net, busName = "Bus1", busType = "PQ", vn_kV = 110.0)
+  addBus!(net = net, busName = "Bus1a", busType = "PQ", vn_kV = 110.0)
+
+  addACLine!(net = net, fromBus = "Slack", toBus = "Bus1", length = 5.0, r = 0.05, x = 0.5, c_nf_per_km = 10.0, tanδ = 0.0)
+  addLink!(net = net, fromBus = "Bus1", toBus = "Bus1a", status = 1)
+
+  addProsumer!(net = net, busName = "Slack", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "Slack")
+  addProsumer!(net = net, busName = "Bus1", type = "ENERGYCONSUMER", p = 10.0, q = 2.0)
+  addProsumer!(net = net, busName = "Bus1a", type = "ENERGYCONSUMER", p = 5.0, q = 1.0)
+
+  ite, erg = runpf!(net, 30, 1e-10, 0; method = :polar_full, opt_sparse = true)
+  erg == 0 || return false
+
+  calcNetLosses!(net)
+  calcLinkFlowsKCL!(net)
+
+  report = buildACPFlowReport(net; ct = 0.0, ite = ite, tol = 1e-10, converged = true, solver = :polar_full)
+  report_text = mktempdir() do tmpdir
+    printACPFlowResults(net, 0.0, ite, 1e-10, true, tmpdir; converged = true, solver = :polar_full)
+    read(joinpath(tmpdir, "result_$(net.name).txt"), String)
+  end
+
+  has_bus1a_row = any(row -> row.bus_name == "Bus1a", report.nodes)
+  merged_pf_count_ok = occursin("PF Nodes", report_text) && occursin("2 (after active-link merge)", report_text)
+  link_names_ok = occursin("Bus1", report_text) && occursin("Bus1a", report_text)
+  branch_connection_ok = occursin("Slack -> Bus1", report_text) && occursin("Line", report_text)
+
+  return has_bus1a_row && merged_pf_count_ok && link_names_ok && branch_connection_ok
+end

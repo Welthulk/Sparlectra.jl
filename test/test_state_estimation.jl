@@ -171,3 +171,97 @@ function test_state_estimation_matrix_observability_helpers()::Bool
 
   return true
 end
+
+function test_state_estimation_measurement_add_helpers()::Bool
+  @testset "State estimation measurement add helpers" begin
+    net = createTest3BusNet()
+    measurements = Measurement[]
+
+    vm = addVmMeasurement!(measurements; net = net, busName = "ASTADT", value = 1.01, sigma = 0.002)
+    pinj = addPinjMeasurement!(measurements; net = net, busName = "STATION1", value = -25.0, sigma = 1.0, id = "PINJ_STATION1")
+    qinj = addQinjMeasurement!(measurements; net = net, busName = "STATION1", value = -8.0, sigma = 1.2)
+    pflow = addPflowMeasurement!(measurements; net = net, fromBus = "ASTADT", toBus = "STATION1", value = 24.0, sigma = 0.8, direction = :from)
+    qflow = addQflowMeasurement!(measurements; net = net, branchNr = 1, value = 6.0, sigma = 0.9, direction = :to, active = false)
+
+    @test length(measurements) == 5
+    @test vm.typ == Sparlectra.VmMeas
+    @test vm.busIdx == Sparlectra.geNetBusIdx(net = net, busName = "ASTADT")
+    @test pinj.typ == Sparlectra.PinjMeas
+    @test pinj.id == "PINJ_STATION1"
+    @test qinj.typ == Sparlectra.QinjMeas
+    @test pflow.typ == Sparlectra.PflowMeas
+    @test pflow.branchIdx == 1
+    @test pflow.direction == :from
+    @test qflow.typ == Sparlectra.QflowMeas
+    @test qflow.direction == :to
+    @test qflow.active == false
+
+    @test_throws ErrorException addPflowMeasurement!(Measurement[]; net = net, fromBus = "ASTADT", toBus = "UNKNOWN", value = 1.0, sigma = 0.1)
+  end
+
+  return true
+end
+
+function create_state_estimation_passive_transit_net()::Net
+  net = Net(name = "se_passive_transit", baseMVA = 100.0)
+
+  addBus!(net = net, busName = "Slack", busType = "SLACK", vn_kV = 110.0)
+  addBus!(net = net, busName = "Transit", busType = "PQ", vn_kV = 110.0)
+  addBus!(net = net, busName = "Load", busType = "PQ", vn_kV = 110.0)
+
+  addACLine!(net = net, fromBus = "Slack", toBus = "Transit", length = 10.0, r = 0.02, x = 0.2, c_nf_per_km = 0.0, tanδ = 0.0)
+  addACLine!(net = net, fromBus = "Transit", toBus = "Load", length = 8.0, r = 0.02, x = 0.2, c_nf_per_km = 0.0, tanδ = 0.0)
+
+  addProsumer!(net = net, busName = "Slack", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.02, va_deg = 0.0, referencePri = "Slack")
+  addProsumer!(net = net, busName = "Load", type = "ENERGYCONSUMER", p = 40.0, q = 15.0)
+
+  return net
+end
+
+function test_state_estimation_passive_bus_zero_injection_helpers()::Bool
+  @testset "State estimation passive bus zero-injection helpers" begin
+    net = create_state_estimation_passive_transit_net()
+
+    ite, erg = runpf!(net, 40, 1e-10, 0; method = :polar_full, opt_sparse = true)
+    @test erg == 0
+    @test ite > 0
+
+    passive = findPassiveBuses(net)
+    @test passive == [2]
+
+    std = measurementStdDevs(vm = 1e-5, pinj = 1e-5, qinj = 1e-5, pflow = 1e-5, qflow = 1e-5)
+    all_meas = generateMeasurementsFromPF(net; includeVm = true, includePinj = true, includeQinj = true, includePflow = true, includeQflow = true, noise = false, stddev = std, rng = MersenneTwister(7))
+
+    base_meas = Measurement[]
+    for m in all_meas
+      keep = (m.typ == Sparlectra.VmMeas && m.busIdx == 1) ||
+             ((m.typ == Sparlectra.PflowMeas || m.typ == Sparlectra.QflowMeas) && m.branchIdx == 1 && m.direction == :from) ||
+             ((m.typ == Sparlectra.PflowMeas || m.typ == Sparlectra.QflowMeas) && m.branchIdx == 2 && m.direction == :to)
+      keep && push!(base_meas, m)
+    end
+
+    @test length(base_meas) == 5
+
+    base_obs = evaluate_global_observability(net, base_meas; flatstart = true, jacEps = 1e-6)
+    @test base_obs.quality == :critical
+    @test base_obs.redundancy == 0
+    @test !isempty(base_obs.numerical_critical_measurement_indices)
+
+    meas_with_zi = copy(base_meas)
+    added = addZeroInjectionMeasurements!(meas_with_zi; net = net, sigma = 1e-6)
+    @test length(added) == 2
+    @test all(m -> m.busIdx == 2, added)
+    @test sort([m.typ for m in added]) == sort([Sparlectra.PinjMeas, Sparlectra.QinjMeas])
+
+    zi_obs = evaluate_global_observability(net, meas_with_zi; flatstart = true, jacEps = 1e-6)
+    @test zi_obs.quality == :good
+    @test zi_obs.redundancy == 2
+    @test isempty(zi_obs.numerical_critical_measurement_indices)
+    @test isempty(zi_obs.structural_critical_measurement_indices)
+
+    result = runse!(deepcopy(net), meas_with_zi; maxIte = 12, tol = 1e-8, flatstart = true, jacEps = 1e-6, updateNet = false)
+    @test result.converged == true
+  end
+
+  return true
+end
