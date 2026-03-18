@@ -54,12 +54,13 @@ end
 - **[Networks](networks.md)**: Creating and manipulating network models
 - **[Branch Model](branchmodel.md)**: Details of the network branch model
 - **[Import/Export](import.md)**: Importing and exporting network configurations
-- **[Component Removal](remove_functions.md)**: Removing components from networks
+- **[Component Removal](remove_functions.md)**: Conceptual notes on topology-aware removal workflows
 - **[Workshop](workshop.md)**: Guided exercises and examples
 - **[State Estimation](state_estimation.md)**: Theory, observability, and practical SE workflow
 - **[Network Reports](netreports.md)**: Create and use machine-readable `ACPFlowReport` output
 - **[Function Reference](reference.md)**: Complete API documentation
-- **[Powerlimit Guide](powerlimits_solvers.md)**: Handling of power limits
+- **[Powerlimit Guide](powerlimits.md)**: Handling of power limits
+- **[Solver Guide](solver.md)**: Numerical solver formulations and FD Jacobians
 
 
 ### Network Creation

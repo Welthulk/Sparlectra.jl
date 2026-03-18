@@ -64,6 +64,108 @@ function Measurement(; typ::MeasurementType, value::Real, sigma::Real, active::B
   return Measurement(typ, Float64(value), σ, w, active, busIdx, branchIdx, direction, String(id))
 end
 
+@inline function _default_measurement_id(typ::MeasurementType; busIdx::Union{Nothing,Int} = nothing, branchIdx::Union{Nothing,Int} = nothing, direction::Symbol = :none)
+  if typ == VmMeas
+    return "Vm_bus_$(something(busIdx, 0))"
+  elseif typ == PinjMeas
+    return "Pinj_bus_$(something(busIdx, 0))"
+  elseif typ == QinjMeas
+    return "Qinj_bus_$(something(busIdx, 0))"
+  elseif typ == PflowMeas
+    return "Pflow_branch_$(something(branchIdx, 0))_$(direction)"
+  elseif typ == QflowMeas
+    return "Qflow_branch_$(something(branchIdx, 0))_$(direction)"
+  end
+  error("Unsupported measurement type")
+end
+
+@inline function _resolve_branch_idx(net::Net; branchNr::Union{Nothing,Int} = nothing, fromBus::Union{Nothing,String} = nothing, toBus::Union{Nothing,String} = nothing)
+  if !isnothing(branchNr)
+    branchNr < 1 && error("branchNr must be > 0")
+    branchNr > length(net.branchVec) && error("branchNr $(branchNr) not found in network")
+    return branchNr
+  end
+
+  isnothing(fromBus) && error("Either branchNr or fromBus must be provided")
+  isnothing(toBus) && error("Either branchNr or toBus must be provided")
+
+  brVec = getNetBranchNumberVec(net = net, fromBus = fromBus, toBus = toBus)
+  isempty(brVec) && error("No branch found between $(fromBus) and $(toBus)")
+  length(brVec) > 1 && error("Multiple branches found between $(fromBus) and $(toBus); please specify branchNr")
+  return brVec[1]
+end
+
+"""
+    addMeasurement!(measurements; typ, value, sigma, active=true, busIdx=nothing, branchIdx=nothing, direction=:none, id="")
+
+Append a state-estimation measurement to `measurements` and return it.
+"""
+function addMeasurement!(measurements::Vector{Measurement}; typ::MeasurementType, value::Real, sigma::Real, active::Bool = true, busIdx::Union{Nothing,Int} = nothing, branchIdx::Union{Nothing,Int} = nothing, direction::Symbol = :none, id::AbstractString = "")
+  if typ == VmMeas || typ == PinjMeas || typ == QinjMeas
+    isnothing(busIdx) && error("Bus measurement requires busIdx")
+  elseif typ == PflowMeas || typ == QflowMeas
+    isnothing(branchIdx) && error("Flow measurement requires branchIdx")
+    (direction == :from || direction == :to) || error("Flow measurement direction must be :from or :to")
+  end
+
+  meas_id = isempty(id) ? _default_measurement_id(typ; busIdx = busIdx, branchIdx = branchIdx, direction = direction) : String(id)
+  meas = Measurement(typ = typ, value = value, sigma = sigma, active = active, busIdx = busIdx, branchIdx = branchIdx, direction = direction, id = meas_id)
+  push!(measurements, meas)
+  return meas
+end
+
+"""
+    addVmMeasurement!(measurements; net, busName, value, sigma, active=true, id="")
+
+Append a bus voltage-magnitude measurement identified by `busName`.
+"""
+function addVmMeasurement!(measurements::Vector{Measurement}; net::Net, busName::String, value::Real, sigma::Real, active::Bool = true, id::AbstractString = "")
+  busIdx = geNetBusIdx(net = net, busName = busName)
+  return addMeasurement!(measurements; typ = VmMeas, value = value, sigma = sigma, active = active, busIdx = busIdx, id = id)
+end
+
+"""
+    addPinjMeasurement!(measurements; net, busName, value, sigma, active=true, id="")
+
+Append an active-power injection measurement identified by `busName`.
+"""
+function addPinjMeasurement!(measurements::Vector{Measurement}; net::Net, busName::String, value::Real, sigma::Real, active::Bool = true, id::AbstractString = "")
+  busIdx = geNetBusIdx(net = net, busName = busName)
+  return addMeasurement!(measurements; typ = PinjMeas, value = value, sigma = sigma, active = active, busIdx = busIdx, id = id)
+end
+
+"""
+    addQinjMeasurement!(measurements; net, busName, value, sigma, active=true, id="")
+
+Append a reactive-power injection measurement identified by `busName`.
+"""
+function addQinjMeasurement!(measurements::Vector{Measurement}; net::Net, busName::String, value::Real, sigma::Real, active::Bool = true, id::AbstractString = "")
+  busIdx = geNetBusIdx(net = net, busName = busName)
+  return addMeasurement!(measurements; typ = QinjMeas, value = value, sigma = sigma, active = active, busIdx = busIdx, id = id)
+end
+
+"""
+    addPflowMeasurement!(measurements; net, value, sigma, direction=:from, branchNr=nothing, fromBus=nothing, toBus=nothing, active=true, id="")
+
+Append an active-power flow measurement identified by `branchNr` or a unique
+`fromBus`/`toBus` branch pair.
+"""
+function addPflowMeasurement!(measurements::Vector{Measurement}; net::Net, value::Real, sigma::Real, direction::Symbol = :from, branchNr::Union{Nothing,Int} = nothing, fromBus::Union{Nothing,String} = nothing, toBus::Union{Nothing,String} = nothing, active::Bool = true, id::AbstractString = "")
+  bridx = _resolve_branch_idx(net; branchNr = branchNr, fromBus = fromBus, toBus = toBus)
+  return addMeasurement!(measurements; typ = PflowMeas, value = value, sigma = sigma, active = active, branchIdx = bridx, direction = direction, id = id)
+end
+
+"""
+    addQflowMeasurement!(measurements; net, value, sigma, direction=:from, branchNr=nothing, fromBus=nothing, toBus=nothing, active=true, id="")
+
+Append a reactive-power flow measurement identified by `branchNr` or a unique
+`fromBus`/`toBus` branch pair.
+"""
+function addQflowMeasurement!(measurements::Vector{Measurement}; net::Net, value::Real, sigma::Real, direction::Symbol = :from, branchNr::Union{Nothing,Int} = nothing, fromBus::Union{Nothing,String} = nothing, toBus::Union{Nothing,String} = nothing, active::Bool = true, id::AbstractString = "")
+  bridx = _resolve_branch_idx(net; branchNr = branchNr, fromBus = fromBus, toBus = toBus)
+  return addMeasurement!(measurements; typ = QflowMeas, value = value, sigma = sigma, active = active, branchIdx = bridx, direction = direction, id = id)
+end
+
 """
     measurementStdDevs(; vm=0.005, pinj=1.0, qinj=1.0, pflow=1.0, qflow=1.0)
 
@@ -73,28 +175,66 @@ function measurementStdDevs(; vm::Float64 = 0.005, pinj::Float64 = 1.0, qinj::Fl
   return Dict(VmMeas => vm, PinjMeas => pinj, QinjMeas => qinj, PflowMeas => pflow, QflowMeas => qflow)
 end
 
-@inline function _branch_flow_pu(branch::Branch, from::Int, to::Int, tapSide::Int, V::Vector{ComplexF64})
-  @assert tapSide == 1 || tapSide == 2
-  if branch.status == 0
-    return 0.0 + 0.0im
+@inline _bus_power_value(x::Union{Nothing,Float64}) = isnothing(x) ? 0.0 : x
+
+"""
+    findPassiveBuses(net; atol=1e-9, includeSlack=false) -> Vector{Int}
+
+Return bus indices that have no generation, no load, and no shunt contribution
+within the given tolerance `atol`.
+
+This is useful for state-estimation workflows where passive / transit buses are
+often modeled through zero-injection pseudo-measurements.
+"""
+function findPassiveBuses(net::Net; atol::Float64 = 1e-9, includeSlack::Bool = false)
+  passive = Int[]
+  for i in eachindex(net.nodeVec)
+    node = net.nodeVec[i]
+    if !includeSlack && getNodeType(node) == Slack
+      continue
+    end
+
+    pinj = _bus_power_value(node._pƩGen) - _bus_power_value(node._pƩLoad) - _bus_power_value(node._pShunt)
+    qinj = _bus_power_value(node._qƩGen) - _bus_power_value(node._qƩLoad) - _bus_power_value(node._qShunt)
+    if abs(pinj) <= atol && abs(qinj) <= atol
+      push!(passive, i)
+    end
   end
+  return passive
+end
 
-  ui = V[from]
-  uj = V[to]
+"""
+    addZeroInjectionMeasurements!(measurements; net, sigma=1e-6, busNames=nothing, busIdxs=nothing, active=true, idPrefix="ZI") -> Vector{Measurement}
 
-  ratio = (branch.ratio != 0.0) ? branch.ratio : 1.0
-  angle = (branch.ratio != 0.0) ? branch.angle : 0.0
-  tap = calcComplexRatio(tapRatio = ratio, angleInDegrees = angle)
+Append active- and reactive-power zero-injection pseudo-measurements for the
+selected buses and return the newly added measurements.
 
-  if tapSide == 1
-    ui /= tap
+Selection rules:
+- If `busIdxs` is provided, those indices are used.
+- Else if `busNames` is provided, names are resolved to indices.
+- Else passive buses are detected automatically via `findPassiveBuses(net)`.
+
+These pseudo-measurements are the current way to encode equality constraints
+`P_inj = 0` and `Q_inj = 0` in the WLS estimator.
+"""
+function addZeroInjectionMeasurements!(measurements::Vector{Measurement}; net::Net, sigma::Real = 1e-6, busNames::Union{Nothing,Vector{String}} = nothing, busIdxs::Union{Nothing,Vector{Int}} = nothing, active::Bool = true, idPrefix::AbstractString = "ZI")
+  selected = if !isnothing(busIdxs)
+    copy(busIdxs)
+  elseif !isnothing(busNames)
+    [geNetBusIdx(net = net, busName = busName) for busName in busNames]
   else
-    uj /= tap
+    findPassiveBuses(net)
   end
 
-  Yik = inv(branch.r_pu + im * branch.x_pu)
-  Y0ik = 0.5 * (branch.g_pu + im * branch.b_pu)
-  return abs(ui)^2 * conj(Y0ik + Yik) - ui * conj(uj) * conj(Yik)
+  isempty(selected) && return Measurement[]
+
+  added = Measurement[]
+  for busIdx in selected
+    1 <= busIdx <= length(net.nodeVec) || error("Bus index $(busIdx) out of bounds")
+    push!(added, addMeasurement!(measurements; typ = PinjMeas, value = 0.0, sigma = sigma, active = active, busIdx = busIdx, id = "$(idPrefix)_PINJ_bus_$(busIdx)"))
+    push!(added, addMeasurement!(measurements; typ = QinjMeas, value = 0.0, sigma = sigma, active = active, busIdx = busIdx, id = "$(idPrefix)_QINJ_bus_$(busIdx)"))
+  end
+  return added
 end
 
 @inline function _measurement_prediction(meas::Measurement, net::Net, V::Vector{ComplexF64}, Sbus_MVA::Vector{ComplexF64})
@@ -115,9 +255,9 @@ end
     bridx < 1 && error("Flow measurement missing branchIdx")
     br = net.branchVec[bridx]
     if meas.direction == :from
-      s = _branch_flow_pu(br, br.fromBus, br.toBus, 1, V) * net.baseMVA
+      s = branchFlow_pu(br, br.fromBus, br.toBus, 1, V) * net.baseMVA
     elseif meas.direction == :to
-      s = _branch_flow_pu(br, br.toBus, br.fromBus, 2, V) * net.baseMVA
+      s = branchFlow_pu(br, br.toBus, br.fromBus, 2, V) * net.baseMVA
     else
       error("Flow measurement direction must be :from or :to")
     end
@@ -168,15 +308,15 @@ function generateMeasurementsFromPF(net::Net; includeVm::Bool = true, includePin
     br.status == 0 && continue
     if includePflow
       σ = stddev[PflowMeas]
-      sfrom = _branch_flow_pu(br, br.fromBus, br.toBus, 1, V) * net.baseMVA
-      sto = _branch_flow_pu(br, br.toBus, br.fromBus, 2, V) * net.baseMVA
+      sfrom = branchFlow_pu(br, br.fromBus, br.toBus, 1, V) * net.baseMVA
+      sto = branchFlow_pu(br, br.toBus, br.fromBus, 2, V) * net.baseMVA
       push!(m, Measurement(typ = PflowMeas, value = real(sfrom) + (noise ? randn(rng) * σ : 0.0), sigma = σ, branchIdx = br.branchIdx, direction = :from, id = "Pflow_branch_$(br.branchIdx)_from"))
       push!(m, Measurement(typ = PflowMeas, value = real(sto) + (noise ? randn(rng) * σ : 0.0), sigma = σ, branchIdx = br.branchIdx, direction = :to, id = "Pflow_branch_$(br.branchIdx)_to"))
     end
     if includeQflow
       σ = stddev[QflowMeas]
-      sfrom = _branch_flow_pu(br, br.fromBus, br.toBus, 1, V) * net.baseMVA
-      sto = _branch_flow_pu(br, br.toBus, br.fromBus, 2, V) * net.baseMVA
+      sfrom = branchFlow_pu(br, br.fromBus, br.toBus, 1, V) * net.baseMVA
+      sto = branchFlow_pu(br, br.toBus, br.fromBus, 2, V) * net.baseMVA
       push!(m, Measurement(typ = QflowMeas, value = imag(sfrom) + (noise ? randn(rng) * σ : 0.0), sigma = σ, branchIdx = br.branchIdx, direction = :from, id = "Qflow_branch_$(br.branchIdx)_from"))
       push!(m, Measurement(typ = QflowMeas, value = imag(sto) + (noise ? randn(rng) * σ : 0.0), sigma = σ, branchIdx = br.branchIdx, direction = :to, id = "Qflow_branch_$(br.branchIdx)_to"))
     end

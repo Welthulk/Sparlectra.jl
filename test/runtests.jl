@@ -60,7 +60,10 @@ include("test_state_estimation.jl")
   @test test_link_kcl_ring_allocation_with_shunt() == true
   @test test_link_ring_pf_stability() == true
   @test test_acpflow_report_object() == true
+  @test test_report_uses_user_bus_names_and_pf_node_count() == true
   @test test_state_estimation_wls_first_version() == true
   @test test_state_estimation_observability_metrics() == true
   @test test_state_estimation_matrix_observability_helpers() == true
+  @test test_state_estimation_measurement_add_helpers() == true
+  @test test_state_estimation_passive_bus_zero_injection_helpers() == true
 end

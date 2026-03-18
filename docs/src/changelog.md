@@ -1,11 +1,13 @@
 # Change Log
 ## Version 0.6.0 – 2026-03-17
 ### New Features
-* Added initial State Estimation (SE, WLS) documentation and examples.
+* Added initial State Estimation (SE, WLS), documentation and examples.
+* Added ZIB in SE, documentation and examples.
+* Improved reesults reporting and logging. 
 
 ### Notes
 * State Estimation is currently marked as **experimental**.
-* API details and behavior may change in upcoming releases.
+
 
 ## Version 0.5.0 – 2026-03-11
 ### Highlights

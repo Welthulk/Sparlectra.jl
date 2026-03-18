@@ -22,6 +22,41 @@ Where:
 The algorithm linearizes `h(x)` and iterates Newton-style until the update norm
 or residual criteria satisfy tolerance.
 
+## Why the FD measurement Jacobian works
+
+The internal helper `_measurement_jacobian_fd` approximates the Jacobian of the
+measurement model `h(x)` by finite differences. The key idea is the same as in
+power-flow FD Newton methods, but now the nonlinear map is the SE prediction
+function rather than the PF mismatch function.
+
+If `h(x)` is differentiable, then for a small perturbation `δx`:
+
+```math
+h(x + \delta x) \approx h(x) + H(x)\,\delta x,
+```
+
+where `H(x) = \partial h / \partial x` is the measurement Jacobian. Each
+Jacobian column can therefore be approximated numerically via
+
+```math
+\frac{\partial h}{\partial x_k}(x)
+\approx
+\frac{h(x + \varepsilon e_k) - h(x)}{\varepsilon}.
+```
+
+This works because WLS only needs the **local first-order sensitivity** of the
+measurements with respect to the state in order to build the linearized normal
+equations. The underlying estimation model does not change; only the derivative
+evaluation is numerical instead of analytic.
+
+Conceptually:
+
+* PF FD Jacobian approximates derivatives of the residual map `F(x)`.
+* SE FD Jacobian approximates derivatives of the measurement map `h(x)`.
+
+In both cases, the finite-difference step is justified by the same first-order
+Taylor approximation.
+
 ## Measurement model
 
 The current implementation supports these measurement types:
@@ -29,6 +64,29 @@ The current implementation supports these measurement types:
 * `VmMeas` (bus voltage magnitude)
 * `PinjMeas`, `QinjMeas` (bus injections)
 * `PflowMeas`, `QflowMeas` (branch flows with direction)
+
+### Passive / transit buses
+
+For buses without load, generation, or shunt contribution, Sparlectra does
+**not** currently introduce a separate hard equality-constraint block in the
+WLS solver. Instead, the recommended modeling approach is to add
+zero-injection pseudo-measurements
+
+* `Pinj = 0`
+* `Qinj = 0`
+
+for those buses. In other words, the physical equality constraint is embedded
+through very small-variance measurements in the standard WLS formulation.
+
+Helper functions:
+
+* `findPassiveBuses(net)` detects passive / transit buses from the bus power
+  aggregates.
+* `addZeroInjectionMeasurements!(meas; net, sigma=...)` appends the matching
+  zero-injection pseudo-measurements automatically.
+
+This is especially useful in sparse measurement scenarios, where a passive node
+may otherwise leave the estimator merely critical or weakly redundant.
 
 Typical synthetic-data workflow (for studies/tests):
 
@@ -125,7 +183,7 @@ addPIModelACLine!(net = net, fromBus = "B2", toBus = "B3", r_pu = 0.01, x_pu = 0
 addPIModelACLine!(net = net, fromBus = "B3", toBus = "B1", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0)
 
 ok, msg = validate!(net = net)
-ok || error("Validation failed: $msg")
+ok || error("Validation failed: \$msg")
 
 meas = Measurement[
     Measurement(typ = VmMeas, value = 1.01, sigma = 0.002, busIdx = 1, id = "VM_B1"),
@@ -143,11 +201,40 @@ se = runse!(net, meas; maxIte = 12, tol = 1e-6, flatstart = true, jacEps = 1e-6,
 println("Converged: ", se.converged)
 ```
 
+## Adding measurements with helper functions
+
+Instead of constructing each `Measurement(...)` manually, you can build the
+measurement vector with helper functions that resolve bus names and branch
+references for you:
+
+```julia
+using Sparlectra
+
+net = Net(name = "se_helpers", baseMVA = 100.0)
+addBus!(net = net, busName = "B1", busType = "Slack", vn_kV = 110.0)
+addBus!(net = net, busName = "B2", busType = "PQ", vn_kV = 110.0)
+addBus!(net = net, busName = "B3", busType = "PQ", vn_kV = 110.0)
+addPIModelACLine!(net = net, fromBus = "B1", toBus = "B2", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0)
+addPIModelACLine!(net = net, fromBus = "B2", toBus = "B3", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0)
+addPIModelACLine!(net = net, fromBus = "B3", toBus = "B1", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0)
+
+meas = Measurement[]
+addVmMeasurement!(meas; net = net, busName = "B1", value = 1.01, sigma = 0.002)
+addPinjMeasurement!(meas; net = net, busName = "B2", value = -25.0, sigma = 1.0)
+addQinjMeasurement!(meas; net = net, busName = "B2", value = -8.0, sigma = 1.0)
+addPflowMeasurement!(meas; net = net, fromBus = "B1", toBus = "B2", value = 24.0, sigma = 0.8, direction = :from)
+addQflowMeasurement!(meas; net = net, branchNr = 1, value = 6.5, sigma = 0.8, direction = :to)
+
+obs = evaluate_global_observability(net, meas; flatstart = true, jacEps = 1e-6)
+println("Observable quality: ", obs.quality)
+```
+
 ## Further examples and workshop material
 
 * Extended tutorial and a simple 7-bus setup: [Workshop](workshop.md)
 * Detailed WLS reporting example script: `src/examples/state_estimation_wls.jl`
 * Observability-focused scenario script: `src/examples/state_estimation_observability.jl`
+* Passive-bus ZIB comparison example: `src/examples/state_estimation_passive_bus_zib_comparison.jl`
 * Matrix-based observability/redundancy demo: `src/examples/h_matrix_observability_demo.jl`
 
 ## H-matrix observability demo (A..E)
