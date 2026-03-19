@@ -4,6 +4,7 @@
 * Added initial State Estimation (SE, WLS), documentation and examples.
 * Added ZIB in SE, documentation and examples.
 * Improved reesults reporting and logging. 
+* Refactor testsuite for clarity.
 
 ### Notes
 * State Estimation is currently marked as **experimental**.
