@@ -67,7 +67,8 @@ function _run_state_estimation_example(io::IO)
   std = measurementStdDevs(vm = 0.1, pinj = 1.5, qinj = 1.5, pflow = 0.7, qflow = 0.9)
 
   # Generate all currently supported measurement types with Gaussian noise.
-  meas = generateMeasurementsFromPF(net; includeVm = true, includePinj = true, includeQinj = true, includePflow = true, includeQflow = true, noise = true, stddev = std)
+  setMeasurementsFromPF!(net; includeVm = true, includePinj = true, includeQinj = true, includePflow = true, includeQflow = true, noise = true, stddev = std)
+  meas = Measurement[m for m in net.measurements]
 
   # Reset to a simple flat start before running the state estimator.
   for n in net.nodeVec
@@ -78,7 +79,7 @@ function _run_state_estimation_example(io::IO)
   end
 
   # Run first WLS state estimation implementation.
-  se = runse!(net, meas; maxIte = 12, tol = 1e-6, flatstart = false, jacEps = 1e-6, updateNet = true)
+  se = runse!(net; maxIte = 12, tol = 1e-6, flatstart = false, jacEps = 1e-6, updateNet = true)
 
   # Compare estimated voltages against PF reference values.
   Vse = se.voltages
@@ -159,9 +160,9 @@ function _run_state_estimation_example(io::IO)
 
   # Measurement-wise table: PF prediction, measured value, SE prediction, residual and 3σ indicator.
   println(io, "\nMeasurement table with 3σ check")
-  println(io, "------------------------------------------------------------------------------------------------------------------------------------------------")
-  @printf(io, "%4s %-10s %-20s %7s %12s %12s %12s %12s %9s %8s\n", "#", "Type", "Target", "Unit", "PF", "Measured", "SE", "SE-Meas", "|r|/σ", "3σ")
-  println(io, "------------------------------------------------------------------------------------------------------------------------------------------------")
+  println(io, "----------------------------------------------------------------------------------------------------------------------------------------------------------------")
+  @printf(io, "%4s %-10s %-20s %7s %12s %12s %12s %12s %12s %9s %8s\n", "#", "Type", "Target", "Unit", "PF", "Measured", "SE", "SE-PF", "SE-Meas", "|r|/σ", "3σ")
+  println(io, "----------------------------------------------------------------------------------------------------------------------------------------------------------------")
   for (k, m) in enumerate(meas)
     target = if !isnothing(m.busIdx)
       "bus=$(m.busIdx)"
@@ -183,12 +184,13 @@ function _run_state_estimation_example(io::IO)
     h_pf_u = h_pf * scale
     z_u = m.value * scale
     h_se_u = h_se * scale
+    se_pf_u = h_se_u - h_pf_u
     r_u = h_se_u - z_u
     sigma_u = m.sigma * scale
     abs_norm_r = abs(r_u) / sigma_u
     sigma_flag = abs_norm_r <= 3.0 ? "in" : "out"
 
-    @printf(io, "%4d %-10s %-20s %7s %12.4f %12.4f %12.4f %12.4f %9.3f %8s\n", k, string(m.typ), target, unit, h_pf_u, z_u, h_se_u, r_u, abs_norm_r, sigma_flag)
+    @printf(io, "%4d %-10s %-20s %7s %12.4f %12.4f %12.4f %12.4f %12.4f %9.3f %8s\n", k, string(m.typ), target, unit, h_pf_u, z_u, h_se_u, se_pf_u, r_u, abs_norm_r, sigma_flag)
   end
 
   return se

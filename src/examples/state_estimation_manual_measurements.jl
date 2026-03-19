@@ -71,8 +71,6 @@ function build_manual_measurements(net::Net; rng::AbstractRNG = MersenneTwister(
     return synthetic[idx]
   end
 
-  measurements = Measurement[]
-
   vm_b1 = pick_measurement(Sparlectra.VmMeas; busIdx = 1)
   vm_b2 = pick_measurement(Sparlectra.VmMeas; busIdx = 2)
   pinj_b2 = pick_measurement(Sparlectra.PinjMeas; busIdx = 2)
@@ -81,15 +79,16 @@ function build_manual_measurements(net::Net; rng::AbstractRNG = MersenneTwister(
   qflow_12 = pick_measurement(Sparlectra.QflowMeas; branchIdx = 1, direction = :from)
   pflow_31 = pick_measurement(Sparlectra.PflowMeas; branchIdx = 3, direction = :from)
 
-  addVmMeasurement!(measurements; net = net, busName = "B1", value = vm_b1.value, sigma = vm_b1.sigma, id = "VM_B1")
-  addVmMeasurement!(measurements; net = net, busName = "B2", value = vm_b2.value, sigma = vm_b2.sigma, id = "VM_B2")
-  addPinjMeasurement!(measurements; net = net, busName = "B2", value = pinj_b2.value, sigma = pinj_b2.sigma, id = "PINJ_B2")
-  addQinjMeasurement!(measurements; net = net, busName = "B2", value = qinj_b2.value, sigma = qinj_b2.sigma, id = "QINJ_B2")
-  addPflowMeasurement!(measurements; net = net, fromBus = "B1", toBus = "B2", value = pflow_12.value, sigma = pflow_12.sigma, direction = :from, id = "PFLOW_12_FROM")
-  addQflowMeasurement!(measurements; net = net, branchNr = 1, value = qflow_12.value, sigma = qflow_12.sigma, direction = :from, id = "QFLOW_12_FROM")
-  addPflowMeasurement!(measurements; net = net, fromBus = "B3", toBus = "B1", value = pflow_31.value, sigma = pflow_31.sigma, direction = :from, id = "PFLOW_31_FROM")
+  empty!(net.measurements)
+  addVmMeasurement!(net; busName = "B1", value = vm_b1.value, sigma = vm_b1.sigma, id = "VM_B1")
+  addVmMeasurement!(net; busName = "B2", value = vm_b2.value, sigma = vm_b2.sigma, id = "VM_B2")
+  addPinjMeasurement!(net; busName = "B2", value = pinj_b2.value, sigma = pinj_b2.sigma, id = "PINJ_B2")
+  addQinjMeasurement!(net; busName = "B2", value = qinj_b2.value, sigma = qinj_b2.sigma, id = "QINJ_B2")
+  addPflowMeasurement!(net; fromBus = "B1", toBus = "B2", value = pflow_12.value, sigma = pflow_12.sigma, direction = :from, id = "PFLOW_12_FROM")
+  addQflowMeasurement!(net; branchNr = 1, value = qflow_12.value, sigma = qflow_12.sigma, direction = :from, id = "QFLOW_12_FROM")
+  addPflowMeasurement!(net; fromBus = "B3", toBus = "B1", value = pflow_31.value, sigma = pflow_31.sigma, direction = :from, id = "PFLOW_31_FROM")
 
-  return ite_pf, measurements
+  return ite_pf
 end
 
 function reset_to_flatstart!(net::Net)
@@ -104,23 +103,23 @@ end
 
 function run_manual_measurement_example()
   net = build_manual_measurement_example_net()
-  ite_pf, measurements = build_manual_measurements(net)
+  ite_pf = build_manual_measurements(net)
   reset_to_flatstart!(net)
 
-  gobs = evaluate_global_observability(net, measurements; flatstart = false, jacEps = 1e-6)
+  gobs = evaluate_global_observability(net; flatstart = false, jacEps = 1e-6)
   println("Manual measurement example")
   println("==========================")
   @printf("PF iterations used for synthetic data: %d\n", ite_pf)
   @printf("Measurements: %d, states: %d, quality: %s\n", gobs.n_measurements, gobs.n_states, string(gobs.quality))
 
-  se = runse!(net, measurements; maxIte = 12, tol = 1e-6, flatstart = false, jacEps = 1e-6, updateNet = true)
+  se = runse!(net; maxIte = 12, tol = 1e-6, flatstart = false, jacEps = 1e-6, updateNet = true)
   @printf("SE converged: %s in %d iterations\n", string(se.converged), se.iterations)
   @printf("Objective J: %.6e\n", se.objectiveJ)
   @printf("Residual norm: %.6e\n", se.residualNorm)
 
   println("\nMeasurements")
   println("------------")
-  for m in measurements
+  for m in net.measurements
     target = isnothing(m.busIdx) ? "branch=$(m.branchIdx), dir=$(m.direction)" : "bus=$(m.busIdx)"
     @printf("%-16s %-24s value=%10.5f  sigma=%8.5f\n", string(m.typ), target, m.value, m.sigma)
   end

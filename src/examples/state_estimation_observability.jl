@@ -173,7 +173,7 @@ end
 """
 Map a vector of measurement indices to their corresponding log labels.
 """
-function _critical_labels(meas::Vector{Sparlectra.Measurement}, idx::Vector{Int})
+function _critical_labels(meas::AbstractVector, idx::Vector{Int})
   labels = String[]
   for i in idx
     if 1 <= i <= length(meas)
@@ -186,7 +186,7 @@ end
 """
 Set the active flag of one measurement by reconstructing the immutable struct.
 """
-function _set_measurement_active!(meas::Vector{Sparlectra.Measurement}, idx::Int, active::Bool)
+function _set_measurement_active!(meas::AbstractVector, idx::Int, active::Bool)
   m = meas[idx]
   meas[idx] = Measurement(typ = m.typ, value = m.value, sigma = m.sigma, active = active, busIdx = m.busIdx, branchIdx = m.branchIdx, direction = m.direction, id = m.id)
   return nothing
@@ -196,7 +196,7 @@ end
 Collect active flow measurements for one branch, grouped by direction
 (:from and :to), with deterministic ordering for reproducible logs.
 """
-function _branch_direction_measurement_groups(meas::Vector{Sparlectra.Measurement}, branch_idx::Int)
+function _branch_direction_measurement_groups(meas::AbstractVector, branch_idx::Int)
   by_direction = Dict{Symbol,Vector{Int}}()
   for i in eachindex(meas)
     m = meas[i]
@@ -222,7 +222,7 @@ end
 """
 Collect active injection measurements (P/Q) for a specific bus.
 """
-function _bus_injection_measurement_group(meas::Vector{Sparlectra.Measurement}, bus_idx::Int)
+function _bus_injection_measurement_group(meas::AbstractVector, bus_idx::Int)
   idx = Int[]
   for i in eachindex(meas)
     m = meas[i]
@@ -267,7 +267,7 @@ end
 """
 Append deactivation groups for the provided branch IDs to the global group list.
 """
-function _push_groups_for_branches!(groups::Vector{Tuple{String,Union{Nothing,Int},Vector{Int}}}, meas::Vector{Sparlectra.Measurement}, branch_ids::Vector{Int})
+function _push_groups_for_branches!(groups::Vector{Tuple{String,Union{Nothing,Int},Vector{Int}}}, meas::AbstractVector, branch_ids::Vector{Int})
   for br_id in branch_ids
     for g in _branch_direction_measurement_groups(meas, br_id)
       push!(groups, ("branch", br_id, g))
@@ -279,7 +279,7 @@ end
 """
 Append deactivation groups for injection measurements at the provided buses.
 """
-function _push_groups_for_buses!(groups::Vector{Tuple{String,Union{Nothing,Int},Vector{Int}}}, meas::Vector{Sparlectra.Measurement}, bus_ids::Vector{Int})
+function _push_groups_for_buses!(groups::Vector{Tuple{String,Union{Nothing,Int},Vector{Int}}}, meas::AbstractVector, bus_ids::Vector{Int})
   for bus_id in bus_ids
     g = _bus_injection_measurement_group(meas, bus_id)
     isempty(g) || push!(groups, ("injection", nothing, g))
@@ -294,7 +294,7 @@ Build the ordered measurement-deactivation plan:
 3) remaining branch flows,
 4) remaining injections.
 """
-function _deactivation_groups(net::Sparlectra.Net, meas::Vector{Sparlectra.Measurement}, target_buses::Vector{Int})
+function _deactivation_groups(net::Sparlectra.Net, meas::AbstractVector, target_buses::Vector{Int})
   groups = Tuple{String,Union{Nothing,Int},Vector{Int}}[]
   focused_adjacent = Set{Int}()
   focused_neighbors = Set{Int}()
@@ -337,7 +337,7 @@ end
 """
 Return sorted branch IDs that still have at least one active flow measurement.
 """
-function _active_branch_ids(meas::Vector{Sparlectra.Measurement})
+function _active_branch_ids(meas::AbstractVector)
   ids = Set{Int}()
   for m in meas
     if m.active && (m.typ == Sparlectra.PflowMeas || m.typ == Sparlectra.QflowMeas) && !isnothing(m.branchIdx)
@@ -378,7 +378,8 @@ function run_state_estimation_observability_example(io::IO)
   erg_pf == 0 || error("Power flow did not converge")
 
   std = measurementStdDevs(vm = 0.1, pinj = 1.5, qinj = 1.5, pflow = 0.7, qflow = 0.9)
-  meas = generateMeasurementsFromPF(net; includeVm = true, includePinj = true, includeQinj = true, includePflow = true, includeQflow = true, noise = true, stddev = std)
+  setMeasurementsFromPF!(net; includeVm = true, includePinj = true, includeQinj = true, includePflow = true, includeQflow = true, noise = true, stddev = std)
+  meas = net.measurements
 
   angle_cols, vm_cols, slack_idx = _state_column_groups(net)
   # Fixed seed keeps the random bus choice reproducible between runs/log comparisons.
@@ -398,8 +399,8 @@ function run_state_estimation_observability_example(io::IO)
 
   function log_step(step::Int, removed_branch::Union{Nothing,Int}, removed_measurements::Vector{String}, all_deactivated_measurements::Vector{String})
     # Recompute both global and local observability after every deactivation step.
-    global_obs = evaluate_global_observability(net, meas; flatstart = true, jacEps = 1e-6)
-    local_obs = evaluate_local_observability(net, meas, local_cols; flatstart = true, jacEps = 1e-6)
+    global_obs = evaluate_global_observability(net; flatstart = true, jacEps = 1e-6)
+    local_obs = evaluate_local_observability(net, local_cols; flatstart = true, jacEps = 1e-6)
 
     active_total = count(m -> m.active, meas)
     active_branch = length(_active_branch_ids(meas))
@@ -447,7 +448,7 @@ function run_state_estimation_observability_example(io::IO)
 
     # Reset state before WLS so each step is evaluated from a comparable start.
     _reset_non_slack!(net)
-    se = runse!(net, meas; maxIte = 12, tol = 1e-6, flatstart = false, jacEps = 1e-6, updateNet = false)
+    se = runse!(net; maxIte = 12, tol = 1e-6, flatstart = false, jacEps = 1e-6, updateNet = false)
     @printf(io, "  WLS J=r'Wr: %.6e, dof=%d, J within 3σ-band: %s\n\n", se.objectiveJ, se.dof, string(se.jWithin3Sigma))
 
     return global_obs, local_obs

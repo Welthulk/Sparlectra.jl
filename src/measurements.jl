@@ -16,6 +16,10 @@
 
 using Random
 
+@inline function _net_measurements(net::Net)::Vector
+  return net.measurements
+end
+
 """
     @enum MeasurementType
 
@@ -100,7 +104,7 @@ end
 
 Append a state-estimation measurement to `measurements` and return it.
 """
-function addMeasurement!(measurements::Vector{Measurement}; typ::MeasurementType, value::Real, sigma::Real, active::Bool = true, busIdx::Union{Nothing,Int} = nothing, branchIdx::Union{Nothing,Int} = nothing, direction::Symbol = :none, id::AbstractString = "")
+function addMeasurement!(measurements::Vector; typ::MeasurementType, value::Real, sigma::Real, active::Bool = true, busIdx::Union{Nothing,Int} = nothing, branchIdx::Union{Nothing,Int} = nothing, direction::Symbol = :none, id::AbstractString = "")
   if typ == VmMeas || typ == PinjMeas || typ == QinjMeas
     isnothing(busIdx) && error("Bus measurement requires busIdx")
   elseif typ == PflowMeas || typ == QflowMeas
@@ -114,14 +118,22 @@ function addMeasurement!(measurements::Vector{Measurement}; typ::MeasurementType
   return meas
 end
 
+function addMeasurement!(net::Net; kwargs...)
+  return addMeasurement!(_net_measurements(net); kwargs...)
+end
+
 """
     addVmMeasurement!(measurements; net, busName, value, sigma, active=true, id="")
 
 Append a bus voltage-magnitude measurement identified by `busName`.
 """
-function addVmMeasurement!(measurements::Vector{Measurement}; net::Net, busName::String, value::Real, sigma::Real, active::Bool = true, id::AbstractString = "")
+function addVmMeasurement!(measurements::Vector; net::Net, busName::String, value::Real, sigma::Real, active::Bool = true, id::AbstractString = "")
   busIdx = geNetBusIdx(net = net, busName = busName)
   return addMeasurement!(measurements; typ = VmMeas, value = value, sigma = sigma, active = active, busIdx = busIdx, id = id)
+end
+
+function addVmMeasurement!(net::Net; busName::String, value::Real, sigma::Real, active::Bool = true, id::AbstractString = "")
+  return addVmMeasurement!(_net_measurements(net); net = net, busName = busName, value = value, sigma = sigma, active = active, id = id)
 end
 
 """
@@ -129,9 +141,13 @@ end
 
 Append an active-power injection measurement identified by `busName`.
 """
-function addPinjMeasurement!(measurements::Vector{Measurement}; net::Net, busName::String, value::Real, sigma::Real, active::Bool = true, id::AbstractString = "")
+function addPinjMeasurement!(measurements::Vector; net::Net, busName::String, value::Real, sigma::Real, active::Bool = true, id::AbstractString = "")
   busIdx = geNetBusIdx(net = net, busName = busName)
   return addMeasurement!(measurements; typ = PinjMeas, value = value, sigma = sigma, active = active, busIdx = busIdx, id = id)
+end
+
+function addPinjMeasurement!(net::Net; busName::String, value::Real, sigma::Real, active::Bool = true, id::AbstractString = "")
+  return addPinjMeasurement!(_net_measurements(net); net = net, busName = busName, value = value, sigma = sigma, active = active, id = id)
 end
 
 """
@@ -139,9 +155,13 @@ end
 
 Append a reactive-power injection measurement identified by `busName`.
 """
-function addQinjMeasurement!(measurements::Vector{Measurement}; net::Net, busName::String, value::Real, sigma::Real, active::Bool = true, id::AbstractString = "")
+function addQinjMeasurement!(measurements::Vector; net::Net, busName::String, value::Real, sigma::Real, active::Bool = true, id::AbstractString = "")
   busIdx = geNetBusIdx(net = net, busName = busName)
   return addMeasurement!(measurements; typ = QinjMeas, value = value, sigma = sigma, active = active, busIdx = busIdx, id = id)
+end
+
+function addQinjMeasurement!(net::Net; busName::String, value::Real, sigma::Real, active::Bool = true, id::AbstractString = "")
+  return addQinjMeasurement!(_net_measurements(net); net = net, busName = busName, value = value, sigma = sigma, active = active, id = id)
 end
 
 """
@@ -150,9 +170,13 @@ end
 Append an active-power flow measurement identified by `branchNr` or a unique
 `fromBus`/`toBus` branch pair.
 """
-function addPflowMeasurement!(measurements::Vector{Measurement}; net::Net, value::Real, sigma::Real, direction::Symbol = :from, branchNr::Union{Nothing,Int} = nothing, fromBus::Union{Nothing,String} = nothing, toBus::Union{Nothing,String} = nothing, active::Bool = true, id::AbstractString = "")
+function addPflowMeasurement!(measurements::Vector; net::Net, value::Real, sigma::Real, direction::Symbol = :from, branchNr::Union{Nothing,Int} = nothing, fromBus::Union{Nothing,String} = nothing, toBus::Union{Nothing,String} = nothing, active::Bool = true, id::AbstractString = "")
   bridx = _resolve_branch_idx(net; branchNr = branchNr, fromBus = fromBus, toBus = toBus)
   return addMeasurement!(measurements; typ = PflowMeas, value = value, sigma = sigma, active = active, branchIdx = bridx, direction = direction, id = id)
+end
+
+function addPflowMeasurement!(net::Net; value::Real, sigma::Real, direction::Symbol = :from, branchNr::Union{Nothing,Int} = nothing, fromBus::Union{Nothing,String} = nothing, toBus::Union{Nothing,String} = nothing, active::Bool = true, id::AbstractString = "")
+  return addPflowMeasurement!(_net_measurements(net); net = net, value = value, sigma = sigma, direction = direction, branchNr = branchNr, fromBus = fromBus, toBus = toBus, active = active, id = id)
 end
 
 """
@@ -161,9 +185,13 @@ end
 Append a reactive-power flow measurement identified by `branchNr` or a unique
 `fromBus`/`toBus` branch pair.
 """
-function addQflowMeasurement!(measurements::Vector{Measurement}; net::Net, value::Real, sigma::Real, direction::Symbol = :from, branchNr::Union{Nothing,Int} = nothing, fromBus::Union{Nothing,String} = nothing, toBus::Union{Nothing,String} = nothing, active::Bool = true, id::AbstractString = "")
+function addQflowMeasurement!(measurements::Vector; net::Net, value::Real, sigma::Real, direction::Symbol = :from, branchNr::Union{Nothing,Int} = nothing, fromBus::Union{Nothing,String} = nothing, toBus::Union{Nothing,String} = nothing, active::Bool = true, id::AbstractString = "")
   bridx = _resolve_branch_idx(net; branchNr = branchNr, fromBus = fromBus, toBus = toBus)
   return addMeasurement!(measurements; typ = QflowMeas, value = value, sigma = sigma, active = active, branchIdx = bridx, direction = direction, id = id)
+end
+
+function addQflowMeasurement!(net::Net; value::Real, sigma::Real, direction::Symbol = :from, branchNr::Union{Nothing,Int} = nothing, fromBus::Union{Nothing,String} = nothing, toBus::Union{Nothing,String} = nothing, active::Bool = true, id::AbstractString = "")
+  return addQflowMeasurement!(_net_measurements(net); net = net, value = value, sigma = sigma, direction = direction, branchNr = branchNr, fromBus = fromBus, toBus = toBus, active = active, id = id)
 end
 
 """
@@ -217,7 +245,7 @@ Selection rules:
 These pseudo-measurements are the current way to encode equality constraints
 `P_inj = 0` and `Q_inj = 0` in the WLS estimator.
 """
-function addZeroInjectionMeasurements!(measurements::Vector{Measurement}; net::Net, sigma::Real = 1e-6, busNames::Union{Nothing,Vector{String}} = nothing, busIdxs::Union{Nothing,Vector{Int}} = nothing, active::Bool = true, idPrefix::AbstractString = "ZI")
+function addZeroInjectionMeasurements!(measurements::Vector; net::Net, sigma::Real = 1e-6, busNames::Union{Nothing,Vector{String}} = nothing, busIdxs::Union{Nothing,Vector{Int}} = nothing, active::Bool = true, idPrefix::AbstractString = "ZI")
   selected = if !isnothing(busIdxs)
     copy(busIdxs)
   elseif !isnothing(busNames)
@@ -235,6 +263,10 @@ function addZeroInjectionMeasurements!(measurements::Vector{Measurement}; net::N
     push!(added, addMeasurement!(measurements; typ = QinjMeas, value = 0.0, sigma = sigma, active = active, busIdx = busIdx, id = "$(idPrefix)_QINJ_bus_$(busIdx)"))
   end
   return added
+end
+
+function addZeroInjectionMeasurements!(net::Net; sigma::Real = 1e-6, busNames::Union{Nothing,Vector{String}} = nothing, busIdxs::Union{Nothing,Vector{Int}} = nothing, active::Bool = true, idPrefix::AbstractString = "ZI")
+  return addZeroInjectionMeasurements!(_net_measurements(net); net = net, sigma = sigma, busNames = busNames, busIdxs = busIdxs, active = active, idPrefix = idPrefix)
 end
 
 @inline function _measurement_prediction(meas::Measurement, net::Net, V::Vector{ComplexF64}, Sbus_MVA::Vector{ComplexF64})
@@ -323,4 +355,11 @@ function generateMeasurementsFromPF(net::Net; includeVm::Bool = true, includePin
   end
 
   return m
+end
+
+function setMeasurementsFromPF!(net::Net; kwargs...)
+  measurements = generateMeasurementsFromPF(net; kwargs...)
+  empty!(net.measurements)
+  append!(net.measurements, measurements)
+  return Measurement[m for m in net.measurements]
 end

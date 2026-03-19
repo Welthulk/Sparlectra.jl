@@ -86,9 +86,11 @@ end
 function _run_scenario(label::String, base_net::Net, measurements::Vector{Measurement})
   net = deepcopy(base_net)
   _reset_non_slack_buses!(net)
+  empty!(net.measurements)
+  append!(net.measurements, measurements)
 
-  obs = evaluate_global_observability(net, measurements; flatstart = false, jacEps = 1e-6)
-  se = runse!(net, measurements; maxIte = 12, tol = 1e-8, flatstart = false, jacEps = 1e-6, updateNet = false)
+  obs = evaluate_global_observability(net; flatstart = false, jacEps = 1e-6)
+  se = runse!(net; maxIte = 12, tol = 1e-8, flatstart = false, jacEps = 1e-6, updateNet = false)
 
   println(label)
   println(repeat("=", length(label)))

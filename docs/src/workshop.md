@@ -507,7 +507,7 @@ status_pf == 0 || error("Power flow did not converge")
 
 # 3) Build synthetic measurements (with light noise)
 std = measurementStdDevs(vm = 1e-3, pinj = 1.0, qinj = 1.0, pflow = 0.7, qflow = 0.7)
-meas = generateMeasurementsFromPF(
+setMeasurementsFromPF!(
     net;
     includeVm = true,
     includePinj = true,
@@ -520,14 +520,13 @@ meas = generateMeasurementsFromPF(
 )
 
 # 4) Check observability
-gobs = evaluate_global_observability(net, meas; flatstart = true, jacEps = 1e-6)
+gobs = evaluate_global_observability(net; flatstart = true, jacEps = 1e-6)
 println("Global observability quality: ", gobs.quality)
 println("Measurements: ", gobs.n_measurements, ", states: ", gobs.n_states)
 
 # 5) Run state estimation
 se = runse!(
-    net,
-    meas;
+    net;
     maxIte = 12,
     tol = 1e-6,
     flatstart = true,
@@ -551,14 +550,14 @@ work similarly to `addBus!` or `addACLine!` and resolve bus or branch
 references for you.
 
 ```julia
-meas = Measurement[]
+empty!(net.measurements)
 
-addVmMeasurement!(meas; net = net, busName = "B1", value = 1.02, sigma = 0.002)
-addPinjMeasurement!(meas; net = net, busName = "B2", value = -35.0, sigma = 1.0)
-addQinjMeasurement!(meas; net = net, busName = "B2", value = -10.0, sigma = 1.0)
-addPflowMeasurement!(meas; net = net, fromBus = "B1", toBus = "B2", value = 22.0, sigma = 0.8, direction = :from)
-addQflowMeasurement!(meas; net = net, branchNr = 1, value = 7.0, sigma = 0.8, direction = :to)
+addVmMeasurement!(net; busName = "B1", value = 1.02, sigma = 0.002)
+addPinjMeasurement!(net; busName = "B2", value = -35.0, sigma = 1.0)
+addQinjMeasurement!(net; busName = "B2", value = -10.0, sigma = 1.0)
+addPflowMeasurement!(net; fromBus = "B1", toBus = "B2", value = 22.0, sigma = 0.8, direction = :from)
+addQflowMeasurement!(net; branchNr = 1, value = 7.0, sigma = 0.8, direction = :to)
 
-obs = evaluate_global_observability(net, meas; flatstart = true, jacEps = 1e-6)
+obs = evaluate_global_observability(net; flatstart = true, jacEps = 1e-6)
 println("Manual measurement set quality: ", obs.quality)
 ```
