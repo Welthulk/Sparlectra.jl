@@ -267,3 +267,21 @@ function test_state_estimation_passive_bus_zero_injection_helpers()::Bool
 
   return true
 end
+
+function run_state_estimation_tests()
+  @testset "State estimation" begin
+    tests = [
+      ("WLS", test_state_estimation_wls_first_version),
+      ("Observability metrics", test_state_estimation_observability_metrics),
+      ("Matrix observability helpers", test_state_estimation_matrix_observability_helpers),
+      ("Measurement add helpers", test_state_estimation_measurement_add_helpers),
+      ("Passive bus zero injection helpers", test_state_estimation_passive_bus_zero_injection_helpers),
+    ]
+
+    for (name, testfn) in tests
+      @testset "$name" begin
+        @test testfn() == true
+      end
+    end
+  end
+end

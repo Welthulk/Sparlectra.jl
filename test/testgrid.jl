@@ -1109,45 +1109,6 @@ function test_link_kcl_ring_allocation_with_shunt()
   return isapprox.(flowsP, fP_expected; atol = 1e-10, rtol = 0.0) |> all && isapprox.(flowsQ, fQ_expected; atol = 1e-10, rtol = 0.0) |> all && isapprox.(A * flowsP, bP; atol = 1e-10, rtol = 0.0) |> all && isapprox.(A * flowsQ, bQ; atol = 1e-10, rtol = 0.0) |> all
 end
 
-function test_link_kcl_ring_allocation_with_shunt()
-  net = Net(name = "link_kcl_ring_shunt", baseMVA = 100.0)
-  addBus!(net = net, busName = "B1", busType = "PQ", vn_kV = 110.0)
-  addBus!(net = net, busName = "B2", busType = "PQ", vn_kV = 110.0)
-  addBus!(net = net, busName = "B3", busType = "PQ", vn_kV = 110.0)
-
-  addBusGenPower!(net = net, busName = "B1", p = 15.0, q = 12.0)
-  addBusLoadPower!(net = net, busName = "B2", p = 10.0, q = 4.0)
-  addBusLoadPower!(net = net, busName = "B3", p = 5.0, q = 2.0)
-
-  # Y-model shunt at B2; at vm=1.0 pu this contributes Q_shunt = -6 MVar.
-  addShunt!(net = net, busName = "B2", pShunt = 0.0, qShunt = 6.0)
-  net.nodeVec[1]._vm_pu = 1.0
-  net.nodeVec[2]._vm_pu = 1.0
-  net.nodeVec[3]._vm_pu = 1.0
-  updateShuntPowers!(net = net)
-
-  addLink!(net = net, fromBus = "B1", toBus = "B2", status = 1)
-  addLink!(net = net, fromBus = "B2", toBus = "B3", status = 1)
-  addLink!(net = net, fromBus = "B3", toBus = "B1", status = 1)
-
-  calcLinkFlowsKCL!(net)
-
-  A = [
-    1.0 0.0 -1.0
-    -1.0 1.0 0.0
-    0.0 -1.0 1.0
-  ]
-  bP = [15.0, -10.0, -5.0]
-  bQ = [12.0, -10.0, -2.0]
-  fP_expected = pinv(A) * bP
-  fQ_expected = pinv(A) * bQ
-
-  flowsP = [net.linkVec[1].pFlow_MW, net.linkVec[2].pFlow_MW, net.linkVec[3].pFlow_MW]
-  flowsQ = [net.linkVec[1].qFlow_MVar, net.linkVec[2].qFlow_MVar, net.linkVec[3].qFlow_MVar]
-
-  return isapprox.(flowsP, fP_expected; atol = 1e-10, rtol = 0.0) |> all && isapprox.(flowsQ, fQ_expected; atol = 1e-10, rtol = 0.0) |> all && isapprox.(A * flowsP, bP; atol = 1e-10, rtol = 0.0) |> all && isapprox.(A * flowsQ, bQ; atol = 1e-10, rtol = 0.0) |> all
-end
-
 function test_link_ring_pf_stability()
   # Build a mixed grid: radial AC lines from slack plus a meshed 3-link ring
   # among PQ buses where link flows are recovered via KCL.
@@ -1295,4 +1256,49 @@ function test_report_uses_user_bus_names_and_pf_node_count()
   branch_connection_ok = occursin("Slack -> Bus1", report_text) && occursin("Line", report_text)
 
   return has_bus1a_row && merged_pf_count_ok && link_names_ok && branch_connection_ok
+end
+
+function run_grid_tests()
+  @testset "Grid and power-flow regression tests" begin
+    @testset "Transformer and network validation" begin
+      @test test_2WTPITrafo() == true
+      @test test_3WTPITrafo() == true
+      @test testNetwork() == true
+      @test test_NBI_MDO() == true
+      @test testISOBusses() == true
+    end
+
+    @testset "MATPOWER import/export" begin
+      @test testImportMatpower() == true
+      @test test_matpower_import_defaults_no_reenable() == true
+      @test test_matpower_vmva_selfcheck_noncontiguous_bus_numbers() == true
+      @test test_matpower_vmva_selfcheck_ignores_slack_pq_spec() == true
+      @test test_mp_inline_vs_manual_shunt() == true
+    end
+
+    @testset "Power flow scenarios" begin
+      @test test_5BusNet(0, 10.0) == true
+      @test test_3BusNet(0, 150.0, :rectangular, false, false) == true
+      @test test_3BusNet(0, 150.0, :polar_full, false, false) == true
+      @test test_acpflow(0; lLine_6a6b = 0.01, damp = 1.0, method = :classic, opt_sparse = true) == true
+      @test test_acpflow(0; lLine_6a6b = 0.01, damp = 1.0, method = :rectangular, opt_sparse = true) == true
+      @test test_acpflow(0; lLine_6a6b = 0.01, damp = 1.0, method = :rectangular, opt_sparse = false) == true
+      @test test_acpflow(0; lLine_6a6b = 0.01, damp = 1.0, method = :polar_full, opt_sparse = true) == true
+    end
+
+    @testset "Link behaviour and reporting" begin
+      @test test_link_kcl_simple() == true
+      @test test_link_component_type() == true
+      @test test_link_rejects_slack_connection() == true
+      @test test_link_rejects_mixed_bus_types() == true
+      @test test_link_bus_merge_pf() == true
+      @test test_link_bus_merge_pf_default_method() == true
+      @test test_link_closed_keeps_shunt_reporting_on_original_bus() == true
+      @test test_link_kcl_ring_allocation() == true
+      @test test_link_kcl_ring_allocation_with_shunt() == true
+      @test test_link_ring_pf_stability() == true
+      @test test_acpflow_report_object() == true
+      @test test_report_uses_user_bus_names_and_pf_node_count() == true
+    end
+  end
 end
