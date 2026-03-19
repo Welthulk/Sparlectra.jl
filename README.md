@@ -4,14 +4,14 @@
 # SPARLECTRA
 <a href="https://github.com/Welthulk/Sparlectra.jl/tree/main/"><img align="left" width="100" src="docs/src/assets/logo.png" style="margin-right: 20px" /></a>
 
-This package contains tools for subsequent network calculations. It primarily features a program for calculating load flow and state estimaton. The focus is to provide valuable insights into load flow calculations for both students and ambitious professionals.
+This package contains tools for subsequent network calculations. It primarily features programs for calculating load flow and state estimation. The focus is to provide valuable insights into power-system calculations for both students and ambitious professionals.
 
 ---
 
 ## Features
 
 - AC power flow with multiple internal Newton-Raphson formulations (`:polar_full`, `:rectangular`, `:classic`) and many options.
-- State Estimation (WLS) as an **experimental** feature 
+- State Estimation (WLS) as an **experimental** feature
 - Canonical external solver interface (`PFModel`/`PFSolution`) to integrate third-party solvers.
 - PV-to-PQ bus switching.
 - MATPOWER-compatible import/export utilities and local casefile helper workflow.
@@ -75,6 +75,18 @@ end
 ### Network Creation
 This package supports the import and export of Matpower .m files, although currently it only reads bus, generator, and branch data from these files. Please note that additional Matlab functions within the .m file are not supported. Additionally, you can modify the imported Matpower files or you can create your own network using easy-to-use functions provided by the package.
 
+### Release status of State Estimation
+
+The current State Estimation functionality should be considered **experimental**.
+The present implementation provides a first nonlinear WLS workflow with
+observability helpers, convenient measurement-building utilities, and support
+for passive buses via zero-injection pseudo measurements. At the moment,
+zero-injection buses are modeled through pseudo measurements with small
+variances rather than a dedicated hard-constraint block, and bad-data detection
+is not yet exposed as a full public API. The current scripts and result fields
+support residual inspection, but a dedicated diagnostics workflow remains part
+of the roadmap.
+
 ### Test Cases and Benchmarks
 
 Sparlectra does not ship third-party power system test cases by default.
@@ -91,7 +103,6 @@ data while still allowing reproducible experiments and benchmarks.
 ### License
 This project is licensed under the Apache License, Version 2.0.
 [The license file](https://github.com/welthulk/Sparlectra.jl/blob/main/LICENSE) contains the complete licensing information.
-
 
 
 

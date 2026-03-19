@@ -4,6 +4,10 @@ State Estimation
 This page summarizes the state-estimation (SE) functionality in Sparlectra and
 shows how it connects to regular network studies.
 
+> **Release status:** State Estimation is currently **experimental**. The
+> current implementation is intended as a first practical WLS workflow for
+> studies, examples, and early application feedback.
+
 ## Theory (compact)
 
 Sparlectra currently provides a classical weighted least-squares (WLS)
@@ -88,6 +92,10 @@ Helper functions:
 This is especially useful in sparse measurement scenarios, where a passive node
 may otherwise leave the estimator merely critical or weakly redundant.
 
+At the moment, this is the supported way to model ZIB behavior in Sparlectra.
+There is not yet a separate hard-constraint solver block for zero-injection
+buses.
+
 Typical synthetic-data workflow (for studies/tests):
 
 1. Solve a power flow to get a physically consistent reference state.
@@ -140,6 +148,11 @@ Conceptually, SE is the measurement-driven counterpart of power flow:
 * SE computes states from measured values.
 * Measurement redundancy improves robustness and enables bad-data detection
   using residual statistics.
+
+At present, Sparlectra does not yet expose a full public bad-data-detection API
+(for example a dedicated chi-square / normalized-residual workflow). The
+current result object and examples support residual inspection, while a more
+complete diagnostics API remains future work.
 
 ## Minimal example
 

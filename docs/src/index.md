@@ -5,7 +5,7 @@ This package contains tools for subsequent network calculations. It primarily fe
 ## Features
 
 - AC power flow with multiple internal Newton-Raphson formulations (`:polar_full`, `:rectangular`, `:classic`) and many options.
-- State Estimation (WLS) as an **experimental** feature (API and behavior may change in upcoming 
+- State Estimation (WLS) as an **experimental** feature 
 - Canonical external solver interface (`PFModel`/`PFSolution`) to integrate third-party solvers.
 - PV-to-PQ bus switching.
 - MATPOWER-compatible import/export utilities and local casefile helper workflow.
