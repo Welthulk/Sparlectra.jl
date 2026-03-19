@@ -29,38 +29,8 @@ include("test_solver_interface.jl")
 include("test_state_estimation.jl")
 
 @testset "Sparlectra.jl" begin
-  @test test_2WTPITrafo() == true
-  @test test_3WTPITrafo() == true
-  @test test_external_solver_interface() == true
-  @test testNetwork() == true
-  @test test_NBI_MDO() == true
-  @test testImportMatpower() == true
-  @test test_matpower_import_defaults_no_reenable() == true
-  @test test_matpower_vmva_selfcheck_noncontiguous_bus_numbers() == true
-  @test test_matpower_vmva_selfcheck_ignores_slack_pq_spec() == true
-  @test testRemoveFunctions() == true
-  @test testISOBusses() == true
-  @test test_mp_inline_vs_manual_shunt() == true
-
-  @test test_5BusNet(0, 10.0) == true
-  @test test_3BusNet(0, 150.0, :rectangular, false, false) == true
-  @test test_3BusNet(0, 150.0, :polar_full, false, false) == true
-  @test test_acpflow(0; lLine_6a6b = 0.01, damp = 1.0, method = :classic, opt_sparse = true) == true
-  @test test_acpflow(0; lLine_6a6b = 0.01, damp = 1.0, method = :rectangular, opt_sparse = true) == true
-  @test test_acpflow(0; lLine_6a6b = 0.01, damp = 1.0, method = :rectangular, opt_sparse = false) == true
-  @test test_acpflow(0; lLine_6a6b = 0.01, damp = 1.0, method = :polar_full, opt_sparse = true) == true
-  @test test_link_kcl_simple() == true
-  @test test_link_component_type() == true
-  @test test_link_rejects_slack_connection() == true
-  @test test_link_rejects_mixed_bus_types() == true
-  @test test_link_bus_merge_pf() == true
-  @test test_link_bus_merge_pf_default_method() == true
-  @test test_link_closed_keeps_shunt_reporting_on_original_bus() == true
-  @test test_link_kcl_ring_allocation() == true
-  @test test_link_kcl_ring_allocation_with_shunt() == true
-  @test test_link_ring_pf_stability() == true
-  @test test_acpflow_report_object() == true
-  @test test_state_estimation_wls_first_version() == true
-  @test test_state_estimation_observability_metrics() == true
-  @test test_state_estimation_matrix_observability_helpers() == true
+  run_grid_tests()
+  run_remove_tests()
+  run_solver_interface_tests()
+  run_state_estimation_tests()
 end

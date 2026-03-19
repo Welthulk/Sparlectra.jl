@@ -305,3 +305,9 @@ function testRemoveFunctions()
   println("All removal tests passed!")
   return true
 end
+
+function run_remove_tests()
+  @testset "Remove functions" begin
+    @test testRemoveFunctions() == true
+  end
+end

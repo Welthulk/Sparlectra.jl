@@ -485,6 +485,10 @@ function evaluate_global_observability(net::Net, measurements::Vector{Measuremen
   return _evaluate_observability_from_jacobian(H, activeIdx; tol = tol)
 end
 
+function evaluate_global_observability(net::Net; flatstart::Bool = true, jacEps::Float64 = 1e-6, tol = nothing)
+  return evaluate_global_observability(net, Measurement[m for m in net.measurements]; flatstart = flatstart, jacEps = jacEps, tol = tol)
+end
+
 """
     evaluate_local_observability(net, measurements, stateCols; kwargs...) -> NamedTuple
 
@@ -542,6 +546,10 @@ function evaluate_local_observability(net::Net, measurements::Vector{Measurement
   base = _evaluate_observability_from_jacobian(Hlocal, localOriginalIdx; tol = tol)
 
   return merge(base, (rows = localRows, stateCols = copy(stateCols)))
+end
+
+function evaluate_local_observability(net::Net, stateCols::Vector{Int}; flatstart::Bool = true, jacEps::Float64 = 1e-6, tol = nothing)
+  return evaluate_local_observability(net, Measurement[m for m in net.measurements], stateCols; flatstart = flatstart, jacEps = jacEps, tol = tol)
 end
 
 """
@@ -609,4 +617,8 @@ function runse!(net::Net, measurements::Vector{Measurement}; maxIte::Int = 12, t
   end
 
   return SEResult(Vest, converged, iteDone, norm(r), r, jval, ν, _j_within_3sigma_band(jval, ν))
+end
+
+function runse!(net::Net; maxIte::Int = 12, tol::Float64 = 1e-6, flatstart::Bool = true, jacEps::Float64 = 1e-6, updateNet::Bool = true)
+  return runse!(net, Measurement[m for m in net.measurements]; maxIte = maxIte, tol = tol, flatstart = flatstart, jacEps = jacEps, updateNet = updateNet)
 end

@@ -109,7 +109,7 @@ export
   # exportMatPower.jl
   writeMatpowerCasefile, 
   # equicircuit.jl
-  calcComplexRatio, calcNeutralU,  createYBUS, adjacentBranches, toPU_RXBG, fromPU_RXBG, 
+  calcComplexRatio, calcNeutralU,  createYBUS, adjacentBranches, toPU_RXBG, fromPU_RXBG, branchFlow_pu,
   # nbi.jl
   getNBI, mdoRCM,
   # jacobian.jl
@@ -128,7 +128,9 @@ export
   calc_injections, calc_currents, solve_linear, build_pos_map, slack_elimination_indices,extract_bus_types_and_vset, 
   build_qload_pu, build_voltage_vector, compute_sbus_and_totals, 
   # measurements.jl / state_estimation.jl
-  MeasurementType, Measurement, measurementStdDevs, generateMeasurementsFromPF,
+  MeasurementType, Measurement, measurementStdDevs, generateMeasurementsFromPF, setMeasurementsFromPF!,
+  addMeasurement!, addVmMeasurement!, addPinjMeasurement!, addQinjMeasurement!,
+  addPflowMeasurement!, addQflowMeasurement!, findPassiveBuses, addZeroInjectionMeasurements!,
   SEResult, runse!, numeric_rank,
   numerical_observable, structural_observable, numerical_row_redundant, structural_row_redundant,
   evaluate_observability_matrix, evaluate_local_observability_matrix,

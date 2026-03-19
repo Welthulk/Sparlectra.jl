@@ -54,6 +54,32 @@ end
 
 _default0(x) = isnothing(x) ? 0.0 : x
 
+function _bus_name_by_idx(net::Net)
+  busNameByIdx = Dict{Int,String}()
+  for (name, idx) in net.busDict
+    busNameByIdx[idx] = name
+  end
+  return busNameByIdx
+end
+
+function _effective_pf_node_count(net::Net)::Int
+  reps = _active_link_representative_map(net)
+  return length(unique(reps))
+end
+
+function _branch_kind_label(br::Branch)::String
+  name = br.comp.cName
+  if occursin("_ACL_", name)
+    return "Line"
+  elseif occursin("_2WT_", name)
+    return "Trafo"
+  elseif occursin("_PI_", name)
+    return "PI"
+  else
+    return "Branch"
+  end
+end
+
 """
     buildACPFlowReport(net::Net; ...)
 
@@ -67,13 +93,14 @@ function buildACPFlowReport(net::Net;
   converged::Bool = true,
   solver::Symbol = :NR,
 )::ACPFlowReport
+  busNameByIdx = _bus_name_by_idx(net)
   nodes_sorted = sort(net.nodeVec, by = x -> x.busIdx)
 
   node_rows = NamedTuple[]
   for n in nodes_sorted
     push!(node_rows, (
       bus = n.busIdx,
-      bus_name = n.comp.cName,
+      bus_name = get(busNameByIdx, n.busIdx, n.comp.cName),
       type = toString(n._nodeType),
       vm_pu = n._vm_pu,
       va_deg = n._va_deg,
@@ -158,16 +185,20 @@ function buildACPFlowReport(net::Net;
 end
 
 function formatBranchResults(net::Net)
+  busNameByIdx = _bus_name_by_idx(net)
   #! format: off
-  formatted_results = @sprintf("\n===========================================================================================================================\n")
-
-  formatted_results *= @sprintf("| %-25s | %-5s | %-5s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s |\n", "Branch", "From", "To", "P [MW]", "Q [MVar]", "P [MW]", "Q [MVar]", "Pv [MW]", "Qv [MVar]")
-  formatted_results *= @sprintf("===========================================================================================================================\n")
+  formatted_results = @sprintf("\n========================================================================================================================================================\n")
+  formatted_results *= @sprintf("| %-25s | %-6s | %-25s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s |\n", "Branch", "Type", "Connection", "P [MW]", "Q [MVar]", "P [MW]", "Q [MVar]", "Pv [MW]", "Qv [MVar]")
+  formatted_results *= @sprintf("========================================================================================================================================================\n")
   #! format: on
   for br in net.branchVec
     from = br.fromBus
     to = br.toBus
     bName = br.comp.cName
+    branchKind = _branch_kind_label(br)
+    fromName = get(busNameByIdx, Int(from), string(from))
+    toName = get(busNameByIdx, Int(to), string(to))
+    connection = string(fromName, " -> ", toName)
     if br.status == 0 || (isnothing(br.fBranchFlow)) || (isnothing(br.tBranchFlow))
       pfromVal = qfromVal = ptoVal = qtoVal = pLossval = qLossval = 0.0
     else
@@ -193,10 +224,10 @@ function formatBranchResults(net::Net)
       end
     end
     #! format: off
-    formatted_results *= @sprintf("| %-25s | %-5s | %-5s | %-10.3f | %-10.3f | %-10.3f | %-10.3f | %-10.3f |  %-10.3f|\n", bName, from, to, pfromVal, qfromVal, ptoVal, qtoVal, pLossval, qLossval)
+    formatted_results *= @sprintf("| %-25s | %-6s | %-25s | %-10.3f | %-10.3f | %-10.3f | %-10.3f | %-10.3f |  %-10.3f|\n", bName, branchKind, connection, pfromVal, qfromVal, ptoVal, qtoVal, pLossval, qLossval)
     #! format: on
   end
-  formatted_results *= @sprintf("---------------------------------------------------------------------------------------------------------------------------\n")
+  formatted_results *= @sprintf("--------------------------------------------------------------------------------------------------------------------------------------------------------\n")
   (∑pv, ∑qv) = getTotalLosses(net = net)
   total_losses = @sprintf("total network power balance (Σ S_branch): P = %10.3f [MW], Q = %10.3f [MVar]\n", ∑pv, ∑qv)
 
@@ -223,6 +254,7 @@ function printACPFlowResults(net::Net, ct::Float64, ite::Int, tol::Float64, toFi
   @printf(io, "================================================================================\n")
 
   busses = length(net.nodeVec)
+  pf_nodes = _effective_pf_node_count(net)
   branches = length(net.branchVec)
   links = length(net.linkVec)
   lines = length(net.linesAC)
@@ -231,6 +263,7 @@ function printACPFlowResults(net::Net, ct::Float64, ite::Int, tol::Float64, toFi
   loads = 0
   shunts = 0
   auxb = 0
+  busNameByIdx = _bus_name_by_idx(net)
 
   nodes = sort(net.nodeVec, by = x -> x.busIdx)
 
@@ -272,6 +305,9 @@ function printACPFlowResults(net::Net, ct::Float64, ite::Int, tol::Float64, toFi
     @printf(io, "Nodes          :%10d (PV: %d PQ: %d (Aux: %d) Slack: %d\n", busses, npv, npq, auxb, 1)
   else
     @printf(io, "Nodes          :%10d (PV: %d PQ: %d Slack: %d)\n", busses, npv, npq, 1)
+  end
+  if pf_nodes != busses
+    @printf(io, "PF Nodes       :%10d (after active-link merge)\n", pf_nodes)
   end
   @printf(io, "Branches       :%10d\n", branches)
   @printf(io, "Links          :%10d\n", links)
@@ -341,7 +377,7 @@ function printACPFlowResults(net::Net, ct::Float64, ite::Int, tol::Float64, toFi
     end
 
     v = n.comp.cVN * n._vm_pu
-    nodeName = n.comp.cName
+    nodeName = get(busNameByIdx, n.busIdx, n.comp.cName)
     if !isnothing(n._vmin_pu) && !isnothing(n._vmax_pu)
       if !isIsolated(n) && (n._vm_pu < n._vmin_pu || n._vm_pu > n._vmax_pu)
         nodeName *= " !"
@@ -364,7 +400,9 @@ function printACPFlowResults(net::Net, ct::Float64, ite::Int, tol::Float64, toFi
       q = isnothing(l.qFlow_MVar) ? NaN : l.qFlow_MVar
       ifrom = isnothing(l.iFrom_kA) ? NaN : l.iFrom_kA
       ito = isnothing(l.iTo_kA) ? NaN : l.iTo_kA
-      @printf(io, "| %-5d | %-8d | %-8d | %-6d | %-12.3f | %-12.3f | %-12.4f | %-12.4f |\n", l.linkIdx, l.fromBus, l.toBus, l.status, p, q, ifrom, ito)
+      fromName = get(busNameByIdx, Int(l.fromBus), string(l.fromBus))
+      toName = get(busNameByIdx, Int(l.toBus), string(l.toBus))
+      @printf(io, "| %-5d | %-8s | %-8s | %-6d | %-12.3f | %-12.3f | %-12.4f | %-12.4f |\n", l.linkIdx, fromName, toName, l.status, p, q, ifrom, ito)
     end
   end
   if toFile
@@ -377,10 +415,7 @@ function formatProsumerResults(net::Net)
   buf = IOBuffer()
 
   # Rebuild mapping: bus index -> bus name
-  busNameByIdx = Dict{Int,String}()
-  for (name, idx) in net.busDict
-    busNameByIdx[idx] = name
-  end
+  busNameByIdx = _bus_name_by_idx(net)
 
   # Collect indices per bus, separated into generators and loads
   gens_by_bus  = Dict{Int,Vector{Int}}()

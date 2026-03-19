@@ -1,11 +1,16 @@
 # Change Log
 ## Version 0.6.0 – 2026-03-17
 ### New Features
-* Added initial State Estimation (SE, WLS) documentation and examples.
+* Added initial State Estimation (SE, WLS), documentation and examples.
+* Added zero-injection-bus (ZIB) support in SE, documentation, and examples.
+* Improved results reporting and logging.
+* Refactor testsuite for clarity.
 
 ### Notes
 * State Estimation is currently marked as **experimental**.
-* API details and behavior may change in upcoming releases.
+* Passive buses / ZIB are currently represented through zero-injection pseudo measurements in the WLS workflow.
+* Bad-data detection and statistical diagnostics are not yet exposed as a complete public SE API.
+
 
 ## Version 0.5.0 – 2026-03-11
 ### Highlights
