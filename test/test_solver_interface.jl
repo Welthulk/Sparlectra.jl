@@ -89,3 +89,9 @@ function test_external_solver_interface()::Bool
 
   return true
 end
+
+function run_solver_interface_tests()
+  @testset "Solver interface" begin
+    @test test_external_solver_interface() == true
+  end
+end

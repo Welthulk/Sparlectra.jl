@@ -68,11 +68,11 @@ file = "case9.m"
 case_name, baseMVA, busData, genData, branchData = casefileparser(file)
 
 # Now you can work with the raw data arrays
-println("Case name: $case_name")
-println("Base MVA: $baseMVA")
-println("Number of buses: $(size(busData, 1))")
-println("Number of generators: $(size(genData, 1))")
-println("Number of branches: $(size(branchData, 1))")
+println("Case name: \$case_name")
+println("Base MVA: \$baseMVA")
+println("Number of buses: \$(size(busData, 1))")
+println("Number of generators: \$(size(genData, 1))")
+println("Number of branches: \$(size(branchData, 1))")
 ```
 
 ## Exporting Networks to Matpower Format
@@ -114,7 +114,7 @@ if erg == 0
   calcNetLosses!(net)
   printACPFlowResults(net, 0.0, ite, tol)
 else
-  @warn "Power flow did not converge after $ite iterations"
+  @warn "Power flow did not converge after \$ite iterations"
 end
 ```
 
@@ -148,11 +148,3 @@ writeMatpowerCasefile(net, output_path)
 
 !!! Note 
     Please note that providing support for individualized network data issues is beyond the scope of this project, as it is not maintained by an organization. Users are encouraged to take initiative in resolving such issues independently and sharing their results with the community.
-
-## API Reference
-
-```@autodocs 
-  Modules = [Sparlectra]   
-  Pages = ["FetchMatpowerCase.jl", "createnet_powermat.jl", "exportMatPower.jl", "run_acpflow.jl"]
-  Order = [:type, :function]
-```

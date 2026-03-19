@@ -1,4 +1,4 @@
-## External Solver Interface
+# External Solver Interface
 
 Sparlectra provides a **solver-agnostic interface** that allows external power-flow solvers
 (e.g. research prototypes, new implementations, or custom Newton variants)

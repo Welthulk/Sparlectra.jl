@@ -209,7 +209,6 @@ Converts the resistance, reactance, conductance, and susceptance from per unit t
 fromPU_RXBG(r_pu = 0.01, x_pu = 0.1, g_pu = 0.02, b_pu = 0.02, v_kv = 110.0, baseMVA = 100.0)
 ```
 """
-
 function fromPU_RXBG(; r_pu::T, x_pu::T, g_pu::Union{Nothing,T} = nothing, b_pu::Union{Nothing,T} = nothing, v_kv::T, baseMVA::T)::NTuple{4,T} where {T<:Real}
   z_base = (v_kv * v_kv) / baseMVA
   y_base = inv(z_base)
@@ -220,6 +219,45 @@ function fromPU_RXBG(; r_pu::T, x_pu::T, g_pu::Union{Nothing,T} = nothing, b_pu:
   b = isnothing(b_pu) ? zero(T) : b_pu * y_base
 
   return r, x, b, g
+end
+
+"""
+    branchFlow_pu(branch::Branch, from::Int, to::Int, tapSide::Int, V::Vector{ComplexF64})
+
+Calculate branch flow in per unit for a given branch and voltage vector.
+
+# Arguments
+- `branch::Branch`: The branch for which to calculate flow
+- `from::Int`: From bus index
+- `to::Int`: To bus index  
+- `tapSide::Int`: Tap side (1 or 2)
+- `V::Vector{ComplexF64}`: Voltage vector in per unit
+
+# Returns
+- `ComplexF64`: Branch flow in per unit
+"""
+@inline function branchFlow_pu(branch::Branch, from::Int, to::Int, tapSide::Int, V::Vector{ComplexF64})
+  @assert tapSide == 1 || tapSide == 2
+  if branch.status == 0
+    return 0.0 + 0.0im
+  end
+
+  ui = V[from]
+  uj = V[to]
+
+  ratio = (branch.ratio != 0.0) ? branch.ratio : 1.0
+  angle = (branch.ratio != 0.0) ? branch.angle : 0.0
+  tap = calcComplexRatio(tapRatio = ratio, angleInDegrees = angle)
+
+  if tapSide == 1
+    ui /= tap
+  else
+    uj /= tap
+  end
+
+  Yik = inv(branch.r_pu + im * branch.x_pu)
+  Y0ik = 0.5 * (branch.g_pu + im * branch.b_pu)
+  return abs(ui)^2 * conj(Y0ik + Yik) - ui * conj(uj) * conj(Yik)
 end
 
 """

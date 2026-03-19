@@ -37,6 +37,7 @@ Represents an electrical network.
 - `branchDict::Dict{Tuple{Int, Int},Int}`: Dictionary mapping branch tuples to indices.
 - `totalLosses::Vector{Tuple{Float64,Float64}}`: Vector containing tuples of total power losses.
 - `_locked::Bool`: Boolean indicating if the network is locked.
+- `measurements::Vector`: State-estimation measurements stored on the network.
 
 # Constructors
 - `Net(name::String, baseMVA::Float64, vmin_pu::Float64 = 0.9, vmax_pu::Float64 = 1.1)`: Creates a new `Net` object with the given name, base MVA, and optional voltage limits.
@@ -95,6 +96,7 @@ struct Net
   qmin_pu::Vector{Float64}            # pro Bus Qmin (p.u.)
   qmax_pu::Vector{Float64}            # pro Bus Qmax (p.u.)
   qLimitEvents::Dict{Int,Symbol}      # BusIdx -> :min | :max (PV→PQ Change)  
+  measurements::Vector
 
   #! format: off
   function Net(; name::String, baseMVA::Float64, vmin_pu::Float64 = 0.9, vmax_pu::Float64 = 1.1, cooldown_iters::Int = 0, q_hyst_pu::Float64 = 0.0, flatstart::Bool = false)    
@@ -124,7 +126,8 @@ struct Net
         q_hyst_pu,
         [],                                    # qmin_pu
         [],                                    # qmax_pu
-        Dict{Int,Symbol}())                                          
+        Dict{Int,Symbol}(),
+        [])                                          
   end
   #! format: on
   function Base.show(io::IO, net::Net)
@@ -134,6 +137,7 @@ struct Net
     println(io, "Slack buses: ", net.slackVec, ", flatstart: ", net.flatstart, ", locked: ", net._locked)
     println(io, "Vmin / Vmax: ", net.vmin_pu, " / ", net.vmax_pu)
     println(io, "cooldown_iters: ", net.cooldown_iters, ", q_hyst_pu: ", net.q_hyst_pu)
+    println(io, "Measurements: ", length(net.measurements))
   end
 end
 
@@ -165,6 +169,7 @@ function showNet(io::IO, net::Net; verbose::Bool = false)
   println(io, "qmin_pu:        ", net.qmin_pu)
   println(io, "qmax_pu:        ", net.qmax_pu)
   println(io, "qLimitEvents:   ", net.qLimitEvents)
+  println(io, "measurements:   ", length(net.measurements))
 
   println(io, "\n--- Aggregates ---")
   println(io, "totalLosses:    ", net.totalLosses)
@@ -216,7 +221,16 @@ function showNet(io::IO, net::Net; verbose::Bool = false)
     println(io, "\n[link ", i, "]")
     show(io, l)
   end
-
+  if length(net.measurements) == 0
+    println(io, "\n==================== No measurements ====================")
+    return
+  else
+    Println(io, "\n==================== Mesurements ====================")
+    for (i, m) in enumerate(net.measurements)
+      println(io, "\n[measurement ", i, "]")
+      show(io, m)
+    end
+  end
   println(io, "\n==================== END Net ====================")
 end
 # convenience overloads
