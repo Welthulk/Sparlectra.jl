@@ -11,7 +11,7 @@ This package contains tools for subsequent network calculations. It primarily fe
 ## Features
 
 - AC power flow with multiple internal Newton-Raphson formulations (`:polar_full`, `:rectangular`, `:classic`) and many options.
-- State Estimation (WLS) as an **experimental** feature (API and behavior may change in upcoming releases).
+- State Estimation (WLS) as an **experimental** feature 
 - Canonical external solver interface (`PFModel`/`PFSolution`) to integrate third-party solvers.
 - PV-to-PQ bus switching.
 - MATPOWER-compatible import/export utilities and local casefile helper workflow.
@@ -62,13 +62,13 @@ end
 - **[Networks](networks.md)**: Creating and manipulating network models
 - **[Branch Model](branchmodel.md)**: Details of the network branch model
 - **[Import/Export](import.md)**: Importing and exporting network configurations
-- **[Component Removal](remove_functions.md)**: Removing components from networks
+- **[Component Removal](remove_functions.md)**: Conceptual notes on topology-aware removal workflows
 - **[Workshop](workshop.md)**: Guided exercises and examples
-- **[State Estimation](state_estimation.md)**: Experimental SE workflow, observability, and examples
+- **[State Estimation](state_estimation.md)**: Theory, observability, and practical SE workflow
 - **[Network Reports](netreports.md)**: Create and use machine-readable `ACPFlowReport` output
 - **[Function Reference](reference.md)**: Complete API documentation
-- **[Powerlimit Guide](powerlimits_solvers.md)**: Handling of power limits
-
+- **[Powerlimit Guide](powerlimits.md)**: Handling of power limits
+- **[Solver Guide](solver.md)**: Numerical solver formulations and FD Jacobians
 
 
 

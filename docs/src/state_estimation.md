@@ -104,8 +104,8 @@ SE quality depends strongly on observability.
 
 ### Global observability
 
-Use `evaluate_global_observability(net, meas; ...)` to assess if the complete
-state can be estimated from active measurements.
+Use `evaluate_global_observability(net; ...)` to assess if the complete
+state can be estimated from the active measurements stored in `net.measurements`.
 
 Typical metrics:
 
@@ -118,8 +118,8 @@ Typical metrics:
 
 ### Local observability
 
-Use `evaluate_local_observability(net, meas, cols; ...)` to assess a selected
-subset of state columns (for example one bus angle and one bus magnitude).
+Use `evaluate_local_observability(net, cols; ...)` to assess a selected subset
+of state columns (for example one bus angle and one bus magnitude).
 
 This is useful for sensor-placement studies and for identifying vulnerable areas.
 
@@ -150,7 +150,7 @@ using Random
 net = run_acpflow(casefile = "case9.m")
 
 std = measurementStdDevs(vm = 1e-3, pinj = 1.0, qinj = 1.0, pflow = 0.7, qflow = 0.7)
-meas = generateMeasurementsFromPF(
+setMeasurementsFromPF!(
     net;
     includeVm = true,
     includePinj = true,
@@ -162,10 +162,10 @@ meas = generateMeasurementsFromPF(
     rng = MersenneTwister(42),
 )
 
-gobs = evaluate_global_observability(net, meas; flatstart = true, jacEps = 1e-6)
+gobs = evaluate_global_observability(net; flatstart = true, jacEps = 1e-6)
 println("Global observability quality: ", gobs.quality)
 
-se = runse!(net, meas; maxIte = 12, tol = 1e-6, flatstart = true, jacEps = 1e-6, updateNet = true)
+se = runse!(net; maxIte = 12, tol = 1e-6, flatstart = true, jacEps = 1e-6, updateNet = true)
 println("Converged: ", se.converged, ", iterations: ", se.iterations)
 ```
 
@@ -185,19 +185,20 @@ addPIModelACLine!(net = net, fromBus = "B3", toBus = "B1", r_pu = 0.01, x_pu = 0
 ok, msg = validate!(net = net)
 ok || error("Validation failed: \$msg")
 
-meas = Measurement[
+empty!(net.measurements)
+append!(net.measurements, Measurement[
     Measurement(typ = VmMeas, value = 1.01, sigma = 0.002, busIdx = 1, id = "VM_B1"),
     Measurement(typ = VmMeas, value = 0.99, sigma = 0.004, busIdx = 2, id = "VM_B2"),
     Measurement(typ = PinjMeas, value = -25.0, sigma = 1.0, busIdx = 2, id = "PINJ_B2"),
     Measurement(typ = QinjMeas, value = -8.0, sigma = 1.0, busIdx = 2, id = "QINJ_B2"),
     Measurement(typ = PflowMeas, value = 24.0, sigma = 0.8, branchIdx = 1, direction = :from, id = "PF_12"),
     Measurement(typ = PflowMeas, value = 23.5, sigma = 0.8, branchIdx = 1, direction = :from, id = "PF_12_REDUNDANT"),
-]
+])
 
-obs = evaluate_global_observability(net, meas; flatstart = true, jacEps = 1e-6)
+obs = evaluate_global_observability(net; flatstart = true, jacEps = 1e-6)
 println("Observable quality: ", obs.quality)
 
-se = runse!(net, meas; maxIte = 12, tol = 1e-6, flatstart = true, jacEps = 1e-6, updateNet = true)
+se = runse!(net; maxIte = 12, tol = 1e-6, flatstart = true, jacEps = 1e-6, updateNet = true)
 println("Converged: ", se.converged)
 ```
 
@@ -218,14 +219,14 @@ addPIModelACLine!(net = net, fromBus = "B1", toBus = "B2", r_pu = 0.01, x_pu = 0
 addPIModelACLine!(net = net, fromBus = "B2", toBus = "B3", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0)
 addPIModelACLine!(net = net, fromBus = "B3", toBus = "B1", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0)
 
-meas = Measurement[]
-addVmMeasurement!(meas; net = net, busName = "B1", value = 1.01, sigma = 0.002)
-addPinjMeasurement!(meas; net = net, busName = "B2", value = -25.0, sigma = 1.0)
-addQinjMeasurement!(meas; net = net, busName = "B2", value = -8.0, sigma = 1.0)
-addPflowMeasurement!(meas; net = net, fromBus = "B1", toBus = "B2", value = 24.0, sigma = 0.8, direction = :from)
-addQflowMeasurement!(meas; net = net, branchNr = 1, value = 6.5, sigma = 0.8, direction = :to)
+empty!(net.measurements)
+addVmMeasurement!(net; busName = "B1", value = 1.01, sigma = 0.002)
+addPinjMeasurement!(net; busName = "B2", value = -25.0, sigma = 1.0)
+addQinjMeasurement!(net; busName = "B2", value = -8.0, sigma = 1.0)
+addPflowMeasurement!(net; fromBus = "B1", toBus = "B2", value = 24.0, sigma = 0.8, direction = :from)
+addQflowMeasurement!(net; branchNr = 1, value = 6.5, sigma = 0.8, direction = :to)
 
-obs = evaluate_global_observability(net, meas; flatstart = true, jacEps = 1e-6)
+obs = evaluate_global_observability(net; flatstart = true, jacEps = 1e-6)
 println("Observable quality: ", obs.quality)
 ```
 

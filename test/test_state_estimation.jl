@@ -175,15 +175,15 @@ end
 function test_state_estimation_measurement_add_helpers()::Bool
   @testset "State estimation measurement add helpers" begin
     net = createTest3BusNet()
-    measurements = Measurement[]
+    @test isempty(net.measurements)
 
-    vm = addVmMeasurement!(measurements; net = net, busName = "ASTADT", value = 1.01, sigma = 0.002)
-    pinj = addPinjMeasurement!(measurements; net = net, busName = "STATION1", value = -25.0, sigma = 1.0, id = "PINJ_STATION1")
-    qinj = addQinjMeasurement!(measurements; net = net, busName = "STATION1", value = -8.0, sigma = 1.2)
-    pflow = addPflowMeasurement!(measurements; net = net, fromBus = "ASTADT", toBus = "STATION1", value = 24.0, sigma = 0.8, direction = :from)
-    qflow = addQflowMeasurement!(measurements; net = net, branchNr = 1, value = 6.0, sigma = 0.9, direction = :to, active = false)
+    vm = addVmMeasurement!(net; busName = "ASTADT", value = 1.01, sigma = 0.002)
+    pinj = addPinjMeasurement!(net; busName = "STATION1", value = -25.0, sigma = 1.0, id = "PINJ_STATION1")
+    qinj = addQinjMeasurement!(net; busName = "STATION1", value = -8.0, sigma = 1.2)
+    pflow = addPflowMeasurement!(net; fromBus = "ASTADT", toBus = "STATION1", value = 24.0, sigma = 0.8, direction = :from)
+    qflow = addQflowMeasurement!(net; branchNr = 1, value = 6.0, sigma = 0.9, direction = :to, active = false)
 
-    @test length(measurements) == 5
+    @test length(net.measurements) == 5
     @test vm.typ == Sparlectra.VmMeas
     @test vm.busIdx == Sparlectra.geNetBusIdx(net = net, busName = "ASTADT")
     @test pinj.typ == Sparlectra.PinjMeas
@@ -195,6 +195,7 @@ function test_state_estimation_measurement_add_helpers()::Bool
     @test qflow.typ == Sparlectra.QflowMeas
     @test qflow.direction == :to
     @test qflow.active == false
+    @test net.measurements[end] == qflow
 
     @test_throws ErrorException addPflowMeasurement!(Measurement[]; net = net, fromBus = "ASTADT", toBus = "UNKNOWN", value = 1.0, sigma = 0.1)
   end
@@ -230,7 +231,7 @@ function test_state_estimation_passive_bus_zero_injection_helpers()::Bool
     @test passive == [2]
 
     std = measurementStdDevs(vm = 1e-5, pinj = 1e-5, qinj = 1e-5, pflow = 1e-5, qflow = 1e-5)
-    all_meas = generateMeasurementsFromPF(net; includeVm = true, includePinj = true, includeQinj = true, includePflow = true, includeQflow = true, noise = false, stddev = std, rng = MersenneTwister(7))
+    all_meas = setMeasurementsFromPF!(net; includeVm = true, includePinj = true, includeQinj = true, includePflow = true, includeQflow = true, noise = false, stddev = std, rng = MersenneTwister(7))
 
     base_meas = Measurement[]
     for m in all_meas
@@ -241,25 +242,26 @@ function test_state_estimation_passive_bus_zero_injection_helpers()::Bool
     end
 
     @test length(base_meas) == 5
+    empty!(net.measurements)
+    append!(net.measurements, base_meas)
 
-    base_obs = evaluate_global_observability(net, base_meas; flatstart = true, jacEps = 1e-6)
+    base_obs = evaluate_global_observability(net; flatstart = true, jacEps = 1e-6)
     @test base_obs.quality == :critical
     @test base_obs.redundancy == 0
     @test !isempty(base_obs.numerical_critical_measurement_indices)
 
-    meas_with_zi = copy(base_meas)
-    added = addZeroInjectionMeasurements!(meas_with_zi; net = net, sigma = 1e-6)
+    added = addZeroInjectionMeasurements!(net; sigma = 1e-6)
     @test length(added) == 2
     @test all(m -> m.busIdx == 2, added)
     @test sort([m.typ for m in added]) == sort([Sparlectra.PinjMeas, Sparlectra.QinjMeas])
 
-    zi_obs = evaluate_global_observability(net, meas_with_zi; flatstart = true, jacEps = 1e-6)
+    zi_obs = evaluate_global_observability(net; flatstart = true, jacEps = 1e-6)
     @test zi_obs.quality == :good
     @test zi_obs.redundancy == 2
     @test isempty(zi_obs.numerical_critical_measurement_indices)
     @test isempty(zi_obs.structural_critical_measurement_indices)
 
-    result = runse!(deepcopy(net), meas_with_zi; maxIte = 12, tol = 1e-8, flatstart = true, jacEps = 1e-6, updateNet = false)
+    result = runse!(deepcopy(net); maxIte = 12, tol = 1e-8, flatstart = true, jacEps = 1e-6, updateNet = false)
     @test result.converged == true
   end
 
