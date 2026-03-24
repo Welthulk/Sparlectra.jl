@@ -1,4 +1,8 @@
 # Change Log
+## Version 0.6.1 – 2026-04-xx
+### Bug Fixes
+* Fix issue #139
+* 
 ## Version 0.6.0 – 2026-03-17
 ### New Features
 * Added initial State Estimation (SE, WLS), documentation and examples.
