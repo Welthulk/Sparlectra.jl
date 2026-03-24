@@ -26,11 +26,15 @@ using Dates
 #case = "case118.m"    
 #case = "case39.m"     
 #case = "case57.m"     
-case = "case300.m"
+#case = "case300.m"
 #case = "case18.m"     
-#case = "case141.m"    
+case = "case141.m"
 #case = "case69.m"     
 #case = "case85.m"     
+#case = "case1354pegase.m"
+
+#case = "case2869pegase.m"
+#case = "case9241pegase.m"
 
 print("\e[2J\e[H") # clear screen and move cursor to home position
 println("----------------------------------------------------------------------------------------------")

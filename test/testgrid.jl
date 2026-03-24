@@ -1258,6 +1258,64 @@ function test_report_uses_user_bus_names_and_pf_node_count()
   return has_bus1a_row && merged_pf_count_ok && link_names_ok && branch_connection_ok
 end
 
+function test_matpower_read_case_m_postprocessing()::Bool
+  mfile = tempname() * ".m"
+  open(mfile, "w") do io
+    write(io, """
+function mpc = case_postproc
+mpc.version = '2';
+mpc.baseMVA = 10;
+mpc.bus = [
+  1 3 1000 0 0 0 1 1.0 0.0 12.47 1 1.1 0.9;
+  2 1 500 0 0 0 1 1.0 0.0 12.47 1 1.1 0.9;
+];
+mpc.gen = [
+  1 0 0 100 -100 1.0 100 1 100 0 0 0 0 0 0 0 0 0 0 0 0;
+];
+mpc.branch = [
+  1 2 0.0577 0.0409 0 0 0 0 0 0 1 -360 360;
+];
+mpc.gencost = [
+  2 0 0 3 0 20 0;
+];
+[PQ, PV, REF, NONE, BUS_I, BUS_TYPE, PD, QD, GS, BS, BUS_AREA, VM, ...
+    VA, BASE_KV, ZONE, VMAX, VMIN, LAM_P, LAM_Q, MU_VMAX, MU_VMIN] = idx_bus;
+[F_BUS, T_BUS, BR_R, BR_X, BR_B, RATE_A, RATE_B, RATE_C, ...
+    TAP, SHIFT, BR_STATUS, PF, QF, PT, QT, MU_SF, MU_ST, ...
+    ANGMIN, ANGMAX, MU_ANGMIN, MU_ANGMAX] = idx_brch;
+Vbase = mpc.bus(1, BASE_KV) * 1e3;
+Sbase = mpc.baseMVA * 1e6;
+mpc.branch(:, [BR_R BR_X]) = mpc.branch(:, [BR_R BR_X]) / (Vbase^2 / Sbase);
+mpc.bus(:, [PD, QD]) = mpc.bus(:, [PD, QD]) / 1e3;
+pf = 0.85;
+mpc.bus(:, QD) = mpc.bus(:, PD) * sin(acos(pf));
+mpc.bus(:, PD) = mpc.bus(:, PD) * pf;
+end
+""")
+  end
+
+  mpc = Sparlectra.MatpowerIO.read_case_m(mfile; legacy_compat = false)
+  rm(mfile; force = true)
+
+  pd_expected = 0.85
+  qd_expected = 1.0 * sin(acos(0.85))
+
+  zbase = (12.47e3)^2 / (10e6)
+  r_expected = 0.0577 / zbase
+  x_expected = 0.0409 / zbase
+
+  ok_pd = isapprox(mpc.bus[1, 3], pd_expected; atol = 1e-12, rtol = 0.0)
+  ok_qd = isapprox(mpc.bus[1, 4], qd_expected; atol = 1e-12, rtol = 0.0)
+  ok_r = isapprox(mpc.branch[1, 3], r_expected; atol = 1e-12, rtol = 0.0)
+  ok_x = isapprox(mpc.branch[1, 4], x_expected; atol = 1e-12, rtol = 0.0)
+
+  if !(ok_pd && ok_qd && ok_r && ok_x)
+    @warn "MATPOWER post-processing parse mismatch" pd = mpc.bus[1, 3] qd = mpc.bus[1, 4] r = mpc.branch[1, 3] x = mpc.branch[1, 4]
+    return false
+  end
+  return true
+end
+
 function run_grid_tests()
   @testset "Grid and power-flow regression tests" begin
     @testset "Transformer and network validation" begin
@@ -1274,6 +1332,7 @@ function run_grid_tests()
       @test test_matpower_vmva_selfcheck_noncontiguous_bus_numbers() == true
       @test test_matpower_vmva_selfcheck_ignores_slack_pq_spec() == true
       @test test_mp_inline_vs_manual_shunt() == true
+      @test test_matpower_read_case_m_postprocessing() == true
     end
 
     @testset "Power flow scenarios" begin

@@ -157,7 +157,53 @@ function read_case_m(path::AbstractString; legacy_compat::Bool = true)
   bus_name = try_parse_bus_name(txt)
 
   mpc = MatpowerCase(name, baseMVA, bus, gen, branch, gencost, bus_name)
+  apply_supported_postprocessing!(mpc, txt)
   return legacy_compat ? legacy_sort_bus(mpc) : mpc
+end
+
+function apply_supported_postprocessing!(mpc::MatpowerCase, txt::AbstractString)
+  bus = mpc.bus
+  branch = mpc.branch
+
+  # Support common MATPOWER scripts that store branch r/x in Ohm
+  # and convert to per-unit at the end of the case file.
+  has_ohm_to_pu =
+    occursin("mpc.branch(:, [BR_R BR_X])", txt) &&
+    occursin("Vbase^2 / Sbase", txt)
+  if has_ohm_to_pu
+    base_kV = bus[1, 10]  # BASE_KV column in MATPOWER bus table
+    vbase = base_kV * 1e3
+    sbase = mpc.baseMVA * 1e6
+    zbase = vbase^2 / sbase
+    branch[:, 3] ./= zbase  # BR_R
+    branch[:, 4] ./= zbase  # BR_X
+  end
+
+  # Support common MATPOWER scripts that declare loads in kW/kVAr (or kVA)
+  # and convert to MW/MVAr by dividing by 1e3.
+  has_pdqd_div_1e3 = occursin("mpc.bus(:, [PD, QD]) = mpc.bus(:, [PD, QD]) / 1e3", txt)
+  if has_pdqd_div_1e3
+    bus[:, 3] ./= 1e3  # PD
+    bus[:, 4] ./= 1e3  # QD
+  end
+
+  # Support common conversion from apparent power at fixed pf to PD/QD.
+  # Equivalent MATLAB pattern:
+  #   pf = ...
+  #   mpc.bus(:, QD) = mpc.bus(:, PD) * sin(acos(pf));
+  #   mpc.bus(:, PD) = mpc.bus(:, PD) * pf;
+  m_pf = match(r"\bpf\s*=\s*([0-9]+(?:\.[0-9]+)?)\s*;", txt)
+  has_pf_conversion =
+    m_pf !== nothing &&
+    occursin("mpc.bus(:, QD) = mpc.bus(:, PD) * sin(acos(pf));", txt) &&
+    occursin("mpc.bus(:, PD) = mpc.bus(:, PD) * pf;", txt)
+  if has_pf_conversion
+    pf = parse(Float64, m_pf.captures[1])
+    bus[:, 4] .= bus[:, 3] .* sin(acos(pf))  # QD from PD and pf
+    bus[:, 3] .*= pf                          # PD scaled by pf
+  end
+
+  return mpc
 end
 
 function parse_baseMVA(txt::String)
