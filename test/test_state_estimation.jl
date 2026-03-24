@@ -268,6 +268,80 @@ function test_state_estimation_passive_bus_zero_injection_helpers()::Bool
   return true
 end
 
+function test_state_estimation_bad_data_diagnostics()::Bool
+  @testset "State estimation bad-data diagnostics" begin
+    net = createTest3BusNet()
+
+    ite, erg = runpf!(net, 40, 1e-10, 0; method = :polar_full, opt_sparse = true)
+    @test erg == 0
+    @test ite > 0
+
+    std = measurementStdDevs(vm = 1e-5, pinj = 1e-4, qinj = 1e-4, pflow = 1e-4, qflow = 1e-4)
+    meas = generateMeasurementsFromPF(net; includeVm = true, includePinj = true, includeQinj = true, includePflow = true, includeQflow = true, noise = false, stddev = std, rng = MersenneTwister(42))
+    @test !isempty(meas)
+
+    bad_idx = findfirst(m -> m.typ == Sparlectra.VmMeas, meas)
+    @test !isnothing(bad_idx)
+    idx = something(bad_idx, 0)
+    bad_meas = meas[idx]
+    meas[idx] = Measurement(
+      typ = bad_meas.typ,
+      value = bad_meas.value + 0.15,
+      sigma = bad_meas.sigma,
+      active = bad_meas.active,
+      busIdx = bad_meas.busIdx,
+      branchIdx = bad_meas.branchIdx,
+      direction = bad_meas.direction,
+      id = bad_meas.id,
+    )
+
+    report = validate_measurements(net, meas; maxIte = 12, tol = 1e-8, flatstart = true, jacEps = 1e-6, normalizedThreshold = 3.0)
+    @test report.converged == true
+    @test report.objective.dof == report.result.dof
+    @test report.global_consistency == false
+    @test !isempty(report.measurement_ranking)
+    @test report.largest_normalized_residual.measurement_index == idx
+    @test any(x -> x.measurement_index == idx, report.suspicious_measurements)
+
+    summary = summarize_se_diagnostics(report)
+    @test summary.global_consistency == false
+    @test summary.suspicious_count > 0
+    @test occursin("Objective J is outside", summary.reason)
+
+    io = IOBuffer()
+    print_se_diagnostics(io, report; topN = 5)
+    txt = String(take!(io))
+    @test occursin("State-estimation diagnostics", txt)
+    @test occursin("Global consistency: false", txt)
+    @test occursin("Flag", txt)
+    @test occursin("BAD", txt)
+
+    io_md = IOBuffer()
+    print_se_diagnostics(io_md, report; topN = 5, format = :markdown)
+    txt_md = String(take!(io_md))
+    @test occursin("## State-estimation diagnostics", txt_md)
+    @test occursin("| Idx | ID | Type |", txt_md)
+    @test occursin("|", txt_md)
+
+    diag = runse_diagnostics(net, meas; deactivate_and_rerun = true, maxIte = 12, tol = 1e-8, flatstart = true, jacEps = 1e-6, normalizedThreshold = 3.0)
+    @test !isnothing(diag.rerun)
+    @test diag.rerun.deactivated_measurement_index == idx
+    @test diag.rerun.diagnostics.objective.value < diag.diagnostics.objective.value
+
+    io2 = IOBuffer()
+    print_se_diagnostics(io2, diag; topN = 5)
+    txt2 = String(take!(io2))
+    @test occursin("Deactivate-and-rerun", txt2)
+
+    io2_md = IOBuffer()
+    print_se_diagnostics(io2_md, diag; topN = 5, format = :markdown)
+    txt2_md = String(take!(io2_md))
+    @test occursin("### Deactivate-and-rerun", txt2_md)
+  end
+
+  return true
+end
+
 function run_state_estimation_tests()
   @testset "State estimation" begin
     tests = [
@@ -276,6 +350,7 @@ function run_state_estimation_tests()
       ("Matrix observability helpers", test_state_estimation_matrix_observability_helpers),
       ("Measurement add helpers", test_state_estimation_measurement_add_helpers),
       ("Passive bus zero injection helpers", test_state_estimation_passive_bus_zero_injection_helpers),
+      ("Bad-data diagnostics", test_state_estimation_bad_data_diagnostics),
     ]
 
     for (name, testfn) in tests

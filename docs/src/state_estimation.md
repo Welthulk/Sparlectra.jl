@@ -149,10 +149,34 @@ Conceptually, SE is the measurement-driven counterpart of power flow:
 * Measurement redundancy improves robustness and enables bad-data detection
   using residual statistics.
 
-At present, Sparlectra does not yet expose a full public bad-data-detection API
-(for example a dedicated chi-square / normalized-residual workflow). The
-current result object and examples support residual inspection, while a more
-complete diagnostics API remains future work.
+Sparlectra exposes a public diagnostics workflow for bad-data and statistical
+consistency checks:
+
+* `validate_measurements(net, measurements; normalizedThreshold=3.0, ...)`
+  runs SE once and returns:
+  * objective statistics (`value`, `dof`, `zscore`, `within_3sigma`)
+  * largest normalized residual
+  * full measurement ranking by `|normalized_residual|`
+  * suspicious measurement list based on `normalizedThreshold`
+* `runse_diagnostics(net, measurements; deactivate_and_rerun=true, ...)`
+  extends this with a deactivate-and-rerun step for the top suspicious
+  measurement. Note: a single rerun can improve the objective significantly,
+  but `global_consistency` may still stay `false` when multiple bad or
+  mismodeled measurements remain active.
+* `summarize_se_diagnostics(diag)` creates a compact interpretation summary
+  (`global_consistency`, `reason`, suspicious count).
+* `print_se_diagnostics(diag; io=stdout, topN=10, format=:plain|:markdown)`
+  pretty-prints the statistics and ranking for reports.
+
+Meaning of `global_consistency`:
+
+* `true`: estimator converged and the objective is within the 3σ plausibility
+  band (globally plausible data/model fit).
+* `false`: either non-convergence or implausibly large objective value
+  (possible bad data, wrong uncertainty model, or topology/model mismatch).
+
+This workflow can be used both for automated checks (NamedTuple result
+inspection) and for human-readable diagnostics output.
 
 ## Minimal example
 

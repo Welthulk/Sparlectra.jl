@@ -132,6 +132,8 @@ export
   addMeasurement!, addVmMeasurement!, addPinjMeasurement!, addQinjMeasurement!,
   addPflowMeasurement!, addQflowMeasurement!, findPassiveBuses, addZeroInjectionMeasurements!,
   SEResult, runse!, numeric_rank,
+  runse_diagnostics, validate_measurements,
+  summarize_se_diagnostics, print_se_diagnostics,
   numerical_observable, structural_observable, numerical_row_redundant, structural_row_redundant,
   evaluate_observability_matrix, evaluate_local_observability_matrix,
   evaluate_global_observability, evaluate_local_observability,
