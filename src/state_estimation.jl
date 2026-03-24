@@ -778,6 +778,10 @@ function summarize_se_diagnostics(diag)
   return (global_consistency = base.global_consistency, converged = base.converged, objective = base.objective, suspicious_count = suspicious_count, total_measurements = total, reason = reason)
 end
 
+@inline function _global_consistency_label(summary)
+  return summary.global_consistency ? "PASS (globally plausible)" : "FAIL (check objective/residuals)"
+end
+
 """
     print_se_diagnostics(io, diag; topN=10)    
 
@@ -797,7 +801,7 @@ function print_se_diagnostics(diag; io = stdout, topN::Int = 10, format::Symbol 
     println(io, "## State-estimation diagnostics")
     println(io)
     println(io, "- **Converged:** $(summary.converged)")
-    println(io, "- **Global consistency:** $(summary.global_consistency)")
+    println(io, "- **Global consistency:** $(summary.global_consistency) — $(_global_consistency_label(summary))")
     @printf(io, "- **Objective J:** %.6f (dof=%d, z=%.3f, within_3sigma=%s)\n", summary.objective.value, summary.objective.dof, summary.objective.zscore, string(summary.objective.within_3sigma))
     println(io, "- **Interpretation:** $(summary.reason)")
     println(io, "- **Suspicious measurements:** $(summary.suspicious_count) / $(summary.total_measurements)")
@@ -814,7 +818,7 @@ function print_se_diagnostics(diag; io = stdout, topN::Int = 10, format::Symbol 
     println(io, "State-estimation diagnostics")
     println(io, "--------------------------------------------------------------")
     @printf(io, "Converged: %s\n", string(summary.converged))
-    @printf(io, "Global consistency: %s\n", string(summary.global_consistency))
+    @printf(io, "Global consistency: %s (%s)\n", string(summary.global_consistency), _global_consistency_label(summary))
     @printf(io, "Objective J: %.6f (dof=%d, z=%.3f, within_3sigma=%s)\n", summary.objective.value, summary.objective.dof, summary.objective.zscore, string(summary.objective.within_3sigma))
     @printf(io, "Interpretation: %s\n", summary.reason)
     @printf(io, "Suspicious measurements: %d / %d\n", summary.suspicious_count, summary.total_measurements)
@@ -832,20 +836,25 @@ function print_se_diagnostics(diag; io = stdout, topN::Int = 10, format::Symbol 
 
   if hasproperty(diag, :rerun) && !isnothing(diag.rerun)
     rerun = diag.rerun
+    rerun_summary = summarize_se_diagnostics(rerun.diagnostics)
     if format == :markdown
       println(io)
       println(io, "### Deactivate-and-rerun")
       println(io, "- **Deactivated measurement:** idx=$(rerun.deactivated_measurement_index), id=$(rerun.deactivated_measurement_id)")
       @printf(io, "- **Objective before:** %.6f\n", base.objective.value)
       @printf(io, "- **Objective after:** %.6f\n", rerun.diagnostics.objective.value)
-      println(io, "- **Global consistency after rerun:** $(rerun.diagnostics.global_consistency)")
+      @printf(io, "- **Objective after stats:** dof=%d, z=%.3f, within_3sigma=%s\n", rerun_summary.objective.dof, rerun_summary.objective.zscore, string(rerun_summary.objective.within_3sigma))
+      println(io, "- **Global consistency after rerun:** $(rerun_summary.global_consistency) — $(_global_consistency_label(rerun_summary))")
+      println(io, "- **Interpretation after rerun:** $(rerun_summary.reason)")
     else
       println(io, "\nDeactivate-and-rerun")
       println(io, "--------------------------------------------------------------")
       @printf(io, "Deactivated measurement: idx=%d id=%s\n", rerun.deactivated_measurement_index, rerun.deactivated_measurement_id)
       @printf(io, "Objective before: %.6f\n", base.objective.value)
       @printf(io, "Objective after : %.6f\n", rerun.diagnostics.objective.value)
-      @printf(io, "Global consistency after rerun: %s\n", string(rerun.diagnostics.global_consistency))
+      @printf(io, "Objective after stats: dof=%d, z=%.3f, within_3sigma=%s\n", rerun_summary.objective.dof, rerun_summary.objective.zscore, string(rerun_summary.objective.within_3sigma))
+      @printf(io, "Global consistency after rerun: %s (%s)\n", string(rerun_summary.global_consistency), _global_consistency_label(rerun_summary))
+      @printf(io, "Interpretation after rerun: %s\n", rerun_summary.reason)
     end
   end
 end
