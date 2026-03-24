@@ -1,5 +1,5 @@
 # Change Log
-## Version 0.6.1 – 2026-04-xx
+## Version 0.6.1 – 2026-03-24
 ### New Features
 * Bad Data Detection (BDD) and Statistical Diagnostics for State Estimation (SE)
   
