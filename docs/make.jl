@@ -17,7 +17,7 @@ makedocs(
   doctest = true,
   checkdocs = :none,
   format = Documenter.HTML(; assets = ["assets/tablestyle.css"], prettyurls = get(ENV, "CI", "false") == "true", collapselevel = 1, canonical = "https://welthulk.github.io/Sparlectra.jl"),
-  pages = ["index.md", "changelog.md", "branchmodel.md", "external_solvers.md", "import.md", "links.md", "netreports.md", "powerlimits.md", "solver.md", "state_estimation.md", "workshop.md", raw"API" => ["reference.md"]],
+  pages = ["index.md", "feature_matrix.md", "changelog.md", "branchmodel.md", "external_solvers.md", "import.md", "links.md", "netreports.md", "powerlimits.md", "solver.md", "state_estimation.md", "workshop.md", raw"API" => ["reference.md"]],
 )
 
 deploydocs(; repo = "github.com/welthulk/Sparlectra.jl", devbranch = "main", push_preview = true)

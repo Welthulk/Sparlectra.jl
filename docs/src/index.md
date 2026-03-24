@@ -57,6 +57,7 @@ end
 - **[Component Removal](remove_functions.md)**: Conceptual notes on topology-aware removal workflows
 - **[Workshop](workshop.md)**: Guided exercises and examples
 - **[State Estimation](state_estimation.md)**: Theory, observability, and practical SE workflow
+- **[Feature Matrix](feature_matrix.md)**: Quick PF vs SE capability overview
 - **[Network Reports](netreports.md)**: Create and use machine-readable `ACPFlowReport` output
 - **[Function Reference](reference.md)**: Complete API documentation
 - **[Powerlimit Guide](powerlimits.md)**: Handling of power limits
