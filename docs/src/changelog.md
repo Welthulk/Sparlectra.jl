@@ -1,8 +1,16 @@
 # Change Log
 ## Version 0.6.1 – 2026-04-xx
+### New Features
+* Bad Data Detection (BDD) and Statistical Diagnostics for State Estimation (SE)
+  
 ### Bug Fixes
 * Fix issue #139
-* 
+### Notes
+
+* Bad-data detection and statistical diagnostics are available via
+  `validate_measurements`, `runse_diagnostics`,
+  `summarize_se_diagnostics`, and `print_se_diagnostics`.
+
 ## Version 0.6.0 – 2026-03-17
 ### New Features
 * Added initial State Estimation (SE, WLS), documentation and examples.
@@ -13,7 +21,6 @@
 ### Notes
 * State Estimation is currently marked as **experimental**.
 * Passive buses / ZIB are currently represented through zero-injection pseudo measurements in the WLS workflow.
-* Bad-data detection and statistical diagnostics are not yet exposed as a complete public SE API.
 
 
 ## Version 0.5.0 – 2026-03-11

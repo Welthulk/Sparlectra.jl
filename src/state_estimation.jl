@@ -14,6 +14,7 @@
 
 # file: src/state_estimation.jl
 
+using Printf
 """
     SEResult
 
@@ -123,6 +124,10 @@ function _active_measurements_with_indices(measurements::Vector{Measurement})
   return active, idx
 end
 
+@inline function _set_measurement_active(m::Measurement, active::Bool)
+  return Measurement(typ = m.typ, value = m.value, sigma = m.sigma, active = active, busIdx = m.busIdx, branchIdx = m.branchIdx, direction = m.direction, id = m.id)
+end
+
 ## Internal helper: assemble measurement value vector z from active measurements.
 function _measurement_vector(measurements::Vector{Measurement})
   z = Vector{Float64}(undef, length(measurements))
@@ -130,6 +135,42 @@ function _measurement_vector(measurements::Vector{Measurement})
     z[i] = m.value
   end
   return z
+end
+
+## Internal helper: compute normalized residuals and row-level diagnostics.
+function _residual_diagnostics(H::Matrix{Float64}, r::Vector{Float64}, w::Vector{Float64})
+  m, _ = size(H)
+  G = (H' .* reshape(w, 1, :)) * H
+  GI = pinv(G)
+  WInv = Diagonal(1.0 ./ w)
+  Ω = Symmetric(WInv - H * GI * H')
+
+  rn = zeros(Float64, m)
+  for i in eachindex(r)
+    σr2 = max(real(Ω[i, i]), 0.0)
+    if σr2 <= eps(Float64)
+      rn[i] = 0.0
+    else
+      rn[i] = r[i] / sqrt(σr2)
+    end
+  end
+  return rn
+end
+
+@inline function _chi_square_zscore(j::Float64, ν::Int)
+  ν <= 0 && return Inf
+  return (j - ν) / sqrt(2.0 * ν)
+end
+
+function _build_measurement_suspicion_report(activeMeas::Vector{Measurement}, activeIdx::Vector{Int}, r::Vector{Float64}, rn::Vector{Float64}; normalizedThreshold::Float64 = 3.0)
+  rows = NamedTuple[]
+  for i in eachindex(activeMeas)
+    m = activeMeas[i]
+    push!(rows, (local_index = i, measurement_index = activeIdx[i], id = m.id, typ = Symbol(m.typ), residual = r[i], normalized_residual = rn[i], abs_normalized_residual = abs(rn[i]), suspicious = abs(rn[i]) >= normalizedThreshold))
+  end
+
+  sort!(rows; by = x -> x.abs_normalized_residual, rev = true)
+  return rows
 end
 
 ## Internal helper: assemble diagonal weight entries w = 1/σ² from measurements.
@@ -621,4 +662,195 @@ end
 
 function runse!(net::Net; maxIte::Int = 12, tol::Float64 = 1e-6, flatstart::Bool = true, jacEps::Float64 = 1e-6, updateNet::Bool = true)
   return runse!(net, Measurement[m for m in net.measurements]; maxIte = maxIte, tol = tol, flatstart = flatstart, jacEps = jacEps, updateNet = updateNet)
+end
+
+"""
+    validate_measurements(net, measurements; kwargs...) -> NamedTuple
+
+Run state-estimation diagnostics on currently active measurements and return a
+machine-readable report with:
+- global bad-data consistency check (`global_consistency`)
+- χ²-like objective plausibility summary
+- largest-normalized-residual ranking
+- suspicious measurement list (threshold-based)
+"""
+function validate_measurements(net::Net, measurements::Vector{Measurement}; maxIte::Int = 12, tol::Float64 = 1e-6, flatstart::Bool = true, jacEps::Float64 = 1e-6, normalizedThreshold::Float64 = 3.0)
+  activeMeas, activeIdx = _active_measurements_with_indices(measurements)
+  isempty(activeMeas) && error("validate_measurements: no active measurements")
+
+  netLocal = deepcopy(net)
+  result = runse!(netLocal, activeMeas; maxIte = maxIte, tol = tol, flatstart = flatstart, jacEps = jacEps, updateNet = false)
+
+  nbus = length(netLocal.nodeVec)
+  slackIdx = _find_slack_idx(netLocal)
+  x = _initial_state_vector(netLocal, slackIdx; flatstart = flatstart)
+  nθ = nbus - 1
+  p = 0
+  for i in eachindex(netLocal.nodeVec)
+    if i != slackIdx
+      p += 1
+      x[p] = angle(result.voltages[i])
+    end
+    x[nθ+i] = abs(result.voltages[i])
+  end
+
+  Ybus = createYBUS(net = netLocal)
+  H, h = _measurement_jacobian_fd(activeMeas, netLocal, x, slackIdx, nbus, Ybus; eps = jacEps)
+  z = _measurement_vector(activeMeas)
+  w = _weight_vector(activeMeas)
+  r = z - h
+  rn = _residual_diagnostics(H, r, w)
+  ranking = _build_measurement_suspicion_report(activeMeas, activeIdx, r, rn; normalizedThreshold = normalizedThreshold)
+
+  suspicious = [row for row in ranking if row.suspicious]
+  zscore = _chi_square_zscore(result.objectiveJ, result.dof)
+
+  return (
+    converged = result.converged,
+    global_consistency = result.converged && result.jWithin3Sigma,
+    objective = (value = result.objectiveJ, dof = result.dof, zscore = zscore, within_3sigma = result.jWithin3Sigma),
+    largest_normalized_residual = isempty(ranking) ? nothing : first(ranking),
+    suspicious_measurements = suspicious,
+    measurement_ranking = ranking,
+    residuals = r,
+    normalized_residuals = rn,
+    result = result,
+  )
+end
+
+function validate_measurements(net::Net; kwargs...)
+  return validate_measurements(net, Measurement[m for m in net.measurements]; kwargs...)
+end
+
+"""
+    runse_diagnostics(net, measurements; deactivate_and_rerun=false, kwargs...) -> NamedTuple
+
+Extended diagnostics workflow around `validate_measurements` with optional
+deactivate-and-rerun logic for the currently largest suspicious measurement.
+"""
+function runse_diagnostics(net::Net, measurements::Vector{Measurement}; deactivate_and_rerun::Bool = false, maxIte::Int = 12, tol::Float64 = 1e-6, flatstart::Bool = true, jacEps::Float64 = 1e-6, normalizedThreshold::Float64 = 3.0)
+  base = validate_measurements(net, measurements; maxIte = maxIte, tol = tol, flatstart = flatstart, jacEps = jacEps, normalizedThreshold = normalizedThreshold)
+  rerun = nothing
+
+  if deactivate_and_rerun && !isempty(base.suspicious_measurements)
+    target = first(base.suspicious_measurements)
+    meas2 = copy(measurements)
+    idx = target.measurement_index
+    meas2[idx] = _set_measurement_active(meas2[idx], false)
+    rerun = validate_measurements(net, meas2; maxIte = maxIte, tol = tol, flatstart = flatstart, jacEps = jacEps, normalizedThreshold = normalizedThreshold)
+    rerun = (deactivated_measurement_index = idx, deactivated_measurement_id = measurements[idx].id, diagnostics = rerun)
+  end
+
+  return (diagnostics = base, rerun = rerun)
+end
+
+function runse_diagnostics(net::Net; kwargs...)
+  return runse_diagnostics(net, Measurement[m for m in net.measurements]; kwargs...)
+end
+
+@inline function _base_diag_report(diag)
+  return hasproperty(diag, :diagnostics) ? diag.diagnostics : diag
+end
+
+"""
+    summarize_se_diagnostics(diag) -> NamedTuple
+
+Create a compact interpretation summary for a diagnostics object returned by
+`validate_measurements` or `runse_diagnostics`.
+
+`global_consistency` is interpreted as:
+- `true`: SE converged and objective is inside χ²-like 3σ plausibility band
+- `false`: either non-convergence or implausibly large objective
+"""
+function summarize_se_diagnostics(diag)
+  base = _base_diag_report(diag)
+  suspicious_count = length(base.suspicious_measurements)
+  total = length(base.measurement_ranking)
+
+  reason = if !base.converged
+    "State estimation did not converge."
+  elseif !base.objective.within_3sigma
+    "Objective J is outside the χ²-like 3σ plausibility band (possible bad data/model mismatch)."
+  else
+    "No global inconsistency detected."
+  end
+
+  return (global_consistency = base.global_consistency, converged = base.converged, objective = base.objective, suspicious_count = suspicious_count, total_measurements = total, reason = reason)
+end
+
+"""
+    print_se_diagnostics(io, diag; topN=10)    
+
+Pretty-print diagnostics from `validate_measurements` or `runse_diagnostics`
+including:
+- explanation of `global_consistency`
+- tabular measurement ranking
+- BAD/OK marker per measurement
+- optional rerun comparison if present
+"""
+function print_se_diagnostics(diag; io = stdout, topN::Int = 10, format::Symbol = :plain)
+  base = _base_diag_report(diag)
+  summary = summarize_se_diagnostics(diag)
+
+  nrows = min(topN, length(base.measurement_ranking))
+  if format == :markdown
+    println(io, "## State-estimation diagnostics")
+    println(io)
+    println(io, "- **Converged:** $(summary.converged)")
+    println(io, "- **Global consistency:** $(summary.global_consistency)")
+    @printf(io, "- **Objective J:** %.6f (dof=%d, z=%.3f, within_3sigma=%s)\n", summary.objective.value, summary.objective.dof, summary.objective.zscore, string(summary.objective.within_3sigma))
+    println(io, "- **Interpretation:** $(summary.reason)")
+    println(io, "- **Suspicious measurements:** $(summary.suspicious_count) / $(summary.total_measurements)")
+    println(io)
+    println(io, "### Measurement ranking (largest |normalized residual|)")
+    println(io, "| Idx | ID | Type | Residual | Norm.Res | Flag |")
+    println(io, "|---:|:---|:---|---:|---:|:---:|")
+    for k = 1:nrows
+      row = base.measurement_ranking[k]
+      flag = row.suspicious ? "BAD" : "OK"
+      @printf(io, "| %d | %s | %s | %.5f | %.5f | %s |\n", row.measurement_index, row.id, string(row.typ), row.residual, row.normalized_residual, flag)
+    end
+  else
+    println(io, "State-estimation diagnostics")
+    println(io, "--------------------------------------------------------------")
+    @printf(io, "Converged: %s\n", string(summary.converged))
+    @printf(io, "Global consistency: %s\n", string(summary.global_consistency))
+    @printf(io, "Objective J: %.6f (dof=%d, z=%.3f, within_3sigma=%s)\n", summary.objective.value, summary.objective.dof, summary.objective.zscore, string(summary.objective.within_3sigma))
+    @printf(io, "Interpretation: %s\n", summary.reason)
+    @printf(io, "Suspicious measurements: %d / %d\n", summary.suspicious_count, summary.total_measurements)
+
+    println(io, "\nMeasurement ranking (largest |normalized residual|)")
+    println(io, "----------------------------------------------------------------------------------------------")
+    @printf(io, "%5s %-28s %-12s %12s %12s %8s\n", "Idx", "ID", "Type", "Residual", "Norm.Res", "Flag")
+    println(io, "----------------------------------------------------------------------------------------------")
+    for k = 1:nrows
+      row = base.measurement_ranking[k]
+      flag = row.suspicious ? "BAD" : "OK"
+      @printf(io, "%5d %-28s %-12s %12.5f %12.5f %8s\n", row.measurement_index, row.id, string(row.typ), row.residual, row.normalized_residual, flag)
+    end
+  end
+
+  if hasproperty(diag, :rerun) && !isnothing(diag.rerun)
+    rerun = diag.rerun
+    if format == :markdown
+      println(io)
+      println(io, "### Deactivate-and-rerun")
+      println(io, "- **Deactivated measurement:** idx=$(rerun.deactivated_measurement_index), id=$(rerun.deactivated_measurement_id)")
+      @printf(io, "- **Objective before:** %.6f\n", base.objective.value)
+      @printf(io, "- **Objective after:** %.6f\n", rerun.diagnostics.objective.value)
+      println(io, "- **Global consistency after rerun:** $(rerun.diagnostics.global_consistency)")
+    else
+      println(io, "\nDeactivate-and-rerun")
+      println(io, "--------------------------------------------------------------")
+      @printf(io, "Deactivated measurement: idx=%d id=%s\n", rerun.deactivated_measurement_index, rerun.deactivated_measurement_id)
+      @printf(io, "Objective before: %.6f\n", base.objective.value)
+      @printf(io, "Objective after : %.6f\n", rerun.diagnostics.objective.value)
+      @printf(io, "Global consistency after rerun: %s\n", string(rerun.diagnostics.global_consistency))
+    end
+  end
+end
+
+# Backward-compatible positional-IO method kept for existing callers/tests.
+function print_se_diagnostics(io::IO, diag; topN::Int = 10, format::Symbol = :plain)
+  return print_se_diagnostics(diag; io = io, topN = topN, format = format)
 end
