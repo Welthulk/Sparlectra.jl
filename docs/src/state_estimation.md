@@ -149,10 +149,25 @@ Conceptually, SE is the measurement-driven counterpart of power flow:
 * Measurement redundancy improves robustness and enables bad-data detection
   using residual statistics.
 
-At present, Sparlectra does not yet expose a full public bad-data-detection API
-(for example a dedicated chi-square / normalized-residual workflow). The
-current result object and examples support residual inspection, while a more
-complete diagnostics API remains future work.
+Sparlectra exposes a public diagnostics workflow for bad-data and statistical
+consistency checks:
+
+* `validate_measurements(net, measurements; normalizedThreshold=3.0, ...)`
+  runs SE once and returns:
+  * objective statistics (`value`, `dof`, `zscore`, `within_3sigma`)
+  * largest normalized residual
+  * full measurement ranking by `|normalized_residual|`
+  * suspicious measurement list based on `normalizedThreshold`
+* `runse_diagnostics(net, measurements; deactivate_and_rerun=true, ...)`
+  extends this with a deactivate-and-rerun step for the top suspicious
+  measurement.
+* `summarize_se_diagnostics(diag)` creates a compact interpretation summary
+  (`global_consistency`, `reason`, suspicious count).
+* `print_se_diagnostics(diag; io=stdout, topN=10, format=:plain|:markdown)`
+  pretty-prints the statistics and ranking for reports.
+
+This workflow can be used both for automated checks (NamedTuple result
+inspection) and for human-readable diagnostics output.
 
 ## Minimal example
 
