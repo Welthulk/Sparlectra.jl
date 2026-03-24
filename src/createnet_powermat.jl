@@ -233,7 +233,7 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
     mBase = Float64(row[genDict["mBase"]])
 
     referencePri = (slackIdx == Int(row[genDict["bus"]])) ? bus : nothing
-    (mBase != baseMVA) && @warn "generator $(bus) has different baseMVA than network baseMVA"
+    (mBase != baseMVA) && @debug "generator $(bus) has different mBase than network baseMVA (allowed in MATPOWER)" bus mBase baseMVA
 
     addProsumer!(
       net = myNet,
