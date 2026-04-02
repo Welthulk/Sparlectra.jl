@@ -1,4 +1,9 @@
 # Change Log
+## Version 0.6.2 – 2026-04-02
+### New Features
+* adding sign validation and optional autocorrection of Q-limits before running power flows.
+* Provide an option to lock selected PV buses from being switched to PQ 
+
 ## Version 0.6.1 – 2026-03-24
 ### New Features
 * Bad Data Detection (BDD) and Statistical Diagnostics for State Estimation (SE)
