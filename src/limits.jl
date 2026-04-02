@@ -264,19 +264,25 @@ function printFinalLimitValidation(net::Net; q_headroom::Float64 = 0.20, io::IO 
   qmin_pu, qmax_pu = getQLimits_pu(net)
   qrows = Tuple{Int,Float64,Float64,Float64,Float64}[]
   vrows = Tuple{Int,Float64,Float64,Float64}[]
+  qgen_missing = 0
 
   for (bus, node) in enumerate(net.nodeVec)
-    qgen = node._qƩGen / net.baseMVA
-    if bus <= length(qmin_pu) && isfinite(qmin_pu[bus])
+    qgen_pu = isnothing(node._qƩGen) ? nothing : (Float64(node._qƩGen) / net.baseMVA)
+    has_qgen = !isnothing(qgen_pu)
+    if !has_qgen && (((bus <= length(qmin_pu)) && isfinite(qmin_pu[bus])) || ((bus <= length(qmax_pu)) && isfinite(qmax_pu[bus])))
+      qgen_missing += 1
+    end
+
+    if has_qgen && (bus <= length(qmin_pu)) && isfinite(qmin_pu[bus])
       lo = qmin_pu[bus]
-      if qgen < (lo - _qlimit_headroom(lo, q_headroom))
-        push!(qrows, (bus, qgen * net.baseMVA, lo * net.baseMVA, qmax_pu[bus] * net.baseMVA, (lo - qgen) * net.baseMVA))
+      if qgen_pu < (lo - _qlimit_headroom(lo, q_headroom))
+        push!(qrows, (bus, qgen_pu * net.baseMVA, lo * net.baseMVA, qmax_pu[bus] * net.baseMVA, (lo - qgen_pu) * net.baseMVA))
       end
     end
-    if bus <= length(qmax_pu) && isfinite(qmax_pu[bus])
+    if has_qgen && (bus <= length(qmax_pu)) && isfinite(qmax_pu[bus])
       hi = qmax_pu[bus]
-      if qgen > (hi + _qlimit_headroom(hi, q_headroom))
-        push!(qrows, (bus, qgen * net.baseMVA, qmin_pu[bus] * net.baseMVA, hi * net.baseMVA, (qgen - hi) * net.baseMVA))
+      if qgen_pu > (hi + _qlimit_headroom(hi, q_headroom))
+        push!(qrows, (bus, qgen_pu * net.baseMVA, qmin_pu[bus] * net.baseMVA, hi * net.baseMVA, (qgen_pu - hi) * net.baseMVA))
       end
     end
 
@@ -299,6 +305,9 @@ function printFinalLimitValidation(net::Net; q_headroom::Float64 = 0.20, io::IO 
     for (bus, qgen, qmin, qmax, vio) in qrows
       @printf(io, " %4d │ %9.3f │ %9.3f │ %9.3f │ %10.3f\n", bus, qgen, qmin, qmax, vio)
     end
+  end
+  if qgen_missing > 0
+    @printf(io, "  Q-limits: skipped %d bus(es) with finite Q-limits but missing _qƩGen.\n", qgen_missing)
   end
 
   if isempty(vrows)

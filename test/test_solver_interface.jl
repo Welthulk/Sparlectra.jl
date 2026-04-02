@@ -128,5 +128,16 @@ function run_solver_interface_tests()
       @test erg_locked == 0
       @test getNodeType(net_locked.nodeVec[2]) == Sparlectra.PV
     end
+
+    @testset "Final limit validation tolerates missing qgen" begin
+      net = createTest3BusNet()
+      net.nodeVec[3]._qƩGen = nothing
+      io = IOBuffer()
+      res = printFinalLimitValidation(net; q_headroom = 0.20, io = io)
+      out = String(take!(io))
+      @test haskey(res, :q_violations)
+      @test haskey(res, :v_violations)
+      @test occursin("Final limit validation:", out)
+    end
   end
 end
