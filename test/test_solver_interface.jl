@@ -93,5 +93,40 @@ end
 function run_solver_interface_tests()
   @testset "Solver interface" begin
     @test test_external_solver_interface() == true
+    @testset "Q-limit reporting and validation options" begin
+      net = createTest3BusNet()
+      Sparlectra.setBusType!(net, 1, "PV")
+      Sparlectra.setBusType!(net, 2, "PV")
+      Sparlectra.setBusType!(net, 3, "PV")
+      empty!(net.qmin_pu)
+      append!(net.qmin_pu, [-0.1, 0.05, -0.2])
+      empty!(net.qmax_pu)
+      append!(net.qmax_pu, [0.2, 0.1, 0.3])
+
+      io = IOBuffer()
+      printPVQLimitsTable(net; io = io, max_rows = 2)
+      printed = String(take!(io))
+      @test occursin("more PV rows omitted", printed)
+
+      res = validate_q_limit_signs!(net.qmin_pu, net.qmax_pu; io = io, autocorrect = true, warn = false)
+      @test res.flagged >= 1
+      @test res.corrected >= 1
+      @test net.qmin_pu[2] <= 0.0
+      @test net.qmax_pu[2] >= 0.0
+    end
+
+    @testset "PV->PQ lock option" begin
+      net_unlocked = createTest3BusNet()
+      setQLimits!(net = net_unlocked, qmin_MVar = -1.0, qmax_MVar = 1.0, busName = "STATION1")
+      _, erg_unlocked = runpf!(net_unlocked, 20, 1e-6, 0; method = :rectangular)
+      @test erg_unlocked == 0
+      @test getNodeType(net_unlocked.nodeVec[2]) == Sparlectra.PQ
+
+      net_locked = createTest3BusNet()
+      setQLimits!(net = net_locked, qmin_MVar = -1.0, qmax_MVar = 1.0, busName = "STATION1")
+      _, erg_locked = runpf!(net_locked, 20, 1e-6, 0; method = :rectangular, lock_pv_to_pq_buses = [2])
+      @test erg_locked == 0
+      @test getNodeType(net_locked.nodeVec[2]) == Sparlectra.PV
+    end
   end
 end

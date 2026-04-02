@@ -101,12 +101,12 @@ function getQLimits_pu(net::Net)
 end
 
 """
-    printPVQLimitsTable(net::Net; io::IO=stdout)
+    printPVQLimitsTable(net::Net; io::IO=stdout, max_rows::Int=30)
 
 Print a compact table of PV-bus reactive limits before the PF iteration starts.
 Values are shown in **MVAr**.
 """
-function printPVQLimitsTable(net::Net; io::IO = stdout)
+function printPVQLimitsTable(net::Net; io::IO = stdout, max_rows::Int = 30)
   qmin_pu, qmax_pu = getQLimits_pu(net)
   rows = Tuple{Int,Float64,Float64}[]
 
@@ -126,8 +126,14 @@ function printPVQLimitsTable(net::Net; io::IO = stdout)
   println(io, "──────────────────────────────────────────────")
   println(io, " Bus │      Qmin [MVAr] │      Qmax [MVAr]")
   println(io, "──────────────────────────────────────────────")
-  for (bus, qmin, qmax) in rows
+  shown = max_rows < 0 ? length(rows) : min(max_rows, length(rows))
+  for i in 1:shown
+    bus, qmin, qmax = rows[i]
     @printf(io, " %3d │ %15.6f │ %15.6f\n", bus, qmin, qmax)
+  end
+  if shown < length(rows)
+    println(io, " ...")
+    @printf(io, " (%d more PV rows omitted; increase max_rows for full output)\n", length(rows) - shown)
   end
   println(io, "──────────────────────────────────────────────")
   return nothing
@@ -179,6 +185,136 @@ function _sanitize_q_limits!(qmin_pu::Vector{Float64}, qmax_pu::Vector{Float64},
 end
 
 """
+    validate_q_limit_signs!(qmin_pu, qmax_pu; io::IO=stdout, autocorrect::Bool=false, warn::Bool=true)
+
+Validate Q-limit sign conventions per bus:
+- expect `qmin ≤ 0`
+- expect `qmax ≥ 0`
+- expect `qmin ≤ qmax`
+
+If `autocorrect=true`, suspicious sign-only limits are flipped and inverted ranges are swapped.
+"""
+function validate_q_limit_signs!(qmin_pu::AbstractVector{Float64}, qmax_pu::AbstractVector{Float64}; io::IO = stdout, autocorrect::Bool = false, warn::Bool = true)
+  n = min(length(qmin_pu), length(qmax_pu))
+  corrected = 0
+  flagged = 0
+
+  for bus in 1:n
+    qmin = qmin_pu[bus]
+    qmax = qmax_pu[bus]
+    (isfinite(qmin) || isfinite(qmax)) || continue
+
+    changed = false
+    msgs = String[]
+
+    if isfinite(qmin) && isfinite(qmax) && (qmin > qmax)
+      push!(msgs, "qmin > qmax")
+      if autocorrect
+        qmin_pu[bus], qmax_pu[bus] = qmax, qmin
+        qmin, qmax = qmin_pu[bus], qmax_pu[bus]
+        changed = true
+      end
+    end
+
+    if isfinite(qmin) && (qmin > 0.0)
+      push!(msgs, "qmin positive")
+      if autocorrect
+        qmin_pu[bus] = -abs(qmin)
+        qmin = qmin_pu[bus]
+        changed = true
+      end
+    end
+
+    if isfinite(qmax) && (qmax < 0.0)
+      push!(msgs, "qmax negative")
+      if autocorrect
+        qmax_pu[bus] = abs(qmax)
+        qmax = qmax_pu[bus]
+        changed = true
+      end
+    end
+
+    if !isempty(msgs)
+      flagged += 1
+      if warn
+        action = changed ? "corrected" : "detected"
+        @printf(io, "Warning: Q-limit sign issue at bus %d (%s) -> %s [qmin=%.6f, qmax=%.6f]\n", bus, join(msgs, ", "), action, qmin, qmax)
+      end
+      corrected += changed ? 1 : 0
+    end
+  end
+
+  return (flagged = flagged, corrected = corrected)
+end
+
+function _qlimit_headroom(limit::Float64, headroom::Float64)
+  if !isfinite(limit)
+    return Inf
+  end
+  return abs(limit) * max(headroom, 0.0)
+end
+
+"""
+    printFinalLimitValidation(net::Net; q_headroom::Float64=0.20, io::IO=stdout)
+
+Prints post-PF validation tables for violated Q limits and voltage limits.
+Returns `(q_violations, v_violations)`.
+"""
+function printFinalLimitValidation(net::Net; q_headroom::Float64 = 0.20, io::IO = stdout)
+  qmin_pu, qmax_pu = getQLimits_pu(net)
+  qrows = Tuple{Int,Float64,Float64,Float64,Float64}[]
+  vrows = Tuple{Int,Float64,Float64,Float64}[]
+
+  for (bus, node) in enumerate(net.nodeVec)
+    qgen = node._qƩGen / net.baseMVA
+    if bus <= length(qmin_pu) && isfinite(qmin_pu[bus])
+      lo = qmin_pu[bus]
+      if qgen < (lo - _qlimit_headroom(lo, q_headroom))
+        push!(qrows, (bus, qgen * net.baseMVA, lo * net.baseMVA, qmax_pu[bus] * net.baseMVA, (lo - qgen) * net.baseMVA))
+      end
+    end
+    if bus <= length(qmax_pu) && isfinite(qmax_pu[bus])
+      hi = qmax_pu[bus]
+      if qgen > (hi + _qlimit_headroom(hi, q_headroom))
+        push!(qrows, (bus, qgen * net.baseMVA, qmin_pu[bus] * net.baseMVA, hi * net.baseMVA, (qgen - hi) * net.baseMVA))
+      end
+    end
+
+    vm = node._vm_pu
+    isnothing(vm) && continue
+    vmin = isnothing(node._vmin_pu) ? net.vmin_pu : node._vmin_pu
+    vmax = isnothing(node._vmax_pu) ? net.vmax_pu : node._vmax_pu
+    vmf = Float64(vm)
+    if vmf < vmin || vmf > vmax
+      push!(vrows, (bus, vmf, vmin, vmax))
+    end
+  end
+
+  println(io, "Final limit validation:")
+  if isempty(qrows)
+    @printf(io, "  Q-limits: no violations beyond %.1f%% headroom.\n", 100 * max(q_headroom, 0.0))
+  else
+    println(io, "  Q-limit violations (MVAr):")
+    println(io, "  Bus │      Qgen │      Qmin │      Qmax │  Violation")
+    for (bus, qgen, qmin, qmax, vio) in qrows
+      @printf(io, " %4d │ %9.3f │ %9.3f │ %9.3f │ %10.3f\n", bus, qgen, qmin, qmax, vio)
+    end
+  end
+
+  if isempty(vrows)
+    println(io, "  Voltage limits: no violations.")
+  else
+    println(io, "  Voltage limit violations (p.u.):")
+    println(io, "  Bus │        Vm │      Vmin │      Vmax")
+    for (bus, vm, vmin, vmax) in vrows
+      @printf(io, " %4d │ %9.5f │ %9.5f │ %9.5f\n", bus, vm, vmin, vmax)
+    end
+  end
+
+  return (q_violations = length(qrows), v_violations = length(vrows))
+end
+
+"""
     active_set_q_limits!(
         net, it, nb;
         get_qreq_pu,
@@ -216,6 +352,7 @@ function active_set_q_limits!(
   allow_reenable::Bool,
   q_hyst_pu::Float64,
   cooldown_iters::Int,
+  pv_to_pq_blocked::AbstractVector{Bool} = falses(nb),
   verbose::Int = 0,
 )
   changed   = false
@@ -224,6 +361,7 @@ function active_set_q_limits!(
   # --- PV -> PQ ------------------------------------------------------------
   @inbounds for bus = 1:nb
     is_pv(bus) || continue
+    pv_to_pq_blocked[bus] && continue
     qreq = get_qreq_pu(bus)
 
     has_q_limits(qmin_pu, qmax_pu, bus) || continue
