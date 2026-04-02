@@ -315,6 +315,4 @@ function main()
   return bench
 end
 
-if abspath(PROGRAM_FILE) == @__FILE__
-  Base.invokelatest(main)
-end
+Base.invokelatest(main)
