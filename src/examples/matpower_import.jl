@@ -190,11 +190,6 @@ function bench_run_acpflow(; casefile::String, methods::Vector{Symbol}, mpc, log
     opt_flatstart_ = $opt_flatstart;
     cooldown_iters_ = $cooldown_iters;
     q_hyst_pu_ = $q_hyst_pu;
-    pv_table_rows_ = $pv_table_rows;
-    check_q_limit_signs_ = $check_q_limit_signs;
-    autocorrect_q_limit_signs_ = $autocorrect_q_limit_signs;
-    validate_limits_after_pf_ = $validate_limits_after_pf;
-    q_limit_violation_headroom_ = $q_limit_violation_headroom;
     lock_pv_to_pq_buses_ = $lock_pv_to_pq_buses;
     method_ = $m)
 
@@ -298,7 +293,7 @@ function main()
   end
 
   cfg = bench_config_for_case(case, yaml_cfg)
-  bench = Base.invokelatest(bench_run_acpflow;
+  bench = bench_run_acpflow(
     casefile = basename(local_case),
     methods = methods,
     mpc = mpc,
@@ -320,4 +315,6 @@ function main()
   return bench
 end
 
-Base.invokelatest(main)
+if abspath(PROGRAM_FILE) == @__FILE__
+  main()
+end
