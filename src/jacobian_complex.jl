@@ -654,7 +654,7 @@ polar formulations.
 - `build_rectangular_jacobian_pq_pv()`: Analytic Jacobian construction
 """
 
-function run_complex_nr_rectangular_for_net!(net::Net; maxiter::Int = 20, tol::Float64 = 1e-8, damp::Float64 = 0.2, verbose::Int = 0, use_fd::Bool = false, opt_sparse::Bool = true, opt_flatstart::Bool = net.flatstart, lock_pv_to_pq_buses::AbstractVector{Int} = Int[])
+function run_complex_nr_rectangular_for_net!(net::Net; maxiter::Int = 20, tol::Float64 = 1e-8, damp::Float64 = 0.2, verbose::Int = 0, use_fd::Bool = false, opt_sparse::Bool = true, opt_flatstart::Bool = net.flatstart, pv_table_rows::Int = 30, lock_pv_to_pq_buses::AbstractVector{Int} = Int[])
   if verbose > 1
     @info "Running complex rectangular NR power flow... use_fd=$use_fd, opt_sparse=$opt_sparse"
   end
@@ -894,7 +894,7 @@ Returns:
 where `status == 0` indicates convergence.
 """
 function runpf_rectangular!(net::Net, maxIte::Int, tolerance::Float64 = 1e-6, verbose::Int = 0; opt_fd::Bool = false, opt_sparse::Bool = true, damp = 1.0, opt_flatstart::Bool = net.flatstart, pv_table_rows::Int = 30, lock_pv_to_pq_buses::AbstractVector{Int} = Int[])
-  iters, erg = run_complex_nr_rectangular_for_net!(net; maxiter = maxIte, tol = tolerance, damp = damp, verbose = verbose, use_fd = opt_fd, opt_sparse = opt_sparse, opt_flatstart = opt_flatstart, lock_pv_to_pq_buses = lock_pv_to_pq_buses)
+  iters, erg = run_complex_nr_rectangular_for_net!(net; maxiter = maxIte, tol = tolerance, damp = damp, verbose = verbose, use_fd = opt_fd, opt_sparse = opt_sparse, opt_flatstart = opt_flatstart, pv_table_rows = pv_table_rows, lock_pv_to_pq_buses = lock_pv_to_pq_buses)
   return iters, erg
 end
 
