@@ -98,7 +98,7 @@ function run_acpflow(;
   # Run power flow
   ite = 0
   etime = @elapsed begin
-    ite, erg = runpf!(myNet, max_ite, tol, verbose; opt_fd = opt_fd, opt_sparse = opt_sparse, method = method, opt_flatstart = opt_flatstart, lock_pv_to_pq_buses = lock_pv_to_pq_buses)
+    ite, erg = runpf!(myNet, max_ite, tol, verbose; opt_fd = opt_fd, opt_sparse = opt_sparse, method = method, opt_flatstart = opt_flatstart, pv_table_rows = pv_table_rows, validate_limits_after_pf = validate_limits_after_pf, q_limit_violation_headroom = q_limit_violation_headroom, lock_pv_to_pq_buses = lock_pv_to_pq_buses)
   end
   
   if erg == 0 || printResultAnyCase

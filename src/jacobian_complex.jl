@@ -893,7 +893,7 @@ Returns:
     (iterations::Int, status::Int)
 where `status == 0` indicates convergence.
 """
-function runpf_rectangular!(net::Net, maxIte::Int, tolerance::Float64 = 1e-6, verbose::Int = 0; opt_fd::Bool = false, opt_sparse::Bool = true, damp = 1.0, opt_flatstart::Bool = net.flatstart, lock_pv_to_pq_buses::AbstractVector{Int} = Int[])
+function runpf_rectangular!(net::Net, maxIte::Int, tolerance::Float64 = 1e-6, verbose::Int = 0; opt_fd::Bool = false, opt_sparse::Bool = true, damp = 1.0, opt_flatstart::Bool = net.flatstart, pv_table_rows::Int = 30, lock_pv_to_pq_buses::AbstractVector{Int} = Int[])
   iters, erg = run_complex_nr_rectangular_for_net!(net; maxiter = maxIte, tol = tolerance, damp = damp, verbose = verbose, use_fd = opt_fd, opt_sparse = opt_sparse, opt_flatstart = opt_flatstart, lock_pv_to_pq_buses = lock_pv_to_pq_buses)
   return iters, erg
 end
@@ -1042,7 +1042,7 @@ Returns:
 
 where `status == 0` indicates convergence.
 """
-function runpf!(net::Net, maxIte::Int, tolerance::Float64 = 1e-6, verbose::Int = 0; method::Symbol = :rectangular, opt_fd::Bool = false, opt_sparse::Bool = true, opt_flatstart::Bool = net.flatstart, damp = 1.0, validate_limits_after_pf::Bool = false, q_limit_violation_headroom::Float64 = 0.0, lock_pv_to_pq_buses::AbstractVector{Int} = Int[])
+function runpf!(net::Net, maxIte::Int, tolerance::Float64 = 1e-6, verbose::Int = 0; method::Symbol = :rectangular, opt_fd::Bool = false, opt_sparse::Bool = true, opt_flatstart::Bool = net.flatstart, damp = 1.0, pv_table_rows::Int = 30, validate_limits_after_pf::Bool = false, q_limit_violation_headroom::Float64 = 0.0, lock_pv_to_pq_buses::AbstractVector{Int} = Int[])
   wnet, reps, has_merges = _merged_pf_net(net)
 
   function _sync_merged_results_to_original!()
@@ -1056,7 +1056,7 @@ function runpf!(net::Net, maxIte::Int, tolerance::Float64 = 1e-6, verbose::Int =
 
   #@info "Running AC Power Flow using method: $(method)"
   if method === :polar_full
-    iters, erg = runpf_full!(wnet, maxIte, tolerance, verbose; opt_sparse = opt_sparse, opt_flatstart = opt_flatstart, lock_pv_to_pq_buses = lock_pv_to_pq_buses)
+    iters, erg = runpf_full!(wnet, maxIte, tolerance, verbose; opt_sparse = opt_sparse, opt_flatstart = opt_flatstart, pv_table_rows = pv_table_rows, lock_pv_to_pq_buses = lock_pv_to_pq_buses)
     if erg == 0 && has_merges
       _sync_merged_results_to_original!()
     end
@@ -1069,9 +1069,9 @@ function runpf!(net::Net, maxIte::Int, tolerance::Float64 = 1e-6, verbose::Int =
       if verbose > 0
         @warn "runpf!: rectangular solver does not support internal Isolated buses from active-link merges; falling back to :polar_full"
       end
-      iters, erg = runpf_full!(wnet, maxIte, tolerance, verbose; opt_sparse = opt_sparse, opt_flatstart = opt_flatstart, lock_pv_to_pq_buses = lock_pv_to_pq_buses)
+      iters, erg = runpf_full!(wnet, maxIte, tolerance, verbose; opt_sparse = opt_sparse, opt_flatstart = opt_flatstart, pv_table_rows = pv_table_rows, lock_pv_to_pq_buses = lock_pv_to_pq_buses)
     else
-      iters, erg = runpf_rectangular!(wnet, maxIte, tolerance, verbose; opt_fd = opt_fd, opt_sparse = opt_sparse, damp = damp, opt_flatstart = opt_flatstart, lock_pv_to_pq_buses = lock_pv_to_pq_buses)
+      iters, erg = runpf_rectangular!(wnet, maxIte, tolerance, verbose; opt_fd = opt_fd, opt_sparse = opt_sparse, damp = damp, opt_flatstart = opt_flatstart, pv_table_rows = pv_table_rows, lock_pv_to_pq_buses = lock_pv_to_pq_buses)
     end
     if erg == 0 && has_merges
       _sync_merged_results_to_original!()
