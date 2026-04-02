@@ -12,35 +12,97 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# file: examples/matpower_import_case14.jl
+# file: examples/matpower_import.jl
 using Sparlectra
 import Sparlectra: MatpowerIO
 using BenchmarkTools
 using Printf
 using Dates
+
+# -----------------------------------------------------------------------------
+# YAML config helpers (simple subset)
+# -----------------------------------------------------------------------------
+function _parse_yaml_scalar(raw::AbstractString)
+  s = strip(raw)
+  isempty(s) && return nothing
+
+  if (startswith(s, "\"") && endswith(s, "\"")) || (startswith(s, "'") && endswith(s, "'"))
+    return s[2:end-1]
+  end
+  ls = lowercase(s)
+  ls == "true" && return true
+  ls == "false" && return false
+  ls == "null" && return nothing
+
+  iv = tryparse(Int, s)
+  !isnothing(iv) && return iv
+  fv = tryparse(Float64, s)
+  !isnothing(fv) && return fv
+  return s
+end
+
+function _parse_yaml_list(raw::AbstractString)
+  inner = strip(raw)[2:end-1]
+  isempty(strip(inner)) && return Any[]
+  return [_parse_yaml_scalar(part) for part in split(inner, ",")]
+end
+
+function load_yaml_config(path::AbstractString)
+  isempty(path) && return Dict{String,Any}()
+  isfile(path) || error("YAML config file not found: $path")
+
+  cfg = Dict{String,Any}()
+  for line in eachline(path)
+    stripped = strip(line)
+    isempty(stripped) && continue
+    startswith(stripped, "#") && continue
+    occursin(":", stripped) || continue
+
+    key, value_raw = split(stripped, ":"; limit = 2)
+    key = strip(key)
+    value_raw = strip(split(value_raw, "#"; limit = 2)[1]) # remove inline comments
+
+    if startswith(value_raw, "[") && endswith(value_raw, "]")
+      cfg[key] = _parse_yaml_list(value_raw)
+    else
+      cfg[key] = _parse_yaml_scalar(value_raw)
+    end
+  end
+  return cfg
+end
+
+function _as_symbol_vec(v)
+  v isa AbstractVector || return Symbol[]
+  return Symbol.(String.(v))
+end
+
+function _as_int_vec(v)
+  v isa AbstractVector || return Int[]
+  return Int[x for x in v]
+end
+
+function _yaml_path_from_inputs()
+  !isempty(ARGS) && return ARGS[1]
+  return get(ENV, "SPARLECTRA_MATPOWER_IMPORT_YAML", "")
+end
 # -----------------------------------------------------------------------------
 # Configuration
 # -----------------------------------------------------------------------------
-
-#case = "case30.m"     
-#case = "case118.m"    
-#case = "case39.m"     
-#case = "case57.m"     
-#case = "case300.m"
-#case = "case18.m"     
-#case = "case141.m"
-#case = "case69.m"     
-#case = "case85.m"     
-#case = "case1354pegase.m"
-
-#case = "case2869pegase.m"
-#case = "case9241pegase.m"
-case = "case1951rte.m"
+const DEFAULT_CASE = "case141.m"
+const DEFAULT_METHODS = [:polar_full, :rectangular, :classic]
+const YAML_PATH = _yaml_path_from_inputs()
+const YAML_CFG = load_yaml_config(YAML_PATH)
+case = String(get(YAML_CFG, "case", DEFAULT_CASE))
+methods_cfg = haskey(YAML_CFG, "methods") ? _as_symbol_vec(YAML_CFG["methods"]) : Symbol[]
+methods = isempty(methods_cfg) ? DEFAULT_METHODS : methods_cfg
 
 print("\e[2J\e[H") # clear screen and move cursor to home position
 println("----------------------------------------------------------------------------------------------")
 println("Sparlectra version: ", Sparlectra.version(), "\n")
 println("Importing MATPOWER case file: $case\n")
+if !isempty(YAML_PATH)
+  println("Using YAML config: $YAML_PATH\n")
+end
 
 # -----------------------------------------------------------------------------
 # Output redirection (write verbose output to git-ignored file)
@@ -82,8 +144,49 @@ end
 # Compare against MATPOWER reference (if present)
 # -----------------------------------------------------------------------------
 show_diff = true
-tol_vm    = 2e-2
-tol_va    = 5e-1
+tol_vm = 2e-2
+tol_va = 5e-1
+const METHODS = [:polar_full, :rectangular, :classic]
+
+# Keep scenario-specific benchmark options centralized here.
+# If additional case-specific options are introduced (e.g. PV->PQ lock lists),
+# they can be added in this table instead of using local `if case == ...` blocks.
+const CASE_BENCH_OVERRIDES = Dict{String,NamedTuple}(
+  # Example:
+  # "case1951rte.m" => (; lock_pv_to_pq_buses = [44]),
+)
+
+function bench_config_for_case(case_name::AbstractString)
+  base = (;
+    opt_fd = false,
+    opt_sparse = true,
+    opt_flatstart = false,
+    verbose = 1,
+    cooldown_iters = 0,
+    q_hyst_pu = 0.0,
+    lock_pv_to_pq_buses = Int[],
+    seconds = 2.0,
+    samples = 50,
+    show_once = true,
+  )
+  case_override = get(CASE_BENCH_OVERRIDES, String(case_name), (;))
+  yaml_override = (;)
+  if !isempty(YAML_CFG)
+    yaml_override = (;
+      opt_fd = Bool(get(YAML_CFG, "opt_fd", base.opt_fd)),
+      opt_sparse = Bool(get(YAML_CFG, "opt_sparse", base.opt_sparse)),
+      opt_flatstart = Bool(get(YAML_CFG, "opt_flatstart", base.opt_flatstart)),
+      verbose = Int(get(YAML_CFG, "verbose", base.verbose)),
+      cooldown_iters = Int(get(YAML_CFG, "cooldown_iters", base.cooldown_iters)),
+      q_hyst_pu = Float64(get(YAML_CFG, "q_hyst_pu", base.q_hyst_pu)),
+      lock_pv_to_pq_buses = _as_int_vec(get(YAML_CFG, "lock_pv_to_pq_buses", base.lock_pv_to_pq_buses)),
+      seconds = Float64(get(YAML_CFG, "seconds", base.seconds)),
+      samples = Int(get(YAML_CFG, "samples", base.samples)),
+      show_once = Bool(get(YAML_CFG, "show_once", base.show_once)),
+    )
+  end
+  return merge(base, case_override, yaml_override)
+end
 
 function mp_has_vm_va(mpc)
   size(mpc.bus, 2) >= 9 || return false
@@ -102,76 +205,24 @@ end
 # -----------------------------------------------------------------------------
 # Benchmark helper: benchmark exactly run_acpflow(...)
 # -----------------------------------------------------------------------------
-function bench_run_acpflow(;
-  casefile::String,
-  methods::Vector{Symbol},
-  opt_fd::Bool = true,
-  opt_sparse::Bool = true,
-  opt_flatstart::Bool = true,
-  verbose::Int = 0,
-  cooldown_iters::Int = 0,
-  q_hyst_pu::Float64 = 0.0,
-  pv_table_rows::Int = 30,
-  check_q_limit_signs::Bool = false,
-  autocorrect_q_limit_signs::Bool = false,
-  validate_limits_after_pf::Bool = false,
-  q_limit_violation_headroom::Float64 = 0.20,
-  lock_pv_to_pq_buses::AbstractVector{Int} = Int[],
-  seconds::Float64 = 2.0,
-  samples::Int = 50,
-  show_once::Bool = false,
-)
+function bench_run_acpflow(; casefile::String, methods::Vector{Symbol}, opt_fd::Bool = true, opt_sparse::Bool = true, opt_flatstart::Bool = true, verbose::Int = 0, cooldown_iters::Int = 0, q_hyst_pu::Float64 = 0.0, lock_pv_to_pq_buses::AbstractVector{Int} = Int[], seconds::Float64 = 2.0, samples::Int = 50, show_once::Bool = false)
   results = Dict{Symbol,Any}()
 
   # Warmup (compile) once per method with minimal output
   for m in methods
-    run_acpflow(
-      casefile = casefile,
-      opt_fd = opt_fd,
-      opt_sparse = opt_sparse,
-      method = m,
-      opt_flatstart = opt_flatstart,
-      show_results = false,
-      verbose = 0,
-      cooldown_iters = cooldown_iters,
-      q_hyst_pu = q_hyst_pu,
-      pv_table_rows = pv_table_rows,
-      check_q_limit_signs = check_q_limit_signs,
-      autocorrect_q_limit_signs = autocorrect_q_limit_signs,
-      validate_limits_after_pf = validate_limits_after_pf,
-      q_limit_violation_headroom = q_limit_violation_headroom,
-      lock_pv_to_pq_buses = lock_pv_to_pq_buses,
-    )
+    run_acpflow(casefile = casefile, opt_fd = opt_fd, opt_sparse = opt_sparse, method = m, opt_flatstart = opt_flatstart, show_results = false, verbose = 0, cooldown_iters = cooldown_iters, q_hyst_pu = q_hyst_pu, lock_pv_to_pq_buses = lock_pv_to_pq_buses)
   end
 
   println("\n==================== Benchmark run_acpflow ====================")
   println("casefile        = ", casefile)
   println("opt_fd          = ", opt_fd, "   opt_sparse = ", opt_sparse, "   flatstart = ", opt_flatstart)
   println("cooldown_iters  = ", cooldown_iters, "   q_hyst_pu = ", q_hyst_pu)
-  println("pv_table_rows   = ", pv_table_rows, "   q_headroom = ", q_limit_violation_headroom)
-  println("q_sign_check    = ", check_q_limit_signs, "   q_sign_autocorrect = ", autocorrect_q_limit_signs)
-  println("validate_limits = ", validate_limits_after_pf, "   lock PV->PQ = ", collect(lock_pv_to_pq_buses))
+  println("lock PV->PQ     = ", collect(lock_pv_to_pq_buses))
   println("seconds/method  = ", seconds, "   samples = ", samples)
   println("===============================================================\n")
 
   for m in methods
-    benchable = @benchmarkable run_acpflow(
-      casefile = casefile_,
-      opt_fd = opt_fd_,
-      opt_sparse = opt_sparse_,
-      method = method_,
-      opt_flatstart = opt_flatstart_,
-      show_results = false,
-      verbose = 0,
-      cooldown_iters = cooldown_iters_,
-      q_hyst_pu = q_hyst_pu_,
-      pv_table_rows = pv_table_rows_,
-      check_q_limit_signs = check_q_limit_signs_,
-      autocorrect_q_limit_signs = autocorrect_q_limit_signs_,
-      validate_limits_after_pf = validate_limits_after_pf_,
-      q_limit_violation_headroom = q_limit_violation_headroom_,
-      lock_pv_to_pq_buses = lock_pv_to_pq_buses_,
-    ) setup = (casefile_ = $casefile;
+    benchable = @benchmarkable run_acpflow(casefile = casefile_, opt_fd = opt_fd_, opt_sparse = opt_sparse_, method = method_, opt_flatstart = opt_flatstart_, show_results = false, verbose = 0, cooldown_iters = cooldown_iters_, q_hyst_pu = q_hyst_pu_, lock_pv_to_pq_buses = lock_pv_to_pq_buses_) setup = (casefile_ = $casefile;
     opt_fd_ = $opt_fd;
     opt_sparse_ = $opt_sparse;
     opt_flatstart_ = $opt_flatstart;
@@ -217,23 +268,7 @@ function bench_run_acpflow(;
             println("RUN method = ", m)
             println("=================================================================\n")
 
-            net_res = run_acpflow(
-              casefile = casefile,
-              opt_fd = opt_fd,
-              opt_sparse = opt_sparse,
-              method = m,
-              opt_flatstart = opt_flatstart,
-              show_results = true,
-              verbose = verbose,
-              cooldown_iters = cooldown_iters,
-              q_hyst_pu = q_hyst_pu,
-              pv_table_rows = pv_table_rows,
-              check_q_limit_signs = check_q_limit_signs,
-              autocorrect_q_limit_signs = autocorrect_q_limit_signs,
-              validate_limits_after_pf = validate_limits_after_pf,
-              q_limit_violation_headroom = q_limit_violation_headroom,
-              lock_pv_to_pq_buses = lock_pv_to_pq_buses,
-            )
+            net_res = run_acpflow(casefile = casefile, opt_fd = opt_fd, opt_sparse = opt_sparse, method = m, opt_flatstart = opt_flatstart, show_results = true, verbose = verbose, cooldown_iters = cooldown_iters, q_hyst_pu = q_hyst_pu, lock_pv_to_pq_buses = lock_pv_to_pq_buses)
 
             # compare (still computed, but details go to logfile)
             if mp_has_vm_va(mpc)
@@ -265,30 +300,21 @@ function bench_run_acpflow(;
   return results
 end
 
-methods = [:polar_full, :rectangular, :classic]
-
 function main()
-  methods = [:polar_full, :rectangular, :classic]
-  lock_pv_to_pq_buses = [44] # analysis example: keep Bus 44 as PV
-
+  cfg = bench_config_for_case(case)
   bench = bench_run_acpflow(
     casefile = basename(local_case),
     methods = methods,
-    opt_fd = false,
-    opt_sparse = true,
-    opt_flatstart = false,
-    verbose = 1,
-    cooldown_iters = 0,
-    q_hyst_pu = 0.0,
-    pv_table_rows = 30,
-    check_q_limit_signs = true,
-    autocorrect_q_limit_signs = true,
-    validate_limits_after_pf = true,
-    q_limit_violation_headroom = 0.20,
-    lock_pv_to_pq_buses = lock_pv_to_pq_buses,
-    seconds = 2.0,
-    samples = 50,
-    show_once = true,
+    opt_fd = cfg.opt_fd,
+    opt_sparse = cfg.opt_sparse,
+    opt_flatstart = cfg.opt_flatstart,
+    verbose = cfg.verbose,
+    cooldown_iters = cfg.cooldown_iters,
+    q_hyst_pu = cfg.q_hyst_pu,
+    lock_pv_to_pq_buses = cfg.lock_pv_to_pq_buses,
+    seconds = cfg.seconds,
+    samples = cfg.samples,
+    show_once = cfg.show_once,
   )
   return bench
 end
