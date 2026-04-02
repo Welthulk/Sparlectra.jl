@@ -99,6 +99,39 @@ function getQLimits_pu(net::Net)
   _sanitize_q_limits!(net.qmin_pu, net.qmax_pu, length(net.nodeVec))
   return net.qmin_pu, net.qmax_pu
 end
+
+"""
+    printPVQLimitsTable(net::Net; io::IO=stdout)
+
+Print a compact table of PV-bus reactive limits before the PF iteration starts.
+Values are shown in **MVAr**.
+"""
+function printPVQLimitsTable(net::Net; io::IO = stdout)
+  qmin_pu, qmax_pu = getQLimits_pu(net)
+  rows = Tuple{Int,Float64,Float64}[]
+
+  for (bus, node) in enumerate(net.nodeVec)
+    getNodeType(node) == PV || continue
+    qmin = ((bus <= length(qmin_pu)) && isfinite(qmin_pu[bus])) ? (qmin_pu[bus] * net.baseMVA) : -Inf
+    qmax = ((bus <= length(qmax_pu)) && isfinite(qmax_pu[bus])) ? (qmax_pu[bus] * net.baseMVA) : Inf
+    push!(rows, (bus, qmin, qmax))
+  end
+
+  if isempty(rows)
+    println(io, "PV Q-limits (MVAr): no PV buses.")
+    return nothing
+  end
+
+  println(io, "PV Q-limits before PF run (MVAr):")
+  println(io, "──────────────────────────────────────────────")
+  println(io, " Bus │      Qmin [MVAr] │      Qmax [MVAr]")
+  println(io, "──────────────────────────────────────────────")
+  for (bus, qmin, qmax) in rows
+    @printf(io, " %3d │ %15.6f │ %15.6f\n", bus, qmin, qmax)
+  end
+  println(io, "──────────────────────────────────────────────")
+  return nothing
+end
 """
     pv_hit_q_limit(net, pv_names)
 
