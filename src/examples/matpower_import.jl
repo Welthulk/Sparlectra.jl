@@ -316,5 +316,5 @@ function main()
 end
 
 if abspath(PROGRAM_FILE) == @__FILE__
-  main()
+  Base.invokelatest(main)
 end
