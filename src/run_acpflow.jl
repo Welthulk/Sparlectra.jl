@@ -95,10 +95,30 @@ function run_acpflow(;
     error("File extension $(ext) not supported! Use .m or .jl")
   end
 
+  # Resolve PV->PQ lock list (prefer original bus IDs; fallback to internal indices).
+  lock_pv_to_pq_buses_resolved = Int[]
+  if !isempty(lock_pv_to_pq_buses)
+    orig_to_net = Dict{Int,Int}()
+    for (net_idx, orig_idx) in myNet.busOrigIdxDict
+      orig_to_net[orig_idx] = net_idx
+    end
+    for bus in lock_pv_to_pq_buses
+      if haskey(orig_to_net, bus)
+        push!(lock_pv_to_pq_buses_resolved, orig_to_net[bus])
+      elseif 1 <= bus <= length(myNet.nodeVec)
+        push!(lock_pv_to_pq_buses_resolved, bus)
+      elseif verbose > 0
+        @warn "lock_pv_to_pq_buses entry not found (ignored): $bus"
+      end
+    end
+    unique!(lock_pv_to_pq_buses_resolved)
+    sort!(lock_pv_to_pq_buses_resolved)
+  end
+
   # Run power flow
   ite = 0
   etime = @elapsed begin
-    ite, erg = runpf!(myNet, max_ite, tol, verbose; opt_fd = opt_fd, opt_sparse = opt_sparse, method = method, opt_flatstart = opt_flatstart, pv_table_rows = pv_table_rows, validate_limits_after_pf = validate_limits_after_pf, q_limit_violation_headroom = q_limit_violation_headroom, lock_pv_to_pq_buses = lock_pv_to_pq_buses)
+    ite, erg = runpf!(myNet, max_ite, tol, verbose; opt_fd = opt_fd, opt_sparse = opt_sparse, method = method, opt_flatstart = opt_flatstart, pv_table_rows = pv_table_rows, validate_limits_after_pf = validate_limits_after_pf, q_limit_violation_headroom = q_limit_violation_headroom, lock_pv_to_pq_buses = lock_pv_to_pq_buses_resolved)
   end
   
   if erg == 0 || printResultAnyCase
