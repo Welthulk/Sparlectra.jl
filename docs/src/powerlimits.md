@@ -49,6 +49,19 @@ Typical source of these limits:
 * A helper like `setQLimits!` / `buildQLimits!` pre-fills `net.qmin_pu` and
   `net.qmax_pu` before the power flow.
 
+## Pre-run Q-limit Preview in MVAr
+
+Before entering the Newton-Raphson loop, Sparlectra can print a compact
+Q-limit preview (when `verbose > 1`). The preview is intended as a quick
+sanity check for operational values and is shown in **MVAr** at bus level
+(derived from internal per-unit limits using `baseMVA`).
+
+Practical intent:
+
+* verify that imported/aggregated limits are plausible,
+* detect unit mixups early (pu vs. MVAr),
+* support debugging before the first NR iteration starts.
+
 ## Logging Q-Limit Hits
 
 Q-limit events are represented by `QLimitEvent` and are stored in
