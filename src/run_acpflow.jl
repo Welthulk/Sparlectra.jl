@@ -42,6 +42,12 @@ function run_acpflow(;
   show_results::Bool = true,
   cooldown_iters::Int = 0,
   q_hyst_pu::Float64 = 0.0,
+  pv_table_rows::Int = 30,
+  check_q_limit_signs::Bool = false,
+  autocorrect_q_limit_signs::Bool = false,
+  validate_limits_after_pf::Bool = false,
+  q_limit_violation_headroom::Float64 = 0.20,
+  lock_pv_to_pq_buses::AbstractVector{Int} = Int[],
 )::Net  
   ext = lowercase(splitext(casefile)[2])
   myNet = nothing              # Initialize myNet variable
@@ -92,7 +98,7 @@ function run_acpflow(;
   # Run power flow
   ite = 0
   etime = @elapsed begin
-    ite, erg = runpf!(myNet, max_ite, tol, verbose; opt_fd = opt_fd, opt_sparse = opt_sparse, method = method, opt_flatstart = opt_flatstart)
+    ite, erg = runpf!(myNet, max_ite, tol, verbose; opt_fd = opt_fd, opt_sparse = opt_sparse, method = method, opt_flatstart = opt_flatstart, pv_table_rows = pv_table_rows, check_q_limit_signs = check_q_limit_signs, autocorrect_q_limit_signs = autocorrect_q_limit_signs, validate_limits_after_pf = validate_limits_after_pf, q_limit_violation_headroom = q_limit_violation_headroom, lock_pv_to_pq_buses = lock_pv_to_pq_buses)
   end
   
   if erg == 0 || printResultAnyCase
@@ -123,12 +129,12 @@ Parameters:
 - printResultToFile: Bool, flag to print results to a file (default: false).
 - printResultAnyCase: Bool, flag to print results even if the power flow fails (default: false).
 """
-function run_net_acpflow(; net::Net, max_ite::Int = 30, tol::Float64 = 1e-6, verbose::Int = 0, printResultToFile::Bool = false, printResultAnyCase::Bool = false, opt_fd::Bool = false, opt_sparse::Bool = false, method::Symbol = :polar_full, show_results::Bool = true)
+function run_net_acpflow(; net::Net, max_ite::Int = 30, tol::Float64 = 1e-6, verbose::Int = 0, printResultToFile::Bool = false, printResultAnyCase::Bool = false, opt_fd::Bool = false, opt_sparse::Bool = false, method::Symbol = :polar_full, show_results::Bool = true, pv_table_rows::Int = 30, check_q_limit_signs::Bool = false, autocorrect_q_limit_signs::Bool = false, validate_limits_after_pf::Bool = false, q_limit_violation_headroom::Float64 = 0.20, lock_pv_to_pq_buses::AbstractVector{Int} = Int[])
 
   # Run power flow
   ite = 0
   etime = @elapsed begin
-    ite, erg = runpf!(net, max_ite, tol, verbose; opt_fd = opt_fd, opt_sparse = opt_sparse, method = method)
+    ite, erg = runpf!(net, max_ite, tol, verbose; opt_fd = opt_fd, opt_sparse = opt_sparse, method = method, pv_table_rows = pv_table_rows, check_q_limit_signs = check_q_limit_signs, autocorrect_q_limit_signs = autocorrect_q_limit_signs, validate_limits_after_pf = validate_limits_after_pf, q_limit_violation_headroom = q_limit_violation_headroom, lock_pv_to_pq_buses = lock_pv_to_pq_buses)
   end
 
   if erg == 0 || printResultAnyCase
