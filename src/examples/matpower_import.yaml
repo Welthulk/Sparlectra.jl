@@ -1,0 +1,25 @@
+#
+# Example configuration for src/examples/matpower_import.jl
+#
+# Usage:
+#   julia --project=. src/examples/matpower_import.jl src/examples/matpower_import.yaml
+# or
+#   SPARLECTRA_MATPOWER_IMPORT_YAML=src/examples/matpower_import.yaml julia --project=. src/examples/matpower_import.jl
+#
+
+case: case141.m
+methods: [polar_full, rectangular, classic]
+
+opt_fd: false
+opt_sparse: true
+opt_flatstart: false
+verbose: 1
+cooldown_iters: 0
+q_hyst_pu: 0.0
+
+# Prevent these buses from PV->PQ switching due to Q-limit active-set logic.
+lock_pv_to_pq_buses: []
+
+seconds: 2.0
+samples: 50
+show_once: true

@@ -361,16 +361,22 @@ function active_set_q_limits!(
   allow_reenable::Bool,
   q_hyst_pu::Float64,
   cooldown_iters::Int,
-  pv_to_pq_blocked::AbstractVector{Bool} = falses(nb),
+  lock_pv_to_pq_buses::AbstractVector{Int} = Int[],
   verbose::Int = 0,
 )
   changed   = false
   reenabled = false
+  lock_mask = falses(nb)
+  @inbounds for bus in lock_pv_to_pq_buses
+    if 1 <= bus <= nb
+      lock_mask[bus] = true
+    end
+  end
 
   # --- PV -> PQ ------------------------------------------------------------
   @inbounds for bus = 1:nb
     is_pv(bus) || continue
-    pv_to_pq_blocked[bus] && continue
+    lock_mask[bus] && continue
     qreq = get_qreq_pu(bus)
 
     has_q_limits(qmin_pu, qmax_pu, bus) || continue

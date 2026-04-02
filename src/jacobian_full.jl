@@ -223,7 +223,7 @@ end
 # ------------------------------
 # Full Newton-Raphson including PV identity rows (separate from the reduced version)
 # ------------------------------
-function calcNewtonRaphson_withPVIdentity!(net::Net, Y::AbstractMatrix{ComplexF64}, maxIte::Int; tolerance::Float64 = 1e-6, verbose::Int = 0, sparse::Bool = false, flatStart::Bool = false, angle_limit::Bool = false, debug::Bool = false, pv_table_rows::Int = 30, pv_to_pq_blocked::AbstractVector{Bool} = falses(length(net.nodeVec)))
+function calcNewtonRaphson_withPVIdentity!(net::Net, Y::AbstractMatrix{ComplexF64}, maxIte::Int; tolerance::Float64 = 1e-6, verbose::Int = 0, sparse::Bool = false, flatStart::Bool = false, angle_limit::Bool = false, debug::Bool = false, lock_pv_to_pq_buses::AbstractVector{Int} = Int[])
   if verbose > 0
     @info "Running full-system Newton-Raphson with PV identity rows...sparse=$sparse, flatStart=$flatStart, angle_limit=$angle_limit, debug=$debug"
   end
@@ -286,7 +286,7 @@ function calcNewtonRaphson_withPVIdentity!(net::Net, Y::AbstractMatrix{ComplexF6
         allow_reenable = allow_reenable,
         q_hyst_pu = q_hyst_pu,
         cooldown_iters = cooldown_iters,
-        pv_to_pq_blocked = pv_to_pq_blocked,
+        lock_pv_to_pq_buses = lock_pv_to_pq_buses,
         verbose = verbose,
 
         # Q required at bus (p.u.) from last residuum evaluation
@@ -412,7 +412,7 @@ end
 # ------------------------------
 # Convenience wrapper similar to runpf!, but for the full system
 # ------------------------------
-function runpf_full!(net::Net, maxIte::Int, tolerance::Float64 = 1e-6, verbose::Int = 0; opt_sparse::Bool = false, opt_flatstart::Bool = net.flatstart, pv_table_rows::Int = 30, pv_to_pq_blocked::AbstractVector{Bool} = falses(length(net.nodeVec)))
+function runpf_full!(net::Net, maxIte::Int, tolerance::Float64 = 1e-6, verbose::Int = 0; opt_sparse::Bool = false, opt_flatstart::Bool = net.flatstart, lock_pv_to_pq_buses::AbstractVector{Int} = Int[])
   printYBus = (length(net.nodeVec) < 20) && (verbose > 1)
   Y = createYBUS(net = net, sparse = opt_sparse, printYBUS = printYBus)
   if verbose > 1
@@ -421,5 +421,5 @@ function runpf_full!(net::Net, maxIte::Int, tolerance::Float64 = 1e-6, verbose::
     Ydiag_imag_max = maximum(abs.(imag.(diag(Y))))
     @printf "Ybus summary: Yabs_max=%.6e, Ydiag_max=%.6e, Ydiag_imag_max=%.6e\n" Yabs_max Ydiag_max Ydiag_imag_max
   end
-  return calcNewtonRaphson_withPVIdentity!(net, Y, maxIte; tolerance = tolerance, verbose = verbose, sparse = opt_sparse, flatStart = opt_flatstart, angle_limit = false, debug = false, pv_table_rows = pv_table_rows, pv_to_pq_blocked = pv_to_pq_blocked)
+  return calcNewtonRaphson_withPVIdentity!(net, Y, maxIte; tolerance = tolerance, verbose = verbose, sparse = opt_sparse, flatStart = opt_flatstart, angle_limit = false, debug = false, lock_pv_to_pq_buses = lock_pv_to_pq_buses)  
 end
