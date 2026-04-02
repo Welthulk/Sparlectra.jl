@@ -298,7 +298,7 @@ function main()
   end
 
   cfg = bench_config_for_case(case, yaml_cfg)
-  bench = bench_run_acpflow(
+  bench = Base.invokelatest(bench_run_acpflow;
     casefile = basename(local_case),
     methods = methods,
     mpc = mpc,
@@ -320,4 +320,4 @@ function main()
   return bench
 end
 
-main()
+Base.invokelatest(main)
