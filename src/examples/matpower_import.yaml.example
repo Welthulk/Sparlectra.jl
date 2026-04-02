@@ -18,6 +18,7 @@ opt_fd: false
 opt_sparse: true
 opt_flatstart: false
 max_ite: 30
+tol: 1.0e-6
 verbose: 1
 cooldown_iters: 0
 q_hyst_pu: 0.0
