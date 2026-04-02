@@ -83,7 +83,12 @@ end
 
 function _yaml_path_from_inputs()
   !isempty(ARGS) && return ARGS[1]
-  return get(ENV, "SPARLECTRA_MATPOWER_IMPORT_YAML", "")
+  env_path = get(ENV, "SPARLECTRA_MATPOWER_IMPORT_YAML", "")
+  !isempty(env_path) && return env_path
+
+  local_default = joinpath(@__DIR__, "matpower_import.yaml")
+  isfile(local_default) && return local_default
+  return ""
 end
 # -----------------------------------------------------------------------------
 # Configuration
