@@ -83,26 +83,19 @@ end
 
 function _yaml_path_from_inputs()
   !isempty(ARGS) && return ARGS[1]
-  return get(ENV, "SPARLECTRA_MATPOWER_IMPORT_YAML", "")
+  env_path = get(ENV, "SPARLECTRA_MATPOWER_IMPORT_YAML", "")
+  !isempty(env_path) && return env_path
+
+  local_default = joinpath(@__DIR__, "matpower_import.yaml")
+  isfile(local_default) && return local_default
+  return ""
 end
 # -----------------------------------------------------------------------------
 # Configuration
 # -----------------------------------------------------------------------------
 const DEFAULT_CASE = "case141.m"
 const DEFAULT_METHODS = [:polar_full, :rectangular, :classic]
-const YAML_PATH = _yaml_path_from_inputs()
-const YAML_CFG = load_yaml_config(YAML_PATH)
-case = String(get(YAML_CFG, "case", DEFAULT_CASE))
-methods_cfg = haskey(YAML_CFG, "methods") ? _as_symbol_vec(YAML_CFG["methods"]) : Symbol[]
-methods = isempty(methods_cfg) ? DEFAULT_METHODS : methods_cfg
-
-print("\e[2J\e[H") # clear screen and move cursor to home position
-println("----------------------------------------------------------------------------------------------")
-println("Sparlectra version: ", Sparlectra.version(), "\n")
-println("Importing MATPOWER case file: $case\n")
-if !isempty(YAML_PATH)
-  println("Using YAML config: $YAML_PATH\n")
-end
+const METHODS = [:polar_full, :rectangular, :classic]
 
 # -----------------------------------------------------------------------------
 # Output redirection (write verbose output to git-ignored file)
@@ -110,43 +103,12 @@ end
 const OUTDIR = joinpath(@__DIR__, "_out")
 mkpath(OUTDIR)
 
-timestamp = Dates.format(Dates.now(), "yyyymmdd_HHMMSS")
-logfile   = joinpath(OUTDIR, "run_$(case)_$(timestamp).log")
-
-# -----------------------------------------------------------------------------
-# Ensure case is available locally (download on demand)
-# -----------------------------------------------------------------------------
-
-# This will:
-# - download case14.m into data/mpower/ if missing
-# - generate case14.jl if requested and missing
-local_case = Sparlectra.FetchMatpowerCase.ensure_casefile(case; outdir = Sparlectra.MPOWER_DIR, to_jl = true, overwrite = false)
-
-# -----------------------------------------------------------------------------
-# Read case (Julia or MATPOWER)
-# -----------------------------------------------------------------------------
-
-mpc = MatpowerIO.read_case(local_case)
-
-# quick consistency check: are mpc.bus VM/VA a solved operating point?
-vmva_chk = MatpowerIO.vmva_power_mismatch_stats(mpc)
-if get(vmva_chk, :ok, false)
-  println("==================== MATPOWER VM/VA self-check ====================")
-  println("checked eqns     : P(PQ+PV)=", vmva_chk.n_p, "  Q(PQ)=", vmva_chk.n_q)
-  println("max |ΔP| (PQ+PV) : ", vmva_chk.max_p_mis_pu, " pu  (", vmva_chk.max_p_mis_MW, " MW)")
-  println("max |ΔQ| (PQ)    : ", vmva_chk.max_q_mis_pu, " pu  (", vmva_chk.max_q_mis_MVar, " MVar)")
-  println("===================================================================\n")
-else
-  println("MATPOWER VM/VA self-check skipped: ", get(vmva_chk, :msg, "unknown reason"))
-end
-
 # -----------------------------------------------------------------------------
 # Compare against MATPOWER reference (if present)
 # -----------------------------------------------------------------------------
 show_diff = true
 tol_vm = 2e-2
 tol_va = 5e-1
-const METHODS = [:polar_full, :rectangular, :classic]
 
 # Keep scenario-specific benchmark options centralized here.
 # If additional case-specific options are introduced (e.g. PV->PQ lock lists),
@@ -156,7 +118,7 @@ const CASE_BENCH_OVERRIDES = Dict{String,NamedTuple}(
   # "case1951rte.m" => (; lock_pv_to_pq_buses = [44]),
 )
 
-function bench_config_for_case(case_name::AbstractString)
+function bench_config_for_case(case_name::AbstractString, yaml_cfg::Dict{String,Any})
   base = (;
     opt_fd = false,
     opt_sparse = true,
@@ -171,18 +133,18 @@ function bench_config_for_case(case_name::AbstractString)
   )
   case_override = get(CASE_BENCH_OVERRIDES, String(case_name), (;))
   yaml_override = (;)
-  if !isempty(YAML_CFG)
+  if !isempty(yaml_cfg)
     yaml_override = (;
-      opt_fd = Bool(get(YAML_CFG, "opt_fd", base.opt_fd)),
-      opt_sparse = Bool(get(YAML_CFG, "opt_sparse", base.opt_sparse)),
-      opt_flatstart = Bool(get(YAML_CFG, "opt_flatstart", base.opt_flatstart)),
-      verbose = Int(get(YAML_CFG, "verbose", base.verbose)),
-      cooldown_iters = Int(get(YAML_CFG, "cooldown_iters", base.cooldown_iters)),
-      q_hyst_pu = Float64(get(YAML_CFG, "q_hyst_pu", base.q_hyst_pu)),
-      lock_pv_to_pq_buses = _as_int_vec(get(YAML_CFG, "lock_pv_to_pq_buses", base.lock_pv_to_pq_buses)),
-      seconds = Float64(get(YAML_CFG, "seconds", base.seconds)),
-      samples = Int(get(YAML_CFG, "samples", base.samples)),
-      show_once = Bool(get(YAML_CFG, "show_once", base.show_once)),
+      opt_fd = Bool(get(yaml_cfg, "opt_fd", base.opt_fd)),
+      opt_sparse = Bool(get(yaml_cfg, "opt_sparse", base.opt_sparse)),
+      opt_flatstart = Bool(get(yaml_cfg, "opt_flatstart", base.opt_flatstart)),
+      verbose = Int(get(yaml_cfg, "verbose", base.verbose)),
+      cooldown_iters = Int(get(yaml_cfg, "cooldown_iters", base.cooldown_iters)),
+      q_hyst_pu = Float64(get(yaml_cfg, "q_hyst_pu", base.q_hyst_pu)),
+      lock_pv_to_pq_buses = _as_int_vec(get(yaml_cfg, "lock_pv_to_pq_buses", base.lock_pv_to_pq_buses)),
+      seconds = Float64(get(yaml_cfg, "seconds", base.seconds)),
+      samples = Int(get(yaml_cfg, "samples", base.samples)),
+      show_once = Bool(get(yaml_cfg, "show_once", base.show_once)),
     )
   end
   return merge(base, case_override, yaml_override)
@@ -205,7 +167,7 @@ end
 # -----------------------------------------------------------------------------
 # Benchmark helper: benchmark exactly run_acpflow(...)
 # -----------------------------------------------------------------------------
-function bench_run_acpflow(; casefile::String, methods::Vector{Symbol}, opt_fd::Bool = true, opt_sparse::Bool = true, opt_flatstart::Bool = true, verbose::Int = 0, cooldown_iters::Int = 0, q_hyst_pu::Float64 = 0.0, lock_pv_to_pq_buses::AbstractVector{Int} = Int[], seconds::Float64 = 2.0, samples::Int = 50, show_once::Bool = false)
+function bench_run_acpflow(; casefile::String, methods::Vector{Symbol}, mpc, logfile::String, show_diff::Bool, tol_vm::Float64, tol_va::Float64, opt_fd::Bool = true, opt_sparse::Bool = true, opt_flatstart::Bool = true, verbose::Int = 0, cooldown_iters::Int = 0, q_hyst_pu::Float64 = 0.0, lock_pv_to_pq_buses::AbstractVector{Int} = Int[], seconds::Float64 = 2.0, samples::Int = 50, show_once::Bool = false)
   results = Dict{Symbol,Any}()
 
   # Warmup (compile) once per method with minimal output
@@ -301,10 +263,49 @@ function bench_run_acpflow(; casefile::String, methods::Vector{Symbol}, opt_fd::
 end
 
 function main()
-  cfg = bench_config_for_case(case)
+  yaml_path = _yaml_path_from_inputs()
+  yaml_cfg = load_yaml_config(yaml_path)
+  case = String(get(yaml_cfg, "case", DEFAULT_CASE))
+  methods_cfg = haskey(yaml_cfg, "methods") ? _as_symbol_vec(yaml_cfg["methods"]) : Symbol[]
+  methods = isempty(methods_cfg) ? DEFAULT_METHODS : methods_cfg
+
+  print("\e[2J\e[H") # clear screen and move cursor to home position
+  println("----------------------------------------------------------------------------------------------")
+  println("Sparlectra version: ", Sparlectra.version(), "\n")
+  println("Importing MATPOWER case file: $case\n")
+  if !isempty(yaml_path)
+    println("Using YAML config: $yaml_path\n")
+  end
+
+  timestamp = Dates.format(Dates.now(), "yyyymmdd_HHMMSS")
+  logfile = joinpath(OUTDIR, "run_$(case)_$(timestamp).log")
+
+  # This will:
+  # - download case14.m into data/mpower/ if missing
+  # - generate case14.jl if requested and missing
+  local_case = Sparlectra.FetchMatpowerCase.ensure_casefile(case; outdir = Sparlectra.MPOWER_DIR, to_jl = true, overwrite = false)
+  mpc = MatpowerIO.read_case(local_case)
+
+  vmva_chk = MatpowerIO.vmva_power_mismatch_stats(mpc)
+  if get(vmva_chk, :ok, false)
+    println("==================== MATPOWER VM/VA self-check ====================")
+    println("checked eqns     : P(PQ+PV)=", vmva_chk.n_p, "  Q(PQ)=", vmva_chk.n_q)
+    println("max |ΔP| (PQ+PV) : ", vmva_chk.max_p_mis_pu, " pu  (", vmva_chk.max_p_mis_MW, " MW)")
+    println("max |ΔQ| (PQ)    : ", vmva_chk.max_q_mis_pu, " pu  (", vmva_chk.max_q_mis_MVar, " MVar)")
+    println("===================================================================\n")
+  else
+    println("MATPOWER VM/VA self-check skipped: ", get(vmva_chk, :msg, "unknown reason"))
+  end
+
+  cfg = bench_config_for_case(case, yaml_cfg)
   bench = bench_run_acpflow(
     casefile = basename(local_case),
     methods = methods,
+    mpc = mpc,
+    logfile = logfile,
+    show_diff = show_diff,
+    tol_vm = tol_vm,
+    tol_va = tol_va,
     opt_fd = cfg.opt_fd,
     opt_sparse = cfg.opt_sparse,
     opt_flatstart = cfg.opt_flatstart,

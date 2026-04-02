@@ -2,6 +2,7 @@
 # Example configuration for src/examples/matpower_import.jl
 #
 # Usage:
+#   (VS Code "Run Julia File"): config is loaded automatically from this file
 #   julia --project=. src/examples/matpower_import.jl src/examples/matpower_import.yaml
 # or
 #   SPARLECTRA_MATPOWER_IMPORT_YAML=src/examples/matpower_import.yaml julia --project=. src/examples/matpower_import.jl
