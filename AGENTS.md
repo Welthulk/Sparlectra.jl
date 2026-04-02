@@ -43,6 +43,12 @@ This keeps the code compatible with non-standard array indices and avoids Static
 - Project root must be used as Julia project
 - When changing power flow or network logic, prefer adding or updating tests in `test/`
 
+## VS Code / developer workflow notes
+- Example programs in `src/examples/` are primarily written for VS Code developer usage.
+- When practical, prefer calling script entry functions via `Base.invokelatest(...)` to reduce world-age issues in interactive development sessions.
+- Do not rely only on `if abspath(PROGRAM_FILE) == @__FILE__` for developer workflows, since this may not match all VS Code execution modes.
+- Recommend `Revise.jl` for contributors working interactively; keep it out of project dependencies so Sparlectra installation remains fast and lightweight.
+
 ## Required after code changes
 - After modifying Julia code, run the smallest relevant test.
 - If no narrower test is obvious, run:

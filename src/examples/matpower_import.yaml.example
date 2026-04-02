@@ -1,0 +1,41 @@
+#
+# Example configuration for src/examples/matpower_import.jl
+#
+# Local developer usage (VS Code "Run Julia File"):
+#   copy this file to `matpower_import.yaml` and edit as needed.
+#
+# CLI usage:
+#   julia --project=. src/examples/matpower_import.jl src/examples/matpower_import.yaml
+# or
+#   SPARLECTRA_MATPOWER_IMPORT_YAML=src/examples/matpower_import.yaml julia --project=. src/examples/matpower_import.jl
+#
+
+case: case141.m
+methods: [polar_full, rectangular, classic]
+
+# Solver/NR options
+opt_fd: false
+opt_sparse: true
+opt_flatstart: false
+max_ite: 30
+tol: 1.0e-6
+verbose: 1
+cooldown_iters: 0
+q_hyst_pu: 0.0
+
+# MATPOWER comparison controls
+show_diff: true
+tol_vm: 0.02
+tol_va: 0.5
+
+# Q-limit / PV->PQ behavior:
+# - If true, all PV buses are locked against PV->PQ switching.
+#   This effectively ignores reactive-power limits during the solve.
+ignore_q_limits: false
+# - Fine-grained manual locks (MATPOWER/original bus IDs). Applied when ignore_q_limits=false.
+lock_pv_to_pq_buses: []
+
+# Benchmark controls
+seconds: 2.0
+samples: 50
+show_once: true
