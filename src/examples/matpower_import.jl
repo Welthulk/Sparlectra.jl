@@ -88,6 +88,8 @@ function _yaml_path_from_inputs()
 
   local_default = joinpath(@__DIR__, "matpower_import.yaml")
   isfile(local_default) && return local_default
+  local_example = joinpath(@__DIR__, "matpower_import.yaml.example")
+  isfile(local_example) && return local_example
   return ""
 end
 # -----------------------------------------------------------------------------
@@ -106,9 +108,9 @@ mkpath(OUTDIR)
 # -----------------------------------------------------------------------------
 # Compare against MATPOWER reference (if present)
 # -----------------------------------------------------------------------------
-show_diff = true
-tol_vm = 2e-2
-tol_va = 5e-1
+const DEFAULT_SHOW_DIFF = true
+const DEFAULT_TOL_VM = 2e-2
+const DEFAULT_TOL_VA = 5e-1
 
 # Keep scenario-specific benchmark options centralized here.
 # If additional case-specific options are introduced (e.g. PV->PQ lock lists),
@@ -127,6 +129,11 @@ function bench_config_for_case(case_name::AbstractString, yaml_cfg::Dict{String,
     cooldown_iters = 0,
     q_hyst_pu = 0.0,
     lock_pv_to_pq_buses = Int[],
+    ignore_q_limits = false,
+    max_ite = 30,
+    show_diff = DEFAULT_SHOW_DIFF,
+    tol_vm = DEFAULT_TOL_VM,
+    tol_va = DEFAULT_TOL_VA,
     seconds = 2.0,
     samples = 50,
     show_once = true,
@@ -142,6 +149,11 @@ function bench_config_for_case(case_name::AbstractString, yaml_cfg::Dict{String,
       cooldown_iters = Int(get(yaml_cfg, "cooldown_iters", base.cooldown_iters)),
       q_hyst_pu = Float64(get(yaml_cfg, "q_hyst_pu", base.q_hyst_pu)),
       lock_pv_to_pq_buses = _as_int_vec(get(yaml_cfg, "lock_pv_to_pq_buses", base.lock_pv_to_pq_buses)),
+      ignore_q_limits = Bool(get(yaml_cfg, "ignore_q_limits", base.ignore_q_limits)),
+      max_ite = Int(get(yaml_cfg, "max_ite", base.max_ite)),
+      show_diff = Bool(get(yaml_cfg, "show_diff", base.show_diff)),
+      tol_vm = Float64(get(yaml_cfg, "tol_vm", base.tol_vm)),
+      tol_va = Float64(get(yaml_cfg, "tol_va", base.tol_va)),
       seconds = Float64(get(yaml_cfg, "seconds", base.seconds)),
       samples = Int(get(yaml_cfg, "samples", base.samples)),
       show_once = Bool(get(yaml_cfg, "show_once", base.show_once)),
@@ -164,15 +176,21 @@ function mp_has_vm_va(mpc)
   va_dev = maximum(abs.(va .- 0.0))
   return (vm_dev > 1e-3) || (va_dev > 1e-2)
 end
+
+function _mpc_pv_bus_ids(mpc)
+  size(mpc.bus, 2) >= 2 || return Int[]
+  pv_mask = mpc.bus[:, 2] .== 2
+  return sort!(unique!(Int.(round.(mpc.bus[pv_mask, 1]))))
+end
 # -----------------------------------------------------------------------------
 # Benchmark helper: benchmark exactly run_acpflow(...)
 # -----------------------------------------------------------------------------
-function bench_run_acpflow(; casefile::String, methods::Vector{Symbol}, mpc, logfile::String, show_diff::Bool, tol_vm::Float64, tol_va::Float64, opt_fd::Bool = true, opt_sparse::Bool = true, opt_flatstart::Bool = true, verbose::Int = 0, cooldown_iters::Int = 0, q_hyst_pu::Float64 = 0.0, lock_pv_to_pq_buses::AbstractVector{Int} = Int[], seconds::Float64 = 2.0, samples::Int = 50, show_once::Bool = false)
+function bench_run_acpflow(; casefile::String, methods::Vector{Symbol}, mpc, logfile::String, show_diff::Bool, tol_vm::Float64, tol_va::Float64, max_ite::Int = 30, opt_fd::Bool = true, opt_sparse::Bool = true, opt_flatstart::Bool = true, verbose::Int = 0, cooldown_iters::Int = 0, q_hyst_pu::Float64 = 0.0, lock_pv_to_pq_buses::AbstractVector{Int} = Int[], seconds::Float64 = 2.0, samples::Int = 50, show_once::Bool = false)
   results = Dict{Symbol,Any}()
 
   # Warmup (compile) once per method with minimal output
   for m in methods
-    run_acpflow(casefile = casefile, opt_fd = opt_fd, opt_sparse = opt_sparse, method = m, opt_flatstart = opt_flatstart, show_results = false, verbose = 0, cooldown_iters = cooldown_iters, q_hyst_pu = q_hyst_pu, lock_pv_to_pq_buses = lock_pv_to_pq_buses)
+    run_acpflow(casefile = casefile, max_ite = max_ite, opt_fd = opt_fd, opt_sparse = opt_sparse, method = m, opt_flatstart = opt_flatstart, show_results = false, verbose = 0, cooldown_iters = cooldown_iters, q_hyst_pu = q_hyst_pu, lock_pv_to_pq_buses = lock_pv_to_pq_buses)
   end
 
   println("\n==================== Benchmark run_acpflow ====================")
@@ -184,7 +202,8 @@ function bench_run_acpflow(; casefile::String, methods::Vector{Symbol}, mpc, log
   println("===============================================================\n")
 
   for m in methods
-    benchable = @benchmarkable run_acpflow(casefile = casefile_, opt_fd = opt_fd_, opt_sparse = opt_sparse_, method = method_, opt_flatstart = opt_flatstart_, show_results = false, verbose = 0, cooldown_iters = cooldown_iters_, q_hyst_pu = q_hyst_pu_, lock_pv_to_pq_buses = lock_pv_to_pq_buses_) setup = (casefile_ = $casefile;
+    benchable = @benchmarkable run_acpflow(casefile = casefile_, max_ite = max_ite_, opt_fd = opt_fd_, opt_sparse = opt_sparse_, method = method_, opt_flatstart = opt_flatstart_, show_results = false, verbose = 0, cooldown_iters = cooldown_iters_, q_hyst_pu = q_hyst_pu_, lock_pv_to_pq_buses = lock_pv_to_pq_buses_) setup = (casefile_ = $casefile;
+    max_ite_ = $max_ite;
     opt_fd_ = $opt_fd;
     opt_sparse_ = $opt_sparse;
     opt_flatstart_ = $opt_flatstart;
@@ -225,7 +244,7 @@ function bench_run_acpflow(; casefile::String, methods::Vector{Symbol}, mpc, log
             println("RUN method = ", m)
             println("=================================================================\n")
 
-            net_res = run_acpflow(casefile = casefile, opt_fd = opt_fd, opt_sparse = opt_sparse, method = m, opt_flatstart = opt_flatstart, show_results = true, verbose = verbose, cooldown_iters = cooldown_iters, q_hyst_pu = q_hyst_pu, lock_pv_to_pq_buses = lock_pv_to_pq_buses)
+            net_res = run_acpflow(casefile = casefile, max_ite = max_ite, opt_fd = opt_fd, opt_sparse = opt_sparse, method = m, opt_flatstart = opt_flatstart, show_results = true, verbose = verbose, cooldown_iters = cooldown_iters, q_hyst_pu = q_hyst_pu, lock_pv_to_pq_buses = lock_pv_to_pq_buses)
 
             # compare (still computed, but details go to logfile)
             if mp_has_vm_va(mpc)
@@ -293,21 +312,27 @@ function main()
   end
 
   cfg = bench_config_for_case(case, yaml_cfg)
+  lock_pv_to_pq_buses = cfg.lock_pv_to_pq_buses
+  if cfg.ignore_q_limits
+    lock_pv_to_pq_buses = _mpc_pv_bus_ids(mpc)
+  end
+
   bench = Base.invokelatest(getfield(@__MODULE__, :bench_run_acpflow);
     casefile = basename(local_case),
     methods = methods,
     mpc = mpc,
     logfile = logfile,
-    show_diff = show_diff,
-    tol_vm = tol_vm,
-    tol_va = tol_va,
+    show_diff = cfg.show_diff,
+    tol_vm = cfg.tol_vm,
+    tol_va = cfg.tol_va,
+    max_ite = cfg.max_ite,
     opt_fd = cfg.opt_fd,
     opt_sparse = cfg.opt_sparse,
     opt_flatstart = cfg.opt_flatstart,
     verbose = cfg.verbose,
     cooldown_iters = cfg.cooldown_iters,
     q_hyst_pu = cfg.q_hyst_pu,
-    lock_pv_to_pq_buses = cfg.lock_pv_to_pq_buses,
+    lock_pv_to_pq_buses = lock_pv_to_pq_buses,
     seconds = cfg.seconds,
     samples = cfg.samples,
     show_once = cfg.show_once,
