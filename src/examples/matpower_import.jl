@@ -28,13 +28,14 @@ using Dates
 #case = "case57.m"     
 #case = "case300.m"
 #case = "case18.m"     
-case = "case141.m"
+#case = "case141.m"
 #case = "case69.m"     
 #case = "case85.m"     
 #case = "case1354pegase.m"
 
 #case = "case2869pegase.m"
 #case = "case9241pegase.m"
+case = "case1951rte.m"
 
 print("\e[2J\e[H") # clear screen and move cursor to home position
 println("----------------------------------------------------------------------------------------------")
@@ -101,12 +102,46 @@ end
 # -----------------------------------------------------------------------------
 # Benchmark helper: benchmark exactly run_acpflow(...)
 # -----------------------------------------------------------------------------
-function bench_run_acpflow(; casefile::String, methods::Vector{Symbol}, opt_fd::Bool = true, opt_sparse::Bool = true, opt_flatstart::Bool = true, verbose::Int = 0, cooldown_iters::Int = 0, q_hyst_pu::Float64 = 0.0, pv_table_rows::Int = 30, check_q_limit_signs::Bool = false, autocorrect_q_limit_signs::Bool = false, validate_limits_after_pf::Bool = false, q_limit_violation_headroom::Float64 = 0.20, lock_pv_to_pq_buses::AbstractVector{Int} = Int[], seconds::Float64 = 2.0, samples::Int = 50, show_once::Bool = false)
+function bench_run_acpflow(;
+  casefile::String,
+  methods::Vector{Symbol},
+  opt_fd::Bool = true,
+  opt_sparse::Bool = true,
+  opt_flatstart::Bool = true,
+  verbose::Int = 0,
+  cooldown_iters::Int = 0,
+  q_hyst_pu::Float64 = 0.0,
+  pv_table_rows::Int = 30,
+  check_q_limit_signs::Bool = false,
+  autocorrect_q_limit_signs::Bool = false,
+  validate_limits_after_pf::Bool = false,
+  q_limit_violation_headroom::Float64 = 0.20,
+  lock_pv_to_pq_buses::AbstractVector{Int} = Int[],
+  seconds::Float64 = 2.0,
+  samples::Int = 50,
+  show_once::Bool = false,
+)
   results = Dict{Symbol,Any}()
 
   # Warmup (compile) once per method with minimal output
   for m in methods
-    run_acpflow(casefile = casefile, opt_fd = opt_fd, opt_sparse = opt_sparse, method = m, opt_flatstart = opt_flatstart, show_results = false, verbose = 0, cooldown_iters = cooldown_iters, q_hyst_pu = q_hyst_pu, pv_table_rows = pv_table_rows, check_q_limit_signs = check_q_limit_signs, autocorrect_q_limit_signs = autocorrect_q_limit_signs, validate_limits_after_pf = validate_limits_after_pf, q_limit_violation_headroom = q_limit_violation_headroom, lock_pv_to_pq_buses = lock_pv_to_pq_buses)
+    run_acpflow(
+      casefile = casefile,
+      opt_fd = opt_fd,
+      opt_sparse = opt_sparse,
+      method = m,
+      opt_flatstart = opt_flatstart,
+      show_results = false,
+      verbose = 0,
+      cooldown_iters = cooldown_iters,
+      q_hyst_pu = q_hyst_pu,
+      pv_table_rows = pv_table_rows,
+      check_q_limit_signs = check_q_limit_signs,
+      autocorrect_q_limit_signs = autocorrect_q_limit_signs,
+      validate_limits_after_pf = validate_limits_after_pf,
+      q_limit_violation_headroom = q_limit_violation_headroom,
+      lock_pv_to_pq_buses = lock_pv_to_pq_buses,
+    )
   end
 
   println("\n==================== Benchmark run_acpflow ====================")
@@ -120,7 +155,23 @@ function bench_run_acpflow(; casefile::String, methods::Vector{Symbol}, opt_fd::
   println("===============================================================\n")
 
   for m in methods
-    benchable = @benchmarkable run_acpflow(casefile = casefile_, opt_fd = opt_fd_, opt_sparse = opt_sparse_, method = method_, opt_flatstart = opt_flatstart_, show_results = false, verbose = 0, cooldown_iters = cooldown_iters_, q_hyst_pu = q_hyst_pu_, pv_table_rows = pv_table_rows_, check_q_limit_signs = check_q_limit_signs_, autocorrect_q_limit_signs = autocorrect_q_limit_signs_, validate_limits_after_pf = validate_limits_after_pf_, q_limit_violation_headroom = q_limit_violation_headroom_, lock_pv_to_pq_buses = lock_pv_to_pq_buses_) setup = (casefile_ = $casefile;
+    benchable = @benchmarkable run_acpflow(
+      casefile = casefile_,
+      opt_fd = opt_fd_,
+      opt_sparse = opt_sparse_,
+      method = method_,
+      opt_flatstart = opt_flatstart_,
+      show_results = false,
+      verbose = 0,
+      cooldown_iters = cooldown_iters_,
+      q_hyst_pu = q_hyst_pu_,
+      pv_table_rows = pv_table_rows_,
+      check_q_limit_signs = check_q_limit_signs_,
+      autocorrect_q_limit_signs = autocorrect_q_limit_signs_,
+      validate_limits_after_pf = validate_limits_after_pf_,
+      q_limit_violation_headroom = q_limit_violation_headroom_,
+      lock_pv_to_pq_buses = lock_pv_to_pq_buses_,
+    ) setup = (casefile_ = $casefile;
     opt_fd_ = $opt_fd;
     opt_sparse_ = $opt_sparse;
     opt_flatstart_ = $opt_flatstart;
@@ -166,7 +217,23 @@ function bench_run_acpflow(; casefile::String, methods::Vector{Symbol}, opt_fd::
             println("RUN method = ", m)
             println("=================================================================\n")
 
-            net_res = run_acpflow(casefile = casefile, opt_fd = opt_fd, opt_sparse = opt_sparse, method = m, opt_flatstart = opt_flatstart, show_results = true, verbose = verbose, cooldown_iters = cooldown_iters, q_hyst_pu = q_hyst_pu, pv_table_rows = pv_table_rows, check_q_limit_signs = check_q_limit_signs, autocorrect_q_limit_signs = autocorrect_q_limit_signs, validate_limits_after_pf = validate_limits_after_pf, q_limit_violation_headroom = q_limit_violation_headroom, lock_pv_to_pq_buses = lock_pv_to_pq_buses)
+            net_res = run_acpflow(
+              casefile = casefile,
+              opt_fd = opt_fd,
+              opt_sparse = opt_sparse,
+              method = m,
+              opt_flatstart = opt_flatstart,
+              show_results = true,
+              verbose = verbose,
+              cooldown_iters = cooldown_iters,
+              q_hyst_pu = q_hyst_pu,
+              pv_table_rows = pv_table_rows,
+              check_q_limit_signs = check_q_limit_signs,
+              autocorrect_q_limit_signs = autocorrect_q_limit_signs,
+              validate_limits_after_pf = validate_limits_after_pf,
+              q_limit_violation_headroom = q_limit_violation_headroom,
+              lock_pv_to_pq_buses = lock_pv_to_pq_buses,
+            )
 
             # compare (still computed, but details go to logfile)
             if mp_has_vm_va(mpc)
@@ -204,7 +271,25 @@ function main()
   methods = [:polar_full, :rectangular, :classic]
   lock_pv_to_pq_buses = [44] # analysis example: keep Bus 44 as PV
 
-  bench = bench_run_acpflow(casefile = basename(local_case), methods = methods, opt_fd = false, opt_sparse = true, opt_flatstart = false, verbose = 1, cooldown_iters = 0, q_hyst_pu = 0.0, pv_table_rows = 30, check_q_limit_signs = true, autocorrect_q_limit_signs = true, validate_limits_after_pf = true, q_limit_violation_headroom = 0.20, lock_pv_to_pq_buses = lock_pv_to_pq_buses, seconds = 2.0, samples = 50, show_once = true)
+  bench = bench_run_acpflow(
+    casefile = basename(local_case),
+    methods = methods,
+    opt_fd = false,
+    opt_sparse = true,
+    opt_flatstart = false,
+    verbose = 1,
+    cooldown_iters = 0,
+    q_hyst_pu = 0.0,
+    pv_table_rows = 30,
+    check_q_limit_signs = true,
+    autocorrect_q_limit_signs = true,
+    validate_limits_after_pf = true,
+    q_limit_violation_headroom = 0.20,
+    lock_pv_to_pq_buses = lock_pv_to_pq_buses,
+    seconds = 2.0,
+    samples = 50,
+    show_once = true,
+  )
   return bench
 end
 
