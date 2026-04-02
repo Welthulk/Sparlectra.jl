@@ -31,7 +31,7 @@ tol_va: 0.5
 # - If true, all PV buses are locked against PV->PQ switching.
 #   This effectively ignores reactive-power limits during the solve.
 ignore_q_limits: false
-# - Fine-grained manual locks (bus IDs). Applied when ignore_q_limits=false.
+# - Fine-grained manual locks (MATPOWER/original bus IDs). Applied when ignore_q_limits=false.
 lock_pv_to_pq_buses: []
 
 # Benchmark controls
