@@ -31,7 +31,7 @@ const MPOWER_DIR = normpath(joinpath(pkgdir(@__MODULE__), "data", "mpower"))
 
 # resource data types for working with Sparlectra
 const Wurzel3 = 1.7320508075688772
-const SparlectraVersion = v"0.6.1"
+const SparlectraVersion = v"0.6.2"
 version() = SparlectraVersion
 abstract type AbstractBranch end
 
@@ -117,7 +117,7 @@ export
   # jacobian_full.jl
   runpf_full!, 
   # limits.jl
-  printQLimitLog,logQLimitHit!, lastQLimitIter, getQLimits_pu, logQLimitHit!,lastQLimitIter, resetQLimitLog!, pv_hit_q_limit,has_q_limits,active_set_q_limits!,
+  printQLimitLog, printPVQLimitsTable, printFinalLimitValidation, validate_q_limit_signs!, logQLimitHit!, lastQLimitIter, getQLimits_pu, logQLimitHit!,lastQLimitIter, resetQLimitLog!, pv_hit_q_limit,has_q_limits,active_set_q_limits!,
   # losses.jl
   calcNetLosses!, 
   # results.jl
