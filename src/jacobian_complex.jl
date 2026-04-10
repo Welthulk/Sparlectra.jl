@@ -202,6 +202,45 @@ function update_net_voltages_from_complex!(net::Net, V::Vector{ComplexF64})
   end
 end
 
+@inline function _has_vset_adjust_config(ps::ProSumer)::Bool
+  return !(isnothing(ps.vstep_pu) && isnothing(ps.tap_steps_down) && isnothing(ps.tap_steps_up))
+end
+
+@inline function _bus_label(net::Net, bus::Int)::String
+  return getCompName(net.nodeVec[bus].comp)
+end
+
+function _build_vset_adjust_controllers(net::Net)
+  controllers = Dict{Int,NamedTuple{(:prosumer_idx, :vstep_pu, :tap_steps_down, :tap_steps_up),Tuple{Int,Float64,Int,Int}}}()
+
+  for (ps_idx, ps) in enumerate(net.prosumpsVec)
+    isGenerator(ps) || continue
+    bus = getPosumerBusIndex(ps)
+
+    has_any = _has_vset_adjust_config(ps)
+    if has_any
+      all_defined = !isnothing(ps.vstep_pu) && !isnothing(ps.tap_steps_down) && !isnothing(ps.tap_steps_up)
+      all_defined || error("Bus $(_bus_label(net, bus)): invalid voltage adjustment config at prosumer $ps_idx. vstep_pu, tap_steps_down and tap_steps_up must be provided together.")
+      ps.vstep_pu > 0.0 || error("Bus $(_bus_label(net, bus)): invalid vstep_pu=$(ps.vstep_pu). Must be > 0.")
+      ps.tap_steps_down >= 0 || error("Bus $(_bus_label(net, bus)): invalid tap_steps_down=$(ps.tap_steps_down). Must be ≥ 0.")
+      ps.tap_steps_up >= 0 || error("Bus $(_bus_label(net, bus)): invalid tap_steps_up=$(ps.tap_steps_up). Must be ≥ 0.")
+      haskey(controllers, bus) && error("Bus $(_bus_label(net, bus)): multiple prosumers define voltage adjustment data. Only one controller per bus is allowed.")
+
+      controllers[bus] = (
+        prosumer_idx = ps_idx,
+        vstep_pu = Float64(ps.vstep_pu),
+        tap_steps_down = Int(ps.tap_steps_down),
+        tap_steps_up = Int(ps.tap_steps_up),
+      )
+    else
+      partially_set = !isnothing(ps.vstep_pu) || !isnothing(ps.tap_steps_down) || !isnothing(ps.tap_steps_up)
+      partially_set && error("Bus $(_bus_label(net, bus)): incomplete voltage adjustment config at prosumer $ps_idx. vstep_pu, tap_steps_down and tap_steps_up must be provided together.")
+    end
+  end
+
+  return controllers
+end
+
 """
     build_rectangular_jacobian_pq_pv_sparse(
         Ybus,
@@ -654,7 +693,7 @@ polar formulations.
 - `build_rectangular_jacobian_pq_pv()`: Analytic Jacobian construction
 """
 
-function run_complex_nr_rectangular_for_net!(net::Net; maxiter::Int = 20, tol::Float64 = 1e-8, damp::Float64 = 0.2, verbose::Int = 0, use_fd::Bool = false, opt_sparse::Bool = true, opt_flatstart::Bool = net.flatstart, pv_table_rows::Int = 30, lock_pv_to_pq_buses::AbstractVector{Int} = Int[])
+function run_complex_nr_rectangular_for_net!(net::Net; maxiter::Int = 20, tol::Float64 = 1e-8, damp::Float64 = 0.2, verbose::Int = 0, use_fd::Bool = false, opt_sparse::Bool = true, opt_flatstart::Bool = net.flatstart, pv_table_rows::Int = 30, lock_pv_to_pq_buses::AbstractVector{Int} = Int[], qlimit_mode::Symbol = :switch_to_pq, qlimit_max_outer::Int = 30)
   if verbose > 1
     @info "Running complex rectangular NR power flow... use_fd=$use_fd, opt_sparse=$opt_sparse"
   end
@@ -714,6 +753,12 @@ function run_complex_nr_rectangular_for_net!(net::Net; maxiter::Int = 20, tol::F
   cooldown_iters = hasfield(typeof(net), :cooldown_iters) ? net.cooldown_iters : 0
   q_hyst_pu      = hasfield(typeof(net), :q_hyst_pu) ? net.q_hyst_pu : 0.0
   allow_reenable = (cooldown_iters > 0) || (q_hyst_pu > 0.0)
+  qlimit_mode in (:switch_to_pq, :adjust_vset) || error("Unsupported qlimit_mode=$(qlimit_mode). Supported: :switch_to_pq, :adjust_vset.")
+  qlimit_max_outer > 0 || error("qlimit_max_outer must be > 0 (got $(qlimit_max_outer)).")
+
+  controllers = qlimit_mode == :adjust_vset ? _build_vset_adjust_controllers(net) : Dict{Int,NamedTuple{(:prosumer_idx, :vstep_pu, :tap_steps_down, :tap_steps_up),Tuple{Int,Float64,Int,Int}}}()
+  base_vset = copy(Vset)
+  adjust_counter = zeros(Int, nb)
 
   # Start fresh each PF run
   resetQLimitLog!(net)
@@ -755,52 +800,104 @@ function run_complex_nr_rectangular_for_net!(net::Net; maxiter::Int = 20, tol::F
     if it > 1
       Scalc_pu = calc_injections(Ybus, V)
 
-      changed, reenabled = active_set_q_limits!(
-        net,
-        it,
-        nb;
-        qmin_pu = qmin_pu,
-        qmax_pu = qmax_pu,
-        pv_orig_mask = pv_orig_mask,
-        allow_reenable = allow_reenable,
-        q_hyst_pu = q_hyst_pu,
-        cooldown_iters = cooldown_iters,
-        lock_pv_to_pq_buses = lock_pv_to_pq_buses,
-        verbose = verbose,
+      if qlimit_mode == :switch_to_pq
+        changed, reenabled = active_set_q_limits!(
+          net,
+          it,
+          nb;
+          qmin_pu = qmin_pu,
+          qmax_pu = qmax_pu,
+          pv_orig_mask = pv_orig_mask,
+          allow_reenable = allow_reenable,
+          q_hyst_pu = q_hyst_pu,
+          cooldown_iters = cooldown_iters,
+          lock_pv_to_pq_buses = lock_pv_to_pq_buses,
+          verbose = verbose,
+          get_qreq_pu = bus -> begin
+            (bus_types[bus] == :Slack) && return 0.0
+            return imag(Scalc_pu[bus]) + Qload_pu[bus]
+          end,
+          is_pv = bus -> (bus_types[bus] == :PV),
+          make_pq! = (bus, qclamp_gen_pu, side) -> begin
+            bus_types[bus] = :PQ
+            qinj_pu = qclamp_gen_pu - Qload_pu[bus]
+            S[bus]  = ComplexF64(real(S[bus]), qinj_pu)
+            net.nodeVec[bus]._qƩGen = qclamp_gen_pu * net.baseMVA
+          end,
+          make_pv! = (bus) -> begin
+            bus_types[bus] = :PV
+          end,
+        )
+      else
+        lock_mask = falses(nb)
+        for bus in lock_pv_to_pq_buses
+          if 1 <= bus <= nb
+            lock_mask[bus] = true
+          end
+        end
 
-        # Q required at bus in terms of GENERATOR Q (p.u.)
-        # generator Q = net Qinj + Qload
-        get_qreq_pu = bus -> begin
-          (bus_types[bus] == :Slack) && return 0.0
-          return imag(Scalc_pu[bus]) + Qload_pu[bus]
-        end,
+        for bus in eachindex(bus_types)
+          bus_types[bus] == :PV || continue
+          lock_mask[bus] && continue
 
-        # PV status from bus_types (rectangular solver!)
-        is_pv = bus -> (bus_types[bus] == :PV),
+          qreq = imag(Scalc_pu[bus]) + Qload_pu[bus]
+          has_hi = (bus <= length(qmax_pu)) && isfinite(qmax_pu[bus])
+          has_lo = (bus <= length(qmin_pu)) && isfinite(qmin_pu[bus])
 
-        # Enforce PV->PQ with generator-Q clamp:
-        # set bus_types to PQ, and set specified net Qinj accordingly.
-        make_pq! = (bus, qclamp_gen_pu, side) -> begin
-          bus_types[bus] = :PQ
+          side = :none
+          qclamp = 0.0
+          if has_hi && (qreq > qmax_pu[bus])
+            side = :max
+            qclamp = qmax_pu[bus]
+          elseif has_lo && (qreq < qmin_pu[bus])
+            side = :min
+            qclamp = qmin_pu[bus]
+          end
+          side == :none && continue
 
-          # Convert generator clamp to net injection clamp: Qinj = Qgen - Qload
-          qinj_pu = qclamp_gen_pu - Qload_pu[bus]
-          S[bus]  = ComplexF64(real(S[bus]), qinj_pu)
+          cname = _bus_label(net, bus)
+          if !haskey(controllers, bus)
+            if verbose > 0
+              @info "Bus $cname: no voltage adjustment controller -> fallback PV→PQ (it=$it)"
+            end
+            bus_types[bus] = :PQ
+            S[bus] = ComplexF64(real(S[bus]), qclamp - Qload_pu[bus])
+            net.nodeVec[bus]._qƩGen = qclamp * net.baseMVA
+            logQLimitHit!(net, it, bus, side)
+            changed = true
+            continue
+          end
 
-          # Mirror clamp into Net/Node (MVar)
-          net.nodeVec[bus]._qƩGen = qclamp_gen_pu * net.baseMVA
-        end,
+          ctrl = controllers[bus]
+          vm_base = base_vset[bus]
+          vm_min = vm_base - ctrl.tap_steps_down * ctrl.vstep_pu
+          vm_max = vm_base + ctrl.tap_steps_up * ctrl.vstep_pu
+          vm_old = Vset[bus]
+          vm_new = side == :max ? vm_old - ctrl.vstep_pu : vm_old + ctrl.vstep_pu
+          can_step = (vm_new >= vm_min - 1e-12) && (vm_new <= vm_max + 1e-12)
 
-        # Optional PQ->PV re-enable:
-        # set bus_types to PV; Qspec is unused for PV, but keep S consistent.
-        make_pv! = (bus) -> begin
-          bus_types[bus] = :PV
-
-          # For PV buses, Qspec is unused (2nd equation is ΔV).
-          # Keep S[bus].im *unchanged* to avoid "drift" if we later switch back to PQ.
-          # (Only Pspec matters for PV mismatch.)
-        end,
-      )
+          if can_step && adjust_counter[bus] < qlimit_max_outer
+            vm_new = clamp(vm_new, vm_min, vm_max)
+            Vset[bus] = vm_new
+            net.nodeVec[bus]._vm_pu = vm_new
+            adjust_counter[bus] += 1
+            changed = true
+            if verbose > 0
+              event = side == :max ? "Qmax violated" : "Qmin violated"
+              @info "Bus $cname: $event -> voltage adjusted from $vm_old to $vm_new (it=$it, step=$(adjust_counter[bus]))"
+            end
+          else
+            if verbose > 0
+              @info "Bus $cname: no further voltage steps (vm_min=$vm_min, vm_max=$vm_max, vm=$vm_old) -> fallback PV→PQ (it=$it)"
+            end
+            bus_types[bus] = :PQ
+            S[bus] = ComplexF64(real(S[bus]), qclamp - Qload_pu[bus])
+            net.nodeVec[bus]._qƩGen = qclamp * net.baseMVA
+            logQLimitHit!(net, it, bus, side)
+            changed = true
+          end
+        end
+      end
 
       # If bus_types/spec changed, mismatch definition changed (ΔQ ↔ ΔV) => rebuild F
       if changed || reenabled
@@ -893,8 +990,8 @@ Returns:
     (iterations::Int, status::Int)
 where `status == 0` indicates convergence.
 """
-function runpf_rectangular!(net::Net, maxIte::Int, tolerance::Float64 = 1e-6, verbose::Int = 0; opt_fd::Bool = false, opt_sparse::Bool = true, damp = 1.0, opt_flatstart::Bool = net.flatstart, pv_table_rows::Int = 30, lock_pv_to_pq_buses::AbstractVector{Int} = Int[])
-  iters, erg = run_complex_nr_rectangular_for_net!(net; maxiter = maxIte, tol = tolerance, damp = damp, verbose = verbose, use_fd = opt_fd, opt_sparse = opt_sparse, opt_flatstart = opt_flatstart, pv_table_rows = pv_table_rows, lock_pv_to_pq_buses = lock_pv_to_pq_buses)
+function runpf_rectangular!(net::Net, maxIte::Int, tolerance::Float64 = 1e-6, verbose::Int = 0; opt_fd::Bool = false, opt_sparse::Bool = true, damp = 1.0, opt_flatstart::Bool = net.flatstart, pv_table_rows::Int = 30, lock_pv_to_pq_buses::AbstractVector{Int} = Int[], qlimit_mode::Symbol = :switch_to_pq, qlimit_max_outer::Int = 30)
+  iters, erg = run_complex_nr_rectangular_for_net!(net; maxiter = maxIte, tol = tolerance, damp = damp, verbose = verbose, use_fd = opt_fd, opt_sparse = opt_sparse, opt_flatstart = opt_flatstart, pv_table_rows = pv_table_rows, lock_pv_to_pq_buses = lock_pv_to_pq_buses, qlimit_mode = qlimit_mode, qlimit_max_outer = qlimit_max_outer)
   return iters, erg
 end
 
@@ -1042,7 +1139,7 @@ Returns:
 
 where `status == 0` indicates convergence.
 """
-function runpf!(net::Net, maxIte::Int, tolerance::Float64 = 1e-6, verbose::Int = 0; method::Symbol = :rectangular, opt_fd::Bool = false, opt_sparse::Bool = true, opt_flatstart::Bool = net.flatstart, damp = 1.0, pv_table_rows::Int = 30, validate_limits_after_pf::Bool = false, q_limit_violation_headroom::Float64 = 0.0, lock_pv_to_pq_buses::AbstractVector{Int} = Int[])
+function runpf!(net::Net, maxIte::Int, tolerance::Float64 = 1e-6, verbose::Int = 0; method::Symbol = :rectangular, opt_fd::Bool = false, opt_sparse::Bool = true, opt_flatstart::Bool = net.flatstart, damp = 1.0, pv_table_rows::Int = 30, validate_limits_after_pf::Bool = false, q_limit_violation_headroom::Float64 = 0.0, lock_pv_to_pq_buses::AbstractVector{Int} = Int[], qlimit_mode::Symbol = :switch_to_pq, qlimit_max_outer::Int = 30)
   wnet, reps, has_merges = _merged_pf_net(net)
 
   function _sync_merged_results_to_original!()
@@ -1056,6 +1153,9 @@ function runpf!(net::Net, maxIte::Int, tolerance::Float64 = 1e-6, verbose::Int =
 
   #@info "Running AC Power Flow using method: $(method)"
   if method === :polar_full
+    if qlimit_mode != :switch_to_pq
+      @warn "runpf!: qlimit_mode=$(qlimit_mode) is only supported for method=:rectangular. Falling back to :switch_to_pq behavior."
+    end
     iters, erg = runpf_full!(wnet, maxIte, tolerance, verbose; opt_sparse = opt_sparse, opt_flatstart = opt_flatstart, pv_table_rows = pv_table_rows, lock_pv_to_pq_buses = lock_pv_to_pq_buses)
     if erg == 0 && has_merges
       _sync_merged_results_to_original!()
@@ -1071,7 +1171,7 @@ function runpf!(net::Net, maxIte::Int, tolerance::Float64 = 1e-6, verbose::Int =
       end
       iters, erg = runpf_full!(wnet, maxIte, tolerance, verbose; opt_sparse = opt_sparse, opt_flatstart = opt_flatstart, pv_table_rows = pv_table_rows, lock_pv_to_pq_buses = lock_pv_to_pq_buses)
     else
-      iters, erg = runpf_rectangular!(wnet, maxIte, tolerance, verbose; opt_fd = opt_fd, opt_sparse = opt_sparse, damp = damp, opt_flatstart = opt_flatstart, pv_table_rows = pv_table_rows, lock_pv_to_pq_buses = lock_pv_to_pq_buses)
+      iters, erg = runpf_rectangular!(wnet, maxIte, tolerance, verbose; opt_fd = opt_fd, opt_sparse = opt_sparse, damp = damp, opt_flatstart = opt_flatstart, pv_table_rows = pv_table_rows, lock_pv_to_pq_buses = lock_pv_to_pq_buses, qlimit_mode = qlimit_mode, qlimit_max_outer = qlimit_max_outer)
     end
     if erg == 0 && has_merges
       _sync_merged_results_to_original!()
@@ -1081,6 +1181,9 @@ function runpf!(net::Net, maxIte::Int, tolerance::Float64 = 1e-6, verbose::Int =
     end
     return iters, erg
   elseif method === :classic
+    if qlimit_mode != :switch_to_pq
+      @warn "runpf!: qlimit_mode=$(qlimit_mode) is only supported for method=:rectangular. Falling back to :switch_to_pq behavior."
+    end
     iters, erg = runpf_classic!(wnet, maxIte, tolerance, verbose, opt_sparse, opt_flatstart)
     if erg == 0 && has_merges
       _sync_merged_results_to_original!()

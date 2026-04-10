@@ -884,6 +884,9 @@ function addProsumer!(;
   referencePri::Union{Nothing,String} = nothing,
   vm_pu::Union{Nothing,Float64} = nothing,
   va_deg::Union{Nothing,Float64} = nothing,
+  vstep_pu::Union{Nothing,Float64} = nothing,
+  tap_steps_down::Union{Nothing,Int} = nothing,
+  tap_steps_up::Union{Nothing,Int} = nothing,
 )
   busIdx = geNetBusIdx(net = net, busName = busName)
   idProsSum = length(net.prosumpsVec) + 1
@@ -901,7 +904,7 @@ function addProsumer!(;
   proTy = toProSumptionType(type)
   refPriIdx = isnothing(referencePri) ? nothing : geNetBusIdx(net = net, busName = referencePri)
   vn_kV = getNodeVn(net.nodeVec[busIdx])
-  ps = ProSumer(vn_kv = vn_kV, busIdx = busIdx, oID = idProsSum, type = proTy, p = p, q = q, minP = pMin, maxP = pMax, minQ = qMin, maxQ = qMax, referencePri = refPriIdx, vm_pu = vm_pu, va_deg = va_deg, isAPUNode = isAPUNode)
+  ps = ProSumer(vn_kv = vn_kV, busIdx = busIdx, oID = idProsSum, type = proTy, p = p, q = q, minP = pMin, maxP = pMax, minQ = qMin, maxQ = qMax, referencePri = refPriIdx, vm_pu = vm_pu, va_deg = va_deg, vstep_pu = vstep_pu, tap_steps_down = tap_steps_down, tap_steps_up = tap_steps_up, isAPUNode = isAPUNode)
   push!(net.prosumpsVec, ps)
   node = net.nodeVec[busIdx]
   if (isGenerator(proTy))

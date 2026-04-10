@@ -57,6 +57,9 @@ mutable struct ProSumer
   referencePri::Union{Nothing,Integer}
   vm_pu::Union{Nothing,Float64}
   va_deg::Union{Nothing,Float64}
+  vstep_pu::Union{Nothing,Float64}
+  tap_steps_down::Union{Nothing,Int}
+  tap_steps_up::Union{Nothing,Int}
   proSumptionType::ProSumptionType
   isAPUNode::Bool
   qGenRepl::Union{Nothing,Float64}
@@ -81,6 +84,9 @@ mutable struct ProSumer
     referencePri::Union{Nothing,Integer} = nothing,
     vm_pu::Union{Nothing,Float64} = nothing,
     va_deg::Union{Nothing,Float64} = nothing,
+    vstep_pu::Union{Nothing,Float64} = nothing,
+    tap_steps_down::Union{Nothing,Int} = nothing,
+    tap_steps_up::Union{Nothing,Int} = nothing,
     isAPUNode::Bool = false,
   )
     comp = getProSumPGMComp(vn_kv, busIdx, isGenerator(type), oID)
@@ -93,7 +99,7 @@ mutable struct ProSumer
       va_deg = 0.0
     end
 
-    new(comp, ratedS, ratedU, qPercent, p, q, maxP, minP, maxQ, minQ, ratedPowerFactor, referencePri, vm_pu, va_deg, type, isAPUNode, nothing, nothing, nothing)
+    new(comp, ratedS, ratedU, qPercent, p, q, maxP, minP, maxQ, minQ, ratedPowerFactor, referencePri, vm_pu, va_deg, vstep_pu, tap_steps_down, tap_steps_up, type, isAPUNode, nothing, nothing, nothing)
   end
 
   function Base.show(io::IO, prosumption::ProSumer)
@@ -150,6 +156,15 @@ mutable struct ProSumer
 
     if (!isnothing(prosumption.va_deg))
       print(io, "va_deg: ", prosumption.va_deg, ", ")
+    end
+    if (!isnothing(prosumption.vstep_pu))
+      print(io, "vstep_pu: ", prosumption.vstep_pu, ", ")
+    end
+    if (!isnothing(prosumption.tap_steps_down))
+      print(io, "tap_steps_down: ", prosumption.tap_steps_down, ", ")
+    end
+    if (!isnothing(prosumption.tap_steps_up))
+      print(io, "tap_steps_up: ", prosumption.tap_steps_up, ", ")
     end
 
     if (!isnothing(prosumption.qGenRepl))
