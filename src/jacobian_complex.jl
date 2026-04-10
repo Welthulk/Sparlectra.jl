@@ -921,9 +921,9 @@ function run_complex_nr_rectangular_for_net!(net::Net; maxiter::Int = 20, tol::F
   # --- mirror bus_types back into Net/node types (PV->PQ switching) ---
   @inbounds for k = 1:n
     if bus_types[k] == :PQ
-      setBusType!(net, k, "PQ")
+      setNodeType!(net.nodeVec[k], "PQ")
     elseif bus_types[k] == :PV
-      setBusType!(net, k, "PV")
+      setNodeType!(net.nodeVec[k], "PV")
     end
   end
   update_net_voltages_from_complex!(net, V)
