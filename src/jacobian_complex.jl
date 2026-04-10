@@ -1141,6 +1141,7 @@ where `status == 0` indicates convergence.
 """
 function runpf!(net::Net, maxIte::Int, tolerance::Float64 = 1e-6, verbose::Int = 0; method::Symbol = :rectangular, opt_fd::Bool = false, opt_sparse::Bool = true, opt_flatstart::Bool = net.flatstart, damp = 1.0, pv_table_rows::Int = 30, validate_limits_after_pf::Bool = false, q_limit_violation_headroom::Float64 = 0.0, lock_pv_to_pq_buses::AbstractVector{Int} = Int[], qlimit_mode::Symbol = :switch_to_pq, qlimit_max_outer::Int = 30)
   wnet, reps, has_merges = _merged_pf_net(net)
+  refreshBusTypesFromProsumers!(wnet)
 
   function _sync_merged_results_to_original!()
     for i in eachindex(net.nodeVec)

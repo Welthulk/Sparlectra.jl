@@ -1395,6 +1395,34 @@ function test_q_limit_default_behavior_unchanged()::Bool
   return erg_default == 0 && erg_explicit == 0 && same_type && same_vm
 end
 
+function test_bus_type_resolution_from_prosumers()::Bool
+  net = Net(name = "bus_type_resolution", baseMVA = 100.0)
+  addBus!(net = net, busName = "LoadBus", vn_kV = 110.0)
+  addBus!(net = net, busName = "PVBus", vn_kV = 110.0)
+  addBus!(net = net, busName = "GenPQBus", vn_kV = 110.0)
+  addBus!(net = net, busName = "MixBus", vn_kV = 110.0)
+  addBus!(net = net, busName = "SlackBus", vn_kV = 110.0)
+  addBus!(net = net, busName = "LegacyBus", busType = "PV", vn_kV = 110.0)
+
+  addProsumer!(net = net, busName = "LoadBus", type = "ENERGYCONSUMER", p = 10.0, q = 3.0)
+  addProsumer!(net = net, busName = "PVBus", type = "SYNCHRONOUSMACHINE", p = 20.0, vm_pu = 1.02, isRegulated = true)
+  addProsumer!(net = net, busName = "GenPQBus", type = "SYNCHRONOUSMACHINE", p = 15.0, q = 2.0)
+  addProsumer!(net = net, busName = "MixBus", type = "SYNCHRONOUSMACHINE", p = 12.0, q = 1.0)
+  addProsumer!(net = net, busName = "MixBus", type = "SYNCHRONOUSMACHINE", p = 8.0, vm_pu = 1.01, isRegulated = true)
+  addProsumer!(net = net, busName = "SlackBus", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "SlackBus")
+  addProsumer!(net = net, busName = "LegacyBus", type = "ENERGYCONSUMER", p = 5.0, q = 1.0)
+
+  ok_types =
+    getEffectiveBusType(net = net, busName = "LoadBus") == Sparlectra.PQ &&
+    getEffectiveBusType(net = net, busName = "PVBus") == Sparlectra.PV &&
+    getEffectiveBusType(net = net, busName = "GenPQBus") == Sparlectra.PQ &&
+    getEffectiveBusType(net = net, busName = "MixBus") == Sparlectra.PV &&
+    getEffectiveBusType(net = net, busName = "SlackBus") == Sparlectra.Slack &&
+    getEffectiveBusType(net = net, busName = "LegacyBus") == Sparlectra.PQ
+
+  return ok_types
+end
+
 function run_grid_tests()
   @testset "Grid and power-flow regression tests" begin
     @testset "Transformer and network validation" begin
@@ -1429,6 +1457,7 @@ function run_grid_tests()
       @test test_q_limit_adjust_vset_step_exhaustion_fallback() == true
       @test test_q_limit_adjust_vset_multigen_single_controller() == true
       @test test_q_limit_default_behavior_unchanged() == true
+      @test test_bus_type_resolution_from_prosumers() == true
     end
 
     @testset "Link behaviour and reporting" begin

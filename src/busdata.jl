@@ -43,7 +43,10 @@ function Base.show(io::IO, bus::BusData)
   print(io, "BusData($(bus.idx), $(bus.vm_pu), $(va_deg)°), $(bus.pƩ), $(bus.qƩ), $(bus._pRes), $(bus._qRes), $(bus.type))")
 end
 
-function getBusData(nodes::Vector{Node}, Sbase_MVA::Float64, flatStart)
+function getBusData(nodes::Vector{Node}, Sbase_MVA::Float64, flatStart; net::Union{Nothing,Net} = nothing)
+  if !isnothing(net)
+    refreshBusTypesFromProsumers!(net)
+  end
   busVec = Vector{BusData}()
 
   slackIdx = 0
