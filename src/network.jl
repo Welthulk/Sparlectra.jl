@@ -248,6 +248,22 @@ end
 end
 
 const _setbus_bus_type_warned = Ref(false)
+const _legacy_bus_type_trace_keys = ("1", "true", "yes", "on")
+
+@inline function _trace_legacy_bus_type_warnings()::Bool
+  return lowercase(get(ENV, "SPARLECTRA_TRACE_LEGACY_BUSTYPE", "0")) in _legacy_bus_type_trace_keys
+end
+
+function _legacy_bus_type_caller_hint()::String
+  bt = stacktrace()
+  for fr in bt
+    f = String(fr.file)
+    if !occursin("src/network.jl", f)
+      return "$(basename(f)):$(fr.line)"
+    end
+  end
+  return "unknown"
+end
 
 """
 Sets the type of a bus in the network.
@@ -259,7 +275,11 @@ Sets the type of a bus in the network.
 """
 function setBusType!(net::Net, bus::Int, busType::String)
   if !_setbus_bus_type_warned[]
-    @warn "setBusType! only updates the static node label. Power-flow bus typing is derived from attached prosumers."
+    msg = "setBusType! only updates the static node label. Power-flow bus typing is derived from attached prosumers."
+    if _trace_legacy_bus_type_warnings()
+      msg *= " caller=" * _legacy_bus_type_caller_hint()
+    end
+    @warn msg
     _setbus_bus_type_warned[] = true
   end
   @assert 1 <= bus <= length(net.nodeVec) "The $bus index is invalid. It must be between 1 and $(length(net.nodeVec))."
@@ -421,7 +441,11 @@ function addBus!(;
   if !isnothing(busType)
     @assert busType in ["Slack", "SLACK", "PQ", "PV"] "Invalid bus type: $busType"
     if !_addbus_bus_type_warned[]
-      @warn "addBus!: `busType` is a legacy input. Power-flow bus typing is derived from attached prosumers."
+      msg = "addBus!: `busType` is a legacy input. Power-flow bus typing is derived from attached prosumers."
+      if _trace_legacy_bus_type_warnings()
+        msg *= " caller=" * _legacy_bus_type_caller_hint()
+      end
+      @warn msg
       _addbus_bus_type_warned[] = true
     end
   end

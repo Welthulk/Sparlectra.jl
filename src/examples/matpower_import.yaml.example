@@ -32,6 +32,12 @@ tol_va: 0.5
 # - If true, all PV buses are locked against PV->PQ switching.
 #   This effectively ignores reactive-power limits during the solve.
 ignore_q_limits: false
+
+# Legacy warning tracing:
+# - If true, legacy busType warnings include caller=<file>:<line>.
+# - Helpful to identify remaining code paths that still call addBus!(... busType=...)
+#   or setBusType! during import/solver runs.
+trace_legacy_bus_type_warnings: true
 # - Fine-grained manual locks (MATPOWER/original bus IDs). Applied when ignore_q_limits=false.
 lock_pv_to_pq_buses: []
 

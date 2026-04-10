@@ -295,6 +295,37 @@ function test_matpower_import_defaults_no_reenable()::Bool
   return true
 end
 
+function test_matpower_import_uses_bus_type_for_regulation()::Bool
+  mpc = (
+    name = "case_bus_type_controls_regulation",
+    baseMVA = 100.0,
+    bus = [
+      1 3 0.0 0.0 0.0 0.0 1 1.0 0.0 110.0 1 1.1 0.9
+      2 1 0.0 0.0 0.0 0.0 1 1.0 0.0 110.0 1 1.1 0.9
+      3 2 0.0 0.0 0.0 0.0 1 1.02 0.0 110.0 1 1.1 0.9
+    ],
+    gen = [
+      1 10.0 0.0 999.0 -999.0 1.0 100.0 1 999.0 0.0 0 0 0 0 0 0 0 0 0 0 0
+      2 30.0 0.0 999.0 -999.0 1.01 100.0 1 999.0 0.0 0 0 0 0 0 0 0 0 0 0 0
+      3 40.0 0.0 999.0 -999.0 1.02 100.0 1 999.0 0.0 0 0 0 0 0 0 0 0 0 0 0
+    ],
+    branch = [
+      1 2 0.01 0.05 0.0 9999.0 0.0 0.0 0.0 0.0 1 -60.0 60.0
+      2 3 0.01 0.05 0.0 9999.0 0.0 0.0 0.0 0.0 1 -60.0 60.0
+    ],
+    gencost = nothing,
+    bus_name = nothing,
+  )
+
+  net = Sparlectra.createNetFromMatPowerCase(mpc = mpc, log = false, flatstart = false)
+
+  b2 = geNetBusIdx(net = net, busName = "2")
+  b3 = geNetBusIdx(net = net, busName = "3")
+
+  return getNodeType(net.nodeVec[b2]) == Sparlectra.PQ &&
+         getNodeType(net.nodeVec[b3]) == Sparlectra.PV
+end
+
 function test_matpower_vmva_selfcheck_noncontiguous_bus_numbers()::Bool
   mpc = Sparlectra.MatpowerIO.MatpowerCase(
     "case_noncontig",
@@ -1436,6 +1467,7 @@ function run_grid_tests()
     @testset "MATPOWER import/export" begin
       @test testImportMatpower() == true
       @test test_matpower_import_defaults_no_reenable() == true
+      @test test_matpower_import_uses_bus_type_for_regulation() == true
       @test test_matpower_vmva_selfcheck_noncontiguous_bus_numbers() == true
       @test test_matpower_vmva_selfcheck_ignores_slack_pq_spec() == true
       @test test_mp_inline_vs_manual_shunt() == true
