@@ -1316,6 +1316,85 @@ end
   return true
 end
 
+function _assign_vset_controller!(net::Net, bus_name::String; vstep_pu::Union{Nothing,Float64}, tap_steps_down::Union{Nothing,Int}, tap_steps_up::Union{Nothing,Int}, all_generators::Bool = false)
+  bus = geNetBusIdx(net = net, busName = bus_name)
+  assigned = 0
+  for ps in net.prosumpsVec
+    isGenerator(ps) || continue
+    getPosumerBusIndex(ps) == bus || continue
+    ps.vstep_pu = vstep_pu
+    ps.tap_steps_down = tap_steps_down
+    ps.tap_steps_up = tap_steps_up
+    assigned += 1
+    all_generators || break
+  end
+  return assigned
+end
+
+function test_q_limit_adjust_vset_success()::Bool
+  net = createTest3BusNet(cooldown = 0, hyst_pu = 0.0, qlim_min = -30.0, qlim_max = 30.0)
+  _assign_vset_controller!(net, "STATION1"; vstep_pu = 0.005, tap_steps_down = 2, tap_steps_up = 2)
+
+  _, erg = runpf!(net, 40, 1e-8, 0; method = :rectangular, qlimit_mode = :adjust_vset, qlimit_max_outer = 20)
+  bus = geNetBusIdx(net = net, busName = "STATION1")
+  return erg == 0 && getNodeType(net.nodeVec[bus]) == Sparlectra.PV && net.nodeVec[bus]._vm_pu < 1.025
+end
+
+function test_q_limit_adjust_vset_no_controller_switches()::Bool
+  net = createTest3BusNet(cooldown = 0, hyst_pu = 0.0, qlim_min = -15.0, qlim_max = 15.0)
+  _, erg = runpf!(net, 30, 1e-8, 0; method = :rectangular, qlimit_mode = :adjust_vset)
+  bus = geNetBusIdx(net = net, busName = "STATION1")
+  return erg == 0 && getNodeType(net.nodeVec[bus]) == Sparlectra.PQ
+end
+
+function test_q_limit_adjust_vset_multiple_controllers_error()::Bool
+  net = createTest5BusNet(cooldown = 0, hyst_pu = 0.0, qlim_min = -15.0, qlim_max = 15.0, mul_gens = true)
+  _assign_vset_controller!(net, "B3"; vstep_pu = 0.005, tap_steps_down = 2, tap_steps_up = 2, all_generators = true)
+  try
+    runpf!(net, 20, 1e-8, 0; method = :rectangular, qlimit_mode = :adjust_vset)
+  catch
+    return true
+  end
+  return false
+end
+
+function test_q_limit_adjust_vset_invalid_config_error()::Bool
+  net = createTest3BusNet(cooldown = 0, hyst_pu = 0.0, qlim_min = -20.0, qlim_max = 20.0)
+  _assign_vset_controller!(net, "STATION1"; vstep_pu = 0.005, tap_steps_down = nothing, tap_steps_up = nothing)
+  try
+    runpf!(net, 20, 1e-8, 0; method = :rectangular, qlimit_mode = :adjust_vset)
+  catch
+    return true
+  end
+  return false
+end
+
+function test_q_limit_adjust_vset_step_exhaustion_fallback()::Bool
+  net = createTest3BusNet(cooldown = 0, hyst_pu = 0.0, qlim_min = -15.0, qlim_max = 15.0)
+  _assign_vset_controller!(net, "STATION1"; vstep_pu = 0.005, tap_steps_down = 0, tap_steps_up = 0)
+  _, erg = runpf!(net, 30, 1e-8, 0; method = :rectangular, qlimit_mode = :adjust_vset, qlimit_max_outer = 1)
+  bus = geNetBusIdx(net = net, busName = "STATION1")
+  return erg == 0 && getNodeType(net.nodeVec[bus]) == Sparlectra.PQ
+end
+
+function test_q_limit_adjust_vset_multigen_single_controller()::Bool
+  net = createTest5BusNet(cooldown = 0, hyst_pu = 0.0, qlim_min = -15.0, qlim_max = 15.0, mul_gens = true)
+  _assign_vset_controller!(net, "B3"; vstep_pu = 0.005, tap_steps_down = 1, tap_steps_up = 1, all_generators = false)
+  _, erg = runpf!(net, 40, 1e-8, 0; method = :rectangular, qlimit_mode = :adjust_vset)
+  return erg == 0
+end
+
+function test_q_limit_default_behavior_unchanged()::Bool
+  net_default = createTest3BusNet(cooldown = 0, hyst_pu = 0.0, qlim_min = -15.0, qlim_max = 15.0)
+  net_explicit = createTest3BusNet(cooldown = 0, hyst_pu = 0.0, qlim_min = -15.0, qlim_max = 15.0)
+  _, erg_default = runpf!(net_default, 30, 1e-8, 0; method = :rectangular)
+  _, erg_explicit = runpf!(net_explicit, 30, 1e-8, 0; method = :rectangular, qlimit_mode = :switch_to_pq)
+  b = geNetBusIdx(net = net_default, busName = "STATION1")
+  same_type = getNodeType(net_default.nodeVec[b]) == getNodeType(net_explicit.nodeVec[b])
+  same_vm = isapprox(net_default.nodeVec[b]._vm_pu, net_explicit.nodeVec[b]._vm_pu; atol = 1e-8, rtol = 0.0)
+  return erg_default == 0 && erg_explicit == 0 && same_type && same_vm
+end
+
 function run_grid_tests()
   @testset "Grid and power-flow regression tests" begin
     @testset "Transformer and network validation" begin
@@ -1343,6 +1422,13 @@ function run_grid_tests()
       @test test_acpflow(0; lLine_6a6b = 0.01, damp = 1.0, method = :rectangular, opt_sparse = true) == true
       @test test_acpflow(0; lLine_6a6b = 0.01, damp = 1.0, method = :rectangular, opt_sparse = false) == true
       @test test_acpflow(0; lLine_6a6b = 0.01, damp = 1.0, method = :polar_full, opt_sparse = true) == true
+      @test test_q_limit_adjust_vset_success() == true
+      @test test_q_limit_adjust_vset_no_controller_switches() == true
+      @test test_q_limit_adjust_vset_multiple_controllers_error() == true
+      @test test_q_limit_adjust_vset_invalid_config_error() == true
+      @test test_q_limit_adjust_vset_step_exhaustion_fallback() == true
+      @test test_q_limit_adjust_vset_multigen_single_controller() == true
+      @test test_q_limit_default_behavior_unchanged() == true
     end
 
     @testset "Link behaviour and reporting" begin
