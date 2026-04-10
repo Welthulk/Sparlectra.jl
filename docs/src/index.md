@@ -11,7 +11,7 @@ This package contains tools for subsequent network calculations. It primarily fe
 - MATPOWER-compatible import/export utilities and local casefile helper workflow.
 - Loss calculations and power flow results reporting.
 - Network Modeling: 
-    - Buses (PQ, PV, Slack)
+    - Buses with prosumer-derived PF typing (PQ, PV, Slack)
     - Transmission lines
     - Transformers (2-winding and 3-winding)
     - Generators and loads

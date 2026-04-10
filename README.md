@@ -17,7 +17,7 @@ This package contains tools for subsequent network calculations. It primarily fe
 - MATPOWER-compatible import/export utilities and local casefile helper workflow.
 - Loss calculations and power flow results reporting.
 - Network Modeling: 
-    - Buses (PQ, PV, Slack)
+    - Buses with prosumer-derived PF typing (PQ, PV, Slack)
     - Transmission lines
     - Transformers (2-winding and 3-winding)
     - Generators and loads
@@ -75,6 +75,17 @@ end
 ### Network Creation
 This package supports the import and export of Matpower .m files, although currently it only reads bus, generator, and branch data from these files. Please note that additional Matlab functions within the .m file are not supported. Additionally, you can modify the imported Matpower files or you can create your own network using easy-to-use functions provided by the package.
 
+### Bus typing in power flow
+
+`addBus!` defines the electrical node data (`busName`, `vn_kV`, optional `vm_pu`, `va_deg`).
+The operational PF bus type is resolved from attached prosumers:
+
+- Slack: at least one slack-defining prosumer (`referencePri` set, e.g. `EXTERNALNETWORKINJECTION`).
+- PV: at least one regulating generator prosumer (`isRegulated = true`, or controller metadata, or generator with `vm_pu` setpoint).
+- PQ: default fallback (loads only, non-regulating generation, or mixed non-regulating injections).
+
+The legacy `busType` argument in `addBus!` is still accepted for compatibility, but ignored for PF typing.
+
 ### Release status of State Estimation
 
 The current State Estimation functionality should be considered **experimental**.
@@ -103,7 +114,6 @@ data while still allowing reproducible experiments and benchmarks.
 ### License
 This project is licensed under the Apache License, Version 2.0.
 [The license file](https://github.com/welthulk/Sparlectra.jl/blob/main/LICENSE) contains the complete licensing information.
-
 
 
 

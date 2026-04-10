@@ -10,10 +10,10 @@ using Sparlectra
 
 net = Net(name = "report_demo", baseMVA = 100.0)
 
-addBus!(net = net, busName = "B1", busType = "SLACK", vn_kV = 110.0)
-addBus!(net = net, busName = "B2", busType = "PQ", vn_kV = 110.0)
-addBus!(net = net, busName = "B3", busType = "PQ", vn_kV = 110.0)
-addBus!(net = net, busName = "B4", busType = "PQ", vn_kV = 110.0)
+addBus!(net = net, busName = "B1", vn_kV = 110.0)
+addBus!(net = net, busName = "B2", vn_kV = 110.0)
+addBus!(net = net, busName = "B3", vn_kV = 110.0)
+addBus!(net = net, busName = "B4", vn_kV = 110.0)
 
 addACLine!(net = net, fromBus = "B1", toBus = "B2", length = 5.0, r = 0.05, x = 0.5)
 addACLine!(net = net, fromBus = "B3", toBus = "B4", length = 20.0, r = 0.05, x = 0.5)

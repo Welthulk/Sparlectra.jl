@@ -2,9 +2,9 @@ using Sparlectra
 
 function build_case(; qmin = -15.0, qmax = 15.0)
   net = Net(name = "q_limit_adjust_demo", baseMVA = 100.0)
-  addBus!(net = net, busName = "SLACK", busType = "SLACK", vn_kV = 20.0)
-  addBus!(net = net, busName = "PV1", busType = "PV", vn_kV = 20.0)
-  addBus!(net = net, busName = "PQ1", busType = "PQ", vn_kV = 20.0)
+  addBus!(net = net, busName = "SLACK", vn_kV = 20.0)
+  addBus!(net = net, busName = "PV1", vn_kV = 20.0)
+  addBus!(net = net, busName = "PQ1", vn_kV = 20.0)
 
   addACLine!(net = net, fromBus = "SLACK", toBus = "PV1", length = 5.0, r = 0.1, x = 0.2, c_nf_per_km = 8.5, tanδ = 0.0)
   addACLine!(net = net, fromBus = "PV1", toBus = "PQ1", length = 8.0, r = 0.1, x = 0.2, c_nf_per_km = 8.5, tanδ = 0.0)
