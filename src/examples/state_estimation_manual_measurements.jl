@@ -27,9 +27,9 @@ using Random
 function build_manual_measurement_example_net()
   net = Net(name = "se_manual_measurements", baseMVA = 100.0)
 
-  addBus!(net = net, busName = "B1", busType = "Slack", vn_kV = 110.0, vm_pu = 1.02, va_deg = 0.0)
-  addBus!(net = net, busName = "B2", busType = "PQ", vn_kV = 110.0, vm_pu = 1.0, va_deg = 0.0)
-  addBus!(net = net, busName = "B3", busType = "PV", vn_kV = 110.0, vm_pu = 1.01, va_deg = 0.0)
+  addBus!(net = net, busName = "B1", vn_kV = 110.0, vm_pu = 1.02, va_deg = 0.0)
+  addBus!(net = net, busName = "B2", vn_kV = 110.0, vm_pu = 1.0, va_deg = 0.0)
+  addBus!(net = net, busName = "B3", vn_kV = 110.0, vm_pu = 1.01, va_deg = 0.0)
 
   addPIModelACLine!(net = net, fromBus = "B1", toBus = "B2", r_pu = 0.010, x_pu = 0.080, b_pu = 0.0, status = 1)
   addPIModelACLine!(net = net, fromBus = "B2", toBus = "B3", r_pu = 0.012, x_pu = 0.090, b_pu = 0.0, status = 1)
