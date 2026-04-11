@@ -100,12 +100,12 @@ function test_debug()
   net = Net(name = "remove_test", baseMVA = 100.0)
 
   # Add buses
-  addBus!(net = net, busName = "B1", busType = "PQ", vn_kV = 110.0)
-  addBus!(net = net, busName = "B2", busType = "PQ", vn_kV = 110.0)
-  addBus!(net = net, busName = "B3", busType = "PQ", vn_kV = 110.0)
-  addBus!(net = net, busName = "B4", busType = "PQ", vn_kV = 110.0)
-  addBus!(net = net, busName = "B5", busType = "SLACK", vn_kV = 110.0)
-  addBus!(net = net, busName = "B6", busType = "PV", vn_kV = 20.0)
+  addBus!(net = net, busName = "B1", vn_kV = 110.0)
+  addBus!(net = net, busName = "B2", vn_kV = 110.0)
+  addBus!(net = net, busName = "B3", vn_kV = 110.0)
+  addBus!(net = net, busName = "B4", vn_kV = 110.0)
+  addBus!(net = net, busName = "B5", vn_kV = 110.0)
+  addBus!(net = net, busName = "B6", vn_kV = 20.0)
 
   # Add lines
   addACLine!(net = net, fromBus = "B1", toBus = "B2", length = 10.0, r = 0.01, x = 0.1, c_nf_per_km = 10.0, tanδ = 0.0, ratedS = 100.0)

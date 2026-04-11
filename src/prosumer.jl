@@ -60,6 +60,7 @@ mutable struct ProSumer
   vstep_pu::Union{Nothing,Float64}
   tap_steps_down::Union{Nothing,Int}
   tap_steps_up::Union{Nothing,Int}
+  isRegulated::Bool
   proSumptionType::ProSumptionType
   isAPUNode::Bool
   qGenRepl::Union{Nothing,Float64}
@@ -87,6 +88,7 @@ mutable struct ProSumer
     vstep_pu::Union{Nothing,Float64} = nothing,
     tap_steps_down::Union{Nothing,Int} = nothing,
     tap_steps_up::Union{Nothing,Int} = nothing,
+    isRegulated::Bool = false,
     isAPUNode::Bool = false,
   )
     comp = getProSumPGMComp(vn_kv, busIdx, isGenerator(type), oID)
@@ -99,7 +101,7 @@ mutable struct ProSumer
       va_deg = 0.0
     end
 
-    new(comp, ratedS, ratedU, qPercent, p, q, maxP, minP, maxQ, minQ, ratedPowerFactor, referencePri, vm_pu, va_deg, vstep_pu, tap_steps_down, tap_steps_up, type, isAPUNode, nothing, nothing, nothing)
+    new(comp, ratedS, ratedU, qPercent, p, q, maxP, minP, maxQ, minQ, ratedPowerFactor, referencePri, vm_pu, va_deg, vstep_pu, tap_steps_down, tap_steps_up, isRegulated, type, isAPUNode, nothing, nothing, nothing)
   end
 
   function Base.show(io::IO, prosumption::ProSumer)
@@ -165,6 +167,9 @@ mutable struct ProSumer
     end
     if (!isnothing(prosumption.tap_steps_up))
       print(io, "tap_steps_up: ", prosumption.tap_steps_up, ", ")
+    end
+    if prosumption.isRegulated
+      print(io, "isRegulated: true, ")
     end
 
     if (!isnothing(prosumption.qGenRepl))
@@ -243,6 +248,11 @@ function isSlack(o::ProSumer)
   else
     return false
   end
+end
+
+function isRegulating(o::ProSumer)::Bool
+  has_controller = !isnothing(o.vstep_pu) || !isnothing(o.tap_steps_down) || !isnothing(o.tap_steps_up)
+  return o.isRegulated || has_controller
 end
 
 function toProSumptionType(o::ComponentTyp)::ProSumptionType

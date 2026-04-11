@@ -3,6 +3,10 @@
 This workshop guides you through the basic steps of using Sparlectra.jl to
 create, manipulate, and solve power system networks.
 
+> **Note:** `addBus!` creates electrical nodes. The operational PF bus type
+> (Slack/PV/PQ) is derived from attached prosumers. The legacy `busType` input
+> is still accepted for compatibility, but does not define PF behavior.
+
 ## Loading data from a file
 
 ```julia
@@ -43,11 +47,11 @@ net = Net(name = "example_network", baseMVA = 100.0)
 ### Add buses
 
 ```julia
-addBus!(net = net, busName = "B1", busType = "PQ", vn_kV = 110.0, vm_pu = 1.0, va_deg = 0.0)
-addBus!(net = net, busName = "B2", busType = "PQ", vn_kV = 110.0, vm_pu = 1.0, va_deg = 0.0)
-addBus!(net = net, busName = "B3", busType = "PQ", vn_kV = 110.0, vm_pu = 1.0, va_deg = 0.0)
-addBus!(net = net, busName = "B4", busType = "PQ", vn_kV = 110.0, vm_pu = 1.0, va_deg = 0.0)
-addBus!(net = net, busName = "B5", busType = "Slack", vn_kV = 110.0, vm_pu = 1.0, va_deg = 0.0)
+addBus!(net = net, busName = "B1", vn_kV = 110.0, vm_pu = 1.0, va_deg = 0.0)
+addBus!(net = net, busName = "B2", vn_kV = 110.0, vm_pu = 1.0, va_deg = 0.0)
+addBus!(net = net, busName = "B3", vn_kV = 110.0, vm_pu = 1.0, va_deg = 0.0)
+addBus!(net = net, busName = "B4", vn_kV = 110.0, vm_pu = 1.0, va_deg = 0.0)
+addBus!(net = net, busName = "B5", vn_kV = 110.0, vm_pu = 1.0, va_deg = 0.0)
 ```
 
 ### Add AC lines and transformers
@@ -177,11 +181,11 @@ print_results = true
 
 net = Net(name = "workshop_case5", baseMVA = 100.0)
 
-addBus!(net = net, busName = "B1", busType = "PQ",    vn_kV = 110.0, vm_pu = 1.0, va_deg = 0.0)
-addBus!(net = net, busName = "B2", busType = "PQ",    vn_kV = 110.0, vm_pu = 1.0, va_deg = 0.0)
-addBus!(net = net, busName = "B3", busType = "PQ",    vn_kV = 110.0, vm_pu = 1.0, va_deg = 0.0)
-addBus!(net = net, busName = "B4", busType = "PQ",    vn_kV = 110.0, vm_pu = 1.0, va_deg = 0.0)
-addBus!(net = net, busName = "B5", busType = "Slack", vn_kV = 110.0, vm_pu = 1.0, va_deg = 0.0)
+addBus!(net = net, busName = "B1",    vn_kV = 110.0, vm_pu = 1.0, va_deg = 0.0)
+addBus!(net = net, busName = "B2",    vn_kV = 110.0, vm_pu = 1.0, va_deg = 0.0)
+addBus!(net = net, busName = "B3",    vn_kV = 110.0, vm_pu = 1.0, va_deg = 0.0)
+addBus!(net = net, busName = "B4",    vn_kV = 110.0, vm_pu = 1.0, va_deg = 0.0)
+addBus!(net = net, busName = "B5", vn_kV = 110.0, vm_pu = 1.0, va_deg = 0.0)
 
 addACLine!(net = net, fromBus = "B1", toBus = "B2", length = 25.0, r = 0.2, x = 0.39)
 addACLine!(net = net, fromBus = "B1", toBus = "B3", length = 25.0, r = 0.2, x = 0.39)
@@ -315,10 +319,10 @@ using Sparlectra
 
 net = Net(name = "workshop_links", baseMVA = 100.0)
 
-addBus!(net = net, busName = "Bus1",  busType = "PQ",    vn_kV = 110.0)
-addBus!(net = net, busName = "Bus1a", busType = "PQ",    vn_kV = 110.0)
-addBus!(net = net, busName = "Bus4",  busType = "PQ",    vn_kV = 110.0)
-addBus!(net = net, busName = "Bus5",  busType = "Slack", vn_kV = 110.0)
+addBus!(net = net, busName = "Bus1",    vn_kV = 110.0)
+addBus!(net = net, busName = "Bus1a",    vn_kV = 110.0)
+addBus!(net = net, busName = "Bus4",    vn_kV = 110.0)
+addBus!(net = net, busName = "Bus5", vn_kV = 110.0)
 
 addPIModelACLine!(net = net, fromBus = "Bus1",  toBus = "Bus4", r_pu = 0.010, x_pu = 0.080, b_pu = 0.0)
 addPIModelACLine!(net = net, fromBus = "Bus1a", toBus = "Bus4", r_pu = 0.009, x_pu = 0.070, b_pu = 0.0)
@@ -377,11 +381,17 @@ Use an existing network or build one as shown above.
 
 ### 2. Define PV buses and Q-limits
 
-Make sure generator buses are of type `PV` and define reactive power limits.
+Define a slack prosumer and a regulating generator (PV behavior), then set Q-limits.
 
 ```julia
-setBusType!(net, "B5", "Slack")
-setBusType!(net, "B1", "PV")
+addProsumer!(
+    net = net,
+    busName = "B5",
+    type = "EXTERNALNETWORKINJECTION",
+    referencePri = "B5",
+    vm_pu = 1.0,
+    va_deg = 0.0,
+)
 
 addProsumer!(
     net = net,
@@ -390,6 +400,7 @@ addProsumer!(
     p = 10.0,
     q = 10.0,
     vm_pu = 1.03,
+    isRegulated = true,
     va_deg = 0.0,
     qMax = 50.0,
     qMin = -50.0,
@@ -473,9 +484,9 @@ using Random
 # 1) Build a simple 7-bus network
 net = Net(name = "workshop_se_7bus", baseMVA = 100.0)
 
-addBus!(net = net, busName = "B1", busType = "Slack", vn_kV = 110.0, vm_pu = 1.02, va_deg = 0.0)
+addBus!(net = net, busName = "B1", vn_kV = 110.0, vm_pu = 1.02, va_deg = 0.0)
 for i in 2:7
-    addBus!(net = net, busName = "B\$(i)", busType = "PQ", vn_kV = 110.0, vm_pu = 1.0, va_deg = 0.0)
+    addBus!(net = net, busName = "B\$(i)", vn_kV = 110.0, vm_pu = 1.0, va_deg = 0.0)
 end
 
 # Ring + cross-connections

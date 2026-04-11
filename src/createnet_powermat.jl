@@ -69,6 +69,10 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
 
   # --- Legacy-compatible dicts (same as your old importer) ---
   busDict, genDict, branchDict = _createDict()
+  mp_bus_type = Dict{Int,Int}()
+  for row in eachrow(busData)
+    mp_bus_type[Int(row[busDict["bus"]])] = Int(row[busDict["type"]])
+  end
 
   if log
     @info "Creating new Net: $(name) with baseMVA=$(baseMVA), flatstart=$(flatstart)"
@@ -116,7 +120,6 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
     addBus!(
       net = myNet,
       busName = busName,
-      busType = toString(toNodeType(btype)),
       vn_kV = vn_kv,
       vm_pu = vm_pu,
       va_deg = va_deg,
@@ -231,6 +234,7 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
     pMin = Float64(row[genDict["Pmin"]])
     vm_pu = Float64(row[genDict["Vg"]])
     mBase = Float64(row[genDict["mBase"]])
+    btype = get(mp_bus_type, Int(row[genDict["bus"]]), 1)
 
     referencePri = (slackIdx == Int(row[genDict["bus"]])) ? bus : nothing
     (mBase != baseMVA) && @debug "generator $(bus) has different mBase than network baseMVA (allowed in MATPOWER)" bus mBase baseMVA
@@ -239,7 +243,7 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
       net = myNet,
       busName = bus,
       type = "GENERATOR",
-      vm_pu = vm_pu,
+      vm_pu = (btype == 2 || btype == 3) ? vm_pu : nothing,
       referencePri = referencePri,
       p = pGen,
       q = qGen,
@@ -247,6 +251,7 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
       pMin = pMin,
       qMax = qMax,
       qMin = qMin,
+      isRegulated = (btype == 2),
     )
   end
 

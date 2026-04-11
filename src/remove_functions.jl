@@ -431,6 +431,8 @@ function removeProsumer!(; net::Net, busName::String, type::String = "")::Bool
     node._qƩLoad = 0.0
   end
 
+  refreshBusTypesFromProsumers!(net)
+  _buildQLimits!(net)
   return true
 end
 

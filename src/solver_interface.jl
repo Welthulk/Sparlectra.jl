@@ -149,7 +149,7 @@ end
     buildPfModel(net; opt_sparse=true, flatstart=net.flatstart, include_limits=true, verbose=0) -> PFModel
 
 Build a canonical PF model from `net`:
-- active buses are defined via `getBusData(net.nodeVec, net.baseMVA, flatstart)`,
+- active buses are defined via `getBusData(net.nodeVec, net.baseMVA, flatstart; net=net)`,
   which excludes isolated buses and sorts by bus index. :contentReference[oaicite:5]{index=5}
 - Ybus is built via `createYBUS(net=net, sparse=opt_sparse, ...)` and is consistent
   with the same isolated-bus compression. :contentReference[oaicite:6]{index=6}
@@ -164,7 +164,7 @@ function buildPfModel(
   verbose::Int = 0,
 )
   # 1) BusData provides canonical active-bus ordering (skip iso, sort by idx)
-  busVec, slackNum = getBusData(net.nodeVec, net.baseMVA, flatstart)
+  busVec, slackNum = getBusData(net.nodeVec, net.baseMVA, flatstart; net = net)
   n = length(busVec)
   n == 0 && error("buildPfModel: empty busVec (no active buses).")
 
