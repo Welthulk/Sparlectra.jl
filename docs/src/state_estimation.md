@@ -212,9 +212,9 @@ println("Converged: ", se.converged, ", iterations: ", se.iterations)
 using Sparlectra
 
 net = Net(name = "se_measurement_driven", baseMVA = 100.0)
-addBus!(net = net, busName = "B1", busType = "Slack", vn_kV = 110.0)
-addBus!(net = net, busName = "B2", busType = "PQ", vn_kV = 110.0)
-addBus!(net = net, busName = "B3", busType = "PQ", vn_kV = 110.0)
+addBus!(net = net, busName = "B1", vn_kV = 110.0)
+addBus!(net = net, busName = "B2", vn_kV = 110.0)
+addBus!(net = net, busName = "B3", vn_kV = 110.0)
 addPIModelACLine!(net = net, fromBus = "B1", toBus = "B2", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0)
 addPIModelACLine!(net = net, fromBus = "B2", toBus = "B3", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0)
 addPIModelACLine!(net = net, fromBus = "B3", toBus = "B1", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0)
@@ -249,9 +249,9 @@ references for you:
 using Sparlectra
 
 net = Net(name = "se_helpers", baseMVA = 100.0)
-addBus!(net = net, busName = "B1", busType = "Slack", vn_kV = 110.0)
-addBus!(net = net, busName = "B2", busType = "PQ", vn_kV = 110.0)
-addBus!(net = net, busName = "B3", busType = "PQ", vn_kV = 110.0)
+addBus!(net = net, busName = "B1", vn_kV = 110.0)
+addBus!(net = net, busName = "B2", vn_kV = 110.0)
+addBus!(net = net, busName = "B3", vn_kV = 110.0)
 addPIModelACLine!(net = net, fromBus = "B1", toBus = "B2", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0)
 addPIModelACLine!(net = net, fromBus = "B2", toBus = "B3", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0)
 addPIModelACLine!(net = net, fromBus = "B3", toBus = "B1", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0)

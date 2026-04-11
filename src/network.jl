@@ -247,6 +247,24 @@ end
   return v
 end
 
+const _setbus_bus_type_warned = Ref(false)
+const _legacy_bus_type_trace_keys = ("1", "true", "yes", "on")
+
+@inline function _trace_legacy_bus_type_warnings()::Bool
+  return lowercase(get(ENV, "SPARLECTRA_TRACE_LEGACY_BUSTYPE", "0")) in _legacy_bus_type_trace_keys
+end
+
+function _legacy_bus_type_caller_hint()::String
+  bt = stacktrace()
+  for fr in bt
+    f = String(fr.file)
+    if !occursin("src/network.jl", f)
+      return "$(basename(f)):$(fr.line)"
+    end
+  end
+  return "unknown"
+end
+
 """
 Sets the type of a bus in the network.
 
@@ -256,6 +274,14 @@ Sets the type of a bus in the network.
 - `busType::String`: Type of the bus (e.g., "Slack", "PQ", "PV")
 """
 function setBusType!(net::Net, bus::Int, busType::String)
+  if !_setbus_bus_type_warned[]
+    msg = "setBusType! only updates the static node label. Power-flow bus typing is derived from attached prosumers."
+    if _trace_legacy_bus_type_warnings()
+      msg *= " caller=" * _legacy_bus_type_caller_hint()
+    end
+    @warn msg
+    _setbus_bus_type_warned[] = true
+  end
   @assert 1 <= bus <= length(net.nodeVec) "The $bus index is invalid. It must be between 1 and $(length(net.nodeVec))."
   node  = net.nodeVec[bus]
   oldTy = getfield(node, :_nodeType)
@@ -322,14 +348,66 @@ function getNetOrigBusIdx(; net::Net, busName::String)::Int
   return net.busOrigIdxDict[id]
 end
 
+function getBusProsumers(net::Net, busIdx::Int)::Vector{ProSumer}
+  bus_ps = ProSumer[]
+  for ps in net.prosumpsVec
+    if getPosumerBusIndex(ps) == busIdx
+      push!(bus_ps, ps)
+    end
+  end
+  return bus_ps
+end
+
+function getEffectiveBusType(net::Net, busIdx::Int)::NodeType
+  has_slack = false
+  has_regulating = false
+
+  for ps in getBusProsumers(net, busIdx)
+    if isSlack(ps)
+      has_slack = true
+    end
+    if isGenerator(ps) && isRegulating(ps)
+      has_regulating = true
+    end
+  end
+
+  if has_slack
+    return Slack
+  elseif has_regulating
+    return PV
+  else
+    return PQ
+  end
+end
+
+function getEffectiveBusType(; net::Net, busName::String)::NodeType
+  busIdx = geNetBusIdx(net = net, busName = busName)
+  return getEffectiveBusType(net, busIdx)
+end
+
+function refreshBusTypesFromProsumers!(net::Net)
+  empty!(net.slackVec)
+  for busIdx in eachindex(net.nodeVec)
+    if net.nodeVec[busIdx]._nodeType == Isolated
+      continue
+    end
+    node_type = getEffectiveBusType(net, busIdx)
+    net.nodeVec[busIdx]._nodeType = node_type
+    if node_type == Slack
+      push!(net.slackVec, busIdx)
+    end
+  end
+  return nothing
+end
+
 """
 addBus!: Adds a bus to the network.
 
 Parameters:
 - `net::Net`: Network object.
 - `busName::String`: Name of the bus.
-- `busType::String`: Type of the bus (e.g., "Slack", "PQ", "PV").
 - `vn_kV::Float64`: Nominal voltage of the bus in kV.
+- `busType::Union{Nothing,String} = nothing`: Legacy static bus label (deprecated, ignored for PF typing).
 - `vm_pu::Float64 = 1.0`: Voltage magnitude of the bus in per unit (default is 1.0).
 - `va_deg::Float64 = 0.0`: Voltage angle of the bus in degrees (default is 0.0).
 - `vmin_pu::Union{Nothing,Float64} = nothing`: Minimum voltage limit in per unit (default is network's vmin_pu).
@@ -340,11 +418,13 @@ Parameters:
 - `area::Union{Nothing,Int} = nothing`: Area index (default is nothing).
 - `ratedS::Union{Nothing,Float64} = nothing`: Rated power of the bus in MVA (default is nothing).
 """
+const _addbus_bus_type_warned = Ref(false)
+
 function addBus!(;
   net::Net,
   busName::String,
-  busType::String,
   vn_kV::Float64,
+  busType::Union{Nothing,String} = nothing,
   vm_pu::Float64 = 1.0,
   va_deg::Float64 = 0.0,
   vmin_pu::Union{Nothing,Float64} = nothing,
@@ -355,7 +435,17 @@ function addBus!(;
   area::Union{Nothing,Int} = nothing,
   ratedS::Union{Nothing,Float64} = nothing,
 )
-  @assert busType in ["Slack", "SLACK", "PQ", "PV"] "Invalid bus type: $busType"
+  if !isnothing(busType)
+    @assert busType in ["Slack", "SLACK", "PQ", "PV"] "Invalid bus type: $busType"
+    if !_addbus_bus_type_warned[]
+      msg = "addBus!: `busType` is a legacy input. Power-flow bus typing is derived from attached prosumers."
+      if _trace_legacy_bus_type_warnings()
+        msg *= " caller=" * _legacy_bus_type_caller_hint()
+      end
+      @warn msg
+      _addbus_bus_type_warned[] = true
+    end
+  end
 
   if net._locked
     @error "Network is locked"
@@ -377,11 +467,12 @@ function addBus!(;
     end
   end
 
-  if (uppercase(busType) == "SLACK") || (uppercase(busType) == "Slack ")
+  static_bus_type = isnothing(busType) ? "PQ" : busType
+  if uppercase(static_bus_type) == "SLACK"
     push!(net.slackVec, busIdx)
   end
 
-  node = Node(busIdx = busIdx, vn_kV = vn_kV, nodeType = toNodeType(busType), vm_pu = vm_pu, va_deg = va_deg, vmin_pu = vmin_pu, vmax_pu = vmax_pu, isAux = isAux, oBusIdx = oBusIdx, zone = zone, area = area, ratedS = ratedS)
+  node = Node(busIdx = busIdx, vn_kV = vn_kV, nodeType = toNodeType(static_bus_type), vm_pu = vm_pu, va_deg = va_deg, vmin_pu = vmin_pu, vmax_pu = vmax_pu, isAux = isAux, oBusIdx = oBusIdx, zone = zone, area = area, ratedS = ratedS)
   push!(net.nodeVec, node)
 end
 
@@ -766,7 +857,7 @@ function add3WTPiModelTrafo!(; net::Net, HBBus::String, MBBus::String, LVBus::St
 
   # --- create AUX bus if missing ---
   if !hasBusInNet(net = net, busName = aux_bus)
-    addBus!(net = net, busName = aux_bus, busType = "PQ", vn_kV = U_aux_kV, isAux = true)
+    addBus!(net = net, busName = aux_bus, vn_kV = U_aux_kV, isAux = true)
   end
 
   # --- define ratios for each branch AUX->side ---
@@ -870,6 +961,7 @@ Add a prosumer (combination of a producer and consumer) to the network.
 - `referencePri::Union{Nothing, String}`: Reference bus for the prosumer. Default is `nothing`.
 - `vm_pu::Union{Nothing, Float64}`: Voltage magnitude setpoint. Default is `nothing`.
 - `va_deg::Union{Nothing, Float64}`: Voltage angle setpoint. Default is `nothing`.
+- `isRegulated::Bool`: Marks a prosumer as voltage-regulating for PV bus resolution. Default is `false`.
 """
 function addProsumer!(;
   net::Net,
@@ -887,6 +979,7 @@ function addProsumer!(;
   vstep_pu::Union{Nothing,Float64} = nothing,
   tap_steps_down::Union{Nothing,Int} = nothing,
   tap_steps_up::Union{Nothing,Int} = nothing,
+  isRegulated::Bool = false,
 )
   busIdx = geNetBusIdx(net = net, busName = busName)
   idProsSum = length(net.prosumpsVec) + 1
@@ -904,7 +997,8 @@ function addProsumer!(;
   proTy = toProSumptionType(type)
   refPriIdx = isnothing(referencePri) ? nothing : geNetBusIdx(net = net, busName = referencePri)
   vn_kV = getNodeVn(net.nodeVec[busIdx])
-  ps = ProSumer(vn_kv = vn_kV, busIdx = busIdx, oID = idProsSum, type = proTy, p = p, q = q, minP = pMin, maxP = pMax, minQ = qMin, maxQ = qMax, referencePri = refPriIdx, vm_pu = vm_pu, va_deg = va_deg, vstep_pu = vstep_pu, tap_steps_down = tap_steps_down, tap_steps_up = tap_steps_up, isAPUNode = isAPUNode)
+  auto_regulated = isRegulated || (isGenerator(proTy) && !isnothing(vm_pu))
+  ps = ProSumer(vn_kv = vn_kV, busIdx = busIdx, oID = idProsSum, type = proTy, p = p, q = q, minP = pMin, maxP = pMax, minQ = qMin, maxQ = qMax, referencePri = refPriIdx, vm_pu = vm_pu, va_deg = va_deg, vstep_pu = vstep_pu, tap_steps_down = tap_steps_down, tap_steps_up = tap_steps_up, isRegulated = auto_regulated, isAPUNode = isAPUNode)
   push!(net.prosumpsVec, ps)
   node = net.nodeVec[busIdx]
   if (isGenerator(proTy))
@@ -913,6 +1007,7 @@ function addProsumer!(;
     addLoadPower!(node = node, p = p, q = q)
   end
 
+  refreshBusTypesFromProsumers!(net)
   _buildQLimits!(net)
 end
 
@@ -1224,8 +1319,7 @@ Get the type of a specific bus in the network.
 The type of the specified bus.
 """
 function getBusType(; net::Net, busName::String)
-  busIdx = geNetBusIdx(net = net, busName = busName)
-  return net.nodeVec[busIdx]._nodeType
+  return getEffectiveBusType(net = net, busName = busName)
 end
 
 """

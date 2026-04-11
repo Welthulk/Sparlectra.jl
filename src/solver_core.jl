@@ -93,6 +93,7 @@ end
 bus_types uses :Slack/:PV/:PQ, Vset is vm setpoint (PV) or current vm default.
 """
 function extract_bus_types_and_vset(net::Net)
+  refreshBusTypesFromProsumers!(net)
   n         = length(net.nodeVec)
   bus_types = Vector{Symbol}(undef, n)
   Vset      = Vector{Float64}(undef, n)

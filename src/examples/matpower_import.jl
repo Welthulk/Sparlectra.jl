@@ -138,6 +138,7 @@ function bench_config_for_case(case_name::AbstractString, yaml_cfg::Dict{String,
     seconds = 2.0,
     samples = 50,
     show_once = true,
+    trace_legacy_bus_type_warnings = false,
   )
   case_override = get(CASE_BENCH_OVERRIDES, String(case_name), (;))
   yaml_override = (;)
@@ -159,6 +160,7 @@ function bench_config_for_case(case_name::AbstractString, yaml_cfg::Dict{String,
       seconds = Float64(get(yaml_cfg, "seconds", base.seconds)),
       samples = Int(get(yaml_cfg, "samples", base.samples)),
       show_once = Bool(get(yaml_cfg, "show_once", base.show_once)),
+      trace_legacy_bus_type_warnings = Bool(get(yaml_cfg, "trace_legacy_bus_type_warnings", base.trace_legacy_bus_type_warnings)),
     )
   end
   return merge(base, case_override, yaml_override)
@@ -316,6 +318,10 @@ function main()
   end
 
   cfg = bench_config_for_case(case, yaml_cfg)
+  if cfg.trace_legacy_bus_type_warnings
+    ENV["SPARLECTRA_TRACE_LEGACY_BUSTYPE"] = "1"
+    println("legacy trace     = enabled (SPARLECTRA_TRACE_LEGACY_BUSTYPE=1)")
+  end
   lock_pv_to_pq_buses = cfg.lock_pv_to_pq_buses
   if cfg.ignore_q_limits
     lock_pv_to_pq_buses = _mpc_pv_bus_ids(mpc)

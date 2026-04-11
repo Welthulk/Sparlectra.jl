@@ -51,12 +51,12 @@ function build_link_demo_net(; link_closed::Bool)
   net = Net(name = link_closed ? "using_links_closed" : "using_links_open", baseMVA = 100.0)
 
   # Buses: five base buses + additional Bus1a.
-  addBus!(net = net, busName = "Bus1", busType = "PQ", vn_kV = 110.0)
-  addBus!(net = net, busName = "Bus1a", busType = "PQ", vn_kV = 110.0)
-  addBus!(net = net, busName = "Bus2", busType = "PQ", vn_kV = 110.0)
-  addBus!(net = net, busName = "Bus3", busType = "PQ", vn_kV = 110.0)
-  addBus!(net = net, busName = "Bus4", busType = "PQ", vn_kV = 110.0)
-  addBus!(net = net, busName = "Bus5", busType = "Slack", vn_kV = 110.0)
+  addBus!(net = net, busName = "Bus1", vn_kV = 110.0)
+  addBus!(net = net, busName = "Bus1a", vn_kV = 110.0)
+  addBus!(net = net, busName = "Bus2", vn_kV = 110.0)
+  addBus!(net = net, busName = "Bus3", vn_kV = 110.0)
+  addBus!(net = net, busName = "Bus4", vn_kV = 110.0)
+  addBus!(net = net, busName = "Bus5", vn_kV = 110.0)
 
   # Requested branches.
   addPIModelACLine!(net = net, fromBus = "Bus1", toBus = "Bus3", r_pu = 0.010, x_pu = 0.080, b_pu = 0.0, status = 1)

@@ -116,9 +116,9 @@ function create_base_network()
   net = Net(name = "BaseNetwork", baseMVA = 100.0, vmin_pu = 0.1, vmax_pu = 2.0)
   base_r, base_x = 0.02, 0.08
 
-  addBus!(net = net, busName = "B1", busType = "Slack", vn_kV = 110.0)
-  addBus!(net = net, busName = "B2", busType = "PQ", vn_kV = 110.0)
-  addBus!(net = net, busName = "B3", busType = "PV", vn_kV = 110.0)
+  addBus!(net = net, busName = "B1", vn_kV = 110.0)
+  addBus!(net = net, busName = "B2", vn_kV = 110.0)
+  addBus!(net = net, busName = "B3", vn_kV = 110.0)
 
   addACLine!(net = net, fromBus = "B1", toBus = "B2", length = 15.0, r = base_r, x = base_x, b = 0.0, ratedS = 100.0)
   addACLine!(net = net, fromBus = "B2", toBus = "B3", length = 20.0, r = (base_r + 0.01), x = (base_x + 0.02), b = 0.0, ratedS = 100.0)
@@ -133,9 +133,9 @@ end
 function create_variable_network(; resistance_factor = 1.0, load_factor = 1.0, impedance_factor = 1.0)
   net = Net(name = "VarNet_R$(resistance_factor)_L$(load_factor)_X$(impedance_factor)", baseMVA = 100.0, vmin_pu = 0.1, vmax_pu = 2.0)
 
-  addBus!(net = net, busName = "B1", busType = "Slack", vn_kV = 110.0)
-  addBus!(net = net, busName = "B2", busType = "PQ", vn_kV = 110.0)
-  addBus!(net = net, busName = "B3", busType = "PV", vn_kV = 110.0)
+  addBus!(net = net, busName = "B1", vn_kV = 110.0)
+  addBus!(net = net, busName = "B2", vn_kV = 110.0)
+  addBus!(net = net, busName = "B3", vn_kV = 110.0)
 
   base_r, base_x = 0.02, 0.08
   r_mult = resistance_factor
