@@ -28,9 +28,9 @@ using Printf
 function _create_demo_net()
   net = Net(name = "se_diagnostics_demo", baseMVA = 100.0)
 
-  addBus!(net = net, busName = "Slack", busType = "SLACK", vn_kV = 110.0)
-  addBus!(net = net, busName = "LoadA", busType = "PQ", vn_kV = 110.0)
-  addBus!(net = net, busName = "LoadB", busType = "PQ", vn_kV = 110.0)
+  addBus!(net = net, busName = "Slack", vn_kV = 110.0)
+  addBus!(net = net, busName = "LoadA", vn_kV = 110.0)
+  addBus!(net = net, busName = "LoadB", vn_kV = 110.0)
 
   addACLine!(net = net, fromBus = "Slack", toBus = "LoadA", length = 12.0, r = 0.02, x = 0.2, c_nf_per_km = 0.0, tanδ = 0.0)
   addACLine!(net = net, fromBus = "LoadA", toBus = "LoadB", length = 9.0, r = 0.02, x = 0.2, c_nf_per_km = 0.0, tanδ = 0.0)
