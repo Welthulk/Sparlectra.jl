@@ -1459,29 +1459,21 @@ function test_bus_type_resolution_from_prosumers()::Bool
   return ok_types && pv_regulation_ok && genpq_regulation_ok
 end
 
-function test_regulated_generator_bus_targets_include_unregulated_generators()::Bool
-  net = Net(name = "regulated_generator_bus_targets", baseMVA = 100.0)
-  addBus!(net = net, busName = "Slack", vn_kV = 110.0)
-  addBus!(net = net, busName = "PVBus", vn_kV = 110.0)
+function test_multiple_slack_prosumers_same_bus_supported()::Bool
+  net = Net(name = "multi_slack_same_bus", baseMVA = 100.0)
+  addBus!(net = net, busName = "SlackBus", vn_kV = 110.0)
+  addBus!(net = net, busName = "LoadBus", vn_kV = 110.0)
 
-  addProsumer!(net = net, busName = "Slack", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "Slack")
+  addProsumer!(net = net, busName = "SlackBus", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "SlackBus")
+  # Second in-service generator at the same slack bus (MATPOWER-like multi-gen slack bus case).
+  addProsumer!(net = net, busName = "SlackBus", type = "GENERATOR", p = 15.0, q = 2.0, referencePri = "SlackBus")
+  addProsumer!(net = net, busName = "LoadBus", type = "ENERGYCONSUMER", p = 10.0, q = 3.0)
 
-  # Regulated generator defines PV behavior at the bus.
-  addProsumer!(net = net, busName = "PVBus", type = "SYNCHRONOUSMACHINE", p = 20.0, q = 3.0, vm_pu = 1.02, isRegulated = true, qMin = -30.0, qMax = 40.0)
-  # Additional unregulated generator at the same bus.
-  addProsumer!(net = net, busName = "PVBus", type = "SYNCHRONOUSMACHINE", p = 7.5, q = 1.0, qMin = -10.0, qMax = 15.0)
-
-  pv_bus = geNetBusIdx(net = net, busName = "PVBus")
-  node = net.nodeVec[pv_bus]
-  qmin_pu, qmax_pu = getQLimits_pu(net)
-
-  p_target_ok = isapprox(node._pƩGen, 27.5; atol = 1e-9, rtol = 0.0)
-  q_target_ok = isapprox(node._qƩGen, 4.0; atol = 1e-9, rtol = 0.0)
-  q_limit_ok = isapprox(qmin_pu[pv_bus], -0.4; atol = 1e-9, rtol = 0.0) &&
-               isapprox(qmax_pu[pv_bus], 0.55; atol = 1e-9, rtol = 0.0)
-  bus_type_ok = getEffectiveBusType(net = net, busName = "PVBus") == Sparlectra.PV
-
-  return p_target_ok && q_target_ok && q_limit_ok && bus_type_ok
+  slack_bus = geNetBusIdx(net = net, busName = "SlackBus")
+  load_bus = geNetBusIdx(net = net, busName = "LoadBus")
+  return getEffectiveBusType(net, slack_bus) == Sparlectra.Slack &&
+         getEffectiveBusType(net, load_bus) == Sparlectra.PQ &&
+         count(isSlack, getBusProsumers(net, slack_bus)) == 2
 end
 
 function test_regulated_generator_bus_targets_include_unregulated_generators()::Bool
@@ -1545,6 +1537,7 @@ function run_grid_tests()
       @test test_q_limit_adjust_vset_multigen_single_controller() == true
       @test test_q_limit_default_behavior_unchanged() == true
       @test test_bus_type_resolution_from_prosumers() == true
+      @test test_multiple_slack_prosumers_same_bus_supported() == true
       @test test_regulated_generator_bus_targets_include_unregulated_generators() == true
     end
 

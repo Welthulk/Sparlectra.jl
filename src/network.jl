@@ -364,9 +364,6 @@ function getEffectiveBusType(net::Net, busIdx::Int)::NodeType
 
   for ps in getBusProsumers(net, busIdx)
     if isSlack(ps)
-      if has_slack
-        error("Multiple slack-defining prosumers at bus index $busIdx are not supported.")
-      end
       has_slack = true
     end
     if isGenerator(ps) && isRegulating(ps)
@@ -860,7 +857,7 @@ function add3WTPiModelTrafo!(; net::Net, HBBus::String, MBBus::String, LVBus::St
 
   # --- create AUX bus if missing ---
   if !hasBusInNet(net = net, busName = aux_bus)
-    addBus!(net = net, busName = aux_bus, busType = "PQ", vn_kV = U_aux_kV, isAux = true)
+    addBus!(net = net, busName = aux_bus, vn_kV = U_aux_kV, isAux = true)
   end
 
   # --- define ratios for each branch AUX->side ---
