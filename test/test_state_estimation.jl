@@ -206,9 +206,9 @@ end
 function create_state_estimation_passive_transit_net()::Net
   net = Net(name = "se_passive_transit", baseMVA = 100.0)
 
-  addBus!(net = net, busName = "Slack", busType = "SLACK", vn_kV = 110.0)
-  addBus!(net = net, busName = "Transit", busType = "PQ", vn_kV = 110.0)
-  addBus!(net = net, busName = "Load", busType = "PQ", vn_kV = 110.0)
+  addBus!(net = net, busName = "Slack", vn_kV = 110.0)
+  addBus!(net = net, busName = "Transit", vn_kV = 110.0)
+  addBus!(net = net, busName = "Load", vn_kV = 110.0)
 
   addACLine!(net = net, fromBus = "Slack", toBus = "Transit", length = 10.0, r = 0.02, x = 0.2, c_nf_per_km = 0.0, tanδ = 0.0)
   addACLine!(net = net, fromBus = "Transit", toBus = "Load", length = 8.0, r = 0.02, x = 0.2, c_nf_per_km = 0.0, tanδ = 0.0)
