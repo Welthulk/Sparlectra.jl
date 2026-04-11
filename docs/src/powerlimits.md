@@ -196,3 +196,39 @@ step, not only a post-processing label.
 
 For the numerical solver details behind this equation system, see
 [Solver Guide](solver.md).
+
+---
+
+## Alternative to immediate PV→PQ switching: `qlimit_mode = :adjust_vset`
+
+In addition to the default `:switch_to_pq` behavior, Sparlectra supports a
+controller-based strategy for the **rectangular** solver:
+
+```julia
+runpf!(net, 40, 1e-8, 1; method = :rectangular, qlimit_mode = :adjust_vset)
+```
+
+### What it does
+
+When a PV bus reaches a reactive limit, Sparlectra can first try to change the
+voltage setpoint (`vm_pu`) in configured steps (`vstep_pu`) before converting
+the bus to PQ. This can avoid unnecessary PV→PQ switching in operating points
+where a small voltage correction is enough to keep Q inside limits.
+
+### Required controller data
+
+At least one regulating generator prosumer at the PV bus must provide:
+
+* `vstep_pu` (step size),
+* optional `tap_steps_down` / `tap_steps_up` (max number of downward/upward
+  adjustments),
+* and only **one** controller definition per bus is allowed.
+
+If no valid controller is configured (or limits on adjustment steps are
+exhausted), Sparlectra falls back to standard PV→PQ switching.
+
+### Important scope note
+
+`qlimit_mode = :adjust_vset` is currently only supported with
+`method = :rectangular`. For other methods, Sparlectra warns and uses
+`:switch_to_pq` behavior.

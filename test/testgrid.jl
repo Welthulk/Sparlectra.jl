@@ -1454,6 +1454,31 @@ function test_bus_type_resolution_from_prosumers()::Bool
   return ok_types
 end
 
+function test_regulated_generator_bus_targets_include_unregulated_generators()::Bool
+  net = Net(name = "regulated_generator_bus_targets", baseMVA = 100.0)
+  addBus!(net = net, busName = "Slack", vn_kV = 110.0)
+  addBus!(net = net, busName = "PVBus", vn_kV = 110.0)
+
+  addProsumer!(net = net, busName = "Slack", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "Slack")
+
+  # Regulated generator defines PV behavior at the bus.
+  addProsumer!(net = net, busName = "PVBus", type = "SYNCHRONOUSMACHINE", p = 20.0, q = 3.0, vm_pu = 1.02, isRegulated = true, qMin = -30.0, qMax = 40.0)
+  # Additional unregulated generator at the same bus.
+  addProsumer!(net = net, busName = "PVBus", type = "SYNCHRONOUSMACHINE", p = 7.5, q = 1.0, qMin = -10.0, qMax = 15.0)
+
+  pv_bus = geNetBusIdx(net = net, busName = "PVBus")
+  node = net.nodeVec[pv_bus]
+  qmin_pu, qmax_pu = getQLimits_pu(net)
+
+  p_target_ok = isapprox(node._pƩGen, 27.5; atol = 1e-9, rtol = 0.0)
+  q_target_ok = isapprox(node._qƩGen, 4.0; atol = 1e-9, rtol = 0.0)
+  q_limit_ok = isapprox(qmin_pu[pv_bus], -0.4; atol = 1e-9, rtol = 0.0) &&
+               isapprox(qmax_pu[pv_bus], 0.55; atol = 1e-9, rtol = 0.0)
+  bus_type_ok = getEffectiveBusType(net = net, busName = "PVBus") == Sparlectra.PV
+
+  return p_target_ok && q_target_ok && q_limit_ok && bus_type_ok
+end
+
 function run_grid_tests()
   @testset "Grid and power-flow regression tests" begin
     @testset "Transformer and network validation" begin
@@ -1490,6 +1515,7 @@ function run_grid_tests()
       @test test_q_limit_adjust_vset_multigen_single_controller() == true
       @test test_q_limit_default_behavior_unchanged() == true
       @test test_bus_type_resolution_from_prosumers() == true
+      @test test_regulated_generator_bus_targets_include_unregulated_generators() == true
     end
 
     @testset "Link behaviour and reporting" begin
