@@ -95,9 +95,9 @@ function run_solver_interface_tests()
     @test test_external_solver_interface() == true
     @testset "Q-limit reporting and validation options" begin
       net = createTest3BusNet()
-      Sparlectra.setBusType!(net, 1, "PV")
-      Sparlectra.setBusType!(net, 2, "PV")
-      Sparlectra.setBusType!(net, 3, "PV")
+      net.nodeVec[1]._nodeType = Sparlectra.PV
+      net.nodeVec[2]._nodeType = Sparlectra.PV
+      net.nodeVec[3]._nodeType = Sparlectra.PV
       empty!(net.qmin_pu)
       append!(net.qmin_pu, [-0.1, 0.05, -0.2])
       empty!(net.qmax_pu)
