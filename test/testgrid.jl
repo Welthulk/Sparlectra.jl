@@ -24,8 +24,8 @@ function test_2WTPITrafo()
   netName = "trafo_2W_PIT"
   net = Net(name = netName, baseMVA = Sbase_MVA)
   @debug "Creating $netName test network"
-  addBus!(net = net, busName = "B1", busType = "PQ", vn_kV = 220.0)
-  addBus!(net = net, busName = "B2", busType = "SLACK", vn_kV = 20.0)
+  addBus!(net = net, busName = "B1", vn_kV = 220.0)
+  addBus!(net = net, busName = "B2", vn_kV = 20.0)
 
   add2WTPIModelTrafo!(net = net, fromBus = "B1", toBus = "B2", r = 0.0, x = 0.4, ratedU = 220.0, ratedS = 1000.0)
   addProsumer!(net = net, busName = "B2", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "B1")
@@ -52,11 +52,11 @@ function test_3WTPITrafo(verbose::Int = 0; method::Symbol = :rectangular, opt_fd
   @debug "Creating $netName test network"
 
   # --- buses ---
-  addBus!(net = net, busName = "B1", busType = "SLACK", vn_kV = 380.0)
-  addBus!(net = net, busName = "B2", busType = "PQ", vn_kV = 380.0)  # HV side of 3W trafo
-  addBus!(net = net, busName = "B3", busType = "PQ", vn_kV = 110.0)  # MV side
-  addBus!(net = net, busName = "B4", busType = "PQ", vn_kV = 20.0)   # LV side (shunt bus)
-  addBus!(net = net, busName = "B5", busType = "PQ", vn_kV = 110.0)  # load bus at 110kV
+  addBus!(net = net, busName = "B1", vn_kV = 380.0)
+  addBus!(net = net, busName = "B2", vn_kV = 380.0)  # HV side of 3W trafo
+  addBus!(net = net, busName = "B3", vn_kV = 110.0)  # MV side
+  addBus!(net = net, busName = "B4", vn_kV = 20.0)   # LV side (shunt bus)
+  addBus!(net = net, busName = "B5", vn_kV = 110.0)  # load bus at 110kV
 
   # --- slack injection ---
   addProsumer!(net = net, busName = "B1", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "B1")
@@ -379,11 +379,11 @@ function testISOBusses()
   netName = "isobus"
   net = Net(name = netName, baseMVA = Sbase_MVA)
   @debug "Creating $netName test network"
-  addBus!(net = net, busName = "B1", busType = "PQ", vn_kV = 220.0)
-  addBus!(net = net, busName = "B2", busType = "PV", vn_kV = 220.0)
-  addBus!(net = net, busName = "B3", busType = "PQ", vn_kV = 220.0)
-  addBus!(net = net, busName = "B4", busType = "PQ", vn_kV = 220.0)
-  addBus!(net = net, busName = "B5", busType = "SLACK", vn_kV = 220.0)
+  addBus!(net = net, busName = "B1", vn_kV = 220.0)
+  addBus!(net = net, busName = "B2", vn_kV = 220.0)
+  addBus!(net = net, busName = "B3", vn_kV = 220.0)
+  addBus!(net = net, busName = "B4", vn_kV = 220.0)
+  addBus!(net = net, busName = "B5", vn_kV = 220.0)
 
   addACLine!(net = net, fromBus = "B1", toBus = "B2", length = 100.0, r = 0.0653, x = 0.398, c_nf_per_km = 9.08, tanδ = 0.0, ratedS = 250.0, status = 1)
   addACLine!(net = net, fromBus = "B1", toBus = "B3", length = 100.0, r = 0.0653, x = 0.398, c_nf_per_km = 9.08, tanδ = 0.0, ratedS = 250.0, status = 1)
@@ -444,33 +444,33 @@ function createCIGRE(lLine_6a6b = 0.01)::Net
   @debug "Creating $netName test network"
   # A R E A 1
   # Bus 1, 220kV  
-  addBus!(net = net, busName = "B1", busType = "PQ", vn_kV = 220.0)
+  addBus!(net = net, busName = "B1", vn_kV = 220.0)
   # Bus 9, 22kV  
-  addBus!(net = net, busName = "B9", busType = "Slack", vn_kV = 22.0)
+  addBus!(net = net, busName = "B9", vn_kV = 22.0)
   # Bus 7, 22kV  
-  addBus!(net = net, busName = "B7", busType = "PQ", vn_kV = 380.0)
+  addBus!(net = net, busName = "B7", vn_kV = 380.0)
   # Bus 2, 220kV  
-  addBus!(net = net, busName = "B2", busType = "PQ", vn_kV = 220.0)
+  addBus!(net = net, busName = "B2", vn_kV = 220.0)
   # Bus 10, 22kV  
-  addBus!(net = net, busName = "B10", busType = "PV", vn_kV = 22.0)
+  addBus!(net = net, busName = "B10", vn_kV = 22.0)
   # A R E A 2
   # B6a, 220kV  
-  addBus!(net = net, busName = "B6a", busType = "PQ", vn_kV = 220.0)
+  addBus!(net = net, busName = "B6a", vn_kV = 220.0)
   # B6b, 220kV   
-  addBus!(net = net, busName = "B6b", busType = "PQ", vn_kV = 220.0)
+  addBus!(net = net, busName = "B6b", vn_kV = 220.0)
   # Bus 12, 22kV  
-  addBus!(net = net, busName = "B12", busType = "PV", vn_kV = 22.0)
+  addBus!(net = net, busName = "B12", vn_kV = 22.0)
   # A R E A 3
   # Bus 5, 220kV  
-  addBus!(net = net, busName = "B5", busType = "PQ", vn_kV = 220.0)
+  addBus!(net = net, busName = "B5", vn_kV = 220.0)
   # Bus 4, 220kV  
-  addBus!(net = net, busName = "B4", busType = "PQ", vn_kV = 220.0)
+  addBus!(net = net, busName = "B4", vn_kV = 220.0)
   # Bus 3, 220kV
-  addBus!(net = net, busName = "B3", busType = "PQ", vn_kV = 220.0)
+  addBus!(net = net, busName = "B3", vn_kV = 220.0)
   # Bus 8, 380kV  
-  addBus!(net = net, busName = "B8", busType = "PQ", vn_kV = 380.0)
+  addBus!(net = net, busName = "B8", vn_kV = 380.0)
   # Bus 11, 22kV  
-  addBus!(net = net, busName = "B11", busType = "PV", vn_kV = 22.0)
+  addBus!(net = net, busName = "B11", vn_kV = 22.0)
 
   ##### Shunt    
   addShunt!(net = net, busName = "B6a", pShunt = 0.0, qShunt = 180.0)
@@ -548,20 +548,14 @@ function createTest5BusNet(; cooldown = 0, hyst_pu = 0.0, qlim_min = nothing, ql
   c_nf_per_km = 10.0
   tanδ = 0.0
 
-  if pq_only
-    busTypeBus3 = "PQ"
-  else
-    busTypeBus3 = "PV"
-  end
-
   @debug "Creating $netName test network with qlim_min=$qlim_min, qlim_max=$qlim_max, pq_only=$pq_only"
 
   Bus5Net = Net(name = netName, baseMVA = Sbase_MVA, cooldown_iters = cooldown, q_hyst_pu = hyst_pu)
-  addBus!(net = Bus5Net, busName = "B1", busType = "Slack", vn_kV = 110.0)
-  addBus!(net = Bus5Net, busName = "B2", busType = "PQ", vn_kV = 110.0)
-  addBus!(net = Bus5Net, busName = "B3", busType = busTypeBus3, vn_kV = 110.0)
-  addBus!(net = Bus5Net, busName = "B4", busType = "PQ", vn_kV = 110.0)
-  addBus!(net = Bus5Net, busName = "B5", busType = busTypeBus3, vn_kV = 110.0)
+  addBus!(net = Bus5Net, busName = "B1", vn_kV = 110.0)
+  addBus!(net = Bus5Net, busName = "B2", vn_kV = 110.0)
+  addBus!(net = Bus5Net, busName = "B3", vn_kV = 110.0)
+  addBus!(net = Bus5Net, busName = "B4", vn_kV = 110.0)
+  addBus!(net = Bus5Net, busName = "B5", vn_kV = 110.0)
 
   addACLine!(net = Bus5Net, fromBus = "B1", toBus = "B3", length = 20.0, r = r, x = x, c_nf_per_km = c_nf_per_km, tanδ = tanδ)
   addACLine!(net = Bus5Net, fromBus = "B3", toBus = "B5", length = 50.0, r = r, x = x, c_nf_per_km = c_nf_per_km, tanδ = tanδ)
@@ -574,8 +568,9 @@ function createTest5BusNet(; cooldown = 0, hyst_pu = 0.0, qlim_min = nothing, ql
   if mul_gens
     addProsumer!(net = Bus5Net, busName = "B2", type = "ENERGYCONSUMER", p = 25.0, q = 8.0)
     addProsumer!(net = Bus5Net, busName = "B2", type = "ENERGYCONSUMER", p = 25.0, q = 7.0)
-    addProsumer!(net = Bus5Net, busName = "B3", type = "SYNCHRONOUSMACHINE", p = 20.0, q = 15.0, vm_pu = 1.03, va_deg = 0.0, qMax = 0.6 * qlim_max, qMin = 0.6 * qlim_min)
-    addProsumer!(net = Bus5Net, busName = "B3", type = "SYNCHRONOUSMACHINE", p = 10.0, q = 10.0, vm_pu = 1.03, va_deg = 0.0, qMax = 0.4 * qlim_max, qMin = 0.4 * qlim_min)
+    vm_b3 = pq_only ? nothing : 1.03
+    addProsumer!(net = Bus5Net, busName = "B3", type = "SYNCHRONOUSMACHINE", p = 20.0, q = 15.0, vm_pu = vm_b3, va_deg = 0.0, qMax = 0.6 * qlim_max, qMin = 0.6 * qlim_min)
+    addProsumer!(net = Bus5Net, busName = "B3", type = "SYNCHRONOUSMACHINE", p = 10.0, q = 10.0, vm_pu = vm_b3, va_deg = 0.0, qMax = 0.4 * qlim_max, qMin = 0.4 * qlim_min)
     addProsumer!(net = Bus5Net, busName = "B4", type = "ENERGYCONSUMER", p = 25.0, q = 7.0)
     addProsumer!(net = Bus5Net, busName = "B4", type = "ENERGYCONSUMER", p = 25.0, q = 8.0)
     addProsumer!(net = Bus5Net, busName = "B5", type = "ENERGYCONSUMER", p = 10.0, q = 5.0)
@@ -585,7 +580,8 @@ function createTest5BusNet(; cooldown = 0, hyst_pu = 0.0, qlim_min = nothing, ql
     end
   else
     addProsumer!(net = Bus5Net, busName = "B2", type = "ENERGYCONSUMER", p = 50.0, q = 15.0)
-    addProsumer!(net = Bus5Net, busName = "B3", type = "SYNCHRONOUSMACHINE", p = 30.0, q = 25.0, vm_pu = 1.0, va_deg = 0.0, qMax = qlim_max, qMin = qlim_min)
+    vm_b3 = pq_only ? nothing : 1.0
+    addProsumer!(net = Bus5Net, busName = "B3", type = "SYNCHRONOUSMACHINE", p = 30.0, q = 25.0, vm_pu = vm_b3, va_deg = 0.0, qMax = qlim_max, qMin = qlim_min)
     addProsumer!(net = Bus5Net, busName = "B4", type = "ENERGYCONSUMER", p = 50.0, q = 15.0)
     addProsumer!(net = Bus5Net, busName = "B5", type = "ENERGYCONSUMER", p = 25.0, q = 10.0)
   end
@@ -618,9 +614,9 @@ function createTest3BusNet(; cooldown = 0, hyst_pu = 0.0, qlim_min = nothing, ql
 
   Bus3Net = Net(name = netName, baseMVA = Sbase_MVA, cooldown_iters = cooldown, q_hyst_pu = hyst_pu)
 
-  addBus!(net = Bus3Net, busName = "ASTADT", busType = "PQ", vn_kV = 110.0)
-  addBus!(net = Bus3Net, busName = "STATION1", busType = "PV", vn_kV = 110.0)
-  addBus!(net = Bus3Net, busName = "VERBUND", busType = "SLACK", vn_kV = 110.0)
+  addBus!(net = Bus3Net, busName = "ASTADT", vn_kV = 110.0)
+  addBus!(net = Bus3Net, busName = "STATION1", vn_kV = 110.0)
+  addBus!(net = Bus3Net, busName = "VERBUND", vn_kV = 110.0)
 
   addACLine!(net = Bus3Net, fromBus = "ASTADT", toBus = "STATION1", length = s, r = r, x = x, c_nf_per_km = c_nf_per_km, tanδ = tanδ)
   addACLine!(net = Bus3Net, fromBus = "ASTADT", toBus = "VERBUND", length = s, r = r, x = x, c_nf_per_km = c_nf_per_km, tanδ = tanδ)
@@ -648,8 +644,8 @@ function createTest2BusNet(; cooldown = 0, hyst_pu = 0.0, qlim_min = nothing, ql
   @debug "Creating $netName test network with qlim_min=$qlim_min, qlim_max=$qlim_max"
 
   Bus2Net = Net(name = netName, baseMVA = Sbase_MVA, cooldown_iters = cooldown, q_hyst_pu = hyst_pu)
-  addBus!(net = Bus2Net, busName = "B1", busType = "Slack", vn_kV = 110.0)
-  addBus!(net = Bus2Net, busName = "B2", busType = "PV", vn_kV = 110.0)
+  addBus!(net = Bus2Net, busName = "B1", vn_kV = 110.0)
+  addBus!(net = Bus2Net, busName = "B2", vn_kV = 110.0)
 
   addACLine!(net = Bus2Net, fromBus = "B1", toBus = "B2", length = 20.0, r = r, x = x, c_nf_per_km = c_nf_per_km, tanδ = tanδ)
 
@@ -820,9 +816,9 @@ function test_mp_inline_vs_manual_shunt(verbose::Int = 0; method::Symbol = :rect
   # -------------------------
   netName = "case3_manual_vs_mp_shunt"
   net_man = Net(name = netName, baseMVA = 100.0)
-  addBus!(net = net_man, busName = "B1", busType = "SLACK", vn_kV = 110.0, vm_pu = 1.06, va_deg = 0.0)
-  addBus!(net = net_man, busName = "B2", busType = "PV", vn_kV = 110.0, vm_pu = 1.03, va_deg = 0.0)
-  addBus!(net = net_man, busName = "B3", busType = "PQ", vn_kV = 110.0, vm_pu = 1.00, va_deg = 0.0)
+  addBus!(net = net_man, busName = "B1", vn_kV = 110.0, vm_pu = 1.06, va_deg = 0.0)
+  addBus!(net = net_man, busName = "B2", vn_kV = 110.0, vm_pu = 1.03, va_deg = 0.0)
+  addBus!(net = net_man, busName = "B3", vn_kV = 110.0, vm_pu = 1.00, va_deg = 0.0)
   # Lines without line charging, so only bus shunts differ/drive this check.
   addACLine!(net = net_man, fromBus = "B1", toBus = "B2", length = 1.0, r = 0.02, x = 0.06)
   addACLine!(net = net_man, fromBus = "B1", toBus = "B3", length = 1.0, r = 0.08, x = 0.24)
@@ -911,8 +907,8 @@ end
 
 function test_link_kcl_simple()
   net = Net(name = "link_kcl", baseMVA = 100.0)
-  addBus!(net = net, busName = "B1", busType = "PQ", vn_kV = 110.0)
-  addBus!(net = net, busName = "B2", busType = "PQ", vn_kV = 110.0)
+  addBus!(net = net, busName = "B1", vn_kV = 110.0)
+  addBus!(net = net, busName = "B2", vn_kV = 110.0)
 
   addBusGenPower!(net = net, busName = "B1", p = 10.0, q = 2.0)
   addBusLoadPower!(net = net, busName = "B2", p = 10.0, q = 2.0)
@@ -927,8 +923,8 @@ end
 
 function test_link_component_type()
   net = Net(name = "link_component", baseMVA = 100.0)
-  addBus!(net = net, busName = "B1", busType = "PQ", vn_kV = 110.0)
-  addBus!(net = net, busName = "B2", busType = "PQ", vn_kV = 110.0)
+  addBus!(net = net, busName = "B1", vn_kV = 110.0)
+  addBus!(net = net, busName = "B2", vn_kV = 110.0)
   addLink!(net = net, fromBus = "B1", toBus = "B2", status = 1)
 
   l = net.linkVec[1]
@@ -937,8 +933,10 @@ end
 
 function test_link_rejects_slack_connection()
   net = Net(name = "link_slack_reject", baseMVA = 100.0)
-  addBus!(net = net, busName = "B1", busType = "SLACK", vn_kV = 110.0)
-  addBus!(net = net, busName = "B2", busType = "PQ", vn_kV = 110.0)
+  addBus!(net = net, busName = "B1", vn_kV = 110.0)
+  addBus!(net = net, busName = "B2", vn_kV = 110.0)
+  addProsumer!(net = net, busName = "B1", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "B1")
+  addProsumer!(net = net, busName = "B2", type = "ENERGYCONSUMER", p = 5.0, q = 1.0)
 
   try
     addLink!(net = net, fromBus = "B1", toBus = "B2", status = 1)
@@ -950,8 +948,10 @@ end
 
 function test_link_rejects_mixed_bus_types()
   net = Net(name = "link_type_reject", baseMVA = 100.0)
-  addBus!(net = net, busName = "B1", busType = "PQ", vn_kV = 110.0)
-  addBus!(net = net, busName = "B2", busType = "PV", vn_kV = 110.0)
+  addBus!(net = net, busName = "B1", vn_kV = 110.0)
+  addBus!(net = net, busName = "B2", vn_kV = 110.0)
+  addProsumer!(net = net, busName = "B1", type = "SYNCHRONOUSMACHINE", p = 10.0, vm_pu = 1.02)
+  addProsumer!(net = net, busName = "B2", type = "ENERGYCONSUMER", p = 5.0, q = 1.0)
 
   try
     addLink!(net = net, fromBus = "B1", toBus = "B2", status = 1)
@@ -966,10 +966,10 @@ function test_link_bus_merge_pf()
   maxIte = 30
 
   net_link = Net(name = "link_merge_pf", baseMVA = 100.0)
-  addBus!(net = net_link, busName = "B0", busType = "SLACK", vn_kV = 110.0)
-  addBus!(net = net_link, busName = "B1", busType = "PQ", vn_kV = 110.0)
-  addBus!(net = net_link, busName = "B2", busType = "PQ", vn_kV = 110.0)
-  addBus!(net = net_link, busName = "B3", busType = "PQ", vn_kV = 110.0)
+  addBus!(net = net_link, busName = "B0", vn_kV = 110.0)
+  addBus!(net = net_link, busName = "B1", vn_kV = 110.0)
+  addBus!(net = net_link, busName = "B2", vn_kV = 110.0)
+  addBus!(net = net_link, busName = "B3", vn_kV = 110.0)
 
   addACLine!(net = net_link, fromBus = "B0", toBus = "B1", length = 5.0, r = 0.05, x = 0.5, c_nf_per_km = 10.0, tanδ = 0.0)
   addACLine!(net = net_link, fromBus = "B2", toBus = "B3", length = 20.0, r = 0.05, x = 0.5, c_nf_per_km = 10.0, tanδ = 0.0)
@@ -1000,9 +1000,9 @@ function test_link_bus_merge_pf()
   end
 
   net_eq = Net(name = "merge_reference", baseMVA = 100.0)
-  addBus!(net = net_eq, busName = "B0", busType = "SLACK", vn_kV = 110.0)
-  addBus!(net = net_eq, busName = "B12", busType = "PQ", vn_kV = 110.0)
-  addBus!(net = net_eq, busName = "B3", busType = "PQ", vn_kV = 110.0)
+  addBus!(net = net_eq, busName = "B0", vn_kV = 110.0)
+  addBus!(net = net_eq, busName = "B12", vn_kV = 110.0)
+  addBus!(net = net_eq, busName = "B3", vn_kV = 110.0)
 
   addACLine!(net = net_eq, fromBus = "B0", toBus = "B12", length = 5.0, r = 0.05, x = 0.5, c_nf_per_km = 10.0, tanδ = 0.0)
   addACLine!(net = net_eq, fromBus = "B12", toBus = "B3", length = 20.0, r = 0.05, x = 0.5, c_nf_per_km = 10.0, tanδ = 0.0)
@@ -1034,10 +1034,10 @@ end
 
 function test_link_closed_keeps_shunt_reporting_on_original_bus()
   net = Net(name = "link_shunt_reporting", baseMVA = 100.0)
-  addBus!(net = net, busName = "B0", busType = "SLACK", vn_kV = 110.0)
-  addBus!(net = net, busName = "B1", busType = "PQ", vn_kV = 110.0)
-  addBus!(net = net, busName = "B2", busType = "PQ", vn_kV = 110.0)
-  addBus!(net = net, busName = "B3", busType = "PQ", vn_kV = 110.0)
+  addBus!(net = net, busName = "B0", vn_kV = 110.0)
+  addBus!(net = net, busName = "B1", vn_kV = 110.0)
+  addBus!(net = net, busName = "B2", vn_kV = 110.0)
+  addBus!(net = net, busName = "B3", vn_kV = 110.0)
 
   addACLine!(net = net, fromBus = "B0", toBus = "B1", length = 5.0, r = 0.05, x = 0.5, c_nf_per_km = 10.0, tanδ = 0.0)
   addACLine!(net = net, fromBus = "B2", toBus = "B3", length = 20.0, r = 0.05, x = 0.5, c_nf_per_km = 10.0, tanδ = 0.0)
@@ -1063,9 +1063,9 @@ end
 function test_link_kcl_ring_allocation()
   net = Net(name = "link_kcl_ring", baseMVA = 100.0)
   # 3 busses
-  addBus!(net = net, busName = "B1", busType = "PQ", vn_kV = 110.0)
-  addBus!(net = net, busName = "B2", busType = "PQ", vn_kV = 110.0)
-  addBus!(net = net, busName = "B3", busType = "PQ", vn_kV = 110.0)
+  addBus!(net = net, busName = "B1", vn_kV = 110.0)
+  addBus!(net = net, busName = "B2", vn_kV = 110.0)
+  addBus!(net = net, busName = "B3", vn_kV = 110.0)
 
   # Zero-Bilance: + 15 -10 -5 = 0;   +6 -4 -2 = 0
   addBusGenPower!(net = net, busName = "B1", p = 15.0, q = 6.0)
@@ -1103,9 +1103,9 @@ end
 
 function test_link_kcl_ring_allocation_with_shunt()
   net = Net(name = "link_kcl_ring_shunt", baseMVA = 100.0)
-  addBus!(net = net, busName = "B1", busType = "PQ", vn_kV = 110.0)
-  addBus!(net = net, busName = "B2", busType = "PQ", vn_kV = 110.0)
-  addBus!(net = net, busName = "B3", busType = "PQ", vn_kV = 110.0)
+  addBus!(net = net, busName = "B1", vn_kV = 110.0)
+  addBus!(net = net, busName = "B2", vn_kV = 110.0)
+  addBus!(net = net, busName = "B3", vn_kV = 110.0)
 
   addBusGenPower!(net = net, busName = "B1", p = 15.0, q = 12.0)
   addBusLoadPower!(net = net, busName = "B2", p = 10.0, q = 4.0)
@@ -1144,10 +1144,10 @@ function test_link_ring_pf_stability()
   # Build a mixed grid: radial AC lines from slack plus a meshed 3-link ring
   # among PQ buses where link flows are recovered via KCL.
   net = Net(name = "link_ring_pf_stability", baseMVA = 100.0)
-  addBus!(net = net, busName = "B0", busType = "SLACK", vn_kV = 110.0)
-  addBus!(net = net, busName = "B1", busType = "PQ", vn_kV = 110.0)
-  addBus!(net = net, busName = "B2", busType = "PQ", vn_kV = 110.0)
-  addBus!(net = net, busName = "B3", busType = "PQ", vn_kV = 110.0)
+  addBus!(net = net, busName = "B0", vn_kV = 110.0)
+  addBus!(net = net, busName = "B1", vn_kV = 110.0)
+  addBus!(net = net, busName = "B2", vn_kV = 110.0)
+  addBus!(net = net, busName = "B3", vn_kV = 110.0)
 
   # Two physical AC branches feed the ring from the slack side.
   addACLine!(net = net, fromBus = "B0", toBus = "B1", length = 10.0, r = 0.05, x = 0.4, c_nf_per_km = 10.0, tanδ = 0.0)
@@ -1258,9 +1258,9 @@ end
 
 function test_report_uses_user_bus_names_and_pf_node_count()
   net = Net(name = "report_link_names", baseMVA = 100.0)
-  addBus!(net = net, busName = "Slack", busType = "SLACK", vn_kV = 110.0)
-  addBus!(net = net, busName = "Bus1", busType = "PQ", vn_kV = 110.0)
-  addBus!(net = net, busName = "Bus1a", busType = "PQ", vn_kV = 110.0)
+  addBus!(net = net, busName = "Slack", vn_kV = 110.0)
+  addBus!(net = net, busName = "Bus1", vn_kV = 110.0)
+  addBus!(net = net, busName = "Bus1a", vn_kV = 110.0)
 
   addACLine!(net = net, fromBus = "Slack", toBus = "Bus1", length = 5.0, r = 0.05, x = 0.5, c_nf_per_km = 10.0, tanδ = 0.0)
   addLink!(net = net, fromBus = "Bus1", toBus = "Bus1a", status = 1)
@@ -1433,7 +1433,7 @@ function test_bus_type_resolution_from_prosumers()::Bool
   addBus!(net = net, busName = "GenPQBus", vn_kV = 110.0)
   addBus!(net = net, busName = "MixBus", vn_kV = 110.0)
   addBus!(net = net, busName = "SlackBus", vn_kV = 110.0)
-  addBus!(net = net, busName = "LegacyBus", busType = "PV", vn_kV = 110.0)
+  addBus!(net = net, busName = "NoProsumerBus", vn_kV = 110.0)
 
   addProsumer!(net = net, busName = "LoadBus", type = "ENERGYCONSUMER", p = 10.0, q = 3.0)
   addProsumer!(net = net, busName = "PVBus", type = "SYNCHRONOUSMACHINE", p = 20.0, vm_pu = 1.02, isRegulated = true)
@@ -1441,7 +1441,12 @@ function test_bus_type_resolution_from_prosumers()::Bool
   addProsumer!(net = net, busName = "MixBus", type = "SYNCHRONOUSMACHINE", p = 12.0, q = 1.0)
   addProsumer!(net = net, busName = "MixBus", type = "SYNCHRONOUSMACHINE", p = 8.0, vm_pu = 1.01, isRegulated = true)
   addProsumer!(net = net, busName = "SlackBus", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "SlackBus")
-  addProsumer!(net = net, busName = "LegacyBus", type = "ENERGYCONSUMER", p = 5.0, q = 1.0)
+  addProsumer!(net = net, busName = "NoProsumerBus", type = "ENERGYCONSUMER", p = 5.0, q = 1.0)
+
+  pv_bus = geNetBusIdx(net = net, busName = "PVBus")
+  genpq_bus = geNetBusIdx(net = net, busName = "GenPQBus")
+  pv_regulation_ok = any(isGenerator(ps) && isRegulating(ps) for ps in getBusProsumers(net, pv_bus))
+  genpq_regulation_ok = all(!(isGenerator(ps) && isRegulating(ps)) for ps in getBusProsumers(net, genpq_bus))
 
   ok_types =
     getEffectiveBusType(net = net, busName = "LoadBus") == Sparlectra.PQ &&
@@ -1449,9 +1454,34 @@ function test_bus_type_resolution_from_prosumers()::Bool
     getEffectiveBusType(net = net, busName = "GenPQBus") == Sparlectra.PQ &&
     getEffectiveBusType(net = net, busName = "MixBus") == Sparlectra.PV &&
     getEffectiveBusType(net = net, busName = "SlackBus") == Sparlectra.Slack &&
-    getEffectiveBusType(net = net, busName = "LegacyBus") == Sparlectra.PQ
+    getEffectiveBusType(net = net, busName = "NoProsumerBus") == Sparlectra.PQ
 
-  return ok_types
+  return ok_types && pv_regulation_ok && genpq_regulation_ok
+end
+
+function test_regulated_generator_bus_targets_include_unregulated_generators()::Bool
+  net = Net(name = "regulated_generator_bus_targets", baseMVA = 100.0)
+  addBus!(net = net, busName = "Slack", vn_kV = 110.0)
+  addBus!(net = net, busName = "PVBus", vn_kV = 110.0)
+
+  addProsumer!(net = net, busName = "Slack", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "Slack")
+
+  # Regulated generator defines PV behavior at the bus.
+  addProsumer!(net = net, busName = "PVBus", type = "SYNCHRONOUSMACHINE", p = 20.0, q = 3.0, vm_pu = 1.02, isRegulated = true, qMin = -30.0, qMax = 40.0)
+  # Additional unregulated generator at the same bus.
+  addProsumer!(net = net, busName = "PVBus", type = "SYNCHRONOUSMACHINE", p = 7.5, q = 1.0, qMin = -10.0, qMax = 15.0)
+
+  pv_bus = geNetBusIdx(net = net, busName = "PVBus")
+  node = net.nodeVec[pv_bus]
+  qmin_pu, qmax_pu = getQLimits_pu(net)
+
+  p_target_ok = isapprox(node._pƩGen, 27.5; atol = 1e-9, rtol = 0.0)
+  q_target_ok = isapprox(node._qƩGen, 4.0; atol = 1e-9, rtol = 0.0)
+  q_limit_ok = isapprox(qmin_pu[pv_bus], -0.4; atol = 1e-9, rtol = 0.0) &&
+               isapprox(qmax_pu[pv_bus], 0.55; atol = 1e-9, rtol = 0.0)
+  bus_type_ok = getEffectiveBusType(net = net, busName = "PVBus") == Sparlectra.PV
+
+  return p_target_ok && q_target_ok && q_limit_ok && bus_type_ok
 end
 
 function test_regulated_generator_bus_targets_include_unregulated_generators()::Bool
