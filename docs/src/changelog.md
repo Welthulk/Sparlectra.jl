@@ -1,11 +1,14 @@
 # Change Log
+## Version 0.6.3 – 2026-04-11
+### New Features
+* Added `:adjust_vset` controller-based Q-limit handling at PV buses (adaptive Vset steps before optional PV→PQ fallback).
+* Power-flow bus typing is now derived from attached prosumers (Slack > PV > PQ); `addBus!(busType=...)` is legacy-only and no longer defines operational PF type.
+
 ## Version 0.6.2 – 2026-04-02
 ### New Features
 * adding sign validation and optional autocorrection of Q-limits before running power flows.
 * Provide an option to lock selected PV buses from being switched to PQ 
 * Added pre-run PV Q-limit preview logging in MVAr for easier diagnostics before the PF iteration loop.
-* Added `:adjust_vset` controller-based Q-limit handling at PV buses (adaptive Vset steps before optional PV→PQ fallback).
-* Power-flow bus typing is now derived from attached prosumers (Slack > PV > PQ); `addBus!(busType=...)` is legacy-only and no longer defines operational PF type.
 ## Version 0.6.1 – 2026-03-24
 ### New Features
 * Bad Data Detection (BDD) and Statistical Diagnostics for State Estimation (SE)
