@@ -27,10 +27,12 @@ include("testgrid.jl")
 include("testremove.jl")
 include("test_solver_interface.jl")
 include("test_state_estimation.jl")
+include("test_voltage_dependent_control.jl")
 
 @testset "Sparlectra.jl" begin
   run_grid_tests()
   run_remove_tests()
   run_solver_interface_tests()
   run_state_estimation_tests()
+  run_voltage_dependent_control_tests()
 end

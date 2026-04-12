@@ -979,6 +979,8 @@ function addProsumer!(;
   vstep_pu::Union{Nothing,Float64} = nothing,
   tap_steps_down::Union{Nothing,Int} = nothing,
   tap_steps_up::Union{Nothing,Int} = nothing,
+  qu_controller::Union{Nothing,QUController} = nothing,
+  pu_controller::Union{Nothing,PUController} = nothing,
   isRegulated::Bool = false,
 )
   busIdx = geNetBusIdx(net = net, busName = busName)
@@ -1000,7 +1002,7 @@ function addProsumer!(;
   has_vm_setpoint = !isnothing(vm_pu)
   has_vstep_with_taps = !isnothing(vstep_pu) && (!isnothing(tap_steps_down) || !isnothing(tap_steps_up))
   auto_regulated = isRegulated || has_vm_setpoint || has_vstep_with_taps
-  ps = ProSumer(vn_kv = vn_kV, busIdx = busIdx, oID = idProsSum, type = proTy, p = p, q = q, minP = pMin, maxP = pMax, minQ = qMin, maxQ = qMax, referencePri = refPriIdx, vm_pu = vm_pu, va_deg = va_deg, vstep_pu = vstep_pu, tap_steps_down = tap_steps_down, tap_steps_up = tap_steps_up, isRegulated = auto_regulated, isAPUNode = isAPUNode)
+  ps = ProSumer(vn_kv = vn_kV, busIdx = busIdx, oID = idProsSum, type = proTy, p = p, q = q, minP = pMin, maxP = pMax, minQ = qMin, maxQ = qMax, referencePri = refPriIdx, vm_pu = vm_pu, va_deg = va_deg, vstep_pu = vstep_pu, tap_steps_down = tap_steps_down, tap_steps_up = tap_steps_up, isRegulated = auto_regulated, isAPUNode = isAPUNode, quController = qu_controller, puController = pu_controller)
   push!(net.prosumpsVec, ps)
   node = net.nodeVec[busIdx]
   if (isGenerator(proTy))
@@ -1810,6 +1812,67 @@ function buildComplexSVec(net::Net)
   end
 
   return S
+end
+
+function has_voltage_dependent_control(net::Net)::Bool
+  for ps in net.prosumpsVec
+    if has_qu_controller(ps) || has_pu_controller(ps)
+      return true
+    end
+  end
+  return false
+end
+
+@inline _safe_vm(vm::Float64; eps::Float64 = 1e-9) = vm > eps ? vm : eps
+
+"""
+    buildControlledSVec(net, V) -> (Sspec, dPinj_dVm, dQinj_dVm)
+
+Evaluate bus injections for the current voltage state. If a prosumer carries a
+`PUController` and/or `QUController`, the corresponding active/reactive setpoint
+is evaluated as a function of local bus voltage magnitude. The derivative
+vectors contain `dP_spec/d|V|` and `dQ_spec/d|V|` (both in p.u. per p.u.).
+"""
+function buildControlledSVec(net::Net, V::Vector{ComplexF64})
+  n = length(net.nodeVec)
+  length(V) == n || error("buildControlledSVec: voltage vector length mismatch.")
+
+  Sspec = zeros(ComplexF64, n)
+  dPinj_dVm = zeros(Float64, n)
+  dQinj_dVm = zeros(Float64, n)
+  base = net.baseMVA
+
+  for ps in net.prosumpsVec
+    bus = getPosumerBusIndex(ps)
+    (1 <= bus <= n) || continue
+
+    vm = abs(V[bus])
+    vm_safe = _safe_vm(vm)
+
+    p_mw = isnothing(ps.pVal) ? 0.0 : ps.pVal
+    q_mvar = isnothing(ps.qVal) ? 0.0 : ps.qVal
+    dp_dvm_mw = 0.0
+    dq_dvm_mvar = 0.0
+
+    if has_pu_controller(ps)
+      p_pu, dp_dvm_pu = evaluate_controller(ps.puController, vm_safe)
+      p_mw = p_pu * base
+      dp_dvm_mw = dp_dvm_pu * base
+    end
+
+    if has_qu_controller(ps)
+      q_pu, dq_dvm_pu = evaluate_controller(ps.quController, vm_safe)
+      q_mvar = q_pu * base
+      dq_dvm_mvar = dq_dvm_pu * base
+    end
+
+    sign = isGenerator(ps) ? 1.0 : -1.0
+    Sspec[bus] += ComplexF64(sign * p_mw / base, sign * q_mvar / base)
+    dPinj_dVm[bus] += sign * dp_dvm_mw / base
+    dQinj_dVm[bus] += sign * dq_dvm_mvar / base
+  end
+
+  return Sspec, dPinj_dVm, dQinj_dVm
 end
 
 """

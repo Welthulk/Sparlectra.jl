@@ -255,3 +255,15 @@ In the rectangular solver this is represented through the `bus_types` vector.
 
 For the operational / data-model side of Q-limit handling, see
 [Powerlimits Guide](powerlimits.md).
+
+---
+
+## Voltage-dependent P(U)/Q(U) controls
+
+The rectangular solver also supports state-dependent specified injections via
+`PUController` and `QUController` attached to prosumers. In that case, the
+specified power vector is re-evaluated each Newton iteration as a function of
+local `|V|`, and local chain-rule terms are added to the Jacobian.
+
+For full derivation, formulas, API usage, and output semantics (`Type` vs
+`Control`), see [Voltage-dependent Control](voltage_dependent_control.md).
