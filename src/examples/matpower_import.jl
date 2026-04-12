@@ -96,8 +96,8 @@ end
 # Configuration
 # -----------------------------------------------------------------------------
 const DEFAULT_CASE = "case141.m"
-const DEFAULT_METHODS = [:polar_full, :rectangular, :classic]
-const METHODS = [:polar_full, :rectangular, :classic]
+const DEFAULT_METHODS = [:rectangular]
+const METHODS = [:rectangular]
 
 # -----------------------------------------------------------------------------
 # Output redirection (write verbose output to git-ignored file)

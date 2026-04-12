@@ -1501,6 +1501,31 @@ function test_regulated_generator_bus_targets_include_unregulated_generators()::
   return p_target_ok && q_target_ok && q_limit_ok && bus_type_ok
 end
 
+function test_addprosumer_auto_regulated_flags()::Bool
+  net = Net(name = "addprosumer_auto_regulated_flags", baseMVA = 100.0)
+  addBus!(net = net, busName = "Slack", vn_kV = 110.0)
+  addBus!(net = net, busName = "PVVm", vn_kV = 110.0)
+  addBus!(net = net, busName = "PVTap", vn_kV = 110.0)
+  addBus!(net = net, busName = "PQ", vn_kV = 110.0)
+
+  addProsumer!(net = net, busName = "Slack", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "Slack")
+  addProsumer!(net = net, busName = "PVVm", type = "SYNCHRONOUSMACHINE", p = 10.0, vm_pu = 1.01)
+  addProsumer!(net = net, busName = "PVTap", type = "SYNCHRONOUSMACHINE", p = 8.0, vstep_pu = 0.005, tap_steps_down = 2, tap_steps_up = 2)
+  addProsumer!(net = net, busName = "PQ", type = "SYNCHRONOUSMACHINE", p = 6.0, q = 1.5)
+
+  ps_vm = only(getBusProsumers(net, geNetBusIdx(net = net, busName = "PVVm")))
+  ps_tap = only(getBusProsumers(net, geNetBusIdx(net = net, busName = "PVTap")))
+  ps_pq = only(getBusProsumers(net, geNetBusIdx(net = net, busName = "PQ")))
+
+  flags_ok = ps_vm.isRegulated && ps_tap.isRegulated && !ps_pq.isRegulated
+  bus_types_ok =
+    getEffectiveBusType(net = net, busName = "PVVm") == Sparlectra.PV &&
+    getEffectiveBusType(net = net, busName = "PVTap") == Sparlectra.PV &&
+    getEffectiveBusType(net = net, busName = "PQ") == Sparlectra.PQ
+
+  return flags_ok && bus_types_ok
+end
+
 function run_grid_tests()
   @testset "Grid and power-flow regression tests" begin
     @testset "Transformer and network validation" begin
@@ -1539,6 +1564,7 @@ function run_grid_tests()
       @test test_bus_type_resolution_from_prosumers() == true
       @test test_multiple_slack_prosumers_same_bus_supported() == true
       @test test_regulated_generator_bus_targets_include_unregulated_generators() == true
+      @test test_addprosumer_auto_regulated_flags() == true
     end
 
     @testset "Link behaviour and reporting" begin

@@ -576,7 +576,13 @@ A tuple containing the number of iterations and the result of the calculation:
 - `2`: Unsolvable system of equations.
 - `3`: Error.
 """
+const _warned_classic_solver_deprecated = Ref(false)
+
 function runpf_classic!(net::Net, maxIte::Int, tolerance::Float64 = 1e-6, verbose::Int = 0, opt_sparse::Bool = false, opt_flatstart::Bool = net.flatstart)
+  if !_warned_classic_solver_deprecated[]
+    @warn "runpf_classic! / method=:classic is deprecated and will be removed in a future release. Please use method=:rectangular (complex Jacobian)."
+    _warned_classic_solver_deprecated[] = true
+  end
   if length(net.nodeVec) == 0
     @error "No nodes found in the network."
     return
