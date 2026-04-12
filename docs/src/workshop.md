@@ -127,7 +127,7 @@ model. After convergence, call `calcLinkFlowsKCL!` to allocate and report the
 link exchange on the original topology.
 
 ```julia
-ite, erg = runpf!(net, 25; method = :polar_full)
+ite, erg = runpf!(net, 25; method = :rectangular)
 if erg == 0
     calcNetLosses!(net)
     calcLinkFlowsKCL!(net)
@@ -338,7 +338,7 @@ ite, status, etime = run_net_acpflow(
     net = net,
     max_ite = 25,
     tol = 1e-8,
-    method = :polar_full,
+    method = :rectangular,
     opt_sparse = true,
     show_results = false,
 )
@@ -349,7 +349,7 @@ ite2, status2, etime2 = run_net_acpflow(
     net = net,
     max_ite = 25,
     tol = 1e-8,
-    method = :polar_full,
+    method = :rectangular,
     opt_sparse = true,
     show_results = false,
 )
@@ -360,7 +360,7 @@ report = buildACPFlowReport(
     ite = ite2,
     tol = 1e-8,
     converged = (status2 == 0),
-    solver = :polar_full,
+    solver = :rectangular,
 )
 
 println(report)
@@ -513,7 +513,7 @@ ok, msg = validate!(net = net)
 ok || error("Validation failed: \$msg")
 
 # 2) Solve reference power flow
-ite_pf, status_pf = runpf!(net, 40, 1e-10, 0; method = :polar_full, opt_sparse = true)
+ite_pf, status_pf = runpf!(net, 40, 1e-10, 0; method = :rectangular, opt_sparse = true)
 status_pf == 0 || error("Power flow did not converge")
 
 # 3) Build synthetic measurements (with light noise)

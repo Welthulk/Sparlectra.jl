@@ -13,7 +13,7 @@ Legend:
 
 | Feature | Load Flow (`runpf!`) | State Estimation (`runse!`) | Notes |
 |---|:---:|:---:|---|
-| AC power flow (NR) | ✅ | — | Main PF entry point is `runpf!` (polar full / rectangular). |
+| AC power flow (NR) | ✅ | — | Main PF entry point is `runpf!` with rectangular complex Jacobian by default; `:polar_full` / `:classic` are deprecated. |
 | AC state estimation (WLS) | — | ✅ | Main SE entry point is `runse!` (experimental status). |
 | Topological bus links (`addLink!`) | ✅ | ⚠️ | Links are fully integrated in PF workflow/reporting; in SE they are part of network topology context and should be used with care in measurement design. |
 | 2-winding transformer | ✅ | ✅ | Supported in network model and usable in both workflows. |
@@ -26,7 +26,7 @@ Legend:
 
 | Feature | Load Flow (`runpf!`) | State Estimation (`runse!`) | Notes |
 |---|:---:|:---:|---|
-| Polar full NR solver | ✅ | ⚠️ | PF has dedicated solver mode; SE uses its own WLS iteration and Jacobian evaluation. |
+| Polar full NR solver (deprecated) | ✅ | ⚠️ | Legacy PF mode (deprecated); SE uses its own WLS iteration and Jacobian evaluation. |
 | Rectangular NR solver | ✅ | ❌ | Available for PF, not as separate SE formulation. |
 | Finite-difference Jacobian option (`opt_fd`) | ✅ | ❌ | In PF this toggles FD Jacobian vs analytic Jacobian (not fast-decoupled); not exposed as an SE user option. |
 | Sparse Jacobian option (`opt_sparse`) | ✅ | ⚠️ | PF supports explicit sparse option; SE internally builds Jacobians for WLS. |
@@ -67,4 +67,3 @@ Legend:
 * [Network Reports](netreports.md)
 * [Workshop](workshop.md)
 * [Changelog](changelog.md)
-

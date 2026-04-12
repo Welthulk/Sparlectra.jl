@@ -46,7 +46,7 @@ end
 function run_usage_state_estimation_diagnostics()
   net = _create_demo_net()
 
-  ite_pf, erg_pf = runpf!(net, 40, 1e-10, 0; method = :polar_full, opt_sparse = true)
+  ite_pf, erg_pf = runpf!(net, 40, 1e-10, 0; method = :rectangular, opt_sparse = true)
   erg_pf == 0 || error("Power flow did not converge")
 
   std = measurementStdDevs(vm = 0.01, pinj = 1.0, qinj = 1.0, pflow = 1.0, qflow = 1.0)

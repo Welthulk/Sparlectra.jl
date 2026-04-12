@@ -374,7 +374,7 @@ function run_state_estimation_observability_example(io::IO)
   end
 
   net = createNetFromMatPowerFile(filename = case_path)
-  _, erg_pf = runpf!(net, 40, 1e-10, 0; method = :polar_full, opt_sparse = true)
+  _, erg_pf = runpf!(net, 40, 1e-10, 0; method = :rectangular, opt_sparse = true)
   erg_pf == 0 || error("Power flow did not converge")
 
   std = measurementStdDevs(vm = 0.1, pinj = 1.5, qinj = 1.5, pflow = 0.7, qflow = 0.9)
