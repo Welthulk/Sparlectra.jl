@@ -67,6 +67,30 @@ function _effective_pf_node_count(net::Net)::Int
   return length(unique(reps))
 end
 
+function _bus_control_flags(net::Net, bus_idx::Int)
+  has_qu = false
+  has_pu = false
+  for ps in net.prosumpsVec
+    getPosumerBusIndex(ps) == bus_idx || continue
+    has_qu |= has_qu_controller(ps)
+    has_pu |= has_pu_controller(ps)
+  end
+  return has_qu, has_pu
+end
+
+function _control_label(net::Net, bus_idx::Int)::String
+  has_qu, has_pu = _bus_control_flags(net, bus_idx)
+  if has_qu && has_pu
+    return "Q(U), P(U)"
+  elseif has_qu
+    return "Q(U)"
+  elseif has_pu
+    return "P(U)"
+  else
+    return "-"
+  end
+end
+
 function _branch_kind_label(br::Branch)::String
   name = br.comp.cName
   if occursin("_ACL_", name)
@@ -114,6 +138,7 @@ function buildACPFlowReport(net::Net;
       q_shunt_MVar = _default0(n._qShunt),
       is_isolated = isIsolated(n),
       q_limit_hit = haskey(net.qLimitEvents, n.busIdx),
+      control = _control_label(net, n.busIdx),
     ))
   end
 
@@ -322,9 +347,9 @@ function printACPFlowResults(net::Net, ct::Float64, ite::Int, tol::Float64, toFi
 
   println(io, "\n", totalLosses)
 
-  @printf(io, "===============================================================================================================================================================================\n")
-  @printf(io, "| %-5s | %-20s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s |\n", "Nr", "Bus", "Vn [kV]", "V [kV]", "V [pu]", "phi [deg]", "Pg [MW]", "Qg [MVar]", "Pl [MW]", "Ql [MVar]", "Ps [MW]", "Qs [MVar]", "Type")
-  @printf(io, "===============================================================================================================================================================================\n")
+  @printf(io, "====================================================================================================================================================================================================\n")
+  @printf(io, "| %-5s | %-20s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-12s |\n", "Nr", "Bus", "Vn [kV]", "V [kV]", "V [pu]", "phi [deg]", "Pg [MW]", "Qg [MVar]", "Pl [MW]", "Ql [MVar]", "Ps [MW]", "Qs [MVar]", "Type", "Control")
+  @printf(io, "====================================================================================================================================================================================================\n")
 
   pGS = qGS = pLS = qLS = ""
   tpGS = tqGS = tpLS = tqLS = 0.0
@@ -370,6 +395,7 @@ function printACPFlowResults(net::Net, ct::Float64, ite::Int, tol::Float64, toFi
       qShunt_str = ""
     end
     typeStr = toString(n._nodeType)
+    controlStr = _control_label(net, n.busIdx)
 
     # Mark PV→PQ buses (hit Q-limit) with a star in the Type column
     if haskey(net.qLimitEvents, n.busIdx)
@@ -384,10 +410,10 @@ function printACPFlowResults(net::Net, ct::Float64, ite::Int, tol::Float64, toFi
       end
     end
 
-    @printf(io, "| %-5d | %-20s | %-10.1f | %-10.3f | %-10.3f | %-10.3f | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s |\n", n.busIdx, nodeName, n.comp.cVN, v, n._vm_pu, n._va_deg, pGS, qGS, pLS, qLS, pShunt_str, qShunt_str, typeStr)
+    @printf(io, "| %-5d | %-20s | %-10.1f | %-10.3f | %-10.3f | %-10.3f | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-12s |\n", n.busIdx, nodeName, n.comp.cVN, v, n._vm_pu, n._va_deg, pGS, qGS, pLS, qLS, pShunt_str, qShunt_str, typeStr, controlStr)
   end
 
-  @printf(io, "-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------\n")
+  @printf(io, "----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------\n")
   println(io, flowResults)
 
 

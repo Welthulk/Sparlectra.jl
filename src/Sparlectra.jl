@@ -64,7 +64,7 @@ export
   # Trafo
   TrafoTyp, PowerTransformerTaps,  PowerTransformerWinding,  PowerTransformer, TransformerModelParameters,
   # ProSumer
-  ProSumer,
+  ProSumer, AbstractVoltageDependentController, PiecewiseLinearCharacteristic, QUController, PUController,
   # Branch
   AbstractBranch, Branch, BranchModel, BranchFlow, getBranchFlow, setBranchFlow!, getBranchNumber, getBranchLosses, setBranchLosses!, setBranchStatus!,
   # Link
@@ -96,11 +96,11 @@ export
   # ACLineSegment
   get_line_parameters, isLinePIModel, getLineRXBG, getLineRXBG_pu,
   # ProSumer
-  isSlack, isGenerator, isAPUNode, isRegulating, setQGenReplacement!, getQGenReplacement, toProSumptionType, updatePQ!, getPosumerBusIndex, setPQResult!,
+  isSlack, isGenerator, isAPUNode, isRegulating, setQGenReplacement!, getQGenReplacement, toProSumptionType, updatePQ!, getPosumerBusIndex, setPQResult!, evaluate_characteristic, evaluate_controller, make_characteristic, has_qu_controller, has_pu_controller,
   # Network
   addBus!, addShunt!, addACLine!, addPIModelACLine!, add2WTrafo!, addPIModelTrafo!, addProsumer!, lockNet!, validate!, hasBusInNet, addBusGenPower!, addBusLoadPower!, addBusShuntPower!, setNodeVoltage!, setNodeAngle!,
   getNetOrigBusIdx, geNetBusIdx, setNetBranchStatus!, getNetBranch, getNetBranchNumberVec, setTotalLosses!, getTotalLosses, getBusType, getEffectiveBusType, getBusProsumers, refreshBusTypesFromProsumers!, get_bus_vn_kV, get_vn_kV, updateBranchParameters!, hasShunt!, 
-  getShunt!, markIsolatedBuses!,setTotalBusPower!, setPVBusVset!, setQLimits!, getNodeVm,distributeBusResults!, getTotalBusPower, getTotalLosses, buildVoltageVector,initialVrect, buildComplexSVec,addShuntMatpower!,
+  getShunt!, markIsolatedBuses!,setTotalBusPower!, setPVBusVset!, setQLimits!, getNodeVm,distributeBusResults!, getTotalBusPower, getTotalLosses, buildVoltageVector,initialVrect, buildComplexSVec, buildControlledSVec, has_voltage_dependent_control, addShuntMatpower!,
   add2WTPIModelTrafo!, add3WTPiModelTrafo!,showNet, buildQLimits!,updateShuntPowers!, addLink!, setNetLinkStatus!, getNetLinks, calcLinkFlowsKCL!,
   # remove_functions.jl
   removeBus!, removeBranch!, removeACLine!, removeTrafo!, removeShunt!, removeProsumer!, clearIsolatedBuses!,apply_mp_isolated_buses!,
