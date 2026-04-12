@@ -1118,7 +1118,7 @@ function _merged_pf_net(net::Net)
 end
 
 """
-    runpf!(net, maxIte, tolerance=1e-6, verbose=0; method=:polar_full)
+    runpf!(net, maxIte, tolerance=1e-6, verbose=0; method=:rectangular)
 
 Unified AC power flow interface.
 
@@ -1127,7 +1127,7 @@ Arguments:
 - `maxIte::Int`: maximum iterations
 - `tolerance::Float64`: mismatch tolerance
 - `verbose::Int`: verbosity level
-- `method::Symbol`: `:polar_full`, `:rectangular`, or `:classic`
+- `method::Symbol`: `:rectangular` (recommended), `:polar_full` (deprecated), or `:classic` (deprecated)
 
 Notes:
 - Link-flow recovery (`calcLinkFlowsKCL!`) is method-agnostic and uses solved PF results.
@@ -1194,6 +1194,6 @@ function runpf!(net::Net, maxIte::Int, tolerance::Float64 = 1e-6, verbose::Int =
     end
     return iters, erg
   else
-    error("runpf!: unknown method $(method). Use :polar_full or :rectangular.")
+    error("runpf!: unknown method $(method). Use :rectangular (recommended), :polar_full (deprecated), or :classic (deprecated).")
   end
 end

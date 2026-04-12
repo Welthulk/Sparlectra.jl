@@ -37,7 +37,7 @@ function run_acpflow(;
   printResultAnyCase::Bool = false,
   opt_fd::Bool = false,
   opt_sparse::Bool = false,
-  method::Symbol = :polar_full,
+  method::Symbol = :rectangular,
   opt_flatstart::Bool = false,
   show_results::Bool = true,
   cooldown_iters::Int = 0,
@@ -149,7 +149,7 @@ Parameters:
 - printResultToFile: Bool, flag to print results to a file (default: false).
 - printResultAnyCase: Bool, flag to print results even if the power flow fails (default: false).
 """
-function run_net_acpflow(; net::Net, max_ite::Int = 30, tol::Float64 = 1e-6, verbose::Int = 0, printResultToFile::Bool = false, printResultAnyCase::Bool = false, opt_fd::Bool = false, opt_sparse::Bool = false, method::Symbol = :polar_full, show_results::Bool = true, lock_pv_to_pq_buses::AbstractVector{Int} = Int[])
+function run_net_acpflow(; net::Net, max_ite::Int = 30, tol::Float64 = 1e-6, verbose::Int = 0, printResultToFile::Bool = false, printResultAnyCase::Bool = false, opt_fd::Bool = false, opt_sparse::Bool = false, method::Symbol = :rectangular, show_results::Bool = true, lock_pv_to_pq_buses::AbstractVector{Int} = Int[])
 
   # Run power flow
   ite = 0

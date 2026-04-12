@@ -92,7 +92,7 @@ case = "case14.m"          # or "case14.jl"
 flatstart = false
 opt_sparse = true
 opt_fd = true
-method = :polar_full        # internal solver method (run_acpflow)
+method = :rectangular       # internal solver method (run_acpflow, recommended)
 max_iter = 25               # only used if you switch to runpf!(...) manually
 tol = 1e-8                  # convergence tolerance for mismatchInf
 

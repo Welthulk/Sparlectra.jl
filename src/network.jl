@@ -997,7 +997,9 @@ function addProsumer!(;
   proTy = toProSumptionType(type)
   refPriIdx = isnothing(referencePri) ? nothing : geNetBusIdx(net = net, busName = referencePri)
   vn_kV = getNodeVn(net.nodeVec[busIdx])
-  auto_regulated = isRegulated || (isGenerator(proTy) && !isnothing(vm_pu))
+  has_vm_setpoint = !isnothing(vm_pu)
+  has_vstep_with_taps = !isnothing(vstep_pu) && (!isnothing(tap_steps_down) || !isnothing(tap_steps_up))
+  auto_regulated = isRegulated || has_vm_setpoint || has_vstep_with_taps
   ps = ProSumer(vn_kv = vn_kV, busIdx = busIdx, oID = idProsSum, type = proTy, p = p, q = q, minP = pMin, maxP = pMax, minQ = qMin, maxQ = qMax, referencePri = refPriIdx, vm_pu = vm_pu, va_deg = va_deg, vstep_pu = vstep_pu, tap_steps_down = tap_steps_down, tap_steps_up = tap_steps_up, isRegulated = auto_regulated, isAPUNode = isAPUNode)
   push!(net.prosumpsVec, ps)
   node = net.nodeVec[busIdx]

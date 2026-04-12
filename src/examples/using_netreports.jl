@@ -47,9 +47,9 @@ function main()
   addProsumer!(net = net, busName = "B3", type = "ENERGYCONSUMER", p = 15.0, q = 5.0)
   addProsumer!(net = net, busName = "B4", type = "ENERGYCONSUMER", p = 25.0, q = 10.0)
 
-  ite, erg, etime = run_net_acpflow(net = net, max_ite = 40, tol = 1e-10, method = :polar_full, opt_sparse = true, show_results = false)
+  ite, erg, etime = run_net_acpflow(net = net, max_ite = 40, tol = 1e-10, method = :rectangular, opt_sparse = true, show_results = false)
 
-  report = buildACPFlowReport(net; ct = etime, ite = ite, tol = 1e-10, converged = (erg == 0), solver = :polar_full)
+  report = buildACPFlowReport(net; ct = etime, ite = ite, tol = 1e-10, converged = (erg == 0), solver = :rectangular)
 
   println("\n--- ACPFlowReport summary ---")
   println(report)
