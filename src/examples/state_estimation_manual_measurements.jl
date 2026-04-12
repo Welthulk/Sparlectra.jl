@@ -46,7 +46,7 @@ function build_manual_measurement_example_net()
 end
 
 function build_manual_measurements(net::Net; rng::AbstractRNG = MersenneTwister(42))
-  ite_pf, status_pf = runpf!(net, 40, 1e-10, 0; method = :polar_full, opt_sparse = true)
+  ite_pf, status_pf = runpf!(net, 40, 1e-10, 0; method = :rectangular, opt_sparse = true)
   status_pf == 0 || error("Power flow did not converge")
 
   std = measurementStdDevs(vm = 1e-3, pinj = 0.8, qinj = 0.8, pflow = 0.5, qflow = 0.5)

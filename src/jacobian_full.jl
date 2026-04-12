@@ -412,7 +412,13 @@ end
 # ------------------------------
 # Convenience wrapper similar to runpf!, but for the full system
 # ------------------------------
+const _warned_full_solver_deprecated = Ref(false)
+
 function runpf_full!(net::Net, maxIte::Int, tolerance::Float64 = 1e-6, verbose::Int = 0; opt_sparse::Bool = false, opt_flatstart::Bool = net.flatstart, pv_table_rows::Int = 30, lock_pv_to_pq_buses::AbstractVector{Int} = Int[])
+  if !_warned_full_solver_deprecated[]
+    @warn "runpf_full! / method=:polar_full is deprecated and will be removed in a future release. Please use method=:rectangular (complex Jacobian)."
+    _warned_full_solver_deprecated[] = true
+  end
   printYBus = (length(net.nodeVec) < 20) && (verbose > 1)
   Y = createYBUS(net = net, sparse = opt_sparse, printYBUS = printYBus)
   if verbose > 1

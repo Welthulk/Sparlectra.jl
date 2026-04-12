@@ -30,7 +30,7 @@ ite, erg, etime = run_net_acpflow(
   net = net,
   max_ite = 40,
   tol = 1e-10,
-  method = :polar_full,
+  method = :rectangular,
   opt_sparse = true,
   show_results = false,
 )
@@ -41,7 +41,7 @@ report = buildACPFlowReport(
   ite = ite,
   tol = 1e-10,
   converged = (erg == 0),
-  solver = :polar_full,
+  solver = :rectangular,
 )
 ```
 

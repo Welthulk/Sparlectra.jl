@@ -92,7 +92,7 @@ function run_link_demo(; link_closed::Bool)
 
   println("\n================================================================================")
   println("Scenario: ", link_closed ? "Link CLOSED (Bus1-Bus1a)" : "Link OPEN (Bus1-Bus1a)")
-  iterations, status, _ = run_net_acpflow(net = net, max_ite = 25, tol = 1e-8, method = :polar_full, opt_sparse = true, opt_fd = false)
+  iterations, status, _ = run_net_acpflow(net = net, max_ite = 25, tol = 1e-8, method = :rectangular, opt_sparse = true, opt_fd = false)
   println("Converged: ", status == 0, " (status=", status, ", iterations=", iterations, ")")
   status == 0 || return net
 

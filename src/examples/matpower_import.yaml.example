@@ -11,7 +11,7 @@
 #
 
 case: case141.m
-methods: [polar_full, rectangular, classic]
+methods: [rectangular]
 
 # Solver/NR options
 opt_fd: false

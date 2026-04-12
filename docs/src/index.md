@@ -4,7 +4,7 @@ This package contains tools for subsequent network calculations. It primarily fe
 
 ## Features
 
-- AC power flow with multiple internal Newton-Raphson formulations (`:polar_full`, `:rectangular`, `:classic`) and many options.
+- AC power flow with rectangular complex-state Newton-Raphson as default (`:rectangular`); legacy `:polar_full` / `:classic` are deprecated.
 - State Estimation (WLS) as an **experimental** feature 
 - Canonical external solver interface (`PFModel`/`PFSolution`) to integrate third-party solvers.
 - PV-to-PQ bus switching.

@@ -1,4 +1,15 @@
 # Change Log
+## Version 0.6.4 – 2026-04-12
+### Changes
+* Marked legacy Jacobian solvers as deprecated:
+  * `runpf_full!` / `method = :polar_full`
+  * `runpf_classic!` / `method = :classic`
+  Both now emit a deprecation warning when used.
+* Set rectangular complex Jacobian (`method = :rectangular`) as the default for:
+  * `run_acpflow`
+  * `run_net_acpflow`
+* Updated examples and user documentation to use `:rectangular` as the recommended/default solver method.
+
 ## Version 0.6.3 – 2026-04-11
 ### New Features
 * Added `:adjust_vset` controller-based Q-limit handling at PV buses (adaptive Vset steps before optional PV→PQ fallback).
