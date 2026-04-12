@@ -1,6 +1,10 @@
 # Change Log
+## Version 0.7.0 – 2026-04-XX
+### New Features
+* Added support for P(U) and Q(U) controller models in power flow calculations
+
 ## Version 0.6.4 – 2026-04-12
-### Changes
+### New Features
 * Marked legacy Jacobian solvers as deprecated:
   * `runpf_full!` / `method = :polar_full`
   * `runpf_classic!` / `method = :classic`
@@ -9,6 +13,8 @@
   * `run_acpflow`
   * `run_net_acpflow`
 * Updated examples and user documentation to use `:rectangular` as the recommended/default solver method.
+### Bugfixes
+* For backwards compatibility, if vm is set, the coresponding bus type is set to PV
 
 ## Version 0.6.3 – 2026-04-11
 ### New Features
