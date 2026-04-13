@@ -85,8 +85,9 @@ end
 
 function _effective_bus_power_components(net::Net, bus_idx::Int)
   base = net.baseMVA
+  node = net.nodeVec[bus_idx]
 
-  vm = net.nodeVec[bus_idx]._vm_pu
+  vm = node._vm_pu
   vm_safe = vm > 1e-9 ? vm : 1e-9
 
   p_gen = 0.0
