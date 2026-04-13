@@ -41,15 +41,7 @@ struct ACPFlowReport
 end
 
 function Base.show(io::IO, report::ACPFlowReport)
-  print(io,
-    "ACPFlowReport(",
-    "case=", report.metadata.case,
-    ", converged=", report.metadata.converged,
-    ", nodes=", length(report.nodes),
-    ", branches=", length(report.branches),
-    ", links=", length(report.links),
-    ", q_limit_events=", length(report.q_limit_events),
-    ")")
+  print(io, "ACPFlowReport(", "case=", report.metadata.case, ", converged=", report.metadata.converged, ", nodes=", length(report.nodes), ", branches=", length(report.branches), ", links=", length(report.links), ", q_limit_events=", length(report.q_limit_events), ")")
 end
 
 _default0(x) = isnothing(x) ? 0.0 : x
@@ -93,6 +85,7 @@ end
 
 function _effective_bus_power_components(net::Net, bus_idx::Int)
   base = net.baseMVA
+
   vm = net.nodeVec[bus_idx]._vm_pu
   vm_safe = vm > 1e-9 ? vm : 1e-9
 
@@ -125,6 +118,22 @@ function _effective_bus_power_components(net::Net, bus_idx::Int)
     end
   end
 
+  if node._nodeType == Sparlectra.Slack
+    if !isnothing(node._pƩGen)
+      p_gen = node._pƩGen
+    end
+    if !isnothing(node._qƩGen)
+      q_gen = node._qƩGen
+    end
+  elseif node._nodeType == Sparlectra.PV
+    if abs(q_gen) <= 1e-9 && !isnothing(node._qƩGen)
+      q_gen = node._qƩGen
+    end
+    if abs(p_gen) <= 1e-9 && !isnothing(node._pƩGen)
+      p_gen = node._pƩGen
+    end
+  end
+
   return p_gen, q_gen, p_load, q_load
 end
 
@@ -147,37 +156,34 @@ end
 Builds a structured report object from solved network data.
 This provides a machine-readable alternative to `printACPFlowResults`.
 """
-function buildACPFlowReport(net::Net;
-  ct::Float64 = 0.0,
-  ite::Int = 0,
-  tol::Float64 = 1e-6,
-  converged::Bool = true,
-  solver::Symbol = :NR,
-)::ACPFlowReport
+function buildACPFlowReport(net::Net; ct::Float64 = 0.0, ite::Int = 0, tol::Float64 = 1e-6, converged::Bool = true, solver::Symbol = :NR)::ACPFlowReport
   busNameByIdx = _bus_name_by_idx(net)
   nodes_sorted = sort(net.nodeVec, by = x -> x.busIdx)
 
   node_rows = NamedTuple[]
   for n in nodes_sorted
     p_gen, q_gen, p_load, q_load = _effective_bus_power_components(net, n.busIdx)
-    push!(node_rows, (
-      bus = n.busIdx,
-      bus_name = get(busNameByIdx, n.busIdx, n.comp.cName),
-      type = toString(n._nodeType),
-      vm_pu = n._vm_pu,
-      va_deg = n._va_deg,
-      vn_kV = n.comp.cVN,
-      v_kV = n.comp.cVN * n._vm_pu,
-      p_gen_MW = p_gen,
-      q_gen_MVar = q_gen,
-      p_load_MW = p_load,
-      q_load_MVar = q_load,
-      p_shunt_MW = _default0(n._pShunt),
-      q_shunt_MVar = _default0(n._qShunt),
-      is_isolated = isIsolated(n),
-      q_limit_hit = haskey(net.qLimitEvents, n.busIdx),
-      control = _control_label(net, n.busIdx),
-    ))
+    push!(
+      node_rows,
+      (
+        bus = n.busIdx,
+        bus_name = get(busNameByIdx, n.busIdx, n.comp.cName),
+        type = toString(n._nodeType),
+        vm_pu = n._vm_pu,
+        va_deg = n._va_deg,
+        vn_kV = n.comp.cVN,
+        v_kV = n.comp.cVN * n._vm_pu,
+        p_gen_MW = p_gen,
+        q_gen_MVar = q_gen,
+        p_load_MW = p_load,
+        q_load_MVar = q_load,
+        p_shunt_MW = _default0(n._pShunt),
+        q_shunt_MVar = _default0(n._qShunt),
+        is_isolated = isIsolated(n),
+        q_limit_hit = haskey(net.qLimitEvents, n.busIdx),
+        control = _control_label(net, n.busIdx),
+      ),
+    )
   end
 
   branch_rows = NamedTuple[]
@@ -193,36 +199,12 @@ function buildACPFlowReport(net::Net;
     rated = isnothing(br.sn_MVA) ? 0.0 : br.sn_MVA
     overload = rated > 0.0 && max(abs(p_from), abs(p_to)) > rated
 
-    push!(branch_rows, (
-      branch = br.comp.cName,
-      branch_index = br.branchIdx,
-      from_bus = br.fromBus,
-      to_bus = br.toBus,
-      status = br.status,
-      p_from_MW = p_from,
-      q_from_MVar = q_from,
-      p_to_MW = p_to,
-      q_to_MVar = q_to,
-      p_loss_MW = p_loss,
-      q_loss_MVar = q_loss,
-      rated_MVA = rated,
-      overloaded = overload,
-    ))
+    push!(branch_rows, (branch = br.comp.cName, branch_index = br.branchIdx, from_bus = br.fromBus, to_bus = br.toBus, status = br.status, p_from_MW = p_from, q_from_MVar = q_from, p_to_MW = p_to, q_to_MVar = q_to, p_loss_MW = p_loss, q_loss_MVar = q_loss, rated_MVA = rated, overloaded = overload))
   end
 
   link_rows = NamedTuple[]
   for l in net.linkVec
-    push!(link_rows, (
-      link = l.cName,
-      link_index = l.linkIdx,
-      from_bus = l.fromBus,
-      to_bus = l.toBus,
-      status = l.status,
-      p_MW = _default0(l.pFlow_MW),
-      q_MVar = _default0(l.qFlow_MVar),
-      ifrom_kA = _default0(l.iFrom_kA),
-      ito_kA = _default0(l.iTo_kA),
-    ))
+    push!(link_rows, (link = l.cName, link_index = l.linkIdx, from_bus = l.fromBus, to_bus = l.toBus, status = l.status, p_MW = _default0(l.pFlow_MW), q_MVar = _default0(l.qFlow_MVar), ifrom_kA = _default0(l.iFrom_kA), ito_kA = _default0(l.iTo_kA)))
   end
 
   q_events = NamedTuple[]
@@ -231,18 +213,7 @@ function buildACPFlowReport(net::Net;
   end
 
   p_loss_total, q_loss_total = getTotalLosses(net = net)
-  metadata = (
-    case = net.name,
-    baseMVA = net.baseMVA,
-    converged = converged,
-    elapsed_s = ct,
-    iterations = ite,
-    tolerance = tol,
-    solver = solver,
-    timestamp = Dates.now(),
-    total_p_loss_MW = p_loss_total,
-    total_q_loss_MVar = q_loss_total,
-  )
+  metadata = (case = net.name, baseMVA = net.baseMVA, converged = converged, elapsed_s = ct, iterations = ite, tolerance = tol, solver = solver, timestamp = Dates.now(), total_p_loss_MW = p_loss_total, total_q_loss_MVar = q_loss_total)
 
   return ACPFlowReport(metadata, node_rows, branch_rows, link_rows, q_events)
 end
@@ -357,10 +328,10 @@ function printACPFlowResults(net::Net, ct::Float64, ite::Int, tol::Float64, toFi
   else
     @printf(io, "Status         :%10s\n", "Not Converged")
   end
-  @printf(io, "Case           :%15s\n", net.name)  
+  @printf(io, "Case           :%15s\n", net.name)
   @printf(io, "Cooldown iters :%10d\n", net.cooldown_iters)
   @printf(io, "Q-hysteresis   :%10.4f pu\n", net.q_hyst_pu)
-  
+
   @printf(io, "BaseMVA        :%10d\n", net.baseMVA)
   if auxb > 0 && niso > 0
     @printf(io, "Nodes          :%10d (PV: %d PQ: %d (Aux: %d) Iso: %d Slack: %d\n", busses, npv, npq, auxb, niso, 1)
@@ -453,7 +424,6 @@ function printACPFlowResults(net::Net, ct::Float64, ite::Int, tol::Float64, toFi
 
   @printf(io, "----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------\n")
   println(io, flowResults)
-
 
   if !isempty(net.linkVec)
     @printf(io, "\n----------------------------------- Link Flows (KCL) -----------------------------------\n")

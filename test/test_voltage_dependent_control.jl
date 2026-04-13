@@ -118,8 +118,11 @@ function run_voltage_dependent_control_tests()
 
       report = buildACPFlowReport(net; ct = 0.0, ite = 1, tol = 1e-8, converged = true, solver = :rectangular)
       row_ctrl = only(filter(r -> r.bus_name == "B4", report.nodes))
+      row_slack = only(filter(r -> r.bus_name == "B1", report.nodes))
       @test isapprox(row_ctrl.p_gen_MW, p_ctrl_mw; atol = 1e-8)
       @test isapprox(row_ctrl.q_gen_MVar, q_ctrl_mvar; atol = 1e-8)
+      @test abs(row_slack.p_gen_MW) > 1e-6
+      @test abs(row_slack.q_gen_MVar) > 1e-6
     end
   end
 
