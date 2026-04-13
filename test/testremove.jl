@@ -66,8 +66,7 @@ function createTestNetwork()::Net
 end
 
 function testRemoveBranch()
-  # Use a minimal logger to suppress expected error messages
-  with_logger(SimpleLogger(stderr, Logging.Warn)) do
+  with_logger(NullLogger()) do
     net = createTestNetwork()
 
     # Get initial counts
@@ -117,8 +116,7 @@ function testRemoveBranch()
 end
 
 function testRemoveShunt()
-  # Use a minimal logger to suppress expected error messages
-  with_logger(SimpleLogger(stderr, Logging.Warn)) do
+  with_logger(NullLogger()) do
     net = createTestNetwork()
 
     # Verify shunts exist where we expect
@@ -146,8 +144,7 @@ function testRemoveShunt()
 end
 
 function testRemoveProsumer()
-  # Use a minimal logger to suppress expected error messages
-  with_logger(SimpleLogger(stderr, Logging.Warn)) do
+  with_logger(NullLogger()) do
     net = createTestNetwork()
 
     # Get initial prosumer count
@@ -197,8 +194,7 @@ function testRemoveProsumer()
 end
 
 function testIsolatedBuses()
-  # Use a minimal logger to suppress expected error messages
-  with_logger(SimpleLogger(stderr, Logging.Warn)) do
+  with_logger(NullLogger()) do
     net = createTestNetwork()
 
     # Initially no isolated buses
@@ -242,13 +238,11 @@ end
 function testRemoveBus()
   # Skip actual tests since Net is immutable and can't be modified
   # Return true for compatibility with other tests
-  println("  Note: Bus removal tests skipped - Net struct is immutable")
   return true
 end
 
 function testRemoveSpecialCases()
-  # Use a minimal logger to suppress expected error messages
-  with_logger(SimpleLogger(stderr, Logging.Warn)) do
+  with_logger(NullLogger()) do
     net = createTestNetwork()
 
     # Test cannot remove slack bus
@@ -272,37 +266,30 @@ function testRemoveSpecialCases()
 end
 
 function testRemoveFunctions()
-  println("Testing branch removal...")
   if !testRemoveBranch()
     return false
   end
 
-  println("Testing shunt removal...")
   if !testRemoveShunt()
     return false
   end
 
-  println("Testing prosumer removal...")
   if !testRemoveProsumer()
     return false
   end
 
-  println("Testing bus removal...")
   if !testRemoveBus()
     return false
   end
 
-  println("Testing isolated buses...")
   if !testIsolatedBuses()
     return false
   end
 
-  println("Testing special cases...")
   if !testRemoveSpecialCases()
     return false
   end
 
-  println("All removal tests passed!")
   return true
 end
 

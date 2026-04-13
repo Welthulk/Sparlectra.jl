@@ -21,7 +21,7 @@ using Printf
 using LinearAlgebra
 
 # keep logs quiet unless there's a warning or error
-global_logger(ConsoleLogger(stderr, Logging.Info))
+global_logger(ConsoleLogger(stderr, Logging.Warn))
 
 # Suppress one-time deprecation warnings in test output. Deprecated solver
 # behavior is covered by dedicated tests and does not need to spam full-suite logs.

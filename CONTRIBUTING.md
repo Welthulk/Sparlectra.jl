@@ -1,47 +1,151 @@
-# Contributing to Sparlectra.jl
+# Contributing to Sparlectra.jl (Strict Governance Model + QA Requirements)
 
-Thank you for your interest in contributing to **Sparlectra.jl**. Contributions that improve reliability, performance, documentation, and usability are welcome.
+Thank you for your interest in contributing to **Sparlectra.jl**.
+
+This project is primarily a **research and educational effort** with limited maintainer capacity.  
+To keep the codebase consistent and maintainable, contributions follow a stricter process.
+
+---
+
+## ⚠️ Mandatory Proposal First Policy
+
+**All non-trivial contributions require prior discussion.**
+
+Before writing code, you MUST:
+
+1. Open an Issue or Discussion
+2. Describe your idea clearly
+3. Wait for maintainer feedback and alignment
+
+➡️ Pull Requests without prior agreement are typically not reviewed.
+
+---
+
+## Contribution Scope
+
+Sparlectra prioritizes:
+
+- numerical robustness  
+- deterministic behavior  
+- conceptual clarity  
+- minimal complexity  
+
+---
 
 ## Development Workflow
 
-1. Fork the repository
-2. Create a feature branch
-3. Implement your changes
-4. Open a Pull Request
+1. Fork the repository  
+2. Create a feature branch  
+3. Implement agreed changes  
+4. Open a Pull Request  
 
-Small and focused Pull Requests are preferred.
+---
 
 ## Coding Guidelines
 
-Please follow general Julia best practices:
+- clear and structured code  
+- descriptive naming  
+- minimal dependencies  
+- deterministic algorithms  
 
-* Write clear, readable, and well-structured code
-* Use descriptive function and variable names
-* Avoid unnecessary dependencies
-* Keep algorithms deterministic and numerically robust
+All comments and docstrings must be in **English**.
 
-All code comments and docstrings should be written in **English**.
+---
 
-## Numerical Code
+## Numerical Code Requirements
 
-Sparlectra focuses on **power flow algorithms and electrical network modeling**.
-When modifying numerical or solver-related code:
+- preserve numerical stability  
+- avoid performance regressions  
+- document mathematical changes clearly  
+- justify algorithmic decisions  
 
-* maintain numerical stability
-* avoid performance regressions
-* document algorithmic changes clearly
+---
 
-## Pull Requests
+## Testing Requirements (Mandatory)
 
-Please ensure that:
+- Every change MUST include **dedicated unit tests**
+- Tests must be **deterministic**
+- Edge cases must be covered where relevant
+- Tests must be part of the repository (not only described in PR)
 
-* the purpose of the change is clearly described
-* the scope of the Pull Request is focused
+---
 
-Large architectural changes should be discussed in an Issue first.
+## Coverage Requirements
 
-## Project Scope and Maintainer Availability
+- New code should include **test coverage**
+- Contributions should not significantly reduce overall coverage
+- Critical numerical paths must be explicitly tested
 
-Sparlectra.jl is primarily developed as a **research and educational project**, and the maintainer community is currently small.
+(Optional but recommended)
+- Contributors may include coverage reports (e.g. via CI)
 
-Contributions are welcome, but response times for issues or pull requests may vary, and immediate feedback cannot always be guaranteed. Thank you for your patience.
+---
+
+## Benchmark Requirements (for Solver / Numerical Changes)
+
+For any change affecting:
+
+- solver behavior  
+- numerical routines  
+- performance-critical code  
+
+the contributor MUST provide:
+
+- a **before/after benchmark**
+- description of the test case (network size, type)
+- comparison of:
+  - runtime  
+  - iteration count  
+  - convergence behavior  
+
+Benchmarks must be:
+
+- reproducible  
+- documented  
+- runnable by the maintainer  
+
+---
+
+## Test & Validation Documentation
+
+Each contribution must include:
+
+- how to run tests  
+- expected results  
+- assumptions / limitations  
+
+PR-only descriptions are NOT sufficient.
+
+---
+
+## Pull Request Acceptance Policy
+
+A PR may be rejected if:
+
+- no prior discussion  
+- missing tests  
+- missing benchmarks (if required)  
+- insufficient documentation  
+- increased complexity without benefit  
+
+---
+
+## Maintainer Availability
+
+- Reviews are best-effort  
+- Response times may vary  
+- Not all PRs will be accepted  
+
+---
+
+## Summary
+
+- Discuss first  
+- Provide tests  
+- Provide benchmarks (if relevant)  
+- Document clearly  
+- Keep changes minimal  
+
+This ensures long-term maintainability.
+
+Thank you for your understanding.

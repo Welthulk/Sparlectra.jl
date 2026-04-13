@@ -1062,7 +1062,9 @@ function test_rectangular_merge_fallback_suppresses_polar_deprecation_warning():
   Sparlectra._warned_full_solver_deprecated[] = false
   try
     @test_logs min_level = Logging.Warn (:warn, r"runpf!: rectangular solver does not support internal Isolated buses from active-link merges; falling back to :polar_full") match_mode = :all begin
-      _, erg = runpf!(net, 30, 1e-8, 1; method = :rectangular, opt_sparse = true)
+      _, erg = redirect_stdout(devnull) do
+        runpf!(net, 30, 1e-8, 1; method = :rectangular, opt_sparse = true)
+      end
       if erg != 0
         return false
       end

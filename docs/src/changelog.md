@@ -1,8 +1,10 @@
 # Change Log
-## Version 0.7.0 – 2026-04-XX
+## Version 0.7.0 – 2026-04-14
 ### New Features
 * Added support for P(U) and Q(U) controller models in power flow calculations
-
+* Added supprt for controler for non pv generators
+* Added documentation and examples for new controller features
+  
 ## Version 0.6.4 – 2026-04-12
 ### New Features
 * Marked legacy Jacobian solvers as deprecated:
