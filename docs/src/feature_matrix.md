@@ -20,6 +20,7 @@ Legend:
 | 3-winding transformer | ✅ | ✅ | Implemented via star-equivalent with AUX bus in network construction. |
 | π-equivalent branch modeling | ✅ | ✅ | Common branch representation across PF/SE workflows. |
 | Shunts / loads / generators in `Net` model | ✅ | ✅ | Shared physical network model and component handling. |
+| Voltage-dependent prosumer control (`Q(U)`, `P(U)`) | ✅ | ❌ | Implemented for PF with controller-aware mismatch/Jacobian terms in rectangular formulation; not part of SE model. |
 | MATPOWER import / cases | ✅ | ✅ | Typical SE studies can start from imported PF-ready networks. |
 
 ## Solvers, operations & limits
@@ -32,6 +33,7 @@ Legend:
 | Sparse Jacobian option (`opt_sparse`) | ✅ | ⚠️ | PF supports explicit sparse option; SE internally builds Jacobians for WLS. |
 | Flat start control | ✅ | ✅ | Available in both PF and SE workflows. |
 | PV/PQ reactive limit handling | ✅ | ❌ | PF includes Q-limit logic; SE currently does not expose PV/PQ switching logic. |
+| `Q(U)` / `P(U)` controller solver support | ⚠️ | ❌ | Supported for PF in `method = :rectangular`; legacy `:polar_full` / `:classic` are unsupported with these controllers. |
 | External solver interface | ✅ | ❌ | PF has external solver integration; SE is internal WLS. |
 
 ## State-estimation measurements, observability & diagnostics
