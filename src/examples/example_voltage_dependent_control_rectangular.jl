@@ -13,8 +13,8 @@ function run_example_voltage_dependent_control_rectangular(; verbose::Int = 1)
 
   addProsumer!(net = net, busName = "Slack", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "Slack")
 
-  qu_curve = make_characteristic([(0.94, 0.35), (1.00, 0.00), (1.06, -0.25)])
-  pu_curve = make_characteristic([(0.94, 0.25), (1.00, 0.10), (1.06, 0.00)])
+  qu_curve = make_characteristic([(103.4, 35.0), (110.0, 0.0), (116.6, -25.0)]; voltage_unit = :kV, value_unit = :MVAr, vn_kV = 110.0, sbase_MVA = net.baseMVA)
+  pu_curve = make_characteristic([(103.4, 25.0), (110.0, 10.0), (116.6, 0.0)]; voltage_unit = :kV, value_unit = :MW, vn_kV = 110.0, sbase_MVA = net.baseMVA)
 
   addProsumer!(
     net = net,
@@ -22,8 +22,8 @@ function run_example_voltage_dependent_control_rectangular(; verbose::Int = 1)
     type = "SYNCHRONOUSMACHINE",
     p = 10.0,
     q = 0.0,
-    qu_controller = QUController(qu_curve, -0.50, 0.50),
-    pu_controller = PUController(pu_curve, 0.0, 0.50),
+    qu_controller = QUController(qu_curve; qmin_MVAr = -50.0, qmax_MVAr = 50.0, sbase_MVA = net.baseMVA),
+    pu_controller = PUController(pu_curve; pmin_MW = 0.0, pmax_MW = 50.0, sbase_MVA = net.baseMVA),
   )
 
   addProsumer!(net = net, busName = "Prosumer", type = "ENERGYCONSUMER", p = 45.0, q = 18.0)
