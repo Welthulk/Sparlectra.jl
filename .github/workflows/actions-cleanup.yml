@@ -2,6 +2,23 @@ name: Actions Clean-Up
 
 on:
   workflow_dispatch:
+    inputs:
+      retain_days:
+        description: "Keep runs from the last N days"
+        required: true
+        default: "30"
+      keep_minimum_runs:
+        description: "Keep at least N runs"
+        required: true
+        default: "10"
+      dry_run:
+        description: "Only simulate deletions"
+        required: true
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
   schedule:
     - cron: '0 2 * * 0' # weekly
 
@@ -10,8 +27,13 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       actions: write
+      contents: read
     steps:
-      - uses: Mattraks/delete-workflow-runs@v2
+      - name: Delete old workflow runs
+        uses: Mattraks/delete-workflow-runs@v2
         with:
-          retain_days: 90
-          keep_minimum_runs: 2
+          token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          retain_days: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.retain_days || '30' }}
+          keep_minimum_runs: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.keep_minimum_runs || '10' }}
+          dry_run: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run || 'false' }}
