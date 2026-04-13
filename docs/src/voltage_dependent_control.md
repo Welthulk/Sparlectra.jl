@@ -183,6 +183,9 @@ Notes:
 
 - Existing p.u.-based calls remain fully supported.
 - Controller evaluation and Jacobian assembly still operate in p.u. internally.
+- MATPOWER import: if a generator is connected to a `PQ` bus (`BUS_TYPE = 1`),
+  Sparlectra maps `Pmin/Pmax/Qmin/Qmax` to constant `P(U)`/`Q(U)` controllers
+  (fixed characteristic with limits) and emits an import log message.
 
 ## Solver support and limitation
 

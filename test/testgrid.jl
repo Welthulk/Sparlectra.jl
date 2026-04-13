@@ -317,13 +317,24 @@ function test_matpower_import_uses_bus_type_for_regulation()::Bool
     bus_name = nothing,
   )
 
-  net = Sparlectra.createNetFromMatPowerCase(mpc = mpc, log = false, flatstart = false)
+  net = nothing
+  @test_logs (:info, r"MATPOWER import: PQ generator limits mapped to constant P\(U\)/Q\(U\) controllers") match_mode = :any begin
+    net = Sparlectra.createNetFromMatPowerCase(mpc = mpc, log = false, flatstart = false)
+  end
 
   b2 = geNetBusIdx(net = net, busName = "2")
   b3 = geNetBusIdx(net = net, busName = "3")
+  b2_prosumers = getBusProsumers(net, b2)
+  b3_prosumers = getBusProsumers(net, b3)
+  b2_gen = only(filter(isGenerator, b2_prosumers))
+  b3_gen = only(filter(isGenerator, b3_prosumers))
 
   return getNodeType(net.nodeVec[b2]) == Sparlectra.PQ &&
-         getNodeType(net.nodeVec[b3]) == Sparlectra.PV
+         getNodeType(net.nodeVec[b3]) == Sparlectra.PV &&
+         !isnothing(b2_gen.puController) &&
+         !isnothing(b2_gen.quController) &&
+         isnothing(b3_gen.puController) &&
+         isnothing(b3_gen.quController)
 end
 
 function test_matpower_vmva_selfcheck_noncontiguous_bus_numbers()::Bool
