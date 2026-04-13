@@ -1,0 +1,17 @@
+name: Actions Clean-Up
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 2 * * 0' # weekly
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - uses: Mattraks/delete-workflow-runs@v2
+        with:
+          retain_days: 30
+          keep_minimum_runs: 10
