@@ -23,6 +23,11 @@ using LinearAlgebra
 # keep logs quiet unless there's a warning or error
 global_logger(ConsoleLogger(stderr, Logging.Info))
 
+# Suppress one-time deprecation warnings in test output. Deprecated solver
+# behavior is covered by dedicated tests and does not need to spam full-suite logs.
+Sparlectra._warned_full_solver_deprecated[] = true
+Sparlectra._warned_classic_solver_deprecated[] = true
+
 include("testgrid.jl")
 include("testremove.jl")
 include("test_solver_interface.jl")
