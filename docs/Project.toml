@@ -3,7 +3,7 @@ Documenter = "e30172f5-a6a5-5a46-863b-614d45cd2de4"
 Sparlectra = "31ce9bba-fd9d-44a1-b005-f5f509afda38"
 
 [sources]
-Sparlectra = {path = "c:\\Users\\scud\\.julia\\dev\\Sparlectra\\docs\\.."}
+Sparlectra = {path = ".."}
 
 [compat]
 Documenter = "1.14"

@@ -40,4 +40,5 @@ include("test_voltage_dependent_control.jl")
   run_solver_interface_tests()
   run_state_estimation_tests()
   run_voltage_dependent_control_tests()
+  return nothing
 end

@@ -1,9 +1,14 @@
 # Change Log
-## Version 0.7.0 – 2026-04-14
+## Version 0.7.0 – 2026-04-15
 ### New Features
-* Added support for P(U) and Q(U) controller models in power flow calculations
-* Added supprt for controler for non pv generators
-* Added documentation and examples for new controller features
+* Added support for **P(U)** and **Q(U)** controller models in power flow calculations
+* Characteristic curves can be defined via discrete points, with selectable interpolation methods:
+  * linear
+  * piecewise constant
+  * cubic
+  * polynomial
+* Added support for controllers on **non-PV generators**
+* Added documentation and examples for the new controller features
   
 ## Version 0.6.4 – 2026-04-12
 ### New Features

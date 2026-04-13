@@ -19,6 +19,8 @@ using Sparlectra
 using Random
 
 function test_state_estimation_wls_first_version()::Bool
+  # Verifies the baseline WLS state-estimation workflow:
+  # PF reference generation, synthetic measurements, convergence, and voltage accuracy.
   @testset "State estimation WLS first version" begin
     net = createTest3BusNet()
 
@@ -58,6 +60,8 @@ function test_state_estimation_wls_first_version()::Bool
 end
 
 function test_state_estimation_observability_metrics()::Bool
+  # Validates global/local observability metrics for full, reduced, and sparse
+  # measurement sets, including expected not-observable behavior for sparse data.
   @testset "State estimation observability metrics" begin
     net = createTest3BusNet()
 
@@ -139,6 +143,8 @@ function test_state_estimation_observability_metrics()::Bool
 end
 
 function test_state_estimation_matrix_observability_helpers()::Bool
+  # Unit-checks matrix-only observability helpers (rank/matching/redundancy),
+  # including local-column selection and expected error paths.
   @testset "State estimation matrix observability helpers" begin
     H = [
       1.0 0.0 0.0
@@ -173,6 +179,8 @@ function test_state_estimation_matrix_observability_helpers()::Bool
 end
 
 function test_state_estimation_measurement_add_helpers()::Bool
+  # Verifies measurement insertion helper APIs for Vm/Pinj/Qinj/Pflow/Qflow,
+  # field mapping, storage in net.measurements, and invalid-branch error handling.
   @testset "State estimation measurement add helpers" begin
     net = createTest3BusNet()
     @test isempty(net.measurements)
@@ -220,6 +228,8 @@ function create_state_estimation_passive_transit_net()::Net
 end
 
 function test_state_estimation_passive_bus_zero_injection_helpers()::Bool
+  # Checks passive-bus detection and automatic zero-injection measurement addition,
+  # and confirms improved observability/SE convergence after augmentation.
   @testset "State estimation passive bus zero-injection helpers" begin
     net = create_state_estimation_passive_transit_net()
 
@@ -269,6 +279,8 @@ function test_state_estimation_passive_bus_zero_injection_helpers()::Bool
 end
 
 function test_state_estimation_bad_data_diagnostics()::Bool
+  # Injects a controlled bad measurement and verifies diagnostics:
+  # residual ranking, suspect identification, formatted reporting, and rerun improvement.
   @testset "State estimation bad-data diagnostics" begin
     net = createTest3BusNet()
 
@@ -343,6 +355,7 @@ function test_state_estimation_bad_data_diagnostics()::Bool
 end
 
 function run_state_estimation_tests()
+  # Aggregates all state-estimation unit tests to keep coverage explicit and ordered.
   @testset "State estimation" begin
     tests = [
       ("WLS", test_state_estimation_wls_first_version),
