@@ -115,6 +115,11 @@ function run_voltage_dependent_control_tests()
       @test occursin(" - ", out)
       @test occursin(@sprintf("%10.3f", p_ctrl_mw), out)
       @test occursin(@sprintf("%10.3f", q_ctrl_mvar), out)
+
+      report = buildACPFlowReport(net; ct = 0.0, ite = 1, tol = 1e-8, converged = true, solver = :rectangular)
+      row_ctrl = only(filter(r -> r.bus_name == "B4", report.nodes))
+      @test isapprox(row_ctrl.p_gen_MW, p_ctrl_mw; atol = 1e-8)
+      @test isapprox(row_ctrl.q_gen_MVar, q_ctrl_mvar; atol = 1e-8)
     end
   end
 

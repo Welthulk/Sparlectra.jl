@@ -239,6 +239,16 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
     referencePri = (slackIdx == Int(row[genDict["bus"]])) ? bus : nothing
     (mBase != baseMVA) && @debug "generator $(bus) has different mBase than network baseMVA (allowed in MATPOWER)" bus mBase baseMVA
 
+    pu_controller = nothing
+    qu_controller = nothing
+    if btype == 1
+      p_pu = pGen / baseMVA
+      q_pu = qGen / baseMVA
+      pu_controller = PUController(make_characteristic([(0.0, p_pu), (2.0, p_pu)]); pmin_MW = pMin, pmax_MW = pMax, sbase_MVA = baseMVA)
+      qu_controller = QUController(make_characteristic([(0.0, q_pu), (2.0, q_pu)]); qmin_MVAr = qMin, qmax_MVAr = qMax, sbase_MVA = baseMVA)
+      @info "MATPOWER import: PQ generator limits mapped to constant P(U)/Q(U) controllers" bus = bus pMin = pMin pMax = pMax qMin = qMin qMax = qMax
+    end
+
     addProsumer!(
       net = myNet,
       busName = bus,
@@ -251,6 +261,8 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
       pMin = pMin,
       qMax = qMax,
       qMin = qMin,
+      qu_controller = qu_controller,
+      pu_controller = pu_controller,
       isRegulated = (btype == 2),
     )
   end
