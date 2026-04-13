@@ -195,5 +195,8 @@ Detailed result output has separate columns:
 
 - `Type`: structural bus class (`Slack`, `PV`, `PQ`), unchanged semantics.
 - `Control`: additional voltage-dependent behavior (`Q(U)`, `P(U)`, `Q(U), P(U)`, or `-`).
+- `Pg/Qg/Pl/Ql`: effective solved bus power components; for prosumers with
+  `Q(U)`/`P(U)` this reflects the controller-evaluated setpoints at the solved
+  bus voltage (not only initial static `p`/`q` inputs).
 
 This avoids overloading bus type strings and keeps existing workflows stable.

@@ -91,6 +91,43 @@ function _control_label(net::Net, bus_idx::Int)::String
   end
 end
 
+function _effective_bus_power_components(net::Net, bus_idx::Int)
+  base = net.baseMVA
+  vm = net.nodeVec[bus_idx]._vm_pu
+  vm_safe = vm > 1e-9 ? vm : 1e-9
+
+  p_gen = 0.0
+  q_gen = 0.0
+  p_load = 0.0
+  q_load = 0.0
+
+  for ps in net.prosumpsVec
+    getPosumerBusIndex(ps) == bus_idx || continue
+
+    p_mw = isnothing(ps.pVal) ? 0.0 : ps.pVal
+    q_mvar = isnothing(ps.qVal) ? 0.0 : ps.qVal
+
+    if has_pu_controller(ps)
+      p_pu, _ = evaluate_controller(ps.puController, vm_safe)
+      p_mw = p_pu * base
+    end
+    if has_qu_controller(ps)
+      q_pu, _ = evaluate_controller(ps.quController, vm_safe)
+      q_mvar = q_pu * base
+    end
+
+    if isGenerator(ps)
+      p_gen += p_mw
+      q_gen += q_mvar
+    else
+      p_load += p_mw
+      q_load += q_mvar
+    end
+  end
+
+  return p_gen, q_gen, p_load, q_load
+end
+
 function _branch_kind_label(br::Branch)::String
   name = br.comp.cName
   if occursin("_ACL_", name)
@@ -122,6 +159,7 @@ function buildACPFlowReport(net::Net;
 
   node_rows = NamedTuple[]
   for n in nodes_sorted
+    p_gen, q_gen, p_load, q_load = _effective_bus_power_components(net, n.busIdx)
     push!(node_rows, (
       bus = n.busIdx,
       bus_name = get(busNameByIdx, n.busIdx, n.comp.cName),
@@ -130,10 +168,10 @@ function buildACPFlowReport(net::Net;
       va_deg = n._va_deg,
       vn_kV = n.comp.cVN,
       v_kV = n.comp.cVN * n._vm_pu,
-      p_gen_MW = _default0(n._pƩGen),
-      q_gen_MVar = _default0(n._qƩGen),
-      p_load_MW = _default0(n._pƩLoad),
-      q_load_MVar = _default0(n._qƩLoad),
+      p_gen_MW = p_gen,
+      q_gen_MVar = q_gen,
+      p_load_MW = p_load,
+      q_load_MVar = q_load,
       p_shunt_MW = _default0(n._pShunt),
       q_shunt_MVar = _default0(n._qShunt),
       is_isolated = isIsolated(n),
@@ -356,29 +394,29 @@ function printACPFlowResults(net::Net, ct::Float64, ite::Int, tol::Float64, toFi
   pShunt_str = qShunt_str = ""
   tpShunt = tqShunt = 0.0
   for n in nodes
-    if !isnothing(n._pƩGen)
-      abs(n._pƩGen) > 1e-6
-      pGS = @sprintf("%10.3f", n._pƩGen)
-      tpGS += n._pƩGen
+    p_gen, q_gen, p_load, q_load = _effective_bus_power_components(net, n.busIdx)
+    if abs(p_gen) > 1e-6
+      pGS = @sprintf("%10.3f", p_gen)
+      tpGS += p_gen
     else
       pGS = ""
     end
-    if !isnothing(n._qƩGen) && abs(n._qƩGen) > 1e-6
-      qGS = @sprintf("%10.3f", n._qƩGen)
-      tqGS += n._qƩGen
+    if abs(q_gen) > 1e-6
+      qGS = @sprintf("%10.3f", q_gen)
+      tqGS += q_gen
     else
       qGS = ""
     end
 
-    if !isnothing(n._pƩLoad) && abs(n._pƩLoad) > 1e-6
-      pLS = @sprintf("%10.3f", n._pƩLoad)
-      tpLS += n._pƩLoad
+    if abs(p_load) > 1e-6
+      pLS = @sprintf("%10.3f", p_load)
+      tpLS += p_load
     else
       pLS = ""
     end
-    if !isnothing(n._qƩLoad) && abs(n._qƩLoad) > 1e-6
-      qLS = @sprintf("%10.3f", n._qƩLoad)
-      tqLS += n._qƩLoad
+    if abs(q_load) > 1e-6
+      qLS = @sprintf("%10.3f", q_load)
+      tqLS += q_load
     else
       qLS = ""
     end
