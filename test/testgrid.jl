@@ -1032,6 +1032,37 @@ function test_link_bus_merge_pf_default_method()
   return test_link_bus_merge_pf()
 end
 
+function test_rectangular_merge_fallback_suppresses_polar_deprecation_warning()::Bool
+  net = Net(name = "link_merge_warning_gate", baseMVA = 100.0)
+  addBus!(net = net, busName = "B0", vn_kV = 110.0)
+  addBus!(net = net, busName = "B1", vn_kV = 110.0)
+  addBus!(net = net, busName = "B2", vn_kV = 110.0)
+  addBus!(net = net, busName = "B3", vn_kV = 110.0)
+
+  addACLine!(net = net, fromBus = "B0", toBus = "B1", length = 5.0, r = 0.05, x = 0.5, c_nf_per_km = 10.0, tanδ = 0.0)
+  addACLine!(net = net, fromBus = "B2", toBus = "B3", length = 20.0, r = 0.05, x = 0.5, c_nf_per_km = 10.0, tanδ = 0.0)
+  addLink!(net = net, fromBus = "B1", toBus = "B2", status = 1)
+  addProsumer!(net = net, busName = "B0", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "B0")
+  addProsumer!(net = net, busName = "B1", type = "GENERATOR", p = 10.0, q = 1.0)
+  addProsumer!(net = net, busName = "B2", type = "ENERGYCONSUMER", p = 15.0, q = 5.0)
+  addProsumer!(net = net, busName = "B3", type = "ENERGYCONSUMER", p = 25.0, q = 10.0)
+
+  old_warned = Sparlectra._warned_full_solver_deprecated[]
+  Sparlectra._warned_full_solver_deprecated[] = false
+  try
+    @test_logs min_level = Logging.Warn (:warn, r"runpf!: rectangular solver does not support internal Isolated buses from active-link merges; falling back to :polar_full") match_mode = :all begin
+      _, erg = runpf!(net, 30, 1e-8, 1; method = :rectangular, opt_sparse = true)
+      if erg != 0
+        return false
+      end
+    end
+  finally
+    Sparlectra._warned_full_solver_deprecated[] = old_warned
+  end
+
+  return true
+end
+
 function test_link_closed_keeps_shunt_reporting_on_original_bus()
   net = Net(name = "link_shunt_reporting", baseMVA = 100.0)
   addBus!(net = net, busName = "B0", vn_kV = 110.0)
@@ -1574,6 +1605,7 @@ function run_grid_tests()
       @test test_link_rejects_mixed_bus_types() == true
       @test test_link_bus_merge_pf() == true
       @test test_link_bus_merge_pf_default_method() == true
+      @test test_rectangular_merge_fallback_suppresses_polar_deprecation_warning() == true
       @test test_link_closed_keeps_shunt_reporting_on_original_bus() == true
       @test test_link_kcl_ring_allocation() == true
       @test test_link_kcl_ring_allocation_with_shunt() == true
