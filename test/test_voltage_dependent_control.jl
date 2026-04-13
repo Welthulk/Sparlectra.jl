@@ -2,6 +2,7 @@
 
 using Test
 using Sparlectra
+using Printf
 
 function run_voltage_dependent_control_tests()
   @testset "Voltage dependent P(U)/Q(U) control" begin
@@ -97,12 +98,23 @@ function run_voltage_dependent_control_tests()
       tmp = mktempdir()
       printACPFlowResults(net, 0.0, 1, 1e-8, true, tmp; converged = true, solver = :rectangular)
       out = read(joinpath(tmp, "result_$(net.name).txt"), String)
+      V = buildVoltageVector(net)
+      controlled_idx = findfirst(ps -> !isnothing(ps.puController) && !isnothing(ps.quController), net.prosumpsVec)
+      @test !isnothing(controlled_idx)
+      ps_ctrl = net.prosumpsVec[controlled_idx]
+      vm_ctrl = abs(V[getPosumerBusIndex(ps_ctrl)])
+      p_ctrl_pu, _ = evaluate_controller(ps_ctrl.puController, vm_ctrl)
+      q_ctrl_pu, _ = evaluate_controller(ps_ctrl.quController, vm_ctrl)
+      p_ctrl_mw = p_ctrl_pu * net.baseMVA
+      q_ctrl_mvar = q_ctrl_pu * net.baseMVA
 
       @test occursin("Control", out)
       @test occursin("Q(U)", out)
       @test occursin("P(U)", out)
       @test occursin("Q(U), P(U)", out)
       @test occursin(" - ", out)
+      @test occursin(@sprintf("%10.3f", p_ctrl_mw), out)
+      @test occursin(@sprintf("%10.3f", q_ctrl_mvar), out)
     end
   end
 
