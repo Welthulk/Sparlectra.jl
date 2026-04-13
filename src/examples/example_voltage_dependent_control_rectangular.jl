@@ -16,15 +16,7 @@ function run_example_voltage_dependent_control_rectangular(; verbose::Int = 1)
   qu_curve = make_characteristic([(103.4, 35.0), (110.0, 0.0), (116.6, -25.0)]; voltage_unit = :kV, value_unit = :MVAr, vn_kV = 110.0, sbase_MVA = net.baseMVA)
   pu_curve = make_characteristic([(103.4, 25.0), (110.0, 10.0), (116.6, 0.0)]; voltage_unit = :kV, value_unit = :MW, vn_kV = 110.0, sbase_MVA = net.baseMVA)
 
-  addProsumer!(
-    net = net,
-    busName = "Prosumer",
-    type = "SYNCHRONOUSMACHINE",
-    p = 10.0,
-    q = 0.0,
-    qu_controller = QUController(qu_curve; qmin_MVAr = -50.0, qmax_MVAr = 50.0, sbase_MVA = net.baseMVA),
-    pu_controller = PUController(pu_curve; pmin_MW = 0.0, pmax_MW = 50.0, sbase_MVA = net.baseMVA),
-  )
+  addProsumer!(net = net, busName = "Prosumer", type = "SYNCHRONOUSMACHINE", p = 10.0, q = 0.0, qu_controller = QUController(qu_curve; qmin_MVAr = -50.0, qmax_MVAr = 50.0, sbase_MVA = net.baseMVA), pu_controller = PUController(pu_curve; pmin_MW = 0.0, pmax_MW = 50.0, sbase_MVA = net.baseMVA))
 
   addProsumer!(net = net, busName = "Prosumer", type = "ENERGYCONSUMER", p = 45.0, q = 18.0)
 
@@ -44,7 +36,7 @@ function run_example_voltage_dependent_control_rectangular(; verbose::Int = 1)
     @printf("Bus %-10s |V| = %.5f pu, angle = %.3f deg\n", "Prosumer", abs(V[2]), rad2deg(angle(V[2])))
     @printf("Controlled prosumer setpoints at Vm=%.5f pu: P=%.3f MW, Q=%.3f MVar\n", vm, p_ctrl_pu * net.baseMVA, q_ctrl_pu * net.baseMVA)
     @printf("Net specified injection at Prosumer bus: P=%.3f MW, Q=%.3f MVar\n", real(Sspec[2]) * net.baseMVA, imag(Sspec[2]) * net.baseMVA)
-
+    println("\nDetailed results:")
     printACPFlowResults(net, 0.0, ite, 1e-9; converged = true, solver = :rectangular)
   else
     println("Power flow did not converge.")
