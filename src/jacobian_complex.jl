@@ -1232,7 +1232,7 @@ function runpf!(net::Net, maxIte::Int, tolerance::Float64 = 1e-6, verbose::Int =
     if qlimit_mode != :switch_to_pq
       @warn "runpf!: qlimit_mode=$(qlimit_mode) is only supported for method=:rectangular. Falling back to :switch_to_pq behavior."
     end
-    iters, erg = runpf_full!(wnet, maxIte, tolerance, verbose; opt_sparse = opt_sparse, opt_flatstart = opt_flatstart, pv_table_rows = pv_table_rows, lock_pv_to_pq_buses = lock_pv_to_pq_buses)
+    iters, erg = runpf_full!(wnet, maxIte, tolerance, verbose; opt_sparse = opt_sparse, opt_flatstart = opt_flatstart, pv_table_rows = pv_table_rows, lock_pv_to_pq_buses = lock_pv_to_pq_buses, warn_deprecated = true)
     if erg == 0 && has_merges
       _sync_merged_results_to_original!()
     end
@@ -1246,7 +1246,7 @@ function runpf!(net::Net, maxIte::Int, tolerance::Float64 = 1e-6, verbose::Int =
       if verbose > 0
         @warn "runpf!: rectangular solver does not support internal Isolated buses from active-link merges; falling back to :polar_full"
       end
-      iters, erg = runpf_full!(wnet, maxIte, tolerance, verbose; opt_sparse = opt_sparse, opt_flatstart = opt_flatstart, pv_table_rows = pv_table_rows, lock_pv_to_pq_buses = lock_pv_to_pq_buses)
+      iters, erg = runpf_full!(wnet, maxIte, tolerance, verbose; opt_sparse = opt_sparse, opt_flatstart = opt_flatstart, pv_table_rows = pv_table_rows, lock_pv_to_pq_buses = lock_pv_to_pq_buses, warn_deprecated = false)
     else
       iters, erg = runpf_rectangular!(wnet, maxIte, tolerance, verbose; opt_fd = opt_fd, opt_sparse = opt_sparse, damp = damp, opt_flatstart = opt_flatstart, pv_table_rows = pv_table_rows, lock_pv_to_pq_buses = lock_pv_to_pq_buses, qlimit_mode = qlimit_mode, qlimit_max_outer = qlimit_max_outer)
     end
