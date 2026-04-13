@@ -21,16 +21,23 @@ using Printf
 using LinearAlgebra
 
 # keep logs quiet unless there's a warning or error
-global_logger(ConsoleLogger(stderr, Logging.Info))
+global_logger(ConsoleLogger(stderr, Logging.Warn))
+
+# Suppress one-time deprecation warnings in test output. Deprecated solver
+# behavior is covered by dedicated tests and does not need to spam full-suite logs.
+Sparlectra._warned_full_solver_deprecated[] = true
+Sparlectra._warned_classic_solver_deprecated[] = true
 
 include("testgrid.jl")
 include("testremove.jl")
 include("test_solver_interface.jl")
 include("test_state_estimation.jl")
+include("test_voltage_dependent_control.jl")
 
 @testset "Sparlectra.jl" begin
   run_grid_tests()
   run_remove_tests()
   run_solver_interface_tests()
   run_state_estimation_tests()
+  run_voltage_dependent_control_tests()
 end
