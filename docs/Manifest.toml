@@ -400,7 +400,7 @@ version = "1.2.2"
 deps = ["BenchmarkTools", "DataFrames", "Dates", "Downloads", "InlineStrings", "LinearAlgebra", "Logging", "Printf", "Random", "SHA", "SparseArrays"]
 path = "c:\\Users\\scud\\.julia\\dev\\Sparlectra\\docs\\.."
 uuid = "31ce9bba-fd9d-44a1-b005-f5f509afda38"
-version = "0.6.2"
+version = "0.7.0"
 
 [[deps.SparseArrays]]
 deps = ["Libdl", "LinearAlgebra", "Random", "Serialization", "SuiteSparse_jll"]
