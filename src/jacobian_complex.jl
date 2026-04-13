@@ -160,7 +160,22 @@ function mismatch_rectangular(Ybus, V::Vector{ComplexF64}, S::Vector{ComplexF64}
   return F
 end
 
-function run_complex_nr_rectangular(Ybus, V0, S; slack_idx::Int = 1, maxiter::Int = 20, tol::Float64 = 1e-8, verbose::Bool = false, damp::Float64 = 1.0, bus_types::Vector{Symbol}, Vset::Vector{Float64}, use_fd::Bool = false, use_sparse::Bool = false, dPinj_dVm::Vector{Float64} = zeros(Float64, length(V0)), dQinj_dVm::Vector{Float64} = zeros(Float64, length(V0)))
+function run_complex_nr_rectangular(
+  Ybus,
+  V0,
+  S;
+  slack_idx::Int = 1,
+  maxiter::Int = 20,
+  tol::Float64 = 1e-8,
+  verbose::Bool = false,
+  damp::Float64 = 1.0,
+  bus_types::Vector{Symbol},
+  Vset::Vector{Float64},
+  use_fd::Bool = false,
+  use_sparse::Bool = false,
+  dPinj_dVm::Vector{Float64} = zeros(Float64, length(V0)),
+  dQinj_dVm::Vector{Float64} = zeros(Float64, length(V0)),
+)
   V = copy(V0)
   history = Float64[]
 
@@ -228,12 +243,7 @@ function _build_vset_adjust_controllers(net::Net)
       ps.tap_steps_up >= 0 || error("Bus $(_bus_label(net, bus)): invalid tap_steps_up=$(ps.tap_steps_up). Must be ≥ 0.")
       haskey(controllers, bus) && error("Bus $(_bus_label(net, bus)): multiple prosumers define voltage adjustment data. Only one controller per bus is allowed.")
 
-      controllers[bus] = (
-        prosumer_idx = ps_idx,
-        vstep_pu = Float64(ps.vstep_pu),
-        tap_steps_down = Int(ps.tap_steps_down),
-        tap_steps_up = Int(ps.tap_steps_up),
-      )
+      controllers[bus] = (prosumer_idx = ps_idx, vstep_pu = Float64(ps.vstep_pu), tap_steps_down = Int(ps.tap_steps_down), tap_steps_up = Int(ps.tap_steps_up))
     else
       partially_set = !isnothing(ps.vstep_pu) || !isnothing(ps.tap_steps_down) || !isnothing(ps.tap_steps_up)
       partially_set && error("Bus $(_bus_label(net, bus)): incomplete voltage adjustment config at prosumer $ps_idx. vstep_pu, tap_steps_down and tap_steps_up must be provided together.")
@@ -279,7 +289,16 @@ With ΔP_i = Re(ΔS_i), ΔQ_i = Im(ΔS_i), ΔV_i = |V_i| - Vset[i].
 Returns:
     J :: SparseMatrixCSC{Float64} with size (2(n-1)) × (2(n-1)).
 """
-function build_rectangular_jacobian_pq_pv_sparse(Ybus::SparseMatrixCSC{ComplexF64}, V::Vector{ComplexF64}, bus_types::Vector{Symbol}, Vset::Vector{Float64}, slack_idx::Int; dPinj_dVm::Vector{Float64} = zeros(Float64, length(V)), dQinj_dVm::Vector{Float64} = zeros(Float64, length(V)), vm_eps::Float64 = 1e-9)
+function build_rectangular_jacobian_pq_pv_sparse(
+  Ybus::SparseMatrixCSC{ComplexF64},
+  V::Vector{ComplexF64},
+  bus_types::Vector{Symbol},
+  Vset::Vector{Float64},
+  slack_idx::Int;
+  dPinj_dVm::Vector{Float64} = zeros(Float64, length(V)),
+  dQinj_dVm::Vector{Float64} = zeros(Float64, length(V)),
+  vm_eps::Float64 = 1e-9,
+)
   n = length(V)
   @assert length(bus_types) == n
   @assert length(Vset) == n
@@ -662,7 +681,18 @@ Jacobian that matches `mismatch_rectangular`.
 - State: x = [Vr(non-slack); Vi(non-slack)]
 - Residual: F(x) = mismatch_rectangular(...)
 """
-function complex_newton_step_rectangular(Ybus, V::Vector{ComplexF64}, S::Vector{ComplexF64}; slack_idx::Int, damp::Float64 = 1.0, bus_types::Vector{Symbol}, Vset::Vector{Float64}, use_sparse::Bool = false, dPinj_dVm::Vector{Float64} = zeros(Float64, length(V)), dQinj_dVm::Vector{Float64} = zeros(Float64, length(V)))
+function complex_newton_step_rectangular(
+  Ybus,
+  V::Vector{ComplexF64},
+  S::Vector{ComplexF64};
+  slack_idx::Int,
+  damp::Float64 = 1.0,
+  bus_types::Vector{Symbol},
+  Vset::Vector{Float64},
+  use_sparse::Bool = false,
+  dPinj_dVm::Vector{Float64} = zeros(Float64, length(V)),
+  dQinj_dVm::Vector{Float64} = zeros(Float64, length(V)),
+)
   n = length(V)
   @assert length(S) == n
   @assert length(bus_types) == n
@@ -758,7 +788,20 @@ polar formulations.
 - `build_rectangular_jacobian_pq_pv()`: Analytic Jacobian construction
 """
 
-function run_complex_nr_rectangular_for_net!(net::Net; maxiter::Int = 20, tol::Float64 = 1e-8, damp::Float64 = 0.2, verbose::Int = 0, use_fd::Bool = false, opt_sparse::Bool = true, opt_flatstart::Bool = net.flatstart, pv_table_rows::Int = 30, lock_pv_to_pq_buses::AbstractVector{Int} = Int[], qlimit_mode::Symbol = :switch_to_pq, qlimit_max_outer::Int = 30)
+function run_complex_nr_rectangular_for_net!(
+  net::Net;
+  maxiter::Int = 20,
+  tol::Float64 = 1e-8,
+  damp::Float64 = 0.2,
+  verbose::Int = 0,
+  use_fd::Bool = false,
+  opt_sparse::Bool = true,
+  opt_flatstart::Bool = net.flatstart,
+  pv_table_rows::Int = 30,
+  lock_pv_to_pq_buses::AbstractVector{Int} = Int[],
+  qlimit_mode::Symbol = :switch_to_pq,
+  qlimit_max_outer::Int = 30,
+)
   if verbose > 1
     @info "Running complex rectangular NR power flow... use_fd=$use_fd, opt_sparse=$opt_sparse"
   end
@@ -894,7 +937,7 @@ function run_complex_nr_rectangular_for_net!(net::Net; maxiter::Int = 20, tol::F
           make_pq! = (bus, qclamp_gen_pu, side) -> begin
             bus_types[bus] = :PQ
             qinj_pu = qclamp_gen_pu - Qload_pu[bus]
-            S[bus]  = ComplexF64(real(S[bus]), qinj_pu)
+            S[bus] = ComplexF64(real(S[bus]), qinj_pu)
             net.nodeVec[bus]._qƩGen = qclamp_gen_pu * net.baseMVA
           end,
           make_pv! = (bus) -> begin
@@ -1063,8 +1106,34 @@ Returns:
     (iterations::Int, status::Int)
 where `status == 0` indicates convergence.
 """
-function runpf_rectangular!(net::Net, maxIte::Int, tolerance::Float64 = 1e-6, verbose::Int = 0; opt_fd::Bool = false, opt_sparse::Bool = true, damp = 1.0, opt_flatstart::Bool = net.flatstart, pv_table_rows::Int = 30, lock_pv_to_pq_buses::AbstractVector{Int} = Int[], qlimit_mode::Symbol = :switch_to_pq, qlimit_max_outer::Int = 30)
-  iters, erg = run_complex_nr_rectangular_for_net!(net; maxiter = maxIte, tol = tolerance, damp = damp, verbose = verbose, use_fd = opt_fd, opt_sparse = opt_sparse, opt_flatstart = opt_flatstart, pv_table_rows = pv_table_rows, lock_pv_to_pq_buses = lock_pv_to_pq_buses, qlimit_mode = qlimit_mode, qlimit_max_outer = qlimit_max_outer)
+function runpf_rectangular!(
+  net::Net,
+  maxIte::Int,
+  tolerance::Float64 = 1e-6,
+  verbose::Int = 0;
+  opt_fd::Bool = false,
+  opt_sparse::Bool = true,
+  damp = 1.0,
+  opt_flatstart::Bool = net.flatstart,
+  pv_table_rows::Int = 30,
+  lock_pv_to_pq_buses::AbstractVector{Int} = Int[],
+  qlimit_mode::Symbol = :switch_to_pq,
+  qlimit_max_outer::Int = 30,
+)
+  iters, erg = run_complex_nr_rectangular_for_net!(
+    net;
+    maxiter = maxIte,
+    tol = tolerance,
+    damp = damp,
+    verbose = verbose,
+    use_fd = opt_fd,
+    opt_sparse = opt_sparse,
+    opt_flatstart = opt_flatstart,
+    pv_table_rows = pv_table_rows,
+    lock_pv_to_pq_buses = lock_pv_to_pq_buses,
+    qlimit_mode = qlimit_mode,
+    qlimit_max_outer = qlimit_max_outer,
+  )
   return iters, erg
 end
 
@@ -1212,7 +1281,23 @@ Returns:
 
 where `status == 0` indicates convergence.
 """
-function runpf!(net::Net, maxIte::Int, tolerance::Float64 = 1e-6, verbose::Int = 0; method::Symbol = :rectangular, opt_fd::Bool = false, opt_sparse::Bool = true, opt_flatstart::Bool = net.flatstart, damp = 1.0, pv_table_rows::Int = 30, validate_limits_after_pf::Bool = false, q_limit_violation_headroom::Float64 = 0.0, lock_pv_to_pq_buses::AbstractVector{Int} = Int[], qlimit_mode::Symbol = :switch_to_pq, qlimit_max_outer::Int = 30)
+function runpf!(
+  net::Net,
+  maxIte::Int,
+  tolerance::Float64 = 1e-6,
+  verbose::Int = 0;
+  method::Symbol = :rectangular,
+  opt_fd::Bool = false,
+  opt_sparse::Bool = true,
+  opt_flatstart::Bool = net.flatstart,
+  damp = 1.0,
+  pv_table_rows::Int = 30,
+  validate_limits_after_pf::Bool = false,
+  q_limit_violation_headroom::Float64 = 0.0,
+  lock_pv_to_pq_buses::AbstractVector{Int} = Int[],
+  qlimit_mode::Symbol = :switch_to_pq,
+  qlimit_max_outer::Int = 30,
+)
   wnet, reps, has_merges = _merged_pf_net(net)
   refreshBusTypesFromProsumers!(wnet)
   has_vdep_control = has_voltage_dependent_control(wnet)
