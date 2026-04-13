@@ -62,6 +62,7 @@ end
 - **[Function Reference](reference.md)**: Complete API documentation
 - **[Powerlimit Guide](powerlimits.md)**: Handling of power limits
 - **[Solver Guide](solver.md)**: Numerical solver formulations and FD Jacobians
+- **[Voltage-dependent Control](voltage_dependent_control.md)**: Q(U)/P(U) formulation, Jacobian terms, and API usage
 
 
 ### Network Creation

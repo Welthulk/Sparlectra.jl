@@ -16,6 +16,168 @@
 # Date: 10.05.2023
 # file: src/prosumer.jl
 
+abstract type AbstractVoltageDependentController end
+
+"""
+    PiecewiseLinearCharacteristic(points)
+
+Piecewise linear characteristic `y = f(u)` represented by ordered `(u, y)` points.
+Outside the point range, values are clamped to the edge points and the derivative is `0.0`.
+"""
+struct PiecewiseLinearCharacteristic
+  points::Vector{Tuple{Float64,Float64}}
+
+  function PiecewiseLinearCharacteristic(points::Vector{Tuple{Float64,Float64}})
+    length(points) >= 2 || error("PiecewiseLinearCharacteristic requires at least 2 points.")
+    u_prev = points[1][1]
+    for i in 2:length(points)
+      u = points[i][1]
+      u > u_prev || error("PiecewiseLinearCharacteristic points must have strictly increasing voltage values.")
+      u_prev = u
+    end
+    new(points)
+  end
+end
+
+struct QUController <: AbstractVoltageDependentController
+  characteristic::PiecewiseLinearCharacteristic
+  qmin_pu::Union{Nothing,Float64}
+  qmax_pu::Union{Nothing,Float64}
+end
+
+struct PUController <: AbstractVoltageDependentController
+  characteristic::PiecewiseLinearCharacteristic
+  pmin_pu::Union{Nothing,Float64}
+  pmax_pu::Union{Nothing,Float64}
+end
+
+@inline _to_pu_power(value::Float64, sbase_MVA::Float64) = value / sbase_MVA
+@inline _to_pu_voltage(value::Float64, vn_kV::Float64) = value / vn_kV
+
+function _convert_power_limit_to_pu(name::String, value::Union{Nothing,Float64}, unit::Symbol, sbase_MVA::Union{Nothing,Float64})
+  isnothing(value) && return nothing
+  if unit === :pu
+    return value
+  elseif (unit === :MW) || (unit === :MVAr)
+    isnothing(sbase_MVA) && error("$(name): sbase_MVA is required when using $(unit) limits.")
+    return _to_pu_power(value, sbase_MVA)
+  else
+    error("$(name): unsupported unit $(unit). Use :pu, :MW, or :MVAr.")
+  end
+end
+
+"""
+    QUController(characteristic; qmin_pu=nothing, qmax_pu=nothing,
+                 qmin_MVAr=nothing, qmax_MVAr=nothing, sbase_MVA=nothing)
+
+Convenience constructor for `QUController` that accepts limits either in p.u. or in MVAr.
+"""
+function QUController(characteristic::PiecewiseLinearCharacteristic; qmin_pu::Union{Nothing,Float64} = nothing, qmax_pu::Union{Nothing,Float64} = nothing, qmin_MVAr::Union{Nothing,Float64} = nothing, qmax_MVAr::Union{Nothing,Float64} = nothing, sbase_MVA::Union{Nothing,Float64} = nothing)
+  (!isnothing(qmin_pu) && !isnothing(qmin_MVAr)) && error("QUController: specify either qmin_pu or qmin_MVAr, not both.")
+  (!isnothing(qmax_pu) && !isnothing(qmax_MVAr)) && error("QUController: specify either qmax_pu or qmax_MVAr, not both.")
+  qmin = isnothing(qmin_MVAr) ? qmin_pu : _convert_power_limit_to_pu("QUController", qmin_MVAr, :MVAr, sbase_MVA)
+  qmax = isnothing(qmax_MVAr) ? qmax_pu : _convert_power_limit_to_pu("QUController", qmax_MVAr, :MVAr, sbase_MVA)
+  return QUController(characteristic, qmin, qmax)
+end
+
+"""
+    PUController(characteristic; pmin_pu=nothing, pmax_pu=nothing,
+                 pmin_MW=nothing, pmax_MW=nothing, sbase_MVA=nothing)
+
+Convenience constructor for `PUController` that accepts limits either in p.u. or in MW.
+"""
+function PUController(characteristic::PiecewiseLinearCharacteristic; pmin_pu::Union{Nothing,Float64} = nothing, pmax_pu::Union{Nothing,Float64} = nothing, pmin_MW::Union{Nothing,Float64} = nothing, pmax_MW::Union{Nothing,Float64} = nothing, sbase_MVA::Union{Nothing,Float64} = nothing)
+  (!isnothing(pmin_pu) && !isnothing(pmin_MW)) && error("PUController: specify either pmin_pu or pmin_MW, not both.")
+  (!isnothing(pmax_pu) && !isnothing(pmax_MW)) && error("PUController: specify either pmax_pu or pmax_MW, not both.")
+  pmin = isnothing(pmin_MW) ? pmin_pu : _convert_power_limit_to_pu("PUController", pmin_MW, :MW, sbase_MVA)
+  pmax = isnothing(pmax_MW) ? pmax_pu : _convert_power_limit_to_pu("PUController", pmax_MW, :MW, sbase_MVA)
+  return PUController(characteristic, pmin, pmax)
+end
+
+@inline function _apply_limits(value_pu::Float64, slope_pu::Float64, min_pu::Union{Nothing,Float64}, max_pu::Union{Nothing,Float64})
+  if !isnothing(min_pu) && value_pu < min_pu
+    return min_pu, 0.0
+  end
+  if !isnothing(max_pu) && value_pu > max_pu
+    return max_pu, 0.0
+  end
+  return value_pu, slope_pu
+end
+
+"""
+    evaluate_characteristic(ch, u_pu) -> (value, slope)
+
+Evaluate piecewise linear characteristic at `u_pu`.
+"""
+function evaluate_characteristic(ch::PiecewiseLinearCharacteristic, u_pu::Float64)
+  pts = ch.points
+  u1 = pts[1][1]
+  uN = pts[end][1]
+
+  if u_pu <= u1
+    return pts[1][2], 0.0
+  elseif u_pu >= uN
+    return pts[end][2], 0.0
+  end
+
+  for i in 1:(length(pts)-1)
+    uk, yk = pts[i]
+    uk1, yk1 = pts[i+1]
+    if uk <= u_pu <= uk1
+      slope = (yk1 - yk) / (uk1 - uk)
+      value = yk + slope * (u_pu - uk)
+      return value, slope
+    end
+  end
+
+  return pts[end][2], 0.0
+end
+
+function evaluate_controller(ctrl::QUController, u_pu::Float64)
+  value, slope = evaluate_characteristic(ctrl.characteristic, u_pu)
+  return _apply_limits(value, slope, ctrl.qmin_pu, ctrl.qmax_pu)
+end
+
+function evaluate_controller(ctrl::PUController, u_pu::Float64)
+  value, slope = evaluate_characteristic(ctrl.characteristic, u_pu)
+  return _apply_limits(value, slope, ctrl.pmin_pu, ctrl.pmax_pu)
+end
+
+"""
+    make_characteristic(points; voltage_unit=:pu, value_unit=:pu, vn_kV=nothing, sbase_MVA=nothing)
+
+Create a piecewise linear characteristic from points in p.u. or physical units.
+
+- `voltage_unit = :pu` expects voltage in per-unit.
+- `voltage_unit = :kV` expects voltage in kV and requires `vn_kV`.
+- `value_unit = :pu` expects power output in per-unit.
+- `value_unit = :MW` or `:MVAr` expects physical power values and requires `sbase_MVA`.
+"""
+function make_characteristic(points::Vector{Tuple{Float64,Float64}}; voltage_unit::Symbol = :pu, value_unit::Symbol = :pu, vn_kV::Union{Nothing,Float64} = nothing, sbase_MVA::Union{Nothing,Float64} = nothing)
+  converted = Tuple{Float64,Float64}[]
+  for (u, y) in points
+    u_pu = if voltage_unit === :pu
+      u
+    elseif voltage_unit === :kV
+      isnothing(vn_kV) && error("make_characteristic: vn_kV is required when voltage_unit=:kV.")
+      _to_pu_voltage(u, vn_kV)
+    else
+      error("make_characteristic: unsupported voltage_unit $(voltage_unit). Use :pu or :kV.")
+    end
+
+    y_pu = if value_unit === :pu
+      y
+    elseif (value_unit === :MW) || (value_unit === :MVAr)
+      isnothing(sbase_MVA) && error("make_characteristic: sbase_MVA is required when value_unit=$(value_unit).")
+      _to_pu_power(y, sbase_MVA)
+    else
+      error("make_characteristic: unsupported value_unit $(value_unit). Use :pu, :MW, or :MVAr.")
+    end
+    push!(converted, (u_pu, y_pu))
+  end
+  return PiecewiseLinearCharacteristic(converted)
+end
+
 # Data type to describe producers and consumers
 """
     ProSumer
@@ -63,6 +225,8 @@ mutable struct ProSumer
   isRegulated::Bool
   proSumptionType::ProSumptionType
   isAPUNode::Bool
+  quController::Union{Nothing,QUController}
+  puController::Union{Nothing,PUController}
   qGenRepl::Union{Nothing,Float64}
   pRes::Union{Nothing,Float64}
   qRes::Union{Nothing,Float64}
@@ -90,6 +254,8 @@ mutable struct ProSumer
     tap_steps_up::Union{Nothing,Int} = nothing,
     isRegulated::Bool = false,
     isAPUNode::Bool = false,
+    quController::Union{Nothing,QUController} = nothing,
+    puController::Union{Nothing,PUController} = nothing,
   )
     comp = getProSumPGMComp(vn_kv, busIdx, isGenerator(type), oID)
 
@@ -101,7 +267,7 @@ mutable struct ProSumer
       va_deg = 0.0
     end
 
-    new(comp, ratedS, ratedU, qPercent, p, q, maxP, minP, maxQ, minQ, ratedPowerFactor, referencePri, vm_pu, va_deg, vstep_pu, tap_steps_down, tap_steps_up, isRegulated, type, isAPUNode, nothing, nothing, nothing)
+    new(comp, ratedS, ratedU, qPercent, p, q, maxP, minP, maxQ, minQ, ratedPowerFactor, referencePri, vm_pu, va_deg, vstep_pu, tap_steps_down, tap_steps_up, isRegulated, type, isAPUNode, quController, puController, nothing, nothing, nothing)
   end
 
   function Base.show(io::IO, prosumption::ProSumer)
@@ -171,6 +337,12 @@ mutable struct ProSumer
     if prosumption.isRegulated
       print(io, "isRegulated: true, ")
     end
+    if !isnothing(prosumption.quController)
+      print(io, "quController: yes, ")
+    end
+    if !isnothing(prosumption.puController)
+      print(io, "puController: yes, ")
+    end
 
     if (!isnothing(prosumption.qGenRepl))
       print(io, "qGenRepl: ", prosumption.qGenRepl, ", ")
@@ -217,6 +389,9 @@ end # isGenerator
 function isGenerator(o::ProSumer)::Bool
   return isGenerator(o.proSumptionType)
 end # isGenerator
+
+@inline has_qu_controller(ps::ProSumer)::Bool = !isnothing(ps.quController)
+@inline has_pu_controller(ps::ProSumer)::Bool = !isnothing(ps.puController)
 
 function getProSumPGMComp(Vn::Float64, from::Int, isGen::Bool, id::Int)
   cTyp = isGen ? toComponentTyp("GENERATOR") : toComponentTyp("LOAD")

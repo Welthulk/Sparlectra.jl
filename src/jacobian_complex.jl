@@ -111,11 +111,13 @@ For each non-slack bus i:
 
 F is stacked as [ΔP_2, ΔQ/ΔV_2, ..., ΔP_n, ΔQ/ΔV_n] over all non-slack buses.
 """
-function mismatch_rectangular(Ybus, V::Vector{ComplexF64}, S::Vector{ComplexF64}, bus_types::Vector{Symbol}, Vset::Vector{Float64}, slack_idx::Int)
+function mismatch_rectangular(Ybus, V::Vector{ComplexF64}, S::Vector{ComplexF64}, bus_types::Vector{Symbol}, Vset::Vector{Float64}, slack_idx::Int; dPinj_dVm::Vector{Float64} = zeros(Float64, length(V)), dQinj_dVm::Vector{Float64} = zeros(Float64, length(V)))
   n = length(V)
   @assert length(S) == n
   @assert length(bus_types) == n
   @assert length(Vset) == n
+  @assert length(dPinj_dVm) == n
+  @assert length(dQinj_dVm) == n
 
   # Network-based injections for the current state
   S_calc = calc_injections(Ybus, V)
@@ -158,12 +160,12 @@ function mismatch_rectangular(Ybus, V::Vector{ComplexF64}, S::Vector{ComplexF64}
   return F
 end
 
-function run_complex_nr_rectangular(Ybus, V0, S; slack_idx::Int = 1, maxiter::Int = 20, tol::Float64 = 1e-8, verbose::Bool = false, damp::Float64 = 1.0, bus_types::Vector{Symbol}, Vset::Vector{Float64}, use_fd::Bool = false, use_sparse::Bool = false)
+function run_complex_nr_rectangular(Ybus, V0, S; slack_idx::Int = 1, maxiter::Int = 20, tol::Float64 = 1e-8, verbose::Bool = false, damp::Float64 = 1.0, bus_types::Vector{Symbol}, Vset::Vector{Float64}, use_fd::Bool = false, use_sparse::Bool = false, dPinj_dVm::Vector{Float64} = zeros(Float64, length(V0)), dQinj_dVm::Vector{Float64} = zeros(Float64, length(V0)))
   V = copy(V0)
   history = Float64[]
 
   for iter = 1:maxiter
-    F = mismatch_rectangular(Ybus, V, S, bus_types, Vset, slack_idx)
+    F = mismatch_rectangular(Ybus, V, S, bus_types, Vset, slack_idx; dPinj_dVm = dPinj_dVm, dQinj_dVm = dQinj_dVm)
     max_mis = maximum(abs.(F))
     push!(history, max_mis)
 
@@ -172,9 +174,9 @@ function run_complex_nr_rectangular(Ybus, V0, S; slack_idx::Int = 1, maxiter::In
     end
 
     if use_fd
-      V = complex_newton_step_rectangular_fd(Ybus, V, S; slack_idx = slack_idx, damp = damp, h = 1e-6, bus_types = bus_types, Vset = Vset)
+      V = complex_newton_step_rectangular_fd(Ybus, V, S; slack_idx = slack_idx, damp = damp, h = 1e-6, bus_types = bus_types, Vset = Vset, dPinj_dVm = dPinj_dVm, dQinj_dVm = dQinj_dVm)
     else
-      V = complex_newton_step_rectangular(Ybus, V, S; slack_idx = slack_idx, damp = damp, bus_types = bus_types, Vset = Vset, use_sparse = use_sparse)
+      V = complex_newton_step_rectangular(Ybus, V, S; slack_idx = slack_idx, damp = damp, bus_types = bus_types, Vset = Vset, use_sparse = use_sparse, dPinj_dVm = dPinj_dVm, dQinj_dVm = dQinj_dVm)
     end
   end
 
@@ -277,10 +279,12 @@ With ΔP_i = Re(ΔS_i), ΔQ_i = Im(ΔS_i), ΔV_i = |V_i| - Vset[i].
 Returns:
     J :: SparseMatrixCSC{Float64} with size (2(n-1)) × (2(n-1)).
 """
-function build_rectangular_jacobian_pq_pv_sparse(Ybus::SparseMatrixCSC{ComplexF64}, V::Vector{ComplexF64}, bus_types::Vector{Symbol}, Vset::Vector{Float64}, slack_idx::Int)
+function build_rectangular_jacobian_pq_pv_sparse(Ybus::SparseMatrixCSC{ComplexF64}, V::Vector{ComplexF64}, bus_types::Vector{Symbol}, Vset::Vector{Float64}, slack_idx::Int; dPinj_dVm::Vector{Float64} = zeros(Float64, length(V)), dQinj_dVm::Vector{Float64} = zeros(Float64, length(V)), vm_eps::Float64 = 1e-9)
   n = length(V)
   @assert length(bus_types) == n
   @assert length(Vset) == n
+  @assert length(dPinj_dVm) == n
+  @assert length(dQinj_dVm) == n
 
   I = Ybus * V
 
@@ -452,6 +456,45 @@ function build_rectangular_jacobian_pq_pv_sparse(Ybus::SparseMatrixCSC{ComplexF6
     end
   end
 
+  # Local chain-rule terms for voltage-dependent specified injections.
+  # For ΔP = Pcalc - Pspec(|V|): subtract dPspec/d|V| * d|V|/dVr and d|V|/dVi.
+  # For PQ second row ΔQ = Qcalc - Qspec(|V|): analogous subtraction.
+  for i in non_slack
+    pos = pos_non_slack[i]
+    rb = row_block[i]
+    pos == 0 && continue
+    rb == 0 && continue
+
+    vm = abs(V[i])
+    vm_safe = vm > vm_eps ? vm : vm_eps
+    dvm_dvr = real(V[i]) / vm_safe
+    dvm_dvi = imag(V[i]) / vm_safe
+    colVr = pos
+    colVi = (n - 1) + pos
+
+    dP = dPinj_dVm[i]
+    if dP != 0.0
+      push!(Iidx, rb)
+      push!(Jidx, colVr)
+      push!(Vals, -dP * dvm_dvr)
+      push!(Iidx, rb)
+      push!(Jidx, colVi)
+      push!(Vals, -dP * dvm_dvi)
+    end
+
+    if bus_types[i] == :PQ
+      dQ = dQinj_dVm[i]
+      if dQ != 0.0
+        push!(Iidx, rb + 1)
+        push!(Jidx, colVr)
+        push!(Vals, -dQ * dvm_dvr)
+        push!(Iidx, rb + 1)
+        push!(Jidx, colVi)
+        push!(Vals, -dQ * dvm_dvi)
+      end
+    end
+  end
+
   return sparse(Iidx, Jidx, Vals, m, nvar)
 end
 
@@ -470,10 +513,12 @@ defined in `mismatch_rectangular`.
 
 `bus_types` and `Vset` must be consistent with `mismatch_rectangular`.
 """
-function build_rectangular_jacobian_pq_pv_dense(Ybus, V::Vector{ComplexF64}, bus_types::Vector{Symbol}, Vset::Vector{Float64}, slack_idx::Int)
+function build_rectangular_jacobian_pq_pv_dense(Ybus, V::Vector{ComplexF64}, bus_types::Vector{Symbol}, Vset::Vector{Float64}, slack_idx::Int; dPinj_dVm::Vector{Float64} = zeros(Float64, length(V)), dQinj_dVm::Vector{Float64} = zeros(Float64, length(V)), vm_eps::Float64 = 1e-9)
   n = length(V)
   @assert length(bus_types) == n
   @assert length(Vset) == n
+  @assert length(dPinj_dVm) == n
+  @assert length(dQinj_dVm) == n
 
   # --- 1) Wirtinger blocks for S(V) = V .* conj(Ybus * V)
   J11, J12, J21, J22 = build_complex_jacobian(Ybus, V)
@@ -553,6 +598,24 @@ function build_rectangular_jacobian_pq_pv_dense(Ybus, V::Vector{ComplexF64}, bus
     row += 2
   end
 
+  for i in non_slack
+    rowP = 2 * pos_map[i] - 1
+    pos = pos_map[i]
+    vm = abs(V[i])
+    vm_safe = vm > vm_eps ? vm : vm_eps
+    dvm_dvr = real(V[i]) / vm_safe
+    dvm_dvi = imag(V[i]) / vm_safe
+
+    J[rowP, pos] -= dPinj_dVm[i] * dvm_dvr
+    J[rowP, (n-1)+pos] -= dPinj_dVm[i] * dvm_dvi
+
+    if bus_types[i] == :PQ
+      rowQ = rowP + 1
+      J[rowQ, pos] -= dQinj_dVm[i] * dvm_dvr
+      J[rowQ, (n-1)+pos] -= dQinj_dVm[i] * dvm_dvi
+    end
+  end
+
   return J
 end
 
@@ -573,11 +636,11 @@ Dispatches to either the dense or sparse rectangular Jacobian builder matching
   sparse builder is used.
 - Otherwise, the dense builder is used.
 """
-function build_rectangular_jacobian_pq_pv(Ybus, V::Vector{ComplexF64}, bus_types::Vector{Symbol}, Vset::Vector{Float64}, slack_idx::Int; use_sparse::Bool = false)
+function build_rectangular_jacobian_pq_pv(Ybus, V::Vector{ComplexF64}, bus_types::Vector{Symbol}, Vset::Vector{Float64}, slack_idx::Int; use_sparse::Bool = false, dPinj_dVm::Vector{Float64} = zeros(Float64, length(V)), dQinj_dVm::Vector{Float64} = zeros(Float64, length(V)), vm_eps::Float64 = 1e-9)
   if use_sparse && Ybus isa SparseMatrixCSC{ComplexF64}
-    return build_rectangular_jacobian_pq_pv_sparse(Ybus, V, bus_types, Vset, slack_idx)
+    return build_rectangular_jacobian_pq_pv_sparse(Ybus, V, bus_types, Vset, slack_idx; dPinj_dVm = dPinj_dVm, dQinj_dVm = dQinj_dVm, vm_eps = vm_eps)
   else
-    return build_rectangular_jacobian_pq_pv_dense(Ybus, V, bus_types, Vset, slack_idx)
+    return build_rectangular_jacobian_pq_pv_dense(Ybus, V, bus_types, Vset, slack_idx; dPinj_dVm = dPinj_dVm, dQinj_dVm = dQinj_dVm, vm_eps = vm_eps)
   end
 end
 
@@ -599,22 +662,24 @@ Jacobian that matches `mismatch_rectangular`.
 - State: x = [Vr(non-slack); Vi(non-slack)]
 - Residual: F(x) = mismatch_rectangular(...)
 """
-function complex_newton_step_rectangular(Ybus, V::Vector{ComplexF64}, S::Vector{ComplexF64}; slack_idx::Int, damp::Float64 = 1.0, bus_types::Vector{Symbol}, Vset::Vector{Float64}, use_sparse::Bool = false)
+function complex_newton_step_rectangular(Ybus, V::Vector{ComplexF64}, S::Vector{ComplexF64}; slack_idx::Int, damp::Float64 = 1.0, bus_types::Vector{Symbol}, Vset::Vector{Float64}, use_sparse::Bool = false, dPinj_dVm::Vector{Float64} = zeros(Float64, length(V)), dQinj_dVm::Vector{Float64} = zeros(Float64, length(V)))
   n = length(V)
   @assert length(S) == n
   @assert length(bus_types) == n
   @assert length(Vset) == n
+  @assert length(dPinj_dVm) == n
+  @assert length(dQinj_dVm) == n
 
   # Non-slack indices
   non_slack = non_slack_indices(n, slack_idx)
   # Residual matching the FD variant
-  F0 = mismatch_rectangular(Ybus, V, S, bus_types, Vset, slack_idx)
+  F0 = mismatch_rectangular(Ybus, V, S, bus_types, Vset, slack_idx; dPinj_dVm = dPinj_dVm, dQinj_dVm = dQinj_dVm)
   m = length(F0)
   nvar = 2 * (n - 1)
   @assert m == nvar "complex_newton_step_rectangular: mismatch and state dimension differ"
 
   # Analytic Jacobian (dense or sparse)
-  J = build_rectangular_jacobian_pq_pv(Ybus, V, bus_types, Vset, slack_idx; use_sparse = use_sparse)
+  J = build_rectangular_jacobian_pq_pv(Ybus, V, bus_types, Vset, slack_idx; use_sparse = use_sparse, dPinj_dVm = dPinj_dVm, dQinj_dVm = dQinj_dVm)
 
   # Solve J * δx = -F
   δx = solve_linear(J, -F0; allow_pinv = true)
@@ -711,8 +776,12 @@ function run_complex_nr_rectangular_for_net!(net::Net; maxiter::Int = 20, tol::F
   # 1) Initial complex voltages V0 and slack index
   V0, slack_idx = initialVrect(net; flatstart = opt_flatstart)
 
-  # 2) Specified complex power injections S (p.u.), sign convention wie im Polar-NR
+  # 2) Specified complex power injections S (p.u.). For Q(U)/P(U) controllers
+  # this vector becomes state-dependent and is re-evaluated per Newton iteration.
   S = buildComplexSVec(net)
+  dPinj_dVm = zeros(Float64, n)
+  dQinj_dVm = zeros(Float64, n)
+  has_vdep_control = has_voltage_dependent_control(net)
 
   # 3) Bus types and PV setpoints from Node data
   bus_types = Vector{Symbol}(undef, n)
@@ -779,8 +848,12 @@ function run_complex_nr_rectangular_for_net!(net::Net; maxiter::Int = 20, tol::F
   for it = 1:maxiter
     iters = it
 
-    # Mismatch with current bus_types & S
-    F = mismatch_rectangular(Ybus, V, S, bus_types, Vset, slack_idx)
+    if has_vdep_control
+      S, dPinj_dVm, dQinj_dVm = buildControlledSVec(net, V)
+    end
+
+    # Mismatch with current bus_types and (possibly) voltage-dependent S.
+    F = mismatch_rectangular(Ybus, V, S, bus_types, Vset, slack_idx; dPinj_dVm = dPinj_dVm, dQinj_dVm = dQinj_dVm)
     max_mis = maximum(abs.(F))
     push!(history, max_mis)
 
@@ -901,16 +974,16 @@ function run_complex_nr_rectangular_for_net!(net::Net; maxiter::Int = 20, tol::F
 
       # If bus_types/spec changed, mismatch definition changed (ΔQ ↔ ΔV) => rebuild F
       if changed || reenabled
-        F = mismatch_rectangular(Ybus, V, S, bus_types, Vset, slack_idx)
+        F = mismatch_rectangular(Ybus, V, S, bus_types, Vset, slack_idx; dPinj_dVm = dPinj_dVm, dQinj_dVm = dQinj_dVm)
         max_mis = maximum(abs.(F))
         history[end] = max_mis  # optional: overwrite last stored value for this iteration
       end
     end
     # --- Newton-Stepp (FD oder analytisch) -----------------------------
     if use_fd
-      V = complex_newton_step_rectangular_fd(Ybus, V, S; slack_idx = slack_idx, damp = damp, h = 1e-6, bus_types = bus_types, Vset = Vset)
+      V = complex_newton_step_rectangular_fd(Ybus, V, S; slack_idx = slack_idx, damp = damp, h = 1e-6, bus_types = bus_types, Vset = Vset, dPinj_dVm = dPinj_dVm, dQinj_dVm = dQinj_dVm)
     else
-      V = complex_newton_step_rectangular(Ybus, V, S; slack_idx = slack_idx, damp = damp, bus_types = bus_types, Vset = Vset, use_sparse = sparse)
+      V = complex_newton_step_rectangular(Ybus, V, S; slack_idx = slack_idx, damp = damp, bus_types = bus_types, Vset = Vset, use_sparse = sparse, dPinj_dVm = dPinj_dVm, dQinj_dVm = dQinj_dVm)
     end
 
     # Keep slack voltage fixed (safety belt)
@@ -1142,6 +1215,7 @@ where `status == 0` indicates convergence.
 function runpf!(net::Net, maxIte::Int, tolerance::Float64 = 1e-6, verbose::Int = 0; method::Symbol = :rectangular, opt_fd::Bool = false, opt_sparse::Bool = true, opt_flatstart::Bool = net.flatstart, damp = 1.0, pv_table_rows::Int = 30, validate_limits_after_pf::Bool = false, q_limit_violation_headroom::Float64 = 0.0, lock_pv_to_pq_buses::AbstractVector{Int} = Int[], qlimit_mode::Symbol = :switch_to_pq, qlimit_max_outer::Int = 30)
   wnet, reps, has_merges = _merged_pf_net(net)
   refreshBusTypesFromProsumers!(wnet)
+  has_vdep_control = has_voltage_dependent_control(wnet)
 
   function _sync_merged_results_to_original!()
     for i in eachindex(net.nodeVec)
@@ -1154,10 +1228,11 @@ function runpf!(net::Net, maxIte::Int, tolerance::Float64 = 1e-6, verbose::Int =
 
   #@info "Running AC Power Flow using method: $(method)"
   if method === :polar_full
+    has_vdep_control && error("runpf!: P(U)/Q(U) voltage-dependent controllers are currently supported only for method=:rectangular.")
     if qlimit_mode != :switch_to_pq
       @warn "runpf!: qlimit_mode=$(qlimit_mode) is only supported for method=:rectangular. Falling back to :switch_to_pq behavior."
     end
-    iters, erg = runpf_full!(wnet, maxIte, tolerance, verbose; opt_sparse = opt_sparse, opt_flatstart = opt_flatstart, pv_table_rows = pv_table_rows, lock_pv_to_pq_buses = lock_pv_to_pq_buses)
+    iters, erg = runpf_full!(wnet, maxIte, tolerance, verbose; opt_sparse = opt_sparse, opt_flatstart = opt_flatstart, pv_table_rows = pv_table_rows, lock_pv_to_pq_buses = lock_pv_to_pq_buses, warn_deprecated = true)
     if erg == 0 && has_merges
       _sync_merged_results_to_original!()
     end
@@ -1167,10 +1242,11 @@ function runpf!(net::Net, maxIte::Int, tolerance::Float64 = 1e-6, verbose::Int =
     return iters, erg
   elseif method === :rectangular
     if has_merges
+      has_vdep_control && error("runpf!: P(U)/Q(U) voltage-dependent controllers are not supported with active-link merge fallback to :polar_full. Disable merges or use a topology without internal isolated buses.")
       if verbose > 0
         @warn "runpf!: rectangular solver does not support internal Isolated buses from active-link merges; falling back to :polar_full"
       end
-      iters, erg = runpf_full!(wnet, maxIte, tolerance, verbose; opt_sparse = opt_sparse, opt_flatstart = opt_flatstart, pv_table_rows = pv_table_rows, lock_pv_to_pq_buses = lock_pv_to_pq_buses)
+      iters, erg = runpf_full!(wnet, maxIte, tolerance, verbose; opt_sparse = opt_sparse, opt_flatstart = opt_flatstart, pv_table_rows = pv_table_rows, lock_pv_to_pq_buses = lock_pv_to_pq_buses, warn_deprecated = false)
     else
       iters, erg = runpf_rectangular!(wnet, maxIte, tolerance, verbose; opt_fd = opt_fd, opt_sparse = opt_sparse, damp = damp, opt_flatstart = opt_flatstart, pv_table_rows = pv_table_rows, lock_pv_to_pq_buses = lock_pv_to_pq_buses, qlimit_mode = qlimit_mode, qlimit_max_outer = qlimit_max_outer)
     end
@@ -1182,6 +1258,7 @@ function runpf!(net::Net, maxIte::Int, tolerance::Float64 = 1e-6, verbose::Int =
     end
     return iters, erg
   elseif method === :classic
+    has_vdep_control && error("runpf!: P(U)/Q(U) voltage-dependent controllers are currently supported only for method=:rectangular.")
     if qlimit_mode != :switch_to_pq
       @warn "runpf!: qlimit_mode=$(qlimit_mode) is only supported for method=:rectangular. Falling back to :switch_to_pq behavior."
     end
