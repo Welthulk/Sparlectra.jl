@@ -120,7 +120,13 @@ For PV second rows (`ΔV`) no `Q(U)` term is added because that row is voltage m
 
 ## Piecewise linear characteristic and derivative
 
-Controllers use ordered points `(u_k, y_k)` in p.u.
+Controllers use ordered points `(u_k, y_k)` internally in p.u.
+
+You can now provide characteristic points either:
+
+- directly in p.u. (`voltage_unit=:pu`, `value_unit=:pu`), or
+- in physical units (`voltage_unit=:kV`, `value_unit=:MW`/`:MVAr`) with
+  conversion metadata (`vn_kV`, `sbase_MVA`).
 
 Inside segment `[u_k, u_{k+1}]`:
 
@@ -142,8 +148,23 @@ Behavior conventions:
 ```julia
 using Sparlectra
 
-qu = QUController(make_characteristic([(0.95, 0.3), (1.0, 0.0), (1.05, -0.2)]), -0.5, 0.5)
-pu = PUController(make_characteristic([(0.95, 0.2), (1.0, 0.1), (1.05, 0.0)]), 0.0, 0.5)
+qu = QUController(
+    make_characteristic([(104.5, 30.0), (110.0, 0.0), (115.5, -20.0)];
+                        voltage_unit = :kV, value_unit = :MVAr,
+                        vn_kV = 110.0, sbase_MVA = 100.0);
+    qmin_MVAr = -50.0,
+    qmax_MVAr = 50.0,
+    sbase_MVA = 100.0,
+)
+
+pu = PUController(
+    make_characteristic([(104.5, 20.0), (110.0, 10.0), (115.5, 0.0)];
+                        voltage_unit = :kV, value_unit = :MW,
+                        vn_kV = 110.0, sbase_MVA = 100.0);
+    pmin_MW = 0.0,
+    pmax_MW = 50.0,
+    sbase_MVA = 100.0,
+)
 
 addProsumer!(
     net = net,
@@ -157,6 +178,11 @@ addProsumer!(
 
 runpf!(net, 30, 1e-8, 0; method = :rectangular)
 ```
+
+Notes:
+
+- Existing p.u.-based calls remain fully supported.
+- Controller evaluation and Jacobian assembly still operate in p.u. internally.
 
 ## Solver support and limitation
 

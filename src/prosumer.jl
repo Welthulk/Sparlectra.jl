@@ -51,6 +51,49 @@ struct PUController <: AbstractVoltageDependentController
   pmax_pu::Union{Nothing,Float64}
 end
 
+@inline _to_pu_power(value::Float64, sbase_MVA::Float64) = value / sbase_MVA
+@inline _to_pu_voltage(value::Float64, vn_kV::Float64) = value / vn_kV
+
+function _convert_power_limit_to_pu(name::String, value::Union{Nothing,Float64}, unit::Symbol, sbase_MVA::Union{Nothing,Float64})
+  isnothing(value) && return nothing
+  if unit === :pu
+    return value
+  elseif (unit === :MW) || (unit === :MVAr)
+    isnothing(sbase_MVA) && error("$(name): sbase_MVA is required when using $(unit) limits.")
+    return _to_pu_power(value, sbase_MVA)
+  else
+    error("$(name): unsupported unit $(unit). Use :pu, :MW, or :MVAr.")
+  end
+end
+
+"""
+    QUController(characteristic; qmin_pu=nothing, qmax_pu=nothing,
+                 qmin_MVAr=nothing, qmax_MVAr=nothing, sbase_MVA=nothing)
+
+Convenience constructor for `QUController` that accepts limits either in p.u. or in MVAr.
+"""
+function QUController(characteristic::PiecewiseLinearCharacteristic; qmin_pu::Union{Nothing,Float64} = nothing, qmax_pu::Union{Nothing,Float64} = nothing, qmin_MVAr::Union{Nothing,Float64} = nothing, qmax_MVAr::Union{Nothing,Float64} = nothing, sbase_MVA::Union{Nothing,Float64} = nothing)
+  (!isnothing(qmin_pu) && !isnothing(qmin_MVAr)) && error("QUController: specify either qmin_pu or qmin_MVAr, not both.")
+  (!isnothing(qmax_pu) && !isnothing(qmax_MVAr)) && error("QUController: specify either qmax_pu or qmax_MVAr, not both.")
+  qmin = isnothing(qmin_MVAr) ? qmin_pu : _convert_power_limit_to_pu("QUController", qmin_MVAr, :MVAr, sbase_MVA)
+  qmax = isnothing(qmax_MVAr) ? qmax_pu : _convert_power_limit_to_pu("QUController", qmax_MVAr, :MVAr, sbase_MVA)
+  return QUController(characteristic, qmin, qmax)
+end
+
+"""
+    PUController(characteristic; pmin_pu=nothing, pmax_pu=nothing,
+                 pmin_MW=nothing, pmax_MW=nothing, sbase_MVA=nothing)
+
+Convenience constructor for `PUController` that accepts limits either in p.u. or in MW.
+"""
+function PUController(characteristic::PiecewiseLinearCharacteristic; pmin_pu::Union{Nothing,Float64} = nothing, pmax_pu::Union{Nothing,Float64} = nothing, pmin_MW::Union{Nothing,Float64} = nothing, pmax_MW::Union{Nothing,Float64} = nothing, sbase_MVA::Union{Nothing,Float64} = nothing)
+  (!isnothing(pmin_pu) && !isnothing(pmin_MW)) && error("PUController: specify either pmin_pu or pmin_MW, not both.")
+  (!isnothing(pmax_pu) && !isnothing(pmax_MW)) && error("PUController: specify either pmax_pu or pmax_MW, not both.")
+  pmin = isnothing(pmin_MW) ? pmin_pu : _convert_power_limit_to_pu("PUController", pmin_MW, :MW, sbase_MVA)
+  pmax = isnothing(pmax_MW) ? pmax_pu : _convert_power_limit_to_pu("PUController", pmax_MW, :MW, sbase_MVA)
+  return PUController(characteristic, pmin, pmax)
+end
+
 @inline function _apply_limits(value_pu::Float64, slope_pu::Float64, min_pu::Union{Nothing,Float64}, max_pu::Union{Nothing,Float64})
   if !isnothing(min_pu) && value_pu < min_pu
     return min_pu, 0.0
@@ -101,11 +144,39 @@ function evaluate_controller(ctrl::PUController, u_pu::Float64)
 end
 
 """
-    make_characteristic(points)
+    make_characteristic(points; voltage_unit=:pu, value_unit=:pu, vn_kV=nothing, sbase_MVA=nothing)
 
-Convenience constructor for `PiecewiseLinearCharacteristic`.
+Create a piecewise linear characteristic from points in p.u. or physical units.
+
+- `voltage_unit = :pu` expects voltage in per-unit.
+- `voltage_unit = :kV` expects voltage in kV and requires `vn_kV`.
+- `value_unit = :pu` expects power output in per-unit.
+- `value_unit = :MW` or `:MVAr` expects physical power values and requires `sbase_MVA`.
 """
-make_characteristic(points::Vector{Tuple{Float64,Float64}}) = PiecewiseLinearCharacteristic(points)
+function make_characteristic(points::Vector{Tuple{Float64,Float64}}; voltage_unit::Symbol = :pu, value_unit::Symbol = :pu, vn_kV::Union{Nothing,Float64} = nothing, sbase_MVA::Union{Nothing,Float64} = nothing)
+  converted = Tuple{Float64,Float64}[]
+  for (u, y) in points
+    u_pu = if voltage_unit === :pu
+      u
+    elseif voltage_unit === :kV
+      isnothing(vn_kV) && error("make_characteristic: vn_kV is required when voltage_unit=:kV.")
+      _to_pu_voltage(u, vn_kV)
+    else
+      error("make_characteristic: unsupported voltage_unit $(voltage_unit). Use :pu or :kV.")
+    end
+
+    y_pu = if value_unit === :pu
+      y
+    elseif (value_unit === :MW) || (value_unit === :MVAr)
+      isnothing(sbase_MVA) && error("make_characteristic: sbase_MVA is required when value_unit=$(value_unit).")
+      _to_pu_power(y, sbase_MVA)
+    else
+      error("make_characteristic: unsupported value_unit $(value_unit). Use :pu, :MW, or :MVAr.")
+    end
+    push!(converted, (u_pu, y_pu))
+  end
+  return PiecewiseLinearCharacteristic(converted)
+end
 
 # Data type to describe producers and consumers
 """

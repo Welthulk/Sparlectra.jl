@@ -26,6 +26,22 @@ function run_voltage_dependent_control_tests()
       @test q_slope == 0.0
     end
 
+    @testset "Physical-unit controller inputs (kV, MW, MVAr)" begin
+      ch_qu = make_characteristic([(104.5, 30.0), (110.0, 0.0), (115.5, -20.0)]; voltage_unit = :kV, value_unit = :MVAr, vn_kV = 110.0, sbase_MVA = 100.0)
+      ch_pu = make_characteristic([(104.5, 20.0), (110.0, 10.0), (115.5, 0.0)]; voltage_unit = :kV, value_unit = :MW, vn_kV = 110.0, sbase_MVA = 100.0)
+
+      @test ch_qu.points == [(0.95, 0.3), (1.0, 0.0), (1.05, -0.2)]
+      @test ch_pu.points == [(0.95, 0.2), (1.0, 0.1), (1.05, 0.0)]
+
+      qu = QUController(ch_qu; qmin_MVAr = -50.0, qmax_MVAr = 50.0, sbase_MVA = 100.0)
+      pu = PUController(ch_pu; pmin_MW = 0.0, pmax_MW = 50.0, sbase_MVA = 100.0)
+
+      @test isapprox(qu.qmin_pu, -0.5; atol = 1e-12)
+      @test isapprox(qu.qmax_pu, 0.5; atol = 1e-12)
+      @test isapprox(pu.pmin_pu, 0.0; atol = 1e-12)
+      @test isapprox(pu.pmax_pu, 0.5; atol = 1e-12)
+    end
+
     @testset "No-control compatibility and solver integration" begin
       net_plain = createTest3BusNet()
       V_plain = buildVoltageVector(net_plain)
