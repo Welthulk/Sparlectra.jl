@@ -118,7 +118,7 @@ For reactive-power mismatch row (PQ buses):
 
 For PV second rows (`ΔV`) no `Q(U)` term is added because that row is voltage magnitude mismatch.
 
-## Piecewise linear characteristic and derivative
+## Characteristic interpolation and derivative
 
 Controllers use ordered points `(u_k, y_k)` internally in p.u.
 
@@ -128,7 +128,15 @@ You can now provide characteristic points either:
 - in physical units (`voltage_unit=:kV`, `value_unit=:MW`/`:MVAr`) with
   conversion metadata (`vn_kV`, `sbase_MVA`).
 
-Inside segment `[u_k, u_{k+1}]`:
+You can choose interpolation with `make_characteristic(...; interpolation = ...)`:
+
+- `:linear` (default): piecewise linear interpolation.
+- `:spline`: natural cubic spline through all points (for smooth transitions).
+  If only two points are given, Sparlectra automatically uses a straight line.
+- `:polynomial`: one global interpolating polynomial through all points.
+  If only two points are given, Sparlectra automatically uses a straight line.
+
+For `:linear`, inside segment `[u_k, u_{k+1}]`:
 
 ```math
 y(u) = y_k + \frac{y_{k+1}-y_k}{u_{k+1}-u_k}(u-u_k),
@@ -136,7 +144,11 @@ y(u) = y_k + \frac{y_{k+1}-y_k}{u_{k+1}-u_k}(u-u_k),
 \frac{dy}{du} = \frac{y_{k+1}-y_k}{u_{k+1}-u_k}.
 ```
 
-Behavior conventions:
+For `:spline`, the characteristic is smooth in the interior and still interpolates all
+given points.  
+For `:polynomial`, one global polynomial is used over the whole interior range.
+
+General behavior conventions (both modes):
 
 - Below first point: clamp to first value, derivative `0`.
 - Above last point: clamp to last value, derivative `0`.
@@ -149,18 +161,20 @@ Behavior conventions:
 using Sparlectra
 
 qu = QUController(
-    make_characteristic([(104.5, 30.0), (110.0, 0.0), (115.5, -20.0)];
+    make_characteristic([(104.5, 30.0), (107.0, 20.0), (110.0, 0.0), (112.0, -10.0), (115.5, -20.0)];
                         voltage_unit = :kV, value_unit = :MVAr,
-                        vn_kV = 110.0, sbase_MVA = 100.0);
+                        vn_kV = 110.0, sbase_MVA = 100.0,
+                        interpolation = :polynomial);
     qmin_MVAr = -50.0,
     qmax_MVAr = 50.0,
     sbase_MVA = 100.0,
 )
 
 pu = PUController(
-    make_characteristic([(104.5, 20.0), (110.0, 10.0), (115.5, 0.0)];
+    make_characteristic([(104.5, 20.0), (108.0, 14.0), (110.0, 10.0), (113.0, 6.0), (115.5, 0.0)];
                         voltage_unit = :kV, value_unit = :MW,
-                        vn_kV = 110.0, sbase_MVA = 100.0);
+                        vn_kV = 110.0, sbase_MVA = 100.0,
+                        interpolation = :polynomial);
     pmin_MW = 0.0,
     pmax_MW = 50.0,
     sbase_MVA = 100.0,

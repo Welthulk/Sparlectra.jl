@@ -26,12 +26,11 @@ jobs:
         with:
           version: '1'
 
-      - name: Install Sparlectra and Documenter packages
-        run: |
-          julia -e 'using Pkg; Pkg.add(["Sparlectra", "Documenter"])'
+      - name: Instantiate docs environment
+        run: julia --project=docs -e 'using Pkg; Pkg.instantiate()'
 
       - name: Run make.jl script
-        run: julia docs/make.jl
+        run: julia --project=docs docs/make.jl
 
       - name: Copy build content to _site directory
         run: |

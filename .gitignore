@@ -12,7 +12,9 @@ network_dump.txt
 test/test_experments.jl
 test/test_experment.jl
 *.log
+*.png
 julia-*.tar.gz
 src/examples/matpower_import.yaml
 src/examples/matpower_import.yaml
 src/examples/MergeRequeste.md
+kink_characteristic.png

@@ -54,3 +54,9 @@ This keeps the code compatible with non-standard array indices and avoids Static
 - If no narrower test is obvious, run:
   `julia --project=. test/runtests.jl`
 - Report the exact command and the relevant failure output if tests fail.
+
+## Power-flow execution preference
+- Prefer `run_net_acpflow(...)` over calling `runpf!(...)` directly when practical.
+- Reason: `run_net_acpflow(...)` also executes post-processing (e.g. `calcNetLosses!`,
+  branch-flow calculation, and link-flow calculation) so reported network losses
+  and branch/link flows are populated consistently.

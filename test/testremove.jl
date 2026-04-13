@@ -66,6 +66,8 @@ function createTestNetwork()::Net
 end
 
 function testRemoveBranch()
+  # Verifies branch removal semantics: expected deletion order, index-shift handling,
+  # and safe failure for invalid branch indices.
   with_logger(NullLogger()) do
     net = createTestNetwork()
 
@@ -116,6 +118,7 @@ function testRemoveBranch()
 end
 
 function testRemoveShunt()
+  # Verifies shunt presence checks and removeShunt! behavior for existing/non-existing shunts.
   with_logger(NullLogger()) do
     net = createTestNetwork()
 
@@ -144,6 +147,7 @@ function testRemoveShunt()
 end
 
 function testRemoveProsumer()
+  # Verifies removeProsumer! by bus/type for existing prosumers and expected failure cases.
   with_logger(NullLogger()) do
     net = createTestNetwork()
 
@@ -194,6 +198,7 @@ function testRemoveProsumer()
 end
 
 function testIsolatedBuses()
+  # Verifies that topology edits lead to correct isolated-bus detection via markIsolatedBuses!.
   with_logger(NullLogger()) do
     net = createTestNetwork()
 
@@ -236,12 +241,14 @@ function testIsolatedBuses()
 end
 
 function testRemoveBus()
+  # Placeholder test: bus-removal mutation is currently skipped for immutable Net handling.
   # Skip actual tests since Net is immutable and can't be modified
   # Return true for compatibility with other tests
   return true
 end
 
 function testRemoveSpecialCases()
+  # Verifies guardrails for removeBus!: slack/connected buses must not be removable.
   with_logger(NullLogger()) do
     net = createTestNetwork()
 
@@ -266,6 +273,7 @@ function testRemoveSpecialCases()
 end
 
 function testRemoveFunctions()
+  # Runs all remove-related unit tests and propagates the first failure.
   if !testRemoveBranch()
     return false
   end
@@ -294,6 +302,7 @@ function testRemoveFunctions()
 end
 
 function run_remove_tests()
+  # Top-level entrypoint used by runtests.jl for remove-function coverage.
   @testset "Remove functions" begin
     @test testRemoveFunctions() == true
   end

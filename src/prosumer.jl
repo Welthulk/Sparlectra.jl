@@ -26,8 +26,12 @@ Outside the point range, values are clamped to the edge points and the derivativ
 """
 struct PiecewiseLinearCharacteristic
   points::Vector{Tuple{Float64,Float64}}
+  interpolation::Symbol
+  spline_second_derivatives::Vector{Float64}
+  polynomial_nodes::Vector{Float64}
+  polynomial_coefficients::Vector{Float64}
 
-  function PiecewiseLinearCharacteristic(points::Vector{Tuple{Float64,Float64}})
+  function PiecewiseLinearCharacteristic(points::Vector{Tuple{Float64,Float64}}; interpolation::Symbol = :linear)
     length(points) >= 2 || error("PiecewiseLinearCharacteristic requires at least 2 points.")
     u_prev = points[1][1]
     for i in 2:length(points)
@@ -35,8 +39,79 @@ struct PiecewiseLinearCharacteristic
       u > u_prev || error("PiecewiseLinearCharacteristic points must have strictly increasing voltage values.")
       u_prev = u
     end
-    new(points)
+
+    if interpolation === :linear
+      return new(points, interpolation, Float64[], Float64[], Float64[])
+    elseif interpolation === :spline
+      if length(points) == 2
+        return new(points, :linear, Float64[], Float64[], Float64[])
+      end
+      return new(points, interpolation, _natural_spline_second_derivatives(points), Float64[], Float64[])
+    elseif interpolation === :polynomial
+      if length(points) == 2
+        return new(points, :linear, Float64[], Float64[], Float64[])
+      end
+      nodes, coeffs = _newton_polynomial_coefficients(points)
+      return new(points, interpolation, Float64[], nodes, coeffs)
+    else
+      error("PiecewiseLinearCharacteristic: unsupported interpolation $(interpolation). Use :linear, :spline, or :polynomial.")
+    end
   end
+end
+
+function _natural_spline_second_derivatives(points::Vector{Tuple{Float64,Float64}})
+  n = length(points)
+  h = Vector{Float64}(undef, n - 1)
+  for i in 1:(n-1)
+    h[i] = points[i+1][1] - points[i][1]
+  end
+
+  lower = Vector{Float64}(undef, n - 3)
+  diag = Vector{Float64}(undef, n - 2)
+  upper = Vector{Float64}(undef, n - 3)
+  rhs = Vector{Float64}(undef, n - 2)
+
+  for i in 1:(n-2)
+    him1 = h[i]
+    hi = h[i+1]
+    diag[i] = 2.0 * (him1 + hi)
+    rhs[i] = 6.0 * (((points[i+2][2] - points[i+1][2]) / hi) - ((points[i+1][2] - points[i][2]) / him1))
+    if i <= n - 3
+      upper[i] = hi
+      lower[i] = hi
+    end
+  end
+
+  m = zeros(Float64, n)
+  m[2:n-1] = Tridiagonal(lower, diag, upper) \ rhs
+  return m
+end
+
+function _newton_polynomial_coefficients(points::Vector{Tuple{Float64,Float64}})
+  n = length(points)
+  nodes = [p[1] for p in points]
+  coeffs = [p[2] for p in points]
+
+  for j in 2:n
+    for i in n:-1:j
+      coeffs[i] = (coeffs[i] - coeffs[i-1]) / (nodes[i] - nodes[i-j+1])
+    end
+  end
+
+  return nodes, coeffs
+end
+
+function _evaluate_newton_polynomial(nodes::Vector{Float64}, coeffs::Vector{Float64}, x::Float64)
+  n = length(coeffs)
+  value = coeffs[n]
+  slope = 0.0
+
+  for i in (n-1):-1:1
+    slope = slope * (x - nodes[i]) + value
+    value = value * (x - nodes[i]) + coeffs[i]
+  end
+
+  return value, slope
 end
 
 struct QUController <: AbstractVoltageDependentController
@@ -108,6 +183,11 @@ end
     evaluate_characteristic(ch, u_pu) -> (value, slope)
 
 Evaluate piecewise linear characteristic at `u_pu`.
+
+For interior breakpoints (turning points), the implementation uses the segment
+found first during the left-to-right scan, i.e. the slope of the segment on
+the left side of the breakpoint. Outside the point range, the value is clamped
+and the returned slope is `0.0`.
 """
 function evaluate_characteristic(ch::PiecewiseLinearCharacteristic, u_pu::Float64)
   pts = ch.points
@@ -120,13 +200,27 @@ function evaluate_characteristic(ch::PiecewiseLinearCharacteristic, u_pu::Float6
     return pts[end][2], 0.0
   end
 
+  if ch.interpolation === :polynomial
+    return _evaluate_newton_polynomial(ch.polynomial_nodes, ch.polynomial_coefficients, u_pu)
+  end
+
   for i in 1:(length(pts)-1)
     uk, yk = pts[i]
     uk1, yk1 = pts[i+1]
     if uk <= u_pu <= uk1
-      slope = (yk1 - yk) / (uk1 - uk)
-      value = yk + slope * (u_pu - uk)
-      return value, slope
+      if ch.interpolation === :spline
+        h = uk1 - uk
+        m = ch.spline_second_derivatives
+        a = (uk1 - u_pu) / h
+        b = (u_pu - uk) / h
+        value = a * yk + b * yk1 + (((a^3 - a) * m[i] + (b^3 - b) * m[i+1]) * h^2 / 6.0)
+        slope = (yk1 - yk) / h + (((-3.0 * a^2 + 1.0) * m[i] + (3.0 * b^2 - 1.0) * m[i+1]) * h / 6.0)
+        return value, slope
+      else
+        slope = (yk1 - yk) / (uk1 - uk)
+        value = yk + slope * (u_pu - uk)
+        return value, slope
+      end
     end
   end
 
@@ -144,7 +238,7 @@ function evaluate_controller(ctrl::PUController, u_pu::Float64)
 end
 
 """
-    make_characteristic(points; voltage_unit=:pu, value_unit=:pu, vn_kV=nothing, sbase_MVA=nothing)
+    make_characteristic(points; voltage_unit=:pu, value_unit=:pu, vn_kV=nothing, sbase_MVA=nothing, interpolation=:linear)
 
 Create a piecewise linear characteristic from points in p.u. or physical units.
 
@@ -152,8 +246,13 @@ Create a piecewise linear characteristic from points in p.u. or physical units.
 - `voltage_unit = :kV` expects voltage in kV and requires `vn_kV`.
 - `value_unit = :pu` expects power output in per-unit.
 - `value_unit = :MW` or `:MVAr` expects physical power values and requires `sbase_MVA`.
+- `interpolation = :linear` uses piecewise linear interpolation.
+- `interpolation = :spline` uses natural cubic spline interpolation through all points.
+  If only two points are provided, linear interpolation is used automatically.
+- `interpolation = :polynomial` uses one global polynomial through all points.
+  If only two points are provided, linear interpolation is used automatically.
 """
-function make_characteristic(points::Vector{Tuple{Float64,Float64}}; voltage_unit::Symbol = :pu, value_unit::Symbol = :pu, vn_kV::Union{Nothing,Float64} = nothing, sbase_MVA::Union{Nothing,Float64} = nothing)
+function make_characteristic(points::Vector{Tuple{Float64,Float64}}; voltage_unit::Symbol = :pu, value_unit::Symbol = :pu, vn_kV::Union{Nothing,Float64} = nothing, sbase_MVA::Union{Nothing,Float64} = nothing, interpolation::Symbol = :linear)
   converted = Tuple{Float64,Float64}[]
   for (u, y) in points
     u_pu = if voltage_unit === :pu
@@ -175,7 +274,7 @@ function make_characteristic(points::Vector{Tuple{Float64,Float64}}; voltage_uni
     end
     push!(converted, (u_pu, y_pu))
   end
-  return PiecewiseLinearCharacteristic(converted)
+  return PiecewiseLinearCharacteristic(converted; interpolation = interpolation)
 end
 
 # Data type to describe producers and consumers

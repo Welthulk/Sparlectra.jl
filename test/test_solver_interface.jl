@@ -91,8 +91,11 @@ function test_external_solver_interface()::Bool
 end
 
 function run_solver_interface_tests()
+  # Covers solver-interface integration and option behavior:
+  # external model API, Q-limit reporting/autocorrection, PV->PQ locking, and final-limit reporting.
   @testset "Solver interface" begin
     @test test_external_solver_interface() == true
+    # Checks tabular Q-limit output truncation plus sign-validation/autocorrect behavior.
     @testset "Q-limit reporting and validation options" begin
       net = createTest3BusNet()
       net.nodeVec[1]._nodeType = Sparlectra.PV
@@ -115,6 +118,7 @@ function run_solver_interface_tests()
       @test net.qmax_pu[2] >= 0.0
     end
 
+    # Verifies that configured lock_pv_to_pq_buses keeps selected PV buses from switching to PQ.
     @testset "PV->PQ lock option" begin
       net_unlocked = createTest3BusNet()
       setQLimits!(net = net_unlocked, qmin_MVar = -1.0, qmax_MVar = 1.0, busName = "STATION1")
@@ -129,6 +133,7 @@ function run_solver_interface_tests()
       @test getNodeType(net_locked.nodeVec[2]) == Sparlectra.PV
     end
 
+    # Ensures final-limit validation remains robust when q-generation data is partially missing.
     @testset "Final limit validation tolerates missing qgen" begin
       net = createTest3BusNet()
       net.nodeVec[3]._qƩGen = nothing

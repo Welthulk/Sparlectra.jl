@@ -39,6 +39,26 @@ Sparlectra prioritizes:
 3. Implement agreed changes  
 4. Open a Pull Request  
 
+### Optional local hot-reload workflow (Revise.jl, not a project dependency)
+
+For interactive development (especially in VS Code), you can use `Revise.jl`
+from your global Julia environment so you do **not** need to restart Julia
+after every edit.
+
+Important:
+- Do **not** add `Revise` to Sparlectra's project dependencies.
+- Keep `Revise` only in your personal/global environment.
+
+Typical REPL flow:
+
+```julia
+using Revise
+using Sparlectra
+```
+
+Then run example entry points via `Base.invokelatest(...)` where available to
+avoid world-age issues during interactive sessions.
+
 ---
 
 ## Coding Guidelines
