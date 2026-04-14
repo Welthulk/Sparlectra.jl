@@ -46,29 +46,28 @@ using Sparlectra
 # Ensure case file exists locally (downloads on demand into data/mpower)
 case_path = ensure_casefile("case14.m")
 
-# Build network and run Newton-Raphson power flow
+# Build network and run AC power flow (including post-processing)
 net = createNetFromMatPowerFile(case_path, false)
-ite, erg = runpf!(net, 10, 1e-6, 0)
+ite, erg = run_net_acpflow(net; iter_max = 10, tol = 1e-6, print = 0)
 
 if erg == 0
-    calcNetLosses!(net)
     printACPFlowResults(net, 0.0, ite, 1e-6)
 end
 ```
 
 ## Documentation Structure
 
-- **[Changelog](changelog.md)**: Version history and updates
-- **[Networks](networks.md)**: Creating and manipulating network models
-- **[Branch Model](branchmodel.md)**: Details of the network branch model
-- **[Import/Export](import.md)**: Importing and exporting network configurations
-- **[Component Removal](remove_functions.md)**: Conceptual notes on topology-aware removal workflows
-- **[Workshop](workshop.md)**: Guided exercises and examples
-- **[State Estimation](state_estimation.md)**: Theory, observability, and practical SE workflow
-- **[Network Reports](netreports.md)**: Create and use machine-readable `ACPFlowReport` output
-- **[Function Reference](reference.md)**: Complete API documentation
-- **[Powerlimit Guide](powerlimits.md)**: Handling of power limits
-- **[Solver Guide](solver.md)**: Numerical solver formulations and FD Jacobians
+- **[Changelog](docs/src/changelog.md)**: Version history and updates
+- **[Networks](docs/src/networks.md)**: Creating and manipulating network models
+- **[Branch Model](docs/src/branchmodel.md)**: Details of the network branch model
+- **[Import/Export](docs/src/import.md)**: Importing and exporting network configurations
+- **[Component Removal](docs/src/remove_functions.md)**: Conceptual notes on topology-aware removal workflows
+- **[Workshop](docs/src/workshop.md)**: Guided exercises and examples
+- **[State Estimation](docs/src/state_estimation.md)**: Theory, observability, and practical SE workflow
+- **[Network Reports](docs/src/netreports.md)**: Create and use machine-readable `ACPFlowReport` output
+- **[Function Reference](docs/src/reference.md)**: Complete API documentation
+- **[Powerlimit Guide](docs/src/powerlimits.md)**: Handling of power limits
+- **[Solver Guide](docs/src/solver.md)**: Numerical solver formulations and FD Jacobians
 
 
 
@@ -114,6 +113,5 @@ data while still allowing reproducible experiments and benchmarks.
 ### License
 This project is licensed under the Apache License, Version 2.0.
 [The license file](https://github.com/welthulk/Sparlectra.jl/blob/main/LICENSE) contains the complete licensing information.
-
 
 

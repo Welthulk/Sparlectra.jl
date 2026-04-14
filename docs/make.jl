@@ -1,10 +1,3 @@
-# docs/make.jl
-using Pkg
-Pkg.activate(@__DIR__)  # aktiviere das docs-Project.toml
-# binde dein Paket aus dem Repo-Root ins docs-Env ein
-Pkg.develop(path = joinpath(@__DIR__, ".."))
-Pkg.instantiate()
-
 using Documenter
 using Sparlectra
 
