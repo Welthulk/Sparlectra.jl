@@ -108,6 +108,11 @@ end
     evaluate_characteristic(ch, u_pu) -> (value, slope)
 
 Evaluate piecewise linear characteristic at `u_pu`.
+
+For interior breakpoints (turning points), the implementation uses the segment
+found first during the left-to-right scan, i.e. the slope of the segment on
+the left side of the breakpoint. Outside the point range, the value is clamped
+and the returned slope is `0.0`.
 """
 function evaluate_characteristic(ch::PiecewiseLinearCharacteristic, u_pu::Float64)
   pts = ch.points

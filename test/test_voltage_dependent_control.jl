@@ -25,6 +25,15 @@ function run_voltage_dependent_control_tests()
       q_val, q_slope = evaluate_controller(qu, 1.05)
       @test isapprox(q_val, 0.05; atol = 1e-12)
       @test q_slope == 0.0
+
+      ch_kink = PiecewiseLinearCharacteristic([(0.95, 0.2), (1.0, 0.0), (1.05, 0.2)])
+      v_kink, dv_kink = evaluate_characteristic(ch_kink, 1.0)
+      _, dv_left = evaluate_characteristic(ch_kink, 1.0 - 1e-8)
+      _, dv_right = evaluate_characteristic(ch_kink, 1.0 + 1e-8)
+      @test isapprox(v_kink, 0.0; atol = 1e-12)
+      @test isapprox(dv_left, -4.0; atol = 1e-6)
+      @test isapprox(dv_right, 4.0; atol = 1e-6)
+      @test isapprox(dv_kink, dv_left; atol = 1e-12)
     end
 
     @testset "Physical-unit controller inputs (kV, MW, MVAr)" begin
@@ -72,6 +81,35 @@ function run_voltage_dependent_control_tests()
       S_eval, _, _ = buildControlledSVec(net, V)
       qnet_expected = q_ctrl_pu * net.baseMVA - 20.0
       @test isapprox(imag(S_eval[2]) * net.baseMVA, qnet_expected; atol = 1e-8)
+    end
+
+    @testset "Solver operating point at characteristic kink" begin
+      net = Net(name = "kink_operating_point", baseMVA = 100.0)
+      addBus!(net = net, busName = "B1", vn_kV = 110.0)
+      addBus!(net = net, busName = "B2", vn_kV = 110.0)
+      addACLine!(net = net, fromBus = "B1", toBus = "B2", length = 1.0, r = 0.01, x = 0.1)
+
+      addProsumer!(net = net, busName = "B1", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "B1")
+
+      kink_curve = PiecewiseLinearCharacteristic([(0.95, 0.2), (1.0, 0.0), (1.05, 0.2)])
+      addProsumer!(
+        net = net,
+        busName = "B2",
+        type = "SYNCHRONOUSMACHINE",
+        p = 0.0,
+        q = 0.0,
+        pu_controller = PUController(kink_curve; pmin_pu = -0.5, pmax_pu = 0.5),
+      )
+
+      ite, erg = runpf!(net, 30, 1e-10, 0; method = :rectangular, opt_sparse = true)
+      @test erg == 0
+      @test ite <= 30
+
+      vm = abs(buildVoltageVector(net)[2])
+      _, slope_at = evaluate_characteristic(kink_curve, vm)
+      _, slope_left = evaluate_characteristic(kink_curve, 1.0 - 1e-8)
+      @test isapprox(vm, 1.0; atol = 1e-8)
+      @test isapprox(slope_at, slope_left; atol = 1e-8)
     end
 
     @testset "Result printout shows Control column" begin
