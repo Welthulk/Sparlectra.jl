@@ -1,4 +1,5 @@
-Pkg.develop(path = joinpath(@__DIR__, ".."))
+using Pkg
+Pkg.instantiate()
 using Documenter
 using Sparlectra
 
@@ -7,11 +8,26 @@ DocMeta.setdocmeta!(Sparlectra, :DocTestSetup, :(using Sparlectra); recursive = 
 makedocs(
   sitename = "Sparlectra.jl",
   modules = [Sparlectra],
-  clean = false,
+  clean = true,
   doctest = true,
   checkdocs = :none,
-  format = Documenter.HTML(; assets = ["assets/tablestyle.css"], prettyurls = get(ENV, "CI", "false") == "true", collapselevel = 1, canonical = "https://welthulk.github.io/Sparlectra.jl"),
-  pages = ["index.md", "feature_matrix.md", "changelog.md", "branchmodel.md", "external_solvers.md", "import.md", "links.md", "netreports.md", "powerlimits.md", "solver.md", "voltage_dependent_control.md", "state_estimation.md", "workshop.md", raw"API" => ["reference.md"]],
+  format = Documenter.HTML(assets = ["assets/tablestyle.css"], prettyurls = get(ENV, "CI", "false") == "true", collapselevel = 1, canonical = "https://welthulk.github.io/Sparlectra.jl"),
+  pages = [
+    "Home" => "index.md",
+    "Feature Matrix" => "feature_matrix.md",
+    "Changelog" => "changelog.md",
+    "Branch Model" => "branchmodel.md",
+    "External Solvers" => "external_solvers.md",
+    "Import" => "import.md",
+    "Links" => "links.md",
+    "Network Reports" => "netreports.md",
+    "Power Limits" => "powerlimits.md",
+    "Solver" => "solver.md",
+    "Voltage Dependent Control" => "voltage_dependent_control.md",
+    "State Estimation" => "state_estimation.md",
+    "Workshop" => "workshop.md",
+    "API Reference" => "reference.md",
+  ],
 )
 
-deploydocs(; repo = "github.com/welthulk/Sparlectra.jl", devbranch = "main", push_preview = true)
+deploydocs(repo = "github.com/welthulk/Sparlectra.jl", devbranch = "main", push_preview = true)
