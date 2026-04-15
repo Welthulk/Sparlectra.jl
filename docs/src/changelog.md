@@ -1,4 +1,16 @@
 # Change Log
+## Version 0.7.1 – 2026-04-XX
+### Improvements
+* Refactored decision logic for `qlimit_mode = :adjust_vset`:
+  * consolidated Q-limit event handling via shared active-set flow
+  * extracted voltage-step handling into dedicated helper logic
+* Added typed `VoltageAdjustConfig` support for prosumers and integrated it into voltage-regulation detection.
+* Simplified rectangular mismatch API by removing unused derivative keyword arguments from `mismatch_rectangular(...)`.
+
+### Solver Robustness
+* Rectangular solver now handles reduced Ybus matrices (caused by internal isolated buses) by expanding them back to full network dimension for mismatch/Jacobian processing.
+* For rectangular runs with active-link merges and internal isolated buses, solver now uses a rectangular FD fallback path instead of switching to `:polar_full`.
+
 ## Version 0.7.0 – 2026-04-15
 ### New Features
 * Added support for **P(U)** and **Q(U)** controller models in power flow calculations
