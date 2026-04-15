@@ -216,6 +216,29 @@ function update_net_voltages_from_complex!(net::Net, V::Vector{ComplexF64})
   end
 end
 
+function _expand_ybus_for_isolated_nodes(Yred, n::Int, iso_nodes::Vector{Int})
+  isempty(iso_nodes) && return Yred
+
+  iso_mask = falses(n)
+  for bus in iso_nodes
+    if 1 <= bus <= n
+      iso_mask[bus] = true
+    end
+  end
+
+  active = Int[]
+  for bus in eachindex(iso_mask)
+    iso_mask[bus] || push!(active, bus)
+  end
+
+  size(Yred, 1) == length(active) || error("_expand_ybus_for_isolated_nodes: size mismatch between reduced Ybus and active buses.")
+  size(Yred, 2) == length(active) || error("_expand_ybus_for_isolated_nodes: Ybus is not square in active-bus space.")
+
+  Yfull = issparse(Yred) ? spzeros(ComplexF64, n, n) : zeros(ComplexF64, n, n)
+  Yfull[active, active] = Yred
+  return Yfull
+end
+
 @inline function _has_vset_adjust_config(ps::ProSumer)::Bool
   return !isnothing(ps.vset_adjust) || !(isnothing(ps.vstep_pu) && isnothing(ps.tap_steps_down) && isnothing(ps.tap_steps_up))
 end
@@ -869,7 +892,8 @@ function run_complex_nr_rectangular_for_net!(
   else
     sparse = opt_sparse
   end
-  Ybus = createYBUS(net = net, sparse = sparse, printYBUS = (verbose > 1))
+  Yred = createYBUS(net = net, sparse = sparse, printYBUS = (verbose > 1))
+  Ybus = (size(Yred, 1) == n) ? Yred : _expand_ybus_for_isolated_nodes(Yred, n, net.isoNodes)
 
   # 1) Initial complex voltages V0 and slack index
   V0, slack_idx = initialVrect(net; flatstart = opt_flatstart)
@@ -893,6 +917,11 @@ function run_complex_nr_rectangular_for_net!(
       bus_types[k] = :PV
     elseif BusType == PQ
       bus_types[k] = :PQ
+    elseif BusType == Isolated
+      # Keep isolated buses in the rectangular state vector as neutral PQ rows.
+      # Their injections are forced to zero so they do not affect the solved grid.
+      bus_types[k] = :PQ
+      S[k] = 0.0 + 0.0im
     else
       error("run_complex_nr_rectangular_for_net!: unsupported bus type at bus $k, given: $(BusType)")
     end
@@ -1312,11 +1341,11 @@ function runpf!(
     return iters, erg
   elseif method === :rectangular
     if has_merges
-      has_vdep_control && error("runpf!: P(U)/Q(U) voltage-dependent controllers are not supported with active-link merge fallback to :polar_full. Disable merges or use a topology without internal isolated buses.")
+      has_vdep_control && error("runpf!: P(U)/Q(U) voltage-dependent controllers are not supported with active-link merge handling in rectangular mode. Disable merges or use a topology without internal isolated buses.")
       if verbose > 0
-        @warn "runpf!: rectangular solver does not support internal Isolated buses from active-link merges; falling back to :polar_full"
+        @warn "runpf!: rectangular solver detected internal Isolated buses from active-link merges; using rectangular FD fallback instead of :polar_full"
       end
-      iters, erg = runpf_full!(wnet, maxIte, tolerance, verbose; opt_sparse = opt_sparse, opt_flatstart = opt_flatstart, pv_table_rows = pv_table_rows, lock_pv_to_pq_buses = lock_pv_to_pq_buses, warn_deprecated = false)
+      iters, erg = runpf_rectangular!(wnet, maxIte, tolerance, verbose; opt_fd = true, opt_sparse = opt_sparse, damp = damp, opt_flatstart = opt_flatstart, pv_table_rows = pv_table_rows, lock_pv_to_pq_buses = lock_pv_to_pq_buses, qlimit_mode = qlimit_mode, qlimit_max_outer = qlimit_max_outer)
     else
       iters, erg = runpf_rectangular!(wnet, maxIte, tolerance, verbose; opt_fd = opt_fd, opt_sparse = opt_sparse, damp = damp, opt_flatstart = opt_flatstart, pv_table_rows = pv_table_rows, lock_pv_to_pq_buses = lock_pv_to_pq_buses, qlimit_mode = qlimit_mode, qlimit_max_outer = qlimit_max_outer)
     end
