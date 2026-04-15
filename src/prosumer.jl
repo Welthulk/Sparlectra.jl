@@ -126,6 +126,12 @@ struct PUController <: AbstractVoltageDependentController
   pmax_pu::Union{Nothing,Float64}
 end
 
+struct VoltageAdjustConfig
+  vstep_pu::Float64
+  tap_steps_down::Int
+  tap_steps_up::Int
+end
+
 @inline _to_pu_power(value::Float64, sbase_MVA::Float64) = value / sbase_MVA
 @inline _to_pu_voltage(value::Float64, vn_kV::Float64) = value / vn_kV
 
@@ -321,6 +327,7 @@ mutable struct ProSumer
   vstep_pu::Union{Nothing,Float64}
   tap_steps_down::Union{Nothing,Int}
   tap_steps_up::Union{Nothing,Int}
+  vset_adjust::Union{Nothing,VoltageAdjustConfig}
   isRegulated::Bool
   proSumptionType::ProSumptionType
   isAPUNode::Bool
@@ -351,6 +358,7 @@ mutable struct ProSumer
     vstep_pu::Union{Nothing,Float64} = nothing,
     tap_steps_down::Union{Nothing,Int} = nothing,
     tap_steps_up::Union{Nothing,Int} = nothing,
+    vset_adjust::Union{Nothing,VoltageAdjustConfig} = nothing,
     isRegulated::Bool = false,
     isAPUNode::Bool = false,
     quController::Union{Nothing,QUController} = nothing,
@@ -366,7 +374,7 @@ mutable struct ProSumer
       va_deg = 0.0
     end
 
-    new(comp, ratedS, ratedU, qPercent, p, q, maxP, minP, maxQ, minQ, ratedPowerFactor, referencePri, vm_pu, va_deg, vstep_pu, tap_steps_down, tap_steps_up, isRegulated, type, isAPUNode, quController, puController, nothing, nothing, nothing)
+    new(comp, ratedS, ratedU, qPercent, p, q, maxP, minP, maxQ, minQ, ratedPowerFactor, referencePri, vm_pu, va_deg, vstep_pu, tap_steps_down, tap_steps_up, vset_adjust, isRegulated, type, isAPUNode, quController, puController, nothing, nothing, nothing)
   end
 
   function Base.show(io::IO, prosumption::ProSumer)
@@ -432,6 +440,9 @@ mutable struct ProSumer
     end
     if (!isnothing(prosumption.tap_steps_up))
       print(io, "tap_steps_up: ", prosumption.tap_steps_up, ", ")
+    end
+    if !isnothing(prosumption.vset_adjust)
+      print(io, "vset_adjust: ", prosumption.vset_adjust, ", ")
     end
     if prosumption.isRegulated
       print(io, "isRegulated: true, ")
@@ -525,7 +536,7 @@ function isSlack(o::ProSumer)
 end
 
 function isRegulating(o::ProSumer)::Bool
-  has_controller = !isnothing(o.vstep_pu) || !isnothing(o.tap_steps_down) || !isnothing(o.tap_steps_up)
+  has_controller = !isnothing(o.vset_adjust) || !isnothing(o.vstep_pu) || !isnothing(o.tap_steps_down) || !isnothing(o.tap_steps_up)
   return o.isRegulated || has_controller
 end
 

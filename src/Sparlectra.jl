@@ -64,7 +64,7 @@ export
   # Trafo
   TrafoTyp, PowerTransformerTaps,  PowerTransformerWinding,  PowerTransformer, TransformerModelParameters,
   # ProSumer
-  ProSumer, AbstractVoltageDependentController, PiecewiseLinearCharacteristic, QUController, PUController,
+  ProSumer, AbstractVoltageDependentController, PiecewiseLinearCharacteristic, QUController, PUController, VoltageAdjustConfig,
   # Branch
   AbstractBranch, Branch, BranchModel, BranchFlow, getBranchFlow, setBranchFlow!, getBranchNumber, getBranchLosses, setBranchLosses!, setBranchStatus!,
   # Link
