@@ -23,7 +23,7 @@ Usage examples:
 
 using Sparlectra
 
-const DEFAULT_CASEFILE = "case14.m"
+const DEFAULT_CASEFILE = "case1951rte.m"
 const show_results = false
 
 function run_import_case_xxxyyyy_loadflow_example(; casefile::AbstractString = DEFAULT_CASEFILE, method::Symbol = :rectangular, max_ite::Int = 30, tol::Float64 = 1e-6, verbose::Int = 1)
@@ -38,7 +38,7 @@ function run_import_case_xxxyyyy_loadflow_example(; casefile::AbstractString = D
 
   # Time power flow execution  
   pf_time = @elapsed begin
-    ite, erg, etime = run_net_acpflow(net = net, max_ite = max_ite, tol = tol, verbose = verbose, opt_sparse = true, opt_fd = false, method = method, show_results = true)
+    ite, erg, etime = run_net_acpflow(net = net, max_ite = max_ite, tol = tol, verbose = verbose, opt_sparse = true, opt_fd = false, method = method, show_results = show_results)
   end
 
   converged = (erg == 0)
