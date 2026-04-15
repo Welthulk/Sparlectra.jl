@@ -35,9 +35,10 @@ ignore_q_limits: false
 
 # Optional MATPOWER import behavior for PQ-type generators:
 # - If true, PQ generators get constant P(U)/Q(U) controllers based on MATPOWER limits.
+# - Applied only for generators connected to MATPOWER PQ buses (BUS_TYPE=1).
 # - If false, import keeps the plain generator values without creating these controllers.
-#   Recommended default for large benchmark cases to avoid extra overhead/log output.
-enable_pq_gen_controllers: false
+#   Keep enabled by default for compatibility with previous convergence behavior.
+enable_pq_gen_controllers: true
 
 # Legacy warning tracing:
 # - If true, legacy busType warnings include caller=<file>:<line>.
@@ -54,3 +55,9 @@ benchmark: true
 seconds: 2.0
 samples: 50
 show_once: true
+# show_once output mode:
+# - classic: full classic result tables (printACPFlowResults)
+# - dataframe: compact DataFrame-style node table
+show_once_output: classic
+# Limits only DataFrame-style output (0 = all nodes); ignored for classic output.
+show_once_max_nodes: 0
