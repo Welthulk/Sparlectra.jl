@@ -24,38 +24,28 @@ Usage examples:
 using Sparlectra
 
 const DEFAULT_CASEFILE = "case14.m"
+const show_results = false
 
-function run_import_case_xxxyyyy_loadflow_example(; casefile::AbstractString = DEFAULT_CASEFILE,
-                                                  method::Symbol = :rectangular,
-                                                  max_ite::Int = 30,
-                                                  tol::Float64 = 1e-6,
-                                                  verbose::Int = 1)
-  local_case = Sparlectra.FetchMatpowerCase.ensure_casefile(
-    String(casefile);
-    outdir = Sparlectra.MPOWER_DIR,
-    to_jl = false,
-    overwrite = false,
-  )
+function run_import_case_xxxyyyy_loadflow_example(; casefile::AbstractString = DEFAULT_CASEFILE, method::Symbol = :rectangular, max_ite::Int = 30, tol::Float64 = 1e-6, verbose::Int = 1)
+  local_case = Sparlectra.FetchMatpowerCase.ensure_casefile(String(casefile); outdir = Sparlectra.MPOWER_DIR, to_jl = false, overwrite = false)
 
   println("Loaded case file: ", local_case)
   println("Running AC power flow with method=", method, ", max_ite=", max_ite, ", tol=", tol)
+  # Time network creation
+  net_creation_time = @elapsed begin
+    net = createNetFromMatPowerFile(filename = local_case, log = (verbose > 0), flatstart = false)
+  end
 
-  net = createNetFromMatPowerFile(filename = local_case, log = (verbose > 0), flatstart = false)
-  ite, erg, etime = run_net_acpflow(
-    net = net,
-    max_ite = max_ite,
-    tol = tol,
-    verbose = verbose,
-    opt_sparse = true,
-    opt_fd = false,
-    method = method,
-    show_results = true,
-  )
+  # Time power flow execution  
+  pf_time = @elapsed begin
+    ite, erg, etime = run_net_acpflow(net = net, max_ite = max_ite, tol = tol, verbose = verbose, opt_sparse = true, opt_fd = false, method = method, show_results = true)
+  end
 
   converged = (erg == 0)
-  println("Summary: converged=", converged, ", iterations=", ite, ", elapsed_s=", round(etime; digits = 6))
+  println("Summary: converged=", converged, ", iterations=", ite, ", solver_time=", round(etime; digits = 6), ", total_pf_time=", round(pf_time; digits = 6), " net_creation_time=", round(net_creation_time; digits = 6), " seconds  ")
 
-  return (net = net, converged = converged, iterations = ite, elapsed_s = etime)
+  return nothing
+  #return (net = net, converged = converged, iterations = ite, elapsed_s = etime)
 end
 
 function main()
