@@ -81,6 +81,18 @@ function _as_int_vec(v)
   return Int[x for x in v]
 end
 
+function _as_output_mode(v)::Symbol
+  s = lowercase(String(v))
+  if s == "classic"
+    return :classic
+  elseif s == "dataframe"
+    return :dataframe
+  else
+    @warn "Unknown show_once_output; using :classic" value = v
+    return :classic
+  end
+end
+
 function _yaml_path_from_inputs()
   !isempty(ARGS) && return ARGS[1]
   env_path = get(ENV, "SPARLECTRA_MATPOWER_IMPORT_YAML", "")
@@ -138,8 +150,10 @@ function bench_config_for_case(case_name::AbstractString, yaml_cfg::Dict{String,
     seconds = 2.0,
     samples = 50,
     show_once = true,
+    show_once_output = :classic,
+    show_once_max_nodes = 0,
     benchmark = true,
-    enable_pq_gen_controllers = false,
+    enable_pq_gen_controllers = true,
     trace_legacy_bus_type_warnings = false,
   )
   case_override = get(CASE_BENCH_OVERRIDES, String(case_name), (;))
@@ -162,6 +176,8 @@ function bench_config_for_case(case_name::AbstractString, yaml_cfg::Dict{String,
       seconds = Float64(get(yaml_cfg, "seconds", base.seconds)),
       samples = Int(get(yaml_cfg, "samples", base.samples)),
       show_once = Bool(get(yaml_cfg, "show_once", base.show_once)),
+      show_once_output = _as_output_mode(get(yaml_cfg, "show_once_output", base.show_once_output)),
+      show_once_max_nodes = Int(get(yaml_cfg, "show_once_max_nodes", base.show_once_max_nodes)),
       benchmark = Bool(get(yaml_cfg, "benchmark", base.benchmark)),
       enable_pq_gen_controllers = Bool(get(yaml_cfg, "enable_pq_gen_controllers", base.enable_pq_gen_controllers)),
       trace_legacy_bus_type_warnings = Bool(get(yaml_cfg, "trace_legacy_bus_type_warnings", base.trace_legacy_bus_type_warnings)),
@@ -190,10 +206,43 @@ function _mpc_pv_bus_ids(mpc)
   pv_mask = mpc.bus[:, 2] .== 2
   return sort!(unique!(Int.(round.(mpc.bus[pv_mask, 1]))))
 end
+
+function _print_dataframe_nodes(io::IO, net::Sparlectra.Net; max_nodes::Int = 0)
+  bus_name_by_idx = Dict{Int,String}()
+  for (name, idx) in net.busDict
+    bus_name_by_idx[idx] = name
+  end
+  nodes = sort(net.nodeVec, by = x -> x.busIdx)
+  n_total = length(nodes)
+  n_show = max_nodes > 0 ? min(max_nodes, n_total) : n_total
+
+  println(io, "DataFrame-style node output:")
+  println(io, " row  bus  bus_name              type     vm_pu     va_deg")
+  println(io, "-----------------------------------------------------------")
+
+  shown = 0
+  for i in eachindex(nodes)
+    shown >= n_show && break
+    n = nodes[i]
+    bname = get(bus_name_by_idx, n.busIdx, string(n.busIdx))
+    vm = isnothing(n._vm_pu) ? NaN : Float64(n._vm_pu)
+    va = isnothing(n._va_deg) ? NaN : Float64(n._va_deg)
+    @printf(io, " %4d %4d  %-20s %-6s %8.5f %10.4f\n", i, n.busIdx, bname, String(toString(n._nodeType)), vm, va)
+    shown += 1
+  end
+
+  if n_show < n_total
+    @printf(io, "... truncated: showing %d/%d nodes (show_once_max_nodes)\n", n_show, n_total)
+  else
+    @printf(io, "shown nodes: %d/%d\n", n_show, n_total)
+  end
+  println(io)
+end
 # -----------------------------------------------------------------------------
 # Benchmark helper: benchmark exactly run_acpflow(...)
 # -----------------------------------------------------------------------------
-function bench_run_acpflow(; casefile::String, methods::Vector{Symbol}, mpc, logfile::String, show_diff::Bool, tol_vm::Float64, tol_va::Float64, max_ite::Int = 30, tol::Float64 = 1e-6, opt_fd::Bool = true, opt_sparse::Bool = true, opt_flatstart::Bool = true, verbose::Int = 0, cooldown_iters::Int = 0, q_hyst_pu::Float64 = 0.0, lock_pv_to_pq_buses::AbstractVector{Int} = Int[], seconds::Float64 = 2.0, samples::Int = 50, show_once::Bool = false, benchmark::Bool = true, enable_pq_gen_controllers::Bool = false)
+function bench_run_acpflow(; casefile::String, methods::Vector{Symbol}, mpc, logfile::String, show_diff::Bool, tol_vm::Float64, tol_va::Float64, max_ite::Int = 30, tol::Float64 = 1e-6, opt_fd::Bool = true, opt_sparse::Bool = true, opt_flatstart::Bool = true, verbose::Int = 0, cooldown_iters::Int = 0, q_hyst_pu::Float64 = 0.0, lock_pv_to_pq_buses::AbstractVector{Int} = Int[], seconds::Float64 = 2.0, samples::Int = 50, show_once::Bool = false, show_once_output::Symbol = :classic, show_once_max_nodes::Int = 0, benchmark::Bool = true, enable_pq_gen_controllers::Bool = true)
+  t0 = time()
   results = Dict{Symbol,Any}()
 
   # Create/seed logfile up-front so users can see progress even if benchmarks are long.
@@ -206,29 +255,35 @@ function bench_run_acpflow(; casefile::String, methods::Vector{Symbol}, mpc, log
 
   # Optional: show results once (not benchmarked)
   if show_once
-    # write full solver output to logfile; keep terminal clean
     local summaries = Vector{NamedTuple{(:method, :converged, :max_dvm, :max_dva, :cmp_ok),Tuple{Symbol,Bool,Float64,Float64,Bool}}}()
-
-    open(logfile, "a") do io
-      redirect_stdout(io) do
-        redirect_stderr(io) do
-          for m in methods
+    show_classic = (show_once_output == :classic)
+    println("show_once output is written to logfile: ", logfile)
+    for m in methods
+      open(logfile, "a") do io
+        redirect_stdout(io) do
+          redirect_stderr(io) do
             println("=================================================================")
             println("RUN method = ", m)
             println("=================================================================\n")
-
-            net_res = run_acpflow(casefile = casefile, max_ite = max_ite, tol = tol, opt_fd = opt_fd, opt_sparse = opt_sparse, method = m, opt_flatstart = opt_flatstart, show_results = true, verbose = verbose, cooldown_iters = cooldown_iters, q_hyst_pu = q_hyst_pu, lock_pv_to_pq_buses = lock_pv_to_pq_buses, enable_pq_gen_controllers = enable_pq_gen_controllers)
-
-            # compare (still computed, but details go to logfile)
+            status_ref = Ref{Any}(nothing)
+            net_res = run_acpflow(casefile = casefile, max_ite = max_ite, tol = tol, opt_fd = opt_fd, opt_sparse = opt_sparse, method = m, opt_flatstart = opt_flatstart, show_results = show_classic, show_compact_result = true, status_ref = status_ref, verbose = verbose, cooldown_iters = cooldown_iters, q_hyst_pu = q_hyst_pu, lock_pv_to_pq_buses = lock_pv_to_pq_buses, enable_pq_gen_controllers = enable_pq_gen_controllers)
+            status = status_ref[]
+            if !show_classic
+              _print_dataframe_nodes(io, net_res; max_nodes = show_once_max_nodes)
+            end
             if mp_has_vm_va(mpc)
               ok, stats = MatpowerIO.compare_vm_va(net_res, mpc; show_diff = show_diff, tol_vm = tol_vm, tol_va = tol_va, maxlines = 20)
-              push!(summaries, (method = m, converged = true, max_dvm = Float64(get(stats, :max_dvm, NaN)), max_dva = Float64(get(stats, :max_dva, NaN)), cmp_ok = ok))
+              push!(summaries, (method = m, converged = Bool(get(status, :converged, false)), max_dvm = Float64(get(stats, :max_dvm, NaN)), max_dva = Float64(get(stats, :max_dva, NaN)), cmp_ok = ok))
             else
-              push!(summaries, (method = m, converged = true, max_dvm = NaN, max_dva = NaN, cmp_ok = false))
+              push!(summaries, (method = m, converged = false, max_dvm = NaN, max_dva = NaN, cmp_ok = false))
               println("Compare skipped: no solution-like VM/VA in mpc.bus(:,8:9)")
             end
-
-            println()
+            if !Bool(get(status, :converged, false)) && !enable_pq_gen_controllers
+              println("Fallback diagnostic: rerun with enable_pq_gen_controllers=true")
+              fb_ref = Ref{Any}(nothing)
+              run_acpflow(casefile = casefile, max_ite = max_ite, tol = tol, opt_fd = opt_fd, opt_sparse = opt_sparse, method = m, opt_flatstart = opt_flatstart, show_results = false, show_compact_result = true, status_ref = fb_ref, verbose = 0, cooldown_iters = cooldown_iters, q_hyst_pu = q_hyst_pu, lock_pv_to_pq_buses = lock_pv_to_pq_buses, enable_pq_gen_controllers = true)
+            end
+            @printf(io, "show_once method=%s output=%s\n\n", String(m), String(show_once_output))
           end
         end
       end
@@ -239,21 +294,34 @@ function bench_run_acpflow(; casefile::String, methods::Vector{Symbol}, mpc, log
     println("logfile: ", logfile)
     for s in summaries
       if isnan(s.max_dvm) || isnan(s.max_dva)
-        @printf("method=%-12s  compare=SKIP\n", String(s.method))
+        @printf("method=%-12s  converged=%s  compare=SKIP\n", String(s.method), s.converged ? "yes" : "no")
       else
-        @printf("method=%-12s  compare=%s  max|dVm|=%8.5f pu  max|dVa|=%7.4f deg\n", String(s.method), s.cmp_ok ? "OK " : "FAIL", s.max_dvm, s.max_dva)
+        @printf("method=%-12s  converged=%s  compare=%s  max|dVm|=%8.5f pu  max|dVa|=%7.4f deg\n", String(s.method), s.converged ? "yes" : "no", s.cmp_ok ? "OK " : "FAIL", s.max_dvm, s.max_dva)
       end
     end
     println("=================================================\n")
   end
 
+  if !show_once
+    println("\nInitial run (convergence + iterations):")
+    for m in methods
+      run_acpflow(casefile = casefile, max_ite = max_ite, tol = tol, opt_fd = opt_fd, opt_sparse = opt_sparse, method = m, opt_flatstart = opt_flatstart, show_results = false, show_compact_result = true, verbose = 0, cooldown_iters = cooldown_iters, q_hyst_pu = q_hyst_pu, lock_pv_to_pq_buses = lock_pv_to_pq_buses, enable_pq_gen_controllers = enable_pq_gen_controllers)
+    end
+  end
+
   if !benchmark
-    println("\nBenchmark skipped (`benchmark: false`).")
+    total_s = time() - t0
+    println("\nBenchmarkTools loop skipped (`benchmark: false`).")
+    @printf("total runtime    = %.3f s\n", total_s)
     println("logfile: ", logfile)
+    open(logfile, "a") do io
+      @printf(io, "total runtime: %.3f s\n", total_s)
+    end
     return results
   end
 
   # Warmup (compile) once per method with minimal output
+  println("Warmup run:")
   for m in methods
     run_acpflow(casefile = casefile, max_ite = max_ite, tol = tol, opt_fd = opt_fd, opt_sparse = opt_sparse, method = m, opt_flatstart = opt_flatstart, show_results = false, verbose = 0, cooldown_iters = cooldown_iters, q_hyst_pu = q_hyst_pu, lock_pv_to_pq_buses = lock_pv_to_pq_buses, enable_pq_gen_controllers = enable_pq_gen_controllers)
   end
@@ -291,6 +359,12 @@ function bench_run_acpflow(; casefile::String, methods::Vector{Symbol}, mpc, log
 
     println("method = ", m)
     @printf("bench  method=%-12s  med=%8.4f ms  min=%8.4f ms  alloc=%9d B  allocs=%d\n", String(m), tmed, tmin, alloc, allocs)
+  end
+  total_s = time() - t0
+  @printf("\ntotal runtime    = %.3f s\n", total_s)
+  println("logfile: ", logfile)
+  open(logfile, "a") do io
+    @printf(io, "total runtime: %.3f s\n", total_s)
   end
   return results
 end
@@ -331,6 +405,7 @@ function main()
   end
 
   cfg = bench_config_for_case(case, yaml_cfg)
+
   if cfg.trace_legacy_bus_type_warnings
     ENV["SPARLECTRA_TRACE_LEGACY_BUSTYPE"] = "1"
     println("legacy trace     = enabled (SPARLECTRA_TRACE_LEGACY_BUSTYPE=1)")
@@ -342,7 +417,8 @@ function main()
     lock_pv_to_pq_buses = _mpc_pv_bus_ids(mpc)
   end
 
-  bench = Base.invokelatest(getfield(@__MODULE__, :bench_run_acpflow);
+  bench = Base.invokelatest(
+    getfield(@__MODULE__, :bench_run_acpflow);
     casefile = basename(local_case),
     methods = methods,
     mpc = mpc,
@@ -362,6 +438,8 @@ function main()
     seconds = cfg.seconds,
     samples = cfg.samples,
     show_once = cfg.show_once,
+    show_once_output = cfg.show_once_output,
+    show_once_max_nodes = cfg.show_once_max_nodes,
     benchmark = cfg.benchmark,
     enable_pq_gen_controllers = cfg.enable_pq_gen_controllers,
   )
