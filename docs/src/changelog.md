@@ -1,4 +1,7 @@
 # Change Log
+## Version 0.7.1 – 2026-04-XX
+* Refaktoring of Decision Logif for adjust_vset
+* 
 ## Version 0.7.0 – 2026-04-15
 ### New Features
 * Added support for **P(U)** and **Q(U)** controller models in power flow calculations
@@ -38,7 +41,7 @@
 * Bad Data Detection (BDD) and Statistical Diagnostics for State Estimation (SE)
   
 ### Bug Fixes
-* Fix issue #139
+* Fix #139
 
 ### Notes
 
