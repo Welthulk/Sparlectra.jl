@@ -1,5 +1,5 @@
 # Change Log
-## Version 0.7.1 – 2026-04-XX
+## Version 0.7.1 – 2026-04-15
 ### Improvements
 * Refactored decision logic for `qlimit_mode = :adjust_vset`:
   * consolidated Q-limit event handling via shared active-set flow
