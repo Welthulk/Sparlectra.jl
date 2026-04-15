@@ -346,6 +346,8 @@ Callbacks:
 - is_pv(bus) -> Bool
 - make_pq!(bus, q_clamp_pu::Float64, side::Symbol)  # side = :min/:max
 - make_pv!(bus)
+- on_violation!(bus, qreq_pu::Float64, side::Symbol, q_clamp_pu::Float64) -> Bool
+  (optional; return true if violation was handled without PV->PQ fallback)
 """
 function active_set_q_limits!(
   net::Net,
@@ -362,6 +364,7 @@ function active_set_q_limits!(
   q_hyst_pu::Float64,
   cooldown_iters::Int,
   lock_pv_to_pq_buses::AbstractVector{Int} = Int[],
+  on_violation! = nothing,
   verbose::Int = 0,
 )
   changed   = false
@@ -384,15 +387,32 @@ function active_set_q_limits!(
     has_hi = (bus <= length(qmax_pu)) && isfinite(qmax_pu[bus])
     has_lo = (bus <= length(qmin_pu)) && isfinite(qmin_pu[bus])
 
+    side = :none
+    qclamp = 0.0
     if has_hi && (qreq > qmax_pu[bus])
-      make_pq!(bus, qmax_pu[bus], :max)
-      logQLimitHit!(net, it, bus, :max)
+      side = :max
+      qclamp = qmax_pu[bus]
+    elseif has_lo && (qreq < qmin_pu[bus])
+      side = :min
+      qclamp = qmin_pu[bus]
+    end
+    side == :none && continue
+
+    handled = false
+    if !isnothing(on_violation!)
+      handled = on_violation!(bus, qreq, side, qclamp)
+    end
+
+    if handled
+      changed = true
+    elseif side == :max
+      make_pq!(bus, qclamp, side)
+      logQLimitHit!(net, it, bus, side)
       changed = true
       (verbose > 0) && @printf "PV->PQ Bus %d: Q=%.6f > Qmax=%.6f (it=%d)\n" bus qreq qmax_pu[bus] it
-
-    elseif has_lo && (qreq < qmin_pu[bus])
-      make_pq!(bus, qmin_pu[bus], :min)
-      logQLimitHit!(net, it, bus, :min)
+    else
+      make_pq!(bus, qclamp, side)
+      logQLimitHit!(net, it, bus, side)
       changed = true
       (verbose > 0) && @printf "PV->PQ Bus %d: Q=%.6f < Qmin=%.6f (it=%d)\n" bus qreq qmin_pu[bus] it
     end

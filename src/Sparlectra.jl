@@ -31,7 +31,7 @@ const MPOWER_DIR = normpath(joinpath(pkgdir(@__MODULE__), "data", "mpower"))
 
 # resource data types for working with Sparlectra
 const Wurzel3 = 1.7320508075688772
-const SparlectraVersion = v"0.7.0"
+const SparlectraVersion = v"0.7.1"
 version() = SparlectraVersion
 abstract type AbstractBranch end
 
@@ -64,7 +64,7 @@ export
   # Trafo
   TrafoTyp, PowerTransformerTaps,  PowerTransformerWinding,  PowerTransformer, TransformerModelParameters,
   # ProSumer
-  ProSumer, AbstractVoltageDependentController, PiecewiseLinearCharacteristic, QUController, PUController,
+  ProSumer, AbstractVoltageDependentController, PiecewiseLinearCharacteristic, QUController, PUController, VoltageAdjustConfig,
   # Branch
   AbstractBranch, Branch, BranchModel, BranchFlow, getBranchFlow, setBranchFlow!, getBranchNumber, getBranchLosses, setBranchLosses!, setBranchStatus!,
   # Link
