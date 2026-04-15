@@ -125,12 +125,14 @@ function run_acpflow(;
   end
 
   if show_compact_result
+    pv_to_pq_events = length(myNet.qLimitLog)
+    pv_to_pq_buses = length(myNet.qLimitEvents)
     if erg == 0
-      @printf("method=%-12s  converged=%s  iterations=%d  time=%8.6f s\n", String(method), "yes", ite, etime)
+      @printf("method=%-12s  converged=%s  iterations=%d  pv2pq_events=%d  pv2pq_buses=%d  time=%8.6f s\n", String(method), "yes", ite, pv_to_pq_events, pv_to_pq_buses, etime)
     elseif erg == 1
-      @printf("method=%-12s  converged=%s  iterations=%d  time=%8.6f s\n", String(method), "no", ite, etime)
+      @printf("method=%-12s  converged=%s  iterations=%d  pv2pq_events=%d  pv2pq_buses=%d  time=%8.6f s\n", String(method), "no", ite, pv_to_pq_events, pv_to_pq_buses, etime)
     else
-      @printf("method=%-12s  converged=%s  iterations=%d  time=%8.6f s\n", String(method), "error", ite, etime)
+      @printf("method=%-12s  converged=%s  iterations=%d  pv2pq_events=%d  pv2pq_buses=%d  time=%8.6f s\n", String(method), "error", ite, pv_to_pq_events, pv_to_pq_buses, etime)
     end
   end
 
