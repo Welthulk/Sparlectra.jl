@@ -66,7 +66,7 @@ function complex_newton_step_rectangular_fd(Ybus, V, S; slack_idx::Int = 1, damp
   n = length(V)
 
   # Base mismatch F(V)
-  F0 = mismatch_rectangular(Ybus, V, S, bus_types, Vset, slack_idx; dPinj_dVm = dPinj_dVm, dQinj_dVm = dQinj_dVm)
+  F0 = mismatch_rectangular(Ybus, V, S, bus_types, Vset, slack_idx)
   m  = length(F0)  # expected = 2 * (n-1)
 
   # Non-slack buses
@@ -86,7 +86,7 @@ function complex_newton_step_rectangular_fd(Ybus, V, S; slack_idx::Int = 1, damp
     V_pert = copy(V)
     V_pert[bus] = ComplexF64(Vr[bus] + h, Vi[bus])
 
-    Fp = mismatch_rectangular(Ybus, V_pert, S, bus_types, Vset, slack_idx; dPinj_dVm = dPinj_dVm, dQinj_dVm = dQinj_dVm)
+    Fp = mismatch_rectangular(Ybus, V_pert, S, bus_types, Vset, slack_idx)
     J[:, col_idx] .= (Fp .- F0) ./ h
   end
 
@@ -96,7 +96,7 @@ function complex_newton_step_rectangular_fd(Ybus, V, S; slack_idx::Int = 1, damp
     V_pert = copy(V)
     V_pert[bus] = ComplexF64(Vr[bus], Vi[bus] + h)
 
-    Fp = mismatch_rectangular(Ybus, V_pert, S, bus_types, Vset, slack_idx; dPinj_dVm = dPinj_dVm, dQinj_dVm = dQinj_dVm)
+    Fp = mismatch_rectangular(Ybus, V_pert, S, bus_types, Vset, slack_idx)
     J[:, col_idx] .= (Fp .- F0) ./ h
   end
 
