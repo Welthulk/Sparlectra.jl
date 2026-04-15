@@ -1,7 +1,7 @@
 # Change Log
 ## Version 0.7.2 – 2026-04-15
 ### Bug Fixes
-* Fixed a bug in the rectangular solver where the presence of internal isolated buses could lead to dimension
+* Fixed the increased loading time for large test cases
 
 ## Version 0.7.1 – 2026-04-15
 ### Improvements
