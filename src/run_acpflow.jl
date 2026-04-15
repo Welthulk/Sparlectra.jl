@@ -40,6 +40,8 @@ function run_acpflow(;
   method::Symbol = :rectangular,
   opt_flatstart::Bool = false,
   show_results::Bool = true,
+  show_compact_result::Bool = false,
+  status_ref::Union{Nothing,Base.RefValue{Any}} = nothing,
   cooldown_iters::Int = 0,
   q_hyst_pu::Float64 = 0.0,
   pv_table_rows::Int = 30,
@@ -49,7 +51,7 @@ function run_acpflow(;
   q_limit_violation_headroom::Float64 = 0.20,
   lock_pv_to_pq_buses::AbstractVector{Int} = Int[],
   enable_pq_gen_controllers::Bool = true,
-)::Net  
+)
   ext = lowercase(splitext(casefile)[2])
   myNet = nothing              # Initialize myNet variable
   in_path = nothing
@@ -120,6 +122,22 @@ function run_acpflow(;
   ite = 0
   etime = @elapsed begin
     ite, erg = runpf!(myNet, max_ite, tol, verbose; opt_fd = opt_fd, opt_sparse = opt_sparse, method = method, opt_flatstart = opt_flatstart, pv_table_rows = pv_table_rows, validate_limits_after_pf = validate_limits_after_pf, q_limit_violation_headroom = q_limit_violation_headroom, lock_pv_to_pq_buses = lock_pv_to_pq_buses_resolved)
+  end
+
+  if show_compact_result
+    pv_to_pq_events = length(myNet.qLimitLog)
+    pv_to_pq_buses = length(myNet.qLimitEvents)
+    if erg == 0
+      @printf("method=%-12s  converged=%s  iterations=%d  pv2pq_events=%d  pv2pq_buses=%d  time=%8.6f s\n", String(method), "yes", ite, pv_to_pq_events, pv_to_pq_buses, etime)
+    elseif erg == 1
+      @printf("method=%-12s  converged=%s  iterations=%d  pv2pq_events=%d  pv2pq_buses=%d  time=%8.6f s\n", String(method), "no", ite, pv_to_pq_events, pv_to_pq_buses, etime)
+    else
+      @printf("method=%-12s  converged=%s  iterations=%d  pv2pq_events=%d  pv2pq_buses=%d  time=%8.6f s\n", String(method), "error", ite, pv_to_pq_events, pv_to_pq_buses, etime)
+    end
+  end
+
+  if status_ref !== nothing
+    status_ref[] = (converged = (erg == 0), erg = erg, iterations = ite, elapsed_s = etime, method = method)
   end
   
   if erg == 0 || printResultAnyCase

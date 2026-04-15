@@ -1,4 +1,8 @@
 # Change Log
+## Version 0.7.2 – 2026-04-15
+### Bug Fixes
+* Fixed a bug in the rectangular solver where the presence of internal isolated buses could lead to dimension
+
 ## Version 0.7.1 – 2026-04-15
 ### Improvements
 * Refactored decision logic for `qlimit_mode = :adjust_vset`:
@@ -50,7 +54,7 @@
 * Bad Data Detection (BDD) and Statistical Diagnostics for State Estimation (SE)
   
 ### Bug Fixes
-* Fix #139
+* Fix Issue 139
 
 ### Notes
 
