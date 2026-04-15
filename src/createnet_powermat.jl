@@ -161,6 +161,7 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
         pMax = pMax,
         qMin = qMin,
         qMax = qMax,
+        defer_bus_type_refresh = true,
       )
     end
   end
@@ -265,8 +266,12 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
       qu_controller = qu_controller,
       pu_controller = pu_controller,
       isRegulated = (btype == 2),
+      defer_bus_type_refresh = true,
     )
   end
+
+  refreshBusTypesFromProsumers!(myNet)
+  _buildQLimits!(myNet)
 
   if enable_pq_gen_controllers && pq_gen_controller_count > 0
     @info "MATPOWER import: PQ generator limits mapped to constant P(U)/Q(U) controllers" count = pq_gen_controller_count
