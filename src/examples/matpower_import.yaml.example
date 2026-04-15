@@ -33,15 +33,24 @@ tol_va: 0.5
 #   This effectively ignores reactive-power limits during the solve.
 ignore_q_limits: false
 
+# Optional MATPOWER import behavior for PQ-type generators:
+# - If true, PQ generators get constant P(U)/Q(U) controllers based on MATPOWER limits.
+# - If false, import keeps the plain generator values without creating these controllers.
+#   Recommended default for large benchmark cases to avoid extra overhead/log output.
+enable_pq_gen_controllers: false
+
 # Legacy warning tracing:
 # - If true, legacy busType warnings include caller=<file>:<line>.
 # - Helpful to identify remaining code paths that still call addBus!(... busType=...)
 #   or setBusType! during import/solver runs.
-trace_legacy_bus_type_warnings: true
+trace_legacy_bus_type_warnings: false
 # - Fine-grained manual locks (MATPOWER/original bus IDs). Applied when ignore_q_limits=false.
 lock_pv_to_pq_buses: []
 
 # Benchmark controls
+# - Set `benchmark: false` to only run `show_once` and write logfile/results once.
+#   Useful for large cases (e.g. case1951rte / case2869pegase) where benchmarking can take very long.
+benchmark: true
 seconds: 2.0
 samples: 50
 show_once: true

@@ -56,7 +56,7 @@ Builds a Sparlectra `Net` from a MATPOWER-like container `mpc`.
 
 All matrices are expected in MATPOWER v2 column conventions.
 """
-function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false, cooldown::Int = 0, q_hyst_pu::Float64 = 0.0)::Net
+function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false, cooldown::Int = 0, q_hyst_pu::Float64 = 0.0, enable_pq_gen_controllers::Bool = true)::Net
   # Small logger helper
   pInfo(msg::String) = (log ? (@info msg) : nothing)
 
@@ -219,6 +219,7 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
   end
 
   # --- Generators ---
+  pq_gen_controller_count = 0
   for row in eachrow(genData)
     status = Int(row[genDict["status"]])
     status < 1 && continue
@@ -241,12 +242,12 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
 
     pu_controller = nothing
     qu_controller = nothing
-    if btype == 1
+    if enable_pq_gen_controllers && btype == 1
       p_pu = pGen / baseMVA
       q_pu = qGen / baseMVA
       pu_controller = PUController(make_characteristic([(0.0, p_pu), (2.0, p_pu)]); pmin_MW = pMin, pmax_MW = pMax, sbase_MVA = baseMVA)
       qu_controller = QUController(make_characteristic([(0.0, q_pu), (2.0, q_pu)]); qmin_MVAr = qMin, qmax_MVAr = qMax, sbase_MVA = baseMVA)
-      @info "MATPOWER import: PQ generator limits mapped to constant P(U)/Q(U) controllers" bus = bus pMin = pMin pMax = pMax qMin = qMin qMax = qMax
+      pq_gen_controller_count += 1
     end
 
     addProsumer!(
@@ -267,6 +268,10 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
     )
   end
 
+  if enable_pq_gen_controllers && pq_gen_controller_count > 0
+    @info "MATPOWER import: PQ generator limits mapped to constant P(U)/Q(U) controllers" count = pq_gen_controller_count
+  end
+
   ok, msg = validate!(net = myNet)
   ok || @error "network is invalid: $msg"
 
@@ -278,13 +283,14 @@ function createNetFromMatPowerFile(; filename::String,
     flatstart::Bool=false,
     cooldown::Int = 0,
     q_hyst_pu::Float64 = 0.0,
+    enable_pq_gen_controllers::Bool = true,
     verbose::Int = 0)::Net
 
   mpc = MatpowerIO.read_case(filename; legacy_compat=true)
 
   # Build the network first
   net = createNetFromMatPowerCase(; mpc=mpc, log=log, flatstart=flatstart,
-                                  cooldown=cooldown, q_hyst_pu=q_hyst_pu)
+                                  cooldown=cooldown, q_hyst_pu=q_hyst_pu, enable_pq_gen_controllers=enable_pq_gen_controllers)
 
   # Always apply MATPOWER isolated flags (BUS_TYPE==4) onto net
   MatpowerIO.apply_mp_isolated_buses!(net, mpc; verbose=verbose)

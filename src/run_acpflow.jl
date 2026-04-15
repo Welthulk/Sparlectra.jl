@@ -48,6 +48,7 @@ function run_acpflow(;
   validate_limits_after_pf::Bool = false,
   q_limit_violation_headroom::Float64 = 0.20,
   lock_pv_to_pq_buses::AbstractVector{Int} = Int[],
+  enable_pq_gen_controllers::Bool = true,
 )::Net  
   ext = lowercase(splitext(casefile)[2])
   myNet = nothing              # Initialize myNet variable
@@ -66,7 +67,7 @@ function run_acpflow(;
       error("File $(in_path) not found")
     end
 
-    myNet = createNetFromMatPowerFile(filename = in_path, log = (verbose > 0), flatstart = opt_flatstart, cooldown = cooldown_iters, q_hyst_pu = q_hyst_pu)
+    myNet = createNetFromMatPowerFile(filename = in_path, log = (verbose > 0), flatstart = opt_flatstart, cooldown = cooldown_iters, q_hyst_pu = q_hyst_pu, enable_pq_gen_controllers = enable_pq_gen_controllers)
     
     if verbose > 1
       # --- DEBUG START ---
