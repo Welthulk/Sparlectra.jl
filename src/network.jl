@@ -982,6 +982,7 @@ function addProsumer!(;
   qu_controller::Union{Nothing,QUController} = nothing,
   pu_controller::Union{Nothing,PUController} = nothing,
   isRegulated::Bool = false,
+  defer_bus_type_refresh::Bool = false,
 )
   busIdx = geNetBusIdx(net = net, busName = busName)
   idProsSum = length(net.prosumpsVec) + 1
@@ -1016,8 +1017,10 @@ function addProsumer!(;
     addLoadPower!(node = node, p = p, q = q)
   end
 
-  refreshBusTypesFromProsumers!(net)
-  _buildQLimits!(net)
+  if !defer_bus_type_refresh
+    refreshBusTypesFromProsumers!(net)
+    _buildQLimits!(net)
+  end
 end
 
 """
