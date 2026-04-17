@@ -26,6 +26,7 @@
 using Sparlectra
 using Printf
 using Dates
+using Random
 
 const OUTDIR = joinpath(@__DIR__, "_out")
 const CASEFILE = "case9.m"
@@ -64,10 +65,11 @@ function _run_state_estimation_example(io::IO)
   Vref = buildVoltageVector(net)
 
   # Configure synthetic measurement standard deviations.
-  std = measurementStdDevs(vm = 0.1, pinj = 1.5, qinj = 1.5, pflow = 0.7, qflow = 0.9)
+  std = measurementStdDevs(vm = 0.01, pinj = 1.5, qinj = 1.5, pflow = 0.7, qflow = 0.9)
 
   # Generate all currently supported measurement types with Gaussian noise.
-  setMeasurementsFromPF!(net; includeVm = true, includePinj = true, includeQinj = true, includePflow = true, includeQflow = true, noise = true, stddev = std)
+  rng = MersenneTwister(42)
+  setMeasurementsFromPF!(net; includeVm = true, includePinj = true, includeQinj = true, includePflow = true, includeQflow = true, noise = true, stddev = std, rng = rng)
   meas = Measurement[m for m in net.measurements]
 
   # Reset to a simple flat start before running the state estimator.
