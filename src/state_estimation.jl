@@ -374,6 +374,11 @@ end
 ## - Redundancy metrics ν = m - n and ρ = m/n
 ## - Critical measurements by single-row removal tests (numerical + structural)
 ##
+## Naming note:
+## - `redundancy` and `dof` are intentionally the same value ν = m - n.
+##   `redundancy` is the observability wording, while `dof` is kept as a
+##   statistics-oriented alias for consistency with χ²-style checks.
+##
 ## activeOriginalIdx maps local Jacobian rows back to original measurement indices.
 function _evaluate_observability_from_jacobian(H::Matrix{Float64}, activeOriginalIdx::Vector{Int}; tol = nothing)
   m, n = size(H)
@@ -407,7 +412,7 @@ function _evaluate_observability_from_jacobian(H::Matrix{Float64}, activeOrigina
     n_measurements = m,
     redundancy = ν,
     redundancy_ratio = ρ,
-    dof = ν,
+    dof = ν, # alias of redundancy (ν = m - n), kept for statistical interpretation
     numerical_critical_measurement_indices = criticalNum,
     structural_critical_measurement_indices = criticalStr,
     quality = _redundancy_quality(numObs && strObs, ν, hasCritical),
@@ -506,7 +511,7 @@ measurement Jacobian.
 Includes global redundancy metrics
 - `redundancy = r = m - n`
 - `redundancy_ratio = ρ = m / n`
-- `dof = ν = m - n`
+- `dof = ν = m - n` (alias of `redundancy`, kept for statistical wording)
 
 Quality classes:
 - `:good`: observable and no critical single measurement
