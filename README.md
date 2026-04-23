@@ -114,4 +114,10 @@ data while still allowing reproducible experiments and benchmarks.
 This project is licensed under the Apache License, Version 2.0.
 [The license file](https://github.com/welthulk/Sparlectra.jl/blob/main/LICENSE) contains the complete licensing information.
 
+### Note for publications
+If you use Sparlectra in publications, presentations, or project reports, a brief
+mention is appreciated: the program name **Sparlectra.jl**, the GitHub repository
+link (<https://github.com/Welthulk/Sparlectra.jl>), and the original author
+**Udo Schmitz**.
+
 
