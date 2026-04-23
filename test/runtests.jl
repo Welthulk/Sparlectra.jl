@@ -33,6 +33,7 @@ include("testremove.jl")
 include("test_solver_interface.jl")
 include("test_state_estimation.jl")
 include("test_voltage_dependent_control.jl")
+include("test_transformer_phase_shift.jl")
 
 @testset "Sparlectra.jl" begin
   run_grid_tests()
@@ -40,5 +41,6 @@ include("test_voltage_dependent_control.jl")
   run_solver_interface_tests()
   run_state_estimation_tests()
   run_voltage_dependent_control_tests()
+  run_transformer_phase_shift_tests()
   return nothing
 end

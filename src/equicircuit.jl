@@ -121,9 +121,7 @@ function calcVKDependence(xTaps::Vector{Int}, yVKs::Vector{Float64}, tapPos::Flo
 end
 
 function calcComplexRatio(; tapRatio::Float64, angleInDegrees::Float64)::ComplexF64
-  tr = tapRatio * cosd(angleInDegrees)
-  ti = tapRatio * sind(angleInDegrees)
-  return tr + ti * im
+  return tapRatio * cis(deg2rad(angleInDegrees))
 end
 
 """

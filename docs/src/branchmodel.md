@@ -28,6 +28,22 @@ y_{ser} = \frac{1}{R + jX}
 y_{shunt} = G + j \cdot B
 ```
 
+### Phase-shift control direction (practical probe)
+
+For transformer-flow control with a phase shifter, do not hard-code the sign
+of the controller action. Probe it on the active model:
+
+1. Compute `P_ab(φ = 0°)`.
+2. Compute `P_ab(φ = +5°)`.
+3. Evaluate `ΔP_ab = P_ab(5°) - P_ab(0°)`.
+4. Use the measured direction in control:
+   - if `P_ab < target`, move `φ` in the direction that increases `P_ab`,
+   - otherwise move `φ` in the opposite direction.
+
+See executable example:
+
+- `src/examples/example_transformer_phase_shift_control.jl`
+
 
 #### Circuit diagram
 ```
@@ -40,6 +56,5 @@ y_{shunt} = G + j \cdot B
       x--┛┗----------------------x 
          N = tau * e^(j*phi)
 ```
-
 
 

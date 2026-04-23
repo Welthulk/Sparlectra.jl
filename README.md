@@ -55,6 +55,12 @@ if erg == 0
 end
 ```
 
+## Example scripts
+
+- `src/examples/example_transformer_phase_shift_control.jl`  
+  Demonstrates transformer phase-shift sign probing (`φ=0°` vs `φ=+5°`) and
+  controller-step selection based on measured `ΔP_ab` instead of a fixed sign assumption.
+
 ## Documentation Structure
 
 - **[Changelog](docs/src/changelog.md)**: Version history and updates
@@ -119,5 +125,4 @@ If you use Sparlectra in publications, presentations, or project reports, a brie
 mention is appreciated: the program name **Sparlectra.jl**, the GitHub repository
 link (<https://github.com/Welthulk/Sparlectra.jl>), and the original author
 **Udo Schmitz**.
-
 
