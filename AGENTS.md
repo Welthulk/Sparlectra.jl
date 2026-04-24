@@ -230,3 +230,9 @@ If it corrects behavior that was wrong, classify it as a **bugfix**.
   - The feature matrix is checked and updated if applicable
 
 - Tests alone are not sufficient for new features; documentation and examples are required
+## Changelog and release notes
+- For each new feature, improvement, or bugfix, add a corresponding entry in `CHANGELOG.md` under the appropriate version heading.
+- Follow the format:
+  - **Feature**: Brief description of the new capability, its purpose, and any important usage notes.
+  - **Improvement**: Brief description of the enhancement, what it improves, and any impact on existing behavior.
+  - **Bugfix**: Brief description of the issue fixed, its impact, and any relevant details for users. 

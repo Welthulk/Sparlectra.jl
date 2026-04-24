@@ -16,6 +16,7 @@ test/test_experment.jl
 julia-*.tar.gz
 src/examples/matpower_import.yaml
 src/examples/matpower_import.yaml
+src/examples/tap_control_demo_grid.yaml
 src/examples/MergeRequeste.md
 kink_characteristic.png
 docs/src/ybus_diagonal_sparlectra.md

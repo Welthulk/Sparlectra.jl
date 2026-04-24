@@ -1,23 +1,84 @@
 using Sparlectra
 using Printf
 
-const MAX_ITE = 40
-const PF_TOL = 1e-9
-const PF_METHOD = :rectangular
+const DEFAULT_CFG = Dict{String,Any}(
+  "max_ite" => 40,
+  "pf_tol" => 1e-9,
+  "pf_method" => "rectangular",
+  "t2_target_bus" => "B9",
+  "t2_target_vm_pu" => 1.23,
+  "pst1_target_from_bus" => "B1",
+  "pst1_target_to_bus" => "B2",
+  "pst1_target_p_mw" => 7.0,
+  "st1_target_bus" => "B5",
+  "st1_target_vm_pu" => 1.07,
+  "st1_target_from_bus" => "B4",
+  "st1_target_to_bus" => "B5",
+  "st1_target_p_mw" => -60.0,
+)
 
 # -----------------------------------------------------------------------------
-# Tap controller setpoints
+# YAML config helpers (simple subset)
 # -----------------------------------------------------------------------------
-const T2_TARGET_BUS = "B9"
-const T2_TARGET_VM_PU = 1.23
+function _parse_yaml_scalar(raw::AbstractString)
+  s = strip(raw)
+  isempty(s) && return nothing
 
-const PST1_TARGET_BRANCH = ("B1", "B2")
-const PST1_TARGET_P_MW = 7.0
+  if (startswith(s, "\"") && endswith(s, "\"")) || (startswith(s, "'") && endswith(s, "'"))
+    return s[2:end-1]
+  end
 
-const ST1_TARGET_BUS = "B5"
-const ST1_TARGET_VM_PU = 1.07
-const ST1_TARGET_BRANCH = ("B4", "B5")
-const ST1_TARGET_P_MW = -60.0
+  ls = lowercase(s)
+  ls == "true" && return true
+  ls == "false" && return false
+  ls == "null" && return nothing
+
+  iv = tryparse(Int, s)
+  !isnothing(iv) && return iv
+  fv = tryparse(Float64, s)
+  !isnothing(fv) && return fv
+  return s
+end
+
+function load_yaml_config(path::AbstractString)
+  isempty(path) && return Dict{String,Any}()
+  isfile(path) || error("YAML config file not found: $path")
+
+  cfg = Dict{String,Any}()
+  for line in eachline(path)
+    stripped = strip(line)
+    isempty(stripped) && continue
+    startswith(stripped, "#") && continue
+    occursin(":", stripped) || continue
+
+    key, value_raw = split(stripped, ":"; limit = 2)
+    key = strip(key)
+    value_raw = strip(split(value_raw, "#"; limit = 2)[1])
+    cfg[key] = _parse_yaml_scalar(value_raw)
+  end
+  return cfg
+end
+
+function _yaml_path_from_inputs()
+  !isempty(ARGS) && return ARGS[1]
+  env_path = get(ENV, "SPARLECTRA_TAP_DEMO_YAML", "")
+  !isempty(env_path) && return env_path
+
+  local_default = joinpath(@__DIR__, "tap_control_demo_grid.yaml")
+  isfile(local_default) && return local_default
+
+  local_example = joinpath(@__DIR__, "tap_control_demo_grid.yaml.example")
+  isfile(local_example) && return local_example
+  return ""
+end
+
+function _cfg_value(cfg::Dict{String,Any}, key::String)
+  return get(cfg, key, DEFAULT_CFG[key])
+end
+
+function _target_branch(cfg::Dict{String,Any}, prefix::String)
+  return (String(_cfg_value(cfg, "$(prefix)_from_bus")), String(_cfg_value(cfg, "$(prefix)_to_bus")))
+end
 
 """
     build_tap_control_demo_grid()
@@ -121,12 +182,12 @@ function _controller_branches(net::Net)
 end
 
 """
-    configure_tap_controllers!(net)
+    configure_tap_controllers!(net, cfg)
 
 Configures one voltage, one phase-power, and one coupled complex tap controller.
-All controller setpoints are explicitly wired from top-level constants.
+All controller setpoints are loaded from YAML or fallback defaults.
 """
-function configure_tap_controllers!(net::Net)
+function configure_tap_controllers!(net::Net, cfg::Dict{String,Any})
   if !isdefined(Sparlectra, :addTapController!)
     error("Sparlectra.addTapController! is not available. Please update this example to the current API name.")
   end
@@ -137,8 +198,8 @@ function configure_tap_controllers!(net::Net)
   addTapController!(net;
     trafo = string(c.t2.branchIdx),
     mode = :voltage,
-    target_bus = T2_TARGET_BUS,
-    target_vm_pu = T2_TARGET_VM_PU,
+    target_bus = String(_cfg_value(cfg, "t2_target_bus")),
+    target_vm_pu = Float64(_cfg_value(cfg, "t2_target_vm_pu")),
     control_ratio = true,
     control_phase = false,
     is_discrete = true,
@@ -149,8 +210,8 @@ function configure_tap_controllers!(net::Net)
   addTapController!(net;
     trafo = string(c.pst1.branchIdx),
     mode = :branch_active_power,
-    target_branch = PST1_TARGET_BRANCH,
-    p_target_mw = PST1_TARGET_P_MW,
+    target_branch = _target_branch(cfg, "pst1_target"),
+    p_target_mw = Float64(_cfg_value(cfg, "pst1_target_p_mw")),
     control_ratio = false,
     control_phase = true,
     is_discrete = true,
@@ -161,10 +222,10 @@ function configure_tap_controllers!(net::Net)
   addTapController!(net;
     trafo = string(c.st1.branchIdx),
     mode = :voltage_and_branch_active_power,
-    target_bus = ST1_TARGET_BUS,
-    target_vm_pu = ST1_TARGET_VM_PU,
-    target_branch = ST1_TARGET_BRANCH,
-    p_target_mw = ST1_TARGET_P_MW,
+    target_bus = String(_cfg_value(cfg, "st1_target_bus")),
+    target_vm_pu = Float64(_cfg_value(cfg, "st1_target_vm_pu")),
+    target_branch = _target_branch(cfg, "st1_target"),
+    p_target_mw = Float64(_cfg_value(cfg, "st1_target_p_mw")),
     control_ratio = true,
     control_phase = true,
     is_discrete = true,
@@ -177,37 +238,46 @@ function configure_tap_controllers!(net::Net)
 end
 
 """
-    print_tap_control_targets(net)
+    print_tap_control_targets(net, cfg)
 
 Prints configured target values together with achieved branch/bus values and
 current tap states for T2, PST1, and ST1.
 """
-function print_tap_control_targets(net::Net)
+function print_tap_control_targets(net::Net, cfg::Dict{String,Any})
   c = _controller_branches(net)
+
+  t2_target_bus = String(_cfg_value(cfg, "t2_target_bus"))
+  t2_target_vm_pu = Float64(_cfg_value(cfg, "t2_target_vm_pu"))
+  pst1_target_branch = _target_branch(cfg, "pst1_target")
+  pst1_target_p_mw = Float64(_cfg_value(cfg, "pst1_target_p_mw"))
+  st1_target_bus = String(_cfg_value(cfg, "st1_target_bus"))
+  st1_target_vm_pu = Float64(_cfg_value(cfg, "st1_target_vm_pu"))
+  st1_target_branch = _target_branch(cfg, "st1_target")
+  st1_target_p_mw = Float64(_cfg_value(cfg, "st1_target_p_mw"))
 
   println("Tap Control Targets and Results")
   println("-------------------------------")
   println("T2 voltage controller:")
-  @printf("  target bus       : %s\n", T2_TARGET_BUS)
-  @printf("  target Vm        : %.4f pu\n", T2_TARGET_VM_PU)
-  @printf("  achieved Vm      : %.4f pu\n", get_bus_vm_pu(net, T2_TARGET_BUS))
+  @printf("  target bus       : %s\n", t2_target_bus)
+  @printf("  target Vm        : %.4f pu\n", t2_target_vm_pu)
+  @printf("  achieved Vm      : %.4f pu\n", get_bus_vm_pu(net, t2_target_bus))
   @printf("  tap ratio        : %.5f\n", c.t2.tap_ratio)
   @printf("  phase shift      : %.5f deg\n", c.t2.phase_shift_deg)
 
   println("\nPST1 active power controller:")
-  @printf("  target branch    : %s -> %s\n", PST1_TARGET_BRANCH[1], PST1_TARGET_BRANCH[2])
-  @printf("  target P         : %.3f MW\n", PST1_TARGET_P_MW)
-  @printf("  achieved P       : %.3f MW\n", get_branch_p_from_to_mw(net, PST1_TARGET_BRANCH[1], PST1_TARGET_BRANCH[2]))
+  @printf("  target branch    : %s -> %s\n", pst1_target_branch[1], pst1_target_branch[2])
+  @printf("  target P         : %.3f MW\n", pst1_target_p_mw)
+  @printf("  achieved P       : %.3f MW\n", get_branch_p_from_to_mw(net, pst1_target_branch[1], pst1_target_branch[2]))
   @printf("  tap ratio        : %.5f\n", c.pst1.tap_ratio)
   @printf("  phase shift      : %.5f deg\n", c.pst1.phase_shift_deg)
 
   println("\nST1 Schraegregler:")
-  @printf("  target bus       : %s\n", ST1_TARGET_BUS)
-  @printf("  target Vm        : %.4f pu\n", ST1_TARGET_VM_PU)
-  @printf("  achieved Vm      : %.4f pu\n", get_bus_vm_pu(net, ST1_TARGET_BUS))
-  @printf("  target branch    : %s -> %s\n", ST1_TARGET_BRANCH[1], ST1_TARGET_BRANCH[2])
-  @printf("  target P         : %.3f MW\n", ST1_TARGET_P_MW)
-  @printf("  achieved P       : %.3f MW\n", get_branch_p_from_to_mw(net, ST1_TARGET_BRANCH[1], ST1_TARGET_BRANCH[2]))
+  @printf("  target bus       : %s\n", st1_target_bus)
+  @printf("  target Vm        : %.4f pu\n", st1_target_vm_pu)
+  @printf("  achieved Vm      : %.4f pu\n", get_bus_vm_pu(net, st1_target_bus))
+  @printf("  target branch    : %s -> %s\n", st1_target_branch[1], st1_target_branch[2])
+  @printf("  target P         : %.3f MW\n", st1_target_p_mw)
+  @printf("  achieved P       : %.3f MW\n", get_branch_p_from_to_mw(net, st1_target_branch[1], st1_target_branch[2]))
   @printf("  tap ratio        : %.5f\n", c.st1.tap_ratio)
   @printf("  phase shift      : %.5f deg\n", c.st1.phase_shift_deg)
 
@@ -226,22 +296,35 @@ end
 
 function main()
   println("Tap Control Demo Grid")
+
+  yaml_path = _yaml_path_from_inputs()
+  cfg = merge(copy(DEFAULT_CFG), load_yaml_config(yaml_path))
+  if !isempty(yaml_path)
+    println("Using YAML config: $yaml_path")
+  else
+    println("Using built-in defaults (no YAML file found)")
+  end
+
   net = build_tap_control_demo_grid()
 
-  _print_section("Uncontrolled power flow")
-  _, erg0, _ = run_net_acpflow(net = net, max_ite = MAX_ITE, tol = PF_TOL, verbose = 0, method = PF_METHOD, show_results = true)
-  erg0 == 0 || error("Uncontrolled power flow failed with erg=$(erg0)")
-  print_tap_control_targets(net)
+  max_ite = Int(_cfg_value(cfg, "max_ite"))
+  pf_tol = Float64(_cfg_value(cfg, "pf_tol"))
+  pf_method = Symbol(_cfg_value(cfg, "pf_method"))
 
-  configure_tap_controllers!(net)
+  _print_section("Uncontrolled power flow")
+  _, erg0, _ = run_net_acpflow(net = net, max_ite = max_ite, tol = pf_tol, verbose = 0, method = pf_method, show_results = true)
+  erg0 == 0 || error("Uncontrolled power flow failed with erg=$(erg0)")
+  print_tap_control_targets(net, cfg)
+
+  configure_tap_controllers!(net, cfg)
 
   _print_section("Configured tap controller setpoints")
-  print_tap_control_targets(net)
+  print_tap_control_targets(net, cfg)
 
   _print_section("Controlled power flow with outer-loop tap control")
-  _, erg1, _ = run_net_acpflow(net = net, max_ite = MAX_ITE, tol = PF_TOL, verbose = 0, method = PF_METHOD, show_results = true)
+  _, erg1, _ = run_net_acpflow(net = net, max_ite = max_ite, tol = pf_tol, verbose = 0, method = pf_method, show_results = true)
   erg1 == 0 || error("Controlled power flow failed with erg=$(erg1)")
-  print_tap_control_targets(net)
+  print_tap_control_targets(net, cfg)
 
   return net
 end

@@ -1,0 +1,35 @@
+# Tap Control Demo Grid - editable local configuration
+#
+# Usage options:
+#   1) Default lookup (auto):
+#      - script first checks: src/examples/tap_control_demo_grid.yaml
+#      - if not found, it loads this example file
+#   2) Explicit path argument:
+#      julia --project=. src/examples/tap_control_demo_grid.jl path/to/custom.yaml
+#   3) Environment variable:
+#      SPARLECTRA_TAP_DEMO_YAML=path/to/custom.yaml julia --project=. src/examples/tap_control_demo_grid.jl
+#
+# Recommended local workflow (git-clean):
+#   cp src/examples/tap_control_demo_grid.yaml.example src/examples/tap_control_demo_grid.yaml
+#   # edit src/examples/tap_control_demo_grid.yaml (this file is git-ignored)
+
+# Solver options
+max_ite: 40
+pf_tol: 1.0e-9
+pf_method: rectangular
+
+# -----------------------------------------------------------------------------
+# Tap controller setpoints
+# -----------------------------------------------------------------------------
+t2_target_bus: B9
+t2_target_vm_pu: 1.23
+
+pst1_target_from_bus: B1
+pst1_target_to_bus: B2
+pst1_target_p_mw: 7.0
+
+st1_target_bus: B5
+st1_target_vm_pu: 1.07
+st1_target_from_bus: B4
+st1_target_to_bus: B5
+st1_target_p_mw: -60.0
