@@ -1288,6 +1288,7 @@ function test_acpflow_report_object()
   node_count_ok = length(report.nodes) == length(net.nodeVec)
   branch_count_ok = length(report.branches) == length(net.branchVec)
   link_count_ok = length(report.links) == length(net.linkVec)
+  ctrl_count_ok = length(report.transformer_controls) == 0
 
   total_losses_ok = isapprox(report.metadata.total_p_loss_MW, getTotalLosses(net = net)[1]; atol = 1e-8) && isapprox(report.metadata.total_q_loss_MVar, getTotalLosses(net = net)[2]; atol = 1e-8)
 
@@ -1297,7 +1298,7 @@ function test_acpflow_report_object()
   has_node_keys = haskey(first_node, :bus) && haskey(first_node, :vm_pu) && haskey(first_node, :q_limit_hit)
   has_branch_keys = haskey(first_branch, :from_bus) && haskey(first_branch, :p_from_MW) && haskey(first_branch, :overloaded)
 
-  return node_count_ok && branch_count_ok && link_count_ok && total_losses_ok && has_node_keys && has_branch_keys
+  return node_count_ok && branch_count_ok && link_count_ok && ctrl_count_ok && total_losses_ok && has_node_keys && has_branch_keys
 end
 
 function test_report_uses_user_bus_names_and_pf_node_count()
@@ -1327,10 +1328,11 @@ function test_report_uses_user_bus_names_and_pf_node_count()
 
   has_bus1a_row = any(row -> row.bus_name == "Bus1a", report.nodes)
   merged_pf_count_ok = occursin("PF Nodes", report_text) && occursin("2 (after active-link merge)", report_text)
+  controllers_line_ok = occursin("Controllers", report_text)
   link_names_ok = occursin("Bus1", report_text) && occursin("Bus1a", report_text)
   branch_connection_ok = occursin("Slack -> Bus1", report_text) && occursin("Line", report_text)
 
-  return has_bus1a_row && merged_pf_count_ok && link_names_ok && branch_connection_ok
+  return has_bus1a_row && merged_pf_count_ok && controllers_line_ok && link_names_ok && branch_connection_ok
 end
 
 function test_matpower_read_case_m_postprocessing()::Bool

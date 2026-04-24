@@ -15,6 +15,8 @@
 
 ### Improvements
 * Updated branch-model documentation with practical controller-direction probing guidance for phase-shift control.
+* Improved tap-control reporting in classic and structured ACP flow outputs, including typed transformer-controller rows with tap position/stage and consistent branch power direction reporting.
+* Updated `tap_control_demo_grid.jl` logging to create versioned run logs in `src/examples/_out/` and refined OLTC demo step resolution to `tap_step = 0.00625` for the unchanged `0.90 .. 1.10` ratio range.
 
 ### Tests
 * Added regression tests for transformer tap controller behavior.

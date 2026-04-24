@@ -33,3 +33,24 @@ st1_target_vm_pu: 1.07
 st1_target_from_bus: B4
 st1_target_to_bus: B5
 st1_target_p_mw: -60.0
+
+# -----------------------------------------------------------------------------
+# Transformer tap/phase parameters (all editable from YAML)
+# -----------------------------------------------------------------------------
+# T2 OLTC ratio range and discrete step
+t2_tap_min: 0.90
+t2_tap_max: 1.10
+t2_tap_step: 0.00625
+
+# PST1 phase-shift range and step [deg]
+pst1_phase_min_deg: -15.0
+pst1_phase_max_deg: 15.0
+pst1_phase_step_deg: 1.0
+
+# ST1 combined ratio + phase range and step
+st1_tap_min: 0.95
+st1_tap_max: 1.05
+st1_tap_step: 0.00625
+st1_phase_min_deg: -10.0
+st1_phase_max_deg: 10.0
+st1_phase_step_deg: 0.5

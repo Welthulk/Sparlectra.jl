@@ -79,4 +79,35 @@ function run_tap_controller_tests()
     @test erg == 0
     @test tbr.phase_shift_deg != 0.0
   end
+
+  @testset "Tap controller reporting rows and classic section" begin
+    net, tbr = _build_net()
+    addTapController!(net;
+      trafo = string(tbr.branchIdx),
+      mode = :voltage_and_branch_active_power,
+      target_bus = "Load",
+      target_vm_pu = 0.98,
+      target_branch = ("Slack", "Mid"),
+      p_target_mw = 10.0,
+      control_ratio = true,
+      control_phase = true,
+      is_discrete = true,
+      max_outer_iters = 4,
+    )
+    _, erg, _ = run_net_acpflow(net = net, max_ite = 30, tol = 1e-9, verbose = 0, method = :rectangular, show_results = false)
+    @test erg == 0
+
+    report = buildACPFlowReport(net; ct = 0.0, ite = 1, tol = 1e-9, converged = true, solver = :rectangular)
+    @test length(report.transformer_controls) == 1
+    row = report.transformer_controls[1]
+    @test haskey(row, :controller_name)
+    @test haskey(row, :achieved_p_mw)
+    @test !ismissing(row.achieved_p_mw)
+    @test row.control_type == "OLTC+PST"
+
+    txt = sprint(io -> printTapControllerSummary(io, net))
+    @test occursin("tap position", txt)
+    @test occursin("status", txt)
+    @test occursin("Power sign convention", txt)
+  end
 end

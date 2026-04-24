@@ -1,5 +1,6 @@
 using Sparlectra
 using Printf
+using Dates
 
 const DEFAULT_CFG = Dict{String,Any}(
   "max_ite" => 40,
@@ -15,6 +16,19 @@ const DEFAULT_CFG = Dict{String,Any}(
   "st1_target_from_bus" => "B4",
   "st1_target_to_bus" => "B5",
   "st1_target_p_mw" => -60.0,
+  # Transformer tap parameterization (editable from YAML)
+  "t2_tap_min" => 0.90,
+  "t2_tap_max" => 1.10,
+  "t2_tap_step" => 0.00625,
+  "pst1_phase_min_deg" => -15.0,
+  "pst1_phase_max_deg" => 15.0,
+  "pst1_phase_step_deg" => 1.0,
+  "st1_tap_min" => 0.95,
+  "st1_tap_max" => 1.05,
+  "st1_tap_step" => 0.00625,
+  "st1_phase_min_deg" => -10.0,
+  "st1_phase_max_deg" => 10.0,
+  "st1_phase_step_deg" => 0.5,
 )
 
 # -----------------------------------------------------------------------------
@@ -81,13 +95,14 @@ function _target_branch(cfg::Dict{String,Any}, prefix::String)
 end
 
 """
-    build_tap_control_demo_grid()
+    build_tap_control_demo_grid(cfg)
 
 Builds a three-voltage-level network with a meshed 220 kV level, a meshed 110 kV
 level, and a radial 20 kV level. The grid contains one OLTC transformer, one PST,
-and one coupled ratio+phase regulating transformer.
+and one coupled ratio+phase regulating transformer. Tap and phase limits/steps
+are read from `cfg` so they can be edited in YAML.
 """
-function build_tap_control_demo_grid()
+function build_tap_control_demo_grid(cfg::Dict{String,Any})
   net = Net(name = "tap_control_demo_grid", baseMVA = 100.0)
 
   # 220 kV mesh
@@ -139,9 +154,9 @@ function build_tap_control_demo_grid()
   # T2 OLTC (ratio only)
   t2.has_ratio_tap = true
   t2.has_phase_tap = false
-  t2.tap_min = 0.90
-  t2.tap_max = 1.10
-  t2.tap_step = 0.0125
+  t2.tap_min = Float64(_cfg_value(cfg, "t2_tap_min"))
+  t2.tap_max = Float64(_cfg_value(cfg, "t2_tap_max"))
+  t2.tap_step = Float64(_cfg_value(cfg, "t2_tap_step"))
   t2.phase_shift_deg = 0.0
   t2.angle = 0.0
 
@@ -152,23 +167,23 @@ function build_tap_control_demo_grid()
   pst1.ratio = 1.0
   pst1.phase_shift_deg = 0.0
   pst1.angle = 0.0
-  pst1.phase_min_deg = -15.0
-  pst1.phase_max_deg = 15.0
-  pst1.phase_step_deg = 1.0
+  pst1.phase_min_deg = Float64(_cfg_value(cfg, "pst1_phase_min_deg"))
+  pst1.phase_max_deg = Float64(_cfg_value(cfg, "pst1_phase_max_deg"))
+  pst1.phase_step_deg = Float64(_cfg_value(cfg, "pst1_phase_step_deg"))
 
   # ST1 Schrägregler (ratio + phase)
   st1.has_ratio_tap = true
   st1.has_phase_tap = true
   st1.tap_ratio = 1.0
   st1.ratio = 1.0
-  st1.tap_min = 0.95
-  st1.tap_max = 1.05
-  st1.tap_step = 0.00625
+  st1.tap_min = Float64(_cfg_value(cfg, "st1_tap_min"))
+  st1.tap_max = Float64(_cfg_value(cfg, "st1_tap_max"))
+  st1.tap_step = Float64(_cfg_value(cfg, "st1_tap_step"))
   st1.phase_shift_deg = 0.0
   st1.angle = 0.0
-  st1.phase_min_deg = -10.0
-  st1.phase_max_deg = 10.0
-  st1.phase_step_deg = 0.5
+  st1.phase_min_deg = Float64(_cfg_value(cfg, "st1_phase_min_deg"))
+  st1.phase_max_deg = Float64(_cfg_value(cfg, "st1_phase_max_deg"))
+  st1.phase_step_deg = Float64(_cfg_value(cfg, "st1_phase_step_deg"))
 
   return net
 end
@@ -243,7 +258,7 @@ end
 Prints configured target values together with achieved branch/bus values and
 current tap states for T2, PST1, and ST1.
 """
-function print_tap_control_targets(net::Net, cfg::Dict{String,Any})
+function print_tap_control_targets(io::IO, net::Net, cfg::Dict{String,Any})
   c = _controller_branches(net)
 
   t2_target_bus = String(_cfg_value(cfg, "t2_target_bus"))
@@ -255,78 +270,134 @@ function print_tap_control_targets(net::Net, cfg::Dict{String,Any})
   st1_target_branch = _target_branch(cfg, "st1_target")
   st1_target_p_mw = Float64(_cfg_value(cfg, "st1_target_p_mw"))
 
-  println("Tap Control Targets and Results")
-  println("-------------------------------")
-  println("T2 voltage controller:")
-  @printf("  target bus       : %s\n", t2_target_bus)
-  @printf("  target Vm        : %.4f pu\n", t2_target_vm_pu)
-  @printf("  achieved Vm      : %.4f pu\n", get_bus_vm_pu(net, t2_target_bus))
-  @printf("  tap ratio        : %.5f\n", c.t2.tap_ratio)
-  @printf("  phase shift      : %.5f deg\n", c.t2.phase_shift_deg)
+  println(io, "Tap Control Targets")
+  println(io, "-------------------")
+  println(io, "Power sign convention: P is positive in the configured target branch direction (from -> to).")
+  println(io, "T2 OLTC:")
+  @printf(io, "  target bus       : %s\n", t2_target_bus)
+  @printf(io, "  target Vm        : %.4f pu\n", t2_target_vm_pu)
+  @printf(io, "  achieved Vm      : %.4f pu\n", get_bus_vm_pu(net, t2_target_bus))
+  @printf(io, "  tap ratio        : %.5f\n", c.t2.tap_ratio)
+  @printf(io, "  tap range        : %.5f .. %.5f\n", c.t2.tap_min, c.t2.tap_max)
+  @printf(io, "  tap step         : %.5f\n", c.t2.tap_step)
 
-  println("\nPST1 active power controller:")
-  @printf("  target branch    : %s -> %s\n", pst1_target_branch[1], pst1_target_branch[2])
-  @printf("  target P         : %.3f MW\n", pst1_target_p_mw)
-  @printf("  achieved P       : %.3f MW\n", get_branch_p_from_to_mw(net, pst1_target_branch[1], pst1_target_branch[2]))
-  @printf("  tap ratio        : %.5f\n", c.pst1.tap_ratio)
-  @printf("  phase shift      : %.5f deg\n", c.pst1.phase_shift_deg)
+  println(io, "\nPST1:")
+  @printf(io, "  target branch    : %s -> %s\n", pst1_target_branch[1], pst1_target_branch[2])
+  @printf(io, "  target P         : %.3f MW\n", pst1_target_p_mw)
+  @printf(io, "  achieved P       : %.3f MW\n", get_branch_p_from_to_mw(net, pst1_target_branch[1], pst1_target_branch[2]))
+  @printf(io, "  phase shift      : %.5f deg\n", c.pst1.phase_shift_deg)
 
-  println("\nST1 Schraegregler:")
-  @printf("  target bus       : %s\n", st1_target_bus)
-  @printf("  target Vm        : %.4f pu\n", st1_target_vm_pu)
-  @printf("  achieved Vm      : %.4f pu\n", get_bus_vm_pu(net, st1_target_bus))
-  @printf("  target branch    : %s -> %s\n", st1_target_branch[1], st1_target_branch[2])
-  @printf("  target P         : %.3f MW\n", st1_target_p_mw)
-  @printf("  achieved P       : %.3f MW\n", get_branch_p_from_to_mw(net, st1_target_branch[1], st1_target_branch[2]))
-  @printf("  tap ratio        : %.5f\n", c.st1.tap_ratio)
-  @printf("  phase shift      : %.5f deg\n", c.st1.phase_shift_deg)
-
-  if isdefined(Sparlectra, :printTapControllerSummary)
-    printTapControllerSummary(stdout, net)
-  end
+  println(io, "\nST1 Schraegregler:")
+  @printf(io, "  target bus       : %s\n", st1_target_bus)
+  @printf(io, "  target Vm        : %.4f pu\n", st1_target_vm_pu)
+  @printf(io, "  achieved Vm      : %.4f pu\n", get_bus_vm_pu(net, st1_target_bus))
+  @printf(io, "  target branch    : %s -> %s\n", st1_target_branch[1], st1_target_branch[2])
+  @printf(io, "  target P         : %.3f MW\n", st1_target_p_mw)
+  @printf(io, "  achieved P       : %.3f MW\n", get_branch_p_from_to_mw(net, st1_target_branch[1], st1_target_branch[2]))
+  @printf(io, "  tap ratio        : %.5f\n", c.st1.tap_ratio)
+  @printf(io, "  phase shift      : %.5f deg\n", c.st1.phase_shift_deg)
 
   return nothing
 end
 
-function _print_section(title::String)
-  println("\n======================================================================")
-  println(title)
-  println("======================================================================")
+function _print_section(io::IO, title::String)
+  println(io, "\n======================================================================")
+  println(io, title)
+  println(io, "======================================================================")
+end
+
+function _next_versioned_logfile()
+  outdir = joinpath(@__DIR__, "_out")
+  mkpath(outdir)
+  date_tag = Dates.format(Dates.today(), "yyyy-mm-dd")
+  prefix = "run_tap_control_demo_grid_$(date_tag)_v"
+  existing = filter(name -> startswith(name, prefix) && endswith(name, ".log"), readdir(outdir))
+  version = 1
+  if !isempty(existing)
+    versions = Int[]
+    for name in existing
+      m = match(r"_v(\d+)\.log$", name)
+      isnothing(m) || push!(versions, parse(Int, m.captures[1]))
+    end
+    !isempty(versions) && (version = maximum(versions) + 1)
+  end
+  return joinpath(outdir, "$(prefix)$(lpad(version, 2, '0')).log")
+end
+
+function _build_classic_report_string(net::Net, ite::Int, tol::Float64, method::Symbol)
+  return mktempdir() do tmpdir
+    printACPFlowResults(net, 0.0, ite, tol, true, tmpdir; converged = true, solver = method)
+    read(joinpath(tmpdir, "result_$(net.name).txt"), String)
+  end
+end
+
+function _print_dual(io_log::IO, msg::AbstractString)
+  print(stdout, msg)
+  print(io_log, msg)
 end
 
 function main()
-  println("Tap Control Demo Grid")
+  logfile = _next_versioned_logfile()
+  open(logfile, "w") do io_log
+    _print_dual(io_log, "Tap Control Demo Grid\n")
+    _print_dual(io_log, "Logfile: $logfile\n")
 
-  yaml_path = _yaml_path_from_inputs()
-  cfg = merge(copy(DEFAULT_CFG), load_yaml_config(yaml_path))
-  if !isempty(yaml_path)
-    println("Using YAML config: $yaml_path")
-  else
-    println("Using built-in defaults (no YAML file found)")
+    yaml_path = _yaml_path_from_inputs()
+    cfg = merge(copy(DEFAULT_CFG), load_yaml_config(yaml_path))
+    if !isempty(yaml_path)
+      _print_dual(io_log, "Using YAML config: $yaml_path\n")
+    else
+      _print_dual(io_log, "Using built-in defaults (no YAML file found)\n")
+    end
+
+    net = build_tap_control_demo_grid(cfg)
+
+    max_ite = Int(_cfg_value(cfg, "max_ite"))
+    pf_tol = Float64(_cfg_value(cfg, "pf_tol"))
+    pf_method = Symbol(_cfg_value(cfg, "pf_method"))
+
+    _print_section(stdout, "Uncontrolled power flow")
+    _, erg0, _ = run_net_acpflow(net = net, max_ite = max_ite, tol = pf_tol, verbose = 0, method = pf_method, show_results = false)
+    erg0 == 0 || error("Uncontrolled power flow failed with erg=$(erg0)")
+    print_tap_control_targets(stdout, net, cfg)
+
+    _print_section(io_log, "Uncontrolled power flow")
+    print_tap_control_targets(io_log, net, cfg)
+
+    configure_tap_controllers!(net, cfg)
+
+    _print_section(stdout, "Configured tap controller setpoints")
+    print_tap_control_targets(stdout, net, cfg)
+    _print_section(io_log, "Configured tap controller setpoints")
+    print_tap_control_targets(io_log, net, cfg)
+
+    _print_section(stdout, "Controlled power flow with outer-loop tap control")
+    ite, erg1, _ = run_net_acpflow(net = net, max_ite = max_ite, tol = pf_tol, verbose = 0, method = pf_method, show_results = false)
+    erg1 == 0 || error("Controlled power flow failed with erg=$(erg1)")
+    print_tap_control_targets(stdout, net, cfg)
+    printTapControllerSummary(stdout, net)
+
+    _print_section(io_log, "Controlled power flow with outer-loop tap control")
+    print_tap_control_targets(io_log, net, cfg)
+    printTapControllerSummary(io_log, net)
+
+    classic_report = _build_classic_report_string(net, ite, pf_tol, pf_method)
+    _print_section(stdout, "Final classic network report")
+    print(stdout, classic_report)
+    _print_section(io_log, "Final classic network report")
+    print(io_log, classic_report)
+
+    report = buildACPFlowReport(net; ct = 0.0, ite = ite, tol = pf_tol, converged = true, solver = pf_method)
+    _print_section(stdout, "Tap controller DataFrame-compatible rows")
+    for row in report.transformer_controls
+      println(stdout, row)
+    end
+    _print_section(io_log, "Tap controller DataFrame-compatible rows")
+    for row in report.transformer_controls
+      println(io_log, row)
+    end
+    return net
   end
-
-  net = build_tap_control_demo_grid()
-
-  max_ite = Int(_cfg_value(cfg, "max_ite"))
-  pf_tol = Float64(_cfg_value(cfg, "pf_tol"))
-  pf_method = Symbol(_cfg_value(cfg, "pf_method"))
-
-  _print_section("Uncontrolled power flow")
-  _, erg0, _ = run_net_acpflow(net = net, max_ite = max_ite, tol = pf_tol, verbose = 0, method = pf_method, show_results = true)
-  erg0 == 0 || error("Uncontrolled power flow failed with erg=$(erg0)")
-  print_tap_control_targets(net, cfg)
-
-  configure_tap_controllers!(net, cfg)
-
-  _print_section("Configured tap controller setpoints")
-  print_tap_control_targets(net, cfg)
-
-  _print_section("Controlled power flow with outer-loop tap control")
-  _, erg1, _ = run_net_acpflow(net = net, max_ite = max_ite, tol = pf_tol, verbose = 0, method = pf_method, show_results = true)
-  erg1 == 0 || error("Controlled power flow failed with erg=$(erg1)")
-  print_tap_control_targets(net, cfg)
-
-  return net
 end
 
 Base.invokelatest(main)
