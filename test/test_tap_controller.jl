@@ -34,6 +34,11 @@ function run_tap_controller_tests()
 
   @testset "Voltage tap controller (discrete ratio)" begin
     net, tbr = _build_net()
+    _, erg0, _ = run_net_acpflow(net = net, max_ite = 30, tol = 1e-9, verbose = 0, method = :rectangular, show_results = false)
+    @test erg0 == 0
+    vm0 = get_bus_vm_pu(net, "Load")
+    @test vm0 > 0.98
+
     addTapController!(net;
       trafo = string(tbr.branchIdx),
       mode = :voltage,
@@ -50,6 +55,7 @@ function run_tap_controller_tests()
     _, erg, _ = run_net_acpflow(net = net, max_ite = 30, tol = 1e-9, verbose = 0, method = :rectangular, show_results = false)
     @test erg == 0
     @test tbr.tap_ratio != ratio_before
+    @test tbr.tap_ratio > ratio_before
     if net.tapControllers[1].converged
       @test abs(get_bus_vm_pu(net, "Load") - 0.98) <= 0.05
     else
