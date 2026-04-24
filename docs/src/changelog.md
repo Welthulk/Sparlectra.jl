@@ -1,5 +1,24 @@
 # Change Log
 ## Version 0.7.3 – 2026-05-xx
+### New Features
+* Added transformer tap control in AC power flow with an outer-loop controller workflow.
+* Added `addTapController!` support for:
+  * voltage control via tap ratio (`mode = :voltage`)
+  * branch active-power control via phase shift (`mode = :branch_active_power`)
+  * coupled ratio + phase control (`mode = :voltage_and_branch_active_power`)
+* Added discrete tap-step handling (ratio and phase) with limit enforcement in controller updates.
+* Added user documentation for complex tap control and controller modes.
+* Added runnable examples for:
+  * transformer tap voltage control
+  * combined complex tap control
+  * phase-shift transformer active-power control
+
+### Improvements
+* Updated branch-model documentation with practical controller-direction probing guidance for phase-shift control.
+
+### Tests
+* Added regression tests for transformer tap controller behavior.
+* Added dedicated tests for transformer phase-shift control direction and target tracking.
 
 ## Version 0.7.2 – 2026-04-15
 ### Bug Fixes
