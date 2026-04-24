@@ -1,4 +1,6 @@
 # Change Log
+## Version 0.7.3 – 2026-05-xx
+
 ## Version 0.7.2 – 2026-04-15
 ### Bug Fixes
 * Fixed the increased loading time for large test cases

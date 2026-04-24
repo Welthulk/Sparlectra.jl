@@ -97,6 +97,7 @@ struct Net
   qmax_pu::Vector{Float64}            # pro Bus Qmax (p.u.)
   qLimitEvents::Dict{Int,Symbol}      # BusIdx -> :min | :max (PV→PQ Change)  
   measurements::Vector
+  tapControllers::Vector{Any}
 
   #! format: off
   function Net(; name::String, baseMVA::Float64, vmin_pu::Float64 = 0.9, vmax_pu::Float64 = 1.1, cooldown_iters::Int = 0, q_hyst_pu::Float64 = 0.0, flatstart::Bool = false)    
@@ -127,7 +128,8 @@ struct Net
         [],                                    # qmin_pu
         [],                                    # qmax_pu
         Dict{Int,Symbol}(),
-        [])                                          
+        [],
+        Any[])                                          
   end
   #! format: on
   function Base.show(io::IO, net::Net)
@@ -137,7 +139,8 @@ struct Net
     println(io, "Slack buses: ", net.slackVec, ", flatstart: ", net.flatstart, ", locked: ", net._locked)
     println(io, "Vmin / Vmax: ", net.vmin_pu, " / ", net.vmax_pu)
     println(io, "cooldown_iters: ", net.cooldown_iters, ", q_hyst_pu: ", net.q_hyst_pu)
-    println(io, "Measurements: ", length(net.measurements))
+  println(io, "Measurements: ", length(net.measurements))
+  println(io, "Tap controllers: ", length(net.tapControllers))
   end
 end
 
@@ -662,6 +665,8 @@ function updateBranchParameters!(; net::Net, branchNr::Int, branch::BranchModel)
   br.g_pu = branch.g_pu
   br.ratio = branch.ratio
   br.angle = branch.angle
+  br.tap_ratio = branch.ratio == 0.0 ? 1.0 : branch.ratio
+  br.phase_shift_deg = branch.ratio == 0.0 ? 0.0 : branch.angle
   br.sn_MVA = branch.sn_MVA
 end
 

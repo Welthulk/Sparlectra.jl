@@ -31,7 +31,7 @@ const MPOWER_DIR = normpath(joinpath(pkgdir(@__MODULE__), "data", "mpower"))
 
 # resource data types for working with Sparlectra
 const Wurzel3 = 1.7320508075688772
-const SparlectraVersion = v"0.7.2"
+const SparlectraVersion = v"0.7.3"
 version() = SparlectraVersion
 abstract type AbstractBranch end
 
@@ -44,10 +44,6 @@ It is designed to be used in the context of power system analysis and optimizati
 - GitHub Repository: https://github.com/welthulk/Sparlectra.jl
 - Website: https://welthulk.github.io/Sparlectra.jl
 
-**Naming Conventions:**
-The project follows the Julia Naming Conventions for the most part, 
-but it's important to note that the naming convention for functions might deviate. 
-In this module, functions are written in CamelCase with a lowercase initial letter.
 """
 @doc _MODULE_DOC Sparlectra
 export
@@ -65,6 +61,8 @@ export
   TrafoTyp, PowerTransformerTaps,  PowerTransformerWinding,  PowerTransformer, TransformerModelParameters,
   # ProSumer
   ProSumer, AbstractVoltageDependentController, PiecewiseLinearCharacteristic, QUController, PUController, VoltageAdjustConfig,
+  # Tap controller
+  TapController,
   # Branch
   AbstractBranch, Branch, BranchModel, BranchFlow, getBranchFlow, setBranchFlow!, getBranchNumber, getBranchLosses, setBranchLosses!, setBranchStatus!,
   # Link
@@ -102,6 +100,7 @@ export
   getNetOrigBusIdx, geNetBusIdx, setNetBranchStatus!, getNetBranch, getNetBranchNumberVec, setTotalLosses!, getTotalLosses, getBusType, getEffectiveBusType, getBusProsumers, refreshBusTypesFromProsumers!, get_bus_vn_kV, get_vn_kV, updateBranchParameters!, hasShunt!, 
   getShunt!, markIsolatedBuses!,setTotalBusPower!, setPVBusVset!, setQLimits!, getNodeVm,distributeBusResults!, getTotalBusPower, getTotalLosses, buildVoltageVector,initialVrect, buildComplexSVec, buildControlledSVec, has_voltage_dependent_control, addShuntMatpower!,
   add2WTPIModelTrafo!, add3WTPiModelTrafo!,showNet, buildQLimits!,updateShuntPowers!, addLink!, setNetLinkStatus!, getNetLinks, calcLinkFlowsKCL!,
+  addTapController!, get_bus_vm_pu, get_branch_p_from_to_mw, get_branch_q_from_to_mvar, run_tap_controllers_outer!, printTapControllerSummary,
   # remove_functions.jl
   removeBus!, removeBranch!, removeACLine!, removeTrafo!, removeShunt!, removeProsumer!, clearIsolatedBuses!,apply_mp_isolated_buses!,
   # import.jl
@@ -154,6 +153,7 @@ include("branch.jl")
 include("link.jl")
 include("shunt.jl")
 include("network.jl")
+include("tap_control.jl")
 include("busdata.jl")
 include("MatpowerIO.jl")   
 include("createnet_powermat.jl")
