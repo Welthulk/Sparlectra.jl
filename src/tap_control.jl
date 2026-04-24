@@ -258,6 +258,32 @@ function _phase_probe_direction(net::Net, br::Branch, ctrl::TapController, max_i
 end
 
 """
+    _ratio_probe_direction(...)
+
+Internal helper: determines the empirical sign of `ΔVm_target` for a positive
+ratio increment (`+tap_step`) on the controlled transformer and target bus.
+Returns `-1`, `0`, or `+1`.
+"""
+function _ratio_probe_direction(net::Net, br::Branch, ctrl::TapController, max_ite::Int, tol::Float64, verbose::Int, opt_fd::Bool, opt_sparse::Bool, method::Symbol)
+  oldratio = br.tap_ratio
+  step = br.tap_step
+  _, erg = runpf!(net, max_ite, tol, verbose; opt_fd = opt_fd, opt_sparse = opt_sparse, method = method)
+  erg != 0 && return -1.0
+  vm0 = get_bus_vm_pu(net, ctrl.target_bus)
+  newratio = clamp(oldratio + step, br.tap_min, br.tap_max)
+  if isapprox(newratio, oldratio; atol = 1e-12)
+    return 0.0
+  end
+  br.tap_ratio = newratio
+  br.ratio = newratio
+  _, erg2 = runpf!(net, max_ite, tol, verbose; opt_fd = opt_fd, opt_sparse = opt_sparse, method = method)
+  vm1 = erg2 == 0 ? get_bus_vm_pu(net, ctrl.target_bus) : vm0
+  br.tap_ratio = oldratio
+  br.ratio = oldratio
+  return sign(vm1 - vm0)
+end
+
+"""
     run_tap_controllers_outer!(net; ...)
 
 Run outer-loop transformer control around `runpf!`.
@@ -297,8 +323,11 @@ function run_tap_controllers_outer!(net::Net; max_ite::Int=30, tol::Float64=1e-6
         e_v = vm^2 - ctrl.target_vm_pu^2
         converged_v = abs(e_v) <= ctrl.deadband_vm_pu
         if !converged_v && ctrl.control_ratio
+          direction = _ratio_probe_direction(net, br, ctrl, max_ite, tol, 0, opt_fd, opt_sparse, method)
+          direction == 0.0 && (direction = -1.0)
           Δ = ctrl.is_discrete ? br.tap_step : 0.25 * br.tap_step
-          new_ratio = clamp(br.tap_ratio + (e_v < 0.0 ? Δ : -Δ), br.tap_min, br.tap_max)
+          step = (e_v < 0.0) ? direction * Δ : -direction * Δ
+          new_ratio = clamp(br.tap_ratio + step, br.tap_min, br.tap_max)
           any_moved = any_moved || (new_ratio != br.tap_ratio)
           br.tap_ratio = new_ratio
           br.ratio = new_ratio

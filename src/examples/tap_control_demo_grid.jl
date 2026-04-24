@@ -29,6 +29,9 @@ const DEFAULT_CFG = Dict{String,Any}(
   "st1_phase_min_deg" => -10.0,
   "st1_phase_max_deg" => 10.0,
   "st1_phase_step_deg" => 0.5,
+  "t2_max_outer_iters" => 40,
+  "pst1_max_outer_iters" => 60,
+  "st1_max_outer_iters" => 80,
 )
 
 # -----------------------------------------------------------------------------
@@ -219,7 +222,7 @@ function configure_tap_controllers!(net::Net, cfg::Dict{String,Any})
     control_phase = false,
     is_discrete = true,
     deadband_vm_pu = 1e-3,
-    max_outer_iters = 20,
+    max_outer_iters = Int(_cfg_value(cfg, "t2_max_outer_iters")),
   )
 
   addTapController!(net;
@@ -231,7 +234,7 @@ function configure_tap_controllers!(net::Net, cfg::Dict{String,Any})
     control_phase = true,
     is_discrete = true,
     deadband_p_mw = 0.5,
-    max_outer_iters = 20,
+    max_outer_iters = Int(_cfg_value(cfg, "pst1_max_outer_iters")),
   )
 
   addTapController!(net;
@@ -246,7 +249,7 @@ function configure_tap_controllers!(net::Net, cfg::Dict{String,Any})
     is_discrete = true,
     deadband_vm_pu = 1e-3,
     deadband_p_mw = 0.5,
-    max_outer_iters = 24,
+    max_outer_iters = Int(_cfg_value(cfg, "st1_max_outer_iters")),
   )
 
   return nothing

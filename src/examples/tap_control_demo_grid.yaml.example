@@ -17,6 +17,11 @@
 max_ite: 40
 pf_tol: 1.0e-9
 pf_method: rectangular
+# Outer-loop budget for tap controllers:
+# If you use small steps (e.g. 0.25° / 0.5°), increase these values.
+t2_max_outer_iters: 40
+pst1_max_outer_iters: 60
+st1_max_outer_iters: 80
 
 # -----------------------------------------------------------------------------
 # Tap controller setpoints (balanced starter values)
@@ -49,6 +54,8 @@ t2_tap_step: 0.00625   # delta_u ≈ 0.625% per tap step
 # PST1 phase-shift range and step [deg]
 # - Wider min/max => larger controllable active-power corridor
 # - Smaller phase_step_deg => finer control but more discrete positions
+# - Required outer-loop iterations roughly scale with:
+#   (pst1_phase_max_deg - pst1_phase_min_deg) / pst1_phase_step_deg
 pst1_phase_min_deg: -20.0
 pst1_phase_max_deg: 20.0
 pst1_phase_step_deg: 0.5
@@ -57,6 +64,7 @@ pst1_phase_step_deg: 0.5
 # - ratio tap controls local voltage level (coarse/fine via st1_tap_step)
 # - phase tap controls branch active power setpoint
 # - delta_u_per_step [pu] ≈ st1_tap_step, e.g. 0.0125 => 1.25% per tap step
+# - If both tap and phase are active, raise st1_max_outer_iters accordingly
 st1_tap_min: 0.90
 st1_tap_max: 1.15
 st1_tap_step: 0.0125
