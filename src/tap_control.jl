@@ -109,6 +109,83 @@ function get_branch_q_from_to_mvar(net::Net, from_bus::String, to_bus::String)
   return br.fromBus == from ? br.fBranchFlow.qFlow : br.tBranchFlow.qFlow
 end
 
+@inline _controller_mode_label(mode::Symbol) = String(mode)
+
+function _controller_type_label(ctrl::TapController, br::Branch)::String
+  ratio = ctrl.control_ratio && br.has_ratio_tap
+  phase = ctrl.control_phase && br.has_phase_tap
+  if ratio && phase
+    return "OLTC+PST"
+  elseif ratio
+    return "OLTC"
+  elseif phase
+    return "PST"
+  end
+  return "fixed transformer"
+end
+
+function _controller_status_label(ctrl::TapController)::String
+  !ctrl.enabled && return "inactive"
+  ctrl.converged && return "converged"
+  ctrl.at_limit && return "at_limit"
+  ctrl.status == :max_outer_iters && return "not_converged"
+  return "active"
+end
+
+@inline function _tap_position(value::Float64, neutral::Float64, step::Float64)
+  step <= 0.0 && return missing
+  return round(Int, (value - neutral) / step)
+end
+
+"""
+    buildTapControllerReportRows(net::Net)
+
+Build typed, machine-readable tap-controller report rows with engineering fields
+for textual and DataFrame-based reporting.
+"""
+function buildTapControllerReportRows(net::Net)::Vector{NamedTuple}
+  rows = NamedTuple[]
+  for ctrl in net.tapControllers
+    br = _find_trafo_branch(net, ctrl.trafo)
+    target_bus = ctrl.target_bus
+    target_branch = ctrl.target_branch
+    achieved_vm = isnothing(target_bus) ? missing : get_bus_vm_pu(net, target_bus)
+    achieved_p = isnothing(target_branch) ? missing : get_branch_p_from_to_mw(net, target_branch[1], target_branch[2])
+    push!(rows, (
+      controller_name = string(br.comp.cName, " ", _controller_type_label(ctrl, br)),
+      transformer_id = br.comp.cName,
+      transformer_branch_index = br.branchIdx,
+      from_bus = br.fromBus,
+      to_bus = br.toBus,
+      control_type = _controller_type_label(ctrl, br),
+      mode = _controller_mode_label(ctrl.mode),
+      target_bus = isnothing(target_bus) ? missing : target_bus,
+      target_vm_pu = isnothing(ctrl.target_vm_pu) ? missing : ctrl.target_vm_pu,
+      achieved_vm_pu = achieved_vm,
+      target_branch_from = isnothing(target_branch) ? missing : target_branch[1],
+      target_branch_to = isnothing(target_branch) ? missing : target_branch[2],
+      p_target_mw = isnothing(ctrl.p_target_mw) ? missing : ctrl.p_target_mw,
+      achieved_p_mw = achieved_p,
+      tap_ratio = br.tap_ratio,
+      phase_shift_deg = br.phase_shift_deg,
+      ratio_tap_position = ctrl.is_discrete && br.has_ratio_tap ? _tap_position(br.tap_ratio, 1.0, br.tap_step) : missing,
+      phase_tap_position = ctrl.is_discrete && br.has_phase_tap ? _tap_position(br.phase_shift_deg, 0.0, br.phase_step_deg) : missing,
+      ratio_tap_min = br.has_ratio_tap ? br.tap_min : missing,
+      ratio_tap_max = br.has_ratio_tap ? br.tap_max : missing,
+      ratio_tap_step = br.has_ratio_tap ? br.tap_step : missing,
+      phase_tap_min_deg = br.has_phase_tap ? br.phase_min_deg : missing,
+      phase_tap_max_deg = br.has_phase_tap ? br.phase_max_deg : missing,
+      phase_tap_step_deg = br.has_phase_tap ? br.phase_step_deg : missing,
+      discrete = ctrl.is_discrete,
+      converged = ctrl.converged,
+      at_limit = ctrl.at_limit,
+      status = _controller_status_label(ctrl),
+      power_direction = isnothing(target_branch) ? missing : string(target_branch[1], " -> ", target_branch[2]),
+    ))
+  end
+  return rows
+end
+
 """
     addTapController!(net; ...)
 
@@ -277,24 +354,40 @@ end
 Print a compact controller summary block for all configured tap controllers.
 """
 function printTapControllerSummary(io::IO, net::Net)
-  isempty(net.tapControllers) && return
+  if isempty(net.tapControllers)
+    println(io, "\nControl")
+    println(io, "-------")
+    println(io, "Transformer controls: none")
+    return
+  end
+  rows = buildTapControllerReportRows(net)
   println(io, "\nTransformer Control Summary")
   println(io, "---------------------------")
-  for ctrl in net.tapControllers
-    br = _find_trafo_branch(net, ctrl.trafo)
-    println(io, "Transformer ", ctrl.trafo)
-    println(io, "  mode               : ", ctrl.mode)
-    println(io, "  target_bus         : ", isnothing(ctrl.target_bus) ? "-" : ctrl.target_bus)
-    println(io, "  target_vm_pu       : ", isnothing(ctrl.target_vm_pu) ? "-" : @sprintf("%.4f", ctrl.target_vm_pu))
-    println(io, "  achieved_vm_pu     : ", isnothing(ctrl.achieved_vm_pu) ? "-" : @sprintf("%.4f", ctrl.achieved_vm_pu))
-    println(io, "  target_branch      : ", isnothing(ctrl.target_branch) ? "-" : string(ctrl.target_branch))
-    println(io, "  p_target_mw        : ", isnothing(ctrl.p_target_mw) ? "-" : @sprintf("%.2f", ctrl.p_target_mw))
-    println(io, "  achieved_p_mw      : ", isnothing(ctrl.achieved_p_mw) ? "-" : @sprintf("%.2f", ctrl.achieved_p_mw))
-    println(io, "  tap_ratio          : ", @sprintf("%.5f", br.tap_ratio))
-    println(io, "  phase_shift_deg    : ", @sprintf("%.5f", br.phase_shift_deg))
-    println(io, "  discrete           : ", ctrl.is_discrete)
-    println(io, "  converged          : ", ctrl.converged)
-    println(io, "  at_limit           : ", ctrl.at_limit)
-    println(io, "  status             : ", ctrl.status)
+  println(io, "Power sign convention: achieved_p_mw is positive in the configured target branch direction (from -> to).")
+  for row in rows
+    println(io, row.controller_name, " (", row.transformer_id, ", ", row.from_bus, " -> ", row.to_bus, ")")
+    println(io, "  controller type    : ", row.control_type)
+    println(io, "  mode               : ", row.mode)
+    println(io, "  target bus         : ", ismissing(row.target_bus) ? "-" : row.target_bus)
+    println(io, "  target Vm          : ", ismissing(row.target_vm_pu) ? "-" : @sprintf("%.4f pu", row.target_vm_pu))
+    println(io, "  achieved Vm        : ", ismissing(row.achieved_vm_pu) ? "-" : @sprintf("%.4f pu", row.achieved_vm_pu))
+    println(io, "  target branch      : ", ismissing(row.target_branch_from) ? "-" : string(row.target_branch_from, " -> ", row.target_branch_to))
+    println(io, "  target P           : ", ismissing(row.p_target_mw) ? "-" : @sprintf("%.3f MW", row.p_target_mw))
+    println(io, "  achieved P         : ", ismissing(row.achieved_p_mw) ? "-" : @sprintf("%.3f MW", row.achieved_p_mw))
+    println(io, "  tap ratio          : ", @sprintf("%.5f", row.tap_ratio))
+    println(io, "  phase shift        : ", @sprintf("%.5f deg", row.phase_shift_deg))
+    println(io, "  tap position       : ", ismissing(row.ratio_tap_position) ? "-" : @sprintf("%+d", row.ratio_tap_position))
+    println(io, "  phase position     : ", ismissing(row.phase_tap_position) ? "-" : @sprintf("%+d", row.phase_tap_position))
+    println(io, "  ratio range        : ", ismissing(row.ratio_tap_min) ? "-" : @sprintf("%.5f .. %.5f", row.ratio_tap_min, row.ratio_tap_max))
+    println(io, "  ratio step         : ", ismissing(row.ratio_tap_step) ? "-" : @sprintf("%.5f", row.ratio_tap_step))
+    println(io, "  phase range        : ", ismissing(row.phase_tap_min_deg) ? "-" : @sprintf("%.5f .. %.5f deg", row.phase_tap_min_deg, row.phase_tap_max_deg))
+    println(io, "  phase step         : ", ismissing(row.phase_tap_step_deg) ? "-" : @sprintf("%.5f deg", row.phase_tap_step_deg))
+    println(io, "  discrete           : ", row.discrete)
+    println(io, "  converged          : ", row.converged)
+    println(io, "  at_limit           : ", row.at_limit)
+    println(io, "  status             : ", row.status)
+    if !row.converged && row.at_limit
+      println(io, "  status detail      : target not fully reached because tap/phase limit was hit")
+    end
   end
 end

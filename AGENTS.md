@@ -236,3 +236,40 @@ If it corrects behavior that was wrong, classify it as a **bugfix**.
   - **Feature**: Brief description of the new capability, its purpose, and any important usage notes.
   - **Improvement**: Brief description of the enhancement, what it improves, and any impact on existing behavior.
   - **Bugfix**: Brief description of the issue fixed, its impact, and any relevant details for users. 
+## Documentation (Documenter.jl / Markdown + Math)
+
+To ensure stable and predictable rendering in Documenter.jl:
+
+### Math usage
+- Use `$...$` for **inline math** (variables inside text).
+- Use ```math blocks only for **actual equations**, not for single symbols.
+- Do **not** start list items with `$...$` → this may be rendered as display math (centered).
+  - Instead write:
+    - ✅ `- variable $y_{ik}$: ...`
+    - ❌ `- $y_{ik}$: ...`
+
+### Lists and definitions
+- Avoid placing math expressions alone at the beginning of list items.
+- Prefer descriptive text before math symbols for stable layout.
+- Use `—` or text instead of relying on punctuation directly after math.
+
+### Code vs. Math
+- Use backticks `` `...` `` for:
+  - variable names in code context (`y_ser`, `addACLine!`)
+- Use math `$...$` only for mathematical notation (`y_{ik}`, `Y_{ii}`)
+
+### LaTeX correctness
+- Use valid LaTeX only (e.g. `$Y_{ii}$`, not `$\Y_{ii}$`)
+- Units should be written as:
+  - `$V_i = 1\,\\mathrm{pu}$`
+
+### General rule
+- Inline math = inline context  
+- Math blocks = equations only  
+- Never mix both unintentionally
+
+### Goal
+Keep documentation:
+- left-aligned
+- stable across Documenter versions
+- consistent with KaTeX rendering
