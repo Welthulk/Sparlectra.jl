@@ -440,6 +440,7 @@ function printACPFlowResults(net::Net, ct::Float64, ite::Int, tol::Float64, toFi
       @printf(io, "| %-5d | %-8s | %-8s | %-6d | %-12.3f | %-12.3f | %-12.4f | %-12.4f |\n", l.linkIdx, fromName, toName, l.status, p, q, ifrom, ito)
     end
   end
+  printTapControllerSummary(io, net)
   if toFile
     close(io)
     #println("Results have been written to $(joinpath(path, filename))")
