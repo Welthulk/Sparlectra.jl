@@ -17,6 +17,7 @@ Outer-loop transformer controller definition.
 - `control_phase`: Enable phase (`φ`) updates.
 - `is_discrete`: Use discrete tap-step updates.
 - `deadband_vm_pu`: Voltage deadband.
+- `voltage_error_metric`: Error metric for voltage step direction (`:vm` or `:vm2`).
 - `deadband_p_mw`: Active-power deadband.
 - `max_outer_iters`: Maximum outer-loop iterations.
 - `enabled`: Enable/disable controller.
@@ -36,6 +37,7 @@ mutable struct TapController
   is_discrete::Bool
   deadband_vm_pu::Float64
   deadband_p_mw::Float64
+  voltage_error_metric::Symbol
   max_outer_iters::Int
   enabled::Bool
   converged::Bool
@@ -55,10 +57,14 @@ execution and status initialization.
 function TapController(; trafo::String, mode::Symbol, target_bus::Union{Nothing,String}=nothing, target_branch::Union{Nothing,Tuple{String,String}}=nothing,
   target_vm_pu::Union{Nothing,Float64}=nothing, p_target_mw::Union{Nothing,Float64}=nothing, q_target_mvar::Union{Nothing,Float64}=nothing,
   control_ratio::Bool=true, control_phase::Bool=false, is_discrete::Bool=true, deadband_vm_pu::Float64=1e-3, deadband_p_mw::Float64=0.5,
-  max_outer_iters::Int=20, enabled::Bool=true)
+  voltage_error_metric::Symbol=:vm, max_outer_iters::Int=20, enabled::Bool=true)
+  voltage_error_metric in (:vm, :vm2) || error("TapController: unsupported voltage_error_metric=$(voltage_error_metric). Use :vm or :vm2.")
   return TapController(trafo, mode, target_bus, target_branch, target_vm_pu, p_target_mw, q_target_mvar, control_ratio, control_phase, is_discrete,
-    deadband_vm_pu, deadband_p_mw, max_outer_iters, enabled, false, false, :idle, nothing, nothing, 0)
+    deadband_vm_pu, deadband_p_mw, voltage_error_metric, max_outer_iters, enabled, false, false, :idle, nothing, nothing, 0)
 end
+
+@inline _voltage_within_deadband(vm::Float64, target_vm_pu::Float64, deadband_vm_pu::Float64)::Bool = abs(vm - target_vm_pu) <= deadband_vm_pu
+@inline _voltage_control_error(vm::Float64, target_vm_pu::Float64, metric::Symbol)::Float64 = metric == :vm2 ? vm^2 - target_vm_pu^2 : vm - target_vm_pu
 
 """
     _find_trafo_branch(net, name)
@@ -199,7 +205,7 @@ Validation rules:
 function addTapController!(net::Net; trafo::String, mode::Symbol, target_bus::Union{Nothing,String}=nothing, target_branch::Union{Nothing,Tuple{String,String}}=nothing,
   target_vm_pu::Union{Nothing,Float64}=nothing, p_target_mw::Union{Nothing,Float64}=nothing, q_target_mvar::Union{Nothing,Float64}=nothing,
   control_ratio::Bool=true, control_phase::Bool=false, is_discrete::Bool=true, deadband_vm_pu::Float64=1e-3, deadband_p_mw::Float64=0.5,
-  max_outer_iters::Int=20, enabled::Bool=true)
+  voltage_error_metric::Symbol=:vm, max_outer_iters::Int=20, enabled::Bool=true)
 
   _ = _find_trafo_branch(net, trafo)
   any(c -> c.trafo == trafo && c.enabled, net.tapControllers) && error("TapController: only one active controller per transformer is allowed.")
@@ -229,6 +235,7 @@ function addTapController!(net::Net; trafo::String, mode::Symbol, target_bus::Un
     is_discrete = is_discrete,
     deadband_vm_pu = deadband_vm_pu,
     deadband_p_mw = deadband_p_mw,
+    voltage_error_metric = voltage_error_metric,
     max_outer_iters = max_outer_iters,
     enabled = enabled,
   ))
@@ -320,9 +327,9 @@ function run_tap_controllers_outer!(net::Net; max_ite::Int=30, tol::Float64=1e-6
       if ctrl.mode in (:voltage, :voltage_and_branch_active_power)
         vm = get_bus_vm_pu(net, ctrl.target_bus)
         ctrl.achieved_vm_pu = vm
-        e_v = vm^2 - ctrl.target_vm_pu^2
-        converged_v = abs(e_v) <= ctrl.deadband_vm_pu
+        converged_v = _voltage_within_deadband(vm, ctrl.target_vm_pu, ctrl.deadband_vm_pu)
         if !converged_v && ctrl.control_ratio
+          e_v = _voltage_control_error(vm, ctrl.target_vm_pu, ctrl.voltage_error_metric)
           direction = _ratio_probe_direction(net, br, ctrl, max_ite, tol, 0, opt_fd, opt_sparse, method)
           direction == 0.0 && (direction = -1.0)
           Δ = ctrl.is_discrete ? br.tap_step : 0.25 * br.tap_step

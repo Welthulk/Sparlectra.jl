@@ -30,8 +30,12 @@ const DEFAULT_CFG = Dict{String,Any}(
   "st1_phase_max_deg" => 10.0,
   "st1_phase_step_deg" => 0.5,
   "t2_max_outer_iters" => 40,
+  "t2_deadband_vm_pu" => 1e-3,
+  "t2_voltage_error_metric" => "vm",
   "pst1_max_outer_iters" => 60,
   "st1_max_outer_iters" => 80,
+  "st1_deadband_vm_pu" => 1e-3,
+  "st1_voltage_error_metric" => "vm",
 )
 
 # -----------------------------------------------------------------------------
@@ -221,7 +225,8 @@ function configure_tap_controllers!(net::Net, cfg::Dict{String,Any})
     control_ratio = true,
     control_phase = false,
     is_discrete = true,
-    deadband_vm_pu = 1e-3,
+    deadband_vm_pu = Float64(_cfg_value(cfg, "t2_deadband_vm_pu")),
+    voltage_error_metric = Symbol(_cfg_value(cfg, "t2_voltage_error_metric")),
     max_outer_iters = Int(_cfg_value(cfg, "t2_max_outer_iters")),
   )
 
@@ -247,7 +252,8 @@ function configure_tap_controllers!(net::Net, cfg::Dict{String,Any})
     control_ratio = true,
     control_phase = true,
     is_discrete = true,
-    deadband_vm_pu = 1e-3,
+    deadband_vm_pu = Float64(_cfg_value(cfg, "st1_deadband_vm_pu")),
+    voltage_error_metric = Symbol(_cfg_value(cfg, "st1_voltage_error_metric")),
     deadband_p_mw = 0.5,
     max_outer_iters = Int(_cfg_value(cfg, "st1_max_outer_iters")),
   )

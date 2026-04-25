@@ -30,6 +30,14 @@ function run_tap_controller_tests()
     net, _ = _build_net()
     @test_throws ErrorException addTapController!(net; trafo = "does_not_exist", mode = :voltage, target_bus = "Load", target_vm_pu = 1.0)
     @test_throws ErrorException addTapController!(net; trafo = "1", mode = :voltage)
+    @test_throws ErrorException addTapController!(net; trafo = "1", mode = :voltage, target_bus = "Load", target_vm_pu = 1.0, voltage_error_metric = :invalid)
+  end
+
+  @testset "Voltage deadband is evaluated in pu Vm space" begin
+    @test Sparlectra._voltage_within_deadband(1.2009, 1.200, 1e-3)
+    @test !Sparlectra._voltage_within_deadband(1.2025, 1.200, 1e-3)
+    @test isapprox(Sparlectra._voltage_control_error(1.201, 1.200, :vm), 1e-3; atol = 1e-12)
+    @test isapprox(Sparlectra._voltage_control_error(1.201, 1.200, :vm2), 2.401e-3; atol = 1e-12)
   end
 
   @testset "Voltage tap controller (discrete ratio)" begin

@@ -17,6 +17,8 @@
 * Updated branch-model documentation with practical controller-direction probing guidance for phase-shift control.
 * Improved tap-control reporting in classic and structured ACP flow outputs, including typed transformer-controller rows with tap position/stage and consistent branch power direction reporting.
 * Updated `tap_control_demo_grid.jl` logging to create versioned run logs in `src/examples/_out/` and refined OLTC demo step resolution to `tap_step = 0.00625` for the unchanged `0.90 .. 1.10` ratio range.
+* Tap-controller voltage convergence now consistently evaluates deadband in `|V - V_target|` (pu), while allowing optional step-direction evaluation via `voltage_error_metric = :vm2` for users who prefer a squared-voltage control signal.
+* Added YAML configurability in the tap-control demo for `*_deadband_vm_pu` and `*_voltage_error_metric` (`vm` or `vm2`) on voltage-regulating controllers.
 
 ### Tests
 * Added regression tests for transformer tap controller behavior.
