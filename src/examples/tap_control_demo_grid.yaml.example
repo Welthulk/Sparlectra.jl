@@ -20,8 +20,12 @@ pf_method: rectangular
 # Outer-loop budget for tap controllers:
 # If you use small steps (e.g. 0.25° / 0.5°), increase these values.
 t2_max_outer_iters: 40
+t2_deadband_vm_pu: 0.001
+t2_voltage_error_metric: vm   # vm | vm2
 pst1_max_outer_iters: 60
 st1_max_outer_iters: 80
+st1_deadband_vm_pu: 0.001
+st1_voltage_error_metric: vm  # vm | vm2
 
 # -----------------------------------------------------------------------------
 # Tap controller setpoints (balanced starter values)
