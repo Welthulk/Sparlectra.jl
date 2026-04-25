@@ -217,14 +217,33 @@ function configure_tap_controllers!(net::Net, cfg::Dict{String,Any})
   empty!(net.tapControllers)
   c = _controller_branches(net)
 
-  addTapController!(net;
+  function _add_voltage_tap_controller_compat!(; trafo::String, target_bus::String, target_vm_pu::Float64, deadband_vm_pu::Float64, voltage_error_metric::Symbol, max_outer_iters::Int)
+    kwargs_common = (
+      trafo = trafo,
+      mode = :voltage,
+      target_bus = target_bus,
+      target_vm_pu = target_vm_pu,
+      control_ratio = true,
+      control_phase = false,
+      is_discrete = true,
+      deadband_vm_pu = deadband_vm_pu,
+      max_outer_iters = max_outer_iters,
+    )
+    try
+      addTapController!(net; kwargs_common..., voltage_error_metric = voltage_error_metric)
+    catch err
+      if err isa MethodError || err isa UndefKeywordError
+        addTapController!(net; kwargs_common...)
+      else
+        rethrow(err)
+      end
+    end
+  end
+
+  _add_voltage_tap_controller_compat!(;
     trafo = string(c.t2.branchIdx),
-    mode = :voltage,
     target_bus = String(_cfg_value(cfg, "t2_target_bus")),
     target_vm_pu = Float64(_cfg_value(cfg, "t2_target_vm_pu")),
-    control_ratio = true,
-    control_phase = false,
-    is_discrete = true,
     deadband_vm_pu = Float64(_cfg_value(cfg, "t2_deadband_vm_pu")),
     voltage_error_metric = Symbol(_cfg_value(cfg, "t2_voltage_error_metric")),
     max_outer_iters = Int(_cfg_value(cfg, "t2_max_outer_iters")),
@@ -340,23 +359,28 @@ function _build_classic_report_string(net::Net, ite::Int, tol::Float64, method::
   end
 end
 
-function _print_dual(io_log::IO, msg::AbstractString)
-  print(stdout, msg)
-  print(io_log, msg)
+function _strip_control_section_for_stdout(report::String)
+  control_header = "Control\n-------\n\nTransformer Control Summary\n---------------------------\n"
+  control_start = findfirst(control_header, report)
+  isnothing(control_start) && return report
+
+  net_start = findnext("Net:", report, last(control_start) + 1)
+  isnothing(net_start) && return report[1:first(control_start)-1]
+  return report[1:first(control_start)-1] * report[net_start:end]
 end
 
 function main()
   logfile = _next_versioned_logfile()
   open(logfile, "w") do io_log
-    _print_dual(io_log, "Tap Control Demo Grid\n")
-    _print_dual(io_log, "Logfile: $logfile\n")
+    println(io_log, "Tap Control Demo Grid")
+    println(io_log, "Logfile: $logfile")
 
     yaml_path = _yaml_path_from_inputs()
     cfg = merge(copy(DEFAULT_CFG), load_yaml_config(yaml_path))
     if !isempty(yaml_path)
-      _print_dual(io_log, "Using YAML config: $yaml_path\n")
+      println(io_log, "Using YAML config: $yaml_path")
     else
-      _print_dual(io_log, "Using built-in defaults (no YAML file found)\n")
+      println(io_log, "Using built-in defaults (no YAML file found)")
     end
 
     net = build_tap_control_demo_grid(cfg)
@@ -365,42 +389,32 @@ function main()
     pf_tol = Float64(_cfg_value(cfg, "pf_tol"))
     pf_method = Symbol(_cfg_value(cfg, "pf_method"))
 
-    _print_section(stdout, "Uncontrolled power flow")
     _, erg0, _ = run_net_acpflow(net = net, max_ite = max_ite, tol = pf_tol, verbose = 0, method = pf_method, show_results = false)
     erg0 == 0 || error("Uncontrolled power flow failed with erg=$(erg0)")
-    print_tap_control_targets(stdout, net, cfg)
 
     _print_section(io_log, "Uncontrolled power flow")
     print_tap_control_targets(io_log, net, cfg)
 
     configure_tap_controllers!(net, cfg)
 
-    _print_section(stdout, "Configured tap controller setpoints")
-    print_tap_control_targets(stdout, net, cfg)
     _print_section(io_log, "Configured tap controller setpoints")
     print_tap_control_targets(io_log, net, cfg)
 
-    _print_section(stdout, "Controlled power flow with outer-loop tap control")
     ite, erg1, _ = run_net_acpflow(net = net, max_ite = max_ite, tol = pf_tol, verbose = 0, method = pf_method, show_results = false)
     erg1 == 0 || error("Controlled power flow failed with erg=$(erg1)")
-    print_tap_control_targets(stdout, net, cfg)
-    printTapControllerSummary(stdout, net)
 
     _print_section(io_log, "Controlled power flow with outer-loop tap control")
     print_tap_control_targets(io_log, net, cfg)
     printTapControllerSummary(io_log, net)
 
     classic_report = _build_classic_report_string(net, ite, pf_tol, pf_method)
+    classic_report_stdout = _strip_control_section_for_stdout(classic_report)
     _print_section(stdout, "Final classic network report")
-    print(stdout, classic_report)
+    print(stdout, classic_report_stdout)
     _print_section(io_log, "Final classic network report")
     print(io_log, classic_report)
 
     report = buildACPFlowReport(net; ct = 0.0, ite = ite, tol = pf_tol, converged = true, solver = pf_method)
-    _print_section(stdout, "Tap controller DataFrame-compatible rows")
-    for row in report.transformer_controls
-      println(stdout, row)
-    end
     _print_section(io_log, "Tap controller DataFrame-compatible rows")
     for row in report.transformer_controls
       println(io_log, row)

@@ -124,4 +124,34 @@ function run_tap_controller_tests()
     @test occursin("status", txt)
     @test occursin("Power sign convention", txt)
   end
+
+  @testset "Branch derives tap limits from PowerTransformerTaps" begin
+    taps = PowerTransformerTaps(Vn_kV = 110.0, step = 0, lowStep = -4, highStep = 6, neutralStep = 1, voltageIncrement_kV = 1.1)
+    w1 = PowerTransformerWinding(110.0, 0.0, 0.12, 0.0, 0.0, 1.0, 0.0, 110.0, 100.0, taps, true, nothing)
+    w2 = PowerTransformerWinding(20.0, 0.0, 0.0, 0.0, 0.0, nothing, 0.0, 20.0, 100.0, nothing, true, nothing)
+    trafo_comp = Sparlectra.getBranchComp(110.0, 1, 2, 1, "2WT")
+    trafo = PowerTransformer(trafo_comp, true, w1, w2, nothing, Sparlectra.Ratio)
+
+    br = Branch(
+      branchIdx = 1,
+      from = 1,
+      to = 2,
+      baseMVA = 100.0,
+      branch = trafo,
+      id = 1,
+      ratio = 1.0,
+      side = 1,
+      vn_kV = 110.0,
+      values_are_pu = true,
+    )
+
+    pu_per_step = taps.tapStepPercent / 100.0
+    expected_min = min(1.0 + (taps.lowStep - taps.neutralStep) * pu_per_step, 1.0 + (taps.highStep - taps.neutralStep) * pu_per_step)
+    expected_max = max(1.0 + (taps.lowStep - taps.neutralStep) * pu_per_step, 1.0 + (taps.highStep - taps.neutralStep) * pu_per_step)
+    expected_step = abs(pu_per_step)
+
+    @test isapprox(br.tap_min, expected_min; atol = 1e-12)
+    @test isapprox(br.tap_max, expected_max; atol = 1e-12)
+    @test isapprox(br.tap_step, expected_step; atol = 1e-12)
+  end
 end
