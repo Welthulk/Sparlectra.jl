@@ -208,8 +208,21 @@ mutable struct Branch <: AbstractBranch
       @assert ratio != 0.0 "ratio must not be 0.0 for transformers"
       #angle = isnothing(w.shift_degree) ? 0.0 : w.shift_degree
       angle = isnothing(angle) ? (isnothing(w.shift_degree) ? 0.0 : w.shift_degree) : angle
+      tap_min = 0.9
+      tap_max = 1.1
+      tap_step = 0.00625
+      if !isnothing(w.taps)
+        taps = w.taps
+        neutral = taps.neutralStep
+        pu_per_step = taps.tapStepPercent / 100.0
+        low_ratio = 1.0 + (taps.lowStep - neutral) * pu_per_step
+        high_ratio = 1.0 + (taps.highStep - neutral) * pu_per_step
+        tap_min = min(low_ratio, high_ratio)
+        tap_max = max(low_ratio, high_ratio)
+        tap_step = abs(pu_per_step)
+      end
 
-      new(c, branchIdx, from, to, r_pu, x_pu, b_pu, g_pu, ratio, angle, status, sn_MVA, nothing, nothing, nothing, nothing, ratio, angle, true, true, 0.9, 1.1, 0.00625, -30.0, 30.0, 1.25)
+      new(c, branchIdx, from, to, r_pu, x_pu, b_pu, g_pu, ratio, angle, status, sn_MVA, nothing, nothing, nothing, nothing, ratio, angle, true, true, tap_min, tap_max, tap_step, -30.0, 30.0, 1.25)
     elseif isa(branch, BranchModel) # PI-Model
       @assert !isnothing(vn_kV) "vn_kV must be set for PI-Model"
 
