@@ -1,73 +1,64 @@
-# Tap Control Demo Grid - editable local configuration
 #
-# Usage options:
-#   1) Default lookup (auto):
-#      - script first checks: src/examples/tap_control_demo_grid.yaml
-#      - if not found, it loads this example file
-#   2) Explicit path argument:
-#      julia --project=. src/examples/tap_control_demo_grid.jl path/to/custom.yaml
-#   3) Environment variable:
-#      SPARLECTRA_TAP_DEMO_YAML=path/to/custom.yaml julia --project=. src/examples/tap_control_demo_grid.jl
+# Example configuration for src/examples/matpower_import.jl
 #
-# Recommended local workflow (git-clean):
-#   cp src/examples/tap_control_demo_grid.yaml.example src/examples/tap_control_demo_grid.yaml
-#   # edit src/examples/tap_control_demo_grid.yaml (this file is git-ignored)
+# Local developer usage (VS Code "Run Julia File"):
+#   copy this file to `matpower_import.yaml` and edit as needed.
+#
+# CLI usage:
+#   julia --project=. src/examples/matpower_import.jl src/examples/matpower_import.yaml
+# or
+#   SPARLECTRA_MATPOWER_IMPORT_YAML=src/examples/matpower_import.yaml julia --project=. src/examples/matpower_import.jl
+#
+case: case141.m
+methods: [rectangular]
 
-# Solver options
-max_ite: 40
-pf_tol: 1.0e-9
-pf_method: rectangular
-# Outer-loop budget for tap controllers:
-# If you use small steps (e.g. 0.25° / 0.5°), increase these values.
-t2_max_outer_iters: 40
-pst1_max_outer_iters: 60
-st1_max_outer_iters: 80
+# Solver/NR options
+opt_fd: false
+opt_sparse: true
+opt_flatstart: false
+max_ite: 30
+tol: 1.0e-6
+verbose: 1
+cooldown_iters: 0
+q_hyst_pu: 0.0
 
-# -----------------------------------------------------------------------------
-# Tap controller setpoints (balanced starter values)
-# -----------------------------------------------------------------------------
-# Hint: tune setpoints first, then widen tap/phase ranges only if limits are hit.
-t2_target_bus: B9
-t2_target_vm_pu: 1.10
+# MATPOWER comparison controls
+show_diff: true
+tol_vm: 0.02
+tol_va: 0.5
 
-pst1_target_from_bus: B1
-pst1_target_to_bus: B2
-pst1_target_p_mw: 7.0
+# Q-limit / PV->PQ behavior:
+# - If true, all PV buses are locked against PV->PQ switching.
+#   This effectively ignores reactive-power limits during the solve.
+ignore_q_limits: false
 
-st1_target_bus: B5
-st1_target_vm_pu: 1.08
-st1_target_from_bus: B4
-st1_target_to_bus: B5
-st1_target_p_mw: -55.0
+# Optional MATPOWER import behavior for PQ-type generators:
+# - If true, PQ generators get constant P(U)/Q(U) controllers based on MATPOWER limits.
+# - Applied only for generators connected to MATPOWER PQ buses (BUS_TYPE=1).
+# - If false, import keeps the plain generator values without creating these controllers.
+#   Keep enabled by default for compatibility with previous convergence behavior.
+enable_pq_gen_controllers: false
 
-# -----------------------------------------------------------------------------
-# Transformer tap/phase parameters (all editable from YAML)
-# -----------------------------------------------------------------------------
-# T2 OLTC ratio range and discrete step
-# - delta_u_per_step [pu] ≈ t2_tap_step
-# - delta_u_per_step [%]  = 100 * t2_tap_step
-# - number_of_ratio_positions ≈ (t2_tap_max - t2_tap_min) / t2_tap_step
-t2_tap_min: 0.90
-t2_tap_max: 1.16
-t2_tap_step: 0.00625   # delta_u ≈ 0.625% per tap step
+# Legacy warning tracing:
+# - If true, legacy busType warnings include caller=<file>:<line>.
+# - Helpful to identify remaining code paths that still call addBus!(... busType=...)
+#   or setBusType! during import/solver runs.
+trace_legacy_bus_type_warnings: false
+# - Fine-grained manual locks (MATPOWER/original bus IDs). Applied when ignore_q_limits=false.
+lock_pv_to_pq_buses: []
 
-# PST1 phase-shift range and step [deg]
-# - Wider min/max => larger controllable active-power corridor
-# - Smaller phase_step_deg => finer control but more discrete positions
-# - Required outer-loop iterations roughly scale with:
-#   (pst1_phase_max_deg - pst1_phase_min_deg) / pst1_phase_step_deg
-pst1_phase_min_deg: -20.0
-pst1_phase_max_deg: 20.0
-pst1_phase_step_deg: 0.5
-
-# ST1 combined ratio + phase range and step
-# - ratio tap controls local voltage level (coarse/fine via st1_tap_step)
-# - phase tap controls branch active power setpoint
-# - delta_u_per_step [pu] ≈ st1_tap_step, e.g. 0.0125 => 1.25% per tap step
-# - If both tap and phase are active, raise st1_max_outer_iters accordingly
-st1_tap_min: 0.90
-st1_tap_max: 1.15
-st1_tap_step: 0.0125
-st1_phase_min_deg: -25.0
-st1_phase_max_deg: 25.0
-st1_phase_step_deg: 0.25
+# Benchmark controls
+# - Set `benchmark: false` to only run `show_once` and write logfile/results once.
+#   Useful for large cases (e.g. case1951rte / case2869pegase) where benchmarking can take very long.
+benchmark: false
+seconds: 2.0
+samples: 50
+#show_once: true
+show_once: true
+# show_once output mode:
+# - classic: full classic result tables (printACPFlowResults)
+# - dataframe: compact DataFrame-style node table
+#show_once_output: classic
+show_once_output: dataframe
+# Limits only DataFrame-style output (0 = all nodes); ignored for classic output.
+show_once_max_nodes: 10
