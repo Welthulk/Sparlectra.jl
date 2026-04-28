@@ -168,5 +168,7 @@ function run_tap_controller_tests()
     addPIModelTrafo!(net = net, fromBus = "B1", toBus = "B2", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, ratio = 1.0, shift_deg = 0.0, status = 1, controls = [ctrl])
     @test length(net.tapControllers) == 1
     @test net.tapControllers[1].trafo == string(getNetBranch(net = net, fromBus = "B1", toBus = "B2").branchIdx)
+    @test length(net.trafos[1].side1.controls) == 1
+    @test net.trafos[1].tapSideNumber == 1
   end
 end

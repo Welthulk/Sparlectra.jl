@@ -777,6 +777,13 @@ function addPIModelTrafo!(;
   vn_lv_kV = getNodeVn(net.nodeVec[to])
   w1 = PowerTransformerWinding(vn_hv_kV, r_pu, x_pu, b_pu, 0.0, ratio, shift_deg, ratedU, ratedS, nothing, true)
   w2 = PowerTransformerWinding(vn_lv_kV, 0.0, 0.0)
+  if !isnothing(controls)
+    if side == 1
+      w1.controls = copy(controls)
+    elseif side == 2
+      w2.controls = copy(controls)
+    end
+  end
   comp = getTrafoImpPGMComp(isAux, vn_hv_kV, from, to)
   trafo = PowerTransformer(comp, false, w1, w2, nothing, Sparlectra.PIModel)
   push!(net.trafos, trafo)
@@ -955,6 +962,13 @@ function add2WTrafo!(; net::Net, fromBus::String, toBus::String, sn_mva::Float64
 
   trafo = create2WTRatioTransformerNoTaps(from = from, to = to, vn_hv_kV = vn_hv_kV, vn_lv_kV = vn_lv_kV, sn_mva = sn_mva, vk_percent = vk_percent, vkr_percent = vkr_percent, pfe_kw = pfe_kw, i0_percent = i0_percent)
   side = getSideNumber2WT(trafo)
+  if !isnothing(controls)
+    if side == 1
+      trafo.side1.controls = copy(controls)
+    elseif side == 2
+      trafo.side2.controls = copy(controls)
+    end
+  end
   ratio = calcTransformerRatio(trafo)
   push!(net.trafos, trafo)
 
