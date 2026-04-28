@@ -14,7 +14,7 @@
   * phase-shift transformer active-power control
 
 ### Improvements
-* Refactored transformer controller model to `PowerTransformerControl` in `transformer.jl`; controller capacity is now derived from transformer type (`OLTC=1`, `PST=1`, `STE=2`) and network transformer creation APIs accept `controls = [...]`.
+* Refactored transformer controller model to `PowerTransformerControl` in `transformer.jl`; controller capacity is now derived from transformer type (`OLTC=1`, `PST=1`, `STE=2`), `PowerTransformerWinding` now carries `controls`, and network transformer creation APIs accept `controls = [...]`.
 * Updated branch-model documentation with practical controller-direction probing guidance for phase-shift control.
 * Improved tap-control reporting in classic and structured ACP flow outputs, including typed transformer-controller rows with tap position/stage and consistent branch power direction reporting.
 * Updated `tap_control_demo_grid.jl` logging to create versioned run logs in `src/examples/_out/` and refined OLTC demo step resolution to `tap_step = 0.00625` for the unchanged `0.90 .. 1.10` ratio range.
