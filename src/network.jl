@@ -97,7 +97,7 @@ struct Net
   qmax_pu::Vector{Float64}            # pro Bus Qmax (p.u.)
   qLimitEvents::Dict{Int,Symbol}      # BusIdx -> :min | :max (PV→PQ Change)  
   measurements::Vector
-  tapControllers::Vector{Any}
+  tapControllers::Vector{PowerTransformerControl}
 
   #! format: off
   function Net(; name::String, baseMVA::Float64, vmin_pu::Float64 = 0.9, vmax_pu::Float64 = 1.1, cooldown_iters::Int = 0, q_hyst_pu::Float64 = 0.0, flatstart::Bool = false)    
@@ -129,7 +129,7 @@ struct Net
         [],                                    # qmax_pu
         Dict{Int,Symbol}(),
         [],
-        Any[])                                          
+        PowerTransformerControl[])                                          
   end
   #! format: on
   function Base.show(io::IO, net::Net)
@@ -768,6 +768,7 @@ function addPIModelTrafo!(;
   shift_deg::Union{Nothing,Float64} = nothing,
   isAux::Bool = false,
   side::Int = 1,
+  controls::Union{Nothing,Vector{PowerTransformerControl}} = nothing,
 )
   @assert fromBus != toBus "From and to bus must be different"
   from = geNetBusIdx(net = net, busName = fromBus)
@@ -781,6 +782,16 @@ function addPIModelTrafo!(;
   push!(net.trafos, trafo)
 
   addBranch!(net = net, from = from, to = to, branch = trafo, status = status, ratio = ratio, side = side, vn_kV = vn_hv_kV, values_are_pu = true)
+  if !isnothing(controls)
+    br = net.branchVec[end]
+    for ctrl in controls
+      addPowerTransformerControl!(net; trafo = string(br.branchIdx), mode = ctrl.mode, target_bus = ctrl.target_bus, target_branch = ctrl.target_branch,
+        target_vm_pu = ctrl.target_vm_pu, p_target_mw = ctrl.p_target_mw, q_target_mvar = ctrl.q_target_mvar,
+        control_ratio = ctrl.control_ratio, control_phase = ctrl.control_phase, is_discrete = ctrl.is_discrete,
+        deadband_vm_pu = ctrl.deadband_vm_pu, deadband_p_mw = ctrl.deadband_p_mw, voltage_error_metric = ctrl.voltage_error_metric,
+        max_outer_iters = ctrl.max_outer_iters, enabled = ctrl.enabled)
+    end
+  end
 end
 
 """
@@ -935,7 +946,7 @@ Add a two-winding transformer to the network.
 - `i0_percent::Float64`: No-load current percent of the transformer.
 - `status::Int`: The status of the transformer. Default is 1.
 """
-function add2WTrafo!(; net::Net, fromBus::String, toBus::String, sn_mva::Float64, vk_percent::Float64, vkr_percent::Float64, pfe_kw::Float64, i0_percent::Float64, status::Int = 1)
+function add2WTrafo!(; net::Net, fromBus::String, toBus::String, sn_mva::Float64, vk_percent::Float64, vkr_percent::Float64, pfe_kw::Float64, i0_percent::Float64, status::Int = 1, controls::Union{Nothing,Vector{PowerTransformerControl}} = nothing)
   @assert fromBus != toBus "From and to bus must be different"
   from = geNetBusIdx(net = net, busName = fromBus)
   to = geNetBusIdx(net = net, busName = toBus)
@@ -948,6 +959,16 @@ function add2WTrafo!(; net::Net, fromBus::String, toBus::String, sn_mva::Float64
   push!(net.trafos, trafo)
 
   addBranch!(net = net, from = from, to = to, branch = trafo, status = status, ratio = ratio, side = side, vn_kV = vn_hv_kV)
+  if !isnothing(controls)
+    br = net.branchVec[end]
+    for ctrl in controls
+      addPowerTransformerControl!(net; trafo = string(br.branchIdx), mode = ctrl.mode, target_bus = ctrl.target_bus, target_branch = ctrl.target_branch,
+        target_vm_pu = ctrl.target_vm_pu, p_target_mw = ctrl.p_target_mw, q_target_mvar = ctrl.q_target_mvar,
+        control_ratio = ctrl.control_ratio, control_phase = ctrl.control_phase, is_discrete = ctrl.is_discrete,
+        deadband_vm_pu = ctrl.deadband_vm_pu, deadband_p_mw = ctrl.deadband_p_mw, voltage_error_metric = ctrl.voltage_error_metric,
+        max_outer_iters = ctrl.max_outer_iters, enabled = ctrl.enabled)
+    end
+  end
 end
 
 """

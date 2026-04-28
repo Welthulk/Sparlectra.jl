@@ -62,21 +62,21 @@ function run_example_transformer_complex_tap_control(; verbose::Int = 0)
   _print_snapshot(net_ctrl, "Base point before control")
 
   println("\n--- Voltage regulator (ratio tap) ---")
-  addTapController!(net_ctrl; trafo = string(tbr.branchIdx), mode = :voltage, target_bus = "Load", target_vm_pu = 0.985, control_ratio = true, control_phase = false, is_discrete = true, deadband_vm_pu = 2e-3, max_outer_iters = 12)
+  addPowerTransformerControl!(net_ctrl; trafo = string(tbr.branchIdx), mode = :voltage, target_bus = "Load", target_vm_pu = 0.985, control_ratio = true, control_phase = false, is_discrete = true, deadband_vm_pu = 2e-3, max_outer_iters = 12)
   run_net_acpflow(net = net_ctrl, max_ite = 30, tol = 1e-9, verbose = verbose, method = :rectangular, show_results = false)
   _print_snapshot(net_ctrl, "After voltage control")
 
   println("\n--- Querregler / phase shifter (branch active power) ---")
   empty!(net_ctrl.tapControllers)
   p_ref = get_branch_p_from_to_mw(net_ctrl, "Slack", "Mid")
-  addTapController!(net_ctrl; trafo = string(tbr.branchIdx), mode = :branch_active_power, target_branch = ("Slack", "Mid"), p_target_mw = p_ref - 3.0, control_ratio = false, control_phase = true, is_discrete = true, deadband_p_mw = 0.5, max_outer_iters = 12)
+  addPowerTransformerControl!(net_ctrl; trafo = string(tbr.branchIdx), mode = :branch_active_power, target_branch = ("Slack", "Mid"), p_target_mw = p_ref - 3.0, control_ratio = false, control_phase = true, is_discrete = true, deadband_p_mw = 0.5, max_outer_iters = 12)
   run_net_acpflow(net = net_ctrl, max_ite = 30, tol = 1e-9, verbose = verbose, method = :rectangular, show_results = false)
   _print_snapshot(net_ctrl, "After branch active-power control")
 
   println("\n--- Schrägregler (coupled voltage + branch active power) ---")
   empty!(net_ctrl.tapControllers)
   p_ref2 = get_branch_p_from_to_mw(net_ctrl, "Slack", "Mid")
-  addTapController!(
+  addPowerTransformerControl!(
     net_ctrl;
     trafo = string(tbr.branchIdx),
     mode = :voltage_and_branch_active_power,

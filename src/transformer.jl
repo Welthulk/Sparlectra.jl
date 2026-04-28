@@ -406,6 +406,60 @@ function getWindingRatedS(o::PowerTransformerWinding)
     return o.ratedS
   end
 end
+
+"""
+    PowerTransformerControl
+
+Transformer outer-loop controller definition.
+
+# Notes
+- One `PowerTransformerControl` instance represents one controller channel.
+- Typical channel count by transformer type:
+  - `Ratio` (OLTC): 1
+  - `PhaseShifter` (PST): 1
+  - `PhaseTapChanger` (Schrägregler / STE): 2 (ratio + phase)
+"""
+mutable struct PowerTransformerControl
+  trafo::String
+  mode::Symbol
+  target_bus::Union{Nothing,String}
+  target_branch::Union{Nothing,Tuple{String,String}}
+  target_vm_pu::Union{Nothing,Float64}
+  p_target_mw::Union{Nothing,Float64}
+  q_target_mvar::Union{Nothing,Float64}
+  control_ratio::Bool
+  control_phase::Bool
+  is_discrete::Bool
+  deadband_vm_pu::Float64
+  deadband_p_mw::Float64
+  voltage_error_metric::Symbol
+  max_outer_iters::Int
+  enabled::Bool
+  converged::Bool
+  at_limit::Bool
+  status::Symbol
+  achieved_vm_pu::Union{Nothing,Float64}
+  achieved_p_mw::Union{Nothing,Float64}
+  outer_iters::Int
+end
+
+function PowerTransformerControl(; trafo::String, mode::Symbol, target_bus::Union{Nothing,String} = nothing, target_branch::Union{Nothing,Tuple{String,String}} = nothing,
+  target_vm_pu::Union{Nothing,Float64} = nothing, p_target_mw::Union{Nothing,Float64} = nothing, q_target_mvar::Union{Nothing,Float64} = nothing,
+  control_ratio::Bool = true, control_phase::Bool = false, is_discrete::Bool = true, deadband_vm_pu::Float64 = 1e-3, deadband_p_mw::Float64 = 0.5,
+  voltage_error_metric::Symbol = :vm, max_outer_iters::Int = 20, enabled::Bool = true)
+  voltage_error_metric in (:vm, :vm2) || error("PowerTransformerControl: unsupported voltage_error_metric=$(voltage_error_metric). Use :vm or :vm2.")
+  return PowerTransformerControl(trafo, mode, target_bus, target_branch, target_vm_pu, p_target_mw, q_target_mvar, control_ratio, control_phase, is_discrete,
+    deadband_vm_pu, deadband_p_mw, voltage_error_metric, max_outer_iters, enabled, false, false, :idle, nothing, nothing, 0)
+end
+
+@inline function expected_controller_count(trafoTyp::TrafoTyp)::Int
+  if trafoTyp == Ratio || trafoTyp == PhaseShifter
+    return 1
+  elseif trafoTyp == PhaseTapChanger
+    return 2
+  end
+  return 0
+end
 """
     PowerTransformer
 
@@ -462,16 +516,17 @@ mutable struct PowerTransformer <: AbstractBranch
       equiParms = 3
     end
 
-    controller = 0
+    taps_controller = 0
     TapSideNumber = 0
     for x in [s1, s2, s3]
       if hasTaps(x)
-        controller += 1
-        if controller == 1
+        taps_controller += 1
+        if taps_controller == 1
           TapSideNumber = x == s1 ? 1 : (x == s2 ? 2 : 3)
         end
       end
     end
+    controller = tapEnable ? max(taps_controller, expected_controller_count(trafoTyp)) : taps_controller
 
     v1 = s1.Vn
     v2 = s2.Vn

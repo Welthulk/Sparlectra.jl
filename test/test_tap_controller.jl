@@ -28,9 +28,9 @@ function run_tap_controller_tests()
 
   @testset "Tap controller API validation" begin
     net, _ = _build_net()
-    @test_throws ErrorException addTapController!(net; trafo = "does_not_exist", mode = :voltage, target_bus = "Load", target_vm_pu = 1.0)
-    @test_throws ErrorException addTapController!(net; trafo = "1", mode = :voltage)
-    @test_throws ErrorException addTapController!(net; trafo = "1", mode = :voltage, target_bus = "Load", target_vm_pu = 1.0, voltage_error_metric = :invalid)
+    @test_throws ErrorException addPowerTransformerControl!(net; trafo = "does_not_exist", mode = :voltage, target_bus = "Load", target_vm_pu = 1.0)
+    @test_throws ErrorException addPowerTransformerControl!(net; trafo = "1", mode = :voltage)
+    @test_throws ErrorException addPowerTransformerControl!(net; trafo = "1", mode = :voltage, target_bus = "Load", target_vm_pu = 1.0, voltage_error_metric = :invalid)
   end
 
   @testset "Voltage deadband is evaluated in pu Vm space" begin
@@ -47,7 +47,7 @@ function run_tap_controller_tests()
     vm0 = get_bus_vm_pu(net, "Load")
     @test vm0 > 0.98
 
-    addTapController!(net;
+    addPowerTransformerControl!(net;
       trafo = string(tbr.branchIdx),
       mode = :voltage,
       target_bus = "Load",
@@ -77,7 +77,7 @@ function run_tap_controller_tests()
     @test erg0 == 0
     p0 = get_branch_p_from_to_mw(net, "Slack", "Mid")
 
-    addTapController!(net;
+    addPowerTransformerControl!(net;
       trafo = string(tbr.branchIdx),
       mode = :branch_active_power,
       target_branch = ("Slack", "Mid"),
@@ -96,7 +96,7 @@ function run_tap_controller_tests()
 
   @testset "Tap controller reporting rows and classic section" begin
     net, tbr = _build_net()
-    addTapController!(net;
+    addPowerTransformerControl!(net;
       trafo = string(tbr.branchIdx),
       mode = :voltage_and_branch_active_power,
       target_bus = "Load",
@@ -153,5 +153,20 @@ function run_tap_controller_tests()
     @test isapprox(br.tap_min, expected_min; atol = 1e-12)
     @test isapprox(br.tap_max, expected_max; atol = 1e-12)
     @test isapprox(br.tap_step, expected_step; atol = 1e-12)
+  end
+
+  @testset "Controller can be attached during transformer creation" begin
+    net = Net(name = "tap_ctrl_on_create", baseMVA = 100.0)
+    addBus!(net = net, busName = "B1", vn_kV = 110.0)
+    addBus!(net = net, busName = "B2", vn_kV = 110.0)
+    addBus!(net = net, busName = "B3", vn_kV = 110.0)
+    addProsumer!(net = net, busName = "B1", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.01, va_deg = 0.0, referencePri = "B1")
+    addProsumer!(net = net, busName = "B3", type = "ENERGYCONSUMER", p = -20.0, q = -5.0)
+    addPIModelACLine!(net = net, fromBus = "B2", toBus = "B3", r_pu = 0.02, x_pu = 0.12, b_pu = 0.01, status = 1)
+
+    ctrl = PowerTransformerControl(trafo = "", mode = :voltage, target_bus = "B3", target_vm_pu = 0.99, control_ratio = true, control_phase = false)
+    addPIModelTrafo!(net = net, fromBus = "B1", toBus = "B2", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, ratio = 1.0, shift_deg = 0.0, status = 1, controls = [ctrl])
+    @test length(net.tapControllers) == 1
+    @test net.tapControllers[1].trafo == string(getNetBranch(net = net, fromBus = "B1", toBus = "B2").branchIdx)
   end
 end
