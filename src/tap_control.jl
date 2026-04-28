@@ -1,68 +1,5 @@
 # Copyright 2023–2026 Udo Schmitz
 
-"""
-    TapController
-
-Outer-loop transformer controller definition.
-
-# Fields
-- `trafo`: Transformer identifier (branch component name/id or branch index as `String`).
-- `mode`: `:voltage`, `:branch_active_power`, or `:voltage_and_branch_active_power`.
-- `target_bus`: Controlled bus name for voltage mode.
-- `target_branch`: Controlled branch tuple `(fromBus, toBus)` for active-power mode.
-- `target_vm_pu`: Voltage target in p.u.
-- `p_target_mw`: Active-power target in MW.
-- `q_target_mvar`: Optional reactive-power target (reserved for future use).
-- `control_ratio`: Enable ratio (`τ`) updates.
-- `control_phase`: Enable phase (`φ`) updates.
-- `is_discrete`: Use discrete tap-step updates.
-- `deadband_vm_pu`: Voltage deadband.
-- `voltage_error_metric`: Error metric for voltage step direction (`:vm` or `:vm2`).
-- `deadband_p_mw`: Active-power deadband.
-- `max_outer_iters`: Maximum outer-loop iterations.
-- `enabled`: Enable/disable controller.
-- Runtime fields (`converged`, `at_limit`, `status`, `achieved_*`, `outer_iters`) are
-  updated by `run_tap_controllers_outer!`.
-"""
-mutable struct TapController
-  trafo::String
-  mode::Symbol
-  target_bus::Union{Nothing,String}
-  target_branch::Union{Nothing,Tuple{String,String}}
-  target_vm_pu::Union{Nothing,Float64}
-  p_target_mw::Union{Nothing,Float64}
-  q_target_mvar::Union{Nothing,Float64}
-  control_ratio::Bool
-  control_phase::Bool
-  is_discrete::Bool
-  deadband_vm_pu::Float64
-  deadband_p_mw::Float64
-  voltage_error_metric::Symbol
-  max_outer_iters::Int
-  enabled::Bool
-  converged::Bool
-  at_limit::Bool
-  status::Symbol
-  achieved_vm_pu::Union{Nothing,Float64}
-  achieved_p_mw::Union{Nothing,Float64}
-  outer_iters::Int
-end
-
-"""
-    TapController(; ...)
-
-Convenience constructor for `TapController` with sane defaults for outer-loop
-execution and status initialization.
-"""
-function TapController(; trafo::String, mode::Symbol, target_bus::Union{Nothing,String}=nothing, target_branch::Union{Nothing,Tuple{String,String}}=nothing,
-  target_vm_pu::Union{Nothing,Float64}=nothing, p_target_mw::Union{Nothing,Float64}=nothing, q_target_mvar::Union{Nothing,Float64}=nothing,
-  control_ratio::Bool=true, control_phase::Bool=false, is_discrete::Bool=true, deadband_vm_pu::Float64=1e-3, deadband_p_mw::Float64=0.5,
-  voltage_error_metric::Symbol=:vm, max_outer_iters::Int=20, enabled::Bool=true)
-  voltage_error_metric in (:vm, :vm2) || error("TapController: unsupported voltage_error_metric=$(voltage_error_metric). Use :vm or :vm2.")
-  return TapController(trafo, mode, target_bus, target_branch, target_vm_pu, p_target_mw, q_target_mvar, control_ratio, control_phase, is_discrete,
-    deadband_vm_pu, deadband_p_mw, voltage_error_metric, max_outer_iters, enabled, false, false, :idle, nothing, nothing, 0)
-end
-
 @inline _voltage_within_deadband(vm::Float64, target_vm_pu::Float64, deadband_vm_pu::Float64)::Bool = abs(vm - target_vm_pu) <= deadband_vm_pu
 @inline _voltage_control_error(vm::Float64, target_vm_pu::Float64, metric::Symbol)::Float64 = metric == :vm2 ? vm^2 - target_vm_pu^2 : vm - target_vm_pu
 
@@ -78,7 +15,7 @@ function _find_trafo_branch(net::Net, name::String)::Branch
       return br
     end
   end
-  error("TapController: transformer $(name) not found. Use branch component name/id or branch index as String.")
+  error("PowerTransformerControl: transformer $(name) not found. Use branch component name/id or branch index as String.")
 end
 
 """
@@ -117,7 +54,7 @@ end
 
 @inline _controller_mode_label(mode::Symbol) = String(mode)
 
-function _controller_type_label(ctrl::TapController, br::Branch)::String
+function _controller_type_label(ctrl::PowerTransformerControl, br::Branch)::String
   ratio = ctrl.control_ratio && br.has_ratio_tap
   phase = ctrl.control_phase && br.has_phase_tap
   if ratio && phase
@@ -130,7 +67,7 @@ function _controller_type_label(ctrl::TapController, br::Branch)::String
   return "fixed transformer"
 end
 
-function _controller_status_label(ctrl::TapController)::String
+function _controller_status_label(ctrl::PowerTransformerControl)::String
   !ctrl.enabled && return "inactive"
   ctrl.converged && return "converged"
   ctrl.at_limit && return "at_limit"
@@ -193,7 +130,7 @@ function buildTapControllerReportRows(net::Net)::Vector{NamedTuple}
 end
 
 """
-    addTapController!(net; ...)
+    addPowerTransformerControl!(net; ...)
 
 Add and validate a transformer tap controller.
 
@@ -202,27 +139,30 @@ Validation rules:
 - Required target fields must be set according to `mode`.
 - `control_ratio` / `control_phase` must match the chosen mode.
 """
-function addTapController!(net::Net; trafo::String, mode::Symbol, target_bus::Union{Nothing,String}=nothing, target_branch::Union{Nothing,Tuple{String,String}}=nothing,
+function addPowerTransformerControl!(net::Net; trafo::String, mode::Symbol, target_bus::Union{Nothing,String}=nothing, target_branch::Union{Nothing,Tuple{String,String}}=nothing,
   target_vm_pu::Union{Nothing,Float64}=nothing, p_target_mw::Union{Nothing,Float64}=nothing, q_target_mvar::Union{Nothing,Float64}=nothing,
   control_ratio::Bool=true, control_phase::Bool=false, is_discrete::Bool=true, deadband_vm_pu::Float64=1e-3, deadband_p_mw::Float64=0.5,
   voltage_error_metric::Symbol=:vm, max_outer_iters::Int=20, enabled::Bool=true)
 
-  _ = _find_trafo_branch(net, trafo)
-  any(c -> c.trafo == trafo && c.enabled, net.tapControllers) && error("TapController: only one active controller per transformer is allowed.")
-  mode in (:voltage, :branch_active_power, :voltage_and_branch_active_power) || error("TapController: unsupported mode=$(mode)")
+  br = _find_trafo_branch(net, trafo)
+  trafo_obj = findfirst(t -> t.comp.cName == br.comp.cName || t.comp.cID == br.comp.cID, net.trafos)
+  max_controls = isnothing(trafo_obj) ? 1 : max(1, net.trafos[trafo_obj].nController)
+  n_active = count(c -> c.trafo == trafo && c.enabled, net.tapControllers)
+  n_active >= max_controls && error("PowerTransformerControl: transformer $(trafo) allows at most $(max_controls) active controller(s).")
+  mode in (:voltage, :branch_active_power, :voltage_and_branch_active_power) || error("PowerTransformerControl: unsupported mode=$(mode)")
 
   if mode in (:voltage, :voltage_and_branch_active_power)
-    isnothing(target_bus) && error("TapController: target_bus is required for mode=$(mode)")
-    isnothing(target_vm_pu) && error("TapController: target_vm_pu is required for mode=$(mode)")
-    !control_ratio && error("TapController: control_ratio must be true for voltage control")
+    isnothing(target_bus) && error("PowerTransformerControl: target_bus is required for mode=$(mode)")
+    isnothing(target_vm_pu) && error("PowerTransformerControl: target_vm_pu is required for mode=$(mode)")
+    !control_ratio && error("PowerTransformerControl: control_ratio must be true for voltage control")
   end
   if mode in (:branch_active_power, :voltage_and_branch_active_power)
-    isnothing(target_branch) && error("TapController: target_branch is required for mode=$(mode)")
-    isnothing(p_target_mw) && error("TapController: p_target_mw is required for mode=$(mode)")
-    !control_phase && error("TapController: control_phase must be true for branch active power control")
+    isnothing(target_branch) && error("PowerTransformerControl: target_branch is required for mode=$(mode)")
+    isnothing(p_target_mw) && error("PowerTransformerControl: p_target_mw is required for mode=$(mode)")
+    !control_phase && error("PowerTransformerControl: control_phase must be true for branch active power control")
   end
 
-  push!(net.tapControllers, TapController(;
+  push!(net.tapControllers, PowerTransformerControl(;
     trafo = trafo,
     mode = mode,
     target_bus = target_bus,
@@ -242,6 +182,8 @@ function addTapController!(net::Net; trafo::String, mode::Symbol, target_bus::Un
   return net
 end
 
+addTapController!(net::Net; kwargs...) = addPowerTransformerControl!(net; kwargs...)
+
 """
     _phase_probe_direction(...)
 
@@ -249,7 +191,7 @@ Internal helper: determines the empirical sign of `ΔP_from_to` for a positive
 phase increment (`+phase_step_deg`) on the controlled transformer and branch.
 Returns `-1`, `0`, or `+1`.
 """
-function _phase_probe_direction(net::Net, br::Branch, ctrl::TapController, max_ite::Int, tol::Float64, verbose::Int, opt_fd::Bool, opt_sparse::Bool, method::Symbol)
+function _phase_probe_direction(net::Net, br::Branch, ctrl::PowerTransformerControl, max_ite::Int, tol::Float64, verbose::Int, opt_fd::Bool, opt_sparse::Bool, method::Symbol)
   oldphi = br.phase_shift_deg
   step = br.phase_step_deg
   _, erg = runpf!(net, max_ite, tol, verbose; opt_fd = opt_fd, opt_sparse = opt_sparse, method = method)
@@ -271,7 +213,7 @@ Internal helper: determines the empirical sign of `ΔVm_target` for a positive
 ratio increment (`+tap_step`) on the controlled transformer and target bus.
 Returns `-1`, `0`, or `+1`.
 """
-function _ratio_probe_direction(net::Net, br::Branch, ctrl::TapController, max_ite::Int, tol::Float64, verbose::Int, opt_fd::Bool, opt_sparse::Bool, method::Symbol)
+function _ratio_probe_direction(net::Net, br::Branch, ctrl::PowerTransformerControl, max_ite::Int, tol::Float64, verbose::Int, opt_fd::Bool, opt_sparse::Bool, method::Symbol)
   oldratio = br.tap_ratio
   step = br.tap_step
   _, erg = runpf!(net, max_ite, tol, verbose; opt_fd = opt_fd, opt_sparse = opt_sparse, method = method)

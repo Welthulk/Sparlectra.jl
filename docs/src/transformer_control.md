@@ -34,7 +34,7 @@ The augmented Newton formulation with tap variables is intentionally deferred.
 ## API
 
 ```julia
-addTapController!(net;
+addPowerTransformerControl!(net;
   trafo = "1",
   mode = :voltage,
   target_bus = "B5",
@@ -45,7 +45,7 @@ addTapController!(net;
 ```
 
 ```julia
-addTapController!(net;
+addPowerTransformerControl!(net;
   trafo = "1",
   mode = :branch_active_power,
   target_branch = ("B1", "B2"),
@@ -56,7 +56,7 @@ addTapController!(net;
 ```
 
 ```julia
-addTapController!(net;
+addPowerTransformerControl!(net;
   trafo = "1",
   mode = :voltage_and_branch_active_power,
   target_bus = "B5",
@@ -79,4 +79,30 @@ addTapController!(net;
 - No coupled Jacobian with tap states yet.
 - No multi-transformer coordinated remote control yet.
 
-See `src/examples/transformer_complex_tap_control.jl` for a runnable example.
+You can also pass controller definitions directly while creating a transformer:
+
+```julia
+ctrl = PowerTransformerControl(
+  trafo = "",
+  mode = :voltage,
+  target_bus = "B5",
+  target_vm_pu = 1.01,
+  control_ratio = true,
+  control_phase = false,
+)
+
+addPIModelTrafo!(
+  net = net,
+  fromBus = "B1",
+  toBus = "B2",
+  r_pu = 0.01,
+  x_pu = 0.08,
+  b_pu = 0.0,
+  ratio = 1.0,
+  shift_deg = 0.0,
+  status = 1,
+  controls = [ctrl],
+)
+```
+
+See `src/examples/example_transformer_tap.jl` for a runnable example.
