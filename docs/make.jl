@@ -25,6 +25,7 @@ makedocs(
     "Solver" => "solver.md",
     "Voltage Dependent Control" => "voltage_dependent_control.md",
     "Transformer Control" => "transformer_control.md",
+    "Examples Overview" => "examples_overview.md",
     "State Estimation" => "state_estimation.md",
     "Workshop" => "workshop.md",
     "API Reference" => "reference.md",

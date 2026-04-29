@@ -135,7 +135,8 @@ addPIModelTrafo!(
 )
 ```
 
-See `src/examples/example_transformer_tap.jl` for a runnable example.
+See `src/examples/example_transformer_tap.jl` and `src/examples/tap_control_demo_grid.jl`
+for runnable transformer-control examples.
 
 Internally, passed controller channels are also attached to the selected transformer winding
 (`PowerTransformerWinding.controls`), so controller-side assignment is explicitly represented
