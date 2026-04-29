@@ -15,3 +15,9 @@ readme_text = replace(readme_text, r"\(docs/src/([^)]+)\)" => s"(\1)")
 
 Markdown.parse(readme_text)
 ```
+
+## Documentation quick links
+
+* [Feature Matrix](feature_matrix.md)
+* [Transformer Control](transformer_control.md)
+* [Examples Overview](examples_overview.md)
