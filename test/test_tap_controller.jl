@@ -64,10 +64,11 @@ function run_tap_controller_tests()
     @test erg == 0
     @test tbr.tap_ratio != ratio_before
     @test tbr.tap_ratio > ratio_before
-    if net.tapControllers[1].converged
+    ctrl = Sparlectra._tap_controllers(net)[1]
+    if ctrl.converged
       @test abs(get_bus_vm_pu(net, "Load") - 0.98) <= 0.05
     else
-      @test net.tapControllers[1].at_limit
+      @test ctrl.at_limit
     end
   end
 
@@ -166,8 +167,9 @@ function run_tap_controller_tests()
 
     ctrl = PowerTransformerControl(trafo = "", mode = :voltage, target_bus = "B3", target_vm_pu = 0.99, control_ratio = true, control_phase = false)
     addPIModelTrafo!(net = net, fromBus = "B1", toBus = "B2", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, ratio = 1.0, shift_deg = 0.0, status = 1, controls = [ctrl])
-    @test length(net.tapControllers) == 1
-    @test net.tapControllers[1].trafo == string(getNetBranch(net = net, fromBus = "B1", toBus = "B2").branchIdx)
+    ctrls = Sparlectra._tap_controllers(net)
+    @test length(ctrls) == 1
+    @test ctrls[1].trafo == string(getNetBranch(net = net, fromBus = "B1", toBus = "B2").branchIdx)
     @test length(net.trafos[1].side1.controls) == 1
     @test net.trafos[1].tapSideNumber == 1
   end

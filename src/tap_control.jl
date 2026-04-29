@@ -6,19 +6,11 @@
 """
     _tap_controllers(net)
 
-Collect all tap controllers configured in `net`.
-Controllers can be attached either to `net.tapControllers` (legacy) or directly
-to transformer windings (`winding.controls`).
+Collect all tap controllers configured in `net` from transformer windings.
 """
 function _tap_controllers(net::Net)::Vector{PowerTransformerControl}
   controllers = PowerTransformerControl[]
   seen = IdDict{PowerTransformerControl,Bool}()
-
-  for ctrl in net.tapControllers
-    haskey(seen, ctrl) && continue
-    seen[ctrl] = true
-    push!(controllers, ctrl)
-  end
 
   for trafo in net.trafos
     for winding in (trafo.side1, trafo.side2, trafo.side3)
@@ -31,6 +23,22 @@ function _tap_controllers(net::Net)::Vector{PowerTransformerControl}
     end
   end
   return controllers
+end
+
+"""
+    clearTapControllers!(net)
+
+Remove all tap controllers from transformer windings in `net`.
+"""
+function clearTapControllers!(net::Net)
+  for trafo in net.trafos
+    empty!(trafo.side1.controls)
+    empty!(trafo.side2.controls)
+    if !isnothing(trafo.side3)
+      empty!(trafo.side3.controls)
+    end
+  end
+  return net
 end
 
 """
@@ -175,9 +183,10 @@ function addPowerTransformerControl!(net::Net; trafo::String, mode::Symbol, targ
   voltage_error_metric::Symbol=:vm, max_outer_iters::Int=20, enabled::Bool=true)
 
   br = _find_trafo_branch(net, trafo)
-  trafo_obj = findfirst(t -> t.comp.cName == br.comp.cName || t.comp.cID == br.comp.cID, net.trafos)
+  trafo_obj = findfirst(t -> t.comp.cFrom_bus == br.comp.cFrom_bus && t.comp.cTo_bus == br.comp.cTo_bus, net.trafos)
   max_controls = isnothing(trafo_obj) ? 1 : max(1, net.trafos[trafo_obj].nController)
-  n_active = count(c -> c.trafo == trafo && c.enabled, net.tapControllers)
+  controllers = _tap_controllers(net)
+  n_active = count(c -> c.trafo == trafo && c.enabled, controllers)
   n_active >= max_controls && error("PowerTransformerControl: transformer $(trafo) allows at most $(max_controls) active controller(s).")
   mode in (:voltage, :branch_active_power, :voltage_and_branch_active_power) || error("PowerTransformerControl: unsupported mode=$(mode)")
 
@@ -192,7 +201,7 @@ function addPowerTransformerControl!(net::Net; trafo::String, mode::Symbol, targ
     !control_phase && error("PowerTransformerControl: control_phase must be true for branch active power control")
   end
 
-  push!(net.tapControllers, PowerTransformerControl(;
+  ctrl = PowerTransformerControl(;
     trafo = trafo,
     mode = mode,
     target_bus = target_bus,
@@ -207,8 +216,11 @@ function addPowerTransformerControl!(net::Net; trafo::String, mode::Symbol, targ
     deadband_p_mw = deadband_p_mw,
     voltage_error_metric = voltage_error_metric,
     max_outer_iters = max_outer_iters,
-    enabled = enabled,
-  ))
+    enabled = enabled)
+  if isnothing(trafo_obj)
+    error("PowerTransformerControl: no transformer object found for branch $(br.branchIdx)")
+  end
+  push!(net.trafos[trafo_obj].side1.controls, ctrl)
   return net
 end
 

@@ -214,7 +214,7 @@ function configure_tap_controllers!(net::Net, cfg::Dict{String,Any})
     error("Sparlectra.addTapController! is not available. Please update this example to the current API name.")
   end
 
-  empty!(net.tapControllers)
+  clearTapControllers!(net)
   c = _controller_branches(net)
 
   function _add_voltage_tap_controller_compat!(; trafo::String, target_bus::String, target_vm_pu::Float64, deadband_vm_pu::Float64, voltage_error_metric::Symbol, max_outer_iters::Int)
