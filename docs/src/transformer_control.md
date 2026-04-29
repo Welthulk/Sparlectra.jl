@@ -31,6 +31,39 @@ Current implementation uses an outer loop around `runpf!`:
 
 The augmented Newton formulation with tap variables is intentionally deferred.
 
+## Controller Source Resolution (`tap_control.jl`)
+
+Tap controllers are resolved in one place via `_tap_controllers(net)`:
+
+- legacy source: `net.tapControllers`
+- transformer-native source: `PowerTransformerWinding.controls`
+
+Both sources are merged and deduplicated by object identity. This design keeps
+older workflows compatible and allows users to define controllers directly on
+the transformer model without mirroring them manually in `net.tapControllers`.
+
+The merged list is used by:
+
+- `run_tap_controllers_outer!` (controller execution),
+- `buildTapControllerReportRows` / `printTapControllerSummary` (reporting),
+- ACP-flow entry points (`run_acpflow` / `run_net_acpflow`) to decide whether
+  tap-control outer-loop execution is needed.
+
+## Why this is not embedded directly in the NR solvers
+
+The current approach intentionally keeps tap control outside the Newton core:
+
+- It avoids extending the Jacobian and state vector by tap variables.
+- It keeps solver backends (`:rectangular`, deprecated alternatives, FD
+  fallback paths) simpler and easier to maintain.
+- It isolates control logic (deadbands, limit handling, discrete steps) in
+  `tap_control.jl` instead of duplicating it across solver variants.
+- It preserves deterministic post-processing (`calcNetLosses!`,
+  `calcLinkFlowsKCL!`) between outer iterations.
+
+In short: taps are currently treated as supervisory control updates around PF
+solves, not as additional algebraic unknowns inside one monolithic NR system.
+
 ## API
 
 ```julia

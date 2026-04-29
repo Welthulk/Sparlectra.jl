@@ -121,7 +121,7 @@ function run_acpflow(;
   # Run power flow / optional tap-controller outer loop
   ite = 0
   etime = @elapsed begin
-    if isempty(myNet.tapControllers)
+    if isempty(_tap_controllers(myNet))
       ite, erg = runpf!(myNet, max_ite, tol, verbose; opt_fd = opt_fd, opt_sparse = opt_sparse, method = method, opt_flatstart = opt_flatstart, pv_table_rows = pv_table_rows, validate_limits_after_pf = validate_limits_after_pf, q_limit_violation_headroom = q_limit_violation_headroom, lock_pv_to_pq_buses = lock_pv_to_pq_buses_resolved)
     else
       ite, erg = run_tap_controllers_outer!(myNet; max_ite = max_ite, tol = tol, verbose = verbose, opt_fd = opt_fd, opt_sparse = opt_sparse, method = method)
@@ -177,7 +177,7 @@ function run_net_acpflow(; net::Net, max_ite::Int = 30, tol::Float64 = 1e-6, ver
   # Run power flow / optional tap-controller outer loop
   ite = 0
   etime = @elapsed begin
-    if isempty(net.tapControllers)
+    if isempty(_tap_controllers(net))
       ite, erg = runpf!(net, max_ite, tol, verbose; opt_fd = opt_fd, opt_sparse = opt_sparse, method = method, lock_pv_to_pq_buses = lock_pv_to_pq_buses)
     else
       ite, erg = run_tap_controllers_outer!(net; max_ite = max_ite, tol = tol, verbose = verbose, opt_fd = opt_fd, opt_sparse = opt_sparse, method = method)

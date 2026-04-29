@@ -20,6 +20,7 @@
 * Updated `tap_control_demo_grid.jl` logging to create versioned run logs in `src/examples/_out/` and refined OLTC demo step resolution to `tap_step = 0.00625` for the unchanged `0.90 .. 1.10` ratio range.
 * Tap-controller voltage convergence now consistently evaluates deadband in `|V - V_target|` (pu), while allowing optional step-direction evaluation via `voltage_error_metric = :vm2` for users who prefer a squared-voltage control signal.
 * Added YAML configurability in the tap-control demo for `*_deadband_vm_pu` and `*_voltage_error_metric` (`vm` or `vm2`) on voltage-regulating controllers.
+* Tap-controller discovery now consistently merges legacy `net.tapControllers` with transformer-winding `controls`, so winding-attached controllers are executed and reported without duplicate manual registration.
 
 ### Tests
 * Added regression tests for transformer tap controller behavior.
