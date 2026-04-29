@@ -111,7 +111,7 @@ end
 
 function _tap_voltage_target_by_bus(net::Net)::Dict{Int,Float64}
   targets = Dict{Int,Float64}()
-  for ctrl in net.tapControllers
+  for ctrl in _tap_controllers(net)
     ctrl.enabled || continue
     ctrl.mode in (:voltage, :voltage_and_branch_active_power) || continue
     isnothing(ctrl.target_bus) && continue
@@ -123,7 +123,7 @@ function _tap_voltage_target_by_bus(net::Net)::Dict{Int,Float64}
 end
 
 function _controller_counts(net::Net)
-  tap = count(c -> c.enabled, net.tapControllers)
+  tap = count(c -> c.enabled, _tap_controllers(net))
   qu = count(ps -> has_qu_controller(ps), net.prosumpsVec)
   pu = count(ps -> has_pu_controller(ps), net.prosumpsVec)
   return tap, qu, pu
@@ -523,7 +523,7 @@ function printACPFlowResults(net::Net, ct::Float64, ite::Int, tol::Float64, toFi
   end
   println(io, "\nControl")
   println(io, "-------")
-  if isempty(net.tapControllers)
+  if isempty(_tap_controllers(net))
     # Explicit statement keeps report output deterministic for tools/parsers.
     println(io, "Transformer controls: none")
   else

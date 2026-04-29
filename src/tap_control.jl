@@ -4,6 +4,36 @@
 @inline _voltage_control_error(vm::Float64, target_vm_pu::Float64, metric::Symbol)::Float64 = metric == :vm2 ? vm^2 - target_vm_pu^2 : vm - target_vm_pu
 
 """
+    _tap_controllers(net)
+
+Collect all tap controllers configured in `net`.
+Controllers can be attached either to `net.tapControllers` (legacy) or directly
+to transformer windings (`winding.controls`).
+"""
+function _tap_controllers(net::Net)::Vector{PowerTransformerControl}
+  controllers = PowerTransformerControl[]
+  seen = IdDict{PowerTransformerControl,Bool}()
+
+  for ctrl in net.tapControllers
+    haskey(seen, ctrl) && continue
+    seen[ctrl] = true
+    push!(controllers, ctrl)
+  end
+
+  for trafo in net.trafos
+    for winding in (trafo.side1, trafo.side2, trafo.side3)
+      isnothing(winding) && continue
+      for ctrl in winding.controls
+        haskey(seen, ctrl) && continue
+        seen[ctrl] = true
+        push!(controllers, ctrl)
+      end
+    end
+  end
+  return controllers
+end
+
+"""
     _find_trafo_branch(net, name)
 
 Internal helper to resolve a transformer branch by component name, component id,
@@ -88,7 +118,7 @@ for textual and DataFrame-based reporting.
 """
 function buildTapControllerReportRows(net::Net)::Vector{NamedTuple}
   rows = NamedTuple[]
-  for ctrl in net.tapControllers
+  for ctrl in _tap_controllers(net)
     br = _find_trafo_branch(net, ctrl.trafo)
     target_bus = ctrl.target_bus
     target_branch = ctrl.target_branch
@@ -248,18 +278,19 @@ Loop per iteration:
 Returns `(iterations, erg)` where `erg == 0` means successful PF termination.
 """
 function run_tap_controllers_outer!(net::Net; max_ite::Int=30, tol::Float64=1e-6, verbose::Int=0, opt_fd::Bool=false, opt_sparse::Bool=false, method::Symbol=:rectangular)
-  isempty(net.tapControllers) && return (0, 0)
+  controllers = _tap_controllers(net)
+  isempty(controllers) && return (0, 0)
   _, erg = runpf!(net, max_ite, tol, verbose; opt_fd = opt_fd, opt_sparse = opt_sparse, method = method)
   erg != 0 && return (0, erg)
   calcNetLosses!(net)
   calcLinkFlowsKCL!(net)
 
-  max_outer = maximum(c.max_outer_iters for c in net.tapControllers if c.enabled)
+  max_outer = maximum(c.max_outer_iters for c in controllers if c.enabled)
   for it in 1:max_outer
     all_done = true
     any_moved = false
 
-    for ctrl in net.tapControllers
+    for ctrl in controllers
       ctrl.enabled || continue
       br = _find_trafo_branch(net, ctrl.trafo)
       moved = false
@@ -319,7 +350,7 @@ function run_tap_controllers_outer!(net::Net; max_ite::Int=30, tol::Float64=1e-6
     calcLinkFlowsKCL!(net)
   end
 
-  for ctrl in net.tapControllers
+  for ctrl in controllers
     ctrl.enabled || continue
     ctrl.status = :max_outer_iters
   end
@@ -332,7 +363,7 @@ end
 Print a compact controller summary block for all configured tap controllers.
 """
 function printTapControllerSummary(io::IO, net::Net)
-  if isempty(net.tapControllers)
+  if isempty(_tap_controllers(net))
     println(io, "\nControl")
     println(io, "-------")
     println(io, "Transformer controls: none")
