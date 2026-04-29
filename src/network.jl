@@ -97,7 +97,6 @@ struct Net
   qmax_pu::Vector{Float64}            # pro Bus Qmax (p.u.)
   qLimitEvents::Dict{Int,Symbol}      # BusIdx -> :min | :max (PV→PQ Change)  
   measurements::Vector
-  tapControllers::Vector{PowerTransformerControl}
 
   #! format: off
   function Net(; name::String, baseMVA::Float64, vmin_pu::Float64 = 0.9, vmax_pu::Float64 = 1.1, cooldown_iters::Int = 0, q_hyst_pu::Float64 = 0.0, flatstart::Bool = false)    
@@ -128,8 +127,7 @@ struct Net
         [],                                    # qmin_pu
         [],                                    # qmax_pu
         Dict{Int,Symbol}(),
-        [],
-        PowerTransformerControl[])                                          
+        [])                                          
   end
   #! format: on
   function Base.show(io::IO, net::Net)
@@ -140,7 +138,7 @@ struct Net
     println(io, "Vmin / Vmax: ", net.vmin_pu, " / ", net.vmax_pu)
     println(io, "cooldown_iters: ", net.cooldown_iters, ", q_hyst_pu: ", net.q_hyst_pu)
   println(io, "Measurements: ", length(net.measurements))
-  println(io, "Tap controllers: ", length(net.tapControllers))
+  println(io, "Tap controllers: ", sum(length, (t.side1.controls for t in net.trafos)) + sum(length, (t.side2.controls for t in net.trafos)) + sum(isnothing(t.side3) ? 0 : length(t.side3.controls) for t in net.trafos))
   end
 end
 
@@ -791,12 +789,9 @@ function addPIModelTrafo!(;
   addBranch!(net = net, from = from, to = to, branch = trafo, status = status, ratio = ratio, side = side, vn_kV = vn_hv_kV, values_are_pu = true)
   if !isnothing(controls)
     br = net.branchVec[end]
-    for ctrl in controls
-      addPowerTransformerControl!(net; trafo = string(br.branchIdx), mode = ctrl.mode, target_bus = ctrl.target_bus, target_branch = ctrl.target_branch,
-        target_vm_pu = ctrl.target_vm_pu, p_target_mw = ctrl.p_target_mw, q_target_mvar = ctrl.q_target_mvar,
-        control_ratio = ctrl.control_ratio, control_phase = ctrl.control_phase, is_discrete = ctrl.is_discrete,
-        deadband_vm_pu = ctrl.deadband_vm_pu, deadband_p_mw = ctrl.deadband_p_mw, voltage_error_metric = ctrl.voltage_error_metric,
-        max_outer_iters = ctrl.max_outer_iters, enabled = ctrl.enabled)
+    target_controls = side == 1 ? net.trafos[end].side1.controls : net.trafos[end].side2.controls
+    for ctrl in target_controls
+      ctrl.trafo = string(br.branchIdx)
     end
   end
 end
@@ -975,12 +970,9 @@ function add2WTrafo!(; net::Net, fromBus::String, toBus::String, sn_mva::Float64
   addBranch!(net = net, from = from, to = to, branch = trafo, status = status, ratio = ratio, side = side, vn_kV = vn_hv_kV)
   if !isnothing(controls)
     br = net.branchVec[end]
-    for ctrl in controls
-      addPowerTransformerControl!(net; trafo = string(br.branchIdx), mode = ctrl.mode, target_bus = ctrl.target_bus, target_branch = ctrl.target_branch,
-        target_vm_pu = ctrl.target_vm_pu, p_target_mw = ctrl.p_target_mw, q_target_mvar = ctrl.q_target_mvar,
-        control_ratio = ctrl.control_ratio, control_phase = ctrl.control_phase, is_discrete = ctrl.is_discrete,
-        deadband_vm_pu = ctrl.deadband_vm_pu, deadband_p_mw = ctrl.deadband_p_mw, voltage_error_metric = ctrl.voltage_error_metric,
-        max_outer_iters = ctrl.max_outer_iters, enabled = ctrl.enabled)
+    target_controls = side == 1 ? net.trafos[end].side1.controls : net.trafos[end].side2.controls
+    for ctrl in target_controls
+      ctrl.trafo = string(br.branchIdx)
     end
   end
 end

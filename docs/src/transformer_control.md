@@ -33,14 +33,11 @@ The augmented Newton formulation with tap variables is intentionally deferred.
 
 ## Controller Source Resolution (`tap_control.jl`)
 
-Tap controllers are resolved in one place via `_tap_controllers(net)`:
+Tap controllers are resolved in one place via `_tap_controllers(net)` from
+transformer-native source `PowerTransformerWinding.controls`.
 
-- legacy source: `net.tapControllers`
-- transformer-native source: `PowerTransformerWinding.controls`
-
-Both sources are merged and deduplicated by object identity. This design keeps
-older workflows compatible and allows users to define controllers directly on
-the transformer model without mirroring them manually in `net.tapControllers`.
+Controllers are deduplicated by object identity so each controller is processed
+once, even if references are shared across internal structures.
 
 The merged list is used by:
 

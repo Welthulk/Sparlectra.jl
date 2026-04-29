@@ -100,7 +100,7 @@ export
   getNetOrigBusIdx, geNetBusIdx, setNetBranchStatus!, getNetBranch, getNetBranchNumberVec, setTotalLosses!, getTotalLosses, getBusType, getEffectiveBusType, getBusProsumers, refreshBusTypesFromProsumers!, get_bus_vn_kV, get_vn_kV, updateBranchParameters!, hasShunt!, 
   getShunt!, markIsolatedBuses!,setTotalBusPower!, setPVBusVset!, setQLimits!, getNodeVm,distributeBusResults!, getTotalBusPower, getTotalLosses, buildVoltageVector,initialVrect, buildComplexSVec, buildControlledSVec, has_voltage_dependent_control, addShuntMatpower!,
   add2WTPIModelTrafo!, add3WTPiModelTrafo!,showNet, buildQLimits!,updateShuntPowers!, addLink!, setNetLinkStatus!, getNetLinks, calcLinkFlowsKCL!,
-  addPowerTransformerControl!, addTapController!, get_bus_vm_pu, get_branch_p_from_to_mw, get_branch_q_from_to_mvar, run_tap_controllers_outer!, buildTapControllerReportRows, printTapControllerSummary,
+  addPowerTransformerControl!, addTapController!, clearTapControllers!, get_bus_vm_pu, get_branch_p_from_to_mw, get_branch_q_from_to_mvar, run_tap_controllers_outer!, buildTapControllerReportRows, printTapControllerSummary,
   # remove_functions.jl
   removeBus!, removeBranch!, removeACLine!, removeTrafo!, removeShunt!, removeProsumer!, clearIsolatedBuses!,apply_mp_isolated_buses!,
   # import.jl
