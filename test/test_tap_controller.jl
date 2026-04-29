@@ -154,6 +154,18 @@ function run_tap_controller_tests()
     @test isapprox(br.tap_min, expected_min; atol = 1e-12)
     @test isapprox(br.tap_max, expected_max; atol = 1e-12)
     @test isapprox(br.tap_step, expected_step; atol = 1e-12)
+    @test isapprox(taps.tapStepPercent, 1.0; atol = 1e-12)
+    @test isapprox(taps.neutralU, 110.0; atol = 1e-12)
+    @test isapprox(taps.neutralU_ratio, 1.0; atol = 1e-12)
+  end
+
+  @testset "PowerTransformerTaps neutral voltage derivation" begin
+    taps_ratio = PowerTransformerTaps(Vn_kV = 20.0, step = 0, lowStep = -2, highStep = 2, neutralStep = 0, voltageIncrement_kV = 0.4, neutralU_ratio = 1.05)
+    @test isapprox(taps_ratio.neutralU, 21.0; atol = 1e-12)
+    @test isapprox(taps_ratio.neutralU_ratio, 1.05; atol = 1e-12)
+
+    taps_neutral = PowerTransformerTaps(Vn_kV = 20.0, step = 0, lowStep = -2, highStep = 2, neutralStep = 0, voltageIncrement_kV = 0.4, neutralU = 19.5)
+    @test isapprox(taps_neutral.neutralU_ratio, 0.975; atol = 1e-12)
   end
 
   @testset "Controller can be attached during transformer creation" begin

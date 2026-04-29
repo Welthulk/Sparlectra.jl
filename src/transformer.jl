@@ -146,19 +146,16 @@ mutable struct PowerTransformerTaps
     @assert Vn_kV > 0.0 "Vn_kV must be > 0.0"
     @assert highStep != lowStep "tap high position equals low position $(highStep) = $(lowStep)"
 
-    tapStepPercent = 0
+    tapStepPercent = 0.0
     if voltageIncrement_kV != 0.0
-      tapStepPercent = (Vn_kV / voltageIncrement_kV) * 1e-2
+      tapStepPercent = (voltageIncrement_kV / Vn_kV) * 100.0
     end
 
-    #FIXME: calculation of neutralU is not correct
     if isnothing(neutralU)
-      if isnothing(neutralU_ratio)
-        neutralU_ratio = 1.0
-        neutralU = Vn_kV
-      end
-      neutralU = Vn_kV
-      # neutralU = round(neutralU_ratio * Vn_kV + (highStep - lowStep) * tapStepPercent * 1e2, digits = 0)
+      neutralU_ratio = isnothing(neutralU_ratio) ? 1.0 : neutralU_ratio
+      neutralU = neutralU_ratio * Vn_kV
+    elseif isnothing(neutralU_ratio)
+      neutralU_ratio = neutralU / Vn_kV
     end
     tapSign = (highStep > lowStep) ? 1 : -1
     new(step, lowStep, highStep, neutralStep, voltageIncrement_kV, neutralU, neutralU_ratio, tapStepPercent, tapSign)
