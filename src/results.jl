@@ -17,9 +17,9 @@
 # file: src/results.jl
 # Purpose: functions for formatting and printing results of power flow calculations
 function format_version(version::VersionNumber)
-  major = lpad(version.major, 2, '0')
+  major = lpad(version.major, 1, '0')
   minor = lpad(version.minor, 1, '0')
-  patch = lpad(version.patch, 2, '0')
+  patch = lpad(version.patch, 0, '0')
   return "$major.$minor.$patch"
 end
 
@@ -67,7 +67,25 @@ function _build_transformer_control_rows(net::Net)::Vector{NamedTuple}
 end
 
 function Base.show(io::IO, report::ACPFlowReport)
-  print(io, "ACPFlowReport(", "case=", report.metadata.case, ", converged=", report.metadata.converged, ", nodes=", length(report.nodes), ", branches=", length(report.branches), ", links=", length(report.links), ", transformer_controls=", length(report.transformer_controls), ", q_limit_events=", length(report.q_limit_events), ")")
+  print(
+    io,
+    "ACPFlowReport(",
+    "case=",
+    report.metadata.case,
+    ", converged=",
+    report.metadata.converged,
+    ", nodes=",
+    length(report.nodes),
+    ", branches=",
+    length(report.branches),
+    ", links=",
+    length(report.links),
+    ", transformer_controls=",
+    length(report.transformer_controls),
+    ", q_limit_events=",
+    length(report.q_limit_events),
+    ")",
+  )
 end
 
 _default0(x) = isnothing(x) ? 0.0 : x
@@ -438,7 +456,25 @@ function printACPFlowResults(net::Net, ct::Float64, ite::Int, tol::Float64, toFi
 
   tap_target_vm = _tap_voltage_target_by_bus(net)
   @printf(io, "==========================================================================================================================================================================================================================\n")
-  @printf(io, "| %-5s | %-20s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-12s | %-12s |\n", "Nr", "Bus", "Vn [kV]", "V [kV]", "V [pu]", "phi [deg]", "Pg [MW]", "Qg [MVar]", "Pl [MW]", "Ql [MVar]", "Ps [MW]", "Qs [MVar]", "Type", "Control", "Tap Vm tgt")
+  @printf(
+    io,
+    "| %-5s | %-20s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-12s | %-12s |\n",
+    "Nr",
+    "Bus",
+    "Vn [kV]",
+    "V [kV]",
+    "V [pu]",
+    "phi [deg]",
+    "Pg [MW]",
+    "Qg [MVar]",
+    "Pl [MW]",
+    "Ql [MVar]",
+    "Ps [MW]",
+    "Qs [MVar]",
+    "Type",
+    "Control",
+    "Tap Vm tgt"
+  )
   @printf(io, "==========================================================================================================================================================================================================================\n")
 
   pGS = qGS = pLS = qLS = ""
