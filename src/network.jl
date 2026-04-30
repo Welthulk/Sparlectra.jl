@@ -133,12 +133,12 @@ struct Net
   function Base.show(io::IO, net::Net)
     println(io, "Net: ", net.name)
     println(io, "Base MVA: ", net.baseMVA)
-    println(io, "Nodes: ", length(net.nodeVec), ", Lines: ", length(net.linesAC), ", Transformers: ", length(net.trafos), ", Branches: ", length(net.branchVec), "Links: ", length(net.linkVec), ", Prosumers: ", length(net.prosumpsVec), ", Shunts: ", length(net.shuntVec))
+    println(io, "Nodes: ", length(net.nodeVec), ", Lines: ", length(net.linesAC), ", Transformers: ", length(net.trafos), ", Branches: ", length(net.branchVec), ", Links: ", length(net.linkVec), ", Prosumers: ", length(net.prosumpsVec), ", Shunts: ", length(net.shuntVec))
     println(io, "Slack buses: ", net.slackVec, ", flatstart: ", net.flatstart, ", locked: ", net._locked)
     println(io, "Vmin / Vmax: ", net.vmin_pu, " / ", net.vmax_pu)
     println(io, "cooldown_iters: ", net.cooldown_iters, ", q_hyst_pu: ", net.q_hyst_pu)
-  println(io, "Measurements: ", length(net.measurements))
-  println(io, "Tap controllers: ", sum(length, (t.side1.controls for t in net.trafos)) + sum(length, (t.side2.controls for t in net.trafos)) + sum(isnothing(t.side3) ? 0 : length(t.side3.controls) for t in net.trafos))
+    println(io, "Measurements: ", length(net.measurements))
+    println(io, "Tap controllers: ", sum(length, (t.side1.controls for t in net.trafos)) + sum(length, (t.side2.controls for t in net.trafos)) + sum(isnothing(t.side3) ? 0 : length(t.side3.controls) for t in net.trafos))
   end
 end
 
@@ -1040,7 +1040,29 @@ function addProsumer!(;
   else
     nothing
   end
-  ps = ProSumer(vn_kv = vn_kV, busIdx = busIdx, oID = idProsSum, type = proTy, p = p, q = q, minP = pMin, maxP = pMax, minQ = qMin, maxQ = qMax, referencePri = refPriIdx, vm_pu = vm_pu, va_deg = va_deg, vstep_pu = vstep_pu, tap_steps_down = tap_steps_down, tap_steps_up = tap_steps_up, vset_adjust = vset_adjust_cfg, isRegulated = auto_regulated, isAPUNode = isAPUNode, quController = qu_controller, puController = pu_controller)
+  ps = ProSumer(
+    vn_kv = vn_kV,
+    busIdx = busIdx,
+    oID = idProsSum,
+    type = proTy,
+    p = p,
+    q = q,
+    minP = pMin,
+    maxP = pMax,
+    minQ = qMin,
+    maxQ = qMax,
+    referencePri = refPriIdx,
+    vm_pu = vm_pu,
+    va_deg = va_deg,
+    vstep_pu = vstep_pu,
+    tap_steps_down = tap_steps_down,
+    tap_steps_up = tap_steps_up,
+    vset_adjust = vset_adjust_cfg,
+    isRegulated = auto_regulated,
+    isAPUNode = isAPUNode,
+    quController = qu_controller,
+    puController = pu_controller,
+  )
   push!(net.prosumpsVec, ps)
   node = net.nodeVec[busIdx]
   if (isGenerator(proTy))
