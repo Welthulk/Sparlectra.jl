@@ -1,30 +1,18 @@
 # Change Log
-## Version 0.7.3 – 2026-05-xx
+## Version 0.7.3 – 2026-05-04
 ### New Features
 * Added transformer tap control in AC power flow with an outer-loop controller workflow.
 * Added `addTapController!` support for:
   * voltage control via tap ratio (`mode = :voltage`)
   * branch active-power control via phase shift (`mode = :branch_active_power`)
   * coupled ratio + phase control (`mode = :voltage_and_branch_active_power`)
-* Added discrete tap-step handling (ratio and phase) with limit enforcement in controller updates.
-* Added user documentation for complex tap control and controller modes.
-* Added runnable examples for:
-  * transformer tap voltage control
-  * combined complex tap control
-  * phase-shift transformer active-power control
+  * tap-control reporting in classic and structured ACP flow outputs
 
 ### Improvements
-* Refactored transformer controller model to `PowerTransformerControl` in `transformer.jl`; controller capacity is now derived from transformer type (`OLTC=1`, `PST=1`, `STE=2`), `PowerTransformerWinding` now carries `controls`, and network transformer creation APIs accept `controls = [...]`.
 * Updated branch-model documentation with practical controller-direction probing guidance for phase-shift control.
-* Improved tap-control reporting in classic and structured ACP flow outputs, including typed transformer-controller rows with tap position/stage and consistent branch power direction reporting.
-* Updated `tap_control_demo_grid.jl` logging to create versioned run logs in `src/examples/_out/` and refined OLTC demo step resolution to `tap_step = 0.00625` for the unchanged `0.90 .. 1.10` ratio range.
-* Tap-controller voltage convergence now consistently evaluates deadband in `|V - V_target|` (pu), while allowing optional step-direction evaluation via `voltage_error_metric = :vm2` for users who prefer a squared-voltage control signal.
-* Added YAML configurability in the tap-control demo for `*_deadband_vm_pu` and `*_voltage_error_metric` (`vm` or `vm2`) on voltage-regulating controllers.
-* Tap controllers are now sourced directly from transformer windings (`PowerTransformerWinding.controls`), removing redundant controller storage on `Net` and simplifying controller ownership.
 
 ### Tests
 * Added regression tests for transformer tap controller behavior.
-* Added dedicated tests for transformer phase-shift control direction and target tracking.
 
 ## Version 0.7.2 – 2026-04-15
 ### Bug Fixes
