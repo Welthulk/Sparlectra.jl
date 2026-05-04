@@ -13,10 +13,6 @@ This page summarizes the most relevant runnable examples in `src/examples/`.
 
 ## Transformer and tap control
 
-- `example_transformer_tap.jl`  
-  Demonstrates voltage, phase, and coupled transformer control scenarios.
-- `example_transformer_phase_shift_control.jl`  
-  Focused phase-shift transformer active-power control example.
 - `tap_control_demo_grid.jl` (+ `tap_control_demo_grid.yaml.example`)  
   Configurable demo grid for multi-controller experiments and logging.
 
