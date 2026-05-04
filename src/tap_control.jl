@@ -233,15 +233,15 @@ Internal helper: determines the empirical sign of `ΔP_from_to` for a positive
 phase increment (`+phase_step_deg`) on the controlled transformer and branch.
 Returns `-1`, `0`, or `+1`.
 """
-function _phase_probe_direction(net::Net, br::Branch, ctrl::PowerTransformerControl, max_ite::Int, tol::Float64, verbose::Int, opt_fd::Bool, opt_sparse::Bool, method::Symbol)
+function _phase_probe_direction(net::Net, br::Branch, ctrl::PowerTransformerControl, max_ite::Int, tol::Float64, verbose::Int, opt_fd::Bool, opt_sparse::Bool, method::Symbol; opt_flatstart::Bool=true, pv_table_rows::Int=30, validate_limits_after_pf::Bool=false, q_limit_violation_headroom::Float64=0.0, lock_pv_to_pq_buses::AbstractVector{Int}=Int[])
   oldphi = br.phase_shift_deg
   step = br.phase_step_deg
-  _, erg = runpf!(net, max_ite, tol, verbose; opt_fd = opt_fd, opt_sparse = opt_sparse, method = method)
+  _, erg = runpf!(net, max_ite, tol, verbose; opt_fd = opt_fd, opt_sparse = opt_sparse, method = method, opt_flatstart = opt_flatstart, pv_table_rows = pv_table_rows, validate_limits_after_pf = validate_limits_after_pf, q_limit_violation_headroom = q_limit_violation_headroom, lock_pv_to_pq_buses = lock_pv_to_pq_buses)
   erg != 0 && return -1.0
   p0 = get_branch_p_from_to_mw(net, ctrl.target_branch[1], ctrl.target_branch[2])
   br.phase_shift_deg = clamp(oldphi + step, br.phase_min_deg, br.phase_max_deg)
   br.angle = br.phase_shift_deg
-  _, erg2 = runpf!(net, max_ite, tol, verbose; opt_fd = opt_fd, opt_sparse = opt_sparse, method = method)
+  _, erg2 = runpf!(net, max_ite, tol, verbose; opt_fd = opt_fd, opt_sparse = opt_sparse, method = method, opt_flatstart = opt_flatstart, pv_table_rows = pv_table_rows, validate_limits_after_pf = validate_limits_after_pf, q_limit_violation_headroom = q_limit_violation_headroom, lock_pv_to_pq_buses = lock_pv_to_pq_buses)
   p1 = erg2 == 0 ? get_branch_p_from_to_mw(net, ctrl.target_branch[1], ctrl.target_branch[2]) : p0
   br.phase_shift_deg = oldphi
   br.angle = oldphi
@@ -255,10 +255,10 @@ Internal helper: determines the empirical sign of `ΔVm_target` for a positive
 ratio increment (`+tap_step`) on the controlled transformer and target bus.
 Returns `-1`, `0`, or `+1`.
 """
-function _ratio_probe_direction(net::Net, br::Branch, ctrl::PowerTransformerControl, max_ite::Int, tol::Float64, verbose::Int, opt_fd::Bool, opt_sparse::Bool, method::Symbol)
+function _ratio_probe_direction(net::Net, br::Branch, ctrl::PowerTransformerControl, max_ite::Int, tol::Float64, verbose::Int, opt_fd::Bool, opt_sparse::Bool, method::Symbol; opt_flatstart::Bool=true, pv_table_rows::Int=30, validate_limits_after_pf::Bool=false, q_limit_violation_headroom::Float64=0.0, lock_pv_to_pq_buses::AbstractVector{Int}=Int[])
   oldratio = br.tap_ratio
   step = br.tap_step
-  _, erg = runpf!(net, max_ite, tol, verbose; opt_fd = opt_fd, opt_sparse = opt_sparse, method = method)
+  _, erg = runpf!(net, max_ite, tol, verbose; opt_fd = opt_fd, opt_sparse = opt_sparse, method = method, opt_flatstart = opt_flatstart, pv_table_rows = pv_table_rows, validate_limits_after_pf = validate_limits_after_pf, q_limit_violation_headroom = q_limit_violation_headroom, lock_pv_to_pq_buses = lock_pv_to_pq_buses)
   erg != 0 && return -1.0
   vm0 = get_bus_vm_pu(net, ctrl.target_bus)
   newratio = clamp(oldratio + step, br.tap_min, br.tap_max)
@@ -267,7 +267,7 @@ function _ratio_probe_direction(net::Net, br::Branch, ctrl::PowerTransformerCont
   end
   br.tap_ratio = newratio
   br.ratio = newratio
-  _, erg2 = runpf!(net, max_ite, tol, verbose; opt_fd = opt_fd, opt_sparse = opt_sparse, method = method)
+  _, erg2 = runpf!(net, max_ite, tol, verbose; opt_fd = opt_fd, opt_sparse = opt_sparse, method = method, opt_flatstart = opt_flatstart, pv_table_rows = pv_table_rows, validate_limits_after_pf = validate_limits_after_pf, q_limit_violation_headroom = q_limit_violation_headroom, lock_pv_to_pq_buses = lock_pv_to_pq_buses)
   vm1 = erg2 == 0 ? get_bus_vm_pu(net, ctrl.target_bus) : vm0
   br.tap_ratio = oldratio
   br.ratio = oldratio
@@ -289,13 +289,13 @@ Loop per iteration:
 
 Returns `(iterations, erg)` where `erg == 0` means successful PF termination.
 """
-function run_tap_controllers_outer!(net::Net; max_ite::Int=30, tol::Float64=1e-6, verbose::Int=0, opt_fd::Bool=false, opt_sparse::Bool=false, method::Symbol=:rectangular)
+function run_tap_controllers_outer!(net::Net; max_ite::Int=30, tol::Float64=1e-6, verbose::Int=0, opt_fd::Bool=false, opt_sparse::Bool=false, method::Symbol=:rectangular, opt_flatstart::Bool=true, pv_table_rows::Int=30, validate_limits_after_pf::Bool=false, q_limit_violation_headroom::Float64=0.0, lock_pv_to_pq_buses::AbstractVector{Int}=Int[])
   controllers = _tap_controllers(net)
   isempty(controllers) && return (0, 0)
   if !any(c -> c.enabled, controllers)
-    return runpf!(net, max_ite, tol, verbose; opt_fd = opt_fd, opt_sparse = opt_sparse, method = method)
+    return runpf!(net, max_ite, tol, verbose; opt_fd = opt_fd, opt_sparse = opt_sparse, method = method, opt_flatstart = opt_flatstart, pv_table_rows = pv_table_rows, validate_limits_after_pf = validate_limits_after_pf, q_limit_violation_headroom = q_limit_violation_headroom, lock_pv_to_pq_buses = lock_pv_to_pq_buses)
   end
-  _, erg = runpf!(net, max_ite, tol, verbose; opt_fd = opt_fd, opt_sparse = opt_sparse, method = method)
+  _, erg = runpf!(net, max_ite, tol, verbose; opt_fd = opt_fd, opt_sparse = opt_sparse, method = method, opt_flatstart = opt_flatstart, pv_table_rows = pv_table_rows, validate_limits_after_pf = validate_limits_after_pf, q_limit_violation_headroom = q_limit_violation_headroom, lock_pv_to_pq_buses = lock_pv_to_pq_buses)
   erg != 0 && return (0, erg)
   calcNetLosses!(net)
   calcLinkFlowsKCL!(net)
@@ -318,7 +318,7 @@ function run_tap_controllers_outer!(net::Net; max_ite::Int=30, tol::Float64=1e-6
         converged_v = _voltage_within_deadband(vm, ctrl.target_vm_pu, ctrl.deadband_vm_pu)
         if !converged_v && ctrl.control_ratio
           e_v = _voltage_control_error(vm, ctrl.target_vm_pu, ctrl.voltage_error_metric)
-          direction = _ratio_probe_direction(net, br, ctrl, max_ite, tol, 0, opt_fd, opt_sparse, method)
+          direction = _ratio_probe_direction(net, br, ctrl, max_ite, tol, 0, opt_fd, opt_sparse, method; opt_flatstart = opt_flatstart, pv_table_rows = pv_table_rows, validate_limits_after_pf = validate_limits_after_pf, q_limit_violation_headroom = q_limit_violation_headroom, lock_pv_to_pq_buses = lock_pv_to_pq_buses)
           direction == 0.0 && (direction = -1.0)
           Δ = ctrl.is_discrete ? br.tap_step : 0.25 * br.tap_step
           step = (e_v < 0.0) ? direction * Δ : -direction * Δ
@@ -336,7 +336,7 @@ function run_tap_controllers_outer!(net::Net; max_ite::Int=30, tol::Float64=1e-6
         e_p = p - ctrl.p_target_mw
         converged_p = abs(e_p) <= ctrl.deadband_p_mw
         if !converged_p && ctrl.control_phase
-          direction = _phase_probe_direction(net, br, ctrl, max_ite, tol, 0, opt_fd, opt_sparse, method)
+          direction = _phase_probe_direction(net, br, ctrl, max_ite, tol, 0, opt_fd, opt_sparse, method; opt_flatstart = opt_flatstart, pv_table_rows = pv_table_rows, validate_limits_after_pf = validate_limits_after_pf, q_limit_violation_headroom = q_limit_violation_headroom, lock_pv_to_pq_buses = lock_pv_to_pq_buses)
           direction == 0.0 && (direction = -1.0)
           Δ = ctrl.is_discrete ? br.phase_step_deg : 0.25 * br.phase_step_deg
           step = (e_p < 0.0) ? direction * Δ : -direction * Δ
@@ -359,7 +359,7 @@ function run_tap_controllers_outer!(net::Net; max_ite::Int=30, tol::Float64=1e-6
       return (it, 0)
     end
 
-    _, erg2 = runpf!(net, max_ite, tol, verbose; opt_fd = opt_fd, opt_sparse = opt_sparse, method = method)
+    _, erg2 = runpf!(net, max_ite, tol, verbose; opt_fd = opt_fd, opt_sparse = opt_sparse, method = method, opt_flatstart = opt_flatstart, pv_table_rows = pv_table_rows, validate_limits_after_pf = validate_limits_after_pf, q_limit_violation_headroom = q_limit_violation_headroom, lock_pv_to_pq_buses = lock_pv_to_pq_buses)
     erg2 != 0 && return (it, erg2)
     calcNetLosses!(net)
     calcLinkFlowsKCL!(net)
