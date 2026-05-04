@@ -33,6 +33,12 @@ function run_tap_controller_tests()
     @test_throws ErrorException addPowerTransformerControl!(net; trafo = "1", mode = :voltage, target_bus = "Load", target_vm_pu = 1.0, voltage_error_metric = :invalid)
   end
 
+  @testset "One-controller guard works across transformer aliases" begin
+    net, tbr = _build_net()
+    addPowerTransformerControl!(net; trafo = string(tbr.branchIdx), mode = :voltage, target_bus = "Load", target_vm_pu = 0.99, control_ratio = true, control_phase = false)
+    @test_throws ErrorException addPowerTransformerControl!(net; trafo = tbr.comp.cID, mode = :voltage, target_bus = "Load", target_vm_pu = 0.99, control_ratio = true, control_phase = false)
+  end
+
   @testset "Voltage deadband is evaluated in pu Vm space" begin
     @test Sparlectra._voltage_within_deadband(1.2009, 1.200, 1e-3)
     @test !Sparlectra._voltage_within_deadband(1.2025, 1.200, 1e-3)
