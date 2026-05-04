@@ -17,9 +17,9 @@
 # file: src/results.jl
 # Purpose: functions for formatting and printing results of power flow calculations
 function format_version(version::VersionNumber)
-  major = lpad(version.major, 2, '0')
+  major = lpad(version.major, 1, '0')
   minor = lpad(version.minor, 1, '0')
-  patch = lpad(version.patch, 2, '0')
+  patch = lpad(version.patch, 0, '0')
   return "$major.$minor.$patch"
 end
 
@@ -28,20 +28,64 @@ end
 
 Structured container for AC power flow results.
 
-The vectors (`nodes`, `branches`, `links`, `q_limit_events`) are table-like and can
+The vectors (`nodes`, `branches`, `links`, `transformer_controls`, `q_limit_events`)
+are table-like and can
 be converted directly to `DataFrame`s if `DataFrames.jl` is available, e.g.
 `DataFrame(report.nodes)`.
+
+# Fields
+- `metadata`: Global run/case metadata (solver, tolerance, elapsed time, losses, ...).
+- `nodes`: Per-bus electrical state and power balance values.
+- `branches`: Per-branch directional flows and losses.
+- `links`: Link-flow values from KCL post-processing.
+- `transformer_controls`: Tap-controller state rows with typed `missing` for
+  non-applicable engineering values.
+- `q_limit_events`: PV→PQ limit-hit markers.
 """
 struct ACPFlowReport
   metadata::NamedTuple
   nodes::Vector{NamedTuple}
   branches::Vector{NamedTuple}
   links::Vector{NamedTuple}
+  transformer_controls::Vector{NamedTuple}
   q_limit_events::Vector{NamedTuple}
 end
 
+"""
+    _build_transformer_control_rows(net::Net)
+
+Internal helper that mirrors transformer control state into table-like rows for
+`ACPFlowReport`.
+
+Notes:
+- Rows are intentionally typed for DataFrame conversion.
+- Non-applicable controller fields remain `missing` (not placeholder strings).
+"""
+function _build_transformer_control_rows(net::Net)::Vector{NamedTuple}
+  # Reuse tap-control module helper to keep classic and structured reports aligned.
+  return buildTapControllerReportRows(net)
+end
+
 function Base.show(io::IO, report::ACPFlowReport)
-  print(io, "ACPFlowReport(", "case=", report.metadata.case, ", converged=", report.metadata.converged, ", nodes=", length(report.nodes), ", branches=", length(report.branches), ", links=", length(report.links), ", q_limit_events=", length(report.q_limit_events), ")")
+  print(
+    io,
+    "ACPFlowReport(",
+    "case=",
+    report.metadata.case,
+    ", converged=",
+    report.metadata.converged,
+    ", nodes=",
+    length(report.nodes),
+    ", branches=",
+    length(report.branches),
+    ", links=",
+    length(report.links),
+    ", transformer_controls=",
+    length(report.transformer_controls),
+    ", q_limit_events=",
+    length(report.q_limit_events),
+    ")",
+  )
 end
 
 _default0(x) = isnothing(x) ? 0.0 : x
@@ -81,6 +125,26 @@ function _control_label(net::Net, bus_idx::Int)::String
   else
     return "-"
   end
+end
+
+function _tap_voltage_target_by_bus(net::Net)::Dict{Int,Float64}
+  targets = Dict{Int,Float64}()
+  for ctrl in _tap_controllers(net)
+    ctrl.enabled || continue
+    ctrl.mode in (:voltage, :voltage_and_branch_active_power) || continue
+    isnothing(ctrl.target_bus) && continue
+    isnothing(ctrl.target_vm_pu) && continue
+    bus_idx = geNetBusIdx(net = net, busName = ctrl.target_bus)
+    targets[bus_idx] = ctrl.target_vm_pu
+  end
+  return targets
+end
+
+function _controller_counts(net::Net)
+  tap = count(c -> c.enabled, _tap_controllers(net))
+  qu = count(ps -> has_qu_controller(ps), net.prosumpsVec)
+  pu = count(ps -> has_pu_controller(ps), net.prosumpsVec)
+  return tap, qu, pu
 end
 
 function _effective_bus_power_components(net::Net, bus_idx::Int)
@@ -216,15 +280,32 @@ function buildACPFlowReport(net::Net; ct::Float64 = 0.0, ite::Int = 0, tol::Floa
   p_loss_total, q_loss_total = getTotalLosses(net = net)
   metadata = (case = net.name, baseMVA = net.baseMVA, converged = converged, elapsed_s = ct, iterations = ite, tolerance = tol, solver = solver, timestamp = Dates.now(), total_p_loss_MW = p_loss_total, total_q_loss_MVar = q_loss_total)
 
-  return ACPFlowReport(metadata, node_rows, branch_rows, link_rows, q_events)
+  # Keep structured tap-controller data as a dedicated relation in the report
+  # (preferred over widening the branch table with sparse controller columns).
+  tap_control_rows = _build_transformer_control_rows(net)
+  return ACPFlowReport(metadata, node_rows, branch_rows, link_rows, tap_control_rows, q_events)
 end
 
 function formatBranchResults(net::Net)
   busNameByIdx = _bus_name_by_idx(net)
+  ctrl_by_branch = Dict{Int,NamedTuple}()
+  for row in buildTapControllerReportRows(net)
+    ctrl_by_branch[row.transformer_branch_index] = row
+  end
+
+  ctrl_status = function (row)
+    if row.converged
+      return "converged"
+    elseif row.at_limit
+      return "at_limit_not_converged"
+    else
+      return row.status
+    end
+  end
   #! format: off
-  formatted_results = @sprintf("\n========================================================================================================================================================\n")
-  formatted_results *= @sprintf("| %-25s | %-6s | %-25s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s |\n", "Branch", "Type", "Connection", "P [MW]", "Q [MVar]", "P [MW]", "Q [MVar]", "Pv [MW]", "Qv [MVar]")
-  formatted_results *= @sprintf("========================================================================================================================================================\n")
+  formatted_results = @sprintf("\n==========================================================================================================================================================================================================================\n")
+  formatted_results *= @sprintf("| %-25s | %-6s | %-25s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-9s | %-22s |\n", "Branch", "Type", "Connection", "P [MW]", "Q [MVar]", "P [MW]", "Q [MVar]", "Pv [MW]", "Qv [MVar]", "Ctrl", "P_tgt", "TapPos", "Ctrl status")
+  formatted_results *= @sprintf("==========================================================================================================================================================================================================================\n")
   #! format: on
   for br in net.branchVec
     from = br.fromBus
@@ -258,11 +339,24 @@ function formatBranchResults(net::Net)
         bName *= " !"
       end
     end
+    ctrl = get(ctrl_by_branch, br.branchIdx, nothing)
+    ctrl_type = isnothing(ctrl) ? "-" : String(ctrl.control_type)
+    p_target = isnothing(ctrl) || ismissing(ctrl.p_target_mw) ? "-" : @sprintf("%.3f", ctrl.p_target_mw)
+    tap_pos = "-"
+    if !isnothing(ctrl)
+      if !ismissing(ctrl.ratio_tap_position)
+        tap_pos = @sprintf("%+d", ctrl.ratio_tap_position)
+      elseif !ismissing(ctrl.phase_tap_position)
+        tap_pos = @sprintf("%+d", ctrl.phase_tap_position)
+      end
+    end
+    status = isnothing(ctrl) ? "-" : ctrl_status(ctrl)
+
     #! format: off
-    formatted_results *= @sprintf("| %-25s | %-6s | %-25s | %-10.3f | %-10.3f | %-10.3f | %-10.3f | %-10.3f |  %-10.3f|\n", bName, branchKind, connection, pfromVal, qfromVal, ptoVal, qtoVal, pLossval, qLossval)
+    formatted_results *= @sprintf("| %-25s | %-6s | %-25s | %-10.3f | %-10.3f | %-10.3f | %-10.3f | %-10.3f | %-10.3f | %-10s | %-10s | %-9s | %-22s |\n", bName, branchKind, connection, pfromVal, qfromVal, ptoVal, qtoVal, pLossval, qLossval, ctrl_type, p_target, tap_pos, status)
     #! format: on
   end
-  formatted_results *= @sprintf("--------------------------------------------------------------------------------------------------------------------------------------------------------\n")
+  formatted_results *= @sprintf("--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------\n")
   (∑pv, ∑qv) = getTotalLosses(net = net)
   total_losses = @sprintf("total network power balance (Σ S_branch): P = %10.3f [MW], Q = %10.3f [MVar]\n", ∑pv, ∑qv)
 
@@ -318,6 +412,8 @@ function printACPFlowResults(net::Net, ct::Float64, ite::Int, tol::Float64, toFi
     gens += ps.proSumptionType == Sparlectra.Injection ? 1 : 0
   end
   shunts = length(net.shuntVec)
+  tap_ctrl_count, qu_ctrl_count, pu_ctrl_count = _controller_counts(net)
+  total_ctrl_count = tap_ctrl_count + qu_ctrl_count + pu_ctrl_count
 
   @printf(io, "Date           :%20s\n", current_date)
   @printf(io, "Iterations     :%10d\n", ite)
@@ -351,15 +447,35 @@ function printACPFlowResults(net::Net, ct::Float64, ite::Int, tol::Float64, toFi
   @printf(io, "Generators     :%10d\n", gens)
   @printf(io, "Loads          :%10d\n", loads)
   @printf(io, "Shunts         :%10d\n", shunts)
+  @printf(io, "Controllers    :%10d (Tap: %d, Q(U): %d, P(U): %d)\n", total_ctrl_count, tap_ctrl_count, qu_ctrl_count, pu_ctrl_count)
 
   num_q_limit = length(net.qLimitEvents)
   @printf(io, "PV→PQ (Q-Limit):%10d\n", num_q_limit)
 
   println(io, "\n", totalLosses)
 
-  @printf(io, "====================================================================================================================================================================================================\n")
-  @printf(io, "| %-5s | %-20s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-12s |\n", "Nr", "Bus", "Vn [kV]", "V [kV]", "V [pu]", "phi [deg]", "Pg [MW]", "Qg [MVar]", "Pl [MW]", "Ql [MVar]", "Ps [MW]", "Qs [MVar]", "Type", "Control")
-  @printf(io, "====================================================================================================================================================================================================\n")
+  tap_target_vm = _tap_voltage_target_by_bus(net)
+  @printf(io, "==========================================================================================================================================================================================================================\n")
+  @printf(
+    io,
+    "| %-5s | %-20s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-12s | %-12s |\n",
+    "Nr",
+    "Bus",
+    "Vn [kV]",
+    "V [kV]",
+    "V [pu]",
+    "phi [deg]",
+    "Pg [MW]",
+    "Qg [MVar]",
+    "Pl [MW]",
+    "Ql [MVar]",
+    "Ps [MW]",
+    "Qs [MVar]",
+    "Type",
+    "Control",
+    "Tap Vm tgt"
+  )
+  @printf(io, "==========================================================================================================================================================================================================================\n")
 
   pGS = qGS = pLS = qLS = ""
   tpGS = tqGS = tpLS = tqLS = 0.0
@@ -420,10 +536,11 @@ function printACPFlowResults(net::Net, ct::Float64, ite::Int, tol::Float64, toFi
       end
     end
 
-    @printf(io, "| %-5d | %-20s | %-10.1f | %-10.3f | %-10.3f | %-10.3f | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-12s |\n", n.busIdx, nodeName, n.comp.cVN, v, n._vm_pu, n._va_deg, pGS, qGS, pLS, qLS, pShunt_str, qShunt_str, typeStr, controlStr)
+    tap_target_str = haskey(tap_target_vm, n.busIdx) ? @sprintf("%.4f", tap_target_vm[n.busIdx]) : ""
+    @printf(io, "| %-5d | %-20s | %-10.1f | %-10.3f | %-10.3f | %-10.3f | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-12s | %-12s |\n", n.busIdx, nodeName, n.comp.cVN, v, n._vm_pu, n._va_deg, pGS, qGS, pLS, qLS, pShunt_str, qShunt_str, typeStr, controlStr, tap_target_str)
   end
 
-  @printf(io, "----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------\n")
+  @printf(io, "--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------\n")
   println(io, flowResults)
 
   if !isempty(net.linkVec)
@@ -439,6 +556,15 @@ function printACPFlowResults(net::Net, ct::Float64, ite::Int, tol::Float64, toFi
       toName = get(busNameByIdx, Int(l.toBus), string(l.toBus))
       @printf(io, "| %-5d | %-8s | %-8s | %-6d | %-12.3f | %-12.3f | %-12.4f | %-12.4f |\n", l.linkIdx, fromName, toName, l.status, p, q, ifrom, ito)
     end
+  end
+  println(io, "\nControl")
+  println(io, "-------")
+  if isempty(_tap_controllers(net))
+    # Explicit statement keeps report output deterministic for tools/parsers.
+    println(io, "Transformer controls: none")
+  else
+    # Detailed engineering-style control section (OLTC/PST/combined).
+    printTapControllerSummary(io, net)
   end
   if toFile
     close(io)

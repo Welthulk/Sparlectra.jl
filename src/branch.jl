@@ -136,6 +136,16 @@ mutable struct Branch <: AbstractBranch
   tBranchFlow::Union{Nothing,BranchFlow} # flow from toNodeID to fromNodeID
   pLosses::Union{Nothing,Float64}        # active power losses
   qLosses::Union{Nothing,Float64}        # reactive power losses
+  tap_ratio::Float64
+  phase_shift_deg::Float64
+  has_ratio_tap::Bool
+  has_phase_tap::Bool
+  tap_min::Float64
+  tap_max::Float64
+  tap_step::Float64
+  phase_min_deg::Float64
+  phase_max_deg::Float64
+  phase_step_deg::Float64
 
   function Branch(;
     branchIdx::Int,
@@ -169,7 +179,7 @@ mutable struct Branch <: AbstractBranch
       else 
         r_pu, x_pu, b_pu, g_pu = getLineRXBG_pu(branch, vn_kV, baseMVA)        
       end    
-      new(c, branchIdx, from, to, r_pu, x_pu, b_pu, g_pu, 0.0, 0.0, status, branch.ratedS, nothing, nothing, nothing, nothing)
+      new(c, branchIdx, from, to, r_pu, x_pu, b_pu, g_pu, 0.0, 0.0, status, branch.ratedS, nothing, nothing, nothing, nothing, 1.0, 0.0, false, false, 0.9, 1.1, 0.00625, -30.0, 30.0, 1.25)
     elseif isa(branch, PowerTransformer) # Transformer     
       if (isnothing(side) && branch.isBiWinder)
         side = getSideNumber2WT(branch)
@@ -198,8 +208,21 @@ mutable struct Branch <: AbstractBranch
       @assert ratio != 0.0 "ratio must not be 0.0 for transformers"
       #angle = isnothing(w.shift_degree) ? 0.0 : w.shift_degree
       angle = isnothing(angle) ? (isnothing(w.shift_degree) ? 0.0 : w.shift_degree) : angle
+      tap_min = 0.9
+      tap_max = 1.1
+      tap_step = 0.00625
+      if !isnothing(w.taps)
+        taps = w.taps
+        neutral = taps.neutralStep
+        pu_per_step = taps.tapStepPercent / 100.0
+        low_ratio = 1.0 + (taps.lowStep - neutral) * pu_per_step
+        high_ratio = 1.0 + (taps.highStep - neutral) * pu_per_step
+        tap_min = min(low_ratio, high_ratio)
+        tap_max = max(low_ratio, high_ratio)
+        tap_step = abs(pu_per_step)
+      end
 
-      new(c, branchIdx, from, to, r_pu, x_pu, b_pu, g_pu, ratio, angle, status, sn_MVA, nothing, nothing, nothing, nothing)
+      new(c, branchIdx, from, to, r_pu, x_pu, b_pu, g_pu, ratio, angle, status, sn_MVA, nothing, nothing, nothing, nothing, ratio, angle, true, true, tap_min, tap_max, tap_step, -30.0, 30.0, 1.25)
     elseif isa(branch, BranchModel) # PI-Model
       @assert !isnothing(vn_kV) "vn_kV must be set for PI-Model"
 
@@ -209,7 +232,10 @@ mutable struct Branch <: AbstractBranch
         c = getBranchComp(vn_kV, from, to, id, "PI")
       end
 
-      new(c, branchIdx, from, to, branch.r_pu, branch.x_pu, branch.b_pu, branch.g_pu, branch.ratio, branch.angle, status, branch.sn_MVA, nothing, nothing, nothing, nothing)
+      is_tap = branch.ratio != 0.0
+      initial_ratio = is_tap ? branch.ratio : 1.0
+      initial_angle = is_tap ? branch.angle : 0.0
+      new(c, branchIdx, from, to, branch.r_pu, branch.x_pu, branch.b_pu, branch.g_pu, branch.ratio, branch.angle, status, branch.sn_MVA, nothing, nothing, nothing, nothing, initial_ratio, initial_angle, is_tap, is_tap, 0.9, 1.1, 0.00625, -30.0, 30.0, 1.25)
     else
       error("Branch type not supported")
     end
@@ -242,8 +268,10 @@ mutable struct Branch <: AbstractBranch
       print(io, "pLosses: ", b.pLosses, ", ")
     end
     if (!isnothing(b.qLosses))
-      print(io, "qLosses: ", b.qLosses, ", ")
+    print(io, "qLosses: ", b.qLosses, ", ")
     end
+    print(io, "tap_ratio: ", b.tap_ratio, ", ")
+    print(io, "phase_shift_deg: ", b.phase_shift_deg, ", ")
 
     println(io, ")")
   end
@@ -311,8 +339,8 @@ function calcBranchYshunt(branch::Branch)::ComplexF64
 end
 
 function calcBranchRatio(branch::Branch)::ComplexF64
-  ratio = (isnothing(branch.ratio) || branch.ratio == 0.0) ? 1.0 : branch.ratio
-  shift = isnothing(branch.angle) ? 0.0 : branch.angle
+  ratio = (branch.ratio == 0.0) ? 1.0 : branch.tap_ratio
+  shift = (branch.ratio == 0.0) ? 0.0 : branch.phase_shift_deg
 
   # use ratio even if shift is 0
   if ratio != 1.0 || shift != 0.0

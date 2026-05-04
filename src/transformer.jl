@@ -146,19 +146,16 @@ mutable struct PowerTransformerTaps
     @assert Vn_kV > 0.0 "Vn_kV must be > 0.0"
     @assert highStep != lowStep "tap high position equals low position $(highStep) = $(lowStep)"
 
-    tapStepPercent = 0
+    tapStepPercent = 0.0
     if voltageIncrement_kV != 0.0
-      tapStepPercent = (Vn_kV / voltageIncrement_kV) * 1e-2
+      tapStepPercent = (voltageIncrement_kV / Vn_kV) * 100.0
     end
 
-    #FIXME: calculation of neutralU is not correct
     if isnothing(neutralU)
-      if isnothing(neutralU_ratio)
-        neutralU_ratio = 1.0
-        neutralU = Vn_kV
-      end
-      neutralU = Vn_kV
-      # neutralU = round(neutralU_ratio * Vn_kV + (highStep - lowStep) * tapStepPercent * 1e2, digits = 0)
+      neutralU_ratio = isnothing(neutralU_ratio) ? 1.0 : neutralU_ratio
+      neutralU = neutralU_ratio * Vn_kV
+    elseif isnothing(neutralU_ratio)
+      neutralU_ratio = neutralU / Vn_kV
     end
     tapSign = (highStep > lowStep) ? 1 : -1
     new(step, lowStep, highStep, neutralStep, voltageIncrement_kV, neutralU, neutralU_ratio, tapStepPercent, tapSign)
@@ -176,6 +173,53 @@ mutable struct PowerTransformerTaps
     print(io, "tapStepPercent=$(x.tapStepPercent) ")
     print(io, ")")
   end
+end
+
+"""
+    PowerTransformerControl
+
+Transformer outer-loop transformer controller channel.
+"""
+mutable struct PowerTransformerControl
+  trafo::String
+  mode::Symbol
+  target_bus::Union{Nothing,String}
+  target_branch::Union{Nothing,Tuple{String,String}}
+  target_vm_pu::Union{Nothing,Float64}
+  p_target_mw::Union{Nothing,Float64}
+  q_target_mvar::Union{Nothing,Float64}
+  control_ratio::Bool
+  control_phase::Bool
+  is_discrete::Bool
+  deadband_vm_pu::Float64
+  deadband_p_mw::Float64
+  voltage_error_metric::Symbol
+  max_outer_iters::Int
+  enabled::Bool
+  converged::Bool
+  at_limit::Bool
+  status::Symbol
+  achieved_vm_pu::Union{Nothing,Float64}
+  achieved_p_mw::Union{Nothing,Float64}
+  outer_iters::Int
+end
+
+function PowerTransformerControl(; trafo::String, mode::Symbol, target_bus::Union{Nothing,String} = nothing, target_branch::Union{Nothing,Tuple{String,String}} = nothing,
+  target_vm_pu::Union{Nothing,Float64} = nothing, p_target_mw::Union{Nothing,Float64} = nothing, q_target_mvar::Union{Nothing,Float64} = nothing,
+  control_ratio::Bool = true, control_phase::Bool = false, is_discrete::Bool = true, deadband_vm_pu::Float64 = 1e-3, deadband_p_mw::Float64 = 0.5,
+  voltage_error_metric::Symbol = :vm, max_outer_iters::Int = 20, enabled::Bool = true)
+  voltage_error_metric in (:vm, :vm2) || error("PowerTransformerControl: unsupported voltage_error_metric=$(voltage_error_metric). Use :vm or :vm2.")
+  return PowerTransformerControl(trafo, mode, target_bus, target_branch, target_vm_pu, p_target_mw, q_target_mvar, control_ratio, control_phase, is_discrete,
+    deadband_vm_pu, deadband_p_mw, voltage_error_metric, max_outer_iters, enabled, false, false, :idle, nothing, nothing, 0)
+end
+
+@inline function expected_controller_count(trafoTyp::TrafoTyp)::Int
+  if trafoTyp == Ratio || trafoTyp == PhaseShifter
+    return 1
+  elseif trafoTyp == PhaseTapChanger
+    return 2
+  end
+  return 0
 end
 
 #= not implemented
@@ -217,6 +261,7 @@ A mutable structure representing a winding of a power transformer.
 - `ratedU::Union{Nothing,Float64}`: The rated voltage of the winding.
 - `ratedS::Union{Nothing,Float64}`: The rated power of the winding.
 - `taps::Union{Nothing,PowerTransformerTaps}`: The tap settings of the winding.
+- `controls::Vector{PowerTransformerControl}`: Controllers assigned to this winding side.
 - `isPu_RXGB::Union{Nothing,Bool}`: Whether the resistance, reactance, susceptance, and conductance are given in per unit.
 - `modelData::Union{Nothing,TransformerModelParameters}`: The model parameters of the transformer.
 - `_isEmpty::Bool`: Whether the has no model data.
@@ -239,6 +284,7 @@ mutable struct PowerTransformerWinding
   ratedU::Union{Nothing,Float64}             # cim:PowerTransformerEnd.ratedU
   ratedS::Union{Nothing,Float64}             # cim:PowerTransformerEnd.ratedS  
   taps::Union{Nothing,PowerTransformerTaps}
+  controls::Vector{PowerTransformerControl}
   isPu_RXGB::Union{Nothing,Bool}          # r,x,b in p.u. given? nothing = false
   modelData::Union{Nothing,TransformerModelParameters}
   _isEmpty::Bool
@@ -256,8 +302,10 @@ mutable struct PowerTransformerWinding
     taps::Union{Nothing,PowerTransformerTaps} = nothing,
     isPu_RXGB::Union{Nothing,Bool} = nothing,
     modelData::Union{Nothing,TransformerModelParameters} = nothing,
+    controls::Union{Nothing,Vector{PowerTransformerControl}} = nothing,
   )
-    new(Vn, r, x, b, g, ratio, shift_degree, ratedU, ratedS, taps, isPu_RXGB, modelData, isnothing(modelData))
+    ctrls = isnothing(controls) ? PowerTransformerControl[] : controls
+    new(Vn, r, x, b, g, ratio, shift_degree, ratedU, ratedS, taps, ctrls, isPu_RXGB, modelData, isnothing(modelData))
   end
 
   function PowerTransformerWinding(;
@@ -268,6 +316,7 @@ mutable struct PowerTransformerWinding
     ratedU::Union{Nothing,Float64} = nothing,
     ratedS::Union{Nothing,Float64} = nothing,
     taps::Union{Nothing,PowerTransformerTaps} = nothing,
+    controls::Union{Nothing,Vector{PowerTransformerControl}} = nothing,
   )
     @assert Vn_kV > 0.0 "Vn_kv must be > 0.0"
     if isnothing(ratedU)
@@ -275,10 +324,12 @@ mutable struct PowerTransformerWinding
     end
 
     if isnothing(modelData)
-      new(Vn_kV, 0.0, 0.0, 0.0, 0.0, ratio, shift_degree, ratedU, ratedS, taps, false, nothing, true)
+      ctrls = isnothing(controls) ? PowerTransformerControl[] : controls
+      new(Vn_kV, 0.0, 0.0, 0.0, 0.0, ratio, shift_degree, ratedU, ratedS, taps, ctrls, false, nothing, true)
     else
       r, x, b, g = calcTransformerRXGB(ratedU, modelData)
-      new(Vn_kV, r, x, b, g, ratio, shift_degree, ratedU, ratedS, taps, false, modelData, false)
+      ctrls = isnothing(controls) ? PowerTransformerControl[] : controls
+      new(Vn_kV, r, x, b, g, ratio, shift_degree, ratedU, ratedS, taps, ctrls, false, modelData, false)
     end
   end
 
@@ -307,6 +358,9 @@ mutable struct PowerTransformerWinding
     end
     if !isnothing(x.taps)
       print(io, "taps=$(x.taps), ")
+    end
+    if !isempty(x.controls)
+      print(io, "controls=$(length(x.controls)), ")
     end
     if !isnothing(x.isPu_RXGB)
       print(io, "isPu_RXGB=$(x.isPu_RXGB), ")
@@ -387,6 +441,14 @@ function hasTaps(x::Union{Nothing,PowerTransformerWinding})::Bool
   end
 end
 
+@inline function hasControls(x::Union{Nothing,PowerTransformerWinding})::Bool
+  return !(isnothing(x)) && !isempty(x.controls)
+end
+
+@inline function countWindingControls(x::Union{Nothing,PowerTransformerWinding})::Int
+  return isnothing(x) ? 0 : length(x.controls)
+end
+
 function isPerUnit_RXGB(o::PowerTransformerWinding)
   if isnothing(o.isPu_RXGB)
     return false
@@ -462,16 +524,24 @@ mutable struct PowerTransformer <: AbstractBranch
       equiParms = 3
     end
 
-    controller = 0
+    taps_controller = 0
+    winding_controller = 0
     TapSideNumber = 0
     for x in [s1, s2, s3]
+      has_ctrl = hasControls(x)
       if hasTaps(x)
-        controller += 1
-        if controller == 1
+        taps_controller += 1
+      end
+      if has_ctrl
+        winding_controller += countWindingControls(x)
+      end
+      if hasTaps(x) || has_ctrl
+        if TapSideNumber == 0
           TapSideNumber = x == s1 ? 1 : (x == s2 ? 2 : 3)
         end
       end
     end
+    controller = tapEnable ? max(taps_controller + winding_controller, expected_controller_count(trafoTyp)) : (taps_controller + winding_controller)
 
     v1 = s1.Vn
     v2 = s2.Vn

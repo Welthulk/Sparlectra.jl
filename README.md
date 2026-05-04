@@ -64,10 +64,12 @@ end
 - **[Component Removal](docs/src/remove_functions.md)**: Conceptual notes on topology-aware removal workflows
 - **[Workshop](docs/src/workshop.md)**: Guided exercises and examples
 - **[State Estimation](docs/src/state_estimation.md)**: Theory, observability, and practical SE workflow
+- **[Feature Matrix](docs/src/feature_matrix.md)**: Quick PF vs SE capability overview
 - **[Network Reports](docs/src/netreports.md)**: Create and use machine-readable `ACPFlowReport` output
 - **[Function Reference](docs/src/reference.md)**: Complete API documentation
 - **[Powerlimit Guide](docs/src/powerlimits.md)**: Handling of power limits
 - **[Solver Guide](docs/src/solver.md)**: Numerical solver formulations and FD Jacobians
+- **[Transformer Control](docs/src/transformer_control.md)**: Complex-tap transformer regulation (ratio/phase/Schrägregler) via outer-loop control
 
 
 
@@ -119,5 +121,3 @@ If you use Sparlectra in publications, presentations, or project reports, a brie
 mention is appreciated: the program name **Sparlectra.jl**, the GitHub repository
 link (<https://github.com/Welthulk/Sparlectra.jl>), and the original author
 **Udo Schmitz**.
-
-

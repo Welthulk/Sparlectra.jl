@@ -18,6 +18,9 @@ Legend:
 | Topological bus links (`addLink!`) | ✅ | ⚠️ | Links are fully integrated in PF workflow/reporting; in SE they are part of network topology context and should be used with care in measurement design. |
 | 2-winding transformer | ✅ | ✅ | Supported in network model and usable in both workflows. |
 | 3-winding transformer | ✅ | ✅ | Implemented via star-equivalent with AUX bus in network construction. |
+| Transformer tap control (`addTapController!`) | ✅ | ❌ | PF supports outer-loop tap control for ratio and/or phase (`:voltage`, `:branch_active_power`, `:voltage_and_branch_active_power`), including discrete step operation with tap/phase limits. |
+| Remote target-bus voltage control (single-controller) | ⚠️ | ❌ | Supported in PF by setting `mode = :voltage` and `target_bus`; this is remote measurement with one controller channel. |
+| Coordinated master/slave transformer voltage control | ❌ | ❌ | Not yet implemented as dedicated multi-transformer coordination logic (no built-in participation-factor allocation/group dispatcher yet). |
 | π-equivalent branch modeling | ✅ | ✅ | Common branch representation across PF/SE workflows. |
 | Shunts / loads / generators in `Net` model | ✅ | ✅ | Shared physical network model and component handling. |
 | Voltage-dependent prosumer control (`Q(U)`, `P(U)`) | ✅ | ❌ | Implemented for PF with controller-aware mismatch/Jacobian terms in rectangular formulation; not part of SE model. |

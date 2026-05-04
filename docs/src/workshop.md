@@ -370,6 +370,92 @@ printACPFlowResults(net, etime2, ite2, 1e-8)
 ```
 ---
 
+## Transformer Tap Control (OLTC / PST / combined)
+
+This section gives a compact workflow for transformer tap control and points to
+the dedicated runnable examples.
+
+### 1. Enable tap capability on a transformer branch
+
+```julia
+tbr = getNetBranch(net = net, fromBus = "Slack", toBus = "Mid")
+tbr.has_ratio_tap = true
+tbr.tap_min = 0.90
+tbr.tap_max = 1.10
+tbr.tap_step = 0.00625
+```
+
+For phase-shift control (PST), configure:
+
+```julia
+tbr.has_phase_tap = true
+tbr.phase_min_deg = -15.0
+tbr.phase_max_deg = 15.0
+tbr.phase_step_deg = 1.0
+```
+
+### 2. Add controller(s)
+
+```julia
+addTapController!(net;
+    trafo = string(tbr.branchIdx),
+    mode = :voltage,                      # :branch_active_power or :voltage_and_branch_active_power
+    target_bus = "Load",
+    target_vm_pu = 1.01,
+    control_ratio = true,
+    control_phase = false,
+    is_discrete = true,
+)
+```
+
+For active-power control, use `target_branch = ("FromBus", "ToBus")` and
+`p_target_mw`. Reported `achieved_p_mw` is interpreted in exactly that
+configured direction (`from -> to`).
+
+### 3. Run PF including tap-control post-processing
+
+Prefer:
+
+```julia
+ite, status, etime = run_net_acpflow(
+    net = net,
+    method = :rectangular,
+    show_results = false,
+)
+```
+
+This includes post-processing (losses, branch flows, link flows), so controller
+targets and report values stay consistent.
+
+### 4. Read classic and structured reports
+
+```julia
+printTapControllerSummary(stdout, net)
+report = buildACPFlowReport(net; ct = etime, ite = ite, tol = 1e-8, converged = (status == 0), solver = :rectangular)
+```
+
+Use `report.transformer_controls` for machine-readable controller rows
+(DataFrame-compatible), including controller type, target/achieved values,
+tap/phase positions, limits, and status.
+
+### 5. Example programs
+
+- `src/examples/example_transformer_tap.jl`  
+  Minimal setup for OLTC / PST / combined controller behavior.
+- `src/examples/example_transformer_phase_shift_control.jl`  
+  Focused PST active-power target control example.
+- `src/examples/tap_control_demo_grid.jl`  
+  Full multi-voltage demo with YAML-configurable controller targets and
+  transformer tap/phase parameters plus versioned output logs.
+
+The accompanying config template is:
+
+- `src/examples/tap_control_demo_grid.yaml.example`
+
+It exposes target values and transformer tap/phase ranges + step sizes so that
+you can tune the workshop run without editing the Julia source.
+---
+
 ## Running rectangular NR with Q-limits
 
 This section shows how to use the rectangular Newton-Raphson solver with

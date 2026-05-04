@@ -9,7 +9,6 @@
 # or
 #   SPARLECTRA_MATPOWER_IMPORT_YAML=src/examples/matpower_import.yaml julia --project=. src/examples/matpower_import.jl
 #
-
 case: case141.m
 methods: [rectangular]
 
@@ -38,7 +37,7 @@ ignore_q_limits: false
 # - Applied only for generators connected to MATPOWER PQ buses (BUS_TYPE=1).
 # - If false, import keeps the plain generator values without creating these controllers.
 #   Keep enabled by default for compatibility with previous convergence behavior.
-enable_pq_gen_controllers: true
+enable_pq_gen_controllers: false
 
 # Legacy warning tracing:
 # - If true, legacy busType warnings include caller=<file>:<line>.
@@ -51,13 +50,15 @@ lock_pv_to_pq_buses: []
 # Benchmark controls
 # - Set `benchmark: false` to only run `show_once` and write logfile/results once.
 #   Useful for large cases (e.g. case1951rte / case2869pegase) where benchmarking can take very long.
-benchmark: true
+benchmark: false
 seconds: 2.0
 samples: 50
+#show_once: true
 show_once: true
 # show_once output mode:
 # - classic: full classic result tables (printACPFlowResults)
 # - dataframe: compact DataFrame-style node table
-show_once_output: classic
+#show_once_output: classic
+show_once_output: dataframe
 # Limits only DataFrame-style output (0 = all nodes); ignored for classic output.
-show_once_max_nodes: 0
+show_once_max_nodes: 10
