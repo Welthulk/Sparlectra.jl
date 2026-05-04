@@ -186,7 +186,12 @@ function addPowerTransformerControl!(net::Net; trafo::String, mode::Symbol, targ
   trafo_obj = findfirst(t -> t.comp.cFrom_bus == br.comp.cFrom_bus && t.comp.cTo_bus == br.comp.cTo_bus, net.trafos)
   max_controls = isnothing(trafo_obj) ? 1 : max(1, net.trafos[trafo_obj].nController)
   controllers = _tap_controllers(net)
-  n_active = count(c -> c.trafo == trafo && c.enabled, controllers)
+  n_active = 0
+  for c in controllers
+    c.enabled || continue
+    cbr = _find_trafo_branch(net, c.trafo)
+    cbr.branchIdx == br.branchIdx && (n_active += 1)
+  end
   n_active >= max_controls && error("PowerTransformerControl: transformer $(trafo) allows at most $(max_controls) active controller(s).")
   mode in (:voltage, :branch_active_power, :voltage_and_branch_active_power) || error("PowerTransformerControl: unsupported mode=$(mode)")
 
