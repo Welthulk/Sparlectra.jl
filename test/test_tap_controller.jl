@@ -95,6 +95,24 @@ function run_tap_controller_tests()
     @test tbr.phase_shift_deg != 0.0
   end
 
+  @testset "Disabled tap controllers are skipped" begin
+    net, tbr = _build_net()
+    addPowerTransformerControl!(net;
+      trafo = string(tbr.branchIdx),
+      mode = :voltage,
+      target_bus = "Load",
+      target_vm_pu = 0.98,
+      control_ratio = true,
+      control_phase = false,
+      enabled = false,
+    )
+
+    ratio_before = tbr.tap_ratio
+    _, erg, _ = run_net_acpflow(net = net, max_ite = 30, tol = 1e-9, verbose = 0, method = :rectangular, show_results = false)
+    @test erg == 0
+    @test tbr.tap_ratio == ratio_before
+  end
+
   @testset "Tap controller reporting rows and classic section" begin
     net, tbr = _build_net()
     addPowerTransformerControl!(net;

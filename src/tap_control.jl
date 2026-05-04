@@ -292,6 +292,9 @@ Returns `(iterations, erg)` where `erg == 0` means successful PF termination.
 function run_tap_controllers_outer!(net::Net; max_ite::Int=30, tol::Float64=1e-6, verbose::Int=0, opt_fd::Bool=false, opt_sparse::Bool=false, method::Symbol=:rectangular)
   controllers = _tap_controllers(net)
   isempty(controllers) && return (0, 0)
+  if !any(c -> c.enabled, controllers)
+    return runpf!(net, max_ite, tol, verbose; opt_fd = opt_fd, opt_sparse = opt_sparse, method = method)
+  end
   _, erg = runpf!(net, max_ite, tol, verbose; opt_fd = opt_fd, opt_sparse = opt_sparse, method = method)
   erg != 0 && return (0, erg)
   calcNetLosses!(net)
