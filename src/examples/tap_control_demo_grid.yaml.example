@@ -1,0 +1,77 @@
+# Tap Control Demo Grid - editable local configuration
+#
+# Usage options:
+#   1) Default lookup (auto):
+#      - script first checks: src/examples/tap_control_demo_grid.yaml
+#      - if not found, it loads this example file
+#   2) Explicit path argument:
+#      julia --project=. src/examples/tap_control_demo_grid.jl path/to/custom.yaml
+#   3) Environment variable:
+#      SPARLECTRA_TAP_DEMO_YAML=path/to/custom.yaml julia --project=. src/examples/tap_control_demo_grid.jl
+#
+# Recommended local workflow (git-clean):
+#   cp src/examples/tap_control_demo_grid.yaml.example src/examples/tap_control_demo_grid.yaml
+#   # edit src/examples/tap_control_demo_grid.yaml (this file is git-ignored)
+
+# Solver options
+max_ite: 40
+pf_tol: 1.0e-9
+pf_method: rectangular
+# Outer-loop budget for tap controllers:
+# If you use small steps (e.g. 0.25° / 0.5°), increase these values.
+t2_max_outer_iters: 40
+t2_deadband_vm_pu: 0.001
+t2_voltage_error_metric: vm   # vm | vm2
+pst1_max_outer_iters: 60
+st1_max_outer_iters: 80
+st1_deadband_vm_pu: 0.001
+st1_voltage_error_metric: vm  # vm | vm2
+
+# -----------------------------------------------------------------------------
+# Tap controller setpoints (balanced starter values)
+# -----------------------------------------------------------------------------
+# Hint: tune setpoints first, then widen tap/phase ranges only if limits are hit.
+t2_target_bus: B9
+t2_target_vm_pu: 1.10
+
+pst1_target_from_bus: B1
+pst1_target_to_bus: B2
+pst1_target_p_mw: 7.0
+
+st1_target_bus: B5
+st1_target_vm_pu: 1.08
+st1_target_from_bus: B4
+st1_target_to_bus: B5
+st1_target_p_mw: -55.0
+
+# -----------------------------------------------------------------------------
+# Transformer tap/phase parameters (all editable from YAML)
+# -----------------------------------------------------------------------------
+# T2 OLTC ratio range and discrete step
+# - delta_u_per_step [pu] ≈ t2_tap_step
+# - delta_u_per_step [%]  = 100 * t2_tap_step
+# - number_of_ratio_positions ≈ (t2_tap_max - t2_tap_min) / t2_tap_step
+t2_tap_min: 0.90
+t2_tap_max: 1.16
+t2_tap_step: 0.00625   # delta_u ≈ 0.625% per tap step
+
+# PST1 phase-shift range and step [deg]
+# - Wider min/max => larger controllable active-power corridor
+# - Smaller phase_step_deg => finer control but more discrete positions
+# - Required outer-loop iterations roughly scale with:
+#   (pst1_phase_max_deg - pst1_phase_min_deg) / pst1_phase_step_deg
+pst1_phase_min_deg: -20.0
+pst1_phase_max_deg: 20.0
+pst1_phase_step_deg: 0.5
+
+# ST1 combined ratio + phase range and step
+# - ratio tap controls local voltage level (coarse/fine via st1_tap_step)
+# - phase tap controls branch active power setpoint
+# - delta_u_per_step [pu] ≈ st1_tap_step, e.g. 0.0125 => 1.25% per tap step
+# - If both tap and phase are active, raise st1_max_outer_iters accordingly
+st1_tap_min: 0.90
+st1_tap_max: 1.15
+st1_tap_step: 0.0125
+st1_phase_min_deg: -25.0
+st1_phase_max_deg: 25.0
+st1_phase_step_deg: 0.25

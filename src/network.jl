@@ -133,11 +133,12 @@ struct Net
   function Base.show(io::IO, net::Net)
     println(io, "Net: ", net.name)
     println(io, "Base MVA: ", net.baseMVA)
-    println(io, "Nodes: ", length(net.nodeVec), ", Lines: ", length(net.linesAC), ", Transformers: ", length(net.trafos), ", Branches: ", length(net.branchVec), "Links: ", length(net.linkVec), ", Prosumers: ", length(net.prosumpsVec), ", Shunts: ", length(net.shuntVec))
+    println(io, "Nodes: ", length(net.nodeVec), ", Lines: ", length(net.linesAC), ", Transformers: ", length(net.trafos), ", Branches: ", length(net.branchVec), ", Links: ", length(net.linkVec), ", Prosumers: ", length(net.prosumpsVec), ", Shunts: ", length(net.shuntVec))
     println(io, "Slack buses: ", net.slackVec, ", flatstart: ", net.flatstart, ", locked: ", net._locked)
     println(io, "Vmin / Vmax: ", net.vmin_pu, " / ", net.vmax_pu)
     println(io, "cooldown_iters: ", net.cooldown_iters, ", q_hyst_pu: ", net.q_hyst_pu)
     println(io, "Measurements: ", length(net.measurements))
+    println(io, "Tap controllers: ", sum(length, (t.side1.controls for t in net.trafos); init = 0) + sum(length, (t.side2.controls for t in net.trafos); init = 0) + sum((isnothing(t.side3) ? 0 : length(t.side3.controls) for t in net.trafos); init = 0))
   end
 end
 
@@ -662,6 +663,8 @@ function updateBranchParameters!(; net::Net, branchNr::Int, branch::BranchModel)
   br.g_pu = branch.g_pu
   br.ratio = branch.ratio
   br.angle = branch.angle
+  br.tap_ratio = branch.ratio == 0.0 ? 1.0 : branch.ratio
+  br.phase_shift_deg = branch.ratio == 0.0 ? 0.0 : branch.angle
   br.sn_MVA = branch.sn_MVA
 end
 
@@ -763,6 +766,7 @@ function addPIModelTrafo!(;
   shift_deg::Union{Nothing,Float64} = nothing,
   isAux::Bool = false,
   side::Int = 1,
+  controls::Union{Nothing,Vector{PowerTransformerControl}} = nothing,
 )
   @assert fromBus != toBus "From and to bus must be different"
   from = geNetBusIdx(net = net, busName = fromBus)
@@ -771,11 +775,25 @@ function addPIModelTrafo!(;
   vn_lv_kV = getNodeVn(net.nodeVec[to])
   w1 = PowerTransformerWinding(vn_hv_kV, r_pu, x_pu, b_pu, 0.0, ratio, shift_deg, ratedU, ratedS, nothing, true)
   w2 = PowerTransformerWinding(vn_lv_kV, 0.0, 0.0)
+  if !isnothing(controls)
+    if side == 1
+      w1.controls = copy(controls)
+    elseif side == 2
+      w2.controls = copy(controls)
+    end
+  end
   comp = getTrafoImpPGMComp(isAux, vn_hv_kV, from, to)
   trafo = PowerTransformer(comp, false, w1, w2, nothing, Sparlectra.PIModel)
   push!(net.trafos, trafo)
 
   addBranch!(net = net, from = from, to = to, branch = trafo, status = status, ratio = ratio, side = side, vn_kV = vn_hv_kV, values_are_pu = true)
+  if !isnothing(controls)
+    br = net.branchVec[end]
+    target_controls = side == 1 ? net.trafos[end].side1.controls : net.trafos[end].side2.controls
+    for ctrl in target_controls
+      ctrl.trafo = string(br.branchIdx)
+    end
+  end
 end
 
 """
@@ -930,7 +948,7 @@ Add a two-winding transformer to the network.
 - `i0_percent::Float64`: No-load current percent of the transformer.
 - `status::Int`: The status of the transformer. Default is 1.
 """
-function add2WTrafo!(; net::Net, fromBus::String, toBus::String, sn_mva::Float64, vk_percent::Float64, vkr_percent::Float64, pfe_kw::Float64, i0_percent::Float64, status::Int = 1)
+function add2WTrafo!(; net::Net, fromBus::String, toBus::String, sn_mva::Float64, vk_percent::Float64, vkr_percent::Float64, pfe_kw::Float64, i0_percent::Float64, status::Int = 1, controls::Union{Nothing,Vector{PowerTransformerControl}} = nothing)
   @assert fromBus != toBus "From and to bus must be different"
   from = geNetBusIdx(net = net, busName = fromBus)
   to = geNetBusIdx(net = net, busName = toBus)
@@ -939,10 +957,24 @@ function add2WTrafo!(; net::Net, fromBus::String, toBus::String, sn_mva::Float64
 
   trafo = create2WTRatioTransformerNoTaps(from = from, to = to, vn_hv_kV = vn_hv_kV, vn_lv_kV = vn_lv_kV, sn_mva = sn_mva, vk_percent = vk_percent, vkr_percent = vkr_percent, pfe_kw = pfe_kw, i0_percent = i0_percent)
   side = getSideNumber2WT(trafo)
+  if !isnothing(controls)
+    if side == 1
+      trafo.side1.controls = copy(controls)
+    elseif side == 2
+      trafo.side2.controls = copy(controls)
+    end
+  end
   ratio = calcTransformerRatio(trafo)
   push!(net.trafos, trafo)
 
   addBranch!(net = net, from = from, to = to, branch = trafo, status = status, ratio = ratio, side = side, vn_kV = vn_hv_kV)
+  if !isnothing(controls)
+    br = net.branchVec[end]
+    target_controls = side == 1 ? net.trafos[end].side1.controls : net.trafos[end].side2.controls
+    for ctrl in target_controls
+      ctrl.trafo = string(br.branchIdx)
+    end
+  end
 end
 
 """
@@ -1008,7 +1040,29 @@ function addProsumer!(;
   else
     nothing
   end
-  ps = ProSumer(vn_kv = vn_kV, busIdx = busIdx, oID = idProsSum, type = proTy, p = p, q = q, minP = pMin, maxP = pMax, minQ = qMin, maxQ = qMax, referencePri = refPriIdx, vm_pu = vm_pu, va_deg = va_deg, vstep_pu = vstep_pu, tap_steps_down = tap_steps_down, tap_steps_up = tap_steps_up, vset_adjust = vset_adjust_cfg, isRegulated = auto_regulated, isAPUNode = isAPUNode, quController = qu_controller, puController = pu_controller)
+  ps = ProSumer(
+    vn_kv = vn_kV,
+    busIdx = busIdx,
+    oID = idProsSum,
+    type = proTy,
+    p = p,
+    q = q,
+    minP = pMin,
+    maxP = pMax,
+    minQ = qMin,
+    maxQ = qMax,
+    referencePri = refPriIdx,
+    vm_pu = vm_pu,
+    va_deg = va_deg,
+    vstep_pu = vstep_pu,
+    tap_steps_down = tap_steps_down,
+    tap_steps_up = tap_steps_up,
+    vset_adjust = vset_adjust_cfg,
+    isRegulated = auto_regulated,
+    isAPUNode = isAPUNode,
+    quController = qu_controller,
+    puController = pu_controller,
+  )
   push!(net.prosumpsVec, ps)
   node = net.nodeVec[busIdx]
   if (isGenerator(proTy))

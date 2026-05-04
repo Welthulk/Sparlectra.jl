@@ -1,86 +1,23 @@
 # Sparlectra
 
-This package contains tools for subsequent network calculations. It primarily features a program for calculating load flow and state estimaton. The focus is to provide valuable insights into load flow calculations for both students and ambitious professionals.
-
-## Features
-
-- AC power flow with rectangular complex-state Newton-Raphson as default (`:rectangular`); legacy `:polar_full` / `:classic` are deprecated.
-- State Estimation (WLS) as an **experimental** feature 
-- Canonical external solver interface (`PFModel`/`PFSolution`) to integrate third-party solvers.
-- PV-to-PQ bus switching.
-- MATPOWER-compatible import/export utilities and local casefile helper workflow.
-- Loss calculations and power flow results reporting.
-- Network Modeling: 
-    - Buses with prosumer-derived PF typing (PQ, PV, Slack)
-    - Transmission lines
-    - Transformers (2-winding and 3-winding)
-    - Generators and loads
-    - Shunts
-    - Topological impedanceless bus links (`addLink!`) 
-- Transmission lines and transformers can be represented using π-equivalent models,
-allowing direct use of CIM and manufacturer data without additional model conversions.    
-
-## Installation
-
-For installation, run the following command in the Julia REPL:
-```julia
-import Pkg
-Pkg.add("Sparlectra")
+```@meta
+EditURL = "../../README.md"
 ```
 
-## Quick Start
+```@eval
+using Markdown
 
-Here's a simple example to get you started:
+readme_path = normpath(joinpath(@__DIR__, "..", "..", "README.md"))
+readme_text = read(readme_path, String)
 
-```julia
-using Sparlectra
+# Keep docs-internal links working after reusing README content.
+readme_text = replace(readme_text, r"\(docs/src/([^)]+)\)" => s"(\1)")
 
-# Ensure case file exists locally (downloads on demand into data/mpower)
-case_path = ensure_casefile("case14.m")
-
-# Build network and run Newton-Raphson power flow
-net = createNetFromMatPowerFile(case_path, false)
-ite, erg = runpf!(net, 10, 1e-6, 0)
-
-if erg == 0
-    calcNetLosses!(net)
-    printACPFlowResults(net, 0.0, ite, 1e-6)
-end
+Markdown.parse(readme_text)
 ```
 
-## Documentation Structure
+## Documentation quick links
 
-- **[Changelog](changelog.md)**: Version history and updates
-- **[Networks](networks.md)**: Creating and manipulating network models
-- **[Branch Model](branchmodel.md)**: Details of the network branch model
-- **[Import/Export](import.md)**: Importing and exporting network configurations
-- **[Component Removal](remove_functions.md)**: Conceptual notes on topology-aware removal workflows
-- **[Workshop](workshop.md)**: Guided exercises and examples
-- **[State Estimation](state_estimation.md)**: Theory, observability, and practical SE workflow
-- **[Feature Matrix](feature_matrix.md)**: Quick PF vs SE capability overview
-- **[Network Reports](netreports.md)**: Create and use machine-readable `ACPFlowReport` output
-- **[Function Reference](reference.md)**: Complete API documentation
-- **[Powerlimit Guide](powerlimits.md)**: Handling of power limits
-- **[Solver Guide](solver.md)**: Numerical solver formulations and FD Jacobians
-- **[Voltage-dependent Control](voltage_dependent_control.md)**: Q(U)/P(U) formulation, Jacobian terms, and API usage
-
-
-### Network Creation
-This package supports the import and export of Matpower .m files, although currently it only reads bus, generator, and branch data from these files. Please note that additional Matlab functions within the .m file are not supported. Additionally, you can modify the imported Matpower files or you can create your own network using easy-to-use functions provided by the package.
-
-### Test Cases and Benchmarks
-
-Sparlectra does not ship third-party power system test cases by default.
-
-Instead, MATPOWER-compatible case files (e.g. `case14`, `case118`) can be
-downloaded **on demand** using helper scripts provided with the package.
-Downloaded files are stored locally and are not part of the Sparlectra source
-distribution.
-
-This approach keeps the repository lightweight and avoids bundling external
-data while still allowing reproducible experiments and benchmarks.
-
-## License
-
-This project is licensed under the Apache License, Version 2.0.
-[The license file](https://github.com/welthulk/Sparlectra.jl/blob/main/LICENSE) contains the complete licensing information.
+* [Feature Matrix](feature_matrix.md)
+* [Transformer Control](transformer_control.md)
+* [Examples Overview](examples_overview.md)
