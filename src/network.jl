@@ -138,7 +138,7 @@ struct Net
     println(io, "Vmin / Vmax: ", net.vmin_pu, " / ", net.vmax_pu)
     println(io, "cooldown_iters: ", net.cooldown_iters, ", q_hyst_pu: ", net.q_hyst_pu)
     println(io, "Measurements: ", length(net.measurements))
-    println(io, "Tap controllers: ", sum(length, (t.side1.controls for t in net.trafos)) + sum(length, (t.side2.controls for t in net.trafos)) + sum(isnothing(t.side3) ? 0 : length(t.side3.controls) for t in net.trafos))
+    println(io, "Tap controllers: ", sum(length, (t.side1.controls for t in net.trafos); init = 0) + sum(length, (t.side2.controls for t in net.trafos); init = 0) + sum((isnothing(t.side3) ? 0 : length(t.side3.controls) for t in net.trafos); init = 0))
   end
 end
 

@@ -3,6 +3,91 @@
 using Sparlectra
 using Printf
 
+const DEFAULT_EXAMPLE_CFG = Dict{String,Any}(
+  "plot_curve" => true,
+  "qu_points" => [(103.4, 35.0), (110.0, 0.0), (116.6, -25.0)],
+  "pu_points" => [(103.4, 25.0), (110.0, 10.0), (116.6, 0.0)],
+)
+
+function _write_default_yaml_example(path::AbstractString)
+  mkpath(dirname(path))
+  write(path, """
+# Voltage dependent P(U)/Q(U) control demo.
+# Usage:
+#   julia --project=. src/examples/example_voltage_dependent_control_rectangular.jl
+#   julia --project=. src/examples/example_voltage_dependent_control_rectangular.jl path/to/custom.yaml
+#   SPARLECTRA_VCTRL_YAML=path/to/custom.yaml julia --project=. src/examples/example_voltage_dependent_control_rectangular.jl
+plot_curve: true
+qu_points:
+  - [103.4, 35.0]
+  - [110.0, 0.0]
+  - [116.6, -25.0]
+pu_points:
+  - [103.4, 25.0]
+  - [110.0, 10.0]
+  - [116.6, 0.0]
+""")
+end
+
+_parse_pair_line(line::AbstractString) = begin
+  m = match(r"^\s*-\s*\[\s*([^\],]+)\s*,\s*([^\],]+)\s*\]\s*$", line)
+  isnothing(m) && return nothing
+  return (parse(Float64, m.captures[1]), parse(Float64, m.captures[2]))
+end
+
+function load_voltage_ctrl_yaml(path::AbstractString)
+  cfg = Dict{String,Any}()
+  pairs = Tuple{Float64,Float64}[]
+  list_key = ""
+  for raw in eachline(path)
+    line = strip(split(raw, "#"; limit = 2)[1])
+    isempty(line) && continue
+    if line == "qu_points:" || line == "pu_points:"
+      if !isempty(list_key)
+        cfg[list_key] = copy(pairs)
+        empty!(pairs)
+      end
+      list_key = replace(line, ":" => "")
+      continue
+    end
+    if startswith(line, "-")
+      p = _parse_pair_line(line)
+      isnothing(p) && error("Invalid YAML list entry in $path: $line")
+      push!(pairs, p)
+      continue
+    end
+    if !isempty(list_key)
+      cfg[list_key] = copy(pairs)
+      empty!(pairs)
+      list_key = ""
+    end
+    kv = split(line, ":"; limit = 2)
+    length(kv) == 2 || error("Invalid YAML line in $path: $line")
+    key = strip(kv[1])
+    val = lowercase(strip(kv[2]))
+    if key == "plot_curve"
+      cfg[key] = (val == "true" || val == "1" || val == "yes" || val == "on")
+    end
+  end
+  if !isempty(list_key)
+    cfg[list_key] = copy(pairs)
+  end
+  return cfg
+end
+
+function _resolve_yaml_path()
+  length(ARGS) >= 1 && isfile(ARGS[1]) && return ARGS[1]
+  env_path = get(ENV, "SPARLECTRA_VCTRL_YAML", "")
+  !isempty(env_path) && isfile(env_path) && return env_path
+
+  local_cfg = joinpath(@__DIR__, "example_voltage_dependent_control_rectangular.yaml")
+  local_example = joinpath(@__DIR__, "example_voltage_dependent_control_rectangular.yaml.example")
+  if !isfile(local_example)
+    _write_default_yaml_example(local_example)
+  end
+  return isfile(local_cfg) ? local_cfg : local_example
+end
+
 function _maybe_plot_characteristic(ch::PiecewiseLinearCharacteristic; enable_plot::Bool = false, out_file::String = joinpath(pkgdir(Sparlectra), "src", "examples", "_out", "voltage_control_characteristic.png"))
   enable_plot || return
 
@@ -45,9 +130,14 @@ function _run_kink_check()
   return (curve = kink_curve, slope_left = slope_left, slope_kink = slope_kink, slope_right = slope_right)
 end
 
-function run_example_voltage_dependent_control_rectangular(; verbose::Int = 1, plot_curve::Bool = true)
+function run_example_voltage_dependent_control_rectangular(; verbose::Int = 1, plot_curve::Union{Bool,Nothing} = nothing)
+  yaml_path = _resolve_yaml_path()
+  yaml_cfg = load_voltage_ctrl_yaml(yaml_path)
+  cfg = merge(copy(DEFAULT_EXAMPLE_CFG), yaml_cfg)
+  used_plot_curve = isnothing(plot_curve) ? Bool(cfg["plot_curve"]) : Bool(plot_curve)
+
   kink_check = Base.invokelatest(_run_kink_check)
-  Base.invokelatest(_maybe_plot_characteristic, kink_check.curve; enable_plot = plot_curve)
+  Base.invokelatest(_maybe_plot_characteristic, kink_check.curve; enable_plot = used_plot_curve)
 
   net = Net(name = "voltage_dependent_control", baseMVA = 100.0)
 
@@ -58,8 +148,8 @@ function run_example_voltage_dependent_control_rectangular(; verbose::Int = 1, p
 
   addProsumer!(net = net, busName = "Slack", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "Slack")
 
-  qu_curve = make_characteristic([(103.4, 35.0), (110.0, 0.0), (116.6, -25.0)]; voltage_unit = :kV, value_unit = :MVAr, vn_kV = 110.0, sbase_MVA = net.baseMVA)
-  pu_curve = make_characteristic([(103.4, 25.0), (110.0, 10.0), (116.6, 0.0)]; voltage_unit = :kV, value_unit = :MW, vn_kV = 110.0, sbase_MVA = net.baseMVA)
+  qu_curve = make_characteristic(cfg["qu_points"]; voltage_unit = :kV, value_unit = :MVAr, vn_kV = 110.0, sbase_MVA = net.baseMVA)
+  pu_curve = make_characteristic(cfg["pu_points"]; voltage_unit = :kV, value_unit = :MW, vn_kV = 110.0, sbase_MVA = net.baseMVA)
 
   addProsumer!(net = net, busName = "Prosumer", type = "SYNCHRONOUSMACHINE", p = 10.0, q = 0.0, qu_controller = QUController(qu_curve; qmin_MVAr = -50.0, qmax_MVAr = 50.0, sbase_MVA = net.baseMVA), pu_controller = PUController(pu_curve; pmin_MW = 0.0, pmax_MW = 50.0, sbase_MVA = net.baseMVA))
 
