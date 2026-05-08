@@ -337,6 +337,35 @@ function test_matpower_import_uses_bus_type_for_regulation()::Bool
          isnothing(b3_gen.quController)
 end
 
+function test_prosumer_aggregation_preserves_bus_types_and_injections()::Bool
+  net = Net(name = "aggregation_regression", baseMVA = 100.0)
+  addBus!(net = net, busName = "Slack", vn_kV = 110.0)
+  addBus!(net = net, busName = "PV", vn_kV = 110.0)
+  addBus!(net = net, busName = "PQ", vn_kV = 110.0)
+
+  addACLine!(net = net, fromBus = "Slack", toBus = "PV", length = 1.0, r = 0.01, x = 0.10)
+  addACLine!(net = net, fromBus = "PV", toBus = "PQ", length = 1.0, r = 0.01, x = 0.10)
+
+  addProsumer!(net = net, busName = "Slack", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "Slack", defer_bus_type_refresh = true)
+  addProsumer!(net = net, busName = "PV", type = "SYNCHRONOUSMACHINE", p = 50.0, q = 5.0, vm_pu = 1.01, defer_bus_type_refresh = true)
+  addProsumer!(net = net, busName = "PV", type = "ENERGYCONSUMER", p = 10.0, q = 3.0, defer_bus_type_refresh = true)
+  addProsumer!(net = net, busName = "PQ", type = "ENERGYCONSUMER", p = 20.0, q = 7.0, defer_bus_type_refresh = true)
+  addProsumer!(net = net, busName = "PQ", type = "GENERATOR", p = 2.0, q = 1.0, defer_bus_type_refresh = true)
+
+  refreshBusTypesFromProsumers!(net)
+  S = buildComplexSVec(net)
+
+  slack = geNetBusIdx(net = net, busName = "Slack")
+  pv = geNetBusIdx(net = net, busName = "PV")
+  pq = geNetBusIdx(net = net, busName = "PQ")
+
+  return getNodeType(net.nodeVec[slack]) == Sparlectra.Slack &&
+         getNodeType(net.nodeVec[pv]) == Sparlectra.PV &&
+         getNodeType(net.nodeVec[pq]) == Sparlectra.PQ &&
+         isapprox(S[pv], ComplexF64(0.40, 0.02); atol = 1e-12) &&
+         isapprox(S[pq], ComplexF64(-0.18, -0.06); atol = 1e-12)
+end
+
 function test_matpower_vmva_selfcheck_noncontiguous_bus_numbers()::Bool
   mpc = Sparlectra.MatpowerIO.MatpowerCase(
     "case_noncontig",
@@ -1586,6 +1615,7 @@ function run_grid_tests()
       @test testImportMatpower() == true
       @test test_matpower_import_defaults_no_reenable() == true
       @test test_matpower_import_uses_bus_type_for_regulation() == true
+      @test test_prosumer_aggregation_preserves_bus_types_and_injections() == true
       @test test_matpower_vmva_selfcheck_noncontiguous_bus_numbers() == true
       @test test_matpower_vmva_selfcheck_ignores_slack_pq_spec() == true
       @test test_mp_inline_vs_manual_shunt() == true
