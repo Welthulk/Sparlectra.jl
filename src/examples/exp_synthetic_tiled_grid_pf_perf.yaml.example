@@ -1,0 +1,31 @@
+# Configuration example for Sparlectra synthetic tiled-grid power-flow benchmark.
+
+bus_limits: [100, 300, 500, 1000, 2000, 5000]
+
+solver:
+  max_iter: 25
+  tol: 1e-8
+  verbose: 0
+  flatstart: false
+  method: :rectangular
+  opt_sparse: true
+
+performance:
+  blas_threads: 4       # 0 = keep current BLAS thread setting
+  show_thread_info: true
+
+synthetic_network:
+  aspect_ratio: 1.0
+  base_mva: 100.0
+
+  r: 0.01
+  x: 0.05
+  g: 0.0
+  b: 0.0
+
+  load_mw_per_right_corner: 50.0
+  load_mvar_per_right_corner: 15.0
+  generation_balance: 0.995
+
+  vm_slack: 1.0
+  vm_flat: 1.0

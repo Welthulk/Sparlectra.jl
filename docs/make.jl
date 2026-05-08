@@ -23,6 +23,7 @@ makedocs(
     "Network Reports" => "netreports.md",
     "Power Limits" => "powerlimits.md",
     "Solver" => "solver.md",
+    "Synthetic Tiled Grids" => "synthetic_grids.md",
     "Voltage Dependent Control" => "voltage_dependent_control.md",
     "Transformer Control" => "transformer_control.md",
     "Examples Overview" => "examples_overview.md",
