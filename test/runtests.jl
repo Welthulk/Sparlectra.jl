@@ -35,6 +35,7 @@ include("test_state_estimation.jl")
 include("test_voltage_dependent_control.jl")
 include("test_transformer_phase_shift.jl")
 include("test_tap_controller.jl")
+include("test_synthetic_grids.jl")
 
 function _print_test_progress(step::Int, total::Int, label::String)
   width = 30
@@ -56,6 +57,7 @@ end
     ("voltage_dependent_control", run_voltage_dependent_control_tests),
     ("transformer_phase_shift", run_transformer_phase_shift_tests),
     ("tap_controller", run_tap_controller_tests),
+    ("synthetic_grids", run_synthetic_grid_tests),
   ]
 
   total = length(test_steps)

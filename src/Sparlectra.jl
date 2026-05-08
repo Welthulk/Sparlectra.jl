@@ -75,6 +75,10 @@ export
   # functions  
   # utilities.jl
   zero_row!, print_jacobian,
+  # yamlparams.jl
+  parse_yaml_scalar, load_yaml_dict, merge_yaml_dict!, as_bool, as_int_vector,
+  # synthetic_grids.jl
+  synthetic_tiled_grid_bus_index, build_synthetic_tiled_grid_net, build_tiled_grid_net,
   # BusData
   BusData, getBusData, getBusTypeVec, countNodes, map_NR_voltage_to_net!,buildVoltageVector_from_busVec,
   # Compomnent
@@ -144,6 +148,7 @@ export
   ensure_casefile
 
 include("utilities.jl")
+include("yamlparams.jl")
 include("component.jl")
 include("lines.jl")
 include("transformer.jl")
@@ -153,6 +158,7 @@ include("branch.jl")
 include("link.jl")
 include("shunt.jl")
 include("network.jl")
+include("synthetic_grids.jl")
 include("tap_control.jl")
 include("busdata.jl")
 include("MatpowerIO.jl")   
