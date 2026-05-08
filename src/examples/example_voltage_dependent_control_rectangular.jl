@@ -3,15 +3,13 @@
 using Sparlectra
 using Printf
 
-const DEFAULT_EXAMPLE_CFG = Dict{String,Any}(
-  "plot_curve" => true,
-  "qu_points" => [(103.4, 35.0), (110.0, 0.0), (116.6, -25.0)],
-  "pu_points" => [(103.4, 25.0), (110.0, 10.0), (116.6, 0.0)],
-)
+const DEFAULT_EXAMPLE_CFG = Dict{String,Any}("plot_curve" => true, "qu_points" => [(103.4, 35.0), (110.0, 0.0), (116.6, -25.0)], "pu_points" => [(103.4, 25.0), (110.0, 10.0), (116.6, 0.0)])
 
 function _write_default_yaml_example(path::AbstractString)
   mkpath(dirname(path))
-  write(path, """
+  write(
+    path,
+    """
 # Voltage dependent P(U)/Q(U) control demo.
 # Usage:
 #   julia --project=. src/examples/example_voltage_dependent_control_rectangular.jl
@@ -26,7 +24,8 @@ pu_points:
   - [103.4, 25.0]
   - [110.0, 10.0]
   - [116.6, 0.0]
-""")
+""",
+  )
 end
 
 _parse_pair_line(line::AbstractString) = begin
@@ -180,6 +179,14 @@ function run_example_voltage_dependent_control_rectangular(; verbose::Int = 1, p
   end
 
   return net
+end
+
+# IMPORTANT for Julia 1.12 / Revise world-age safety:
+# Default: run immediately (also when included from REPL), like a script.
+# Set ENV["APSLF_SUITE_NO_AUTORUN"]="1" to load definitions without execution.
+if get(ENV, "SPARLECTRA_SUITE_NO_AUTORUN", "0") != "1"
+  main_fn = getfield(@__MODULE__, :main)
+  Base.invokelatest(main_fn)
 end
 
 Base.invokelatest(() -> run_example_voltage_dependent_control_rectangular())

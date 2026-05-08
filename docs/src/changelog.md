@@ -1,8 +1,10 @@
 # Change Log
 ## Version 0.7.4 – 2026-06-02
+### New Features 
+* Added a dependency-free YAML subset parser and a synthetic tiled-grid AC network builder, including a YAML-driven benchmark example for scalable power-flow diagnostics.
 ### Improvements
-* Improved large-network MATPOWER and rectangular-solver performance by aggregating prosumer-derived bus types and specified power injections in linear time.
-* 
+* Improved large-network MATPOWER and rectangular-solver performance by aggregating prosumer-derived bus types and specified power injections in linear time. 
+   
 ## Version 0.7.3 – 2026-05-04
 ### New Features
 * Added transformer tap control in AC power flow with an outer-loop controller workflow.

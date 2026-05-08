@@ -19,5 +19,6 @@ Markdown.parse(readme_text)
 ## Documentation quick links
 
 * [Feature Matrix](feature_matrix.md)
+* [Synthetic Tiled Grids](synthetic_grids.md)
 * [Transformer Control](transformer_control.md)
 * [Examples Overview](examples_overview.md)
