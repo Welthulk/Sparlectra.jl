@@ -36,13 +36,47 @@ function _parse_args(args::Vector{String})
   for arg in args
     if startswith(arg, "--max-buses=")
       max_override = parse(Int, split(arg, "=", limit = 2)[2])
-    elseif endswith(lowercase(arg), ".yaml") || endswith(lowercase(arg), ".yml")
+    elseif _looks_like_yaml_path(arg)
       config_path = arg
     else
       push!(limits, parse(Int, arg))
     end
   end
   return config_path, limits, max_override
+end
+
+function _looks_like_yaml_path(arg::AbstractString)::Bool
+  lower = lowercase(arg)
+  return endswith(lower, ".yaml") || endswith(lower, ".yml") || endswith(lower, ".yaml.example") || endswith(lower, ".yml.example")
+end
+
+function _fallback_example_path(path::AbstractString)::String
+  lower = lowercase(path)
+  if endswith(lower, ".yaml") || endswith(lower, ".yml")
+    return path * ".example"
+  end
+  return path
+end
+
+function _resolve_config_path(config_path)::Union{Nothing,String}
+  if isnothing(config_path)
+    println("No configuration file specified; using built-in defaults.")
+    return nothing
+  end
+
+  if isfile(config_path)
+    return String(config_path)
+  end
+  fallback_path = _fallback_example_path(config_path)
+  if fallback_path != config_path && isfile(fallback_path)
+    println("Configuration file not found: ", config_path)
+    println("Using example configuration fallback: ", fallback_path)
+    return fallback_path
+  end
+
+  println("Configuration file not found: ", config_path)
+  println("No fallback configuration file found; using built-in defaults.")
+  return nothing
 end
 
 function _configure_blas!(cfg::Dict{String,Any})
@@ -101,8 +135,10 @@ end
 function main(args = ARGS)
   config_path, cli_limits, max_override = _parse_args(collect(args))
   cfg = _copy_config_dict(DEFAULT_CONFIG)
-  if !isnothing(config_path)
-    merge_yaml_dict!(cfg, load_yaml_dict(config_path))
+  resolved_config_path = _resolve_config_path(config_path)
+  if !isnothing(resolved_config_path)
+    println("Loading configuration: ", resolved_config_path)
+    merge_yaml_dict!(cfg, load_yaml_dict(resolved_config_path))
   end
   if !isempty(cli_limits)
     cfg["bus_limits"] = cli_limits
@@ -188,12 +224,11 @@ function main(args = ARGS)
   return rows
 end
 
-Base.invokelatest(main, ARGS)
-
 # IMPORTANT for Julia 1.12 / Revise world-age safety:
 # Default: run immediately (also when included from REPL), like a script.
 # Set ENV["APSLF_SUITE_NO_AUTORUN"]="1" to load definitions without execution.
-#if get(ENV, "SPARLECTRA_SUITE_NO_AUTORUN", "0") != "1"
-#  main_fn = getfield(@__MODULE__, :main)
-#  Base.invokelatest(main_fn, ARGS)
-#end
+if get(ENV, "SPARLECTRA_SUITE_NO_AUTORUN", "0") != "1"
+  main_fn = getfield(@__MODULE__, :main)
+  Base.invokelatest(main_fn, ARGS)
+  nothing
+end
