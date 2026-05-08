@@ -1,7 +1,8 @@
 # Change Log
 ## Version 0.7.4 – 2026-06-02
 ### New Features 
-* Added a dependency-free YAML subset parser and a synthetic tiled-grid AC network builder, including a YAML-driven benchmark example for scalable power-flow diagnostics.
+### Bugfix
+* Synthetic tiled-grid benchmark example now falls back from `.yaml` to `.yaml.example` and reports when built-in defaults are used.
 ### Improvements
 * Improved large-network MATPOWER and rectangular-solver performance by aggregating prosumer-derived bus types and specified power injections in linear time. 
    
