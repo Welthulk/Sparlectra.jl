@@ -363,7 +363,8 @@ function getEffectiveBusType(net::Net, busIdx::Int)::NodeType
   has_slack = false
   has_regulating = false
 
-  for ps in getBusProsumers(net, busIdx)
+  for ps in net.prosumpsVec
+    getPosumerBusIndex(ps) == busIdx || continue
     if isSlack(ps)
       has_slack = true
     end
@@ -387,12 +388,27 @@ function getEffectiveBusType(; net::Net, busName::String)::NodeType
 end
 
 function refreshBusTypesFromProsumers!(net::Net)
+  nbus = length(net.nodeVec)
+  has_slack = falses(nbus)
+  has_regulating = falses(nbus)
+
+  @inbounds for ps in net.prosumpsVec
+    bus = getPosumerBusIndex(ps)
+    (1 <= bus <= nbus) || continue
+    if isSlack(ps)
+      has_slack[bus] = true
+    end
+    if isGenerator(ps) && isRegulating(ps)
+      has_regulating[bus] = true
+    end
+  end
+
   empty!(net.slackVec)
-  for busIdx in eachindex(net.nodeVec)
+  @inbounds for busIdx in eachindex(net.nodeVec)
     if net.nodeVec[busIdx]._nodeType == Isolated
       continue
     end
-    node_type = getEffectiveBusType(net, busIdx)
+    node_type = has_slack[busIdx] ? Slack : (has_regulating[busIdx] ? PV : PQ)
     net.nodeVec[busIdx]._nodeType = node_type
     if node_type == Slack
       push!(net.slackVec, busIdx)
@@ -1845,31 +1861,31 @@ negative means net consumption (load).
 """
 function buildComplexSVec(net::Net)
   n = length(net.nodeVec)
-  S = Vector{ComplexF64}(undef, n)
+  Pgen = zeros(Float64, n)
+  Qgen = zeros(Float64, n)
+  Pload = zeros(Float64, n)
+  Qload = zeros(Float64, n)
   baseMVA = net.baseMVA
 
-  for bus = 1:n
-    Pgen = 0.0
-    Qgen = 0.0
-    Pload = 0.0
-    Qload = 0.0
+  @inbounds for ps in net.prosumpsVec
+    bus = getPosumerBusIndex(ps)
+    (1 <= bus <= n) || continue
+    p = isnothing(ps.pVal) ? 0.0 : ps.pVal
+    q = isnothing(ps.qVal) ? 0.0 : ps.qVal
 
-    for ps in net.prosumpsVec
-      getPosumerBusIndex(ps) == bus || continue
-      p = isnothing(ps.pVal) ? 0.0 : ps.pVal
-      q = isnothing(ps.qVal) ? 0.0 : ps.qVal
-
-      if isGenerator(ps)
-        Pgen += p
-        Qgen += q
-      else
-        Pload += p
-        Qload += q
-      end
+    if isGenerator(ps)
+      Pgen[bus] += p
+      Qgen[bus] += q
+    else
+      Pload[bus] += p
+      Qload[bus] += q
     end
+  end
 
-    Pinj = (Pgen - Pload) / baseMVA
-    Qinj = (Qgen - Qload) / baseMVA
+  S = Vector{ComplexF64}(undef, n)
+  @inbounds for bus in eachindex(S)
+    Pinj = (Pgen[bus] - Pload[bus]) / baseMVA
+    Qinj = (Qgen[bus] - Qload[bus]) / baseMVA
     S[bus] = ComplexF64(Pinj, Qinj)
   end
 
