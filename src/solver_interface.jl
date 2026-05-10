@@ -162,6 +162,11 @@ function buildPfModel(
   flatstart::Bool = net.flatstart,
   include_limits::Bool = true,
   verbose::Int = 0,
+  start_projection::Bool = false,
+  start_projection_try_dc_start::Bool = true,
+  start_projection_try_blend_scan::Bool = true,
+  start_projection_blend_lambdas::AbstractVector{<:Real} = [0.25, 0.5, 0.75],
+  start_projection_dc_angle_limit_deg::Float64 = 60.0,
 )
   # 1) BusData provides canonical active-bus ordering (skip iso, sort by idx)
   busVec, slackNum = getBusData(net.nodeVec, net.baseMVA, flatstart; net = net)
@@ -212,6 +217,21 @@ function buildPfModel(
       Vset[k] = 1.0
     end
   end
+
+  V0 = project_rectangular_start(
+    Ybus,
+    V0,
+    Sspec,
+    busType,
+    Vset,
+    slack_idx;
+    enabled = start_projection,
+    try_dc_start = start_projection_try_dc_start,
+    try_blend_scan = start_projection_try_blend_scan,
+    blend_lambdas = start_projection_blend_lambdas,
+    dc_angle_limit_deg = start_projection_dc_angle_limit_deg,
+    verbose = verbose,
+  )
 
   # 4) Optional limits aligned with busVec indexing (as in jacobian_full.jl) :contentReference[oaicite:8]{index=8}
   qmin_pu = Float64[]
@@ -356,9 +376,14 @@ function runpf_external!(
   show_model::Bool = false,
   show_solution::Bool = false,
   io::IO = stdout,
+  start_projection::Bool = false,
+  start_projection_try_dc_start::Bool = true,
+  start_projection_try_blend_scan::Bool = true,
+  start_projection_blend_lambdas::AbstractVector{<:Real} = [0.25, 0.5, 0.75],
+  start_projection_dc_angle_limit_deg::Float64 = 60.0,
   solver_kwargs...,
 )
-  model = buildPfModel(net; opt_sparse=opt_sparse, flatstart=flatstart, include_limits=include_limits, verbose=verbose)
+  model = buildPfModel(net; opt_sparse=opt_sparse, flatstart=flatstart, include_limits=include_limits, verbose=verbose, start_projection=start_projection, start_projection_try_dc_start=start_projection_try_dc_start, start_projection_try_blend_scan=start_projection_try_blend_scan, start_projection_blend_lambdas=start_projection_blend_lambdas, start_projection_dc_angle_limit_deg=start_projection_dc_angle_limit_deg)
 
   show_model && showPfModel(model; io=io, verbose=(verbose > 0))
 

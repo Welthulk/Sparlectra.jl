@@ -69,9 +69,17 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
 
   # --- Legacy-compatible dicts (same as your old importer) ---
   busDict, genDict, branchDict = _createDict()
+  BUS_I = busDict["bus"]; BUS_TYPE = busDict["type"]; PD = busDict["Pd"]; QD = busDict["Qd"]; GS = busDict["Gs"]; BS = busDict["Bs"]
+  BUS_AREA = busDict["area"]; VM = busDict["Vm"]; VA = busDict["Va"]; BASE_KV = busDict["baseKV"]; BUS_ZONE = busDict["zone"]; VMAX = busDict["Vmax"]; VMIN = busDict["Vmin"]
+  GEN_BUS = genDict["bus"]; PG = genDict["Pg"]; QG = genDict["Qg"]; QMAX = genDict["Qmax"]; QMIN = genDict["Qmin"]; VG = genDict["Vg"]
+  MBASE = genDict["mBase"]; GEN_STATUS = genDict["status"]; PMAX = genDict["Pmax"]; PMIN = genDict["Pmin"]
+  F_BUS = branchDict["fbus"]; T_BUS = branchDict["tbus"]; BR_R = branchDict["r"]; BR_X = branchDict["x"]; BR_B = branchDict["b"]
+  RATE_A = branchDict["rateA"]; TAP = branchDict["ratio"]; SHIFT = branchDict["angle"]; BR_STATUS = branchDict["status"]
+
   mp_bus_type = Dict{Int,Int}()
+  sizehint!(mp_bus_type, size(busData, 1))
   for row in eachrow(busData)
-    mp_bus_type[Int(row[busDict["bus"]])] = Int(row[busDict["type"]])
+    mp_bus_type[Int(row[BUS_I])] = Int(row[BUS_TYPE])
   end
 
   if log
@@ -79,13 +87,27 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
   end
   
   myNet = Net(name = String(name), baseMVA = baseMVA, flatstart = flatstart, cooldown_iters = cooldown, q_hyst_pu = q_hyst_pu)
+  nbus = size(busData, 1)
+  nbranch = size(brData, 1)
+  ngen = size(genData, 1)
+  sizehint!(myNet.nodeVec, nbus)
+  sizehint!(myNet.busDict, nbus)
+  sizehint!(myNet.busOrigIdxDict, nbus)
+  sizehint!(myNet.branchVec, nbranch)
+  sizehint!(myNet.linesAC, nbranch)
+  sizehint!(myNet.trafos, nbranch)
+  sizehint!(myNet.prosumpsVec, nbus + ngen)
+  sizehint!(myNet.shuntVec, nbus)
+  sizehint!(myNet.shuntDict, nbus)
+  bus_idx_by_orig = Dict{Int,Int}()
+  sizehint!(bus_idx_by_orig, nbus)
 
   # --- Find slack bus index from BUS_TYPE==3 (MATPOWER) ---
   slackIdx = 0
   for row in eachrow(busData)
-    btype = Int(row[busDict["type"]])
+    btype = Int(row[BUS_TYPE])
     if btype == 3
-      slackIdx = Int(row[busDict["bus"]])
+      slackIdx = Int(row[BUS_I])
       break
     end
   end
@@ -94,27 +116,27 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
   mFak = 10.0
 
   for row in eachrow(busData)
-    btype = Int(row[busDict["type"]])
-    kIdx  = Int(row[busDict["bus"]])     # original bus number
+    btype = Int(row[BUS_TYPE])
+    kIdx  = Int(row[BUS_I])     # original bus number
     busName = string(kIdx)
 
-    raw_vn = Float64(row[busDict["baseKV"]])
+    raw_vn = Float64(row[BASE_KV])
     vn_kv  = raw_vn <= 0.0 ? 1.0 : raw_vn
 
-    va_deg = Float64(row[busDict["Va"]])
-    vm_pu  = Float64(row[busDict["Vm"]])
+    va_deg = Float64(row[VA])
+    vm_pu  = Float64(row[VM])
     vm_pu  = vm_pu <= 0.0 ? 1.0 : vm_pu
 
-    pLoad  = Float64(row[busDict["Pd"]])
-    qLoad  = Float64(row[busDict["Qd"]])
+    pLoad  = Float64(row[PD])
+    qLoad  = Float64(row[QD])
 
-    pShunt = Float64(row[busDict["Gs"]])
-    qShunt = Float64(row[busDict["Bs"]])
+    pShunt = Float64(row[GS])
+    qShunt = Float64(row[BS])
 
-    zone = Int(row[busDict["zone"]])
-    area = Int(row[busDict["area"]])
-    vmin = Float64(row[busDict["Vmin"]])
-    vmax = Float64(row[busDict["Vmax"]])
+    zone = Int(row[BUS_ZONE])
+    area = Int(row[BUS_AREA])
+    vmin = Float64(row[VMIN])
+    vmax = Float64(row[VMAX])
 
 
     addBus!(
@@ -139,8 +161,10 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
     end
     =#
     # new 04.02.2026: directly add shunt as bus shunt
-    pShunt = Float64(row[busDict["Gs"]])
-    qShunt = Float64(row[busDict["Bs"]])
+    pShunt = Float64(row[GS])
+    qShunt = Float64(row[BS])
+
+    bus_idx_by_orig[kIdx] = length(myNet.nodeVec)
 
     if pShunt != 0.0 || qShunt != 0.0
       addShuntMatpower!(net=myNet, busName=busName, Gs=pShunt, Bs=qShunt)
@@ -168,46 +192,48 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
 
   # --- Branches (line vs transformer decision same as old importer) ---
   for row in eachrow(brData)
-    fbus = string(Int(row[branchDict["fbus"]]))
-    tbus = string(Int(row[branchDict["tbus"]]))
+    fbus_orig = Int(row[F_BUS])
+    tbus_orig = Int(row[T_BUS])
+    from_idx = get(bus_idx_by_orig, fbus_orig, 0)
+    to_idx = get(bus_idx_by_orig, tbus_orig, 0)
 
-    hasBusInNet(net = myNet, busName = fbus) || (@warn "bus $(fbus) not found, branch ignored."; continue)
-    hasBusInNet(net = myNet, busName = tbus) || (@warn "bus $(tbus) not found, branch ignored."; continue)
+    from_idx != 0 || (@warn "bus $(fbus_orig) not found, branch ignored."; continue)
+    to_idx != 0 || (@warn "bus $(tbus_orig) not found, branch ignored."; continue)
 
-    r_pu = Float64(row[branchDict["r"]])
-    x_pu = Float64(row[branchDict["x"]])
-    b_pu = Float64(row[branchDict["b"]])
+    r_pu = Float64(row[BR_R])
+    x_pu = Float64(row[BR_X])
+    b_pu = Float64(row[BR_B])
 
-    ratedS_raw = Float64(row[branchDict["rateA"]])
+    ratedS_raw = Float64(row[RATE_A])
     ratedS = ratedS_raw > 0.0 ? ratedS_raw : Inf
 
-    ratio = Float64(row[branchDict["ratio"]])
+    ratio = Float64(row[TAP])
     ratio = (ratio == 0.0) ? 1.0 : ratio
 
-    angle  = Float64(row[branchDict["angle"]])
-    status = Int(row[branchDict["status"]])
+    angle  = Float64(row[SHIFT])
+    status = Int(row[BR_STATUS])
 
-    vn_from = get_bus_vn_kV(net = myNet, busName = fbus)
-    vn_to   = get_bus_vn_kV(net = myNet, busName = tbus)
+    vn_from = getNodeVn(myNet.nodeVec[from_idx])
+    vn_to   = getNodeVn(myNet.nodeVec[to_idx])
 
     isLine = ((ratio == 1.0 && angle == 0.0) && (vn_from == vn_to))
 
     if isLine
-      addPIModelACLine!(
+      _addPIModelACLine_by_idx!(
         net = myNet,
-        fromBus = fbus,
-        toBus = tbus,
+        from = from_idx,
+        to = to_idx,
         r_pu = r_pu,
         x_pu = x_pu,
         b_pu = b_pu,
         status = status,
-        ratedS = ratedS,        
+        ratedS = ratedS,
       )
     else
-      addPIModelTrafo!(
+      _addPIModelTrafo_by_idx!(
         net = myNet,
-        fromBus = fbus,
-        toBus = tbus,
+        from = from_idx,
+        to = to_idx,
         r_pu = r_pu,
         x_pu = x_pu,
         b_pu = b_pu,
@@ -222,23 +248,23 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
   # --- Generators ---
   pq_gen_controller_count = 0
   for row in eachrow(genData)
-    status = Int(row[genDict["status"]])
+    status = Int(row[GEN_STATUS])
     status < 1 && continue
 
-    bus = string(Int(row[genDict["bus"]]))
+    bus = string(Int(row[GEN_BUS]))
 
-    pGen = Float64(row[genDict["Pg"]])
-    qGen = Float64(row[genDict["Qg"]])
+    pGen = Float64(row[PG])
+    qGen = Float64(row[QG])
 
-    qMax = Float64(row[genDict["Qmax"]])
-    qMin = Float64(row[genDict["Qmin"]])
-    pMax = Float64(row[genDict["Pmax"]])
-    pMin = Float64(row[genDict["Pmin"]])
-    vm_pu = Float64(row[genDict["Vg"]])
-    mBase = Float64(row[genDict["mBase"]])
-    btype = get(mp_bus_type, Int(row[genDict["bus"]]), 1)
+    qMax = Float64(row[QMAX])
+    qMin = Float64(row[QMIN])
+    pMax = Float64(row[PMAX])
+    pMin = Float64(row[PMIN])
+    vm_pu = Float64(row[VG])
+    mBase = Float64(row[MBASE])
+    btype = get(mp_bus_type, Int(row[GEN_BUS]), 1)
 
-    referencePri = (slackIdx == Int(row[genDict["bus"]])) ? bus : nothing
+    referencePri = (slackIdx == Int(row[GEN_BUS])) ? bus : nothing
     (mBase != baseMVA) && @debug "generator $(bus) has different mBase than network baseMVA (allowed in MATPOWER)" bus mBase baseMVA
 
     pu_controller = nothing

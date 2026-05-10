@@ -137,6 +137,13 @@ function bench_config_for_case(case_name::AbstractString, yaml_cfg::Dict{String,
     opt_fd = false,
     opt_sparse = true,
     opt_flatstart = false,
+    autodamp = false,
+    autodamp_min = 1e-3,
+    start_projection = false,
+    start_projection_try_dc_start = true,
+    start_projection_try_blend_scan = true,
+    start_projection_blend_lambdas = [0.25, 0.5, 0.75],
+    start_projection_dc_angle_limit_deg = 60.0,
     verbose = 1,
     cooldown_iters = 0,
     q_hyst_pu = 0.0,
@@ -163,6 +170,13 @@ function bench_config_for_case(case_name::AbstractString, yaml_cfg::Dict{String,
       opt_fd = Bool(get(yaml_cfg, "opt_fd", base.opt_fd)),
       opt_sparse = Bool(get(yaml_cfg, "opt_sparse", base.opt_sparse)),
       opt_flatstart = Bool(get(yaml_cfg, "opt_flatstart", base.opt_flatstart)),
+      autodamp = Bool(get(yaml_cfg, "autodamp", base.autodamp)),
+      autodamp_min = Float64(get(yaml_cfg, "autodamp_min", base.autodamp_min)),
+      start_projection = Bool(get(yaml_cfg, "start_projection", base.start_projection)),
+      start_projection_try_dc_start = Bool(get(yaml_cfg, "start_projection_try_dc_start", base.start_projection_try_dc_start)),
+      start_projection_try_blend_scan = Bool(get(yaml_cfg, "start_projection_try_blend_scan", base.start_projection_try_blend_scan)),
+      start_projection_blend_lambdas = Float64[x for x in get(yaml_cfg, "start_projection_blend_lambdas", base.start_projection_blend_lambdas)],
+      start_projection_dc_angle_limit_deg = Float64(get(yaml_cfg, "start_projection_dc_angle_limit_deg", base.start_projection_dc_angle_limit_deg)),
       verbose = Int(get(yaml_cfg, "verbose", base.verbose)),
       cooldown_iters = Int(get(yaml_cfg, "cooldown_iters", base.cooldown_iters)),
       q_hyst_pu = Float64(get(yaml_cfg, "q_hyst_pu", base.q_hyst_pu)),
@@ -266,7 +280,7 @@ function bench_run_acpflow(; casefile::String, methods::Vector{Symbol}, mpc, log
             println("RUN method = ", m)
             println("=================================================================\n")
             status_ref = Ref{Any}(nothing)
-            net_res = run_acpflow(casefile = casefile, max_ite = max_ite, tol = tol, opt_fd = opt_fd, opt_sparse = opt_sparse, method = m, opt_flatstart = opt_flatstart, show_results = show_classic, show_compact_result = true, status_ref = status_ref, verbose = verbose, cooldown_iters = cooldown_iters, q_hyst_pu = q_hyst_pu, lock_pv_to_pq_buses = lock_pv_to_pq_buses, enable_pq_gen_controllers = enable_pq_gen_controllers)
+            net_res = run_acpflow(casefile = casefile, max_ite = max_ite, tol = tol, opt_fd = opt_fd, opt_sparse = opt_sparse, method = m, autodamp = autodamp, autodamp_min = autodamp_min, start_projection = start_projection, start_projection_try_dc_start = start_projection_try_dc_start, start_projection_try_blend_scan = start_projection_try_blend_scan, start_projection_blend_lambdas = start_projection_blend_lambdas, start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg, opt_flatstart = opt_flatstart, show_results = show_classic, show_compact_result = true, status_ref = status_ref, verbose = verbose, cooldown_iters = cooldown_iters, q_hyst_pu = q_hyst_pu, lock_pv_to_pq_buses = lock_pv_to_pq_buses, enable_pq_gen_controllers = enable_pq_gen_controllers)
             status = status_ref[]
             if !show_classic
               _print_dataframe_nodes(io, net_res; max_nodes = show_once_max_nodes)
@@ -281,7 +295,7 @@ function bench_run_acpflow(; casefile::String, methods::Vector{Symbol}, mpc, log
             if !Bool(get(status, :converged, false)) && !enable_pq_gen_controllers
               println("Fallback diagnostic: rerun with enable_pq_gen_controllers=true")
               fb_ref = Ref{Any}(nothing)
-              run_acpflow(casefile = casefile, max_ite = max_ite, tol = tol, opt_fd = opt_fd, opt_sparse = opt_sparse, method = m, opt_flatstart = opt_flatstart, show_results = false, show_compact_result = true, status_ref = fb_ref, verbose = 0, cooldown_iters = cooldown_iters, q_hyst_pu = q_hyst_pu, lock_pv_to_pq_buses = lock_pv_to_pq_buses, enable_pq_gen_controllers = true)
+              run_acpflow(casefile = casefile, max_ite = max_ite, tol = tol, opt_fd = opt_fd, opt_sparse = opt_sparse, method = m, autodamp = autodamp, autodamp_min = autodamp_min, start_projection = start_projection, start_projection_try_dc_start = start_projection_try_dc_start, start_projection_try_blend_scan = start_projection_try_blend_scan, start_projection_blend_lambdas = start_projection_blend_lambdas, start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg, opt_flatstart = opt_flatstart, show_results = false, show_compact_result = true, status_ref = fb_ref, verbose = 0, cooldown_iters = cooldown_iters, q_hyst_pu = q_hyst_pu, lock_pv_to_pq_buses = lock_pv_to_pq_buses, enable_pq_gen_controllers = true)
             end
             @printf(io, "show_once method=%s output=%s\n\n", String(m), String(show_once_output))
           end
@@ -305,7 +319,7 @@ function bench_run_acpflow(; casefile::String, methods::Vector{Symbol}, mpc, log
   if !show_once
     println("\nInitial run (convergence + iterations):")
     for m in methods
-      run_acpflow(casefile = casefile, max_ite = max_ite, tol = tol, opt_fd = opt_fd, opt_sparse = opt_sparse, method = m, opt_flatstart = opt_flatstart, show_results = false, show_compact_result = true, verbose = 0, cooldown_iters = cooldown_iters, q_hyst_pu = q_hyst_pu, lock_pv_to_pq_buses = lock_pv_to_pq_buses, enable_pq_gen_controllers = enable_pq_gen_controllers)
+      run_acpflow(casefile = casefile, max_ite = max_ite, tol = tol, opt_fd = opt_fd, opt_sparse = opt_sparse, method = m, autodamp = autodamp, autodamp_min = autodamp_min, start_projection = start_projection, start_projection_try_dc_start = start_projection_try_dc_start, start_projection_try_blend_scan = start_projection_try_blend_scan, start_projection_blend_lambdas = start_projection_blend_lambdas, start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg, opt_flatstart = opt_flatstart, show_results = false, show_compact_result = true, verbose = 0, cooldown_iters = cooldown_iters, q_hyst_pu = q_hyst_pu, lock_pv_to_pq_buses = lock_pv_to_pq_buses, enable_pq_gen_controllers = enable_pq_gen_controllers)
     end
   end
 
@@ -323,12 +337,14 @@ function bench_run_acpflow(; casefile::String, methods::Vector{Symbol}, mpc, log
   # Warmup (compile) once per method with minimal output
   println("Warmup run:")
   for m in methods
-    run_acpflow(casefile = casefile, max_ite = max_ite, tol = tol, opt_fd = opt_fd, opt_sparse = opt_sparse, method = m, opt_flatstart = opt_flatstart, show_results = false, verbose = 0, cooldown_iters = cooldown_iters, q_hyst_pu = q_hyst_pu, lock_pv_to_pq_buses = lock_pv_to_pq_buses, enable_pq_gen_controllers = enable_pq_gen_controllers)
+    run_acpflow(casefile = casefile, max_ite = max_ite, tol = tol, opt_fd = opt_fd, opt_sparse = opt_sparse, method = m, autodamp = autodamp, autodamp_min = autodamp_min, start_projection = start_projection, start_projection_try_dc_start = start_projection_try_dc_start, start_projection_try_blend_scan = start_projection_try_blend_scan, start_projection_blend_lambdas = start_projection_blend_lambdas, start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg, opt_flatstart = opt_flatstart, show_results = false, verbose = 0, cooldown_iters = cooldown_iters, q_hyst_pu = q_hyst_pu, lock_pv_to_pq_buses = lock_pv_to_pq_buses, enable_pq_gen_controllers = enable_pq_gen_controllers)
   end
 
   println("\n==================== Benchmark run_acpflow ====================")
   println("casefile        = ", casefile)
   println("opt_fd          = ", opt_fd, "   opt_sparse = ", opt_sparse, "   flatstart = ", opt_flatstart)
+  println("autodamp        = ", autodamp, "   autodamp_min = ", autodamp_min)
+  println("start_projection= ", start_projection, "   dc_angle_limit_deg = ", start_projection_dc_angle_limit_deg)
   println("cooldown_iters  = ", cooldown_iters, "   q_hyst_pu = ", q_hyst_pu)
   println("lock PV->PQ     = ", collect(lock_pv_to_pq_buses))
   println("tol             = ", tol, "   max_ite = ", max_ite)
@@ -336,11 +352,18 @@ function bench_run_acpflow(; casefile::String, methods::Vector{Symbol}, mpc, log
   println("===============================================================\n")
 
   for m in methods
-    benchable = @benchmarkable run_acpflow(casefile = casefile_, max_ite = max_ite_, tol = tol_, opt_fd = opt_fd_, opt_sparse = opt_sparse_, method = method_, opt_flatstart = opt_flatstart_, show_results = false, verbose = 0, cooldown_iters = cooldown_iters_, q_hyst_pu = q_hyst_pu_, lock_pv_to_pq_buses = lock_pv_to_pq_buses_, enable_pq_gen_controllers = enable_pq_gen_controllers_) setup = (casefile_ = $casefile;
+    benchable = @benchmarkable run_acpflow(casefile = casefile_, max_ite = max_ite_, tol = tol_, opt_fd = opt_fd_, opt_sparse = opt_sparse_, method = method_, autodamp = autodamp_, autodamp_min = autodamp_min_, start_projection = start_projection_, start_projection_try_dc_start = start_projection_try_dc_start_, start_projection_try_blend_scan = start_projection_try_blend_scan_, start_projection_blend_lambdas = start_projection_blend_lambdas_, start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg_, opt_flatstart = opt_flatstart_, show_results = false, verbose = 0, cooldown_iters = cooldown_iters_, q_hyst_pu = q_hyst_pu_, lock_pv_to_pq_buses = lock_pv_to_pq_buses_, enable_pq_gen_controllers = enable_pq_gen_controllers_) setup = (casefile_ = $casefile;
     max_ite_ = $max_ite;
     tol_ = $tol;
     opt_fd_ = $opt_fd;
     opt_sparse_ = $opt_sparse;
+    autodamp_ = $autodamp;
+    autodamp_min_ = $autodamp_min;
+    start_projection_ = $start_projection;
+    start_projection_try_dc_start_ = $start_projection_try_dc_start;
+    start_projection_try_blend_scan_ = $start_projection_try_blend_scan;
+    start_projection_blend_lambdas_ = $start_projection_blend_lambdas;
+    start_projection_dc_angle_limit_deg_ = $start_projection_dc_angle_limit_deg;
     opt_flatstart_ = $opt_flatstart;
     cooldown_iters_ = $cooldown_iters;
     q_hyst_pu_ = $q_hyst_pu;
@@ -431,6 +454,13 @@ function main()
     opt_fd = cfg.opt_fd,
     opt_sparse = cfg.opt_sparse,
     opt_flatstart = cfg.opt_flatstart,
+    autodamp = cfg.autodamp,
+    autodamp_min = cfg.autodamp_min,
+    start_projection = cfg.start_projection,
+    start_projection_try_dc_start = cfg.start_projection_try_dc_start,
+    start_projection_try_blend_scan = cfg.start_projection_try_blend_scan,
+    start_projection_blend_lambdas = cfg.start_projection_blend_lambdas,
+    start_projection_dc_angle_limit_deg = cfg.start_projection_dc_angle_limit_deg,
     verbose = cfg.verbose,
     cooldown_iters = cfg.cooldown_iters,
     q_hyst_pu = cfg.q_hyst_pu,

@@ -366,6 +366,61 @@ function test_prosumer_aggregation_preserves_bus_types_and_injections()::Bool
          isapprox(S[pq], ComplexF64(-0.18, -0.06); atol = 1e-12)
 end
 
+function test_rectangular_autodamp_backtracks_oversized_step()::Bool
+  Y = ComplexF64[0.0 - 10.0im 0.0 + 10.0im; 0.0 + 10.0im 0.0 - 10.0im]
+  V = ComplexF64[1.0 + 0.0im, 1.0 + 0.0im]
+  S = ComplexF64[0.0 + 0.0im, -1.0 - 0.2im]
+  bus_types = [:Slack, :PQ]
+  Vset = [1.0, 1.0]
+  F0 = Sparlectra.mismatch_rectangular(Y, V, S, bus_types, Vset, 1)
+
+  oversized_delta = [0.0, -1.0]
+  alpha, Vtrial, trial_mismatch = Sparlectra.choose_rectangular_autodamp(
+    Y,
+    V,
+    S,
+    oversized_delta,
+    F0;
+    slack_idx = 1,
+    damp = 1.0,
+    autodamp_min = 1e-3,
+    bus_types = bus_types,
+    Vset = Vset,
+  )
+  full_step_mismatch = maximum(abs.(Sparlectra.mismatch_rectangular(Y, ComplexF64[1.0 + 0.0im, 1.0 - 1.0im], S, bus_types, Vset, 1)))
+
+  return alpha < 1.0 &&
+         trial_mismatch < maximum(abs.(F0)) &&
+         trial_mismatch < full_step_mismatch &&
+         Vtrial[1] == V[1]
+end
+
+function test_rectangular_start_projection_improves_dc_seed()::Bool
+  Y = ComplexF64[0.0 - 10.0im 0.0 + 10.0im; 0.0 + 10.0im 0.0 - 10.0im]
+  Vraw = ComplexF64[1.0 + 0.0im, 1.0 + 0.0im]
+  S = ComplexF64[0.0 + 0.0im, -1.0 - 0.2im]
+  bus_types = [:Slack, :PQ]
+  Vset = [1.0, 1.0]
+
+  raw_mismatch = maximum(abs.(Sparlectra.mismatch_rectangular(Y, Vraw, S, bus_types, Vset, 1)))
+  Vproj = Sparlectra.project_rectangular_start(
+    Y,
+    Vraw,
+    S,
+    bus_types,
+    Vset,
+    1;
+    enabled = true,
+    try_dc_start = true,
+    try_blend_scan = true,
+    blend_lambdas = [0.25, 0.5, 0.75],
+    dc_angle_limit_deg = 60.0,
+  )
+  projected_mismatch = maximum(abs.(Sparlectra.mismatch_rectangular(Y, Vproj, S, bus_types, Vset, 1)))
+
+  return Vproj[1] == Vraw[1] && projected_mismatch < raw_mismatch
+end
+
 function test_matpower_vmva_selfcheck_noncontiguous_bus_numbers()::Bool
   mpc = Sparlectra.MatpowerIO.MatpowerCase(
     "case_noncontig",
@@ -412,6 +467,35 @@ function test_matpower_vmva_selfcheck_ignores_slack_pq_spec()::Bool
 
   stats = Sparlectra.MatpowerIO.vmva_power_mismatch_stats(mpc)
   return get(stats, :ok, false) && isapprox(get(stats, :max_p_mis_pu, NaN), 0.0; atol = 1e-12) && isapprox(get(stats, :max_q_mis_pu, NaN), 0.0; atol = 1e-12)
+end
+
+function test_matpower_compare_vmva_wraps_angle_differences()::Bool
+  mpc = Sparlectra.MatpowerIO.MatpowerCase(
+    "case_angle_wrap_compare",
+    100.0,
+    [
+      1 3 0.0 0.0 0.0 0.0 1 1.00 0.0 110.0 1 1.1 0.9
+      2 1 0.0 0.0 0.0 0.0 1 0.99 179.0 110.0 1 1.1 0.9
+    ],
+    [
+      1 0.0 0.0 999.0 -999.0 1.0 100.0 1 999.0 0.0 0 0 0 0 0 0 0 0 0 0 0
+    ],
+    [
+      1 2 0.01 0.05 0.0 9999.0 0.0 0.0 0.0 0.0 0 -60.0 60.0
+    ],
+    nothing,
+    nothing,
+  )
+  net = Sparlectra.createNetFromMatPowerCase(mpc = mpc, log = false, flatstart = false)
+  net.nodeVec[1]._vm_pu = 1.0
+  net.nodeVec[1]._va_deg = 0.0
+  net.nodeVec[2]._vm_pu = 0.99
+  net.nodeVec[2]._va_deg = -179.0
+
+  ok, stats = redirect_stdout(devnull) do
+    Sparlectra.MatpowerIO.compare_vm_va(net, mpc; show_diff = false, tol_vm = 1e-12, tol_va = 2.1)
+  end
+  return ok && isapprox(get(stats, :max_dva, NaN), 2.0; atol = 1e-12)
 end
 
 function testISOBusses()
@@ -1618,6 +1702,7 @@ function run_grid_tests()
       @test test_prosumer_aggregation_preserves_bus_types_and_injections() == true
       @test test_matpower_vmva_selfcheck_noncontiguous_bus_numbers() == true
       @test test_matpower_vmva_selfcheck_ignores_slack_pq_spec() == true
+      @test test_matpower_compare_vmva_wraps_angle_differences() == true
       @test test_mp_inline_vs_manual_shunt() == true
       @test test_matpower_read_case_m_postprocessing() == true
     end
@@ -1630,6 +1715,8 @@ function run_grid_tests()
       @test test_acpflow(0; lLine_6a6b = 0.01, damp = 1.0, method = :rectangular, opt_sparse = true) == true
       @test test_acpflow(0; lLine_6a6b = 0.01, damp = 1.0, method = :rectangular, opt_sparse = false) == true
       @test test_acpflow(0; lLine_6a6b = 0.01, damp = 1.0, method = :polar_full, opt_sparse = true) == true
+      @test test_rectangular_autodamp_backtracks_oversized_step() == true
+      @test test_rectangular_start_projection_improves_dc_seed() == true
       @test test_q_limit_adjust_vset_success() == true
       @test test_q_limit_adjust_vset_no_controller_switches() == true
       @test test_q_limit_adjust_vset_multiple_controllers_error() == true

@@ -738,10 +738,8 @@ Adds a PI model AC line to the network.
 addPIModelACLine!(net = network, fromBus = "Bus1", toBus = "Bus2", r_pu = 0.01, x_pu = 0.1, b_pu = 0.02, status = 1, ratedS = 100.0)
 ```
 """
-function addPIModelACLine!(; net::Net, fromBus::String, toBus::String, r_pu::Float64, x_pu::Float64, b_pu::Float64, status::Int, ratedS::Union{Nothing,Float64} = nothing)
-  @assert fromBus != toBus "From and to bus must be different"
-  from = geNetBusIdx(net = net, busName = fromBus)
-  to = geNetBusIdx(net = net, busName = toBus)
+function _addPIModelACLine_by_idx!(; net::Net, from::Int, to::Int, r_pu::Float64, x_pu::Float64, b_pu::Float64, status::Int, ratedS::Union{Nothing,Float64} = nothing)
+  @assert from != to "From and to bus must be different"
   vn_kV = getNodeVn(net.nodeVec[from])
   vn_2_kV = getNodeVn(net.nodeVec[to])
   @assert vn_kV == vn_2_kV "Voltage level of the from bus $(vn_kV) does not match the to bus $(vn_2_kV)"
@@ -749,6 +747,12 @@ function addPIModelACLine!(; net::Net, fromBus::String, toBus::String, r_pu::Flo
   push!(net.linesAC, acseg)
 
   addBranch!(net = net, from = from, to = to, branch = acseg, vn_kV = vn_kV, status = status, values_are_pu = true)
+end
+
+function addPIModelACLine!(; net::Net, fromBus::String, toBus::String, r_pu::Float64, x_pu::Float64, b_pu::Float64, status::Int, ratedS::Union{Nothing,Float64} = nothing)
+  from = geNetBusIdx(net = net, busName = fromBus)
+  to = geNetBusIdx(net = net, busName = toBus)
+  return _addPIModelACLine_by_idx!(net = net, from = from, to = to, r_pu = r_pu, x_pu = x_pu, b_pu = b_pu, status = status, ratedS = ratedS)
 end
 
 """
@@ -768,10 +772,10 @@ Add a transformer with PI model to the network.
 - `shift_deg::Union{Nothing, Float64}`: Phase shift angle of the transformer. Default is `nothing`.
 - `isAux::Bool`: Whether the transformer is an auxiliary transformer. Default is `false`.
 """
-function addPIModelTrafo!(;
+function _addPIModelTrafo_by_idx!(;
   net::Net,
-  fromBus::String,
-  toBus::String,
+  from::Int,
+  to::Int,
   r_pu::Float64,
   x_pu::Float64,
   b_pu::Float64,
@@ -784,9 +788,7 @@ function addPIModelTrafo!(;
   side::Int = 1,
   controls::Union{Nothing,Vector{PowerTransformerControl}} = nothing,
 )
-  @assert fromBus != toBus "From and to bus must be different"
-  from = geNetBusIdx(net = net, busName = fromBus)
-  to = geNetBusIdx(net = net, busName = toBus)
+  @assert from != to "From and to bus must be different"
   vn_hv_kV = getNodeVn(net.nodeVec[from])
   vn_lv_kV = getNodeVn(net.nodeVec[to])
   w1 = PowerTransformerWinding(vn_hv_kV, r_pu, x_pu, b_pu, 0.0, ratio, shift_deg, ratedU, ratedS, nothing, true)
@@ -810,6 +812,27 @@ function addPIModelTrafo!(;
       ctrl.trafo = string(br.branchIdx)
     end
   end
+end
+
+function addPIModelTrafo!(;
+  net::Net,
+  fromBus::String,
+  toBus::String,
+  r_pu::Float64,
+  x_pu::Float64,
+  b_pu::Float64,
+  status::Int,
+  ratedU::Union{Nothing,Float64} = nothing,
+  ratedS::Union{Nothing,Float64} = nothing,
+  ratio::Union{Nothing,Float64} = nothing,
+  shift_deg::Union{Nothing,Float64} = nothing,
+  isAux::Bool = false,
+  side::Int = 1,
+  controls::Union{Nothing,Vector{PowerTransformerControl}} = nothing,
+)
+  from = geNetBusIdx(net = net, busName = fromBus)
+  to = geNetBusIdx(net = net, busName = toBus)
+  return _addPIModelTrafo_by_idx!(net = net, from = from, to = to, r_pu = r_pu, x_pu = x_pu, b_pu = b_pu, status = status, ratedU = ratedU, ratedS = ratedS, ratio = ratio, shift_deg = shift_deg, isAux = isAux, side = side, controls = controls)
 end
 
 """

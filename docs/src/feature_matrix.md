@@ -33,6 +33,8 @@ Legend:
 |---|:---:|:---:|---|
 | Polar full NR solver (deprecated) | ✅ | ⚠️ | Legacy PF mode (deprecated); SE uses its own WLS iteration and Jacobian evaluation. |
 | Rectangular NR solver | ✅ | ❌ | Available for PF, not as separate SE formulation. |
+| Automatic rectangular Newton damping (`autodamp`) | ✅ | ❌ | PF rectangular solver can backtrack the Newton step from `damp` down to `autodamp_min` for difficult flat starts. |
+| Start projection (`start_projection`) | ✅ | ⚠️ | Internal PF and external-solver `PFModel` starts can use DC-angle and blend-scan projection; SE does not consume `PFModel`. |
 | Finite-difference Jacobian option (`opt_fd`) | ✅ | ❌ | In PF this toggles FD Jacobian vs analytic Jacobian (not fast-decoupled); not exposed as an SE user option. |
 | Sparse Jacobian option (`opt_sparse`) | ✅ | ⚠️ | PF supports explicit sparse option; SE internally builds Jacobians for WLS. |
 | Flat start control | ✅ | ✅ | Available in both PF and SE workflows. |

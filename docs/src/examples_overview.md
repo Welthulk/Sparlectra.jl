@@ -10,6 +10,10 @@ This page summarizes the most relevant runnable examples in `src/examples/`.
   Compares Sparlectra load-flow outputs against reference expectations.
 - `import_case_xxxyyyy_loadflow.jl`  
   End-to-end import and load-flow execution flow.
+- `exp_autodamped_rectangular_pf.jl`: Demonstrates `autodamp = true` for
+  residual-based rectangular Newton backtracking.
+- `exp_start_projection_rectangular_pf.jl`: Demonstrates `start_projection = true`
+  with DC-angle and blend-scan candidates.
 
 ## Transformer and tap control
 
