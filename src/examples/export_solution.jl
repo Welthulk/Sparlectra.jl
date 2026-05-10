@@ -27,6 +27,9 @@ What you can toggle:
 """
 
 using Sparlectra
+
+_angle_delta_deg(calc_deg::Real, ref_deg::Real)::Float64 = mod(Float64(calc_deg) - Float64(ref_deg) + 180.0, 360.0) - 180.0
+
 const MPOWER_DIR = normpath(joinpath(@__DIR__, "..", "..", "data", "mpower"))
 
 # Ensure a MATPOWER case file exists locally under data/mpower/ by downloading it on demand.
@@ -280,7 +283,7 @@ if run_internal && run_external
   if length(model_ref.busIdx_net) == length(model_cmp.busIdx_net) && model_ref.busIdx_net == model_cmp.busIdx_net
     dV = sol_ext.V .- sol_ref.V
     max_dVm = maximum(abs.(abs.(sol_ext.V) .- abs.(sol_ref.V)))
-    max_dVa = maximum(abs.(rad2deg.(angle.(sol_ext.V)) .- rad2deg.(angle.(sol_ref.V))))
+    max_dVa = maximum(abs.(_angle_delta_deg.(rad2deg.(angle.(sol_ext.V)), rad2deg.(angle.(sol_ref.V)))))
 
     println("Max |ΔVm| (p.u.)  = ", max_dVm)
     println("Max |ΔVa| (deg)   = ", max_dVa)

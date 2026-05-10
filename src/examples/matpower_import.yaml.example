@@ -16,11 +16,37 @@ methods: [rectangular]
 opt_fd: false
 opt_sparse: true
 opt_flatstart: false
+
+# Bus shunt modeling:
+# - admittance: classic MATPOWER treatment, stamp Gs/Bs into the Y-bus diagonal.
+# - voltage_dependent_injection: keep Gs/Bs out of Y-bus and include their
+#   |V|^2-dependent power contribution in the nonlinear injection/mismatch path.
+bus_shunt_model: admittance
+
+# Set `autodamp: true` for difficult flat-start cases such as larger MATPOWER
+# networks where a full Newton step increases the mismatch.
+autodamp: false
+autodamp_min: 1.0e-3
+
+# Optional start projection before rectangular NR / external solver starts.
+start_projection: false
+start_projection_try_dc_start: true
+start_projection_try_blend_scan: true
+start_projection_blend_lambdas: [0.25, 0.5, 0.75]
+start_projection_dc_angle_limit_deg: 60.0
 max_ite: 30
 tol: 1.0e-6
 verbose: 1
 cooldown_iters: 0
 q_hyst_pu: 0.0
+
+# PV->PQ Q-limit switching start controls:
+# - qlimit_start_mode: iteration, auto_q_delta, or iteration_or_auto.
+# - iteration starts switching at qlimit_start_iter (default preserves previous iteration 2 behavior).
+# - auto_q_delta starts once PV reactive-power request changes are <= qlimit_auto_q_delta_pu.
+qlimit_start_iter: 2
+qlimit_start_mode: iteration
+qlimit_auto_q_delta_pu: 1.0e-4
 
 # MATPOWER comparison controls
 show_diff: true

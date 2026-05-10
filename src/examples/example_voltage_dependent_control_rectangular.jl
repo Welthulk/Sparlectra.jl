@@ -183,7 +183,6 @@ end
 
 # IMPORTANT for Julia 1.12 / Revise world-age safety:
 # Default: run immediately (also when included from REPL), like a script.
-# Set ENV["APSLF_SUITE_NO_AUTORUN"]="1" to load definitions without execution.
 if get(ENV, "SPARLECTRA_SUITE_NO_AUTORUN", "0") != "1"
   main_fn = getfield(@__MODULE__, :main)
   Base.invokelatest(main_fn)

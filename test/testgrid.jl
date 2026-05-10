@@ -366,6 +366,61 @@ function test_prosumer_aggregation_preserves_bus_types_and_injections()::Bool
          isapprox(S[pq], ComplexF64(-0.18, -0.06); atol = 1e-12)
 end
 
+function test_rectangular_autodamp_backtracks_oversized_step()::Bool
+  Y = ComplexF64[0.0 - 10.0im 0.0 + 10.0im; 0.0 + 10.0im 0.0 - 10.0im]
+  V = ComplexF64[1.0 + 0.0im, 1.0 + 0.0im]
+  S = ComplexF64[0.0 + 0.0im, -1.0 - 0.2im]
+  bus_types = [:Slack, :PQ]
+  Vset = [1.0, 1.0]
+  F0 = Sparlectra.mismatch_rectangular(Y, V, S, bus_types, Vset, 1)
+
+  oversized_delta = [0.0, -1.0]
+  alpha, Vtrial, trial_mismatch = Sparlectra.choose_rectangular_autodamp(
+    Y,
+    V,
+    S,
+    oversized_delta,
+    F0;
+    slack_idx = 1,
+    damp = 1.0,
+    autodamp_min = 1e-3,
+    bus_types = bus_types,
+    Vset = Vset,
+  )
+  full_step_mismatch = maximum(abs.(Sparlectra.mismatch_rectangular(Y, ComplexF64[1.0 + 0.0im, 1.0 - 1.0im], S, bus_types, Vset, 1)))
+
+  return alpha < 1.0 &&
+         trial_mismatch < maximum(abs.(F0)) &&
+         trial_mismatch < full_step_mismatch &&
+         Vtrial[1] == V[1]
+end
+
+function test_rectangular_start_projection_improves_dc_seed()::Bool
+  Y = ComplexF64[0.0 - 10.0im 0.0 + 10.0im; 0.0 + 10.0im 0.0 - 10.0im]
+  Vraw = ComplexF64[1.0 + 0.0im, 1.0 + 0.0im]
+  S = ComplexF64[0.0 + 0.0im, -1.0 - 0.2im]
+  bus_types = [:Slack, :PQ]
+  Vset = [1.0, 1.0]
+
+  raw_mismatch = maximum(abs.(Sparlectra.mismatch_rectangular(Y, Vraw, S, bus_types, Vset, 1)))
+  Vproj = Sparlectra.project_rectangular_start(
+    Y,
+    Vraw,
+    S,
+    bus_types,
+    Vset,
+    1;
+    enabled = true,
+    try_dc_start = true,
+    try_blend_scan = true,
+    blend_lambdas = [0.25, 0.5, 0.75],
+    dc_angle_limit_deg = 60.0,
+  )
+  projected_mismatch = maximum(abs.(Sparlectra.mismatch_rectangular(Y, Vproj, S, bus_types, Vset, 1)))
+
+  return Vproj[1] == Vraw[1] && projected_mismatch < raw_mismatch
+end
+
 function test_matpower_vmva_selfcheck_noncontiguous_bus_numbers()::Bool
   mpc = Sparlectra.MatpowerIO.MatpowerCase(
     "case_noncontig",
@@ -412,6 +467,35 @@ function test_matpower_vmva_selfcheck_ignores_slack_pq_spec()::Bool
 
   stats = Sparlectra.MatpowerIO.vmva_power_mismatch_stats(mpc)
   return get(stats, :ok, false) && isapprox(get(stats, :max_p_mis_pu, NaN), 0.0; atol = 1e-12) && isapprox(get(stats, :max_q_mis_pu, NaN), 0.0; atol = 1e-12)
+end
+
+function test_matpower_compare_vmva_wraps_angle_differences()::Bool
+  mpc = Sparlectra.MatpowerIO.MatpowerCase(
+    "case_angle_wrap_compare",
+    100.0,
+    [
+      1 3 0.0 0.0 0.0 0.0 1 1.00 0.0 110.0 1 1.1 0.9
+      2 1 0.0 0.0 0.0 0.0 1 0.99 179.0 110.0 1 1.1 0.9
+    ],
+    [
+      1 0.0 0.0 999.0 -999.0 1.0 100.0 1 999.0 0.0 0 0 0 0 0 0 0 0 0 0 0
+    ],
+    [
+      1 2 0.01 0.05 0.0 9999.0 0.0 0.0 0.0 0.0 0 -60.0 60.0
+    ],
+    nothing,
+    nothing,
+  )
+  net = Sparlectra.createNetFromMatPowerCase(mpc = mpc, log = false, flatstart = false)
+  net.nodeVec[1]._vm_pu = 1.0
+  net.nodeVec[1]._va_deg = 0.0
+  net.nodeVec[2]._vm_pu = 0.99
+  net.nodeVec[2]._va_deg = -179.0
+
+  ok, stats = redirect_stdout(devnull) do
+    Sparlectra.MatpowerIO.compare_vm_va(net, mpc; show_diff = false, tol_vm = 1e-12, tol_va = 2.1)
+  end
+  return ok && isapprox(get(stats, :max_dva, NaN), 2.0; atol = 1e-12)
 end
 
 function testISOBusses()
@@ -943,6 +1027,56 @@ function test_mp_inline_vs_manual_shunt(verbose::Int = 0; method::Symbol = :rect
   end
 
   return true
+end
+
+function test_bus_shunt_model_modes()::Bool
+  y_expected = ComplexF64(10.0, 20.0) / 100.0
+
+  net_adm = Net(name = "bus_shunt_admittance", baseMVA = 100.0, bus_shunt_model = "admittance")
+  addBus!(net = net_adm, busName = "B1", vn_kV = 110.0)
+  addShunt!(net = net_adm, busName = "B1", pShunt = 10.0, qShunt = 20.0)
+  Y_adm = createYBUS(net = net_adm, sparse = false, printYBUS = false)
+
+  net_vdi = Net(name = "bus_shunt_vdi", baseMVA = 100.0, bus_shunt_model = "voltage_dependent_injection")
+  addBus!(net = net_vdi, busName = "B1", vn_kV = 110.0)
+  addShunt!(net = net_vdi, busName = "B1", pShunt = 10.0, qShunt = 20.0)
+  Y_vdi = createYBUS(net = net_vdi, sparse = false, printYBUS = false)
+
+  S1, dP1, dQ1 = buildControlledSVec(net_vdi, ComplexF64[1.0 + 0.0im])
+  S2, dP2, dQ2 = buildControlledSVec(net_vdi, ComplexF64[2.0 + 0.0im])
+
+  mpc = (
+    name = "case2_shunt_modes",
+    baseMVA = 100.0,
+    bus = [
+      1 3 0.0 0.0 10.0 20.0 1 1.0 0.0 110.0 1 1.10 0.90
+      2 1 0.0 0.0 0.0 0.0 1 1.0 0.0 110.0 1 1.10 0.90
+    ],
+    gen = [1 0.0 0.0 100.0 -100.0 1.0 100.0 1 100.0 0.0 0 0 0 0 0 0 0 0 0 0 0],
+    branch = [1 2 0.02 0.06 0.0 0 0 0 0.0 0.0 1 -360 360],
+    gencost = nothing,
+    bus_name = ["BUS1", "BUS2"],
+  )
+  mp_adm = Sparlectra.createNetFromMatPowerCase(mpc = mpc, bus_shunt_model = "admittance")
+  mp_vdi = Sparlectra.createNetFromMatPowerCase(mpc = mpc, bus_shunt_model = "voltage_dependent_injection")
+
+  invalid_ok = false
+  try
+    Sparlectra.normalize_bus_shunt_model("not_a_mode")
+  catch err
+    invalid_ok = err isa ErrorException && occursin("Invalid bus_shunt_model", sprint(showerror, err))
+  end
+
+  return isapprox(Y_adm[1, 1], y_expected; atol = 1e-12, rtol = 0.0) &&
+         isapprox(Y_vdi[1, 1], 0.0 + 0.0im; atol = 1e-12, rtol = 0.0) &&
+         isapprox(S1[1], -conj(y_expected); atol = 1e-12, rtol = 0.0) &&
+         isapprox(S2[1], -4.0 * conj(y_expected); atol = 1e-12, rtol = 0.0) &&
+         isapprox(dP1[1], -2.0 * real(conj(y_expected)); atol = 1e-12, rtol = 0.0) &&
+         isapprox(dQ2[1], -4.0 * imag(conj(y_expected)); atol = 1e-12, rtol = 0.0) &&
+         mp_adm.shuntVec[1].model == :Y &&
+         mp_vdi.shuntVec[1].model == :VoltageDependentInjection &&
+         isapprox(createYBUS(net = mp_adm, sparse = false, printYBUS = false)[1, 1] - createYBUS(net = mp_vdi, sparse = false, printYBUS = false)[1, 1], y_expected; atol = 1e-12, rtol = 0.0) &&
+         invalid_ok
 end
 
 function test_link_kcl_simple()
@@ -1501,6 +1635,28 @@ function test_q_limit_default_behavior_unchanged()::Bool
   return erg_default == 0 && erg_explicit == 0 && same_type && same_vm
 end
 
+
+function test_q_limit_start_iter_delays_switching()::Bool
+  net = createTest3BusNet(cooldown = 0, hyst_pu = 0.0, qlim_min = -15.0, qlim_max = 15.0)
+  _, erg = runpf!(net, 3, 1e-12, 0; method = :rectangular, qlimit_start_iter = 10)
+  bus = geNetBusIdx(net = net, busName = "STATION1")
+  return erg == 1 && getNodeType(net.nodeVec[bus]) == Sparlectra.PV && isempty(net.qLimitLog)
+end
+
+function test_q_limit_auto_q_delta_accepts_switching()::Bool
+  net = createTest3BusNet(cooldown = 0, hyst_pu = 0.0, qlim_min = -15.0, qlim_max = 15.0)
+  _, erg = runpf!(net, 30, 1e-8, 0; method = :rectangular, qlimit_start_mode = :auto_q_delta, qlimit_auto_q_delta_pu = Inf)
+  bus = geNetBusIdx(net = net, busName = "STATION1")
+  return erg == 0 && getNodeType(net.nodeVec[bus]) == Sparlectra.PQ && !isempty(net.qLimitLog)
+end
+
+function test_solve_linear_singular_sparse_qr_fallback()::Bool
+  A = sparse([1.0 1.0; 2.0 2.0])
+  b = [1.0, 2.0]
+  x = Sparlectra.solve_linear(A, b)
+  return all(isfinite, x) && isapprox(A * x, b; atol = 1e-10, rtol = 0.0)
+end
+
 function test_bus_type_resolution_from_prosumers()::Bool
   net = Net(name = "bus_type_resolution", baseMVA = 100.0)
   addBus!(net = net, busName = "LoadBus", vn_kV = 110.0)
@@ -1618,7 +1774,9 @@ function run_grid_tests()
       @test test_prosumer_aggregation_preserves_bus_types_and_injections() == true
       @test test_matpower_vmva_selfcheck_noncontiguous_bus_numbers() == true
       @test test_matpower_vmva_selfcheck_ignores_slack_pq_spec() == true
+      @test test_matpower_compare_vmva_wraps_angle_differences() == true
       @test test_mp_inline_vs_manual_shunt() == true
+      @test test_bus_shunt_model_modes() == true
       @test test_matpower_read_case_m_postprocessing() == true
     end
 
@@ -1630,6 +1788,8 @@ function run_grid_tests()
       @test test_acpflow(0; lLine_6a6b = 0.01, damp = 1.0, method = :rectangular, opt_sparse = true) == true
       @test test_acpflow(0; lLine_6a6b = 0.01, damp = 1.0, method = :rectangular, opt_sparse = false) == true
       @test test_acpflow(0; lLine_6a6b = 0.01, damp = 1.0, method = :polar_full, opt_sparse = true) == true
+      @test test_rectangular_autodamp_backtracks_oversized_step() == true
+      @test test_rectangular_start_projection_improves_dc_seed() == true
       @test test_q_limit_adjust_vset_success() == true
       @test test_q_limit_adjust_vset_no_controller_switches() == true
       @test test_q_limit_adjust_vset_multiple_controllers_error() == true
@@ -1637,6 +1797,9 @@ function run_grid_tests()
       @test test_q_limit_adjust_vset_step_exhaustion_fallback() == true
       @test test_q_limit_adjust_vset_multigen_single_controller() == true
       @test test_q_limit_default_behavior_unchanged() == true
+      @test test_q_limit_start_iter_delays_switching() == true
+      @test test_q_limit_auto_q_delta_accepts_switching() == true
+      @test test_solve_linear_singular_sparse_qr_fallback() == true
       @test test_bus_type_resolution_from_prosumers() == true
       @test test_multiple_slack_prosumers_same_bus_supported() == true
       @test test_regulated_generator_bus_targets_include_unregulated_generators() == true

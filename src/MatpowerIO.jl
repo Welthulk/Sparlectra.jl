@@ -20,6 +20,10 @@ using LinearAlgebra, Printf
 export MatpowerCase, read_case, read_case_m, read_case_julia, build_ybus_matpower, vmva_power_mismatch_stats
 
 using LinearAlgebra
+
+@inline function _angle_delta_deg(calc_deg::Real, ref_deg::Real)::Float64
+  return mod(Float64(calc_deg) - Float64(ref_deg) + 180.0, 360.0) - 180.0
+end
 import ..Sparlectra: setVmVa!, setNodeType!
 
 """
@@ -233,24 +237,24 @@ function parse_matrix_block(txt::String, key::String; ncols::Int = 0)
   end
 end
 
+@inline function _matpower_row_tokens(row::AbstractString)
+  s = strip(row)
+  isempty(s) && return nothing
+  return split(s)
+end
+
 # best-effort: auto width; IMPORTANT: fill with 0.0 (not NaN)
 function parse_numeric_matrix(body::AbstractString, key::AbstractString)
-  raw_rows = split(body, ';')
   rows = Vector{Vector{Float64}}()
   maxcols = 0
 
-  for rr in raw_rows
-    s = strip(rr)
-    isempty(s) && continue
-    s = replace(s, '\t' => ' ')
-    s = replace(s, r"\s+" => " ")
-    toks = split(s, ' ')
+  for rr in eachsplit(body, ';')
+    toks = _matpower_row_tokens(rr)
+    toks === nothing && continue
 
-    vals = Float64[]
-    for t in toks
-      tt = strip(t)
-      isempty(tt) && continue
-      push!(vals, parse(Float64, tt))
+    vals = Vector{Float64}(undef, length(toks))
+    @inbounds for j in eachindex(toks)
+      vals[j] = parse(Float64, toks[j])
     end
 
     maxcols = max(maxcols, length(vals))
@@ -260,9 +264,9 @@ function parse_numeric_matrix(body::AbstractString, key::AbstractString)
   isempty(rows) && error("Matrix `$key` appears empty or could not be parsed.")
 
   M = zeros(Float64, length(rows), maxcols)
-  for (i, r) in enumerate(rows)
-    for (j, val) in enumerate(r)
-      M[i, j] = val
+  @inbounds for (i, r) in enumerate(rows)
+    for j in eachindex(r)
+      M[i, j] = r[j]
     end
   end
   return M
@@ -270,37 +274,22 @@ end
 
 # fixed width path: pad/truncate to exactly ncols with zeros
 function parse_numeric_matrix_ncols(body::AbstractString, key::AbstractString; ncols::Int)
-  raw_rows = split(body, ';')
-  rows = Vector{Vector{Float64}}()
-
-  for rr in raw_rows
-    s = strip(rr)
-    isempty(s) && continue
-    s = replace(s, '\t' => ' ')
-    s = replace(s, r"\s+" => " ")
-    toks = split(s, ' ')
-
-    vals = Float64[]
-    for t in toks
-      tt = strip(t)
-      isempty(tt) && continue
-      push!(vals, parse(Float64, tt))
-    end
-
-    if length(vals) < ncols
-      append!(vals, zeros(Float64, ncols - length(vals)))
-    elseif length(vals) > ncols
-      vals = vals[1:ncols]
-    end
-
-    push!(rows, vals)
+  row_count = 0
+  for rr in eachsplit(body, ';')
+    _matpower_row_tokens(rr) === nothing || (row_count += 1)
   end
+  row_count == 0 && error("Matrix `$key` appears empty or could not be parsed.")
 
-  isempty(rows) && error("Matrix `$key` appears empty or could not be parsed.")
-
-  M = zeros(Float64, length(rows), ncols)
-  for (i, r) in enumerate(rows)
-    @inbounds M[i, :] .= r
+  M = zeros(Float64, row_count, ncols)
+  i = 0
+  for rr in eachsplit(body, ';')
+    toks = _matpower_row_tokens(rr)
+    toks === nothing && continue
+    i += 1
+    ntok = min(length(toks), ncols)
+    @inbounds for j = 1:ntok
+      M[i, j] = parse(Float64, toks[j])
+    end
   end
   return M
 end
@@ -353,7 +342,7 @@ function compare_vm_va(net, mpc; show_diff::Bool = false, tol_vm::Float64 = 1e-6
   have_delta = false
   if slack_busI !== nothing
     net_slack_k = nothing
-    @inbounds for k = 1:length(net.nodeVec)
+    @inbounds for k in eachindex(net.nodeVec)
       busI_k = haskey(net.busOrigIdxDict, k) ? net.busOrigIdxDict[k] : k
       if busI_k == slack_busI
         net_slack_k = k
@@ -365,7 +354,7 @@ function compare_vm_va(net, mpc; show_diff::Bool = false, tol_vm::Float64 = 1e-6
       node_slack    = net.nodeVec[net_slack_k]
       va_calc_slack = (node_slack._va_deg === nothing) ? NaN : Float64(node_slack._va_deg)
       if isfinite(va_ref_slack) && isfinite(va_calc_slack)
-        delta_va = va_calc_slack - va_ref_slack
+        delta_va = _angle_delta_deg(va_calc_slack, va_ref_slack)
         have_delta = true
       end
     end
@@ -374,8 +363,7 @@ function compare_vm_va(net, mpc; show_diff::Bool = false, tol_vm::Float64 = 1e-6
   # Collect diffs
   diffs = Vector{NamedTuple{(:busIdx, :busI, :vm_ref, :vm_calc, :dvm, :va_ref, :va_calc, :dva, :type_ref),Tuple{Int,Int,Float64,Float64,Float64,Float64,Float64,Float64,Int}}}()
 
-  nbus = length(net.nodeVec)
-  @inbounds for k = 1:nbus
+  @inbounds for k in eachindex(net.nodeVec)
     node = net.nodeVec[k]
 
     # Map to MATPOWER BUS_I if available; else assume k
@@ -395,7 +383,7 @@ function compare_vm_va(net, mpc; show_diff::Bool = false, tol_vm::Float64 = 1e-6
     va_calc_aligned = have_delta ? (va_calc - delta_va) : va_calc
 
     dvm = vm_calc - vm_ref
-    dva = va_calc_aligned - va_ref
+    dva = _angle_delta_deg(va_calc_aligned, va_ref)
 
     push!(diffs, (busIdx = k, busI = busI, vm_ref = vm_ref, vm_calc = vm_calc, dvm = dvm, va_ref = va_ref, va_calc = va_calc_aligned, dva = dva, type_ref = btype))
   end

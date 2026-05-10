@@ -110,41 +110,43 @@ function load_yaml_dict(path::AbstractString)::Dict{String,Any}
   root = Dict{String,Any}()
   stack = Dict{Int,Dict{String,Any}}(0 => root)
 
-  for (lineno, rawline) in enumerate(eachline(path))
-    line = rstrip(_strip_yaml_comment(rawline))
-    isempty(strip(line)) && continue
+  open(path, "r") do io
+    for (lineno, rawline) in enumerate(eachline(io))
+      line = rstrip(_strip_yaml_comment(rawline))
+      isempty(strip(line)) && continue
 
-    indent_count = 0
-    for ch in line
-      ch == ' ' || break
-      indent_count += 1
-    end
-    indent_count % 2 == 0 || error("Invalid YAML indentation at $(path):$(lineno): indentation must use multiples of 2 spaces")
-
-    content = strip(line)
-    m = match(r"^([A-Za-z0-9_\-]+)\s*:\s*(.*)$", content)
-    isnothing(m) && error("Unsupported YAML line at $(path):$(lineno): $(strip(rawline))")
-
-    level = indent_count ÷ 2
-    haskey(stack, level) || error("Invalid YAML indentation at $(path):$(lineno): missing parent for indentation level $(level)")
-    parent = stack[level]
-    key = String(m.captures[1])
-    value_raw = String(m.captures[2])
-
-    if isempty(value_raw)
-      child = Dict{String,Any}()
-      parent[key] = child
-      stack[level + 1] = child
-      for k in collect(keys(stack))
-        if k > level + 1
-          delete!(stack, k)
-        end
+      indent_count = 0
+      for ch in line
+        ch == ' ' || break
+        indent_count += 1
       end
-    else
-      parent[key] = parse_yaml_scalar(value_raw)
-      for k in collect(keys(stack))
-        if k > level
-          delete!(stack, k)
+      indent_count % 2 == 0 || error("Invalid YAML indentation at $(path):$(lineno): indentation must use multiples of 2 spaces")
+
+      content = strip(line)
+      m = match(r"^([A-Za-z0-9_\-]+)\s*:\s*(.*)$", content)
+      isnothing(m) && error("Unsupported YAML line at $(path):$(lineno): $(strip(rawline))")
+
+      level = indent_count ÷ 2
+      haskey(stack, level) || error("Invalid YAML indentation at $(path):$(lineno): missing parent for indentation level $(level)")
+      parent = stack[level]
+      key = String(m.captures[1])
+      value_raw = String(m.captures[2])
+
+      if isempty(value_raw)
+        child = Dict{String,Any}()
+        parent[key] = child
+        stack[level + 1] = child
+        for k in collect(keys(stack))
+          if k > level + 1
+            delete!(stack, k)
+          end
+        end
+      else
+        parent[key] = parse_yaml_scalar(value_raw)
+        for k in collect(keys(stack))
+          if k > level
+            delete!(stack, k)
+          end
         end
       end
     end
