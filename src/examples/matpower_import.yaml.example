@@ -16,6 +16,13 @@ methods: [rectangular]
 opt_fd: false
 opt_sparse: true
 opt_flatstart: false
+
+# Bus shunt modeling:
+# - admittance: classic MATPOWER treatment, stamp Gs/Bs into the Y-bus diagonal.
+# - voltage_dependent_injection: keep Gs/Bs out of Y-bus and include their
+#   |V|^2-dependent power contribution in the nonlinear injection/mismatch path.
+bus_shunt_model: admittance
+
 # Set `autodamp: true` for difficult flat-start cases such as larger MATPOWER
 # networks where a full Newton step increases the mismatch.
 autodamp: false

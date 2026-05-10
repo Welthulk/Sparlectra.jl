@@ -79,7 +79,24 @@ Y_{ii} = -\sum_{k \neq i} Y_{ik}
 ### Implementation in Sparlectra
 
 - branch builders (`addACLine!`, `addPIModelACLine!`, `addPIModelTrafo!`) stamp series admittance plus half shunt on each side according to the branch model
-- explicit shunts are added as nodal shunt terms
+- explicit shunts are added as nodal shunt terms when `bus_shunt_model = "admittance"`
+
+## Bus-shunt modeling modes
+
+Sparlectra supports two representations for real bus shunts imported from sources such as MATPOWER `Gs`/`Bs` columns:
+
+- mode `"admittance"`: the classical treatment. The bus shunt admittance $y_i^{sh} = G_i + jB_i$ is stamped into the Y-bus diagonal as part of $Y_{ii}$. This is the default mode and preserves existing numerical behavior.
+- mode `"voltage_dependent_injection"`: the bus shunt is not stamped into Y-bus. Instead, its power is evaluated in the nonlinear injection/mismatch path as a local voltage-dependent term.
+
+For a bus shunt admittance $y_i^{sh}$ and local voltage magnitude $|V_i|$, Sparlectra uses the sign convention:
+
+```math
+S_i^{sh} = |V_i|^2 \overline{y_i^{sh}}
+```
+
+This follows the same sign convention as admittance stamping: a positive conductance contributes positive active power, while the reactive sign follows the complex conjugate of the shunt admittance. The rectangular mismatch uses `S_calc - S_spec`, so voltage-dependent injection mode subtracts $S_i^{sh}$ from the specified net injection. This keeps the equations equivalent to the admittance model while avoiding double-counting: each bus shunt is either stamped into Y-bus or represented as a voltage-dependent injection term, never both.
+
+The voltage-dependent injection mode is useful when a solver formulation wants the network admittance matrix to contain only branch/network coupling while keeping shunt effects in the nonlinear injection equations.
 
 ## Phase-shift control direction (practical probe)
 
