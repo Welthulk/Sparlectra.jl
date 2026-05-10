@@ -309,6 +309,21 @@ reactive power value. It changes the equation type for that bus:
 
 In the rectangular solver this is represented through the `bus_types` vector.
 
+The start of PV→PQ switching can be controlled for difficult cases:
+
+```julia
+runpf!(net, 60, 1e-8, 1;
+    method = :rectangular,
+    qlimit_start_iter = 4,
+    qlimit_start_mode = :iteration,
+)
+```
+
+Use `qlimit_start_mode = :auto_q_delta` to wait until the PV reactive-power
+requests have stabilized. The threshold is `qlimit_auto_q_delta_pu` in p.u.
+The hybrid `:iteration_or_auto` mode starts when either the configured iteration
+or the reactive-power stabilization criterion is reached.
+
 For the operational / data-model side of Q-limit handling, see
 [Powerlimits Guide](powerlimits.md).
 

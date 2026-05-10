@@ -39,7 +39,7 @@ Legend:
 | Finite-difference Jacobian option (`opt_fd`) | ✅ | ❌ | In PF this toggles FD Jacobian vs analytic Jacobian (not fast-decoupled); not exposed as an SE user option. |
 | Sparse Jacobian option (`opt_sparse`) | ✅ | ⚠️ | PF supports explicit sparse option; SE internally builds Jacobians for WLS. |
 | Flat start control | ✅ | ✅ | Available in both PF and SE workflows. |
-| PV/PQ reactive limit handling | ✅ | ❌ | PF includes Q-limit logic; SE currently does not expose PV/PQ switching logic. |
+| PV/PQ reactive limit handling | ✅ | ❌ | PF includes Q-limit logic with configurable iteration or reactive-power stabilization start controls; SE currently does not expose PV/PQ switching logic. |
 | `Q(U)` / `P(U)` controller solver support | ⚠️ | ❌ | Supported for PF in `method = :rectangular`; legacy `:polar_full` / `:classic` are unsupported with these controllers. |
 | External solver interface | ✅ | ❌ | PF has external solver integration; SE is internal WLS. |
 
