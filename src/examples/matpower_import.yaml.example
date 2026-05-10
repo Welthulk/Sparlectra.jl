@@ -21,7 +21,7 @@ opt_flatstart: false
 autodamp: false
 autodamp_min: 1.0e-3
 
-# Optional APSLF-style start projection before rectangular NR / external solver starts.
+# Optional start projection before rectangular NR / external solver starts.
 start_projection: false
 start_projection_try_dc_start: true
 start_projection_try_blend_scan: true

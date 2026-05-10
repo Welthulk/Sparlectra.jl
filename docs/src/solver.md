@@ -140,14 +140,14 @@ runpf!(net, 60, 1e-8, 1;
 )
 ```
 
-The projection is inspired by the APSLF workflow. It sanitizes the raw seed,
+The projection is inspired by the other workflows. It sanitizes the raw seed,
 optionally builds a DC-angle approximation from active-power injections and the
 Y-bus off-diagonal susceptances, and optionally scans convex angle/magnitude
 blends between the raw seed and the DC start. Sparlectra picks the candidate with
 the lowest rectangular mismatch and then runs the ordinary solver.
 
 The same projection options are also available through `buildPfModel` and
-`runpf_external!`, so external solvers such as APSLF can receive the projected
+`runpf_external!`, so external solvers can receive the projected
 `model.V0` without changing their own solver implementation.
 
 ---

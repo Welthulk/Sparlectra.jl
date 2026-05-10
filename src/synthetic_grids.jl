@@ -28,10 +28,10 @@ function _choose_tiled_grid_dims(max_buses::Int, aspect_ratio::Float64)::Tuple{I
   best_area = 4
   best_score = abs(best_cols / best_rows - aspect_ratio)
 
-  for rows in 2:max_buses
+  for rows = 2:max_buses
     cols_max = max_buses ÷ rows
     cols_max >= 2 || continue
-    for cols in 2:cols_max
+    for cols = 2:cols_max
       area = rows * cols
       score = abs(cols / rows - aspect_ratio)
       if area > best_area || (area == best_area && score < best_score) || (area == best_area && score == best_score && rows < best_rows)
@@ -70,7 +70,7 @@ impedance is `r + im*x` in p.u. and whose total shunt admittance is `g + im*b`
 in p.u.; Sparlectra's branch model splits that shunt half/half in flow and
 Y-bus calculations.
 
-Bus roles follow the APSLF benchmark convention: the upper-left bus is the
+Bus roles follow the other benchmark convention: the upper-left bus is the
 slack bus, the lower-left bus has scheduled generation, and the upper-right and
 lower-right buses have scheduled PQ loads. Power metadata values are reported
 in MW/MVAr; line parameters and voltages are in per unit.
@@ -81,32 +81,47 @@ in MW/MVAr; line parameters and voltages are in per unit.
 `load_mvar_per_right_corner = 15.0`, `generation_balance = 0.995`,
 `vm_slack = 1.0`, `vm_flat = 1.0`.
 """
-function build_synthetic_tiled_grid_net(max_buses::Int; aspect_ratio::Float64 = 1.0, base_mva::Float64 = 100.0, r::Float64 = 0.01, x::Float64 = 0.05, g::Float64 = 0.0, b::Float64 = 0.0, load_mw_per_right_corner::Float64 = 50.0, load_mvar_per_right_corner::Float64 = 15.0, generation_balance::Float64 = 0.995, vm_slack::Float64 = 1.0, vm_flat::Float64 = 1.0, vn_kV::Float64 = 110.0, name::Union{Nothing,String} = nothing)
+function build_synthetic_tiled_grid_net(
+  max_buses::Int;
+  aspect_ratio::Float64 = 1.0,
+  base_mva::Float64 = 100.0,
+  r::Float64 = 0.01,
+  x::Float64 = 0.05,
+  g::Float64 = 0.0,
+  b::Float64 = 0.0,
+  load_mw_per_right_corner::Float64 = 50.0,
+  load_mvar_per_right_corner::Float64 = 15.0,
+  generation_balance::Float64 = 0.995,
+  vm_slack::Float64 = 1.0,
+  vm_flat::Float64 = 1.0,
+  vn_kV::Float64 = 110.0,
+  name::Union{Nothing,String} = nothing,
+)
   rows, cols = _choose_tiled_grid_dims(max_buses, aspect_ratio)
   actual_buses = rows * cols
   net_name = isnothing(name) ? "synthetic_tiled_grid_$(rows)x$(cols)" : name
   net = Net(name = net_name, baseMVA = base_mva, flatstart = false)
 
-  for row in 1:rows
-    for col in 1:cols
+  for row = 1:rows
+    for col = 1:cols
       bus_name = _synthetic_tiled_grid_bus_name(row, col)
       vm = (row == 1 && col == 1) ? vm_slack : vm_flat
       addBus!(net = net, busName = bus_name, vn_kV = vn_kV, vm_pu = vm, va_deg = 0.0, oBusIdx = synthetic_tiled_grid_bus_index(row, col, cols))
     end
   end
 
-  for row in 1:rows
-    for col in 1:(cols-1)
+  for row = 1:rows
+    for col = 1:(cols-1)
       _add_synthetic_pi_line!(net, _synthetic_tiled_grid_bus_name(row, col), _synthetic_tiled_grid_bus_name(row, col + 1), r, x, g, b)
     end
   end
-  for row in 1:(rows-1)
-    for col in 1:cols
+  for row = 1:(rows-1)
+    for col = 1:cols
       _add_synthetic_pi_line!(net, _synthetic_tiled_grid_bus_name(row, col), _synthetic_tiled_grid_bus_name(row + 1, col), r, x, g, b)
     end
   end
-  for row in 1:(rows-1)
-    for col in 1:(cols-1)
+  for row = 1:(rows-1)
+    for col = 1:(cols-1)
       _add_synthetic_pi_line!(net, _synthetic_tiled_grid_bus_name(row, col), _synthetic_tiled_grid_bus_name(row + 1, col + 1), r, x, g, b)
     end
   end
