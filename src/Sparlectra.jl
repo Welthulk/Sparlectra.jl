@@ -141,7 +141,7 @@ export
   evaluate_observability_matrix, evaluate_local_observability_matrix,
   evaluate_global_observability, evaluate_local_observability,
   # jacobian_complex.jl
-  runpf_rectangular!, mismatch_rectangular, complex_newton_step_rectangular_fd,
+  runpf_rectangular!, mismatch_rectangular, project_rectangular_start, complex_newton_step_rectangular_fd,
   # External solver interface
   PFModel, PFSolution, AbstractExternalSolver,
   buildPfModel, mismatchInf, applyPfSolution!, solvePf, runpf_external!,

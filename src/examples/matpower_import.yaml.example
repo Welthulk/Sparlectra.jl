@@ -16,6 +16,17 @@ methods: [rectangular]
 opt_fd: false
 opt_sparse: true
 opt_flatstart: false
+# Set `autodamp: true` for difficult flat-start cases such as larger MATPOWER
+# networks where a full Newton step increases the mismatch.
+autodamp: false
+autodamp_min: 1.0e-3
+
+# Optional APSLF-style start projection before rectangular NR / external solver starts.
+start_projection: false
+start_projection_try_dc_start: true
+start_projection_try_blend_scan: true
+start_projection_blend_lambdas: [0.25, 0.5, 0.75]
+start_projection_dc_angle_limit_deg: 60.0
 max_ite: 30
 tol: 1.0e-6
 verbose: 1

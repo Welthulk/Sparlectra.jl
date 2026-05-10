@@ -55,6 +55,8 @@ Arguments:
 - `S`: specified complex power injections P + jQ (length n)
 - `slack_idx`: index of the slack bus (no equations / no variables)
 - `damp`: scalar damping factor for the Newton step (0 < damp ≤ 1)
+- `autodamp`: when true, backtrack from `damp` to reduce the current mismatch
+- `autodamp_min`: minimum automatic damping factor
 - `h`: perturbation step for finite differences
 - `bus_types`: vector of bus types (:PQ, :PV, :Slack)
 - `Vset`: voltage magnitude setpoints for PV buses
@@ -62,7 +64,7 @@ Arguments:
 Returns:
 - Updated complex voltage vector `V_new` (length n)
 """
-function complex_newton_step_rectangular_fd(Ybus, V, S; slack_idx::Int = 1, damp::Float64 = 1.0, h::Float64 = 1e-6, bus_types::Vector{Symbol}, Vset::Vector{Float64}, dPinj_dVm::Vector{Float64} = zeros(Float64, length(V)), dQinj_dVm::Vector{Float64} = zeros(Float64, length(V)))
+function complex_newton_step_rectangular_fd(Ybus, V, S; slack_idx::Int = 1, damp::Float64 = 1.0, autodamp::Bool = false, autodamp_min::Float64 = 1e-3, h::Float64 = 1e-6, bus_types::Vector{Symbol}, Vset::Vector{Float64}, dPinj_dVm::Vector{Float64} = zeros(Float64, length(V)), dQinj_dVm::Vector{Float64} = zeros(Float64, length(V)))
   n = length(V)
 
   # Base mismatch F(V)
@@ -102,21 +104,11 @@ function complex_newton_step_rectangular_fd(Ybus, V, S; slack_idx::Int = 1, damp
 
   # Solve J * δx = -F0
   δx = solve_linear(J, -F0; allow_pinv = true)
-  # Damping
-  δx .*= damp
-
-  # Map update back to Vr/Vi
-  Vr_new = copy(Vr)
-  Vi_new = copy(Vi)
-
-  @inbounds for (idx, bus) in enumerate(non_slack)
-    Vr_new[bus] += δx[idx]
-    Vi_new[bus] += δx[(n-1)+idx]
+  if autodamp
+    _, Vtrial, _ = choose_rectangular_autodamp(Ybus, V, S, δx, F0; slack_idx = slack_idx, damp = damp, autodamp_min = autodamp_min, bus_types = bus_types, Vset = Vset)
+    return Vtrial
   end
 
-  # Keep slack voltage fixed
-  Vr_new[slack_idx] = Vr[slack_idx]
-  Vi_new[slack_idx] = Vi[slack_idx]
-
-  return ComplexF64.(Vr_new, Vi_new)
+  _validate_rectangular_damping(damp, min(autodamp_min, damp))
+  return _apply_rectangular_delta(V, δx, slack_idx, non_slack, damp)
 end

@@ -46,6 +46,24 @@ A model is constructed using:
 model = buildPfModel(net; opt_sparse=true, flatstart=net.flatstart)
 ```
 
+For difficult starts, the canonical model builder can apply the same start
+projection used by the internal rectangular solver:
+
+```julia
+model = buildPfModel(net;
+    opt_sparse = true,
+    flatstart = true,
+    start_projection = true,
+    start_projection_try_dc_start = true,
+    start_projection_try_blend_scan = true,
+    start_projection_blend_lambdas = [0.25, 0.5, 0.75],
+    start_projection_dc_angle_limit_deg = 60.0,
+)
+```
+
+External solvers receive the projected start in `model.V0`. `runpf_external!`
+forwards the same keyword arguments to `buildPfModel`.
+
 ---
 
 ### `PFSolution`
