@@ -17,7 +17,7 @@ using Sparlectra
 """
     main()
 
-Demonstrate APSLF-style start projection before the rectangular Newton power
+Demonstrate start projection before the rectangular Newton power
 flow. The solver sanitizes the raw seed, tries a DC-angle start, and scans
 convex blends between both starts before entering Newton iterations.
 """
