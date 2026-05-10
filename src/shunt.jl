@@ -32,7 +32,7 @@ A mutable structure representing a shunt in a power system.
 - `G_shunt::Float64`: The conductance of the shunt (S) - optional input/debug.
 - `B_shunt::Float64`: The susceptance of the shunt (S) - optional input/debug.
 - `y_pu_shunt::ComplexF64`: The shunt admittance in per unit (solver-relevant for Y-shunts).
-- `model::Symbol`: The shunt model - `:Y` for admittance or `:PQ` for constant power.
+- `model::Symbol`: The shunt model - `:Y` for admittance-matrix stamping, `:VoltageDependentInjection` for voltage-dependent mismatch terms, or `:PQ` for legacy constant power.
 - `status::Int`: The status of the shunt. 1 = in service, 0 = out of service.
 
 # Constructors
@@ -60,7 +60,7 @@ mutable struct Shunt
   y_pu_shunt::ComplexF64
 
   # Semantics
-  model::Symbol      # :Y  or :PQ   (start with :Y if you want)
+  model::Symbol      # :Y, :VoltageDependentInjection, or legacy :PQ
   status::Int
 
   function Shunt(; fromBus::Int, id::Int, base_MVA::Float64, vn_kV_shunt::Float64,

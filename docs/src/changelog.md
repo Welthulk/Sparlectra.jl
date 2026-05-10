@@ -1,6 +1,7 @@
 # Change Log
 ## Version 0.7.5 – 2026-05-10
 ### New Features 
+* Added configurable bus-shunt modeling with classic Y-bus admittance stamping and a rectangular-solver voltage-dependent injection mode for keeping shunt effects in nonlinear mismatch terms.
 * Added automatic rectangular Newton damping (`autodamp`) for difficult flat-start power-flow cases; the solver backtracks the Newton step from `damp` down to `autodamp_min` and accepts the first residual-reducing trial.
 * Added start projection (`start_projection`) for difficult power-flow seeds, including optional DC-angle starts and raw/DC blend scans for both the internal rectangular solver and external-solver `PFModel` starts.
 

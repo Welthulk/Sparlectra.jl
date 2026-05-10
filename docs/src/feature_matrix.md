@@ -23,6 +23,7 @@ Legend:
 | Coordinated master/slave transformer voltage control | ❌ | ❌ | Not yet implemented as dedicated multi-transformer coordination logic (no built-in participation-factor allocation/group dispatcher yet). |
 | π-equivalent branch modeling | ✅ | ✅ | Common branch representation across PF/SE workflows. |
 | Shunts / loads / generators in `Net` model | ✅ | ✅ | Shared physical network model and component handling. |
+| Configurable bus-shunt modeling | ⚠️ | ❌ | `bus_shunt_model = "admittance"` is the default/classic Y-bus treatment; `"voltage_dependent_injection"` is available for rectangular PF formulations that keep shunt effects in nonlinear mismatch terms. |
 | Voltage-dependent prosumer control (`Q(U)`, `P(U)`) | ✅ | ❌ | Implemented for PF with controller-aware mismatch/Jacobian terms in rectangular formulation; not part of SE model. |
 | MATPOWER import / cases | ✅ | ✅ | Typical SE studies can start from imported PF-ready networks. |
 | Synthetic tiled-grid generator | ✅ | ⚠️ | `build_synthetic_tiled_grid_net` creates artificial one-voltage-level AC PF benchmark networks; SE can use the resulting `Net` as an artificial study case when measurements are supplied. |

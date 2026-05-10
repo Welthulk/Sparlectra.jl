@@ -1616,7 +1616,7 @@ function runpf!(
 
   #@info "Running AC Power Flow using method: $(method)"
   if method === :polar_full
-    has_vdep_control && error("runpf!: P(U)/Q(U) voltage-dependent controllers are currently supported only for method=:rectangular.")
+    has_vdep_control && error("runpf!: voltage-dependent injections, including P(U)/Q(U) controllers and bus_shunt_model=voltage_dependent_injection, are currently supported only for method=:rectangular.")
     if qlimit_mode != :switch_to_pq
       @warn "runpf!: qlimit_mode=$(qlimit_mode) is only supported for method=:rectangular. Falling back to :switch_to_pq behavior."
     end
@@ -1630,7 +1630,7 @@ function runpf!(
     return iters, erg
   elseif method === :rectangular
     if has_merges
-      has_vdep_control && error("runpf!: P(U)/Q(U) voltage-dependent controllers are not supported with active-link merge handling in rectangular mode. Disable merges or use a topology without internal isolated buses.")
+      has_vdep_control && error("runpf!: voltage-dependent injections, including P(U)/Q(U) controllers and bus_shunt_model=voltage_dependent_injection, are not supported with active-link merge handling in rectangular mode. Disable merges or use a topology without internal isolated buses.")
       if verbose > 0
         @warn "runpf!: rectangular solver detected internal Isolated buses from active-link merges; using rectangular FD fallback instead of :polar_full"
       end
@@ -1646,7 +1646,7 @@ function runpf!(
     end
     return iters, erg
   elseif method === :classic
-    has_vdep_control && error("runpf!: P(U)/Q(U) voltage-dependent controllers are currently supported only for method=:rectangular.")
+    has_vdep_control && error("runpf!: voltage-dependent injections, including P(U)/Q(U) controllers and bus_shunt_model=voltage_dependent_injection, are currently supported only for method=:rectangular.")
     if qlimit_mode != :switch_to_pq
       @warn "runpf!: qlimit_mode=$(qlimit_mode) is only supported for method=:rectangular. Falling back to :switch_to_pq behavior."
     end

@@ -1,0 +1,39 @@
+# Demonstration configuration for voltage-dependent bus-shunt injection mode.
+# Run with:
+#   julia --project=. src/examples/matpower_import.jl src/examples/matpower_import_voltage_dependent_shunt.yaml.example
+#
+# This keeps MATPOWER Gs/Bs bus shunts out of Ybus and represents their
+# |V|^2-dependent power contribution in the nonlinear injection/mismatch path.
+
+case: case14.m
+methods: [rectangular]
+bus_shunt_model: voltage_dependent_injection
+
+opt_fd: false
+opt_sparse: true
+opt_flatstart: false
+autodamp: false
+autodamp_min: 1.0e-3
+start_projection: false
+start_projection_try_dc_start: true
+start_projection_try_blend_scan: true
+start_projection_blend_lambdas: [0.25, 0.5, 0.75]
+start_projection_dc_angle_limit_deg: 60.0
+max_ite: 30
+tol: 1.0e-6
+verbose: 1
+cooldown_iters: 0
+q_hyst_pu: 0.0
+show_diff: true
+tol_vm: 0.02
+tol_va: 0.5
+ignore_q_limits: false
+enable_pq_gen_controllers: false
+trace_legacy_bus_type_warnings: false
+lock_pv_to_pq_buses: []
+benchmark: false
+seconds: 2.0
+samples: 10
+show_once: true
+show_once_output: dataframe
+show_once_max_nodes: 10

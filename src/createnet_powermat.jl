@@ -55,8 +55,13 @@ Builds a Sparlectra `Net` from a MATPOWER-like container `mpc`.
 - or a struct with the same field names (e.g. `MatpowerCase`)
 
 All matrices are expected in MATPOWER v2 column conventions.
+
+`bus_shunt_model` controls how MATPOWER bus `Gs`/`Bs` values are represented:
+`"admittance"` stamps them into Ybus (default), while
+`"voltage_dependent_injection"` keeps them out of Ybus and evaluates their
+|V|²-dependent contribution in the rectangular mismatch path.
 """
-function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false, cooldown::Int = 0, q_hyst_pu::Float64 = 0.0, enable_pq_gen_controllers::Bool = true)::Net
+function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false, cooldown::Int = 0, q_hyst_pu::Float64 = 0.0, enable_pq_gen_controllers::Bool = true, bus_shunt_model = :admittance)::Net
   # Small logger helper
   pInfo(msg::String) = (log ? (@info msg) : nothing)
 
@@ -82,11 +87,13 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
     mp_bus_type[Int(row[BUS_I])] = Int(row[BUS_TYPE])
   end
 
+  shunt_model = normalize_bus_shunt_model(bus_shunt_model)
+
   if log
     @info "Creating new Net: $(name) with baseMVA=$(baseMVA), flatstart=$(flatstart)"
   end
   
-  myNet = Net(name = String(name), baseMVA = baseMVA, flatstart = flatstart, cooldown_iters = cooldown, q_hyst_pu = q_hyst_pu)
+  myNet = Net(name = String(name), baseMVA = baseMVA, flatstart = flatstart, cooldown_iters = cooldown, q_hyst_pu = q_hyst_pu, bus_shunt_model = shunt_model)
   nbus = size(busData, 1)
   nbranch = size(brData, 1)
   ngen = size(genData, 1)
@@ -167,7 +174,7 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
     bus_idx_by_orig[kIdx] = length(myNet.nodeVec)
 
     if pShunt != 0.0 || qShunt != 0.0
-      addShuntMatpower!(net=myNet, busName=busName, Gs=pShunt, Bs=qShunt)
+      addShuntMatpower!(net=myNet, busName=busName, Gs=pShunt, Bs=qShunt, bus_shunt_model = shunt_model)
     end
     
     if pLoad != 0.0 || qLoad != 0.0
@@ -303,6 +310,8 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
     @info "MATPOWER import: PQ generator limits mapped to constant P(U)/Q(U) controllers" count = pq_gen_controller_count
   end
 
+  log && log_bus_shunt_model(myNet)
+
   ok, msg = validate!(net = myNet)
   ok || @error "network is invalid: $msg"
 
@@ -315,13 +324,15 @@ function createNetFromMatPowerFile(; filename::String,
     cooldown::Int = 0,
     q_hyst_pu::Float64 = 0.0,
     enable_pq_gen_controllers::Bool = true,
+    bus_shunt_model = :admittance,
     verbose::Int = 0)::Net
 
   mpc = MatpowerIO.read_case(filename; legacy_compat=true)
 
   # Build the network first
   net = createNetFromMatPowerCase(; mpc=mpc, log=log, flatstart=flatstart,
-                                  cooldown=cooldown, q_hyst_pu=q_hyst_pu, enable_pq_gen_controllers=enable_pq_gen_controllers)
+                                  cooldown=cooldown, q_hyst_pu=q_hyst_pu, enable_pq_gen_controllers=enable_pq_gen_controllers,
+                                  bus_shunt_model=bus_shunt_model)
 
   # Always apply MATPOWER isolated flags (BUS_TYPE==4) onto net
   MatpowerIO.apply_mp_isolated_buses!(net, mpc; verbose=verbose)

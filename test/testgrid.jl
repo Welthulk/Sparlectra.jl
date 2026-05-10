@@ -1029,6 +1029,56 @@ function test_mp_inline_vs_manual_shunt(verbose::Int = 0; method::Symbol = :rect
   return true
 end
 
+function test_bus_shunt_model_modes()::Bool
+  y_expected = ComplexF64(10.0, 20.0) / 100.0
+
+  net_adm = Net(name = "bus_shunt_admittance", baseMVA = 100.0, bus_shunt_model = "admittance")
+  addBus!(net = net_adm, busName = "B1", vn_kV = 110.0)
+  addShunt!(net = net_adm, busName = "B1", pShunt = 10.0, qShunt = 20.0)
+  Y_adm = createYBUS(net = net_adm, sparse = false, printYBUS = false)
+
+  net_vdi = Net(name = "bus_shunt_vdi", baseMVA = 100.0, bus_shunt_model = "voltage_dependent_injection")
+  addBus!(net = net_vdi, busName = "B1", vn_kV = 110.0)
+  addShunt!(net = net_vdi, busName = "B1", pShunt = 10.0, qShunt = 20.0)
+  Y_vdi = createYBUS(net = net_vdi, sparse = false, printYBUS = false)
+
+  S1, dP1, dQ1 = buildControlledSVec(net_vdi, ComplexF64[1.0 + 0.0im])
+  S2, dP2, dQ2 = buildControlledSVec(net_vdi, ComplexF64[2.0 + 0.0im])
+
+  mpc = (
+    name = "case2_shunt_modes",
+    baseMVA = 100.0,
+    bus = [
+      1 3 0.0 0.0 10.0 20.0 1 1.0 0.0 110.0 1 1.10 0.90
+      2 1 0.0 0.0 0.0 0.0 1 1.0 0.0 110.0 1 1.10 0.90
+    ],
+    gen = [1 0.0 0.0 100.0 -100.0 1.0 100.0 1 100.0 0.0 0 0 0 0 0 0 0 0 0 0 0],
+    branch = [1 2 0.02 0.06 0.0 0 0 0 0.0 0.0 1 -360 360],
+    gencost = nothing,
+    bus_name = ["BUS1", "BUS2"],
+  )
+  mp_adm = Sparlectra.createNetFromMatPowerCase(mpc = mpc, bus_shunt_model = "admittance")
+  mp_vdi = Sparlectra.createNetFromMatPowerCase(mpc = mpc, bus_shunt_model = "voltage_dependent_injection")
+
+  invalid_ok = false
+  try
+    Sparlectra.normalize_bus_shunt_model("not_a_mode")
+  catch err
+    invalid_ok = err isa ErrorException && occursin("Invalid bus_shunt_model", sprint(showerror, err))
+  end
+
+  return isapprox(Y_adm[1, 1], y_expected; atol = 1e-12, rtol = 0.0) &&
+         isapprox(Y_vdi[1, 1], 0.0 + 0.0im; atol = 1e-12, rtol = 0.0) &&
+         isapprox(S1[1], -conj(y_expected); atol = 1e-12, rtol = 0.0) &&
+         isapprox(S2[1], -4.0 * conj(y_expected); atol = 1e-12, rtol = 0.0) &&
+         isapprox(dP1[1], -2.0 * real(conj(y_expected)); atol = 1e-12, rtol = 0.0) &&
+         isapprox(dQ2[1], -4.0 * imag(conj(y_expected)); atol = 1e-12, rtol = 0.0) &&
+         mp_adm.shuntVec[1].model == :Y &&
+         mp_vdi.shuntVec[1].model == :VoltageDependentInjection &&
+         isapprox(createYBUS(net = mp_adm, sparse = false, printYBUS = false)[1, 1] - createYBUS(net = mp_vdi, sparse = false, printYBUS = false)[1, 1], y_expected; atol = 1e-12, rtol = 0.0) &&
+         invalid_ok
+end
+
 function test_link_kcl_simple()
   net = Net(name = "link_kcl", baseMVA = 100.0)
   addBus!(net = net, busName = "B1", vn_kV = 110.0)
@@ -1704,6 +1754,7 @@ function run_grid_tests()
       @test test_matpower_vmva_selfcheck_ignores_slack_pq_spec() == true
       @test test_matpower_compare_vmva_wraps_angle_differences() == true
       @test test_mp_inline_vs_manual_shunt() == true
+      @test test_bus_shunt_model_modes() == true
       @test test_matpower_read_case_m_postprocessing() == true
     end
 
