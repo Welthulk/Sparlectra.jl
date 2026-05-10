@@ -31,7 +31,7 @@ const MPOWER_DIR = normpath(joinpath(pkgdir(@__MODULE__), "data", "mpower"))
 
 # resource data types for working with Sparlectra
 const Wurzel3 = 1.7320508075688772
-const SparlectraVersion = v"0.7.4"
+const SparlectraVersion = v"0.7.5"
 version() = SparlectraVersion
 abstract type AbstractBranch end
 
@@ -102,7 +102,7 @@ export
   # Network
   addBus!, addShunt!, addACLine!, addPIModelACLine!, add2WTrafo!, addPIModelTrafo!, addProsumer!, lockNet!, validate!, hasBusInNet, addBusGenPower!, addBusLoadPower!, addBusShuntPower!, setNodeVoltage!, setNodeAngle!,
   getNetOrigBusIdx, geNetBusIdx, setNetBranchStatus!, getNetBranch, getNetBranchNumberVec, setTotalLosses!, getTotalLosses, getBusType, getEffectiveBusType, getBusProsumers, refreshBusTypesFromProsumers!, get_bus_vn_kV, get_vn_kV, updateBranchParameters!, hasShunt!, 
-  getShunt!, markIsolatedBuses!,setTotalBusPower!, setPVBusVset!, setQLimits!, getNodeVm,distributeBusResults!, getTotalBusPower, getTotalLosses, buildVoltageVector,initialVrect, buildComplexSVec, buildControlledSVec, has_voltage_dependent_control, addShuntMatpower!,
+  getShunt!, markIsolatedBuses!,setTotalBusPower!, setPVBusVset!, setQLimits!, getNodeVm,distributeBusResults!, getTotalBusPower, getTotalLosses, buildVoltageVector,initialVrect, buildComplexSVec, buildControlledSVec, has_voltage_dependent_control, addShuntMatpower!, normalize_bus_shunt_model, bus_shunt_totals_pu, log_bus_shunt_model,
   add2WTPIModelTrafo!, add3WTPiModelTrafo!,showNet, buildQLimits!,updateShuntPowers!, addLink!, setNetLinkStatus!, getNetLinks, calcLinkFlowsKCL!,
   addPowerTransformerControl!, addTapController!, clearTapControllers!, get_bus_vm_pu, get_branch_p_from_to_mw, get_branch_q_from_to_mvar, run_tap_controllers_outer!, buildTapControllerReportRows, printTapControllerSummary,
   # remove_functions.jl
@@ -141,7 +141,7 @@ export
   evaluate_observability_matrix, evaluate_local_observability_matrix,
   evaluate_global_observability, evaluate_local_observability,
   # jacobian_complex.jl
-  runpf_rectangular!, mismatch_rectangular, complex_newton_step_rectangular_fd,
+  runpf_rectangular!, mismatch_rectangular, project_rectangular_start, complex_newton_step_rectangular_fd,
   # External solver interface
   PFModel, PFSolution, AbstractExternalSolver,
   buildPfModel, mismatchInf, applyPfSolution!, solvePf, runpf_external!,

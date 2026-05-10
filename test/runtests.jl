@@ -19,6 +19,7 @@ using Test
 using Logging
 using Printf
 using LinearAlgebra
+using SparseArrays
 
 # keep logs quiet unless there's a warning or error
 global_logger(ConsoleLogger(stderr, Logging.Warn))
@@ -36,6 +37,7 @@ include("test_voltage_dependent_control.jl")
 include("test_transformer_phase_shift.jl")
 include("test_tap_controller.jl")
 include("test_synthetic_grids.jl")
+include("test_matpower_example.jl")
 
 function _print_test_progress(step::Int, total::Int, label::String)
   width = 30
@@ -58,6 +60,7 @@ end
     ("transformer_phase_shift", run_transformer_phase_shift_tests),
     ("tap_controller", run_tap_controller_tests),
     ("synthetic_grids", run_synthetic_grid_tests),
+    ("matpower_example", run_matpower_example_tests),
   ]
 
   total = length(test_steps)

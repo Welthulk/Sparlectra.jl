@@ -166,6 +166,8 @@ function run_complex_nr_rectangular(
   tol::Float64 = 1e-8,
   verbose::Bool = false,
   damp::Float64 = 1.0,
+  autodamp::Bool = false,
+  autodamp_min::Float64 = 1e-3,
   bus_types::Vector{Symbol},
   Vset::Vector{Float64},
   use_fd::Bool = false,
@@ -186,13 +188,266 @@ function run_complex_nr_rectangular(
     end
 
     if use_fd
-      V = complex_newton_step_rectangular_fd(Ybus, V, S; slack_idx = slack_idx, damp = damp, h = 1e-6, bus_types = bus_types, Vset = Vset, dPinj_dVm = dPinj_dVm, dQinj_dVm = dQinj_dVm)
+      V = complex_newton_step_rectangular_fd(Ybus, V, S; slack_idx = slack_idx, damp = damp, autodamp = autodamp, autodamp_min = autodamp_min, h = 1e-6, bus_types = bus_types, Vset = Vset, dPinj_dVm = dPinj_dVm, dQinj_dVm = dQinj_dVm)
     else
-      V = complex_newton_step_rectangular(Ybus, V, S; slack_idx = slack_idx, damp = damp, bus_types = bus_types, Vset = Vset, use_sparse = use_sparse, dPinj_dVm = dPinj_dVm, dQinj_dVm = dQinj_dVm)
+      V = complex_newton_step_rectangular(Ybus, V, S; slack_idx = slack_idx, damp = damp, autodamp = autodamp, autodamp_min = autodamp_min, bus_types = bus_types, Vset = Vset, use_sparse = use_sparse, dPinj_dVm = dPinj_dVm, dQinj_dVm = dQinj_dVm)
     end
   end
 
   return V, false, maxiter, history
+end
+
+function _sanitize_rectangular_start(V::Vector{ComplexF64}, bus_types::Vector{Symbol}, Vset::Vector{Float64}, slack_idx::Int)
+  Vs = copy(V)
+  @inbounds for k in eachindex(Vs)
+    Vk = Vs[k]
+    vm = abs(Vk)
+    if !isfinite(real(Vk)) || !isfinite(imag(Vk)) || vm <= 0.0
+      vm = (bus_types[k] in (:Slack, :PV) && isfinite(Vset[k]) && Vset[k] > 0.0) ? Vset[k] : 1.0
+      Vs[k] = ComplexF64(vm, 0.0)
+    end
+  end
+  Vs[slack_idx] = V[slack_idx]
+  return Vs
+end
+
+function _voltage_magnitude_for_projection(Vraw::Vector{ComplexF64}, bus_types::Vector{Symbol}, Vset::Vector{Float64}, k::Int)
+  vm_raw = abs(Vraw[k])
+  if bus_types[k] in (:Slack, :PV) && isfinite(Vset[k]) && Vset[k] > 0.0
+    return Vset[k]
+  elseif isfinite(vm_raw) && vm_raw > 0.0
+    return vm_raw
+  else
+    return 1.0
+  end
+end
+
+function _dc_angle_start_rectangular(
+  Ybus,
+  Vraw::Vector{ComplexF64},
+  S::Vector{ComplexF64},
+  bus_types::Vector{Symbol},
+  Vset::Vector{Float64},
+  slack_idx::Int;
+  dc_angle_limit_deg::Float64 = 60.0,
+)
+  n = length(Vraw)
+  non_slack = non_slack_indices(n, slack_idx)
+  nred = length(non_slack)
+  nred == 0 && return copy(Vraw)
+  pos = build_pos_map(non_slack, n)
+
+  B = zeros(Float64, nred, nred)
+  if Ybus isa SparseMatrixCSC
+    rv = rowvals(Ybus)
+    nz = nonzeros(Ybus)
+    @inbounds for j in 1:n
+      for ptr in nzrange(Ybus, j)
+        i = rv[ptr]
+        i == j && continue
+        ri = pos[i]
+        ri == 0 && continue
+        bij = imag(nz[ptr])
+        bij == 0.0 && continue
+        if j != slack_idx
+          cj = pos[j]
+          if cj != 0
+            B[ri, cj] -= bij
+          end
+        end
+        B[ri, ri] += bij
+      end
+    end
+  else
+    @inbounds for i in non_slack
+      ri = pos[i]
+      for j in 1:n
+        j == i && continue
+        bij = imag(Ybus[i, j])
+        bij == 0.0 && continue
+        if j != slack_idx
+          cj = pos[j]
+          if cj != 0
+            B[ri, cj] -= bij
+          end
+        end
+        B[ri, ri] += bij
+      end
+    end
+  end
+
+  P = real.(S[non_slack])
+  θred = solve_linear(B, P; allow_pinv = true)
+  limit = deg2rad(dc_angle_limit_deg)
+  θslack = angle(Vraw[slack_idx])
+  Vdc = similar(Vraw)
+
+  @inbounds for k in 1:n
+    vm = _voltage_magnitude_for_projection(Vraw, bus_types, Vset, k)
+    if k == slack_idx
+      Vdc[k] = Vraw[k]
+    else
+      θ = θslack + clamp(θred[pos[k]], -limit, limit)
+      Vdc[k] = ComplexF64(vm * cos(θ), vm * sin(θ))
+    end
+  end
+  return Vdc
+end
+
+function _blend_voltage_starts(Vraw::Vector{ComplexF64}, Vdc::Vector{ComplexF64}, λ::Float64, slack_idx::Int)
+  0.0 <= λ <= 1.0 || error("blend lambda must satisfy 0 ≤ λ ≤ 1 (got $(λ)).")
+  V = similar(Vraw)
+  @inbounds for k in eachindex(Vraw)
+    if k == slack_idx
+      V[k] = Vraw[k]
+      continue
+    end
+    vm = (1.0 - λ) * abs(Vraw[k]) + λ * abs(Vdc[k])
+    θ = (1.0 - λ) * angle(Vraw[k]) + λ * angle(Vdc[k])
+    V[k] = ComplexF64(vm * cos(θ), vm * sin(θ))
+  end
+  return V
+end
+
+"""
+    project_rectangular_start(Ybus, Vraw, S, bus_types, Vset, slack_idx; ...)
+
+Build a projected initial voltage for the rectangular power-flow solver.
+
+When enabled, the projection sanitizes the raw seed, optionally computes a
+DC-angle start from active-power injections and the Y-bus off-diagonal
+susceptances, and optionally scans convex blends between the raw and DC starts.
+The candidate with the lowest rectangular mismatch is returned.
+"""
+function project_rectangular_start(
+  Ybus,
+  Vraw::Vector{ComplexF64},
+  S::Vector{ComplexF64},
+  bus_types::Vector{Symbol},
+  Vset::Vector{Float64},
+  slack_idx::Int;
+  enabled::Bool = false,
+  try_dc_start::Bool = true,
+  try_blend_scan::Bool = true,
+  blend_lambdas::AbstractVector{<:Real} = [0.25, 0.5, 0.75],
+  dc_angle_limit_deg::Float64 = 60.0,
+  verbose::Int = 0,
+)
+  enabled || return Vraw
+  dc_angle_limit_deg > 0.0 || error("dc_angle_limit_deg must be > 0 (got $(dc_angle_limit_deg)).")
+
+  raw = _sanitize_rectangular_start(Vraw, bus_types, Vset, slack_idx)
+  best = raw
+  best_name = :raw
+  best_mis = _max_rectangular_mismatch(Ybus, raw, S, bus_types, Vset, slack_idx)
+  Vdc = nothing
+
+  if try_dc_start
+    Vdc = _dc_angle_start_rectangular(Ybus, raw, S, bus_types, Vset, slack_idx; dc_angle_limit_deg = dc_angle_limit_deg)
+    dc_mis = _max_rectangular_mismatch(Ybus, Vdc, S, bus_types, Vset, slack_idx)
+    if isfinite(dc_mis) && dc_mis < best_mis
+      best = Vdc
+      best_name = :dc_start
+      best_mis = dc_mis
+    end
+  end
+
+  if try_blend_scan && Vdc !== nothing
+    for λ_raw in blend_lambdas
+      λ = Float64(λ_raw)
+      Vblend = _blend_voltage_starts(raw, Vdc, λ, slack_idx)
+      blend_mis = _max_rectangular_mismatch(Ybus, Vblend, S, bus_types, Vset, slack_idx)
+      if isfinite(blend_mis) && blend_mis < best_mis
+        best = Vblend
+        best_name = Symbol("blend_", λ)
+        best_mis = blend_mis
+      end
+    end
+  end
+
+  if verbose > 0
+    raw_mis = _max_rectangular_mismatch(Ybus, raw, S, bus_types, Vset, slack_idx)
+    @info "start projection selected $(best_name)" raw_mismatch = raw_mis projected_mismatch = best_mis
+  end
+  return best
+end
+
+function _validate_rectangular_damping(damp::Float64, autodamp_min::Float64)
+  isfinite(damp) || error("damp must be finite (got $(damp)).")
+  isfinite(autodamp_min) || error("autodamp_min must be finite (got $(autodamp_min)).")
+  0.0 < damp <= 1.0 || error("damp must satisfy 0 < damp ≤ 1 (got $(damp)).")
+  0.0 < autodamp_min <= damp || error("autodamp_min must satisfy 0 < autodamp_min ≤ damp (got autodamp_min=$(autodamp_min), damp=$(damp)).")
+  return nothing
+end
+
+function _apply_rectangular_delta(V::Vector{ComplexF64}, δx::Vector{Float64}, slack_idx::Int, non_slack::Vector{Int}, alpha::Float64)
+  n = length(V)
+  Vr = real.(V)
+  Vi = imag.(V)
+  Vr_new = copy(Vr)
+  Vi_new = copy(Vi)
+
+  @inbounds for (idx, bus) in enumerate(non_slack)
+    Vr_new[bus] += alpha * δx[idx]
+    Vi_new[bus] += alpha * δx[(n - 1) + idx]
+  end
+
+  Vr_new[slack_idx] = Vr[slack_idx]
+  Vi_new[slack_idx] = Vi[slack_idx]
+  return ComplexF64.(Vr_new, Vi_new)
+end
+
+function _max_rectangular_mismatch(Ybus, V::Vector{ComplexF64}, S::Vector{ComplexF64}, bus_types::Vector{Symbol}, Vset::Vector{Float64}, slack_idx::Int)
+  F = mismatch_rectangular(Ybus, V, S, bus_types, Vset, slack_idx)
+  return maximum(abs.(F))
+end
+
+"""
+    choose_rectangular_autodamp(Ybus, V, S, δx, F0; slack_idx, damp, autodamp_min, bus_types, Vset)
+
+Select a Newton step length for the rectangular power-flow solver by backtracking
+from `damp` toward `autodamp_min`. The first trial step that reduces the maximum
+absolute mismatch is accepted. If no trial reduces the mismatch, the smallest
+finite trial is returned so the solver can continue safely with a conservative
+step.
+
+Returns `(alpha, Vtrial, trial_mismatch)`.
+"""
+function choose_rectangular_autodamp(
+  Ybus,
+  V::Vector{ComplexF64},
+  S::Vector{ComplexF64},
+  δx::Vector{Float64},
+  F0::Vector{Float64};
+  slack_idx::Int,
+  damp::Float64 = 1.0,
+  autodamp_min::Float64 = 1e-3,
+  bus_types::Vector{Symbol},
+  Vset::Vector{Float64},
+)
+  _validate_rectangular_damping(damp, autodamp_min)
+  non_slack = non_slack_indices(length(V), slack_idx)
+  current_mismatch = maximum(abs.(F0))
+  best_alpha = autodamp_min
+  best_V = _apply_rectangular_delta(V, δx, slack_idx, non_slack, autodamp_min)
+  best_mismatch = _max_rectangular_mismatch(Ybus, best_V, S, bus_types, Vset, slack_idx)
+
+  alpha = damp
+  while alpha >= autodamp_min
+    Vtrial = _apply_rectangular_delta(V, δx, slack_idx, non_slack, alpha)
+    trial_mismatch = _max_rectangular_mismatch(Ybus, Vtrial, S, bus_types, Vset, slack_idx)
+    if isfinite(trial_mismatch) && trial_mismatch < current_mismatch
+      return alpha, Vtrial, trial_mismatch
+    end
+    if isfinite(trial_mismatch) && trial_mismatch < best_mismatch
+      best_alpha = alpha
+      best_V = Vtrial
+      best_mismatch = trial_mismatch
+    end
+    alpha *= 0.5
+  end
+
+  return best_alpha, best_V, best_mismatch
 end
 
 """
@@ -765,6 +1020,8 @@ function complex_newton_step_rectangular(
   S::Vector{ComplexF64};
   slack_idx::Int,
   damp::Float64 = 1.0,
+  autodamp::Bool = false,
+  autodamp_min::Float64 = 1e-3,
   bus_types::Vector{Symbol},
   Vset::Vector{Float64},
   use_sparse::Bool = false,
@@ -791,26 +1048,13 @@ function complex_newton_step_rectangular(
 
   # Solve J * δx = -F
   δx = solve_linear(J, -F0; allow_pinv = true)
-  # Damping
-  δx .*= damp
-
-  # Map update back to Vr/Vi
-  Vr = real.(V)
-  Vi = imag.(V)
-
-  Vr_new = copy(Vr)
-  Vi_new = copy(Vi)
-
-  @inbounds for (idx, bus) in enumerate(non_slack)
-    Vr_new[bus] += δx[idx]
-    Vi_new[bus] += δx[(n-1)+idx]
+  if autodamp
+    _, Vtrial, _ = choose_rectangular_autodamp(Ybus, V, S, δx, F0; slack_idx = slack_idx, damp = damp, autodamp_min = autodamp_min, bus_types = bus_types, Vset = Vset)
+    return Vtrial
   end
 
-  # Keep slack voltage fixed
-  Vr_new[slack_idx] = Vr[slack_idx]
-  Vi_new[slack_idx] = Vi[slack_idx]
-
-  return ComplexF64.(Vr_new, Vi_new)
+  _validate_rectangular_damping(damp, min(autodamp_min, damp))
+  return _apply_rectangular_delta(V, δx, slack_idx, non_slack, damp)
 end
 
 """
@@ -873,12 +1117,22 @@ function run_complex_nr_rectangular_for_net!(
   damp::Float64 = 0.2,
   verbose::Int = 0,
   use_fd::Bool = false,
+  autodamp::Bool = false,
+  autodamp_min::Float64 = 1e-3,
   opt_sparse::Bool = true,
   opt_flatstart::Bool = net.flatstart,
   pv_table_rows::Int = 30,
   lock_pv_to_pq_buses::AbstractVector{Int} = Int[],
   qlimit_mode::Symbol = :switch_to_pq,
   qlimit_max_outer::Int = 30,
+  start_projection::Bool = false,
+  start_projection_try_dc_start::Bool = true,
+  start_projection_try_blend_scan::Bool = true,
+  start_projection_blend_lambdas::AbstractVector{<:Real} = [0.25, 0.5, 0.75],
+  start_projection_dc_angle_limit_deg::Float64 = 60.0,
+  qlimit_start_iter::Int = 2,
+  qlimit_start_mode::Symbol = :iteration,
+  qlimit_auto_q_delta_pu::Float64 = 1e-4,
 )
   if verbose > 1
     @info "Running complex rectangular NR power flow... use_fd=$use_fd, opt_sparse=$opt_sparse"
@@ -929,6 +1183,21 @@ function run_complex_nr_rectangular_for_net!(
     Vset[k] = isnothing(node._vm_pu) ? 1.0 : node._vm_pu
   end
 
+  V0 = project_rectangular_start(
+    Ybus,
+    V0,
+    S,
+    bus_types,
+    Vset,
+    slack_idx;
+    enabled = start_projection,
+    try_dc_start = start_projection_try_dc_start,
+    try_blend_scan = start_projection_try_blend_scan,
+    blend_lambdas = start_projection_blend_lambdas,
+    dc_angle_limit_deg = start_projection_dc_angle_limit_deg,
+    verbose = verbose,
+  )
+
   # 4) Q-limit data 
   qmin_pu, qmax_pu = getQLimits_pu(net)
   if verbose > 1
@@ -951,6 +1220,9 @@ function run_complex_nr_rectangular_for_net!(
   allow_reenable = (cooldown_iters > 0) || (q_hyst_pu > 0.0)
   qlimit_mode in (:switch_to_pq, :adjust_vset) || error("Unsupported qlimit_mode=$(qlimit_mode). Supported: :switch_to_pq, :adjust_vset.")
   qlimit_max_outer > 0 || error("qlimit_max_outer must be > 0 (got $(qlimit_max_outer)).")
+  qlimit_start_iter > 0 || error("qlimit_start_iter must be > 0 (got $(qlimit_start_iter)).")
+  qlimit_start_mode in (:iteration, :auto_q_delta, :iteration_or_auto) || error("Unsupported qlimit_start_mode=$(qlimit_start_mode). Supported: :iteration, :auto_q_delta, :iteration_or_auto.")
+  qlimit_auto_q_delta_pu >= 0.0 || error("qlimit_auto_q_delta_pu must be >= 0 (got $(qlimit_auto_q_delta_pu)).")
 
   controllers = qlimit_mode == :adjust_vset ? _build_vset_adjust_controllers(net) : Dict{Int,NamedTuple{(:prosumer_idx, :config),Tuple{Int,VoltageAdjustConfig}}}()
   base_vset = copy(Vset)
@@ -964,12 +1236,13 @@ function run_complex_nr_rectangular_for_net!(
   history   = Float64[]
   converged = false
   iters     = 0
+  prev_pv_qreq_pu = fill(NaN, nb)
 
   if verbose > 1
     @info "Starting rectangular complex NR power flow..."
     @info "Initial complex voltages V0:" V0
     @info "Slack bus index:" slack_idx
-    @info "maxiter = $maxiter, tol = $tol, damp = $damp"
+    @info "maxiter = $maxiter, tol = $tol, damp = $damp, autodamp = $autodamp, autodamp_min = $autodamp_min, start_projection = $start_projection"
   end
 
   for it = 1:maxiter
@@ -997,9 +1270,32 @@ function run_complex_nr_rectangular_for_net!(
 
     Qload_pu = build_qload_pu(net)
 
-    if it > 1
-      Scalc_pu = calc_injections(Ybus, V)
+    Scalc_pu = calc_injections(Ybus, V)
+    current_pv_qreq_pu = fill(NaN, nb)
+    @inbounds for bus in eachindex(current_pv_qreq_pu)
+      if bus_types[bus] == :PV
+        current_pv_qreq_pu[bus] = imag(Scalc_pu[bus]) + Qload_pu[bus]
+      end
+    end
 
+    qlimit_iter_ready = it >= qlimit_start_iter
+    qlimit_auto_ready = false
+    if qlimit_start_mode in (:auto_q_delta, :iteration_or_auto)
+      max_q_delta = 0.0
+      compared = false
+      @inbounds for bus in eachindex(current_pv_qreq_pu)
+        if isfinite(current_pv_qreq_pu[bus]) && isfinite(prev_pv_qreq_pu[bus])
+          max_q_delta = max(max_q_delta, abs(current_pv_qreq_pu[bus] - prev_pv_qreq_pu[bus]))
+          compared = true
+        end
+      end
+      qlimit_auto_ready = compared && (max_q_delta <= qlimit_auto_q_delta_pu)
+    end
+    qlimit_ready = qlimit_start_mode == :iteration ? qlimit_iter_ready :
+                   qlimit_start_mode == :auto_q_delta ? qlimit_auto_ready :
+                   (qlimit_iter_ready || qlimit_auto_ready)
+
+    if qlimit_ready
       changed, reenabled = active_set_q_limits!(
         net,
         it,
@@ -1036,11 +1332,12 @@ function run_complex_nr_rectangular_for_net!(
         history[end] = max_mis  # optional: overwrite last stored value for this iteration
       end
     end
+    prev_pv_qreq_pu = current_pv_qreq_pu
     # --- Newton-Stepp (FD oder analytisch) -----------------------------
     if use_fd
-      V = complex_newton_step_rectangular_fd(Ybus, V, S; slack_idx = slack_idx, damp = damp, h = 1e-6, bus_types = bus_types, Vset = Vset, dPinj_dVm = dPinj_dVm, dQinj_dVm = dQinj_dVm)
+      V = complex_newton_step_rectangular_fd(Ybus, V, S; slack_idx = slack_idx, damp = damp, autodamp = autodamp, autodamp_min = autodamp_min, h = 1e-6, bus_types = bus_types, Vset = Vset, dPinj_dVm = dPinj_dVm, dQinj_dVm = dQinj_dVm)
     else
-      V = complex_newton_step_rectangular(Ybus, V, S; slack_idx = slack_idx, damp = damp, bus_types = bus_types, Vset = Vset, use_sparse = sparse, dPinj_dVm = dPinj_dVm, dQinj_dVm = dQinj_dVm)
+      V = complex_newton_step_rectangular(Ybus, V, S; slack_idx = slack_idx, damp = damp, autodamp = autodamp, autodamp_min = autodamp_min, bus_types = bus_types, Vset = Vset, use_sparse = sparse, dPinj_dVm = dPinj_dVm, dQinj_dVm = dQinj_dVm)
     end
 
     # Keep slack voltage fixed (safety belt)
@@ -1128,17 +1425,29 @@ function runpf_rectangular!(
   opt_fd::Bool = false,
   opt_sparse::Bool = true,
   damp = 1.0,
+  autodamp::Bool = false,
+  autodamp_min::Float64 = 1e-3,
   opt_flatstart::Bool = net.flatstart,
   pv_table_rows::Int = 30,
   lock_pv_to_pq_buses::AbstractVector{Int} = Int[],
   qlimit_mode::Symbol = :switch_to_pq,
   qlimit_max_outer::Int = 30,
+  start_projection::Bool = false,
+  start_projection_try_dc_start::Bool = true,
+  start_projection_try_blend_scan::Bool = true,
+  start_projection_blend_lambdas::AbstractVector{<:Real} = [0.25, 0.5, 0.75],
+  start_projection_dc_angle_limit_deg::Float64 = 60.0,
+  qlimit_start_iter::Int = 2,
+  qlimit_start_mode::Symbol = :iteration,
+  qlimit_auto_q_delta_pu::Float64 = 1e-4,
 )
   iters, erg = run_complex_nr_rectangular_for_net!(
     net;
     maxiter = maxIte,
     tol = tolerance,
     damp = damp,
+    autodamp = autodamp,
+    autodamp_min = autodamp_min,
     verbose = verbose,
     use_fd = opt_fd,
     opt_sparse = opt_sparse,
@@ -1147,6 +1456,14 @@ function runpf_rectangular!(
     lock_pv_to_pq_buses = lock_pv_to_pq_buses,
     qlimit_mode = qlimit_mode,
     qlimit_max_outer = qlimit_max_outer,
+    start_projection = start_projection,
+    start_projection_try_dc_start = start_projection_try_dc_start,
+    start_projection_try_blend_scan = start_projection_try_blend_scan,
+    start_projection_blend_lambdas = start_projection_blend_lambdas,
+    start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg,
+    qlimit_start_iter = qlimit_start_iter,
+    qlimit_start_mode = qlimit_start_mode,
+    qlimit_auto_q_delta_pu = qlimit_auto_q_delta_pu,
   )
   return iters, erg
 end
@@ -1284,6 +1601,11 @@ Arguments:
 - `tolerance::Float64`: mismatch tolerance
 - `verbose::Int`: verbosity level
 - `method::Symbol`: `:rectangular` (recommended), `:polar_full` (deprecated), or `:classic` (deprecated)
+- `autodamp::Bool`: enable residual-based backtracking for rectangular Newton steps
+- `autodamp_min::Float64`: minimum automatic damping factor when `autodamp = true`
+- `qlimit_start_iter::Int`: first Newton iteration where PV→PQ Q-limit switching may run in `:iteration` mode
+- `qlimit_start_mode::Symbol`: `:iteration`, `:auto_q_delta`, or `:iteration_or_auto` start criterion for PV→PQ switching
+- `qlimit_auto_q_delta_pu::Float64`: PV reactive-power request change threshold for automatic switching start
 
 Notes:
 - Link-flow recovery (`calcLinkFlowsKCL!`) is method-agnostic and uses solved PF results.
@@ -1305,12 +1627,22 @@ function runpf!(
   opt_sparse::Bool = true,
   opt_flatstart::Bool = net.flatstart,
   damp = 1.0,
+  autodamp::Bool = false,
+  autodamp_min::Float64 = 1e-3,
   pv_table_rows::Int = 30,
   validate_limits_after_pf::Bool = false,
   q_limit_violation_headroom::Float64 = 0.0,
   lock_pv_to_pq_buses::AbstractVector{Int} = Int[],
   qlimit_mode::Symbol = :switch_to_pq,
   qlimit_max_outer::Int = 30,
+  start_projection::Bool = false,
+  start_projection_try_dc_start::Bool = true,
+  start_projection_try_blend_scan::Bool = true,
+  start_projection_blend_lambdas::AbstractVector{<:Real} = [0.25, 0.5, 0.75],
+  start_projection_dc_angle_limit_deg::Float64 = 60.0,
+  qlimit_start_iter::Int = 2,
+  qlimit_start_mode::Symbol = :iteration,
+  qlimit_auto_q_delta_pu::Float64 = 1e-4,
 )
   wnet, reps, has_merges = _merged_pf_net(net)
   refreshBusTypesFromProsumers!(wnet)
@@ -1327,7 +1659,7 @@ function runpf!(
 
   #@info "Running AC Power Flow using method: $(method)"
   if method === :polar_full
-    has_vdep_control && error("runpf!: P(U)/Q(U) voltage-dependent controllers are currently supported only for method=:rectangular.")
+    has_vdep_control && error("runpf!: voltage-dependent injections, including P(U)/Q(U) controllers and bus_shunt_model=voltage_dependent_injection, are currently supported only for method=:rectangular.")
     if qlimit_mode != :switch_to_pq
       @warn "runpf!: qlimit_mode=$(qlimit_mode) is only supported for method=:rectangular. Falling back to :switch_to_pq behavior."
     end
@@ -1341,13 +1673,13 @@ function runpf!(
     return iters, erg
   elseif method === :rectangular
     if has_merges
-      has_vdep_control && error("runpf!: P(U)/Q(U) voltage-dependent controllers are not supported with active-link merge handling in rectangular mode. Disable merges or use a topology without internal isolated buses.")
+      has_vdep_control && error("runpf!: voltage-dependent injections, including P(U)/Q(U) controllers and bus_shunt_model=voltage_dependent_injection, are not supported with active-link merge handling in rectangular mode. Disable merges or use a topology without internal isolated buses.")
       if verbose > 0
         @warn "runpf!: rectangular solver detected internal Isolated buses from active-link merges; using rectangular FD fallback instead of :polar_full"
       end
-      iters, erg = runpf_rectangular!(wnet, maxIte, tolerance, verbose; opt_fd = true, opt_sparse = opt_sparse, damp = damp, opt_flatstart = opt_flatstart, pv_table_rows = pv_table_rows, lock_pv_to_pq_buses = lock_pv_to_pq_buses, qlimit_mode = qlimit_mode, qlimit_max_outer = qlimit_max_outer)
+      iters, erg = runpf_rectangular!(wnet, maxIte, tolerance, verbose; opt_fd = true, opt_sparse = opt_sparse, damp = damp, autodamp = autodamp, autodamp_min = autodamp_min, opt_flatstart = opt_flatstart, pv_table_rows = pv_table_rows, lock_pv_to_pq_buses = lock_pv_to_pq_buses, qlimit_mode = qlimit_mode, qlimit_max_outer = qlimit_max_outer, start_projection = start_projection, start_projection_try_dc_start = start_projection_try_dc_start, start_projection_try_blend_scan = start_projection_try_blend_scan, start_projection_blend_lambdas = start_projection_blend_lambdas, start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg, qlimit_start_iter = qlimit_start_iter, qlimit_start_mode = qlimit_start_mode, qlimit_auto_q_delta_pu = qlimit_auto_q_delta_pu)
     else
-      iters, erg = runpf_rectangular!(wnet, maxIte, tolerance, verbose; opt_fd = opt_fd, opt_sparse = opt_sparse, damp = damp, opt_flatstart = opt_flatstart, pv_table_rows = pv_table_rows, lock_pv_to_pq_buses = lock_pv_to_pq_buses, qlimit_mode = qlimit_mode, qlimit_max_outer = qlimit_max_outer)
+      iters, erg = runpf_rectangular!(wnet, maxIte, tolerance, verbose; opt_fd = opt_fd, opt_sparse = opt_sparse, damp = damp, autodamp = autodamp, autodamp_min = autodamp_min, opt_flatstart = opt_flatstart, pv_table_rows = pv_table_rows, lock_pv_to_pq_buses = lock_pv_to_pq_buses, qlimit_mode = qlimit_mode, qlimit_max_outer = qlimit_max_outer, start_projection = start_projection, start_projection_try_dc_start = start_projection_try_dc_start, start_projection_try_blend_scan = start_projection_try_blend_scan, start_projection_blend_lambdas = start_projection_blend_lambdas, start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg, qlimit_start_iter = qlimit_start_iter, qlimit_start_mode = qlimit_start_mode, qlimit_auto_q_delta_pu = qlimit_auto_q_delta_pu)
     end
     if erg == 0 && has_merges
       _sync_merged_results_to_original!()
@@ -1357,7 +1689,7 @@ function runpf!(
     end
     return iters, erg
   elseif method === :classic
-    has_vdep_control && error("runpf!: P(U)/Q(U) voltage-dependent controllers are currently supported only for method=:rectangular.")
+    has_vdep_control && error("runpf!: voltage-dependent injections, including P(U)/Q(U) controllers and bus_shunt_model=voltage_dependent_injection, are currently supported only for method=:rectangular.")
     if qlimit_mode != :switch_to_pq
       @warn "runpf!: qlimit_mode=$(qlimit_mode) is only supported for method=:rectangular. Falling back to :switch_to_pq behavior."
     end

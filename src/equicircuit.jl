@@ -313,6 +313,9 @@ function createYBUS(; net::Net, sparse::Bool = true, printYBUS::Bool = false)
 
   for sh in net.shuntVec
     sh.status == 0 && continue
+    # In voltage-dependent injection mode the same physical shunt is represented
+    # in the mismatch/injection path, so it must not also be stamped into Ybus.
+    sh.model == :Y || continue
     bus = sh.busIdx
     bus in net.isoNodes && continue
     bus -= count(i -> i < bus, net.isoNodes)

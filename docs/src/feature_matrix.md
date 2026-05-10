@@ -23,6 +23,7 @@ Legend:
 | Coordinated master/slave transformer voltage control | ❌ | ❌ | Not yet implemented as dedicated multi-transformer coordination logic (no built-in participation-factor allocation/group dispatcher yet). |
 | π-equivalent branch modeling | ✅ | ✅ | Common branch representation across PF/SE workflows. |
 | Shunts / loads / generators in `Net` model | ✅ | ✅ | Shared physical network model and component handling. |
+| Configurable bus-shunt modeling | ⚠️ | ❌ | `bus_shunt_model = "admittance"` is the default/classic Y-bus treatment; `"voltage_dependent_injection"` is available for rectangular PF formulations that keep shunt effects in nonlinear mismatch terms. |
 | Voltage-dependent prosumer control (`Q(U)`, `P(U)`) | ✅ | ❌ | Implemented for PF with controller-aware mismatch/Jacobian terms in rectangular formulation; not part of SE model. |
 | MATPOWER import / cases | ✅ | ✅ | Typical SE studies can start from imported PF-ready networks. |
 | Synthetic tiled-grid generator | ✅ | ⚠️ | `build_synthetic_tiled_grid_net` creates artificial one-voltage-level AC PF benchmark networks; SE can use the resulting `Net` as an artificial study case when measurements are supplied. |
@@ -33,10 +34,12 @@ Legend:
 |---|:---:|:---:|---|
 | Polar full NR solver (deprecated) | ✅ | ⚠️ | Legacy PF mode (deprecated); SE uses its own WLS iteration and Jacobian evaluation. |
 | Rectangular NR solver | ✅ | ❌ | Available for PF, not as separate SE formulation. |
+| Automatic rectangular Newton damping (`autodamp`) | ✅ | ❌ | PF rectangular solver can backtrack the Newton step from `damp` down to `autodamp_min` for difficult flat starts. |
+| Start projection (`start_projection`) | ✅ | ⚠️ | Internal PF and external-solver `PFModel` starts can use DC-angle and blend-scan projection; SE does not consume `PFModel`. |
 | Finite-difference Jacobian option (`opt_fd`) | ✅ | ❌ | In PF this toggles FD Jacobian vs analytic Jacobian (not fast-decoupled); not exposed as an SE user option. |
 | Sparse Jacobian option (`opt_sparse`) | ✅ | ⚠️ | PF supports explicit sparse option; SE internally builds Jacobians for WLS. |
 | Flat start control | ✅ | ✅ | Available in both PF and SE workflows. |
-| PV/PQ reactive limit handling | ✅ | ❌ | PF includes Q-limit logic; SE currently does not expose PV/PQ switching logic. |
+| PV/PQ reactive limit handling | ✅ | ❌ | PF includes Q-limit logic with configurable iteration or reactive-power stabilization start controls; SE currently does not expose PV/PQ switching logic. |
 | `Q(U)` / `P(U)` controller solver support | ⚠️ | ❌ | Supported for PF in `method = :rectangular`; legacy `:polar_full` / `:classic` are unsupported with these controllers. |
 | External solver interface | ✅ | ❌ | PF has external solver integration; SE is internal WLS. |
 

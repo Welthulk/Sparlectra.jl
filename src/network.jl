@@ -97,9 +97,11 @@ struct Net
   qmax_pu::Vector{Float64}            # pro Bus Qmax (p.u.)
   qLimitEvents::Dict{Int,Symbol}      # BusIdx -> :min | :max (PV→PQ Change)  
   measurements::Vector
+  bus_shunt_model::Symbol
 
   #! format: off
-  function Net(; name::String, baseMVA::Float64, vmin_pu::Float64 = 0.9, vmax_pu::Float64 = 1.1, cooldown_iters::Int = 0, q_hyst_pu::Float64 = 0.0, flatstart::Bool = false)    
+  function Net(; name::String, baseMVA::Float64, vmin_pu::Float64 = 0.9, vmax_pu::Float64 = 1.1, cooldown_iters::Int = 0, q_hyst_pu::Float64 = 0.0, flatstart::Bool = false, bus_shunt_model = :admittance)    
+    shunt_model = normalize_bus_shunt_model(bus_shunt_model)
     
     new(name, # name
         baseMVA, # baseMVA
@@ -119,7 +121,7 @@ struct Net
         [], # totalBusPower
         false, # _locked
         flatstart,                     # flatstart
-        Dict{Int,Symbol}(),  # shuntDict
+        Dict{Int,Int}(),  # shuntDict
         [],                                    # isoNodes
         Any[],                                 # qLimitLog                     
         cooldown_iters,                        # cooldown_iters
@@ -127,7 +129,8 @@ struct Net
         [],                                    # qmin_pu
         [],                                    # qmax_pu
         Dict{Int,Symbol}(),
-        [])                                          
+        [],
+        shunt_model)                                          
   end
   #! format: on
   function Base.show(io::IO, net::Net)
@@ -140,6 +143,57 @@ struct Net
     println(io, "Measurements: ", length(net.measurements))
     println(io, "Tap controllers: ", sum(length, (t.side1.controls for t in net.trafos); init = 0) + sum(length, (t.side2.controls for t in net.trafos); init = 0) + sum((isnothing(t.side3) ? 0 : length(t.side3.controls) for t in net.trafos); init = 0))
   end
+end
+
+const BUS_SHUNT_ADMITTANCE = :admittance
+const BUS_SHUNT_VOLTAGE_DEPENDENT_INJECTION = :voltage_dependent_injection
+const BUS_SHUNT_MODEL_VALUES = (BUS_SHUNT_ADMITTANCE, BUS_SHUNT_VOLTAGE_DEPENDENT_INJECTION)
+
+"""
+    normalize_bus_shunt_model(value) -> Symbol
+
+Validate and normalize the bus-shunt modeling option. Supported values are
+`"admittance"` and `"voltage_dependent_injection"`.
+"""
+function normalize_bus_shunt_model(value)::Symbol
+  s = lowercase(String(value))
+  s = replace(s, "-" => "_")
+  model = Symbol(s)
+  model in BUS_SHUNT_MODEL_VALUES || error("Invalid bus_shunt_model=$(value). Supported values are \"admittance\" and \"voltage_dependent_injection\".")
+  return model
+end
+
+_shunt_component_model(model::Symbol)::Symbol = model == BUS_SHUNT_ADMITTANCE ? :Y : :VoltageDependentInjection
+
+"""
+    bus_shunt_totals_pu(net) -> NamedTuple
+
+Return the count and total per-unit conductance/susceptance of in-service bus
+shunts. The totals are based on the stored shunt admittances and are useful for
+compact import/configuration logging.
+"""
+function bus_shunt_totals_pu(net::Net)
+  g = 0.0
+  b = 0.0
+  count = 0
+  for sh in net.shuntVec
+    sh.status == 0 && continue
+    count += 1
+    g += real(sh.y_pu_shunt)
+    b += imag(sh.y_pu_shunt)
+  end
+  return (count = count, total_g_pu = g, total_b_pu = b)
+end
+
+"""
+    log_bus_shunt_model(net) -> Nothing
+
+Emit a compact log message with the selected bus-shunt modeling mode, in-service
+bus-shunt count, and aggregate per-unit conductance/susceptance.
+"""
+function log_bus_shunt_model(net::Net)
+  totals = bus_shunt_totals_pu(net)
+  @info "Bus shunt model" bus_shunt_model = String(net.bus_shunt_model) bus_shunt_count = totals.count bus_shunt_total_g_pu = totals.total_g_pu bus_shunt_total_b_pu = totals.total_b_pu
 end
 
 function showNet(io::IO, net::Net; verbose::Bool = false)
@@ -502,14 +556,21 @@ Semantics:
 - `pShunt`, `qShunt` are interpreted as MW/MVar at V = 1.0 pu (MATPOWER-style).
 - Internally, the shunt is represented as a pu-admittance stamped into YBUS:
       y_pu = (pShunt + j*qShunt) / baseMVA
+  when `bus_shunt_model = "admittance"`.
+- When `bus_shunt_model = "voltage_dependent_injection"`, the same
+  pu-admittance is excluded from YBUS and contributes
+  `-|V|^2 * conj(y_pu)` to the specified net injection.
 - The shunt power is *not* constant; it depends on |V|² and will be computed
   after solving via `updateShuntPowers!(net)`.
 
 IMPORTANT:
-- This does NOT add anything to the S-vector and does NOT call `addShuntPower!`.
+- This does NOT call `addShuntPower!` or add a constant-power shunt load.
+- In voltage-dependent injection mode, the solver adds only the voltage-dependent
+  equivalent term to the injection/mismatch path.
 """
-function addShunt!(; net::Net, busName::String, pShunt::Float64, qShunt::Float64, in_service::Int = 1)
+function addShunt!(; net::Net, busName::String, pShunt::Float64, qShunt::Float64, in_service::Int = 1, bus_shunt_model = net.bus_shunt_model)
   @assert in_service in (0, 1) "in_service must be 0 or 1"
+  shunt_model = normalize_bus_shunt_model(bus_shunt_model)
 
   busIdx = geNetBusIdx(net = net, busName = busName)
   idShunt = length(net.shuntVec) + 1
@@ -522,10 +583,11 @@ function addShunt!(; net::Net, busName::String, pShunt::Float64, qShunt::Float64
   ypu = ComplexF64(pShunt, qShunt) / net.baseMVA
 
   # Create via constructor (p/q here are ONLY used to set y_pu_shunt in this new semantics)
-  sh = Shunt(fromBus = busIdx, id = idShunt, base_MVA = net.baseMVA, vn_kV_shunt = vn_kV, p_shunt = pShunt, q_shunt = qShunt, status = in_service)
+  sh = Shunt(fromBus = busIdx, id = idShunt, base_MVA = net.baseMVA, vn_kV_shunt = vn_kV, p_shunt = pShunt, q_shunt = qShunt, model = _shunt_component_model(shunt_model), status = in_service)
 
   # Enforce the intended semantics explicitly (in case constructor changes again)
   sh.y_pu_shunt = ypu
+  sh.model = _shunt_component_model(shunt_model)
 
   # Optional: keep the "G/B" fields consistent with y_pu (pu values)
   sh.G_shunt = real(ypu)
@@ -738,10 +800,8 @@ Adds a PI model AC line to the network.
 addPIModelACLine!(net = network, fromBus = "Bus1", toBus = "Bus2", r_pu = 0.01, x_pu = 0.1, b_pu = 0.02, status = 1, ratedS = 100.0)
 ```
 """
-function addPIModelACLine!(; net::Net, fromBus::String, toBus::String, r_pu::Float64, x_pu::Float64, b_pu::Float64, status::Int, ratedS::Union{Nothing,Float64} = nothing)
-  @assert fromBus != toBus "From and to bus must be different"
-  from = geNetBusIdx(net = net, busName = fromBus)
-  to = geNetBusIdx(net = net, busName = toBus)
+function _addPIModelACLine_by_idx!(; net::Net, from::Int, to::Int, r_pu::Float64, x_pu::Float64, b_pu::Float64, status::Int, ratedS::Union{Nothing,Float64} = nothing)
+  @assert from != to "From and to bus must be different"
   vn_kV = getNodeVn(net.nodeVec[from])
   vn_2_kV = getNodeVn(net.nodeVec[to])
   @assert vn_kV == vn_2_kV "Voltage level of the from bus $(vn_kV) does not match the to bus $(vn_2_kV)"
@@ -749,6 +809,12 @@ function addPIModelACLine!(; net::Net, fromBus::String, toBus::String, r_pu::Flo
   push!(net.linesAC, acseg)
 
   addBranch!(net = net, from = from, to = to, branch = acseg, vn_kV = vn_kV, status = status, values_are_pu = true)
+end
+
+function addPIModelACLine!(; net::Net, fromBus::String, toBus::String, r_pu::Float64, x_pu::Float64, b_pu::Float64, status::Int, ratedS::Union{Nothing,Float64} = nothing)
+  from = geNetBusIdx(net = net, busName = fromBus)
+  to = geNetBusIdx(net = net, busName = toBus)
+  return _addPIModelACLine_by_idx!(net = net, from = from, to = to, r_pu = r_pu, x_pu = x_pu, b_pu = b_pu, status = status, ratedS = ratedS)
 end
 
 """
@@ -768,10 +834,10 @@ Add a transformer with PI model to the network.
 - `shift_deg::Union{Nothing, Float64}`: Phase shift angle of the transformer. Default is `nothing`.
 - `isAux::Bool`: Whether the transformer is an auxiliary transformer. Default is `false`.
 """
-function addPIModelTrafo!(;
+function _addPIModelTrafo_by_idx!(;
   net::Net,
-  fromBus::String,
-  toBus::String,
+  from::Int,
+  to::Int,
   r_pu::Float64,
   x_pu::Float64,
   b_pu::Float64,
@@ -784,9 +850,7 @@ function addPIModelTrafo!(;
   side::Int = 1,
   controls::Union{Nothing,Vector{PowerTransformerControl}} = nothing,
 )
-  @assert fromBus != toBus "From and to bus must be different"
-  from = geNetBusIdx(net = net, busName = fromBus)
-  to = geNetBusIdx(net = net, busName = toBus)
+  @assert from != to "From and to bus must be different"
   vn_hv_kV = getNodeVn(net.nodeVec[from])
   vn_lv_kV = getNodeVn(net.nodeVec[to])
   w1 = PowerTransformerWinding(vn_hv_kV, r_pu, x_pu, b_pu, 0.0, ratio, shift_deg, ratedU, ratedS, nothing, true)
@@ -810,6 +874,27 @@ function addPIModelTrafo!(;
       ctrl.trafo = string(br.branchIdx)
     end
   end
+end
+
+function addPIModelTrafo!(;
+  net::Net,
+  fromBus::String,
+  toBus::String,
+  r_pu::Float64,
+  x_pu::Float64,
+  b_pu::Float64,
+  status::Int,
+  ratedU::Union{Nothing,Float64} = nothing,
+  ratedS::Union{Nothing,Float64} = nothing,
+  ratio::Union{Nothing,Float64} = nothing,
+  shift_deg::Union{Nothing,Float64} = nothing,
+  isAux::Bool = false,
+  side::Int = 1,
+  controls::Union{Nothing,Vector{PowerTransformerControl}} = nothing,
+)
+  from = geNetBusIdx(net = net, busName = fromBus)
+  to = geNetBusIdx(net = net, busName = toBus)
+  return _addPIModelTrafo_by_idx!(net = net, from = from, to = to, r_pu = r_pu, x_pu = x_pu, b_pu = b_pu, status = status, ratedU = ratedU, ratedS = ratedS, ratio = ratio, shift_deg = shift_deg, isAux = isAux, side = side, controls = controls)
 end
 
 """
@@ -1182,7 +1267,8 @@ MATPOWER semantics:
 - Internally we stamp them as pu-admittance: y_pu = (Gs + j*Bs)/baseMVA.
 - IMPORTANT: do NOT add fixed P/Q to the bus power balance.
 """
-function addShuntMatpower!(; net::Net, busName::String, Gs::Float64, Bs::Float64, in_service::Int = 1)
+function addShuntMatpower!(; net::Net, busName::String, Gs::Float64, Bs::Float64, in_service::Int = 1, bus_shunt_model = net.bus_shunt_model)
+  shunt_model = normalize_bus_shunt_model(bus_shunt_model)
   busIdx = geNetBusIdx(net = net, busName = busName)
   idShunt = length(net.shuntVec) + 1
   net.shuntDict[busIdx] = idShunt
@@ -1191,11 +1277,14 @@ function addShuntMatpower!(; net::Net, busName::String, Gs::Float64, Bs::Float64
 
   # Create shunt as "PQ-style" just to populate p_shunt/q_shunt fields meaningfully
   # (report values at 1.0 pu). This is NOT used for stamping.
-  sh = Shunt(fromBus = busIdx, id = idShunt, base_MVA = net.baseMVA, vn_kV_shunt = vn_kV, p_shunt = Gs, q_shunt = Bs, status = in_service)
+  sh = Shunt(fromBus = busIdx, id = idShunt, base_MVA = net.baseMVA, vn_kV_shunt = vn_kV, p_shunt = Gs, q_shunt = Bs, model = _shunt_component_model(shunt_model), status = in_service)
 
   # Override stamping admittance to MATPOWER semantics:
   # MATPOWER: Gs/Bs are MW/MVAr at 1 pu -> y_pu = (Gs + j Bs)/baseMVA
   sh.y_pu_shunt = ComplexF64(Gs, Bs) / net.baseMVA
+  sh.model = _shunt_component_model(shunt_model)
+  sh.G_shunt = real(sh.y_pu_shunt)
+  sh.B_shunt = imag(sh.y_pu_shunt)
 
   push!(net.shuntVec, sh)
 
@@ -1889,10 +1978,27 @@ function buildComplexSVec(net::Net)
     S[bus] = ComplexF64(Pinj, Qinj)
   end
 
+  # Voltage-dependent bus shunts are represented as specified injections so
+  # they are not double-counted in Ybus. Their equivalent complex-power term is
+  # S_sh = |V|^2 * conj(y_sh), so the net specified injection gets the negative
+  # of that contribution. Without a voltage argument this base vector uses
+  # |V| = 1 pu; the rectangular solver updates it per iteration.
+  for sh in net.shuntVec
+    sh.status == 0 && continue
+    sh.model == :VoltageDependentInjection || continue
+    (sh.busIdx in net.isoNodes) && continue
+    S[sh.busIdx] -= conj(sh.y_pu_shunt)
+  end
+
   return S
 end
 
 function has_voltage_dependent_control(net::Net)::Bool
+  for sh in net.shuntVec
+    if sh.status != 0 && sh.model == :VoltageDependentInjection
+      return true
+    end
+  end
   for ps in net.prosumpsVec
     if has_qu_controller(ps) || has_pu_controller(ps)
       return true
@@ -1950,6 +2056,24 @@ function buildControlledSVec(net::Net, V::Vector{ComplexF64})
     dQinj_dVm[bus] += sign * dq_dvm_mvar / base
   end
 
+  for sh in net.shuntVec
+    sh.status == 0 && continue
+    sh.model == :VoltageDependentInjection || continue
+    bus = sh.busIdx
+    (1 <= bus <= n) || continue
+    (bus in net.isoNodes) && continue
+    vm = abs(V[bus])
+    vm_safe = _safe_vm(vm)
+    # The shunt contribution follows the same sign as admittance stamping:
+    # S_sh,p.u. = |V|^2 * conj(y_sh). The mismatch uses
+    # F = S_calc - S_spec, so this contribution is subtracted from S_spec.
+    yconj = conj(sh.y_pu_shunt)
+    Sspec[bus] -= vm^2 * yconj
+    dS_dVm = -2.0 * vm_safe * yconj
+    dPinj_dVm[bus] += real(dS_dVm)
+    dQinj_dVm[bus] += imag(dS_dVm)
+  end
+
   return Sspec, dPinj_dVm, dQinj_dVm
 end
 
@@ -1974,7 +2098,7 @@ function updateShuntPowers!(; net::Net, reset_node::Bool = true)
 
   for sh in net.shuntVec
     sh.status == 0 && continue
-    sh.model == :Y || continue
+    sh.model in (:Y, :VoltageDependentInjection) || continue
 
     bus = sh.busIdx
     # ignore isolated buses if you want:

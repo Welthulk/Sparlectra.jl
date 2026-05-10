@@ -53,10 +53,32 @@ function solve_linear(A, b; allow_pinv::Bool = true)
     return A \ b
   catch e
     if allow_pinv && (e isa LinearAlgebra.SingularException)
-      return pinv(Matrix(A)) * b
+      all(isfinite, A) && all(isfinite, b) || rethrow(e)
+      try
+        # Prefer a rank-revealing QR fallback.  It avoids forming a dense SVD for
+        # large sparse Jacobians and is more robust than `pinv` on singular steps.
+        return qr(A) \ b
+      catch qr_error
+        if qr_error isa LinearAlgebra.LAPACKException || qr_error isa ArgumentError || qr_error isa LinearAlgebra.SingularException
+          return _svd_pinv_solve(Matrix(A), b)
+        end
+        rethrow(qr_error)
+      end
     end
     rethrow(e)
   end
+end
+
+function _svd_pinv_solve(A::AbstractMatrix, b)
+  F = svd(A; full = false, alg = LinearAlgebra.QRIteration())
+  isempty(F.S) && return zeros(eltype(b), size(A, 2))
+  cutoff = max(size(A)...) * eps(real(eltype(F.S))) * maximum(F.S)
+  Sinv_b = similar(F.U' * b)
+  Ub = F.U' * b
+  @inbounds for i in eachindex(Ub)
+    Sinv_b[i] = F.S[i] > cutoff ? Ub[i] / F.S[i] : zero(Ub[i])
+  end
+  return F.Vt' * Sinv_b
 end
 
 """
