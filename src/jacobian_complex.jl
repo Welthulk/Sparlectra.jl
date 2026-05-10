@@ -1130,6 +1130,9 @@ function run_complex_nr_rectangular_for_net!(
   start_projection_try_blend_scan::Bool = true,
   start_projection_blend_lambdas::AbstractVector{<:Real} = [0.25, 0.5, 0.75],
   start_projection_dc_angle_limit_deg::Float64 = 60.0,
+  qlimit_start_iter::Int = 2,
+  qlimit_start_mode::Symbol = :iteration,
+  qlimit_auto_q_delta_pu::Float64 = 1e-4,
 )
   if verbose > 1
     @info "Running complex rectangular NR power flow... use_fd=$use_fd, opt_sparse=$opt_sparse"
@@ -1217,6 +1220,9 @@ function run_complex_nr_rectangular_for_net!(
   allow_reenable = (cooldown_iters > 0) || (q_hyst_pu > 0.0)
   qlimit_mode in (:switch_to_pq, :adjust_vset) || error("Unsupported qlimit_mode=$(qlimit_mode). Supported: :switch_to_pq, :adjust_vset.")
   qlimit_max_outer > 0 || error("qlimit_max_outer must be > 0 (got $(qlimit_max_outer)).")
+  qlimit_start_iter > 0 || error("qlimit_start_iter must be > 0 (got $(qlimit_start_iter)).")
+  qlimit_start_mode in (:iteration, :auto_q_delta, :iteration_or_auto) || error("Unsupported qlimit_start_mode=$(qlimit_start_mode). Supported: :iteration, :auto_q_delta, :iteration_or_auto.")
+  qlimit_auto_q_delta_pu >= 0.0 || error("qlimit_auto_q_delta_pu must be >= 0 (got $(qlimit_auto_q_delta_pu)).")
 
   controllers = qlimit_mode == :adjust_vset ? _build_vset_adjust_controllers(net) : Dict{Int,NamedTuple{(:prosumer_idx, :config),Tuple{Int,VoltageAdjustConfig}}}()
   base_vset = copy(Vset)
@@ -1230,6 +1236,7 @@ function run_complex_nr_rectangular_for_net!(
   history   = Float64[]
   converged = false
   iters     = 0
+  prev_pv_qreq_pu = fill(NaN, nb)
 
   if verbose > 1
     @info "Starting rectangular complex NR power flow..."
@@ -1263,9 +1270,32 @@ function run_complex_nr_rectangular_for_net!(
 
     Qload_pu = build_qload_pu(net)
 
-    if it > 1
-      Scalc_pu = calc_injections(Ybus, V)
+    Scalc_pu = calc_injections(Ybus, V)
+    current_pv_qreq_pu = fill(NaN, nb)
+    @inbounds for bus in eachindex(current_pv_qreq_pu)
+      if bus_types[bus] == :PV
+        current_pv_qreq_pu[bus] = imag(Scalc_pu[bus]) + Qload_pu[bus]
+      end
+    end
 
+    qlimit_iter_ready = it >= qlimit_start_iter
+    qlimit_auto_ready = false
+    if qlimit_start_mode in (:auto_q_delta, :iteration_or_auto)
+      max_q_delta = 0.0
+      compared = false
+      @inbounds for bus in eachindex(current_pv_qreq_pu)
+        if isfinite(current_pv_qreq_pu[bus]) && isfinite(prev_pv_qreq_pu[bus])
+          max_q_delta = max(max_q_delta, abs(current_pv_qreq_pu[bus] - prev_pv_qreq_pu[bus]))
+          compared = true
+        end
+      end
+      qlimit_auto_ready = compared && (max_q_delta <= qlimit_auto_q_delta_pu)
+    end
+    qlimit_ready = qlimit_start_mode == :iteration ? qlimit_iter_ready :
+                   qlimit_start_mode == :auto_q_delta ? qlimit_auto_ready :
+                   (qlimit_iter_ready || qlimit_auto_ready)
+
+    if qlimit_ready
       changed, reenabled = active_set_q_limits!(
         net,
         it,
@@ -1302,6 +1332,7 @@ function run_complex_nr_rectangular_for_net!(
         history[end] = max_mis  # optional: overwrite last stored value for this iteration
       end
     end
+    prev_pv_qreq_pu = current_pv_qreq_pu
     # --- Newton-Stepp (FD oder analytisch) -----------------------------
     if use_fd
       V = complex_newton_step_rectangular_fd(Ybus, V, S; slack_idx = slack_idx, damp = damp, autodamp = autodamp, autodamp_min = autodamp_min, h = 1e-6, bus_types = bus_types, Vset = Vset, dPinj_dVm = dPinj_dVm, dQinj_dVm = dQinj_dVm)
@@ -1406,6 +1437,9 @@ function runpf_rectangular!(
   start_projection_try_blend_scan::Bool = true,
   start_projection_blend_lambdas::AbstractVector{<:Real} = [0.25, 0.5, 0.75],
   start_projection_dc_angle_limit_deg::Float64 = 60.0,
+  qlimit_start_iter::Int = 2,
+  qlimit_start_mode::Symbol = :iteration,
+  qlimit_auto_q_delta_pu::Float64 = 1e-4,
 )
   iters, erg = run_complex_nr_rectangular_for_net!(
     net;
@@ -1427,6 +1461,9 @@ function runpf_rectangular!(
     start_projection_try_blend_scan = start_projection_try_blend_scan,
     start_projection_blend_lambdas = start_projection_blend_lambdas,
     start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg,
+    qlimit_start_iter = qlimit_start_iter,
+    qlimit_start_mode = qlimit_start_mode,
+    qlimit_auto_q_delta_pu = qlimit_auto_q_delta_pu,
   )
   return iters, erg
 end
@@ -1566,6 +1603,9 @@ Arguments:
 - `method::Symbol`: `:rectangular` (recommended), `:polar_full` (deprecated), or `:classic` (deprecated)
 - `autodamp::Bool`: enable residual-based backtracking for rectangular Newton steps
 - `autodamp_min::Float64`: minimum automatic damping factor when `autodamp = true`
+- `qlimit_start_iter::Int`: first Newton iteration where PV→PQ Q-limit switching may run in `:iteration` mode
+- `qlimit_start_mode::Symbol`: `:iteration`, `:auto_q_delta`, or `:iteration_or_auto` start criterion for PV→PQ switching
+- `qlimit_auto_q_delta_pu::Float64`: PV reactive-power request change threshold for automatic switching start
 
 Notes:
 - Link-flow recovery (`calcLinkFlowsKCL!`) is method-agnostic and uses solved PF results.
@@ -1600,6 +1640,9 @@ function runpf!(
   start_projection_try_blend_scan::Bool = true,
   start_projection_blend_lambdas::AbstractVector{<:Real} = [0.25, 0.5, 0.75],
   start_projection_dc_angle_limit_deg::Float64 = 60.0,
+  qlimit_start_iter::Int = 2,
+  qlimit_start_mode::Symbol = :iteration,
+  qlimit_auto_q_delta_pu::Float64 = 1e-4,
 )
   wnet, reps, has_merges = _merged_pf_net(net)
   refreshBusTypesFromProsumers!(wnet)
@@ -1634,9 +1677,9 @@ function runpf!(
       if verbose > 0
         @warn "runpf!: rectangular solver detected internal Isolated buses from active-link merges; using rectangular FD fallback instead of :polar_full"
       end
-      iters, erg = runpf_rectangular!(wnet, maxIte, tolerance, verbose; opt_fd = true, opt_sparse = opt_sparse, damp = damp, autodamp = autodamp, autodamp_min = autodamp_min, opt_flatstart = opt_flatstart, pv_table_rows = pv_table_rows, lock_pv_to_pq_buses = lock_pv_to_pq_buses, qlimit_mode = qlimit_mode, qlimit_max_outer = qlimit_max_outer, start_projection = start_projection, start_projection_try_dc_start = start_projection_try_dc_start, start_projection_try_blend_scan = start_projection_try_blend_scan, start_projection_blend_lambdas = start_projection_blend_lambdas, start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg)
+      iters, erg = runpf_rectangular!(wnet, maxIte, tolerance, verbose; opt_fd = true, opt_sparse = opt_sparse, damp = damp, autodamp = autodamp, autodamp_min = autodamp_min, opt_flatstart = opt_flatstart, pv_table_rows = pv_table_rows, lock_pv_to_pq_buses = lock_pv_to_pq_buses, qlimit_mode = qlimit_mode, qlimit_max_outer = qlimit_max_outer, start_projection = start_projection, start_projection_try_dc_start = start_projection_try_dc_start, start_projection_try_blend_scan = start_projection_try_blend_scan, start_projection_blend_lambdas = start_projection_blend_lambdas, start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg, qlimit_start_iter = qlimit_start_iter, qlimit_start_mode = qlimit_start_mode, qlimit_auto_q_delta_pu = qlimit_auto_q_delta_pu)
     else
-      iters, erg = runpf_rectangular!(wnet, maxIte, tolerance, verbose; opt_fd = opt_fd, opt_sparse = opt_sparse, damp = damp, autodamp = autodamp, autodamp_min = autodamp_min, opt_flatstart = opt_flatstart, pv_table_rows = pv_table_rows, lock_pv_to_pq_buses = lock_pv_to_pq_buses, qlimit_mode = qlimit_mode, qlimit_max_outer = qlimit_max_outer, start_projection = start_projection, start_projection_try_dc_start = start_projection_try_dc_start, start_projection_try_blend_scan = start_projection_try_blend_scan, start_projection_blend_lambdas = start_projection_blend_lambdas, start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg)
+      iters, erg = runpf_rectangular!(wnet, maxIte, tolerance, verbose; opt_fd = opt_fd, opt_sparse = opt_sparse, damp = damp, autodamp = autodamp, autodamp_min = autodamp_min, opt_flatstart = opt_flatstart, pv_table_rows = pv_table_rows, lock_pv_to_pq_buses = lock_pv_to_pq_buses, qlimit_mode = qlimit_mode, qlimit_max_outer = qlimit_max_outer, start_projection = start_projection, start_projection_try_dc_start = start_projection_try_dc_start, start_projection_try_blend_scan = start_projection_try_blend_scan, start_projection_blend_lambdas = start_projection_blend_lambdas, start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg, qlimit_start_iter = qlimit_start_iter, qlimit_start_mode = qlimit_start_mode, qlimit_auto_q_delta_pu = qlimit_auto_q_delta_pu)
     end
     if erg == 0 && has_merges
       _sync_merged_results_to_original!()

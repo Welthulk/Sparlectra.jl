@@ -1635,6 +1635,28 @@ function test_q_limit_default_behavior_unchanged()::Bool
   return erg_default == 0 && erg_explicit == 0 && same_type && same_vm
 end
 
+
+function test_q_limit_start_iter_delays_switching()::Bool
+  net = createTest3BusNet(cooldown = 0, hyst_pu = 0.0, qlim_min = -15.0, qlim_max = 15.0)
+  _, erg = runpf!(net, 3, 1e-12, 0; method = :rectangular, qlimit_start_iter = 10)
+  bus = geNetBusIdx(net = net, busName = "STATION1")
+  return erg == 1 && getNodeType(net.nodeVec[bus]) == Sparlectra.PV && isempty(net.qLimitLog)
+end
+
+function test_q_limit_auto_q_delta_accepts_switching()::Bool
+  net = createTest3BusNet(cooldown = 0, hyst_pu = 0.0, qlim_min = -15.0, qlim_max = 15.0)
+  _, erg = runpf!(net, 30, 1e-8, 0; method = :rectangular, qlimit_start_mode = :auto_q_delta, qlimit_auto_q_delta_pu = Inf)
+  bus = geNetBusIdx(net = net, busName = "STATION1")
+  return erg == 0 && getNodeType(net.nodeVec[bus]) == Sparlectra.PQ && !isempty(net.qLimitLog)
+end
+
+function test_solve_linear_singular_sparse_qr_fallback()::Bool
+  A = sparse([1.0 1.0; 2.0 2.0])
+  b = [1.0, 2.0]
+  x = Sparlectra.solve_linear(A, b)
+  return all(isfinite, x) && isapprox(A * x, b; atol = 1e-10, rtol = 0.0)
+end
+
 function test_bus_type_resolution_from_prosumers()::Bool
   net = Net(name = "bus_type_resolution", baseMVA = 100.0)
   addBus!(net = net, busName = "LoadBus", vn_kV = 110.0)
@@ -1775,6 +1797,9 @@ function run_grid_tests()
       @test test_q_limit_adjust_vset_step_exhaustion_fallback() == true
       @test test_q_limit_adjust_vset_multigen_single_controller() == true
       @test test_q_limit_default_behavior_unchanged() == true
+      @test test_q_limit_start_iter_delays_switching() == true
+      @test test_q_limit_auto_q_delta_accepts_switching() == true
+      @test test_solve_linear_singular_sparse_qr_fallback() == true
       @test test_bus_type_resolution_from_prosumers() == true
       @test test_multiple_slack_prosumers_same_bus_supported() == true
       @test test_regulated_generator_bus_targets_include_unregulated_generators() == true
