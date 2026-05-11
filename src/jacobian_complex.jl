@@ -56,6 +56,8 @@ using LinearAlgebra
 using SparseArrays
 using Printf
 
+_is_rectangular_linear_step_failure(e) = e isa LinearAlgebra.SingularException || e isa LinearAlgebra.LAPACKException
+
 """
     build_complex_jacobian(Ybus, V)
 
@@ -1333,11 +1335,20 @@ function run_complex_nr_rectangular_for_net!(
       end
     end
     prev_pv_qreq_pu = current_pv_qreq_pu
-    # --- Newton-Stepp (FD oder analytisch) -----------------------------
-    if use_fd
-      V = complex_newton_step_rectangular_fd(Ybus, V, S; slack_idx = slack_idx, damp = damp, autodamp = autodamp, autodamp_min = autodamp_min, h = 1e-6, bus_types = bus_types, Vset = Vset, dPinj_dVm = dPinj_dVm, dQinj_dVm = dQinj_dVm)
-    else
-      V = complex_newton_step_rectangular(Ybus, V, S; slack_idx = slack_idx, damp = damp, autodamp = autodamp, autodamp_min = autodamp_min, bus_types = bus_types, Vset = Vset, use_sparse = sparse, dPinj_dVm = dPinj_dVm, dQinj_dVm = dQinj_dVm)
+    # --- Newton step (FD or analytic) -----------------------------------
+    try
+      if use_fd
+        V = complex_newton_step_rectangular_fd(Ybus, V, S; slack_idx = slack_idx, damp = damp, autodamp = autodamp, autodamp_min = autodamp_min, h = 1e-6, bus_types = bus_types, Vset = Vset, dPinj_dVm = dPinj_dVm, dQinj_dVm = dQinj_dVm)
+      else
+        V = complex_newton_step_rectangular(Ybus, V, S; slack_idx = slack_idx, damp = damp, autodamp = autodamp, autodamp_min = autodamp_min, bus_types = bus_types, Vset = Vset, use_sparse = sparse, dPinj_dVm = dPinj_dVm, dQinj_dVm = dQinj_dVm)
+      end
+    catch step_error
+      if _is_rectangular_linear_step_failure(step_error)
+        verbose > 0 && @warn "Rectangular Newton step failed because the linear Jacobian solve was singular; returning non-convergence." iteration = it max_mismatch = max_mis exception = (typeof(step_error), sprint(showerror, step_error))
+        converged = false
+        break
+      end
+      rethrow(step_error)
     end
 
     # Keep slack voltage fixed (safety belt)

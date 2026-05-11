@@ -36,8 +36,8 @@ function run_matpower_example_tests()
       @test occursin(keyword * " = " * keyword, source)
     end
 
-    @test occursin("Base.invokelatest(bench_run_acpflow;", source)
-    @test occursin("Base.invokelatest(main)", source)
+    @test occursin("Base.invokelatest(getfield(@__MODULE__, :bench_run_acpflow);", source)
+    @test occursin("Base.invokelatest(getfield(@__MODULE__, :main))", source)
     @test occursin("SPARLECTRA_MATPOWER_IMPORT_NO_MAIN", source)
     @test occursin("function _enable_pq_gen_controllers_for_method(method::Symbol, requested::Bool)::Bool", source)
     @test occursin("return requested && method === :rectangular", source)
