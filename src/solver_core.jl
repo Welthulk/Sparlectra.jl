@@ -23,6 +23,7 @@
 # ------------------------------------------------------------
 
 using LinearAlgebra
+using SparseArrays
 
 """
     calc_currents(Y, V) -> I
@@ -46,41 +47,91 @@ end
 """
     solve_linear(A, b; allow_pinv=true)
 
-Solve A*x=b. If SingularException => allow_pinv=true: pinv(A)*b.
+Solve `A*x = b`. If the direct solve reports a singular matrix and
+`allow_pinv=true`, first try a rank-revealing QR solve. For smaller systems,
+fall back to dense SVD if QR also fails. Large sparse systems deliberately do
+not densify here; callers that can continue safely should catch the remaining
+singular linear-step error and report non-convergence instead.
 """
 function solve_linear(A, b; allow_pinv::Bool = true)
   try
     return A \ b
   catch e
-    if allow_pinv && (e isa LinearAlgebra.SingularException)
-      all(isfinite, A) && all(isfinite, b) || rethrow(e)
+    if allow_pinv && _is_linear_singularity_error(e)
+      _allfinite_matrix(A) && all(isfinite, b) || rethrow(e)
       try
-        # Prefer a rank-revealing QR fallback.  It avoids forming a dense SVD for
+        # Prefer a rank-revealing QR fallback. It avoids forming a dense SVD for
         # large sparse Jacobians and is more robust than `pinv` on singular steps.
         return qr(A) \ b
       catch qr_error
-        if qr_error isa LinearAlgebra.LAPACKException || qr_error isa ArgumentError || qr_error isa LinearAlgebra.SingularException
-          return _svd_pinv_solve(Matrix(A), b)
-        end
-        rethrow(qr_error)
+        _is_linear_fallback_error(qr_error) || rethrow(qr_error)
+        _dense_svd_fallback_allowed(A) || rethrow(qr_error)
+        return _svd_pinv_solve(Matrix(A), b)
       end
     end
     rethrow(e)
   end
 end
 
+_is_linear_singularity_error(e) = e isa LinearAlgebra.SingularException
+_is_linear_fallback_error(e) = e isa LinearAlgebra.LAPACKException || e isa ArgumentError || e isa LinearAlgebra.SingularException
+
+function _allfinite_matrix(A)::Bool
+  if A isa SparseArrays.AbstractSparseMatrixCSC
+    return all(isfinite, nonzeros(A))
+  end
+  return all(isfinite, A)
+end
+
+_is_linear_singularity_error(e) = e isa LinearAlgebra.SingularException
+_is_linear_fallback_error(e) = e isa LinearAlgebra.LAPACKException || e isa ArgumentError || e isa LinearAlgebra.SingularException
+
+function _allfinite_matrix(A)::Bool
+  if A isa SparseArrays.AbstractSparseMatrixCSC
+    return all(isfinite, nonzeros(A))
+  end
+  return all(isfinite, A)
+end
+
+function _dense_svd_fallback_allowed(A)::Bool
+  return max(size(A)...) <= 2000
+end
+
+function _regularized_normal_solve(A::AbstractMatrix, b::AbstractVector)
+  At = A'
+  normal_matrix = At * A
+  normal_rhs = At * b
+  scale = _matrix_abs_scale(A)
+  λ0 = max(sqrt(eps(Float64)) * max(scale * scale, 1.0), eps(Float64))
+  for factor in (1.0, 1e2, 1e4, 1e6)
+    λ = λ0 * factor
+    x = (normal_matrix + λ * I) \ normal_rhs
+    all(isfinite, x) && return x
+  end
+  error("regularized linear solve produced non-finite values")
+end
+
+function _matrix_abs_scale(A)::Float64
+  if A isa SparseArrays.AbstractSparseMatrixCSC
+    vals = nonzeros(A)
+    isempty(vals) && return 0.0
+    return Float64(maximum(abs, vals))
+  end
+  isempty(A) && return 0.0
+  return Float64(maximum(abs, A))
+end
+
 function _svd_pinv_solve(A::AbstractMatrix, b)
   F = svd(A; full = false, alg = LinearAlgebra.QRIteration())
   isempty(F.S) && return zeros(eltype(b), size(A, 2))
   cutoff = max(size(A)...) * eps(real(eltype(F.S))) * maximum(F.S)
-  Sinv_b = similar(F.U' * b)
   Ub = F.U' * b
+  Sinv_b = similar(Ub)
   @inbounds for i in eachindex(Ub)
     Sinv_b[i] = F.S[i] > cutoff ? Ub[i] / F.S[i] : zero(Ub[i])
   end
   return F.Vt' * Sinv_b
 end
-
 """
     non_slack_indices(n, slack_idx) -> Vector{Int}
 """

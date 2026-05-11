@@ -458,7 +458,7 @@ function main()
     lock_pv_to_pq_buses = _mpc_pv_bus_ids(mpc)
   end
 
-  bench = Base.invokelatest(bench_run_acpflow;
+  bench = Base.invokelatest(getfield(@__MODULE__, :bench_run_acpflow);
     casefile = basename(local_case),
     methods = methods,
     mpc = mpc,
@@ -498,5 +498,5 @@ function main()
 end
 
 if get(ENV, "SPARLECTRA_MATPOWER_IMPORT_NO_MAIN", "") != "1"
-  Base.invokelatest(main)
+  Base.invokelatest(getfield(@__MODULE__, :main))
 end
