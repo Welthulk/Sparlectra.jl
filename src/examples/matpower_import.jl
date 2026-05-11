@@ -458,7 +458,7 @@ function main()
     lock_pv_to_pq_buses = _mpc_pv_bus_ids(mpc)
   end
 
-  bench = Base.invokelatest(() -> bench_run_acpflow(;
+  bench = Base.invokelatest(bench_run_acpflow;
     casefile = basename(local_case),
     methods = methods,
     mpc = mpc,
@@ -493,8 +493,10 @@ function main()
     benchmark = cfg.benchmark,
     enable_pq_gen_controllers = cfg.enable_pq_gen_controllers,
     bus_shunt_model = cfg.bus_shunt_model,
-  ))
+  )
   return bench
 end
 
-Base.invokelatest(() -> main())
+if get(ENV, "SPARLECTRA_MATPOWER_IMPORT_NO_MAIN", "") != "1"
+  Base.invokelatest(main)
+end

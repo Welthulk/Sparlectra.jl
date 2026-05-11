@@ -1,4 +1,8 @@
 # Change Log
+## Version 0.7.6 – 2026-05-11
+### Issue #186: Singular Jacobian / World-Age Issue in rectangular NR solver
+* Fixed the MATPOWER import example so Julia 1.12 / Revise entry points use `Base.invokelatest`, corrected keyword forwarding for damping and start-projection solver options, prevented the MATPOWER fallback diagnostic from enabling PQ-generator voltage-dependent controllers for non-rectangular methods, and added import-safe smoke coverage for those options.
+
 ## Version 0.7.5 – 2026-05-10
 ### New Features 
 * Added PV→PQ Q-limit switching start controls (`qlimit_start_iter`, `qlimit_start_mode`, `qlimit_auto_q_delta_pu`) for rectangular power-flow runs.
