@@ -36,11 +36,44 @@ function run_matpower_example_tests()
       @test occursin(keyword * " = " * keyword, source)
     end
 
-    @test occursin("Base.invokelatest(() -> bench_run_acpflow(;", source)
-    @test occursin("Base.invokelatest(() -> main())", source)
+    @test occursin("Base.invokelatest(bench_run_acpflow;", source)
+    @test occursin("Base.invokelatest(main)", source)
+    @test occursin("SPARLECTRA_MATPOWER_IMPORT_NO_MAIN", source)
     @test occursin("function _enable_pq_gen_controllers_for_method(method::Symbol, requested::Bool)::Bool", source)
     @test occursin("return requested && method === :rectangular", source)
     @test occursin("!enable_pq_gen_controllers && m === :rectangular", source)
+
+    example_path = joinpath(@__DIR__, "..", "src", "examples", "matpower_import.jl")
+    old_no_main = get(ENV, "SPARLECTRA_MATPOWER_IMPORT_NO_MAIN", nothing)
+    ENV["SPARLECTRA_MATPOWER_IMPORT_NO_MAIN"] = "1"
+    mod = Module(:MatpowerImportExampleSmoke)
+    try
+      Base.include(mod, example_path)
+      cfg = Base.invokelatest(() -> getfield(mod, :bench_config_for_case)("case14.m", Dict{String,Any}(
+        "autodamp" => true,
+        "autodamp_min" => 0.002,
+        "start_projection" => true,
+        "start_projection_try_dc_start" => false,
+        "start_projection_try_blend_scan" => false,
+        "start_projection_blend_lambdas" => [0.1, 0.9],
+        "start_projection_dc_angle_limit_deg" => 45.0,
+      )))
+      @test cfg.autodamp === true
+      @test cfg.autodamp_min == 0.002
+      @test cfg.start_projection === true
+      @test cfg.start_projection_try_dc_start === false
+      @test cfg.start_projection_try_blend_scan === false
+      @test cfg.start_projection_blend_lambdas == [0.1, 0.9]
+      @test cfg.start_projection_dc_angle_limit_deg == 45.0
+      @test Base.invokelatest(() -> getfield(mod, :_enable_pq_gen_controllers_for_method)(:rectangular, true)) === true
+      @test Base.invokelatest(() -> getfield(mod, :_enable_pq_gen_controllers_for_method)(:polar, true)) === false
+    finally
+      if isnothing(old_no_main)
+        delete!(ENV, "SPARLECTRA_MATPOWER_IMPORT_NO_MAIN")
+      else
+        ENV["SPARLECTRA_MATPOWER_IMPORT_NO_MAIN"] = old_no_main
+      end
+    end
   end
   return true
 end
