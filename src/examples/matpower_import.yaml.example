@@ -40,6 +40,14 @@ verbose: 1
 cooldown_iters: 0
 q_hyst_pu: 0.0
 
+# PV->PQ Q-limit switching start controls:
+# - qlimit_start_mode: iteration, auto_q_delta, or iteration_or_auto.
+# - iteration starts switching at qlimit_start_iter (default preserves previous iteration 2 behavior).
+# - auto_q_delta starts once PV reactive-power request changes are <= qlimit_auto_q_delta_pu.
+qlimit_start_iter: 2
+qlimit_start_mode: iteration
+qlimit_auto_q_delta_pu: 1.0e-4
+
 # MATPOWER comparison controls
 show_diff: true
 tol_vm: 0.02
