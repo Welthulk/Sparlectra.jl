@@ -1,8 +1,8 @@
 # Change Log
 ## Version 0.7.6 – 2026-05-11
-### Issue #186: Singular Jacobian / World-Age Issue in rectangular NR solver
+### Bugfix
+* Issue #186: Singular Jacobian / World-Age Issue in rectangular NR solver
 * Fixed rectangular MATPOWER runs so a singular Newton Jacobian is reported as non-convergence instead of aborting the example, and tightened Julia 1.12 / Revise entry-point calls to avoid world-age binding warnings.
-* Fixed the MATPOWER import example so Julia 1.12 / Revise entry points use `Base.invokelatest`, corrected keyword forwarding for damping and start-projection solver options, prevented the MATPOWER fallback diagnostic from enabling PQ-generator voltage-dependent controllers for non-rectangular methods, and added import-safe smoke coverage for those options.
 
 ## Version 0.7.5 – 2026-05-10
 ### New Features 

@@ -73,28 +73,6 @@ function solve_linear(A, b; allow_pinv::Bool = true)
   end
 end
 
-function _svd_pinv_solve(A::AbstractMatrix, b)
-  F = svd(A; full = false, alg = LinearAlgebra.QRIteration())
-  isempty(F.S) && return zeros(eltype(b), size(A, 2))
-  cutoff = max(size(A)...) * eps(real(eltype(F.S))) * maximum(F.S)
-  Sinv_b = similar(F.U' * b)
-  Ub = F.U' * b
-  @inbounds for i in eachindex(Ub)
-    Sinv_b[i] = F.S[i] > cutoff ? Ub[i] / F.S[i] : zero(Ub[i])
-  end
-  return F.Vt' * Sinv_b
-end
-
-_is_linear_singularity_error(e) = e isa LinearAlgebra.SingularException
-_is_linear_fallback_error(e) = e isa LinearAlgebra.LAPACKException || e isa ArgumentError || e isa LinearAlgebra.SingularException
-
-function _allfinite_matrix(A)::Bool
-  if A isa SparseArrays.AbstractSparseMatrixCSC
-    return all(isfinite, nonzeros(A))
-  end
-  return all(isfinite, A)
-end
-
 _is_linear_singularity_error(e) = e isa LinearAlgebra.SingularException
 _is_linear_fallback_error(e) = e isa LinearAlgebra.LAPACKException || e isa ArgumentError || e isa LinearAlgebra.SingularException
 
