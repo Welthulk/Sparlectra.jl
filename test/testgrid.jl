@@ -1656,6 +1656,22 @@ function test_solve_linear_singular_sparse_qr_fallback()::Bool
   x = Sparlectra.solve_linear(A, b)
   return all(isfinite, x) && isapprox(A * x, b; atol = 1e-10, rtol = 0.0)
 end
+function test_solve_linear_regularized_sparse_fallback()::Bool
+  A = spzeros(Float64, 3, 3)
+  b = [1.0, -2.0, 3.0]
+  x = Sparlectra._regularized_normal_solve(A, b)
+  return length(x) == 3 && all(isfinite, x) && norm(x) <= 1e-12
+end
+
+function test_rectangular_singular_step_returns_nonconvergence()::Bool
+  net = Net(name = "singular_rectangular_step", baseMVA = 100.0)
+  addBus!(net = net, busName = "Slack", vn_kV = 110.0)
+  addBus!(net = net, busName = "Load", vn_kV = 110.0)
+  addProsumer!(net = net, busName = "Slack", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "Slack")
+  addProsumer!(net = net, busName = "Load", type = "ENERGYCONSUMER", p = 10.0, q = 5.0)
+  _, erg = runpf!(net, 5, 1e-8, 0; method = :rectangular, opt_sparse = true)
+  return erg == 1
+end
 
 function test_bus_type_resolution_from_prosumers()::Bool
   net = Net(name = "bus_type_resolution", baseMVA = 100.0)
@@ -1800,6 +1816,7 @@ function run_grid_tests()
       @test test_q_limit_start_iter_delays_switching() == true
       @test test_q_limit_auto_q_delta_accepts_switching() == true
       @test test_solve_linear_singular_sparse_qr_fallback() == true
+      @test test_rectangular_singular_step_returns_nonconvergence() == true
       @test test_bus_type_resolution_from_prosumers() == true
       @test test_multiple_slack_prosumers_same_bus_supported() == true
       @test test_regulated_generator_bus_targets_include_unregulated_generators() == true
