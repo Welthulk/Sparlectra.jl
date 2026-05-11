@@ -452,3 +452,7 @@ If the example requires arguments or a config file, use the smallest available M
 - Do not introduce the term `APSLF` into newly generated public-facing repository artifacts.
 - Existing historic references may remain unchanged unless the task explicitly includes renaming or cleanup work.
 - If unsure whether a text is public-facing, treat it as public-facing by default.
+
+## Do not add new changelog!
+- Changelog remains here docs/src/changelog.md
+- Add new entries to that file, do not create a new changelog or add entries to the README or other documentation files.
