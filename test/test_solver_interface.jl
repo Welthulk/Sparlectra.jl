@@ -95,6 +95,32 @@ function run_solver_interface_tests()
   # external model API, Q-limit reporting/autocorrection, PV->PQ locking, and final-limit reporting.
   @testset "Solver interface" begin
     @test test_external_solver_interface() == true
+    @testset "Flat-start voltage setpoints" begin
+      net = createTest3BusNet()
+      net.nodeVec[1]._vm_pu = 0.94
+      net.nodeVec[1]._va_deg = -7.0
+      net.nodeVec[2]._vm_pu = 1.04
+      net.nodeVec[2]._va_deg = -3.0
+      net.nodeVec[3]._vm_pu = 1.06
+      net.nodeVec[3]._va_deg = 2.0
+
+      Vflat, slack_idx = Sparlectra.initialVrect(net; flatstart = true)
+      @test slack_idx == 3
+      @test abs(Vflat[1]) == 1.0
+      @test angle(Vflat[1]) == 0.0
+      @test abs(Vflat[2]) == 1.04
+      @test angle(Vflat[2]) == 0.0
+      @test abs(Vflat[3]) == 1.06
+      @test angle(Vflat[3]) == 0.0
+
+      Vseeded, _ = Sparlectra.initialVrect(net; flatstart = false)
+      @test isapprox(abs(Vseeded[1]), 0.94; atol = 1e-12)
+      @test isapprox(rad2deg(angle(Vseeded[1])), -7.0; atol = 1e-12)
+      @test isapprox(abs(Vseeded[2]), 1.04; atol = 1e-12)
+      @test isapprox(rad2deg(angle(Vseeded[2])), -3.0; atol = 1e-12)
+      @test isapprox(abs(Vseeded[3]), 1.06; atol = 1e-12)
+      @test isapprox(rad2deg(angle(Vseeded[3])), 2.0; atol = 1e-12)
+    end
     # Checks tabular Q-limit output truncation plus sign-validation/autocorrect behavior.
     @testset "Q-limit reporting and validation options" begin
       net = createTest3BusNet()

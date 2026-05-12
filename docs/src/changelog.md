@@ -3,6 +3,9 @@
 ### Bugfix
 * Issue #186: Singular Jacobian / World-Age Issue in rectangular NR solver
 * Fixed rectangular MATPOWER runs so a singular Newton Jacobian is reported as non-convergence instead of aborting the example, and tightened Julia 1.12 / Revise entry-point calls to avoid world-age binding warnings.
+* Fixed the MATPOWER example wrapper so Julia 1.12 / Revise entry calls use `invokelatest` and the `autodamp` / `start_projection` keyword set is accepted consistently by the benchmark path.
+* Fixed rectangular flat-start initialization so slack/PV voltage magnitudes from MATPOWER remain active setpoints while PQ buses and angles start flat.
+* Added a MATPOWER example warning explaining that `opt_flatstart=true` ignores stored solved voltage angles and PQ-bus voltage magnitudes, while preserving slack/PV voltage setpoints.
 
 ## Version 0.7.5 – 2026-05-10
 ### New Features 

@@ -128,8 +128,8 @@ const DEFAULT_TOL_VA = 5e-1
 # If additional case-specific options are introduced (e.g. PV->PQ lock lists),
 # they can be added in this table instead of using local `if case == ...` blocks.
 const CASE_BENCH_OVERRIDES = Dict{String,NamedTuple}(
-  # Example:
-  # "case1951rte.m" => (; lock_pv_to_pq_buses = [44]),
+# Example:
+# "case1951rte.m" => (; lock_pv_to_pq_buses = [44]),
 )
 
 function bench_config_for_case(case_name::AbstractString, yaml_cfg::Dict{String,Any})
@@ -208,6 +208,14 @@ function bench_config_for_case(case_name::AbstractString, yaml_cfg::Dict{String,
   return merge(base, case_override, yaml_override)
 end
 
+function _warn_if_flatstart_uses_only_voltage_setpoints(case_name::AbstractString, cfg, mpc)
+  !cfg.opt_flatstart || return nothing
+  mp_has_vm_va(mpc) || return nothing
+
+  @warn "opt_flatstart=true ignores MATPOWER solved voltage angles and PQ-bus voltage magnitudes. Slack/PV voltage magnitudes are still used as setpoints, so this is a true flat-start solve rather than a restart from the stored MATPOWER solution." case = case_name
+  return nothing
+end
+
 function mp_has_vm_va(mpc)
   size(mpc.bus, 2) >= 9 || return false
   vm = mpc.bus[:, 8]
@@ -268,7 +276,42 @@ end
 # -----------------------------------------------------------------------------
 # Benchmark helper: benchmark exactly run_acpflow(...)
 # -----------------------------------------------------------------------------
-function bench_run_acpflow(; casefile::String, methods::Vector{Symbol}, mpc, logfile::String, show_diff::Bool, tol_vm::Float64, tol_va::Float64, max_ite::Int = 30, tol::Float64 = 1e-6, opt_fd::Bool = true, opt_sparse::Bool = true, opt_flatstart::Bool = true, autodamp::Bool = false, autodamp_min::Float64 = 1e-3, start_projection::Bool = false, start_projection_try_dc_start::Bool = true, start_projection_try_blend_scan::Bool = true, start_projection_blend_lambdas::AbstractVector{<:Real} = [0.25, 0.5, 0.75], start_projection_dc_angle_limit_deg::Float64 = 60.0, qlimit_start_iter::Int = 2, qlimit_start_mode::Symbol = :iteration, qlimit_auto_q_delta_pu::Float64 = 1e-4, verbose::Int = 0, cooldown_iters::Int = 0, q_hyst_pu::Float64 = 0.0, lock_pv_to_pq_buses::AbstractVector{Int} = Int[], seconds::Float64 = 2.0, samples::Int = 50, show_once::Bool = false, show_once_output::Symbol = :classic, show_once_max_nodes::Int = 0, benchmark::Bool = true, enable_pq_gen_controllers::Bool = true, bus_shunt_model::String = "admittance")
+function bench_run_acpflow(;
+  casefile::String,
+  methods::Vector{Symbol},
+  mpc,
+  logfile::String,
+  show_diff::Bool,
+  tol_vm::Float64,
+  tol_va::Float64,
+  max_ite::Int = 30,
+  tol::Float64 = 1e-6,
+  opt_fd::Bool = true,
+  opt_sparse::Bool = true,
+  opt_flatstart::Bool = true,
+  autodamp::Bool = false,
+  autodamp_min::Float64 = 1e-3,
+  start_projection::Bool = false,
+  start_projection_try_dc_start::Bool = true,
+  start_projection_try_blend_scan::Bool = true,
+  start_projection_blend_lambdas::AbstractVector{<:Real} = [0.25, 0.5, 0.75],
+  start_projection_dc_angle_limit_deg::Float64 = 60.0,
+  qlimit_start_iter::Int = 2,
+  qlimit_start_mode::Symbol = :iteration,
+  qlimit_auto_q_delta_pu::Float64 = 1e-4,
+  verbose::Int = 0,
+  cooldown_iters::Int = 0,
+  q_hyst_pu::Float64 = 0.0,
+  lock_pv_to_pq_buses::AbstractVector{Int} = Int[],
+  seconds::Float64 = 2.0,
+  samples::Int = 50,
+  show_once::Bool = false,
+  show_once_output::Symbol = :classic,
+  show_once_max_nodes::Int = 0,
+  benchmark::Bool = true,
+  enable_pq_gen_controllers::Bool = true,
+  bus_shunt_model::String = "admittance",
+)
   t0 = time()
   results = Dict{Symbol,Any}()
 
@@ -293,7 +336,34 @@ function bench_run_acpflow(; casefile::String, methods::Vector{Symbol}, mpc, log
             println("RUN method = ", m)
             println("=================================================================\n")
             status_ref = Ref{Any}(nothing)
-            net_res = run_acpflow(casefile = casefile, max_ite = max_ite, tol = tol, opt_fd = opt_fd, opt_sparse = opt_sparse, method = m, autodamp = autodamp, autodamp_min = autodamp_min, start_projection = start_projection, start_projection_try_dc_start = start_projection_try_dc_start, start_projection_try_blend_scan = start_projection_try_blend_scan, start_projection_blend_lambdas = start_projection_blend_lambdas, start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg, qlimit_start_iter = qlimit_start_iter, qlimit_start_mode = qlimit_start_mode, qlimit_auto_q_delta_pu = qlimit_auto_q_delta_pu, opt_flatstart = opt_flatstart, show_results = show_classic, show_compact_result = true, status_ref = status_ref, verbose = verbose, cooldown_iters = cooldown_iters, q_hyst_pu = q_hyst_pu, lock_pv_to_pq_buses = lock_pv_to_pq_buses, enable_pq_gen_controllers = _enable_pq_gen_controllers_for_method(m, enable_pq_gen_controllers), bus_shunt_model = bus_shunt_model)
+            net_res = run_acpflow(
+              casefile = casefile,
+              max_ite = max_ite,
+              tol = tol,
+              opt_fd = opt_fd,
+              opt_sparse = opt_sparse,
+              method = m,
+              autodamp = autodamp,
+              autodamp_min = autodamp_min,
+              start_projection = start_projection,
+              start_projection_try_dc_start = start_projection_try_dc_start,
+              start_projection_try_blend_scan = start_projection_try_blend_scan,
+              start_projection_blend_lambdas = start_projection_blend_lambdas,
+              start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg,
+              qlimit_start_iter = qlimit_start_iter,
+              qlimit_start_mode = qlimit_start_mode,
+              qlimit_auto_q_delta_pu = qlimit_auto_q_delta_pu,
+              opt_flatstart = opt_flatstart,
+              show_results = show_classic,
+              show_compact_result = true,
+              status_ref = status_ref,
+              verbose = verbose,
+              cooldown_iters = cooldown_iters,
+              q_hyst_pu = q_hyst_pu,
+              lock_pv_to_pq_buses = lock_pv_to_pq_buses,
+              enable_pq_gen_controllers = _enable_pq_gen_controllers_for_method(m, enable_pq_gen_controllers),
+              bus_shunt_model = bus_shunt_model,
+            )
             status = status_ref[]
             if !show_classic
               _print_dataframe_nodes(io, net_res; max_nodes = show_once_max_nodes)
@@ -308,7 +378,34 @@ function bench_run_acpflow(; casefile::String, methods::Vector{Symbol}, mpc, log
             if !Bool(get(status, :converged, false)) && !enable_pq_gen_controllers && m === :rectangular
               println("Fallback diagnostic: rerun with enable_pq_gen_controllers=true")
               fb_ref = Ref{Any}(nothing)
-              run_acpflow(casefile = casefile, max_ite = max_ite, tol = tol, opt_fd = opt_fd, opt_sparse = opt_sparse, method = m, autodamp = autodamp, autodamp_min = autodamp_min, start_projection = start_projection, start_projection_try_dc_start = start_projection_try_dc_start, start_projection_try_blend_scan = start_projection_try_blend_scan, start_projection_blend_lambdas = start_projection_blend_lambdas, start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg, qlimit_start_iter = qlimit_start_iter, qlimit_start_mode = qlimit_start_mode, qlimit_auto_q_delta_pu = qlimit_auto_q_delta_pu, opt_flatstart = opt_flatstart, show_results = false, show_compact_result = true, status_ref = fb_ref, verbose = 0, cooldown_iters = cooldown_iters, q_hyst_pu = q_hyst_pu, lock_pv_to_pq_buses = lock_pv_to_pq_buses, enable_pq_gen_controllers = true, bus_shunt_model = bus_shunt_model)
+              run_acpflow(
+                casefile = casefile,
+                max_ite = max_ite,
+                tol = tol,
+                opt_fd = opt_fd,
+                opt_sparse = opt_sparse,
+                method = m,
+                autodamp = autodamp,
+                autodamp_min = autodamp_min,
+                start_projection = start_projection,
+                start_projection_try_dc_start = start_projection_try_dc_start,
+                start_projection_try_blend_scan = start_projection_try_blend_scan,
+                start_projection_blend_lambdas = start_projection_blend_lambdas,
+                start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg,
+                qlimit_start_iter = qlimit_start_iter,
+                qlimit_start_mode = qlimit_start_mode,
+                qlimit_auto_q_delta_pu = qlimit_auto_q_delta_pu,
+                opt_flatstart = opt_flatstart,
+                show_results = false,
+                show_compact_result = true,
+                status_ref = fb_ref,
+                verbose = 0,
+                cooldown_iters = cooldown_iters,
+                q_hyst_pu = q_hyst_pu,
+                lock_pv_to_pq_buses = lock_pv_to_pq_buses,
+                enable_pq_gen_controllers = true,
+                bus_shunt_model = bus_shunt_model,
+              )
             end
             @printf(io, "show_once method=%s output=%s\n\n", String(m), String(show_once_output))
           end
@@ -332,7 +429,33 @@ function bench_run_acpflow(; casefile::String, methods::Vector{Symbol}, mpc, log
   if !show_once
     println("\nInitial run (convergence + iterations):")
     for m in methods
-      run_acpflow(casefile = casefile, max_ite = max_ite, tol = tol, opt_fd = opt_fd, opt_sparse = opt_sparse, method = m, autodamp = autodamp, autodamp_min = autodamp_min, start_projection = start_projection, start_projection_try_dc_start = start_projection_try_dc_start, start_projection_try_blend_scan = start_projection_try_blend_scan, start_projection_blend_lambdas = start_projection_blend_lambdas, start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg, qlimit_start_iter = qlimit_start_iter, qlimit_start_mode = qlimit_start_mode, qlimit_auto_q_delta_pu = qlimit_auto_q_delta_pu, opt_flatstart = opt_flatstart, show_results = false, show_compact_result = true, verbose = 0, cooldown_iters = cooldown_iters, q_hyst_pu = q_hyst_pu, lock_pv_to_pq_buses = lock_pv_to_pq_buses, enable_pq_gen_controllers = _enable_pq_gen_controllers_for_method(m, enable_pq_gen_controllers), bus_shunt_model = bus_shunt_model)
+      run_acpflow(
+        casefile = casefile,
+        max_ite = max_ite,
+        tol = tol,
+        opt_fd = opt_fd,
+        opt_sparse = opt_sparse,
+        method = m,
+        autodamp = autodamp,
+        autodamp_min = autodamp_min,
+        start_projection = start_projection,
+        start_projection_try_dc_start = start_projection_try_dc_start,
+        start_projection_try_blend_scan = start_projection_try_blend_scan,
+        start_projection_blend_lambdas = start_projection_blend_lambdas,
+        start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg,
+        qlimit_start_iter = qlimit_start_iter,
+        qlimit_start_mode = qlimit_start_mode,
+        qlimit_auto_q_delta_pu = qlimit_auto_q_delta_pu,
+        opt_flatstart = opt_flatstart,
+        show_results = false,
+        show_compact_result = true,
+        verbose = 0,
+        cooldown_iters = cooldown_iters,
+        q_hyst_pu = q_hyst_pu,
+        lock_pv_to_pq_buses = lock_pv_to_pq_buses,
+        enable_pq_gen_controllers = _enable_pq_gen_controllers_for_method(m, enable_pq_gen_controllers),
+        bus_shunt_model = bus_shunt_model,
+      )
     end
   end
 
@@ -350,7 +473,32 @@ function bench_run_acpflow(; casefile::String, methods::Vector{Symbol}, mpc, log
   # Warmup (compile) once per method with minimal output
   println("Warmup run:")
   for m in methods
-    run_acpflow(casefile = casefile, max_ite = max_ite, tol = tol, opt_fd = opt_fd, opt_sparse = opt_sparse, method = m, autodamp = autodamp, autodamp_min = autodamp_min, start_projection = start_projection, start_projection_try_dc_start = start_projection_try_dc_start, start_projection_try_blend_scan = start_projection_try_blend_scan, start_projection_blend_lambdas = start_projection_blend_lambdas, start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg, qlimit_start_iter = qlimit_start_iter, qlimit_start_mode = qlimit_start_mode, qlimit_auto_q_delta_pu = qlimit_auto_q_delta_pu, opt_flatstart = opt_flatstart, show_results = false, verbose = 0, cooldown_iters = cooldown_iters, q_hyst_pu = q_hyst_pu, lock_pv_to_pq_buses = lock_pv_to_pq_buses, enable_pq_gen_controllers = _enable_pq_gen_controllers_for_method(m, enable_pq_gen_controllers), bus_shunt_model = bus_shunt_model)
+    run_acpflow(
+      casefile = casefile,
+      max_ite = max_ite,
+      tol = tol,
+      opt_fd = opt_fd,
+      opt_sparse = opt_sparse,
+      method = m,
+      autodamp = autodamp,
+      autodamp_min = autodamp_min,
+      start_projection = start_projection,
+      start_projection_try_dc_start = start_projection_try_dc_start,
+      start_projection_try_blend_scan = start_projection_try_blend_scan,
+      start_projection_blend_lambdas = start_projection_blend_lambdas,
+      start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg,
+      qlimit_start_iter = qlimit_start_iter,
+      qlimit_start_mode = qlimit_start_mode,
+      qlimit_auto_q_delta_pu = qlimit_auto_q_delta_pu,
+      opt_flatstart = opt_flatstart,
+      show_results = false,
+      verbose = 0,
+      cooldown_iters = cooldown_iters,
+      q_hyst_pu = q_hyst_pu,
+      lock_pv_to_pq_buses = lock_pv_to_pq_buses,
+      enable_pq_gen_controllers = _enable_pq_gen_controllers_for_method(m, enable_pq_gen_controllers),
+      bus_shunt_model = bus_shunt_model,
+    )
   end
 
   println("\n==================== Benchmark run_acpflow ====================")
@@ -366,7 +514,32 @@ function bench_run_acpflow(; casefile::String, methods::Vector{Symbol}, mpc, log
 
   for m in methods
     method_enable_pq_gen_controllers = _enable_pq_gen_controllers_for_method(m, enable_pq_gen_controllers)
-    benchable = @benchmarkable run_acpflow(casefile = casefile_, max_ite = max_ite_, tol = tol_, opt_fd = opt_fd_, opt_sparse = opt_sparse_, method = method_, autodamp = autodamp_, autodamp_min = autodamp_min_, start_projection = start_projection_, start_projection_try_dc_start = start_projection_try_dc_start_, start_projection_try_blend_scan = start_projection_try_blend_scan_, start_projection_blend_lambdas = start_projection_blend_lambdas_, start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg_, qlimit_start_iter = qlimit_start_iter_, qlimit_start_mode = qlimit_start_mode_, qlimit_auto_q_delta_pu = qlimit_auto_q_delta_pu_, opt_flatstart = opt_flatstart_, show_results = false, verbose = 0, cooldown_iters = cooldown_iters_, q_hyst_pu = q_hyst_pu_, lock_pv_to_pq_buses = lock_pv_to_pq_buses_, enable_pq_gen_controllers = enable_pq_gen_controllers_, bus_shunt_model = bus_shunt_model_) setup = (casefile_ = $casefile;
+    benchable = @benchmarkable run_acpflow(
+      casefile = casefile_,
+      max_ite = max_ite_,
+      tol = tol_,
+      opt_fd = opt_fd_,
+      opt_sparse = opt_sparse_,
+      method = method_,
+      autodamp = autodamp_,
+      autodamp_min = autodamp_min_,
+      start_projection = start_projection_,
+      start_projection_try_dc_start = start_projection_try_dc_start_,
+      start_projection_try_blend_scan = start_projection_try_blend_scan_,
+      start_projection_blend_lambdas = start_projection_blend_lambdas_,
+      start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg_,
+      qlimit_start_iter = qlimit_start_iter_,
+      qlimit_start_mode = qlimit_start_mode_,
+      qlimit_auto_q_delta_pu = qlimit_auto_q_delta_pu_,
+      opt_flatstart = opt_flatstart_,
+      show_results = false,
+      verbose = 0,
+      cooldown_iters = cooldown_iters_,
+      q_hyst_pu = q_hyst_pu_,
+      lock_pv_to_pq_buses = lock_pv_to_pq_buses_,
+      enable_pq_gen_controllers = enable_pq_gen_controllers_,
+      bus_shunt_model = bus_shunt_model_,
+    ) setup = (casefile_ = $casefile;
     max_ite_ = $max_ite;
     tol_ = $tol;
     opt_fd_ = $opt_fd;
@@ -446,6 +619,7 @@ function main()
   end
 
   cfg = bench_config_for_case(case, yaml_cfg)
+  _warn_if_flatstart_uses_only_voltage_setpoints(case, cfg, mpc)
 
   if cfg.trace_legacy_bus_type_warnings
     ENV["SPARLECTRA_TRACE_LEGACY_BUSTYPE"] = "1"
@@ -458,45 +632,47 @@ function main()
     lock_pv_to_pq_buses = _mpc_pv_bus_ids(mpc)
   end
 
-  bench = Base.invokelatest(getfield(@__MODULE__, :bench_run_acpflow);
-    casefile = basename(local_case),
-    methods = methods,
-    mpc = mpc,
-    logfile = logfile,
-    show_diff = cfg.show_diff,
-    tol_vm = cfg.tol_vm,
-    tol_va = cfg.tol_va,
-    max_ite = cfg.max_ite,
-    tol = cfg.tol,
-    opt_fd = cfg.opt_fd,
-    opt_sparse = cfg.opt_sparse,
-    opt_flatstart = cfg.opt_flatstart,
-    autodamp = cfg.autodamp,
-    autodamp_min = cfg.autodamp_min,
-    start_projection = cfg.start_projection,
-    start_projection_try_dc_start = cfg.start_projection_try_dc_start,
-    start_projection_try_blend_scan = cfg.start_projection_try_blend_scan,
-    start_projection_blend_lambdas = cfg.start_projection_blend_lambdas,
-    start_projection_dc_angle_limit_deg = cfg.start_projection_dc_angle_limit_deg,
-    qlimit_start_iter = cfg.qlimit_start_iter,
-    qlimit_start_mode = cfg.qlimit_start_mode,
-    qlimit_auto_q_delta_pu = cfg.qlimit_auto_q_delta_pu,
-    verbose = cfg.verbose,
-    cooldown_iters = cfg.cooldown_iters,
-    q_hyst_pu = cfg.q_hyst_pu,
-    lock_pv_to_pq_buses = lock_pv_to_pq_buses,
-    seconds = cfg.seconds,
-    samples = cfg.samples,
-    show_once = cfg.show_once,
-    show_once_output = cfg.show_once_output,
-    show_once_max_nodes = cfg.show_once_max_nodes,
-    benchmark = cfg.benchmark,
-    enable_pq_gen_controllers = cfg.enable_pq_gen_controllers,
-    bus_shunt_model = cfg.bus_shunt_model,
+  bench = Base.invokelatest(
+    () -> getfield(@__MODULE__, :bench_run_acpflow)(;
+      casefile = basename(local_case),
+      methods = methods,
+      mpc = mpc,
+      logfile = logfile,
+      show_diff = cfg.show_diff,
+      tol_vm = cfg.tol_vm,
+      tol_va = cfg.tol_va,
+      max_ite = cfg.max_ite,
+      tol = cfg.tol,
+      opt_fd = cfg.opt_fd,
+      opt_sparse = cfg.opt_sparse,
+      opt_flatstart = cfg.opt_flatstart,
+      autodamp = cfg.autodamp,
+      autodamp_min = cfg.autodamp_min,
+      start_projection = cfg.start_projection,
+      start_projection_try_dc_start = cfg.start_projection_try_dc_start,
+      start_projection_try_blend_scan = cfg.start_projection_try_blend_scan,
+      start_projection_blend_lambdas = cfg.start_projection_blend_lambdas,
+      start_projection_dc_angle_limit_deg = cfg.start_projection_dc_angle_limit_deg,
+      qlimit_start_iter = cfg.qlimit_start_iter,
+      qlimit_start_mode = cfg.qlimit_start_mode,
+      qlimit_auto_q_delta_pu = cfg.qlimit_auto_q_delta_pu,
+      verbose = cfg.verbose,
+      cooldown_iters = cfg.cooldown_iters,
+      q_hyst_pu = cfg.q_hyst_pu,
+      lock_pv_to_pq_buses = lock_pv_to_pq_buses,
+      seconds = cfg.seconds,
+      samples = cfg.samples,
+      show_once = cfg.show_once,
+      show_once_output = cfg.show_once_output,
+      show_once_max_nodes = cfg.show_once_max_nodes,
+      benchmark = cfg.benchmark,
+      enable_pq_gen_controllers = cfg.enable_pq_gen_controllers,
+      bus_shunt_model = cfg.bus_shunt_model,
+    ),
   )
   return bench
 end
 
 if get(ENV, "SPARLECTRA_MATPOWER_IMPORT_NO_MAIN", "") != "1"
-  Base.invokelatest(getfield(@__MODULE__, :main))
+  Base.invokelatest(() -> getfield(@__MODULE__, :main)())
 end
