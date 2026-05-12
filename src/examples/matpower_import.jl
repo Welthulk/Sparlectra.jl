@@ -209,10 +209,10 @@ function bench_config_for_case(case_name::AbstractString, yaml_cfg::Dict{String,
 end
 
 function _warn_if_flatstart_uses_only_voltage_setpoints(case_name::AbstractString, cfg, mpc)
-  !cfg.opt_flatstart || return nothing
+  cfg.opt_flatstart && return nothing
   mp_has_vm_va(mpc) || return nothing
 
-  @warn "opt_flatstart=true ignores MATPOWER solved voltage angles and PQ-bus voltage magnitudes. Slack/PV voltage magnitudes are still used as setpoints, so this is a true flat-start solve rather than a restart from the stored MATPOWER solution." case = case_name
+  @info "opt_flatstart=false uses stored MATPOWER voltage magnitudes and angles as the initial solve state. Set opt_flatstart=true to start from scratch with 1.0 pu / 0° on PQ buses and slack/PV voltage setpoints." case = case_name
   return nothing
 end
 

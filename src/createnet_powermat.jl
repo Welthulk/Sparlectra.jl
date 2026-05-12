@@ -284,6 +284,14 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
       pq_gen_controller_count += 1
     end
 
+    if btype == 2 || btype == 3
+      # MATPOWER stores PV/slack voltage setpoints in GEN.VG. Keep those
+      # setpoints authoritative for flat starts even when BUS.VM contains a
+      # solved/reference voltage from the input case.
+      node_idx = get(bus_idx_by_orig, Int(row[GEN_BUS]), 0)
+      node_idx != 0 && setVmVa!(node = myNet.nodeVec[node_idx], vm_pu = vm_pu)
+    end
+
     addProsumer!(
       net = myNet,
       busName = bus,
