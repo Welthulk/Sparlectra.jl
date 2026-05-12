@@ -102,7 +102,7 @@ The `.jl` file should either:
 (B) return a `NamedTuple` with fields: `baseMVA, bus, gen, branch` and optional `gencost, bus_name, name`.
 """
 function read_case_julia(path::AbstractString; legacy_compat::Bool = true)
-  obj = include(path)
+  obj = include(abspath(path))
 
   mpc = if obj isa MatpowerCase
     obj
