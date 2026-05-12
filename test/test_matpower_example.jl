@@ -14,6 +14,9 @@
 
 # file: test/test_matpower_example.jl
 
+using Sparlectra
+using Test
+
 function run_matpower_example_tests()
   @testset "MATPOWER example keyword forwarding" begin
     source = read(joinpath(@__DIR__, "..", "src", "examples", "matpower_import.jl"), String)
@@ -36,8 +39,8 @@ function run_matpower_example_tests()
       @test occursin(keyword * " = " * keyword, source)
     end
 
-    @test occursin("Base.invokelatest(getfield(@__MODULE__, :bench_run_acpflow);", source)
-    @test occursin("Base.invokelatest(getfield(@__MODULE__, :main))", source)
+    @test occursin("Base.invokelatest(() -> getfield(@__MODULE__, :bench_run_acpflow)(;", source)
+    @test occursin("Base.invokelatest(() -> getfield(@__MODULE__, :main)())", source)
     @test occursin("SPARLECTRA_MATPOWER_IMPORT_NO_MAIN", source)
     @test occursin("function _enable_pq_gen_controllers_for_method(method::Symbol, requested::Bool)::Bool", source)
     @test occursin("return requested && method === :rectangular", source)
@@ -67,6 +70,32 @@ function run_matpower_example_tests()
       @test cfg.start_projection_dc_angle_limit_deg == 45.0
       @test Base.invokelatest(() -> getfield(mod, :_enable_pq_gen_controllers_for_method)(:rectangular, true)) === true
       @test Base.invokelatest(() -> getfield(mod, :_enable_pq_gen_controllers_for_method)(:polar, true)) === false
+      mpc_seeded = (; bus = hcat(collect(1.0:3.0), fill(1.0, 3), zeros(3, 5), [1.02, 1.01, 0.99], [0.0, -1.0, -2.0]))
+      @test_logs (:warn, r"opt_flatstart=true ignores MATPOWER solved voltage angles") Base.invokelatest(() -> getfield(mod, :_warn_if_flatstart_uses_only_voltage_setpoints)("case1951rte.m", (; opt_flatstart = true), mpc_seeded))
+      @test Base.invokelatest(() -> getfield(mod, :_warn_if_flatstart_uses_only_voltage_setpoints)("case1951rte.m", (; opt_flatstart = false), mpc_seeded)) === nothing
+
+      logfile, io = mktemp()
+      close(io)
+      result = Base.invokelatest(() -> getfield(mod, :bench_run_acpflow)(;
+        casefile = "case14.m",
+        methods = Symbol[],
+        mpc = nothing,
+        logfile = logfile,
+        show_diff = false,
+        tol_vm = 0.02,
+        tol_va = 2.0,
+        autodamp = true,
+        autodamp_min = 0.002,
+        start_projection = true,
+        start_projection_try_dc_start = false,
+        start_projection_try_blend_scan = false,
+        start_projection_blend_lambdas = [0.1, 0.9],
+        start_projection_dc_angle_limit_deg = 45.0,
+        show_once = false,
+        benchmark = false,
+      ))
+      @test result == Dict{Symbol,Any}()
+      rm(logfile; force = true)
     finally
       if isnothing(old_no_main)
         delete!(ENV, "SPARLECTRA_MATPOWER_IMPORT_NO_MAIN")
@@ -76,4 +105,8 @@ function run_matpower_example_tests()
     end
   end
   return true
+end
+
+if abspath(PROGRAM_FILE) == @__FILE__
+  Base.invokelatest(run_matpower_example_tests)
 end

@@ -15,6 +15,9 @@ methods: [rectangular]
 # Solver/NR options
 opt_fd: false
 opt_sparse: true
+# If true, PQ-bus magnitudes and all voltage angles start flat while slack/PV
+# voltage magnitudes from MATPOWER remain active setpoints. Keep false when you
+# intentionally want to restart from the stored MATPOWER VM/VA solution.
 opt_flatstart: false
 
 # Bus shunt modeling:
