@@ -7,6 +7,8 @@
 * Fixed rectangular flat-start initialization so slack/PV voltage magnitudes from MATPOWER remain active setpoints while PQ buses and angles start flat.
 * Fixed external `PFModel` flat-start setpoint extraction to use original bus indices, so user-built networks with isolated buses keep slack/PV voltage setpoints correctly.
 * Fixed MATPOWER example startup messaging so `opt_flatstart=true` stays quiet for true flat starts, while `opt_flatstart=false` emits an informational note that stored MATPOWER voltage magnitudes and angles seed the solve.
+* Fixed repository-local generated MATPOWER `.jl` cases so bare names already present in `data/mpower` are loaded directly instead of triggering a download, and relative `.jl` case paths are included from their absolute path.
+* Fixed rectangular PV→PQ Q-limit switching so a positive `q_hyst_pu` also acts as a switching deadband, preventing premature conversions from transient or roundoff-sized Q-limit overshoots during flat-start runs, and keeping repeatedly re-violating buses clamped to avoid PV↔PQ chatter.
 
 ## Version 0.7.5 – 2026-05-10
 ### New Features 

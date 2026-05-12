@@ -105,6 +105,37 @@ function run_matpower_example_tests()
       end
     end
   end
+
+  @testset "MATPOWER local Julia case resolution" begin
+    mktempdir() do dir
+      case_path = joinpath(dir, "local_case.jl")
+      write(case_path, """
+      (
+        name = \"local_case\",
+        baseMVA = 100.0,
+        bus = [1 3 0 0 0 0 1 1.0 0.0 110 1 1.1 0.9],
+        gen = [1 0 0 10 -10 1.0 100 1 10 0],
+        branch = zeros(0, 13),
+        gencost = nothing,
+        bus_name = nothing,
+      )
+      """)
+
+      resolved = Sparlectra.FetchMatpowerCase.ensure_casefile("local_case.jl"; outdir = dir, to_jl = true, overwrite = false)
+      @test resolved == abspath(case_path)
+
+      old_pwd = pwd()
+      try
+        cd(dirname(@__DIR__))
+        relative_path = relpath(case_path, pwd())
+        mpc = Sparlectra.MatpowerIO.read_case(relative_path; legacy_compat = false)
+        @test mpc.name == "local_case"
+        @test size(mpc.bus) == (1, 13)
+      finally
+        cd(old_pwd)
+      end
+    end
+  end
   return true
 end
 
