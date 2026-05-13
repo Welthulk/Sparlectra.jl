@@ -49,6 +49,7 @@ function run_matpower_example_tests()
       "start_projection_blend_lambdas",
       "start_projection_dc_angle_limit_deg",
       "matpower_ratio",
+      "reference_override",
     ]
 
     for keyword in expected_keywords
@@ -111,6 +112,7 @@ function run_matpower_example_tests()
         "matpower_shift_unit" => "rad",
         "matpower_shift_sign" => -1.0,
         "matpower_ratio" => "reciprocal",
+        "reference_override" => true,
         "reference_vm_pu" => 1.01,
         "reference_va_deg" => -3.0,
         "log_effective_config" => true,
@@ -128,11 +130,14 @@ function run_matpower_example_tests()
       @test cfg.matpower_shift_unit == "rad"
       @test cfg.matpower_shift_sign == -1.0
       @test cfg.matpower_ratio == "reciprocal"
+      @test cfg.reference_override === true
       @test cfg.reference_vm_pu == 1.01
       @test cfg.reference_va_deg == -3.0
       @test cfg.log_effective_config === true
       @test occursin("matpower_shift_sign", normalized_source)
       @test occursin("matpower_ratio", normalized_source)
+      @test occursin("reference_override", normalized_source)
+      @test occursin("_print_reference_override_status", normalized_source)
       @test occursin("_print_effective_config", normalized_source)
       @test occursin("function _print_matpower_reference_diagnostics", normalized_source)
       @test occursin("Branch-shift convention scan", normalized_source)
@@ -144,6 +149,8 @@ function run_matpower_example_tests()
       @test isnan(skipped_compare_summary.elapsed_s)
       @test isnan(skipped_compare_summary.max_dvm)
       @test isnan(skipped_compare_summary.max_dva)
+      @test isnan(skipped_compare_summary.slack_delta_va)
+      @test skipped_compare_summary.angle_alignment === :none
       @test skipped_compare_summary.cmp_ok === false
       compared_summary = Base.invokelatest(() -> getfield(mod, :_show_once_summary_row)(:rectangular, (; converged = true, iterations = 4, elapsed_s = 0.125), (; max_dvm = 0.01, max_dva = 0.2), true; compare_available = true))
       @test compared_summary.converged === true
@@ -151,6 +158,11 @@ function run_matpower_example_tests()
       @test compared_summary.elapsed_s == 0.125
       @test compared_summary.max_dvm == 0.01
       @test compared_summary.max_dva == 0.2
+      @test isnan(compared_summary.slack_delta_va)
+      @test compared_summary.angle_alignment === :none
+      compared_summary_with_alignment = Base.invokelatest(() -> getfield(mod, :_show_once_summary_row)(:rectangular, (; converged = true, iterations = 4, elapsed_s = 0.125), (; max_dvm = 0.01, max_dva = 0.2, slack_delta_va = -30.0, angle_alignment = :slack), true; compare_available = true))
+      @test compared_summary_with_alignment.slack_delta_va == -30.0
+      @test compared_summary_with_alignment.angle_alignment === :slack
       @test compared_summary.cmp_ok === true
       mpc_seeded = (; bus = hcat(collect(1.0:3.0), fill(1.0, 3), zeros(3, 5), [1.02, 1.01, 0.99], [0.0, -1.0, -2.0]))
       @test Base.invokelatest(() -> getfield(mod, :_warn_if_flatstart_uses_only_voltage_setpoints)("case1951rte.m", (; opt_flatstart = true), mpc_seeded)) === nothing
@@ -163,6 +175,13 @@ function run_matpower_example_tests()
         gen = [1.0 0.0 0.0 0.0 0.0 1.0 100.0 1.0 0.0 0.0 zeros(1, 11)...],
         branch = [1.0 2.0 0.01 0.10 0.02 0.0 0.0 0.0 1.0 0.01 1.0 0.0 0.0],
       )
+      slack_ref = Base.invokelatest(() -> getfield(mod, :_matpower_slack_reference)(diagnostic_mpc))
+      @test slack_ref.bus == 1
+      @test slack_ref.vm_pu == 1.0
+      @test slack_ref.va_deg == 0.0
+      ref_io = IOBuffer()
+      @test Base.invokelatest(() -> getfield(mod, :_print_reference_override_status)(ref_io, diagnostic_mpc; reference_override = false, reference_vm_pu = 1.1, reference_va_deg = 45.0)) === nothing
+      @test occursin("override: disabled", String(take!(ref_io)))
       diag_io = IOBuffer()
       @test Base.invokelatest(() -> getfield(mod, :_print_matpower_reference_diagnostics)(diag_io, diagnostic_mpc; matpower_shift_sign = -1.0, matpower_shift_unit = "rad", diagnose_branch_shift_conventions = true, maxlines = 2)) === nothing
       @test occursin("Branch-shift convention scan", String(take!(diag_io)))
@@ -187,6 +206,7 @@ function run_matpower_example_tests()
         matpower_shift_unit = "rad",
         matpower_shift_sign = -1.0,
         matpower_ratio = "reciprocal",
+        reference_override = true,
         reference_vm_pu = 1.01,
         reference_va_deg = -3.0,
         log_effective_config = true,
