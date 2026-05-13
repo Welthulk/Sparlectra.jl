@@ -389,12 +389,35 @@ function _mpc_pv_bus_ids(mpc)
   return sort!(unique!(Int.(round.(mpc.bus[pv_mask, 1]))))
 end
 
+function _run_iterations(status)::Int
+  return Int(get(status, :iterations, -1))
+end
+
+function _run_elapsed_s(status)::Float64
+  return Float64(get(status, :elapsed_s, NaN))
+end
+
+function _print_converged_loss_summary(io::IO, method::Symbol, status, net::Sparlectra.Net)
+  iterations = _run_iterations(status)
+  elapsed_s = _run_elapsed_s(status)
+  converged = Bool(get(status, :converged, false))
+  if converged
+    p_loss, q_loss = getTotalLosses(net = net)
+    @printf(io, "summary method=%-12s  converged=yes  iterations=%d  time=%8.6f s  losses P=%10.6f MW  Q=%10.6f MVar\n", String(method), iterations, elapsed_s, p_loss, q_loss)
+  else
+    @printf(io, "summary method=%-12s  converged=no   iterations=%d  time=%8.6f s  losses=SKIP\n", String(method), iterations, elapsed_s)
+  end
+  return nothing
+end
+
 function _show_once_summary_row(method::Symbol, status, stats, cmp_ok::Bool; compare_available::Bool)
   converged = Bool(get(status, :converged, false))
+  iterations = _run_iterations(status)
+  elapsed_s = _run_elapsed_s(status)
   if compare_available
-    return (method = method, converged = converged, max_dvm = Float64(get(stats, :max_dvm, NaN)), max_dva = Float64(get(stats, :max_dva, NaN)), cmp_ok = cmp_ok)
+    return (method = method, converged = converged, iterations = iterations, elapsed_s = elapsed_s, max_dvm = Float64(get(stats, :max_dvm, NaN)), max_dva = Float64(get(stats, :max_dva, NaN)), cmp_ok = cmp_ok)
   end
-  return (method = method, converged = converged, max_dvm = NaN, max_dva = NaN, cmp_ok = false)
+  return (method = method, converged = converged, iterations = iterations, elapsed_s = elapsed_s, max_dvm = NaN, max_dva = NaN, cmp_ok = false)
 end
 
 function _print_dataframe_nodes(io::IO, net::Sparlectra.Net; max_nodes::Int = 0)
@@ -512,7 +535,7 @@ function bench_run_acpflow(;
 
   # Optional: show results once (not benchmarked)
   if show_once
-    local summaries = Vector{NamedTuple{(:method, :converged, :max_dvm, :max_dva, :cmp_ok),Tuple{Symbol,Bool,Float64,Float64,Bool}}}()
+    local summaries = Vector{NamedTuple{(:method, :converged, :iterations, :elapsed_s, :max_dvm, :max_dva, :cmp_ok),Tuple{Symbol,Bool,Int,Float64,Float64,Float64,Bool}}}()
     show_classic = (show_once_output == :classic)
     println("show_once output is written to logfile: ", logfile)
     for m in methods
@@ -555,6 +578,7 @@ function bench_run_acpflow(;
               matpower_ratio = matpower_ratio,
             )
             status = status_ref[]
+            _print_converged_loss_summary(io, m, status, net_res)
             if !show_classic
               _print_dataframe_nodes(io, net_res; max_nodes = show_once_max_nodes)
             end
@@ -611,9 +635,9 @@ function bench_run_acpflow(;
     println("logfile: ", logfile)
     for s in summaries
       if isnan(s.max_dvm) || isnan(s.max_dva)
-        @printf("method=%-12s  converged=%s  compare=SKIP\n", String(s.method), s.converged ? "yes" : "no")
+        @printf("method=%-12s  converged=%s  iterations=%d  time=%8.6f s  compare=SKIP\n", String(s.method), s.converged ? "yes" : "no", s.iterations, s.elapsed_s)
       else
-        @printf("method=%-12s  converged=%s  compare=%s  max|dVm|=%8.5f pu  max|dVa|=%7.4f deg\n", String(s.method), s.converged ? "yes" : "no", s.cmp_ok ? "OK " : "FAIL", s.max_dvm, s.max_dva)
+        @printf("method=%-12s  converged=%s  iterations=%d  time=%8.6f s  compare=%s  max|dVm|=%8.5f pu  max|dVa|=%7.4f deg\n", String(s.method), s.converged ? "yes" : "no", s.iterations, s.elapsed_s, s.cmp_ok ? "OK " : "FAIL", s.max_dvm, s.max_dva)
       end
     end
     println("=================================================\n")
@@ -622,7 +646,8 @@ function bench_run_acpflow(;
   if !show_once
     println("\nInitial run (convergence + iterations):")
     for m in methods
-      run_acpflow(
+      status_ref = Ref{Any}(nothing)
+      net_res = run_acpflow(
         casefile = casefile,
         max_ite = max_ite,
         tol = tol,
@@ -642,6 +667,7 @@ function bench_run_acpflow(;
         opt_flatstart = opt_flatstart,
         show_results = false,
         show_compact_result = true,
+        status_ref = status_ref,
         verbose = 0,
         cooldown_iters = cooldown_iters,
         q_hyst_pu = q_hyst_pu,
@@ -652,6 +678,10 @@ function bench_run_acpflow(;
         matpower_shift_unit = matpower_shift_unit,
         matpower_ratio = matpower_ratio,
       )
+      _print_converged_loss_summary(stdout, m, status_ref[], net_res)
+      open(logfile, "a") do io
+        _print_converged_loss_summary(io, m, status_ref[], net_res)
+      end
     end
   end
 

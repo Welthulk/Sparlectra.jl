@@ -14,6 +14,7 @@
 * Fixed MATPOWER example regression tests to use `matpower_import.yaml.example`, tolerate CRLF source checkouts for Julia 1.12 / Revise world-age checks, and download missing MATPOWER test cases only outside GitLab CI.
 
 ### Improvements
+* Extended `matpower_import.jl` run logging with converged network losses and terminal summaries that include iteration counts and elapsed solve time.
 * Added MATPOWER example diagnostics for embedded reference VM/VA residuals and branch phase-shift convention scans, making it easier to explain angle differences on large PEGASE-style cases.
 * Added configurable MATPOWER branch `SHIFT` sign/unit handling for phase-shifter import, plus logfile-only reference diagnostics and effective YAML logging for `matpower_import.jl`.
 
