@@ -96,7 +96,19 @@ uses the `TAP` value directly (with MATPOWER `0` treated as `1`). Set
 `matpower_ratio = "reciprocal"` when an input data set stores the inverse tap
 ratio expected by Sparlectra.
 """
-function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false, cooldown::Int = 0, q_hyst_pu::Float64 = 0.0, enable_pq_gen_controllers::Bool = true, bus_shunt_model = :admittance, matpower_shift_sign::Real = 1.0, matpower_shift_unit = :deg, matpower_ratio = :normal)::Net
+function _apply_matpower_reference_override!(net::Net, slack_orig_idx::Int, bus_idx_by_orig::Dict{Int,Int}; reference_vm_pu::Union{Nothing,Float64} = nothing, reference_va_deg::Union{Nothing,Float64} = nothing)
+  slack_orig_idx != 0 || return nothing
+  node_idx = get(bus_idx_by_orig, slack_orig_idx, 0)
+  node_idx != 0 || return nothing
+
+  node = net.nodeVec[node_idx]
+  vm = isnothing(reference_vm_pu) ? (node._vm_pu === nothing ? 1.0 : Float64(node._vm_pu)) : reference_vm_pu
+  va = isnothing(reference_va_deg) ? (node._va_deg === nothing ? 0.0 : Float64(node._va_deg)) : reference_va_deg
+  setVmVa!(node = node, vm_pu = vm, va_deg = va)
+  return nothing
+end
+
+function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false, cooldown::Int = 0, q_hyst_pu::Float64 = 0.0, enable_pq_gen_controllers::Bool = true, bus_shunt_model = :admittance, matpower_shift_sign::Real = 1.0, matpower_shift_unit = :deg, matpower_ratio = :normal, reference_vm_pu::Union{Nothing,Float64} = nothing, reference_va_deg::Union{Nothing,Float64} = nothing)::Net
   # Small logger helper
   pInfo(msg::String) = (log ? (@info msg) : nothing)
 
@@ -360,6 +372,8 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
     @info "MATPOWER import: PQ generator limits mapped to constant P(U)/Q(U) controllers" count = pq_gen_controller_count
   end
 
+  _apply_matpower_reference_override!(myNet, slackIdx, bus_idx_by_orig; reference_vm_pu = reference_vm_pu, reference_va_deg = reference_va_deg)
+
   log && log_bus_shunt_model(myNet)
 
   ok, msg = validate!(net = myNet)
@@ -378,6 +392,8 @@ function createNetFromMatPowerFile(; filename::String,
     matpower_shift_sign::Real = 1.0,
     matpower_shift_unit = :deg,
     matpower_ratio = :normal,
+    reference_vm_pu::Union{Nothing,Float64} = nothing,
+    reference_va_deg::Union{Nothing,Float64} = nothing,
     verbose::Int = 0)::Net
 
   mpc = MatpowerIO.read_case(filename; legacy_compat=true)
@@ -386,7 +402,8 @@ function createNetFromMatPowerFile(; filename::String,
   net = createNetFromMatPowerCase(; mpc=mpc, log=log, flatstart=flatstart,
                                   cooldown=cooldown, q_hyst_pu=q_hyst_pu, enable_pq_gen_controllers=enable_pq_gen_controllers,
                                   bus_shunt_model=bus_shunt_model, matpower_shift_sign=matpower_shift_sign,
-                                  matpower_shift_unit=matpower_shift_unit, matpower_ratio=matpower_ratio)
+                                  matpower_shift_unit=matpower_shift_unit, matpower_ratio=matpower_ratio,
+                                  reference_vm_pu=reference_vm_pu, reference_va_deg=reference_va_deg)
 
   # Always apply MATPOWER isolated flags (BUS_TYPE==4) onto net
   MatpowerIO.apply_mp_isolated_buses!(net, mpc; verbose=verbose)

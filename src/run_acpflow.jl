@@ -26,6 +26,7 @@ Parameters:
 - autodamp: Bool, enable residual-based Newton step backtracking for `method = :rectangular`.
 - autodamp_min: Float64, minimum trial step length for automatic damping.
 - matpower_ratio: `:normal`/`"normal"` keeps MATPOWER branch `TAP` values as stored; `:reciprocal`/`"reciprocal"` imports reciprocal transformer ratios.
+- reference_vm_pu/reference_va_deg: optional MATPOWER slack/reference voltage override used by the imported network and flat-start seed.
 
 Returns:
 - Net, the network object.
@@ -60,6 +61,8 @@ function run_acpflow(;
   matpower_shift_sign::Real = 1.0,
   matpower_shift_unit = :deg,
   matpower_ratio = :normal,
+  reference_vm_pu::Union{Nothing,Float64} = nothing,
+  reference_va_deg::Union{Nothing,Float64} = nothing,
 )
   ext = lowercase(splitext(casefile)[2])
   myNet = nothing              # Initialize myNet variable
@@ -78,7 +81,7 @@ function run_acpflow(;
       error("File $(in_path) not found")
     end
 
-    myNet = createNetFromMatPowerFile(filename = in_path, log = (verbose > 0), flatstart = opt_flatstart, cooldown = cooldown_iters, q_hyst_pu = q_hyst_pu, enable_pq_gen_controllers = enable_pq_gen_controllers, bus_shunt_model = bus_shunt_model, matpower_shift_sign = matpower_shift_sign, matpower_shift_unit = matpower_shift_unit, matpower_ratio = matpower_ratio)
+    myNet = createNetFromMatPowerFile(filename = in_path, log = (verbose > 0), flatstart = opt_flatstart, cooldown = cooldown_iters, q_hyst_pu = q_hyst_pu, enable_pq_gen_controllers = enable_pq_gen_controllers, bus_shunt_model = bus_shunt_model, matpower_shift_sign = matpower_shift_sign, matpower_shift_unit = matpower_shift_unit, matpower_ratio = matpower_ratio, reference_vm_pu = reference_vm_pu, reference_va_deg = reference_va_deg)
     
     if verbose > 1
       # --- DEBUG START ---

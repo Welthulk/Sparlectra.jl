@@ -1920,9 +1920,16 @@ function initialVrect(net::Net; flatstart::Bool = net.flatstart)
     vm = (node._vm_pu === nothing || node._vm_pu <= 0.0) ? 1.0 : Float64(node._vm_pu)
 
     if flatstart
-      if k == slack_idx || getNodeType(node) == PV
-        # Flat start resets angles, but keeps voltage magnitude setpoints for
-        # slack/PV buses. PQ-bus magnitudes remain the flat 1.0 pu guess.
+      if k == slack_idx
+        # The slack/reference bus remains fixed during the solve. Even for a
+        # flat start, keep its imported or explicitly configured reference
+        # angle together with its voltage magnitude.
+        va_deg = (node._va_deg === nothing) ? 0.0 : Float64(node._va_deg)
+        va = deg2rad(va_deg)
+        V0[k] = ComplexF64(vm * cos(va), vm * sin(va))
+      elseif getNodeType(node) == PV
+        # Flat start resets non-reference angles, but keeps voltage magnitude
+        # setpoints for PV buses. PQ-bus magnitudes remain the flat 1.0 pu guess.
         V0[k] = ComplexF64(vm, 0.0)
       else
         V0[k] = ComplexF64(1.0, 0.0)

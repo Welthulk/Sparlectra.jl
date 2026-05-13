@@ -94,8 +94,9 @@ function getBusData(nodes::Vector{Node}, Sbase_MVA::Float64, flatStart; net::Uni
         va_rad = 0.0
       elseif type == Slack
         vm_pu = n._vm_pu === nothing ? 1.0 : n._vm_pu
-        #va_rad = n._va_deg === nothing ? 0.0 : deg2rad(n._va_deg)
-        va_rad = 0.0
+        # The reference bus is not an iterative state; keep its configured
+        # angle even when other flat-start angles are reset.
+        va_rad = n._va_deg === nothing ? 0.0 : deg2rad(n._va_deg)
       end
     else
       vm_pu = n._vm_pu === nothing ? 1.0 : n._vm_pu

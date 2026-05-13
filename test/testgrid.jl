@@ -321,12 +321,39 @@ function test_matpower_flatstart_uses_generator_voltage_setpoints()::Bool
   busVec, _ = Sparlectra.getBusData(net.nodeVec, net.baseMVA, true; net = net)
 
   return slack_idx == 1 &&
-         isapprox(abs(V0[1]), 1.04; atol = 1e-12) && isapprox(angle(V0[1]), 0.0; atol = 1e-12) &&
+         isapprox(abs(V0[1]), 1.04; atol = 1e-12) && isapprox(angle(V0[1]), deg2rad(12.0); atol = 1e-12) &&
          isapprox(abs(V0[2]), 1.0; atol = 1e-12) && isapprox(angle(V0[2]), 0.0; atol = 1e-12) &&
          isapprox(abs(V0[3]), 1.02; atol = 1e-12) && isapprox(angle(V0[3]), 0.0; atol = 1e-12) &&
-         isapprox(busVec[1].vm_pu, 1.04; atol = 1e-12) && isapprox(busVec[1].va_rad, 0.0; atol = 1e-12) &&
+         isapprox(busVec[1].vm_pu, 1.04; atol = 1e-12) && isapprox(busVec[1].va_rad, deg2rad(12.0); atol = 1e-12) &&
          isapprox(busVec[2].vm_pu, 1.0; atol = 1e-12) && isapprox(busVec[2].va_rad, 0.0; atol = 1e-12) &&
          isapprox(busVec[3].vm_pu, 1.02; atol = 1e-12) && isapprox(busVec[3].va_rad, 0.0; atol = 1e-12)
+end
+
+function test_matpower_reference_override_controls_flatstart()::Bool
+  mpc = (
+    name = "case_reference_override",
+    baseMVA = 100.0,
+    bus = [
+      1 3 0.0 0.0 0.0 0.0 1 0.97 12.0 110.0 1 1.1 0.9
+      2 1 20.0 8.0 0.0 0.0 1 0.93 -7.0 110.0 1 1.1 0.9
+    ],
+    gen = [
+      1 30.0 0.0 999.0 -999.0 1.04 100.0 1 999.0 0.0 0 0 0 0 0 0 0 0 0 0 0
+    ],
+    branch = [
+      1 2 0.01 0.05 0.0 9999.0 0.0 0.0 0.0 0.0 1 -60.0 60.0
+    ],
+    gencost = nothing,
+    bus_name = nothing,
+  )
+
+  net = Sparlectra.createNetFromMatPowerCase(mpc = mpc, log = false, flatstart = true, reference_vm_pu = 1.01, reference_va_deg = -3.0)
+  V0, slack_idx = Sparlectra.initialVrect(net; flatstart = true)
+  busVec, _ = Sparlectra.getBusData(net.nodeVec, net.baseMVA, true; net = net)
+
+  return slack_idx == 1 &&
+         isapprox(abs(V0[1]), 1.01; atol = 1e-12) && isapprox(angle(V0[1]), deg2rad(-3.0); atol = 1e-12) &&
+         isapprox(busVec[1].vm_pu, 1.01; atol = 1e-12) && isapprox(busVec[1].va_rad, deg2rad(-3.0); atol = 1e-12)
 end
 
 function test_matpower_import_uses_bus_type_for_regulation()::Bool
@@ -1919,6 +1946,7 @@ function run_grid_tests()
       @test test_matpower_import_defaults_no_reenable() == true
       @test test_matpower_import_uses_bus_type_for_regulation() == true
       @test test_matpower_flatstart_uses_generator_voltage_setpoints() == true
+      @test test_matpower_reference_override_controls_flatstart() == true
       @test test_prosumer_aggregation_preserves_bus_types_and_injections() == true
       @test test_matpower_vmva_selfcheck_noncontiguous_bus_numbers() == true
       @test test_matpower_vmva_selfcheck_ignores_slack_pq_spec() == true

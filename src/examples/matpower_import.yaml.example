@@ -20,6 +20,11 @@ opt_sparse: true
 # intentionally want to restart from the stored MATPOWER VM/VA solution.
 opt_flatstart: false
 
+# Reference/slack-bus voltage used by the MATPOWER example path. The value is
+# applied to the slack bus and remains fixed even for flat-start runs.
+reference_vm_pu: 1.0
+reference_va_deg: 0.0
+
 # Bus shunt modeling:
 # - admittance: classic MATPOWER treatment, stamp Gs/Bs into the Y-bus diagonal.
 # - voltage_dependent_injection: keep Gs/Bs out of Y-bus and include their
@@ -57,13 +62,14 @@ tol_vm: 0.02
 tol_va: 0.5
 
 
-# MATPOWER branch SHIFT convention controls:
-# - matpower_shift_unit: deg (MATPOWER default) or rad (PEGASE-style small shift values).
-# - matpower_shift_sign: 1 keeps MATPOWER from-side sign; -1 flips PST angle sign.
-#   With ratio=1, reversing PST from/to orientation is equivalent to flipping sign;
-#   with off-nominal ratios it would also move the ratio tap and is not done here.
-matpower_shift_unit: rad
-matpower_shift_sign: -1.0
+
+# MATPOWER branch SHIFT/TAP convention controls:
+# - deg/sign=1 preserves MATPOWER default SHIFT semantics (degrees on from side).
+# - matpower_ratio=normal preserves MATPOWER TAP as stored; reciprocal imports 1/TAP.
+# - Some PEGASE-style files use small radian-like SHIFT values and may need sign=-1.
+matpower_shift_unit: deg
+matpower_shift_sign: 1.0
+matpower_ratio: normal
 
 # If true, write the effective parsed YAML/options to the logfile.
 log_effective_config: true
