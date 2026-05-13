@@ -249,10 +249,7 @@ function _matpower_reference_residuals(mpc; matpower_shift_sign::Real = 1.0, mat
     bus[:, 5] .= 0.0
     bus[:, 6] .= 0.0
   end
-  branch = copy(mpc.branch)
-  if size(branch, 2) >= 10
-    branch[:, 10] .*= shift_multiplier
-  end
+  branch = mpc.branch
 
   busrow = Dict{Int,Int}()
   sizehint!(busrow, size(bus, 1))
@@ -321,9 +318,9 @@ end
 
 function _print_matpower_reference_diagnostics(io::IO, mpc; matpower_shift_sign::Real = 1.0, matpower_shift_unit = "deg", diagnose_branch_shift_conventions::Bool = false, maxlines::Int = 12)
   mp_has_vm_va(mpc) || return nothing
-  base_diag = _matpower_reference_residuals(mpc; matpower_shift_sign = matpower_shift_sign, matpower_shift_unit = matpower_shift_unit)
+  base_diag = Base.invokelatest(getfield(@__MODULE__, :_matpower_reference_residuals), mpc; matpower_shift_sign = matpower_shift_sign, matpower_shift_unit = matpower_shift_unit)
   label = "configured SHIFT sign=$(matpower_shift_sign), unit=$(matpower_shift_unit)"
-  _print_top_residuals(io, label, base_diag, mpc.baseMVA; maxlines = maxlines)
+  Base.invokelatest(getfield(@__MODULE__, :_print_top_residuals), io, label, base_diag, mpc.baseMVA; maxlines = maxlines)
 
   if diagnose_branch_shift_conventions
     if size(mpc.branch, 2) >= 10
@@ -346,7 +343,7 @@ function _print_matpower_reference_diagnostics(io::IO, mpc; matpower_shift_sign:
       ("configured, bus shunts disabled", matpower_shift_sign, matpower_shift_unit, false),
     )
     for (variant_label, shift_sign, shift_unit, keep_shunts) in variants
-      d = _matpower_reference_residuals(mpc; matpower_shift_sign = shift_sign, matpower_shift_unit = shift_unit, keep_shunts = keep_shunts)
+      d = Base.invokelatest(getfield(@__MODULE__, :_matpower_reference_residuals), mpc; matpower_shift_sign = shift_sign, matpower_shift_unit = shift_unit, keep_shunts = keep_shunts)
       max_p = isempty(d.p_rows) ? NaN : maximum(abs.(real.(d.mis[d.p_rows]))) * mpc.baseMVA
       max_q = isempty(d.q_rows) ? NaN : maximum(abs.(imag.(d.mis[d.q_rows]))) * mpc.baseMVA
       @printf(io, " %-34s %13.3f %15.3f\n", variant_label, max_p, max_q)
@@ -482,12 +479,13 @@ function bench_run_acpflow(;
     println(io, "timestamp: ", Dates.now())
     println(io)
     if log_effective_config && !isnothing(effective_config)
-      _print_effective_config(io, effective_config; yaml_path = yaml_path, case_name = casefile, methods = methods)
+      Base.invokelatest(getfield(@__MODULE__, :_print_effective_config), io, effective_config; yaml_path = yaml_path, case_name = casefile, methods = methods)
     end
     if !isnothing(mpc)
-      _print_vmva_self_check(io, mpc; matpower_shift_sign = matpower_shift_sign, matpower_shift_unit = matpower_shift_unit)
+      Base.invokelatest(getfield(@__MODULE__, :_print_vmva_self_check), io, mpc; matpower_shift_sign = matpower_shift_sign, matpower_shift_unit = matpower_shift_unit)
       if diagnose_matpower_reference
-        _print_matpower_reference_diagnostics(
+        Base.invokelatest(
+          getfield(@__MODULE__, :_print_matpower_reference_diagnostics),
           io,
           mpc;
           matpower_shift_sign = matpower_shift_sign,
@@ -787,7 +785,8 @@ function main()
   end
 
   timestamp = Dates.format(Dates.now(), "yyyymmdd_HHMMSS")
-  logfile = joinpath(OUTDIR, "run_$(case)_$(timestamp).log")
+  log_case = replace(basename(case), r"[^A-Za-z0-9_.-]" => "_")
+  logfile = joinpath(OUTDIR, "run_$(log_case)_$(timestamp).log")
 
   # This will:
   # - download case14.m into data/mpower/ if missing
@@ -809,8 +808,8 @@ function main()
   end
 
   bench = Base.invokelatest(
-    () -> getfield(@__MODULE__, :bench_run_acpflow)(;
-      casefile = basename(local_case),
+    getfield(@__MODULE__, :bench_run_acpflow);
+      casefile = local_case,
       methods = methods,
       mpc = mpc,
       logfile = logfile,
@@ -852,11 +851,10 @@ function main()
       benchmark = cfg.benchmark,
       enable_pq_gen_controllers = cfg.enable_pq_gen_controllers,
       bus_shunt_model = cfg.bus_shunt_model,
-    ),
   )
   return bench
 end
 
 if get(ENV, "SPARLECTRA_MATPOWER_IMPORT_NO_MAIN", "") != "1"
-  Base.invokelatest(() -> getfield(@__MODULE__, :main)())
+  Base.invokelatest(getfield(@__MODULE__, :main))
 end
