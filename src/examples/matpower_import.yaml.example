@@ -56,6 +56,17 @@ show_diff: true
 tol_vm: 0.02
 tol_va: 0.5
 
+
+# MATPOWER branch SHIFT convention controls:
+# - matpower_shift_unit: deg (MATPOWER default) or rad (PEGASE-style small shift values).
+# - matpower_shift_sign: 1 keeps MATPOWER from-side sign; -1 flips PST angle sign.
+#   With ratio=1, reversing PST from/to orientation is equivalent to flipping sign;
+#   with off-nominal ratios it would also move the ratio tap and is not done here.
+matpower_shift_unit: rad
+matpower_shift_sign: -1.0
+
+# If true, write the effective parsed YAML/options to the logfile.
+log_effective_config: true
 # MATPOWER-reference diagnostics:
 # - diagnose_matpower_reference prints the largest residuals obtained when the
 #   VM/VA values embedded in the MATPOWER data are evaluated against the imported
@@ -69,11 +80,13 @@ diagnose_branch_shift_conventions: true
 diagnose_maxlines: 12
 
 
-# MATPOWER branch SHIFT convention controls:
-# - deg/sign=1 preserves MATPOWER default semantics (SHIFT in degrees on from side).
-# - Some PEGASE-style files use small radian-like values and may need sign=-1.
+# MATPOWER branch SHIFT/TAP convention controls:
+# - deg/sign=1 preserves MATPOWER default SHIFT semantics (degrees on from side).
+# - matpower_ratio=normal preserves MATPOWER TAP as stored; reciprocal imports 1/TAP.
+# - Some PEGASE-style files use small radian-like SHIFT values and may need sign=-1.
 matpower_shift_unit: deg
 matpower_shift_sign: 1.0
+matpower_ratio: normal
 
 # Write effective parsed options to the logfile.
 log_effective_config: false

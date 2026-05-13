@@ -27,6 +27,9 @@ q_hyst_pu: 0.0
 show_diff: true
 tol_vm: 0.02
 tol_va: 0.5
+matpower_shift_unit: deg
+matpower_shift_sign: 1.0
+matpower_ratio: normal
 ignore_q_limits: false
 enable_pq_gen_controllers: false
 trace_legacy_bus_type_warnings: false

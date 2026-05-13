@@ -25,7 +25,7 @@ Legend:
 | Shunts / loads / generators in `Net` model | ✅ | ✅ | Shared physical network model and component handling. |
 | Configurable bus-shunt modeling | ⚠️ | ❌ | `bus_shunt_model = "admittance"` is the default/classic Y-bus treatment; `"voltage_dependent_injection"` is available for rectangular PF formulations that keep shunt effects in nonlinear mismatch terms. |
 | Voltage-dependent prosumer control (`Q(U)`, `P(U)`) | ✅ | ❌ | Implemented for PF with controller-aware mismatch/Jacobian terms in rectangular formulation; not part of SE model. |
-| MATPOWER import / cases | ✅ | ✅ | Typical SE studies can start from imported PF-ready networks. |
+| MATPOWER import / cases | ✅ | ✅ | Typical SE studies can start from imported PF-ready networks; PF import supports configurable SHIFT unit/sign and TAP ratio (`normal` or `reciprocal`) conventions. |
 | Synthetic tiled-grid generator | ✅ | ⚠️ | `build_synthetic_tiled_grid_net` creates artificial one-voltage-level AC PF benchmark networks; SE can use the resulting `Net` as an artificial study case when measurements are supplied. |
 
 ## Solvers, operations & limits

@@ -49,6 +49,19 @@ case_path = ensure_casefile("case14.m")
 net = createNetFromMatPowerFile(case_path, false)
 ```
 
+MATPOWER transformer convention options can be passed to the import and power-flow
+paths. The default `matpower_ratio = "normal"` uses branch `TAP` values as
+stored, while `matpower_ratio = "reciprocal"` imports their reciprocal:
+
+```julia
+net = createNetFromMatPowerFile(
+    filename = case_path,
+    matpower_shift_unit = "rad",
+    matpower_shift_sign = -1.0,
+    matpower_ratio = "reciprocal",
+)
+```
+
 You can also request a generated `.jl` companion file by passing a `.jl` name:
 
 ```julia

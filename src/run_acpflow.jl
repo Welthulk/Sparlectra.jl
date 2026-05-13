@@ -25,6 +25,7 @@ Parameters:
 - printResultAnyCase: Bool, flag to print results even if the power flow fails (default: false).
 - autodamp: Bool, enable residual-based Newton step backtracking for `method = :rectangular`.
 - autodamp_min: Float64, minimum trial step length for automatic damping.
+- matpower_ratio: `:normal`/`"normal"` keeps MATPOWER branch `TAP` values as stored; `:reciprocal`/`"reciprocal"` imports reciprocal transformer ratios.
 
 Returns:
 - Net, the network object.
@@ -58,6 +59,7 @@ function run_acpflow(;
   bus_shunt_model = :admittance,
   matpower_shift_sign::Real = 1.0,
   matpower_shift_unit = :deg,
+  matpower_ratio = :normal,
 )
   ext = lowercase(splitext(casefile)[2])
   myNet = nothing              # Initialize myNet variable
@@ -76,7 +78,7 @@ function run_acpflow(;
       error("File $(in_path) not found")
     end
 
-    myNet = createNetFromMatPowerFile(filename = in_path, log = (verbose > 0), flatstart = opt_flatstart, cooldown = cooldown_iters, q_hyst_pu = q_hyst_pu, enable_pq_gen_controllers = enable_pq_gen_controllers, bus_shunt_model = bus_shunt_model, matpower_shift_sign = matpower_shift_sign, matpower_shift_unit = matpower_shift_unit)
+    myNet = createNetFromMatPowerFile(filename = in_path, log = (verbose > 0), flatstart = opt_flatstart, cooldown = cooldown_iters, q_hyst_pu = q_hyst_pu, enable_pq_gen_controllers = enable_pq_gen_controllers, bus_shunt_model = bus_shunt_model, matpower_shift_sign = matpower_shift_sign, matpower_shift_unit = matpower_shift_unit, matpower_ratio = matpower_ratio)
     
     if verbose > 1
       # --- DEBUG START ---

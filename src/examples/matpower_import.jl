@@ -165,6 +165,7 @@ function bench_config_for_case(case_name::AbstractString, yaml_cfg::Dict{String,
     benchmark = true,
     matpower_shift_sign = 1.0,
     matpower_shift_unit = "deg",
+    matpower_ratio = "normal",
     diagnose_matpower_reference = false,
     diagnose_branch_shift_conventions = false,
     diagnose_maxlines = 12,
@@ -208,6 +209,7 @@ function bench_config_for_case(case_name::AbstractString, yaml_cfg::Dict{String,
       benchmark = Bool(get(yaml_cfg, "benchmark", base.benchmark)),
       matpower_shift_sign = Float64(get(yaml_cfg, "matpower_shift_sign", base.matpower_shift_sign)),
       matpower_shift_unit = String(get(yaml_cfg, "matpower_shift_unit", base.matpower_shift_unit)),
+      matpower_ratio = String(get(yaml_cfg, "matpower_ratio", base.matpower_ratio)),
       diagnose_matpower_reference = Bool(get(yaml_cfg, "diagnose_matpower_reference", base.diagnose_matpower_reference)),
       diagnose_branch_shift_conventions = Bool(get(yaml_cfg, "diagnose_branch_shift_conventions", base.diagnose_branch_shift_conventions)),
       diagnose_maxlines = Int(get(yaml_cfg, "diagnose_maxlines", base.diagnose_maxlines)),
@@ -243,7 +245,7 @@ function mp_has_vm_va(mpc)
   return (vm_dev > 1e-3) || (va_dev > 1e-2)
 end
 
-function _matpower_reference_residuals(mpc; matpower_shift_sign::Real = 1.0, matpower_shift_unit = "deg", keep_shunts::Bool = true)
+function _matpower_reference_residuals(mpc; matpower_shift_sign::Real = 1.0, matpower_shift_unit = "deg", matpower_ratio = "normal", keep_shunts::Bool = true)
   bus = keep_shunts ? mpc.bus : copy(mpc.bus)
   if !keep_shunts && size(bus, 2) >= 6
     bus[:, 5] .= 0.0
@@ -275,7 +277,7 @@ function _matpower_reference_residuals(mpc; matpower_shift_sign::Real = 1.0, mat
     Qinj[r] += mpc.gen[g, 3] / mpc.baseMVA
   end
 
-  Y = MatpowerIO.build_ybus_matpower(bus, branch, mpc.baseMVA; matpower_shift_sign = matpower_shift_sign, matpower_shift_unit = matpower_shift_unit)
+  Y = MatpowerIO.build_ybus_matpower(bus, branch, mpc.baseMVA; matpower_shift_sign = matpower_shift_sign, matpower_shift_unit = matpower_shift_unit, matpower_ratio = matpower_ratio)
   V = bus[:, 8] .* cis.(deg2rad.(bus[:, 9]))
   mis = V .* conj.(Y * V) .- ComplexF64.(Pinj, Qinj)
   p_rows = Int[]
@@ -316,10 +318,10 @@ function _print_top_residuals(io::IO, label::AbstractString, diag, baseMVA::Floa
   println(io, "================================================================================\n")
 end
 
-function _print_matpower_reference_diagnostics(io::IO, mpc; matpower_shift_sign::Real = 1.0, matpower_shift_unit = "deg", diagnose_branch_shift_conventions::Bool = false, maxlines::Int = 12)
+function _print_matpower_reference_diagnostics(io::IO, mpc; matpower_shift_sign::Real = 1.0, matpower_shift_unit = "deg", matpower_ratio = "normal", diagnose_branch_shift_conventions::Bool = false, maxlines::Int = 12)
   mp_has_vm_va(mpc) || return nothing
-  base_diag = Base.invokelatest(getfield(@__MODULE__, :_matpower_reference_residuals), mpc; matpower_shift_sign = matpower_shift_sign, matpower_shift_unit = matpower_shift_unit)
-  label = "configured SHIFT sign=$(matpower_shift_sign), unit=$(matpower_shift_unit)"
+  base_diag = Base.invokelatest(getfield(@__MODULE__, :_matpower_reference_residuals), mpc; matpower_shift_sign = matpower_shift_sign, matpower_shift_unit = matpower_shift_unit, matpower_ratio = matpower_ratio)
+  label = "configured SHIFT sign=$(matpower_shift_sign), unit=$(matpower_shift_unit), ratio=$(matpower_ratio)"
   Base.invokelatest(getfield(@__MODULE__, :_print_top_residuals), io, label, base_diag, mpc.baseMVA; maxlines = maxlines)
 
   if diagnose_branch_shift_conventions
@@ -336,14 +338,15 @@ function _print_matpower_reference_diagnostics(io::IO, mpc; matpower_shift_sign:
     println(io, "Branch-shift convention scan (using MATPOWER VM/VA as a fixed reference):")
     println(io, " convention                         max|dP|_MW     max|dQ|_MVAr")
     variants = (
-      ("MATPOWER sign, degrees", 1.0, "deg", true),
-      ("opposite sign, degrees", -1.0, "deg", true),
-      ("MATPOWER sign, radians", 1.0, "rad", true),
-      ("opposite sign, radians", -1.0, "rad", true),
-      ("configured, bus shunts disabled", matpower_shift_sign, matpower_shift_unit, false),
+      ("MATPOWER sign, degrees", 1.0, "deg", "normal", true),
+      ("opposite sign, degrees", -1.0, "deg", "normal", true),
+      ("MATPOWER sign, radians", 1.0, "rad", "normal", true),
+      ("opposite sign, radians", -1.0, "rad", "normal", true),
+      ("configured, reciprocal ratio", matpower_shift_sign, matpower_shift_unit, "reciprocal", true),
+      ("configured, bus shunts disabled", matpower_shift_sign, matpower_shift_unit, matpower_ratio, false),
     )
-    for (variant_label, shift_sign, shift_unit, keep_shunts) in variants
-      d = Base.invokelatest(getfield(@__MODULE__, :_matpower_reference_residuals), mpc; matpower_shift_sign = shift_sign, matpower_shift_unit = shift_unit, keep_shunts = keep_shunts)
+    for (variant_label, shift_sign, shift_unit, ratio_mode, keep_shunts) in variants
+      d = Base.invokelatest(getfield(@__MODULE__, :_matpower_reference_residuals), mpc; matpower_shift_sign = shift_sign, matpower_shift_unit = shift_unit, matpower_ratio = ratio_mode, keep_shunts = keep_shunts)
       max_p = isempty(d.p_rows) ? NaN : maximum(abs.(real.(d.mis[d.p_rows]))) * mpc.baseMVA
       max_q = isempty(d.q_rows) ? NaN : maximum(abs.(imag.(d.mis[d.q_rows]))) * mpc.baseMVA
       @printf(io, " %-34s %13.3f %15.3f\n", variant_label, max_p, max_q)
@@ -365,11 +368,11 @@ function _print_effective_config(io::IO, cfg; yaml_path::String = "", case_name:
   return nothing
 end
 
-function _print_vmva_self_check(io::IO, mpc; matpower_shift_sign::Real = 1.0, matpower_shift_unit = "deg")
-  vmva_chk = MatpowerIO.vmva_power_mismatch_stats(mpc; matpower_shift_sign = matpower_shift_sign, matpower_shift_unit = matpower_shift_unit)
+function _print_vmva_self_check(io::IO, mpc; matpower_shift_sign::Real = 1.0, matpower_shift_unit = "deg", matpower_ratio = "normal")
+  vmva_chk = MatpowerIO.vmva_power_mismatch_stats(mpc; matpower_shift_sign = matpower_shift_sign, matpower_shift_unit = matpower_shift_unit, matpower_ratio = matpower_ratio)
   if get(vmva_chk, :ok, false)
     println(io, "==================== MATPOWER VM/VA self-check ====================")
-    println(io, "SHIFT convention : sign=", matpower_shift_sign, " unit=", matpower_shift_unit)
+    println(io, "SHIFT convention : sign=", matpower_shift_sign, " unit=", matpower_shift_unit, " ratio=", matpower_ratio)
     println(io, "checked eqns     : P(PQ+PV)=", vmva_chk.n_p, "  Q(PQ)=", vmva_chk.n_q)
     println(io, "max |ΔP| (PQ+PV) : ", vmva_chk.max_p_mis_pu, " pu  (", vmva_chk.max_p_mis_MW, " MW)")
     println(io, "max |ΔQ| (PQ)    : ", vmva_chk.max_q_mis_pu, " pu  (", vmva_chk.max_q_mis_MVar, " MVar)")
@@ -384,6 +387,14 @@ function _mpc_pv_bus_ids(mpc)
   size(mpc.bus, 2) >= 2 || return Int[]
   pv_mask = mpc.bus[:, 2] .== 2
   return sort!(unique!(Int.(round.(mpc.bus[pv_mask, 1]))))
+end
+
+function _show_once_summary_row(method::Symbol, status, stats, cmp_ok::Bool; compare_available::Bool)
+  converged = Bool(get(status, :converged, false))
+  if compare_available
+    return (method = method, converged = converged, max_dvm = Float64(get(stats, :max_dvm, NaN)), max_dva = Float64(get(stats, :max_dva, NaN)), cmp_ok = cmp_ok)
+  end
+  return (method = method, converged = converged, max_dvm = NaN, max_dva = NaN, cmp_ok = false)
 end
 
 function _print_dataframe_nodes(io::IO, net::Sparlectra.Net; max_nodes::Int = 0)
@@ -460,6 +471,7 @@ function bench_run_acpflow(;
   benchmark::Bool = true,
   matpower_shift_sign::Float64 = 1.0,
   matpower_shift_unit::String = "deg",
+  matpower_ratio::String = "normal",
   diagnose_matpower_reference::Bool = false,
   diagnose_branch_shift_conventions::Bool = false,
   diagnose_maxlines::Int = 12,
@@ -482,7 +494,7 @@ function bench_run_acpflow(;
       Base.invokelatest(getfield(@__MODULE__, :_print_effective_config), io, effective_config; yaml_path = yaml_path, case_name = casefile, methods = methods)
     end
     if !isnothing(mpc)
-      Base.invokelatest(getfield(@__MODULE__, :_print_vmva_self_check), io, mpc; matpower_shift_sign = matpower_shift_sign, matpower_shift_unit = matpower_shift_unit)
+      Base.invokelatest(getfield(@__MODULE__, :_print_vmva_self_check), io, mpc; matpower_shift_sign = matpower_shift_sign, matpower_shift_unit = matpower_shift_unit, matpower_ratio = matpower_ratio)
       if diagnose_matpower_reference
         Base.invokelatest(
           getfield(@__MODULE__, :_print_matpower_reference_diagnostics),
@@ -490,6 +502,7 @@ function bench_run_acpflow(;
           mpc;
           matpower_shift_sign = matpower_shift_sign,
           matpower_shift_unit = matpower_shift_unit,
+          matpower_ratio = matpower_ratio,
           diagnose_branch_shift_conventions = diagnose_branch_shift_conventions,
           maxlines = diagnose_maxlines,
         )
@@ -539,6 +552,7 @@ function bench_run_acpflow(;
               bus_shunt_model = bus_shunt_model,
               matpower_shift_sign = matpower_shift_sign,
               matpower_shift_unit = matpower_shift_unit,
+              matpower_ratio = matpower_ratio,
             )
             status = status_ref[]
             if !show_classic
@@ -546,9 +560,9 @@ function bench_run_acpflow(;
             end
             if mp_has_vm_va(mpc)
               ok, stats = MatpowerIO.compare_vm_va(net_res, mpc; show_diff = show_diff, tol_vm = tol_vm, tol_va = tol_va, maxlines = 20)
-              push!(summaries, (method = m, converged = Bool(get(status, :converged, false)), max_dvm = Float64(get(stats, :max_dvm, NaN)), max_dva = Float64(get(stats, :max_dva, NaN)), cmp_ok = ok))
+              push!(summaries, _show_once_summary_row(m, status, stats, ok; compare_available = true))
             else
-              push!(summaries, (method = m, converged = false, max_dvm = NaN, max_dva = NaN, cmp_ok = false))
+              push!(summaries, _show_once_summary_row(m, status, nothing, false; compare_available = false))
               println("Compare skipped: no solution-like VM/VA in mpc.bus(:,8:9)")
             end
             if !Bool(get(status, :converged, false)) && !enable_pq_gen_controllers && m === :rectangular
@@ -583,6 +597,7 @@ function bench_run_acpflow(;
                 bus_shunt_model = bus_shunt_model,
                 matpower_shift_sign = matpower_shift_sign,
                 matpower_shift_unit = matpower_shift_unit,
+                matpower_ratio = matpower_ratio,
               )
             end
             @printf(io, "show_once method=%s output=%s\n\n", String(m), String(show_once_output))
@@ -635,6 +650,7 @@ function bench_run_acpflow(;
         bus_shunt_model = bus_shunt_model,
         matpower_shift_sign = matpower_shift_sign,
         matpower_shift_unit = matpower_shift_unit,
+        matpower_ratio = matpower_ratio,
       )
     end
   end
@@ -680,6 +696,7 @@ function bench_run_acpflow(;
       bus_shunt_model = bus_shunt_model,
       matpower_shift_sign = matpower_shift_sign,
       matpower_shift_unit = matpower_shift_unit,
+      matpower_ratio = matpower_ratio,
     )
   end
 
@@ -688,6 +705,7 @@ function bench_run_acpflow(;
   println("opt_fd          = ", opt_fd, "   opt_sparse = ", opt_sparse, "   flatstart = ", opt_flatstart)
   println("autodamp        = ", autodamp, "   autodamp_min = ", autodamp_min)
   println("start_projection= ", start_projection, "   dc_angle_limit_deg = ", start_projection_dc_angle_limit_deg)
+  println("matpower_ratio  = ", matpower_ratio)
   println("cooldown_iters  = ", cooldown_iters, "   q_hyst_pu = ", q_hyst_pu)
   println("lock PV->PQ     = ", collect(lock_pv_to_pq_buses))
   println("tol             = ", tol, "   max_ite = ", max_ite)
@@ -723,6 +741,7 @@ function bench_run_acpflow(;
       bus_shunt_model = bus_shunt_model_,
       matpower_shift_sign = matpower_shift_sign_,
       matpower_shift_unit = matpower_shift_unit_,
+      matpower_ratio = matpower_ratio_,
     ) setup = (casefile_ = $casefile;
     max_ite_ = $max_ite;
     tol_ = $tol;
@@ -746,6 +765,7 @@ function bench_run_acpflow(;
     bus_shunt_model_ = $bus_shunt_model;
     matpower_shift_sign_ = $matpower_shift_sign;
     matpower_shift_unit_ = $matpower_shift_unit;
+    matpower_ratio_ = $matpower_ratio;
     method_ = $m)
 
     b = run(benchable; seconds = seconds, samples = samples)
@@ -842,6 +862,7 @@ function main()
       show_once_max_nodes = cfg.show_once_max_nodes,
       matpower_shift_sign = cfg.matpower_shift_sign,
       matpower_shift_unit = cfg.matpower_shift_unit,
+      matpower_ratio = cfg.matpower_ratio,
       diagnose_matpower_reference = cfg.diagnose_matpower_reference,
       diagnose_branch_shift_conventions = cfg.diagnose_branch_shift_conventions,
       diagnose_maxlines = cfg.diagnose_maxlines,

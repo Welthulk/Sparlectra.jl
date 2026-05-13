@@ -34,7 +34,7 @@ y_{ser} = \frac{1}{R + jX}
 y_{shunt} = G + jB
 ```
 
-For MATPOWER imports, branch `SHIFT` is interpreted as the phase angle $\phi$ on the branch from side by default (`matpower_shift_unit = "deg"`, `matpower_shift_sign = 1`). Some PEGASE-style cases contain small radian-like phase-shifter values; `matpower_import.jl` can set `matpower_shift_unit = "rad"` and `matpower_shift_sign = -1` to test or apply that convention. With ratio $\tau = 1$, reversing the PST orientation is electrically equivalent to flipping the sign of $\phi$; with an off-nominal ratio, reversing orientation also moves the ratio tap and is not treated as a pure sign change.
+For MATPOWER imports, branch `SHIFT` is interpreted as the phase angle $\phi$ on the branch from side by default (`matpower_shift_unit = "deg"`, `matpower_shift_sign = 1`). Some PEGASE-style cases contain small radian-like phase-shifter values; `matpower_import.jl` can set `matpower_shift_unit = "rad"` and `matpower_shift_sign = -1` to test or apply that convention. MATPOWER branch `TAP` is used as stored by default (`matpower_ratio = "normal"`); set `matpower_ratio = "reciprocal"` for input files whose off-nominal transformer ratios must be inverted before import. With ratio $\tau = 1$, reversing the PST orientation is electrically equivalent to flipping the sign of $\phi$; with an off-nominal ratio, reversing orientation also moves the ratio tap and is not treated as a pure sign change.
 
 
 ## Y-bus diagonal entries (π-model + shunts)
