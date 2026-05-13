@@ -166,6 +166,7 @@ function bench_config_for_case(case_name::AbstractString, yaml_cfg::Dict{String,
     matpower_shift_sign = 1.0,
     matpower_shift_unit = "deg",
     matpower_ratio = "normal",
+    reference_override = false,
     reference_vm_pu = 1.0,
     reference_va_deg = 0.0,
     diagnose_matpower_reference = false,
@@ -212,6 +213,7 @@ function bench_config_for_case(case_name::AbstractString, yaml_cfg::Dict{String,
       matpower_shift_sign = Float64(get(yaml_cfg, "matpower_shift_sign", base.matpower_shift_sign)),
       matpower_shift_unit = String(get(yaml_cfg, "matpower_shift_unit", base.matpower_shift_unit)),
       matpower_ratio = String(get(yaml_cfg, "matpower_ratio", base.matpower_ratio)),
+      reference_override = Bool(get(yaml_cfg, "reference_override", base.reference_override)),
       reference_vm_pu = Float64(get(yaml_cfg, "reference_vm_pu", base.reference_vm_pu)),
       reference_va_deg = Float64(get(yaml_cfg, "reference_va_deg", base.reference_va_deg)),
       diagnose_matpower_reference = Bool(get(yaml_cfg, "diagnose_matpower_reference", base.diagnose_matpower_reference)),
@@ -419,9 +421,9 @@ function _show_once_summary_row(method::Symbol, status, stats, cmp_ok::Bool; com
   iterations = _run_iterations(status)
   elapsed_s = _run_elapsed_s(status)
   if compare_available
-    return (method = method, converged = converged, iterations = iterations, elapsed_s = elapsed_s, max_dvm = Float64(get(stats, :max_dvm, NaN)), max_dva = Float64(get(stats, :max_dva, NaN)), cmp_ok = cmp_ok)
+    return (method = method, converged = converged, iterations = iterations, elapsed_s = elapsed_s, max_dvm = Float64(get(stats, :max_dvm, NaN)), max_dva = Float64(get(stats, :max_dva, NaN)), slack_delta_va = Float64(get(stats, :slack_delta_va, NaN)), angle_alignment = get(stats, :angle_alignment, :none), cmp_ok = cmp_ok)
   end
-  return (method = method, converged = converged, iterations = iterations, elapsed_s = elapsed_s, max_dvm = NaN, max_dva = NaN, cmp_ok = false)
+  return (method = method, converged = converged, iterations = iterations, elapsed_s = elapsed_s, max_dvm = NaN, max_dva = NaN, slack_delta_va = NaN, angle_alignment = :none, cmp_ok = false)
 end
 
 function _print_dataframe_nodes(io::IO, net::Sparlectra.Net; max_nodes::Int = 0)
@@ -459,6 +461,31 @@ end
 function _enable_pq_gen_controllers_for_method(method::Symbol, requested::Bool)::Bool
   # PQ-generator voltage-dependent controllers are supported only by the rectangular solver.
   return requested && method === :rectangular
+end
+
+function _matpower_slack_reference(mpc)
+  if isnothing(mpc) || !hasproperty(mpc, :bus) || size(mpc.bus, 2) < 9
+    return (bus = missing, vm_pu = missing, va_deg = missing)
+  end
+  slack_rows = findall(r -> Int(round(mpc.bus[r, 2])) == 3, axes(mpc.bus, 1))
+  isempty(slack_rows) && return (bus = missing, vm_pu = missing, va_deg = missing)
+  row = first(slack_rows)
+  return (bus = Int(round(mpc.bus[row, 1])), vm_pu = Float64(mpc.bus[row, 8]), va_deg = Float64(mpc.bus[row, 9]))
+end
+
+function _print_reference_override_status(io::IO, mpc; reference_override::Bool, reference_vm_pu::Float64, reference_va_deg::Float64)
+  slack_ref = _matpower_slack_reference(mpc)
+  println(io, "MATPOWER slack reference bus: ", slack_ref.bus)
+  println(io, "MATPOWER slack reference read: ", slack_ref.vm_pu, " pu / ", slack_ref.va_deg, " deg")
+  if reference_override
+    println(io, "MATPOWER slack reference override: enabled -> ", reference_vm_pu, " pu / ", reference_va_deg, " deg")
+  else
+    println(io, "MATPOWER slack reference override: disabled; using imported MATPOWER slack reference")
+    if reference_vm_pu != 1.0 || reference_va_deg != 0.0
+      println(io, "MATPOWER slack reference override values ignored while disabled: ", reference_vm_pu, " pu / ", reference_va_deg, " deg")
+    end
+  end
+  return nothing
 end
 # -----------------------------------------------------------------------------
 # Benchmark helper: benchmark exactly run_acpflow(...)
@@ -499,6 +526,7 @@ function bench_run_acpflow(;
   matpower_shift_sign::Float64 = 1.0,
   matpower_shift_unit::String = "deg",
   matpower_ratio::String = "normal",
+  reference_override::Bool = false,
   reference_vm_pu::Float64 = 1.0,
   reference_va_deg::Float64 = 0.0,
   diagnose_matpower_reference::Bool = false,
@@ -512,12 +540,15 @@ function bench_run_acpflow(;
 )
   t0 = time()
   results = Dict{Symbol,Any}()
+  effective_reference_vm_pu = reference_override ? reference_vm_pu : nothing
+  effective_reference_va_deg = reference_override ? reference_va_deg : nothing
 
   # Create/seed logfile up-front so users can see progress even if benchmarks are long.
   open(logfile, "w") do io
     println(io, "Sparlectra version: ", Sparlectra.version())
     println(io, "casefile: ", casefile)
     println(io, "timestamp: ", Dates.now())
+    Base.invokelatest(getfield(@__MODULE__, :_print_reference_override_status), io, mpc; reference_override = reference_override, reference_vm_pu = reference_vm_pu, reference_va_deg = reference_va_deg)
     println(io)
     if log_effective_config && !isnothing(effective_config)
       Base.invokelatest(getfield(@__MODULE__, :_print_effective_config), io, effective_config; yaml_path = yaml_path, case_name = casefile, methods = methods)
@@ -541,7 +572,7 @@ function bench_run_acpflow(;
 
   # Optional: show results once (not benchmarked)
   if show_once
-    local summaries = Vector{NamedTuple{(:method, :converged, :iterations, :elapsed_s, :max_dvm, :max_dva, :cmp_ok),Tuple{Symbol,Bool,Int,Float64,Float64,Float64,Bool}}}()
+    local summaries = Vector{NamedTuple{(:method, :converged, :iterations, :elapsed_s, :max_dvm, :max_dva, :slack_delta_va, :angle_alignment, :cmp_ok),Tuple{Symbol,Bool,Int,Float64,Float64,Float64,Float64,Symbol,Bool}}}()
     show_classic = (show_once_output == :classic)
     println("show_once output is written to logfile: ", logfile)
     for m in methods
@@ -582,8 +613,8 @@ function bench_run_acpflow(;
               matpower_shift_sign = matpower_shift_sign,
               matpower_shift_unit = matpower_shift_unit,
               matpower_ratio = matpower_ratio,
-              reference_vm_pu = reference_vm_pu,
-              reference_va_deg = reference_va_deg,
+              reference_vm_pu = effective_reference_vm_pu,
+              reference_va_deg = effective_reference_va_deg,
             )
             status = status_ref[]
             _print_converged_loss_summary(io, m, status, net_res)
@@ -630,8 +661,8 @@ function bench_run_acpflow(;
                 matpower_shift_sign = matpower_shift_sign,
                 matpower_shift_unit = matpower_shift_unit,
                 matpower_ratio = matpower_ratio,
-                reference_vm_pu = reference_vm_pu,
-                reference_va_deg = reference_va_deg,
+                reference_vm_pu = effective_reference_vm_pu,
+                reference_va_deg = effective_reference_va_deg,
               )
             end
             @printf(io, "show_once method=%s output=%s\n\n", String(m), String(show_once_output))
@@ -647,7 +678,7 @@ function bench_run_acpflow(;
       if isnan(s.max_dvm) || isnan(s.max_dva)
         @printf("method=%-12s  converged=%s  iterations=%d  time=%8.6f s  compare=SKIP\n", String(s.method), s.converged ? "yes" : "no", s.iterations, s.elapsed_s)
       else
-        @printf("method=%-12s  converged=%s  iterations=%d  time=%8.6f s  compare=%s  max|dVm|=%8.5f pu  max|dVa|=%7.4f deg\n", String(s.method), s.converged ? "yes" : "no", s.iterations, s.elapsed_s, s.cmp_ok ? "OK " : "FAIL", s.max_dvm, s.max_dva)
+        @printf("method=%-12s  converged=%s  iterations=%d  time=%8.6f s  compare=%s  max|dVm|=%8.5f pu  max|dVa|_aligned=%7.4f deg  slackΔ=%+8.4f deg\n", String(s.method), s.converged ? "yes" : "no", s.iterations, s.elapsed_s, s.cmp_ok ? "OK " : "FAIL", s.max_dvm, s.max_dva, s.slack_delta_va)
       end
     end
     println("=================================================\n")
@@ -687,8 +718,8 @@ function bench_run_acpflow(;
         matpower_shift_sign = matpower_shift_sign,
         matpower_shift_unit = matpower_shift_unit,
         matpower_ratio = matpower_ratio,
-        reference_vm_pu = reference_vm_pu,
-        reference_va_deg = reference_va_deg,
+        reference_vm_pu = effective_reference_vm_pu,
+        reference_va_deg = effective_reference_va_deg,
       )
       _print_converged_loss_summary(stdout, m, status_ref[], net_res)
       open(logfile, "a") do io
@@ -739,8 +770,8 @@ function bench_run_acpflow(;
       matpower_shift_sign = matpower_shift_sign,
       matpower_shift_unit = matpower_shift_unit,
       matpower_ratio = matpower_ratio,
-      reference_vm_pu = reference_vm_pu,
-      reference_va_deg = reference_va_deg,
+      reference_vm_pu = effective_reference_vm_pu,
+      reference_va_deg = effective_reference_va_deg,
     )
   end
 
@@ -750,7 +781,8 @@ function bench_run_acpflow(;
   println("autodamp        = ", autodamp, "   autodamp_min = ", autodamp_min)
   println("start_projection= ", start_projection, "   dc_angle_limit_deg = ", start_projection_dc_angle_limit_deg)
   println("matpower_ratio  = ", matpower_ratio)
-  println("reference       = ", reference_vm_pu, " pu / ", reference_va_deg, " deg")
+  println("reference read  = ", _matpower_slack_reference(mpc).vm_pu, " pu / ", _matpower_slack_reference(mpc).va_deg, " deg")
+  println("reference override = ", reference_override ? "enabled" : "disabled", reference_override ? " -> " * string(reference_vm_pu) * " pu / " * string(reference_va_deg) * " deg" : "")
   println("cooldown_iters  = ", cooldown_iters, "   q_hyst_pu = ", q_hyst_pu)
   println("lock PV->PQ     = ", collect(lock_pv_to_pq_buses))
   println("tol             = ", tol, "   max_ite = ", max_ite)
@@ -813,8 +845,8 @@ function bench_run_acpflow(;
     matpower_shift_sign_ = $matpower_shift_sign;
     matpower_shift_unit_ = $matpower_shift_unit;
     matpower_ratio_ = $matpower_ratio;
-    reference_vm_pu_ = $reference_vm_pu;
-    reference_va_deg_ = $reference_va_deg;
+    reference_vm_pu_ = $effective_reference_vm_pu;
+    reference_va_deg_ = $effective_reference_va_deg;
     method_ = $m)
 
     b = run(benchable; seconds = seconds, samples = samples)
@@ -912,6 +944,7 @@ function main()
       matpower_shift_sign = cfg.matpower_shift_sign,
       matpower_shift_unit = cfg.matpower_shift_unit,
       matpower_ratio = cfg.matpower_ratio,
+      reference_override = cfg.reference_override,
       reference_vm_pu = cfg.reference_vm_pu,
       reference_va_deg = cfg.reference_va_deg,
       diagnose_matpower_reference = cfg.diagnose_matpower_reference,

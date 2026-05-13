@@ -429,7 +429,7 @@ function compare_vm_va(net, mpc; show_diff::Bool = false, tol_vm::Float64 = 1e-6
   println("\n==================== MATPOWER Vm/Va compare ====================")
   println("Compared buses   : ", length(diffs))
   println("tol_vm / tol_va  : ", tol_vm, " pu / ", tol_va, " deg")
-  println("angle alignment  : ", have_delta ? "slack (Δva=$(delta_va) deg)" : "none")
+  println("angle alignment  : ", have_delta ? "slack (raw slack Δva=$(delta_va) deg; max |dVa| below is slack-aligned)" : "none")
   println("max |dVm|        : ", max_dvm, " pu")
   println("max |dVa|        : ", max_dva, " deg")
   println("status           : ", ok ? "OK" : "FAIL")
@@ -448,7 +448,7 @@ function compare_vm_va(net, mpc; show_diff::Bool = false, tol_vm::Float64 = 1e-6
     println()
   end
 
-  return ok, (max_dvm = max_dvm, max_dva = max_dva, n = length(diffs))
+  return ok, (max_dvm = max_dvm, max_dva = max_dva, n = length(diffs), angle_alignment = have_delta ? :slack : :none, slack_delta_va = have_delta ? delta_va : NaN)
 end
 
 """

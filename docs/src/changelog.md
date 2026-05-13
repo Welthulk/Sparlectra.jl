@@ -4,6 +4,8 @@
 * Added `matpower_ratio` for MATPOWER transformer TAP import, allowing the default stored-ratio convention (`normal`) or reciprocal TAP conversion (`reciprocal`) in import, example, and reference-diagnostic paths.
 
 ### Bugfix
+* Clarified MATPOWER VM/VA comparison output by reporting the raw slack angle offset separately from slack-aligned max angle differences, so reference-angle overrides are visible without changing the invariant aligned comparison metric.
+* Fixed `matpower_import.jl` reference-voltage handling so MATPOWER slack VM/VA values are preserved unless `reference_override` is enabled, and the run logfile now reports the read slack reference and whether it was overridden.
 * Fixed MATPOWER flat-start initialization so the slack/reference angle is preserved or explicitly overridden together with the reference voltage, and added `matpower_import.jl` YAML options for `reference_vm_pu` and `reference_va_deg`.
 * Clarified PV→PQ Q-limit switch diagnostics by printing the compared per-unit values together with their MVAr equivalents, avoiding ambiguity with the pre-run MVAr limit table.
 * Fixed `matpower_import.jl` diagnostics so MATPOWER reference residual logging no longer uses an undefined branch-shift multiplier and the example entry path avoids Julia 1.12 / Revise world-age binding warnings.

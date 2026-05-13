@@ -56,8 +56,11 @@ opt_sparse: true
 # intentionally want to restart from the stored MATPOWER VM/VA solution.
 opt_flatstart: true
 
-# Reference/slack-bus voltage used by the MATPOWER example path. The value is
-# applied to the slack bus and remains fixed even for flat-start runs.
+# Reference/slack-bus voltage handling for the MATPOWER example path. By default
+# the slack-bus VM/VA read from the MATPOWER file is preserved. Set
+# reference_override: true to replace it with the values below; the selected
+# behavior is printed to the run logfile.
+reference_override: false
 reference_vm_pu: 1.1
 reference_va_deg: 45.0
 
