@@ -63,6 +63,9 @@ function run_matpower_example_tests()
     @test occursin("function _enable_pq_gen_controllers_for_method(method::Symbol, requested::Bool)::Bool", normalized_source)
     @test occursin("return requested && method === :rectangular", normalized_source)
     @test occursin("!enable_pq_gen_controllers && m === :rectangular", normalized_source)
+    @test occursin("function _print_converged_loss_summary(io::IO, method::Symbol, status, net::Sparlectra.Net)", normalized_source)
+    @test occursin("losses P=", normalized_source)
+    @test occursin("status_ref = status_ref", normalized_source)
 
     example_path = joinpath(@__DIR__, "..", "src", "examples", "matpower_import.jl")
     old_no_main = get(ENV, "SPARLECTRA_MATPOWER_IMPORT_NO_MAIN", nothing)
@@ -133,11 +136,15 @@ function run_matpower_example_tests()
       @test Base.invokelatest(() -> getfield(mod, :_enable_pq_gen_controllers_for_method)(:polar, true)) === false
       skipped_compare_summary = Base.invokelatest(() -> getfield(mod, :_show_once_summary_row)(:rectangular, (; converged = true), nothing, false; compare_available = false))
       @test skipped_compare_summary.converged === true
+      @test skipped_compare_summary.iterations == -1
+      @test isnan(skipped_compare_summary.elapsed_s)
       @test isnan(skipped_compare_summary.max_dvm)
       @test isnan(skipped_compare_summary.max_dva)
       @test skipped_compare_summary.cmp_ok === false
-      compared_summary = Base.invokelatest(() -> getfield(mod, :_show_once_summary_row)(:rectangular, (; converged = true), (; max_dvm = 0.01, max_dva = 0.2), true; compare_available = true))
+      compared_summary = Base.invokelatest(() -> getfield(mod, :_show_once_summary_row)(:rectangular, (; converged = true, iterations = 4, elapsed_s = 0.125), (; max_dvm = 0.01, max_dva = 0.2), true; compare_available = true))
       @test compared_summary.converged === true
+      @test compared_summary.iterations == 4
+      @test compared_summary.elapsed_s == 0.125
       @test compared_summary.max_dvm == 0.01
       @test compared_summary.max_dva == 0.2
       @test compared_summary.cmp_ok === true
