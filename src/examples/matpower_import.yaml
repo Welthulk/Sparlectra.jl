@@ -9,31 +9,7 @@
 # or
 #   SPARLECTRA_MATPOWER_IMPORT_YAML=src/examples/matpower_import.yaml julia --project=. src/examples/matpower_import.jl
 #
-#case: case118.m
-#case118.m: method=rectangular   converged=yes  compare=OK   max|dVm|= 0.01753 pu  max|dVa|= 0.3127 deg
-#case: case145.m
-#case145.m: method=rectangular   converged=yes  compare=OK   max|dVm|= 0.00005 pu  max|dVa|= 0.0051 deg
-#case: case300.m
-#case300.m: method=rectangular   converged=yes  compare=FAIL  max|dVm|= 0.00854 pu  max|dVa|= 9.7610 deg
-#case: case1951rte.m
-# case1951rte.m: method=rectangular   converged=no  compare=SKIP; 
-#case: case1888rte.m
-# case1888rte.m: method=rectangular   converged=no  compare=SKIP
-#case: case141.m
-# case141.m: converged; ok, compare: skipped (MATPOWER case has 2 PV buses with Q limits, but only 1 PV->PQ switch in PowerSimulationsDynamics)
-#case: case_ACTIVSg10k.m
-#case_ACTIVSg10k.m: coconverged; ok, compare: failed
 case: case1354pegase.jl
-#case1354pegase.m: 
-#                  method=classic       converged=yes  compare=FAIL  max|dVm|= 0.00395 pu  max|dVa|= 5.5638 deg
-#                  method=rectangular   converged=yes  compare=FAIL  max|dVm|= 0.00395 pu  max|dVa|= 5.5638 deg
-#                  -> qlimit_start_iter: 2, qlimit_start_mode: auto_q_delta
-
-
-#case: case2869pegase.m
-# case2869pegase.m: method=rectangular   converged=yes  compare=FAIL  max|dVm|= 0.00905 pu  max|dVa|=11.6335 deg
-#case: case9241pegase.m
-#case9241pegase.m: method=rectangular   converged=yes  compare=FAIL  max|dVm|= 0.02841 pu  max|dVa|=13.6434 deg
 methods: [rectangular]
 
 # Solver/NR options
