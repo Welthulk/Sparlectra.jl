@@ -1,16 +1,19 @@
 # Change Log
-## Version 0.7.6 – 2026-05-11
+## Version 0.7.7 – 2026-05-13
 ### Bugfix
 * Issue #186: Singular Jacobian / World-Age Issue in rectangular NR solver
-* Fixed rectangular MATPOWER runs so a singular Newton Jacobian is reported as non-convergence instead of aborting the example, and tightened Julia 1.12 / Revise entry-point calls to avoid world-age binding warnings.
-* Fixed the MATPOWER example wrapper so Julia 1.12 / Revise entry calls use `invokelatest` and the `autodamp` / `start_projection` keyword set is accepted consistently by the benchmark path.
-* Added MATPOWER example diagnostics for embedded reference VM/VA residuals and branch phase-shift convention scans, making it easier to explain angle differences on large PEGASE-style cases.
-* Added configurable MATPOWER branch `SHIFT` sign/unit handling for phase-shifter import, plus logfile-only reference diagnostics and effective YAML logging for `matpower_import.jl`.
 * Fixed rectangular flat-start initialization so slack/PV voltage magnitudes from MATPOWER remain active setpoints while PQ buses and angles start flat.
 * Fixed external `PFModel` flat-start setpoint extraction to use original bus indices, so user-built networks with isolated buses keep slack/PV voltage setpoints correctly.
-* Fixed MATPOWER example startup messaging so `opt_flatstart=true` stays quiet for true flat starts, while `opt_flatstart=false` emits an informational note that stored MATPOWER voltage magnitudes and angles seed the solve.
 * Fixed repository-local generated MATPOWER `.jl` cases so bare names already present in `data/mpower` are loaded directly instead of triggering a download, and relative `.jl` case paths are included from their absolute path.
 * Fixed rectangular PV→PQ Q-limit switching so a positive `q_hyst_pu` also acts as a switching deadband, preventing premature conversions from transient or roundoff-sized Q-limit overshoots during flat-start runs, and keeping repeatedly re-violating buses clamped to avoid PV↔PQ chatter.
+
+### Improvements
+* Added MATPOWER example diagnostics for embedded reference VM/VA residuals and branch phase-shift convention scans, making it easier to explain angle differences on large PEGASE-style cases.
+* Added configurable MATPOWER branch `SHIFT` sign/unit handling for phase-shifter import, plus logfile-only reference diagnostics and effective YAML logging for `matpower_import.jl`.
+
+## Version 0.7.6 – 2026-05-11
+### Bugfix
+* Fixed rectangular MATPOWER runs so a singular Newton Jacobian is reported as non-convergence instead of aborting the example, and tightened Julia 1.12 / Revise entry-point calls to avoid world-age binding warnings.
 
 ## Version 0.7.5 – 2026-05-10
 ### New Features 
