@@ -123,6 +123,7 @@ function printPVQLimitsTable(net::Net; io::IO = stdout, max_rows::Int = 30)
   end
 
   println(io, "PV Q-limits before PF run (MVAr):")
+  println(io, "PV->PQ switch comparisons use per-unit internally; switch diagnostics report both p.u. and MVAr.")
   println(io, "──────────────────────────────────────────────")
   println(io, " Bus │      Qmin [MVAr] │      Qmax [MVAr]")
   println(io, "──────────────────────────────────────────────")
@@ -337,6 +338,7 @@ end
         q_hyst_pu::Float64,
         cooldown_iters::Int,
         verbose::Int=0,
+        io::IO=stdout,
     ) -> (changed::Bool, reenabled::Bool)
 
 Core PV/Q-limit active-set logic shared by solvers.
@@ -366,6 +368,7 @@ function active_set_q_limits!(
   lock_pv_to_pq_buses::AbstractVector{Int} = Int[],
   on_violation! = nothing,
   verbose::Int = 0,
+  io::IO = stdout,
 )
   changed   = false
   reenabled = false
@@ -416,12 +419,16 @@ function active_set_q_limits!(
       make_pq!(bus, qclamp, side)
       logQLimitHit!(net, it, bus, side)
       changed = true
-      (verbose > 0) && @printf "PV->PQ Bus %d: Q=%.6f > Qmax=%.6f (it=%d)\n" bus qreq qmax_pu[bus] it
+      if verbose > 0
+        @printf(io, "PV->PQ Bus %d: Q=%.6f pu (%.6f MVAr) > Qmax=%.6f pu (%.6f MVAr) (it=%d)\n", bus, qreq, qreq * net.baseMVA, qmax_pu[bus], qmax_pu[bus] * net.baseMVA, it)
+      end
     else
       make_pq!(bus, qclamp, side)
       logQLimitHit!(net, it, bus, side)
       changed = true
-      (verbose > 0) && @printf "PV->PQ Bus %d: Q=%.6f < Qmin=%.6f (it=%d)\n" bus qreq qmin_pu[bus] it
+      if verbose > 0
+        @printf(io, "PV->PQ Bus %d: Q=%.6f pu (%.6f MVAr) < Qmin=%.6f pu (%.6f MVAr) (it=%d)\n", bus, qreq, qreq * net.baseMVA, qmin_pu[bus], qmin_pu[bus] * net.baseMVA, it)
+      end
     end
   end
 
@@ -457,7 +464,7 @@ function active_set_q_limits!(
         make_pv!(bus)
         delete!(net.qLimitEvents, bus)   # clear event after re-enable
         reenabled = true
-        (verbose > 0) && @printf "PQ->PV Bus %d: Q=%.6f within (%.6f, %.6f)\n" bus qreq lo hi
+        (verbose > 0) && @printf(io, "PQ->PV Bus %d: Q=%.6f pu (%.6f MVAr) within (%.6f, %.6f) pu ((%.6f, %.6f) MVAr)\n", bus, qreq, qreq * net.baseMVA, lo, hi, lo * net.baseMVA, hi * net.baseMVA)
       end
     end
   end

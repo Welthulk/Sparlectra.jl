@@ -176,6 +176,30 @@ function run_solver_interface_tests()
       printPVQLimitsTable(net; io = io, max_rows = 2)
       printed = String(take!(io))
       @test occursin("more PV rows omitted", printed)
+      @test occursin("switch comparisons use per-unit internally", printed)
+
+      switch_io = IOBuffer()
+      active_set_q_limits!(
+        net,
+        10,
+        length(net.nodeVec);
+        get_qreq_pu = bus -> bus == 2 ? 0.2 : 0.0,
+        is_pv = bus -> bus == 2,
+        make_pq! = (bus, qclamp, side) -> nothing,
+        make_pv! = bus -> nothing,
+        qmin_pu = fill(-Inf, length(net.nodeVec)),
+        qmax_pu = [Inf, 0.1, Inf],
+        pv_orig_mask = trues(length(net.nodeVec)),
+        allow_reenable = false,
+        q_hyst_pu = 0.0,
+        cooldown_iters = 0,
+        verbose = 1,
+        io = switch_io,
+      )
+      switch_log = String(take!(switch_io))
+      @test occursin("Q=0.200000 pu", switch_log)
+      @test occursin("Qmax=0.100000 pu", switch_log)
+      @test occursin("MVAr", switch_log)
 
       res = validate_q_limit_signs!(net.qmin_pu, net.qmax_pu; io = io, autocorrect = true, warn = false)
       @test res.flagged >= 1
