@@ -12,6 +12,8 @@ bus_shunt_model: voltage_dependent_injection
 opt_fd: false
 opt_sparse: true
 opt_flatstart: false
+reference_vm_pu: 1.0
+reference_va_deg: 0.0
 autodamp: false
 autodamp_min: 1.0e-3
 start_projection: false

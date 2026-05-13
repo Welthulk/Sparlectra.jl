@@ -10,25 +10,40 @@
 #   SPARLECTRA_MATPOWER_IMPORT_YAML=src/examples/matpower_import.yaml julia --project=. src/examples/matpower_import.jl
 #
 #case: case118.m
-#method=rectangular   converged=yes  compare=OK   max|dVm|= 0.07753 pu  max|dVa|= 0.6345 deg
-#case: case141.m
+#method=rectangular   converged=yes  compare=OK   max|dVm|= 0.07753 pu  max|dVa|= 0.6345 deg, Options: matpower_shift_unit: deg, matpower_shift_sign: 1.0, matpower_ratio: normal
 
 #case: case145.m
 #method=rectangular   converged=yes  compare=OK   max|dVm|= 0.03910 pu  max|dVa|= 1.9719 deg, Options: matpower_shift_unit: rad, matpower_shift_sign: -1.0, matpower_ratio: normal
+
 #case: case300.m
 #case300.m: method=rectangular   converged=yes  compare=FAIL  max|dVm|= 0.00854 pu  max|dVa|= 9.7610 deg
+
 #case: case1951rte.m
 # method=rectangular   converged=no  compare=FAIL  max|dVm|= 5.07017 pu  max|dVa|=89.8793 deg
-case: case1888rte.m
-# case1888rte.m: method=rectangular   converged=no  compare=SKIP
-# method=rectangular   converged=no  compare=FAIL  max|dVm|= 0.87592 pu  max|dVa|=116.1723 deg
-# 
-#case: case_ACTIVSg10k.m
-#method=rectangular   converged=yes  compare=FAIL  max|dVm|= 1.04937 pu  max|dVa|=169.8844 deg. Options: matpower_shift_unit: rad, matpower_shift_sign: 1.0
+
+#case: case1888rte.m
+#method=rectangular   converged=no  compare=FAIL  max|dVm|= 0.87592 pu  max|dVa|=116.1723 deg
+ 
+case: case_ACTIVSg10k.m
+#method=rectangular   converged=no  compare=FAIL  max|dVm|= 1.01873 pu  max|dVa|=81.0625 deg.   Options: matpower_shift_unit: deg, matpower_shift_sign: 1.0, matpower_ratio: normal
+#method=rectangular   converged=yes  compare=FAIL  max|dVm|= 1.01873 pu  max|dVa|=99.2825 deg,  Options: matpower_shift_unit: deg, matpower_shift_sign: -1.0, matpower_ratio: normal
+#method=rectangular   converged=yes  compare=FAIL  max|dVm|= 1.01873 pu  max|dVa|=119.6346 deg, Options: matpower_shift_unit: deg, matpower_shift_sign: -1.0, matpower_ratio: reciprocal
+#method=rectangular   converged=yes  compare=FAIL  max|dVm|= 1.01873 pu  max|dVa|=102.3707 deg, Options: matpower_shift_unit: deg, matpower_shift_sign: 1.0, matpower_ratio: reciprocal
+#method=rectangular   converged=yes  compare=FAIL  max|dVm|= 1.04937 pu  max|dVa|=169.8844 deg, Options: matpower_shift_unit: rad, matpower_shift_sign: 1.0, matpower_ratio: normal
+#method=rectangular   converged=yes  compare=FAIL  max|dVm|= 1.04937 pu  max|dVa|=162.6605 deg, Options: matpower_shift_unit: rad, matpower_shift_sign: -1.0, matpower_ratio: normal
+#method=rectangular   converged=yes  compare=FAIL  max|dVm|= 1.04937 pu  max|dVa|=179.5273 deg, Options: matpower_shift_unit: rad, matpower_shift_sign: -1.0, matpower_ratio: reciprocal
+#case: case_ACTIVSg500.m
+#method=rectangular   converged=yes  iterations=4  time=0.025165 s  compare=OK   max|dVm|= 0.05251 pu  max|dVa|= 0.1966 deg, Options: matpower_shift_unit: deg, matpower_shift_sign: 1.0, matpower_ratio: normal
+#case: case_ACTIVSg2000.m
+#method=rectangular   converged=yes  iterations=5  time=0.178201 s  compare=OK   max|dVm|= 0.03523 pu  max|dVa|= 0.6388 deg, Options: matpower_shift_unit: deg, matpower_shift_sign: 1.0, matpower_ratio: normal
+
+
 #case1354pegase.m: 
 #method=rectangular   converged=yes  compare=OK   max|dVm|= 0.00254 pu  max|dVa|= 0.4725 deg. Options: matpower_shift_unit: rad, matpower_shift_sign: -1.0
+
 #case: case2869pegase.m
 # method=rectangular   converged=yes  compare=OK   max|dVm|= 0.00129 pu  max|dVa|= 0.2560 deg. Options: matpower_shift_unit: rad, matpower_shift_sign: -1.0
+
 #case: case9241pegase.m
 #method=rectangular   converged=yes  compare=OK   max|dVm|= 0.02662 pu  max|dVa|= 1.4886 deg. Options: matpower_shift_unit: rad, matpower_shift_sign: -1.0
 methods: [rectangular]
@@ -40,6 +55,11 @@ opt_sparse: true
 # voltage magnitudes from MATPOWER remain active setpoints. Keep false when you
 # intentionally want to restart from the stored MATPOWER VM/VA solution.
 opt_flatstart: true
+
+# Reference/slack-bus voltage used by the MATPOWER example path. The value is
+# applied to the slack bus and remains fixed even for flat-start runs.
+reference_vm_pu: 1.1
+reference_va_deg: 45.0
 
 # Bus shunt modeling:
 # - admittance: classic MATPOWER treatment, stamp Gs/Bs into the Y-bus diagonal.
@@ -57,19 +77,19 @@ start_projection: true
 start_projection_try_dc_start: true
 start_projection_try_blend_scan: true
 start_projection_blend_lambdas: [0.1, 0.25, 0.5, 0.75]
-start_projection_dc_angle_limit_deg: 30.0
+start_projection_dc_angle_limit_deg: 60.0
 
-max_ite: 80
-tol: 1.0e-6
+max_ite: 50
+tol: 1.0e-5
 verbose: 1
 cooldown_iters: 2
-q_hyst_pu: 0.2
+q_hyst_pu: 0.15
 
 # PV->PQ Q-limit switching start controls:
 # - qlimit_start_mode: iteration, auto_q_delta, or iteration_or_auto.
 # - iteration starts switching at qlimit_start_iter (default preserves previous iteration 2 behavior).
 # - auto_q_delta starts once PV reactive-power request changes are <= qlimit_auto_q_delta_pu.
-qlimit_start_iter: 2
+qlimit_start_iter: 3
 qlimit_start_mode: auto_q_delta
 qlimit_auto_q_delta_pu: 1.0e-2
 
@@ -80,6 +100,10 @@ tol_va: 2.0
 
 # If true, write the effective parsed YAML/options to the logfile.
 log_effective_config: true
+
+
+# Write effective parsed options to the logfile.
+log_effective_config: true
 # MATPOWER-reference diagnostics:
 # - diagnose_matpower_reference prints the largest residuals obtained when the
 #   VM/VA values embedded in the MATPOWER data are evaluated against the imported
@@ -88,6 +112,8 @@ log_effective_config: true
 # - diagnose_branch_shift_conventions scans common phase-shift interpretations;
 #   this is useful for PEGASE-style cases whose branch SHIFT entries are small
 #   radian-like values although MATPOWER's column convention is degrees.
+
+# Optional logfile-only diagnostics for embedded MATPOWER VM/VA and SHIFT scans.
 diagnose_matpower_reference: true
 diagnose_branch_shift_conventions: true
 diagnose_maxlines: 12
@@ -99,15 +125,8 @@ diagnose_maxlines: 12
 # - Some PEGASE-style files use small radian-like SHIFT values and may need sign=-1.
 matpower_shift_unit: deg
 matpower_shift_sign: 1.0
-matpower_ratio: reciprocal
+matpower_ratio: normal
 
-# Write effective parsed options to the logfile.
-log_effective_config: true
-
-# Optional logfile-only diagnostics for embedded MATPOWER VM/VA and SHIFT scans.
-diagnose_matpower_reference: true
-diagnose_branch_shift_conventions: true
-diagnose_maxlines: 12
 # Q-limit / PV->PQ behavior:
 # - If true, all PV buses are locked against PV->PQ switching.
 #   This effectively ignores reactive-power limits during the solve.

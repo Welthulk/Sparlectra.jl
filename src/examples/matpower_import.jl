@@ -166,6 +166,8 @@ function bench_config_for_case(case_name::AbstractString, yaml_cfg::Dict{String,
     matpower_shift_sign = 1.0,
     matpower_shift_unit = "deg",
     matpower_ratio = "normal",
+    reference_vm_pu = 1.0,
+    reference_va_deg = 0.0,
     diagnose_matpower_reference = false,
     diagnose_branch_shift_conventions = false,
     diagnose_maxlines = 12,
@@ -210,6 +212,8 @@ function bench_config_for_case(case_name::AbstractString, yaml_cfg::Dict{String,
       matpower_shift_sign = Float64(get(yaml_cfg, "matpower_shift_sign", base.matpower_shift_sign)),
       matpower_shift_unit = String(get(yaml_cfg, "matpower_shift_unit", base.matpower_shift_unit)),
       matpower_ratio = String(get(yaml_cfg, "matpower_ratio", base.matpower_ratio)),
+      reference_vm_pu = Float64(get(yaml_cfg, "reference_vm_pu", base.reference_vm_pu)),
+      reference_va_deg = Float64(get(yaml_cfg, "reference_va_deg", base.reference_va_deg)),
       diagnose_matpower_reference = Bool(get(yaml_cfg, "diagnose_matpower_reference", base.diagnose_matpower_reference)),
       diagnose_branch_shift_conventions = Bool(get(yaml_cfg, "diagnose_branch_shift_conventions", base.diagnose_branch_shift_conventions)),
       diagnose_maxlines = Int(get(yaml_cfg, "diagnose_maxlines", base.diagnose_maxlines)),
@@ -495,6 +499,8 @@ function bench_run_acpflow(;
   matpower_shift_sign::Float64 = 1.0,
   matpower_shift_unit::String = "deg",
   matpower_ratio::String = "normal",
+  reference_vm_pu::Float64 = 1.0,
+  reference_va_deg::Float64 = 0.0,
   diagnose_matpower_reference::Bool = false,
   diagnose_branch_shift_conventions::Bool = false,
   diagnose_maxlines::Int = 12,
@@ -576,6 +582,8 @@ function bench_run_acpflow(;
               matpower_shift_sign = matpower_shift_sign,
               matpower_shift_unit = matpower_shift_unit,
               matpower_ratio = matpower_ratio,
+              reference_vm_pu = reference_vm_pu,
+              reference_va_deg = reference_va_deg,
             )
             status = status_ref[]
             _print_converged_loss_summary(io, m, status, net_res)
@@ -622,6 +630,8 @@ function bench_run_acpflow(;
                 matpower_shift_sign = matpower_shift_sign,
                 matpower_shift_unit = matpower_shift_unit,
                 matpower_ratio = matpower_ratio,
+                reference_vm_pu = reference_vm_pu,
+                reference_va_deg = reference_va_deg,
               )
             end
             @printf(io, "show_once method=%s output=%s\n\n", String(m), String(show_once_output))
@@ -677,6 +687,8 @@ function bench_run_acpflow(;
         matpower_shift_sign = matpower_shift_sign,
         matpower_shift_unit = matpower_shift_unit,
         matpower_ratio = matpower_ratio,
+        reference_vm_pu = reference_vm_pu,
+        reference_va_deg = reference_va_deg,
       )
       _print_converged_loss_summary(stdout, m, status_ref[], net_res)
       open(logfile, "a") do io
@@ -727,6 +739,8 @@ function bench_run_acpflow(;
       matpower_shift_sign = matpower_shift_sign,
       matpower_shift_unit = matpower_shift_unit,
       matpower_ratio = matpower_ratio,
+      reference_vm_pu = reference_vm_pu,
+      reference_va_deg = reference_va_deg,
     )
   end
 
@@ -736,6 +750,7 @@ function bench_run_acpflow(;
   println("autodamp        = ", autodamp, "   autodamp_min = ", autodamp_min)
   println("start_projection= ", start_projection, "   dc_angle_limit_deg = ", start_projection_dc_angle_limit_deg)
   println("matpower_ratio  = ", matpower_ratio)
+  println("reference       = ", reference_vm_pu, " pu / ", reference_va_deg, " deg")
   println("cooldown_iters  = ", cooldown_iters, "   q_hyst_pu = ", q_hyst_pu)
   println("lock PV->PQ     = ", collect(lock_pv_to_pq_buses))
   println("tol             = ", tol, "   max_ite = ", max_ite)
@@ -772,6 +787,8 @@ function bench_run_acpflow(;
       matpower_shift_sign = matpower_shift_sign_,
       matpower_shift_unit = matpower_shift_unit_,
       matpower_ratio = matpower_ratio_,
+      reference_vm_pu = reference_vm_pu_,
+      reference_va_deg = reference_va_deg_,
     ) setup = (casefile_ = $casefile;
     max_ite_ = $max_ite;
     tol_ = $tol;
@@ -796,6 +813,8 @@ function bench_run_acpflow(;
     matpower_shift_sign_ = $matpower_shift_sign;
     matpower_shift_unit_ = $matpower_shift_unit;
     matpower_ratio_ = $matpower_ratio;
+    reference_vm_pu_ = $reference_vm_pu;
+    reference_va_deg_ = $reference_va_deg;
     method_ = $m)
 
     b = run(benchable; seconds = seconds, samples = samples)
@@ -893,6 +912,8 @@ function main()
       matpower_shift_sign = cfg.matpower_shift_sign,
       matpower_shift_unit = cfg.matpower_shift_unit,
       matpower_ratio = cfg.matpower_ratio,
+      reference_vm_pu = cfg.reference_vm_pu,
+      reference_va_deg = cfg.reference_va_deg,
       diagnose_matpower_reference = cfg.diagnose_matpower_reference,
       diagnose_branch_shift_conventions = cfg.diagnose_branch_shift_conventions,
       diagnose_maxlines = cfg.diagnose_maxlines,

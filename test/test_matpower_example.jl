@@ -111,6 +111,8 @@ function run_matpower_example_tests()
         "matpower_shift_unit" => "rad",
         "matpower_shift_sign" => -1.0,
         "matpower_ratio" => "reciprocal",
+        "reference_vm_pu" => 1.01,
+        "reference_va_deg" => -3.0,
         "log_effective_config" => true,
       )))
       @test cfg.autodamp === true
@@ -126,6 +128,8 @@ function run_matpower_example_tests()
       @test cfg.matpower_shift_unit == "rad"
       @test cfg.matpower_shift_sign == -1.0
       @test cfg.matpower_ratio == "reciprocal"
+      @test cfg.reference_vm_pu == 1.01
+      @test cfg.reference_va_deg == -3.0
       @test cfg.log_effective_config === true
       @test occursin("matpower_shift_sign", normalized_source)
       @test occursin("matpower_ratio", normalized_source)
@@ -183,6 +187,8 @@ function run_matpower_example_tests()
         matpower_shift_unit = "rad",
         matpower_shift_sign = -1.0,
         matpower_ratio = "reciprocal",
+        reference_vm_pu = 1.01,
+        reference_va_deg = -3.0,
         log_effective_config = true,
         effective_config = cfg,
         show_once = false,
