@@ -56,6 +56,8 @@ function run_acpflow(;
   lock_pv_to_pq_buses::AbstractVector{Int} = Int[],
   enable_pq_gen_controllers::Bool = true,
   bus_shunt_model = :admittance,
+  matpower_shift_sign::Real = 1.0,
+  matpower_shift_unit = :deg,
 )
   ext = lowercase(splitext(casefile)[2])
   myNet = nothing              # Initialize myNet variable
@@ -74,7 +76,7 @@ function run_acpflow(;
       error("File $(in_path) not found")
     end
 
-    myNet = createNetFromMatPowerFile(filename = in_path, log = (verbose > 0), flatstart = opt_flatstart, cooldown = cooldown_iters, q_hyst_pu = q_hyst_pu, enable_pq_gen_controllers = enable_pq_gen_controllers, bus_shunt_model = bus_shunt_model)
+    myNet = createNetFromMatPowerFile(filename = in_path, log = (verbose > 0), flatstart = opt_flatstart, cooldown = cooldown_iters, q_hyst_pu = q_hyst_pu, enable_pq_gen_controllers = enable_pq_gen_controllers, bus_shunt_model = bus_shunt_model, matpower_shift_sign = matpower_shift_sign, matpower_shift_unit = matpower_shift_unit)
     
     if verbose > 1
       # --- DEBUG START ---
