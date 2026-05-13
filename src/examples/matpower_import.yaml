@@ -1,0 +1,115 @@
+#
+# Example configuration for src/examples/matpower_import.jl
+#
+# Local developer usage (VS Code "Run Julia File"):
+#   copy this file to `matpower_import.yaml` and edit as needed.
+#
+# CLI usage:
+#   julia --project=. src/examples/matpower_import.jl src/examples/matpower_import.yaml
+# or
+#   SPARLECTRA_MATPOWER_IMPORT_YAML=src/examples/matpower_import.yaml julia --project=. src/examples/matpower_import.jl
+#
+#case: case118.m
+#case118.m: method=rectangular   converged=yes  compare=OK   max|dVm|= 0.01753 pu  max|dVa|= 0.3127 deg
+#case: case145.m
+#case145.m: method=rectangular   converged=yes  compare=OK   max|dVm|= 0.00005 pu  max|dVa|= 0.0051 deg
+#case: case300.m
+#case300.m: method=rectangular   converged=yes  compare=FAIL  max|dVm|= 0.00854 pu  max|dVa|= 9.7610 deg
+#case: case1951rte.m
+# case1951rte.m: method=rectangular   converged=no  compare=SKIP; 
+#case: case1888rte.m
+# case1888rte.m: method=rectangular   converged=no  compare=SKIP
+#case: case141.m
+# case141.m: converged; ok, compare: skipped (MATPOWER case has 2 PV buses with Q limits, but only 1 PV->PQ switch in PowerSimulationsDynamics)
+#case: case_ACTIVSg10k.m
+#case_ACTIVSg10k.m: coconverged; ok, compare: failed
+case: case1354pegase.jl
+#case1354pegase.m: 
+#                  method=classic       converged=yes  compare=FAIL  max|dVm|= 0.00395 pu  max|dVa|= 5.5638 deg
+#                  method=rectangular   converged=yes  compare=FAIL  max|dVm|= 0.00395 pu  max|dVa|= 5.5638 deg
+#                  -> qlimit_start_iter: 2, qlimit_start_mode: auto_q_delta
+
+
+#case: case2869pegase.m
+# case2869pegase.m: method=rectangular   converged=yes  compare=FAIL  max|dVm|= 0.00905 pu  max|dVa|=11.6335 deg
+#case: case9241pegase.m
+#case9241pegase.m: method=rectangular   converged=yes  compare=FAIL  max|dVm|= 0.02841 pu  max|dVa|=13.6434 deg
+methods: [rectangular]
+
+# Solver/NR options
+opt_fd: false
+opt_sparse: true
+opt_flatstart: true
+
+# Bus shunt modeling:
+# - admittance: classic MATPOWER treatment, stamp Gs/Bs into the Y-bus diagonal.
+# - voltage_dependent_injection: keep Gs/Bs out of Y-bus and include their
+#   |V|^2-dependent power contribution in the nonlinear injection/mismatch path.
+bus_shunt_model: admittance
+
+# Set `autodamp: true` for difficult flat-start cases such as larger MATPOWER
+# networks where a full Newton step increases the mismatch.
+autodamp: true
+autodamp_min: 1.0e-3
+
+# Optional start projection before rectangular NR / external solver starts.
+start_projection: true
+start_projection_try_dc_start: true
+start_projection_try_blend_scan: true
+start_projection_blend_lambdas: [0.1, 0.25, 0.5, 0.75]
+start_projection_dc_angle_limit_deg: 30.0
+
+max_ite: 80
+tol: 1.0e-6
+verbose: 1
+cooldown_iters: 2
+q_hyst_pu: 0.2
+
+# PV->PQ Q-limit switching start controls:
+# - qlimit_start_mode: iteration, auto_q_delta, or iteration_or_auto.
+# - iteration starts switching at qlimit_start_iter (default preserves previous iteration 2 behavior).
+# - auto_q_delta starts once PV reactive-power request changes are <= qlimit_auto_q_delta_pu.
+qlimit_start_iter: 2
+qlimit_start_mode: auto_q_delta
+qlimit_auto_q_delta_pu: 1.0e-2
+
+# MATPOWER comparison controls
+show_diff: true
+tol_vm: 0.02
+tol_va: 2.0
+
+# Q-limit / PV->PQ behavior:
+# - If true, all PV buses are locked against PV->PQ switching.
+#   This effectively ignores reactive-power limits during the solve.
+ignore_q_limits: false
+
+# Optional MATPOWER import behavior for PQ-type generators:
+# - If true, PQ generators get constant P(U)/Q(U) controllers based on MATPOWER limits.
+# - Applied only for generators connected to MATPOWER PQ buses (BUS_TYPE=1).
+# - If false, import keeps the plain generator values without creating these controllers.
+#   Keep enabled by default for compatibility with previous convergence behavior.
+enable_pq_gen_controllers: false
+
+# Legacy warning tracing:
+# - If true, legacy busType warnings include caller=<file>:<line>.
+# - Helpful to identify remaining code paths that still call addBus!(... busType=...)
+#   or setBusType! during import/solver runs.
+trace_legacy_bus_type_warnings: false
+# - Fine-grained manual locks (MATPOWER/original bus IDs). Applied when ignore_q_limits=false.
+lock_pv_to_pq_buses: []
+
+# Benchmark controls
+# - Set `benchmark: false` to only run `show_once` and write logfile/results once.
+#   Useful for large cases (e.g. case1951rte / case2869pegase) where benchmarking can take very long.
+benchmark: false
+seconds: 2.0
+samples: 50
+#show_once: true
+show_once: true
+# show_once output mode:
+# - classic: full classic result tables (printACPFlowResults)
+# - dataframe: compact DataFrame-style node table
+show_once_output: dataframe
+#show_once_output: dataframe
+# Limits only DataFrame-style output (0 = all nodes); ignored for classic output.
+show_once_max_nodes: 30
