@@ -40,8 +40,8 @@ function run_matpower_example_tests()
     end
 
     @test occursin("Base.invokelatest(", source)
-    @test occursin("() -> getfield(@__MODULE__, :bench_run_acpflow)(;", source)
-    @test occursin("Base.invokelatest(() -> getfield(@__MODULE__, :main)())", source)
+    @test occursin("Base.invokelatest(\n    getfield(@__MODULE__, :bench_run_acpflow);", source)
+    @test occursin("Base.invokelatest(getfield(@__MODULE__, :main))", source)
     @test occursin("SPARLECTRA_MATPOWER_IMPORT_NO_MAIN", source)
     @test occursin("function _enable_pq_gen_controllers_for_method(method::Symbol, requested::Bool)::Bool", source)
     @test occursin("return requested && method === :rectangular", source)
@@ -90,6 +90,17 @@ function run_matpower_example_tests()
       mpc_seeded = (; bus = hcat(collect(1.0:3.0), fill(1.0, 3), zeros(3, 5), [1.02, 1.01, 0.99], [0.0, -1.0, -2.0]))
       @test Base.invokelatest(() -> getfield(mod, :_warn_if_flatstart_uses_only_voltage_setpoints)("case1951rte.m", (; opt_flatstart = true), mpc_seeded)) === nothing
       @test_logs (:info, r"opt_flatstart=false uses stored MATPOWER voltage magnitudes and angles") Base.invokelatest(() -> getfield(mod, :_warn_if_flatstart_uses_only_voltage_setpoints)("case1951rte.m", (; opt_flatstart = false), mpc_seeded))
+
+      diagnostic_mpc = (;
+        baseMVA = 100.0,
+        bus = [1.0 3.0 0.0 0.0 0.0 0.0 1.0 1.0 0.0 110.0 1.0 1.1 0.9;
+               2.0 1.0 0.0 0.0 0.0 0.0 1.0 1.0 -0.1 110.0 1.0 1.1 0.9],
+        gen = [1.0 0.0 0.0 0.0 0.0 1.0 100.0 1.0 0.0 0.0 zeros(1, 11)...],
+        branch = [1.0 2.0 0.01 0.10 0.02 0.0 0.0 0.0 1.0 0.01 1.0 0.0 0.0],
+      )
+      diag_io = IOBuffer()
+      @test Base.invokelatest(() -> getfield(mod, :_print_matpower_reference_diagnostics)(diag_io, diagnostic_mpc; matpower_shift_sign = -1.0, matpower_shift_unit = "rad", diagnose_branch_shift_conventions = true, maxlines = 2)) === nothing
+      @test occursin("Branch-shift convention scan", String(take!(diag_io)))
 
       logfile, io = mktemp()
       close(io)

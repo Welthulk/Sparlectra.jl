@@ -1,6 +1,7 @@
 # Change Log
 ## Version 0.7.7 – 2026-05-13
 ### Bugfix
+* Fixed `matpower_import.jl` diagnostics so MATPOWER reference residual logging no longer uses an undefined branch-shift multiplier and the example entry path avoids Julia 1.12 / Revise world-age binding warnings.
 * Issue #186: Singular Jacobian / World-Age Issue in rectangular NR solver
 * Fixed rectangular flat-start initialization so slack/PV voltage magnitudes from MATPOWER remain active setpoints while PQ buses and angles start flat.
 * Fixed external `PFModel` flat-start setpoint extraction to use original bus indices, so user-built networks with isolated buses keep slack/PV voltage setpoints correctly.
