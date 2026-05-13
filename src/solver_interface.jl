@@ -190,7 +190,7 @@ function buildPfModel(
 
   @inbounds for k in 1:n
     b = busVec[k]
-    busIdx_net[k] = b.idx
+    busIdx_net[k] = b.nodeIdx
 
     # NodeType -> Symbol
     if b.type == Slack
@@ -211,7 +211,7 @@ function buildPfModel(
 
     # PV/Slack voltage magnitude setpoint (best effort: node._vm_pu if present, else BusData vm)
     if b.type == PV || b.type == Slack
-      vm_node = net.nodeVec[b.idx]._vm_pu
+      vm_node = net.nodeVec[b.nodeIdx]._vm_pu
       Vset[k] = (vm_node === nothing) ? b.vm_pu : Float64(vm_node)
     else
       Vset[k] = 1.0

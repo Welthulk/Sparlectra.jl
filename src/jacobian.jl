@@ -115,6 +115,12 @@ S = Vdiag * conj(Y*V)
 A vector representing the residuum.
 =#
 function residuum(Y::AbstractMatrix{ComplexF64}, busVec::Vector{BusData}, feeders::Vector{Float64}, n_pq::Int, n_pv::Int, log::Bool)::Vector{Float64}
+  # Residual/update convention for the reduced polar solver:
+  # ΔP = P_spec - P_calc and ΔQ = Q_spec - Q_calc are solved as J * Δx = Δ.
+  # The state update applies θ_new = θ + Δθ and, for PQ buses only,
+  # V_new = V + V * (ΔV/V). PV magnitudes are eliminated from this reduced
+  # state and remain fixed at their setpoints unless Q-limit switching makes
+  # a bus PQ.
   # create complex vector of voltages
   V = [bus.vm_pu * exp(im * bus.va_rad) for bus in busVec]
   # create diagonal matrix of voltages

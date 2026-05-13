@@ -389,10 +389,17 @@ function active_set_q_limits!(
 
     side = :none
     qclamp = 0.0
-    if has_hi && (qreq > qmax_pu[bus])
+    # Use the same hysteresis margin for the initial PV->PQ decision as for
+    # later PQ->PV re-enable checks.  With q_hyst_pu = 0.0 this preserves the
+    # historical exact-limit behavior; positive margins avoid switching on
+    # transient or roundoff-sized Q overshoots during difficult flat starts.
+    hi_switch = has_hi ? qmax_pu[bus] + q_hyst_pu : Inf
+    lo_switch = has_lo ? qmin_pu[bus] - q_hyst_pu : -Inf
+
+    if has_hi && (qreq > hi_switch)
       side = :max
       qclamp = qmax_pu[bus]
-    elseif has_lo && (qreq < qmin_pu[bus])
+    elseif has_lo && (qreq < lo_switch)
       side = :min
       qclamp = qmin_pu[bus]
     end
@@ -427,6 +434,12 @@ function active_set_q_limits!(
       is_pv(bus) && continue
 
       has_q_limits(qmin_pu, qmax_pu, bus) || continue
+
+      # A re-enabled bus that violates its Q limit again is likely chattering
+      # between the PQ clamp and the PV voltage constraint. Keep it clamped
+      # after the first retry instead of re-enabling it indefinitely.
+      prior_hits = count(ev -> ev.bus == bus, net.qLimitLog)
+      prior_hits > 1 && continue
 
       qreq = get_qreq_pu(bus)
       lo, hi = q_limit_band(qmin_pu, qmax_pu, bus, q_hyst_pu)

@@ -114,6 +114,11 @@ For each non-slack bus i:
 F is stacked as [ΔP_2, ΔQ/ΔV_2, ..., ΔP_n, ΔQ/ΔV_n] over all non-slack buses.
 """
 function mismatch_rectangular(Ybus, V::Vector{ComplexF64}, S::Vector{ComplexF64}, bus_types::Vector{Symbol}, Vset::Vector{Float64}, slack_idx::Int)
+  # Residual/update convention for the rectangular solver:
+  # F = calc - spec, including the PV row ΔV = |V| - Vset, and Newton solves
+  # J * δx = -F before applying rectangular absolute updates ΔVr, ΔVi.
+  # The positive PV voltage Jacobian row below is therefore consistent with
+  # the opposite residual sign used by the polar spec-minus-calc solvers.
   n = length(V)
   @assert length(S) == n
   @assert length(bus_types) == n

@@ -291,7 +291,7 @@ function ensure_casefile(casefile::AbstractString;
 
   # 1) If user passed an existing file path, just use it.
   if isfile(casefile)
-    return normpath(casefile)
+    return abspath(casefile)
   end
 
   # 2) Decide output directory.
@@ -311,6 +311,13 @@ function ensure_casefile(casefile::AbstractString;
 
   lcase = lowercase(casefile)
 
+  # Bare case names are resolved inside `outdir` before attempting a network
+  # fetch.  This lets repository-local generated `.jl` cases run offline.
+  local_casefile = joinpath(outdir, casefile)
+  if isfile(local_casefile)
+    return abspath(local_casefile)
+  end
+
   if endswith(lcase, ".m")
     url = "https://raw.githubusercontent.com/MATPOWER/matpower/master/data/$(casefile)"
     ensure_matpower_case(url=url, outdir=outdir, to_jl=to_jl, overwrite=overwrite)
@@ -327,4 +334,3 @@ end
 
 
 end # module
-
