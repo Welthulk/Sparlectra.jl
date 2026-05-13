@@ -24,6 +24,19 @@ using LinearAlgebra
 @inline function _angle_delta_deg(calc_deg::Real, ref_deg::Real)::Float64
   return mod(Float64(calc_deg) - Float64(ref_deg) + 180.0, 360.0) - 180.0
 end
+
+function _normalize_matpower_shift_unit(unit)::Symbol
+  value = Symbol(lowercase(String(unit)))
+  value in (:deg, :degree, :degrees) && return :deg
+  value in (:rad, :radian, :radians) && return :rad
+  error(string("matpower_shift_unit must be \"deg\" or \"rad\" (got ", unit, ")."))
+end
+
+function _matpower_shift_radians(raw_shift::Float64; sign::Float64 = 1.0, unit::Symbol = :deg)::Float64
+  shift_rad = unit == :rad ? raw_shift : deg2rad(raw_shift)
+  return sign * shift_rad
+end
+
 import ..Sparlectra: setVmVa!, setNodeType!
 
 """
@@ -434,8 +447,13 @@ MATPOWER-style Ybus stamping (π-model + tap/shift + bus shunts):
 - line charging b split as b/2 on each end
 - off-nominal tap ratio and phase shift on from-side
 - bus shunts GS/BS added on diagonal: (GS + j*BS)/baseMVA
+Optional `matpower_shift_sign` and `matpower_shift_unit` convert branch `SHIFT` before stamping. Defaults preserve MATPOWER degrees/from-side semantics.
 """
-function build_ybus_matpower(bus::AbstractMatrix{<:Real}, branch::AbstractMatrix{<:Real}, baseMVA::Float64)
+function build_ybus_matpower(bus::AbstractMatrix{<:Real}, branch::AbstractMatrix{<:Real}, baseMVA::Float64; matpower_shift_sign::Real = 1.0, matpower_shift_unit = :deg)
+  shift_unit = _normalize_matpower_shift_unit(matpower_shift_unit)
+  shift_sign = Float64(matpower_shift_sign)
+  shift_sign in (-1.0, 1.0) || error(string("matpower_shift_sign must be 1 or -1 (got ", matpower_shift_sign, ")."))
+
   nbus = size(bus, 1)
   Y = zeros(ComplexF64, nbus, nbus)
 
@@ -495,14 +513,14 @@ function build_ybus_matpower(bus::AbstractMatrix{<:Real}, branch::AbstractMatrix
     ysh = 1im * b / 2
 
     tap = (size(branch, 2) >= 9) ? branch[e, 9] : 1.0
-    shift_deg = (size(branch, 2) >= 10) ? branch[e, 10] : 0.0
+    shift_raw = (size(branch, 2) >= 10) ? Float64(branch[e, 10]) : 0.0
 
     # enforce MATPOWER semantics again (safe)
     if tap == 0.0
       tap = 1.0
     end
 
-    shift = shift_deg * (pi / 180)
+    shift = _matpower_shift_radians(shift_raw; sign = shift_sign, unit = shift_unit)
     a = tap * cis(shift)  # complex tap on from side
 
     # stamping with off-nominal tap
@@ -528,7 +546,7 @@ Important PF semantics:
 Returns maxima of residuals in p.u. and MW/MVar for those enforced equation sets,
 plus equation counts.
 """
-function vmva_power_mismatch_stats(mpc::MatpowerCase)
+function vmva_power_mismatch_stats(mpc::MatpowerCase; matpower_shift_sign::Real = 1.0, matpower_shift_unit = :deg)
   size(mpc.bus, 2) >= 9 || return (ok = false, msg = "mpc.bus has no VM/VA columns")
 
   busrow = bus_row_index(mpc)
@@ -557,7 +575,7 @@ function vmva_power_mismatch_stats(mpc::MatpowerCase)
   end
 
   Sspec = ComplexF64.(Pinj, Qinj)
-  Y = build_ybus_matpower(mpc.bus, mpc.branch, mpc.baseMVA)
+  Y = build_ybus_matpower(mpc.bus, mpc.branch, mpc.baseMVA; matpower_shift_sign = matpower_shift_sign, matpower_shift_unit = matpower_shift_unit)
 
   Vm = mpc.bus[:, 8]
   Va = mpc.bus[:, 9] .* (pi / 180)

@@ -42,6 +42,18 @@ function _createDict()
   return busDict, genDict, branchDict
 end
 
+function _normalize_matpower_shift_unit(unit)::Symbol
+  value = Symbol(lowercase(String(unit)))
+  value in (:deg, :degree, :degrees) && return :deg
+  value in (:rad, :radian, :radians) && return :rad
+  error(string("matpower_shift_unit must be \"deg\" or \"rad\" (got ", unit, ")."))
+end
+
+function _matpower_shift_degrees(raw_shift::Float64; sign::Float64 = 1.0, unit::Symbol = :deg)::Float64
+  shift_deg = unit == :rad ? rad2deg(raw_shift) : raw_shift
+  return sign * shift_deg
+end
+
 
 #! format: on
 
@@ -60,8 +72,14 @@ All matrices are expected in MATPOWER v2 column conventions.
 `"admittance"` stamps them into Ybus (default), while
 `"voltage_dependent_injection"` keeps them out of Ybus and evaluates their
 |V|²-dependent contribution in the rectangular mismatch path.
+
+`matpower_shift_sign` and `matpower_shift_unit` control how MATPOWER branch
+`SHIFT` values are converted before they are stored as Sparlectra transformer
+phase shifts. Defaults preserve MATPOWER convention: `SHIFT` is in degrees,
+positive on the branch from side. PEGASE-style data sets may require
+`matpower_shift_unit = "rad"` and/or `matpower_shift_sign = -1`.
 """
-function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false, cooldown::Int = 0, q_hyst_pu::Float64 = 0.0, enable_pq_gen_controllers::Bool = true, bus_shunt_model = :admittance)::Net
+function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false, cooldown::Int = 0, q_hyst_pu::Float64 = 0.0, enable_pq_gen_controllers::Bool = true, bus_shunt_model = :admittance, matpower_shift_sign::Real = 1.0, matpower_shift_unit = :deg)::Net
   # Small logger helper
   pInfo(msg::String) = (log ? (@info msg) : nothing)
 
@@ -88,6 +106,9 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
   end
 
   shunt_model = normalize_bus_shunt_model(bus_shunt_model)
+  shift_unit = _normalize_matpower_shift_unit(matpower_shift_unit)
+  shift_sign = Float64(matpower_shift_sign)
+  shift_sign in (-1.0, 1.0) || error(string("matpower_shift_sign must be 1 or -1 (got ", matpower_shift_sign, ")."))
 
   if log
     @info "Creating new Net: $(name) with baseMVA=$(baseMVA), flatstart=$(flatstart)"
@@ -217,7 +238,11 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
     ratio = Float64(row[TAP])
     ratio = (ratio == 0.0) ? 1.0 : ratio
 
-    angle  = Float64(row[SHIFT])
+    # MATPOWER defines SHIFT on the branch from side. Sparlectra uses the
+    # same PI tap placement; changing PST orientation for ratio=1 is therefore
+    # equivalent to changing the phase-shift sign. For off-nominal ratios,
+    # reversing from/to also moves the ratio tap and is intentionally not done.
+    angle  = _matpower_shift_degrees(Float64(row[SHIFT]); sign = shift_sign, unit = shift_unit)
     status = Int(row[BR_STATUS])
 
     vn_from = getNodeVn(myNet.nodeVec[from_idx])
@@ -333,6 +358,8 @@ function createNetFromMatPowerFile(; filename::String,
     q_hyst_pu::Float64 = 0.0,
     enable_pq_gen_controllers::Bool = true,
     bus_shunt_model = :admittance,
+    matpower_shift_sign::Real = 1.0,
+    matpower_shift_unit = :deg,
     verbose::Int = 0)::Net
 
   mpc = MatpowerIO.read_case(filename; legacy_compat=true)
@@ -340,7 +367,8 @@ function createNetFromMatPowerFile(; filename::String,
   # Build the network first
   net = createNetFromMatPowerCase(; mpc=mpc, log=log, flatstart=flatstart,
                                   cooldown=cooldown, q_hyst_pu=q_hyst_pu, enable_pq_gen_controllers=enable_pq_gen_controllers,
-                                  bus_shunt_model=bus_shunt_model)
+                                  bus_shunt_model=bus_shunt_model, matpower_shift_sign=matpower_shift_sign,
+                                  matpower_shift_unit=matpower_shift_unit)
 
   # Always apply MATPOWER isolated flags (BUS_TYPE==4) onto net
   MatpowerIO.apply_mp_isolated_buses!(net, mpc; verbose=verbose)

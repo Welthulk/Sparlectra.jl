@@ -61,6 +61,12 @@ function run_matpower_example_tests()
         "start_projection_try_blend_scan" => false,
         "start_projection_blend_lambdas" => [0.1, 0.9],
         "start_projection_dc_angle_limit_deg" => 45.0,
+        "diagnose_matpower_reference" => true,
+        "diagnose_branch_shift_conventions" => true,
+        "diagnose_maxlines" => 3,
+        "matpower_shift_unit" => "rad",
+        "matpower_shift_sign" => -1.0,
+        "log_effective_config" => true,
       )))
       @test cfg.autodamp === true
       @test cfg.autodamp_min == 0.002
@@ -69,6 +75,16 @@ function run_matpower_example_tests()
       @test cfg.start_projection_try_blend_scan === false
       @test cfg.start_projection_blend_lambdas == [0.1, 0.9]
       @test cfg.start_projection_dc_angle_limit_deg == 45.0
+      @test cfg.diagnose_matpower_reference === true
+      @test cfg.diagnose_branch_shift_conventions === true
+      @test cfg.diagnose_maxlines == 3
+      @test cfg.matpower_shift_unit == "rad"
+      @test cfg.matpower_shift_sign == -1.0
+      @test cfg.log_effective_config === true
+      @test occursin("matpower_shift_sign", source)
+      @test occursin("_print_effective_config", source)
+      @test occursin("function _print_matpower_reference_diagnostics", source)
+      @test occursin("Branch-shift convention scan", source)
       @test Base.invokelatest(() -> getfield(mod, :_enable_pq_gen_controllers_for_method)(:rectangular, true)) === true
       @test Base.invokelatest(() -> getfield(mod, :_enable_pq_gen_controllers_for_method)(:polar, true)) === false
       mpc_seeded = (; bus = hcat(collect(1.0:3.0), fill(1.0, 3), zeros(3, 5), [1.02, 1.01, 0.99], [0.0, -1.0, -2.0]))
@@ -92,6 +108,10 @@ function run_matpower_example_tests()
         start_projection_try_blend_scan = false,
         start_projection_blend_lambdas = [0.1, 0.9],
         start_projection_dc_angle_limit_deg = 45.0,
+        matpower_shift_unit = "rad",
+        matpower_shift_sign = -1.0,
+        log_effective_config = true,
+        effective_config = cfg,
         show_once = false,
         benchmark = false,
       ))
@@ -104,6 +124,17 @@ function run_matpower_example_tests()
         ENV["SPARLECTRA_MATPOWER_IMPORT_NO_MAIN"] = old_no_main
       end
     end
+  end
+
+  @testset "MATPOWER SHIFT convention options" begin
+    bus = [1.0 3.0 0.0 0.0 0.0 0.0 1.0 1.0 0.0 110.0 1.0 1.1 0.9;
+           2.0 1.0 0.0 0.0 0.0 0.0 1.0 1.0 0.0 110.0 1.0 1.1 0.9]
+    branch_rad = [1.0 2.0 0.01 0.10 0.02 0.0 0.0 0.0 1.0 (pi / 6) 1.0 -360.0 360.0]
+    branch_deg = copy(branch_rad)
+    branch_deg[1, 10] = -30.0
+    y_rad = Sparlectra.MatpowerIO.build_ybus_matpower(bus, branch_rad, 100.0; matpower_shift_unit = "rad", matpower_shift_sign = -1.0)
+    y_deg = Sparlectra.MatpowerIO.build_ybus_matpower(bus, branch_deg, 100.0)
+    @test isapprox(y_rad, y_deg; atol = 1e-12, rtol = 0.0)
   end
 
   @testset "MATPOWER local Julia case resolution" begin

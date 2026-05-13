@@ -78,6 +78,29 @@ show_diff: true
 tol_vm: 0.02
 tol_va: 2.0
 
+
+# MATPOWER branch SHIFT convention controls:
+# - matpower_shift_unit: deg (MATPOWER default) or rad (PEGASE-style small shift values).
+# - matpower_shift_sign: 1 keeps MATPOWER from-side sign; -1 flips PST angle sign.
+#   With ratio=1, reversing PST from/to orientation is equivalent to flipping sign;
+#   with off-nominal ratios it would also move the ratio tap and is not done here.
+matpower_shift_unit: rad
+matpower_shift_sign: -1.0
+
+# If true, write the effective parsed YAML/options to the logfile.
+log_effective_config: true
+# MATPOWER-reference diagnostics:
+# - diagnose_matpower_reference prints the largest residuals obtained when the
+#   VM/VA values embedded in the MATPOWER data are evaluated against the imported
+#   network equations. Large residuals mean the reference VM/VA is not an exact
+#   solution of the imported data/model before the Sparlectra solve is considered.
+# - diagnose_branch_shift_conventions scans common phase-shift interpretations;
+#   this is useful for PEGASE-style cases whose branch SHIFT entries are small
+#   radian-like values although MATPOWER's column convention is degrees.
+diagnose_matpower_reference: true
+diagnose_branch_shift_conventions: true
+diagnose_maxlines: 12
+
 # Q-limit / PV->PQ behavior:
 # - If true, all PV buses are locked against PV->PQ switching.
 #   This effectively ignores reactive-power limits during the solve.
