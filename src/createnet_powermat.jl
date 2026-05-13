@@ -54,6 +54,18 @@ function _matpower_shift_degrees(raw_shift::Float64; sign::Float64 = 1.0, unit::
   return sign * shift_deg
 end
 
+function _normalize_matpower_ratio_mode(mode)::Symbol
+  value = Symbol(lowercase(String(mode)))
+  value === :normal && return :normal
+  value === :reciprocal && return :reciprocal
+  error(string("matpower_ratio must be \"normal\" or \"reciprocal\" (got ", mode, ")."))
+end
+
+function _matpower_import_ratio(raw_ratio::Float64; mode::Symbol = :normal)::Float64
+  ratio = raw_ratio == 0.0 ? 1.0 : raw_ratio
+  return mode === :reciprocal ? inv(ratio) : ratio
+end
+
 
 #! format: on
 
@@ -78,8 +90,13 @@ All matrices are expected in MATPOWER v2 column conventions.
 phase shifts. Defaults preserve MATPOWER convention: `SHIFT` is in degrees,
 positive on the branch from side. PEGASE-style data sets may require
 `matpower_shift_unit = "rad"` and/or `matpower_shift_sign = -1`.
+
+`matpower_ratio` controls MATPOWER branch `TAP` import. The default `"normal"`
+uses the `TAP` value directly (with MATPOWER `0` treated as `1`). Set
+`matpower_ratio = "reciprocal"` when an input data set stores the inverse tap
+ratio expected by Sparlectra.
 """
-function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false, cooldown::Int = 0, q_hyst_pu::Float64 = 0.0, enable_pq_gen_controllers::Bool = true, bus_shunt_model = :admittance, matpower_shift_sign::Real = 1.0, matpower_shift_unit = :deg)::Net
+function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false, cooldown::Int = 0, q_hyst_pu::Float64 = 0.0, enable_pq_gen_controllers::Bool = true, bus_shunt_model = :admittance, matpower_shift_sign::Real = 1.0, matpower_shift_unit = :deg, matpower_ratio = :normal)::Net
   # Small logger helper
   pInfo(msg::String) = (log ? (@info msg) : nothing)
 
@@ -109,6 +126,7 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
   shift_unit = _normalize_matpower_shift_unit(matpower_shift_unit)
   shift_sign = Float64(matpower_shift_sign)
   shift_sign in (-1.0, 1.0) || error(string("matpower_shift_sign must be 1 or -1 (got ", matpower_shift_sign, ")."))
+  ratio_mode = _normalize_matpower_ratio_mode(matpower_ratio)
 
   if log
     @info "Creating new Net: $(name) with baseMVA=$(baseMVA), flatstart=$(flatstart)"
@@ -235,8 +253,7 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
     ratedS_raw = Float64(row[RATE_A])
     ratedS = ratedS_raw > 0.0 ? ratedS_raw : Inf
 
-    ratio = Float64(row[TAP])
-    ratio = (ratio == 0.0) ? 1.0 : ratio
+    ratio = _matpower_import_ratio(Float64(row[TAP]); mode = ratio_mode)
 
     # MATPOWER defines SHIFT on the branch from side. Sparlectra uses the
     # same PI tap placement; changing PST orientation for ratio=1 is therefore
@@ -360,6 +377,7 @@ function createNetFromMatPowerFile(; filename::String,
     bus_shunt_model = :admittance,
     matpower_shift_sign::Real = 1.0,
     matpower_shift_unit = :deg,
+    matpower_ratio = :normal,
     verbose::Int = 0)::Net
 
   mpc = MatpowerIO.read_case(filename; legacy_compat=true)
@@ -368,7 +386,7 @@ function createNetFromMatPowerFile(; filename::String,
   net = createNetFromMatPowerCase(; mpc=mpc, log=log, flatstart=flatstart,
                                   cooldown=cooldown, q_hyst_pu=q_hyst_pu, enable_pq_gen_controllers=enable_pq_gen_controllers,
                                   bus_shunt_model=bus_shunt_model, matpower_shift_sign=matpower_shift_sign,
-                                  matpower_shift_unit=matpower_shift_unit)
+                                  matpower_shift_unit=matpower_shift_unit, matpower_ratio=matpower_ratio)
 
   # Always apply MATPOWER isolated flags (BUS_TYPE==4) onto net
   MatpowerIO.apply_mp_isolated_buses!(net, mpc; verbose=verbose)

@@ -1,5 +1,8 @@
 # Change Log
 ## Version 0.7.7 – 2026-05-13
+### New Features
+* Added `matpower_ratio` for MATPOWER transformer TAP import, allowing the default stored-ratio convention (`normal`) or reciprocal TAP conversion (`reciprocal`) in import, example, and reference-diagnostic paths.
+
 ### Bugfix
 * Fixed `matpower_import.jl` diagnostics so MATPOWER reference residual logging no longer uses an undefined branch-shift multiplier and the example entry path avoids Julia 1.12 / Revise world-age binding warnings.
 * Issue #186: Singular Jacobian / World-Age Issue in rectangular NR solver
@@ -7,6 +10,7 @@
 * Fixed external `PFModel` flat-start setpoint extraction to use original bus indices, so user-built networks with isolated buses keep slack/PV voltage setpoints correctly.
 * Fixed repository-local generated MATPOWER `.jl` cases so bare names already present in `data/mpower` are loaded directly instead of triggering a download, and relative `.jl` case paths are included from their absolute path.
 * Fixed rectangular PV→PQ Q-limit switching so a positive `q_hyst_pu` also acts as a switching deadband, preventing premature conversions from transient or roundoff-sized Q-limit overshoots during flat-start runs, and keeping repeatedly re-violating buses clamped to avoid PV↔PQ chatter.
+* Fixed MATPOWER example regression tests to use `matpower_import.yaml.example`, tolerate CRLF source checkouts for Julia 1.12 / Revise world-age checks, and download missing MATPOWER test cases only outside GitLab CI.
 
 ### Improvements
 * Added MATPOWER example diagnostics for embedded reference VM/VA residuals and branch phase-shift convention scans, making it easier to explain angle differences on large PEGASE-style cases.

@@ -37,6 +37,18 @@ function _matpower_shift_radians(raw_shift::Float64; sign::Float64 = 1.0, unit::
   return sign * shift_rad
 end
 
+function _normalize_matpower_ratio_mode(mode)::Symbol
+  value = Symbol(lowercase(String(mode)))
+  value === :normal && return :normal
+  value === :reciprocal && return :reciprocal
+  error(string("matpower_ratio must be \"normal\" or \"reciprocal\" (got ", mode, ")."))
+end
+
+function _matpower_import_ratio(raw_ratio::Float64; mode::Symbol = :normal)::Float64
+  ratio = raw_ratio == 0.0 ? 1.0 : raw_ratio
+  return mode === :reciprocal ? inv(ratio) : ratio
+end
+
 import ..Sparlectra: setVmVa!, setNodeType!
 
 """
@@ -447,12 +459,13 @@ MATPOWER-style Ybus stamping (π-model + tap/shift + bus shunts):
 - line charging b split as b/2 on each end
 - off-nominal tap ratio and phase shift on from-side
 - bus shunts GS/BS added on diagonal: (GS + j*BS)/baseMVA
-Optional `matpower_shift_sign` and `matpower_shift_unit` convert branch `SHIFT` before stamping. Defaults preserve MATPOWER degrees/from-side semantics.
+Optional `matpower_shift_sign` and `matpower_shift_unit` convert branch `SHIFT` before stamping. `matpower_ratio` controls whether branch `TAP` is used as stored (`"normal"`, default) or inverted first (`"reciprocal"`). Defaults preserve MATPOWER degrees/from-side semantics.
 """
-function build_ybus_matpower(bus::AbstractMatrix{<:Real}, branch::AbstractMatrix{<:Real}, baseMVA::Float64; matpower_shift_sign::Real = 1.0, matpower_shift_unit = :deg)
+function build_ybus_matpower(bus::AbstractMatrix{<:Real}, branch::AbstractMatrix{<:Real}, baseMVA::Float64; matpower_shift_sign::Real = 1.0, matpower_shift_unit = :deg, matpower_ratio = :normal)
   shift_unit = _normalize_matpower_shift_unit(matpower_shift_unit)
   shift_sign = Float64(matpower_shift_sign)
   shift_sign in (-1.0, 1.0) || error(string("matpower_shift_sign must be 1 or -1 (got ", matpower_shift_sign, ")."))
+  ratio_mode = _normalize_matpower_ratio_mode(matpower_ratio)
 
   nbus = size(bus, 1)
   Y = zeros(ComplexF64, nbus, nbus)
@@ -512,13 +525,9 @@ function build_ybus_matpower(bus::AbstractMatrix{<:Real}, branch::AbstractMatrix
     # line charging b -> j*b/2 at both ends
     ysh = 1im * b / 2
 
-    tap = (size(branch, 2) >= 9) ? branch[e, 9] : 1.0
+    tap_raw = (size(branch, 2) >= 9) ? Float64(branch[e, 9]) : 1.0
     shift_raw = (size(branch, 2) >= 10) ? Float64(branch[e, 10]) : 0.0
-
-    # enforce MATPOWER semantics again (safe)
-    if tap == 0.0
-      tap = 1.0
-    end
+    tap = _matpower_import_ratio(tap_raw; mode = ratio_mode)
 
     shift = _matpower_shift_radians(shift_raw; sign = shift_sign, unit = shift_unit)
     a = tap * cis(shift)  # complex tap on from side
@@ -546,7 +555,7 @@ Important PF semantics:
 Returns maxima of residuals in p.u. and MW/MVar for those enforced equation sets,
 plus equation counts.
 """
-function vmva_power_mismatch_stats(mpc::MatpowerCase; matpower_shift_sign::Real = 1.0, matpower_shift_unit = :deg)
+function vmva_power_mismatch_stats(mpc::MatpowerCase; matpower_shift_sign::Real = 1.0, matpower_shift_unit = :deg, matpower_ratio = :normal)
   size(mpc.bus, 2) >= 9 || return (ok = false, msg = "mpc.bus has no VM/VA columns")
 
   busrow = bus_row_index(mpc)
@@ -575,7 +584,7 @@ function vmva_power_mismatch_stats(mpc::MatpowerCase; matpower_shift_sign::Real 
   end
 
   Sspec = ComplexF64.(Pinj, Qinj)
-  Y = build_ybus_matpower(mpc.bus, mpc.branch, mpc.baseMVA; matpower_shift_sign = matpower_shift_sign, matpower_shift_unit = matpower_shift_unit)
+  Y = build_ybus_matpower(mpc.bus, mpc.branch, mpc.baseMVA; matpower_shift_sign = matpower_shift_sign, matpower_shift_unit = matpower_shift_unit, matpower_ratio = matpower_ratio)
 
   Vm = mpc.bus[:, 8]
   Va = mpc.bus[:, 9] .* (pi / 180)
