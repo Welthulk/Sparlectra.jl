@@ -9,16 +9,37 @@
 # or
 #   SPARLECTRA_MATPOWER_IMPORT_YAML=src/examples/matpower_import.yaml julia --project=. src/examples/matpower_import.jl
 #
-case: case118.m
+#case: case118.m
+#case118.m: method=rectangular   converged=yes  compare=OK   max|dVm|= 0.01753 pu  max|dVa|= 0.3127 deg
+#case: case145.m
+#case145.m: method=rectangular   converged=yes  compare=OK   max|dVm|= 0.00005 pu  max|dVa|= 0.0051 deg
+#case: case300.m
+#case300.m: method=rectangular   converged=yes  compare=FAIL  max|dVm|= 0.00854 pu  max|dVa|= 9.7610 deg
+#case: case1951rte.m
+# case1951rte.m: method=rectangular   converged=no  compare=SKIP; 
+#case: case1888rte.m
+# case1888rte.m: method=rectangular   converged=no  compare=SKIP
+#case: case141.m
+# case141.m: converged; ok, compare: skipped (MATPOWER case has 2 PV buses with Q limits, but only 1 PV->PQ switch in PowerSimulationsDynamics)
+#case: case_ACTIVSg10k.m
+#case_ACTIVSg10k.m: coconverged; ok, compare: failed
+case: case1354pegase.jl
+#case1354pegase.m: 
+#                  method=classic       converged=yes  compare=FAIL  max|dVm|= 0.00395 pu  max|dVa|= 5.5638 deg
+#                  method=rectangular   converged=yes  compare=FAIL  max|dVm|= 0.00395 pu  max|dVa|= 5.5638 deg
+#                  -> qlimit_start_iter: 2, qlimit_start_mode: auto_q_delta
+
+
+#case: case2869pegase.m
+# case2869pegase.m: method=rectangular   converged=yes  compare=FAIL  max|dVm|= 0.00905 pu  max|dVa|=11.6335 deg
+#case: case9241pegase.m
+#case9241pegase.m: method=rectangular   converged=yes  compare=FAIL  max|dVm|= 0.02841 pu  max|dVa|=13.6434 deg
 methods: [rectangular]
 
 # Solver/NR options
 opt_fd: false
 opt_sparse: true
-# If true, PQ-bus magnitudes and all voltage angles start flat while slack/PV
-# voltage magnitudes from MATPOWER remain active setpoints. Keep false when you
-# intentionally want to restart from the stored MATPOWER VM/VA solution.
-opt_flatstart: false
+opt_flatstart: true
 
 # Bus shunt modeling:
 # - admittance: classic MATPOWER treatment, stamp Gs/Bs into the Y-bus diagonal.
@@ -28,34 +49,46 @@ bus_shunt_model: admittance
 
 # Set `autodamp: true` for difficult flat-start cases such as larger MATPOWER
 # networks where a full Newton step increases the mismatch.
-autodamp: false
+autodamp: true
 autodamp_min: 1.0e-3
 
 # Optional start projection before rectangular NR / external solver starts.
-start_projection: false
+start_projection: true
 start_projection_try_dc_start: true
 start_projection_try_blend_scan: true
-start_projection_blend_lambdas: [0.25, 0.5, 0.75]
-start_projection_dc_angle_limit_deg: 60.0
-max_ite: 30
+start_projection_blend_lambdas: [0.1, 0.25, 0.5, 0.75]
+start_projection_dc_angle_limit_deg: 30.0
+
+max_ite: 80
 tol: 1.0e-6
 verbose: 1
-cooldown_iters: 0
-q_hyst_pu: 0.0
+cooldown_iters: 2
+q_hyst_pu: 0.2
 
 # PV->PQ Q-limit switching start controls:
 # - qlimit_start_mode: iteration, auto_q_delta, or iteration_or_auto.
 # - iteration starts switching at qlimit_start_iter (default preserves previous iteration 2 behavior).
 # - auto_q_delta starts once PV reactive-power request changes are <= qlimit_auto_q_delta_pu.
-qlimit_start_iter: 3
-qlimit_start_mode: iteration
-qlimit_auto_q_delta_pu: 1.0e-4
+qlimit_start_iter: 2
+qlimit_start_mode: auto_q_delta
+qlimit_auto_q_delta_pu: 1.0e-2
 
 # MATPOWER comparison controls
 show_diff: true
 tol_vm: 0.02
-tol_va: 0.5
+tol_va: 2.0
 
+
+# MATPOWER branch SHIFT convention controls:
+# - matpower_shift_unit: deg (MATPOWER default) or rad (PEGASE-style small shift values).
+# - matpower_shift_sign: 1 keeps MATPOWER from-side sign; -1 flips PST angle sign.
+#   With ratio=1, reversing PST from/to orientation is equivalent to flipping sign;
+#   with off-nominal ratios it would also move the ratio tap and is not done here.
+matpower_shift_unit: rad
+matpower_shift_sign: -1.0
+
+# If true, write the effective parsed YAML/options to the logfile.
+log_effective_config: true
 # MATPOWER-reference diagnostics:
 # - diagnose_matpower_reference prints the largest residuals obtained when the
 #   VM/VA values embedded in the MATPOWER data are evaluated against the imported
@@ -68,20 +101,6 @@ diagnose_matpower_reference: true
 diagnose_branch_shift_conventions: true
 diagnose_maxlines: 12
 
-
-# MATPOWER branch SHIFT convention controls:
-# - deg/sign=1 preserves MATPOWER default semantics (SHIFT in degrees on from side).
-# - Some PEGASE-style files use small radian-like values and may need sign=-1.
-matpower_shift_unit: deg
-matpower_shift_sign: 1.0
-
-# Write effective parsed options to the logfile.
-log_effective_config: false
-
-# Optional logfile-only diagnostics for embedded MATPOWER VM/VA and SHIFT scans.
-diagnose_matpower_reference: false
-diagnose_branch_shift_conventions: false
-diagnose_maxlines: 12
 # Q-limit / PV->PQ behavior:
 # - If true, all PV buses are locked against PV->PQ switching.
 #   This effectively ignores reactive-power limits during the solve.
@@ -113,7 +132,7 @@ show_once: true
 # show_once output mode:
 # - classic: full classic result tables (printACPFlowResults)
 # - dataframe: compact DataFrame-style node table
-#show_once_output: classic
 show_once_output: dataframe
+#show_once_output: dataframe
 # Limits only DataFrame-style output (0 = all nodes); ignored for classic output.
 show_once_max_nodes: 30

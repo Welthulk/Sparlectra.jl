@@ -53,6 +53,8 @@ This page summarizes the most relevant runnable examples in `src/examples/`.
 
 - `matpower_import.jl` (+ `matpower_import.yaml.example`)  
   Configurable MATPOWER import utility script.
+  Supports logfile-only MATPOWER reference diagnostics, effective YAML logging, and
+  configurable branch `SHIFT` sign/unit handling for phase-shifter convention checks.
 - `network_analyzer.jl`  
   Network diagnostics and inspection helpers.
 - `visul_chaos.jl`  

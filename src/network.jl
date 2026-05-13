@@ -1920,12 +1920,11 @@ function initialVrect(net::Net; flatstart::Bool = net.flatstart)
     vm = (node._vm_pu === nothing || node._vm_pu <= 0.0) ? 1.0 : Float64(node._vm_pu)
 
     if flatstart
-      # fix: 04.02.2026: slack bus gets its Vm (or 1.0 if missing), angle 0
-      if k == slack_idx
-        # Slack: keep its Vm (or 1.0 if missing), angle 0
+      if k == slack_idx || getNodeType(node) == PV
+        # Flat start resets angles, but keeps voltage magnitude setpoints for
+        # slack/PV buses. PQ-bus magnitudes remain the flat 1.0 pu guess.
         V0[k] = ComplexF64(vm, 0.0)
       else
-        # All others: true flat start
         V0[k] = ComplexF64(1.0, 0.0)
       end
     else

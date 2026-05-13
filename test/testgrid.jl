@@ -295,6 +295,40 @@ function test_matpower_import_defaults_no_reenable()::Bool
   return true
 end
 
+function test_matpower_flatstart_uses_generator_voltage_setpoints()::Bool
+  mpc = (
+    name = "case_flatstart_vg_setpoints",
+    baseMVA = 100.0,
+    bus = [
+      1 3 0.0 0.0 0.0 0.0 1 0.97 12.0 110.0 1 1.1 0.9
+      2 1 20.0 8.0 0.0 0.0 1 0.93 -7.0 110.0 1 1.1 0.9
+      3 2 0.0 0.0 0.0 0.0 1 0.96 5.0 110.0 1 1.1 0.9
+    ],
+    gen = [
+      1 30.0 0.0 999.0 -999.0 1.04 100.0 1 999.0 0.0 0 0 0 0 0 0 0 0 0 0 0
+      3 25.0 0.0 999.0 -999.0 1.02 100.0 1 999.0 0.0 0 0 0 0 0 0 0 0 0 0 0
+    ],
+    branch = [
+      1 2 0.01 0.05 0.0 9999.0 0.0 0.0 0.0 0.0 1 -60.0 60.0
+      2 3 0.01 0.05 0.0 9999.0 0.0 0.0 0.0 0.0 1 -60.0 60.0
+    ],
+    gencost = nothing,
+    bus_name = nothing,
+  )
+
+  net = Sparlectra.createNetFromMatPowerCase(mpc = mpc, log = false, flatstart = true)
+  V0, slack_idx = Sparlectra.initialVrect(net; flatstart = true)
+  busVec, _ = Sparlectra.getBusData(net.nodeVec, net.baseMVA, true; net = net)
+
+  return slack_idx == 1 &&
+         isapprox(abs(V0[1]), 1.04; atol = 1e-12) && isapprox(angle(V0[1]), 0.0; atol = 1e-12) &&
+         isapprox(abs(V0[2]), 1.0; atol = 1e-12) && isapprox(angle(V0[2]), 0.0; atol = 1e-12) &&
+         isapprox(abs(V0[3]), 1.02; atol = 1e-12) && isapprox(angle(V0[3]), 0.0; atol = 1e-12) &&
+         isapprox(busVec[1].vm_pu, 1.04; atol = 1e-12) && isapprox(busVec[1].va_rad, 0.0; atol = 1e-12) &&
+         isapprox(busVec[2].vm_pu, 1.0; atol = 1e-12) && isapprox(busVec[2].va_rad, 0.0; atol = 1e-12) &&
+         isapprox(busVec[3].vm_pu, 1.02; atol = 1e-12) && isapprox(busVec[3].va_rad, 0.0; atol = 1e-12)
+end
+
 function test_matpower_import_uses_bus_type_for_regulation()::Bool
   mpc = (
     name = "case_bus_type_controls_regulation",
@@ -1650,6 +1684,103 @@ function test_q_limit_auto_q_delta_accepts_switching()::Bool
   return erg == 0 && getNodeType(net.nodeVec[bus]) == Sparlectra.PQ && !isempty(net.qLimitLog)
 end
 
+function test_q_limit_hysteresis_delays_small_pv_to_pq_overshoot()::Bool
+  net = Net(name = "q_limit_hysteresis_deadband", baseMVA = 100.0)
+  nb = 1
+  qmin_pu = [-1.0]
+  qmax_pu = [1.0]
+  bus_types = [:PV]
+  pv_orig_mask = trues(nb)
+
+  changed, _ = Sparlectra.active_set_q_limits!(
+    net,
+    1,
+    nb;
+    get_qreq_pu = _ -> 1.05,
+    is_pv = bus -> (bus_types[bus] == :PV),
+    make_pq! = (bus, _qclamp, _side) -> (bus_types[bus] = :PQ),
+    make_pv! = bus -> (bus_types[bus] = :PV),
+    qmin_pu = qmin_pu,
+    qmax_pu = qmax_pu,
+    pv_orig_mask = pv_orig_mask,
+    allow_reenable = false,
+    q_hyst_pu = 0.10,
+    cooldown_iters = 0,
+  )
+  delayed = !changed && bus_types[1] == :PV && isempty(net.qLimitLog)
+
+  changed, _ = Sparlectra.active_set_q_limits!(
+    net,
+    2,
+    nb;
+    get_qreq_pu = _ -> 1.11,
+    is_pv = bus -> (bus_types[bus] == :PV),
+    make_pq! = (bus, _qclamp, _side) -> (bus_types[bus] = :PQ),
+    make_pv! = bus -> (bus_types[bus] = :PV),
+    qmin_pu = qmin_pu,
+    qmax_pu = qmax_pu,
+    pv_orig_mask = pv_orig_mask,
+    allow_reenable = false,
+    q_hyst_pu = 0.10,
+    cooldown_iters = 0,
+  )
+
+  first_switch = changed && bus_types[1] == :PQ && length(net.qLimitLog) == 1
+
+  changed, reenabled = Sparlectra.active_set_q_limits!(
+    net,
+    3,
+    nb;
+    get_qreq_pu = _ -> 0.0,
+    is_pv = bus -> (bus_types[bus] == :PV),
+    make_pq! = (bus, _qclamp, _side) -> (bus_types[bus] = :PQ),
+    make_pv! = bus -> (bus_types[bus] = :PV),
+    qmin_pu = qmin_pu,
+    qmax_pu = qmax_pu,
+    pv_orig_mask = pv_orig_mask,
+    allow_reenable = true,
+    q_hyst_pu = 0.10,
+    cooldown_iters = 0,
+  )
+  first_reenable = !changed && reenabled && bus_types[1] == :PV && isempty(net.qLimitEvents)
+
+  changed, _ = Sparlectra.active_set_q_limits!(
+    net,
+    4,
+    nb;
+    get_qreq_pu = _ -> 1.11,
+    is_pv = bus -> (bus_types[bus] == :PV),
+    make_pq! = (bus, _qclamp, _side) -> (bus_types[bus] = :PQ),
+    make_pv! = bus -> (bus_types[bus] = :PV),
+    qmin_pu = qmin_pu,
+    qmax_pu = qmax_pu,
+    pv_orig_mask = pv_orig_mask,
+    allow_reenable = false,
+    q_hyst_pu = 0.10,
+    cooldown_iters = 0,
+  )
+  second_switch = changed && bus_types[1] == :PQ && length(net.qLimitLog) == 2
+
+  changed, reenabled = Sparlectra.active_set_q_limits!(
+    net,
+    5,
+    nb;
+    get_qreq_pu = _ -> 0.0,
+    is_pv = bus -> (bus_types[bus] == :PV),
+    make_pq! = (bus, _qclamp, _side) -> (bus_types[bus] = :PQ),
+    make_pv! = bus -> (bus_types[bus] = :PV),
+    qmin_pu = qmin_pu,
+    qmax_pu = qmax_pu,
+    pv_orig_mask = pv_orig_mask,
+    allow_reenable = true,
+    q_hyst_pu = 0.10,
+    cooldown_iters = 0,
+  )
+  second_reenable_blocked = !changed && !reenabled && bus_types[1] == :PQ && length(net.qLimitLog) == 2
+
+  return delayed && first_switch && first_reenable && second_switch && second_reenable_blocked
+end
+
 function test_solve_linear_singular_sparse_qr_fallback()::Bool
   A = sparse([1.0 1.0; 2.0 2.0])
   b = [1.0, 2.0]
@@ -1787,6 +1918,7 @@ function run_grid_tests()
       @test testImportMatpower() == true
       @test test_matpower_import_defaults_no_reenable() == true
       @test test_matpower_import_uses_bus_type_for_regulation() == true
+      @test test_matpower_flatstart_uses_generator_voltage_setpoints() == true
       @test test_prosumer_aggregation_preserves_bus_types_and_injections() == true
       @test test_matpower_vmva_selfcheck_noncontiguous_bus_numbers() == true
       @test test_matpower_vmva_selfcheck_ignores_slack_pq_spec() == true
@@ -1815,6 +1947,7 @@ function run_grid_tests()
       @test test_q_limit_default_behavior_unchanged() == true
       @test test_q_limit_start_iter_delays_switching() == true
       @test test_q_limit_auto_q_delta_accepts_switching() == true
+      @test test_q_limit_hysteresis_delays_small_pv_to_pq_overshoot() == true
       @test test_solve_linear_singular_sparse_qr_fallback() == true
       @test test_rectangular_singular_step_returns_nonconvergence() == true
       @test test_bus_type_resolution_from_prosumers() == true

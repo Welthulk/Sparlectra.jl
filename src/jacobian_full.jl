@@ -17,7 +17,7 @@
 #
 # Features:
 # - Full-state NR: θ and V for all non-slack buses
-# - PV buses: second equation is replaced by identity row enforcing rPV := V - Vset = 0
+# - PV buses: second equation is replaced by identity row enforcing ΔV := Vset - V = 0
 # - Active-set handling of PV Q-limits: PV→PQ when Q demand violates limits
 # - Optional re-enable PQ→PV with hysteresis band and cooldown (robust to missing fields)
 #
@@ -54,7 +54,12 @@ function getPowerFeeds_full(busVec::Vector{BusData}, n_pq::Int, n_pv::Int)::Vect
 end
 
 # ------------------------------
-# Residual for the full system: PV’s second equation becomes rPV = V − Vset
+# Residual/update convention for the full polar identity-row solver:
+# ΔP = P_spec - P_calc and ΔQ = Q_spec - Q_calc are solved as J * Δx = Δ,
+# then states are updated with θ_new = θ + Δθ and V_new = V + V * (ΔV/V).
+# Therefore the PV voltage row uses ΔV = Vset - V. The polar Jacobian in this
+# file is assembled for the spec-minus-calc Newton equation J * Δx = Δ, so the
+# PV identity row maps the relative voltage correction directly with +V.
 # ------------------------------
 """
     residuum_state_full_withPV(
@@ -104,7 +109,7 @@ function residuum_state_full_withPV(
       vindex += 1;
       Δ[vindex] = bus.pƩ - real(S[k])        # ΔP
       vindex += 1;
-      Δ[vindex] = bus.vm_pu - Vset[k]        # rPV
+      Δ[vindex] = Vset[k] - bus.vm_pu        # ΔV
     end
     # Store calculated bus powers for later use in the Net object
     bus._pRes = real(S[k])
@@ -202,7 +207,9 @@ function calcJacobian_withPVIdentity(Y::AbstractMatrix{ComplexF64}, busVec::Vect
       end
     end
 
-    # PV constraint: row i2 as (V - Vset) = 0 => ∂/∂ΔV_rel_i = +V_i
+    # PV constraint: row i2 as ΔV = Vset - V with the spec-minus-calc
+    # Jacobian convention => J[i2, ΔV_rel_i] = +V_i.
+    # This matches the solver convention J * Δx = Δ and V_new = V + V * Δx.
     if type_i == Sparlectra.PV
       if issparse(J)
         zero_row!(J, i2)               # sparse path

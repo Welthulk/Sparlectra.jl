@@ -1,7 +1,19 @@
 # Change Log
+## Version 0.7.7 – 2026-05-13
+### Bugfix
+* Fixed `matpower_import.jl` diagnostics so MATPOWER reference residual logging no longer uses an undefined branch-shift multiplier and the example entry path avoids Julia 1.12 / Revise world-age binding warnings.
+* Issue #186: Singular Jacobian / World-Age Issue in rectangular NR solver
+* Fixed rectangular flat-start initialization so slack/PV voltage magnitudes from MATPOWER remain active setpoints while PQ buses and angles start flat.
+* Fixed external `PFModel` flat-start setpoint extraction to use original bus indices, so user-built networks with isolated buses keep slack/PV voltage setpoints correctly.
+* Fixed repository-local generated MATPOWER `.jl` cases so bare names already present in `data/mpower` are loaded directly instead of triggering a download, and relative `.jl` case paths are included from their absolute path.
+* Fixed rectangular PV→PQ Q-limit switching so a positive `q_hyst_pu` also acts as a switching deadband, preventing premature conversions from transient or roundoff-sized Q-limit overshoots during flat-start runs, and keeping repeatedly re-violating buses clamped to avoid PV↔PQ chatter.
+
+### Improvements
+* Added MATPOWER example diagnostics for embedded reference VM/VA residuals and branch phase-shift convention scans, making it easier to explain angle differences on large PEGASE-style cases.
+* Added configurable MATPOWER branch `SHIFT` sign/unit handling for phase-shifter import, plus logfile-only reference diagnostics and effective YAML logging for `matpower_import.jl`.
+
 ## Version 0.7.6 – 2026-05-11
 ### Bugfix
-* Issue #186: Singular Jacobian / World-Age Issue in rectangular NR solver
 * Fixed rectangular MATPOWER runs so a singular Newton Jacobian is reported as non-convergence instead of aborting the example, and tightened Julia 1.12 / Revise entry-point calls to avoid world-age binding warnings.
 
 ## Version 0.7.5 – 2026-05-10
