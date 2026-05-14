@@ -21,6 +21,20 @@ export MatpowerCase, read_case, read_case_m, read_case_julia, build_ybus_matpowe
 
 using LinearAlgebra
 
+const _matpower_trace_legacy_keys = ("1", "true", "yes", "on")
+
+@inline function _trace_matpower_legacy_bus_type_warnings()::Bool
+  return lowercase(get(ENV, "SPARLECTRA_TRACE_LEGACY_BUSTYPE", "0")) in _matpower_trace_legacy_keys
+end
+
+function _format_bus_vm_fallback_examples(rows; max_examples::Int = 8)::String
+  examples = String[]
+  for row in Iterators.take(rows, max(max_examples, 0))
+    push!(examples, @sprintf("BUS_I=%d BUS.VM=%.5f", row.busI, row.bus_vm))
+  end
+  return isempty(examples) ? "none" : join(examples, "; ")
+end
+
 @inline function _angle_delta_deg(calc_deg::Real, ref_deg::Real)::Float64
   return mod(Float64(calc_deg) - Float64(ref_deg) + 180.0, 360.0) - 180.0
 end
@@ -49,7 +63,7 @@ function _matpower_import_ratio(raw_ratio::Float64; mode::Symbol = :normal)::Flo
   return mode === :reciprocal ? inv(ratio) : ratio
 end
 
-import ..Sparlectra: setVmVa!, setNodeType!
+import ..Sparlectra: setVmVa!, setNodeType!, getNodeType, PQ
 
 """
 Container for a MATPOWER case (case format v2/v2-ish).
@@ -84,9 +98,9 @@ end
 	normalize_branch_tap!(branch)
 
 MATPOWER semantics:
-- column 9 (TAP) == 0 means "no transformer tap specified" -> treat as 1.0.
+- column 9 (TAP) == 0 means "no transformer tap specified" and is treated electrically as 1.0 by Y-bus stamping and import code.
 
-We normalize data early so downstream code sees a consistent ratio.
+This helper is kept for callers that explicitly want normalized data, but `read_case` preserves raw TAP values so import code can distinguish lines (`TAP == 0`) from explicit nominal-tap transformers (`TAP == 1`).
 """
 function normalize_branch_tap!(branch::AbstractMatrix{<:Real})
   ncol = size(branch, 2)
@@ -137,7 +151,6 @@ function read_case_julia(path::AbstractString; legacy_compat::Bool = true)
     bus = Matrix{Float64}(obj.bus)
     gen = Matrix{Float64}(obj.gen)
     branch = Matrix{Float64}(obj.branch)
-    normalize_branch_tap!(branch)
 
     gencost = haskey(obj, :gencost) ? (obj.gencost === nothing ? nothing : Matrix{Float64}(obj.gencost)) : nothing
     bus_name = haskey(obj, :bus_name) ? (obj.bus_name === nothing ? nothing : Vector{String}(obj.bus_name)) : nothing
@@ -180,7 +193,6 @@ function read_case_m(path::AbstractString; legacy_compat::Bool = true)
   bus    = parse_matrix_block(txt, "mpc.bus"; ncols = 13)
   gen    = parse_matrix_block(txt, "mpc.gen"; ncols = 21)
   branch = parse_matrix_block(txt, "mpc.branch"; ncols = 13)
-  normalize_branch_tap!(branch)
 
   gencost = try_parse_matrix_block(txt, "mpc.gencost")
   bus_name = try_parse_bus_name(txt)
@@ -356,8 +368,155 @@ Compare net results (node._vm_pu/_va_deg) against MATPOWER reference (mpc.bus VM
 Skips isolated buses (BUS_TYPE==4) by default.
 Returns (ok::Bool, stats::NamedTuple).
 """
-function compare_vm_va(net, mpc; show_diff::Bool = false, tol_vm::Float64 = 1e-6, tol_va::Float64 = 1e-4, maxlines::Int = 20)
+function _normalize_pv_voltage_source(source)::Symbol
+  value = Symbol(lowercase(String(source)))
+  value in (:gen_vg, :bus_vm, :auto, :strict_check) && return value
+  error(string("matpower_pv_voltage_source must be gen_vg, bus_vm, auto, or strict_check (got ", source, ")."))
+end
+
+function _normalize_compare_voltage_reference(mode)::Symbol
+  value = Symbol(lowercase(String(mode)))
+  value in (:bus_vm, :gen_vg, :imported_setpoint, :hybrid) && return value
+  error(string("compare_voltage_reference must be bus_vm, gen_vg, imported_setpoint, or hybrid (got ", mode, ")."))
+end
+
+function _online_gen_vg_by_bus(mpc)
+  by_bus = Dict{Int,Vector{Float64}}()
+  size(mpc.gen, 2) >= 6 || return by_bus
+  @inbounds for g in axes(mpc.gen, 1)
+    if size(mpc.gen, 2) >= 8 && Float64(mpc.gen[g, 8]) <= 0.0
+      continue
+    end
+    busI = Int(mpc.gen[g, 1])
+    push!(get!(by_bus, busI, Float64[]), Float64(mpc.gen[g, 6]))
+  end
+  return by_bus
+end
+
+function _select_matpower_pv_vset(bus_vm::Float64, gen_vgs::Vector{Float64}; source = :gen_vg, tol::Float64 = 1e-4, busI::Int = 0, warn::Bool = false)
+  src = _normalize_pv_voltage_source(source)
+  has_gen = !isempty(gen_vgs)
+  if has_gen && maximum(abs.(gen_vgs .- gen_vgs[1])) > tol
+    warn && @warn "MATPOWER PV/REF bus has inconsistent online GEN.VG values; using the first online generator value." BUS_I = busI GEN_VG = gen_vgs tol
+  end
+  if src == :bus_vm
+    return bus_vm, :BUS_VM
+  end
+  if !has_gen
+    warn && _trace_matpower_legacy_bus_type_warnings() && @warn "MATPOWER PV/REF bus has no online generator; falling back to BUS.VM for the voltage setpoint." BUS_I = busI BUS_VM = bus_vm
+    return bus_vm, :BUS_VM_FALLBACK
+  end
+  if (src == :auto || src == :strict_check) && abs(gen_vgs[1] - bus_vm) > tol
+    @warn "MATPOWER PV/REF BUS.VM and GEN.VG differ." BUS_I = busI BUS_VM = bus_vm selected_GEN_VG = gen_vgs[1] difference = gen_vgs[1] - bus_vm source = src tol
+  end
+  return gen_vgs[1], :GEN_VG
+end
+
+function pv_voltage_reference_rows(mpc; net = nothing, matpower_pv_voltage_source = :gen_vg, tol::Float64 = 1e-4, warn::Bool = false)
+  by_bus = _online_gen_vg_by_bus(mpc)
+  rows = NamedTuple[]
+  fallback_rows = NamedTuple[]
+  @inbounds for r in axes(mpc.bus, 1)
+    btype = Int(mpc.bus[r, 2])
+    (btype == 2 || btype == 3) || continue
+    busI = Int(mpc.bus[r, 1])
+    bus_vm = Float64(mpc.bus[r, 8])
+    bus_va = Float64(mpc.bus[r, 9])
+    gen_vgs = get(by_bus, busI, Float64[])
+    vset, kind = _select_matpower_pv_vset(bus_vm, gen_vgs; source = matpower_pv_voltage_source, tol = tol, busI = busI, warn = warn)
+    vm_calc = NaN
+    if net !== nothing
+      for k in eachindex(net.nodeVec)
+        busI_k = haskey(net.busOrigIdxDict, k) ? net.busOrigIdxDict[k] : k
+        if busI_k == busI
+          node = net.nodeVec[k]
+          vm_calc = node._vm_pu === nothing ? NaN : Float64(node._vm_pu)
+          break
+        end
+      end
+    end
+    row_out = (row = r, busI = busI, bus_type = btype, bus_vm = bus_vm, bus_va = bus_va, gen_vgs = copy(gen_vgs), imported_vset = vset, imported_kind = kind, dvg_bus = isempty(gen_vgs) ? NaN : gen_vgs[1] - bus_vm, vm_calc = vm_calc, dvm_bus = vm_calc - bus_vm, dvm_gen_vg = isempty(gen_vgs) ? NaN : vm_calc - gen_vgs[1], dvm_vset = vm_calc - vset)
+    push!(rows, row_out)
+    kind == :BUS_VM_FALLBACK && push!(fallback_rows, row_out)
+  end
+  if warn && !_trace_matpower_legacy_bus_type_warnings() && !isempty(fallback_rows)
+    @warn string("MATPOWER PV/REF buses without online generators: ", length(fallback_rows), "; using BUS.VM fallback. First examples: ", _format_bus_vm_fallback_examples(fallback_rows))
+  end
+  return rows
+end
+
+function _comparison_vm_reference(mpc, r::Int, btype::Int, mode::Symbol, rows_by_bus, net, k::Int, node)
+  busI = Int(mpc.bus[r, 1])
+  bus_vm = Float64(mpc.bus[r, 8])
+  final_type = getNodeType(node)
+  final_pq_after_qlimit = btype == 2 && final_type == PQ && haskey(net.qLimitEvents, k)
+  if final_pq_after_qlimit
+    # A PV bus switched to PQ no longer regulates the imported GEN.VG/Vset;
+    # classify it separately so compare diagnostics do not read it as an
+    # active PV setpoint residual.
+    return bus_vm, :final_pq_after_qlimit
+  end
+  if btype == 1
+    return bus_vm, :pq_bus_vm
+  end
+  # Hybrid mode reaches this branch through imported-setpoint selection for
+  # active PV/REF buses, while PQ and final PQ-after-Q-limit buses keep BUS.VM
+  # references above.
+  if mode == :bus_vm
+    return bus_vm, btype == 3 ? :ref_slack_bus_vm : :active_pv_bus_vm
+  end
+  row = get(rows_by_bus, busI, nothing)
+  row === nothing && return bus_vm, btype == 3 ? :ref_slack_bus_vm : :active_pv_bus_vm
+  if mode == :gen_vg
+    if isempty(row.gen_vgs)
+      return bus_vm, btype == 3 ? :ref_slack_bus_vm_fallback : :active_pv_bus_vm_fallback
+    end
+    return row.gen_vgs[1], btype == 3 ? :ref_slack_gen_vg : :active_pv_gen_vg
+  end
+  return row.imported_vset, btype == 3 ? :ref_slack_imported_setpoint : :active_pv_imported_setpoint
+end
+
+function _compare_deviation_summary_by_kind(diffs)
+  summary = Dict{Symbol,NamedTuple{(:count, :max_dvm, :max_dva),Tuple{Int,Float64,Float64}}}()
+  for d in diffs
+    current = get(summary, d.vm_ref_kind, (count = 0, max_dvm = 0.0, max_dva = 0.0))
+    summary[d.vm_ref_kind] = (
+      count = current.count + 1,
+      max_dvm = max(current.max_dvm, abs(d.dvm)),
+      max_dva = max(current.max_dva, abs(d.dva)),
+    )
+  end
+  return summary
+end
+
+function _compare_status_for_diffs(diffs, compare_mode::Symbol, tol_vm::Float64, tol_va::Float64)
+  vm_violation_kinds = Set{Symbol}()
+  va_violation = false
+  for d in diffs
+    if !isnan(d.dvm) && abs(d.dvm) > tol_vm
+      push!(vm_violation_kinds, d.vm_ref_kind)
+    end
+    if !isnan(d.dva) && abs(d.dva) > tol_va
+      va_violation = true
+    end
+  end
+  if va_violation
+    return :fail, vm_violation_kinds, va_violation
+  end
+  if isempty(vm_violation_kinds)
+    return :ok, vm_violation_kinds, va_violation
+  end
+  if compare_mode == :hybrid && all(kind -> kind == :final_pq_after_qlimit, vm_violation_kinds)
+    return :warn, vm_violation_kinds, va_violation
+  end
+  return :fail, vm_violation_kinds, va_violation
+end
+
+function compare_vm_va(net, mpc; show_diff::Bool = false, tol_vm::Float64 = 1e-6, tol_va::Float64 = 1e-4, maxlines::Int = 20, compare_voltage_reference = :bus_vm, matpower_pv_voltage_source = :gen_vg, matpower_pv_voltage_mismatch_tol_pu::Float64 = 1e-4)
   busrow = _mp_bus_row_index(mpc)
+  compare_mode = _normalize_compare_voltage_reference(compare_voltage_reference)
+  pv_rows = pv_voltage_reference_rows(mpc; matpower_pv_voltage_source = matpower_pv_voltage_source, tol = matpower_pv_voltage_mismatch_tol_pu, warn = false)
+  rows_by_bus = Dict(row.busI => row for row in pv_rows)
 
   # --- angle alignment on slack to remove global offset ---
   slack_row = findfirst(r -> Int(mpc.bus[r, 2]) == 3, 1:size(mpc.bus, 1))
@@ -386,7 +545,7 @@ function compare_vm_va(net, mpc; show_diff::Bool = false, tol_vm::Float64 = 1e-6
   end
 
   # Collect diffs
-  diffs = Vector{NamedTuple{(:busIdx, :busI, :vm_ref, :vm_calc, :dvm, :va_ref, :va_calc, :dva, :type_ref),Tuple{Int,Int,Float64,Float64,Float64,Float64,Float64,Float64,Int}}}()
+  diffs = NamedTuple[]
 
   @inbounds for k in eachindex(net.nodeVec)
     node = net.nodeVec[k]
@@ -399,7 +558,7 @@ function compare_vm_va(net, mpc; show_diff::Bool = false, tol_vm::Float64 = 1e-6
     btype = Int(mpc.bus[r, 2])
     btype == 4 && continue  # skip isolated
 
-    vm_ref = Float64(mpc.bus[r, 8])
+    vm_ref, vm_ref_kind = _comparison_vm_reference(mpc, r, btype, compare_mode, rows_by_bus, net, k, node)
     va_ref = Float64(mpc.bus[r, 9])
 
     vm_calc = (node._vm_pu === nothing) ? NaN : Float64(node._vm_pu)
@@ -410,7 +569,7 @@ function compare_vm_va(net, mpc; show_diff::Bool = false, tol_vm::Float64 = 1e-6
     dvm = vm_calc - vm_ref
     dva = _angle_delta_deg(va_calc_aligned, va_ref)
 
-    push!(diffs, (busIdx = k, busI = busI, vm_ref = vm_ref, vm_calc = vm_calc, dvm = dvm, va_ref = va_ref, va_calc = va_calc_aligned, dva = dva, type_ref = btype))
+    push!(diffs, (busIdx = k, busI = busI, vm_ref = vm_ref, vm_ref_kind = vm_ref_kind, vm_calc = vm_calc, dvm = dvm, va_ref = va_ref, va_calc = va_calc_aligned, dva = dva, type_ref = btype))
   end
 
   isempty(diffs) && return (false, (msg = "No comparable buses found.",))
@@ -420,35 +579,50 @@ function compare_vm_va(net, mpc; show_diff::Bool = false, tol_vm::Float64 = 1e-6
 
   max_dvm = maximum(abs_dvm)
   max_dva = maximum(abs_dva)
+  vm_ref_kind_counts = Dict{Symbol,Int}()
+  for d in diffs
+    vm_ref_kind_counts[d.vm_ref_kind] = get(vm_ref_kind_counts, d.vm_ref_kind, 0) + 1
+  end
+  vm_ref_kind_summary = _compare_deviation_summary_by_kind(diffs)
 
-  # Pass/fail: all within tolerance (ignoring NaNs)
-  ok_vm = all(x -> (isnan(x) ? true : x <= tol_vm), abs_dvm)
-  ok_va = all(x -> (isnan(x) ? true : x <= tol_va), abs_dva)
-  ok = ok_vm && ok_va
+  compare_status, vm_violation_kinds, va_violation = _compare_status_for_diffs(diffs, compare_mode, tol_vm, tol_va)
+  ok = compare_status != :fail
 
   println("\n==================== MATPOWER Vm/Va compare ====================")
   println("Compared buses   : ", length(diffs))
+  println("Vm reference mode: ", compare_mode)
   println("tol_vm / tol_va  : ", tol_vm, " pu / ", tol_va, " deg")
   println("angle alignment  : ", have_delta ? "slack (raw slack Δva=$(delta_va) deg; max |dVa| below is slack-aligned)" : "none")
+  println("Vm ref kinds     : ", join([string(k, "=", v) for (k, v) in sort(collect(vm_ref_kind_counts); by = x -> String(x[1]))], ", "))
   println("max |dVm|        : ", max_dvm, " pu")
   println("max |dVa|        : ", max_dva, " deg")
-  println("status           : ", ok ? "OK" : "FAIL")
+  if compare_mode == :hybrid
+    println("max |dVm| by Vm reference kind:")
+    for kind in (:active_pv_imported_setpoint, :final_pq_after_qlimit, :pq_bus_vm, :ref_slack_imported_setpoint)
+      summary = get(vm_ref_kind_summary, kind, (count = 0, max_dvm = 0.0, max_dva = 0.0))
+      @printf("  %-30s %6d buses  max |dVm| = %.8g pu  max |dVa| = %.8g deg\n", String(kind), summary.count, summary.max_dvm, summary.max_dva)
+    end
+  end
+  if compare_status == :warn && vm_violation_kinds == Set([:final_pq_after_qlimit]) && !va_violation
+    println("diagnostic       : Voltage deviations on final_pq_after_qlimit buses are expected: these buses no longer enforce the imported PV voltage setpoint after Q-limit switching.")
+  end
+  println("status           : ", compare_status == :ok ? "OK" : compare_status == :warn ? "WARN" : "FAIL")
   println("===============================================================\n")
 
   if show_diff
     ord = sortperm(1:length(diffs); by = i -> max(abs(diffs[i].dvm), abs(diffs[i].dva)), rev = true)
 
     println("Top diffs (up to $maxlines lines):")
-    println(" busIdx  BUS_I  type   Vm_ref   Vm_calc    dVm      Va_ref   Va_calc    dVa")
+    println(" busIdx  BUS_I  type  Vm_ref_kind             Vm_ref   Vm_calc    dVm      Va_ref   Va_calc    dVa")
     nshow = min(maxlines, length(ord))
     @inbounds for ii = 1:nshow
       d = diffs[ord[ii]]
-      @printf(" %6d  %5d   %2d   %7.4f  %7.4f  %+8.5f   %7.3f  %7.3f  %+8.5f\n", d.busIdx, d.busI, d.type_ref, d.vm_ref, d.vm_calc, d.dvm, d.va_ref, d.va_calc, d.dva)
+      @printf(" %6d  %5d   %2d  %-23s %7.4f  %7.4f  %+8.5f   %7.3f  %7.3f  %+8.5f\n", d.busIdx, d.busI, d.type_ref, String(d.vm_ref_kind), d.vm_ref, d.vm_calc, d.dvm, d.va_ref, d.va_calc, d.dva)
     end
     println()
   end
 
-  return ok, (max_dvm = max_dvm, max_dva = max_dva, n = length(diffs), angle_alignment = have_delta ? :slack : :none, slack_delta_va = have_delta ? delta_va : NaN)
+  return ok, (max_dvm = max_dvm, max_dva = max_dva, n = length(diffs), angle_alignment = have_delta ? :slack : :none, slack_delta_va = have_delta ? delta_va : NaN, vm_ref_kind_counts = vm_ref_kind_counts, vm_ref_kind_summary = vm_ref_kind_summary, compare_status = compare_status, vm_violation_kinds = vm_violation_kinds, va_violation = va_violation)
 end
 
 """

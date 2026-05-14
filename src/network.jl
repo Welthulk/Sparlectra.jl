@@ -1732,6 +1732,11 @@ end
 function setPVBusVset!(; net::Net, busName::String, vm_pu::Float64)
   bus = geNetBusIdx(net = net, busName = busName)
   net.nodeVec[bus]._vm_pu = vm_pu
+  for ps in net.prosumpsVec
+    getPosumerBusIndex(ps) == bus || continue
+    (isSlack(ps) || (isGenerator(ps) && isRegulating(ps))) || continue
+    ps.vm_pu = vm_pu
+  end
 end
 
 function _wattterfillQ(Q_target::Float64, q_spec::Vector{Float64}, qmin::Vector{Float64}, qmax::Vector{Float64}; tol::Float64 = 1e-6, maxiter::Int = 50)

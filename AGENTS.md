@@ -29,6 +29,45 @@ This repository is a Julia project.
 - After code changes, run the smallest relevant test first, then broader tests if needed.
 - Avoid broad refactoring while fixing a targeted bug.
 
+## Test hygiene / avoiding test explosion
+
+Tests are mandatory for bugfixes, changed behavior, and new features, but the test suite must remain maintainable.
+
+Before adding a new test file or a new large test block:
+- Inspect existing tests for the affected code path.
+- Check whether an existing test can be extended instead of adding a new near-duplicate test.
+- Prefer merging related regression checks into one coherent testset when they exercise the same function, option path, or failure mode.
+- Avoid preserving temporary diagnostic tests that were only useful during bug investigation.
+- Remove or consolidate obsolete tests when the underlying failure mode is already covered by a clearer regression test.
+- Keep test names explicit about the behavior being protected, not about the historical debugging session.
+- Keep test fixtures small; do not add large MATPOWER cases or long-running examples unless they are explicitly required.
+- Avoid broad end-to-end tests when a focused unit or integration test can protect the same behavior.
+- When adding a test for a bugfix, document the protected failure mode in a short inline comment if it is not obvious from the test name.
+- If multiple tests cover the same behavior with only small parameter differences, use a table-driven test or a loop inside one testset instead of duplicating test bodies.
+
+During cleanup or refactoring tasks:
+- Revisit recently added tests and decide whether they are still needed.
+- Merge redundant tests where possible.
+- Delete tests that only assert implementation details and no longer protect public or intended internal behavior.
+- Keep at least one regression test for each fixed bug, but avoid multiple overlapping regressions for the same failure mode.
+
+When reporting work:
+- State which smallest relevant test was run.
+- If tests were added, state whether an existing test was extended or why a new test was necessary.
+- If tests were consolidated or removed, state which behavior remains covered.
+
+## Code hygiene / avoiding implementation bloat
+
+Before completing a task, inspect the touched implementation path for unnecessary growth.
+
+- Look for duplicated helper logic introduced during debugging.
+- Remove dead code, stale debug branches, and obsolete temporary diagnostics unless they are intentionally kept behind a clear diagnostic option.
+- Prefer one well-named helper over repeated local code blocks.
+- Keep logging and diagnostics compact by default; verbose output must be opt-in.
+- Avoid adding options that merely paper over one case unless the behavior is clearly documented and reusable.
+- Do not retain experimental code paths without tests and documentation.
+- If a cleanup would become too broad for the current bugfix, leave a short follow-up issue instead of mixing unrelated refactoring into the fix.
+
 ### Julia indexing style
 To avoid linter warnings (`IndexFromLength`):
 
@@ -47,6 +86,7 @@ This keeps the code compatible with non-standard array indices and avoids Static
 - Main language: Julia
 - Project root must be used as Julia project
 - When changing power flow or network logic, prefer adding or updating tests in `test/`
+- Prefer extending or consolidating existing tests over creating new narrowly overlapping test files.
 
 ## VS Code / developer workflow notes
 - Example programs in `src/examples/` are primarily written for VS Code developer usage.
@@ -73,6 +113,8 @@ Hint: Add an appropriate `invokelatest` around the access to this binding.
   `Base.invokelatest(main, args...)`
 - If a benchmark or example script dynamically defines and then calls another local entry function, call that function through `Base.invokelatest` at the call site.
 - Do not wrap internal hot-loop functions with `invokelatest`; use it only at script/developer entry boundaries where world-age problems occur.
+- In example scripts included into `Main` or ad-hoc modules, qualify Sparlectra enum constants and types with `Sparlectra.` (for example `Sparlectra.Slack`, `Sparlectra.PV`, `Sparlectra.PQ`) unless they are explicitly imported in that file.
+- When calling a helper function defined in the same example file from a `main`, `show_once`, benchmark, or redirected-output closure, prefer `Base.invokelatest(getfield(@__MODULE__, :helper_name), args...; kwargs...)` to avoid Julia 1.12/Revise world-age binding warnings.
 - When investigating this class of issue, reproduce with:
   `julia --project=. --depwarn=error path/to/script.jl`
   so that Julia produces a stack trace.
@@ -99,6 +141,7 @@ When fixing this:
 - Do not pass arbitrary keyword dictionaries blindly into functions unless the existing style already does this.
 - Prefer explicit keyword signatures for public or developer-facing example entry points.
 - Add or update a smoke test if the script is part of tested behavior.
+- Before adding a new keyword-forwarding test, check whether an existing wrapper smoke test can be extended.
 
 ### Example pattern
 
@@ -119,6 +162,9 @@ Only use `kwargs...` when this matches the local style and the downstream functi
 - If no narrower test is obvious, run:
   `julia --project=. test/runtests.jl`
 - Report the exact command and the relevant failure output if tests fail.
+- Before adding new tests, check whether existing tests can be extended or merged.
+- Before finishing, check whether new tests created during debugging can be consolidated.
+- Avoid leaving behind redundant tests that only differ in incidental parameters.
 
 ## Power-flow execution preference
 - Prefer `run_net_acpflow(...)` over calling `runpf!(...)` directly when practical.
@@ -146,6 +192,7 @@ Requirements for features:
 - Example in `src/examples/exp_<feature>.jl` (mandatory)
 - Documentation update (mandatory)
 - Feature matrix review/update (mandatory)
+- Test-hygiene review (mandatory): prefer extending existing tests and avoid duplicate test coverage.
 
 ---
 
@@ -164,6 +211,7 @@ Requirements for improvements:
 - Docstrings updated if behavior or usage clarity changes
 - No example required (unless it improves clarity significantly)
 - No mandatory feature matrix update
+- Review whether existing tests can be consolidated if the improvement replaces older behavior.
 
 ---
 
@@ -177,9 +225,11 @@ Typical indicators:
 
 Requirements for bugfixes:
 - Add or extend a test that reproduces the bug
+- Prefer extending an existing regression test over adding a new test file
 - Keep changes minimal and targeted
 - No example required
 - Documentation update only if the previous behavior was documented incorrectly
+- Remove temporary diagnostic tests once a clear regression test exists.
 
 ---
 
@@ -231,6 +281,7 @@ Feature requirements:
 - Example program in `src/examples/exp_<feature>.jl`
 - Documentation update
 - Feature matrix review/update
+- Test-hygiene review: avoid duplicating existing coverage and consolidate related test cases where possible.
 
 ---
 
@@ -249,6 +300,7 @@ Improvement requirements:
 - Update tests if behavior or output changes
 - Update docstrings if user-facing behavior becomes clearer or changes
 - Documentation update only if existing documentation becomes incomplete or misleading
+- Consolidate or remove obsolete tests if the improvement replaces previous diagnostic-only behavior.
 
 ---
 
@@ -268,9 +320,11 @@ Classify as **bugfix** when correcting wrong behavior, for example:
 
 Bugfix requirements:
 - Add or extend a regression test
+- Prefer an existing testset if it already covers the affected code path
 - Keep the change minimal and targeted
 - Update documentation only if the previous documented behavior was wrong
 - No new example required unless it helps demonstrate the corrected behavior
+- Do not keep multiple overlapping regression tests for the same bug.
 
 ---
 
@@ -294,6 +348,7 @@ If it corrects behavior that was wrong, classify it as a **bugfix**.
   - The existing documentation is reviewed and updated where appropriate
   - The feature is added to a suitable documentation page (theory, usage, or API section)
   - The feature matrix is checked and updated if applicable
+  - The tests are reviewed for overlap before adding new files or large new test blocks
 
 - Tests alone are not sufficient for new features; documentation and examples are required.
 
@@ -407,10 +462,12 @@ Make the example script robust under Julia 1.12 and VS Code / Revise workflows, 
    - Defaults must match the existing solver defaults or current configuration defaults.
    - Avoid broad refactoring.
 
-5. Add a small smoke/regression test if practical
-   - Prefer a lightweight test that validates the example call path accepts the new keyword set.
+5. Add or update a small smoke/regression test if practical
+   - Prefer extending an existing lightweight test that validates the example call path accepts the new keyword set.
    - The test does not need to run a large MATPOWER case.
+   - Do not add a new test file if an existing testset can cover the behavior.
    - If this example is not part of the formal test suite, add a minimal direct test for the wrapper function or document the manual test command.
+   - Remove any temporary diagnostic-only tests once the regression is covered.
 
 6. Update changelog
    - Add a `Bugfix` entry in `CHANGELOG.md`.
@@ -430,6 +487,8 @@ Make the example script robust under Julia 1.12 and VS Code / Revise workflows, 
   - `start_projection_dc_angle_limit_deg`
 - Existing tests still pass.
 - The smallest relevant test or manual command is reported.
+- If tests were added, state whether an existing test was extended or why a new test was necessary.
+- If tests were consolidated or removed, state which behavior remains covered.
 - If a test fails, report the exact command and relevant failure output.
 
 ## Suggested diagnostic command

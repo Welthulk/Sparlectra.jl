@@ -17,3 +17,4 @@ julia-*.tar.gz
 src/examples/*.yaml
 src/examples/*.png
 docs/src/ybus_diagonal_sparlectra.md
+src/examples/matpower_import.yaml
