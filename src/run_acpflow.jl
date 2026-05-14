@@ -31,6 +31,51 @@ Parameters:
 Returns:
 - Net, the network object.
 """
+function _apply_matpower_flatstart_modes!(net::Net, mpc; voltage_mode = :classic, angle_mode = :classic, matpower_pv_voltage_source = :gen_vg, matpower_pv_voltage_mismatch_tol_pu::Float64 = 1e-4)
+  vmode = Symbol(voltage_mode)
+  amode = Symbol(angle_mode)
+  vmode in (:classic, :pv_gen_vg, :pv_bus_vm, :all_bus_vm, :bus_vm_va_blend) || error("flatstart_voltage_mode must be classic, pv_gen_vg, pv_bus_vm, all_bus_vm, or bus_vm_va_blend")
+  amode in (:classic, :dc, :bus_va_blend, :matpower_va) || error("flatstart_angle_mode must be classic, dc, bus_va_blend, or matpower_va")
+  busrow = MatpowerIO.bus_row_index(mpc)
+  pv_rows = MatpowerIO.pv_voltage_reference_rows(mpc; matpower_pv_voltage_source = matpower_pv_voltage_source, tol = matpower_pv_voltage_mismatch_tol_pu, warn = false)
+  imported_vset = Dict(row.busI => row.imported_vset for row in pv_rows)
+  gen_vset = Dict(row.busI => (isempty(row.gen_vgs) ? row.bus_vm : row.gen_vgs[1]) for row in pv_rows)
+
+  for k in eachindex(net.nodeVec)
+    node = net.nodeVec[k]
+    busI = haskey(net.busOrigIdxDict, k) ? net.busOrigIdxDict[k] : k
+    haskey(busrow, busI) || continue
+    r = busrow[busI]
+    btype = Int(mpc.bus[r, 2])
+    bus_vm = Float64(mpc.bus[r, 8])
+    bus_va = Float64(mpc.bus[r, 9])
+
+    if vmode == :pv_gen_vg && (btype == 2 || btype == 3)
+      setVmVa!(node = node, vm_pu = get(gen_vset, busI, bus_vm))
+    elseif vmode == :pv_bus_vm && (btype == 2 || btype == 3)
+      setVmVa!(node = node, vm_pu = bus_vm)
+    elseif vmode == :all_bus_vm
+      setVmVa!(node = node, vm_pu = bus_vm)
+    elseif vmode == :bus_vm_va_blend
+      current_vm = node._vm_pu === nothing ? 1.0 : Float64(node._vm_pu)
+      setVmVa!(node = node, vm_pu = 0.5 * (current_vm + bus_vm))
+    elseif vmode == :classic && (btype == 2 || btype == 3)
+      setVmVa!(node = node, vm_pu = get(imported_vset, busI, bus_vm))
+    end
+
+    if amode == :matpower_va
+      setVmVa!(node = node, vm_pu = node._vm_pu === nothing ? bus_vm : Float64(node._vm_pu), va_deg = bus_va)
+    elseif amode == :bus_va_blend
+      current_va = node._va_deg === nothing ? 0.0 : Float64(node._va_deg)
+      setVmVa!(node = node, vm_pu = node._vm_pu === nothing ? bus_vm : Float64(node._vm_pu), va_deg = 0.5 * (current_va + bus_va))
+    elseif amode == :dc
+      # DC starts are handled by start_projection_try_dc_start in the rectangular solver.
+      nothing
+    end
+  end
+  return nothing
+end
+
 function run_acpflow(;
   max_ite::Int = 30,
   tol::Float64 = 1e-6,
@@ -44,6 +89,8 @@ function run_acpflow(;
   method::Symbol = :rectangular,
   autodamp::Bool = false,
   autodamp_min::Float64 = 1e-3, start_projection::Bool = false, start_projection_try_dc_start::Bool = true, start_projection_try_blend_scan::Bool = true, start_projection_blend_lambdas::AbstractVector{<:Real} = [0.25, 0.5, 0.75], start_projection_dc_angle_limit_deg::Float64 = 60.0, qlimit_start_iter::Int = 2, qlimit_start_mode::Symbol = :iteration, qlimit_auto_q_delta_pu::Float64 = 1e-4,
+  qlimit_trace_buses::AbstractVector{Int} = Int[],
+  qlimit_lock_reason::Symbol = :manual,
   opt_flatstart::Bool = false,
   show_results::Bool = true,
   show_compact_result::Bool = false,
@@ -63,6 +110,10 @@ function run_acpflow(;
   matpower_ratio = :normal,
   reference_vm_pu::Union{Nothing,Float64} = nothing,
   reference_va_deg::Union{Nothing,Float64} = nothing,
+  matpower_pv_voltage_source = :gen_vg,
+  matpower_pv_voltage_mismatch_tol_pu::Float64 = 1e-4,
+  flatstart_voltage_mode = :classic,
+  flatstart_angle_mode = :classic,
 )
   ext = lowercase(splitext(casefile)[2])
   myNet = nothing              # Initialize myNet variable
@@ -81,7 +132,14 @@ function run_acpflow(;
       error("File $(in_path) not found")
     end
 
-    myNet = createNetFromMatPowerFile(filename = in_path, log = (verbose > 0), flatstart = opt_flatstart, cooldown = cooldown_iters, q_hyst_pu = q_hyst_pu, enable_pq_gen_controllers = enable_pq_gen_controllers, bus_shunt_model = bus_shunt_model, matpower_shift_sign = matpower_shift_sign, matpower_shift_unit = matpower_shift_unit, matpower_ratio = matpower_ratio, reference_vm_pu = reference_vm_pu, reference_va_deg = reference_va_deg)
+    myNet = createNetFromMatPowerFile(filename = in_path, log = (verbose > 0), flatstart = opt_flatstart, cooldown = cooldown_iters, q_hyst_pu = q_hyst_pu, enable_pq_gen_controllers = enable_pq_gen_controllers, bus_shunt_model = bus_shunt_model, matpower_shift_sign = matpower_shift_sign, matpower_shift_unit = matpower_shift_unit, matpower_ratio = matpower_ratio, reference_vm_pu = reference_vm_pu, reference_va_deg = reference_va_deg, matpower_pv_voltage_source = matpower_pv_voltage_source, matpower_pv_voltage_mismatch_tol_pu = matpower_pv_voltage_mismatch_tol_pu)
+    if opt_flatstart && (Symbol(flatstart_voltage_mode) != :classic || Symbol(flatstart_angle_mode) != :classic)
+      mpc_init = MatpowerIO.read_case(in_path; legacy_compat = true)
+      _apply_matpower_flatstart_modes!(myNet, mpc_init; voltage_mode = flatstart_voltage_mode, angle_mode = flatstart_angle_mode, matpower_pv_voltage_source = matpower_pv_voltage_source, matpower_pv_voltage_mismatch_tol_pu = matpower_pv_voltage_mismatch_tol_pu)
+      if Symbol(flatstart_voltage_mode) in (:all_bus_vm, :bus_vm_va_blend) || Symbol(flatstart_angle_mode) in (:bus_va_blend, :matpower_va)
+        opt_flatstart = false
+      end
+    end
     
     if verbose > 1
       # --- DEBUG START ---
@@ -134,9 +192,9 @@ function run_acpflow(;
   ite = 0
   etime = @elapsed begin
     if isempty(_tap_controllers(myNet))
-      ite, erg = runpf!(myNet, max_ite, tol, verbose; opt_fd = opt_fd, opt_sparse = opt_sparse, method = method, autodamp = autodamp, autodamp_min = autodamp_min, start_projection = start_projection, start_projection_try_dc_start = start_projection_try_dc_start, start_projection_try_blend_scan = start_projection_try_blend_scan, start_projection_blend_lambdas = start_projection_blend_lambdas, start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg, qlimit_start_iter = qlimit_start_iter, qlimit_start_mode = qlimit_start_mode, qlimit_auto_q_delta_pu = qlimit_auto_q_delta_pu, opt_flatstart = opt_flatstart, pv_table_rows = pv_table_rows, validate_limits_after_pf = validate_limits_after_pf, q_limit_violation_headroom = q_limit_violation_headroom, lock_pv_to_pq_buses = lock_pv_to_pq_buses_resolved)
+      ite, erg = runpf!(myNet, max_ite, tol, verbose; opt_fd = opt_fd, opt_sparse = opt_sparse, method = method, autodamp = autodamp, autodamp_min = autodamp_min, start_projection = start_projection, start_projection_try_dc_start = start_projection_try_dc_start, start_projection_try_blend_scan = start_projection_try_blend_scan, start_projection_blend_lambdas = start_projection_blend_lambdas, start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg, qlimit_start_iter = qlimit_start_iter, qlimit_start_mode = qlimit_start_mode, qlimit_auto_q_delta_pu = qlimit_auto_q_delta_pu, opt_flatstart = opt_flatstart, pv_table_rows = pv_table_rows, validate_limits_after_pf = validate_limits_after_pf, q_limit_violation_headroom = q_limit_violation_headroom, lock_pv_to_pq_buses = lock_pv_to_pq_buses_resolved, qlimit_trace_buses = qlimit_trace_buses, qlimit_lock_reason = qlimit_lock_reason)
     else
-      ite, erg = run_tap_controllers_outer!(myNet; max_ite = max_ite, tol = tol, verbose = verbose, opt_fd = opt_fd, opt_sparse = opt_sparse, method = method, autodamp = autodamp, autodamp_min = autodamp_min, start_projection = start_projection, start_projection_try_dc_start = start_projection_try_dc_start, start_projection_try_blend_scan = start_projection_try_blend_scan, start_projection_blend_lambdas = start_projection_blend_lambdas, start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg, qlimit_start_iter = qlimit_start_iter, qlimit_start_mode = qlimit_start_mode, qlimit_auto_q_delta_pu = qlimit_auto_q_delta_pu, opt_flatstart = opt_flatstart, pv_table_rows = pv_table_rows, validate_limits_after_pf = validate_limits_after_pf, q_limit_violation_headroom = q_limit_violation_headroom, lock_pv_to_pq_buses = lock_pv_to_pq_buses_resolved)
+      ite, erg = run_tap_controllers_outer!(myNet; max_ite = max_ite, tol = tol, verbose = verbose, opt_fd = opt_fd, opt_sparse = opt_sparse, method = method, autodamp = autodamp, autodamp_min = autodamp_min, start_projection = start_projection, start_projection_try_dc_start = start_projection_try_dc_start, start_projection_try_blend_scan = start_projection_try_blend_scan, start_projection_blend_lambdas = start_projection_blend_lambdas, start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg, qlimit_start_iter = qlimit_start_iter, qlimit_start_mode = qlimit_start_mode, qlimit_auto_q_delta_pu = qlimit_auto_q_delta_pu, opt_flatstart = opt_flatstart, pv_table_rows = pv_table_rows, validate_limits_after_pf = validate_limits_after_pf, q_limit_violation_headroom = q_limit_violation_headroom, lock_pv_to_pq_buses = lock_pv_to_pq_buses_resolved, qlimit_trace_buses = qlimit_trace_buses, qlimit_lock_reason = qlimit_lock_reason)
     end
   end
 
@@ -186,7 +244,7 @@ Parameters:
 - autodamp: Bool, enable residual-based Newton step backtracking for `method = :rectangular`.
 - autodamp_min: Float64, minimum trial step length for automatic damping.
 """
-function run_net_acpflow(; net::Net, max_ite::Int = 30, tol::Float64 = 1e-6, verbose::Int = 0, printResultToFile::Bool = false, printResultAnyCase::Bool = false, opt_fd::Bool = false, opt_sparse::Bool = false, method::Symbol = :rectangular, autodamp::Bool = false, autodamp_min::Float64 = 1e-3, start_projection::Bool = false, start_projection_try_dc_start::Bool = true, start_projection_try_blend_scan::Bool = true, start_projection_blend_lambdas::AbstractVector{<:Real} = [0.25, 0.5, 0.75], start_projection_dc_angle_limit_deg::Float64 = 60.0, qlimit_start_iter::Int = 2, qlimit_start_mode::Symbol = :iteration, qlimit_auto_q_delta_pu::Float64 = 1e-4, show_results::Bool = true, lock_pv_to_pq_buses::AbstractVector{Int} = Int[], opt_flatstart::Bool = true, pv_table_rows::Int = 30, validate_limits_after_pf::Bool = false, q_limit_violation_headroom::Float64 = 0.0, bus_shunt_model = net.bus_shunt_model)
+function run_net_acpflow(; net::Net, max_ite::Int = 30, tol::Float64 = 1e-6, verbose::Int = 0, printResultToFile::Bool = false, printResultAnyCase::Bool = false, opt_fd::Bool = false, opt_sparse::Bool = false, method::Symbol = :rectangular, autodamp::Bool = false, autodamp_min::Float64 = 1e-3, start_projection::Bool = false, start_projection_try_dc_start::Bool = true, start_projection_try_blend_scan::Bool = true, start_projection_blend_lambdas::AbstractVector{<:Real} = [0.25, 0.5, 0.75], start_projection_dc_angle_limit_deg::Float64 = 60.0, qlimit_start_iter::Int = 2, qlimit_start_mode::Symbol = :iteration, qlimit_auto_q_delta_pu::Float64 = 1e-4, show_results::Bool = true, lock_pv_to_pq_buses::AbstractVector{Int} = Int[], opt_flatstart::Bool = true, pv_table_rows::Int = 30, validate_limits_after_pf::Bool = false, q_limit_violation_headroom::Float64 = 0.0, qlimit_trace_buses::AbstractVector{Int} = Int[], qlimit_lock_reason::Symbol = :manual, bus_shunt_model = net.bus_shunt_model)
 
   requested_shunt_model = normalize_bus_shunt_model(bus_shunt_model)
   requested_shunt_model == net.bus_shunt_model || error("run_net_acpflow: bus_shunt_model must be set when constructing/importing the Net; got $(requested_shunt_model) for a net configured as $(net.bus_shunt_model).")
@@ -195,9 +253,9 @@ function run_net_acpflow(; net::Net, max_ite::Int = 30, tol::Float64 = 1e-6, ver
   ite = 0
   etime = @elapsed begin
     if isempty(_tap_controllers(net))
-      ite, erg = runpf!(net, max_ite, tol, verbose; opt_fd = opt_fd, opt_sparse = opt_sparse, method = method, autodamp = autodamp, autodamp_min = autodamp_min, start_projection = start_projection, start_projection_try_dc_start = start_projection_try_dc_start, start_projection_try_blend_scan = start_projection_try_blend_scan, start_projection_blend_lambdas = start_projection_blend_lambdas, start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg, qlimit_start_iter = qlimit_start_iter, qlimit_start_mode = qlimit_start_mode, qlimit_auto_q_delta_pu = qlimit_auto_q_delta_pu, lock_pv_to_pq_buses = lock_pv_to_pq_buses, opt_flatstart = opt_flatstart, pv_table_rows = pv_table_rows, validate_limits_after_pf = validate_limits_after_pf, q_limit_violation_headroom = q_limit_violation_headroom)
+      ite, erg = runpf!(net, max_ite, tol, verbose; opt_fd = opt_fd, opt_sparse = opt_sparse, method = method, autodamp = autodamp, autodamp_min = autodamp_min, start_projection = start_projection, start_projection_try_dc_start = start_projection_try_dc_start, start_projection_try_blend_scan = start_projection_try_blend_scan, start_projection_blend_lambdas = start_projection_blend_lambdas, start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg, qlimit_start_iter = qlimit_start_iter, qlimit_start_mode = qlimit_start_mode, qlimit_auto_q_delta_pu = qlimit_auto_q_delta_pu, lock_pv_to_pq_buses = lock_pv_to_pq_buses, opt_flatstart = opt_flatstart, pv_table_rows = pv_table_rows, validate_limits_after_pf = validate_limits_after_pf, q_limit_violation_headroom = q_limit_violation_headroom, qlimit_trace_buses = qlimit_trace_buses, qlimit_lock_reason = qlimit_lock_reason)
     else
-      ite, erg = run_tap_controllers_outer!(net; max_ite = max_ite, tol = tol, verbose = verbose, opt_fd = opt_fd, opt_sparse = opt_sparse, method = method, autodamp = autodamp, autodamp_min = autodamp_min, start_projection = start_projection, start_projection_try_dc_start = start_projection_try_dc_start, start_projection_try_blend_scan = start_projection_try_blend_scan, start_projection_blend_lambdas = start_projection_blend_lambdas, start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg, qlimit_start_iter = qlimit_start_iter, qlimit_start_mode = qlimit_start_mode, qlimit_auto_q_delta_pu = qlimit_auto_q_delta_pu, opt_flatstart = opt_flatstart, pv_table_rows = pv_table_rows, validate_limits_after_pf = validate_limits_after_pf, q_limit_violation_headroom = q_limit_violation_headroom, lock_pv_to_pq_buses = lock_pv_to_pq_buses)
+      ite, erg = run_tap_controllers_outer!(net; max_ite = max_ite, tol = tol, verbose = verbose, opt_fd = opt_fd, opt_sparse = opt_sparse, method = method, autodamp = autodamp, autodamp_min = autodamp_min, start_projection = start_projection, start_projection_try_dc_start = start_projection_try_dc_start, start_projection_try_blend_scan = start_projection_try_blend_scan, start_projection_blend_lambdas = start_projection_blend_lambdas, start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg, qlimit_start_iter = qlimit_start_iter, qlimit_start_mode = qlimit_start_mode, qlimit_auto_q_delta_pu = qlimit_auto_q_delta_pu, opt_flatstart = opt_flatstart, pv_table_rows = pv_table_rows, validate_limits_after_pf = validate_limits_after_pf, q_limit_violation_headroom = q_limit_violation_headroom, lock_pv_to_pq_buses = lock_pv_to_pq_buses, qlimit_trace_buses = qlimit_trace_buses, qlimit_lock_reason = qlimit_lock_reason)
     end
   end
 

@@ -55,6 +55,11 @@ This page summarizes the most relevant runnable examples in `src/examples/`.
   Configurable MATPOWER import utility script.
   Supports logfile-only MATPOWER reference diagnostics, effective YAML logging, and
   configurable branch `SHIFT` sign/unit handling for phase-shifter convention checks.
+  The YAML options can also diagnose and choose PV/REF voltage references when
+  MATPOWER `BUS.VM` values differ from generator `GEN.VG` setpoints; use
+  `compare_voltage_reference: imported_setpoint` to validate against the actual
+  imported PV/REF setpoints, or `compare_voltage_reference: bus_vm` to reproduce
+  stored bus-matrix voltages strictly.
 - `network_analyzer.jl`  
   Network diagnostics and inspection helpers.
 - `visul_chaos.jl`  

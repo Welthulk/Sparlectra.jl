@@ -48,8 +48,21 @@ function run_matpower_example_tests()
       "start_projection_try_blend_scan",
       "start_projection_blend_lambdas",
       "start_projection_dc_angle_limit_deg",
+      "qlimit_trace_buses",
       "matpower_ratio",
       "reference_override",
+      "diagnose_branch_neighborhood",
+      "diagnose_branch_neighborhood_buses",
+      "diagnose_branch_neighborhood_depth",
+      "diagnose_branch_neighborhood_maxlines",
+      "diagnose_residual_clusters",
+      "diagnose_residual_cluster_threshold_mw",
+      "diagnose_residual_cluster_maxlines",
+      "diagnose_nodal_balance_breakdown",
+      "diagnose_nodal_balance_buses",
+      "diagnose_nodal_balance_maxlines",
+      "diagnose_negative_branch_impedance",
+      "diagnose_negative_branch_impedance_fail_on_negative_r",
     ]
 
     for keyword in expected_keywords
@@ -67,6 +80,9 @@ function run_matpower_example_tests()
     @test occursin("function _print_converged_loss_summary(io::IO, method::Symbol, status, net::Sparlectra.Net)", normalized_source)
     @test occursin("losses P=", normalized_source)
     @test occursin("status_ref = status_ref", normalized_source)
+    @test occursin("Base.invokelatest(getfield(@__MODULE__, :_print_pv_voltage_reference_diagnostics)", normalized_source)
+    @test occursin("Sparlectra.Slack", normalized_source)
+    @test occursin("Sparlectra.PV", normalized_source)
 
     example_path = joinpath(@__DIR__, "..", "src", "examples", "matpower_import.jl")
     old_no_main = get(ENV, "SPARLECTRA_MATPOWER_IMPORT_NO_MAIN", nothing)
@@ -106,8 +122,28 @@ function run_matpower_example_tests()
         "start_projection_try_blend_scan" => false,
         "start_projection_blend_lambdas" => [0.1, 0.9],
         "start_projection_dc_angle_limit_deg" => 45.0,
+        "qlimit_trace_buses" => [40712],
         "diagnose_matpower_reference" => true,
         "diagnose_branch_shift_conventions" => true,
+        "diagnose_branch_neighborhood" => true,
+        "diagnose_branch_neighborhood_buses" => [7934, 6621],
+        "diagnose_branch_neighborhood_depth" => 2,
+        "diagnose_branch_neighborhood_maxlines" => 25,
+        "diagnose_residual_clusters" => true,
+        "diagnose_residual_cluster_threshold_mw" => 5.0,
+        "diagnose_residual_cluster_maxlines" => 4,
+        "diagnose_nodal_balance_breakdown" => true,
+        "diagnose_nodal_balance_buses" => [511, 2852],
+        "diagnose_nodal_balance_maxlines" => 250,
+        "diagnose_nodal_balance_include_branches" => false,
+        "diagnose_nodal_balance_include_generators" => false,
+        "diagnose_nodal_balance_include_shunts" => false,
+        "diagnose_negative_branch_impedance" => true,
+        "diagnose_negative_branch_impedance_maxlines" => 7,
+        "diagnose_negative_branch_impedance_fail_on_negative_r" => false,
+        "diagnose_negative_branch_impedance_fail_on_negative_x" => false,
+        "diagnose_negative_branch_impedance_warn_threshold_abs_r" => 0.001,
+        "diagnose_negative_branch_impedance_warn_threshold_abs_x" => 0.002,
         "diagnose_maxlines" => 3,
         "matpower_shift_unit" => "rad",
         "matpower_shift_sign" => -1.0,
@@ -124,8 +160,28 @@ function run_matpower_example_tests()
       @test cfg.start_projection_try_blend_scan === false
       @test cfg.start_projection_blend_lambdas == [0.1, 0.9]
       @test cfg.start_projection_dc_angle_limit_deg == 45.0
+      @test cfg.qlimit_trace_buses == [40712]
       @test cfg.diagnose_matpower_reference === true
       @test cfg.diagnose_branch_shift_conventions === true
+      @test cfg.diagnose_branch_neighborhood === true
+      @test cfg.diagnose_branch_neighborhood_buses == [7934, 6621]
+      @test cfg.diagnose_branch_neighborhood_depth == 2
+      @test cfg.diagnose_branch_neighborhood_maxlines == 25
+      @test cfg.diagnose_residual_clusters === true
+      @test cfg.diagnose_residual_cluster_threshold_mw == 5.0
+      @test cfg.diagnose_residual_cluster_maxlines == 4
+      @test cfg.diagnose_nodal_balance_breakdown === true
+      @test cfg.diagnose_nodal_balance_buses == [511, 2852]
+      @test cfg.diagnose_nodal_balance_maxlines == 250
+      @test cfg.diagnose_nodal_balance_include_branches === false
+      @test cfg.diagnose_nodal_balance_include_generators === false
+      @test cfg.diagnose_nodal_balance_include_shunts === false
+      @test cfg.diagnose_negative_branch_impedance === true
+      @test cfg.diagnose_negative_branch_impedance_maxlines == 7
+      @test cfg.diagnose_negative_branch_impedance_fail_on_negative_r === false
+      @test cfg.diagnose_negative_branch_impedance_fail_on_negative_x === false
+      @test cfg.diagnose_negative_branch_impedance_warn_threshold_abs_r == 0.001
+      @test cfg.diagnose_negative_branch_impedance_warn_threshold_abs_x == 0.002
       @test cfg.diagnose_maxlines == 3
       @test cfg.matpower_shift_unit == "rad"
       @test cfg.matpower_shift_sign == -1.0
@@ -140,7 +196,18 @@ function run_matpower_example_tests()
       @test occursin("_print_reference_override_status", normalized_source)
       @test occursin("_print_effective_config", normalized_source)
       @test occursin("function _print_matpower_reference_diagnostics", normalized_source)
+      @test occursin("function _print_matpower_branch_neighborhood_diagnostics", normalized_source)
+      @test occursin("function _print_residual_cluster_diagnostics", normalized_source)
+      @test occursin("function _print_negative_branch_impedance_diagnostics", normalized_source)
+      @test occursin("function _print_nodal_balance_breakdown", normalized_source)
       @test occursin("Branch-shift convention scan", normalized_source)
+      mktemp() do yaml_path, yaml_io
+        write(yaml_io, "diagnose_nodal_balance_buses:\n  - 7934\n  - 6621\ndiagnose_negative_branch_impedance: true\n")
+        close(yaml_io)
+        block_cfg = Base.invokelatest(() -> getfield(mod, :load_yaml_config)(yaml_path))
+        @test block_cfg["diagnose_nodal_balance_buses"] == [7934, 6621]
+        @test block_cfg["diagnose_negative_branch_impedance"] === true
+      end
       @test Base.invokelatest(() -> getfield(mod, :_enable_pq_gen_controllers_for_method)(:rectangular, true)) === true
       @test Base.invokelatest(() -> getfield(mod, :_enable_pq_gen_controllers_for_method)(:polar, true)) === false
       skipped_compare_summary = Base.invokelatest(() -> getfield(mod, :_show_once_summary_row)(:rectangular, (; converged = true), nothing, false; compare_available = false))
@@ -152,6 +219,7 @@ function run_matpower_example_tests()
       @test isnan(skipped_compare_summary.slack_delta_va)
       @test skipped_compare_summary.angle_alignment === :none
       @test skipped_compare_summary.cmp_ok === false
+      @test skipped_compare_summary.compare_status === :skip
       compared_summary = Base.invokelatest(() -> getfield(mod, :_show_once_summary_row)(:rectangular, (; converged = true, iterations = 4, elapsed_s = 0.125), (; max_dvm = 0.01, max_dva = 0.2), true; compare_available = true))
       @test compared_summary.converged === true
       @test compared_summary.iterations == 4
@@ -164,6 +232,9 @@ function run_matpower_example_tests()
       @test compared_summary_with_alignment.slack_delta_va == -30.0
       @test compared_summary_with_alignment.angle_alignment === :slack
       @test compared_summary.cmp_ok === true
+      @test compared_summary.compare_status === :ok
+      compared_warn_summary = Base.invokelatest(() -> getfield(mod, :_show_once_summary_row)(:rectangular, (; converged = true, iterations = 4, elapsed_s = 0.125), (; max_dvm = 0.01, max_dva = 0.2, compare_status = :warn), true; compare_available = true))
+      @test compared_warn_summary.compare_status === :warn
       mpc_seeded = (; bus = hcat(collect(1.0:3.0), fill(1.0, 3), zeros(3, 5), [1.02, 1.01, 0.99], [0.0, -1.0, -2.0]))
       @test Base.invokelatest(() -> getfield(mod, :_warn_if_flatstart_uses_only_voltage_setpoints)("case1951rte.m", (; opt_flatstart = true), mpc_seeded)) === nothing
       @test_logs (:info, r"opt_flatstart=false uses stored MATPOWER voltage magnitudes and angles") Base.invokelatest(() -> getfield(mod, :_warn_if_flatstart_uses_only_voltage_setpoints)("case1951rte.m", (; opt_flatstart = false), mpc_seeded))
@@ -185,6 +256,123 @@ function run_matpower_example_tests()
       diag_io = IOBuffer()
       @test Base.invokelatest(() -> getfield(mod, :_print_matpower_reference_diagnostics)(diag_io, diagnostic_mpc; matpower_shift_sign = -1.0, matpower_shift_unit = "rad", diagnose_branch_shift_conventions = true, maxlines = 2)) === nothing
       @test occursin("Branch-shift convention scan", String(take!(diag_io)))
+      neighborhood_io = IOBuffer()
+      @test Base.invokelatest(() -> getfield(mod, :_print_matpower_reference_diagnostics)(neighborhood_io, diagnostic_mpc; matpower_shift_sign = -1.0, matpower_shift_unit = "rad", diagnose_branch_neighborhood = true, diagnose_branch_neighborhood_buses = [1, 2], diagnose_branch_neighborhood_depth = 1, diagnose_branch_neighborhood_maxlines = 5, maxlines = 2)) === nothing
+      neighborhood_text = String(take!(neighborhood_io))
+      @test occursin("MATPOWER branch-neighborhood fixed-reference diagnostics", neighborhood_text)
+      @test occursin("branch row 1: f_bus=1  t_bus=2", neighborhood_text)
+      @test occursin("connects two selected high-residual buses", neighborhood_text)
+      @test occursin("fixed-reference flow Sf=", neighborhood_text)
+
+      negative_mpc = (;
+        baseMVA = 100.0,
+        bus = [1.0 3.0 0.0 0.0 0.0 0.0 1.0 1.0 0.0 110.0 1.0 1.1 0.9;
+               2.0 1.0 10.0 2.0 0.0 0.0 1.0 0.99 -1.0 110.0 1.0 1.1 0.9],
+        gen = [1.0 10.0 2.0 10.0 -10.0 1.0 100.0 1.0 20.0 0.0 zeros(1, 11)...],
+        branch = [1.0 2.0 -0.01 0.10 0.02 0.0 0.0 0.0 1.05 5.0 1.0 -360.0 360.0],
+      )
+      stamp = Base.invokelatest(() -> getfield(mod, :_matpower_branch_stamp)(view(negative_mpc.branch, 1, :)))
+      expected_y = inv(-0.01 + 0.10im)
+      @test stamp.br_r == -0.01
+      @test isapprox(real(expected_y), -0.99009900990099; atol = 1e-14, rtol = 0.0)
+      @test isapprox(stamp.Ytt - 0.01im, expected_y; atol = 1e-12, rtol = 0.0)
+      ybus_negative = Sparlectra.MatpowerIO.build_ybus_matpower(negative_mpc.bus, negative_mpc.branch, negative_mpc.baseMVA)
+      @test isapprox(ybus_negative[2, 2] - 0.01im, expected_y; atol = 1e-12, rtol = 0.0)
+      negative_net = Sparlectra.createNetFromMatPowerCase(mpc = negative_mpc)
+      @test negative_net.branchVec[1].r_pu == -0.01
+      neg_io = IOBuffer()
+      @test Base.invokelatest(() -> getfield(mod, :_print_negative_branch_impedance_diagnostics)(neg_io, negative_mpc; diagnose_branch_neighborhood_buses = [1, 2], diagnose_nodal_balance_buses = [2], fail_on_negative_r = false)) === nothing
+      neg_text = String(take!(neg_io))
+      @test occursin("Negative branch resistance/reactance detected", neg_text)
+      @test occursin("<negative BR_R>", neg_text)
+      @test occursin("Sparlectra preserves the signed impedance values", neg_text)
+      @test occursin("y=1/(R+jX)=", neg_text)
+      @test_throws ErrorException Base.invokelatest(() -> getfield(mod, :_print_negative_branch_impedance_diagnostics)(IOBuffer(), negative_mpc; fail_on_negative_r = true))
+      nodal_diag = Base.invokelatest(() -> getfield(mod, :_matpower_reference_residuals)(negative_mpc))
+      nodal_io = IOBuffer()
+      @test Base.invokelatest(() -> getfield(mod, :_print_nodal_balance_breakdown)(nodal_io, negative_mpc, nodal_diag; buses = [1, 2], maxlines = 5)) === nothing
+      nodal_text = String(take!(nodal_io))
+      @test occursin("S_spec", nodal_text)
+      @test occursin("S_branch_sum", nodal_text)
+      @test occursin("residual dS=S_branch_sum-S_spec", nodal_text)
+      @test occursin("formula: S_spec = S_gen_online - S_load - S_shunt", nodal_text)
+
+      # BUS_I 196 uses a small equivalent Pd adjustment so this focused fixture
+      # reproduces the known fixed-reference residual without embedding case300.m.
+      case300_neighborhood_mpc = (;
+        name = "case300_reference_neighborhood",
+        baseMVA = 100.0,
+        bus = [196.0 1.0 15.2823184571025 3.0 0.0 0.0 1.0 0.9695 -25.32 115.0 3.0 1.06 0.94;
+               197.0 1.0 43.0 14.0 0.0 0.0 1.0 0.9907 -23.72 115.0 3.0 1.06 0.94;
+               210.0 1.0 0.0 0.0 0.0 0.0 1.0 0.9788 -24.22 115.0 3.0 1.06 0.94;
+               204.0 1.0 72.0 24.0 0.0 0.0 1.0 0.9718 -25.7 66.0 3.0 1.06 0.94;
+               2040.0 1.0 0.0 0.0 0.0 0.0 1.0 0.9653 -14.94 115.0 3.0 1.06 0.94],
+        gen = zeros(0, 21),
+        branch = [196.0 197.0 0.014 0.04 0.004 0.0 0.0 0.0 0.0 0.0 1.0 -360.0 360.0;
+                  196.0 210.0 0.03 0.081 0.01 0.0 0.0 0.0 0.0 0.0 1.0 -360.0 360.0;
+                  204.0 2040.0 0.02 0.204 -0.012 0.0 0.0 0.0 1.05 0.0 1.0 -360.0 360.0;
+                  196.0 2040.0 0.0001 0.02 0.0 0.0 0.0 0.0 1.0 0.0 1.0 -360.0 360.0],
+      )
+      case300_diag = Base.invokelatest(() -> getfield(mod, :_matpower_reference_residuals)(case300_neighborhood_mpc))
+      busrow = Dict(Int(case300_diag.bus[r, 1]) => r for r in axes(case300_diag.bus, 1))
+      @test isapprox(real(case300_diag.mis[busrow[2040]]), 9.269150; atol = 1e-6, rtol = 0.0)
+      @test isapprox(real(case300_diag.mis[busrow[196]]), -9.260983; atol = 1e-6, rtol = 0.0)
+      case300_diag_io = IOBuffer()
+      @test Base.invokelatest(() -> getfield(mod, :_print_matpower_reference_diagnostics)(case300_diag_io, case300_neighborhood_mpc; maxlines = 3)) === nothing
+      case300_diag_text = String(take!(case300_diag_io))
+      @test occursin("raw MATPOWER-style fixed-reference check", case300_diag_text)
+      @test occursin("not necessarily a Sparlectra solver or import error", case300_diag_text)
+      cluster_io = IOBuffer()
+      @test Base.invokelatest(() -> getfield(mod, :_print_matpower_reference_diagnostics)(cluster_io, case300_neighborhood_mpc; diagnose_residual_clusters = true, diagnose_residual_cluster_threshold_mw = 100.0, diagnose_residual_cluster_maxlines = 5, maxlines = 3)) === nothing
+      cluster_text = String(take!(cluster_io))
+      @test occursin("MATPOWER fixed-reference residual clusters", cluster_text)
+      @test occursin("cluster 1:", cluster_text)
+      @test occursin("196, 197, 2040", cluster_text)
+      @test occursin("row 4 196->2040", cluster_text)
+
+      pv_diag_mpc = Sparlectra.MatpowerIO.MatpowerCase(
+        "pv_diagnostic",
+        100.0,
+        [
+          1 3 0.0 0.0 0.0 0.0 1 1.00 0.0 110.0 1 1.1 0.9
+          2 2 0.0 0.0 0.0 0.0 1 1.02 0.0 110.0 1 1.1 0.9
+          3 1 20.0 5.0 0.0 0.0 1 0.98 -2.0 110.0 1 1.1 0.9
+        ],
+        [
+          1 0.0 0.0 999.0 -999.0 1.0 100.0 1 999.0 0.0 zeros(1, 11)...
+          2 50.0 0.0 999.0 -999.0 1.04 100.0 1 999.0 0.0 zeros(1, 11)...
+        ],
+        [
+          1 2 0.01 0.05 0.0 9999.0 0.0 0.0 0.0 0.0 1 -60.0 60.0
+          2 3 0.01 0.05 0.0 9999.0 0.0 0.0 0.0 0.0 1 -60.0 60.0
+        ],
+        nothing,
+        nothing,
+      )
+      pv_diag_net = Sparlectra.createNetFromMatPowerCase(mpc = pv_diag_mpc, matpower_pv_voltage_source = :gen_vg)
+      pv_diag_io = IOBuffer()
+      @test Base.invokelatest(() -> getfield(mod, :_print_pv_voltage_reference_diagnostics)(pv_diag_io, pv_diag_mpc, pv_diag_net; matpower_pv_voltage_source = :gen_vg, compare_voltage_reference = :hybrid, maxlines = 3)) === nothing
+      pv_diag_text = String(take!(pv_diag_io))
+      @test occursin("Post-solve active PV/REF setpoint residual", pv_diag_text)
+      @test occursin("BUS.VM fallback", pv_diag_text)
+
+      warn_logfile, warn_io = mktemp()
+      close(warn_io)
+      warn_mpc = deepcopy(pv_diag_mpc)
+      warn_mpc.bus[3, 2] = 2.0
+      warn_status = Base.invokelatest(() -> getfield(mod, :_MatpowerImportLogStatus)())
+      rows = Base.invokelatest(() -> getfield(mod, :_with_log_table)(warn_logfile, warn_status) do
+        Sparlectra.MatpowerIO.pv_voltage_reference_rows(warn_mpc; warn = true)
+      end)
+      warn_text = read(warn_logfile, String)
+      @test length(rows) == 3
+      @test warn_status.warnings == 1
+      @test warn_status.errors == 0
+      @test occursin("Reported warnings/errors", warn_text)
+      @test occursin("MATPOWER PV/REF buses without online generators: 1; using BUS.VM fallback", warn_text)
+      @test occursin("BUS_I=3", warn_text)
+      @test !occursin("has no online generator; falling back", warn_text)
+      rm(warn_logfile; force = true)
 
       logfile, io = mktemp()
       close(io)
@@ -203,12 +391,25 @@ function run_matpower_example_tests()
         start_projection_try_blend_scan = false,
         start_projection_blend_lambdas = [0.1, 0.9],
         start_projection_dc_angle_limit_deg = 45.0,
+        qlimit_trace_buses = [40712],
         matpower_shift_unit = "rad",
         matpower_shift_sign = -1.0,
         matpower_ratio = "reciprocal",
         reference_override = true,
         reference_vm_pu = 1.01,
         reference_va_deg = -3.0,
+        diagnose_branch_neighborhood = true,
+        diagnose_residual_clusters = true,
+        diagnose_residual_cluster_threshold_mw = 5.0,
+        diagnose_residual_cluster_maxlines = 4,
+        diagnose_branch_neighborhood_buses = [7934, 6621],
+        diagnose_branch_neighborhood_depth = 2,
+        diagnose_branch_neighborhood_maxlines = 25,
+        diagnose_nodal_balance_breakdown = true,
+        diagnose_nodal_balance_buses = [511, 2852],
+        diagnose_nodal_balance_maxlines = 2,
+        diagnose_negative_branch_impedance = true,
+        diagnose_negative_branch_impedance_fail_on_negative_r = false,
         log_effective_config = true,
         effective_config = cfg,
         show_once = false,
@@ -234,6 +435,24 @@ function run_matpower_example_tests()
     y_rad = Sparlectra.MatpowerIO.build_ybus_matpower(bus, branch_rad, 100.0; matpower_shift_unit = "rad", matpower_shift_sign = -1.0)
     y_deg = Sparlectra.MatpowerIO.build_ybus_matpower(bus, branch_deg, 100.0)
     @test isapprox(y_rad, y_deg; atol = 1e-12, rtol = 0.0)
+  end
+
+  @testset "MATPOWER nominal TAP transformer preservation" begin
+    bus = [196.0 3.0 10.0 3.0 0.0 0.0 1.0 0.9695 -25.32 115.0 3.0 1.06 0.94;
+           2040.0 1.0 0.0 0.0 0.0 0.0 1.0 0.9653 -14.94 115.0 3.0 1.06 0.94;
+           3000.0 1.0 0.0 0.0 0.0 0.0 1.0 0.9700 -20.00 115.0 3.0 1.06 0.94]
+    gen = [196.0 0.0 0.0 10.0 -10.0 1.0 100.0 1.0 10.0 0.0 zeros(1, 11)...]
+    branch = [196.0 2040.0 0.0001 0.02 0.0 0.0 0.0 0.0 1.0 0.0 1.0 -360.0 360.0;
+              2040.0 3000.0 0.0001 0.02 0.0 0.0 0.0 0.0 0.0 0.0 1.0 -360.0 360.0]
+    mpc = (; name = "nominal_tap_transformer", baseMVA = 100.0, bus = bus, gen = gen, branch = branch, gencost = nothing, bus_name = nothing)
+
+    net = Sparlectra.createNetFromMatPowerCase(mpc = mpc)
+    @test length(net.trafos) == 1
+    @test length(net.linesAC) == 1
+    @test net.branchVec[1].ratio == 1.0
+    @test net.branchVec[1].tap_ratio == 1.0
+    @test net.branchVec[2].ratio == 0.0
+    @test isapprox(Matrix(Sparlectra.createYBUS(net = net, sparse = false)), Sparlectra.MatpowerIO.build_ybus_matpower(bus, branch, 100.0); atol = 1e-12, rtol = 0.0)
   end
 
   @testset "MATPOWER TAP ratio convention options" begin
