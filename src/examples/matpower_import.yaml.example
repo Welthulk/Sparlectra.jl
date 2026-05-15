@@ -42,7 +42,7 @@ opt_sparse: true
 opt_flatstart: true
 
 # Newton solver controls.
-tol: 1.0e-6
+tol: 1.0e-8
 max_ite: 30
 verbose: 1
 
@@ -77,8 +77,8 @@ bus_shunt_model: admittance
 
 # Optional start projection before rectangular NR.
 # Recommended for difficult flatstart cases.
-start_projection: true
-start_projection_try_dc_start: true
+start_projection: false
+start_projection_try_dc_start: false
 start_projection_try_blend_scan: false
 start_projection_blend_lambdas: [0.1, 0.25, 0.5, 0.75]
 start_projection_dc_angle_limit_deg: 70.0
@@ -96,10 +96,10 @@ flatstart_max_angle_step_deg: 20.0
 flatstart_max_vm_step_pu: 0.1
 
 # Wrong-branch detection and optional rescue.
-wrong_branch_detection: true
+wrong_branch_detection: false
 wrong_branch_min_vm_pu: 0.4
 wrong_branch_max_angle_spread_deg: 120.0
-wrong_branch_rescue: true
+wrong_branch_rescue: false
 wrong_branch_rescue_modes: [dc, bus_vm_va_blend, matpower_va]
 
 # ---------------------------------------------------------------------------
@@ -124,8 +124,8 @@ qlimit_start_mode: iteration
 qlimit_auto_q_delta_pu: 1.0e-4
 
 # Hysteresis/cooldown for PV<->PQ switching.
-q_hyst_pu: 0.0
-cooldown_iters: 0
+q_hyst_pu: 0.01
+cooldown_iters: 1
 
 # Optional focused Q-limit decision trace.
 # Entries are MATPOWER BUS_I values when available.
@@ -144,7 +144,7 @@ qlimit_trace_buses: []
 # compare_voltage_reference: bus_vm, gen_vg, imported_setpoint, or hybrid.
 matpower_pv_voltage_source: gen_vg
 matpower_pv_voltage_mismatch_tol_pu: 1.0e-4
-compare_voltage_reference: hybrid
+compare_voltage_reference: imported_setpoint
 
 # ---------------------------------------------------------------------------
 # MATPOWER branch SHIFT/TAP convention controls
@@ -182,15 +182,15 @@ trace_legacy_bus_type_warnings: false
 show_diff: true
 
 # Practical compare tolerances for the current general test run.
-tol_vm: 0.01
-tol_va: 2.0
+tol_vm: 0.02
+tol_va: 1.0
 
 # ---------------------------------------------------------------------------
 # Diagnostics
 # ---------------------------------------------------------------------------
 
 # If true, write the effective parsed YAML/options to the logfile.
-log_effective_config: false
+log_effective_config: true
 
 # MATPOWER-reference diagnostics:
 # - diagnose_matpower_reference prints the largest residuals obtained when the
@@ -199,7 +199,7 @@ log_effective_config: false
 #   solution of the imported data/model before the Sparlectra solve is considered.
 # - diagnose_branch_shift_conventions scans common phase-shift interpretations.
 diagnose_matpower_reference: true
-diagnose_branch_shift_conventions: true
+diagnose_branch_shift_conventions: false
 diagnose_negative_branch_impedances: true
 
 # PV voltage-reference diagnostics.
@@ -294,8 +294,24 @@ show_once_max_pv_rows: 30
 #diagnose_branch_shift_conventions: true
 #
 # --- MATPOWER warmstart validation ---
+# --- Strict MATPOWER warmstart validation ---
 #opt_flatstart: false
 #start_projection: false
+#wrong_branch_detection: false
 #wrong_branch_rescue: false
-#tol: 1.0e-8
-#max_ite: 50
+#tol: 1.0e-10
+#max_ite: 20
+#compare_voltage_reference: imported_setpoint
+#tol_vm: 1.0e-5
+#tol_va: 0.05
+
+# --- Robust flatstart variant for harder cases ---
+#start_projection: true
+#start_projection_try_dc_start: true
+#flatstart_angle_mode: dc
+#flatstart_voltage_mode: bus_vm_va_blend
+#wrong_branch_detection: true
+#wrong_branch_rescue: true
+#tol: 1.0e-6
+#tol_vm: 0.01
+#tol_va: 2.0
