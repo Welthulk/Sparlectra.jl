@@ -2,49 +2,54 @@
 ## Version 0.7.7 – 2026-05-13
 
 ### Highlights
-* Improved MATPOWER import diagnostics for large cases, including effective YAML logging, VM/VA reference checks, branch-shift convention scans, bus-shunt impact checks, and clearer terminal summaries.
+
+* Improved MATPOWER import diagnostics for large and difficult cases:
+  * clearer YAML-backed logging and terminal summaries
+  * VM/VA reference checks
+  * branch-shift and transformer convention scans
+  * bus-shunt and fixed-reference residual diagnostics
+
 * Added configurable MATPOWER transformer and phase-shifter import conventions:
   * `matpower_ratio`
   * `matpower_shift_sign`
   * `matpower_shift_unit`
 
-### Improvements
-* Improved PV/REF voltage-setpoint handling for MATPOWER imports:
-  * configurable `BUS.VM` vs. `GEN.VG` selection
+* Improved MATPOWER voltage reference handling:
+  * configurable `BUS.VM` vs. `GEN.VG` handling
   * hybrid comparison mode
-  * compact diagnostics for PV/REF buses without online generators
-* Improved rectangular NR flat-start behaviour for large MATPOWER cases:
-  * preserved slack/PV setpoints during flat start
+  * better diagnostics for PV/REF buses without online generators
+  * correct handling of buses switched from PV to PQ by Q-limits
+
+* Improved rectangular NR robustness for large MATPOWER cases:
+  * preserved slack and PV setpoints during flat start
   * added DC-angle and blended-voltage start support
   * added wrong-branch diagnostics for suspicious low-voltage solutions
-* Improved MATPOWER reference diagnostics with an optional branch-neighborhood report for selected high-residual buses, including raw branch data, effective tap interpretation, Y-bus stamp terms, and fixed-reference P/Q flow contributions.
+
 * Improved PV→PQ Q-limit handling:
   * clearer per-unit and MVAr diagnostics
-  * hysteresis/deadband support to reduce premature switching and PV↔PQ chatter
-  * post-solve Q-limit summaries for large cases
-* Fixed several Julia 1.12 / Revise world-age issues in MATPOWER example and diagnostic paths.
+  * hysteresis/deadband support
+  * compact post-solve active-set consistency checks
+  * separate handling of PV and REF/slack Q-limit violations
+
+### Fixes
+
+* Fixed MATPOWER slack/reference voltage import so VM/VA values are preserved unless explicitly overridden.
+* Fixed nominal-tap transformer handling so explicit `TAP = 1` branches remain transformer models.
 * Fixed repository-local MATPOWER `.jl` case loading and example regression-test handling.
+* Fixed several Julia 1.12 / Revise world-age issues in MATPOWER diagnostic and example paths.
+* Fixed flat-start setpoint extraction for networks with isolated buses.
+* Improved warning/error capture in `matpower_import.jl` with compact logfile summaries.
 
-### Bugfixes
+### Diagnostics
 
-* Bugfix: Made MATPOWER Vm/Va comparisons aware of final PV→PQ Q-limit switching so switched buses use `BUS.VM` as their voltage reference and are reported separately from active PV, PQ, and REF/slack buses.
-* Bugfix: Refined MATPOWER hybrid Vm/Va comparison diagnostics so deviations are summarized by voltage-reference kind and tolerance excursions that occur only on `final_pq_after_qlimit` buses are reported as WARN with an explanation instead of a hard compare failure.
-* Bugfix: Separated final rectangular Q-limit diagnostics for active PV and REF buses so PV violations fail the active-set check while REF/slack violations are reported as WARN by default without switching the slack bus to PQ.
-* Bugfix: Added a compact final rectangular PV/REF Q-limit consistency check that reports converged active-set violations with the same reactive-power source used by switching logic, including switch history and hysteresis return-band status.
-* Bugfix: Repaired MATPOWER fixed-reference diagnostics for PEGASE-style residual clusters by adding a branch-connected residual-cluster report that groups high P/Q mismatches and prints their internal branch context.
-* Bugfix: Extended the MATPOWER example diagnostics with YAML-backed nodal fixed-reference balance breakdowns and negative branch impedance scans, preserving signed branch `BR_R`/`BR_X` values while reporting model-critical negative impedance rows without clipping or correction.
-* Added MATPOWER reference-data consistency diagnostics and documented the known `case300.m` fixed-reference mismatch around `BUS_I 196 / 2040`.
-* Fixed MATPOWER nominal-tap transformer preservation so explicit `TAP = 1` branches, including case300 BUS_I 196 -> 2040 style connections, remain transformer models while ordinary `TAP = 0` lines still stamp with unity ratio.
-* Fixed MATPOWER slack/reference voltage handling so imported slack VM/VA values are preserved unless explicitly overridden.
-* Fixed rectangular flat-start initialization so slack and PV voltage setpoints remain active constraints.
-* Fixed external `PFModel` flat-start setpoint extraction for networks with isolated buses.
-* Fixed MATPOWER reference residual diagnostics and phase-shift logging paths.
-* Fixed warning/error capture in `matpower_import.jl`, replacing noisy console output with compact logfile summaries.
+* Added branch-neighborhood reports for selected high-residual buses.
+* Added residual-cluster diagnostics for PEGASE-style mismatch regions.
+* Added negative branch impedance scans while preserving signed MATPOWER `BR_R` / `BR_X` values.
+* Added MATPOWER reference-data consistency diagnostics, including documentation of the known `case300.m` fixed-reference mismatch around `BUS_I 196 / 2040`.
 
 ### Related
-* Issue #186: Singular Jacobian / world-age issue in rectangular NR solver.
-  
-## Version 0.7.6 – 2026-05-11
+
+* Issue #186: Singular Jacobian / world-age issue in rectangular NR solver.## Version 0.7.6 – 2026-05-11
 ### Bugfix
 * Fixed rectangular MATPOWER runs so a singular Newton Jacobian is reported as non-convergence instead of aborting the example, and tightened Julia 1.12 / Revise entry-point calls to avoid world-age binding warnings.
 
