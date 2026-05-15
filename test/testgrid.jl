@@ -559,6 +559,110 @@ function test_matpower_compare_vmva_wraps_angle_differences()::Bool
   return ok && isapprox(get(stats, :max_dva, NaN), 2.0; atol = 1e-12)
 end
 
+function _synthetic_pv_vg_mismatch_case(; gen_rows = nothing)
+  gens = gen_rows === nothing ? [
+    1 0.0 0.0 999.0 -999.0 1.0 100.0 1 999.0 0.0 zeros(1, 11)...
+    2 50.0 0.0 999.0 -999.0 1.04 100.0 1 999.0 0.0 zeros(1, 11)...
+  ] : gen_rows
+  return Sparlectra.MatpowerIO.MatpowerCase(
+    "case_pv_vg_mismatch",
+    100.0,
+    [
+      1 3 0.0 0.0 0.0 0.0 1 1.00 0.0 110.0 1 1.1 0.9
+      2 2 0.0 0.0 0.0 0.0 1 1.02 0.0 110.0 1 1.1 0.9
+      3 1 20.0 5.0 0.0 0.0 1 0.98 -2.0 110.0 1 1.1 0.9
+    ],
+    gens,
+    [
+      1 2 0.01 0.05 0.0 9999.0 0.0 0.0 0.0 0.0 1 -60.0 60.0
+      2 3 0.01 0.05 0.0 9999.0 0.0 0.0 0.0 0.0 1 -60.0 60.0
+    ],
+    nothing,
+    nothing,
+  )
+end
+
+function test_matpower_pv_voltage_source_and_compare_modes()::Bool
+  mpc = _synthetic_pv_vg_mismatch_case()
+  net_gen = Sparlectra.createNetFromMatPowerCase(mpc = mpc, matpower_pv_voltage_source = :gen_vg)
+  net_bus = Sparlectra.createNetFromMatPowerCase(mpc = mpc, matpower_pv_voltage_source = :bus_vm)
+
+  pv_idx = geNetBusIdx(net = net_gen, busName = "2")
+  source_ok = isapprox(net_gen.nodeVec[pv_idx]._vm_pu, 1.04; atol = 1e-12) && isapprox(net_bus.nodeVec[pv_idx]._vm_pu, 1.02; atol = 1e-12)
+
+  net_gen.nodeVec[pv_idx]._vm_pu = 1.04
+  bus_ok, bus_stats = redirect_stdout(devnull) do
+    Sparlectra.MatpowerIO.compare_vm_va(net_gen, mpc; compare_voltage_reference = :bus_vm, tol_vm = 0.01, tol_va = 180.0)
+  end
+  imported_ok, imported_stats = redirect_stdout(devnull) do
+    Sparlectra.MatpowerIO.compare_vm_va(net_gen, mpc; compare_voltage_reference = :imported_setpoint, matpower_pv_voltage_source = :gen_vg, tol_vm = 0.01, tol_va = 180.0)
+  end
+
+  rows = Sparlectra.MatpowerIO.pv_voltage_reference_rows(mpc; net = net_gen, matpower_pv_voltage_source = :gen_vg)
+  diagnostic_ok = any(row -> row.busI == 2 && isapprox(row.dvg_bus, 0.02; atol = 1e-12) && isapprox(row.dvm_vset, 0.0; atol = 1e-12), rows)
+  return source_ok && !bus_ok && get(bus_stats, :max_dvm, 0.0) > 0.019 && imported_ok && get(imported_stats, :max_dvm, 1.0) < 0.011 && diagnostic_ok
+end
+
+function test_matpower_compare_vmva_final_pq_after_qlimit_uses_bus_vm()::Bool
+  mpc = _synthetic_pv_vg_mismatch_case()
+  net = Sparlectra.createNetFromMatPowerCase(mpc = mpc, matpower_pv_voltage_source = :gen_vg)
+  pv_idx = geNetBusIdx(net = net, busName = "2")
+
+  Sparlectra.setNodeType!(net.nodeVec[pv_idx], "PQ")
+  net.qLimitEvents[pv_idx] = :max
+  net.nodeVec[pv_idx]._vm_pu = 1.03
+  net.nodeVec[pv_idx]._va_deg = 0.0
+
+  text_path, text_io = mktemp()
+  close(text_io)
+  ok, stats = open(text_path, "w") do io
+    redirect_stdout(io) do
+      Sparlectra.MatpowerIO.compare_vm_va(net, mpc; show_diff = true, compare_voltage_reference = :hybrid, matpower_pv_voltage_source = :gen_vg, tol_vm = 1e-12, tol_va = 180.0)
+    end
+  end
+  text = read(text_path, String)
+  rm(text_path; force = true)
+  counts = get(stats, :vm_ref_kind_counts, Dict{Symbol,Int}())
+  kind_summary = get(stats, :vm_ref_kind_summary, Dict{Symbol,Any}())
+  final_pq_summary = get(kind_summary, :final_pq_after_qlimit, (count = 0, max_dvm = NaN, max_dva = NaN))
+
+  return ok &&
+         get(stats, :compare_status, :fail) == :warn &&
+         isapprox(get(stats, :max_dvm, NaN), 0.01; atol = 1e-12) &&
+         isapprox(final_pq_summary.max_dvm, 0.01; atol = 1e-12) &&
+         get(counts, :final_pq_after_qlimit, 0) == 1 &&
+         get(counts, :pq_bus_vm, 0) == 1 &&
+         get(counts, :ref_slack_imported_setpoint, 0) == 1 &&
+         get(counts, :active_pv_imported_setpoint, 0) == 0 &&
+         occursin("final_pq_after_qlimit", text) &&
+         occursin("pq_bus_vm", text) &&
+         occursin("ref_slack_imported_setpoint", text) &&
+         occursin("status           : WARN", text) &&
+         occursin("Voltage deviations on final_pq_after_qlimit buses are expected", text)
+end
+
+function test_matpower_multi_generator_vg_and_fallback()::Bool
+  mpc_multi = _synthetic_pv_vg_mismatch_case(gen_rows = [
+    1 0.0 0.0 999.0 -999.0 1.0 100.0 1 999.0 0.0 zeros(1, 11)...
+    2 25.0 0.0 999.0 -999.0 1.04 100.0 1 999.0 0.0 zeros(1, 11)...
+    2 25.0 0.0 999.0 -999.0 1.05 100.0 1 999.0 0.0 zeros(1, 11)...
+  ])
+  net_multi = redirect_stderr(devnull) do
+    Sparlectra.createNetFromMatPowerCase(mpc = mpc_multi, matpower_pv_voltage_source = :gen_vg, matpower_pv_voltage_mismatch_tol_pu = 1e-4)
+  end
+  first_online_ok = isapprox(net_multi.nodeVec[geNetBusIdx(net = net_multi, busName = "2")]._vm_pu, 1.04; atol = 1e-12)
+
+  mpc_fallback = _synthetic_pv_vg_mismatch_case(gen_rows = [
+    1 0.0 0.0 999.0 -999.0 1.0 100.0 1 999.0 0.0 zeros(1, 11)...
+    2 50.0 0.0 999.0 -999.0 1.04 100.0 0 999.0 0.0 zeros(1, 11)...
+  ])
+  net_fallback = redirect_stderr(devnull) do
+    Sparlectra.createNetFromMatPowerCase(mpc = mpc_fallback, matpower_pv_voltage_source = :gen_vg)
+  end
+  fallback_ok = isapprox(net_fallback.nodeVec[geNetBusIdx(net = net_fallback, busName = "2")]._vm_pu, 1.02; atol = 1e-12)
+  return first_online_ok && fallback_ok
+end
+
 function testISOBusses()
   Sbase_MVA = 1000.0
   netName = "isobus"
@@ -1951,6 +2055,9 @@ function run_grid_tests()
       @test test_matpower_vmva_selfcheck_noncontiguous_bus_numbers() == true
       @test test_matpower_vmva_selfcheck_ignores_slack_pq_spec() == true
       @test test_matpower_compare_vmva_wraps_angle_differences() == true
+      @test test_matpower_pv_voltage_source_and_compare_modes() == true
+      @test test_matpower_compare_vmva_final_pq_after_qlimit_uses_bus_vm() == true
+      @test test_matpower_multi_generator_vg_and_fallback() == true
       @test test_mp_inline_vs_manual_shunt() == true
       @test test_bus_shunt_model_modes() == true
       @test test_matpower_read_case_m_postprocessing() == true

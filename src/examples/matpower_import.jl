@@ -18,6 +18,7 @@ import Sparlectra: MatpowerIO
 using BenchmarkTools
 using Printf
 using Dates
+using Logging
 
 # -----------------------------------------------------------------------------
 # YAML config helpers (simple subset)
@@ -52,17 +53,27 @@ function load_yaml_config(path::AbstractString)
   isfile(path) || error("YAML config file not found: $path")
 
   cfg = Dict{String,Any}()
+  pending_list_key = nothing
   for line in eachline(path)
     stripped = strip(line)
     isempty(stripped) && continue
     startswith(stripped, "#") && continue
+    if startswith(stripped, "-") && !isnothing(pending_list_key)
+      item_raw = strip(stripped[2:end])
+      push!(cfg[pending_list_key], _parse_yaml_scalar(item_raw))
+      continue
+    end
+    pending_list_key = nothing
     occursin(":", stripped) || continue
 
     key, value_raw = split(stripped, ":"; limit = 2)
     key = strip(key)
     value_raw = strip(split(value_raw, "#"; limit = 2)[1]) # remove inline comments
 
-    if startswith(value_raw, "[") && endswith(value_raw, "]")
+    if isempty(value_raw)
+      cfg[key] = Any[]
+      pending_list_key = key
+    elseif startswith(value_raw, "[") && endswith(value_raw, "]")
       cfg[key] = _parse_yaml_list(value_raw)
     else
       cfg[key] = _parse_yaml_scalar(value_raw)
@@ -117,6 +128,74 @@ const METHODS = [:rectangular]
 const OUTDIR = joinpath(@__DIR__, "_out")
 mkpath(OUTDIR)
 
+mutable struct _MatpowerImportLogStatus
+  warnings::Int
+  errors::Int
+end
+
+_MatpowerImportLogStatus() = _MatpowerImportLogStatus(0, 0)
+
+mutable struct _MatpowerImportTableLogger <: Logging.AbstractLogger
+  io::IO
+  min_level::Logging.LogLevel
+  status::_MatpowerImportLogStatus
+  header_printed::Bool
+end
+
+Logging.min_enabled_level(logger::_MatpowerImportTableLogger) = logger.min_level
+Logging.catch_exceptions(logger::_MatpowerImportTableLogger) = true
+Logging.shouldlog(logger::_MatpowerImportTableLogger, level, _module, group, id) = level >= logger.min_level
+
+function _log_level_label(level)::String
+  level >= Logging.Error && return "ERROR"
+  level >= Logging.Warn && return "WARN"
+  return string(level)
+end
+
+function _log_kv_string(kwargs)::String
+  isempty(kwargs) && return ""
+  parts = String[]
+  for (key, value) in kwargs
+    push!(parts, string(key, "=", repr(value)))
+  end
+  return join(parts, "; ")
+end
+
+function _log_source(_module, file, line)::String
+  file_label = isnothing(file) ? "unknown" : basename(String(file))
+  return string(_module, ":", file_label, ":", line)
+end
+
+function Logging.handle_message(logger::_MatpowerImportTableLogger, level, message, _module, group, id, file, line; kwargs...)
+  level >= Logging.Error && (logger.status.errors += 1)
+  Logging.Warn <= level < Logging.Error && (logger.status.warnings += 1)
+  if !logger.header_printed
+    println(logger.io, "")
+    println(logger.io, "==================== Reported warnings/errors ====================")
+    @printf(logger.io, "%-23s  %-5s  %-28s  %-24s  %s\n", "timestamp", "level", "source", "message", "details")
+    @printf(logger.io, "%-23s  %-5s  %-28s  %-24s  %s\n", repeat("-", 23), repeat("-", 5), repeat("-", 28), repeat("-", 24), repeat("-", 40))
+    logger.header_printed = true
+  end
+  source = _log_source(_module, file, line)
+  @printf(logger.io, "%-23s  %-5s  %-28s  %-24s  %s\n", Dates.format(Dates.now(), "yyyy-mm-dd HH:MM:SS"), _log_level_label(level), source, string(message), _log_kv_string(kwargs))
+  flush(logger.io)
+  return nothing
+end
+
+function _with_log_table(f::Function, logfile::AbstractString, status::_MatpowerImportLogStatus)
+  open(logfile, "a") do io
+    logger = _MatpowerImportTableLogger(io, Logging.Warn, status, false)
+    return Logging.with_logger(logger) do
+      f()
+    end
+  end
+end
+
+function _print_log_status(io::IO, status::_MatpowerImportLogStatus)
+  println(io, "reported warnings/errors: warnings=", status.warnings, " errors=", status.errors)
+  return nothing
+end
+
 # -----------------------------------------------------------------------------
 # Compare against MATPOWER reference (if present)
 # -----------------------------------------------------------------------------
@@ -150,6 +229,7 @@ function bench_config_for_case(case_name::AbstractString, yaml_cfg::Dict{String,
     verbose = 1,
     cooldown_iters = 0,
     q_hyst_pu = 0.0,
+    qlimit_trace_buses = Int[],
     lock_pv_to_pq_buses = Int[],
     ignore_q_limits = false,
     max_ite = 30,
@@ -171,11 +251,46 @@ function bench_config_for_case(case_name::AbstractString, yaml_cfg::Dict{String,
     reference_va_deg = 0.0,
     diagnose_matpower_reference = false,
     diagnose_branch_shift_conventions = false,
+    diagnose_branch_neighborhood = false,
+    diagnose_residual_clusters = false,
+    diagnose_residual_cluster_threshold_mw = 1.0,
+    diagnose_residual_cluster_maxlines = 20,
+    diagnose_branch_neighborhood_buses = Int[],
+    diagnose_branch_neighborhood_depth = 1,
+    diagnose_branch_neighborhood_maxlines = 200,
+    diagnose_nodal_balance_breakdown = false,
+    diagnose_nodal_balance_buses = Int[],
+    diagnose_nodal_balance_maxlines = 200,
+    diagnose_nodal_balance_include_branches = true,
+    diagnose_nodal_balance_include_generators = true,
+    diagnose_nodal_balance_include_shunts = true,
+    diagnose_negative_branch_impedance = true,
+    diagnose_negative_branch_impedance_maxlines = 100,
+    diagnose_negative_branch_impedance_fail_on_negative_r = false,
+    diagnose_negative_branch_impedance_fail_on_negative_x = false,
+    diagnose_negative_branch_impedance_warn_threshold_abs_r = 0.0,
+    diagnose_negative_branch_impedance_warn_threshold_abs_x = 0.0,
     diagnose_maxlines = 12,
     log_effective_config = false,
     enable_pq_gen_controllers = true,
     bus_shunt_model = "admittance",
     trace_legacy_bus_type_warnings = false,
+    matpower_pv_voltage_source = :gen_vg,
+    matpower_pv_voltage_mismatch_tol_pu = 1e-4,
+    compare_voltage_reference = :bus_vm,
+    diagnose_pv_voltage_references = false,
+    diagnose_pv_voltage_maxlines = 30,
+    flatstart_voltage_mode = :classic,
+    flatstart_angle_mode = :classic,
+    flatstart_branch_guard = true,
+    flatstart_min_vm_pu = 0.5,
+    flatstart_max_angle_step_deg = 20.0,
+    flatstart_max_vm_step_pu = 0.1,
+    wrong_branch_detection = true,
+    wrong_branch_min_vm_pu = 0.4,
+    wrong_branch_max_angle_spread_deg = 120.0,
+    wrong_branch_rescue = false,
+    wrong_branch_rescue_modes = [:dc, :bus_vm_va_blend, :matpower_va],
   )
   case_override = get(CASE_BENCH_OVERRIDES, String(case_name), (;))
   yaml_override = (;)
@@ -197,6 +312,7 @@ function bench_config_for_case(case_name::AbstractString, yaml_cfg::Dict{String,
       verbose = Int(get(yaml_cfg, "verbose", base.verbose)),
       cooldown_iters = Int(get(yaml_cfg, "cooldown_iters", base.cooldown_iters)),
       q_hyst_pu = Float64(get(yaml_cfg, "q_hyst_pu", base.q_hyst_pu)),
+      qlimit_trace_buses = _as_int_vec(get(yaml_cfg, "qlimit_trace_buses", base.qlimit_trace_buses)),
       lock_pv_to_pq_buses = _as_int_vec(get(yaml_cfg, "lock_pv_to_pq_buses", base.lock_pv_to_pq_buses)),
       ignore_q_limits = Bool(get(yaml_cfg, "ignore_q_limits", base.ignore_q_limits)),
       max_ite = Int(get(yaml_cfg, "max_ite", base.max_ite)),
@@ -218,11 +334,46 @@ function bench_config_for_case(case_name::AbstractString, yaml_cfg::Dict{String,
       reference_va_deg = Float64(get(yaml_cfg, "reference_va_deg", base.reference_va_deg)),
       diagnose_matpower_reference = Bool(get(yaml_cfg, "diagnose_matpower_reference", base.diagnose_matpower_reference)),
       diagnose_branch_shift_conventions = Bool(get(yaml_cfg, "diagnose_branch_shift_conventions", base.diagnose_branch_shift_conventions)),
+      diagnose_branch_neighborhood = Bool(get(yaml_cfg, "diagnose_branch_neighborhood", base.diagnose_branch_neighborhood)),
+      diagnose_residual_clusters = Bool(get(yaml_cfg, "diagnose_residual_clusters", base.diagnose_residual_clusters)),
+      diagnose_residual_cluster_threshold_mw = Float64(get(yaml_cfg, "diagnose_residual_cluster_threshold_mw", base.diagnose_residual_cluster_threshold_mw)),
+      diagnose_residual_cluster_maxlines = Int(get(yaml_cfg, "diagnose_residual_cluster_maxlines", base.diagnose_residual_cluster_maxlines)),
+      diagnose_branch_neighborhood_buses = _as_int_vec(get(yaml_cfg, "diagnose_branch_neighborhood_buses", base.diagnose_branch_neighborhood_buses)),
+      diagnose_branch_neighborhood_depth = Int(get(yaml_cfg, "diagnose_branch_neighborhood_depth", base.diagnose_branch_neighborhood_depth)),
+      diagnose_branch_neighborhood_maxlines = Int(get(yaml_cfg, "diagnose_branch_neighborhood_maxlines", base.diagnose_branch_neighborhood_maxlines)),
+      diagnose_nodal_balance_breakdown = Bool(get(yaml_cfg, "diagnose_nodal_balance_breakdown", base.diagnose_nodal_balance_breakdown)),
+      diagnose_nodal_balance_buses = _as_int_vec(get(yaml_cfg, "diagnose_nodal_balance_buses", base.diagnose_nodal_balance_buses)),
+      diagnose_nodal_balance_maxlines = Int(get(yaml_cfg, "diagnose_nodal_balance_maxlines", base.diagnose_nodal_balance_maxlines)),
+      diagnose_nodal_balance_include_branches = Bool(get(yaml_cfg, "diagnose_nodal_balance_include_branches", base.diagnose_nodal_balance_include_branches)),
+      diagnose_nodal_balance_include_generators = Bool(get(yaml_cfg, "diagnose_nodal_balance_include_generators", base.diagnose_nodal_balance_include_generators)),
+      diagnose_nodal_balance_include_shunts = Bool(get(yaml_cfg, "diagnose_nodal_balance_include_shunts", base.diagnose_nodal_balance_include_shunts)),
+      diagnose_negative_branch_impedance = Bool(get(yaml_cfg, "diagnose_negative_branch_impedance", base.diagnose_negative_branch_impedance)),
+      diagnose_negative_branch_impedance_maxlines = Int(get(yaml_cfg, "diagnose_negative_branch_impedance_maxlines", base.diagnose_negative_branch_impedance_maxlines)),
+      diagnose_negative_branch_impedance_fail_on_negative_r = Bool(get(yaml_cfg, "diagnose_negative_branch_impedance_fail_on_negative_r", base.diagnose_negative_branch_impedance_fail_on_negative_r)),
+      diagnose_negative_branch_impedance_fail_on_negative_x = Bool(get(yaml_cfg, "diagnose_negative_branch_impedance_fail_on_negative_x", base.diagnose_negative_branch_impedance_fail_on_negative_x)),
+      diagnose_negative_branch_impedance_warn_threshold_abs_r = Float64(get(yaml_cfg, "diagnose_negative_branch_impedance_warn_threshold_abs_r", base.diagnose_negative_branch_impedance_warn_threshold_abs_r)),
+      diagnose_negative_branch_impedance_warn_threshold_abs_x = Float64(get(yaml_cfg, "diagnose_negative_branch_impedance_warn_threshold_abs_x", base.diagnose_negative_branch_impedance_warn_threshold_abs_x)),
       diagnose_maxlines = Int(get(yaml_cfg, "diagnose_maxlines", base.diagnose_maxlines)),
       log_effective_config = Bool(get(yaml_cfg, "log_effective_config", base.log_effective_config)),
       enable_pq_gen_controllers = Bool(get(yaml_cfg, "enable_pq_gen_controllers", base.enable_pq_gen_controllers)),
       bus_shunt_model = String(get(yaml_cfg, "bus_shunt_model", base.bus_shunt_model)),
       trace_legacy_bus_type_warnings = Bool(get(yaml_cfg, "trace_legacy_bus_type_warnings", base.trace_legacy_bus_type_warnings)),
+      matpower_pv_voltage_source = Symbol(get(yaml_cfg, "matpower_pv_voltage_source", base.matpower_pv_voltage_source)),
+      matpower_pv_voltage_mismatch_tol_pu = Float64(get(yaml_cfg, "matpower_pv_voltage_mismatch_tol_pu", base.matpower_pv_voltage_mismatch_tol_pu)),
+      compare_voltage_reference = Symbol(get(yaml_cfg, "compare_voltage_reference", base.compare_voltage_reference)),
+      diagnose_pv_voltage_references = Bool(get(yaml_cfg, "diagnose_pv_voltage_references", base.diagnose_pv_voltage_references)),
+      diagnose_pv_voltage_maxlines = Int(get(yaml_cfg, "diagnose_pv_voltage_maxlines", base.diagnose_pv_voltage_maxlines)),
+      flatstart_voltage_mode = Symbol(get(yaml_cfg, "flatstart_voltage_mode", base.flatstart_voltage_mode)),
+      flatstart_angle_mode = Symbol(get(yaml_cfg, "flatstart_angle_mode", base.flatstart_angle_mode)),
+      flatstart_branch_guard = Bool(get(yaml_cfg, "flatstart_branch_guard", base.flatstart_branch_guard)),
+      flatstart_min_vm_pu = Float64(get(yaml_cfg, "flatstart_min_vm_pu", base.flatstart_min_vm_pu)),
+      flatstart_max_angle_step_deg = Float64(get(yaml_cfg, "flatstart_max_angle_step_deg", base.flatstart_max_angle_step_deg)),
+      flatstart_max_vm_step_pu = Float64(get(yaml_cfg, "flatstart_max_vm_step_pu", base.flatstart_max_vm_step_pu)),
+      wrong_branch_detection = Bool(get(yaml_cfg, "wrong_branch_detection", base.wrong_branch_detection)),
+      wrong_branch_min_vm_pu = Float64(get(yaml_cfg, "wrong_branch_min_vm_pu", base.wrong_branch_min_vm_pu)),
+      wrong_branch_max_angle_spread_deg = Float64(get(yaml_cfg, "wrong_branch_max_angle_spread_deg", base.wrong_branch_max_angle_spread_deg)),
+      wrong_branch_rescue = Bool(get(yaml_cfg, "wrong_branch_rescue", base.wrong_branch_rescue)),
+      wrong_branch_rescue_modes = _as_symbol_vec(get(yaml_cfg, "wrong_branch_rescue_modes", base.wrong_branch_rescue_modes)),
     )
   end
   return merge(base, case_override, yaml_override)
@@ -311,24 +462,619 @@ function _print_top_residuals(io::IO, label::AbstractString, diag, baseMVA::Floa
   println(io, "\n==================== MATPOWER reference residual diagnostics: ", label, " ====================")
   println(io, "Top active-power residuals on enforced PQ/PV buses:")
   println(io, " rank  bus      type        dP_pu         dP_MW       Vm_ref     Va_ref_deg")
-  for rank in 1:n_p
+  for rank = 1:n_p
     r = p_order[rank]
     @printf(io, "%5d %6d %5d %13.6f %13.3f %10.6f %12.6f\n", rank, Int(bus[r, 1]), Int(bus[r, 2]), real(mis[r]), real(mis[r]) * baseMVA, bus[r, 8], bus[r, 9])
   end
   println(io, "Top reactive-power residuals on enforced PQ buses:")
   println(io, " rank  bus      type        dQ_pu       dQ_MVAr      Vm_ref     Va_ref_deg")
-  for rank in 1:n_q
+  for rank = 1:n_q
     r = q_order[rank]
     @printf(io, "%5d %6d %5d %13.6f %13.3f %10.6f %12.6f\n", rank, Int(bus[r, 1]), Int(bus[r, 2]), imag(mis[r]), imag(mis[r]) * baseMVA, bus[r, 8], bus[r, 9])
   end
   println(io, "================================================================================\n")
 end
 
-function _print_matpower_reference_diagnostics(io::IO, mpc; matpower_shift_sign::Real = 1.0, matpower_shift_unit = "deg", matpower_ratio = "normal", diagnose_branch_shift_conventions::Bool = false, maxlines::Int = 12)
+function _matpower_busrow_map(bus)
+  busrow = Dict{Int,Int}()
+  sizehint!(busrow, size(bus, 1))
+  for r in axes(bus, 1)
+    busrow[Int(bus[r, 1])] = r
+  end
+  return busrow
+end
+
+function _matpower_branch_stamp(row; matpower_shift_sign::Real = 1.0, matpower_shift_unit = "deg", matpower_ratio = "normal")
+  shift_unit = MatpowerIO._normalize_matpower_shift_unit(matpower_shift_unit)
+  shift_sign = Float64(matpower_shift_sign)
+  ratio_mode = MatpowerIO._normalize_matpower_ratio_mode(matpower_ratio)
+
+  r = Float64(row[3])
+  x = Float64(row[4])
+  b = Float64(row[5])
+  y = inv(complex(r, x))
+  ysh = 1im * b / 2
+  tap_raw = length(row) >= 9 ? Float64(row[9]) : 1.0
+  shift_raw = length(row) >= 10 ? Float64(row[10]) : 0.0
+  ratio = MatpowerIO._matpower_import_ratio(tap_raw; mode = ratio_mode)
+  shift_rad = MatpowerIO._matpower_shift_radians(shift_raw; sign = shift_sign, unit = shift_unit)
+  tap = ratio * cis(shift_rad)
+
+  return (;
+    br_r = r,
+    br_x = x,
+    br_b = b,
+    tap_raw = tap_raw,
+    shift_raw = shift_raw,
+    ratio = ratio,
+    shift_rad = shift_rad,
+    shift_deg = rad2deg(shift_rad),
+    tap = tap,
+    Yff = (y + ysh) / (tap * conj(tap)),
+    Yft = -y / conj(tap),
+    Ytf = -y / tap,
+    Ytt = y + ysh,
+  )
+end
+
+function _matpower_branch_flow_from_stamp(mpc, busrow::Dict{Int,Int}, e::Int, stamp)
+  row = view(mpc.branch, e, :)
+  f_bus = Int(row[1])
+  t_bus = Int(row[2])
+  f = busrow[f_bus]
+  t = busrow[t_bus]
+  Vf = mpc.bus[f, 8] * cis(deg2rad(mpc.bus[f, 9]))
+  Vt = mpc.bus[t, 8] * cis(deg2rad(mpc.bus[t, 9]))
+  If = stamp.Yff * Vf + stamp.Yft * Vt
+  It = stamp.Ytf * Vf + stamp.Ytt * Vt
+  return (; f_bus, t_bus, f, t, Vf, Vt, Sf = Vf * conj(If), St = Vt * conj(It))
+end
+
+function _matpower_high_residual_bus_set(diag; maxlines::Int = 12)
+  high = Set{Int}()
+  p_order = sort(diag.p_rows; by = r -> abs(real(diag.mis[r])), rev = true)
+  q_order = sort(diag.q_rows; by = r -> abs(imag(diag.mis[r])), rev = true)
+  for r in p_order[1:min(max(maxlines, 0), length(p_order))]
+    push!(high, Int(diag.bus[r, 1]))
+  end
+  for r in q_order[1:min(max(maxlines, 0), length(q_order))]
+    push!(high, Int(diag.bus[r, 1]))
+  end
+  return high
+end
+
+function _matpower_residual_bus_rows(diag, baseMVA::Float64; threshold_mw::Real = 1.0, maxlines::Int = 20)
+  rows = Set{Int}()
+  threshold_pu = abs(Float64(threshold_mw)) / baseMVA
+  for r in diag.p_rows
+    abs(real(diag.mis[r])) >= threshold_pu && push!(rows, r)
+  end
+  for r in diag.q_rows
+    abs(imag(diag.mis[r])) >= threshold_pu && push!(rows, r)
+  end
+  if isempty(rows)
+    p_order = sort(diag.p_rows; by = r -> abs(real(diag.mis[r])), rev = true)
+    q_order = sort(diag.q_rows; by = r -> abs(imag(diag.mis[r])), rev = true)
+    for r in p_order[1:min(max(maxlines, 0), length(p_order))]
+      push!(rows, r)
+    end
+    for r in q_order[1:min(max(maxlines, 0), length(q_order))]
+      push!(rows, r)
+    end
+  end
+  return rows
+end
+
+function _matpower_residual_bus_clusters(mpc, diag; threshold_mw::Real = 1.0, maxlines::Int = 20)
+  selected_rows = _matpower_residual_bus_rows(diag, Float64(mpc.baseMVA); threshold_mw = threshold_mw, maxlines = maxlines)
+  isempty(selected_rows) && return NamedTuple[]
+  busrow = _matpower_busrow_map(diag.bus)
+  selected_buses = Set(Int(diag.bus[r, 1]) for r in selected_rows)
+  adjacency = Dict{Int,Set{Int}}(busI => Set{Int}() for busI in selected_buses)
+  for e in axes(mpc.branch, 1)
+    status = size(mpc.branch, 2) >= 11 ? Float64(mpc.branch[e, 11]) : 1.0
+    status == 0.0 && continue
+    f_bus = Int(mpc.branch[e, 1])
+    t_bus = Int(mpc.branch[e, 2])
+    if f_bus in selected_buses && t_bus in selected_buses
+      push!(adjacency[f_bus], t_bus)
+      push!(adjacency[t_bus], f_bus)
+    end
+  end
+
+  clusters = NamedTuple[]
+  seen = Set{Int}()
+  for seed in sort!(collect(selected_buses))
+    seed in seen && continue
+    queue = [seed]
+    push!(seen, seed)
+    buses = Int[]
+    while !isempty(queue)
+      busI = popfirst!(queue)
+      push!(buses, busI)
+      for nb in adjacency[busI]
+        nb in seen && continue
+        push!(seen, nb)
+        push!(queue, nb)
+      end
+    end
+    sort!(buses)
+    row_ids = [busrow[busI] for busI in buses if haskey(busrow, busI)]
+    internal_branch_rows = Int[]
+    boundary_branch_rows = Int[]
+    bus_set = Set(buses)
+    for e in axes(mpc.branch, 1)
+      status = size(mpc.branch, 2) >= 11 ? Float64(mpc.branch[e, 11]) : 1.0
+      status == 0.0 && continue
+      f_bus = Int(mpc.branch[e, 1])
+      t_bus = Int(mpc.branch[e, 2])
+      f_in = f_bus in bus_set
+      t_in = t_bus in bus_set
+      if f_in && t_in
+        push!(internal_branch_rows, e)
+      elseif f_in || t_in
+        push!(boundary_branch_rows, e)
+      end
+    end
+    max_p_mw = isempty(row_ids) ? 0.0 : maximum(abs(real(diag.mis[r])) for r in row_ids) * mpc.baseMVA
+    max_q_mvar = isempty(row_ids) ? 0.0 : maximum(abs(imag(diag.mis[r])) for r in row_ids) * mpc.baseMVA
+    sum_mis = isempty(row_ids) ? 0.0 + 0.0im : sum(diag.mis[row_ids])
+    push!(clusters, (;
+      buses = buses,
+      rows = row_ids,
+      internal_branch_rows = internal_branch_rows,
+      boundary_branch_rows = boundary_branch_rows,
+      max_p_mw = max_p_mw,
+      max_q_mvar = max_q_mvar,
+      sum_mis = sum_mis,
+    ))
+  end
+  return sort!(clusters; by = c -> max(c.max_p_mw, c.max_q_mvar), rev = true)
+end
+
+function _print_residual_cluster_diagnostics(io::IO, mpc, diag; threshold_mw::Real = 1.0, maxlines::Int = 20, matpower_shift_sign::Real = 1.0, matpower_shift_unit = "deg", matpower_ratio = "normal")
+  clusters = _matpower_residual_bus_clusters(mpc, diag; threshold_mw = threshold_mw, maxlines = maxlines)
+  isempty(clusters) && return nothing
+  nshow = min(max(maxlines, 0), length(clusters))
+  println(io, "==================== MATPOWER fixed-reference residual clusters ====================")
+  @printf(io, "threshold: %.6g MW/MVAr; clusters: %d; showing: %d\n", Float64(threshold_mw), length(clusters), nshow)
+  println(io, "Clusters connect buses whose fixed-reference P/Q residuals exceed the threshold through online MATPOWER branches.")
+  println(io, "Use this to separate local data/model inconsistencies from one global residual list.")
+  for rank in 1:nshow
+    cluster = clusters[rank]
+    @printf(io, "\ncluster %d: buses=%d internal_branches=%d boundary_branches=%d max|dP|=%.3f MW max|dQ|=%.3f MVAr sum_dS=% .6g%+ .6gi pu\n", rank, length(cluster.buses), length(cluster.internal_branch_rows), length(cluster.boundary_branch_rows), cluster.max_p_mw, cluster.max_q_mvar, real(cluster.sum_mis), imag(cluster.sum_mis))
+    println(io, "  buses: ", join(cluster.buses[1:min(length(cluster.buses), maxlines)], ", "), length(cluster.buses) > maxlines ? " ..." : "")
+    bus_order = sort(cluster.rows; by = r -> max(abs(real(diag.mis[r])), abs(imag(diag.mis[r]))), rev = true)
+    println(io, "  top residual buses: BUS_I type dP_MW dQ_MVAr Vm_ref Va_ref_deg")
+    for r in bus_order[1:min(length(bus_order), maxlines)]
+      @printf(io, "    %6d %4d % .6f % .6f % .6f % .6f\n", Int(diag.bus[r, 1]), Int(diag.bus[r, 2]), real(diag.mis[r]) * mpc.baseMVA, imag(diag.mis[r]) * mpc.baseMVA, diag.bus[r, 8], diag.bus[r, 9])
+    end
+    if !isempty(cluster.internal_branch_rows)
+      println(io, "  internal branch rows: ", join(cluster.internal_branch_rows[1:min(length(cluster.internal_branch_rows), maxlines)], ", "), length(cluster.internal_branch_rows) > maxlines ? " ..." : "")
+      busrow = _matpower_busrow_map(mpc.bus)
+      for e in cluster.internal_branch_rows[1:min(length(cluster.internal_branch_rows), maxlines)]
+        row = view(mpc.branch, e, :)
+        stamp = _matpower_branch_stamp(row; matpower_shift_sign = matpower_shift_sign, matpower_shift_unit = matpower_shift_unit, matpower_ratio = matpower_ratio)
+        flow = _matpower_branch_flow_from_stamp(mpc, busrow, e, stamp)
+        @printf(io, "    row %d %d->%d R=% .6g X=% .6g TAP=% .6g SHIFT=% .6g Sf=% .6g%+ .6gi pu St=% .6g%+ .6gi pu\n", e, flow.f_bus, flow.t_bus, stamp.br_r, stamp.br_x, stamp.tap_raw, stamp.shift_raw, real(flow.Sf), imag(flow.Sf), real(flow.St), imag(flow.St))
+      end
+    end
+  end
+  if nshow < length(clusters)
+    @printf(io, "\n... truncated residual cluster diagnostics: showing %d/%d clusters (diagnose_residual_cluster_maxlines)\n", nshow, length(clusters))
+  end
+  println(io, "==================================================================================\n")
+  return nothing
+end
+
+function _negative_branch_markers(row, selected_set::Set{Int}; high_residual_buses::Set{Int} = Set{Int}())
+  f_bus = Int(row[1])
+  t_bus = Int(row[2])
+  markers = String[]
+  Float64(row[3]) < 0.0 && push!(markers, "<negative BR_R>")
+  Float64(row[4]) < 0.0 && push!(markers, "<negative BR_X>")
+  (f_bus in selected_set && t_bus in selected_set) && push!(markers, "<connects two selected high-residual buses>")
+  (f_bus in high_residual_buses && t_bus in high_residual_buses) && push!(markers, "<connects two top-residual buses>")
+  return isempty(markers) ? "" : "  " * join(markers, " ")
+end
+
+function _negative_branch_rows(branch; warn_threshold_abs_r::Real = 0.0, warn_threshold_abs_x::Real = 0.0)
+  rows = Int[]
+  for e in axes(branch, 1)
+    r = Float64(branch[e, 3])
+    x = Float64(branch[e, 4])
+    if r < -abs(warn_threshold_abs_r) || x < -abs(warn_threshold_abs_x)
+      push!(rows, e)
+    end
+  end
+  return rows
+end
+
+function _print_negative_branch_impedance_diagnostics(io::IO, mpc; matpower_shift_sign::Real = 1.0, matpower_shift_unit = "deg", matpower_ratio = "normal", maxlines::Int = 100, fail_on_negative_r::Bool = false, fail_on_negative_x::Bool = false, warn_threshold_abs_r::Real = 0.0, warn_threshold_abs_x::Real = 0.0, diagnose_branch_neighborhood_buses::AbstractVector{Int} = Int[], diagnose_nodal_balance_buses::AbstractVector{Int} = Int[], high_residual_buses::Set{Int} = Set{Int}())
+  branch = mpc.branch
+  nbranch = size(branch, 1)
+  neg_r = [e for e in axes(branch, 1) if Float64(branch[e, 3]) < 0.0]
+  neg_x = [e for e in axes(branch, 1) if Float64(branch[e, 4]) < 0.0]
+  both_neg = [e for e in axes(branch, 1) if Float64(branch[e, 3]) < 0.0 && Float64(branch[e, 4]) < 0.0]
+  zero_z = [e for e in axes(branch, 1) if Float64(branch[e, 3]) == 0.0 && Float64(branch[e, 4]) == 0.0]
+  tap_zero = [e for e in axes(branch, 1) if (size(branch, 2) < 9 || Float64(branch[e, 9]) == 0.0)]
+  tap_nonzero = [e for e in axes(branch, 1) if size(branch, 2) >= 9 && Float64(branch[e, 9]) != 0.0]
+  shift_nonzero = [e for e in axes(branch, 1) if size(branch, 2) >= 10 && Float64(branch[e, 10]) != 0.0]
+  neg_r_shift = [e for e in neg_r if size(branch, 2) >= 10 && Float64(branch[e, 10]) != 0.0]
+  neg_r_nonunity_tap = [e for e in neg_r if size(branch, 2) >= 9 && Float64(branch[e, 9]) != 0.0 && Float64(branch[e, 9]) != 1.0]
+
+  if fail_on_negative_r && !isempty(neg_r)
+    e = neg_r[1]
+    error("Negative MATPOWER branch resistance detected at branch row $(e) (f_bus=$(Int(branch[e, 1])), t_bus=$(Int(branch[e, 2])), BR_R=$(branch[e, 3])). Set diagnose_negative_branch_impedance_fail_on_negative_r=false to allow this model-critical data.")
+  end
+  if fail_on_negative_x && !isempty(neg_x)
+    e = neg_x[1]
+    error("Negative MATPOWER branch reactance detected at branch row $(e) (f_bus=$(Int(branch[e, 1])), t_bus=$(Int(branch[e, 2])), BR_X=$(branch[e, 4])). Set diagnose_negative_branch_impedance_fail_on_negative_x=false to allow this model-critical data.")
+  end
+
+  rows_to_print = _negative_branch_rows(branch; warn_threshold_abs_r = warn_threshold_abs_r, warn_threshold_abs_x = warn_threshold_abs_x)
+  isempty(rows_to_print) && isempty(zero_z) && return nothing
+
+  min_r_row = nbranch == 0 ? 0 : argmin(branch[:, 3])
+  min_x_row = nbranch == 0 ? 0 : argmin(branch[:, 4])
+  neighborhood_set = Set(Int[x for x in diagnose_branch_neighborhood_buses])
+  nodal_set = Set(Int[x for x in diagnose_nodal_balance_buses])
+  busrow = _matpower_busrow_map(mpc.bus)
+  nshow = min(max(maxlines, 0), length(rows_to_print))
+
+  println(io, "==================== MATPOWER negative branch impedance diagnostics ====================")
+  if !isempty(neg_r) || !isempty(neg_x)
+    println(io, "Negative branch resistance/reactance detected. This can occur in reduced or equivalent network models, including some PEGASE-style cases, but it is numerically and physically sensitive. Sparlectra preserves the signed impedance values. No clipping or correction is applied.")
+  end
+  println(io, "branch rows: ", nbranch)
+  println(io, "BR_R < 0: ", length(neg_r), "   BR_X < 0: ", length(neg_x), "   both negative: ", length(both_neg))
+  println(io, "BR_R == 0 and BR_X == 0: ", length(zero_z))
+  println(io, "TAP == 0: ", length(tap_zero), "   nonzero TAP: ", length(tap_nonzero), "   nonzero SHIFT: ", length(shift_nonzero))
+  println(io, "negative R with nonzero SHIFT: ", length(neg_r_shift), "   negative R with non-unity TAP: ", length(neg_r_nonunity_tap))
+  if nbranch > 0
+    @printf(io, "minimum BR_R: row %d  f_bus=%d  t_bus=%d  BR_R=% .10g\n", min_r_row, Int(branch[min_r_row, 1]), Int(branch[min_r_row, 2]), branch[min_r_row, 3])
+    @printf(io, "minimum BR_X: row %d  f_bus=%d  t_bus=%d  BR_X=% .10g\n", min_x_row, Int(branch[min_x_row, 1]), Int(branch[min_x_row, 2]), branch[min_x_row, 4])
+  end
+
+  for pos in 1:nshow
+    e = rows_to_print[pos]
+    row = view(branch, e, :)
+    f_bus = Int(row[1])
+    t_bus = Int(row[2])
+    stamp = _matpower_branch_stamp(row; matpower_shift_sign = matpower_shift_sign, matpower_shift_unit = matpower_shift_unit, matpower_ratio = matpower_ratio)
+    flags = String[]
+    (f_bus in neighborhood_set || t_bus in neighborhood_set) && push!(flags, "branch-neighborhood endpoint")
+    (f_bus in nodal_set || t_bus in nodal_set) && push!(flags, "nodal-balance endpoint")
+    (f_bus in high_residual_buses && t_bus in high_residual_buses) && push!(flags, "both endpoints high-residual")
+    marker = _negative_branch_markers(row, neighborhood_set; high_residual_buses = high_residual_buses)
+    @printf(io, "\nbranch row %d: f_bus=%d  t_bus=%d%s\n", e, f_bus, t_bus, marker)
+    @printf(io, "  raw branch: BR_R=% .10g  BR_X=% .10g  BR_B=% .10g  TAP=% .10g  SHIFT=% .10g\n", stamp.br_r, stamp.br_x, stamp.br_b, stamp.tap_raw, stamp.shift_raw)
+    @printf(io, "  interpreted: ratio=% .10g  shift=% .10g rad (% .10g deg)  t=% .10g%+ .10gi\n", stamp.ratio, stamp.shift_rad, stamp.shift_deg, real(stamp.tap), imag(stamp.tap))
+    @printf(io, "  y=1/(R+jX)=% .10g%+ .10gi\n", real(inv(complex(stamp.br_r, stamp.br_x))), imag(inv(complex(stamp.br_r, stamp.br_x))))
+    @printf(io, "  Yff=% .10g%+ .10gi  Yft=% .10g%+ .10gi\n", real(stamp.Yff), imag(stamp.Yff), real(stamp.Yft), imag(stamp.Yft))
+    @printf(io, "  Ytf=% .10g%+ .10gi  Ytt=% .10g%+ .10gi\n", real(stamp.Ytf), imag(stamp.Ytf), real(stamp.Ytt), imag(stamp.Ytt))
+    isempty(flags) || println(io, "  flags: ", join(flags, "; "))
+    if haskey(busrow, f_bus) && haskey(busrow, t_bus)
+      flow = _matpower_branch_flow_from_stamp(mpc, busrow, e, stamp)
+      @printf(io, "  fixed-reference flow Sf=% .10g%+ .10gi pu  St=% .10g%+ .10gi pu\n", real(flow.Sf), imag(flow.Sf), real(flow.St), imag(flow.St))
+    end
+  end
+  if nshow < length(rows_to_print)
+    @printf(io, "\n... truncated negative branch impedance diagnostics: showing %d/%d branches (diagnose_negative_branch_impedance_maxlines)\n", nshow, length(rows_to_print))
+  end
+  println(io, "=======================================================================================\n")
+  return nothing
+end
+
+function _matpower_branch_neighborhood(branch, seed_buses::AbstractVector{Int}; depth::Int = 1)
+  seed_set = Set(seed_buses)
+  isempty(seed_set) && return Int[]
+  max_depth = max(depth, 1)
+  seen_buses = copy(seed_set)
+  frontier = copy(seed_set)
+  selected = Set{Int}()
+
+  for _depth in 1:max_depth
+    next_frontier = Set{Int}()
+    for e in axes(branch, 1)
+      status = size(branch, 2) >= 11 ? branch[e, 11] : 1.0
+      status == 0.0 && continue
+      f_bus = Int(branch[e, 1])
+      t_bus = Int(branch[e, 2])
+      if f_bus in frontier || t_bus in frontier
+        push!(selected, e)
+        if !(f_bus in seen_buses)
+          push!(seen_buses, f_bus)
+          push!(next_frontier, f_bus)
+        end
+        if !(t_bus in seen_buses)
+          push!(seen_buses, t_bus)
+          push!(next_frontier, t_bus)
+        end
+      end
+    end
+    isempty(next_frontier) && break
+    frontier = next_frontier
+  end
+  return sort!(collect(selected))
+end
+
+function _print_matpower_branch_neighborhood_diagnostics(io::IO, mpc, diag; buses::AbstractVector{Int}, depth::Int = 1, maxlines::Int = 200, matpower_shift_sign::Real = 1.0, matpower_shift_unit = "deg", matpower_ratio = "normal")
   mp_has_vm_va(mpc) || return nothing
+  selected_buses = unique(Int[x for x in buses])
+  isempty(selected_buses) && return nothing
+  busrow = _matpower_busrow_map(mpc.bus)
+  branch_rows = _matpower_branch_neighborhood(mpc.branch, selected_buses; depth = depth)
+  selected_set = Set(selected_buses)
+  high_residual_buses = _matpower_high_residual_bus_set(diag; maxlines = maxlines)
+  nshow = min(max(maxlines, 0), length(branch_rows))
+
+  println(io, "==================== MATPOWER branch-neighborhood fixed-reference diagnostics ====================")
+  println(io, "seed buses: ", selected_buses)
+  println(io, "depth: ", max(depth, 1), "   selected branches: ", length(branch_rows), "   showing: ", nshow)
+  println(io, "convention: SHIFT sign=", matpower_shift_sign, " unit=", matpower_shift_unit, " ratio=", matpower_ratio)
+
+  for pos in 1:nshow
+    e = branch_rows[pos]
+    row = view(mpc.branch, e, :)
+    f_bus = Int(row[1])
+    t_bus = Int(row[2])
+    haskey(busrow, f_bus) || continue
+    haskey(busrow, t_bus) || continue
+    f = busrow[f_bus]
+    t = busrow[t_bus]
+    stamp = _matpower_branch_stamp(row; matpower_shift_sign = matpower_shift_sign, matpower_shift_unit = matpower_shift_unit, matpower_ratio = matpower_ratio)
+    Vf = mpc.bus[f, 8] * cis(deg2rad(mpc.bus[f, 9]))
+    Vt = mpc.bus[t, 8] * cis(deg2rad(mpc.bus[t, 9]))
+    If = stamp.Yff * Vf + stamp.Yft * Vt
+    It = stamp.Ytf * Vf + stamp.Ytt * Vt
+    Sf = Vf * conj(If)
+    St = Vt * conj(It)
+    marker = _negative_branch_markers(row, selected_set; high_residual_buses = high_residual_buses)
+
+    @printf(io, "\nbranch row %d: f_bus=%d  t_bus=%d%s\n", e, f_bus, t_bus, marker)
+    @printf(io, "  raw branch: BR_R=% .10g  BR_X=% .10g  BR_B=% .10g  TAP=% .10g  SHIFT=% .10g\n", stamp.br_r, stamp.br_x, stamp.br_b, stamp.tap_raw, stamp.shift_raw)
+    @printf(io, "  interpreted: ratio=% .10g  shift=% .10g rad (% .10g deg)  t=% .10g%+ .10gi\n", stamp.ratio, stamp.shift_rad, stamp.shift_deg, real(stamp.tap), imag(stamp.tap))
+    @printf(io, "  Yff=% .10g%+ .10gi  Yft=% .10g%+ .10gi\n", real(stamp.Yff), imag(stamp.Yff), real(stamp.Yft), imag(stamp.Yft))
+    @printf(io, "  Ytf=% .10g%+ .10gi  Ytt=% .10g%+ .10gi\n", real(stamp.Ytf), imag(stamp.Ytf), real(stamp.Ytt), imag(stamp.Ytt))
+    @printf(io, "  Vref f: Vm=% .10g pu  Va=% .10g deg;  Vref t: Vm=% .10g pu  Va=% .10g deg\n", mpc.bus[f, 8], mpc.bus[f, 9], mpc.bus[t, 8], mpc.bus[t, 9])
+    @printf(io, "  fixed-reference flow Sf=% .10g%+ .10gi pu (% .6f MW,% .6f MVAr)\n", real(Sf), imag(Sf), real(Sf) * mpc.baseMVA, imag(Sf) * mpc.baseMVA)
+    @printf(io, "  fixed-reference flow St=% .10g%+ .10gi pu (% .6f MW,% .6f MVAr)\n", real(St), imag(St), real(St) * mpc.baseMVA, imag(St) * mpc.baseMVA)
+    @printf(io, "  residual contribution at f_bus: dP=% .10g pu (% .6f MW)  dQ=% .10g pu (% .6f MVAr); total residual dP=% .10g pu dQ=% .10g pu\n", real(Sf), real(Sf) * mpc.baseMVA, imag(Sf), imag(Sf) * mpc.baseMVA, real(diag.mis[f]), imag(diag.mis[f]))
+    @printf(io, "  residual contribution at t_bus: dP=% .10g pu (% .6f MW)  dQ=% .10g pu (% .6f MVAr); total residual dP=% .10g pu dQ=% .10g pu\n", real(St), real(St) * mpc.baseMVA, imag(St), imag(St) * mpc.baseMVA, real(diag.mis[t]), imag(diag.mis[t]))
+  end
+  if nshow < length(branch_rows)
+    @printf(io, "\n... truncated branch-neighborhood diagnostics: showing %d/%d branches (diagnose_branch_neighborhood_maxlines)\n", nshow, length(branch_rows))
+  end
+  println(io, "===================================================================================================\n")
+  return nothing
+end
+
+function _matpower_bus_type_label(code::Int)::String
+  code == 1 && return "PQ"
+  code == 2 && return "PV"
+  code == 3 && return "REF"
+  code == 4 && return "isolated"
+  return string("unknown(", code, ")")
+end
+
+function _matpower_voltage_setpoint_source(mpc, busI::Int, busrow::Int; matpower_pv_voltage_source = :gen_vg)::String
+  if matpower_pv_voltage_source == :bus_vm
+    return "BUS.VM"
+  end
+  for g in axes(mpc.gen, 1)
+    if Int(mpc.gen[g, 1]) == busI && (size(mpc.gen, 2) < 8 || mpc.gen[g, 8] > 0.0)
+      return "GEN.VG"
+    end
+  end
+  return "BUS.VM fallback"
+end
+
+function _nodal_balance_dominant_source(Sbranch::ComplexF64, Sspec_no_shunt::ComplexF64, Sshunt::ComplexF64, residual::ComplexF64; bus_type::Int)::String
+  mag_res = abs(residual)
+  mag_res < 1e-9 && return "mixed"
+  parts = (branch_sum = abs(Sbranch), load_or_gen_spec = abs(Sspec_no_shunt), bus_shunt = abs(Sshunt))
+  max_part = maximum(values(parts))
+  max_part < 1e-12 && return bus_type in (2, 3) ? "q_treatment" : "unknown"
+  winners = [String(k) for (k, v) in pairs(parts) if v >= 0.67 * max_part]
+  length(winners) == 1 && return winners[1]
+  return bus_type in (2, 3) && abs(imag(residual)) > abs(real(residual)) ? "q_treatment" : "mixed"
+end
+
+function _print_nodal_balance_breakdown(io::IO, mpc, diag; buses::AbstractVector{Int}, maxlines::Int = 200, include_branches::Bool = true, include_generators::Bool = true, include_shunts::Bool = true, matpower_shift_sign::Real = 1.0, matpower_shift_unit = "deg", matpower_ratio = "normal", matpower_pv_voltage_source = :gen_vg)
+  mp_has_vm_va(mpc) || return nothing
+  selected_buses = unique(Int[x for x in buses])
+  isempty(selected_buses) && return nothing
+  busrow = _matpower_busrow_map(mpc.bus)
+  nshow = min(max(maxlines, 0), length(selected_buses))
+  branch_sums = zeros(ComplexF64, size(mpc.bus, 1))
+  incident = Dict{Int,Vector{Tuple{Int,Symbol,ComplexF64}}}()
+  for e in axes(mpc.branch, 1)
+    status = size(mpc.branch, 2) >= 11 ? mpc.branch[e, 11] : 1.0
+    status == 0.0 && continue
+    f_bus = Int(mpc.branch[e, 1])
+    t_bus = Int(mpc.branch[e, 2])
+    haskey(busrow, f_bus) || continue
+    haskey(busrow, t_bus) || continue
+    stamp = _matpower_branch_stamp(view(mpc.branch, e, :); matpower_shift_sign = matpower_shift_sign, matpower_shift_unit = matpower_shift_unit, matpower_ratio = matpower_ratio)
+    flow = _matpower_branch_flow_from_stamp(mpc, busrow, e, stamp)
+    branch_sums[flow.f] += flow.Sf
+    branch_sums[flow.t] += flow.St
+    push!(get!(incident, f_bus, Tuple{Int,Symbol,ComplexF64}[]), (e, :from, flow.Sf))
+    push!(get!(incident, t_bus, Tuple{Int,Symbol,ComplexF64}[]), (e, :to, flow.St))
+  end
+
+  println(io, "==================== MATPOWER fixed-reference nodal balance breakdown ====================")
+  println(io, "formula: S_spec = S_gen_online - S_load - S_shunt; S_branch_sum = sum incident fixed-reference branch injections; residual dS = S_branch_sum - S_spec")
+  println(io, "units: p.u. on baseMVA=", mpc.baseMVA, " (MW/MVAr values are p.u. times baseMVA)")
+  for busI in selected_buses[1:nshow]
+    if !haskey(busrow, busI)
+      println(io, "\nBUS_I=", busI, " not found in MATPOWER bus table")
+      continue
+    end
+    r = busrow[busI]
+    btype = Int(mpc.bus[r, 2])
+    Pd = mpc.bus[r, 3] / mpc.baseMVA
+    Qd = mpc.bus[r, 4] / mpc.baseMVA
+    Vm = mpc.bus[r, 8]
+    Va = mpc.bus[r, 9]
+    Sload = complex(Pd, Qd)
+    Sshunt = (Vm^2) * complex(mpc.bus[r, 5], -mpc.bus[r, 6]) / mpc.baseMVA
+    online_gen = 0 + 0im
+    offline_gen = 0 + 0im
+    online_count = 0
+    offline_count = 0
+    for g in axes(mpc.gen, 1)
+      Int(mpc.gen[g, 1]) == busI || continue
+      Sg = complex(mpc.gen[g, 2], mpc.gen[g, 3]) / mpc.baseMVA
+      if size(mpc.gen, 2) >= 8 && mpc.gen[g, 8] <= 0.0
+        offline_gen += Sg
+        offline_count += 1
+      else
+        online_gen += Sg
+        online_count += 1
+      end
+    end
+    Sspec_no_shunt = online_gen - Sload
+    Sspec = Sspec_no_shunt - Sshunt
+    Sbranch = branch_sums[r]
+    residual = Sbranch - Sspec
+    total_residual = diag.mis[r]
+    source = _nodal_balance_dominant_source(Sbranch, Sspec_no_shunt, Sshunt, residual; bus_type = btype)
+
+    @printf(io, "\nBUS_I=%d  internal_index=%d  type=%s  Vm_ref=% .10g  Va_ref=% .10g deg\n", busI, r, _matpower_bus_type_label(btype), Vm, Va)
+    @printf(io, "  Pd=% .10g pu (% .6f MW)  Qd=% .10g pu (% .6f MVAr)\n", Pd, Pd * mpc.baseMVA, Qd, Qd * mpc.baseMVA)
+    @printf(io, "  Gs=% .10g MW at V=1  Bs=% .10g MVAr at V=1  S_shunt=% .10g%+ .10gi pu\n", mpc.bus[r, 5], mpc.bus[r, 6], real(Sshunt), imag(Sshunt))
+    if include_generators
+      @printf(io, "  online generators: count=%d  sum Pg=% .10g pu (% .6f MW)  sum Qg=% .10g pu (% .6f MVAr)\n", online_count, real(online_gen), real(online_gen) * mpc.baseMVA, imag(online_gen), imag(online_gen) * mpc.baseMVA)
+      if offline_count > 0 || abs(offline_gen) > 0.0
+        @printf(io, "  offline generators: count=%d  sum Pg=% .10g pu (% .6f MW)  sum Qg=% .10g pu (% .6f MVAr)\n", offline_count, real(offline_gen), real(offline_gen) * mpc.baseMVA, imag(offline_gen), imag(offline_gen) * mpc.baseMVA)
+      end
+    end
+    if btype in (2, 3)
+      println(io, "  PV/REF treatment: P is enforced in the MATPOWER power-flow equations; Q is diagnostic/calculated here and is not part of the checked residual unless the bus is PQ.")
+      println(io, "  voltage setpoint source: ", _matpower_voltage_setpoint_source(mpc, busI, r; matpower_pv_voltage_source = matpower_pv_voltage_source))
+    end
+    include_shunts || println(io, "  shunt details suppressed by diagnose_nodal_balance_include_shunts=false; S_shunt is still included in the formula above.")
+    if include_branches
+      entries = get(incident, busI, Tuple{Int,Symbol,ComplexF64}[])
+      println(io, "  incident online branches: ", length(entries))
+      for (e, side, S) in entries[1:min(length(entries), max(0, maxlines))]
+        @printf(io, "    branch row %d (%s): S=% .10g%+ .10gi pu (% .6f MW,% .6f MVAr)\n", e, String(side), real(S), imag(S), real(S) * mpc.baseMVA, imag(S) * mpc.baseMVA)
+      end
+    end
+    @printf(io, "  S_spec=% .10g%+ .10gi pu  (S_gen_online - S_load - S_shunt)\n", real(Sspec), imag(Sspec))
+    @printf(io, "  S_branch_sum=% .10g%+ .10gi pu\n", real(Sbranch), imag(Sbranch))
+    @printf(io, "  residual dS=S_branch_sum-S_spec=% .10g%+ .10gi pu (% .6f MW,% .6f MVAr)\n", real(residual), imag(residual), real(residual) * mpc.baseMVA, imag(residual) * mpc.baseMVA)
+    @printf(io, "  reported total residual comparison: diag.mis=% .10g%+ .10gi pu  delta=% .3e%+ .3ei pu\n", real(total_residual), imag(total_residual), real(residual - total_residual), imag(residual - total_residual))
+    println(io, "  dominant source classification: ", source)
+  end
+  if nshow < length(selected_buses)
+    @printf(io, "\n... truncated nodal balance diagnostics: showing %d/%d buses (diagnose_nodal_balance_maxlines)\n", nshow, length(selected_buses))
+  end
+  println(io, "========================================================================================\n")
+  return nothing
+end
+
+function _print_matpower_reference_diagnostics(io::IO, mpc; matpower_shift_sign::Real = 1.0, matpower_shift_unit = "deg", matpower_ratio = "normal", diagnose_branch_shift_conventions::Bool = false, diagnose_branch_neighborhood::Bool = false, diagnose_residual_clusters::Bool = false, diagnose_residual_cluster_threshold_mw::Float64 = 1.0, diagnose_residual_cluster_maxlines::Int = 20, diagnose_branch_neighborhood_buses::AbstractVector{Int} = Int[], diagnose_branch_neighborhood_depth::Int = 1, diagnose_branch_neighborhood_maxlines::Int = 200, diagnose_nodal_balance_breakdown::Bool = false, diagnose_nodal_balance_buses::AbstractVector{Int} = Int[], diagnose_nodal_balance_maxlines::Int = 200, diagnose_nodal_balance_include_branches::Bool = true, diagnose_nodal_balance_include_generators::Bool = true, diagnose_nodal_balance_include_shunts::Bool = true, diagnose_negative_branch_impedance::Bool = true, diagnose_negative_branch_impedance_maxlines::Int = 100, diagnose_negative_branch_impedance_fail_on_negative_r::Bool = false, diagnose_negative_branch_impedance_fail_on_negative_x::Bool = false, diagnose_negative_branch_impedance_warn_threshold_abs_r::Float64 = 0.0, diagnose_negative_branch_impedance_warn_threshold_abs_x::Float64 = 0.0, matpower_pv_voltage_source = :gen_vg, maxlines::Int = 12)
+  if !mp_has_vm_va(mpc)
+    if diagnose_negative_branch_impedance || diagnose_branch_neighborhood
+      Base.invokelatest(
+        getfield(@__MODULE__, :_print_negative_branch_impedance_diagnostics),
+        io,
+        mpc;
+        matpower_shift_sign = matpower_shift_sign,
+        matpower_shift_unit = matpower_shift_unit,
+        matpower_ratio = matpower_ratio,
+        maxlines = diagnose_negative_branch_impedance_maxlines,
+        fail_on_negative_r = diagnose_negative_branch_impedance_fail_on_negative_r,
+        fail_on_negative_x = diagnose_negative_branch_impedance_fail_on_negative_x,
+        warn_threshold_abs_r = diagnose_negative_branch_impedance_warn_threshold_abs_r,
+        warn_threshold_abs_x = diagnose_negative_branch_impedance_warn_threshold_abs_x,
+        diagnose_branch_neighborhood_buses = diagnose_branch_neighborhood_buses,
+        diagnose_nodal_balance_buses = diagnose_nodal_balance_buses,
+      )
+    end
+    return nothing
+  end
   base_diag = Base.invokelatest(getfield(@__MODULE__, :_matpower_reference_residuals), mpc; matpower_shift_sign = matpower_shift_sign, matpower_shift_unit = matpower_shift_unit, matpower_ratio = matpower_ratio)
   label = "configured SHIFT sign=$(matpower_shift_sign), unit=$(matpower_shift_unit), ratio=$(matpower_ratio)"
   Base.invokelatest(getfield(@__MODULE__, :_print_top_residuals), io, label, base_diag, mpc.baseMVA; maxlines = maxlines)
+
+  if diagnose_negative_branch_impedance || diagnose_branch_neighborhood
+    Base.invokelatest(
+      getfield(@__MODULE__, :_print_negative_branch_impedance_diagnostics),
+      io,
+      mpc;
+      matpower_shift_sign = matpower_shift_sign,
+      matpower_shift_unit = matpower_shift_unit,
+      matpower_ratio = matpower_ratio,
+      maxlines = diagnose_negative_branch_impedance_maxlines,
+      fail_on_negative_r = diagnose_negative_branch_impedance_fail_on_negative_r,
+      fail_on_negative_x = diagnose_negative_branch_impedance_fail_on_negative_x,
+      warn_threshold_abs_r = diagnose_negative_branch_impedance_warn_threshold_abs_r,
+      warn_threshold_abs_x = diagnose_negative_branch_impedance_warn_threshold_abs_x,
+      diagnose_branch_neighborhood_buses = diagnose_branch_neighborhood_buses,
+      diagnose_nodal_balance_buses = diagnose_nodal_balance_buses,
+      high_residual_buses = _matpower_high_residual_bus_set(base_diag; maxlines = maxlines),
+    )
+  end
+
+  if diagnose_residual_clusters
+    Base.invokelatest(
+      getfield(@__MODULE__, :_print_residual_cluster_diagnostics),
+      io,
+      mpc,
+      base_diag;
+      threshold_mw = diagnose_residual_cluster_threshold_mw,
+      maxlines = diagnose_residual_cluster_maxlines,
+      matpower_shift_sign = matpower_shift_sign,
+      matpower_shift_unit = matpower_shift_unit,
+      matpower_ratio = matpower_ratio,
+    )
+  end
+
+  if diagnose_branch_neighborhood
+    Base.invokelatest(
+      getfield(@__MODULE__, :_print_matpower_branch_neighborhood_diagnostics),
+      io,
+      mpc,
+      base_diag;
+      buses = diagnose_branch_neighborhood_buses,
+      depth = diagnose_branch_neighborhood_depth,
+      maxlines = diagnose_branch_neighborhood_maxlines,
+      matpower_shift_sign = matpower_shift_sign,
+      matpower_shift_unit = matpower_shift_unit,
+      matpower_ratio = matpower_ratio,
+    )
+  end
+
+  if diagnose_nodal_balance_breakdown
+    Base.invokelatest(
+      getfield(@__MODULE__, :_print_nodal_balance_breakdown),
+      io,
+      mpc,
+      base_diag;
+      buses = diagnose_nodal_balance_buses,
+      maxlines = diagnose_nodal_balance_maxlines,
+      include_branches = diagnose_nodal_balance_include_branches,
+      include_generators = diagnose_nodal_balance_include_generators,
+      include_shunts = diagnose_nodal_balance_include_shunts,
+      matpower_shift_sign = matpower_shift_sign,
+      matpower_shift_unit = matpower_shift_unit,
+      matpower_ratio = matpower_ratio,
+      matpower_pv_voltage_source = matpower_pv_voltage_source,
+    )
+  end
+
+  max_p_pu = isempty(base_diag.p_rows) ? 0.0 : maximum(abs.(real.(base_diag.mis[base_diag.p_rows])))
+  max_q_pu = isempty(base_diag.q_rows) ? 0.0 : maximum(abs.(imag.(base_diag.mis[base_diag.q_rows])))
+  if max(max_p_pu, max_q_pu) >= 1.0
+    println(io, "The dominant residual is already present in the raw MATPOWER-style fixed-reference check.")
+    println(io, "This indicates that the stored VM/VA reference values are not power-balanced for the imported branch data.")
+    println(io, "This is not necessarily a Sparlectra solver or import error.")
+    println(io)
+  end
 
   if diagnose_branch_shift_conventions
     if size(mpc.branch, 2) >= 10
@@ -421,9 +1167,112 @@ function _show_once_summary_row(method::Symbol, status, stats, cmp_ok::Bool; com
   iterations = _run_iterations(status)
   elapsed_s = _run_elapsed_s(status)
   if compare_available
-    return (method = method, converged = converged, iterations = iterations, elapsed_s = elapsed_s, max_dvm = Float64(get(stats, :max_dvm, NaN)), max_dva = Float64(get(stats, :max_dva, NaN)), slack_delta_va = Float64(get(stats, :slack_delta_va, NaN)), angle_alignment = get(stats, :angle_alignment, :none), cmp_ok = cmp_ok)
+    return (
+      method = method,
+      converged = converged,
+      iterations = iterations,
+      elapsed_s = elapsed_s,
+      max_dvm = Float64(get(stats, :max_dvm, NaN)),
+      max_dva = Float64(get(stats, :max_dva, NaN)),
+      slack_delta_va = Float64(get(stats, :slack_delta_va, NaN)),
+      angle_alignment = get(stats, :angle_alignment, :none),
+      cmp_ok = cmp_ok,
+      compare_status = Symbol(get(stats, :compare_status, cmp_ok ? :ok : :fail)),
+    )
   end
-  return (method = method, converged = converged, iterations = iterations, elapsed_s = elapsed_s, max_dvm = NaN, max_dva = NaN, slack_delta_va = NaN, angle_alignment = :none, cmp_ok = false)
+  return (method = method, converged = converged, iterations = iterations, elapsed_s = elapsed_s, max_dvm = NaN, max_dva = NaN, slack_delta_va = NaN, angle_alignment = :none, cmp_ok = false, compare_status = :skip)
+end
+
+function _print_pv_voltage_reference_diagnostics(io::IO, mpc, net; matpower_pv_voltage_source = :gen_vg, compare_voltage_reference = :bus_vm, tol::Float64 = 1e-4, maxlines::Int = 30)
+  rows = MatpowerIO.pv_voltage_reference_rows(mpc; net = net, matpower_pv_voltage_source = matpower_pv_voltage_source, tol = tol, warn = true)
+  qmin_pu, qmax_pu = getQLimits_pu(net)
+  enriched_rows = NamedTuple[]
+  for row in rows
+    node_idx = findfirst(k -> (haskey(net.busOrigIdxDict, k) ? net.busOrigIdxDict[k] : k) == row.busI, eachindex(net.nodeVec))
+    if node_idx === nothing
+      continue
+    end
+    node = net.nodeVec[node_idx]
+    final_type = getNodeType(node)
+    switched_to_pq = haskey(net.qLimitEvents, node_idx)
+    active_regulating = (final_type == Sparlectra.Slack || final_type == Sparlectra.PV) && !switched_to_pq
+    qcalc = node._qƩGen === nothing ? NaN : Float64(node._qƩGen)
+    push!(
+      enriched_rows,
+      (
+        row...,
+        node_idx = node_idx,
+        final_type = final_type == Sparlectra.Slack ? "REF" : final_type == Sparlectra.PV ? "PV" : final_type == Sparlectra.PQ ? "PQ" : string(final_type),
+        switched_to_pq = switched_to_pq,
+        active_regulating = active_regulating,
+        qcalc = qcalc,
+        qmin = qmin_pu[node_idx] * net.baseMVA,
+        qmax = qmax_pu[node_idx] * net.baseMVA,
+      ),
+    )
+  end
+  println(io, "==================== PV voltage reference diagnostics ====================")
+  println(io, "source option: matpower_pv_voltage_source = ", matpower_pv_voltage_source)
+  println(io, "compare option: compare_voltage_reference = ", compare_voltage_reference)
+  println(io, "tolerance: ", tol, " pu")
+  if isempty(rows)
+    println(io, "No MATPOWER PV/REF buses found.")
+    println(io, "==========================================================================")
+    return nothing
+  end
+  ord_mis = sortperm(1:length(rows); by = i -> (isfinite(rows[i].dvg_bus) ? 0 : 1, isfinite(rows[i].dvg_bus) ? -abs(rows[i].dvg_bus) : 0.0))
+  println(io, "\nTop PV/REF BUS.VM vs GEN.VG mismatches (online GEN.VG rows first):")
+  println(io, " rank  BUS_I  type  BUS.VM   GEN.VG_values        imported_Vset  dVG_BUS")
+  for rank = 1:min(maxlines, length(ord_mis))
+    row = rows[ord_mis[rank]]
+    @printf(io, " %4d  %5d   %3s  %7.5f  %-20s %11.5f  %+8.5f\n", rank, row.busI, row.bus_type == 3 ? "REF" : "PV", row.bus_vm, string(row.gen_vgs), row.imported_vset, row.dvg_bus)
+  end
+  ord_final = sortperm(1:length(rows); by = i -> max(abs(rows[i].dvm_bus), abs(rows[i].dvm_vset)), rev = true)
+  println(io, "\nTop final Vm deviations explained by selected setpoint:")
+  println(io, " rank  BUS_I  type  BUS.VM   GEN.VG  imported_Vset  Vm_calc  dVm_BUS  dVm_Vset")
+  for rank = 1:min(maxlines, length(ord_final))
+    row = rows[ord_final[rank]]
+    gen_vg = isempty(row.gen_vgs) ? NaN : row.gen_vgs[1]
+    @printf(io, " %4d  %5d   %3s  %7.5f  %7.5f  %12.5f  %7.5f  %+8.5f  %+9.5f\n", rank, row.busI, row.bus_type == 3 ? "REF" : "PV", row.bus_vm, gen_vg, row.imported_vset, row.vm_calc, row.dvm_bus, row.dvm_vset)
+  end
+  active_rows = filter(row -> row.active_regulating, enriched_rows)
+  max_vset_residual = isempty(active_rows) ? 0.0 : maximum(abs(row.dvm_vset) for row in active_rows)
+  @printf(io, "\nPost-solve active PV/REF setpoint residual: max |Vm_calc - imported_Vset| = %.8g pu over %d buses\n", max_vset_residual, length(active_rows))
+  ord_active = sortperm(1:length(active_rows); by = i -> abs(active_rows[i].dvm_vset), rev = true)
+  println(io, "Worst active PV/REF buses by imported setpoint residual:")
+  println(io, " rank  BUS_I  BUS.VM   GEN.VG  imported_Vset  Vm_calc  dVm_BUS  dVm_Vset  final  Qcalc     Qmin      Qmax")
+  for rank = 1:min(maxlines, length(ord_active))
+    row = active_rows[ord_active[rank]]
+    gen_vg = isempty(row.gen_vgs) ? NaN : row.gen_vgs[1]
+    @printf(io, " %4d  %5d  %7.5f  %7.5f  %12.5f  %7.5f  %+8.5f  %+9.5f  %-5s  %8.3f  %8.3f  %8.3f\n", rank, row.busI, row.bus_vm, gen_vg, row.imported_vset, row.vm_calc, row.dvm_bus, row.dvm_vset, row.final_type, row.qcalc, row.qmin, row.qmax)
+  end
+  fallback_count = count(row -> row.imported_kind == :BUS_VM_FALLBACK, enriched_rows)
+  println(io, "PV/REF buses without online generators using BUS.VM fallback: ", fallback_count)
+  println(io, "\nInterpretation:")
+  println(io, "- Large dVm_BUS but small dVm_Vset means Sparlectra is following the imported PV setpoint.")
+  println(io, "- dVm_BUS is the deviation from MATPOWER BUS.VM; dVm_Vset is the deviation from imported GEN.VG/imported_Vset.")
+  println(io, "- BUS.VM fallback rows are PV/REF buses without an online generator voltage setpoint.")
+  println(io, "- If compare_voltage_reference=bus_vm, this can produce a compare FAIL even when the solver is correct.")
+  println(io, "==========================================================================")
+  return nothing
+end
+
+function _wrong_branch_stats(net, mpc; compare_voltage_reference = :bus_vm, matpower_pv_voltage_source = :gen_vg, tol::Float64 = 1e-4)
+  vm = filter(isfinite, [n._vm_pu === nothing ? NaN : Float64(n._vm_pu) for n in net.nodeVec if !isIsolated(n)])
+  cmp_ok, cmp_stats = MatpowerIO.compare_vm_va(net, mpc; show_diff = false, tol_vm = 1e9, tol_va = 1e9, compare_voltage_reference = compare_voltage_reference, matpower_pv_voltage_source = matpower_pv_voltage_source, matpower_pv_voltage_mismatch_tol_pu = tol)
+  return (min_vm = isempty(vm) ? NaN : minimum(vm), max_vm = isempty(vm) ? NaN : maximum(vm), max_dva = Float64(get(cmp_stats, :max_dva, NaN)), max_dvm = Float64(get(cmp_stats, :max_dvm, NaN)))
+end
+
+function _print_wrong_branch_warning(io::IO, net, mpc; wrong_branch_detection::Bool, wrong_branch_min_vm_pu::Float64, wrong_branch_max_angle_spread_deg::Float64, compare_voltage_reference = :bus_vm, matpower_pv_voltage_source = :gen_vg, tol::Float64 = 1e-4)
+  wrong_branch_detection || return nothing
+  stats = _wrong_branch_stats(net, mpc; compare_voltage_reference = compare_voltage_reference, matpower_pv_voltage_source = matpower_pv_voltage_source, tol = tol)
+  suspicious = stats.min_vm < wrong_branch_min_vm_pu || stats.max_dva > wrong_branch_max_angle_spread_deg
+  if suspicious
+    println(io, "WARNING: Solver converged to a suspicious low-voltage / wrong-branch solution.")
+    @printf(io, "  minVm=%.5f pu, max|dVm|=%.5f pu, max|dVa|=%.5f deg\n", stats.min_vm, stats.max_dvm, stats.max_dva)
+    println(io, "  Consider flatstart_angle_mode=dc or flatstart_voltage_mode=bus_vm_va_blend.")
+  end
+  return suspicious
 end
 
 function _print_dataframe_nodes(io::IO, net::Sparlectra.Net; max_nodes::Int = 0)
@@ -516,6 +1365,8 @@ function bench_run_acpflow(;
   verbose::Int = 0,
   cooldown_iters::Int = 0,
   q_hyst_pu::Float64 = 0.0,
+  qlimit_trace_buses::AbstractVector{Int} = Int[],
+  qlimit_lock_reason::Symbol = :manual,
   lock_pv_to_pq_buses::AbstractVector{Int} = Int[],
   seconds::Float64 = 2.0,
   samples::Int = 50,
@@ -531,20 +1382,52 @@ function bench_run_acpflow(;
   reference_va_deg::Float64 = 0.0,
   diagnose_matpower_reference::Bool = false,
   diagnose_branch_shift_conventions::Bool = false,
+  diagnose_branch_neighborhood::Bool = false,
+  diagnose_residual_clusters::Bool = false,
+  diagnose_residual_cluster_threshold_mw::Float64 = 1.0,
+  diagnose_residual_cluster_maxlines::Int = 20,
+  diagnose_branch_neighborhood_buses::AbstractVector{Int} = Int[],
+  diagnose_branch_neighborhood_depth::Int = 1,
+  diagnose_branch_neighborhood_maxlines::Int = 200,
+  diagnose_nodal_balance_breakdown::Bool = false,
+  diagnose_nodal_balance_buses::AbstractVector{Int} = Int[],
+  diagnose_nodal_balance_maxlines::Int = 200,
+  diagnose_nodal_balance_include_branches::Bool = true,
+  diagnose_nodal_balance_include_generators::Bool = true,
+  diagnose_nodal_balance_include_shunts::Bool = true,
+  diagnose_negative_branch_impedance::Bool = true,
+  diagnose_negative_branch_impedance_maxlines::Int = 100,
+  diagnose_negative_branch_impedance_fail_on_negative_r::Bool = false,
+  diagnose_negative_branch_impedance_fail_on_negative_x::Bool = false,
+  diagnose_negative_branch_impedance_warn_threshold_abs_r::Float64 = 0.0,
+  diagnose_negative_branch_impedance_warn_threshold_abs_x::Float64 = 0.0,
   diagnose_maxlines::Int = 12,
   log_effective_config::Bool = false,
   yaml_path::String = "",
   effective_config = nothing,
   enable_pq_gen_controllers::Bool = true,
   bus_shunt_model::String = "admittance",
+  matpower_pv_voltage_source::Symbol = :gen_vg,
+  matpower_pv_voltage_mismatch_tol_pu::Float64 = 1e-4,
+  compare_voltage_reference::Symbol = :bus_vm,
+  diagnose_pv_voltage_references::Bool = false,
+  diagnose_pv_voltage_maxlines::Int = 30,
+  flatstart_voltage_mode::Symbol = :classic,
+  flatstart_angle_mode::Symbol = :classic,
+  wrong_branch_detection::Bool = true,
+  wrong_branch_min_vm_pu::Float64 = 0.4,
+  wrong_branch_max_angle_spread_deg::Float64 = 120.0,
+  wrong_branch_rescue::Bool = false,
+  wrong_branch_rescue_modes::AbstractVector{Symbol} = [:dc, :bus_vm_va_blend, :matpower_va],
+  log_status::_MatpowerImportLogStatus = _MatpowerImportLogStatus(),
 )
   t0 = time()
   results = Dict{Symbol,Any}()
   effective_reference_vm_pu = reference_override ? reference_vm_pu : nothing
   effective_reference_va_deg = reference_override ? reference_va_deg : nothing
 
-  # Create/seed logfile up-front so users can see progress even if benchmarks are long.
-  open(logfile, "w") do io
+  # Append to the logfile because main() may already have captured import warnings there.
+  open(logfile, "a") do io
     println(io, "Sparlectra version: ", Sparlectra.version())
     println(io, "casefile: ", casefile)
     println(io, "timestamp: ", Dates.now())
@@ -564,7 +1447,43 @@ function bench_run_acpflow(;
           matpower_shift_unit = matpower_shift_unit,
           matpower_ratio = matpower_ratio,
           diagnose_branch_shift_conventions = diagnose_branch_shift_conventions,
+          diagnose_branch_neighborhood = diagnose_branch_neighborhood,
+          diagnose_residual_clusters = diagnose_residual_clusters,
+          diagnose_residual_cluster_threshold_mw = diagnose_residual_cluster_threshold_mw,
+          diagnose_residual_cluster_maxlines = diagnose_residual_cluster_maxlines,
+          diagnose_branch_neighborhood_buses = diagnose_branch_neighborhood_buses,
+          diagnose_branch_neighborhood_depth = diagnose_branch_neighborhood_depth,
+          diagnose_branch_neighborhood_maxlines = diagnose_branch_neighborhood_maxlines,
+          diagnose_nodal_balance_breakdown = diagnose_nodal_balance_breakdown,
+          diagnose_nodal_balance_buses = diagnose_nodal_balance_buses,
+          diagnose_nodal_balance_maxlines = diagnose_nodal_balance_maxlines,
+          diagnose_nodal_balance_include_branches = diagnose_nodal_balance_include_branches,
+          diagnose_nodal_balance_include_generators = diagnose_nodal_balance_include_generators,
+          diagnose_nodal_balance_include_shunts = diagnose_nodal_balance_include_shunts,
+          diagnose_negative_branch_impedance = diagnose_negative_branch_impedance,
+          diagnose_negative_branch_impedance_maxlines = diagnose_negative_branch_impedance_maxlines,
+          diagnose_negative_branch_impedance_fail_on_negative_r = diagnose_negative_branch_impedance_fail_on_negative_r,
+          diagnose_negative_branch_impedance_fail_on_negative_x = diagnose_negative_branch_impedance_fail_on_negative_x,
+          diagnose_negative_branch_impedance_warn_threshold_abs_r = diagnose_negative_branch_impedance_warn_threshold_abs_r,
+          diagnose_negative_branch_impedance_warn_threshold_abs_x = diagnose_negative_branch_impedance_warn_threshold_abs_x,
+          matpower_pv_voltage_source = matpower_pv_voltage_source,
           maxlines = diagnose_maxlines,
+        )
+      elseif diagnose_negative_branch_impedance || diagnose_branch_neighborhood
+        Base.invokelatest(
+          getfield(@__MODULE__, :_print_negative_branch_impedance_diagnostics),
+          io,
+          mpc;
+          matpower_shift_sign = matpower_shift_sign,
+          matpower_shift_unit = matpower_shift_unit,
+          matpower_ratio = matpower_ratio,
+          maxlines = diagnose_negative_branch_impedance_maxlines,
+          fail_on_negative_r = diagnose_negative_branch_impedance_fail_on_negative_r,
+          fail_on_negative_x = diagnose_negative_branch_impedance_fail_on_negative_x,
+          warn_threshold_abs_r = diagnose_negative_branch_impedance_warn_threshold_abs_r,
+          warn_threshold_abs_x = diagnose_negative_branch_impedance_warn_threshold_abs_x,
+          diagnose_branch_neighborhood_buses = diagnose_branch_neighborhood_buses,
+          diagnose_nodal_balance_buses = diagnose_nodal_balance_buses,
         )
       end
     end
@@ -572,7 +1491,7 @@ function bench_run_acpflow(;
 
   # Optional: show results once (not benchmarked)
   if show_once
-    local summaries = Vector{NamedTuple{(:method, :converged, :iterations, :elapsed_s, :max_dvm, :max_dva, :slack_delta_va, :angle_alignment, :cmp_ok),Tuple{Symbol,Bool,Int,Float64,Float64,Float64,Float64,Symbol,Bool}}}()
+    local summaries = Vector{NamedTuple{(:method, :converged, :iterations, :elapsed_s, :max_dvm, :max_dva, :slack_delta_va, :angle_alignment, :cmp_ok, :compare_status),Tuple{Symbol,Bool,Int,Float64,Float64,Float64,Float64,Symbol,Bool,Symbol}}}()
     show_classic = (show_once_output == :classic)
     println("show_once output is written to logfile: ", logfile)
     for m in methods
@@ -583,7 +1502,8 @@ function bench_run_acpflow(;
             println("RUN method = ", m)
             println("=================================================================\n")
             status_ref = Ref{Any}(nothing)
-            net_res = run_acpflow(
+            net_res = _with_log_table(logfile, log_status) do
+              run_acpflow(
               casefile = casefile,
               max_ite = max_ite,
               tol = tol,
@@ -607,6 +1527,8 @@ function bench_run_acpflow(;
               verbose = verbose,
               cooldown_iters = cooldown_iters,
               q_hyst_pu = q_hyst_pu,
+              qlimit_trace_buses = qlimit_trace_buses,
+              qlimit_lock_reason = qlimit_lock_reason,
               lock_pv_to_pq_buses = lock_pv_to_pq_buses,
               enable_pq_gen_controllers = _enable_pq_gen_controllers_for_method(m, enable_pq_gen_controllers),
               bus_shunt_model = bus_shunt_model,
@@ -615,14 +1537,43 @@ function bench_run_acpflow(;
               matpower_ratio = matpower_ratio,
               reference_vm_pu = effective_reference_vm_pu,
               reference_va_deg = effective_reference_va_deg,
-            )
+              matpower_pv_voltage_source = matpower_pv_voltage_source,
+              matpower_pv_voltage_mismatch_tol_pu = matpower_pv_voltage_mismatch_tol_pu,
+              flatstart_voltage_mode = flatstart_voltage_mode,
+              flatstart_angle_mode = flatstart_angle_mode,
+              )
+            end
             status = status_ref[]
             _print_converged_loss_summary(io, m, status, net_res)
             if !show_classic
               _print_dataframe_nodes(io, net_res; max_nodes = show_once_max_nodes)
             end
             if mp_has_vm_va(mpc)
-              ok, stats = MatpowerIO.compare_vm_va(net_res, mpc; show_diff = show_diff, tol_vm = tol_vm, tol_va = tol_va, maxlines = 20)
+              if diagnose_pv_voltage_references
+                Base.invokelatest(getfield(@__MODULE__, :_print_pv_voltage_reference_diagnostics), io, mpc, net_res; matpower_pv_voltage_source = matpower_pv_voltage_source, compare_voltage_reference = compare_voltage_reference, tol = matpower_pv_voltage_mismatch_tol_pu, maxlines = diagnose_pv_voltage_maxlines)
+              end
+              ok, stats = MatpowerIO.compare_vm_va(
+                net_res,
+                mpc;
+                show_diff = show_diff,
+                tol_vm = tol_vm,
+                tol_va = tol_va,
+                maxlines = 20,
+                compare_voltage_reference = compare_voltage_reference,
+                matpower_pv_voltage_source = matpower_pv_voltage_source,
+                matpower_pv_voltage_mismatch_tol_pu = matpower_pv_voltage_mismatch_tol_pu,
+              )
+              _print_wrong_branch_warning(
+                io,
+                net_res,
+                mpc;
+                wrong_branch_detection = wrong_branch_detection,
+                wrong_branch_min_vm_pu = wrong_branch_min_vm_pu,
+                wrong_branch_max_angle_spread_deg = wrong_branch_max_angle_spread_deg,
+                compare_voltage_reference = compare_voltage_reference,
+                matpower_pv_voltage_source = matpower_pv_voltage_source,
+                tol = matpower_pv_voltage_mismatch_tol_pu,
+              )
               push!(summaries, _show_once_summary_row(m, status, stats, ok; compare_available = true))
             else
               push!(summaries, _show_once_summary_row(m, status, nothing, false; compare_available = false))
@@ -631,8 +1582,9 @@ function bench_run_acpflow(;
             if !Bool(get(status, :converged, false)) && !enable_pq_gen_controllers && m === :rectangular
               println("Fallback diagnostic: rerun with enable_pq_gen_controllers=true")
               fb_ref = Ref{Any}(nothing)
-              run_acpflow(
-                casefile = casefile,
+              _with_log_table(logfile, log_status) do
+                run_acpflow(
+                  casefile = casefile,
                 max_ite = max_ite,
                 tol = tol,
                 opt_fd = opt_fd,
@@ -655,6 +1607,8 @@ function bench_run_acpflow(;
                 verbose = 0,
                 cooldown_iters = cooldown_iters,
                 q_hyst_pu = q_hyst_pu,
+                qlimit_trace_buses = qlimit_trace_buses,
+                qlimit_lock_reason = qlimit_lock_reason,
                 lock_pv_to_pq_buses = lock_pv_to_pq_buses,
                 enable_pq_gen_controllers = true,
                 bus_shunt_model = bus_shunt_model,
@@ -663,7 +1617,12 @@ function bench_run_acpflow(;
                 matpower_ratio = matpower_ratio,
                 reference_vm_pu = effective_reference_vm_pu,
                 reference_va_deg = effective_reference_va_deg,
-              )
+                matpower_pv_voltage_source = matpower_pv_voltage_source,
+                matpower_pv_voltage_mismatch_tol_pu = matpower_pv_voltage_mismatch_tol_pu,
+                flatstart_voltage_mode = flatstart_voltage_mode,
+                  flatstart_angle_mode = flatstart_angle_mode,
+                )
+              end
             end
             @printf(io, "show_once method=%s output=%s\n\n", String(m), String(show_once_output))
           end
@@ -678,7 +1637,8 @@ function bench_run_acpflow(;
       if isnan(s.max_dvm) || isnan(s.max_dva)
         @printf("method=%-12s  converged=%s  iterations=%d  time=%8.6f s  compare=SKIP\n", String(s.method), s.converged ? "yes" : "no", s.iterations, s.elapsed_s)
       else
-        @printf("method=%-12s  converged=%s  iterations=%d  time=%8.6f s  compare=%s  max|dVm|=%8.5f pu  max|dVa|_aligned=%7.4f deg  slackΔ=%+8.4f deg\n", String(s.method), s.converged ? "yes" : "no", s.iterations, s.elapsed_s, s.cmp_ok ? "OK " : "FAIL", s.max_dvm, s.max_dva, s.slack_delta_va)
+        compare_text = s.compare_status == :ok ? "OK " : s.compare_status == :warn ? "WARN" : "FAIL"
+        @printf("method=%-12s  converged=%s  iterations=%d  time=%8.6f s  compare=%s  max|dVm|=%8.5f pu  max|dVa|_aligned=%7.4f deg  slackΔ=%+8.4f deg\n", String(s.method), s.converged ? "yes" : "no", s.iterations, s.elapsed_s, compare_text, s.max_dvm, s.max_dva, s.slack_delta_va)
       end
     end
     println("=================================================\n")
@@ -688,7 +1648,8 @@ function bench_run_acpflow(;
     println("\nInitial run (convergence + iterations):")
     for m in methods
       status_ref = Ref{Any}(nothing)
-      net_res = run_acpflow(
+      net_res = _with_log_table(logfile, log_status) do
+        run_acpflow(
         casefile = casefile,
         max_ite = max_ite,
         tol = tol,
@@ -712,6 +1673,8 @@ function bench_run_acpflow(;
         verbose = 0,
         cooldown_iters = cooldown_iters,
         q_hyst_pu = q_hyst_pu,
+        qlimit_trace_buses = qlimit_trace_buses,
+        qlimit_lock_reason = qlimit_lock_reason,
         lock_pv_to_pq_buses = lock_pv_to_pq_buses,
         enable_pq_gen_controllers = _enable_pq_gen_controllers_for_method(m, enable_pq_gen_controllers),
         bus_shunt_model = bus_shunt_model,
@@ -720,7 +1683,12 @@ function bench_run_acpflow(;
         matpower_ratio = matpower_ratio,
         reference_vm_pu = effective_reference_vm_pu,
         reference_va_deg = effective_reference_va_deg,
-      )
+        matpower_pv_voltage_source = matpower_pv_voltage_source,
+        matpower_pv_voltage_mismatch_tol_pu = matpower_pv_voltage_mismatch_tol_pu,
+        flatstart_voltage_mode = flatstart_voltage_mode,
+        flatstart_angle_mode = flatstart_angle_mode,
+        )
+      end
       _print_converged_loss_summary(stdout, m, status_ref[], net_res)
       open(logfile, "a") do io
         _print_converged_loss_summary(io, m, status_ref[], net_res)
@@ -735,15 +1703,18 @@ function bench_run_acpflow(;
     println("logfile: ", logfile)
     open(logfile, "a") do io
       @printf(io, "total runtime: %.3f s\n", total_s)
+      _print_log_status(io, log_status)
     end
+    _print_log_status(stdout, log_status)
     return results
   end
 
   # Warmup (compile) once per method with minimal output
   println("Warmup run:")
   for m in methods
-    run_acpflow(
-      casefile = casefile,
+    _with_log_table(logfile, log_status) do
+      run_acpflow(
+        casefile = casefile,
       max_ite = max_ite,
       tol = tol,
       opt_fd = opt_fd,
@@ -764,6 +1735,8 @@ function bench_run_acpflow(;
       verbose = 0,
       cooldown_iters = cooldown_iters,
       q_hyst_pu = q_hyst_pu,
+      qlimit_trace_buses = qlimit_trace_buses,
+      qlimit_lock_reason = qlimit_lock_reason,
       lock_pv_to_pq_buses = lock_pv_to_pq_buses,
       enable_pq_gen_controllers = _enable_pq_gen_controllers_for_method(m, enable_pq_gen_controllers),
       bus_shunt_model = bus_shunt_model,
@@ -772,7 +1745,12 @@ function bench_run_acpflow(;
       matpower_ratio = matpower_ratio,
       reference_vm_pu = effective_reference_vm_pu,
       reference_va_deg = effective_reference_va_deg,
+      matpower_pv_voltage_source = matpower_pv_voltage_source,
+      matpower_pv_voltage_mismatch_tol_pu = matpower_pv_voltage_mismatch_tol_pu,
+      flatstart_voltage_mode = flatstart_voltage_mode,
+      flatstart_angle_mode = flatstart_angle_mode,
     )
+  end
   end
 
   println("\n==================== Benchmark run_acpflow ====================")
@@ -791,8 +1769,9 @@ function bench_run_acpflow(;
 
   for m in methods
     method_enable_pq_gen_controllers = _enable_pq_gen_controllers_for_method(m, enable_pq_gen_controllers)
-    benchable = @benchmarkable run_acpflow(
-      casefile = casefile_,
+    benchable = @benchmarkable _with_log_table(logfile_, log_status_) do
+      run_acpflow(
+        casefile = casefile_,
       max_ite = max_ite_,
       tol = tol_,
       opt_fd = opt_fd_,
@@ -813,6 +1792,8 @@ function bench_run_acpflow(;
       verbose = 0,
       cooldown_iters = cooldown_iters_,
       q_hyst_pu = q_hyst_pu_,
+      qlimit_trace_buses = qlimit_trace_buses_,
+      qlimit_lock_reason = qlimit_lock_reason_,
       lock_pv_to_pq_buses = lock_pv_to_pq_buses_,
       enable_pq_gen_controllers = enable_pq_gen_controllers_,
       bus_shunt_model = bus_shunt_model_,
@@ -821,7 +1802,12 @@ function bench_run_acpflow(;
       matpower_ratio = matpower_ratio_,
       reference_vm_pu = reference_vm_pu_,
       reference_va_deg = reference_va_deg_,
-    ) setup = (casefile_ = $casefile;
+      matpower_pv_voltage_source = matpower_pv_voltage_source_,
+      matpower_pv_voltage_mismatch_tol_pu = matpower_pv_voltage_mismatch_tol_pu_,
+      flatstart_voltage_mode = flatstart_voltage_mode_,
+        flatstart_angle_mode = flatstart_angle_mode_,
+      )
+    end setup = (casefile_ = $casefile;
     max_ite_ = $max_ite;
     tol_ = $tol;
     opt_fd_ = $opt_fd;
@@ -839,6 +1825,8 @@ function bench_run_acpflow(;
     opt_flatstart_ = $opt_flatstart;
     cooldown_iters_ = $cooldown_iters;
     q_hyst_pu_ = $q_hyst_pu;
+    qlimit_trace_buses_ = $qlimit_trace_buses;
+    qlimit_lock_reason_ = $qlimit_lock_reason;
     lock_pv_to_pq_buses_ = $lock_pv_to_pq_buses;
     enable_pq_gen_controllers_ = $method_enable_pq_gen_controllers;
     bus_shunt_model_ = $bus_shunt_model;
@@ -847,7 +1835,13 @@ function bench_run_acpflow(;
     matpower_ratio_ = $matpower_ratio;
     reference_vm_pu_ = $effective_reference_vm_pu;
     reference_va_deg_ = $effective_reference_va_deg;
-    method_ = $m)
+    matpower_pv_voltage_source_ = $matpower_pv_voltage_source;
+    matpower_pv_voltage_mismatch_tol_pu_ = $matpower_pv_voltage_mismatch_tol_pu;
+    flatstart_voltage_mode_ = $flatstart_voltage_mode;
+    flatstart_angle_mode_ = $flatstart_angle_mode;
+    method_ = $m;
+    logfile_ = $logfile;
+    log_status_ = $log_status)
 
     b = run(benchable; seconds = seconds, samples = samples)
     results[m] = b
@@ -866,7 +1860,9 @@ function bench_run_acpflow(;
   println("logfile: ", logfile)
   open(logfile, "a") do io
     @printf(io, "total runtime: %.3f s\n", total_s)
+    _print_log_status(io, log_status)
   end
+  _print_log_status(stdout, log_status)
   return results
 end
 
@@ -893,7 +1889,15 @@ function main()
   # - download case14.m into data/mpower/ if missing
   # - generate case14.jl if requested and missing
   local_case = Sparlectra.FetchMatpowerCase.ensure_casefile(case; outdir = Sparlectra.MPOWER_DIR, to_jl = true, overwrite = false)
-  mpc = MatpowerIO.read_case(local_case)
+  log_status = _MatpowerImportLogStatus()
+  open(logfile, "w") do io
+    println(io, "Sparlectra version: ", Sparlectra.version())
+    println(io, "casefile: ", local_case)
+    println(io, "timestamp: ", Dates.now())
+  end
+  mpc = _with_log_table(logfile, log_status) do
+    MatpowerIO.read_case(local_case)
+  end
 
   cfg = bench_config_for_case(case, yaml_cfg)
   _warn_if_flatstart_uses_only_voltage_setpoints(case, cfg, mpc)
@@ -904,58 +1908,94 @@ function main()
     delete!(ENV, "SPARLECTRA_TRACE_LEGACY_BUSTYPE")
   end
   lock_pv_to_pq_buses = cfg.lock_pv_to_pq_buses
+  qlimit_lock_reason = :manual
   if cfg.ignore_q_limits
     lock_pv_to_pq_buses = _mpc_pv_bus_ids(mpc)
+    qlimit_lock_reason = :ignore_q_limits
   end
 
   bench = Base.invokelatest(
     getfield(@__MODULE__, :bench_run_acpflow);
-      casefile = local_case,
-      methods = methods,
-      mpc = mpc,
-      logfile = logfile,
-      show_diff = cfg.show_diff,
-      tol_vm = cfg.tol_vm,
-      tol_va = cfg.tol_va,
-      max_ite = cfg.max_ite,
-      tol = cfg.tol,
-      opt_fd = cfg.opt_fd,
-      opt_sparse = cfg.opt_sparse,
-      opt_flatstart = cfg.opt_flatstart,
-      autodamp = cfg.autodamp,
-      autodamp_min = cfg.autodamp_min,
-      start_projection = cfg.start_projection,
-      start_projection_try_dc_start = cfg.start_projection_try_dc_start,
-      start_projection_try_blend_scan = cfg.start_projection_try_blend_scan,
-      start_projection_blend_lambdas = cfg.start_projection_blend_lambdas,
-      start_projection_dc_angle_limit_deg = cfg.start_projection_dc_angle_limit_deg,
-      qlimit_start_iter = cfg.qlimit_start_iter,
-      qlimit_start_mode = cfg.qlimit_start_mode,
-      qlimit_auto_q_delta_pu = cfg.qlimit_auto_q_delta_pu,
-      verbose = cfg.verbose,
-      cooldown_iters = cfg.cooldown_iters,
-      q_hyst_pu = cfg.q_hyst_pu,
-      lock_pv_to_pq_buses = lock_pv_to_pq_buses,
-      seconds = cfg.seconds,
-      samples = cfg.samples,
-      show_once = cfg.show_once,
-      show_once_output = cfg.show_once_output,
-      show_once_max_nodes = cfg.show_once_max_nodes,
-      matpower_shift_sign = cfg.matpower_shift_sign,
-      matpower_shift_unit = cfg.matpower_shift_unit,
-      matpower_ratio = cfg.matpower_ratio,
-      reference_override = cfg.reference_override,
-      reference_vm_pu = cfg.reference_vm_pu,
-      reference_va_deg = cfg.reference_va_deg,
-      diagnose_matpower_reference = cfg.diagnose_matpower_reference,
-      diagnose_branch_shift_conventions = cfg.diagnose_branch_shift_conventions,
-      diagnose_maxlines = cfg.diagnose_maxlines,
-      log_effective_config = cfg.log_effective_config,
-      yaml_path = yaml_path,
-      effective_config = cfg,
-      benchmark = cfg.benchmark,
-      enable_pq_gen_controllers = cfg.enable_pq_gen_controllers,
-      bus_shunt_model = cfg.bus_shunt_model,
+    casefile = local_case,
+    methods = methods,
+    mpc = mpc,
+    logfile = logfile,
+    show_diff = cfg.show_diff,
+    tol_vm = cfg.tol_vm,
+    tol_va = cfg.tol_va,
+    max_ite = cfg.max_ite,
+    tol = cfg.tol,
+    opt_fd = cfg.opt_fd,
+    opt_sparse = cfg.opt_sparse,
+    opt_flatstart = cfg.opt_flatstart,
+    autodamp = cfg.autodamp,
+    autodamp_min = cfg.autodamp_min,
+    start_projection = cfg.start_projection,
+    start_projection_try_dc_start = cfg.start_projection_try_dc_start,
+    start_projection_try_blend_scan = cfg.start_projection_try_blend_scan,
+    start_projection_blend_lambdas = cfg.start_projection_blend_lambdas,
+    start_projection_dc_angle_limit_deg = cfg.start_projection_dc_angle_limit_deg,
+    qlimit_start_iter = cfg.qlimit_start_iter,
+    qlimit_start_mode = cfg.qlimit_start_mode,
+    qlimit_auto_q_delta_pu = cfg.qlimit_auto_q_delta_pu,
+    verbose = cfg.verbose,
+    cooldown_iters = cfg.cooldown_iters,
+    q_hyst_pu = cfg.q_hyst_pu,
+    qlimit_trace_buses = cfg.qlimit_trace_buses,
+    qlimit_lock_reason = qlimit_lock_reason,
+    lock_pv_to_pq_buses = lock_pv_to_pq_buses,
+    seconds = cfg.seconds,
+    samples = cfg.samples,
+    show_once = cfg.show_once,
+    show_once_output = cfg.show_once_output,
+    show_once_max_nodes = cfg.show_once_max_nodes,
+    matpower_shift_sign = cfg.matpower_shift_sign,
+    matpower_shift_unit = cfg.matpower_shift_unit,
+    matpower_ratio = cfg.matpower_ratio,
+    reference_override = cfg.reference_override,
+    reference_vm_pu = cfg.reference_vm_pu,
+    reference_va_deg = cfg.reference_va_deg,
+    diagnose_matpower_reference = cfg.diagnose_matpower_reference,
+    diagnose_branch_shift_conventions = cfg.diagnose_branch_shift_conventions,
+    diagnose_branch_neighborhood = cfg.diagnose_branch_neighborhood,
+    diagnose_residual_clusters = cfg.diagnose_residual_clusters,
+    diagnose_residual_cluster_threshold_mw = cfg.diagnose_residual_cluster_threshold_mw,
+    diagnose_residual_cluster_maxlines = cfg.diagnose_residual_cluster_maxlines,
+    diagnose_branch_neighborhood_buses = cfg.diagnose_branch_neighborhood_buses,
+    diagnose_branch_neighborhood_depth = cfg.diagnose_branch_neighborhood_depth,
+    diagnose_branch_neighborhood_maxlines = cfg.diagnose_branch_neighborhood_maxlines,
+    diagnose_nodal_balance_breakdown = cfg.diagnose_nodal_balance_breakdown,
+    diagnose_nodal_balance_buses = cfg.diagnose_nodal_balance_buses,
+    diagnose_nodal_balance_maxlines = cfg.diagnose_nodal_balance_maxlines,
+    diagnose_nodal_balance_include_branches = cfg.diagnose_nodal_balance_include_branches,
+    diagnose_nodal_balance_include_generators = cfg.diagnose_nodal_balance_include_generators,
+    diagnose_nodal_balance_include_shunts = cfg.diagnose_nodal_balance_include_shunts,
+    diagnose_negative_branch_impedance = cfg.diagnose_negative_branch_impedance,
+    diagnose_negative_branch_impedance_maxlines = cfg.diagnose_negative_branch_impedance_maxlines,
+    diagnose_negative_branch_impedance_fail_on_negative_r = cfg.diagnose_negative_branch_impedance_fail_on_negative_r,
+    diagnose_negative_branch_impedance_fail_on_negative_x = cfg.diagnose_negative_branch_impedance_fail_on_negative_x,
+    diagnose_negative_branch_impedance_warn_threshold_abs_r = cfg.diagnose_negative_branch_impedance_warn_threshold_abs_r,
+    diagnose_negative_branch_impedance_warn_threshold_abs_x = cfg.diagnose_negative_branch_impedance_warn_threshold_abs_x,
+    diagnose_maxlines = cfg.diagnose_maxlines,
+    log_effective_config = cfg.log_effective_config,
+    yaml_path = yaml_path,
+    effective_config = cfg,
+    benchmark = cfg.benchmark,
+    enable_pq_gen_controllers = cfg.enable_pq_gen_controllers,
+    bus_shunt_model = cfg.bus_shunt_model,
+    matpower_pv_voltage_source = cfg.matpower_pv_voltage_source,
+    matpower_pv_voltage_mismatch_tol_pu = cfg.matpower_pv_voltage_mismatch_tol_pu,
+    compare_voltage_reference = cfg.compare_voltage_reference,
+    diagnose_pv_voltage_references = cfg.diagnose_pv_voltage_references,
+    diagnose_pv_voltage_maxlines = cfg.diagnose_pv_voltage_maxlines,
+    flatstart_voltage_mode = cfg.flatstart_voltage_mode,
+    flatstart_angle_mode = cfg.flatstart_angle_mode,
+    wrong_branch_detection = cfg.wrong_branch_detection,
+    wrong_branch_min_vm_pu = cfg.wrong_branch_min_vm_pu,
+    wrong_branch_max_angle_spread_deg = cfg.wrong_branch_max_angle_spread_deg,
+    wrong_branch_rescue = cfg.wrong_branch_rescue,
+    wrong_branch_rescue_modes = cfg.wrong_branch_rescue_modes,
+    log_status = log_status,
   )
   return bench
 end

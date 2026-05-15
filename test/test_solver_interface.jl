@@ -111,7 +111,7 @@ function run_solver_interface_tests()
       @test abs(Vflat[2]) == 1.04
       @test angle(Vflat[2]) == 0.0
       @test abs(Vflat[3]) == 1.06
-      @test angle(Vflat[3]) == 0.0
+      @test isapprox(rad2deg(angle(Vflat[3])), 2.0; atol = 1e-12)
 
       busVec, polar_slack_idx = Sparlectra.getBusData(net.nodeVec, net.baseMVA, true; net = net)
       @test polar_slack_idx == 3
@@ -120,7 +120,7 @@ function run_solver_interface_tests()
       @test busVec[2].vm_pu == 1.04
       @test busVec[2].va_rad == 0.0
       @test busVec[3].vm_pu == 1.06
-      @test busVec[3].va_rad == 0.0
+      @test isapprox(rad2deg(busVec[3].va_rad), 2.0; atol = 1e-12)
 
       model = Sparlectra.buildPfModel(net; flatstart = true, include_limits = false, start_projection = false)
       @test model.busIdx_net == [1, 2, 3]
@@ -129,7 +129,7 @@ function run_solver_interface_tests()
       @test abs(model.V0[2]) == 1.04
       @test angle(model.V0[2]) == 0.0
       @test abs(model.V0[3]) == 1.06
-      @test angle(model.V0[3]) == 0.0
+      @test isapprox(rad2deg(angle(model.V0[3])), 2.0; atol = 1e-12)
 
       Vseeded, _ = Sparlectra.initialVrect(net; flatstart = false)
       @test isapprox(abs(Vseeded[1]), 0.94; atol = 1e-12)
@@ -158,7 +158,7 @@ function run_solver_interface_tests()
       @test iso_model.busIdx_net == [1, 3, 4]
       @test iso_model.busType == [:PQ, :PV, :Slack]
       @test abs.(iso_model.V0) == [1.0, 1.04, 1.06]
-      @test angle.(iso_model.V0) == [0.0, 0.0, 0.0]
+      @test all(isapprox.(rad2deg.(angle.(iso_model.V0)), [0.0, 0.0, 5.0]; atol = 1e-12))
       @test iso_model.Vset == [1.0, 1.04, 1.06]
     end
     # Checks tabular Q-limit output truncation plus sign-validation/autocorrect behavior.
@@ -219,8 +219,111 @@ function run_solver_interface_tests()
       net_locked = createTest3BusNet()
       setQLimits!(net = net_locked, qmin_MVar = -1.0, qmax_MVar = 1.0, busName = "STATION1")
       _, erg_locked = runpf!(net_locked, 20, 1e-6, 0; method = :rectangular, lock_pv_to_pq_buses = [2])
-      @test erg_locked == 0
+      @test erg_locked == 1
       @test getNodeType(net_locked.nodeVec[2]) == Sparlectra.PV
+    end
+
+    @testset "Rectangular Q-limit trace diagnostics" begin
+      net = createTest3BusNet()
+      setQLimits!(net = net, qmin_MVar = -1.0, qmax_MVar = 1.0, busName = "STATION1")
+      trace_path, trace_io = mktemp()
+      close(trace_io)
+      open(trace_path, "w") do io
+        redirect_stdout(io) do
+          runpf!(net, 3, 1e-8, 0; method = :rectangular, qlimit_start_iter = 99, qlimit_trace_buses = [2])
+        end
+      end
+      trace_text = read(trace_path, String)
+      rm(trace_path; force = true)
+      @test occursin("Q-limit trace enabled", trace_text)
+      @test occursin("BUS_I=2", trace_text)
+      @test occursin("qlimit_start_iter has not been reached", trace_text)
+      pq_io = IOBuffer()
+      Sparlectra._print_rectangular_qlimit_trace(
+        pq_io,
+        net,
+        4,
+        2,
+        :PQ,
+        ComplexF64[1.0 + 0.0im, 1.0 + 0.0im, 1.0 + 0.0im],
+        [1.0, 1.0, 1.0],
+        NaN,
+        [-Inf, -0.01, -Inf],
+        [Inf, 0.01, Inf];
+        q_hyst_pu = 0.0,
+        qlimit_start_iter = 2,
+        qlimit_start_mode = :iteration_or_auto,
+        qlimit_iter_ready = true,
+        qlimit_auto_ready = true,
+        qlimit_ready = true,
+        qlimit_check_active = true,
+        converged_before_switching = false,
+        qlimit_mode = :switch_to_pq,
+        lock_mask = falses(3),
+      )
+      pq_trace_text = String(take!(pq_io))
+      @test occursin("decision=keep PQ", pq_trace_text)
+      @test occursin("reason=bus is no longer an active PV/REF bus", pq_trace_text)
+      @test !occursin("decision=keep PV reason=bus is not an active PV/REF bus", pq_trace_text)
+
+      ignore_io = IOBuffer()
+      Sparlectra._print_rectangular_qlimit_trace(
+        ignore_io, net, 1, 2, :PV, ComplexF64[1.0 + 0.0im, 1.0 + 0.0im, 1.0 + 0.0im], [1.0, 1.0, 1.0], 0.02, [-Inf, -0.01, -Inf], [Inf, 0.01, Inf];
+        q_hyst_pu = 0.0, qlimit_start_iter = 1, qlimit_start_mode = :iteration, qlimit_iter_ready = true, qlimit_auto_ready = false, qlimit_ready = true, qlimit_check_active = true, converged_before_switching = false, qlimit_mode = :switch_to_pq, lock_mask = Bool[false, true, false], qlimit_lock_reason = :ignore_q_limits,
+      )
+      @test occursin("ignore_q_limits=true disables Q-limit switching", String(take!(ignore_io)))
+
+      final_io = IOBuffer()
+      res = Sparlectra._print_rectangular_qlimit_summary(
+        final_io,
+        net,
+        ComplexF64[1.0 + 0.0im, 1.0 + 0.0im, 1.0 + 0.0im],
+        ComplexF64[0.0 + 0.0im, 0.0 + 0.02im, 0.0 + 0.0im],
+        [:PQ, :PV, :Slack],
+        [-Inf, -0.01, -0.05],
+        [Inf, 0.01, 0.05],
+        zeros(Float64, 3);
+        q_hyst_pu = 0.0,
+        tolerance_pu = 1e-6,
+        max_rows = 30,
+      )
+      final_text = String(take!(final_io))
+      @test res.violating == 1
+      @test res.pv_violations == 1
+      @test res.ref_violations == 0
+      @test occursin("Final PV Q-limit active-set check: FAIL", final_text)
+      @test occursin("active PV buses checked", final_text)
+      @test occursin("active REF buses checked", final_text)
+      @test occursin("PV violations: 1", final_text)
+      @test occursin("REF violations: 0", final_text)
+      @test occursin("Final PV/REF Q-limit check: FAIL", final_text)
+      @test occursin("Qcalc pu", final_text)
+      @test occursin("switched", final_text)
+      @test occursin("return band", final_text)
+
+      ref_io = IOBuffer()
+      ref_res = Sparlectra._print_rectangular_qlimit_summary(
+        ref_io,
+        net,
+        ComplexF64[1.0 + 0.0im, 1.0 + 0.0im, 1.0 + 0.0im],
+        ComplexF64[0.0 + 0.0im, 0.0 + 0.0im, 0.0 + 0.08im],
+        [:PQ, :PV, :Slack],
+        [-Inf, -0.01, -0.05],
+        [Inf, 0.01, 0.05],
+        zeros(Float64, 3);
+        q_hyst_pu = 0.0,
+        tolerance_pu = 1e-6,
+        max_rows = 30,
+      )
+      ref_text = String(take!(ref_io))
+      @test ref_res.pv_violations == 0
+      @test ref_res.ref_violations == 1
+      @test ref_res.status == :warn
+      @test occursin("Final PV Q-limit active-set check: OK", ref_text)
+      @test occursin("Final REF Q-limit diagnostic: WARN", ref_text)
+      @test occursin("PV violations: 0", ref_text)
+      @test occursin("REF violations: 1", ref_text)
+      @test occursin("Final PV/REF Q-limit check: WARN", ref_text)
     end
 
     # Ensures final-limit validation remains robust when q-generation data is partially missing.

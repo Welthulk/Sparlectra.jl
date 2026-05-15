@@ -103,5 +103,39 @@ function run_pv_voltage_residual_tests()
         @test getNodeType(net.nodeVec[3]) == Sparlectra.PV
       end
     end
+
+    @testset "rectangular MATPOWER flat-start seed does not replace imported PV setpoint" begin
+      mpc = _synthetic_pv_vg_mismatch_case()
+      net = Sparlectra.createNetFromMatPowerCase(mpc = mpc, log = false, flatstart = true, matpower_pv_voltage_source = :gen_vg)
+      slack_idx = geNetBusIdx(net = net, busName = "1")
+      pv_idx = geNetBusIdx(net = net, busName = "2")
+
+      # Mimic flatstart_voltage_mode=bus_vm_va_blend: node voltages are start
+      # guesses, while regulating prosumer vm_pu stores the imported setpoint.
+      net.nodeVec[slack_idx]._vm_pu = 0.5 * (net.nodeVec[slack_idx]._vm_pu + 1.00)
+      net.nodeVec[pv_idx]._vm_pu = 0.5 * (net.nodeVec[pv_idx]._vm_pu + 1.02)
+
+      _, erg = runpf!(
+        net,
+        40,
+        1e-9,
+        0;
+        method = :rectangular,
+        opt_sparse = true,
+        opt_flatstart = false,
+        start_projection = true,
+        start_projection_try_dc_start = true,
+        start_projection_try_blend_scan = true,
+      )
+
+      rows = Sparlectra.MatpowerIO.pv_voltage_reference_rows(mpc; net = net, matpower_pv_voltage_source = :gen_vg)
+      pv_row = rows[findfirst(row -> row.busI == 2, rows)]
+      @test erg == 0
+      @test getNodeType(net.nodeVec[pv_idx]) == Sparlectra.PV
+      @test isapprox(pv_row.imported_vset, 1.04; atol = 1e-12)
+      @test isapprox(net.nodeVec[pv_idx]._vm_pu, pv_row.imported_vset; atol = 1e-7)
+      @test abs(pv_row.dvm_vset) <= 1e-7
+      @test abs(pv_row.dvm_bus) > 0.015
+    end
   end
 end
