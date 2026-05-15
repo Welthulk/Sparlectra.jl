@@ -108,7 +108,7 @@ function _apply_matpower_reference_override!(net::Net, slack_orig_idx::Int, bus_
   return nothing
 end
 
-function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false, cooldown::Int = 0, q_hyst_pu::Float64 = 0.0, enable_pq_gen_controllers::Bool = true, bus_shunt_model = :admittance, matpower_shift_sign::Real = 1.0, matpower_shift_unit = :deg, matpower_ratio = :normal, reference_vm_pu::Union{Nothing,Float64} = nothing, reference_va_deg::Union{Nothing,Float64} = nothing)::Net
+function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false, cooldown::Int = 0, q_hyst_pu::Float64 = 0.0, enable_pq_gen_controllers::Bool = true, bus_shunt_model = :admittance, matpower_shift_sign::Real = 1.0, matpower_shift_unit = :deg, matpower_ratio = :normal, reference_vm_pu::Union{Nothing,Float64} = nothing, reference_va_deg::Union{Nothing,Float64} = nothing, matpower_pv_voltage_source = :gen_vg, matpower_pv_voltage_mismatch_tol_pu::Float64 = 1e-4)::Net
   # Small logger helper
   pInfo(msg::String) = (log ? (@info msg) : nothing)
 
@@ -139,6 +139,9 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
   shift_sign = Float64(matpower_shift_sign)
   shift_sign in (-1.0, 1.0) || error(string("matpower_shift_sign must be 1 or -1 (got ", matpower_shift_sign, ")."))
   ratio_mode = _normalize_matpower_ratio_mode(matpower_ratio)
+  pv_voltage_source = MatpowerIO._normalize_pv_voltage_source(matpower_pv_voltage_source)
+  pv_voltage_rows = MatpowerIO.pv_voltage_reference_rows(mpc; matpower_pv_voltage_source = pv_voltage_source, tol = matpower_pv_voltage_mismatch_tol_pu, warn = log)
+  pv_vset_by_bus = Dict(row.busI => row.imported_vset for row in pv_voltage_rows)
 
   if log
     @info "Creating new Net: $(name) with baseMVA=$(baseMVA), flatstart=$(flatstart)"
@@ -265,7 +268,9 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
     ratedS_raw = Float64(row[RATE_A])
     ratedS = ratedS_raw > 0.0 ? ratedS_raw : Inf
 
-    ratio = _matpower_import_ratio(Float64(row[TAP]); mode = ratio_mode)
+    tap_raw = Float64(row[TAP])
+    tap_specified = tap_raw != 0.0
+    ratio = _matpower_import_ratio(tap_raw; mode = ratio_mode)
 
     # MATPOWER defines SHIFT on the branch from side. Sparlectra uses the
     # same PI tap placement; changing PST orientation for ratio=1 is therefore
@@ -277,7 +282,10 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
     vn_from = getNodeVn(myNet.nodeVec[from_idx])
     vn_to   = getNodeVn(myNet.nodeVec[to_idx])
 
-    isLine = ((ratio == 1.0 && angle == 0.0) && (vn_from == vn_to))
+    # MATPOWER uses TAP == 0 for ordinary lines and a non-zero TAP value for
+    # transformers. Preserve explicit nominal-tap transformers (`TAP == 1`) so
+    # case300-style branches such as BUS_I 196 -> 2040 are not demoted to lines.
+    isLine = ((!tap_specified && angle == 0.0) && (vn_from == vn_to))
 
     if isLine
       _addPIModelACLine_by_idx!(
@@ -321,7 +329,8 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
     qMin = Float64(row[QMIN])
     pMax = Float64(row[PMAX])
     pMin = Float64(row[PMIN])
-    vm_pu = Float64(row[VG])
+    vm_pu_gen = Float64(row[VG])
+    vm_pu = get(pv_vset_by_bus, Int(row[GEN_BUS]), vm_pu_gen)
     mBase = Float64(row[MBASE])
     btype = get(mp_bus_type, Int(row[GEN_BUS]), 1)
 
@@ -339,9 +348,8 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
     end
 
     if btype == 2 || btype == 3
-      # MATPOWER stores PV/slack voltage setpoints in GEN.VG. Keep those
-      # setpoints authoritative for flat starts even when BUS.VM contains a
-      # solved/reference voltage from the input case.
+      # MATPOWER PV/slack voltage setpoints are configurable because some
+      # solved cases store BUS.VM values that differ from GEN.VG setpoints.
       node_idx = get(bus_idx_by_orig, Int(row[GEN_BUS]), 0)
       node_idx != 0 && setVmVa!(node = myNet.nodeVec[node_idx], vm_pu = vm_pu)
     end
@@ -394,6 +402,8 @@ function createNetFromMatPowerFile(; filename::String,
     matpower_ratio = :normal,
     reference_vm_pu::Union{Nothing,Float64} = nothing,
     reference_va_deg::Union{Nothing,Float64} = nothing,
+    matpower_pv_voltage_source = :gen_vg,
+    matpower_pv_voltage_mismatch_tol_pu::Float64 = 1e-4,
     verbose::Int = 0)::Net
 
   mpc = MatpowerIO.read_case(filename; legacy_compat=true)
@@ -403,7 +413,9 @@ function createNetFromMatPowerFile(; filename::String,
                                   cooldown=cooldown, q_hyst_pu=q_hyst_pu, enable_pq_gen_controllers=enable_pq_gen_controllers,
                                   bus_shunt_model=bus_shunt_model, matpower_shift_sign=matpower_shift_sign,
                                   matpower_shift_unit=matpower_shift_unit, matpower_ratio=matpower_ratio,
-                                  reference_vm_pu=reference_vm_pu, reference_va_deg=reference_va_deg)
+                                  reference_vm_pu=reference_vm_pu, reference_va_deg=reference_va_deg,
+                                  matpower_pv_voltage_source=matpower_pv_voltage_source,
+                                  matpower_pv_voltage_mismatch_tol_pu=matpower_pv_voltage_mismatch_tol_pu)
 
   # Always apply MATPOWER isolated flags (BUS_TYPE==4) onto net
   MatpowerIO.apply_mp_isolated_buses!(net, mpc; verbose=verbose)

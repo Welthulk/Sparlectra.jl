@@ -9,24 +9,61 @@
 # or
 #   SPARLECTRA_MATPOWER_IMPORT_YAML=src/examples/matpower_import.yaml julia --project=. src/examples/matpower_import.jl
 #
+# Purpose of this example:
+# 1. Provide a compact, documented baseline for MATPOWER import tests.
+# 2. Keep option order aligned with `matpower_import.yaml`.
+# 3. Avoid duplicate active YAML keys in the general section.
+# 4. Put case-specific alternatives into the inactive override section at the bottom.
+#
+
+# ---------------------------------------------------------------------------
+# Case selection
+# ---------------------------------------------------------------------------
+
 case: case118.m
+#case: case300.m
+#case: case1354pegase.m
+#case: case2869pegase.m
+#case: case9241pegase.m
+#case: case_ACTIVSg10k.m
+#case: case1951rte.m
+
 methods: [rectangular]
 
-# Solver/NR options
+# ---------------------------------------------------------------------------
+# Solver / Newton-Raphson options
+# ---------------------------------------------------------------------------
+
 opt_fd: false
 opt_sparse: true
-# If true, PQ-bus magnitudes and all voltage angles start flat while slack/PV
-# voltage magnitudes from MATPOWER remain active setpoints. Keep false when you
-# intentionally want to restart from the stored MATPOWER VM/VA solution.
-opt_flatstart: false
 
-# Reference/slack-bus voltage handling for the MATPOWER example path. By default
-# the slack-bus VM/VA read from the MATPOWER file is preserved. Set
-# reference_override: true to replace it with the values below; the selected
-# behavior is printed to the run logfile.
+# Set true for a pure flatstart run.
+# Set false to use imported MATPOWER VM/VA values as initial values where available.
+opt_flatstart: true
+
+# Newton solver controls.
+tol: 1.0e-6
+max_ite: 30
+verbose: 1
+
+# Set `autodamp: true` for difficult flat-start cases or large MATPOWER
+# networks where a full Newton step can increase the mismatch.
+autodamp: true
+autodamp_min: 0.05
+
+# ---------------------------------------------------------------------------
+# Reference / slack-bus voltage handling
+# ---------------------------------------------------------------------------
+
+# By default, the slack-bus VM/VA read from the MATPOWER file is preserved.
+# Set reference_override: true to replace it with the values below.
 reference_override: false
 reference_vm_pu: 1.0
 reference_va_deg: 0.0
+
+# ---------------------------------------------------------------------------
+# Bus shunt modeling
+# ---------------------------------------------------------------------------
 
 # Bus shunt modeling:
 # - admittance: classic MATPOWER treatment, stamp Gs/Bs into the Y-bus diagonal.
@@ -34,86 +71,102 @@ reference_va_deg: 0.0
 #   |V|^2-dependent power contribution in the nonlinear injection/mismatch path.
 bus_shunt_model: admittance
 
-# Set `autodamp: true` for difficult flat-start cases such as larger MATPOWER
-# networks where a full Newton step increases the mismatch.
-autodamp: false
-autodamp_min: 1.0e-3
+# ---------------------------------------------------------------------------
+# Start projection / flatstart robustness
+# ---------------------------------------------------------------------------
 
-# Optional start projection before rectangular NR / external solver starts.
-start_projection: false
+# Optional start projection before rectangular NR.
+# Recommended for difficult flatstart cases.
+start_projection: true
 start_projection_try_dc_start: true
-start_projection_try_blend_scan: true
-start_projection_blend_lambdas: [0.25, 0.5, 0.75]
-start_projection_dc_angle_limit_deg: 60.0
-max_ite: 30
-tol: 1.0e-6
-verbose: 1
-cooldown_iters: 0
-q_hyst_pu: 0.0
+start_projection_try_blend_scan: false
+start_projection_blend_lambdas: [0.1, 0.25, 0.5, 0.75]
+start_projection_dc_angle_limit_deg: 70.0
 
-# PV->PQ Q-limit switching start controls:
-# - qlimit_start_mode: iteration, auto_q_delta, or iteration_or_auto.
-# - iteration starts switching at qlimit_start_iter (default preserves previous iteration 2 behavior).
-# - auto_q_delta starts once PV reactive-power request changes are <= qlimit_auto_q_delta_pu.
-qlimit_start_iter: 3
-qlimit_start_mode: iteration
-qlimit_auto_q_delta_pu: 1.0e-4
+# Flatstart robustness options for difficult large MATPOWER cases.
+# Recommended diagnostic rescue seed:
+#   flatstart_angle_mode: dc
+#   flatstart_voltage_mode: bus_vm_va_blend
+flatstart_angle_mode: dc
+flatstart_voltage_mode: bus_vm_va_blend
 
-# MATPOWER comparison controls
-show_diff: true
-tol_vm: 0.02
-tol_va: 0.5
+flatstart_branch_guard: true
+flatstart_min_vm_pu: 0.5
+flatstart_max_angle_step_deg: 20.0
+flatstart_max_vm_step_pu: 0.1
 
+# Wrong-branch detection and optional rescue.
+wrong_branch_detection: true
+wrong_branch_min_vm_pu: 0.4
+wrong_branch_max_angle_spread_deg: 120.0
+wrong_branch_rescue: true
+wrong_branch_rescue_modes: [dc, bus_vm_va_blend, matpower_va]
 
+# ---------------------------------------------------------------------------
+# PV -> PQ Q-limit switching
+# ---------------------------------------------------------------------------
 
-# MATPOWER branch SHIFT/TAP convention controls:
-# - deg/sign=1 preserves MATPOWER default SHIFT semantics (degrees on from side).
-# - matpower_ratio=normal preserves MATPOWER TAP as stored; reciprocal imports 1/TAP.
-# - Some PEGASE-style files use small radian-like SHIFT values and may need sign=-1.
-matpower_shift_unit: deg
-matpower_shift_sign: 1.0
-matpower_ratio: normal
-
-# If true, write the effective parsed YAML/options to the logfile.
-log_effective_config: true
-# MATPOWER-reference diagnostics:
-# - diagnose_matpower_reference prints the largest residuals obtained when the
-#   VM/VA values embedded in the MATPOWER data are evaluated against the imported
-#   network equations. Large residuals mean the reference VM/VA is not an exact
-#   solution of the imported data/model before the Sparlectra solve is considered.
-# - diagnose_branch_shift_conventions scans common phase-shift interpretations;
-#   this is useful for PEGASE-style cases whose branch SHIFT entries are small
-#   radian-like values although MATPOWER's column convention is degrees.
-diagnose_matpower_reference: true
-diagnose_branch_shift_conventions: true
-diagnose_maxlines: 12
-
-
-# MATPOWER branch SHIFT/TAP convention controls:
-# - deg/sign=1 preserves MATPOWER default SHIFT semantics (degrees on from side).
-# - matpower_ratio=normal preserves MATPOWER TAP as stored; reciprocal imports 1/TAP.
-# - Some PEGASE-style files use small radian-like SHIFT values and may need sign=-1.
-matpower_shift_unit: deg
-matpower_shift_sign: 1.0
-matpower_ratio: normal
-
-# Write effective parsed options to the logfile.
-log_effective_config: false
-
-# Optional logfile-only diagnostics for embedded MATPOWER VM/VA and SHIFT scans.
-diagnose_matpower_reference: false
-diagnose_branch_shift_conventions: false
-diagnose_maxlines: 12
 # Q-limit / PV->PQ behavior:
 # - If true, all PV buses are locked against PV->PQ switching.
 #   This effectively ignores reactive-power limits during the solve.
 ignore_q_limits: false
 
+# Fine-grained manual locks (MATPOWER/original bus IDs).
+# Applied when ignore_q_limits=false.
+lock_pv_to_pq_buses: []
+
+# PV->PQ Q-limit switching start controls:
+# - qlimit_start_mode: iteration, auto_q_delta, or iteration_or_auto.
+# - iteration starts switching at qlimit_start_iter.
+# - auto_q_delta starts once PV reactive-power request changes are <= qlimit_auto_q_delta_pu.
+qlimit_start_iter: 3
+qlimit_start_mode: iteration
+qlimit_auto_q_delta_pu: 1.0e-4
+
+# Hysteresis/cooldown for PV<->PQ switching.
+q_hyst_pu: 0.0
+cooldown_iters: 0
+
+# Optional focused Q-limit decision trace.
+# Entries are MATPOWER BUS_I values when available.
+qlimit_trace_buses: []
+
+# ---------------------------------------------------------------------------
+# MATPOWER PV/REF voltage-reference handling
+# ---------------------------------------------------------------------------
+
+# PV/REF voltage-reference handling:
+# - BUS.VM is the stored MATPOWER bus-matrix voltage magnitude.
+# - GEN.VG is the generator voltage setpoint normally used for PV/REF control.
+# - If they differ, solving against GEN.VG while comparing against BUS.VM can
+#   produce a false Vm comparison failure at PV/REF buses.
+# matpower_pv_voltage_source: gen_vg, bus_vm, auto, or strict_check.
+# compare_voltage_reference: bus_vm, gen_vg, imported_setpoint, or hybrid.
+matpower_pv_voltage_source: gen_vg
+matpower_pv_voltage_mismatch_tol_pu: 1.0e-4
+compare_voltage_reference: hybrid
+
+# ---------------------------------------------------------------------------
+# MATPOWER branch SHIFT/TAP convention controls
+# ---------------------------------------------------------------------------
+
+# MATPOWER branch SHIFT/TAP convention controls:
+# - deg/sign=1 preserves MATPOWER default SHIFT semantics (degrees on from side).
+# - matpower_ratio=normal preserves MATPOWER TAP as stored.
+# - matpower_ratio=reciprocal imports 1/TAP.
+# - Some PEGASE-style files use small radian-like SHIFT values and may need sign=-1.
+matpower_shift_unit: deg
+matpower_shift_sign: 1.0
+matpower_ratio: normal
+
+# ---------------------------------------------------------------------------
+# Optional MATPOWER import behavior
+# ---------------------------------------------------------------------------
+
 # Optional MATPOWER import behavior for PQ-type generators:
 # - If true, PQ generators get constant P(U)/Q(U) controllers based on MATPOWER limits.
 # - Applied only for generators connected to MATPOWER PQ buses (BUS_TYPE=1).
 # - If false, import keeps the plain generator values without creating these controllers.
-#   Keep enabled by default for compatibility with previous convergence behavior.
 enable_pq_gen_controllers: false
 
 # Legacy warning tracing:
@@ -121,21 +174,128 @@ enable_pq_gen_controllers: false
 # - Helpful to identify remaining code paths that still call addBus!(... busType=...)
 #   or setBusType! during import/solver runs.
 trace_legacy_bus_type_warnings: false
-# - Fine-grained manual locks (MATPOWER/original bus IDs). Applied when ignore_q_limits=false.
-lock_pv_to_pq_buses: []
 
-# Benchmark controls
-# - Set `benchmark: false` to only run `show_once` and write logfile/results once.
-#   Useful for large cases (e.g. case1951rte / case2869pegase) where benchmarking can take very long.
+# ---------------------------------------------------------------------------
+# MATPOWER comparison controls
+# ---------------------------------------------------------------------------
+
+show_diff: true
+
+# Practical compare tolerances for the current general test run.
+tol_vm: 0.01
+tol_va: 2.0
+
+# ---------------------------------------------------------------------------
+# Diagnostics
+# ---------------------------------------------------------------------------
+
+# If true, write the effective parsed YAML/options to the logfile.
+log_effective_config: false
+
+# MATPOWER-reference diagnostics:
+# - diagnose_matpower_reference prints the largest residuals obtained when the
+#   VM/VA values embedded in the MATPOWER data are evaluated against the imported
+#   network equations. Large residuals mean the reference VM/VA is not an exact
+#   solution of the imported data/model before the Sparlectra solve is considered.
+# - diagnose_branch_shift_conventions scans common phase-shift interpretations.
+diagnose_matpower_reference: true
+diagnose_branch_shift_conventions: true
+diagnose_negative_branch_impedances: true
+
+# PV voltage-reference diagnostics.
+diagnose_pv_voltage_references: true
+diagnose_pv_voltage_maxlines: 30
+
+# Optional logfile-only neighborhood and residual-cluster diagnostics.
+diagnose_branch_neighborhood: false
+diagnose_branch_neighborhood_buses: []
+diagnose_branch_neighborhood_depth: 1
+diagnose_branch_neighborhood_maxlines: 200
+
+diagnose_residual_clusters: false
+diagnose_residual_cluster_threshold_mw: 1.0
+diagnose_residual_cluster_maxlines: 20
+
+diagnose_maxlines: 12
+
+# ---------------------------------------------------------------------------
+# Benchmark / output controls
+# ---------------------------------------------------------------------------
+
+# Set `benchmark: false` to only run `show_once` and write logfile/results once.
+# Useful for large cases where benchmarking can take very long.
 benchmark: false
 seconds: 2.0
 samples: 50
-#show_once: true
+
+# Single result/log run.
 show_once: true
+
 # show_once output mode:
 # - classic: full classic result tables (printACPFlowResults)
 # - dataframe: compact DataFrame-style node table
-#show_once_output: classic
 show_once_output: dataframe
+
 # Limits only DataFrame-style output (0 = all nodes); ignored for classic output.
 show_once_max_nodes: 30
+show_once_max_pv_rows: 30
+
+# ---------------------------------------------------------------------------
+# Special-case override section
+# ---------------------------------------------------------------------------
+# Keep this section at the bottom. To activate a special case, uncomment the
+# corresponding block. Values here intentionally override the general settings
+# above because YAML readers usually keep the last value for duplicate keys.
+#
+# --- case1951rte flatstart comparison ---
+#case: case1951rte.m
+#opt_flatstart: true
+#tol: 1.0e-8
+#max_ite: 50
+#autodamp: true
+#autodamp_min: 0.05
+#compare_voltage_reference: hybrid
+#tol_vm: 0.01
+#tol_va: 2.0
+#enable_pq_gen_controllers: true
+#qlimit_start_iter: 5
+#qlimit_start_mode: auto_q_delta
+#qlimit_auto_q_delta_pu: 0.02
+#q_hyst_pu: 0.06
+#cooldown_iters: 3
+#diagnose_matpower_reference: true
+#diagnose_branch_shift_conventions: true
+#diagnose_negative_branch_impedances: true
+#
+# --- ACTIVSg10k flatstart / wrong-branch rescue ---
+#case: case_ACTIVSg10k.m
+#opt_flatstart: true
+#flatstart_angle_mode: dc
+#flatstart_voltage_mode: bus_vm_va_blend
+#start_projection: true
+#start_projection_try_blend_scan: false
+#start_projection_try_dc_start: true
+#max_ite: 80
+#tol: 1.0e-5
+#tol_vm: 0.2
+#tol_va: 2.0
+#qlimit_start_iter: 3
+#qlimit_start_mode: auto_q_delta
+#qlimit_auto_q_delta_pu: 0.01
+#q_hyst_pu: 0.15
+#cooldown_iters: 2
+#
+# --- PEGASE-style SHIFT/radian experiment ---
+#case: case1354pegase.m
+#matpower_shift_sign: -1.0
+#matpower_shift_unit: rad
+#matpower_ratio: normal
+#diagnose_matpower_reference: true
+#diagnose_branch_shift_conventions: true
+#
+# --- MATPOWER warmstart validation ---
+#opt_flatstart: false
+#start_projection: false
+#wrong_branch_rescue: false
+#tol: 1.0e-8
+#max_ite: 50
