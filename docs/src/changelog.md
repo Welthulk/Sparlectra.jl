@@ -5,6 +5,7 @@
 * Added compact console reporting for large MATPOWER example runs while keeping the full diagnostics in the logfile.
 
 ### Fixes
+* Fixed direct `run_net_acpflow` and rectangular solver defaults so the Q-limit guard remains opt-in unless a caller or config explicitly enables it.
 * Fixed MATPOWER example config forwarding so Q-limit guard options from YAML are preserved in the effective config and passed through all `run_acpflow` paths.
 * Fixed rectangular NR status reporting: numerical convergence, Q-limit active-set consistency, final convergence, comparison status, and rejection reasons are now reported separately.
 * Fixed Q-limit guard behavior so strongly violating active PV buses can be locked to PQ during eligible Q-limit checks, reducing final active-PV limit violations.

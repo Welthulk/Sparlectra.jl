@@ -421,6 +421,31 @@ end
       @test occursin("NR convergence             : yes", status_text)
       @test occursin("Active-set convergence     : no", status_text)
       @test occursin("Final status               : qlimit_chatter", status_text)
+
+      function zero_range_pv_net()
+        guarded_net = createTest3BusNet()
+        guarded_bus = geNetBusIdx(net = guarded_net, busName = "STATION1")
+        guarded_net.nodeVec[guarded_bus]._nodeType = Sparlectra.PV
+        empty!(guarded_net.qmin_pu)
+        append!(guarded_net.qmin_pu, [-Inf, 0.0, -Inf])
+        empty!(guarded_net.qmax_pu)
+        append!(guarded_net.qmax_pu, [Inf, 0.0, Inf])
+        return guarded_net
+      end
+
+      # Regression: direct run_net_acpflow callers must opt in before the narrow-Q guard
+      # locks PV buses to PQ during rectangular pre-processing.
+      default_net = zero_range_pv_net()
+      redirect_stdout(devnull) do
+        run_net_acpflow(net = default_net, max_ite = 0, verbose = 0, show_results = false)
+      end
+      @test isempty(default_net.qLimitLog)
+
+      opt_in_net = zero_range_pv_net()
+      redirect_stdout(devnull) do
+        run_net_acpflow(net = opt_in_net, max_ite = 0, verbose = 0, show_results = false, qlimit_guard = true)
+      end
+      @test length(opt_in_net.qLimitLog) == 1
     end
 
 # Ensures final-limit validation remains robust when q-generation data is partially missing.
