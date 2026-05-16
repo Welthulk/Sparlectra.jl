@@ -1,7 +1,7 @@
 # Sparlectra.jl MATPOWER Case Diagnostics Matrix
 
-Date: 2026-05-15  
-Sparlectra version: 0.7.7  
+Date: 2026-05-16  
+Sparlectra versions covered: 0.7.7–0.7.8  
 Purpose: compact tracking table for MATPOWER import, reference-data consistency, and solver diagnostics.
 
 > **Data and license note**  
@@ -14,11 +14,16 @@ This note is intended as a living diagnostic matrix. Add one row per MATPOWER ca
 
 The matrix distinguishes solver convergence failures, wrong Newton solution branches, Sparlectra import/Y-bus mismatches, and inconsistent stored MATPOWER reference data. When a large fixed-reference residual is already reproducible with a raw MATPOWER-style Y-bus using the stored `VM`/`VA` values and branch data, classify the case as a reference-data consistency diagnostic rather than as a clean solver benchmark failure.
 
+## Latest addition: `case_ACTIVSg25k.m`
+
+`case_ACTIVSg25k.m` now converges successfully with the strengthened Q-limit guard profile. The final documented run reports `numerical_solution=OK`, `q_limit_active_set=OK`, `final_converged=true`, `iterations=8`, `pv2pq_events=2004`, `guarded narrow-Q PV buses=960`, and `compare=OK`. The remaining active PV/REF Q-limit violations are zero. This confirms that the earlier failure mode was primarily a Q-limit active-set stabilization issue, not a classical Newton divergence.
+
 ## Case matrix
 
 | Case | Size / type | Status in Sparlectra | Recommended YAML profile | Main findings | Case-specific anomalies / deviations | Wrong-branch risk | Open checks |
 |---|---:|---|---|---|---|---|---|
 | `case_ACTIVSg10k.m` | 10,000 buses; large synthetic transmission case | Converges with DC-angle flat start and blended voltage start. Latest documented run: `converged=yes`, `iterations=9`, `pv2pq_events=657`, `pv2pq_buses=640`, compare `status=OK`. | `large_flatstart_dc_blend` | MATPOWER import conventions confirmed: `shift_sign=1.0`, `shift_unit=deg`, `ratio=normal`, `bus_shunt_model=admittance`. Branch-shift scan strongly rejects opposite sign, radians, and reciprocal ratio. Bus shunts are required for reactive balance. | 273 PV/REF buses have no online generator; fallback to `BUS.VM` is required. Many PV buses have `Qmin=0` or `Qmax=0`. Large number of PV→PQ switches when Q-limits are enforced. Final active PV/REF setpoint residual is essentially zero for active PV buses, but hybrid comparison can show larger deviations where reference is `BUS.VM` or where buses switched to PQ. | High with classic flat start. A previous classic flat-start run converged formally to a low-voltage / wrong-branch solution with `max|dVm|≈1.0187 pu`, `max|dVa|≈90.73°`, `minVm=0.0 pu`. DC angle start removes this behaviour in the tested run. | Improve compact Q-limit reporting. Keep diagnostics for PV/REF buses without online generators. Track whether many zero Q-limits are data artefacts or valid MATPOWER case data. |
+| `case_ACTIVSg25k.m` | 25,000 buses; large ACTIVSg synthetic transmission case; 32,230 branches | Rectangular NR converges with strengthened Q-limit guard. Successful run: `numerical_solution=OK`, `q_limit_active_set=OK`, `final_converged=true`, `status=converged`, `iterations=8`, PF time `≈74.55 s`, total example runtime `≈85.11 s`, final mismatch `≈4.651e-08`. | `activsg25k_q_limit_guard` + `large_flatstart_dc_blend` | MATPOWER fixed-reference self-check is good for this size: `max|ΔP|≈7.118 MW`, `max|ΔQ|≈4.611 MVAr`. Auto-profile detects `2034/3779` online generators with zero or narrow Q range. Q-limit guard locks `960` narrow-range PV buses as PQ before rectangular NR. Active set converges cleanly: `PV violations=0`, `REF violations=0`, final `PV/REF Q-limit check=OK`. Switching statistics: `pv2pq_events=2004`, `pv2pq_buses=1996`, `oscillating_buses=0`. Compare against imported setpoints is `OK`: `max|dVm|≈0.04291 pu`, aligned `max|dVa|≈0.3683°`, slack Δ `≈0.0°`. | `2753/3235` PV/REF buses have online `GEN.VG` targets; `502` differ from `BUS.VM` by more than `1e-4 pu`. `482` PV/REF buses have no online generator and use `BUS.VM` fallback. Negative branch impedance is present and preserved: `BR_R<0` on `447` rows, `BR_X<0` on `503` rows, both negative on `447` rows. Compare reference kinds: `active_pv_imported_setpoint=1238`, `final_pq_after_qlimit=1996`, `pq_bus_vm=21765`, `ref_slack_imported_setpoint=1`. | Low with the successful profile. Previous failures were active-set stabilization failures caused by many zero/narrow-Q generators and infeasible PV setpoints, not classical Newton wrong-branch convergence. | Console output is still too verbose: keep full auto-profile, negative-branch diagnostics, PV voltage diagnostics, and per-bus PV→PQ events in the logfile; show only compact statistics on console. Consider whether `qlimit_guard_violation_mode=lock_pq` should become an auto-profile recommendation for large narrow-Q cases. |
 | `case300.m` | 300 buses; medium test case | Rectangular NR converges in about 5 iterations with 3 PV→PQ switches. Final voltage magnitudes are close, but angle comparison fails mainly around the `BUS_I 196 / 2040` area. | `large_flatstart_dc_blend` + `diagnostic_import_scan` | The MATPOWER fixed-reference self-check is not power-balanced around `BUS_I 196 / 2040`. The dominant mismatch is already reproducible with a MATPOWER-style Y-bus using the stored `VM`/`VA` values and raw branch data. Main residual: about 926.9 MW at `BUS_I 2040` and `BUS_I 196`. | Not classified as a Sparlectra Newton wrong-branch issue. The dominant mismatch appears to be caused by the stored case reference angles together with a low-reactance active branch `196 -> 2040` (`x = 0.02`, `TAP = 1`, `SHIFT = 0`). Treat this case as a reference-data consistency diagnostic, not as a clean pass/fail solver benchmark. | Low for the documented run; angle-reference comparison is dominated by the stored fixed-reference inconsistency rather than a known wrong branch. | Keep the fixed-reference diagnostic classification visible when updating MATPOWER comparison tolerances or profiles. Keep the explicit `TAP = 1` preservation regression, but do not treat lost nominal TAP as the remaining root cause. |
 | `case145.m` | 145 buses; medium/small test case | Rectangular NR converges: `converged=yes`, `iterations=6`, `pv2pq_events=1`, compare `status=OK`. | `large_flatstart_dc_blend` + `diagnostic_import_scan` | No branch-shift entries. Standard degree/radian/sign scans are irrelevant because `SHIFT=0`. Reciprocal ratio is rejected by diagnostics. Bus shunts are important: disabling them causes very large P/Q residuals. | One relevant PV→PQ switch: `BUS_I 104`, where `GEN.VG=1.045` differs from `BUS.VM≈1.0059`; after switching, comparison against imported setpoint shows `dVm≈-0.03909 pu`, but the hybrid compare is still within configured tolerances. Several PV buses have `Qmin=0`. | Low in the documented run. No evidence of a wrong Newton branch; angle deviation is very small (`max|dVa|≈0.0051°`). | Track whether `BUS_I 104` is a valid Q-limit-driven PV→PQ case. Keep zero-Q-limit and shunt sensitivity visible in future comparisons. |
 | `case1354pegase.m` | 1,354 buses; PEGASE case | With standard MATPOWER-style shift interpretation (`sign=1.0`, `unit=deg`) the compare fails. With PEGASE-style interpretation `matpower_shift_sign=-1.0`, `matpower_shift_unit=rad`, rectangular NR converges in 3 iterations with `pv2pq_events=0`; compare `status=OK`, `max|dVm|≈0.00254 pu`, `max|dVa|≈0.47247°`. | `pegase_shift_rad_opposite` + `large_flatstart_dc_blend` + `diagnostic_import_scan` | Branch-shift scan identifies `opposite sign, radians` as the only plausible convention. It reduces the fixed-reference active-power residual from about 1299.8 MW to about 38.8 MW. Bus shunts remain important for Q balance. | Six non-zero shift entries. Remaining fixed-reference mismatch is dominated by `BUS_I 58` and `BUS_I 6153`. No PV/REF buses without online generators. Active PV/REF setpoint residual is essentially zero after solve. | Low in the documented successful run. The earlier failed compare was mainly an import-convention issue, not a demonstrated wrong Newton branch. | Add an automatic PEGASE shift-convention recommendation when branch-shift scan strongly prefers `sign=-1.0`, `unit=rad`. Keep residual classification visible because the fixed-reference check is not perfectly zero even with the preferred convention. |
@@ -63,6 +68,56 @@ matpower_pv_voltage_source: gen_vg
 compare_voltage_reference: hybrid
 wrong_branch_detection: true
 wrong_branch_rescue: true
+```
+
+### `activsg25k_q_limit_guard`
+
+Use for the documented successful `case_ACTIVSg25k.m` run. The key point is not only a robust Newton start, but also a strong Q-limit guard for zero/narrow-Q PV buses and PV buses whose calculated Q violates limits after the first eligible Q-limit check.
+
+```yaml
+opt_flatstart: true
+flatstart_angle_mode: dc
+flatstart_voltage_mode: bus_vm_va_blend
+start_projection: true
+start_projection_try_blend_scan: false
+start_projection_try_dc_start: true
+start_projection_dc_angle_limit_deg: 70.0
+start_projection_blend_lambdas:
+  - 0.1
+  - 0.25
+  - 0.5
+  - 0.75
+
+autodamp: true
+autodamp_min: 0.05
+max_ite: 80
+tol: 1.0e-5
+
+ignore_q_limits: false
+qlimit_start_iter: 3
+qlimit_start_mode: iteration_or_auto
+qlimit_auto_q_delta_pu: 0.0001
+q_hyst_pu: 0.01
+cooldown_iters: 1
+
+qlimit_guard: true
+qlimit_guard_min_q_range_pu: 0.02
+qlimit_guard_zero_range_mode: lock_pq
+qlimit_guard_narrow_range_mode: lock_pq
+qlimit_guard_violation_mode: lock_pq
+qlimit_guard_violation_threshold_pu: 0.0001
+qlimit_guard_max_switches: 3
+qlimit_guard_freeze_after_repeated_switching: true
+qlimit_guard_accept_bounded_violations: false
+qlimit_guard_max_remaining_violations: 0
+qlimit_guard_log: true
+
+matpower_shift_sign: 1.0
+matpower_shift_unit: deg
+matpower_ratio: normal
+bus_shunt_model: admittance
+matpower_pv_voltage_source: gen_vg
+compare_voltage_reference: imported_setpoint
 ```
 
 ### `pegase_shift_rad_opposite`
@@ -130,6 +185,8 @@ Use the following short labels in the case matrix where useful:
 | `pegase_shift_rad_opposite` | PEGASE-style shift interpretation appears necessary: `matpower_shift_sign=-1.0`, `matpower_shift_unit=rad`. |
 | `ref_slack_q_warn` | Remaining Q-limit violation is on the REF/slack bus only and is reported as WARN by default. |
 | `final_pq_after_qlimit` | Bus was originally PV but switched to PQ due to Q-limits; its original PV voltage setpoint is no longer enforced. |
+| `qlimit_guard_stabilized` | Q-limit guard pre-locking and/or violation locking stabilizes many zero/narrow-Q PV buses and allows the active set to converge. |
+| `compact_console_needed` | Run is technically successful, but console output is too verbose; detailed diagnostics should remain in the logfile. |
 
 ## Notes for extending this table
 

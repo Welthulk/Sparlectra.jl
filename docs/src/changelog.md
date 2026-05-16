@@ -1,4 +1,23 @@
 # Change Log
+## Version 0.7.8 – 2026-05-16
+### Highlights
+* Improved Q-limit handling for large MATPOWER imports, especially cases with many generators that have zero or very narrow reactive-power ranges.
+* Added compact console reporting for large MATPOWER example runs while keeping the full diagnostics in the logfile.
+
+### Fixes
+* Fixed rectangular power-flow status caching to use weak network keys so repeated benchmark/example solves can release imported `Net` objects after callers consume the status.
+* Fixed direct `run_net_acpflow` and rectangular solver defaults so the Q-limit guard remains opt-in unless a caller or config explicitly enables it.
+* Fixed direct `run_tap_controllers_outer!` defaults so the Q-limit guard remains opt-in when the exported tap-control API calls `runpf!`.
+* Fixed MATPOWER example config forwarding so Q-limit guard options from YAML are preserved in the effective config and passed through all `run_acpflow` paths.
+* Fixed MATPOWER example console row limiting so `console_max_rows` from YAML is forwarded to Q-limit event and final active-set row caps in the `run_acpflow` paths.
+* Fixed rectangular NR status reporting: numerical convergence, Q-limit active-set consistency, final convergence, comparison status, and rejection reasons are now reported separately.
+* Fixed Q-limit guard behavior so strongly violating active PV buses can be locked to PQ during eligible Q-limit checks, reducing final active-PV limit violations.
+
+### Improvements
+* Reduced console noise for large Q-limit active-set cases by replacing long PV→PQ and violation tables with compact summaries.
+* Improved MATPOWER import example logging: the console now shows the essential run status, while detailed auto-profile evidence, diagnostics, and solver traces remain available in the logfile. 
+
+
 ## Version 0.7.7 – 2026-05-13
 
 ### Highlights
@@ -42,6 +61,7 @@
 
 ### Diagnostics
 
+* Added MATPOWER auto-profile pre-run mode (`matpower_auto_profile = recommend|apply`) to summarize or apply robust import, flat-start, PV/REF voltage-source, and Q-limit settings while preserving explicit YAML overrides.
 * Added branch-neighborhood reports for selected high-residual buses.
 * Added residual-cluster diagnostics for PEGASE-style mismatch regions.
 * Added negative branch impedance scans while preserving signed MATPOWER `BR_R` / `BR_X` values.

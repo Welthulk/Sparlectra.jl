@@ -104,6 +104,16 @@ function _as_output_mode(v)::Symbol
   end
 end
 
+function _as_console_mode(v)::Symbol
+  v === false && return :off
+  v === true && return :compact
+  s = lowercase(String(v))
+  s in ("false", "off", "none", "no", "0") && return :off
+  s in ("compact", "summary", "full") && return Symbol(s)
+  @warn "Unknown console/logfile verbosity mode; using :compact" value = v
+  return :compact
+end
+
 function _yaml_path_from_inputs()
   !isempty(ARGS) && return ARGS[1]
   env_path = get(ENV, "SPARLECTRA_MATPOWER_IMPORT_YAML", "")
@@ -226,6 +236,17 @@ function bench_config_for_case(case_name::AbstractString, yaml_cfg::Dict{String,
     qlimit_start_iter = 2,
     qlimit_start_mode = :iteration,
     qlimit_auto_q_delta_pu = 1e-4,
+    qlimit_guard = false,
+    qlimit_guard_min_q_range_pu = 1e-4,
+    qlimit_guard_zero_range_mode = :lock_pq,
+    qlimit_guard_narrow_range_mode = :prefer_pq,
+    qlimit_guard_max_switches = 10,
+    qlimit_guard_freeze_after_repeated_switching = true,
+    qlimit_guard_accept_bounded_violations = false,
+    qlimit_guard_max_remaining_violations = 0,
+    qlimit_guard_violation_mode = :delayed_switch,
+    qlimit_guard_violation_threshold_pu = 1e-4,
+    qlimit_guard_log = true,
     verbose = 1,
     cooldown_iters = 0,
     q_hyst_pu = 0.0,
@@ -291,6 +312,14 @@ function bench_config_for_case(case_name::AbstractString, yaml_cfg::Dict{String,
     wrong_branch_max_angle_spread_deg = 120.0,
     wrong_branch_rescue = false,
     wrong_branch_rescue_modes = [:dc, :bus_vm_va_blend, :matpower_va],
+    matpower_auto_profile = :off,
+    matpower_auto_profile_log = true,
+    console_summary = true,
+    console_auto_profile = :compact,
+    console_diagnostics = :compact,
+    console_q_limit_events = :summary,
+    console_max_rows = 20,
+    logfile_diagnostics = :full,
   )
   case_override = get(CASE_BENCH_OVERRIDES, String(case_name), (;))
   yaml_override = (;)
@@ -309,6 +338,17 @@ function bench_config_for_case(case_name::AbstractString, yaml_cfg::Dict{String,
       qlimit_start_iter = Int(get(yaml_cfg, "qlimit_start_iter", base.qlimit_start_iter)),
       qlimit_start_mode = Symbol(get(yaml_cfg, "qlimit_start_mode", base.qlimit_start_mode)),
       qlimit_auto_q_delta_pu = Float64(get(yaml_cfg, "qlimit_auto_q_delta_pu", base.qlimit_auto_q_delta_pu)),
+      qlimit_guard = Bool(get(yaml_cfg, "qlimit_guard", base.qlimit_guard)),
+      qlimit_guard_min_q_range_pu = Float64(get(yaml_cfg, "qlimit_guard_min_q_range_pu", base.qlimit_guard_min_q_range_pu)),
+      qlimit_guard_zero_range_mode = Symbol(get(yaml_cfg, "qlimit_guard_zero_range_mode", base.qlimit_guard_zero_range_mode)),
+      qlimit_guard_narrow_range_mode = Symbol(get(yaml_cfg, "qlimit_guard_narrow_range_mode", base.qlimit_guard_narrow_range_mode)),
+      qlimit_guard_max_switches = Int(get(yaml_cfg, "qlimit_guard_max_switches", base.qlimit_guard_max_switches)),
+      qlimit_guard_freeze_after_repeated_switching = Bool(get(yaml_cfg, "qlimit_guard_freeze_after_repeated_switching", base.qlimit_guard_freeze_after_repeated_switching)),
+      qlimit_guard_accept_bounded_violations = Bool(get(yaml_cfg, "qlimit_guard_accept_bounded_violations", base.qlimit_guard_accept_bounded_violations)),
+      qlimit_guard_max_remaining_violations = Int(get(yaml_cfg, "qlimit_guard_max_remaining_violations", base.qlimit_guard_max_remaining_violations)),
+      qlimit_guard_violation_mode = Symbol(get(yaml_cfg, "qlimit_guard_violation_mode", base.qlimit_guard_violation_mode)),
+      qlimit_guard_violation_threshold_pu = Float64(get(yaml_cfg, "qlimit_guard_violation_threshold_pu", base.qlimit_guard_violation_threshold_pu)),
+      qlimit_guard_log = Bool(get(yaml_cfg, "qlimit_guard_log", base.qlimit_guard_log)),
       verbose = Int(get(yaml_cfg, "verbose", base.verbose)),
       cooldown_iters = Int(get(yaml_cfg, "cooldown_iters", base.cooldown_iters)),
       q_hyst_pu = Float64(get(yaml_cfg, "q_hyst_pu", base.q_hyst_pu)),
@@ -374,6 +414,14 @@ function bench_config_for_case(case_name::AbstractString, yaml_cfg::Dict{String,
       wrong_branch_max_angle_spread_deg = Float64(get(yaml_cfg, "wrong_branch_max_angle_spread_deg", base.wrong_branch_max_angle_spread_deg)),
       wrong_branch_rescue = Bool(get(yaml_cfg, "wrong_branch_rescue", base.wrong_branch_rescue)),
       wrong_branch_rescue_modes = _as_symbol_vec(get(yaml_cfg, "wrong_branch_rescue_modes", base.wrong_branch_rescue_modes)),
+      matpower_auto_profile = _as_auto_profile_mode(get(yaml_cfg, "matpower_auto_profile", base.matpower_auto_profile)),
+      matpower_auto_profile_log = Bool(get(yaml_cfg, "matpower_auto_profile_log", base.matpower_auto_profile_log)),
+      console_summary = Bool(get(yaml_cfg, "console_summary", base.console_summary)),
+      console_auto_profile = _as_console_mode(get(yaml_cfg, "console_auto_profile", base.console_auto_profile)),
+      console_diagnostics = _as_console_mode(get(yaml_cfg, "console_diagnostics", base.console_diagnostics)),
+      console_q_limit_events = _as_console_mode(get(yaml_cfg, "console_q_limit_events", base.console_q_limit_events)),
+      console_max_rows = Int(get(yaml_cfg, "console_max_rows", base.console_max_rows)),
+      logfile_diagnostics = _as_console_mode(get(yaml_cfg, "logfile_diagnostics", base.logfile_diagnostics)),
     )
   end
   return merge(base, case_override, yaml_override)
@@ -1119,6 +1167,134 @@ function _print_effective_config(io::IO, cfg; yaml_path::String = "", case_name:
   println(io, "===============================================================================\n")
   return nothing
 end
+function _as_auto_profile_mode(v)::Symbol
+  v === false && return :off
+  v === true && return :apply
+  s = lowercase(String(v))
+  s in ("false", "off", "none", "no", "0") && return :off
+  s == "recommend" && return :recommend
+  s == "apply" && return :apply
+  @warn "Unknown matpower_auto_profile; using false/off" value = v
+  return :off
+end
+
+function _namedtuple_from_symbol_dict(d::Dict{Symbol,Any})
+  isempty(d) && return (;)
+  ordered = sort!(collect(keys(d)); by = String)
+  return NamedTuple{Tuple(ordered)}(Tuple(d[k] for k in ordered))
+end
+
+function _max_reference_residual_mw(diag, baseMVA::Real)
+  max_p = isempty(diag.p_rows) ? 0.0 : maximum(abs.(real.(diag.mis[diag.p_rows]))) * baseMVA
+  max_q = isempty(diag.q_rows) ? 0.0 : maximum(abs.(imag.(diag.mis[diag.q_rows]))) * baseMVA
+  return (; max_p, max_q, score = max(max_p, max_q))
+end
+
+function _matpower_auto_add!(recommendations::Dict{Symbol,Any}, reasons::Dict{Symbol,String}, option::Symbol, value, reason::AbstractString)
+  recommendations[option] = value
+  reasons[option] = String(reason)
+  return nothing
+end
+
+function _matpower_auto_profile_shift_scan!(recommendations::Dict{Symbol,Any}, reasons::Dict{Symbol,String}, evidence::Vector{String}, mpc, cfg)
+  mp_has_vm_va(mpc) || (push!(evidence, "branch-shift scan skipped: no usable MATPOWER VM/VA reference"); return nothing)
+  variants = [
+    (; label = "standard sign/degrees + normal ratio", matpower_shift_sign = 1.0, matpower_shift_unit = "deg", matpower_ratio = "normal"),
+    (; label = "opposite sign/radians + normal ratio", matpower_shift_sign = -1.0, matpower_shift_unit = "rad", matpower_ratio = "normal"),
+    (; label = "standard sign/degrees + reciprocal ratio", matpower_shift_sign = 1.0, matpower_shift_unit = "deg", matpower_ratio = "reciprocal"),
+    (; label = "opposite sign/radians + reciprocal ratio", matpower_shift_sign = -1.0, matpower_shift_unit = "rad", matpower_ratio = "reciprocal"),
+  ]
+  rows = NamedTuple[]
+  current = nothing
+  for v in variants
+    diag = Base.invokelatest(getfield(@__MODULE__, :_matpower_reference_residuals), mpc; matpower_shift_sign = v.matpower_shift_sign, matpower_shift_unit = v.matpower_shift_unit, matpower_ratio = v.matpower_ratio)
+    res = _max_reference_residual_mw(diag, mpc.baseMVA)
+    row = merge(v, res)
+    push!(rows, row)
+    if isapprox(v.matpower_shift_sign, cfg.matpower_shift_sign; atol = 0.0, rtol = 0.0) && v.matpower_shift_unit == cfg.matpower_shift_unit && v.matpower_ratio == cfg.matpower_ratio
+      current = row
+    end
+  end
+  best = rows[argmin([r.score for r in rows])]
+  current = isnothing(current) ? best : current
+  push!(evidence, @sprintf("branch-shift scan best='%s' score=%.3f MW/MVAr; current='%s' score=%.3f", best.label, best.score, current.label, current.score))
+  if best.score + 1e-9 < 0.5 * max(current.score, 1e-9)
+    reason = @sprintf("branch-shift scan strongly improves fixed-reference residual score from %.3f to %.3f MW/MVAr", current.score, best.score)
+    _matpower_auto_add!(recommendations, reasons, :matpower_shift_sign, best.matpower_shift_sign, reason)
+    _matpower_auto_add!(recommendations, reasons, :matpower_shift_unit, best.matpower_shift_unit, reason)
+    _matpower_auto_add!(recommendations, reasons, :matpower_ratio, best.matpower_ratio, reason)
+  end
+  return nothing
+end
+
+function _matpower_auto_profile_shunt_scan!(recommendations::Dict{Symbol,Any}, reasons::Dict{Symbol,String}, evidence::Vector{String}, mpc, cfg)
+  mp_has_vm_va(mpc) || (push!(evidence, "bus-shunt scan skipped: no usable MATPOWER VM/VA reference"); return nothing)
+  keep = Base.invokelatest(getfield(@__MODULE__, :_matpower_reference_residuals), mpc; matpower_shift_sign = cfg.matpower_shift_sign, matpower_shift_unit = cfg.matpower_shift_unit, matpower_ratio = cfg.matpower_ratio, keep_shunts = true)
+  drop = Base.invokelatest(getfield(@__MODULE__, :_matpower_reference_residuals), mpc; matpower_shift_sign = cfg.matpower_shift_sign, matpower_shift_unit = cfg.matpower_shift_unit, matpower_ratio = cfg.matpower_ratio, keep_shunts = false)
+  keep_res = _max_reference_residual_mw(keep, mpc.baseMVA)
+  drop_res = _max_reference_residual_mw(drop, mpc.baseMVA)
+  push!(evidence, @sprintf("bus-shunt scan keep max|dP|=%.3f MW max|dQ|=%.3f MVAr; drop max|dP|=%.3f MW max|dQ|=%.3f MVAr", keep_res.max_p, keep_res.max_q, drop_res.max_p, drop_res.max_q))
+  if drop_res.max_q > 1.05 * max(keep_res.max_q, 1e-9) || drop_res.max_p >= 0.95 * max(keep_res.max_p, 1e-9)
+    _matpower_auto_add!(recommendations, reasons, :bus_shunt_model, "admittance", "disabling MATPOWER bus shunts does not improve active residuals or worsens reactive residuals")
+  end
+  return nothing
+end
+
+function _matpower_auto_profile_voltage_source!(recommendations::Dict{Symbol,Any}, reasons::Dict{Symbol,String}, evidence::Vector{String}, mpc)
+  rows = MatpowerIO.pv_voltage_reference_rows(mpc; warn = false)
+  isempty(rows) && (push!(evidence, "PV/REF voltage-source scan found no PV/REF buses"); return nothing)
+  with_online = count(r -> !isempty(r.gen_vgs), rows)
+  mismatched = count(r -> !isempty(r.gen_vgs) && isfinite(r.dvg_bus) && abs(r.dvg_bus) > 1e-4, rows)
+  push!(evidence, "PV/REF voltage-source scan: $(with_online)/$(length(rows)) buses have online GEN.VG targets; $(mismatched) differ from BUS.VM by more than 1e-4 pu")
+  if with_online > 0
+    _matpower_auto_add!(recommendations, reasons, :matpower_pv_voltage_source, :gen_vg, "PV/REF buses have online generator voltage targets")
+    _matpower_auto_add!(recommendations, reasons, :compare_voltage_reference, :hybrid, "hybrid comparison uses active setpoints for PV/REF buses while preserving BUS.VM for PQ and switched buses")
+  end
+  return nothing
+end
+
+function _matpower_auto_profile_flatstart!(recommendations::Dict{Symbol,Any}, reasons::Dict{Symbol,String}, evidence::Vector{String}, mpc)
+  nbus = size(mpc.bus, 1)
+  nbranch = size(mpc.branch, 1)
+  nonzero_shift = size(mpc.branch, 2) >= 10 ? count(!iszero, mpc.branch[:, 10]) : 0
+  large_or_shifted = nbus >= 1000 || nbranch >= 2000 || nonzero_shift >= 10
+  push!(evidence, "flatstart scan: nbus=$(nbus), nbranch=$(nbranch), nonzero branch SHIFT=$(nonzero_shift)")
+  if large_or_shifted
+    reason = "large or phase-shifted MATPOWER case benefits from DC-angle and blended-voltage flat-start seeds"
+    _matpower_auto_add!(recommendations, reasons, :opt_flatstart, true, reason)
+    _matpower_auto_add!(recommendations, reasons, :flatstart_angle_mode, :dc, reason)
+    _matpower_auto_add!(recommendations, reasons, :flatstart_voltage_mode, :bus_vm_va_blend, reason)
+    _matpower_auto_add!(recommendations, reasons, :start_projection, true, reason)
+    _matpower_auto_add!(recommendations, reasons, :start_projection_try_dc_start, true, reason)
+    _matpower_auto_add!(recommendations, reasons, :start_projection_try_blend_scan, false, "DC start plus bus VM/VA blend is the compact default pre-run profile for large cases")
+  end
+  return nothing
+end
+
+function _matpower_auto_profile_qlimits!(recommendations::Dict{Symbol,Any}, reasons::Dict{Symbol,String}, evidence::Vector{String}, mpc)
+  size(mpc.gen, 2) >= 8 || (push!(evidence, "Q-limit scan skipped: MATPOWER gen table has no status column"); return nothing)
+  active = [g for g in axes(mpc.gen, 1) if mpc.gen[g, 8] > 0.0]
+  isempty(active) && (push!(evidence, "Q-limit scan found no online generators"); return nothing)
+  narrow = 0
+  for g in active
+    qmax = Float64(mpc.gen[g, 4])
+    qmin = Float64(mpc.gen[g, 5])
+    width = qmax - qmin
+    if abs(width) <= 1e-6 || max(abs(qmax), abs(qmin)) <= 1e-6 || width <= 5.0
+      narrow += 1
+    end
+  end
+  share = narrow / length(active)
+  push!(evidence, @sprintf("Q-limit scan: %d/%d online generators have zero or narrow Q range", narrow, length(active)))
+  if narrow >= 5 && share >= 0.25
+    _matpower_auto_add!(recommendations, reasons, :qlimit_start_iter, 3, "many generators have zero or narrow reactive-power limits; delay switching slightly")
+    _matpower_auto_add!(recommendations, reasons, :qlimit_start_mode, :iteration_or_auto, "many narrow Q limits benefit from conservative iteration-or-stability start")
+    _matpower_auto_add!(recommendations, reasons, :q_hyst_pu, 0.01, "many narrow Q limits benefit from a small hysteresis deadband")
+    _matpower_auto_add!(recommendations, reasons, :cooldown_iters, 1, "many narrow Q limits benefit from a short PV/PQ cooldown")
+  end
+  return nothing
+end
+
 
 function _print_vmva_self_check(io::IO, mpc; matpower_shift_sign::Real = 1.0, matpower_shift_unit = "deg", matpower_ratio = "normal")
   vmva_chk = MatpowerIO.vmva_power_mismatch_stats(mpc; matpower_shift_sign = matpower_shift_sign, matpower_shift_unit = matpower_shift_unit, matpower_ratio = matpower_ratio)
@@ -1162,10 +1338,16 @@ function _print_converged_loss_summary(io::IO, method::Symbol, status, net::Spar
   return nothing
 end
 
-function _show_once_summary_row(method::Symbol, status, stats, cmp_ok::Bool; compare_available::Bool)
+function _show_once_summary_row(method::Symbol, status, stats, cmp_ok::Bool; compare_available::Bool, net = nothing)
   converged = Bool(get(status, :converged, false))
   iterations = _run_iterations(status)
   elapsed_s = _run_elapsed_s(status)
+  numerical_solution = Bool(get(status, :numerical_converged, converged)) ? :ok : :fail
+  q_limit_active_set = Bool(get(status, :q_limit_active_set_ok, converged)) ? :ok : :fail
+  final_converged = Bool(get(status, :final_converged, converged))
+  reason_text = String(get(status, :reason_text, final_converged ? "none" : "not converged"))
+  status_text = String(get(status, :status, final_converged ? :converged : :not_converged))
+  qcounts = _qlimit_summary_counts(net)
   if compare_available
     return (
       method = method,
@@ -1178,9 +1360,38 @@ function _show_once_summary_row(method::Symbol, status, stats, cmp_ok::Bool; com
       angle_alignment = get(stats, :angle_alignment, :none),
       cmp_ok = cmp_ok,
       compare_status = Symbol(get(stats, :compare_status, cmp_ok ? :ok : :fail)),
+      numerical_solution = numerical_solution,
+      q_limit_active_set = q_limit_active_set,
+      final_converged = final_converged,
+      reason_text = reason_text,
+      status = status_text,
+      pv2pq_events = qcounts.pv2pq_events,
+      pv2pq_buses = qcounts.pv2pq_buses,
+      guarded_pv_buses = qcounts.guarded_pv_buses,
+      oscillating_buses = qcounts.oscillating_buses,
     )
   end
-  return (method = method, converged = converged, iterations = iterations, elapsed_s = elapsed_s, max_dvm = NaN, max_dva = NaN, slack_delta_va = NaN, angle_alignment = :none, cmp_ok = false, compare_status = :skip)
+  return (
+    method = method,
+    converged = converged,
+    iterations = iterations,
+    elapsed_s = elapsed_s,
+    max_dvm = NaN,
+    max_dva = NaN,
+    slack_delta_va = NaN,
+    angle_alignment = :none,
+    cmp_ok = false,
+    compare_status = :skip,
+    numerical_solution = numerical_solution,
+    q_limit_active_set = q_limit_active_set,
+    final_converged = final_converged,
+    reason_text = reason_text,
+    status = status_text,
+    pv2pq_events = qcounts.pv2pq_events,
+    pv2pq_buses = qcounts.pv2pq_buses,
+    guarded_pv_buses = qcounts.guarded_pv_buses,
+    oscillating_buses = qcounts.oscillating_buses,
+  )
 end
 
 function _print_pv_voltage_reference_diagnostics(io::IO, mpc, net; matpower_pv_voltage_source = :gen_vg, compare_voltage_reference = :bus_vm, tol::Float64 = 1e-4, maxlines::Int = 30)
@@ -1362,6 +1573,17 @@ function bench_run_acpflow(;
   qlimit_start_iter::Int = 2,
   qlimit_start_mode::Symbol = :iteration,
   qlimit_auto_q_delta_pu::Float64 = 1e-4,
+  qlimit_guard::Bool = false,
+  qlimit_guard_min_q_range_pu::Float64 = 1e-4,
+  qlimit_guard_zero_range_mode::Symbol = :lock_pq,
+  qlimit_guard_narrow_range_mode::Symbol = :prefer_pq,
+  qlimit_guard_max_switches::Int = 10,
+  qlimit_guard_freeze_after_repeated_switching::Bool = true,
+  qlimit_guard_accept_bounded_violations::Bool = false,
+  qlimit_guard_max_remaining_violations::Int = 0,
+  qlimit_guard_violation_mode::Symbol = :delayed_switch,
+  qlimit_guard_violation_threshold_pu::Float64 = 1e-4,
+  qlimit_guard_log::Bool = true,
   verbose::Int = 0,
   cooldown_iters::Int = 0,
   q_hyst_pu::Float64 = 0.0,
@@ -1419,6 +1641,12 @@ function bench_run_acpflow(;
   wrong_branch_max_angle_spread_deg::Float64 = 120.0,
   wrong_branch_rescue::Bool = false,
   wrong_branch_rescue_modes::AbstractVector{Symbol} = [:dc, :bus_vm_va_blend, :matpower_va],
+  console_summary::Bool = true,
+  console_auto_profile::Symbol = :compact,
+  console_diagnostics::Symbol = :compact,
+  console_q_limit_events::Symbol = :summary,
+  console_max_rows::Int = 20,
+  logfile_diagnostics::Symbol = :full,
   log_status::_MatpowerImportLogStatus = _MatpowerImportLogStatus(),
 )
   t0 = time()
@@ -1491,9 +1719,8 @@ function bench_run_acpflow(;
 
   # Optional: show results once (not benchmarked)
   if show_once
-    local summaries = Vector{NamedTuple{(:method, :converged, :iterations, :elapsed_s, :max_dvm, :max_dva, :slack_delta_va, :angle_alignment, :cmp_ok, :compare_status),Tuple{Symbol,Bool,Int,Float64,Float64,Float64,Float64,Symbol,Bool,Symbol}}}()
+    local summaries = NamedTuple[]
     show_classic = (show_once_output == :classic)
-    println("show_once output is written to logfile: ", logfile)
     for m in methods
       open(logfile, "a") do io
         redirect_stdout(io) do
@@ -1520,6 +1747,18 @@ function bench_run_acpflow(;
               qlimit_start_iter = qlimit_start_iter,
               qlimit_start_mode = qlimit_start_mode,
               qlimit_auto_q_delta_pu = qlimit_auto_q_delta_pu,
+              qlimit_guard = qlimit_guard,
+              qlimit_guard_min_q_range_pu = qlimit_guard_min_q_range_pu,
+              qlimit_guard_zero_range_mode = qlimit_guard_zero_range_mode,
+              qlimit_guard_narrow_range_mode = qlimit_guard_narrow_range_mode,
+              qlimit_guard_max_switches = qlimit_guard_max_switches,
+              qlimit_guard_freeze_after_repeated_switching = qlimit_guard_freeze_after_repeated_switching,
+              qlimit_guard_accept_bounded_violations = qlimit_guard_accept_bounded_violations,
+              qlimit_guard_max_remaining_violations = qlimit_guard_max_remaining_violations,
+              qlimit_guard_violation_mode = qlimit_guard_violation_mode,
+              qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu,
+              qlimit_guard_log = qlimit_guard_log,
+              pv_table_rows = console_max_rows,
               opt_flatstart = opt_flatstart,
               show_results = show_classic,
               show_compact_result = true,
@@ -1574,9 +1813,9 @@ function bench_run_acpflow(;
                 matpower_pv_voltage_source = matpower_pv_voltage_source,
                 tol = matpower_pv_voltage_mismatch_tol_pu,
               )
-              push!(summaries, _show_once_summary_row(m, status, stats, ok; compare_available = true))
+              push!(summaries, _show_once_summary_row(m, status, stats, ok; compare_available = true, net = net_res))
             else
-              push!(summaries, _show_once_summary_row(m, status, nothing, false; compare_available = false))
+              push!(summaries, _show_once_summary_row(m, status, nothing, false; compare_available = false, net = net_res))
               println("Compare skipped: no solution-like VM/VA in mpc.bus(:,8:9)")
             end
             if !Bool(get(status, :converged, false)) && !enable_pq_gen_controllers && m === :rectangular
@@ -1600,6 +1839,18 @@ function bench_run_acpflow(;
                 qlimit_start_iter = qlimit_start_iter,
                 qlimit_start_mode = qlimit_start_mode,
                 qlimit_auto_q_delta_pu = qlimit_auto_q_delta_pu,
+                qlimit_guard = qlimit_guard,
+                qlimit_guard_min_q_range_pu = qlimit_guard_min_q_range_pu,
+                qlimit_guard_zero_range_mode = qlimit_guard_zero_range_mode,
+                qlimit_guard_narrow_range_mode = qlimit_guard_narrow_range_mode,
+                qlimit_guard_max_switches = qlimit_guard_max_switches,
+                qlimit_guard_freeze_after_repeated_switching = qlimit_guard_freeze_after_repeated_switching,
+                qlimit_guard_accept_bounded_violations = qlimit_guard_accept_bounded_violations,
+                qlimit_guard_max_remaining_violations = qlimit_guard_max_remaining_violations,
+                qlimit_guard_violation_mode = qlimit_guard_violation_mode,
+                qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu,
+                qlimit_guard_log = qlimit_guard_log,
+                pv_table_rows = console_max_rows,
                 opt_flatstart = opt_flatstart,
                 show_results = false,
                 show_compact_result = true,
@@ -1630,18 +1881,12 @@ function bench_run_acpflow(;
       end
     end
 
-    # print short summary to terminal
-    println("\n==================== Summary ====================")
-    println("logfile: ", logfile)
-    for s in summaries
-      if isnan(s.max_dvm) || isnan(s.max_dva)
-        @printf("method=%-12s  converged=%s  iterations=%d  time=%8.6f s  compare=SKIP\n", String(s.method), s.converged ? "yes" : "no", s.iterations, s.elapsed_s)
-      else
-        compare_text = s.compare_status == :ok ? "OK " : s.compare_status == :warn ? "WARN" : "FAIL"
-        @printf("method=%-12s  converged=%s  iterations=%d  time=%8.6f s  compare=%s  max|dVm|=%8.5f pu  max|dVa|_aligned=%7.4f deg  slackΔ=%+8.4f deg\n", String(s.method), s.converged ? "yes" : "no", s.iterations, s.elapsed_s, compare_text, s.max_dvm, s.max_dva, s.slack_delta_va)
-      end
+    # print compact operational summary to terminal
+    if console_summary
+      println()
+      _print_matpower_run_summary(stdout, summaries; logfile = logfile, q_limit_mode = console_q_limit_events)
+      println()
     end
-    println("=================================================\n")
   end
 
   if !show_once
@@ -1666,6 +1911,18 @@ function bench_run_acpflow(;
         qlimit_start_iter = qlimit_start_iter,
         qlimit_start_mode = qlimit_start_mode,
         qlimit_auto_q_delta_pu = qlimit_auto_q_delta_pu,
+        qlimit_guard = qlimit_guard,
+        qlimit_guard_min_q_range_pu = qlimit_guard_min_q_range_pu,
+        qlimit_guard_zero_range_mode = qlimit_guard_zero_range_mode,
+        qlimit_guard_narrow_range_mode = qlimit_guard_narrow_range_mode,
+        qlimit_guard_max_switches = qlimit_guard_max_switches,
+        qlimit_guard_freeze_after_repeated_switching = qlimit_guard_freeze_after_repeated_switching,
+        qlimit_guard_accept_bounded_violations = qlimit_guard_accept_bounded_violations,
+        qlimit_guard_max_remaining_violations = qlimit_guard_max_remaining_violations,
+        qlimit_guard_violation_mode = qlimit_guard_violation_mode,
+        qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu,
+        qlimit_guard_log = qlimit_guard_log,
+        pv_table_rows = console_max_rows,
         opt_flatstart = opt_flatstart,
         show_results = false,
         show_compact_result = true,
@@ -1698,9 +1955,7 @@ function bench_run_acpflow(;
 
   if !benchmark
     total_s = time() - t0
-    println("\nBenchmarkTools loop skipped (`benchmark: false`).")
-    @printf("total runtime    = %.3f s\n", total_s)
-    println("logfile: ", logfile)
+    @printf("total runtime        : %.3f s\n", total_s)
     open(logfile, "a") do io
       @printf(io, "total runtime: %.3f s\n", total_s)
       _print_log_status(io, log_status)
@@ -1730,6 +1985,18 @@ function bench_run_acpflow(;
       qlimit_start_iter = qlimit_start_iter,
       qlimit_start_mode = qlimit_start_mode,
       qlimit_auto_q_delta_pu = qlimit_auto_q_delta_pu,
+      qlimit_guard = qlimit_guard,
+      qlimit_guard_min_q_range_pu = qlimit_guard_min_q_range_pu,
+      qlimit_guard_zero_range_mode = qlimit_guard_zero_range_mode,
+      qlimit_guard_narrow_range_mode = qlimit_guard_narrow_range_mode,
+      qlimit_guard_max_switches = qlimit_guard_max_switches,
+      qlimit_guard_freeze_after_repeated_switching = qlimit_guard_freeze_after_repeated_switching,
+      qlimit_guard_accept_bounded_violations = qlimit_guard_accept_bounded_violations,
+      qlimit_guard_max_remaining_violations = qlimit_guard_max_remaining_violations,
+      qlimit_guard_violation_mode = qlimit_guard_violation_mode,
+      qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu,
+      qlimit_guard_log = qlimit_guard_log,
+      pv_table_rows = console_max_rows,
       opt_flatstart = opt_flatstart,
       show_results = false,
       verbose = 0,
@@ -1787,6 +2054,18 @@ function bench_run_acpflow(;
       qlimit_start_iter = qlimit_start_iter_,
       qlimit_start_mode = qlimit_start_mode_,
       qlimit_auto_q_delta_pu = qlimit_auto_q_delta_pu_,
+      qlimit_guard = qlimit_guard_,
+      qlimit_guard_min_q_range_pu = qlimit_guard_min_q_range_pu_,
+      qlimit_guard_zero_range_mode = qlimit_guard_zero_range_mode_,
+      qlimit_guard_narrow_range_mode = qlimit_guard_narrow_range_mode_,
+      qlimit_guard_max_switches = qlimit_guard_max_switches_,
+      qlimit_guard_freeze_after_repeated_switching = qlimit_guard_freeze_after_repeated_switching_,
+      qlimit_guard_accept_bounded_violations = qlimit_guard_accept_bounded_violations_,
+      qlimit_guard_max_remaining_violations = qlimit_guard_max_remaining_violations_,
+      qlimit_guard_violation_mode = qlimit_guard_violation_mode_,
+      qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu_,
+      qlimit_guard_log = qlimit_guard_log_,
+      pv_table_rows = pv_table_rows_,
       opt_flatstart = opt_flatstart_,
       show_results = false,
       verbose = 0,
@@ -1822,6 +2101,18 @@ function bench_run_acpflow(;
     qlimit_start_iter_ = $qlimit_start_iter;
     qlimit_start_mode_ = $qlimit_start_mode;
     qlimit_auto_q_delta_pu_ = $qlimit_auto_q_delta_pu;
+    qlimit_guard_ = $qlimit_guard;
+    qlimit_guard_min_q_range_pu_ = $qlimit_guard_min_q_range_pu;
+    qlimit_guard_zero_range_mode_ = $qlimit_guard_zero_range_mode;
+    qlimit_guard_narrow_range_mode_ = $qlimit_guard_narrow_range_mode;
+    qlimit_guard_max_switches_ = $qlimit_guard_max_switches;
+    qlimit_guard_freeze_after_repeated_switching_ = $qlimit_guard_freeze_after_repeated_switching;
+    qlimit_guard_accept_bounded_violations_ = $qlimit_guard_accept_bounded_violations;
+    qlimit_guard_max_remaining_violations_ = $qlimit_guard_max_remaining_violations;
+    qlimit_guard_violation_mode_ = $qlimit_guard_violation_mode;
+    qlimit_guard_violation_threshold_pu_ = $qlimit_guard_violation_threshold_pu;
+    qlimit_guard_log_ = $qlimit_guard_log;
+    pv_table_rows_ = $console_max_rows;
     opt_flatstart_ = $opt_flatstart;
     cooldown_iters_ = $cooldown_iters;
     q_hyst_pu_ = $q_hyst_pu;
@@ -1856,14 +2147,178 @@ function bench_run_acpflow(;
     @printf("bench  method=%-12s  med=%8.4f ms  min=%8.4f ms  alloc=%9d B  allocs=%d\n", String(m), tmed, tmin, alloc, allocs)
   end
   total_s = time() - t0
-  @printf("\ntotal runtime    = %.3f s\n", total_s)
-  println("logfile: ", logfile)
+  @printf("\ntotal runtime        : %.3f s\n", total_s)
   open(logfile, "a") do io
     @printf(io, "total runtime: %.3f s\n", total_s)
     _print_log_status(io, log_status)
   end
   _print_log_status(stdout, log_status)
   return results
+end
+
+"""
+    _matpower_auto_profile(mpc, cfg, yaml_cfg)
+
+Build the optional MATPOWER example auto-profile for an imported case. The
+profile inspects fixed-reference residuals, shunt impact, PV/REF voltage targets,
+large-case flat-start risk, and narrow Q-limit patterns, then returns the
+original configuration plus recommendations and any safely applied changes.
+Explicit YAML keys are preserved in `apply` mode so user configuration remains
+reproducible.
+"""
+function _matpower_auto_profile(mpc, cfg, yaml_cfg::Dict{String,Any})
+  mode = _as_auto_profile_mode(cfg.matpower_auto_profile)
+  explicit_keys = Set(Symbol(k) for k in keys(yaml_cfg))
+  recommendations = Dict{Symbol,Any}()
+  reasons = Dict{Symbol,String}()
+  evidence = String[]
+  applied = Dict{Symbol,Any}()
+  preserved = Symbol[]
+
+  if mode != :off
+    _matpower_auto_profile_shift_scan!(recommendations, reasons, evidence, mpc, cfg)
+    _matpower_auto_profile_shunt_scan!(recommendations, reasons, evidence, mpc, cfg)
+    _matpower_auto_profile_voltage_source!(recommendations, reasons, evidence, mpc)
+    _matpower_auto_profile_flatstart!(recommendations, reasons, evidence, mpc)
+    _matpower_auto_profile_qlimits!(recommendations, reasons, evidence, mpc)
+
+    if mode == :apply
+      for option in sort!(collect(keys(recommendations)); by = String)
+        if option in explicit_keys
+          push!(preserved, option)
+        else
+          current = hasproperty(cfg, option) ? getproperty(cfg, option) : nothing
+          recommended = recommendations[option]
+          current == recommended || (applied[option] = recommended)
+        end
+      end
+    end
+  end
+
+  cfg_out = isempty(applied) ? cfg : merge(cfg, _namedtuple_from_symbol_dict(applied))
+  return (; mode, cfg = cfg_out, recommendations = _namedtuple_from_symbol_dict(recommendations), applied = _namedtuple_from_symbol_dict(applied), preserved = sort!(preserved; by = String), reasons, evidence)
+end
+
+function _print_matpower_auto_profile(io::IO, result)
+  result.mode == :off && return nothing
+  println(io, "==================== MATPOWER auto-profile ====================")
+  println(io, "mode: ", result.mode)
+  if isempty(result.evidence)
+    println(io, "diagnostics: no evidence collected")
+  else
+    println(io, "diagnostics:")
+    for item in result.evidence
+      println(io, "  - ", item)
+    end
+  end
+  rec_keys = sort!(collect(keys(pairs(result.recommendations))); by = String)
+  if isempty(rec_keys)
+    println(io, "recommendations: none; keeping user/default configuration")
+  else
+    println(io, "recommendations:")
+    for option in rec_keys
+      value = getproperty(result.recommendations, option)
+      action = hasproperty(result.applied, option) ? "applied" : (option in result.preserved ? "preserved explicit value" : "recommended only")
+      println(io, "  - ", option, " => ", value, " [", action, "]")
+      println(io, "    reason: ", get(result.reasons, option, "diagnostic recommendation"))
+    end
+  end
+  println(io, "================================================================\n")
+  return nothing
+end
+
+function _auto_profile_recommendation_text(result, option::Symbol, yes::AbstractString, no::AbstractString = "OK")::String
+  return hasproperty(result.recommendations, option) ? yes : no
+end
+
+function _auto_profile_evidence_with_prefix(result, prefix::AbstractString)::String
+  for item in result.evidence
+    startswith(item, prefix) && return item
+  end
+  return ""
+end
+
+function _print_matpower_auto_profile_compact(io::IO, result)
+  result.mode == :off && return nothing
+  println(io, "MATPOWER auto-profile: ", result.mode)
+  branch_evidence = _auto_profile_evidence_with_prefix(result, "branch-shift scan")
+  branch_match = match(r"branch-shift scan best='([^']+)'", branch_evidence)
+  branch_text = isnothing(branch_match) ? "OK" : string("OK, ", branch_match.captures[1])
+  shunt_text = _auto_profile_recommendation_text(result, :bus_shunt_model, "admittance recommended", "keep/admittance")
+  pv_text = _auto_profile_recommendation_text(result, :matpower_pv_voltage_source, "GEN.VG recommended", "OK")
+  qlimit_evidence = _auto_profile_evidence_with_prefix(result, "Q-limit scan")
+  qlimit_text = isempty(qlimit_evidence) ? "OK" : replace(qlimit_evidence, "online generators have zero or narrow Q range" => "online generators have zero/narrow Q range")
+  start_text = hasproperty(result.recommendations, :start_projection) || hasproperty(result.recommendations, :flatstart_angle_mode) ? "DC angle + blended voltage recommended" : "OK"
+  @printf(io, "  branch shift      : %s\n", branch_text)
+  @printf(io, "  bus shunts        : %s\n", shunt_text)
+  @printf(io, "  PV voltage source : %s\n", pv_text)
+  @printf(io, "  Q-limit scan      : %s\n", qlimit_text)
+  @printf(io, "  start profile     : %s\n\n", start_text)
+  return nothing
+end
+
+function _print_matpower_console_diagnostics_compact(io::IO, mpc; matpower_shift_sign::Real = 1.0, matpower_shift_unit = "deg", matpower_ratio = "normal")
+  isnothing(mpc) && return nothing
+  println(io, "Diagnostics:")
+  vmva_chk = MatpowerIO.vmva_power_mismatch_stats(mpc; matpower_shift_sign = matpower_shift_sign, matpower_shift_unit = matpower_shift_unit, matpower_ratio = matpower_ratio)
+  if get(vmva_chk, :ok, false)
+    @printf(io, "  VM/VA self-check : max |dP|=%.4g MW, max |dQ|=%.4g MVAr\n", Float64(get(vmva_chk, :max_p_mis_MW, NaN)), Float64(get(vmva_chk, :max_q_mis_MVar, NaN)))
+  else
+    println(io, "  VM/VA self-check : skipped")
+  end
+  if hasproperty(mpc, :branch) && size(mpc.branch, 2) >= 4
+    neg_r = count(<(0.0), mpc.branch[:, 3])
+    neg_x = count(<(0.0), mpc.branch[:, 4])
+    @printf(io, "  negative branches: BR_R<0=%d, BR_X<0=%d\n", neg_r, neg_x)
+  end
+  println(io)
+  return nothing
+end
+
+function _qlimit_summary_counts(net)
+  isnothing(net) && return (; pv2pq_events = 0, pv2pq_buses = 0, guarded_pv_buses = 0, oscillating_buses = 0)
+  counts = Dict{Int,Int}()
+  guarded = Set{Int}()
+  for ev in net.qLimitLog
+    counts[ev.bus] = get(counts, ev.bus, 0) + 1
+    ev.iter == 0 && push!(guarded, ev.bus)
+  end
+  return (; pv2pq_events = length(net.qLimitLog), pv2pq_buses = length(net.qLimitEvents), guarded_pv_buses = length(guarded), oscillating_buses = count(>(1), values(counts)))
+end
+
+function _print_matpower_run_summary(io::IO, summaries; logfile::AbstractString = "", q_limit_mode::Symbol = :summary)
+  println(io, "Run summary:")
+  if isempty(summaries)
+    println(io, "  status              : no methods executed")
+  end
+  for s in summaries
+    compare_text = s.compare_status == :ok ? "OK" : s.compare_status == :warn ? "WARN" : s.compare_status == :skip ? "SKIP" : "FAIL"
+    println(io, "  method              : ", s.method)
+    println(io, "  numerical_solution  : ", s.numerical_solution == :ok ? "OK" : "FAIL")
+    println(io, "  q_limit_active_set  : ", s.q_limit_active_set == :ok ? "OK" : "FAIL")
+    println(io, "  final_converged     : ", s.final_converged)
+    println(io, "  iterations          : ", s.iterations)
+    @printf(io, "  time                : %.6f s\n", s.elapsed_s)
+    println(io, "  compare             : ", compare_text)
+    if !isnan(s.max_dvm)
+      @printf(io, "  max |dVm|           : %.5g pu\n", s.max_dvm)
+    end
+    if !isnan(s.max_dva)
+      @printf(io, "  max |dVa| aligned   : %.5g deg\n", s.max_dva)
+    end
+    if q_limit_mode != :off
+      println(io, "  pv2pq_events        : ", s.pv2pq_events)
+      println(io, "  pv2pq_buses         : ", s.pv2pq_buses)
+      println(io, "  guarded_pv_buses    : ", s.guarded_pv_buses)
+      println(io, "  oscillating_buses   : ", s.oscillating_buses)
+    end
+    if hasproperty(s, :status)
+      println(io, "  status              : ", s.status)
+    end
+    println(io, "  reason              : ", s.reason_text)
+  end
+  !isempty(logfile) && println(io, "\nDetails written to logfile.")
+  return nothing
 end
 
 function main()
@@ -1875,11 +2330,6 @@ function main()
 
   print("\e[2J\e[H") # clear screen and move cursor to home position
   println("----------------------------------------------------------------------------------------------")
-  println("Sparlectra version: ", Sparlectra.version(), "\n")
-  println("Importing MATPOWER case file: $case\n")
-  if !isempty(yaml_path)
-    println("Using YAML config: $yaml_path\n")
-  end
 
   timestamp = Dates.format(Dates.now(), "yyyymmdd_HHMMSS")
   log_case = replace(basename(case), r"[^A-Za-z0-9_.-]" => "_")
@@ -1889,6 +2339,10 @@ function main()
   # - download case14.m into data/mpower/ if missing
   # - generate case14.jl if requested and missing
   local_case = Sparlectra.FetchMatpowerCase.ensure_casefile(case; outdir = Sparlectra.MPOWER_DIR, to_jl = true, overwrite = false)
+  println("Sparlectra version: ", Sparlectra.version())
+  println("casefile: ", local_case)
+  !isempty(yaml_path) && println("yaml: ", yaml_path)
+  println("logfile: ", logfile, "\n")
   log_status = _MatpowerImportLogStatus()
   open(logfile, "w") do io
     println(io, "Sparlectra version: ", Sparlectra.version())
@@ -1900,6 +2354,21 @@ function main()
   end
 
   cfg = bench_config_for_case(case, yaml_cfg)
+  auto_profile = _matpower_auto_profile(mpc, cfg, yaml_cfg)
+  cfg = auto_profile.cfg
+  if cfg.matpower_auto_profile_log && auto_profile.mode != :off
+    if cfg.console_auto_profile == :full
+      _print_matpower_auto_profile(stdout, auto_profile)
+    elseif cfg.console_auto_profile != :off
+      _print_matpower_auto_profile_compact(stdout, auto_profile)
+    end
+    open(logfile, "a") do io
+      _print_matpower_auto_profile(io, auto_profile)
+    end
+  end
+  if cfg.console_diagnostics == :compact || cfg.console_diagnostics == :summary
+    _print_matpower_console_diagnostics_compact(stdout, mpc; matpower_shift_sign = cfg.matpower_shift_sign, matpower_shift_unit = cfg.matpower_shift_unit, matpower_ratio = cfg.matpower_ratio)
+  end
   _warn_if_flatstart_uses_only_voltage_setpoints(case, cfg, mpc)
   if cfg.trace_legacy_bus_type_warnings
     ENV["SPARLECTRA_TRACE_LEGACY_BUSTYPE"] = "1"
@@ -1938,6 +2407,17 @@ function main()
     qlimit_start_iter = cfg.qlimit_start_iter,
     qlimit_start_mode = cfg.qlimit_start_mode,
     qlimit_auto_q_delta_pu = cfg.qlimit_auto_q_delta_pu,
+    qlimit_guard = cfg.qlimit_guard,
+    qlimit_guard_min_q_range_pu = cfg.qlimit_guard_min_q_range_pu,
+    qlimit_guard_zero_range_mode = cfg.qlimit_guard_zero_range_mode,
+    qlimit_guard_narrow_range_mode = cfg.qlimit_guard_narrow_range_mode,
+    qlimit_guard_max_switches = cfg.qlimit_guard_max_switches,
+    qlimit_guard_freeze_after_repeated_switching = cfg.qlimit_guard_freeze_after_repeated_switching,
+    qlimit_guard_accept_bounded_violations = cfg.qlimit_guard_accept_bounded_violations,
+    qlimit_guard_max_remaining_violations = cfg.qlimit_guard_max_remaining_violations,
+    qlimit_guard_violation_mode = cfg.qlimit_guard_violation_mode,
+    qlimit_guard_violation_threshold_pu = cfg.qlimit_guard_violation_threshold_pu,
+    qlimit_guard_log = cfg.qlimit_guard_log,
     verbose = cfg.verbose,
     cooldown_iters = cfg.cooldown_iters,
     q_hyst_pu = cfg.q_hyst_pu,
@@ -1995,6 +2475,12 @@ function main()
     wrong_branch_max_angle_spread_deg = cfg.wrong_branch_max_angle_spread_deg,
     wrong_branch_rescue = cfg.wrong_branch_rescue,
     wrong_branch_rescue_modes = cfg.wrong_branch_rescue_modes,
+    console_summary = cfg.console_summary,
+    console_auto_profile = cfg.console_auto_profile,
+    console_diagnostics = cfg.console_diagnostics,
+    console_q_limit_events = cfg.console_q_limit_events,
+    console_max_rows = cfg.console_max_rows,
+    logfile_diagnostics = cfg.logfile_diagnostics,
     log_status = log_status,
   )
   return bench

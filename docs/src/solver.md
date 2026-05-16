@@ -126,6 +126,40 @@ scalar step length for the already computed rectangular Newton correction.
 
 ### Start Projection for Difficult Seeds
 
+#### DC-angle flat-start background
+
+A conventional AC flat start initializes most bus voltages near $1.0\,\mathrm{pu}$
+and all non-slack voltage angles near $0^\circ$. That seed is simple and
+reproducible, but it ignores the active-power flow pattern that is already
+encoded in the network topology, branch reactances, transformer phase shifts,
+and specified injections. In large or heavily phase-shifted MATPOWER cases, the
+first Newton step may therefore start far away from the physically relevant
+angle branch.
+
+The DC-angle seed uses the active-power part of the power-flow model as a
+linearized predictor for voltage angles. Under the usual high-voltage,
+small-angle assumptions, voltage magnitudes are held near nominal values,
+resistance and reactive-power coupling are neglected, and active-power transfer
+across a branch is approximated by the angle difference divided by branch
+reactance. This gives a sparse linear system of the form
+
+```math
+B'\theta = P
+```
+
+where $P$ is the net active-power injection vector and $B'$ is assembled from
+the branch susceptance structure. The slack angle fixes the reference, and the
+resulting angles are clipped by `start_projection_dc_angle_limit_deg` before
+being used as a Newton seed. This is not a replacement for the AC solve; it is
+only an initialization step that preserves the full AC equations, Q-limit logic,
+and rectangular Newton formulation used by the main run.
+
+Blended starts combine this DC-angle predictor with the stored MATPOWER `VM`/`VA`
+data or the raw flat start. The projection scans the requested candidates and
+keeps the one with the smallest rectangular mismatch, which helps avoid wrong
+low-voltage or wrong-angle branches without changing the final convergence
+criteria.
+
 The rectangular solver can project the initial voltage before Newton iterations:
 
 ```julia

@@ -49,6 +49,15 @@ function run_matpower_example_tests()
       "start_projection_blend_lambdas",
       "start_projection_dc_angle_limit_deg",
       "qlimit_trace_buses",
+      "qlimit_guard",
+      "qlimit_guard_min_q_range_pu",
+      "qlimit_guard_zero_range_mode",
+      "qlimit_guard_narrow_range_mode",
+      "qlimit_guard_max_switches",
+      "qlimit_guard_freeze_after_repeated_switching",
+      "qlimit_guard_accept_bounded_violations",
+      "qlimit_guard_max_remaining_violations",
+      "qlimit_guard_log",
       "matpower_ratio",
       "reference_override",
       "diagnose_branch_neighborhood",
@@ -83,6 +92,18 @@ function run_matpower_example_tests()
     @test occursin("Base.invokelatest(getfield(@__MODULE__, :_print_pv_voltage_reference_diagnostics)", normalized_source)
     @test occursin("Sparlectra.Slack", normalized_source)
     @test occursin("Sparlectra.PV", normalized_source)
+    @test occursin("matpower_auto_profile", normalized_source)
+    @test occursin("function _matpower_auto_profile", normalized_source)
+    @test occursin("console_summary::Bool", signature)
+    @test occursin("console_auto_profile::Symbol", signature)
+    @test occursin("console_q_limit_events::Symbol", signature)
+    @test occursin("console_max_rows::Int", signature)
+    # Regression: YAML console_max_rows must cap run_acpflow Q-limit event and final active-set rows.
+    @test count("pv_table_rows = console_max_rows", normalized_source) == 4
+    @test count("pv_table_rows = pv_table_rows_", normalized_source) == 1
+    @test occursin(raw"pv_table_rows_ = $console_max_rows", normalized_source)
+    @test occursin("function _print_matpower_auto_profile_compact", normalized_source)
+    @test occursin("function _print_matpower_run_summary", normalized_source)
 
     example_path = joinpath(@__DIR__, "..", "src", "examples", "matpower_import.jl")
     old_no_main = get(ENV, "SPARLECTRA_MATPOWER_IMPORT_NO_MAIN", nothing)
@@ -123,6 +144,15 @@ function run_matpower_example_tests()
         "start_projection_blend_lambdas" => [0.1, 0.9],
         "start_projection_dc_angle_limit_deg" => 45.0,
         "qlimit_trace_buses" => [40712],
+        "qlimit_guard" => true,
+        "qlimit_guard_min_q_range_pu" => 2.5e-4,
+        "qlimit_guard_zero_range_mode" => "lock_pq",
+        "qlimit_guard_narrow_range_mode" => "prefer_pq",
+        "qlimit_guard_max_switches" => 4,
+        "qlimit_guard_freeze_after_repeated_switching" => false,
+        "qlimit_guard_accept_bounded_violations" => true,
+        "qlimit_guard_max_remaining_violations" => 2,
+        "qlimit_guard_log" => false,
         "diagnose_matpower_reference" => true,
         "diagnose_branch_shift_conventions" => true,
         "diagnose_branch_neighborhood" => true,
@@ -152,6 +182,14 @@ function run_matpower_example_tests()
         "reference_vm_pu" => 1.01,
         "reference_va_deg" => -3.0,
         "log_effective_config" => true,
+        "matpower_auto_profile" => "recommend",
+        "matpower_auto_profile_log" => true,
+        "console_summary" => true,
+        "console_auto_profile" => "compact",
+        "console_diagnostics" => "summary",
+        "console_q_limit_events" => "summary",
+        "console_max_rows" => 7,
+        "logfile_diagnostics" => "full",
       )))
       @test cfg.autodamp === true
       @test cfg.autodamp_min == 0.002
@@ -161,6 +199,22 @@ function run_matpower_example_tests()
       @test cfg.start_projection_blend_lambdas == [0.1, 0.9]
       @test cfg.start_projection_dc_angle_limit_deg == 45.0
       @test cfg.qlimit_trace_buses == [40712]
+      @test cfg.qlimit_guard === true
+      @test cfg.qlimit_guard_min_q_range_pu == 2.5e-4
+      @test cfg.qlimit_guard_zero_range_mode === :lock_pq
+      @test cfg.qlimit_guard_narrow_range_mode === :prefer_pq
+      @test cfg.qlimit_guard_max_switches == 4
+      @test cfg.qlimit_guard_freeze_after_repeated_switching === false
+      @test cfg.qlimit_guard_accept_bounded_violations === true
+      @test cfg.qlimit_guard_max_remaining_violations == 2
+      @test cfg.qlimit_guard_log === false
+      cfg_io = IOBuffer()
+      Base.invokelatest(() -> getfield(mod, :_print_effective_config)(cfg_io, cfg))
+      cfg_text = String(take!(cfg_io))
+      @test occursin("qlimit_guard_min_q_range_pu: 0.00025", cfg_text)
+      @test occursin("qlimit_guard_zero_range_mode: lock_pq", cfg_text)
+      @test cfg.qlimit_guard_min_q_range_pu == 2.5e-4 # regression: non-default YAML guard value reaches the effective config used by bench_run_acpflow.
+      @test_throws ErrorException Sparlectra.run_acpflow(casefile = "__missing_qlimit_guard_smoke__.m", qlimit_guard = cfg.qlimit_guard, qlimit_guard_min_q_range_pu = cfg.qlimit_guard_min_q_range_pu)
       @test cfg.diagnose_matpower_reference === true
       @test cfg.diagnose_branch_shift_conventions === true
       @test cfg.diagnose_branch_neighborhood === true
@@ -190,6 +244,14 @@ function run_matpower_example_tests()
       @test cfg.reference_vm_pu == 1.01
       @test cfg.reference_va_deg == -3.0
       @test cfg.log_effective_config === true
+      @test cfg.matpower_auto_profile === :recommend
+      @test cfg.matpower_auto_profile_log === true
+      @test cfg.console_summary === true
+      @test cfg.console_auto_profile === :compact
+      @test cfg.console_diagnostics === :summary
+      @test cfg.console_q_limit_events === :summary
+      @test cfg.console_max_rows == 7
+      @test cfg.logfile_diagnostics === :full
       @test occursin("matpower_shift_sign", normalized_source)
       @test occursin("matpower_ratio", normalized_source)
       @test occursin("reference_override", normalized_source)
@@ -220,6 +282,10 @@ function run_matpower_example_tests()
       @test skipped_compare_summary.angle_alignment === :none
       @test skipped_compare_summary.cmp_ok === false
       @test skipped_compare_summary.compare_status === :skip
+      @test skipped_compare_summary.numerical_solution === :ok
+      @test skipped_compare_summary.q_limit_active_set === :ok
+      @test skipped_compare_summary.final_converged === true
+      @test skipped_compare_summary.reason_text == "none"
       compared_summary = Base.invokelatest(() -> getfield(mod, :_show_once_summary_row)(:rectangular, (; converged = true, iterations = 4, elapsed_s = 0.125), (; max_dvm = 0.01, max_dva = 0.2), true; compare_available = true))
       @test compared_summary.converged === true
       @test compared_summary.iterations == 4
@@ -233,11 +299,55 @@ function run_matpower_example_tests()
       @test compared_summary_with_alignment.angle_alignment === :slack
       @test compared_summary.cmp_ok === true
       @test compared_summary.compare_status === :ok
+      rejected_summary = Base.invokelatest(() -> getfield(mod, :_show_once_summary_row)(:rectangular, (; converged = false, numerical_converged = true, q_limit_active_set_ok = false, final_converged = false, reason_text = "remaining PV Q-limit violations"), (; max_dvm = 0.036, max_dva = 0.44), true; compare_available = true))
+      @test rejected_summary.numerical_solution === :ok
+      @test rejected_summary.q_limit_active_set === :fail
+      @test rejected_summary.final_converged === false
+      @test rejected_summary.compare_status === :ok
+      @test rejected_summary.reason_text == "remaining PV Q-limit violations"
       compared_warn_summary = Base.invokelatest(() -> getfield(mod, :_show_once_summary_row)(:rectangular, (; converged = true, iterations = 4, elapsed_s = 0.125), (; max_dvm = 0.01, max_dva = 0.2, compare_status = :warn), true; compare_available = true))
       @test compared_warn_summary.compare_status === :warn
       mpc_seeded = (; bus = hcat(collect(1.0:3.0), fill(1.0, 3), zeros(3, 5), [1.02, 1.01, 0.99], [0.0, -1.0, -2.0]))
       @test Base.invokelatest(() -> getfield(mod, :_warn_if_flatstart_uses_only_voltage_setpoints)("case1951rte.m", (; opt_flatstart = true), mpc_seeded)) === nothing
       @test_logs (:info, r"opt_flatstart=false uses stored MATPOWER voltage magnitudes and angles") Base.invokelatest(() -> getfield(mod, :_warn_if_flatstart_uses_only_voltage_setpoints)("case1951rte.m", (; opt_flatstart = false), mpc_seeded))
+
+      large_bus = zeros(1000, 13)
+      for r in axes(large_bus, 1)
+        large_bus[r, 1] = r
+        large_bus[r, 2] = r == 1 ? 3.0 : 1.0
+        large_bus[r, 8] = 1.0
+      end
+      large_mpc = (; baseMVA = 100.0, bus = large_bus, gen = zeros(0, 21), branch = zeros(0, 13))
+      auto_apply_cfg = Base.invokelatest(() -> getfield(mod, :bench_config_for_case)("case_large.m", Dict{String,Any}(
+        "matpower_auto_profile" => "apply",
+        "opt_flatstart" => false,
+      )))
+      auto_apply = Base.invokelatest(() -> getfield(mod, :_matpower_auto_profile)(large_mpc, auto_apply_cfg, Dict{String,Any}(
+        "matpower_auto_profile" => "apply",
+        "opt_flatstart" => false,
+      )))
+      @test auto_apply.mode === :apply
+      # Explicit YAML values win; inferred large-case start-projection options are still applied.
+      @test auto_apply.cfg.opt_flatstart === false
+      @test :opt_flatstart in auto_apply.preserved
+      @test auto_apply.cfg.start_projection === true
+      @test auto_apply.cfg.flatstart_angle_mode === :dc
+      @test auto_apply.cfg.flatstart_voltage_mode === :bus_vm_va_blend
+      auto_recommend_cfg = Base.invokelatest(() -> getfield(mod, :bench_config_for_case)("case_large.m", Dict{String,Any}("matpower_auto_profile" => "recommend")))
+      auto_recommend = Base.invokelatest(() -> getfield(mod, :_matpower_auto_profile)(large_mpc, auto_recommend_cfg, Dict{String,Any}("matpower_auto_profile" => "recommend")))
+      @test auto_recommend.mode === :recommend
+      @test auto_recommend.cfg.start_projection === false
+      auto_io = IOBuffer()
+      @test Base.invokelatest(() -> getfield(mod, :_print_matpower_auto_profile)(auto_io, auto_apply)) === nothing
+      auto_text = String(take!(auto_io))
+      @test occursin("MATPOWER auto-profile", auto_text)
+      @test occursin("preserved explicit value", auto_text)
+      auto_compact_io = IOBuffer()
+      @test Base.invokelatest(() -> getfield(mod, :_print_matpower_auto_profile_compact)(auto_compact_io, auto_apply)) === nothing
+      auto_compact_text = String(take!(auto_compact_io))
+      @test occursin("MATPOWER auto-profile: apply", auto_compact_text)
+      @test occursin("branch shift", auto_compact_text)
+      @test !occursin("reason:", auto_compact_text)
 
       diagnostic_mpc = (;
         baseMVA = 100.0,
@@ -392,6 +502,15 @@ function run_matpower_example_tests()
         start_projection_blend_lambdas = [0.1, 0.9],
         start_projection_dc_angle_limit_deg = 45.0,
         qlimit_trace_buses = [40712],
+        qlimit_guard = cfg.qlimit_guard,
+        qlimit_guard_min_q_range_pu = cfg.qlimit_guard_min_q_range_pu,
+        qlimit_guard_zero_range_mode = cfg.qlimit_guard_zero_range_mode,
+        qlimit_guard_narrow_range_mode = cfg.qlimit_guard_narrow_range_mode,
+        qlimit_guard_max_switches = cfg.qlimit_guard_max_switches,
+        qlimit_guard_freeze_after_repeated_switching = cfg.qlimit_guard_freeze_after_repeated_switching,
+        qlimit_guard_accept_bounded_violations = cfg.qlimit_guard_accept_bounded_violations,
+        qlimit_guard_max_remaining_violations = cfg.qlimit_guard_max_remaining_violations,
+        qlimit_guard_log = cfg.qlimit_guard_log,
         matpower_shift_unit = "rad",
         matpower_shift_sign = -1.0,
         matpower_ratio = "reciprocal",
@@ -414,6 +533,11 @@ function run_matpower_example_tests()
         effective_config = cfg,
         show_once = false,
         benchmark = false,
+        console_summary = true,
+        console_diagnostics = :compact,
+        console_q_limit_events = :summary,
+        console_max_rows = 3,
+        logfile_diagnostics = :full,
       ))
       @test result == Dict{Symbol,Any}()
       rm(logfile; force = true)
