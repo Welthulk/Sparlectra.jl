@@ -384,7 +384,11 @@ function active_set_q_limits!(
   max_console_rows::Int = 30,
   qlimit_guard_max_switches::Int = typemax(Int),
   qlimit_guard_freeze_after_repeated_switching::Bool = true,
+  qlimit_guard_violation_mode::Symbol = :delayed_switch,
+  qlimit_guard_violation_threshold_pu::Float64 = 1e-4,
 )
+  qlimit_guard_violation_mode in (:delayed_switch, :lock_pq, :ignore) || error("Unsupported qlimit_guard_violation_mode=$(qlimit_guard_violation_mode). Supported: :delayed_switch, :lock_pq, :ignore.")
+  qlimit_guard_violation_threshold_pu >= 0.0 || error("qlimit_guard_violation_threshold_pu must be >= 0 (got $(qlimit_guard_violation_threshold_pu)).")
   changed   = false
   reenabled = false
   printed_events = 0
@@ -409,6 +413,15 @@ function active_set_q_limits!(
 
     side = :none
     qclamp = 0.0
+    physical_side = :none
+    physical_violation = 0.0
+    if has_hi && (qreq > qmax_pu[bus])
+      physical_side = :max
+      physical_violation = qreq - qmax_pu[bus]
+    elseif has_lo && (qreq < qmin_pu[bus])
+      physical_side = :min
+      physical_violation = qmin_pu[bus] - qreq
+    end
     # Use the same hysteresis margin for the initial PV->PQ decision as for
     # later PQ->PV re-enable checks.  With q_hyst_pu = 0.0 this preserves the
     # historical exact-limit behavior; positive margins avoid switching on
@@ -422,6 +435,10 @@ function active_set_q_limits!(
     elseif has_lo && (qreq < lo_switch)
       side = :min
       qclamp = qmin_pu[bus]
+    end
+    if side == :none && qlimit_guard_violation_mode == :lock_pq && physical_violation > qlimit_guard_violation_threshold_pu
+      side = physical_side
+      qclamp = side == :max ? qmax_pu[bus] : qmin_pu[bus]
     end
     side == :none && continue
 

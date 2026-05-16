@@ -134,6 +134,14 @@ qlimit_start_iter: 3
 qlimit_start_mode: iteration
 qlimit_auto_q_delta_pu: 1.0e-4
 
+# Optional Q-limit violation guard:
+# - delayed_switch preserves the hysteresis-gated PV->PQ switching behavior.
+# - lock_pq immediately locks active PV buses whose calculated Q violates a
+#   finite Qmin/Qmax by more than qlimit_guard_violation_threshold_pu at an
+#   eligible Q-limit check.
+qlimit_guard_violation_mode: delayed_switch
+qlimit_guard_violation_threshold_pu: 1.0e-4
+
 # Hysteresis/cooldown for PV<->PQ switching.
 q_hyst_pu: 0.01
 cooldown_iters: 1
