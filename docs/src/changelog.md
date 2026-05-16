@@ -3,6 +3,8 @@
 ### Highlights
 
 ### Fixes
+* Fixed rectangular NR convergence reporting so numerical AC-equation convergence, PV Q-limit active-set consistency, final convergence, comparison status, and rejection reasons are reported separately for large active-set cases.
+* Reduced large Q-limit active-set console noise with compact summaries and row limits for detailed PV→PQ and final violation diagnostics.
 
 ### Improvements
 

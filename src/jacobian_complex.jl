@@ -319,7 +319,35 @@ function _print_rectangular_qlimit_trace(
   return nothing
 end
 
-function _print_rectangular_qlimit_summary(io::IO, net::Net, V::Vector{ComplexF64}, Sbus_pu::Vector{ComplexF64}, bus_types::Vector{Symbol}, qmin_pu::AbstractVector, qmax_pu::AbstractVector, Qload_pu::Vector{Float64}; q_hyst_pu::Float64, tolerance_pu::Float64 = 0.0, max_rows::Int = 30)
+const _RECTANGULAR_PF_STATUS = IdDict{Net,Any}()
+
+function _set_rectangular_pf_status!(net::Net, status)
+  _RECTANGULAR_PF_STATUS[net] = status
+  return status
+end
+
+function rectangular_pf_status(net::Net)
+  return get(_RECTANGULAR_PF_STATUS, net, nothing)
+end
+
+function _rectangular_rejection_reason_text(reason::Symbol)
+  reason == :none && return "none"
+  reason == :remaining_pv_q_limit_violations && return "remaining PV Q-limit violations"
+  reason == :active_pv_voltage_residual && return "active PV voltage residual exceeds tolerance"
+  reason == :singular_newton_step && return "singular Newton step"
+  reason == :nr_mismatch_not_converged && return "NR mismatch did not converge"
+  return replace(String(reason), "_" => " ")
+end
+
+function _print_rectangular_convergence_summary(io::IO, status)
+  numerical_text = status.numerical_converged ? "OK" : "FAIL"
+  active_text = status.q_limit_active_set_ok ? "OK" : "FAIL"
+  final_text = status.final_converged ? "true" : "false"
+  @printf(io, "rectangular convergence: numerical_solution=%s  q_limit_active_set=%s  final_converged=%s  reason=%s\n", numerical_text, active_text, final_text, status.reason_text)
+  return nothing
+end
+
+function _print_rectangular_qlimit_summary(io::IO, net::Net, V::Vector{ComplexF64}, Sbus_pu::Vector{ComplexF64}, bus_types::Vector{Symbol}, qmin_pu::AbstractVector, qmax_pu::AbstractVector, Qload_pu::Vector{Float64}; q_hyst_pu::Float64, tolerance_pu::Float64 = 0.0, max_rows::Int = 30, max_console_rows::Union{Nothing,Int} = nothing)
   checked_pv = 0
   checked_ref = 0
   rows = NamedTuple[]
@@ -394,7 +422,8 @@ function _print_rectangular_qlimit_summary(io::IO, net::Net, V::Vector{ComplexF6
     @printf(io, "  active PV/REF buses checked with finite Qmin/Qmax: %d\n", checked_pv + checked_ref)
     @printf(io, "  remaining violations: %d (PV %d, REF %d)\n", length(rows), pv_violations, ref_violations)
     println(io, "  BUS_I │ type │ Qcalc pu │ Qcalc MVAr │ Qmin pu │ Qmin MVAr │ Qmax pu │ Qmax MVAr │ dir │ viol pu │ viol MVAr │ switched │ last it │ return band")
-    shown = max_rows < 0 ? length(rows) : min(max_rows, length(rows))
+    row_limit = isnothing(max_console_rows) ? max_rows : max_console_rows
+    shown = row_limit < 0 ? length(rows) : min(row_limit, length(rows))
     for row in Iterators.take(rows, shown)
       last_text = isnothing(row.last_it) ? "-" : string(row.last_it)
       band_text = row.in_return_band ? "inside" : "outside"
@@ -406,7 +435,7 @@ function _print_rectangular_qlimit_summary(io::IO, net::Net, V::Vector{ComplexF6
               string(row.switched), last_text, band_text)
     end
     if shown < length(rows)
-      @printf(io, "  (%d more violation rows omitted; increase max_rows for full output)\n", length(rows) - shown)
+      @printf(io, "  (%d more violation rows omitted; increase max_rows/max_console_rows for full output)\n", length(rows) - shown)
     end
   end
   return (
@@ -1515,6 +1544,7 @@ function run_complex_nr_rectangular_for_net!(
   history   = Float64[]
   converged = false
   iters     = 0
+  rejection_reason = :nr_mismatch_not_converged
   prev_pv_qreq_pu = fill(NaN, nb)
 
   if verbose > 1
@@ -1609,6 +1639,7 @@ function run_complex_nr_rectangular_for_net!(
 
     if converged_this_iter
       converged = true
+      rejection_reason = :none
       break
     end
 
@@ -1661,6 +1692,7 @@ function run_complex_nr_rectangular_for_net!(
       if _is_rectangular_linear_step_failure(step_error)
         verbose > 0 && @warn "Rectangular Newton step failed because the linear Jacobian solve was singular; returning non-convergence." iteration = it max_mismatch = max_mis exception = (typeof(step_error), sprint(showerror, step_error))
         converged = false
+        rejection_reason = :singular_newton_step
         break
       end
       rethrow(step_error)
@@ -1679,10 +1711,12 @@ function run_complex_nr_rectangular_for_net!(
       setNodeType!(net.nodeVec[k], "PV")
     end
   end
+  numerical_converged = converged
   final_pv_voltage_residual = _max_rectangular_pv_voltage_residual(V, Vset, bus_types, net.qLimitEvents)
-  if converged && final_pv_voltage_residual > tol
+  if numerical_converged && final_pv_voltage_residual > tol
     verbose > 0 && @warn "Rectangular NR convergence rejected because active PV voltage setpoint residual exceeds tolerance." max_pv_voltage_residual = final_pv_voltage_residual tolerance = tol
     converged = false
+    rejection_reason = :active_pv_voltage_residual
   end
 
   update_net_voltages_from_complex!(net, V)
@@ -1737,14 +1771,32 @@ function run_complex_nr_rectangular_for_net!(
   setTotalBusPower!(net = net, p = p, q = q)
   updateShuntPowers!(net = net)
 
-  if converged
+  qlimit_summary = nothing
+  if numerical_converged
     final_Qload_pu = build_qload_pu(net)
     qlimit_summary_io = (verbose > 0 || qlimit_trace_enabled) ? stdout : devnull
-    qlimit_summary = _print_rectangular_qlimit_summary(qlimit_summary_io, net, V, Sbus_pu, bus_types, qmin_pu, qmax_pu, final_Qload_pu; q_hyst_pu = q_hyst_pu, tolerance_pu = tol, max_rows = pv_table_rows)
+    qlimit_summary = _print_rectangular_qlimit_summary(qlimit_summary_io, net, V, Sbus_pu, bus_types, qmin_pu, qmax_pu, final_Qload_pu; q_hyst_pu = q_hyst_pu, tolerance_pu = tol, max_rows = pv_table_rows, max_console_rows = pv_table_rows)
     if qlimit_summary.pv_violations > 0
       verbose > 0 && @warn "Rectangular NR convergence rejected because active PV Q-limit violations remain after the active-set check." pv_violations = qlimit_summary.pv_violations ref_violations = qlimit_summary.ref_violations
       converged = false
+      rejection_reason = :remaining_pv_q_limit_violations
     end
+  end
+
+  q_limit_active_set_ok = numerical_converged && final_pv_voltage_residual <= tol && (isnothing(qlimit_summary) || qlimit_summary.pv_violations == 0)
+  final_reason = converged ? :none : rejection_reason
+  status = _set_rectangular_pf_status!(net, (
+    numerical_converged = numerical_converged,
+    q_limit_active_set_ok = q_limit_active_set_ok,
+    final_converged = converged,
+    reason = final_reason,
+    reason_text = _rectangular_rejection_reason_text(final_reason),
+    pv_q_limit_violations = isnothing(qlimit_summary) ? 0 : qlimit_summary.pv_violations,
+    ref_q_limit_violations = isnothing(qlimit_summary) ? 0 : qlimit_summary.ref_violations,
+    final_pv_voltage_residual = final_pv_voltage_residual,
+  ))
+  if verbose > 0 || (numerical_converged && !q_limit_active_set_ok)
+    _print_rectangular_convergence_summary(stdout, status)
   end
 
   return iters, converged ? 0 : 1
@@ -2028,6 +2080,10 @@ function runpf!(
       iters, erg = runpf_rectangular!(wnet, maxIte, tolerance, verbose; opt_fd = true, opt_sparse = opt_sparse, damp = damp, autodamp = autodamp, autodamp_min = autodamp_min, opt_flatstart = opt_flatstart, pv_table_rows = pv_table_rows, lock_pv_to_pq_buses = lock_pv_to_pq_buses, qlimit_mode = qlimit_mode, qlimit_max_outer = qlimit_max_outer, start_projection = start_projection, start_projection_try_dc_start = start_projection_try_dc_start, start_projection_try_blend_scan = start_projection_try_blend_scan, start_projection_blend_lambdas = start_projection_blend_lambdas, start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg, qlimit_start_iter = qlimit_start_iter, qlimit_start_mode = qlimit_start_mode, qlimit_auto_q_delta_pu = qlimit_auto_q_delta_pu, qlimit_trace_buses = qlimit_trace_buses, qlimit_lock_reason = qlimit_lock_reason)
     else
       iters, erg = runpf_rectangular!(wnet, maxIte, tolerance, verbose; opt_fd = opt_fd, opt_sparse = opt_sparse, damp = damp, autodamp = autodamp, autodamp_min = autodamp_min, opt_flatstart = opt_flatstart, pv_table_rows = pv_table_rows, lock_pv_to_pq_buses = lock_pv_to_pq_buses, qlimit_mode = qlimit_mode, qlimit_max_outer = qlimit_max_outer, start_projection = start_projection, start_projection_try_dc_start = start_projection_try_dc_start, start_projection_try_blend_scan = start_projection_try_blend_scan, start_projection_blend_lambdas = start_projection_blend_lambdas, start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg, qlimit_start_iter = qlimit_start_iter, qlimit_start_mode = qlimit_start_mode, qlimit_auto_q_delta_pu = qlimit_auto_q_delta_pu, qlimit_trace_buses = qlimit_trace_buses, qlimit_lock_reason = qlimit_lock_reason)
+    end
+    rect_status = rectangular_pf_status(wnet)
+    if rect_status !== nothing
+      _set_rectangular_pf_status!(net, rect_status)
     end
     if erg == 0 && has_merges
       _sync_merged_results_to_original!()

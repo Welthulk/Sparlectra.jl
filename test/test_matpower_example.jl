@@ -226,6 +226,10 @@ function run_matpower_example_tests()
       @test skipped_compare_summary.angle_alignment === :none
       @test skipped_compare_summary.cmp_ok === false
       @test skipped_compare_summary.compare_status === :skip
+      @test skipped_compare_summary.numerical_solution === :ok
+      @test skipped_compare_summary.q_limit_active_set === :ok
+      @test skipped_compare_summary.final_converged === true
+      @test skipped_compare_summary.reason_text == "none"
       compared_summary = Base.invokelatest(() -> getfield(mod, :_show_once_summary_row)(:rectangular, (; converged = true, iterations = 4, elapsed_s = 0.125), (; max_dvm = 0.01, max_dva = 0.2), true; compare_available = true))
       @test compared_summary.converged === true
       @test compared_summary.iterations == 4
@@ -239,6 +243,12 @@ function run_matpower_example_tests()
       @test compared_summary_with_alignment.angle_alignment === :slack
       @test compared_summary.cmp_ok === true
       @test compared_summary.compare_status === :ok
+      rejected_summary = Base.invokelatest(() -> getfield(mod, :_show_once_summary_row)(:rectangular, (; converged = false, numerical_converged = true, q_limit_active_set_ok = false, final_converged = false, reason_text = "remaining PV Q-limit violations"), (; max_dvm = 0.036, max_dva = 0.44), true; compare_available = true))
+      @test rejected_summary.numerical_solution === :ok
+      @test rejected_summary.q_limit_active_set === :fail
+      @test rejected_summary.final_converged === false
+      @test rejected_summary.compare_status === :ok
+      @test rejected_summary.reason_text == "remaining PV Q-limit violations"
       compared_warn_summary = Base.invokelatest(() -> getfield(mod, :_show_once_summary_row)(:rectangular, (; converged = true, iterations = 4, elapsed_s = 0.125), (; max_dvm = 0.01, max_dva = 0.2, compare_status = :warn), true; compare_available = true))
       @test compared_warn_summary.compare_status === :warn
       mpc_seeded = (; bus = hcat(collect(1.0:3.0), fill(1.0, 3), zeros(3, 5), [1.02, 1.01, 0.99], [0.0, -1.0, -2.0]))
