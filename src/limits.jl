@@ -71,6 +71,18 @@ function logQLimitHit!(net::Net, iter::Int, bus::Int, side::Symbol)
   net.qLimitEvents[bus] = side
 end
 
+function qlimit_switch_count(net::Net, bus::Int)::Int
+  return count(ev -> ev.bus == bus, net.qLimitLog)
+end
+
+function qlimit_switch_counts(net::Net)
+  counts = Dict{Int,Int}()
+  for ev in net.qLimitLog
+    counts[ev.bus] = get(counts, ev.bus, 0) + 1
+  end
+  return counts
+end
+
 "Returns the last iteration number where `bus` hit a Q-limit, or `nothing`."
 function lastQLimitIter(net::Net, bus::Int)
   for i = length(net.qLimitLog):-1:1
@@ -370,6 +382,8 @@ function active_set_q_limits!(
   verbose::Int = 0,
   io::IO = stdout,
   max_console_rows::Int = 30,
+  qlimit_guard_max_switches::Int = typemax(Int),
+  qlimit_guard_freeze_after_repeated_switching::Bool = true,
 )
   changed   = false
   reenabled = false
@@ -410,6 +424,18 @@ function active_set_q_limits!(
       qclamp = qmin_pu[bus]
     end
     side == :none && continue
+
+    if qlimit_guard_freeze_after_repeated_switching && qlimit_switch_count(net, bus) >= qlimit_guard_max_switches
+      if verbose > 0
+        if max_console_rows < 0 || printed_events < max_console_rows
+          @printf(io, "PV->PQ Bus %d: switching suppressed after %d Q-limit event(s); bus remains in its current active-set state (it=%d)\n", bus, qlimit_switch_count(net, bus), it)
+          printed_events += 1
+        else
+          omitted_events += 1
+        end
+      end
+      continue
+    end
 
     handled = false
     if !isnothing(on_violation!)

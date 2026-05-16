@@ -49,6 +49,15 @@ function run_matpower_example_tests()
       "start_projection_blend_lambdas",
       "start_projection_dc_angle_limit_deg",
       "qlimit_trace_buses",
+      "qlimit_guard",
+      "qlimit_guard_min_q_range_pu",
+      "qlimit_guard_zero_range_mode",
+      "qlimit_guard_narrow_range_mode",
+      "qlimit_guard_max_switches",
+      "qlimit_guard_freeze_after_repeated_switching",
+      "qlimit_guard_accept_bounded_violations",
+      "qlimit_guard_max_remaining_violations",
+      "qlimit_guard_log",
       "matpower_ratio",
       "reference_override",
       "diagnose_branch_neighborhood",
@@ -125,6 +134,15 @@ function run_matpower_example_tests()
         "start_projection_blend_lambdas" => [0.1, 0.9],
         "start_projection_dc_angle_limit_deg" => 45.0,
         "qlimit_trace_buses" => [40712],
+        "qlimit_guard" => true,
+        "qlimit_guard_min_q_range_pu" => 2.5e-4,
+        "qlimit_guard_zero_range_mode" => "lock_pq",
+        "qlimit_guard_narrow_range_mode" => "prefer_pq",
+        "qlimit_guard_max_switches" => 4,
+        "qlimit_guard_freeze_after_repeated_switching" => false,
+        "qlimit_guard_accept_bounded_violations" => true,
+        "qlimit_guard_max_remaining_violations" => 2,
+        "qlimit_guard_log" => false,
         "diagnose_matpower_reference" => true,
         "diagnose_branch_shift_conventions" => true,
         "diagnose_branch_neighborhood" => true,
@@ -165,6 +183,22 @@ function run_matpower_example_tests()
       @test cfg.start_projection_blend_lambdas == [0.1, 0.9]
       @test cfg.start_projection_dc_angle_limit_deg == 45.0
       @test cfg.qlimit_trace_buses == [40712]
+      @test cfg.qlimit_guard === true
+      @test cfg.qlimit_guard_min_q_range_pu == 2.5e-4
+      @test cfg.qlimit_guard_zero_range_mode === :lock_pq
+      @test cfg.qlimit_guard_narrow_range_mode === :prefer_pq
+      @test cfg.qlimit_guard_max_switches == 4
+      @test cfg.qlimit_guard_freeze_after_repeated_switching === false
+      @test cfg.qlimit_guard_accept_bounded_violations === true
+      @test cfg.qlimit_guard_max_remaining_violations == 2
+      @test cfg.qlimit_guard_log === false
+      cfg_io = IOBuffer()
+      Base.invokelatest(() -> getfield(mod, :_print_effective_config)(cfg_io, cfg))
+      cfg_text = String(take!(cfg_io))
+      @test occursin("qlimit_guard_min_q_range_pu: 0.00025", cfg_text)
+      @test occursin("qlimit_guard_zero_range_mode: lock_pq", cfg_text)
+      @test cfg.qlimit_guard_min_q_range_pu == 2.5e-4 # regression: non-default YAML guard value reaches the effective config used by bench_run_acpflow.
+      @test_throws ErrorException Sparlectra.run_acpflow(casefile = "__missing_qlimit_guard_smoke__.m", qlimit_guard = cfg.qlimit_guard, qlimit_guard_min_q_range_pu = cfg.qlimit_guard_min_q_range_pu)
       @test cfg.diagnose_matpower_reference === true
       @test cfg.diagnose_branch_shift_conventions === true
       @test cfg.diagnose_branch_neighborhood === true
@@ -440,6 +474,15 @@ function run_matpower_example_tests()
         start_projection_blend_lambdas = [0.1, 0.9],
         start_projection_dc_angle_limit_deg = 45.0,
         qlimit_trace_buses = [40712],
+        qlimit_guard = cfg.qlimit_guard,
+        qlimit_guard_min_q_range_pu = cfg.qlimit_guard_min_q_range_pu,
+        qlimit_guard_zero_range_mode = cfg.qlimit_guard_zero_range_mode,
+        qlimit_guard_narrow_range_mode = cfg.qlimit_guard_narrow_range_mode,
+        qlimit_guard_max_switches = cfg.qlimit_guard_max_switches,
+        qlimit_guard_freeze_after_repeated_switching = cfg.qlimit_guard_freeze_after_repeated_switching,
+        qlimit_guard_accept_bounded_violations = cfg.qlimit_guard_accept_bounded_violations,
+        qlimit_guard_max_remaining_violations = cfg.qlimit_guard_max_remaining_violations,
+        qlimit_guard_log = cfg.qlimit_guard_log,
         matpower_shift_unit = "rad",
         matpower_shift_sign = -1.0,
         matpower_ratio = "reciprocal",

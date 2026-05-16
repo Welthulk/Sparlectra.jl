@@ -1,13 +1,15 @@
 # Change Log
 ## Version 0.7.8 – 2026-05-16
 ### Highlights
+* Added Q-limit guard YAML/config forwarding in `matpower_import.jl` so MATPOWER example runs preserve guard-related options through effective config logging and all `run_acpflow` call paths.
 
 ### Fixes
 * Fixed rectangular NR convergence reporting so numerical AC-equation convergence, PV Q-limit active-set consistency, final convergence, comparison status, and rejection reasons are reported separately for large active-set cases.
-* Reduced large Q-limit active-set console noise with compact summaries and row limits for detailed PV→PQ and final violation diagnostics.
+
 
 ### Improvements
-
+* Reduced large Q-limit active-set console noise with compact summaries and row limits for detailed PV→PQ and final violation diagnostics.
+ 
 ### Related
 
 ## Version 0.7.7 – 2026-05-13

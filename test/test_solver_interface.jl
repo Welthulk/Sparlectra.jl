@@ -359,6 +359,70 @@ function run_solver_interface_tests()
   @test occursin("reason=remaining PV Q-limit violations", summary_text)
 end
 
+    @testset "Q-limit guard and active-set status" begin
+      net = createTest3BusNet()
+      bus = geNetBusIdx(net = net, busName = "STATION1")
+      qmin_pu = [-Inf, 0.0, -Inf]
+      qmax_pu = [Inf, 0.0, Inf]
+      bus_types = [:PQ, :PV, :Slack]
+      S = ComplexF64[0.0 + 0.0im, 0.1 + 0.0im, 0.0 + 0.0im]
+      guarded = Sparlectra._apply_qlimit_guard_to_rectangular_active_set!(
+        net,
+        bus_types,
+        S,
+        zeros(Float64, 3),
+        qmin_pu,
+        qmax_pu;
+        min_q_range_pu = 1e-4,
+        zero_range_mode = :lock_pq,
+        narrow_range_mode = :prefer_pq,
+        log = false,
+        verbose = 0,
+      )
+      @test guarded == [bus]
+      @test bus_types[bus] == :PQ
+      @test length(net.qLimitLog) == 1
+
+      bus_types[bus] = :PV
+      changed, reenabled = Sparlectra.active_set_q_limits!(
+        net,
+        2,
+        3;
+        get_qreq_pu = _ -> 0.2,
+        is_pv = b -> (bus_types[b] == :PV),
+        make_pq! = (b, _qclamp, _side) -> (bus_types[b] = :PQ),
+        make_pv! = b -> (bus_types[b] = :PV),
+        qmin_pu = qmin_pu,
+        qmax_pu = qmax_pu,
+        pv_orig_mask = trues(3),
+        allow_reenable = false,
+        q_hyst_pu = 0.0,
+        cooldown_iters = 0,
+        qlimit_guard_max_switches = 1,
+        qlimit_guard_freeze_after_repeated_switching = true,
+      )
+      @test !changed
+      @test !reenabled
+      @test bus_types[bus] == :PV
+      @test length(net.qLimitLog) == 1
+
+      status_io = IOBuffer()
+      status = (
+        numerical_converged = true,
+        q_limit_active_set_ok = false,
+        final_mismatch = 2.1e-9,
+        pv_pq_switching_events = 1842,
+        oscillating_buses = 37,
+        guarded_narrow_q_pv_buses = 512,
+        status = :qlimit_chatter,
+      )
+      Sparlectra._print_qlimit_active_set_summary(status_io, status)
+      status_text = String(take!(status_io))
+      @test occursin("NR convergence             : yes", status_text)
+      @test occursin("Active-set convergence     : no", status_text)
+      @test occursin("Final status               : qlimit_chatter", status_text)
+    end
+
 # Ensures final-limit validation remains robust when q-generation data is partially missing.
     @testset "Final limit validation tolerates missing qgen" begin
       net = createTest3BusNet()
