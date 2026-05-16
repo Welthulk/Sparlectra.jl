@@ -68,6 +68,24 @@ You can also request a generated `.jl` companion file by passing a `.jl` name:
 case_jl_path = ensure_casefile("case14.jl")
 ```
 
+### MATPOWER auto-profile pre-run
+
+The `src/examples/matpower_import.jl` workflow can run a compact diagnostic
+pre-run before the main power-flow solve:
+
+```yaml
+matpower_auto_profile: recommend  # false, recommend, or apply
+matpower_auto_profile_log: true
+```
+
+`recommend` logs a profile without changing the active run. `apply` applies
+safe recommendations unless the YAML file already contains an explicit value for
+that option. The pre-run checks transformer ratio and phase-shift conventions,
+bus-shunt residual impact, PV/REF voltage-source handling, large-case flat-start
+strategy, and conservative PV→PQ Q-limit settings. The terminal summary and
+logfile list the evidence, selected recommendations, applied options, and
+explicit YAML values that were preserved.
+
 ### Import Parser
 
 The `casefileparser` function parses Matpower case files and returns the raw data arrays:

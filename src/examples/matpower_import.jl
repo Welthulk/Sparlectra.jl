@@ -291,6 +291,8 @@ function bench_config_for_case(case_name::AbstractString, yaml_cfg::Dict{String,
     wrong_branch_max_angle_spread_deg = 120.0,
     wrong_branch_rescue = false,
     wrong_branch_rescue_modes = [:dc, :bus_vm_va_blend, :matpower_va],
+    matpower_auto_profile = :off,
+    matpower_auto_profile_log = true,
   )
   case_override = get(CASE_BENCH_OVERRIDES, String(case_name), (;))
   yaml_override = (;)
@@ -374,6 +376,8 @@ function bench_config_for_case(case_name::AbstractString, yaml_cfg::Dict{String,
       wrong_branch_max_angle_spread_deg = Float64(get(yaml_cfg, "wrong_branch_max_angle_spread_deg", base.wrong_branch_max_angle_spread_deg)),
       wrong_branch_rescue = Bool(get(yaml_cfg, "wrong_branch_rescue", base.wrong_branch_rescue)),
       wrong_branch_rescue_modes = _as_symbol_vec(get(yaml_cfg, "wrong_branch_rescue_modes", base.wrong_branch_rescue_modes)),
+      matpower_auto_profile = _as_auto_profile_mode(get(yaml_cfg, "matpower_auto_profile", base.matpower_auto_profile)),
+      matpower_auto_profile_log = Bool(get(yaml_cfg, "matpower_auto_profile_log", base.matpower_auto_profile_log)),
     )
   end
   return merge(base, case_override, yaml_override)
@@ -1119,6 +1123,134 @@ function _print_effective_config(io::IO, cfg; yaml_path::String = "", case_name:
   println(io, "===============================================================================\n")
   return nothing
 end
+function _as_auto_profile_mode(v)::Symbol
+  v === false && return :off
+  v === true && return :apply
+  s = lowercase(String(v))
+  s in ("false", "off", "none", "no", "0") && return :off
+  s == "recommend" && return :recommend
+  s == "apply" && return :apply
+  @warn "Unknown matpower_auto_profile; using false/off" value = v
+  return :off
+end
+
+function _namedtuple_from_symbol_dict(d::Dict{Symbol,Any})
+  isempty(d) && return (;)
+  ordered = sort!(collect(keys(d)); by = String)
+  return NamedTuple{Tuple(ordered)}(Tuple(d[k] for k in ordered))
+end
+
+function _max_reference_residual_mw(diag, baseMVA::Real)
+  max_p = isempty(diag.p_rows) ? 0.0 : maximum(abs.(real.(diag.mis[diag.p_rows]))) * baseMVA
+  max_q = isempty(diag.q_rows) ? 0.0 : maximum(abs.(imag.(diag.mis[diag.q_rows]))) * baseMVA
+  return (; max_p, max_q, score = max(max_p, max_q))
+end
+
+function _matpower_auto_add!(recommendations::Dict{Symbol,Any}, reasons::Dict{Symbol,String}, option::Symbol, value, reason::AbstractString)
+  recommendations[option] = value
+  reasons[option] = String(reason)
+  return nothing
+end
+
+function _matpower_auto_profile_shift_scan!(recommendations::Dict{Symbol,Any}, reasons::Dict{Symbol,String}, evidence::Vector{String}, mpc, cfg)
+  mp_has_vm_va(mpc) || (push!(evidence, "branch-shift scan skipped: no usable MATPOWER VM/VA reference"); return nothing)
+  variants = [
+    (; label = "standard sign/degrees + normal ratio", matpower_shift_sign = 1.0, matpower_shift_unit = "deg", matpower_ratio = "normal"),
+    (; label = "opposite sign/radians + normal ratio", matpower_shift_sign = -1.0, matpower_shift_unit = "rad", matpower_ratio = "normal"),
+    (; label = "standard sign/degrees + reciprocal ratio", matpower_shift_sign = 1.0, matpower_shift_unit = "deg", matpower_ratio = "reciprocal"),
+    (; label = "opposite sign/radians + reciprocal ratio", matpower_shift_sign = -1.0, matpower_shift_unit = "rad", matpower_ratio = "reciprocal"),
+  ]
+  rows = NamedTuple[]
+  current = nothing
+  for v in variants
+    diag = Base.invokelatest(getfield(@__MODULE__, :_matpower_reference_residuals), mpc; matpower_shift_sign = v.matpower_shift_sign, matpower_shift_unit = v.matpower_shift_unit, matpower_ratio = v.matpower_ratio)
+    res = _max_reference_residual_mw(diag, mpc.baseMVA)
+    row = merge(v, res)
+    push!(rows, row)
+    if isapprox(v.matpower_shift_sign, cfg.matpower_shift_sign; atol = 0.0, rtol = 0.0) && v.matpower_shift_unit == cfg.matpower_shift_unit && v.matpower_ratio == cfg.matpower_ratio
+      current = row
+    end
+  end
+  best = rows[argmin([r.score for r in rows])]
+  current = isnothing(current) ? best : current
+  push!(evidence, @sprintf("branch-shift scan best='%s' score=%.3f MW/MVAr; current='%s' score=%.3f", best.label, best.score, current.label, current.score))
+  if best.score + 1e-9 < 0.5 * max(current.score, 1e-9)
+    reason = @sprintf("branch-shift scan strongly improves fixed-reference residual score from %.3f to %.3f MW/MVAr", current.score, best.score)
+    _matpower_auto_add!(recommendations, reasons, :matpower_shift_sign, best.matpower_shift_sign, reason)
+    _matpower_auto_add!(recommendations, reasons, :matpower_shift_unit, best.matpower_shift_unit, reason)
+    _matpower_auto_add!(recommendations, reasons, :matpower_ratio, best.matpower_ratio, reason)
+  end
+  return nothing
+end
+
+function _matpower_auto_profile_shunt_scan!(recommendations::Dict{Symbol,Any}, reasons::Dict{Symbol,String}, evidence::Vector{String}, mpc, cfg)
+  mp_has_vm_va(mpc) || (push!(evidence, "bus-shunt scan skipped: no usable MATPOWER VM/VA reference"); return nothing)
+  keep = Base.invokelatest(getfield(@__MODULE__, :_matpower_reference_residuals), mpc; matpower_shift_sign = cfg.matpower_shift_sign, matpower_shift_unit = cfg.matpower_shift_unit, matpower_ratio = cfg.matpower_ratio, keep_shunts = true)
+  drop = Base.invokelatest(getfield(@__MODULE__, :_matpower_reference_residuals), mpc; matpower_shift_sign = cfg.matpower_shift_sign, matpower_shift_unit = cfg.matpower_shift_unit, matpower_ratio = cfg.matpower_ratio, keep_shunts = false)
+  keep_res = _max_reference_residual_mw(keep, mpc.baseMVA)
+  drop_res = _max_reference_residual_mw(drop, mpc.baseMVA)
+  push!(evidence, @sprintf("bus-shunt scan keep max|dP|=%.3f MW max|dQ|=%.3f MVAr; drop max|dP|=%.3f MW max|dQ|=%.3f MVAr", keep_res.max_p, keep_res.max_q, drop_res.max_p, drop_res.max_q))
+  if drop_res.max_q > 1.05 * max(keep_res.max_q, 1e-9) || drop_res.max_p >= 0.95 * max(keep_res.max_p, 1e-9)
+    _matpower_auto_add!(recommendations, reasons, :bus_shunt_model, "admittance", "disabling MATPOWER bus shunts does not improve active residuals or worsens reactive residuals")
+  end
+  return nothing
+end
+
+function _matpower_auto_profile_voltage_source!(recommendations::Dict{Symbol,Any}, reasons::Dict{Symbol,String}, evidence::Vector{String}, mpc)
+  rows = MatpowerIO.pv_voltage_reference_rows(mpc; warn = false)
+  isempty(rows) && (push!(evidence, "PV/REF voltage-source scan found no PV/REF buses"); return nothing)
+  with_online = count(r -> !isempty(r.gen_vgs), rows)
+  mismatched = count(r -> !isempty(r.gen_vgs) && isfinite(r.dvg_bus) && abs(r.dvg_bus) > 1e-4, rows)
+  push!(evidence, "PV/REF voltage-source scan: $(with_online)/$(length(rows)) buses have online GEN.VG targets; $(mismatched) differ from BUS.VM by more than 1e-4 pu")
+  if with_online > 0
+    _matpower_auto_add!(recommendations, reasons, :matpower_pv_voltage_source, :gen_vg, "PV/REF buses have online generator voltage targets")
+    _matpower_auto_add!(recommendations, reasons, :compare_voltage_reference, :hybrid, "hybrid comparison uses active setpoints for PV/REF buses while preserving BUS.VM for PQ and switched buses")
+  end
+  return nothing
+end
+
+function _matpower_auto_profile_flatstart!(recommendations::Dict{Symbol,Any}, reasons::Dict{Symbol,String}, evidence::Vector{String}, mpc)
+  nbus = size(mpc.bus, 1)
+  nbranch = size(mpc.branch, 1)
+  nonzero_shift = size(mpc.branch, 2) >= 10 ? count(!iszero, mpc.branch[:, 10]) : 0
+  large_or_shifted = nbus >= 1000 || nbranch >= 2000 || nonzero_shift >= 10
+  push!(evidence, "flatstart scan: nbus=$(nbus), nbranch=$(nbranch), nonzero branch SHIFT=$(nonzero_shift)")
+  if large_or_shifted
+    reason = "large or phase-shifted MATPOWER case benefits from DC-angle and blended-voltage flat-start seeds"
+    _matpower_auto_add!(recommendations, reasons, :opt_flatstart, true, reason)
+    _matpower_auto_add!(recommendations, reasons, :flatstart_angle_mode, :dc, reason)
+    _matpower_auto_add!(recommendations, reasons, :flatstart_voltage_mode, :bus_vm_va_blend, reason)
+    _matpower_auto_add!(recommendations, reasons, :start_projection, true, reason)
+    _matpower_auto_add!(recommendations, reasons, :start_projection_try_dc_start, true, reason)
+    _matpower_auto_add!(recommendations, reasons, :start_projection_try_blend_scan, false, "DC start plus bus VM/VA blend is the compact default pre-run profile for large cases")
+  end
+  return nothing
+end
+
+function _matpower_auto_profile_qlimits!(recommendations::Dict{Symbol,Any}, reasons::Dict{Symbol,String}, evidence::Vector{String}, mpc)
+  size(mpc.gen, 2) >= 8 || (push!(evidence, "Q-limit scan skipped: MATPOWER gen table has no status column"); return nothing)
+  active = [g for g in axes(mpc.gen, 1) if mpc.gen[g, 8] > 0.0]
+  isempty(active) && (push!(evidence, "Q-limit scan found no online generators"); return nothing)
+  narrow = 0
+  for g in active
+    qmax = Float64(mpc.gen[g, 4])
+    qmin = Float64(mpc.gen[g, 5])
+    width = qmax - qmin
+    if abs(width) <= 1e-6 || max(abs(qmax), abs(qmin)) <= 1e-6 || width <= 5.0
+      narrow += 1
+    end
+  end
+  share = narrow / length(active)
+  push!(evidence, @sprintf("Q-limit scan: %d/%d online generators have zero or narrow Q range", narrow, length(active)))
+  if narrow >= 5 && share >= 0.25
+    _matpower_auto_add!(recommendations, reasons, :qlimit_start_iter, 3, "many generators have zero or narrow reactive-power limits; delay switching slightly")
+    _matpower_auto_add!(recommendations, reasons, :qlimit_start_mode, :iteration_or_auto, "many narrow Q limits benefit from conservative iteration-or-stability start")
+    _matpower_auto_add!(recommendations, reasons, :q_hyst_pu, 0.01, "many narrow Q limits benefit from a small hysteresis deadband")
+    _matpower_auto_add!(recommendations, reasons, :cooldown_iters, 1, "many narrow Q limits benefit from a short PV/PQ cooldown")
+  end
+  return nothing
+end
+
 
 function _print_vmva_self_check(io::IO, mpc; matpower_shift_sign::Real = 1.0, matpower_shift_unit = "deg", matpower_ratio = "normal")
   vmva_chk = MatpowerIO.vmva_power_mismatch_stats(mpc; matpower_shift_sign = matpower_shift_sign, matpower_shift_unit = matpower_shift_unit, matpower_ratio = matpower_ratio)
@@ -1866,6 +1998,77 @@ function bench_run_acpflow(;
   return results
 end
 
+"""
+    _matpower_auto_profile(mpc, cfg, yaml_cfg)
+
+Build the optional MATPOWER example auto-profile for an imported case. The
+profile inspects fixed-reference residuals, shunt impact, PV/REF voltage targets,
+large-case flat-start risk, and narrow Q-limit patterns, then returns the
+original configuration plus recommendations and any safely applied changes.
+Explicit YAML keys are preserved in `apply` mode so user configuration remains
+reproducible.
+"""
+function _matpower_auto_profile(mpc, cfg, yaml_cfg::Dict{String,Any})
+  mode = _as_auto_profile_mode(cfg.matpower_auto_profile)
+  explicit_keys = Set(Symbol(k) for k in keys(yaml_cfg))
+  recommendations = Dict{Symbol,Any}()
+  reasons = Dict{Symbol,String}()
+  evidence = String[]
+  applied = Dict{Symbol,Any}()
+  preserved = Symbol[]
+
+  if mode != :off
+    _matpower_auto_profile_shift_scan!(recommendations, reasons, evidence, mpc, cfg)
+    _matpower_auto_profile_shunt_scan!(recommendations, reasons, evidence, mpc, cfg)
+    _matpower_auto_profile_voltage_source!(recommendations, reasons, evidence, mpc)
+    _matpower_auto_profile_flatstart!(recommendations, reasons, evidence, mpc)
+    _matpower_auto_profile_qlimits!(recommendations, reasons, evidence, mpc)
+
+    if mode == :apply
+      for option in sort!(collect(keys(recommendations)); by = String)
+        if option in explicit_keys
+          push!(preserved, option)
+        else
+          current = hasproperty(cfg, option) ? getproperty(cfg, option) : nothing
+          recommended = recommendations[option]
+          current == recommended || (applied[option] = recommended)
+        end
+      end
+    end
+  end
+
+  cfg_out = isempty(applied) ? cfg : merge(cfg, _namedtuple_from_symbol_dict(applied))
+  return (; mode, cfg = cfg_out, recommendations = _namedtuple_from_symbol_dict(recommendations), applied = _namedtuple_from_symbol_dict(applied), preserved = sort!(preserved; by = String), reasons, evidence)
+end
+
+function _print_matpower_auto_profile(io::IO, result)
+  result.mode == :off && return nothing
+  println(io, "==================== MATPOWER auto-profile ====================")
+  println(io, "mode: ", result.mode)
+  if isempty(result.evidence)
+    println(io, "diagnostics: no evidence collected")
+  else
+    println(io, "diagnostics:")
+    for item in result.evidence
+      println(io, "  - ", item)
+    end
+  end
+  rec_keys = sort!(collect(keys(pairs(result.recommendations))); by = String)
+  if isempty(rec_keys)
+    println(io, "recommendations: none; keeping user/default configuration")
+  else
+    println(io, "recommendations:")
+    for option in rec_keys
+      value = getproperty(result.recommendations, option)
+      action = hasproperty(result.applied, option) ? "applied" : (option in result.preserved ? "preserved explicit value" : "recommended only")
+      println(io, "  - ", option, " => ", value, " [", action, "]")
+      println(io, "    reason: ", get(result.reasons, option, "diagnostic recommendation"))
+    end
+  end
+  println(io, "================================================================\n")
+  return nothing
+end
+
 function main()
   yaml_path = _yaml_path_from_inputs()
   yaml_cfg = load_yaml_config(yaml_path)
@@ -1900,6 +2103,14 @@ function main()
   end
 
   cfg = bench_config_for_case(case, yaml_cfg)
+  auto_profile = _matpower_auto_profile(mpc, cfg, yaml_cfg)
+  cfg = auto_profile.cfg
+  if cfg.matpower_auto_profile_log && auto_profile.mode != :off
+    _print_matpower_auto_profile(stdout, auto_profile)
+    open(logfile, "a") do io
+      _print_matpower_auto_profile(io, auto_profile)
+    end
+  end
   _warn_if_flatstart_uses_only_voltage_setpoints(case, cfg, mpc)
   if cfg.trace_legacy_bus_type_warnings
     ENV["SPARLECTRA_TRACE_LEGACY_BUSTYPE"] = "1"
