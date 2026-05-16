@@ -31,6 +31,17 @@ case: case118.m
 methods: [rectangular]
 
 # ---------------------------------------------------------------------------
+# MATPOWER auto-profile / pre-run diagnostics
+# ---------------------------------------------------------------------------
+
+# false: keep current behavior.
+# recommend: inspect the imported case and log recommended robust settings.
+# apply: inspect the case and apply safe recommendations unless the YAML file
+#       already sets that option explicitly.
+matpower_auto_profile: false
+matpower_auto_profile_log: true
+
+# ---------------------------------------------------------------------------
 # Solver / Newton-Raphson options
 # ---------------------------------------------------------------------------
 
@@ -122,6 +133,14 @@ lock_pv_to_pq_buses: []
 qlimit_start_iter: 3
 qlimit_start_mode: iteration
 qlimit_auto_q_delta_pu: 1.0e-4
+
+# Optional Q-limit violation guard:
+# - delayed_switch preserves the hysteresis-gated PV->PQ switching behavior.
+# - lock_pq immediately locks active PV buses whose calculated Q violates a
+#   finite Qmin/Qmax by more than qlimit_guard_violation_threshold_pu at an
+#   eligible Q-limit check.
+qlimit_guard_violation_mode: delayed_switch
+qlimit_guard_violation_threshold_pu: 1.0e-4
 
 # Hysteresis/cooldown for PV<->PQ switching.
 q_hyst_pu: 0.01
@@ -221,6 +240,16 @@ diagnose_maxlines: 12
 # ---------------------------------------------------------------------------
 # Benchmark / output controls
 # ---------------------------------------------------------------------------
+
+# Console/logfile routing:
+# - Console defaults to compact operational summaries for large cases.
+# - Detailed diagnostics and tables remain in the logfile.
+console_summary: true
+console_auto_profile: compact
+console_diagnostics: compact
+console_q_limit_events: summary
+console_max_rows: 20
+logfile_diagnostics: full
 
 # Set `benchmark: false` to only run `show_once` and write logfile/results once.
 # Useful for large cases where benchmarking can take very long.

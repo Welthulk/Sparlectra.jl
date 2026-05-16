@@ -71,6 +71,18 @@ function logQLimitHit!(net::Net, iter::Int, bus::Int, side::Symbol)
   net.qLimitEvents[bus] = side
 end
 
+function qlimit_switch_count(net::Net, bus::Int)::Int
+  return count(ev -> ev.bus == bus, net.qLimitLog)
+end
+
+function qlimit_switch_counts(net::Net)
+  counts = Dict{Int,Int}()
+  for ev in net.qLimitLog
+    counts[ev.bus] = get(counts, ev.bus, 0) + 1
+  end
+  return counts
+end
+
 "Returns the last iteration number where `bus` hit a Q-limit, or `nothing`."
 function lastQLimitIter(net::Net, bus::Int)
   for i = length(net.qLimitLog):-1:1
@@ -369,9 +381,18 @@ function active_set_q_limits!(
   on_violation! = nothing,
   verbose::Int = 0,
   io::IO = stdout,
+  max_console_rows::Int = 30,
+  qlimit_guard_max_switches::Int = typemax(Int),
+  qlimit_guard_freeze_after_repeated_switching::Bool = true,
+  qlimit_guard_violation_mode::Symbol = :delayed_switch,
+  qlimit_guard_violation_threshold_pu::Float64 = 1e-4,
 )
+  qlimit_guard_violation_mode in (:delayed_switch, :lock_pq, :ignore) || error("Unsupported qlimit_guard_violation_mode=$(qlimit_guard_violation_mode). Supported: :delayed_switch, :lock_pq, :ignore.")
+  qlimit_guard_violation_threshold_pu >= 0.0 || error("qlimit_guard_violation_threshold_pu must be >= 0 (got $(qlimit_guard_violation_threshold_pu)).")
   changed   = false
   reenabled = false
+  printed_events = 0
+  omitted_events = 0
   lock_mask = falses(nb)
   @inbounds for bus in lock_pv_to_pq_buses
     if 1 <= bus <= nb
@@ -392,6 +413,15 @@ function active_set_q_limits!(
 
     side = :none
     qclamp = 0.0
+    physical_side = :none
+    physical_violation = 0.0
+    if has_hi && (qreq > qmax_pu[bus])
+      physical_side = :max
+      physical_violation = qreq - qmax_pu[bus]
+    elseif has_lo && (qreq < qmin_pu[bus])
+      physical_side = :min
+      physical_violation = qmin_pu[bus] - qreq
+    end
     # Use the same hysteresis margin for the initial PV->PQ decision as for
     # later PQ->PV re-enable checks.  With q_hyst_pu = 0.0 this preserves the
     # historical exact-limit behavior; positive margins avoid switching on
@@ -406,7 +436,23 @@ function active_set_q_limits!(
       side = :min
       qclamp = qmin_pu[bus]
     end
+    if side == :none && qlimit_guard_violation_mode == :lock_pq && physical_violation > qlimit_guard_violation_threshold_pu
+      side = physical_side
+      qclamp = side == :max ? qmax_pu[bus] : qmin_pu[bus]
+    end
     side == :none && continue
+
+    if qlimit_guard_freeze_after_repeated_switching && qlimit_switch_count(net, bus) >= qlimit_guard_max_switches
+      if verbose > 0
+        if max_console_rows < 0 || printed_events < max_console_rows
+          @printf(io, "PV->PQ Bus %d: switching suppressed after %d Q-limit event(s); bus remains in its current active-set state (it=%d)\n", bus, qlimit_switch_count(net, bus), it)
+          printed_events += 1
+        else
+          omitted_events += 1
+        end
+      end
+      continue
+    end
 
     handled = false
     if !isnothing(on_violation!)
@@ -420,14 +466,24 @@ function active_set_q_limits!(
       logQLimitHit!(net, it, bus, side)
       changed = true
       if verbose > 0
-        @printf(io, "PV->PQ Bus %d: Q=%.6f pu (%.6f MVAr) > Qmax=%.6f pu (%.6f MVAr) (it=%d)\n", bus, qreq, qreq * net.baseMVA, qmax_pu[bus], qmax_pu[bus] * net.baseMVA, it)
+        if max_console_rows < 0 || printed_events < max_console_rows
+          @printf(io, "PV->PQ Bus %d: Q=%.6f pu (%.6f MVAr) > Qmax=%.6f pu (%.6f MVAr) (it=%d)\n", bus, qreq, qreq * net.baseMVA, qmax_pu[bus], qmax_pu[bus] * net.baseMVA, it)
+          printed_events += 1
+        else
+          omitted_events += 1
+        end
       end
     else
       make_pq!(bus, qclamp, side)
       logQLimitHit!(net, it, bus, side)
       changed = true
       if verbose > 0
-        @printf(io, "PV->PQ Bus %d: Q=%.6f pu (%.6f MVAr) < Qmin=%.6f pu (%.6f MVAr) (it=%d)\n", bus, qreq, qreq * net.baseMVA, qmin_pu[bus], qmin_pu[bus] * net.baseMVA, it)
+        if max_console_rows < 0 || printed_events < max_console_rows
+          @printf(io, "PV->PQ Bus %d: Q=%.6f pu (%.6f MVAr) < Qmin=%.6f pu (%.6f MVAr) (it=%d)\n", bus, qreq, qreq * net.baseMVA, qmin_pu[bus], qmin_pu[bus] * net.baseMVA, it)
+          printed_events += 1
+        else
+          omitted_events += 1
+        end
       end
     end
   end
@@ -467,6 +523,10 @@ function active_set_q_limits!(
         (verbose > 0) && @printf(io, "PQ->PV Bus %d: Q=%.6f pu (%.6f MVAr) within (%.6f, %.6f) pu ((%.6f, %.6f) MVAr)\n", bus, qreq, qreq * net.baseMVA, lo, hi, lo * net.baseMVA, hi * net.baseMVA)
       end
     end
+  end
+
+  if verbose > 0 && omitted_events > 0
+    @printf(io, "PV->PQ event details: %d additional row(s) omitted; increase max_console_rows for full output.\n", omitted_events)
   end
 
   return changed, reenabled

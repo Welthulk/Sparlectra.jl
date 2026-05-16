@@ -119,6 +119,41 @@ function run_tap_controller_tests()
     @test tbr.tap_ratio == ratio_before
   end
 
+  @testset "Direct tap-controller Q-limit guard is opt-in" begin
+    function zero_range_pv_tap_net()
+      net, tbr = _build_net()
+      addProsumer!(net = net, busName = "Mid", type = "SYNCHRONOUSMACHINE", p = 0.0, q = 0.0, vm_pu = 1.0, qMin = 0.0, qMax = 0.0)
+      empty!(net.qmin_pu)
+      append!(net.qmin_pu, [-Inf, 0.0, -Inf])
+      empty!(net.qmax_pu)
+      append!(net.qmax_pu, [Inf, 0.0, Inf])
+      addPowerTransformerControl!(net;
+        trafo = string(tbr.branchIdx),
+        mode = :voltage,
+        target_bus = "Load",
+        target_vm_pu = 0.98,
+        control_ratio = true,
+        control_phase = false,
+        enabled = false,
+      )
+      return net
+    end
+
+    # Regression: direct run_tap_controllers_outer! callers must opt in before
+    # the narrow-Q guard can lock PV buses to PQ through its runpf! call.
+    default_net = zero_range_pv_tap_net()
+    redirect_stdout(devnull) do
+      run_tap_controllers_outer!(default_net; max_ite = 0, verbose = 0)
+    end
+    @test isempty(default_net.qLimitLog)
+
+    opt_in_net = zero_range_pv_tap_net()
+    redirect_stdout(devnull) do
+      run_tap_controllers_outer!(opt_in_net; max_ite = 0, verbose = 0, qlimit_guard = true)
+    end
+    @test length(opt_in_net.qLimitLog) == 1
+  end
+
   @testset "Tap controller reporting rows and classic section" begin
     net, tbr = _build_net()
     addPowerTransformerControl!(net;
