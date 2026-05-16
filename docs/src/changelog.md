@@ -42,6 +42,7 @@
 
 ### Diagnostics
 
+* Added MATPOWER auto-profile pre-run mode (`matpower_auto_profile = recommend|apply`) to summarize or apply robust import, flat-start, PV/REF voltage-source, and Q-limit settings while preserving explicit YAML overrides.
 * Added branch-neighborhood reports for selected high-residual buses.
 * Added residual-cluster diagnostics for PEGASE-style mismatch regions.
 * Added negative branch impedance scans while preserving signed MATPOWER `BR_R` / `BR_X` values.

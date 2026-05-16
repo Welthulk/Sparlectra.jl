@@ -83,6 +83,8 @@ function run_matpower_example_tests()
     @test occursin("Base.invokelatest(getfield(@__MODULE__, :_print_pv_voltage_reference_diagnostics)", normalized_source)
     @test occursin("Sparlectra.Slack", normalized_source)
     @test occursin("Sparlectra.PV", normalized_source)
+    @test occursin("matpower_auto_profile", normalized_source)
+    @test occursin("function _matpower_auto_profile", normalized_source)
 
     example_path = joinpath(@__DIR__, "..", "src", "examples", "matpower_import.jl")
     old_no_main = get(ENV, "SPARLECTRA_MATPOWER_IMPORT_NO_MAIN", nothing)
@@ -152,6 +154,8 @@ function run_matpower_example_tests()
         "reference_vm_pu" => 1.01,
         "reference_va_deg" => -3.0,
         "log_effective_config" => true,
+        "matpower_auto_profile" => "recommend",
+        "matpower_auto_profile_log" => true,
       )))
       @test cfg.autodamp === true
       @test cfg.autodamp_min == 0.002
@@ -190,6 +194,8 @@ function run_matpower_example_tests()
       @test cfg.reference_vm_pu == 1.01
       @test cfg.reference_va_deg == -3.0
       @test cfg.log_effective_config === true
+      @test cfg.matpower_auto_profile === :recommend
+      @test cfg.matpower_auto_profile_log === true
       @test occursin("matpower_shift_sign", normalized_source)
       @test occursin("matpower_ratio", normalized_source)
       @test occursin("reference_override", normalized_source)
@@ -238,6 +244,38 @@ function run_matpower_example_tests()
       mpc_seeded = (; bus = hcat(collect(1.0:3.0), fill(1.0, 3), zeros(3, 5), [1.02, 1.01, 0.99], [0.0, -1.0, -2.0]))
       @test Base.invokelatest(() -> getfield(mod, :_warn_if_flatstart_uses_only_voltage_setpoints)("case1951rte.m", (; opt_flatstart = true), mpc_seeded)) === nothing
       @test_logs (:info, r"opt_flatstart=false uses stored MATPOWER voltage magnitudes and angles") Base.invokelatest(() -> getfield(mod, :_warn_if_flatstart_uses_only_voltage_setpoints)("case1951rte.m", (; opt_flatstart = false), mpc_seeded))
+
+      large_bus = zeros(1000, 13)
+      for r in axes(large_bus, 1)
+        large_bus[r, 1] = r
+        large_bus[r, 2] = r == 1 ? 3.0 : 1.0
+        large_bus[r, 8] = 1.0
+      end
+      large_mpc = (; baseMVA = 100.0, bus = large_bus, gen = zeros(0, 21), branch = zeros(0, 13))
+      auto_apply_cfg = Base.invokelatest(() -> getfield(mod, :bench_config_for_case)("case_large.m", Dict{String,Any}(
+        "matpower_auto_profile" => "apply",
+        "opt_flatstart" => false,
+      )))
+      auto_apply = Base.invokelatest(() -> getfield(mod, :_matpower_auto_profile)(large_mpc, auto_apply_cfg, Dict{String,Any}(
+        "matpower_auto_profile" => "apply",
+        "opt_flatstart" => false,
+      )))
+      @test auto_apply.mode === :apply
+      # Explicit YAML values win; inferred large-case start-projection options are still applied.
+      @test auto_apply.cfg.opt_flatstart === false
+      @test :opt_flatstart in auto_apply.preserved
+      @test auto_apply.cfg.start_projection === true
+      @test auto_apply.cfg.flatstart_angle_mode === :dc
+      @test auto_apply.cfg.flatstart_voltage_mode === :bus_vm_va_blend
+      auto_recommend_cfg = Base.invokelatest(() -> getfield(mod, :bench_config_for_case)("case_large.m", Dict{String,Any}("matpower_auto_profile" => "recommend")))
+      auto_recommend = Base.invokelatest(() -> getfield(mod, :_matpower_auto_profile)(large_mpc, auto_recommend_cfg, Dict{String,Any}("matpower_auto_profile" => "recommend")))
+      @test auto_recommend.mode === :recommend
+      @test auto_recommend.cfg.start_projection === false
+      auto_io = IOBuffer()
+      @test Base.invokelatest(() -> getfield(mod, :_print_matpower_auto_profile)(auto_io, auto_apply)) === nothing
+      auto_text = String(take!(auto_io))
+      @test occursin("MATPOWER auto-profile", auto_text)
+      @test occursin("preserved explicit value", auto_text)
 
       diagnostic_mpc = (;
         baseMVA = 100.0,

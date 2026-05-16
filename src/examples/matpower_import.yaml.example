@@ -31,6 +31,17 @@ case: case118.m
 methods: [rectangular]
 
 # ---------------------------------------------------------------------------
+# MATPOWER auto-profile / pre-run diagnostics
+# ---------------------------------------------------------------------------
+
+# false: keep current behavior.
+# recommend: inspect the imported case and log recommended robust settings.
+# apply: inspect the case and apply safe recommendations unless the YAML file
+#       already sets that option explicitly.
+matpower_auto_profile: false
+matpower_auto_profile_log: true
+
+# ---------------------------------------------------------------------------
 # Solver / Newton-Raphson options
 # ---------------------------------------------------------------------------
 
