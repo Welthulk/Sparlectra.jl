@@ -1,4 +1,13 @@
 # Change Log
+## Version 0.7.8 – 2026-05-16
+### Highlights
+
+### Fixes
+
+### Improvements
+
+### Related
+
 ## Version 0.7.7 – 2026-05-13
 
 ### Highlights
