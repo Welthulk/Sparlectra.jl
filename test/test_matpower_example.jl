@@ -97,6 +97,11 @@ function run_matpower_example_tests()
     @test occursin("console_summary::Bool", signature)
     @test occursin("console_auto_profile::Symbol", signature)
     @test occursin("console_q_limit_events::Symbol", signature)
+    @test occursin("console_max_rows::Int", signature)
+    # Regression: YAML console_max_rows must cap run_acpflow Q-limit event and final active-set rows.
+    @test count("pv_table_rows = console_max_rows", normalized_source) == 4
+    @test count("pv_table_rows = pv_table_rows_", normalized_source) == 1
+    @test occursin(raw"pv_table_rows_ = $console_max_rows", normalized_source)
     @test occursin("function _print_matpower_auto_profile_compact", normalized_source)
     @test occursin("function _print_matpower_run_summary", normalized_source)
 

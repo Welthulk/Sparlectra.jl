@@ -1758,6 +1758,7 @@ function bench_run_acpflow(;
               qlimit_guard_violation_mode = qlimit_guard_violation_mode,
               qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu,
               qlimit_guard_log = qlimit_guard_log,
+              pv_table_rows = console_max_rows,
               opt_flatstart = opt_flatstart,
               show_results = show_classic,
               show_compact_result = true,
@@ -1849,6 +1850,7 @@ function bench_run_acpflow(;
                 qlimit_guard_violation_mode = qlimit_guard_violation_mode,
                 qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu,
                 qlimit_guard_log = qlimit_guard_log,
+                pv_table_rows = console_max_rows,
                 opt_flatstart = opt_flatstart,
                 show_results = false,
                 show_compact_result = true,
@@ -1920,6 +1922,7 @@ function bench_run_acpflow(;
         qlimit_guard_violation_mode = qlimit_guard_violation_mode,
         qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu,
         qlimit_guard_log = qlimit_guard_log,
+        pv_table_rows = console_max_rows,
         opt_flatstart = opt_flatstart,
         show_results = false,
         show_compact_result = true,
@@ -1993,6 +1996,7 @@ function bench_run_acpflow(;
       qlimit_guard_violation_mode = qlimit_guard_violation_mode,
       qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu,
       qlimit_guard_log = qlimit_guard_log,
+      pv_table_rows = console_max_rows,
       opt_flatstart = opt_flatstart,
       show_results = false,
       verbose = 0,
@@ -2061,6 +2065,7 @@ function bench_run_acpflow(;
       qlimit_guard_violation_mode = qlimit_guard_violation_mode_,
       qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu_,
       qlimit_guard_log = qlimit_guard_log_,
+      pv_table_rows = pv_table_rows_,
       opt_flatstart = opt_flatstart_,
       show_results = false,
       verbose = 0,
@@ -2107,6 +2112,7 @@ function bench_run_acpflow(;
     qlimit_guard_violation_mode_ = $qlimit_guard_violation_mode;
     qlimit_guard_violation_threshold_pu_ = $qlimit_guard_violation_threshold_pu;
     qlimit_guard_log_ = $qlimit_guard_log;
+    pv_table_rows_ = $console_max_rows;
     opt_flatstart_ = $opt_flatstart;
     cooldown_iters_ = $cooldown_iters;
     q_hyst_pu_ = $q_hyst_pu;
