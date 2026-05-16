@@ -369,9 +369,12 @@ function active_set_q_limits!(
   on_violation! = nothing,
   verbose::Int = 0,
   io::IO = stdout,
+  max_console_rows::Int = 30,
 )
   changed   = false
   reenabled = false
+  printed_events = 0
+  omitted_events = 0
   lock_mask = falses(nb)
   @inbounds for bus in lock_pv_to_pq_buses
     if 1 <= bus <= nb
@@ -420,14 +423,24 @@ function active_set_q_limits!(
       logQLimitHit!(net, it, bus, side)
       changed = true
       if verbose > 0
-        @printf(io, "PV->PQ Bus %d: Q=%.6f pu (%.6f MVAr) > Qmax=%.6f pu (%.6f MVAr) (it=%d)\n", bus, qreq, qreq * net.baseMVA, qmax_pu[bus], qmax_pu[bus] * net.baseMVA, it)
+        if max_console_rows < 0 || printed_events < max_console_rows
+          @printf(io, "PV->PQ Bus %d: Q=%.6f pu (%.6f MVAr) > Qmax=%.6f pu (%.6f MVAr) (it=%d)\n", bus, qreq, qreq * net.baseMVA, qmax_pu[bus], qmax_pu[bus] * net.baseMVA, it)
+          printed_events += 1
+        else
+          omitted_events += 1
+        end
       end
     else
       make_pq!(bus, qclamp, side)
       logQLimitHit!(net, it, bus, side)
       changed = true
       if verbose > 0
-        @printf(io, "PV->PQ Bus %d: Q=%.6f pu (%.6f MVAr) < Qmin=%.6f pu (%.6f MVAr) (it=%d)\n", bus, qreq, qreq * net.baseMVA, qmin_pu[bus], qmin_pu[bus] * net.baseMVA, it)
+        if max_console_rows < 0 || printed_events < max_console_rows
+          @printf(io, "PV->PQ Bus %d: Q=%.6f pu (%.6f MVAr) < Qmin=%.6f pu (%.6f MVAr) (it=%d)\n", bus, qreq, qreq * net.baseMVA, qmin_pu[bus], qmin_pu[bus] * net.baseMVA, it)
+          printed_events += 1
+        else
+          omitted_events += 1
+        end
       end
     end
   end
@@ -467,6 +480,10 @@ function active_set_q_limits!(
         (verbose > 0) && @printf(io, "PQ->PV Bus %d: Q=%.6f pu (%.6f MVAr) within (%.6f, %.6f) pu ((%.6f, %.6f) MVAr)\n", bus, qreq, qreq * net.baseMVA, lo, hi, lo * net.baseMVA, hi * net.baseMVA)
       end
     end
+  end
+
+  if verbose > 0 && omitted_events > 0
+    @printf(io, "PV->PQ event details: %d additional row(s) omitted; increase max_console_rows for full output.\n", omitted_events)
   end
 
   return changed, reenabled

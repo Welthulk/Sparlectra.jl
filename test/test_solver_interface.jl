@@ -324,9 +324,42 @@ function run_solver_interface_tests()
       @test occursin("PV violations: 0", ref_text)
       @test occursin("REF violations: 1", ref_text)
       @test occursin("Final PV/REF Q-limit check: WARN", ref_text)
-    end
 
-    # Ensures final-limit validation remains robust when q-generation data is partially missing.
+  limited_io = IOBuffer()
+  limited_res = Sparlectra._print_rectangular_qlimit_summary(
+    limited_io,
+    net,
+    ComplexF64[1.0 + 0.0im, 1.0 + 0.0im, 1.0 + 0.0im],
+    ComplexF64[0.0 + 0.0im, 0.0 + 0.02im, 0.0 + 0.08im],
+    [:PQ, :PV, :Slack],
+    [-Inf, -0.01, -0.05],
+    [Inf, 0.01, 0.05],
+    zeros(Float64, 3);
+    q_hyst_pu = 0.0,
+    tolerance_pu = 1e-6,
+    max_rows = 30,
+    max_console_rows = 1,
+  )
+  limited_text = String(take!(limited_io))
+  @test limited_res.violating == 2
+  @test occursin("1 more violation rows omitted", limited_text)
+  @test occursin("max_rows/max_console_rows", limited_text)
+
+  summary_io = IOBuffer()
+  Sparlectra._print_rectangular_convergence_summary(summary_io, (
+    numerical_converged = true,
+    q_limit_active_set_ok = false,
+    final_converged = false,
+    reason_text = "remaining PV Q-limit violations",
+  ))
+  summary_text = String(take!(summary_io))
+  @test occursin("numerical_solution=OK", summary_text)
+  @test occursin("q_limit_active_set=FAIL", summary_text)
+  @test occursin("final_converged=false", summary_text)
+  @test occursin("reason=remaining PV Q-limit violations", summary_text)
+end
+
+# Ensures final-limit validation remains robust when q-generation data is partially missing.
     @testset "Final limit validation tolerates missing qgen" begin
       net = createTest3BusNet()
       net.nodeVec[3]._qƩGen = nothing

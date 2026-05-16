@@ -201,19 +201,31 @@ function run_acpflow(;
   if show_compact_result
     pv_to_pq_events = length(myNet.qLimitLog)
     pv_to_pq_buses = length(myNet.qLimitEvents)
-    if erg == 0
-      @printf("method=%-12s  converged=%s  iterations=%d  pv2pq_events=%d  pv2pq_buses=%d  time=%8.6f s\n", String(method), "yes", ite, pv_to_pq_events, pv_to_pq_buses, etime)
-    elseif erg == 1
-      @printf("method=%-12s  converged=%s  iterations=%d  pv2pq_events=%d  pv2pq_buses=%d  time=%8.6f s\n", String(method), "no", ite, pv_to_pq_events, pv_to_pq_buses, etime)
-    else
-      @printf("method=%-12s  converged=%s  iterations=%d  pv2pq_events=%d  pv2pq_buses=%d  time=%8.6f s\n", String(method), "error", ite, pv_to_pq_events, pv_to_pq_buses, etime)
+    rect_status = method === :rectangular ? rectangular_pf_status(myNet) : nothing
+    converged_text = erg == 0 ? "yes" : erg == 1 ? "no" : "error"
+    @printf("method=%-12s  converged=%s  iterations=%d  pv2pq_events=%d  pv2pq_buses=%d  time=%8.6f s", String(method), converged_text, ite, pv_to_pq_events, pv_to_pq_buses, etime)
+    if rect_status !== nothing
+      @printf("  numerical_solution=%s  q_limit_active_set=%s  final_converged=%s  reason=%s", rect_status.numerical_converged ? "OK" : "FAIL", rect_status.q_limit_active_set_ok ? "OK" : "FAIL", string(rect_status.final_converged), rect_status.reason_text)
     end
+    println()
   end
 
   if status_ref !== nothing
-    status_ref[] = (converged = (erg == 0), erg = erg, iterations = ite, elapsed_s = etime, method = method)
+    rect_status = method === :rectangular ? rectangular_pf_status(myNet) : nothing
+    if rect_status === nothing
+      status_ref[] = (converged = (erg == 0), erg = erg, iterations = ite, elapsed_s = etime, method = method)
+    else
+      status_ref[] = (converged = (erg == 0), erg = erg, iterations = ite, elapsed_s = etime, method = method,
+                      numerical_converged = rect_status.numerical_converged,
+                      q_limit_active_set_ok = rect_status.q_limit_active_set_ok,
+                      final_converged = rect_status.final_converged,
+                      reason = rect_status.reason,
+                      reason_text = rect_status.reason_text,
+                      pv_q_limit_violations = rect_status.pv_q_limit_violations,
+                      ref_q_limit_violations = rect_status.ref_q_limit_violations,
+                      final_pv_voltage_residual = rect_status.final_pv_voltage_residual)
+    end
   end
-  
   if erg == 0 || printResultAnyCase
     # Calculate network losses and print results
     calcNetLosses!(myNet)

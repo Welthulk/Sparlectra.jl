@@ -1298,6 +1298,10 @@ function _show_once_summary_row(method::Symbol, status, stats, cmp_ok::Bool; com
   converged = Bool(get(status, :converged, false))
   iterations = _run_iterations(status)
   elapsed_s = _run_elapsed_s(status)
+  numerical_solution = Bool(get(status, :numerical_converged, converged)) ? :ok : :fail
+  q_limit_active_set = Bool(get(status, :q_limit_active_set_ok, converged)) ? :ok : :fail
+  final_converged = Bool(get(status, :final_converged, converged))
+  reason_text = String(get(status, :reason_text, final_converged ? "none" : "not converged"))
   if compare_available
     return (
       method = method,
@@ -1310,9 +1314,13 @@ function _show_once_summary_row(method::Symbol, status, stats, cmp_ok::Bool; com
       angle_alignment = get(stats, :angle_alignment, :none),
       cmp_ok = cmp_ok,
       compare_status = Symbol(get(stats, :compare_status, cmp_ok ? :ok : :fail)),
+      numerical_solution = numerical_solution,
+      q_limit_active_set = q_limit_active_set,
+      final_converged = final_converged,
+      reason_text = reason_text,
     )
   end
-  return (method = method, converged = converged, iterations = iterations, elapsed_s = elapsed_s, max_dvm = NaN, max_dva = NaN, slack_delta_va = NaN, angle_alignment = :none, cmp_ok = false, compare_status = :skip)
+  return (method = method, converged = converged, iterations = iterations, elapsed_s = elapsed_s, max_dvm = NaN, max_dva = NaN, slack_delta_va = NaN, angle_alignment = :none, cmp_ok = false, compare_status = :skip, numerical_solution = numerical_solution, q_limit_active_set = q_limit_active_set, final_converged = final_converged, reason_text = reason_text)
 end
 
 function _print_pv_voltage_reference_diagnostics(io::IO, mpc, net; matpower_pv_voltage_source = :gen_vg, compare_voltage_reference = :bus_vm, tol::Float64 = 1e-4, maxlines::Int = 30)
@@ -1623,7 +1631,7 @@ function bench_run_acpflow(;
 
   # Optional: show results once (not benchmarked)
   if show_once
-    local summaries = Vector{NamedTuple{(:method, :converged, :iterations, :elapsed_s, :max_dvm, :max_dva, :slack_delta_va, :angle_alignment, :cmp_ok, :compare_status),Tuple{Symbol,Bool,Int,Float64,Float64,Float64,Float64,Symbol,Bool,Symbol}}}()
+    local summaries = NamedTuple[]
     show_classic = (show_once_output == :classic)
     println("show_once output is written to logfile: ", logfile)
     for m in methods
@@ -1767,10 +1775,10 @@ function bench_run_acpflow(;
     println("logfile: ", logfile)
     for s in summaries
       if isnan(s.max_dvm) || isnan(s.max_dva)
-        @printf("method=%-12s  converged=%s  iterations=%d  time=%8.6f s  compare=SKIP\n", String(s.method), s.converged ? "yes" : "no", s.iterations, s.elapsed_s)
+        @printf("method=%-12s  numerical_solution=%s  q_limit_active_set=%s  final_converged=%s  iterations=%d  time=%8.6f s  compare=SKIP  reason=%s\n", String(s.method), s.numerical_solution == :ok ? "OK" : "FAIL", s.q_limit_active_set == :ok ? "OK" : "FAIL", string(s.final_converged), s.iterations, s.elapsed_s, s.reason_text)
       else
         compare_text = s.compare_status == :ok ? "OK " : s.compare_status == :warn ? "WARN" : "FAIL"
-        @printf("method=%-12s  converged=%s  iterations=%d  time=%8.6f s  compare=%s  max|dVm|=%8.5f pu  max|dVa|_aligned=%7.4f deg  slackΔ=%+8.4f deg\n", String(s.method), s.converged ? "yes" : "no", s.iterations, s.elapsed_s, compare_text, s.max_dvm, s.max_dva, s.slack_delta_va)
+        @printf("method=%-12s  numerical_solution=%s  q_limit_active_set=%s  final_converged=%s  iterations=%d  time=%8.6f s  compare=%s  max|dVm|=%8.5f pu  max|dVa|_aligned=%7.4f deg  slackΔ=%+8.4f deg  reason=%s\n", String(s.method), s.numerical_solution == :ok ? "OK" : "FAIL", s.q_limit_active_set == :ok ? "OK" : "FAIL", string(s.final_converged), s.iterations, s.elapsed_s, compare_text, s.max_dvm, s.max_dva, s.slack_delta_va, s.reason_text)
       end
     end
     println("=================================================\n")
