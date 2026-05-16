@@ -9,6 +9,7 @@
 * Fixed direct `run_net_acpflow` and rectangular solver defaults so the Q-limit guard remains opt-in unless a caller or config explicitly enables it.
 * Fixed direct `run_tap_controllers_outer!` defaults so the Q-limit guard remains opt-in when the exported tap-control API calls `runpf!`.
 * Fixed MATPOWER example config forwarding so Q-limit guard options from YAML are preserved in the effective config and passed through all `run_acpflow` paths.
+* Fixed MATPOWER example console row limiting so `console_max_rows` from YAML is forwarded to Q-limit event and final active-set row caps in the `run_acpflow` paths.
 * Fixed rectangular NR status reporting: numerical convergence, Q-limit active-set consistency, final convergence, comparison status, and rejection reasons are now reported separately.
 * Fixed Q-limit guard behavior so strongly violating active PV buses can be locked to PQ during eligible Q-limit checks, reducing final active-PV limit violations.
 
