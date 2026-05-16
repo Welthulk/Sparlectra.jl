@@ -94,6 +94,11 @@ function run_matpower_example_tests()
     @test occursin("Sparlectra.PV", normalized_source)
     @test occursin("matpower_auto_profile", normalized_source)
     @test occursin("function _matpower_auto_profile", normalized_source)
+    @test occursin("console_summary::Bool", signature)
+    @test occursin("console_auto_profile::Symbol", signature)
+    @test occursin("console_q_limit_events::Symbol", signature)
+    @test occursin("function _print_matpower_auto_profile_compact", normalized_source)
+    @test occursin("function _print_matpower_run_summary", normalized_source)
 
     example_path = joinpath(@__DIR__, "..", "src", "examples", "matpower_import.jl")
     old_no_main = get(ENV, "SPARLECTRA_MATPOWER_IMPORT_NO_MAIN", nothing)
@@ -174,6 +179,12 @@ function run_matpower_example_tests()
         "log_effective_config" => true,
         "matpower_auto_profile" => "recommend",
         "matpower_auto_profile_log" => true,
+        "console_summary" => true,
+        "console_auto_profile" => "compact",
+        "console_diagnostics" => "summary",
+        "console_q_limit_events" => "summary",
+        "console_max_rows" => 7,
+        "logfile_diagnostics" => "full",
       )))
       @test cfg.autodamp === true
       @test cfg.autodamp_min == 0.002
@@ -230,6 +241,12 @@ function run_matpower_example_tests()
       @test cfg.log_effective_config === true
       @test cfg.matpower_auto_profile === :recommend
       @test cfg.matpower_auto_profile_log === true
+      @test cfg.console_summary === true
+      @test cfg.console_auto_profile === :compact
+      @test cfg.console_diagnostics === :summary
+      @test cfg.console_q_limit_events === :summary
+      @test cfg.console_max_rows == 7
+      @test cfg.logfile_diagnostics === :full
       @test occursin("matpower_shift_sign", normalized_source)
       @test occursin("matpower_ratio", normalized_source)
       @test occursin("reference_override", normalized_source)
@@ -320,6 +337,12 @@ function run_matpower_example_tests()
       auto_text = String(take!(auto_io))
       @test occursin("MATPOWER auto-profile", auto_text)
       @test occursin("preserved explicit value", auto_text)
+      auto_compact_io = IOBuffer()
+      @test Base.invokelatest(() -> getfield(mod, :_print_matpower_auto_profile_compact)(auto_compact_io, auto_apply)) === nothing
+      auto_compact_text = String(take!(auto_compact_io))
+      @test occursin("MATPOWER auto-profile: apply", auto_compact_text)
+      @test occursin("branch shift", auto_compact_text)
+      @test !occursin("reason:", auto_compact_text)
 
       diagnostic_mpc = (;
         baseMVA = 100.0,
@@ -505,6 +528,11 @@ function run_matpower_example_tests()
         effective_config = cfg,
         show_once = false,
         benchmark = false,
+        console_summary = true,
+        console_diagnostics = :compact,
+        console_q_limit_events = :summary,
+        console_max_rows = 3,
+        logfile_diagnostics = :full,
       ))
       @test result == Dict{Symbol,Any}()
       rm(logfile; force = true)

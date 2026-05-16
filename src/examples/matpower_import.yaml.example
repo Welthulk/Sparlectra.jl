@@ -241,6 +241,16 @@ diagnose_maxlines: 12
 # Benchmark / output controls
 # ---------------------------------------------------------------------------
 
+# Console/logfile routing:
+# - Console defaults to compact operational summaries for large cases.
+# - Detailed diagnostics and tables remain in the logfile.
+console_summary: true
+console_auto_profile: compact
+console_diagnostics: compact
+console_q_limit_events: summary
+console_max_rows: 20
+logfile_diagnostics: full
+
 # Set `benchmark: false` to only run `show_once` and write logfile/results once.
 # Useful for large cases where benchmarking can take very long.
 benchmark: false
