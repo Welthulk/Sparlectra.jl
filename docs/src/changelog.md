@@ -1,17 +1,18 @@
 # Change Log
 ## Version 0.7.8 – 2026-05-16
 ### Highlights
-* Added Q-limit guard YAML/config forwarding in `matpower_import.jl` so MATPOWER example runs preserve guard-related options through effective config logging and all `run_acpflow` call paths.
+* Improved Q-limit handling for large MATPOWER imports, especially cases with many generators that have zero or very narrow reactive-power ranges.
+* Added compact console reporting for large MATPOWER example runs while keeping the full diagnostics in the logfile.
 
 ### Fixes
-* Fixed rectangular NR convergence reporting so numerical AC-equation convergence, PV Q-limit active-set consistency, final convergence, comparison status, and rejection reasons are reported separately for large active-set cases.
-* Fixed the rectangular PV Q-limit guard path so an optional violation guard can immediately lock strongly violating active PV buses at eligible Q-limit checks, reducing remaining final active-PV Q-limit violations in large MATPOWER runs.
-
+* Fixed MATPOWER example config forwarding so Q-limit guard options from YAML are preserved in the effective config and passed through all `run_acpflow` paths.
+* Fixed rectangular NR status reporting: numerical convergence, Q-limit active-set consistency, final convergence, comparison status, and rejection reasons are now reported separately.
+* Fixed Q-limit guard behavior so strongly violating active PV buses can be locked to PQ during eligible Q-limit checks, reducing final active-PV limit violations.
 
 ### Improvements
-* Reduced large Q-limit active-set console noise with compact summaries and row limits for detailed PV→PQ and final violation diagnostics.
- 
-### Related
+* Reduced console noise for large Q-limit active-set cases by replacing long PV→PQ and violation tables with compact summaries.
+* Improved MATPOWER import example logging: the console now shows the essential run status, while detailed auto-profile evidence, diagnostics, and solver traces remain available in the logfile. 
+
 
 ## Version 0.7.7 – 2026-05-13
 

@@ -104,6 +104,16 @@ function _as_output_mode(v)::Symbol
   end
 end
 
+function _as_console_mode(v)::Symbol
+  v === false && return :off
+  v === true && return :compact
+  s = lowercase(String(v))
+  s in ("false", "off", "none", "no", "0") && return :off
+  s in ("compact", "summary", "full") && return Symbol(s)
+  @warn "Unknown console/logfile verbosity mode; using :compact" value = v
+  return :compact
+end
+
 function _yaml_path_from_inputs()
   !isempty(ARGS) && return ARGS[1]
   env_path = get(ENV, "SPARLECTRA_MATPOWER_IMPORT_YAML", "")
@@ -304,6 +314,12 @@ function bench_config_for_case(case_name::AbstractString, yaml_cfg::Dict{String,
     wrong_branch_rescue_modes = [:dc, :bus_vm_va_blend, :matpower_va],
     matpower_auto_profile = :off,
     matpower_auto_profile_log = true,
+    console_summary = true,
+    console_auto_profile = :compact,
+    console_diagnostics = :compact,
+    console_q_limit_events = :summary,
+    console_max_rows = 20,
+    logfile_diagnostics = :full,
   )
   case_override = get(CASE_BENCH_OVERRIDES, String(case_name), (;))
   yaml_override = (;)
@@ -400,6 +416,12 @@ function bench_config_for_case(case_name::AbstractString, yaml_cfg::Dict{String,
       wrong_branch_rescue_modes = _as_symbol_vec(get(yaml_cfg, "wrong_branch_rescue_modes", base.wrong_branch_rescue_modes)),
       matpower_auto_profile = _as_auto_profile_mode(get(yaml_cfg, "matpower_auto_profile", base.matpower_auto_profile)),
       matpower_auto_profile_log = Bool(get(yaml_cfg, "matpower_auto_profile_log", base.matpower_auto_profile_log)),
+      console_summary = Bool(get(yaml_cfg, "console_summary", base.console_summary)),
+      console_auto_profile = _as_console_mode(get(yaml_cfg, "console_auto_profile", base.console_auto_profile)),
+      console_diagnostics = _as_console_mode(get(yaml_cfg, "console_diagnostics", base.console_diagnostics)),
+      console_q_limit_events = _as_console_mode(get(yaml_cfg, "console_q_limit_events", base.console_q_limit_events)),
+      console_max_rows = Int(get(yaml_cfg, "console_max_rows", base.console_max_rows)),
+      logfile_diagnostics = _as_console_mode(get(yaml_cfg, "logfile_diagnostics", base.logfile_diagnostics)),
     )
   end
   return merge(base, case_override, yaml_override)
@@ -1316,7 +1338,7 @@ function _print_converged_loss_summary(io::IO, method::Symbol, status, net::Spar
   return nothing
 end
 
-function _show_once_summary_row(method::Symbol, status, stats, cmp_ok::Bool; compare_available::Bool)
+function _show_once_summary_row(method::Symbol, status, stats, cmp_ok::Bool; compare_available::Bool, net = nothing)
   converged = Bool(get(status, :converged, false))
   iterations = _run_iterations(status)
   elapsed_s = _run_elapsed_s(status)
@@ -1324,6 +1346,8 @@ function _show_once_summary_row(method::Symbol, status, stats, cmp_ok::Bool; com
   q_limit_active_set = Bool(get(status, :q_limit_active_set_ok, converged)) ? :ok : :fail
   final_converged = Bool(get(status, :final_converged, converged))
   reason_text = String(get(status, :reason_text, final_converged ? "none" : "not converged"))
+  status_text = String(get(status, :status, final_converged ? :converged : :not_converged))
+  qcounts = _qlimit_summary_counts(net)
   if compare_available
     return (
       method = method,
@@ -1340,9 +1364,34 @@ function _show_once_summary_row(method::Symbol, status, stats, cmp_ok::Bool; com
       q_limit_active_set = q_limit_active_set,
       final_converged = final_converged,
       reason_text = reason_text,
+      status = status_text,
+      pv2pq_events = qcounts.pv2pq_events,
+      pv2pq_buses = qcounts.pv2pq_buses,
+      guarded_pv_buses = qcounts.guarded_pv_buses,
+      oscillating_buses = qcounts.oscillating_buses,
     )
   end
-  return (method = method, converged = converged, iterations = iterations, elapsed_s = elapsed_s, max_dvm = NaN, max_dva = NaN, slack_delta_va = NaN, angle_alignment = :none, cmp_ok = false, compare_status = :skip, numerical_solution = numerical_solution, q_limit_active_set = q_limit_active_set, final_converged = final_converged, reason_text = reason_text)
+  return (
+    method = method,
+    converged = converged,
+    iterations = iterations,
+    elapsed_s = elapsed_s,
+    max_dvm = NaN,
+    max_dva = NaN,
+    slack_delta_va = NaN,
+    angle_alignment = :none,
+    cmp_ok = false,
+    compare_status = :skip,
+    numerical_solution = numerical_solution,
+    q_limit_active_set = q_limit_active_set,
+    final_converged = final_converged,
+    reason_text = reason_text,
+    status = status_text,
+    pv2pq_events = qcounts.pv2pq_events,
+    pv2pq_buses = qcounts.pv2pq_buses,
+    guarded_pv_buses = qcounts.guarded_pv_buses,
+    oscillating_buses = qcounts.oscillating_buses,
+  )
 end
 
 function _print_pv_voltage_reference_diagnostics(io::IO, mpc, net; matpower_pv_voltage_source = :gen_vg, compare_voltage_reference = :bus_vm, tol::Float64 = 1e-4, maxlines::Int = 30)
@@ -1592,6 +1641,12 @@ function bench_run_acpflow(;
   wrong_branch_max_angle_spread_deg::Float64 = 120.0,
   wrong_branch_rescue::Bool = false,
   wrong_branch_rescue_modes::AbstractVector{Symbol} = [:dc, :bus_vm_va_blend, :matpower_va],
+  console_summary::Bool = true,
+  console_auto_profile::Symbol = :compact,
+  console_diagnostics::Symbol = :compact,
+  console_q_limit_events::Symbol = :summary,
+  console_max_rows::Int = 20,
+  logfile_diagnostics::Symbol = :full,
   log_status::_MatpowerImportLogStatus = _MatpowerImportLogStatus(),
 )
   t0 = time()
@@ -1666,7 +1721,6 @@ function bench_run_acpflow(;
   if show_once
     local summaries = NamedTuple[]
     show_classic = (show_once_output == :classic)
-    println("show_once output is written to logfile: ", logfile)
     for m in methods
       open(logfile, "a") do io
         redirect_stdout(io) do
@@ -1758,9 +1812,9 @@ function bench_run_acpflow(;
                 matpower_pv_voltage_source = matpower_pv_voltage_source,
                 tol = matpower_pv_voltage_mismatch_tol_pu,
               )
-              push!(summaries, _show_once_summary_row(m, status, stats, ok; compare_available = true))
+              push!(summaries, _show_once_summary_row(m, status, stats, ok; compare_available = true, net = net_res))
             else
-              push!(summaries, _show_once_summary_row(m, status, nothing, false; compare_available = false))
+              push!(summaries, _show_once_summary_row(m, status, nothing, false; compare_available = false, net = net_res))
               println("Compare skipped: no solution-like VM/VA in mpc.bus(:,8:9)")
             end
             if !Bool(get(status, :converged, false)) && !enable_pq_gen_controllers && m === :rectangular
@@ -1825,18 +1879,12 @@ function bench_run_acpflow(;
       end
     end
 
-    # print short summary to terminal
-    println("\n==================== Summary ====================")
-    println("logfile: ", logfile)
-    for s in summaries
-      if isnan(s.max_dvm) || isnan(s.max_dva)
-        @printf("method=%-12s  numerical_solution=%s  q_limit_active_set=%s  final_converged=%s  iterations=%d  time=%8.6f s  compare=SKIP  reason=%s\n", String(s.method), s.numerical_solution == :ok ? "OK" : "FAIL", s.q_limit_active_set == :ok ? "OK" : "FAIL", string(s.final_converged), s.iterations, s.elapsed_s, s.reason_text)
-      else
-        compare_text = s.compare_status == :ok ? "OK " : s.compare_status == :warn ? "WARN" : "FAIL"
-        @printf("method=%-12s  numerical_solution=%s  q_limit_active_set=%s  final_converged=%s  iterations=%d  time=%8.6f s  compare=%s  max|dVm|=%8.5f pu  max|dVa|_aligned=%7.4f deg  slackΔ=%+8.4f deg  reason=%s\n", String(s.method), s.numerical_solution == :ok ? "OK" : "FAIL", s.q_limit_active_set == :ok ? "OK" : "FAIL", string(s.final_converged), s.iterations, s.elapsed_s, compare_text, s.max_dvm, s.max_dva, s.slack_delta_va, s.reason_text)
-      end
+    # print compact operational summary to terminal
+    if console_summary
+      println()
+      _print_matpower_run_summary(stdout, summaries; logfile = logfile, q_limit_mode = console_q_limit_events)
+      println()
     end
-    println("=================================================\n")
   end
 
   if !show_once
@@ -1904,9 +1952,7 @@ function bench_run_acpflow(;
 
   if !benchmark
     total_s = time() - t0
-    println("\nBenchmarkTools loop skipped (`benchmark: false`).")
-    @printf("total runtime    = %.3f s\n", total_s)
-    println("logfile: ", logfile)
+    @printf("total runtime        : %.3f s\n", total_s)
     open(logfile, "a") do io
       @printf(io, "total runtime: %.3f s\n", total_s)
       _print_log_status(io, log_status)
@@ -2095,8 +2141,7 @@ function bench_run_acpflow(;
     @printf("bench  method=%-12s  med=%8.4f ms  min=%8.4f ms  alloc=%9d B  allocs=%d\n", String(m), tmed, tmin, alloc, allocs)
   end
   total_s = time() - t0
-  @printf("\ntotal runtime    = %.3f s\n", total_s)
-  println("logfile: ", logfile)
+  @printf("\ntotal runtime        : %.3f s\n", total_s)
   open(logfile, "a") do io
     @printf(io, "total runtime: %.3f s\n", total_s)
     _print_log_status(io, log_status)
@@ -2176,6 +2221,100 @@ function _print_matpower_auto_profile(io::IO, result)
   return nothing
 end
 
+function _auto_profile_recommendation_text(result, option::Symbol, yes::AbstractString, no::AbstractString = "OK")::String
+  return hasproperty(result.recommendations, option) ? yes : no
+end
+
+function _auto_profile_evidence_with_prefix(result, prefix::AbstractString)::String
+  for item in result.evidence
+    startswith(item, prefix) && return item
+  end
+  return ""
+end
+
+function _print_matpower_auto_profile_compact(io::IO, result)
+  result.mode == :off && return nothing
+  println(io, "MATPOWER auto-profile: ", result.mode)
+  branch_evidence = _auto_profile_evidence_with_prefix(result, "branch-shift scan")
+  branch_match = match(r"branch-shift scan best='([^']+)'", branch_evidence)
+  branch_text = isnothing(branch_match) ? "OK" : string("OK, ", branch_match.captures[1])
+  shunt_text = _auto_profile_recommendation_text(result, :bus_shunt_model, "admittance recommended", "keep/admittance")
+  pv_text = _auto_profile_recommendation_text(result, :matpower_pv_voltage_source, "GEN.VG recommended", "OK")
+  qlimit_evidence = _auto_profile_evidence_with_prefix(result, "Q-limit scan")
+  qlimit_text = isempty(qlimit_evidence) ? "OK" : replace(qlimit_evidence, "online generators have zero or narrow Q range" => "online generators have zero/narrow Q range")
+  start_text = hasproperty(result.recommendations, :start_projection) || hasproperty(result.recommendations, :flatstart_angle_mode) ? "DC angle + blended voltage recommended" : "OK"
+  @printf(io, "  branch shift      : %s\n", branch_text)
+  @printf(io, "  bus shunts        : %s\n", shunt_text)
+  @printf(io, "  PV voltage source : %s\n", pv_text)
+  @printf(io, "  Q-limit scan      : %s\n", qlimit_text)
+  @printf(io, "  start profile     : %s\n\n", start_text)
+  return nothing
+end
+
+function _print_matpower_console_diagnostics_compact(io::IO, mpc; matpower_shift_sign::Real = 1.0, matpower_shift_unit = "deg", matpower_ratio = "normal")
+  isnothing(mpc) && return nothing
+  println(io, "Diagnostics:")
+  vmva_chk = MatpowerIO.vmva_power_mismatch_stats(mpc; matpower_shift_sign = matpower_shift_sign, matpower_shift_unit = matpower_shift_unit, matpower_ratio = matpower_ratio)
+  if get(vmva_chk, :ok, false)
+    @printf(io, "  VM/VA self-check : max |dP|=%.4g MW, max |dQ|=%.4g MVAr\n", Float64(get(vmva_chk, :max_p_mis_MW, NaN)), Float64(get(vmva_chk, :max_q_mis_MVar, NaN)))
+  else
+    println(io, "  VM/VA self-check : skipped")
+  end
+  if hasproperty(mpc, :branch) && size(mpc.branch, 2) >= 4
+    neg_r = count(<(0.0), mpc.branch[:, 3])
+    neg_x = count(<(0.0), mpc.branch[:, 4])
+    @printf(io, "  negative branches: BR_R<0=%d, BR_X<0=%d\n", neg_r, neg_x)
+  end
+  println(io)
+  return nothing
+end
+
+function _qlimit_summary_counts(net)
+  isnothing(net) && return (; pv2pq_events = 0, pv2pq_buses = 0, guarded_pv_buses = 0, oscillating_buses = 0)
+  counts = Dict{Int,Int}()
+  guarded = Set{Int}()
+  for ev in net.qLimitLog
+    counts[ev.bus] = get(counts, ev.bus, 0) + 1
+    ev.iter == 0 && push!(guarded, ev.bus)
+  end
+  return (; pv2pq_events = length(net.qLimitLog), pv2pq_buses = length(net.qLimitEvents), guarded_pv_buses = length(guarded), oscillating_buses = count(>(1), values(counts)))
+end
+
+function _print_matpower_run_summary(io::IO, summaries; logfile::AbstractString = "", q_limit_mode::Symbol = :summary)
+  println(io, "Run summary:")
+  if isempty(summaries)
+    println(io, "  status              : no methods executed")
+  end
+  for s in summaries
+    compare_text = s.compare_status == :ok ? "OK" : s.compare_status == :warn ? "WARN" : s.compare_status == :skip ? "SKIP" : "FAIL"
+    println(io, "  method              : ", s.method)
+    println(io, "  numerical_solution  : ", s.numerical_solution == :ok ? "OK" : "FAIL")
+    println(io, "  q_limit_active_set  : ", s.q_limit_active_set == :ok ? "OK" : "FAIL")
+    println(io, "  final_converged     : ", s.final_converged)
+    println(io, "  iterations          : ", s.iterations)
+    @printf(io, "  time                : %.6f s\n", s.elapsed_s)
+    println(io, "  compare             : ", compare_text)
+    if !isnan(s.max_dvm)
+      @printf(io, "  max |dVm|           : %.5g pu\n", s.max_dvm)
+    end
+    if !isnan(s.max_dva)
+      @printf(io, "  max |dVa| aligned   : %.5g deg\n", s.max_dva)
+    end
+    if q_limit_mode != :off
+      println(io, "  pv2pq_events        : ", s.pv2pq_events)
+      println(io, "  pv2pq_buses         : ", s.pv2pq_buses)
+      println(io, "  guarded_pv_buses    : ", s.guarded_pv_buses)
+      println(io, "  oscillating_buses   : ", s.oscillating_buses)
+    end
+    if hasproperty(s, :status)
+      println(io, "  status              : ", s.status)
+    end
+    println(io, "  reason              : ", s.reason_text)
+  end
+  !isempty(logfile) && println(io, "\nDetails written to logfile.")
+  return nothing
+end
+
 function main()
   yaml_path = _yaml_path_from_inputs()
   yaml_cfg = load_yaml_config(yaml_path)
@@ -2185,11 +2324,6 @@ function main()
 
   print("\e[2J\e[H") # clear screen and move cursor to home position
   println("----------------------------------------------------------------------------------------------")
-  println("Sparlectra version: ", Sparlectra.version(), "\n")
-  println("Importing MATPOWER case file: $case\n")
-  if !isempty(yaml_path)
-    println("Using YAML config: $yaml_path\n")
-  end
 
   timestamp = Dates.format(Dates.now(), "yyyymmdd_HHMMSS")
   log_case = replace(basename(case), r"[^A-Za-z0-9_.-]" => "_")
@@ -2199,6 +2333,10 @@ function main()
   # - download case14.m into data/mpower/ if missing
   # - generate case14.jl if requested and missing
   local_case = Sparlectra.FetchMatpowerCase.ensure_casefile(case; outdir = Sparlectra.MPOWER_DIR, to_jl = true, overwrite = false)
+  println("Sparlectra version: ", Sparlectra.version())
+  println("casefile: ", local_case)
+  !isempty(yaml_path) && println("yaml: ", yaml_path)
+  println("logfile: ", logfile, "\n")
   log_status = _MatpowerImportLogStatus()
   open(logfile, "w") do io
     println(io, "Sparlectra version: ", Sparlectra.version())
@@ -2213,10 +2351,17 @@ function main()
   auto_profile = _matpower_auto_profile(mpc, cfg, yaml_cfg)
   cfg = auto_profile.cfg
   if cfg.matpower_auto_profile_log && auto_profile.mode != :off
-    _print_matpower_auto_profile(stdout, auto_profile)
+    if cfg.console_auto_profile == :full
+      _print_matpower_auto_profile(stdout, auto_profile)
+    elseif cfg.console_auto_profile != :off
+      _print_matpower_auto_profile_compact(stdout, auto_profile)
+    end
     open(logfile, "a") do io
       _print_matpower_auto_profile(io, auto_profile)
     end
+  end
+  if cfg.console_diagnostics == :compact || cfg.console_diagnostics == :summary
+    _print_matpower_console_diagnostics_compact(stdout, mpc; matpower_shift_sign = cfg.matpower_shift_sign, matpower_shift_unit = cfg.matpower_shift_unit, matpower_ratio = cfg.matpower_ratio)
   end
   _warn_if_flatstart_uses_only_voltage_setpoints(case, cfg, mpc)
   if cfg.trace_legacy_bus_type_warnings
@@ -2324,6 +2469,12 @@ function main()
     wrong_branch_max_angle_spread_deg = cfg.wrong_branch_max_angle_spread_deg,
     wrong_branch_rescue = cfg.wrong_branch_rescue,
     wrong_branch_rescue_modes = cfg.wrong_branch_rescue_modes,
+    console_summary = cfg.console_summary,
+    console_auto_profile = cfg.console_auto_profile,
+    console_diagnostics = cfg.console_diagnostics,
+    console_q_limit_events = cfg.console_q_limit_events,
+    console_max_rows = cfg.console_max_rows,
+    logfile_diagnostics = cfg.logfile_diagnostics,
     log_status = log_status,
   )
   return bench
