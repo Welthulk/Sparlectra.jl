@@ -5,6 +5,7 @@
 
 ### Fixes
 * Fixed rectangular NR convergence reporting so numerical AC-equation convergence, PV Q-limit active-set consistency, final convergence, comparison status, and rejection reasons are reported separately for large active-set cases.
+* Fixed the rectangular PV Q-limit guard path so an optional violation guard can immediately lock strongly violating active PV buses at eligible Q-limit checks, reducing remaining final active-PV Q-limit violations in large MATPOWER runs.
 
 
 ### Improvements
