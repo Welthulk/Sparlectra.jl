@@ -95,6 +95,14 @@ function run_solver_interface_tests()
   # external model API, Q-limit reporting/autocorrection, PV->PQ locking, and final-limit reporting.
   @testset "Solver interface" begin
     @test test_external_solver_interface() == true
+    @testset "Rectangular PF statuses use weak net keys" begin
+      @test isempty(Sparlectra._RECTANGULAR_PF_STATUS.entries) || all(entry[2] isa WeakRef for entry in Sparlectra._RECTANGULAR_PF_STATUS.entries)
+
+      net = createTest3BusNet()
+      status = (status = :test_status,)
+      @test Sparlectra._set_rectangular_pf_status!(net, status) === status
+      @test Sparlectra.rectangular_pf_status(net) === status
+    end
     @testset "Flat-start voltage setpoints" begin
       net = createTest3BusNet()
       net.nodeVec[1]._vm_pu = 0.94

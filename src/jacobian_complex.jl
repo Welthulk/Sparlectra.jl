@@ -319,15 +319,38 @@ function _print_rectangular_qlimit_trace(
   return nothing
 end
 
-const _RECTANGULAR_PF_STATUS = IdDict{Net,Any}()
+mutable struct _RectangularPFStatusTable
+  entries::Vector{Tuple{UInt,WeakRef,Any}}
+end
+
+const _RECTANGULAR_PF_STATUS = _RectangularPFStatusTable(Tuple{UInt,WeakRef,Any}[])
+
+function _prune_rectangular_pf_status!(table::_RectangularPFStatusTable)
+  filter!(entry -> entry[2].value !== nothing, table.entries)
+  return table
+end
 
 function _set_rectangular_pf_status!(net::Net, status)
-  _RECTANGULAR_PF_STATUS[net] = status
+  _prune_rectangular_pf_status!(_RECTANGULAR_PF_STATUS)
+  key = objectid(net)
+  for i in eachindex(_RECTANGULAR_PF_STATUS.entries)
+    entry = _RECTANGULAR_PF_STATUS.entries[i]
+    if entry[1] == key && entry[2].value === net
+      _RECTANGULAR_PF_STATUS.entries[i] = (key, WeakRef(net), status)
+      return status
+    end
+  end
+  push!(_RECTANGULAR_PF_STATUS.entries, (key, WeakRef(net), status))
   return status
 end
 
 function rectangular_pf_status(net::Net)
-  return get(_RECTANGULAR_PF_STATUS, net, nothing)
+  _prune_rectangular_pf_status!(_RECTANGULAR_PF_STATUS)
+  key = objectid(net)
+  for entry in _RECTANGULAR_PF_STATUS.entries
+    entry[1] == key && entry[2].value === net && return entry[3]
+  end
+  return nothing
 end
 
 function _rectangular_rejection_reason_text(reason::Symbol)
