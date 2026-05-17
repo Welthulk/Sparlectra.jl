@@ -364,6 +364,29 @@ perf_cfg = Base.invokelatest(() -> getfield(mod, :bench_config_for_case)("case14
 @test perf_cfg.performance_skip_reference_comparison === true
 @test perf_cfg.performance_max_diagnostic_rows == 7
 
+summary_profile = Dict{Symbol,Any}(
+  :enabled => true,
+  :level => :summary,
+  :show_allocations => false,
+  :show_iteration_table => true,
+  :timings => Dict{Symbol,Any}(
+    :matpower_parse => (calls = 1, elapsed_s = 0.1, bytes = 0),
+    :logging_diagnostics => (calls = 1, elapsed_s = 0.2, bytes = 0),
+  ),
+  :iterations => [(iteration = 1, max_mismatch = 1e-3, qlimit_changed = false, qlimit_reenabled = false)],
+)
+summary_io = IOBuffer()
+@test Base.invokelatest(() -> getfield(mod, :_print_performance_profile)(summary_io, summary_profile; max_rows = 5)) === nothing
+summary_text = String(take!(summary_io))
+@test occursin("Performance Summary", summary_text)
+@test occursin("matpower_parse", summary_text)
+@test occursin("logging_diagnostics", summary_text)
+@test !occursin("Newton iteration table", summary_text)
+summary_profile[:level] = :iteration
+iteration_io = IOBuffer()
+@test Base.invokelatest(() -> getfield(mod, :_print_performance_profile)(iteration_io, summary_profile; max_rows = 5)) === nothing
+@test occursin("Newton iteration table", String(take!(iteration_io)))
+
 diagnostic_mpc = (;
         baseMVA = 100.0,
         bus = [1.0 3.0 0.0 0.0 0.0 0.0 1.0 1.0 0.0 110.0 1.0 1.1 0.9;
@@ -559,6 +582,9 @@ diagnostic_mpc = (;
   performance_max_diagnostic_rows = 5,
 ))
       @test result == Dict{Symbol,Any}()
+      logfile_text = read(logfile, String)
+      @test occursin("Performance Summary", logfile_text)
+      @test occursin("logging_diagnostics", logfile_text)
       rm(logfile; force = true)
     finally
       if isnothing(old_no_main)
