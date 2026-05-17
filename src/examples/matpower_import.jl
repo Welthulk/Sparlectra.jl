@@ -305,6 +305,13 @@ function _print_performance_profile(io::IO, profile; title::AbstractString = "Pe
     if nshow < length(rows)
       @printf(io, "... truncated performance rows: showing %d/%d\n", nshow, length(rows))
     end
+    sp = get(profile, :start_projection_summary, nothing)
+    if sp !== nothing
+      @printf(io, "start_projection: selected=%s, candidates=%d, best_mismatch=%.6e, time=%.6f s\n", String(sp.selected), sp.candidates, sp.best_mismatch, sp.elapsed_s)
+    end
+    if haskey(timings, :solver_total)
+      println(io, "Note: solver_total is inclusive; nested phase rows explain visible subwork, and any remainder is solver control flow, status bookkeeping, or other uninstrumented overhead.")
+    end
   end
   iterations = get(profile, :iterations, NamedTuple[])
   if Bool(get(profile, :show_iteration_table, true)) && get(profile, :level, :summary) === :iteration && !isempty(iterations)
@@ -361,6 +368,9 @@ function bench_config_for_case(case_name::AbstractString, yaml_cfg::Dict{String,
     start_projection = false,
     start_projection_try_dc_start = true,
     start_projection_try_blend_scan = true,
+    start_projection_branch_guard = true,
+    start_projection_measure_candidates = true,
+    start_projection_reuse_import_data = true,
     start_projection_blend_lambdas = [0.25, 0.5, 0.75],
     start_projection_dc_angle_limit_deg = 60.0,
     qlimit_start_iter = 2,
@@ -474,6 +484,9 @@ function bench_config_for_case(case_name::AbstractString, yaml_cfg::Dict{String,
       start_projection = Bool(get(yaml_cfg, "start_projection", base.start_projection)),
       start_projection_try_dc_start = Bool(get(yaml_cfg, "start_projection_try_dc_start", base.start_projection_try_dc_start)),
       start_projection_try_blend_scan = Bool(get(yaml_cfg, "start_projection_try_blend_scan", base.start_projection_try_blend_scan)),
+      start_projection_branch_guard = Bool(get(yaml_cfg, "start_projection_branch_guard", base.start_projection_branch_guard)),
+      start_projection_measure_candidates = Bool(get(yaml_cfg, "start_projection_measure_candidates", base.start_projection_measure_candidates)),
+      start_projection_reuse_import_data = Bool(get(yaml_cfg, "start_projection_reuse_import_data", base.start_projection_reuse_import_data)),
       start_projection_blend_lambdas = Float64[x for x in get(yaml_cfg, "start_projection_blend_lambdas", base.start_projection_blend_lambdas)],
       start_projection_dc_angle_limit_deg = Float64(get(yaml_cfg, "start_projection_dc_angle_limit_deg", base.start_projection_dc_angle_limit_deg)),
       qlimit_start_iter = Int(get(yaml_cfg, "qlimit_start_iter", base.qlimit_start_iter)),
@@ -1419,6 +1432,8 @@ function _matpower_auto_profile_flatstart!(recommendations::Dict{Symbol,Any}, re
     _matpower_auto_add!(recommendations, reasons, :start_projection, true, reason)
     _matpower_auto_add!(recommendations, reasons, :start_projection_try_dc_start, true, reason)
     _matpower_auto_add!(recommendations, reasons, :start_projection_try_blend_scan, false, "DC start plus bus VM/VA blend is the compact default pre-run profile for large cases")
+    _matpower_auto_add!(recommendations, reasons, :start_projection_measure_candidates, false, "large-case fast path skips candidate mismatch scans when the DC start is explicitly requested")
+    _matpower_auto_add!(recommendations, reasons, :start_projection_reuse_import_data, true, "reuse the already parsed MATPOWER case for import and flat-start lookup")
   end
   return nothing
 end
@@ -1720,6 +1735,9 @@ function bench_run_acpflow(;
   start_projection::Bool = false,
   start_projection_try_dc_start::Bool = true,
   start_projection_try_blend_scan::Bool = true,
+  start_projection_branch_guard::Bool = true,
+  start_projection_measure_candidates::Bool = true,
+  start_projection_reuse_import_data::Bool = true,
   start_projection_blend_lambdas::AbstractVector{<:Real} = [0.25, 0.5, 0.75],
   start_projection_dc_angle_limit_deg::Float64 = 60.0,
   qlimit_start_iter::Int = 2,
@@ -1910,6 +1928,8 @@ function bench_run_acpflow(;
               start_projection = start_projection,
               start_projection_try_dc_start = start_projection_try_dc_start,
               start_projection_try_blend_scan = start_projection_try_blend_scan,
+              start_projection_branch_guard = start_projection_branch_guard,
+              start_projection_measure_candidates = start_projection_measure_candidates,
               start_projection_blend_lambdas = start_projection_blend_lambdas,
               start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg,
               qlimit_start_iter = qlimit_start_iter,
@@ -1948,6 +1968,7 @@ function bench_run_acpflow(;
               matpower_pv_voltage_mismatch_tol_pu = matpower_pv_voltage_mismatch_tol_pu,
               flatstart_voltage_mode = flatstart_voltage_mode,
               flatstart_angle_mode = flatstart_angle_mode,
+                imported_matpower_case = start_projection_reuse_import_data ? mpc : nothing,
                 performance_profile = performance_profile,
               )
             end
@@ -2009,6 +2030,8 @@ end
                 start_projection = start_projection,
                 start_projection_try_dc_start = start_projection_try_dc_start,
                 start_projection_try_blend_scan = start_projection_try_blend_scan,
+                start_projection_branch_guard = start_projection_branch_guard,
+                start_projection_measure_candidates = start_projection_measure_candidates,
                 start_projection_blend_lambdas = start_projection_blend_lambdas,
                 start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg,
                 qlimit_start_iter = qlimit_start_iter,
@@ -2047,6 +2070,7 @@ end
                 matpower_pv_voltage_mismatch_tol_pu = matpower_pv_voltage_mismatch_tol_pu,
                 flatstart_voltage_mode = flatstart_voltage_mode,
                   flatstart_angle_mode = flatstart_angle_mode,
+                imported_matpower_case = start_projection_reuse_import_data ? mpc : nothing,
                 performance_profile = performance_profile,
                 )
               end
@@ -2082,6 +2106,8 @@ end
         start_projection = start_projection,
         start_projection_try_dc_start = start_projection_try_dc_start,
         start_projection_try_blend_scan = start_projection_try_blend_scan,
+        start_projection_branch_guard = start_projection_branch_guard,
+        start_projection_measure_candidates = start_projection_measure_candidates,
         start_projection_blend_lambdas = start_projection_blend_lambdas,
         start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg,
         qlimit_start_iter = qlimit_start_iter,
@@ -2120,6 +2146,7 @@ end
         matpower_pv_voltage_mismatch_tol_pu = matpower_pv_voltage_mismatch_tol_pu,
         flatstart_voltage_mode = flatstart_voltage_mode,
         flatstart_angle_mode = flatstart_angle_mode,
+                imported_matpower_case = start_projection_reuse_import_data ? mpc : nothing,
                 performance_profile = performance_profile,
         )
       end
@@ -2160,6 +2187,8 @@ end
       start_projection = start_projection,
       start_projection_try_dc_start = start_projection_try_dc_start,
       start_projection_try_blend_scan = start_projection_try_blend_scan,
+      start_projection_branch_guard = start_projection_branch_guard,
+      start_projection_measure_candidates = start_projection_measure_candidates,
       start_projection_blend_lambdas = start_projection_blend_lambdas,
       start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg,
       qlimit_start_iter = qlimit_start_iter,
@@ -2196,6 +2225,7 @@ end
       matpower_pv_voltage_mismatch_tol_pu = matpower_pv_voltage_mismatch_tol_pu,
       flatstart_voltage_mode = flatstart_voltage_mode,
       flatstart_angle_mode = flatstart_angle_mode,
+                imported_matpower_case = start_projection_reuse_import_data ? mpc : nothing,
                 performance_profile = performance_profile,
     )
   end
@@ -2594,6 +2624,9 @@ function main()
     start_projection = cfg.start_projection,
     start_projection_try_dc_start = cfg.start_projection_try_dc_start,
     start_projection_try_blend_scan = cfg.start_projection_try_blend_scan,
+    start_projection_branch_guard = cfg.start_projection_branch_guard,
+    start_projection_measure_candidates = cfg.start_projection_measure_candidates,
+    start_projection_reuse_import_data = cfg.start_projection_reuse_import_data,
     start_projection_blend_lambdas = cfg.start_projection_blend_lambdas,
     start_projection_dc_angle_limit_deg = cfg.start_projection_dc_angle_limit_deg,
     qlimit_start_iter = cfg.qlimit_start_iter,

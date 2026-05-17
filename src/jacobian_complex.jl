@@ -668,6 +668,90 @@ function _dc_angle_start_rectangular(
   return Vdc
 end
 
+function _dc_angle_start_rectangular_profiled(
+  Ybus,
+  Vraw::Vector{ComplexF64},
+  S::Vector{ComplexF64},
+  bus_types::Vector{Symbol},
+  Vset::Vector{Float64},
+  slack_idx::Int;
+  dc_angle_limit_deg::Float64 = 60.0,
+  performance_profile = nothing,
+)
+  n = length(Vraw)
+  non_slack = _perf_profile_time!(performance_profile, :start_projection_bus_map) do
+    non_slack_indices(n, slack_idx)
+  end
+  nred = length(non_slack)
+  nred == 0 && return copy(Vraw)
+  pos = _perf_profile_time!(performance_profile, :start_projection_bus_map) do
+    build_pos_map(non_slack, n)
+  end
+
+  B = _perf_profile_time!(performance_profile, :start_projection_dc_matrix_assembly) do
+    B = zeros(Float64, nred, nred)
+    if Ybus isa SparseMatrixCSC
+      rv = rowvals(Ybus)
+      nz = nonzeros(Ybus)
+      @inbounds for j in axes(Ybus, 2)
+        for ptr in nzrange(Ybus, j)
+          i = rv[ptr]
+          i == j && continue
+          ri = pos[i]
+          ri == 0 && continue
+          bij = imag(nz[ptr])
+          bij == 0.0 && continue
+          if j != slack_idx
+            cj = pos[j]
+            if cj != 0
+              B[ri, cj] -= bij
+            end
+          end
+          B[ri, ri] += bij
+        end
+      end
+    else
+      @inbounds for i in non_slack
+        ri = pos[i]
+        for j in axes(Ybus, 2)
+          j == i && continue
+          bij = imag(Ybus[i, j])
+          bij == 0.0 && continue
+          if j != slack_idx
+            cj = pos[j]
+            if cj != 0
+              B[ri, cj] -= bij
+            end
+          end
+          B[ri, ri] += bij
+        end
+      end
+    end
+    B
+  end
+
+  P = real.(S[non_slack])
+  θred = _perf_profile_time!(performance_profile, :start_projection_dc_linear_solve) do
+    solve_linear(B, P; allow_pinv = true)
+  end
+  limit = deg2rad(dc_angle_limit_deg)
+  θslack = angle(Vraw[slack_idx])
+  Vdc = similar(Vraw)
+
+  _perf_profile_time!(performance_profile, :start_projection_voltage_clipping) do
+    @inbounds for k in eachindex(Vraw)
+      vm = _voltage_magnitude_for_projection(Vraw, bus_types, Vset, k)
+      if k == slack_idx
+        Vdc[k] = Vraw[k]
+      else
+        θ = θslack + clamp(θred[pos[k]], -limit, limit)
+        Vdc[k] = ComplexF64(vm * cos(θ), vm * sin(θ))
+      end
+    end
+  end
+  return Vdc
+end
+
 function _blend_voltage_starts(Vraw::Vector{ComplexF64}, Vdc::Vector{ComplexF64}, λ::Float64, slack_idx::Int)
   0.0 <= λ <= 1.0 || error("blend lambda must satisfy 0 ≤ λ ≤ 1 (got $(λ)).")
   V = similar(Vraw)
@@ -703,23 +787,37 @@ function project_rectangular_start(
   enabled::Bool = false,
   try_dc_start::Bool = true,
   try_blend_scan::Bool = true,
+  branch_guard::Bool = true,
+  measure_candidates::Bool = true,
   blend_lambdas::AbstractVector{<:Real} = [0.25, 0.5, 0.75],
   dc_angle_limit_deg::Float64 = 60.0,
   verbose::Int = 0,
+  performance_profile = nothing,
 )
   enabled || return Vraw
   dc_angle_limit_deg > 0.0 || error("dc_angle_limit_deg must be > 0 (got $(dc_angle_limit_deg)).")
 
-  raw = _sanitize_rectangular_start(Vraw, bus_types, Vset, slack_idx)
+  t0 = time_ns()
+  candidate_count = 1
+  raw = _perf_profile_time!(performance_profile, :start_projection_voltage_clipping) do
+    _sanitize_rectangular_start(Vraw, bus_types, Vset, slack_idx)
+  end
   best = raw
   best_name = :raw
-  best_mis = _max_rectangular_mismatch(Ybus, raw, S, bus_types, Vset, slack_idx)
+  best_mis = measure_candidates ? _perf_profile_time!(performance_profile, :start_projection_mismatch_evaluation) do
+    _max_rectangular_mismatch(Ybus, raw, S, bus_types, Vset, slack_idx)
+  end : NaN
   Vdc = nothing
 
   if try_dc_start
-    Vdc = _dc_angle_start_rectangular(Ybus, raw, S, bus_types, Vset, slack_idx; dc_angle_limit_deg = dc_angle_limit_deg)
-    dc_mis = _max_rectangular_mismatch(Ybus, Vdc, S, bus_types, Vset, slack_idx)
-    if isfinite(dc_mis) && dc_mis < best_mis
+    Vdc = _perf_profile_time!(performance_profile, :start_projection_dc_start_construction) do
+      _dc_angle_start_rectangular_profiled(Ybus, raw, S, bus_types, Vset, slack_idx; dc_angle_limit_deg = dc_angle_limit_deg, performance_profile = performance_profile)
+    end
+    candidate_count += 1
+    dc_mis = measure_candidates ? _perf_profile_time!(performance_profile, :start_projection_mismatch_evaluation) do
+      _max_rectangular_mismatch(Ybus, Vdc, S, bus_types, Vset, slack_idx)
+    end : NaN
+    if !measure_candidates || (isfinite(dc_mis) && dc_mis < best_mis)
       best = Vdc
       best_name = :dc_start
       best_mis = dc_mis
@@ -727,20 +825,42 @@ function project_rectangular_start(
   end
 
   if try_blend_scan && Vdc !== nothing
-    for λ_raw in blend_lambdas
-      λ = Float64(λ_raw)
-      Vblend = _blend_voltage_starts(raw, Vdc, λ, slack_idx)
-      blend_mis = _max_rectangular_mismatch(Ybus, Vblend, S, bus_types, Vset, slack_idx)
-      if isfinite(blend_mis) && blend_mis < best_mis
-        best = Vblend
-        best_name = Symbol("blend_", λ)
-        best_mis = blend_mis
+    _perf_profile_time!(performance_profile, :start_projection_blend_candidate_generation) do
+      for λ_raw in blend_lambdas
+        λ = Float64(λ_raw)
+        Vblend = _blend_voltage_starts(raw, Vdc, λ, slack_idx)
+        candidate_count += 1
+        blend_mis = measure_candidates ? _perf_profile_time!(performance_profile, :start_projection_mismatch_evaluation) do
+          _max_rectangular_mismatch(Ybus, Vblend, S, bus_types, Vset, slack_idx)
+        end : NaN
+        if measure_candidates && isfinite(blend_mis) && blend_mis < best_mis
+          best = Vblend
+          best_name = Symbol("blend_", λ)
+          best_mis = blend_mis
+        end
       end
     end
   end
 
+  if branch_guard
+    _perf_profile_time!(performance_profile, :start_projection_branch_guard_checks) do
+      if !all(isfinite, real.(best)) || !all(isfinite, imag.(best))
+        best = raw
+        best_name = :raw
+        best_mis = measure_candidates ? _max_rectangular_mismatch(Ybus, raw, S, bus_types, Vset, slack_idx) : NaN
+      end
+    end
+  end
+
+  _perf_profile_time!(performance_profile, :start_projection_final_selection) do
+    nothing
+  end
+  if performance_profile isa AbstractDict && Bool(get(performance_profile, :enabled, false))
+    performance_profile[:start_projection_summary] = (selected = best_name, candidates = candidate_count, best_mismatch = best_mis, elapsed_s = (time_ns() - t0) / 1e9)
+  end
+
   if verbose > 0
-    raw_mis = _max_rectangular_mismatch(Ybus, raw, S, bus_types, Vset, slack_idx)
+    raw_mis = measure_candidates ? _max_rectangular_mismatch(Ybus, raw, S, bus_types, Vset, slack_idx) : NaN
     @info "start projection selected $(best_name)" raw_mismatch = raw_mis projected_mismatch = best_mis
   end
   return best
@@ -1511,6 +1631,8 @@ function run_complex_nr_rectangular_for_net!(
   start_projection::Bool = false,
   start_projection_try_dc_start::Bool = true,
   start_projection_try_blend_scan::Bool = true,
+  start_projection_branch_guard::Bool = true,
+  start_projection_measure_candidates::Bool = true,
   start_projection_blend_lambdas::AbstractVector{<:Real} = [0.25, 0.5, 0.75],
   start_projection_dc_angle_limit_deg::Float64 = 60.0,
   qlimit_start_iter::Int = 2,
@@ -1604,9 +1726,12 @@ function run_complex_nr_rectangular_for_net!(
       enabled = start_projection,
       try_dc_start = start_projection_try_dc_start,
       try_blend_scan = start_projection_try_blend_scan,
+      branch_guard = start_projection_branch_guard,
+      measure_candidates = start_projection_measure_candidates,
       blend_lambdas = start_projection_blend_lambdas,
       dc_angle_limit_deg = start_projection_dc_angle_limit_deg,
       verbose = verbose,
+      performance_profile = performance_profile,
     )
   end
 
@@ -2001,6 +2126,8 @@ function runpf_rectangular!(
   start_projection::Bool = false,
   start_projection_try_dc_start::Bool = true,
   start_projection_try_blend_scan::Bool = true,
+  start_projection_branch_guard::Bool = true,
+  start_projection_measure_candidates::Bool = true,
   start_projection_blend_lambdas::AbstractVector{<:Real} = [0.25, 0.5, 0.75],
   start_projection_dc_angle_limit_deg::Float64 = 60.0,
   qlimit_start_iter::Int = 2,
@@ -2039,6 +2166,8 @@ function runpf_rectangular!(
     start_projection = start_projection,
     start_projection_try_dc_start = start_projection_try_dc_start,
     start_projection_try_blend_scan = start_projection_try_blend_scan,
+    start_projection_branch_guard = start_projection_branch_guard,
+    start_projection_measure_candidates = start_projection_measure_candidates,
     start_projection_blend_lambdas = start_projection_blend_lambdas,
     start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg,
     qlimit_start_iter = qlimit_start_iter,
@@ -2232,6 +2361,8 @@ function runpf!(
   start_projection::Bool = false,
   start_projection_try_dc_start::Bool = true,
   start_projection_try_blend_scan::Bool = true,
+  start_projection_branch_guard::Bool = true,
+  start_projection_measure_candidates::Bool = true,
   start_projection_blend_lambdas::AbstractVector{<:Real} = [0.25, 0.5, 0.75],
   start_projection_dc_angle_limit_deg::Float64 = 60.0,
   qlimit_start_iter::Int = 2,
@@ -2285,9 +2416,9 @@ function runpf!(
       if verbose > 0
         @warn "runpf!: rectangular solver detected internal Isolated buses from active-link merges; using rectangular FD fallback instead of :polar_full"
       end
-      iters, erg = runpf_rectangular!(wnet, maxIte, tolerance, verbose; opt_fd = true, opt_sparse = opt_sparse, damp = damp, autodamp = autodamp, autodamp_min = autodamp_min, opt_flatstart = opt_flatstart, pv_table_rows = pv_table_rows, lock_pv_to_pq_buses = lock_pv_to_pq_buses, qlimit_mode = qlimit_mode, qlimit_max_outer = qlimit_max_outer, start_projection = start_projection, start_projection_try_dc_start = start_projection_try_dc_start, start_projection_try_blend_scan = start_projection_try_blend_scan, start_projection_blend_lambdas = start_projection_blend_lambdas, start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg, qlimit_start_iter = qlimit_start_iter, qlimit_start_mode = qlimit_start_mode, qlimit_auto_q_delta_pu = qlimit_auto_q_delta_pu, qlimit_trace_buses = qlimit_trace_buses, qlimit_lock_reason = qlimit_lock_reason, qlimit_guard = qlimit_guard, qlimit_guard_min_q_range_pu = qlimit_guard_min_q_range_pu, qlimit_guard_zero_range_mode = qlimit_guard_zero_range_mode, qlimit_guard_narrow_range_mode = qlimit_guard_narrow_range_mode, qlimit_guard_log = qlimit_guard_log, qlimit_guard_max_switches = qlimit_guard_max_switches, qlimit_guard_accept_bounded_violations = qlimit_guard_accept_bounded_violations, qlimit_guard_max_remaining_violations = qlimit_guard_max_remaining_violations, qlimit_guard_freeze_after_repeated_switching = qlimit_guard_freeze_after_repeated_switching, qlimit_guard_violation_mode = qlimit_guard_violation_mode, qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu, performance_profile = performance_profile)
+      iters, erg = runpf_rectangular!(wnet, maxIte, tolerance, verbose; opt_fd = true, opt_sparse = opt_sparse, damp = damp, autodamp = autodamp, autodamp_min = autodamp_min, opt_flatstart = opt_flatstart, pv_table_rows = pv_table_rows, lock_pv_to_pq_buses = lock_pv_to_pq_buses, qlimit_mode = qlimit_mode, qlimit_max_outer = qlimit_max_outer, start_projection = start_projection, start_projection_try_dc_start = start_projection_try_dc_start, start_projection_try_blend_scan = start_projection_try_blend_scan, start_projection_branch_guard = start_projection_branch_guard, start_projection_measure_candidates = start_projection_measure_candidates, start_projection_blend_lambdas = start_projection_blend_lambdas, start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg, qlimit_start_iter = qlimit_start_iter, qlimit_start_mode = qlimit_start_mode, qlimit_auto_q_delta_pu = qlimit_auto_q_delta_pu, qlimit_trace_buses = qlimit_trace_buses, qlimit_lock_reason = qlimit_lock_reason, qlimit_guard = qlimit_guard, qlimit_guard_min_q_range_pu = qlimit_guard_min_q_range_pu, qlimit_guard_zero_range_mode = qlimit_guard_zero_range_mode, qlimit_guard_narrow_range_mode = qlimit_guard_narrow_range_mode, qlimit_guard_log = qlimit_guard_log, qlimit_guard_max_switches = qlimit_guard_max_switches, qlimit_guard_accept_bounded_violations = qlimit_guard_accept_bounded_violations, qlimit_guard_max_remaining_violations = qlimit_guard_max_remaining_violations, qlimit_guard_freeze_after_repeated_switching = qlimit_guard_freeze_after_repeated_switching, qlimit_guard_violation_mode = qlimit_guard_violation_mode, qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu, performance_profile = performance_profile)
     else
-      iters, erg = runpf_rectangular!(wnet, maxIte, tolerance, verbose; opt_fd = opt_fd, opt_sparse = opt_sparse, damp = damp, autodamp = autodamp, autodamp_min = autodamp_min, opt_flatstart = opt_flatstart, pv_table_rows = pv_table_rows, lock_pv_to_pq_buses = lock_pv_to_pq_buses, qlimit_mode = qlimit_mode, qlimit_max_outer = qlimit_max_outer, start_projection = start_projection, start_projection_try_dc_start = start_projection_try_dc_start, start_projection_try_blend_scan = start_projection_try_blend_scan, start_projection_blend_lambdas = start_projection_blend_lambdas, start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg, qlimit_start_iter = qlimit_start_iter, qlimit_start_mode = qlimit_start_mode, qlimit_auto_q_delta_pu = qlimit_auto_q_delta_pu, qlimit_trace_buses = qlimit_trace_buses, qlimit_lock_reason = qlimit_lock_reason, qlimit_guard = qlimit_guard, qlimit_guard_min_q_range_pu = qlimit_guard_min_q_range_pu, qlimit_guard_zero_range_mode = qlimit_guard_zero_range_mode, qlimit_guard_narrow_range_mode = qlimit_guard_narrow_range_mode, qlimit_guard_log = qlimit_guard_log, qlimit_guard_max_switches = qlimit_guard_max_switches, qlimit_guard_accept_bounded_violations = qlimit_guard_accept_bounded_violations, qlimit_guard_max_remaining_violations = qlimit_guard_max_remaining_violations, qlimit_guard_freeze_after_repeated_switching = qlimit_guard_freeze_after_repeated_switching, qlimit_guard_violation_mode = qlimit_guard_violation_mode, qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu, performance_profile = performance_profile)
+      iters, erg = runpf_rectangular!(wnet, maxIte, tolerance, verbose; opt_fd = opt_fd, opt_sparse = opt_sparse, damp = damp, autodamp = autodamp, autodamp_min = autodamp_min, opt_flatstart = opt_flatstart, pv_table_rows = pv_table_rows, lock_pv_to_pq_buses = lock_pv_to_pq_buses, qlimit_mode = qlimit_mode, qlimit_max_outer = qlimit_max_outer, start_projection = start_projection, start_projection_try_dc_start = start_projection_try_dc_start, start_projection_try_blend_scan = start_projection_try_blend_scan, start_projection_branch_guard = start_projection_branch_guard, start_projection_measure_candidates = start_projection_measure_candidates, start_projection_blend_lambdas = start_projection_blend_lambdas, start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg, qlimit_start_iter = qlimit_start_iter, qlimit_start_mode = qlimit_start_mode, qlimit_auto_q_delta_pu = qlimit_auto_q_delta_pu, qlimit_trace_buses = qlimit_trace_buses, qlimit_lock_reason = qlimit_lock_reason, qlimit_guard = qlimit_guard, qlimit_guard_min_q_range_pu = qlimit_guard_min_q_range_pu, qlimit_guard_zero_range_mode = qlimit_guard_zero_range_mode, qlimit_guard_narrow_range_mode = qlimit_guard_narrow_range_mode, qlimit_guard_log = qlimit_guard_log, qlimit_guard_max_switches = qlimit_guard_max_switches, qlimit_guard_accept_bounded_violations = qlimit_guard_accept_bounded_violations, qlimit_guard_max_remaining_violations = qlimit_guard_max_remaining_violations, qlimit_guard_freeze_after_repeated_switching = qlimit_guard_freeze_after_repeated_switching, qlimit_guard_violation_mode = qlimit_guard_violation_mode, qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu, performance_profile = performance_profile)
     end
     rect_status = rectangular_pf_status(wnet)
     if rect_status !== nothing
