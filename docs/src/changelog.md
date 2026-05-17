@@ -1,4 +1,11 @@
 # Change Log
+## Version 0.7.9 – 2026-05-17
+### Highlights
+
+### Fixes
+
+### Improvements
+
 ## Version 0.7.8 – 2026-05-16
 ### Highlights
 * Improved Q-limit handling for large MATPOWER imports, especially cases with many generators that have zero or very narrow reactive-power ranges.
