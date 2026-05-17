@@ -385,6 +385,11 @@ summary_profile = Dict{Symbol,Any}(
   ),
   :iterations => [(iteration = 1, max_mismatch = 1e-3, qlimit_changed = false, qlimit_reenabled = false)],
   :start_projection_summary => (selected = :dc_start, candidates = 2, best_mismatch = 1e-4, elapsed_s = 0.03),
+  :dc_matrix_size => (24, 24),
+  :dc_matrix_nnz => 128,
+  :dc_matrix_density => 128 / (24 * 24),
+  :dc_solve_backend => :sparse_lu_umfpack,
+  :dc_solve_reduced_dimension => 24,
 )
 summary_io = IOBuffer()
 @test Base.invokelatest(() -> getfield(mod, :_print_performance_profile)(summary_io, summary_profile; max_rows = 5)) === nothing
@@ -393,6 +398,8 @@ summary_text = String(take!(summary_io))
 @test occursin("matpower_parse", summary_text)
 @test occursin("logging_diagnostics", summary_text)
 @test occursin("start_projection: selected=dc_start", summary_text)
+@test occursin("start_projection_dc: dc_matrix_size=(24, 24)", summary_text)
+@test occursin("dc_solve_backend=sparse_lu_umfpack", summary_text)
 @test !occursin("Newton iteration table", summary_text)
 summary_profile[:level] = :iteration
 iteration_io = IOBuffer()

@@ -309,6 +309,20 @@ function _print_performance_profile(io::IO, profile; title::AbstractString = "Pe
     if sp !== nothing
       @printf(io, "start_projection: selected=%s, candidates=%d, best_mismatch=%.6e, time=%.6f s\n", String(sp.selected), sp.candidates, sp.best_mismatch, sp.elapsed_s)
     end
+    if haskey(profile, :dc_matrix_size)
+      dc_size = get(profile, :dc_matrix_size, (0, 0))
+      @printf(io, "start_projection_dc: dc_matrix_size=(%d, %d), dc_matrix_nnz=%d, dc_matrix_density=%.6e, dc_solve_backend=%s, dc_solve_reduced_dimension=%d\n",
+        dc_size[1],
+        dc_size[2],
+        get(profile, :dc_matrix_nnz, 0),
+        get(profile, :dc_matrix_density, 0.0),
+        String(get(profile, :dc_solve_backend, :unknown)),
+        get(profile, :dc_solve_reduced_dimension, 0),
+      )
+      if haskey(profile, :dc_solve_condition_warning)
+        @printf(io, "start_projection_dc: dc_solve_condition_warning=%s\n", String(get(profile, :dc_solve_condition_warning, :unknown)))
+      end
+    end
     if haskey(timings, :solver_total)
       println(io, "Note: solver_total is inclusive; nested phase rows explain visible subwork, and any remainder is solver control flow, status bookkeeping, or other uninstrumented overhead.")
     end

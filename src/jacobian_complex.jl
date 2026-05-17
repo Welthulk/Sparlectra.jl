@@ -668,6 +668,81 @@ function _dc_angle_start_rectangular(
   return Vdc
 end
 
+function _record_dc_solve_diagnostics!(performance_profile, B, backend::Symbol, condition_warning, nred::Int)
+  performance_profile isa AbstractDict || return nothing
+  Bool(get(performance_profile, :enabled, false)) || return nothing
+  rows, cols = size(B)
+  matrix_nnz = B isa SparseMatrixCSC ? nnz(B) : count(!iszero, B)
+  density = rows == 0 || cols == 0 ? 0.0 : matrix_nnz / (rows * cols)
+  performance_profile[:dc_matrix_size] = (rows, cols)
+  performance_profile[:dc_matrix_nnz] = matrix_nnz
+  performance_profile[:dc_matrix_density] = density
+  performance_profile[:dc_solve_backend] = backend
+  performance_profile[:dc_solve_reduced_dimension] = nred
+  if condition_warning !== nothing
+    performance_profile[:dc_solve_condition_warning] = condition_warning
+  else
+    delete!(performance_profile, :dc_solve_condition_warning)
+  end
+  return nothing
+end
+
+function _sparse_dc_solve(B::SparseMatrixCSC{Float64}, P::Vector{Float64}, performance_profile, nred::Int)
+  backend = :sparse_lu_umfpack
+  condition_warning = nothing
+  try
+    F = lu(B)
+    θred = F \ P
+    _record_dc_solve_diagnostics!(performance_profile, B, backend, condition_warning, nred)
+    return θred
+  catch e
+    if _is_rectangular_linear_step_failure(e)
+      backend = :sparse_qr_fallback
+      condition_warning = :singular_or_ill_conditioned_lu
+      try
+        θred = qr(B) \ P
+        _record_dc_solve_diagnostics!(performance_profile, B, backend, condition_warning, nred)
+        return θred
+      catch qr_error
+        max(size(B)...) <= 2000 || rethrow(qr_error)
+        backend = :dense_svd_fallback_small_system
+        θred = _svd_pinv_solve(Matrix(B), P)
+        _record_dc_solve_diagnostics!(performance_profile, B, backend, condition_warning, nred)
+        return θred
+      end
+    end
+    rethrow(e)
+  end
+end
+
+function _solve_dc_angle_system(B, P::Vector{Float64}, performance_profile, nred::Int)
+  if B isa SparseMatrixCSC{Float64}
+    return _sparse_dc_solve(B, P, performance_profile, nred)
+  end
+  backend = :dense_backslash
+  condition_warning = nothing
+  try
+    θred = B \ P
+    if max(size(B)...) <= 2000
+      c = cond(B)
+      if !isfinite(c) || c > 1 / sqrt(eps(Float64))
+        condition_warning = :large_condition_estimate
+      end
+    end
+    _record_dc_solve_diagnostics!(performance_profile, B, backend, condition_warning, nred)
+    return θred
+  catch e
+    if _is_rectangular_linear_step_failure(e)
+      backend = :dense_qr_or_svd_fallback
+      condition_warning = :singular_or_ill_conditioned_backslash
+      θred = solve_linear(B, P; allow_pinv = true)
+      _record_dc_solve_diagnostics!(performance_profile, B, backend, condition_warning, nred)
+      return θred
+    end
+    rethrow(e)
+  end
+end
+
 function _dc_angle_start_rectangular_profiled(
   Ybus,
   Vraw::Vector{ComplexF64},
@@ -689,8 +764,13 @@ function _dc_angle_start_rectangular_profiled(
   end
 
   B = _perf_profile_time!(performance_profile, :start_projection_dc_matrix_assembly) do
-    B = zeros(Float64, nred, nred)
     if Ybus isa SparseMatrixCSC
+      I = Int[]
+      J = Int[]
+      V = Float64[]
+      sizehint!(I, 2 * nnz(Ybus))
+      sizehint!(J, 2 * nnz(Ybus))
+      sizehint!(V, 2 * nnz(Ybus))
       rv = rowvals(Ybus)
       nz = nonzeros(Ybus)
       @inbounds for j in axes(Ybus, 2)
@@ -704,13 +784,19 @@ function _dc_angle_start_rectangular_profiled(
           if j != slack_idx
             cj = pos[j]
             if cj != 0
-              B[ri, cj] -= bij
+              push!(I, ri)
+              push!(J, cj)
+              push!(V, -bij)
             end
           end
-          B[ri, ri] += bij
+          push!(I, ri)
+          push!(J, ri)
+          push!(V, bij)
         end
       end
+      sparse(I, J, V, nred, nred)
     else
+      B = zeros(Float64, nred, nred)
       @inbounds for i in non_slack
         ri = pos[i]
         for j in axes(Ybus, 2)
@@ -726,13 +812,13 @@ function _dc_angle_start_rectangular_profiled(
           B[ri, ri] += bij
         end
       end
+      B
     end
-    B
   end
 
   P = real.(S[non_slack])
   θred = _perf_profile_time!(performance_profile, :start_projection_dc_linear_solve) do
-    solve_linear(B, P; allow_pinv = true)
+    _solve_dc_angle_system(B, P, performance_profile, nred)
   end
   limit = deg2rad(dc_angle_limit_deg)
   θslack = angle(Vraw[slack_idx])
