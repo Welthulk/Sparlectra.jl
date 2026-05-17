@@ -315,11 +315,15 @@ function run_net_acpflow(; net::Net, max_ite::Int = 30, tol::Float64 = 1e-6, ver
 
   if erg == 0 || printResultAnyCase
     # Calculate network losses and print results
-    calcNetLosses!(net)
-    calcLinkFlowsKCL!(net)
+    _perf_profile_time!(performance_profile, :postprocess_losses_and_flows) do
+      calcNetLosses!(net)
+      calcLinkFlowsKCL!(net)
+    end
     jpath = ""
     if show_results
-      printACPFlowResults(net, etime, ite, tol, printResultToFile, jpath; converged = (erg == 0), solver = method)
+      _perf_profile_time!(performance_profile, :result_output) do
+        printACPFlowResults(net, etime, ite, tol, printResultToFile, jpath; converged = (erg == 0), solver = method)
+      end
     end
   elseif erg == 1
     _print_ac_pf_nonconvergence(method, net)

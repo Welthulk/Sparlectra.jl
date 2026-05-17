@@ -279,7 +279,7 @@ function _new_performance_profile(cfg)
   )
 end
 
-function _print_performance_profile(io::IO, profile; title::AbstractString = "Performance profile", max_rows::Int = 20)
+function _print_performance_profile(io::IO, profile; title::AbstractString = "Performance Summary", max_rows::Int = 20)
   profile isa AbstractDict || return nothing
   Bool(get(profile, :enabled, false)) || return nothing
   timings = get(profile, :timings, Dict{Symbol,Any}())
@@ -308,7 +308,7 @@ function _print_performance_profile(io::IO, profile; title::AbstractString = "Pe
   end
   iterations = get(profile, :iterations, NamedTuple[])
   if Bool(get(profile, :show_iteration_table, true)) && get(profile, :level, :summary) === :iteration && !isempty(iterations)
-    println(io, "\nNewton iteration timing context:")
+    println(io, "\nNewton iteration table:")
     @printf(io, "%8s %16s %16s %16s\n", "iter", "max_mismatch", "qlimit_changed", "qlimit_reenabled")
     nshow = min(length(iterations), max(0, max_rows))
     for row in iterations[1:nshow]
@@ -319,6 +319,20 @@ function _print_performance_profile(io::IO, profile; title::AbstractString = "Pe
     end
   end
   println(io, "===============================================================")
+  return nothing
+end
+
+function _emit_performance_summary(profile; logfile::AbstractString = "", print_to_console::Bool = true, write_to_logfile::Bool = true, max_rows::Int = 20)
+  profile isa AbstractDict || return nothing
+  Bool(get(profile, :enabled, false)) || return nothing
+  if print_to_console
+    _print_performance_profile(stdout, profile; title = "Performance Summary", max_rows = max_rows)
+  end
+  if write_to_logfile && !isempty(logfile)
+    open(logfile, "a") do io
+      _print_performance_profile(io, profile; title = "Performance Summary", max_rows = max_rows)
+    end
+  end
   return nothing
 end
 
@@ -1946,17 +1960,19 @@ function bench_run_acpflow(;
               if effective_diagnose_pv_voltage_references
                 Base.invokelatest(getfield(@__MODULE__, :_print_pv_voltage_reference_diagnostics), io, mpc, net_res; matpower_pv_voltage_source = matpower_pv_voltage_source, compare_voltage_reference = compare_voltage_reference, tol = matpower_pv_voltage_mismatch_tol_pu, maxlines = diagnose_pv_voltage_maxlines)
               end
-              ok, stats = MatpowerIO.compare_vm_va(
-                net_res,
-                mpc;
-                show_diff = show_diff,
-                tol_vm = tol_vm,
-                tol_va = tol_va,
-                maxlines = 20,
-                compare_voltage_reference = compare_voltage_reference,
-                matpower_pv_voltage_source = matpower_pv_voltage_source,
-                matpower_pv_voltage_mismatch_tol_pu = matpower_pv_voltage_mismatch_tol_pu,
-              )
+              ok, stats = _perf_profile_time!(performance_profile, :reference_comparison) do
+                MatpowerIO.compare_vm_va(
+                  net_res,
+                  mpc;
+                  show_diff = show_diff,
+                  tol_vm = tol_vm,
+                  tol_va = tol_va,
+                  maxlines = 20,
+                  compare_voltage_reference = compare_voltage_reference,
+                  matpower_pv_voltage_source = matpower_pv_voltage_source,
+                  matpower_pv_voltage_mismatch_tol_pu = matpower_pv_voltage_mismatch_tol_pu,
+                )
+              end
               _print_wrong_branch_warning(
                 io,
                 net_res,
@@ -2117,11 +2133,14 @@ end
   if !benchmark
     total_s = time() - t0
     @printf("total runtime        : %.3f s\n", total_s)
-    open(logfile, "a") do io
-      @printf(io, "total runtime: %.3f s\n", total_s)
-      _print_log_status(io, log_status)
+    _perf_profile_time!(performance_profile, :logging_diagnostics) do
+      open(logfile, "a") do io
+        @printf(io, "total runtime: %.3f s\n", total_s)
+        _print_log_status(io, log_status)
+      end
+      _print_log_status(stdout, log_status)
     end
-    _print_log_status(stdout, log_status)
+    _emit_performance_summary(performance_profile; logfile = logfile, print_to_console = performance_print_to_console, write_to_logfile = performance_write_to_logfile, max_rows = performance_max_diagnostic_rows)
     return results
   end
 
@@ -2315,6 +2334,7 @@ end
     _print_log_status(io, log_status)
   end
   _print_log_status(stdout, log_status)
+  _emit_performance_summary(performance_profile; logfile = logfile, print_to_console = performance_print_to_console, write_to_logfile = performance_write_to_logfile, max_rows = performance_max_diagnostic_rows)
   return results
 end
 
