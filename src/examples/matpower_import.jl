@@ -14,7 +14,7 @@
 
 # file: examples/matpower_import.jl
 using Sparlectra
-import Sparlectra: MatpowerIO
+import Sparlectra: MatpowerIO, _perf_profile_time!
 using BenchmarkTools
 using Printf
 using Dates
@@ -48,35 +48,83 @@ function _parse_yaml_list(raw::AbstractString)
   return [_parse_yaml_scalar(part) for part in split(inner, ",")]
 end
 
+function _strip_yaml_inline_comment(raw::AbstractString)
+  buf = IOBuffer()
+  qchar = '\0'
+  for ch in raw
+    if qchar != '\0'
+      ch == qchar && (qchar = '\0')
+      print(buf, ch)
+    elseif ch == '\'' || ch == '"'
+      qchar = ch
+      print(buf, ch)
+    elseif ch == '#'
+      break
+    else
+      print(buf, ch)
+    end
+  end
+  return String(take!(buf))
+end
+
 function load_yaml_config(path::AbstractString)
   isempty(path) && return Dict{String,Any}()
   isfile(path) || error("YAML config file not found: $path")
 
   cfg = Dict{String,Any}()
+  current_section = nothing
   pending_list_key = nothing
-  for line in eachline(path)
-    stripped = strip(line)
+  pending_list_section = nothing
+  for rawline in eachline(path)
+    uncommented = rstrip(_strip_yaml_inline_comment(rawline))
+    stripped = strip(uncommented)
     isempty(stripped) && continue
     startswith(stripped, "#") && continue
+
+    indent = firstindex(uncommented)
+    while indent <= lastindex(uncommented) && uncommented[indent] == ' '
+      indent = nextind(uncommented, indent)
+    end
+    is_nested = indent > firstindex(uncommented)
+
     if startswith(stripped, "-") && !isnothing(pending_list_key)
       item_raw = strip(stripped[2:end])
-      push!(cfg[pending_list_key], _parse_yaml_scalar(item_raw))
+      target = isnothing(pending_list_section) ? cfg : cfg[pending_list_section]
+      target[pending_list_key] isa AbstractVector || (target[pending_list_key] = Any[])
+      push!(target[pending_list_key], _parse_yaml_scalar(item_raw))
       continue
     end
-    pending_list_key = nothing
-    occursin(":", stripped) || continue
 
+    occursin(":", stripped) || continue
     key, value_raw = split(stripped, ":"; limit = 2)
     key = strip(key)
-    value_raw = strip(split(value_raw, "#"; limit = 2)[1]) # remove inline comments
+    value_raw = strip(value_raw)
+    target = cfg
+    if is_nested && !isnothing(current_section) && cfg[current_section] isa Dict{String,Any}
+      target = cfg[current_section]
+    elseif !is_nested
+      current_section = nothing
+    end
 
     if isempty(value_raw)
-      cfg[key] = Any[]
-      pending_list_key = key
+      if is_nested
+        target[key] = Any[]
+        pending_list_key = key
+        pending_list_section = current_section
+      else
+        cfg[key] = Dict{String,Any}()
+        current_section = key
+        pending_list_key = key
+        pending_list_section = nothing
+      end
     elseif startswith(value_raw, "[") && endswith(value_raw, "]")
-      cfg[key] = _parse_yaml_list(value_raw)
+      target[key] = _parse_yaml_list(value_raw)
+      pending_list_key = nothing
+      pending_list_section = nothing
     else
-      cfg[key] = _parse_yaml_scalar(value_raw)
+      target[key] = _parse_yaml_scalar(value_raw)
+      pending_list_key = nothing
+      pending_list_section = nothing
     end
   end
   return cfg
@@ -102,6 +150,22 @@ function _as_output_mode(v)::Symbol
     @warn "Unknown show_once_output; using :classic" value = v
     return :classic
   end
+end
+
+function _as_performance_level(v)::Symbol
+  s = lowercase(String(v))
+  s in ("false", "off", "none", "no", "0") && return :off
+  s in ("summary", "detailed", "iteration") && return Symbol(s)
+  @warn "Unknown performance.level; using :summary" value = v
+  return :summary
+end
+
+function _yaml_section_get(cfg::Dict{String,Any}, section::AbstractString, key::AbstractString, default)
+  flat_key = string(section, "_", key)
+  haskey(cfg, flat_key) && return cfg[flat_key]
+  sec = get(cfg, section, nothing)
+  sec isa Dict{String,Any} && haskey(sec, key) && return sec[key]
+  return default
 end
 
 function _as_console_mode(v)::Symbol
@@ -203,6 +267,58 @@ end
 
 function _print_log_status(io::IO, status::_MatpowerImportLogStatus)
   println(io, "reported warnings/errors: warnings=", status.warnings, " errors=", status.errors)
+  return nothing
+end
+
+function _new_performance_profile(cfg)
+  return Dict{Symbol,Any}(
+    :enabled => cfg.performance_enabled && cfg.performance_level != :off,
+    :level => cfg.performance_level,
+    :show_allocations => cfg.performance_show_allocations,
+    :show_iteration_table => cfg.performance_show_iteration_table,
+  )
+end
+
+function _print_performance_profile(io::IO, profile; title::AbstractString = "Performance profile", max_rows::Int = 20)
+  profile isa AbstractDict || return nothing
+  Bool(get(profile, :enabled, false)) || return nothing
+  timings = get(profile, :timings, Dict{Symbol,Any}())
+  println(io, "\n==================== ", title, " ====================")
+  if isempty(timings)
+    println(io, "No timing samples recorded.")
+  else
+    rows = sort(collect(timings); by = pair -> pair.second.elapsed_s, rev = true)
+    nshow = min(length(rows), max(0, max_rows))
+    show_alloc = Bool(get(profile, :show_allocations, false))
+    if show_alloc
+      @printf(io, "%-40s %8s %12s %14s\n", "phase", "calls", "seconds", "allocated")
+    else
+      @printf(io, "%-40s %8s %12s\n", "phase", "calls", "seconds")
+    end
+    for (phase, row) in rows[1:nshow]
+      if show_alloc
+        @printf(io, "%-40s %8d %12.6f %14d\n", String(phase), row.calls, row.elapsed_s, row.bytes)
+      else
+        @printf(io, "%-40s %8d %12.6f\n", String(phase), row.calls, row.elapsed_s)
+      end
+    end
+    if nshow < length(rows)
+      @printf(io, "... truncated performance rows: showing %d/%d\n", nshow, length(rows))
+    end
+  end
+  iterations = get(profile, :iterations, NamedTuple[])
+  if Bool(get(profile, :show_iteration_table, true)) && get(profile, :level, :summary) === :iteration && !isempty(iterations)
+    println(io, "\nNewton iteration timing context:")
+    @printf(io, "%8s %16s %16s %16s\n", "iter", "max_mismatch", "qlimit_changed", "qlimit_reenabled")
+    nshow = min(length(iterations), max(0, max_rows))
+    for row in iterations[1:nshow]
+      @printf(io, "%8d %16.6e %16s %16s\n", row.iteration, row.max_mismatch, string(row.qlimit_changed), string(row.qlimit_reenabled))
+    end
+    if nshow < length(iterations)
+      @printf(io, "... truncated iteration rows: showing %d/%d\n", nshow, length(iterations))
+    end
+  end
+  println(io, "===============================================================")
   return nothing
 end
 
@@ -320,6 +436,17 @@ function bench_config_for_case(case_name::AbstractString, yaml_cfg::Dict{String,
     console_q_limit_events = :summary,
     console_max_rows = 20,
     logfile_diagnostics = :full,
+    performance_enabled = false,
+    performance_level = :summary,
+    performance_print_to_console = true,
+    performance_write_to_logfile = true,
+    performance_show_allocations = false,
+    performance_show_iteration_table = true,
+    performance_compact_logging = true,
+    performance_skip_reference_comparison = false,
+    performance_skip_expensive_diagnostics = false,
+    performance_skip_branch_neighborhood_report = true,
+    performance_max_diagnostic_rows = 20,
   )
   case_override = get(CASE_BENCH_OVERRIDES, String(case_name), (;))
   yaml_override = (;)
@@ -422,6 +549,17 @@ function bench_config_for_case(case_name::AbstractString, yaml_cfg::Dict{String,
       console_q_limit_events = _as_console_mode(get(yaml_cfg, "console_q_limit_events", base.console_q_limit_events)),
       console_max_rows = Int(get(yaml_cfg, "console_max_rows", base.console_max_rows)),
       logfile_diagnostics = _as_console_mode(get(yaml_cfg, "logfile_diagnostics", base.logfile_diagnostics)),
+      performance_enabled = Bool(_yaml_section_get(yaml_cfg, "performance", "enabled", base.performance_enabled)),
+      performance_level = _as_performance_level(_yaml_section_get(yaml_cfg, "performance", "level", base.performance_level)),
+      performance_print_to_console = Bool(_yaml_section_get(yaml_cfg, "performance", "print_to_console", base.performance_print_to_console)),
+      performance_write_to_logfile = Bool(_yaml_section_get(yaml_cfg, "performance", "write_to_logfile", base.performance_write_to_logfile)),
+      performance_show_allocations = Bool(_yaml_section_get(yaml_cfg, "performance", "show_allocations", base.performance_show_allocations)),
+      performance_show_iteration_table = Bool(_yaml_section_get(yaml_cfg, "performance", "show_iteration_table", base.performance_show_iteration_table)),
+      performance_compact_logging = Bool(_yaml_section_get(yaml_cfg, "performance", "compact_logging", base.performance_compact_logging)),
+      performance_skip_reference_comparison = Bool(_yaml_section_get(yaml_cfg, "performance", "skip_reference_comparison", base.performance_skip_reference_comparison)),
+      performance_skip_expensive_diagnostics = Bool(_yaml_section_get(yaml_cfg, "performance", "skip_expensive_diagnostics", base.performance_skip_expensive_diagnostics)),
+      performance_skip_branch_neighborhood_report = Bool(_yaml_section_get(yaml_cfg, "performance", "skip_branch_neighborhood_report", base.performance_skip_branch_neighborhood_report)),
+      performance_max_diagnostic_rows = Int(_yaml_section_get(yaml_cfg, "performance", "max_diagnostic_rows", base.performance_max_diagnostic_rows)),
     )
   end
   return merge(base, case_override, yaml_override)
@@ -1647,12 +1785,28 @@ function bench_run_acpflow(;
   console_q_limit_events::Symbol = :summary,
   console_max_rows::Int = 20,
   logfile_diagnostics::Symbol = :full,
+  performance_profile = nothing,
+  performance_level::Symbol = :summary,
+  performance_print_to_console::Bool = true,
+  performance_write_to_logfile::Bool = true,
+  performance_show_iteration_table::Bool = true,
+  performance_skip_reference_comparison::Bool = false,
+  performance_skip_expensive_diagnostics::Bool = false,
+  performance_skip_branch_neighborhood_report::Bool = false,
+  performance_max_diagnostic_rows::Int = 20,
   log_status::_MatpowerImportLogStatus = _MatpowerImportLogStatus(),
 )
   t0 = time()
   results = Dict{Symbol,Any}()
   effective_reference_vm_pu = reference_override ? reference_vm_pu : nothing
   effective_reference_va_deg = reference_override ? reference_va_deg : nothing
+  effective_diagnose_matpower_reference = diagnose_matpower_reference && !performance_skip_expensive_diagnostics
+  effective_diagnose_pv_voltage_references = diagnose_pv_voltage_references && !performance_skip_expensive_diagnostics
+  effective_diagnose_branch_neighborhood = diagnose_branch_neighborhood && !performance_skip_branch_neighborhood_report && !performance_skip_expensive_diagnostics
+  effective_diagnose_residual_clusters = diagnose_residual_clusters && !performance_skip_expensive_diagnostics
+  effective_diagnose_negative_branch_impedance = diagnose_negative_branch_impedance && !performance_skip_expensive_diagnostics
+  effective_diagnose_maxlines = min(diagnose_maxlines, performance_max_diagnostic_rows)
+
 
   # Append to the logfile because main() may already have captured import warnings there.
   open(logfile, "a") do io
@@ -1666,7 +1820,7 @@ function bench_run_acpflow(;
     end
     if !isnothing(mpc)
       Base.invokelatest(getfield(@__MODULE__, :_print_vmva_self_check), io, mpc; matpower_shift_sign = matpower_shift_sign, matpower_shift_unit = matpower_shift_unit, matpower_ratio = matpower_ratio)
-      if diagnose_matpower_reference
+      if effective_diagnose_matpower_reference
         Base.invokelatest(
           getfield(@__MODULE__, :_print_matpower_reference_diagnostics),
           io,
@@ -1675,8 +1829,8 @@ function bench_run_acpflow(;
           matpower_shift_unit = matpower_shift_unit,
           matpower_ratio = matpower_ratio,
           diagnose_branch_shift_conventions = diagnose_branch_shift_conventions,
-          diagnose_branch_neighborhood = diagnose_branch_neighborhood,
-          diagnose_residual_clusters = diagnose_residual_clusters,
+          diagnose_branch_neighborhood = effective_diagnose_branch_neighborhood,
+          diagnose_residual_clusters = effective_diagnose_residual_clusters,
           diagnose_residual_cluster_threshold_mw = diagnose_residual_cluster_threshold_mw,
           diagnose_residual_cluster_maxlines = diagnose_residual_cluster_maxlines,
           diagnose_branch_neighborhood_buses = diagnose_branch_neighborhood_buses,
@@ -1688,16 +1842,16 @@ function bench_run_acpflow(;
           diagnose_nodal_balance_include_branches = diagnose_nodal_balance_include_branches,
           diagnose_nodal_balance_include_generators = diagnose_nodal_balance_include_generators,
           diagnose_nodal_balance_include_shunts = diagnose_nodal_balance_include_shunts,
-          diagnose_negative_branch_impedance = diagnose_negative_branch_impedance,
+          diagnose_negative_branch_impedance = effective_diagnose_negative_branch_impedance,
           diagnose_negative_branch_impedance_maxlines = diagnose_negative_branch_impedance_maxlines,
           diagnose_negative_branch_impedance_fail_on_negative_r = diagnose_negative_branch_impedance_fail_on_negative_r,
           diagnose_negative_branch_impedance_fail_on_negative_x = diagnose_negative_branch_impedance_fail_on_negative_x,
           diagnose_negative_branch_impedance_warn_threshold_abs_r = diagnose_negative_branch_impedance_warn_threshold_abs_r,
           diagnose_negative_branch_impedance_warn_threshold_abs_x = diagnose_negative_branch_impedance_warn_threshold_abs_x,
           matpower_pv_voltage_source = matpower_pv_voltage_source,
-          maxlines = diagnose_maxlines,
+          maxlines = effective_diagnose_maxlines,
         )
-      elseif diagnose_negative_branch_impedance || diagnose_branch_neighborhood
+      elseif effective_diagnose_negative_branch_impedance || effective_diagnose_branch_neighborhood
         Base.invokelatest(
           getfield(@__MODULE__, :_print_negative_branch_impedance_diagnostics),
           io,
@@ -1780,6 +1934,7 @@ function bench_run_acpflow(;
               matpower_pv_voltage_mismatch_tol_pu = matpower_pv_voltage_mismatch_tol_pu,
               flatstart_voltage_mode = flatstart_voltage_mode,
               flatstart_angle_mode = flatstart_angle_mode,
+                performance_profile = performance_profile,
               )
             end
             status = status_ref[]
@@ -1787,8 +1942,8 @@ function bench_run_acpflow(;
             if !show_classic
               _print_dataframe_nodes(io, net_res; max_nodes = show_once_max_nodes)
             end
-            if mp_has_vm_va(mpc)
-              if diagnose_pv_voltage_references
+            if mp_has_vm_va(mpc) && !performance_skip_reference_comparison
+              if effective_diagnose_pv_voltage_references
                 Base.invokelatest(getfield(@__MODULE__, :_print_pv_voltage_reference_diagnostics), io, mpc, net_res; matpower_pv_voltage_source = matpower_pv_voltage_source, compare_voltage_reference = compare_voltage_reference, tol = matpower_pv_voltage_mismatch_tol_pu, maxlines = diagnose_pv_voltage_maxlines)
               end
               ok, stats = MatpowerIO.compare_vm_va(
@@ -1815,9 +1970,13 @@ function bench_run_acpflow(;
               )
               push!(summaries, _show_once_summary_row(m, status, stats, ok; compare_available = true, net = net_res))
             else
-              push!(summaries, _show_once_summary_row(m, status, nothing, false; compare_available = false, net = net_res))
-              println("Compare skipped: no solution-like VM/VA in mpc.bus(:,8:9)")
-            end
+  push!(summaries, _show_once_summary_row(m, status, nothing, false; compare_available = false, net = net_res))
+  if performance_skip_reference_comparison
+    println("Compare skipped: performance.skip_reference_comparison=true")
+  else
+    println("Compare skipped: no solution-like VM/VA in mpc.bus(:,8:9)")
+  end
+end
             if !Bool(get(status, :converged, false)) && !enable_pq_gen_controllers && m === :rectangular
               println("Fallback diagnostic: rerun with enable_pq_gen_controllers=true")
               fb_ref = Ref{Any}(nothing)
@@ -1872,6 +2031,7 @@ function bench_run_acpflow(;
                 matpower_pv_voltage_mismatch_tol_pu = matpower_pv_voltage_mismatch_tol_pu,
                 flatstart_voltage_mode = flatstart_voltage_mode,
                   flatstart_angle_mode = flatstart_angle_mode,
+                performance_profile = performance_profile,
                 )
               end
             end
@@ -1944,6 +2104,7 @@ function bench_run_acpflow(;
         matpower_pv_voltage_mismatch_tol_pu = matpower_pv_voltage_mismatch_tol_pu,
         flatstart_voltage_mode = flatstart_voltage_mode,
         flatstart_angle_mode = flatstart_angle_mode,
+                performance_profile = performance_profile,
         )
       end
       _print_converged_loss_summary(stdout, m, status_ref[], net_res)
@@ -2016,6 +2177,7 @@ function bench_run_acpflow(;
       matpower_pv_voltage_mismatch_tol_pu = matpower_pv_voltage_mismatch_tol_pu,
       flatstart_voltage_mode = flatstart_voltage_mode,
       flatstart_angle_mode = flatstart_angle_mode,
+                performance_profile = performance_profile,
     )
   end
   end
@@ -2344,18 +2506,28 @@ function main()
   !isempty(yaml_path) && println("yaml: ", yaml_path)
   println("logfile: ", logfile, "\n")
   log_status = _MatpowerImportLogStatus()
+  cfg = bench_config_for_case(case, yaml_cfg)
+  performance_profile = _new_performance_profile(cfg)
   open(logfile, "w") do io
     println(io, "Sparlectra version: ", Sparlectra.version())
     println(io, "casefile: ", local_case)
     println(io, "timestamp: ", Dates.now())
   end
-  mpc = _with_log_table(logfile, log_status) do
-    MatpowerIO.read_case(local_case)
+  mpc = _perf_profile_time!(performance_profile, :matpower_parse) do
+    _with_log_table(logfile, log_status) do
+      MatpowerIO.read_case(local_case)
+    end
   end
 
-  cfg = bench_config_for_case(case, yaml_cfg)
   auto_profile = _matpower_auto_profile(mpc, cfg, yaml_cfg)
   cfg = auto_profile.cfg
+  performance_profile[:enabled] = cfg.performance_enabled && cfg.performance_level != :off
+  performance_profile[:level] = cfg.performance_level
+  performance_profile[:show_allocations] = cfg.performance_show_allocations
+  performance_profile[:show_iteration_table] = cfg.performance_show_iteration_table
+  if cfg.performance_enabled && cfg.performance_compact_logging
+    cfg = merge(cfg, (; console_diagnostics = :compact, console_q_limit_events = :summary, console_max_rows = min(cfg.console_max_rows, cfg.performance_max_diagnostic_rows)))
+  end
   if cfg.matpower_auto_profile_log && auto_profile.mode != :off
     if cfg.console_auto_profile == :full
       _print_matpower_auto_profile(stdout, auto_profile)
@@ -2481,6 +2653,15 @@ function main()
     console_q_limit_events = cfg.console_q_limit_events,
     console_max_rows = cfg.console_max_rows,
     logfile_diagnostics = cfg.logfile_diagnostics,
+    performance_profile = performance_profile,
+    performance_level = cfg.performance_level,
+    performance_print_to_console = cfg.performance_print_to_console,
+    performance_write_to_logfile = cfg.performance_write_to_logfile,
+    performance_show_iteration_table = cfg.performance_show_iteration_table,
+    performance_skip_reference_comparison = cfg.performance_skip_reference_comparison,
+    performance_skip_expensive_diagnostics = cfg.performance_skip_expensive_diagnostics,
+    performance_skip_branch_neighborhood_report = cfg.performance_skip_branch_neighborhood_report,
+    performance_max_diagnostic_rows = cfg.performance_max_diagnostic_rows,
     log_status = log_status,
   )
   return bench

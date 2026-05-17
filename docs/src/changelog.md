@@ -5,6 +5,7 @@
 ### Fixes
 
 ### Improvements
+* Added configurable performance profiling for the MATPOWER import example, including phase-level import/solver/output timings, optional allocation reporting, Newton-iteration diagnostics, and large-case speed switches for compact logging and expensive comparisons.
 
 ## Version 0.7.8 – 2026-05-16
 ### Highlights

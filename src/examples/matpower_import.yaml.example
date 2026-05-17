@@ -238,6 +238,25 @@ diagnose_residual_cluster_maxlines: 20
 diagnose_maxlines: 12
 
 # ---------------------------------------------------------------------------
+# Performance profiling / large-case runtime diagnostics
+# ---------------------------------------------------------------------------
+
+performance:
+  enabled: false
+  level: summary          # off | summary | detailed | iteration
+  print_to_console: true
+  write_to_logfile: true
+  show_allocations: false
+  show_iteration_table: true
+
+  # Optional speed switches for large cases.
+  compact_logging: true
+  skip_reference_comparison: false
+  skip_expensive_diagnostics: false
+  skip_branch_neighborhood_report: true
+  max_diagnostic_rows: 20
+
+# ---------------------------------------------------------------------------
 # Benchmark / output controls
 # ---------------------------------------------------------------------------
 
