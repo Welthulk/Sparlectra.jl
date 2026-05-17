@@ -7,6 +7,7 @@
 
 ### Improvements
 * Added configurable performance profiling for the MATPOWER import example, including phase-level import/solver/output timings, optional allocation reporting, Newton-iteration diagnostics, and large-case speed switches for compact logging and expensive comparisons.
+* Decomposed rectangular start-projection profiling into DC-start construction, matrix assembly, solve, candidate generation/evaluation, branch-guard checks, voltage limiting, MATPOWER lookup/map phases, and final selection; added large-case YAML switches to disable expensive candidate measurement and reuse the already parsed MATPOWER case.
 
 ## Version 0.7.8 – 2026-05-16
 ### Highlights

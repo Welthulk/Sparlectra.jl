@@ -46,6 +46,8 @@ function run_matpower_example_tests()
       "start_projection",
       "start_projection_try_dc_start",
       "start_projection_try_blend_scan",
+      "start_projection_branch_guard",
+      "start_projection_measure_candidates",
       "start_projection_blend_lambdas",
       "start_projection_dc_angle_limit_deg",
       "qlimit_trace_buses",
@@ -141,6 +143,9 @@ function run_matpower_example_tests()
         "start_projection" => true,
         "start_projection_try_dc_start" => false,
         "start_projection_try_blend_scan" => false,
+        "start_projection_branch_guard" => false,
+        "start_projection_measure_candidates" => false,
+        "start_projection_reuse_import_data" => false,
         "start_projection_blend_lambdas" => [0.1, 0.9],
         "start_projection_dc_angle_limit_deg" => 45.0,
         "qlimit_trace_buses" => [40712],
@@ -196,6 +201,9 @@ function run_matpower_example_tests()
       @test cfg.start_projection === true
       @test cfg.start_projection_try_dc_start === false
       @test cfg.start_projection_try_blend_scan === false
+      @test cfg.start_projection_branch_guard === false
+      @test cfg.start_projection_measure_candidates === false
+      @test cfg.start_projection_reuse_import_data === false
       @test cfg.start_projection_blend_lambdas == [0.1, 0.9]
       @test cfg.start_projection_dc_angle_limit_deg == 45.0
       @test cfg.qlimit_trace_buses == [40712]
@@ -333,6 +341,8 @@ function run_matpower_example_tests()
       @test auto_apply.cfg.start_projection === true
       @test auto_apply.cfg.flatstart_angle_mode === :dc
       @test auto_apply.cfg.flatstart_voltage_mode === :bus_vm_va_blend
+      @test auto_apply.cfg.start_projection_measure_candidates === false
+      @test auto_apply.cfg.start_projection_reuse_import_data === true
       auto_recommend_cfg = Base.invokelatest(() -> getfield(mod, :bench_config_for_case)("case_large.m", Dict{String,Any}("matpower_auto_profile" => "recommend")))
       auto_recommend = Base.invokelatest(() -> getfield(mod, :_matpower_auto_profile)(large_mpc, auto_recommend_cfg, Dict{String,Any}("matpower_auto_profile" => "recommend")))
       @test auto_recommend.mode === :recommend
@@ -374,6 +384,7 @@ summary_profile = Dict{Symbol,Any}(
     :logging_diagnostics => (calls = 1, elapsed_s = 0.2, bytes = 0),
   ),
   :iterations => [(iteration = 1, max_mismatch = 1e-3, qlimit_changed = false, qlimit_reenabled = false)],
+  :start_projection_summary => (selected = :dc_start, candidates = 2, best_mismatch = 1e-4, elapsed_s = 0.03),
 )
 summary_io = IOBuffer()
 @test Base.invokelatest(() -> getfield(mod, :_print_performance_profile)(summary_io, summary_profile; max_rows = 5)) === nothing
@@ -381,6 +392,7 @@ summary_text = String(take!(summary_io))
 @test occursin("Performance Summary", summary_text)
 @test occursin("matpower_parse", summary_text)
 @test occursin("logging_diagnostics", summary_text)
+@test occursin("start_projection: selected=dc_start", summary_text)
 @test !occursin("Newton iteration table", summary_text)
 summary_profile[:level] = :iteration
 iteration_io = IOBuffer()

@@ -91,6 +91,9 @@ bus_shunt_model: admittance
 start_projection: false
 start_projection_try_dc_start: false
 start_projection_try_blend_scan: false
+start_projection_branch_guard: true
+start_projection_measure_candidates: true
+start_projection_reuse_import_data: true
 start_projection_blend_lambdas: [0.1, 0.25, 0.5, 0.75]
 start_projection_dc_angle_limit_deg: 70.0
 
