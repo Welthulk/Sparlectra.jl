@@ -481,9 +481,11 @@ function test_rectangular_start_projection_improves_dc_seed()::Bool
     performance_profile = profile,
   )
   projected_mismatch = maximum(abs.(Sparlectra.mismatch_rectangular(Y, Vproj, S, bus_types, Vset, 1)))
+  Vdc = Sparlectra._dc_angle_start_rectangular(Y, Vraw, S, bus_types, Vset, 1; dc_angle_limit_deg = 60.0)
 
   return Vproj[1] == Vraw[1] &&
          projected_mismatch < raw_mismatch &&
+         Vdc == Vproj &&
          profile[:dc_matrix_size] == (1, 1) &&
          profile[:dc_matrix_nnz] == 1 &&
          profile[:dc_solve_backend] === :sparse_lu_umfpack &&

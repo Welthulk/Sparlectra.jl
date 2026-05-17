@@ -611,11 +611,16 @@ function _dc_angle_start_rectangular(
   nred == 0 && return copy(Vraw)
   pos = build_pos_map(non_slack, n)
 
-  B = zeros(Float64, nred, nred)
-  if Ybus isa SparseMatrixCSC
+  B = if Ybus isa SparseMatrixCSC
+    I = Int[]
+    J = Int[]
+    V = Float64[]
+    sizehint!(I, 2 * nnz(Ybus))
+    sizehint!(J, 2 * nnz(Ybus))
+    sizehint!(V, 2 * nnz(Ybus))
     rv = rowvals(Ybus)
     nz = nonzeros(Ybus)
-    @inbounds for j in 1:n
+    @inbounds for j in axes(Ybus, 2)
       for ptr in nzrange(Ybus, j)
         i = rv[ptr]
         i == j && continue
@@ -626,16 +631,22 @@ function _dc_angle_start_rectangular(
         if j != slack_idx
           cj = pos[j]
           if cj != 0
-            B[ri, cj] -= bij
+            push!(I, ri)
+            push!(J, cj)
+            push!(V, -bij)
           end
         end
-        B[ri, ri] += bij
+        push!(I, ri)
+        push!(J, ri)
+        push!(V, bij)
       end
     end
+    sparse(I, J, V, nred, nred)
   else
+    B = zeros(Float64, nred, nred)
     @inbounds for i in non_slack
       ri = pos[i]
-      for j in 1:n
+      for j in axes(Ybus, 2)
         j == i && continue
         bij = imag(Ybus[i, j])
         bij == 0.0 && continue
@@ -648,10 +659,11 @@ function _dc_angle_start_rectangular(
         B[ri, ri] += bij
       end
     end
+    B
   end
 
   P = real.(S[non_slack])
-  θred = solve_linear(B, P; allow_pinv = true)
+  θred = _solve_dc_angle_system(B, P, nothing, nred)
   limit = deg2rad(dc_angle_limit_deg)
   θslack = angle(Vraw[slack_idx])
   Vdc = similar(Vraw)
