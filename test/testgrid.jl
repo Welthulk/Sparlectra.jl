@@ -457,11 +457,13 @@ function test_rectangular_autodamp_backtracks_oversized_step()::Bool
 end
 
 function test_rectangular_start_projection_improves_dc_seed()::Bool
-  Y = ComplexF64[0.0 - 10.0im 0.0 + 10.0im; 0.0 + 10.0im 0.0 - 10.0im]
+  Ydense = ComplexF64[0.0 - 10.0im 0.0 + 10.0im; 0.0 + 10.0im 0.0 - 10.0im]
+  Y = sparse(Ydense)
   Vraw = ComplexF64[1.0 + 0.0im, 1.0 + 0.0im]
   S = ComplexF64[0.0 + 0.0im, -1.0 - 0.2im]
   bus_types = [:Slack, :PQ]
   Vset = [1.0, 1.0]
+  profile = Dict{Symbol,Any}(:enabled => true)
 
   raw_mismatch = maximum(abs.(Sparlectra.mismatch_rectangular(Y, Vraw, S, bus_types, Vset, 1)))
   Vproj = Sparlectra.project_rectangular_start(
@@ -476,10 +478,16 @@ function test_rectangular_start_projection_improves_dc_seed()::Bool
     try_blend_scan = true,
     blend_lambdas = [0.25, 0.5, 0.75],
     dc_angle_limit_deg = 60.0,
+    performance_profile = profile,
   )
   projected_mismatch = maximum(abs.(Sparlectra.mismatch_rectangular(Y, Vproj, S, bus_types, Vset, 1)))
 
-  return Vproj[1] == Vraw[1] && projected_mismatch < raw_mismatch
+  return Vproj[1] == Vraw[1] &&
+         projected_mismatch < raw_mismatch &&
+         profile[:dc_matrix_size] == (1, 1) &&
+         profile[:dc_matrix_nnz] == 1 &&
+         profile[:dc_solve_backend] === :sparse_lu_umfpack &&
+         profile[:dc_solve_reduced_dimension] == 1
 end
 
 function test_matpower_vmva_selfcheck_noncontiguous_bus_numbers()::Bool
