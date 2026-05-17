@@ -64,11 +64,13 @@ Arguments:
 Returns:
 - Updated complex voltage vector `V_new` (length n)
 """
-function complex_newton_step_rectangular_fd(Ybus, V, S; slack_idx::Int = 1, damp::Float64 = 1.0, autodamp::Bool = false, autodamp_min::Float64 = 1e-3, h::Float64 = 1e-6, bus_types::Vector{Symbol}, Vset::Vector{Float64}, dPinj_dVm::Vector{Float64} = zeros(Float64, length(V)), dQinj_dVm::Vector{Float64} = zeros(Float64, length(V)))
+function complex_newton_step_rectangular_fd(Ybus, V, S; slack_idx::Int = 1, damp::Float64 = 1.0, autodamp::Bool = false, autodamp_min::Float64 = 1e-3, h::Float64 = 1e-6, bus_types::Vector{Symbol}, Vset::Vector{Float64}, dPinj_dVm::Vector{Float64} = zeros(Float64, length(V)), dQinj_dVm::Vector{Float64} = zeros(Float64, length(V)), performance_profile = nothing)
   n = length(V)
 
   # Base mismatch F(V)
-  F0 = mismatch_rectangular(Ybus, V, S, bus_types, Vset, slack_idx)
+  F0 = _perf_profile_time!(performance_profile, :newton_step_fd_base_mismatch) do
+    mismatch_rectangular(Ybus, V, S, bus_types, Vset, slack_idx)
+  end
   m  = length(F0)  # expected = 2 * (n-1)
 
   # Non-slack buses
@@ -78,7 +80,9 @@ function complex_newton_step_rectangular_fd(Ybus, V, S; slack_idx::Int = 1, damp
   nvar = 2 * (n - 1)
   @assert nvar == m "Rectangular FD-Newton: nvar and m should both equal 2*(n-1)"
 
-  J = zeros(Float64, m, nvar)
+  J = _perf_profile_time!(performance_profile, :newton_step_fd_jacobian) do
+    zeros(Float64, m, nvar)
+  end
 
   Vr = real.(V)
   Vi = imag.(V)
@@ -103,9 +107,13 @@ function complex_newton_step_rectangular_fd(Ybus, V, S; slack_idx::Int = 1, damp
   end
 
   # Solve J * δx = -F0
-  δx = solve_linear(J, -F0; allow_pinv = true)
+  δx = _perf_profile_time!(performance_profile, :newton_step_linear_solve) do
+    solve_linear(J, -F0; allow_pinv = true)
+  end
   if autodamp
-    _, Vtrial, _ = choose_rectangular_autodamp(Ybus, V, S, δx, F0; slack_idx = slack_idx, damp = damp, autodamp_min = autodamp_min, bus_types = bus_types, Vset = Vset)
+    _, Vtrial, _ = _perf_profile_time!(performance_profile, :newton_step_autodamp) do
+      choose_rectangular_autodamp(Ybus, V, S, δx, F0; slack_idx = slack_idx, damp = damp, autodamp_min = autodamp_min, bus_types = bus_types, Vset = Vset)
+    end
     return Vtrial
   end
 

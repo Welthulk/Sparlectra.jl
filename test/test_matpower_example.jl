@@ -349,7 +349,22 @@ function run_matpower_example_tests()
       @test occursin("branch shift", auto_compact_text)
       @test !occursin("reason:", auto_compact_text)
 
-      diagnostic_mpc = (;
+perf_cfg = Base.invokelatest(() -> getfield(mod, :bench_config_for_case)("case14.m", Dict{String,Any}(
+  "performance" => Dict{String,Any}(
+    "enabled" => true,
+    "level" => "iteration",
+    "show_allocations" => true,
+    "skip_reference_comparison" => true,
+    "max_diagnostic_rows" => 7,
+  ),
+)))
+@test perf_cfg.performance_enabled === true
+@test perf_cfg.performance_level === :iteration
+@test perf_cfg.performance_show_allocations === true
+@test perf_cfg.performance_skip_reference_comparison === true
+@test perf_cfg.performance_max_diagnostic_rows == 7
+
+diagnostic_mpc = (;
         baseMVA = 100.0,
         bus = [1.0 3.0 0.0 0.0 0.0 0.0 1.0 1.0 0.0 110.0 1.0 1.1 0.9;
                2.0 1.0 0.0 0.0 0.0 0.0 1.0 1.0 -0.1 110.0 1.0 1.1 0.9],
@@ -538,7 +553,11 @@ function run_matpower_example_tests()
         console_q_limit_events = :summary,
         console_max_rows = 3,
         logfile_diagnostics = :full,
-      ))
+  performance_profile = Dict{Symbol,Any}(:enabled => true, :level => :summary, :show_allocations => false, :show_iteration_table => true),
+  performance_write_to_logfile = true,
+  performance_print_to_console = false,
+  performance_max_diagnostic_rows = 5,
+))
       @test result == Dict{Symbol,Any}()
       rm(logfile; force = true)
     finally

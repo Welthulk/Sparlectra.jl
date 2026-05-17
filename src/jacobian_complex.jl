@@ -547,6 +547,7 @@ function run_complex_nr_rectangular(
   use_sparse::Bool = false,
   dPinj_dVm::Vector{Float64} = zeros(Float64, length(V0)),
   dQinj_dVm::Vector{Float64} = zeros(Float64, length(V0)),
+  performance_profile = nothing,
 )
   V = copy(V0)
   history = Float64[]
@@ -561,9 +562,9 @@ function run_complex_nr_rectangular(
     end
 
     if use_fd
-      V = complex_newton_step_rectangular_fd(Ybus, V, S; slack_idx = slack_idx, damp = damp, autodamp = autodamp, autodamp_min = autodamp_min, h = 1e-6, bus_types = bus_types, Vset = Vset, dPinj_dVm = dPinj_dVm, dQinj_dVm = dQinj_dVm)
+      V = complex_newton_step_rectangular_fd(Ybus, V, S; slack_idx = slack_idx, damp = damp, autodamp = autodamp, autodamp_min = autodamp_min, h = 1e-6, bus_types = bus_types, Vset = Vset, dPinj_dVm = dPinj_dVm, dQinj_dVm = dQinj_dVm, performance_profile = performance_profile)
     else
-      V = complex_newton_step_rectangular(Ybus, V, S; slack_idx = slack_idx, damp = damp, autodamp = autodamp, autodamp_min = autodamp_min, bus_types = bus_types, Vset = Vset, use_sparse = use_sparse, dPinj_dVm = dPinj_dVm, dQinj_dVm = dQinj_dVm)
+      V = complex_newton_step_rectangular(Ybus, V, S; slack_idx = slack_idx, damp = damp, autodamp = autodamp, autodamp_min = autodamp_min, bus_types = bus_types, Vset = Vset, use_sparse = use_sparse, dPinj_dVm = dPinj_dVm, dQinj_dVm = dQinj_dVm, performance_profile = performance_profile)
     end
   end
 
@@ -1400,6 +1401,7 @@ function complex_newton_step_rectangular(
   use_sparse::Bool = false,
   dPinj_dVm::Vector{Float64} = zeros(Float64, length(V)),
   dQinj_dVm::Vector{Float64} = zeros(Float64, length(V)),
+  performance_profile = nothing,
 )
   n = length(V)
   @assert length(S) == n
@@ -1411,18 +1413,26 @@ function complex_newton_step_rectangular(
   # Non-slack indices
   non_slack = non_slack_indices(n, slack_idx)
   # Residual matching the FD variant
-  F0 = mismatch_rectangular(Ybus, V, S, bus_types, Vset, slack_idx)
+  F0 = _perf_profile_time!(performance_profile, :newton_step_mismatch) do
+    mismatch_rectangular(Ybus, V, S, bus_types, Vset, slack_idx)
+  end
   m = length(F0)
   nvar = 2 * (n - 1)
   @assert m == nvar "complex_newton_step_rectangular: mismatch and state dimension differ"
 
   # Analytic Jacobian (dense or sparse)
-  J = build_rectangular_jacobian_pq_pv(Ybus, V, bus_types, Vset, slack_idx; use_sparse = use_sparse, dPinj_dVm = dPinj_dVm, dQinj_dVm = dQinj_dVm)
+  J = _perf_profile_time!(performance_profile, :newton_step_jacobian) do
+    build_rectangular_jacobian_pq_pv(Ybus, V, bus_types, Vset, slack_idx; use_sparse = use_sparse, dPinj_dVm = dPinj_dVm, dQinj_dVm = dQinj_dVm)
+  end
 
   # Solve J * δx = -F
-  δx = solve_linear(J, -F0; allow_pinv = true)
+  δx = _perf_profile_time!(performance_profile, :newton_step_linear_solve) do
+    solve_linear(J, -F0; allow_pinv = true)
+  end
   if autodamp
-    _, Vtrial, _ = choose_rectangular_autodamp(Ybus, V, S, δx, F0; slack_idx = slack_idx, damp = damp, autodamp_min = autodamp_min, bus_types = bus_types, Vset = Vset)
+    _, Vtrial, _ = _perf_profile_time!(performance_profile, :newton_step_autodamp) do
+      choose_rectangular_autodamp(Ybus, V, S, δx, F0; slack_idx = slack_idx, damp = damp, autodamp_min = autodamp_min, bus_types = bus_types, Vset = Vset)
+    end
     return Vtrial
   end
 
@@ -1519,6 +1529,7 @@ function run_complex_nr_rectangular_for_net!(
   qlimit_guard_freeze_after_repeated_switching::Bool = true,
   qlimit_guard_violation_mode::Symbol = :delayed_switch,
   qlimit_guard_violation_threshold_pu::Float64 = 1e-4,
+  performance_profile = nothing,
 )
   if verbose > 1
     @info "Running complex rectangular NR power flow... use_fd=$use_fd, opt_sparse=$opt_sparse"
@@ -1532,15 +1543,23 @@ function run_complex_nr_rectangular_for_net!(
   else
     sparse = opt_sparse
   end
-  Yred = createYBUS(net = net, sparse = sparse, printYBUS = (verbose > 1))
-  Ybus = (size(Yred, 1) == n) ? Yred : _expand_ybus_for_isolated_nodes(Yred, n, net.isoNodes)
+  Yred = _perf_profile_time!(performance_profile, :ybus_assembly) do
+    createYBUS(net = net, sparse = sparse, printYBUS = (verbose > 1))
+  end
+  Ybus = _perf_profile_time!(performance_profile, :ybus_expand_isolated) do
+    (size(Yred, 1) == n) ? Yred : _expand_ybus_for_isolated_nodes(Yred, n, net.isoNodes)
+  end
 
   # 1) Initial complex voltages V0 and slack index
-  V0, slack_idx = initialVrect(net; flatstart = opt_flatstart)
+  V0, slack_idx = _perf_profile_time!(performance_profile, :solver_initial_voltage) do
+    initialVrect(net; flatstart = opt_flatstart)
+  end
 
   # 2) Specified complex power injections S (p.u.). For Q(U)/P(U) controllers
   # this vector becomes state-dependent and is re-evaluated per Newton iteration.
-  S = buildComplexSVec(net)
+  S = _perf_profile_time!(performance_profile, :solver_initial_injections) do
+    buildComplexSVec(net)
+  end
   dPinj_dVm = zeros(Float64, n)
   dQinj_dVm = zeros(Float64, n)
   has_vdep_control = has_voltage_dependent_control(net)
@@ -1574,20 +1593,22 @@ function run_complex_nr_rectangular_for_net!(
   # flat-start mode temporarily changed node._vm_pu as an initial guess.
   V0[slack_idx] = ComplexF64(Vset[slack_idx] * cos(angle(V0[slack_idx])), Vset[slack_idx] * sin(angle(V0[slack_idx])))
 
-  V0 = project_rectangular_start(
-    Ybus,
-    V0,
-    S,
-    bus_types,
-    Vset,
-    slack_idx;
-    enabled = start_projection,
-    try_dc_start = start_projection_try_dc_start,
-    try_blend_scan = start_projection_try_blend_scan,
-    blend_lambdas = start_projection_blend_lambdas,
-    dc_angle_limit_deg = start_projection_dc_angle_limit_deg,
-    verbose = verbose,
-  )
+  V0 = _perf_profile_time!(performance_profile, :start_projection) do
+    project_rectangular_start(
+      Ybus,
+      V0,
+      S,
+      bus_types,
+      Vset,
+      slack_idx;
+      enabled = start_projection,
+      try_dc_start = start_projection_try_dc_start,
+      try_blend_scan = start_projection_try_blend_scan,
+      blend_lambdas = start_projection_blend_lambdas,
+      dc_angle_limit_deg = start_projection_dc_angle_limit_deg,
+      verbose = verbose,
+    )
+  end
 
   # 4) Q-limit data 
   qmin_pu, qmax_pu = getQLimits_pu(net)
@@ -1601,19 +1622,21 @@ function run_complex_nr_rectangular_for_net!(
 
   guarded_qlimit_buses = Int[]
   if qlimit_guard
-    guarded_qlimit_buses = _apply_qlimit_guard_to_rectangular_active_set!(
-      net,
-      bus_types,
-      S,
-      build_qload_pu(net),
-      qmin_pu,
-      qmax_pu;
-      min_q_range_pu = qlimit_guard_min_q_range_pu,
-      zero_range_mode = qlimit_guard_zero_range_mode,
-      narrow_range_mode = qlimit_guard_narrow_range_mode,
-      log = qlimit_guard_log,
-      verbose = verbose,
-    )
+    guarded_qlimit_buses = _perf_profile_time!(performance_profile, :qlimit_guard_preprocess) do
+      _apply_qlimit_guard_to_rectangular_active_set!(
+        net,
+        bus_types,
+        S,
+        build_qload_pu(net),
+        qmin_pu,
+        qmax_pu;
+        min_q_range_pu = qlimit_guard_min_q_range_pu,
+        zero_range_mode = qlimit_guard_zero_range_mode,
+        narrow_range_mode = qlimit_guard_narrow_range_mode,
+        log = qlimit_guard_log,
+        verbose = verbose,
+      )
+    end
   end
 
   # --- Active-set bookkeeping (rectangular solver) ------------------------
@@ -1666,11 +1689,15 @@ function run_complex_nr_rectangular_for_net!(
     iters = it
 
     if has_vdep_control
-      S, dPinj_dVm, dQinj_dVm = buildControlledSVec(net, V)
+      S, dPinj_dVm, dQinj_dVm = _perf_profile_time!(performance_profile, :iteration_controlled_injections) do
+        buildControlledSVec(net, V)
+      end
     end
 
     # Mismatch with current bus_types and (possibly) voltage-dependent S.
-    F = mismatch_rectangular(Ybus, V, S, bus_types, Vset, slack_idx)
+    F = _perf_profile_time!(performance_profile, :iteration_mismatch) do
+      mismatch_rectangular(Ybus, V, S, bus_types, Vset, slack_idx)
+    end
     max_mis = maximum(abs.(F))
     push!(history, max_mis)
 
@@ -1680,9 +1707,13 @@ function run_complex_nr_rectangular_for_net!(
     changed   = false
     reenabled = false
 
-    Qload_pu = build_qload_pu(net)
+    Qload_pu = _perf_profile_time!(performance_profile, :iteration_qload) do
+      build_qload_pu(net)
+    end
 
-    Scalc_pu = calc_injections(Ybus, V)
+    Scalc_pu = _perf_profile_time!(performance_profile, :iteration_calc_injections) do
+      calc_injections(Ybus, V)
+    end
     current_pv_qreq_pu = fill(NaN, nb)
     @inbounds for bus in eachindex(current_pv_qreq_pu)
       if bus_types[bus] == :PV
@@ -1747,7 +1778,8 @@ function run_complex_nr_rectangular_for_net!(
     end
 
     if qlimit_check_active
-      changed, reenabled = active_set_q_limits!(
+      changed, reenabled = _perf_profile_time!(performance_profile, :iteration_qlimit_active_set) do
+        active_set_q_limits!(
         net,
         it,
         nb;
@@ -1778,11 +1810,14 @@ function run_complex_nr_rectangular_for_net!(
         qlimit_guard_freeze_after_repeated_switching = qlimit_guard_freeze_after_repeated_switching,
         qlimit_guard_violation_mode = qlimit_guard_violation_mode,
         qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu,
-      )
+        )
+      end
 
       # If bus_types/spec changed, mismatch definition changed (ΔQ ↔ ΔV) => rebuild F
       if changed || reenabled
-        F = mismatch_rectangular(Ybus, V, S, bus_types, Vset, slack_idx)
+        F = _perf_profile_time!(performance_profile, :iteration_mismatch_after_qlimit) do
+          mismatch_rectangular(Ybus, V, S, bus_types, Vset, slack_idx)
+        end
         max_mis = maximum(abs.(F))
         history[end] = max_mis  # optional: overwrite last stored value for this iteration
       end
@@ -1796,9 +1831,13 @@ function run_complex_nr_rectangular_for_net!(
     # --- Newton step (FD or analytic) -----------------------------------
     try
       if use_fd
-        V = complex_newton_step_rectangular_fd(Ybus, V, S; slack_idx = slack_idx, damp = damp, autodamp = autodamp, autodamp_min = autodamp_min, h = 1e-6, bus_types = bus_types, Vset = Vset, dPinj_dVm = dPinj_dVm, dQinj_dVm = dQinj_dVm)
+        V = _perf_profile_time!(performance_profile, :iteration_newton_step_fd) do
+          complex_newton_step_rectangular_fd(Ybus, V, S; slack_idx = slack_idx, damp = damp, autodamp = autodamp, autodamp_min = autodamp_min, h = 1e-6, bus_types = bus_types, Vset = Vset, dPinj_dVm = dPinj_dVm, dQinj_dVm = dQinj_dVm)
+        end
       else
-        V = complex_newton_step_rectangular(Ybus, V, S; slack_idx = slack_idx, damp = damp, autodamp = autodamp, autodamp_min = autodamp_min, bus_types = bus_types, Vset = Vset, use_sparse = sparse, dPinj_dVm = dPinj_dVm, dQinj_dVm = dQinj_dVm)
+        V = _perf_profile_time!(performance_profile, :iteration_newton_step) do
+          complex_newton_step_rectangular(Ybus, V, S; slack_idx = slack_idx, damp = damp, autodamp = autodamp, autodamp_min = autodamp_min, bus_types = bus_types, Vset = Vset, use_sparse = sparse, dPinj_dVm = dPinj_dVm, dQinj_dVm = dQinj_dVm, performance_profile = performance_profile)
+        end
       end
     catch step_error
       if _is_rectangular_linear_step_failure(step_error)
@@ -1812,6 +1851,7 @@ function run_complex_nr_rectangular_for_net!(
 
     # Keep slack voltage fixed (safety belt)
     V[slack_idx] = V0[slack_idx]
+    _perf_profile_push_iteration!(performance_profile, (iteration = it, max_mismatch = max_mis, qlimit_changed = changed, qlimit_reenabled = reenabled))
   end
 
   # 6) Update voltages back to network
@@ -1979,6 +2019,7 @@ function runpf_rectangular!(
   qlimit_guard_freeze_after_repeated_switching::Bool = true,
   qlimit_guard_violation_mode::Symbol = :delayed_switch,
   qlimit_guard_violation_threshold_pu::Float64 = 1e-4,
+  performance_profile = nothing,
 )
   iters, erg = run_complex_nr_rectangular_for_net!(
     net;
@@ -2016,6 +2057,7 @@ function runpf_rectangular!(
     qlimit_guard_freeze_after_repeated_switching = qlimit_guard_freeze_after_repeated_switching,
     qlimit_guard_violation_mode = qlimit_guard_violation_mode,
     qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu,
+    performance_profile = performance_profile,
   )
   return iters, erg
 end
@@ -2208,6 +2250,7 @@ function runpf!(
   qlimit_guard_freeze_after_repeated_switching::Bool = true,
   qlimit_guard_violation_mode::Symbol = :delayed_switch,
   qlimit_guard_violation_threshold_pu::Float64 = 1e-4,
+  performance_profile = nothing,
 )
   wnet, reps, has_merges = _merged_pf_net(net)
   refreshBusTypesFromProsumers!(wnet)
@@ -2242,9 +2285,9 @@ function runpf!(
       if verbose > 0
         @warn "runpf!: rectangular solver detected internal Isolated buses from active-link merges; using rectangular FD fallback instead of :polar_full"
       end
-      iters, erg = runpf_rectangular!(wnet, maxIte, tolerance, verbose; opt_fd = true, opt_sparse = opt_sparse, damp = damp, autodamp = autodamp, autodamp_min = autodamp_min, opt_flatstart = opt_flatstart, pv_table_rows = pv_table_rows, lock_pv_to_pq_buses = lock_pv_to_pq_buses, qlimit_mode = qlimit_mode, qlimit_max_outer = qlimit_max_outer, start_projection = start_projection, start_projection_try_dc_start = start_projection_try_dc_start, start_projection_try_blend_scan = start_projection_try_blend_scan, start_projection_blend_lambdas = start_projection_blend_lambdas, start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg, qlimit_start_iter = qlimit_start_iter, qlimit_start_mode = qlimit_start_mode, qlimit_auto_q_delta_pu = qlimit_auto_q_delta_pu, qlimit_trace_buses = qlimit_trace_buses, qlimit_lock_reason = qlimit_lock_reason, qlimit_guard = qlimit_guard, qlimit_guard_min_q_range_pu = qlimit_guard_min_q_range_pu, qlimit_guard_zero_range_mode = qlimit_guard_zero_range_mode, qlimit_guard_narrow_range_mode = qlimit_guard_narrow_range_mode, qlimit_guard_log = qlimit_guard_log, qlimit_guard_max_switches = qlimit_guard_max_switches, qlimit_guard_accept_bounded_violations = qlimit_guard_accept_bounded_violations, qlimit_guard_max_remaining_violations = qlimit_guard_max_remaining_violations, qlimit_guard_freeze_after_repeated_switching = qlimit_guard_freeze_after_repeated_switching, qlimit_guard_violation_mode = qlimit_guard_violation_mode, qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu)
+      iters, erg = runpf_rectangular!(wnet, maxIte, tolerance, verbose; opt_fd = true, opt_sparse = opt_sparse, damp = damp, autodamp = autodamp, autodamp_min = autodamp_min, opt_flatstart = opt_flatstart, pv_table_rows = pv_table_rows, lock_pv_to_pq_buses = lock_pv_to_pq_buses, qlimit_mode = qlimit_mode, qlimit_max_outer = qlimit_max_outer, start_projection = start_projection, start_projection_try_dc_start = start_projection_try_dc_start, start_projection_try_blend_scan = start_projection_try_blend_scan, start_projection_blend_lambdas = start_projection_blend_lambdas, start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg, qlimit_start_iter = qlimit_start_iter, qlimit_start_mode = qlimit_start_mode, qlimit_auto_q_delta_pu = qlimit_auto_q_delta_pu, qlimit_trace_buses = qlimit_trace_buses, qlimit_lock_reason = qlimit_lock_reason, qlimit_guard = qlimit_guard, qlimit_guard_min_q_range_pu = qlimit_guard_min_q_range_pu, qlimit_guard_zero_range_mode = qlimit_guard_zero_range_mode, qlimit_guard_narrow_range_mode = qlimit_guard_narrow_range_mode, qlimit_guard_log = qlimit_guard_log, qlimit_guard_max_switches = qlimit_guard_max_switches, qlimit_guard_accept_bounded_violations = qlimit_guard_accept_bounded_violations, qlimit_guard_max_remaining_violations = qlimit_guard_max_remaining_violations, qlimit_guard_freeze_after_repeated_switching = qlimit_guard_freeze_after_repeated_switching, qlimit_guard_violation_mode = qlimit_guard_violation_mode, qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu, performance_profile = performance_profile)
     else
-      iters, erg = runpf_rectangular!(wnet, maxIte, tolerance, verbose; opt_fd = opt_fd, opt_sparse = opt_sparse, damp = damp, autodamp = autodamp, autodamp_min = autodamp_min, opt_flatstart = opt_flatstart, pv_table_rows = pv_table_rows, lock_pv_to_pq_buses = lock_pv_to_pq_buses, qlimit_mode = qlimit_mode, qlimit_max_outer = qlimit_max_outer, start_projection = start_projection, start_projection_try_dc_start = start_projection_try_dc_start, start_projection_try_blend_scan = start_projection_try_blend_scan, start_projection_blend_lambdas = start_projection_blend_lambdas, start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg, qlimit_start_iter = qlimit_start_iter, qlimit_start_mode = qlimit_start_mode, qlimit_auto_q_delta_pu = qlimit_auto_q_delta_pu, qlimit_trace_buses = qlimit_trace_buses, qlimit_lock_reason = qlimit_lock_reason, qlimit_guard = qlimit_guard, qlimit_guard_min_q_range_pu = qlimit_guard_min_q_range_pu, qlimit_guard_zero_range_mode = qlimit_guard_zero_range_mode, qlimit_guard_narrow_range_mode = qlimit_guard_narrow_range_mode, qlimit_guard_log = qlimit_guard_log, qlimit_guard_max_switches = qlimit_guard_max_switches, qlimit_guard_accept_bounded_violations = qlimit_guard_accept_bounded_violations, qlimit_guard_max_remaining_violations = qlimit_guard_max_remaining_violations, qlimit_guard_freeze_after_repeated_switching = qlimit_guard_freeze_after_repeated_switching, qlimit_guard_violation_mode = qlimit_guard_violation_mode, qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu)
+      iters, erg = runpf_rectangular!(wnet, maxIte, tolerance, verbose; opt_fd = opt_fd, opt_sparse = opt_sparse, damp = damp, autodamp = autodamp, autodamp_min = autodamp_min, opt_flatstart = opt_flatstart, pv_table_rows = pv_table_rows, lock_pv_to_pq_buses = lock_pv_to_pq_buses, qlimit_mode = qlimit_mode, qlimit_max_outer = qlimit_max_outer, start_projection = start_projection, start_projection_try_dc_start = start_projection_try_dc_start, start_projection_try_blend_scan = start_projection_try_blend_scan, start_projection_blend_lambdas = start_projection_blend_lambdas, start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg, qlimit_start_iter = qlimit_start_iter, qlimit_start_mode = qlimit_start_mode, qlimit_auto_q_delta_pu = qlimit_auto_q_delta_pu, qlimit_trace_buses = qlimit_trace_buses, qlimit_lock_reason = qlimit_lock_reason, qlimit_guard = qlimit_guard, qlimit_guard_min_q_range_pu = qlimit_guard_min_q_range_pu, qlimit_guard_zero_range_mode = qlimit_guard_zero_range_mode, qlimit_guard_narrow_range_mode = qlimit_guard_narrow_range_mode, qlimit_guard_log = qlimit_guard_log, qlimit_guard_max_switches = qlimit_guard_max_switches, qlimit_guard_accept_bounded_violations = qlimit_guard_accept_bounded_violations, qlimit_guard_max_remaining_violations = qlimit_guard_max_remaining_violations, qlimit_guard_freeze_after_repeated_switching = qlimit_guard_freeze_after_repeated_switching, qlimit_guard_violation_mode = qlimit_guard_violation_mode, qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu, performance_profile = performance_profile)
     end
     rect_status = rectangular_pf_status(wnet)
     if rect_status !== nothing

@@ -59,3 +59,44 @@ function print_jacobian(J::AbstractMatrix; label::AbstractString = "Jacobian", d
     end
   end
 end
+
+function _perf_profile_enabled(profile)::Bool
+  profile isa AbstractDict || return false
+  return Bool(get(profile, :enabled, false))
+end
+
+function _perf_profile_wants_allocations(profile)::Bool
+  _perf_profile_enabled(profile) || return false
+  return Bool(get(profile, :show_allocations, false))
+end
+
+function _perf_profile_add!(profile, phase::Symbol, elapsed_s::Real, bytes::Integer = 0)
+  _perf_profile_enabled(profile) || return nothing
+  timings = get!(profile, :timings) do
+    Dict{Symbol,NamedTuple{(:calls,:elapsed_s,:bytes),Tuple{Int,Float64,Int}}}()
+  end
+  prev = get(timings, phase, (calls = 0, elapsed_s = 0.0, bytes = 0))
+  timings[phase] = (calls = prev.calls + 1, elapsed_s = prev.elapsed_s + Float64(elapsed_s), bytes = prev.bytes + Int(bytes))
+  return nothing
+end
+
+function _perf_profile_push_iteration!(profile, row)
+  _perf_profile_enabled(profile) || return nothing
+  push!(get!(profile, :iterations, NamedTuple[]), row)
+  return nothing
+end
+
+function _perf_profile_time!(f::F, profile, phase::Symbol) where {F}
+  if !_perf_profile_enabled(profile)
+    return f()
+  elseif _perf_profile_wants_allocations(profile)
+    timed = @timed f()
+    _perf_profile_add!(profile, phase, timed.time, timed.bytes)
+    return timed.value
+  else
+    t0 = time_ns()
+    value = f()
+    _perf_profile_add!(profile, phase, (time_ns() - t0) / 1e9, 0)
+    return value
+  end
+end
