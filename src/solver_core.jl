@@ -64,6 +64,7 @@ function solve_linear(A, b; allow_pinv::Bool = true)
         return qr(A) \ b
       catch qr_error
         if qr_error isa LinearAlgebra.LAPACKException || qr_error isa ArgumentError || qr_error isa LinearAlgebra.SingularException
+          _dense_svd_fallback_allowed(A) || rethrow(qr_error)
           return _svd_pinv_solve(Matrix(A), b)
         end
         rethrow(qr_error)

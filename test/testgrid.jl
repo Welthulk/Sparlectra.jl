@@ -457,11 +457,13 @@ function test_rectangular_autodamp_backtracks_oversized_step()::Bool
 end
 
 function test_rectangular_start_projection_improves_dc_seed()::Bool
-  Y = ComplexF64[0.0 - 10.0im 0.0 + 10.0im; 0.0 + 10.0im 0.0 - 10.0im]
+  Ydense = ComplexF64[0.0 - 10.0im 0.0 + 10.0im; 0.0 + 10.0im 0.0 - 10.0im]
+  Y = sparse(Ydense)
   Vraw = ComplexF64[1.0 + 0.0im, 1.0 + 0.0im]
   S = ComplexF64[0.0 + 0.0im, -1.0 - 0.2im]
   bus_types = [:Slack, :PQ]
   Vset = [1.0, 1.0]
+  profile = Dict{Symbol,Any}(:enabled => true)
 
   raw_mismatch = maximum(abs.(Sparlectra.mismatch_rectangular(Y, Vraw, S, bus_types, Vset, 1)))
   Vproj = Sparlectra.project_rectangular_start(
@@ -476,10 +478,66 @@ function test_rectangular_start_projection_improves_dc_seed()::Bool
     try_blend_scan = true,
     blend_lambdas = [0.25, 0.5, 0.75],
     dc_angle_limit_deg = 60.0,
+    performance_profile = profile,
   )
   projected_mismatch = maximum(abs.(Sparlectra.mismatch_rectangular(Y, Vproj, S, bus_types, Vset, 1)))
+  Vdc = Sparlectra._dc_angle_start_rectangular(Y, Vraw, S, bus_types, Vset, 1; dc_angle_limit_deg = 60.0)
 
-  return Vproj[1] == Vraw[1] && projected_mismatch < raw_mismatch
+  return Vproj[1] == Vraw[1] &&
+         projected_mismatch < raw_mismatch &&
+         Vdc == Vproj &&
+         profile[:dc_matrix_size] == (1, 1) &&
+         profile[:dc_matrix_nnz] == 1 &&
+         profile[:dc_solve_backend] === :sparse_lu_umfpack &&
+         profile[:dc_solve_reduced_dimension] == 1
+end
+
+function test_rectangular_start_projection_keeps_raw_without_finite_improvement()::Bool
+  Ydense = ComplexF64[0.0 - 10.0im 0.0 + 10.0im; 0.0 + 10.0im 0.0 - 10.0im]
+  Y = sparse(Ydense)
+  Vraw = ComplexF64[1.0 + 0.0im, 1.0 + 0.0im]
+  bus_types = [:Slack, :PQ]
+  Vset = [1.0, 1.0]
+
+  unmeasured_profile = Dict{Symbol,Any}(:enabled => true)
+  Vunmeasured = Sparlectra.project_rectangular_start(
+    Y,
+    Vraw,
+    ComplexF64[0.0 + 0.0im, -1.0 - 0.2im],
+    bus_types,
+    Vset,
+    1;
+    enabled = true,
+    try_dc_start = true,
+    try_blend_scan = false,
+    measure_candidates = false,
+    performance_profile = unmeasured_profile,
+  )
+
+  nonfinite_profile = Dict{Symbol,Any}(:enabled => true)
+  Vnonfinite = Sparlectra.project_rectangular_start(
+    Y,
+    Vraw,
+    ComplexF64[0.0 + 0.0im, Inf + 0.0im],
+    bus_types,
+    Vset,
+    1;
+    enabled = true,
+    try_dc_start = true,
+    try_blend_scan = false,
+    measure_candidates = true,
+    performance_profile = nonfinite_profile,
+  )
+
+  # Regression: an unmeasured or non-finite DC candidate must not be treated as a proven improvement.
+  return Vunmeasured == Vraw &&
+         unmeasured_profile[:start_projection_summary].selected === :raw &&
+         unmeasured_profile[:start_projection_summary].reason === :candidate_mismatch_not_measured &&
+         ismissing(unmeasured_profile[:start_projection_summary].best_mismatch) &&
+         Vnonfinite == Vraw &&
+         nonfinite_profile[:start_projection_summary].selected === :raw &&
+         nonfinite_profile[:start_projection_summary].reason === :no_finite_improvement &&
+         ismissing(nonfinite_profile[:start_projection_summary].best_mismatch)
 end
 
 function test_matpower_vmva_selfcheck_noncontiguous_bus_numbers()::Bool
@@ -661,6 +719,53 @@ function test_matpower_multi_generator_vg_and_fallback()::Bool
   end
   fallback_ok = isapprox(net_fallback.nodeVec[geNetBusIdx(net = net_fallback, busName = "2")]._vm_pu, 1.02; atol = 1e-12)
   return first_online_ok && fallback_ok
+end
+
+function _synthetic_large_vset_lookup_net(nbus::Int)::Net
+  net = Net(name = "synthetic_vset_lookup", baseMVA = 100.0)
+  sizehint!(net.nodeVec, nbus)
+  sizehint!(net.busDict, nbus)
+  sizehint!(net.busOrigIdxDict, nbus)
+  sizehint!(net.prosumpsVec, nbus)
+  for k in Base.OneTo(nbus)
+    addBus!(net = net, busName = string(k), vn_kV = 110.0, vm_pu = 0.98 + 1e-7 * k, oBusIdx = 100_000 + k)
+  end
+  for k in Base.OneTo(nbus)
+    if k == 1
+      addProsumer!(net = net, busName = string(k), type = "EXTERNALNETWORKINJECTION", p = 0.0, q = 0.0, vm_pu = 1.01, referencePri = string(k), defer_bus_type_refresh = true)
+    elseif iseven(k)
+      addProsumer!(net = net, busName = string(k), type = "GENERATOR", p = 1.0, q = 0.0, vm_pu = 1.0 + 1e-6 * k, defer_bus_type_refresh = true)
+    else
+      addProsumer!(net = net, busName = string(k), type = "ENERGYCONSUMER", p = 1.0, q = 0.2, defer_bus_type_refresh = true)
+    end
+  end
+  Sparlectra.refreshBusTypesFromProsumers!(net)
+  return net
+end
+
+function test_voltage_setpoint_lookup_uses_cached_linear_scan()::Bool
+  nbus = 4096
+  net = _synthetic_large_vset_lookup_net(nbus)
+  # Warm up compilation so this regression guards the lookup algorithm, not JIT latency.
+  Sparlectra._bus_voltage_setpoints_from_prosumers(net)
+  profile = Dict{Symbol,Any}(:enabled => true, :show_allocations => true)
+  elapsed = @elapsed Vset = Sparlectra._bus_voltage_setpoints_from_prosumers(net; performance_profile = profile)
+  timings = profile[:timings]
+  phases_present = all(phase -> haskey(timings, phase), (
+    :vset_map_build,
+    :vset_generator_scan,
+    :vset_node_metadata_scan,
+    :vset_vector_fill,
+    :vset_fallback_bus_vm,
+    :vset_missing_online_gen_summary,
+  ))
+  values_ok = isapprox(Vset[1], 1.01; atol = 1e-12) &&
+              isapprox(Vset[2], 1.000002; atol = 1e-12) &&
+              isapprox(Vset[3], 0.9800003; atol = 1e-12) &&
+              isapprox(Vset[end], 1.0 + 1e-6 * nbus; atol = 1e-12)
+  # The old nested bus×prosumer scan is quadratic for this fixture; the cached
+  # map/vector path should remain comfortably sub-second after compilation.
+  return phases_present && values_ok && elapsed < 0.5 && timings[:vset_generator_scan].bytes > 0
 end
 
 function testISOBusses()
@@ -2087,6 +2192,7 @@ function run_grid_tests()
       @test test_matpower_pv_voltage_source_and_compare_modes() == true
       @test test_matpower_compare_vmva_final_pq_after_qlimit_uses_bus_vm() == true
       @test test_matpower_multi_generator_vg_and_fallback() == true
+      @test test_voltage_setpoint_lookup_uses_cached_linear_scan() == true
       @test test_mp_inline_vs_manual_shunt() == true
       @test test_bus_shunt_model_modes() == true
       @test test_matpower_read_case_m_postprocessing() == true
@@ -2102,6 +2208,7 @@ function run_grid_tests()
       @test test_acpflow(0; lLine_6a6b = 0.01, damp = 1.0, method = :polar_full, opt_sparse = true) == true
       @test test_rectangular_autodamp_backtracks_oversized_step() == true
       @test test_rectangular_start_projection_improves_dc_seed() == true
+      @test test_rectangular_start_projection_keeps_raw_without_finite_improvement() == true
       @test test_q_limit_adjust_vset_success() == true
       @test test_q_limit_adjust_vset_no_controller_switches() == true
       @test test_q_limit_adjust_vset_multiple_controllers_error() == true

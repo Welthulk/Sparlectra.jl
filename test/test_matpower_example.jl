@@ -46,6 +46,9 @@ function run_matpower_example_tests()
       "start_projection",
       "start_projection_try_dc_start",
       "start_projection_try_blend_scan",
+      "start_projection_branch_guard",
+      "start_projection_measure_candidates",
+      "start_projection_accept_unmeasured_dc_start",
       "start_projection_blend_lambdas",
       "start_projection_dc_angle_limit_deg",
       "qlimit_trace_buses",
@@ -89,7 +92,7 @@ function run_matpower_example_tests()
     @test occursin("function _print_converged_loss_summary(io::IO, method::Symbol, status, net::Sparlectra.Net)", normalized_source)
     @test occursin("losses P=", normalized_source)
     @test occursin("status_ref = status_ref", normalized_source)
-    @test occursin("Base.invokelatest(getfield(@__MODULE__, :_print_pv_voltage_reference_diagnostics)", normalized_source)
+    @test occursin(r"Base\.invokelatest\(\s*getfield\(@__MODULE__, :_print_pv_voltage_reference_diagnostics\)", normalized_source)
     @test occursin("Sparlectra.Slack", normalized_source)
     @test occursin("Sparlectra.PV", normalized_source)
     @test occursin("matpower_auto_profile", normalized_source)
@@ -104,6 +107,9 @@ function run_matpower_example_tests()
     @test occursin(raw"pv_table_rows_ = $console_max_rows", normalized_source)
     @test occursin("function _print_matpower_auto_profile_compact", normalized_source)
     @test occursin("function _print_matpower_run_summary", normalized_source)
+    @test occursin("start_projection_reuse_import_data::Bool", signature)
+    @test occursin("start_projection_reuse_import_data = cfg.start_projection_reuse_import_data", normalized_source)
+    @test occursin("imported_matpower_case = start_projection_reuse_import_data_ ? mpc_ : nothing", normalized_source)
 
     example_path = joinpath(@__DIR__, "..", "src", "examples", "matpower_import.jl")
     old_no_main = get(ENV, "SPARLECTRA_MATPOWER_IMPORT_NO_MAIN", nothing)
@@ -141,6 +147,10 @@ function run_matpower_example_tests()
         "start_projection" => true,
         "start_projection_try_dc_start" => false,
         "start_projection_try_blend_scan" => false,
+        "start_projection_branch_guard" => false,
+        "start_projection_measure_candidates" => false,
+        "start_projection_accept_unmeasured_dc_start" => true,
+        "start_projection_reuse_import_data" => false,
         "start_projection_blend_lambdas" => [0.1, 0.9],
         "start_projection_dc_angle_limit_deg" => 45.0,
         "qlimit_trace_buses" => [40712],
@@ -196,6 +206,10 @@ function run_matpower_example_tests()
       @test cfg.start_projection === true
       @test cfg.start_projection_try_dc_start === false
       @test cfg.start_projection_try_blend_scan === false
+      @test cfg.start_projection_branch_guard === false
+      @test cfg.start_projection_measure_candidates === false
+      @test cfg.start_projection_accept_unmeasured_dc_start === true
+      @test cfg.start_projection_reuse_import_data === false
       @test cfg.start_projection_blend_lambdas == [0.1, 0.9]
       @test cfg.start_projection_dc_angle_limit_deg == 45.0
       @test cfg.qlimit_trace_buses == [40712]
@@ -327,16 +341,52 @@ function run_matpower_example_tests()
         "opt_flatstart" => false,
       )))
       @test auto_apply.mode === :apply
-      # Explicit YAML values win; inferred large-case start-projection options are still applied.
+      # Explicit YAML values win; large-case auto-profile keeps start projection disabled by default.
       @test auto_apply.cfg.opt_flatstart === false
       @test :opt_flatstart in auto_apply.preserved
-      @test auto_apply.cfg.start_projection === true
+      @test auto_apply.cfg.start_projection === false
       @test auto_apply.cfg.flatstart_angle_mode === :dc
       @test auto_apply.cfg.flatstart_voltage_mode === :bus_vm_va_blend
+      @test auto_apply.cfg.start_projection_measure_candidates === false
+      @test auto_apply.cfg.start_projection_accept_unmeasured_dc_start === false
+      @test auto_apply.cfg.start_projection_reuse_import_data === true
+      @test auto_apply.cfg.performance_skip_expensive_diagnostics === true
+      @test auto_apply.cfg.tol == 1e-5
+      auto_explicit_diag_cfg = Base.invokelatest(() -> getfield(mod, :bench_config_for_case)("case_large.m", Dict{String,Any}(
+        "matpower_auto_profile" => "apply",
+        "performance" => Dict{String,Any}("skip_expensive_diagnostics" => false),
+      )))
+      auto_explicit_diag = Base.invokelatest(() -> getfield(mod, :_matpower_auto_profile)(large_mpc, auto_explicit_diag_cfg, Dict{String,Any}(
+        "matpower_auto_profile" => "apply",
+        "performance" => Dict{String,Any}("skip_expensive_diagnostics" => false),
+      )))
+      @test auto_explicit_diag.cfg.performance_skip_expensive_diagnostics === false
+      @test :performance_skip_expensive_diagnostics in auto_explicit_diag.preserved
+      @test auto_apply.cfg.max_ite == 80
       auto_recommend_cfg = Base.invokelatest(() -> getfield(mod, :bench_config_for_case)("case_large.m", Dict{String,Any}("matpower_auto_profile" => "recommend")))
       auto_recommend = Base.invokelatest(() -> getfield(mod, :_matpower_auto_profile)(large_mpc, auto_recommend_cfg, Dict{String,Any}("matpower_auto_profile" => "recommend")))
       @test auto_recommend.mode === :recommend
       @test auto_recommend.cfg.start_projection === false
+      narrow_gen = zeros(10, 21)
+      for r in axes(narrow_gen, 1)
+        narrow_gen[r, 1] = r
+        narrow_gen[r, 4] = 0.5
+        narrow_gen[r, 5] = 0.0
+        narrow_gen[r, 8] = 1.0
+      end
+      narrow_large_mpc = (; baseMVA = 100.0, bus = large_bus, gen = narrow_gen, branch = zeros(0, 13))
+      narrow_auto_apply_cfg = Base.invokelatest(() -> getfield(mod, :bench_config_for_case)("case_large.m", Dict{String,Any}("matpower_auto_profile" => "apply")))
+      narrow_auto_apply = Base.invokelatest(() -> getfield(mod, :_matpower_auto_profile)(narrow_large_mpc, narrow_auto_apply_cfg, Dict{String,Any}("matpower_auto_profile" => "apply")))
+      @test narrow_auto_apply.cfg.start_projection === false
+      @test narrow_auto_apply.cfg.flatstart_angle_mode === :dc
+      @test narrow_auto_apply.cfg.flatstart_voltage_mode === :bus_vm_va_blend
+      @test narrow_auto_apply.cfg.qlimit_guard === true
+      @test narrow_auto_apply.cfg.qlimit_start_mode === :iteration_or_auto
+      @test narrow_auto_apply.cfg.qlimit_guard_min_q_range_pu == 0.02
+      @test narrow_auto_apply.cfg.qlimit_guard_narrow_range_mode === :lock_pq
+      @test narrow_auto_apply.cfg.qlimit_guard_violation_mode === :lock_pq
+      @test narrow_auto_apply.cfg.performance_skip_expensive_diagnostics === true
+      @test narrow_auto_apply.cfg.tol == 1e-5
       auto_io = IOBuffer()
       @test Base.invokelatest(() -> getfield(mod, :_print_matpower_auto_profile)(auto_io, auto_apply)) === nothing
       auto_text = String(take!(auto_io))
@@ -349,7 +399,55 @@ function run_matpower_example_tests()
       @test occursin("branch shift", auto_compact_text)
       @test !occursin("reason:", auto_compact_text)
 
-      diagnostic_mpc = (;
+perf_cfg = Base.invokelatest(() -> getfield(mod, :bench_config_for_case)("case14.m", Dict{String,Any}(
+  "performance" => Dict{String,Any}(
+    "enabled" => true,
+    "level" => "iteration",
+    "show_allocations" => true,
+    "skip_reference_comparison" => true,
+    "max_diagnostic_rows" => 7,
+  ),
+)))
+@test perf_cfg.performance_enabled === true
+@test perf_cfg.performance_level === :iteration
+@test perf_cfg.performance_show_allocations === true
+@test perf_cfg.performance_skip_reference_comparison === true
+@test perf_cfg.performance_max_diagnostic_rows == 7
+
+summary_profile = Dict{Symbol,Any}(
+  :enabled => true,
+  :level => :summary,
+  :show_allocations => false,
+  :show_iteration_table => true,
+  :timings => Dict{Symbol,Any}(
+    :matpower_parse => (calls = 1, elapsed_s = 0.1, bytes = 0),
+    :logging_diagnostics => (calls = 1, elapsed_s = 0.2, bytes = 0),
+  ),
+  :iterations => [(iteration = 1, max_mismatch = 1e-3, qlimit_changed = false, qlimit_reenabled = false)],
+  :start_projection_summary => (selected = :dc_start, reason = :finite_improvement, candidates = 2, best_mismatch = 1e-4, elapsed_s = 0.03),
+  :dc_matrix_size => (24, 24),
+  :dc_matrix_nnz => 128,
+  :dc_matrix_density => 128 / (24 * 24),
+  :dc_solve_backend => :sparse_lu_umfpack,
+  :dc_solve_reduced_dimension => 24,
+)
+summary_io = IOBuffer()
+@test Base.invokelatest(() -> getfield(mod, :_print_performance_profile)(summary_io, summary_profile; max_rows = 5)) === nothing
+summary_text = String(take!(summary_io))
+@test occursin("Performance Summary", summary_text)
+@test occursin("matpower_parse", summary_text)
+@test occursin("logging_diagnostics", summary_text)
+@test occursin("start_projection: selected=dc_start", summary_text)
+@test occursin("reason=finite_improvement", summary_text)
+@test occursin("start_projection_dc: dc_matrix_size=(24, 24)", summary_text)
+@test occursin("dc_solve_backend=sparse_lu_umfpack", summary_text)
+@test !occursin("Newton iteration table", summary_text)
+summary_profile[:level] = :iteration
+iteration_io = IOBuffer()
+@test Base.invokelatest(() -> getfield(mod, :_print_performance_profile)(iteration_io, summary_profile; max_rows = 5)) === nothing
+@test occursin("Newton iteration table", String(take!(iteration_io)))
+
+diagnostic_mpc = (;
         baseMVA = 100.0,
         bus = [1.0 3.0 0.0 0.0 0.0 0.0 1.0 1.0 0.0 110.0 1.0 1.1 0.9;
                2.0 1.0 0.0 0.0 0.0 0.0 1.0 1.0 -0.1 110.0 1.0 1.1 0.9],
@@ -538,8 +636,15 @@ function run_matpower_example_tests()
         console_q_limit_events = :summary,
         console_max_rows = 3,
         logfile_diagnostics = :full,
-      ))
+  performance_profile = Dict{Symbol,Any}(:enabled => true, :level => :summary, :show_allocations => false, :show_iteration_table => true),
+  performance_write_to_logfile = true,
+  performance_print_to_console = false,
+  performance_max_diagnostic_rows = 5,
+))
       @test result == Dict{Symbol,Any}()
+      logfile_text = read(logfile, String)
+      @test occursin("Performance Summary", logfile_text)
+      @test occursin("logging_diagnostics", logfile_text)
       rm(logfile; force = true)
     finally
       if isnothing(old_no_main)
