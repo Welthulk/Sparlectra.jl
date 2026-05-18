@@ -1452,6 +1452,8 @@ function _matpower_auto_profile_flatstart!(recommendations::Dict{Symbol,Any}, re
     _matpower_auto_add!(recommendations, reasons, :start_projection_try_blend_scan, false, "DC start plus bus VM/VA blend is the compact default pre-run profile for large cases")
     _matpower_auto_add!(recommendations, reasons, :start_projection_measure_candidates, false, "large-case fast path skips candidate mismatch scans when the DC start is explicitly requested")
     _matpower_auto_add!(recommendations, reasons, :start_projection_reuse_import_data, true, "reuse the already parsed MATPOWER case for import and flat-start lookup")
+    _matpower_auto_add!(recommendations, reasons, :tol, 1e-5, "large benchmark validation uses a practical tolerance unless strict validation is explicitly requested")
+    _matpower_auto_add!(recommendations, reasons, :max_ite, 80, "large benchmark validation allows additional iterations for active-set stabilization")
   end
   return nothing
 end
@@ -1476,6 +1478,12 @@ function _matpower_auto_profile_qlimits!(recommendations::Dict{Symbol,Any}, reas
     _matpower_auto_add!(recommendations, reasons, :qlimit_start_mode, :iteration_or_auto, "many narrow Q limits benefit from conservative iteration-or-stability start")
     _matpower_auto_add!(recommendations, reasons, :q_hyst_pu, 0.01, "many narrow Q limits benefit from a small hysteresis deadband")
     _matpower_auto_add!(recommendations, reasons, :cooldown_iters, 1, "many narrow Q limits benefit from a short PV/PQ cooldown")
+    _matpower_auto_add!(recommendations, reasons, :qlimit_guard, true, "many narrow Q limits benefit from pre-locking and violation locking")
+    _matpower_auto_add!(recommendations, reasons, :qlimit_guard_min_q_range_pu, 0.02, "large narrow-Q cases use a stronger guard threshold")
+    _matpower_auto_add!(recommendations, reasons, :qlimit_guard_zero_range_mode, :lock_pq, "zero-range PV buses are locked to PQ before the solve")
+    _matpower_auto_add!(recommendations, reasons, :qlimit_guard_narrow_range_mode, :lock_pq, "narrow-range PV buses are locked to PQ before the solve")
+    _matpower_auto_add!(recommendations, reasons, :qlimit_guard_violation_mode, :lock_pq, "large narrow-Q cases lock violating PV buses once checks begin")
+    _matpower_auto_add!(recommendations, reasons, :qlimit_guard_max_switches, 3, "large narrow-Q cases use a tighter repeated-switching guard")
   end
   return nothing
 end
@@ -2321,7 +2329,8 @@ end
       matpower_pv_voltage_source = matpower_pv_voltage_source_,
       matpower_pv_voltage_mismatch_tol_pu = matpower_pv_voltage_mismatch_tol_pu_,
       flatstart_voltage_mode = flatstart_voltage_mode_,
-        flatstart_angle_mode = flatstart_angle_mode_,
+      flatstart_angle_mode = flatstart_angle_mode_,
+      imported_matpower_case = start_projection_reuse_import_data_ ? mpc_ : nothing,
       )
     end setup = (casefile_ = $casefile;
     max_ite_ = $max_ite;
@@ -2336,6 +2345,8 @@ end
     start_projection_branch_guard_ = $start_projection_branch_guard;
     start_projection_measure_candidates_ = $start_projection_measure_candidates;
     start_projection_accept_unmeasured_dc_start_ = $start_projection_accept_unmeasured_dc_start;
+    start_projection_reuse_import_data_ = $start_projection_reuse_import_data;
+    mpc_ = $mpc;
     start_projection_blend_lambdas_ = $start_projection_blend_lambdas;
     start_projection_dc_angle_limit_deg_ = $start_projection_dc_angle_limit_deg;
     qlimit_start_iter_ = $qlimit_start_iter;
