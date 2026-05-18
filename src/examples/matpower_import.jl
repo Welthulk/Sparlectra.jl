@@ -19,6 +19,7 @@ using BenchmarkTools
 using Printf
 using Dates
 using Logging
+using LinearAlgebra
 
 # -----------------------------------------------------------------------------
 # YAML config helpers (simple subset)
@@ -138,6 +139,66 @@ end
 function _as_int_vec(v)
   v isa AbstractVector || return Int[]
   return Int[x for x in v]
+end
+
+function _as_runtime_thread_count(v)
+  v === nothing && return nothing
+  v === false && return nothing
+  v isa Integer && return Int(v)
+
+  s = lowercase(strip(String(v)))
+  s in ("", "keep", "default", "none", "false", "off", "0") && return nothing
+  s == "auto" && return Sys.CPU_THREADS
+
+  iv = tryparse(Int, s)
+  if isnothing(iv) || iv < 1
+    @warn "Invalid runtime thread count; keeping current setting" value = v
+    return nothing
+  end
+  return iv
+end
+
+function _configure_runtime_threads!(cfg)
+  requested_julia_threads = _as_runtime_thread_count(getproperty(cfg, :julia_threads))
+  requested_blas_threads = _as_runtime_thread_count(getproperty(cfg, :blas_threads))
+
+  actual_julia_threads = Threads.nthreads()
+  blas_threads_before = BLAS.get_num_threads()
+
+  if !isnothing(requested_blas_threads)
+    BLAS.set_num_threads(requested_blas_threads)
+  end
+
+  blas_threads_after = BLAS.get_num_threads()
+  return (;
+    cpu_threads = Sys.CPU_THREADS,
+    requested_julia_threads = requested_julia_threads,
+    julia_threads = actual_julia_threads,
+    requested_blas_threads = requested_blas_threads,
+    blas_threads_before = blas_threads_before,
+    blas_threads = blas_threads_after,
+    julia_threads_request_applied = isnothing(requested_julia_threads) || requested_julia_threads == actual_julia_threads,
+    blas_threads_request_applied = isnothing(requested_blas_threads) || requested_blas_threads == blas_threads_after,
+  )
+end
+
+function _print_runtime_thread_config(io::IO, status)
+  println(io, "==================== Runtime thread configuration ====================")
+  println(io, "CPU threads     : ", status.cpu_threads)
+  println(io, "Julia threads   : ", status.julia_threads)
+  if !isnothing(status.requested_julia_threads) && !status.julia_threads_request_applied
+    println(io, "Julia request   : ", status.requested_julia_threads, " (not applied; start Julia with --threads or JULIA_NUM_THREADS)")
+  elseif !isnothing(status.requested_julia_threads)
+    println(io, "Julia request   : ", status.requested_julia_threads, " (already active)")
+  end
+  println(io, "BLAS threads    : ", status.blas_threads)
+  if status.blas_threads_before != status.blas_threads
+    println(io, "BLAS changed    : ", status.blas_threads_before, " -> ", status.blas_threads)
+  elseif !isnothing(status.requested_blas_threads)
+    println(io, "BLAS request    : ", status.requested_blas_threads, " (already active)")
+  end
+  println(io, "======================================================================\n")
+  return nothing
 end
 
 function _as_output_mode(v)::Symbol
@@ -271,12 +332,7 @@ function _print_log_status(io::IO, status::_MatpowerImportLogStatus)
 end
 
 function _new_performance_profile(cfg)
-  return Dict{Symbol,Any}(
-    :enabled => cfg.performance_enabled && cfg.performance_level != :off,
-    :level => cfg.performance_level,
-    :show_allocations => cfg.performance_show_allocations,
-    :show_iteration_table => cfg.performance_show_iteration_table,
-  )
+  return Dict{Symbol,Any}(:enabled => cfg.performance_enabled && cfg.performance_level != :off, :level => cfg.performance_level, :show_allocations => cfg.performance_show_allocations, :show_iteration_table => cfg.performance_show_iteration_table)
 end
 
 function _print_performance_profile(io::IO, profile; title::AbstractString = "Performance Summary", max_rows::Int = 20)
@@ -313,7 +369,9 @@ function _print_performance_profile(io::IO, profile; title::AbstractString = "Pe
     end
     if haskey(profile, :dc_matrix_size)
       dc_size = get(profile, :dc_matrix_size, (0, 0))
-      @printf(io, "start_projection_dc: dc_matrix_size=(%d, %d), dc_matrix_nnz=%d, dc_matrix_density=%.6e, dc_solve_backend=%s, dc_solve_reduced_dimension=%d\n",
+      @printf(
+        io,
+        "start_projection_dc: dc_matrix_size=(%d, %d), dc_matrix_nnz=%d, dc_matrix_density=%.6e, dc_solve_backend=%s, dc_solve_reduced_dimension=%d\n",
         dc_size[1],
         dc_size[2],
         get(profile, :dc_matrix_nnz, 0),
@@ -488,6 +546,9 @@ function bench_config_for_case(case_name::AbstractString, yaml_cfg::Dict{String,
     performance_skip_expensive_diagnostics = false,
     performance_skip_branch_neighborhood_report = true,
     performance_max_diagnostic_rows = 20,
+    julia_threads = "keep",
+    blas_threads = "keep",
+    print_thread_config = true,
   )
   case_override = get(CASE_BENCH_OVERRIDES, String(case_name), (;))
   yaml_override = (;)
@@ -605,6 +666,9 @@ function bench_config_for_case(case_name::AbstractString, yaml_cfg::Dict{String,
       performance_skip_expensive_diagnostics = Bool(_yaml_section_get(yaml_cfg, "performance", "skip_expensive_diagnostics", base.performance_skip_expensive_diagnostics)),
       performance_skip_branch_neighborhood_report = Bool(_yaml_section_get(yaml_cfg, "performance", "skip_branch_neighborhood_report", base.performance_skip_branch_neighborhood_report)),
       performance_max_diagnostic_rows = Int(_yaml_section_get(yaml_cfg, "performance", "max_diagnostic_rows", base.performance_max_diagnostic_rows)),
+      julia_threads = get(yaml_cfg, "julia_threads", _yaml_section_get(yaml_cfg, "runtime", "julia_threads", base.julia_threads)),
+      blas_threads = get(yaml_cfg, "blas_threads", _yaml_section_get(yaml_cfg, "runtime", "blas_threads", base.blas_threads)),
+      print_thread_config = Bool(get(yaml_cfg, "print_thread_config", _yaml_section_get(yaml_cfg, "runtime", "print_thread_config", base.print_thread_config))),
     )
   end
   return merge(base, case_override, yaml_override)
@@ -731,21 +795,7 @@ function _matpower_branch_stamp(row; matpower_shift_sign::Real = 1.0, matpower_s
   shift_rad = MatpowerIO._matpower_shift_radians(shift_raw; sign = shift_sign, unit = shift_unit)
   tap = ratio * cis(shift_rad)
 
-  return (;
-    br_r = r,
-    br_x = x,
-    br_b = b,
-    tap_raw = tap_raw,
-    shift_raw = shift_raw,
-    ratio = ratio,
-    shift_rad = shift_rad,
-    shift_deg = rad2deg(shift_rad),
-    tap = tap,
-    Yff = (y + ysh) / (tap * conj(tap)),
-    Yft = -y / conj(tap),
-    Ytf = -y / tap,
-    Ytt = y + ysh,
-  )
+  return (; br_r = r, br_x = x, br_b = b, tap_raw = tap_raw, shift_raw = shift_raw, ratio = ratio, shift_rad = shift_rad, shift_deg = rad2deg(shift_rad), tap = tap, Yff = (y + ysh) / (tap * conj(tap)), Yft = -y / conj(tap), Ytf = -y / tap, Ytt = y + ysh)
 end
 
 function _matpower_branch_flow_from_stamp(mpc, busrow::Dict{Int,Int}, e::Int, stamp)
@@ -850,15 +900,7 @@ function _matpower_residual_bus_clusters(mpc, diag; threshold_mw::Real = 1.0, ma
     max_p_mw = isempty(row_ids) ? 0.0 : maximum(abs(real(diag.mis[r])) for r in row_ids) * mpc.baseMVA
     max_q_mvar = isempty(row_ids) ? 0.0 : maximum(abs(imag(diag.mis[r])) for r in row_ids) * mpc.baseMVA
     sum_mis = isempty(row_ids) ? 0.0 + 0.0im : sum(diag.mis[row_ids])
-    push!(clusters, (;
-      buses = buses,
-      rows = row_ids,
-      internal_branch_rows = internal_branch_rows,
-      boundary_branch_rows = boundary_branch_rows,
-      max_p_mw = max_p_mw,
-      max_q_mvar = max_q_mvar,
-      sum_mis = sum_mis,
-    ))
+    push!(clusters, (; buses = buses, rows = row_ids, internal_branch_rows = internal_branch_rows, boundary_branch_rows = boundary_branch_rows, max_p_mw = max_p_mw, max_q_mvar = max_q_mvar, sum_mis = sum_mis))
   end
   return sort!(clusters; by = c -> max(c.max_p_mw, c.max_q_mvar), rev = true)
 end
@@ -871,9 +913,20 @@ function _print_residual_cluster_diagnostics(io::IO, mpc, diag; threshold_mw::Re
   @printf(io, "threshold: %.6g MW/MVAr; clusters: %d; showing: %d\n", Float64(threshold_mw), length(clusters), nshow)
   println(io, "Clusters connect buses whose fixed-reference P/Q residuals exceed the threshold through online MATPOWER branches.")
   println(io, "Use this to separate local data/model inconsistencies from one global residual list.")
-  for rank in 1:nshow
+  for rank = 1:nshow
     cluster = clusters[rank]
-    @printf(io, "\ncluster %d: buses=%d internal_branches=%d boundary_branches=%d max|dP|=%.3f MW max|dQ|=%.3f MVAr sum_dS=% .6g%+ .6gi pu\n", rank, length(cluster.buses), length(cluster.internal_branch_rows), length(cluster.boundary_branch_rows), cluster.max_p_mw, cluster.max_q_mvar, real(cluster.sum_mis), imag(cluster.sum_mis))
+    @printf(
+      io,
+      "\ncluster %d: buses=%d internal_branches=%d boundary_branches=%d max|dP|=%.3f MW max|dQ|=%.3f MVAr sum_dS=% .6g%+ .6gi pu\n",
+      rank,
+      length(cluster.buses),
+      length(cluster.internal_branch_rows),
+      length(cluster.boundary_branch_rows),
+      cluster.max_p_mw,
+      cluster.max_q_mvar,
+      real(cluster.sum_mis),
+      imag(cluster.sum_mis)
+    )
     println(io, "  buses: ", join(cluster.buses[1:min(length(cluster.buses), maxlines)], ", "), length(cluster.buses) > maxlines ? " ..." : "")
     bus_order = sort(cluster.rows; by = r -> max(abs(real(diag.mis[r])), abs(imag(diag.mis[r]))), rev = true)
     println(io, "  top residual buses: BUS_I type dP_MW dQ_MVAr Vm_ref Va_ref_deg")
@@ -921,7 +974,21 @@ function _negative_branch_rows(branch; warn_threshold_abs_r::Real = 0.0, warn_th
   return rows
 end
 
-function _print_negative_branch_impedance_diagnostics(io::IO, mpc; matpower_shift_sign::Real = 1.0, matpower_shift_unit = "deg", matpower_ratio = "normal", maxlines::Int = 100, fail_on_negative_r::Bool = false, fail_on_negative_x::Bool = false, warn_threshold_abs_r::Real = 0.0, warn_threshold_abs_x::Real = 0.0, diagnose_branch_neighborhood_buses::AbstractVector{Int} = Int[], diagnose_nodal_balance_buses::AbstractVector{Int} = Int[], high_residual_buses::Set{Int} = Set{Int}())
+function _print_negative_branch_impedance_diagnostics(
+  io::IO,
+  mpc;
+  matpower_shift_sign::Real = 1.0,
+  matpower_shift_unit = "deg",
+  matpower_ratio = "normal",
+  maxlines::Int = 100,
+  fail_on_negative_r::Bool = false,
+  fail_on_negative_x::Bool = false,
+  warn_threshold_abs_r::Real = 0.0,
+  warn_threshold_abs_x::Real = 0.0,
+  diagnose_branch_neighborhood_buses::AbstractVector{Int} = Int[],
+  diagnose_nodal_balance_buses::AbstractVector{Int} = Int[],
+  high_residual_buses::Set{Int} = Set{Int}(),
+)
   branch = mpc.branch
   nbranch = size(branch, 1)
   neg_r = [e for e in axes(branch, 1) if Float64(branch[e, 3]) < 0.0]
@@ -967,7 +1034,7 @@ function _print_negative_branch_impedance_diagnostics(io::IO, mpc; matpower_shif
     @printf(io, "minimum BR_X: row %d  f_bus=%d  t_bus=%d  BR_X=% .10g\n", min_x_row, Int(branch[min_x_row, 1]), Int(branch[min_x_row, 2]), branch[min_x_row, 4])
   end
 
-  for pos in 1:nshow
+  for pos = 1:nshow
     e = rows_to_print[pos]
     row = view(branch, e, :)
     f_bus = Int(row[1])
@@ -1005,7 +1072,7 @@ function _matpower_branch_neighborhood(branch, seed_buses::AbstractVector{Int}; 
   frontier = copy(seed_set)
   selected = Set{Int}()
 
-  for _depth in 1:max_depth
+  for _depth = 1:max_depth
     next_frontier = Set{Int}()
     for e in axes(branch, 1)
       status = size(branch, 2) >= 11 ? branch[e, 11] : 1.0
@@ -1045,7 +1112,7 @@ function _print_matpower_branch_neighborhood_diagnostics(io::IO, mpc, diag; buse
   println(io, "depth: ", max(depth, 1), "   selected branches: ", length(branch_rows), "   showing: ", nshow)
   println(io, "convention: SHIFT sign=", matpower_shift_sign, " unit=", matpower_shift_unit, " ratio=", matpower_ratio)
 
-  for pos in 1:nshow
+  for pos = 1:nshow
     e = branch_rows[pos]
     row = view(mpc.branch, e, :)
     f_bus = Int(row[1])
@@ -1112,7 +1179,20 @@ function _nodal_balance_dominant_source(Sbranch::ComplexF64, Sspec_no_shunt::Com
   return bus_type in (2, 3) && abs(imag(residual)) > abs(real(residual)) ? "q_treatment" : "mixed"
 end
 
-function _print_nodal_balance_breakdown(io::IO, mpc, diag; buses::AbstractVector{Int}, maxlines::Int = 200, include_branches::Bool = true, include_generators::Bool = true, include_shunts::Bool = true, matpower_shift_sign::Real = 1.0, matpower_shift_unit = "deg", matpower_ratio = "normal", matpower_pv_voltage_source = :gen_vg)
+function _print_nodal_balance_breakdown(
+  io::IO,
+  mpc,
+  diag;
+  buses::AbstractVector{Int},
+  maxlines::Int = 200,
+  include_branches::Bool = true,
+  include_generators::Bool = true,
+  include_shunts::Bool = true,
+  matpower_shift_sign::Real = 1.0,
+  matpower_shift_unit = "deg",
+  matpower_ratio = "normal",
+  matpower_pv_voltage_source = :gen_vg,
+)
   mp_has_vm_va(mpc) || return nothing
   selected_buses = unique(Int[x for x in buses])
   isempty(selected_buses) && return nothing
@@ -1207,7 +1287,35 @@ function _print_nodal_balance_breakdown(io::IO, mpc, diag; buses::AbstractVector
   return nothing
 end
 
-function _print_matpower_reference_diagnostics(io::IO, mpc; matpower_shift_sign::Real = 1.0, matpower_shift_unit = "deg", matpower_ratio = "normal", diagnose_branch_shift_conventions::Bool = false, diagnose_branch_neighborhood::Bool = false, diagnose_residual_clusters::Bool = false, diagnose_residual_cluster_threshold_mw::Float64 = 1.0, diagnose_residual_cluster_maxlines::Int = 20, diagnose_branch_neighborhood_buses::AbstractVector{Int} = Int[], diagnose_branch_neighborhood_depth::Int = 1, diagnose_branch_neighborhood_maxlines::Int = 200, diagnose_nodal_balance_breakdown::Bool = false, diagnose_nodal_balance_buses::AbstractVector{Int} = Int[], diagnose_nodal_balance_maxlines::Int = 200, diagnose_nodal_balance_include_branches::Bool = true, diagnose_nodal_balance_include_generators::Bool = true, diagnose_nodal_balance_include_shunts::Bool = true, diagnose_negative_branch_impedance::Bool = true, diagnose_negative_branch_impedance_maxlines::Int = 100, diagnose_negative_branch_impedance_fail_on_negative_r::Bool = false, diagnose_negative_branch_impedance_fail_on_negative_x::Bool = false, diagnose_negative_branch_impedance_warn_threshold_abs_r::Float64 = 0.0, diagnose_negative_branch_impedance_warn_threshold_abs_x::Float64 = 0.0, matpower_pv_voltage_source = :gen_vg, maxlines::Int = 12)
+function _print_matpower_reference_diagnostics(
+  io::IO,
+  mpc;
+  matpower_shift_sign::Real = 1.0,
+  matpower_shift_unit = "deg",
+  matpower_ratio = "normal",
+  diagnose_branch_shift_conventions::Bool = false,
+  diagnose_branch_neighborhood::Bool = false,
+  diagnose_residual_clusters::Bool = false,
+  diagnose_residual_cluster_threshold_mw::Float64 = 1.0,
+  diagnose_residual_cluster_maxlines::Int = 20,
+  diagnose_branch_neighborhood_buses::AbstractVector{Int} = Int[],
+  diagnose_branch_neighborhood_depth::Int = 1,
+  diagnose_branch_neighborhood_maxlines::Int = 200,
+  diagnose_nodal_balance_breakdown::Bool = false,
+  diagnose_nodal_balance_buses::AbstractVector{Int} = Int[],
+  diagnose_nodal_balance_maxlines::Int = 200,
+  diagnose_nodal_balance_include_branches::Bool = true,
+  diagnose_nodal_balance_include_generators::Bool = true,
+  diagnose_nodal_balance_include_shunts::Bool = true,
+  diagnose_negative_branch_impedance::Bool = true,
+  diagnose_negative_branch_impedance_maxlines::Int = 100,
+  diagnose_negative_branch_impedance_fail_on_negative_r::Bool = false,
+  diagnose_negative_branch_impedance_fail_on_negative_x::Bool = false,
+  diagnose_negative_branch_impedance_warn_threshold_abs_r::Float64 = 0.0,
+  diagnose_negative_branch_impedance_warn_threshold_abs_x::Float64 = 0.0,
+  matpower_pv_voltage_source = :gen_vg,
+  maxlines::Int = 12,
+)
   if !mp_has_vm_va(mpc)
     if diagnose_negative_branch_impedance || diagnose_branch_neighborhood
       Base.invokelatest(
@@ -1487,7 +1595,6 @@ function _matpower_auto_profile_qlimits!(recommendations::Dict{Symbol,Any}, reas
   end
   return nothing
 end
-
 
 function _print_vmva_self_check(io::IO, mpc; matpower_shift_sign::Real = 1.0, matpower_shift_unit = "deg", matpower_ratio = "normal")
   vmva_chk = MatpowerIO.vmva_power_mismatch_stats(mpc; matpower_shift_sign = matpower_shift_sign, matpower_shift_unit = matpower_shift_unit, matpower_ratio = matpower_ratio)
@@ -1866,7 +1973,6 @@ function bench_run_acpflow(;
   effective_diagnose_negative_branch_impedance = diagnose_negative_branch_impedance && !performance_skip_expensive_diagnostics
   effective_diagnose_maxlines = min(diagnose_maxlines, performance_max_diagnostic_rows)
 
-
   # Append to the logfile because main() may already have captured import warnings there.
   open(logfile, "a") do io
     println(io, "Sparlectra version: ", Sparlectra.version())
@@ -1944,110 +2050,7 @@ function bench_run_acpflow(;
             status_ref = Ref{Any}(nothing)
             net_res = _with_log_table(logfile, log_status) do
               run_acpflow(
-              casefile = casefile,
-              max_ite = max_ite,
-              tol = tol,
-              opt_fd = opt_fd,
-              opt_sparse = opt_sparse,
-              method = m,
-              autodamp = autodamp,
-              autodamp_min = autodamp_min,
-              start_projection = start_projection,
-              start_projection_try_dc_start = start_projection_try_dc_start,
-              start_projection_try_blend_scan = start_projection_try_blend_scan,
-              start_projection_branch_guard = start_projection_branch_guard,
-              start_projection_measure_candidates = start_projection_measure_candidates,
-              start_projection_accept_unmeasured_dc_start = start_projection_accept_unmeasured_dc_start,
-              start_projection_blend_lambdas = start_projection_blend_lambdas,
-              start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg,
-              qlimit_start_iter = qlimit_start_iter,
-              qlimit_start_mode = qlimit_start_mode,
-              qlimit_auto_q_delta_pu = qlimit_auto_q_delta_pu,
-              qlimit_guard = qlimit_guard,
-              qlimit_guard_min_q_range_pu = qlimit_guard_min_q_range_pu,
-              qlimit_guard_zero_range_mode = qlimit_guard_zero_range_mode,
-              qlimit_guard_narrow_range_mode = qlimit_guard_narrow_range_mode,
-              qlimit_guard_max_switches = qlimit_guard_max_switches,
-              qlimit_guard_freeze_after_repeated_switching = qlimit_guard_freeze_after_repeated_switching,
-              qlimit_guard_accept_bounded_violations = qlimit_guard_accept_bounded_violations,
-              qlimit_guard_max_remaining_violations = qlimit_guard_max_remaining_violations,
-              qlimit_guard_violation_mode = qlimit_guard_violation_mode,
-              qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu,
-              qlimit_guard_log = qlimit_guard_log,
-              pv_table_rows = console_max_rows,
-              opt_flatstart = opt_flatstart,
-              show_results = show_classic,
-              show_compact_result = true,
-              status_ref = status_ref,
-              verbose = verbose,
-              cooldown_iters = cooldown_iters,
-              q_hyst_pu = q_hyst_pu,
-              qlimit_trace_buses = qlimit_trace_buses,
-              qlimit_lock_reason = qlimit_lock_reason,
-              lock_pv_to_pq_buses = lock_pv_to_pq_buses,
-              enable_pq_gen_controllers = _enable_pq_gen_controllers_for_method(m, enable_pq_gen_controllers),
-              bus_shunt_model = bus_shunt_model,
-              matpower_shift_sign = matpower_shift_sign,
-              matpower_shift_unit = matpower_shift_unit,
-              matpower_ratio = matpower_ratio,
-              reference_vm_pu = effective_reference_vm_pu,
-              reference_va_deg = effective_reference_va_deg,
-              matpower_pv_voltage_source = matpower_pv_voltage_source,
-              matpower_pv_voltage_mismatch_tol_pu = matpower_pv_voltage_mismatch_tol_pu,
-              flatstart_voltage_mode = flatstart_voltage_mode,
-              flatstart_angle_mode = flatstart_angle_mode,
-                imported_matpower_case = start_projection_reuse_import_data ? mpc : nothing,
-                performance_profile = performance_profile,
-              )
-            end
-            status = status_ref[]
-            _print_converged_loss_summary(io, m, status, net_res)
-            if !show_classic
-              _print_dataframe_nodes(io, net_res; max_nodes = show_once_max_nodes)
-            end
-            if mp_has_vm_va(mpc) && !performance_skip_reference_comparison
-              if effective_diagnose_pv_voltage_references
-                Base.invokelatest(getfield(@__MODULE__, :_print_pv_voltage_reference_diagnostics), io, mpc, net_res; matpower_pv_voltage_source = matpower_pv_voltage_source, compare_voltage_reference = compare_voltage_reference, tol = matpower_pv_voltage_mismatch_tol_pu, maxlines = diagnose_pv_voltage_maxlines)
-              end
-              ok, stats = _perf_profile_time!(performance_profile, :reference_comparison) do
-                MatpowerIO.compare_vm_va(
-                  net_res,
-                  mpc;
-                  show_diff = show_diff,
-                  tol_vm = tol_vm,
-                  tol_va = tol_va,
-                  maxlines = 20,
-                  compare_voltage_reference = compare_voltage_reference,
-                  matpower_pv_voltage_source = matpower_pv_voltage_source,
-                  matpower_pv_voltage_mismatch_tol_pu = matpower_pv_voltage_mismatch_tol_pu,
-                )
-              end
-              _print_wrong_branch_warning(
-                io,
-                net_res,
-                mpc;
-                wrong_branch_detection = wrong_branch_detection,
-                wrong_branch_min_vm_pu = wrong_branch_min_vm_pu,
-                wrong_branch_max_angle_spread_deg = wrong_branch_max_angle_spread_deg,
-                compare_voltage_reference = compare_voltage_reference,
-                matpower_pv_voltage_source = matpower_pv_voltage_source,
-                tol = matpower_pv_voltage_mismatch_tol_pu,
-              )
-              push!(summaries, _show_once_summary_row(m, status, stats, ok; compare_available = true, net = net_res))
-            else
-  push!(summaries, _show_once_summary_row(m, status, nothing, false; compare_available = false, net = net_res))
-  if performance_skip_reference_comparison
-    println("Compare skipped: performance.skip_reference_comparison=true")
-  else
-    println("Compare skipped: no solution-like VM/VA in mpc.bus(:,8:9)")
-  end
-end
-            if !Bool(get(status, :converged, false)) && !enable_pq_gen_controllers && m === :rectangular
-              println("Fallback diagnostic: rerun with enable_pq_gen_controllers=true")
-              fb_ref = Ref{Any}(nothing)
-              _with_log_table(logfile, log_status) do
-                run_acpflow(
-                  casefile = casefile,
+                casefile = casefile,
                 max_ite = max_ite,
                 tol = tol,
                 opt_fd = opt_fd,
@@ -2079,16 +2082,16 @@ end
                 qlimit_guard_log = qlimit_guard_log,
                 pv_table_rows = console_max_rows,
                 opt_flatstart = opt_flatstart,
-                show_results = false,
+                show_results = show_classic,
                 show_compact_result = true,
-                status_ref = fb_ref,
-                verbose = 0,
+                status_ref = status_ref,
+                verbose = verbose,
                 cooldown_iters = cooldown_iters,
                 q_hyst_pu = q_hyst_pu,
                 qlimit_trace_buses = qlimit_trace_buses,
                 qlimit_lock_reason = qlimit_lock_reason,
                 lock_pv_to_pq_buses = lock_pv_to_pq_buses,
-                enable_pq_gen_controllers = true,
+                enable_pq_gen_controllers = _enable_pq_gen_controllers_for_method(m, enable_pq_gen_controllers),
                 bus_shunt_model = bus_shunt_model,
                 matpower_shift_sign = matpower_shift_sign,
                 matpower_shift_unit = matpower_shift_unit,
@@ -2098,9 +2101,121 @@ end
                 matpower_pv_voltage_source = matpower_pv_voltage_source,
                 matpower_pv_voltage_mismatch_tol_pu = matpower_pv_voltage_mismatch_tol_pu,
                 flatstart_voltage_mode = flatstart_voltage_mode,
-                  flatstart_angle_mode = flatstart_angle_mode,
+                flatstart_angle_mode = flatstart_angle_mode,
                 imported_matpower_case = start_projection_reuse_import_data ? mpc : nothing,
                 performance_profile = performance_profile,
+              )
+            end
+            status = status_ref[]
+            _print_converged_loss_summary(io, m, status, net_res)
+            if !show_classic
+              _print_dataframe_nodes(io, net_res; max_nodes = show_once_max_nodes)
+            end
+            if mp_has_vm_va(mpc) && !performance_skip_reference_comparison
+              if effective_diagnose_pv_voltage_references
+                Base.invokelatest(
+                  getfield(@__MODULE__, :_print_pv_voltage_reference_diagnostics),
+                  io,
+                  mpc,
+                  net_res;
+                  matpower_pv_voltage_source = matpower_pv_voltage_source,
+                  compare_voltage_reference = compare_voltage_reference,
+                  tol = matpower_pv_voltage_mismatch_tol_pu,
+                  maxlines = diagnose_pv_voltage_maxlines,
+                )
+              end
+              ok, stats = _perf_profile_time!(performance_profile, :reference_comparison) do
+                MatpowerIO.compare_vm_va(
+                  net_res,
+                  mpc;
+                  show_diff = show_diff,
+                  tol_vm = tol_vm,
+                  tol_va = tol_va,
+                  maxlines = 20,
+                  compare_voltage_reference = compare_voltage_reference,
+                  matpower_pv_voltage_source = matpower_pv_voltage_source,
+                  matpower_pv_voltage_mismatch_tol_pu = matpower_pv_voltage_mismatch_tol_pu,
+                )
+              end
+              _print_wrong_branch_warning(
+                io,
+                net_res,
+                mpc;
+                wrong_branch_detection = wrong_branch_detection,
+                wrong_branch_min_vm_pu = wrong_branch_min_vm_pu,
+                wrong_branch_max_angle_spread_deg = wrong_branch_max_angle_spread_deg,
+                compare_voltage_reference = compare_voltage_reference,
+                matpower_pv_voltage_source = matpower_pv_voltage_source,
+                tol = matpower_pv_voltage_mismatch_tol_pu,
+              )
+              push!(summaries, _show_once_summary_row(m, status, stats, ok; compare_available = true, net = net_res))
+            else
+              push!(summaries, _show_once_summary_row(m, status, nothing, false; compare_available = false, net = net_res))
+              if performance_skip_reference_comparison
+                println("Compare skipped: performance.skip_reference_comparison=true")
+              else
+                println("Compare skipped: no solution-like VM/VA in mpc.bus(:,8:9)")
+              end
+            end
+            if !Bool(get(status, :converged, false)) && !enable_pq_gen_controllers && m === :rectangular
+              println("Fallback diagnostic: rerun with enable_pq_gen_controllers=true")
+              fb_ref = Ref{Any}(nothing)
+              _with_log_table(logfile, log_status) do
+                run_acpflow(
+                  casefile = casefile,
+                  max_ite = max_ite,
+                  tol = tol,
+                  opt_fd = opt_fd,
+                  opt_sparse = opt_sparse,
+                  method = m,
+                  autodamp = autodamp,
+                  autodamp_min = autodamp_min,
+                  start_projection = start_projection,
+                  start_projection_try_dc_start = start_projection_try_dc_start,
+                  start_projection_try_blend_scan = start_projection_try_blend_scan,
+                  start_projection_branch_guard = start_projection_branch_guard,
+                  start_projection_measure_candidates = start_projection_measure_candidates,
+                  start_projection_accept_unmeasured_dc_start = start_projection_accept_unmeasured_dc_start,
+                  start_projection_blend_lambdas = start_projection_blend_lambdas,
+                  start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg,
+                  qlimit_start_iter = qlimit_start_iter,
+                  qlimit_start_mode = qlimit_start_mode,
+                  qlimit_auto_q_delta_pu = qlimit_auto_q_delta_pu,
+                  qlimit_guard = qlimit_guard,
+                  qlimit_guard_min_q_range_pu = qlimit_guard_min_q_range_pu,
+                  qlimit_guard_zero_range_mode = qlimit_guard_zero_range_mode,
+                  qlimit_guard_narrow_range_mode = qlimit_guard_narrow_range_mode,
+                  qlimit_guard_max_switches = qlimit_guard_max_switches,
+                  qlimit_guard_freeze_after_repeated_switching = qlimit_guard_freeze_after_repeated_switching,
+                  qlimit_guard_accept_bounded_violations = qlimit_guard_accept_bounded_violations,
+                  qlimit_guard_max_remaining_violations = qlimit_guard_max_remaining_violations,
+                  qlimit_guard_violation_mode = qlimit_guard_violation_mode,
+                  qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu,
+                  qlimit_guard_log = qlimit_guard_log,
+                  pv_table_rows = console_max_rows,
+                  opt_flatstart = opt_flatstart,
+                  show_results = false,
+                  show_compact_result = true,
+                  status_ref = fb_ref,
+                  verbose = 0,
+                  cooldown_iters = cooldown_iters,
+                  q_hyst_pu = q_hyst_pu,
+                  qlimit_trace_buses = qlimit_trace_buses,
+                  qlimit_lock_reason = qlimit_lock_reason,
+                  lock_pv_to_pq_buses = lock_pv_to_pq_buses,
+                  enable_pq_gen_controllers = true,
+                  bus_shunt_model = bus_shunt_model,
+                  matpower_shift_sign = matpower_shift_sign,
+                  matpower_shift_unit = matpower_shift_unit,
+                  matpower_ratio = matpower_ratio,
+                  reference_vm_pu = effective_reference_vm_pu,
+                  reference_va_deg = effective_reference_va_deg,
+                  matpower_pv_voltage_source = matpower_pv_voltage_source,
+                  matpower_pv_voltage_mismatch_tol_pu = matpower_pv_voltage_mismatch_tol_pu,
+                  flatstart_voltage_mode = flatstart_voltage_mode,
+                  flatstart_angle_mode = flatstart_angle_mode,
+                  imported_matpower_case = start_projection_reuse_import_data ? mpc : nothing,
+                  performance_profile = performance_profile,
                 )
               end
             end
@@ -2124,6 +2239,88 @@ end
       status_ref = Ref{Any}(nothing)
       net_res = _with_log_table(logfile, log_status) do
         run_acpflow(
+          casefile = casefile,
+          max_ite = max_ite,
+          tol = tol,
+          opt_fd = opt_fd,
+          opt_sparse = opt_sparse,
+          method = m,
+          autodamp = autodamp,
+          autodamp_min = autodamp_min,
+          start_projection = start_projection,
+          start_projection_try_dc_start = start_projection_try_dc_start,
+          start_projection_try_blend_scan = start_projection_try_blend_scan,
+          start_projection_branch_guard = start_projection_branch_guard,
+          start_projection_measure_candidates = start_projection_measure_candidates,
+          start_projection_accept_unmeasured_dc_start = start_projection_accept_unmeasured_dc_start,
+          start_projection_blend_lambdas = start_projection_blend_lambdas,
+          start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg,
+          qlimit_start_iter = qlimit_start_iter,
+          qlimit_start_mode = qlimit_start_mode,
+          qlimit_auto_q_delta_pu = qlimit_auto_q_delta_pu,
+          qlimit_guard = qlimit_guard,
+          qlimit_guard_min_q_range_pu = qlimit_guard_min_q_range_pu,
+          qlimit_guard_zero_range_mode = qlimit_guard_zero_range_mode,
+          qlimit_guard_narrow_range_mode = qlimit_guard_narrow_range_mode,
+          qlimit_guard_max_switches = qlimit_guard_max_switches,
+          qlimit_guard_freeze_after_repeated_switching = qlimit_guard_freeze_after_repeated_switching,
+          qlimit_guard_accept_bounded_violations = qlimit_guard_accept_bounded_violations,
+          qlimit_guard_max_remaining_violations = qlimit_guard_max_remaining_violations,
+          qlimit_guard_violation_mode = qlimit_guard_violation_mode,
+          qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu,
+          qlimit_guard_log = qlimit_guard_log,
+          pv_table_rows = console_max_rows,
+          opt_flatstart = opt_flatstart,
+          show_results = false,
+          show_compact_result = true,
+          status_ref = status_ref,
+          verbose = 0,
+          cooldown_iters = cooldown_iters,
+          q_hyst_pu = q_hyst_pu,
+          qlimit_trace_buses = qlimit_trace_buses,
+          qlimit_lock_reason = qlimit_lock_reason,
+          lock_pv_to_pq_buses = lock_pv_to_pq_buses,
+          enable_pq_gen_controllers = _enable_pq_gen_controllers_for_method(m, enable_pq_gen_controllers),
+          bus_shunt_model = bus_shunt_model,
+          matpower_shift_sign = matpower_shift_sign,
+          matpower_shift_unit = matpower_shift_unit,
+          matpower_ratio = matpower_ratio,
+          reference_vm_pu = effective_reference_vm_pu,
+          reference_va_deg = effective_reference_va_deg,
+          matpower_pv_voltage_source = matpower_pv_voltage_source,
+          matpower_pv_voltage_mismatch_tol_pu = matpower_pv_voltage_mismatch_tol_pu,
+          flatstart_voltage_mode = flatstart_voltage_mode,
+          flatstart_angle_mode = flatstart_angle_mode,
+          imported_matpower_case = start_projection_reuse_import_data ? mpc : nothing,
+          performance_profile = performance_profile,
+        )
+      end
+      _print_converged_loss_summary(stdout, m, status_ref[], net_res)
+      open(logfile, "a") do io
+        _print_converged_loss_summary(io, m, status_ref[], net_res)
+      end
+    end
+  end
+
+  if !benchmark
+    total_s = time() - t0
+    @printf("total runtime        : %.3f s\n", total_s)
+    _perf_profile_time!(performance_profile, :logging_diagnostics) do
+      open(logfile, "a") do io
+        @printf(io, "total runtime: %.3f s\n", total_s)
+        _print_log_status(io, log_status)
+      end
+      _print_log_status(stdout, log_status)
+    end
+    _emit_performance_summary(performance_profile; logfile = logfile, print_to_console = performance_print_to_console, write_to_logfile = performance_write_to_logfile, max_rows = performance_max_diagnostic_rows)
+    return results
+  end
+
+  # Warmup (compile) once per method with minimal output
+  println("Warmup run:")
+  for m in methods
+    _with_log_table(logfile, log_status) do
+      run_acpflow(
         casefile = casefile,
         max_ite = max_ite,
         tol = tol,
@@ -2157,8 +2354,6 @@ end
         pv_table_rows = console_max_rows,
         opt_flatstart = opt_flatstart,
         show_results = false,
-        show_compact_result = true,
-        status_ref = status_ref,
         verbose = 0,
         cooldown_iters = cooldown_iters,
         q_hyst_pu = q_hyst_pu,
@@ -2176,90 +2371,10 @@ end
         matpower_pv_voltage_mismatch_tol_pu = matpower_pv_voltage_mismatch_tol_pu,
         flatstart_voltage_mode = flatstart_voltage_mode,
         flatstart_angle_mode = flatstart_angle_mode,
-                imported_matpower_case = start_projection_reuse_import_data ? mpc : nothing,
-                performance_profile = performance_profile,
-        )
-      end
-      _print_converged_loss_summary(stdout, m, status_ref[], net_res)
-      open(logfile, "a") do io
-        _print_converged_loss_summary(io, m, status_ref[], net_res)
-      end
+        imported_matpower_case = start_projection_reuse_import_data ? mpc : nothing,
+        performance_profile = performance_profile,
+      )
     end
-  end
-
-  if !benchmark
-    total_s = time() - t0
-    @printf("total runtime        : %.3f s\n", total_s)
-    _perf_profile_time!(performance_profile, :logging_diagnostics) do
-      open(logfile, "a") do io
-        @printf(io, "total runtime: %.3f s\n", total_s)
-        _print_log_status(io, log_status)
-      end
-      _print_log_status(stdout, log_status)
-    end
-    _emit_performance_summary(performance_profile; logfile = logfile, print_to_console = performance_print_to_console, write_to_logfile = performance_write_to_logfile, max_rows = performance_max_diagnostic_rows)
-    return results
-  end
-
-  # Warmup (compile) once per method with minimal output
-  println("Warmup run:")
-  for m in methods
-    _with_log_table(logfile, log_status) do
-      run_acpflow(
-        casefile = casefile,
-      max_ite = max_ite,
-      tol = tol,
-      opt_fd = opt_fd,
-      opt_sparse = opt_sparse,
-      method = m,
-      autodamp = autodamp,
-      autodamp_min = autodamp_min,
-      start_projection = start_projection,
-      start_projection_try_dc_start = start_projection_try_dc_start,
-      start_projection_try_blend_scan = start_projection_try_blend_scan,
-      start_projection_branch_guard = start_projection_branch_guard,
-      start_projection_measure_candidates = start_projection_measure_candidates,
-      start_projection_accept_unmeasured_dc_start = start_projection_accept_unmeasured_dc_start,
-      start_projection_blend_lambdas = start_projection_blend_lambdas,
-      start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg,
-      qlimit_start_iter = qlimit_start_iter,
-      qlimit_start_mode = qlimit_start_mode,
-      qlimit_auto_q_delta_pu = qlimit_auto_q_delta_pu,
-      qlimit_guard = qlimit_guard,
-      qlimit_guard_min_q_range_pu = qlimit_guard_min_q_range_pu,
-      qlimit_guard_zero_range_mode = qlimit_guard_zero_range_mode,
-      qlimit_guard_narrow_range_mode = qlimit_guard_narrow_range_mode,
-      qlimit_guard_max_switches = qlimit_guard_max_switches,
-      qlimit_guard_freeze_after_repeated_switching = qlimit_guard_freeze_after_repeated_switching,
-      qlimit_guard_accept_bounded_violations = qlimit_guard_accept_bounded_violations,
-      qlimit_guard_max_remaining_violations = qlimit_guard_max_remaining_violations,
-      qlimit_guard_violation_mode = qlimit_guard_violation_mode,
-      qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu,
-      qlimit_guard_log = qlimit_guard_log,
-      pv_table_rows = console_max_rows,
-      opt_flatstart = opt_flatstart,
-      show_results = false,
-      verbose = 0,
-      cooldown_iters = cooldown_iters,
-      q_hyst_pu = q_hyst_pu,
-      qlimit_trace_buses = qlimit_trace_buses,
-      qlimit_lock_reason = qlimit_lock_reason,
-      lock_pv_to_pq_buses = lock_pv_to_pq_buses,
-      enable_pq_gen_controllers = _enable_pq_gen_controllers_for_method(m, enable_pq_gen_controllers),
-      bus_shunt_model = bus_shunt_model,
-      matpower_shift_sign = matpower_shift_sign,
-      matpower_shift_unit = matpower_shift_unit,
-      matpower_ratio = matpower_ratio,
-      reference_vm_pu = effective_reference_vm_pu,
-      reference_va_deg = effective_reference_va_deg,
-      matpower_pv_voltage_source = matpower_pv_voltage_source,
-      matpower_pv_voltage_mismatch_tol_pu = matpower_pv_voltage_mismatch_tol_pu,
-      flatstart_voltage_mode = flatstart_voltage_mode,
-      flatstart_angle_mode = flatstart_angle_mode,
-                imported_matpower_case = start_projection_reuse_import_data ? mpc : nothing,
-                performance_profile = performance_profile,
-    )
-  end
   end
 
   println("\n==================== Benchmark run_acpflow ====================")
@@ -2281,56 +2396,56 @@ end
     benchable = @benchmarkable _with_log_table(logfile_, log_status_) do
       run_acpflow(
         casefile = casefile_,
-      max_ite = max_ite_,
-      tol = tol_,
-      opt_fd = opt_fd_,
-      opt_sparse = opt_sparse_,
-      method = method_,
-      autodamp = autodamp_,
-      autodamp_min = autodamp_min_,
-      start_projection = start_projection_,
-      start_projection_try_dc_start = start_projection_try_dc_start_,
-      start_projection_try_blend_scan = start_projection_try_blend_scan_,
-      start_projection_branch_guard = start_projection_branch_guard_,
-      start_projection_measure_candidates = start_projection_measure_candidates_,
-      start_projection_accept_unmeasured_dc_start = start_projection_accept_unmeasured_dc_start_,
-      start_projection_blend_lambdas = start_projection_blend_lambdas_,
-      start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg_,
-      qlimit_start_iter = qlimit_start_iter_,
-      qlimit_start_mode = qlimit_start_mode_,
-      qlimit_auto_q_delta_pu = qlimit_auto_q_delta_pu_,
-      qlimit_guard = qlimit_guard_,
-      qlimit_guard_min_q_range_pu = qlimit_guard_min_q_range_pu_,
-      qlimit_guard_zero_range_mode = qlimit_guard_zero_range_mode_,
-      qlimit_guard_narrow_range_mode = qlimit_guard_narrow_range_mode_,
-      qlimit_guard_max_switches = qlimit_guard_max_switches_,
-      qlimit_guard_freeze_after_repeated_switching = qlimit_guard_freeze_after_repeated_switching_,
-      qlimit_guard_accept_bounded_violations = qlimit_guard_accept_bounded_violations_,
-      qlimit_guard_max_remaining_violations = qlimit_guard_max_remaining_violations_,
-      qlimit_guard_violation_mode = qlimit_guard_violation_mode_,
-      qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu_,
-      qlimit_guard_log = qlimit_guard_log_,
-      pv_table_rows = pv_table_rows_,
-      opt_flatstart = opt_flatstart_,
-      show_results = false,
-      verbose = 0,
-      cooldown_iters = cooldown_iters_,
-      q_hyst_pu = q_hyst_pu_,
-      qlimit_trace_buses = qlimit_trace_buses_,
-      qlimit_lock_reason = qlimit_lock_reason_,
-      lock_pv_to_pq_buses = lock_pv_to_pq_buses_,
-      enable_pq_gen_controllers = enable_pq_gen_controllers_,
-      bus_shunt_model = bus_shunt_model_,
-      matpower_shift_sign = matpower_shift_sign_,
-      matpower_shift_unit = matpower_shift_unit_,
-      matpower_ratio = matpower_ratio_,
-      reference_vm_pu = reference_vm_pu_,
-      reference_va_deg = reference_va_deg_,
-      matpower_pv_voltage_source = matpower_pv_voltage_source_,
-      matpower_pv_voltage_mismatch_tol_pu = matpower_pv_voltage_mismatch_tol_pu_,
-      flatstart_voltage_mode = flatstart_voltage_mode_,
-      flatstart_angle_mode = flatstart_angle_mode_,
-      imported_matpower_case = start_projection_reuse_import_data_ ? mpc_ : nothing,
+        max_ite = max_ite_,
+        tol = tol_,
+        opt_fd = opt_fd_,
+        opt_sparse = opt_sparse_,
+        method = method_,
+        autodamp = autodamp_,
+        autodamp_min = autodamp_min_,
+        start_projection = start_projection_,
+        start_projection_try_dc_start = start_projection_try_dc_start_,
+        start_projection_try_blend_scan = start_projection_try_blend_scan_,
+        start_projection_branch_guard = start_projection_branch_guard_,
+        start_projection_measure_candidates = start_projection_measure_candidates_,
+        start_projection_accept_unmeasured_dc_start = start_projection_accept_unmeasured_dc_start_,
+        start_projection_blend_lambdas = start_projection_blend_lambdas_,
+        start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg_,
+        qlimit_start_iter = qlimit_start_iter_,
+        qlimit_start_mode = qlimit_start_mode_,
+        qlimit_auto_q_delta_pu = qlimit_auto_q_delta_pu_,
+        qlimit_guard = qlimit_guard_,
+        qlimit_guard_min_q_range_pu = qlimit_guard_min_q_range_pu_,
+        qlimit_guard_zero_range_mode = qlimit_guard_zero_range_mode_,
+        qlimit_guard_narrow_range_mode = qlimit_guard_narrow_range_mode_,
+        qlimit_guard_max_switches = qlimit_guard_max_switches_,
+        qlimit_guard_freeze_after_repeated_switching = qlimit_guard_freeze_after_repeated_switching_,
+        qlimit_guard_accept_bounded_violations = qlimit_guard_accept_bounded_violations_,
+        qlimit_guard_max_remaining_violations = qlimit_guard_max_remaining_violations_,
+        qlimit_guard_violation_mode = qlimit_guard_violation_mode_,
+        qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu_,
+        qlimit_guard_log = qlimit_guard_log_,
+        pv_table_rows = pv_table_rows_,
+        opt_flatstart = opt_flatstart_,
+        show_results = false,
+        verbose = 0,
+        cooldown_iters = cooldown_iters_,
+        q_hyst_pu = q_hyst_pu_,
+        qlimit_trace_buses = qlimit_trace_buses_,
+        qlimit_lock_reason = qlimit_lock_reason_,
+        lock_pv_to_pq_buses = lock_pv_to_pq_buses_,
+        enable_pq_gen_controllers = enable_pq_gen_controllers_,
+        bus_shunt_model = bus_shunt_model_,
+        matpower_shift_sign = matpower_shift_sign_,
+        matpower_shift_unit = matpower_shift_unit_,
+        matpower_ratio = matpower_ratio_,
+        reference_vm_pu = reference_vm_pu_,
+        reference_va_deg = reference_va_deg_,
+        matpower_pv_voltage_source = matpower_pv_voltage_source_,
+        matpower_pv_voltage_mismatch_tol_pu = matpower_pv_voltage_mismatch_tol_pu_,
+        flatstart_voltage_mode = flatstart_voltage_mode_,
+        flatstart_angle_mode = flatstart_angle_mode_,
+        imported_matpower_case = start_projection_reuse_import_data_ ? mpc_ : nothing,
       )
     end setup = (casefile_ = $casefile;
     max_ite_ = $max_ite;
@@ -2597,11 +2712,18 @@ function main()
   println("logfile: ", logfile, "\n")
   log_status = _MatpowerImportLogStatus()
   cfg = bench_config_for_case(case, yaml_cfg)
+  thread_status = _configure_runtime_threads!(cfg)
+  if cfg.print_thread_config
+    _print_runtime_thread_config(stdout, thread_status)
+  end
   performance_profile = _new_performance_profile(cfg)
   open(logfile, "w") do io
     println(io, "Sparlectra version: ", Sparlectra.version())
     println(io, "casefile: ", local_case)
     println(io, "timestamp: ", Dates.now())
+    if cfg.print_thread_config
+      _print_runtime_thread_config(io, thread_status)
+    end
   end
   mpc = _perf_profile_time!(performance_profile, :matpower_parse) do
     _with_log_table(logfile, log_status) do

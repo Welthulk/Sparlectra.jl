@@ -456,6 +456,29 @@ end
       @test length(opt_in_net.qLimitLog) == 1
     end
 
+    @testset "Rectangular performance profile exposes solver control path" begin
+      net = createTest3BusNet()
+      profile = Dict{Symbol,Any}(:enabled => true, :show_allocations => false, :show_iteration_table => true)
+      _, erg = runpf!(net, 20, 1e-8, 0; method = :rectangular, opt_sparse = true, performance_profile = profile)
+      @test erg == 0
+      timings = profile[:timings]
+      for phase in (
+        :solver_bus_type_scan,
+        :solver_qlimit_extraction,
+        :solver_active_set_origin_mask,
+        :solver_active_set_setup,
+        :iteration_qreq_vector,
+        :iteration_control_bookkeeping,
+        :iteration_state_update,
+        :solver_final_injection_vectors,
+        :solver_result_bus_writeback,
+        :solver_status_bookkeeping,
+      )
+        @test haskey(timings, phase)
+        @test timings[phase].calls >= 1
+      end
+    end
+
 # Ensures final-limit validation remains robust when q-generation data is partially missing.
     @testset "Final limit validation tolerates missing qgen" begin
       net = createTest3BusNet()

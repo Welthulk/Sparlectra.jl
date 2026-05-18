@@ -350,7 +350,18 @@ function run_matpower_example_tests()
       @test auto_apply.cfg.start_projection_measure_candidates === false
       @test auto_apply.cfg.start_projection_accept_unmeasured_dc_start === false
       @test auto_apply.cfg.start_projection_reuse_import_data === true
+      @test auto_apply.cfg.performance_skip_expensive_diagnostics === true
       @test auto_apply.cfg.tol == 1e-5
+      auto_explicit_diag_cfg = Base.invokelatest(() -> getfield(mod, :bench_config_for_case)("case_large.m", Dict{String,Any}(
+        "matpower_auto_profile" => "apply",
+        "performance" => Dict{String,Any}("skip_expensive_diagnostics" => false),
+      )))
+      auto_explicit_diag = Base.invokelatest(() -> getfield(mod, :_matpower_auto_profile)(large_mpc, auto_explicit_diag_cfg, Dict{String,Any}(
+        "matpower_auto_profile" => "apply",
+        "performance" => Dict{String,Any}("skip_expensive_diagnostics" => false),
+      )))
+      @test auto_explicit_diag.cfg.performance_skip_expensive_diagnostics === false
+      @test :performance_skip_expensive_diagnostics in auto_explicit_diag.preserved
       @test auto_apply.cfg.max_ite == 80
       auto_recommend_cfg = Base.invokelatest(() -> getfield(mod, :bench_config_for_case)("case_large.m", Dict{String,Any}("matpower_auto_profile" => "recommend")))
       auto_recommend = Base.invokelatest(() -> getfield(mod, :_matpower_auto_profile)(large_mpc, auto_recommend_cfg, Dict{String,Any}("matpower_auto_profile" => "recommend")))
@@ -374,6 +385,7 @@ function run_matpower_example_tests()
       @test narrow_auto_apply.cfg.qlimit_guard_min_q_range_pu == 0.02
       @test narrow_auto_apply.cfg.qlimit_guard_narrow_range_mode === :lock_pq
       @test narrow_auto_apply.cfg.qlimit_guard_violation_mode === :lock_pq
+      @test narrow_auto_apply.cfg.performance_skip_expensive_diagnostics === true
       @test narrow_auto_apply.cfg.tol == 1e-5
       auto_io = IOBuffer()
       @test Base.invokelatest(() -> getfield(mod, :_print_matpower_auto_profile)(auto_io, auto_apply)) === nothing

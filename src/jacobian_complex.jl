@@ -1802,31 +1802,36 @@ function run_complex_nr_rectangular_for_net!(
   # 3) Bus types from Node data, and PV setpoints from regulating prosumers.
   # Node voltages may be temporary start guesses for MATPOWER flat-start modes.
   bus_types = Vector{Symbol}(undef, n)
-  Vset      = _bus_voltage_setpoints_from_prosumers(net)
+  Vset = _perf_profile_time!(performance_profile, :solver_voltage_setpoint_lookup) do
+    _bus_voltage_setpoints_from_prosumers(net)
+  end
 
-  @inbounds for (k, node) in enumerate(nodes)
-    BusType = getNodeType(node)
-    if BusType == Slack
-      bus_types[k] = :Slack
-    elseif BusType == PV
-      bus_types[k] = :PV
-    elseif BusType == PQ
-      bus_types[k] = :PQ
-    elseif BusType == Isolated
-      # Keep isolated buses in the rectangular state vector as neutral PQ rows.
-      # Their injections are forced to zero so they do not affect the solved grid.
-      bus_types[k] = :PQ
-      S[k] = 0.0 + 0.0im
-    else
-      error("run_complex_nr_rectangular_for_net!: unsupported bus type at bus $k, given: $(BusType)")
+  _perf_profile_time!(performance_profile, :solver_bus_type_scan) do
+    @inbounds for (k, node) in enumerate(nodes)
+      BusType = getNodeType(node)
+      if BusType == Slack
+        bus_types[k] = :Slack
+      elseif BusType == PV
+        bus_types[k] = :PV
+      elseif BusType == PQ
+        bus_types[k] = :PQ
+      elseif BusType == Isolated
+        # Keep isolated buses in the rectangular state vector as neutral PQ rows.
+        # Their injections are forced to zero so they do not affect the solved grid.
+        bus_types[k] = :PQ
+        S[k] = 0.0 + 0.0im
+      else
+        error("run_complex_nr_rectangular_for_net!: unsupported bus type at bus $k, given: $(BusType)")
+      end
     end
-
   end
 
   # The slack/reference voltage is fixed rather than solved by a residual row.
   # Keep its magnitude at the regulating prosumer setpoint even if a MATPOWER
   # flat-start mode temporarily changed node._vm_pu as an initial guess.
-  V0[slack_idx] = ComplexF64(Vset[slack_idx] * cos(angle(V0[slack_idx])), Vset[slack_idx] * sin(angle(V0[slack_idx])))
+  _perf_profile_time!(performance_profile, :solver_slack_voltage_fix) do
+    V0[slack_idx] = ComplexF64(Vset[slack_idx] * cos(angle(V0[slack_idx])), Vset[slack_idx] * sin(angle(V0[slack_idx])))
+  end
 
   V0 = _perf_profile_time!(performance_profile, :start_projection) do
     project_rectangular_start(
@@ -1850,9 +1855,13 @@ function run_complex_nr_rectangular_for_net!(
   end
 
   # 4) Q-limit data 
-  qmin_pu, qmax_pu = getQLimits_pu(net)
+  qmin_pu, qmax_pu = _perf_profile_time!(performance_profile, :solver_qlimit_extraction) do
+    getQLimits_pu(net)
+  end
   # Start fresh each PF run before guard pre-processing records locked buses.
-  resetQLimitLog!(net)
+  _perf_profile_time!(performance_profile, :solver_qlimit_log_reset) do
+    resetQLimitLog!(net)
+  end
   if verbose > 1
     printPVQLimitsTable(net; max_rows = typemax(Int))
   elseif verbose > 0
@@ -1882,9 +1891,12 @@ function run_complex_nr_rectangular_for_net!(
   nb = n  # number of buses
 
   # PV origin mask (guards for PQ->PV re-enable)
-  pv_orig_mask = falses(nb)
-  @inbounds for k = 1:nb
-    pv_orig_mask[k] = (bus_types[k] == :PV)
+  pv_orig_mask = _perf_profile_time!(performance_profile, :solver_active_set_origin_mask) do
+    mask = falses(nb)
+    @inbounds for k in eachindex(mask)
+      mask[k] = (bus_types[k] == :PV)
+    end
+    mask
   end
 
   cooldown_iters = hasfield(typeof(net), :cooldown_iters) ? net.cooldown_iters : 0
@@ -1898,10 +1910,10 @@ function run_complex_nr_rectangular_for_net!(
   qlimit_guard_violation_mode in (:delayed_switch, :lock_pq, :ignore) || error("Unsupported qlimit_guard_violation_mode=$(qlimit_guard_violation_mode). Supported: :delayed_switch, :lock_pq, :ignore.")
   qlimit_guard_violation_threshold_pu >= 0.0 || error("qlimit_guard_violation_threshold_pu must be >= 0 (got $(qlimit_guard_violation_threshold_pu)).")
 
-  controllers = qlimit_mode == :adjust_vset ? _build_vset_adjust_controllers(net) : Dict{Int,NamedTuple{(:prosumer_idx, :config),Tuple{Int,VoltageAdjustConfig}}}()
-  base_vset = copy(Vset)
-  adjust_counter = zeros(Int, nb)
-  qlimit_trace_internal = _resolve_qlimit_trace_buses(net, qlimit_trace_buses)
+  controllers, base_vset, adjust_counter, qlimit_trace_internal = _perf_profile_time!(performance_profile, :solver_active_set_setup) do
+    controllers_ = qlimit_mode == :adjust_vset ? _build_vset_adjust_controllers(net) : Dict{Int,NamedTuple{(:prosumer_idx, :config),Tuple{Int,VoltageAdjustConfig}}}()
+    (controllers_, copy(Vset), zeros(Int, nb), _resolve_qlimit_trace_buses(net, qlimit_trace_buses))
+  end
   qlimit_trace_enabled = !isempty(qlimit_trace_internal)
   if qlimit_trace_enabled
     missing = setdiff(collect(qlimit_trace_buses), [_qlimit_original_bus_id(net, bus) for bus in qlimit_trace_internal])
@@ -1953,66 +1965,74 @@ function run_complex_nr_rectangular_for_net!(
     Scalc_pu = _perf_profile_time!(performance_profile, :iteration_calc_injections) do
       calc_injections(Ybus, V)
     end
-    current_pv_qreq_pu = fill(NaN, nb)
-    @inbounds for bus in eachindex(current_pv_qreq_pu)
-      if bus_types[bus] == :PV
-        current_pv_qreq_pu[bus] = imag(Scalc_pu[bus]) + Qload_pu[bus]
-      end
-    end
-
-    qlimit_iter_ready = it >= qlimit_start_iter
-    qlimit_auto_ready = false
-    if qlimit_start_mode in (:auto_q_delta, :iteration_or_auto)
-      max_q_delta = 0.0
-      compared = false
-      @inbounds for bus in eachindex(current_pv_qreq_pu)
-        if isfinite(current_pv_qreq_pu[bus]) && isfinite(prev_pv_qreq_pu[bus])
-          max_q_delta = max(max_q_delta, abs(current_pv_qreq_pu[bus] - prev_pv_qreq_pu[bus]))
-          compared = true
+    current_pv_qreq_pu = _perf_profile_time!(performance_profile, :iteration_qreq_vector) do
+      qreq = fill(NaN, nb)
+      @inbounds for bus in eachindex(qreq)
+        if bus_types[bus] == :PV
+          qreq[bus] = imag(Scalc_pu[bus]) + Qload_pu[bus]
         end
       end
-      qlimit_auto_ready = compared && (max_q_delta <= qlimit_auto_q_delta_pu)
+      qreq
     end
-    qlimit_ready = qlimit_start_mode == :iteration ? qlimit_iter_ready :
-                   qlimit_start_mode == :auto_q_delta ? qlimit_auto_ready :
-                   (qlimit_iter_ready || qlimit_auto_ready)
-    converged_this_iter = max_mis <= tol
-    violation_guard_active = qlimit_guard_violation_mode == :lock_pq
-    qlimit_check_active = qlimit_ready && (!converged_this_iter || violation_guard_active)
+
+    qlimit_iter_ready, qlimit_auto_ready, qlimit_ready, converged_this_iter, qlimit_check_active = _perf_profile_time!(performance_profile, :iteration_control_bookkeeping) do
+      qlimit_iter_ready_ = it >= qlimit_start_iter
+      qlimit_auto_ready_ = false
+      if qlimit_start_mode in (:auto_q_delta, :iteration_or_auto)
+        max_q_delta = 0.0
+        compared = false
+        @inbounds for bus in eachindex(current_pv_qreq_pu)
+          if isfinite(current_pv_qreq_pu[bus]) && isfinite(prev_pv_qreq_pu[bus])
+            max_q_delta = max(max_q_delta, abs(current_pv_qreq_pu[bus] - prev_pv_qreq_pu[bus]))
+            compared = true
+          end
+        end
+        qlimit_auto_ready_ = compared && (max_q_delta <= qlimit_auto_q_delta_pu)
+      end
+      qlimit_ready_ = qlimit_start_mode == :iteration ? qlimit_iter_ready_ :
+                      qlimit_start_mode == :auto_q_delta ? qlimit_auto_ready_ :
+                      (qlimit_iter_ready_ || qlimit_auto_ready_)
+      converged_this_iter_ = max_mis <= tol
+      violation_guard_active = qlimit_guard_violation_mode == :lock_pq
+      qlimit_check_active_ = qlimit_ready_ && (!converged_this_iter_ || violation_guard_active)
+      (qlimit_iter_ready_, qlimit_auto_ready_, qlimit_ready_, converged_this_iter_, qlimit_check_active_)
+    end
 
     if qlimit_trace_enabled
-      lock_mask_trace = falses(nb)
-      for bus in lock_pv_to_pq_buses
-        if 1 <= bus <= nb
-          lock_mask_trace[bus] = true
+      _perf_profile_time!(performance_profile, :iteration_qlimit_trace) do
+        lock_mask_trace = falses(nb)
+        for bus in lock_pv_to_pq_buses
+          if 1 <= bus <= nb
+            lock_mask_trace[bus] = true
+          end
         end
-      end
-      for bus in qlimit_trace_internal
-        bus <= nb || continue
-        qreq = bus_types[bus] in (:PV, :Slack) ? imag(Scalc_pu[bus]) + Qload_pu[bus] : NaN
-        _print_rectangular_qlimit_trace(
-          stdout,
-          net,
-          it,
-          bus,
-          bus_types[bus],
-          V,
-          Vset,
-          qreq,
-          qmin_pu,
-          qmax_pu;
-          q_hyst_pu = q_hyst_pu,
-          qlimit_start_iter = qlimit_start_iter,
-          qlimit_start_mode = qlimit_start_mode,
-          qlimit_iter_ready = qlimit_iter_ready,
-          qlimit_auto_ready = qlimit_auto_ready,
-          qlimit_ready = qlimit_ready,
-          qlimit_check_active = qlimit_check_active,
-          converged_before_switching = converged_this_iter,
-          qlimit_mode = qlimit_mode,
-          lock_mask = lock_mask_trace,
-          qlimit_lock_reason = qlimit_lock_reason,
-        )
+        for bus in qlimit_trace_internal
+          bus <= nb || continue
+          qreq = bus_types[bus] in (:PV, :Slack) ? imag(Scalc_pu[bus]) + Qload_pu[bus] : NaN
+          _print_rectangular_qlimit_trace(
+            stdout,
+            net,
+            it,
+            bus,
+            bus_types[bus],
+            V,
+            Vset,
+            qreq,
+            qmin_pu,
+            qmax_pu;
+            q_hyst_pu = q_hyst_pu,
+            qlimit_start_iter = qlimit_start_iter,
+            qlimit_start_mode = qlimit_start_mode,
+            qlimit_iter_ready = qlimit_iter_ready,
+            qlimit_auto_ready = qlimit_auto_ready,
+            qlimit_ready = qlimit_ready,
+            qlimit_check_active = qlimit_check_active,
+            converged_before_switching = converged_this_iter,
+            qlimit_mode = qlimit_mode,
+            lock_mask = lock_mask_trace,
+            qlimit_lock_reason = qlimit_lock_reason,
+          )
+        end
       end
     end
 
@@ -2089,122 +2109,147 @@ function run_complex_nr_rectangular_for_net!(
     end
 
     # Keep slack voltage fixed (safety belt)
-    V[slack_idx] = V0[slack_idx]
-    _perf_profile_push_iteration!(performance_profile, (iteration = it, max_mismatch = max_mis, qlimit_changed = changed, qlimit_reenabled = reenabled))
+    _perf_profile_time!(performance_profile, :iteration_state_update) do
+      V[slack_idx] = V0[slack_idx]
+      _perf_profile_push_iteration!(performance_profile, (iteration = it, max_mismatch = max_mis, qlimit_changed = changed, qlimit_reenabled = reenabled))
+    end
   end
 
   # 6) Update voltages back to network
   # --- mirror bus_types back into Net/node types (PV->PQ switching) ---
-  @inbounds for k = 1:n
-    if bus_types[k] == :PQ
-      setNodeType!(net.nodeVec[k], "PQ")
-    elseif bus_types[k] == :PV
-      setNodeType!(net.nodeVec[k], "PV")
+  _perf_profile_time!(performance_profile, :solver_final_active_set_sync) do
+    @inbounds for k in eachindex(bus_types)
+      if bus_types[k] == :PQ
+        setNodeType!(net.nodeVec[k], "PQ")
+      elseif bus_types[k] == :PV
+        setNodeType!(net.nodeVec[k], "PV")
+      end
     end
   end
   numerical_converged = converged
-  final_pv_voltage_residual = _max_rectangular_pv_voltage_residual(V, Vset, bus_types, net.qLimitEvents)
+  final_pv_voltage_residual = _perf_profile_time!(performance_profile, :solver_final_status_checks) do
+    _max_rectangular_pv_voltage_residual(V, Vset, bus_types, net.qLimitEvents)
+  end
   if numerical_converged && final_pv_voltage_residual > tol
     verbose > 0 && @warn "Rectangular NR convergence rejected because active PV voltage setpoint residual exceeds tolerance." max_pv_voltage_residual = final_pv_voltage_residual tolerance = tol
     converged = false
     rejection_reason = :active_pv_voltage_residual
   end
 
-  update_net_voltages_from_complex!(net, V)
+  _perf_profile_time!(performance_profile, :solver_voltage_writeback) do
+    update_net_voltages_from_complex!(net, V)
+  end
 
   # 7) Compute bus injections from final voltages  
-  Sbus_pu = calc_injections(Ybus, V)
-  Sbus_MVA = Sbus_pu .* Sbase
+  Sbus_pu, Sbus_MVA = _perf_profile_time!(performance_profile, :solver_final_injection_vectors) do
+    Sbus_pu_ = calc_injections(Ybus, V)
+    (Sbus_pu_, Sbus_pu_ .* Sbase)
+  end
 
   @debug "Final Voltages Mag = " [abs.(V)...]
   @debug "Final Voltages Ang = " [angle.(V) .* (180.0 / π)...]
 
   isoNodes = net.isoNodes
 
-  @inbounds for (k, node) in enumerate(nodes)
-    # Skip isolated nodes (if any)
-    if k in isoNodes
-      continue
-    end
-
-    Sbus      = Sbus_MVA[k]
-    Pbus_MW   = real(Sbus)
-    Qbus_MVar = imag(Sbus)
-
-    # Slack bus: always write P and Q generation from the solved state
-    if node._nodeType == Sparlectra.Slack
-      node._pƩGen = Pbus_MW
-      node._qƩGen = Qbus_MVar
-
-    elseif node._nodeType == Sparlectra.PV
-      # PV bus: Qgen is a result (unless it later switches)
-      node._qƩGen = Qbus_MVar
-
-    elseif node._nodeType == Sparlectra.PQ
-      # If this bus was forced PV->PQ by Q-limit, keep the clamped generator Q
-      # (already written in make_pq! as MVar).
-      if haskey(net.qLimitEvents, k)
-        @debug "Bus $(k) is PQ due to Q-limit; keeping clamped Qgen = $(node._qƩGen) MVar."
+  _perf_profile_time!(performance_profile, :solver_result_bus_writeback) do
+    @inbounds for (k, node) in enumerate(nodes)
+      # Skip isolated nodes (if any)
+      if k in isoNodes
+        continue
       end
+
+      Sbus      = Sbus_MVA[k]
+      Pbus_MW   = real(Sbus)
+      Qbus_MVar = imag(Sbus)
+
+      # Slack bus: always write P and Q generation from the solved state
+      if node._nodeType == Sparlectra.Slack
+        node._pƩGen = Pbus_MW
+        node._qƩGen = Qbus_MVar
+
+      elseif node._nodeType == Sparlectra.PV
+        # PV bus: Qgen is a result (unless it later switches)
+        node._qƩGen = Qbus_MVar
+
+      elseif node._nodeType == Sparlectra.PQ
+        # If this bus was forced PV->PQ by Q-limit, keep the clamped generator Q
+        # (already written in make_pq! as MVar).
+        if haskey(net.qLimitEvents, k)
+          @debug "Bus $(k) is PQ due to Q-limit; keeping clamped Qgen = $(node._qƩGen) MVar."
+        end
+      end
+      # PQ buses / pure loads: do not touch _pƩLoad / _pƩGen here.
+      # The original load/generation specification remains intact.
     end
-    # PQ buses / pure loads: do not touch _pƩLoad / _pƩGen here.
-    # The original load/generation specification remains intact.
   end
 
   # 8) Update total bus power (sum of complex injections in p.u.)
-  p = (sum(real.(Sbus_pu))) * Sbase
-  q = (sum(imag.(Sbus_pu))) * Sbase
+  p, q = _perf_profile_time!(performance_profile, :solver_total_power_reduction) do
+    ((sum(real.(Sbus_pu))) * Sbase, (sum(imag.(Sbus_pu))) * Sbase)
+  end
 
   if verbose > 1
     @info "Set total bus power to p = $p MW and q = $q MVar"
   end
 
-  setTotalBusPower!(net = net, p = p, q = q)
-  updateShuntPowers!(net = net)
+  _perf_profile_time!(performance_profile, :solver_total_power_writeback) do
+    setTotalBusPower!(net = net, p = p, q = q)
+    updateShuntPowers!(net = net)
+  end
 
   qlimit_summary = nothing
   if numerical_converged
-    final_Qload_pu = build_qload_pu(net)
-    qlimit_summary_io = (verbose > 0 || qlimit_trace_enabled) ? stdout : devnull
-    qlimit_summary = _print_rectangular_qlimit_summary(qlimit_summary_io, net, V, Sbus_pu, bus_types, qmin_pu, qmax_pu, final_Qload_pu; q_hyst_pu = q_hyst_pu, tolerance_pu = tol, max_rows = pv_table_rows, max_console_rows = pv_table_rows)
-    remaining_pv_violations = qlimit_summary.pv_violations
-    bounded_ok = qlimit_guard_accept_bounded_violations && remaining_pv_violations <= qlimit_guard_max_remaining_violations
-    if remaining_pv_violations > 0 && !bounded_ok
-      verbose > 0 && @warn "Rectangular NR active-set failed because active PV Q-limit violations remain after the numerical solve." pv_violations = qlimit_summary.pv_violations ref_violations = qlimit_summary.ref_violations
-      converged = false
-      rejection_reason = :remaining_pv_q_limit_violations
-    elseif remaining_pv_violations > 0 && bounded_ok
-      rejection_reason = :bounded_q_limit_violations_accepted
+    qlimit_summary, converged, rejection_reason = _perf_profile_time!(performance_profile, :solver_final_qlimit_summary) do
+      final_Qload_pu = build_qload_pu(net)
+      qlimit_summary_io = (verbose > 0 || qlimit_trace_enabled) ? stdout : devnull
+      qlimit_summary_ = _print_rectangular_qlimit_summary(qlimit_summary_io, net, V, Sbus_pu, bus_types, qmin_pu, qmax_pu, final_Qload_pu; q_hyst_pu = q_hyst_pu, tolerance_pu = tol, max_rows = pv_table_rows, max_console_rows = pv_table_rows)
+      remaining_pv_violations = qlimit_summary_.pv_violations
+      bounded_ok = qlimit_guard_accept_bounded_violations && remaining_pv_violations <= qlimit_guard_max_remaining_violations
+      converged_ = converged
+      rejection_reason_ = rejection_reason
+      if remaining_pv_violations > 0 && !bounded_ok
+        verbose > 0 && @warn "Rectangular NR active-set failed because active PV Q-limit violations remain after the numerical solve." pv_violations = qlimit_summary_.pv_violations ref_violations = qlimit_summary_.ref_violations
+        converged_ = false
+        rejection_reason_ = :remaining_pv_q_limit_violations
+      elseif remaining_pv_violations > 0 && bounded_ok
+        rejection_reason_ = :bounded_q_limit_violations_accepted
+      end
+      (qlimit_summary_, converged_, rejection_reason_)
     end
   end
 
-  switch_counts = qlimit_switch_counts(net)
-  oscillating_buses = count(>=(max(qlimit_guard_max_switches, 1)), values(switch_counts))
-  max_switching_exceeded = qlimit_guard_freeze_after_repeated_switching && oscillating_buses > 0
-  q_limit_active_set_ok = numerical_converged && final_pv_voltage_residual <= tol && (isnothing(qlimit_summary) || qlimit_summary.pv_violations == 0 || (qlimit_guard_accept_bounded_violations && qlimit_summary.pv_violations <= qlimit_guard_max_remaining_violations)) && !max_switching_exceeded
-  if numerical_converged && max_switching_exceeded && !q_limit_active_set_ok
-    rejection_reason = :max_switching_exceeded
-    converged = false
+  switch_counts, oscillating_buses, max_switching_exceeded, q_limit_active_set_ok, converged, rejection_reason, final_reason, final_status, status = _perf_profile_time!(performance_profile, :solver_status_bookkeeping) do
+    switch_counts_ = qlimit_switch_counts(net)
+    oscillating_buses_ = count(>=(max(qlimit_guard_max_switches, 1)), values(switch_counts_))
+    max_switching_exceeded_ = qlimit_guard_freeze_after_repeated_switching && oscillating_buses_ > 0
+    q_limit_active_set_ok_ = numerical_converged && final_pv_voltage_residual <= tol && (isnothing(qlimit_summary) || qlimit_summary.pv_violations == 0 || (qlimit_guard_accept_bounded_violations && qlimit_summary.pv_violations <= qlimit_guard_max_remaining_violations)) && !max_switching_exceeded_
+    converged_ = converged
+    rejection_reason_ = rejection_reason
+    if numerical_converged && max_switching_exceeded_ && !q_limit_active_set_ok_
+      rejection_reason_ = :max_switching_exceeded
+      converged_ = false
+    end
+    final_reason_ = converged_ ? :none : rejection_reason_
+    final_status_ = _rectangular_solver_status_symbol(numerical_converged, q_limit_active_set_ok_, converged_, final_reason_)
+    status_ = _set_rectangular_pf_status!(net, (
+      numerical_converged = numerical_converged,
+      nr_converged = numerical_converged,
+      active_set_converged = q_limit_active_set_ok_,
+      q_limit_active_set_ok = q_limit_active_set_ok_,
+      final_converged = converged_,
+      status = final_status_,
+      reason = final_reason_,
+      reason_text = _rectangular_rejection_reason_text(final_reason_),
+      pv_q_limit_violations = isnothing(qlimit_summary) ? 0 : qlimit_summary.pv_violations,
+      ref_q_limit_violations = isnothing(qlimit_summary) ? 0 : qlimit_summary.ref_violations,
+      final_pv_voltage_residual = final_pv_voltage_residual,
+      final_mismatch = isempty(history) ? Inf : history[end],
+      pv_pq_switching_events = length(net.qLimitLog),
+      oscillating_buses = oscillating_buses_,
+      guarded_narrow_q_pv_buses = length(guarded_qlimit_buses),
+    ))
+    (switch_counts_, oscillating_buses_, max_switching_exceeded_, q_limit_active_set_ok_, converged_, rejection_reason_, final_reason_, final_status_, status_)
   end
-  final_reason = converged ? :none : rejection_reason
-  final_status = _rectangular_solver_status_symbol(numerical_converged, q_limit_active_set_ok, converged, final_reason)
-  status = _set_rectangular_pf_status!(net, (
-    numerical_converged = numerical_converged,
-    nr_converged = numerical_converged,
-    active_set_converged = q_limit_active_set_ok,
-    q_limit_active_set_ok = q_limit_active_set_ok,
-    final_converged = converged,
-    status = final_status,
-    reason = final_reason,
-    reason_text = _rectangular_rejection_reason_text(final_reason),
-    pv_q_limit_violations = isnothing(qlimit_summary) ? 0 : qlimit_summary.pv_violations,
-    ref_q_limit_violations = isnothing(qlimit_summary) ? 0 : qlimit_summary.ref_violations,
-    final_pv_voltage_residual = final_pv_voltage_residual,
-    final_mismatch = isempty(history) ? Inf : history[end],
-    pv_pq_switching_events = length(net.qLimitLog),
-    oscillating_buses = oscillating_buses,
-    guarded_narrow_q_pv_buses = length(guarded_qlimit_buses),
-  ))
   if verbose > 0 || (numerical_converged && !q_limit_active_set_ok)
     _print_rectangular_convergence_summary(stdout, status)
     _print_qlimit_active_set_summary(stdout, status)
