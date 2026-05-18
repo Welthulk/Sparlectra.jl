@@ -9,6 +9,7 @@
 * Fixed performance-enabled MATPOWER example runs so they emit a compact Performance Summary with shared phase timings, including import, solver, diagnostics/logging, reference comparison, and post-processing phases when collected.
 
 ### Improvements
+* Added finer rectangular solver performance timings for setup, active-set construction, Q-limit extraction/readiness, state updates, final result writeback, and status bookkeeping to explain large-case `solver_total` overhead outside Newton-step timing.
 * Added configurable performance profiling for the MATPOWER import example, including phase-level import/solver/output timings, optional allocation reporting, Newton-iteration diagnostics, and large-case speed switches for compact logging and expensive comparisons.
 * Decomposed rectangular start-projection profiling into DC-start construction, matrix assembly, solve, candidate generation/evaluation, branch-guard checks, voltage limiting, MATPOWER lookup/map phases, and final selection; added large-case YAML switches to disable expensive candidate measurement and reuse the already parsed MATPOWER case.
 
