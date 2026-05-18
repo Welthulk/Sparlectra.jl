@@ -1,123 +1,243 @@
+# Sparlectra.jl
+
 [![Documentation](https://github.com/Welthulk/Sparlectra.jl/actions/workflows/jekyll-gh-pages.yml/badge.svg)](https://welthulk.github.io/Sparlectra.jl/)
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
+[![Julia](https://img.shields.io/badge/Julia-1.x-9558B2.svg)](https://julialang.org/)
+[![GitHub release](https://img.shields.io/github/v/release/Welthulk/Sparlectra.jl)](https://github.com/Welthulk/Sparlectra.jl/releases)
+[![GitHub stars](https://img.shields.io/github/stars/Welthulk/Sparlectra.jl?style=social)](https://github.com/Welthulk/Sparlectra.jl/stargazers)
 
-
-# SPARLECTRA
+**Sparlectra.jl is a Julia package for transparent power-system calculations.**
 <a href="https://github.com/Welthulk/Sparlectra.jl/tree/main/"><img align="left" width="100" src="docs/src/assets/logo.png" style="margin-right: 20px" /></a>
 
-This package contains tools for subsequent network calculations. It primarily features programs for calculating load flow and state estimation. The focus is to provide valuable insights into power-system calculations for both students and ambitious professionals.
+It focuses on understandable and inspectable algorithms for AC power flow, PV/PQ switching, MATPOWER-based studies, transformer-control experiments, and experimental weighted-least-squares state estimation.
+
+Sparlectra is intended for engineers, researchers, and students who want to understand, test, and extend power-flow and state-estimation algorithms without hiding the numerical core behind a black box.
 
 ---
 
-## Features
+## Why Sparlectra?
 
-- AC power flow with rectangular complex-state Newton-Raphson as default (`:rectangular`); legacy `:polar_full` / `:classic` are deprecated.
-- State Estimation (WLS) as an **experimental** feature
-- Canonical external solver interface (`PFModel`/`PFSolution`) to integrate third-party solvers.
-- PV-to-PQ bus switching.
-- MATPOWER-compatible import/export utilities and local casefile helper workflow.
-- Loss calculations and power flow results reporting.
-- Network Modeling: 
-    - Buses with prosumer-derived PF typing (PQ, PV, Slack)
-    - Transmission lines
-    - Transformers (2-winding and 3-winding)
-    - Generators and loads
-    - Shunts
-    - Topological impedanceless bus links (`addLink!`) 
-- Transmission lines and transformers can be represented using π-equivalent models,
-allowing direct use of CIM and manufacturer data without additional model conversions.    
+| Need | Sparlectra focus |
+|---|---|
+| Understand Newton-Raphson power-flow internals | Transparent rectangular complex-state formulation |
+| Study PV/PQ switching | Explicit Q-limit and active-set diagnostics |
+| Work with MATPOWER cases | Import helpers, local casefile workflow, and comparison diagnostics |
+| Teach or inspect power-system algorithms | Readable Julia implementation with direct model access |
+| Experiment with state estimation | Experimental nonlinear WLS workflow |
+| Integrate external solvers | `PFModel` / `PFSolution` interface |
+| Investigate voltage-control behavior | Transformer tap and voltage-control experiments |
+
+Sparlectra is not primarily an optimization framework it focuses on solver mechanics, model transparency, diagnostics, and engineering-oriented experimentation.
+
+---
+
+## Main features
+
+### AC power flow
+
+- Rectangular complex-state Newton-Raphson power flow as the main solver path.
+- Sparse-matrix-oriented implementation for realistic network studies.
+- PV/PQ bus handling with Q-limit checks and active-set behavior.
+- Slack, PV, and PQ bus typing derived from attached power-system components.
+- Loss calculations and power-flow result reporting.
+
+### MATPOWER workflow
+
+- MATPOWER-compatible case import helpers.
+- On-demand local casefile workflow for common benchmark cases.
+- Diagnostics for comparing imported models against reference voltage profiles.
+- Support for branch, transformer, shunt, generator, and load data relevant to AC power-flow studies.
+
+### Network modeling
+
+Sparlectra can represent typical transmission-grid components:
+
+- buses
+- transmission lines
+- two-winding and three-winding transformers
+- generators
+- loads
+- shunts
+- topological impedanceless bus links via `addLink!`
+- π-equivalent branch models for lines and transformers
+
+Transmission lines and transformers can be represented using π-equivalent models. This supports direct use of many CIM- and manufacturer-style data sets without forcing an early conversion into overly simplified models.
+
+### State estimation
+
+Sparlectra includes an experimental nonlinear weighted-least-squares state-estimation workflow.
+
+Current focus:
+
+- WLS state estimation
+- measurement-building helpers
+- observability-related utilities
+- residual inspection
+- zero-injection pseudo-measurements for passive buses
+
+State estimation should currently be treated as experimental. The implementation is useful for learning, prototyping, and diagnostic experiments, but some production-style workflows such as full bad-data processing are still part of the roadmap.
+
+### Transformer and voltage-control experiments
+
+Sparlectra provides functionality for transformer-control studies, including complex tap behavior and voltage-control experiments. This is useful for investigating how transformer ratios, phase shifts, and voltage-control logic interact with AC power-flow calculations.
 
 ---
 
 ## Installation
 
-For installation, run the following command in the Julia REPL:
+Install Sparlectra from the Julia package manager:
+
 ```julia
 using Pkg
 Pkg.add("Sparlectra")
 ```
 
-## Quick Start
+Then load it with:
 
-Here's a simple example to get you started:
+```julia
+using Sparlectra
+```
+
+---
+
+## Quick start
+
+The following example downloads a MATPOWER-compatible case file on demand, imports it, runs an AC power flow, and prints the result.
 
 ```julia
 using Sparlectra
 
-# Ensure case file exists locally (downloads on demand into data/mpower)
+# Ensure that the case file exists locally.
+# If needed, it is downloaded into the local data/mpower workflow.
 case_path = ensure_casefile("case14.m")
 
-# Build network and run AC power flow (including post-processing)
+# Build a Sparlectra network from the MATPOWER case.
 net = createNetFromMatPowerFile(case_path, false)
+
+# Run AC power flow.
 ite, erg = run_net_acpflow(net; iter_max = 10, tol = 1e-6, print = 0)
 
 if erg == 0
     printACPFlowResults(net, 0.0, ite, 1e-6)
+else
+    @warn "AC power flow did not converge" iterations = ite status = erg
 end
 ```
 
-## Documentation Structure
+---
 
-- **[Changelog](docs/src/changelog.md)**: Version history and updates
-- **[Networks](docs/src/networks.md)**: Creating and manipulating network models
-- **[Branch Model](docs/src/branchmodel.md)**: Details of the network branch model
-- **[Import/Export](docs/src/import.md)**: Importing and exporting network configurations
-- **[Component Removal](docs/src/remove_functions.md)**: Conceptual notes on topology-aware removal workflows
-- **[Workshop](docs/src/workshop.md)**: Guided exercises and examples
-- **[State Estimation](docs/src/state_estimation.md)**: Theory, observability, and practical SE workflow
-- **[Feature Matrix](docs/src/feature_matrix.md)**: Quick PF vs SE capability overview
-- **[Network Reports](docs/src/netreports.md)**: Create and use machine-readable `ACPFlowReport` output
-- **[Function Reference](docs/src/reference.md)**: Complete API documentation
-- **[Powerlimit Guide](docs/src/powerlimits.md)**: Handling of power limits
-- **[Solver Guide](docs/src/solver.md)**: Numerical solver formulations and FD Jacobians
-- **[Transformer Control](docs/src/transformer_control.md)**: Complex-tap transformer regulation (ratio/phase/Schrägregler) via outer-loop control
+## Minimal modeling example
+
+A typical Sparlectra workflow is:
+
+1. create or import a network,
+2. assign components and operating data,
+3. run the solver,
+4. inspect voltages, flows, losses, and diagnostics.
+
+For most users, importing a MATPOWER-compatible case is the fastest way to start. For custom models, see the network and branch-model documentation.
+
+---
+
+## Documentation
+
+The full documentation is available here:
+
+<https://welthulk.github.io/Sparlectra.jl/>
+
+Useful entry points:
+
+- [Changelog](docs/src/changelog.md) — version history and release notes
+- [Networks](docs/src/networks.md) — creating and manipulating network models
+- [Branch Model](docs/src/branchmodel.md) — line and transformer branch modeling
+- [Import/Export](docs/src/import.md) — importing and exporting network data
+- [Workshop](docs/src/workshop.md) — guided examples and exercises
+- [State Estimation](docs/src/state_estimation.md) — WLS state-estimation workflow
+- [Feature Matrix](docs/src/feature_matrix.md) — power-flow and state-estimation capability overview
+- [Network Reports](docs/src/netreports.md) — machine-readable `ACPFlowReport` output
+- [Solver Guide](docs/src/solver.md) — numerical solver formulations
+- [Transformer Control](docs/src/transformer_control.md) — transformer tap and voltage-control behavior
+- [Function Reference](docs/src/reference.md) — public API reference
+
+---
+
+## Bus typing in power flow
+
+`addBus!` defines the electrical node data, such as bus name, nominal voltage, optional voltage magnitude, and optional voltage angle.
+
+The operational power-flow bus type is resolved from attached components:
+
+- **Slack bus**: at least one slack-defining prosumer, for example an external-network injection with reference priority.
+- **PV bus**: at least one regulating generator or controller with a voltage setpoint.
+- **PQ bus**: default fallback for loads, non-regulating generation, or mixed non-regulating injections.
+
+The legacy `busType` argument in `addBus!` may still be accepted for compatibility, but operational power-flow typing is derived from the network model.
+
+---
+
+## Test cases and benchmark data
+
+Sparlectra does not ship third-party power-system test cases by default.
+
+Instead, MATPOWER-compatible case files such as `case14.m` or `case118.m` can be downloaded on demand using helper functions and scripts. Downloaded files are stored locally and are not part of the Sparlectra source distribution.
+
+This keeps the repository lightweight while still allowing reproducible experiments and benchmark-style workflows.
+
+---
+
+## Who is this for?
+
+Sparlectra may be useful if you are:
+
+- learning AC power-flow and state-estimation methods,
+- teaching Newton-Raphson power-flow mechanics,
+- testing PV/PQ switching and Q-limit behavior,
+- investigating MATPOWER import behavior,
+- experimenting with transformer-control concepts,
+- building your own solver and need a transparent reference workflow,
+- interested in power-system algorithms implemented in Julia.
+
+---
+## Contributing
+
+Contributions, bug reports, test cases, and documentation improvements are welcome.
+
+Before contributing, please read:
+
+- [CONTRIBUTING.md](CONTRIBUTING.md)
+- [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
+
+Good first contributions include:
+
+- improving examples,
+- adding small reproducible test networks,
+- extending documentation,
+- reporting MATPOWER import edge cases,
+- improving diagnostics and error messages.
+
+---
+
+## Citing Sparlectra
+
+If you use Sparlectra.jl in teaching, research, presentations, or project reports, please cite the repository.
+
+```bibtex
+@software{sparlectra_jl,
+  title  = {Sparlectra.jl: Transparent Power-Flow and State-Estimation Experiments in Julia},
+  author = {Schmitz, Udo},
+  year   = {2026},
+  url    = {https://github.com/Welthulk/Sparlectra.jl}
+}
+```
+
+---
+
+## License
+
+Sparlectra.jl is licensed under the Apache License, Version 2.0.
+
+See [LICENSE](LICENSE) for the full license text.
+
+---
 
 
-
-### Network Creation
-This package supports the import and export of Matpower .m files, although currently it only reads bus, generator, and branch data from these files. Please note that additional Matlab functions within the .m file are not supported. Additionally, you can modify the imported Matpower files or you can create your own network using easy-to-use functions provided by the package.
-
-### Bus typing in power flow
-
-`addBus!` defines the electrical node data (`busName`, `vn_kV`, optional `vm_pu`, `va_deg`).
-The operational PF bus type is resolved from attached prosumers:
-
-- Slack: at least one slack-defining prosumer (`referencePri` set, e.g. `EXTERNALNETWORKINJECTION`).
-- PV: at least one regulating generator prosumer (`isRegulated = true`, or controller metadata, or generator with `vm_pu` setpoint).
-- PQ: default fallback (loads only, non-regulating generation, or mixed non-regulating injections).
-
-The legacy `busType` argument in `addBus!` is still accepted for compatibility, but ignored for PF typing.
-
-### Release status of State Estimation
-
-The current State Estimation functionality should be considered **experimental**.
-The present implementation provides a first nonlinear WLS workflow with
-observability helpers, convenient measurement-building utilities, and support
-for passive buses via zero-injection pseudo measurements. At the moment,
-zero-injection buses are modeled through pseudo measurements with small
-variances rather than a dedicated hard-constraint block, and bad-data detection
-is not yet exposed as a full public API. The current scripts and result fields
-support residual inspection, but a dedicated diagnostics workflow remains part
-of the roadmap.
-
-### Test Cases and Benchmarks
-
-Sparlectra does not ship third-party power system test cases by default.
-
-Instead, MATPOWER-compatible case files (e.g. `case14`, `case118`) can be
-downloaded **on demand** using helper scripts provided with the package.
-Downloaded files are stored locally and are not part of the Sparlectra source
-distribution.
-
-This approach keeps the repository lightweight and avoids bundling external
-data while still allowing reproducible experiments and benchmarks.
-
-
-### License
-This project is licensed under the Apache License, Version 2.0.
-[The license file](https://github.com/welthulk/Sparlectra.jl/blob/main/LICENSE) contains the complete licensing information.
-
-### Note for publications
-If you use Sparlectra in publications, presentations, or project reports, a brief
-mention is appreciated: the program name **Sparlectra.jl**, the GitHub repository
-link (<https://github.com/Welthulk/Sparlectra.jl>), and the original author
-**Udo Schmitz**.
