@@ -49,13 +49,13 @@ compare_voltage_reference: hybrid
 
 ### `large_flatstart_dc_blend`
 
-Use for large cases where a true flat start is required, but a classic flat start may converge to a wrong branch.
+Use for large cases where a true flat start is required, but a classic flat start may converge to a wrong branch. Keep start projection disabled for large benchmark validation unless a stricter or case-specific rescue run explicitly requests it.
 
 ```yaml
 opt_flatstart: true
 flatstart_angle_mode: dc
 flatstart_voltage_mode: bus_vm_va_blend
-start_projection: true
+start_projection: false
 start_projection_try_blend_scan: false
 start_projection_try_dc_start: true
 autodamp: true
@@ -72,13 +72,13 @@ wrong_branch_rescue: true
 
 ### `activsg25k_q_limit_guard`
 
-Use for the documented successful `case_ACTIVSg25k.m` run. The key point is not only a robust Newton start, but also a strong Q-limit guard for zero/narrow-Q PV buses and PV buses whose calculated Q violates limits after the first eligible Q-limit check.
+Use for the documented successful `case_ACTIVSg25k.m` run. The key point is a robust DC-angle/blended-voltage flat start with start projection disabled, plus a strong Q-limit guard for zero/narrow-Q PV buses and PV buses whose calculated Q violates limits after the first eligible Q-limit check. Use `tol: 1.0e-5` for large benchmark validation unless strict validation is explicitly requested.
 
 ```yaml
 opt_flatstart: true
 flatstart_angle_mode: dc
 flatstart_voltage_mode: bus_vm_va_blend
-start_projection: true
+start_projection: false
 start_projection_try_blend_scan: false
 start_projection_try_dc_start: true
 start_projection_dc_angle_limit_deg: 70.0

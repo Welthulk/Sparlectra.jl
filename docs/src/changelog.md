@@ -1,4 +1,19 @@
 # Change Log
+## Version 0.7.9 – 2026-05-17
+### Highlights
+
+### Fixes
+* Fixed MATPOWER import example recommendations and call paths so Julia 1.12/Revise entry points use `invokelatest`, start-projection keywords are forwarded consistently, and large-case auto-profile guidance keeps `start_projection=false` with DC-angle/blended-voltage starts, Q-limit guard, skipped expensive diagnostics, and practical benchmark tolerance defaults while preserving explicit nested performance YAML values.
+* Fixed rectangular start-projection candidate selection so unmeasured or non-finite DC candidates are not selected as proven improvements, summary output reports an explicit selection reason, and large MATPOWER auto-profile keeps start projection disabled by default.
+* Fixed rectangular start-projection DC angle solves to preserve sparse DC matrices in both profiled and unprofiled start paths, use a sparse LU solve path for large reduced systems, avoid dense SVD fallback on large sparse singular systems, and report DC matrix/solver diagnostics in MATPOWER Performance Summary output.
+* Fixed performance-enabled MATPOWER example runs so they emit a compact Performance Summary with shared phase timings, including import, solver, diagnostics/logging, reference comparison, and post-processing phases when collected.
+
+### Improvements
+* Optimized rectangular solver voltage-setpoint lookup to build per-solve bus and generator setpoint maps, avoiding repeated bus-by-prosumer scans for large MATPOWER imports while preserving `GEN.VG` PV/REF setpoint behavior and diagnostics.
+* Added finer rectangular solver performance timings for setup, active-set construction, Q-limit extraction/readiness, state updates, final result writeback, and status bookkeeping to explain large-case `solver_total` overhead outside Newton-step timing.
+* Added configurable performance profiling for the MATPOWER import example, including phase-level import/solver/output timings, optional allocation reporting, Newton-iteration diagnostics, and large-case speed switches for compact logging and expensive comparisons.
+* Decomposed rectangular start-projection profiling into DC-start construction, matrix assembly, solve, candidate generation/evaluation, branch-guard checks, voltage limiting, MATPOWER lookup/map phases, and final selection; added large-case YAML switches to disable expensive candidate measurement and reuse the already parsed MATPOWER case.
+
 ## Version 0.7.8 – 2026-05-16
 ### Highlights
 * Improved Q-limit handling for large MATPOWER imports, especially cases with many generators that have zero or very narrow reactive-power ranges.

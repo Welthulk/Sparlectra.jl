@@ -82,7 +82,10 @@ matpower_auto_profile_log: true
 safe recommendations unless the YAML file already contains an explicit value for
 that option. The pre-run checks transformer ratio and phase-shift conventions,
 bus-shunt residual impact, PV/REF voltage-source handling, large-case flat-start
-strategy, and conservative PV→PQ Q-limit settings. The terminal summary and
+strategy, and conservative PV→PQ Q-limit settings. For large-case runtime
+profiles it keeps start projection disabled, uses DC-angle and blended-voltage
+flat-start seeds, recommends practical validation tolerance, and disables
+expensive diagnostics unless explicitly requested. The terminal summary and
 logfile list the evidence, selected recommendations, applied options, and
 explicit YAML values that were preserved.
 
