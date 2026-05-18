@@ -721,6 +721,53 @@ function test_matpower_multi_generator_vg_and_fallback()::Bool
   return first_online_ok && fallback_ok
 end
 
+function _synthetic_large_vset_lookup_net(nbus::Int)::Net
+  net = Net(name = "synthetic_vset_lookup", baseMVA = 100.0)
+  sizehint!(net.nodeVec, nbus)
+  sizehint!(net.busDict, nbus)
+  sizehint!(net.busOrigIdxDict, nbus)
+  sizehint!(net.prosumpsVec, nbus)
+  for k in Base.OneTo(nbus)
+    addBus!(net = net, busName = string(k), vn_kV = 110.0, vm_pu = 0.98 + 1e-7 * k, oBusIdx = 100_000 + k)
+  end
+  for k in Base.OneTo(nbus)
+    if k == 1
+      addProsumer!(net = net, busName = string(k), type = "EXTERNALNETWORKINJECTION", p = 0.0, q = 0.0, vm_pu = 1.01, referencePri = string(k), defer_bus_type_refresh = true)
+    elseif iseven(k)
+      addProsumer!(net = net, busName = string(k), type = "GENERATOR", p = 1.0, q = 0.0, vm_pu = 1.0 + 1e-6 * k, defer_bus_type_refresh = true)
+    else
+      addProsumer!(net = net, busName = string(k), type = "ENERGYCONSUMER", p = 1.0, q = 0.2, defer_bus_type_refresh = true)
+    end
+  end
+  Sparlectra.refreshBusTypesFromProsumers!(net)
+  return net
+end
+
+function test_voltage_setpoint_lookup_uses_cached_linear_scan()::Bool
+  nbus = 4096
+  net = _synthetic_large_vset_lookup_net(nbus)
+  # Warm up compilation so this regression guards the lookup algorithm, not JIT latency.
+  Sparlectra._bus_voltage_setpoints_from_prosumers(net)
+  profile = Dict{Symbol,Any}(:enabled => true, :show_allocations => true)
+  elapsed = @elapsed Vset = Sparlectra._bus_voltage_setpoints_from_prosumers(net; performance_profile = profile)
+  timings = profile[:timings]
+  phases_present = all(phase -> haskey(timings, phase), (
+    :vset_map_build,
+    :vset_generator_scan,
+    :vset_node_metadata_scan,
+    :vset_vector_fill,
+    :vset_fallback_bus_vm,
+    :vset_missing_online_gen_summary,
+  ))
+  values_ok = isapprox(Vset[1], 1.01; atol = 1e-12) &&
+              isapprox(Vset[2], 1.000002; atol = 1e-12) &&
+              isapprox(Vset[3], 0.9800003; atol = 1e-12) &&
+              isapprox(Vset[end], 1.0 + 1e-6 * nbus; atol = 1e-12)
+  # The old nested bus×prosumer scan is quadratic for this fixture; the cached
+  # map/vector path should remain comfortably sub-second after compilation.
+  return phases_present && values_ok && elapsed < 0.5 && timings[:vset_generator_scan].bytes > 0
+end
+
 function testISOBusses()
   Sbase_MVA = 1000.0
   netName = "isobus"
@@ -2145,6 +2192,7 @@ function run_grid_tests()
       @test test_matpower_pv_voltage_source_and_compare_modes() == true
       @test test_matpower_compare_vmva_final_pq_after_qlimit_uses_bus_vm() == true
       @test test_matpower_multi_generator_vg_and_fallback() == true
+      @test test_voltage_setpoint_lookup_uses_cached_linear_scan() == true
       @test test_mp_inline_vs_manual_shunt() == true
       @test test_bus_shunt_model_modes() == true
       @test test_matpower_read_case_m_postprocessing() == true
