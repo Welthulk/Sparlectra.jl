@@ -365,6 +365,9 @@ function run_solver_interface_tests()
   @test occursin("q_limit_active_set=FAIL", summary_text)
   @test occursin("final_converged=false", summary_text)
   @test occursin("reason=remaining PV Q-limit violations", summary_text)
+  @test Sparlectra._rectangular_solver_status_symbol(true, false, false, :remaining_pv_q_limit_violations) == :converged_limits_failed
+  @test Sparlectra._rectangular_solver_status_symbol(false, false, false, :singular_newton_step) == :singular_jacobian
+  @test Sparlectra._rectangular_solver_status_symbol(false, false, false, :nr_mismatch_not_converged) == :not_converged
 end
 
     @testset "Q-limit guard and active-set status" begin
@@ -420,6 +423,8 @@ end
         q_limit_active_set_ok = false,
         final_mismatch = 2.1e-9,
         pv_pq_switching_events = 1842,
+        qlimit_active_set_changes = 91,
+        qlimit_reenable_events = 14,
         oscillating_buses = 37,
         guarded_narrow_q_pv_buses = 512,
         status = :qlimit_chatter,
@@ -459,7 +464,7 @@ end
     @testset "Rectangular performance profile exposes solver control path" begin
       net = createTest3BusNet()
       profile = Dict{Symbol,Any}(:enabled => true, :show_allocations => false, :show_iteration_table => true)
-      _, erg = runpf!(net, 20, 1e-8, 0; method = :rectangular, opt_sparse = true, performance_profile = profile)
+      _, erg = runpf!(net, 20, 1e-8, 0; method = :rectangular, performance_profile = profile)
       @test erg == 0
       timings = profile[:timings]
       for phase in (
@@ -476,6 +481,52 @@ end
       )
         @test haskey(timings, phase)
         @test timings[phase].calls >= 1
+      end
+    end
+
+    @testset "Typed power-flow config entry points" begin
+      pf_config = PowerFlowConfig(max_iter = 20, tol = 1e-8, sparse = true, start_mode = StartModeConfig(flatstart = true))
+
+      net_direct = createTest3BusNet()
+      _, erg_direct = runpf!(net_direct; config = pf_config)
+      @test erg_direct == 0
+
+      net_project = createTest3BusNet()
+      _, erg_project = runpf!(net_project; config = SparlectraConfig(powerflow = pf_config))
+      @test erg_project == 0
+
+      net_runner = createTest3BusNet()
+      _, erg_runner, _ = run_net_acpflow(net = net_runner, config = pf_config, show_results = false)
+      @test erg_runner == 0
+
+      old_cfg = active_sparlectra_config()
+      try
+        set_sparlectra_config!(SparlectraConfig(output = OutputConfig(logfile_results = :full)))
+        cfg_output_off = SparlectraConfig(powerflow = pf_config, output = OutputConfig(logfile_results = :off))
+
+        net_with_explicit_cfg = createTest3BusNet()
+        explicit_output = mktemp() do path, io
+          redirect_stdout(io) do
+            _, erg_explicit, _ = run_net_acpflow(net = net_with_explicit_cfg, config = cfg_output_off)
+            @test erg_explicit == 0
+          end
+          flush(io)
+          return read(path, String)
+        end
+        @test !occursin("AC Power Flow Results", explicit_output)
+
+        net_with_global_cfg = createTest3BusNet()
+        global_output = mktemp() do path, io
+          redirect_stdout(io) do
+            _, erg_global, _ = run_net_acpflow(net = net_with_global_cfg, config = pf_config)
+            @test erg_global == 0
+          end
+          flush(io)
+          return read(path, String)
+        end
+        @test occursin("AC Power Flow Results", global_output)
+      finally
+        set_sparlectra_config!(old_cfg)
       end
     end
 

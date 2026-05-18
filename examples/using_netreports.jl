@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# file: src/examples/using_netreports.jl
+# file: examples/using_netreports.jl
 
 using Sparlectra
 using Printf
@@ -28,7 +28,8 @@ This example demonstrates:
 - including bus-link flows (`report.links`),
 - conversion to DataFrame.
 """
-function main()
+function main(; args = ARGS)
+  _ = args
   net = Net(name = "netreport_demo", baseMVA = 100.0)
 
   addBus!(net = net, busName = "B1", vn_kV = 110.0)
@@ -47,9 +48,9 @@ function main()
   addProsumer!(net = net, busName = "B3", type = "ENERGYCONSUMER", p = 15.0, q = 5.0)
   addProsumer!(net = net, busName = "B4", type = "ENERGYCONSUMER", p = 25.0, q = 10.0)
 
-  ite, erg, etime = run_net_acpflow(net = net, max_ite = 40, tol = 1e-10, method = :rectangular, opt_sparse = true, show_results = false)
+  ite, erg, etime = run_net_acpflow(net = net, max_ite = 40, tol = 1e-10, show_results = false)
 
-  report = buildACPFlowReport(net; ct = etime, ite = ite, tol = 1e-10, converged = (erg == 0), solver = :rectangular)
+  report = buildACPFlowReport(net; ct = etime, ite = ite, tol = 1e-10, converged = (erg == 0))
 
   println("\n--- ACPFlowReport summary ---")
   println(report)
@@ -81,4 +82,6 @@ function main()
   return report
 end
 
-main()
+if get(ENV, "SPARLECTRA_USING_NETREPORTS_NO_MAIN", "0") != "1"
+  Base.invokelatest(getfield(@__MODULE__, :main))
+end

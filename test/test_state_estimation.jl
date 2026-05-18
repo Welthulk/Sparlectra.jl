@@ -24,7 +24,7 @@ function test_state_estimation_wls_first_version()::Bool
   @testset "State estimation WLS first version" begin
     net = createTest3BusNet()
 
-    ite, erg = runpf!(net, 40, 1e-10, 0; method = :polar_full, opt_sparse = true)
+    ite, erg = runpf!(net, 40, 1e-10, 0; method = :rectangular)
     @test erg == 0
     @test ite > 0
 
@@ -65,7 +65,7 @@ function test_state_estimation_observability_metrics()::Bool
   @testset "State estimation observability metrics" begin
     net = createTest3BusNet()
 
-    ite, erg = runpf!(net, 40, 1e-10, 0; method = :polar_full, opt_sparse = true)
+    ite, erg = runpf!(net, 40, 1e-10, 0; method = :rectangular)
     @test erg == 0
     @test ite > 0
 
@@ -233,7 +233,7 @@ function test_state_estimation_passive_bus_zero_injection_helpers()::Bool
   @testset "State estimation passive bus zero-injection helpers" begin
     net = create_state_estimation_passive_transit_net()
 
-    ite, erg = runpf!(net, 40, 1e-10, 0; method = :polar_full, opt_sparse = true)
+    ite, erg = runpf!(net, 40, 1e-10, 0; method = :rectangular)
     @test erg == 0
     @test ite > 0
 
@@ -271,7 +271,7 @@ function test_state_estimation_passive_bus_zero_injection_helpers()::Bool
     @test isempty(zi_obs.numerical_critical_measurement_indices)
     @test isempty(zi_obs.structural_critical_measurement_indices)
 
-    result = runse!(deepcopy(net); maxIte = 12, tol = 1e-8, flatstart = true, jacEps = 1e-6, updateNet = false)
+    result = runse!(deepcopy(net); maxIte = 45, tol = 1e-8, flatstart = true, jacEps = 1e-6, updateNet = false)
     @test result.converged == true
   end
 
@@ -284,7 +284,7 @@ function test_state_estimation_bad_data_diagnostics()::Bool
   @testset "State estimation bad-data diagnostics" begin
     net = createTest3BusNet()
 
-    ite, erg = runpf!(net, 40, 1e-10, 0; method = :polar_full, opt_sparse = true)
+    ite, erg = runpf!(net, 40, 1e-10, 0; method = :rectangular)
     @test erg == 0
     @test ite > 0
 

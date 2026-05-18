@@ -602,7 +602,16 @@ State representation:
 - bus voltage angles for all non-slack buses (radians)
 - bus voltage magnitudes for all buses (p.u.)
 """
-function runse!(net::Net, measurements::Vector{Measurement}; maxIte::Int = 12, tol::Float64 = 1e-6, flatstart::Bool = true, jacEps::Float64 = 1e-6, updateNet::Bool = true)
+function runse!(net::Net, measurements::Vector{Measurement}, cfg::StateEstimationConfig)
+  return _runse_with_config!(net, measurements, cfg)
+end
+
+function _runse_with_config!(net::Net, measurements::Vector{Measurement}, cfg::StateEstimationConfig)
+  maxIte = cfg.max_iter
+  tol = cfg.tol
+  flatstart = cfg.flatstart
+  jacEps = cfg.jac_eps
+  updateNet = cfg.update_net
   activeMeas = _active_measurements(measurements)
   isempty(activeMeas) && error("runse!: no active measurements")
 
@@ -660,8 +669,14 @@ function runse!(net::Net, measurements::Vector{Measurement}; maxIte::Int = 12, t
   return SEResult(Vest, converged, iteDone, norm(r), r, jval, ν, _j_within_3sigma_band(jval, ν))
 end
 
-function runse!(net::Net; maxIte::Int = 12, tol::Float64 = 1e-6, flatstart::Bool = true, jacEps::Float64 = 1e-6, updateNet::Bool = true)
-  return runse!(net, Measurement[m for m in net.measurements]; maxIte = maxIte, tol = tol, flatstart = flatstart, jacEps = jacEps, updateNet = updateNet)
+function runse!(net::Net, measurements::Vector{Measurement}; maxIte::Int = state_estimation_config().max_iter, tol::Float64 = state_estimation_config().tol, flatstart::Bool = state_estimation_config().flatstart, jacEps::Float64 = state_estimation_config().jac_eps, updateNet::Bool = state_estimation_config().update_net)
+  cfg = StateEstimationConfig(max_iter = maxIte, tol = tol, flatstart = flatstart, jac_eps = jacEps, update_net = updateNet)
+  return _runse_with_config!(net, measurements, cfg)
+end
+
+function runse!(net::Net; maxIte::Int = state_estimation_config().max_iter, tol::Float64 = state_estimation_config().tol, flatstart::Bool = state_estimation_config().flatstart, jacEps::Float64 = state_estimation_config().jac_eps, updateNet::Bool = state_estimation_config().update_net)
+  cfg = StateEstimationConfig(max_iter = maxIte, tol = tol, flatstart = flatstart, jac_eps = jacEps, update_net = updateNet)
+  return runse!(net, Measurement[m for m in net.measurements], cfg)
 end
 
 """

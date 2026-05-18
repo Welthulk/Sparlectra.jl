@@ -14,7 +14,7 @@
 #
 # Example: compare state estimation with and without ZIB (zero-injection bus)
 
-# file: src/examples/state_estimation_passive_bus_zib_comparison.jl
+# file: examples/state_estimation_passive_bus_zib_comparison.jl
 
 using Sparlectra
 using Printf
@@ -49,7 +49,7 @@ function _reset_non_slack_buses!(net::Net)
 end
 
 function build_sparse_measurements_for_zib_demo(net::Net; rng::AbstractRNG = MersenneTwister(7))
-  ite_pf, status_pf = runpf!(net, 40, 1e-10, 0; method = :rectangular, opt_sparse = true)
+  ite_pf, status_pf = runpf!(net, 40, 1e-10, 0; method = :rectangular)
   status_pf == 0 || error("Power flow did not converge")
 
   std = measurementStdDevs(vm = 1e-5, pinj = 1e-5, qinj = 1e-5, pflow = 1e-5, qflow = 1e-5)

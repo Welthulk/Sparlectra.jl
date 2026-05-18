@@ -17,7 +17,7 @@
 # This script progressively deactivates branch-flow measurements and logs
 # global/local redundancy metrics and warnings when local observability is lost.
 
-# file: src/examples/state_estimation_observability.jl
+# file: examples/state_estimation_observability.jl
 
 using Sparlectra
 using Printf
@@ -374,7 +374,7 @@ function run_state_estimation_observability_example(io::IO)
   end
 
   net = createNetFromMatPowerFile(filename = case_path)
-  _, erg_pf = runpf!(net, 40, 1e-10, 0; method = :rectangular, opt_sparse = true)
+  _, erg_pf = runpf!(net, 40, 1e-10, 0; method = :rectangular)
   erg_pf == 0 || error("Power flow did not converge")
 
   std = measurementStdDevs(vm = 0.1, pinj = 1.5, qinj = 1.5, pflow = 0.7, qflow = 0.9)
@@ -495,7 +495,7 @@ end
 """
 Run the observability example and write the output to a timestamped log file.
 """
-function run_and_log_state_estimation_observability_example()
+function main()
   mkpath(OUTDIR_OBS)
   timestamp = Dates.format(Dates.now(), "yyyymmdd_HHMMSS")
   logfile = joinpath(OUTDIR_OBS, "run_observability_$(CASEFILE_OBS)_$(timestamp).log")
@@ -506,4 +506,6 @@ function run_and_log_state_estimation_observability_example()
   return logfile
 end
 
-run_and_log_state_estimation_observability_example()
+if get(ENV, "SPARLECTRA_USING_STATE_ESTIMATION_OBSERVABILITY", "0") != "1"
+  Base.invokelatest(getfield(@__MODULE__, :main))
+end

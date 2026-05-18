@@ -26,7 +26,7 @@
 # - Rectangular complex-state Newton-Raphson with PQ and PV bus handling
 # - Wirtinger calculus-based Jacobian construction for complex power equations
 # - Active-set Q-limit management for PV→PQ switching with optional re-enable
-# - Both analytic and finite-difference Jacobian options
+# - Sparse analytic Jacobian construction
 # - Hysteresis and cooldown mechanisms for robust PV bus management
 # - Direct integration with Sparlectra.jl network data structures
 #
@@ -44,10 +44,9 @@
 # - mismatch_rectangular(): Residual function for PQ/PV bus constraints
 #
 # Note:
-# - The FD Jacobian is mathematically dense; sparse storage does not bring much benefit.
-# - The analytic Jacobian currently uses a dense rectangular build, even though the
-#   underlying structure is sparse (Ybus-like). A true sparse implementation would
-#   require a dedicated builder similar to `calcJacobian(...; sparse=true)`.
+# - The power-flow core uses sparse Y-bus and Jacobian matrices by default.
+# - Dense builders remain for small helper-level diagnostics, but unsupported PF
+#   entry options are rejected before the solver core is entered.
 #
 # References:
 # - Wirtinger calculus for complex derivatives
@@ -362,11 +361,30 @@ function _print_rectangular_qlimit_trace(
     reason = "rectangular solver path does not enforce this Q-limit mode"
   end
 
-  @printf(io, "Q-limit trace it=%d BUS_I=%d type=%s Vm_calc=%.6f imported_Vset=%.6f Qcalc=%.6f pu (%.3f MVAr) Qmin=%.6f pu (%.3f MVAr) Qmax=%.6f pu (%.3f MVAr) q_hyst_pu=%.6f qlimit_start_iter=%d qlimit_start_mode=%s active=%s violation=%s amount=%.6f pu (%.3f MVAr) decision=%s reason=%s\n",
-          it, busI, String(bus_type), abs(V[bus]), Vset[bus], qreq_pu, qreq_pu * net.baseMVA,
-          qmin, qmin * net.baseMVA, qmax, qmax * net.baseMVA, q_hyst_pu, qlimit_start_iter,
-          String(qlimit_start_mode), string(qlimit_check_active), String(side), amount_pu, amount_pu * net.baseMVA,
-          decision, reason)
+  @printf(
+    io,
+    "Q-limit trace it=%d BUS_I=%d type=%s Vm_calc=%.6f imported_Vset=%.6f Qcalc=%.6f pu (%.3f MVAr) Qmin=%.6f pu (%.3f MVAr) Qmax=%.6f pu (%.3f MVAr) q_hyst_pu=%.6f qlimit_start_iter=%d qlimit_start_mode=%s active=%s violation=%s amount=%.6f pu (%.3f MVAr) decision=%s reason=%s\n",
+    it,
+    busI,
+    String(bus_type),
+    abs(V[bus]),
+    Vset[bus],
+    qreq_pu,
+    qreq_pu * net.baseMVA,
+    qmin,
+    qmin * net.baseMVA,
+    qmax,
+    qmax * net.baseMVA,
+    q_hyst_pu,
+    qlimit_start_iter,
+    String(qlimit_start_mode),
+    string(qlimit_check_active),
+    String(side),
+    amount_pu,
+    amount_pu * net.baseMVA,
+    decision,
+    reason
+  )
   return nothing
 end
 
@@ -375,6 +393,18 @@ mutable struct _RectangularPFStatusTable
 end
 
 const _RECTANGULAR_PF_STATUS = _RectangularPFStatusTable(Tuple{UInt,WeakRef,Any}[])
+
+mutable struct RectangularIterationWorkspace
+  qload_pu::Vector{Float64}
+  current_pv_qreq_pu::Vector{Float64}
+  prev_pv_qreq_pu::Vector{Float64}
+  lock_mask::BitVector
+  rhs_vector::Vector{Float64}
+end
+
+function RectangularIterationWorkspace(nb::Int)
+  return RectangularIterationWorkspace(zeros(Float64, nb), fill(NaN, nb), fill(NaN, nb), falses(nb), zeros(Float64, 2 * max(nb - 1, 0)))
+end
 
 function _prune_rectangular_pf_status!(table::_RectangularPFStatusTable)
   filter!(entry -> entry[2].value !== nothing, table.entries)
@@ -410,6 +440,7 @@ function _rectangular_rejection_reason_text(reason::Symbol)
   reason == :active_pv_voltage_residual && return "active PV voltage residual exceeds tolerance"
   reason == :singular_newton_step && return "singular Newton step"
   reason == :nr_mismatch_not_converged && return "NR mismatch did not converge"
+  reason == :nr_mismatch_not_converged_active_set_unstable && return "NR mismatch did not converge; Q-limit active set changed repeatedly"
   return replace(String(reason), "_" => " ")
 end
 
@@ -423,12 +454,12 @@ end
 
 function _rectangular_solver_status_symbol(numerical_converged::Bool, active_set_ok::Bool, final_converged::Bool, reason::Symbol)::Symbol
   final_converged && return :converged
-  numerical_converged || return reason == :singular_newton_step ? :singular_jacobian : :nr_mismatch_not_converged
-  active_set_ok && return :converged_with_active_set_instability
-  reason == :max_switching_exceeded && return :max_switching_exceeded
-  reason == :bounded_q_limit_violations_accepted && return :converged_with_bounded_q_limit_violations
-  reason == :remaining_pv_q_limit_violations && return :numerically_converged_but_active_set_failed
-  return :qlimit_chatter
+  numerical_converged || return reason == :singular_newton_step ? :singular_jacobian : :not_converged
+  active_set_ok && return :converged_with_limit_warnings
+  reason == :max_switching_exceeded && return :converged_limits_failed
+  reason == :bounded_q_limit_violations_accepted && return :converged_with_limit_warnings
+  reason == :remaining_pv_q_limit_violations && return :converged_limits_failed
+  return :converged_limits_failed
 end
 
 function _print_qlimit_active_set_summary(io::IO, status)
@@ -438,6 +469,8 @@ function _print_qlimit_active_set_summary(io::IO, status)
   @printf(io, "Final mismatch             : %.6g\n", status.final_mismatch)
   @printf(io, "Active-set convergence     : %s\n", status.q_limit_active_set_ok ? "yes" : "no")
   @printf(io, "PV→PQ switching events     : %d\n", status.pv_pq_switching_events)
+  @printf(io, "Q-limit active-set changes : %d\n", status.qlimit_active_set_changes)
+  @printf(io, "Q-limit re-enable events   : %d\n", status.qlimit_reenable_events)
   @printf(io, "Oscillating buses          : %d\n", status.oscillating_buses)
   @printf(io, "Guarded narrow-Q PV buses  : %d\n", status.guarded_narrow_q_pv_buses)
   @printf(io, "Final status               : %s\n", String(status.status))
@@ -477,7 +510,20 @@ function _apply_qlimit_guard_to_rectangular_active_set!(net::Net, bus_types::Vec
   return guarded
 end
 
-function _print_rectangular_qlimit_summary(io::IO, net::Net, V::Vector{ComplexF64}, Sbus_pu::Vector{ComplexF64}, bus_types::Vector{Symbol}, qmin_pu::AbstractVector, qmax_pu::AbstractVector, Qload_pu::Vector{Float64}; q_hyst_pu::Float64, tolerance_pu::Float64 = 0.0, max_rows::Int = 30, max_console_rows::Union{Nothing,Int} = nothing)
+function _print_rectangular_qlimit_summary(
+  io::IO,
+  net::Net,
+  V::Vector{ComplexF64},
+  Sbus_pu::Vector{ComplexF64},
+  bus_types::Vector{Symbol},
+  qmin_pu::AbstractVector,
+  qmax_pu::AbstractVector,
+  Qload_pu::Vector{Float64};
+  q_hyst_pu::Float64,
+  tolerance_pu::Float64 = 0.0,
+  max_rows::Int = 30,
+  max_console_rows::Union{Nothing,Int} = nothing,
+)
   checked_pv = 0
   checked_ref = 0
   rows = NamedTuple[]
@@ -511,19 +557,7 @@ function _print_rectangular_qlimit_summary(io::IO, net::Net, V::Vector{ComplexF6
     last_it = lastQLimitIter(net, bus)
     lo_return, hi_return = q_limit_band(qmin_pu, qmax_pu, bus, q_hyst_pu)
     in_return_band = (qcalc > lo_return) && (qcalc < hi_return)
-    push!(rows, (
-      bus = bus,
-      busI = _qlimit_original_bus_id(net, bus),
-      type = bus_type,
-      qcalc = qcalc,
-      qmin = qmin,
-      qmax = qmax,
-      side = side,
-      amount = amount,
-      switched = !isnothing(last_it),
-      last_it = last_it,
-      in_return_band = in_return_band,
-    ))
+    push!(rows, (bus = bus, busI = _qlimit_original_bus_id(net, bus), type = bus_type, qcalc = qcalc, qmin = qmin, qmax = qmax, side = side, amount = amount, switched = !isnothing(last_it), last_it = last_it, in_return_band = in_return_band))
   end
 
   sort!(rows; by = r -> -abs(r.amount * net.baseMVA))
@@ -558,11 +592,24 @@ function _print_rectangular_qlimit_summary(io::IO, net::Net, V::Vector{ComplexF6
       last_text = isnothing(row.last_it) ? "-" : string(row.last_it)
       band_text = row.in_return_band ? "inside" : "outside"
       type_text = row.type == :Slack ? "REF" : String(row.type)
-      @printf(io, " %6d │ %4s │ %8.5f │ %10.3f │ %7.5f │ %9.3f │ %7.5f │ %9.3f │ %4s │ %7.5f │ %9.3f │ %8s │ %7s │ %s\n",
-              row.busI, type_text, row.qcalc, row.qcalc * net.baseMVA,
-              row.qmin, row.qmin * net.baseMVA, row.qmax, row.qmax * net.baseMVA,
-              String(row.side), row.amount, row.amount * net.baseMVA,
-              string(row.switched), last_text, band_text)
+      @printf(
+        io,
+        " %6d │ %4s │ %8.5f │ %10.3f │ %7.5f │ %9.3f │ %7.5f │ %9.3f │ %4s │ %7.5f │ %9.3f │ %8s │ %7s │ %s\n",
+        row.busI,
+        type_text,
+        row.qcalc,
+        row.qcalc * net.baseMVA,
+        row.qmin,
+        row.qmin * net.baseMVA,
+        row.qmax,
+        row.qmax * net.baseMVA,
+        String(row.side),
+        row.amount,
+        row.amount * net.baseMVA,
+        string(row.switched),
+        last_text,
+        band_text
+      )
     end
     if shown < length(rows)
       @printf(io, "  (%d more violation rows omitted; increase max_rows/max_console_rows for full output)\n", length(rows) - shown)
@@ -594,8 +641,6 @@ function run_complex_nr_rectangular(
   autodamp_min::Float64 = 1e-3,
   bus_types::Vector{Symbol},
   Vset::Vector{Float64},
-  use_fd::Bool = false,
-  use_sparse::Bool = false,
   dPinj_dVm::Vector{Float64} = zeros(Float64, length(V0)),
   dQinj_dVm::Vector{Float64} = zeros(Float64, length(V0)),
   performance_profile = nothing,
@@ -612,11 +657,7 @@ function run_complex_nr_rectangular(
       return V, true, iter, history
     end
 
-    if use_fd
-      V = complex_newton_step_rectangular_fd(Ybus, V, S; slack_idx = slack_idx, damp = damp, autodamp = autodamp, autodamp_min = autodamp_min, h = 1e-6, bus_types = bus_types, Vset = Vset, dPinj_dVm = dPinj_dVm, dQinj_dVm = dQinj_dVm, performance_profile = performance_profile)
-    else
-      V = complex_newton_step_rectangular(Ybus, V, S; slack_idx = slack_idx, damp = damp, autodamp = autodamp, autodamp_min = autodamp_min, bus_types = bus_types, Vset = Vset, use_sparse = use_sparse, dPinj_dVm = dPinj_dVm, dQinj_dVm = dQinj_dVm, performance_profile = performance_profile)
-    end
+    V = complex_newton_step_rectangular(Ybus, V, S; slack_idx = slack_idx, damp = damp, autodamp = autodamp, autodamp_min = autodamp_min, bus_types = bus_types, Vset = Vset, dPinj_dVm = dPinj_dVm, dQinj_dVm = dQinj_dVm, performance_profile = performance_profile)
   end
 
   return V, false, maxiter, history
@@ -647,15 +688,7 @@ function _voltage_magnitude_for_projection(Vraw::Vector{ComplexF64}, bus_types::
   end
 end
 
-function _dc_angle_start_rectangular(
-  Ybus,
-  Vraw::Vector{ComplexF64},
-  S::Vector{ComplexF64},
-  bus_types::Vector{Symbol},
-  Vset::Vector{Float64},
-  slack_idx::Int;
-  dc_angle_limit_deg::Float64 = 60.0,
-)
+function _dc_angle_start_rectangular(Ybus, Vraw::Vector{ComplexF64}, S::Vector{ComplexF64}, bus_types::Vector{Symbol}, Vset::Vector{Float64}, slack_idx::Int; dc_angle_limit_deg::Float64 = 60.0)
   n = length(Vraw)
   non_slack = non_slack_indices(n, slack_idx)
   nred = length(non_slack)
@@ -719,7 +752,7 @@ function _dc_angle_start_rectangular(
   θslack = angle(Vraw[slack_idx])
   Vdc = similar(Vraw)
 
-  @inbounds for k in 1:n
+  @inbounds for k = 1:n
     vm = _voltage_magnitude_for_projection(Vraw, bus_types, Vset, k)
     if k == slack_idx
       Vdc[k] = Vraw[k]
@@ -740,6 +773,7 @@ function _record_dc_solve_diagnostics!(performance_profile, B, backend::Symbol, 
   performance_profile[:dc_matrix_size] = (rows, cols)
   performance_profile[:dc_matrix_nnz] = matrix_nnz
   performance_profile[:dc_matrix_density] = density
+  performance_profile[:dc_matrix_is_sparse] = (B isa SparseMatrixCSC)
   performance_profile[:dc_solve_backend] = backend
   performance_profile[:dc_solve_reduced_dimension] = nred
   if condition_warning !== nothing
@@ -767,7 +801,7 @@ function _sparse_dc_solve(B::SparseMatrixCSC{Float64}, P::Vector{Float64}, perfo
         _record_dc_solve_diagnostics!(performance_profile, B, backend, condition_warning, nred)
         return θred
       catch qr_error
-        max(size(B)...) <= 2000 || rethrow(qr_error)
+        _dense_svd_fallback_allowed(B) || rethrow(qr_error)
         backend = :dense_svd_fallback_small_system
         θred = _svd_pinv_solve(Matrix(B), P)
         _record_dc_solve_diagnostics!(performance_profile, B, backend, condition_warning, nred)
@@ -806,16 +840,7 @@ function _solve_dc_angle_system(B, P::Vector{Float64}, performance_profile, nred
   end
 end
 
-function _dc_angle_start_rectangular_profiled(
-  Ybus,
-  Vraw::Vector{ComplexF64},
-  S::Vector{ComplexF64},
-  bus_types::Vector{Symbol},
-  Vset::Vector{Float64},
-  slack_idx::Int;
-  dc_angle_limit_deg::Float64 = 60.0,
-  performance_profile = nothing,
-)
+function _dc_angle_start_rectangular_profiled(Ybus, Vraw::Vector{ComplexF64}, S::Vector{ComplexF64}, bus_types::Vector{Symbol}, Vset::Vector{Float64}, slack_idx::Int; dc_angle_limit_deg::Float64 = 60.0, performance_profile = nothing)
   n = length(Vraw)
   non_slack = _perf_profile_time!(performance_profile, :start_projection_bus_map) do
     non_slack_indices(n, slack_idx)
@@ -1046,7 +1071,7 @@ function _apply_rectangular_delta(V::Vector{ComplexF64}, δx::Vector{Float64}, s
 
   @inbounds for (idx, bus) in enumerate(non_slack)
     Vr_new[bus] += alpha * δx[idx]
-    Vi_new[bus] += alpha * δx[(n - 1) + idx]
+    Vi_new[bus] += alpha * δx[(n-1)+idx]
   end
 
   Vr_new[slack_idx] = Vr[slack_idx]
@@ -1070,18 +1095,7 @@ step.
 
 Returns `(alpha, Vtrial, trial_mismatch)`.
 """
-function choose_rectangular_autodamp(
-  Ybus,
-  V::Vector{ComplexF64},
-  S::Vector{ComplexF64},
-  δx::Vector{Float64},
-  F0::Vector{Float64};
-  slack_idx::Int,
-  damp::Float64 = 1.0,
-  autodamp_min::Float64 = 1e-3,
-  bus_types::Vector{Symbol},
-  Vset::Vector{Float64},
-)
+function choose_rectangular_autodamp(Ybus, V::Vector{ComplexF64}, S::Vector{ComplexF64}, δx::Vector{Float64}, F0::Vector{Float64}; slack_idx::Int, damp::Float64 = 1.0, autodamp_min::Float64 = 1e-3, bus_types::Vector{Symbol}, Vset::Vector{Float64})
   _validate_rectangular_damping(damp, autodamp_min)
   non_slack = non_slack_indices(length(V), slack_idx)
   current_mismatch = maximum(abs.(F0))
@@ -1197,18 +1211,7 @@ function _build_vset_adjust_controllers(net::Net)
   return controllers
 end
 
-function _try_adjust_vset_on_q_limit!(
-  net::Net,
-  bus::Int,
-  side::Symbol,
-  it::Int,
-  controllers::Dict{Int,NamedTuple{(:prosumer_idx, :config),Tuple{Int,VoltageAdjustConfig}}},
-  base_vset::Vector{Float64},
-  Vset::Vector{Float64},
-  adjust_counter::Vector{Int},
-  qlimit_max_outer::Int,
-  verbose::Int,
-)::Bool
+function _try_adjust_vset_on_q_limit!(net::Net, bus::Int, side::Symbol, it::Int, controllers::Dict{Int,NamedTuple{(:prosumer_idx, :config),Tuple{Int,VoltageAdjustConfig}}}, base_vset::Vector{Float64}, Vset::Vector{Float64}, adjust_counter::Vector{Int}, qlimit_max_outer::Int, verbose::Int)::Bool
   cname = _bus_label(net, bus)
   if !haskey(controllers, bus)
     if verbose > 0
@@ -1630,27 +1633,24 @@ end
 
 """
     build_rectangular_jacobian_pq_pv(
-        Ybus,
+        Ybus::SparseMatrixCSC{ComplexF64},
         V,
         bus_types,
         Vset,
         slack_idx;
-        use_sparse::Bool = false,
     )
-
-Dispatches to either the dense or sparse rectangular Jacobian builder matching
-`mismatch_rectangular`.
-
-- If `use_sparse == true` and `Ybus` is a `SparseMatrixCSC{ComplexF64}`, the
-  sparse builder is used.
-- Otherwise, the dense builder is used.
 """
-function build_rectangular_jacobian_pq_pv(Ybus, V::Vector{ComplexF64}, bus_types::Vector{Symbol}, Vset::Vector{Float64}, slack_idx::Int; use_sparse::Bool = false, dPinj_dVm::Vector{Float64} = zeros(Float64, length(V)), dQinj_dVm::Vector{Float64} = zeros(Float64, length(V)), vm_eps::Float64 = 1e-9)
-  if use_sparse && Ybus isa SparseMatrixCSC{ComplexF64}
-    return build_rectangular_jacobian_pq_pv_sparse(Ybus, V, bus_types, Vset, slack_idx; dPinj_dVm = dPinj_dVm, dQinj_dVm = dQinj_dVm, vm_eps = vm_eps)
-  else
-    return build_rectangular_jacobian_pq_pv_dense(Ybus, V, bus_types, Vset, slack_idx; dPinj_dVm = dPinj_dVm, dQinj_dVm = dQinj_dVm, vm_eps = vm_eps)
-  end
+function build_rectangular_jacobian_pq_pv(
+  Ybus::SparseMatrixCSC{ComplexF64},
+  V::Vector{ComplexF64},
+  bus_types::Vector{Symbol},
+  Vset::Vector{Float64},
+  slack_idx::Int;
+  dPinj_dVm::Vector{Float64} = zeros(Float64, length(V)),
+  dQinj_dVm::Vector{Float64} = zeros(Float64, length(V)),
+  vm_eps::Float64 = 1e-9,
+)
+  return build_rectangular_jacobian_pq_pv_sparse(Ybus, V, bus_types, Vset, slack_idx; dPinj_dVm = dPinj_dVm, dQinj_dVm = dQinj_dVm, vm_eps = vm_eps)
 end
 
 """
@@ -1662,7 +1662,6 @@ end
         damp,
         bus_types,
         Vset,
-        use_sparse=false,
     )
 
 Performs one Newton–Raphson step in rectangular coordinates using the analytic
@@ -1681,7 +1680,6 @@ function complex_newton_step_rectangular(
   autodamp_min::Float64 = 1e-3,
   bus_types::Vector{Symbol},
   Vset::Vector{Float64},
-  use_sparse::Bool = false,
   dPinj_dVm::Vector{Float64} = zeros(Float64, length(V)),
   dQinj_dVm::Vector{Float64} = zeros(Float64, length(V)),
   performance_profile = nothing,
@@ -1703,9 +1701,9 @@ function complex_newton_step_rectangular(
   nvar = 2 * (n - 1)
   @assert m == nvar "complex_newton_step_rectangular: mismatch and state dimension differ"
 
-  # Analytic Jacobian (dense or sparse)
+  # Analytic rectangular sparse Jacobian
   J = _perf_profile_time!(performance_profile, :newton_step_jacobian) do
-    build_rectangular_jacobian_pq_pv(Ybus, V, bus_types, Vset, slack_idx; use_sparse = use_sparse, dPinj_dVm = dPinj_dVm, dQinj_dVm = dQinj_dVm)
+    build_rectangular_jacobian_pq_pv(Ybus, V, bus_types, Vset, slack_idx; dPinj_dVm = dPinj_dVm, dQinj_dVm = dQinj_dVm)
   end
 
   # Solve J * δx = -F
@@ -1724,7 +1722,7 @@ function complex_newton_step_rectangular(
 end
 
 """
-    run_complex_nr_rectangular_for_net!(net; maxiter=20, tol=1e-8, damp=0.2, verbose=0, use_fd=false)
+    run_complex_nr_rectangular_for_net!(net; maxiter=20, tol=1e-8, damp=0.2, verbose=0)
 
 Run a complex-state Newton-Raphson power flow in rectangular coordinates on a Sparlectra network.
 
@@ -1734,7 +1732,6 @@ Run a complex-state Newton-Raphson power flow in rectangular coordinates on a Sp
 - `tol::Float64=1e-8`: Convergence tolerance for maximum mismatch
 - `damp::Float64=0.2`: Damping factor for Newton step (0 < damp ≤ 1)
 - `verbose::Int=0`: Verbosity level (0=quiet, 1=basic info, 2=detailed)
-- `use_fd::Bool=false`: Use finite-difference Jacobian instead of analytic
 
 # Returns
 - `Tuple{Int, Int}`: (iterations_used, error_code)
@@ -1782,10 +1779,8 @@ function run_complex_nr_rectangular_for_net!(
   tol::Float64 = 1e-8,
   damp::Float64 = 0.2,
   verbose::Int = 0,
-  use_fd::Bool = false,
   autodamp::Bool = false,
   autodamp_min::Float64 = 1e-3,
-  opt_sparse::Bool = true,
   opt_flatstart::Bool = net.flatstart,
   pv_table_rows::Int = 30,
   lock_pv_to_pq_buses::AbstractVector{Int} = Int[],
@@ -1816,21 +1811,20 @@ function run_complex_nr_rectangular_for_net!(
   qlimit_guard_violation_mode::Symbol = :delayed_switch,
   qlimit_guard_violation_threshold_pu::Float64 = 1e-4,
   performance_profile = nothing,
+  rectangular_workspace_reuse::Bool = true,
+  rectangular_preallocate_workspace::Symbol = :auto,
+  rectangular_workspace_min_buses::Int = 1000,
 )
+    _validate_rectangular_powerflow_options(method = :rectangular, sparse = true)
   if verbose > 1
-    @info "Running complex rectangular NR power flow... use_fd=$use_fd, opt_sparse=$opt_sparse"
+    @info "Running complex rectangular NR power flow..."
   end
 
   nodes = net.nodeVec
-  n     = length(nodes)
+  n = length(nodes)
   Sbase = net.baseMVA
-  if !opt_sparse
-    sparse = n > 1000
-  else
-    sparse = opt_sparse
-  end
   Yred = _perf_profile_time!(performance_profile, :ybus_assembly) do
-    createYBUS(net = net, sparse = sparse, printYBUS = (verbose > 1))
+    createYBUS(net = net, sparse = true, printYBUS = (verbose > 1))
   end
   Ybus = _perf_profile_time!(performance_profile, :ybus_expand_isolated) do
     (size(Yred, 1) == n) ? Yred : _expand_ybus_for_isolated_nodes(Yred, n, net.isoNodes)
@@ -1922,19 +1916,7 @@ function run_complex_nr_rectangular_for_net!(
   guarded_qlimit_buses = Int[]
   if qlimit_guard
     guarded_qlimit_buses = _perf_profile_time!(performance_profile, :qlimit_guard_preprocess) do
-      _apply_qlimit_guard_to_rectangular_active_set!(
-        net,
-        bus_types,
-        S,
-        build_qload_pu(net),
-        qmin_pu,
-        qmax_pu;
-        min_q_range_pu = qlimit_guard_min_q_range_pu,
-        zero_range_mode = qlimit_guard_zero_range_mode,
-        narrow_range_mode = qlimit_guard_narrow_range_mode,
-        log = qlimit_guard_log,
-        verbose = verbose,
-      )
+      _apply_qlimit_guard_to_rectangular_active_set!(net, bus_types, S, build_qload_pu(net), qmin_pu, qmax_pu; min_q_range_pu = qlimit_guard_min_q_range_pu, zero_range_mode = qlimit_guard_zero_range_mode, narrow_range_mode = qlimit_guard_narrow_range_mode, log = qlimit_guard_log, verbose = verbose)
     end
   end
 
@@ -1973,12 +1955,32 @@ function run_complex_nr_rectangular_for_net!(
   end
 
   # 5) NR-Loop
-  V         = copy(V0)
-  history   = Float64[]
+  V = copy(V0)
+  history = Float64[]
   converged = false
-  iters     = 0
+  iters = 0
   rejection_reason = :nr_mismatch_not_converged
-  prev_pv_qreq_pu = fill(NaN, nb)
+  rectangular_workspace_reason = :disabled
+  rectangular_workspace_preallocated = false
+  if !rectangular_workspace_reuse || rectangular_preallocate_workspace == :off
+    rectangular_workspace_reason = rectangular_workspace_reuse ? :off : :reuse_disabled
+  elseif rectangular_preallocate_workspace == :on
+    rectangular_workspace_preallocated = true
+    rectangular_workspace_reason = :forced_on
+  elseif rectangular_preallocate_workspace == :auto
+    rectangular_workspace_preallocated = nb >= rectangular_workspace_min_buses
+    rectangular_workspace_reason = rectangular_workspace_preallocated ? :auto_threshold : :auto_below_threshold
+  else
+    error("Unsupported rectangular_preallocate_workspace=$(rectangular_preallocate_workspace). Supported: :off, :on, :auto.")
+  end
+  workspace = RectangularIterationWorkspace(nb)
+  if performance_profile !== nothing
+    performance_profile[:rectangular_workspace_reuse] = rectangular_workspace_reuse
+    performance_profile[:rectangular_workspace_preallocated] = rectangular_workspace_preallocated
+    performance_profile[:rectangular_workspace_reason] = rectangular_workspace_reason
+    performance_profile[:rectangular_workspace_nbus] = nb
+    performance_profile[:rectangular_workspace_nstate] = 2 * max(nb - 1, 0)
+  end
 
   if verbose > 1
     @info "Starting rectangular complex NR power flow..."
@@ -1987,6 +1989,8 @@ function run_complex_nr_rectangular_for_net!(
     @info "maxiter = $maxiter, tol = $tol, damp = $damp, autodamp = $autodamp, autodamp_min = $autodamp_min, start_projection = $start_projection"
   end
 
+  qlimit_active_set_changes = 0
+  qlimit_reenable_events = 0
   for it = 1:maxiter
     iters = it
 
@@ -2002,6 +2006,10 @@ function run_complex_nr_rectangular_for_net!(
     end
     max_mis = maximum(abs.(F))
     push!(history, max_mis)
+    if rectangular_workspace_preallocated
+      resize!(workspace.rhs_vector, length(F))
+      copyto!(workspace.rhs_vector, F)
+    end
 
     (verbose > 1) && @debug "Rectangular NR iteration" iter = it max_mismatch = max_mis
 
@@ -2009,21 +2017,21 @@ function run_complex_nr_rectangular_for_net!(
     changed   = false
     reenabled = false
 
-    Qload_pu = _perf_profile_time!(performance_profile, :iteration_qload) do
-      build_qload_pu(net)
+    _perf_profile_time!(performance_profile, :iteration_qload) do
+      copyto!(workspace.qload_pu, build_qload_pu(net))
     end
 
     Scalc_pu = _perf_profile_time!(performance_profile, :iteration_calc_injections) do
       calc_injections(Ybus, V)
     end
     current_pv_qreq_pu = _perf_profile_time!(performance_profile, :iteration_qreq_vector) do
-      qreq = fill(NaN, nb)
-      @inbounds for bus in eachindex(qreq)
+      fill!(workspace.current_pv_qreq_pu, NaN)
+      @inbounds for bus in eachindex(workspace.current_pv_qreq_pu)
         if bus_types[bus] == :PV
-          qreq[bus] = imag(Scalc_pu[bus]) + Qload_pu[bus]
+          workspace.current_pv_qreq_pu[bus] = imag(Scalc_pu[bus]) + workspace.qload_pu[bus]
         end
       end
-      qreq
+      workspace.current_pv_qreq_pu
     end
 
     qlimit_iter_ready, qlimit_auto_ready, qlimit_ready, converged_this_iter, qlimit_check_active = _perf_profile_time!(performance_profile, :iteration_control_bookkeeping) do
@@ -2033,16 +2041,14 @@ function run_complex_nr_rectangular_for_net!(
         max_q_delta = 0.0
         compared = false
         @inbounds for bus in eachindex(current_pv_qreq_pu)
-          if isfinite(current_pv_qreq_pu[bus]) && isfinite(prev_pv_qreq_pu[bus])
-            max_q_delta = max(max_q_delta, abs(current_pv_qreq_pu[bus] - prev_pv_qreq_pu[bus]))
+          if isfinite(current_pv_qreq_pu[bus]) && isfinite(workspace.prev_pv_qreq_pu[bus])
+            max_q_delta = max(max_q_delta, abs(current_pv_qreq_pu[bus] - workspace.prev_pv_qreq_pu[bus]))
             compared = true
           end
         end
         qlimit_auto_ready_ = compared && (max_q_delta <= qlimit_auto_q_delta_pu)
       end
-      qlimit_ready_ = qlimit_start_mode == :iteration ? qlimit_iter_ready_ :
-                      qlimit_start_mode == :auto_q_delta ? qlimit_auto_ready_ :
-                      (qlimit_iter_ready_ || qlimit_auto_ready_)
+      qlimit_ready_ = qlimit_start_mode == :iteration ? qlimit_iter_ready_ : qlimit_start_mode == :auto_q_delta ? qlimit_auto_ready_ : (qlimit_iter_ready_ || qlimit_auto_ready_)
       converged_this_iter_ = max_mis <= tol
       violation_guard_active = qlimit_guard_violation_mode == :lock_pq
       qlimit_check_active_ = qlimit_ready_ && (!converged_this_iter_ || violation_guard_active)
@@ -2059,7 +2065,7 @@ function run_complex_nr_rectangular_for_net!(
         end
         for bus in qlimit_trace_internal
           bus <= nb || continue
-          qreq = bus_types[bus] in (:PV, :Slack) ? imag(Scalc_pu[bus]) + Qload_pu[bus] : NaN
+          qreq = bus_types[bus] in (:PV, :Slack) ? imag(Scalc_pu[bus]) + workspace.qload_pu[bus] : NaN
           _print_rectangular_qlimit_trace(
             stdout,
             net,
@@ -2090,41 +2096,44 @@ function run_complex_nr_rectangular_for_net!(
     if qlimit_check_active
       changed, reenabled = _perf_profile_time!(performance_profile, :iteration_qlimit_active_set) do
         active_set_q_limits!(
-        net,
-        it,
-        nb;
-        qmin_pu = qmin_pu,
-        qmax_pu = qmax_pu,
-        pv_orig_mask = pv_orig_mask,
-        allow_reenable = qlimit_mode == :switch_to_pq ? allow_reenable : false,
-        q_hyst_pu = q_hyst_pu,
-        cooldown_iters = cooldown_iters,
-        lock_pv_to_pq_buses = lock_pv_to_pq_buses,
-        on_violation! = qlimit_mode == :adjust_vset ? ((bus, qreq, side, qclamp) -> _try_adjust_vset_on_q_limit!(net, bus, side, it, controllers, base_vset, Vset, adjust_counter, qlimit_max_outer, verbose)) : nothing,
-        verbose = verbose,
-        get_qreq_pu = bus -> begin
-          (bus_types[bus] == :Slack) && return 0.0
-          return imag(Scalc_pu[bus]) + Qload_pu[bus]
-        end,
-        is_pv = bus -> (bus_types[bus] == :PV),
-        make_pq! = (bus, qclamp_gen_pu, side) -> begin
-          bus_types[bus] = :PQ
-          qinj_pu = qclamp_gen_pu - Qload_pu[bus]
-          S[bus] = ComplexF64(real(S[bus]), qinj_pu)
-          net.nodeVec[bus]._qƩGen = qclamp_gen_pu * net.baseMVA
-        end,
-        make_pv! = (bus) -> begin
-          bus_types[bus] = :PV
-        end,
-        qlimit_guard_max_switches = qlimit_guard_max_switches,
-        qlimit_guard_freeze_after_repeated_switching = qlimit_guard_freeze_after_repeated_switching,
-        qlimit_guard_violation_mode = qlimit_guard_violation_mode,
-        qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu,
+          net,
+          it,
+          nb;
+          qmin_pu = qmin_pu,
+          qmax_pu = qmax_pu,
+          pv_orig_mask = pv_orig_mask,
+          allow_reenable = qlimit_mode == :switch_to_pq ? allow_reenable : false,
+          q_hyst_pu = q_hyst_pu,
+          cooldown_iters = cooldown_iters,
+          lock_pv_to_pq_buses = lock_pv_to_pq_buses,
+          on_violation! = qlimit_mode == :adjust_vset ? ((bus, qreq, side, qclamp) -> _try_adjust_vset_on_q_limit!(net, bus, side, it, controllers, base_vset, Vset, adjust_counter, qlimit_max_outer, verbose)) : nothing,
+          verbose = verbose,
+          get_qreq_pu = bus -> begin
+            (bus_types[bus] == :Slack) && return 0.0
+            return imag(Scalc_pu[bus]) + workspace.qload_pu[bus]
+          end,
+          is_pv = bus -> (bus_types[bus] == :PV),
+          make_pq! = (bus, qclamp_gen_pu, side) -> begin
+            bus_types[bus] = :PQ
+            qinj_pu = qclamp_gen_pu - workspace.qload_pu[bus]
+            S[bus] = ComplexF64(real(S[bus]), qinj_pu)
+            net.nodeVec[bus]._qƩGen = qclamp_gen_pu * net.baseMVA
+          end,
+          make_pv! = (bus) -> begin
+            bus_types[bus] = :PV
+          end,
+          qlimit_guard_max_switches = qlimit_guard_max_switches,
+          qlimit_guard_freeze_after_repeated_switching = qlimit_guard_freeze_after_repeated_switching,
+          qlimit_guard_violation_mode = qlimit_guard_violation_mode,
+          qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu,
+          lock_mask_buffer = workspace.lock_mask,
         )
       end
 
       # If bus_types/spec changed, mismatch definition changed (ΔQ ↔ ΔV) => rebuild F
       if changed || reenabled
+        changed && (qlimit_active_set_changes += 1)
+        reenabled && (qlimit_reenable_events += 1)
         F = _perf_profile_time!(performance_profile, :iteration_mismatch_after_qlimit) do
           mismatch_rectangular(Ybus, V, S, bus_types, Vset, slack_idx)
         end
@@ -2137,17 +2146,11 @@ function run_complex_nr_rectangular_for_net!(
       rejection_reason = :none
       break
     end
-    prev_pv_qreq_pu = current_pv_qreq_pu
+    copyto!(workspace.prev_pv_qreq_pu, current_pv_qreq_pu)
     # --- Newton step (FD or analytic) -----------------------------------
     try
-      if use_fd
-        V = _perf_profile_time!(performance_profile, :iteration_newton_step_fd) do
-          complex_newton_step_rectangular_fd(Ybus, V, S; slack_idx = slack_idx, damp = damp, autodamp = autodamp, autodamp_min = autodamp_min, h = 1e-6, bus_types = bus_types, Vset = Vset, dPinj_dVm = dPinj_dVm, dQinj_dVm = dQinj_dVm)
-        end
-      else
-        V = _perf_profile_time!(performance_profile, :iteration_newton_step) do
-          complex_newton_step_rectangular(Ybus, V, S; slack_idx = slack_idx, damp = damp, autodamp = autodamp, autodamp_min = autodamp_min, bus_types = bus_types, Vset = Vset, use_sparse = sparse, dPinj_dVm = dPinj_dVm, dQinj_dVm = dQinj_dVm, performance_profile = performance_profile)
-        end
+      V = _perf_profile_time!(performance_profile, :iteration_newton_step) do
+        complex_newton_step_rectangular(Ybus, V, S; slack_idx = slack_idx, damp = damp, autodamp = autodamp, autodamp_min = autodamp_min, bus_types = bus_types, Vset = Vset, dPinj_dVm = dPinj_dVm, dQinj_dVm = dQinj_dVm, performance_profile = performance_profile)
       end
     catch step_error
       if _is_rectangular_linear_step_failure(step_error)
@@ -2281,24 +2284,32 @@ function run_complex_nr_rectangular_for_net!(
       converged_ = false
     end
     final_reason_ = converged_ ? :none : rejection_reason_
+    if final_reason_ == :nr_mismatch_not_converged && qlimit_active_set_changes >= 3
+      final_reason_ = :nr_mismatch_not_converged_active_set_unstable
+    end
     final_status_ = _rectangular_solver_status_symbol(numerical_converged, q_limit_active_set_ok_, converged_, final_reason_)
-    status_ = _set_rectangular_pf_status!(net, (
-      numerical_converged = numerical_converged,
-      nr_converged = numerical_converged,
-      active_set_converged = q_limit_active_set_ok_,
-      q_limit_active_set_ok = q_limit_active_set_ok_,
-      final_converged = converged_,
-      status = final_status_,
-      reason = final_reason_,
-      reason_text = _rectangular_rejection_reason_text(final_reason_),
-      pv_q_limit_violations = isnothing(qlimit_summary) ? 0 : qlimit_summary.pv_violations,
-      ref_q_limit_violations = isnothing(qlimit_summary) ? 0 : qlimit_summary.ref_violations,
-      final_pv_voltage_residual = final_pv_voltage_residual,
-      final_mismatch = isempty(history) ? Inf : history[end],
-      pv_pq_switching_events = length(net.qLimitLog),
-      oscillating_buses = oscillating_buses_,
-      guarded_narrow_q_pv_buses = length(guarded_qlimit_buses),
-    ))
+    status_ = _set_rectangular_pf_status!(
+      net,
+      (
+        numerical_converged = numerical_converged,
+        nr_converged = numerical_converged,
+        active_set_converged = q_limit_active_set_ok_,
+        q_limit_active_set_ok = q_limit_active_set_ok_,
+        final_converged = converged_,
+        status = final_status_,
+        reason = final_reason_,
+        reason_text = _rectangular_rejection_reason_text(final_reason_),
+        pv_q_limit_violations = isnothing(qlimit_summary) ? 0 : qlimit_summary.pv_violations,
+        ref_q_limit_violations = isnothing(qlimit_summary) ? 0 : qlimit_summary.ref_violations,
+        final_pv_voltage_residual = final_pv_voltage_residual,
+        final_mismatch = isempty(history) ? Inf : history[end],
+        pv_pq_switching_events = length(net.qLimitLog),
+        qlimit_active_set_changes = qlimit_active_set_changes,
+        qlimit_reenable_events = qlimit_reenable_events,
+        oscillating_buses = oscillating_buses_,
+        guarded_narrow_q_pv_buses = length(guarded_qlimit_buses),
+      ),
+    )
     (switch_counts_, oscillating_buses_, max_switching_exceeded_, q_limit_active_set_ok_, converged_, rejection_reason_, final_reason_, final_status_, status_)
   end
   if verbose > 0 || (numerical_converged && !q_limit_active_set_ok)
@@ -2323,8 +2334,7 @@ function runpf_rectangular!(
   maxIte::Int,
   tolerance::Float64 = 1e-6,
   verbose::Int = 0;
-  opt_fd::Bool = false,
-  opt_sparse::Bool = true,
+
   damp = 1.0,
   autodamp::Bool = false,
   autodamp_min::Float64 = 1e-3,
@@ -2357,6 +2367,9 @@ function runpf_rectangular!(
   qlimit_guard_freeze_after_repeated_switching::Bool = true,
   qlimit_guard_violation_mode::Symbol = :delayed_switch,
   qlimit_guard_violation_threshold_pu::Float64 = 1e-4,
+  rectangular_workspace_reuse::Bool = true,
+  rectangular_preallocate_workspace::Symbol = :auto,
+  rectangular_workspace_min_buses::Int = 1000,
   performance_profile = nothing,
 )
   iters, erg = run_complex_nr_rectangular_for_net!(
@@ -2367,8 +2380,6 @@ function runpf_rectangular!(
     autodamp = autodamp,
     autodamp_min = autodamp_min,
     verbose = verbose,
-    use_fd = opt_fd,
-    opt_sparse = opt_sparse,
     opt_flatstart = opt_flatstart,
     pv_table_rows = pv_table_rows,
     lock_pv_to_pq_buses = lock_pv_to_pq_buses,
@@ -2398,6 +2409,9 @@ function runpf_rectangular!(
     qlimit_guard_freeze_after_repeated_switching = qlimit_guard_freeze_after_repeated_switching,
     qlimit_guard_violation_mode = qlimit_guard_violation_mode,
     qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu,
+    rectangular_workspace_reuse = rectangular_workspace_reuse,
+    rectangular_preallocate_workspace = rectangular_preallocate_workspace,
+    rectangular_workspace_min_buses = rectangular_workspace_min_buses,
     performance_profile = performance_profile,
   )
   return iters, erg
@@ -2535,7 +2549,7 @@ Arguments:
 - `maxIte::Int`: maximum iterations
 - `tolerance::Float64`: mismatch tolerance
 - `verbose::Int`: verbosity level
-- `method::Symbol`: `:rectangular` (recommended), `:polar_full` (deprecated), or `:classic` (deprecated)
+- `method::Symbol`: must be `:rectangular`
 - `autodamp::Bool`: enable residual-based backtracking for rectangular Newton steps
 - `autodamp_min::Float64`: minimum automatic damping factor when `autodamp = true`
 - `qlimit_start_iter::Int`: first Newton iteration where PV→PQ Q-limit switching may run in `:iteration` mode
@@ -2544,22 +2558,95 @@ Arguments:
 
 Notes:
 - Link-flow recovery (`calcLinkFlowsKCL!`) is method-agnostic and uses solved PF results.
-- If active-link merges create internal isolated buses, `:rectangular` currently falls
-  back to `:polar_full` for robustness.
+- If active-link merges create internal isolated buses, the rectangular sparse
+  solver remains the only supported PF path; there is no polar fallback.
 
 Returns:
     (iterations::Int, status::Int)
 
 where `status == 0` indicates convergence.
 """
+function _runpf_with_config!(net::Net, config::PowerFlowConfig; verbose::Int = 0, damp = 1.0, pv_table_rows::Int = 30, validate_limits_after_pf::Bool = false, q_limit_violation_headroom::Float64 = 0.0, qlimit_lock_reason::Symbol = :manual, performance_profile = nothing)
+  start = config.start_mode
+  qlim = config.qlimits
+  return runpf!(
+    net,
+    config.max_iter,
+    config.tol,
+    verbose;
+    method = config.method,
+    opt_flatstart = start.flatstart,
+    damp = damp,
+    autodamp = config.autodamp,
+    autodamp_min = config.autodamp_min,
+    pv_table_rows = pv_table_rows,
+    validate_limits_after_pf = validate_limits_after_pf,
+    q_limit_violation_headroom = q_limit_violation_headroom,
+    lock_pv_to_pq_buses = qlim.lock_pv_to_pq_buses,
+    start_projection = start.start_projection,
+    start_projection_try_dc_start = start.try_dc_start,
+    start_projection_try_blend_scan = start.try_blend_scan,
+    start_projection_branch_guard = start.branch_guard,
+    start_projection_measure_candidates = start.measure_candidates,
+    start_projection_accept_unmeasured_dc_start = start.accept_unmeasured_dc_start,
+    start_projection_blend_lambdas = start.blend_lambdas,
+    start_projection_dc_angle_limit_deg = start.dc_angle_limit_deg,
+    qlimit_start_iter = qlim.start_iter,
+    qlimit_start_mode = qlim.start_mode,
+    qlimit_auto_q_delta_pu = qlim.auto_q_delta_pu,
+    qlimit_trace_buses = qlim.trace_buses,
+    qlimit_lock_reason = qlimit_lock_reason,
+    qlimit_guard = qlim.guard,
+    qlimit_guard_min_q_range_pu = qlim.guard_min_q_range_pu,
+    qlimit_guard_zero_range_mode = qlim.guard_zero_range_mode,
+    qlimit_guard_narrow_range_mode = qlim.guard_narrow_range_mode,
+    qlimit_guard_log = qlim.guard_log,
+    qlimit_guard_max_switches = qlim.guard_max_switches,
+    qlimit_guard_accept_bounded_violations = qlim.guard_accept_bounded_violations,
+    qlimit_guard_max_remaining_violations = qlim.guard_max_remaining_violations,
+    qlimit_guard_freeze_after_repeated_switching = qlim.guard_freeze_after_repeated_switching,
+    qlimit_guard_violation_mode = qlim.guard_violation_mode,
+    qlimit_guard_violation_threshold_pu = qlim.guard_violation_threshold_pu,
+    rectangular_workspace_reuse = config.rectangular_workspace_reuse,
+    rectangular_preallocate_workspace = config.rectangular_preallocate_workspace,
+    rectangular_workspace_min_buses = config.rectangular_workspace_min_buses,
+    performance_profile = performance_profile,
+  )
+end
+
+runpf!(net::Net, config::PowerFlowConfig; kwargs...) = _runpf_with_config!(net, config; kwargs...)
+runpf!(net::Net, config::SparlectraConfig; kwargs...) = _runpf_with_config!(net, config.powerflow; kwargs...)
+
+function runpf!(net::Net; config::Union{Nothing,PowerFlowConfig,SparlectraConfig} = nothing, kwargs...)
+  runtime_keys = Set((:verbose, :damp, :pv_table_rows, :validate_limits_after_pf, :q_limit_violation_headroom, :qlimit_lock_reason, :performance_profile))
+  cfg0 = config === nothing ? powerflow_config() : (config isa SparlectraConfig ? config.powerflow : config)
+  if !isempty(kwargs)
+    raw = Dict{String,Any}(String(k) => v for (k, v) in pairs(kwargs))
+    if all(k -> k in runtime_keys, keys(kwargs))
+      return _runpf_with_config!(
+        net,
+        cfg0;
+        verbose = Int(get(raw, "verbose", 0)),
+        damp = get(raw, "damp", 1.0),
+        pv_table_rows = Int(get(raw, "pv_table_rows", 30)),
+        validate_limits_after_pf = Bool(get(raw, "validate_limits_after_pf", false)),
+        q_limit_violation_headroom = Float64(get(raw, "q_limit_violation_headroom", 0.0)),
+        qlimit_lock_reason = Symbol(get(raw, "qlimit_lock_reason", :manual)),
+        performance_profile = get(raw, "performance_profile", nothing),
+      )
+    else
+      throw(ArgumentError("runpf!: solver options must be supplied through PowerFlowConfig or set_sparlectra_config!; only runtime keywords $(collect(runtime_keys)) are accepted."))
+    end
+  end
+  return _runpf_with_config!(net, cfg0)
+end
+
 function runpf!(
   net::Net,
   maxIte::Int,
   tolerance::Float64 = 1e-6,
   verbose::Int = 0;
   method::Symbol = :rectangular,
-  opt_fd::Bool = false,
-  opt_sparse::Bool = true,
   opt_flatstart::Bool = net.flatstart,
   damp = 1.0,
   autodamp::Bool = false,
@@ -2594,8 +2681,12 @@ function runpf!(
   qlimit_guard_freeze_after_repeated_switching::Bool = true,
   qlimit_guard_violation_mode::Symbol = :delayed_switch,
   qlimit_guard_violation_threshold_pu::Float64 = 1e-4,
+  rectangular_workspace_reuse::Bool = true,
+  rectangular_preallocate_workspace::Symbol = :auto,
+  rectangular_workspace_min_buses::Int = 1000,
   performance_profile = nothing,
 )
+  _validate_rectangular_powerflow_options(method = method, sparse = true)
   wnet, reps, has_merges = _merged_pf_net(net)
   refreshBusTypesFromProsumers!(wnet)
   has_vdep_control = has_voltage_dependent_control(wnet)
@@ -2609,29 +2700,94 @@ function runpf!(
     updateShuntPowers!(net = net)
   end
 
-  #@info "Running AC Power Flow using method: $(method)"
-  if method === :polar_full
-    has_vdep_control && error("runpf!: voltage-dependent injections, including P(U)/Q(U) controllers and bus_shunt_model=voltage_dependent_injection, are currently supported only for method=:rectangular.")
-    if qlimit_mode != :switch_to_pq
-      @warn "runpf!: qlimit_mode=$(qlimit_mode) is only supported for method=:rectangular. Falling back to :switch_to_pq behavior."
-    end
-    iters, erg = runpf_full!(wnet, maxIte, tolerance, verbose; opt_sparse = opt_sparse, opt_flatstart = opt_flatstart, pv_table_rows = pv_table_rows, lock_pv_to_pq_buses = lock_pv_to_pq_buses, warn_deprecated = true)
-    if erg == 0 && has_merges
-      _sync_merged_results_to_original!()
-    end
-    if validate_limits_after_pf && (verbose > 0)
-      printFinalLimitValidation(has_merges ? net : wnet; q_headroom = q_limit_violation_headroom)
-    end
-    return iters, erg
-  elseif method === :rectangular
+  if method === :rectangular
     if has_merges
       has_vdep_control && error("runpf!: voltage-dependent injections, including P(U)/Q(U) controllers and bus_shunt_model=voltage_dependent_injection, are not supported with active-link merge handling in rectangular mode. Disable merges or use a topology without internal isolated buses.")
-      if verbose > 0
-        @warn "runpf!: rectangular solver detected internal Isolated buses from active-link merges; using rectangular FD fallback instead of :polar_full"
-      end
-      iters, erg = runpf_rectangular!(wnet, maxIte, tolerance, verbose; opt_fd = true, opt_sparse = opt_sparse, damp = damp, autodamp = autodamp, autodamp_min = autodamp_min, opt_flatstart = opt_flatstart, pv_table_rows = pv_table_rows, lock_pv_to_pq_buses = lock_pv_to_pq_buses, qlimit_mode = qlimit_mode, qlimit_max_outer = qlimit_max_outer, start_projection = start_projection, start_projection_try_dc_start = start_projection_try_dc_start, start_projection_try_blend_scan = start_projection_try_blend_scan, start_projection_branch_guard = start_projection_branch_guard, start_projection_measure_candidates = start_projection_measure_candidates, start_projection_accept_unmeasured_dc_start = start_projection_accept_unmeasured_dc_start, start_projection_blend_lambdas = start_projection_blend_lambdas, start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg, qlimit_start_iter = qlimit_start_iter, qlimit_start_mode = qlimit_start_mode, qlimit_auto_q_delta_pu = qlimit_auto_q_delta_pu, qlimit_trace_buses = qlimit_trace_buses, qlimit_lock_reason = qlimit_lock_reason, qlimit_guard = qlimit_guard, qlimit_guard_min_q_range_pu = qlimit_guard_min_q_range_pu, qlimit_guard_zero_range_mode = qlimit_guard_zero_range_mode, qlimit_guard_narrow_range_mode = qlimit_guard_narrow_range_mode, qlimit_guard_log = qlimit_guard_log, qlimit_guard_max_switches = qlimit_guard_max_switches, qlimit_guard_accept_bounded_violations = qlimit_guard_accept_bounded_violations, qlimit_guard_max_remaining_violations = qlimit_guard_max_remaining_violations, qlimit_guard_freeze_after_repeated_switching = qlimit_guard_freeze_after_repeated_switching, qlimit_guard_violation_mode = qlimit_guard_violation_mode, qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu, performance_profile = performance_profile)
+      iters, erg = runpf_rectangular!(
+        wnet,
+        maxIte,
+        tolerance,
+        verbose;
+        damp = damp,
+        autodamp = autodamp,
+        autodamp_min = autodamp_min,
+        opt_flatstart = opt_flatstart,
+        pv_table_rows = pv_table_rows,
+        lock_pv_to_pq_buses = lock_pv_to_pq_buses,
+        qlimit_mode = qlimit_mode,
+        qlimit_max_outer = qlimit_max_outer,
+        start_projection = start_projection,
+        start_projection_try_dc_start = start_projection_try_dc_start,
+        start_projection_try_blend_scan = start_projection_try_blend_scan,
+        start_projection_branch_guard = start_projection_branch_guard,
+        start_projection_measure_candidates = start_projection_measure_candidates,
+        start_projection_accept_unmeasured_dc_start = start_projection_accept_unmeasured_dc_start,
+        start_projection_blend_lambdas = start_projection_blend_lambdas,
+        start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg,
+        qlimit_start_iter = qlimit_start_iter,
+        qlimit_start_mode = qlimit_start_mode,
+        qlimit_auto_q_delta_pu = qlimit_auto_q_delta_pu,
+        qlimit_trace_buses = qlimit_trace_buses,
+        qlimit_lock_reason = qlimit_lock_reason,
+        qlimit_guard = qlimit_guard,
+        qlimit_guard_min_q_range_pu = qlimit_guard_min_q_range_pu,
+        qlimit_guard_zero_range_mode = qlimit_guard_zero_range_mode,
+        qlimit_guard_narrow_range_mode = qlimit_guard_narrow_range_mode,
+        qlimit_guard_log = qlimit_guard_log,
+        qlimit_guard_max_switches = qlimit_guard_max_switches,
+        qlimit_guard_accept_bounded_violations = qlimit_guard_accept_bounded_violations,
+        qlimit_guard_max_remaining_violations = qlimit_guard_max_remaining_violations,
+        qlimit_guard_freeze_after_repeated_switching = qlimit_guard_freeze_after_repeated_switching,
+        qlimit_guard_violation_mode = qlimit_guard_violation_mode,
+        qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu,
+        rectangular_workspace_reuse = rectangular_workspace_reuse,
+        rectangular_preallocate_workspace = rectangular_preallocate_workspace,
+        rectangular_workspace_min_buses = rectangular_workspace_min_buses,
+        performance_profile = performance_profile,
+      )
     else
-      iters, erg = runpf_rectangular!(wnet, maxIte, tolerance, verbose; opt_fd = opt_fd, opt_sparse = opt_sparse, damp = damp, autodamp = autodamp, autodamp_min = autodamp_min, opt_flatstart = opt_flatstart, pv_table_rows = pv_table_rows, lock_pv_to_pq_buses = lock_pv_to_pq_buses, qlimit_mode = qlimit_mode, qlimit_max_outer = qlimit_max_outer, start_projection = start_projection, start_projection_try_dc_start = start_projection_try_dc_start, start_projection_try_blend_scan = start_projection_try_blend_scan, start_projection_branch_guard = start_projection_branch_guard, start_projection_measure_candidates = start_projection_measure_candidates, start_projection_accept_unmeasured_dc_start = start_projection_accept_unmeasured_dc_start, start_projection_blend_lambdas = start_projection_blend_lambdas, start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg, qlimit_start_iter = qlimit_start_iter, qlimit_start_mode = qlimit_start_mode, qlimit_auto_q_delta_pu = qlimit_auto_q_delta_pu, qlimit_trace_buses = qlimit_trace_buses, qlimit_lock_reason = qlimit_lock_reason, qlimit_guard = qlimit_guard, qlimit_guard_min_q_range_pu = qlimit_guard_min_q_range_pu, qlimit_guard_zero_range_mode = qlimit_guard_zero_range_mode, qlimit_guard_narrow_range_mode = qlimit_guard_narrow_range_mode, qlimit_guard_log = qlimit_guard_log, qlimit_guard_max_switches = qlimit_guard_max_switches, qlimit_guard_accept_bounded_violations = qlimit_guard_accept_bounded_violations, qlimit_guard_max_remaining_violations = qlimit_guard_max_remaining_violations, qlimit_guard_freeze_after_repeated_switching = qlimit_guard_freeze_after_repeated_switching, qlimit_guard_violation_mode = qlimit_guard_violation_mode, qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu, performance_profile = performance_profile)
+      iters, erg = runpf_rectangular!(
+        wnet,
+        maxIte,
+        tolerance,
+        verbose;
+        damp = damp,
+        autodamp = autodamp,
+        autodamp_min = autodamp_min,
+        opt_flatstart = opt_flatstart,
+        pv_table_rows = pv_table_rows,
+        lock_pv_to_pq_buses = lock_pv_to_pq_buses,
+        qlimit_mode = qlimit_mode,
+        qlimit_max_outer = qlimit_max_outer,
+        start_projection = start_projection,
+        start_projection_try_dc_start = start_projection_try_dc_start,
+        start_projection_try_blend_scan = start_projection_try_blend_scan,
+        start_projection_branch_guard = start_projection_branch_guard,
+        start_projection_measure_candidates = start_projection_measure_candidates,
+        start_projection_accept_unmeasured_dc_start = start_projection_accept_unmeasured_dc_start,
+        start_projection_blend_lambdas = start_projection_blend_lambdas,
+        start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg,
+        qlimit_start_iter = qlimit_start_iter,
+        qlimit_start_mode = qlimit_start_mode,
+        qlimit_auto_q_delta_pu = qlimit_auto_q_delta_pu,
+        qlimit_trace_buses = qlimit_trace_buses,
+        qlimit_lock_reason = qlimit_lock_reason,
+        qlimit_guard = qlimit_guard,
+        qlimit_guard_min_q_range_pu = qlimit_guard_min_q_range_pu,
+        qlimit_guard_zero_range_mode = qlimit_guard_zero_range_mode,
+        qlimit_guard_narrow_range_mode = qlimit_guard_narrow_range_mode,
+        qlimit_guard_log = qlimit_guard_log,
+        qlimit_guard_max_switches = qlimit_guard_max_switches,
+        qlimit_guard_accept_bounded_violations = qlimit_guard_accept_bounded_violations,
+        qlimit_guard_max_remaining_violations = qlimit_guard_max_remaining_violations,
+        qlimit_guard_freeze_after_repeated_switching = qlimit_guard_freeze_after_repeated_switching,
+        qlimit_guard_violation_mode = qlimit_guard_violation_mode,
+        qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu,
+        rectangular_workspace_reuse = rectangular_workspace_reuse,
+        rectangular_preallocate_workspace = rectangular_preallocate_workspace,
+        rectangular_workspace_min_buses = rectangular_workspace_min_buses,
+        performance_profile = performance_profile,
+      )
     end
     rect_status = rectangular_pf_status(wnet)
     if rect_status !== nothing
@@ -2644,20 +2800,7 @@ function runpf!(
       printFinalLimitValidation(has_merges ? net : wnet; q_headroom = q_limit_violation_headroom)
     end
     return iters, erg
-  elseif method === :classic
-    has_vdep_control && error("runpf!: voltage-dependent injections, including P(U)/Q(U) controllers and bus_shunt_model=voltage_dependent_injection, are currently supported only for method=:rectangular.")
-    if qlimit_mode != :switch_to_pq
-      @warn "runpf!: qlimit_mode=$(qlimit_mode) is only supported for method=:rectangular. Falling back to :switch_to_pq behavior."
-    end
-    iters, erg = runpf_classic!(wnet, maxIte, tolerance, verbose, opt_sparse, opt_flatstart)
-    if erg == 0 && has_merges
-      _sync_merged_results_to_original!()
-    end
-    if validate_limits_after_pf && (verbose > 0)
-      printFinalLimitValidation(has_merges ? net : wnet; q_headroom = q_limit_violation_headroom)
-    end
-    return iters, erg
   else
-    error("runpf!: unknown method $(method). Use :rectangular (recommended), :polar_full (deprecated), or :classic (deprecated).")
+    throw(ArgumentError(unsupported_powerflow_method_message(method)))
   end
 end

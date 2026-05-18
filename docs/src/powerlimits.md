@@ -205,7 +205,7 @@ In addition to the default `:switch_to_pq` behavior, Sparlectra supports a
 controller-based strategy for the **rectangular** solver:
 
 ```julia
-runpf!(net, 40, 1e-8, 1; method = :rectangular, qlimit_mode = :adjust_vset)
+runpf!(net, 40, 1e-8, 1; qlimit_mode = :adjust_vset)
 ```
 
 ### What it does
@@ -229,6 +229,5 @@ exhausted), Sparlectra falls back to standard PV→PQ switching.
 
 ### Important scope note
 
-`qlimit_mode = :adjust_vset` is currently only supported with
-`method = :rectangular`. For other methods, Sparlectra warns and uses
-`:switch_to_pq` behavior.
+`qlimit_mode = :adjust_vset` is currently supported on the rectangular solver
+path.

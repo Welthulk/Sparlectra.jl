@@ -18,7 +18,7 @@
 # (`addVmMeasurement!`, `addPinjMeasurement!`, ...) to build a measurement
 # vector without manual `Measurement(...)` construction.
 
-# file: src/examples/state_estimation_manual_measurements.jl
+# file: examples/state_estimation_manual_measurements.jl
 
 using Sparlectra
 using Printf
@@ -46,21 +46,11 @@ function build_manual_measurement_example_net()
 end
 
 function build_manual_measurements(net::Net; rng::AbstractRNG = MersenneTwister(42))
-  ite_pf, status_pf = runpf!(net, 40, 1e-10, 0; method = :rectangular, opt_sparse = true)
+  ite_pf, status_pf = runpf!(net, 40, 1e-10, 0; method = :rectangular)
   status_pf == 0 || error("Power flow did not converge")
 
   std = measurementStdDevs(vm = 1e-3, pinj = 0.8, qinj = 0.8, pflow = 0.5, qflow = 0.5)
-  synthetic = generateMeasurementsFromPF(
-    net;
-    includeVm = true,
-    includePinj = true,
-    includeQinj = true,
-    includePflow = true,
-    includeQflow = true,
-    noise = true,
-    stddev = std,
-    rng = rng,
-  )
+  synthetic = generateMeasurementsFromPF(net; includeVm = true, includePinj = true, includeQinj = true, includePflow = true, includeQflow = true, noise = true, stddev = std, rng = rng)
 
   function pick_measurement(typ::Sparlectra.MeasurementType; busIdx::Union{Nothing,Int} = nothing, branchIdx::Union{Nothing,Int} = nothing, direction::Symbol = :none)
     idx = findfirst(i -> begin
@@ -101,7 +91,7 @@ function reset_to_flatstart!(net::Net)
   return nothing
 end
 
-function run_manual_measurement_example()
+function main()
   net = build_manual_measurement_example_net()
   ite_pf = build_manual_measurements(net)
   reset_to_flatstart!(net)
@@ -133,4 +123,6 @@ function run_manual_measurement_example()
   return se
 end
 
-run_manual_measurement_example()
+if get(ENV, "SPARLECTRA_MANUAL_MEASURMENT_EXAMPLE", "0") != "1"
+  Base.invokelatest(getfield(@__MODULE__, :main))
+end
