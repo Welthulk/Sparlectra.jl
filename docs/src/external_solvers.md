@@ -147,7 +147,7 @@ to avoid global display side effects.
 See:
 
 ```
-src/examples/export_solution.jl
+examples/export_solution.jl
 ```
 
 This example:

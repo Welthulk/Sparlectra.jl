@@ -17,7 +17,7 @@
 # This script progressively deactivates branch-flow measurements and logs
 # global/local redundancy metrics and warnings when local observability is lost.
 
-# file: src/examples/state_estimation_observability.jl
+# file: examples/state_estimation_observability.jl
 
 using Sparlectra
 using Printf

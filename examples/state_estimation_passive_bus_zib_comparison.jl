@@ -14,7 +14,7 @@
 #
 # Example: compare state estimation with and without ZIB (zero-injection bus)
 
-# file: src/examples/state_estimation_passive_bus_zib_comparison.jl
+# file: examples/state_estimation_passive_bus_zib_comparison.jl
 
 using Sparlectra
 using Printf

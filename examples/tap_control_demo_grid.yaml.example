@@ -2,16 +2,16 @@
 #
 # Usage options:
 #   1) Default lookup (auto):
-#      - script first checks: src/examples/tap_control_demo_grid.yaml
+#      - script first checks: examples/tap_control_demo_grid.yaml
 #      - if not found, it loads this example file
 #   2) Explicit path argument:
-#      julia --project=. src/examples/tap_control_demo_grid.jl path/to/custom.yaml
+#      julia --project=. examples/tap_control_demo_grid.jl path/to/custom.yaml
 #   3) Environment variable:
-#      SPARLECTRA_TAP_DEMO_YAML=path/to/custom.yaml julia --project=. src/examples/tap_control_demo_grid.jl
+#      SPARLECTRA_TAP_DEMO_YAML=path/to/custom.yaml julia --project=. examples/tap_control_demo_grid.jl
 #
 # Recommended local workflow (git-clean):
-#   cp src/examples/tap_control_demo_grid.yaml.example src/examples/tap_control_demo_grid.yaml
-#   # edit src/examples/tap_control_demo_grid.yaml (this file is git-ignored)
+#   cp examples/tap_control_demo_grid.yaml.example examples/tap_control_demo_grid.yaml
+#   # edit examples/tap_control_demo_grid.yaml (this file is git-ignored)
 
 # Solver options
 max_ite: 40

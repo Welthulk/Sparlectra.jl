@@ -90,17 +90,15 @@ function run_pv_voltage_residual_tests()
     end
 
     @testset "solver paths converge with PV voltage setpoint" begin
-      for (method, kwargs) in [
-        (:rectangular, (; opt_sparse = true)),
-        (:rectangular, (; opt_fd = true, opt_sparse = true)),
-        (:polar_full, (; opt_sparse = true)),
-        (:classic, (; opt_sparse = true)),
-      ]
-        net = _create_pv_voltage_regression_net(vset = vset)
-        _, erg = runpf!(net, 40, 1e-9, 0; method = method, kwargs...)
-        @test erg == 0
-        @test isapprox(net.nodeVec[3]._vm_pu, vset; atol = 1e-7)
-        @test getNodeType(net.nodeVec[3]) == Sparlectra.PV
+      net = _create_pv_voltage_regression_net(vset = vset)
+      _, erg = runpf!(net, 40, 1e-9, 0; method = :rectangular, opt_sparse = true)
+      @test erg == 0
+      @test isapprox(net.nodeVec[3]._vm_pu, vset; atol = 1e-7)
+      @test getNodeType(net.nodeVec[3]) == Sparlectra.PV
+
+      for kwargs in ((; method = :polar_full), (; method = :classic), (; method = :polar), (; method = :rectangular, opt_sparse = false))
+        unsupported_net = _create_pv_voltage_regression_net(vset = vset)
+        @test_throws ArgumentError runpf!(unsupported_net, 40, 1e-9, 0; kwargs...)
       end
     end
 

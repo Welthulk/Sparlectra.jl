@@ -1,6 +1,8 @@
 using Sparlectra
 using Printf
 using Dates
+Base.include(@__MODULE__, "example_utils.jl")
+using .ExampleUtils
 
 const DEFAULT_CFG = Dict{String,Any}(
   "max_ite" => 40,
@@ -38,59 +40,11 @@ const DEFAULT_CFG = Dict{String,Any}(
   "st1_voltage_error_metric" => "vm",
 )
 
-# -----------------------------------------------------------------------------
-# YAML config helpers (simple subset)
-# -----------------------------------------------------------------------------
-function _parse_yaml_scalar(raw::AbstractString)
-  s = strip(raw)
-  isempty(s) && return nothing
-
-  if (startswith(s, "\"") && endswith(s, "\"")) || (startswith(s, "'") && endswith(s, "'"))
-    return s[2:end-1]
-  end
-
-  ls = lowercase(s)
-  ls == "true" && return true
-  ls == "false" && return false
-  ls == "null" && return nothing
-
-  iv = tryparse(Int, s)
-  !isnothing(iv) && return iv
-  fv = tryparse(Float64, s)
-  !isnothing(fv) && return fv
-  return s
-end
-
-function load_yaml_config(path::AbstractString)
-  isempty(path) && return Dict{String,Any}()
-  isfile(path) || error("YAML config file not found: $path")
-
-  cfg = Dict{String,Any}()
-  for line in eachline(path)
-    stripped = strip(line)
-    isempty(stripped) && continue
-    startswith(stripped, "#") && continue
-    occursin(":", stripped) || continue
-
-    key, value_raw = split(stripped, ":"; limit = 2)
-    key = strip(key)
-    value_raw = strip(split(value_raw, "#"; limit = 2)[1])
-    cfg[key] = _parse_yaml_scalar(value_raw)
-  end
-  return cfg
-end
-
 function _yaml_path_from_inputs()
-  !isempty(ARGS) && return ARGS[1]
-  env_path = get(ENV, "SPARLECTRA_TAP_DEMO_YAML", "")
-  !isempty(env_path) && return env_path
-
-  local_default = joinpath(@__DIR__, "tap_control_demo_grid.yaml")
-  isfile(local_default) && return local_default
-
-  local_example = joinpath(@__DIR__, "tap_control_demo_grid.yaml.example")
-  isfile(local_example) && return local_example
-  return ""
+  return ExampleUtils.yaml_path_from_inputs(;
+    env_var = "SPARLECTRA_TAP_DEMO_YAML",
+    fallback_paths = [joinpath(@__DIR__, "tap_control_demo_grid.yaml"), joinpath(@__DIR__, "tap_control_demo_grid.yaml.example")],
+  )
 end
 
 function _cfg_value(cfg::Dict{String,Any}, key::String)

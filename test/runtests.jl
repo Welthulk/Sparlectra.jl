@@ -39,6 +39,8 @@ include("test_tap_controller.jl")
 include("test_synthetic_grids.jl")
 include("test_matpower_example.jl")
 include("test_pv_voltage_residuals.jl")
+include("test_configuration_docs.jl")
+include("test_configuration_coverage.jl")
 
 function _print_test_progress(step::Int, total::Int, label::String)
   width = 30
@@ -63,6 +65,8 @@ end
     ("synthetic_grids", run_synthetic_grid_tests),
     ("matpower_example", run_matpower_example_tests),
     ("pv_voltage_residuals", run_pv_voltage_residual_tests),
+    ("configuration_docs", run_configuration_docs_tests),
+    ("configuration_coverage", run_configuration_coverage_tests),
   ]
 
   total = length(test_steps)

@@ -94,7 +94,6 @@ end
 case = "case14.m"          # or "case14.jl"
 flatstart = false
 opt_sparse = true
-opt_fd = true
 method = :rectangular       # internal solver method (run_acpflow, recommended)
 max_iter = 25               # only used if you switch to runpf!(...) manually
 tol = 1e-8                  # convergence tolerance for mismatchInf
@@ -158,7 +157,7 @@ println("Options:")
 println("  run_internal           = ", run_internal)
 println("  run_external           = ", run_external)
 println("  method (internal)      = ", method)
-println("  opt_sparse / opt_fd    = ", opt_sparse, " / ", opt_fd)
+println("  opt_sparse             = ", opt_sparse)
 println("  flatstart              = ", flatstart)
 println("  show_results_internal  = ", show_results_internal)
 println("  show_model/solution    = ", show_model, " / ", show_solution)
@@ -179,7 +178,6 @@ if run_internal
   solved_net_ref = run_acpflow(
     casefile = case,
     opt_sparse = opt_sparse,
-    opt_fd = opt_fd,
     method = method,
     opt_flatstart = flatstart,
     show_results = show_results_internal,
@@ -207,7 +205,7 @@ if run_internal
     converged = isfinite(res_ref) && (res_ref <= tol),
     iters = -1,  # run_acpflow prints iterations, but doesn't return them; keep -1 here
     residual_inf = res_ref,
-    meta = (solver = :internal, method = method, opt_sparse = opt_sparse, opt_fd = opt_fd, flatstart = flatstart),
+    meta = (solver = :internal, method = method, opt_sparse = opt_sparse, flatstart = flatstart),
   )
 
   if show_export_summary

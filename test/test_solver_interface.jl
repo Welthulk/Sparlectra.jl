@@ -365,6 +365,9 @@ function run_solver_interface_tests()
   @test occursin("q_limit_active_set=FAIL", summary_text)
   @test occursin("final_converged=false", summary_text)
   @test occursin("reason=remaining PV Q-limit violations", summary_text)
+  @test Sparlectra._rectangular_solver_status_symbol(true, false, false, :remaining_pv_q_limit_violations) == :converged_limits_failed
+  @test Sparlectra._rectangular_solver_status_symbol(false, false, false, :singular_newton_step) == :singular_jacobian
+  @test Sparlectra._rectangular_solver_status_symbol(false, false, false, :nr_mismatch_not_converged) == :not_converged
 end
 
     @testset "Q-limit guard and active-set status" begin
@@ -477,6 +480,22 @@ end
         @test haskey(timings, phase)
         @test timings[phase].calls >= 1
       end
+    end
+
+    @testset "Typed power-flow config entry points" begin
+      pf_config = PowerFlowConfig(max_iter = 20, tol = 1e-8, sparse = true, start_mode = StartModeConfig(flatstart = true))
+
+      net_direct = createTest3BusNet()
+      _, erg_direct = runpf!(net_direct; config = pf_config)
+      @test erg_direct == 0
+
+      net_project = createTest3BusNet()
+      _, erg_project = runpf!(net_project; config = SparlectraConfig(powerflow = pf_config))
+      @test erg_project == 0
+
+      net_runner = createTest3BusNet()
+      _, erg_runner, _ = run_net_acpflow(net = net_runner, config = pf_config, show_results = false)
+      @test erg_runner == 0
     end
 
 # Ensures final-limit validation remains robust when q-generation data is partially missing.

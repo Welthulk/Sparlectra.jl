@@ -37,7 +37,7 @@ function test_2WTPITrafo()
   return result
 end
 
-function test_3WTPITrafo(verbose::Int = 0; method::Symbol = :rectangular, opt_fd::Bool = false, opt_sparse::Bool = true)::Bool
+function test_3WTPITrafo(verbose::Int = 0; method::Symbol = :rectangular, opt_sparse::Bool = true)::Bool
   #
   #                                                  380kV      AUX*        110kV
   # 380kV              -----------------------AC-LINE--o----------o----------o----------------AC-LINE---------o  Load: p=80 MW, q=30 MVar
@@ -119,7 +119,7 @@ function test_3WTPITrafo(verbose::Int = 0; method::Symbol = :rectangular, opt_fd
 
   etim = 0.0
   etim = @elapsed begin
-    ite, erg = runpf!(net, maxIte, tol, verbose, method = method, opt_fd = opt_fd, opt_sparse = opt_sparse)
+    ite, erg = runpf!(net, maxIte, tol, verbose, method = method, opt_sparse = opt_sparse)
     if erg != 0
       @info "Full-system power flow did not converge"
       result = false
@@ -1049,7 +1049,7 @@ function createTest2BusNet(; cooldown = 0, hyst_pu = 0.0, qlim_min = nothing, ql
   return Bus2Net
 end
 
-function test_3BusNet(verbose::Int = 0, qlim::Float64 = 15.0, method::Symbol = :rectangular, opt_fd::Bool = false, opt_sparse::Bool = false)
+function test_3BusNet(verbose::Int = 0, qlim::Float64 = 15.0, method::Symbol = :rectangular, opt_sparse::Bool = true)
   net = createTest3BusNet(cooldown = 2, hyst_pu = 0.01, qlim_min = -qlim, qlim_max = qlim)
   tol = 1e-12
   maxIte = 50
@@ -1059,7 +1059,7 @@ function test_3BusNet(verbose::Int = 0, qlim::Float64 = 15.0, method::Symbol = :
   pv_names = ["STATION1"]
   etim = 0.0
   etim = @elapsed begin
-    ite, erg = runpf!(net, maxIte, tol, verbose, method = method, opt_fd = opt_fd, opt_sparse = opt_sparse)
+    ite, erg = runpf!(net, maxIte, tol, verbose, method = method, opt_sparse = opt_sparse)
     if erg != 0
       @info "Full-system power flow did not converge"
       result = false
@@ -1093,7 +1093,7 @@ function test_3BusNet(verbose::Int = 0, qlim::Float64 = 15.0, method::Symbol = :
   end
 end
 
-function test_5BusNet(verbose::Int = 0, qlim::Float64 = 20.0, method::Symbol = :rectangular, opt_fd::Bool = false, opt_sparse::Bool = false)
+function test_5BusNet(verbose::Int = 0, qlim::Float64 = 20.0, method::Symbol = :rectangular, opt_sparse::Bool = true)
   net = createTest5BusNet(cooldown = 2, hyst_pu = 0.01, qlim_min = -qlim, qlim_max = qlim)
   tol = 1e-9
   maxIte = 50
@@ -1103,7 +1103,7 @@ function test_5BusNet(verbose::Int = 0, qlim::Float64 = 20.0, method::Symbol = :
   pv_names = ["B3"]
   etim = 0.0
   etim = @elapsed begin
-    ite, erg = runpf!(net, maxIte, tol, verbose, method = method, opt_fd = opt_fd, opt_sparse = opt_sparse)
+    ite, erg = runpf!(net, maxIte, tol, verbose, method = method, opt_sparse = opt_sparse)
     if erg != 0
       @info "Full-system power flow did not converge"
       result = false
@@ -1424,7 +1424,7 @@ function test_link_bus_merge_pf()
   addProsumer!(net = net_link, busName = "B2", type = "ENERGYCONSUMER", p = 15.0, q = 5.0)
   addProsumer!(net = net_link, busName = "B3", type = "ENERGYCONSUMER", p = 25.0, q = 10.0)
 
-  ite_link, erg_link = runpf!(net_link, maxIte, tol, 0; method = :polar_full, opt_sparse = true)
+  ite_link, erg_link = runpf!(net_link, maxIte, tol, 0; method = :rectangular, opt_sparse = true)
   if erg_link != 0
     @warn "Link network did not converge" ite = ite_link
     return false
@@ -1455,7 +1455,7 @@ function test_link_bus_merge_pf()
   addProsumer!(net = net_eq, busName = "B12", type = "ENERGYCONSUMER", p = 15.0, q = 5.0)
   addProsumer!(net = net_eq, busName = "B3", type = "ENERGYCONSUMER", p = 25.0, q = 10.0)
 
-  ite_eq, erg_eq = runpf!(net_eq, maxIte, tol, 0; method = :polar_full, opt_sparse = true)
+  ite_eq, erg_eq = runpf!(net_eq, maxIte, tol, 0; method = :rectangular, opt_sparse = true)
   if erg_eq != 0
     @warn "Reference network did not converge" ite = ite_eq
     return false
@@ -1491,19 +1491,11 @@ function test_rectangular_merge_fallback_suppresses_polar_deprecation_warning():
   addProsumer!(net = net, busName = "B2", type = "ENERGYCONSUMER", p = 15.0, q = 5.0)
   addProsumer!(net = net, busName = "B3", type = "ENERGYCONSUMER", p = 25.0, q = 10.0)
 
-  old_warned = Sparlectra._warned_full_solver_deprecated[]
-  Sparlectra._warned_full_solver_deprecated[] = false
-  try
-    @test_logs min_level = Logging.Warn (:warn, r"runpf!: rectangular solver detected internal Isolated buses from active-link merges; using rectangular FD fallback instead of :polar_full") match_mode = :all begin
-      _, erg = redirect_stdout(devnull) do
-        runpf!(net, 30, 1e-8, 1; method = :rectangular, opt_sparse = true)
-      end
-      if erg != 0
-        return false
-      end
-    end
-  finally
-    Sparlectra._warned_full_solver_deprecated[] = old_warned
+  _, erg = redirect_stdout(devnull) do
+    runpf!(net, 30, 1e-8, 1; method = :rectangular, opt_sparse = true)
+  end
+  if erg != 0
+    return false
   end
 
   return true
@@ -1526,7 +1518,7 @@ function test_link_closed_keeps_shunt_reporting_on_original_bus()
   addProsumer!(net = net, busName = "B2", type = "ENERGYCONSUMER", p = 15.0, q = 5.0)
   addProsumer!(net = net, busName = "B3", type = "ENERGYCONSUMER", p = 25.0, q = 10.0)
 
-  _, erg = runpf!(net, 25, 1e-8, 0; method = :polar_full, opt_sparse = true)
+  _, erg = runpf!(net, 25, 1e-8, 0; method = :rectangular, opt_sparse = true)
   erg == 0 || return false
 
   b2_idx = geNetBusIdx(net = net, busName = "B2")
@@ -1641,7 +1633,7 @@ function test_link_ring_pf_stability()
   addProsumer!(net = net, busName = "B3", type = "ENERGYCONSUMER", p = 8.0, q = 3.0)
 
   # Solve PF first, then derive link flows from nodal balances.
-  _, erg = runpf!(net, 40, 1e-9, 0; method = :polar_full, opt_sparse = false)
+  _, erg = runpf!(net, 40, 1e-9, 0; method = :rectangular, opt_sparse = true)
   erg == 0 || return false
 
   calcLinkFlowsKCL!(net)
@@ -1710,13 +1702,13 @@ end
 
 function test_acpflow_report_object()
   net = createTest3BusNet(cooldown = 2, hyst_pu = 0.01, qlim_min = -15.0, qlim_max = 15.0)
-  ite, erg = runpf!(net, 50, 1e-10, 0; method = :polar_full, opt_sparse = true)
+  ite, erg = runpf!(net, 50, 1e-10, 0; method = :rectangular, opt_sparse = true)
   erg == 0 || return false
 
   calcNetLosses!(net)
   calcLinkFlowsKCL!(net)
 
-  report = buildACPFlowReport(net; ct = 0.123, ite = ite, tol = 1e-10, converged = true, solver = :polar_full)
+  report = buildACPFlowReport(net; ct = 0.123, ite = ite, tol = 1e-10, converged = true, solver = :rectangular)
 
   node_count_ok = length(report.nodes) == length(net.nodeVec)
   branch_count_ok = length(report.branches) == length(net.branchVec)
@@ -1747,15 +1739,15 @@ function test_report_uses_user_bus_names_and_pf_node_count()
   addProsumer!(net = net, busName = "Bus1", type = "ENERGYCONSUMER", p = 10.0, q = 2.0)
   addProsumer!(net = net, busName = "Bus1a", type = "ENERGYCONSUMER", p = 5.0, q = 1.0)
 
-  ite, erg = runpf!(net, 30, 1e-10, 0; method = :polar_full, opt_sparse = true)
+  ite, erg = runpf!(net, 30, 1e-10, 0; method = :rectangular, opt_sparse = true)
   erg == 0 || return false
 
   calcNetLosses!(net)
   calcLinkFlowsKCL!(net)
 
-  report = buildACPFlowReport(net; ct = 0.0, ite = ite, tol = 1e-10, converged = true, solver = :polar_full)
+  report = buildACPFlowReport(net; ct = 0.0, ite = ite, tol = 1e-10, converged = true, solver = :rectangular)
   report_text = mktempdir() do tmpdir
-    printACPFlowResults(net, 0.0, ite, 1e-10, true, tmpdir; converged = true, solver = :polar_full)
+    printACPFlowResults(net, 0.0, ite, 1e-10, true, tmpdir; converged = true, solver = :rectangular)
     read(joinpath(tmpdir, "result_$(net.name).txt"), String)
   end
 
@@ -2200,12 +2192,12 @@ function run_grid_tests()
 
     @testset "Power flow scenarios" begin
       @test test_5BusNet(0, 10.0) == true
-      @test test_3BusNet(0, 150.0, :rectangular, false, false) == true
-      @test test_3BusNet(0, 150.0, :polar_full, false, false) == true
-      @test test_acpflow(0; lLine_6a6b = 0.01, damp = 1.0, method = :classic, opt_sparse = true) == true
+      @test test_3BusNet(0, 150.0, :rectangular, true) == true
+      @test test_3BusNet(0, 150.0, :rectangular, true) == true
       @test test_acpflow(0; lLine_6a6b = 0.01, damp = 1.0, method = :rectangular, opt_sparse = true) == true
-      @test test_acpflow(0; lLine_6a6b = 0.01, damp = 1.0, method = :rectangular, opt_sparse = false) == true
-      @test test_acpflow(0; lLine_6a6b = 0.01, damp = 1.0, method = :polar_full, opt_sparse = true) == true
+      @test test_acpflow(0; lLine_6a6b = 0.01, damp = 1.0, method = :rectangular, opt_sparse = true) == true
+      @test test_acpflow(0; lLine_6a6b = 0.01, damp = 1.0, method = :rectangular, opt_sparse = true) == true
+      @test test_acpflow(0; lLine_6a6b = 0.01, damp = 1.0, method = :rectangular, opt_sparse = true) == true
       @test test_rectangular_autodamp_backtracks_oversized_step() == true
       @test test_rectangular_start_projection_improves_dc_seed() == true
       @test test_rectangular_start_projection_keeps_raw_without_finite_improvement() == true

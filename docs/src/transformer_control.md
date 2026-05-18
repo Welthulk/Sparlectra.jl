@@ -206,6 +206,6 @@ addPIModelTrafo!(
 
 See:
 
-* `src/examples/tap_control_demo_grid.jl`
+* `examples/tap_control_demo_grid.jl`
 
 for runnable setups.

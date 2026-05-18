@@ -18,7 +18,7 @@
 # (`addVmMeasurement!`, `addPinjMeasurement!`, ...) to build a measurement
 # vector without manual `Measurement(...)` construction.
 
-# file: src/examples/state_estimation_manual_measurements.jl
+# file: examples/state_estimation_manual_measurements.jl
 
 using Sparlectra
 using Printf

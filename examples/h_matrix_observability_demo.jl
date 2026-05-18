@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# file: src/examples/h_matrix_observability_demo.jl
+# file: examples/h_matrix_observability_demo.jl
 
 """
 Demo for small measurement Jacobians H (m×n).
@@ -24,7 +24,7 @@ This example reuses public observability helpers from `state_estimation.jl`:
 - `numerical_row_redundant` / `structural_row_redundant`
 
 Run from project root:
-  julia --project=. src/examples/h_matrix_observability_demo.jl
+  julia --project=. examples/h_matrix_observability_demo.jl
 """
 
 using Sparlectra

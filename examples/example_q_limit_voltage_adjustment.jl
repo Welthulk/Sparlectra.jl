@@ -58,4 +58,4 @@ function main()
   report_case("Case C (controller exhausted -> fallback)", net_c, :adjust_vset)
 end
 
-Base.invokelatest(main)
+Base.invokelatest(getfield(@__MODULE__, :main))

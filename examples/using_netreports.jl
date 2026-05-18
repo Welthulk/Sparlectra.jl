@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# file: src/examples/using_netreports.jl
+# file: examples/using_netreports.jl
 
 using Sparlectra
 using Printf

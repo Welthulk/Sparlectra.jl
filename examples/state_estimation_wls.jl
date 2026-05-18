@@ -21,7 +21,7 @@
 # 4) Run WLS state estimation
 # 5) Compare estimated voltages with PF reference
 
-# file: src/examples/state_estimation_wls.jl
+# file: examples/state_estimation_wls.jl
 
 using Sparlectra
 using Printf

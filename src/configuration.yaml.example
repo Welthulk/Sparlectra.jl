@@ -1,0 +1,127 @@
+# Sparlectra central default configuration.
+#
+# Copy this file to examples/configuration.yaml for local user overrides.
+# The local override file is intentionally ignored by Git.
+
+power_flow:
+  method: rectangular
+  sparse: true
+  flatstart: true
+  tol: 1.0e-5
+  max_iter: 80
+  autodamp: true
+  autodamp_min: 0.05
+
+  start_mode:
+    angle_mode: dc
+    voltage_mode: bus_vm_va_blend
+    start_projection: true
+    try_dc_start: true
+    try_blend_scan: true
+    branch_guard: true
+    measure_candidates: true
+    accept_unmeasured_dc_start: false
+    reuse_import_data: true
+    blend_lambdas: [0.25, 0.5, 0.75]
+    dc_angle_limit_deg: 60.0
+
+  qlimits:
+    enabled: true
+    start_iter: 3
+    start_mode: iteration_or_auto
+    auto_q_delta_pu: 1.0e-4
+    hysteresis_pu: 0.01
+    cooldown_iters: 1
+    trace_buses: []
+    lock_pv_to_pq_buses: []
+    guard:
+      enabled: true
+      min_q_range_pu: 0.02
+      narrow_range_mode: lock_pq
+      zero_range_mode: lock_pq
+      violation_mode: lock_pq
+      violation_threshold_pu: 1.0e-4
+      max_switches: 3
+      max_remaining_violations: 0
+      accept_bounded_violations: false
+      freeze_after_repeated_switching: true
+      log: true
+
+state_estimation:
+  enabled: true
+  method: wls
+  sparse: true
+  tol: 1.0e-8
+  max_iter: 20
+  flatstart: true
+  jac_eps: 1.0e-6
+  update_net: true
+  observability:
+    enabled: true
+
+matpower_import:
+  case: case14.m
+  auto_profile: recommend
+  auto_profile_log: false
+  pv_voltage_source: gen_vg
+  pv_voltage_mismatch_tol_pu: 1.0e-4
+  compare_voltage_reference: imported_setpoint
+  bus_shunt_model: admittance
+  shift_unit: deg
+  shift_sign: 1.0
+  ratio: normal
+  enable_pq_gen_controllers: true
+  preallocate_network: auto
+  preallocate_min_buses: 500
+
+performance:
+  enabled: true
+  level: iteration
+  print_to_console: true
+  write_to_logfile: true
+  show_allocations: false
+  show_iteration_table: true
+  compact_logging: true
+  skip_reference_comparison: false
+  skip_expensive_diagnostics: true
+  skip_branch_neighborhood_report: true
+  max_diagnostic_rows: 25
+
+runtime:
+  print_thread_config: true
+  julia_threads: keep  # requires process startup or script re-exec
+  blas_threads: keep   # can be applied at runtime
+
+diagnostics:
+  matpower_reference: true
+  branch_shift_conventions: true
+  negative_branch_impedance: true
+  pv_voltage_references: true
+  residual_clusters: true
+  nodal_balance_breakdown: true
+  branch_neighborhood: true
+  detailed_log: true
+  log_effective_config: false
+
+output:
+  console_summary: true
+  console_auto_profile: compact
+  console_diagnostics: compact
+  console_q_limit_events: summary
+  console_max_rows: 20
+  logfile_results: full
+  logfile_diagnostics: full
+  logfile_performance: full
+  logfile_warnings: full
+
+benchmark:
+  enabled: true
+  methods: [rectangular]
+  seconds: 2.0
+  samples: 50
+  show_once: false
+  show_once_output: classic
+  show_once_max_nodes: 0
+
+extensions:
+  reserved: true

@@ -26,7 +26,7 @@
 # - Rectangular complex-state Newton-Raphson with PQ and PV bus handling
 # - Wirtinger calculus-based Jacobian construction for complex power equations
 # - Active-set Q-limit management for PV→PQ switching with optional re-enable
-# - Both analytic and finite-difference Jacobian options
+# - Sparse analytic Jacobian construction
 # - Hysteresis and cooldown mechanisms for robust PV bus management
 # - Direct integration with Sparlectra.jl network data structures
 #
@@ -44,10 +44,9 @@
 # - mismatch_rectangular(): Residual function for PQ/PV bus constraints
 #
 # Note:
-# - The FD Jacobian is mathematically dense; sparse storage does not bring much benefit.
-# - The analytic Jacobian currently uses a dense rectangular build, even though the
-#   underlying structure is sparse (Ybus-like). A true sparse implementation would
-#   require a dedicated builder similar to `calcJacobian(...; sparse=true)`.
+# - The power-flow core uses sparse Y-bus and Jacobian matrices by default.
+# - Dense builders remain for small helper-level diagnostics, but unsupported PF
+#   entry options are rejected before the solver core is entered.
 #
 # References:
 # - Wirtinger calculus for complex derivatives
@@ -423,12 +422,12 @@ end
 
 function _rectangular_solver_status_symbol(numerical_converged::Bool, active_set_ok::Bool, final_converged::Bool, reason::Symbol)::Symbol
   final_converged && return :converged
-  numerical_converged || return reason == :singular_newton_step ? :singular_jacobian : :nr_mismatch_not_converged
-  active_set_ok && return :converged_with_active_set_instability
-  reason == :max_switching_exceeded && return :max_switching_exceeded
-  reason == :bounded_q_limit_violations_accepted && return :converged_with_bounded_q_limit_violations
-  reason == :remaining_pv_q_limit_violations && return :numerically_converged_but_active_set_failed
-  return :qlimit_chatter
+  numerical_converged || return reason == :singular_newton_step ? :singular_jacobian : :not_converged
+  active_set_ok && return :converged_with_limit_warnings
+  reason == :max_switching_exceeded && return :converged_limits_failed
+  reason == :bounded_q_limit_violations_accepted && return :converged_with_limit_warnings
+  reason == :remaining_pv_q_limit_violations && return :converged_limits_failed
+  return :converged_limits_failed
 end
 
 function _print_qlimit_active_set_summary(io::IO, status)
@@ -1817,18 +1816,15 @@ function run_complex_nr_rectangular_for_net!(
   qlimit_guard_violation_threshold_pu::Float64 = 1e-4,
   performance_profile = nothing,
 )
+  _validate_rectangular_powerflow_options(method = :rectangular, sparse = opt_sparse)
   if verbose > 1
-    @info "Running complex rectangular NR power flow... use_fd=$use_fd, opt_sparse=$opt_sparse"
+    @info "Running complex rectangular NR power flow... opt_sparse=$opt_sparse"
   end
 
   nodes = net.nodeVec
   n     = length(nodes)
   Sbase = net.baseMVA
-  if !opt_sparse
-    sparse = n > 1000
-  else
-    sparse = opt_sparse
-  end
+  sparse = true
   Yred = _perf_profile_time!(performance_profile, :ybus_assembly) do
     createYBUS(net = net, sparse = sparse, printYBUS = (verbose > 1))
   end
@@ -2323,7 +2319,6 @@ function runpf_rectangular!(
   maxIte::Int,
   tolerance::Float64 = 1e-6,
   verbose::Int = 0;
-  opt_fd::Bool = false,
   opt_sparse::Bool = true,
   damp = 1.0,
   autodamp::Bool = false,
@@ -2367,7 +2362,6 @@ function runpf_rectangular!(
     autodamp = autodamp,
     autodamp_min = autodamp_min,
     verbose = verbose,
-    use_fd = opt_fd,
     opt_sparse = opt_sparse,
     opt_flatstart = opt_flatstart,
     pv_table_rows = pv_table_rows,
@@ -2535,7 +2529,7 @@ Arguments:
 - `maxIte::Int`: maximum iterations
 - `tolerance::Float64`: mismatch tolerance
 - `verbose::Int`: verbosity level
-- `method::Symbol`: `:rectangular` (recommended), `:polar_full` (deprecated), or `:classic` (deprecated)
+- `method::Symbol`: must be `:rectangular`
 - `autodamp::Bool`: enable residual-based backtracking for rectangular Newton steps
 - `autodamp_min::Float64`: minimum automatic damping factor when `autodamp = true`
 - `qlimit_start_iter::Int`: first Newton iteration where PV→PQ Q-limit switching may run in `:iteration` mode
@@ -2544,21 +2538,103 @@ Arguments:
 
 Notes:
 - Link-flow recovery (`calcLinkFlowsKCL!`) is method-agnostic and uses solved PF results.
-- If active-link merges create internal isolated buses, `:rectangular` currently falls
-  back to `:polar_full` for robustness.
+- If active-link merges create internal isolated buses, the rectangular sparse
+  solver remains the only supported PF path; there is no polar fallback.
 
 Returns:
     (iterations::Int, status::Int)
 
 where `status == 0` indicates convergence.
 """
+function _runpf_with_config!(
+  net::Net,
+  config::PowerFlowConfig;
+  verbose::Int = 0,
+  damp = 1.0,
+  pv_table_rows::Int = 30,
+  validate_limits_after_pf::Bool = false,
+  q_limit_violation_headroom::Float64 = 0.0,
+  qlimit_lock_reason::Symbol = :manual,
+  performance_profile = nothing,
+)
+  start = config.start_mode
+  qlim = config.qlimits
+  return runpf!(
+    net,
+    config.max_iter,
+    config.tol,
+    verbose;
+    method = config.method,
+    opt_sparse = config.sparse,
+    opt_flatstart = start.flatstart,
+    damp = damp,
+    autodamp = config.autodamp,
+    autodamp_min = config.autodamp_min,
+    pv_table_rows = pv_table_rows,
+    validate_limits_after_pf = validate_limits_after_pf,
+    q_limit_violation_headroom = q_limit_violation_headroom,
+    lock_pv_to_pq_buses = qlim.lock_pv_to_pq_buses,
+    start_projection = start.start_projection,
+    start_projection_try_dc_start = start.try_dc_start,
+    start_projection_try_blend_scan = start.try_blend_scan,
+    start_projection_branch_guard = start.branch_guard,
+    start_projection_measure_candidates = start.measure_candidates,
+    start_projection_accept_unmeasured_dc_start = start.accept_unmeasured_dc_start,
+    start_projection_blend_lambdas = start.blend_lambdas,
+    start_projection_dc_angle_limit_deg = start.dc_angle_limit_deg,
+    qlimit_start_iter = qlim.start_iter,
+    qlimit_start_mode = qlim.start_mode,
+    qlimit_auto_q_delta_pu = qlim.auto_q_delta_pu,
+    qlimit_trace_buses = qlim.trace_buses,
+    qlimit_lock_reason = qlimit_lock_reason,
+    qlimit_guard = qlim.guard,
+    qlimit_guard_min_q_range_pu = qlim.guard_min_q_range_pu,
+    qlimit_guard_zero_range_mode = qlim.guard_zero_range_mode,
+    qlimit_guard_narrow_range_mode = qlim.guard_narrow_range_mode,
+    qlimit_guard_log = qlim.guard_log,
+    qlimit_guard_max_switches = qlim.guard_max_switches,
+    qlimit_guard_accept_bounded_violations = qlim.guard_accept_bounded_violations,
+    qlimit_guard_max_remaining_violations = qlim.guard_max_remaining_violations,
+    qlimit_guard_freeze_after_repeated_switching = qlim.guard_freeze_after_repeated_switching,
+    qlimit_guard_violation_mode = qlim.guard_violation_mode,
+    qlimit_guard_violation_threshold_pu = qlim.guard_violation_threshold_pu,
+    performance_profile = performance_profile,
+  )
+end
+
+runpf!(net::Net, config::PowerFlowConfig; kwargs...) = _runpf_with_config!(net, config; kwargs...)
+runpf!(net::Net, config::SparlectraConfig; kwargs...) = _runpf_with_config!(net, config.powerflow; kwargs...)
+
+function runpf!(net::Net; config::Union{Nothing,PowerFlowConfig,SparlectraConfig} = nothing, kwargs...)
+  runtime_keys = Set((:verbose, :damp, :pv_table_rows, :validate_limits_after_pf, :q_limit_violation_headroom, :qlimit_lock_reason, :performance_profile))
+  cfg0 = config === nothing ? powerflow_config() : (config isa SparlectraConfig ? config.powerflow : config)
+  if !isempty(kwargs)
+    raw = Dict{String,Any}(String(k) => v for (k, v) in pairs(kwargs))
+    if all(k -> k in runtime_keys, keys(kwargs))
+      return _runpf_with_config!(
+        net,
+        cfg0;
+        verbose = Int(get(raw, "verbose", 0)),
+        damp = get(raw, "damp", 1.0),
+        pv_table_rows = Int(get(raw, "pv_table_rows", 30)),
+        validate_limits_after_pf = Bool(get(raw, "validate_limits_after_pf", false)),
+        q_limit_violation_headroom = Float64(get(raw, "q_limit_violation_headroom", 0.0)),
+        qlimit_lock_reason = Symbol(get(raw, "qlimit_lock_reason", :manual)),
+        performance_profile = get(raw, "performance_profile", nothing),
+      )
+    else
+      throw(ArgumentError("runpf!: solver options must be supplied through PowerFlowConfig or set_sparlectra_config!; only runtime keywords $(collect(runtime_keys)) are accepted."))
+    end
+  end
+  return _runpf_with_config!(net, cfg0)
+end
+
 function runpf!(
   net::Net,
   maxIte::Int,
   tolerance::Float64 = 1e-6,
   verbose::Int = 0;
   method::Symbol = :rectangular,
-  opt_fd::Bool = false,
   opt_sparse::Bool = true,
   opt_flatstart::Bool = net.flatstart,
   damp = 1.0,
@@ -2596,6 +2672,7 @@ function runpf!(
   qlimit_guard_violation_threshold_pu::Float64 = 1e-4,
   performance_profile = nothing,
 )
+  _validate_rectangular_powerflow_options(method = method, sparse = opt_sparse)
   wnet, reps, has_merges = _merged_pf_net(net)
   refreshBusTypesFromProsumers!(wnet)
   has_vdep_control = has_voltage_dependent_control(wnet)
@@ -2609,29 +2686,12 @@ function runpf!(
     updateShuntPowers!(net = net)
   end
 
-  #@info "Running AC Power Flow using method: $(method)"
-  if method === :polar_full
-    has_vdep_control && error("runpf!: voltage-dependent injections, including P(U)/Q(U) controllers and bus_shunt_model=voltage_dependent_injection, are currently supported only for method=:rectangular.")
-    if qlimit_mode != :switch_to_pq
-      @warn "runpf!: qlimit_mode=$(qlimit_mode) is only supported for method=:rectangular. Falling back to :switch_to_pq behavior."
-    end
-    iters, erg = runpf_full!(wnet, maxIte, tolerance, verbose; opt_sparse = opt_sparse, opt_flatstart = opt_flatstart, pv_table_rows = pv_table_rows, lock_pv_to_pq_buses = lock_pv_to_pq_buses, warn_deprecated = true)
-    if erg == 0 && has_merges
-      _sync_merged_results_to_original!()
-    end
-    if validate_limits_after_pf && (verbose > 0)
-      printFinalLimitValidation(has_merges ? net : wnet; q_headroom = q_limit_violation_headroom)
-    end
-    return iters, erg
-  elseif method === :rectangular
+  if method === :rectangular
     if has_merges
       has_vdep_control && error("runpf!: voltage-dependent injections, including P(U)/Q(U) controllers and bus_shunt_model=voltage_dependent_injection, are not supported with active-link merge handling in rectangular mode. Disable merges or use a topology without internal isolated buses.")
-      if verbose > 0
-        @warn "runpf!: rectangular solver detected internal Isolated buses from active-link merges; using rectangular FD fallback instead of :polar_full"
-      end
-      iters, erg = runpf_rectangular!(wnet, maxIte, tolerance, verbose; opt_fd = true, opt_sparse = opt_sparse, damp = damp, autodamp = autodamp, autodamp_min = autodamp_min, opt_flatstart = opt_flatstart, pv_table_rows = pv_table_rows, lock_pv_to_pq_buses = lock_pv_to_pq_buses, qlimit_mode = qlimit_mode, qlimit_max_outer = qlimit_max_outer, start_projection = start_projection, start_projection_try_dc_start = start_projection_try_dc_start, start_projection_try_blend_scan = start_projection_try_blend_scan, start_projection_branch_guard = start_projection_branch_guard, start_projection_measure_candidates = start_projection_measure_candidates, start_projection_accept_unmeasured_dc_start = start_projection_accept_unmeasured_dc_start, start_projection_blend_lambdas = start_projection_blend_lambdas, start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg, qlimit_start_iter = qlimit_start_iter, qlimit_start_mode = qlimit_start_mode, qlimit_auto_q_delta_pu = qlimit_auto_q_delta_pu, qlimit_trace_buses = qlimit_trace_buses, qlimit_lock_reason = qlimit_lock_reason, qlimit_guard = qlimit_guard, qlimit_guard_min_q_range_pu = qlimit_guard_min_q_range_pu, qlimit_guard_zero_range_mode = qlimit_guard_zero_range_mode, qlimit_guard_narrow_range_mode = qlimit_guard_narrow_range_mode, qlimit_guard_log = qlimit_guard_log, qlimit_guard_max_switches = qlimit_guard_max_switches, qlimit_guard_accept_bounded_violations = qlimit_guard_accept_bounded_violations, qlimit_guard_max_remaining_violations = qlimit_guard_max_remaining_violations, qlimit_guard_freeze_after_repeated_switching = qlimit_guard_freeze_after_repeated_switching, qlimit_guard_violation_mode = qlimit_guard_violation_mode, qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu, performance_profile = performance_profile)
+      iters, erg = runpf_rectangular!(wnet, maxIte, tolerance, verbose; opt_sparse = opt_sparse, damp = damp, autodamp = autodamp, autodamp_min = autodamp_min, opt_flatstart = opt_flatstart, pv_table_rows = pv_table_rows, lock_pv_to_pq_buses = lock_pv_to_pq_buses, qlimit_mode = qlimit_mode, qlimit_max_outer = qlimit_max_outer, start_projection = start_projection, start_projection_try_dc_start = start_projection_try_dc_start, start_projection_try_blend_scan = start_projection_try_blend_scan, start_projection_branch_guard = start_projection_branch_guard, start_projection_measure_candidates = start_projection_measure_candidates, start_projection_accept_unmeasured_dc_start = start_projection_accept_unmeasured_dc_start, start_projection_blend_lambdas = start_projection_blend_lambdas, start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg, qlimit_start_iter = qlimit_start_iter, qlimit_start_mode = qlimit_start_mode, qlimit_auto_q_delta_pu = qlimit_auto_q_delta_pu, qlimit_trace_buses = qlimit_trace_buses, qlimit_lock_reason = qlimit_lock_reason, qlimit_guard = qlimit_guard, qlimit_guard_min_q_range_pu = qlimit_guard_min_q_range_pu, qlimit_guard_zero_range_mode = qlimit_guard_zero_range_mode, qlimit_guard_narrow_range_mode = qlimit_guard_narrow_range_mode, qlimit_guard_log = qlimit_guard_log, qlimit_guard_max_switches = qlimit_guard_max_switches, qlimit_guard_accept_bounded_violations = qlimit_guard_accept_bounded_violations, qlimit_guard_max_remaining_violations = qlimit_guard_max_remaining_violations, qlimit_guard_freeze_after_repeated_switching = qlimit_guard_freeze_after_repeated_switching, qlimit_guard_violation_mode = qlimit_guard_violation_mode, qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu, performance_profile = performance_profile)
     else
-      iters, erg = runpf_rectangular!(wnet, maxIte, tolerance, verbose; opt_fd = opt_fd, opt_sparse = opt_sparse, damp = damp, autodamp = autodamp, autodamp_min = autodamp_min, opt_flatstart = opt_flatstart, pv_table_rows = pv_table_rows, lock_pv_to_pq_buses = lock_pv_to_pq_buses, qlimit_mode = qlimit_mode, qlimit_max_outer = qlimit_max_outer, start_projection = start_projection, start_projection_try_dc_start = start_projection_try_dc_start, start_projection_try_blend_scan = start_projection_try_blend_scan, start_projection_branch_guard = start_projection_branch_guard, start_projection_measure_candidates = start_projection_measure_candidates, start_projection_accept_unmeasured_dc_start = start_projection_accept_unmeasured_dc_start, start_projection_blend_lambdas = start_projection_blend_lambdas, start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg, qlimit_start_iter = qlimit_start_iter, qlimit_start_mode = qlimit_start_mode, qlimit_auto_q_delta_pu = qlimit_auto_q_delta_pu, qlimit_trace_buses = qlimit_trace_buses, qlimit_lock_reason = qlimit_lock_reason, qlimit_guard = qlimit_guard, qlimit_guard_min_q_range_pu = qlimit_guard_min_q_range_pu, qlimit_guard_zero_range_mode = qlimit_guard_zero_range_mode, qlimit_guard_narrow_range_mode = qlimit_guard_narrow_range_mode, qlimit_guard_log = qlimit_guard_log, qlimit_guard_max_switches = qlimit_guard_max_switches, qlimit_guard_accept_bounded_violations = qlimit_guard_accept_bounded_violations, qlimit_guard_max_remaining_violations = qlimit_guard_max_remaining_violations, qlimit_guard_freeze_after_repeated_switching = qlimit_guard_freeze_after_repeated_switching, qlimit_guard_violation_mode = qlimit_guard_violation_mode, qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu, performance_profile = performance_profile)
+      iters, erg = runpf_rectangular!(wnet, maxIte, tolerance, verbose; opt_sparse = opt_sparse, damp = damp, autodamp = autodamp, autodamp_min = autodamp_min, opt_flatstart = opt_flatstart, pv_table_rows = pv_table_rows, lock_pv_to_pq_buses = lock_pv_to_pq_buses, qlimit_mode = qlimit_mode, qlimit_max_outer = qlimit_max_outer, start_projection = start_projection, start_projection_try_dc_start = start_projection_try_dc_start, start_projection_try_blend_scan = start_projection_try_blend_scan, start_projection_branch_guard = start_projection_branch_guard, start_projection_measure_candidates = start_projection_measure_candidates, start_projection_accept_unmeasured_dc_start = start_projection_accept_unmeasured_dc_start, start_projection_blend_lambdas = start_projection_blend_lambdas, start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg, qlimit_start_iter = qlimit_start_iter, qlimit_start_mode = qlimit_start_mode, qlimit_auto_q_delta_pu = qlimit_auto_q_delta_pu, qlimit_trace_buses = qlimit_trace_buses, qlimit_lock_reason = qlimit_lock_reason, qlimit_guard = qlimit_guard, qlimit_guard_min_q_range_pu = qlimit_guard_min_q_range_pu, qlimit_guard_zero_range_mode = qlimit_guard_zero_range_mode, qlimit_guard_narrow_range_mode = qlimit_guard_narrow_range_mode, qlimit_guard_log = qlimit_guard_log, qlimit_guard_max_switches = qlimit_guard_max_switches, qlimit_guard_accept_bounded_violations = qlimit_guard_accept_bounded_violations, qlimit_guard_max_remaining_violations = qlimit_guard_max_remaining_violations, qlimit_guard_freeze_after_repeated_switching = qlimit_guard_freeze_after_repeated_switching, qlimit_guard_violation_mode = qlimit_guard_violation_mode, qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu, performance_profile = performance_profile)
     end
     rect_status = rectangular_pf_status(wnet)
     if rect_status !== nothing
@@ -2644,20 +2704,7 @@ function runpf!(
       printFinalLimitValidation(has_merges ? net : wnet; q_headroom = q_limit_violation_headroom)
     end
     return iters, erg
-  elseif method === :classic
-    has_vdep_control && error("runpf!: voltage-dependent injections, including P(U)/Q(U) controllers and bus_shunt_model=voltage_dependent_injection, are currently supported only for method=:rectangular.")
-    if qlimit_mode != :switch_to_pq
-      @warn "runpf!: qlimit_mode=$(qlimit_mode) is only supported for method=:rectangular. Falling back to :switch_to_pq behavior."
-    end
-    iters, erg = runpf_classic!(wnet, maxIte, tolerance, verbose, opt_sparse, opt_flatstart)
-    if erg == 0 && has_merges
-      _sync_merged_results_to_original!()
-    end
-    if validate_limits_after_pf && (verbose > 0)
-      printFinalLimitValidation(has_merges ? net : wnet; q_headroom = q_limit_violation_headroom)
-    end
-    return iters, erg
   else
-    error("runpf!: unknown method $(method). Use :rectangular (recommended), :polar_full (deprecated), or :classic (deprecated).")
+    throw(ArgumentError(unsupported_powerflow_method_message(method)))
   end
 end

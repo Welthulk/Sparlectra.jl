@@ -212,5 +212,14 @@ function run_voltage_dependent_control_tests()
     end
   end
 
+  @testset "Voltage-dependent example is thin wrapper" begin
+    source = read(joinpath(@__DIR__, "..", "examples", "example_voltage_dependent_control_rectangular.jl"), String)
+    @test !occursin("DEFAULT_EXAMPLE_CFG = Dict", source)
+    @test !occursin("load_voltage_ctrl_yaml", source)
+    @test !occursin("_write_default_yaml_example", source)
+    @test !occursin("eachline(path)", source)
+    @test occursin("run_voltage_dependent_control_demo", source)
+  end
+
   return true
 end

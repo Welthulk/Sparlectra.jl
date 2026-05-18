@@ -1,6 +1,6 @@
 # Examples Overview
 
-This page summarizes the most relevant runnable examples in `src/examples/`.
+This page summarizes the most relevant runnable examples in `examples/`.
 
 ## Power flow and network operation
 
@@ -51,9 +51,11 @@ This page summarizes the most relevant runnable examples in `src/examples/`.
 
 ## Utility / analysis scripts
 
-- `matpower_import.jl` (+ `matpower_import.yaml.example`)  
-  Configurable MATPOWER import utility script.
-  Supports logfile-only MATPOWER reference diagnostics, effective YAML logging, and
+- `matpower_import.jl`
+  Configurable MATPOWER import utility script using the central
+  `src/configuration.yaml.example` defaults plus optional
+  `examples/configuration.yaml` local overrides.
+  Supports logfile-only MATPOWER reference diagnostics, effective configuration logging, and
   configurable branch `SHIFT` sign/unit handling for phase-shifter convention checks.
   The YAML options can also diagnose and choose PV/REF voltage references when
   MATPOWER `BUS.VM` values differ from generator `GEN.VG` setpoints; use
@@ -70,11 +72,11 @@ This page summarizes the most relevant runnable examples in `src/examples/`.
 From repository root:
 
 ```bash
-julia --project=. src/examples/example_transformer_tap.jl
+julia --project=. examples/example_transformer_tap.jl
 ```
 
 General pattern:
 
 ```bash
-julia --project=. src/examples/<example_name>.jl
+julia --project=. examples/<example_name>.jl
 ```

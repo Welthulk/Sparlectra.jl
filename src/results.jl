@@ -363,7 +363,7 @@ function formatBranchResults(net::Net)
   return formatted_results, total_losses
 end
 
-function printACPFlowResults(net::Net, ct::Float64, ite::Int, tol::Float64, toFile::Bool = false, path::String = ""; converged::Bool = true, solver::Symbol = :NR)
+function printACPFlowResults(net::Net, ct::Float64, ite::Int, tol::Float64, toFile::Bool = false, path::String = ""; converged::Bool = true, solver::Symbol = :NR, solver_time_s::Union{Nothing,Float64} = nothing)
   if toFile
     filename = strip("result_$(net.name).txt")
     io = open(joinpath(path, filename), "w")
@@ -421,7 +421,13 @@ function printACPFlowResults(net::Net, ct::Float64, ite::Int, tol::Float64, toFi
   @printf(io, "Tolerance      : %.1e\n", tol)
   @printf(io, "Solver         :%15s\n", string(solver))
   if converged
-    @printf(io, "Converged in   :%10f seconds\n", ct)
+    if isnothing(solver_time_s)
+      @printf(io, "Solver time    :%10s\n", "unavailable")
+      @printf(io, "Repr. time     :%10f seconds\n", ct)
+    else
+      @printf(io, "Solver time    :%10f seconds\n", solver_time_s)
+      @printf(io, "Repr. time     :%10f seconds\n", ct)
+    end
   else
     @printf(io, "Status         :%10s\n", "Not Converged")
   end

@@ -8,7 +8,10 @@ This repository is a Julia project.
 - Do not use Python to inspect or modify Julia source unless explicitly requested.
 - Prefer minimal, targeted changes.
 - Keep changes local to the affected implementation path whenever possible.
-- Do not silently change public APIs or example-script behavior.
+- Do not silently change public APIs or example-script behavior in bugfix or minor-improvement tasks.
+- For explicit refactoring or breaking-change tasks, prefer the clean target design over backward-compatibility layers.
+- Do not add compatibility shims, deprecated wrappers, legacy keyword paths, or transitional duplicate APIs unless explicitly requested.
+- When an API, option, file path, or example behavior is intentionally changed, update all in-repository callers, examples, documentation, and tests instead of preserving the old path.
 
 ## Standard commands
 - Verify toolchain:
@@ -28,10 +31,32 @@ This repository is a Julia project.
 - Before editing, inspect current tests that cover the affected code.
 - After code changes, run the smallest relevant test first, then broader tests if needed.
 - Avoid broad refactoring while fixing a targeted bug.
+- During planned refactoring, remove obsolete code paths instead of keeping them as compatibility ballast.
+
+## Refactoring and breaking changes
+
+For tasks that explicitly request refactoring, cleanup, simplification, or breaking changes, backward compatibility is **not** required by default.
+
+Use these rules:
+- Prefer one clean implementation path over parallel old/new code paths.
+- Remove obsolete wrappers, deprecated keyword forwarding, legacy YAML files, compatibility aliases, and unused fallback branches.
+- Update internal callers immediately instead of preserving old signatures.
+- Update examples and documentation to the new behavior.
+- Remove tests that only protect removed compatibility behavior.
+- Do not keep deprecation warnings or migration layers unless the task explicitly asks for a transition period.
+- If public behavior changes intentionally, state this clearly in the changelog or task summary.
+- If a breaking change affects documented usage, update the documentation in the same change.
 
 ## Test hygiene / avoiding test explosion
 
-Tests are mandatory for bugfixes, changed behavior, and new features, but the test suite must remain maintainable.
+Tests are mandatory for bugfixes, changed behavior, and new features, but the test suite must remain maintainable. Avoid test explosion.
+
+Default policy:
+- Extend existing tests first.
+- Add a new test file only when no suitable existing test location exists.
+- Remove tests for deleted behavior, obsolete compatibility paths, and temporary diagnostics.
+- Consolidate overlapping tests into one coherent testset or a table-driven test.
+- Prefer fewer, stronger tests over many narrowly duplicated tests.
 
 Before adding a new test file or a new large test block:
 - Inspect existing tests for the affected code path.
@@ -39,6 +64,7 @@ Before adding a new test file or a new large test block:
 - Prefer merging related regression checks into one coherent testset when they exercise the same function, option path, or failure mode.
 - Avoid preserving temporary diagnostic tests that were only useful during bug investigation.
 - Remove or consolidate obsolete tests when the underlying failure mode is already covered by a clearer regression test.
+- Remove tests that only verify backward compatibility for APIs, files, options, or wrappers intentionally removed by a refactoring task.
 - Keep test names explicit about the behavior being protected, not about the historical debugging session.
 - Keep test fixtures small; do not add large MATPOWER cases or long-running examples unless they are explicitly required.
 - Avoid broad end-to-end tests when a focused unit or integration test can protect the same behavior.
@@ -50,6 +76,7 @@ During cleanup or refactoring tasks:
 - Merge redundant tests where possible.
 - Delete tests that only assert implementation details and no longer protect public or intended internal behavior.
 - Keep at least one regression test for each fixed bug, but avoid multiple overlapping regressions for the same failure mode.
+- For breaking changes, keep tests for the new intended behavior and delete tests that only protect the removed behavior.
 
 When reporting work:
 - State which smallest relevant test was run.
@@ -87,6 +114,7 @@ This keeps the code compatible with non-standard array indices and avoids Static
 - Project root must be used as Julia project
 - When changing power flow or network logic, prefer adding or updating tests in `test/`
 - Prefer extending or consolidating existing tests over creating new narrowly overlapping test files.
+- Remove obsolete tests when refactoring deletes the behavior they were written for.
 
 ## VS Code / developer workflow notes
 - Example programs in `src/examples/` are primarily written for VS Code developer usage.
@@ -164,6 +192,7 @@ Only use `kwargs...` when this matches the local style and the downstream functi
 - Report the exact command and the relevant failure output if tests fail.
 - Before adding new tests, check whether existing tests can be extended or merged.
 - Before finishing, check whether new tests created during debugging can be consolidated.
+- Remove tests that only cover removed compatibility paths or deleted legacy behavior.
 - Avoid leaving behind redundant tests that only differ in incidental parameters.
 
 ## Power-flow execution preference
@@ -212,6 +241,7 @@ Requirements for improvements:
 - No example required (unless it improves clarity significantly)
 - No mandatory feature matrix update
 - Review whether existing tests can be consolidated if the improvement replaces older behavior.
+- If the improvement is an explicit refactoring or cleanup, remove obsolete compatibility code and its tests instead of preserving both old and new paths.
 
 ---
 
@@ -457,10 +487,11 @@ Make the example script robust under Julia 1.12 and VS Code / Revise workflows, 
    - If any are not meaningful in this path, filter them explicitly before calling `bench_run_acpflow` and add a short comment explaining why.
    - Do not leave accidental unsupported keyword forwarding in place.
 
-4. Preserve current behavior
+4. Preserve current behavior for this targeted bugfix
    - Existing behavior must remain unchanged when these options are not provided.
    - Defaults must match the existing solver defaults or current configuration defaults.
-   - Avoid broad refactoring.
+   - Avoid broad refactoring in this bugfix task.
+   - This does not override the general repository rule for explicit refactoring or breaking-change tasks: no backward-compatibility layer is required unless requested.
 
 5. Add or update a small smoke/regression test if practical
    - Prefer extending an existing lightweight test that validates the example call path accepts the new keyword set.

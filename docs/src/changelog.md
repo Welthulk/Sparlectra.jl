@@ -1,19 +1,59 @@
 # Change Log
-## Version 0.7.9 – 2026-05-17
-### Highlights
+## Version 0.8.0 – 2026-05-17
+
+
+### Breaking Changes
+
+* Power flow now supports only the sparse rectangular AC solver. Requests for polar/classic methods, finite-difference PF Jacobians, or dense PF matrices now fail validation with a clear error instead of falling back silently.
+* Removed the old flat keyword-style configuration path for rectangular power-flow runs. Configuration is now handled through structured YAML sections and typed config objects.
+* Removed the obsolete finite-difference power-flow option from configuration, APIs, examples, documentation, and tests; the sparse analytic rectangular solver is now the only public power-flow Jacobian path.
+
 
 ### Fixes
-* Fixed MATPOWER import example recommendations and call paths so Julia 1.12/Revise entry points use `invokelatest`, start-projection keywords are forwarded consistently, and large-case auto-profile guidance keeps `start_projection=false` with DC-angle/blended-voltage starts, Q-limit guard, skipped expensive diagnostics, and practical benchmark tolerance defaults while preserving explicit nested performance YAML values.
-* Fixed rectangular start-projection candidate selection so unmeasured or non-finite DC candidates are not selected as proven improvements, summary output reports an explicit selection reason, and large MATPOWER auto-profile keeps start projection disabled by default.
-* Fixed rectangular start-projection DC angle solves to preserve sparse DC matrices in both profiled and unprofiled start paths, use a sparse LU solve path for large reduced systems, avoid dense SVD fallback on large sparse singular systems, and report DC matrix/solver diagnostics in MATPOWER Performance Summary output.
-* Fixed performance-enabled MATPOWER example runs so they emit a compact Performance Summary with shared phase timings, including import, solver, diagnostics/logging, reference comparison, and post-processing phases when collected.
+
+* **Bugfix**: Fixed runtime thread config parsing so numeric YAML values for `runtime.julia_threads`/`runtime.blas_threads` are accepted and normalized to strings, preventing `MethodError: no method matching String(::Int64)` in MATPOWER example startup paths.
+* **Bugfix**: Fixed MATPOWER import configuration validation for `preallocate_network` by allowing symbol allow-lists passed as vectors, preventing `MethodError` in `matpower_import.jl` startup under Julia 1.12 workflows.
+* **Bugfix**: Unified rectangular PF outcome reporting and gating through a canonical status payload (outcome, numerical convergence, solution availability, limit-validation status, reason text, mismatch, iterations, elapsed time), fixed compact/log summaries to report `numerical_solution=FAIL` for non-converged NR runs, and aligned result-table plus MATPOWER comparison gating to depend on explicit solution availability (including `converged_limits_failed` as a numerical-solution class with validation warning output).
+* Increased the passive-bus zero-injection state-estimation regression iteration cap so `test/runtests.jl` converges reliably under the current solver behavior.
+* Consolidated shared example YAML-loading/runtime-output helpers into `examples/example_utils.jl` and updated MATPOWER/tap-control examples to use the centralized path, including Julia 1.12-safe include usage for module-based example smoke tests.
+* Moved MATPOWER example configuration ownership into package core entry points: `examples/matpower_import.jl` is now a thin script that only resolves config/case inputs and calls `run_matpower_case`, with Julia 1.12-safe `Base.invokelatest(getfield(@__MODULE__, :main))` entry invocation.
+* **Bugfix**: Added an explicit migration error for removed `matpower_import.benchmark` user config keys and directed users to top-level `benchmark.enabled`; also fixed MATPOWER runner status handling and benchmark method execution/seconds handling in package-level runner paths.
+* **Bugfix**: Hardened `test/test_matpower_example.jl` for Julia 1.12/Revise workflows by invoking the test entry via `Base.invokelatest(...)`, using a test-local MATPOWER config file, and accepting known network-fetch error variants in offline or proxied environments.
+* **Bugfix**: Fixed MATPOWER runner benchmark method config cloning to use current `PowerFlowConfig` fields (`tol`, `max_iter`, `autodamp`, `autodamp_min`, `start_mode`, `qlimits`) so Julia 1.12 MATPOWER example runs no longer fail with `PowerFlowConfig.max_ite` field errors.
+* **Bugfix**: Clarified MATPOWER benchmark timing semantics by separating representative wall time, solver time, result-output coverage rows, and benchmark median/min reporting; replaced ambiguous compact `time=` summary with explicit `representative_time=`/`solver_time=` fields and aligned AC result-table runtime label to `Solver time`.
+* **Bugfix**: Fixed MATPOWER timing-status consistency so summary `solver_time` now maps to instrumented `solver_total` (or `unavailable` when missing), `representative_time` remains full wall time, and AC result output prints distinct solver/representative timing labels instead of silently aliasing representative time as solver time.
+* **Bugfix**: Fixed MATPOWER benchmark execution under Julia 1.12/Revise by interpolating the benchmark casefile into `@benchmarkable` and invoking `BenchmarkTools.run` via `Base.invokelatest`, preventing world-age warnings and `UndefVarError: local_case` failures in the MATPOWER example path.
+* **Bugfix**: Fixed MATPOWER import benchmark path for Julia 1.12/Revise by invoking benchmark sample closures via `Base.invokelatest` and guarding `performance_profile` access in `run_acpflow`, eliminating world-age warnings (`Main.main`, BenchmarkTools-generated closures) and `MethodError: get(::Nothing, ::Symbol, ::Nothing)` during sample runs.
+* **Bugfix**: Fixed MATPOWER example startup/runtime thread handling by distinguishing Julia startup threads vs runtime BLAS threads, adding `--julia-threads`/`SPARLECTRA_JULIA_THREADS` overrides with single-pass script re-exec guidance, and hardening compact performance/final console output against Ctrl-C interruptions in script mode.
+* **Bugfix**: Fixed MATPOWER runner output routing by running benchmark samples silently, capturing one representative solve for logfile diagnostics, honoring `output.logfile_performance`, and deriving compact `q_limit_active_set` summaries from typed status fields so benchmark console output stays compact and summary status remains consistent.
+* **Bugfix**: Fixed MATPOWER runner performance logging so `logfile_performance = full` now includes representative phase timings plus iteration/allocation details (when enabled), `compact` includes aggregated timing rows, and benchmark samples no longer pollute the representative performance profile.
+* **Improvement**: Added MATPOWER performance timing coverage reporting with representative wall time, top-level and total recorded phase sums, benchmark-event separation, and unaccounted/overlap diagnostics to make instrumentation coverage explicit.
+* **Bugfix**: Fixed diagnostics/output section separation in central YAML parsing so MATPOWER example effective-config logging no longer overrides `diagnostics.*` values with same-named `output.*` keys.
+* **Bugfix**: Reworked YAML configuration documentation into table-based references, added explicit allowed-value validation for user-facing Symbol/String options, and added regression tests to ensure every key in `src/configuration.yaml.example` is documented (including migration from removed `matpower_import.benchmark` to `benchmark.enabled`).
+* **Bugfix**: Fixed MATPOWER start-mode configuration regression by validating all runtime-supported `power_flow.start_mode.angle_mode`/`voltage_mode` values, storing both fields in typed config, propagating them into `run_acpflow`, and adding regression coverage for accepted and rejected values under Julia 1.12 example workflows.
+* **Bugfix**: Audited and aligned central YAML/runtime configuration coverage for MATPOWER and power-flow paths by adding typed `state_estimation.method`, widening MATPOWER allowed-value validation to runtime-supported modes (`pv_voltage_source`, `compare_voltage_reference`, `ratio`, `bus_shunt_model`), and adding configuration-coverage plus roundtrip regression tests for previously dropped keys (including Q-limit and MATPOWER import toggles).
+* **Bugfix**: Refactored rectangular MATPOWER result handling to use a structured solver outcome (`:converged`, `:converged_with_limit_warnings`, `:converged_limits_failed`, `:not_converged`, `:singular_jacobian`, `:solver_error`), kept numerical/active-set status fields in exported status summaries, and allowed voltage-result output for numerically converged solutions even when final Q-limit active-set validation fails.
+* **Bugfix**: Improved MATPOWER network-construction instrumentation and performance controls for large imports by adding preallocation config (`matpower_import.preallocate_network`, `matpower_import.preallocate_min_buses`), export of construction metadata in the performance profile, and import-path setup for reusable MATPOWER lookup maps without changing solver numerics.
 
 ### Improvements
-* Optimized rectangular solver voltage-setpoint lookup to build per-solve bus and generator setpoint maps, avoiding repeated bus-by-prosumer scans for large MATPOWER imports while preserving `GEN.VG` PV/REF setpoint behavior and diagnostics.
-* Added finer rectangular solver performance timings for setup, active-set construction, Q-limit extraction/readiness, state updates, final result writeback, and status bookkeeping to explain large-case `solver_total` overhead outside Newton-step timing.
-* Added configurable performance profiling for the MATPOWER import example, including phase-level import/solver/output timings, optional allocation reporting, Newton-iteration diagnostics, and large-case speed switches for compact logging and expensive comparisons.
-* Decomposed rectangular start-projection profiling into DC-start construction, matrix assembly, solve, candidate generation/evaluation, branch-guard checks, voltage limiting, MATPOWER lookup/map phases, and final selection; added large-case YAML switches to disable expensive candidate measurement and reuse the already parsed MATPOWER case.
 
+* Added a central configuration workflow:
+  * default template: `src/configuration.yaml.example`
+  * optional user override: `examples/configuration.yaml`
+  * early unknown-key validation
+  * MATPOWER options grouped under `matpower_import`
+* Centralized runtime configuration for MATPOWER import, rectangular power flow, state estimation, diagnostics, output, and profiling. This reduces long option lists and makes the call paths easier to follow.
+* Optimized rectangular solver voltage-setpoint lookup by building per-solve bus and generator maps instead of repeatedly scanning prosumers in large MATPOWER cases.
+* Added more detailed rectangular solver timings for setup, active-set handling, Q-limit checks, state updates, result writeback, and status bookkeeping.
+* Added configurable MATPOWER performance profiling with phase timings, optional allocation reporting, Newton diagnostics, and large-case speed switches.
+* Split start-projection profiling into smaller phases, including DC-start construction, matrix assembly, solve, candidate evaluation, branch checks, voltage limiting, MATPOWER lookup, and final selection.
+
+### Related
+
+* Issue #201: YAML redesign
+* Issue #199: Centralized configuration
+
+  
 ## Version 0.7.8 – 2026-05-16
 ### Highlights
 * Improved Q-limit handling for large MATPOWER imports, especially cases with many generators that have zero or very narrow reactive-power ranges.
@@ -384,3 +424,5 @@
 
 ## Version 0.4.0 (2023-11-30)
 - Initial public commit of Sparlectra 
+
+* **Bugfix**: Restored MATPOWER runner operational reporting through package-level runners (header, config paths, resolved case, logfile path, compact summary, benchmark/performance blocks) while keeping example scripts thin and free of local YAML parsing.

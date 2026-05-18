@@ -78,4 +78,4 @@ links_df = DataFrame(report.links)
 
 ## Full runnable example
 
-See `src/examples/using_netreports.jl` for a complete script.
+See `examples/using_netreports.jl` for a complete script.

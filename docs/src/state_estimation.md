@@ -270,10 +270,10 @@ println("Observable quality: ", obs.quality)
 ## Further examples and workshop material
 
 * Extended tutorial and a simple 7-bus setup: [Workshop](workshop.md)
-* Detailed WLS reporting example script: `src/examples/state_estimation_wls.jl`
-* Observability-focused scenario script: `src/examples/state_estimation_observability.jl`
-* Passive-bus ZIB comparison example: `src/examples/state_estimation_passive_bus_zib_comparison.jl`
-* Matrix-based observability/redundancy demo: `src/examples/h_matrix_observability_demo.jl`
+* Detailed WLS reporting example script: `examples/state_estimation_wls.jl`
+* Observability-focused scenario script: `examples/state_estimation_observability.jl`
+* Passive-bus ZIB comparison example: `examples/state_estimation_passive_bus_zib_comparison.jl`
+* Matrix-based observability/redundancy demo: `examples/h_matrix_observability_demo.jl`
 
 ## H-matrix observability demo (A..E)
 
@@ -281,7 +281,7 @@ If you want to study observability directly on Jacobian-like matrices `H` withou
 building a full network first, use:
 
 ```bash
-julia --project=. src/examples/h_matrix_observability_demo.jl
+julia --project=. examples/h_matrix_observability_demo.jl
 ```
 
 The script evaluates each matrix with:

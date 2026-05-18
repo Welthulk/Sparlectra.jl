@@ -45,27 +45,49 @@ function calc_injections(Y::AbstractMatrix{ComplexF64}, V::AbstractVector{Comple
 end
 
 """
+    solve_sparse_system(A::SparseMatrixCSC, b; context=:powerflow)
+
+Solve a sparse linear system without densifying `A`. The primary path uses the
+standard sparse direct solve (UMFPACK for sparse floating-point matrices where
+available), with sparse QR as a singular-step fallback. If both sparse paths
+fail, the caller receives a clear error instead of an accidental dense SVD or
+`Matrix(A)` fallback in the power-flow core.
+"""
+function solve_sparse_system(A::SparseMatrixCSC, b; context::Symbol = :powerflow)
+  try
+    return A \ b
+  catch e
+    _is_linear_singularity_error(e) || rethrow(e)
+    try
+      return qr(A) \ b
+    catch qr_error
+      _is_linear_fallback_error(qr_error) || rethrow(qr_error)
+      throw(LinearAlgebra.SingularException(0))
+    end
+  end
+end
+
+"""
     solve_linear(A, b; allow_pinv=true)
 
-Solve `A*x = b`. If the direct solve reports a singular matrix and
-`allow_pinv=true`, first try a rank-revealing QR solve. For smaller systems,
-fall back to dense SVD if QR also fails. Large sparse systems deliberately do
-not densify here; callers that can continue safely should catch the remaining
-singular linear-step error and report non-convergence instead.
+Solve `A*x = b`. Sparse matrices are handled by `solve_sparse_system` and are
+never converted to dense storage. Dense callers may still use the small-system
+SVD fallback when explicitly allowed.
 """
 function solve_linear(A, b; allow_pinv::Bool = true)
+  if A isa SparseMatrixCSC
+    return solve_sparse_system(A, b; context = :powerflow)
+  end
   try
     return A \ b
   catch e
     if allow_pinv && _is_linear_singularity_error(e)
       try
-        # Prefer a rank-revealing QR fallback.  It avoids forming a dense SVD for
-        # large sparse Jacobians and is more robust than `pinv` on singular steps.
         return qr(A) \ b
       catch qr_error
-        if qr_error isa LinearAlgebra.LAPACKException || qr_error isa ArgumentError || qr_error isa LinearAlgebra.SingularException
+        if _is_linear_fallback_error(qr_error)
           _dense_svd_fallback_allowed(A) || rethrow(qr_error)
-          return _svd_pinv_solve(Matrix(A), b)
+          return _svd_pinv_solve(A, b)
         end
         rethrow(qr_error)
       end

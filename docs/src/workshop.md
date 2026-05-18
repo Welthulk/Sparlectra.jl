@@ -135,7 +135,7 @@ end
 ```
 
 For a complete scenario with open and closed links, see
-`src/examples/using_links.jl` and the detailed notes in `links.md`.
+`examples/using_links.jl` and the detailed notes in `links.md`.
 
 ### Validate and solve the network
 
@@ -440,17 +440,17 @@ tap/phase positions, limits, and status.
 
 ### 5. Example programs
 
-- `src/examples/example_transformer_tap.jl`  
+- `examples/example_transformer_tap.jl`  
   Minimal setup for OLTC / PST / combined controller behavior.
-- `src/examples/example_transformer_phase_shift_control.jl`  
+- `examples/example_transformer_phase_shift_control.jl`  
   Focused PST active-power target control example.
-- `src/examples/tap_control_demo_grid.jl`  
+- `examples/tap_control_demo_grid.jl`  
   Full multi-voltage demo with YAML-configurable controller targets and
   transformer tap/phase parameters plus versioned output logs.
 
 The accompanying config template is:
 
-- `src/examples/tap_control_demo_grid.yaml.example`
+- `examples/tap_control_demo_grid.yaml.example`
 
 It exposes target values and transformer tap/phase ranges + step sizes so that
 you can tune the workshop run without editing the Julia source.
@@ -510,7 +510,6 @@ maxIte = 20
 tol = 1e-8
 verbose = 1
 damp = 0.2
-opt_fd = false
 opt_sparse = true
 
 etime = @elapsed begin
@@ -521,7 +520,6 @@ etime = @elapsed begin
         verbose;
         method = :rectangular,
         damp = damp,
-        opt_fd = opt_fd,
         opt_sparse = opt_sparse,
     )
 end
