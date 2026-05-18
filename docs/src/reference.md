@@ -4,6 +4,7 @@
   Modules = [Sparlectra] 
   Pages = [    
     "Sparlectra.jl",
+    "configuration.jl",
     "node.jl", 
     "shunt.jl", 
     "lines.jl", 

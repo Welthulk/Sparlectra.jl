@@ -64,7 +64,7 @@ function _rectangular_one_step_voltage(initial_vm::Float64, vset::Float64)
   Vset = [1.0, 1.0, vset]
   V0[3] = initial_vm + 0.0im
 
-  V1 = Sparlectra.complex_newton_step_rectangular(Y, V0, S; slack_idx = slack_idx, bus_types = bus_types, Vset = Vset, use_sparse = true)
+  V1 = Sparlectra.complex_newton_step_rectangular(Y, V0, S; slack_idx = slack_idx, bus_types = bus_types, Vset = Vset)
   F0 = Sparlectra.mismatch_rectangular(Y, V0, S, bus_types, Vset, slack_idx)
   return abs(V1[3]), F0[4]
 end
@@ -90,17 +90,15 @@ function run_pv_voltage_residual_tests()
     end
 
     @testset "solver paths converge with PV voltage setpoint" begin
-      for (method, kwargs) in [
-        (:rectangular, (; opt_sparse = true)),
-        (:rectangular, (; opt_fd = true, opt_sparse = true)),
-        (:polar_full, (; opt_sparse = true)),
-        (:classic, (; opt_sparse = true)),
-      ]
-        net = _create_pv_voltage_regression_net(vset = vset)
-        _, erg = runpf!(net, 40, 1e-9, 0; method = method, kwargs...)
-        @test erg == 0
-        @test isapprox(net.nodeVec[3]._vm_pu, vset; atol = 1e-7)
-        @test getNodeType(net.nodeVec[3]) == Sparlectra.PV
+      net = _create_pv_voltage_regression_net(vset = vset)
+      _, erg = runpf!(net, 40, 1e-9, 0; method = :rectangular)
+      @test erg == 0
+      @test isapprox(net.nodeVec[3]._vm_pu, vset; atol = 1e-7)
+      @test getNodeType(net.nodeVec[3]) == Sparlectra.PV
+
+      for kwargs in ((; method = :polar_full), (; method = :classic), (; method = :polar))
+        unsupported_net = _create_pv_voltage_regression_net(vset = vset)
+        @test_throws ArgumentError runpf!(unsupported_net, 40, 1e-9, 0; kwargs...)
       end
     end
 
@@ -121,7 +119,6 @@ function run_pv_voltage_residual_tests()
         1e-9,
         0;
         method = :rectangular,
-        opt_sparse = true,
         opt_flatstart = false,
         start_projection = true,
         start_projection_try_dc_start = true,
