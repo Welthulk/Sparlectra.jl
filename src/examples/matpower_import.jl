@@ -1475,6 +1475,43 @@ function _namedtuple_from_symbol_dict(d::Dict{Symbol,Any})
   return NamedTuple{Tuple(ordered)}(Tuple(d[k] for k in ordered))
 end
 
+function _explicit_yaml_options(yaml_cfg::Dict{String,Any})
+  explicit = Set(Symbol(k) for k in keys(yaml_cfg))
+  performance_keys = Dict(
+    "enabled" => :performance_enabled,
+    "level" => :performance_level,
+    "print_to_console" => :performance_print_to_console,
+    "write_to_logfile" => :performance_write_to_logfile,
+    "show_allocations" => :performance_show_allocations,
+    "show_iteration_table" => :performance_show_iteration_table,
+    "compact_logging" => :performance_compact_logging,
+    "skip_reference_comparison" => :performance_skip_reference_comparison,
+    "skip_expensive_diagnostics" => :performance_skip_expensive_diagnostics,
+    "skip_branch_neighborhood_report" => :performance_skip_branch_neighborhood_report,
+    "max_diagnostic_rows" => :performance_max_diagnostic_rows,
+  )
+  performance_cfg = get(yaml_cfg, "performance", nothing)
+  if performance_cfg isa AbstractDict
+    for key in keys(performance_cfg)
+      option = get(performance_keys, String(key), nothing)
+      isnothing(option) || push!(explicit, option)
+    end
+  end
+  runtime_keys = Dict(
+    "julia_threads" => :julia_threads,
+    "blas_threads" => :blas_threads,
+    "print_thread_config" => :print_thread_config,
+  )
+  runtime_cfg = get(yaml_cfg, "runtime", nothing)
+  if runtime_cfg isa AbstractDict
+    for key in keys(runtime_cfg)
+      option = get(runtime_keys, String(key), nothing)
+      isnothing(option) || push!(explicit, option)
+    end
+  end
+  return explicit
+end
+
 function _max_reference_residual_mw(diag, baseMVA::Real)
   max_p = isempty(diag.p_rows) ? 0.0 : maximum(abs.(real.(diag.mis[diag.p_rows]))) * baseMVA
   max_q = isempty(diag.q_rows) ? 0.0 : maximum(abs.(imag.(diag.mis[diag.q_rows]))) * baseMVA
@@ -1560,6 +1597,7 @@ function _matpower_auto_profile_flatstart!(recommendations::Dict{Symbol,Any}, re
     _matpower_auto_add!(recommendations, reasons, :start_projection_try_blend_scan, false, "DC start plus bus VM/VA blend is the compact default pre-run profile for large cases")
     _matpower_auto_add!(recommendations, reasons, :start_projection_measure_candidates, false, "large-case fast path skips candidate mismatch scans when the DC start is explicitly requested")
     _matpower_auto_add!(recommendations, reasons, :start_projection_reuse_import_data, true, "reuse the already parsed MATPOWER case for import and flat-start lookup")
+    _matpower_auto_add!(recommendations, reasons, :performance_skip_expensive_diagnostics, true, "large-case auto-profile avoids expensive reference diagnostics unless explicitly requested")
     _matpower_auto_add!(recommendations, reasons, :tol, 1e-5, "large benchmark validation uses a practical tolerance unless strict validation is explicitly requested")
     _matpower_auto_add!(recommendations, reasons, :max_ite, 80, "large benchmark validation allows additional iterations for active-set stabilization")
   end
@@ -2535,7 +2573,7 @@ reproducible.
 """
 function _matpower_auto_profile(mpc, cfg, yaml_cfg::Dict{String,Any})
   mode = _as_auto_profile_mode(cfg.matpower_auto_profile)
-  explicit_keys = Set(Symbol(k) for k in keys(yaml_cfg))
+  explicit_keys = _explicit_yaml_options(yaml_cfg)
   recommendations = Dict{Symbol,Any}()
   reasons = Dict{Symbol,String}()
   evidence = String[]
