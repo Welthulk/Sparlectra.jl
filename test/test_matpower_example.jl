@@ -107,6 +107,9 @@ function run_matpower_example_tests()
     @test occursin(raw"pv_table_rows_ = $console_max_rows", normalized_source)
     @test occursin("function _print_matpower_auto_profile_compact", normalized_source)
     @test occursin("function _print_matpower_run_summary", normalized_source)
+    @test occursin("start_projection_reuse_import_data::Bool", signature)
+    @test occursin("start_projection_reuse_import_data = cfg.start_projection_reuse_import_data", normalized_source)
+    @test occursin("imported_matpower_case = start_projection_reuse_import_data_ ? mpc_ : nothing", normalized_source)
 
     example_path = joinpath(@__DIR__, "..", "src", "examples", "matpower_import.jl")
     old_no_main = get(ENV, "SPARLECTRA_MATPOWER_IMPORT_NO_MAIN", nothing)
@@ -347,10 +350,31 @@ function run_matpower_example_tests()
       @test auto_apply.cfg.start_projection_measure_candidates === false
       @test auto_apply.cfg.start_projection_accept_unmeasured_dc_start === false
       @test auto_apply.cfg.start_projection_reuse_import_data === true
+      @test auto_apply.cfg.tol == 1e-5
+      @test auto_apply.cfg.max_ite == 80
       auto_recommend_cfg = Base.invokelatest(() -> getfield(mod, :bench_config_for_case)("case_large.m", Dict{String,Any}("matpower_auto_profile" => "recommend")))
       auto_recommend = Base.invokelatest(() -> getfield(mod, :_matpower_auto_profile)(large_mpc, auto_recommend_cfg, Dict{String,Any}("matpower_auto_profile" => "recommend")))
       @test auto_recommend.mode === :recommend
       @test auto_recommend.cfg.start_projection === false
+      narrow_gen = zeros(10, 21)
+      for r in axes(narrow_gen, 1)
+        narrow_gen[r, 1] = r
+        narrow_gen[r, 4] = 0.5
+        narrow_gen[r, 5] = 0.0
+        narrow_gen[r, 8] = 1.0
+      end
+      narrow_large_mpc = (; baseMVA = 100.0, bus = large_bus, gen = narrow_gen, branch = zeros(0, 13))
+      narrow_auto_apply_cfg = Base.invokelatest(() -> getfield(mod, :bench_config_for_case)("case_large.m", Dict{String,Any}("matpower_auto_profile" => "apply")))
+      narrow_auto_apply = Base.invokelatest(() -> getfield(mod, :_matpower_auto_profile)(narrow_large_mpc, narrow_auto_apply_cfg, Dict{String,Any}("matpower_auto_profile" => "apply")))
+      @test narrow_auto_apply.cfg.start_projection === false
+      @test narrow_auto_apply.cfg.flatstart_angle_mode === :dc
+      @test narrow_auto_apply.cfg.flatstart_voltage_mode === :bus_vm_va_blend
+      @test narrow_auto_apply.cfg.qlimit_guard === true
+      @test narrow_auto_apply.cfg.qlimit_start_mode === :iteration_or_auto
+      @test narrow_auto_apply.cfg.qlimit_guard_min_q_range_pu == 0.02
+      @test narrow_auto_apply.cfg.qlimit_guard_narrow_range_mode === :lock_pq
+      @test narrow_auto_apply.cfg.qlimit_guard_violation_mode === :lock_pq
+      @test narrow_auto_apply.cfg.tol == 1e-5
       auto_io = IOBuffer()
       @test Base.invokelatest(() -> getfield(mod, :_print_matpower_auto_profile)(auto_io, auto_apply)) === nothing
       auto_text = String(take!(auto_io))
