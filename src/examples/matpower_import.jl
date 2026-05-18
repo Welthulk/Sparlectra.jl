@@ -307,7 +307,9 @@ function _print_performance_profile(io::IO, profile; title::AbstractString = "Pe
     end
     sp = get(profile, :start_projection_summary, nothing)
     if sp !== nothing
-      @printf(io, "start_projection: selected=%s, candidates=%d, best_mismatch=%.6e, time=%.6f s\n", String(sp.selected), sp.candidates, sp.best_mismatch, sp.elapsed_s)
+      best_mismatch_text = ismissing(sp.best_mismatch) ? "not_measured" : @sprintf("%.6e", sp.best_mismatch)
+      reason = hasproperty(sp, :reason) ? sp.reason : :unknown
+      @printf(io, "start_projection: selected=%s, reason=%s, candidates=%d, best_mismatch=%s, time=%.6f s\n", String(sp.selected), String(reason), sp.candidates, best_mismatch_text, sp.elapsed_s)
     end
     if haskey(profile, :dc_matrix_size)
       dc_size = get(profile, :dc_matrix_size, (0, 0))
@@ -384,6 +386,7 @@ function bench_config_for_case(case_name::AbstractString, yaml_cfg::Dict{String,
     start_projection_try_blend_scan = true,
     start_projection_branch_guard = true,
     start_projection_measure_candidates = true,
+    start_projection_accept_unmeasured_dc_start = false,
     start_projection_reuse_import_data = true,
     start_projection_blend_lambdas = [0.25, 0.5, 0.75],
     start_projection_dc_angle_limit_deg = 60.0,
@@ -500,6 +503,7 @@ function bench_config_for_case(case_name::AbstractString, yaml_cfg::Dict{String,
       start_projection_try_blend_scan = Bool(get(yaml_cfg, "start_projection_try_blend_scan", base.start_projection_try_blend_scan)),
       start_projection_branch_guard = Bool(get(yaml_cfg, "start_projection_branch_guard", base.start_projection_branch_guard)),
       start_projection_measure_candidates = Bool(get(yaml_cfg, "start_projection_measure_candidates", base.start_projection_measure_candidates)),
+      start_projection_accept_unmeasured_dc_start = Bool(get(yaml_cfg, "start_projection_accept_unmeasured_dc_start", base.start_projection_accept_unmeasured_dc_start)),
       start_projection_reuse_import_data = Bool(get(yaml_cfg, "start_projection_reuse_import_data", base.start_projection_reuse_import_data)),
       start_projection_blend_lambdas = Float64[x for x in get(yaml_cfg, "start_projection_blend_lambdas", base.start_projection_blend_lambdas)],
       start_projection_dc_angle_limit_deg = Float64(get(yaml_cfg, "start_projection_dc_angle_limit_deg", base.start_projection_dc_angle_limit_deg)),
@@ -1443,7 +1447,7 @@ function _matpower_auto_profile_flatstart!(recommendations::Dict{Symbol,Any}, re
     _matpower_auto_add!(recommendations, reasons, :opt_flatstart, true, reason)
     _matpower_auto_add!(recommendations, reasons, :flatstart_angle_mode, :dc, reason)
     _matpower_auto_add!(recommendations, reasons, :flatstart_voltage_mode, :bus_vm_va_blend, reason)
-    _matpower_auto_add!(recommendations, reasons, :start_projection, true, reason)
+    _matpower_auto_add!(recommendations, reasons, :start_projection, false, "large-case auto-profile keeps start projection disabled unless a later rescue path explicitly requests it")
     _matpower_auto_add!(recommendations, reasons, :start_projection_try_dc_start, true, reason)
     _matpower_auto_add!(recommendations, reasons, :start_projection_try_blend_scan, false, "DC start plus bus VM/VA blend is the compact default pre-run profile for large cases")
     _matpower_auto_add!(recommendations, reasons, :start_projection_measure_candidates, false, "large-case fast path skips candidate mismatch scans when the DC start is explicitly requested")
@@ -1751,6 +1755,7 @@ function bench_run_acpflow(;
   start_projection_try_blend_scan::Bool = true,
   start_projection_branch_guard::Bool = true,
   start_projection_measure_candidates::Bool = true,
+  start_projection_accept_unmeasured_dc_start::Bool = false,
   start_projection_reuse_import_data::Bool = true,
   start_projection_blend_lambdas::AbstractVector{<:Real} = [0.25, 0.5, 0.75],
   start_projection_dc_angle_limit_deg::Float64 = 60.0,
@@ -1944,6 +1949,7 @@ function bench_run_acpflow(;
               start_projection_try_blend_scan = start_projection_try_blend_scan,
               start_projection_branch_guard = start_projection_branch_guard,
               start_projection_measure_candidates = start_projection_measure_candidates,
+              start_projection_accept_unmeasured_dc_start = start_projection_accept_unmeasured_dc_start,
               start_projection_blend_lambdas = start_projection_blend_lambdas,
               start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg,
               qlimit_start_iter = qlimit_start_iter,
@@ -2046,6 +2052,7 @@ end
                 start_projection_try_blend_scan = start_projection_try_blend_scan,
                 start_projection_branch_guard = start_projection_branch_guard,
                 start_projection_measure_candidates = start_projection_measure_candidates,
+                start_projection_accept_unmeasured_dc_start = start_projection_accept_unmeasured_dc_start,
                 start_projection_blend_lambdas = start_projection_blend_lambdas,
                 start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg,
                 qlimit_start_iter = qlimit_start_iter,
@@ -2122,6 +2129,7 @@ end
         start_projection_try_blend_scan = start_projection_try_blend_scan,
         start_projection_branch_guard = start_projection_branch_guard,
         start_projection_measure_candidates = start_projection_measure_candidates,
+        start_projection_accept_unmeasured_dc_start = start_projection_accept_unmeasured_dc_start,
         start_projection_blend_lambdas = start_projection_blend_lambdas,
         start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg,
         qlimit_start_iter = qlimit_start_iter,
@@ -2203,6 +2211,7 @@ end
       start_projection_try_blend_scan = start_projection_try_blend_scan,
       start_projection_branch_guard = start_projection_branch_guard,
       start_projection_measure_candidates = start_projection_measure_candidates,
+      start_projection_accept_unmeasured_dc_start = start_projection_accept_unmeasured_dc_start,
       start_projection_blend_lambdas = start_projection_blend_lambdas,
       start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg,
       qlimit_start_iter = qlimit_start_iter,
@@ -2274,6 +2283,9 @@ end
       start_projection = start_projection_,
       start_projection_try_dc_start = start_projection_try_dc_start_,
       start_projection_try_blend_scan = start_projection_try_blend_scan_,
+      start_projection_branch_guard = start_projection_branch_guard_,
+      start_projection_measure_candidates = start_projection_measure_candidates_,
+      start_projection_accept_unmeasured_dc_start = start_projection_accept_unmeasured_dc_start_,
       start_projection_blend_lambdas = start_projection_blend_lambdas_,
       start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg_,
       qlimit_start_iter = qlimit_start_iter_,
@@ -2321,6 +2333,9 @@ end
     start_projection_ = $start_projection;
     start_projection_try_dc_start_ = $start_projection_try_dc_start;
     start_projection_try_blend_scan_ = $start_projection_try_blend_scan;
+    start_projection_branch_guard_ = $start_projection_branch_guard;
+    start_projection_measure_candidates_ = $start_projection_measure_candidates;
+    start_projection_accept_unmeasured_dc_start_ = $start_projection_accept_unmeasured_dc_start;
     start_projection_blend_lambdas_ = $start_projection_blend_lambdas;
     start_projection_dc_angle_limit_deg_ = $start_projection_dc_angle_limit_deg;
     qlimit_start_iter_ = $qlimit_start_iter;
@@ -2474,7 +2489,7 @@ function _print_matpower_auto_profile_compact(io::IO, result)
   pv_text = _auto_profile_recommendation_text(result, :matpower_pv_voltage_source, "GEN.VG recommended", "OK")
   qlimit_evidence = _auto_profile_evidence_with_prefix(result, "Q-limit scan")
   qlimit_text = isempty(qlimit_evidence) ? "OK" : replace(qlimit_evidence, "online generators have zero or narrow Q range" => "online generators have zero/narrow Q range")
-  start_text = hasproperty(result.recommendations, :start_projection) || hasproperty(result.recommendations, :flatstart_angle_mode) ? "DC angle + blended voltage recommended" : "OK"
+  start_text = hasproperty(result.recommendations, :flatstart_angle_mode) ? "DC angle + blended voltage recommended; start projection off" : "OK"
   @printf(io, "  branch shift      : %s\n", branch_text)
   @printf(io, "  bus shunts        : %s\n", shunt_text)
   @printf(io, "  PV voltage source : %s\n", pv_text)
@@ -2640,6 +2655,7 @@ function main()
     start_projection_try_blend_scan = cfg.start_projection_try_blend_scan,
     start_projection_branch_guard = cfg.start_projection_branch_guard,
     start_projection_measure_candidates = cfg.start_projection_measure_candidates,
+    start_projection_accept_unmeasured_dc_start = cfg.start_projection_accept_unmeasured_dc_start,
     start_projection_reuse_import_data = cfg.start_projection_reuse_import_data,
     start_projection_blend_lambdas = cfg.start_projection_blend_lambdas,
     start_projection_dc_angle_limit_deg = cfg.start_projection_dc_angle_limit_deg,
