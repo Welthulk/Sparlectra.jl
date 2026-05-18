@@ -492,6 +492,54 @@ function test_rectangular_start_projection_improves_dc_seed()::Bool
          profile[:dc_solve_reduced_dimension] == 1
 end
 
+function test_rectangular_start_projection_keeps_raw_without_finite_improvement()::Bool
+  Ydense = ComplexF64[0.0 - 10.0im 0.0 + 10.0im; 0.0 + 10.0im 0.0 - 10.0im]
+  Y = sparse(Ydense)
+  Vraw = ComplexF64[1.0 + 0.0im, 1.0 + 0.0im]
+  bus_types = [:Slack, :PQ]
+  Vset = [1.0, 1.0]
+
+  unmeasured_profile = Dict{Symbol,Any}(:enabled => true)
+  Vunmeasured = Sparlectra.project_rectangular_start(
+    Y,
+    Vraw,
+    ComplexF64[0.0 + 0.0im, -1.0 - 0.2im],
+    bus_types,
+    Vset,
+    1;
+    enabled = true,
+    try_dc_start = true,
+    try_blend_scan = false,
+    measure_candidates = false,
+    performance_profile = unmeasured_profile,
+  )
+
+  nonfinite_profile = Dict{Symbol,Any}(:enabled => true)
+  Vnonfinite = Sparlectra.project_rectangular_start(
+    Y,
+    Vraw,
+    ComplexF64[0.0 + 0.0im, Inf + 0.0im],
+    bus_types,
+    Vset,
+    1;
+    enabled = true,
+    try_dc_start = true,
+    try_blend_scan = false,
+    measure_candidates = true,
+    performance_profile = nonfinite_profile,
+  )
+
+  # Regression: an unmeasured or non-finite DC candidate must not be treated as a proven improvement.
+  return Vunmeasured == Vraw &&
+         unmeasured_profile[:start_projection_summary].selected === :raw &&
+         unmeasured_profile[:start_projection_summary].reason === :candidate_mismatch_not_measured &&
+         ismissing(unmeasured_profile[:start_projection_summary].best_mismatch) &&
+         Vnonfinite == Vraw &&
+         nonfinite_profile[:start_projection_summary].selected === :raw &&
+         nonfinite_profile[:start_projection_summary].reason === :no_finite_improvement &&
+         ismissing(nonfinite_profile[:start_projection_summary].best_mismatch)
+end
+
 function test_matpower_vmva_selfcheck_noncontiguous_bus_numbers()::Bool
   mpc = Sparlectra.MatpowerIO.MatpowerCase(
     "case_noncontig",
@@ -2112,6 +2160,7 @@ function run_grid_tests()
       @test test_acpflow(0; lLine_6a6b = 0.01, damp = 1.0, method = :polar_full, opt_sparse = true) == true
       @test test_rectangular_autodamp_backtracks_oversized_step() == true
       @test test_rectangular_start_projection_improves_dc_seed() == true
+      @test test_rectangular_start_projection_keeps_raw_without_finite_improvement() == true
       @test test_q_limit_adjust_vset_success() == true
       @test test_q_limit_adjust_vset_no_controller_switches() == true
       @test test_q_limit_adjust_vset_multiple_controllers_error() == true

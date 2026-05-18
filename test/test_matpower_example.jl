@@ -48,6 +48,7 @@ function run_matpower_example_tests()
       "start_projection_try_blend_scan",
       "start_projection_branch_guard",
       "start_projection_measure_candidates",
+      "start_projection_accept_unmeasured_dc_start",
       "start_projection_blend_lambdas",
       "start_projection_dc_angle_limit_deg",
       "qlimit_trace_buses",
@@ -145,6 +146,7 @@ function run_matpower_example_tests()
         "start_projection_try_blend_scan" => false,
         "start_projection_branch_guard" => false,
         "start_projection_measure_candidates" => false,
+        "start_projection_accept_unmeasured_dc_start" => true,
         "start_projection_reuse_import_data" => false,
         "start_projection_blend_lambdas" => [0.1, 0.9],
         "start_projection_dc_angle_limit_deg" => 45.0,
@@ -203,6 +205,7 @@ function run_matpower_example_tests()
       @test cfg.start_projection_try_blend_scan === false
       @test cfg.start_projection_branch_guard === false
       @test cfg.start_projection_measure_candidates === false
+      @test cfg.start_projection_accept_unmeasured_dc_start === true
       @test cfg.start_projection_reuse_import_data === false
       @test cfg.start_projection_blend_lambdas == [0.1, 0.9]
       @test cfg.start_projection_dc_angle_limit_deg == 45.0
@@ -335,13 +338,14 @@ function run_matpower_example_tests()
         "opt_flatstart" => false,
       )))
       @test auto_apply.mode === :apply
-      # Explicit YAML values win; inferred large-case start-projection options are still applied.
+      # Explicit YAML values win; large-case auto-profile keeps start projection disabled by default.
       @test auto_apply.cfg.opt_flatstart === false
       @test :opt_flatstart in auto_apply.preserved
-      @test auto_apply.cfg.start_projection === true
+      @test auto_apply.cfg.start_projection === false
       @test auto_apply.cfg.flatstart_angle_mode === :dc
       @test auto_apply.cfg.flatstart_voltage_mode === :bus_vm_va_blend
       @test auto_apply.cfg.start_projection_measure_candidates === false
+      @test auto_apply.cfg.start_projection_accept_unmeasured_dc_start === false
       @test auto_apply.cfg.start_projection_reuse_import_data === true
       auto_recommend_cfg = Base.invokelatest(() -> getfield(mod, :bench_config_for_case)("case_large.m", Dict{String,Any}("matpower_auto_profile" => "recommend")))
       auto_recommend = Base.invokelatest(() -> getfield(mod, :_matpower_auto_profile)(large_mpc, auto_recommend_cfg, Dict{String,Any}("matpower_auto_profile" => "recommend")))
@@ -384,7 +388,7 @@ summary_profile = Dict{Symbol,Any}(
     :logging_diagnostics => (calls = 1, elapsed_s = 0.2, bytes = 0),
   ),
   :iterations => [(iteration = 1, max_mismatch = 1e-3, qlimit_changed = false, qlimit_reenabled = false)],
-  :start_projection_summary => (selected = :dc_start, candidates = 2, best_mismatch = 1e-4, elapsed_s = 0.03),
+  :start_projection_summary => (selected = :dc_start, reason = :finite_improvement, candidates = 2, best_mismatch = 1e-4, elapsed_s = 0.03),
   :dc_matrix_size => (24, 24),
   :dc_matrix_nnz => 128,
   :dc_matrix_density => 128 / (24 * 24),
@@ -398,6 +402,7 @@ summary_text = String(take!(summary_io))
 @test occursin("matpower_parse", summary_text)
 @test occursin("logging_diagnostics", summary_text)
 @test occursin("start_projection: selected=dc_start", summary_text)
+@test occursin("reason=finite_improvement", summary_text)
 @test occursin("start_projection_dc: dc_matrix_size=(24, 24)", summary_text)
 @test occursin("dc_solve_backend=sparse_lu_umfpack", summary_text)
 @test !occursin("Newton iteration table", summary_text)

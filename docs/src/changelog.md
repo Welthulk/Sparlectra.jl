@@ -3,6 +3,7 @@
 ### Highlights
 
 ### Fixes
+* Fixed rectangular start-projection candidate selection so unmeasured or non-finite DC candidates are not selected as proven improvements, summary output reports an explicit selection reason, and large MATPOWER auto-profile keeps start projection disabled by default.
 * Fixed rectangular start-projection DC angle solves to preserve sparse DC matrices in both profiled and unprofiled start paths, use a sparse LU solve path for large reduced systems, avoid dense SVD fallback on large sparse singular systems, and report DC matrix/solver diagnostics in MATPOWER Performance Summary output.
 * Fixed performance-enabled MATPOWER example runs so they emit a compact Performance Summary with shared phase timings, including import, solver, diagnostics/logging, reference comparison, and post-processing phases when collected.
 
