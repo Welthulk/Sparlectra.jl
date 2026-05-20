@@ -286,9 +286,6 @@ function run_acpflow(;
   show_results = show_results && out_cfg.logfile_results !== :off
   row_limit = out_cfg.result_table_max_rows > 0 ? out_cfg.result_table_max_rows : nothing
   result_mode = out_cfg.logfile_results === :compact ? :summary : out_cfg.logfile_results
-  if length(myNet.nodeVec) >= out_cfg.result_table_large_case_threshold_buses && out_cfg.logfile_results != :full
-    result_mode = out_cfg.result_table_large_case_mode
-  end
   ext = lowercase(splitext(casefile)[2])
   myNet = nothing              # Initialize myNet variable
   in_path = nothing
@@ -325,6 +322,9 @@ function run_acpflow(;
       if Symbol(flatstart_voltage_mode) in (:all_bus_vm, :bus_vm_va_blend) || Symbol(flatstart_angle_mode) in (:bus_va_blend, :matpower_va)
         opt_flatstart = false
       end
+    end
+    if length(myNet.nodeVec) >= out_cfg.result_table_large_case_threshold_buses && out_cfg.logfile_results != :full
+      result_mode = out_cfg.result_table_large_case_mode
     end
     
     if verbose > 1
