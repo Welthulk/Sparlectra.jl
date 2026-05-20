@@ -31,7 +31,7 @@ function run_configuration_coverage_tests()
       "performance.enabled", "performance.level", "performance.print_to_console", "performance.write_to_logfile", "performance.show_allocations", "performance.show_iteration_table", "performance.compact_logging", "performance.skip_reference_comparison", "performance.skip_expensive_diagnostics", "performance.skip_branch_neighborhood_report", "performance.max_diagnostic_rows",
       "runtime.print_thread_config", "runtime.julia_threads", "runtime.blas_threads",
       "diagnostics.log_effective_config", "diagnostics.matpower_reference", "diagnostics.branch_shift_conventions", "diagnostics.negative_branch_impedance", "diagnostics.pv_voltage_references", "diagnostics.residual_clusters", "diagnostics.nodal_balance_breakdown", "diagnostics.branch_neighborhood", "diagnostics.compact_console", "diagnostics.detailed_log",
-      "output.console_summary", "output.console_auto_profile", "output.console_diagnostics", "output.console_q_limit_events", "output.console_max_rows", "output.logfile_results", "output.logfile_diagnostics", "output.logfile_performance", "output.logfile_warnings",
+      "output.console_summary", "output.console_auto_profile", "output.console_diagnostics", "output.console_q_limit_events", "output.console_max_rows", "output.logfile_results", "output.result_table_max_rows", "output.result_table_large_case_threshold_buses", "output.result_table_large_case_mode", "output.logfile_diagnostics", "output.logfile_performance", "output.logfile_warnings",
       "benchmark.enabled", "benchmark.methods", "benchmark.seconds", "benchmark.samples", "benchmark.show_once", "benchmark.show_once_output", "benchmark.show_once_max_nodes",
       "extensions.reserved",
     ])

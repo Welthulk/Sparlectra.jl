@@ -190,6 +190,9 @@ Base.@kwdef struct OutputConfig
   console_q_limit_events::Symbol = :summary
   console_max_rows::Int = 20
   logfile_results::Symbol = :off
+  result_table_max_rows::Int = 200
+  result_table_large_case_threshold_buses::Int = 1000
+  result_table_large_case_mode::Symbol = :summary
   logfile_diagnostics::Symbol = :compact
   logfile_performance::Symbol = :compact
   logfile_warnings::Symbol = :table
@@ -237,6 +240,7 @@ const OUTPUT_CONSOLE_AUTO_PROFILE_VALUES = (:off, :compact, :full)
 const OUTPUT_CONSOLE_DIAGNOSTICS_VALUES = (:off, :compact, :summary, :full)
 const OUTPUT_CONSOLE_Q_LIMIT_EVENTS_VALUES = (:off, :summary, :full)
 const OUTPUT_LOGFILE_RESULTS_VALUES = (:off, :compact, :classic, :full)
+const OUTPUT_RESULT_TABLE_LARGE_CASE_MODE_VALUES = (:summary, :classic, :full)
 const OUTPUT_LOGFILE_DIAGNOSTICS_VALUES = (:off, :compact, :full)
 const OUTPUT_LOGFILE_PERFORMANCE_VALUES = (:off, :compact, :full)
 const OUTPUT_LOGFILE_WARNINGS_VALUES = (:off, :summary, :table, :full)
@@ -540,6 +544,9 @@ function OutputConfig(raw::AbstractDict)
     console_q_limit_events = _validate_allowed_symbol("output.console_q_limit_events", _as_symbol_cfg(_raw_get(merged, "console_q_limit_events", :summary)), OUTPUT_CONSOLE_Q_LIMIT_EVENTS_VALUES),
     console_max_rows = _as_int_cfg(_raw_get(merged, "console_max_rows", 20)),
     logfile_results = _validate_allowed_symbol("output.logfile_results", _as_symbol_cfg(_raw_get(merged, "logfile_results", :off)), OUTPUT_LOGFILE_RESULTS_VALUES),
+    result_table_max_rows = _as_int_cfg(_raw_get(merged, "result_table_max_rows", 200)),
+    result_table_large_case_threshold_buses = _as_int_cfg(_raw_get(merged, "result_table_large_case_threshold_buses", 1000)),
+    result_table_large_case_mode = _validate_allowed_symbol("output.result_table_large_case_mode", _as_symbol_cfg(_raw_get(merged, "result_table_large_case_mode", :summary)), OUTPUT_RESULT_TABLE_LARGE_CASE_MODE_VALUES),
     logfile_diagnostics = _validate_allowed_symbol("output.logfile_diagnostics", _as_symbol_cfg(_raw_get(merged, "logfile_diagnostics", :compact)), OUTPUT_LOGFILE_DIAGNOSTICS_VALUES),
     logfile_performance = _validate_allowed_symbol("output.logfile_performance", _as_symbol_cfg(_raw_get(merged, "logfile_performance", :compact)), OUTPUT_LOGFILE_PERFORMANCE_VALUES),
     logfile_warnings = _validate_allowed_symbol("output.logfile_warnings", _as_symbol_cfg(_raw_get(merged, "logfile_warnings", :table)), OUTPUT_LOGFILE_WARNINGS_VALUES),

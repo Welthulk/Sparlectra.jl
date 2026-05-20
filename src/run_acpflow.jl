@@ -284,6 +284,11 @@ function run_acpflow(;
   matpower_pv_voltage_mismatch_tol_pu = mat_cfg.pv_voltage_mismatch_tol_pu
   enable_pq_gen_controllers = mat_cfg.enable_pq_gen_controllers
   show_results = show_results && out_cfg.logfile_results !== :off
+  row_limit = out_cfg.result_table_max_rows > 0 ? out_cfg.result_table_max_rows : nothing
+  result_mode = out_cfg.logfile_results === :compact ? :summary : out_cfg.logfile_results
+  if length(myNet.nodeVec) >= out_cfg.result_table_large_case_threshold_buses && out_cfg.logfile_results != :full
+    result_mode = out_cfg.result_table_large_case_mode
+  end
   ext = lowercase(splitext(casefile)[2])
   myNet = nothing              # Initialize myNet variable
   in_path = nothing
@@ -474,7 +479,7 @@ function run_acpflow(;
     jpath = printResultToFile ? out_path : ""
     if show_results || printResultAnyCase
       _perf_profile_time!(performance_profile, :result_output) do
-        printACPFlowResults(myNet, etime, ite, tol, printResultToFile, jpath; converged = (outcome == :converged), solver = method, solver_time_s = solver_elapsed_s)
+        printACPFlowResults(myNet, etime, ite, tol, printResultToFile, jpath; converged = (outcome == :converged), solver = method, solver_time_s = solver_elapsed_s, result_mode = result_mode, max_rows = row_limit)
         if outcome == :not_converged
           println("Diagnostic last-iterate voltages; Newton-Raphson did not converge.")
         elseif outcome == :converged_limits_failed
@@ -550,6 +555,11 @@ function run_net_acpflow(; net::Net, max_ite::Int = 30, tol::Float64 = 1e-6, ver
     lock_pv_to_pq_buses = pf_config.qlimits.lock_pv_to_pq_buses
   end
   show_results = show_results && out_cfg.logfile_results !== :off
+  row_limit = out_cfg.result_table_max_rows > 0 ? out_cfg.result_table_max_rows : nothing
+  result_mode = out_cfg.logfile_results === :compact ? :summary : out_cfg.logfile_results
+  if length(net.nodeVec) >= out_cfg.result_table_large_case_threshold_buses && out_cfg.logfile_results != :full
+    result_mode = out_cfg.result_table_large_case_mode
+  end
 
   requested_shunt_model = normalize_bus_shunt_model(bus_shunt_model)
   requested_shunt_model == net.bus_shunt_model || error("run_net_acpflow: bus_shunt_model must be set when constructing/importing the Net; got $(requested_shunt_model) for a net configured as $(net.bus_shunt_model).")
@@ -619,7 +629,7 @@ function run_net_acpflow(; net::Net, max_ite::Int = 30, tol::Float64 = 1e-6, ver
     jpath = ""
     if show_results
       _perf_profile_time!(performance_profile, :result_output) do
-        printACPFlowResults(net, etime, ite, tol, printResultToFile, jpath; converged = (outcome == :converged), solver = method, solver_time_s = solver_elapsed_s)
+        printACPFlowResults(net, etime, ite, tol, printResultToFile, jpath; converged = (outcome == :converged), solver = method, solver_time_s = solver_elapsed_s, result_mode = result_mode, max_rows = row_limit)
         if outcome == :not_converged
           println("Diagnostic last-iterate voltages; Newton-Raphson did not converge.")
         elseif outcome == :converged_limits_failed

@@ -318,7 +318,9 @@ function _compact_run_summary(status)::String
   pv2pq_buses = hasproperty(status, :pv2pq_buses) ? getproperty(status, :pv2pq_buses) : 0
   benchmark_fragment = isnothing(benchmark_median_s) ? "" : " benchmark_median=$(round(benchmark_median_s * 1000.0; digits = 6)) ms"
   solver_fragment = isnothing(solver_elapsed_s) ? " solver_time=unavailable" : " solver_time=$(round(Float64(solver_elapsed_s); digits = 6)) s"
-  return "summary method=$(method) outcome=$(outcome) numerical_solution=$(numerical_solution) solution_available=$(solution_available) limit_validation=$(limit_validation) final_converged=$(final_converged) final_mismatch=$(round(final_mismatch; digits = 9)) iterations=$(iterations) representative_time=$(round(representative_elapsed_s; digits = 6)) s$(solver_fragment)$(benchmark_fragment) pv2pq_events=$(pv2pq_events) pv2pq_buses=$(pv2pq_buses) reason=\"$(reason_text)\""
+  result_output_s = hasproperty(status, :result_output_s) ? getproperty(status, :result_output_s) : nothing
+  result_output_fragment = isnothing(result_output_s) ? "" : " result_output_time=$(round(Float64(result_output_s); digits = 6)) s"
+  return "summary method=$(method) outcome=$(outcome) numerical_solution=$(numerical_solution) solution_available=$(solution_available) limit_validation=$(limit_validation) final_converged=$(final_converged) final_mismatch=$(round(final_mismatch; digits = 9)) iterations=$(iterations) representative_time=$(round(representative_elapsed_s; digits = 6)) s$(solver_fragment)$(result_output_fragment)$(benchmark_fragment) pv2pq_events=$(pv2pq_events) pv2pq_buses=$(pv2pq_buses) reason=\"$(reason_text)\""
 end
 
 function _run_matpower_single(local_case::AbstractString, cfg::SparlectraConfig, profile, status_ref)
@@ -327,7 +329,9 @@ function _run_matpower_single(local_case::AbstractString, cfg::SparlectraConfig,
   if isnothing(status)
     status_ref[] = (method = cfg.powerflow.method, elapsed_s = t)
   else
-    status_ref[] = merge(status, (method = cfg.powerflow.method, elapsed_s = t))
+    timings = get(profile, :timings, Dict{Symbol,Any}())
+    result_output_s = haskey(timings, :result_output) ? _perf_timing_seconds(timings[:result_output]) : nothing
+    status_ref[] = merge(status, (method = cfg.powerflow.method, elapsed_s = t, result_output_s = result_output_s))
   end
   return t
 end

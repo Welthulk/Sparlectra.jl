@@ -286,7 +286,7 @@ function buildACPFlowReport(net::Net; ct::Float64 = 0.0, ite::Int = 0, tol::Floa
   return ACPFlowReport(metadata, node_rows, branch_rows, link_rows, tap_control_rows, q_events)
 end
 
-function formatBranchResults(net::Net)
+function formatBranchResults(net::Net; max_rows::Union{Nothing,Int} = nothing)
   busNameByIdx = _bus_name_by_idx(net)
   ctrl_by_branch = Dict{Int,NamedTuple}()
   for row in buildTapControllerReportRows(net)
@@ -307,7 +307,11 @@ function formatBranchResults(net::Net)
   formatted_results *= @sprintf("| %-25s | %-6s | %-25s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-9s | %-22s |\n", "Branch", "Type", "Connection", "P [MW]", "Q [MVar]", "P [MW]", "Q [MVar]", "Pv [MW]", "Qv [MVar]", "Ctrl", "P_tgt", "TapPos", "Ctrl status")
   formatted_results *= @sprintf("==========================================================================================================================================================================================================================\n")
   #! format: on
+  shown_rows = 0
   for br in net.branchVec
+    if !isnothing(max_rows) && shown_rows >= max_rows
+      break
+    end
     from = br.fromBus
     to = br.toBus
     bName = br.comp.cName
@@ -355,15 +359,19 @@ function formatBranchResults(net::Net)
     #! format: off
     formatted_results *= @sprintf("| %-25s | %-6s | %-25s | %-10.3f | %-10.3f | %-10.3f | %-10.3f | %-10.3f | %-10.3f | %-10s | %-10s | %-9s | %-22s |\n", bName, branchKind, connection, pfromVal, qfromVal, ptoVal, qtoVal, pLossval, qLossval, ctrl_type, p_target, tap_pos, status)
     #! format: on
+    shown_rows += 1
   end
   formatted_results *= @sprintf("--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------\n")
   (∑pv, ∑qv) = getTotalLosses(net = net)
   total_losses = @sprintf("total network power balance (Σ S_branch): P = %10.3f [MW], Q = %10.3f [MVar]\n", ∑pv, ∑qv)
 
+  if !isnothing(max_rows) && length(net.branchVec) > shown_rows
+    formatted_results *= @sprintf("Branch results shown: %d / %d\n", shown_rows, length(net.branchVec))
+  end
   return formatted_results, total_losses
 end
 
-function printACPFlowResults(net::Net, ct::Float64, ite::Int, tol::Float64, toFile::Bool = false, path::String = ""; converged::Bool = true, solver::Symbol = :NR, solver_time_s::Union{Nothing,Float64} = nothing)
+function printACPFlowResults(net::Net, ct::Float64, ite::Int, tol::Float64, toFile::Bool = false, path::String = ""; converged::Bool = true, solver::Symbol = :NR, solver_time_s::Union{Nothing,Float64} = nothing, result_mode::Symbol = :classic, max_rows::Union{Nothing,Int} = nothing)
   if toFile
     filename = strip("result_$(net.name).txt")
     io = open(joinpath(path, filename), "w")
@@ -376,7 +384,7 @@ function printACPFlowResults(net::Net, ct::Float64, ite::Int, tol::Float64, toFi
   current_date = Dates.format(Dates.now(), "d-u-yy H:M:S")
 
   formatted_version = format_version(vers)
-  flowResults, totalLosses = formatBranchResults(net)
+  flowResults, totalLosses = formatBranchResults(net; max_rows = max_rows)
 
   @printf(io, "================================================================================\n")
   @printf(io, "| SPARLECTRA Version %-10s - AC Power Flow Results                        |\n", formatted_version)
@@ -459,6 +467,7 @@ function printACPFlowResults(net::Net, ct::Float64, ite::Int, tol::Float64, toFi
   @printf(io, "PV→PQ (Q-Limit):%10d\n", num_q_limit)
 
   println(io, "\n", totalLosses)
+  result_mode === :summary && return nothing
 
   tap_target_vm = _tap_voltage_target_by_bus(net)
   @printf(io, "==========================================================================================================================================================================================================================\n")
@@ -487,7 +496,11 @@ function printACPFlowResults(net::Net, ct::Float64, ite::Int, tol::Float64, toFi
   tpGS = tqGS = tpLS = tqLS = 0.0
   pShunt_str = qShunt_str = ""
   tpShunt = tqShunt = 0.0
+  shown_bus_rows = 0
   for n in nodes
+    if !isnothing(max_rows) && shown_bus_rows >= max_rows
+      break
+    end
     p_gen, q_gen, p_load, q_load = _effective_bus_power_components(net, n.busIdx)
     if abs(p_gen) > 1e-6
       pGS = @sprintf("%10.3f", p_gen)
@@ -544,6 +557,10 @@ function printACPFlowResults(net::Net, ct::Float64, ite::Int, tol::Float64, toFi
 
     tap_target_str = haskey(tap_target_vm, n.busIdx) ? @sprintf("%.4f", tap_target_vm[n.busIdx]) : ""
     @printf(io, "| %-5d | %-20s | %-10.1f | %-10.3f | %-10.3f | %-10.3f | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-12s | %-12s |\n", n.busIdx, nodeName, n.comp.cVN, v, n._vm_pu, n._va_deg, pGS, qGS, pLS, qLS, pShunt_str, qShunt_str, typeStr, controlStr, tap_target_str)
+    shown_bus_rows += 1
+  end
+  if !isnothing(max_rows) && length(nodes) > shown_bus_rows
+    @printf(io, "Bus results shown: %d / %d\n", shown_bus_rows, length(nodes))
   end
 
   @printf(io, "--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------\n")

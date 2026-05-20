@@ -110,6 +110,9 @@ output:
   console_q_limit_events: summary
   console_max_rows: 20
   logfile_results: full
+  result_table_max_rows: 200
+  result_table_large_case_threshold_buses: 1000
+  result_table_large_case_mode: summary
   logfile_diagnostics: full
   logfile_performance: full
   logfile_warnings: full

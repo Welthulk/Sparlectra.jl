@@ -12,6 +12,8 @@
 ### Fixes
 
 * **Bugfix**: Fixed runtime thread config parsing so numeric YAML values for `runtime.julia_threads`/`runtime.blas_threads` are accepted and normalized to strings, preventing `MethodError: no method matching String(::Int64)` in MATPOWER example startup paths.
+* **Bugfix**: Made MATPOWER large-case result output scalable by adding row-limited/summary-aware AC result table rendering (`output.result_table_max_rows`, `output.result_table_large_case_threshold_buses`, `output.result_table_large_case_mode`) and wiring compact result mode so large runs avoid full bus/branch table dumps by default.
+* **Bugfix**: Extended compact MATPOWER run summary/status payload with `result_output_time` (when profiled) to separate solver time from output cost in large-case runs.
 * **Bugfix**: Fixed MATPOWER import configuration validation for `preallocate_network` by allowing symbol allow-lists passed as vectors, preventing `MethodError` in `matpower_import.jl` startup under Julia 1.12 workflows.
 * **Bugfix**: Unified rectangular PF outcome reporting and gating through a canonical status payload (outcome, numerical convergence, solution availability, limit-validation status, reason text, mismatch, iterations, elapsed time), fixed compact/log summaries to report `numerical_solution=FAIL` for non-converged NR runs, and aligned result-table plus MATPOWER comparison gating to depend on explicit solution availability (including `converged_limits_failed` as a numerical-solution class with validation warning output).
 * Increased the passive-bus zero-injection state-estimation regression iteration cap so `test/runtests.jl` converges reliably under the current solver behavior.
