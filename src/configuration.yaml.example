@@ -85,6 +85,8 @@ performance:
   show_allocations: false
   show_iteration_table: true
   compact_logging: true
+  representative_warmup_runs: 0
+  compare_cold_warm: false
   skip_reference_comparison: false
   skip_expensive_diagnostics: true
   skip_branch_neighborhood_report: true

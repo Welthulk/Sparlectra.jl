@@ -51,3 +51,14 @@ Reserved extension leaf: `extensions.reserved` (kept for forward compatibility, 
 - [MATPOWER Import Configuration](matpower_import.md)
 - [State-Estimation Configuration](state_estimation_configuration.md)
 - [Performance and Profiling Configuration](performance_profiling.md)
+
+## Key index (selected paths)
+
+- `power_flow.rectangular_workspace_reuse`
+- `power_flow.rectangular_preallocate_workspace`
+- `power_flow.rectangular_workspace_min_buses`
+- `performance.representative_warmup_runs`
+- `performance.compare_cold_warm`
+- `output.result_table_max_rows`
+- `output.result_table_large_case_threshold_buses`
+- `output.result_table_large_case_mode`

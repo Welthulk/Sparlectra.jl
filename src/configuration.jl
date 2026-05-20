@@ -137,6 +137,8 @@ Base.@kwdef struct PerformanceConfig
   show_allocations::Bool = false
   show_iteration_table::Bool = false
   compact_logging::Bool = true
+  representative_warmup_runs::Int = 0
+  compare_cold_warm::Bool = false
   skip_reference_comparison::Bool = false
   skip_expensive_diagnostics::Bool = true
   skip_branch_neighborhood_report::Bool = true
@@ -500,6 +502,8 @@ function PerformanceConfig(raw::AbstractDict)
     show_allocations = _as_bool_cfg(_raw_get(merged, "show_allocations", _raw_get(merged, "performance_show_allocations", false))),
     show_iteration_table = _as_bool_cfg(_raw_get(merged, "show_iteration_table", _raw_get(merged, "performance_show_iteration_table", false))),
     compact_logging = _as_bool_cfg(_raw_get(merged, "compact_logging", _raw_get(merged, "performance_compact_logging", true))),
+    representative_warmup_runs = _as_int_cfg(_raw_get(merged, "representative_warmup_runs", 0)),
+    compare_cold_warm = _as_bool_cfg(_raw_get(merged, "compare_cold_warm", false)),
     skip_reference_comparison = _as_bool_cfg(_raw_get(merged, "skip_reference_comparison", _raw_get(merged, "performance_skip_reference_comparison", false))),
     skip_expensive_diagnostics = _as_bool_cfg(_raw_get(merged, "skip_expensive_diagnostics", _raw_get(merged, "performance_skip_expensive_diagnostics", true))),
     skip_branch_neighborhood_report = _as_bool_cfg(_raw_get(merged, "skip_branch_neighborhood_report", _raw_get(merged, "performance_skip_branch_neighborhood_report", true))),

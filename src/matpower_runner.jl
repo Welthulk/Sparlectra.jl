@@ -69,6 +69,9 @@ function _print_timing_coverage(io::IO, profile; level::Symbol = :compact)
   println(io)
   println(io, "Timing coverage")
   println(io, "---------------")
+  timing_mode = get(profile, :timing_mode, :cold_representative)
+  println(io, "Timing mode                    : ", timing_mode == :warm_steady_state ? "warm / steady-state" : "cold / representative")
+  timing_mode == :cold_representative && println(io, "Timing note                    : first representative run may include JIT, sparse/BLAS init, and cache construction")
   println(io, "Representative wall time       : ", round(representative_elapsed_s; digits = 6), " s")
   println(io, "Top-level measured time        : ", round(sum_top_level; digits = 6), " s")
   println(io, "Top-level excluding output     : ", round(sum_top_level_ex_output; digits = 6), " s")
@@ -83,6 +86,14 @@ function _print_timing_coverage(io::IO, profile; level::Symbol = :compact)
   println(io, "Coverage status                : ", status_detail)
   println(io, "Nested timing note             : recorded phases include nested timings; their sum may exceed wall time")
   level === :compact && println(io, "  (compact mode: iteration diagnostics omitted)")
+  println(io)
+  println(io, "Rectangular workspace")
+  println(io, "---------------------")
+  println(io, "reuse         : ", get(profile, :rectangular_workspace_reuse, false))
+  println(io, "preallocated  : ", get(profile, :rectangular_workspace_preallocated, false))
+  println(io, "reason        : ", get(profile, :rectangular_workspace_reason, :unsupported_solver))
+  haskey(profile, :rectangular_workspace_nbus) && println(io, "nbus          : ", get(profile, :rectangular_workspace_nbus, 0))
+  haskey(profile, :rectangular_workspace_nstate) && println(io, "nstate        : ", get(profile, :rectangular_workspace_nstate, 0))
   return nothing
 end
 
@@ -449,6 +460,18 @@ function run_matpower_case(; casefile::AbstractString = "", config_file::Abstrac
       end
     end
   else
+    cold_solver_time = nothing
+    warm_solver_time = nothing
+    warmup_runs = max(0, cfg.performance.representative_warmup_runs)
+    if warmup_runs > 0
+      for _ in 1:warmup_runs
+        warm_status_ref = Ref{Any}(nothing)
+        _run_matpower_single(local_case, cfg, Dict{Symbol,Any}(), warm_status_ref)
+      end
+      profile[:timing_mode] = :warm_steady_state
+    else
+      profile[:timing_mode] = :cold_representative
+    end
     run_single = _run_matpower_single_routed(
       local_case,
       cfg,
@@ -459,6 +482,10 @@ function run_matpower_case(; casefile::AbstractString = "", config_file::Abstrac
     )
     if run_single isa NamedTuple
       profile[:representative_elapsed_s] = run_single.elapsed
+      st = status_ref[]
+      if !isnothing(st) && hasproperty(st, :solver_elapsed_s)
+        warm_solver_time = getproperty(st, :solver_elapsed_s)
+      end
       if cfg.output.logfile_diagnostics === :full
         append_captured_output_to_logfile(logfile, run_single.captured; section_title = "Solve diagnostics")
       elseif cfg.output.logfile_diagnostics === :compact
@@ -471,6 +498,21 @@ function run_matpower_case(; casefile::AbstractString = "", config_file::Abstrac
       end
     else
       profile[:representative_elapsed_s] = run_single
+    end
+    if cfg.performance.compare_cold_warm && warmup_runs > 0
+      cold_status_ref = Ref{Any}(nothing)
+      cold_profile = new_performance_profile(cfg.performance)
+      _run_matpower_single(local_case, cfg, cold_profile, cold_status_ref)
+      st = cold_status_ref[]
+      if !isnothing(st) && hasproperty(st, :solver_elapsed_s)
+        cold_solver_time = getproperty(st, :solver_elapsed_s)
+      end
+      if !(isnothing(cold_solver_time) || isnothing(warm_solver_time) || warm_solver_time == 0)
+        speedup = cold_solver_time / warm_solver_time
+        println("Cold run solver time : ", round(cold_solver_time; digits = 6), " s")
+        println("Warm run solver time : ", round(warm_solver_time; digits = 6), " s")
+        println("Warmup speedup       : ", round(speedup; digits = 3), "x")
+      end
     end
   end
 

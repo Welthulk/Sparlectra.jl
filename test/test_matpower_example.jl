@@ -233,6 +233,12 @@ matpower_import:
         :newton_step_linear_solve => (calls = 4, elapsed_s = 0.5, bytes = 400),
       ),
       :iterations => [(iter = 1, mismatch = 1.0, elapsed_s = 0.01)],
+      :timing_mode => :cold_representative,
+      :rectangular_workspace_reuse => true,
+      :rectangular_workspace_preallocated => true,
+      :rectangular_workspace_reason => :auto_threshold,
+      :rectangular_workspace_nbus => 10000,
+      :rectangular_workspace_nstate => 19998,
     )
     io_full = IOBuffer()
     Sparlectra.print_performance_profile(io_full, profile; level = :full, max_rows = 25)
@@ -259,6 +265,16 @@ matpower_import:
     @test occursin("network_construction", txt_compact)
     @test occursin("benchmark_rectangular", txt_compact)
     @test occursin("Timing coverage", txt_compact)
+    @test occursin("Timing mode", txt_compact)
+    @test occursin("cold / representative", txt_compact)
+    @test occursin("Rectangular workspace", txt_compact)
+    @test occursin("auto_threshold", txt_compact)
+  end
+
+  @testset "Performance warmup configuration parsing" begin
+    cfg_default = Sparlectra.load_sparlectra_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH; reload = true)
+    @test cfg_default.performance.representative_warmup_runs == 0
+    @test cfg_default.performance.compare_cold_warm == false
   end
 
   @testset "MATPOWER benchmark output routing" begin
