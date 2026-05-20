@@ -111,6 +111,14 @@ state_estimation:
       write(cfg_mode, "matpower_import:\n  compare_voltage_reference: $(mode)\n")
       @test Sparlectra.load_sparlectra_config(cfg_mode; reload = true).matpower.compare_voltage_reference === Symbol(mode)
     end
+    for mode in ("off", "on", "auto")
+      cfg_mode = tempname() * ".yaml"
+      write(cfg_mode, "power_flow:\n  rectangular_preallocate_workspace: $(mode)\n")
+      @test Sparlectra.load_sparlectra_config(cfg_mode; reload = true).powerflow.rectangular_preallocate_workspace === Symbol(mode)
+    end
+    bad_ws_cfg = tempname() * ".yaml"
+    write(bad_ws_cfg, "power_flow:\n  rectangular_preallocate_workspace: invalid\n")
+    @test_throws ArgumentError Sparlectra.load_sparlectra_config(bad_ws_cfg; reload = true)
   end
 
   @testset "MATPOWER example cleanup guard" begin
@@ -242,6 +250,7 @@ matpower_import:
     @test occursin("9.0", txt_full)
     @test !occursin("9.025", txt_full)
     @test occursin("Bytes", txt_full)
+    @test occursin("Bytes/Call", txt_full)
     @test occursin("Iteration diagnostics", txt_full)
 
     io_compact = IOBuffer()

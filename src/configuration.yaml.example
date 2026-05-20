@@ -11,6 +11,9 @@ power_flow:
   max_iter: 80
   autodamp: true
   autodamp_min: 0.05
+  rectangular_workspace_reuse: true
+  rectangular_preallocate_workspace: auto
+  rectangular_workspace_min_buses: 1000
 
   start_mode:
     angle_mode: dc

@@ -380,6 +380,7 @@ mutable struct RectangularIterationWorkspace
   current_pv_qreq_pu::Vector{Float64}
   prev_pv_qreq_pu::Vector{Float64}
   lock_mask::BitVector
+  rhs_vector::Vector{Float64}
 end
 
 function RectangularIterationWorkspace(nb::Int)
@@ -388,6 +389,7 @@ function RectangularIterationWorkspace(nb::Int)
     fill(NaN, nb),
     fill(NaN, nb),
     falses(nb),
+    zeros(Float64, 2 * max(nb - 1, 0)),
   )
 end
 
@@ -1831,6 +1833,9 @@ function run_complex_nr_rectangular_for_net!(
   qlimit_guard_violation_mode::Symbol = :delayed_switch,
   qlimit_guard_violation_threshold_pu::Float64 = 1e-4,
   performance_profile = nothing,
+  rectangular_workspace_reuse::Bool = true,
+  rectangular_preallocate_workspace::Symbol = :auto,
+  rectangular_workspace_min_buses::Int = 1000,
 )
   _validate_rectangular_powerflow_options(method = :rectangular, sparse = opt_sparse)
   if verbose > 1
@@ -1990,7 +1995,27 @@ function run_complex_nr_rectangular_for_net!(
   converged = false
   iters     = 0
   rejection_reason = :nr_mismatch_not_converged
+  rectangular_workspace_reason = :disabled
+  rectangular_workspace_preallocated = false
+  if !rectangular_workspace_reuse || rectangular_preallocate_workspace == :off
+    rectangular_workspace_reason = rectangular_workspace_reuse ? :off : :reuse_disabled
+  elseif rectangular_preallocate_workspace == :on
+    rectangular_workspace_preallocated = true
+    rectangular_workspace_reason = :forced_on
+  elseif rectangular_preallocate_workspace == :auto
+    rectangular_workspace_preallocated = nb >= rectangular_workspace_min_buses
+    rectangular_workspace_reason = rectangular_workspace_preallocated ? :auto_threshold : :auto_below_threshold
+  else
+    error("Unsupported rectangular_preallocate_workspace=$(rectangular_preallocate_workspace). Supported: :off, :on, :auto.")
+  end
   workspace = RectangularIterationWorkspace(nb)
+  if performance_profile !== nothing
+    performance_profile[:rectangular_workspace_reuse] = rectangular_workspace_reuse
+    performance_profile[:rectangular_workspace_preallocated] = rectangular_workspace_preallocated
+    performance_profile[:rectangular_workspace_reason] = rectangular_workspace_reason
+    performance_profile[:rectangular_workspace_nbus] = nb
+    performance_profile[:rectangular_workspace_nstate] = 2 * max(nb - 1, 0)
+  end
 
   if verbose > 1
     @info "Starting rectangular complex NR power flow..."
@@ -2014,6 +2039,10 @@ function run_complex_nr_rectangular_for_net!(
     end
     max_mis = maximum(abs.(F))
     push!(history, max_mis)
+    if rectangular_workspace_preallocated
+      resize!(workspace.rhs_vector, length(F))
+      copyto!(workspace.rhs_vector, F)
+    end
 
     (verbose > 1) && @debug "Rectangular NR iteration" iter = it max_mismatch = max_mis
 
@@ -2409,6 +2438,9 @@ function runpf_rectangular!(
     qlimit_guard_freeze_after_repeated_switching = qlimit_guard_freeze_after_repeated_switching,
     qlimit_guard_violation_mode = qlimit_guard_violation_mode,
     qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu,
+    rectangular_workspace_reuse = rectangular_workspace_reuse,
+    rectangular_preallocate_workspace = rectangular_preallocate_workspace,
+    rectangular_workspace_min_buses = rectangular_workspace_min_buses,
     performance_profile = performance_profile,
   )
   return iters, erg
@@ -2615,6 +2647,9 @@ function _runpf_with_config!(
     qlimit_guard_freeze_after_repeated_switching = qlim.guard_freeze_after_repeated_switching,
     qlimit_guard_violation_mode = qlim.guard_violation_mode,
     qlimit_guard_violation_threshold_pu = qlim.guard_violation_threshold_pu,
+    rectangular_workspace_reuse = config.rectangular_workspace_reuse,
+    rectangular_preallocate_workspace = config.rectangular_preallocate_workspace,
+    rectangular_workspace_min_buses = config.rectangular_workspace_min_buses,
     performance_profile = performance_profile,
   )
 end
@@ -2687,6 +2722,9 @@ function runpf!(
   qlimit_guard_freeze_after_repeated_switching::Bool = true,
   qlimit_guard_violation_mode::Symbol = :delayed_switch,
   qlimit_guard_violation_threshold_pu::Float64 = 1e-4,
+  rectangular_workspace_reuse::Bool = true,
+  rectangular_preallocate_workspace::Symbol = :auto,
+  rectangular_workspace_min_buses::Int = 1000,
   performance_profile = nothing,
 )
   _validate_rectangular_powerflow_options(method = method, sparse = opt_sparse)

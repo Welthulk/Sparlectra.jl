@@ -110,7 +110,7 @@ function print_performance_profile(io::IO, profile; title::AbstractString = "Per
 
   if has_timing_rows || !isempty(events)
     phase_w = 42
-    println(io, rpad("Phase", phase_w), lpad("Calls", 8), lpad("Time [s]", 14), show_allocations ? lpad("Bytes", 14) : "")
+    println(io, rpad("Phase", phase_w), lpad("Calls", 8), lpad("Time [s]", 14), show_allocations ? lpad("Bytes", 14) * lpad("Bytes/Call", 14) : "")
     shown = 0
     for phase in sort!(collect(keys(timings)); by = string)
       shown >= max_rows && break
@@ -121,7 +121,8 @@ function print_performance_profile(io::IO, profile; title::AbstractString = "Per
       calls = getproperty(row, :calls)
       elapsed_s = getproperty(row, :elapsed_s)
       bytes = _perf_timing_bytes(row)
-      bytes_str = show_allocations ? lpad(string(bytes), 14) : ""
+      bytes_per_call = calls > 0 ? Int(fld(bytes, calls)) : 0
+      bytes_str = show_allocations ? lpad(string(bytes), 14) * lpad(string(bytes_per_call), 14) : ""
       println(io, rpad(string(phase), phase_w), lpad(string(calls), 8), lpad(string(round(elapsed_s; digits = 6)), 14), bytes_str)
       shown += 1
     end
@@ -129,7 +130,7 @@ function print_performance_profile(io::IO, profile; title::AbstractString = "Per
       shown >= max_rows && break
       phase = hasproperty(row, :label) ? getproperty(row, :label) : :event
       elapsed_s = hasproperty(row, :seconds) ? getproperty(row, :seconds) : 0.0
-      bytes_str = show_allocations ? lpad("-", 14) : ""
+      bytes_str = show_allocations ? lpad("-", 14) * lpad("-", 14) : ""
       println(io, rpad(string(phase), phase_w), lpad("1", 8), lpad(string(round(elapsed_s; digits = 6)), 14), bytes_str)
       shown += 1
     end
