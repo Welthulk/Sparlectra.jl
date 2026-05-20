@@ -375,6 +375,22 @@ end
 
 const _RECTANGULAR_PF_STATUS = _RectangularPFStatusTable(Tuple{UInt,WeakRef,Any}[])
 
+mutable struct RectangularIterationWorkspace
+  qload_pu::Vector{Float64}
+  current_pv_qreq_pu::Vector{Float64}
+  prev_pv_qreq_pu::Vector{Float64}
+  lock_mask::BitVector
+end
+
+function RectangularIterationWorkspace(nb::Int)
+  return RectangularIterationWorkspace(
+    zeros(Float64, nb),
+    fill(NaN, nb),
+    fill(NaN, nb),
+    falses(nb),
+  )
+end
+
 function _prune_rectangular_pf_status!(table::_RectangularPFStatusTable)
   filter!(entry -> entry[2].value !== nothing, table.entries)
   return table
@@ -1974,7 +1990,7 @@ function run_complex_nr_rectangular_for_net!(
   converged = false
   iters     = 0
   rejection_reason = :nr_mismatch_not_converged
-  prev_pv_qreq_pu = fill(NaN, nb)
+  workspace = RectangularIterationWorkspace(nb)
 
   if verbose > 1
     @info "Starting rectangular complex NR power flow..."
@@ -2005,21 +2021,21 @@ function run_complex_nr_rectangular_for_net!(
     changed   = false
     reenabled = false
 
-    Qload_pu = _perf_profile_time!(performance_profile, :iteration_qload) do
-      build_qload_pu(net)
+    _perf_profile_time!(performance_profile, :iteration_qload) do
+      copyto!(workspace.qload_pu, build_qload_pu(net))
     end
 
     Scalc_pu = _perf_profile_time!(performance_profile, :iteration_calc_injections) do
       calc_injections(Ybus, V)
     end
     current_pv_qreq_pu = _perf_profile_time!(performance_profile, :iteration_qreq_vector) do
-      qreq = fill(NaN, nb)
-      @inbounds for bus in eachindex(qreq)
+      fill!(workspace.current_pv_qreq_pu, NaN)
+      @inbounds for bus in eachindex(workspace.current_pv_qreq_pu)
         if bus_types[bus] == :PV
-          qreq[bus] = imag(Scalc_pu[bus]) + Qload_pu[bus]
+          workspace.current_pv_qreq_pu[bus] = imag(Scalc_pu[bus]) + workspace.qload_pu[bus]
         end
       end
-      qreq
+      workspace.current_pv_qreq_pu
     end
 
     qlimit_iter_ready, qlimit_auto_ready, qlimit_ready, converged_this_iter, qlimit_check_active = _perf_profile_time!(performance_profile, :iteration_control_bookkeeping) do
@@ -2029,8 +2045,8 @@ function run_complex_nr_rectangular_for_net!(
         max_q_delta = 0.0
         compared = false
         @inbounds for bus in eachindex(current_pv_qreq_pu)
-          if isfinite(current_pv_qreq_pu[bus]) && isfinite(prev_pv_qreq_pu[bus])
-            max_q_delta = max(max_q_delta, abs(current_pv_qreq_pu[bus] - prev_pv_qreq_pu[bus]))
+          if isfinite(current_pv_qreq_pu[bus]) && isfinite(workspace.prev_pv_qreq_pu[bus])
+            max_q_delta = max(max_q_delta, abs(current_pv_qreq_pu[bus] - workspace.prev_pv_qreq_pu[bus]))
             compared = true
           end
         end
@@ -2055,7 +2071,7 @@ function run_complex_nr_rectangular_for_net!(
         end
         for bus in qlimit_trace_internal
           bus <= nb || continue
-          qreq = bus_types[bus] in (:PV, :Slack) ? imag(Scalc_pu[bus]) + Qload_pu[bus] : NaN
+          qreq = bus_types[bus] in (:PV, :Slack) ? imag(Scalc_pu[bus]) + workspace.qload_pu[bus] : NaN
           _print_rectangular_qlimit_trace(
             stdout,
             net,
@@ -2100,12 +2116,12 @@ function run_complex_nr_rectangular_for_net!(
         verbose = verbose,
         get_qreq_pu = bus -> begin
           (bus_types[bus] == :Slack) && return 0.0
-          return imag(Scalc_pu[bus]) + Qload_pu[bus]
+          return imag(Scalc_pu[bus]) + workspace.qload_pu[bus]
         end,
         is_pv = bus -> (bus_types[bus] == :PV),
         make_pq! = (bus, qclamp_gen_pu, side) -> begin
           bus_types[bus] = :PQ
-          qinj_pu = qclamp_gen_pu - Qload_pu[bus]
+          qinj_pu = qclamp_gen_pu - workspace.qload_pu[bus]
           S[bus] = ComplexF64(real(S[bus]), qinj_pu)
           net.nodeVec[bus]._qƩGen = qclamp_gen_pu * net.baseMVA
         end,
@@ -2116,6 +2132,7 @@ function run_complex_nr_rectangular_for_net!(
         qlimit_guard_freeze_after_repeated_switching = qlimit_guard_freeze_after_repeated_switching,
         qlimit_guard_violation_mode = qlimit_guard_violation_mode,
         qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu,
+        lock_mask_buffer = workspace.lock_mask,
         )
       end
 
@@ -2133,7 +2150,7 @@ function run_complex_nr_rectangular_for_net!(
       rejection_reason = :none
       break
     end
-    prev_pv_qreq_pu = current_pv_qreq_pu
+    copyto!(workspace.prev_pv_qreq_pu, current_pv_qreq_pu)
     # --- Newton step (FD or analytic) -----------------------------------
     try
       if use_fd
