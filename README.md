@@ -5,6 +5,11 @@
 [![Julia](https://img.shields.io/badge/Julia-1.x-9558B2.svg)](https://julialang.org/)
 [![GitHub release](https://img.shields.io/github/v/release/Welthulk/Sparlectra.jl)](https://github.com/Welthulk/Sparlectra.jl/releases)
 
+[![Documentation](https://github.com/Welthulk/Sparlectra.jl/actions/workflows/jekyll-gh-pages.yml/badge.svg)](https://welthulk.github.io/Sparlectra.jl/)
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
+[![Julia](https://img.shields.io/badge/Julia-1.x-9558B2.svg)](https://julialang.org/)
+[![GitHub release](https://img.shields.io/github/v/release/Welthulk/Sparlectra.jl)](https://github.com/Welthulk/Sparlectra.jl/releases)
+[![GitHub stars](https://img.shields.io/github/stars/Welthulk/Sparlectra.jl?style=social)](https://github.com/Welthulk/Sparlectra.jl/stargazers)
 
 **Sparlectra.jl is a Julia package for transparent power-system calculations.**
 <a href="https://github.com/Welthulk/Sparlectra.jl/tree/main/"><img align="left" width="100" src="docs/src/assets/logo.png" style="margin-right: 20px" /></a>
