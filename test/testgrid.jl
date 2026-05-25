@@ -1349,6 +1349,68 @@ function test_bus_shunt_model_modes()::Bool
          invalid_ok
 end
 
+function test_matpower_file_import_honors_explicit_overrides()::Bool
+  tmpdir = mktempdir()
+  case_path = joinpath(tmpdir, "case_inline.m")
+  write(case_path, """
+function mpc = case_inline
+mpc.version = '2';
+mpc.baseMVA = 100;
+mpc.bus = [
+1 3 0 0 0 0 1 1.0 0 110 1 1.1 0.9;
+2 1 90 30 5 10 1 1.0 0 110 1 1.1 0.9;
+];
+mpc.gen = [
+1 100 0 300 -300 1.02 100 1 300 0;
+];
+mpc.branch = [
+1 2 0.01 0.05 0.0 999 999 999 1.0 20 1 -360 360;
+];
+""")
+  prev_cfg = Sparlectra.active_sparlectra_config()
+  global_cfg = Sparlectra.SparlectraConfig(Dict(
+    "power_flow" => Dict("start_mode" => Dict("flatstart" => true)),
+    "matpower_import" => Dict(
+      "bus_shunt_model" => "voltage_dependent_injection",
+      "shift_sign" => -1.0,
+      "shift_unit" => "rad",
+    ),
+  ))
+  run_cfg = Sparlectra.SparlectraConfig(Dict(
+    "power_flow" => Dict("start_mode" => Dict("flatstart" => false)),
+    "matpower_import" => Dict(
+      "bus_shunt_model" => "admittance",
+      "shift_sign" => 1.0,
+      "shift_unit" => "deg",
+    ),
+  ))
+  try
+    Sparlectra.set_sparlectra_config!(global_cfg)
+
+    net_direct = Sparlectra.createNetFromMatPowerFile(
+      filename = case_path,
+      flatstart = false,
+      bus_shunt_model = :admittance,
+      matpower_shift_unit = :deg,
+    )
+    direct_ok = (net_direct.flatstart == false) &&
+                (net_direct.bus_shunt_model == :admittance)
+
+    net_cfg = Sparlectra.run_acpflow(
+      casefile = basename(case_path),
+      path = dirname(case_path),
+      show_results = false,
+      config = run_cfg,
+      matpower_shift_sign = 1.0,
+    )
+    cfg_ok = (net_cfg.flatstart == false) &&
+             (net_cfg.bus_shunt_model == :admittance)
+    return direct_ok && cfg_ok
+  finally
+    Sparlectra.set_sparlectra_config!(prev_cfg)
+  end
+end
+
 function test_link_kcl_simple()
   net = Net(name = "link_kcl", baseMVA = 100.0)
   addBus!(net = net, busName = "B1", vn_kV = 110.0)
@@ -2254,6 +2316,7 @@ function run_grid_tests()
       @test test_mp_inline_vs_manual_shunt() == true
       @test test_bus_shunt_model_modes() == true
       @test test_matpower_read_case_m_postprocessing() == true
+      @test test_matpower_file_import_honors_explicit_overrides() == true
     end
 
     @testset "Power flow scenarios" begin

@@ -426,30 +426,31 @@ end
 
 function createNetFromMatPowerFile(; filename::String,
     log::Bool=false,
-    flatstart::Bool=false,
+    flatstart::Union{Nothing,Bool}=nothing,
     cooldown::Int = 0,
     q_hyst_pu::Float64 = 0.0,
-    enable_pq_gen_controllers::Bool = true,
-    bus_shunt_model = :admittance,
-    matpower_shift_sign::Real = 1.0,
-    matpower_shift_unit = :deg,
-    matpower_ratio = :normal,
+    enable_pq_gen_controllers::Union{Nothing,Bool}=nothing,
+    bus_shunt_model = nothing,
+    matpower_shift_sign::Union{Nothing,Real} = nothing,
+    matpower_shift_unit = nothing,
+    matpower_ratio = nothing,
     reference_vm_pu::Union{Nothing,Float64} = nothing,
     reference_va_deg::Union{Nothing,Float64} = nothing,
-    matpower_pv_voltage_source = :gen_vg,
-    matpower_pv_voltage_mismatch_tol_pu::Float64 = 1e-4,
+    matpower_pv_voltage_source = nothing,
+    matpower_pv_voltage_mismatch_tol_pu::Union{Nothing,Float64} = nothing,
     verbose::Int = 0,
     profile::Union{Nothing,AbstractDict}=nothing)::Net
 
   mat_cfg = matpower_import_config()
   pf_cfg = powerflow_config()
-  flatstart = pf_cfg.start_mode.flatstart
-  bus_shunt_model = mat_cfg.bus_shunt_model
-  matpower_shift_sign = mat_cfg.shift_sign
-  matpower_shift_unit = mat_cfg.shift_unit
-  matpower_ratio = mat_cfg.ratio
-  matpower_pv_voltage_source = mat_cfg.pv_voltage_source
-  matpower_pv_voltage_mismatch_tol_pu = mat_cfg.pv_voltage_mismatch_tol_pu
+  flatstart = isnothing(flatstart) ? pf_cfg.start_mode.flatstart : flatstart
+  enable_pq_gen_controllers = isnothing(enable_pq_gen_controllers) ? mat_cfg.enable_pq_gen_controllers : enable_pq_gen_controllers
+  bus_shunt_model = isnothing(bus_shunt_model) ? mat_cfg.bus_shunt_model : bus_shunt_model
+  matpower_shift_sign = isnothing(matpower_shift_sign) ? mat_cfg.shift_sign : matpower_shift_sign
+  matpower_shift_unit = isnothing(matpower_shift_unit) ? mat_cfg.shift_unit : matpower_shift_unit
+  matpower_ratio = isnothing(matpower_ratio) ? mat_cfg.ratio : matpower_ratio
+  matpower_pv_voltage_source = isnothing(matpower_pv_voltage_source) ? mat_cfg.pv_voltage_source : matpower_pv_voltage_source
+  matpower_pv_voltage_mismatch_tol_pu = isnothing(matpower_pv_voltage_mismatch_tol_pu) ? mat_cfg.pv_voltage_mismatch_tol_pu : matpower_pv_voltage_mismatch_tol_pu
   preallocate_network = mat_cfg.preallocate_network
   preallocate_min_buses = mat_cfg.preallocate_min_buses
 
