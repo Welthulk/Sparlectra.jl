@@ -216,7 +216,7 @@ function run_acpflow(;
   qlimit_guard_log::Bool = true,
   qlimit_trace_buses::AbstractVector{Int} = Int[],
   qlimit_lock_reason::Symbol = :manual,
-  opt_flatstart::Bool = false,
+  opt_flatstart::Union{Nothing,Bool} = nothing,
   show_results::Bool = true,
   show_compact_result::Bool = false,
   status_ref::Union{Nothing,Base.RefValue{Any}} = nothing,
@@ -228,15 +228,15 @@ function run_acpflow(;
   validate_limits_after_pf::Bool = false,
   q_limit_violation_headroom::Float64 = 0.20,
   lock_pv_to_pq_buses::AbstractVector{Int} = Int[],
-  enable_pq_gen_controllers::Bool = true,
-  bus_shunt_model = :admittance,
-  matpower_shift_sign::Real = 1.0,
-  matpower_shift_unit = :deg,
-  matpower_ratio = :normal,
+  enable_pq_gen_controllers::Union{Nothing,Bool} = nothing,
+  bus_shunt_model = nothing,
+  matpower_shift_sign::Union{Nothing,Real} = nothing,
+  matpower_shift_unit = nothing,
+  matpower_ratio = nothing,
   reference_vm_pu::Union{Nothing,Float64} = nothing,
   reference_va_deg::Union{Nothing,Float64} = nothing,
-  matpower_pv_voltage_source = :gen_vg,
-  matpower_pv_voltage_mismatch_tol_pu::Float64 = 1e-4,
+  matpower_pv_voltage_source = nothing,
+  matpower_pv_voltage_mismatch_tol_pu::Union{Nothing,Float64} = nothing,
   flatstart_voltage_mode = :classic,
   flatstart_angle_mode = :classic,
   imported_matpower_case = nothing,
@@ -251,7 +251,7 @@ function run_acpflow(;
   method = pf_config.method
   autodamp = pf_config.autodamp
   autodamp_min = pf_config.autodamp_min
-  opt_flatstart = pf_config.start_mode.flatstart
+  opt_flatstart = isnothing(opt_flatstart) ? pf_config.start_mode.flatstart : opt_flatstart
   flatstart_angle_mode = pf_config.start_mode.angle_mode
   flatstart_voltage_mode = pf_config.start_mode.voltage_mode
   flatstart_profile_source = pf_config.start_mode.profile_source
@@ -281,13 +281,13 @@ function run_acpflow(;
   qlimit_guard_log = pf_config.qlimits.guard_log
   qlimit_trace_buses = pf_config.qlimits.trace_buses
   lock_pv_to_pq_buses = pf_config.qlimits.lock_pv_to_pq_buses
-  bus_shunt_model = mat_cfg.bus_shunt_model
-  matpower_shift_sign = mat_cfg.shift_sign
-  matpower_shift_unit = mat_cfg.shift_unit
-  matpower_ratio = mat_cfg.ratio
-  matpower_pv_voltage_source = mat_cfg.pv_voltage_source
-  matpower_pv_voltage_mismatch_tol_pu = mat_cfg.pv_voltage_mismatch_tol_pu
-  enable_pq_gen_controllers = mat_cfg.enable_pq_gen_controllers
+  bus_shunt_model = isnothing(bus_shunt_model) ? mat_cfg.bus_shunt_model : bus_shunt_model
+  matpower_shift_sign = isnothing(matpower_shift_sign) ? mat_cfg.shift_sign : matpower_shift_sign
+  matpower_shift_unit = isnothing(matpower_shift_unit) ? mat_cfg.shift_unit : matpower_shift_unit
+  matpower_ratio = isnothing(matpower_ratio) ? mat_cfg.ratio : matpower_ratio
+  matpower_pv_voltage_source = isnothing(matpower_pv_voltage_source) ? mat_cfg.pv_voltage_source : matpower_pv_voltage_source
+  matpower_pv_voltage_mismatch_tol_pu = isnothing(matpower_pv_voltage_mismatch_tol_pu) ? mat_cfg.pv_voltage_mismatch_tol_pu : matpower_pv_voltage_mismatch_tol_pu
+  enable_pq_gen_controllers = isnothing(enable_pq_gen_controllers) ? mat_cfg.enable_pq_gen_controllers : enable_pq_gen_controllers
   show_results = show_results && out_cfg.logfile_results !== :off
   row_limit = out_cfg.result_table_max_rows > 0 ? out_cfg.result_table_max_rows : nothing
   result_mode = out_cfg.logfile_results === :compact ? :summary : out_cfg.logfile_results
