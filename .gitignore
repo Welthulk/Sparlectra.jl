@@ -14,8 +14,11 @@ test/test_experment.jl
 *.log
 *.png
 julia-*.tar.gz
-src/examples/*.yaml
-src/examples/*.png
+examples/*.yaml
+examples/*.png
 docs/src/ybus_diagonal_sparlectra.md
-src/examples/matpower_import.yaml
 auswertung_case25k_performance_2026-05-17.md
+
+# Ignore local Sparlectra user configuration
+examples/configuration.yaml
+examples/_out/

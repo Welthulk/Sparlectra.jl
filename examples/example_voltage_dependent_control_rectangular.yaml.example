@@ -1,0 +1,11 @@
+# Voltage dependent P(U)/Q(U) control demo.
+# Copy to `example_voltage_dependent_control_rectangular.yaml` for local edits.
+plot_curve: false
+qu_points:
+  - [103.4, 35.0]
+  - [110.0, 0.0]
+  - [116.6, -25.0]
+pu_points:
+  - [103.4, 25.0]
+  - [110.0, 10.0]
+  - [116.6, 0.0]

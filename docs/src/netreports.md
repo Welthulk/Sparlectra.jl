@@ -30,8 +30,6 @@ ite, erg, etime = run_net_acpflow(
   net = net,
   max_ite = 40,
   tol = 1e-10,
-  method = :rectangular,
-  opt_sparse = true,
   show_results = false,
 )
 
@@ -78,4 +76,4 @@ links_df = DataFrame(report.links)
 
 ## Full runnable example
 
-See `src/examples/using_netreports.jl` for a complete script.
+See `examples/using_netreports.jl` for a complete script.

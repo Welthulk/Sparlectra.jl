@@ -1,0 +1,78 @@
+# Test Suite
+
+Sparlectra uses profile-aware test loading through `SPARLECTRA_TEST_PROFILE` in `test/runtests.jl`.
+
+## Test profiles
+
+| Profile | Command | Scope | Intended use |
+|---|---|---|---|
+| `fast` (default) | `julia --project=. test/runtests.jl` | Core offline tests | Normal local development and default CI smoke |
+| `extended` | `SPARLECTRA_TEST_PROFILE=extended julia --project=. test/runtests.jl` | Fast + integration/heavier tests | Before merge and after configuration, MATPOWER, or integration changes |
+| `all` | `SPARLECTRA_TEST_PROFILE=all julia --project=. test/runtests.jl` | Currently alias for `extended` | Reserved for future all-only suites and CI matrix clarity |
+
+`Pkg.test()` uses the same test runner and therefore the default `fast` profile unless `SPARLECTRA_TEST_PROFILE` is set:
+
+```bash
+julia --project=. -e 'using Pkg; Pkg.test()'
+```
+
+## Fast profile groups
+
+| Group | Files | Main checks |
+|---|---|---|
+| `core_model` | `test/testgrid.jl` | Core net construction and validation, inline MATPOWER import helpers, link handling, shunts, reporting/output checks, and summary-file output regression |
+| `powerflow_rectangular` | `test/test_solver_interface.jl` | Rectangular power-flow API behavior, sparse-only solver path, Q-limit and typed configuration entry checks |
+| `configuration` | `test/test_configuration_coverage.jl` | Configuration-key coverage, forwarding checks, and value-domain validation |
+| `state_estimation` | `test/test_state_estimation.jl` | WLS state-estimation behavior and observability-oriented regressions |
+| `controls` | `test/test_voltage_dependent_control.jl`, `test/test_transformer_phase_shift.jl`, `test/test_tap_controller.jl` | Voltage-dependent controls, transformer phase-shift control, and tap-controller behavior |
+
+## Extended profile additions
+
+| Extended addition | File | Main checks |
+|---|---|---|
+| `remove` | `test/testremove.jl` | Remove/delete behavior and consistency after structural edits |
+| `pv_voltage_residuals` | `test/test_pv_voltage_residuals.jl` | PV-voltage residual behavior and related solver diagnostics |
+| `matpower_example` | `test/test_matpower_example.jl` | MATPOWER example runner path, output routing, performance/profile rendering, and runtime configuration forwarding |
+| `synthetic_grids` | `test/test_synthetic_grids.jl` | Synthetic network generation and larger synthetic-grid regression coverage |
+| `configuration_docs` | `test/test_configuration_docs.jl` | Configuration documentation and docs/config consistency checks |
+
+## Offline and runtime expectations
+
+The default `fast` profile is intended to be offline-safe and should not download MATPOWER cases or run benchmark loops.
+
+The `extended` profile may include MATPOWER/example/output-heavy tests. These tests stay isolated from the default profile.
+
+Use `fast` during normal development. Use `extended` before merging changes that affect configuration, MATPOWER import, output formatting, performance reporting, or broader integration paths.
+
+## Pre-merge verification gate (config / MATPOWER / output / performance / docs changes)
+
+For branches that touch central configuration, MATPOWER runner behavior, output routing/formatting, performance reporting, or documentation/config consistency, complete this checklist before merge:
+
+### Bash
+
+```bash
+julia --project=. -e 'using Pkg; Pkg.instantiate()'
+julia --project=. test/runtests.jl
+SPARLECTRA_TEST_PROFILE=extended julia --project=. test/runtests.jl
+julia --project=docs docs/make.jl
+```
+
+### PowerShell
+
+```powershell
+julia --project=. -e 'using Pkg; Pkg.instantiate()'
+julia --project=. test/runtests.jl
+
+$env:SPARLECTRA_TEST_PROFILE="extended"
+julia --project=. test/runtests.jl
+Remove-Item Env:SPARLECTRA_TEST_PROFILE
+
+julia --project=docs docs/make.jl
+```
+
+This keeps the default local workflow fast while making the extended profile and docs build an explicit pre-merge gate for integration-heavy changes.
+
+## Output-summary regression note
+
+The fast profile includes a regression for `printACPFlowResults(...; toFile=true, result_mode=:summary)`.
+It verifies that the result file is closed/flushed before the function returns and that the summary contains Q-limit counter labels.

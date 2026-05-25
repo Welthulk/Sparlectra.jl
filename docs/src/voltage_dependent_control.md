@@ -190,7 +190,7 @@ addProsumer!(
     pu_controller = pu,
 )
 
-runpf!(net, 30, 1e-8, 0; method = :rectangular)
+runpf!(net, 30, 1e-8, 0)
 ```
 
 Notes:
@@ -203,8 +203,8 @@ Notes:
 
 ## Solver support and limitation
 
-- Supported: `method = :rectangular`.
-- Unsupported: legacy/deprecated `:polar_full` and `:classic` (clear runtime error if used with these controllers).
+- Supported: the default rectangular solver path.
+- Legacy polar/classic solver modes are deprecated and not part of the supported workflow.
 
 ## Result printout semantics (`Type` vs `Control`)
 

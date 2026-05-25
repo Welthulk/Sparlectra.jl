@@ -127,7 +127,7 @@ model. After convergence, call `calcLinkFlowsKCL!` to allocate and report the
 link exchange on the original topology.
 
 ```julia
-ite, erg = runpf!(net, 25; method = :rectangular)
+ite, erg = runpf!(net, 25)
 if erg == 0
     calcNetLosses!(net)
     calcLinkFlowsKCL!(net)
@@ -135,7 +135,7 @@ end
 ```
 
 For a complete scenario with open and closed links, see
-`src/examples/using_links.jl` and the detailed notes in `links.md`.
+`examples/using_links.jl` and the detailed notes in `links.md`.
 
 ### Validate and solve the network
 
@@ -338,8 +338,6 @@ ite, status, etime = run_net_acpflow(
     net = net,
     max_ite = 25,
     tol = 1e-8,
-    method = :rectangular,
-    opt_sparse = true,
     show_results = false,
 )
 
@@ -349,8 +347,6 @@ ite2, status2, etime2 = run_net_acpflow(
     net = net,
     max_ite = 25,
     tol = 1e-8,
-    method = :rectangular,
-    opt_sparse = true,
     show_results = false,
 )
 
@@ -418,8 +414,7 @@ Prefer:
 
 ```julia
 ite, status, etime = run_net_acpflow(
-    net = net,
-    method = :rectangular,
+    net = net
     show_results = false,
 )
 ```
@@ -440,17 +435,17 @@ tap/phase positions, limits, and status.
 
 ### 5. Example programs
 
-- `src/examples/example_transformer_tap.jl`  
+- `examples/example_transformer_tap.jl`  
   Minimal setup for OLTC / PST / combined controller behavior.
-- `src/examples/example_transformer_phase_shift_control.jl`  
+- `examples/example_transformer_phase_shift_control.jl`  
   Focused PST active-power target control example.
-- `src/examples/tap_control_demo_grid.jl`  
+- `examples/tap_control_demo_grid.jl`  
   Full multi-voltage demo with YAML-configurable controller targets and
   transformer tap/phase parameters plus versioned output logs.
 
 The accompanying config template is:
 
-- `src/examples/tap_control_demo_grid.yaml.example`
+- `examples/tap_control_demo_grid.yaml.example`
 
 It exposes target values and transformer tap/phase ranges + step sizes so that
 you can tune the workshop run without editing the Julia source.
@@ -510,8 +505,6 @@ maxIte = 20
 tol = 1e-8
 verbose = 1
 damp = 0.2
-opt_fd = false
-opt_sparse = true
 
 etime = @elapsed begin
     ite, status = runpf!(
@@ -519,10 +512,7 @@ etime = @elapsed begin
         maxIte,
         tol,
         verbose;
-        method = :rectangular,
         damp = damp,
-        opt_fd = opt_fd,
-        opt_sparse = opt_sparse,
     )
 end
 
@@ -599,7 +589,7 @@ ok, msg = validate!(net = net)
 ok || error("Validation failed: \$msg")
 
 # 2) Solve reference power flow
-ite_pf, status_pf = runpf!(net, 40, 1e-10, 0; method = :rectangular, opt_sparse = true)
+ite_pf, status_pf = runpf!(net, 40, 1e-10, 0)
 status_pf == 0 || error("Power flow did not converge")
 
 # 3) Build synthetic measurements (with light noise)

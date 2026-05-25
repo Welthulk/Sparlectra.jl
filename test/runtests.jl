@@ -1,19 +1,3 @@
-# Copyright 2023–2026 Udo Schmitz
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-# file: test/runtests.jl
-
 using Sparlectra
 using Test
 using Logging
@@ -21,56 +5,80 @@ using Printf
 using LinearAlgebra
 using SparseArrays
 
-# keep logs quiet unless there's a warning or error
 global_logger(ConsoleLogger(stderr, Logging.Warn))
+const TEST_PROFILE = Symbol(get(ENV, "SPARLECTRA_TEST_PROFILE", "fast"))
 
-# Suppress one-time deprecation warnings in test output. Deprecated solver
-# behavior is covered by dedicated tests and does not need to spam full-suite logs.
-Sparlectra._warned_full_solver_deprecated[] = true
-Sparlectra._warned_classic_solver_deprecated[] = true
-
-include("testgrid.jl")
-include("testremove.jl")
-include("test_solver_interface.jl")
-include("test_state_estimation.jl")
-include("test_voltage_dependent_control.jl")
-include("test_transformer_phase_shift.jl")
-include("test_tap_controller.jl")
-include("test_synthetic_grids.jl")
-include("test_matpower_example.jl")
-include("test_pv_voltage_residuals.jl")
-
-function _print_test_progress(step::Int, total::Int, label::String)
-  width = 30
-  filled = round(Int, width * step / total)
-  bar = repeat("█", filled) * repeat("░", width - filled)
-  @printf("\rTest progress [%s] %3d%% (%d/%d) %s", bar, round(Int, 100 * step / total), step, total, label)
-  flush(stdout)
-  if step == total
-    println()
-  end
+function include_fast_tests()
+  include("testgrid.jl")
+  include("test_solver_interface.jl")
+  include("test_state_estimation.jl")
+  include("test_voltage_dependent_control.jl")
+  include("test_transformer_phase_shift.jl")
+  include("test_tap_controller.jl")
+  include("test_configuration_coverage.jl")
 end
 
-@testset "Sparlectra.jl" begin
-  test_steps = [
-    ("grid", run_grid_tests),
-    ("remove", run_remove_tests),
-    ("solver_interface", run_solver_interface_tests),
-    ("state_estimation", run_state_estimation_tests),
-    ("voltage_dependent_control", run_voltage_dependent_control_tests),
-    ("transformer_phase_shift", run_transformer_phase_shift_tests),
-    ("tap_controller", run_tap_controller_tests),
-    ("synthetic_grids", run_synthetic_grid_tests),
-    ("matpower_example", run_matpower_example_tests),
-    ("pv_voltage_residuals", run_pv_voltage_residual_tests),
+function include_extended_tests()
+  include("testremove.jl")
+  include("test_pv_voltage_residuals.jl")
+  include("test_matpower_example.jl")
+  include("test_synthetic_grids.jl")
+  include("test_configuration_docs.jl")
+end
+
+function run_fast_profile_tests()
+  function run_entry(name::Symbol)
+    runner = Base.invokelatest(getfield, @__MODULE__, name)
+    return Base.invokelatest(runner)
+  end
+  groups = [
+    ("core_model", () -> run_entry(:run_grid_tests)),
+    ("powerflow_rectangular", () -> run_entry(:run_solver_interface_tests)),
+    ("configuration", () -> run_entry(:run_configuration_coverage_tests)),
+    ("state_estimation", () -> run_entry(:run_state_estimation_tests)),
+    ("controls", () -> begin
+      run_entry(:run_voltage_dependent_control_tests)
+      run_entry(:run_transformer_phase_shift_tests)
+      run_entry(:run_tap_controller_tests)
+    end),
   ]
-
-  total = length(test_steps)
-  _print_test_progress(0, total, "starting")
-  for (idx, (name, runner)) in enumerate(test_steps)
-    _print_test_progress(idx - 1, total, "running $(name)")
-    runner()
-    _print_test_progress(idx, total, "finished $(name)")
+  @testset "Sparlectra.jl fast profile" begin
+    for (_, runner) in groups
+      Base.invokelatest(runner)
+    end
   end
-  return nothing
 end
+
+function run_extended_profile_tests()
+  function run_entry(name::Symbol)
+    runner = Base.invokelatest(getfield, @__MODULE__, name)
+    return Base.invokelatest(runner)
+  end
+  @testset "Sparlectra.jl extended profile" begin
+    run_entry(:run_remove_tests)
+    run_entry(:run_pv_voltage_residual_tests)
+    run_entry(:run_matpower_example_tests)
+    run_entry(:run_synthetic_grid_tests)
+    run_entry(:run_configuration_docs_tests)
+  end
+end
+
+if TEST_PROFILE === :fast
+  include_fast_tests()
+  run_fast_profile_tests()
+elseif TEST_PROFILE === :extended
+  include_fast_tests()
+  include_extended_tests()
+  run_fast_profile_tests()
+  run_extended_profile_tests()
+elseif TEST_PROFILE === :all
+  include_fast_tests()
+  include_extended_tests()
+  # At the moment, `all` is an alias for `extended`.
+  # Keep the profile for future all-only suites and CI matrix clarity.
+  run_fast_profile_tests()
+  run_extended_profile_tests()
+else
+  error("Unknown SPARLECTRA_TEST_PROFILE=$(TEST_PROFILE). Allowed: fast, extended, all")
+end
+return nothing

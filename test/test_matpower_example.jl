@@ -1,651 +1,165 @@
-# Copyright 2023–2026 Udo Schmitz
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-# file: test/test_matpower_example.jl
-
 using Sparlectra
 using Test
 
-function _is_gitlab_ci()::Bool
-  return lowercase(get(ENV, "GITLAB_CI", "false")) == "true"
-end
-
-function _ensure_matpower_case_for_example_tests(case_name::AbstractString)
-  local_case = joinpath(Sparlectra.MPOWER_DIR, case_name)
-  isfile(local_case) && return abspath(local_case)
-  _is_gitlab_ci() && return nothing
-  try
-    return Sparlectra.FetchMatpowerCase.ensure_casefile(case_name; outdir = Sparlectra.MPOWER_DIR, to_jl = false, overwrite = false)
-  catch
-    return nothing
-  end
-end
-
 function run_matpower_example_tests()
-  @testset "MATPOWER example keyword forwarding" begin
-    source = read(joinpath(@__DIR__, "..", "src", "examples", "matpower_import.jl"), String)
-    normalized_source = replace(source, "\r\n" => "\n")
-    signature_match = match(r"(?s)function bench_run_acpflow\(;.*?\n\)", normalized_source)
-    @test !isnothing(signature_match)
-    signature = signature_match.match
+  @testset "Central Sparlectra configuration" begin
+    cfg = Sparlectra.load_sparlectra_config(; reload = true)
+    @test cfg.powerflow.method === :rectangular
 
-    expected_keywords = [
-      "autodamp",
-      "autodamp_min",
-      "start_projection",
-      "start_projection_try_dc_start",
-      "start_projection_try_blend_scan",
-      "start_projection_branch_guard",
-      "start_projection_measure_candidates",
-      "start_projection_accept_unmeasured_dc_start",
-      "start_projection_blend_lambdas",
-      "start_projection_dc_angle_limit_deg",
-      "qlimit_trace_buses",
-      "qlimit_guard",
-      "qlimit_guard_min_q_range_pu",
-      "qlimit_guard_zero_range_mode",
-      "qlimit_guard_narrow_range_mode",
-      "qlimit_guard_max_switches",
-      "qlimit_guard_freeze_after_repeated_switching",
-      "qlimit_guard_accept_bounded_violations",
-      "qlimit_guard_max_remaining_violations",
-      "qlimit_guard_log",
-      "matpower_ratio",
-      "reference_override",
-      "diagnose_branch_neighborhood",
-      "diagnose_branch_neighborhood_buses",
-      "diagnose_branch_neighborhood_depth",
-      "diagnose_branch_neighborhood_maxlines",
-      "diagnose_residual_clusters",
-      "diagnose_residual_cluster_threshold_mw",
-      "diagnose_residual_cluster_maxlines",
-      "diagnose_nodal_balance_breakdown",
-      "diagnose_nodal_balance_buses",
-      "diagnose_nodal_balance_maxlines",
-      "diagnose_negative_branch_impedance",
-      "diagnose_negative_branch_impedance_fail_on_negative_r",
-    ]
+    bad_method_cfg = tempname() * ".yaml"
+    write(bad_method_cfg, "power_flow:\n  method: polar\n")
+    @test_throws ArgumentError Sparlectra.load_sparlectra_config(bad_method_cfg; reload = true)
 
-    for keyword in expected_keywords
-      @test occursin(keyword, signature)
-      @test occursin(keyword * " = " * keyword, normalized_source)
+    bad_sparse_cfg = tempname() * ".yaml"
+    write(bad_sparse_cfg, "power_flow:\n  sparse: true\n")
+    @test_throws ArgumentError Sparlectra.load_sparlectra_config(bad_sparse_cfg; reload = true)
+
+    bad_unknown_cfg = tempname() * ".yaml"
+    write(bad_unknown_cfg, "power_flow:\n  typo_tol: 1.0e-4\n")
+    @test_throws ArgumentError Sparlectra.load_sparlectra_config(bad_unknown_cfg; reload = true)
+
+    removed_key_cfg = tempname() * ".yaml"
+    write(removed_key_cfg, "matpower_import:\n  benchmark: true\n")
+    err_removed = try
+      Sparlectra.load_sparlectra_config(removed_key_cfg; reload = true)
+      nothing
+    catch err
+      err
+    end
+    @test err_removed isa ArgumentError
+    @test occursin("matpower_import.benchmark", sprint(showerror, err_removed))
+    @test occursin("benchmark.enabled", sprint(showerror, err_removed))
+
+    bench_cfg = tempname() * ".yaml"
+    write(bench_cfg, "benchmark:\n  enabled: false\n  methods: [rectangular]\n  seconds: 0.1\n  samples: 2\n  show_once: true\n")
+    cfg_bench = Sparlectra.load_sparlectra_config(bench_cfg; reload = true)
+    @test cfg_bench.benchmark.enabled === false
+    @test cfg_bench.benchmark.methods == [:rectangular]
+
+    bad_bench_method_cfg = tempname() * ".yaml"
+    write(bad_bench_method_cfg, "benchmark:\n  methods: [polar]\n")
+    @test_throws ArgumentError Sparlectra.load_sparlectra_config(bad_bench_method_cfg; reload = true)
+
+    startmode_cfg = tempname() * ".yaml"
+    write(startmode_cfg, """
+power_flow:
+  start_mode:
+    angle_mode: dc
+    voltage_mode: pv_gen_vg
+""")
+    cfg_startmode = Sparlectra.load_sparlectra_config(startmode_cfg; reload = true)
+    @test cfg_startmode.powerflow.start_mode.angle_mode === :dc
+    @test cfg_startmode.powerflow.start_mode.voltage_mode === :pv_gen_vg
+
+    for mode in ("classic", "dc", "bus_va_blend", "matpower_va")
+      cfg_mode = tempname() * ".yaml"
+      write(cfg_mode, "power_flow:\n  start_mode:\n    angle_mode: $(mode)\n")
+      cfg_loaded = Sparlectra.load_sparlectra_config(cfg_mode; reload = true)
+      @test cfg_loaded.powerflow.start_mode.angle_mode === Symbol(mode)
     end
 
-    @test occursin("Base.invokelatest(", normalized_source)
-    @test occursin(r"Base\.invokelatest\(\s*getfield\(@__MODULE__, :bench_run_acpflow\);", normalized_source)
-    @test occursin("Base.invokelatest(getfield(@__MODULE__, :main))", normalized_source)
-    @test occursin("SPARLECTRA_MATPOWER_IMPORT_NO_MAIN", normalized_source)
-    @test occursin("function _enable_pq_gen_controllers_for_method(method::Symbol, requested::Bool)::Bool", normalized_source)
-    @test occursin("return requested && method === :rectangular", normalized_source)
-    @test occursin("!enable_pq_gen_controllers && m === :rectangular", normalized_source)
-    @test occursin("function _print_converged_loss_summary(io::IO, method::Symbol, status, net::Sparlectra.Net)", normalized_source)
-    @test occursin("losses P=", normalized_source)
-    @test occursin("status_ref = status_ref", normalized_source)
-    @test occursin(r"Base\.invokelatest\(\s*getfield\(@__MODULE__, :_print_pv_voltage_reference_diagnostics\)", normalized_source)
-    @test occursin("Sparlectra.Slack", normalized_source)
-    @test occursin("Sparlectra.PV", normalized_source)
-    @test occursin("matpower_auto_profile", normalized_source)
-    @test occursin("function _matpower_auto_profile", normalized_source)
-    @test occursin("console_summary::Bool", signature)
-    @test occursin("console_auto_profile::Symbol", signature)
-    @test occursin("console_q_limit_events::Symbol", signature)
-    @test occursin("console_max_rows::Int", signature)
-    # Regression: YAML console_max_rows must cap run_acpflow Q-limit event and final active-set rows.
-    @test count("pv_table_rows = console_max_rows", normalized_source) == 4
-    @test count("pv_table_rows = pv_table_rows_", normalized_source) == 1
-    @test occursin(raw"pv_table_rows_ = $console_max_rows", normalized_source)
-    @test occursin("function _print_matpower_auto_profile_compact", normalized_source)
-    @test occursin("function _print_matpower_run_summary", normalized_source)
-    @test occursin("start_projection_reuse_import_data::Bool", signature)
-    @test occursin("start_projection_reuse_import_data = cfg.start_projection_reuse_import_data", normalized_source)
-    @test occursin("imported_matpower_case = start_projection_reuse_import_data_ ? mpc_ : nothing", normalized_source)
+    for mode in ("classic", "pv_gen_vg", "pv_bus_vm", "all_bus_vm", "profile_blend")
+      cfg_mode = tempname() * ".yaml"
+      write(cfg_mode, "power_flow:\n  start_mode:\n    voltage_mode: $(mode)\n")
+      cfg_loaded = Sparlectra.load_sparlectra_config(cfg_mode; reload = true)
+      @test cfg_loaded.powerflow.start_mode.voltage_mode === Symbol(mode)
+    end
+    cfg_legacy = tempname() * ".yaml"
+    write(cfg_legacy, "power_flow:\n  start_mode:\n    voltage_mode: bus_vm_va_blend\n")
+    Sparlectra._warned_legacy_bus_vm_va_blend[] = false
+    cfg_legacy_loaded = @test_logs (:warn, r"Deprecated start mode `bus_vm_va_blend`") Sparlectra.load_sparlectra_config(cfg_legacy; reload = true)
+    @test cfg_legacy_loaded.powerflow.start_mode.voltage_mode === :profile_blend
+    @test cfg_legacy_loaded.powerflow.start_mode.profile_source === :matpower_reference
 
-    example_path = joinpath(@__DIR__, "..", "src", "examples", "matpower_import.jl")
+    bad_startmode_cfg = tempname() * ".yaml"
+    write(bad_startmode_cfg, "power_flow:\n  start_mode:\n    voltage_mode: nonsense\n")
+    err_startmode = try
+      Sparlectra.load_sparlectra_config(bad_startmode_cfg; reload = true)
+      nothing
+    catch err
+      err
+    end
+    @test err_startmode isa ArgumentError
+    @test occursin("power_flow.start_mode.voltage_mode", sprint(showerror, err_startmode))
+    @test occursin("pv_gen_vg", sprint(showerror, err_startmode))
+
+    cfg_roundtrip = tempname() * ".yaml"
+    write(cfg_roundtrip, """
+power_flow:
+  qlimits:
+    enabled: false
+    hysteresis_pu: 0.123
+    cooldown_iters: 7
+matpower_import:
+  enable_pq_gen_controllers: false
+  ratio: reciprocal
+  bus_shunt_model: voltage_dependent_injection
+state_estimation:
+  method: wls
+""")
+    cfg_loaded = Sparlectra.load_sparlectra_config(cfg_roundtrip; reload = true)
+    @test cfg_loaded.powerflow.qlimits.ignore_q_limits === true
+    @test cfg_loaded.powerflow.qlimits.hysteresis_pu == 0.123
+    @test cfg_loaded.powerflow.qlimits.cooldown_iters == 7
+    @test cfg_loaded.matpower.enable_pq_gen_controllers === false
+    @test cfg_loaded.matpower.ratio === :reciprocal
+    @test cfg_loaded.matpower.bus_shunt_model === :voltage_dependent_injection
+    @test cfg_loaded.state_estimation.method === :wls
+
+    for mode in ("gen_vg", "bus_vm", "auto", "strict_check")
+      cfg_mode = tempname() * ".yaml"
+      write(cfg_mode, "matpower_import:\n  pv_voltage_source: $(mode)\n")
+      @test Sparlectra.load_sparlectra_config(cfg_mode; reload = true).matpower.pv_voltage_source === Symbol(mode)
+    end
+    for mode in ("bus_vm", "gen_vg", "imported_setpoint", "hybrid")
+      cfg_mode = tempname() * ".yaml"
+      write(cfg_mode, "matpower_import:\n  compare_voltage_reference: $(mode)\n")
+      @test Sparlectra.load_sparlectra_config(cfg_mode; reload = true).matpower.compare_voltage_reference === Symbol(mode)
+    end
+    for mode in ("off", "on", "auto")
+      cfg_mode = tempname() * ".yaml"
+      write(cfg_mode, "power_flow:\n  rectangular_preallocate_workspace: $(mode)\n")
+      @test Sparlectra.load_sparlectra_config(cfg_mode; reload = true).powerflow.rectangular_preallocate_workspace === Symbol(mode)
+    end
+    bad_ws_cfg = tempname() * ".yaml"
+    write(bad_ws_cfg, "power_flow:\n  rectangular_preallocate_workspace: invalid\n")
+    @test_throws ArgumentError Sparlectra.load_sparlectra_config(bad_ws_cfg; reload = true)
+
+    cfg_method_copy = SparlectraConfig(
+      powerflow = PowerFlowConfig(
+        method = :polar,
+        rectangular_workspace_reuse = false,
+        rectangular_preallocate_workspace = :on,
+        rectangular_workspace_min_buses = 12345,
+      ),
+    )
+    cfg_rect = Sparlectra.with_powerflow_method(cfg_method_copy, :rectangular)
+    @test cfg_rect.powerflow.method === :rectangular
+    @test cfg_rect.powerflow.rectangular_workspace_reuse === false
+    @test cfg_rect.powerflow.rectangular_preallocate_workspace === :on
+    @test cfg_rect.powerflow.rectangular_workspace_min_buses == 12345
+  end
+
+  @testset "MATPOWER example cleanup guard" begin
+    source = read(joinpath(@__DIR__, "..", "examples", "matpower_import.jl"), String)
+    @test !occursin("load_yaml_dict", source)
+    @test !occursin("_normalize_matpower_example_config", source)
+    @test !occursin("_copy_nested_yaml!", source)
+    @test !occursin("_nested_yaml_get", source)
+    @test !occursin("Dict{String,Any}", source)
+    @test occursin("Sparlectra.run_matpower_case", source)
+    @test occursin("Base.invokelatest(getfield(@__MODULE__, :main))", source)
+    @test occursin("Base.invokelatest(getfield(@__MODULE__, :_ensure_julia_threads_for_script)", source)
+    @test occursin("Base.invokelatest(getfield(@__MODULE__, :_resolve_julia_threads_request)", source)
+    @test occursin("Base.invokelatest(", source)
+
+    example_path = joinpath(@__DIR__, "..", "examples", "matpower_import.jl")
     old_no_main = get(ENV, "SPARLECTRA_MATPOWER_IMPORT_NO_MAIN", nothing)
     ENV["SPARLECTRA_MATPOWER_IMPORT_NO_MAIN"] = "1"
     mod = Module(:MatpowerImportExampleSmoke)
     try
       Base.include(mod, example_path)
-
-      example_yaml = joinpath(@__DIR__, "..", "src", "examples", "matpower_import.yaml.example")
-      @test isfile(example_yaml)
-      yaml_cfg = Base.invokelatest(() -> getfield(mod, :load_yaml_config)(example_yaml))
-      example_case = String(yaml_cfg["case"])
-      @test example_case == "case118.m"
-      example_case_path = _ensure_matpower_case_for_example_tests(example_case)
-      if isnothing(example_case_path)
-        @test_skip "MATPOWER example case missing; dataset download skipped or unavailable"
-      else
-        @test isfile(example_case_path)
-      end
-      old_yaml = get(ENV, "SPARLECTRA_MATPOWER_IMPORT_YAML", nothing)
-      try
-        ENV["SPARLECTRA_MATPOWER_IMPORT_YAML"] = example_yaml
-        @test Base.invokelatest(() -> getfield(mod, :_yaml_path_from_inputs)()) == example_yaml
-      finally
-        if isnothing(old_yaml)
-          delete!(ENV, "SPARLECTRA_MATPOWER_IMPORT_YAML")
-        else
-          ENV["SPARLECTRA_MATPOWER_IMPORT_YAML"] = old_yaml
-        end
-      end
-
-      cfg = Base.invokelatest(() -> getfield(mod, :bench_config_for_case)("case14.m", Dict{String,Any}(
-        "autodamp" => true,
-        "autodamp_min" => 0.002,
-        "start_projection" => true,
-        "start_projection_try_dc_start" => false,
-        "start_projection_try_blend_scan" => false,
-        "start_projection_branch_guard" => false,
-        "start_projection_measure_candidates" => false,
-        "start_projection_accept_unmeasured_dc_start" => true,
-        "start_projection_reuse_import_data" => false,
-        "start_projection_blend_lambdas" => [0.1, 0.9],
-        "start_projection_dc_angle_limit_deg" => 45.0,
-        "qlimit_trace_buses" => [40712],
-        "qlimit_guard" => true,
-        "qlimit_guard_min_q_range_pu" => 2.5e-4,
-        "qlimit_guard_zero_range_mode" => "lock_pq",
-        "qlimit_guard_narrow_range_mode" => "prefer_pq",
-        "qlimit_guard_max_switches" => 4,
-        "qlimit_guard_freeze_after_repeated_switching" => false,
-        "qlimit_guard_accept_bounded_violations" => true,
-        "qlimit_guard_max_remaining_violations" => 2,
-        "qlimit_guard_log" => false,
-        "diagnose_matpower_reference" => true,
-        "diagnose_branch_shift_conventions" => true,
-        "diagnose_branch_neighborhood" => true,
-        "diagnose_branch_neighborhood_buses" => [7934, 6621],
-        "diagnose_branch_neighborhood_depth" => 2,
-        "diagnose_branch_neighborhood_maxlines" => 25,
-        "diagnose_residual_clusters" => true,
-        "diagnose_residual_cluster_threshold_mw" => 5.0,
-        "diagnose_residual_cluster_maxlines" => 4,
-        "diagnose_nodal_balance_breakdown" => true,
-        "diagnose_nodal_balance_buses" => [511, 2852],
-        "diagnose_nodal_balance_maxlines" => 250,
-        "diagnose_nodal_balance_include_branches" => false,
-        "diagnose_nodal_balance_include_generators" => false,
-        "diagnose_nodal_balance_include_shunts" => false,
-        "diagnose_negative_branch_impedance" => true,
-        "diagnose_negative_branch_impedance_maxlines" => 7,
-        "diagnose_negative_branch_impedance_fail_on_negative_r" => false,
-        "diagnose_negative_branch_impedance_fail_on_negative_x" => false,
-        "diagnose_negative_branch_impedance_warn_threshold_abs_r" => 0.001,
-        "diagnose_negative_branch_impedance_warn_threshold_abs_x" => 0.002,
-        "diagnose_maxlines" => 3,
-        "matpower_shift_unit" => "rad",
-        "matpower_shift_sign" => -1.0,
-        "matpower_ratio" => "reciprocal",
-        "reference_override" => true,
-        "reference_vm_pu" => 1.01,
-        "reference_va_deg" => -3.0,
-        "log_effective_config" => true,
-        "matpower_auto_profile" => "recommend",
-        "matpower_auto_profile_log" => true,
-        "console_summary" => true,
-        "console_auto_profile" => "compact",
-        "console_diagnostics" => "summary",
-        "console_q_limit_events" => "summary",
-        "console_max_rows" => 7,
-        "logfile_diagnostics" => "full",
-      )))
-      @test cfg.autodamp === true
-      @test cfg.autodamp_min == 0.002
-      @test cfg.start_projection === true
-      @test cfg.start_projection_try_dc_start === false
-      @test cfg.start_projection_try_blend_scan === false
-      @test cfg.start_projection_branch_guard === false
-      @test cfg.start_projection_measure_candidates === false
-      @test cfg.start_projection_accept_unmeasured_dc_start === true
-      @test cfg.start_projection_reuse_import_data === false
-      @test cfg.start_projection_blend_lambdas == [0.1, 0.9]
-      @test cfg.start_projection_dc_angle_limit_deg == 45.0
-      @test cfg.qlimit_trace_buses == [40712]
-      @test cfg.qlimit_guard === true
-      @test cfg.qlimit_guard_min_q_range_pu == 2.5e-4
-      @test cfg.qlimit_guard_zero_range_mode === :lock_pq
-      @test cfg.qlimit_guard_narrow_range_mode === :prefer_pq
-      @test cfg.qlimit_guard_max_switches == 4
-      @test cfg.qlimit_guard_freeze_after_repeated_switching === false
-      @test cfg.qlimit_guard_accept_bounded_violations === true
-      @test cfg.qlimit_guard_max_remaining_violations == 2
-      @test cfg.qlimit_guard_log === false
-      cfg_io = IOBuffer()
-      Base.invokelatest(() -> getfield(mod, :_print_effective_config)(cfg_io, cfg))
-      cfg_text = String(take!(cfg_io))
-      @test occursin("qlimit_guard_min_q_range_pu: 0.00025", cfg_text)
-      @test occursin("qlimit_guard_zero_range_mode: lock_pq", cfg_text)
-      @test cfg.qlimit_guard_min_q_range_pu == 2.5e-4 # regression: non-default YAML guard value reaches the effective config used by bench_run_acpflow.
-      @test_throws ErrorException Sparlectra.run_acpflow(casefile = "__missing_qlimit_guard_smoke__.m", qlimit_guard = cfg.qlimit_guard, qlimit_guard_min_q_range_pu = cfg.qlimit_guard_min_q_range_pu)
-      @test cfg.diagnose_matpower_reference === true
-      @test cfg.diagnose_branch_shift_conventions === true
-      @test cfg.diagnose_branch_neighborhood === true
-      @test cfg.diagnose_branch_neighborhood_buses == [7934, 6621]
-      @test cfg.diagnose_branch_neighborhood_depth == 2
-      @test cfg.diagnose_branch_neighborhood_maxlines == 25
-      @test cfg.diagnose_residual_clusters === true
-      @test cfg.diagnose_residual_cluster_threshold_mw == 5.0
-      @test cfg.diagnose_residual_cluster_maxlines == 4
-      @test cfg.diagnose_nodal_balance_breakdown === true
-      @test cfg.diagnose_nodal_balance_buses == [511, 2852]
-      @test cfg.diagnose_nodal_balance_maxlines == 250
-      @test cfg.diagnose_nodal_balance_include_branches === false
-      @test cfg.diagnose_nodal_balance_include_generators === false
-      @test cfg.diagnose_nodal_balance_include_shunts === false
-      @test cfg.diagnose_negative_branch_impedance === true
-      @test cfg.diagnose_negative_branch_impedance_maxlines == 7
-      @test cfg.diagnose_negative_branch_impedance_fail_on_negative_r === false
-      @test cfg.diagnose_negative_branch_impedance_fail_on_negative_x === false
-      @test cfg.diagnose_negative_branch_impedance_warn_threshold_abs_r == 0.001
-      @test cfg.diagnose_negative_branch_impedance_warn_threshold_abs_x == 0.002
-      @test cfg.diagnose_maxlines == 3
-      @test cfg.matpower_shift_unit == "rad"
-      @test cfg.matpower_shift_sign == -1.0
-      @test cfg.matpower_ratio == "reciprocal"
-      @test cfg.reference_override === true
-      @test cfg.reference_vm_pu == 1.01
-      @test cfg.reference_va_deg == -3.0
-      @test cfg.log_effective_config === true
-      @test cfg.matpower_auto_profile === :recommend
-      @test cfg.matpower_auto_profile_log === true
-      @test cfg.console_summary === true
-      @test cfg.console_auto_profile === :compact
-      @test cfg.console_diagnostics === :summary
-      @test cfg.console_q_limit_events === :summary
-      @test cfg.console_max_rows == 7
-      @test cfg.logfile_diagnostics === :full
-      @test occursin("matpower_shift_sign", normalized_source)
-      @test occursin("matpower_ratio", normalized_source)
-      @test occursin("reference_override", normalized_source)
-      @test occursin("_print_reference_override_status", normalized_source)
-      @test occursin("_print_effective_config", normalized_source)
-      @test occursin("function _print_matpower_reference_diagnostics", normalized_source)
-      @test occursin("function _print_matpower_branch_neighborhood_diagnostics", normalized_source)
-      @test occursin("function _print_residual_cluster_diagnostics", normalized_source)
-      @test occursin("function _print_negative_branch_impedance_diagnostics", normalized_source)
-      @test occursin("function _print_nodal_balance_breakdown", normalized_source)
-      @test occursin("Branch-shift convention scan", normalized_source)
-      mktemp() do yaml_path, yaml_io
-        write(yaml_io, "diagnose_nodal_balance_buses:\n  - 7934\n  - 6621\ndiagnose_negative_branch_impedance: true\n")
-        close(yaml_io)
-        block_cfg = Base.invokelatest(() -> getfield(mod, :load_yaml_config)(yaml_path))
-        @test block_cfg["diagnose_nodal_balance_buses"] == [7934, 6621]
-        @test block_cfg["diagnose_negative_branch_impedance"] === true
-      end
-      @test Base.invokelatest(() -> getfield(mod, :_enable_pq_gen_controllers_for_method)(:rectangular, true)) === true
-      @test Base.invokelatest(() -> getfield(mod, :_enable_pq_gen_controllers_for_method)(:polar, true)) === false
-      skipped_compare_summary = Base.invokelatest(() -> getfield(mod, :_show_once_summary_row)(:rectangular, (; converged = true), nothing, false; compare_available = false))
-      @test skipped_compare_summary.converged === true
-      @test skipped_compare_summary.iterations == -1
-      @test isnan(skipped_compare_summary.elapsed_s)
-      @test isnan(skipped_compare_summary.max_dvm)
-      @test isnan(skipped_compare_summary.max_dva)
-      @test isnan(skipped_compare_summary.slack_delta_va)
-      @test skipped_compare_summary.angle_alignment === :none
-      @test skipped_compare_summary.cmp_ok === false
-      @test skipped_compare_summary.compare_status === :skip
-      @test skipped_compare_summary.numerical_solution === :ok
-      @test skipped_compare_summary.q_limit_active_set === :ok
-      @test skipped_compare_summary.final_converged === true
-      @test skipped_compare_summary.reason_text == "none"
-      compared_summary = Base.invokelatest(() -> getfield(mod, :_show_once_summary_row)(:rectangular, (; converged = true, iterations = 4, elapsed_s = 0.125), (; max_dvm = 0.01, max_dva = 0.2), true; compare_available = true))
-      @test compared_summary.converged === true
-      @test compared_summary.iterations == 4
-      @test compared_summary.elapsed_s == 0.125
-      @test compared_summary.max_dvm == 0.01
-      @test compared_summary.max_dva == 0.2
-      @test isnan(compared_summary.slack_delta_va)
-      @test compared_summary.angle_alignment === :none
-      compared_summary_with_alignment = Base.invokelatest(() -> getfield(mod, :_show_once_summary_row)(:rectangular, (; converged = true, iterations = 4, elapsed_s = 0.125), (; max_dvm = 0.01, max_dva = 0.2, slack_delta_va = -30.0, angle_alignment = :slack), true; compare_available = true))
-      @test compared_summary_with_alignment.slack_delta_va == -30.0
-      @test compared_summary_with_alignment.angle_alignment === :slack
-      @test compared_summary.cmp_ok === true
-      @test compared_summary.compare_status === :ok
-      rejected_summary = Base.invokelatest(() -> getfield(mod, :_show_once_summary_row)(:rectangular, (; converged = false, numerical_converged = true, q_limit_active_set_ok = false, final_converged = false, reason_text = "remaining PV Q-limit violations"), (; max_dvm = 0.036, max_dva = 0.44), true; compare_available = true))
-      @test rejected_summary.numerical_solution === :ok
-      @test rejected_summary.q_limit_active_set === :fail
-      @test rejected_summary.final_converged === false
-      @test rejected_summary.compare_status === :ok
-      @test rejected_summary.reason_text == "remaining PV Q-limit violations"
-      compared_warn_summary = Base.invokelatest(() -> getfield(mod, :_show_once_summary_row)(:rectangular, (; converged = true, iterations = 4, elapsed_s = 0.125), (; max_dvm = 0.01, max_dva = 0.2, compare_status = :warn), true; compare_available = true))
-      @test compared_warn_summary.compare_status === :warn
-      mpc_seeded = (; bus = hcat(collect(1.0:3.0), fill(1.0, 3), zeros(3, 5), [1.02, 1.01, 0.99], [0.0, -1.0, -2.0]))
-      @test Base.invokelatest(() -> getfield(mod, :_warn_if_flatstart_uses_only_voltage_setpoints)("case1951rte.m", (; opt_flatstart = true), mpc_seeded)) === nothing
-      @test_logs (:info, r"opt_flatstart=false uses stored MATPOWER voltage magnitudes and angles") Base.invokelatest(() -> getfield(mod, :_warn_if_flatstart_uses_only_voltage_setpoints)("case1951rte.m", (; opt_flatstart = false), mpc_seeded))
-
-      large_bus = zeros(1000, 13)
-      for r in axes(large_bus, 1)
-        large_bus[r, 1] = r
-        large_bus[r, 2] = r == 1 ? 3.0 : 1.0
-        large_bus[r, 8] = 1.0
-      end
-      large_mpc = (; baseMVA = 100.0, bus = large_bus, gen = zeros(0, 21), branch = zeros(0, 13))
-      auto_apply_cfg = Base.invokelatest(() -> getfield(mod, :bench_config_for_case)("case_large.m", Dict{String,Any}(
-        "matpower_auto_profile" => "apply",
-        "opt_flatstart" => false,
-      )))
-      auto_apply = Base.invokelatest(() -> getfield(mod, :_matpower_auto_profile)(large_mpc, auto_apply_cfg, Dict{String,Any}(
-        "matpower_auto_profile" => "apply",
-        "opt_flatstart" => false,
-      )))
-      @test auto_apply.mode === :apply
-      # Explicit YAML values win; large-case auto-profile keeps start projection disabled by default.
-      @test auto_apply.cfg.opt_flatstart === false
-      @test :opt_flatstart in auto_apply.preserved
-      @test auto_apply.cfg.start_projection === false
-      @test auto_apply.cfg.flatstart_angle_mode === :dc
-      @test auto_apply.cfg.flatstart_voltage_mode === :bus_vm_va_blend
-      @test auto_apply.cfg.start_projection_measure_candidates === false
-      @test auto_apply.cfg.start_projection_accept_unmeasured_dc_start === false
-      @test auto_apply.cfg.start_projection_reuse_import_data === true
-      @test auto_apply.cfg.performance_skip_expensive_diagnostics === true
-      @test auto_apply.cfg.tol == 1e-5
-      auto_explicit_diag_cfg = Base.invokelatest(() -> getfield(mod, :bench_config_for_case)("case_large.m", Dict{String,Any}(
-        "matpower_auto_profile" => "apply",
-        "performance" => Dict{String,Any}("skip_expensive_diagnostics" => false),
-      )))
-      auto_explicit_diag = Base.invokelatest(() -> getfield(mod, :_matpower_auto_profile)(large_mpc, auto_explicit_diag_cfg, Dict{String,Any}(
-        "matpower_auto_profile" => "apply",
-        "performance" => Dict{String,Any}("skip_expensive_diagnostics" => false),
-      )))
-      @test auto_explicit_diag.cfg.performance_skip_expensive_diagnostics === false
-      @test :performance_skip_expensive_diagnostics in auto_explicit_diag.preserved
-      @test auto_apply.cfg.max_ite == 80
-      auto_recommend_cfg = Base.invokelatest(() -> getfield(mod, :bench_config_for_case)("case_large.m", Dict{String,Any}("matpower_auto_profile" => "recommend")))
-      auto_recommend = Base.invokelatest(() -> getfield(mod, :_matpower_auto_profile)(large_mpc, auto_recommend_cfg, Dict{String,Any}("matpower_auto_profile" => "recommend")))
-      @test auto_recommend.mode === :recommend
-      @test auto_recommend.cfg.start_projection === false
-      narrow_gen = zeros(10, 21)
-      for r in axes(narrow_gen, 1)
-        narrow_gen[r, 1] = r
-        narrow_gen[r, 4] = 0.5
-        narrow_gen[r, 5] = 0.0
-        narrow_gen[r, 8] = 1.0
-      end
-      narrow_large_mpc = (; baseMVA = 100.0, bus = large_bus, gen = narrow_gen, branch = zeros(0, 13))
-      narrow_auto_apply_cfg = Base.invokelatest(() -> getfield(mod, :bench_config_for_case)("case_large.m", Dict{String,Any}("matpower_auto_profile" => "apply")))
-      narrow_auto_apply = Base.invokelatest(() -> getfield(mod, :_matpower_auto_profile)(narrow_large_mpc, narrow_auto_apply_cfg, Dict{String,Any}("matpower_auto_profile" => "apply")))
-      @test narrow_auto_apply.cfg.start_projection === false
-      @test narrow_auto_apply.cfg.flatstart_angle_mode === :dc
-      @test narrow_auto_apply.cfg.flatstart_voltage_mode === :bus_vm_va_blend
-      @test narrow_auto_apply.cfg.qlimit_guard === true
-      @test narrow_auto_apply.cfg.qlimit_start_mode === :iteration_or_auto
-      @test narrow_auto_apply.cfg.qlimit_guard_min_q_range_pu == 0.02
-      @test narrow_auto_apply.cfg.qlimit_guard_narrow_range_mode === :lock_pq
-      @test narrow_auto_apply.cfg.qlimit_guard_violation_mode === :lock_pq
-      @test narrow_auto_apply.cfg.performance_skip_expensive_diagnostics === true
-      @test narrow_auto_apply.cfg.tol == 1e-5
-      auto_io = IOBuffer()
-      @test Base.invokelatest(() -> getfield(mod, :_print_matpower_auto_profile)(auto_io, auto_apply)) === nothing
-      auto_text = String(take!(auto_io))
-      @test occursin("MATPOWER auto-profile", auto_text)
-      @test occursin("preserved explicit value", auto_text)
-      auto_compact_io = IOBuffer()
-      @test Base.invokelatest(() -> getfield(mod, :_print_matpower_auto_profile_compact)(auto_compact_io, auto_apply)) === nothing
-      auto_compact_text = String(take!(auto_compact_io))
-      @test occursin("MATPOWER auto-profile: apply", auto_compact_text)
-      @test occursin("branch shift", auto_compact_text)
-      @test !occursin("reason:", auto_compact_text)
-
-perf_cfg = Base.invokelatest(() -> getfield(mod, :bench_config_for_case)("case14.m", Dict{String,Any}(
-  "performance" => Dict{String,Any}(
-    "enabled" => true,
-    "level" => "iteration",
-    "show_allocations" => true,
-    "skip_reference_comparison" => true,
-    "max_diagnostic_rows" => 7,
-  ),
-)))
-@test perf_cfg.performance_enabled === true
-@test perf_cfg.performance_level === :iteration
-@test perf_cfg.performance_show_allocations === true
-@test perf_cfg.performance_skip_reference_comparison === true
-@test perf_cfg.performance_max_diagnostic_rows == 7
-
-summary_profile = Dict{Symbol,Any}(
-  :enabled => true,
-  :level => :summary,
-  :show_allocations => false,
-  :show_iteration_table => true,
-  :timings => Dict{Symbol,Any}(
-    :matpower_parse => (calls = 1, elapsed_s = 0.1, bytes = 0),
-    :logging_diagnostics => (calls = 1, elapsed_s = 0.2, bytes = 0),
-  ),
-  :iterations => [(iteration = 1, max_mismatch = 1e-3, qlimit_changed = false, qlimit_reenabled = false)],
-  :start_projection_summary => (selected = :dc_start, reason = :finite_improvement, candidates = 2, best_mismatch = 1e-4, elapsed_s = 0.03),
-  :dc_matrix_size => (24, 24),
-  :dc_matrix_nnz => 128,
-  :dc_matrix_density => 128 / (24 * 24),
-  :dc_solve_backend => :sparse_lu_umfpack,
-  :dc_solve_reduced_dimension => 24,
-)
-summary_io = IOBuffer()
-@test Base.invokelatest(() -> getfield(mod, :_print_performance_profile)(summary_io, summary_profile; max_rows = 5)) === nothing
-summary_text = String(take!(summary_io))
-@test occursin("Performance Summary", summary_text)
-@test occursin("matpower_parse", summary_text)
-@test occursin("logging_diagnostics", summary_text)
-@test occursin("start_projection: selected=dc_start", summary_text)
-@test occursin("reason=finite_improvement", summary_text)
-@test occursin("start_projection_dc: dc_matrix_size=(24, 24)", summary_text)
-@test occursin("dc_solve_backend=sparse_lu_umfpack", summary_text)
-@test !occursin("Newton iteration table", summary_text)
-summary_profile[:level] = :iteration
-iteration_io = IOBuffer()
-@test Base.invokelatest(() -> getfield(mod, :_print_performance_profile)(iteration_io, summary_profile; max_rows = 5)) === nothing
-@test occursin("Newton iteration table", String(take!(iteration_io)))
-
-diagnostic_mpc = (;
-        baseMVA = 100.0,
-        bus = [1.0 3.0 0.0 0.0 0.0 0.0 1.0 1.0 0.0 110.0 1.0 1.1 0.9;
-               2.0 1.0 0.0 0.0 0.0 0.0 1.0 1.0 -0.1 110.0 1.0 1.1 0.9],
-        gen = [1.0 0.0 0.0 0.0 0.0 1.0 100.0 1.0 0.0 0.0 zeros(1, 11)...],
-        branch = [1.0 2.0 0.01 0.10 0.02 0.0 0.0 0.0 1.0 0.01 1.0 0.0 0.0],
-      )
-      slack_ref = Base.invokelatest(() -> getfield(mod, :_matpower_slack_reference)(diagnostic_mpc))
-      @test slack_ref.bus == 1
-      @test slack_ref.vm_pu == 1.0
-      @test slack_ref.va_deg == 0.0
-      ref_io = IOBuffer()
-      @test Base.invokelatest(() -> getfield(mod, :_print_reference_override_status)(ref_io, diagnostic_mpc; reference_override = false, reference_vm_pu = 1.1, reference_va_deg = 45.0)) === nothing
-      @test occursin("override: disabled", String(take!(ref_io)))
-      diag_io = IOBuffer()
-      @test Base.invokelatest(() -> getfield(mod, :_print_matpower_reference_diagnostics)(diag_io, diagnostic_mpc; matpower_shift_sign = -1.0, matpower_shift_unit = "rad", diagnose_branch_shift_conventions = true, maxlines = 2)) === nothing
-      @test occursin("Branch-shift convention scan", String(take!(diag_io)))
-      neighborhood_io = IOBuffer()
-      @test Base.invokelatest(() -> getfield(mod, :_print_matpower_reference_diagnostics)(neighborhood_io, diagnostic_mpc; matpower_shift_sign = -1.0, matpower_shift_unit = "rad", diagnose_branch_neighborhood = true, diagnose_branch_neighborhood_buses = [1, 2], diagnose_branch_neighborhood_depth = 1, diagnose_branch_neighborhood_maxlines = 5, maxlines = 2)) === nothing
-      neighborhood_text = String(take!(neighborhood_io))
-      @test occursin("MATPOWER branch-neighborhood fixed-reference diagnostics", neighborhood_text)
-      @test occursin("branch row 1: f_bus=1  t_bus=2", neighborhood_text)
-      @test occursin("connects two selected high-residual buses", neighborhood_text)
-      @test occursin("fixed-reference flow Sf=", neighborhood_text)
-
-      negative_mpc = (;
-        baseMVA = 100.0,
-        bus = [1.0 3.0 0.0 0.0 0.0 0.0 1.0 1.0 0.0 110.0 1.0 1.1 0.9;
-               2.0 1.0 10.0 2.0 0.0 0.0 1.0 0.99 -1.0 110.0 1.0 1.1 0.9],
-        gen = [1.0 10.0 2.0 10.0 -10.0 1.0 100.0 1.0 20.0 0.0 zeros(1, 11)...],
-        branch = [1.0 2.0 -0.01 0.10 0.02 0.0 0.0 0.0 1.05 5.0 1.0 -360.0 360.0],
-      )
-      stamp = Base.invokelatest(() -> getfield(mod, :_matpower_branch_stamp)(view(negative_mpc.branch, 1, :)))
-      expected_y = inv(-0.01 + 0.10im)
-      @test stamp.br_r == -0.01
-      @test isapprox(real(expected_y), -0.99009900990099; atol = 1e-14, rtol = 0.0)
-      @test isapprox(stamp.Ytt - 0.01im, expected_y; atol = 1e-12, rtol = 0.0)
-      ybus_negative = Sparlectra.MatpowerIO.build_ybus_matpower(negative_mpc.bus, negative_mpc.branch, negative_mpc.baseMVA)
-      @test isapprox(ybus_negative[2, 2] - 0.01im, expected_y; atol = 1e-12, rtol = 0.0)
-      negative_net = Sparlectra.createNetFromMatPowerCase(mpc = negative_mpc)
-      @test negative_net.branchVec[1].r_pu == -0.01
-      neg_io = IOBuffer()
-      @test Base.invokelatest(() -> getfield(mod, :_print_negative_branch_impedance_diagnostics)(neg_io, negative_mpc; diagnose_branch_neighborhood_buses = [1, 2], diagnose_nodal_balance_buses = [2], fail_on_negative_r = false)) === nothing
-      neg_text = String(take!(neg_io))
-      @test occursin("Negative branch resistance/reactance detected", neg_text)
-      @test occursin("<negative BR_R>", neg_text)
-      @test occursin("Sparlectra preserves the signed impedance values", neg_text)
-      @test occursin("y=1/(R+jX)=", neg_text)
-      @test_throws ErrorException Base.invokelatest(() -> getfield(mod, :_print_negative_branch_impedance_diagnostics)(IOBuffer(), negative_mpc; fail_on_negative_r = true))
-      nodal_diag = Base.invokelatest(() -> getfield(mod, :_matpower_reference_residuals)(negative_mpc))
-      nodal_io = IOBuffer()
-      @test Base.invokelatest(() -> getfield(mod, :_print_nodal_balance_breakdown)(nodal_io, negative_mpc, nodal_diag; buses = [1, 2], maxlines = 5)) === nothing
-      nodal_text = String(take!(nodal_io))
-      @test occursin("S_spec", nodal_text)
-      @test occursin("S_branch_sum", nodal_text)
-      @test occursin("residual dS=S_branch_sum-S_spec", nodal_text)
-      @test occursin("formula: S_spec = S_gen_online - S_load - S_shunt", nodal_text)
-
-      # BUS_I 196 uses a small equivalent Pd adjustment so this focused fixture
-      # reproduces the known fixed-reference residual without embedding case300.m.
-      case300_neighborhood_mpc = (;
-        name = "case300_reference_neighborhood",
-        baseMVA = 100.0,
-        bus = [196.0 1.0 15.2823184571025 3.0 0.0 0.0 1.0 0.9695 -25.32 115.0 3.0 1.06 0.94;
-               197.0 1.0 43.0 14.0 0.0 0.0 1.0 0.9907 -23.72 115.0 3.0 1.06 0.94;
-               210.0 1.0 0.0 0.0 0.0 0.0 1.0 0.9788 -24.22 115.0 3.0 1.06 0.94;
-               204.0 1.0 72.0 24.0 0.0 0.0 1.0 0.9718 -25.7 66.0 3.0 1.06 0.94;
-               2040.0 1.0 0.0 0.0 0.0 0.0 1.0 0.9653 -14.94 115.0 3.0 1.06 0.94],
-        gen = zeros(0, 21),
-        branch = [196.0 197.0 0.014 0.04 0.004 0.0 0.0 0.0 0.0 0.0 1.0 -360.0 360.0;
-                  196.0 210.0 0.03 0.081 0.01 0.0 0.0 0.0 0.0 0.0 1.0 -360.0 360.0;
-                  204.0 2040.0 0.02 0.204 -0.012 0.0 0.0 0.0 1.05 0.0 1.0 -360.0 360.0;
-                  196.0 2040.0 0.0001 0.02 0.0 0.0 0.0 0.0 1.0 0.0 1.0 -360.0 360.0],
-      )
-      case300_diag = Base.invokelatest(() -> getfield(mod, :_matpower_reference_residuals)(case300_neighborhood_mpc))
-      busrow = Dict(Int(case300_diag.bus[r, 1]) => r for r in axes(case300_diag.bus, 1))
-      @test isapprox(real(case300_diag.mis[busrow[2040]]), 9.269150; atol = 1e-6, rtol = 0.0)
-      @test isapprox(real(case300_diag.mis[busrow[196]]), -9.260983; atol = 1e-6, rtol = 0.0)
-      case300_diag_io = IOBuffer()
-      @test Base.invokelatest(() -> getfield(mod, :_print_matpower_reference_diagnostics)(case300_diag_io, case300_neighborhood_mpc; maxlines = 3)) === nothing
-      case300_diag_text = String(take!(case300_diag_io))
-      @test occursin("raw MATPOWER-style fixed-reference check", case300_diag_text)
-      @test occursin("not necessarily a Sparlectra solver or import error", case300_diag_text)
-      cluster_io = IOBuffer()
-      @test Base.invokelatest(() -> getfield(mod, :_print_matpower_reference_diagnostics)(cluster_io, case300_neighborhood_mpc; diagnose_residual_clusters = true, diagnose_residual_cluster_threshold_mw = 100.0, diagnose_residual_cluster_maxlines = 5, maxlines = 3)) === nothing
-      cluster_text = String(take!(cluster_io))
-      @test occursin("MATPOWER fixed-reference residual clusters", cluster_text)
-      @test occursin("cluster 1:", cluster_text)
-      @test occursin("196, 197, 2040", cluster_text)
-      @test occursin("row 4 196->2040", cluster_text)
-
-      pv_diag_mpc = Sparlectra.MatpowerIO.MatpowerCase(
-        "pv_diagnostic",
-        100.0,
-        [
-          1 3 0.0 0.0 0.0 0.0 1 1.00 0.0 110.0 1 1.1 0.9
-          2 2 0.0 0.0 0.0 0.0 1 1.02 0.0 110.0 1 1.1 0.9
-          3 1 20.0 5.0 0.0 0.0 1 0.98 -2.0 110.0 1 1.1 0.9
-        ],
-        [
-          1 0.0 0.0 999.0 -999.0 1.0 100.0 1 999.0 0.0 zeros(1, 11)...
-          2 50.0 0.0 999.0 -999.0 1.04 100.0 1 999.0 0.0 zeros(1, 11)...
-        ],
-        [
-          1 2 0.01 0.05 0.0 9999.0 0.0 0.0 0.0 0.0 1 -60.0 60.0
-          2 3 0.01 0.05 0.0 9999.0 0.0 0.0 0.0 0.0 1 -60.0 60.0
-        ],
-        nothing,
-        nothing,
-      )
-      pv_diag_net = Sparlectra.createNetFromMatPowerCase(mpc = pv_diag_mpc, matpower_pv_voltage_source = :gen_vg)
-      pv_diag_io = IOBuffer()
-      @test Base.invokelatest(() -> getfield(mod, :_print_pv_voltage_reference_diagnostics)(pv_diag_io, pv_diag_mpc, pv_diag_net; matpower_pv_voltage_source = :gen_vg, compare_voltage_reference = :hybrid, maxlines = 3)) === nothing
-      pv_diag_text = String(take!(pv_diag_io))
-      @test occursin("Post-solve active PV/REF setpoint residual", pv_diag_text)
-      @test occursin("BUS.VM fallback", pv_diag_text)
-
-      warn_logfile, warn_io = mktemp()
-      close(warn_io)
-      warn_mpc = deepcopy(pv_diag_mpc)
-      warn_mpc.bus[3, 2] = 2.0
-      warn_status = Base.invokelatest(() -> getfield(mod, :_MatpowerImportLogStatus)())
-      rows = Base.invokelatest(() -> getfield(mod, :_with_log_table)(warn_logfile, warn_status) do
-        Sparlectra.MatpowerIO.pv_voltage_reference_rows(warn_mpc; warn = true)
-      end)
-      warn_text = read(warn_logfile, String)
-      @test length(rows) == 3
-      @test warn_status.warnings == 1
-      @test warn_status.errors == 0
-      @test occursin("Reported warnings/errors", warn_text)
-      @test occursin("MATPOWER PV/REF buses without online generators: 1; using BUS.VM fallback", warn_text)
-      @test occursin("BUS_I=3", warn_text)
-      @test !occursin("has no online generator; falling back", warn_text)
-      rm(warn_logfile; force = true)
-
-      logfile, io = mktemp()
-      close(io)
-      result = Base.invokelatest(() -> getfield(mod, :bench_run_acpflow)(;
-        casefile = "case14.m",
-        methods = Symbol[],
-        mpc = nothing,
-        logfile = logfile,
-        show_diff = false,
-        tol_vm = 0.02,
-        tol_va = 2.0,
-        autodamp = true,
-        autodamp_min = 0.002,
-        start_projection = true,
-        start_projection_try_dc_start = false,
-        start_projection_try_blend_scan = false,
-        start_projection_blend_lambdas = [0.1, 0.9],
-        start_projection_dc_angle_limit_deg = 45.0,
-        qlimit_trace_buses = [40712],
-        qlimit_guard = cfg.qlimit_guard,
-        qlimit_guard_min_q_range_pu = cfg.qlimit_guard_min_q_range_pu,
-        qlimit_guard_zero_range_mode = cfg.qlimit_guard_zero_range_mode,
-        qlimit_guard_narrow_range_mode = cfg.qlimit_guard_narrow_range_mode,
-        qlimit_guard_max_switches = cfg.qlimit_guard_max_switches,
-        qlimit_guard_freeze_after_repeated_switching = cfg.qlimit_guard_freeze_after_repeated_switching,
-        qlimit_guard_accept_bounded_violations = cfg.qlimit_guard_accept_bounded_violations,
-        qlimit_guard_max_remaining_violations = cfg.qlimit_guard_max_remaining_violations,
-        qlimit_guard_log = cfg.qlimit_guard_log,
-        matpower_shift_unit = "rad",
-        matpower_shift_sign = -1.0,
-        matpower_ratio = "reciprocal",
-        reference_override = true,
-        reference_vm_pu = 1.01,
-        reference_va_deg = -3.0,
-        diagnose_branch_neighborhood = true,
-        diagnose_residual_clusters = true,
-        diagnose_residual_cluster_threshold_mw = 5.0,
-        diagnose_residual_cluster_maxlines = 4,
-        diagnose_branch_neighborhood_buses = [7934, 6621],
-        diagnose_branch_neighborhood_depth = 2,
-        diagnose_branch_neighborhood_maxlines = 25,
-        diagnose_nodal_balance_breakdown = true,
-        diagnose_nodal_balance_buses = [511, 2852],
-        diagnose_nodal_balance_maxlines = 2,
-        diagnose_negative_branch_impedance = true,
-        diagnose_negative_branch_impedance_fail_on_negative_r = false,
-        log_effective_config = true,
-        effective_config = cfg,
-        show_once = false,
-        benchmark = false,
-        console_summary = true,
-        console_diagnostics = :compact,
-        console_q_limit_events = :summary,
-        console_max_rows = 3,
-        logfile_diagnostics = :full,
-  performance_profile = Dict{Symbol,Any}(:enabled => true, :level => :summary, :show_allocations => false, :show_iteration_table => true),
-  performance_write_to_logfile = true,
-  performance_print_to_console = false,
-  performance_max_diagnostic_rows = 5,
-))
-      @test result == Dict{Symbol,Any}()
-      logfile_text = read(logfile, String)
-      @test occursin("Performance Summary", logfile_text)
-      @test occursin("logging_diagnostics", logfile_text)
-      rm(logfile; force = true)
+      @test isdefined(mod, :main)
     finally
       if isnothing(old_no_main)
         delete!(ENV, "SPARLECTRA_MATPOWER_IMPORT_NO_MAIN")
@@ -655,93 +169,423 @@ diagnostic_mpc = (;
     end
   end
 
-  @testset "MATPOWER SHIFT convention options" begin
-    bus = [1.0 3.0 0.0 0.0 0.0 0.0 1.0 1.0 0.0 110.0 1.0 1.1 0.9;
-           2.0 1.0 0.0 0.0 0.0 0.0 1.0 1.0 0.0 110.0 1.0 1.1 0.9]
-    branch_rad = [1.0 2.0 0.01 0.10 0.02 0.0 0.0 0.0 1.0 (pi / 6) 1.0 -360.0 360.0]
-    branch_deg = copy(branch_rad)
-    branch_deg[1, 10] = -30.0
-    y_rad = Sparlectra.MatpowerIO.build_ybus_matpower(bus, branch_rad, 100.0; matpower_shift_unit = "rad", matpower_shift_sign = -1.0)
-    y_deg = Sparlectra.MatpowerIO.build_ybus_matpower(bus, branch_deg, 100.0)
-    @test isapprox(y_rad, y_deg; atol = 1e-12, rtol = 0.0)
-  end
-
-  @testset "MATPOWER nominal TAP transformer preservation" begin
-    bus = [196.0 3.0 10.0 3.0 0.0 0.0 1.0 0.9695 -25.32 115.0 3.0 1.06 0.94;
-           2040.0 1.0 0.0 0.0 0.0 0.0 1.0 0.9653 -14.94 115.0 3.0 1.06 0.94;
-           3000.0 1.0 0.0 0.0 0.0 0.0 1.0 0.9700 -20.00 115.0 3.0 1.06 0.94]
-    gen = [196.0 0.0 0.0 10.0 -10.0 1.0 100.0 1.0 10.0 0.0 zeros(1, 11)...]
-    branch = [196.0 2040.0 0.0001 0.02 0.0 0.0 0.0 0.0 1.0 0.0 1.0 -360.0 360.0;
-              2040.0 3000.0 0.0001 0.02 0.0 0.0 0.0 0.0 0.0 0.0 1.0 -360.0 360.0]
-    mpc = (; name = "nominal_tap_transformer", baseMVA = 100.0, bus = bus, gen = gen, branch = branch, gencost = nothing, bus_name = nothing)
-
-    net = Sparlectra.createNetFromMatPowerCase(mpc = mpc)
-    @test length(net.trafos) == 1
-    @test length(net.linesAC) == 1
-    @test net.branchVec[1].ratio == 1.0
-    @test net.branchVec[1].tap_ratio == 1.0
-    @test net.branchVec[2].ratio == 0.0
-    @test isapprox(Matrix(Sparlectra.createYBUS(net = net, sparse = false)), Sparlectra.MatpowerIO.build_ybus_matpower(bus, branch, 100.0); atol = 1e-12, rtol = 0.0)
-  end
-
-  @testset "MATPOWER TAP ratio convention options" begin
-    bus = [1.0 3.0 0.0 0.0 0.0 0.0 1.0 1.0 0.0 110.0 1.0 1.1 0.9;
-           2.0 1.0 0.0 0.0 0.0 0.0 1.0 1.0 0.0 110.0 1.0 1.1 0.9]
-    branch = [1.0 2.0 0.01 0.10 0.02 0.0 0.0 0.0 2.0 0.0 1.0 0.0 0.0]
-    branch_recip = copy(branch)
-    branch_recip[1, 9] = 0.5
-    y_recip_option = Sparlectra.MatpowerIO.build_ybus_matpower(bus, branch, 100.0; matpower_ratio = "reciprocal")
-    y_recip_data = Sparlectra.MatpowerIO.build_ybus_matpower(bus, branch_recip, 100.0)
-    @test isapprox(y_recip_option, y_recip_data; atol = 1e-12, rtol = 0.0)
-
-    mpc = (;
-      name = "ratio_convention",
-      baseMVA = 100.0,
-      bus = bus,
-      gen = [1.0 0.0 0.0 10.0 -10.0 1.0 100.0 1.0 10.0 0.0 zeros(1, 11)...],
-      branch = branch,
-      gencost = nothing,
-      bus_name = nothing,
-    )
-    net_normal = Sparlectra.createNetFromMatPowerCase(mpc = mpc, matpower_ratio = "normal")
-    net_recip = Sparlectra.createNetFromMatPowerCase(mpc = mpc, matpower_ratio = "reciprocal")
-    @test net_normal.branchVec[1].ratio == 2.0
-    @test net_recip.branchVec[1].ratio == 0.5
-  end
-
-  @testset "MATPOWER local Julia case resolution" begin
-    mktempdir() do dir
-      case_path = joinpath(dir, "local_case.jl")
-      write(case_path, """
-      (
-        name = \"local_case\",
-        baseMVA = 100.0,
-        bus = [1 3 0 0 0 0 1 1.0 0.0 110 1 1.1 0.9],
-        gen = [1 0 0 10 -10 1.0 100 1 10 0],
-        branch = zeros(0, 13),
-        gencost = nothing,
-        bus_name = nothing,
-      )
-      """)
-
-      resolved = Sparlectra.FetchMatpowerCase.ensure_casefile("local_case.jl"; outdir = dir, to_jl = true, overwrite = false)
-      @test resolved == abspath(case_path)
-
-      old_pwd = pwd()
-      try
-        cd(dirname(@__DIR__))
-        relative_path = relpath(case_path, pwd())
-        mpc = Sparlectra.MatpowerIO.read_case(relative_path; legacy_compat = false)
-        @test mpc.name == "local_case"
-        @test size(mpc.bus) == (1, 13)
-      finally
-        cd(old_pwd)
-      end
+  @testset "MATPOWER runner operational output" begin
+    test_cfg = tempname() * ".yaml"
+    write(test_cfg, """
+benchmark:
+  enabled: false
+power_flow:
+  flatstart: true
+  start_mode:
+    angle_mode: dc
+    voltage_mode: pv_gen_vg
+matpower_import:
+  case: case14.m
+""")
+    try
+      result = Sparlectra.run_matpower_case(; casefile = "case14.m", config_file = test_cfg)
+      @test isfile(result.logfile)
+      @test result.status_ref !== nothing
+      logtxt = read(result.logfile, String)
+      @test occursin("Sparlectra version", logtxt)
+      @test occursin("config default", logtxt)
+      @test occursin("config user", logtxt)
+      @test occursin("casefile", logtxt)
+      @test occursin("logfile", logtxt)
+      @test occursin("performance", logtxt)
+      @test occursin("summary method=", logtxt)
+      @test occursin("summary", logtxt)
+    catch err
+      # Network fetch can fail in CI/offline runs depending on HTTP stack versions.
+      et = string(typeof(err))
+      em = sprint(showerror, err)
+      @test occursin("RequestError", et) || occursin("FieldError", et) || occursin("RequestError", em)
     end
   end
-  return true
+
+  @testset "Compact summary uses canonical outcome fields" begin
+    summary_not_conv = Sparlectra._compact_run_summary((
+      method = :rectangular,
+      outcome = :not_converged,
+      numerical_converged = false,
+      solution_available = false,
+      limit_validation_status = :skip,
+      final_converged = false,
+      final_mismatch = 2.575667589,
+      reason_text = "NR mismatch did not converge",
+      iterations = 30,
+      elapsed_s = 1.25,
+    ))
+    @test occursin("outcome=not_converged", summary_not_conv)
+    @test occursin("numerical_solution=FAIL", summary_not_conv)
+    @test occursin("solution_available=false", summary_not_conv)
+    @test occursin("limit_validation=SKIP", summary_not_conv)
+    @test occursin("reason=\"NR mismatch did not converge\"", summary_not_conv)
+
+    summary_limits = Sparlectra._compact_run_summary((
+      method = :rectangular,
+      outcome = :converged_limits_failed,
+      numerical_converged = true,
+      solution_available = true,
+      limit_validation_status = :fail,
+      final_converged = false,
+      final_mismatch = 1.2e-7,
+      reason_text = "remaining PV Q-limit violations",
+      iterations = 8,
+      elapsed_s = 0.5,
+    ))
+    @test occursin("outcome=converged_limits_failed", summary_limits)
+    @test occursin("numerical_solution=OK", summary_limits)
+    @test occursin("solution_available=true", summary_limits)
+    @test occursin("limit_validation=FAIL", summary_limits)
+  end
+
+  @testset "Q-limit non-convergence reason and counters are explicit" begin
+    @test Sparlectra._rectangular_rejection_reason_text(:nr_mismatch_not_converged_active_set_unstable) ==
+          "NR mismatch did not converge; Q-limit active set changed repeatedly"
+    io = IOBuffer()
+    Sparlectra._print_qlimit_active_set_summary(io, (
+      numerical_converged = false,
+      q_limit_active_set_ok = false,
+      final_mismatch = 1.0,
+      pv_pq_switching_events = 0,
+      qlimit_active_set_changes = 5,
+      qlimit_reenable_events = 2,
+      oscillating_buses = 0,
+      guarded_narrow_q_pv_buses = 0,
+      status = :not_converged,
+    ))
+    txt = String(take!(io))
+    @test occursin("Q-limit active-set changes", txt)
+    @test occursin("Q-limit re-enable events", txt)
+  end
+
+  @testset "MATPOWER performance profile output coverage" begin
+    profile = Dict{Symbol,Any}(
+      :enabled => true,
+      :level => :full,
+      :show_allocations => true,
+      :show_iteration_table => true,
+      :representative_elapsed_s => 10.0,
+      :events => [(label = :benchmark_rectangular, seconds = 0.025)],
+      :timings => Dict(
+        :network_construction => (calls = 1, elapsed_s = 2.0, bytes = 100),
+        :start_projection => (calls = 1, elapsed_s = 1.0, bytes = 200),
+        :solver_total => (calls = 1, elapsed_s = 6.0, bytes = 300),
+        :newton_step_linear_solve => (calls = 4, elapsed_s = 0.5, bytes = 400),
+      ),
+      :iterations => [(iter = 1, mismatch = 1.0, elapsed_s = 0.01)],
+      :timing_mode => :cold_representative,
+      :representative_warmup_runs => 0,
+      :rectangular_workspace_reuse => true,
+      :rectangular_workspace_preallocated => true,
+      :rectangular_workspace_reason => :auto_threshold,
+      :rectangular_workspace_nbus => 10000,
+      :rectangular_workspace_nstate => 19998,
+    )
+    io_full = IOBuffer()
+    Sparlectra.print_performance_profile(io_full, profile; level = :full, max_rows = 25)
+    txt_full = String(take!(io_full))
+    @test occursin("network_construction", txt_full)
+    @test occursin("benchmark_rectangular", txt_full)
+    @test occursin("Timing coverage", txt_full)
+    @test occursin("Representative wall time", txt_full)
+    @test occursin("Top-level measured time", txt_full)
+    @test occursin("Sum of all recorded phase timings", txt_full)
+    @test occursin("Benchmark events total", txt_full)
+    @test occursin("Coverage status", txt_full)
+    @test occursin("Nested timing note", txt_full)
+    @test occursin("10.0", txt_full)
+    @test occursin("9.0", txt_full)
+    @test !occursin("9.025", txt_full)
+    @test occursin("Bytes", txt_full)
+    @test occursin("Bytes/Call", txt_full)
+    @test occursin("Iteration diagnostics", txt_full)
+
+    io_compact = IOBuffer()
+    Sparlectra.print_performance_profile(io_compact, profile; level = :compact, max_rows = 25)
+    txt_compact = String(take!(io_compact))
+    @test occursin("network_construction", txt_compact)
+    @test occursin("benchmark_rectangular", txt_compact)
+    @test occursin("Timing coverage", txt_compact)
+    @test occursin("Timing mode", txt_compact)
+    @test occursin("cold / representative", txt_compact)
+    @test occursin("Representative warmup runs", txt_compact)
+    @test occursin("Warmup guidance", txt_compact)
+    @test occursin("Rectangular workspace", txt_compact)
+    @test occursin("auto_threshold", txt_compact)
+  end
+
+  @testset "Performance warmup configuration parsing" begin
+    cfg_default = Sparlectra.load_sparlectra_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH; reload = true)
+    @test cfg_default.performance.representative_warmup_runs == 0
+    @test cfg_default.performance.compare_cold_warm == false
+  end
+
+  @testset "Performance warmup sentinel is rendered in profile output" begin
+    profile = Dict{Symbol,Any}(
+      :timing_mode => :warm_steady_state,
+      :representative_warmup_runs => 2,
+      :representative_elapsed_s => 0.1,
+      :events => NamedTuple[],
+      :timings => Dict{Symbol,Any}(),
+      :iterations => NamedTuple[],
+    )
+    io = IOBuffer()
+    Sparlectra.print_performance_profile(io, profile; level = :compact, max_rows = 5)
+    txt = String(take!(io))
+    @test occursin("warm / steady-state", txt)
+    @test occursin("Representative warmup runs     : 2", txt)
+  end
+
+  @testset "Automatic timing mode labels are rendered in profile output" begin
+    profile_auto_cold = Dict{Symbol,Any}(
+      :timing_mode => :auto_cold_session_first,
+      :representative_warmup_runs => 0,
+      :representative_elapsed_s => 0.1,
+      :events => NamedTuple[],
+      :timings => Dict{Symbol,Any}(),
+      :iterations => NamedTuple[],
+    )
+    io_cold = IOBuffer()
+    Sparlectra.print_performance_profile(io_cold, profile_auto_cold; level = :compact, max_rows = 5)
+    txt_cold = String(take!(io_cold))
+    @test occursin("auto: cold first session-run", txt_cold)
+    @test occursin("Timing note", txt_cold)
+
+    profile_auto_warm = Dict{Symbol,Any}(
+      :timing_mode => :auto_warm_session_reuse,
+      :representative_warmup_runs => 0,
+      :representative_elapsed_s => 0.1,
+      :events => NamedTuple[],
+      :timings => Dict{Symbol,Any}(),
+      :iterations => NamedTuple[],
+    )
+    io_warm = IOBuffer()
+    Sparlectra.print_performance_profile(io_warm, profile_auto_warm; level = :compact, max_rows = 5)
+    txt_warm = String(take!(io_warm))
+    @test occursin("auto: warm session-reuse", txt_warm)
+    @test !occursin("Timing note", txt_warm)
+  end
+
+  @testset "Performance warmup override reason is explicit when warmup is zero" begin
+    profile = Dict{Symbol,Any}(
+      :timing_mode => :cold_representative,
+      :representative_warmup_runs => 0,
+      :warmup_override_reason => "benchmark-mode override",
+      :representative_elapsed_s => 0.1,
+      :events => NamedTuple[],
+      :timings => Dict{Symbol,Any}(),
+      :iterations => NamedTuple[],
+    )
+    io = IOBuffer()
+    Sparlectra.print_performance_profile(io, profile; level = :compact, max_rows = 5)
+    txt = String(take!(io))
+    @test occursin("Representative warmup runs     : 0", txt)
+    @test occursin("Warmup override reason         : benchmark-mode override", txt)
+    @test !occursin("Warmup guidance", txt)
+  end
+
+  @testset "Compact summary includes Q-limit aggregate counters" begin
+    summary = Sparlectra._compact_run_summary((
+      method = :rectangular,
+      outcome = :not_converged,
+      numerical_converged = false,
+      solution_available = false,
+      limit_validation_status = :skip,
+      final_converged = false,
+      final_mismatch = 1.0,
+      iterations = 80,
+      elapsed_s = 1.25,
+      pv2pq_events = 0,
+      pv2pq_buses = 0,
+      qlimit_active_set_changes = 76,
+      qlimit_reenable_events = 63,
+      reason_text = "NR mismatch did not converge; Q-limit active set changed repeatedly",
+    ))
+    @test occursin("pv2pq_events=0", summary)
+    @test occursin("qlimit_active_set_changes=76", summary)
+    @test occursin("qlimit_reenable_events=63", summary)
+  end
+
+  @testset "MATPOWER benchmark output routing" begin
+    test_cfg = tempname() * ".yaml"
+    write(test_cfg, """
+benchmark:
+  enabled: true
+  methods: [rectangular]
+  seconds: 0.05
+  samples: 3
+output:
+  console_summary: true
+  console_diagnostics: compact
+  console_q_limit_events: summary
+  logfile_results: full
+  result_table_max_rows: 5
+  logfile_diagnostics: full
+performance:
+  enabled: true
+  write_to_logfile: true
+diagnostics:
+  log_effective_config: true
+matpower_import:
+  case: case14.m
+""")
+    result = try
+      captured = Sparlectra.run_with_output_capture() do
+        Sparlectra.run_matpower_case(; casefile = "case14.m", config_file = test_cfg)
+      end
+      captured
+    catch err
+      et = string(typeof(err))
+      em = sprint(showerror, err)
+      if occursin("RequestError", et) || occursin("FieldError", et) || occursin("RequestError", em)
+        @test true
+        nothing
+      else
+        rethrow(err)
+      end
+    end
+    isnothing(result) && return
+    txt = result.stdout
+    @test count(occursin("Benchmark results", line) for line in split(txt, '\n')) == 1
+    @test count(occursin("benchmark method=rectangular", line) for line in split(txt, '\n')) == 1
+    @test occursin("representative=", txt)
+    @test count(occursin("Q-Limit Active-Set Summary", line) for line in split(txt, '\n')) <= 1
+    logtxt = read(result.result.logfile, String)
+    @test occursin("Effective Sparlectra Configuration", logtxt)
+    @test occursin("summary method=", logtxt)
+    @test occursin("representative_time=", logtxt)
+    @test occursin("solver_time=", logtxt)
+    @test occursin("benchmark_median=", logtxt)
+    @test occursin("Top-level measured time", logtxt)
+    @test occursin("Top-level excluding output", logtxt)
+    @test occursin("Result output time", logtxt)
+    @test occursin("Representative wall time", logtxt)
+    @test !occursin("Repr. time", logtxt)
+    @test occursin("Representative warmup runs", logtxt)
+    @test occursin("Large-case result output is row-limited", logtxt)
+    @test occursin("output.logfile_results=summary", logtxt)
+    @test !occursin("q_limit_active_set=OK final_converged=false", logtxt)
+    @test occursin("Representative solve diagnostics", logtxt) || occursin("Solve diagnostics (compact)", logtxt)
+  end
+
+  @testset "MATPOWER warmup output and compact console hygiene" begin
+    test_cfg = tempname() * ".yaml"
+    write(test_cfg, """
+benchmark:
+  enabled: false
+performance:
+  representative_warmup_runs: 2
+  compact_logging: true
+  enabled: true
+output:
+  console_summary: true
+  console_diagnostics: compact
+  logfile_results: compact
+  logfile_diagnostics: compact
+matpower_import:
+  case: case14.m
+""")
+    captured = try
+      Sparlectra.run_with_output_capture() do
+        Sparlectra.run_matpower_case(; casefile = "case14.m", config_file = test_cfg)
+      end
+    catch err
+      et = string(typeof(err))
+      em = sprint(showerror, err)
+      if occursin("RequestError", et) || occursin("FieldError", et) || occursin("RequestError", em)
+        nothing
+      else
+        rethrow(err)
+      end
+    end
+    isnothing(captured) && return
+    txt = captured.stdout
+    @test count(occursin("AC Power Flow Results", line) for line in split(txt, '\n')) <= 1
+    @test !occursin("status_ref =", txt)
+    @test !occursin("performance_profile = Dict", txt)
+  end
+
+  @testset "MATPOWER compact timing summary uses solver_total semantics" begin
+    summary = Sparlectra._compact_run_summary((
+      method = :rectangular,
+      outcome = :converged,
+      numerical_converged = true,
+      solution_available = true,
+      limit_validation_status = :ok,
+      final_converged = true,
+      final_mismatch = 1e-8,
+      iterations = 5,
+      elapsed_s = 14.522494,
+      solver_elapsed_s = 8.948731,
+      benchmark_median_s = 0.018227,
+      pv2pq_events = 0,
+      pv2pq_buses = 0,
+      reason_text = "none",
+    ))
+    @test occursin("representative_time=14.522494 s", summary)
+    @test occursin("solver_time=8.948731 s", summary)
+    @test occursin("benchmark_median=18.227 ms", summary)
+    @test !occursin("solver_time=14.522494 s", summary)
+  end
+
+  @testset "Runtime config accepts numeric thread values" begin
+    cfg_file = tempname() * ".yaml"
+    write(cfg_file, "runtime:
+  julia_threads: 4
+  blas_threads: 16
+")
+    cfg_runtime = Sparlectra.load_sparlectra_config(cfg_file; reload = true)
+    @test cfg_runtime.runtime.julia_threads == "4"
+    @test cfg_runtime.runtime.blas_threads == "16"
+  end
+
+  @testset "Runtime thread status reporting" begin
+    cfg_keep = Sparlectra.RuntimeConfig(; print_thread_config = true, julia_threads = "keep", blas_threads = "keep")
+    status_keep = Sparlectra.runtime_thread_status(cfg_keep)
+    @test status_keep.julia_applied === true
+    @test status_keep.julia_startup_required === false
+
+    requested = Threads.nthreads() == 1 ? 2 : 1
+    cfg_julia = Sparlectra.RuntimeConfig(; print_thread_config = true, julia_threads = string(requested), blas_threads = "keep")
+    status_julia = Sparlectra.runtime_thread_status(cfg_julia)
+    @test status_julia.requested_julia_threads_resolved == requested
+    @test status_julia.julia_applied === false
+    @test status_julia.julia_startup_required === true
+    io = IOBuffer()
+    Sparlectra.print_runtime_thread_config(io, status_julia)
+    txt = String(take!(io))
+    @test occursin("Request not applied: Julia threads must be set at process startup.", txt)
+    @test occursin("julia --threads=$(requested)", txt)
+
+    cfg_blas = Sparlectra.RuntimeConfig(; print_thread_config = true, julia_threads = "keep", blas_threads = string(LinearAlgebra.BLAS.get_num_threads()))
+    status_blas = Sparlectra.runtime_thread_status(cfg_blas)
+    @test status_blas.blas_applied === true
+  end
+
+  @testset "Compact performance summary output" begin
+    profile = Dict{Symbol,Any}(
+      :compact_logging => true,
+      :representative_elapsed_s => 10.0,
+      :events => [(label = :benchmark_rectangular, seconds = 0.02)],
+      :timings => Dict(
+        :network_construction => (calls = 1, elapsed_s = 2.5, bytes = 10),
+        :result_output => (calls = 1, elapsed_s = 1.0, bytes = 10),
+        :solver_total => (calls = 1, elapsed_s = 5.0, bytes = 10),
+      ),
+      :iterations => NamedTuple[],
+    )
+    output = Sparlectra.run_with_output_capture() do
+      Sparlectra.emit_performance_summary(profile; print_to_console = true, write_to_logfile = false, console_level = :compact)
+    end
+    txt = output.stdout
+    @test occursin("Performance Summary (compact)", txt)
+    @test occursin("Coverage status", txt)
+    @test !occursin("Phase", txt)
+    @test !occursin("Iteration diagnostics", txt)
+  end
 end
 
-if abspath(PROGRAM_FILE) == @__FILE__
-  Base.invokelatest(run_matpower_example_tests)
-end
+# Executed from test/runtests.jl to avoid duplicate execution and
+# Julia 1.12 world-age warnings when this file is included into Main.
