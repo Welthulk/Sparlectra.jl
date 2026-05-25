@@ -21,7 +21,7 @@
 # 4) Run WLS state estimation
 # 5) Compare estimated voltages with PF reference
 
-# file: src/examples/state_estimation_wls.jl
+# file: examples/state_estimation_wls.jl
 
 using Sparlectra
 using Printf
@@ -58,7 +58,7 @@ function _run_state_estimation_example(io::IO)
 
   # Build net from the case file and solve the AC power flow.
   net = createNetFromMatPowerFile(filename = case_path)
-  it_pf, erg_pf = runpf!(net, 40, 1e-10, 0; method = :rectangular, opt_sparse = true)
+  it_pf, erg_pf = runpf!(net, 40, 1e-10, 0; method = :rectangular)
   erg_pf == 0 || error("Power flow did not converge")
 
   # Keep PF voltages as "ground truth" for the synthetic measurement study.
@@ -198,7 +198,7 @@ function _run_state_estimation_example(io::IO)
   return se
 end
 
-function run_state_estimation_example()
+function main()
   mkpath(OUTDIR)
   timestamp = Dates.format(Dates.now(), "yyyymmdd_HHMMSS")
   logfile = joinpath(OUTDIR, "run_$(CASEFILE)_$(timestamp).log")
@@ -216,4 +216,6 @@ function run_state_estimation_example()
   return logfile
 end
 
-run_state_estimation_example()
+if get(ENV, "SPARLECTRA_USING_STATE_ESTIMATION_EXAMPLE", "0") != "1"
+  Base.invokelatest(getfield(@__MODULE__, :main))
+end

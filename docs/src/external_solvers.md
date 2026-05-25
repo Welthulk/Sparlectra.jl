@@ -43,7 +43,7 @@ PFModel(
 A model is constructed using:
 
 ```julia
-model = buildPfModel(net; opt_sparse=true, flatstart=net.flatstart)
+model = buildPfModel(net; flatstart=net.flatstart)
 ```
 
 For difficult starts, the canonical model builder can apply the same start
@@ -51,7 +51,6 @@ projection used by the internal rectangular solver:
 
 ```julia
 model = buildPfModel(net;
-    opt_sparse = true,
     flatstart = true,
     start_projection = true,
     start_projection_try_dc_start = true,
@@ -109,7 +108,6 @@ runpf_external!(
   net,
   solver;
   tol=1e-8,
-  opt_sparse=true,
   flatstart=net.flatstart,
   include_limits=false,
   show_model=false,
@@ -147,7 +145,7 @@ to avoid global display side effects.
 See:
 
 ```
-src/examples/export_solution.jl
+examples/export_solution.jl
 ```
 
 This example:
@@ -160,7 +158,6 @@ This example:
 It is intended as a **reference and regression test** for external solvers.
 
 ---
-
 
 
 

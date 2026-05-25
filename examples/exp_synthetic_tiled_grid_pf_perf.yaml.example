@@ -8,7 +8,6 @@ solver:
   verbose: 0
   flatstart: false
   method: :rectangular
-  opt_sparse: true
 
 performance:
   blas_threads: 4       # 0 = keep current BLAS thread setting

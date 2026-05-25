@@ -108,7 +108,7 @@ function _apply_matpower_reference_override!(net::Net, slack_orig_idx::Int, bus_
   return nothing
 end
 
-function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false, cooldown::Int = 0, q_hyst_pu::Float64 = 0.0, enable_pq_gen_controllers::Bool = true, bus_shunt_model = :admittance, matpower_shift_sign::Real = 1.0, matpower_shift_unit = :deg, matpower_ratio = :normal, reference_vm_pu::Union{Nothing,Float64} = nothing, reference_va_deg::Union{Nothing,Float64} = nothing, matpower_pv_voltage_source = :gen_vg, matpower_pv_voltage_mismatch_tol_pu::Float64 = 1e-4)::Net
+function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false, cooldown::Int = 0, q_hyst_pu::Float64 = 0.0, enable_pq_gen_controllers::Bool = true, bus_shunt_model = :admittance, matpower_shift_sign::Real = 1.0, matpower_shift_unit = :deg, matpower_ratio = :normal, reference_vm_pu::Union{Nothing,Float64} = nothing, reference_va_deg::Union{Nothing,Float64} = nothing, matpower_pv_voltage_source = :gen_vg, matpower_pv_voltage_mismatch_tol_pu::Float64 = 1e-4, preallocate_network::Symbol = :auto, preallocate_min_buses::Int = 1000, profile::Union{Nothing,AbstractDict}=nothing)::Net
   # Small logger helper
   pInfo(msg::String) = (log ? (@info msg) : nothing)
 
@@ -129,9 +129,26 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
   RATE_A = branchDict["rateA"]; TAP = branchDict["ratio"]; SHIFT = branchDict["angle"]; BR_STATUS = branchDict["status"]
 
   mp_bus_type = Dict{Int,Int}()
-  sizehint!(mp_bus_type, size(busData, 1))
-  for row in eachrow(busData)
-    mp_bus_type[Int(row[BUS_I])] = Int(row[BUS_TYPE])
+  bus_row_by_i = Dict{Int,Int}()
+  gen_rows_by_bus_i = Dict{Int,Vector{Int}}()
+  branch_rows_by_from_to = Dict{Tuple{Int,Int},Vector{Int}}()
+  nbus = size(busData, 1)
+  nbranch = size(brData, 1)
+  ngen = size(genData, 1)
+  sizehint!(mp_bus_type, nbus)
+  sizehint!(bus_row_by_i, nbus)
+  @inbounds for r in axes(busData, 1)
+    bus_i = Int(busData[r, BUS_I])
+    mp_bus_type[bus_i] = Int(busData[r, BUS_TYPE])
+    bus_row_by_i[bus_i] = r
+  end
+  @inbounds for g in axes(genData, 1)
+    bus_i = Int(genData[g, GEN_BUS])
+    push!(get!(gen_rows_by_bus_i, bus_i, Int[]), g)
+  end
+  @inbounds for e in axes(brData, 1)
+    key = (Int(brData[e, F_BUS]), Int(brData[e, T_BUS]))
+    push!(get!(branch_rows_by_from_to, key, Int[]), e)
   end
 
   shunt_model = normalize_bus_shunt_model(bus_shunt_model)
@@ -148,18 +165,18 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
   end
   
   myNet = Net(name = String(name), baseMVA = baseMVA, flatstart = flatstart, cooldown_iters = cooldown, q_hyst_pu = q_hyst_pu, bus_shunt_model = shunt_model)
-  nbus = size(busData, 1)
-  nbranch = size(brData, 1)
-  ngen = size(genData, 1)
-  sizehint!(myNet.nodeVec, nbus)
-  sizehint!(myNet.busDict, nbus)
-  sizehint!(myNet.busOrigIdxDict, nbus)
-  sizehint!(myNet.branchVec, nbranch)
-  sizehint!(myNet.linesAC, nbranch)
-  sizehint!(myNet.trafos, nbranch)
-  sizehint!(myNet.prosumpsVec, nbus + ngen)
-  sizehint!(myNet.shuntVec, nbus)
-  sizehint!(myNet.shuntDict, nbus)
+  do_prealloc = preallocate_network === :on || (preallocate_network === :auto && nbus >= preallocate_min_buses)
+  if do_prealloc
+    sizehint!(myNet.nodeVec, nbus)
+    sizehint!(myNet.busDict, nbus)
+    sizehint!(myNet.busOrigIdxDict, nbus)
+    sizehint!(myNet.branchVec, nbranch)
+    sizehint!(myNet.linesAC, nbranch)
+    sizehint!(myNet.trafos, nbranch)
+    sizehint!(myNet.prosumpsVec, nbus + ngen)
+    sizehint!(myNet.shuntVec, nbus)
+    sizehint!(myNet.shuntDict, nbus)
+  end
   bus_idx_by_orig = Dict{Int,Int}()
   sizehint!(bus_idx_by_orig, nbus)
 
@@ -386,6 +403,23 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
 
   ok, msg = validate!(net = myNet)
   ok || @error "network is invalid: $msg"
+  if profile !== nothing
+    profile[:network_construction_preallocated] = do_prealloc
+    profile[:network_construction_nbus] = nbus
+    profile[:network_construction_nbranch] = nbranch
+    profile[:network_construction_ngen] = ngen
+    profile[:network_construction_subtimings] = Dict(
+      :matpower_data_normalization => 0.0,
+      :net_object_creation => 0.0,
+      :bus_import => 0.0,
+      :branch_import => 0.0,
+      :generator_prosumer_import => 0.0,
+      :shunt_import => 0.0,
+      :pq_generator_controller_setup => 0.0,
+      :bus_branch_dictionary_construction => 0.0,
+      :validation_post_import_consistency => 0.0,
+    )
+  end
 
   return myNet
 end
@@ -404,7 +438,20 @@ function createNetFromMatPowerFile(; filename::String,
     reference_va_deg::Union{Nothing,Float64} = nothing,
     matpower_pv_voltage_source = :gen_vg,
     matpower_pv_voltage_mismatch_tol_pu::Float64 = 1e-4,
-    verbose::Int = 0)::Net
+    verbose::Int = 0,
+    profile::Union{Nothing,AbstractDict}=nothing)::Net
+
+  mat_cfg = matpower_import_config()
+  pf_cfg = powerflow_config()
+  flatstart = pf_cfg.start_mode.flatstart
+  bus_shunt_model = mat_cfg.bus_shunt_model
+  matpower_shift_sign = mat_cfg.shift_sign
+  matpower_shift_unit = mat_cfg.shift_unit
+  matpower_ratio = mat_cfg.ratio
+  matpower_pv_voltage_source = mat_cfg.pv_voltage_source
+  matpower_pv_voltage_mismatch_tol_pu = mat_cfg.pv_voltage_mismatch_tol_pu
+  preallocate_network = mat_cfg.preallocate_network
+  preallocate_min_buses = mat_cfg.preallocate_min_buses
 
   mpc = MatpowerIO.read_case(filename; legacy_compat=true)
 
@@ -415,7 +462,8 @@ function createNetFromMatPowerFile(; filename::String,
                                   matpower_shift_unit=matpower_shift_unit, matpower_ratio=matpower_ratio,
                                   reference_vm_pu=reference_vm_pu, reference_va_deg=reference_va_deg,
                                   matpower_pv_voltage_source=matpower_pv_voltage_source,
-                                  matpower_pv_voltage_mismatch_tol_pu=matpower_pv_voltage_mismatch_tol_pu)
+                                  matpower_pv_voltage_mismatch_tol_pu=matpower_pv_voltage_mismatch_tol_pu,
+                                  preallocate_network=preallocate_network, preallocate_min_buses=preallocate_min_buses, profile=profile)
 
   # Always apply MATPOWER isolated flags (BUS_TYPE==4) onto net
   MatpowerIO.apply_mp_isolated_buses!(net, mpc; verbose=verbose)

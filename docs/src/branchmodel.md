@@ -114,7 +114,7 @@ For transformer-flow control with a phase shifter, do not hard-code the sign of 
 
 See executable example:
 
-`src/examples/example_transformer_phase_shift_control.jl`
+`examples/example_transformer_phase_shift_control.jl`
 
 ## Circuit diagram
 

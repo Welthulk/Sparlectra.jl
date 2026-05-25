@@ -16,30 +16,30 @@
 # Purpose: network calculation
 
 # Naming Conventions:
-# The project follows the Julia Naming Conventions for the most part, 
-# but it's important to note that the naming convention for functions might deviate. 
-# In this module, functions are written in CamelCase with a lowercase initial letter. 
+# The project follows the Julia Naming Conventions for the most part,
+# but it's important to note that the naming convention for functions might deviate.
+# In this module, functions are written in CamelCase with a lowercase initial letter.
 
 # file: src/Sparlectra.jl
 #! format: off
 
 module Sparlectra
-using LinearAlgebra, Dates, SparseArrays, Printf, Logging
+using LinearAlgebra, Dates, SparseArrays, Printf, Logging, BenchmarkTools
 
 const MPOWER_DIR = normpath(joinpath(pkgdir(@__MODULE__), "data", "mpower"))
 
 
 # resource data types for working with Sparlectra
 const Wurzel3 = 1.7320508075688772
-const SparlectraVersion = v"0.7.9"
+const SparlectraVersion = v"0.8.0"
 version() = SparlectraVersion
 abstract type AbstractBranch end
 
 const _MODULE_DOC = """
     Sparlectra $(SparlectraVersion)
 
-Sparlectra is a Julia package for the calculation of electrical networks. 
-It is designed to be used in the context of power system analysis and optimization. 
+Sparlectra is a Julia package for the calculation of electrical networks.
+It is designed to be used in the context of power system analysis and optimization.
 
 - GitHub Repository: https://github.com/welthulk/Sparlectra.jl
 - Website: https://welthulk.github.io/Sparlectra.jl
@@ -50,11 +50,11 @@ export
   version,
   # constants
   Wurzel3, ComponentTyp,
-  # classes  
+  # classes
   # Component
-  AbstractComponent, Component, ImpPGMComp, ImpPGMComp3WT, 
+  AbstractComponent, Component, ImpPGMComp, ImpPGMComp3WT,
   # Node
-  Node, 
+  Node,
   # Line
   ACLineSegment,
   # Trafo
@@ -71,23 +71,26 @@ export
   Shunt,
   # Net
   Net,
-  
-  # functions  
+
+  # functions
   # utilities.jl
   zero_row!, print_jacobian,
   # yamlparams.jl
   parse_yaml_scalar, load_yaml_dict, merge_yaml_dict!, as_bool, as_int_vector,
+  # configuration.jl
+  StartModeConfig, QLimitConfig, PowerFlowConfig, ObservabilityConfig, StateEstimationConfig, MatpowerImportConfig, PerformanceConfig, BenchmarkConfig, RuntimeConfig, DiagnosticsConfig, OutputConfig, SparlectraConfig, load_sparlectra_config, load_sparlectra_config!, set_sparlectra_config!, active_sparlectra_config, powerflow_config, matpower_import_config, state_estimation_config, diagnostics_config, output_config, performance_config, benchmark_config, runtime_config, print_effective_config, configuration_path_from_inputs,
+  run_matpower_case, run_synthetic_tiled_grid_pf_perf, run_voltage_dependent_control_demo,
   # synthetic_grids.jl
   synthetic_tiled_grid_bus_index, build_synthetic_tiled_grid_net, build_tiled_grid_net,
   # BusData
   BusData, getBusData, getBusTypeVec, countNodes, map_NR_voltage_to_net!,buildVoltageVector_from_busVec,
   # Compomnent
-  toComponentTyp, getCompName, getCompID, 
+  toComponentTyp, getCompName, getCompID,
   # Transformers
   getSideNumber2WT,  getWinding2WT,  calcTransformerRatio, recalc_trafo_model_data, create2WTRatioTransformerNoTaps, create3WTWindings!,
-  getTrafoImpPGMComp,  getWT3AuxBusID,  isPerUnit_RXGB, getWindingRatedS, getTrafoRXBG, getTrafoRXBG_pu, 
-  # Nodes  
-  setRatedS!,  setVmVa!,  addShuntPower!,  addLoadPower!,  addGenPower!,  getNodeVn,  isSlack,  isPVNode,  isPQNode, isIsolated, toNodeType, setNodeType!,getNodeType, 
+  getTrafoImpPGMComp,  getWT3AuxBusID,  isPerUnit_RXGB, getWindingRatedS, getTrafoRXBG, getTrafoRXBG_pu,
+  # Nodes
+  setRatedS!,  setVmVa!,  addShuntPower!,  addLoadPower!,  addGenPower!,  getNodeVn,  isSlack,  isPVNode,  isPQNode, isIsolated, toNodeType, setNodeType!,getNodeType,
   busComparison, toString,
   # Branch
   getBranchIdx, calcBranchYser, calcBranchYshunt, calcBranchRatio, calcAdmittance,
@@ -101,7 +104,7 @@ export
   isSlack, isGenerator, isAPUNode, isRegulating, setQGenReplacement!, getQGenReplacement, toProSumptionType, updatePQ!, getPosumerBusIndex, setPQResult!, evaluate_characteristic, evaluate_controller, make_characteristic, has_qu_controller, has_pu_controller,
   # Network
   addBus!, addShunt!, addACLine!, addPIModelACLine!, add2WTrafo!, addPIModelTrafo!, addProsumer!, lockNet!, validate!, hasBusInNet, addBusGenPower!, addBusLoadPower!, addBusShuntPower!, setNodeVoltage!, setNodeAngle!,
-  getNetOrigBusIdx, geNetBusIdx, setNetBranchStatus!, getNetBranch, getNetBranchNumberVec, setTotalLosses!, getTotalLosses, getBusType, getEffectiveBusType, getBusProsumers, refreshBusTypesFromProsumers!, get_bus_vn_kV, get_vn_kV, updateBranchParameters!, hasShunt!, 
+  getNetOrigBusIdx, geNetBusIdx, setNetBranchStatus!, getNetBranch, getNetBranchNumberVec, setTotalLosses!, getTotalLosses, getBusType, getEffectiveBusType, getBusProsumers, refreshBusTypesFromProsumers!, get_bus_vn_kV, get_vn_kV, updateBranchParameters!, hasShunt!,
   getShunt!, markIsolatedBuses!,setTotalBusPower!, setPVBusVset!, setQLimits!, getNodeVm,distributeBusResults!, getTotalBusPower, getTotalLosses, buildVoltageVector,initialVrect, buildComplexSVec, buildControlledSVec, has_voltage_dependent_control, addShuntMatpower!, normalize_bus_shunt_model, bus_shunt_totals_pu, log_bus_shunt_model,
   add2WTPIModelTrafo!, add3WTPiModelTrafo!,showNet, buildQLimits!,updateShuntPowers!, addLink!, setNetLinkStatus!, getNetLinks, calcLinkFlowsKCL!,
   addPowerTransformerControl!, addTapController!, clearTapControllers!, get_bus_vm_pu, get_branch_p_from_to_mw, get_branch_q_from_to_mvar, run_tap_controllers_outer!, buildTapControllerReportRows, printTapControllerSummary,
@@ -110,7 +113,7 @@ export
   # import.jl
   createNetFromMatPowerFile, _createDict, apply_matpower_bus_voltage!,apply_mp_bus_vmva_init!,
   # exportMatPower.jl
-  writeMatpowerCasefile, 
+  writeMatpowerCasefile,
   # equicircuit.jl
   calcComplexRatio, calcNeutralU,  createYBUS, adjacentBranches, toPU_RXBG, fromPU_RXBG, branchFlow_pu,
   # nbi.jl
@@ -118,18 +121,18 @@ export
   # jacobian.jl
   runpf!, setJacobianDebug, setJacobianAngleLimit,
   # jacobian_full.jl
-  runpf_full!, 
+  runpf_full!,
   # limits.jl
   printQLimitLog, printPVQLimitsTable, printFinalLimitValidation, validate_q_limit_signs!, logQLimitHit!, lastQLimitIter, getQLimits_pu, logQLimitHit!,lastQLimitIter, resetQLimitLog!, pv_hit_q_limit,has_q_limits,active_set_q_limits!,
   # losses.jl
-  calcNetLosses!, 
+  calcNetLosses!,
   # results.jl
   ACPFlowReport, buildACPFlowReport, printACPFlowResults, printProsumerResults,
-  # run_acpflow.jl  
-  run_acpflow, run_net_acpflow,
+  # run_acpflow.jl
+  run_acpflow, run_net_acpflow, run_matpower_case,
   # solver_core.jl
-  calc_injections, calc_currents, solve_linear, build_pos_map, slack_elimination_indices,extract_bus_types_and_vset, 
-  build_qload_pu, build_voltage_vector, compute_sbus_and_totals, 
+  calc_injections, calc_currents, solve_linear, solve_sparse_system, build_pos_map, slack_elimination_indices,extract_bus_types_and_vset,
+  build_qload_pu, build_voltage_vector, compute_sbus_and_totals,
   # measurements.jl / state_estimation.jl
   MeasurementType, Measurement, measurementStdDevs, generateMeasurementsFromPF, setMeasurementsFromPF!,
   addMeasurement!, addVmMeasurement!, addPinjMeasurement!, addQinjMeasurement!,
@@ -141,7 +144,7 @@ export
   evaluate_observability_matrix, evaluate_local_observability_matrix,
   evaluate_global_observability, evaluate_local_observability,
   # jacobian_complex.jl
-  runpf_rectangular!, mismatch_rectangular, project_rectangular_start, complex_newton_step_rectangular_fd,
+  runpf_rectangular!, mismatch_rectangular, project_rectangular_start,
   # External solver interface
   PFModel, PFSolution, AbstractExternalSolver,
   buildPfModel, mismatchInf, applyPfSolution!, solvePf, runpf_external!,
@@ -149,6 +152,7 @@ export
 
 include("utilities.jl")
 include("yamlparams.jl")
+include("configuration.jl")
 include("component.jl")
 include("lines.jl")
 include("transformer.jl")
@@ -161,7 +165,7 @@ include("network.jl")
 include("synthetic_grids.jl")
 include("tap_control.jl")
 include("busdata.jl")
-include("MatpowerIO.jl")   
+include("MatpowerIO.jl")
 include("createnet_powermat.jl")
 include("equicircuit.jl")
 include("jacobian.jl")
@@ -172,8 +176,9 @@ include("nbi.jl")
 include("exportMatPower.jl")
 include("results.jl")
 include("run_acpflow.jl")
+include("matpower_runner.jl")
 include("remove_functions.jl")
-include("solver_core.jl") 
+include("solver_core.jl")
 include("jacobian_complex.jl")
 include("jacobian_fd.jl")
 include("solver_interface.jl")

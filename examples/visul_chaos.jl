@@ -20,8 +20,8 @@ using Logging
 using Printf
 global_logger(ConsoleLogger(stderr, Logging.Info))
 
-function converges_for(r_factor, l_factor; v0 = 1.0, a0 = 0.0, max_iter = 50, tol = 1e-6, method = :rectangular, opt_sparse = true, verbose = 0)
-  res = test_convergence(voltage_B2        = v0, angle_B2          = a0, angle_B3          = 0.0, resistance_factor = r_factor, load_factor       = l_factor, impedance_factor  = r_factor, max_iter          = max_iter, tolerance         = tol, method            = method, opt_sparse        = opt_sparse, verbose           = verbose)
+function converges_for(r_factor, l_factor; v0 = 1.0, a0 = 0.0, max_iter = 50, tol = 1e-6, method = :rectangular, verbose = 0)
+  res = test_convergence(voltage_B2        = v0, angle_B2          = a0, angle_B3          = 0.0, resistance_factor = r_factor, load_factor       = l_factor, impedance_factor  = r_factor, max_iter          = max_iter, tolerance         = tol, method            = method, verbose           = verbose)
   return res.converged, res.iterations
 end
 
@@ -168,7 +168,7 @@ function safe_set_initial_values!(net; voltage_B2 = 1.0, angle_B2 = 0.0, angle_B
   return success
 end
 
-function test_convergence(; voltage_B2 = 1.0, angle_B2 = 0.0, angle_B3 = 0.0, resistance_factor = 1.0, load_factor = 1.0, impedance_factor = 1.0, max_iter::Int = 50, tolerance::Float64 = 1e-6, method::Symbol = :rectangular, opt_sparse::Bool = true, verbose::Int = 0)
+function test_convergence(; voltage_B2 = 1.0, angle_B2 = 0.0, angle_B3 = 0.0, resistance_factor = 1.0, load_factor = 1.0, impedance_factor = 1.0, max_iter::Int = 50, tolerance::Float64 = 1e-6, method::Symbol = :rectangular, verbose::Int = 0)
   try
     net = create_variable_network(resistance_factor = resistance_factor, load_factor       = load_factor, impedance_factor  = impedance_factor)
 
@@ -177,7 +177,7 @@ function test_convergence(; voltage_B2 = 1.0, angle_B2 = 0.0, angle_B3 = 0.0, re
 
     safe_set_initial_values!(net, voltage_B2 = float(voltage_B2), angle_B2   = float(angle_B2), angle_B3   = float(angle_B3))
 
-    iterations, result = runpf!(net, max_iter, tolerance, verbose; method = method, opt_sparse = opt_sparse)
+    iterations, result = runpf!(net, max_iter, tolerance, verbose; method = method)
 
     return (converged = (result == 0), iterations = iterations)
   catch
@@ -293,7 +293,7 @@ function parameter_sensitivity_analysis()
   println(repeat("-", 72))
 
   for r in resistance_range
-    res = find_load_critical_adaptive(r; l_lo = 1.0, l_hi = 6.0, grow = 2.0, l_max = 50.0, eps = 1e-3, itmax = 30, method = :rectangular, opt_sparse = true, verbose = 0, max_iter = 50, tol = 1e-6)
+    res = find_load_critical_adaptive(r; l_lo = 1.0, l_hi = 6.0, grow = 2.0, l_max = 50.0, eps = 1e-3, itmax = 30, method = :rectangular, verbose = 0, max_iter = 50, tol = 1e-6)
     @printf("%7.1fx | %14.3f | [%-7.3f, %-7.3f] | %s\n", r, res.lcrit, res.bracket[1], res.bracket[2], res.note)
   end
 
@@ -504,7 +504,7 @@ function comprehensive_chaos_visualization()
   return (basin_data = (basin_conv, basin_iter, v_range, a_range), param_data = (param_conv, param_iter, r_range, l_range), critical_data = (crit_v, crit_a, crit_p), hotspots = chaos_hotspots, combined_chaos_rate = combined_rate)
 end
 
-function parameter_sensitivity_plot_ascii(; method = :rectangular, opt_sparse = true, verbose = 0, max_iter = 50, tol = 1e-6)
+function parameter_sensitivity_plot_ascii(; method = :rectangular, verbose = 0, max_iter = 50, tol = 1e-6)
   resistance_range = [1.0, 2.0, 3.0, 5.0, 8.0, 10.0]
 
   # collect results
@@ -522,7 +522,6 @@ function parameter_sensitivity_plot_ascii(; method = :rectangular, opt_sparse = 
       eps = 1e-3,
       itmax = 25,
       method = method,
-      opt_sparse = opt_sparse,
       verbose = verbose,
       max_iter = max_iter,
       tol = tol,

@@ -82,7 +82,7 @@ voltage magnitudes are reported in p.u.
 The example benchmark uses Sparlectra's small YAML subset parser:
 
 ```julia
-cfg = load_yaml_dict("src/examples/exp_synthetic_tiled_grid_pf_perf.yaml.example")
+cfg = load_yaml_dict("examples/exp_synthetic_tiled_grid_pf_perf.yaml.example")
 ```
 
 This parser is intentionally not a full YAML implementation. It supports only
@@ -94,17 +94,17 @@ one-line scalar lists such as `[100, 300, 500]`.
 ## Running the example
 
 ```bash
-julia --project=. src/examples/exp_synthetic_tiled_grid_pf_perf.jl
-julia --project=. src/examples/exp_synthetic_tiled_grid_pf_perf.jl 100 300 1000
-julia --project=. src/examples/exp_synthetic_tiled_grid_pf_perf.jl src/examples/exp_synthetic_tiled_grid_pf_perf.yaml
+julia --project=. examples/exp_synthetic_tiled_grid_pf_perf.jl
+julia --project=. examples/exp_synthetic_tiled_grid_pf_perf.jl 100 300 1000
+julia --project=. examples/exp_synthetic_tiled_grid_pf_perf.jl examples/exp_synthetic_tiled_grid_pf_perf.yaml
 # if the .yaml file is missing, the runner tries .yaml.example automatically
-julia --project=. src/examples/exp_synthetic_tiled_grid_pf_perf.jl src/examples/exp_synthetic_tiled_grid_pf_perf.yaml --max-buses=5000
+julia --project=. examples/exp_synthetic_tiled_grid_pf_perf.jl examples/exp_synthetic_tiled_grid_pf_perf.yaml --max-buses=5000
 ```
 
 When no configuration path is supplied, or when neither the requested YAML file nor its `.yaml.example` fallback is available, the example prints a message before using its built-in defaults. The example prints a compact summary with grid size, branch count, convergence,
 iterations, solve time, mismatch diagnostics, system-build timing, allocation
 counts, and total case runtime. It also writes a timestamped log file under
-`src/examples/_out` and prints a small ASCII plot of `nbus` versus solve time.
+`examples/_out` and prints a small ASCII plot of `nbus` versus solve time.
 
 ## Limitations
 

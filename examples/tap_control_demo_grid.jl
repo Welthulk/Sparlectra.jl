@@ -38,59 +38,14 @@ const DEFAULT_CFG = Dict{String,Any}(
   "st1_voltage_error_metric" => "vm",
 )
 
-# -----------------------------------------------------------------------------
-# YAML config helpers (simple subset)
-# -----------------------------------------------------------------------------
-function _parse_yaml_scalar(raw::AbstractString)
-  s = strip(raw)
-  isempty(s) && return nothing
-
-  if (startswith(s, "\"") && endswith(s, "\"")) || (startswith(s, "'") && endswith(s, "'"))
-    return s[2:end-1]
-  end
-
-  ls = lowercase(s)
-  ls == "true" && return true
-  ls == "false" && return false
-  ls == "null" && return nothing
-
-  iv = tryparse(Int, s)
-  !isnothing(iv) && return iv
-  fv = tryparse(Float64, s)
-  !isnothing(fv) && return fv
-  return s
+function _yaml_path_from_inputs()
+  return Sparlectra.configuration_path_from_inputs(; env_var = "SPARLECTRA_TAP_DEMO_YAML", fallback_paths = [joinpath(@__DIR__, "tap_control_demo_grid.yaml"), joinpath(@__DIR__, "tap_control_demo_grid.yaml.example")])
 end
 
-function load_yaml_config(path::AbstractString)
+function _load_demo_yaml_config(path::AbstractString)
   isempty(path) && return Dict{String,Any}()
   isfile(path) || error("YAML config file not found: $path")
-
-  cfg = Dict{String,Any}()
-  for line in eachline(path)
-    stripped = strip(line)
-    isempty(stripped) && continue
-    startswith(stripped, "#") && continue
-    occursin(":", stripped) || continue
-
-    key, value_raw = split(stripped, ":"; limit = 2)
-    key = strip(key)
-    value_raw = strip(split(value_raw, "#"; limit = 2)[1])
-    cfg[key] = _parse_yaml_scalar(value_raw)
-  end
-  return cfg
-end
-
-function _yaml_path_from_inputs()
-  !isempty(ARGS) && return ARGS[1]
-  env_path = get(ENV, "SPARLECTRA_TAP_DEMO_YAML", "")
-  !isempty(env_path) && return env_path
-
-  local_default = joinpath(@__DIR__, "tap_control_demo_grid.yaml")
-  isfile(local_default) && return local_default
-
-  local_example = joinpath(@__DIR__, "tap_control_demo_grid.yaml.example")
-  isfile(local_example) && return local_example
-  return ""
+  return Sparlectra.load_yaml_dict(path)
 end
 
 function _cfg_value(cfg::Dict{String,Any}, key::String)
@@ -196,11 +151,7 @@ function build_tap_control_demo_grid(cfg::Dict{String,Any})
 end
 
 function _controller_branches(net::Net)
-  return (
-    pst1 = getNetBranch(net = net, fromBus = "B1", toBus = "B2"),
-    st1 = getNetBranch(net = net, fromBus = "B4", toBus = "B5"),
-    t2 = getNetBranch(net = net, fromBus = "B6", toBus = "B7"),
-  )
+  return (pst1 = getNetBranch(net = net, fromBus = "B1", toBus = "B2"), st1 = getNetBranch(net = net, fromBus = "B4", toBus = "B5"), t2 = getNetBranch(net = net, fromBus = "B6", toBus = "B7"))
 end
 
 """
@@ -218,17 +169,7 @@ function configure_tap_controllers!(net::Net, cfg::Dict{String,Any})
   c = _controller_branches(net)
 
   function _add_voltage_tap_controller_compat!(; trafo::String, target_bus::String, target_vm_pu::Float64, deadband_vm_pu::Float64, voltage_error_metric::Symbol, max_outer_iters::Int)
-    kwargs_common = (
-      trafo = trafo,
-      mode = :voltage,
-      target_bus = target_bus,
-      target_vm_pu = target_vm_pu,
-      control_ratio = true,
-      control_phase = false,
-      is_discrete = true,
-      deadband_vm_pu = deadband_vm_pu,
-      max_outer_iters = max_outer_iters,
-    )
+    kwargs_common = (trafo = trafo, mode = :voltage, target_bus = target_bus, target_vm_pu = target_vm_pu, control_ratio = true, control_phase = false, is_discrete = true, deadband_vm_pu = deadband_vm_pu, max_outer_iters = max_outer_iters)
     try
       addTapController!(net; kwargs_common..., voltage_error_metric = voltage_error_metric)
     catch err
@@ -249,7 +190,8 @@ function configure_tap_controllers!(net::Net, cfg::Dict{String,Any})
     max_outer_iters = Int(_cfg_value(cfg, "t2_max_outer_iters")),
   )
 
-  addTapController!(net;
+  addTapController!(
+    net;
     trafo = string(c.pst1.branchIdx),
     mode = :branch_active_power,
     target_branch = _target_branch(cfg, "pst1_target"),
@@ -261,7 +203,8 @@ function configure_tap_controllers!(net::Net, cfg::Dict{String,Any})
     max_outer_iters = Int(_cfg_value(cfg, "pst1_max_outer_iters")),
   )
 
-  addTapController!(net;
+  addTapController!(
+    net;
     trafo = string(c.st1.branchIdx),
     mode = :voltage_and_branch_active_power,
     target_bus = String(_cfg_value(cfg, "st1_target_bus")),
@@ -376,7 +319,7 @@ function main()
     println(io_log, "Logfile: $logfile")
 
     yaml_path = _yaml_path_from_inputs()
-    cfg = merge(copy(DEFAULT_CFG), load_yaml_config(yaml_path))
+    cfg = merge(copy(DEFAULT_CFG), _load_demo_yaml_config(yaml_path))
     if !isempty(yaml_path)
       println(io_log, "Using YAML config: $yaml_path")
     else
@@ -423,4 +366,6 @@ function main()
   end
 end
 
-Base.invokelatest(main)
+if get(ENV, "SPARLECTRA_TAP_CONTROL_DEMO_GRID", "0") != "1"
+  Base.invokelatest(getfield(@__MODULE__, :main))
+end

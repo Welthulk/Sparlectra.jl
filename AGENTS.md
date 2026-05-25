@@ -8,7 +8,65 @@ This repository is a Julia project.
 - Do not use Python to inspect or modify Julia source unless explicitly requested.
 - Prefer minimal, targeted changes.
 - Keep changes local to the affected implementation path whenever possible.
-- Do not silently change public APIs or example-script behavior.
+- Do not silently change public APIs or example-script behavior in bugfix or minor-improvement tasks.
+- For explicit refactoring or breaking-change tasks, prefer the clean target design over backward-compatibility layers.
+- Do not add compatibility shims, deprecated wrappers, legacy keyword paths, or transitional duplicate APIs unless explicitly requested.
+- When an API, option, file path, or example behavior is intentionally changed, update all in-repository callers, examples, documentation, and tests instead of preserving the old path.
+
+## Agent execution discipline
+
+These rules are mandatory for automated coding agents.
+
+- Treat every task list as a checklist. If a prompt contains multiple tasks, complete all of them unless the user explicitly asks for only one.
+- Do not choose an easier subset of the task. If a requested item is unsafe, impossible, ambiguous, or outside the repository state, state that explicitly and leave it unclaimed.
+- Do not report "done", "ready", "complete", or "merge-ready" after partial work.
+- If work is partial, say `PARTIAL` clearly in the summary and list every unfinished item.
+- Do not commit partial cleanup as if it were successful completion. A commit may be made only when the requested acceptance criteria are satisfied, or when the user explicitly asked for a partial checkpoint.
+- Before committing, re-read the task acceptance criteria and verify each item.
+- Do not use broad refactoring to hide an incomplete targeted fix.
+- If a task asks for proof, provide the exact command output or a precise line-by-line classification of remaining matches.
+- If a command fails, do not continue as if the task passed. Fix the smallest cause, rerun the failed command, and report both the failure and the rerun result.
+- Never claim a test or verification command was run unless it was actually run in the current working tree.
+
+## Multi-task and checklist handling
+
+For prompts containing several tasks, issues, checklist items, or numbered sections:
+
+1. Convert the request into an internal checklist before editing.
+2. Work through every checklist item.
+3. After editing, revisit the checklist and mark each item as:
+   - done,
+   - not applicable, with reason,
+   - blocked, with reason,
+   - not done.
+4. The final response must include unresolved or blocked items. Do not omit them.
+5. If only some tasks were completed, the final response must not recommend merging or release.
+
+## Acceptance criteria and evidence
+
+Acceptance criteria are binding. Search/evidence commands in a task are also binding.
+
+- If the task provides `rg`, `find`, `julia`, or documentation-build commands, run them exactly unless the user explicitly says not to.
+- If a search command still returns matches, classify every remaining match.
+- Use this classification vocabulary when applicable:
+  - `expected obsolete-key rejection`
+  - `legacy/non-production path`
+  - `solver-interface compatibility boundary`
+  - `historical changelog`
+  - `test for removed behavior`
+  - `still to fix`
+- No unclassified leftover search match is acceptable.
+- A branch is not merge-ready if any required command failed or any remaining match is classified as `still to fix`.
+- For API removals, update implementation, tests, examples, and documentation in the same change. Do not leave stale callers to fail later.
+- For option removals, search the full repository for the option name and update or classify every match.
+
+## Commit discipline
+
+- Make a commit only after the requested verification passes, unless the user explicitly requests an intermediate commit.
+- Do not create PR metadata that claims completion when the work is partial.
+- Commit messages must describe the actual completed change, not the intended full task if only part was finished.
+- If verification is not run, say so in the final response and do not mark the task as verified.
+- If verification fails after changes, either fix the failure or leave the branch uncommitted unless explicitly asked otherwise.
 
 ## Standard commands
 - Verify toolchain:
@@ -22,16 +80,86 @@ This repository is a Julia project.
 - Run with deprecation warnings as errors when investigating Julia 1.12 world-age or Revise issues:
   `julia --project=. --depwarn=error path/to/script.jl`
 
+
+## Verification policy
+
+Use the smallest meaningful verification first, then broader verification when the task affects shared behavior.
+
+Default verification levels:
+
+- Syntax/package load check:
+  `julia --project=. -e 'using Sparlectra'`
+- Fast test profile:
+  `julia --project=. test/runtests.jl`
+- Extended test profile:
+  `SPARLECTRA_TEST_PROFILE=extended julia --project=. test/runtests.jl`
+- Documentation build:
+  `julia --project=docs docs/make.jl`
+
+Required rules:
+
+- If a task changes package loading, module exports, function signatures, or central config, run the package load check.
+- If a task changes solver behavior, configuration, tests, examples, MATPOWER runner behavior, or documentation, run the relevant profile or explicitly state why it was not run.
+- If a task is intended to make a branch merge-ready, run package load, fast profile, extended profile, and docs build unless the user explicitly excludes one.
+- If any verification command fails, the final response must say `NOT READY`.
+- Do not hide warnings that indicate future errors, especially Julia world-age warnings under Julia 1.12. Fix them if they are in touched code or test runner code.
+
+PowerShell extended-profile pattern:
+
+```powershell
+$env:SPARLECTRA_TEST_PROFILE="extended"
+julia --project=. test/runtests.jl
+Remove-Item Env:\SPARLECTRA_TEST_PROFILE
+```
+
 ## Repo conventions
 - Keep code comments and docstrings in English.
 - Prefer existing Sparlectra naming and style.
 - Before editing, inspect current tests that cover the affected code.
 - After code changes, run the smallest relevant test first, then broader tests if needed.
 - Avoid broad refactoring while fixing a targeted bug.
+- During planned refactoring, remove obsolete code paths instead of keeping them as compatibility ballast.
+
+## Refactoring and breaking changes
+
+For tasks that explicitly request refactoring, cleanup, simplification, or breaking changes, backward compatibility is **not** required by default.
+
+Use these rules:
+- Prefer one clean implementation path over parallel old/new code paths.
+- Remove obsolete wrappers, deprecated keyword forwarding, legacy YAML files, compatibility aliases, and unused fallback branches.
+- Update internal callers immediately instead of preserving old signatures.
+- Update examples and documentation to the new behavior.
+- Remove tests that only protect removed compatibility behavior.
+- Do not keep deprecation warnings or migration layers unless the task explicitly asks for a transition period.
+- If public behavior changes intentionally, state this clearly in the changelog or task summary.
+- If a breaking change affects documented usage, update the documentation in the same change.
+
+
+## Test documentation maintenance
+
+When adding, removing, renaming, moving, or materially changing tests, update the test-suite documentation in `docs/src/tests.md` in the same change.
+
+The documentation must stay aligned with:
+
+- available test profiles,
+- test runner commands,
+- files loaded by each profile,
+- logical test groups,
+- what each group verifies,
+- offline/extended/all expectations.
+
+Do not add new test files or new profile groups without documenting them.
 
 ## Test hygiene / avoiding test explosion
 
-Tests are mandatory for bugfixes, changed behavior, and new features, but the test suite must remain maintainable.
+Tests are mandatory for bugfixes, changed behavior, and new features, but the test suite must remain maintainable. Avoid test explosion.
+
+Default policy:
+- Extend existing tests first.
+- Add a new test file only when no suitable existing test location exists.
+- Remove tests for deleted behavior, obsolete compatibility paths, and temporary diagnostics.
+- Consolidate overlapping tests into one coherent testset or a table-driven test.
+- Prefer fewer, stronger tests over many narrowly duplicated tests.
 
 Before adding a new test file or a new large test block:
 - Inspect existing tests for the affected code path.
@@ -39,6 +167,7 @@ Before adding a new test file or a new large test block:
 - Prefer merging related regression checks into one coherent testset when they exercise the same function, option path, or failure mode.
 - Avoid preserving temporary diagnostic tests that were only useful during bug investigation.
 - Remove or consolidate obsolete tests when the underlying failure mode is already covered by a clearer regression test.
+- Remove tests that only verify backward compatibility for APIs, files, options, or wrappers intentionally removed by a refactoring task.
 - Keep test names explicit about the behavior being protected, not about the historical debugging session.
 - Keep test fixtures small; do not add large MATPOWER cases or long-running examples unless they are explicitly required.
 - Avoid broad end-to-end tests when a focused unit or integration test can protect the same behavior.
@@ -50,6 +179,7 @@ During cleanup or refactoring tasks:
 - Merge redundant tests where possible.
 - Delete tests that only assert implementation details and no longer protect public or intended internal behavior.
 - Keep at least one regression test for each fixed bug, but avoid multiple overlapping regressions for the same failure mode.
+- For breaking changes, keep tests for the new intended behavior and delete tests that only protect the removed behavior.
 
 When reporting work:
 - State which smallest relevant test was run.
@@ -87,9 +217,10 @@ This keeps the code compatible with non-standard array indices and avoids Static
 - Project root must be used as Julia project
 - When changing power flow or network logic, prefer adding or updating tests in `test/`
 - Prefer extending or consolidating existing tests over creating new narrowly overlapping test files.
+- Remove obsolete tests when refactoring deletes the behavior they were written for.
 
 ## VS Code / developer workflow notes
-- Example programs in `src/examples/` are primarily written for VS Code developer usage.
+- Example programs in `examples/` are primarily written for VS Code developer usage.
 - When practical, prefer calling script entry functions via `Base.invokelatest(...)` to reduce world-age issues in interactive development sessions.
 - Do not rely only on `if abspath(PROGRAM_FILE) == @__FILE__` for developer workflows, since this may not match all VS Code execution modes.
 - Recommend `Revise.jl` for contributors working interactively; keep it out of project dependencies so Sparlectra installation remains fast and lightweight.
@@ -105,6 +236,16 @@ WARNING: Detected access to binding `Main.main` in a world prior to its definiti
 Julia 1.12 has introduced more strict world age semantics for global bindings.
 Hint: Add an appropriate `invokelatest` around the access to this binding.
 ```
+
+Julia 1.12 world-age warnings are not harmless noise in this repository. Treat them as future errors.
+
+- If a task touches a script entry point, test runner, or dynamically included test file, avoid `getfield(@__MODULE__, name)` followed by a stale call.
+- Prefer:
+  ```julia
+  runner = Base.invokelatest(getfield, @__MODULE__, name)
+  Base.invokelatest(runner)
+  ```
+- If a warning appears in verification output from touched code, fix it before claiming the task is complete.
 
 ### Required handling
 - For script entry points, call the entry function through `Base.invokelatest`, for example:
@@ -164,7 +305,38 @@ Only use `kwargs...` when this matches the local style and the downstream functi
 - Report the exact command and the relevant failure output if tests fail.
 - Before adding new tests, check whether existing tests can be extended or merged.
 - Before finishing, check whether new tests created during debugging can be consolidated.
+- Remove tests that only cover removed compatibility paths or deleted legacy behavior.
 - Avoid leaving behind redundant tests that only differ in incidental parameters.
+
+
+## Final response contract for coding tasks
+
+Every coding-agent final response must use this structure when code was changed:
+
+```text
+Summary
+- ...
+
+Verification
+- command:
+  result: PASS/FAIL/NOT RUN
+  notes: ...
+
+Search evidence
+- command:
+  result/classification: ...
+
+Unfinished items
+- none
+```
+
+Rules:
+
+- `Unfinished items` must not be omitted.
+- If nothing is unfinished, write `none`.
+- If tests were not run, write `NOT RUN`; do not imply they passed.
+- If a requested verification command failed, the merge recommendation must be `NOT READY`.
+- If only a search/evidence pass was requested, include the exact search command and summarize all remaining matches.
 
 ## Power-flow execution preference
 - Prefer `run_net_acpflow(...)` over calling `runpf!(...)` directly when practical.
@@ -189,7 +361,7 @@ Typical indicators:
 Requirements for features:
 - Inline docstrings (mandatory)
 - Tests (mandatory)
-- Example in `src/examples/exp_<feature>.jl` (mandatory)
+- Example in `examples/exp_<feature>.jl` (mandatory)
 - Documentation update (mandatory)
 - Feature matrix review/update (mandatory)
 - Test-hygiene review (mandatory): prefer extending existing tests and avoid duplicate test coverage.
@@ -212,6 +384,7 @@ Requirements for improvements:
 - No example required (unless it improves clarity significantly)
 - No mandatory feature matrix update
 - Review whether existing tests can be consolidated if the improvement replaces older behavior.
+- If the improvement is an explicit refactoring or cleanup, remove obsolete compatibility code and its tests instead of preserving both old and new paths.
 
 ---
 
@@ -278,7 +451,7 @@ Classify as **feature** when adding or exposing new capabilities, for example:
 Feature requirements:
 - Inline docstrings
 - Targeted tests
-- Example program in `src/examples/exp_<feature>.jl`
+- Example program in `examples/exp_<feature>.jl`
 - Documentation update
 - Feature matrix review/update
 - Test-hygiene review: avoid duplicating existing coverage and consolidate related test cases where possible.
@@ -340,7 +513,7 @@ If it corrects behavior that was wrong, classify it as a **bugfix**.
 - Docstrings must be written in English and follow existing Sparlectra style.
 
 - For **new features** (i.e. functionality that adds a new capability, not bugfixes or minor improvements):
-  - Add at least one example program in `src/examples/`
+  - Add at least one example program in `examples/`
   - Naming convention: `exp_<feature>.jl`
   - The example should demonstrate typical usage and expected behavior
 
@@ -399,105 +572,6 @@ Keep documentation:
 
 ---
 
-# Codex task: Fix Julia 1.12 world-age and keyword-forwarding errors in example scripts
-
-## Context
-
-The repository currently shows Julia 1.12 / Revise-related warnings and a keyword mismatch in an example script, for example:
-
-```text
-WARNING: Detected access to binding `Main.bench_run_acpflow` in a world prior to its definition world.
-Julia 1.12 has introduced more strict world age semantics for global bindings.
-Hint: Add an appropriate `invokelatest` around the access to this binding.
-```
-
-and:
-
-```text
-MethodError: no method matching bench_run_acpflow(...; autodamp=..., autodamp_min=..., start_projection=..., ...)
-got unsupported keyword arguments "autodamp", "autodamp_min", "start_projection",
-"start_projection_try_dc_start", "start_projection_try_blend_scan",
-"start_projection_blend_lambdas", "start_projection_dc_angle_limit_deg"
-```
-
-The affected example is at least:
-
-```text
-src/examples/matpower_import.jl
-```
-
-## Goal
-
-Make the example script robust under Julia 1.12 and VS Code / Revise workflows, and fix the keyword mismatch so newly introduced solver/start-projection options are either correctly supported or intentionally filtered.
-
-## Required work
-
-1. Inspect the call chain in `src/examples/matpower_import.jl`
-   - Identify where `main()` is defined and called.
-   - Identify where `bench_run_acpflow` is defined and called.
-   - Identify all wrappers between the parsed configuration/options and the final power-flow call.
-
-2. Fix Julia 1.12 world-age warnings
-   - Use `Base.invokelatest(...)` at script/developer entry boundaries.
-   - Apply it to `main()` invocation if needed.
-   - Apply it to dynamically accessed local entry functions such as `bench_run_acpflow` only at the problematic call site.
-   - Do not wrap internal numerical kernels or hot loops.
-
-3. Fix keyword forwarding
-   - The caller currently passes keywords not accepted by `bench_run_acpflow`.
-   - Decide whether these keywords are intended to be supported by this example:
-     - `autodamp`
-     - `autodamp_min`
-     - `start_projection`
-     - `start_projection_try_dc_start`
-     - `start_projection_try_blend_scan`
-     - `start_projection_blend_lambdas`
-     - `start_projection_dc_angle_limit_deg`
-   - If they are intended to be supported, add them explicitly to the `bench_run_acpflow` keyword signature and forward them to the downstream function.
-   - If any are not meaningful in this path, filter them explicitly before calling `bench_run_acpflow` and add a short comment explaining why.
-   - Do not leave accidental unsupported keyword forwarding in place.
-
-4. Preserve current behavior
-   - Existing behavior must remain unchanged when these options are not provided.
-   - Defaults must match the existing solver defaults or current configuration defaults.
-   - Avoid broad refactoring.
-
-5. Add or update a small smoke/regression test if practical
-   - Prefer extending an existing lightweight test that validates the example call path accepts the new keyword set.
-   - The test does not need to run a large MATPOWER case.
-   - Do not add a new test file if an existing testset can cover the behavior.
-   - If this example is not part of the formal test suite, add a minimal direct test for the wrapper function or document the manual test command.
-   - Remove any temporary diagnostic-only tests once the regression is covered.
-
-6. Update changelog
-   - Add a `Bugfix` entry in `CHANGELOG.md`.
-   - Mention Julia 1.12 / Revise world-age handling and keyword-forwarding correction for the MATPOWER example path.
-
-## Acceptance criteria
-
-- Running the affected example no longer emits Julia 1.12 world-age warnings for `main` or `bench_run_acpflow`.
-- The keyword mismatch is fixed.
-- The following keywords are either accepted and forwarded correctly or intentionally filtered with a short comment:
-  - `autodamp`
-  - `autodamp_min`
-  - `start_projection`
-  - `start_projection_try_dc_start`
-  - `start_projection_try_blend_scan`
-  - `start_projection_blend_lambdas`
-  - `start_projection_dc_angle_limit_deg`
-- Existing tests still pass.
-- The smallest relevant test or manual command is reported.
-- If tests were added, state whether an existing test was extended or why a new test was necessary.
-- If tests were consolidated or removed, state which behavior remains covered.
-- If a test fails, report the exact command and relevant failure output.
-
-## Suggested diagnostic command
-
-```bash
-julia --project=. --depwarn=error src/examples/matpower_import.jl
-```
-
-If the example requires arguments or a config file, use the smallest available MATPOWER case and the minimal options needed to exercise the failing path.
 
 ## Private project naming / confidentiality
 

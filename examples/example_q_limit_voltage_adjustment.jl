@@ -43,19 +43,21 @@ function main()
   # Case A — successful voltage adjustment
   net_a = build_case(qmin = -30.0, qmax = 30.0)
   set_controller!(net_a, "PV1"; vstep_pu = 0.005, tap_steps_down = 20, tap_steps_up = 2)
-  runpf!(net_a, 40, 1e-8, 1; method = :rectangular, qlimit_mode = :adjust_vset, qlimit_max_outer = 20)
+  runpf!(net_a, 40, 1e-8, 1; qlimit_mode = :adjust_vset, qlimit_max_outer = 20)
   report_case("Case A (voltage adjustment succeeds)", net_a, :adjust_vset)
 
   # Case B — no configuration (immediate PV→PQ fallback)
   net_b = build_case(qmin = -15.0, qmax = 15.0)
-  runpf!(net_b, 40, 1e-8, 1; method = :rectangular, qlimit_mode = :adjust_vset)
+  runpf!(net_b, 40, 1e-8, 1; qlimit_mode = :adjust_vset)
   report_case("Case B (no controller configured)", net_b, :adjust_vset)
 
   # Case C — adjustment attempted, no steps available, then PV→PQ fallback
   net_c = build_case(qmin = -15.0, qmax = 15.0)
   set_controller!(net_c, "PV1"; vstep_pu = 0.005, tap_steps_down = 0, tap_steps_up = 0)
-  runpf!(net_c, 40, 1e-8, 1; method = :rectangular, qlimit_mode = :adjust_vset, qlimit_max_outer = 1)
+  runpf!(net_c, 40, 1e-8, 1; qlimit_mode = :adjust_vset, qlimit_max_outer = 1)
   report_case("Case C (controller exhausted -> fallback)", net_c, :adjust_vset)
 end
 
-Base.invokelatest(main)
+if get(ENV, "SPARLECTRA_Q_LIMIT_ADJUST_NO_MAIN", "0") != "1"
+  Base.invokelatest(getfield(@__MODULE__, :main))
+end

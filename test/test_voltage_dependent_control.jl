@@ -115,7 +115,7 @@ function run_voltage_dependent_control_tests()
       addProsumer!(net = net, busName = "B2", type = "SYNCHRONOUSMACHINE", p = 20.0, q = 0.0, qu_controller = QUController(qu_curve, -0.5, 0.5))
       addProsumer!(net = net, busName = "B2", type = "ENERGYCONSUMER", p = 60.0, q = 20.0)
 
-      ite, erg = runpf!(net, 30, 1e-9, 0; method = :rectangular, opt_sparse = true)
+      ite, erg = runpf!(net, 30, 1e-9, 0; method = :rectangular)
       @test erg == 0
       @test ite <= 30
 
@@ -147,7 +147,7 @@ function run_voltage_dependent_control_tests()
         pu_controller = PUController(kink_curve; pmin_pu = -0.5, pmax_pu = 0.5),
       )
 
-      ite, erg = runpf!(net, 30, 1e-10, 0; method = :rectangular, opt_sparse = true)
+      ite, erg = runpf!(net, 30, 1e-10, 0; method = :rectangular)
       @test erg == 0
       @test ite <= 30
 
@@ -210,6 +210,15 @@ function run_voltage_dependent_control_tests()
       @test abs(row_slack.p_gen_MW) > 1e-6
       @test abs(row_slack.q_gen_MVar) > 1e-6
     end
+  end
+
+  @testset "Voltage-dependent example is thin wrapper" begin
+    source = read(joinpath(@__DIR__, "..", "examples", "example_voltage_dependent_control_rectangular.jl"), String)
+    @test !occursin("DEFAULT_EXAMPLE_CFG = Dict", source)
+    @test !occursin("load_voltage_ctrl_yaml", source)
+    @test !occursin("_write_default_yaml_example", source)
+    @test !occursin("eachline(path)", source)
+    @test occursin("run_voltage_dependent_control_demo", source)
   end
 
   return true

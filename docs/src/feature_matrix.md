@@ -13,7 +13,7 @@ Legend:
 
 | Feature | Load Flow (`runpf!`) | State Estimation (`runse!`) | Notes |
 |---|:---:|:---:|---|
-| AC power flow (NR) | ✅ | — | Main PF entry point is `runpf!` with rectangular complex Jacobian by default; `:polar_full` / `:classic` are deprecated. |
+| AC power flow (NR) | ✅ | — | Main PF entry point is `runpf!` with the sparse rectangular complex Jacobian; polar/classic PF methods are not supported. |
 | AC state estimation (WLS) | — | ✅ | Main SE entry point is `runse!` (experimental status). |
 | Topological bus links (`addLink!`) | ✅ | ⚠️ | Links are fully integrated in PF workflow/reporting; in SE they are part of network topology context and should be used with care in measurement design. |
 | 2-winding transformer | ✅ | ✅ | Supported in network model and usable in both workflows. |
@@ -32,15 +32,14 @@ Legend:
 
 | Feature | Load Flow (`runpf!`) | State Estimation (`runse!`) | Notes |
 |---|:---:|:---:|---|
-| Polar full NR solver (deprecated) | ✅ | ⚠️ | Legacy PF mode (deprecated); SE uses its own WLS iteration and Jacobian evaluation. |
+| Polar full NR solver | ❌ | ⚠️ | Unsupported for PF; SE uses its own WLS iteration and Jacobian evaluation. |
 | Rectangular NR solver | ✅ | ❌ | Available for PF, not as separate SE formulation. |
 | Automatic rectangular Newton damping (`autodamp`) | ✅ | ❌ | PF rectangular solver can backtrack the Newton step from `damp` down to `autodamp_min` for difficult flat starts. |
 | Start projection (`start_projection`) | ✅ | ⚠️ | Internal PF and external-solver `PFModel` starts can use DC-angle and blend-scan projection; SE does not consume `PFModel`. |
-| Finite-difference Jacobian option (`opt_fd`) | ✅ | ❌ | In PF this toggles FD Jacobian vs analytic Jacobian (not fast-decoupled); not exposed as an SE user option. |
-| Sparse Jacobian option (`opt_sparse`) | ✅ | ⚠️ | PF supports explicit sparse option; SE internally builds Jacobians for WLS. |
+| Sparse PF matrices | ✅ | ⚠️ | PF requires sparse Y-bus and Jacobian matrices; SE internally builds Jacobians for WLS. |
 | Flat start control | ✅ | ✅ | Available in both PF and SE workflows. |
 | PV/PQ reactive limit handling | ✅ | ❌ | PF includes Q-limit logic with configurable iteration or reactive-power stabilization start controls; SE currently does not expose PV/PQ switching logic. |
-| `Q(U)` / `P(U)` controller solver support | ⚠️ | ❌ | Supported for PF in `method = :rectangular`; legacy `:polar_full` / `:classic` are unsupported with these controllers. |
+| `Q(U)` / `P(U)` controller solver support | ⚠️ | ❌ | Supported on the default rectangular PF path; legacy polar/classic PF modes are unsupported. |
 | External solver interface | ✅ | ❌ | PF has external solver integration; SE is internal WLS. |
 
 ## State-estimation measurements, observability & diagnostics
@@ -66,6 +65,7 @@ Legend:
 | Machine-readable report (`ACPFlowReport`) | ✅ | ❌ | Dedicated report container currently exists for PF workflow. |
 | DataFrame-friendly report rows | ✅ | ❌ | PF report rows can be converted/used in tabular workflows. |
 | Synthetic measurements from PF result | — | ✅ | PF + measurement generators support SE test-data workflows. |
+| Central typed configuration | ✅ | ✅ | `SparlectraConfig` and module-specific config sections support cached YAML loading, typed validation, override precedence, and effective-configuration printing for application/example boundaries. |
 | Write-back solved states into `Net` | ✅ | ✅ | PF updates net states; SE supports `updateNet=true`. |
 
 ## Useful links

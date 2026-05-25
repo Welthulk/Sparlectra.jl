@@ -1,19 +1,110 @@
 # Change Log
-## Version 0.7.9 – 2026-05-17
+## Version 0.8.0 – 2026-05-25
+
+### Breaking Changes
+
+* The public AC power-flow path now supports only the sparse rectangular Newton-Raphson solver.
+  Legacy polar/classic methods, dense PF matrices, and finite-difference PF Jacobian options are no longer supported as user-facing runtime choices.
+* Power-flow configuration has moved to structured YAML sections and typed configuration objects.
+  The old flat keyword-style configuration path is deprecated/removed for the cleaned rectangular workflow.
+* Obsolete sparse switches such as `power_flow.sparse`, `opt_sparse`, and `state_estimation.sparse` are no longer valid configuration keys.
+  Sparse matrix handling is mandatory for the production PF core.
+
 ### Highlights
 
-### Fixes
-* Fixed MATPOWER import example recommendations and call paths so Julia 1.12/Revise entry points use `invokelatest`, start-projection keywords are forwarded consistently, and large-case auto-profile guidance keeps `start_projection=false` with DC-angle/blended-voltage starts, Q-limit guard, skipped expensive diagnostics, and practical benchmark tolerance defaults while preserving explicit nested performance YAML values.
-* Fixed rectangular start-projection candidate selection so unmeasured or non-finite DC candidates are not selected as proven improvements, summary output reports an explicit selection reason, and large MATPOWER auto-profile keeps start projection disabled by default.
-* Fixed rectangular start-projection DC angle solves to preserve sparse DC matrices in both profiled and unprofiled start paths, use a sparse LU solve path for large reduced systems, avoid dense SVD fallback on large sparse singular systems, and report DC matrix/solver diagnostics in MATPOWER Performance Summary output.
-* Fixed performance-enabled MATPOWER example runs so they emit a compact Performance Summary with shared phase timings, including import, solver, diagnostics/logging, reference comparison, and post-processing phases when collected.
+* Added a central configuration workflow:
+  * default template: `src/configuration.yaml.example`
+  * optional user override: `examples/configuration.yaml`
+  * typed config objects for power flow, MATPOWER import, state estimation, diagnostics, output, benchmarking, runtime, and performance profiling
+  * early validation of unknown or obsolete keys
+* Simplified the production power-flow path to the sparse rectangular AC solver with sparse Y-bus assembly, sparse analytic rectangular Jacobian, and sparse linear solves.
+* Improved MATPOWER import and runner workflows:
+  * central YAML-driven execution
+  * configurable MATPOWER import options
+  * cleaner compact summaries
+  * better separation of numerical convergence, Q-limit validation, and solution availability
+* Added configurable performance and timing output for MATPOWER and rectangular PF runs:
+  * representative wall time
+  * solver time
+  * result-output time
+  * timing coverage
+  * optional allocation information
+  * rectangular workspace metadata
+* Improved large-case output handling:
+  * configurable result-table row limits
+  * summary/compact/full result-output modes
+  * safer default behavior for large MATPOWER cases
+* Added rectangular workspace reuse/preallocation controls:
+  * `power_flow.rectangular_workspace_reuse`
+  * `power_flow.rectangular_preallocate_workspace`
+  * `power_flow.rectangular_workspace_min_buses`
+* Reworked example scripts under top-level `examples/`:
+  * `matpower_import.jl` is now a thin YAML-driven entry script
+  * `tap_control_demo_grid.jl` uses central configuration helpers
+  * `export_solution.jl` writes deterministic export artifacts under `examples/_out/export_solution/<case>_<timestamp>/`
+* Added a clearer test profile structure:
+  * default `fast` profile for normal development
+  * `extended` profile for MATPOWER/output/documentation-heavy checks
+  * `all` currently aliases `extended`
 
-### Improvements
-* Optimized rectangular solver voltage-setpoint lookup to build per-solve bus and generator setpoint maps, avoiding repeated bus-by-prosumer scans for large MATPOWER imports while preserving `GEN.VG` PV/REF setpoint behavior and diagnostics.
-* Added finer rectangular solver performance timings for setup, active-set construction, Q-limit extraction/readiness, state updates, final result writeback, and status bookkeeping to explain large-case `solver_total` overhead outside Newton-step timing.
-* Added configurable performance profiling for the MATPOWER import example, including phase-level import/solver/output timings, optional allocation reporting, Newton-iteration diagnostics, and large-case speed switches for compact logging and expensive comparisons.
-* Decomposed rectangular start-projection profiling into DC-start construction, matrix assembly, solve, candidate generation/evaluation, branch-guard checks, voltage limiting, MATPOWER lookup/map phases, and final selection; added large-case YAML switches to disable expensive candidate measurement and reuse the already parsed MATPOWER case.
+### Configuration Notes
 
+* The main configuration template is now:
+
+  ```text
+  src/configuration.yaml.example
+  ```
+
+* A local user/example override can be placed at:
+
+  ```text
+  examples/configuration.yaml
+  ```
+
+* MATPOWER benchmarking moved to the top-level benchmark section:
+
+  ```yaml
+  benchmark:
+    enabled: true
+  ```
+
+  The old `matpower_import.benchmark` key is rejected with a migration message.
+
+### Output and Examples
+
+* `examples/export_solution.jl` now produces files instead of only printing to the console.
+  Typical output files are:
+
+  ```text
+  summary.txt
+  internal_solution.csv
+  external_solution.csv
+  comparison.csv
+  *_export.m
+  ```
+
+* `examples/matpower_import.jl` uses the central configuration and writes logs under:
+
+  ```text
+  examples/_out/
+  ```
+
+### Documentation
+
+* Added/updated documentation for:
+  * central configuration
+  * power-flow configuration
+  * MATPOWER import configuration
+  * state-estimation configuration
+  * performance profiling
+  * test profiles
+  * examples overview
+
+### Related
+
+* Issue #199: Central configuration, PF solver simplification, sparse-only PF core, and test-framework cleanup
+* Issue #201: YAML redesign
+  
 ## Version 0.7.8 – 2026-05-16
 ### Highlights
 * Improved Q-limit handling for large MATPOWER imports, especially cases with many generators that have zero or very narrow reactive-power ranges.
@@ -384,3 +475,5 @@
 
 ## Version 0.4.0 (2023-11-30)
 - Initial public commit of Sparlectra 
+
+* **Bugfix**: Restored MATPOWER runner operational reporting through package-level runners (header, config paths, resolved case, logfile path, compact summary, benchmark/performance blocks) while keeping example scripts thin and free of local YAML parsing.

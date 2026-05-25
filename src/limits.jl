@@ -386,6 +386,7 @@ function active_set_q_limits!(
   qlimit_guard_freeze_after_repeated_switching::Bool = true,
   qlimit_guard_violation_mode::Symbol = :delayed_switch,
   qlimit_guard_violation_threshold_pu::Float64 = 1e-4,
+  lock_mask_buffer::Union{Nothing,BitVector} = nothing,
 )
   qlimit_guard_violation_mode in (:delayed_switch, :lock_pq, :ignore) || error("Unsupported qlimit_guard_violation_mode=$(qlimit_guard_violation_mode). Supported: :delayed_switch, :lock_pq, :ignore.")
   qlimit_guard_violation_threshold_pu >= 0.0 || error("qlimit_guard_violation_threshold_pu must be >= 0 (got $(qlimit_guard_violation_threshold_pu)).")
@@ -393,7 +394,9 @@ function active_set_q_limits!(
   reenabled = false
   printed_events = 0
   omitted_events = 0
-  lock_mask = falses(nb)
+  lock_mask = isnothing(lock_mask_buffer) ? falses(nb) : lock_mask_buffer
+  length(lock_mask) == nb || throw(ArgumentError("lock_mask_buffer length mismatch: expected $nb, got $(length(lock_mask))"))
+  fill!(lock_mask, false)
   @inbounds for bus in lock_pv_to_pq_buses
     if 1 <= bus <= nb
       lock_mask[bus] = true

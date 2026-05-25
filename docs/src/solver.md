@@ -1,8 +1,7 @@
 # Solver Guide
 
-This page collects the numerical solver notes that were previously mixed with
-power-limit documentation. It focuses on *why* the finite-difference (FD)
-methods work and how they relate to the analytic Jacobian-based methods.
+This page collects numerical notes for the supported internal power-flow path:
+the sparse rectangular complex-state Newton–Raphson solver.
 
 ## Rectangular Complex-State Newton–Raphson (`jacobian_complex.jl`)
 
@@ -104,7 +103,6 @@ For difficult flat-start studies, enable residual-based backtracking:
 
 ```julia
 runpf!(net, 60, 1e-8, 1;
-    method = :rectangular,
     opt_flatstart = true,
     autodamp = true,
     autodamp_min = 1e-3,
@@ -164,7 +162,6 @@ The rectangular solver can project the initial voltage before Newton iterations:
 
 ```julia
 runpf!(net, 60, 1e-8, 1;
-    method = :rectangular,
     opt_flatstart = true,
     start_projection = true,
     start_projection_try_dc_start = true,
@@ -186,13 +183,15 @@ The same projection options are also available through `buildPfModel` and
 
 ---
 
-## Finite-Difference Rectangular Jacobian (`jacobian_fd.jl`)
+## Finite-Difference Rectangular Jacobian (`jacobian_fd.jl`, internal/developer path)
 
 ### Purpose
 
-The file `jacobian_fd.jl` provides a reference / fallback implementation of the
-Newton step for the rectangular complex-state NR using finite differences. It
-is mainly useful for:
+The file `jacobian_fd.jl` provides a reference / compatibility implementation of
+the Newton step using finite differences. This path is internal/developer-only
+and is not part of the recommended user-facing configuration workflow.
+
+It is mainly useful for:
 
 * prototyping and validation of the analytic Jacobian,
 * debugging difficult cases,
@@ -321,7 +320,7 @@ In short:
    V_new = ComplexF64.(Vr_new, Vi_new)
    ```
 
-`run_complex_nr_rectangular` selects this FD step when `use_fd = true`.
+`run_complex_nr_rectangular` can select this path in internal validation flows.
 
 ### Practical Interpretation
 
@@ -347,7 +346,6 @@ The start of PV→PQ switching can be controlled for difficult cases:
 
 ```julia
 runpf!(net, 60, 1e-8, 1;
-    method = :rectangular,
     qlimit_start_iter = 4,
     qlimit_start_mode = :iteration,
 )
