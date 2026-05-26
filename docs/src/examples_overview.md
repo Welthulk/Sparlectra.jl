@@ -15,7 +15,11 @@ This page summarizes the most relevant runnable examples in `examples/`.
 
 - `tap_control_demo_grid.jl`  
   Lightweight generic outer-loop control demo using `run_acpflow(net = ...)`,
-  `latest_control_result(net)`, controller rows, and trace rows.
+  central Sparlectra configuration (`examples/configuration.yaml` or
+  `SPARLECTRA_CONFIGURATION_YAML`) plus demo-specific
+  `examples/tap_control_demo_grid.yaml`, and `latest_control_result(net)` for
+  controller rows and trace rows. Optional classic output can be enabled with
+  `SPARLECTRA_TAP_DEMO_CLASSIC=1`.
 
 ## Voltage-dependent and Q-limit controls
 

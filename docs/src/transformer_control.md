@@ -45,8 +45,7 @@ No augmentation of the Newton system is performed.
 
 ## Controller Resolution
 
-Transformer tap/phase control is implemented as an `AbstractOuterController`.
-Controllers are collected by `collect_outer_controllers(net)` from
+Controllers are collected centrally via `_tap_controllers(net)` from
 `PowerTransformerWinding.controls`.
 
 They are:
@@ -85,15 +84,10 @@ addPowerTransformerControl!(net;
 
 ## Generic control framework integration
 
-Preferred high-level solve path for already constructed networks:
-
-```julia
-run_acpflow(net = net; show_results = false)
-```
-
-When at least one controller is present (`collect_outer_controllers(net)`), the
-high-level runner calls `run_control!` internally for outer-loop orchestration.
-`runpf!` remains the inner numerical solver.
+Transformer tap/phase control is implemented as an `AbstractOuterController`.
+Controllers are collected by `collect_outer_controllers(net)`. When at least one
+controller is present, `run_acpflow` calls `run_control!`
+for outer-loop orchestration.
 
 Advanced direct use:
 
@@ -109,9 +103,7 @@ result.trace
 latest_control_result(net)
 ```
 
-`run_control!` remains available for advanced direct use.
-`run_net_acpflow` is retained only as a compatibility/secondary wrapper.
-There is no public compatibility execution path for `run_tap_controllers_outer!`.
+Preferred high-level solve path:
 
 ### Result inspection
 
@@ -255,14 +247,18 @@ addPIModelTrafo!(
 
 ---
 
-## Runnable example
+## Examples
 
-`examples/tap_control_demo_grid.jl`
+See:
 
-This runnable example demonstrates:
+* `examples/tap_control_demo_grid.jl`
+  - Two-file configuration model:
+    - `examples/configuration.yaml` (or `SPARLECTRA_CONFIGURATION_YAML`) for central solver/output/control-framework settings.
+    - `examples/tap_control_demo_grid.yaml` for demo-specific transformer setpoints and tap parameters.
+  - Controller definitions are created programmatically by the example.
+  - Central `control.controllers: []` remains reserved/future.
+  - Optional classic output:
+    `SPARLECTRA_TAP_DEMO_CLASSIC=1 julia --project=. examples/tap_control_demo_grid.jl`
+  - Structured results are inspected via `latest_control_result(net)` (controller rows and trace rows).
 
-* building a small grid
-* adding tap/phase controllers through the public API
-* running `run_acpflow(net = net; ...)`
-* inspecting `latest_control_result(net)`
-* printing controller rows and trace rows
+for runnable setups.
