@@ -527,7 +527,7 @@ function with_powerflow_method(cfg::SparlectraConfig, method::Symbol)::Sparlectr
   pf = cfg.powerflow
   pf_kwargs = NamedTuple{fieldnames(PowerFlowConfig)}(getfield.(Ref(pf), fieldnames(PowerFlowConfig)))
   pf2 = PowerFlowConfig(; pf_kwargs..., method = method)
-  return SparlectraConfig(; powerflow = pf2, state_estimation = cfg.state_estimation, matpower = cfg.matpower, performance = cfg.performance, benchmark = cfg.benchmark, runtime = cfg.runtime, diagnostics = cfg.diagnostics, output = cfg.output)
+  return SparlectraConfig(; powerflow = pf2, state_estimation = cfg.state_estimation, matpower = cfg.matpower, performance = cfg.performance, benchmark = cfg.benchmark, runtime = cfg.runtime, diagnostics = cfg.diagnostics, output = cfg.output, control = cfg.control)
 end
 
 """
