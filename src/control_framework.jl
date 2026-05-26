@@ -64,6 +64,21 @@ function latest_control_result(net::Any)
   return getproperty(net, :control_result)
 end
 
+function _resolve_control_pf_config(pf_config)
+  if isnothing(pf_config)
+    return powerflow_config()
+  end
+
+  # Allow callers to pass a project-level SparlectraConfig as a convenience.
+  # The control layer and built-in controllers need the concrete PowerFlowConfig
+  # because they dereference fields such as max_iter, tol, and method.
+  if hasproperty(pf_config, :powerflow)
+    return getproperty(pf_config, :powerflow)
+  end
+
+  return pf_config
+end
+
 """
     run_control!(net; ...)
 
@@ -88,8 +103,9 @@ function run_control!(net::Any; controllers::Vector{<:AbstractOuterController} =
     net.control_result = result
     return result
   end
-  pf_runner = () -> runpf!(net; config = pf_config, verbose = verbose, performance_profile = performance_profile)
-  context = (pf_config = pf_config, control_config = control_config, verbose = verbose, performance_profile = performance_profile, outer_iteration = 0)
+  pf_config_resolved = _resolve_control_pf_config(pf_config)
+  pf_runner = () -> runpf!(net; config = pf_config_resolved, verbose = verbose, performance_profile = performance_profile)
+  context = (pf_config = pf_config_resolved, control_config = control_config, verbose = verbose, performance_profile = performance_profile, outer_iteration = 0)
   states = AbstractControlState[control_initialize!(ctrl, net, context) for ctrl in controllers]
   ite, erg = pf_runner()
   solves = 1
@@ -117,7 +133,7 @@ function run_control!(net::Any; controllers::Vector{<:AbstractOuterController} =
   for it in 1:max_outer
     outer_iterations = it
     for i in active_ids
-      ctx = (pf_config = pf_config, control_config = control_config, verbose = verbose, performance_profile = performance_profile, outer_iteration = it)
+      ctx = (pf_config = pf_config_resolved, control_config = control_config, verbose = verbose, performance_profile = performance_profile, outer_iteration = it)
       control_evaluate!(controllers[i], net, states[i], ctx)
     end
     all_done = all(i -> control_is_converged(controllers[i], states[i]) || control_is_blocked(controllers[i], states[i]), active_ids)
@@ -127,7 +143,7 @@ function run_control!(net::Any; controllers::Vector{<:AbstractOuterController} =
     end
     moved = false
     for i in active_ids
-      ctx = (pf_config = pf_config, control_config = control_config, verbose = verbose, performance_profile = performance_profile, outer_iteration = it)
+      ctx = (pf_config = pf_config_resolved, control_config = control_config, verbose = verbose, performance_profile = performance_profile, outer_iteration = it)
       upd = control_propose_update!(controllers[i], net, states[i], ctx)
       moved = control_apply_update!(controllers[i], net, states[i], upd, ctx) || moved
       if control_config.trace
