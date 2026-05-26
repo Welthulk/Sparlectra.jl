@@ -174,7 +174,25 @@ function control_apply_update!(ctrl::PowerTransformerControl, net::Net, ::Abstra
   return moved
 end
 control_report_rows(ctrl::PowerTransformerControl, net::Net, ::AbstractControlState, context) = filter(row -> row.transformer_id == _find_trafo_branch(net, ctrl.trafo).comp.cName, buildTapControllerReportRows(net))
-control_trace_rows(ctrl::PowerTransformerControl, net::Net, ::AbstractControlState, context) = NamedTuple[]
+function control_trace_rows(ctrl::PowerTransformerControl, net::Net, ::AbstractControlState, context)
+  br = _find_trafo_branch(net, ctrl.trafo)
+  return [(
+    outer_iteration = context.outer_iteration,
+    controller_name = control_name(ctrl),
+    controller_type = "PowerTransformerControl",
+    transformer_id = br.comp.cName,
+    mode = string(ctrl.mode),
+    status = ctrl.status,
+    converged = ctrl.converged,
+    at_limit = ctrl.at_limit,
+    achieved_vm_pu = isnothing(ctrl.achieved_vm_pu) ? missing : ctrl.achieved_vm_pu,
+    target_vm_pu = isnothing(ctrl.target_vm_pu) ? missing : ctrl.target_vm_pu,
+    achieved_p_mw = isnothing(ctrl.achieved_p_mw) ? missing : ctrl.achieved_p_mw,
+    target_p_mw = isnothing(ctrl.p_target_mw) ? missing : ctrl.p_target_mw,
+    tap_ratio = br.tap_ratio,
+    phase_shift_deg = br.phase_shift_deg,
+  )]
+end
 
 function _controller_type_label(ctrl::PowerTransformerControl, br::Branch)::String
   ratio = ctrl.control_ratio && br.has_ratio_tap

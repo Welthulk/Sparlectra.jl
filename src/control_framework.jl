@@ -56,6 +56,8 @@ control_report_rows(::AbstractOuterController, ::Any, ::AbstractControlState, co
 control_trace_rows(::AbstractOuterController, ::Any, ::AbstractControlState, context)::Vector{NamedTuple} = NamedTuple[]
 
 collect_outer_controllers(net::Any)::Vector{AbstractOuterController} = AbstractOuterController[_tap_controllers(net)...]
+const _LAST_CONTROL_RESULT = IdDict{Any,ControlRunResult}()
+latest_control_result(net::Any) = get(_LAST_CONTROL_RESULT, net, nothing)
 
 """
     run_control!(net; ...)
@@ -65,14 +67,21 @@ It does not replace `runpf!`; it coordinates built-in or user-defined controller
 returns a `ControlRunResult`.
 """
 function run_control!(net::Any; controllers::Vector{<:AbstractOuterController} = collect_outer_controllers(net), pf_config = nothing, control_config::ControlConfig = ControlConfig(), verbose::Int = 0, performance_profile = nothing)
+  pop!(_LAST_CONTROL_RESULT, net, nothing)
   if isempty(controllers)
-    return ControlRunResult(status = :no_controllers)
+    result = ControlRunResult(status = :no_controllers)
+    _LAST_CONTROL_RESULT[net] = result
+    return result
   end
   if !control_config.enabled
-    return ControlRunResult(status = :disabled)
+    result = ControlRunResult(status = :disabled)
+    _LAST_CONTROL_RESULT[net] = result
+    return result
   end
   if all(c -> !control_enabled(c), controllers)
-    return ControlRunResult(status = :disabled)
+    result = ControlRunResult(status = :disabled)
+    _LAST_CONTROL_RESULT[net] = result
+    return result
   end
   pf_runner = () -> runpf!(net; config = pf_config, verbose = verbose, performance_profile = performance_profile)
   context = (pf_config = pf_config, control_config = control_config, verbose = verbose, performance_profile = performance_profile, outer_iteration = 0)
@@ -80,13 +89,19 @@ function run_control!(net::Any; controllers::Vector{<:AbstractOuterController} =
   ite, erg = pf_runner()
   solves = 1
   if erg != 0
-    return ControlRunResult(status = :pf_failed, converged = false, powerflow_solves = solves, last_pf_iterations = ite, last_pf_status = :failed)
+    result = ControlRunResult(status = :pf_failed, converged = false, powerflow_solves = solves, last_pf_iterations = ite, last_pf_status = :failed)
+    _LAST_CONTROL_RESULT[net] = result
+    return result
   end
   calcNetLosses!(net)
   calcLinkFlowsKCL!(net)
 
   active_ids = findall(control_enabled, controllers)
-  isempty(active_ids) && return ControlRunResult(status = :no_active_controllers, converged = true, powerflow_solves = solves, last_pf_iterations = ite, last_pf_status = :ok)
+  if isempty(active_ids)
+    result = ControlRunResult(status = :no_active_controllers, converged = true, powerflow_solves = solves, last_pf_iterations = ite, last_pf_status = :ok)
+    _LAST_CONTROL_RESULT[net] = result
+    return result
+  end
   max_outer = min(control_config.max_outer_iterations, isnothing(pf_config) ? control_config.max_outer_iterations : pf_config.max_iter)
   status = :max_outer_iterations
   trace = NamedTuple[]
@@ -117,7 +132,11 @@ function run_control!(net::Any; controllers::Vector{<:AbstractOuterController} =
     end
     ite, erg = pf_runner()
     solves += 1
-    erg != 0 && return ControlRunResult(status = :pf_failed, converged = false, outer_iterations = it, powerflow_solves = solves, last_pf_iterations = ite, last_pf_status = :failed, trace = trace)
+    if erg != 0
+      result = ControlRunResult(status = :pf_failed, converged = false, outer_iterations = it, powerflow_solves = solves, last_pf_iterations = ite, last_pf_status = :failed, trace = trace)
+      _LAST_CONTROL_RESULT[net] = result
+      return result
+    end
     calcNetLosses!(net)
     calcLinkFlowsKCL!(net)
   end
@@ -125,5 +144,7 @@ function run_control!(net::Any; controllers::Vector{<:AbstractOuterController} =
   for (i, ctrl) in enumerate(controllers)
     append!(rows, control_report_rows(ctrl, net, states[i], context))
   end
-  return ControlRunResult(status = status, converged = status == :converged, outer_iterations = outer_iterations, powerflow_solves = solves, last_pf_iterations = ite, last_pf_status = :ok, controllers = rows, trace = trace)
+  result = ControlRunResult(status = status, converged = status == :converged, outer_iterations = outer_iterations, powerflow_solves = solves, last_pf_iterations = ite, last_pf_status = :ok, controllers = rows, trace = trace)
+  _LAST_CONTROL_RESULT[net] = result
+  return result
 end

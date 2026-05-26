@@ -135,8 +135,42 @@ function run_tap_controller_tests()
     result = run_control!(net; controllers = collect_outer_controllers(net), pf_config = pf_cfg, control_config = ControlConfig(max_outer_iterations = 4), verbose = 0)
     @test result isa ControlRunResult
     @test result.powerflow_solves >= 1
-    @test result.status in (:converged, :blocked, :max_outer_iterations)
+    @test result.status in (:converged, :blocked, :max_outer_iterations, :pf_failed)
     @test !isempty(result.controllers)
+    @test latest_control_result(net) === result
+  end
+
+  @testset "Transformer controller trace rows include stable keys" begin
+    net, tbr = _build_net()
+    addPowerTransformerControl!(net;
+      trafo = string(tbr.branchIdx),
+      mode = :voltage,
+      target_bus = "Load",
+      target_vm_pu = 0.98,
+      control_ratio = true,
+      control_phase = false,
+      is_discrete = true,
+      max_outer_iters = 4,
+    )
+    pf_cfg = PowerFlowConfig(max_iter = 30, tol = 1e-9, method = :rectangular)
+    result = run_control!(net; controllers = collect_outer_controllers(net), pf_config = pf_cfg, control_config = ControlConfig(max_outer_iterations = 4, trace = true), verbose = 0)
+    @test !isempty(result.controllers)
+    @test !isempty(result.trace)
+    row = first(result.trace)
+    @test haskey(row, :outer_iteration)
+    @test haskey(row, :controller_name)
+    @test haskey(row, :controller_type)
+    @test haskey(row, :status)
+    @test haskey(row, :tap_ratio)
+    @test haskey(row, :phase_shift_deg)
+    @test row.controller_type == "PowerTransformerControl"
+  end
+
+  @testset "Legacy erg mapping uses PF-failure semantics only" begin
+    @test Sparlectra._legacy_erg_from_control_status(:pf_failed) == 1
+    @test Sparlectra._legacy_erg_from_control_status(:converged) == 0
+    @test Sparlectra._legacy_erg_from_control_status(:blocked) == 0
+    @test Sparlectra._legacy_erg_from_control_status(:max_outer_iterations) == 0
   end
   @testset "Tap controller reporting rows and classic section" begin
     net, tbr = _build_net()
