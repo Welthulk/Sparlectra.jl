@@ -45,6 +45,8 @@ ControlRunResult stored on net.control_result
 
 `control_max_outer_iterations` provides controller-specific outer-loop limits. The global outer-loop budget is `control.max_outer_iterations` and is combined with controller limits.
 
+`control_max_outer_iterations` is currently treated as an internal extension hook (not exported). External custom controllers can still extend it via `Sparlectra.control_max_outer_iterations(::MyController)`.
+
 ## Result model
 
 `ControlRunResult` contains:
