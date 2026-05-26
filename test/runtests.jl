@@ -6,7 +6,22 @@ using LinearAlgebra
 using SparseArrays
 
 global_logger(ConsoleLogger(stderr, Logging.Warn))
-const TEST_PROFILE = Symbol(get(ENV, "SPARLECTRA_TEST_PROFILE", "fast"))
+
+function selected_test_profile()
+  cli_profile = length(ARGS) >= 1 ? Symbol(strip(ARGS[1])) : nothing
+  env_profile = Symbol(get(ENV, "SPARLECTRA_TEST_PROFILE", "fast"))
+  return something(cli_profile, env_profile)
+end
+
+const TEST_PROFILE = selected_test_profile()
+
+function print_test_progress_header(profile::Symbol)
+  println("Test framework: ", profile)
+end
+
+function print_group_progress(i::Int, total::Int, name::AbstractString)
+  println("[", i, "/", total, "] ", name)
+end
 
 function include_fast_tests()
   include("testgrid.jl")
@@ -43,7 +58,9 @@ function run_fast_profile_tests()
     end),
   ]
   @testset "Sparlectra.jl fast profile" begin
-    for (_, runner) in groups
+    total = length(groups)
+    for (i, (name, runner)) in enumerate(groups)
+      print_group_progress(i, total, name)
       Base.invokelatest(runner)
     end
   end
@@ -54,24 +71,34 @@ function run_extended_profile_tests()
     runner = Base.invokelatest(getfield, @__MODULE__, name)
     return Base.invokelatest(runner)
   end
+  groups = [
+    ("legacy/remove", () -> run_entry(:run_remove_tests)),
+    ("pv_voltage_residuals", () -> run_entry(:run_pv_voltage_residual_tests)),
+    ("matpower_examples", () -> run_entry(:run_matpower_example_tests)),
+    ("synthetic_grids", () -> run_entry(:run_synthetic_grid_tests)),
+    ("configuration_docs", () -> run_entry(:run_configuration_docs_tests)),
+  ]
   @testset "Sparlectra.jl extended profile" begin
-    run_entry(:run_remove_tests)
-    run_entry(:run_pv_voltage_residual_tests)
-    run_entry(:run_matpower_example_tests)
-    run_entry(:run_synthetic_grid_tests)
-    run_entry(:run_configuration_docs_tests)
+    total = length(groups)
+    for (i, (name, runner)) in enumerate(groups)
+      print_group_progress(i, total, name)
+      Base.invokelatest(runner)
+    end
   end
 end
 
 if TEST_PROFILE === :fast
+  print_test_progress_header(:fast)
   include_fast_tests()
   run_fast_profile_tests()
 elseif TEST_PROFILE === :extended
+  print_test_progress_header(:extended)
   include_fast_tests()
   include_extended_tests()
   run_fast_profile_tests()
   run_extended_profile_tests()
 elseif TEST_PROFILE === :all
+  print_test_progress_header(:all)
   include_fast_tests()
   include_extended_tests()
   # At the moment, `all` is an alias for `extended`.
@@ -79,6 +106,6 @@ elseif TEST_PROFILE === :all
   run_fast_profile_tests()
   run_extended_profile_tests()
 else
-  error("Unknown SPARLECTRA_TEST_PROFILE=$(TEST_PROFILE). Allowed: fast, extended, all")
+  error("Unknown test profile=$(TEST_PROFILE). Allowed: fast, extended, all. Selection precedence: CLI arg, SPARLECTRA_TEST_PROFILE, default fast.")
 end
 return nothing

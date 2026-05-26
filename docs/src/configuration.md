@@ -223,6 +223,13 @@ The following canonical keys are currently present in `src/configuration.yaml.ex
 - `benchmark.show_once`
 - `benchmark.show_once_max_nodes`
 - `benchmark.show_once_output`
+- `control`
+- `control.controllers`
+- `control.enabled`
+- `control.log_iterations`
+- `control.max_outer_iterations`
+- `control.stop_on_pf_failure`
+- `control.trace`
 - `diagnostics`
 - `diagnostics.console_auto_profile`
 - `diagnostics.console_diagnostics`
