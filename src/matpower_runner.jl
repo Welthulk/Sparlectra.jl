@@ -1,3 +1,21 @@
+# Copyright 2023–2026 Udo Schmitz
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Author: Udo Schmitz (https://github.com/Welthulk)
+# Date: 20.5.2026
+# file: src/matpower_runner.jl
+
 """
     new_performance_profile(cfg::PerformanceConfig)
 
@@ -227,7 +245,7 @@ function print_performance_profile(io::IO, profile; title::AbstractString = "Per
     println(io, "Benchmark events")
     println(io, "----------------")
     rows = min(length(events), max_rows)
-    for i in 1:rows
+    for i = 1:rows
       row = events[i]
       label = hasproperty(row, :label) ? getproperty(row, :label) : :event
       seconds = hasproperty(row, :seconds) ? getproperty(row, :seconds) : 0.0
@@ -240,7 +258,7 @@ function print_performance_profile(io::IO, profile; title::AbstractString = "Per
     println(io, "Iteration diagnostics")
     println(io, "---------------------")
     rows = min(length(iterations), max_rows)
-    for i in 1:rows
+    for i = 1:rows
       row = iterations[i]
       println(io, "  ", row)
     end
@@ -313,7 +331,7 @@ function runtime_thread_status(cfg::RuntimeConfig)
   end
   active_blas = BLAS.get_num_threads()
   blas_applied = isnothing(requested_blas) || requested_blas == active_blas
-  return (; 
+  return (;
     cpu_threads = Sys.CPU_THREADS,
     julia_threads = active_julia,
     blas_threads_before = before,
@@ -509,16 +527,7 @@ function with_powerflow_method(cfg::SparlectraConfig, method::Symbol)::Sparlectr
   pf = cfg.powerflow
   pf_kwargs = NamedTuple{fieldnames(PowerFlowConfig)}(getfield.(Ref(pf), fieldnames(PowerFlowConfig)))
   pf2 = PowerFlowConfig(; pf_kwargs..., method = method)
-  return SparlectraConfig(;
-    powerflow = pf2,
-    state_estimation = cfg.state_estimation,
-    matpower = cfg.matpower,
-    performance = cfg.performance,
-    benchmark = cfg.benchmark,
-    runtime = cfg.runtime,
-    diagnostics = cfg.diagnostics,
-    output = cfg.output,
-  )
+  return SparlectraConfig(; powerflow = pf2, state_estimation = cfg.state_estimation, matpower = cfg.matpower, performance = cfg.performance, benchmark = cfg.benchmark, runtime = cfg.runtime, diagnostics = cfg.diagnostics, output = cfg.output)
 end
 
 """
@@ -538,9 +547,27 @@ function run_matpower_case(; casefile::AbstractString = "", config_file::Abstrac
   isempty(strip(resolved_case)) && throw(ArgumentError("No MATPOWER case selected. Set matpower_import.case in the active configuration or pass casefile."))
   local_case = FetchMatpowerCase.ensure_casefile(resolved_case)
   logfile = matpower_run_logfile_path(local_case, cfg.output)
-  print_matpower_runner_header(stdout; default_config = DEFAULT_SPARLECTRA_CONFIG_PATH, user_config = isfile(USER_SPARLECTRA_CONFIG_PATH) ? USER_SPARLECTRA_CONFIG_PATH : "", casefile = local_case, logfile = logfile, methods = cfg.benchmark.methods, benchmark = cfg.benchmark, performance = cfg.performance)
+  print_matpower_runner_header(
+    stdout;
+    default_config = DEFAULT_SPARLECTRA_CONFIG_PATH,
+    user_config = isfile(USER_SPARLECTRA_CONFIG_PATH) ? USER_SPARLECTRA_CONFIG_PATH : "",
+    casefile = local_case,
+    logfile = logfile,
+    methods = cfg.benchmark.methods,
+    benchmark = cfg.benchmark,
+    performance = cfg.performance,
+  )
   open(logfile, "w") do io
-    print_matpower_runner_header(io; default_config = DEFAULT_SPARLECTRA_CONFIG_PATH, user_config = isfile(USER_SPARLECTRA_CONFIG_PATH) ? USER_SPARLECTRA_CONFIG_PATH : "", casefile = local_case, logfile = logfile, methods = cfg.benchmark.methods, benchmark = cfg.benchmark, performance = cfg.performance)
+    print_matpower_runner_header(
+      io;
+      default_config = DEFAULT_SPARLECTRA_CONFIG_PATH,
+      user_config = isfile(USER_SPARLECTRA_CONFIG_PATH) ? USER_SPARLECTRA_CONFIG_PATH : "",
+      casefile = local_case,
+      logfile = logfile,
+      methods = cfg.benchmark.methods,
+      benchmark = cfg.benchmark,
+      performance = cfg.performance,
+    )
   end
   if cfg.runtime.print_thread_config
     status = runtime_thread_status(cfg.runtime)
@@ -549,7 +576,9 @@ function run_matpower_case(; casefile::AbstractString = "", config_file::Abstrac
       print_runtime_thread_config(io, status)
     end
   end
-  cfg.diagnostics.log_effective_config && open(logfile, "a") do io; print_effective_config(io, cfg); end
+  cfg.diagnostics.log_effective_config && open(logfile, "a") do io
+    print_effective_config(io, cfg)
+  end
 
   profile = new_performance_profile(cfg.performance)
   status_ref = Ref{Any}(nothing)
@@ -568,14 +597,7 @@ function run_matpower_case(; casefile::AbstractString = "", config_file::Abstrac
     println("Benchmark results")
     for method in cfg.benchmark.methods
       method_cfg = with_powerflow_method(cfg, method)
-      warm_run = _run_matpower_single_routed(
-        local_case,
-        method_cfg,
-        profile,
-        status_ref;
-        to_console = cfg.output.console_diagnostics === :full,
-        capture_for_log = cfg.output.logfile_diagnostics !== :off || cfg.output.logfile_warnings !== :off,
-      )
+      warm_run = _run_matpower_single_routed(local_case, method_cfg, profile, status_ref; to_console = cfg.output.console_diagnostics === :full, capture_for_log = cfg.output.logfile_diagnostics !== :off || cfg.output.logfile_warnings !== :off)
       warm = warm_run isa NamedTuple ? warm_run.elapsed : warm_run
       profile[:representative_elapsed_s] = warm
       if warm_run isa NamedTuple && cfg.output.logfile_diagnostics === :full
@@ -583,14 +605,7 @@ function run_matpower_case(; casefile::AbstractString = "", config_file::Abstrac
       end
       bench_status_ref = Ref{Any}(nothing)
       bench = BenchmarkTools.@benchmarkable run_silent_for_benchmark() do
-        Base.invokelatest(
-          run_acpflow;
-          casefile = $local_case,
-          config = $method_cfg,
-          performance_profile = nothing,
-          status_ref = $bench_status_ref,
-          show_compact_result = false,
-        )
+        Base.invokelatest(run_acpflow; casefile = $local_case, config = $method_cfg, performance_profile = nothing, status_ref = $bench_status_ref, show_compact_result = false)
       end
       trial = Base.invokelatest(BenchmarkTools.run, bench; samples = max(1, cfg.benchmark.samples), seconds = max(0.01, cfg.benchmark.seconds))
       med = BenchmarkTools.median(trial).time / 1e9
@@ -615,7 +630,7 @@ function run_matpower_case(; casefile::AbstractString = "", config_file::Abstrac
     profile[:representative_warmup_runs] = warmup_runs
     if warmup_runs > 0
       last_warmup_elapsed_s = 0.0
-      for _ in 1:warmup_runs
+      for _ = 1:warmup_runs
         warm_status_ref = Ref{Any}(nothing)
         cold_profile = Dict{Symbol,Any}()
         warmup_elapsed_s = _run_matpower_single(local_case, cfg, cold_profile, warm_status_ref; show_results = false)
@@ -630,14 +645,7 @@ function run_matpower_case(; casefile::AbstractString = "", config_file::Abstrac
       profile[:last_warmup_elapsed_s] = last_warmup_elapsed_s
     end
     profile[:timing_mode] = _auto_timing_mode(cfg.powerflow.method, warmup_runs)
-    run_single = _run_matpower_single_routed(
-      local_case,
-      cfg,
-      profile,
-      status_ref;
-      to_console = cfg.output.console_diagnostics === :full,
-      capture_for_log = cfg.output.logfile_diagnostics !== :off || cfg.output.logfile_warnings !== :off,
-    )
+    run_single = _run_matpower_single_routed(local_case, cfg, profile, status_ref; to_console = cfg.output.console_diagnostics === :full, capture_for_log = cfg.output.logfile_diagnostics !== :off || cfg.output.logfile_warnings !== :off)
     if run_single isa NamedTuple
       profile[:representative_elapsed_s] = run_single.elapsed
       st = status_ref[]
@@ -682,7 +690,15 @@ function run_matpower_case(; casefile::AbstractString = "", config_file::Abstrac
 
   write_perf_log = cfg.performance.write_to_logfile && cfg.output.logfile_performance !== :off
   try
-    emit_performance_summary(profile; logfile = logfile, print_to_console = cfg.performance.print_to_console, write_to_logfile = write_perf_log, max_rows = cfg.performance.max_diagnostic_rows, console_level = cfg.performance.compact_logging ? :compact : cfg.performance.level, logfile_level = cfg.output.logfile_performance)
+    emit_performance_summary(
+      profile;
+      logfile = logfile,
+      print_to_console = cfg.performance.print_to_console,
+      write_to_logfile = write_perf_log,
+      max_rows = cfg.performance.max_diagnostic_rows,
+      console_level = cfg.performance.compact_logging ? :compact : cfg.performance.level,
+      logfile_level = cfg.output.logfile_performance,
+    )
     println("Wrote log file: ", logfile)
   catch err
     if err isa InterruptException

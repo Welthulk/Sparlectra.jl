@@ -2,7 +2,18 @@
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
+# Author: Udo Schmitz (https://github.com/Welthulk)
+# Date: 20.5.2026
 # file: src/configuration.jl
 
 using SHA
@@ -417,14 +428,22 @@ function QLimitConfig(raw::AbstractDict)
   merged = merge(Dict{Any,Any}(raw), Dict{Any,Any}(guard_cfg))
   return QLimitConfig(
     start_iter = _as_int_cfg(_raw_get(merged, "start_iter", _raw_get(merged, "qlimit_start_iter", 2))),
-    start_mode = _validate_allowed_symbol("power_flow.qlimits.start_mode", _as_symbol_cfg((_raw_get(merged, "start_mode", nothing) isa AbstractDict) ? _raw_get(merged, "qlimit_start_mode", :iteration) : _raw_get(merged, "start_mode", _raw_get(merged, "qlimit_start_mode", :iteration))), QLIMIT_START_MODE_VALUES),
+    start_mode = _validate_allowed_symbol(
+      "power_flow.qlimits.start_mode",
+      _as_symbol_cfg((_raw_get(merged, "start_mode", nothing) isa AbstractDict) ? _raw_get(merged, "qlimit_start_mode", :iteration) : _raw_get(merged, "start_mode", _raw_get(merged, "qlimit_start_mode", :iteration))),
+      QLIMIT_START_MODE_VALUES,
+    ),
     auto_q_delta_pu = _validate_nonnegative("qlimit_auto_q_delta_pu", _as_float_cfg(_raw_get(merged, "auto_q_delta_pu", _raw_get(merged, "qlimit_auto_q_delta_pu", 1e-4)))),
     hysteresis_pu = _validate_nonnegative("power_flow.qlimits.hysteresis_pu", _as_float_cfg(_raw_get(merged, "hysteresis_pu", _raw_get(merged, "q_hyst_pu", 0.01)))),
     cooldown_iters = _as_int_cfg(_raw_get(merged, "cooldown_iters", 1)),
     guard = _as_bool_cfg(_raw_get(raw, "qlimit_guard", guard_enabled_default)),
     guard_min_q_range_pu = _validate_nonnegative("qlimit_guard_min_q_range_pu", _as_float_cfg(_raw_get(merged, "min_q_range_pu", _raw_get(merged, "guard_min_q_range_pu", _raw_get(merged, "qlimit_guard_min_q_range_pu", 1e-4))))),
     guard_zero_range_mode = _validate_allowed_symbol("power_flow.qlimits.guard.zero_range_mode", _as_symbol_cfg(_raw_get(merged, "zero_range_mode", _raw_get(merged, "guard_zero_range_mode", _raw_get(merged, "qlimit_guard_zero_range_mode", :lock_pq)))), QLIMIT_GUARD_ZERO_RANGE_MODE_VALUES),
-    guard_narrow_range_mode = _validate_allowed_symbol("power_flow.qlimits.guard.narrow_range_mode", _as_symbol_cfg(_raw_get(merged, "narrow_range_mode", _raw_get(merged, "guard_narrow_range_mode", _raw_get(merged, "qlimit_guard_narrow_range_mode", :prefer_pq)))), QLIMIT_GUARD_NARROW_RANGE_MODE_VALUES),
+    guard_narrow_range_mode = _validate_allowed_symbol(
+      "power_flow.qlimits.guard.narrow_range_mode",
+      _as_symbol_cfg(_raw_get(merged, "narrow_range_mode", _raw_get(merged, "guard_narrow_range_mode", _raw_get(merged, "qlimit_guard_narrow_range_mode", :prefer_pq)))),
+      QLIMIT_GUARD_NARROW_RANGE_MODE_VALUES,
+    ),
     guard_max_switches = _as_int_cfg(_raw_get(merged, "max_switches", _raw_get(merged, "guard_max_switches", _raw_get(merged, "qlimit_guard_max_switches", 10)))),
     guard_freeze_after_repeated_switching = _as_bool_cfg(_raw_get(merged, "freeze_after_repeated_switching", _raw_get(merged, "guard_freeze_after_repeated_switching", _raw_get(merged, "qlimit_guard_freeze_after_repeated_switching", true)))),
     guard_accept_bounded_violations = _as_bool_cfg(_raw_get(merged, "accept_bounded_violations", _raw_get(merged, "guard_accept_bounded_violations", _raw_get(merged, "qlimit_guard_accept_bounded_violations", false)))),
@@ -586,7 +605,6 @@ function OutputConfig(raw::AbstractDict)
   )
 end
 
-
 function ControlConfig(raw::AbstractDict)
   merged = _merged_section(raw, "control")
   return ControlConfig(
@@ -600,7 +618,17 @@ function ControlConfig(raw::AbstractDict)
 end
 
 function SparlectraConfig(raw::AbstractDict)
-  return SparlectraConfig(powerflow = PowerFlowConfig(raw), state_estimation = StateEstimationConfig(raw), matpower = MatpowerImportConfig(raw), performance = PerformanceConfig(raw), benchmark = BenchmarkConfig(raw), runtime = RuntimeConfig(raw), diagnostics = DiagnosticsConfig(raw), output = OutputConfig(raw), control = ControlConfig(raw))
+  return SparlectraConfig(
+    powerflow = PowerFlowConfig(raw),
+    state_estimation = StateEstimationConfig(raw),
+    matpower = MatpowerImportConfig(raw),
+    performance = PerformanceConfig(raw),
+    benchmark = BenchmarkConfig(raw),
+    runtime = RuntimeConfig(raw),
+    diagnostics = DiagnosticsConfig(raw),
+    output = OutputConfig(raw),
+    control = ControlConfig(raw),
+  )
 end
 
 _canonical_config_key(key::AbstractString)::String = key == "powerflow" ? "power_flow" : key == "matpower" ? "matpower_import" : String(key)
