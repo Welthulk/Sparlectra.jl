@@ -61,8 +61,7 @@ function control_max_outer_iterations(ctrl::AbstractOuterController)::Int
 end
 function latest_control_result(net::Any)
   hasproperty(net, :control_result) || return nothing
-  ref = getproperty(net, :control_result)
-  return ref isa Base.RefValue ? ref[] : ref
+  return getproperty(net, :control_result)
 end
 
 """
@@ -73,20 +72,20 @@ It does not replace `runpf!`; it coordinates built-in or user-defined controller
 returns a `ControlRunResult`.
 """
 function run_control!(net::Any; controllers::Vector{<:AbstractOuterController} = collect_outer_controllers(net), pf_config = nothing, control_config::ControlConfig = ControlConfig(), verbose::Int = 0, performance_profile = nothing)
-  net.control_result[] = nothing
+  net.control_result = nothing
   if isempty(controllers)
     result = ControlRunResult(status = :no_controllers)
-    net.control_result[] = result
+    net.control_result = result
     return result
   end
   if !control_config.enabled
     result = ControlRunResult(status = :disabled)
-    net.control_result[] = result
+    net.control_result = result
     return result
   end
   if all(c -> !control_enabled(c), controllers)
     result = ControlRunResult(status = :disabled)
-    net.control_result[] = result
+    net.control_result = result
     return result
   end
   pf_runner = () -> runpf!(net; config = pf_config, verbose = verbose, performance_profile = performance_profile)
@@ -96,7 +95,7 @@ function run_control!(net::Any; controllers::Vector{<:AbstractOuterController} =
   solves = 1
   if erg != 0
     result = ControlRunResult(status = :pf_failed, converged = false, powerflow_solves = solves, last_pf_iterations = ite, last_pf_status = :failed)
-    net.control_result[] = result
+    net.control_result = result
     return result
   end
   calcNetLosses!(net)
@@ -105,7 +104,7 @@ function run_control!(net::Any; controllers::Vector{<:AbstractOuterController} =
   active_ids = findall(control_enabled, controllers)
   if isempty(active_ids)
     result = ControlRunResult(status = :no_active_controllers, converged = true, powerflow_solves = solves, last_pf_iterations = ite, last_pf_status = :ok)
-    net.control_result[] = result
+    net.control_result = result
     return result
   end
   # Outer-loop budget is controlled only by ControlConfig and controller-specific
@@ -143,7 +142,7 @@ function run_control!(net::Any; controllers::Vector{<:AbstractOuterController} =
     solves += 1
     if erg != 0
       result = ControlRunResult(status = :pf_failed, converged = false, outer_iterations = it, powerflow_solves = solves, last_pf_iterations = ite, last_pf_status = :failed, trace = trace)
-      net.control_result[] = result
+      net.control_result = result
       return result
     end
     calcNetLosses!(net)
@@ -154,6 +153,6 @@ function run_control!(net::Any; controllers::Vector{<:AbstractOuterController} =
     append!(rows, control_report_rows(ctrl, net, states[i], context))
   end
   result = ControlRunResult(status = status, converged = status == :converged, outer_iterations = outer_iterations, powerflow_solves = solves, last_pf_iterations = ite, last_pf_status = :ok, controllers = rows, trace = trace)
-  net.control_result[] = result
+  net.control_result = result
   return result
 end
