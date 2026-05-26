@@ -464,14 +464,21 @@ result = run_control!(
 - `examples/example_transformer_phase_shift_control.jl`  
   Focused PST active-power target control example.
 - `examples/tap_control_demo_grid.jl`  
-  Full multi-voltage demo with YAML-configurable controller targets and
-  transformer tap/phase parameters plus versioned output logs.
+  Lightweight demo that:
+  - uses central configuration from `examples/configuration.yaml` (or `SPARLECTRA_CONFIGURATION_YAML`),
+  - reads demo-specific setpoints from `examples/tap_control_demo_grid.yaml`,
+  - runs through `run_acpflow(net = net; config = ...)`,
+  - inspects structured output from `latest_control_result(net)`.
 
-The accompanying config template is:
+Copy and edit:
 
+- `examples/tap_control_demo_grid.yaml.example` → `examples/tap_control_demo_grid.yaml`
 
-It exposes target values and transformer tap/phase ranges + step sizes so that
-you can tune the workshop run without editing the Julia source.
+Optional classic view:
+
+```bash
+SPARLECTRA_TAP_DEMO_CLASSIC=1 julia --project=. examples/tap_control_demo_grid.jl
+```
 ---
 
 ## Running rectangular NR with Q-limits

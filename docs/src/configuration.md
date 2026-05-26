@@ -185,24 +185,15 @@ control:
 In Stage 1, controllers are typically attached programmatically via
 `addTapController!` / `addPowerTransformerControl!`.
 
-### What goes into `control.controllers`?
+### Demo controller YAML vs. central `control.controllers`
 
-For the current Stage 1 implementation: nothing.
+The tap-control demo may read `examples/tap_control_demo_grid.yaml` for
+example setpoints and transformer tap parameters. This is an example-specific
+input file consumed by `examples/tap_control_demo_grid.jl`.
 
-Leave:
-
-```yaml
-controllers: []
-```
-
-as-is.
-
-Transformer controllers are currently registered programmatically via
-`addTapController!` or `addPowerTransformerControl!`.
-
-The `controllers` list is reserved for future YAML-based controller definitions.
-Do not place arbitrary dictionaries there unless a future release documents a
-supported schema.
+It does not define the central `control.controllers` schema. Today,
+`control.controllers` remains reserved/future and should be left as `[]` in
+central configuration files.
 
 ## Migration notes
 
