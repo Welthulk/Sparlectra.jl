@@ -145,6 +145,8 @@ function _build_pf_outcome_status(method::Symbol, erg::Int, ite::Int, etime::Flo
   return (outcome = outcome, numerical_converged = (erg == 0), solution_available = (erg == 0), limit_validation_status = :skip, final_converged = (erg == 0), reason = (erg == 0 ? :none : :nr_mismatch_not_converged), reason_text = (erg == 0 ? "none" : "NR mismatch did not converge"), final_mismatch = NaN, iterations = ite, elapsed_s = etime)
 end
 
+_legacy_erg_from_control_status(status::Symbol)::Int = status == :pf_failed ? 1 : 0
+
 function _legacy_powerflow_config(; max_ite::Int, tol::Float64, method::Symbol, autodamp::Bool, autodamp_min::Float64, opt_flatstart::Bool, start_projection::Bool, start_projection_try_dc_start::Bool, start_projection_try_blend_scan::Bool, start_projection_branch_guard::Bool, start_projection_measure_candidates::Bool, start_projection_accept_unmeasured_dc_start::Bool, start_projection_blend_lambdas, start_projection_dc_angle_limit_deg::Float64, qlimit_start_iter::Int, qlimit_start_mode::Symbol, qlimit_auto_q_delta_pu::Float64, lock_pv_to_pq_buses, qlimit_trace_buses, qlimit_guard::Bool, qlimit_guard_min_q_range_pu::Float64, qlimit_guard_zero_range_mode::Symbol, qlimit_guard_narrow_range_mode::Symbol, qlimit_guard_log::Bool, qlimit_guard_max_switches::Int, qlimit_guard_accept_bounded_violations::Bool, qlimit_guard_max_remaining_violations::Int, qlimit_guard_freeze_after_repeated_switching::Bool, qlimit_guard_violation_mode::Symbol, qlimit_guard_violation_threshold_pu::Float64)
   return PowerFlowConfig(
     method = method,
@@ -423,8 +425,10 @@ function run_acpflow(;
       runpf!(myNet, solver_config; verbose = verbose, pv_table_rows = pv_table_rows, validate_limits_after_pf = validate_limits_after_pf, q_limit_violation_headroom = q_limit_violation_headroom, qlimit_lock_reason = qlimit_lock_reason, performance_profile = performance_profile)
     else
       control_result = run_control!(myNet; controllers = controllers, pf_config = solver_config, control_config = control_config(), verbose = verbose, performance_profile = performance_profile)
-      # Keep legacy `(ite, erg)` boundary semantics: `ite` reports last PF iterations from the control run.
-      (control_result.last_pf_iterations, control_result.status == :pf_failed ? 1 : 0)
+      # The legacy `erg` flag describes numerical PF success/failure.
+      # Control-loop terminal states such as :blocked or :max_outer_iterations are
+      # reported through `control_result` and `net.control_result`, not as PF failure.
+      (control_result.last_pf_iterations, _legacy_erg_from_control_status(control_result.status))
       end
     end
   end
@@ -453,10 +457,12 @@ function run_acpflow(;
     rect_status = method === :rectangular ? rectangular_pf_status(myNet) : nothing
     outcome = _rectangular_public_outcome(rect_status)
     if rect_status === nothing
-      status_ref[] = (converged = (erg == 0), erg = erg, iterations = ite, elapsed_s = etime, solver_elapsed_s = solver_elapsed_s, method = method, outcome = (erg == 0 ? :converged : :not_converged))
+      ctrl_result = latest_control_result(myNet)
+      status_ref[] = (converged = (erg == 0), erg = erg, iterations = ite, elapsed_s = etime, solver_elapsed_s = solver_elapsed_s, method = method, outcome = (erg == 0 ? :converged : :not_converged), control_status = isnothing(ctrl_result) ? :none : ctrl_result.status)
     else
       pf_status = _build_pf_outcome_status(method, erg, ite, etime, rect_status)
-      status_ref[] = (converged = (erg == 0), erg = erg, iterations = ite, elapsed_s = etime, solver_elapsed_s = solver_elapsed_s, method = method, outcome = outcome,
+      ctrl_result = latest_control_result(myNet)
+      status_ref[] = (converged = (erg == 0), erg = erg, iterations = ite, elapsed_s = etime, solver_elapsed_s = solver_elapsed_s, method = method, outcome = outcome, control_status = isnothing(ctrl_result) ? :none : ctrl_result.status,
                       numerical_solution = (pf_status.numerical_converged ? "OK" : "FAIL"),
                       solution_available = pf_status.solution_available,
                       limit_validation_status = pf_status.limit_validation_status,
@@ -614,8 +620,10 @@ function run_net_acpflow(; net::Net, max_ite::Int = 30, tol::Float64 = 1e-6, ver
       runpf!(net, solver_config; verbose = verbose, pv_table_rows = pv_table_rows, validate_limits_after_pf = validate_limits_after_pf, q_limit_violation_headroom = q_limit_violation_headroom, qlimit_lock_reason = qlimit_lock_reason, performance_profile = performance_profile)
     else
       control_result = run_control!(net; controllers = controllers, pf_config = solver_config, control_config = control_config(), verbose = verbose, performance_profile = performance_profile)
-      # Keep legacy `(ite, erg)` boundary semantics: `ite` reports last PF iterations from the control run.
-      (control_result.last_pf_iterations, control_result.status == :pf_failed ? 1 : 0)
+      # The legacy `erg` flag describes numerical PF success/failure.
+      # Control-loop terminal states such as :blocked or :max_outer_iterations are
+      # reported through `control_result` and `net.control_result`, not as PF failure.
+      (control_result.last_pf_iterations, _legacy_erg_from_control_status(control_result.status))
       end
     end
   end
