@@ -43,6 +43,7 @@ The merged YAML is converted into:
   - `runtime::RuntimeConfig`
   - `diagnostics::DiagnosticsConfig`
   - `output::OutputConfig`
+  - `control::ControlConfig`
 
 This typed model is the canonical internal representation that should be consumed by power-flow, MATPOWER import, state estimation, output/reporting, performance profiling, benchmark runners, and future modules.
 
@@ -56,7 +57,7 @@ This typed model is the canonical internal representation that should be consume
 | `output` | `OutputConfig` | Console/logfile behavior and result table sizing | Public / supported |
 | `performance` | `PerformanceConfig` | Profiling/reporting toggles and diagnostic volume controls | Public / supported |
 | `benchmark` | `BenchmarkConfig` | Repeated benchmark-run controls | Public / supported |
-| `control` | `ControlConfig` | Generic controller outer-loop orchestration controls | Public / supported |
+| `control` | `ControlConfig` | Generic controller outer-loop orchestration controls (`control.controllers` reserved for future YAML definitions) | Public / supported |
 | `runtime` | `RuntimeConfig` | Julia/BLAS thread control knobs for entry workflows | Public / supported |
 | `diagnostics` | `DiagnosticsConfig` | Effective-config logging and diagnostics render controls | Public / supported |
 | `extensions` | reserved (not mapped to typed runtime fields) | Future extension placeholder | Reserved |
@@ -179,10 +180,29 @@ control:
 | `trace` | Bool | `true` | Collect machine-readable control trace rows. |
 | `log_iterations` | Bool | `true` | Enables optional per-iteration control logging hooks. |
 | `stop_on_pf_failure` | Bool | `true` | Stops control orchestration when inner PF fails. |
-| `controllers` | Vector | `[]` | Reserved for future YAML controller instantiation. |
+| `controllers` | Vector | `[]` | Reserved for future YAML controller definitions; leave empty for current programmatic controller setup. |
 
 In Stage 1, controllers are typically attached programmatically via
 `addTapController!` / `addPowerTransformerControl!`.
+
+### What goes into `control.controllers`?
+
+For the current Stage 1 implementation: nothing.
+
+Leave:
+
+```yaml
+controllers: []
+```
+
+as-is.
+
+Transformer controllers are currently registered programmatically via
+`addTapController!` or `addPowerTransformerControl!`.
+
+The `controllers` list is reserved for future YAML-based controller definitions.
+Do not place arbitrary dictionaries there unless a future release documents a
+supported schema.
 
 ## Migration notes
 

@@ -2,8 +2,15 @@
 ## Version 0.8.1 – 2026-05-25
 
 ### Highlights
+* Added a generic outer-loop control framework above `runpf!`.
+  Transformer tap/phase control now uses this framework as the first concrete controller implementation.
 
 ### Improvements
+* Added structured `ControlRunResult` output and `latest_control_result(net)` for inspecting controller status, outer iterations, PF solve count, controller rows, and trace rows.
+* Added machine-readable control trace rows for transformer control.
+* Added `run_acpflow(net=...)` as the preferred high-level entry point for already constructed networks, while keeping `run_net_acpflow` as a compatibility wrapper.
+* Simplified `examples/tap_control_demo_grid.jl` into a lightweight demo of the generic control framework.
+* Documented the `control` configuration section, including that `control.controllers` is reserved for future YAML-based controller instantiation.
 
 
 ### Fixes

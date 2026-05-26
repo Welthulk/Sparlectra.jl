@@ -18,6 +18,10 @@ Legend:
 | Topological bus links (`addLink!`) | ✅ | ⚠️ | Links are fully integrated in PF workflow/reporting; in SE they are part of network topology context and should be used with care in measurement design. |
 | 2-winding transformer | ✅ | ✅ | Supported in network model and usable in both workflows. |
 | 3-winding transformer | ✅ | ✅ | Implemented via star-equivalent with AUX bus in network construction. |
+| Generic outer-loop control framework | ✅ | ❌ | Reusable orchestration above `runpf!`; controller results are available through `ControlRunResult` / `latest_control_result(net)`. |
+| Transformer tap/phase controller as outer controller | ✅ | ❌ | First concrete `AbstractOuterController`; supports ratio and phase updates outside the Newton system. |
+| Machine-readable control trace rows | ✅ | ❌ | Available through `ControlRunResult.trace`; avoids parsing console output. |
+| YAML controller instantiation | ⚠️ | ❌ | `control.controllers` is reserved for future controller definitions; leave empty for current programmatic setup. |
 | Transformer tap control (`addTapController!`) | ✅ | ❌ | PF supports outer-loop tap control for ratio and/or phase (`:voltage`, `:branch_active_power`, `:voltage_and_branch_active_power`), including discrete step operation with tap/phase limits. |
 | Remote target-bus voltage control (single-controller) | ⚠️ | ❌ | Supported in PF by setting `mode = :voltage` and `target_bus`; this is remote measurement with one controller channel. |
 | Coordinated master/slave transformer voltage control | ❌ | ❌ | Not yet implemented as dedicated multi-transformer coordination logic (no built-in participation-factor allocation/group dispatcher yet). |
@@ -74,5 +78,6 @@ Legend:
 * [Links (bus couplers)](links.md)
 * [External Solvers](external_solvers.md)
 * [Network Reports](netreports.md)
+* [Transformer Control](transformer_control.md)
 * [Workshop](workshop.md)
 * [Changelog](changelog.md)
