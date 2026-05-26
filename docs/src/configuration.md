@@ -43,6 +43,7 @@ The merged YAML is converted into:
   - `runtime::RuntimeConfig`
   - `diagnostics::DiagnosticsConfig`
   - `output::OutputConfig`
+  - `control::ControlConfig`
 
 This typed model is the canonical internal representation that should be consumed by power-flow, MATPOWER import, state estimation, output/reporting, performance profiling, benchmark runners, and future modules.
 
@@ -56,6 +57,7 @@ This typed model is the canonical internal representation that should be consume
 | `output` | `OutputConfig` | Console/logfile behavior and result table sizing | Public / supported |
 | `performance` | `PerformanceConfig` | Profiling/reporting toggles and diagnostic volume controls | Public / supported |
 | `benchmark` | `BenchmarkConfig` | Repeated benchmark-run controls | Public / supported |
+| `control` | `ControlConfig` | Generic controller outer-loop orchestration controls (`control.controllers` reserved for future YAML definitions) | Public / supported |
 | `runtime` | `RuntimeConfig` | Julia/BLAS thread control knobs for entry workflows | Public / supported |
 | `diagnostics` | `DiagnosticsConfig` | Effective-config logging and diagnostics render controls | Public / supported |
 | `extensions` | reserved (not mapped to typed runtime fields) | Future extension placeholder | Reserved |
@@ -159,6 +161,41 @@ extensions:
 
 For complete key references and allowed-value tables, see the module-specific pages below.
 
+## Control configuration (generic outer loop)
+
+```yaml
+control:
+  enabled: true
+  max_outer_iterations: 20
+  trace: true
+  log_iterations: true
+  stop_on_pf_failure: true
+  controllers: []
+```
+
+| Key | Type | Default | Meaning |
+|---|---:|---:|---|
+| `enabled` | Bool | `true` | Enables the generic outer-loop control framework. |
+| `max_outer_iterations` | Int | `20` | Global outer-loop cap. Does not control inner NR iterations. |
+| `trace` | Bool | `true` | Collect machine-readable control trace rows. |
+| `log_iterations` | Bool | `true` | Enables optional per-iteration control logging hooks. |
+| `stop_on_pf_failure` | Bool | `true` | Stops control orchestration when inner PF fails. |
+| `controllers` | Vector | `[]` | Reserved for future YAML controller definitions; leave empty for current programmatic controller setup. |
+
+In Stage 1, controllers are typically attached programmatically via
+`addTapController!` / `addPowerTransformerControl!`.
+
+### Demo controller YAML vs. central `control.controllers`
+
+The tap-control demo may read `examples/tap_control_demo_grid.yaml` for
+example setpoints and transformer tap/phase parameters (`oltc`, `pst`,
+`schraeg`). This is an example-specific
+input file consumed by `examples/tap_control_demo_grid.jl`.
+
+It does not define the central `control.controllers` schema. Today,
+`control.controllers` remains reserved/future and should be left as `[]` in
+central configuration files.
+
 ## Migration notes
 
 | Legacy / old key | Canonical key | Notes |
@@ -187,6 +224,13 @@ The following canonical keys are currently present in `src/configuration.yaml.ex
 - `benchmark.show_once`
 - `benchmark.show_once_max_nodes`
 - `benchmark.show_once_output`
+- `control`
+- `control.controllers`
+- `control.enabled`
+- `control.log_iterations`
+- `control.max_outer_iterations`
+- `control.stop_on_pf_failure`
+- `control.trace`
 - `diagnostics`
 - `diagnostics.console_auto_profile`
 - `diagnostics.console_diagnostics`

@@ -180,7 +180,7 @@ end
 
 Transformer outer-loop transformer controller channel.
 """
-mutable struct PowerTransformerControl
+mutable struct PowerTransformerControl <: AbstractOuterController
   trafo::String
   mode::Symbol
   target_bus::Union{Nothing,String}

@@ -1,14 +1,18 @@
 # Test Suite
 
-Sparlectra uses profile-aware test loading through `SPARLECTRA_TEST_PROFILE` in `test/runtests.jl`.
+Sparlectra uses profile-aware test loading through `test/runtests.jl`.
+Profile selection precedence is:
+1. CLI argument (`julia --project=. test/runtests.jl <profile>`)
+2. `SPARLECTRA_TEST_PROFILE`
+3. default `fast`
 
 ## Test profiles
 
 | Profile | Command | Scope | Intended use |
 |---|---|---|---|
-| `fast` (default) | `julia --project=. test/runtests.jl` | Core offline tests | Normal local development and default CI smoke |
-| `extended` | `SPARLECTRA_TEST_PROFILE=extended julia --project=. test/runtests.jl` | Fast + integration/heavier tests | Before merge and after configuration, MATPOWER, or integration changes |
-| `all` | `SPARLECTRA_TEST_PROFILE=all julia --project=. test/runtests.jl` | Currently alias for `extended` | Reserved for future all-only suites and CI matrix clarity |
+| `fast` (default) | `julia --project=. test/runtests.jl fast` | Core offline tests | Normal local development and default CI smoke |
+| `extended` | `julia --project=. test/runtests.jl extended` | Fast + integration/heavier tests | Before merge and after configuration, MATPOWER, or integration changes |
+| `all` | `julia --project=. test/runtests.jl all` | Currently alias for `extended` | Reserved for future all-only suites and CI matrix clarity |
 
 `Pkg.test()` uses the same test runner and therefore the default `fast` profile unless `SPARLECTRA_TEST_PROFILE` is set:
 
@@ -76,3 +80,25 @@ This keeps the default local workflow fast while making the extended profile and
 
 The fast profile includes a regression for `printACPFlowResults(...; toFile=true, result_mode=:summary)`.
 It verifies that the result file is closed/flushed before the function returns and that the summary contains Q-limit counter labels.
+Equivalent environment-variable usage remains supported:
+```bash
+SPARLECTRA_TEST_PROFILE=extended julia --project=. test/runtests.jl
+```
+
+## Progress output
+
+The runner prints a lightweight progress view, for example:
+
+```text
+Test framework: fast
+[1/5] core_model
+[2/5] powerflow_rectangular
+...
+```
+
+Julia's final `Test Summary` remains unchanged and visible at the end.
+
+## Rectangular/Q-limit diagnostics in tests
+
+The rectangular convergence and Q-limit active-set diagnostic block is not printed in normal test runs.
+Those diagnostics remain available only through explicit diagnostic requests (for example solver `verbose > 0` paths used during focused debugging).

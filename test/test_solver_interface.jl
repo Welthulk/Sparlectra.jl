@@ -446,17 +446,17 @@ end
         return guarded_net
       end
 
-      # Regression: direct run_net_acpflow callers must opt in before the narrow-Q guard
+      # Regression: direct run_acpflow callers must opt in before the narrow-Q guard
       # locks PV buses to PQ during rectangular pre-processing.
       default_net = zero_range_pv_net()
       redirect_stdout(devnull) do
-        run_net_acpflow(net = default_net, max_ite = 0, verbose = 0, show_results = false)
+        run_acpflow(net = default_net, max_ite = 0, verbose = 0, show_results = false)
       end
       @test isempty(default_net.qLimitLog)
 
       opt_in_net = zero_range_pv_net()
       redirect_stdout(devnull) do
-        run_net_acpflow(net = opt_in_net, max_ite = 0, verbose = 0, show_results = false, qlimit_guard = true)
+        run_acpflow(net = opt_in_net, max_ite = 0, verbose = 0, show_results = false, qlimit_guard = true)
       end
       @test length(opt_in_net.qLimitLog) == 1
     end
@@ -496,7 +496,7 @@ end
       @test erg_project == 0
 
       net_runner = createTest3BusNet()
-      _, erg_runner, _ = run_net_acpflow(net = net_runner, config = pf_config, show_results = false)
+      _, erg_runner, _ = run_acpflow(net = net_runner, config = pf_config, show_results = false)
       @test erg_runner == 0
 
       old_cfg = active_sparlectra_config()
@@ -507,7 +507,7 @@ end
         net_with_explicit_cfg = createTest3BusNet()
         explicit_output = mktemp() do path, io
           redirect_stdout(io) do
-            _, erg_explicit, _ = run_net_acpflow(net = net_with_explicit_cfg, config = cfg_output_off)
+            _, erg_explicit, _ = run_acpflow(net = net_with_explicit_cfg, config = cfg_output_off)
             @test erg_explicit == 0
           end
           flush(io)
@@ -518,7 +518,7 @@ end
         net_with_global_cfg = createTest3BusNet()
         global_output = mktemp() do path, io
           redirect_stdout(io) do
-            _, erg_global, _ = run_net_acpflow(net = net_with_global_cfg, config = pf_config)
+            _, erg_global, _ = run_acpflow(net = net_with_global_cfg, config = pf_config)
             @test erg_global == 0
           end
           flush(io)
@@ -528,6 +528,12 @@ end
       finally
         set_sparlectra_config!(old_cfg)
       end
+    end
+
+    @testset "run_acpflow input validation for net/casefile entry modes" begin
+      net = createTest3BusNet()
+      @test_throws ArgumentError run_acpflow(net = net, casefile = "case3.m", show_results = false)
+      @test_throws ArgumentError run_acpflow(show_results = false)
     end
 
 # Ensures final-limit validation remains robust when q-generation data is partially missing.

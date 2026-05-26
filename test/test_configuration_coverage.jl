@@ -38,6 +38,7 @@ function run_configuration_coverage_tests()
       "diagnostics.log_effective_config", "diagnostics.console_summary", "diagnostics.console_auto_profile", "diagnostics.console_diagnostics", "diagnostics.console_q_limit_events", "diagnostics.console_max_rows", "diagnostics.logfile_diagnostics",
       "output.console_summary", "output.console_auto_profile", "output.console_diagnostics", "output.console_q_limit_events", "output.console_max_rows", "output.logfile_results", "output.result_table_max_rows", "output.result_table_large_case_threshold_buses", "output.result_table_large_case_mode", "output.logfile_diagnostics", "output.logfile_performance", "output.logfile_warnings",
       "benchmark.enabled", "benchmark.methods", "benchmark.seconds", "benchmark.samples", "benchmark.show_once", "benchmark.show_once_output", "benchmark.show_once_max_nodes",
+      "control.enabled", "control.max_outer_iterations", "control.trace", "control.log_iterations", "control.stop_on_pf_failure", "control.controllers",
     ])
     reserved_keys = Set(["extensions.reserved"])
     mapped_or_reserved = union(mapped_keys, reserved_keys)

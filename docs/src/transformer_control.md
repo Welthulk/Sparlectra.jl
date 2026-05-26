@@ -16,10 +16,14 @@ A combined transformer (“Schrägregler”) is represented by enabling both con
 
 With series admittance `y`, total shunt `y_sh`, and from-side tap `t`:
 
-`Y_ff = (y + 0.5*y_sh)/|t|^2`
-`Y_ft = -y/conj(t)`
-`Y_tf = -y/t`
-`Y_tt = y + 0.5*y_sh`
+```math
+\begin{aligned}
+Y_{ff} &= \frac{y + 0.5\,y_{sh}}{\lvert t \rvert^2} \\
+Y_{ft} &= -\frac{y}{\overline{t}} \\
+Y_{tf} &= -\frac{y}{t} \\
+Y_{tt} &= y + 0.5\,y_{sh}
+\end{aligned}
+```
 
 This matches the Sparlectra sign and conjugation convention.
 
@@ -77,6 +81,47 @@ addPowerTransformerControl!(net;
   control_phase = false,
   is_discrete = true)
 ```
+
+## Generic control framework integration
+
+Transformer tap/phase control is implemented as an `AbstractOuterController`.
+Controllers are collected by `collect_outer_controllers(net)`. When at least one
+controller is present, `run_acpflow` calls `run_control!`
+for outer-loop orchestration.
+
+Advanced direct use:
+
+```julia
+result = run_control!(
+  net;
+  pf_config = powerflow_config(),
+  control_config = control_config(),
+)
+
+result.status
+result.trace
+latest_control_result(net)
+```
+
+Preferred high-level solve path:
+
+### Result inspection
+
+```julia
+run_acpflow(net = net; show_results = false)
+
+result = latest_control_result(net)
+
+println(result.status)
+println(result.outer_iterations)
+println(result.powerflow_solves)
+println(result.controllers)
+println(result.trace)
+```
+
+`result.status` is the outer control-loop terminal state.
+It is separate from numerical PF success/failure.
+`result.trace` is machine-readable and does not require parsing console output.
 
 ```julia
 addPowerTransformerControl!(net;
@@ -207,5 +252,17 @@ addPIModelTrafo!(
 See:
 
 * `examples/tap_control_demo_grid.jl`
+  - Two-file configuration model:
+    - `examples/configuration.yaml` (or `SPARLECTRA_CONFIGURATION_YAML`) for central solver/output/control-framework settings.
+    - `examples/tap_control_demo_grid.yaml` for demo-specific transformer setpoints and tap parameters.
+  - Demonstrates all three control types in one lightweight network: OLTC voltage control, PST active-power control, and Schrägregler combined voltage + active-power control.
+  - Controller definitions are created programmatically by the example.
+  - Central `control.controllers: []` remains reserved/future.
+  - Optional classic output:
+    `SPARLECTRA_TAP_DEMO_CLASSIC=1 julia --project=. examples/tap_control_demo_grid.jl`
+  - Optional raw result dump:
+    `SPARLECTRA_TAP_DEMO_RAW=1 julia --project=. examples/tap_control_demo_grid.jl`
+  - Default output is compact and summarizes controller status, taps/phases, and trace size.
+  - Structured results are inspected via `latest_control_result(net)` (controller rows and trace rows).
 
 for runnable setups.

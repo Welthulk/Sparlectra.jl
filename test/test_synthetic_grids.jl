@@ -81,7 +81,7 @@ function run_synthetic_grid_tests()
     @test net.busDict == net2.busDict
 
     small_net, small_meta = build_synthetic_tiled_grid_net(9; aspect_ratio = 1.0)
-    iterations, erg, _etime = run_net_acpflow(net = small_net, max_ite = 25, tol = 1e-8, verbose = 0, method = :rectangular, show_results = false)
+    iterations, erg, _etime = run_acpflow(net = small_net, max_ite = 25, tol = 1e-8, verbose = 0, method = :rectangular, show_results = false)
     @test erg == 0
     @test iterations > 0
     @test small_meta.branch_count == small_meta.rows * (small_meta.cols - 1) + (small_meta.rows - 1) * small_meta.cols + (small_meta.rows - 1) * (small_meta.cols - 1)

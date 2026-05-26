@@ -1,371 +1,210 @@
 using Sparlectra
 using Printf
-using Dates
 
-const DEFAULT_CFG = Dict{String,Any}(
-  "max_ite" => 40,
-  "pf_tol" => 1e-9,
-  "pf_method" => "rectangular",
-  "t2_target_bus" => "B9",
-  "t2_target_vm_pu" => 1.23,
-  "pst1_target_from_bus" => "B1",
-  "pst1_target_to_bus" => "B2",
-  "pst1_target_p_mw" => 7.0,
-  "st1_target_bus" => "B5",
-  "st1_target_vm_pu" => 1.07,
-  "st1_target_from_bus" => "B4",
-  "st1_target_to_bus" => "B5",
-  "st1_target_p_mw" => -60.0,
-  # Transformer tap parameterization (editable from YAML)
-  "t2_tap_min" => 0.90,
-  "t2_tap_max" => 1.10,
-  "t2_tap_step" => 0.00625,
-  "pst1_phase_min_deg" => -15.0,
-  "pst1_phase_max_deg" => 15.0,
-  "pst1_phase_step_deg" => 1.0,
-  "st1_tap_min" => 0.95,
-  "st1_tap_max" => 1.05,
-  "st1_tap_step" => 0.00625,
-  "st1_phase_min_deg" => -10.0,
-  "st1_phase_max_deg" => 10.0,
-  "st1_phase_step_deg" => 0.5,
-  "t2_max_outer_iters" => 40,
-  "t2_deadband_vm_pu" => 1e-3,
-  "t2_voltage_error_metric" => "vm",
-  "pst1_max_outer_iters" => 60,
-  "st1_max_outer_iters" => 80,
-  "st1_deadband_vm_pu" => 1e-3,
-  "st1_voltage_error_metric" => "vm",
-)
-
-function _yaml_path_from_inputs()
-  return Sparlectra.configuration_path_from_inputs(; env_var = "SPARLECTRA_TAP_DEMO_YAML", fallback_paths = [joinpath(@__DIR__, "tap_control_demo_grid.yaml"), joinpath(@__DIR__, "tap_control_demo_grid.yaml.example")])
+function demo_yaml_path(args::AbstractVector{String} = ARGS)
+  if length(args) >= 1
+    return abspath(args[1])
+  end
+  from_env = strip(get(ENV, "SPARLECTRA_TAP_DEMO_YAML", ""))
+  if !isempty(from_env)
+    return abspath(from_env)
+  end
+  local_path = joinpath(@__DIR__, "tap_control_demo_grid.yaml")
+  if isfile(local_path)
+    return local_path
+  end
+  return joinpath(@__DIR__, "tap_control_demo_grid.yaml.example")
 end
 
-function _load_demo_yaml_config(path::AbstractString)
-  isempty(path) && return Dict{String,Any}()
-  isfile(path) || error("YAML config file not found: $path")
-  return Sparlectra.load_yaml_dict(path)
+function load_demo_settings(args::AbstractVector{String} = ARGS)
+  path = demo_yaml_path(args)
+  return path, Sparlectra.load_yaml_dict(path)
 end
 
-function _cfg_value(cfg::Dict{String,Any}, key::String)
-  return get(cfg, key, DEFAULT_CFG[key])
+function load_demo_sparlectra_config(demo_settings::Dict{String,Any}, demo_path::AbstractString)
+  raw_path = get(demo_settings, "sparlectra_config", nothing)
+  if raw_path isa AbstractString && !isempty(strip(raw_path))
+    cfg_path = isabspath(raw_path) ? raw_path : normpath(joinpath(dirname(demo_path), raw_path))
+    return cfg_path, Sparlectra.load_sparlectra_config(cfg_path; reload = true)
+  end
+  return "default discovery", Sparlectra.load_sparlectra_config(; reload = true)
 end
 
-function _target_branch(cfg::Dict{String,Any}, prefix::String)
-  return (String(_cfg_value(cfg, "$(prefix)_from_bus")), String(_cfg_value(cfg, "$(prefix)_to_bus")))
-end
-
-"""
-    build_tap_control_demo_grid(cfg)
-
-Builds a three-voltage-level network with a meshed 220 kV level, a meshed 110 kV
-level, and a radial 20 kV level. The grid contains one OLTC transformer, one PST,
-and one coupled ratio+phase regulating transformer. Tap and phase limits/steps
-are read from `cfg` so they can be edited in YAML.
-"""
-function build_tap_control_demo_grid(cfg::Dict{String,Any})
+function build_demo_net(demo_settings::Dict{String,Any})
   net = Net(name = "tap_control_demo_grid", baseMVA = 100.0)
-
-  # 220 kV mesh
-  addBus!(net = net, busName = "B1", vn_kV = 220.0)
-  addBus!(net = net, busName = "B2", vn_kV = 220.0)
-  addBus!(net = net, busName = "B3", vn_kV = 220.0)
-
-  # 110 kV mesh
-  addBus!(net = net, busName = "B4", vn_kV = 110.0)
-  addBus!(net = net, busName = "B5", vn_kV = 110.0)
-  addBus!(net = net, busName = "B6", vn_kV = 110.0)
-
-  # 20 kV radial feeder
-  addBus!(net = net, busName = "B7", vn_kV = 20.0)
-  addBus!(net = net, busName = "B8", vn_kV = 20.0)
-  addBus!(net = net, busName = "B9", vn_kV = 20.0)
-
-  # Injections and loads
-  addProsumer!(net = net, busName = "B1", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.02, va_deg = 0.0, referencePri = "B1")
-  addProsumer!(net = net, busName = "B3", type = "GENERATOR", p = 95.0, q = 12.0)
-  addProsumer!(net = net, busName = "B5", type = "ENERGYCONSUMER", p = -90.0, q = -28.0)
-  addProsumer!(net = net, busName = "B8", type = "ENERGYCONSUMER", p = -24.0, q = -8.0)
-  addProsumer!(net = net, busName = "B9", type = "ENERGYCONSUMER", p = -42.0, q = -14.0)
-
-  # 220 kV mesh branches (PST on B1->B2)
-  addPIModelTrafo!(net = net, fromBus = "B1", toBus = "B2", r_pu = 0.004, x_pu = 0.05, b_pu = 0.0, ratio = 1.0, shift_deg = 0.0, status = 1)
-  addPIModelACLine!(net = net, fromBus = "B1", toBus = "B3", r_pu = 0.012, x_pu = 0.10, b_pu = 0.003, status = 1)
-  addPIModelACLine!(net = net, fromBus = "B2", toBus = "B3", r_pu = 0.010, x_pu = 0.09, b_pu = 0.003, status = 1)
-
-  # 220/110 kV interconnection
-  addPIModelTrafo!(net = net, fromBus = "B3", toBus = "B4", r_pu = 0.006, x_pu = 0.07, b_pu = 0.0, ratio = 1.0, shift_deg = 0.0, status = 1)
-
-  # 110 kV mesh with complex tap transformer on B4->B5
-  addPIModelTrafo!(net = net, fromBus = "B4", toBus = "B5", r_pu = 0.005, x_pu = 0.06, b_pu = 0.0, ratio = 1.0, shift_deg = 0.0, status = 1)
-  addPIModelACLine!(net = net, fromBus = "B4", toBus = "B6", r_pu = 0.014, x_pu = 0.11, b_pu = 0.004, status = 1)
-  addPIModelACLine!(net = net, fromBus = "B6", toBus = "B5", r_pu = 0.013, x_pu = 0.10, b_pu = 0.004, status = 1)
-
-  # 110/20 kV interconnection (OLTC on B6->B7)
-  addPIModelTrafo!(net = net, fromBus = "B6", toBus = "B7", r_pu = 0.008, x_pu = 0.08, b_pu = 0.0, ratio = 1.0, shift_deg = 0.0, status = 1)
-
-  # 20 kV radial feeder
-  addPIModelACLine!(net = net, fromBus = "B7", toBus = "B8", r_pu = 0.018, x_pu = 0.10, b_pu = 0.001, status = 1)
-  addPIModelACLine!(net = net, fromBus = "B8", toBus = "B9", r_pu = 0.025, x_pu = 0.12, b_pu = 0.001, status = 1)
-
-  pst1 = getNetBranch(net = net, fromBus = "B1", toBus = "B2")
-  st1 = getNetBranch(net = net, fromBus = "B4", toBus = "B5")
-  t2 = getNetBranch(net = net, fromBus = "B6", toBus = "B7")
-
-  # T2 OLTC (ratio only)
-  t2.has_ratio_tap = true
-  t2.has_phase_tap = false
-  t2.tap_min = Float64(_cfg_value(cfg, "t2_tap_min"))
-  t2.tap_max = Float64(_cfg_value(cfg, "t2_tap_max"))
-  t2.tap_step = Float64(_cfg_value(cfg, "t2_tap_step"))
-  t2.phase_shift_deg = 0.0
-  t2.angle = 0.0
-
-  # PST1 (phase only)
-  pst1.has_ratio_tap = false
-  pst1.has_phase_tap = true
-  pst1.tap_ratio = 1.0
-  pst1.ratio = 1.0
-  pst1.phase_shift_deg = 0.0
-  pst1.angle = 0.0
-  pst1.phase_min_deg = Float64(_cfg_value(cfg, "pst1_phase_min_deg"))
-  pst1.phase_max_deg = Float64(_cfg_value(cfg, "pst1_phase_max_deg"))
-  pst1.phase_step_deg = Float64(_cfg_value(cfg, "pst1_phase_step_deg"))
-
-  # ST1 Schrägregler (ratio + phase)
-  st1.has_ratio_tap = true
-  st1.has_phase_tap = true
-  st1.tap_ratio = 1.0
-  st1.ratio = 1.0
-  st1.tap_min = Float64(_cfg_value(cfg, "st1_tap_min"))
-  st1.tap_max = Float64(_cfg_value(cfg, "st1_tap_max"))
-  st1.tap_step = Float64(_cfg_value(cfg, "st1_tap_step"))
-  st1.phase_shift_deg = 0.0
-  st1.angle = 0.0
-  st1.phase_min_deg = Float64(_cfg_value(cfg, "st1_phase_min_deg"))
-  st1.phase_max_deg = Float64(_cfg_value(cfg, "st1_phase_max_deg"))
-  st1.phase_step_deg = Float64(_cfg_value(cfg, "st1_phase_step_deg"))
-
-  return net
-end
-
-function _controller_branches(net::Net)
-  return (pst1 = getNetBranch(net = net, fromBus = "B1", toBus = "B2"), st1 = getNetBranch(net = net, fromBus = "B4", toBus = "B5"), t2 = getNetBranch(net = net, fromBus = "B6", toBus = "B7"))
-end
-
-"""
-    configure_tap_controllers!(net, cfg)
-
-Configures one voltage, one phase-power, and one coupled complex tap controller.
-All controller setpoints are loaded from YAML or fallback defaults.
-"""
-function configure_tap_controllers!(net::Net, cfg::Dict{String,Any})
-  if !isdefined(Sparlectra, :addTapController!)
-    error("Sparlectra.addTapController! is not available. Please update this example to the current API name.")
+  for bus in ("Slack", "Grid_A", "Grid_B", "MV_A", "MV_B", "Load_LV", "Load_MV")
+    addBus!(net = net, busName = bus, vn_kV = 110.0)
   end
 
-  clearTapControllers!(net)
-  c = _controller_branches(net)
+  addProsumer!(net = net, busName = "Slack", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.01, va_deg = 0.0, referencePri = "Slack")
+  addProsumer!(net = net, busName = "Load_LV", type = "ENERGYCONSUMER", p = -45.0, q = -12.0)
+  addProsumer!(net = net, busName = "Load_MV", type = "ENERGYCONSUMER", p = -28.0, q = -8.0)
 
-  function _add_voltage_tap_controller_compat!(; trafo::String, target_bus::String, target_vm_pu::Float64, deadband_vm_pu::Float64, voltage_error_metric::Symbol, max_outer_iters::Int)
-    kwargs_common = (trafo = trafo, mode = :voltage, target_bus = target_bus, target_vm_pu = target_vm_pu, control_ratio = true, control_phase = false, is_discrete = true, deadband_vm_pu = deadband_vm_pu, max_outer_iters = max_outer_iters)
-    try
-      addTapController!(net; kwargs_common..., voltage_error_metric = voltage_error_metric)
-    catch err
-      if err isa MethodError || err isa UndefKeywordError
-        addTapController!(net; kwargs_common...)
-      else
-        rethrow(err)
-      end
-    end
-  end
+  addPIModelTrafo!(net = net, fromBus = "Slack", toBus = "Grid_A", r_pu = 0.006, x_pu = 0.05, b_pu = 0.0, ratio = 1.0, shift_deg = 0.0, status = 1)
+  addPIModelTrafo!(net = net, fromBus = "Grid_A", toBus = "Grid_B", r_pu = 0.004, x_pu = 0.035, b_pu = 0.0, ratio = 1.0, shift_deg = 0.0, status = 1)
+  addPIModelTrafo!(net = net, fromBus = "MV_A", toBus = "MV_B", r_pu = 0.004, x_pu = 0.03, b_pu = 0.0, ratio = 1.0, shift_deg = 0.0, status = 1)
 
-  _add_voltage_tap_controller_compat!(;
-    trafo = string(c.t2.branchIdx),
-    target_bus = String(_cfg_value(cfg, "t2_target_bus")),
-    target_vm_pu = Float64(_cfg_value(cfg, "t2_target_vm_pu")),
-    deadband_vm_pu = Float64(_cfg_value(cfg, "t2_deadband_vm_pu")),
-    voltage_error_metric = Symbol(_cfg_value(cfg, "t2_voltage_error_metric")),
-    max_outer_iters = Int(_cfg_value(cfg, "t2_max_outer_iters")),
+  addPIModelACLine!(net = net, fromBus = "Grid_B", toBus = "MV_A", r_pu = 0.015, x_pu = 0.09, b_pu = 0.01, status = 1)
+  addPIModelACLine!(net = net, fromBus = "Grid_A", toBus = "MV_A", r_pu = 0.02, x_pu = 0.11, b_pu = 0.01, status = 1)
+  addPIModelACLine!(net = net, fromBus = "Grid_B", toBus = "MV_B", r_pu = 0.018, x_pu = 0.10, b_pu = 0.01, status = 1)
+  addPIModelACLine!(net = net, fromBus = "MV_B", toBus = "Load_LV", r_pu = 0.015, x_pu = 0.07, b_pu = 0.01, status = 1)
+  addPIModelACLine!(net = net, fromBus = "MV_A", toBus = "Load_MV", r_pu = 0.02, x_pu = 0.08, b_pu = 0.01, status = 1)
+
+  t_oltc = getNetBranch(net = net, fromBus = "Slack", toBus = "Grid_A")
+  t_pst = getNetBranch(net = net, fromBus = "Grid_A", toBus = "Grid_B")
+  t_schraeg = getNetBranch(net = net, fromBus = "MV_A", toBus = "MV_B")
+  t_oltc.comp.cName = "T_OLTC"
+  t_pst.comp.cName = "T_PST"
+  t_schraeg.comp.cName = "T_SCHRAEG"
+
+  oltc = get(demo_settings, "oltc", Dict{String,Any}())
+  pst = get(demo_settings, "pst", Dict{String,Any}())
+  schraeg = get(demo_settings, "schraeg", Dict{String,Any}())
+
+  t_oltc.has_ratio_tap = true
+  t_oltc.tap_min = get(oltc, "tap_min", 0.95)
+  t_oltc.tap_max = get(oltc, "tap_max", 1.08)
+  t_oltc.tap_step = get(oltc, "tap_step", 0.0125)
+
+  t_pst.has_phase_tap = true
+  t_pst.phase_min_deg = get(pst, "phase_min_deg", -12.0)
+  t_pst.phase_max_deg = get(pst, "phase_max_deg", 12.0)
+  t_pst.phase_step_deg = get(pst, "phase_step_deg", 1.0)
+
+  t_schraeg.has_ratio_tap = true
+  t_schraeg.tap_min = get(schraeg, "tap_min", 0.95)
+  t_schraeg.tap_max = get(schraeg, "tap_max", 1.08)
+  t_schraeg.tap_step = get(schraeg, "tap_step", 0.0125)
+  t_schraeg.has_phase_tap = true
+  t_schraeg.phase_min_deg = get(schraeg, "phase_min_deg", -10.0)
+  t_schraeg.phase_max_deg = get(schraeg, "phase_max_deg", 10.0)
+  t_schraeg.phase_step_deg = get(schraeg, "phase_step_deg", 1.0)
+
+  return net, (t_oltc = t_oltc, t_pst = t_pst, t_schraeg = t_schraeg)
+end
+
+function add_demo_controllers!(net::Net, trafos, demo_settings::Dict{String,Any})
+  # Demo controller setpoints come from the example YAML.
+  # Controller objects are still created programmatically.
+  # This is not the central control.controllers schema.
+  oltc = get(demo_settings, "oltc", Dict{String,Any}())
+  pst = get(demo_settings, "pst", Dict{String,Any}())
+  schraeg = get(demo_settings, "schraeg", Dict{String,Any}())
+
+  addTapController!(
+    net;
+    trafo = "T_OLTC",
+    mode = :voltage,
+    target_bus = String(get(oltc, "target_bus", "Load_LV")),
+    target_vm_pu = get(oltc, "target_vm_pu", 1.0),
+    control_ratio = true,
+    control_phase = false,
+    is_discrete = true,
+    deadband_vm_pu = get(oltc, "deadband_vm_pu", 5e-3),
+    max_outer_iters = get(oltc, "max_outer_iters", 12),
   )
 
   addTapController!(
     net;
-    trafo = string(c.pst1.branchIdx),
+    trafo = "T_PST",
     mode = :branch_active_power,
-    target_branch = _target_branch(cfg, "pst1_target"),
-    p_target_mw = Float64(_cfg_value(cfg, "pst1_target_p_mw")),
+    target_branch = (String(get(pst, "target_branch_from", "Grid_B")), String(get(pst, "target_branch_to", "MV_B"))),
+    p_target_mw = get(pst, "p_target_mw", 20.0),
     control_ratio = false,
     control_phase = true,
     is_discrete = true,
-    deadband_p_mw = 0.5,
-    max_outer_iters = Int(_cfg_value(cfg, "pst1_max_outer_iters")),
+    deadband_p_mw = get(pst, "deadband_p_mw", 1.0),
+    max_outer_iters = get(pst, "max_outer_iters", 12),
   )
 
   addTapController!(
     net;
-    trafo = string(c.st1.branchIdx),
+    trafo = "T_SCHRAEG",
     mode = :voltage_and_branch_active_power,
-    target_bus = String(_cfg_value(cfg, "st1_target_bus")),
-    target_vm_pu = Float64(_cfg_value(cfg, "st1_target_vm_pu")),
-    target_branch = _target_branch(cfg, "st1_target"),
-    p_target_mw = Float64(_cfg_value(cfg, "st1_target_p_mw")),
+    target_bus = String(get(schraeg, "target_bus", "Load_MV")),
+    target_vm_pu = get(schraeg, "target_vm_pu", 1.0),
+    target_branch = (String(get(schraeg, "target_branch_from", "MV_A")), String(get(schraeg, "target_branch_to", "MV_B"))),
+    p_target_mw = get(schraeg, "p_target_mw", 10.0),
     control_ratio = true,
     control_phase = true,
     is_discrete = true,
-    deadband_vm_pu = Float64(_cfg_value(cfg, "st1_deadband_vm_pu")),
-    voltage_error_metric = Symbol(_cfg_value(cfg, "st1_voltage_error_metric")),
-    deadband_p_mw = 0.5,
-    max_outer_iters = Int(_cfg_value(cfg, "st1_max_outer_iters")),
+    deadband_vm_pu = get(schraeg, "deadband_vm_pu", 5e-3),
+    deadband_p_mw = get(schraeg, "deadband_p_mw", 1.0),
+    max_outer_iters = get(schraeg, "max_outer_iters", 20),
   )
-
-  return nothing
 end
 
-"""
-    print_tap_control_targets(net, cfg)
-
-Prints configured target values together with achieved branch/bus values and
-current tap states for T2, PST1, and ST1.
-"""
-function print_tap_control_targets(io::IO, net::Net, cfg::Dict{String,Any})
-  c = _controller_branches(net)
-
-  t2_target_bus = String(_cfg_value(cfg, "t2_target_bus"))
-  t2_target_vm_pu = Float64(_cfg_value(cfg, "t2_target_vm_pu"))
-  pst1_target_branch = _target_branch(cfg, "pst1_target")
-  pst1_target_p_mw = Float64(_cfg_value(cfg, "pst1_target_p_mw"))
-  st1_target_bus = String(_cfg_value(cfg, "st1_target_bus"))
-  st1_target_vm_pu = Float64(_cfg_value(cfg, "st1_target_vm_pu"))
-  st1_target_branch = _target_branch(cfg, "st1_target")
-  st1_target_p_mw = Float64(_cfg_value(cfg, "st1_target_p_mw"))
-
-  println(io, "Tap Control Targets")
-  println(io, "-------------------")
-  println(io, "Power sign convention: P is positive in the configured target branch direction (from -> to).")
-  println(io, "T2 OLTC:")
-  @printf(io, "  target bus       : %s\n", t2_target_bus)
-  @printf(io, "  target Vm        : %.4f pu\n", t2_target_vm_pu)
-  @printf(io, "  achieved Vm      : %.4f pu\n", get_bus_vm_pu(net, t2_target_bus))
-  @printf(io, "  tap ratio        : %.5f\n", c.t2.tap_ratio)
-  @printf(io, "  tap range        : %.5f .. %.5f\n", c.t2.tap_min, c.t2.tap_max)
-  @printf(io, "  tap step         : %.5f\n", c.t2.tap_step)
-
-  println(io, "\nPST1:")
-  @printf(io, "  target branch    : %s -> %s\n", pst1_target_branch[1], pst1_target_branch[2])
-  @printf(io, "  target P         : %.3f MW\n", pst1_target_p_mw)
-  @printf(io, "  achieved P       : %.3f MW\n", get_branch_p_from_to_mw(net, pst1_target_branch[1], pst1_target_branch[2]))
-  @printf(io, "  phase shift      : %.5f deg\n", c.pst1.phase_shift_deg)
-
-  println(io, "\nST1 Schraegregler:")
-  @printf(io, "  target bus       : %s\n", st1_target_bus)
-  @printf(io, "  target Vm        : %.4f pu\n", st1_target_vm_pu)
-  @printf(io, "  achieved Vm      : %.4f pu\n", get_bus_vm_pu(net, st1_target_bus))
-  @printf(io, "  target branch    : %s -> %s\n", st1_target_branch[1], st1_target_branch[2])
-  @printf(io, "  target P         : %.3f MW\n", st1_target_p_mw)
-  @printf(io, "  achieved P       : %.3f MW\n", get_branch_p_from_to_mw(net, st1_target_branch[1], st1_target_branch[2]))
-  @printf(io, "  tap ratio        : %.5f\n", c.st1.tap_ratio)
-  @printf(io, "  phase shift      : %.5f deg\n", c.st1.phase_shift_deg)
-
-  return nothing
-end
-
-function _print_section(io::IO, title::String)
-  println(io, "\n======================================================================")
-  println(io, title)
-  println(io, "======================================================================")
-end
-
-function _next_versioned_logfile()
-  outdir = joinpath(@__DIR__, "_out")
-  mkpath(outdir)
-  date_tag = Dates.format(Dates.today(), "yyyy-mm-dd")
-  prefix = "run_tap_control_demo_grid_$(date_tag)_v"
-  existing = filter(name -> startswith(name, prefix) && endswith(name, ".log"), readdir(outdir))
-  version = 1
-  if !isempty(existing)
-    versions = Int[]
-    for name in existing
-      m = match(r"_v(\d+)\.log$", name)
-      isnothing(m) || push!(versions, parse(Int, m.captures[1]))
-    end
-    !isempty(versions) && (version = maximum(versions) + 1)
+function print_compact_result(result::ControlRunResult)
+  println("Control status: ", result.status)
+  println("Outer iterations: ", result.outer_iterations)
+  println("PF solves: ", result.powerflow_solves)
+  println("Controllers:")
+  for row in result.controllers
+    @printf("  %-18s mode=%-28s status=%-12s tap=%.4f phase=%.2f°\n", row.controller_name, row.mode, row.status, row.tap_ratio, row.phase_shift_deg)
   end
-  return joinpath(outdir, "$(prefix)$(lpad(version, 2, '0')).log")
-end
-
-function _build_classic_report_string(net::Net, ite::Int, tol::Float64, method::Symbol)
-  return mktempdir() do tmpdir
-    printACPFlowResults(net, 0.0, ite, tol, true, tmpdir; converged = true, solver = method)
-    read(joinpath(tmpdir, "result_$(net.name).txt"), String)
+  println("Trace:")
+  println("  rows: ", length(result.trace))
+  if !isempty(result.trace)
+    println("  first: ", first(result.trace))
+    println("  last:  ", last(result.trace))
   end
 end
 
-function _strip_control_section_for_stdout(report::String)
-  control_header = "Control\n-------\n\nTransformer Control Summary\n---------------------------\n"
-  control_start = findfirst(control_header, report)
-  isnothing(control_start) && return report
+function main(args::AbstractVector{String} = ARGS)
+  demo_path, demo_settings = load_demo_settings(args)
+  config_label, sparlectra_config = load_demo_sparlectra_config(demo_settings, demo_path)
+  net, trafos = build_demo_net(demo_settings)
 
-  net_start = findnext("Net:", report, last(control_start) + 1)
-  isnothing(net_start) && return report[1:first(control_start)-1]
-  return report[1:first(control_start)-1] * report[net_start:end]
-end
+  _, erg0, _ = run_acpflow(net = net; config = sparlectra_config, show_results = false)
+  erg0 == 0 || error("Uncontrolled PF failed with erg=$erg0")
+  vm_lv0 = get_bus_vm_pu(net, "Load_LV")
+  vm_mv0 = get_bus_vm_pu(net, "Load_MV")
 
-function main()
-  logfile = _next_versioned_logfile()
-  open(logfile, "w") do io_log
-    println(io_log, "Tap Control Demo Grid")
-    println(io_log, "Logfile: $logfile")
+  add_demo_controllers!(net, trafos, demo_settings)
+  # Classic network output is enabled by default for this demo.
+  # Set SPARLECTRA_TAP_DEMO_CLASSIC=0 for compact-only output.
+  show_classic = get(ENV, "SPARLECTRA_TAP_DEMO_CLASSIC", "1") != "0"
+  raw = get(ENV, "SPARLECTRA_TAP_DEMO_RAW", "0") == "1"
 
-    yaml_path = _yaml_path_from_inputs()
-    cfg = merge(copy(DEFAULT_CFG), _load_demo_yaml_config(yaml_path))
-    if !isempty(yaml_path)
-      println(io_log, "Using YAML config: $yaml_path")
-    else
-      println(io_log, "Using built-in defaults (no YAML file found)")
+  _, erg, _ = run_acpflow(net = net; config = sparlectra_config, show_results = show_classic)
+  erg == 0 || error("Controlled PF failed with erg=$erg")
+
+  vm_lv = get_bus_vm_pu(net, "Load_LV")
+  vm_mv = get_bus_vm_pu(net, "Load_MV")
+  p_gb_mb = get_branch_p_from_to_mw(net, "Grid_B", "MV_B")
+  p_mva_mvb = get_branch_p_from_to_mw(net, "MV_A", "MV_B")
+
+  result = latest_control_result(net)
+  result === nothing && error("Expected control result on net.control_result")
+
+  println("Demo YAML: ", demo_path)
+  println("Central config: ", config_label)
+  println("Classic output: ", show_classic ? "enabled" : "disabled")
+  println("Uncontrolled:")
+  @printf("  Load_LV Vm: %.6f pu\n", vm_lv0)
+  @printf("  Load_MV Vm: %.6f pu\n", vm_mv0)
+  println("Controlled:")
+  @printf("  Load_LV Vm: %.6f pu\n", vm_lv)
+  @printf("  Load_MV Vm: %.6f pu\n", vm_mv)
+  @printf("  P(Grid_B -> MV_B): %.4f MW\n", p_gb_mb)
+  @printf("  P(MV_A -> MV_B): %.4f MW\n", p_mva_mvb)
+
+  print_compact_result(result)
+  println("Tip: set SPARLECTRA_TAP_DEMO_CLASSIC=0 for compact-only output.")
+  println("Tip: set SPARLECTRA_TAP_DEMO_RAW=1 for raw ControlRunResult rows.")
+
+  if raw
+    println("Raw controller rows:")
+    for row in result.controllers
+      println("  ", row)
     end
-
-    net = build_tap_control_demo_grid(cfg)
-
-    max_ite = Int(_cfg_value(cfg, "max_ite"))
-    pf_tol = Float64(_cfg_value(cfg, "pf_tol"))
-    pf_method = Symbol(_cfg_value(cfg, "pf_method"))
-
-    _, erg0, _ = run_net_acpflow(net = net, max_ite = max_ite, tol = pf_tol, verbose = 0, method = pf_method, show_results = false)
-    erg0 == 0 || error("Uncontrolled power flow failed with erg=$(erg0)")
-
-    _print_section(io_log, "Uncontrolled power flow")
-    print_tap_control_targets(io_log, net, cfg)
-
-    configure_tap_controllers!(net, cfg)
-
-    _print_section(io_log, "Configured tap controller setpoints")
-    print_tap_control_targets(io_log, net, cfg)
-
-    ite, erg1, _ = run_net_acpflow(net = net, max_ite = max_ite, tol = pf_tol, verbose = 0, method = pf_method, show_results = false)
-    erg1 == 0 || error("Controlled power flow failed with erg=$(erg1)")
-
-    _print_section(io_log, "Controlled power flow with outer-loop tap control")
-    print_tap_control_targets(io_log, net, cfg)
-    printTapControllerSummary(io_log, net)
-
-    classic_report = _build_classic_report_string(net, ite, pf_tol, pf_method)
-    classic_report_stdout = _strip_control_section_for_stdout(classic_report)
-    _print_section(stdout, "Final classic network report")
-    print(stdout, classic_report_stdout)
-    _print_section(io_log, "Final classic network report")
-    print(io_log, classic_report)
-
-    report = buildACPFlowReport(net; ct = 0.0, ite = ite, tol = pf_tol, converged = true, solver = pf_method)
-    _print_section(io_log, "Tap controller DataFrame-compatible rows")
-    for row in report.transformer_controls
-      println(io_log, row)
+    println("Raw trace rows:")
+    for row in result.trace
+      println("  ", row)
     end
-    return net
   end
 end
 
-if get(ENV, "SPARLECTRA_TAP_CONTROL_DEMO_GRID", "0") != "1"
-  Base.invokelatest(getfield(@__MODULE__, :main))
+if get(ENV, "SPARLECTRA_TAP_CONTROL_DEMO_NO_MAIN", "0") != "1"
+  Base.invokelatest(getfield(@__MODULE__, :main), ARGS)
 end
