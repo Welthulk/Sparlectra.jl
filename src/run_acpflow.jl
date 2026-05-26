@@ -194,6 +194,13 @@ _matpower_config_for_runner(config::SparlectraConfig) = config.matpower
 _output_config_for_runner(::Union{Nothing,PowerFlowConfig}) = output_config()
 _output_config_for_runner(config::SparlectraConfig) = config.output
 
+"""
+Run AC power flow using the public high-level ACP runner.
+
+Use `run_acpflow(; net = net, ...)` for already constructed in-memory networks (preferred),
+or `run_acpflow(; casefile = "case.m", path = "...", ...)` for file-based workflows.
+Exactly one of `net` or `casefile` must be provided.
+"""
 function run_acpflow(;
   net::Union{Nothing,Net} = nothing,
   max_ite::Int = 30,
@@ -247,9 +254,10 @@ function run_acpflow(;
   performance_profile = nothing,
 )
   if net !== nothing
-    return run_net_acpflow(; net = net, max_ite = max_ite, tol = tol, verbose = verbose, printResultToFile = printResultToFile, printResultAnyCase = printResultAnyCase, method = method, autodamp = autodamp, autodamp_min = autodamp_min, start_projection = start_projection, start_projection_try_dc_start = start_projection_try_dc_start, start_projection_try_blend_scan = start_projection_try_blend_scan, start_projection_branch_guard = start_projection_branch_guard, start_projection_measure_candidates = start_projection_measure_candidates, start_projection_accept_unmeasured_dc_start = start_projection_accept_unmeasured_dc_start, start_projection_blend_lambdas = start_projection_blend_lambdas, start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg, qlimit_start_iter = qlimit_start_iter, qlimit_start_mode = qlimit_start_mode, qlimit_auto_q_delta_pu = qlimit_auto_q_delta_pu, show_results = show_results, lock_pv_to_pq_buses = lock_pv_to_pq_buses, opt_flatstart = isnothing(opt_flatstart) ? true : opt_flatstart, pv_table_rows = pv_table_rows, validate_limits_after_pf = validate_limits_after_pf, q_limit_violation_headroom = q_limit_violation_headroom, qlimit_trace_buses = qlimit_trace_buses, qlimit_lock_reason = qlimit_lock_reason, qlimit_guard = qlimit_guard, qlimit_guard_min_q_range_pu = qlimit_guard_min_q_range_pu, qlimit_guard_zero_range_mode = qlimit_guard_zero_range_mode, qlimit_guard_narrow_range_mode = qlimit_guard_narrow_range_mode, qlimit_guard_log = qlimit_guard_log, qlimit_guard_max_switches = qlimit_guard_max_switches, qlimit_guard_accept_bounded_violations = qlimit_guard_accept_bounded_violations, qlimit_guard_max_remaining_violations = qlimit_guard_max_remaining_violations, qlimit_guard_freeze_after_repeated_switching = qlimit_guard_freeze_after_repeated_switching, qlimit_guard_violation_mode = qlimit_guard_violation_mode, qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu, bus_shunt_model = isnothing(bus_shunt_model) ? net.bus_shunt_model : bus_shunt_model, config = config, performance_profile = performance_profile)
+    isnothing(casefile) || throw(ArgumentError("run_acpflow: pass either net or casefile, not both."))
+    return _run_acpflow_net!(; net = net, max_ite = max_ite, tol = tol, verbose = verbose, printResultToFile = printResultToFile, printResultAnyCase = printResultAnyCase, method = method, autodamp = autodamp, autodamp_min = autodamp_min, start_projection = start_projection, start_projection_try_dc_start = start_projection_try_dc_start, start_projection_try_blend_scan = start_projection_try_blend_scan, start_projection_branch_guard = start_projection_branch_guard, start_projection_measure_candidates = start_projection_measure_candidates, start_projection_accept_unmeasured_dc_start = start_projection_accept_unmeasured_dc_start, start_projection_blend_lambdas = start_projection_blend_lambdas, start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg, qlimit_start_iter = qlimit_start_iter, qlimit_start_mode = qlimit_start_mode, qlimit_auto_q_delta_pu = qlimit_auto_q_delta_pu, show_results = show_results, lock_pv_to_pq_buses = lock_pv_to_pq_buses, opt_flatstart = isnothing(opt_flatstart) ? true : opt_flatstart, pv_table_rows = pv_table_rows, validate_limits_after_pf = validate_limits_after_pf, q_limit_violation_headroom = q_limit_violation_headroom, qlimit_trace_buses = qlimit_trace_buses, qlimit_lock_reason = qlimit_lock_reason, qlimit_guard = qlimit_guard, qlimit_guard_min_q_range_pu = qlimit_guard_min_q_range_pu, qlimit_guard_zero_range_mode = qlimit_guard_zero_range_mode, qlimit_guard_narrow_range_mode = qlimit_guard_narrow_range_mode, qlimit_guard_log = qlimit_guard_log, qlimit_guard_max_switches = qlimit_guard_max_switches, qlimit_guard_accept_bounded_violations = qlimit_guard_accept_bounded_violations, qlimit_guard_max_remaining_violations = qlimit_guard_max_remaining_violations, qlimit_guard_freeze_after_repeated_switching = qlimit_guard_freeze_after_repeated_switching, qlimit_guard_violation_mode = qlimit_guard_violation_mode, qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu, bus_shunt_model = isnothing(bus_shunt_model) ? net.bus_shunt_model : bus_shunt_model, config = config, performance_profile = performance_profile)
   end
-  isnothing(casefile) && error("run_acpflow requires `casefile` for file-based runs, or `net` for in-memory runs.")
+  isnothing(casefile) && throw(ArgumentError("run_acpflow: casefile is required when net is not provided."))
   pf_config = isnothing(config) ? powerflow_config() : _as_powerflow_config(config)
   mat_cfg = _matpower_config_for_runner(config)
   out_cfg = _output_config_for_runner(config)
@@ -520,22 +528,7 @@ function run_acpflow(;
 end
 
 
-"""
-Compatibility wrapper to perform AC power flow analysis on an existing Net.
-
-Parameters:
-- net: Net, the network object.
-- max_ite: Int, the maximum number of iterations for the power flow algorithm (default: 30).
-- tol: Float64, tolerance for convergence criterion (default: 1e-6).
-- verbose: Int, verbosity level for output (default: 0).
-- printResultToFile: Bool, flag to print results to a file (default: false).
-- printResultAnyCase: Bool, flag to print results even if the power flow fails (default: false).
-- autodamp: Bool, enable residual-based Newton step backtracking for `method = :rectangular`.
-- autodamp_min: Float64, minimum trial step length for automatic damping.
-run_net_acpflow is kept as a compatibility wrapper for existing code.
-Prefer `run_acpflow(; net = ..., ...)` in new code.
-"""
-function run_net_acpflow(; net::Net, max_ite::Int = 30, tol::Float64 = 1e-6, verbose::Int = 0, printResultToFile::Bool = false, printResultAnyCase::Bool = false, method::Symbol = :rectangular, autodamp::Bool = false, autodamp_min::Float64 = 1e-3, start_projection::Bool = false, start_projection_try_dc_start::Bool = true, start_projection_try_blend_scan::Bool = true, start_projection_branch_guard::Bool = true, start_projection_measure_candidates::Bool = true, start_projection_accept_unmeasured_dc_start::Bool = false, start_projection_blend_lambdas::AbstractVector{<:Real} = [0.25, 0.5, 0.75], start_projection_dc_angle_limit_deg::Float64 = 60.0, qlimit_start_iter::Int = 2, qlimit_start_mode::Symbol = :iteration, qlimit_auto_q_delta_pu::Float64 = 1e-4, show_results::Bool = true, lock_pv_to_pq_buses::AbstractVector{Int} = Int[], opt_flatstart::Bool = true, pv_table_rows::Int = 30, validate_limits_after_pf::Bool = false, q_limit_violation_headroom::Float64 = 0.0, qlimit_trace_buses::AbstractVector{Int} = Int[], qlimit_lock_reason::Symbol = :manual, qlimit_guard::Bool = false, qlimit_guard_min_q_range_pu::Float64 = 1e-4, qlimit_guard_zero_range_mode::Symbol = :lock_pq, qlimit_guard_narrow_range_mode::Symbol = :prefer_pq, qlimit_guard_log::Bool = true, qlimit_guard_max_switches::Int = 10, qlimit_guard_accept_bounded_violations::Bool = false, qlimit_guard_max_remaining_violations::Int = 0, qlimit_guard_freeze_after_repeated_switching::Bool = true, qlimit_guard_violation_mode::Symbol = :delayed_switch, qlimit_guard_violation_threshold_pu::Float64 = 1e-4, bus_shunt_model = net.bus_shunt_model, config::Union{Nothing,PowerFlowConfig,SparlectraConfig} = nothing, performance_profile = nothing)
+function _run_acpflow_net!(; net::Net, max_ite::Int = 30, tol::Float64 = 1e-6, verbose::Int = 0, printResultToFile::Bool = false, printResultAnyCase::Bool = false, method::Symbol = :rectangular, autodamp::Bool = false, autodamp_min::Float64 = 1e-3, start_projection::Bool = false, start_projection_try_dc_start::Bool = true, start_projection_try_blend_scan::Bool = true, start_projection_branch_guard::Bool = true, start_projection_measure_candidates::Bool = true, start_projection_accept_unmeasured_dc_start::Bool = false, start_projection_blend_lambdas::AbstractVector{<:Real} = [0.25, 0.5, 0.75], start_projection_dc_angle_limit_deg::Float64 = 60.0, qlimit_start_iter::Int = 2, qlimit_start_mode::Symbol = :iteration, qlimit_auto_q_delta_pu::Float64 = 1e-4, show_results::Bool = true, lock_pv_to_pq_buses::AbstractVector{Int} = Int[], opt_flatstart::Bool = true, pv_table_rows::Int = 30, validate_limits_after_pf::Bool = false, q_limit_violation_headroom::Float64 = 0.0, qlimit_trace_buses::AbstractVector{Int} = Int[], qlimit_lock_reason::Symbol = :manual, qlimit_guard::Bool = false, qlimit_guard_min_q_range_pu::Float64 = 1e-4, qlimit_guard_zero_range_mode::Symbol = :lock_pq, qlimit_guard_narrow_range_mode::Symbol = :prefer_pq, qlimit_guard_log::Bool = true, qlimit_guard_max_switches::Int = 10, qlimit_guard_accept_bounded_violations::Bool = false, qlimit_guard_max_remaining_violations::Int = 0, qlimit_guard_freeze_after_repeated_switching::Bool = true, qlimit_guard_violation_mode::Symbol = :delayed_switch, qlimit_guard_violation_threshold_pu::Float64 = 1e-4, bus_shunt_model = net.bus_shunt_model, config::Union{Nothing,PowerFlowConfig,SparlectraConfig} = nothing, performance_profile = nothing)
 
   use_active_config = config !== nothing || (max_ite == 30 && tol == 1e-6 && method === :rectangular && !autodamp && autodamp_min == 1e-3 && !start_projection && start_projection_try_dc_start && start_projection_try_blend_scan && start_projection_branch_guard && start_projection_measure_candidates && !start_projection_accept_unmeasured_dc_start && collect(start_projection_blend_lambdas) == [0.25, 0.5, 0.75] && start_projection_dc_angle_limit_deg == 60.0 && qlimit_start_iter == 2 && qlimit_start_mode === :iteration && qlimit_auto_q_delta_pu == 1e-4 && isempty(lock_pv_to_pq_buses) && opt_flatstart && isempty(qlimit_trace_buses) && !qlimit_guard)
   pf_config = config === nothing ? powerflow_config() : _as_powerflow_config(config)
@@ -582,7 +575,7 @@ function run_net_acpflow(; net::Net, max_ite::Int = 30, tol::Float64 = 1e-6, ver
   end
 
   requested_shunt_model = normalize_bus_shunt_model(bus_shunt_model)
-  requested_shunt_model == net.bus_shunt_model || error("run_net_acpflow: bus_shunt_model must be set when constructing/importing the Net; got $(requested_shunt_model) for a net configured as $(net.bus_shunt_model).")
+  requested_shunt_model == net.bus_shunt_model || error("run_acpflow(net=...): bus_shunt_model must be set when constructing/importing the Net; got $(requested_shunt_model) for a net configured as $(net.bus_shunt_model).")
 
   solver_config = _legacy_powerflow_config(
     max_ite = max_ite,

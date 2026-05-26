@@ -11,7 +11,7 @@ MATPOWER, CGMES, or other external case file.
 using Sparlectra
 
 net, meta = build_synthetic_tiled_grid_net(1000; aspect_ratio = 1.0)
-ite, erg, elapsed_s = run_net_acpflow(net = net, show_results = false)
+ite, erg, elapsed_s = run_acpflow(net = net, show_results = false)
 ```
 
 `build_tiled_grid_net` is an alias for `build_synthetic_tiled_grid_net`.

@@ -1195,7 +1195,7 @@ Update the active and reactive power of a generator connected to a bus in the ne
 ```julia
 net = run_acpflow(max_ite= 7,tol = 1e-6, casefile='a_case.m') # run the power flow on the network and get the network object
 updateBusPower!(net = net, busName = "Bus1", p = 0.5, q = 0.2) # Update the power of Bus1 to 0.5 MW and 0.2 MVar
-run_net_acpflow(net = net, max_ite= 7,tol = 1e-6) # rerun the power flow with the updated network
+run_acpflow(net = net, max_ite= 7,tol = 1e-6) # rerun the power flow with the updated network
 ```
 """
 function addBusGenPower!(; net::Net, busName::String, p::Union{Nothing,Float64} = nothing, q::Union{Nothing,Float64} = nothing)
@@ -1218,7 +1218,7 @@ Update the active and reactive power of a load connected to a bus in the network
 ```julia
 net = run_acpflow(max_ite= 7,tol = 1e-6, casefile='a_case.m') # run the power flow on the network and get the network object
 updateBusPower!(net = net, busName = "Bus1", p = 0.5, q = 0.2) # Update the power of Bus1 to 0.5 MW and 0.2 MVar
-run_net_acpflow(net = net, max_ite= 7,tol = 1e-6) # rerun the power flow with the updated network
+run_acpflow(net = net, max_ite= 7,tol = 1e-6) # rerun the power flow with the updated network
 ```
 """
 function addBusLoadPower!(; net::Net, busName::String, p::Union{Nothing,Float64} = nothing, q::Union{Nothing,Float64} = nothing)
@@ -1239,7 +1239,7 @@ Update the active and reactive power of a shunt connected to a bus in the networ
 ```julia
 net = run_acpflow(max_ite= 7,tol = 1e-6, casefile='a_case.m') # run the power flow on the network and get the network object
 updateBusPower!(net = net, busName = "Bus1", p = 0.5, q = 0.2) # Update the power of Bus1 to 0.5 MW and 0.2 MVar
-run_net_acpflow(net = net, max_ite= 7,tol = 1e-6) # rerun the power flow with the updated network
+run_acpflow(net = net, max_ite= 7,tol = 1e-6) # rerun the power flow with the updated network
 ```
 """
 function addBusShuntPower!(; net::Net, busName::String, p::Float64, q::Float64)

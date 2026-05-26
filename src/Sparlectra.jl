@@ -129,7 +129,7 @@ export
   # results.jl
   ACPFlowReport, buildACPFlowReport, printACPFlowResults, printProsumerResults,
   # run_acpflow.jl
-  run_acpflow, run_net_acpflow, run_matpower_case,
+  run_acpflow, run_matpower_case,
   # solver_core.jl
   calc_injections, calc_currents, solve_linear, solve_sparse_system, build_pos_map, slack_elimination_indices,extract_bus_types_and_vset,
   build_qload_pu, build_voltage_vector, compute_sbus_and_totals,
