@@ -178,6 +178,79 @@ function run_tap_controller_tests()
     @test net.control_result === result
   end
 
+  @testset "Disabled control still runs one baseline PF" begin
+    net, tbr = _build_net()
+    addPowerTransformerControl!(net;
+      trafo = string(tbr.branchIdx),
+      mode = :voltage,
+      target_bus = "Load",
+      target_vm_pu = 0.98,
+      control_ratio = true,
+      control_phase = false,
+    )
+    result = run_control!(net;
+      controllers = collect_outer_controllers(net),
+      pf_config = PowerFlowConfig(method = :rectangular, max_iter = 30, tol = 1e-9),
+      control_config = ControlConfig(enabled = false),
+      verbose = 0,
+    )
+    @test result isa ControlRunResult
+    @test result.status == :disabled
+    @test result.converged == true
+    @test result.powerflow_solves == 1
+    @test result.last_pf_iterations >= 1
+    @test result.last_pf_status == :ok
+    @test latest_control_result(net) === result
+    @test net.control_result === result
+  end
+
+  @testset "All disabled controllers still run one baseline PF" begin
+    net, tbr = _build_net()
+    addPowerTransformerControl!(net;
+      trafo = string(tbr.branchIdx),
+      mode = :voltage,
+      target_bus = "Load",
+      target_vm_pu = 0.98,
+      control_ratio = true,
+      control_phase = false,
+      enabled = false,
+    )
+    result = run_control!(net;
+      controllers = collect_outer_controllers(net),
+      pf_config = PowerFlowConfig(method = :rectangular, max_iter = 30, tol = 1e-9),
+      control_config = ControlConfig(enabled = true),
+      verbose = 0,
+    )
+    @test result.status == :disabled
+    @test result.converged == true
+    @test result.powerflow_solves == 1
+    @test result.last_pf_status == :ok
+    @test latest_control_result(net) === result
+  end
+
+  @testset "run_acpflow net path honors per-call cfg.control" begin
+    net, tbr = _build_net()
+    addPowerTransformerControl!(net;
+      trafo = string(tbr.branchIdx),
+      mode = :voltage,
+      target_bus = "Load",
+      target_vm_pu = 0.98,
+      control_ratio = true,
+      control_phase = false,
+    )
+    cfg = SparlectraConfig(
+      powerflow = PowerFlowConfig(method = :rectangular, max_iter = 30, tol = 1e-9),
+      control = ControlConfig(enabled = false, max_outer_iterations = 3, trace = false),
+    )
+    _, erg, _ = run_acpflow(net = net, config = cfg, show_results = false)
+    @test erg == 0
+    result = latest_control_result(net)
+    @test result !== nothing
+    @test result.status == :disabled
+    @test result.powerflow_solves == 1
+    @test result.converged == true
+  end
+
   @testset "Outer-loop limits are separated from inner PF max_iter" begin
     net, tbr = _build_net()
     addPowerTransformerControl!(net;
