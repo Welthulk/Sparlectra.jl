@@ -138,7 +138,13 @@ function run_tap_controller_tests()
     @test result.status in (:converged, :blocked, :max_outer_iterations, :pf_failed)
     @test !isempty(result.controllers)
     @test latest_control_result(net) === result
-    @test net.control_result[] === result
+    @test net.control_result === result
+  end
+
+  @testset "Net initializes control_result as nothing" begin
+    net = Net(name = "x", baseMVA = 100.0)
+    @test net.control_result === nothing
+    @test latest_control_result(net) === nothing
   end
 
   @testset "run_control! stores terminal no-controller result on Net" begin
@@ -146,7 +152,7 @@ function run_tap_controller_tests()
     result = run_control!(net; controllers = AbstractOuterController[], pf_config = PowerFlowConfig(max_iter = 2), control_config = ControlConfig(enabled = true), verbose = 0)
     @test result.status == :no_controllers
     @test latest_control_result(net) === result
-    @test net.control_result[] === result
+    @test net.control_result === result
   end
 
   @testset "Outer-loop limits are separated from inner PF max_iter" begin
