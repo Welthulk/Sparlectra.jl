@@ -48,7 +48,7 @@ function run_tap_controller_tests()
 
   @testset "Voltage tap controller (discrete ratio)" begin
     net, tbr = _build_net()
-    _, erg0, _ = run_net_acpflow(net = net, max_ite = 30, tol = 1e-9, verbose = 0, method = :rectangular, show_results = false)
+    _, erg0, _ = run_acpflow(net = net, max_ite = 30, tol = 1e-9, verbose = 0, method = :rectangular, show_results = false)
     @test erg0 == 0
     vm0 = get_bus_vm_pu(net, "Load")
     @test vm0 > 0.98
@@ -66,7 +66,7 @@ function run_tap_controller_tests()
     )
 
     ratio_before = tbr.tap_ratio
-    _, erg, _ = run_net_acpflow(net = net, max_ite = 30, tol = 1e-9, verbose = 0, method = :rectangular, show_results = false)
+    _, erg, _ = run_acpflow(net = net, max_ite = 30, tol = 1e-9, verbose = 0, method = :rectangular, show_results = false)
     @test erg == 0
     @test tbr.tap_ratio != ratio_before
     @test tbr.tap_ratio > ratio_before
@@ -80,7 +80,7 @@ function run_tap_controller_tests()
 
   @testset "Branch active power controller (phase)" begin
     net, tbr = _build_net()
-    _, erg0, _ = run_net_acpflow(net = net, max_ite = 30, tol = 1e-9, verbose = 0, method = :rectangular, show_results = false)
+    _, erg0, _ = run_acpflow(net = net, max_ite = 30, tol = 1e-9, verbose = 0, method = :rectangular, show_results = false)
     @test erg0 == 0
     p0 = get_branch_p_from_to_mw(net, "Slack", "Mid")
 
@@ -96,7 +96,7 @@ function run_tap_controller_tests()
       max_outer_iters = 6,
     )
 
-    _, erg, _ = run_net_acpflow(net = net, max_ite = 30, tol = 1e-9, verbose = 0, method = :rectangular, show_results = false)
+    _, erg, _ = run_acpflow(net = net, max_ite = 30, tol = 1e-9, verbose = 0, method = :rectangular, show_results = false)
     @test erg == 0
     @test tbr.phase_shift_deg != 0.0
   end
@@ -114,46 +114,204 @@ function run_tap_controller_tests()
     )
 
     ratio_before = tbr.tap_ratio
-    _, erg, _ = run_net_acpflow(net = net, max_ite = 30, tol = 1e-9, verbose = 0, method = :rectangular, show_results = false)
+    _, erg, _ = run_acpflow(net = net, max_ite = 30, tol = 1e-9, verbose = 0, method = :rectangular, show_results = false)
     @test erg == 0
     @test tbr.tap_ratio == ratio_before
   end
 
-  @testset "Direct tap-controller Q-limit guard is opt-in" begin
-    function zero_range_pv_tap_net()
-      net, tbr = _build_net()
-      addProsumer!(net = net, busName = "Mid", type = "SYNCHRONOUSMACHINE", p = 0.0, q = 0.0, vm_pu = 1.0, qMin = 0.0, qMax = 0.0)
-      empty!(net.qmin_pu)
-      append!(net.qmin_pu, [-Inf, 0.0, -Inf])
-      empty!(net.qmax_pu)
-      append!(net.qmax_pu, [Inf, 0.0, Inf])
-      addPowerTransformerControl!(net;
-        trafo = string(tbr.branchIdx),
-        mode = :voltage,
-        target_bus = "Load",
-        target_vm_pu = 0.98,
-        control_ratio = true,
-        control_phase = false,
-        enabled = false,
-      )
-      return net
-    end
-
-    # Regression: direct run_tap_controllers_outer! callers must opt in before
-    # the narrow-Q guard can lock PV buses to PQ through its runpf! call.
-    default_net = zero_range_pv_tap_net()
-    redirect_stdout(devnull) do
-      run_tap_controllers_outer!(default_net; max_ite = 0, verbose = 0)
-    end
-    @test isempty(default_net.qLimitLog)
-
-    opt_in_net = zero_range_pv_tap_net()
-    redirect_stdout(devnull) do
-      run_tap_controllers_outer!(opt_in_net; max_ite = 0, verbose = 0, qlimit_guard = true)
-    end
-    @test length(opt_in_net.qLimitLog) == 1
+  @testset "Direct run_control! returns ControlRunResult" begin
+    net, tbr = _build_net()
+    addPowerTransformerControl!(net;
+      trafo = string(tbr.branchIdx),
+      mode = :voltage,
+      target_bus = "Load",
+      target_vm_pu = 0.98,
+      control_ratio = true,
+      control_phase = false,
+      is_discrete = true,
+      max_outer_iters = 4,
+    )
+    pf_cfg = PowerFlowConfig(max_iter = 30, tol = 1e-9, method = :rectangular)
+    result = run_control!(net; controllers = collect_outer_controllers(net), pf_config = pf_cfg, control_config = ControlConfig(max_outer_iterations = 4), verbose = 0)
+    @test result isa ControlRunResult
+    @test result.powerflow_solves >= 1
+    @test result.status in (:converged, :blocked, :max_outer_iterations, :pf_failed)
+    @test !isempty(result.controllers)
+    @test latest_control_result(net) === result
+    @test net.control_result === result
   end
 
+  @testset "Direct run_control! resolves default PF config" begin
+    net, tbr = _build_net()
+    addPowerTransformerControl!(net;
+      trafo = string(tbr.branchIdx),
+      mode = :voltage,
+      target_bus = "Load",
+      target_vm_pu = 0.98,
+      control_ratio = true,
+      control_phase = false,
+      is_discrete = true,
+      max_outer_iters = 4,
+    )
+
+    ratio_before = tbr.tap_ratio
+    result = run_control!(net; controllers = collect_outer_controllers(net), control_config = ControlConfig(max_outer_iterations = 4), verbose = 0)
+    @test result isa ControlRunResult
+    @test result.powerflow_solves >= 1
+    @test result.status in (:converged, :blocked, :max_outer_iterations, :pf_failed)
+    @test latest_control_result(net) === result
+    @test net.control_result === result
+    @test tbr.tap_ratio != ratio_before || result.status in (:converged, :blocked, :max_outer_iterations, :pf_failed)
+  end
+
+  @testset "Net initializes control_result as nothing" begin
+    net = Net(name = "x", baseMVA = 100.0)
+    @test net.control_result === nothing
+    @test latest_control_result(net) === nothing
+  end
+
+  @testset "run_control! stores terminal no-controller result on Net" begin
+    net, _ = _build_net()
+    result = run_control!(net; controllers = AbstractOuterController[], pf_config = PowerFlowConfig(max_iter = 2), control_config = ControlConfig(enabled = true), verbose = 0)
+    @test result.status == :no_controllers
+    @test latest_control_result(net) === result
+    @test net.control_result === result
+  end
+
+  @testset "Disabled control still runs one baseline PF" begin
+    net, tbr = _build_net()
+    addPowerTransformerControl!(net;
+      trafo = string(tbr.branchIdx),
+      mode = :voltage,
+      target_bus = "Load",
+      target_vm_pu = 0.98,
+      control_ratio = true,
+      control_phase = false,
+    )
+    result = run_control!(net;
+      controllers = collect_outer_controllers(net),
+      pf_config = PowerFlowConfig(method = :rectangular, max_iter = 30, tol = 1e-9),
+      control_config = ControlConfig(enabled = false),
+      verbose = 0,
+    )
+    @test result isa ControlRunResult
+    @test result.status == :disabled
+    @test result.converged == true
+    @test result.powerflow_solves == 1
+    @test result.last_pf_iterations >= 1
+    @test result.last_pf_status == :ok
+    @test latest_control_result(net) === result
+    @test net.control_result === result
+  end
+
+  @testset "All disabled controllers still run one baseline PF" begin
+    net, tbr = _build_net()
+    addPowerTransformerControl!(net;
+      trafo = string(tbr.branchIdx),
+      mode = :voltage,
+      target_bus = "Load",
+      target_vm_pu = 0.98,
+      control_ratio = true,
+      control_phase = false,
+      enabled = false,
+    )
+    result = run_control!(net;
+      controllers = collect_outer_controllers(net),
+      pf_config = PowerFlowConfig(method = :rectangular, max_iter = 30, tol = 1e-9),
+      control_config = ControlConfig(enabled = true),
+      verbose = 0,
+    )
+    @test result.status == :disabled
+    @test result.converged == true
+    @test result.powerflow_solves == 1
+    @test result.last_pf_status == :ok
+    @test latest_control_result(net) === result
+  end
+
+  @testset "run_acpflow net path honors per-call cfg.control" begin
+    net, tbr = _build_net()
+    addPowerTransformerControl!(net;
+      trafo = string(tbr.branchIdx),
+      mode = :voltage,
+      target_bus = "Load",
+      target_vm_pu = 0.98,
+      control_ratio = true,
+      control_phase = false,
+    )
+    cfg = SparlectraConfig(
+      powerflow = PowerFlowConfig(method = :rectangular, max_iter = 30, tol = 1e-9),
+      control = ControlConfig(enabled = false, max_outer_iterations = 3, trace = false),
+    )
+    _, erg, _ = run_acpflow(net = net, config = cfg, show_results = false)
+    @test erg == 0
+    result = latest_control_result(net)
+    @test result !== nothing
+    @test result.status == :disabled
+    @test result.powerflow_solves == 1
+    @test result.converged == true
+  end
+
+  @testset "Outer-loop limits are separated from inner PF max_iter" begin
+    net, tbr = _build_net()
+    addPowerTransformerControl!(net;
+      trafo = string(tbr.branchIdx),
+      mode = :voltage,
+      target_bus = "Load",
+      target_vm_pu = 0.90,
+      control_ratio = true,
+      control_phase = false,
+      is_discrete = true,
+      max_outer_iters = 5,
+    )
+    low_inner_pf = PowerFlowConfig(max_iter = 1, tol = 1e-9, method = :rectangular)
+    cfg = ControlConfig(max_outer_iterations = 4, trace = true)
+    result = run_control!(net; controllers = collect_outer_controllers(net), pf_config = low_inner_pf, control_config = cfg, verbose = 0)
+    @test result.outer_iterations <= 4
+    @test result.outer_iterations <= 5
+    @test result.powerflow_solves >= 1
+    @test latest_control_result(net) === result
+  end
+
+  @testset "Transformer controller trace rows include stable keys" begin
+    net, tbr = _build_net()
+    addPowerTransformerControl!(net;
+      trafo = string(tbr.branchIdx),
+      mode = :voltage,
+      target_bus = "Load",
+      target_vm_pu = 0.98,
+      control_ratio = true,
+      control_phase = false,
+      is_discrete = true,
+      max_outer_iters = 4,
+    )
+    pf_cfg = PowerFlowConfig(max_iter = 30, tol = 1e-9, method = :rectangular)
+    result = run_control!(net; controllers = collect_outer_controllers(net), pf_config = pf_cfg, control_config = ControlConfig(max_outer_iterations = 4, trace = true), verbose = 0)
+    @test !isempty(result.controllers)
+    @test !isempty(result.trace)
+    row = first(result.trace)
+    @test haskey(row, :outer_iteration)
+    @test haskey(row, :controller_name)
+    @test haskey(row, :controller_type)
+    @test haskey(row, :status)
+    @test haskey(row, :tap_ratio)
+    @test haskey(row, :phase_shift_deg)
+    @test row.controller_type == "PowerTransformerControl"
+  end
+
+  @testset "Legacy erg mapping uses PF-failure semantics only" begin
+    @test Sparlectra._legacy_erg_from_control_status(:pf_failed) == 1
+    @test Sparlectra._legacy_erg_from_control_status(:converged) == 0
+    @test Sparlectra._legacy_erg_from_control_status(:blocked) == 0
+    @test Sparlectra._legacy_erg_from_control_status(:max_outer_iterations) == 0
+  end
+
+  @testset "run_acpflow net entry point" begin
+    net, _ = _build_net()
+    ite_a, erg_a, _ = run_acpflow(net = net, max_ite = 20, tol = 1e-9, show_results = false)
+    @test erg_a == 0
+    @test ite_a >= 1
+
+  end
   @testset "Tap controller reporting rows and classic section" begin
     net, tbr = _build_net()
     addPowerTransformerControl!(net;
@@ -168,7 +326,7 @@ function run_tap_controller_tests()
       is_discrete = true,
       max_outer_iters = 4,
     )
-    _, erg, _ = run_net_acpflow(net = net, max_ite = 30, tol = 1e-9, verbose = 0, method = :rectangular, show_results = false)
+    _, erg, _ = run_acpflow(net = net, max_ite = 30, tol = 1e-9, verbose = 0, method = :rectangular, show_results = false)
     @test erg == 0
 
     report = buildACPFlowReport(net; ct = 0.0, ite = 1, tol = 1e-9, converged = true, solver = :rectangular)

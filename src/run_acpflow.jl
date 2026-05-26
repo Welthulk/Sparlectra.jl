@@ -13,7 +13,7 @@
 # limitations under the License.
 
 """
-Function to perform AC power flow analysis.
+Compatibility wrapper to perform AC power flow analysis on an existing Net.
 
 Parameters:
 - max_ite: Int, the maximum number of iterations for the power flow algorithm (default: 30).
@@ -145,6 +145,8 @@ function _build_pf_outcome_status(method::Symbol, erg::Int, ite::Int, etime::Flo
   return (outcome = outcome, numerical_converged = (erg == 0), solution_available = (erg == 0), limit_validation_status = :skip, final_converged = (erg == 0), reason = (erg == 0 ? :none : :nr_mismatch_not_converged), reason_text = (erg == 0 ? "none" : "NR mismatch did not converge"), final_mismatch = NaN, iterations = ite, elapsed_s = etime)
 end
 
+_legacy_erg_from_control_status(status::Symbol)::Int = status == :pf_failed ? 1 : 0
+
 function _legacy_powerflow_config(; max_ite::Int, tol::Float64, method::Symbol, autodamp::Bool, autodamp_min::Float64, opt_flatstart::Bool, start_projection::Bool, start_projection_try_dc_start::Bool, start_projection_try_blend_scan::Bool, start_projection_branch_guard::Bool, start_projection_measure_candidates::Bool, start_projection_accept_unmeasured_dc_start::Bool, start_projection_blend_lambdas, start_projection_dc_angle_limit_deg::Float64, qlimit_start_iter::Int, qlimit_start_mode::Symbol, qlimit_auto_q_delta_pu::Float64, lock_pv_to_pq_buses, qlimit_trace_buses, qlimit_guard::Bool, qlimit_guard_min_q_range_pu::Float64, qlimit_guard_zero_range_mode::Symbol, qlimit_guard_narrow_range_mode::Symbol, qlimit_guard_log::Bool, qlimit_guard_max_switches::Int, qlimit_guard_accept_bounded_violations::Bool, qlimit_guard_max_remaining_violations::Int, qlimit_guard_freeze_after_repeated_switching::Bool, qlimit_guard_violation_mode::Symbol, qlimit_guard_violation_threshold_pu::Float64)
   return PowerFlowConfig(
     method = method,
@@ -191,11 +193,21 @@ _matpower_config_for_runner(::Union{Nothing,PowerFlowConfig}) = matpower_import_
 _matpower_config_for_runner(config::SparlectraConfig) = config.matpower
 _output_config_for_runner(::Union{Nothing,PowerFlowConfig}) = output_config()
 _output_config_for_runner(config::SparlectraConfig) = config.output
+_control_config_for_runner(::Union{Nothing,PowerFlowConfig}) = control_config()
+_control_config_for_runner(config::SparlectraConfig) = config.control
 
+"""
+Run AC power flow using the public high-level ACP runner.
+
+Use `run_acpflow(; net = net, ...)` for already constructed in-memory networks (preferred),
+or `run_acpflow(; casefile = "case.m", path = "...", ...)` for file-based workflows.
+Exactly one of `net` or `casefile` must be provided.
+"""
 function run_acpflow(;
+  net::Union{Nothing,Net} = nothing,
   max_ite::Int = 30,
   tol::Float64 = 1e-6,
-  casefile::String,
+  casefile::Union{Nothing,String} = nothing,
   path::Union{Nothing,String} = nothing,
   verbose::Int = 0,  
   printResultToFile::Bool = false,
@@ -243,9 +255,15 @@ function run_acpflow(;
   config::Union{Nothing,PowerFlowConfig,SparlectraConfig} = nothing,
   performance_profile = nothing,
 )
+  if net !== nothing
+    isnothing(casefile) || throw(ArgumentError("run_acpflow: pass either net or casefile, not both."))
+    return _run_acpflow_net!(; net = net, max_ite = max_ite, tol = tol, verbose = verbose, printResultToFile = printResultToFile, printResultAnyCase = printResultAnyCase, method = method, autodamp = autodamp, autodamp_min = autodamp_min, start_projection = start_projection, start_projection_try_dc_start = start_projection_try_dc_start, start_projection_try_blend_scan = start_projection_try_blend_scan, start_projection_branch_guard = start_projection_branch_guard, start_projection_measure_candidates = start_projection_measure_candidates, start_projection_accept_unmeasured_dc_start = start_projection_accept_unmeasured_dc_start, start_projection_blend_lambdas = start_projection_blend_lambdas, start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg, qlimit_start_iter = qlimit_start_iter, qlimit_start_mode = qlimit_start_mode, qlimit_auto_q_delta_pu = qlimit_auto_q_delta_pu, show_results = show_results, lock_pv_to_pq_buses = lock_pv_to_pq_buses, opt_flatstart = isnothing(opt_flatstart) ? true : opt_flatstart, pv_table_rows = pv_table_rows, validate_limits_after_pf = validate_limits_after_pf, q_limit_violation_headroom = q_limit_violation_headroom, qlimit_trace_buses = qlimit_trace_buses, qlimit_lock_reason = qlimit_lock_reason, qlimit_guard = qlimit_guard, qlimit_guard_min_q_range_pu = qlimit_guard_min_q_range_pu, qlimit_guard_zero_range_mode = qlimit_guard_zero_range_mode, qlimit_guard_narrow_range_mode = qlimit_guard_narrow_range_mode, qlimit_guard_log = qlimit_guard_log, qlimit_guard_max_switches = qlimit_guard_max_switches, qlimit_guard_accept_bounded_violations = qlimit_guard_accept_bounded_violations, qlimit_guard_max_remaining_violations = qlimit_guard_max_remaining_violations, qlimit_guard_freeze_after_repeated_switching = qlimit_guard_freeze_after_repeated_switching, qlimit_guard_violation_mode = qlimit_guard_violation_mode, qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu, bus_shunt_model = isnothing(bus_shunt_model) ? net.bus_shunt_model : bus_shunt_model, config = config, performance_profile = performance_profile)
+  end
+  isnothing(casefile) && throw(ArgumentError("run_acpflow: casefile is required when net is not provided."))
   pf_config = isnothing(config) ? powerflow_config() : _as_powerflow_config(config)
   mat_cfg = _matpower_config_for_runner(config)
   out_cfg = _output_config_for_runner(config)
+  ctrl_cfg = _control_config_for_runner(config)
   max_ite = pf_config.max_iter
   tol = pf_config.tol
   method = pf_config.method
@@ -418,10 +436,15 @@ function run_acpflow(;
   erg = 2
   etime = @elapsed begin
     ite, erg = _perf_profile_time!(performance_profile, :solver_total) do
-    if isempty(_tap_controllers(myNet))
+    controllers = collect_outer_controllers(myNet)
+    if isempty(controllers)
       runpf!(myNet, solver_config; verbose = verbose, pv_table_rows = pv_table_rows, validate_limits_after_pf = validate_limits_after_pf, q_limit_violation_headroom = q_limit_violation_headroom, qlimit_lock_reason = qlimit_lock_reason, performance_profile = performance_profile)
-      else
-      run_tap_controllers_outer!(myNet; max_ite = max_ite, tol = tol, verbose = verbose, method = method, autodamp = autodamp, autodamp_min = autodamp_min, start_projection = start_projection, start_projection_try_dc_start = start_projection_try_dc_start, start_projection_try_blend_scan = start_projection_try_blend_scan, start_projection_branch_guard = start_projection_branch_guard, start_projection_measure_candidates = start_projection_measure_candidates, start_projection_accept_unmeasured_dc_start = start_projection_accept_unmeasured_dc_start, start_projection_blend_lambdas = start_projection_blend_lambdas, start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg, qlimit_start_iter = qlimit_start_iter, qlimit_start_mode = qlimit_start_mode, qlimit_auto_q_delta_pu = qlimit_auto_q_delta_pu, opt_flatstart = opt_flatstart, pv_table_rows = pv_table_rows, validate_limits_after_pf = validate_limits_after_pf, q_limit_violation_headroom = q_limit_violation_headroom, lock_pv_to_pq_buses = lock_pv_to_pq_buses_resolved, qlimit_trace_buses = qlimit_trace_buses, qlimit_lock_reason = qlimit_lock_reason, qlimit_guard = qlimit_guard, qlimit_guard_min_q_range_pu = qlimit_guard_min_q_range_pu, qlimit_guard_zero_range_mode = qlimit_guard_zero_range_mode, qlimit_guard_narrow_range_mode = qlimit_guard_narrow_range_mode, qlimit_guard_log = qlimit_guard_log, qlimit_guard_max_switches = qlimit_guard_max_switches, qlimit_guard_accept_bounded_violations = qlimit_guard_accept_bounded_violations, qlimit_guard_max_remaining_violations = qlimit_guard_max_remaining_violations, qlimit_guard_freeze_after_repeated_switching = qlimit_guard_freeze_after_repeated_switching, qlimit_guard_violation_mode = qlimit_guard_violation_mode, qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu)
+    else
+      control_result = run_control!(myNet; controllers = controllers, pf_config = solver_config, control_config = ctrl_cfg, verbose = verbose, performance_profile = performance_profile)
+      # The legacy `erg` flag describes numerical PF success/failure.
+      # Control-loop terminal states such as :blocked or :max_outer_iterations are
+      # reported through `control_result` and `net.control_result`, not as PF failure.
+      (control_result.last_pf_iterations, _legacy_erg_from_control_status(control_result.status))
       end
     end
   end
@@ -450,10 +473,12 @@ function run_acpflow(;
     rect_status = method === :rectangular ? rectangular_pf_status(myNet) : nothing
     outcome = _rectangular_public_outcome(rect_status)
     if rect_status === nothing
-      status_ref[] = (converged = (erg == 0), erg = erg, iterations = ite, elapsed_s = etime, solver_elapsed_s = solver_elapsed_s, method = method, outcome = (erg == 0 ? :converged : :not_converged))
+      ctrl_result = latest_control_result(myNet)
+      status_ref[] = (converged = (erg == 0), erg = erg, iterations = ite, elapsed_s = etime, solver_elapsed_s = solver_elapsed_s, method = method, outcome = (erg == 0 ? :converged : :not_converged), control_status = isnothing(ctrl_result) ? :none : ctrl_result.status)
     else
       pf_status = _build_pf_outcome_status(method, erg, ite, etime, rect_status)
-      status_ref[] = (converged = (erg == 0), erg = erg, iterations = ite, elapsed_s = etime, solver_elapsed_s = solver_elapsed_s, method = method, outcome = outcome,
+      ctrl_result = latest_control_result(myNet)
+      status_ref[] = (converged = (erg == 0), erg = erg, iterations = ite, elapsed_s = etime, solver_elapsed_s = solver_elapsed_s, method = method, outcome = outcome, control_status = isnothing(ctrl_result) ? :none : ctrl_result.status,
                       numerical_solution = (pf_status.numerical_converged ? "OK" : "FAIL"),
                       solution_available = pf_status.solution_available,
                       limit_validation_status = pf_status.limit_validation_status,
@@ -505,24 +530,13 @@ function run_acpflow(;
   return myNet
 end
 
-"""
-Function to perform AC power flow analysis.
 
-Parameters:
-- net: Net, the network object.
-- max_ite: Int, the maximum number of iterations for the power flow algorithm (default: 30).
-- tol: Float64, tolerance for convergence criterion (default: 1e-6).
-- verbose: Int, verbosity level for output (default: 0).
-- printResultToFile: Bool, flag to print results to a file (default: false).
-- printResultAnyCase: Bool, flag to print results even if the power flow fails (default: false).
-- autodamp: Bool, enable residual-based Newton step backtracking for `method = :rectangular`.
-- autodamp_min: Float64, minimum trial step length for automatic damping.
-"""
-function run_net_acpflow(; net::Net, max_ite::Int = 30, tol::Float64 = 1e-6, verbose::Int = 0, printResultToFile::Bool = false, printResultAnyCase::Bool = false, method::Symbol = :rectangular, autodamp::Bool = false, autodamp_min::Float64 = 1e-3, start_projection::Bool = false, start_projection_try_dc_start::Bool = true, start_projection_try_blend_scan::Bool = true, start_projection_branch_guard::Bool = true, start_projection_measure_candidates::Bool = true, start_projection_accept_unmeasured_dc_start::Bool = false, start_projection_blend_lambdas::AbstractVector{<:Real} = [0.25, 0.5, 0.75], start_projection_dc_angle_limit_deg::Float64 = 60.0, qlimit_start_iter::Int = 2, qlimit_start_mode::Symbol = :iteration, qlimit_auto_q_delta_pu::Float64 = 1e-4, show_results::Bool = true, lock_pv_to_pq_buses::AbstractVector{Int} = Int[], opt_flatstart::Bool = true, pv_table_rows::Int = 30, validate_limits_after_pf::Bool = false, q_limit_violation_headroom::Float64 = 0.0, qlimit_trace_buses::AbstractVector{Int} = Int[], qlimit_lock_reason::Symbol = :manual, qlimit_guard::Bool = false, qlimit_guard_min_q_range_pu::Float64 = 1e-4, qlimit_guard_zero_range_mode::Symbol = :lock_pq, qlimit_guard_narrow_range_mode::Symbol = :prefer_pq, qlimit_guard_log::Bool = true, qlimit_guard_max_switches::Int = 10, qlimit_guard_accept_bounded_violations::Bool = false, qlimit_guard_max_remaining_violations::Int = 0, qlimit_guard_freeze_after_repeated_switching::Bool = true, qlimit_guard_violation_mode::Symbol = :delayed_switch, qlimit_guard_violation_threshold_pu::Float64 = 1e-4, bus_shunt_model = net.bus_shunt_model, config::Union{Nothing,PowerFlowConfig,SparlectraConfig} = nothing, performance_profile = nothing)
+function _run_acpflow_net!(; net::Net, max_ite::Int = 30, tol::Float64 = 1e-6, verbose::Int = 0, printResultToFile::Bool = false, printResultAnyCase::Bool = false, method::Symbol = :rectangular, autodamp::Bool = false, autodamp_min::Float64 = 1e-3, start_projection::Bool = false, start_projection_try_dc_start::Bool = true, start_projection_try_blend_scan::Bool = true, start_projection_branch_guard::Bool = true, start_projection_measure_candidates::Bool = true, start_projection_accept_unmeasured_dc_start::Bool = false, start_projection_blend_lambdas::AbstractVector{<:Real} = [0.25, 0.5, 0.75], start_projection_dc_angle_limit_deg::Float64 = 60.0, qlimit_start_iter::Int = 2, qlimit_start_mode::Symbol = :iteration, qlimit_auto_q_delta_pu::Float64 = 1e-4, show_results::Bool = true, lock_pv_to_pq_buses::AbstractVector{Int} = Int[], opt_flatstart::Bool = true, pv_table_rows::Int = 30, validate_limits_after_pf::Bool = false, q_limit_violation_headroom::Float64 = 0.0, qlimit_trace_buses::AbstractVector{Int} = Int[], qlimit_lock_reason::Symbol = :manual, qlimit_guard::Bool = false, qlimit_guard_min_q_range_pu::Float64 = 1e-4, qlimit_guard_zero_range_mode::Symbol = :lock_pq, qlimit_guard_narrow_range_mode::Symbol = :prefer_pq, qlimit_guard_log::Bool = true, qlimit_guard_max_switches::Int = 10, qlimit_guard_accept_bounded_violations::Bool = false, qlimit_guard_max_remaining_violations::Int = 0, qlimit_guard_freeze_after_repeated_switching::Bool = true, qlimit_guard_violation_mode::Symbol = :delayed_switch, qlimit_guard_violation_threshold_pu::Float64 = 1e-4, bus_shunt_model = net.bus_shunt_model, config::Union{Nothing,PowerFlowConfig,SparlectraConfig} = nothing, performance_profile = nothing)
 
   use_active_config = config !== nothing || (max_ite == 30 && tol == 1e-6 && method === :rectangular && !autodamp && autodamp_min == 1e-3 && !start_projection && start_projection_try_dc_start && start_projection_try_blend_scan && start_projection_branch_guard && start_projection_measure_candidates && !start_projection_accept_unmeasured_dc_start && collect(start_projection_blend_lambdas) == [0.25, 0.5, 0.75] && start_projection_dc_angle_limit_deg == 60.0 && qlimit_start_iter == 2 && qlimit_start_mode === :iteration && qlimit_auto_q_delta_pu == 1e-4 && isempty(lock_pv_to_pq_buses) && opt_flatstart && isempty(qlimit_trace_buses) && !qlimit_guard)
   pf_config = config === nothing ? powerflow_config() : _as_powerflow_config(config)
   out_cfg = _output_config_for_runner(config)
+  ctrl_cfg = _control_config_for_runner(config)
   if use_active_config
     max_ite = pf_config.max_iter
     tol = pf_config.tol
@@ -565,7 +579,7 @@ function run_net_acpflow(; net::Net, max_ite::Int = 30, tol::Float64 = 1e-6, ver
   end
 
   requested_shunt_model = normalize_bus_shunt_model(bus_shunt_model)
-  requested_shunt_model == net.bus_shunt_model || error("run_net_acpflow: bus_shunt_model must be set when constructing/importing the Net; got $(requested_shunt_model) for a net configured as $(net.bus_shunt_model).")
+  requested_shunt_model == net.bus_shunt_model || error("run_acpflow(net=...): bus_shunt_model must be set when constructing/importing the Net; got $(requested_shunt_model) for a net configured as $(net.bus_shunt_model).")
 
   solver_config = _legacy_powerflow_config(
     max_ite = max_ite,
@@ -606,10 +620,15 @@ function run_net_acpflow(; net::Net, max_ite::Int = 30, tol::Float64 = 1e-6, ver
   erg = 2
   etime = @elapsed begin
     ite, erg = _perf_profile_time!(performance_profile, :solver_total) do
-    if isempty(_tap_controllers(net))
+    controllers = collect_outer_controllers(net)
+    if isempty(controllers)
       runpf!(net, solver_config; verbose = verbose, pv_table_rows = pv_table_rows, validate_limits_after_pf = validate_limits_after_pf, q_limit_violation_headroom = q_limit_violation_headroom, qlimit_lock_reason = qlimit_lock_reason, performance_profile = performance_profile)
     else
-      run_tap_controllers_outer!(net; max_ite = max_ite, tol = tol, verbose = verbose, method = method, autodamp = autodamp, autodamp_min = autodamp_min, start_projection = start_projection, start_projection_try_dc_start = start_projection_try_dc_start, start_projection_try_blend_scan = start_projection_try_blend_scan, start_projection_branch_guard = start_projection_branch_guard, start_projection_measure_candidates = start_projection_measure_candidates, start_projection_accept_unmeasured_dc_start = start_projection_accept_unmeasured_dc_start, start_projection_blend_lambdas = start_projection_blend_lambdas, start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg, qlimit_start_iter = qlimit_start_iter, qlimit_start_mode = qlimit_start_mode, qlimit_auto_q_delta_pu = qlimit_auto_q_delta_pu, opt_flatstart = opt_flatstart, pv_table_rows = pv_table_rows, validate_limits_after_pf = validate_limits_after_pf, q_limit_violation_headroom = q_limit_violation_headroom, lock_pv_to_pq_buses = lock_pv_to_pq_buses, qlimit_trace_buses = qlimit_trace_buses, qlimit_lock_reason = qlimit_lock_reason, qlimit_guard = qlimit_guard, qlimit_guard_min_q_range_pu = qlimit_guard_min_q_range_pu, qlimit_guard_zero_range_mode = qlimit_guard_zero_range_mode, qlimit_guard_narrow_range_mode = qlimit_guard_narrow_range_mode, qlimit_guard_log = qlimit_guard_log, qlimit_guard_max_switches = qlimit_guard_max_switches, qlimit_guard_accept_bounded_violations = qlimit_guard_accept_bounded_violations, qlimit_guard_max_remaining_violations = qlimit_guard_max_remaining_violations, qlimit_guard_freeze_after_repeated_switching = qlimit_guard_freeze_after_repeated_switching, qlimit_guard_violation_mode = qlimit_guard_violation_mode, qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu)
+      control_result = run_control!(net; controllers = controllers, pf_config = solver_config, control_config = ctrl_cfg, verbose = verbose, performance_profile = performance_profile)
+      # The legacy `erg` flag describes numerical PF success/failure.
+      # Control-loop terminal states such as :blocked or :max_outer_iterations are
+      # reported through `control_result` and `net.control_result`, not as PF failure.
+      (control_result.last_pf_iterations, _legacy_erg_from_control_status(control_result.status))
       end
     end
   end

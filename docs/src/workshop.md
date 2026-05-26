@@ -30,7 +30,6 @@ net = run_acpflow(
     casefile = file,
     verbose = verbose,
     printResultToFile = printResultToFile,
-)
 ```
 ---
 
@@ -238,7 +237,7 @@ net = run_acpflow(casefile = file)
 brVec = getNetBranchNumberVec(net = net, fromBus = "1", toBus = "2")
 setNetBranchStatus!(net = net, branchNr = brVec[1], status = 0)
 
-run_net_acpflow(net = net)
+run_acpflow(net = net)
 
 addBusShuntPower!(net = net, busName = "1", p = 0.0, q = 1.0)
 
@@ -293,7 +292,7 @@ if !result
     error("Network validation failed: \$msg")
 end
 
-ite, status, etime = run_net_acpflow(net = net, show_results = false)
+ite, status, etime = run_acpflow(net = net, show_results = false)
 ```
 
 ### Notes on component removal
@@ -334,7 +333,7 @@ addProsumer!(net = net, busName = "Bus1",  type = "GENERATOR", p = 45.0, q = 0.0
 addProsumer!(net = net, busName = "Bus5",  type = "EXTERNALNETWORKINJECTION", referencePri = "Bus5", vm_pu = 1.02, va_deg = 0.0)
 addProsumer!(net = net, busName = "Bus1a", type = "LOAD", p = 30.0, q = 10.0)
 
-ite, status, etime = run_net_acpflow(
+ite, status, etime = run_acpflow(
     net = net,
     max_ite = 25,
     tol = 1e-8,
@@ -343,7 +342,7 @@ ite, status, etime = run_net_acpflow(
 
 setNetLinkStatus!(net = net, linkNr = linkNr, status = 0)
 
-ite2, status2, etime2 = run_net_acpflow(
+ite2, status2, etime2 = run_acpflow(
     net = net,
     max_ite = 25,
     tol = 1e-8,
@@ -413,8 +412,8 @@ configured direction (`from -> to`).
 Prefer:
 
 ```julia
-ite, status, etime = run_net_acpflow(
-    net = net
+ite, status, etime = run_acpflow(
+    net = net,
     show_results = false,
 )
 ```
@@ -433,6 +432,31 @@ Use `report.transformer_controls` for machine-readable controller rows
 (DataFrame-compatible), including controller type, target/achieved values,
 tap/phase positions, limits, and status.
 
+## Transformer control with the generic outer loop
+
+You can also inspect the generic control result directly:
+
+```julia
+run_acpflow(net = net, show_results = false)
+
+result = latest_control_result(net)
+result.status
+result.outer_iterations
+result.powerflow_solves
+result.controllers
+result.trace
+```
+
+Direct orchestration is also available:
+
+```julia
+result = run_control!(
+    net;
+    pf_config = powerflow_config(),
+    control_config = control_config(),
+)
+```
+
 ### 5. Example programs
 
 - `examples/example_transformer_tap.jl`  
@@ -440,15 +464,21 @@ tap/phase positions, limits, and status.
 - `examples/example_transformer_phase_shift_control.jl`  
   Focused PST active-power target control example.
 - `examples/tap_control_demo_grid.jl`  
-  Full multi-voltage demo with YAML-configurable controller targets and
-  transformer tap/phase parameters plus versioned output logs.
+  Lightweight demo that:
+  - uses central configuration from `examples/configuration.yaml` (or `SPARLECTRA_CONFIGURATION_YAML`),
+  - reads demo-specific setpoints from `examples/tap_control_demo_grid.yaml`,
+  - runs through `run_acpflow(net = net; config = ...)`,
+  - inspects structured output from `latest_control_result(net)`.
 
-The accompanying config template is:
+Copy and edit:
 
-- `examples/tap_control_demo_grid.yaml.example`
+- `examples/tap_control_demo_grid.yaml.example` → `examples/tap_control_demo_grid.yaml`
 
-It exposes target values and transformer tap/phase ranges + step sizes so that
-you can tune the workshop run without editing the Julia source.
+Optional classic view:
+
+```bash
+SPARLECTRA_TAP_DEMO_CLASSIC=1 julia --project=. examples/tap_control_demo_grid.jl
+```
 ---
 
 ## Running rectangular NR with Q-limits

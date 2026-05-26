@@ -125,16 +125,9 @@ function getBusData(nodes::Vector{Node}, Sbase_MVA::Float64, flatStart; net::Uni
   delta_p = round((sumGen_p - sumLoad_p), digits = 3)
   delta_q = round((sumGen_q - sumLoad_q), digits = 3)
 
-  if debug
-    println("\n∑Load: [$(sumLoad_p), $(sumLoad_q)], ∑Gen [$(sumGen_p), $(sumGen_q)]  Δp, Δq: [$(delta_p), $(delta_q)]")
-  end
-
-  if debug
-    println("\nslack bus: $(slackIdx)")
-    for b in busVec
-      println("$(b)")
-    end
-  end
+  @debug "Bus injection summary" sumLoad_p sumLoad_q sumGen_p sumGen_q delta_p delta_q
+  @debug "Slack bus index" slackIdx
+  @debug "Bus vector" busVec
 
   return busVec, slackIdx
 end # getBusData
@@ -151,11 +144,7 @@ function getBusTypeVec(busVec::Vector{BusData})
     end
     push!(busTypeVec, bus.type)
   end
-  if debug
-    for (i, bus) in enumerate(busTypeVec)
-      print("busVec[$(i)]: $(bus), ")
-    end
-  end
+  @debug "Bus type vector" busTypeVec
   return busTypeVec, slackIdx
 end
 

@@ -2312,7 +2312,7 @@ function run_complex_nr_rectangular_for_net!(
     )
     (switch_counts_, oscillating_buses_, max_switching_exceeded_, q_limit_active_set_ok_, converged_, rejection_reason_, final_reason_, final_status_, status_)
   end
-  if verbose > 0 || (numerical_converged && !q_limit_active_set_ok)
+  if verbose > 0
     _print_rectangular_convergence_summary(stdout, status)
     _print_qlimit_active_set_summary(stdout, status)
   end

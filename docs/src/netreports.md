@@ -26,7 +26,7 @@ addProsumer!(net = net, busName = "B2", type = "GENERATOR", p = 10.0, q = 1.0)
 addProsumer!(net = net, busName = "B3", type = "ENERGYCONSUMER", p = 15.0, q = 5.0)
 addProsumer!(net = net, busName = "B4", type = "ENERGYCONSUMER", p = 25.0, q = 10.0)
 
-ite, erg, etime = run_net_acpflow(
+ite, erg, etime = run_acpflow(
   net = net,
   max_ite = 40,
   tol = 1e-10,
