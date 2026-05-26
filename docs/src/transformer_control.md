@@ -16,10 +16,14 @@ A combined transformer (“Schrägregler”) is represented by enabling both con
 
 With series admittance `y`, total shunt `y_sh`, and from-side tap `t`:
 
-`Y_ff = (y + 0.5*y_sh)/|t|^2`
-`Y_ft = -y/conj(t)`
-`Y_tf = -y/t`
-`Y_tt = y + 0.5*y_sh`
+```math
+\begin{aligned}
+Y_{ff} &= \frac{y + 0.5\,y_{sh}}{\lvert t \rvert^2} \\
+Y_{ft} &= -\frac{y}{\overline{t}} \\
+Y_{tf} &= -\frac{y}{t} \\
+Y_{tt} &= y + 0.5\,y_{sh}
+\end{aligned}
+```
 
 This matches the Sparlectra sign and conjugation convention.
 
