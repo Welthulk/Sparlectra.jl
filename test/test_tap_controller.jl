@@ -138,6 +138,36 @@ function run_tap_controller_tests()
     @test result.status in (:converged, :blocked, :max_outer_iterations, :pf_failed)
     @test !isempty(result.controllers)
     @test latest_control_result(net) === result
+    @test net.control_result[] === result
+  end
+
+  @testset "run_control! stores terminal no-controller result on Net" begin
+    net, _ = _build_net()
+    result = run_control!(net; controllers = AbstractOuterController[], pf_config = PowerFlowConfig(max_iter = 2), control_config = ControlConfig(enabled = true), verbose = 0)
+    @test result.status == :no_controllers
+    @test latest_control_result(net) === result
+    @test net.control_result[] === result
+  end
+
+  @testset "Outer-loop limits are separated from inner PF max_iter" begin
+    net, tbr = _build_net()
+    addPowerTransformerControl!(net;
+      trafo = string(tbr.branchIdx),
+      mode = :voltage,
+      target_bus = "Load",
+      target_vm_pu = 0.90,
+      control_ratio = true,
+      control_phase = false,
+      is_discrete = true,
+      max_outer_iters = 5,
+    )
+    low_inner_pf = PowerFlowConfig(max_iter = 1, tol = 1e-9, method = :rectangular)
+    cfg = ControlConfig(max_outer_iterations = 4, trace = true)
+    result = run_control!(net; controllers = collect_outer_controllers(net), pf_config = low_inner_pf, control_config = cfg, verbose = 0)
+    @test result.outer_iterations <= 4
+    @test result.outer_iterations <= 5
+    @test result.powerflow_solves >= 1
+    @test latest_control_result(net) === result
   end
 
   @testset "Transformer controller trace rows include stable keys" begin

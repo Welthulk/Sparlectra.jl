@@ -185,6 +185,14 @@ benchmark:
   # 0 disables node-count limit for one-shot output.
   show_once_max_nodes: 0
 
+control:
+  enabled: true
+  max_outer_iterations: 20
+  trace: true
+  log_iterations: true
+  stop_on_pf_failure: true
+  controllers: []
+
 extensions:
   # Reserved for future extension schemas.
   reserved: true

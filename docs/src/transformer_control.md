@@ -78,6 +78,29 @@ addPowerTransformerControl!(net;
   is_discrete = true)
 ```
 
+## Generic control framework integration
+
+Transformer tap/phase control is implemented as an `AbstractOuterController`.
+Controllers are collected by `collect_outer_controllers(net)`. When at least one
+controller is present, `run_acpflow` / `run_net_acpflow` call `run_control!`
+for outer-loop orchestration.
+
+Advanced direct use:
+
+```julia
+result = run_control!(
+  net;
+  pf_config = powerflow_config(),
+  control_config = control_config(),
+)
+
+result.status
+result.trace
+latest_control_result(net)
+```
+
+There is no compatibility execution path for `run_tap_controllers_outer!`.
+
 ```julia
 addPowerTransformerControl!(net;
   trafo = "1",
