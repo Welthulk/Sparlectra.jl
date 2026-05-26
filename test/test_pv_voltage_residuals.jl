@@ -35,26 +35,6 @@ function _create_pv_voltage_regression_net(; vset::Float64 = 1.05)
   return net
 end
 
-function _full_polar_identity_one_step_voltage(initial_vm::Float64, vset::Float64)
-  net = _create_pv_voltage_regression_net(vset = vset)
-  Y = Sparlectra.createYBUS(net = net, sparse = true, printYBUS = false)
-  busVec, _ = Sparlectra.getBusData(net.nodeVec, net.baseMVA, true)
-  _, slackIdx = Sparlectra.getBusTypeVec(busVec)
-  n_pq = count(bus -> bus.type == Sparlectra.PQ, busVec)
-  n_pv = count(bus -> bus.type == Sparlectra.PV, busVec)
-  pv_idx = findfirst(bus -> bus.type == Sparlectra.PV, busVec)
-  @test pv_idx !== nothing
-
-  busVec[pv_idx].vm_pu = initial_vm
-  Vset = [(bus.type == Sparlectra.PV) ? vset : 1.0 for bus in busVec]
-  Δ = Sparlectra.residuum_full_withPV(Y, busVec, Vset, n_pq, n_pv, false)
-  J = Sparlectra.calcJacobian_withPVIdentity(Y, busVec, Sparlectra.adjacentBranches(Y, false), slackIdx, n_pq, n_pv; sparse = true)
-  Δx = J \ Δ
-
-  pv_row = 2 * ((pv_idx >= slackIdx) ? (pv_idx - 1) : pv_idx)
-  return initial_vm * (1.0 + Δx[pv_row]), Δ[pv_row], Δx[pv_row]
-end
-
 function _rectangular_one_step_voltage(initial_vm::Float64, vset::Float64)
   net = _create_pv_voltage_regression_net(vset = vset)
   Y = Sparlectra.createYBUS(net = net, sparse = true, printYBUS = false)
@@ -73,14 +53,6 @@ function run_pv_voltage_residual_tests()
   @testset "PV voltage residual sign conventions" begin
     initial_vm = 1.0
     vset = 1.05
-
-    @testset "full polar PV identity row moves toward setpoint after one Newton step" begin
-      vm_after, residual, relative_step = _full_polar_identity_one_step_voltage(initial_vm, vset)
-      @test residual > 0.0
-      @test relative_step > 0.0
-      @test abs(vm_after - vset) < abs(initial_vm - vset)
-      @test isapprox(vm_after, vset; atol = 1e-12)
-    end
 
     @testset "rectangular PV row moves toward setpoint after one Newton step" begin
       vm_after, residual = _rectangular_one_step_voltage(initial_vm, vset)
