@@ -13,9 +13,8 @@
 * Documented the `control` configuration section, including that `control.controllers` is reserved for future YAML-based controller instantiation.
 
 
-### Fixes
-
-
+### Related
+#179 Introduce a generic control framework above the existing power-flow solver. 
 
 ## Version 0.8.0 – 2026-05-25
 
