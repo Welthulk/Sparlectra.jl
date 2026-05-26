@@ -255,10 +255,14 @@ See:
   - Two-file configuration model:
     - `examples/configuration.yaml` (or `SPARLECTRA_CONFIGURATION_YAML`) for central solver/output/control-framework settings.
     - `examples/tap_control_demo_grid.yaml` for demo-specific transformer setpoints and tap parameters.
+  - Demonstrates all three control types in one lightweight network: OLTC voltage control, PST active-power control, and Schrägregler combined voltage + active-power control.
   - Controller definitions are created programmatically by the example.
   - Central `control.controllers: []` remains reserved/future.
   - Optional classic output:
     `SPARLECTRA_TAP_DEMO_CLASSIC=1 julia --project=. examples/tap_control_demo_grid.jl`
+  - Optional raw result dump:
+    `SPARLECTRA_TAP_DEMO_RAW=1 julia --project=. examples/tap_control_demo_grid.jl`
+  - Default output is compact and summarizes controller status, taps/phases, and trace size.
   - Structured results are inspected via `latest_control_result(net)` (controller rows and trace rows).
 
 for runnable setups.

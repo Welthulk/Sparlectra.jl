@@ -25,94 +25,153 @@ function load_demo_sparlectra_config(demo_settings::Dict{String,Any}, demo_path:
   raw_path = get(demo_settings, "sparlectra_config", nothing)
   if raw_path isa AbstractString && !isempty(strip(raw_path))
     cfg_path = isabspath(raw_path) ? raw_path : normpath(joinpath(dirname(demo_path), raw_path))
-    return Sparlectra.load_sparlectra_config(cfg_path; reload = true)
+    return cfg_path, Sparlectra.load_sparlectra_config(cfg_path; reload = true)
   end
-  return Sparlectra.load_sparlectra_config(; reload = true)
+  return "default discovery", Sparlectra.load_sparlectra_config(; reload = true)
 end
 
 function build_demo_net(demo_settings::Dict{String,Any})
   net = Net(name = "tap_control_demo_grid", baseMVA = 100.0)
-  addBus!(net = net, busName = "Slack", vn_kV = 110.0)
-  addBus!(net = net, busName = "Mid", vn_kV = 110.0)
-  addBus!(net = net, busName = "Load", vn_kV = 110.0)
+  for bus in ("Slack", "Grid_A", "Grid_B", "MV_A", "MV_B", "Load_LV", "Load_MV")
+    addBus!(net = net, busName = bus, vn_kV = 110.0)
+  end
 
-  addProsumer!(net = net, busName = "Slack", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.02, va_deg = 0.0, referencePri = "Slack")
-  addProsumer!(net = net, busName = "Load", type = "ENERGYCONSUMER", p = -70.0, q = -20.0)
+  addProsumer!(net = net, busName = "Slack", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.01, va_deg = 0.0, referencePri = "Slack")
+  addProsumer!(net = net, busName = "Load_LV", type = "ENERGYCONSUMER", p = -45.0, q = -12.0)
+  addProsumer!(net = net, busName = "Load_MV", type = "ENERGYCONSUMER", p = -28.0, q = -8.0)
 
-  tap = get(demo_settings, "tap", Dict{String,Any}())
-  tap_min = get(tap, "tap_min", 0.95)
-  tap_max = get(tap, "tap_max", 1.05)
-  tap_step = get(tap, "tap_step", 0.0125)
+  addPIModelTrafo!(net = net, fromBus = "Slack", toBus = "Grid_A", r_pu = 0.006, x_pu = 0.05, b_pu = 0.0, ratio = 1.0, shift_deg = 0.0, status = 1)
+  addPIModelTrafo!(net = net, fromBus = "Grid_A", toBus = "Grid_B", r_pu = 0.004, x_pu = 0.035, b_pu = 0.0, ratio = 1.0, shift_deg = 0.0, status = 1)
+  addPIModelTrafo!(net = net, fromBus = "MV_A", toBus = "MV_B", r_pu = 0.004, x_pu = 0.03, b_pu = 0.0, ratio = 1.0, shift_deg = 0.0, status = 1)
 
-  addPIModelTrafo!(net = net, fromBus = "Slack", toBus = "Mid", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, ratio = 1.0, shift_deg = 0.0, status = 1)
-  addPIModelACLine!(net = net, fromBus = "Mid", toBus = "Load", r_pu = 0.02, x_pu = 0.12, b_pu = 0.01, status = 1)
+  addPIModelACLine!(net = net, fromBus = "Grid_B", toBus = "MV_A", r_pu = 0.015, x_pu = 0.09, b_pu = 0.01, status = 1)
+  addPIModelACLine!(net = net, fromBus = "Grid_A", toBus = "MV_A", r_pu = 0.02, x_pu = 0.11, b_pu = 0.01, status = 1)
+  addPIModelACLine!(net = net, fromBus = "Grid_B", toBus = "MV_B", r_pu = 0.018, x_pu = 0.10, b_pu = 0.01, status = 1)
+  addPIModelACLine!(net = net, fromBus = "MV_B", toBus = "Load_LV", r_pu = 0.015, x_pu = 0.07, b_pu = 0.01, status = 1)
+  addPIModelACLine!(net = net, fromBus = "MV_A", toBus = "Load_MV", r_pu = 0.02, x_pu = 0.08, b_pu = 0.01, status = 1)
 
-  trafo = getNetBranch(net = net, fromBus = "Slack", toBus = "Mid")
-  trafo.has_ratio_tap = true
-  trafo.tap_min = tap_min
-  trafo.tap_max = tap_max
-  trafo.tap_step = tap_step
-  return net, trafo
+  t_oltc = getNetBranch(net = net, fromBus = "Slack", toBus = "Grid_A")
+  t_pst = getNetBranch(net = net, fromBus = "Grid_A", toBus = "Grid_B")
+  t_schraeg = getNetBranch(net = net, fromBus = "MV_A", toBus = "MV_B")
+  t_oltc.comp.cName = "T_OLTC"
+  t_pst.comp.cName = "T_PST"
+  t_schraeg.comp.cName = "T_SCHRAEG"
+
+  oltc = get(demo_settings, "oltc", Dict{String,Any}())
+  pst = get(demo_settings, "pst", Dict{String,Any}())
+  schraeg = get(demo_settings, "schraeg", Dict{String,Any}())
+
+  t_oltc.has_ratio_tap = true
+  t_oltc.tap_min = get(oltc, "tap_min", 0.95)
+  t_oltc.tap_max = get(oltc, "tap_max", 1.08)
+  t_oltc.tap_step = get(oltc, "tap_step", 0.0125)
+
+  t_pst.has_phase_tap = true
+  t_pst.phase_min_deg = get(pst, "phase_min_deg", -12.0)
+  t_pst.phase_max_deg = get(pst, "phase_max_deg", 12.0)
+  t_pst.phase_step_deg = get(pst, "phase_step_deg", 1.0)
+
+  t_schraeg.has_ratio_tap = true
+  t_schraeg.tap_min = get(schraeg, "tap_min", 0.95)
+  t_schraeg.tap_max = get(schraeg, "tap_max", 1.08)
+  t_schraeg.tap_step = get(schraeg, "tap_step", 0.0125)
+  t_schraeg.has_phase_tap = true
+  t_schraeg.phase_min_deg = get(schraeg, "phase_min_deg", -10.0)
+  t_schraeg.phase_max_deg = get(schraeg, "phase_max_deg", 10.0)
+  t_schraeg.phase_step_deg = get(schraeg, "phase_step_deg", 1.0)
+
+  return net, (t_oltc = t_oltc, t_pst = t_pst, t_schraeg = t_schraeg)
 end
 
-function add_demo_controllers!(net::Net, trafo, demo_settings::Dict{String,Any})
-  # This demo reads controller setpoints from examples/tap_control_demo_grid.yaml.
-  # This is example-specific input. It is not the central control.controllers schema,
-  # which is reserved for future YAML-based controller instantiation.
-  controller = get(demo_settings, "controller", Dict{String,Any}())
-  target_bus = String(get(controller, "target_bus", "Load"))
-  addTapController!(
-    net;
-    trafo = string(trafo.branchIdx),
-    mode = :voltage,
-    target_bus = target_bus,
-    target_vm_pu = get(controller, "target_vm_pu", 0.98),
-    control_ratio = true,
-    control_phase = false,
-    is_discrete = true,
-    deadband_vm_pu = get(controller, "deadband_vm_pu", 5e-3),
-    max_outer_iters = get(controller, "max_outer_iters", 8),
-  )
+function add_demo_controllers!(net::Net, trafos, demo_settings::Dict{String,Any})
+  # Demo controller setpoints come from the example YAML.
+  # Controller objects are still created programmatically.
+  # This is not the central control.controllers schema.
+  oltc = get(demo_settings, "oltc", Dict{String,Any}())
+  pst = get(demo_settings, "pst", Dict{String,Any}())
+  schraeg = get(demo_settings, "schraeg", Dict{String,Any}())
+
+  addTapController!(net; trafo = "T_OLTC", mode = :voltage, target_bus = String(get(oltc, "target_bus", "Load_LV")),
+    target_vm_pu = get(oltc, "target_vm_pu", 1.0), control_ratio = true, control_phase = false, is_discrete = true,
+    deadband_vm_pu = get(oltc, "deadband_vm_pu", 5e-3), max_outer_iters = get(oltc, "max_outer_iters", 12))
+
+  addTapController!(net; trafo = "T_PST", mode = :branch_active_power,
+    target_branch = (String(get(pst, "target_branch_from", "Grid_B")), String(get(pst, "target_branch_to", "MV_B"))),
+    p_target_mw = get(pst, "p_target_mw", 20.0), control_ratio = false, control_phase = true, is_discrete = true,
+    deadband_p_mw = get(pst, "deadband_p_mw", 1.0), max_outer_iters = get(pst, "max_outer_iters", 12))
+
+  addTapController!(net; trafo = "T_SCHRAEG", mode = :voltage_and_branch_active_power, target_bus = String(get(schraeg, "target_bus", "Load_MV")),
+    target_vm_pu = get(schraeg, "target_vm_pu", 1.0), target_branch = (String(get(schraeg, "target_branch_from", "MV_A")), String(get(schraeg, "target_branch_to", "MV_B"))),
+    p_target_mw = get(schraeg, "p_target_mw", 10.0), control_ratio = true, control_phase = true, is_discrete = true,
+    deadband_vm_pu = get(schraeg, "deadband_vm_pu", 5e-3), deadband_p_mw = get(schraeg, "deadband_p_mw", 1.0), max_outer_iters = get(schraeg, "max_outer_iters", 20))
 end
 
-function print_control_result(result::ControlRunResult)
+function print_compact_result(result::ControlRunResult)
   println("Control status: ", result.status)
   println("Outer iterations: ", result.outer_iterations)
   println("PF solves: ", result.powerflow_solves)
-  println("Controller rows:")
+  println("Controllers:")
   for row in result.controllers
-    println("  ", row)
+    @printf("  %-18s mode=%-28s status=%-12s tap=%.4f phase=%.2f°\n", row.controller_name, row.mode, row.status, row.tap_ratio, row.phase_shift_deg)
   end
-  println("Trace rows:")
-  for row in result.trace
-    println("  ", row)
+  println("Trace:")
+  println("  rows: ", length(result.trace))
+  if !isempty(result.trace)
+    println("  first: ", first(result.trace))
+    println("  last:  ", last(result.trace))
   end
 end
 
 function main()
   demo_path, demo_settings = load_demo_settings()
-  sparlectra_config = load_demo_sparlectra_config(demo_settings, demo_path)
-
-  net, trafo = build_demo_net(demo_settings)
+  config_label, sparlectra_config = load_demo_sparlectra_config(demo_settings, demo_path)
+  net, trafos = build_demo_net(demo_settings)
 
   _, erg0, _ = run_acpflow(net = net; config = sparlectra_config, show_results = false)
   erg0 == 0 || error("Uncontrolled PF failed with erg=$erg0")
-  vm_uncontrolled = get_bus_vm_pu(net, "Load")
+  vm_lv0 = get_bus_vm_pu(net, "Load_LV")
+  vm_mv0 = get_bus_vm_pu(net, "Load_MV")
 
-  add_demo_controllers!(net, trafo, demo_settings)
-
+  add_demo_controllers!(net, trafos, demo_settings)
   show_classic = get(ENV, "SPARLECTRA_TAP_DEMO_CLASSIC", "0") == "1"
+  raw = get(ENV, "SPARLECTRA_TAP_DEMO_RAW", "0") == "1"
+
   _, erg, _ = run_acpflow(net = net; config = sparlectra_config, show_results = show_classic)
   erg == 0 || error("Controlled PF failed with erg=$erg")
-  vm_controlled = get_bus_vm_pu(net, "Load")
+
+  vm_lv = get_bus_vm_pu(net, "Load_LV")
+  vm_mv = get_bus_vm_pu(net, "Load_MV")
+  p_gb_mb = get_branch_p_from_to_mw(net, "Grid_B", "MV_B")
+  p_mva_mvb = get_branch_p_from_to_mw(net, "MV_A", "MV_B")
 
   result = latest_control_result(net)
   result === nothing && error("Expected control result on net.control_result")
 
   println("Demo YAML: ", demo_path)
-  @printf("Uncontrolled Load Vm: %.6f pu\n", vm_uncontrolled)
-  @printf("Controlled Load Vm:   %.6f pu\n", vm_controlled)
-  print_control_result(result)
+  println("Central config: ", config_label)
+  println("Uncontrolled:")
+  @printf("  Load_LV Vm: %.6f pu\n", vm_lv0)
+  @printf("  Load_MV Vm: %.6f pu\n", vm_mv0)
+  println("Controlled:")
+  @printf("  Load_LV Vm: %.6f pu\n", vm_lv)
+  @printf("  Load_MV Vm: %.6f pu\n", vm_mv)
+  @printf("  P(Grid_B -> MV_B): %.4f MW\n", p_gb_mb)
+  @printf("  P(MV_A -> MV_B): %.4f MW\n", p_mva_mvb)
+
+  print_compact_result(result)
+  println("Tip: set SPARLECTRA_TAP_DEMO_CLASSIC=1 for classic network output.")
+  println("Tip: set SPARLECTRA_TAP_DEMO_RAW=1 for raw ControlRunResult rows.")
+
+  if raw
+    println("Raw controller rows:")
+    for row in result.controllers
+      println("  ", row)
+    end
+    println("Raw trace rows:")
+    for row in result.trace
+      println("  ", row)
+    end
+  end
 end
 
 Base.invokelatest(main)

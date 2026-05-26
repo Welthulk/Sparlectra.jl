@@ -14,12 +14,13 @@ This page summarizes the most relevant runnable examples in `examples/`.
 ## Transformer and tap control
 
 - `tap_control_demo_grid.jl`  
-  Lightweight generic outer-loop control demo using `run_acpflow(net = ...)`,
+  Lightweight three-controller demo (OLTC + PST + Schrägregler) using `run_acpflow(net = ...)`,
   central Sparlectra configuration (`examples/configuration.yaml` or
   `SPARLECTRA_CONFIGURATION_YAML`) plus demo-specific
   `examples/tap_control_demo_grid.yaml`, and `latest_control_result(net)` for
-  controller rows and trace rows. Optional classic output can be enabled with
-  `SPARLECTRA_TAP_DEMO_CLASSIC=1`.
+  controller rows and trace rows. Optional classic output:
+  `SPARLECTRA_TAP_DEMO_CLASSIC=1`; optional raw control-result rows:
+  `SPARLECTRA_TAP_DEMO_RAW=1`.
 
 ## Voltage-dependent and Q-limit controls
 
