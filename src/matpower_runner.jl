@@ -721,7 +721,7 @@ function run_synthetic_tiled_grid_pf_perf(; config_file::AbstractString = "", ar
   rows = NamedTuple[]
   for limit in limits
     net, meta = build_synthetic_tiled_grid_net(limit)
-    iterations, erg, et = run_net_acpflow(net = net, show_results = false)
+    iterations, erg, et = run_acpflow(net = net, show_results = false)
     push!(rows, (limit = limit, nbus = meta.actual_buses, converged = erg == 0, iterations = iterations, solve_ms = et * 1000.0))
   end
   open(logfile, "w") do io
@@ -751,7 +751,7 @@ function run_voltage_dependent_control_demo(; config_file::AbstractString = "", 
   pu_curve = make_characteristic(pu_points; voltage_unit = :kV, value_unit = :MW, vn_kV = 110.0, sbase_MVA = net.baseMVA)
   addProsumer!(net = net, busName = "Prosumer", type = "SYNCHRONOUSMACHINE", p = 10.0, q = 0.0, qu_controller = QUController(qu_curve; qmin_MVAr = -50.0, qmax_MVAr = 50.0, sbase_MVA = net.baseMVA), pu_controller = PUController(pu_curve; pmin_MW = 0.0, pmax_MW = 50.0, sbase_MVA = net.baseMVA))
   addProsumer!(net = net, busName = "Prosumer", type = "ENERGYCONSUMER", p = 45.0, q = 18.0)
-  ite, erg, _ = run_net_acpflow(net = net, max_ite = 40, tol = 1e-9, verbose = 1, method = :rectangular, show_results = false)
+  ite, erg, _ = run_acpflow(net = net, max_ite = 40, tol = 1e-9, verbose = 1, method = :rectangular, show_results = false)
   println("Voltage-dependent control demo converged=", erg == 0, " iterations=", ite, " plot_curve=", isnothing(plot_curve) ? "default" : string(plot_curve))
   return net
 end

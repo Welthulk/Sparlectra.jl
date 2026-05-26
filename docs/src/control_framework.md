@@ -34,8 +34,7 @@ run_acpflow(; net = net, ...)
 run_acpflow(; casefile = "case14.m", path = "...", ...)
 ```
 
-`run_net_acpflow` is kept as a compatibility wrapper for existing code.
-Prefer `run_acpflow(; net = ..., ...)` in new code.
+`run_acpflow` is the public high-level ACP runner for both in-memory and file-based workflows.
 
 ## Hook interface
 

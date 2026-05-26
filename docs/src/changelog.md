@@ -1,6 +1,9 @@
 # Change Log
 ## Version 0.8.1 – 2026-05-25
 
+### Breaking Changes
+* Removed the old `run_net_acpflow` public wrapper. Use `run_acpflow(net=...)` for already constructed networks and `run_acpflow(casefile=..., path=...)` for file-based workflows.
+
 ### Highlights
 * Added a generic outer-loop control framework above `runpf!`.
   Transformer tap/phase control now uses this framework as the first concrete controller implementation.
@@ -8,7 +11,7 @@
 ### Improvements
 * Added structured `ControlRunResult` output and `latest_control_result(net)` for inspecting controller status, outer iterations, PF solve count, controller rows, and trace rows.
 * Added machine-readable control trace rows for transformer control.
-* Added `run_acpflow(net=...)` as the preferred high-level entry point for already constructed networks, while keeping `run_net_acpflow` as a compatibility wrapper.
+* Added `run_acpflow(net=...)` as the preferred high-level entry point for already constructed networks, and made it the single public in-memory entry path.
 * Simplified `examples/tap_control_demo_grid.jl` into a lightweight demo of the generic control framework.
 * Documented the `control` configuration section, including that `control.controllers` is reserved for future YAML-based controller instantiation.
 
@@ -129,7 +132,7 @@
 
 ### Fixes
 * Fixed rectangular power-flow status caching to use weak network keys so repeated benchmark/example solves can release imported `Net` objects after callers consume the status.
-* Fixed direct `run_net_acpflow` and rectangular solver defaults so the Q-limit guard remains opt-in unless a caller or config explicitly enables it.
+* Fixed direct `run_acpflow(net=...)` and rectangular solver defaults so the Q-limit guard remains opt-in unless a caller or config explicitly enables it.
 * Fixed direct `run_tap_controllers_outer!` defaults so the Q-limit guard remains opt-in when the exported tap-control API calls `runpf!`.
 * Fixed MATPOWER example config forwarding so Q-limit guard options from YAML are preserved in the effective config and passed through all `run_acpflow` paths.
 * Fixed MATPOWER example console row limiting so `console_max_rows` from YAML is forwarded to Q-limit event and final active-set row caps in the `run_acpflow` paths.
@@ -270,7 +273,7 @@
   Both now emit a deprecation warning when used.
 * Set rectangular complex Jacobian (`method = :rectangular`) as the default for:
   * `run_acpflow`
-  * `run_net_acpflow`
+  * `run_acpflow(; net = net, ...)`
 * Updated examples and user documentation to use `:rectangular` as the recommended/default solver method.
 ### Bugfixes
 * For backwards compatibility, if vm is set, the coresponding bus type is set to PV

@@ -209,16 +209,12 @@ function run_tap_controller_tests()
     @test Sparlectra._legacy_erg_from_control_status(:max_outer_iterations) == 0
   end
 
-  @testset "run_net_acpflow compatibility wrapper" begin
+  @testset "run_acpflow net entry point" begin
     net, _ = _build_net()
     ite_a, erg_a, _ = run_acpflow(net = net, max_ite = 20, tol = 1e-9, show_results = false)
     @test erg_a == 0
     @test ite_a >= 1
 
-    net2, _ = _build_net()
-    ite_b, erg_b, _ = run_net_acpflow(net = net2, max_ite = 20, tol = 1e-9, show_results = false)
-    @test erg_b == 0
-    @test ite_b >= 1
   end
   @testset "Tap controller reporting rows and classic section" begin
     net, tbr = _build_net()
