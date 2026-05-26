@@ -1,5 +1,5 @@
 # Change Log
-## Version 0.8.1 – 2026-05-25
+## Version 0.8.1 – 2026-05-26
 
 ### Breaking Changes
 * Removed the old `run_net_acpflow` public wrapper. Use `run_acpflow(net=...)` for already constructed networks and `run_acpflow(casefile=..., path=...)` for file-based workflows.
