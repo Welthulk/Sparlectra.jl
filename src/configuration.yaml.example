@@ -186,11 +186,24 @@ benchmark:
   show_once_max_nodes: 0
 
 control:
+  # Enable the generic outer-loop control framework.
+  # If a network contains registered controllers, high-level runners such as
+  # run_acpflow(net=...) can use run_control! around the inner runpf! solver.
   enabled: true
+  # Global maximum number of outer controller iterations.
+  # This is independent from power_flow.max_iter, which limits the inner
+  # Newton / power-flow iterations.
   max_outer_iterations: 20
+  # Collect machine-readable control trace rows in ControlRunResult.trace.
   trace: true
+  # Reserved for future or implementation-dependent per-iteration control logging.
   log_iterations: true
+  # Stop outer-loop orchestration if the inner power flow fails.
   stop_on_pf_failure: true
+  # Reserved for future YAML-based controller instantiation.
+  # Leave this empty for now.
+  # Transformer controllers are currently added programmatically via
+  # addTapController! or addPowerTransformerControl!.
   controllers: []
 
 extensions:

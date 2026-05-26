@@ -45,7 +45,8 @@ No augmentation of the Newton system is performed.
 
 ## Controller Resolution
 
-Controllers are collected centrally via `_tap_controllers(net)` from
+Transformer tap/phase control is implemented as an `AbstractOuterController`.
+Controllers are collected by `collect_outer_controllers(net)` from
 `PowerTransformerWinding.controls`.
 
 They are:
@@ -84,10 +85,15 @@ addPowerTransformerControl!(net;
 
 ## Generic control framework integration
 
-Transformer tap/phase control is implemented as an `AbstractOuterController`.
-Controllers are collected by `collect_outer_controllers(net)`. When at least one
-controller is present, `run_acpflow` calls `run_control!`
-for outer-loop orchestration.
+Preferred high-level solve path for already constructed networks:
+
+```julia
+run_acpflow(net = net; show_results = false)
+```
+
+When at least one controller is present (`collect_outer_controllers(net)`), the
+high-level runner calls `run_control!` internally for outer-loop orchestration.
+`runpf!` remains the inner numerical solver.
 
 Advanced direct use:
 
@@ -103,14 +109,27 @@ result.trace
 latest_control_result(net)
 ```
 
-Preferred high-level solve path:
+`run_control!` remains available for advanced direct use.
+`run_net_acpflow` is retained only as a compatibility/secondary wrapper.
+There is no public compatibility execution path for `run_tap_controllers_outer!`.
+
+### Result inspection
 
 ```julia
 run_acpflow(net = net; show_results = false)
+
 result = latest_control_result(net)
+
+println(result.status)
+println(result.outer_iterations)
+println(result.powerflow_solves)
+println(result.controllers)
+println(result.trace)
 ```
 
-There is no compatibility execution path for `run_tap_controllers_outer!`.
+`result.status` is the outer control-loop terminal state.
+It is separate from numerical PF success/failure.
+`result.trace` is machine-readable and does not require parsing console output.
 
 ```julia
 addPowerTransformerControl!(net;
@@ -236,10 +255,14 @@ addPIModelTrafo!(
 
 ---
 
-## Examples
+## Runnable example
 
-See:
+`examples/tap_control_demo_grid.jl`
 
-* `examples/tap_control_demo_grid.jl`
+This runnable example demonstrates:
 
-for runnable setups.
+* building a small grid
+* adding tap/phase controllers through the public API
+* running `run_acpflow(net = net; ...)`
+* inspecting `latest_control_result(net)`
+* printing controller rows and trace rows
