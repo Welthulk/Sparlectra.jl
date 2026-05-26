@@ -98,6 +98,7 @@ struct Net
   qLimitEvents::Dict{Int,Symbol}      # BusIdx -> :min | :max (PV→PQ Change)  
   measurements::Vector
   bus_shunt_model::Symbol
+  control_result::Base.RefValue{Any}
 
   #! format: off
   function Net(; name::String, baseMVA::Float64, vmin_pu::Float64 = 0.9, vmax_pu::Float64 = 1.1, cooldown_iters::Int = 0, q_hyst_pu::Float64 = 0.0, flatstart::Bool = false, bus_shunt_model = :admittance)    
@@ -130,7 +131,8 @@ struct Net
         [],                                    # qmax_pu
         Dict{Int,Symbol}(),
         [],
-        shunt_model)                                          
+        shunt_model,
+        Ref{Any}(nothing))                                          
   end
   #! format: on
   function Base.show(io::IO, net::Net)

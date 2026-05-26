@@ -433,6 +433,31 @@ Use `report.transformer_controls` for machine-readable controller rows
 (DataFrame-compatible), including controller type, target/achieved values,
 tap/phase positions, limits, and status.
 
+## Transformer control with the generic outer loop
+
+You can also inspect the generic control result directly:
+
+```julia
+run_net_acpflow(net = net, show_results = false)
+
+result = latest_control_result(net)
+result.status
+result.outer_iterations
+result.powerflow_solves
+result.controllers
+result.trace
+```
+
+Direct orchestration is also available:
+
+```julia
+result = run_control!(
+    net;
+    pf_config = powerflow_config(),
+    control_config = control_config(),
+)
+```
+
 ### 5. Example programs
 
 - `examples/example_transformer_tap.jl`  

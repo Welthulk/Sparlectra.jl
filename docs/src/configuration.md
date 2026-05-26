@@ -56,6 +56,7 @@ This typed model is the canonical internal representation that should be consume
 | `output` | `OutputConfig` | Console/logfile behavior and result table sizing | Public / supported |
 | `performance` | `PerformanceConfig` | Profiling/reporting toggles and diagnostic volume controls | Public / supported |
 | `benchmark` | `BenchmarkConfig` | Repeated benchmark-run controls | Public / supported |
+| `control` | `ControlConfig` | Generic controller outer-loop orchestration controls | Public / supported |
 | `runtime` | `RuntimeConfig` | Julia/BLAS thread control knobs for entry workflows | Public / supported |
 | `diagnostics` | `DiagnosticsConfig` | Effective-config logging and diagnostics render controls | Public / supported |
 | `extensions` | reserved (not mapped to typed runtime fields) | Future extension placeholder | Reserved |
@@ -158,6 +159,30 @@ extensions:
 ```
 
 For complete key references and allowed-value tables, see the module-specific pages below.
+
+## Control configuration (generic outer loop)
+
+```yaml
+control:
+  enabled: true
+  max_outer_iterations: 20
+  trace: true
+  log_iterations: true
+  stop_on_pf_failure: true
+  controllers: []
+```
+
+| Key | Type | Default | Meaning |
+|---|---:|---:|---|
+| `enabled` | Bool | `true` | Enables the generic outer-loop control framework. |
+| `max_outer_iterations` | Int | `20` | Global outer-loop cap. Does not control inner NR iterations. |
+| `trace` | Bool | `true` | Collect machine-readable control trace rows. |
+| `log_iterations` | Bool | `true` | Enables optional per-iteration control logging hooks. |
+| `stop_on_pf_failure` | Bool | `true` | Stops control orchestration when inner PF fails. |
+| `controllers` | Vector | `[]` | Reserved for future YAML controller instantiation. |
+
+In Stage 1, controllers are typically attached programmatically via
+`addTapController!` / `addPowerTransformerControl!`.
 
 ## Migration notes
 
