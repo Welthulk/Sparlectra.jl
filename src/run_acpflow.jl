@@ -418,10 +418,13 @@ function run_acpflow(;
   erg = 2
   etime = @elapsed begin
     ite, erg = _perf_profile_time!(performance_profile, :solver_total) do
-    if isempty(_tap_controllers(myNet))
+    controllers = collect_outer_controllers(myNet)
+    if isempty(controllers)
       runpf!(myNet, solver_config; verbose = verbose, pv_table_rows = pv_table_rows, validate_limits_after_pf = validate_limits_after_pf, q_limit_violation_headroom = q_limit_violation_headroom, qlimit_lock_reason = qlimit_lock_reason, performance_profile = performance_profile)
-      else
-      run_tap_controllers_outer!(myNet; max_ite = max_ite, tol = tol, verbose = verbose, method = method, autodamp = autodamp, autodamp_min = autodamp_min, start_projection = start_projection, start_projection_try_dc_start = start_projection_try_dc_start, start_projection_try_blend_scan = start_projection_try_blend_scan, start_projection_branch_guard = start_projection_branch_guard, start_projection_measure_candidates = start_projection_measure_candidates, start_projection_accept_unmeasured_dc_start = start_projection_accept_unmeasured_dc_start, start_projection_blend_lambdas = start_projection_blend_lambdas, start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg, qlimit_start_iter = qlimit_start_iter, qlimit_start_mode = qlimit_start_mode, qlimit_auto_q_delta_pu = qlimit_auto_q_delta_pu, opt_flatstart = opt_flatstart, pv_table_rows = pv_table_rows, validate_limits_after_pf = validate_limits_after_pf, q_limit_violation_headroom = q_limit_violation_headroom, lock_pv_to_pq_buses = lock_pv_to_pq_buses_resolved, qlimit_trace_buses = qlimit_trace_buses, qlimit_lock_reason = qlimit_lock_reason, qlimit_guard = qlimit_guard, qlimit_guard_min_q_range_pu = qlimit_guard_min_q_range_pu, qlimit_guard_zero_range_mode = qlimit_guard_zero_range_mode, qlimit_guard_narrow_range_mode = qlimit_guard_narrow_range_mode, qlimit_guard_log = qlimit_guard_log, qlimit_guard_max_switches = qlimit_guard_max_switches, qlimit_guard_accept_bounded_violations = qlimit_guard_accept_bounded_violations, qlimit_guard_max_remaining_violations = qlimit_guard_max_remaining_violations, qlimit_guard_freeze_after_repeated_switching = qlimit_guard_freeze_after_repeated_switching, qlimit_guard_violation_mode = qlimit_guard_violation_mode, qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu)
+    else
+      control_result = run_control!(myNet; controllers = controllers, pf_config = solver_config, control_config = control_config(), verbose = verbose, performance_profile = performance_profile)
+      # Keep legacy `(ite, erg)` boundary semantics: `ite` reports last PF iterations from the control run.
+      (control_result.last_pf_iterations, control_result.status == :pf_failed ? 1 : 0)
       end
     end
   end
@@ -606,10 +609,13 @@ function run_net_acpflow(; net::Net, max_ite::Int = 30, tol::Float64 = 1e-6, ver
   erg = 2
   etime = @elapsed begin
     ite, erg = _perf_profile_time!(performance_profile, :solver_total) do
-    if isempty(_tap_controllers(net))
+    controllers = collect_outer_controllers(net)
+    if isempty(controllers)
       runpf!(net, solver_config; verbose = verbose, pv_table_rows = pv_table_rows, validate_limits_after_pf = validate_limits_after_pf, q_limit_violation_headroom = q_limit_violation_headroom, qlimit_lock_reason = qlimit_lock_reason, performance_profile = performance_profile)
     else
-      run_tap_controllers_outer!(net; max_ite = max_ite, tol = tol, verbose = verbose, method = method, autodamp = autodamp, autodamp_min = autodamp_min, start_projection = start_projection, start_projection_try_dc_start = start_projection_try_dc_start, start_projection_try_blend_scan = start_projection_try_blend_scan, start_projection_branch_guard = start_projection_branch_guard, start_projection_measure_candidates = start_projection_measure_candidates, start_projection_accept_unmeasured_dc_start = start_projection_accept_unmeasured_dc_start, start_projection_blend_lambdas = start_projection_blend_lambdas, start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg, qlimit_start_iter = qlimit_start_iter, qlimit_start_mode = qlimit_start_mode, qlimit_auto_q_delta_pu = qlimit_auto_q_delta_pu, opt_flatstart = opt_flatstart, pv_table_rows = pv_table_rows, validate_limits_after_pf = validate_limits_after_pf, q_limit_violation_headroom = q_limit_violation_headroom, lock_pv_to_pq_buses = lock_pv_to_pq_buses, qlimit_trace_buses = qlimit_trace_buses, qlimit_lock_reason = qlimit_lock_reason, qlimit_guard = qlimit_guard, qlimit_guard_min_q_range_pu = qlimit_guard_min_q_range_pu, qlimit_guard_zero_range_mode = qlimit_guard_zero_range_mode, qlimit_guard_narrow_range_mode = qlimit_guard_narrow_range_mode, qlimit_guard_log = qlimit_guard_log, qlimit_guard_max_switches = qlimit_guard_max_switches, qlimit_guard_accept_bounded_violations = qlimit_guard_accept_bounded_violations, qlimit_guard_max_remaining_violations = qlimit_guard_max_remaining_violations, qlimit_guard_freeze_after_repeated_switching = qlimit_guard_freeze_after_repeated_switching, qlimit_guard_violation_mode = qlimit_guard_violation_mode, qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu)
+      control_result = run_control!(net; controllers = controllers, pf_config = solver_config, control_config = control_config(), verbose = verbose, performance_profile = performance_profile)
+      # Keep legacy `(ite, erg)` boundary semantics: `ite` reports last PF iterations from the control run.
+      (control_result.last_pf_iterations, control_result.status == :pf_failed ? 1 : 0)
       end
     end
   end

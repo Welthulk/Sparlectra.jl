@@ -168,23 +168,15 @@ function configure_tap_controllers!(net::Net, cfg::Dict{String,Any})
   clearTapControllers!(net)
   c = _controller_branches(net)
 
-  function _add_voltage_tap_controller_compat!(; trafo::String, target_bus::String, target_vm_pu::Float64, deadband_vm_pu::Float64, voltage_error_metric::Symbol, max_outer_iters::Int)
-    kwargs_common = (trafo = trafo, mode = :voltage, target_bus = target_bus, target_vm_pu = target_vm_pu, control_ratio = true, control_phase = false, is_discrete = true, deadband_vm_pu = deadband_vm_pu, max_outer_iters = max_outer_iters)
-    try
-      addTapController!(net; kwargs_common..., voltage_error_metric = voltage_error_metric)
-    catch err
-      if err isa MethodError || err isa UndefKeywordError
-        addTapController!(net; kwargs_common...)
-      else
-        rethrow(err)
-      end
-    end
-  end
-
-  _add_voltage_tap_controller_compat!(;
+  addTapController!(
+    net;
     trafo = string(c.t2.branchIdx),
+    mode = :voltage,
     target_bus = String(_cfg_value(cfg, "t2_target_bus")),
     target_vm_pu = Float64(_cfg_value(cfg, "t2_target_vm_pu")),
+    control_ratio = true,
+    control_phase = false,
+    is_discrete = true,
     deadband_vm_pu = Float64(_cfg_value(cfg, "t2_deadband_vm_pu")),
     voltage_error_metric = Symbol(_cfg_value(cfg, "t2_voltage_error_metric")),
     max_outer_iters = Int(_cfg_value(cfg, "t2_max_outer_iters")),
@@ -222,6 +214,7 @@ function configure_tap_controllers!(net::Net, cfg::Dict{String,Any})
 
   return nothing
 end
+
 
 """
     print_tap_control_targets(net, cfg)
