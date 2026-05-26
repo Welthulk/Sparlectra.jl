@@ -193,6 +193,8 @@ _matpower_config_for_runner(::Union{Nothing,PowerFlowConfig}) = matpower_import_
 _matpower_config_for_runner(config::SparlectraConfig) = config.matpower
 _output_config_for_runner(::Union{Nothing,PowerFlowConfig}) = output_config()
 _output_config_for_runner(config::SparlectraConfig) = config.output
+_control_config_for_runner(::Union{Nothing,PowerFlowConfig}) = control_config()
+_control_config_for_runner(config::SparlectraConfig) = config.control
 
 """
 Run AC power flow using the public high-level ACP runner.
@@ -261,6 +263,7 @@ function run_acpflow(;
   pf_config = isnothing(config) ? powerflow_config() : _as_powerflow_config(config)
   mat_cfg = _matpower_config_for_runner(config)
   out_cfg = _output_config_for_runner(config)
+  ctrl_cfg = _control_config_for_runner(config)
   max_ite = pf_config.max_iter
   tol = pf_config.tol
   method = pf_config.method
@@ -437,7 +440,7 @@ function run_acpflow(;
     if isempty(controllers)
       runpf!(myNet, solver_config; verbose = verbose, pv_table_rows = pv_table_rows, validate_limits_after_pf = validate_limits_after_pf, q_limit_violation_headroom = q_limit_violation_headroom, qlimit_lock_reason = qlimit_lock_reason, performance_profile = performance_profile)
     else
-      control_result = run_control!(myNet; controllers = controllers, pf_config = solver_config, control_config = control_config(), verbose = verbose, performance_profile = performance_profile)
+      control_result = run_control!(myNet; controllers = controllers, pf_config = solver_config, control_config = ctrl_cfg, verbose = verbose, performance_profile = performance_profile)
       # The legacy `erg` flag describes numerical PF success/failure.
       # Control-loop terminal states such as :blocked or :max_outer_iterations are
       # reported through `control_result` and `net.control_result`, not as PF failure.
@@ -533,6 +536,7 @@ function _run_acpflow_net!(; net::Net, max_ite::Int = 30, tol::Float64 = 1e-6, v
   use_active_config = config !== nothing || (max_ite == 30 && tol == 1e-6 && method === :rectangular && !autodamp && autodamp_min == 1e-3 && !start_projection && start_projection_try_dc_start && start_projection_try_blend_scan && start_projection_branch_guard && start_projection_measure_candidates && !start_projection_accept_unmeasured_dc_start && collect(start_projection_blend_lambdas) == [0.25, 0.5, 0.75] && start_projection_dc_angle_limit_deg == 60.0 && qlimit_start_iter == 2 && qlimit_start_mode === :iteration && qlimit_auto_q_delta_pu == 1e-4 && isempty(lock_pv_to_pq_buses) && opt_flatstart && isempty(qlimit_trace_buses) && !qlimit_guard)
   pf_config = config === nothing ? powerflow_config() : _as_powerflow_config(config)
   out_cfg = _output_config_for_runner(config)
+  ctrl_cfg = _control_config_for_runner(config)
   if use_active_config
     max_ite = pf_config.max_iter
     tol = pf_config.tol
@@ -620,7 +624,7 @@ function _run_acpflow_net!(; net::Net, max_ite::Int = 30, tol::Float64 = 1e-6, v
     if isempty(controllers)
       runpf!(net, solver_config; verbose = verbose, pv_table_rows = pv_table_rows, validate_limits_after_pf = validate_limits_after_pf, q_limit_violation_headroom = q_limit_violation_headroom, qlimit_lock_reason = qlimit_lock_reason, performance_profile = performance_profile)
     else
-      control_result = run_control!(net; controllers = controllers, pf_config = solver_config, control_config = control_config(), verbose = verbose, performance_profile = performance_profile)
+      control_result = run_control!(net; controllers = controllers, pf_config = solver_config, control_config = ctrl_cfg, verbose = verbose, performance_profile = performance_profile)
       # The legacy `erg` flag describes numerical PF success/failure.
       # Control-loop terminal states such as :blocked or :max_outer_iterations are
       # reported through `control_result` and `net.control_result`, not as PF failure.

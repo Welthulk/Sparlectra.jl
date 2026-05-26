@@ -79,6 +79,24 @@ function _resolve_control_pf_config(pf_config)
   return pf_config
 end
 
+function _run_control_baseline_pf!(net::Any, pf_config, verbose::Int, performance_profile, success_status::Symbol)
+  pf_config_resolved = _resolve_control_pf_config(pf_config)
+  ite, erg = runpf!(net; config = pf_config_resolved, verbose = verbose, performance_profile = performance_profile)
+  if erg == 0
+    calcNetLosses!(net)
+    calcLinkFlowsKCL!(net)
+  end
+  result = ControlRunResult(
+    status = erg == 0 ? success_status : :pf_failed,
+    converged = erg == 0,
+    powerflow_solves = 1,
+    last_pf_iterations = ite,
+    last_pf_status = erg == 0 ? :ok : :failed,
+  )
+  net.control_result = result
+  return result
+end
+
 """
     run_control!(net; ...)
 
@@ -94,14 +112,10 @@ function run_control!(net::Any; controllers::Vector{<:AbstractOuterController} =
     return result
   end
   if !control_config.enabled
-    result = ControlRunResult(status = :disabled)
-    net.control_result = result
-    return result
+    return _run_control_baseline_pf!(net, pf_config, verbose, performance_profile, :disabled)
   end
   if all(c -> !control_enabled(c), controllers)
-    result = ControlRunResult(status = :disabled)
-    net.control_result = result
-    return result
+    return _run_control_baseline_pf!(net, pf_config, verbose, performance_profile, :disabled)
   end
   pf_config_resolved = _resolve_control_pf_config(pf_config)
   pf_runner = () -> runpf!(net; config = pf_config_resolved, verbose = verbose, performance_profile = performance_profile)
