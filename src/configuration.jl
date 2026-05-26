@@ -220,6 +220,7 @@ Base.@kwdef struct SparlectraConfig
   runtime::RuntimeConfig = RuntimeConfig()
   diagnostics::DiagnosticsConfig = DiagnosticsConfig()
   output::OutputConfig = OutputConfig()
+  control::ControlConfig = ControlConfig()
 end
 
 const _SPARLECTRA_CONFIG_CACHE = Ref{Union{Nothing,NamedTuple}}(nothing)
@@ -301,6 +302,7 @@ output_config()::OutputConfig = active_sparlectra_config().output
 performance_config()::PerformanceConfig = active_sparlectra_config().performance
 benchmark_config()::BenchmarkConfig = active_sparlectra_config().benchmark
 runtime_config()::RuntimeConfig = active_sparlectra_config().runtime
+control_config()::ControlConfig = active_sparlectra_config().control
 
 function configuration_path_from_inputs(; env_var::AbstractString = "SPARLECTRA_CONFIGURATION_YAML", fallback_paths::AbstractVector{<:AbstractString} = String[])
   candidate = strip(get(ENV, env_var, ""))
@@ -584,8 +586,21 @@ function OutputConfig(raw::AbstractDict)
   )
 end
 
+
+function ControlConfig(raw::AbstractDict)
+  merged = _merged_section(raw, "control")
+  return ControlConfig(
+    enabled = _as_bool_cfg(_raw_get(merged, "enabled", true)),
+    max_outer_iterations = _as_int_cfg(_raw_get(merged, "max_outer_iterations", 20)),
+    trace = _as_bool_cfg(_raw_get(merged, "trace", true)),
+    log_iterations = _as_bool_cfg(_raw_get(merged, "log_iterations", true)),
+    stop_on_pf_failure = _as_bool_cfg(_raw_get(merged, "stop_on_pf_failure", true)),
+    controllers = Any[_raw_get(merged, "controllers", Any[])...],
+  )
+end
+
 function SparlectraConfig(raw::AbstractDict)
-  return SparlectraConfig(powerflow = PowerFlowConfig(raw), state_estimation = StateEstimationConfig(raw), matpower = MatpowerImportConfig(raw), performance = PerformanceConfig(raw), benchmark = BenchmarkConfig(raw), runtime = RuntimeConfig(raw), diagnostics = DiagnosticsConfig(raw), output = OutputConfig(raw))
+  return SparlectraConfig(powerflow = PowerFlowConfig(raw), state_estimation = StateEstimationConfig(raw), matpower = MatpowerImportConfig(raw), performance = PerformanceConfig(raw), benchmark = BenchmarkConfig(raw), runtime = RuntimeConfig(raw), diagnostics = DiagnosticsConfig(raw), output = OutputConfig(raw), control = ControlConfig(raw))
 end
 
 _canonical_config_key(key::AbstractString)::String = key == "powerflow" ? "power_flow" : key == "matpower" ? "matpower_import" : String(key)

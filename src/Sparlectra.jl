@@ -62,7 +62,7 @@ export
   # ProSumer
   ProSumer, AbstractVoltageDependentController, PiecewiseLinearCharacteristic, QUController, PUController, VoltageAdjustConfig,
   # Tap controller
-  PowerTransformerControl,
+  AbstractOuterController, AbstractControlState, AbstractControlUpdate, PowerTransformerControl,
   # Branch
   AbstractBranch, Branch, BranchModel, BranchFlow, getBranchFlow, setBranchFlow!, getBranchNumber, getBranchLosses, setBranchLosses!, setBranchStatus!,
   # Link
@@ -78,7 +78,7 @@ export
   # yamlparams.jl
   parse_yaml_scalar, load_yaml_dict, merge_yaml_dict!, as_bool, as_int_vector,
   # configuration.jl
-  StartModeConfig, QLimitConfig, PowerFlowConfig, ObservabilityConfig, StateEstimationConfig, MatpowerImportConfig, PerformanceConfig, BenchmarkConfig, RuntimeConfig, DiagnosticsConfig, OutputConfig, SparlectraConfig, load_sparlectra_config, load_sparlectra_config!, set_sparlectra_config!, active_sparlectra_config, powerflow_config, matpower_import_config, state_estimation_config, diagnostics_config, output_config, performance_config, benchmark_config, runtime_config, print_effective_config, configuration_path_from_inputs,
+  StartModeConfig, QLimitConfig, PowerFlowConfig, ControlConfig, ObservabilityConfig, StateEstimationConfig, MatpowerImportConfig, PerformanceConfig, BenchmarkConfig, RuntimeConfig, DiagnosticsConfig, OutputConfig, SparlectraConfig, load_sparlectra_config, load_sparlectra_config!, set_sparlectra_config!, active_sparlectra_config, powerflow_config, matpower_import_config, state_estimation_config, diagnostics_config, output_config, performance_config, benchmark_config, runtime_config, print_effective_config, configuration_path_from_inputs,
   run_matpower_case, run_synthetic_tiled_grid_pf_perf, run_voltage_dependent_control_demo,
   # synthetic_grids.jl
   synthetic_tiled_grid_bus_index, build_synthetic_tiled_grid_net, build_tiled_grid_net,
@@ -107,7 +107,7 @@ export
   getNetOrigBusIdx, geNetBusIdx, setNetBranchStatus!, getNetBranch, getNetBranchNumberVec, setTotalLosses!, getTotalLosses, getBusType, getEffectiveBusType, getBusProsumers, refreshBusTypesFromProsumers!, get_bus_vn_kV, get_vn_kV, updateBranchParameters!, hasShunt!,
   getShunt!, markIsolatedBuses!,setTotalBusPower!, setPVBusVset!, setQLimits!, getNodeVm,distributeBusResults!, getTotalBusPower, getTotalLosses, buildVoltageVector,initialVrect, buildComplexSVec, buildControlledSVec, has_voltage_dependent_control, addShuntMatpower!, normalize_bus_shunt_model, bus_shunt_totals_pu, log_bus_shunt_model,
   add2WTPIModelTrafo!, add3WTPiModelTrafo!,showNet, buildQLimits!,updateShuntPowers!, addLink!, setNetLinkStatus!, getNetLinks, calcLinkFlowsKCL!,
-  addPowerTransformerControl!, addTapController!, clearTapControllers!, get_bus_vm_pu, get_branch_p_from_to_mw, get_branch_q_from_to_mvar, run_tap_controllers_outer!, buildTapControllerReportRows, printTapControllerSummary,
+  collect_outer_controllers, run_control!, ControlRunResult, addPowerTransformerControl!, addTapController!, clearTapControllers!, get_bus_vm_pu, get_branch_p_from_to_mw, get_branch_q_from_to_mvar, run_tap_controllers_outer!, buildTapControllerReportRows, printTapControllerSummary,
   # remove_functions.jl
   removeBus!, removeBranch!, removeACLine!, removeTrafo!, removeShunt!, removeProsumer!, clearIsolatedBuses!,apply_mp_isolated_buses!,
   # import.jl
@@ -152,6 +152,7 @@ export
 
 include("utilities.jl")
 include("yamlparams.jl")
+include("control_framework.jl")
 include("configuration.jl")
 include("component.jl")
 include("lines.jl")
