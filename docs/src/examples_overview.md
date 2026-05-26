@@ -13,8 +13,9 @@ This page summarizes the most relevant runnable examples in `examples/`.
 
 ## Transformer and tap control
 
-- `tap_control_demo_grid.jl` (+ `tap_control_demo_grid.yaml.example`)  
-  Configurable demo grid for multi-controller experiments and logging.
+- `tap_control_demo_grid.jl`  
+  Lightweight generic outer-loop control demo using `run_acpflow(net = ...)`,
+  `latest_control_result(net)`, controller rows, and trace rows.
 
 ## Voltage-dependent and Q-limit controls
 

@@ -4,12 +4,12 @@
 
 The inner numerical solver remains `runpf!`. The generic orchestration layer is `run_control!`, which runs controller-driven outer iterations around repeated PF solves.
 
-`run_acpflow` / `run_net_acpflow` automatically dispatch through `run_control!` when `collect_outer_controllers(net)` returns at least one controller.
+`run_acpflow` automatically dispatches through `run_control!` when `collect_outer_controllers(net)` returns at least one controller.
 
 ## Architecture
 
 ```text
-run_acpflow / run_net_acpflow
+run_acpflow (public entry)
         |
         v
 collect_outer_controllers(net)
@@ -26,6 +26,16 @@ run_control!
         v
 ControlRunResult stored on net.control_result
 ```
+
+Preferred public entries:
+
+```julia
+run_acpflow(; net = net, ...)
+run_acpflow(; casefile = "case14.m", path = "...", ...)
+```
+
+`run_net_acpflow` is kept as a compatibility wrapper for existing code.
+Prefer `run_acpflow(; net = ..., ...)` in new code.
 
 ## Hook interface
 

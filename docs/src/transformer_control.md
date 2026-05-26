@@ -86,7 +86,7 @@ addPowerTransformerControl!(net;
 
 Transformer tap/phase control is implemented as an `AbstractOuterController`.
 Controllers are collected by `collect_outer_controllers(net)`. When at least one
-controller is present, `run_acpflow` / `run_net_acpflow` call `run_control!`
+controller is present, `run_acpflow` calls `run_control!`
 for outer-loop orchestration.
 
 Advanced direct use:
@@ -101,6 +101,13 @@ result = run_control!(
 result.status
 result.trace
 latest_control_result(net)
+```
+
+Preferred high-level solve path:
+
+```julia
+run_acpflow(net = net; show_results = false)
+result = latest_control_result(net)
 ```
 
 There is no compatibility execution path for `run_tap_controllers_outer!`.
