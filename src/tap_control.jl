@@ -1,4 +1,20 @@
 # Copyright 2023–2026 Udo Schmitz
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Author: Udo Schmitz (https://github.com/Welthulk)
+# Date: 1.3.2026
+# file: src/tap_control.jl
 
 @inline _voltage_within_deadband(vm::Float64, target_vm_pu::Float64, deadband_vm_pu::Float64)::Bool = abs(vm - target_vm_pu) <= deadband_vm_pu
 @inline _voltage_control_error(vm::Float64, target_vm_pu::Float64, metric::Symbol)::Float64 = metric == :vm2 ? vm^2 - target_vm_pu^2 : vm - target_vm_pu
@@ -132,37 +148,40 @@ function buildTapControllerReportRows(net::Net)::Vector{NamedTuple}
     target_branch = ctrl.target_branch
     achieved_vm = isnothing(target_bus) ? missing : get_bus_vm_pu(net, target_bus)
     achieved_p = isnothing(target_branch) ? missing : get_branch_p_from_to_mw(net, target_branch[1], target_branch[2])
-    push!(rows, (
-      controller_name = string(br.comp.cName, " ", _controller_type_label(ctrl, br)),
-      transformer_id = br.comp.cName,
-      transformer_branch_index = br.branchIdx,
-      from_bus = br.fromBus,
-      to_bus = br.toBus,
-      control_type = _controller_type_label(ctrl, br),
-      mode = _controller_mode_label(ctrl.mode),
-      target_bus = isnothing(target_bus) ? missing : target_bus,
-      target_vm_pu = isnothing(ctrl.target_vm_pu) ? missing : ctrl.target_vm_pu,
-      achieved_vm_pu = achieved_vm,
-      target_branch_from = isnothing(target_branch) ? missing : target_branch[1],
-      target_branch_to = isnothing(target_branch) ? missing : target_branch[2],
-      p_target_mw = isnothing(ctrl.p_target_mw) ? missing : ctrl.p_target_mw,
-      achieved_p_mw = achieved_p,
-      tap_ratio = br.tap_ratio,
-      phase_shift_deg = br.phase_shift_deg,
-      ratio_tap_position = ctrl.is_discrete && br.has_ratio_tap ? _tap_position(br.tap_ratio, 1.0, br.tap_step) : missing,
-      phase_tap_position = ctrl.is_discrete && br.has_phase_tap ? _tap_position(br.phase_shift_deg, 0.0, br.phase_step_deg) : missing,
-      ratio_tap_min = br.has_ratio_tap ? br.tap_min : missing,
-      ratio_tap_max = br.has_ratio_tap ? br.tap_max : missing,
-      ratio_tap_step = br.has_ratio_tap ? br.tap_step : missing,
-      phase_tap_min_deg = br.has_phase_tap ? br.phase_min_deg : missing,
-      phase_tap_max_deg = br.has_phase_tap ? br.phase_max_deg : missing,
-      phase_tap_step_deg = br.has_phase_tap ? br.phase_step_deg : missing,
-      discrete = ctrl.is_discrete,
-      converged = ctrl.converged,
-      at_limit = ctrl.at_limit,
-      status = _controller_status_label(ctrl),
-      power_direction = isnothing(target_branch) ? missing : string(target_branch[1], " -> ", target_branch[2]),
-    ))
+    push!(
+      rows,
+      (
+        controller_name = string(br.comp.cName, " ", _controller_type_label(ctrl, br)),
+        transformer_id = br.comp.cName,
+        transformer_branch_index = br.branchIdx,
+        from_bus = br.fromBus,
+        to_bus = br.toBus,
+        control_type = _controller_type_label(ctrl, br),
+        mode = _controller_mode_label(ctrl.mode),
+        target_bus = isnothing(target_bus) ? missing : target_bus,
+        target_vm_pu = isnothing(ctrl.target_vm_pu) ? missing : ctrl.target_vm_pu,
+        achieved_vm_pu = achieved_vm,
+        target_branch_from = isnothing(target_branch) ? missing : target_branch[1],
+        target_branch_to = isnothing(target_branch) ? missing : target_branch[2],
+        p_target_mw = isnothing(ctrl.p_target_mw) ? missing : ctrl.p_target_mw,
+        achieved_p_mw = achieved_p,
+        tap_ratio = br.tap_ratio,
+        phase_shift_deg = br.phase_shift_deg,
+        ratio_tap_position = ctrl.is_discrete && br.has_ratio_tap ? _tap_position(br.tap_ratio, 1.0, br.tap_step) : missing,
+        phase_tap_position = ctrl.is_discrete && br.has_phase_tap ? _tap_position(br.phase_shift_deg, 0.0, br.phase_step_deg) : missing,
+        ratio_tap_min = br.has_ratio_tap ? br.tap_min : missing,
+        ratio_tap_max = br.has_ratio_tap ? br.tap_max : missing,
+        ratio_tap_step = br.has_ratio_tap ? br.tap_step : missing,
+        phase_tap_min_deg = br.has_phase_tap ? br.phase_min_deg : missing,
+        phase_tap_max_deg = br.has_phase_tap ? br.phase_max_deg : missing,
+        phase_tap_step_deg = br.has_phase_tap ? br.phase_step_deg : missing,
+        discrete = ctrl.is_discrete,
+        converged = ctrl.converged,
+        at_limit = ctrl.at_limit,
+        status = _controller_status_label(ctrl),
+        power_direction = isnothing(target_branch) ? missing : string(target_branch[1], " -> ", target_branch[2]),
+      ),
+    )
   end
   return rows
 end
@@ -177,11 +196,24 @@ Validation rules:
 - Required target fields must be set according to `mode`.
 - `control_ratio` / `control_phase` must match the chosen mode.
 """
-function addPowerTransformerControl!(net::Net; trafo::String, mode::Symbol, target_bus::Union{Nothing,String}=nothing, target_branch::Union{Nothing,Tuple{String,String}}=nothing,
-  target_vm_pu::Union{Nothing,Float64}=nothing, p_target_mw::Union{Nothing,Float64}=nothing, q_target_mvar::Union{Nothing,Float64}=nothing,
-  control_ratio::Bool=true, control_phase::Bool=false, is_discrete::Bool=true, deadband_vm_pu::Float64=1e-3, deadband_p_mw::Float64=0.5,
-  voltage_error_metric::Symbol=:vm, max_outer_iters::Int=20, enabled::Bool=true)
-
+function addPowerTransformerControl!(
+  net::Net;
+  trafo::String,
+  mode::Symbol,
+  target_bus::Union{Nothing,String} = nothing,
+  target_branch::Union{Nothing,Tuple{String,String}} = nothing,
+  target_vm_pu::Union{Nothing,Float64} = nothing,
+  p_target_mw::Union{Nothing,Float64} = nothing,
+  q_target_mvar::Union{Nothing,Float64} = nothing,
+  control_ratio::Bool = true,
+  control_phase::Bool = false,
+  is_discrete::Bool = true,
+  deadband_vm_pu::Float64 = 1e-3,
+  deadband_p_mw::Float64 = 0.5,
+  voltage_error_metric::Symbol = :vm,
+  max_outer_iters::Int = 20,
+  enabled::Bool = true,
+)
   br = _find_trafo_branch(net, trafo)
   trafo_obj = findfirst(t -> t.comp.cFrom_bus == br.comp.cFrom_bus && t.comp.cTo_bus == br.comp.cTo_bus, net.trafos)
   max_controls = isnothing(trafo_obj) ? 1 : max(1, net.trafos[trafo_obj].nController)
@@ -221,7 +253,8 @@ function addPowerTransformerControl!(net::Net; trafo::String, mode::Symbol, targ
     deadband_p_mw = deadband_p_mw,
     voltage_error_metric = voltage_error_metric,
     max_outer_iters = max_outer_iters,
-    enabled = enabled)
+    enabled = enabled,
+  )
   if isnothing(trafo_obj)
     error("PowerTransformerControl: no transformer object found for branch $(br.branchIdx)")
   end
@@ -238,15 +271,89 @@ Internal helper: determines the empirical sign of `ΔP_from_to` for a positive
 phase increment (`+phase_step_deg`) on the controlled transformer and branch.
 Returns `-1`, `0`, or `+1`.
 """
-function _phase_probe_direction(net::Net, br::Branch, ctrl::PowerTransformerControl, max_ite::Int, tol::Float64, verbose::Int, method::Symbol; opt_flatstart::Bool=true, pv_table_rows::Int=30, validate_limits_after_pf::Bool=false, q_limit_violation_headroom::Float64=0.0, lock_pv_to_pq_buses::AbstractVector{Int}=Int[], qlimit_trace_buses::AbstractVector{Int}=Int[], qlimit_lock_reason::Symbol=:manual, qlimit_guard::Bool=false, qlimit_guard_min_q_range_pu::Float64=1e-4, qlimit_guard_zero_range_mode::Symbol=:lock_pq, qlimit_guard_narrow_range_mode::Symbol=:prefer_pq, qlimit_guard_log::Bool=true, qlimit_guard_max_switches::Int=10, qlimit_guard_accept_bounded_violations::Bool=false, qlimit_guard_max_remaining_violations::Int=0, qlimit_guard_freeze_after_repeated_switching::Bool=true, qlimit_guard_violation_mode::Symbol=:delayed_switch, qlimit_guard_violation_threshold_pu::Float64=1e-4)
+function _phase_probe_direction(
+  net::Net,
+  br::Branch,
+  ctrl::PowerTransformerControl,
+  max_ite::Int,
+  tol::Float64,
+  verbose::Int,
+  method::Symbol;
+  opt_flatstart::Bool = true,
+  pv_table_rows::Int = 30,
+  validate_limits_after_pf::Bool = false,
+  q_limit_violation_headroom::Float64 = 0.0,
+  lock_pv_to_pq_buses::AbstractVector{Int} = Int[],
+  qlimit_trace_buses::AbstractVector{Int} = Int[],
+  qlimit_lock_reason::Symbol = :manual,
+  qlimit_guard::Bool = false,
+  qlimit_guard_min_q_range_pu::Float64 = 1e-4,
+  qlimit_guard_zero_range_mode::Symbol = :lock_pq,
+  qlimit_guard_narrow_range_mode::Symbol = :prefer_pq,
+  qlimit_guard_log::Bool = true,
+  qlimit_guard_max_switches::Int = 10,
+  qlimit_guard_accept_bounded_violations::Bool = false,
+  qlimit_guard_max_remaining_violations::Int = 0,
+  qlimit_guard_freeze_after_repeated_switching::Bool = true,
+  qlimit_guard_violation_mode::Symbol = :delayed_switch,
+  qlimit_guard_violation_threshold_pu::Float64 = 1e-4,
+)
   oldphi = br.phase_shift_deg
   step = br.phase_step_deg
-  _, erg = runpf!(net, max_ite, tol, verbose; method = method, opt_flatstart = opt_flatstart, pv_table_rows = pv_table_rows, validate_limits_after_pf = validate_limits_after_pf, q_limit_violation_headroom = q_limit_violation_headroom, lock_pv_to_pq_buses = lock_pv_to_pq_buses, qlimit_trace_buses = qlimit_trace_buses, qlimit_lock_reason = qlimit_lock_reason, qlimit_guard = qlimit_guard, qlimit_guard_min_q_range_pu = qlimit_guard_min_q_range_pu, qlimit_guard_zero_range_mode = qlimit_guard_zero_range_mode, qlimit_guard_narrow_range_mode = qlimit_guard_narrow_range_mode, qlimit_guard_log = qlimit_guard_log, qlimit_guard_max_switches = qlimit_guard_max_switches, qlimit_guard_accept_bounded_violations = qlimit_guard_accept_bounded_violations, qlimit_guard_max_remaining_violations = qlimit_guard_max_remaining_violations, qlimit_guard_freeze_after_repeated_switching = qlimit_guard_freeze_after_repeated_switching, qlimit_guard_violation_mode = qlimit_guard_violation_mode, qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu)
+  _, erg = runpf!(
+    net,
+    max_ite,
+    tol,
+    verbose;
+    method = method,
+    opt_flatstart = opt_flatstart,
+    pv_table_rows = pv_table_rows,
+    validate_limits_after_pf = validate_limits_after_pf,
+    q_limit_violation_headroom = q_limit_violation_headroom,
+    lock_pv_to_pq_buses = lock_pv_to_pq_buses,
+    qlimit_trace_buses = qlimit_trace_buses,
+    qlimit_lock_reason = qlimit_lock_reason,
+    qlimit_guard = qlimit_guard,
+    qlimit_guard_min_q_range_pu = qlimit_guard_min_q_range_pu,
+    qlimit_guard_zero_range_mode = qlimit_guard_zero_range_mode,
+    qlimit_guard_narrow_range_mode = qlimit_guard_narrow_range_mode,
+    qlimit_guard_log = qlimit_guard_log,
+    qlimit_guard_max_switches = qlimit_guard_max_switches,
+    qlimit_guard_accept_bounded_violations = qlimit_guard_accept_bounded_violations,
+    qlimit_guard_max_remaining_violations = qlimit_guard_max_remaining_violations,
+    qlimit_guard_freeze_after_repeated_switching = qlimit_guard_freeze_after_repeated_switching,
+    qlimit_guard_violation_mode = qlimit_guard_violation_mode,
+    qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu,
+  )
   erg != 0 && return -1.0
   p0 = get_branch_p_from_to_mw(net, ctrl.target_branch[1], ctrl.target_branch[2])
   br.phase_shift_deg = clamp(oldphi + step, br.phase_min_deg, br.phase_max_deg)
   br.angle = br.phase_shift_deg
-  _, erg2 = runpf!(net, max_ite, tol, verbose; method = method, opt_flatstart = opt_flatstart, pv_table_rows = pv_table_rows, validate_limits_after_pf = validate_limits_after_pf, q_limit_violation_headroom = q_limit_violation_headroom, lock_pv_to_pq_buses = lock_pv_to_pq_buses, qlimit_trace_buses = qlimit_trace_buses, qlimit_lock_reason = qlimit_lock_reason, qlimit_guard = qlimit_guard, qlimit_guard_min_q_range_pu = qlimit_guard_min_q_range_pu, qlimit_guard_zero_range_mode = qlimit_guard_zero_range_mode, qlimit_guard_narrow_range_mode = qlimit_guard_narrow_range_mode, qlimit_guard_log = qlimit_guard_log, qlimit_guard_max_switches = qlimit_guard_max_switches, qlimit_guard_accept_bounded_violations = qlimit_guard_accept_bounded_violations, qlimit_guard_max_remaining_violations = qlimit_guard_max_remaining_violations, qlimit_guard_freeze_after_repeated_switching = qlimit_guard_freeze_after_repeated_switching, qlimit_guard_violation_mode = qlimit_guard_violation_mode, qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu)
+  _, erg2 = runpf!(
+    net,
+    max_ite,
+    tol,
+    verbose;
+    method = method,
+    opt_flatstart = opt_flatstart,
+    pv_table_rows = pv_table_rows,
+    validate_limits_after_pf = validate_limits_after_pf,
+    q_limit_violation_headroom = q_limit_violation_headroom,
+    lock_pv_to_pq_buses = lock_pv_to_pq_buses,
+    qlimit_trace_buses = qlimit_trace_buses,
+    qlimit_lock_reason = qlimit_lock_reason,
+    qlimit_guard = qlimit_guard,
+    qlimit_guard_min_q_range_pu = qlimit_guard_min_q_range_pu,
+    qlimit_guard_zero_range_mode = qlimit_guard_zero_range_mode,
+    qlimit_guard_narrow_range_mode = qlimit_guard_narrow_range_mode,
+    qlimit_guard_log = qlimit_guard_log,
+    qlimit_guard_max_switches = qlimit_guard_max_switches,
+    qlimit_guard_accept_bounded_violations = qlimit_guard_accept_bounded_violations,
+    qlimit_guard_max_remaining_violations = qlimit_guard_max_remaining_violations,
+    qlimit_guard_freeze_after_repeated_switching = qlimit_guard_freeze_after_repeated_switching,
+    qlimit_guard_violation_mode = qlimit_guard_violation_mode,
+    qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu,
+  )
   p1 = erg2 == 0 ? get_branch_p_from_to_mw(net, ctrl.target_branch[1], ctrl.target_branch[2]) : p0
   br.phase_shift_deg = oldphi
   br.angle = oldphi
@@ -260,10 +367,60 @@ Internal helper: determines the empirical sign of `ΔVm_target` for a positive
 ratio increment (`+tap_step`) on the controlled transformer and target bus.
 Returns `-1`, `0`, or `+1`.
 """
-function _ratio_probe_direction(net::Net, br::Branch, ctrl::PowerTransformerControl, max_ite::Int, tol::Float64, verbose::Int, method::Symbol; opt_flatstart::Bool=true, pv_table_rows::Int=30, validate_limits_after_pf::Bool=false, q_limit_violation_headroom::Float64=0.0, lock_pv_to_pq_buses::AbstractVector{Int}=Int[], qlimit_trace_buses::AbstractVector{Int}=Int[], qlimit_lock_reason::Symbol=:manual, qlimit_guard::Bool=false, qlimit_guard_min_q_range_pu::Float64=1e-4, qlimit_guard_zero_range_mode::Symbol=:lock_pq, qlimit_guard_narrow_range_mode::Symbol=:prefer_pq, qlimit_guard_log::Bool=true, qlimit_guard_max_switches::Int=10, qlimit_guard_accept_bounded_violations::Bool=false, qlimit_guard_max_remaining_violations::Int=0, qlimit_guard_freeze_after_repeated_switching::Bool=true, qlimit_guard_violation_mode::Symbol=:delayed_switch, qlimit_guard_violation_threshold_pu::Float64=1e-4)
+function _ratio_probe_direction(
+  net::Net,
+  br::Branch,
+  ctrl::PowerTransformerControl,
+  max_ite::Int,
+  tol::Float64,
+  verbose::Int,
+  method::Symbol;
+  opt_flatstart::Bool = true,
+  pv_table_rows::Int = 30,
+  validate_limits_after_pf::Bool = false,
+  q_limit_violation_headroom::Float64 = 0.0,
+  lock_pv_to_pq_buses::AbstractVector{Int} = Int[],
+  qlimit_trace_buses::AbstractVector{Int} = Int[],
+  qlimit_lock_reason::Symbol = :manual,
+  qlimit_guard::Bool = false,
+  qlimit_guard_min_q_range_pu::Float64 = 1e-4,
+  qlimit_guard_zero_range_mode::Symbol = :lock_pq,
+  qlimit_guard_narrow_range_mode::Symbol = :prefer_pq,
+  qlimit_guard_log::Bool = true,
+  qlimit_guard_max_switches::Int = 10,
+  qlimit_guard_accept_bounded_violations::Bool = false,
+  qlimit_guard_max_remaining_violations::Int = 0,
+  qlimit_guard_freeze_after_repeated_switching::Bool = true,
+  qlimit_guard_violation_mode::Symbol = :delayed_switch,
+  qlimit_guard_violation_threshold_pu::Float64 = 1e-4,
+)
   oldratio = br.tap_ratio
   step = br.tap_step
-  _, erg = runpf!(net, max_ite, tol, verbose; method = method, opt_flatstart = opt_flatstart, pv_table_rows = pv_table_rows, validate_limits_after_pf = validate_limits_after_pf, q_limit_violation_headroom = q_limit_violation_headroom, lock_pv_to_pq_buses = lock_pv_to_pq_buses, qlimit_trace_buses = qlimit_trace_buses, qlimit_lock_reason = qlimit_lock_reason, qlimit_guard = qlimit_guard, qlimit_guard_min_q_range_pu = qlimit_guard_min_q_range_pu, qlimit_guard_zero_range_mode = qlimit_guard_zero_range_mode, qlimit_guard_narrow_range_mode = qlimit_guard_narrow_range_mode, qlimit_guard_log = qlimit_guard_log, qlimit_guard_max_switches = qlimit_guard_max_switches, qlimit_guard_accept_bounded_violations = qlimit_guard_accept_bounded_violations, qlimit_guard_max_remaining_violations = qlimit_guard_max_remaining_violations, qlimit_guard_freeze_after_repeated_switching = qlimit_guard_freeze_after_repeated_switching, qlimit_guard_violation_mode = qlimit_guard_violation_mode, qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu)
+  _, erg = runpf!(
+    net,
+    max_ite,
+    tol,
+    verbose;
+    method = method,
+    opt_flatstart = opt_flatstart,
+    pv_table_rows = pv_table_rows,
+    validate_limits_after_pf = validate_limits_after_pf,
+    q_limit_violation_headroom = q_limit_violation_headroom,
+    lock_pv_to_pq_buses = lock_pv_to_pq_buses,
+    qlimit_trace_buses = qlimit_trace_buses,
+    qlimit_lock_reason = qlimit_lock_reason,
+    qlimit_guard = qlimit_guard,
+    qlimit_guard_min_q_range_pu = qlimit_guard_min_q_range_pu,
+    qlimit_guard_zero_range_mode = qlimit_guard_zero_range_mode,
+    qlimit_guard_narrow_range_mode = qlimit_guard_narrow_range_mode,
+    qlimit_guard_log = qlimit_guard_log,
+    qlimit_guard_max_switches = qlimit_guard_max_switches,
+    qlimit_guard_accept_bounded_violations = qlimit_guard_accept_bounded_violations,
+    qlimit_guard_max_remaining_violations = qlimit_guard_max_remaining_violations,
+    qlimit_guard_freeze_after_repeated_switching = qlimit_guard_freeze_after_repeated_switching,
+    qlimit_guard_violation_mode = qlimit_guard_violation_mode,
+    qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu,
+  )
   erg != 0 && return -1.0
   vm0 = get_bus_vm_pu(net, ctrl.target_bus)
   newratio = clamp(oldratio + step, br.tap_min, br.tap_max)
@@ -272,7 +429,31 @@ function _ratio_probe_direction(net::Net, br::Branch, ctrl::PowerTransformerCont
   end
   br.tap_ratio = newratio
   br.ratio = newratio
-  _, erg2 = runpf!(net, max_ite, tol, verbose; method = method, opt_flatstart = opt_flatstart, pv_table_rows = pv_table_rows, validate_limits_after_pf = validate_limits_after_pf, q_limit_violation_headroom = q_limit_violation_headroom, lock_pv_to_pq_buses = lock_pv_to_pq_buses, qlimit_trace_buses = qlimit_trace_buses, qlimit_lock_reason = qlimit_lock_reason, qlimit_guard = qlimit_guard, qlimit_guard_min_q_range_pu = qlimit_guard_min_q_range_pu, qlimit_guard_zero_range_mode = qlimit_guard_zero_range_mode, qlimit_guard_narrow_range_mode = qlimit_guard_narrow_range_mode, qlimit_guard_log = qlimit_guard_log, qlimit_guard_max_switches = qlimit_guard_max_switches, qlimit_guard_accept_bounded_violations = qlimit_guard_accept_bounded_violations, qlimit_guard_max_remaining_violations = qlimit_guard_max_remaining_violations, qlimit_guard_freeze_after_repeated_switching = qlimit_guard_freeze_after_repeated_switching, qlimit_guard_violation_mode = qlimit_guard_violation_mode, qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu)
+  _, erg2 = runpf!(
+    net,
+    max_ite,
+    tol,
+    verbose;
+    method = method,
+    opt_flatstart = opt_flatstart,
+    pv_table_rows = pv_table_rows,
+    validate_limits_after_pf = validate_limits_after_pf,
+    q_limit_violation_headroom = q_limit_violation_headroom,
+    lock_pv_to_pq_buses = lock_pv_to_pq_buses,
+    qlimit_trace_buses = qlimit_trace_buses,
+    qlimit_lock_reason = qlimit_lock_reason,
+    qlimit_guard = qlimit_guard,
+    qlimit_guard_min_q_range_pu = qlimit_guard_min_q_range_pu,
+    qlimit_guard_zero_range_mode = qlimit_guard_zero_range_mode,
+    qlimit_guard_narrow_range_mode = qlimit_guard_narrow_range_mode,
+    qlimit_guard_log = qlimit_guard_log,
+    qlimit_guard_max_switches = qlimit_guard_max_switches,
+    qlimit_guard_accept_bounded_violations = qlimit_guard_accept_bounded_violations,
+    qlimit_guard_max_remaining_violations = qlimit_guard_max_remaining_violations,
+    qlimit_guard_freeze_after_repeated_switching = qlimit_guard_freeze_after_repeated_switching,
+    qlimit_guard_violation_mode = qlimit_guard_violation_mode,
+    qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu,
+  )
   vm1 = erg2 == 0 ? get_bus_vm_pu(net, ctrl.target_bus) : vm0
   br.tap_ratio = oldratio
   br.ratio = oldratio
@@ -294,19 +475,130 @@ Loop per iteration:
 
 Returns `(iterations, erg)` where `erg == 0` means successful PF termination.
 """
-function run_tap_controllers_outer!(net::Net; max_ite::Int=30, tol::Float64=1e-6, verbose::Int=0, method::Symbol=:rectangular, autodamp::Bool=false, autodamp_min::Float64=1e-3, start_projection::Bool=false, start_projection_try_dc_start::Bool=true, start_projection_try_blend_scan::Bool=true, start_projection_branch_guard::Bool=true, start_projection_measure_candidates::Bool=true, start_projection_accept_unmeasured_dc_start::Bool=false, start_projection_blend_lambdas::AbstractVector{<:Real}=[0.25, 0.5, 0.75], start_projection_dc_angle_limit_deg::Float64=60.0, qlimit_start_iter::Int=2, qlimit_start_mode::Symbol=:iteration, qlimit_auto_q_delta_pu::Float64=1e-4, opt_flatstart::Bool=true, pv_table_rows::Int=30, validate_limits_after_pf::Bool=false, q_limit_violation_headroom::Float64=0.0, lock_pv_to_pq_buses::AbstractVector{Int}=Int[], qlimit_trace_buses::AbstractVector{Int}=Int[], qlimit_lock_reason::Symbol=:manual, qlimit_guard::Bool=false, qlimit_guard_min_q_range_pu::Float64=1e-4, qlimit_guard_zero_range_mode::Symbol=:lock_pq, qlimit_guard_narrow_range_mode::Symbol=:prefer_pq, qlimit_guard_log::Bool=true, qlimit_guard_max_switches::Int=10, qlimit_guard_accept_bounded_violations::Bool=false, qlimit_guard_max_remaining_violations::Int=0, qlimit_guard_freeze_after_repeated_switching::Bool=true, qlimit_guard_violation_mode::Symbol=:delayed_switch, qlimit_guard_violation_threshold_pu::Float64=1e-4)
+function run_tap_controllers_outer!(
+  net::Net;
+  max_ite::Int = 30,
+  tol::Float64 = 1e-6,
+  verbose::Int = 0,
+  method::Symbol = :rectangular,
+  autodamp::Bool = false,
+  autodamp_min::Float64 = 1e-3,
+  start_projection::Bool = false,
+  start_projection_try_dc_start::Bool = true,
+  start_projection_try_blend_scan::Bool = true,
+  start_projection_branch_guard::Bool = true,
+  start_projection_measure_candidates::Bool = true,
+  start_projection_accept_unmeasured_dc_start::Bool = false,
+  start_projection_blend_lambdas::AbstractVector{<:Real} = [0.25, 0.5, 0.75],
+  start_projection_dc_angle_limit_deg::Float64 = 60.0,
+  qlimit_start_iter::Int = 2,
+  qlimit_start_mode::Symbol = :iteration,
+  qlimit_auto_q_delta_pu::Float64 = 1e-4,
+  opt_flatstart::Bool = true,
+  pv_table_rows::Int = 30,
+  validate_limits_after_pf::Bool = false,
+  q_limit_violation_headroom::Float64 = 0.0,
+  lock_pv_to_pq_buses::AbstractVector{Int} = Int[],
+  qlimit_trace_buses::AbstractVector{Int} = Int[],
+  qlimit_lock_reason::Symbol = :manual,
+  qlimit_guard::Bool = false,
+  qlimit_guard_min_q_range_pu::Float64 = 1e-4,
+  qlimit_guard_zero_range_mode::Symbol = :lock_pq,
+  qlimit_guard_narrow_range_mode::Symbol = :prefer_pq,
+  qlimit_guard_log::Bool = true,
+  qlimit_guard_max_switches::Int = 10,
+  qlimit_guard_accept_bounded_violations::Bool = false,
+  qlimit_guard_max_remaining_violations::Int = 0,
+  qlimit_guard_freeze_after_repeated_switching::Bool = true,
+  qlimit_guard_violation_mode::Symbol = :delayed_switch,
+  qlimit_guard_violation_threshold_pu::Float64 = 1e-4,
+)
   controllers = _tap_controllers(net)
   isempty(controllers) && return (0, 0)
   if !any(c -> c.enabled, controllers)
-    return runpf!(net, max_ite, tol, verbose; method = method, autodamp = autodamp, autodamp_min = autodamp_min, start_projection = start_projection, start_projection_try_dc_start = start_projection_try_dc_start, start_projection_try_blend_scan = start_projection_try_blend_scan, start_projection_branch_guard = start_projection_branch_guard, start_projection_measure_candidates = start_projection_measure_candidates, start_projection_accept_unmeasured_dc_start = start_projection_accept_unmeasured_dc_start, start_projection_blend_lambdas = start_projection_blend_lambdas, start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg, qlimit_start_iter = qlimit_start_iter, qlimit_start_mode = qlimit_start_mode, qlimit_auto_q_delta_pu = qlimit_auto_q_delta_pu, opt_flatstart = opt_flatstart, pv_table_rows = pv_table_rows, validate_limits_after_pf = validate_limits_after_pf, q_limit_violation_headroom = q_limit_violation_headroom, lock_pv_to_pq_buses = lock_pv_to_pq_buses, qlimit_trace_buses = qlimit_trace_buses, qlimit_lock_reason = qlimit_lock_reason, qlimit_guard = qlimit_guard, qlimit_guard_min_q_range_pu = qlimit_guard_min_q_range_pu, qlimit_guard_zero_range_mode = qlimit_guard_zero_range_mode, qlimit_guard_narrow_range_mode = qlimit_guard_narrow_range_mode, qlimit_guard_log = qlimit_guard_log, qlimit_guard_max_switches = qlimit_guard_max_switches, qlimit_guard_accept_bounded_violations = qlimit_guard_accept_bounded_violations, qlimit_guard_max_remaining_violations = qlimit_guard_max_remaining_violations, qlimit_guard_freeze_after_repeated_switching = qlimit_guard_freeze_after_repeated_switching, qlimit_guard_violation_mode = qlimit_guard_violation_mode, qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu)
+    return runpf!(
+      net,
+      max_ite,
+      tol,
+      verbose;
+      method = method,
+      autodamp = autodamp,
+      autodamp_min = autodamp_min,
+      start_projection = start_projection,
+      start_projection_try_dc_start = start_projection_try_dc_start,
+      start_projection_try_blend_scan = start_projection_try_blend_scan,
+      start_projection_branch_guard = start_projection_branch_guard,
+      start_projection_measure_candidates = start_projection_measure_candidates,
+      start_projection_accept_unmeasured_dc_start = start_projection_accept_unmeasured_dc_start,
+      start_projection_blend_lambdas = start_projection_blend_lambdas,
+      start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg,
+      qlimit_start_iter = qlimit_start_iter,
+      qlimit_start_mode = qlimit_start_mode,
+      qlimit_auto_q_delta_pu = qlimit_auto_q_delta_pu,
+      opt_flatstart = opt_flatstart,
+      pv_table_rows = pv_table_rows,
+      validate_limits_after_pf = validate_limits_after_pf,
+      q_limit_violation_headroom = q_limit_violation_headroom,
+      lock_pv_to_pq_buses = lock_pv_to_pq_buses,
+      qlimit_trace_buses = qlimit_trace_buses,
+      qlimit_lock_reason = qlimit_lock_reason,
+      qlimit_guard = qlimit_guard,
+      qlimit_guard_min_q_range_pu = qlimit_guard_min_q_range_pu,
+      qlimit_guard_zero_range_mode = qlimit_guard_zero_range_mode,
+      qlimit_guard_narrow_range_mode = qlimit_guard_narrow_range_mode,
+      qlimit_guard_log = qlimit_guard_log,
+      qlimit_guard_max_switches = qlimit_guard_max_switches,
+      qlimit_guard_accept_bounded_violations = qlimit_guard_accept_bounded_violations,
+      qlimit_guard_max_remaining_violations = qlimit_guard_max_remaining_violations,
+      qlimit_guard_freeze_after_repeated_switching = qlimit_guard_freeze_after_repeated_switching,
+      qlimit_guard_violation_mode = qlimit_guard_violation_mode,
+      qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu,
+    )
   end
-  _, erg = runpf!(net, max_ite, tol, verbose; method = method, autodamp = autodamp, autodamp_min = autodamp_min, start_projection = start_projection, start_projection_try_dc_start = start_projection_try_dc_start, start_projection_try_blend_scan = start_projection_try_blend_scan, start_projection_branch_guard = start_projection_branch_guard, start_projection_measure_candidates = start_projection_measure_candidates, start_projection_accept_unmeasured_dc_start = start_projection_accept_unmeasured_dc_start, start_projection_blend_lambdas = start_projection_blend_lambdas, start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg, qlimit_start_iter = qlimit_start_iter, qlimit_start_mode = qlimit_start_mode, qlimit_auto_q_delta_pu = qlimit_auto_q_delta_pu, opt_flatstart = opt_flatstart, pv_table_rows = pv_table_rows, validate_limits_after_pf = validate_limits_after_pf, q_limit_violation_headroom = q_limit_violation_headroom, lock_pv_to_pq_buses = lock_pv_to_pq_buses, qlimit_trace_buses = qlimit_trace_buses, qlimit_lock_reason = qlimit_lock_reason, qlimit_guard = qlimit_guard, qlimit_guard_min_q_range_pu = qlimit_guard_min_q_range_pu, qlimit_guard_zero_range_mode = qlimit_guard_zero_range_mode, qlimit_guard_narrow_range_mode = qlimit_guard_narrow_range_mode, qlimit_guard_log = qlimit_guard_log, qlimit_guard_max_switches = qlimit_guard_max_switches, qlimit_guard_accept_bounded_violations = qlimit_guard_accept_bounded_violations, qlimit_guard_max_remaining_violations = qlimit_guard_max_remaining_violations, qlimit_guard_freeze_after_repeated_switching = qlimit_guard_freeze_after_repeated_switching, qlimit_guard_violation_mode = qlimit_guard_violation_mode, qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu)
+  _, erg = runpf!(
+    net,
+    max_ite,
+    tol,
+    verbose;
+    method = method,
+    autodamp = autodamp,
+    autodamp_min = autodamp_min,
+    start_projection = start_projection,
+    start_projection_try_dc_start = start_projection_try_dc_start,
+    start_projection_try_blend_scan = start_projection_try_blend_scan,
+    start_projection_branch_guard = start_projection_branch_guard,
+    start_projection_measure_candidates = start_projection_measure_candidates,
+    start_projection_accept_unmeasured_dc_start = start_projection_accept_unmeasured_dc_start,
+    start_projection_blend_lambdas = start_projection_blend_lambdas,
+    start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg,
+    qlimit_start_iter = qlimit_start_iter,
+    qlimit_start_mode = qlimit_start_mode,
+    qlimit_auto_q_delta_pu = qlimit_auto_q_delta_pu,
+    opt_flatstart = opt_flatstart,
+    pv_table_rows = pv_table_rows,
+    validate_limits_after_pf = validate_limits_after_pf,
+    q_limit_violation_headroom = q_limit_violation_headroom,
+    lock_pv_to_pq_buses = lock_pv_to_pq_buses,
+    qlimit_trace_buses = qlimit_trace_buses,
+    qlimit_lock_reason = qlimit_lock_reason,
+    qlimit_guard = qlimit_guard,
+    qlimit_guard_min_q_range_pu = qlimit_guard_min_q_range_pu,
+    qlimit_guard_zero_range_mode = qlimit_guard_zero_range_mode,
+    qlimit_guard_narrow_range_mode = qlimit_guard_narrow_range_mode,
+    qlimit_guard_log = qlimit_guard_log,
+    qlimit_guard_max_switches = qlimit_guard_max_switches,
+    qlimit_guard_accept_bounded_violations = qlimit_guard_accept_bounded_violations,
+    qlimit_guard_max_remaining_violations = qlimit_guard_max_remaining_violations,
+    qlimit_guard_freeze_after_repeated_switching = qlimit_guard_freeze_after_repeated_switching,
+    qlimit_guard_violation_mode = qlimit_guard_violation_mode,
+    qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu,
+  )
   erg != 0 && return (0, erg)
   calcNetLosses!(net)
   calcLinkFlowsKCL!(net)
 
   max_outer = maximum(c.max_outer_iters for c in controllers if c.enabled)
-  for it in 1:max_outer
+  for it = 1:max_outer
     all_done = true
     any_moved = false
 
@@ -323,7 +615,33 @@ function run_tap_controllers_outer!(net::Net; max_ite::Int=30, tol::Float64=1e-6
         converged_v = _voltage_within_deadband(vm, ctrl.target_vm_pu, ctrl.deadband_vm_pu)
         if !converged_v && ctrl.control_ratio
           e_v = _voltage_control_error(vm, ctrl.target_vm_pu, ctrl.voltage_error_metric)
-          direction = _ratio_probe_direction(net, br, ctrl, max_ite, tol, 0, method; opt_flatstart = opt_flatstart, pv_table_rows = pv_table_rows, validate_limits_after_pf = validate_limits_after_pf, q_limit_violation_headroom = q_limit_violation_headroom, lock_pv_to_pq_buses = lock_pv_to_pq_buses, qlimit_trace_buses = qlimit_trace_buses, qlimit_lock_reason = qlimit_lock_reason, qlimit_guard = qlimit_guard, qlimit_guard_min_q_range_pu = qlimit_guard_min_q_range_pu, qlimit_guard_zero_range_mode = qlimit_guard_zero_range_mode, qlimit_guard_narrow_range_mode = qlimit_guard_narrow_range_mode, qlimit_guard_log = qlimit_guard_log, qlimit_guard_max_switches = qlimit_guard_max_switches, qlimit_guard_accept_bounded_violations = qlimit_guard_accept_bounded_violations, qlimit_guard_max_remaining_violations = qlimit_guard_max_remaining_violations, qlimit_guard_freeze_after_repeated_switching = qlimit_guard_freeze_after_repeated_switching, qlimit_guard_violation_mode = qlimit_guard_violation_mode, qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu)
+          direction = _ratio_probe_direction(
+            net,
+            br,
+            ctrl,
+            max_ite,
+            tol,
+            0,
+            method;
+            opt_flatstart = opt_flatstart,
+            pv_table_rows = pv_table_rows,
+            validate_limits_after_pf = validate_limits_after_pf,
+            q_limit_violation_headroom = q_limit_violation_headroom,
+            lock_pv_to_pq_buses = lock_pv_to_pq_buses,
+            qlimit_trace_buses = qlimit_trace_buses,
+            qlimit_lock_reason = qlimit_lock_reason,
+            qlimit_guard = qlimit_guard,
+            qlimit_guard_min_q_range_pu = qlimit_guard_min_q_range_pu,
+            qlimit_guard_zero_range_mode = qlimit_guard_zero_range_mode,
+            qlimit_guard_narrow_range_mode = qlimit_guard_narrow_range_mode,
+            qlimit_guard_log = qlimit_guard_log,
+            qlimit_guard_max_switches = qlimit_guard_max_switches,
+            qlimit_guard_accept_bounded_violations = qlimit_guard_accept_bounded_violations,
+            qlimit_guard_max_remaining_violations = qlimit_guard_max_remaining_violations,
+            qlimit_guard_freeze_after_repeated_switching = qlimit_guard_freeze_after_repeated_switching,
+            qlimit_guard_violation_mode = qlimit_guard_violation_mode,
+            qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu,
+          )
           direction == 0.0 && (direction = -1.0)
           Δ = ctrl.is_discrete ? br.tap_step : 0.25 * br.tap_step
           step = (e_v < 0.0) ? direction * Δ : -direction * Δ
@@ -341,7 +659,33 @@ function run_tap_controllers_outer!(net::Net; max_ite::Int=30, tol::Float64=1e-6
         e_p = p - ctrl.p_target_mw
         converged_p = abs(e_p) <= ctrl.deadband_p_mw
         if !converged_p && ctrl.control_phase
-          direction = _phase_probe_direction(net, br, ctrl, max_ite, tol, 0, method; opt_flatstart = opt_flatstart, pv_table_rows = pv_table_rows, validate_limits_after_pf = validate_limits_after_pf, q_limit_violation_headroom = q_limit_violation_headroom, lock_pv_to_pq_buses = lock_pv_to_pq_buses, qlimit_trace_buses = qlimit_trace_buses, qlimit_lock_reason = qlimit_lock_reason, qlimit_guard = qlimit_guard, qlimit_guard_min_q_range_pu = qlimit_guard_min_q_range_pu, qlimit_guard_zero_range_mode = qlimit_guard_zero_range_mode, qlimit_guard_narrow_range_mode = qlimit_guard_narrow_range_mode, qlimit_guard_log = qlimit_guard_log, qlimit_guard_max_switches = qlimit_guard_max_switches, qlimit_guard_accept_bounded_violations = qlimit_guard_accept_bounded_violations, qlimit_guard_max_remaining_violations = qlimit_guard_max_remaining_violations, qlimit_guard_freeze_after_repeated_switching = qlimit_guard_freeze_after_repeated_switching, qlimit_guard_violation_mode = qlimit_guard_violation_mode, qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu)
+          direction = _phase_probe_direction(
+            net,
+            br,
+            ctrl,
+            max_ite,
+            tol,
+            0,
+            method;
+            opt_flatstart = opt_flatstart,
+            pv_table_rows = pv_table_rows,
+            validate_limits_after_pf = validate_limits_after_pf,
+            q_limit_violation_headroom = q_limit_violation_headroom,
+            lock_pv_to_pq_buses = lock_pv_to_pq_buses,
+            qlimit_trace_buses = qlimit_trace_buses,
+            qlimit_lock_reason = qlimit_lock_reason,
+            qlimit_guard = qlimit_guard,
+            qlimit_guard_min_q_range_pu = qlimit_guard_min_q_range_pu,
+            qlimit_guard_zero_range_mode = qlimit_guard_zero_range_mode,
+            qlimit_guard_narrow_range_mode = qlimit_guard_narrow_range_mode,
+            qlimit_guard_log = qlimit_guard_log,
+            qlimit_guard_max_switches = qlimit_guard_max_switches,
+            qlimit_guard_accept_bounded_violations = qlimit_guard_accept_bounded_violations,
+            qlimit_guard_max_remaining_violations = qlimit_guard_max_remaining_violations,
+            qlimit_guard_freeze_after_repeated_switching = qlimit_guard_freeze_after_repeated_switching,
+            qlimit_guard_violation_mode = qlimit_guard_violation_mode,
+            qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu,
+          )
           direction == 0.0 && (direction = -1.0)
           Δ = ctrl.is_discrete ? br.phase_step_deg : 0.25 * br.phase_step_deg
           step = (e_p < 0.0) ? direction * Δ : -direction * Δ
@@ -364,7 +708,44 @@ function run_tap_controllers_outer!(net::Net; max_ite::Int=30, tol::Float64=1e-6
       return (it, 0)
     end
 
-    _, erg2 = runpf!(net, max_ite, tol, verbose; method = method, autodamp = autodamp, autodamp_min = autodamp_min, start_projection = start_projection, start_projection_try_dc_start = start_projection_try_dc_start, start_projection_try_blend_scan = start_projection_try_blend_scan, start_projection_branch_guard = start_projection_branch_guard, start_projection_measure_candidates = start_projection_measure_candidates, start_projection_accept_unmeasured_dc_start = start_projection_accept_unmeasured_dc_start, start_projection_blend_lambdas = start_projection_blend_lambdas, start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg, qlimit_start_iter = qlimit_start_iter, qlimit_start_mode = qlimit_start_mode, qlimit_auto_q_delta_pu = qlimit_auto_q_delta_pu, opt_flatstart = opt_flatstart, pv_table_rows = pv_table_rows, validate_limits_after_pf = validate_limits_after_pf, q_limit_violation_headroom = q_limit_violation_headroom, lock_pv_to_pq_buses = lock_pv_to_pq_buses, qlimit_trace_buses = qlimit_trace_buses, qlimit_lock_reason = qlimit_lock_reason, qlimit_guard = qlimit_guard, qlimit_guard_min_q_range_pu = qlimit_guard_min_q_range_pu, qlimit_guard_zero_range_mode = qlimit_guard_zero_range_mode, qlimit_guard_narrow_range_mode = qlimit_guard_narrow_range_mode, qlimit_guard_log = qlimit_guard_log, qlimit_guard_max_switches = qlimit_guard_max_switches, qlimit_guard_accept_bounded_violations = qlimit_guard_accept_bounded_violations, qlimit_guard_max_remaining_violations = qlimit_guard_max_remaining_violations, qlimit_guard_freeze_after_repeated_switching = qlimit_guard_freeze_after_repeated_switching, qlimit_guard_violation_mode = qlimit_guard_violation_mode, qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu)
+    _, erg2 = runpf!(
+      net,
+      max_ite,
+      tol,
+      verbose;
+      method = method,
+      autodamp = autodamp,
+      autodamp_min = autodamp_min,
+      start_projection = start_projection,
+      start_projection_try_dc_start = start_projection_try_dc_start,
+      start_projection_try_blend_scan = start_projection_try_blend_scan,
+      start_projection_branch_guard = start_projection_branch_guard,
+      start_projection_measure_candidates = start_projection_measure_candidates,
+      start_projection_accept_unmeasured_dc_start = start_projection_accept_unmeasured_dc_start,
+      start_projection_blend_lambdas = start_projection_blend_lambdas,
+      start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg,
+      qlimit_start_iter = qlimit_start_iter,
+      qlimit_start_mode = qlimit_start_mode,
+      qlimit_auto_q_delta_pu = qlimit_auto_q_delta_pu,
+      opt_flatstart = opt_flatstart,
+      pv_table_rows = pv_table_rows,
+      validate_limits_after_pf = validate_limits_after_pf,
+      q_limit_violation_headroom = q_limit_violation_headroom,
+      lock_pv_to_pq_buses = lock_pv_to_pq_buses,
+      qlimit_trace_buses = qlimit_trace_buses,
+      qlimit_lock_reason = qlimit_lock_reason,
+      qlimit_guard = qlimit_guard,
+      qlimit_guard_min_q_range_pu = qlimit_guard_min_q_range_pu,
+      qlimit_guard_zero_range_mode = qlimit_guard_zero_range_mode,
+      qlimit_guard_narrow_range_mode = qlimit_guard_narrow_range_mode,
+      qlimit_guard_log = qlimit_guard_log,
+      qlimit_guard_max_switches = qlimit_guard_max_switches,
+      qlimit_guard_accept_bounded_violations = qlimit_guard_accept_bounded_violations,
+      qlimit_guard_max_remaining_violations = qlimit_guard_max_remaining_violations,
+      qlimit_guard_freeze_after_repeated_switching = qlimit_guard_freeze_after_repeated_switching,
+      qlimit_guard_violation_mode = qlimit_guard_violation_mode,
+      qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu,
+    )
     erg2 != 0 && return (it, erg2)
     calcNetLosses!(net)
     calcLinkFlowsKCL!(net)
