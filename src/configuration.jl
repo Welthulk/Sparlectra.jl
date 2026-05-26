@@ -607,13 +607,15 @@ end
 
 function ControlConfig(raw::AbstractDict)
   merged = _merged_section(raw, "control")
+  raw_controllers = _raw_get(merged, "controllers", Any[])
+  raw_controllers isa AbstractVector || throw(ArgumentError("control.controllers must be a vector."))
   return ControlConfig(
     enabled = _as_bool_cfg(_raw_get(merged, "enabled", true)),
     max_outer_iterations = _as_int_cfg(_raw_get(merged, "max_outer_iterations", 20)),
     trace = _as_bool_cfg(_raw_get(merged, "trace", true)),
     log_iterations = _as_bool_cfg(_raw_get(merged, "log_iterations", true)),
     stop_on_pf_failure = _as_bool_cfg(_raw_get(merged, "stop_on_pf_failure", true)),
-    controllers = Any[_raw_get(merged, "controllers", Any[])...],
+    controllers = Any[raw_controllers...],
   )
 end
 

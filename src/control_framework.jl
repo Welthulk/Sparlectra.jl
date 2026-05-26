@@ -67,7 +67,9 @@ function run_control!(net::Any; controllers::Vector{<:AbstractOuterController} =
   if all(c -> !control_enabled(c), controllers)
     return ControlRunResult(status = :disabled)
   end
-  ite, erg = runpf!(net; config = pf_config, verbose = verbose)
+  pf_runner = () -> runpf!(net; config = pf_config, verbose = verbose, performance_profile = performance_profile)
+  states = AbstractControlState[control_initialize!(ctrl, net, (; pf_config, control_config, verbose, performance_profile)) for ctrl in controllers]
+  ite, erg = pf_runner()
   solves = 1
   if erg != 0
     return ControlRunResult(status = :pf_failed, converged = false, powerflow_solves = solves, last_pf_iterations = ite, last_pf_status = :failed)
@@ -75,14 +77,43 @@ function run_control!(net::Any; controllers::Vector{<:AbstractOuterController} =
   calcNetLosses!(net)
   calcLinkFlowsKCL!(net)
 
-  iterations, erg2 = run_tap_controllers_outer!(net; max_ite = isnothing(pf_config) ? 30 : pf_config.max_ite, tol = isnothing(pf_config) ? 1e-6 : pf_config.tol, verbose = verbose, method = isnothing(pf_config) ? :rectangular : pf_config.method)
-  status = erg2 == 0 ? :converged : :pf_failed
-  rows = NamedTuple[]
+  active_ids = findall(control_enabled, controllers)
+  isempty(active_ids) && return ControlRunResult(status = :no_active_controllers, converged = true, powerflow_solves = solves, last_pf_iterations = ite, last_pf_status = :ok)
+  max_outer = min(control_config.max_outer_iterations, isnothing(pf_config) ? control_config.max_outer_iterations : pf_config.max_iter)
+  status = :max_outer_iterations
   trace = NamedTuple[]
-  for ctrl in controllers
-    st = getfield(ctrl, :status)
-    push!(rows, (name = control_name(ctrl), status = st, enabled = control_enabled(ctrl), converged = getfield(ctrl, :converged), at_limit = getfield(ctrl, :at_limit), outer_iters = getfield(ctrl, :outer_iters)))
-    append!(trace, control_trace_rows(ctrl, net, NoControlState()))
+  outer_iterations = 0
+  for it in 1:max_outer
+    outer_iterations = it
+    for i in active_ids
+      control_evaluate!(controllers[i], net, states[i], (; outer_iteration = it))
+    end
+    all_done = all(i -> control_is_converged(controllers[i], states[i]) || control_is_blocked(controllers[i], states[i]), active_ids)
+    if all_done
+      status = :converged
+      break
+    end
+    moved = false
+    for i in active_ids
+      upd = control_propose_update!(controllers[i], net, states[i], (; outer_iteration = it))
+      moved = control_apply_update!(controllers[i], net, states[i], upd, (; outer_iteration = it)) || moved
+      if control_config.trace
+        append!(trace, control_trace_rows(controllers[i], net, states[i]))
+      end
+    end
+    if !moved
+      status = :blocked
+      break
+    end
+    ite, erg = pf_runner()
+    solves += 1
+    erg != 0 && return ControlRunResult(status = :pf_failed, converged = false, outer_iterations = it, powerflow_solves = solves, last_pf_iterations = ite, last_pf_status = :failed, trace = trace)
+    calcNetLosses!(net)
+    calcLinkFlowsKCL!(net)
   end
-  return ControlRunResult(status = status, converged = status == :converged, outer_iterations = iterations, powerflow_solves = solves + iterations, last_pf_iterations = ite, last_pf_status = status == :converged ? :ok : :failed, controllers = rows, trace = trace)
+  rows = NamedTuple[]
+  for (i, ctrl) in enumerate(controllers)
+    append!(rows, control_report_rows(ctrl, net, states[i]))
+  end
+  return ControlRunResult(status = status, converged = status == :converged, outer_iterations = outer_iterations, powerflow_solves = solves, last_pf_iterations = ite, last_pf_status = :ok, controllers = rows, trace = trace)
 end
