@@ -4,31 +4,52 @@
 #
 # Central solver/output/control-framework settings come from:
 #   examples/configuration.yaml
-# or:
 #   SPARLECTRA_CONFIGURATION_YAML
-# or an optional sparlectra_config path in this demo YAML.
+#   load_sparlectra_config() discovery
 #
-# This demo YAML provides controller setpoints and transformer tap parameters
-# used by the example script to create controllers programmatically.
+# This demo YAML defines example setpoints and tap/phase ranges for:
+#   - OLTC (`oltc`)
+#   - PST (`pst`)
+#   - Schrägregler (`schraeg`)
 #
-# It is not the same as control.controllers in src/configuration.yaml.example.
-#
-# Recommended local workflow (git-clean):
-#   cp examples/tap_control_demo_grid.yaml.example examples/tap_control_demo_grid.yaml
-#   # edit examples/tap_control_demo_grid.yaml (this file is git-ignored)
+# Controller objects are created programmatically by the demo script.
+# This file is not the central control.controllers schema.
 
 # Optional path to central Sparlectra config.
-# If omitted, the normal Sparlectra config discovery is used.
 # Relative paths are resolved relative to this demo YAML file.
 # sparlectra_config: configuration.yaml
 
-controller:
-  target_bus: Load
-  target_vm_pu: 0.98
-  deadband_vm_pu: 0.005
-  max_outer_iters: 8
-
-tap:
+oltc:
+  target_bus: Load_LV
+  target_vm_pu: 0.995
+  deadband_vm_pu: 0.02
+  max_outer_iters: 12
   tap_min: 0.95
-  tap_max: 1.05
+  tap_max: 1.08
   tap_step: 0.0125
+
+pst:
+  target_branch_from: Grid_B
+  target_branch_to: MV_B
+  p_target_mw: -53.0
+  deadband_p_mw: 8.0
+  max_outer_iters: 12
+  phase_min_deg: -15.0
+  phase_max_deg: 15.0
+  phase_step_deg: 1.0
+
+schraeg:
+  target_bus: Load_MV
+  target_vm_pu: 0.99
+  target_branch_from: MV_A
+  target_branch_to: MV_B
+  p_target_mw: 8.5
+  deadband_vm_pu: 0.02
+  deadband_p_mw: 8.0
+  max_outer_iters: 20
+  tap_min: 0.95
+  tap_max: 1.08
+  tap_step: 0.0125
+  phase_min_deg: -10.0
+  phase_max_deg: 10.0
+  phase_step_deg: 1.0

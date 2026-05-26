@@ -107,7 +107,11 @@ function get_branch_q_from_to_mvar(net::Net, from_bus::String, to_bus::String)
 end
 
 @inline _controller_mode_label(mode::Symbol) = String(mode)
-control_name(ctrl::PowerTransformerControl) = ctrl.trafo
+function control_name(ctrl::PowerTransformerControl)
+  base = strip(ctrl.trafo)
+  mode = ctrl.mode == :voltage ? "OLTC" : (ctrl.mode == :branch_active_power ? "PST" : "SCHRAEG")
+  return isempty(base) ? mode : string(base, " ", mode)
+end
 control_enabled(ctrl::PowerTransformerControl) = ctrl.enabled
 control_initialize!(::PowerTransformerControl, ::Net, context) = NoControlState()
 control_status(ctrl::PowerTransformerControl, ::AbstractControlState)::Symbol = ctrl.status

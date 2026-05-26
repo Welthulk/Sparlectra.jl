@@ -188,7 +188,8 @@ In Stage 1, controllers are typically attached programmatically via
 ### Demo controller YAML vs. central `control.controllers`
 
 The tap-control demo may read `examples/tap_control_demo_grid.yaml` for
-example setpoints and transformer tap parameters. This is an example-specific
+example setpoints and transformer tap/phase parameters (`oltc`, `pst`,
+`schraeg`). This is an example-specific
 input file consumed by `examples/tap_control_demo_grid.jl`.
 
 It does not define the central `control.controllers` schema. Today,
