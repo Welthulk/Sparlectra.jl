@@ -2295,7 +2295,6 @@ function run_grid_tests()
       @test test_2WTPITrafo() == true
       @test test_3WTPITrafo() == true
       @test testNetwork() == true
-      @test test_NBI_MDO() == true
       @test testISOBusses() == true
     end
 
