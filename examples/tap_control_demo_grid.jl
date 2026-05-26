@@ -1,9 +1,9 @@
 using Sparlectra
 using Printf
 
-function demo_yaml_path()
-  if length(ARGS) >= 1
-    return abspath(ARGS[1])
+function demo_yaml_path(args::AbstractVector{String} = ARGS)
+  if length(args) >= 1
+    return abspath(args[1])
   end
   from_env = strip(get(ENV, "SPARLECTRA_TAP_DEMO_YAML", ""))
   if !isempty(from_env)
@@ -16,8 +16,8 @@ function demo_yaml_path()
   return joinpath(@__DIR__, "tap_control_demo_grid.yaml.example")
 end
 
-function load_demo_settings()
-  path = demo_yaml_path()
+function load_demo_settings(args::AbstractVector{String} = ARGS)
+  path = demo_yaml_path(args)
   return path, Sparlectra.load_yaml_dict(path)
 end
 
@@ -91,19 +91,47 @@ function add_demo_controllers!(net::Net, trafos, demo_settings::Dict{String,Any}
   pst = get(demo_settings, "pst", Dict{String,Any}())
   schraeg = get(demo_settings, "schraeg", Dict{String,Any}())
 
-  addTapController!(net; trafo = "T_OLTC", mode = :voltage, target_bus = String(get(oltc, "target_bus", "Load_LV")),
-    target_vm_pu = get(oltc, "target_vm_pu", 1.0), control_ratio = true, control_phase = false, is_discrete = true,
-    deadband_vm_pu = get(oltc, "deadband_vm_pu", 5e-3), max_outer_iters = get(oltc, "max_outer_iters", 12))
+  addTapController!(
+    net;
+    trafo = "T_OLTC",
+    mode = :voltage,
+    target_bus = String(get(oltc, "target_bus", "Load_LV")),
+    target_vm_pu = get(oltc, "target_vm_pu", 1.0),
+    control_ratio = true,
+    control_phase = false,
+    is_discrete = true,
+    deadband_vm_pu = get(oltc, "deadband_vm_pu", 5e-3),
+    max_outer_iters = get(oltc, "max_outer_iters", 12),
+  )
 
-  addTapController!(net; trafo = "T_PST", mode = :branch_active_power,
+  addTapController!(
+    net;
+    trafo = "T_PST",
+    mode = :branch_active_power,
     target_branch = (String(get(pst, "target_branch_from", "Grid_B")), String(get(pst, "target_branch_to", "MV_B"))),
-    p_target_mw = get(pst, "p_target_mw", 20.0), control_ratio = false, control_phase = true, is_discrete = true,
-    deadband_p_mw = get(pst, "deadband_p_mw", 1.0), max_outer_iters = get(pst, "max_outer_iters", 12))
+    p_target_mw = get(pst, "p_target_mw", 20.0),
+    control_ratio = false,
+    control_phase = true,
+    is_discrete = true,
+    deadband_p_mw = get(pst, "deadband_p_mw", 1.0),
+    max_outer_iters = get(pst, "max_outer_iters", 12),
+  )
 
-  addTapController!(net; trafo = "T_SCHRAEG", mode = :voltage_and_branch_active_power, target_bus = String(get(schraeg, "target_bus", "Load_MV")),
-    target_vm_pu = get(schraeg, "target_vm_pu", 1.0), target_branch = (String(get(schraeg, "target_branch_from", "MV_A")), String(get(schraeg, "target_branch_to", "MV_B"))),
-    p_target_mw = get(schraeg, "p_target_mw", 10.0), control_ratio = true, control_phase = true, is_discrete = true,
-    deadband_vm_pu = get(schraeg, "deadband_vm_pu", 5e-3), deadband_p_mw = get(schraeg, "deadband_p_mw", 1.0), max_outer_iters = get(schraeg, "max_outer_iters", 20))
+  addTapController!(
+    net;
+    trafo = "T_SCHRAEG",
+    mode = :voltage_and_branch_active_power,
+    target_bus = String(get(schraeg, "target_bus", "Load_MV")),
+    target_vm_pu = get(schraeg, "target_vm_pu", 1.0),
+    target_branch = (String(get(schraeg, "target_branch_from", "MV_A")), String(get(schraeg, "target_branch_to", "MV_B"))),
+    p_target_mw = get(schraeg, "p_target_mw", 10.0),
+    control_ratio = true,
+    control_phase = true,
+    is_discrete = true,
+    deadband_vm_pu = get(schraeg, "deadband_vm_pu", 5e-3),
+    deadband_p_mw = get(schraeg, "deadband_p_mw", 1.0),
+    max_outer_iters = get(schraeg, "max_outer_iters", 20),
+  )
 end
 
 function print_compact_result(result::ControlRunResult)
@@ -122,8 +150,8 @@ function print_compact_result(result::ControlRunResult)
   end
 end
 
-function main()
-  demo_path, demo_settings = load_demo_settings()
+function main(args::AbstractVector{String} = ARGS)
+  demo_path, demo_settings = load_demo_settings(args)
   config_label, sparlectra_config = load_demo_sparlectra_config(demo_settings, demo_path)
   net, trafos = build_demo_net(demo_settings)
 
@@ -133,7 +161,9 @@ function main()
   vm_mv0 = get_bus_vm_pu(net, "Load_MV")
 
   add_demo_controllers!(net, trafos, demo_settings)
-  show_classic = get(ENV, "SPARLECTRA_TAP_DEMO_CLASSIC", "0") == "1"
+  # Classic network output is enabled by default for this demo.
+  # Set SPARLECTRA_TAP_DEMO_CLASSIC=0 for compact-only output.
+  show_classic = get(ENV, "SPARLECTRA_TAP_DEMO_CLASSIC", "1") != "0"
   raw = get(ENV, "SPARLECTRA_TAP_DEMO_RAW", "0") == "1"
 
   _, erg, _ = run_acpflow(net = net; config = sparlectra_config, show_results = show_classic)
@@ -149,6 +179,7 @@ function main()
 
   println("Demo YAML: ", demo_path)
   println("Central config: ", config_label)
+  println("Classic output: ", show_classic ? "enabled" : "disabled")
   println("Uncontrolled:")
   @printf("  Load_LV Vm: %.6f pu\n", vm_lv0)
   @printf("  Load_MV Vm: %.6f pu\n", vm_mv0)
@@ -159,7 +190,7 @@ function main()
   @printf("  P(MV_A -> MV_B): %.4f MW\n", p_mva_mvb)
 
   print_compact_result(result)
-  println("Tip: set SPARLECTRA_TAP_DEMO_CLASSIC=1 for classic network output.")
+  println("Tip: set SPARLECTRA_TAP_DEMO_CLASSIC=0 for compact-only output.")
   println("Tip: set SPARLECTRA_TAP_DEMO_RAW=1 for raw ControlRunResult rows.")
 
   if raw
@@ -174,4 +205,6 @@ function main()
   end
 end
 
-Base.invokelatest(main)
+if get(ENV, "SPARLECTRA_TAP_CONTROL_DEMO_NO_MAIN", "0") != "1"
+  Base.invokelatest(getfield(@__MODULE__, :main), ARGS)
+end
