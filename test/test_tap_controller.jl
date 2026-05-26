@@ -48,7 +48,7 @@ function run_tap_controller_tests()
 
   @testset "Voltage tap controller (discrete ratio)" begin
     net, tbr = _build_net()
-    _, erg0, _ = run_net_acpflow(net = net, max_ite = 30, tol = 1e-9, verbose = 0, method = :rectangular, show_results = false)
+    _, erg0, _ = run_acpflow(net = net, max_ite = 30, tol = 1e-9, verbose = 0, method = :rectangular, show_results = false)
     @test erg0 == 0
     vm0 = get_bus_vm_pu(net, "Load")
     @test vm0 > 0.98
@@ -66,7 +66,7 @@ function run_tap_controller_tests()
     )
 
     ratio_before = tbr.tap_ratio
-    _, erg, _ = run_net_acpflow(net = net, max_ite = 30, tol = 1e-9, verbose = 0, method = :rectangular, show_results = false)
+    _, erg, _ = run_acpflow(net = net, max_ite = 30, tol = 1e-9, verbose = 0, method = :rectangular, show_results = false)
     @test erg == 0
     @test tbr.tap_ratio != ratio_before
     @test tbr.tap_ratio > ratio_before
@@ -80,7 +80,7 @@ function run_tap_controller_tests()
 
   @testset "Branch active power controller (phase)" begin
     net, tbr = _build_net()
-    _, erg0, _ = run_net_acpflow(net = net, max_ite = 30, tol = 1e-9, verbose = 0, method = :rectangular, show_results = false)
+    _, erg0, _ = run_acpflow(net = net, max_ite = 30, tol = 1e-9, verbose = 0, method = :rectangular, show_results = false)
     @test erg0 == 0
     p0 = get_branch_p_from_to_mw(net, "Slack", "Mid")
 
@@ -96,7 +96,7 @@ function run_tap_controller_tests()
       max_outer_iters = 6,
     )
 
-    _, erg, _ = run_net_acpflow(net = net, max_ite = 30, tol = 1e-9, verbose = 0, method = :rectangular, show_results = false)
+    _, erg, _ = run_acpflow(net = net, max_ite = 30, tol = 1e-9, verbose = 0, method = :rectangular, show_results = false)
     @test erg == 0
     @test tbr.phase_shift_deg != 0.0
   end
@@ -114,7 +114,7 @@ function run_tap_controller_tests()
     )
 
     ratio_before = tbr.tap_ratio
-    _, erg, _ = run_net_acpflow(net = net, max_ite = 30, tol = 1e-9, verbose = 0, method = :rectangular, show_results = false)
+    _, erg, _ = run_acpflow(net = net, max_ite = 30, tol = 1e-9, verbose = 0, method = :rectangular, show_results = false)
     @test erg == 0
     @test tbr.tap_ratio == ratio_before
   end
@@ -208,6 +208,18 @@ function run_tap_controller_tests()
     @test Sparlectra._legacy_erg_from_control_status(:blocked) == 0
     @test Sparlectra._legacy_erg_from_control_status(:max_outer_iterations) == 0
   end
+
+  @testset "run_net_acpflow compatibility wrapper" begin
+    net, _ = _build_net()
+    ite_a, erg_a, _ = run_acpflow(net = net, max_ite = 20, tol = 1e-9, show_results = false)
+    @test erg_a == 0
+    @test ite_a >= 1
+
+    net2, _ = _build_net()
+    ite_b, erg_b, _ = run_net_acpflow(net = net2, max_ite = 20, tol = 1e-9, show_results = false)
+    @test erg_b == 0
+    @test ite_b >= 1
+  end
   @testset "Tap controller reporting rows and classic section" begin
     net, tbr = _build_net()
     addPowerTransformerControl!(net;
@@ -222,7 +234,7 @@ function run_tap_controller_tests()
       is_discrete = true,
       max_outer_iters = 4,
     )
-    _, erg, _ = run_net_acpflow(net = net, max_ite = 30, tol = 1e-9, verbose = 0, method = :rectangular, show_results = false)
+    _, erg, _ = run_acpflow(net = net, max_ite = 30, tol = 1e-9, verbose = 0, method = :rectangular, show_results = false)
     @test erg == 0
 
     report = buildACPFlowReport(net; ct = 0.0, ite = 1, tol = 1e-9, converged = true, solver = :rectangular)

@@ -30,7 +30,6 @@ net = run_acpflow(
     casefile = file,
     verbose = verbose,
     printResultToFile = printResultToFile,
-)
 ```
 ---
 
@@ -238,7 +237,7 @@ net = run_acpflow(casefile = file)
 brVec = getNetBranchNumberVec(net = net, fromBus = "1", toBus = "2")
 setNetBranchStatus!(net = net, branchNr = brVec[1], status = 0)
 
-run_net_acpflow(net = net)
+run_acpflow(net = net)
 
 addBusShuntPower!(net = net, busName = "1", p = 0.0, q = 1.0)
 
@@ -293,7 +292,7 @@ if !result
     error("Network validation failed: \$msg")
 end
 
-ite, status, etime = run_net_acpflow(net = net, show_results = false)
+ite, status, etime = run_acpflow(net = net, show_results = false)
 ```
 
 ### Notes on component removal
@@ -334,7 +333,7 @@ addProsumer!(net = net, busName = "Bus1",  type = "GENERATOR", p = 45.0, q = 0.0
 addProsumer!(net = net, busName = "Bus5",  type = "EXTERNALNETWORKINJECTION", referencePri = "Bus5", vm_pu = 1.02, va_deg = 0.0)
 addProsumer!(net = net, busName = "Bus1a", type = "LOAD", p = 30.0, q = 10.0)
 
-ite, status, etime = run_net_acpflow(
+ite, status, etime = run_acpflow(
     net = net,
     max_ite = 25,
     tol = 1e-8,
@@ -343,7 +342,7 @@ ite, status, etime = run_net_acpflow(
 
 setNetLinkStatus!(net = net, linkNr = linkNr, status = 0)
 
-ite2, status2, etime2 = run_net_acpflow(
+ite2, status2, etime2 = run_acpflow(
     net = net,
     max_ite = 25,
     tol = 1e-8,
@@ -413,8 +412,8 @@ configured direction (`from -> to`).
 Prefer:
 
 ```julia
-ite, status, etime = run_net_acpflow(
-    net = net
+ite, status, etime = run_acpflow(
+    net = net,
     show_results = false,
 )
 ```
@@ -438,7 +437,7 @@ tap/phase positions, limits, and status.
 You can also inspect the generic control result directly:
 
 ```julia
-run_net_acpflow(net = net, show_results = false)
+run_acpflow(net = net, show_results = false)
 
 result = latest_control_result(net)
 result.status
@@ -470,7 +469,6 @@ result = run_control!(
 
 The accompanying config template is:
 
-- `examples/tap_control_demo_grid.yaml.example`
 
 It exposes target values and transformer tap/phase ranges + step sizes so that
 you can tune the workshop run without editing the Julia source.
