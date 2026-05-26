@@ -146,6 +146,13 @@ function control_propose_update!(ctrl::PowerTransformerControl, net::Net, ::Abst
     e_v = _voltage_control_error(ctrl.achieved_vm_pu, ctrl.target_vm_pu, ctrl.voltage_error_metric)
     new_ratio = clamp(old_ratio + ((e_v < 0.0) ? direction * Δ : -direction * Δ), br.tap_min, br.tap_max)
   end
+  if !ctrl.converged && ctrl.control_phase && ctrl.mode in (:branch_active_power, :voltage_and_branch_active_power)
+    direction = _phase_probe_direction(net, br, ctrl, context.pf_config.max_iter, context.pf_config.tol, 0, context.pf_config.method)
+    direction == 0.0 && (direction = -1.0)
+    Δ = ctrl.is_discrete ? br.phase_step_deg : 0.25 * br.phase_step_deg
+    e_p = ctrl.achieved_p_mw - ctrl.p_target_mw
+    new_phase = clamp(old_phase + ((e_p < 0.0) ? direction * Δ : -direction * Δ), br.phase_min_deg, br.phase_max_deg)
+  end
   return (old_ratio = old_ratio, new_ratio = new_ratio, old_phase = old_phase, new_phase = new_phase)
 end
 function control_apply_update!(ctrl::PowerTransformerControl, net::Net, ::AbstractControlState, update::NamedTuple, context)::Bool
@@ -156,12 +163,18 @@ function control_apply_update!(ctrl::PowerTransformerControl, net::Net, ::Abstra
     br.ratio = update.new_ratio
     moved = true
   end
+  if update.new_phase != update.old_phase
+    br.phase_shift_deg = update.new_phase
+    br.angle = update.new_phase
+    moved = true
+  end
   ctrl.at_limit = isapprox(br.tap_ratio, br.tap_min; atol = 1e-12) || isapprox(br.tap_ratio, br.tap_max; atol = 1e-12)
+  ctrl.at_limit = ctrl.at_limit || isapprox(br.phase_shift_deg, br.phase_min_deg; atol = 1e-12) || isapprox(br.phase_shift_deg, br.phase_max_deg; atol = 1e-12)
   ctrl.status = ctrl.at_limit ? :at_limit : ctrl.status
   return moved
 end
-control_report_rows(ctrl::PowerTransformerControl, net::Net, ::AbstractControlState) = filter(row -> row.transformer_id == _find_trafo_branch(net, ctrl.trafo).comp.cName, buildTapControllerReportRows(net))
-control_trace_rows(ctrl::PowerTransformerControl, net::Net, ::AbstractControlState) = NamedTuple[]
+control_report_rows(ctrl::PowerTransformerControl, net::Net, ::AbstractControlState, context) = filter(row -> row.transformer_id == _find_trafo_branch(net, ctrl.trafo).comp.cName, buildTapControllerReportRows(net))
+control_trace_rows(ctrl::PowerTransformerControl, net::Net, ::AbstractControlState, context) = NamedTuple[]
 
 function _controller_type_label(ctrl::PowerTransformerControl, br::Branch)::String
   ratio = ctrl.control_ratio && br.has_ratio_tap
@@ -530,266 +543,8 @@ Loop per iteration:
 
 Returns `(iterations, erg)` where `erg == 0` means successful PF termination.
 """
-function run_tap_controllers_outer!(
-  net::Net;
-  max_ite::Int = 30,
-  tol::Float64 = 1e-6,
-  verbose::Int = 0,
-  method::Symbol = :rectangular,
-  autodamp::Bool = false,
-  autodamp_min::Float64 = 1e-3,
-  start_projection::Bool = false,
-  start_projection_try_dc_start::Bool = true,
-  start_projection_try_blend_scan::Bool = true,
-  start_projection_branch_guard::Bool = true,
-  start_projection_measure_candidates::Bool = true,
-  start_projection_accept_unmeasured_dc_start::Bool = false,
-  start_projection_blend_lambdas::AbstractVector{<:Real} = [0.25, 0.5, 0.75],
-  start_projection_dc_angle_limit_deg::Float64 = 60.0,
-  qlimit_start_iter::Int = 2,
-  qlimit_start_mode::Symbol = :iteration,
-  qlimit_auto_q_delta_pu::Float64 = 1e-4,
-  opt_flatstart::Bool = true,
-  pv_table_rows::Int = 30,
-  validate_limits_after_pf::Bool = false,
-  q_limit_violation_headroom::Float64 = 0.0,
-  lock_pv_to_pq_buses::AbstractVector{Int} = Int[],
-  qlimit_trace_buses::AbstractVector{Int} = Int[],
-  qlimit_lock_reason::Symbol = :manual,
-  qlimit_guard::Bool = false,
-  qlimit_guard_min_q_range_pu::Float64 = 1e-4,
-  qlimit_guard_zero_range_mode::Symbol = :lock_pq,
-  qlimit_guard_narrow_range_mode::Symbol = :prefer_pq,
-  qlimit_guard_log::Bool = true,
-  qlimit_guard_max_switches::Int = 10,
-  qlimit_guard_accept_bounded_violations::Bool = false,
-  qlimit_guard_max_remaining_violations::Int = 0,
-  qlimit_guard_freeze_after_repeated_switching::Bool = true,
-  qlimit_guard_violation_mode::Symbol = :delayed_switch,
-  qlimit_guard_violation_threshold_pu::Float64 = 1e-4,
-)
-  pf_cfg = PowerFlowConfig(
-    max_iter = max_ite, tol = tol, method = method, autodamp = autodamp, autodamp_min = autodamp_min,
-    start_projection = start_projection, start_projection_try_dc_start = start_projection_try_dc_start,
-    start_projection_try_blend_scan = start_projection_try_blend_scan, start_projection_branch_guard = start_projection_branch_guard,
-    start_projection_measure_candidates = start_projection_measure_candidates,
-    start_projection_accept_unmeasured_dc_start = start_projection_accept_unmeasured_dc_start,
-    start_projection_blend_lambdas = collect(start_projection_blend_lambdas),
-    start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg,
-    qlimit_start_iter = qlimit_start_iter, qlimit_start_mode = qlimit_start_mode, qlimit_auto_q_delta_pu = qlimit_auto_q_delta_pu,
-    opt_flatstart = opt_flatstart, pv_table_rows = pv_table_rows, validate_limits_after_pf = validate_limits_after_pf,
-    q_limit_violation_headroom = q_limit_violation_headroom, lock_pv_to_pq_buses = collect(lock_pv_to_pq_buses),
-    qlimit_trace_buses = collect(qlimit_trace_buses), qlimit_lock_reason = qlimit_lock_reason, qlimit_guard = qlimit_guard,
-    qlimit_guard_min_q_range_pu = qlimit_guard_min_q_range_pu, qlimit_guard_zero_range_mode = qlimit_guard_zero_range_mode,
-    qlimit_guard_narrow_range_mode = qlimit_guard_narrow_range_mode, qlimit_guard_log = qlimit_guard_log,
-    qlimit_guard_max_switches = qlimit_guard_max_switches, qlimit_guard_accept_bounded_violations = qlimit_guard_accept_bounded_violations,
-    qlimit_guard_max_remaining_violations = qlimit_guard_max_remaining_violations,
-    qlimit_guard_freeze_after_repeated_switching = qlimit_guard_freeze_after_repeated_switching,
-    qlimit_guard_violation_mode = qlimit_guard_violation_mode, qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu,
-  )
-  result = run_control!(net; controllers = collect_outer_controllers(net), pf_config = pf_cfg, control_config = ControlConfig(max_outer_iterations = max_ite, trace = false), verbose = verbose)
-  return (result.outer_iterations, result.last_pf_status == :failed ? 1 : 0)
-  _, erg = runpf!(
-    net,
-    max_ite,
-    tol,
-    verbose;
-    method = method,
-    autodamp = autodamp,
-    autodamp_min = autodamp_min,
-    start_projection = start_projection,
-    start_projection_try_dc_start = start_projection_try_dc_start,
-    start_projection_try_blend_scan = start_projection_try_blend_scan,
-    start_projection_branch_guard = start_projection_branch_guard,
-    start_projection_measure_candidates = start_projection_measure_candidates,
-    start_projection_accept_unmeasured_dc_start = start_projection_accept_unmeasured_dc_start,
-    start_projection_blend_lambdas = start_projection_blend_lambdas,
-    start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg,
-    qlimit_start_iter = qlimit_start_iter,
-    qlimit_start_mode = qlimit_start_mode,
-    qlimit_auto_q_delta_pu = qlimit_auto_q_delta_pu,
-    opt_flatstart = opt_flatstart,
-    pv_table_rows = pv_table_rows,
-    validate_limits_after_pf = validate_limits_after_pf,
-    q_limit_violation_headroom = q_limit_violation_headroom,
-    lock_pv_to_pq_buses = lock_pv_to_pq_buses,
-    qlimit_trace_buses = qlimit_trace_buses,
-    qlimit_lock_reason = qlimit_lock_reason,
-    qlimit_guard = qlimit_guard,
-    qlimit_guard_min_q_range_pu = qlimit_guard_min_q_range_pu,
-    qlimit_guard_zero_range_mode = qlimit_guard_zero_range_mode,
-    qlimit_guard_narrow_range_mode = qlimit_guard_narrow_range_mode,
-    qlimit_guard_log = qlimit_guard_log,
-    qlimit_guard_max_switches = qlimit_guard_max_switches,
-    qlimit_guard_accept_bounded_violations = qlimit_guard_accept_bounded_violations,
-    qlimit_guard_max_remaining_violations = qlimit_guard_max_remaining_violations,
-    qlimit_guard_freeze_after_repeated_switching = qlimit_guard_freeze_after_repeated_switching,
-    qlimit_guard_violation_mode = qlimit_guard_violation_mode,
-    qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu,
-  )
-  erg != 0 && return (0, erg)
-  calcNetLosses!(net)
-  calcLinkFlowsKCL!(net)
-
-  max_outer = maximum(c.max_outer_iters for c in controllers if c.enabled)
-  for it = 1:max_outer
-    all_done = true
-    any_moved = false
-
-    for ctrl in controllers
-      ctrl.enabled || continue
-      br = _find_trafo_branch(net, ctrl.trafo)
-      moved = false
-      converged_v = true
-      converged_p = true
-
-      if ctrl.mode in (:voltage, :voltage_and_branch_active_power)
-        vm = get_bus_vm_pu(net, ctrl.target_bus)
-        ctrl.achieved_vm_pu = vm
-        converged_v = _voltage_within_deadband(vm, ctrl.target_vm_pu, ctrl.deadband_vm_pu)
-        if !converged_v && ctrl.control_ratio
-          e_v = _voltage_control_error(vm, ctrl.target_vm_pu, ctrl.voltage_error_metric)
-          direction = _ratio_probe_direction(
-            net,
-            br,
-            ctrl,
-            max_ite,
-            tol,
-            0,
-            method;
-            opt_flatstart = opt_flatstart,
-            pv_table_rows = pv_table_rows,
-            validate_limits_after_pf = validate_limits_after_pf,
-            q_limit_violation_headroom = q_limit_violation_headroom,
-            lock_pv_to_pq_buses = lock_pv_to_pq_buses,
-            qlimit_trace_buses = qlimit_trace_buses,
-            qlimit_lock_reason = qlimit_lock_reason,
-            qlimit_guard = qlimit_guard,
-            qlimit_guard_min_q_range_pu = qlimit_guard_min_q_range_pu,
-            qlimit_guard_zero_range_mode = qlimit_guard_zero_range_mode,
-            qlimit_guard_narrow_range_mode = qlimit_guard_narrow_range_mode,
-            qlimit_guard_log = qlimit_guard_log,
-            qlimit_guard_max_switches = qlimit_guard_max_switches,
-            qlimit_guard_accept_bounded_violations = qlimit_guard_accept_bounded_violations,
-            qlimit_guard_max_remaining_violations = qlimit_guard_max_remaining_violations,
-            qlimit_guard_freeze_after_repeated_switching = qlimit_guard_freeze_after_repeated_switching,
-            qlimit_guard_violation_mode = qlimit_guard_violation_mode,
-            qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu,
-          )
-          direction == 0.0 && (direction = -1.0)
-          Δ = ctrl.is_discrete ? br.tap_step : 0.25 * br.tap_step
-          step = (e_v < 0.0) ? direction * Δ : -direction * Δ
-          new_ratio = clamp(br.tap_ratio + step, br.tap_min, br.tap_max)
-          any_moved = any_moved || (new_ratio != br.tap_ratio)
-          br.tap_ratio = new_ratio
-          br.ratio = new_ratio
-          ctrl.at_limit = ctrl.at_limit || isapprox(new_ratio, br.tap_min; atol = 1e-12) || isapprox(new_ratio, br.tap_max; atol = 1e-12)
-        end
-      end
-
-      if ctrl.mode in (:branch_active_power, :voltage_and_branch_active_power)
-        p = get_branch_p_from_to_mw(net, ctrl.target_branch[1], ctrl.target_branch[2])
-        ctrl.achieved_p_mw = p
-        e_p = p - ctrl.p_target_mw
-        converged_p = abs(e_p) <= ctrl.deadband_p_mw
-        if !converged_p && ctrl.control_phase
-          direction = _phase_probe_direction(
-            net,
-            br,
-            ctrl,
-            max_ite,
-            tol,
-            0,
-            method;
-            opt_flatstart = opt_flatstart,
-            pv_table_rows = pv_table_rows,
-            validate_limits_after_pf = validate_limits_after_pf,
-            q_limit_violation_headroom = q_limit_violation_headroom,
-            lock_pv_to_pq_buses = lock_pv_to_pq_buses,
-            qlimit_trace_buses = qlimit_trace_buses,
-            qlimit_lock_reason = qlimit_lock_reason,
-            qlimit_guard = qlimit_guard,
-            qlimit_guard_min_q_range_pu = qlimit_guard_min_q_range_pu,
-            qlimit_guard_zero_range_mode = qlimit_guard_zero_range_mode,
-            qlimit_guard_narrow_range_mode = qlimit_guard_narrow_range_mode,
-            qlimit_guard_log = qlimit_guard_log,
-            qlimit_guard_max_switches = qlimit_guard_max_switches,
-            qlimit_guard_accept_bounded_violations = qlimit_guard_accept_bounded_violations,
-            qlimit_guard_max_remaining_violations = qlimit_guard_max_remaining_violations,
-            qlimit_guard_freeze_after_repeated_switching = qlimit_guard_freeze_after_repeated_switching,
-            qlimit_guard_violation_mode = qlimit_guard_violation_mode,
-            qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu,
-          )
-          direction == 0.0 && (direction = -1.0)
-          Δ = ctrl.is_discrete ? br.phase_step_deg : 0.25 * br.phase_step_deg
-          step = (e_p < 0.0) ? direction * Δ : -direction * Δ
-          new_phase = clamp(br.phase_shift_deg + step, br.phase_min_deg, br.phase_max_deg)
-          any_moved = any_moved || (new_phase != br.phase_shift_deg)
-          br.phase_shift_deg = new_phase
-          br.angle = new_phase
-          ctrl.at_limit = ctrl.at_limit || isapprox(new_phase, br.phase_min_deg; atol = 1e-12) || isapprox(new_phase, br.phase_max_deg; atol = 1e-12)
-        end
-      end
-
-      ctrl.converged = converged_v && converged_p
-      ctrl.outer_iters = it
-      ctrl.status = ctrl.converged ? :converged : (ctrl.at_limit ? :at_limit : :active)
-      all_done = all_done && (ctrl.converged || ctrl.at_limit)
-      all_done || (all_done = all_done && !moved)
-    end
-
-    if all_done || !any_moved
-      return (it, 0)
-    end
-
-    _, erg2 = runpf!(
-      net,
-      max_ite,
-      tol,
-      verbose;
-      method = method,
-      autodamp = autodamp,
-      autodamp_min = autodamp_min,
-      start_projection = start_projection,
-      start_projection_try_dc_start = start_projection_try_dc_start,
-      start_projection_try_blend_scan = start_projection_try_blend_scan,
-      start_projection_branch_guard = start_projection_branch_guard,
-      start_projection_measure_candidates = start_projection_measure_candidates,
-      start_projection_accept_unmeasured_dc_start = start_projection_accept_unmeasured_dc_start,
-      start_projection_blend_lambdas = start_projection_blend_lambdas,
-      start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg,
-      qlimit_start_iter = qlimit_start_iter,
-      qlimit_start_mode = qlimit_start_mode,
-      qlimit_auto_q_delta_pu = qlimit_auto_q_delta_pu,
-      opt_flatstart = opt_flatstart,
-      pv_table_rows = pv_table_rows,
-      validate_limits_after_pf = validate_limits_after_pf,
-      q_limit_violation_headroom = q_limit_violation_headroom,
-      lock_pv_to_pq_buses = lock_pv_to_pq_buses,
-      qlimit_trace_buses = qlimit_trace_buses,
-      qlimit_lock_reason = qlimit_lock_reason,
-      qlimit_guard = qlimit_guard,
-      qlimit_guard_min_q_range_pu = qlimit_guard_min_q_range_pu,
-      qlimit_guard_zero_range_mode = qlimit_guard_zero_range_mode,
-      qlimit_guard_narrow_range_mode = qlimit_guard_narrow_range_mode,
-      qlimit_guard_log = qlimit_guard_log,
-      qlimit_guard_max_switches = qlimit_guard_max_switches,
-      qlimit_guard_accept_bounded_violations = qlimit_guard_accept_bounded_violations,
-      qlimit_guard_max_remaining_violations = qlimit_guard_max_remaining_violations,
-      qlimit_guard_freeze_after_repeated_switching = qlimit_guard_freeze_after_repeated_switching,
-      qlimit_guard_violation_mode = qlimit_guard_violation_mode,
-      qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu,
-    )
-    erg2 != 0 && return (it, erg2)
-    calcNetLosses!(net)
-    calcLinkFlowsKCL!(net)
-  end
-
-  for ctrl in controllers
-    ctrl.enabled || continue
-    ctrl.status = :max_outer_iters
-  end
-  return (max_outer, 0)
+function run_tap_controllers_outer!(net::Net; kwargs...)
+  throw(ArgumentError("run_tap_controllers_outer! has been removed from the public control API; use run_control!(net; pf_config=..., control_config=...)"))
 end
 
 """
