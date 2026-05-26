@@ -4,44 +4,73 @@
 # The local override file is intentionally ignored by Git.
 
 power_flow:
+  # Allowed values: rectangular
+  # Rectangular is the supported public AC power-flow path.
   method: rectangular
+  # Legacy start switch (true = synthetic flat start). Keep aligned with start_mode below.
   flatstart: true
+  # Positive solver tolerance and iteration cap.
   tol: 1.0e-5
   max_iter: 80
+  # Automatic damping for difficult cases.
   autodamp: true
   autodamp_min: 0.05
+
+  # Rectangular workspace handling.
   rectangular_workspace_reuse: true
+  # Allowed values: off, on, auto
   rectangular_preallocate_workspace: auto
   rectangular_workspace_min_buses: 1000
 
+  # Start projection and warmstart controls.
   start_mode:
+    # Allowed values: classic, dc, bus_va_blend, matpower_va
     angle_mode: dc
+    # Allowed values: classic, pv_gen_vg, pv_bus_vm, all_bus_vm, profile_blend, bus_vm_va_blend
+    # Note: bus_vm_va_blend is accepted as a legacy alias and mapped internally.
     voltage_mode: profile_blend
+    # Allowed values: flat, dc, bus_metadata, historical_profile, matpower_reference, state_estimation, scada_snapshot
     profile_source: matpower_reference
+    # Enable projection-based candidate selection instead of direct start.
     start_projection: true
+    # Try a DC-angle candidate start.
     try_dc_start: true
+    # Scan blend_lambdas as additional candidates.
     try_blend_scan: true
+    # Apply branch sanity checks to candidate starts.
     branch_guard: true
+    # Measure/score candidate starts before selection.
     measure_candidates: true
+    # Accept DC start even without candidate measurements.
     accept_unmeasured_dc_start: false
+    # Reuse imported MATPOWER reference values during start generation.
     reuse_import_data: true
+    # Candidate blend factors used when try_blend_scan=true.
     blend_lambdas: [0.25, 0.5, 0.75]
+    # Positive DC-angle clamp in degrees.
     dc_angle_limit_deg: 60.0
 
+  # Reactive-power limit switching.
   qlimits:
     enabled: true
+    # First iteration where Q-limit switching is allowed.
     start_iter: 3
+    # Allowed values: iteration, auto, iteration_or_auto
     start_mode: iteration_or_auto
     auto_q_delta_pu: 1.0e-4
     hysteresis_pu: 0.01
     cooldown_iters: 1
+    # Optional bus-id filters for focused diagnostics/policies.
     trace_buses: []
     lock_pv_to_pq_buses: []
     guard:
       enabled: true
       min_q_range_pu: 0.02
+      # Allowed values: prefer_pq, lock_pq
       narrow_range_mode: lock_pq
+      # Allowed values: lock_pq
       zero_range_mode: lock_pq
+      # Allowed values: delayed_switch, lock_pq
       violation_mode: lock_pq
       violation_threshold_pu: 1.0e-4
       max_switches: 3
@@ -52,9 +81,11 @@ power_flow:
 
 state_estimation:
   enabled: true
+  # Allowed values: wls
   method: wls
   tol: 1.0e-8
   max_iter: 20
+  # Flat start for state-estimation initialization.
   flatstart: true
   jac_eps: 1.0e-6
   update_net: true
@@ -62,22 +93,32 @@ state_estimation:
     enabled: true
 
 matpower_import:
+  # MATPOWER case filename/path resolved by the example runner.
   case: case14.m
+  # Allowed values: off, recommend, apply
   auto_profile: recommend
   auto_profile_log: false
+  # Allowed values: gen_vg, bus_vm, auto, strict_check
   pv_voltage_source: gen_vg
   pv_voltage_mismatch_tol_pu: 1.0e-4
+  # Allowed values: bus_vm, gen_vg, imported_setpoint, hybrid
   compare_voltage_reference: imported_setpoint
+  # Allowed values: admittance, voltage_dependent_injection
   bus_shunt_model: admittance
+  # Allowed values: deg, rad
   shift_unit: deg
+  # Typical values: 1.0 (standard), -1.0 (opposite sign convention)
   shift_sign: 1.0
+  # Allowed values: normal, reciprocal
   ratio: normal
   enable_pq_gen_controllers: true
+  # Allowed values: off, on, auto
   preallocate_network: auto
   preallocate_min_buses: 500
 
 performance:
   enabled: true
+  # Allowed values: off, summary, iteration, full
   level: iteration
   print_to_console: true
   write_to_logfile: true
@@ -93,40 +134,57 @@ performance:
 
 runtime:
   print_thread_config: true
+  # keep = keep current process setting.
   julia_threads: keep  # requires process startup or script re-exec
   blas_threads: keep   # can be applied at runtime
 
 diagnostics:
   log_effective_config: false
   console_summary: true
+  # Allowed values: off, compact, full
   console_auto_profile: compact
+  # Allowed values: off, compact, summary, full
   console_diagnostics: compact
+  # Allowed values: off, summary, full
   console_q_limit_events: summary
   console_max_rows: 20
+  # Allowed values: off, compact, full
   logfile_diagnostics: full
 
 output:
   console_summary: true
+  # Allowed values: off, compact, full
   console_auto_profile: compact
+  # Allowed values: off, compact, summary, full
   console_diagnostics: compact
+  # Allowed values: off, summary, full
   console_q_limit_events: summary
   console_max_rows: 20
+  # Allowed values: off, compact, classic, full
   logfile_results: full
   result_table_max_rows: 200
   result_table_large_case_threshold_buses: 1000
+  # Allowed values: summary, classic, full
   result_table_large_case_mode: summary
+  # Allowed values: off, compact, full
   logfile_diagnostics: full
+  # Allowed values: off, compact, full
   logfile_performance: full
+  # Allowed values: off, summary, table, full
   logfile_warnings: full
 
 benchmark:
   enabled: true
+  # Allowed values: rectangular
   methods: [rectangular]
   seconds: 2.0
   samples: 50
   show_once: false
+  # Allowed values: classic, dataframe, compact
   show_once_output: classic
+  # 0 disables node-count limit for one-shot output.
   show_once_max_nodes: 0
 
 extensions:
+  # Reserved for future extension schemas.
   reserved: true
