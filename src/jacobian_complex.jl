@@ -2715,4 +2715,3 @@ function runpf_rectangular!(
     throw(ArgumentError(unsupported_powerflow_method_message(method)))
   end
 end
-end
