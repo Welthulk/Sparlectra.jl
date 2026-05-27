@@ -2523,19 +2523,242 @@ function run_complex_nr_rectangular_for_net!(
 end
 
 """
-    runpf_rectangular!(net, maxIte, tolerance=1e-6, verbose=0)
+    runpf!(net, maxIte, tolerance=1e-6, verbose=0; method=:rectangular)
 
-Runs a rectangular complex-state Newton–Raphson power flow on `net::Net`.
+Unified AC power flow interface.
+
+Arguments:
+- `net::Net`: network
+- `maxIte::Int`: maximum iterations
+- `tolerance::Float64`: mismatch tolerance
+- `verbose::Int`: verbosity level
+- `method::Symbol`: must be `:rectangular`
+- `autodamp::Bool`: enable residual-based backtracking for rectangular Newton steps
+- `autodamp_min::Float64`: minimum automatic damping factor when `autodamp = true`
+- `qlimit_start_iter::Int`: first Newton iteration where PV→PQ Q-limit switching may run in `:iteration` mode
+- `qlimit_start_mode::Symbol`: `:iteration`, `:auto_q_delta`, or `:iteration_or_auto` start criterion for PV→PQ switching
+- `qlimit_auto_q_delta_pu::Float64`: PV reactive-power request change threshold for automatic switching start
+
+Notes:
+- Link-flow recovery (`calcLinkFlowsKCL!`) is method-agnostic and uses solved PF results.
+- If active-link merges create internal isolated buses, the rectangular sparse
+  solver remains the only supported PF path; there is no polar fallback.
 
 Returns:
     (iterations::Int, status::Int)
 where `status == 0` indicates convergence.
 """
-function runpf_rectangular!(
+function _runpf_with_config!(net::Net, config::PowerFlowConfig; verbose::Int = 0, damp = 1.0, pv_table_rows::Int = 30, validate_limits_after_pf::Bool = false, q_limit_violation_headroom::Float64 = 0.0, qlimit_lock_reason::Symbol = :manual, performance_profile = nothing)
+  start = config.start_mode
+  qlim = config.qlimits
+  return runpf!(
+    net,
+    config.max_iter,
+    config.tol,
+    verbose;
+    method = config.method,
+    opt_flatstart = start.flatstart,
+    damp = damp,
+    autodamp = config.autodamp,
+    autodamp_min = config.autodamp_min,
+    wrong_branch_detection = config.wrong_branch_detection,
+    wrong_branch_rescue = config.wrong_branch_rescue,
+    wrong_branch_min_vm_pu = config.wrong_branch_min_vm_pu,
+    wrong_branch_max_vm_pu = config.wrong_branch_max_vm_pu,
+    wrong_branch_max_angle_spread_deg = config.wrong_branch_max_angle_spread_deg,
+    wrong_branch_max_branch_angle_deg = config.wrong_branch_max_branch_angle_deg,
+    wrong_branch_min_low_vm_count = config.wrong_branch_min_low_vm_count,
+    wrong_branch_rescue_max_attempts = config.wrong_branch_rescue_max_attempts,
+    pv_table_rows = pv_table_rows,
+    validate_limits_after_pf = validate_limits_after_pf,
+    q_limit_violation_headroom = q_limit_violation_headroom,
+    lock_pv_to_pq_buses = qlim.lock_pv_to_pq_buses,
+    start_projection = start.start_projection,
+    start_projection_try_dc_start = start.try_dc_start,
+    start_projection_try_blend_scan = start.try_blend_scan,
+    start_projection_branch_guard = start.branch_guard,
+    start_projection_measure_candidates = start.measure_candidates,
+    start_projection_accept_unmeasured_dc_start = start.accept_unmeasured_dc_start,
+    start_projection_blend_lambdas = start.blend_lambdas,
+    start_projection_dc_angle_limit_deg = start.dc_angle_limit_deg,
+    qlimit_start_iter = qlim.start_iter,
+    qlimit_start_mode = qlim.start_mode,
+    qlimit_auto_q_delta_pu = qlim.auto_q_delta_pu,
+    qlimit_trace_buses = qlim.trace_buses,
+    qlimit_lock_reason = qlimit_lock_reason,
+    qlimit_guard = qlim.guard,
+    qlimit_guard_min_q_range_pu = qlim.guard_min_q_range_pu,
+    qlimit_guard_zero_range_mode = qlim.guard_zero_range_mode,
+    qlimit_guard_narrow_range_mode = qlim.guard_narrow_range_mode,
+    qlimit_guard_log = qlim.guard_log,
+    qlimit_guard_max_switches = qlim.guard_max_switches,
+    qlimit_guard_accept_bounded_violations = qlim.guard_accept_bounded_violations,
+    qlimit_guard_max_remaining_violations = qlim.guard_max_remaining_violations,
+    qlimit_guard_freeze_after_repeated_switching = qlim.guard_freeze_after_repeated_switching,
+    qlimit_guard_violation_mode = qlim.guard_violation_mode,
+    qlimit_guard_violation_threshold_pu = qlim.guard_violation_threshold_pu,
+    rectangular_workspace_reuse = config.rectangular_workspace_reuse,
+    rectangular_preallocate_workspace = config.rectangular_preallocate_workspace,
+    rectangular_workspace_min_buses = config.rectangular_workspace_min_buses,
+    performance_profile = performance_profile,
+  )
+end
+
+runpf!(net::Net, config::PowerFlowConfig; kwargs...) = _runpf_with_config!(net, config; kwargs...)
+runpf!(net::Net, config::SparlectraConfig; kwargs...) = _runpf_with_config!(net, config.powerflow; kwargs...)
+
+function runpf!(net::Net; config::Union{Nothing,PowerFlowConfig,SparlectraConfig} = nothing, kwargs...)
+  runtime_keys = Set((:verbose, :damp, :pv_table_rows, :validate_limits_after_pf, :q_limit_violation_headroom, :qlimit_lock_reason, :performance_profile))
+  cfg0 = config === nothing ? powerflow_config() : (config isa SparlectraConfig ? config.powerflow : config)
+  if !isempty(kwargs)
+    raw = Dict{String,Any}(String(k) => v for (k, v) in pairs(kwargs))
+    if all(k -> k in runtime_keys, keys(kwargs))
+      return _runpf_with_config!(
+        net,
+        cfg0;
+        verbose = Int(get(raw, "verbose", 0)),
+        damp = get(raw, "damp", 1.0),
+        pv_table_rows = Int(get(raw, "pv_table_rows", 30)),
+        validate_limits_after_pf = Bool(get(raw, "validate_limits_after_pf", false)),
+        q_limit_violation_headroom = Float64(get(raw, "q_limit_violation_headroom", 0.0)),
+        qlimit_lock_reason = Symbol(get(raw, "qlimit_lock_reason", :manual)),
+        performance_profile = get(raw, "performance_profile", nothing),
+      )
+    else
+      throw(ArgumentError("runpf!: solver options must be supplied through PowerFlowConfig or set_sparlectra_config!; only runtime keywords $(collect(runtime_keys)) are accepted."))
+    end
+  end
+  return _runpf_with_config!(net, cfg0)
+end
+
+function _active_link_representative_map(net::Net)
+  n = length(net.nodeVec)
+  parent = collect(1:n)
+
+  function find_root(i::Int)
+    while parent[i] != i
+      parent[i] = parent[parent[i]]
+      i = parent[i]
+    end
+    return i
+  end
+
+  function union_set(a::Int, b::Int)
+    ra = find_root(a)
+    rb = find_root(b)
+    ra == rb && return
+    if ra < rb
+      parent[rb] = ra
+    else
+      parent[ra] = rb
+    end
+  end
+
+  for l in net.linkVec
+    l.status == 1 || continue
+    union_set(Int(l.fromBus), Int(l.toBus))
+  end
+
+  return [find_root(i) for i in 1:n]
+end
+
+function _merged_pf_net(net::Net)
+  reps = _active_link_representative_map(net)
+  all(reps[i] == i for i in eachindex(reps)) && return net, reps, false
+
+  wnet = deepcopy(net)
+  n = length(wnet.nodeVec)
+  cluster_members = [Int[] for _ in 1:n]
+  for bus in 1:n
+    push!(cluster_members[reps[bus]], bus)
+  end
+
+  for rep in 1:n
+    members = cluster_members[rep]
+    isempty(members) && continue
+
+    ref = wnet.nodeVec[rep]
+    p_load = 0.0
+    q_load = 0.0
+    p_gen = 0.0
+    q_gen = 0.0
+    p_sh = 0.0
+    q_sh = 0.0
+    has_slack = false
+    has_pv = false
+
+    for b in members
+      nref = wnet.nodeVec[b]
+      p_load += isnothing(nref._pƩLoad) ? 0.0 : nref._pƩLoad
+      q_load += isnothing(nref._qƩLoad) ? 0.0 : nref._qƩLoad
+      p_gen += isnothing(nref._pƩGen) ? 0.0 : nref._pƩGen
+      q_gen += isnothing(nref._qƩGen) ? 0.0 : nref._qƩGen
+      p_sh += isnothing(nref._pShunt) ? 0.0 : nref._pShunt
+      q_sh += isnothing(nref._qShunt) ? 0.0 : nref._qShunt
+      has_slack |= (nref._nodeType == Slack)
+      has_pv |= (nref._nodeType == PV)
+    end
+
+    ref._pƩLoad = p_load
+    ref._qƩLoad = q_load
+    ref._pƩGen = p_gen
+    ref._qƩGen = q_gen
+    ref._pShunt = p_sh
+    ref._qShunt = q_sh
+    ref._nodeType = has_slack ? Slack : (has_pv ? PV : PQ)
+
+    for b in members
+      b == rep && continue
+      nref = wnet.nodeVec[b]
+      nref._pƩLoad = 0.0
+      nref._qƩLoad = 0.0
+      nref._pƩGen = 0.0
+      nref._qƩGen = 0.0
+      nref._pShunt = 0.0
+      nref._qShunt = 0.0
+      nref._nodeType = Isolated
+    end
+  end
+
+  for br in wnet.branchVec
+    f = reps[Int(br.fromBus)]
+    t = reps[Int(br.toBus)]
+    br.fromBus = f
+    br.toBus = t
+    if f == t
+      br.status = 0
+    end
+  end
+
+  for sh in wnet.shuntVec
+    sh.busIdx = reps[Int(sh.busIdx)]
+    if hasproperty(sh.comp, :cFrom_bus) && getfield(sh.comp, :cFrom_bus) !== nothing
+      setfield!(sh.comp, :cFrom_bus, sh.busIdx)
+    end
+  end
+
+  for ps in wnet.prosumpsVec
+    if hasproperty(ps.comp, :cFrom_bus) && getfield(ps.comp, :cFrom_bus) !== nothing
+      new_bus = reps[Int(getfield(ps.comp, :cFrom_bus))]
+      setfield!(ps.comp, :cFrom_bus, new_bus)
+    end
+    if hasproperty(ps.comp, :cTo_bus) && getfield(ps.comp, :cTo_bus) !== nothing
+      new_bus = reps[Int(getfield(ps.comp, :cTo_bus))]
+      setfield!(ps.comp, :cTo_bus, new_bus)
+    end
+  end
+
+  empty!(wnet.isoNodes)
+  markIsolatedBuses!(net = wnet, log = false)
+  return wnet, reps, true
+end
+
+function runpf!(
   net::Net,
   maxIte::Int,
   tolerance::Float64 = 1e-6,
   verbose::Int = 0;
+  method::Symbol = :rectangular,
   damp = 1.0,
   autodamp::Bool = false,
   autodamp_min::Float64 = 1e-3,
