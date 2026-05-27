@@ -445,6 +445,7 @@ function _rectangular_rejection_reason_text(reason::Symbol)
 end
 
 function _check_wrong_branch_solution(
+  net::Net,
   V::Vector{ComplexF64},
   bus_types::Vector{Symbol},
   Vset::Vector{Float64},
@@ -452,13 +453,14 @@ function _check_wrong_branch_solution(
   min_vm_pu::Float64,
   max_vm_pu::Float64,
   max_angle_spread_deg::Float64,
+  max_branch_angle_deg::Float64,
   min_low_vm_count::Int,
 )
   n = length(V)
   n == length(bus_types) || throw(ArgumentError("V and bus_types must have same length."))
   n == length(Vset) || throw(ArgumentError("V and Vset must have same length."))
   if any(v -> !isfinite(real(v)) || !isfinite(imag(v)), V)
-    return (status = :fail, reason = :nonfinite_voltage, min_vm_pu = NaN, max_vm_pu = NaN, low_vm_count = 0, high_vm_count = 0, angle_spread_deg = NaN, lowest_buses = Int[])
+    return (status = :fail, reason = :nonfinite_voltage, min_vm_pu = NaN, max_vm_pu = NaN, low_vm_count = 0, high_vm_count = 0, angle_spread_deg = NaN, lowest_buses = Int[], branch_angle_violation_count = 0, worst_branch_angle_deg = NaN, worst_branch = nothing)
   end
   vm = abs.(V)
   low_idx = findall(<(min_vm_pu), vm)
@@ -471,6 +473,34 @@ function _check_wrong_branch_solution(
   lowest_buses = [Int(i) for i in lowest_order[1:min(3, length(lowest_order))]]
   status = :ok
   reason = :none
+  branch_angle_violation_count = 0
+  worst_branch_angle_deg = 0.0
+  worst_branch = nothing
+  for (idx, br) in enumerate(net.branchVec)
+    br.status == 1 || continue
+    f = Int(br.fromBus)
+    t = Int(br.toBus)
+    (f in eachindex(V) && t in eachindex(V)) || continue
+    dθ = abs(rad2deg(angle(V[f]) - angle(V[t])))
+    if !isfinite(dθ)
+      status = :fail
+      reason = :nonfinite_branch_angle
+      worst_branch_angle_deg = NaN
+      worst_branch = (index = idx, from_bus = f, to_bus = t)
+      break
+    end
+    if dθ > worst_branch_angle_deg
+      worst_branch_angle_deg = dθ
+      worst_branch = (index = idx, from_bus = f, to_bus = t)
+    end
+    if dθ > max_branch_angle_deg
+      branch_angle_violation_count += 1
+    end
+  end
+  if status != :fail && branch_angle_violation_count > 0
+    status = :warn
+    reason = :branch_angle_exceeded
+  end
   if !isempty(low_idx) && length(low_idx) >= min_low_vm_count
     status = :warn
     reason = :low_voltage_magnitude
@@ -481,7 +511,7 @@ function _check_wrong_branch_solution(
     status = :warn
     reason = :angle_spread_exceeded
   end
-  return (status = status, reason = reason, min_vm_pu = minimum(vm), max_vm_pu = maximum(vm), low_vm_count = length(low_idx), high_vm_count = length(high_idx), angle_spread_deg = angle_spread_deg, lowest_buses = lowest_buses)
+  return (status = status, reason = reason, min_vm_pu = minimum(vm), max_vm_pu = maximum(vm), low_vm_count = length(low_idx), high_vm_count = length(high_idx), angle_spread_deg = angle_spread_deg, lowest_buses = lowest_buses, branch_angle_violation_count = branch_angle_violation_count, worst_branch_angle_deg = worst_branch_angle_deg, worst_branch = worst_branch)
 end
 
 function _print_rectangular_convergence_summary(io::IO, status)
@@ -2308,7 +2338,9 @@ function run_complex_nr_rectangular_for_net!(
   end
 
   qlimit_summary = nothing
-  branch_quality = (status = :skipped, reason = :disabled, min_vm_pu = NaN, max_vm_pu = NaN, low_vm_count = 0, high_vm_count = 0, angle_spread_deg = NaN, lowest_buses = Int[])
+  branch_quality = (status = :skipped, reason = :disabled, min_vm_pu = NaN, max_vm_pu = NaN, low_vm_count = 0, high_vm_count = 0, angle_spread_deg = NaN, lowest_buses = Int[], branch_angle_violation_count = 0, worst_branch_angle_deg = NaN, worst_branch = nothing)
+  wrong_branch_rescue_attempted = false
+  wrong_branch_rescue_reason = :not_requested
   if numerical_converged
     qlimit_summary, converged, rejection_reason = _perf_profile_time!(performance_profile, :solver_final_qlimit_summary) do
       final_Qload_pu = build_qload_pu(net)
@@ -2327,7 +2359,9 @@ function run_complex_nr_rectangular_for_net!(
       end
       (qlimit_summary_, converged_, rejection_reason_)
     end
-    branch_quality = _check_wrong_branch_solution(
+    if wrong_branch_detection != :off
+      branch_quality = _check_wrong_branch_solution(
+      net,
       V,
       bus_types,
       Vset,
@@ -2335,12 +2369,24 @@ function run_complex_nr_rectangular_for_net!(
       min_vm_pu = wrong_branch_min_vm_pu,
       max_vm_pu = wrong_branch_max_vm_pu,
       max_angle_spread_deg = wrong_branch_max_angle_spread_deg,
+      max_branch_angle_deg = wrong_branch_max_branch_angle_deg,
       min_low_vm_count = wrong_branch_min_low_vm_count,
     )
-    if wrong_branch_detection == :fail && branch_quality.status == :warn
-      branch_quality = (; branch_quality..., status = :fail, reason = :wrong_branch_detected)
-      converged = false
-      rejection_reason = :wrong_branch_detected
+    end
+    if branch_quality.status in (:warn, :fail)
+      if wrong_branch_detection == :fail
+        branch_quality = (; branch_quality..., status = :fail, reason = :wrong_branch_detected)
+        converged = false
+        rejection_reason = :wrong_branch_detected
+      elseif wrong_branch_detection == :rescue
+        branch_quality = (; branch_quality..., status = :wrong_branch_rescue_not_implemented, reason = :rescue_requested_but_not_available)
+        converged = false
+        rejection_reason = :wrong_branch_rescue_not_implemented
+        wrong_branch_rescue_attempted = false
+        wrong_branch_rescue_reason = :requested_but_not_available
+      elseif wrong_branch_detection == :warn
+        wrong_branch_rescue_reason = :diagnostic_only
+      end
     end
   end
 
@@ -2383,6 +2429,17 @@ function run_complex_nr_rectangular_for_net!(
         branch_quality_status = branch_quality.status,
         branch_quality_reason = branch_quality.reason,
         branch_quality_metrics = branch_quality,
+        wrong_branch_detection = wrong_branch_detection,
+        wrong_branch_status = branch_quality.status,
+        wrong_branch_reason = branch_quality.reason,
+        wrong_branch_low_vm_count = branch_quality.low_vm_count,
+        wrong_branch_high_vm_count = branch_quality.high_vm_count,
+        wrong_branch_angle_spread_deg = branch_quality.angle_spread_deg,
+        wrong_branch_max_branch_angle_deg = wrong_branch_max_branch_angle_deg,
+        wrong_branch_branch_angle_violation_count = branch_quality.branch_angle_violation_count,
+        wrong_branch_worst_branch_angle_deg = branch_quality.worst_branch_angle_deg,
+        wrong_branch_rescue_attempted = wrong_branch_rescue_attempted,
+        wrong_branch_rescue_reason = wrong_branch_rescue_reason,
         wrong_branch_rescue_used = false,
         wrong_branch_rescue_attempts = 0,
         wrong_branch_rescue_profile = :none,
@@ -2395,12 +2452,19 @@ function run_complex_nr_rectangular_for_net!(
     _print_qlimit_active_set_summary(stdout, status)
     println(stdout, "Wrong-branch check:")
     @printf(stdout, "  status           = %s\n", uppercase(String(status.branch_quality_status)))
+    @printf(stdout, "  detection_mode   = %s\n", String(status.wrong_branch_detection))
     @printf(stdout, "  reason           = %s\n", String(status.branch_quality_reason))
     @printf(stdout, "  min_vm_pu        = %.6f\n", status.branch_quality_metrics.min_vm_pu)
     @printf(stdout, "  max_vm_pu        = %.6f\n", status.branch_quality_metrics.max_vm_pu)
     @printf(stdout, "  low_vm_count     = %d\n", status.branch_quality_metrics.low_vm_count)
     @printf(stdout, "  angle_spread_deg = %.6f\n", status.branch_quality_metrics.angle_spread_deg)
+    @printf(stdout, "  max_branch_ang   = %.6f\n", status.branch_quality_metrics.worst_branch_angle_deg)
+    @printf(stdout, "  branch_viol_cnt  = %d\n", status.branch_quality_metrics.branch_angle_violation_count)
     @printf(stdout, "  rescue_enabled   = %s\n", string(wrong_branch_rescue || wrong_branch_detection == :rescue))
+    @printf(stdout, "  rescue_attempted = %s\n", string(status.wrong_branch_rescue_attempted))
+    if wrong_branch_detection == :rescue && status.wrong_branch_reason == :rescue_requested_but_not_available
+      println(stdout, "  Wrong-branch rescue was requested, but active rescue retries are not implemented yet.")
+    end
   end
 
   return iters, converged ? 0 : 1
