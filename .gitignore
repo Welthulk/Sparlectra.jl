@@ -22,3 +22,4 @@ auswertung_case25k_performance_2026-05-17.md
 # Ignore local Sparlectra user configuration
 examples/configuration.yaml
 examples/_out/
+examples/configuration.yaml.example
