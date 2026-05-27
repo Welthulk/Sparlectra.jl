@@ -121,12 +121,29 @@ function run_solver_interface_tests()
       @test bad.status == :fail
       @test bad.reason == :nonfinite_voltage
 
-      Vangle = ComplexF64[1.0 + 0im, cis(deg2rad(140.0)), 1.03 + 0im]
-      bang = Sparlectra._check_wrong_branch_solution(net, Vangle, bus_types, vset, 3; min_vm_pu = 0.70, max_vm_pu = 1.30, max_angle_spread_deg = 180.0, max_branch_angle_deg = 30.0, min_low_vm_count = 1)
-      @test bang.status == :warn
-      @test bang.reason == :branch_angle_exceeded
-      @test bang.branch_angle_violation_count > 0
-      @test bang.worst_branch_angle_deg > 30.0
+      branch_net = Net(name = "branch_wrap_test", baseMVA = 100.0)
+      addBus!(net = branch_net, busName = "B1", vn_kV = 110.0)
+      addBus!(net = branch_net, busName = "B2", vn_kV = 110.0)
+      addBus!(net = branch_net, busName = "B3", vn_kV = 110.0)
+      addACLine!(net = branch_net, fromBus = "B1", toBus = "B2", length = 1.0, r = 0.0, x = 0.1, c_nf_per_km = 0.0, tanδ = 0.0)
+      addACLine!(net = branch_net, fromBus = "B2", toBus = "B3", length = 1.0, r = 0.0, x = 0.1, c_nf_per_km = 0.0, tanδ = 0.0)
+      setNetBranchStatus!(net = branch_net, branchNr = 2, status = 0)
+      branch_net.branchVec[1].phase_shift_deg = 10.0
+      branch_net.branchVec[1].angle = 10.0
+
+      Vwrap = ComplexF64[exp(im * deg2rad(179.0)), exp(im * deg2rad(-179.0)), exp(im * deg2rad(0.0))]
+      wrap = Sparlectra._check_wrong_branch_solution(Vwrap, [:PQ, :PQ, :Slack], [1.0, 1.0, 1.0], 3; net = branch_net, min_vm_pu = 0.70, max_vm_pu = 1.30, max_angle_spread_deg = 360.0, max_branch_angle_deg = 20.0, min_low_vm_count = 1)
+      @test wrap.status == :ok
+      @test wrap.branch_angle_violation_count == 0
+      @test !isnothing(wrap.worst_branch)
+      @test wrap.worst_branch.angle_check_basis == :effective_bus_angle_minus_phase_shift
+      @test isapprox(wrap.worst_branch.angle_diff_raw_deg, 2.0; atol = 1e-8)
+      @test isapprox(wrap.worst_branch.angle_diff_effective_deg, 12.0; atol = 1e-8)
+
+      strict = Sparlectra._check_wrong_branch_solution(Vwrap, [:PQ, :PQ, :Slack], [1.0, 1.0, 1.0], 3; net = branch_net, min_vm_pu = 0.70, max_vm_pu = 1.30, max_angle_spread_deg = 360.0, max_branch_angle_deg = 11.0, min_low_vm_count = 1)
+      @test strict.status == :warn
+      @test strict.reason == :branch_angle_exceeded
+      @test strict.branch_angle_violation_count == 1
     end
     @testset "Flat-start voltage setpoints" begin
       net = createTest3BusNet()
