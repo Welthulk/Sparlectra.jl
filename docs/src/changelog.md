@@ -1,4 +1,10 @@
 # Change Log
+## Version 0.8.2 – 2026-05-30
+### New Features
+
+### Related
+ #219 Detect wrong/false low-voltage branch convergence and retry safely
+
 ## Version 0.8.1 – 2026-05-26
 
 ### Breaking Changes

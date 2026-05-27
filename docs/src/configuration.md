@@ -161,6 +161,17 @@ extensions:
 
 For complete key references and allowed-value tables, see the module-specific pages below.
 
+## Wrong-branch detection semantics (rectangular PF)
+
+`power_flow.wrong_branch_detection` is a post-convergence plausibility check for rectangular PF results. It is heuristic and does **not** prove global branch correctness.
+
+- `off`: checker disabled.
+- `warn`: suspicious solutions are reported in rectangular status metadata; numerical convergence remains accepted.
+- `fail`: suspicious solutions are treated as failed final convergence.
+- `rescue`: reserved/request mode. If a suspicious solution is detected, status reports `rescue_requested_but_not_available`; active retry/rescue loops are not implemented yet.
+
+The thresholds include voltage magnitude range, global angle spread, and active-branch angle-difference checks via `power_flow.wrong_branch_max_branch_angle_deg`.
+
 ## Control configuration (generic outer loop)
 
 ```yaml
@@ -285,6 +296,14 @@ The following canonical keys are currently present in `src/configuration.yaml.ex
 - `power_flow`
 - `power_flow.autodamp`
 - `power_flow.autodamp_min`
+- `power_flow.wrong_branch_detection`
+- `power_flow.wrong_branch_rescue`
+- `power_flow.wrong_branch_min_vm_pu`
+- `power_flow.wrong_branch_max_vm_pu`
+- `power_flow.wrong_branch_max_angle_spread_deg`
+- `power_flow.wrong_branch_max_branch_angle_deg`
+- `power_flow.wrong_branch_min_low_vm_count`
+- `power_flow.wrong_branch_rescue_max_attempts`
 - `power_flow.flatstart`
 - `power_flow.max_iter`
 - `power_flow.method`
@@ -311,7 +330,8 @@ The following canonical keys are currently present in `src/configuration.yaml.ex
 - `power_flow.qlimits.trace_buses`
 - `power_flow.rectangular_preallocate_workspace`
 - `power_flow.rectangular_workspace_min_buses`
-- `power_flow.rectangular_workspace_reuse`- `power_flow.start_mode`
+- `power_flow.rectangular_workspace_reuse`
+- `power_flow.start_mode`
 - `power_flow.start_mode.accept_unmeasured_dc_start`
 - `power_flow.start_mode.angle_mode`
 - `power_flow.start_mode.blend_lambdas`
