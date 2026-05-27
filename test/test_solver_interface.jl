@@ -104,6 +104,8 @@ function run_solver_interface_tests()
       @test Sparlectra.rectangular_pf_status(net) === status
     end
     @testset "Wrong-branch helper classification" begin
+      @test isapprox(Sparlectra._circular_angle_spread_deg([179.0, -179.0]), 2.0; atol = 1e-8)
+      @test isapprox(Sparlectra._circular_angle_spread_deg([-170.0, 170.0]), 20.0; atol = 1e-8)
       Vok = ComplexF64[1.0 + 0im, 1.01 + 0.01im, 1.03 - 0.02im]
       bus_types = [:PQ, :PV, :Slack]
       vset = [1.0, 1.01, 1.03]
@@ -144,6 +146,17 @@ function run_solver_interface_tests()
       @test strict.status == :warn
       @test strict.reason == :branch_angle_exceeded
       @test strict.branch_angle_violation_count == 1
+
+      wrap_spread = Sparlectra._check_wrong_branch_solution(Vwrap, [:PQ, :PQ, :Slack], [1.0, 1.0, 1.0], 3; net = nothing, min_vm_pu = 0.70, max_vm_pu = 1.30, max_angle_spread_deg = 10.0, max_branch_angle_deg = Inf, min_low_vm_count = 1)
+      @test wrap_spread.status == :warn
+      @test wrap_spread.reason == :angle_spread_exceeded
+      @test isapprox(wrap_spread.angle_spread_deg, 181.0; atol = 1e-8)
+
+      Vwide = ComplexF64[exp(im * deg2rad(120.0)), exp(im * deg2rad(-120.0)), exp(im * deg2rad(0.0))]
+      wide_spread = Sparlectra._check_wrong_branch_solution(Vwide, [:PQ, :PQ, :Slack], [1.0, 1.0, 1.0], 3; net = nothing, min_vm_pu = 0.70, max_vm_pu = 1.30, max_angle_spread_deg = 30.0, max_branch_angle_deg = Inf, min_low_vm_count = 1)
+      @test wide_spread.status == :warn
+      @test wide_spread.reason == :angle_spread_exceeded
+      @test isapprox(wide_spread.angle_spread_deg, 240.0; atol = 1e-8)
     end
     @testset "Flat-start voltage setpoints" begin
       net = createTest3BusNet()

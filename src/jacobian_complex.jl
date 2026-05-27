@@ -454,6 +454,25 @@ end
   return wrapped == -180.0 ? 180.0 : wrapped
 end
 
+function _circular_angle_spread_deg(angles_deg)::Float64
+  vals = Float64[_wrap_to_180_deg(Float64(a)) for a in angles_deg if isfinite(a)]
+  n = length(vals)
+  n == 0 && return NaN
+  n == 1 && return 0.0
+
+  vals360 = sort(mod.(vals, 360.0))
+  largest_gap = vals360[1] + 360.0 - vals360[end]
+  for i in 1:(n - 1)
+    gap = vals360[i + 1] - vals360[i]
+    if gap > largest_gap
+      largest_gap = gap
+    end
+  end
+
+  spread = 360.0 - largest_gap
+  return max(0.0, min(360.0, spread))
+end
+
 @inline function _wrong_branch_result(;
   status::Symbol,
   reason::Symbol,
@@ -518,8 +537,8 @@ function _check_wrong_branch_solution(
   high_idx = findall(>(max_vm_pu), vm)
   va_deg = rad2deg.(angle.(V))
   slack_ang = va_deg[slack_idx]
-  rel = va_deg .- slack_ang
-  angle_spread_deg = isempty(rel) ? 0.0 : (maximum(rel) - minimum(rel))
+  rel = _wrap_to_180_deg.(va_deg .- slack_ang)
+  angle_spread_deg = _circular_angle_spread_deg(rel)
   branch_angle_violation_count = 0
   max_branch_angle_seen_deg = NaN
   worst_branch = nothing
