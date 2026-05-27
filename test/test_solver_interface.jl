@@ -103,6 +103,61 @@ function run_solver_interface_tests()
       @test Sparlectra._set_rectangular_pf_status!(net, status) === status
       @test Sparlectra.rectangular_pf_status(net) === status
     end
+    @testset "Wrong-branch helper classification" begin
+      @test isapprox(Sparlectra._circular_angle_spread_deg([179.0, -179.0]), 2.0; atol = 1e-8)
+      @test isapprox(Sparlectra._circular_angle_spread_deg([-170.0, 170.0]), 20.0; atol = 1e-8)
+      Vok = ComplexF64[1.0 + 0im, 1.01 + 0.01im, 1.03 - 0.02im]
+      bus_types = [:PQ, :PV, :Slack]
+      vset = [1.0, 1.01, 1.03]
+      net = createTest3BusNet()
+      ok = Sparlectra._check_wrong_branch_solution(net, Vok, bus_types, vset, 3; min_vm_pu = 0.70, max_vm_pu = 1.30, max_angle_spread_deg = 180.0, max_branch_angle_deg = 90.0, min_low_vm_count = 1)
+      @test ok.status == :ok
+
+      Vlow = ComplexF64[0.40 + 0im, 1.0 + 0im, 1.03 + 0im]
+      low = Sparlectra._check_wrong_branch_solution(net, Vlow, bus_types, vset, 3; min_vm_pu = 0.70, max_vm_pu = 1.30, max_angle_spread_deg = 180.0, max_branch_angle_deg = 90.0, min_low_vm_count = 1)
+      @test low.status == :warn
+      @test low.reason == :low_voltage_magnitude
+
+      Vbad = ComplexF64[NaN + 0im, 1.0 + 0im, 1.03 + 0im]
+      bad = Sparlectra._check_wrong_branch_solution(net, Vbad, bus_types, vset, 3; min_vm_pu = 0.70, max_vm_pu = 1.30, max_angle_spread_deg = 180.0, max_branch_angle_deg = 90.0, min_low_vm_count = 1)
+      @test bad.status == :fail
+      @test bad.reason == :nonfinite_voltage
+
+      branch_net = Net(name = "branch_wrap_test", baseMVA = 100.0)
+      addBus!(net = branch_net, busName = "B1", vn_kV = 110.0)
+      addBus!(net = branch_net, busName = "B2", vn_kV = 110.0)
+      addBus!(net = branch_net, busName = "B3", vn_kV = 110.0)
+      addACLine!(net = branch_net, fromBus = "B1", toBus = "B2", length = 1.0, r = 0.0, x = 0.1, c_nf_per_km = 0.0, tanδ = 0.0)
+      addACLine!(net = branch_net, fromBus = "B2", toBus = "B3", length = 1.0, r = 0.0, x = 0.1, c_nf_per_km = 0.0, tanδ = 0.0)
+      setNetBranchStatus!(net = branch_net, branchNr = 2, status = 0)
+      branch_net.branchVec[1].phase_shift_deg = 10.0
+      branch_net.branchVec[1].angle = 10.0
+
+      Vwrap = ComplexF64[exp(im * deg2rad(179.0)), exp(im * deg2rad(-179.0)), exp(im * deg2rad(0.0))]
+      wrap = Sparlectra._check_wrong_branch_solution(Vwrap, [:PQ, :PQ, :Slack], [1.0, 1.0, 1.0], 3; net = branch_net, min_vm_pu = 0.70, max_vm_pu = 1.30, max_angle_spread_deg = 360.0, max_branch_angle_deg = 20.0, min_low_vm_count = 1)
+      @test wrap.status == :ok
+      @test wrap.branch_angle_violation_count == 0
+      @test !isnothing(wrap.worst_branch)
+      @test wrap.worst_branch.angle_check_basis == :effective_bus_angle_minus_phase_shift
+      @test isapprox(wrap.worst_branch.angle_diff_raw_deg, 2.0; atol = 1e-8)
+      @test isapprox(wrap.worst_branch.angle_diff_effective_deg, 12.0; atol = 1e-8)
+
+      strict = Sparlectra._check_wrong_branch_solution(Vwrap, [:PQ, :PQ, :Slack], [1.0, 1.0, 1.0], 3; net = branch_net, min_vm_pu = 0.70, max_vm_pu = 1.30, max_angle_spread_deg = 360.0, max_branch_angle_deg = 11.0, min_low_vm_count = 1)
+      @test strict.status == :warn
+      @test strict.reason == :branch_angle_exceeded
+      @test strict.branch_angle_violation_count == 1
+
+      wrap_spread = Sparlectra._check_wrong_branch_solution(Vwrap, [:PQ, :PQ, :Slack], [1.0, 1.0, 1.0], 3; net = nothing, min_vm_pu = 0.70, max_vm_pu = 1.30, max_angle_spread_deg = 10.0, max_branch_angle_deg = Inf, min_low_vm_count = 1)
+      @test wrap_spread.status == :warn
+      @test wrap_spread.reason == :angle_spread_exceeded
+      @test isapprox(wrap_spread.angle_spread_deg, 181.0; atol = 1e-8)
+
+      Vwide = ComplexF64[exp(im * deg2rad(120.0)), exp(im * deg2rad(-120.0)), exp(im * deg2rad(0.0))]
+      wide_spread = Sparlectra._check_wrong_branch_solution(Vwide, [:PQ, :PQ, :Slack], [1.0, 1.0, 1.0], 3; net = nothing, min_vm_pu = 0.70, max_vm_pu = 1.30, max_angle_spread_deg = 30.0, max_branch_angle_deg = Inf, min_low_vm_count = 1)
+      @test wide_spread.status == :warn
+      @test wide_spread.reason == :angle_spread_exceeded
+      @test isapprox(wide_spread.angle_spread_deg, 240.0; atol = 1e-8)
+    end
     @testset "Flat-start voltage setpoints" begin
       net = createTest3BusNet()
       net.nodeVec[1]._vm_pu = 0.94
@@ -482,6 +537,30 @@ end
         @test haskey(timings, phase)
         @test timings[phase].calls >= 1
       end
+    end
+
+    @testset "Wrong-branch detection modes are distinct" begin
+      base_cfg = PowerFlowConfig(max_iter = 20, tol = 1e-8, start_mode = StartModeConfig(flatstart = true), wrong_branch_min_vm_pu = 1.20)
+
+      net_warn = createTest3BusNet()
+      _, erg_warn = runpf!(net_warn; config = PowerFlowConfig(; NamedTuple{fieldnames(PowerFlowConfig)}(getfield.(Ref(base_cfg), fieldnames(PowerFlowConfig)))..., wrong_branch_detection = :warn))
+      st_warn = Sparlectra.rectangular_pf_status(net_warn)
+      @test erg_warn == 0
+      @test st_warn.wrong_branch_status == :warn
+
+      net_fail = createTest3BusNet()
+      _, erg_fail = runpf!(net_fail; config = PowerFlowConfig(; NamedTuple{fieldnames(PowerFlowConfig)}(getfield.(Ref(base_cfg), fieldnames(PowerFlowConfig)))..., wrong_branch_detection = :fail))
+      st_fail = Sparlectra.rectangular_pf_status(net_fail)
+      @test erg_fail != 0
+      @test st_fail.wrong_branch_status == :fail
+
+      net_rescue = createTest3BusNet()
+      _, erg_rescue = runpf!(net_rescue; config = PowerFlowConfig(; NamedTuple{fieldnames(PowerFlowConfig)}(getfield.(Ref(base_cfg), fieldnames(PowerFlowConfig)))..., wrong_branch_detection = :rescue))
+      st_rescue = Sparlectra.rectangular_pf_status(net_rescue)
+      @test erg_rescue != 0
+      @test st_rescue.wrong_branch_status == :wrong_branch_rescue_not_implemented
+      @test st_rescue.wrong_branch_reason == :rescue_requested_but_not_available
+      @test st_rescue.wrong_branch_rescue_attempted === false
     end
 
     @testset "Typed power-flow config entry points" begin

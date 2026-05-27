@@ -27,7 +27,7 @@ function run_configuration_coverage_tests()
     leaves = _canonical_yaml_leaf_keys()
 
     mapped_keys = Set([
-      "power_flow.method", "power_flow.flatstart", "power_flow.tol", "power_flow.max_iter", "power_flow.autodamp", "power_flow.autodamp_min", "power_flow.rectangular_workspace_reuse", "power_flow.rectangular_preallocate_workspace", "power_flow.rectangular_workspace_min_buses",
+      "power_flow.method", "power_flow.flatstart", "power_flow.tol", "power_flow.max_iter", "power_flow.autodamp", "power_flow.autodamp_min", "power_flow.wrong_branch_detection", "power_flow.wrong_branch_rescue", "power_flow.wrong_branch_min_vm_pu", "power_flow.wrong_branch_max_vm_pu", "power_flow.wrong_branch_max_angle_spread_deg", "power_flow.wrong_branch_max_branch_angle_deg", "power_flow.wrong_branch_min_low_vm_count", "power_flow.wrong_branch_rescue_max_attempts", "power_flow.rectangular_workspace_reuse", "power_flow.rectangular_preallocate_workspace", "power_flow.rectangular_workspace_min_buses",
       "power_flow.start_mode.angle_mode", "power_flow.start_mode.voltage_mode", "power_flow.start_mode.profile_source", "power_flow.start_mode.start_projection", "power_flow.start_mode.try_dc_start", "power_flow.start_mode.try_blend_scan", "power_flow.start_mode.branch_guard", "power_flow.start_mode.measure_candidates", "power_flow.start_mode.accept_unmeasured_dc_start", "power_flow.start_mode.reuse_import_data", "power_flow.start_mode.blend_lambdas", "power_flow.start_mode.dc_angle_limit_deg",
       "power_flow.qlimits.enabled", "power_flow.qlimits.start_iter", "power_flow.qlimits.start_mode", "power_flow.qlimits.auto_q_delta_pu", "power_flow.qlimits.hysteresis_pu", "power_flow.qlimits.cooldown_iters", "power_flow.qlimits.trace_buses", "power_flow.qlimits.lock_pv_to_pq_buses",
       "power_flow.qlimits.guard.enabled", "power_flow.qlimits.guard.min_q_range_pu", "power_flow.qlimits.guard.narrow_range_mode", "power_flow.qlimits.guard.zero_range_mode", "power_flow.qlimits.guard.violation_mode", "power_flow.qlimits.guard.violation_threshold_pu", "power_flow.qlimits.guard.max_switches", "power_flow.qlimits.guard.max_remaining_violations", "power_flow.qlimits.guard.accept_bounded_violations", "power_flow.qlimits.guard.freeze_after_repeated_switching", "power_flow.qlimits.guard.log",
@@ -51,6 +51,7 @@ function run_configuration_coverage_tests()
       "power_flow.max_iter" => :PowerFlowConfig,
       "power_flow.autodamp" => :PowerFlowConfig,
       "power_flow.autodamp_min" => :PowerFlowConfig,
+      "power_flow.wrong_branch_detection" => :PowerFlowConfig,
       "power_flow.start_mode.angle_mode" => :StartModeConfig,
       "power_flow.start_mode.voltage_mode" => :StartModeConfig,
       "power_flow.start_mode.profile_source" => :StartModeConfig,
@@ -76,6 +77,10 @@ power_flow:
   max_iter: 17
   autodamp: true
   autodamp_min: 0.17
+  wrong_branch_detection: fail
+  wrong_branch_rescue: true
+  wrong_branch_min_vm_pu: 0.65
+  wrong_branch_rescue_max_attempts: 1
   start_mode:
     angle_mode: dc
     voltage_mode: profile_blend
@@ -103,6 +108,10 @@ benchmark:
     @test cfg.powerflow.max_iter == 17
     @test cfg.powerflow.autodamp === true
     @test cfg.powerflow.autodamp_min == 0.17
+    @test cfg.powerflow.wrong_branch_detection === :fail
+    @test cfg.powerflow.wrong_branch_rescue === true
+    @test cfg.powerflow.wrong_branch_min_vm_pu == 0.65
+    @test cfg.powerflow.wrong_branch_rescue_max_attempts == 1
     @test cfg.powerflow.start_mode.angle_mode === :dc
     @test cfg.powerflow.start_mode.voltage_mode === :profile_blend
     @test cfg.powerflow.start_mode.profile_source === :matpower_reference
@@ -144,6 +153,9 @@ benchmark:
     enum_bad = tempname() * ".yaml"
     write(enum_bad, "power_flow:\n  start_mode:\n    angle_mode: invalid_angle\n")
     @test_throws ArgumentError Sparlectra.load_sparlectra_config(enum_bad; reload = true)
+    wrong_branch_bad = tempname() * ".yaml"
+    write(wrong_branch_bad, "power_flow:\n  wrong_branch_detection: maybe\n")
+    @test_throws ArgumentError Sparlectra.load_sparlectra_config(wrong_branch_bad; reload = true)
   end
 
   @testset "Removed diagnostics keys are rejected" begin

@@ -28,6 +28,128 @@ These rules are mandatory for automated coding agents.
 - If a command fails, do not continue as if the task passed. Fix the smallest cause, rerun the failed command, and report both the failure and the rerun result.
 - Never claim a test or verification command was run unless it was actually run in the current working tree.
 
+
+## Repository freshness and current-HEAD gate
+
+These rules are mandatory before any automated coding agent edits files.
+
+- Always work from the current repository state, not from a stale patch, stale mental model, previous Codex run, or copied block from an old commit.
+- Before editing, run and report:
+  ```bash
+  git status --short
+  git rev-parse --short HEAD
+  git log --oneline -n 5
+  ```
+- If a remote/upstream branch exists, also run and report:
+  ```bash
+  git fetch --all --prune
+  git status -sb
+  git rev-list --left-right --count HEAD...@{u}
+  ```
+- If the working tree is dirty, stop immediately. Do not edit files. Report the dirty files.
+- If the local branch is behind its upstream, stop immediately. Do not auto-merge, auto-rebase, or continue editing unless the user explicitly requested that action.
+- If the local branch is ahead of upstream, report that fact before editing.
+- If no upstream is configured, report that fact explicitly and continue only from the current local HEAD.
+- For bugfix tasks, reproduce the current failure from the current HEAD before editing. Do not rely only on pasted logs from an earlier commit.
+- Never claim that a task was performed on the latest commit unless the current HEAD and repository status were checked in the same run.
+
+## Stale-patch and merge-conflict prevention
+
+- Do not apply a patch generated against an older commit without first verifying that it applies cleanly to the current HEAD.
+- Do not paste or reconstruct large code blocks from an old commit unless the task explicitly asks for a restore and the complete dependency block has been identified.
+- Do not restore symbols one by one from history when they form a call chain. Restore or repair the complete coherent block.
+- Before changing a function body, inspect the current function signature, all callers, and all forwarded keywords in the current HEAD.
+- If a function body from history references a keyword or helper that is not present in the current signature or current file, do not paste it as-is.
+- If a task requires Git conflict resolution, stop and report the conflict. Do not guess the intended resolution.
+- If a merge conflict marker is present (`<<<<<<<`, `=======`, `>>>>>>>`), stop and report it unless the task explicitly asks to resolve merge conflicts.
+- Do not commit code that only compiles by accident while leaving broken call chains for the next test step.
+
+## Protected core solver files
+
+The following files are protected because they contain central solver, configuration, or execution-path logic:
+
+```text
+src/jacobian_complex.jl
+src/run_acpflow.jl
+src/control_framework.jl
+src/configuration.jl
+src/Sparlectra.jl
+```
+
+For these files:
+
+- Do not perform broad autonomous refactoring unless the user explicitly requested that exact refactoring.
+- Do not mix refactoring with feature work or bugfix work.
+- Do not make large formatting-only changes.
+- Do not restore partial snippets from old commits.
+- Do not add compatibility shims, wrapper layers, or duplicate APIs unless explicitly requested.
+- Do not change public entry points such as `runpf!`, `runpf_rectangular!`, or `run_acpflow` without explicitly checking all in-repository callers.
+- Do not change keyword signatures without checking the complete forwarding chain.
+- Do not change solver status metadata without checking all readers, tests, and reporting code.
+- Do not edit tests to hide a missing public or internal API binding.
+
+When touching these files, first run:
+
+```bash
+julia --project=. -e "using Sparlectra"
+```
+
+Then check any relevant binding chain explicitly. For the rectangular power-flow path, use:
+
+```bash
+julia --project=. -e "using Sparlectra; for s in Symbol.(String[\"runpf!\", \"runpf_rectangular!\", \"run_complex_nr_rectangular_for_net!\"]); @assert isdefined(Sparlectra, s) s; @assert !isempty(methods(getfield(Sparlectra, s))) s; println(s, \" => \", length(methods(getfield(Sparlectra, s))), \" method(s)\"); end; @assert isdefined(Main, Symbol(\"runpf!\"))"
+```
+
+If any required binding is missing, stop and report the missing binding before editing further.
+
+## Core solver recovery policy
+
+If a protected solver file is syntactically or semantically broken:
+
+- First restore package loadability.
+- Do not start feature work while `using Sparlectra` fails.
+- Do not split, refactor, or redesign the solver while the baseline is broken.
+- If a previous partial restore caused missing symbol chains, identify the complete call chain before editing.
+- For the rectangular power-flow path, keep this chain coherent:
+  ```text
+  runpf! -> runpf_rectangular! -> run_complex_nr_rectangular_for_net!
+  ```
+- If a restored wrapper body references keywords such as `validate_limits_after_pf`, `q_limit_violation_headroom`, `pv_table_rows`, Q-limit options, or wrong-branch options, verify that the active method signature binds them and that callers forward them consistently.
+- Do not add global variables or dummy functions for missing keyword names. Missing keywords must be fixed in the relevant method signature and forwarding chain.
+- If the correct repair would require restoring a large historical block, stop and ask for explicit permission unless the user already requested a restore.
+- Prefer a complete file restore from the last known passing commit over incremental patching when the current file is corrupted.
+
+## Forbidden actions unless explicitly requested
+
+Automated coding agents must not perform the following actions unless the user explicitly requests them:
+
+- active wrong-branch rescue/retry loop,
+- Monte-Carlo or multi-start solver scans,
+- continuation or homotopy start logic,
+- new DC-start or QV-start fallback modes,
+- broad solver restructuring mixed with a bugfix,
+- large-scale rewrite of `src/jacobian_complex.jl`,
+- changing legacy public APIs to hide test failures,
+- converting many tests from unqualified public calls to qualified internal calls,
+- adding global variables or dummy functions to satisfy missing local keyword errors,
+- creating new changelog files,
+- creating broad compatibility layers after an intentional API cleanup.
+
+## Required stop conditions
+
+Stop immediately and report the first blocker if any of the following occurs:
+
+- working tree is dirty before editing,
+- local branch is behind upstream,
+- `using Sparlectra` fails before a task that requires code changes,
+- the first failing test cannot be reproduced from the current HEAD,
+- a requested source file contains merge conflict markers,
+- an intended edit would require guessing between conflicting implementations,
+- a protected solver file has missing call-chain dependencies,
+- validation reveals a new missing-symbol chain caused by the current edit.
+
+Do not continue to the next task item after a stop condition.
+
 ## Multi-task and checklist handling
 
 For prompts containing several tasks, issues, checklist items, or numbered sections:
@@ -115,6 +237,10 @@ Remove-Item Env:\SPARLECTRA_TEST_PROFILE
 ## Repo conventions
 - Keep code comments and docstrings in English.
 - Prefer existing Sparlectra naming and style.
+- Keep `src/Sparlectra.jl` readable as the public module entry point.
+- Important public exports in `src/Sparlectra.jl` must have short inline comments or concise group comments that explain their role at the module-interface level.
+- Do not comment every trivial helper in `src/Sparlectra.jl`; focus on important user-facing functions, solver entry points, configuration APIs, import/export APIs, diagnostics, and external interfaces.
+- When adding, removing, or renaming important exports in `src/Sparlectra.jl`, update the surrounding comments in the same change.
 - Before editing, inspect current tests that cover the affected code.
 - After code changes, run the smallest relevant test first, then broader tests if needed.
 - Avoid broad refactoring while fixing a targeted bug.
