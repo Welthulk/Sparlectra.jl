@@ -103,6 +103,23 @@ function run_solver_interface_tests()
       @test Sparlectra._set_rectangular_pf_status!(net, status) === status
       @test Sparlectra.rectangular_pf_status(net) === status
     end
+    @testset "Wrong-branch helper classification" begin
+      Vok = ComplexF64[1.0 + 0im, 1.01 + 0.01im, 1.03 - 0.02im]
+      bus_types = [:PQ, :PV, :Slack]
+      vset = [1.0, 1.01, 1.03]
+      ok = Sparlectra._check_wrong_branch_solution(Vok, bus_types, vset, 3; min_vm_pu = 0.70, max_vm_pu = 1.30, max_angle_spread_deg = 180.0, min_low_vm_count = 1)
+      @test ok.status == :ok
+
+      Vlow = ComplexF64[0.40 + 0im, 1.0 + 0im, 1.03 + 0im]
+      low = Sparlectra._check_wrong_branch_solution(Vlow, bus_types, vset, 3; min_vm_pu = 0.70, max_vm_pu = 1.30, max_angle_spread_deg = 180.0, min_low_vm_count = 1)
+      @test low.status == :warn
+      @test low.reason == :low_voltage_magnitude
+
+      Vbad = ComplexF64[NaN + 0im, 1.0 + 0im, 1.03 + 0im]
+      bad = Sparlectra._check_wrong_branch_solution(Vbad, bus_types, vset, 3; min_vm_pu = 0.70, max_vm_pu = 1.30, max_angle_spread_deg = 180.0, min_low_vm_count = 1)
+      @test bad.status == :fail
+      @test bad.reason == :nonfinite_voltage
+    end
     @testset "Flat-start voltage setpoints" begin
       net = createTest3BusNet()
       net.nodeVec[1]._vm_pu = 0.94

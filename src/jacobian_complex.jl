@@ -444,6 +444,46 @@ function _rectangular_rejection_reason_text(reason::Symbol)
   return replace(String(reason), "_" => " ")
 end
 
+function _check_wrong_branch_solution(
+  V::Vector{ComplexF64},
+  bus_types::Vector{Symbol},
+  Vset::Vector{Float64},
+  slack_idx::Int;
+  min_vm_pu::Float64,
+  max_vm_pu::Float64,
+  max_angle_spread_deg::Float64,
+  min_low_vm_count::Int,
+)
+  n = length(V)
+  n == length(bus_types) || throw(ArgumentError("V and bus_types must have same length."))
+  n == length(Vset) || throw(ArgumentError("V and Vset must have same length."))
+  if any(v -> !isfinite(real(v)) || !isfinite(imag(v)), V)
+    return (status = :fail, reason = :nonfinite_voltage, min_vm_pu = NaN, max_vm_pu = NaN, low_vm_count = 0, high_vm_count = 0, angle_spread_deg = NaN, lowest_buses = Int[])
+  end
+  vm = abs.(V)
+  low_idx = findall(<(min_vm_pu), vm)
+  high_idx = findall(>(max_vm_pu), vm)
+  va_deg = rad2deg.(angle.(V))
+  slack_ang = va_deg[slack_idx]
+  rel = va_deg .- slack_ang
+  angle_spread_deg = isempty(rel) ? 0.0 : (maximum(rel) - minimum(rel))
+  lowest_order = sortperm(vm)
+  lowest_buses = [Int(i) for i in lowest_order[1:min(3, length(lowest_order))]]
+  status = :ok
+  reason = :none
+  if !isempty(low_idx) && length(low_idx) >= min_low_vm_count
+    status = :warn
+    reason = :low_voltage_magnitude
+  elseif !isempty(high_idx)
+    status = :warn
+    reason = :high_voltage_magnitude
+  elseif angle_spread_deg > max_angle_spread_deg
+    status = :warn
+    reason = :angle_spread_exceeded
+  end
+  return (status = status, reason = reason, min_vm_pu = minimum(vm), max_vm_pu = maximum(vm), low_vm_count = length(low_idx), high_vm_count = length(high_idx), angle_spread_deg = angle_spread_deg, lowest_buses = lowest_buses)
+end
+
 function _print_rectangular_convergence_summary(io::IO, status)
   numerical_text = status.numerical_converged ? "OK" : "FAIL"
   active_text = status.q_limit_active_set_ok ? "OK" : "FAIL"
@@ -639,6 +679,14 @@ function run_complex_nr_rectangular(
   damp::Float64 = 1.0,
   autodamp::Bool = false,
   autodamp_min::Float64 = 1e-3,
+  wrong_branch_detection::Symbol = :warn,
+  wrong_branch_rescue::Bool = false,
+  wrong_branch_min_vm_pu::Float64 = 0.70,
+  wrong_branch_max_vm_pu::Float64 = 1.30,
+  wrong_branch_max_angle_spread_deg::Float64 = 180.0,
+  wrong_branch_max_branch_angle_deg::Float64 = 90.0,
+  wrong_branch_min_low_vm_count::Int = 1,
+  wrong_branch_rescue_max_attempts::Int = 2,
   bus_types::Vector{Symbol},
   Vset::Vector{Float64},
   dPinj_dVm::Vector{Float64} = zeros(Float64, length(V0)),
@@ -1810,6 +1858,14 @@ function run_complex_nr_rectangular_for_net!(
   qlimit_guard_freeze_after_repeated_switching::Bool = true,
   qlimit_guard_violation_mode::Symbol = :delayed_switch,
   qlimit_guard_violation_threshold_pu::Float64 = 1e-4,
+  wrong_branch_detection::Symbol = :warn,
+  wrong_branch_rescue::Bool = false,
+  wrong_branch_min_vm_pu::Float64 = 0.70,
+  wrong_branch_max_vm_pu::Float64 = 1.30,
+  wrong_branch_max_angle_spread_deg::Float64 = 180.0,
+  wrong_branch_max_branch_angle_deg::Float64 = 90.0,
+  wrong_branch_min_low_vm_count::Int = 1,
+  wrong_branch_rescue_max_attempts::Int = 2,
   performance_profile = nothing,
   rectangular_workspace_reuse::Bool = true,
   rectangular_preallocate_workspace::Symbol = :auto,
@@ -2252,6 +2308,7 @@ function run_complex_nr_rectangular_for_net!(
   end
 
   qlimit_summary = nothing
+  branch_quality = (status = :skipped, reason = :disabled, min_vm_pu = NaN, max_vm_pu = NaN, low_vm_count = 0, high_vm_count = 0, angle_spread_deg = NaN, lowest_buses = Int[])
   if numerical_converged
     qlimit_summary, converged, rejection_reason = _perf_profile_time!(performance_profile, :solver_final_qlimit_summary) do
       final_Qload_pu = build_qload_pu(net)
@@ -2269,6 +2326,21 @@ function run_complex_nr_rectangular_for_net!(
         rejection_reason_ = :bounded_q_limit_violations_accepted
       end
       (qlimit_summary_, converged_, rejection_reason_)
+    end
+    branch_quality = _check_wrong_branch_solution(
+      V,
+      bus_types,
+      Vset,
+      slack_idx;
+      min_vm_pu = wrong_branch_min_vm_pu,
+      max_vm_pu = wrong_branch_max_vm_pu,
+      max_angle_spread_deg = wrong_branch_max_angle_spread_deg,
+      min_low_vm_count = wrong_branch_min_low_vm_count,
+    )
+    if wrong_branch_detection == :fail && branch_quality.status == :warn
+      branch_quality = (; branch_quality..., status = :fail, reason = :wrong_branch_detected)
+      converged = false
+      rejection_reason = :wrong_branch_detected
     end
   end
 
@@ -2308,6 +2380,12 @@ function run_complex_nr_rectangular_for_net!(
         qlimit_reenable_events = qlimit_reenable_events,
         oscillating_buses = oscillating_buses_,
         guarded_narrow_q_pv_buses = length(guarded_qlimit_buses),
+        branch_quality_status = branch_quality.status,
+        branch_quality_reason = branch_quality.reason,
+        branch_quality_metrics = branch_quality,
+        wrong_branch_rescue_used = false,
+        wrong_branch_rescue_attempts = 0,
+        wrong_branch_rescue_profile = :none,
       ),
     )
     (switch_counts_, oscillating_buses_, max_switching_exceeded_, q_limit_active_set_ok_, converged_, rejection_reason_, final_reason_, final_status_, status_)
@@ -2315,6 +2393,14 @@ function run_complex_nr_rectangular_for_net!(
   if verbose > 0
     _print_rectangular_convergence_summary(stdout, status)
     _print_qlimit_active_set_summary(stdout, status)
+    println(stdout, "Wrong-branch check:")
+    @printf(stdout, "  status           = %s\n", uppercase(String(status.branch_quality_status)))
+    @printf(stdout, "  reason           = %s\n", String(status.branch_quality_reason))
+    @printf(stdout, "  min_vm_pu        = %.6f\n", status.branch_quality_metrics.min_vm_pu)
+    @printf(stdout, "  max_vm_pu        = %.6f\n", status.branch_quality_metrics.max_vm_pu)
+    @printf(stdout, "  low_vm_count     = %d\n", status.branch_quality_metrics.low_vm_count)
+    @printf(stdout, "  angle_spread_deg = %.6f\n", status.branch_quality_metrics.angle_spread_deg)
+    @printf(stdout, "  rescue_enabled   = %s\n", string(wrong_branch_rescue || wrong_branch_detection == :rescue))
   end
 
   return iters, converged ? 0 : 1
@@ -2367,6 +2453,14 @@ function runpf_rectangular!(
   qlimit_guard_freeze_after_repeated_switching::Bool = true,
   qlimit_guard_violation_mode::Symbol = :delayed_switch,
   qlimit_guard_violation_threshold_pu::Float64 = 1e-4,
+  wrong_branch_detection::Symbol = :warn,
+  wrong_branch_rescue::Bool = false,
+  wrong_branch_min_vm_pu::Float64 = 0.70,
+  wrong_branch_max_vm_pu::Float64 = 1.30,
+  wrong_branch_max_angle_spread_deg::Float64 = 180.0,
+  wrong_branch_max_branch_angle_deg::Float64 = 90.0,
+  wrong_branch_min_low_vm_count::Int = 1,
+  wrong_branch_rescue_max_attempts::Int = 2,
   rectangular_workspace_reuse::Bool = true,
   rectangular_preallocate_workspace::Symbol = :auto,
   rectangular_workspace_min_buses::Int = 1000,
@@ -2409,6 +2503,14 @@ function runpf_rectangular!(
     qlimit_guard_freeze_after_repeated_switching = qlimit_guard_freeze_after_repeated_switching,
     qlimit_guard_violation_mode = qlimit_guard_violation_mode,
     qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu,
+    wrong_branch_detection = wrong_branch_detection,
+    wrong_branch_rescue = wrong_branch_rescue,
+    wrong_branch_min_vm_pu = wrong_branch_min_vm_pu,
+    wrong_branch_max_vm_pu = wrong_branch_max_vm_pu,
+    wrong_branch_max_angle_spread_deg = wrong_branch_max_angle_spread_deg,
+    wrong_branch_max_branch_angle_deg = wrong_branch_max_branch_angle_deg,
+    wrong_branch_min_low_vm_count = wrong_branch_min_low_vm_count,
+    wrong_branch_rescue_max_attempts = wrong_branch_rescue_max_attempts,
     rectangular_workspace_reuse = rectangular_workspace_reuse,
     rectangular_preallocate_workspace = rectangular_preallocate_workspace,
     rectangular_workspace_min_buses = rectangular_workspace_min_buses,
@@ -2579,6 +2681,14 @@ function _runpf_with_config!(net::Net, config::PowerFlowConfig; verbose::Int = 0
     damp = damp,
     autodamp = config.autodamp,
     autodamp_min = config.autodamp_min,
+    wrong_branch_detection = config.wrong_branch_detection,
+    wrong_branch_rescue = config.wrong_branch_rescue,
+    wrong_branch_min_vm_pu = config.wrong_branch_min_vm_pu,
+    wrong_branch_max_vm_pu = config.wrong_branch_max_vm_pu,
+    wrong_branch_max_angle_spread_deg = config.wrong_branch_max_angle_spread_deg,
+    wrong_branch_max_branch_angle_deg = config.wrong_branch_max_branch_angle_deg,
+    wrong_branch_min_low_vm_count = config.wrong_branch_min_low_vm_count,
+    wrong_branch_rescue_max_attempts = config.wrong_branch_rescue_max_attempts,
     pv_table_rows = pv_table_rows,
     validate_limits_after_pf = validate_limits_after_pf,
     q_limit_violation_headroom = q_limit_violation_headroom,
@@ -2651,6 +2761,14 @@ function runpf!(
   damp = 1.0,
   autodamp::Bool = false,
   autodamp_min::Float64 = 1e-3,
+  wrong_branch_detection::Symbol = :warn,
+  wrong_branch_rescue::Bool = false,
+  wrong_branch_min_vm_pu::Float64 = 0.70,
+  wrong_branch_max_vm_pu::Float64 = 1.30,
+  wrong_branch_max_angle_spread_deg::Float64 = 180.0,
+  wrong_branch_max_branch_angle_deg::Float64 = 90.0,
+  wrong_branch_min_low_vm_count::Int = 1,
+  wrong_branch_rescue_max_attempts::Int = 2,
   pv_table_rows::Int = 30,
   validate_limits_after_pf::Bool = false,
   q_limit_violation_headroom::Float64 = 0.0,
@@ -2711,6 +2829,14 @@ function runpf!(
         damp = damp,
         autodamp = autodamp,
         autodamp_min = autodamp_min,
+        wrong_branch_detection = wrong_branch_detection,
+        wrong_branch_rescue = wrong_branch_rescue,
+        wrong_branch_min_vm_pu = wrong_branch_min_vm_pu,
+        wrong_branch_max_vm_pu = wrong_branch_max_vm_pu,
+        wrong_branch_max_angle_spread_deg = wrong_branch_max_angle_spread_deg,
+        wrong_branch_max_branch_angle_deg = wrong_branch_max_branch_angle_deg,
+        wrong_branch_min_low_vm_count = wrong_branch_min_low_vm_count,
+        wrong_branch_rescue_max_attempts = wrong_branch_rescue_max_attempts,
         opt_flatstart = opt_flatstart,
         pv_table_rows = pv_table_rows,
         lock_pv_to_pq_buses = lock_pv_to_pq_buses,
@@ -2754,6 +2880,14 @@ function runpf!(
         damp = damp,
         autodamp = autodamp,
         autodamp_min = autodamp_min,
+        wrong_branch_detection = wrong_branch_detection,
+        wrong_branch_rescue = wrong_branch_rescue,
+        wrong_branch_min_vm_pu = wrong_branch_min_vm_pu,
+        wrong_branch_max_vm_pu = wrong_branch_max_vm_pu,
+        wrong_branch_max_angle_spread_deg = wrong_branch_max_angle_spread_deg,
+        wrong_branch_max_branch_angle_deg = wrong_branch_max_branch_angle_deg,
+        wrong_branch_min_low_vm_count = wrong_branch_min_low_vm_count,
+        wrong_branch_rescue_max_attempts = wrong_branch_rescue_max_attempts,
         opt_flatstart = opt_flatstart,
         pv_table_rows = pv_table_rows,
         lock_pv_to_pq_buses = lock_pv_to_pq_buses,
