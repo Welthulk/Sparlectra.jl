@@ -93,7 +93,6 @@ function build_complex_jacobian(Ybus, V)
   J22 = conj.(J11)
 
   return J11, J12, J21, J22
-end
 
 """
     mismatch_rectangular(Ybus, V, S, bus_types, Vset, slack_idx) -> F::Vector{Float64}
@@ -444,12 +443,52 @@ function _rectangular_rejection_reason_text(reason::Symbol)
   reason == :wrong_branch_detected && return "wrong-branch solution detected"
   reason == :wrong_branch_rescue_not_implemented && return "wrong-branch rescue requested but not implemented"
   reason == :rescue_requested_but_not_available && return "wrong-branch rescue requested but not available"
+  reason == :nonfinite_voltage && return "non-finite voltage state"
+  reason == :nonfinite_branch_angle && return "non-finite branch angle state"
   return replace(String(reason), "_" => " ")
 end
 
 @inline function _wrap_to_180_deg(angle_deg::Float64)::Float64
   wrapped = mod(angle_deg + 180.0, 360.0) - 180.0
   return wrapped == -180.0 ? 180.0 : wrapped
+end
+
+@inline function _wrong_branch_result(;
+  status::Symbol,
+  reason::Symbol,
+  min_vm_pu::Float64 = NaN,
+  max_vm_pu::Float64 = NaN,
+  low_vm_count::Int = 0,
+  high_vm_count::Int = 0,
+  angle_spread_deg::Float64 = NaN,
+  max_branch_angle_deg::Float64 = NaN,
+  worst_branch_angle_deg::Float64 = NaN,
+  branch_angle_violation_count::Int = 0,
+  worst_branch = nothing,
+  lowest_buses::Vector{Int} = Int[],
+)
+  return (;
+    status, reason, min_vm_pu, max_vm_pu, low_vm_count, high_vm_count, angle_spread_deg,
+    max_branch_angle_deg, worst_branch_angle_deg, branch_angle_violation_count, worst_branch,
+    lowest_buses,
+  )
+end
+
+@inline _wrong_branch_not_checked_result() = _wrong_branch_result(status = :not_checked, reason = :disabled)
+
+function _check_wrong_branch_solution(
+  net::Net,
+  V::Vector{ComplexF64},
+  bus_types::Vector{Symbol},
+  Vset::Vector{Float64},
+  slack_idx::Int;
+  min_vm_pu::Float64,
+  max_vm_pu::Float64,
+  max_angle_spread_deg::Float64,
+  max_branch_angle_deg::Float64 = Inf,
+  min_low_vm_count::Int,
+)
+  return _check_wrong_branch_solution(V, bus_types, Vset, slack_idx; net = net, min_vm_pu = min_vm_pu, max_vm_pu = max_vm_pu, max_angle_spread_deg = max_angle_spread_deg, max_branch_angle_deg = max_branch_angle_deg, min_low_vm_count = min_low_vm_count)
 end
 
 function _check_wrong_branch_solution(
@@ -470,7 +509,7 @@ function _check_wrong_branch_solution(
   1 <= slack_idx <= n || throw(ArgumentError("slack_idx must be inside V."))
 
   if any(v -> !isfinite(real(v)) || !isfinite(imag(v)), V)
-    return (status = :fail, reason = :nonfinite_voltage, min_vm_pu = NaN, max_vm_pu = NaN, low_vm_count = 0, high_vm_count = 0, angle_spread_deg = NaN, max_branch_angle_deg = NaN, branch_angle_violation_count = 0, worst_branch = nothing, lowest_buses = Int[])
+    return _wrong_branch_result(status = :fail, reason = :nonfinite_voltage)
   end
 
   vm = abs.(V)
@@ -481,9 +520,10 @@ function _check_wrong_branch_solution(
   rel = va_deg .- slack_ang
   angle_spread_deg = isempty(rel) ? 0.0 : (maximum(rel) - minimum(rel))
   branch_angle_violation_count = 0
-  max_branch_angle_seen_deg = 0.0
+  max_branch_angle_seen_deg = NaN
   worst_branch = nothing
   if !isnothing(net) && isfinite(max_branch_angle_deg)
+    max_branch_angle_seen_deg = 0.0
     # Branch-angle diagnostics intentionally scan net.branchVec only.
     # Non-standard couplers/impedanceless links live in net.linkVec and are excluded.
     @inbounds for br in net.branchVec
@@ -491,19 +531,20 @@ function _check_wrong_branch_solution(
       from = br.fromBus
       to = br.toBus
       (1 <= from <= n && 1 <= to <= n) || continue
-      raw_diff_deg = rad2deg(angle(V[from]) - angle(V[to]))
-      eff_diff_deg = _wrap_to_180_deg(raw_diff_deg - br.phase_shift_deg)
+      theta_from_deg = rad2deg(angle(V[from]))
+      theta_to_deg = rad2deg(angle(V[to]))
+      raw_diff_deg = _wrap_to_180_deg(theta_from_deg - theta_to_deg)
+      phase_shift_deg = hasproperty(br, :phase_shift_deg) ? Float64(getproperty(br, :phase_shift_deg)) : 0.0
+      eff_diff_deg = _wrap_to_180_deg(raw_diff_deg - phase_shift_deg)
       eff_diff_abs_deg = abs(eff_diff_deg)
       if eff_diff_abs_deg > max_branch_angle_seen_deg
         max_branch_angle_seen_deg = eff_diff_abs_deg
-        worst_branch = (branch_index = br.branchIdx, from_bus = from, to_bus = to, active = br.status == 1, phase_shift_deg = br.phase_shift_deg, angle_diff_raw_deg = abs(_wrap_to_180_deg(raw_diff_deg)), angle_diff_effective_deg = eff_diff_abs_deg, angle_check_basis = :effective_bus_angle_minus_phase_shift)
+        worst_branch = (branch_index = br.branchIdx, from_bus = from, to_bus = to, active = true, phase_shift_deg = phase_shift_deg, angle_diff_raw_deg = abs(raw_diff_deg), angle_diff_effective_deg = eff_diff_abs_deg, angle_check_basis = :effective_bus_angle_minus_phase_shift)
       end
       if eff_diff_abs_deg > max_branch_angle_deg
         branch_angle_violation_count += 1
       end
     end
-  else
-    max_branch_angle_seen_deg = NaN
   end
   lowest_order = sortperm(vm)
   lowest_buses = [Int(i) for i in lowest_order[1:min(3, length(lowest_order))]]
@@ -523,7 +564,7 @@ function _check_wrong_branch_solution(
     status = :warn
     reason = :branch_angle_exceeded
   end
-  return (status = status, reason = reason, min_vm_pu = minimum(vm), max_vm_pu = maximum(vm), low_vm_count = length(low_idx), high_vm_count = length(high_idx), angle_spread_deg = angle_spread_deg, max_branch_angle_deg = max_branch_angle_seen_deg, branch_angle_violation_count = branch_angle_violation_count, worst_branch = worst_branch, lowest_buses = lowest_buses)
+  return _wrong_branch_result(status = status, reason = reason, min_vm_pu = minimum(vm), max_vm_pu = maximum(vm), low_vm_count = length(low_idx), high_vm_count = length(high_idx), angle_spread_deg = angle_spread_deg, max_branch_angle_deg = max_branch_angle_deg, worst_branch_angle_deg = max_branch_angle_seen_deg, branch_angle_violation_count = branch_angle_violation_count, worst_branch = worst_branch, lowest_buses = lowest_buses)
 end
 
 function _print_rectangular_convergence_summary(io::IO, status)
@@ -2353,7 +2394,9 @@ function run_complex_nr_rectangular_for_net!(
   end
 
   qlimit_summary = nothing
-  branch_quality = (status = :not_checked, reason = :disabled, min_vm_pu = NaN, max_vm_pu = NaN, low_vm_count = 0, high_vm_count = 0, angle_spread_deg = NaN, max_branch_angle_deg = NaN, branch_angle_violation_count = 0, worst_branch = nothing, lowest_buses = Int[])
+  branch_quality = _wrong_branch_not_checked_result()
+  wrong_branch_rescue_attempted = false
+  wrong_branch_rescue_reason = :disabled
   if numerical_converged
     qlimit_summary, converged, rejection_reason = _perf_profile_time!(performance_profile, :solver_final_qlimit_summary) do
       final_Qload_pu = build_qload_pu(net)
@@ -2372,28 +2415,30 @@ function run_complex_nr_rectangular_for_net!(
       end
       (qlimit_summary_, converged_, rejection_reason_)
     end
-    branch_quality = _check_wrong_branch_solution(
-      V,
-      bus_types,
-      Vset,
-      slack_idx;
-      net = net,
-      min_vm_pu = wrong_branch_min_vm_pu,
-      max_vm_pu = wrong_branch_max_vm_pu,
-      max_angle_spread_deg = wrong_branch_max_angle_spread_deg,
-      max_branch_angle_deg = wrong_branch_max_branch_angle_deg,
-      min_low_vm_count = wrong_branch_min_low_vm_count,
-    )
-    if wrong_branch_detection == :off
-      branch_quality = (; branch_quality..., status = :not_checked, reason = :disabled)
-    elseif wrong_branch_detection == :fail && branch_quality.status == :warn
-      branch_quality = (; branch_quality..., status = :fail, reason = :wrong_branch_detected)
-      converged = false
-      rejection_reason = :wrong_branch_detected
-    elseif wrong_branch_detection == :rescue && branch_quality.status == :warn
-      branch_quality = (; branch_quality..., status = :fail, reason = :rescue_not_implemented)
-      converged = false
-      rejection_reason = :rescue_not_implemented
+    if wrong_branch_detection != :off
+      branch_quality = _check_wrong_branch_solution(
+        V,
+        bus_types,
+        Vset,
+        slack_idx;
+        min_vm_pu = wrong_branch_min_vm_pu,
+        max_vm_pu = wrong_branch_max_vm_pu,
+        max_angle_spread_deg = wrong_branch_max_angle_spread_deg,
+        max_branch_angle_deg = wrong_branch_max_branch_angle_deg,
+        min_low_vm_count = wrong_branch_min_low_vm_count,
+        net = net,
+      )
+      if wrong_branch_detection == :fail && branch_quality.status == :warn
+        branch_quality = (; branch_quality..., status = :fail, reason = :wrong_branch_detected)
+        converged = false
+        rejection_reason = :wrong_branch_detected
+      elseif wrong_branch_detection == :rescue && branch_quality.status == :warn
+        branch_quality = (; branch_quality..., status = :wrong_branch_rescue_not_implemented, reason = :rescue_requested_but_not_available)
+        converged = false
+        rejection_reason = :wrong_branch_rescue_not_implemented
+        wrong_branch_rescue_attempted = false
+        wrong_branch_rescue_reason = :rescue_requested_but_not_available
+      end
     end
   end
 
@@ -2437,6 +2482,16 @@ function run_complex_nr_rectangular_for_net!(
         branch_quality_reason = branch_quality.reason,
         branch_quality_metrics = branch_quality,
         wrong_branch_detection = wrong_branch_detection,
+        wrong_branch_status = branch_quality.status,
+        wrong_branch_reason = branch_quality.reason,
+        wrong_branch_low_vm_count = branch_quality.low_vm_count,
+        wrong_branch_high_vm_count = branch_quality.high_vm_count,
+        wrong_branch_angle_spread_deg = branch_quality.angle_spread_deg,
+        wrong_branch_max_branch_angle_deg = branch_quality.max_branch_angle_deg,
+        wrong_branch_branch_angle_violation_count = branch_quality.branch_angle_violation_count,
+        wrong_branch_worst_branch_angle_deg = branch_quality.worst_branch_angle_deg,
+        wrong_branch_rescue_attempted = wrong_branch_rescue_attempted,
+        wrong_branch_rescue_reason = wrong_branch_rescue_reason,
         wrong_branch_rescue_used = false,
         wrong_branch_rescue_attempts = 0,
         wrong_branch_rescue_profile = :none,
@@ -2455,10 +2510,12 @@ function run_complex_nr_rectangular_for_net!(
     @printf(stdout, "  max_vm_pu        = %.6f\n", status.branch_quality_metrics.max_vm_pu)
     @printf(stdout, "  low_vm_count     = %d\n", status.branch_quality_metrics.low_vm_count)
     @printf(stdout, "  angle_spread_deg = %.6f\n", status.branch_quality_metrics.angle_spread_deg)
-    @printf(stdout, "  branch_violations= %d\n", status.branch_quality_metrics.branch_angle_violation_count)
-    @printf(stdout, "  max_branch_deg   = %.6f\n", status.branch_quality_metrics.max_branch_angle_deg)
-    !isnothing(status.branch_quality_metrics.worst_branch) && @printf(stdout, "  worst_branch     = #%d (%d -> %d), phase_shift_deg=%.6f, basis=%s\n", status.branch_quality_metrics.worst_branch.branch_index, status.branch_quality_metrics.worst_branch.from_bus, status.branch_quality_metrics.worst_branch.to_bus, status.branch_quality_metrics.worst_branch.phase_shift_deg, String(status.branch_quality_metrics.worst_branch.angle_check_basis))
-    @printf(stdout, "  rescue_enabled   = %s\n", string(wrong_branch_rescue || wrong_branch_detection == :rescue))
+    @printf(stdout, "  max_branch_angle = %.6f\n", status.branch_quality_metrics.max_branch_angle_deg)
+    @printf(stdout, "  violation_count  = %d\n", status.branch_quality_metrics.branch_angle_violation_count)
+    !isnothing(status.branch_quality_metrics.worst_branch) && @printf(stdout, "  worst_branch     = %s\n", string(status.branch_quality_metrics.worst_branch))
+    @printf(stdout, "  rescue_requested = %s\n", string(wrong_branch_rescue || wrong_branch_detection == :rescue))
+    @printf(stdout, "  rescue_attempted = %s\n", string(status.wrong_branch_rescue_attempted))
+    @printf(stdout, "  rescue_reason    = %s\n", String(status.wrong_branch_rescue_reason))
   end
 
   return iters, converged ? 0 : 1
