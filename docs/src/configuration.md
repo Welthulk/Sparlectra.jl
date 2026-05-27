@@ -161,6 +161,17 @@ extensions:
 
 For complete key references and allowed-value tables, see the module-specific pages below.
 
+## Wrong-branch detection semantics (rectangular PF)
+
+`power_flow.wrong_branch_detection` is a post-convergence plausibility check for rectangular PF results. It is heuristic and does **not** prove global branch correctness.
+
+- `off`: checker disabled.
+- `warn`: suspicious solutions are reported in rectangular status metadata; numerical convergence remains accepted.
+- `fail`: suspicious solutions are treated as failed final convergence.
+- `rescue`: reserved/request mode. If a suspicious solution is detected, status reports `rescue_requested_but_not_available`; active retry/rescue loops are not implemented yet.
+
+The thresholds include voltage magnitude range, global angle spread, and active-branch angle-difference checks via `power_flow.wrong_branch_max_branch_angle_deg`.
+
 ## Control configuration (generic outer loop)
 
 ```yaml
