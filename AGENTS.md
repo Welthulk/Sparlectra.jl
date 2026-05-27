@@ -115,6 +115,10 @@ Remove-Item Env:\SPARLECTRA_TEST_PROFILE
 ## Repo conventions
 - Keep code comments and docstrings in English.
 - Prefer existing Sparlectra naming and style.
+- Keep `src/Sparlectra.jl` readable as the public module entry point.
+- Important public exports in `src/Sparlectra.jl` must have short inline comments or concise group comments that explain their role at the module-interface level.
+- Do not comment every trivial helper in `src/Sparlectra.jl`; focus on important user-facing functions, solver entry points, configuration APIs, import/export APIs, diagnostics, and external interfaces.
+- When adding, removing, or renaming important exports in `src/Sparlectra.jl`, update the surrounding comments in the same change.
 - Before editing, inspect current tests that cover the affected code.
 - After code changes, run the smallest relevant test first, then broader tests if needed.
 - Avoid broad refactoring while fixing a targeted bug.
