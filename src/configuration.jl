@@ -81,12 +81,22 @@ Base.@kwdef struct PowerFlowConfig
   sparse::Bool = true
   autodamp::Bool = false
   autodamp_min::Float64 = 0.05
+  wrong_branch_detection::Symbol = :warn
+  wrong_branch_rescue::Bool = false
+  wrong_branch_min_vm_pu::Float64 = 0.70
+  wrong_branch_max_vm_pu::Float64 = 1.30
+  wrong_branch_max_angle_spread_deg::Float64 = 180.0
+  wrong_branch_max_branch_angle_deg::Float64 = 90.0
+  wrong_branch_min_low_vm_count::Int = 1
+  wrong_branch_rescue_max_attempts::Int = 2
   rectangular_workspace_reuse::Bool = true
   rectangular_preallocate_workspace::Symbol = :auto
   rectangular_workspace_min_buses::Int = 1000
   start_mode::StartModeConfig = StartModeConfig()
   qlimits::QLimitConfig = QLimitConfig()
 end
+
+const WRONG_BRANCH_DETECTION_VALUES = [:off, :warn, :fail, :rescue]
 
 """
     ObservabilityConfig
@@ -476,6 +486,13 @@ function PowerFlowConfig(raw::AbstractDict)
   _validate_rectangular_powerflow_options(method = method, sparse = true)
   start_raw = _raw_get(merged, "start_values", _raw_section(merged, "start_mode"))
   qlimit_raw = _raw_section(merged, "qlimits")
+  wrong_branch_min_vm_pu = _validate_nonnegative("power_flow.wrong_branch_min_vm_pu", _as_float_cfg(_raw_get(merged, "wrong_branch_min_vm_pu", 0.70)))
+  wrong_branch_max_vm_pu = _validate_positive("power_flow.wrong_branch_max_vm_pu", _as_float_cfg(_raw_get(merged, "wrong_branch_max_vm_pu", 1.30)))
+  wrong_branch_min_vm_pu <= wrong_branch_max_vm_pu || throw(ArgumentError("power_flow.wrong_branch_min_vm_pu must be <= power_flow.wrong_branch_max_vm_pu."))
+  wrong_branch_min_low_vm_count = _as_int_cfg(_raw_get(merged, "wrong_branch_min_low_vm_count", 1))
+  wrong_branch_min_low_vm_count >= 0 || throw(ArgumentError("power_flow.wrong_branch_min_low_vm_count must be >= 0."))
+  wrong_branch_rescue_max_attempts = _as_int_cfg(_raw_get(merged, "wrong_branch_rescue_max_attempts", 2))
+  wrong_branch_rescue_max_attempts >= 0 || throw(ArgumentError("power_flow.wrong_branch_rescue_max_attempts must be >= 0."))
   return PowerFlowConfig(
     method = method,
     tol = _validate_positive("powerflow.tol", _as_float_cfg(_raw_get(merged, "tol", 1.0e-8))),
@@ -483,6 +500,14 @@ function PowerFlowConfig(raw::AbstractDict)
     sparse = true,
     autodamp = _as_bool_cfg(_raw_get(merged, "autodamp", false)),
     autodamp_min = _validate_positive("powerflow.autodamp_min", _as_float_cfg(_raw_get(merged, "autodamp_min", 0.05))),
+    wrong_branch_detection = _validate_allowed_symbol("power_flow.wrong_branch_detection", _as_symbol_cfg(_raw_get(merged, "wrong_branch_detection", :warn)), WRONG_BRANCH_DETECTION_VALUES),
+    wrong_branch_rescue = _as_bool_cfg(_raw_get(merged, "wrong_branch_rescue", false)),
+    wrong_branch_min_vm_pu = wrong_branch_min_vm_pu,
+    wrong_branch_max_vm_pu = wrong_branch_max_vm_pu,
+    wrong_branch_max_angle_spread_deg = _validate_nonnegative("power_flow.wrong_branch_max_angle_spread_deg", _as_float_cfg(_raw_get(merged, "wrong_branch_max_angle_spread_deg", 180.0))),
+    wrong_branch_max_branch_angle_deg = _validate_nonnegative("power_flow.wrong_branch_max_branch_angle_deg", _as_float_cfg(_raw_get(merged, "wrong_branch_max_branch_angle_deg", 90.0))),
+    wrong_branch_min_low_vm_count = wrong_branch_min_low_vm_count,
+    wrong_branch_rescue_max_attempts = wrong_branch_rescue_max_attempts,
     rectangular_workspace_reuse = _as_bool_cfg(_raw_get(merged, "rectangular_workspace_reuse", true)),
     rectangular_preallocate_workspace = _validate_allowed_symbol("power_flow.rectangular_preallocate_workspace", _as_symbol_cfg(_raw_get(merged, "rectangular_preallocate_workspace", :auto)), RECTANGULAR_PREALLOCATE_WORKSPACE_VALUES),
     rectangular_workspace_min_buses = _as_int_cfg(_raw_get(merged, "rectangular_workspace_min_buses", 1000)),
