@@ -57,28 +57,6 @@ using Printf
 
 _is_rectangular_linear_step_failure(e) = e isa LinearAlgebra.SingularException || e isa LinearAlgebra.LAPACKException
 
-_qlimit_original_bus_id(net::Net, bus::Int)::Int = haskey(net.busOrigIdxDict, bus) ? net.busOrigIdxDict[bus] : bus
-
-function _resolve_qlimit_trace_buses(net::Net, requested::AbstractVector{Int})::Vector{Int}
-  isempty(requested) && return Int[]
-  orig_to_net = Dict{Int,Int}()
-  sizehint!(orig_to_net, length(net.busOrigIdxDict))
-  for (net_idx, orig_idx) in net.busOrigIdxDict
-    orig_to_net[orig_idx] = net_idx
-  end
-  resolved = Int[]
-  for bus in requested
-    if haskey(orig_to_net, bus)
-      push!(resolved, orig_to_net[bus])
-    elseif 1 <= bus <= length(net.nodeVec)
-      push!(resolved, bus)
-    end
-  end
-  unique!(resolved)
-  sort!(resolved)
-  return resolved
-end
-
 function _bus_has_online_voltage_regulator(net::Net, bus::Int)::Bool
   for ps in net.prosumpsVec
     getPosumerBusIndex(ps) == bus || continue
