@@ -21,6 +21,7 @@ include("powerflow_rectangular/rectangular_result_updates.jl")
 include("powerflow_rectangular/rectangular_voltage_setpoints.jl")
 include("powerflow_rectangular/rectangular_qlimit_trace.jl")
 include("powerflow_rectangular/rectangular_qlimit_vset_adjustment.jl")
+include("powerflow_rectangular/rectangular_qlimit_guard.jl")
 include("jacobian_complex.jl")
 ```
 
@@ -32,6 +33,7 @@ Why this matters:
 - start/diagnostic/result/setpoint helpers must be available before `jacobian_complex.jl` consumes them.
 - Q-limit trace bus-ID mapping helpers must be loaded before the remaining Q-limit workflow in `jacobian_complex.jl`.
 - Q-limit `:adjust_vset` helper construction must be loaded before the remaining Q-limit workflow in `jacobian_complex.jl`.
+- Q-limit guard preprocessing must be loaded before the remaining rectangular Q-limit active-set loop in `jacobian_complex.jl`.
 
 ## File responsibilities
 
@@ -47,6 +49,7 @@ Why this matters:
 | `rectangular_voltage_setpoints.jl` | Bus voltage setpoint lookup and fallback preparation for rectangular setup | `_bus_voltage_setpoints_from_prosumers` |
 | `rectangular_qlimit_trace.jl` | Q-limit trace bus-ID mapping helpers used by rectangular diagnostics | `_qlimit_original_bus_id`, `_resolve_qlimit_trace_buses` |
 | `rectangular_qlimit_vset_adjustment.jl` | Q-limit `:adjust_vset` controller construction for rectangular workflow | `_build_vset_adjust_controllers` |
+| `rectangular_qlimit_guard.jl` | Q-limit guard preprocessing before rectangular active-set iterations | `_apply_qlimit_guard_to_rectangular_active_set!` |
 | `../jacobian_complex.jl` | Remaining rectangular solver loop/public wrappers and Q-limit active-set workflow | `run_complex_nr_rectangular_for_net!`, `runpf_rectangular!`, `runpf!`-related rectangular entry points |
 
 ## Execution flow
@@ -59,7 +62,7 @@ High-level rectangular PF flow in the current split:
 4. Optionally project/sanitize the rectangular start.
 5. Run Newton iterations via the standalone array solver (`run_complex_nr_rectangular`) using rectangular mismatch and Newton-step helpers.
 6. Optionally apply autodamping backtracking.
-7. Handle Q-limit active-set logic in the remaining solver loop in `jacobian_complex.jl`.
+7. Apply Q-limit guard preprocessing, then handle active PV→PQ switching logic in the remaining solver loop in `jacobian_complex.jl`.
 8. Write final complex voltages back to node magnitude/angle fields.
 9. Run wrong-branch diagnostics/status reporting where configured.
 
