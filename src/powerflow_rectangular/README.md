@@ -56,7 +56,9 @@ Why this matters:
 | `rectangular_qlimit_vset_adjustment.jl` | Q-limit `:adjust_vset` controller construction for rectangular workflow | `_build_vset_adjust_controllers` |
 | `rectangular_qlimit_guard.jl` | Q-limit guard preprocessing before rectangular active-set iterations | `_apply_qlimit_guard_to_rectangular_active_set!` |
 | `rectangular_status_workspace.jl` | Rectangular status registry, iteration workspace allocation, and summary/report formatting helpers | `_RectangularPFStatusTable`, `RectangularIterationWorkspace`, `rectangular_pf_status`, `_print_rectangular_convergence_summary`, `_print_qlimit_active_set_summary` |
-| `../jacobian_complex.jl` | Remaining rectangular solver loop/public wrappers and Q-limit active-set workflow | `run_complex_nr_rectangular_for_net!`, `runpf_rectangular!`, `runpf!`-related rectangular entry points |
+| `../jacobian_complex.jl` | Remaining rectangular solver loop/public entry points and Q-limit active-set workflow | `runpf_rectangular!`, `runpf!`-related rectangular entry points |
+
+Entry-point note: the previous extra naming layer (`run_complex_nr_rectangular_for_net!`) was removed. `runpf_rectangular!` is now the network-integrated rectangular solver entry point, while `run_complex_nr_rectangular` remains the standalone array-level solver.
 
 ## Execution flow
 

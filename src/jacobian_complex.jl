@@ -38,8 +38,7 @@
 # - Slack bus voltage is held constant throughout the iteration
 #
 # Key Functions:
-# - run_complex_nr_rectangular_for_net!(): Main solver interface
-# - runpf_rectangular!(): Convenience wrapper matching runpf!() signature
+# - runpf_rectangular!(): Main solver interface (network-integrated rectangular NR)
 # - build_complex_jacobian(): Wirtinger-based Jacobian block construction
 # - mismatch_rectangular(): Residual function for PQ/PV bus constraints
 #
@@ -253,7 +252,7 @@ function _try_adjust_vset_on_q_limit!(net::Net, bus::Int, side::Symbol, it::Int,
 end
 
 """
-    run_complex_nr_rectangular_for_net!(net; maxiter=20, tol=1e-8, damp=0.2, verbose=0)
+    runpf_rectangular!(net; maxiter=20, tol=1e-8, damp=0.2, verbose=0)
 
 Run a complex-state Newton-Raphson power flow in rectangular coordinates on a Sparlectra network.
 
@@ -299,12 +298,12 @@ polar formulations.
 - **Compatibility**: Maintains same interface as `runpf!()` for easy substitution
 
 # See Also
-- `runpf_rectangular!()`: Convenience wrapper matching `runpf!()` signature
+- `runpf_rectangular!(net, maxIte, tolerance, verbose; ...)`: compatibility overload matching `runpf!()` signature
 - `mismatch_rectangular()`: Core mismatch function for PQ/PV constraints
 - `build_rectangular_jacobian_pq_pv()`: Analytic Jacobian construction
 """
 
-function run_complex_nr_rectangular_for_net!(
+function runpf_rectangular!(
   net::Net;
   maxiter::Int = 20,
   tol::Float64 = 1e-8,
@@ -405,7 +404,7 @@ function run_complex_nr_rectangular_for_net!(
         bus_types[k] = :PQ
         S[k] = 0.0 + 0.0im
       else
-        error("run_complex_nr_rectangular_for_net!: unsupported bus type at bus $k, given: $(BusType)")
+        error("runpf_rectangular!: unsupported bus type at bus $k, given: $(BusType)")
       end
     end
   end
@@ -996,7 +995,7 @@ function runpf_rectangular!(
   rectangular_workspace_min_buses::Int = 1000,
   performance_profile = nothing,
 )
-  iters, erg = run_complex_nr_rectangular_for_net!(
+  iters, erg = runpf_rectangular!(
     net;
     maxiter = maxIte,
     tol = tolerance,

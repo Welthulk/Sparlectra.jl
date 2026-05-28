@@ -18,7 +18,7 @@
 
 ### 2) Network-integrated solver
 
-- `run_complex_nr_rectangular_for_net!(...)` in `src/jacobian_complex.jl`.
+- `runpf_rectangular!(...)` in `src/jacobian_complex.jl`.
   - **Role:** network-integrated rectangular solve loop that still mixes orchestration, active-set/Q-limit handling, status table/workspace writes, result updates, and final status reporting.
   - **Called by:** `runpf_rectangular!`.
   - **Placement recommendation:** should eventually be reduced to orchestration-only in `src/jacobian_complex.jl`, with internal responsibilities extracted into focused helpers under `src/powerflow_rectangular/`.
@@ -28,7 +28,7 @@
 
 - `run_complex_nr_rectangular(...)` in `src/powerflow_rectangular/rectangular_standalone_solver.jl`.
   - **Role:** array-level Newton driver on `(Ybus, V, S, bus_types, Vset, ...)` independent of net-level active-set orchestration.
-  - **Called by:** `run_complex_nr_rectangular_for_net!`.
+  - **Called by:** `runpf_rectangular!`.
   - **Placement recommendation:** correct current location; keep in split helper module.
   - **Visibility:** internal/semi-public utility for rectangular stack.
 
@@ -57,14 +57,14 @@
 ## Remaining responsibilities in `src/jacobian_complex.jl`
 
 1. **Network-integrated rectangular orchestration**
-   - **Functions (approx.):** `run_complex_nr_rectangular_for_net!`, `runpf_rectangular!`.
+   - **Functions (approx.):** `runpf_rectangular!`, `runpf_rectangular!`.
    - **Current responsibility:** assembles network arrays, controls iteration policy, calls standalone solver/helper stack, orchestrates post-processing.
    - **Safe to extract now:** yes, incrementally.
-   - **Next extraction target:** move non-entry helper blocks used only by `run_complex_nr_rectangular_for_net!` to dedicated helper file(s) (while keeping function signature stable).
+   - **Next extraction target:** move non-entry helper blocks used only by `runpf_rectangular!` to dedicated helper file(s) (while keeping function signature stable).
    - **Risk:** medium (many keyword/threaded dependencies).
 
 2. **Active Q-limit switching loop and decision plumbing**
-   - **Functions/blocks (approx.):** Q-limit loop logic inside `run_complex_nr_rectangular_for_net!`, plus related adjustment hooks and counters.
+   - **Functions/blocks (approx.):** Q-limit loop logic inside `runpf_rectangular!`, plus related adjustment hooks and counters.
    - **Current responsibility:** dynamic PV/PQ switching decisions, iteration-phase guard handling, adjust-vset interactions, trace/logging invocation.
    - **Safe to extract now:** conditionally yes, but requires careful keyword-forwarding and state object boundaries.
    - **Next extraction target:** dedicated internal helper that receives explicit workspace/state bundle.
@@ -94,7 +94,7 @@
 
 1. **Keyword-definition locations**
    - `run_complex_nr_rectangular` defines `damp`, `autodamp`, `autodamp_min` in `src/powerflow_rectangular/rectangular_standalone_solver.jl`.
-   - `run_complex_nr_rectangular_for_net!` defines the same trio in `src/jacobian_complex.jl`.
+   - `runpf_rectangular!` defines the same trio in `src/jacobian_complex.jl`.
    - `runpf_rectangular!` defines and forwards the same trio in `src/jacobian_complex.jl`.
    - Newton-step/autodamp logic uses these in `complex_newton_step_rectangular` / `choose_rectangular_autodamp` in `src/powerflow_rectangular/rectangular_newton_step.jl`.
 
@@ -131,7 +131,7 @@
 
 ## Recommended next small tasks
 
-1. **Goal:** reduce `run_complex_nr_rectangular_for_net!` to orchestration-only by extracting status/finalization glue into one helper.
+1. **Goal:** reduce `runpf_rectangular!` to orchestration-only by extracting status/finalization glue into one helper.
    - **Files touched:** `src/jacobian_complex.jl`, `src/powerflow_rectangular/rectangular_status_workspace.jl`, `src/powerflow_rectangular/README.md`.
    - **Risk:** medium.
    - **Validation command:** `julia --project=. test/test_solver_interface.jl`.
