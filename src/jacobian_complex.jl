@@ -710,13 +710,7 @@ function runpf_rectangular!(
   # 6) Update voltages back to network
   # --- mirror bus_types back into Net/node types (PV->PQ switching) ---
   _perf_profile_time!(performance_profile, :solver_final_active_set_sync) do
-    @inbounds for k in eachindex(bus_types)
-      if bus_types[k] == :PQ
-        setNodeType!(net.nodeVec[k], "PQ")
-      elseif bus_types[k] == :PV
-        setNodeType!(net.nodeVec[k], "PV")
-      end
-    end
+    _sync_rectangular_bus_types_to_net!(net, bus_types)
   end
   numerical_converged = converged
   final_pv_voltage_residual = _perf_profile_time!(performance_profile, :solver_final_status_checks) do
@@ -729,65 +723,23 @@ function runpf_rectangular!(
   end
 
   _perf_profile_time!(performance_profile, :solver_voltage_writeback) do
-    update_net_voltages_from_complex!(net, V)
+    _finalize_rectangular_voltage_writeback!(net, V)
   end
 
   # 7) Compute bus injections from final voltages  
   Sbus_pu, Sbus_MVA = _perf_profile_time!(performance_profile, :solver_final_injection_vectors) do
-    Sbus_pu_ = calc_injections(Ybus, V)
-    (Sbus_pu_, Sbus_pu_ .* Sbase)
+    _compute_rectangular_final_injections(Ybus, V, Sbase)
   end
 
   @debug "Final Voltages Mag = " [abs.(V)...]
   @debug "Final Voltages Ang = " [angle.(V) .* (180.0 / π)...]
 
-  isoNodes = net.isoNodes
-
   _perf_profile_time!(performance_profile, :solver_result_bus_writeback) do
-    @inbounds for (k, node) in enumerate(nodes)
-      # Skip isolated nodes (if any)
-      if k in isoNodes
-        continue
-      end
-
-      Sbus      = Sbus_MVA[k]
-      Pbus_MW   = real(Sbus)
-      Qbus_MVar = imag(Sbus)
-
-      # Slack bus: always write P and Q generation from the solved state
-      if node._nodeType == Sparlectra.Slack
-        node._pƩGen = Pbus_MW
-        node._qƩGen = Qbus_MVar
-
-      elseif node._nodeType == Sparlectra.PV
-        # PV bus: Qgen is a result (unless it later switches)
-        node._qƩGen = Qbus_MVar
-
-      elseif node._nodeType == Sparlectra.PQ
-        # If this bus was forced PV->PQ by Q-limit, keep the clamped generator Q
-        # (already written in make_pq! as MVar).
-        if haskey(net.qLimitEvents, k)
-          @debug "Bus $(k) is PQ due to Q-limit; keeping clamped Qgen = $(node._qƩGen) MVar."
-        end
-      end
-      # PQ buses / pure loads: do not touch _pƩLoad / _pƩGen here.
-      # The original load/generation specification remains intact.
-    end
+    _write_rectangular_bus_power_results!(net, nodes, Sbus_MVA)
   end
 
   # 8) Update total bus power (sum of complex injections in p.u.)
-  p, q = _perf_profile_time!(performance_profile, :solver_total_power_reduction) do
-    ((sum(real.(Sbus_pu))) * Sbase, (sum(imag.(Sbus_pu))) * Sbase)
-  end
-
-  if verbose > 1
-    @info "Set total bus power to p = $p MW and q = $q MVar"
-  end
-
-  _perf_profile_time!(performance_profile, :solver_total_power_writeback) do
-    setTotalBusPower!(net = net, p = p, q = q)
-    updateShuntPowers!(net = net)
-  end
+  p, q = _write_rectangular_total_bus_power!(net, Sbus_pu, Sbase, verbose, performance_profile)
 
   qlimit_summary = nothing
   branch_quality = _wrong_branch_not_checked_result()

@@ -24,6 +24,7 @@ include("powerflow_rectangular/rectangular_qlimit_trace_logging.jl")
 include("powerflow_rectangular/rectangular_qlimit_vset_adjustment.jl")
 include("powerflow_rectangular/rectangular_qlimit_guard.jl")
 include("powerflow_rectangular/rectangular_status_workspace.jl")
+include("powerflow_rectangular/rectangular_finalization.jl")
 include("jacobian_complex.jl")
 ```
 
@@ -38,6 +39,7 @@ Why this matters:
 - Q-limit `:adjust_vset` helper construction must be loaded before the remaining Q-limit workflow in `jacobian_complex.jl`.
 - Q-limit guard preprocessing must be loaded before the remaining rectangular Q-limit active-set loop in `jacobian_complex.jl`.
 - Rectangular status/workspace helpers must be loaded before `jacobian_complex.jl` because the network-integrated solver loop stores and reports status through them.
+- Rectangular post-iteration finalization helpers must be loaded before `jacobian_complex.jl` because `runpf_rectangular!` invokes these write-back and injection-finalization helpers.
 
 ## File responsibilities
 
@@ -56,6 +58,7 @@ Why this matters:
 | `rectangular_qlimit_vset_adjustment.jl` | Q-limit `:adjust_vset` controller construction for rectangular workflow | `_build_vset_adjust_controllers` |
 | `rectangular_qlimit_guard.jl` | Q-limit guard preprocessing before rectangular active-set iterations | `_apply_qlimit_guard_to_rectangular_active_set!` |
 | `rectangular_status_workspace.jl` | Rectangular status registry, iteration workspace allocation, and summary/report formatting helpers | `_RectangularPFStatusTable`, `RectangularIterationWorkspace`, `rectangular_pf_status`, `_print_rectangular_convergence_summary`, `_print_qlimit_active_set_summary` |
+| `rectangular_finalization.jl` | Post-iteration finalization helpers for bus-type sync, voltage write-back, final injection vectors, and bus/total-power write-back (excluding active Q-limit switching and wrong-branch status decisions) | `_sync_rectangular_bus_types_to_net!`, `_compute_rectangular_final_injections`, `_write_rectangular_bus_power_results!`, `_write_rectangular_total_bus_power!` |
 | `../jacobian_complex.jl` | Remaining rectangular solver loop/public entry points and Q-limit active-set workflow | `runpf_rectangular!`, `runpf!`-related rectangular entry points |
 
 Entry-point note: the previous extra naming layer (`run_complex_nr_rectangular_for_net!`) was removed. `runpf_rectangular!` is now the network-integrated rectangular solver entry point, while `run_complex_nr_rectangular` remains the standalone array-level solver.
