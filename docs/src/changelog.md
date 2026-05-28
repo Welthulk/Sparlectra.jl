@@ -1,9 +1,12 @@
 # Change Log
 ## Version 0.8.2 – 2026-05-30
-### New Features
-
+## New Features
+* Added wrong-branch diagnostics for rectangular power-flow solutions, including angle-spread checks and configurable voltage-based status classification.
+## Improvements
+* Refactored rectangular power-flow code into focused modules under `src/powerflow_rectangular/` for better maintainability and clearer separation of responsibilities.
 ### Related
  #219 Detect wrong/false low-voltage branch convergence and retry safely
+ #220 Mechanically split rectangular power-flow code into focused modules 
 
 ## Version 0.8.1 – 2026-05-26
 
