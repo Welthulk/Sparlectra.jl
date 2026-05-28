@@ -461,33 +461,6 @@ end
   return VoltageAdjustConfig(Float64(ps.vstep_pu), Int(ps.tap_steps_down), Int(ps.tap_steps_up))
 end
 
-function _build_vset_adjust_controllers(net::Net)
-  controllers = Dict{Int,NamedTuple{(:prosumer_idx, :config),Tuple{Int,VoltageAdjustConfig}}}()
-
-  for (ps_idx, ps) in enumerate(net.prosumpsVec)
-    isGenerator(ps) || continue
-    bus = getPosumerBusIndex(ps)
-
-    has_any = _has_vset_adjust_config(ps)
-    if has_any
-      cfg = _resolve_vset_adjust_config(ps)
-      all_defined = !isnothing(cfg)
-      all_defined || error("Bus $(_bus_label(net, bus)): invalid voltage adjustment config at prosumer $ps_idx. vstep_pu, tap_steps_down and tap_steps_up must be provided together.")
-      cfg.vstep_pu > 0.0 || error("Bus $(_bus_label(net, bus)): invalid vstep_pu=$(cfg.vstep_pu). Must be > 0.")
-      cfg.tap_steps_down >= 0 || error("Bus $(_bus_label(net, bus)): invalid tap_steps_down=$(cfg.tap_steps_down). Must be ≥ 0.")
-      cfg.tap_steps_up >= 0 || error("Bus $(_bus_label(net, bus)): invalid tap_steps_up=$(cfg.tap_steps_up). Must be ≥ 0.")
-      haskey(controllers, bus) && error("Bus $(_bus_label(net, bus)): multiple prosumers define voltage adjustment data. Only one controller per bus is allowed.")
-
-      controllers[bus] = (prosumer_idx = ps_idx, config = cfg)
-    else
-      partially_set = !isnothing(ps.vstep_pu) || !isnothing(ps.tap_steps_down) || !isnothing(ps.tap_steps_up)
-      partially_set && error("Bus $(_bus_label(net, bus)): incomplete voltage adjustment config at prosumer $ps_idx. vstep_pu, tap_steps_down and tap_steps_up must be provided together.")
-    end
-  end
-
-  return controllers
-end
-
 function _try_adjust_vset_on_q_limit!(net::Net, bus::Int, side::Symbol, it::Int, controllers::Dict{Int,NamedTuple{(:prosumer_idx, :config),Tuple{Int,VoltageAdjustConfig}}}, base_vset::Vector{Float64}, Vset::Vector{Float64}, adjust_counter::Vector{Int}, qlimit_max_outer::Int, verbose::Int)::Bool
   cname = _bus_label(net, bus)
   if !haskey(controllers, bus)
