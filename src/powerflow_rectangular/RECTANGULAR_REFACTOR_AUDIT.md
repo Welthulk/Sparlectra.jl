@@ -117,11 +117,11 @@
    - Core helper-level semantics are documented.
    - User-facing docs are still somewhat fragmented across comments/signatures/config; a single concise policy note in user-facing solver docs would improve clarity.
 
-6. **Default consistency check**
-   - `run_complex_nr_rectangular` default `damp=1.0`, `autodamp=false`, `autodamp_min=1e-3`.
-   - `run_complex_nr_rectangular_for_net!` and `runpf_rectangular!` also default to `damp=1.0`, `autodamp=false`, `autodamp_min=1e-3`.
-   - `PowerFlowConfig` / YAML example currently default `autodamp_min` to `0.05`, which differs from solver-function defaults (`1e-3`).
-   - This is an inconsistency in defaults across API layers (configuration defaults vs function signatures), though not necessarily a runtime bug when config is always explicit.
+6. **Default consistency check (resolved)**
+   - Previously, direct rectangular solver signatures used `autodamp_min=1e-3` while `PowerFlowConfig`/YAML used `0.05`.
+   - Canonical user-visible default is now aligned to `autodamp_min=0.05` across config and direct rectangular entry signatures.
+   - The operational policy remains unchanged: with `autodamp=false`, `damp` is a fixed step factor; with `autodamp=true`, autodamping backtracks from `damp` down to `autodamp_min`.
+   - Validation rule remains `0 < autodamp_min <= damp <= 1`.
 
 7. **Naming/documentation improvement recommendation (no behavior change in this task)**
    - Keep parameter name `damp` (no API rename).
@@ -149,7 +149,7 @@
    - **Validation command:** `julia --project=. -e "using Sparlectra"`.
    - **Behavior changes allowed:** no.
 
-4. **Goal:** evaluate and (if approved) align `autodamp_min` defaults between config layer and direct solver signatures.
+4. **Goal:** keep rectangular damping-policy docs/tests synchronized with the now-aligned `autodamp_min=0.05` default.
    - **Files touched:** `src/configuration.jl`, `src/configuration.yaml.example`, rectangular entry signatures/docs, tests.
    - **Risk:** medium.
    - **Validation command:** `julia --project=. test/runtests.jl`.

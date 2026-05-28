@@ -26,7 +26,7 @@ function run_complex_nr_rectangular(
   verbose::Bool = false,
   damp::Float64 = 1.0,
   autodamp::Bool = false,
-  autodamp_min::Float64 = 1e-3,
+  autodamp_min::Float64 = 0.05,
   wrong_branch_detection::Symbol = :warn,
   wrong_branch_rescue::Bool = false,
   wrong_branch_min_vm_pu::Float64 = 0.70,

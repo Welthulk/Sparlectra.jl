@@ -615,6 +615,15 @@ end
       @test_throws ArgumentError run_acpflow(show_results = false)
     end
 
+    @testset "Rectangular damping defaults and validation" begin
+      @test Sparlectra.active_sparlectra_config().powerflow.autodamp_min == 0.05
+
+      @test_throws ErrorException Sparlectra._validate_rectangular_damping(1.0, 0.0)
+      @test_throws ErrorException Sparlectra._validate_rectangular_damping(0.2, 0.3)
+      @test_throws ErrorException Sparlectra._validate_rectangular_damping(0.0, 0.01)
+      @test_throws ErrorException Sparlectra._validate_rectangular_damping(1.01, 0.05)
+    end
+
 # Ensures final-limit validation remains robust when q-generation data is partially missing.
     @testset "Final limit validation tolerates missing qgen" begin
       net = createTest3BusNet()
