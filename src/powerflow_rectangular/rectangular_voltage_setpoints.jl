@@ -1,6 +1,16 @@
 # Copyright 2023–2026 Udo Schmitz
 #
-# Licensed under the Apache License, Version 2.0.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 #
 # Rectangular power-flow voltage-setpoint lookup helpers.
 #
@@ -23,6 +33,7 @@ function _bus_voltage_setpoints_from_prosumers(net::Net; performance_profile = n
   end
 
   generator_bus_position_to_vg, has_online_voltage_regulator = _perf_profile_time!(performance_profile, :vset_generator_scan) do
+    # Generator/slack regulator setpoints take precedence over fallback node Vm.
     generator_bus_position_to_vg_ = Dict{Int,Float64}()
     has_online_voltage_regulator_ = falses(nbus)
     sizehint!(generator_bus_position_to_vg_, min(length(net.prosumpsVec), nbus))
@@ -47,6 +58,7 @@ function _bus_voltage_setpoints_from_prosumers(net::Net; performance_profile = n
     (generator_bus_position_to_vg_, has_online_voltage_regulator_)
   end
 
+  # Fallback is imported/current node voltage when no regulating setpoint is found.
   fallback_bus_vm = _perf_profile_time!(performance_profile, :vset_fallback_bus_vm) do
     fallback_bus_vm_ = Vector{Float64}(undef, nbus)
     @inbounds for k in eachindex(nodes)
@@ -72,6 +84,7 @@ function _bus_voltage_setpoints_from_prosumers(net::Net; performance_profile = n
   end
 
   _perf_profile_time!(performance_profile, :vset_missing_online_gen_summary) do
+    # Count PV/slack buses without online regulators for diagnostics/profile summaries.
     missing = 0
     @inbounds for k in eachindex(nodes)
       nt = getNodeType(nodes[k])

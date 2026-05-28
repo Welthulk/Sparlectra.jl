@@ -1,5 +1,20 @@
+# Copyright 2023–2026 Udo Schmitz
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# This file is included inside module Sparlectra. Do not add a module wrapper here.
+#
 # Rectangular power-flow core equation helpers.
-# Included into module Sparlectra from src/Sparlectra.jl; no module wrapper here.
 
 """
     build_complex_jacobian(Ybus, V)
@@ -111,6 +126,9 @@ function _max_rectangular_pv_voltage_residual(V::Vector{ComplexF64}, Vset::Vecto
   max_residual = 0.0
   @inbounds for k in eachindex(V)
     bus_types[k] == :PV || continue
+    # Skip PV buses that were already touched by Q-limit switching/locking
+    # in the current loop because their voltage-control residual is no longer
+    # representative of an unconstrained PV target.
     haskey(q_limit_events, k) && continue
     max_residual = max(max_residual, abs(abs(V[k]) - Vset[k]))
   end

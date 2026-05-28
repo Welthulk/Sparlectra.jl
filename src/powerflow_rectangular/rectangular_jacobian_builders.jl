@@ -1,6 +1,16 @@
 # Copyright 2023–2026 Udo Schmitz
 #
-# Licensed under the Apache License, Version 2.0.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 #
 # Rectangular power-flow analytic Jacobian builders.
 #
@@ -65,7 +75,7 @@ function build_rectangular_jacobian_pq_pv_sparse(
   nvar = 2 * (n - 1)   # [Vr(non-slack); Vi(non-slack)]
   m = nvar          # F has 2 equations per non-slack bus
 
-  # Row blocks: for each non-slack bus i
+  # Row blocks follow mismatch_rectangular layout for non-slack buses.
   #   row_block[i]   = index of ΔP row for bus i
   #   row_block[i]+1 = index of ΔQ / ΔV row for bus i
   row_block = zeros(Int, n)
@@ -410,5 +420,6 @@ function build_rectangular_jacobian_pq_pv(
   dQinj_dVm::Vector{Float64} = zeros(Float64, length(V)),
   vm_eps::Float64 = 1e-9,
 )
+  # Default rectangular solver path uses sparse Jacobians for scale and parity.
   return build_rectangular_jacobian_pq_pv_sparse(Ybus, V, bus_types, Vset, slack_idx; dPinj_dVm = dPinj_dVm, dQinj_dVm = dQinj_dVm, vm_eps = vm_eps)
 end

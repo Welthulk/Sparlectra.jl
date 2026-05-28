@@ -1,12 +1,23 @@
 # Copyright 2023–2026 Udo Schmitz
 #
-# Licensed under the Apache License, Version 2.0.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 #
 # Rectangular power-flow Newton-step and autodamping helpers.
 #
 # This file is included inside module Sparlectra. Do not add a module wrapper here.
 
 function _validate_rectangular_damping(damp::Float64, autodamp_min::Float64)
+  # Guard rails keep damping in the physically meaningful [0,1] step-length range.
   isfinite(damp) || error("damp must be finite (got $(damp)).")
   isfinite(autodamp_min) || error("autodamp_min must be finite (got $(autodamp_min)).")
   0.0 < damp <= 1.0 || error("damp must satisfy 0 < damp ≤ 1 (got $(damp)).")
@@ -28,6 +39,7 @@ function _apply_rectangular_delta(V::Vector{ComplexF64}, δx::Vector{Float64}, s
 
   Vr_new[slack_idx] = Vr[slack_idx]
   Vi_new[slack_idx] = Vi[slack_idx]
+  # Preserve slack reference exactly; non-slack updates only.
   return ComplexF64.(Vr_new, Vi_new)
 end
 
@@ -56,6 +68,7 @@ function choose_rectangular_autodamp(Ybus, V::Vector{ComplexF64}, S::Vector{Comp
   best_mismatch = _max_rectangular_mismatch(Ybus, best_V, S, bus_types, Vset, slack_idx)
 
   alpha = damp
+  # Backtrack until mismatch improves or we hit the minimum configured step.
   while alpha >= autodamp_min
     Vtrial = _apply_rectangular_delta(V, δx, slack_idx, non_slack, alpha)
     trial_mismatch = _max_rectangular_mismatch(Ybus, Vtrial, S, bus_types, Vset, slack_idx)
@@ -70,6 +83,7 @@ function choose_rectangular_autodamp(Ybus, V::Vector{ComplexF64}, S::Vector{Comp
     alpha *= 0.5
   end
 
+  # Conservative fallback: best finite trial seen during backtracking.
   return best_alpha, best_V, best_mismatch
 end
 

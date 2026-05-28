@@ -1,5 +1,20 @@
+# Copyright 2023–2026 Udo Schmitz
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# This file is included inside module Sparlectra. Do not add a module wrapper here.
+#
 # Rectangular power-flow wrong-branch diagnostics.
-# This file contains mechanically extracted helpers from jacobian_complex.jl.
 
 @inline function _wrap_to_180_deg(angle_deg::Float64)::Float64
   wrapped = mod(angle_deg + 180.0, 360.0) - 180.0
@@ -7,6 +22,7 @@
 end
 
 function _circular_angle_spread_deg(angles_deg)::Float64
+  # Circular spread is measured after wrap-to-180 normalization.
   vals = Float64[_wrap_to_180_deg(Float64(a)) for a in angles_deg if isfinite(a)]
   n = length(vals)
   n == 0 && return NaN
@@ -95,6 +111,8 @@ function _check_wrong_branch_solution(
   max_branch_angle_seen_deg = NaN
   worst_branch = nothing
   if !isnothing(net) && isfinite(max_branch_angle_deg)
+    # Non-finite branch-angle diagnostics are treated as suspicious and count
+    # against wrong-branch detection by escalating to warning/fail conditions.
     max_branch_angle_seen_deg = 0.0
     # Branch-angle diagnostics intentionally scan net.branchVec only.
     # Non-standard couplers/impedanceless links live in net.linkVec and are excluded.
@@ -121,6 +139,8 @@ function _check_wrong_branch_solution(
   lowest_order = sortperm(vm)
   lowest_buses = [Int(i) for i in lowest_order[1:min(3, length(lowest_order))]]
 
+  # :warn => suspicious but usable; :fail => invalid (e.g., non-finite voltages);
+  # :not_checked is emitted by callers when diagnostics are disabled.
   status = :ok
   reason = :none
   if !isempty(low_idx) && length(low_idx) >= min_low_vm_count
