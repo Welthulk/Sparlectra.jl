@@ -59,7 +59,7 @@ step.
 
 Returns `(alpha, Vtrial, trial_mismatch)`.
 """
-function choose_rectangular_autodamp(Ybus, V::Vector{ComplexF64}, S::Vector{ComplexF64}, δx::Vector{Float64}, F0::Vector{Float64}; slack_idx::Int, damp::Float64 = 1.0, autodamp_min::Float64 = 1e-3, bus_types::Vector{Symbol}, Vset::Vector{Float64})
+function choose_rectangular_autodamp(Ybus, V::Vector{ComplexF64}, S::Vector{ComplexF64}, δx::Vector{Float64}, F0::Vector{Float64}; slack_idx::Int, damp::Float64 = 1.0, autodamp_min::Float64 = 0.05, bus_types::Vector{Symbol}, Vset::Vector{Float64})
   _validate_rectangular_damping(damp, autodamp_min)
   non_slack = non_slack_indices(length(V), slack_idx)
   current_mismatch = maximum(abs.(F0))
@@ -111,7 +111,7 @@ function complex_newton_step_rectangular(
   slack_idx::Int,
   damp::Float64 = 1.0,
   autodamp::Bool = false,
-  autodamp_min::Float64 = 1e-3,
+  autodamp_min::Float64 = 0.05,
   bus_types::Vector{Symbol},
   Vset::Vector{Float64},
   dPinj_dVm::Vector{Float64} = zeros(Float64, length(V)),
