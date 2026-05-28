@@ -80,3 +80,7 @@ High-level rectangular PF flow in the current split:
 - Preserve include-order dependencies.
 - Do not mix mechanical extraction with behavior changes.
 - Add/update this README when adding a new rectangular helper file.
+
+## Refactoring audit
+
+See `RECTANGULAR_REFACTOR_AUDIT.md` for the current entry-point inventory, remaining `jacobian_complex.jl` responsibilities, and damping/autodamping policy notes.
