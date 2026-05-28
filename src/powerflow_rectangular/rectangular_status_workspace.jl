@@ -21,8 +21,10 @@ mutable struct _RectangularPFStatusTable
 end
 
 const _RECTANGULAR_PF_STATUS = _RectangularPFStatusTable(Tuple{UInt,WeakRef,Any}[])
+# Weak-reference registry keeps per-Net rectangular status without preventing GC.
 
 mutable struct RectangularIterationWorkspace
+  # Reusable vectors avoid per-iteration allocations in rectangular NR runs.
   qload_pu::Vector{Float64}
   current_pv_qreq_pu::Vector{Float64}
   prev_pv_qreq_pu::Vector{Float64}
@@ -86,6 +88,7 @@ function _print_rectangular_convergence_summary(io::IO, status)
 end
 
 function _rectangular_solver_status_symbol(numerical_converged::Bool, active_set_ok::Bool, final_converged::Bool, reason::Symbol)::Symbol
+  # Keep symbol mapping stable: downstream status semantics/log text depend on it.
   final_converged && return :converged
   numerical_converged || return reason == :singular_newton_step ? :singular_jacobian : :not_converged
   reason == :wrong_branch_detected && return :wrong_branch_detected
