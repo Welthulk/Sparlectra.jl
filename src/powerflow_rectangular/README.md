@@ -20,6 +20,7 @@ include("powerflow_rectangular/rectangular_start_projection.jl")
 include("powerflow_rectangular/rectangular_result_updates.jl")
 include("powerflow_rectangular/rectangular_voltage_setpoints.jl")
 include("powerflow_rectangular/rectangular_qlimit_trace.jl")
+include("powerflow_rectangular/rectangular_qlimit_trace_logging.jl")
 include("powerflow_rectangular/rectangular_qlimit_vset_adjustment.jl")
 include("powerflow_rectangular/rectangular_qlimit_guard.jl")
 include("jacobian_complex.jl")
@@ -32,6 +33,7 @@ Why this matters:
 - `rectangular_standalone_solver.jl` depends on mismatch and Newton-step helpers.
 - start/diagnostic/result/setpoint helpers must be available before `jacobian_complex.jl` consumes them.
 - Q-limit trace bus-ID mapping helpers must be loaded before the remaining Q-limit workflow in `jacobian_complex.jl`.
+- Q-limit trace logging helpers must be loaded after trace mapping helpers and before the remaining Q-limit workflow in `jacobian_complex.jl`.
 - Q-limit `:adjust_vset` helper construction must be loaded before the remaining Q-limit workflow in `jacobian_complex.jl`.
 - Q-limit guard preprocessing must be loaded before the remaining rectangular Q-limit active-set loop in `jacobian_complex.jl`.
 
@@ -48,6 +50,7 @@ Why this matters:
 | `rectangular_result_updates.jl` | Final complex-voltage write-back into network node fields | `update_net_voltages_from_complex!` |
 | `rectangular_voltage_setpoints.jl` | Bus voltage setpoint lookup and fallback preparation for rectangular setup | `_bus_voltage_setpoints_from_prosumers` |
 | `rectangular_qlimit_trace.jl` | Q-limit trace bus-ID mapping helpers used by rectangular diagnostics | `_qlimit_original_bus_id`, `_resolve_qlimit_trace_buses` |
+| `rectangular_qlimit_trace_logging.jl` | Q-limit trace/logging diagnostics for rectangular active-set decisions | `_bus_has_online_voltage_regulator`, `_qlimit_violation`, `_print_rectangular_qlimit_trace` |
 | `rectangular_qlimit_vset_adjustment.jl` | Q-limit `:adjust_vset` controller construction for rectangular workflow | `_build_vset_adjust_controllers` |
 | `rectangular_qlimit_guard.jl` | Q-limit guard preprocessing before rectangular active-set iterations | `_apply_qlimit_guard_to_rectangular_active_set!` |
 | `../jacobian_complex.jl` | Remaining rectangular solver loop/public wrappers and Q-limit active-set workflow | `run_complex_nr_rectangular_for_net!`, `runpf_rectangular!`, `runpf!`-related rectangular entry points |
