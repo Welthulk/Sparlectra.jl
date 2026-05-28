@@ -76,7 +76,7 @@ complex_newton_step_rectangular(Ybus, V, S;
     slack_idx::Int = 1,
     damp::Float64  = 1.0,
     autodamp::Bool = false,
-    autodamp_min::Float64 = 1e-3,
+    autodamp_min::Float64 = 0.05,
     bus_types::Vector{Symbol},
     Vset::Vector{Float64},
 )
@@ -105,7 +105,7 @@ For difficult flat-start studies, enable residual-based backtracking:
 runpf!(net, 60, 1e-8, 1;
     opt_flatstart = true,
     autodamp = true,
-    autodamp_min = 1e-3,
+    autodamp_min = 0.05,
 )
 ```
 
