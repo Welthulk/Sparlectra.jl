@@ -1,12 +1,23 @@
 # Copyright 2023–2026 Udo Schmitz
 #
-# Licensed under the Apache License, Version 2.0.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 #
 # Rectangular power-flow start projection and DC-start helpers.
 #
 # This file is included inside module Sparlectra. Do not add a module wrapper here.
 
 function _sanitize_rectangular_start(V::Vector{ComplexF64}, bus_types::Vector{Symbol}, Vset::Vector{Float64}, slack_idx::Int)
+  # Sanitize NaN/Inf/zero seeds before any projection candidate is evaluated.
   Vs = copy(V)
   @inbounds for k in eachindex(Vs)
     Vk = Vs[k]
@@ -32,6 +43,7 @@ function _voltage_magnitude_for_projection(Vraw::Vector{ComplexF64}, bus_types::
 end
 
 function _dc_angle_start_rectangular(Ybus, Vraw::Vector{ComplexF64}, S::Vector{ComplexF64}, bus_types::Vector{Symbol}, Vset::Vector{Float64}, slack_idx::Int; dc_angle_limit_deg::Float64 = 60.0)
+  # DC-angle start builds phase guesses from active-power balance on reduced B.
   n = length(Vraw)
   non_slack = non_slack_indices(n, slack_idx)
   nred = length(non_slack)
@@ -316,6 +328,7 @@ function project_rectangular_start(
   dc_angle_limit_deg > 0.0 || error("dc_angle_limit_deg must be > 0 (got $(dc_angle_limit_deg)).")
 
   t0 = time_ns()
+  # Candidate scan starts from the sanitized raw seed.
   candidate_count = 1
   raw = _perf_profile_time!(performance_profile, :start_projection_voltage_clipping) do
     _sanitize_rectangular_start(Vraw, bus_types, Vset, slack_idx)
