@@ -4,8 +4,19 @@
 
 This directory contains helper layers for the rectangular complex-state Newton–Raphson power-flow path.
 
-`runpf_rectangular!` (in `src/jacobian_complex.jl`) is the network-integrated rectangular entry point and orchestrates these helpers.
-`run_complex_nr_rectangular` (in this directory) remains the standalone array-level solver.
+The rectangular implementation is split across several abstraction layers:
+
+| Entry point | Layer | Role |
+|---|---|---|
+| `run_acpflow` | High-level workflow | Handles case/config input, workflow setup, solver selection, and output/result handling. |
+| `runpf!` | Generic power-flow dispatcher | Dispatches to the selected power-flow method. For rectangular runs, it reaches `runpf_rectangular!`. |
+| `runpf_rectangular!` | Network-integrated rectangular solver | Orchestrates rectangular power flow on a `Sparlectra.Net`: setup, start projection, Newton loop, Q-limit handling, finalization, diagnostics, and write-back. |
+| `run_complex_nr_rectangular` | Standalone array-level solver | Runs the rectangular Newton method directly on `Ybus`, `V0`, and `S`; it does not own full `Net` orchestration. |
+
+`runpf_rectangular!` (in `src/jacobian_complex.jl`) is therefore the network-integrated rectangular entry point and orchestrates the helper layers in this directory.
+
+`run_complex_nr_rectangular` (in this directory) remains the standalone array-level solver for direct matrix/vector use.
+
 
 ## Include order
 
@@ -31,20 +42,7 @@ include("powerflow_rectangular/rectangular_final_status.jl")
 include("jacobian_complex.jl")
 ```
 
-Why this matters:
 
-- `rectangular_jacobian_builders.jl` depends on core mismatch/equation helpers.
-- `rectangular_newton_step.jl` depends on mismatch and Jacobian builders.
-- `rectangular_standalone_solver.jl` depends on mismatch and Newton-step helpers.
-- start/diagnostic/result/setpoint helpers must be available before `jacobian_complex.jl` consumes them.
-- Q-limit trace bus-ID mapping helpers must be loaded before the remaining Q-limit workflow in `jacobian_complex.jl`.
-- Q-limit trace logging helpers must be loaded after trace mapping helpers and before the remaining Q-limit workflow in `jacobian_complex.jl`.
-- Q-limit `:adjust_vset` helper construction must be loaded before the remaining Q-limit workflow in `jacobian_complex.jl`.
-- Q-limit guard preprocessing must be loaded before the remaining rectangular Q-limit active-set loop in `jacobian_complex.jl`.
-- Per-iteration Q-limit active-set workflow helpers must be loaded before `jacobian_complex.jl` because `runpf_rectangular!` invokes that helper inside the Newton loop.
-- Rectangular status/workspace helpers must be loaded before `jacobian_complex.jl` because the network-integrated solver loop stores and reports status through them.
-- Rectangular post-iteration finalization helpers must be loaded before `jacobian_complex.jl` because `runpf_rectangular!` invokes these write-back and injection-finalization helpers.
-- Rectangular final status/diagnostic helpers must be loaded before `jacobian_complex.jl` because `runpf_rectangular!` invokes these final Q-limit acceptance, wrong-branch, and status-bookkeeping helpers.
 
 ## File responsibilities
 
@@ -84,15 +82,108 @@ High-level rectangular PF flow in the current split:
 8. Write final complex voltages back to node magnitude/angle fields.
 9. Run wrong-branch diagnostics/status reporting where configured.
 
-## Refactoring rules
+## Architecture and call diagram
 
-- Keep comments and docstrings in English.
-- Do not add `module` wrappers in this directory.
-- Do not change public APIs from helper files.
-- Preserve include-order dependencies.
-- Do not mix mechanical extraction with behavior changes.
-- Add/update this README when adding a new rectangular helper file.
+The **include order** above is the dependency/load order. The **runtime call order** below shows how the rectangular solver path is executed.
 
-## Refactoring audit
+```mermaid
+flowchart TD
+    A["User / script / example"] --> B["run_acpflow\nhigh-level workflow"]
+    B --> C["runpf!\ngeneric PF dispatcher"]
+    C --> D["runpf_rectangular!\nnetwork-integrated rectangular solver\n(src/jacobian_complex.jl)"]
 
-See `RECTANGULAR_REFACTOR_AUDIT.md` for the current entry-point inventory, remaining `jacobian_complex.jl` responsibilities, and damping/autodamping policy notes.
+    subgraph Workflow["Workflow / API layer"]
+        B
+        C
+    end
+
+    subgraph NetworkSolver["Network-integrated rectangular path"]
+        D --> E1["_bus_voltage_setpoints_from_prosumers"]
+        E1 --> E2["project_rectangular_start"]
+        E2 --> E3["_apply_qlimit_guard_to_rectangular_active_set!"]
+        E3 --> E4["RectangularIterationWorkspace"]
+    end
+
+    subgraph Loop["Main Newton iteration loop"]
+        E4 --> F1["mismatch_rectangular"]
+        F1 --> F2["build_rectangular_jacobian_pq_pv"]
+        F2 --> F3["complex_newton_step_rectangular"]
+        F3 --> F4["_handle_rectangular_qlimit_iteration!"]
+        F4 --> F1
+    end
+
+    subgraph Finalization["Post-iteration finalization"]
+        F4 --> G1["_sync_rectangular_bus_types_to_net!"]
+        G1 --> G2["update_net_voltages_from_complex!"]
+        G2 --> G3["_compute_rectangular_final_injections"]
+        G3 --> G4["_write_rectangular_bus_power_results!"]
+        G4 --> G5["_write_rectangular_total_bus_power!"]
+    end
+
+    subgraph FinalStatus["Final diagnostics and status"]
+        G5 --> H1["_finalize_rectangular_qlimit_summary"]
+        H1 --> H2["_finalize_rectangular_wrong_branch_diagnostics"]
+        H2 --> H3["_build_rectangular_final_status"]
+        H3 --> H4["_store_and_print_rectangular_final_status!"]
+    end
+
+    subgraph Standalone["Standalone array-level path"]
+        S1["run_complex_nr_rectangular\nstandalone array-level solver\n(rectangular_standalone_solver.jl)"]
+        S1 --> F1
+    end
+```
+
+## Entry-point layers
+
+The rectangular implementation should be read from top to bottom as layered orchestration:
+
+| Function | Layer | Typical caller | Owns `Sparlectra.Net` orchestration? | Main responsibility |
+|---|---|---|---:|---|
+| `run_acpflow` | Workflow/API | examples, scripts, user-facing workflows | Yes, indirectly | Load/apply configuration, prepare input, select solver path, handle output. |
+| `runpf!` | Generic dispatcher | high-level PF workflows | Partly | Dispatch to the configured PF method. |
+| `runpf_rectangular!` | Network-integrated solver | `runpf!`, solver-interface paths | Yes | Run rectangular PF on `Net`, including setup, Q-limit workflow, finalization, diagnostics, and write-back. |
+| `run_complex_nr_rectangular` | Standalone numerical solver | tests, experiments, low-level callers | No | Run rectangular Newton on `Ybus`, `V0`, `S` without full network object handling. |
+
+The important distinction is:
+
+```text
+runpf_rectangular! != run_complex_nr_rectangular
+```
+
+`runpf_rectangular!` is the full network-integrated rectangular solver. It knows about `Net`, bus types, generator voltage setpoints, Q-limits, start projection, final write-back, and solver status.
+
+`run_complex_nr_rectangular` is the lower-level array solver. It works directly on matrix/vector data and does not perform full `Net` finalization or workflow handling.
+
+## Architectural notes
+
+- `run_acpflow` is the high-level workflow entry point. It is not the numerical solver itself.
+- `runpf!` is the generic power-flow dispatch layer.
+- `runpf_rectangular!` is the **network-integrated** rectangular solver. It owns the high-level orchestration: setup, Newton loop sequencing, Q-limit handling, finalization, and final status handling.
+- `run_complex_nr_rectangular` is the **standalone array-level** solver path. It shares lower-level rectangular helper layers but is not responsible for full network object orchestration.
+- `rectangular_core_equations.jl`, `rectangular_jacobian_builders.jl`, and `rectangular_newton_step.jl` form the numerical core used during the iteration loop.
+- `rectangular_qlimit_iteration.jl` encapsulates the **per-iteration PV/PQ active-set workflow**, but the surrounding Newton loop still lives in `runpf_rectangular!`.
+- `rectangular_finalization.jl` and `rectangular_final_status.jl` split the end-of-run logic into:
+  - **state/result write-back**, and
+  - **acceptance, diagnostics, and status reporting**.
+- `rectangular_wrong_branch.jl` provides the diagnostic logic used by the final status step; it is a supporting layer, not a top-level entry point.
+
+## Minimal call sequence
+
+```text
+run_acpflow
+  -> runpf!
+     -> runpf_rectangular!
+        -> setup helpers
+        -> Newton loop
+           -> mismatch_rectangular
+           -> build_rectangular_jacobian_pq_pv
+           -> complex_newton_step_rectangular
+           -> _handle_rectangular_qlimit_iteration!
+        -> finalization helpers
+        -> final status helpers
+
+run_complex_nr_rectangular
+  -> standalone array-level path
+  -> uses mismatch/Jacobian/Newton helpers
+  -> does not own Net orchestration
+```
