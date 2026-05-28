@@ -270,37 +270,6 @@ function _print_qlimit_active_set_summary(io::IO, status)
   return nothing
 end
 
-function _apply_qlimit_guard_to_rectangular_active_set!(net::Net, bus_types::Vector{Symbol}, S::Vector{ComplexF64}, Qload_pu::Vector{Float64}, qmin_pu::AbstractVector, qmax_pu::AbstractVector; min_q_range_pu::Float64, zero_range_mode::Symbol, narrow_range_mode::Symbol, log::Bool, verbose::Int)
-  min_q_range_pu >= 0.0 || error("qlimit_guard_min_q_range_pu must be >= 0 (got $(min_q_range_pu)).")
-  zero_range_mode in (:lock_pq, :prefer_pq, :delayed_switch, :ignore) || error("Unsupported qlimit_guard_zero_range_mode=$(zero_range_mode). Supported: :lock_pq, :prefer_pq, :delayed_switch, :ignore.")
-  narrow_range_mode in (:lock_pq, :prefer_pq, :delayed_switch, :ignore) || error("Unsupported qlimit_guard_narrow_range_mode=$(narrow_range_mode). Supported: :lock_pq, :prefer_pq, :delayed_switch, :ignore.")
-
-  guarded = Int[]
-  @inbounds for bus in eachindex(bus_types)
-    bus_types[bus] == :PV || continue
-    bus <= length(qmin_pu) && bus <= length(qmax_pu) || continue
-    qmin = qmin_pu[bus]
-    qmax = qmax_pu[bus]
-    isfinite(qmin) && isfinite(qmax) || continue
-    qrange = abs(qmax - qmin)
-    qrange < min_q_range_pu || continue
-    mode = qrange <= eps(Float64) ? zero_range_mode : narrow_range_mode
-    mode in (:lock_pq, :prefer_pq) || continue
-
-    qclamp = 0.5 * (qmin + qmax)
-    bus_types[bus] = :PQ
-    S[bus] = ComplexF64(real(S[bus]), qclamp - Qload_pu[bus])
-    net.nodeVec[bus]._qƩGen = qclamp * net.baseMVA
-    logQLimitHit!(net, 0, bus, qclamp >= 0.0 ? :max : :min)
-    push!(guarded, bus)
-  end
-
-  if log && verbose > 0 && !isempty(guarded)
-    @printf("Q-limit guard: locked %d narrow-range PV bus(es) as PQ before rectangular NR.\n", length(guarded))
-  end
-  return guarded
-end
-
 function _print_rectangular_qlimit_summary(
   io::IO,
   net::Net,
