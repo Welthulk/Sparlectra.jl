@@ -23,6 +23,7 @@ include("powerflow_rectangular/rectangular_qlimit_trace.jl")
 include("powerflow_rectangular/rectangular_qlimit_trace_logging.jl")
 include("powerflow_rectangular/rectangular_qlimit_vset_adjustment.jl")
 include("powerflow_rectangular/rectangular_qlimit_guard.jl")
+include("powerflow_rectangular/rectangular_status_workspace.jl")
 include("jacobian_complex.jl")
 ```
 
@@ -36,6 +37,7 @@ Why this matters:
 - Q-limit trace logging helpers must be loaded after trace mapping helpers and before the remaining Q-limit workflow in `jacobian_complex.jl`.
 - Q-limit `:adjust_vset` helper construction must be loaded before the remaining Q-limit workflow in `jacobian_complex.jl`.
 - Q-limit guard preprocessing must be loaded before the remaining rectangular Q-limit active-set loop in `jacobian_complex.jl`.
+- Rectangular status/workspace helpers must be loaded before `jacobian_complex.jl` because the network-integrated solver loop stores and reports status through them.
 
 ## File responsibilities
 
@@ -53,6 +55,7 @@ Why this matters:
 | `rectangular_qlimit_trace_logging.jl` | Q-limit trace/logging diagnostics for rectangular active-set decisions | `_bus_has_online_voltage_regulator`, `_qlimit_violation`, `_print_rectangular_qlimit_trace` |
 | `rectangular_qlimit_vset_adjustment.jl` | Q-limit `:adjust_vset` controller construction for rectangular workflow | `_build_vset_adjust_controllers` |
 | `rectangular_qlimit_guard.jl` | Q-limit guard preprocessing before rectangular active-set iterations | `_apply_qlimit_guard_to_rectangular_active_set!` |
+| `rectangular_status_workspace.jl` | Rectangular status registry, iteration workspace allocation, and summary/report formatting helpers | `_RectangularPFStatusTable`, `RectangularIterationWorkspace`, `rectangular_pf_status`, `_print_rectangular_convergence_summary`, `_print_qlimit_active_set_summary` |
 | `../jacobian_complex.jl` | Remaining rectangular solver loop/public wrappers and Q-limit active-set workflow | `run_complex_nr_rectangular_for_net!`, `runpf_rectangular!`, `runpf!`-related rectangular entry points |
 
 ## Execution flow
