@@ -746,48 +746,48 @@ function runpf_rectangular!(
   wrong_branch_rescue_attempted = false
   wrong_branch_rescue_reason = :disabled
   if numerical_converged
-    qlimit_summary, converged, rejection_reason = _perf_profile_time!(performance_profile, :solver_final_qlimit_summary) do
-      final_Qload_pu = build_qload_pu(net)
-      qlimit_summary_io = (verbose > 0 || qlimit_trace_enabled) ? stdout : devnull
-      qlimit_summary_ = _print_rectangular_qlimit_summary(qlimit_summary_io, net, V, Sbus_pu, bus_types, qmin_pu, qmax_pu, final_Qload_pu; q_hyst_pu = q_hyst_pu, tolerance_pu = tol, max_rows = pv_table_rows, max_console_rows = pv_table_rows)
-      remaining_pv_violations = qlimit_summary_.pv_violations
-      bounded_ok = qlimit_guard_accept_bounded_violations && remaining_pv_violations <= qlimit_guard_max_remaining_violations
-      converged_ = converged
-      rejection_reason_ = rejection_reason
-      if remaining_pv_violations > 0 && !bounded_ok
-        verbose > 0 && @warn "Rectangular NR active-set failed because active PV Q-limit violations remain after the numerical solve." pv_violations = qlimit_summary_.pv_violations ref_violations = qlimit_summary_.ref_violations
-        converged_ = false
-        rejection_reason_ = :remaining_pv_q_limit_violations
-      elseif remaining_pv_violations > 0 && bounded_ok
-        rejection_reason_ = :bounded_q_limit_violations_accepted
-      end
-      (qlimit_summary_, converged_, rejection_reason_)
-    end
-    if wrong_branch_detection != :off
-      branch_quality = _check_wrong_branch_solution(
+    qlimit_status = _perf_profile_time!(performance_profile, :solver_final_qlimit_summary) do
+      _finalize_rectangular_qlimit_summary(
+        net,
         V,
+        Sbus_pu,
         bus_types,
-        Vset,
-        slack_idx;
-        min_vm_pu = wrong_branch_min_vm_pu,
-        max_vm_pu = wrong_branch_max_vm_pu,
-        max_angle_spread_deg = wrong_branch_max_angle_spread_deg,
-        max_branch_angle_deg = wrong_branch_max_branch_angle_deg,
-        min_low_vm_count = wrong_branch_min_low_vm_count,
-        net = net,
+        qmin_pu,
+        qmax_pu,
+        converged,
+        rejection_reason;
+        verbose = verbose,
+        qlimit_trace_enabled = qlimit_trace_enabled,
+        q_hyst_pu = q_hyst_pu,
+        tol = tol,
+        pv_table_rows = pv_table_rows,
+        qlimit_guard_accept_bounded_violations = qlimit_guard_accept_bounded_violations,
+        qlimit_guard_max_remaining_violations = qlimit_guard_max_remaining_violations,
       )
-      if wrong_branch_detection == :fail && branch_quality.status == :warn
-        branch_quality = (; branch_quality..., status = :fail, reason = :wrong_branch_detected)
-        converged = false
-        rejection_reason = :wrong_branch_detected
-      elseif wrong_branch_detection == :rescue && branch_quality.status == :warn
-        branch_quality = (; branch_quality..., status = :wrong_branch_rescue_not_implemented, reason = :rescue_requested_but_not_available)
-        converged = false
-        rejection_reason = :wrong_branch_rescue_not_implemented
-        wrong_branch_rescue_attempted = false
-        wrong_branch_rescue_reason = :rescue_requested_but_not_available
-      end
     end
+    qlimit_summary = qlimit_status.qlimit_summary
+    converged = qlimit_status.converged
+    rejection_reason = qlimit_status.rejection_reason
+    wrong_branch_status = _finalize_rectangular_wrong_branch_diagnostics(
+      V,
+      bus_types,
+      Vset,
+      slack_idx,
+      converged,
+      rejection_reason;
+      wrong_branch_detection = wrong_branch_detection,
+      wrong_branch_min_vm_pu = wrong_branch_min_vm_pu,
+      wrong_branch_max_vm_pu = wrong_branch_max_vm_pu,
+      wrong_branch_max_angle_spread_deg = wrong_branch_max_angle_spread_deg,
+      wrong_branch_max_branch_angle_deg = wrong_branch_max_branch_angle_deg,
+      wrong_branch_min_low_vm_count = wrong_branch_min_low_vm_count,
+      net = net,
+    )
+    branch_quality = wrong_branch_status.branch_quality
+    converged = wrong_branch_status.converged
+    rejection_reason = wrong_branch_status.rejection_reason
+    wrong_branch_rescue_attempted = wrong_branch_status.wrong_branch_rescue_attempted
+    wrong_branch_rescue_reason = wrong_branch_status.wrong_branch_rescue_reason
   end
 
   switch_counts, oscillating_buses, max_switching_exceeded, q_limit_active_set_ok, converged, rejection_reason, final_reason, final_status, status = _perf_profile_time!(performance_profile, :solver_status_bookkeeping) do
@@ -801,54 +801,30 @@ function runpf_rectangular!(
       rejection_reason_ = :max_switching_exceeded
       converged_ = false
     end
-    final_reason_ = converged_ ? :none : rejection_reason_
-    if final_reason_ == :nr_mismatch_not_converged && qlimit_active_set_changes >= 3
-      final_reason_ = :nr_mismatch_not_converged_active_set_unstable
-    end
-    final_status_ = _rectangular_solver_status_symbol(numerical_converged, q_limit_active_set_ok_, converged_, final_reason_)
-    status_ = _set_rectangular_pf_status!(
+    status_build_ = _build_rectangular_final_status(
       net,
-      (
-        numerical_converged = numerical_converged,
-        nr_converged = numerical_converged,
-        active_set_converged = q_limit_active_set_ok_,
-        q_limit_active_set_ok = q_limit_active_set_ok_,
-        final_converged = converged_,
-        status = final_status_,
-        reason = final_reason_,
-        reason_text = _rectangular_rejection_reason_text(final_reason_),
-        pv_q_limit_violations = isnothing(qlimit_summary) ? 0 : qlimit_summary.pv_violations,
-        ref_q_limit_violations = isnothing(qlimit_summary) ? 0 : qlimit_summary.ref_violations,
-        final_pv_voltage_residual = final_pv_voltage_residual,
-        final_mismatch = isempty(history) ? Inf : history[end],
-        pv_pq_switching_events = length(net.qLimitLog),
-        qlimit_active_set_changes = qlimit_active_set_changes,
-        qlimit_reenable_events = qlimit_reenable_events,
-        oscillating_buses = oscillating_buses_,
-        guarded_narrow_q_pv_buses = length(guarded_qlimit_buses),
-        branch_quality_status = branch_quality.status,
-        branch_quality_reason = branch_quality.reason,
-        branch_quality_metrics = branch_quality,
-        wrong_branch_detection = wrong_branch_detection,
-        wrong_branch_status = branch_quality.status,
-        wrong_branch_reason = branch_quality.reason,
-        wrong_branch_low_vm_count = branch_quality.low_vm_count,
-        wrong_branch_high_vm_count = branch_quality.high_vm_count,
-        wrong_branch_angle_spread_deg = branch_quality.angle_spread_deg,
-        wrong_branch_max_branch_angle_deg = branch_quality.max_branch_angle_deg,
-        wrong_branch_branch_angle_violation_count = branch_quality.branch_angle_violation_count,
-        wrong_branch_worst_branch_angle_deg = branch_quality.worst_branch_angle_deg,
-        wrong_branch_rescue_attempted = wrong_branch_rescue_attempted,
-        wrong_branch_rescue_reason = wrong_branch_rescue_reason,
-        wrong_branch_rescue_used = false,
-        wrong_branch_rescue_attempts = 0,
-        wrong_branch_rescue_profile = :none,
-      ),
+      numerical_converged,
+      q_limit_active_set_ok_,
+      converged_,
+      rejection_reason_,
+      qlimit_summary,
+      final_pv_voltage_residual,
+      history,
+      qlimit_active_set_changes,
+      qlimit_reenable_events,
+      oscillating_buses_,
+      guarded_qlimit_buses,
+      branch_quality,
+      wrong_branch_detection,
+      wrong_branch_rescue_attempted,
+      wrong_branch_rescue_reason,
     )
+    final_reason_ = status_build_.final_reason
+    final_status_ = status_build_.final_status
+    status_ = _store_and_print_rectangular_final_status!(net, status_build_.status, verbose)
     (switch_counts_, oscillating_buses_, max_switching_exceeded_, q_limit_active_set_ok_, converged_, rejection_reason_, final_reason_, final_status_, status_)
   end
   if verbose > 0
-    _print_rectangular_convergence_summary(stdout, status)
     _print_qlimit_active_set_summary(stdout, status)
     println(stdout, "Wrong-branch check:")
     @printf(stdout, "  status           = %s\n", uppercase(String(status.branch_quality_status)))

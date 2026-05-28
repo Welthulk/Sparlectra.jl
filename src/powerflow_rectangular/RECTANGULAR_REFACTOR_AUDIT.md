@@ -77,7 +77,7 @@
    - **Next extraction target:** isolate status finalization and reporting glue into one helper file.
    - **Risk:** low-to-medium (mostly bookkeeping, but user-visible status strings/tags).
 
-### Finalization extraction progress (current)
+### Finalization/status extraction progress (current)
 
 - **Completed in this step:** extracted low-risk post-iteration finalization helpers to `rectangular_finalization.jl` for:
   - bus-type sync to network node types,
@@ -85,11 +85,14 @@
   - final injection vector computation,
   - bus P/Q result write-back,
   - total bus power reduction/write-back.
+- **Completed in this step:** extracted final status/diagnostic glue to `rectangular_final_status.jl` for:
+  - final Q-limit summary acceptance/rejection,
+  - wrong-branch final diagnostics classification and rejection mapping,
+  - final rectangular PF status build/store helper path.
 - **Still in `runpf_rectangular!`:**
   - active Q-limit switching workflow,
-  - final Q-limit summary acceptance/rejection logic,
-  - wrong-branch final diagnostics and status integration,
-  - overall rectangular orchestration and status construction.
+  - core Newton orchestration and iteration-loop sequencing,
+  - overall rectangular orchestration around extracted helper calls.
 
 4. **Public wrapper and config-adapter surface**
    - **Functions (approx.):** `_runpf_with_config!`, `runpf!(...)` overloads, rectangular dispatch branches.
