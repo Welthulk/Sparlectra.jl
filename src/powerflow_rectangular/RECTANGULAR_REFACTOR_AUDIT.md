@@ -2,6 +2,15 @@
 
 ## Rectangular entry points and call layers
 
+## Completed cleanup checkpoints
+
+- Entry-point cleanup completed: `runpf_rectangular!` is the network-integrated rectangular entry point and `run_complex_nr_rectangular` is the standalone array-level solver.
+- Historical intermediate naming layer `run_complex_nr_rectangular_for_net!` removed from active code.
+- `autodamp_min` default cleanup completed: direct rectangular solver calls and configuration-driven runs use `autodamp_min = 0.05`.
+- Finalization helper extraction completed (`rectangular_finalization.jl`).
+- Final status helper extraction completed (`rectangular_final_status.jl`).
+- Per-iteration Q-limit helper extraction completed (`rectangular_qlimit_iteration.jl`).
+
 ### 1) Public user-facing entry points
 
 - `runpf!(net::Net; ...)` in `src/jacobian_complex.jl`.
@@ -146,28 +155,16 @@
    - Add a follow-up documentation note/warning about `autodamp=true` with `damp < 1` (smaller initial search ceiling).
    - Follow-up task should decide whether to align default `autodamp_min` values across config and direct-function signatures.
 
-## Recommended next small tasks
+## Recommended optional next small tasks
 
-1. **Goal:** reduce `runpf_rectangular!` to orchestration-only by extracting status/finalization glue into one helper.
-   - **Files touched:** `src/jacobian_complex.jl`, `src/powerflow_rectangular/rectangular_status_workspace.jl`, `src/powerflow_rectangular/README.md`.
+1. **Goal:** optionally reduce `runpf_rectangular!` further toward pure high-level orchestration (no behavior change).
+   - **Files touched:** `src/jacobian_complex.jl`, selected helpers under `src/powerflow_rectangular/`, `src/powerflow_rectangular/README.md`.
    - **Risk:** medium.
    - **Validation command:** `julia --project=. test/test_solver_interface.jl`.
    - **Behavior changes allowed:** no.
 
-2. **Goal:** extracted active Q-limit switching sub-loop into a focused internal helper API (no algorithm change).
-   - **Files touched:** `src/jacobian_complex.jl`, new helper under `src/powerflow_rectangular/`.
-   - **Risk:** high.
-   - **Validation command:** `julia --project=. test/runtests.jl`.
+2. **Goal:** optional final code-size cleanup for rectangular orchestration and comments after split stabilization.
+   - **Files touched:** `src/jacobian_complex.jl`, `src/powerflow_rectangular/README.md`.
+   - **Risk:** low-to-medium.
+   - **Validation command:** `julia --project=. test/test_solver_interface.jl`.
    - **Behavior changes allowed:** no.
-
-3. **Goal:** unify/document damping policy in public-facing docs/comments and clarify `damp` dual role.
-   - **Files touched:** `src/powerflow_rectangular/README.md`, relevant doc comments in `src/jacobian_complex.jl` and/or `src/run_acpflow.jl` (doc-only).
-   - **Risk:** low.
-   - **Validation command:** `julia --project=. -e "using Sparlectra"`.
-   - **Behavior changes allowed:** no.
-
-4. **Goal:** keep rectangular damping-policy docs/tests synchronized with the now-aligned `autodamp_min=0.05` default.
-   - **Files touched:** `src/configuration.jl`, `src/configuration.yaml.example`, rectangular entry signatures/docs, tests.
-   - **Risk:** medium.
-   - **Validation command:** `julia --project=. test/runtests.jl`.
-   - **Behavior changes allowed:** yes (explicitly controlled follow-up decision).

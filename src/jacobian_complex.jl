@@ -16,39 +16,18 @@
 # file: src/jacobian_complex.jl
 #
 
-# jacobian_complex.jl — Complex-State Newton-Raphson Power Flow Formulation
+# jacobian_complex.jl — Rectangular PF network-level orchestration and public entry glue
 #
-# This module implements a Newton-Raphson power flow solver using complex voltages
-# in rectangular coordinates (Vr + jVi) as state variables, as an alternative to
-# the conventional polar formulation (Vm, θ).
+# Current split architecture:
+# - `runpf_rectangular!` is the network-integrated rectangular solver entry point.
+# - `run_complex_nr_rectangular` is the standalone array-level Newton driver.
+# - Most rectangular helper layers (Jacobian builders, Newton-step/autodamping,
+#   start projection, Q-limit iteration/trace/guard helpers, finalization, and
+#   status/workspace helpers) live under `src/powerflow_rectangular/`.
 #
-# Features:
-# - Rectangular complex-state Newton-Raphson with PQ and PV bus handling
-# - Wirtinger calculus-based Jacobian construction for complex power equations
-# - Active-set Q-limit management for PV→PQ switching with optional re-enable
-# - Sparse analytic Jacobian construction
-# - Hysteresis and cooldown mechanisms for robust PV bus management
-# - Direct integration with Sparlectra.jl network data structures
-#
-# Mathematical Foundation:
-# - State vector: x = [Vr(non-slack); Vi(non-slack)] ∈ ℝ^(2(n-1))
-# - Complex power: S = V .* conj(Y * V) where Y is the bus admittance matrix  
-# - PQ buses: ΔP = Re(S_calc - S_spec), ΔQ = Im(S_calc - S_spec)
-# - PV buses: ΔP = Re(S_calc - S_spec), ΔV = |V| - V_set
-# - Slack bus voltage is held constant throughout the iteration
-#
-# Key Functions:
-# - runpf_rectangular!(): Main solver interface (network-integrated rectangular NR)
-# - build_complex_jacobian(): Wirtinger-based Jacobian block construction
-# - mismatch_rectangular(): Residual function for PQ/PV bus constraints
-#
-# Note:
-# - The power-flow core uses sparse Y-bus and Jacobian matrices by default.
-# - Dense builders remain for small helper-level diagnostics, but unsupported PF
-#   entry options are rejected before the solver core is entered.
-#
-# References:
-# - Wirtinger calculus for complex derivatives
+# Historical note:
+# - `run_complex_nr_rectangular_for_net!` was an intermediate naming layer and is
+#   removed from the active code path.
 
 using LinearAlgebra
 using SparseArrays
