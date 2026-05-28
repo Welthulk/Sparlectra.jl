@@ -19,6 +19,7 @@ include("powerflow_rectangular/rectangular_wrong_branch.jl")
 include("powerflow_rectangular/rectangular_start_projection.jl")
 include("powerflow_rectangular/rectangular_result_updates.jl")
 include("powerflow_rectangular/rectangular_voltage_setpoints.jl")
+include("powerflow_rectangular/rectangular_qlimit_trace.jl")
 include("jacobian_complex.jl")
 ```
 
@@ -28,6 +29,7 @@ Why this matters:
 - `rectangular_newton_step.jl` depends on mismatch and Jacobian builders.
 - `rectangular_standalone_solver.jl` depends on mismatch and Newton-step helpers.
 - start/diagnostic/result/setpoint helpers must be available before `jacobian_complex.jl` consumes them.
+- Q-limit trace bus-ID mapping helpers must be loaded before the remaining Q-limit workflow in `jacobian_complex.jl`.
 
 ## File responsibilities
 
@@ -41,6 +43,7 @@ Why this matters:
 | `rectangular_wrong_branch.jl` | Post-solve wrong-branch diagnostics and status classification | `_wrap_to_180_deg`, `_circular_angle_spread_deg`, `_check_wrong_branch_solution` |
 | `rectangular_result_updates.jl` | Final complex-voltage write-back into network node fields | `update_net_voltages_from_complex!` |
 | `rectangular_voltage_setpoints.jl` | Bus voltage setpoint lookup and fallback preparation for rectangular setup | `_bus_voltage_setpoints_from_prosumers` |
+| `rectangular_qlimit_trace.jl` | Q-limit trace bus-ID mapping helpers used by rectangular diagnostics | `_qlimit_original_bus_id`, `_resolve_qlimit_trace_buses` |
 | `../jacobian_complex.jl` | Remaining rectangular solver loop/public wrappers and Q-limit active-set workflow | `run_complex_nr_rectangular_for_net!`, `runpf_rectangular!`, `runpf!`-related rectangular entry points |
 
 ## Execution flow
