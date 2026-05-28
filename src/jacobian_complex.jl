@@ -565,27 +565,6 @@ function run_complex_nr_rectangular(
 end
 
 
-"""
-    update_net_voltages_from_complex!(net, V)
-
-Update the bus voltage magnitudes and angles in the network from the
-final complex voltages V (in per-unit).
-"""
-function update_net_voltages_from_complex!(net::Net, V::Vector{ComplexF64})
-  nodes = net.nodeVec
-  n = length(nodes)
-  @assert length(V) == n
-
-  for (k, node) in enumerate(nodes)
-    Vk = V[k]
-    vm = abs(Vk)
-    va_rad = angle(Vk)
-    va_deg = rad2deg(va_rad)
-    node._vm_pu = vm
-    node._va_deg = va_deg
-  end
-end
-
 function _expand_ybus_for_isolated_nodes(Yred, n::Int, iso_nodes::Vector{Int})
   isempty(iso_nodes) && return Yred
 
