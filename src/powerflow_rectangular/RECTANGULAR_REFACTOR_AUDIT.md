@@ -90,7 +90,7 @@
   - wrong-branch final diagnostics classification and rejection mapping,
   - final rectangular PF status build/store helper path.
 - **Still in `runpf_rectangular!`:**
-  - active Q-limit switching workflow,
+  - high-level orchestration that calls the extracted per-iteration active Q-limit helper,
   - core Newton orchestration and iteration-loop sequencing,
   - overall rectangular orchestration around extracted helper calls.
 
@@ -154,7 +154,7 @@
    - **Validation command:** `julia --project=. test/test_solver_interface.jl`.
    - **Behavior changes allowed:** no.
 
-2. **Goal:** extract active Q-limit switching sub-loop into a focused internal helper API (no algorithm change).
+2. **Goal:** extracted active Q-limit switching sub-loop into a focused internal helper API (no algorithm change).
    - **Files touched:** `src/jacobian_complex.jl`, new helper under `src/powerflow_rectangular/`.
    - **Risk:** high.
    - **Validation command:** `julia --project=. test/runtests.jl`.
