@@ -97,7 +97,7 @@ julia --project=. -e "using Sparlectra"
 Then check any relevant binding chain explicitly. For the rectangular power-flow path, use:
 
 ```bash
-julia --project=. -e "using Sparlectra; for s in Symbol.(String[\"runpf!\", \"runpf_rectangular!\", \"run_complex_nr_rectangular_for_net!\"]); @assert isdefined(Sparlectra, s) s; @assert !isempty(methods(getfield(Sparlectra, s))) s; println(s, \" => \", length(methods(getfield(Sparlectra, s))), \" method(s)\"); end; @assert isdefined(Main, Symbol(\"runpf!\"))"
+julia --project=. -e "using Sparlectra; for s in Symbol.(String[\"runpf!\", \"runpf_rectangular!\", \"run_complex_nr_rectangular\"]); @assert isdefined(Sparlectra, s) s; @assert !isempty(methods(getfield(Sparlectra, s))) s; println(s, \" => \", length(methods(getfield(Sparlectra, s))), \" method(s)\"); end; @assert isdefined(Main, Symbol(\"runpf!\"))"
 ```
 
 If any required binding is missing, stop and report the missing binding before editing further.
@@ -112,7 +112,7 @@ If a protected solver file is syntactically or semantically broken:
 - If a previous partial restore caused missing symbol chains, identify the complete call chain before editing.
 - For the rectangular power-flow path, keep this chain coherent:
   ```text
-  runpf! -> runpf_rectangular! -> run_complex_nr_rectangular_for_net!
+  runpf! -> runpf_rectangular!
   ```
 - If a restored wrapper body references keywords such as `validate_limits_after_pf`, `q_limit_violation_headroom`, `pv_table_rows`, Q-limit options, or wrong-branch options, verify that the active method signature binds them and that callers forward them consistently.
 - Do not add global variables or dummy functions for missing keyword names. Missing keywords must be fixed in the relevant method signature and forwarding chain.
