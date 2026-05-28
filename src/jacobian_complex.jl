@@ -441,50 +441,6 @@ function _print_rectangular_qlimit_summary(
   )
 end
 
-function run_complex_nr_rectangular(
-  Ybus,
-  V0,
-  S;
-  slack_idx::Int = 1,
-  maxiter::Int = 20,
-  tol::Float64 = 1e-8,
-  verbose::Bool = false,
-  damp::Float64 = 1.0,
-  autodamp::Bool = false,
-  autodamp_min::Float64 = 1e-3,
-  wrong_branch_detection::Symbol = :warn,
-  wrong_branch_rescue::Bool = false,
-  wrong_branch_min_vm_pu::Float64 = 0.70,
-  wrong_branch_max_vm_pu::Float64 = 1.30,
-  wrong_branch_max_angle_spread_deg::Float64 = 180.0,
-  wrong_branch_max_branch_angle_deg::Float64 = 90.0,
-  wrong_branch_min_low_vm_count::Int = 1,
-  wrong_branch_rescue_max_attempts::Int = 2,
-  bus_types::Vector{Symbol},
-  Vset::Vector{Float64},
-  dPinj_dVm::Vector{Float64} = zeros(Float64, length(V0)),
-  dQinj_dVm::Vector{Float64} = zeros(Float64, length(V0)),
-  performance_profile = nothing,
-)
-  V = copy(V0)
-  history = Float64[]
-
-  for iter = 1:maxiter
-    F = mismatch_rectangular(Ybus, V, S, bus_types, Vset, slack_idx)
-    max_mis = maximum(abs.(F))
-    push!(history, max_mis)
-
-    if max_mis <= tol
-      return V, true, iter, history
-    end
-
-    V = complex_newton_step_rectangular(Ybus, V, S; slack_idx = slack_idx, damp = damp, autodamp = autodamp, autodamp_min = autodamp_min, bus_types = bus_types, Vset = Vset, dPinj_dVm = dPinj_dVm, dQinj_dVm = dQinj_dVm, performance_profile = performance_profile)
-  end
-
-  return V, false, maxiter, history
-end
-
-
 function _expand_ybus_for_isolated_nodes(Yred, n::Int, iso_nodes::Vector{Int})
   isempty(iso_nodes) && return Yred
 
