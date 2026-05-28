@@ -4,6 +4,14 @@
 * Added wrong-branch diagnostics for rectangular power-flow solutions, including angle-spread checks and configurable voltage-based status classification.
 ## Improvements
 * Refactored rectangular power-flow code into focused modules under `src/powerflow_rectangular/` for better maintainability and clearer separation of responsibilities.
+
+### Rectangular power-flow internals
+
+* Refactored the rectangular complex-state power-flow implementation into focused helper layers under `src/powerflow_rectangular/`.
+* Simplified the rectangular entry-point model: `runpf_rectangular!` is the network-integrated rectangular solver entry point, while `run_complex_nr_rectangular` remains the standalone array-level solver.
+* Removed the redundant `run_complex_nr_rectangular_for_net!` naming layer.
+* Aligned rectangular autodamping defaults so direct solver calls and configuration-driven runs use the same `autodamp_min = 0.05` default.
+* No intended changes to Newton, Q-limit, wrong-branch, or damping algorithms.
 ### Related
  #219 Detect wrong/false low-voltage branch convergence and retry safely
  #220 Mechanically split rectangular power-flow code into focused modules 

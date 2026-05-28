@@ -4,7 +4,8 @@
 
 This directory contains helper layers for the rectangular complex-state Newton–Raphson power-flow path.
 
-The main solver loop and public wrappers still live in `src/jacobian_complex.jl`.
+`runpf_rectangular!` (in `src/jacobian_complex.jl`) is the network-integrated rectangular entry point and orchestrates these helpers.
+`run_complex_nr_rectangular` (in this directory) remains the standalone array-level solver.
 
 ## Include order
 
