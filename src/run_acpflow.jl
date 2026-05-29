@@ -87,10 +87,12 @@ function _apply_matpower_flatstart_modes!(net::Net, mpc; voltage_mode = :classic
   return nothing
 end
 
-function _print_ac_pf_nonconvergence(method::Symbol, net::Net)
+function _print_ac_pf_nonconvergence(method::Symbol, net::Net; verbose::Int = 0)
   rect_status = method === :rectangular ? rectangular_pf_status(net) : nothing
   if rect_status !== nothing && getproperty(rect_status, :numerical_converged)
-    @printf("Power flow numerical solve converged, but final status is %s (reason=%s).\n", String(rect_status.status), rect_status.reason_text)
+    if verbose > 0
+      @printf("Power flow numerical solve converged, but final status is %s (reason=%s).\n", String(rect_status.status), rect_status.reason_text,)
+    end
   else
     println("Newton-Raphson did not converge")
   end
@@ -142,12 +144,62 @@ function _build_pf_outcome_status(method::Symbol, erg::Int, ite::Int, etime::Flo
     )
   end
   outcome = erg == 0 ? :converged : :not_converged
-  return (outcome = outcome, numerical_converged = (erg == 0), solution_available = (erg == 0), limit_validation_status = :skip, final_converged = (erg == 0), reason = (erg == 0 ? :none : :nr_mismatch_not_converged), reason_text = (erg == 0 ? "none" : "NR mismatch did not converge"), final_mismatch = NaN, iterations = ite, elapsed_s = etime)
+  return (
+    outcome = outcome,
+    numerical_converged = (erg == 0),
+    solution_available = (erg == 0),
+    limit_validation_status = :skip,
+    final_converged = (erg == 0),
+    reason = (erg == 0 ? :none : :nr_mismatch_not_converged),
+    reason_text = (erg == 0 ? "none" : "NR mismatch did not converge"),
+    final_mismatch = NaN,
+    iterations = ite,
+    elapsed_s = etime,
+  )
 end
 
 _legacy_erg_from_control_status(status::Symbol)::Int = status == :pf_failed ? 1 : 0
 
-function _legacy_powerflow_config(; max_ite::Int, tol::Float64, method::Symbol, autodamp::Bool, autodamp_min::Float64, opt_flatstart::Bool, start_projection::Bool, start_projection_try_dc_start::Bool, start_projection_try_blend_scan::Bool, start_projection_branch_guard::Bool, start_projection_measure_candidates::Bool, start_projection_accept_unmeasured_dc_start::Bool, start_projection_blend_lambdas, start_projection_dc_angle_limit_deg::Float64, wrong_branch_detection::Symbol, wrong_branch_rescue::Bool, wrong_branch_min_vm_pu::Float64, wrong_branch_max_vm_pu::Float64, wrong_branch_max_angle_spread_deg::Float64, wrong_branch_max_branch_angle_deg::Float64, wrong_branch_min_low_vm_count::Int, wrong_branch_rescue_max_attempts::Int, qlimit_start_iter::Int, qlimit_start_mode::Symbol, qlimit_auto_q_delta_pu::Float64, lock_pv_to_pq_buses, qlimit_trace_buses, qlimit_guard::Bool, qlimit_guard_min_q_range_pu::Float64, qlimit_guard_zero_range_mode::Symbol, qlimit_guard_narrow_range_mode::Symbol, qlimit_guard_log::Bool, qlimit_guard_max_switches::Int, qlimit_guard_accept_bounded_violations::Bool, qlimit_guard_max_remaining_violations::Int, qlimit_guard_freeze_after_repeated_switching::Bool, qlimit_guard_violation_mode::Symbol, qlimit_guard_violation_threshold_pu::Float64)
+function _legacy_powerflow_config(;
+  max_ite::Int,
+  tol::Float64,
+  method::Symbol,
+  autodamp::Bool,
+  autodamp_min::Float64,
+  opt_flatstart::Bool,
+  start_projection::Bool,
+  start_projection_try_dc_start::Bool,
+  start_projection_try_blend_scan::Bool,
+  start_projection_branch_guard::Bool,
+  start_projection_measure_candidates::Bool,
+  start_projection_accept_unmeasured_dc_start::Bool,
+  start_projection_blend_lambdas,
+  start_projection_dc_angle_limit_deg::Float64,
+  wrong_branch_detection::Symbol,
+  wrong_branch_rescue::Bool,
+  wrong_branch_min_vm_pu::Float64,
+  wrong_branch_max_vm_pu::Float64,
+  wrong_branch_max_angle_spread_deg::Float64,
+  wrong_branch_max_branch_angle_deg::Float64,
+  wrong_branch_min_low_vm_count::Int,
+  wrong_branch_rescue_max_attempts::Int,
+  qlimit_start_iter::Int,
+  qlimit_start_mode::Symbol,
+  qlimit_auto_q_delta_pu::Float64,
+  lock_pv_to_pq_buses,
+  qlimit_trace_buses,
+  qlimit_guard::Bool,
+  qlimit_guard_min_q_range_pu::Float64,
+  qlimit_guard_zero_range_mode::Symbol,
+  qlimit_guard_narrow_range_mode::Symbol,
+  qlimit_guard_log::Bool,
+  qlimit_guard_max_switches::Int,
+  qlimit_guard_accept_bounded_violations::Bool,
+  qlimit_guard_max_remaining_violations::Int,
+  qlimit_guard_freeze_after_repeated_switching::Bool,
+  qlimit_guard_violation_mode::Symbol,
+  qlimit_guard_violation_threshold_pu::Float64,
+)
   return PowerFlowConfig(
     method = method,
     tol = tol,
@@ -217,12 +269,23 @@ function run_acpflow(;
   tol::Float64 = 1e-6,
   casefile::Union{Nothing,String} = nothing,
   path::Union{Nothing,String} = nothing,
-  verbose::Int = 0,  
+  verbose::Int = 0,
   printResultToFile::Bool = false,
   printResultAnyCase::Bool = false,
   method::Symbol = :rectangular,
   autodamp::Bool = false,
-  autodamp_min::Float64 = 0.05, start_projection::Bool = false, start_projection_try_dc_start::Bool = true, start_projection_try_blend_scan::Bool = true, start_projection_branch_guard::Bool = true, start_projection_measure_candidates::Bool = true, start_projection_accept_unmeasured_dc_start::Bool = false, start_projection_blend_lambdas::AbstractVector{<:Real} = [0.25, 0.5, 0.75], start_projection_dc_angle_limit_deg::Float64 = 60.0, qlimit_start_iter::Int = 2, qlimit_start_mode::Symbol = :iteration, qlimit_auto_q_delta_pu::Float64 = 1e-4,
+  autodamp_min::Float64 = 0.05,
+  start_projection::Bool = false,
+  start_projection_try_dc_start::Bool = true,
+  start_projection_try_blend_scan::Bool = true,
+  start_projection_branch_guard::Bool = true,
+  start_projection_measure_candidates::Bool = true,
+  start_projection_accept_unmeasured_dc_start::Bool = false,
+  start_projection_blend_lambdas::AbstractVector{<:Real} = [0.25, 0.5, 0.75],
+  start_projection_dc_angle_limit_deg::Float64 = 60.0,
+  qlimit_start_iter::Int = 2,
+  qlimit_start_mode::Symbol = :iteration,
+  qlimit_auto_q_delta_pu::Float64 = 1e-4,
   qlimit_guard::Bool = false,
   qlimit_guard_min_q_range_pu::Float64 = 1e-4,
   qlimit_guard_zero_range_mode::Symbol = :lock_pq,
@@ -265,7 +328,50 @@ function run_acpflow(;
 )
   if net !== nothing
     isnothing(casefile) || throw(ArgumentError("run_acpflow: pass either net or casefile, not both."))
-    return _run_acpflow_net!(; net = net, max_ite = max_ite, tol = tol, verbose = verbose, printResultToFile = printResultToFile, printResultAnyCase = printResultAnyCase, method = method, autodamp = autodamp, autodamp_min = autodamp_min, start_projection = start_projection, start_projection_try_dc_start = start_projection_try_dc_start, start_projection_try_blend_scan = start_projection_try_blend_scan, start_projection_branch_guard = start_projection_branch_guard, start_projection_measure_candidates = start_projection_measure_candidates, start_projection_accept_unmeasured_dc_start = start_projection_accept_unmeasured_dc_start, start_projection_blend_lambdas = start_projection_blend_lambdas, start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg, qlimit_start_iter = qlimit_start_iter, qlimit_start_mode = qlimit_start_mode, qlimit_auto_q_delta_pu = qlimit_auto_q_delta_pu, show_results = show_results, lock_pv_to_pq_buses = lock_pv_to_pq_buses, opt_flatstart = isnothing(opt_flatstart) ? true : opt_flatstart, pv_table_rows = pv_table_rows, validate_limits_after_pf = validate_limits_after_pf, q_limit_violation_headroom = q_limit_violation_headroom, qlimit_trace_buses = qlimit_trace_buses, qlimit_lock_reason = qlimit_lock_reason, qlimit_guard = qlimit_guard, qlimit_guard_min_q_range_pu = qlimit_guard_min_q_range_pu, qlimit_guard_zero_range_mode = qlimit_guard_zero_range_mode, qlimit_guard_narrow_range_mode = qlimit_guard_narrow_range_mode, qlimit_guard_log = qlimit_guard_log, qlimit_guard_max_switches = qlimit_guard_max_switches, qlimit_guard_accept_bounded_violations = qlimit_guard_accept_bounded_violations, qlimit_guard_max_remaining_violations = qlimit_guard_max_remaining_violations, qlimit_guard_freeze_after_repeated_switching = qlimit_guard_freeze_after_repeated_switching, qlimit_guard_violation_mode = qlimit_guard_violation_mode, qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu, bus_shunt_model = isnothing(bus_shunt_model) ? net.bus_shunt_model : bus_shunt_model, config = config, performance_profile = performance_profile)
+    return _run_acpflow_net!(;
+      net = net,
+      max_ite = max_ite,
+      tol = tol,
+      verbose = verbose,
+      printResultToFile = printResultToFile,
+      printResultAnyCase = printResultAnyCase,
+      method = method,
+      autodamp = autodamp,
+      autodamp_min = autodamp_min,
+      start_projection = start_projection,
+      start_projection_try_dc_start = start_projection_try_dc_start,
+      start_projection_try_blend_scan = start_projection_try_blend_scan,
+      start_projection_branch_guard = start_projection_branch_guard,
+      start_projection_measure_candidates = start_projection_measure_candidates,
+      start_projection_accept_unmeasured_dc_start = start_projection_accept_unmeasured_dc_start,
+      start_projection_blend_lambdas = start_projection_blend_lambdas,
+      start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg,
+      qlimit_start_iter = qlimit_start_iter,
+      qlimit_start_mode = qlimit_start_mode,
+      qlimit_auto_q_delta_pu = qlimit_auto_q_delta_pu,
+      show_results = show_results,
+      lock_pv_to_pq_buses = lock_pv_to_pq_buses,
+      opt_flatstart = isnothing(opt_flatstart) ? true : opt_flatstart,
+      pv_table_rows = pv_table_rows,
+      validate_limits_after_pf = validate_limits_after_pf,
+      q_limit_violation_headroom = q_limit_violation_headroom,
+      qlimit_trace_buses = qlimit_trace_buses,
+      qlimit_lock_reason = qlimit_lock_reason,
+      qlimit_guard = qlimit_guard,
+      qlimit_guard_min_q_range_pu = qlimit_guard_min_q_range_pu,
+      qlimit_guard_zero_range_mode = qlimit_guard_zero_range_mode,
+      qlimit_guard_narrow_range_mode = qlimit_guard_narrow_range_mode,
+      qlimit_guard_log = qlimit_guard_log,
+      qlimit_guard_max_switches = qlimit_guard_max_switches,
+      qlimit_guard_accept_bounded_violations = qlimit_guard_accept_bounded_violations,
+      qlimit_guard_max_remaining_violations = qlimit_guard_max_remaining_violations,
+      qlimit_guard_freeze_after_repeated_switching = qlimit_guard_freeze_after_repeated_switching,
+      qlimit_guard_violation_mode = qlimit_guard_violation_mode,
+      qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu,
+      bus_shunt_model = isnothing(bus_shunt_model) ? net.bus_shunt_model : bus_shunt_model,
+      config = config,
+      performance_profile = performance_profile,
+    )
   end
   isnothing(casefile) && throw(ArgumentError("run_acpflow: casefile is required when net is not provided."))
   pf_config = isnothing(config) ? powerflow_config() : _as_powerflow_config(config)
@@ -333,7 +439,7 @@ function run_acpflow(;
     if path === nothing
       in_path  = joinpath(pwd(), "data", "mpower", strip(casefile))
       out_path = joinpath(pwd(), "data", "mpower")
-      else
+    else
       in_path  = joinpath(path, strip(casefile))
       out_path = joinpath(path)
     end
@@ -344,9 +450,43 @@ function run_acpflow(;
 
     myNet = _perf_profile_time!(performance_profile, :network_construction) do
       if imported_matpower_case === nothing
-        createNetFromMatPowerFile(filename = in_path, log = (verbose > 0), flatstart = opt_flatstart, cooldown = cooldown_iters, q_hyst_pu = q_hyst_pu, enable_pq_gen_controllers = enable_pq_gen_controllers, bus_shunt_model = bus_shunt_model, matpower_shift_sign = matpower_shift_sign, matpower_shift_unit = matpower_shift_unit, matpower_ratio = matpower_ratio, reference_vm_pu = reference_vm_pu, reference_va_deg = reference_va_deg, matpower_pv_voltage_source = matpower_pv_voltage_source, matpower_pv_voltage_mismatch_tol_pu = matpower_pv_voltage_mismatch_tol_pu, profile = performance_profile)
+        createNetFromMatPowerFile(
+          filename = in_path,
+          log = (verbose > 0),
+          flatstart = opt_flatstart,
+          cooldown = cooldown_iters,
+          q_hyst_pu = q_hyst_pu,
+          enable_pq_gen_controllers = enable_pq_gen_controllers,
+          bus_shunt_model = bus_shunt_model,
+          matpower_shift_sign = matpower_shift_sign,
+          matpower_shift_unit = matpower_shift_unit,
+          matpower_ratio = matpower_ratio,
+          reference_vm_pu = reference_vm_pu,
+          reference_va_deg = reference_va_deg,
+          matpower_pv_voltage_source = matpower_pv_voltage_source,
+          matpower_pv_voltage_mismatch_tol_pu = matpower_pv_voltage_mismatch_tol_pu,
+          profile = performance_profile,
+        )
       else
-        createNetFromMatPowerCase(mpc = imported_matpower_case, log = (verbose > 0), flatstart = opt_flatstart, cooldown = cooldown_iters, q_hyst_pu = q_hyst_pu, enable_pq_gen_controllers = enable_pq_gen_controllers, bus_shunt_model = bus_shunt_model, matpower_shift_sign = matpower_shift_sign, matpower_shift_unit = matpower_shift_unit, matpower_ratio = matpower_ratio, reference_vm_pu = reference_vm_pu, reference_va_deg = reference_va_deg, matpower_pv_voltage_source = matpower_pv_voltage_source, matpower_pv_voltage_mismatch_tol_pu = matpower_pv_voltage_mismatch_tol_pu, preallocate_network = mat_cfg.preallocate_network, preallocate_min_buses = mat_cfg.preallocate_min_buses, profile = performance_profile)
+        createNetFromMatPowerCase(
+          mpc = imported_matpower_case,
+          log = (verbose > 0),
+          flatstart = opt_flatstart,
+          cooldown = cooldown_iters,
+          q_hyst_pu = q_hyst_pu,
+          enable_pq_gen_controllers = enable_pq_gen_controllers,
+          bus_shunt_model = bus_shunt_model,
+          matpower_shift_sign = matpower_shift_sign,
+          matpower_shift_unit = matpower_shift_unit,
+          matpower_ratio = matpower_ratio,
+          reference_vm_pu = reference_vm_pu,
+          reference_va_deg = reference_va_deg,
+          matpower_pv_voltage_source = matpower_pv_voltage_source,
+          matpower_pv_voltage_mismatch_tol_pu = matpower_pv_voltage_mismatch_tol_pu,
+          preallocate_network = mat_cfg.preallocate_network,
+          preallocate_min_buses = mat_cfg.preallocate_min_buses,
+          profile = performance_profile,
+        )
       end
     end
     phase = performance_profile === nothing ? nothing : get(performance_profile, :network_construction, nothing)
@@ -357,7 +497,16 @@ function run_acpflow(;
       mpc_init = _perf_profile_time!(performance_profile, :start_projection_matpower_reference_parse_lookup) do
         imported_matpower_case === nothing ? MatpowerIO.read_case(in_path; legacy_compat = true) : imported_matpower_case
       end
-      _apply_matpower_flatstart_modes!(myNet, mpc_init; voltage_mode = flatstart_voltage_mode, angle_mode = flatstart_angle_mode, profile_source = flatstart_profile_source, matpower_pv_voltage_source = matpower_pv_voltage_source, matpower_pv_voltage_mismatch_tol_pu = matpower_pv_voltage_mismatch_tol_pu, performance_profile = performance_profile)
+      _apply_matpower_flatstart_modes!(
+        myNet,
+        mpc_init;
+        voltage_mode = flatstart_voltage_mode,
+        angle_mode = flatstart_angle_mode,
+        profile_source = flatstart_profile_source,
+        matpower_pv_voltage_source = matpower_pv_voltage_source,
+        matpower_pv_voltage_mismatch_tol_pu = matpower_pv_voltage_mismatch_tol_pu,
+        performance_profile = performance_profile,
+      )
       if Symbol(flatstart_voltage_mode) in (:all_bus_vm, :profile_blend) || Symbol(flatstart_angle_mode) in (:bus_va_blend, :matpower_va)
         opt_flatstart = false
       end
@@ -365,15 +514,15 @@ function run_acpflow(;
     if length(myNet.nodeVec) >= out_cfg.result_table_large_case_threshold_buses && out_cfg.logfile_results != :full
       result_mode = out_cfg.result_table_large_case_mode
     end
-    
+
     if verbose > 1
       # --- DEBUG START ---
       @info "DEBUG Full net after import:"
       @printf "DEBUG Full net after import:\n"
       showNet(myNet, verbose = true)
 
-      Y = createYBUS(net=myNet, sparse=false, printYBUS=false)  # dense for inspection      
-      V0, slack = initialVrect(myNet; flatstart=myNet.flatstart)
+      Y = createYBUS(net = myNet, sparse = false, printYBUS = false)  # dense for inspection      
+      V0, slack = initialVrect(myNet; flatstart = myNet.flatstart)
       S = buildComplexSVec(myNet)
 
       @printf "DEBUG Yabs_max: %.6e\n" maximum(abs.(Y))
@@ -460,15 +609,15 @@ function run_acpflow(;
   erg = 2
   etime = @elapsed begin
     ite, erg = _perf_profile_time!(performance_profile, :solver_total) do
-    controllers = collect_outer_controllers(myNet)
-    if isempty(controllers)
-      runpf!(myNet, solver_config; verbose = verbose, pv_table_rows = pv_table_rows, validate_limits_after_pf = validate_limits_after_pf, q_limit_violation_headroom = q_limit_violation_headroom, qlimit_lock_reason = qlimit_lock_reason, performance_profile = performance_profile)
-    else
-      control_result = run_control!(myNet; controllers = controllers, pf_config = solver_config, control_config = ctrl_cfg, verbose = verbose, performance_profile = performance_profile)
-      # The legacy `erg` flag describes numerical PF success/failure.
-      # Control-loop terminal states such as :blocked or :max_outer_iterations are
-      # reported through `control_result` and `net.control_result`, not as PF failure.
-      (control_result.last_pf_iterations, _legacy_erg_from_control_status(control_result.status))
+      controllers = collect_outer_controllers(myNet)
+      if isempty(controllers)
+        runpf!(myNet, solver_config; verbose = verbose, pv_table_rows = pv_table_rows, validate_limits_after_pf = validate_limits_after_pf, q_limit_violation_headroom = q_limit_violation_headroom, qlimit_lock_reason = qlimit_lock_reason, performance_profile = performance_profile)
+      else
+        control_result = run_control!(myNet; controllers = controllers, pf_config = solver_config, control_config = ctrl_cfg, verbose = verbose, performance_profile = performance_profile)
+        # The legacy `erg` flag describes numerical PF success/failure.
+        # Control-loop terminal states such as :blocked or :max_outer_iterations are
+        # reported through `control_result` and `net.control_result`, not as PF failure.
+        (control_result.last_pf_iterations, _legacy_erg_from_control_status(control_result.status))
       end
     end
   end
@@ -485,7 +634,21 @@ function run_acpflow(;
     if rect_status !== nothing
       pf_status = _build_pf_outcome_status(method, erg, ite, etime, rect_status)
       limit_text = pf_status.limit_validation_status === :ok ? "OK" : pf_status.limit_validation_status === :fail ? "FAIL" : "SKIP"
-      @printf("method=%-12s  outcome=%s  numerical_solution=%s  solution_available=%s  limit_validation=%s  final_converged=%s  iterations=%d  pv2pq_events=%d  pv2pq_buses=%d  final_mismatch=%.9g  time=%8.6f s  reason=%s", String(method), String(pf_status.outcome), pf_status.numerical_converged ? "OK" : "FAIL", string(pf_status.solution_available), limit_text, string(pf_status.final_converged), ite, pv_to_pq_events, pv_to_pq_buses, pf_status.final_mismatch, etime, pf_status.reason_text)
+      @printf(
+        "method=%-12s  outcome=%s  numerical_solution=%s  solution_available=%s  limit_validation=%s  final_converged=%s  iterations=%d  pv2pq_events=%d  pv2pq_buses=%d  final_mismatch=%.9g  time=%8.6f s  reason=%s",
+        String(method),
+        String(pf_status.outcome),
+        pf_status.numerical_converged ? "OK" : "FAIL",
+        string(pf_status.solution_available),
+        limit_text,
+        string(pf_status.final_converged),
+        ite,
+        pv_to_pq_events,
+        pv_to_pq_buses,
+        pf_status.final_mismatch,
+        etime,
+        pf_status.reason_text
+      )
     else
       converged_text = erg == 0 ? "yes" : erg == 1 ? "no" : "error"
       @printf("method=%-12s  converged=%s  iterations=%d  pv2pq_events=%d  pv2pq_buses=%d  time=%8.6f s", String(method), converged_text, ite, pv_to_pq_events, pv_to_pq_buses, etime)
@@ -502,22 +665,31 @@ function run_acpflow(;
     else
       pf_status = _build_pf_outcome_status(method, erg, ite, etime, rect_status)
       ctrl_result = latest_control_result(myNet)
-      status_ref[] = (converged = (erg == 0), erg = erg, iterations = ite, elapsed_s = etime, solver_elapsed_s = solver_elapsed_s, method = method, outcome = outcome, control_status = isnothing(ctrl_result) ? :none : ctrl_result.status,
-                      numerical_solution = (pf_status.numerical_converged ? "OK" : "FAIL"),
-                      solution_available = pf_status.solution_available,
-                      limit_validation_status = pf_status.limit_validation_status,
-                      numerical_converged = rect_status.numerical_converged,
-                      q_limit_active_set_ok = rect_status.q_limit_active_set_ok,
-                      final_converged = rect_status.final_converged,
-                      status = rect_status.status,
-                      nr_converged = rect_status.nr_converged,
-                      active_set_converged = rect_status.active_set_converged,
-                      reason = rect_status.reason,
-                      reason_text = rect_status.reason_text,
-                      final_mismatch = pf_status.final_mismatch,
-                      pv_q_limit_violations = rect_status.pv_q_limit_violations,
-                      ref_q_limit_violations = rect_status.ref_q_limit_violations,
-                      final_pv_voltage_residual = rect_status.final_pv_voltage_residual)
+      status_ref[] = (
+        converged = (erg == 0),
+        erg = erg,
+        iterations = ite,
+        elapsed_s = etime,
+        solver_elapsed_s = solver_elapsed_s,
+        method = method,
+        outcome = outcome,
+        control_status = isnothing(ctrl_result) ? :none : ctrl_result.status,
+        numerical_solution = (pf_status.numerical_converged ? "OK" : "FAIL"),
+        solution_available = pf_status.solution_available,
+        limit_validation_status = pf_status.limit_validation_status,
+        numerical_converged = rect_status.numerical_converged,
+        q_limit_active_set_ok = rect_status.q_limit_active_set_ok,
+        final_converged = rect_status.final_converged,
+        status = rect_status.status,
+        nr_converged = rect_status.nr_converged,
+        active_set_converged = rect_status.active_set_converged,
+        reason = rect_status.reason,
+        reason_text = rect_status.reason_text,
+        final_mismatch = pf_status.final_mismatch,
+        pv_q_limit_violations = rect_status.pv_q_limit_violations,
+        ref_q_limit_violations = rect_status.ref_q_limit_violations,
+        final_pv_voltage_residual = rect_status.final_pv_voltage_residual,
+      )
     end
   end
   rect_status = method === :rectangular ? rectangular_pf_status(myNet) : nothing
@@ -546,7 +718,7 @@ function run_acpflow(;
       end
     end
   elseif erg == 1
-    _print_ac_pf_nonconvergence(method, myNet)
+    _print_ac_pf_nonconvergence(method, myNet; verbose = verbose)
   else
     @error "Errors during calculation of Newton-Raphson"
   end
@@ -554,10 +726,73 @@ function run_acpflow(;
   return myNet
 end
 
-
-function _run_acpflow_net!(; net::Net, max_ite::Int = 30, tol::Float64 = 1e-6, verbose::Int = 0, printResultToFile::Bool = false, printResultAnyCase::Bool = false, method::Symbol = :rectangular, autodamp::Bool = false, autodamp_min::Float64 = 0.05, start_projection::Bool = false, start_projection_try_dc_start::Bool = true, start_projection_try_blend_scan::Bool = true, start_projection_branch_guard::Bool = true, start_projection_measure_candidates::Bool = true, start_projection_accept_unmeasured_dc_start::Bool = false, start_projection_blend_lambdas::AbstractVector{<:Real} = [0.25, 0.5, 0.75], start_projection_dc_angle_limit_deg::Float64 = 60.0, qlimit_start_iter::Int = 2, qlimit_start_mode::Symbol = :iteration, qlimit_auto_q_delta_pu::Float64 = 1e-4, show_results::Bool = true, lock_pv_to_pq_buses::AbstractVector{Int} = Int[], opt_flatstart::Bool = true, pv_table_rows::Int = 30, validate_limits_after_pf::Bool = false, q_limit_violation_headroom::Float64 = 0.0, qlimit_trace_buses::AbstractVector{Int} = Int[], qlimit_lock_reason::Symbol = :manual, qlimit_guard::Bool = false, qlimit_guard_min_q_range_pu::Float64 = 1e-4, qlimit_guard_zero_range_mode::Symbol = :lock_pq, qlimit_guard_narrow_range_mode::Symbol = :prefer_pq, qlimit_guard_log::Bool = true, qlimit_guard_max_switches::Int = 10, qlimit_guard_accept_bounded_violations::Bool = false, qlimit_guard_max_remaining_violations::Int = 0, qlimit_guard_freeze_after_repeated_switching::Bool = true, qlimit_guard_violation_mode::Symbol = :delayed_switch, qlimit_guard_violation_threshold_pu::Float64 = 1e-4, bus_shunt_model = net.bus_shunt_model, config::Union{Nothing,PowerFlowConfig,SparlectraConfig} = nothing, performance_profile = nothing)
-
-  use_active_config = config !== nothing || (max_ite == 30 && tol == 1e-6 && method === :rectangular && !autodamp && autodamp_min == 0.05 && !start_projection && start_projection_try_dc_start && start_projection_try_blend_scan && start_projection_branch_guard && start_projection_measure_candidates && !start_projection_accept_unmeasured_dc_start && collect(start_projection_blend_lambdas) == [0.25, 0.5, 0.75] && start_projection_dc_angle_limit_deg == 60.0 && qlimit_start_iter == 2 && qlimit_start_mode === :iteration && qlimit_auto_q_delta_pu == 1e-4 && isempty(lock_pv_to_pq_buses) && opt_flatstart && isempty(qlimit_trace_buses) && !qlimit_guard)
+function _run_acpflow_net!(;
+  net::Net,
+  max_ite::Int = 30,
+  tol::Float64 = 1e-6,
+  verbose::Int = 0,
+  printResultToFile::Bool = false,
+  printResultAnyCase::Bool = false,
+  method::Symbol = :rectangular,
+  autodamp::Bool = false,
+  autodamp_min::Float64 = 0.05,
+  start_projection::Bool = false,
+  start_projection_try_dc_start::Bool = true,
+  start_projection_try_blend_scan::Bool = true,
+  start_projection_branch_guard::Bool = true,
+  start_projection_measure_candidates::Bool = true,
+  start_projection_accept_unmeasured_dc_start::Bool = false,
+  start_projection_blend_lambdas::AbstractVector{<:Real} = [0.25, 0.5, 0.75],
+  start_projection_dc_angle_limit_deg::Float64 = 60.0,
+  qlimit_start_iter::Int = 2,
+  qlimit_start_mode::Symbol = :iteration,
+  qlimit_auto_q_delta_pu::Float64 = 1e-4,
+  show_results::Bool = true,
+  lock_pv_to_pq_buses::AbstractVector{Int} = Int[],
+  opt_flatstart::Bool = true,
+  pv_table_rows::Int = 30,
+  validate_limits_after_pf::Bool = false,
+  q_limit_violation_headroom::Float64 = 0.0,
+  qlimit_trace_buses::AbstractVector{Int} = Int[],
+  qlimit_lock_reason::Symbol = :manual,
+  qlimit_guard::Bool = false,
+  qlimit_guard_min_q_range_pu::Float64 = 1e-4,
+  qlimit_guard_zero_range_mode::Symbol = :lock_pq,
+  qlimit_guard_narrow_range_mode::Symbol = :prefer_pq,
+  qlimit_guard_log::Bool = true,
+  qlimit_guard_max_switches::Int = 10,
+  qlimit_guard_accept_bounded_violations::Bool = false,
+  qlimit_guard_max_remaining_violations::Int = 0,
+  qlimit_guard_freeze_after_repeated_switching::Bool = true,
+  qlimit_guard_violation_mode::Symbol = :delayed_switch,
+  qlimit_guard_violation_threshold_pu::Float64 = 1e-4,
+  bus_shunt_model = net.bus_shunt_model,
+  config::Union{Nothing,PowerFlowConfig,SparlectraConfig} = nothing,
+  performance_profile = nothing,
+)
+  use_active_config =
+    config !== nothing || (
+      max_ite == 30 &&
+      tol == 1e-6 &&
+      method === :rectangular &&
+      !autodamp &&
+      autodamp_min == 0.05 &&
+      !start_projection &&
+      start_projection_try_dc_start &&
+      start_projection_try_blend_scan &&
+      start_projection_branch_guard &&
+      start_projection_measure_candidates &&
+      !start_projection_accept_unmeasured_dc_start &&
+      collect(start_projection_blend_lambdas) == [0.25, 0.5, 0.75] &&
+      start_projection_dc_angle_limit_deg == 60.0 &&
+      qlimit_start_iter == 2 &&
+      qlimit_start_mode === :iteration &&
+      qlimit_auto_q_delta_pu == 1e-4 &&
+      isempty(lock_pv_to_pq_buses) &&
+      opt_flatstart &&
+      isempty(qlimit_trace_buses) &&
+      !qlimit_guard
+    )
   pf_config = config === nothing ? powerflow_config() : _as_powerflow_config(config)
   out_cfg = _output_config_for_runner(config)
   ctrl_cfg = _control_config_for_runner(config)
@@ -660,15 +895,15 @@ function _run_acpflow_net!(; net::Net, max_ite::Int = 30, tol::Float64 = 1e-6, v
   erg = 2
   etime = @elapsed begin
     ite, erg = _perf_profile_time!(performance_profile, :solver_total) do
-    controllers = collect_outer_controllers(net)
-    if isempty(controllers)
-      runpf!(net, solver_config; verbose = verbose, pv_table_rows = pv_table_rows, validate_limits_after_pf = validate_limits_after_pf, q_limit_violation_headroom = q_limit_violation_headroom, qlimit_lock_reason = qlimit_lock_reason, performance_profile = performance_profile)
-    else
-      control_result = run_control!(net; controllers = controllers, pf_config = solver_config, control_config = ctrl_cfg, verbose = verbose, performance_profile = performance_profile)
-      # The legacy `erg` flag describes numerical PF success/failure.
-      # Control-loop terminal states such as :blocked or :max_outer_iterations are
-      # reported through `control_result` and `net.control_result`, not as PF failure.
-      (control_result.last_pf_iterations, _legacy_erg_from_control_status(control_result.status))
+      controllers = collect_outer_controllers(net)
+      if isempty(controllers)
+        runpf!(net, solver_config; verbose = verbose, pv_table_rows = pv_table_rows, validate_limits_after_pf = validate_limits_after_pf, q_limit_violation_headroom = q_limit_violation_headroom, qlimit_lock_reason = qlimit_lock_reason, performance_profile = performance_profile)
+      else
+        control_result = run_control!(net; controllers = controllers, pf_config = solver_config, control_config = ctrl_cfg, verbose = verbose, performance_profile = performance_profile)
+        # The legacy `erg` flag describes numerical PF success/failure.
+        # Control-loop terminal states such as :blocked or :max_outer_iterations are
+        # reported through `control_result` and `net.control_result`, not as PF failure.
+        (control_result.last_pf_iterations, _legacy_erg_from_control_status(control_result.status))
       end
     end
   end
