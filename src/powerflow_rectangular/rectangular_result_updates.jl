@@ -16,6 +16,9 @@
 #
 # This file is included inside module Sparlectra. Do not add a module wrapper here.
 
+# Date: 29.5.2026
+# file: src/powerflow_rectangular/rectangular_result_updates.jl
+
 """
     update_net_voltages_from_complex!(net, V)
 

@@ -530,6 +530,214 @@ function with_powerflow_method(cfg::SparlectraConfig, method::Symbol)::Sparlectr
   return SparlectraConfig(; powerflow = pf2, state_estimation = cfg.state_estimation, matpower = cfg.matpower, performance = cfg.performance, benchmark = cfg.benchmark, runtime = cfg.runtime, diagnostics = cfg.diagnostics, output = cfg.output, control = cfg.control)
 end
 
+_auto_profile_value_string(x)::String = x isa AbstractFloat ? string(round(x; digits = 8)) : string(x)
+
+function _matpower_import_auto_profile_residual_score(stats)::Float64
+  stats isa NamedTuple || return Inf
+  get(stats, :ok, false) || return Inf
+  return max(Float64(get(stats, :max_p_mis_pu, Inf)), Float64(get(stats, :max_q_mis_pu, Inf)))
+end
+
+function _matpower_import_auto_profile_convention_scan(mpc)
+  rows = NamedTuple[]
+  for shift_unit in (:deg, :rad), shift_sign in (1.0, -1.0), ratio in (:normal, :reciprocal)
+    stats = MatpowerIO.vmva_power_mismatch_stats(
+      mpc;
+      matpower_shift_unit = shift_unit,
+      matpower_shift_sign = shift_sign,
+      matpower_ratio = ratio,
+    )
+    push!(rows, (shift_unit = shift_unit, shift_sign = shift_sign, ratio = ratio, stats = stats, score = _matpower_import_auto_profile_residual_score(stats)))
+  end
+  sort!(rows; by = row -> row.score)
+  return rows
+end
+
+function _matpower_import_auto_profile_shunt_score(mpc, include_shunts::Bool; shift_unit, shift_sign, ratio)::Float64
+  bus = copy(mpc.bus)
+  if !include_shunts && size(bus, 2) >= 6
+    bus[:, 5] .= 0.0
+    bus[:, 6] .= 0.0
+  end
+  mpc2 = MatpowerIO.MatpowerCase(mpc.name, mpc.baseMVA, bus, mpc.gen, mpc.branch, mpc.gencost, mpc.bus_name)
+  return _matpower_import_auto_profile_residual_score(MatpowerIO.vmva_power_mismatch_stats(mpc2; matpower_shift_unit = shift_unit, matpower_shift_sign = shift_sign, matpower_ratio = ratio))
+end
+
+function _matpower_import_auto_profile_action(mode::Symbol, current, recommended; safe_to_apply::Bool)::Symbol
+  current == recommended && return :keep
+  mode === :apply && safe_to_apply && return :applied
+  return :recommend
+end
+
+function _push_auto_profile_row!(rows, mode::Symbol, option::AbstractString, current, recommended; safe_to_apply::Bool, reason::AbstractString, evidence::AbstractString = "")
+  push!(rows, (
+    option = String(option),
+    current = _auto_profile_value_string(current),
+    recommended = _auto_profile_value_string(recommended),
+    action = _matpower_import_auto_profile_action(mode, current, recommended; safe_to_apply = safe_to_apply),
+    reason = String(reason),
+    evidence = String(evidence),
+    raw_current = current,
+    raw_recommended = recommended,
+  ))
+  return rows
+end
+
+function _matpower_import_auto_profile_has_vg_mismatch(mpc; tol::Float64)
+  rows = MatpowerIO.pv_voltage_reference_rows(mpc; matpower_pv_voltage_source = :gen_vg, tol = tol, warn = false)
+  mismatches = [row for row in rows if isfinite(row.dvg_bus) && abs(row.dvg_bus) > tol]
+  return (rows = rows, mismatches = mismatches)
+end
+
+function _copy_matpower_with(mat::MatpowerImportConfig; kwargs...)
+  fields = NamedTuple{fieldnames(MatpowerImportConfig)}(getfield.(Ref(mat), fieldnames(MatpowerImportConfig)))
+  return MatpowerImportConfig(; fields..., kwargs...)
+end
+
+function _copy_config_with(cfg::SparlectraConfig; powerflow = cfg.powerflow, matpower = cfg.matpower)
+  return SparlectraConfig(; powerflow = powerflow, state_estimation = cfg.state_estimation, matpower = matpower, performance = cfg.performance, benchmark = cfg.benchmark, runtime = cfg.runtime, diagnostics = cfg.diagnostics, output = cfg.output, control = cfg.control)
+end
+
+function matpower_import_auto_profile(mpc, cfg::SparlectraConfig; mode::Symbol = cfg.matpower.auto_profile)
+  mode in (:off, :recommend, :apply) || throw(ArgumentError("matpower auto-profile mode must be off, recommend, or apply."))
+  mode === :off && return (config = cfg, rows = NamedTuple[], applied = NamedTuple[])
+
+  mat = cfg.matpower
+  pf = cfg.powerflow
+  rows = NamedTuple[]
+  applied_pairs = Pair{Symbol,Any}[]
+
+  convention_rows = _matpower_import_auto_profile_convention_scan(mpc)
+  current_row = only([row for row in convention_rows if row.shift_unit === mat.shift_unit && row.shift_sign == mat.shift_sign && row.ratio === mat.ratio])
+  best = first(convention_rows)
+  current_score = current_row.score
+  best_score = best.score
+  strong_convention = isfinite(current_score) && isfinite(best_score) && best_score + 1.0e-8 < min(current_score * 0.25, current_score - 1.0e-6)
+  convention_reason = strong_convention ? "residual scan found a clearly better MATPOWER branch convention" : "residual scan is ambiguous or current convention is best"
+  convention_evidence = "current=$(round(current_score; digits = 8)) best=$(round(best_score; digits = 8))"
+  rec_shift_unit = strong_convention ? best.shift_unit : mat.shift_unit
+  rec_shift_sign = strong_convention ? best.shift_sign : mat.shift_sign
+  rec_ratio = strong_convention ? best.ratio : mat.ratio
+  _push_auto_profile_row!(rows, mode, "matpower_import.shift_unit", mat.shift_unit, rec_shift_unit; safe_to_apply = strong_convention, reason = convention_reason, evidence = convention_evidence)
+  _push_auto_profile_row!(rows, mode, "matpower_import.shift_sign", mat.shift_sign, rec_shift_sign; safe_to_apply = strong_convention, reason = convention_reason, evidence = convention_evidence)
+  _push_auto_profile_row!(rows, mode, "matpower_import.ratio", mat.ratio, rec_ratio; safe_to_apply = strong_convention, reason = convention_reason, evidence = convention_evidence)
+  if mode === :apply && strong_convention
+    push!(applied_pairs, :shift_unit => rec_shift_unit, :shift_sign => rec_shift_sign, :ratio => rec_ratio)
+  end
+
+  shunt_adm_score = _matpower_import_auto_profile_shunt_score(mpc, true; shift_unit = rec_shift_unit, shift_sign = rec_shift_sign, ratio = rec_ratio)
+  shunt_vdi_score = _matpower_import_auto_profile_shunt_score(mpc, false; shift_unit = rec_shift_unit, shift_sign = rec_shift_sign, ratio = rec_ratio)
+  current_shunt_score = mat.bus_shunt_model === :admittance ? shunt_adm_score : shunt_vdi_score
+  best_shunt_model = shunt_adm_score <= shunt_vdi_score ? :admittance : :voltage_dependent_injection
+  best_shunt_score = min(shunt_adm_score, shunt_vdi_score)
+  strong_shunt = isfinite(current_shunt_score) && isfinite(best_shunt_score) && best_shunt_score + 1.0e-8 < min(current_shunt_score * 0.25, current_shunt_score - 1.0e-6)
+  rec_shunt = strong_shunt ? best_shunt_model : mat.bus_shunt_model
+  _push_auto_profile_row!(rows, mode, "matpower_import.bus_shunt_model", mat.bus_shunt_model, rec_shunt; safe_to_apply = strong_shunt, reason = strong_shunt ? "bus-shunt residual scan found a clearly better model" : "bus-shunt residual scan is ambiguous or current model is best", evidence = "admittance=$(round(shunt_adm_score; digits = 8)) voltage_dependent_injection=$(round(shunt_vdi_score; digits = 8))")
+  mode === :apply && strong_shunt && push!(applied_pairs, :bus_shunt_model => rec_shunt)
+
+  vg = _matpower_import_auto_profile_has_vg_mismatch(mpc; tol = mat.pv_voltage_mismatch_tol_pu)
+  has_online_vg = any(row -> !isempty(row.gen_vgs), vg.rows)
+  rec_pv_source = has_online_vg ? :gen_vg : mat.pv_voltage_source
+  pv_reason = has_online_vg ? "online GEN.VG values are available for PV/REF buses" : "no online GEN.VG values available for PV/REF buses"
+  _push_auto_profile_row!(rows, mode, "matpower_import.pv_voltage_source", mat.pv_voltage_source, rec_pv_source; safe_to_apply = false, reason = pv_reason, evidence = "pv_ref_buses=$(length(vg.rows)) vg_bus_mismatches=$(length(vg.mismatches))")
+  rec_compare = isempty(vg.mismatches) ? mat.compare_voltage_reference : :hybrid
+  _push_auto_profile_row!(rows, mode, "matpower_import.compare_voltage_reference", mat.compare_voltage_reference, rec_compare; safe_to_apply = false, reason = isempty(vg.mismatches) ? "BUS.VM and GEN.VG are consistent within tolerance" : "BUS.VM / GEN.VG mismatch detected; hybrid comparison keeps PQ buses on BUS.VM", evidence = "vg_bus_mismatches=$(length(vg.mismatches)) tol=$(mat.pv_voltage_mismatch_tol_pu)")
+
+  nbus = size(mpc.bus, 1)
+  npv = count(r -> Int(mpc.bus[r, 2]) == 2, axes(mpc.bus, 1))
+  fragile_start = nbus >= 1000 || npv >= 100 || (isfinite(best_score) && best_score > 1.0e-3)
+  if fragile_start
+    robust_start = (
+      angle_mode = :dc,
+      voltage_mode = :bus_vm_va_blend,
+      start_projection = true,
+      try_dc_start = true,
+      try_blend_scan = true,
+      branch_guard = true,
+      measure_candidates = true,
+      reuse_import_data = true,
+    )
+    for (field, rec) in pairs(robust_start)
+      cur = getfield(pf.start_mode, field)
+      _push_auto_profile_row!(rows, mode, "power_flow.start_mode.$(field)", cur, rec; safe_to_apply = false, reason = "large or fragile MATPOWER case; robust imported/DC start is safer", evidence = "nbus=$(nbus) npv=$(npv) best_residual=$(round(best_score; digits = 8))")
+    end
+  end
+
+  q_ranges = Float64[]
+  if size(mpc.gen, 2) >= 5
+    for g in axes(mpc.gen, 1)
+      size(mpc.gen, 2) >= 8 && mpc.gen[g, 8] <= 0.0 && continue
+      push!(q_ranges, abs(Float64(mpc.gen[g, 4] - mpc.gen[g, 5])) / mpc.baseMVA)
+    end
+  end
+  narrow_q = count(x -> x <= 0.02, q_ranges)
+  qlimit_risk = npv >= 100 || narrow_q >= 1
+  if qlimit_risk
+    q_recs = (
+      start_iter = 3,
+      start_mode = :iteration_or_auto,
+      hysteresis_pu = 0.01,
+      cooldown_iters = 1,
+      guard = true,
+      guard_min_q_range_pu = 0.02,
+      guard_narrow_range_mode = :lock_pq,
+      guard_zero_range_mode = :lock_pq,
+      guard_violation_mode = :lock_pq,
+      guard_max_switches = 10,
+      guard_max_remaining_violations = 0,
+    )
+    for (field, rec) in pairs(q_recs)
+      cur = getfield(pf.qlimits, field)
+      option = field in (:guard_min_q_range_pu, :guard_narrow_range_mode, :guard_zero_range_mode, :guard_violation_mode, :guard_max_switches, :guard_max_remaining_violations) ? "power_flow.qlimits.guard.$(replace(String(field), "guard_" => ""))" : "power_flow.qlimits.$(field)"
+      _push_auto_profile_row!(rows, mode, option, cur, rec; safe_to_apply = false, reason = "many PV buses or narrow Q ranges; conservative Q-limit guard recommended", evidence = "npv=$(npv) narrow_q_ranges=$(narrow_q)")
+    end
+  end
+
+  mat2 = isempty(applied_pairs) ? mat : _copy_matpower_with(mat; applied_pairs...)
+  cfg2 = mat2 === mat ? cfg : _copy_config_with(cfg; matpower = mat2)
+  return (config = cfg2, rows = rows, applied = Tuple(applied_pairs))
+end
+
+function print_matpower_import_auto_profile(io::IO, rows)
+  isempty(rows) && return nothing
+  println(io, "MATPOWER auto-profile recommendations")
+  println(io, "-------------------------------------")
+  @printf(io, "%-46s %-14s %-14s %-10s %s\n", "option", "current", "recommended", "action", "reason")
+  for row in rows
+    reason = isempty(row.evidence) ? row.reason : string(row.reason, " (", row.evidence, ")")
+    @printf(io, "%-46s %-14s %-14s %-10s %s\n", row.option, row.current, row.recommended, string(row.action), reason)
+  end
+  println(io)
+  return nothing
+end
+
+function print_matpower_import_auto_profile_effective_options(io::IO, cfg::SparlectraConfig)
+  println(io, "Final effective MATPOWER auto-profile options")
+  println(io, "---------------------------------------------")
+  println(io, "matpower_import.auto_profile: ", cfg.matpower.auto_profile)
+  println(io, "matpower_import.shift_unit: ", cfg.matpower.shift_unit)
+  println(io, "matpower_import.shift_sign: ", cfg.matpower.shift_sign)
+  println(io, "matpower_import.ratio: ", cfg.matpower.ratio)
+  println(io, "matpower_import.bus_shunt_model: ", cfg.matpower.bus_shunt_model)
+  println(io, "matpower_import.pv_voltage_source: ", cfg.matpower.pv_voltage_source)
+  println(io, "matpower_import.compare_voltage_reference: ", cfg.matpower.compare_voltage_reference)
+  println(io, "power_flow.start_mode.angle_mode: ", cfg.powerflow.start_mode.angle_mode)
+  println(io, "power_flow.start_mode.voltage_mode: ", cfg.powerflow.start_mode.voltage_mode)
+  println(io, "power_flow.start_mode.start_projection: ", cfg.powerflow.start_mode.start_projection)
+  println(io, "power_flow.start_mode.try_dc_start: ", cfg.powerflow.start_mode.try_dc_start)
+  println(io, "power_flow.start_mode.try_blend_scan: ", cfg.powerflow.start_mode.try_blend_scan)
+  println(io, "power_flow.start_mode.branch_guard: ", cfg.powerflow.start_mode.branch_guard)
+  println(io, "power_flow.start_mode.measure_candidates: ", cfg.powerflow.start_mode.measure_candidates)
+  println(io, "power_flow.start_mode.reuse_import_data: ", cfg.powerflow.start_mode.reuse_import_data)
+  println(io, "power_flow.qlimits.start_iter: ", cfg.powerflow.qlimits.start_iter)
+  println(io, "power_flow.qlimits.start_mode: ", cfg.powerflow.qlimits.start_mode)
+  println(io, "power_flow.qlimits.hysteresis_pu: ", cfg.powerflow.qlimits.hysteresis_pu)
+  println(io, "power_flow.qlimits.cooldown_iters: ", cfg.powerflow.qlimits.cooldown_iters)
+  println(io, "power_flow.qlimits.guard.enabled: ", cfg.powerflow.qlimits.guard)
+  println(io)
+  return nothing
+end
+
 """
     run_matpower_case(; casefile::AbstractString = "", config_file::AbstractString = "")
 
@@ -547,6 +755,12 @@ function run_matpower_case(; casefile::AbstractString = "", config_file::Abstrac
   isempty(strip(resolved_case)) && throw(ArgumentError("No MATPOWER case selected. Set matpower_import.case in the active configuration or pass casefile."))
   local_case = FetchMatpowerCase.ensure_casefile(resolved_case)
   logfile = matpower_run_logfile_path(local_case, cfg.output)
+  auto_profile_result = nothing
+  if cfg.matpower.auto_profile !== :off
+    mpc_for_profile = MatpowerIO.read_case(local_case; legacy_compat = true)
+    auto_profile_result = matpower_import_auto_profile(mpc_for_profile, cfg; mode = cfg.matpower.auto_profile)
+    cfg = auto_profile_result.config
+  end
   print_matpower_runner_header(
     stdout;
     default_config = DEFAULT_SPARLECTRA_CONFIG_PATH,
@@ -568,6 +782,15 @@ function run_matpower_case(; casefile::AbstractString = "", config_file::Abstrac
       benchmark = cfg.benchmark,
       performance = cfg.performance,
     )
+  end
+  if auto_profile_result !== nothing && cfg.matpower.auto_profile_log
+    print_matpower_import_auto_profile(stdout, auto_profile_result.rows)
+    print_matpower_import_auto_profile_effective_options(stdout, cfg)
+    open(logfile, "a") do io
+      print_matpower_import_auto_profile(io, auto_profile_result.rows)
+      print_matpower_import_auto_profile_effective_options(io, cfg)
+      print_effective_config(io, cfg)
+    end
   end
   if cfg.runtime.print_thread_config
     status = runtime_thread_status(cfg.runtime)

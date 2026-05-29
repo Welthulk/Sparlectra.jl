@@ -17,6 +17,10 @@
 # Rectangular power-flow Q-limit voltage-setpoint adjustment helpers.
 
 # Supports rectangular Q-limit control mode `:adjust_vset`.
+
+# Date: 29.5.2026
+# file: src/powerflow_rectangular/rectangular_qlimit_vset_adjustment.jl
+
 function _build_vset_adjust_controllers(net::Net)
   controllers = Dict{Int,NamedTuple{(:prosumer_idx, :config),Tuple{Int,VoltageAdjustConfig}}}()
 

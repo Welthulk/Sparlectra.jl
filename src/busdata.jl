@@ -47,6 +47,7 @@ function getBusData(nodes::Vector{Node}, Sbase_MVA::Float64, flatStart; net::Uni
   if !isnothing(net)
     refreshBusTypesFromProsumers!(net)
   end
+  angle_limit = false
   busVec = Vector{BusData}()
 
   slackIdx = 0

@@ -113,8 +113,11 @@ matpower_import:
   # MATPOWER case filename/path resolved by the example runner.
   case: case14.m
   # Allowed values: off, recommend, apply
+  # recommend prints a pre-run table without changing the active run.
+  # apply may change only convention settings with clear residual evidence;
+  # user YAML files are never rewritten.
   auto_profile: recommend
-  auto_profile_log: false
+  auto_profile_log: true
   # Allowed values: gen_vg, bus_vm, auto, strict_check
   pv_voltage_source: gen_vg
   pv_voltage_mismatch_tol_pu: 1.0e-4

@@ -15,6 +15,8 @@
 # Rectangular power-flow analytic Jacobian builders.
 #
 # This file is included inside module Sparlectra. Do not add a module wrapper here.
+# Date: 29.5.2026
+# file: src/powerflow_rectangular/rectangular_jacobian_builders.jl  
 
 """
     build_rectangular_jacobian_pq_pv_sparse(

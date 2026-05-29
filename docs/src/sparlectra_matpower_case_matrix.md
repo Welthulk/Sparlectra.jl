@@ -1,7 +1,7 @@
 # Sparlectra.jl MATPOWER Case Diagnostics Matrix
 
-Date: 2026-05-16  
-Sparlectra versions covered: 0.7.7–0.7.8  
+Date: 2026-05-29  
+Sparlectra versions covered: 0.7.7–0.8.2  
 Purpose: compact tracking table for MATPOWER import, reference-data consistency, and solver diagnostics.
 
 > **Data and license note**  
@@ -18,11 +18,40 @@ The matrix distinguishes solver convergence failures, wrong Newton solution bran
 
 `case_ACTIVSg25k.m` now converges successfully with the strengthened Q-limit guard profile. The final documented run reports `numerical_solution=OK`, `q_limit_active_set=OK`, `final_converged=true`, `iterations=8`, `pv2pq_events=2004`, `guarded narrow-Q PV buses=960`, and `compare=OK`. The remaining active PV/REF Q-limit violations are zero. This confirms that the earlier failure mode was primarily a Q-limit active-set stabilization issue, not a classical Newton divergence.
 
+## Latest addition: `case_ACTIVSg10k.m` wrong-branch follow-up in v0.8.2
+
+The historical ACTIVSg10k wrong-branch observation remains important, but it should now be classified as a **historical solver-path issue**, not as a currently reproducible natural wrong-branch case with the latest rectangular solver path.
+
+In the current v0.8.2 checks, several default-near and degraded start configurations were tested without artificial branch-angle threshold tightening:
+
+- `profile_blend` / MATPOWER reference voltage starts converge to a healthy solution.
+- `classic` / `classic` voltage-angle starts no longer produce a formally converged wrong branch; they fail before numerical convergence with active-set instability.
+- Delayed or disabled Q-limit variants either converge to the same healthy solution or fail Q-limit validation, but do not show wrong-branch quality warnings.
+- No tested configuration with normal `wrong_branch_max_branch_angle_deg = 90.0`, normal `shift_sign = 1.0`, `shift_unit = deg`, and `ratio = normal` reproduced the old low-voltage wrong-branch solution.
+
+The current observed healthy ACTIVSg10k branch-quality metrics are approximately:
+
+```text
+min_vm_pu                      ≈ 0.9234 … 0.9460
+max_vm_pu                      ≈ 1.0889 … 1.1087
+wrong_branch_angle_spread_deg  ≈ 107.1 … 107.7
+wrong_branch_worst_branch_deg  ≈ 21.75 … 22.94
+wrong_branch_status            = ok
+```
+
+The v0.8.2 wrong-branch configuration forwarding was separately validated with a **forced threshold test** on the same solved case:
+
+- With `wrong_branch_max_branch_angle_deg = 90.0`, the status is `ok`.
+- With `wrong_branch_max_branch_angle_deg = 20.0` and `wrong_branch_detection = warn`, the status becomes `warn`, reason `branch_angle_exceeded`, with 3 branch-angle violations.
+- With the same `20.0` threshold and `wrong_branch_detection = fail`, the numerical solve still converges, but the final PF status becomes `wrong_branch_detected` and `final_converged = false`.
+
+This forced-threshold test proves that the `wrong_branch_*` YAML values are now forwarded into the rectangular solver and that `warn`/`fail` final-status handling works. It is **not** evidence that the physical ACTIVSg10k case naturally lands on a wrong branch in v0.8.2.
+
 ## Case matrix
 
 | Case | Size / type | Status in Sparlectra | Recommended YAML profile | Main findings | Case-specific anomalies / deviations | Wrong-branch risk | Open checks |
 |---|---:|---|---|---|---|---|---|
-| `case_ACTIVSg10k.m` | 10,000 buses; large synthetic transmission case | Converges with DC-angle flat start and blended voltage start. Latest documented run: `converged=yes`, `iterations=9`, `pv2pq_events=657`, `pv2pq_buses=640`, compare `status=OK`. | `large_flatstart_dc_blend` | MATPOWER import conventions confirmed: `shift_sign=1.0`, `shift_unit=deg`, `ratio=normal`, `bus_shunt_model=admittance`. Branch-shift scan strongly rejects opposite sign, radians, and reciprocal ratio. Bus shunts are required for reactive balance. | 273 PV/REF buses have no online generator; fallback to `BUS.VM` is required. Many PV buses have `Qmin=0` or `Qmax=0`. Large number of PV→PQ switches when Q-limits are enforced. Final active PV/REF setpoint residual is essentially zero for active PV buses, but hybrid comparison can show larger deviations where reference is `BUS.VM` or where buses switched to PQ. | High with classic flat start. A previous classic flat-start run converged formally to a low-voltage / wrong-branch solution with `max|dVm|≈1.0187 pu`, `max|dVa|≈90.73°`, `minVm=0.0 pu`. DC angle start removes this behaviour in the tested run. | Improve compact Q-limit reporting. Keep diagnostics for PV/REF buses without online generators. Track whether many zero Q-limits are data artefacts or valid MATPOWER case data. |
+| `case_ACTIVSg10k.m` | 10,000 buses; large synthetic transmission case | Current v0.8.2 file-based MATPOWER runs converge to a healthy rectangular solution with profile-blend/MATPOWER-reference starts. Typical status: `status=converged`, `numerical_converged=true`, `final_converged=true`, `final_mismatch≈5e-8` or smaller, and `wrong_branch_status=ok`. | `large_flatstart_dc_blend` for robust production runs; `activsg10k_wrong_branch_historical_scan` only for manual diagnostics | MATPOWER import conventions confirmed: `shift_sign=1.0`, `shift_unit=deg`, `ratio=normal`, `bus_shunt_model=admittance`. Branch-shift scan strongly rejects opposite sign, radians, and reciprocal ratio. Bus shunts are required for reactive balance. Current healthy runs show approximately `min_vm_pu≈0.9234…0.9460`, `max_vm_pu≈1.0889…1.1087`, `angle_spread≈107°`, and worst active branch angle `≈22°`. | 273 PV/REF buses have no online generator; fallback to `BUS.VM` is required. Many PV buses have `Qmin=0` or `Qmax=0`. Large number of PV→PQ switches can occur when Q-limits are enforced. A delayed-Q-limit scan can produce `converged_limits_failed` due to remaining PV Q-limit violations while branch-quality metrics remain `ok`. | Historical, not currently reproduced. An earlier classic flat-start run converged formally to a low-voltage / wrong-branch solution with `max|dVm|≈1.0187 pu`, `max|dVa|≈90.73°`, `minVm=0.0 pu`, but current v0.8.2 scans either converge to a healthy branch or fail before numerical convergence. `wrong_branch_detection` itself is validated by forced-threshold tests (`90° => ok`, `20° warn => branch_angle_exceeded`, `20° fail => wrong_branch_detected`). | Preserve the historical wrong-branch note, but do not treat it as a current natural reproducer. If a true reproducer is still required, search old commits/configs rather than adding more YAML guesses. Keep compact Q-limit reporting, PV/REF-without-online-generator diagnostics, and forced-threshold wrong-branch regression coverage. |
 | `case_ACTIVSg25k.m` | 25,000 buses; large ACTIVSg synthetic transmission case; 32,230 branches | Rectangular NR converges with strengthened Q-limit guard. Successful run: `numerical_solution=OK`, `q_limit_active_set=OK`, `final_converged=true`, `status=converged`, `iterations=8`, PF time `≈74.55 s`, total example runtime `≈85.11 s`, final mismatch `≈4.651e-08`. | `activsg25k_q_limit_guard` + `large_flatstart_dc_blend` | MATPOWER fixed-reference self-check is good for this size: `max|ΔP|≈7.118 MW`, `max|ΔQ|≈4.611 MVAr`. Auto-profile detects `2034/3779` online generators with zero or narrow Q range. Q-limit guard locks `960` narrow-range PV buses as PQ before rectangular NR. Active set converges cleanly: `PV violations=0`, `REF violations=0`, final `PV/REF Q-limit check=OK`. Switching statistics: `pv2pq_events=2004`, `pv2pq_buses=1996`, `oscillating_buses=0`. Compare against imported setpoints is `OK`: `max|dVm|≈0.04291 pu`, aligned `max|dVa|≈0.3683°`, slack Δ `≈0.0°`. | `2753/3235` PV/REF buses have online `GEN.VG` targets; `502` differ from `BUS.VM` by more than `1e-4 pu`. `482` PV/REF buses have no online generator and use `BUS.VM` fallback. Negative branch impedance is present and preserved: `BR_R<0` on `447` rows, `BR_X<0` on `503` rows, both negative on `447` rows. Compare reference kinds: `active_pv_imported_setpoint=1238`, `final_pq_after_qlimit=1996`, `pq_bus_vm=21765`, `ref_slack_imported_setpoint=1`. | Low with the successful profile. Previous failures were active-set stabilization failures caused by many zero/narrow-Q generators and infeasible PV setpoints, not classical Newton wrong-branch convergence. | Console output is still too verbose: keep full auto-profile, negative-branch diagnostics, PV voltage diagnostics, and per-bus PV→PQ events in the logfile; show only compact statistics on console. Consider whether `qlimit_guard_violation_mode=lock_pq` should become an auto-profile recommendation for large narrow-Q cases. |
 | `case300.m` | 300 buses; medium test case | Rectangular NR converges in about 5 iterations with 3 PV→PQ switches. Final voltage magnitudes are close, but angle comparison fails mainly around the `BUS_I 196 / 2040` area. | `large_flatstart_dc_blend` + `diagnostic_import_scan` | The MATPOWER fixed-reference self-check is not power-balanced around `BUS_I 196 / 2040`. The dominant mismatch is already reproducible with a MATPOWER-style Y-bus using the stored `VM`/`VA` values and raw branch data. Main residual: about 926.9 MW at `BUS_I 2040` and `BUS_I 196`. | Not classified as a Sparlectra Newton wrong-branch issue. The dominant mismatch appears to be caused by the stored case reference angles together with a low-reactance active branch `196 -> 2040` (`x = 0.02`, `TAP = 1`, `SHIFT = 0`). Treat this case as a reference-data consistency diagnostic, not as a clean pass/fail solver benchmark. | Low for the documented run; angle-reference comparison is dominated by the stored fixed-reference inconsistency rather than a known wrong branch. | Keep the fixed-reference diagnostic classification visible when updating MATPOWER comparison tolerances or profiles. Keep the explicit `TAP = 1` preservation regression, but do not treat lost nominal TAP as the remaining root cause. |
 | `case145.m` | 145 buses; medium/small test case | Rectangular NR converges: `converged=yes`, `iterations=6`, `pv2pq_events=1`, compare `status=OK`. | `large_flatstart_dc_blend` + `diagnostic_import_scan` | No branch-shift entries. Standard degree/radian/sign scans are irrelevant because `SHIFT=0`. Reciprocal ratio is rejected by diagnostics. Bus shunts are important: disabling them causes very large P/Q residuals. | One relevant PV→PQ switch: `BUS_I 104`, where `GEN.VG=1.045` differs from `BUS.VM≈1.0059`; after switching, comparison against imported setpoint shows `dVm≈-0.03909 pu`, but the hybrid compare is still within configured tolerances. Several PV buses have `Qmin=0`. | Low in the documented run. No evidence of a wrong Newton branch; angle deviation is very small (`max|dVa|≈0.0051°`). | Track whether `BUS_I 104` is a valid Q-limit-driven PV→PQ case. Keep zero-Q-limit and shunt sensitivity visible in future comparisons. |
@@ -49,25 +78,123 @@ compare_voltage_reference: hybrid
 
 ### `large_flatstart_dc_blend`
 
-Use for large cases where a true flat start is required, but a classic flat start may converge to a wrong branch. Keep start projection disabled for large benchmark validation unless a stricter or case-specific rescue run explicitly requests it.
+Use for large cases where a true flat start is required, but a classic flat start may converge to an unstable or historically wrong Newton branch. In the current nested YAML schema this profile uses a DC-angle start with a blended voltage start and keeps wrong-branch detection active.
 
 ```yaml
-opt_flatstart: true
-flatstart_angle_mode: dc
-flatstart_voltage_mode: bus_vm_va_blend
-start_projection: false
-start_projection_try_blend_scan: false
-start_projection_try_dc_start: true
-autodamp: true
-max_ite: 80
-matpower_shift_sign: 1.0
-matpower_shift_unit: deg
-matpower_ratio: normal
-bus_shunt_model: admittance
-matpower_pv_voltage_source: gen_vg
-compare_voltage_reference: hybrid
-wrong_branch_detection: true
-wrong_branch_rescue: true
+power_flow:
+  method: rectangular
+  flatstart: true
+  tol: 1.0e-5
+  max_iter: 80
+  autodamp: true
+  autodamp_min: 0.05
+
+  wrong_branch_detection: warn   # use fail for strict CI-style rejection
+  wrong_branch_rescue: false     # rescue mode is reserved; no active retry loop yet
+  wrong_branch_min_vm_pu: 0.60
+  wrong_branch_max_vm_pu: 1.30
+  wrong_branch_max_angle_spread_deg: 180.0
+  wrong_branch_max_branch_angle_deg: 90.0
+  wrong_branch_min_low_vm_count: 1
+
+  start_mode:
+    angle_mode: dc
+    voltage_mode: bus_vm_va_blend
+    profile_source: matpower_reference
+    start_projection: false
+    try_dc_start: true
+    try_blend_scan: false
+    branch_guard: true
+    measure_candidates: true
+    accept_unmeasured_dc_start: false
+    reuse_import_data: true
+    dc_angle_limit_deg: 60.0
+
+matpower_import:
+  shift_sign: 1.0
+  shift_unit: deg
+  ratio: normal
+  bus_shunt_model: admittance
+  pv_voltage_source: gen_vg
+  compare_voltage_reference: hybrid
+```
+
+### `activsg10k_wrong_branch_historical_scan`
+
+Use only for manual diagnostics when trying to reproduce the historical ACTIVSg10k wrong-branch report. This is **not** a production recommendation. Current v0.8.2 tests did not find a natural wrong-branch reproducer with normal shift/ratio conventions and normal `wrong_branch_*` thresholds.
+
+```yaml
+power_flow:
+  method: rectangular
+  flatstart: true
+  tol: 1.0e-5
+  max_iter: 90
+  autodamp: false
+
+  wrong_branch_detection: warn
+  wrong_branch_min_vm_pu: 0.60
+  wrong_branch_max_vm_pu: 1.30
+  wrong_branch_max_angle_spread_deg: 180.0
+  wrong_branch_max_branch_angle_deg: 90.0
+
+  start_mode:
+    angle_mode: classic
+    voltage_mode: profile_blend
+    profile_source: matpower_reference
+    start_projection: false
+    try_dc_start: false
+    try_blend_scan: true
+    branch_guard: true
+    measure_candidates: true
+    reuse_import_data: true
+
+matpower_import:
+  auto_profile: off
+  pv_voltage_source: gen_vg
+  compare_voltage_reference: hybrid
+  bus_shunt_model: admittance
+  shift_unit: deg
+  shift_sign: 1.0
+  ratio: normal
+```
+
+Observed v0.8.2 result with this default-near reproducer candidate:
+
+```text
+status                         = converged
+final_converged                = true
+wrong_branch_status            = ok
+min_vm_pu                      ≈ 0.9235
+max_vm_pu                      ≈ 1.1087
+wrong_branch_angle_spread_deg  ≈ 107.1
+wrong_branch_worst_branch_deg  ≈ 22.94
+```
+
+A more degraded `classic/classic` voltage-angle start does not currently reproduce a converged wrong branch either; it fails before the post-convergence wrong-branch check with `nr_mismatch_not_converged_active_set_unstable`.
+
+### `activsg10k_forced_wrong_branch_detection_test`
+
+Use only to validate that wrong-branch configuration forwarding and final-status handling work. This profile intentionally tightens the branch-angle threshold below the observed healthy worst-branch angle; it is not a physical wrong-branch reproducer.
+
+```yaml
+power_flow:
+  wrong_branch_detection: warn   # change to fail for final rejection
+  wrong_branch_max_branch_angle_deg: 20.0
+```
+
+Expected current result on the healthy ACTIVSg10k solution:
+
+```text
+warn mode:
+  wrong_branch_status            = warn
+  wrong_branch_reason            = branch_angle_exceeded
+  wrong_branch_branch_violations = 3
+
+fail mode:
+  numerical_converged            = true
+  final_converged                = false
+  status                         = wrong_branch_detected
+  reason                         = wrong_branch_detected
 ```
 
 ### `activsg25k_q_limit_guard`
@@ -187,6 +314,8 @@ Use the following short labels in the case matrix where useful:
 | `final_pq_after_qlimit` | Bus was originally PV but switched to PQ due to Q-limits; its original PV voltage setpoint is no longer enforced. |
 | `qlimit_guard_stabilized` | Q-limit guard pre-locking and/or violation locking stabilizes many zero/narrow-Q PV buses and allows the active set to converge. |
 | `compact_console_needed` | Run is technically successful, but console output is too verbose; detailed diagnostics should remain in the logfile. |
+| `historical_wrong_branch_not_reproduced` | A previously observed wrong-branch or low-voltage branch remains documented, but current solver/config scans no longer reproduce it naturally. |
+| `forced_wrong_branch_detection_test` | The threshold is intentionally tightened to validate wrong-branch forwarding/final-status handling; this is not a physical wrong-branch reproducer. |
 
 ## Notes for extending this table
 

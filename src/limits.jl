@@ -12,9 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# file: src/limits.jl
 # Helper function: ensures that the vector is filled to at least 'bus'
 # and fills with a default value (via append!) up to the required length.
+
+# file: src/limits.jl
+
 function _ensure_bus_index!(v::Vector{T}, bus::Int, default::T) where {T}
   if length(v) < bus
     append!(v, fill(default, bus - length(v)))
@@ -140,7 +142,7 @@ function printPVQLimitsTable(net::Net; io::IO = stdout, max_rows::Int = 30)
   println(io, " Bus │      Qmin [MVAr] │      Qmax [MVAr]")
   println(io, "──────────────────────────────────────────────")
   shown = max_rows < 0 ? length(rows) : min(max_rows, length(rows))
-  for i in 1:shown
+  for i = 1:shown
     bus, qmin, qmax = rows[i]
     @printf(io, " %3d │ %15.6f │ %15.6f\n", bus, qmin, qmax)
   end
@@ -212,7 +214,7 @@ function validate_q_limit_signs!(qmin_pu::AbstractVector{Float64}, qmax_pu::Abst
   corrected = 0
   flagged = 0
 
-  for bus in 1:n
+  for bus = 1:n
     qmin = qmin_pu[bus]
     qmax = qmax_pu[bus]
     (isfinite(qmin) || isfinite(qmax)) || continue
@@ -390,7 +392,7 @@ function active_set_q_limits!(
 )
   qlimit_guard_violation_mode in (:delayed_switch, :lock_pq, :ignore) || error("Unsupported qlimit_guard_violation_mode=$(qlimit_guard_violation_mode). Supported: :delayed_switch, :lock_pq, :ignore.")
   qlimit_guard_violation_threshold_pu >= 0.0 || error("qlimit_guard_violation_threshold_pu must be >= 0 (got $(qlimit_guard_violation_threshold_pu)).")
-  changed   = false
+  changed = false
   reenabled = false
   printed_events = 0
   omitted_events = 0
