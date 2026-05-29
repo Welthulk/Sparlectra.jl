@@ -69,7 +69,7 @@ These rules are mandatory before any automated coding agent edits files.
 The following files are protected because they contain central solver, configuration, or execution-path logic:
 
 ```text
-src/jacobian_complex.jl
+src/powerflow_rectangular/rectangular_network_solver.jl
 src/run_acpflow.jl
 src/control_framework.jl
 src/configuration.jl
@@ -128,7 +128,7 @@ Automated coding agents must not perform the following actions unless the user e
 - continuation or homotopy start logic,
 - new DC-start or QV-start fallback modes,
 - broad solver restructuring mixed with a bugfix,
-- large-scale rewrite of `src/jacobian_complex.jl`,
+- large-scale rewrite of `src/powerflow_rectangular/rectangular_network_solver.jl`,
 - changing legacy public APIs to hide test failures,
 - converting many tests from unqualified public calls to qualified internal calls,
 - adding global variables or dummy functions to satisfy missing local keyword errors,

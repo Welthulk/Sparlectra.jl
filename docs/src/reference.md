@@ -14,7 +14,7 @@
     "equicircuit.jl", 
     "losses.jl", 
     "links.jl",
-    "jacobian_complex.jl", 
+    "powerflow_rectangular/rectangular_network_solver.jl", 
     "jacobian_fd.jl",
     "measurements.jl",
     "state_estimation.jl",    

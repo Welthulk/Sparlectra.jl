@@ -434,7 +434,7 @@ export
   evaluate_global_observability,          # Evaluate global SE observability.
   evaluate_local_observability,           # Evaluate local SE observability.
 
-  # jacobian_complex.jl
+  # rectangular network solver
   runpf_rectangular!,                     # Run rectangular complex-state NR PF.
   mismatch_rectangular,                   # Compute rectangular PF mismatch vector.
   project_rectangular_start,              # Build/select rectangular start candidate.
@@ -496,7 +496,7 @@ include("powerflow_rectangular/rectangular_qlimit_iteration.jl")
 include("powerflow_rectangular/rectangular_status_workspace.jl")
 include("powerflow_rectangular/rectangular_finalization.jl")
 include("powerflow_rectangular/rectangular_final_status.jl")
-include("jacobian_complex.jl")
+include("powerflow_rectangular/rectangular_network_solver.jl")
 include("solver_interface.jl")
 include("FetchMatpowerCase.jl")
 include("measurements.jl")

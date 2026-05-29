@@ -323,7 +323,7 @@ function applyPfSolution!(
   Sbus_pu = V .* conj.(Ibus)
   Sbus_MVA = Sbus_pu .* model.baseMVA
 
-  # 3) Write back Slack P/Q and PV Q generation (policy as in jacobian_complex.jl) :contentReference[oaicite:11]{index=11}
+  # 3) Write back Slack P/Q and PV Q generation (policy as in rectangular_network_solver.jl) :contentReference[oaicite:11]{index=11}
   @inbounds for k in 1:n
     busIdx = model.busIdx_net[k]
     node = net.nodeVec[busIdx]

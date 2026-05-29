@@ -13,10 +13,10 @@
 # limitations under the License.
 
 #
-# file: src/jacobian_complex.jl
+# file: src/powerflow_rectangular/rectangular_network_solver.jl
 #
 
-# jacobian_complex.jl — Rectangular PF network-level orchestration and public entry glue
+# rectangular_network_solver.jl — Rectangular PF network-level orchestration and public entry glue
 #
 # Current split architecture:
 # - `runpf_rectangular!` is the network-integrated rectangular solver entry point.
