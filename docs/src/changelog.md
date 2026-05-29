@@ -4,6 +4,7 @@
 * Added wrong-branch diagnostics for rectangular power-flow solutions, including angle-spread checks and configurable voltage-based status classification.
 ## Improvements
 * Refactored rectangular power-flow code into focused modules under `src/powerflow_rectangular/` for better maintainability and clearer separation of responsibilities.
+* Hardened `matpower_import.auto_profile` into a real MATPOWER pre-run that logs recommendation evidence, preserves recommend-mode configuration, applies only unambiguous import-convention changes in apply mode, and prints final effective options without rewriting YAML files.
 
 ## Bugfixes
 * Fixed `run_acpflow(casefile=...)` configuration forwarding so MATPOWER/file-based rectangular solves honor configured `power_flow.wrong_branch_*` diagnostics instead of falling back to default wrong-branch thresholds and detection mode.
@@ -215,7 +216,7 @@
 
 ### Diagnostics
 
-* Added MATPOWER auto-profile pre-run mode (`matpower_auto_profile = recommend|apply`) to summarize or apply robust import, flat-start, PV/REF voltage-source, and Q-limit settings while preserving explicit YAML overrides.
+* Added MATPOWER auto-profile pre-run mode (`matpower_import.auto_profile = recommend|apply`) to summarize or apply robust import, flat-start, PV/REF voltage-source, and Q-limit settings while preserving explicit YAML overrides.
 * Added branch-neighborhood reports for selected high-residual buses.
 * Added residual-cluster diagnostics for PEGASE-style mismatch regions.
 * Added negative branch impedance scans while preserving signed MATPOWER `BR_R` / `BR_X` values.
