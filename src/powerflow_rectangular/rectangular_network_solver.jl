@@ -28,6 +28,8 @@
 # Historical note:
 # - `run_complex_nr_rectangular_for_net!` was an intermediate naming layer and is
 #   removed from the active code path.
+# Date: 29.5.2026
+# file: src/powerflow_rectangular/rectangular_network_solver.jl
 
 using LinearAlgebra
 using SparseArrays
@@ -983,7 +985,7 @@ function _active_link_representative_map(net::Net)
     union_set(Int(l.fromBus), Int(l.toBus))
   end
 
-  return [find_root(i) for i in 1:n]
+  return [find_root(i) for i = 1:n]
 end
 
 function _merged_pf_net(net::Net)
@@ -992,12 +994,12 @@ function _merged_pf_net(net::Net)
 
   wnet = deepcopy(net)
   n = length(wnet.nodeVec)
-  cluster_members = [Int[] for _ in 1:n]
-  for bus in 1:n
+  cluster_members = [Int[] for _ = 1:n]
+  for bus = 1:n
     push!(cluster_members[reps[bus]], bus)
   end
 
-  for rep in 1:n
+  for rep = 1:n
     members = cluster_members[rep]
     isempty(members) && continue
 

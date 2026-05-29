@@ -1,32 +1,27 @@
 # Change Log
-## Version 0.8.2 – 2026-05-30
+## Version 0.8.2 – 2026-05-29
+
 ## New Features
-* Added wrong-branch diagnostics for rectangular power-flow solutions, including angle-spread checks and configurable voltage-based status classification.
+
+* Added configurable wrong-branch diagnostics for rectangular power-flow results, including voltage, angle-spread, and branch-angle plausibility checks.
+
 ## Improvements
-* Refactored rectangular power-flow code into focused modules under `src/powerflow_rectangular/` for better maintainability and clearer separation of responsibilities.
-* Hardened `matpower_import.auto_profile` into a real MATPOWER pre-run that logs recommendation evidence, preserves recommend-mode configuration, applies only unambiguous import-convention changes in apply mode, and prints final effective options without rewriting YAML files.
+
+* Hardened `matpower_import.auto_profile` into a MATPOWER pre-run that logs recommendation evidence, preserves `recommend` mode without changing the active configuration, applies only unambiguous import-convention changes in `apply` mode, and prints final effective options without rewriting YAML files.
+* Refactored the rectangular complex-state power-flow implementation into focused modules under `src/powerflow_rectangular/`, with `runpf_rectangular!` as the network-integrated entry point and `run_complex_nr_rectangular` as the standalone array-level solver.
 
 ## Bugfixes
-* Fixed `run_acpflow(casefile=...)` configuration forwarding so MATPOWER/file-based rectangular solves honor configured `power_flow.wrong_branch_*` diagnostics instead of falling back to default wrong-branch thresholds and detection mode.
 
-### Rectangular power-flow internals
-
-* Refactored the rectangular complex-state power-flow implementation into focused helper layers under `src/powerflow_rectangular/`.
-* Simplified the rectangular entry-point model: `runpf_rectangular!` is the network-integrated rectangular solver entry point, while `run_complex_nr_rectangular` remains the standalone array-level solver.
-* Removed the redundant `run_complex_nr_rectangular_for_net!` naming layer.
+* Fixed `run_acpflow(casefile=...)` configuration forwarding so MATPOWER/file-based rectangular solves honor configured `power_flow.wrong_branch_*` options instead of falling back to default diagnostics.
 * Aligned rectangular autodamping defaults so direct solver calls and configuration-driven runs use the same `autodamp_min = 0.05` default.
 
-### Maintenance
 
-- Moved the rectangular network solver glue from `src/jacobian_complex.jl` to
-  `src/powerflow_rectangular/rectangular_network_solver.jl` so the file layout
-  matches the rectangular power-flow architecture. No public API or solver
-  behavior changed.
+## Related Issues
 
-
-### Related
- #219 Detect wrong/false low-voltage branch convergence and retry safely
- #220 Mechanically split rectangular power-flow code into focused modules 
+* #193 Harden MATPOWER auto-profile recommendation and application
+* #219 Detect wrong/false low-voltage branch convergence and retry safely
+* #220 Mechanically split rectangular power-flow code into focused modules
+  
 
 ## Version 0.8.1 – 2026-05-26
 

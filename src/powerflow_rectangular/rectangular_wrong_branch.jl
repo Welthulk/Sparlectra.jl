@@ -16,6 +16,9 @@
 #
 # Rectangular power-flow wrong-branch diagnostics.
 
+# Date: 29.5.2026
+# file: src/powerflow_rectangular/rectangular_wrong_branch.jl
+
 @inline function _wrap_to_180_deg(angle_deg::Float64)::Float64
   wrapped = mod(angle_deg + 180.0, 360.0) - 180.0
   return wrapped == -180.0 ? 180.0 : wrapped
@@ -30,8 +33,8 @@ function _circular_angle_spread_deg(angles_deg)::Float64
 
   vals360 = sort(mod.(vals, 360.0))
   largest_gap = vals360[1] + 360.0 - vals360[end]
-  for i in 1:(n - 1)
-    gap = vals360[i + 1] - vals360[i]
+  for i = 1:(n-1)
+    gap = vals360[i+1] - vals360[i]
     if gap > largest_gap
       largest_gap = gap
     end
@@ -55,42 +58,16 @@ end
   worst_branch = nothing,
   lowest_buses::Vector{Int} = Int[],
 )
-  return (;
-    status, reason, min_vm_pu, max_vm_pu, low_vm_count, high_vm_count, angle_spread_deg,
-    max_branch_angle_deg, worst_branch_angle_deg, branch_angle_violation_count, worst_branch,
-    lowest_buses,
-  )
+  return (; status, reason, min_vm_pu, max_vm_pu, low_vm_count, high_vm_count, angle_spread_deg, max_branch_angle_deg, worst_branch_angle_deg, branch_angle_violation_count, worst_branch, lowest_buses)
 end
 
 @inline _wrong_branch_not_checked_result() = _wrong_branch_result(status = :not_checked, reason = :disabled)
 
-function _check_wrong_branch_solution(
-  net::Net,
-  V::Vector{ComplexF64},
-  bus_types::Vector{Symbol},
-  Vset::Vector{Float64},
-  slack_idx::Int;
-  min_vm_pu::Float64,
-  max_vm_pu::Float64,
-  max_angle_spread_deg::Float64,
-  max_branch_angle_deg::Float64 = Inf,
-  min_low_vm_count::Int,
-)
+function _check_wrong_branch_solution(net::Net, V::Vector{ComplexF64}, bus_types::Vector{Symbol}, Vset::Vector{Float64}, slack_idx::Int; min_vm_pu::Float64, max_vm_pu::Float64, max_angle_spread_deg::Float64, max_branch_angle_deg::Float64 = Inf, min_low_vm_count::Int)
   return _check_wrong_branch_solution(V, bus_types, Vset, slack_idx; net = net, min_vm_pu = min_vm_pu, max_vm_pu = max_vm_pu, max_angle_spread_deg = max_angle_spread_deg, max_branch_angle_deg = max_branch_angle_deg, min_low_vm_count = min_low_vm_count)
 end
 
-function _check_wrong_branch_solution(
-  V::Vector{ComplexF64},
-  bus_types::Vector{Symbol},
-  Vset::Vector{Float64},
-  slack_idx::Int;
-  net::Union{Nothing,Net} = nothing,
-  min_vm_pu::Float64,
-  max_vm_pu::Float64,
-  max_angle_spread_deg::Float64,
-  max_branch_angle_deg::Float64 = Inf,
-  min_low_vm_count::Int,
-)
+function _check_wrong_branch_solution(V::Vector{ComplexF64}, bus_types::Vector{Symbol}, Vset::Vector{Float64}, slack_idx::Int; net::Union{Nothing,Net} = nothing, min_vm_pu::Float64, max_vm_pu::Float64, max_angle_spread_deg::Float64, max_branch_angle_deg::Float64 = Inf, min_low_vm_count::Int)
   n = length(V)
   n == length(bus_types) || throw(ArgumentError("V and bus_types must have same length."))
   n == length(Vset) || throw(ArgumentError("V and Vset must have same length."))
@@ -156,5 +133,18 @@ function _check_wrong_branch_solution(
     status = :warn
     reason = :branch_angle_exceeded
   end
-  return _wrong_branch_result(status = status, reason = reason, min_vm_pu = minimum(vm), max_vm_pu = maximum(vm), low_vm_count = length(low_idx), high_vm_count = length(high_idx), angle_spread_deg = angle_spread_deg, max_branch_angle_deg = max_branch_angle_deg, worst_branch_angle_deg = max_branch_angle_seen_deg, branch_angle_violation_count = branch_angle_violation_count, worst_branch = worst_branch, lowest_buses = lowest_buses)
+  return _wrong_branch_result(
+    status = status,
+    reason = reason,
+    min_vm_pu = minimum(vm),
+    max_vm_pu = maximum(vm),
+    low_vm_count = length(low_idx),
+    high_vm_count = length(high_idx),
+    angle_spread_deg = angle_spread_deg,
+    max_branch_angle_deg = max_branch_angle_deg,
+    worst_branch_angle_deg = max_branch_angle_seen_deg,
+    branch_angle_violation_count = branch_angle_violation_count,
+    worst_branch = worst_branch,
+    lowest_buses = lowest_buses,
+  )
 end

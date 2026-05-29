@@ -16,6 +16,9 @@
 #
 # This file is included inside module Sparlectra. Do not add a module wrapper here.
 
+# Date: 29.5.2026
+# file: src/powerflow_rectangular/rectangular_voltage_setpoints.jl
+
 function _bus_voltage_setpoints_from_prosumers(net::Net; performance_profile = nothing)::Vector{Float64}
   nodes = net.nodeVec
   nbus = length(nodes)

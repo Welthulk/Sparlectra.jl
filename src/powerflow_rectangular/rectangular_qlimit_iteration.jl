@@ -16,6 +16,9 @@
 #
 # Rectangular power-flow per-iteration Q-limit active-set helper.
 
+# Date: 29.5.2026
+# file: src/powerflow_rectangular/rectangular_qlimit_iteration.jl
+
 function _handle_rectangular_qlimit_iteration!(
   net,
   it,

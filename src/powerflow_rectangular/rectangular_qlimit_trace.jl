@@ -17,6 +17,10 @@
 # Rectangular power-flow Q-limit bus-ID and trace helpers.
 
 # Preserve original MATPOWER BUS_I identifiers for diagnostics output.
+
+# Date: 29.5.2026
+# file: src/powerflow_rectangular/rectangular_qlimit_trace.jl
+
 _qlimit_original_bus_id(net::Net, bus::Int)::Int = haskey(net.busOrigIdxDict, bus) ? net.busOrigIdxDict[bus] : bus
 
 function _resolve_qlimit_trace_buses(net::Net, requested::AbstractVector{Int})::Vector{Int}

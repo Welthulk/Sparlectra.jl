@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Author: Udo Schmitz (https://github.com/Welthulk)
+# Date: 1.1.2026
 # file: src/state_estimation.jl
 
 using Printf
@@ -669,7 +671,15 @@ function _runse_with_config!(net::Net, measurements::Vector{Measurement}, cfg::S
   return SEResult(Vest, converged, iteDone, norm(r), r, jval, ν, _j_within_3sigma_band(jval, ν))
 end
 
-function runse!(net::Net, measurements::Vector{Measurement}; maxIte::Int = state_estimation_config().max_iter, tol::Float64 = state_estimation_config().tol, flatstart::Bool = state_estimation_config().flatstart, jacEps::Float64 = state_estimation_config().jac_eps, updateNet::Bool = state_estimation_config().update_net)
+function runse!(
+  net::Net,
+  measurements::Vector{Measurement};
+  maxIte::Int = state_estimation_config().max_iter,
+  tol::Float64 = state_estimation_config().tol,
+  flatstart::Bool = state_estimation_config().flatstart,
+  jacEps::Float64 = state_estimation_config().jac_eps,
+  updateNet::Bool = state_estimation_config().update_net,
+)
   cfg = StateEstimationConfig(max_iter = maxIte, tol = tol, flatstart = flatstart, jac_eps = jacEps, update_net = updateNet)
   return _runse_with_config!(net, measurements, cfg)
 end
