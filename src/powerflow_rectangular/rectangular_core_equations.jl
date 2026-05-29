@@ -15,6 +15,8 @@
 # This file is included inside module Sparlectra. Do not add a module wrapper here.
 #
 # Rectangular power-flow core equation helpers.
+# Date: 29.5.2026
+# file: src/powerflow_rectangular/rectangular_core_equations.jl
 
 """
     build_complex_jacobian(Ybus, V)

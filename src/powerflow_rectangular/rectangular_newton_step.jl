@@ -16,6 +16,9 @@
 #
 # This file is included inside module Sparlectra. Do not add a module wrapper here.
 
+# Date: 29.5.2026
+# file: src/powerflow_rectangular/rectangular_newton_step.jl
+
 function _validate_rectangular_damping(damp::Float64, autodamp_min::Float64)
   # Guard rails keep damping in the physically meaningful [0,1] step-length range.
   isfinite(damp) || error("damp must be finite (got $(damp)).")

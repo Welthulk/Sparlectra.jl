@@ -15,6 +15,8 @@
 # This file is included inside module Sparlectra. Do not add a module wrapper here.
 #
 # Rectangular power-flow final status and diagnostic helpers.
+# Date: 29.5.2026
+# file: src/powerflow_rectangular/rectangular_final_status.jl
 
 function _finalize_rectangular_qlimit_summary(
   net,

@@ -15,6 +15,8 @@
 # This file is included inside module Sparlectra. Do not add a module wrapper here.
 #
 # Rectangular power-flow post-iteration finalization helpers.
+# Date: 29.5.2026
+# file: src/powerflow_rectangular/rectangular_finalization.jl
 
 function _sync_rectangular_bus_types_to_net!(net::Net, bus_types)
   @inbounds for k in eachindex(bus_types)

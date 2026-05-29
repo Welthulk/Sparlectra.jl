@@ -16,6 +16,9 @@
 #
 # Rectangular power-flow status registry, iteration workspace, and status reporting helpers.
 
+# Date: 29.5.2026
+# file: src/powerflow_rectangular/rectangular_status_workspace.jl 
+
 mutable struct _RectangularPFStatusTable
   entries::Vector{Tuple{UInt,WeakRef,Any}}
 end
