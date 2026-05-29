@@ -16,6 +16,9 @@
 #
 # Rectangular power-flow Q-limit trace logging helpers.
 
+# Date: 29.5.2026
+# file: src/powerflow_rectangular/rectangular_qlimit_trace_logging.jl
+
 function _bus_has_online_voltage_regulator(net::Net, bus::Int)::Bool
   for ps in net.prosumpsVec
     getPosumerBusIndex(ps) == bus || continue

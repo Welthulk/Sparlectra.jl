@@ -150,11 +150,11 @@ end
 
 Build a canonical PF model from `net`:
 - active buses are defined via `getBusData(net.nodeVec, net.baseMVA, flatstart; net=net)`,
-  which excludes isolated buses and sorts by bus index. :contentReference[oaicite:5]{index=5}
+  which excludes isolated buses and sorts by bus index.
 - Ybus is built via `createYBUS(net=net, sparse=opt_sparse, ...)` and is consistent
-  with the same isolated-bus compression. :contentReference[oaicite:6]{index=6}
+  with the same isolated-bus compression.
 
-`include_limits=true` attaches qmin/qmax in per-unit as used by your NR-with-limits code. :contentReference[oaicite:7]{index=7}
+`include_limits=true` attaches qmin/qmax in per-unit as used by your NR-with-limits code.
 """
 function buildPfModel(
   net::Net;
@@ -233,7 +233,7 @@ function buildPfModel(
     verbose = verbose,
   )
 
-  # 4) Optional limits aligned with busVec indexing (as in jacobian_full.jl) :contentReference[oaicite:8]{index=8}
+  # 4) Optional limits aligned with busVec indexing (as in jacobian_full.jl)
   qmin_pu = Float64[]
   qmax_pu = Float64[]
   if include_limits
@@ -271,7 +271,7 @@ Compute `||F(V)||_∞` using Sparlectra's rectangular PQ/PV mismatch definition:
 
     F = mismatch_rectangular(model.Ybus, V, model.Sspec, model.busType, model.Vset, model.slack_idx)
 
-This is the canonical comparison metric for external solvers. :contentReference[oaicite:9]{index=9}
+This is the canonical comparison metric for external solvers.
 """
 function mismatchInf(model::PFModel, V::Vector{ComplexF64})::Float64
   F = mismatch_rectangular(model.Ybus, V, model.Sspec, model.busType, model.Vset, model.slack_idx)
@@ -288,7 +288,7 @@ end
 Write the external solution back into `net`:
 - updates node Vm/Va on all active buses
 - optionally writes Slack P/Q and PV Q generation from solved injections (same policy
-  as your rectangular NR integration) :contentReference[oaicite:10]{index=10}
+  as your rectangular NR integration)
 
 Notes:
 - Isolated buses (not in model) are left untouched.
@@ -323,7 +323,7 @@ function applyPfSolution!(
   Sbus_pu = V .* conj.(Ibus)
   Sbus_MVA = Sbus_pu .* model.baseMVA
 
-  # 3) Write back Slack P/Q and PV Q generation (policy as in jacobian_complex.jl) :contentReference[oaicite:11]{index=11}
+  # 3) Write back Slack P/Q and PV Q generation (policy as in rectangular_network_solver.jl)
   @inbounds for k in 1:n
     busIdx = model.busIdx_net[k]
     node = net.nodeVec[busIdx]
@@ -363,7 +363,7 @@ Convenience wrapper:
 4) apply solution back to net
 5) return `(iters, status, sol)` where `status == 0` indicates convergence
 
-`include_limits=false` by default: keep Sparlectra "clean" and let external solver decide. :contentReference[oaicite:12]{index=12}
+`include_limits=false` by default: keep Sparlectra "clean" and let external solver decide.
 """
 function runpf_external!(
   net::Net,

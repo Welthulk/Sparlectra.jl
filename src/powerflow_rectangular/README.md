@@ -13,7 +13,7 @@ The rectangular implementation is split across several abstraction layers:
 | `runpf_rectangular!` | Network-integrated rectangular solver | Orchestrates rectangular power flow on a `Sparlectra.Net`: setup, start projection, Newton loop, Q-limit handling, finalization, diagnostics, and write-back. |
 | `run_complex_nr_rectangular` | Standalone array-level solver | Runs the rectangular Newton method directly on `Ybus`, `V0`, and `S`; it does not own full `Net` orchestration. |
 
-`runpf_rectangular!` (in `src/jacobian_complex.jl`) is therefore the network-integrated rectangular entry point and orchestrates the helper layers in this directory.
+`runpf_rectangular!` (in `src/powerflow_rectangular/rectangular_network_solver.jl`) is therefore the network-integrated rectangular entry point and orchestrates the helper layers in this directory.
 
 `run_complex_nr_rectangular` (in this directory) remains the standalone array-level solver for direct matrix/vector use.
 
@@ -39,7 +39,7 @@ include("powerflow_rectangular/rectangular_qlimit_iteration.jl")
 include("powerflow_rectangular/rectangular_status_workspace.jl")
 include("powerflow_rectangular/rectangular_finalization.jl")
 include("powerflow_rectangular/rectangular_final_status.jl")
-include("jacobian_complex.jl")
+include("powerflow_rectangular/rectangular_network_solver.jl")
 ```
 
 
@@ -64,7 +64,7 @@ include("jacobian_complex.jl")
 | `rectangular_status_workspace.jl` | Rectangular status registry, iteration workspace allocation, and summary/report formatting helpers | `_RectangularPFStatusTable`, `RectangularIterationWorkspace`, `rectangular_pf_status`, `_print_rectangular_convergence_summary`, `_print_qlimit_active_set_summary` |
 | `rectangular_finalization.jl` | Post-iteration finalization helpers for bus-type sync, voltage write-back, final injection vectors, and bus/total-power write-back (excluding active Q-limit switching and wrong-branch status decisions) | `_sync_rectangular_bus_types_to_net!`, `_compute_rectangular_final_injections`, `_write_rectangular_bus_power_results!`, `_write_rectangular_total_bus_power!` |
 | `rectangular_final_status.jl` | Final Q-limit acceptance/rejection glue, wrong-branch final diagnostics glue, and rectangular PF status build/store helpers (excluding active Q-limit switching loop) | `_finalize_rectangular_qlimit_summary`, `_finalize_rectangular_wrong_branch_diagnostics`, `_build_rectangular_final_status`, `_store_and_print_rectangular_final_status!` |
-| `../jacobian_complex.jl` | Remaining rectangular solver loop/public entry points and orchestration around helper layers | `runpf_rectangular!`, `runpf!`-related rectangular entry points |
+| `rectangular_network_solver.jl` | Network-integrated rectangular solver loop, public entry glue, and orchestration around helper layers | `runpf_rectangular!`, `runpf!`-related rectangular entry points |
 
 Entry-point note: the previous extra naming layer (`run_complex_nr_rectangular_for_net!`) was removed. `runpf_rectangular!` is now the network-integrated rectangular solver entry point, while `run_complex_nr_rectangular` remains the standalone array-level solver.
 
@@ -78,7 +78,7 @@ High-level rectangular PF flow in the current split:
 4. Optionally project/sanitize the rectangular start.
 5. Run Newton iterations via the standalone array solver (`run_complex_nr_rectangular`) using rectangular mismatch and Newton-step helpers.
 6. Optionally apply autodamping backtracking.
-7. Apply Q-limit guard preprocessing, then handle active PV→PQ switching logic in the remaining solver loop in `jacobian_complex.jl`.
+7. Apply Q-limit guard preprocessing, then handle active PV→PQ switching logic in the network solver loop in `rectangular_network_solver.jl`.
 8. Write final complex voltages back to node magnitude/angle fields.
 9. Run wrong-branch diagnostics/status reporting where configured.
 
@@ -90,7 +90,7 @@ The **include order** above is the dependency/load order. The **runtime call ord
 flowchart TD
     A["User / script / example"] --> B["run_acpflow\nhigh-level workflow"]
     B --> C["runpf!\ngeneric PF dispatcher"]
-    C --> D["runpf_rectangular!\nnetwork-integrated rectangular solver\n(src/jacobian_complex.jl)"]
+    C --> D["runpf_rectangular!\nnetwork-integrated rectangular solver\n(src/powerflow_rectangular/rectangular_network_solver.jl)"]
 
     subgraph Workflow["Workflow / API layer"]
         B
