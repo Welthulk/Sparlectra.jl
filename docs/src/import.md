@@ -90,8 +90,9 @@ value differs from active `Threads.nthreads()`, the script can re-exec once
 with the requested `--threads` setting.
 
 ```yaml
-matpower_auto_profile: recommend  # false, recommend, or apply
-matpower_auto_profile_log: true
+matpower_import:
+  auto_profile: recommend  # off, recommend, or apply
+  auto_profile_log: true
 ```
 
 `recommend` logs a profile without changing the active run. `apply` applies

@@ -32,7 +32,10 @@
 `matpower_import.auto_profile` is evaluated by the MATPOWER runner before the
 main solve. The pre-run reads the MATPOWER case, computes compact diagnostics,
 and emits a table with the option path, current value, recommended value,
-action, reason, and diagnostic evidence.
+action, reason, and diagnostic evidence. The shipped default is
+`auto_profile: recommend` with `auto_profile_log: true`, so normal MATPOWER
+runner usage logs recommendation-only diagnostics by default without changing
+the active configuration.
 
 Modes:
 
@@ -59,3 +62,27 @@ ambiguous diagnostics are shown as `keep` or `recommend` and do not change the
 active run. Auto-profile never rewrites user YAML files. To reproduce a run,
 copy the logged final effective options (or enable
 `diagnostics.log_effective_config`) into a tracked configuration file.
+
+### Comparing multiple MATPOWER configurations
+
+`examples/matpower_import_multi_config.jl` is a developer-oriented helper for
+running the same MATPOWER case against several YAML configuration files. It is
+useful for checking whether options such as `matpower_import.auto_profile`,
+`power_flow.wrong_branch_detection`, or start-mode settings affect the final
+rectangular solver status.
+
+Example:
+
+```bash
+julia --project=. examples/matpower_import_multi_config.jl \
+  data/mpower/case14.m \
+  --config=path/to/config_a.yaml \
+  --config=path/to/config_b.yaml \
+  --status-only
+```
+
+The script does not create or rewrite YAML files. Repeated `--config=...`
+arguments and comma- or semicolon-separated `--configs=A,B,C` lists are both
+supported. In `--status-only` mode it prints the rectangular status and
+wrong-branch diagnostic fields for each configuration; `--runner` delegates to
+the standard `Sparlectra.run_matpower_case` runner output.
