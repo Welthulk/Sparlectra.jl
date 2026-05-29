@@ -22,6 +22,34 @@ function _canonical_yaml_leaf_keys()
   return Set(_leaf_paths(yaml))
 end
 
+function _auto_profile_shift_case()
+  base = 100.0
+  bus = [
+    1.0 3.0 0.0 0.0 0.0 0.0 1.0 1.0 0.0 110.0 1.0 1.1 0.9
+    2.0 1.0 0.0 0.0 0.0 0.0 1.0 1.0 -5.0 110.0 1.0 1.1 0.9
+  ]
+  branch = [1.0 2.0 0.01 0.10 0.0 999.0 999.0 999.0 1.0 10.0 1.0 -360.0 360.0]
+  ybus = Sparlectra.MatpowerIO.build_ybus_matpower(bus, branch, base; matpower_shift_unit = :deg, matpower_shift_sign = 1.0, matpower_ratio = :normal)
+  v = bus[:, 8] .* cis.(bus[:, 9] .* (pi / 180.0))
+  scalc = v .* conj.(ybus * v)
+  bus[2, 3] = -real(scalc[2]) * base
+  bus[2, 4] = -imag(scalc[2]) * base
+  gen = [1.0 0.0 0.0 999.0 -999.0 1.0 100.0 1.0 999.0 0.0]
+  return Sparlectra.MatpowerIO.MatpowerCase("auto_profile_shift", base, bus, gen, branch, nothing, nothing)
+end
+
+function _auto_profile_pv_mismatch_case()
+  mpc = _auto_profile_shift_case()
+  bus = copy(mpc.bus)
+  bus[2, 2] = 2.0
+  bus[2, 8] = 1.00
+  gen = [
+    1.0 0.0 0.0 999.0 -999.0 1.0 100.0 1.0 999.0 0.0
+    2.0 0.0 0.0 999.0 -999.0 1.04 100.0 1.0 999.0 0.0
+  ]
+  return Sparlectra.MatpowerIO.MatpowerCase("auto_profile_pv", mpc.baseMVA, bus, gen, mpc.branch, nothing, nothing)
+end
+
 function run_configuration_coverage_tests()
   @testset "Configuration YAML key coverage" begin
     leaves = _canonical_yaml_leaf_keys()
@@ -127,6 +155,42 @@ benchmark:
     @test cfg.matpower.ratio === :reciprocal
     @test cfg.output.logfile_performance === :full
     @test cfg.benchmark.enabled === false
+  end
+
+  @testset "MATPOWER auto-profile decision rules" begin
+    mpc = _auto_profile_shift_case()
+    cfg = Sparlectra.SparlectraConfig(Dict(
+      "matpower_import" => Dict("auto_profile" => "off", "shift_unit" => "rad"),
+    ))
+    off = Sparlectra.matpower_auto_profile(mpc, cfg; mode = :off)
+    @test isempty(off.rows)
+    @test off.config.matpower.shift_unit === :rad
+
+    rec = Sparlectra.matpower_auto_profile(mpc, cfg; mode = :recommend)
+    @test rec.config.matpower.shift_unit === :rad
+    shift_unit_row = only(row for row in rec.rows if row.option == "matpower_import.shift_unit")
+    @test shift_unit_row.recommended == "deg"
+    @test shift_unit_row.action === :recommend
+
+    applied = Sparlectra.matpower_auto_profile(mpc, cfg; mode = :apply)
+    @test applied.config.matpower.shift_unit === :deg
+    applied_row = only(row for row in applied.rows if row.option == "matpower_import.shift_unit")
+    @test applied_row.action === :applied
+
+    ambiguous_cfg = Sparlectra.SparlectraConfig(Dict("matpower_import" => Dict("auto_profile" => "apply")))
+    ambiguous = Sparlectra.matpower_auto_profile(_auto_profile_pv_mismatch_case(), ambiguous_cfg; mode = :apply)
+    compare_row = only(row for row in ambiguous.rows if row.option == "matpower_import.compare_voltage_reference")
+    @test compare_row.recommended == "hybrid"
+    @test compare_row.action === :recommend
+    @test ambiguous.config.matpower.compare_voltage_reference === :imported_setpoint
+
+    io = IOBuffer()
+    Sparlectra.print_matpower_auto_profile(io, ambiguous.rows)
+    Sparlectra.print_matpower_auto_profile_effective_options(io, ambiguous.config)
+    text = String(take!(io))
+    @test occursin("MATPOWER auto-profile recommendations", text)
+    @test occursin("Final effective MATPOWER auto-profile options", text)
+    @test occursin("matpower_import.compare_voltage_reference", text)
   end
 
   @testset "Configuration value-domain validation" begin

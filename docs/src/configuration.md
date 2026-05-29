@@ -133,6 +133,7 @@ power_flow:
 matpower_import:
   case: case14.m
   auto_profile: recommend
+  auto_profile_log: true
   pv_voltage_source: gen_vg
 
 state_estimation:
@@ -158,6 +159,12 @@ runtime:
 extensions:
   reserved: true
 ```
+
+`matpower_import.auto_profile` controls a MATPOWER pre-run profile. Use `off`
+to disable it, `recommend` to print/log a recommendation table without changing
+the active configuration, or `apply` to apply only unambiguous import-convention
+recommendations. The runner also logs final effective MATPOWER options; it never
+rewrites user YAML files.
 
 For complete key references and allowed-value tables, see the module-specific pages below.
 
