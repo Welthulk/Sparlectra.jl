@@ -3,7 +3,15 @@
 This page collects numerical notes for the supported internal power-flow path:
 the sparse rectangular complex-state Newton–Raphson solver.
 
-## Rectangular Complex-State Newton–Raphson (`jacobian_complex.jl`)
+The rectangular power-flow implementation is split into focused layers:
+
+* `src/powerflow_rectangular/rectangular_core_equations.jl` contains the core residual/equation helpers, including `mismatch_rectangular`.
+* `src/powerflow_rectangular/rectangular_jacobian_builders.jl` contains the analytic rectangular Jacobian builders.
+* `src/powerflow_rectangular/rectangular_newton_step.jl` contains Newton-step update and damping helpers.
+* `src/powerflow_rectangular/rectangular_standalone_solver.jl` contains `run_complex_nr_rectangular`, the standalone array-level Newton driver.
+* `src/powerflow_rectangular/rectangular_network_solver.jl` contains `runpf_rectangular!`, the network-integrated rectangular power-flow entry point and orchestration glue.
+
+## Rectangular Complex-State Newton–Raphson (`powerflow_rectangular/rectangular_network_solver.jl`)
 
 ### Motivation and State Vector
 

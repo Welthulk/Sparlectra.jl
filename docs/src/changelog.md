@@ -12,6 +12,13 @@
 * Removed the redundant `run_complex_nr_rectangular_for_net!` naming layer.
 * Aligned rectangular autodamping defaults so direct solver calls and configuration-driven runs use the same `autodamp_min = 0.05` default.
 
+### Maintenance
+
+- Moved the rectangular network solver glue from `src/jacobian_complex.jl` to
+  `src/powerflow_rectangular/rectangular_network_solver.jl` so the file layout
+  matches the rectangular power-flow architecture. No public API or solver
+  behavior changed.
+
 
 ### Related
  #219 Detect wrong/false low-voltage branch convergence and retry safely
