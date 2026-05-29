@@ -5,6 +5,9 @@
 ## Improvements
 * Refactored rectangular power-flow code into focused modules under `src/powerflow_rectangular/` for better maintainability and clearer separation of responsibilities.
 
+## Bugfixes
+* Fixed `run_acpflow(casefile=...)` configuration forwarding so MATPOWER/file-based rectangular solves honor configured `power_flow.wrong_branch_*` diagnostics instead of falling back to default wrong-branch thresholds and detection mode.
+
 ### Rectangular power-flow internals
 
 * Refactored the rectangular complex-state power-flow implementation into focused helper layers under `src/powerflow_rectangular/`.

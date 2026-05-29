@@ -1411,6 +1411,65 @@ mpc.branch = [
   end
 end
 
+function test_matpower_run_acpflow_forwards_wrong_branch_config()::Bool
+  tmpdir = mktempdir()
+  case_path = joinpath(tmpdir, "case_wrong_branch_forwarding.m")
+  write(case_path, """
+function mpc = case_wrong_branch_forwarding
+mpc.version = '2';
+mpc.baseMVA = 100;
+mpc.bus = [
+1 3 0 0 0 0 1 1.0 0 110 1 1.1 0.9;
+2 1 90 30 5 10 1 1.0 0 110 1 1.1 0.9;
+];
+mpc.gen = [
+1 100 0 300 -300 1.02 100 1 300 0;
+];
+mpc.branch = [
+1 2 0.01 0.05 0.0 999 999 999 1.0 20 1 -360 360;
+];
+""")
+
+  function run_with_detection(mode::Symbol)
+    cfg = Sparlectra.SparlectraConfig(Dict(
+      "power_flow" => Dict(
+        "wrong_branch_detection" => String(mode),
+        "wrong_branch_max_branch_angle_deg" => 0.001,
+      ),
+    ))
+    net = Sparlectra.run_acpflow(
+      casefile = basename(case_path),
+      path = dirname(case_path),
+      config = cfg,
+      show_results = false,
+      printResultToFile = false,
+      verbose = 0,
+    )
+    return Sparlectra.rectangular_pf_status(net)
+  end
+
+  st_warn = run_with_detection(:warn)
+  warn_ok = st_warn.wrong_branch_detection === :warn &&
+            st_warn.branch_quality_metrics.max_branch_angle_deg == 0.001 &&
+            st_warn.wrong_branch_status === :warn &&
+            st_warn.wrong_branch_reason === :branch_angle_exceeded &&
+            st_warn.wrong_branch_branch_angle_violation_count > 0 &&
+            st_warn.final_converged === true
+
+  st_fail = run_with_detection(:fail)
+  fail_ok = st_fail.wrong_branch_detection === :fail &&
+            st_fail.branch_quality_metrics.max_branch_angle_deg == 0.001 &&
+            st_fail.wrong_branch_status === :fail &&
+            st_fail.wrong_branch_reason === :wrong_branch_detected &&
+            st_fail.wrong_branch_branch_angle_violation_count > 0 &&
+            st_fail.numerical_converged === true &&
+            st_fail.final_converged === false &&
+            st_fail.status === :wrong_branch_detected &&
+            st_fail.reason === :wrong_branch_detected
+
+  return warn_ok && fail_ok
+end
+
 function test_link_kcl_simple()
   net = Net(name = "link_kcl", baseMVA = 100.0)
   addBus!(net = net, busName = "B1", vn_kV = 110.0)
@@ -2316,6 +2375,7 @@ function run_grid_tests()
       @test test_bus_shunt_model_modes() == true
       @test test_matpower_read_case_m_postprocessing() == true
       @test test_matpower_file_import_honors_explicit_overrides() == true
+      @test test_matpower_run_acpflow_forwards_wrong_branch_config() == true
     end
 
     @testset "Power flow scenarios" begin

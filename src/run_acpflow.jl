@@ -147,7 +147,7 @@ end
 
 _legacy_erg_from_control_status(status::Symbol)::Int = status == :pf_failed ? 1 : 0
 
-function _legacy_powerflow_config(; max_ite::Int, tol::Float64, method::Symbol, autodamp::Bool, autodamp_min::Float64, opt_flatstart::Bool, start_projection::Bool, start_projection_try_dc_start::Bool, start_projection_try_blend_scan::Bool, start_projection_branch_guard::Bool, start_projection_measure_candidates::Bool, start_projection_accept_unmeasured_dc_start::Bool, start_projection_blend_lambdas, start_projection_dc_angle_limit_deg::Float64, qlimit_start_iter::Int, qlimit_start_mode::Symbol, qlimit_auto_q_delta_pu::Float64, lock_pv_to_pq_buses, qlimit_trace_buses, qlimit_guard::Bool, qlimit_guard_min_q_range_pu::Float64, qlimit_guard_zero_range_mode::Symbol, qlimit_guard_narrow_range_mode::Symbol, qlimit_guard_log::Bool, qlimit_guard_max_switches::Int, qlimit_guard_accept_bounded_violations::Bool, qlimit_guard_max_remaining_violations::Int, qlimit_guard_freeze_after_repeated_switching::Bool, qlimit_guard_violation_mode::Symbol, qlimit_guard_violation_threshold_pu::Float64)
+function _legacy_powerflow_config(; max_ite::Int, tol::Float64, method::Symbol, autodamp::Bool, autodamp_min::Float64, opt_flatstart::Bool, start_projection::Bool, start_projection_try_dc_start::Bool, start_projection_try_blend_scan::Bool, start_projection_branch_guard::Bool, start_projection_measure_candidates::Bool, start_projection_accept_unmeasured_dc_start::Bool, start_projection_blend_lambdas, start_projection_dc_angle_limit_deg::Float64, wrong_branch_detection::Symbol, wrong_branch_rescue::Bool, wrong_branch_min_vm_pu::Float64, wrong_branch_max_vm_pu::Float64, wrong_branch_max_angle_spread_deg::Float64, wrong_branch_max_branch_angle_deg::Float64, wrong_branch_min_low_vm_count::Int, wrong_branch_rescue_max_attempts::Int, qlimit_start_iter::Int, qlimit_start_mode::Symbol, qlimit_auto_q_delta_pu::Float64, lock_pv_to_pq_buses, qlimit_trace_buses, qlimit_guard::Bool, qlimit_guard_min_q_range_pu::Float64, qlimit_guard_zero_range_mode::Symbol, qlimit_guard_narrow_range_mode::Symbol, qlimit_guard_log::Bool, qlimit_guard_max_switches::Int, qlimit_guard_accept_bounded_violations::Bool, qlimit_guard_max_remaining_violations::Int, qlimit_guard_freeze_after_repeated_switching::Bool, qlimit_guard_violation_mode::Symbol, qlimit_guard_violation_threshold_pu::Float64)
   return PowerFlowConfig(
     method = method,
     tol = tol,
@@ -155,6 +155,14 @@ function _legacy_powerflow_config(; max_ite::Int, tol::Float64, method::Symbol, 
     sparse = true,
     autodamp = autodamp,
     autodamp_min = autodamp_min,
+    wrong_branch_detection = wrong_branch_detection,
+    wrong_branch_rescue = wrong_branch_rescue,
+    wrong_branch_min_vm_pu = wrong_branch_min_vm_pu,
+    wrong_branch_max_vm_pu = wrong_branch_max_vm_pu,
+    wrong_branch_max_angle_spread_deg = wrong_branch_max_angle_spread_deg,
+    wrong_branch_max_branch_angle_deg = wrong_branch_max_branch_angle_deg,
+    wrong_branch_min_low_vm_count = wrong_branch_min_low_vm_count,
+    wrong_branch_rescue_max_attempts = wrong_branch_rescue_max_attempts,
     start_mode = StartModeConfig(
       flatstart = opt_flatstart,
       start_projection = start_projection,
@@ -299,6 +307,14 @@ function run_acpflow(;
   qlimit_guard_log = pf_config.qlimits.guard_log
   qlimit_trace_buses = pf_config.qlimits.trace_buses
   lock_pv_to_pq_buses = pf_config.qlimits.lock_pv_to_pq_buses
+  wrong_branch_detection = pf_config.wrong_branch_detection
+  wrong_branch_rescue = pf_config.wrong_branch_rescue
+  wrong_branch_min_vm_pu = pf_config.wrong_branch_min_vm_pu
+  wrong_branch_max_vm_pu = pf_config.wrong_branch_max_vm_pu
+  wrong_branch_max_angle_spread_deg = pf_config.wrong_branch_max_angle_spread_deg
+  wrong_branch_max_branch_angle_deg = pf_config.wrong_branch_max_branch_angle_deg
+  wrong_branch_min_low_vm_count = pf_config.wrong_branch_min_low_vm_count
+  wrong_branch_rescue_max_attempts = pf_config.wrong_branch_rescue_max_attempts
   bus_shunt_model = isnothing(bus_shunt_model) ? mat_cfg.bus_shunt_model : bus_shunt_model
   matpower_shift_sign = isnothing(matpower_shift_sign) ? mat_cfg.shift_sign : matpower_shift_sign
   matpower_shift_unit = isnothing(matpower_shift_unit) ? mat_cfg.shift_unit : matpower_shift_unit
@@ -412,6 +428,14 @@ function run_acpflow(;
     start_projection_accept_unmeasured_dc_start = start_projection_accept_unmeasured_dc_start,
     start_projection_blend_lambdas = start_projection_blend_lambdas,
     start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg,
+    wrong_branch_detection = wrong_branch_detection,
+    wrong_branch_rescue = wrong_branch_rescue,
+    wrong_branch_min_vm_pu = wrong_branch_min_vm_pu,
+    wrong_branch_max_vm_pu = wrong_branch_max_vm_pu,
+    wrong_branch_max_angle_spread_deg = wrong_branch_max_angle_spread_deg,
+    wrong_branch_max_branch_angle_deg = wrong_branch_max_branch_angle_deg,
+    wrong_branch_min_low_vm_count = wrong_branch_min_low_vm_count,
+    wrong_branch_rescue_max_attempts = wrong_branch_rescue_max_attempts,
     qlimit_start_iter = qlimit_start_iter,
     qlimit_start_mode = qlimit_start_mode,
     qlimit_auto_q_delta_pu = qlimit_auto_q_delta_pu,
@@ -571,6 +595,14 @@ function _run_acpflow_net!(; net::Net, max_ite::Int = 30, tol::Float64 = 1e-6, v
     qlimit_trace_buses = pf_config.qlimits.trace_buses
     lock_pv_to_pq_buses = pf_config.qlimits.lock_pv_to_pq_buses
   end
+  wrong_branch_detection = pf_config.wrong_branch_detection
+  wrong_branch_rescue = pf_config.wrong_branch_rescue
+  wrong_branch_min_vm_pu = pf_config.wrong_branch_min_vm_pu
+  wrong_branch_max_vm_pu = pf_config.wrong_branch_max_vm_pu
+  wrong_branch_max_angle_spread_deg = pf_config.wrong_branch_max_angle_spread_deg
+  wrong_branch_max_branch_angle_deg = pf_config.wrong_branch_max_branch_angle_deg
+  wrong_branch_min_low_vm_count = pf_config.wrong_branch_min_low_vm_count
+  wrong_branch_rescue_max_attempts = pf_config.wrong_branch_rescue_max_attempts
   show_results = show_results && out_cfg.logfile_results !== :off
   row_limit = out_cfg.result_table_max_rows > 0 ? out_cfg.result_table_max_rows : nothing
   result_mode = out_cfg.logfile_results === :compact ? :summary : out_cfg.logfile_results
@@ -596,6 +628,14 @@ function _run_acpflow_net!(; net::Net, max_ite::Int = 30, tol::Float64 = 1e-6, v
     start_projection_accept_unmeasured_dc_start = start_projection_accept_unmeasured_dc_start,
     start_projection_blend_lambdas = start_projection_blend_lambdas,
     start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg,
+    wrong_branch_detection = wrong_branch_detection,
+    wrong_branch_rescue = wrong_branch_rescue,
+    wrong_branch_min_vm_pu = wrong_branch_min_vm_pu,
+    wrong_branch_max_vm_pu = wrong_branch_max_vm_pu,
+    wrong_branch_max_angle_spread_deg = wrong_branch_max_angle_spread_deg,
+    wrong_branch_max_branch_angle_deg = wrong_branch_max_branch_angle_deg,
+    wrong_branch_min_low_vm_count = wrong_branch_min_low_vm_count,
+    wrong_branch_rescue_max_attempts = wrong_branch_rescue_max_attempts,
     qlimit_start_iter = qlimit_start_iter,
     qlimit_start_mode = qlimit_start_mode,
     qlimit_auto_q_delta_pu = qlimit_auto_q_delta_pu,
