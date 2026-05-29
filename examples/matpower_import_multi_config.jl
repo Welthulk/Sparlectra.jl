@@ -6,40 +6,32 @@
 using Sparlectra
 
 # ---------------------------------------------------------------------------
-# VS Code defaults
+# Developer defaults for VS Code / Run File workflows
 # ---------------------------------------------------------------------------
 #
-# These defaults are used when the script is started without command-line
-# arguments. They make it convenient to press "Run" in VS Code.
+# This script compares one MATPOWER case against one or more YAML configuration
+# files. It is intended as a developer diagnostic helper for checking whether
+# configuration choices such as MATPOWER auto-profile mode, wrong-branch
+# detection, or solver start settings change the final rectangular PF status.
 #
-# For normal command-line usage, pass the case and configs explicitly:
+# Command-line usage is preferred and works from the repository root:
 #
 #   julia --project=. examples/matpower_import_multi_config.jl \
-#     data/mpower/case_ACTIVSg10k.m \
-#     --config=examples/configuration_activsg10k_wrong_branch_warn.yaml \
-#     --config=examples/configuration_activsg10k_wrong_branch_branch20_warn.yaml \
-#     --config=examples/configuration_activsg10k_wrong_branch_branch20_fail.yaml \
+#     data/mpower/case14.m \
+#     --config=path/to/config_a.yaml \
+#     --config=path/to/config_b.yaml \
 #     --status-only
 #
-#=
-bash:
+# The values below are editable developer defaults used only when the script is
+# launched without command-line arguments, for example with VS Code "Run". Leave
+# VS_CODE_CONFIG_FILES empty to use the normal Sparlectra configuration lookup.
+# The script never creates, edits, or rewrites YAML files.
 
-cd ~/.julia/dev/Sparlectra
+const VS_CODE_CASEFILE = "data/mpower/case14.m"
 
-julia --project=. examples/matpower_import_multi_config.jl \
-  data/mpower/case_ACTIVSg10k.m \
-  --config=examples/configuration_activsg10k_wrong_branch_warn.yaml \
-  --config=examples/configuration_activsg10k_wrong_branch_branch20_warn.yaml \
-  --config=examples/configuration_activsg10k_wrong_branch_branch20_fail.yaml \
-  --status-only
+const VS_CODE_CONFIG_FILES = String[]
 
-  =#
-
-const VS_CODE_CASEFILE = "data/mpower/case_ACTIVSg10k.m"
-
-const VS_CODE_CONFIG_FILES = String["examples/configuration_activsg10k_wrong_branch_warn.yaml", "examples/configuration_activsg10k_wrong_branch_branch20_warn.yaml", "examples/configuration_activsg10k_wrong_branch_branch20_fail.yaml"]
-
-# :runner      -> use Sparlectra.run_matpower_case, like the original script
+# :runner      -> use Sparlectra.run_matpower_case, like the standard runner
 # :status_only -> run the PF path and print rectangular wrong-branch status fields
 const VS_CODE_MODE = :status_only
 
@@ -63,26 +55,35 @@ Print supported command-line usage.
 """
 function _print_help()
   println("""
-MATPOWER import runner with multi-configuration support.
+MATPOWER import multi-configuration comparison helper.
+
+Run the same MATPOWER case against multiple YAML configuration files without
+creating or rewriting any configuration files. Invoke from the repository root.
 
 Usage:
   julia --project=. examples/matpower_import_multi_config.jl CASEFILE [options]
 
 Options:
   --config=PATH              Add one YAML configuration file. May be repeated.
-  --configs=A,B,C            Add multiple YAML configuration files.
-  --status-only              Run a compact status check and print wrong-branch fields.
+  --configs=A,B,C            Add multiple YAML configuration files from a comma-
+                             or semicolon-separated list.
+  --status-only              Run a compact status check and print rectangular
+                             status plus wrong-branch diagnostic fields.
   --runner                   Use Sparlectra.run_matpower_case output mode.
   --julia-threads=N          Request Julia thread count, with script re-exec when possible.
   --help                     Show this help text.
 
 Examples:
-  julia --project=. examples/matpower_import_multi_config.jl \\
-    data/mpower/case_ACTIVSg10k.m \\
-    --config=examples/configuration_activsg10k_wrong_branch_warn.yaml \\
-    --config=examples/configuration_activsg10k_wrong_branch_branch20_warn.yaml \\
-    --config=examples/configuration_activsg10k_wrong_branch_branch20_fail.yaml \\
+  julia --project=. examples/matpower_import_multi_config.jl \
+    data/mpower/case14.m \
+    --config=path/to/config_a.yaml \
+    --config=path/to/config_b.yaml \
     --status-only
+
+  julia --project=. examples/matpower_import_multi_config.jl \
+    data/mpower/case14.m \
+    --configs=path/to/config_a.yaml,path/to/config_b.yaml \
+    --runner
 """)
   return nothing
 end

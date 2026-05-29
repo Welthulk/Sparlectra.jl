@@ -162,31 +162,31 @@ benchmark:
     cfg = Sparlectra.SparlectraConfig(Dict(
       "matpower_import" => Dict("auto_profile" => "off", "shift_unit" => "rad"),
     ))
-    off = Sparlectra.matpower_auto_profile(mpc, cfg; mode = :off)
+    off = Sparlectra.matpower_import_auto_profile(mpc, cfg; mode = :off)
     @test isempty(off.rows)
     @test off.config.matpower.shift_unit === :rad
 
-    rec = Sparlectra.matpower_auto_profile(mpc, cfg; mode = :recommend)
+    rec = Sparlectra.matpower_import_auto_profile(mpc, cfg; mode = :recommend)
     @test rec.config.matpower.shift_unit === :rad
     shift_unit_row = only(row for row in rec.rows if row.option == "matpower_import.shift_unit")
     @test shift_unit_row.recommended == "deg"
     @test shift_unit_row.action === :recommend
 
-    applied = Sparlectra.matpower_auto_profile(mpc, cfg; mode = :apply)
+    applied = Sparlectra.matpower_import_auto_profile(mpc, cfg; mode = :apply)
     @test applied.config.matpower.shift_unit === :deg
     applied_row = only(row for row in applied.rows if row.option == "matpower_import.shift_unit")
     @test applied_row.action === :applied
 
     ambiguous_cfg = Sparlectra.SparlectraConfig(Dict("matpower_import" => Dict("auto_profile" => "apply")))
-    ambiguous = Sparlectra.matpower_auto_profile(_auto_profile_pv_mismatch_case(), ambiguous_cfg; mode = :apply)
+    ambiguous = Sparlectra.matpower_import_auto_profile(_auto_profile_pv_mismatch_case(), ambiguous_cfg; mode = :apply)
     compare_row = only(row for row in ambiguous.rows if row.option == "matpower_import.compare_voltage_reference")
     @test compare_row.recommended == "hybrid"
     @test compare_row.action === :recommend
     @test ambiguous.config.matpower.compare_voltage_reference === :imported_setpoint
 
     io = IOBuffer()
-    Sparlectra.print_matpower_auto_profile(io, ambiguous.rows)
-    Sparlectra.print_matpower_auto_profile_effective_options(io, ambiguous.config)
+    Sparlectra.print_matpower_import_auto_profile(io, ambiguous.rows)
+    Sparlectra.print_matpower_import_auto_profile_effective_options(io, ambiguous.config)
     text = String(take!(io))
     @test occursin("MATPOWER auto-profile recommendations", text)
     @test occursin("Final effective MATPOWER auto-profile options", text)
