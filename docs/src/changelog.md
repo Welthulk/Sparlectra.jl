@@ -1,36 +1,38 @@
-## Breaking changes
+# Change Log
+## Version 0.8.3 – 2026-05-30
+
+### Breaking changes
 
 * Replaced the former keyword-heavy `run_acpflow` runner API with the configuration-driven `run_sparlectra` framework entry point.
 * Kept `run_acpflow` as a thin compatibility alias for `run_sparlectra`; it accepts only the new minimal framework arguments.
 * High-level solver/import/output behavior is now controlled through `SparlectraConfig` or YAML rather than per-call legacy runner keywords.
 * Framework runs now return `SparlectraRunResult` consistently for both `casefile` and `net` workflows.
 
-# Change Log
-## Version 0.8.3 – 2026-05-30
 
-## New Features
+### New Features
 
-## Improvements
+### Improvements
 
-## Related Issues
+### Related Issues
+#228 Remove the old compatibility surface from the high-level runner
 
 ## Version 0.8.2 – 2026-05-29
-## New Features
+### New Features
 
 * Added configurable wrong-branch diagnostics for rectangular power-flow results, including voltage, angle-spread, and branch-angle plausibility checks.
 
-## Improvements
+### Improvements
 
 * Hardened `matpower_import.auto_profile` into a MATPOWER pre-run that logs recommendation evidence, preserves `recommend` mode without changing the active configuration, applies only unambiguous import-convention changes in `apply` mode, and prints final effective options without rewriting YAML files.
 * Refactored the rectangular complex-state power-flow implementation into focused modules under `src/powerflow_rectangular/`, with `runpf_rectangular!` as the network-integrated entry point and `run_complex_nr_rectangular` as the standalone array-level solver.
 
-## Bugfixes
+### Bugfixes
 
 * Fixed `run_acpflow(casefile=...)` configuration forwarding so MATPOWER/file-based rectangular solves honor configured `power_flow.wrong_branch_*` options instead of falling back to default diagnostics.
 * Aligned rectangular autodamping defaults so direct solver calls and configuration-driven runs use the same `autodamp_min = 0.05` default.
 
 
-## Related Issues
+### Related Issues
 
 * #193 Harden MATPOWER auto-profile recommendation and application
 * #219 Detect wrong/false low-voltage branch convergence and retry safely
