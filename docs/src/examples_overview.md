@@ -14,7 +14,7 @@ This page summarizes the most relevant runnable examples in `examples/`.
 ## Transformer and tap control
 
 - `tap_control_demo_grid.jl`  
-  Lightweight three-controller demo (OLTC + PST + Schrägregler) using `run_acpflow(net = ...)`,
+  Lightweight three-controller demo (OLTC + PST + Schrägregler) using `run_sparlectra(net = ...)`,
   central Sparlectra configuration (`examples/configuration.yaml` or
   `SPARLECTRA_CONFIGURATION_YAML`) plus demo-specific
   `examples/tap_control_demo_grid.yaml`, and `latest_control_result(net)` for

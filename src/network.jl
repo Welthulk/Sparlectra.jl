@@ -1193,9 +1193,10 @@ Update the active and reactive power of a generator connected to a bus in the ne
 
 # Examples
 ```julia
-net = run_acpflow(max_ite= 7,tol = 1e-6, casefile='a_case.m') # run the power flow on the network and get the network object
+result = run_sparlectra(casefile = "a_case.m") # run the configured framework workflow
+net = result.net
 updateBusPower!(net = net, busName = "Bus1", p = 0.5, q = 0.2) # Update the power of Bus1 to 0.5 MW and 0.2 MVar
-run_acpflow(net = net, max_ite= 7,tol = 1e-6) # rerun the power flow with the updated network
+run_sparlectra(net = net) # rerun with the active SparlectraConfig
 ```
 """
 function addBusGenPower!(; net::Net, busName::String, p::Union{Nothing,Float64} = nothing, q::Union{Nothing,Float64} = nothing)
@@ -1216,9 +1217,10 @@ Update the active and reactive power of a load connected to a bus in the network
 
 # Examples
 ```julia
-net = run_acpflow(max_ite= 7,tol = 1e-6, casefile='a_case.m') # run the power flow on the network and get the network object
+result = run_sparlectra(casefile = "a_case.m") # run the configured framework workflow
+net = result.net
 updateBusPower!(net = net, busName = "Bus1", p = 0.5, q = 0.2) # Update the power of Bus1 to 0.5 MW and 0.2 MVar
-run_acpflow(net = net, max_ite= 7,tol = 1e-6) # rerun the power flow with the updated network
+run_sparlectra(net = net) # rerun with the active SparlectraConfig
 ```
 """
 function addBusLoadPower!(; net::Net, busName::String, p::Union{Nothing,Float64} = nothing, q::Union{Nothing,Float64} = nothing)
@@ -1237,9 +1239,10 @@ Update the active and reactive power of a shunt connected to a bus in the networ
 
 # Examples
 ```julia
-net = run_acpflow(max_ite= 7,tol = 1e-6, casefile='a_case.m') # run the power flow on the network and get the network object
+result = run_sparlectra(casefile = "a_case.m") # run the configured framework workflow
+net = result.net
 updateBusPower!(net = net, busName = "Bus1", p = 0.5, q = 0.2) # Update the power of Bus1 to 0.5 MW and 0.2 MVar
-run_acpflow(net = net, max_ite= 7,tol = 1e-6) # rerun the power flow with the updated network
+run_sparlectra(net = net) # rerun with the active SparlectraConfig
 ```
 """
 function addBusShuntPower!(; net::Net, busName::String, p::Float64, q::Float64)

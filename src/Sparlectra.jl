@@ -37,7 +37,7 @@ const MPOWER_DIR = normpath(joinpath(pkgdir(@__MODULE__), "data", "mpower"))
 
 # resource data types for working with Sparlectra
 const Wurzel3 = 1.7320508075688772
-const SparlectraVersion = v"0.8.2"
+const SparlectraVersion = v"0.8.3"
 version() = SparlectraVersion
 abstract type AbstractBranch end
 
@@ -388,8 +388,10 @@ export
   printACPFlowResults,                    # Print AC PF result report.
   printProsumerResults,
 
-  # run_acpflow.jl
-  run_acpflow,                            # Public high-level AC PF runner.
+  # Configuration-driven framework runner.
+  run_sparlectra,                         # Preferred public import/control/solve/output workflow.
+  run_acpflow,                            # Thin AC power-flow alias for run_sparlectra.
+  SparlectraRunResult,                    # Stable typed framework-run result.
   run_matpower_case,                      # Run a MATPOWER case through the high-level workflow.
 
   # solver_core.jl
@@ -474,7 +476,7 @@ include("limits.jl")
 include("losses.jl")
 include("exportMatPower.jl")
 include("results.jl")
-include("run_acpflow.jl")
+include("acpflow.jl")
 include("matpower_runner.jl")
 include("remove_functions.jl")
 include("solver_core.jl")
@@ -499,6 +501,7 @@ include("powerflow_rectangular/rectangular_final_status.jl")
 include("powerflow_rectangular/rectangular_network_solver.jl")
 include("solver_interface.jl")
 include("FetchMatpowerCase.jl")
+using .FetchMatpowerCase: ensure_casefile
 include("measurements.jl")
 include("state_estimation.jl")
 #! format: on
