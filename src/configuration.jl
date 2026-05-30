@@ -132,6 +132,7 @@ conventions.
 """
 Base.@kwdef struct MatpowerImportConfig
   case::String = ""
+  cases::Vector{String} = String[]
   pv_voltage_source::Symbol = :gen_vg
   pv_voltage_mismatch_tol_pu::Float64 = 1.0e-4
   compare_voltage_reference::Symbol = :imported_setpoint
@@ -360,6 +361,12 @@ function _raw_section(raw::AbstractDict, key::AbstractString, aliases::AbstractV
 end
 
 _as_string_cfg(x)::String = x isa AbstractString ? String(x) : string(x)
+function _as_string_vector_cfg(x)::Vector{String}
+  x isa AbstractVector || throw(ArgumentError("matpower_import.cases must be a vector of non-empty case names."))
+  values = String[strip(_as_string_cfg(item)) for item in x]
+  any(isempty, values) && throw(ArgumentError("matpower_import.cases must not contain empty case names."))
+  return values
+end
 _as_symbol_cfg(x)::Symbol = x isa Symbol ? x : (x isa Bool ? (x ? :on : :off) : Symbol(lowercase(String(x))))
 function _as_auto_profile_symbol_cfg(x)::Symbol
   x === false && return :off
@@ -542,7 +549,8 @@ end
 function MatpowerImportConfig(raw::AbstractDict)
   merged = _merged_section(raw, "matpower")
   return MatpowerImportConfig(
-    case = _as_string_cfg(_raw_get(merged, "case", _raw_get(raw, "case", ""))),
+    case = strip(_as_string_cfg(_raw_get(merged, "case", _raw_get(raw, "case", "")))),
+    cases = _as_string_vector_cfg(_raw_get(merged, "cases", String[])),
     pv_voltage_source = _validate_allowed_symbol("matpower_import.pv_voltage_source", _as_symbol_cfg(_raw_get(merged, "pv_voltage_source", _raw_get(merged, "matpower_pv_voltage_source", :gen_vg))), MATPOWER_PV_VOLTAGE_SOURCE_VALUES),
     pv_voltage_mismatch_tol_pu = _validate_nonnegative("matpower.pv_voltage_mismatch_tol_pu", _as_float_cfg(_raw_get(merged, "pv_voltage_mismatch_tol_pu", _raw_get(merged, "matpower_pv_voltage_mismatch_tol_pu", 1.0e-4)))),
     compare_voltage_reference = _validate_allowed_symbol("matpower_import.compare_voltage_reference", _as_symbol_cfg(_raw_get(merged, "compare_voltage_reference", :imported_setpoint)), MATPOWER_COMPARE_VOLTAGE_REFERENCE_VALUES),
@@ -557,6 +565,21 @@ function MatpowerImportConfig(raw::AbstractDict)
     preallocate_min_buses = _as_int_cfg(_raw_get(merged, "preallocate_min_buses", 1000)),
   )
 end
+
+"""
+    configured_matpower_cases(config) -> Vector{String}
+
+Return configured MATPOWER cases in deterministic execution order. A non-empty
+`matpower.cases` list takes precedence over the compatible single-case
+`matpower.case` setting.
+"""
+function configured_matpower_cases(mat_cfg::MatpowerImportConfig)::Vector{String}
+  !isempty(mat_cfg.cases) && return copy(mat_cfg.cases)
+  case_name = strip(mat_cfg.case)
+  return isempty(case_name) ? String[] : [case_name]
+end
+
+configured_matpower_cases(cfg::SparlectraConfig)::Vector{String} = configured_matpower_cases(cfg.matpower)
 
 function PerformanceConfig(raw::AbstractDict)
   merged = _merged_section(raw, "performance")

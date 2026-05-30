@@ -588,6 +588,8 @@ end
       @test result.net === net_runner
       @test result.numerical_converged
       @test result.solution_available
+      @test result.control_status === :none
+      @test result.final_converged
       @test result.outcome in (:converged, :converged_with_limit_warnings)
       @test result.limit_validation_status in (:ok, :skip)
       @test result.reason isa Symbol
@@ -626,6 +628,77 @@ end
       end
       @test occursin("AC Power Flow Results", full_output)
       @test Sparlectra._sparlectra_result_mode(net_with_output, OutputConfig(logfile_results = :compact, result_table_large_case_threshold_buses = 1, result_table_large_case_mode = :summary)) === :summary
+    end
+
+    @testset "Framework status composition" begin
+      base = (outcome = :converged, numerical_converged = true, solution_available = true, limit_validation_status = :ok, final_converged = true, reason = :none, reason_text = "none", final_mismatch = 0.0)
+      blocked = Sparlectra._compose_framework_status(base, :blocked)
+      @test blocked.numerical_converged
+      @test blocked.solution_available
+      @test !blocked.final_converged
+      @test blocked.outcome === :control_blocked
+      @test blocked.reason === :control_blocked
+      @test occursin("blocked", blocked.reason_text)
+
+      exhausted = Sparlectra._compose_framework_status(base, :max_outer_iterations)
+      @test exhausted.outcome === :control_max_outer_iterations
+      @test !exhausted.final_converged
+
+      unknown = Sparlectra._compose_framework_status(base, :custom_terminal_status)
+      @test unknown.outcome === :control_not_converged
+      @test !unknown.final_converged
+
+      failed_base = merge(base, (outcome = :not_converged, numerical_converged = false, solution_available = false, final_converged = false))
+      failed = Sparlectra._compose_framework_status(failed_base, :pf_failed)
+      @test !failed.numerical_converged
+      @test !failed.solution_available
+      @test !failed.final_converged
+      @test failed.outcome === :pf_failed
+      @test failed.reason === :pf_failed
+    end
+
+    @testset "Configured MATPOWER batch parsing and deterministic local execution" begin
+      cfg_cases = SparlectraConfig(Dict("matpower" => Dict("cases" => [" case_a.m ", "case_b.m"])))
+      @test cfg_cases.matpower.cases == ["case_a.m", "case_b.m"]
+      @test configured_matpower_cases(cfg_cases) == ["case_a.m", "case_b.m"]
+
+      cfg_single = SparlectraConfig(Dict("matpower" => Dict("case" => " case_single.m ")))
+      @test configured_matpower_cases(cfg_single) == ["case_single.m"]
+
+      cfg_precedence = SparlectraConfig(Dict("matpower_import" => Dict("case" => "case_single.m", "cases" => ["case_a.m", "case_b.m"])))
+      @test configured_matpower_cases(cfg_precedence) == ["case_a.m", "case_b.m"]
+      @test_throws ArgumentError SparlectraConfig(Dict("matpower" => Dict("cases" => "case_a.m")))
+      @test_throws ArgumentError SparlectraConfig(Dict("matpower" => Dict("cases" => ["case_a.m", " "])))
+      @test_throws ArgumentError run_sparlectra_cases(config = SparlectraConfig(matpower = MatpowerImportConfig(case = "")))
+      @test_throws ArgumentError run_sparlectra_cases(config = cfg_single, performance_profile = Dict{Symbol,Any}())
+
+      mktempdir() do tmpdir
+        for (case_name, load_mw) in [("case_a.m", 40), ("case_b.m", 60)]
+          function_name = splitext(case_name)[1]
+          write(joinpath(tmpdir, case_name), """
+function mpc = $(function_name)
+mpc.version = '2';
+mpc.baseMVA = 100;
+mpc.bus = [
+1 3 0 0 0 0 1 1.0 0 110 1 1.1 0.9;
+2 1 $(load_mw) 15 0 0 1 1.0 0 110 1 1.1 0.9;
+];
+mpc.gen = [
+1 100 0 300 -300 1.02 100 1 300 0;
+];
+mpc.branch = [
+1 2 0.01 0.05 0.0 999 999 999 0 0 1 -360 360;
+];
+""")
+        end
+        active_before = active_sparlectra_config()
+        results = run_sparlectra_cases(config = cfg_precedence, path = tmpdir)
+        @test length(results) == 2
+        @test [result.net.name for result in results] == ["case_a", "case_b"]
+        @test all(result -> result isa SparlectraRunResult, results)
+        @test all(result -> result.numerical_converged, results)
+        @test active_sparlectra_config() === active_before
+      end
     end
 
     @testset "Framework runner input validation and removed legacy keywords" begin

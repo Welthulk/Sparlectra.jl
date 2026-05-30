@@ -126,6 +126,48 @@ function run_tap_controller_tests()
     @test tbr.tap_ratio == ratio_before
   end
 
+  @testset "Controlled framework result composes converged control status" begin
+    net, tbr = _build_net()
+    baseline = run_sparlectra(net = net, config = _runner_cfg())
+    @test baseline.final_converged
+    addPowerTransformerControl!(net;
+      trafo = string(tbr.branchIdx),
+      mode = :voltage,
+      target_bus = "Load",
+      target_vm_pu = get_bus_vm_pu(net, "Load"),
+      control_ratio = true,
+      control_phase = false,
+    )
+    result = run_sparlectra(net = net, config = _runner_cfg())
+    @test result.control_status === :converged
+    @test result.numerical_converged
+    @test result.solution_available
+    @test result.final_converged
+    @test result.outcome === :converged
+  end
+
+  @testset "Controlled framework result rejects exhausted outer loop" begin
+    net, tbr = _build_net()
+    addPowerTransformerControl!(net;
+      trafo = string(tbr.branchIdx),
+      mode = :voltage,
+      target_bus = "Load",
+      target_vm_pu = 0.90,
+      control_ratio = true,
+      control_phase = false,
+      is_discrete = true,
+      max_outer_iters = 1,
+    )
+    result = run_sparlectra(net = net, config = _runner_cfg(control = ControlConfig(max_outer_iterations = 1)))
+    @test result.control_status === :max_outer_iterations
+    @test result.numerical_converged
+    @test result.solution_available
+    @test !result.final_converged
+    @test result.outcome === :control_max_outer_iterations
+    @test result.reason === :control_max_outer_iterations
+    @test occursin("max_outer_iterations", result.reason_text)
+  end
+
   @testset "Direct run_control! returns ControlRunResult" begin
     net, tbr = _build_net()
     addPowerTransformerControl!(net;

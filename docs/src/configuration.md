@@ -132,6 +132,8 @@ power_flow:
 
 matpower_import:
   case: case14.m
+  # Non-empty cases take precedence for run_sparlectra_cases.
+  cases: [case14.m, case118.m]
   auto_profile: recommend
   auto_profile_log: true
   pv_voltage_source: gen_vg
@@ -264,6 +266,7 @@ The following canonical keys are currently present in `src/configuration.yaml.ex
 - `matpower_import.auto_profile_log`
 - `matpower_import.bus_shunt_model`
 - `matpower_import.case`
+- `matpower_import.cases`
 - `matpower_import.compare_voltage_reference`
 - `matpower_import.enable_pq_gen_controllers`
 - `matpower_import.preallocate_min_buses`

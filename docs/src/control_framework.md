@@ -64,6 +64,14 @@ return `SparlectraRunResult`.
 
 `control_max_outer_iterations` provides controller-specific outer-loop limits. The global outer-loop budget is `control.max_outer_iterations` and is combined with controller limits.
 
+For framework runs, `SparlectraRunResult.numerical_converged` remains strictly
+about the last numerical PF solve and `solution_available` remains true when
+that solve produced a usable solution. `final_converged` is true only when the
+numerical PF solve converged, limit validation did not fail, and
+`control_status` is either `:none` or `:converged`. In particular, `:blocked`,
+`:max_outer_iterations`, and other non-success control terminal states keep the
+last usable solution but do not count as final framework convergence.
+
 `control_max_outer_iterations` is currently treated as an internal extension hook (not exported). External custom controllers can still extend it via `Sparlectra.control_max_outer_iterations(::MyController)`.
 
 ## Result model

@@ -39,6 +39,16 @@ function _rectangular_run_status(rect_status)
   )
 end
 
+function _compose_framework_status(base_status, control_status::Symbol)
+  control_status === :none && return base_status
+  if !base_status.numerical_converged
+    return merge(base_status, (outcome = :pf_failed, final_converged = false, reason = :pf_failed, reason_text = "power flow failed during controlled framework run"))
+  end
+  control_status === :converged && return base_status
+  outcome = control_status === :blocked ? :control_blocked : control_status === :max_outer_iterations ? :control_max_outer_iterations : :control_not_converged
+  return merge(base_status, (outcome = outcome, final_converged = false, reason = outcome, reason_text = "control loop ended with status $(control_status)"))
+end
+
 function _build_sparlectra_result(net::Net, cfg::SparlectraConfig, execution, performance_profile)::SparlectraRunResult
   status = if cfg.powerflow.method === :rectangular
     _rectangular_run_status(rectangular_pf_status(net))
@@ -46,6 +56,7 @@ function _build_sparlectra_result(net::Net, cfg::SparlectraConfig, execution, pe
     converged = execution.erg == 0
     (outcome = converged ? :converged : :not_converged, numerical_converged = converged, solution_available = converged, limit_validation_status = :skip, final_converged = converged, reason = converged ? :none : :nr_mismatch_not_converged, reason_text = converged ? "none" : "NR mismatch did not converge", final_mismatch = NaN)
   end
+  status = _compose_framework_status(status, execution.control_status)
   return SparlectraRunResult(net, status.outcome, status.numerical_converged, status.solution_available, status.limit_validation_status, status.final_converged, status.reason, status.reason_text, execution.iterations, execution.elapsed_s, execution.solver_elapsed_s, status.final_mismatch, cfg.powerflow.method, execution.control_status, performance_profile)
 end
 

@@ -11,6 +11,30 @@ function run_sparlectra(; net::Union{Nothing,Net} = nothing, casefile::Union{Not
 end
 
 """
+    run_sparlectra_cases(; config=nothing, path=nothing, performance_profile=nothing) -> Vector{SparlectraRunResult}
+
+Run configured MATPOWER cases sequentially in deterministic order. A non-empty
+`config.matpower.cases` list takes precedence over `config.matpower.case`. Bare
+case names are resolved through [`ensure_casefile`](@ref), which downloads
+standard MATPOWER cases on demand. Batch-level performance-profile aggregation
+is not supported; profile individual [`run_sparlectra`](@ref) calls instead.
+"""
+function run_sparlectra_cases(; config::Union{Nothing,SparlectraConfig} = nothing, path::Union{Nothing,String} = nothing, performance_profile = nothing)::Vector{SparlectraRunResult}
+  performance_profile === nothing || throw(ArgumentError("run_sparlectra_cases: batch-level performance_profile aggregation is not supported; profile individual run_sparlectra calls instead."))
+  cfg = config === nothing ? active_sparlectra_config() : config
+  case_names = configured_matpower_cases(cfg)
+  isempty(case_names) && throw(ArgumentError("run_sparlectra_cases: configure matpower.cases or matpower.case before running a batch."))
+  results = SparlectraRunResult[]
+  sizehint!(results, length(case_names))
+  for case_name in case_names
+    requested_case = path === nothing ? case_name : joinpath(path, case_name)
+    case_path = ensure_casefile(requested_case)
+    push!(results, run_sparlectra(casefile = basename(case_path), path = dirname(case_path), config = cfg))
+  end
+  return results
+end
+
+"""
     run_acpflow(; net=nothing, casefile=nothing, path=nothing, config=nothing, performance_profile=nothing) -> SparlectraRunResult
 
 Compatibility alias for [`run_sparlectra`](@ref).
