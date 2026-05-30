@@ -19,6 +19,8 @@
 
 ### Bugfixes
 
+* Fixed controlled-run framework status composition so inner PF failures preserve concrete solver rejection metadata, such as wrong-branch final rejection, instead of being reported as generic control-loop failures.
+* Fixed synthetic-grid benchmark rows so the `converged` column follows final framework acceptance while numerical PF convergence remains available as a separate diagnostic.
 * Fixed framework status composition so successful baseline power-flow runs with disabled controls or no active controllers remain accepted, while still exposing `control_status = :disabled` or `:no_active_controllers`.
 * Fixed framework result status handling so numerically converged rectangular solutions rejected by wrong-branch diagnostics are not treated as available for post-processing or reporting.
 * Fixed MATPOWER runner status rows so legacy `converged`/`erg` fields follow final framework acceptance, while `numerical_converged` remains available as a separate diagnostic.

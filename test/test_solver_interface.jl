@@ -668,7 +668,16 @@ end
       @test unknown.outcome === :control_not_converged
       @test !unknown.final_converged
 
-      failed_base = merge(base, (outcome = :not_converged, numerical_converged = false, solution_available = false, final_converged = false))
+      rejected_base = merge(base, (outcome = :wrong_branch_detected, solution_available = false, final_converged = false, reason = :wrong_branch_detected, reason_text = "wrong branch detected"))
+      rejected = Sparlectra._compose_framework_status(rejected_base, :pf_failed)
+      @test rejected.numerical_converged
+      @test !rejected.solution_available
+      @test !rejected.final_converged
+      @test rejected.outcome === :wrong_branch_detected
+      @test rejected.reason === :wrong_branch_detected
+      @test occursin("wrong branch", lowercase(rejected.reason_text))
+
+      failed_base = merge(base, (outcome = :not_converged, numerical_converged = false, solution_available = false, final_converged = false, reason = :nr_mismatch_not_converged, reason_text = "NR mismatch did not converge", final_mismatch = Inf))
       failed = Sparlectra._compose_framework_status(failed_base, :pf_failed)
       @test !failed.numerical_converged
       @test !failed.solution_available
