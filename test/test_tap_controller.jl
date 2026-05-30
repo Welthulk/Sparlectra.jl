@@ -124,6 +124,34 @@ function run_tap_controller_tests()
     erg = result.numerical_converged ? 0 : 1
     @test erg == 0
     @test tbr.tap_ratio == ratio_before
+    @test result.control_status === :disabled
+    @test result.numerical_converged
+    @test result.solution_available
+    @test result.final_converged
+    @test result.outcome === :converged
+    @test result.reason === :none
+  end
+
+  @testset "Disabled control framework preserves successful baseline PF" begin
+    net, tbr = _build_net()
+    addPowerTransformerControl!(net;
+      trafo = string(tbr.branchIdx),
+      mode = :voltage,
+      target_bus = "Load",
+      target_vm_pu = 0.98,
+      control_ratio = true,
+      control_phase = false,
+    )
+
+    ratio_before = tbr.tap_ratio
+    result = run_sparlectra(net = net, config = _runner_cfg(control = ControlConfig(enabled = false)))
+    @test tbr.tap_ratio == ratio_before
+    @test result.control_status === :disabled
+    @test result.numerical_converged
+    @test result.solution_available
+    @test result.final_converged
+    @test result.outcome === :converged
+    @test result.reason === :none
   end
 
   @testset "Controlled framework result composes converged control status" begin

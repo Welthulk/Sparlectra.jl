@@ -646,6 +646,12 @@ end
       @test Sparlectra._rectangular_solution_available((status = :converged_limits_failed, numerical_converged = true, reason = :remaining_q_limit_violations))
 
       base = (outcome = :converged, numerical_converged = true, solution_available = true, limit_validation_status = :ok, final_converged = true, reason = :none, reason_text = "none", final_mismatch = 0.0)
+      for accepted_status in (:none, :converged, :disabled, :no_active_controllers, :no_controllers)
+        accepted = Sparlectra._compose_framework_status(base, accepted_status)
+        @test accepted.final_converged
+        @test accepted.outcome === :converged
+      end
+
       blocked = Sparlectra._compose_framework_status(base, :blocked)
       @test blocked.numerical_converged
       @test blocked.solution_available

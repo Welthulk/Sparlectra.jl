@@ -50,12 +50,13 @@ function _rectangular_run_status(rect_status)
   )
 end
 
+_is_accepted_control_status(status::Symbol)::Bool = status in (:none, :converged, :disabled, :no_active_controllers, :no_controllers)
+
 function _compose_framework_status(base_status, control_status::Symbol)
-  control_status === :none && return base_status
+  _is_accepted_control_status(control_status) && return base_status
   if !base_status.numerical_converged
     return merge(base_status, (outcome = :pf_failed, final_converged = false, reason = :pf_failed, reason_text = "power flow failed during controlled framework run"))
   end
-  control_status === :converged && return base_status
   outcome = control_status === :blocked ? :control_blocked : control_status === :max_outer_iterations ? :control_max_outer_iterations : :control_not_converged
   return merge(base_status, (outcome = outcome, final_converged = false, reason = outcome, reason_text = "control loop ended with status $(control_status)"))
 end
