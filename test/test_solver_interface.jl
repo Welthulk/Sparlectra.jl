@@ -631,6 +631,20 @@ end
     end
 
     @testset "Framework status composition" begin
+      rejected_outcomes = (:wrong_branch_detected, :angle_spread_exceeded, :branch_angle_exceeded, :wrong_branch_rescue_not_implemented)
+      for outcome in rejected_outcomes
+        rect_status = (status = outcome, numerical_converged = true, reason = :none)
+        @test !Sparlectra._rectangular_solution_available(rect_status)
+      end
+      rejected_reasons = (:wrong_branch_detected, :angle_spread_exceeded, :branch_angle_exceeded, :wrong_branch_rescue_not_implemented, :rescue_requested_but_not_available)
+      for reason in rejected_reasons
+        rect_status = (status = :converged, numerical_converged = true, reason = reason)
+        @test !Sparlectra._rectangular_solution_available(rect_status)
+      end
+      @test !Sparlectra._rectangular_solution_available(nothing)
+      @test !Sparlectra._rectangular_solution_available((status = :not_converged, numerical_converged = false, reason = :nr_mismatch_not_converged))
+      @test Sparlectra._rectangular_solution_available((status = :converged_limits_failed, numerical_converged = true, reason = :remaining_q_limit_violations))
+
       base = (outcome = :converged, numerical_converged = true, solution_available = true, limit_validation_status = :ok, final_converged = true, reason = :none, reason_text = "none", final_mismatch = 0.0)
       blocked = Sparlectra._compose_framework_status(base, :blocked)
       @test blocked.numerical_converged

@@ -23,6 +23,17 @@ struct SparlectraRunResult
   performance_profile::Any
 end
 
+function _rectangular_solution_available(rect_status)::Bool
+  rect_status === nothing && return false
+  Bool(rect_status.numerical_converged) || return false
+
+  outcome = Symbol(rect_status.status)
+  reason = Symbol(rect_status.reason)
+  outcome in (:wrong_branch_detected, :angle_spread_exceeded, :branch_angle_exceeded, :wrong_branch_rescue_not_implemented) && return false
+  reason in (:wrong_branch_detected, :angle_spread_exceeded, :branch_angle_exceeded, :wrong_branch_rescue_not_implemented, :rescue_requested_but_not_available) && return false
+  return true
+end
+
 function _rectangular_run_status(rect_status)
   status = rect_status === nothing ? :solver_error : Symbol(rect_status.status)
   outcome = status
@@ -30,7 +41,7 @@ function _rectangular_run_status(rect_status)
   return (
     outcome = outcome,
     numerical_converged = numerical_converged,
-    solution_available = numerical_converged,
+    solution_available = _rectangular_solution_available(rect_status),
     limit_validation_status = rect_status === nothing || !numerical_converged ? :skip : Bool(rect_status.q_limit_active_set_ok) ? :ok : :fail,
     final_converged = rect_status !== nothing && Bool(rect_status.final_converged),
     reason = rect_status === nothing ? :solver_error : Symbol(rect_status.reason),
@@ -61,5 +72,5 @@ function _build_sparlectra_result(net::Net, cfg::SparlectraConfig, execution, pe
 end
 
 function _sparlectra_status_row(result::SparlectraRunResult)
-  return (converged = result.numerical_converged, erg = result.numerical_converged ? 0 : 1, iterations = result.iterations, elapsed_s = result.elapsed_s, solver_elapsed_s = result.solver_elapsed_s, method = result.method, outcome = result.outcome, control_status = result.control_status, numerical_solution = result.numerical_converged ? "OK" : "FAIL", solution_available = result.solution_available, limit_validation_status = result.limit_validation_status, final_converged = result.final_converged, reason = result.reason, reason_text = result.reason_text, final_mismatch = result.final_mismatch)
+  return (converged = result.final_converged, erg = result.final_converged ? 0 : 1, numerical_converged = result.numerical_converged, iterations = result.iterations, elapsed_s = result.elapsed_s, solver_elapsed_s = result.solver_elapsed_s, method = result.method, outcome = result.outcome, control_status = result.control_status, numerical_solution = result.numerical_converged ? "OK" : "FAIL", solution_available = result.solution_available, limit_validation_status = result.limit_validation_status, final_converged = result.final_converged, reason = result.reason, reason_text = result.reason_text, final_mismatch = result.final_mismatch)
 end
