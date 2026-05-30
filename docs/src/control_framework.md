@@ -34,11 +34,14 @@ run_sparlectra(; net = net, ...)
 run_sparlectra(; casefile = "case14.m", path = "...", ...)
 ```
 
-`run_sparlectra` is the public high-level ACP runner for both in-memory and file-based workflows.
+`run_sparlectra` is the preferred public framework entry point for both in-memory
+and file-based workflows. For AC power-flow examples, `run_acpflow` is kept as a
+thin alias with the same minimal configuration-driven signature. Both names
+return `SparlectraRunResult`.
 
 | Layer | Function | Purpose |
 |---|---|---|
-| Framework | `run_sparlectra` | Import/config/control/solve/output orchestration |
+| Framework | `run_sparlectra` (`run_acpflow` alias) | Import/config/control/solve/output orchestration |
 | Solver | `runpf!` | Solve an already built `Net` using `PowerFlowConfig` |
 | Control | `run_control!` | Execute outer-loop controllers |
 | Import | `createNetFromMatPowerFile` | Convert a MATPOWER file into a `Net` |
