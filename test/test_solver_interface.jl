@@ -501,17 +501,17 @@ end
         return guarded_net
       end
 
-      # Regression: direct run_acpflow callers must opt in before the narrow-Q guard
+      # Regression: lower-level solver callers must opt in before the narrow-Q guard
       # locks PV buses to PQ during rectangular pre-processing.
       default_net = zero_range_pv_net()
       redirect_stdout(devnull) do
-        run_acpflow(net = default_net, max_ite = 0, verbose = 0, show_results = false)
+        runpf!(default_net; config = PowerFlowConfig(max_iter = 0))
       end
       @test isempty(default_net.qLimitLog)
 
       opt_in_net = zero_range_pv_net()
       redirect_stdout(devnull) do
-        run_acpflow(net = opt_in_net, max_ite = 0, verbose = 0, show_results = false, qlimit_guard = true)
+        runpf!(opt_in_net; config = PowerFlowConfig(max_iter = 0, qlimits = QLimitConfig(guard = true)))
       end
       @test length(opt_in_net.qLimitLog) == 1
     end
@@ -564,6 +564,13 @@ end
     end
 
     @testset "Typed power-flow config entry points" begin
+      @test isdefined(Main, :run_sparlectra)
+      @test isdefined(Main, :run_acpflow)
+      @test isdefined(Main, :SparlectraRunResult)
+      @test isdefined(Sparlectra, :ensure_casefile)
+      @test isdefined(Main, :ensure_casefile)
+      @test Sparlectra.ensure_casefile === Sparlectra.FetchMatpowerCase.ensure_casefile
+
       pf_config = PowerFlowConfig(max_iter = 20, tol = 1e-8, sparse = true, start_mode = StartModeConfig(flatstart = true))
 
       net_direct = createTest3BusNet()
@@ -574,45 +581,196 @@ end
       _, erg_project = runpf!(net_project; config = SparlectraConfig(powerflow = pf_config))
       @test erg_project == 0
 
+      cfg_output_off = SparlectraConfig(powerflow = pf_config, output = OutputConfig(logfile_results = :off))
       net_runner = createTest3BusNet()
-      _, erg_runner, _ = run_acpflow(net = net_runner, config = pf_config, show_results = false)
-      @test erg_runner == 0
+      result = run_sparlectra(net = net_runner, config = cfg_output_off)
+      @test result isa SparlectraRunResult
+      @test result.net === net_runner
+      @test result.numerical_converged
+      @test result.solution_available
+      @test result.control_status === :none
+      @test result.final_converged
+      @test result.outcome in (:converged, :converged_with_limit_warnings)
+      @test result.limit_validation_status in (:ok, :skip)
+      @test result.reason isa Symbol
+      @test result.reason_text isa String
+      @test result.iterations >= 0
+      @test result.final_mismatch isa Float64
+      @test result.diagnostics isa NamedTuple
 
-      old_cfg = active_sparlectra_config()
-      try
-        set_sparlectra_config!(SparlectraConfig(output = OutputConfig(logfile_results = :full)))
-        cfg_output_off = SparlectraConfig(powerflow = pf_config, output = OutputConfig(logfile_results = :off))
+      fallback_result = SparlectraRunResult(
+        result.net,
+        :converged,
+        true,
+        true,
+        :skip,
+        true,
+        :none,
+        "none",
+        0,
+        0.0,
+        nothing,
+        NaN,
+        :classic,
+        :none,
+        nothing,
+        (converged = false, erg = 1, numerical_converged = false, solution_available = false, final_converged = false, outcome = :diagnostic_override, reason = :diagnostic_override),
+      )
+      fallback_row = Sparlectra._sparlectra_status_row(fallback_result)
+      @test fallback_row.converged === true
+      @test fallback_row.erg == 0
+      @test fallback_row.numerical_converged === true
+      @test fallback_row.solution_available === true
+      @test fallback_row.final_converged === true
+      @test fallback_row.outcome === :converged
+      @test fallback_row.reason === :none
+      @test !hasproperty(fallback_row, :q_limit_active_set_ok)
 
-        net_with_explicit_cfg = createTest3BusNet()
-        explicit_output = mktemp() do path, io
-          redirect_stdout(io) do
-            _, erg_explicit, _ = run_acpflow(net = net_with_explicit_cfg, config = cfg_output_off)
-            @test erg_explicit == 0
-          end
-          flush(io)
-          return read(path, String)
+      net_alias = createTest3BusNet()
+      alias_result = run_acpflow(net = net_alias, config = cfg_output_off)
+      @test alias_result isa SparlectraRunResult
+      @test alias_result.net === net_alias
+      @test alias_result.outcome == result.outcome
+      @test alias_result.method == result.method
+
+      @test_throws TypeError run_sparlectra(net = createTest3BusNet(), config = pf_config)
+      @test_throws TypeError run_acpflow(net = createTest3BusNet(), config = pf_config)
+
+      net_with_explicit_cfg = createTest3BusNet()
+      explicit_output = mktemp() do path, io
+        redirect_stdout(io) do
+          @test run_sparlectra(net = net_with_explicit_cfg, config = cfg_output_off).numerical_converged
         end
-        @test !occursin("AC Power Flow Results", explicit_output)
+        flush(io)
+        return read(path, String)
+      end
+      @test !occursin("AC Power Flow Results", explicit_output)
 
-        net_with_global_cfg = createTest3BusNet()
-        global_output = mktemp() do path, io
-          redirect_stdout(io) do
-            _, erg_global, _ = run_acpflow(net = net_with_global_cfg, config = pf_config)
-            @test erg_global == 0
-          end
-          flush(io)
-          return read(path, String)
+      cfg_output_full = SparlectraConfig(powerflow = pf_config, output = OutputConfig(logfile_results = :full))
+      net_with_output = createTest3BusNet()
+      full_output = mktemp() do path, io
+        redirect_stdout(io) do
+          @test run_sparlectra(net = net_with_output, config = cfg_output_full).numerical_converged
         end
-        @test occursin("AC Power Flow Results", global_output)
-      finally
-        set_sparlectra_config!(old_cfg)
+        flush(io)
+        return read(path, String)
+      end
+      @test occursin("AC Power Flow Results", full_output)
+      @test Sparlectra._sparlectra_result_mode(net_with_output, OutputConfig(logfile_results = :compact, result_table_large_case_threshold_buses = 1, result_table_large_case_mode = :summary)) === :summary
+    end
+
+    @testset "Framework status composition" begin
+      rejected_outcomes = (:wrong_branch_detected, :angle_spread_exceeded, :branch_angle_exceeded, :wrong_branch_rescue_not_implemented)
+      for outcome in rejected_outcomes
+        rect_status = (status = outcome, numerical_converged = true, reason = :none)
+        @test !Sparlectra._rectangular_solution_available(rect_status)
+      end
+      rejected_reasons = (:wrong_branch_detected, :angle_spread_exceeded, :branch_angle_exceeded, :wrong_branch_rescue_not_implemented, :rescue_requested_but_not_available)
+      for reason in rejected_reasons
+        rect_status = (status = :converged, numerical_converged = true, reason = reason)
+        @test !Sparlectra._rectangular_solution_available(rect_status)
+      end
+      @test !Sparlectra._rectangular_solution_available(nothing)
+      @test !Sparlectra._rectangular_solution_available((status = :not_converged, numerical_converged = false, reason = :nr_mismatch_not_converged))
+      @test Sparlectra._rectangular_solution_available((status = :converged_limits_failed, numerical_converged = true, reason = :remaining_q_limit_violations))
+
+      base = (outcome = :converged, numerical_converged = true, solution_available = true, limit_validation_status = :ok, final_converged = true, reason = :none, reason_text = "none", final_mismatch = 0.0)
+      for accepted_status in (:none, :converged, :disabled, :no_active_controllers, :no_controllers)
+        accepted = Sparlectra._compose_framework_status(base, accepted_status)
+        @test accepted.final_converged
+        @test accepted.outcome === :converged
+      end
+
+      blocked = Sparlectra._compose_framework_status(base, :blocked)
+      @test blocked.numerical_converged
+      @test blocked.solution_available
+      @test !blocked.final_converged
+      @test blocked.outcome === :control_blocked
+      @test blocked.reason === :control_blocked
+      @test occursin("blocked", blocked.reason_text)
+
+      exhausted = Sparlectra._compose_framework_status(base, :max_outer_iterations)
+      @test exhausted.outcome === :control_max_outer_iterations
+      @test !exhausted.final_converged
+
+      unknown = Sparlectra._compose_framework_status(base, :custom_terminal_status)
+      @test unknown.outcome === :control_not_converged
+      @test !unknown.final_converged
+
+      rejected_base = merge(base, (outcome = :wrong_branch_detected, solution_available = false, final_converged = false, reason = :wrong_branch_detected, reason_text = "wrong branch detected"))
+      rejected = Sparlectra._compose_framework_status(rejected_base, :pf_failed)
+      @test rejected.numerical_converged
+      @test !rejected.solution_available
+      @test !rejected.final_converged
+      @test rejected.outcome === :wrong_branch_detected
+      @test rejected.reason === :wrong_branch_detected
+      @test occursin("wrong branch", lowercase(rejected.reason_text))
+
+      failed_base = merge(base, (outcome = :not_converged, numerical_converged = false, solution_available = false, final_converged = false, reason = :nr_mismatch_not_converged, reason_text = "NR mismatch did not converge", final_mismatch = Inf))
+      failed = Sparlectra._compose_framework_status(failed_base, :pf_failed)
+      @test !failed.numerical_converged
+      @test !failed.solution_available
+      @test !failed.final_converged
+      @test failed.outcome === :pf_failed
+      @test failed.reason === :pf_failed
+    end
+
+    @testset "Configured MATPOWER batch parsing and deterministic local execution" begin
+      cfg_cases = SparlectraConfig(Dict("matpower" => Dict("cases" => [" case_a.m ", "case_b.m"])))
+      @test cfg_cases.matpower.cases == ["case_a.m", "case_b.m"]
+      @test configured_matpower_cases(cfg_cases) == ["case_a.m", "case_b.m"]
+
+      cfg_single = SparlectraConfig(Dict("matpower" => Dict("case" => " case_single.m ")))
+      @test configured_matpower_cases(cfg_single) == ["case_single.m"]
+
+      cfg_precedence = SparlectraConfig(Dict("matpower_import" => Dict("case" => "case_single.m", "cases" => ["case_a.m", "case_b.m"])))
+      @test configured_matpower_cases(cfg_precedence) == ["case_a.m", "case_b.m"]
+      @test_throws ArgumentError SparlectraConfig(Dict("matpower" => Dict("cases" => "case_a.m")))
+      @test_throws ArgumentError SparlectraConfig(Dict("matpower" => Dict("cases" => ["case_a.m", " "])))
+      @test_throws ArgumentError run_sparlectra_cases(config = SparlectraConfig(matpower = MatpowerImportConfig(case = "")))
+      @test_throws ArgumentError run_sparlectra_cases(config = cfg_single, performance_profile = Dict{Symbol,Any}())
+
+      mktempdir() do tmpdir
+        for (case_name, load_mw) in [("case_a.m", 40), ("case_b.m", 60)]
+          function_name = splitext(case_name)[1]
+          write(joinpath(tmpdir, case_name), """
+function mpc = $(function_name)
+mpc.version = '2';
+mpc.baseMVA = 100;
+mpc.bus = [
+1 3 0 0 0 0 1 1.0 0 110 1 1.1 0.9;
+2 1 $(load_mw) 15 0 0 1 1.0 0 110 1 1.1 0.9;
+];
+mpc.gen = [
+1 100 0 300 -300 1.02 100 1 300 0;
+];
+mpc.branch = [
+1 2 0.01 0.05 0.0 999 999 999 0 0 1 -360 360;
+];
+""")
+        end
+        active_before = active_sparlectra_config()
+        results = run_sparlectra_cases(config = cfg_precedence, path = tmpdir)
+        @test length(results) == 2
+        @test [result.net.name for result in results] == ["case_a", "case_b"]
+        @test all(result -> result isa SparlectraRunResult, results)
+        @test all(result -> result.numerical_converged, results)
+        @test active_sparlectra_config() === active_before
       end
     end
 
-    @testset "run_acpflow input validation for net/casefile entry modes" begin
+    @testset "Framework runner input validation and removed legacy keywords" begin
       net = createTest3BusNet()
-      @test_throws ArgumentError run_acpflow(net = net, casefile = "case3.m", show_results = false)
-      @test_throws ArgumentError run_acpflow(show_results = false)
+      @test_throws ArgumentError run_sparlectra(net = net, casefile = "case3.m")
+      @test_throws ArgumentError run_sparlectra()
+      @test_throws ArgumentError run_sparlectra(net = net, path = "unused")
+      @test_throws ArgumentError run_acpflow(net = net, casefile = "case3.m")
+      @test_throws ArgumentError run_acpflow()
+      @test_throws ArgumentError run_acpflow(net = net, path = "unused")
+      @test_throws MethodError run_acpflow(net = net, max_ite = 10)
+      @test_throws MethodError run_acpflow(net = net, tol = 1e-6)
+      @test_throws MethodError run_acpflow(net = net, verbose = 0)
+      @test_throws MethodError run_acpflow(casefile = "case14.m", matpower_ratio = :normal)
     end
 
     @testset "Rectangular damping defaults and validation" begin

@@ -231,12 +231,12 @@ function _ensure_julia_threads_for_script(config_file::AbstractString, cli_overr
 end
 
 """
-    _split_casefile_for_run_acpflow(casefile)
+    _split_casefile_for_run_sparlectra(casefile)
 
 Convert a possibly path-qualified case file into `(casefile, path)` arguments
-for `run_acpflow`.
+for `run_sparlectra`.
 """
-function _split_casefile_for_run_acpflow(casefile::AbstractString)
+function _split_casefile_for_run_sparlectra(casefile::AbstractString)
   dir = dirname(casefile)
   file = basename(casefile)
 
@@ -302,11 +302,11 @@ function _run_status_only(config_file::AbstractString, casefile::AbstractString)
   println("configured detection           = ", cfg.powerflow.wrong_branch_detection)
   println("configured branch angle limit  = ", cfg.powerflow.wrong_branch_max_branch_angle_deg)
 
-  case_args = _split_casefile_for_run_acpflow(casefile)
+  case_args = _split_casefile_for_run_sparlectra(casefile)
 
-  net = run_acpflow(casefile = case_args.casefile, path = case_args.path, config = cfg, show_results = false, printResultToFile = false, verbose = 0)
+  result = run_sparlectra(casefile = case_args.casefile, path = case_args.path, config = cfg)
 
-  st = Sparlectra.rectangular_pf_status(net)
+  st = Sparlectra.rectangular_pf_status(result.net)
   _print_rectangular_status(st)
   return st
 end

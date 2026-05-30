@@ -150,24 +150,34 @@ function print_compact_result(result::ControlRunResult)
   end
 end
 
+function replace_config_field(config::T, name::Symbol, value) where T
+  return T(; (field => (field === name ? value : getfield(config, field)) for field in fieldnames(T))...)
+end
+
+function tap_demo_run_config(sparlectra_config::SparlectraConfig, show_classic::Bool)
+  show_classic && return sparlectra_config
+  compact_output = replace_config_field(sparlectra_config.output, :logfile_results, :off)
+  return replace_config_field(sparlectra_config, :output, compact_output)
+end
+
 function main(args::AbstractVector{String} = ARGS)
   demo_path, demo_settings = load_demo_settings(args)
   config_label, sparlectra_config = load_demo_sparlectra_config(demo_settings, demo_path)
+  show_classic = get(ENV, "SPARLECTRA_TAP_DEMO_CLASSIC", "1") != "0"
+  run_config = tap_demo_run_config(sparlectra_config, show_classic)
   net, trafos = build_demo_net(demo_settings)
 
-  _, erg0, _ = run_acpflow(net = net; config = sparlectra_config, show_results = false)
-  erg0 == 0 || error("Uncontrolled PF failed with erg=$erg0")
+  initial_result = run_sparlectra(net = net, config = run_config)
+  initial_result.numerical_converged || error("Uncontrolled PF failed: $(initial_result.reason_text)")
   vm_lv0 = get_bus_vm_pu(net, "Load_LV")
   vm_mv0 = get_bus_vm_pu(net, "Load_MV")
 
   add_demo_controllers!(net, trafos, demo_settings)
-  # Classic network output is enabled by default for this demo.
-  # Set SPARLECTRA_TAP_DEMO_CLASSIC=0 for compact-only output.
-  show_classic = get(ENV, "SPARLECTRA_TAP_DEMO_CLASSIC", "1") != "0"
+  # Framework output is selected by run_config.output.
   raw = get(ENV, "SPARLECTRA_TAP_DEMO_RAW", "0") == "1"
 
-  _, erg, _ = run_acpflow(net = net; config = sparlectra_config, show_results = show_classic)
-  erg == 0 || error("Controlled PF failed with erg=$erg")
+  controlled_result = run_sparlectra(net = net, config = run_config)
+  controlled_result.numerical_converged || error("Controlled PF failed: $(controlled_result.reason_text)")
 
   vm_lv = get_bus_vm_pu(net, "Load_LV")
   vm_mv = get_bus_vm_pu(net, "Load_MV")
@@ -190,7 +200,7 @@ function main(args::AbstractVector{String} = ARGS)
   @printf("  P(MV_A -> MV_B): %.4f MW\n", p_mva_mvb)
 
   print_compact_result(result)
-  println("Tip: set SPARLECTRA_TAP_DEMO_CLASSIC=0 for compact-only output.")
+  println("Tip: set SPARLECTRA_TAP_DEMO_CLASSIC=0 to disable framework result tables for compact-only output.")
   println("Tip: set SPARLECTRA_TAP_DEMO_RAW=1 for raw ControlRunResult rows.")
 
   if raw

@@ -8,7 +8,7 @@ The rectangular implementation is split across several abstraction layers:
 
 | Entry point | Layer | Role |
 |---|---|---|
-| `run_acpflow` | High-level workflow | Handles case/config input, workflow setup, solver selection, and output/result handling. |
+| `run_sparlectra` | High-level workflow | Handles case/config input, workflow setup, solver selection, and output/result handling. |
 | `runpf!` | Generic power-flow dispatcher | Dispatches to the selected power-flow method. For rectangular runs, it reaches `runpf_rectangular!`. |
 | `runpf_rectangular!` | Network-integrated rectangular solver | Orchestrates rectangular power flow on a `Sparlectra.Net`: setup, start projection, Newton loop, Q-limit handling, finalization, diagnostics, and write-back. |
 | `run_complex_nr_rectangular` | Standalone array-level solver | Runs the rectangular Newton method directly on `Ybus`, `V0`, and `S`; it does not own full `Net` orchestration. |
@@ -88,7 +88,7 @@ The **include order** above is the dependency/load order. The **runtime call ord
 
 ```mermaid
 flowchart TD
-    A["User / script / example"] --> B["run_acpflow\nhigh-level workflow"]
+    A["User / script / example"] --> B["run_sparlectra\nhigh-level workflow"]
     B --> C["runpf!\ngeneric PF dispatcher"]
     C --> D["runpf_rectangular!\nnetwork-integrated rectangular solver\n(src/powerflow_rectangular/rectangular_network_solver.jl)"]
 
@@ -139,7 +139,7 @@ The rectangular implementation should be read from top to bottom as layered orch
 
 | Function | Layer | Typical caller | Owns `Sparlectra.Net` orchestration? | Main responsibility |
 |---|---|---|---:|---|
-| `run_acpflow` | Workflow/API | examples, scripts, user-facing workflows | Yes, indirectly | Load/apply configuration, prepare input, select solver path, handle output. |
+| `run_sparlectra` | Workflow/API | examples, scripts, user-facing workflows | Yes, indirectly | Load/apply configuration, prepare input, select solver path, handle output. |
 | `runpf!` | Generic dispatcher | high-level PF workflows | Partly | Dispatch to the configured PF method. |
 | `runpf_rectangular!` | Network-integrated solver | `runpf!`, solver-interface paths | Yes | Run rectangular PF on `Net`, including setup, Q-limit workflow, finalization, diagnostics, and write-back. |
 | `run_complex_nr_rectangular` | Standalone numerical solver | tests, experiments, low-level callers | No | Run rectangular Newton on `Ybus`, `V0`, `S` without full network object handling. |
@@ -156,7 +156,7 @@ runpf_rectangular! != run_complex_nr_rectangular
 
 ## Architectural notes
 
-- `run_acpflow` is the high-level workflow entry point. It is not the numerical solver itself.
+- `run_sparlectra` is the high-level workflow entry point. It is not the numerical solver itself.
 - `runpf!` is the generic power-flow dispatch layer.
 - `runpf_rectangular!` is the **network-integrated** rectangular solver. It owns the high-level orchestration: setup, Newton loop sequencing, Q-limit handling, finalization, and final status handling.
 - `run_complex_nr_rectangular` is the **standalone array-level** solver path. It shares lower-level rectangular helper layers but is not responsible for full network object orchestration.
@@ -170,7 +170,7 @@ runpf_rectangular! != run_complex_nr_rectangular
 ## Minimal call sequence
 
 ```text
-run_acpflow
+run_sparlectra
   -> runpf!
      -> runpf_rectangular!
         -> setup helpers
