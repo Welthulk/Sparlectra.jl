@@ -6,6 +6,54 @@ function _resolve_sparlectra_casefile(casefile::String, path::Union{Nothing,Stri
   return filename
 end
 
+function _resolve_matpower_lock_pv_to_pq_buses(net::Net, buses::AbstractVector{Int}; verbose::Int = 0)::Vector{Int}
+  isempty(buses) && return Int[]
+
+  orig_to_net = Dict{Int,Int}()
+  sizehint!(orig_to_net, length(net.busOrigIdxDict))
+  for (net_idx, orig_idx) in net.busOrigIdxDict
+    orig_to_net[Int(orig_idx)] = Int(net_idx)
+  end
+
+  resolved = Int[]
+  nb = length(net.nodeVec)
+  for bus in buses
+    b = Int(bus)
+    if haskey(orig_to_net, b)
+      push!(resolved, orig_to_net[b])
+    elseif 1 <= b <= nb
+      push!(resolved, b)
+    else
+      verbose > 0 && @warn "Configured MATPOWER PV/PQ lock bus was not found and will be ignored" bus = b
+    end
+  end
+  unique!(resolved)
+  sort!(resolved)
+  return resolved
+end
+
+function _copy_qlimits_with(ql::QLimitConfig; kwargs...)::QLimitConfig
+  fields = NamedTuple{fieldnames(QLimitConfig)}(getfield.(Ref(ql), fieldnames(QLimitConfig)))
+  return QLimitConfig(; fields..., kwargs...)
+end
+
+function _copy_powerflow_with(pf::PowerFlowConfig; kwargs...)::PowerFlowConfig
+  fields = NamedTuple{fieldnames(PowerFlowConfig)}(getfield.(Ref(pf), fieldnames(PowerFlowConfig)))
+  return PowerFlowConfig(; fields..., kwargs...)
+end
+
+function _copy_sparlectra_with_powerflow(cfg::SparlectraConfig, powerflow::PowerFlowConfig)::SparlectraConfig
+  return SparlectraConfig(; powerflow = powerflow, state_estimation = cfg.state_estimation, matpower = cfg.matpower, performance = cfg.performance, benchmark = cfg.benchmark, runtime = cfg.runtime, diagnostics = cfg.diagnostics, output = cfg.output, control = cfg.control)
+end
+
+function _resolve_matpower_powerflow_ids_after_import(net::Net, cfg::SparlectraConfig; verbose::Int = 0)::SparlectraConfig
+  qlimits = cfg.powerflow.qlimits
+  resolved = _resolve_matpower_lock_pv_to_pq_buses(net, qlimits.lock_pv_to_pq_buses; verbose = verbose)
+  resolved == qlimits.lock_pv_to_pq_buses && return cfg
+  qlimits2 = _copy_qlimits_with(qlimits; lock_pv_to_pq_buses = resolved)
+  return _copy_sparlectra_with_powerflow(cfg, _copy_powerflow_with(cfg.powerflow; qlimits = qlimits2))
+end
+
 function _import_sparlectra_net(casefile::String, path::Union{Nothing,String}, cfg::SparlectraConfig; performance_profile = nothing)::Net
   filename = _resolve_sparlectra_casefile(casefile, path)
   pf_cfg = cfg.powerflow

@@ -40,8 +40,14 @@ function _run_sparlectra(; net::Union{Nothing,Net} = nothing, casefile::Union{No
   (net === nothing) == (casefile === nothing) && throw(ArgumentError("run_sparlectra: pass exactly one of net or casefile."))
   net !== nothing && path !== nothing && throw(ArgumentError("run_sparlectra: path is only valid with casefile."))
   cfg = config === nothing ? active_sparlectra_config() : config
-  run_net = net === nothing ? _import_sparlectra_net(casefile::String, path, cfg; performance_profile = performance_profile) : net
-  execution = _execute_sparlectra_powerflow!(run_net, cfg; performance_profile = performance_profile)
-  result = _build_sparlectra_result(run_net, cfg, execution, performance_profile)
-  return _postprocess_sparlectra_result!(result, cfg; emit_output = emit_output)
+  if net === nothing
+    run_net = _import_sparlectra_net(casefile::String, path, cfg; performance_profile = performance_profile)
+    run_cfg = _resolve_matpower_powerflow_ids_after_import(run_net, cfg; verbose = _runner_verbose(cfg))
+  else
+    run_net = net
+    run_cfg = cfg
+  end
+  execution = _execute_sparlectra_powerflow!(run_net, run_cfg; performance_profile = performance_profile)
+  result = _build_sparlectra_result(run_net, run_cfg, execution, performance_profile)
+  return _postprocess_sparlectra_result!(result, run_cfg; emit_output = emit_output)
 end

@@ -13,8 +13,12 @@
 
 ### Improvements
 
+### Bugfixes
+
+* Fixed file-based MATPOWER runs so `power_flow.qlimits.lock_pv_to_pq_buses` entries are resolved from original MATPOWER bus IDs to internal Sparlectra bus indices before solving. This preserves correct Q-limit PV locking for non-contiguous MATPOWER bus numbers.
+
 ### Related Issues
-#228 Remove the old compatibility surface from the high-level runner
+* #228 Remove the old compatibility surface from the high-level runner
 
 ## Version 0.8.2 – 2026-05-29
 ### New Features
