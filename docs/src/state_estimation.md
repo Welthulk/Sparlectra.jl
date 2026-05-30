@@ -184,7 +184,8 @@ inspection) and for human-readable diagnostics output.
 using Sparlectra
 using Random
 
-net = run_acpflow(casefile = "case9.m")
+result = run_sparlectra(casefile = "case9.m")
+net = result.net
 
 std = measurementStdDevs(vm = 1e-3, pinj = 1.0, qinj = 1.0, pflow = 0.7, qflow = 0.7)
 setMeasurementsFromPF!(
