@@ -16,6 +16,9 @@
 ### Bugfixes
 
 * Fixed file-based MATPOWER runs so `power_flow.qlimits.lock_pv_to_pq_buses` entries are resolved from original MATPOWER bus IDs to internal Sparlectra bus indices before solving. This preserves correct Q-limit PV locking for non-contiguous MATPOWER bus numbers.
+* Fixed the tap-control demo so the classic-output toggle is defined and honored consistently, avoiding a late `show_classic` runtime error.
+* Updated the Basic Import documentation snippet to use `ensure_casefile` and a case path resolved for fresh checkouts or package installations.
+* Fixed the public `ensure_casefile` binding so `using Sparlectra; ensure_casefile("case14.m")` works as documented.
 
 ### Related Issues
 * #228 Remove the old compatibility surface from the high-level runner
