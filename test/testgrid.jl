@@ -1903,6 +1903,54 @@ function test_report_uses_user_bus_names_and_pf_node_count()
   return has_bus1a_row && merged_pf_count_ok && controllers_line_ok && link_names_ok && branch_connection_ok
 end
 
+function test_run_sparlectra_normalizes_projected_matpower_starts()::Bool
+  tmpdir = mktempdir()
+  case_path = joinpath(tmpdir, "case_projected_start.m")
+  write(case_path, """
+function mpc = case_projected_start
+mpc.version = '2';
+mpc.baseMVA = 100;
+mpc.bus = [
+101 3 0 0 0 0 1 1.04 3.0 110 1 1.1 0.9;
+205 2 10 5 0 0 1 1.03 2.0 110 1 1.1 0.9;
+309 1 90 30 0 0 1 0.97 -4.0 110 1 1.1 0.9;
+];
+mpc.gen = [
+101 100 0 300 -300 1.04 100 1 300 0;
+205 20 0 100 -100 1.03 100 1 100 0;
+];
+mpc.branch = [
+101 205 0.01 0.05 0.0 999 999 999 0 0 1 -360 360;
+205 309 0.01 0.05 0.0 999 999 999 0 0 1 -360 360;
+];
+""")
+
+  cases = (
+    (voltage_mode = :profile_blend, angle_mode = :dc, expected_flatstart = false),
+    (voltage_mode = :classic, angle_mode = :classic, expected_flatstart = true),
+    (voltage_mode = :classic, angle_mode = :matpower_va, expected_flatstart = false),
+    (voltage_mode = :classic, angle_mode = :bus_va_blend, expected_flatstart = false),
+    (voltage_mode = :all_bus_vm, angle_mode = :classic, expected_flatstart = false),
+  )
+  for case in cases
+    cfg = Sparlectra.SparlectraConfig(
+      powerflow = Sparlectra.PowerFlowConfig(
+        start_mode = Sparlectra.StartModeConfig(flatstart = true, voltage_mode = case.voltage_mode, angle_mode = case.angle_mode),
+        qlimits = Sparlectra.QLimitConfig(lock_pv_to_pq_buses = [205]),
+      ),
+      output = Sparlectra.OutputConfig(console_summary = false, logfile_results = :off),
+    )
+    ctx = Sparlectra._import_sparlectra_context(basename(case_path), dirname(case_path), cfg)
+    effective_cfg = Sparlectra._resolve_matpower_powerflow_ids_after_import(ctx.net, ctx.config)
+    effective_cfg.powerflow.start_mode.flatstart == case.expected_flatstart || return false
+    ctx.projected_start_applied == !case.expected_flatstart || return false
+    effective_cfg.powerflow.qlimits.lock_pv_to_pq_buses == [2] || return false
+    cfg.powerflow.start_mode.flatstart == true || return false
+    cfg.powerflow.qlimits.lock_pv_to_pq_buses == [205] || return false
+  end
+  return true
+end
+
 function test_run_sparlectra_resolves_matpower_lock_bus_ids()::Bool
   tmpdir = mktempdir()
   case_path = joinpath(tmpdir, "case_noncontiguous_lock.m")
@@ -2445,6 +2493,7 @@ function run_grid_tests()
       @test test_matpower_read_case_m_postprocessing() == true
       @test test_matpower_file_import_honors_explicit_overrides() == true
       @test test_run_sparlectra_forwards_wrong_branch_config() == true
+      @test test_run_sparlectra_normalizes_projected_matpower_starts() == true
       @test test_run_sparlectra_resolves_matpower_lock_bus_ids() == true
     end
 

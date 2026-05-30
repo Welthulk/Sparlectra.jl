@@ -65,8 +65,9 @@ function _run_sparlectra(; net::Union{Nothing,Net} = nothing, casefile::Union{No
   net !== nothing && path !== nothing && throw(ArgumentError("run_sparlectra: path is only valid with casefile."))
   cfg = config === nothing ? active_sparlectra_config() : config
   if net === nothing
-    run_net = _import_sparlectra_net(casefile::String, path, cfg; performance_profile = performance_profile)
-    run_cfg = _resolve_matpower_powerflow_ids_after_import(run_net, cfg; verbose = _runner_verbose(cfg))
+    import_ctx = _import_sparlectra_context(casefile::String, path, cfg; performance_profile = performance_profile)
+    run_net = import_ctx.net
+    run_cfg = _resolve_matpower_powerflow_ids_after_import(run_net, import_ctx.config; verbose = _runner_verbose(import_ctx.config))
   else
     run_net = net
     run_cfg = cfg

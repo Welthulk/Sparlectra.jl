@@ -19,6 +19,7 @@
 
 ### Bugfixes
 
+* Fixed file-based MATPOWER projected-start handling so imported/profiled voltage or angle starts disable the effective solver flat-start flag for that run, ensuring the rectangular solver consumes the projected node values.
 * Fixed controlled-run framework status composition so inner PF failures preserve concrete solver rejection metadata, such as wrong-branch final rejection, instead of being reported as generic control-loop failures.
 * Fixed synthetic-grid benchmark rows so the `converged` column follows final framework acceptance while numerical PF convergence remains available as a separate diagnostic.
 * Fixed framework status composition so successful baseline power-flow runs with disabled controls or no active controllers remain accepted, while still exposing `control_status = :disabled` or `:no_active_controllers`.
