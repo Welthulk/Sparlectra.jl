@@ -19,6 +19,7 @@
 
 ### Bugfixes
 
+* Fixed framework status composition so successful baseline power-flow runs with disabled controls or no active controllers remain accepted, while still exposing `control_status = :disabled` or `:no_active_controllers`.
 * Fixed framework result status handling so numerically converged rectangular solutions rejected by wrong-branch diagnostics are not treated as available for post-processing or reporting.
 * Fixed MATPOWER runner status rows so legacy `converged`/`erg` fields follow final framework acceptance, while `numerical_converged` remains available as a separate diagnostic.
 * Fixed file-based MATPOWER runs so `power_flow.qlimits.lock_pv_to_pq_buses` entries are resolved from original MATPOWER bus IDs to internal Sparlectra bus indices before solving. This preserves correct Q-limit PV locking for non-contiguous MATPOWER bus numbers.
