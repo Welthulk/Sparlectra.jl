@@ -10,6 +10,32 @@ function run_sparlectra(; net::Union{Nothing,Net} = nothing, casefile::Union{Not
   return _run_sparlectra(; net = net, casefile = casefile, path = path, config = config, performance_profile = performance_profile)
 end
 
+"""
+    run_acpflow(; net=nothing, casefile=nothing, path=nothing, config=nothing, performance_profile=nothing) -> SparlectraRunResult
+
+Compatibility alias for [`run_sparlectra`](@ref).
+
+This function uses the same configuration-driven framework workflow as
+`run_sparlectra`. It does not support the former keyword-heavy runner API.
+Solver, import, output, Q-limit, start-mode, and diagnostic behavior must be
+configured through `SparlectraConfig` or YAML.
+"""
+function run_acpflow(;
+  net::Union{Nothing,Net} = nothing,
+  casefile::Union{Nothing,String} = nothing,
+  path::Union{Nothing,String} = nothing,
+  config::Union{Nothing,SparlectraConfig} = nothing,
+  performance_profile = nothing,
+)::SparlectraRunResult
+  return run_sparlectra(;
+    net = net,
+    casefile = casefile,
+    path = path,
+    config = config,
+    performance_profile = performance_profile,
+  )
+end
+
 function _run_sparlectra(; net::Union{Nothing,Net} = nothing, casefile::Union{Nothing,String} = nothing, path::Union{Nothing,String} = nothing, config::Union{Nothing,SparlectraConfig} = nothing, performance_profile = nothing, emit_output::Bool = true)::SparlectraRunResult
   (net === nothing) == (casefile === nothing) && throw(ArgumentError("run_sparlectra: pass exactly one of net or casefile."))
   net !== nothing && path !== nothing && throw(ArgumentError("run_sparlectra: path is only valid with casefile."))

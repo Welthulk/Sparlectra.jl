@@ -101,9 +101,11 @@ using Sparlectra
 
 ## Quick start
 
-`run_sparlectra` is the public framework entry point. It owns MATPOWER import,
-configuration, optional control-loop execution, solving, post-processing, and
-configured output. Solver and import behavior is controlled through
+`run_sparlectra` is the preferred public framework entry point. It owns MATPOWER
+import, configuration, optional control-loop execution, solving, post-processing,
+and configured output. For AC power-flow examples, `run_acpflow` is kept as a thin
+alias with the same minimal configuration-driven signature. Both names return
+`SparlectraRunResult`. Solver and import behavior is controlled through
 `SparlectraConfig` or YAML rather than a long list of runner keywords.
 
 ```julia
@@ -135,7 +137,7 @@ vm = getNodeVm(result.net.nodeVec[1])
 
 | Layer | Function | Purpose |
 |---|---|---|
-| Framework | `run_sparlectra` | Import/config/control/solve/output orchestration |
+| Framework | `run_sparlectra` (`run_acpflow` alias) | Import/config/control/solve/output orchestration |
 | Solver | `runpf!` | Solve an already built `Net` using `PowerFlowConfig` |
 | Control | `run_control!` | Execute outer-loop controllers |
 | Import | `createNetFromMatPowerFile` | Convert a MATPOWER file into a `Net` without running the framework workflow |

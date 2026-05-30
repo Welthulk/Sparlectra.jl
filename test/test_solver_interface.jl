@@ -564,6 +564,10 @@ end
     end
 
     @testset "Typed power-flow config entry points" begin
+      @test isdefined(Main, :run_sparlectra)
+      @test isdefined(Main, :run_acpflow)
+      @test isdefined(Main, :SparlectraRunResult)
+
       pf_config = PowerFlowConfig(max_iter = 20, tol = 1e-8, sparse = true, start_mode = StartModeConfig(flatstart = true))
 
       net_direct = createTest3BusNet()
@@ -587,7 +591,16 @@ end
       @test result.reason_text isa String
       @test result.iterations >= 0
       @test result.final_mismatch isa Float64
+
+      net_alias = createTest3BusNet()
+      alias_result = run_acpflow(net = net_alias, config = cfg_output_off)
+      @test alias_result isa SparlectraRunResult
+      @test alias_result.net === net_alias
+      @test alias_result.outcome == result.outcome
+      @test alias_result.method == result.method
+
       @test_throws TypeError run_sparlectra(net = createTest3BusNet(), config = pf_config)
+      @test_throws TypeError run_acpflow(net = createTest3BusNet(), config = pf_config)
 
       net_with_explicit_cfg = createTest3BusNet()
       explicit_output = mktemp() do path, io
@@ -612,11 +625,18 @@ end
       @test Sparlectra._sparlectra_result_mode(net_with_output, OutputConfig(logfile_results = :compact, result_table_large_case_threshold_buses = 1, result_table_large_case_mode = :summary)) === :summary
     end
 
-    @testset "run_sparlectra input validation for net/casefile entry modes" begin
+    @testset "Framework runner input validation and removed legacy keywords" begin
       net = createTest3BusNet()
       @test_throws ArgumentError run_sparlectra(net = net, casefile = "case3.m")
       @test_throws ArgumentError run_sparlectra()
       @test_throws ArgumentError run_sparlectra(net = net, path = "unused")
+      @test_throws ArgumentError run_acpflow(net = net, casefile = "case3.m")
+      @test_throws ArgumentError run_acpflow()
+      @test_throws ArgumentError run_acpflow(net = net, path = "unused")
+      @test_throws MethodError run_acpflow(net = net, max_ite = 10)
+      @test_throws MethodError run_acpflow(net = net, tol = 1e-6)
+      @test_throws MethodError run_acpflow(net = net, verbose = 0)
+      @test_throws MethodError run_acpflow(casefile = "case14.m", matpower_ratio = :normal)
     end
 
     @testset "Rectangular damping defaults and validation" begin

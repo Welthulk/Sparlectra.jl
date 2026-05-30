@@ -389,7 +389,8 @@ export
   printProsumerResults,
 
   # Configuration-driven framework runner.
-  run_sparlectra,                         # Public import/control/solve/output workflow.
+  run_sparlectra,                         # Preferred public import/control/solve/output workflow.
+  run_acpflow,                            # Thin AC power-flow alias for run_sparlectra.
   SparlectraRunResult,                    # Stable typed framework-run result.
   run_matpower_case,                      # Run a MATPOWER case through the high-level workflow.
 
@@ -475,7 +476,7 @@ include("limits.jl")
 include("losses.jl")
 include("exportMatPower.jl")
 include("results.jl")
-include("run_acpflow.jl")
+include("acpflow.jl")
 include("matpower_runner.jl")
 include("remove_functions.jl")
 include("solver_core.jl")
