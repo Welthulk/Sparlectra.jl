@@ -54,6 +54,11 @@ _is_accepted_control_status(status::Symbol)::Bool = status in (:none, :converged
 
 function _compose_framework_status(base_status, control_status::Symbol)
   _is_accepted_control_status(control_status) && return base_status
+  if control_status === :pf_failed
+    meaningful_rejection = base_status.outcome !== :converged || base_status.reason !== :none || !base_status.final_converged
+    meaningful_rejection && base_status.numerical_converged && return merge(base_status, (final_converged = false,))
+    return merge(base_status, (outcome = :pf_failed, final_converged = false, reason = :pf_failed, reason_text = "power flow failed during controlled framework run"))
+  end
   if !base_status.numerical_converged
     return merge(base_status, (outcome = :pf_failed, final_converged = false, reason = :pf_failed, reason_text = "power flow failed during controlled framework run"))
   end

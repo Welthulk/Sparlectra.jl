@@ -936,6 +936,10 @@ function run_matpower_case(; casefile::AbstractString = "", config_file::Abstrac
   return (status_ref = status_ref[], logfile = logfile, performance_profile = profile)
 end
 
+function _synthetic_pf_perf_row(limit, meta, result)
+  return (limit = limit, nbus = meta.actual_buses, converged = result.final_converged, numerical_converged = result.numerical_converged, solution_available = result.solution_available, outcome = result.outcome, reason = result.reason, iterations = result.iterations, solve_ms = result.elapsed_s * 1000.0)
+end
+
 function run_synthetic_tiled_grid_pf_perf(; config_file::AbstractString = "", args = String[], outdir::AbstractString = "")
   !isempty(strip(config_file)) && load_sparlectra_config!(String(config_file); reload = true)
   limits = isempty(args) ? [20] : Int[parse(Int, a) for a in args if !startswith(a, "--")]
@@ -947,17 +951,18 @@ function run_synthetic_tiled_grid_pf_perf(; config_file::AbstractString = "", ar
   for limit in limits
     net, meta = build_synthetic_tiled_grid_net(limit)
     result = _run_sparlectra(net = net; emit_output = false)
-    push!(rows, (limit = limit, nbus = meta.actual_buses, converged = result.numerical_converged, iterations = result.iterations, solve_ms = result.elapsed_s * 1000.0))
+    push!(rows, _synthetic_pf_perf_row(limit, meta, result))
   end
   open(logfile, "w") do io
-    println(io, "limit nbus converged iterations solve_ms")
+    println(io, "limit nbus converged numerical_converged solution_available outcome reason iterations solve_ms")
     for r in rows
-      println(io, "$(r.limit) $(r.nbus) $(r.converged) $(r.iterations) $(round(r.solve_ms;digits=3))")
+      println(io, "$(r.limit) $(r.nbus) $(r.converged) $(r.numerical_converged) $(r.solution_available) $(r.outcome) $(r.reason) $(r.iterations) $(round(r.solve_ms;digits=3))")
     end
   end
   println("Synthetic tiled-grid benchmark")
+  println("limit nbus converged numerical_converged solution_available outcome reason iterations solve_ms")
   for r in rows
-    println("$(r.limit) $(r.nbus) $(r.converged) $(r.iterations) $(round(r.solve_ms;digits=3))")
+    println("$(r.limit) $(r.nbus) $(r.converged) $(r.numerical_converged) $(r.solution_available) $(r.outcome) $(r.reason) $(r.iterations) $(round(r.solve_ms;digits=3))")
   end
   println("Wrote log file: ", logfile)
   return (rows = rows, logfile = logfile)
