@@ -1431,20 +1431,40 @@ mpc.branch = [
         "wrong_branch_detection" => String(mode),
         "wrong_branch_max_branch_angle_deg" => 0.001,
       ),
+      "output" => Dict("logfile_results" => "full"),
     ))
-    result = Sparlectra.run_sparlectra(casefile = basename(case_path), path = dirname(case_path), config = cfg)
-    return Sparlectra.rectangular_pf_status(result.net)
+    profile = Dict{Symbol,Any}(:enabled => true)
+    result, output = mktemp() do output_path, io
+      result = redirect_stdout(io) do
+        Sparlectra.run_sparlectra(casefile = basename(case_path), path = dirname(case_path), config = cfg, performance_profile = profile)
+      end
+      flush(io)
+      return result, read(output_path, String)
+    end
+    return result, Sparlectra.rectangular_pf_status(result.net), profile, output
   end
 
-  st_warn = run_with_detection(:warn)
+  result_warn, st_warn, profile_warn, output_warn = run_with_detection(:warn)
+  row_warn = Sparlectra._sparlectra_status_row(result_warn)
   warn_ok = st_warn.wrong_branch_detection === :warn &&
             st_warn.branch_quality_metrics.max_branch_angle_deg == 0.001 &&
             st_warn.wrong_branch_status === :warn &&
             st_warn.wrong_branch_reason === :branch_angle_exceeded &&
             st_warn.wrong_branch_branch_angle_violation_count > 0 &&
-            st_warn.final_converged === true
+            st_warn.final_converged === true &&
+            result_warn.numerical_converged === true &&
+            result_warn.solution_available === true &&
+            result_warn.final_converged === true &&
+            row_warn.numerical_converged === true &&
+            row_warn.converged === true &&
+            row_warn.erg == 0 &&
+            row_warn.solution_available === true &&
+            haskey(profile_warn[:timings], :postprocess_losses_and_flows) &&
+            occursin("AC Power Flow Results", output_warn)
 
-  st_fail = run_with_detection(:fail)
+  result_fail, st_fail, profile_fail, output_fail = run_with_detection(:fail)
+  row_fail = Sparlectra._sparlectra_status_row(result_fail)
+  summary_fail = Sparlectra._compact_run_summary(row_fail)
   fail_ok = st_fail.wrong_branch_detection === :fail &&
             st_fail.branch_quality_metrics.max_branch_angle_deg == 0.001 &&
             st_fail.wrong_branch_status === :fail &&
@@ -1453,7 +1473,21 @@ mpc.branch = [
             st_fail.numerical_converged === true &&
             st_fail.final_converged === false &&
             st_fail.status === :wrong_branch_detected &&
-            st_fail.reason === :wrong_branch_detected
+            st_fail.reason === :wrong_branch_detected &&
+            result_fail.numerical_converged === true &&
+            result_fail.solution_available === false &&
+            result_fail.final_converged === false &&
+            row_fail.numerical_converged === true &&
+            row_fail.final_converged === false &&
+            row_fail.converged === false &&
+            row_fail.erg == 1 &&
+            row_fail.solution_available === false &&
+            !haskey(profile_fail[:timings], :postprocess_losses_and_flows) &&
+            !haskey(profile_fail[:timings], :result_output) &&
+            !occursin("AC Power Flow Results", output_fail) &&
+            occursin("numerical_solution=OK", summary_fail) &&
+            occursin("solution_available=false", summary_fail) &&
+            occursin("final_converged=false", summary_fail)
 
   return warn_ok && fail_ok
 end
