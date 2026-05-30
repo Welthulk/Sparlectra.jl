@@ -151,6 +151,7 @@ export
   active_sparlectra_config,               # Return the currently active configuration.
   powerflow_config,                       # Access the active power-flow settings.
   matpower_import_config,                 # Access MATPOWER import settings.
+  configured_matpower_cases,              # Resolve configured MATPOWER batch order.
   state_estimation_config,
   diagnostics_config,
   output_config,
@@ -390,6 +391,7 @@ export
 
   # Configuration-driven framework runner.
   run_sparlectra,                         # Preferred public import/control/solve/output workflow.
+  run_sparlectra_cases,                   # Run configured MATPOWER cases sequentially.
   run_acpflow,                            # Thin AC power-flow alias for run_sparlectra.
   SparlectraRunResult,                    # Stable typed framework-run result.
   run_matpower_case,                      # Run a MATPOWER case through the high-level workflow.

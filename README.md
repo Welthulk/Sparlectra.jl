@@ -127,6 +127,13 @@ println(result.iterations)
 println(result.final_mismatch)
 ```
 
+For deterministic configuration-driven MATPOWER batches, list ordered case
+names under `matpower_import.cases` and call `run_sparlectra_cases(config = cfg)`.
+The batch helper returns one `SparlectraRunResult` per case in configured order,
+uses `matpower_import.case` only when the list is empty, and resolves bare
+standard case names through `ensure_casefile` on demand. `run_sparlectra` itself
+remains a single-run API.
+
 For a manually constructed network, pass the network directly and read the
 solved model from `result.net`:
 
@@ -145,7 +152,8 @@ vm = getNodeVm(result.net.nodeVec[1])
 
 | Layer | Function | Purpose |
 |---|---|---|
-| Framework | `run_sparlectra` (`run_acpflow` alias) | Import/config/control/solve/output orchestration |
+| Framework | `run_sparlectra` (`run_acpflow` alias) | Import/config/control/solve/output orchestration for one run |
+| Framework batch | `run_sparlectra_cases` | Sequential deterministic execution of configured `matpower_import.cases` |
 | Solver | `runpf!` | Solve an already built `Net` using `PowerFlowConfig` |
 | Control | `run_control!` | Execute outer-loop controllers |
 | Import | `createNetFromMatPowerFile` | Convert a MATPOWER file into a `Net` without running the framework workflow |

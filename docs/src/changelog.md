@@ -11,7 +11,11 @@
 
 ### New Features
 
+* Added config-driven multi-case MATPOWER execution via `matpower_import.cases` and the dedicated `run_sparlectra_cases` batch helper, while keeping `run_sparlectra` as a single-case workflow returning one `SparlectraRunResult`.
+
 ### Improvements
+
+* Refined `SparlectraRunResult` framework status composition so controlled runs report numerical PF convergence, solution availability, control-loop status, and final framework convergence consistently.
 
 ### Bugfixes
 

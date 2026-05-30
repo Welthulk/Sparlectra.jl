@@ -10,6 +10,8 @@ This page summarizes the most relevant runnable examples in `examples/`.
   Demonstrates central configuration loading and typed runtime configuration usage.
 - `exp_synthetic_tiled_grid_pf_perf.jl`
   Synthetic tiled-grid PF performance example.
+- `exp_configured_matpower_cases.jl`
+  Runs ordered `matpower_import.cases` entries sequentially through `run_sparlectra_cases`.
 
 ## Transformer and tap control
 

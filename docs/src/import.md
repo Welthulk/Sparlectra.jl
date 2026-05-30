@@ -22,6 +22,36 @@ result = run_sparlectra(
 net = result.net
 ```
 
+### Configuration-driven MATPOWER batches
+
+Keep `run_sparlectra` as the single-case API when one `SparlectraRunResult` is
+expected. For deterministic sequential execution of several configured cases,
+list them in YAML and call `run_sparlectra_cases`:
+
+```yaml
+matpower_import:
+  cases: [case14.m, case118.m]
+```
+
+```julia
+using Sparlectra
+
+cfg = load_sparlectra_config("path/to/configuration.yaml")
+results = run_sparlectra_cases(config = cfg)
+
+for result in results
+    println(result.net.name, ": ", result.outcome)
+end
+```
+
+Configured order is preserved. A non-empty `matpower_import.cases` list wins
+over `matpower_import.case`; the single-case setting is used as a fallback when
+the list is empty. Bare standard MATPOWER case names are resolved through
+`ensure_casefile` and downloaded on demand. Pass `path` when the listed cases
+are local fixtures or site-specific files. Batch-level performance-profile
+aggregation is intentionally unsupported; profile individual `run_sparlectra`
+calls instead.
+
 ### Import Without Power Flow
 
 If you want to import a network without immediately running power flow, you can use the `createNetFromMatPowerFile` function:

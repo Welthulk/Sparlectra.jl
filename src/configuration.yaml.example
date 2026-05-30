@@ -110,8 +110,10 @@ state_estimation:
     enabled: true
 
 matpower_import:
-  # MATPOWER case filename/path resolved by the example runner.
+  # MATPOWER case filename/path resolved by single-case runner paths.
   case: case14.m
+  # Ordered batch list for run_sparlectra_cases; non-empty cases take precedence over case.
+  cases: [case14.m, case118.m]
   # Allowed values: off, recommend, apply
   # recommend prints a pre-run table without changing the active run.
   # apply may change only convention settings with clear residual evidence;

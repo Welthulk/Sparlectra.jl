@@ -25,7 +25,7 @@ julia --project=. -e 'using Pkg; Pkg.test()'
 | Group | Files | Main checks |
 |---|---|---|
 | `core_model` | `test/testgrid.jl` | Core net construction and validation, inline MATPOWER import helpers, file-based MATPOWER PV/PQ lock-ID resolution, link handling, shunts, reporting/output checks, and summary-file output regression |
-| `powerflow_rectangular` | `test/test_solver_interface.jl` | Rectangular power-flow API behavior, sparse-only solver path, Q-limit and typed configuration entry checks, including the thin `run_acpflow` alias and legacy-keyword rejection |
+| `powerflow_rectangular` | `test/test_solver_interface.jl` | Rectangular power-flow API behavior, sparse-only solver path, Q-limit and typed configuration entry checks, including framework status composition, ordered local MATPOWER batch execution, the thin `run_acpflow` alias, and legacy-keyword rejection |
 | `configuration` | `test/test_configuration_coverage.jl` | Configuration-key coverage, forwarding checks, and value-domain validation |
 | `state_estimation` | `test/test_state_estimation.jl` | WLS state-estimation behavior and observability-oriented regressions |
 | `controls` | `test/test_voltage_dependent_control.jl`, `test/test_transformer_phase_shift.jl`, `test/test_tap_controller.jl` | Voltage-dependent controls, transformer phase-shift control, and tap-controller behavior |
