@@ -108,11 +108,19 @@ alias with the same minimal configuration-driven signature. Both names return
 `SparlectraRunResult`. Solver and import behavior is controlled through
 `SparlectraConfig` or YAML rather than a long list of runner keywords.
 
+This example is runnable from a fresh checkout or package installation. The
+`ensure_casefile` helper downloads `case14.m` on demand if it is not already
+available locally.
+
 ```julia
 using Sparlectra
 
-cfg = load_sparlectra_config("examples/configuration.yaml")
-result = run_sparlectra(casefile = "case14.m", config = cfg)
+case_path = ensure_casefile("case14.m")
+
+result = run_sparlectra(
+    casefile = basename(case_path),
+    path = dirname(case_path),
+)
 
 println(result.outcome)
 println(result.iterations)
@@ -257,5 +265,3 @@ Sparlectra.jl is licensed under the Apache License, Version 2.0.
 See [LICENSE](LICENSE) for the full license text.
 
 ---
-
-
