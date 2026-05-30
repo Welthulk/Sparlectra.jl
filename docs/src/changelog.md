@@ -19,6 +19,7 @@
 
 ### Bugfixes
 
+* Restored rectangular diagnostic fields in MATPOWER runner status rows, including Q-limit active-set diagnostics, final PV voltage residuals, and wrong-branch metrics, while preserving final-acceptance semantics for `converged` and `erg`.
 * Fixed file-based MATPOWER projected-start handling so imported/profiled voltage or angle starts disable the effective solver flat-start flag for that run, ensuring the rectangular solver consumes the projected node values.
 * Fixed controlled-run framework status composition so inner PF failures preserve concrete solver rejection metadata, such as wrong-branch final rejection, instead of being reported as generic control-loop failures.
 * Fixed synthetic-grid benchmark rows so the `converged` column follows final framework acceptance while numerical PF convergence remains available as a separate diagnostic.

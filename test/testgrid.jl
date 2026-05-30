@@ -1459,6 +1459,16 @@ mpc.branch = [
             row_warn.converged === true &&
             row_warn.erg == 0 &&
             row_warn.solution_available === true &&
+            hasproperty(row_warn, :q_limit_active_set_ok) &&
+            hasproperty(row_warn, :active_set_converged) &&
+            hasproperty(row_warn, :pv_q_limit_violations) &&
+            hasproperty(row_warn, :ref_q_limit_violations) &&
+            hasproperty(row_warn, :final_pv_voltage_residual) &&
+            row_warn.q_limit_active_set_ok === st_warn.q_limit_active_set_ok &&
+            row_warn.active_set_converged === st_warn.active_set_converged &&
+            row_warn.pv_q_limit_violations == st_warn.pv_q_limit_violations &&
+            row_warn.ref_q_limit_violations == st_warn.ref_q_limit_violations &&
+            isequal(row_warn.final_pv_voltage_residual, st_warn.final_pv_voltage_residual) &&
             haskey(profile_warn[:timings], :postprocess_losses_and_flows) &&
             occursin("AC Power Flow Results", output_warn)
 
@@ -1482,6 +1492,30 @@ mpc.branch = [
             row_fail.converged === false &&
             row_fail.erg == 1 &&
             row_fail.solution_available === false &&
+            row_fail.converged === row_fail.final_converged &&
+            row_fail.erg == (row_fail.final_converged ? 0 : 1) &&
+            row_fail.numerical_converged === result_fail.numerical_converged &&
+            row_fail.solution_available === result_fail.solution_available &&
+            row_fail.outcome === result_fail.outcome &&
+            row_fail.reason === result_fail.reason &&
+            hasproperty(row_fail, :wrong_branch_detection) &&
+            hasproperty(row_fail, :wrong_branch_status) &&
+            hasproperty(row_fail, :wrong_branch_reason) &&
+            hasproperty(row_fail, :wrong_branch_angle_spread_deg) &&
+            hasproperty(row_fail, :wrong_branch_max_branch_angle_deg) &&
+            hasproperty(row_fail, :wrong_branch_branch_angle_violation_count) &&
+            hasproperty(row_fail, :wrong_branch_worst_branch_angle_deg) &&
+            hasproperty(row_fail, :wrong_branch_rescue_attempted) &&
+            hasproperty(row_fail, :wrong_branch_rescue_reason) &&
+            row_fail.wrong_branch_detection === st_fail.wrong_branch_detection &&
+            row_fail.wrong_branch_status === st_fail.wrong_branch_status &&
+            row_fail.wrong_branch_reason === st_fail.wrong_branch_reason &&
+            row_fail.wrong_branch_angle_spread_deg == st_fail.wrong_branch_angle_spread_deg &&
+            row_fail.wrong_branch_max_branch_angle_deg == st_fail.wrong_branch_max_branch_angle_deg &&
+            row_fail.wrong_branch_branch_angle_violation_count == st_fail.wrong_branch_branch_angle_violation_count &&
+            row_fail.wrong_branch_worst_branch_angle_deg == st_fail.wrong_branch_worst_branch_angle_deg &&
+            row_fail.wrong_branch_rescue_attempted === st_fail.wrong_branch_rescue_attempted &&
+            row_fail.wrong_branch_rescue_reason === st_fail.wrong_branch_rescue_reason &&
             !haskey(profile_fail[:timings], :postprocess_losses_and_flows) &&
             !haskey(profile_fail[:timings], :result_output) &&
             !occursin("AC Power Flow Results", output_fail) &&
