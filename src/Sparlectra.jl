@@ -388,8 +388,9 @@ export
   printACPFlowResults,                    # Print AC PF result report.
   printProsumerResults,
 
-  # run_acpflow.jl
-  run_acpflow,                            # Public high-level AC PF runner.
+  # Configuration-driven framework runner.
+  run_sparlectra,                         # Public import/control/solve/output workflow.
+  SparlectraRunResult,                    # Stable typed framework-run result.
   run_matpower_case,                      # Run a MATPOWER case through the high-level workflow.
 
   # solver_core.jl

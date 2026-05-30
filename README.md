@@ -101,27 +101,44 @@ using Sparlectra
 
 ## Quick start
 
-The following example downloads a MATPOWER-compatible case file on demand, imports it, runs an AC power flow, and prints the result.
+`run_sparlectra` is the public framework entry point. It owns MATPOWER import,
+configuration, optional control-loop execution, solving, post-processing, and
+configured output. Solver and import behavior is controlled through
+`SparlectraConfig` or YAML rather than a long list of runner keywords.
 
 ```julia
 using Sparlectra
 
-# Ensure that the case file exists locally.
-# If needed, it is downloaded into the local data/mpower workflow.
-case_path = ensure_casefile("case14.m")
+cfg = load_sparlectra_config("examples/configuration.yaml")
+result = run_sparlectra(casefile = "case14.m", config = cfg)
 
-# Build a Sparlectra network from the MATPOWER case.
-net = createNetFromMatPowerFile(case_path, false)
-
-# Run AC power flow.
-ite, erg = run_net_acpflow(net; iter_max = 10, tol = 1e-6, print = 0)
-
-if erg == 0
-    printACPFlowResults(net, 0.0, ite, 1e-6)
-else
-    @warn "AC power flow did not converge" iterations = ite status = erg
-end
+println(result.outcome)
+println(result.iterations)
+println(result.final_mismatch)
 ```
+
+For a manually constructed network, pass the network directly and read the
+solved model from `result.net`:
+
+```julia
+using Sparlectra
+
+net = Net(name = "demo", baseMVA = 100.0)
+# build network ...
+lockNet!(net)
+
+cfg = active_sparlectra_config()
+result = run_sparlectra(net = net, config = cfg)
+
+vm = getNodeVm(result.net.nodeVec[1])
+```
+
+| Layer | Function | Purpose |
+|---|---|---|
+| Framework | `run_sparlectra` | Import/config/control/solve/output orchestration |
+| Solver | `runpf!` | Solve an already built `Net` using `PowerFlowConfig` |
+| Control | `run_control!` | Execute outer-loop controllers |
+| Import | `createNetFromMatPowerFile` | Convert a MATPOWER file into a `Net` without running the framework workflow |
 
 ---
 

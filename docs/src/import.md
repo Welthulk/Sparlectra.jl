@@ -6,20 +6,16 @@ Sparlectra provides functionality to import network models from Matpower case fi
 
 ### Basic Import
 
-The simplest way to import a Matpower case file is using the `run_acpflow` function, which both imports the network and runs a power flow analysis:
+The simplest way to import a Matpower case file is using the `run_sparlectra` function, which both imports the network and runs a power flow analysis:
 
 ```julia
 using Sparlectra
 using Logging
 
-# Import a Matpower case file and run power flow
-net = run_acpflow(
-    casefile = "case3.m",       # Case file name
-    max_ite = 10,               # Maximum iterations
-    tol = 1e-8,                 # Convergence tolerance
-    verbose = 0,                # Verbosity level (0: none, 1: iterations, 2+: more details)
-    printResultToFile = false   # Whether to print results to a file
-)
+# Import a MATPOWER case file and run the configured framework workflow
+cfg = load_sparlectra_config("examples/configuration.yaml")
+result = run_sparlectra(casefile = "case3.m", config = cfg)
+net = result.net
 ```
 
 ### Import Without Power Flow
@@ -33,7 +29,7 @@ using Sparlectra
 file_path = "path/to/case5.m"
 
 # Import the network configuration
-net = createNetFromMatPowerFile(file_path, false)  # Second parameter controls logging
+net = createNetFromMatPowerFile(filename = file_path, log = false)
 ```
 
 ### Ensuring Test Cases Exist Locally
@@ -46,11 +42,10 @@ using Sparlectra
 
 # Downloads to Sparlectra.data/mpower if missing and returns absolute path
 case_path = ensure_casefile("case14.m")
-net = createNetFromMatPowerFile(case_path, false)
+net = createNetFromMatPowerFile(filename = case_path, log = false)
 ```
 
-MATPOWER transformer convention options can be passed to the import and power-flow
-paths. The default `matpower_ratio = "normal"` uses branch `TAP` values as
+MATPOWER transformer convention options are configured through `SparlectraConfig.matpower` for framework runs or passed directly to the importer for import-only calls. The default `matpower_ratio = "normal"` uses branch `TAP` values as
 stored, while `matpower_ratio = "reciprocal"` imports their reciprocal:
 
 ```julia
@@ -150,7 +145,7 @@ After importing a network, you can run a power flow analysis:
 using Sparlectra
 
 # Import a network from a Matpower file
-net = createNetFromMatPowerFile("case5.m", false)
+net = createNetFromMatPowerFile(filename = "case5.m", log = false)
 
 # Run power flow
 tol = 1e-6
@@ -179,12 +174,9 @@ using Sparlectra
 # Import from a specific path
 path = "C:/Users/YourUsername/Documents"
 file = "custom_case.m"
-net = run_acpflow(
-    casefile = file,
-    path = path,
-    max_ite = 10,
-    tol = 1e-6
-)
+cfg = load_sparlectra_config("examples/configuration.yaml")
+result = run_sparlectra(casefile = file, path = path, config = cfg)
+net = result.net
 
 # Export to a specific path
 output_path = joinpath(path, "exported_case.m")

@@ -501,17 +501,17 @@ end
         return guarded_net
       end
 
-      # Regression: direct run_acpflow callers must opt in before the narrow-Q guard
+      # Regression: lower-level solver callers must opt in before the narrow-Q guard
       # locks PV buses to PQ during rectangular pre-processing.
       default_net = zero_range_pv_net()
       redirect_stdout(devnull) do
-        run_acpflow(net = default_net, max_ite = 0, verbose = 0, show_results = false)
+        runpf!(default_net; config = PowerFlowConfig(max_iter = 0))
       end
       @test isempty(default_net.qLimitLog)
 
       opt_in_net = zero_range_pv_net()
       redirect_stdout(devnull) do
-        run_acpflow(net = opt_in_net, max_ite = 0, verbose = 0, show_results = false, qlimit_guard = true)
+        runpf!(opt_in_net; config = PowerFlowConfig(max_iter = 0, qlimits = QLimitConfig(guard = true)))
       end
       @test length(opt_in_net.qLimitLog) == 1
     end
@@ -574,45 +574,49 @@ end
       _, erg_project = runpf!(net_project; config = SparlectraConfig(powerflow = pf_config))
       @test erg_project == 0
 
+      cfg_output_off = SparlectraConfig(powerflow = pf_config, output = OutputConfig(logfile_results = :off))
       net_runner = createTest3BusNet()
-      _, erg_runner, _ = run_acpflow(net = net_runner, config = pf_config, show_results = false)
-      @test erg_runner == 0
+      result = run_sparlectra(net = net_runner, config = cfg_output_off)
+      @test result isa SparlectraRunResult
+      @test result.net === net_runner
+      @test result.numerical_converged
+      @test result.solution_available
+      @test result.outcome in (:converged, :converged_with_limit_warnings)
+      @test result.limit_validation_status in (:ok, :skip)
+      @test result.reason isa Symbol
+      @test result.reason_text isa String
+      @test result.iterations >= 0
+      @test result.final_mismatch isa Float64
+      @test_throws TypeError run_sparlectra(net = createTest3BusNet(), config = pf_config)
 
-      old_cfg = active_sparlectra_config()
-      try
-        set_sparlectra_config!(SparlectraConfig(output = OutputConfig(logfile_results = :full)))
-        cfg_output_off = SparlectraConfig(powerflow = pf_config, output = OutputConfig(logfile_results = :off))
-
-        net_with_explicit_cfg = createTest3BusNet()
-        explicit_output = mktemp() do path, io
-          redirect_stdout(io) do
-            _, erg_explicit, _ = run_acpflow(net = net_with_explicit_cfg, config = cfg_output_off)
-            @test erg_explicit == 0
-          end
-          flush(io)
-          return read(path, String)
+      net_with_explicit_cfg = createTest3BusNet()
+      explicit_output = mktemp() do path, io
+        redirect_stdout(io) do
+          @test run_sparlectra(net = net_with_explicit_cfg, config = cfg_output_off).numerical_converged
         end
-        @test !occursin("AC Power Flow Results", explicit_output)
-
-        net_with_global_cfg = createTest3BusNet()
-        global_output = mktemp() do path, io
-          redirect_stdout(io) do
-            _, erg_global, _ = run_acpflow(net = net_with_global_cfg, config = pf_config)
-            @test erg_global == 0
-          end
-          flush(io)
-          return read(path, String)
-        end
-        @test occursin("AC Power Flow Results", global_output)
-      finally
-        set_sparlectra_config!(old_cfg)
+        flush(io)
+        return read(path, String)
       end
+      @test !occursin("AC Power Flow Results", explicit_output)
+
+      cfg_output_full = SparlectraConfig(powerflow = pf_config, output = OutputConfig(logfile_results = :full))
+      net_with_output = createTest3BusNet()
+      full_output = mktemp() do path, io
+        redirect_stdout(io) do
+          @test run_sparlectra(net = net_with_output, config = cfg_output_full).numerical_converged
+        end
+        flush(io)
+        return read(path, String)
+      end
+      @test occursin("AC Power Flow Results", full_output)
+      @test Sparlectra._sparlectra_result_mode(net_with_output, OutputConfig(logfile_results = :compact, result_table_large_case_threshold_buses = 1, result_table_large_case_mode = :summary)) === :summary
     end
 
-    @testset "run_acpflow input validation for net/casefile entry modes" begin
+    @testset "run_sparlectra input validation for net/casefile entry modes" begin
       net = createTest3BusNet()
-      @test_throws ArgumentError run_acpflow(net = net, casefile = "case3.m", show_results = false)
-      @test_throws ArgumentError run_acpflow(show_results = false)
+      @test_throws ArgumentError run_sparlectra(net = net, casefile = "case3.m")
+      @test_throws ArgumentError run_sparlectra()
+      @test_throws ArgumentError run_sparlectra(net = net, path = "unused")
     end
 
     @testset "Rectangular damping defaults and validation" begin

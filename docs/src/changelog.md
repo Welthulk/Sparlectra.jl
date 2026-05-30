@@ -1,3 +1,9 @@
+## Breaking changes
+
+* Replaced the legacy keyword-heavy `run_acpflow` framework runner with the configuration-driven `run_sparlectra` entry point.
+* `run_sparlectra` always returns `SparlectraRunResult`, independent of whether the input is a MATPOWER case file or an existing `Net`.
+* High-level solver/import/output behavior is now controlled through `SparlectraConfig` or YAML rather than per-call legacy runner keywords.
+
 # Change Log
 ## Version 0.8.3 – 2026-05-30
 

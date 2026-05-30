@@ -92,9 +92,10 @@ function run_link_demo(; link_closed::Bool)
 
   println("\n================================================================================")
   println("Scenario: ", link_closed ? "Link CLOSED (Bus1-Bus1a)" : "Link OPEN (Bus1-Bus1a)")
-  iterations, status, _ = run_acpflow(net = net, max_ite = 25, tol = 1e-8)
-  println("Converged: ", status == 0, " (status=", status, ", iterations=", iterations, ")")
-  status == 0 || return net
+  cfg = SparlectraConfig(powerflow = PowerFlowConfig(max_iter = 25, tol = 1e-8))
+  result = run_sparlectra(net = net, config = cfg)
+  println("Converged: ", result.numerical_converged, " (outcome=", result.outcome, ", iterations=", result.iterations, ")")
+  result.numerical_converged || return net
 
   i_bus1 = geNetBusIdx(net = net, busName = "Bus1")
   i_bus1a = geNetBusIdx(net = net, busName = "Bus1a")

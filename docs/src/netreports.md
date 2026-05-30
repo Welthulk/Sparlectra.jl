@@ -26,19 +26,16 @@ addProsumer!(net = net, busName = "B2", type = "GENERATOR", p = 10.0, q = 1.0)
 addProsumer!(net = net, busName = "B3", type = "ENERGYCONSUMER", p = 15.0, q = 5.0)
 addProsumer!(net = net, busName = "B4", type = "ENERGYCONSUMER", p = 25.0, q = 10.0)
 
-ite, erg, etime = run_acpflow(
-  net = net,
-  max_ite = 40,
-  tol = 1e-10,
-  show_results = false,
-)
+cfg = SparlectraConfig(powerflow = PowerFlowConfig(max_iter = 40, tol = 1e-10))
+result = run_sparlectra(net = net, config = cfg)
+ite, etime = result.iterations, result.elapsed_s
 
 report = buildACPFlowReport(
   net;
   ct = etime,
   ite = ite,
   tol = 1e-10,
-  converged = (erg == 0),
+  converged = result.final_converged,
   solver = :rectangular,
 )
 ```
