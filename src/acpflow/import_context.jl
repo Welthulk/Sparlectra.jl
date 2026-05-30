@@ -37,6 +37,11 @@ function _copy_qlimits_with(ql::QLimitConfig; kwargs...)::QLimitConfig
   return QLimitConfig(; fields..., kwargs...)
 end
 
+function _copy_start_mode_with(start::StartModeConfig; kwargs...)::StartModeConfig
+  fields = NamedTuple{fieldnames(StartModeConfig)}(getfield.(Ref(start), fieldnames(StartModeConfig)))
+  return StartModeConfig(; fields..., kwargs...)
+end
+
 function _copy_powerflow_with(pf::PowerFlowConfig; kwargs...)::PowerFlowConfig
   fields = NamedTuple{fieldnames(PowerFlowConfig)}(getfield.(Ref(pf), fieldnames(PowerFlowConfig)))
   return PowerFlowConfig(; fields..., kwargs...)
@@ -54,7 +59,16 @@ function _resolve_matpower_powerflow_ids_after_import(net::Net, cfg::SparlectraC
   return _copy_sparlectra_with_powerflow(cfg, _copy_powerflow_with(cfg.powerflow; qlimits = qlimits2))
 end
 
-function _import_sparlectra_net(casefile::String, path::Union{Nothing,String}, cfg::SparlectraConfig; performance_profile = nothing)::Net
+function _uses_projected_matpower_start(start::StartModeConfig)::Bool
+  return start.flatstart && (start.voltage_mode in (:all_bus_vm, :profile_blend) || start.angle_mode in (:bus_va_blend, :matpower_va))
+end
+
+function _copy_sparlectra_with_projected_matpower_start(cfg::SparlectraConfig)::SparlectraConfig
+  start_mode = _copy_start_mode_with(cfg.powerflow.start_mode; flatstart = false)
+  return _copy_sparlectra_with_powerflow(cfg, _copy_powerflow_with(cfg.powerflow; start_mode = start_mode))
+end
+
+function _import_sparlectra_context(casefile::String, path::Union{Nothing,String}, cfg::SparlectraConfig; performance_profile = nothing)
   filename = _resolve_sparlectra_casefile(casefile, path)
   pf_cfg = cfg.powerflow
   mat_cfg = cfg.matpower
@@ -81,11 +95,19 @@ function _import_sparlectra_net(casefile::String, path::Union{Nothing,String}, c
   end
   MatpowerIO.apply_mp_isolated_buses!(net, mpc; verbose = 0)
   MatpowerIO.apply_mp_bus_vmva_init!(net, mpc; flatstart = pf_cfg.start_mode.flatstart, verbose = 0)
+  projected_start_applied = false
   if pf_cfg.start_mode.flatstart && (pf_cfg.start_mode.voltage_mode != :classic || pf_cfg.start_mode.angle_mode != :classic)
     _apply_matpower_start_modes!(net, mpc, pf_cfg.start_mode, mat_cfg; performance_profile = performance_profile)
-    if pf_cfg.start_mode.voltage_mode in (:all_bus_vm, :profile_blend) || pf_cfg.start_mode.angle_mode in (:bus_va_blend, :matpower_va)
+    if _uses_projected_matpower_start(pf_cfg.start_mode)
       net.flatstart = false
+      projected_start_applied = true
     end
   end
-  return net
+  run_cfg = projected_start_applied ? _copy_sparlectra_with_projected_matpower_start(cfg) : cfg
+  projected_start_applied && @debug "MATPOWER projected start applied; effective solver flatstart disabled for this run."
+  return (net = net, config = run_cfg, projected_start_applied = projected_start_applied)
+end
+
+function _import_sparlectra_net(casefile::String, path::Union{Nothing,String}, cfg::SparlectraConfig; performance_profile = nothing)::Net
+  return _import_sparlectra_context(casefile, path, cfg; performance_profile = performance_profile).net
 end
