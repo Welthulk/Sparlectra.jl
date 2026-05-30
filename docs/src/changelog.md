@@ -3,35 +3,31 @@
 
 ### Breaking changes
 
-* Replaced the former keyword-heavy `run_acpflow` runner API with the configuration-driven `run_sparlectra` framework entry point.
-* Kept `run_acpflow` as a thin compatibility alias for `run_sparlectra`; it accepts only the new minimal framework arguments.
-* High-level solver/import/output behavior is now controlled through `SparlectraConfig` or YAML rather than per-call legacy runner keywords.
-* Framework runs now return `SparlectraRunResult` consistently for both `casefile` and `net` workflows.
+* Replaced the former keyword-heavy high-level runner surface with the configuration-driven `run_sparlectra` framework entry point.
+* Kept `run_acpflow` only as a thin alias for `run_sparlectra`; it now accepts the same minimal framework arguments.
+* High-level import, solver, control, benchmark, and output behavior is now controlled through `SparlectraConfig` or YAML configuration.
+* Framework runs now consistently return `SparlectraRunResult` for both `casefile` and `net` workflows.
 
+### New features
 
-### New Features
-
-* Added config-driven multi-case MATPOWER execution via `matpower_import.cases` and the dedicated `run_sparlectra_cases` batch helper, while keeping `run_sparlectra` as a single-case workflow returning one `SparlectraRunResult`.
+* Added config-driven multi-case MATPOWER execution via `matpower_import.cases` and the dedicated `run_sparlectra_cases` helper, while keeping `run_sparlectra` as a single-case workflow.
 
 ### Improvements
 
-* Refined `SparlectraRunResult` framework status composition so controlled runs report numerical PF convergence, solution availability, control-loop status, and final framework convergence consistently.
+* Refactored the high-level ACP/MATPOWER workflow into a clearer framework path with separated import, execution, status, and output handling.
+* Refined `SparlectraRunResult` status semantics so numerical convergence, solution availability, control-loop status, limit validation, and final framework acceptance are reported separately.
+* Preserved detailed rectangular diagnostics in MATPOWER runner status rows, including Q-limit active-set information, final PV voltage residuals, and wrong-branch metrics.
 
 ### Bugfixes
 
-* Restored rectangular diagnostic fields in MATPOWER runner status rows, including Q-limit active-set diagnostics, final PV voltage residuals, and wrong-branch metrics, while preserving final-acceptance semantics for `converged` and `erg`.
-* Fixed file-based MATPOWER projected-start handling so imported/profiled voltage or angle starts disable the effective solver flat-start flag for that run, ensuring the rectangular solver consumes the projected node values.
-* Fixed controlled-run framework status composition so inner PF failures preserve concrete solver rejection metadata, such as wrong-branch final rejection, instead of being reported as generic control-loop failures.
-* Fixed synthetic-grid benchmark rows so the `converged` column follows final framework acceptance while numerical PF convergence remains available as a separate diagnostic.
-* Fixed framework status composition so successful baseline power-flow runs with disabled controls or no active controllers remain accepted, while still exposing `control_status = :disabled` or `:no_active_controllers`.
-* Fixed framework result status handling so numerically converged rectangular solutions rejected by wrong-branch diagnostics are not treated as available for post-processing or reporting.
-* Fixed MATPOWER runner status rows so legacy `converged`/`erg` fields follow final framework acceptance, while `numerical_converged` remains available as a separate diagnostic.
-* Fixed file-based MATPOWER runs so `power_flow.qlimits.lock_pv_to_pq_buses` entries are resolved from original MATPOWER bus IDs to internal Sparlectra bus indices before solving. This preserves correct Q-limit PV locking for non-contiguous MATPOWER bus numbers.
-* Fixed the tap-control demo so the classic-output toggle is defined and honored consistently, avoiding a late `show_classic` runtime error.
-* Updated the Basic Import documentation snippet to use `ensure_casefile` and a case path resolved for fresh checkouts or package installations.
-* Fixed the public `ensure_casefile` binding so `using Sparlectra; ensure_casefile("case14.m")` works as documented.
+* Fixed file-based MATPOWER start handling so projected/imported voltage and angle starts are actually honored by the rectangular solver instead of being overwritten by an effective flat start.
+* Fixed framework and MATPOWER status handling for rejected numerical solutions, including wrong-branch rejection, active-set rejection, controlled-run PF failures, disabled controls, and synthetic benchmark summaries.
+* Fixed file-based MATPOWER Q-limit lock handling so `power_flow.qlimits.lock_pv_to_pq_buses` is resolved from original MATPOWER bus IDs to internal Sparlectra bus indices.
+* Fixed the public `ensure_casefile` binding and updated runnable documentation snippets so fresh checkouts and package installations can load example MATPOWER cases correctly.
+* Fixed the tap-control demo classic-output toggle so the example no longer fails late with an undefined `show_classic` binding.
 
-### Related Issues
+### Related issues
+
 * #228 Remove the old compatibility surface from the high-level runner
 
 ## Version 0.8.2 – 2026-05-29
