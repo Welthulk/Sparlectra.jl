@@ -1,6 +1,13 @@
 # Change Log
-## Version 0.8.2 – 2026-05-29
+## Version 0.8.3 – 2026-05-30
 
+## New Features
+
+## Improvements
+
+## Related Issues
+
+## Version 0.8.2 – 2026-05-29
 ## New Features
 
 * Added configurable wrong-branch diagnostics for rectangular power-flow results, including voltage, angle-spread, and branch-angle plausibility checks.
