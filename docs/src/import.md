@@ -10,11 +10,15 @@ The simplest way to import a Matpower case file is using the `run_sparlectra` fu
 
 ```julia
 using Sparlectra
-using Logging
 
-# Import a MATPOWER case file and run the configured framework workflow
-cfg = load_sparlectra_config("examples/configuration.yaml")
-result = run_sparlectra(casefile = "case3.m", config = cfg)
+case_path = ensure_casefile("case14.m")
+
+# Import a MATPOWER case file and run the configured framework workflow.
+result = run_sparlectra(
+    casefile = basename(case_path),
+    path = dirname(case_path),
+)
+
 net = result.net
 ```
 

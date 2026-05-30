@@ -567,6 +567,9 @@ end
       @test isdefined(Main, :run_sparlectra)
       @test isdefined(Main, :run_acpflow)
       @test isdefined(Main, :SparlectraRunResult)
+      @test isdefined(Sparlectra, :ensure_casefile)
+      @test isdefined(Main, :ensure_casefile)
+      @test Sparlectra.ensure_casefile === Sparlectra.FetchMatpowerCase.ensure_casefile
 
       pf_config = PowerFlowConfig(max_iter = 20, tol = 1e-8, sparse = true, start_mode = StartModeConfig(flatstart = true))
 

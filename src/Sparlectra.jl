@@ -501,6 +501,7 @@ include("powerflow_rectangular/rectangular_final_status.jl")
 include("powerflow_rectangular/rectangular_network_solver.jl")
 include("solver_interface.jl")
 include("FetchMatpowerCase.jl")
+using .FetchMatpowerCase: ensure_casefile
 include("measurements.jl")
 include("state_estimation.jl")
 #! format: on
