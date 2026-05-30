@@ -596,6 +596,35 @@ end
       @test result.reason_text isa String
       @test result.iterations >= 0
       @test result.final_mismatch isa Float64
+      @test result.diagnostics isa NamedTuple
+
+      fallback_result = SparlectraRunResult(
+        result.net,
+        :converged,
+        true,
+        true,
+        :skip,
+        true,
+        :none,
+        "none",
+        0,
+        0.0,
+        nothing,
+        NaN,
+        :classic,
+        :none,
+        nothing,
+        (converged = false, erg = 1, numerical_converged = false, solution_available = false, final_converged = false, outcome = :diagnostic_override, reason = :diagnostic_override),
+      )
+      fallback_row = Sparlectra._sparlectra_status_row(fallback_result)
+      @test fallback_row.converged === true
+      @test fallback_row.erg == 0
+      @test fallback_row.numerical_converged === true
+      @test fallback_row.solution_available === true
+      @test fallback_row.final_converged === true
+      @test fallback_row.outcome === :converged
+      @test fallback_row.reason === :none
+      @test !hasproperty(fallback_row, :q_limit_active_set_ok)
 
       net_alias = createTest3BusNet()
       alias_result = run_acpflow(net = net_alias, config = cfg_output_off)

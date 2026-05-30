@@ -24,7 +24,7 @@ julia --project=. -e 'using Pkg; Pkg.test()'
 
 | Group | Files | Main checks |
 |---|---|---|
-| `core_model` | `test/testgrid.jl` | Core net construction and validation, inline MATPOWER import helpers, file-based MATPOWER projected-start normalization and PV/PQ lock-ID resolution, link handling, shunts, reporting/output checks, and summary-file output regression |
+| `core_model` | `test/testgrid.jl` | Core net construction and validation, inline MATPOWER import helpers, file-based MATPOWER projected-start normalization, PV/PQ lock-ID resolution, and rectangular status-row diagnostic preservation, link handling, shunts, reporting/output checks, and summary-file output regression |
 | `powerflow_rectangular` | `test/test_solver_interface.jl` | Rectangular power-flow API behavior, sparse-only solver path, Q-limit and typed configuration entry checks, including accepted and rejected framework control-status composition, ordered local MATPOWER batch execution, the thin `run_acpflow` alias, and legacy-keyword rejection |
 | `configuration` | `test/test_configuration_coverage.jl` | Configuration-key coverage, forwarding checks, and value-domain validation |
 | `state_estimation` | `test/test_state_estimation.jl` | WLS state-estimation behavior and observability-oriented regressions |
