@@ -155,19 +155,17 @@ function main(args::AbstractVector{String} = ARGS)
   config_label, sparlectra_config = load_demo_sparlectra_config(demo_settings, demo_path)
   net, trafos = build_demo_net(demo_settings)
 
-  _, erg0, _ = run_acpflow(net = net; config = sparlectra_config, show_results = false)
-  erg0 == 0 || error("Uncontrolled PF failed with erg=$erg0")
+  initial_result = run_sparlectra(net = net, config = sparlectra_config)
+  initial_result.numerical_converged || error("Uncontrolled PF failed: $(initial_result.reason_text)")
   vm_lv0 = get_bus_vm_pu(net, "Load_LV")
   vm_mv0 = get_bus_vm_pu(net, "Load_MV")
 
   add_demo_controllers!(net, trafos, demo_settings)
-  # Classic network output is enabled by default for this demo.
-  # Set SPARLECTRA_TAP_DEMO_CLASSIC=0 for compact-only output.
-  show_classic = get(ENV, "SPARLECTRA_TAP_DEMO_CLASSIC", "1") != "0"
+  # Framework output is selected by sparlectra_config.output.
   raw = get(ENV, "SPARLECTRA_TAP_DEMO_RAW", "0") == "1"
 
-  _, erg, _ = run_acpflow(net = net; config = sparlectra_config, show_results = show_classic)
-  erg == 0 || error("Controlled PF failed with erg=$erg")
+  controlled_result = run_sparlectra(net = net, config = sparlectra_config)
+  controlled_result.numerical_converged || error("Controlled PF failed: $(controlled_result.reason_text)")
 
   vm_lv = get_bus_vm_pu(net, "Load_LV")
   vm_mv = get_bus_vm_pu(net, "Load_MV")

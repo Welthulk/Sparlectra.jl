@@ -4,12 +4,12 @@
 
 The inner numerical solver remains `runpf!`. The generic orchestration layer is `run_control!`, which runs controller-driven outer iterations around repeated PF solves.
 
-`run_acpflow` automatically dispatches through `run_control!` when `collect_outer_controllers(net)` returns at least one controller.
+`run_sparlectra` automatically dispatches through `run_control!` when `collect_outer_controllers(net)` returns at least one controller.
 
 ## Architecture
 
 ```text
-run_acpflow (public entry)
+run_sparlectra (public entry)
         |
         v
 collect_outer_controllers(net)
@@ -30,11 +30,18 @@ ControlRunResult stored on net.control_result
 Preferred public entries:
 
 ```julia
-run_acpflow(; net = net, ...)
-run_acpflow(; casefile = "case14.m", path = "...", ...)
+run_sparlectra(; net = net, ...)
+run_sparlectra(; casefile = "case14.m", path = "...", ...)
 ```
 
-`run_acpflow` is the public high-level ACP runner for both in-memory and file-based workflows.
+`run_sparlectra` is the public high-level ACP runner for both in-memory and file-based workflows.
+
+| Layer | Function | Purpose |
+|---|---|---|
+| Framework | `run_sparlectra` | Import/config/control/solve/output orchestration |
+| Solver | `runpf!` | Solve an already built `Net` using `PowerFlowConfig` |
+| Control | `run_control!` | Execute outer-loop controllers |
+| Import | `createNetFromMatPowerFile` | Convert a MATPOWER file into a `Net` |
 
 ## Hook interface
 

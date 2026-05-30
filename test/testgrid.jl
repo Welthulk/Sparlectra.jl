@@ -1396,22 +1396,17 @@ mpc.branch = [
     direct_ok = (net_direct.flatstart == false) &&
                 (net_direct.bus_shunt_model == :admittance)
 
-    net_cfg = Sparlectra.run_acpflow(
-      casefile = basename(case_path),
-      path = dirname(case_path),
-      show_results = false,
-      config = run_cfg,
-      matpower_shift_sign = 1.0,
-    )
-    cfg_ok = (net_cfg.flatstart == false) &&
-             (net_cfg.bus_shunt_model == :admittance)
+    result = Sparlectra.run_sparlectra(casefile = basename(case_path), path = dirname(case_path), config = run_cfg)
+    cfg_ok = (result isa Sparlectra.SparlectraRunResult) &&
+             (result.net.flatstart == false) &&
+             (result.net.bus_shunt_model == :admittance)
     return direct_ok && cfg_ok
   finally
     Sparlectra.set_sparlectra_config!(prev_cfg)
   end
 end
 
-function test_matpower_run_acpflow_forwards_wrong_branch_config()::Bool
+function test_run_sparlectra_forwards_wrong_branch_config()::Bool
   tmpdir = mktempdir()
   case_path = joinpath(tmpdir, "case_wrong_branch_forwarding.m")
   write(case_path, """
@@ -1437,15 +1432,8 @@ mpc.branch = [
         "wrong_branch_max_branch_angle_deg" => 0.001,
       ),
     ))
-    net = Sparlectra.run_acpflow(
-      casefile = basename(case_path),
-      path = dirname(case_path),
-      config = cfg,
-      show_results = false,
-      printResultToFile = false,
-      verbose = 0,
-    )
-    return Sparlectra.rectangular_pf_status(net)
+    result = Sparlectra.run_sparlectra(casefile = basename(case_path), path = dirname(case_path), config = cfg)
+    return Sparlectra.rectangular_pf_status(result.net)
   end
 
   st_warn = run_with_detection(:warn)
@@ -2375,7 +2363,7 @@ function run_grid_tests()
       @test test_bus_shunt_model_modes() == true
       @test test_matpower_read_case_m_postprocessing() == true
       @test test_matpower_file_import_honors_explicit_overrides() == true
-      @test test_matpower_run_acpflow_forwards_wrong_branch_config() == true
+      @test test_run_sparlectra_forwards_wrong_branch_config() == true
     end
 
     @testset "Power flow scenarios" begin
