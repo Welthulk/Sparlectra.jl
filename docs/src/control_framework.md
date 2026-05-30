@@ -4,12 +4,12 @@
 
 The inner numerical solver remains `runpf!`. The generic orchestration layer is `run_control!`, which runs controller-driven outer iterations around repeated PF solves.
 
-`run_acpflow` automatically dispatches through `run_control!` when `collect_outer_controllers(net)` returns at least one controller.
+`run_sparlectra` automatically dispatches through `run_control!` when `collect_outer_controllers(net)` returns at least one controller.
 
 ## Architecture
 
 ```text
-run_acpflow (public entry)
+run_sparlectra (public entry)
         |
         v
 collect_outer_controllers(net)
@@ -30,11 +30,21 @@ ControlRunResult stored on net.control_result
 Preferred public entries:
 
 ```julia
-run_acpflow(; net = net, ...)
-run_acpflow(; casefile = "case14.m", path = "...", ...)
+run_sparlectra(; net = net, ...)
+run_sparlectra(; casefile = "case14.m", path = "...", ...)
 ```
 
-`run_acpflow` is the public high-level ACP runner for both in-memory and file-based workflows.
+`run_sparlectra` is the preferred public framework entry point for both in-memory
+and file-based workflows. For AC power-flow examples, `run_acpflow` is kept as a
+thin alias with the same minimal configuration-driven signature. Both names
+return `SparlectraRunResult`.
+
+| Layer | Function | Purpose |
+|---|---|---|
+| Framework | `run_sparlectra` (`run_acpflow` alias) | Import/config/control/solve/output orchestration |
+| Solver | `runpf!` | Solve an already built `Net` using `PowerFlowConfig` |
+| Control | `run_control!` | Execute outer-loop controllers |
+| Import | `createNetFromMatPowerFile` | Convert a MATPOWER file into a `Net` |
 
 ## Hook interface
 
@@ -53,6 +63,14 @@ run_acpflow(; casefile = "case14.m", path = "...", ...)
 - `control_max_outer_iterations`
 
 `control_max_outer_iterations` provides controller-specific outer-loop limits. The global outer-loop budget is `control.max_outer_iterations` and is combined with controller limits.
+
+For framework runs, `SparlectraRunResult.numerical_converged` remains strictly
+about the last numerical PF solve and `solution_available` remains true when
+that solve produced a usable solution. `final_converged` is true only when the
+numerical PF solve converged, limit validation did not fail, and
+`control_status` is either `:none` or `:converged`. In particular, `:blocked`,
+`:max_outer_iterations`, and other non-success control terminal states keep the
+last usable solution but do not count as final framework convergence.
 
 `control_max_outer_iterations` is currently treated as an internal extension hook (not exported). External custom controllers can still extend it via `Sparlectra.control_max_outer_iterations(::MyController)`.
 

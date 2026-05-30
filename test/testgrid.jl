@@ -1396,22 +1396,17 @@ mpc.branch = [
     direct_ok = (net_direct.flatstart == false) &&
                 (net_direct.bus_shunt_model == :admittance)
 
-    net_cfg = Sparlectra.run_acpflow(
-      casefile = basename(case_path),
-      path = dirname(case_path),
-      show_results = false,
-      config = run_cfg,
-      matpower_shift_sign = 1.0,
-    )
-    cfg_ok = (net_cfg.flatstart == false) &&
-             (net_cfg.bus_shunt_model == :admittance)
+    result = Sparlectra.run_sparlectra(casefile = basename(case_path), path = dirname(case_path), config = run_cfg)
+    cfg_ok = (result isa Sparlectra.SparlectraRunResult) &&
+             (result.net.flatstart == false) &&
+             (result.net.bus_shunt_model == :admittance)
     return direct_ok && cfg_ok
   finally
     Sparlectra.set_sparlectra_config!(prev_cfg)
   end
 end
 
-function test_matpower_run_acpflow_forwards_wrong_branch_config()::Bool
+function test_run_sparlectra_forwards_wrong_branch_config()::Bool
   tmpdir = mktempdir()
   case_path = joinpath(tmpdir, "case_wrong_branch_forwarding.m")
   write(case_path, """
@@ -1436,27 +1431,50 @@ mpc.branch = [
         "wrong_branch_detection" => String(mode),
         "wrong_branch_max_branch_angle_deg" => 0.001,
       ),
+      "output" => Dict("logfile_results" => "full"),
     ))
-    net = Sparlectra.run_acpflow(
-      casefile = basename(case_path),
-      path = dirname(case_path),
-      config = cfg,
-      show_results = false,
-      printResultToFile = false,
-      verbose = 0,
-    )
-    return Sparlectra.rectangular_pf_status(net)
+    profile = Dict{Symbol,Any}(:enabled => true)
+    result, output = mktemp() do output_path, io
+      result = redirect_stdout(io) do
+        Sparlectra.run_sparlectra(casefile = basename(case_path), path = dirname(case_path), config = cfg, performance_profile = profile)
+      end
+      flush(io)
+      return result, read(output_path, String)
+    end
+    return result, Sparlectra.rectangular_pf_status(result.net), profile, output
   end
 
-  st_warn = run_with_detection(:warn)
+  result_warn, st_warn, profile_warn, output_warn = run_with_detection(:warn)
+  row_warn = Sparlectra._sparlectra_status_row(result_warn)
   warn_ok = st_warn.wrong_branch_detection === :warn &&
             st_warn.branch_quality_metrics.max_branch_angle_deg == 0.001 &&
             st_warn.wrong_branch_status === :warn &&
             st_warn.wrong_branch_reason === :branch_angle_exceeded &&
             st_warn.wrong_branch_branch_angle_violation_count > 0 &&
-            st_warn.final_converged === true
+            st_warn.final_converged === true &&
+            result_warn.numerical_converged === true &&
+            result_warn.solution_available === true &&
+            result_warn.final_converged === true &&
+            row_warn.numerical_converged === true &&
+            row_warn.converged === true &&
+            row_warn.erg == 0 &&
+            row_warn.solution_available === true &&
+            hasproperty(row_warn, :q_limit_active_set_ok) &&
+            hasproperty(row_warn, :active_set_converged) &&
+            hasproperty(row_warn, :pv_q_limit_violations) &&
+            hasproperty(row_warn, :ref_q_limit_violations) &&
+            hasproperty(row_warn, :final_pv_voltage_residual) &&
+            row_warn.q_limit_active_set_ok === st_warn.q_limit_active_set_ok &&
+            row_warn.active_set_converged === st_warn.active_set_converged &&
+            row_warn.pv_q_limit_violations == st_warn.pv_q_limit_violations &&
+            row_warn.ref_q_limit_violations == st_warn.ref_q_limit_violations &&
+            isequal(row_warn.final_pv_voltage_residual, st_warn.final_pv_voltage_residual) &&
+            haskey(profile_warn[:timings], :postprocess_losses_and_flows) &&
+            occursin("AC Power Flow Results", output_warn)
 
-  st_fail = run_with_detection(:fail)
+  result_fail, st_fail, profile_fail, output_fail = run_with_detection(:fail)
+  row_fail = Sparlectra._sparlectra_status_row(result_fail)
+  summary_fail = Sparlectra._compact_run_summary(row_fail)
   fail_ok = st_fail.wrong_branch_detection === :fail &&
             st_fail.branch_quality_metrics.max_branch_angle_deg == 0.001 &&
             st_fail.wrong_branch_status === :fail &&
@@ -1465,7 +1483,45 @@ mpc.branch = [
             st_fail.numerical_converged === true &&
             st_fail.final_converged === false &&
             st_fail.status === :wrong_branch_detected &&
-            st_fail.reason === :wrong_branch_detected
+            st_fail.reason === :wrong_branch_detected &&
+            result_fail.numerical_converged === true &&
+            result_fail.solution_available === false &&
+            result_fail.final_converged === false &&
+            row_fail.numerical_converged === true &&
+            row_fail.final_converged === false &&
+            row_fail.converged === false &&
+            row_fail.erg == 1 &&
+            row_fail.solution_available === false &&
+            row_fail.converged === row_fail.final_converged &&
+            row_fail.erg == (row_fail.final_converged ? 0 : 1) &&
+            row_fail.numerical_converged === result_fail.numerical_converged &&
+            row_fail.solution_available === result_fail.solution_available &&
+            row_fail.outcome === result_fail.outcome &&
+            row_fail.reason === result_fail.reason &&
+            hasproperty(row_fail, :wrong_branch_detection) &&
+            hasproperty(row_fail, :wrong_branch_status) &&
+            hasproperty(row_fail, :wrong_branch_reason) &&
+            hasproperty(row_fail, :wrong_branch_angle_spread_deg) &&
+            hasproperty(row_fail, :wrong_branch_max_branch_angle_deg) &&
+            hasproperty(row_fail, :wrong_branch_branch_angle_violation_count) &&
+            hasproperty(row_fail, :wrong_branch_worst_branch_angle_deg) &&
+            hasproperty(row_fail, :wrong_branch_rescue_attempted) &&
+            hasproperty(row_fail, :wrong_branch_rescue_reason) &&
+            row_fail.wrong_branch_detection === st_fail.wrong_branch_detection &&
+            row_fail.wrong_branch_status === st_fail.wrong_branch_status &&
+            row_fail.wrong_branch_reason === st_fail.wrong_branch_reason &&
+            row_fail.wrong_branch_angle_spread_deg == st_fail.wrong_branch_angle_spread_deg &&
+            row_fail.wrong_branch_max_branch_angle_deg == st_fail.wrong_branch_max_branch_angle_deg &&
+            row_fail.wrong_branch_branch_angle_violation_count == st_fail.wrong_branch_branch_angle_violation_count &&
+            row_fail.wrong_branch_worst_branch_angle_deg == st_fail.wrong_branch_worst_branch_angle_deg &&
+            row_fail.wrong_branch_rescue_attempted === st_fail.wrong_branch_rescue_attempted &&
+            row_fail.wrong_branch_rescue_reason === st_fail.wrong_branch_rescue_reason &&
+            !haskey(profile_fail[:timings], :postprocess_losses_and_flows) &&
+            !haskey(profile_fail[:timings], :result_output) &&
+            !occursin("AC Power Flow Results", output_fail) &&
+            occursin("numerical_solution=OK", summary_fail) &&
+            occursin("solution_available=false", summary_fail) &&
+            occursin("final_converged=false", summary_fail)
 
   return warn_ok && fail_ok
 end
@@ -1879,6 +1935,101 @@ function test_report_uses_user_bus_names_and_pf_node_count()
   branch_connection_ok = occursin("Slack -> Bus1", report_text) && occursin("Line", report_text)
 
   return has_bus1a_row && merged_pf_count_ok && controllers_line_ok && link_names_ok && branch_connection_ok
+end
+
+function test_run_sparlectra_normalizes_projected_matpower_starts()::Bool
+  tmpdir = mktempdir()
+  case_path = joinpath(tmpdir, "case_projected_start.m")
+  write(case_path, """
+function mpc = case_projected_start
+mpc.version = '2';
+mpc.baseMVA = 100;
+mpc.bus = [
+101 3 0 0 0 0 1 1.04 3.0 110 1 1.1 0.9;
+205 2 10 5 0 0 1 1.03 2.0 110 1 1.1 0.9;
+309 1 90 30 0 0 1 0.97 -4.0 110 1 1.1 0.9;
+];
+mpc.gen = [
+101 100 0 300 -300 1.04 100 1 300 0;
+205 20 0 100 -100 1.03 100 1 100 0;
+];
+mpc.branch = [
+101 205 0.01 0.05 0.0 999 999 999 0 0 1 -360 360;
+205 309 0.01 0.05 0.0 999 999 999 0 0 1 -360 360;
+];
+""")
+
+  cases = (
+    (voltage_mode = :profile_blend, angle_mode = :dc, expected_flatstart = false),
+    (voltage_mode = :classic, angle_mode = :classic, expected_flatstart = true),
+    (voltage_mode = :classic, angle_mode = :matpower_va, expected_flatstart = false),
+    (voltage_mode = :classic, angle_mode = :bus_va_blend, expected_flatstart = false),
+    (voltage_mode = :all_bus_vm, angle_mode = :classic, expected_flatstart = false),
+  )
+  for case in cases
+    cfg = Sparlectra.SparlectraConfig(
+      powerflow = Sparlectra.PowerFlowConfig(
+        start_mode = Sparlectra.StartModeConfig(flatstart = true, voltage_mode = case.voltage_mode, angle_mode = case.angle_mode),
+        qlimits = Sparlectra.QLimitConfig(lock_pv_to_pq_buses = [205]),
+      ),
+      output = Sparlectra.OutputConfig(console_summary = false, logfile_results = :off),
+    )
+    ctx = Sparlectra._import_sparlectra_context(basename(case_path), dirname(case_path), cfg)
+    effective_cfg = Sparlectra._resolve_matpower_powerflow_ids_after_import(ctx.net, ctx.config)
+    effective_cfg.powerflow.start_mode.flatstart == case.expected_flatstart || return false
+    ctx.projected_start_applied == !case.expected_flatstart || return false
+    effective_cfg.powerflow.qlimits.lock_pv_to_pq_buses == [2] || return false
+    cfg.powerflow.start_mode.flatstart == true || return false
+    cfg.powerflow.qlimits.lock_pv_to_pq_buses == [205] || return false
+  end
+  return true
+end
+
+function test_run_sparlectra_resolves_matpower_lock_bus_ids()::Bool
+  tmpdir = mktempdir()
+  case_path = joinpath(tmpdir, "case_noncontiguous_lock.m")
+  write(case_path, """
+function mpc = case_noncontiguous_lock
+mpc.version = '2';
+mpc.baseMVA = 100;
+mpc.bus = [
+101 3 0 0 0 0 1 1.0 0 110 1 1.1 0.9;
+205 2 10 5 0 0 1 1.0 0 110 1 1.1 0.9;
+309 1 90 30 0 0 1 1.0 0 110 1 1.1 0.9;
+];
+mpc.gen = [
+101 100 0 300 -300 1.02 100 1 300 0;
+205 20 0 0.01 -0.01 1.01 100 1 100 0;
+];
+mpc.branch = [
+101 205 0.01 0.05 0.0 999 999 999 0 0 1 -360 360;
+205 309 0.01 0.05 0.0 999 999 999 0 0 1 -360 360;
+];
+""")
+  cfg = Sparlectra.SparlectraConfig(
+    powerflow = Sparlectra.PowerFlowConfig(
+      qlimits = Sparlectra.QLimitConfig(lock_pv_to_pq_buses = [205]),
+    ),
+    output = Sparlectra.OutputConfig(console_summary = false, logfile_results = :off),
+  )
+
+  imported_net = Sparlectra._import_sparlectra_net(basename(case_path), dirname(case_path), cfg)
+  helper_ok = Sparlectra._resolve_matpower_lock_pv_to_pq_buses(imported_net, [205]) == [2] &&
+              Sparlectra._resolve_matpower_lock_pv_to_pq_buses(imported_net, [2]) == [2] &&
+              Sparlectra._resolve_matpower_lock_pv_to_pq_buses(imported_net, [999999]) == Int[] &&
+              Sparlectra._resolve_matpower_lock_pv_to_pq_buses(imported_net, [999999, 205, 2, 205]) == [2]
+  effective_cfg = Sparlectra._resolve_matpower_powerflow_ids_after_import(imported_net, cfg)
+  copied_cfg_ok = effective_cfg.powerflow.qlimits.lock_pv_to_pq_buses == [2] &&
+                  cfg.powerflow.qlimits.lock_pv_to_pq_buses == [205]
+
+  file_result = Sparlectra.run_sparlectra(casefile = basename(case_path), path = dirname(case_path), config = cfg)
+  file_path_ok = Sparlectra.getNodeType(file_result.net.nodeVec[2]) == Sparlectra.PV &&
+                 isempty(file_result.net.qLimitLog)
+
+  memory_result = Sparlectra.run_sparlectra(net = imported_net, config = cfg)
+  memory_path_ok = Sparlectra.getNodeType(memory_result.net.nodeVec[2]) == Sparlectra.PQ &&
+                   any(event -> event.bus == 2, memory_result.net.qLimitLog)
+  return helper_ok && copied_cfg_ok && file_path_ok && memory_path_ok
 end
 
 function test_matpower_read_case_m_postprocessing()::Bool
@@ -2375,7 +2526,9 @@ function run_grid_tests()
       @test test_bus_shunt_model_modes() == true
       @test test_matpower_read_case_m_postprocessing() == true
       @test test_matpower_file_import_honors_explicit_overrides() == true
-      @test test_matpower_run_acpflow_forwards_wrong_branch_config() == true
+      @test test_run_sparlectra_forwards_wrong_branch_config() == true
+      @test test_run_sparlectra_normalizes_projected_matpower_starts() == true
+      @test test_run_sparlectra_resolves_matpower_lock_bus_ids() == true
     end
 
     @testset "Power flow scenarios" begin

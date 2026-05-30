@@ -18,18 +18,9 @@ global_logger(ConsoleLogger(stderr, Logging.Warn))
 file = "caseXYZ.m"
 path = "C:/Users/YourUsername/Documents"
 
-printResultToFile = false
-tol = 1e-6
-ite = 10
-verbose = 0   # 0: no output, 1: iteration norm, 2: + Y-Bus, 3: + Jacobian, 4: + Power Flow
-
-net = run_acpflow(
-    max_ite = ite,
-    tol = tol,
-    path = path,
-    casefile = file,
-    verbose = verbose,
-    printResultToFile = printResultToFile,
+cfg = load_sparlectra_config("examples/configuration.yaml")
+result = run_sparlectra(casefile = file, path = path, config = cfg)
+net = result.net
 ```
 ---
 
@@ -232,12 +223,13 @@ end
 using Sparlectra
 
 file = "case5.m"
-net = run_acpflow(casefile = file)
+result = run_sparlectra(casefile = file)
+net = result.net
 
 brVec = getNetBranchNumberVec(net = net, fromBus = "1", toBus = "2")
 setNetBranchStatus!(net = net, branchNr = brVec[1], status = 0)
 
-run_acpflow(net = net)
+run_sparlectra(net = net)
 
 addBusShuntPower!(net = net, busName = "1", p = 0.0, q = 1.0)
 
@@ -292,7 +284,8 @@ if !result
     error("Network validation failed: \$msg")
 end
 
-ite, status, etime = run_acpflow(net = net, show_results = false)
+result = run_sparlectra(net = net)
+ite, etime = result.iterations, result.elapsed_s
 ```
 
 ### Notes on component removal
@@ -333,28 +326,21 @@ addProsumer!(net = net, busName = "Bus1",  type = "GENERATOR", p = 45.0, q = 0.0
 addProsumer!(net = net, busName = "Bus5",  type = "EXTERNALNETWORKINJECTION", referencePri = "Bus5", vm_pu = 1.02, va_deg = 0.0)
 addProsumer!(net = net, busName = "Bus1a", type = "LOAD", p = 30.0, q = 10.0)
 
-ite, status, etime = run_acpflow(
-    net = net,
-    max_ite = 25,
-    tol = 1e-8,
-    show_results = false,
-)
+cfg = SparlectraConfig(powerflow = PowerFlowConfig(max_iter = 25, tol = 1e-8))
+result = run_sparlectra(net = net, config = cfg)
+ite, etime = result.iterations, result.elapsed_s
 
 setNetLinkStatus!(net = net, linkNr = linkNr, status = 0)
 
-ite2, status2, etime2 = run_acpflow(
-    net = net,
-    max_ite = 25,
-    tol = 1e-8,
-    show_results = false,
-)
+result2 = run_sparlectra(net = net, config = cfg)
+ite2, etime2 = result2.iterations, result2.elapsed_s
 
 report = buildACPFlowReport(
     net;
     ct = etime2,
     ite = ite2,
     tol = 1e-8,
-    converged = (status2 == 0),
+    converged = result2.final_converged,
     solver = :rectangular,
 )
 
@@ -412,10 +398,8 @@ configured direction (`from -> to`).
 Prefer:
 
 ```julia
-ite, status, etime = run_acpflow(
-    net = net,
-    show_results = false,
-)
+result = run_sparlectra(net = net)
+ite, etime = result.iterations, result.elapsed_s
 ```
 
 This includes post-processing (losses, branch flows, link flows), so controller
@@ -425,7 +409,7 @@ targets and report values stay consistent.
 
 ```julia
 printTapControllerSummary(stdout, net)
-report = buildACPFlowReport(net; ct = etime, ite = ite, tol = 1e-8, converged = (status == 0), solver = :rectangular)
+report = buildACPFlowReport(net; ct = etime, ite = ite, tol = 1e-8, converged = result.final_converged, solver = :rectangular)
 ```
 
 Use `report.transformer_controls` for machine-readable controller rows
@@ -437,9 +421,9 @@ tap/phase positions, limits, and status.
 You can also inspect the generic control result directly:
 
 ```julia
-run_acpflow(net = net, show_results = false)
+pf_result = run_sparlectra(net = net)
 
-result = latest_control_result(net)
+result = latest_control_result(pf_result.net)
 result.status
 result.outer_iterations
 result.powerflow_solves
@@ -467,7 +451,7 @@ result = run_control!(
   Lightweight demo that:
   - uses central configuration from `examples/configuration.yaml` (or `SPARLECTRA_CONFIGURATION_YAML`),
   - reads demo-specific setpoints from `examples/tap_control_demo_grid.yaml`,
-  - runs through `run_acpflow(net = net; config = ...)`,
+  - runs through `run_sparlectra(net = net; config = ...)`,
   - inspects structured output from `latest_control_result(net)`.
 
 Copy and edit:

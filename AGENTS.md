@@ -218,12 +218,21 @@ Default verification levels:
 - Documentation build:
   `julia --project=docs docs/make.jl`
 
+### Documentation build and proxy limitations
+
+`julia --project=docs docs/make.jl` should be run when documentation or public API documentation changes. However, a local failure caused only by dependency-download restrictions, proxy errors, registry access failures, or package-clone failures is not a code-level blocker.
+
+If the docs build fails with an external network error such as HTTP 403, `proxy returned unexpected status`, registry download failure, or package clone failure, record the exact error and classify it as an environment limitation. Do not mark the implementation as failed for that reason alone.
+
+The authoritative documentation verification is the GitHub Actions runner / documentation workflow. A branch may be treated as implementation-ready when package loading, fast tests, extended tests, example smoke tests, and search checks pass, while the local docs build is blocked only by proxy or network access.
+
 Required rules:
 
 - If a task changes package loading, module exports, function signatures, or central config, run the package load check.
 - If a task changes solver behavior, configuration, tests, examples, MATPOWER runner behavior, or documentation, run the relevant profile or explicitly state why it was not run.
 - If a task is intended to make a branch merge-ready, run package load, fast profile, extended profile, and docs build unless the user explicitly excludes one.
-- If any verification command fails, the final response must say `NOT READY`.
+- If the docs build fails only because of external network/proxy/dependency-download errors, report the exact error and rely on the GitHub Actions documentation workflow for final docs verification.
+- If any non-docs verification command fails, or if the docs build fails for a repository/content error, the final response must say `NOT READY`.
 - Do not hide warnings that indicate future errors, especially Julia world-age warnings under Julia 1.12. Fix them if they are in touched code or test runner code.
 
 PowerShell extended-profile pattern:

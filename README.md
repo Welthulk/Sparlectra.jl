@@ -101,27 +101,62 @@ using Sparlectra
 
 ## Quick start
 
-The following example downloads a MATPOWER-compatible case file on demand, imports it, runs an AC power flow, and prints the result.
+`run_sparlectra` is the preferred public framework entry point. It owns MATPOWER
+import, configuration, optional control-loop execution, solving, post-processing,
+and configured output. For AC power-flow examples, `run_acpflow` is kept as a thin
+alias with the same minimal configuration-driven signature. Both names return
+`SparlectraRunResult`. Solver and import behavior is controlled through
+`SparlectraConfig` or YAML rather than a long list of runner keywords.
+
+This example is runnable from a fresh checkout or package installation. The
+`ensure_casefile` helper downloads `case14.m` on demand if it is not already
+available locally.
 
 ```julia
 using Sparlectra
 
-# Ensure that the case file exists locally.
-# If needed, it is downloaded into the local data/mpower workflow.
 case_path = ensure_casefile("case14.m")
 
-# Build a Sparlectra network from the MATPOWER case.
-net = createNetFromMatPowerFile(case_path, false)
+result = run_sparlectra(
+    casefile = basename(case_path),
+    path = dirname(case_path),
+)
 
-# Run AC power flow.
-ite, erg = run_net_acpflow(net; iter_max = 10, tol = 1e-6, print = 0)
-
-if erg == 0
-    printACPFlowResults(net, 0.0, ite, 1e-6)
-else
-    @warn "AC power flow did not converge" iterations = ite status = erg
-end
+println(result.outcome)
+println(result.iterations)
+println(result.final_mismatch)
 ```
+
+For deterministic configuration-driven MATPOWER batches, list ordered case
+names under `matpower_import.cases` and call `run_sparlectra_cases(config = cfg)`.
+The batch helper returns one `SparlectraRunResult` per case in configured order,
+uses `matpower_import.case` only when the list is empty, and resolves bare
+standard case names through `ensure_casefile` on demand. `run_sparlectra` itself
+remains a single-run API.
+
+For a manually constructed network, pass the network directly and read the
+solved model from `result.net`:
+
+```julia
+using Sparlectra
+
+net = Net(name = "demo", baseMVA = 100.0)
+# build network ...
+lockNet!(net)
+
+cfg = active_sparlectra_config()
+result = run_sparlectra(net = net, config = cfg)
+
+vm = getNodeVm(result.net.nodeVec[1])
+```
+
+| Layer | Function | Purpose |
+|---|---|---|
+| Framework | `run_sparlectra` (`run_acpflow` alias) | Import/config/control/solve/output orchestration for one run |
+| Framework batch | `run_sparlectra_cases` | Sequential deterministic execution of configured `matpower_import.cases` |
+| Solver | `runpf!` | Solve an already built `Net` using `PowerFlowConfig` |
+| Control | `run_control!` | Execute outer-loop controllers |
+| Import | `createNetFromMatPowerFile` | Convert a MATPOWER file into a `Net` without running the framework workflow |
 
 ---
 
@@ -238,5 +273,3 @@ Sparlectra.jl is licensed under the Apache License, Version 2.0.
 See [LICENSE](LICENSE) for the full license text.
 
 ---
-
-

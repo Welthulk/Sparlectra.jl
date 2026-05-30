@@ -81,10 +81,31 @@ function run_synthetic_grid_tests()
     @test net.busDict == net2.busDict
 
     small_net, small_meta = build_synthetic_tiled_grid_net(9; aspect_ratio = 1.0)
-    iterations, erg, _etime = run_acpflow(net = small_net, max_ite = 25, tol = 1e-8, verbose = 0, method = :rectangular, show_results = false)
-    @test erg == 0
-    @test iterations > 0
+    cfg = SparlectraConfig(powerflow = PowerFlowConfig(max_iter = 25, tol = 1e-8), output = OutputConfig(logfile_results = :off))
+    result = run_sparlectra(net = small_net, config = cfg)
+    @test result isa SparlectraRunResult
+    @test result.numerical_converged
+    @test result.net === small_net
+    @test result.iterations > 0
     @test small_meta.branch_count == small_meta.rows * (small_meta.cols - 1) + (small_meta.rows - 1) * small_meta.cols + (small_meta.rows - 1) * (small_meta.cols - 1)
+  end
+
+  @testset "Synthetic PF performance rows use final acceptance" begin
+    meta = (actual_buses = 9,)
+    rejected_result = (final_converged = false, numerical_converged = true, solution_available = false, outcome = :wrong_branch_detected, reason = :wrong_branch_detected, iterations = 4, elapsed_s = 0.012)
+    rejected_row = Sparlectra._synthetic_pf_perf_row(9, meta, rejected_result)
+    @test !rejected_row.converged
+    @test rejected_row.numerical_converged
+    @test !rejected_row.solution_available
+    @test rejected_row.outcome === :wrong_branch_detected
+    @test rejected_row.reason === :wrong_branch_detected
+
+    accepted_result = (final_converged = true, numerical_converged = true, solution_available = true, outcome = :converged, reason = :none, iterations = 3, elapsed_s = 0.01)
+    accepted_row = Sparlectra._synthetic_pf_perf_row(9, meta, accepted_result)
+    @test accepted_row.converged
+    @test accepted_row.numerical_converged
+    @test accepted_row.solution_available
+    @test accepted_row.outcome === :converged
   end
 
   @testset "Synthetic example is thin wrapper" begin

@@ -490,7 +490,9 @@ Run one MATPOWER power-flow solve and update `status_ref` with elapsed-time and
 result-output timing metadata.
 """
 function _run_matpower_single(local_case::AbstractString, cfg::SparlectraConfig, profile, status_ref; show_results::Bool = true)
-  t = @elapsed run_acpflow(; casefile = local_case, config = cfg, performance_profile = profile, status_ref = status_ref, show_compact_result = false, show_results = show_results)
+  result = Ref{SparlectraRunResult}()
+  t = @elapsed result[] = _run_sparlectra(; casefile = String(local_case), config = cfg, performance_profile = profile, emit_output = show_results)
+  status_ref[] = _sparlectra_status_row(result[])
   status = status_ref[]
   if isnothing(status)
     status_ref[] = (method = cfg.powerflow.method, elapsed_s = t)
@@ -828,7 +830,7 @@ function run_matpower_case(; casefile::AbstractString = "", config_file::Abstrac
       end
       bench_status_ref = Ref{Any}(nothing)
       bench = BenchmarkTools.@benchmarkable run_silent_for_benchmark() do
-        Base.invokelatest(run_acpflow; casefile = $local_case, config = $method_cfg, performance_profile = nothing, status_ref = $bench_status_ref, show_compact_result = false)
+        Base.invokelatest(_run_sparlectra; casefile = String($local_case), config = $method_cfg, performance_profile = nothing, emit_output = false)
       end
       trial = Base.invokelatest(BenchmarkTools.run, bench; samples = max(1, cfg.benchmark.samples), seconds = max(0.01, cfg.benchmark.seconds))
       med = BenchmarkTools.median(trial).time / 1e9
@@ -934,6 +936,10 @@ function run_matpower_case(; casefile::AbstractString = "", config_file::Abstrac
   return (status_ref = status_ref[], logfile = logfile, performance_profile = profile)
 end
 
+function _synthetic_pf_perf_row(limit, meta, result)
+  return (limit = limit, nbus = meta.actual_buses, converged = result.final_converged, numerical_converged = result.numerical_converged, solution_available = result.solution_available, outcome = result.outcome, reason = result.reason, iterations = result.iterations, solve_ms = result.elapsed_s * 1000.0)
+end
+
 function run_synthetic_tiled_grid_pf_perf(; config_file::AbstractString = "", args = String[], outdir::AbstractString = "")
   !isempty(strip(config_file)) && load_sparlectra_config!(String(config_file); reload = true)
   limits = isempty(args) ? [20] : Int[parse(Int, a) for a in args if !startswith(a, "--")]
@@ -944,18 +950,19 @@ function run_synthetic_tiled_grid_pf_perf(; config_file::AbstractString = "", ar
   rows = NamedTuple[]
   for limit in limits
     net, meta = build_synthetic_tiled_grid_net(limit)
-    iterations, erg, et = run_acpflow(net = net, show_results = false)
-    push!(rows, (limit = limit, nbus = meta.actual_buses, converged = erg == 0, iterations = iterations, solve_ms = et * 1000.0))
+    result = _run_sparlectra(net = net; emit_output = false)
+    push!(rows, _synthetic_pf_perf_row(limit, meta, result))
   end
   open(logfile, "w") do io
-    println(io, "limit nbus converged iterations solve_ms")
+    println(io, "limit nbus converged numerical_converged solution_available outcome reason iterations solve_ms")
     for r in rows
-      println(io, "$(r.limit) $(r.nbus) $(r.converged) $(r.iterations) $(round(r.solve_ms;digits=3))")
+      println(io, "$(r.limit) $(r.nbus) $(r.converged) $(r.numerical_converged) $(r.solution_available) $(r.outcome) $(r.reason) $(r.iterations) $(round(r.solve_ms;digits=3))")
     end
   end
   println("Synthetic tiled-grid benchmark")
+  println("limit nbus converged numerical_converged solution_available outcome reason iterations solve_ms")
   for r in rows
-    println("$(r.limit) $(r.nbus) $(r.converged) $(r.iterations) $(round(r.solve_ms;digits=3))")
+    println("$(r.limit) $(r.nbus) $(r.converged) $(r.numerical_converged) $(r.solution_available) $(r.outcome) $(r.reason) $(r.iterations) $(round(r.solve_ms;digits=3))")
   end
   println("Wrote log file: ", logfile)
   return (rows = rows, logfile = logfile)
@@ -974,7 +981,8 @@ function run_voltage_dependent_control_demo(; config_file::AbstractString = "", 
   pu_curve = make_characteristic(pu_points; voltage_unit = :kV, value_unit = :MW, vn_kV = 110.0, sbase_MVA = net.baseMVA)
   addProsumer!(net = net, busName = "Prosumer", type = "SYNCHRONOUSMACHINE", p = 10.0, q = 0.0, qu_controller = QUController(qu_curve; qmin_MVAr = -50.0, qmax_MVAr = 50.0, sbase_MVA = net.baseMVA), pu_controller = PUController(pu_curve; pmin_MW = 0.0, pmax_MW = 50.0, sbase_MVA = net.baseMVA))
   addProsumer!(net = net, busName = "Prosumer", type = "ENERGYCONSUMER", p = 45.0, q = 18.0)
-  ite, erg, _ = run_acpflow(net = net, max_ite = 40, tol = 1e-9, verbose = 1, method = :rectangular, show_results = false)
-  println("Voltage-dependent control demo converged=", erg == 0, " iterations=", ite, " plot_curve=", isnothing(plot_curve) ? "default" : string(plot_curve))
+  cfg = SparlectraConfig(powerflow = PowerFlowConfig(max_iter = 40, tol = 1e-9), output = OutputConfig(logfile_results = :off))
+  result = run_sparlectra(net = net, config = cfg)
+  println("Voltage-dependent control demo converged=", result.numerical_converged, " iterations=", result.iterations, " plot_curve=", isnothing(plot_curve) ? "default" : string(plot_curve))
   return net
 end

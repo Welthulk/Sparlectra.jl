@@ -13,6 +13,7 @@ Legend:
 
 | Feature | Load Flow (`runpf!`) | State Estimation (`runse!`) | Notes |
 |---|:---:|:---:|---|
+| Framework workflow | ✅ | — | `run_sparlectra` is the preferred configuration-driven import/control/solve/output entry point and always returns one `SparlectraRunResult`; `run_acpflow` is its thin AC power-flow alias. `run_sparlectra_cases` executes configured MATPOWER batches sequentially and preserves case order. |
 | AC power flow (NR) | ✅ | — | Main PF entry point is `runpf!` with the sparse rectangular complex Jacobian; polar/classic PF methods are not supported. |
 | AC state estimation (WLS) | — | ✅ | Main SE entry point is `runse!` (experimental status). |
 | Topological bus links (`addLink!`) | ✅ | ⚠️ | Links are fully integrated in PF workflow/reporting; in SE they are part of network topology context and should be used with care in measurement design. |

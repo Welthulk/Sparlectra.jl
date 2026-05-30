@@ -177,7 +177,8 @@ function main(args = ARGS)
 
   if cli.run_internal
     println("=== Internal solver run (reference) ===")
-    solved_net_ref = run_acpflow(casefile = basename(local_case), path = dirname(local_case), config = cfg, show_results = show_results_internal)
+    solved_result = run_sparlectra(casefile = basename(local_case), path = dirname(local_case), config = cfg)
+    solved_net_ref = solved_result.net
 
     if show_net_verbose
       showNet(solved_net_ref, verbose = true)

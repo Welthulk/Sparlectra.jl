@@ -1,6 +1,8 @@
 # file: test/test_tap_controller.jl
 
 function run_tap_controller_tests()
+  _runner_cfg(; max_iter::Int = 30, tol::Float64 = 1e-9, control::ControlConfig = ControlConfig()) = SparlectraConfig(powerflow = PowerFlowConfig(max_iter = max_iter, tol = tol), output = OutputConfig(logfile_results = :off), control = control)
+
   function _build_net()
     net = Net(name = "tap_ctrl", baseMVA = 100.0)
     addBus!(net = net, busName = "Slack", vn_kV = 110.0)
@@ -48,7 +50,8 @@ function run_tap_controller_tests()
 
   @testset "Voltage tap controller (discrete ratio)" begin
     net, tbr = _build_net()
-    _, erg0, _ = run_acpflow(net = net, max_ite = 30, tol = 1e-9, verbose = 0, method = :rectangular, show_results = false)
+    result0 = run_sparlectra(net = net, config = _runner_cfg())
+    erg0 = result0.numerical_converged ? 0 : 1
     @test erg0 == 0
     vm0 = get_bus_vm_pu(net, "Load")
     @test vm0 > 0.98
@@ -66,7 +69,8 @@ function run_tap_controller_tests()
     )
 
     ratio_before = tbr.tap_ratio
-    _, erg, _ = run_acpflow(net = net, max_ite = 30, tol = 1e-9, verbose = 0, method = :rectangular, show_results = false)
+    result = run_sparlectra(net = net, config = _runner_cfg())
+    erg = result.numerical_converged ? 0 : 1
     @test erg == 0
     @test tbr.tap_ratio != ratio_before
     @test tbr.tap_ratio > ratio_before
@@ -80,7 +84,8 @@ function run_tap_controller_tests()
 
   @testset "Branch active power controller (phase)" begin
     net, tbr = _build_net()
-    _, erg0, _ = run_acpflow(net = net, max_ite = 30, tol = 1e-9, verbose = 0, method = :rectangular, show_results = false)
+    result0 = run_sparlectra(net = net, config = _runner_cfg())
+    erg0 = result0.numerical_converged ? 0 : 1
     @test erg0 == 0
     p0 = get_branch_p_from_to_mw(net, "Slack", "Mid")
 
@@ -96,7 +101,8 @@ function run_tap_controller_tests()
       max_outer_iters = 6,
     )
 
-    _, erg, _ = run_acpflow(net = net, max_ite = 30, tol = 1e-9, verbose = 0, method = :rectangular, show_results = false)
+    result = run_sparlectra(net = net, config = _runner_cfg())
+    erg = result.numerical_converged ? 0 : 1
     @test erg == 0
     @test tbr.phase_shift_deg != 0.0
   end
@@ -114,9 +120,80 @@ function run_tap_controller_tests()
     )
 
     ratio_before = tbr.tap_ratio
-    _, erg, _ = run_acpflow(net = net, max_ite = 30, tol = 1e-9, verbose = 0, method = :rectangular, show_results = false)
+    result = run_sparlectra(net = net, config = _runner_cfg())
+    erg = result.numerical_converged ? 0 : 1
     @test erg == 0
     @test tbr.tap_ratio == ratio_before
+    @test result.control_status === :disabled
+    @test result.numerical_converged
+    @test result.solution_available
+    @test result.final_converged
+    @test result.outcome === :converged
+    @test result.reason === :none
+  end
+
+  @testset "Disabled control framework preserves successful baseline PF" begin
+    net, tbr = _build_net()
+    addPowerTransformerControl!(net;
+      trafo = string(tbr.branchIdx),
+      mode = :voltage,
+      target_bus = "Load",
+      target_vm_pu = 0.98,
+      control_ratio = true,
+      control_phase = false,
+    )
+
+    ratio_before = tbr.tap_ratio
+    result = run_sparlectra(net = net, config = _runner_cfg(control = ControlConfig(enabled = false)))
+    @test tbr.tap_ratio == ratio_before
+    @test result.control_status === :disabled
+    @test result.numerical_converged
+    @test result.solution_available
+    @test result.final_converged
+    @test result.outcome === :converged
+    @test result.reason === :none
+  end
+
+  @testset "Controlled framework result composes converged control status" begin
+    net, tbr = _build_net()
+    baseline = run_sparlectra(net = net, config = _runner_cfg())
+    @test baseline.final_converged
+    addPowerTransformerControl!(net;
+      trafo = string(tbr.branchIdx),
+      mode = :voltage,
+      target_bus = "Load",
+      target_vm_pu = get_bus_vm_pu(net, "Load"),
+      control_ratio = true,
+      control_phase = false,
+    )
+    result = run_sparlectra(net = net, config = _runner_cfg())
+    @test result.control_status === :converged
+    @test result.numerical_converged
+    @test result.solution_available
+    @test result.final_converged
+    @test result.outcome === :converged
+  end
+
+  @testset "Controlled framework result rejects exhausted outer loop" begin
+    net, tbr = _build_net()
+    addPowerTransformerControl!(net;
+      trafo = string(tbr.branchIdx),
+      mode = :voltage,
+      target_bus = "Load",
+      target_vm_pu = 0.90,
+      control_ratio = true,
+      control_phase = false,
+      is_discrete = true,
+      max_outer_iters = 1,
+    )
+    result = run_sparlectra(net = net, config = _runner_cfg(control = ControlConfig(max_outer_iterations = 1)))
+    @test result.control_status === :max_outer_iterations
+    @test result.numerical_converged
+    @test result.solution_available
+    @test !result.final_converged
+    @test result.outcome === :control_max_outer_iterations
+    @test result.reason === :control_max_outer_iterations
+    @test occursin("max_outer_iterations", result.reason_text)
   end
 
   @testset "Direct run_control! returns ControlRunResult" begin
@@ -228,7 +305,7 @@ function run_tap_controller_tests()
     @test latest_control_result(net) === result
   end
 
-  @testset "run_acpflow net path honors per-call cfg.control" begin
+  @testset "run_sparlectra net path honors per-call cfg.control" begin
     net, tbr = _build_net()
     addPowerTransformerControl!(net;
       trafo = string(tbr.branchIdx),
@@ -242,8 +319,8 @@ function run_tap_controller_tests()
       powerflow = PowerFlowConfig(method = :rectangular, max_iter = 30, tol = 1e-9),
       control = ControlConfig(enabled = false, max_outer_iterations = 3, trace = false),
     )
-    _, erg, _ = run_acpflow(net = net, config = cfg, show_results = false)
-    @test erg == 0
+    result = run_sparlectra(net = net, config = cfg)
+    @test result.numerical_converged
     result = latest_control_result(net)
     @test result !== nothing
     @test result.status == :disabled
@@ -298,18 +375,12 @@ function run_tap_controller_tests()
     @test row.controller_type == "PowerTransformerControl"
   end
 
-  @testset "Legacy erg mapping uses PF-failure semantics only" begin
-    @test Sparlectra._legacy_erg_from_control_status(:pf_failed) == 1
-    @test Sparlectra._legacy_erg_from_control_status(:converged) == 0
-    @test Sparlectra._legacy_erg_from_control_status(:blocked) == 0
-    @test Sparlectra._legacy_erg_from_control_status(:max_outer_iterations) == 0
-  end
 
-  @testset "run_acpflow net entry point" begin
+  @testset "run_sparlectra net entry point" begin
     net, _ = _build_net()
-    ite_a, erg_a, _ = run_acpflow(net = net, max_ite = 20, tol = 1e-9, show_results = false)
-    @test erg_a == 0
-    @test ite_a >= 1
+    result_a = run_sparlectra(net = net, config = _runner_cfg(max_iter = 20))
+    @test result_a.numerical_converged
+    @test result_a.iterations >= 1
 
   end
   @testset "Tap controller reporting rows and classic section" begin
@@ -326,7 +397,8 @@ function run_tap_controller_tests()
       is_discrete = true,
       max_outer_iters = 4,
     )
-    _, erg, _ = run_acpflow(net = net, max_ite = 30, tol = 1e-9, verbose = 0, method = :rectangular, show_results = false)
+    result = run_sparlectra(net = net, config = _runner_cfg())
+    erg = result.numerical_converged ? 0 : 1
     @test erg == 0
 
     report = buildACPFlowReport(net; ct = 0.0, ite = 1, tol = 1e-9, converged = true, solver = :rectangular)
