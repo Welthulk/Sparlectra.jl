@@ -142,7 +142,6 @@ using Sparlectra
 
 net = Net(name = "demo", baseMVA = 100.0)
 # build network ...
-lockNet!(net)
 
 cfg = active_sparlectra_config()
 result = run_sparlectra(net = net, config = cfg)
