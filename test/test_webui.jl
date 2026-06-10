@@ -49,6 +49,17 @@ function run_webui_tests()
         @test occursin("name=\"$(field)\"", form_html)
       end
 
+      @test occursin("src=\"/assets/logo.png\"", form_html)
+      @test occursin("alt=\"Sparlectra.jl logo\"", form_html)
+      @test occursin("<span>Sparlectra.jl</span>", form_html)
+
+      logo_response = Sparlectra.route_sparlectra_webui("GET", "/assets/logo.png")
+      @test logo_response.status == 200
+      @test ("Content-Type" => "image/png") in logo_response.headers
+      @test logo_response.body == read(joinpath(@__DIR__, "..", "docs", "src", "assets", "logo.png"))
+      for target in ("/assets/tablestyle.css", "/assets/../Project.toml", "/assets/logo.png/extra")
+        @test Sparlectra.route_sparlectra_webui("GET", target).status == 404
+      end
       result = Sparlectra.handle_powerflow_run(form)
       @test result["success"]
       run_id = result["run_id"]
@@ -71,7 +82,8 @@ function run_webui_tests()
       end
       result_artifact = Sparlectra.handle_powerflow_artifact(run_id, "result.json")
       @test result_artifact.status == 200
-      @test occursin("Artifact: result.json", String(result_artifact.body))
+      result_artifact_html = String(result_artifact.body)
+      @test occursin("Artifact: result.json", result_artifact_html)
       download = Sparlectra.handle_powerflow_artifact_download(run_id, "result.json")
       @test download.status == 200
       @test any(header -> header.first == "Content-Disposition", download.headers)
@@ -89,8 +101,20 @@ function run_webui_tests()
       @test run_id in refreshed["loaded_runs"]
       history_response = Sparlectra.handle_powerflow_history(output_root)
       @test history_response.status == 200
-      @test occursin(run_id, String(history_response.body))
+      history_html = String(history_response.body)
+      @test occursin(run_id, history_html)
       @test occursin(run_id, String(Sparlectra.handle_powerflow_result(run_id).body))
+      shared_pages = (
+        form_html,
+        result_html,
+        artifact_html,
+        result_artifact_html,
+        history_html,
+      )
+      for page_html in shared_pages
+        @test occursin("src=\"/assets/logo.png\"", page_html)
+        @test occursin("<span>Sparlectra.jl</span>", page_html)
+      end
 
       source = join(read(joinpath(@__DIR__, "..", "src", "webui", file), String) for file in ("forms.jl", "handlers.jl", "routes.jl", "views.jl", "webui.jl"))
       forbidden = ["run" * "pf!", "run" * "pf_rectangular!", "run_complex_nr_" * "rectangular"]
@@ -108,6 +132,13 @@ function run_webui_tests()
         close(socket)
         @test occursin("HTTP/1.1 200 OK", response_text)
         @test occursin("PowerFlow run", response_text)
+
+        logo_socket = connect(ip"127.0.0.1", UInt16(port))
+        write(logo_socket, "GET /assets/logo.png HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+        logo_response_text = read(logo_socket, String)
+        close(logo_socket)
+        @test occursin("HTTP/1.1 200 OK", logo_response_text)
+        @test occursin("Content-Type: image/png", logo_response_text)
       finally
         close(server)
       end

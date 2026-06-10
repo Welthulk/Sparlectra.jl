@@ -25,6 +25,10 @@ optional.
 For safety, the first prototype accepts loopback hosts only: `127.0.0.1`,
 `localhost`, or `::1`. It is not intended for public or multi-user deployment.
 
+The shared page header uses the existing Sparlectra documentation logo from
+`docs/src/assets/logo.png`. The Web UI serves that single PNG through its local
+asset route, and no additional branding configuration is required.
+
 ## Starting a PowerFlow run
 
 The start page accepts:
