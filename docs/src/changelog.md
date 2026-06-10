@@ -2,6 +2,8 @@
 ## Version 0.8.4 – 2026-06-10
 ### New features
 
+* **Feature**: Added `run_sparlectra_api` as a stable non-interactive MATPOWER power-flow backend contract with structured status, controlled GUI configuration overrides, effective configuration output, explicit artifact discovery, and Dict/NamedTuple/JSON/YAML serialization.
+
 ### Improvements
 
 ### Bugfixes

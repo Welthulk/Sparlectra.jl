@@ -394,6 +394,16 @@ export
   run_sparlectra_cases,                   # Run configured MATPOWER cases sequentially.
   run_acpflow,                            # Thin AC power-flow alias for run_sparlectra.
   SparlectraRunResult,                    # Stable typed framework-run result.
+  run_sparlectra_api,                     # Stable non-interactive backend contract for GUI/API integrations.
+  SparlectraApiResult,                    # Structured API run status, numerical metadata, and artifacts.
+  SparlectraApiArtifact,                  # Explicit metadata for generated API artifacts.
+  GUI_EDITABLE_CONFIG_KEYS,               # Controlled allowlist for GUI configuration overrides.
+  validate_gui_config_overrides,          # Validate and nest dotted GUI configuration overrides.
+  collect_sparlectra_api_artifacts,        # Discover generated files without filename assumptions.
+  to_dict,                                # Convert API results and artifacts to dictionaries.
+  to_namedtuple,                          # Convert API results to named tuples.
+  to_json,                                # Serialize API results as JSON.
+  to_yaml,                                # Serialize API results as YAML.
   run_matpower_case,                      # Run a MATPOWER case through the high-level workflow.
 
   # solver_core.jl
@@ -479,6 +489,11 @@ include("losses.jl")
 include("exportMatPower.jl")
 include("results.jl")
 include("acpflow.jl")
+include("api/api_types.jl")
+include("api/config_overrides.jl")
+include("api/serialization.jl")
+include("api/artifacts.jl")
+include("api/run_api.jl")
 include("matpower_runner.jl")
 include("remove_functions.jl")
 include("solver_core.jl")
