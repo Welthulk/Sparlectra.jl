@@ -30,7 +30,7 @@ function _webui_layout(title::AbstractString, content::AbstractString)::String
   return """<!doctype html>
 <html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">
 <title>$(_webui_escape(title)) · Sparlectra</title><link rel=\"stylesheet\" href=\"/static/sparlectra.css\"></head>
-<body><header><a class=\"brand\" href=\"/powerflow\">Sparlectra</a><nav><a href=\"/powerflow\">New run</a><a href=\"/powerflow/history\">Run history</a></nav></header>
+<body><header class=\"site-header\"><a class=\"brand\" href=\"/powerflow\"><img class=\"brand-logo\" src=\"/assets/logo.png\" alt=\"Sparlectra.jl logo\"><span>Sparlectra.jl</span></a><nav><a href=\"/powerflow\">New run</a><a href=\"/powerflow/history\">Run history</a></nav></header>
 <main><h1>$(_webui_escape(title))</h1>$(content)</main><footer>Local PowerFlow Web UI · loopback access only</footer></body></html>"""
 end
 

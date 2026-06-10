@@ -18,6 +18,13 @@ function _webui_redirect(location::AbstractString)
   return SparlectraWebUIResponse(303, ""; headers = ["Location" => String(location)])
 end
 
+const _WEBUI_LOGO_PATH = normpath(joinpath(@__DIR__, "..", "..", "docs", "src", "assets", "logo.png"))
+
+function handle_webui_logo()::SparlectraWebUIResponse
+  isfile(_WEBUI_LOGO_PATH) || return _webui_html(render_webui_error(404, "Sparlectra.jl logo asset is unavailable."); status = 404)
+  return SparlectraWebUIResponse(200, ["Content-Type" => "image/png"], read(_WEBUI_LOGO_PATH))
+end
+
 """Run a PowerFlow request through the Web UI form-to-service boundary."""
 function handle_powerflow_run(form::AbstractDict; default_output_root::AbstractString = "results/powerflow_service")::Dict{String,Any}
   request = powerflow_webui_request(form; default_output_root = default_output_root)

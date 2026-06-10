@@ -41,7 +41,9 @@ end
 function route_sparlectra_webui(method::AbstractString, target::AbstractString, form::AbstractDict = Dict{String,String}(); output_root::AbstractString = "results/powerflow_service")::SparlectraWebUIResponse
   path, query = _webui_split_target(target)
   verb = uppercase(String(method))
-  if verb == "GET" && path in ("/", "/powerflow")
+  if verb == "GET" && path == "/assets/logo.png"
+    return handle_webui_logo()
+  elseif verb == "GET" && path in ("/", "/powerflow")
     return _webui_html(render_powerflow_form(; output_root = output_root))
   elseif verb == "POST" && path == "/powerflow/run"
     try
