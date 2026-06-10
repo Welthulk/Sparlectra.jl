@@ -18,13 +18,16 @@ end
 """
     SparlectraApiResult
 
-Stable, non-interactive result returned by [`run_sparlectra_api`](@ref). The
+Stable, non-interactive result returned by [`run_sparlectra_api`](@ref). Each
+result has a unique `run_id` and a `schema_version` for transport consumers. The
 `raw_result` field contains the underlying [`SparlectraRunResult`](@ref) for a
 completed solver invocation and is `nothing` for input or configuration errors.
 Use the serialization helpers for transport-safe representations that omit
 `raw_result` by default.
 """
 struct SparlectraApiResult
+  run_id::String
+  schema_version::String
   status::Symbol
   success::Bool
   converged::Union{Bool,Nothing}

@@ -15,6 +15,8 @@ function main(; casefile::AbstractString = "case5.m", output_dir::AbstractString
     ),
   )
 
+  println("run ID: ", result.run_id)
+  println("schema version: ", result.schema_version)
   println("status: ", result.status)
   println("solution available: ", result.solution_available)
   for artifact in result.artifacts

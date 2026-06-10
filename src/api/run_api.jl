@@ -1,5 +1,9 @@
-function _api_result(; status::Symbol, success::Bool, converged = nothing, solution_available::Bool = false, iterations = nothing, final_mismatch = nothing, reason = nothing, message = nothing, casefile = nothing, config_file = nothing, output_dir::String, logfile = nothing, result_file = nothing, artifacts = SparlectraApiArtifact[], raw_result = nothing)
-  return SparlectraApiResult(status, success, converged, solution_available, iterations, final_mismatch, reason, message, casefile, config_file, output_dir, logfile, result_file, artifacts, raw_result)
+using UUIDs: uuid4
+
+const _SPARLECTRA_API_SCHEMA_VERSION = "1.0"
+
+function _api_result(; run_id::String = string(uuid4()), schema_version::String = _SPARLECTRA_API_SCHEMA_VERSION, status::Symbol, success::Bool, converged = nothing, solution_available::Bool = false, iterations = nothing, final_mismatch = nothing, reason = nothing, message = nothing, casefile = nothing, config_file = nothing, output_dir::String, logfile = nothing, result_file = nothing, artifacts = SparlectraApiArtifact[], raw_result = nothing)
+  return SparlectraApiResult(run_id, schema_version, status, success, converged, solution_available, iterations, final_mismatch, reason, message, casefile, config_file, output_dir, logfile, result_file, artifacts, raw_result)
 end
 
 function _write_api_result_file(result::SparlectraApiResult)
@@ -9,6 +13,8 @@ end
 
 function _refresh_api_artifacts(result::SparlectraApiResult)::SparlectraApiResult
   return _api_result(
+    run_id = result.run_id,
+    schema_version = result.schema_version,
     status = result.status,
     success = result.success,
     converged = result.converged,
