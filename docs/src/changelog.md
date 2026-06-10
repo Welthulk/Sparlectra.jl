@@ -1,4 +1,11 @@
 # Change Log
+## Version 0.8.4 – 2026-06-10
+### New features
+
+### Improvements
+
+### Bugfixes
+
 ## Version 0.8.3 – 2026-05-30
 
 ### Breaking changes
