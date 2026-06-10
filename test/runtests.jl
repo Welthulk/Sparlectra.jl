@@ -31,6 +31,7 @@ function include_fast_tests()
   include("test_transformer_phase_shift.jl")
   include("test_tap_controller.jl")
   include("test_configuration_coverage.jl")
+  include("test_api.jl")
 end
 
 function include_extended_tests()
@@ -50,6 +51,7 @@ function run_fast_profile_tests()
     ("core_model", () -> run_entry(:run_grid_tests)),
     ("powerflow_rectangular", () -> run_entry(:run_solver_interface_tests)),
     ("configuration", () -> run_entry(:run_configuration_coverage_tests)),
+    ("programmatic_api", () -> run_entry(:run_api_tests)),
     ("state_estimation", () -> run_entry(:run_state_estimation_tests)),
     ("controls", () -> begin
       run_entry(:run_voltage_dependent_control_tests)
