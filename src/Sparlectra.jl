@@ -37,7 +37,7 @@ const MPOWER_DIR = normpath(joinpath(pkgdir(@__MODULE__), "data", "mpower"))
 
 # resource data types for working with Sparlectra
 const Wurzel3 = 1.7320508075688772
-const SparlectraVersion = v"0.8.3"
+const SparlectraVersion = v"0.8.4"
 version() = SparlectraVersion
 abstract type AbstractBranch end
 
@@ -394,6 +394,24 @@ export
   run_sparlectra_cases,                   # Run configured MATPOWER cases sequentially.
   run_acpflow,                            # Thin AC power-flow alias for run_sparlectra.
   SparlectraRunResult,                    # Stable typed framework-run result.
+  run_sparlectra_api,                     # Stable non-interactive backend contract for GUI/API integrations.
+  SparlectraApiResult,                    # Structured API run status, numerical metadata, and artifacts.
+  SparlectraApiArtifact,                  # Explicit metadata for generated API artifacts.
+  GUI_EDITABLE_CONFIG_KEYS,               # Controlled allowlist for GUI configuration overrides.
+  validate_gui_config_overrides,          # Validate and nest dotted GUI configuration overrides.
+  collect_sparlectra_api_artifacts,        # Discover generated files without filename assumptions.
+  POWERFLOW_RUN_INDEX_FILENAME,           # Persistent local PowerFlow run-index filename.
+  start_powerflow_run,                    # Start and persist a local PowerFlow service run.
+  load_powerflow_run_index,               # Load the persistent run index from an output root.
+  list_powerflow_runs,                    # List indexed runs and their disk availability.
+  refresh_powerflow_run_registry!,        # Recover the in-process registry from disk.
+  get_powerflow_result,                   # Look up serialized run metadata by run ID.
+  list_powerflow_artifacts,               # List run artifacts by run ID.
+  resolve_powerflow_artifact,             # Safely resolve a run artifact by metadata name.
+  to_dict,                                # Convert API results and artifacts to dictionaries.
+  to_namedtuple,                          # Convert API results to named tuples.
+  to_json,                                # Serialize API results as JSON.
+  to_yaml,                                # Serialize API results as YAML.
   run_matpower_case,                      # Run a MATPOWER case through the high-level workflow.
 
   # solver_core.jl
@@ -479,6 +497,12 @@ include("losses.jl")
 include("exportMatPower.jl")
 include("results.jl")
 include("acpflow.jl")
+include("api/api_types.jl")
+include("api/config_overrides.jl")
+include("api/serialization.jl")
+include("api/artifacts.jl")
+include("api/run_api.jl")
+include("api/powerflow_service.jl")
 include("matpower_runner.jl")
 include("remove_functions.jl")
 include("solver_core.jl")
