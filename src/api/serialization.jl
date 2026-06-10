@@ -32,6 +32,8 @@ by default because the solved network is not a stable JSON/YAML transport type.
 """
 function to_dict(result::SparlectraApiResult; include_raw_result::Bool = false)::Dict{String,Any}
   data = Dict{String,Any}(
+    "run_id" => result.run_id,
+    "schema_version" => result.schema_version,
     "status" => String(result.status),
     "success" => result.success,
     "converged" => result.converged,
@@ -54,7 +56,7 @@ end
 """Convert an API result to a transport-safe `NamedTuple`."""
 function to_namedtuple(result::SparlectraApiResult; include_raw_result::Bool = false)::NamedTuple
   data = to_dict(result; include_raw_result = include_raw_result)
-  ordered = (:status, :success, :converged, :solution_available, :iterations, :final_mismatch, :reason, :message, :casefile, :config_file, :output_dir, :logfile, :result_file, :artifacts)
+  ordered = (:run_id, :schema_version, :status, :success, :converged, :solution_available, :iterations, :final_mismatch, :reason, :message, :casefile, :config_file, :output_dir, :logfile, :result_file, :artifacts)
   base = NamedTuple{ordered}(Tuple(data[String(key)] for key in ordered))
   return include_raw_result ? merge(base, (raw_result = data["raw_result"],)) : base
 end

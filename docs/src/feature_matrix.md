@@ -72,7 +72,7 @@ Legend:
 | DataFrame-friendly report rows | ✅ | ❌ | PF report rows can be converted/used in tabular workflows. |
 | Synthetic measurements from PF result | — | ✅ | PF + measurement generators support SE test-data workflows. |
 | Central typed configuration | ✅ | ✅ | `SparlectraConfig` and module-specific config sections support cached YAML loading, typed validation, override precedence, and effective-configuration printing for application/example boundaries. |
-| GUI-ready programmatic run API | ✅ | ❌ | `run_sparlectra_api` provides structured status, controlled configuration overrides, effective configuration output, serialization, and explicit artifact discovery for MATPOWER power-flow runs. |
+| GUI-ready programmatic run API | ✅ | ❌ | `run_sparlectra_api` provides unique stable run IDs, schema-versioned structured status, controlled configuration overrides, effective configuration output, serialization, and explicit artifact discovery for MATPOWER power-flow runs. |
 | Write-back solved states into `Net` | ✅ | ✅ | PF updates net states; SE supports `updateNet=true`. |
 
 ## Useful links

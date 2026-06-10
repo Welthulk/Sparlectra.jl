@@ -34,6 +34,8 @@ manual confirmation.
 
 `SparlectraApiResult` separates framework status from transport metadata:
 
+- `run_id` is a globally unique UUID string that remains stable throughout one run.
+- `schema_version` identifies the serialized result contract and is currently `"1.0"`.
 - `status`, `success`, `converged`, and `solution_available` describe run state.
 - `iterations`, `final_mismatch`, `reason`, and `message` describe the outcome.
 - `casefile`, `config_file`, and `output_dir` record effective paths.
@@ -85,6 +87,9 @@ json_text = to_json(result)
 yaml_text = to_yaml(result)
 ```
 
+All transport forms include `run_id` and `schema_version`, including the
+`result.json` artifact. Consumers should use `run_id` as the lookup key and
+inspect `schema_version` before decoding fields added by future API revisions.
 The transport forms omit `raw_result` by default because a solved `Net` is not a
 stable JSON/YAML representation. Pass `include_raw_result=true` only for custom
 Julia-side inspection.

@@ -43,6 +43,8 @@ function run_api_tests()
       )
 
       @test result isa SparlectraApiResult
+      @test !isempty(result.run_id)
+      @test result.schema_version == "1.0"
       @test result.status === :succeeded
       @test result.success
       @test result.converged === true
@@ -69,12 +71,23 @@ function run_api_tests()
       named_result = to_namedtuple(result)
       json_result = to_json(result)
       yaml_result = to_yaml(result)
+      @test dict_result["run_id"] == result.run_id
+      @test dict_result["schema_version"] == "1.0"
       @test dict_result["status"] == "succeeded"
       @test !haskey(dict_result, "raw_result")
+      @test named_result.run_id == result.run_id
+      @test named_result.schema_version == "1.0"
       @test named_result.status == "succeeded"
+      @test occursin("\"run_id\":\"$(result.run_id)\"", json_result)
+      @test occursin("\"schema_version\":\"1.0\"", json_result)
+      @test occursin("run_id: $(result.run_id)", yaml_result)
+      @test occursin("schema_version: 1.0", yaml_result)
       @test occursin("\"status\":\"succeeded\"", json_result)
       @test occursin("status: succeeded", yaml_result)
-      @test occursin("\"artifacts\"", read(result.result_file, String))
+      result_file_text = read(result.result_file, String)
+      @test occursin("\"run_id\":\"$(result.run_id)\"", result_file_text)
+      @test occursin("\"schema_version\":\"1.0\"", result_file_text)
+      @test occursin("\"artifacts\"", result_file_text)
 
       write(joinpath(output_dir, "buses.csv"), "bus,vm\n1,1.0\n")
       write(joinpath(output_dir, "report.txt"), "report\n")
@@ -86,6 +99,9 @@ function run_api_tests()
       @test !missing.success
       @test missing.status === :failed
       @test missing.reason == "casefile_not_found"
+      @test !isempty(missing.run_id)
+      @test missing.run_id != result.run_id
+      @test missing.schema_version == "1.0"
       @test any(artifact -> artifact.kind === :effective_config, missing.artifacts)
 
       invalid_config = joinpath(tmpdir, "invalid.yaml")
