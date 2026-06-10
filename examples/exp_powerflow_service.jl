@@ -19,9 +19,14 @@ function main(;
   result["success"] || return result
 
   run_id = result["run_id"]
+
+  # This can be called in a later Julia process to recover indexed runs.
+  Base.invokelatest(refresh_powerflow_run_registry!, output_root)
+  runs = list_powerflow_runs(output_root)
   stored_result = get_powerflow_result(run_id)
   artifacts = list_powerflow_artifacts(run_id)
 
+  println("indexed runs: ", length(runs))
   println("run ID: ", run_id)
   println("stored status: ", stored_result["status"])
   for artifact in artifacts
