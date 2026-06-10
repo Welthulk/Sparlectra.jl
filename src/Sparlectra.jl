@@ -400,7 +400,11 @@ export
   GUI_EDITABLE_CONFIG_KEYS,               # Controlled allowlist for GUI configuration overrides.
   validate_gui_config_overrides,          # Validate and nest dotted GUI configuration overrides.
   collect_sparlectra_api_artifacts,        # Discover generated files without filename assumptions.
-  start_powerflow_run,                    # Start a run in the local PowerFlow service registry.
+  POWERFLOW_RUN_INDEX_FILENAME,           # Persistent local PowerFlow run-index filename.
+  start_powerflow_run,                    # Start and persist a local PowerFlow service run.
+  load_powerflow_run_index,               # Load the persistent run index from an output root.
+  list_powerflow_runs,                    # List indexed runs and their disk availability.
+  refresh_powerflow_run_registry!,        # Recover the in-process registry from disk.
   get_powerflow_result,                   # Look up serialized run metadata by run ID.
   list_powerflow_artifacts,               # List run artifacts by run ID.
   resolve_powerflow_artifact,             # Safely resolve a run artifact by metadata name.

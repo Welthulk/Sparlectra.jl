@@ -190,6 +190,25 @@ function run_api_tests()
       @test isfile(joinpath(started["output_dir"], "result.json"))
       @test isfile(joinpath(started["output_dir"], "effective_config.yaml"))
 
+      index_path = joinpath(output_root, POWERFLOW_RUN_INDEX_FILENAME)
+      @test isfile(index_path)
+      index = load_powerflow_run_index(output_root)
+      @test index["schema_version"] == "1.0"
+      @test any(run -> run["run_id"] == started["run_id"], index["runs"])
+      listed_runs = list_powerflow_runs(output_root)
+      @test any(run -> run["run_id"] == started["run_id"] && run["available"], listed_runs)
+      @test isempty(list_powerflow_runs(joinpath(tmpdir, "empty_service")))
+
+      failed = start_powerflow_run(Dict(
+        "casefile" => casefile,
+        "config_file" => config_file,
+        "output_root" => output_root,
+        "config_overrides" => Dict("power_flow.tol" => -1.0),
+      ))
+      @test !failed["success"]
+      @test isfile(joinpath(failed["output_dir"], "result.json"))
+      @test any(run -> run["run_id"] == failed["run_id"], load_powerflow_run_index(output_root)["runs"])
+
       stored = get_powerflow_result(started["run_id"])
       @test stored["run_id"] == started["run_id"]
       @test stored["schema_version"] == started["schema_version"]
@@ -202,6 +221,21 @@ function run_api_tests()
       @test resolved isa SparlectraApiArtifact
       @test isfile(resolved.path)
       @test !isempty(resolved.mime_type)
+
+      lock(Sparlectra._POWERFLOW_SERVICE_LOCK) do
+        empty!(Sparlectra._POWERFLOW_SERVICE_RUNS)
+      end
+      @test get_powerflow_result(started["run_id"])["reason"] == "run_not_found"
+      refresh = refresh_powerflow_run_registry!(output_root)
+      @test refresh["status"] == "succeeded"
+      @test Set(refresh["loaded_runs"]) == Set([started["run_id"], failed["run_id"]])
+      @test get_powerflow_result(started["run_id"])["run_id"] == started["run_id"]
+      recovered_artifacts = list_powerflow_artifacts(started["run_id"])
+      recovered_names = Set(artifact["name"] for artifact in recovered_artifacts)
+      @test Set(["result.json", "run.log", "effective_config.yaml"]) ⊆ recovered_names
+      recovered_result = resolve_powerflow_artifact(started["run_id"], "result.json")
+      @test recovered_result isa SparlectraApiArtifact
+      @test recovered_result.path == joinpath(started["output_dir"], "result.json")
 
       for unsafe_name in ("../result.json", "../../Project.toml", "/etc/passwd", raw"C:\Users\x\file.txt")
         rejected = resolve_powerflow_artifact(started["run_id"], unsafe_name)
@@ -217,6 +251,50 @@ function run_api_tests()
       @test missing_run["reason"] == "run_not_found"
       @test list_powerflow_artifacts("unknown-run-id")["reason"] == "run_not_found"
       @test resolve_powerflow_artifact("unknown-run-id", "result.json")["reason"] == "run_not_found"
+
+      corrupt_id = "corrupt-run"
+      corrupt_dir = joinpath(output_root, corrupt_id)
+      mkpath(corrupt_dir)
+      write(joinpath(corrupt_dir, "result.json"), "{not valid json")
+      unsafe_id = "unsafe-run"
+      missing_id = "missing-run"
+      modified_index = load_powerflow_run_index(output_root)
+      push!(modified_index["runs"], Dict(
+        "run_id" => corrupt_id,
+        "output_dir" => corrupt_dir,
+        "result_file" => joinpath(corrupt_dir, "result.json"),
+      ))
+      push!(modified_index["runs"], Dict(
+        "run_id" => unsafe_id,
+        "output_dir" => tmpdir,
+        "result_file" => joinpath(tmpdir, "result.json"),
+      ))
+      push!(modified_index["runs"], Dict(
+        "run_id" => missing_id,
+        "output_dir" => joinpath(output_root, missing_id),
+        "result_file" => joinpath(output_root, missing_id, "result.json"),
+      ))
+      open(index_path, "w") do io
+        Sparlectra._write_json(io, modified_index)
+        println(io)
+      end
+
+      lock(Sparlectra._POWERFLOW_SERVICE_LOCK) do
+        empty!(Sparlectra._POWERFLOW_SERVICE_RUNS)
+      end
+      partial_refresh = refresh_powerflow_run_registry!(output_root)
+      @test partial_refresh["status"] == "partial"
+      @test get_powerflow_result(started["run_id"])["run_id"] == started["run_id"]
+      unavailable_reasons = Dict(run["run_id"] => run["reason"] for run in partial_refresh["unavailable_runs"])
+      @test unavailable_reasons[corrupt_id] == "invalid_result_file"
+      @test unavailable_reasons[unsafe_id] == "unsafe_output_dir"
+      @test unavailable_reasons[missing_id] == "result_file_not_found"
+      listed_by_id = Dict(run["run_id"] => run for run in list_powerflow_runs(output_root) if haskey(run, "run_id"))
+      @test listed_by_id[corrupt_id]["available"]
+      @test !listed_by_id[unsafe_id]["available"]
+      @test listed_by_id[unsafe_id]["reason"] == "unsafe_output_dir"
+      @test !listed_by_id[missing_id]["available"]
+      @test listed_by_id[missing_id]["reason"] == "output_dir_not_found"
     end
   end
   return nothing
