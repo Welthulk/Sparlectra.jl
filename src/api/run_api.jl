@@ -42,12 +42,12 @@ function _finalize_api_result(result::SparlectraApiResult)::SparlectraApiResult
   return refreshed
 end
 
-function _api_failure(reason::String, message::String; casefile, config_file, output_dir::String, logfile::String, result_file::String)::SparlectraApiResult
+function _api_failure(reason::String, message::String; run_id::String = string(uuid4()), casefile, config_file, output_dir::String, logfile::String, result_file::String)::SparlectraApiResult
   open(logfile, "a") do io
     println(io, "Sparlectra API failure: ", reason)
     println(io, message)
   end
-  result = _api_result(status = :failed, success = false, reason = reason, message = message, casefile = casefile, config_file = config_file, output_dir = output_dir, logfile = logfile, result_file = result_file)
+  result = _api_result(run_id = run_id, status = :failed, success = false, reason = reason, message = message, casefile = casefile, config_file = config_file, output_dir = output_dir, logfile = logfile, result_file = result_file)
   return _finalize_api_result(result)
 end
 
@@ -67,6 +67,22 @@ function run_sparlectra_api(;
   output_dir::AbstractString,
   config_overrides::AbstractDict = Dict{String,Any}(),
 )::SparlectraApiResult
+  return _run_sparlectra_api(
+    casefile = casefile,
+    config_file = config_file,
+    output_dir = output_dir,
+    config_overrides = config_overrides,
+    run_id = string(uuid4()),
+  )
+end
+
+function _run_sparlectra_api(;
+  casefile::AbstractString,
+  config_file::AbstractString,
+  output_dir::AbstractString,
+  config_overrides::AbstractDict,
+  run_id::String,
+)::SparlectraApiResult
   output_path = abspath(output_dir)
   mkpath(output_path)
   case_path = abspath(casefile)
@@ -75,12 +91,12 @@ function run_sparlectra_api(;
   result_file = joinpath(output_path, "result.json")
   touch(logfile)
 
-  isfile(config_path) || return _api_failure("config_file_not_found", "Configuration file not found: $(config_path)"; casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file)
+  isfile(config_path) || return _api_failure("config_file_not_found", "Configuration file not found: $(config_path)"; run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file)
 
   nested_overrides = try
     validate_gui_config_overrides(config_overrides)
   catch err
-    return _api_failure("invalid_config_override", sprint(showerror, err); casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file)
+    return _api_failure("invalid_config_override", sprint(showerror, err); run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file)
   end
 
   config = nothing
@@ -88,12 +104,12 @@ function run_sparlectra_api(;
   try
     config, effective_raw = _load_api_config(config_path, nested_overrides)
   catch err
-    return _api_failure("invalid_configuration", sprint(showerror, err); casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file)
+    return _api_failure("invalid_configuration", sprint(showerror, err); run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file)
   end
 
   effective_config = joinpath(output_path, "effective_config.yaml")
   _write_yaml_file(effective_config, effective_raw)
-  isfile(case_path) || return _api_failure("casefile_not_found", "MATPOWER case file not found: $(case_path)"; casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file)
+  isfile(case_path) || return _api_failure("casefile_not_found", "MATPOWER case file not found: $(case_path)"; run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file)
 
   raw_result = nothing
   try
@@ -110,12 +126,13 @@ function run_sparlectra_api(;
     end
   catch err
     message = sprint(showerror, err, catch_backtrace())
-    return _api_failure("execution_error", message; casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file)
+    return _api_failure("execution_error", message; run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file)
   end
 
   success = raw_result.final_converged && raw_result.solution_available
   mismatch = isfinite(raw_result.final_mismatch) ? raw_result.final_mismatch : nothing
   result = _api_result(
+    run_id = run_id,
     status = success ? :succeeded : :failed,
     success = success,
     converged = raw_result.numerical_converged,

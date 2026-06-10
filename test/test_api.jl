@@ -164,5 +164,60 @@ function run_api_tests()
       @test validate_gui_config_overrides(Dict("power_flow.qlimits.enabled" => false))["power_flow"]["qlimits"]["enabled"] === false
     end
   end
+  @testset "Local PowerFlow service" begin
+    mktempdir() do tmpdir
+      casefile = _write_api_test_case(joinpath(tmpdir, "case_service.m"))
+      config_file = joinpath(tmpdir, "service_config.yaml")
+      cp(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, config_file)
+      output_root = joinpath(tmpdir, "powerflow_service")
+
+      started = start_powerflow_run(Dict(
+        "casefile" => casefile,
+        "config_file" => config_file,
+        "output_root" => output_root,
+        "config_overrides" => Dict(
+          "power_flow.tol" => 1.0e-8,
+          "power_flow.max_iter" => 80,
+          "benchmark.enabled" => false,
+        ),
+      ))
+
+      @test started["success"]
+      required_result_fields = ("run_id", "schema_version", "status", "success", "converged", "solution_available", "iterations", "final_mismatch", "reason", "message", "artifacts")
+      @test all(field -> haskey(started, field), required_result_fields)
+      @test !isempty(started["run_id"])
+      @test started["output_dir"] == joinpath(abspath(output_root), started["run_id"])
+      @test isfile(joinpath(started["output_dir"], "result.json"))
+      @test isfile(joinpath(started["output_dir"], "effective_config.yaml"))
+
+      stored = get_powerflow_result(started["run_id"])
+      @test stored["run_id"] == started["run_id"]
+      @test stored["schema_version"] == started["schema_version"]
+
+      artifacts = list_powerflow_artifacts(started["run_id"])
+      artifact_names = Set(artifact["name"] for artifact in artifacts)
+      @test Set(["result.json", "run.log", "effective_config.yaml"]) ⊆ artifact_names
+
+      resolved = resolve_powerflow_artifact(started["run_id"], "result.json")
+      @test resolved isa SparlectraApiArtifact
+      @test isfile(resolved.path)
+      @test !isempty(resolved.mime_type)
+
+      for unsafe_name in ("../result.json", "../../Project.toml", "/etc/passwd", raw"C:\Users\x\file.txt")
+        rejected = resolve_powerflow_artifact(started["run_id"], unsafe_name)
+        @test rejected["success"] === false
+        @test rejected["reason"] == "unsafe_artifact_name"
+      end
+
+      missing_artifact = resolve_powerflow_artifact(started["run_id"], "missing.txt")
+      @test missing_artifact["reason"] == "artifact_not_found"
+
+      missing_run = get_powerflow_result("unknown-run-id")
+      @test missing_run["success"] === false
+      @test missing_run["reason"] == "run_not_found"
+      @test list_powerflow_artifacts("unknown-run-id")["reason"] == "run_not_found"
+      @test resolve_powerflow_artifact("unknown-run-id", "result.json")["reason"] == "run_not_found"
+    end
+  end
   return nothing
 end
