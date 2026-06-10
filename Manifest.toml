@@ -1,8 +1,8 @@
 # This file is machine-generated - editing it directly is not advised
 
-julia_version = "1.12.6"
+julia_version = "1.12.5"
 manifest_format = "2.0"
-project_hash = "615f1512f6284a2c007163e7d7e9c081f99e4481"
+project_hash = "2d3b6e7679a8b3834e35426ca5f33b401c902700"
 
 [[deps.ArgTools]]
 uuid = "0dad84c5-d112-42e6-8d28-ef12dabb789f"
@@ -281,10 +281,10 @@ uuid = "a2af1166-a08f-5f64-846c-94a0d3cef48c"
 version = "1.2.2"
 
 [[deps.Sparlectra]]
-deps = ["BenchmarkTools", "DataFrames", "Dates", "Downloads", "InlineStrings", "LinearAlgebra", "Logging", "Printf", "Random", "SHA", "SparseArrays", "UUIDs"]
+deps = ["BenchmarkTools", "DataFrames", "Dates", "Downloads", "InlineStrings", "LinearAlgebra", "Logging", "Printf", "Random", "SHA", "Sockets", "SparseArrays", "UUIDs"]
 path = "."
 uuid = "31ce9bba-fd9d-44a1-b005-f5f509afda38"
-version = "0.8.0"
+version = "0.8.4"
 
 [[deps.SparseArrays]]
 deps = ["Libdl", "LinearAlgebra", "Random", "Serialization", "SuiteSparse_jll"]

@@ -408,6 +408,7 @@ export
   get_powerflow_result,                   # Look up serialized run metadata by run ID.
   list_powerflow_artifacts,               # List run artifacts by run ID.
   resolve_powerflow_artifact,             # Safely resolve a run artifact by metadata name.
+  start_sparlectra_webui,                 # Start the loopback-only local PowerFlow Web UI.
   to_dict,                                # Convert API results and artifacts to dictionaries.
   to_namedtuple,                          # Convert API results to named tuples.
   to_json,                                # Serialize API results as JSON.
@@ -503,6 +504,7 @@ include("api/serialization.jl")
 include("api/artifacts.jl")
 include("api/run_api.jl")
 include("api/powerflow_service.jl")
+include("webui/webui.jl")
 include("matpower_runner.jl")
 include("remove_functions.jl")
 include("solver_core.jl")
