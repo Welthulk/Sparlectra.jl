@@ -400,6 +400,10 @@ export
   GUI_EDITABLE_CONFIG_KEYS,               # Controlled allowlist for GUI configuration overrides.
   validate_gui_config_overrides,          # Validate and nest dotted GUI configuration overrides.
   collect_sparlectra_api_artifacts,        # Discover generated files without filename assumptions.
+  start_powerflow_run,                    # Start a run in the local PowerFlow service registry.
+  get_powerflow_result,                   # Look up serialized run metadata by run ID.
+  list_powerflow_artifacts,               # List run artifacts by run ID.
+  resolve_powerflow_artifact,             # Safely resolve a run artifact by metadata name.
   to_dict,                                # Convert API results and artifacts to dictionaries.
   to_namedtuple,                          # Convert API results to named tuples.
   to_json,                                # Serialize API results as JSON.
@@ -494,6 +498,7 @@ include("api/config_overrides.jl")
 include("api/serialization.jl")
 include("api/artifacts.jl")
 include("api/run_api.jl")
+include("api/powerflow_service.jl")
 include("matpower_runner.jl")
 include("remove_functions.jl")
 include("solver_core.jl")

@@ -73,6 +73,7 @@ Legend:
 | Synthetic measurements from PF result | — | ✅ | PF + measurement generators support SE test-data workflows. |
 | Central typed configuration | ✅ | ✅ | `SparlectraConfig` and module-specific config sections support cached YAML loading, typed validation, override precedence, and effective-configuration printing for application/example boundaries. |
 | GUI-ready programmatic run API | ✅ | ❌ | `run_sparlectra_api` provides unique stable run IDs, schema-versioned structured status, controlled configuration overrides, effective configuration output, serialization, and explicit artifact discovery for MATPOWER power-flow runs. |
+| Local PowerFlow service boundary | ✅ | ❌ | `start_powerflow_run`, result lookup, artifact listing, and safe artifact resolution provide an in-process, filesystem-backed boundary for future thin Genie.jl routes. |
 | Write-back solved states into `Net` | ✅ | ✅ | PF updates net states; SE supports `updateNet=true`. |
 
 ## Useful links

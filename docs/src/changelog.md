@@ -3,6 +3,7 @@
 ### New features
 
 * **Feature**: Added `run_sparlectra_api` as a stable non-interactive MATPOWER power-flow backend contract with unique run IDs, schema-versioned structured status, controlled GUI configuration overrides, effective configuration output, explicit artifact discovery, and Dict/NamedTuple/JSON/YAML serialization.
+* **Feature**: Added a local PowerFlow service boundary with run-specific output directories, run-ID lookup, artifact listing, and traversal-safe artifact resolution for future thin Genie.jl routes.
 
 ### Improvements
 
