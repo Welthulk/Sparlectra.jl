@@ -5,6 +5,11 @@
   Pages = [    
     "Sparlectra.jl",
     "configuration.jl",
+    "api/api_types.jl",
+    "api/config_overrides.jl",
+    "api/artifacts.jl",
+    "api/run_api.jl",
+    "api/serialization.jl",
     "node.jl", 
     "shunt.jl", 
     "lines.jl", 
