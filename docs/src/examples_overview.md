@@ -16,6 +16,8 @@ This page summarizes the most relevant runnable examples in `examples/`.
   Runs one MATPOWER case through the GUI-ready `run_sparlectra_api` contract and lists explicit artifacts.
 - `exp_powerflow_service.jl`
   Starts a local service run, looks up its serialized result by run ID, and lists its artifacts without an HTTP server.
+- `exp_webui_powerflow.jl`
+  Starts the loopback-only browser UI for local PowerFlow runs and waits until the server is stopped.
 
 ## Transformer and tap control
 

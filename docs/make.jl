@@ -19,6 +19,7 @@ makedocs(
     "Configuration" => "configuration.md",
     "Programmatic API" => "programmatic_api.md",
     "Local PowerFlow Service" => "powerflow_service.md",
+    "Local PowerFlow Web UI" => "webui.md",
     "Power-Flow Configuration" => "powerflow_configuration.md",
     "MATPOWER Import Configuration" => "matpower_import.md",
     "State-Estimation Configuration" => "state_estimation_configuration.md",
