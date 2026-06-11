@@ -509,8 +509,9 @@ include("matpower_runner.jl")
 include("remove_functions.jl")
 include("solver_core.jl")
 # Rectangular power-flow helper layers. Keep dependency order:
-# core equations -> Jacobian builders -> Newton step -> diagnostics/start/result helpers -> solver loop.
+# core equations -> voltage helpers -> Jacobian builders -> Newton step -> diagnostics/start/result helpers -> solver loop.
 include("powerflow_rectangular/rectangular_core_equations.jl")
+include("powerflow_rectangular/rectangular_voltage_helpers.jl")
 include("powerflow_rectangular/rectangular_jacobian_builders.jl")
 include("powerflow_rectangular/rectangular_newton_step.jl")
 include("powerflow_rectangular/rectangular_standalone_solver.jl")

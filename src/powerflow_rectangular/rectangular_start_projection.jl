@@ -19,14 +19,6 @@
 # Date: 29.5.2026
 # file: src/powerflow_rectangular/rectangular_start_projection.jl
 
-function _apply_voltage_magnitude_preserving_angle(V::ComplexF64, vm::Float64)::ComplexF64
-  if iszero(V)
-    # A zero phasor has no defined angle, so use the explicit zero-angle fallback.
-    return ComplexF64(vm, 0.0)
-  end
-  return ComplexF64(vm * cis(angle(V)))
-end
-
 function _sanitize_rectangular_start(V::Vector{ComplexF64}, bus_types::Vector{Symbol}, Vset::Vector{Float64}, slack_idx::Int)
   # Sanitize NaN/Inf/zero seeds before any projection candidate is evaluated.
   Vs = copy(V)
