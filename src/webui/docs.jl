@@ -1,18 +1,46 @@
 const _WEBUI_DOCS_ROOT = normpath(joinpath(@__DIR__, "..", "..", "docs", "src"))
 
 const WEBUI_HELP_TOPICS = Dict(
-  "power_flow.start_mode.voltage_mode" => (
-    label = "Start voltage mode",
-    page = "powerflow_configuration",
-    heading = "Start mode options",
-    selector = "`power_flow.start_mode.voltage_mode`",
-  ),
+  "webui.casefile" => (label = "MATPOWER case file", page = "webui", heading = "PowerFlow input paths", selector = "`webui.casefile`"),
+  "webui.config_file" => (label = "Configuration template file", page = "webui", heading = "PowerFlow input paths", selector = "`webui.config_file`"),
+  "webui.output_root" => (label = "Output root directory", page = "webui", heading = "PowerFlow input paths", selector = "`webui.output_root`"),
+  "power_flow.tol" => (label = "PowerFlow tolerance", page = "powerflow_configuration", heading = "Solver core options", selector = "`power_flow.tol`"),
+  "power_flow.max_iter" => (label = "Maximum iterations", page = "powerflow_configuration", heading = "Solver core options", selector = "`power_flow.max_iter`"),
+  "power_flow.autodamp" => (label = "Autodamping enabled", page = "powerflow_configuration", heading = "Solver core options", selector = "`power_flow.autodamp`"),
+  "power_flow.autodamp_min" => (label = "Autodamping minimum", page = "powerflow_configuration", heading = "Solver core options", selector = "`power_flow.autodamp_min`"),
+  "power_flow.qlimits.enabled" => (label = "Q-limit handling enabled", page = "powerflow_configuration", heading = "Q-limit options and guard", selector = "`power_flow.qlimits.enabled`"),
+  "power_flow.wrong_branch_detection" => (label = "Wrong-branch detection", page = "configuration", heading = "Wrong-branch detection semantics (rectangular PF)", selector = ""),
+  "power_flow.start_mode.angle_mode" => (label = "Start angle mode", page = "powerflow_configuration", heading = "Start mode options", selector = "`power_flow.start_mode.angle_mode`"),
+  "power_flow.start_mode.voltage_mode" => (label = "Start voltage mode", page = "powerflow_configuration", heading = "Start mode options", selector = "`power_flow.start_mode.voltage_mode`"),
+  "output.logfile_results" => (label = "Logfile output mode", page = "performance_profiling", heading = "Output configuration", selector = "`output.logfile_results`"),
+  "benchmark.enabled" => (label = "Benchmark enabled", page = "performance_profiling", heading = "Benchmark configuration", selector = "`benchmark.enabled`"),
+  "benchmark.samples" => (label = "Benchmark samples", page = "performance_profiling", heading = "Benchmark configuration", selector = "`benchmark.samples`"),
+  "benchmark.seconds" => (label = "Benchmark seconds", page = "performance_profiling", heading = "Benchmark configuration", selector = "`benchmark.seconds`"),
+)
+
+const WEBUI_FORM_HELP_TOPICS = Dict(
+  "casefile" => "webui.casefile",
+  "config_file" => "webui.config_file",
+  "output_root" => "webui.output_root",
+  "power_flow_tol" => "power_flow.tol",
+  "power_flow_max_iter" => "power_flow.max_iter",
+  "power_flow_autodamp" => "power_flow.autodamp",
+  "power_flow_autodamp_min" => "power_flow.autodamp_min",
+  "power_flow_qlimits_enabled" => "power_flow.qlimits.enabled",
+  "power_flow_wrong_branch_detection" => "power_flow.wrong_branch_detection",
+  "power_flow_start_angle_mode" => "power_flow.start_mode.angle_mode",
+  "power_flow_start_voltage_mode" => "power_flow.start_mode.voltage_mode",
+  "output_logfile_results" => "output.logfile_results",
+  "benchmark_enabled" => "benchmark.enabled",
+  "benchmark_samples" => "benchmark.samples",
+  "benchmark_seconds" => "benchmark.seconds",
 )
 
 const WEBUI_DOC_PAGES = Dict(
   "configuration" => (title = "Configuration", file = "configuration.md"),
   "powerflow_configuration" => (title = "Power-Flow Configuration", file = "powerflow_configuration.md"),
   "powerflow_service" => (title = "Local PowerFlow Service", file = "powerflow_service.md"),
+  "performance_profiling" => (title = "Performance and Profiling Configuration", file = "performance_profiling.md"),
   "webui" => (title = "Local PowerFlow Web UI", file = "webui.md"),
   "feature_matrix" => (title = "Feature Matrix", file = "feature_matrix.md"),
 )
@@ -93,9 +121,51 @@ function load_webui_help_excerpt(topic::AbstractString)::Union{String,Nothing}
   return isempty(metadata.selector) ? section : _webui_extract_markdown_table_row(section, metadata.selector)
 end
 
+function _webui_heading_slug(heading_html::AbstractString)::String
+  text = replace(String(heading_html), r"<[^>]+>" => "")
+  text = lowercase(replace(text, "&amp;" => "and", "&quot;" => "", "&#39;" => ""))
+  return strip(replace(text, r"[^a-z0-9]+" => "-"), '-')
+end
+
+function _webui_rewritten_doc_href(target::AbstractString; current_page::Union{Nothing,String} = nothing)::Union{String,Nothing}
+  href = String(target)
+  startswith(href, "https://") && return href
+  startswith(href, "http://") && return href
+  startswith(href, "#") && return current_page === nothing ? nothing : href
+  (startswith(href, "/") || occursin('\\', href) || occursin(':', href)) && return nothing
+
+  relative = startswith(href, "./") ? href[3:end] : href
+  matched = match(r"^([A-Za-z0-9_-]+)\.md(#[A-Za-z0-9._~:%-]+)?$", relative)
+  matched === nothing && return nothing
+  page = matched.captures[1]
+  metadata = resolve_webui_doc_page(page)
+  metadata === nothing && return nothing
+  metadata.file == "$(page).md" || return nothing
+  fragment = something(matched.captures[2], "")
+  return "/docs/$(page)$(fragment)"
+end
+
+"""Rewrite rendered Markdown links to safe, allowlisted local documentation routes."""
+function rewrite_webui_doc_links(rendered_html::AbstractString; current_page::Union{Nothing,String} = nothing)::String
+  heading_pattern = r"<h([1-6])>(.*?)</h[1-6]>"s
+  html = replace(String(rendered_html), heading_pattern => matched_text -> begin
+    matched = match(heading_pattern, String(matched_text))
+    level = matched.captures[1]
+    contents = matched.captures[2]
+    slug = _webui_heading_slug(contents)
+    isempty(slug) ? String(matched_text) : "<h$(level) id=\"$(slug)\">$(contents)</h$(level)>"
+  end)
+  href_pattern = Regex("href=\"([^\"]+)\"")
+  return replace(html, href_pattern => matched_text -> begin
+    matched = match(href_pattern, String(matched_text))
+    rewritten = _webui_rewritten_doc_href(matched.captures[1]; current_page = current_page)
+    rewritten === nothing ? "aria-disabled=\"true\"" : "href=\"$(rewritten)\""
+  end)
+end
+
 """Render trusted repository Markdown as HTML using Julia's Markdown standard library."""
-function render_webui_markdown(markdown_text::AbstractString)::String
+function render_webui_markdown(markdown_text::AbstractString; current_page::Union{Nothing,String} = nothing)::String
   io = IOBuffer()
   show(io, MIME"text/html"(), Markdown.parse(String(markdown_text)))
-  return String(take!(io))
+  return rewrite_webui_doc_links(String(take!(io)); current_page = current_page)
 end

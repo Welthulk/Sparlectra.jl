@@ -9,6 +9,8 @@
 
 ### Improvements
 
+* Improved the local PowerFlow Web UI with Markdown-backed help for every visible form option, safe allowlisted rewriting of internal documentation links, and larger readable documentation, help, log, and text-artifact panels.
+
 ### Bugfixes
 
 ## Version 0.8.3 – 2026-05-30
