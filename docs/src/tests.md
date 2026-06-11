@@ -37,7 +37,7 @@ julia --project=. -e 'using Pkg; Pkg.test()'
 | Extended addition | File | Main checks |
 |---|---|---|
 | `remove` | `test/testremove.jl` | Remove/delete behavior and consistency after structural edits |
-| `pv_voltage_residuals` | `test/test_pv_voltage_residuals.jl` | PV-voltage residual behavior and related solver diagnostics |
+| `pv_voltage_residuals` | `test/test_pv_voltage_residuals.jl` | PV-voltage residual behavior, angle-preserving voltage-setpoint starts, phase-shifted PV integration coverage, and related solver diagnostics |
 | `matpower_example` | `test/test_matpower_example.jl` | MATPOWER example runner path, output routing, performance/profile rendering, and runtime configuration forwarding |
 | `synthetic_grids` | `test/test_synthetic_grids.jl` | Synthetic network generation and larger synthetic-grid regression coverage |
 | `configuration_docs` | `test/test_configuration_docs.jl` | Configuration documentation and docs/config consistency checks |
