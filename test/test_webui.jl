@@ -218,6 +218,7 @@ function run_webui_tests()
       @test occursin("class=\"artifact-text-page\"", result_artifact_html)
       @test occursin("class=\"artifact-text\"", result_artifact_html)
       css_text = read(joinpath(@__DIR__, "..", "src", "webui", "static", "sparlectra.css"), String)
+      css_text = replace(css_text, "\r\n" => "\n")
       css_lines = split(css_text, '\n')
       @test length(css_lines) > 100
       @test maximum(length, css_lines) < 300
