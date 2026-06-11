@@ -43,6 +43,12 @@ function route_sparlectra_webui(method::AbstractString, target::AbstractString, 
   verb = uppercase(String(method))
   if verb == "GET" && path == "/assets/logo.png"
     return handle_webui_logo()
+  elseif verb == "GET" && startswith(path, "/help/")
+    return handle_webui_help(_webui_urldecode(path[(lastindex("/help/") + 1):end]))
+  elseif verb == "GET" && path == "/docs"
+    return handle_webui_docs_index()
+  elseif verb == "GET" && startswith(path, "/docs/")
+    return handle_webui_doc_page(_webui_urldecode(path[(lastindex("/docs/") + 1):end]))
   elseif verb == "GET" && path in ("/", "/powerflow")
     return _webui_html(render_powerflow_form(; output_root = output_root))
   elseif verb == "POST" && path == "/powerflow/run"

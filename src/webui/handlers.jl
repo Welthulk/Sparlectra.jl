@@ -81,3 +81,23 @@ end
 function handle_powerflow_refresh(output_root::AbstractString)::Dict{String,Any}
   return refresh_powerflow_run_registry!(output_root)
 end
+
+function handle_webui_help(topic::AbstractString)::SparlectraWebUIResponse
+  metadata = resolve_webui_help_topic(topic)
+  metadata === nothing && return _webui_html(render_webui_error(404, "Unknown help topic."); status = 404)
+  excerpt = load_webui_help_excerpt(topic)
+  excerpt === nothing && return _webui_html(render_webui_error(404, "No help section found for this option."); status = 404)
+  return _webui_html(render_webui_help(metadata, excerpt))
+end
+
+function handle_webui_docs_index()::SparlectraWebUIResponse
+  return _webui_html(render_webui_docs_index(WEBUI_DOC_PAGES))
+end
+
+function handle_webui_doc_page(page::AbstractString)::SparlectraWebUIResponse
+  metadata = resolve_webui_doc_page(page)
+  metadata === nothing && return _webui_html(render_webui_error(404, "Documentation page not found."); status = 404)
+  markdown_text = load_webui_markdown_document(page)
+  markdown_text === nothing && return _webui_html(render_webui_error(404, "Documentation page is unavailable."); status = 404)
+  return _webui_html(render_webui_doc_page(page, metadata, markdown_text))
+end

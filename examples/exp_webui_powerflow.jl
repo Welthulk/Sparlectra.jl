@@ -8,6 +8,7 @@ function main()
     open_browser = false,
   )
   println("Sparlectra Web UI is available at ", server.url)
+  println("Contextual help and selected documentation are available at ", replace(server.url, "/powerflow" => "/docs"))
   println("Press Ctrl+C to stop the local server.")
   wait(server.task)
 end

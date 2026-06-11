@@ -30,8 +30,12 @@ function _webui_layout(title::AbstractString, content::AbstractString)::String
   return """<!doctype html>
 <html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">
 <title>$(_webui_escape(title)) · Sparlectra</title><link rel=\"stylesheet\" href=\"/static/sparlectra.css\"></head>
-<body><header class=\"site-header\"><a class=\"brand\" href=\"/powerflow\"><img class=\"brand-logo\" src=\"/assets/logo.png\" alt=\"Sparlectra.jl logo\"><span>Sparlectra.jl</span></a><nav><a href=\"/powerflow\">New run</a><a href=\"/powerflow/history\">Run history</a></nav></header>
+<body><header class=\"site-header\"><a class=\"brand\" href=\"/powerflow\"><img class=\"brand-logo\" src=\"/assets/logo.png\" alt=\"Sparlectra.jl logo\"><span>Sparlectra.jl</span></a><nav><a href=\"/powerflow\">New run</a><a href=\"/powerflow/history\">Run history</a><a href=\"/docs\">Documentation</a></nav></header>
 <main><h1>$(_webui_escape(title))</h1>$(content)</main><footer>Local PowerFlow Web UI · loopback access only</footer></body></html>"""
+end
+
+function _webui_help_link(topic::AbstractString, label::AbstractString)::String
+  return "<a class=\"help-link\" href=\"/help/$(_webui_urlencode(topic))\" aria-label=\"Help for $(_webui_escape(label))\" title=\"Help for $(_webui_escape(label))\">?</a>"
 end
 
 function render_powerflow_form(; output_root::AbstractString = "results/powerflow_service", error_message = nothing)::String
@@ -49,7 +53,7 @@ $(error_html)<p class=\"lede\">Run a local MATPOWER case through the Sparlectra 
 <label class=\"check\"><input name=\"power_flow_qlimits_enabled\" type=\"checkbox\" checked> Q-limit handling enabled</label>
 <label>Wrong-branch detection$(_webui_select("power_flow_wrong_branch_detection", WRONG_BRANCH_DETECTION_VALUES, :warn))</label>
 <label>Start angle mode$(_webui_select("power_flow_start_angle_mode", POWERFLOW_START_ANGLE_MODE_VALUES, :dc))</label>
-<label>Start voltage mode$(_webui_select("power_flow_start_voltage_mode", POWERFLOW_START_VOLTAGE_MODE_VALUES, :profile_blend))</label>
+<label><span class=\"field-label\">Start voltage mode $(_webui_help_link("power_flow.start_mode.voltage_mode", "Start voltage mode"))</span>$(_webui_select("power_flow_start_voltage_mode", POWERFLOW_START_VOLTAGE_MODE_VALUES, :profile_blend))</label>
 <label>Logfile output mode$(_webui_select("output_logfile_results", OUTPUT_LOGFILE_RESULTS_VALUES, :compact))</label>
 <label class=\"check\"><input name=\"benchmark_enabled\" type=\"checkbox\"> Benchmark enabled</label>
 <label>Benchmark samples<input name=\"benchmark_samples\" type=\"number\" min=\"1\" value=\"10\"></label>
@@ -99,4 +103,23 @@ end
 
 function render_webui_error(status::Integer, message::AbstractString)::String
   return _webui_layout("Request error", "<div class=\"alert error\"><strong>$(_webui_escape(status))</strong> $(_webui_escape(message))</div>")
+end
+
+function render_webui_help(metadata, excerpt::AbstractString)::String
+  markdown_html = render_webui_markdown(excerpt)
+  page_url = _webui_urlencode(metadata.page)
+  source_file = WEBUI_DOC_PAGES[metadata.page].file
+  content = "<section class=\"panel help-panel\">$(markdown_html)<p><a href=\"/docs/$(page_url)\">View the full documentation context</a></p><p class=\"source-note\">Source: <code>$(_webui_escape(source_file))</code></p></section>"
+  return _webui_layout(metadata.label, content)
+end
+
+function render_webui_docs_index(pages::AbstractDict)::String
+  links = join(("<li><a href=\"/docs/$(_webui_urlencode(page))\">$(_webui_escape(metadata.title))</a></li>" for (page, metadata) in sort!(collect(pages); by = first)), "")
+  content = "<section class=\"panel docs-page\"><p>Selected repository documentation pages are rendered directly from their Markdown sources.</p><ul class=\"docs-index\">$(links)</ul></section>"
+  return _webui_layout("Documentation", content)
+end
+
+function render_webui_doc_page(page::AbstractString, metadata, markdown_text::AbstractString)::String
+  content = "<section class=\"panel docs-page\">$(render_webui_markdown(markdown_text))</section>"
+  return _webui_layout(metadata.title, content)
 end
