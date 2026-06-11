@@ -1,6 +1,8 @@
+using Markdown
 using Sockets
 
 include("forms.jl")
+include("docs.jl")
 include("views.jl")
 include("handlers.jl")
 include("routes.jl")

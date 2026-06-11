@@ -51,6 +51,21 @@ creates an `effective_config.yaml` artifact for each run.
 The case and configuration fields are browser text fields rather than native
 file uploads. Enter paths that are readable by the local Julia process.
 
+## Contextual help and documentation
+
+The **Start voltage mode** field includes a contextual help link. The help page
+loads the matching `power_flow.start_mode.voltage_mode` entry from
+[`powerflow_configuration.md`](powerflow_configuration.md) at request time and
+renders that Markdown excerpt in the Web UI. Explanatory option text is not
+copied into Julia views or HTML templates; repository Markdown remains the
+single source of truth.
+
+The **Documentation** navigation link opens `/docs`, which lists selected
+allowlisted pages under `docs/src`. Each `/docs/<page>` request resolves only a
+registered page name, so arbitrary paths and traversal requests are rejected.
+This is a lightweight reader for local reference material, not a replacement
+for the Documenter.jl site.
+
 ## Results and artifacts
 
 Successful and failed runs both have a result page. It shows the run ID, schema

@@ -26,6 +26,64 @@ function run_webui_tests()
     @test isdefined(Sparlectra, :start_sparlectra_webui)
     @test_throws ArgumentError start_sparlectra_webui(host = "0.0.0.0")
 
+    @testset "Markdown-backed contextual help and documentation" begin
+      topic = "power_flow.start_mode.voltage_mode"
+      @test haskey(Sparlectra.WEBUI_HELP_TOPICS, topic)
+      topic_metadata = Sparlectra.resolve_webui_help_topic(topic)
+      @test topic_metadata !== nothing
+      doc_metadata = Sparlectra.resolve_webui_doc_page(topic_metadata.page)
+      @test doc_metadata !== nothing
+      doc_path = joinpath(@__DIR__, "..", "docs", "src", doc_metadata.file)
+      @test isfile(doc_path)
+
+      markdown_text = Sparlectra.load_webui_markdown_document(topic_metadata.page)
+      @test markdown_text !== nothing
+      section = Sparlectra.extract_webui_markdown_section(markdown_text, topic_metadata.heading)
+      @test section !== nothing
+      @test occursin(topic_metadata.selector, section)
+      excerpt = Sparlectra.load_webui_help_excerpt(topic)
+      @test excerpt !== nothing
+      @test occursin("power_flow.start_mode.voltage_mode", excerpt)
+      @test occursin("YAML path", excerpt)
+
+      synthetic = "## Target\n\n- item\n\n```julia\nx = 1\n```\n\n### Child\nchild text\n\n## Next\nnot included"
+      extracted = Sparlectra.extract_webui_markdown_section(synthetic, "Target")
+      @test occursin("- item", extracted)
+      @test occursin("```julia", extracted)
+      @test occursin("### Child", extracted)
+      @test !occursin("not included", extracted)
+
+      help_response = Sparlectra.route_sparlectra_webui("GET", "/help/$(topic)")
+      @test help_response.status == 200
+      help_html = String(help_response.body)
+      @test occursin("Start voltage mode", help_html)
+      @test occursin("power_flow.start_mode.voltage_mode", help_html)
+      @test occursin("/docs/powerflow_configuration", help_html)
+
+      unknown_help = Sparlectra.route_sparlectra_webui("GET", "/help/power_flow.unknown")
+      @test unknown_help.status == 404
+      @test occursin("Unknown help topic", String(unknown_help.body))
+
+      docs_index = Sparlectra.route_sparlectra_webui("GET", "/docs")
+      @test docs_index.status == 200
+      docs_index_html = String(docs_index.body)
+      for page in keys(Sparlectra.WEBUI_DOC_PAGES)
+        @test occursin("/docs/$(page)", docs_index_html)
+      end
+
+      docs_page = Sparlectra.route_sparlectra_webui("GET", "/docs/powerflow_configuration")
+      @test docs_page.status == 200
+      @test occursin("Power-Flow Configuration", String(docs_page.body))
+
+      for unsafe_page in ("../Project.toml", "../../src/Sparlectra.jl", "/etc/passwd", raw"C:\Users\x\file.txt")
+        unsafe = Sparlectra.handle_webui_doc_page(unsafe_page)
+        @test unsafe.status == 404
+        @test occursin("Documentation page not found", String(unsafe.body))
+        unsafe_route = Sparlectra.route_sparlectra_webui("GET", "/docs/" * Sparlectra._webui_urlencode(unsafe_page))
+        @test unsafe_route.status == 404
+      end
+    end
+
     mktempdir() do tmpdir
       casefile = _write_api_test_case(joinpath(tmpdir, "case_webui.m"))
       config_file = joinpath(tmpdir, "config_template.yaml")
@@ -52,6 +110,8 @@ function run_webui_tests()
       @test occursin("src=\"/assets/logo.png\"", form_html)
       @test occursin("alt=\"Sparlectra.jl logo\"", form_html)
       @test occursin("<span>Sparlectra.jl</span>", form_html)
+      @test occursin("class=\"help-link\"", form_html)
+      @test occursin("href=\"/help/power_flow.start_mode.voltage_mode\"", form_html)
 
       logo_response = Sparlectra.route_sparlectra_webui("GET", "/assets/logo.png")
       @test logo_response.status == 200
@@ -116,9 +176,10 @@ function run_webui_tests()
         @test occursin("<span>Sparlectra.jl</span>", page_html)
       end
 
-      source = join(read(joinpath(@__DIR__, "..", "src", "webui", file), String) for file in ("forms.jl", "handlers.jl", "routes.jl", "views.jl", "webui.jl"))
+      source = join(read(joinpath(@__DIR__, "..", "src", "webui", file), String) for file in ("docs.jl", "forms.jl", "handlers.jl", "routes.jl", "views.jl", "webui.jl"))
       forbidden = ["run" * "pf!", "run" * "pf_rectangular!", "run_complex_nr_" * "rectangular"]
       @test all(name -> !occursin(name, source), forbidden)
+      @test !occursin("Voltage-magnitude/angle blend strategy.", source)
 
       probe = listen(ip"127.0.0.1", UInt16(0))
       port = Int(getsockname(probe)[2])
