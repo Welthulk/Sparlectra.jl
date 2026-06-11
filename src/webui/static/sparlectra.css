@@ -1,2 +1,262 @@
-:root{font-family:Inter,system-ui,sans-serif;color:#172033;background:#f4f7fb}*{box-sizing:border-box}body{margin:0}header{display:flex;justify-content:space-between;align-items:center;padding:1rem 5vw;background:#14233d;color:#fff}header a{color:#fff;text-decoration:none}.brand{display:flex;align-items:center;gap:.75rem;font-size:1.25rem;font-weight:700}.brand-logo{height:42px;width:auto;vertical-align:middle}nav{display:flex;gap:1.25rem}main{max-width:1180px;margin:2rem auto;padding:0 1.25rem}footer{text-align:center;color:#60708a;padding:2rem}.lede{color:#52627a}.panel{background:#fff;border:1px solid #dbe3ef;border-radius:12px;padding:1.25rem;box-shadow:0 8px 24px #24426912;overflow:auto}.form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1rem}label{display:flex;flex-direction:column;gap:.4rem;font-weight:600}input,select,button,.button{font:inherit;border-radius:7px;border:1px solid #b7c3d5;padding:.65rem .75rem}.check{flex-direction:row;align-items:center;align-self:end;padding:.6rem 0}.check input{width:1.1rem;height:1.1rem}.span-2{grid-column:1/-1}.actions{display:flex;gap:.75rem;margin-top:.5rem}button,.button{background:#1768d4;color:#fff;border:0;font-weight:700;text-decoration:none;cursor:pointer}.inline-form{display:flex;align-items:end;gap:1rem;margin-bottom:1rem}.inline-form label{flex:1}table{width:100%;border-collapse:collapse;font-size:.92rem}th,td{text-align:left;padding:.7rem;border-bottom:1px solid #e3e8f0;vertical-align:top}.details th{width:220px}code,pre{font-family:ui-monospace,SFMono-Regular,monospace}.artifact{white-space:pre-wrap;overflow-wrap:anywhere;background:#0f1726;color:#dce8fa;padding:1rem;border-radius:8px;max-height:70vh;overflow:auto}.alert{padding:1rem;border-radius:8px;margin-bottom:1rem}.error{background:#fff0f0;color:#8d1e1e;border:1px solid #efb8b8}@media(max-width:760px){.form-grid{grid-template-columns:1fr}.span-2{grid-column:auto}.inline-form{display:block}.inline-form button{margin-top:.75rem}header{align-items:flex-start;gap:1rem}nav{flex-direction:column;gap:.35rem}}
-.field-label{display:flex;align-items:center;gap:.4rem}.help-link{display:inline-flex;align-items:center;justify-content:center;width:1.35rem;height:1.35rem;border-radius:50%;background:#e8f1ff;color:#1557a5;text-decoration:none;font-size:.82rem;font-weight:800;border:1px solid #a9c8ef}.help-link:hover,.help-link:focus{background:#1557a5;color:#fff}.help-panel{max-width:100%;}.help-panel .markdown,.docs-page .markdown{line-height:1.55}.help-panel table,.docs-page table{display:block;overflow-x:auto}.source-note{color:#60708a;font-size:.9rem}.docs-index{line-height:1.8}
+:root {
+  font-family: Inter, system-ui, sans-serif;
+  color: #172033;
+  background: #f4f7fb;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem 5vw;
+  background: #14233d;
+  color: #fff;
+}
+
+header a {
+  color: #fff;
+  text-decoration: none;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: .75rem;
+  font-size: 1.25rem;
+  font-weight: 700;
+}
+
+.brand-logo {
+  height: 42px;
+  width: auto;
+  vertical-align: middle;
+}
+
+nav {
+  display: flex;
+  gap: 1.25rem;
+}
+
+main {
+  max-width: 1180px;
+  margin: 2rem auto;
+  padding: 0 1.25rem;
+}
+
+footer {
+  text-align: center;
+  color: #60708a;
+  padding: 2rem;
+}
+
+.lede {
+  color: #52627a;
+}
+
+.panel {
+  background: #fff;
+  border: 1px solid #dbe3ef;
+  border-radius: 12px;
+  padding: 1.25rem;
+  box-shadow: 0 8px 24px #24426912;
+  overflow: auto;
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+label {
+  display: flex;
+  flex-direction: column;
+  gap: .4rem;
+  font-weight: 600;
+}
+
+input,
+select,
+button,
+.button {
+  font: inherit;
+  border-radius: 7px;
+  border: 1px solid #b7c3d5;
+  padding: .65rem .75rem;
+}
+
+.check {
+  flex-direction: row;
+  align-items: center;
+  align-self: end;
+  padding: .6rem 0;
+}
+
+.check input {
+  width: 1.1rem;
+  height: 1.1rem;
+}
+
+.span-2 {
+  grid-column: 1/-1;
+}
+
+.actions {
+  display: flex;
+  gap: .75rem;
+  margin-top: .5rem;
+}
+
+button,
+.button {
+  background: #1768d4;
+  color: #fff;
+  border: 0;
+  font-weight: 700;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.inline-form {
+  display: flex;
+  align-items: end;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.inline-form label {
+  flex: 1;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: .92rem;
+}
+
+th,
+td {
+  text-align: left;
+  padding: .7rem;
+  border-bottom: 1px solid #e3e8f0;
+  vertical-align: top;
+}
+
+.details th {
+  width: 220px;
+}
+
+code,
+pre {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+}
+
+.artifact {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: #0f1726;
+  color: #dce8fa;
+  padding: 1rem;
+  border-radius: 8px;
+  max-height: 70vh;
+  overflow: auto;
+}
+
+.alert {
+  padding: 1rem;
+  border-radius: 8px;
+  margin-bottom: 1rem;
+}
+
+.error {
+  background: #fff0f0;
+  color: #8d1e1e;
+  border: 1px solid #efb8b8;
+}
+
+@media (max-width: 760px) {
+  .form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .span-2 {
+    grid-column: auto;
+  }
+
+  .inline-form {
+    display: block;
+  }
+
+  .inline-form button {
+    margin-top: .75rem;
+  }
+
+  header {
+    align-items: flex-start;
+    gap: 1rem;
+  }
+
+  nav {
+    flex-direction: column;
+    gap: .35rem;
+  }
+}
+
+.field-label {
+  display: flex;
+  align-items: center;
+  gap: .4rem;
+}
+
+.help-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.35rem;
+  height: 1.35rem;
+  border-radius: 50%;
+  background: #e8f1ff;
+  color: #1557a5;
+  text-decoration: none;
+  font-size: .82rem;
+  font-weight: 800;
+  border: 1px solid #a9c8ef;
+}
+
+.help-link:hover,
+.help-link:focus {
+  background: #1557a5;
+  color: #fff;
+}
+
+.help-panel {
+  max-width: 100%;
+}
+
+.help-panel .markdown,
+.docs-page .markdown {
+  line-height: 1.55;
+}
+
+.help-panel table,
+.docs-page table {
+  display: block;
+  overflow-x: auto;
+}
+
+.source-note {
+  color: #60708a;
+  font-size: .9rem;
+}
+
+.docs-index {
+  line-height: 1.8;
+}
