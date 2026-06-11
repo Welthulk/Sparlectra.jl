@@ -53,12 +53,55 @@ function run_webui_tests()
       @test occursin("### Child", extracted)
       @test !occursin("not included", extracted)
 
+      link_markdown = "## Local section\n\n[Configuration](powerflow_configuration.md)\n[Start modes](powerflow_configuration.md#start-mode-options)\n[Dot relative](./powerflow_configuration.md)\n[External](https://example.com/reference)\n[Local anchor](#local-section)\n[Unknown](unknown.md)"
+      link_html = Sparlectra.render_webui_markdown(link_markdown; current_page = "webui")
+      @test occursin("href=\"/docs/powerflow_configuration\"", link_html)
+      @test occursin("href=\"/docs/powerflow_configuration#start-mode-options\"", link_html)
+      @test count("href=\"/docs/powerflow_configuration\"", link_html) == 2
+      @test occursin("href=\"https://example.com/reference\"", link_html)
+      @test occursin("href=\"#local-section\"", link_html)
+      @test occursin("id=\"local-section\"", link_html)
+      @test !occursin("href=\"unknown.md\"", link_html)
+      @test occursin("aria-disabled=\"true\"", link_html)
+
+      for unsafe_target in ("../Project.toml", "../../src/Sparlectra.jl", "/etc/passwd", raw"C:\Users\x\file.txt")
+        unsafe_html = Sparlectra.render_webui_markdown("[unsafe]($(unsafe_target))"; current_page = "webui")
+        @test occursin("aria-disabled=\"true\"", unsafe_html)
+        @test !occursin("href=\"$(unsafe_target)\"", unsafe_html)
+      end
+
+      @test Set(values(Sparlectra.WEBUI_FORM_HELP_TOPICS)) == Set(keys(Sparlectra.WEBUI_HELP_TOPICS))
+      for (configured_topic, metadata) in Sparlectra.WEBUI_HELP_TOPICS
+        page_metadata = Sparlectra.resolve_webui_doc_page(metadata.page)
+        @test page_metadata !== nothing
+        help_doc_path = joinpath(@__DIR__, "..", "docs", "src", page_metadata.file)
+        @test isfile(help_doc_path)
+        help_markdown = Sparlectra.load_webui_markdown_document(metadata.page)
+        @test help_markdown !== nothing
+        help_section = Sparlectra.extract_webui_markdown_section(help_markdown, metadata.heading)
+        @test help_section !== nothing
+        isempty(metadata.selector) || @test occursin(metadata.selector, help_section)
+        @test Sparlectra.load_webui_help_excerpt(configured_topic) !== nothing
+      end
+
       help_response = Sparlectra.route_sparlectra_webui("GET", "/help/$(topic)")
       @test help_response.status == 200
       help_html = String(help_response.body)
       @test occursin("Start voltage mode", help_html)
       @test occursin("power_flow.start_mode.voltage_mode", help_html)
       @test occursin("/docs/powerflow_configuration", help_html)
+      @test occursin("class=\"panel help-page help-panel\"", help_html)
+
+      for representative_topic in (
+        "power_flow.start_mode.voltage_mode",
+        "power_flow.start_mode.angle_mode",
+        "power_flow.wrong_branch_detection",
+        "benchmark.enabled",
+      )
+        representative_help = Sparlectra.route_sparlectra_webui("GET", "/help/$(representative_topic)")
+        @test representative_help.status == 200
+        @test occursin("class=\"panel help-page help-panel\"", String(representative_help.body))
+      end
 
       unknown_help = Sparlectra.route_sparlectra_webui("GET", "/help/power_flow.unknown")
       @test unknown_help.status == 404
@@ -73,7 +116,17 @@ function run_webui_tests()
 
       docs_page = Sparlectra.route_sparlectra_webui("GET", "/docs/powerflow_configuration")
       @test docs_page.status == 200
-      @test occursin("Power-Flow Configuration", String(docs_page.body))
+      docs_page_html = String(docs_page.body)
+      @test occursin("Power-Flow Configuration", docs_page_html)
+      @test occursin("class=\"panel docs-page docs-content\"", docs_page_html)
+      @test occursin("id=\"start-mode-options\"", docs_page_html)
+
+      webui_docs_page = Sparlectra.route_sparlectra_webui("GET", "/docs/webui")
+      @test webui_docs_page.status == 200
+      webui_docs_html = String(webui_docs_page.body)
+      @test occursin("href=\"/docs/powerflow_configuration\"", webui_docs_html)
+      @test occursin("href=\"/docs/powerflow_configuration#start-mode-options\"", webui_docs_html)
+      @test occursin("href=\"/docs/performance_profiling\"", webui_docs_html)
 
       for unsafe_page in ("../Project.toml", "../../src/Sparlectra.jl", "/etc/passwd", raw"C:\Users\x\file.txt")
         unsafe = Sparlectra.handle_webui_doc_page(unsafe_page)
@@ -103,15 +156,33 @@ function run_webui_tests()
       @test overrides["benchmark.enabled"] === false
 
       form_html = Sparlectra.render_powerflow_form(output_root = output_root)
-      for field in ("casefile", "config_file", "output_root", "power_flow_tol", "power_flow_max_iter", "power_flow_autodamp", "power_flow_autodamp_min", "power_flow_qlimits_enabled", "power_flow_wrong_branch_detection", "power_flow_start_angle_mode", "power_flow_start_voltage_mode", "output_logfile_results", "benchmark_enabled", "benchmark_samples", "benchmark_seconds")
+      expected_help_topics = Dict(
+        "casefile" => "webui.casefile",
+        "config_file" => "webui.config_file",
+        "output_root" => "webui.output_root",
+        "power_flow_tol" => "power_flow.tol",
+        "power_flow_max_iter" => "power_flow.max_iter",
+        "power_flow_autodamp" => "power_flow.autodamp",
+        "power_flow_autodamp_min" => "power_flow.autodamp_min",
+        "power_flow_qlimits_enabled" => "power_flow.qlimits.enabled",
+        "power_flow_wrong_branch_detection" => "power_flow.wrong_branch_detection",
+        "power_flow_start_angle_mode" => "power_flow.start_mode.angle_mode",
+        "power_flow_start_voltage_mode" => "power_flow.start_mode.voltage_mode",
+        "output_logfile_results" => "output.logfile_results",
+        "benchmark_enabled" => "benchmark.enabled",
+        "benchmark_samples" => "benchmark.samples",
+        "benchmark_seconds" => "benchmark.seconds",
+      )
+      @test Sparlectra.WEBUI_FORM_HELP_TOPICS == expected_help_topics
+      for (field, help_topic) in expected_help_topics
         @test occursin("name=\"$(field)\"", form_html)
+        @test occursin("href=\"/help/$(help_topic)\"", form_html)
       end
+      @test count("class=\"help-link\"", form_html) == length(expected_help_topics)
 
       @test occursin("src=\"/assets/logo.png\"", form_html)
       @test occursin("alt=\"Sparlectra.jl logo\"", form_html)
       @test occursin("<span>Sparlectra.jl</span>", form_html)
-      @test occursin("class=\"help-link\"", form_html)
-      @test occursin("href=\"/help/power_flow.start_mode.voltage_mode\"", form_html)
 
       logo_response = Sparlectra.route_sparlectra_webui("GET", "/assets/logo.png")
       @test logo_response.status == 200
@@ -144,6 +215,16 @@ function run_webui_tests()
       @test result_artifact.status == 200
       result_artifact_html = String(result_artifact.body)
       @test occursin("Artifact: result.json", result_artifact_html)
+      @test occursin("class=\"artifact-text-page\"", result_artifact_html)
+      @test occursin("class=\"artifact-text\"", result_artifact_html)
+      css_text = read(joinpath(@__DIR__, "..", "src", "webui", "static", "sparlectra.css"), String)
+      css_lines = split(css_text, '\n')
+      @test length(css_lines) > 100
+      @test maximum(length, css_lines) < 300
+      @test occursin(".artifact-text {\n", css_text)
+      @test occursin("  white-space: pre-wrap;\n", css_text)
+      @test occursin("  overflow: auto;\n", css_text)
+
       download = Sparlectra.handle_powerflow_artifact_download(run_id, "result.json")
       @test download.status == 200
       @test any(header -> header.first == "Content-Disposition", download.headers)

@@ -51,20 +51,34 @@ creates an `effective_config.yaml` artifact for each run.
 The case and configuration fields are browser text fields rather than native
 file uploads. Enter paths that are readable by the local Julia process.
 
+## PowerFlow input paths
+
+| Help topic | Input | Guidance |
+|---|---|---|
+| `webui.casefile` | MATPOWER case file | Enter a local `.m` case path readable by the Julia process. The Web UI passes the path to the existing PowerFlow service; it does not upload or modify the file. |
+| `webui.config_file` | Configuration template file | Enter a readable Sparlectra YAML template. Form values create allowlisted per-run overrides, while the selected template remains unchanged. |
+| `webui.output_root` | Output root directory | Enter the directory beneath which the service creates its persistent run index and one subdirectory per run. |
+
 ## Contextual help and documentation
 
-The **Start voltage mode** field includes a contextual help link. The help page
-loads the matching `power_flow.start_mode.voltage_mode` entry from
-[`powerflow_configuration.md`](powerflow_configuration.md) at request time and
-renders that Markdown excerpt in the Web UI. Explanatory option text is not
-copied into Julia views or HTML templates; repository Markdown remains the
-single source of truth.
+Every visible PowerFlow form option includes a contextual help link. Help pages
+load the matching section or option row from repository Markdown at request
+time. Solver options use
+[`powerflow_configuration.md`](powerflow_configuration.md), output and benchmark
+options use [`performance_profiling.md`](performance_profiling.md), and path
+fields use the table above. Explanatory option text is not copied into Julia
+views or HTML templates; repository Markdown remains the single source of
+truth.
 
 The **Documentation** navigation link opens `/docs`, which lists selected
 allowlisted pages under `docs/src`. Each `/docs/<page>` request resolves only a
 registered page name, so arbitrary paths and traversal requests are rejected.
-This is a lightweight reader for local reference material, not a replacement
-for the Documenter.jl site.
+Markdown links to another allowlisted page are rewritten to local `/docs/...`
+routes, including section fragments such as the
+[start-mode options](powerflow_configuration.md#start-mode-options). External
+HTTP and HTTPS links remain external; unknown or unsafe local paths are made
+inert. This is a lightweight reader for local reference material, not a
+replacement for the Documenter.jl site.
 
 ## Results and artifacts
 
@@ -75,9 +89,10 @@ mismatch, reason/message fields, input paths, and output directory.
 Artifact lists come from `list_powerflow_artifacts`. Artifact requests are
 resolved by exact metadata name through `resolve_powerflow_artifact`; browser
 input is never joined directly to a filesystem path. JSON, YAML, logs, CSV,
-HTML, Markdown, and other text artifacts are displayed as escaped text. Other
-files are downloaded, and every artifact page also offers an explicit download
-response.
+HTML, Markdown, and other text artifacts are displayed as escaped text in a
+large, scrollable, pre-wrapped panel. Help excerpts and full documentation pages
+also use wider content panels and readable line spacing. Other files are
+downloaded, and every artifact page also offers an explicit download response.
 
 ## Persistent run history
 
