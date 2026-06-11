@@ -13,6 +13,8 @@
 
 ### Bugfixes
 
+* Guarded rectangular PV/slack voltage-setpoint initialization so replacing a voltage magnitude preserves an existing phasor angle, with regression coverage for phase-shifted PV starts and intentional flat-start semantics.
+
 ## Version 0.8.3 – 2026-05-30
 
 ### Breaking changes

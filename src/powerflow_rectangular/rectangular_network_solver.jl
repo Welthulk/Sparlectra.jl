@@ -394,7 +394,7 @@ function runpf_rectangular!(
   # Keep its magnitude at the regulating prosumer setpoint even if a MATPOWER
   # flat-start mode temporarily changed node._vm_pu as an initial guess.
   _perf_profile_time!(performance_profile, :solver_slack_voltage_fix) do
-    V0[slack_idx] = ComplexF64(Vset[slack_idx] * cos(angle(V0[slack_idx])), Vset[slack_idx] * sin(angle(V0[slack_idx])))
+    V0[slack_idx] = _apply_voltage_magnitude_preserving_angle(V0[slack_idx], Vset[slack_idx])
   end
 
   V0 = _perf_profile_time!(performance_profile, :start_projection) do
