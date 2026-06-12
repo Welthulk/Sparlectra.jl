@@ -67,11 +67,11 @@ The Web UI resolves the Sparlectra application directory from the process start
 directory. It supports starting directly in the repository or from a parent
 directory containing `Sparlectra` or `Sparlectra.jl` (for example
 `C:\Users\scud\.julia\dev`). MATPOWER `.m` and generated `.jl` files found in
-`Sparlectra/data/mpower` are offered as basename suggestions, while the case
-field remains editable. Users can therefore type a bare case name such as
-`case14.m`, `case118.m`, or `case9241pegase.m` even when local suggestions are
-available. YAML files and `*.yaml.example` templates found in
-`Sparlectra/examples` are offered in a separate dropdown.
+`Sparlectra/data/mpower` are shown in an explicit existing-case selector. A
+separate manual field accepts a bare case name such as `case14.m`, `case118.m`,
+or `case9241pegase.m`; a nonempty manual value overrides the selected local
+case. YAML files and `*.yaml.example` templates found in `Sparlectra/examples`
+are offered in a separate dropdown.
 
 A missing bare `.m` or `.jl` case name is resolved in the server-owned
 `data/mpower` directory through the standard MATPOWER download helper. For an
@@ -91,7 +91,7 @@ default `src/configuration.yaml.example`.
 
 | Help topic | Input | Guidance |
 |---|---|---|
-| `webui.casefile` | MATPOWER case file | Type a bare `.m` or `.jl` case name, choose a local suggestion, or enter an existing local path. Missing bare names may be downloaded into the server-owned `data/mpower` directory; missing path-like inputs and URLs are rejected. Generated `.jl` cases are preferred for execution. |
+| `webui.casefile` | MATPOWER case file | Choose an available `.m` or `.jl` file from the existing-case selector, or type a bare case name or existing local path in the separate manual field. A nonempty manual value takes precedence. Missing bare names may be downloaded into the server-owned `data/mpower` directory; missing path-like inputs and URLs are rejected. Generated `.jl` cases are preferred for execution. |
 | `webui.config_file` | Configuration template file | Select a YAML configuration or `*.yaml.example` template discovered in `examples`. Form values create allowlisted per-run overrides, while the selected template remains unchanged. |
 | `webui.output_root` | Output root directory | Configure this path when calling `start_sparlectra_webui`; the browser displays it read-only. The service creates its persistent run index and one subdirectory per run beneath this root. |
 

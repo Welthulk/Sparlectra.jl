@@ -15,6 +15,8 @@
 
 ### Bugfixes
 
+* Restored an explicit local MATPOWER case selector in the PowerFlow Web UI while retaining separate manual case entry for on-demand downloads.
+
 * Guarded rectangular PV/slack voltage-setpoint initialization so replacing a voltage magnitude preserves an existing phasor angle, with regression coverage for phase-shifted PV starts and intentional flat-start semantics.
 
 ## Version 0.8.3 – 2026-05-30

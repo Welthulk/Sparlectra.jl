@@ -4,7 +4,8 @@ using Test
 
 function _webui_test_form(casefile, config_file, output_root)
   return Dict(
-    "casefile" => casefile,
+    "casefile" => "",
+    "casefile_manual" => casefile,
     "config_file" => config_file,
     "output_root" => output_root,
     "power_flow_tol" => "1e-8",
@@ -62,10 +63,13 @@ function run_webui_tests()
           selected_casefile = "case14.m",
           selected_config_file = secondary_config,
         )
-        @test occursin("<input id=\"casefile\" name=\"casefile\" list=\"available-casefiles\" required value=\"case14.m\"", selection_html)
-        @test occursin("<datalist id=\"available-casefiles\">", selection_html)
-        @test occursin("<option value=\"case14.m\"></option>", selection_html)
-        @test occursin("<option value=\"case14.jl\"></option>", selection_html)
+        @test occursin("<select id=\"casefile\" name=\"casefile\">", selection_html)
+        @test occursin("<option value=\"\">-- choose existing case --</option>", selection_html)
+        @test occursin("<option value=\"case14.m\" selected>case14.m</option>", selection_html)
+        @test occursin("<option value=\"case14.jl\">case14.jl</option>", selection_html)
+        @test occursin("<option value=\"case118.m\">case118.m</option>", selection_html)
+        @test occursin("<input id=\"casefile_manual\" name=\"casefile_manual\" value=\"\" placeholder=\"case14.m\">", selection_html)
+        @test !occursin("available-casefiles", selection_html)
         @test occursin("<select id=\"config_file\" name=\"config_file\" required>", selection_html)
         @test occursin("<option value=\"$(secondary_config)\" selected>study.yaml.example</option>", selection_html)
         @test !occursin("README.md", selection_html)
@@ -77,8 +81,8 @@ function run_webui_tests()
           application_root = application_root,
           selected_casefile = manual_case,
         )
-        @test occursin("<input id=\"casefile\" name=\"casefile\"", fallback_html)
-        @test occursin("value=\"$(manual_case)\"", fallback_html)
+        @test occursin("<select id=\"casefile\" name=\"casefile\">", fallback_html)
+        @test occursin("<input id=\"casefile_manual\" name=\"casefile_manual\" value=\"$(manual_case)\"", fallback_html)
       end
     end
 
@@ -228,9 +232,23 @@ function run_webui_tests()
 
       request = Sparlectra.powerflow_webui_request(form; default_output_root = output_root)
       @test request["casefile"] == casefile
+      existing_form = copy(form)
+      existing_form["casefile"] = "  case118.jl  "
+      existing_form["casefile_manual"] = "  "
+      @test Sparlectra.powerflow_webui_request(existing_form; default_output_root = output_root)["casefile"] == "case118.jl"
+
       typed_form = copy(form)
-      typed_form["casefile"] = "case9241pegase.m"
+      typed_form["casefile"] = "case9.m"
+      typed_form["casefile_manual"] = "  case9241pegase.m  "
       @test Sparlectra.powerflow_webui_request(typed_form; default_output_root = output_root)["casefile"] == "case9241pegase.m"
+
+      empty_case_form = copy(form)
+      empty_case_form["casefile"] = ""
+      empty_case_form["casefile_manual"] = ""
+      @test_throws ArgumentError Sparlectra.powerflow_webui_request(empty_case_form; default_output_root = output_root)
+      empty_case_response = Sparlectra.route_sparlectra_webui("POST", "/powerflow/run", empty_case_form; output_root = output_root)
+      @test empty_case_response.status == 400
+      @test occursin("Select an existing MATPOWER case or type a case name.", String(empty_case_response.body))
       @test request["config_file"] == config_file
       @test request["output_root"] == output_root
       untrusted_form = copy(form)
@@ -248,7 +266,7 @@ function run_webui_tests()
       invalid_response = Sparlectra.route_sparlectra_webui("POST", "/powerflow/run", invalid_form; output_root = output_root)
       invalid_html = String(invalid_response.body)
       @test invalid_response.status == 400
-      @test occursin("value=\"$(casefile)\"", invalid_html)
+      @test occursin("name=\"casefile_manual\"", invalid_html)
       @test occursin("value=\"$(config_file)\" selected", invalid_html)
 
       form_html = Sparlectra.render_powerflow_form(output_root = output_root)

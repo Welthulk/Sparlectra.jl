@@ -67,15 +67,19 @@ function render_powerflow_form(; output_root::AbstractString = "results/powerflo
   config_files = _webui_config_file_options(application_root)
   case_directory = joinpath(application_root, "data", "mpower")
   config_directory = joinpath(application_root, "examples")
-  case_value = isempty(selected_casefile) && !isempty(casefiles) ? first(casefiles) : selected_casefile
-  case_options = join(("<option value=\"$(_webui_escape(casefile))\"></option>" for casefile in casefiles), "")
-  case_control = "<input id=\"casefile\" name=\"casefile\" list=\"available-casefiles\" required value=\"$(_webui_escape(case_value))\" placeholder=\"case14.m\"><datalist id=\"available-casefiles\">$(case_options)</datalist>"
+  selected_value = strip(selected_casefile)
+  existing_value = selected_value in casefiles ? selected_value : ""
+  manual_value = isempty(existing_value) ? selected_value : ""
+  case_options = join(("<option value=\"$(_webui_escape(casefile))\"$(casefile == existing_value ? " selected" : "")>$(_webui_escape(casefile))</option>" for casefile in casefiles), "")
+  case_select = "<select id=\"casefile\" name=\"casefile\"><option value=\"\">-- choose existing case --</option>$(case_options)</select>"
+  case_manual = "<input id=\"casefile_manual\" name=\"casefile_manual\" value=\"$(_webui_escape(manual_value))\" placeholder=\"case14.m\">"
   config_default = isempty(selected_config_file) ? DEFAULT_SPARLECTRA_CONFIG_PATH : selected_config_file
   config_control = isempty(config_files) ? "<input name=\"config_file\" required value=\"$(_webui_escape(config_default))\">" : _webui_path_select("config_file", config_files, selected_config_file)
   form = """
 $(error_html)<p class=\"lede\">Run a local MATPOWER case through the Sparlectra PowerFlow service.</p>
 <form id=\"powerflow-run-form\" method=\"post\" action=\"/powerflow/run\" class=\"panel form-grid\" onsubmit=\"this.classList.add('is-submitting'); this.setAttribute('aria-busy', 'true'); this.querySelector('button[type=submit]').disabled = true;\">
-<label>$(_webui_field_label("casefile", "MATPOWER case file"))$(case_control)<small class="field-hint">Type a case name or choose a case from <code>$(_webui_escape(case_directory))</code></small></label>
+<label>$(_webui_field_label("casefile", "Existing MATPOWER case"))$(case_select)<small class="field-hint">Available cases from <code>$(_webui_escape(case_directory))</code></small></label>
+<label><span class="field-label">Or type/download MATPOWER case</span>$(case_manual)<small class="field-hint">Manual input overrides the existing-case selection.</small></label>
 <label>$(_webui_field_label("config_file", "Configuration template file"))$(config_control)<small class="field-hint">Configurations from <code>$(_webui_escape(config_directory))</code></small></label>
 <p class=\"span-2 output-root-display\"><strong>Output root:</strong> <code>$(_webui_escape(output_root))</code></p>
 <label>$(_webui_field_label("power_flow_tol", "PowerFlow tolerance"))<input name=\"power_flow_tol\" type=\"number\" step=\"any\" min=\"0\" value=\"1e-8\"></label>
