@@ -55,7 +55,7 @@ function handle_powerflow_artifact(run_id::AbstractString, artifact_name::Abstra
   end
   if artifact.mime_type in _WEBUI_TEXT_MIME_TYPES
     content = read(artifact.path, String)
-    page = _webui_layout("Artifact: $(artifact.name)", "<section class=\"artifact-text-page\"><p><a class=\"button\" href=\"?download=1\">Download</a></p><pre class=\"artifact-text\">$(_webui_escape(content))</pre></section>"; show_back = true)
+    page = _webui_layout("Artifact: $(artifact.name)", "<section class=\"artifact-text-page\"><p><a class=\"button\" href=\"?download=1\">Download</a></p><pre class=\"artifact-text\">$(_webui_escape(content))</pre></section>"; show_back = true, main_class = "page artifact-page")
     return _webui_html(page)
   end
   bytes = read(artifact.path)

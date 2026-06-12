@@ -63,10 +63,20 @@ main {
   padding: 0 1.25rem;
 }
 
+.artifact-page {
+  width: min(96vw, 1600px);
+  max-width: none;
+  padding: 0 2rem;
+}
+
 .artifact-text-page {
-  width: min(92vw, 1500px);
-  margin-left: 50%;
-  transform: translateX(-50%);
+  width: 100%;
+}
+
+.artifact-text-page > p {
+  display: flex;
+  justify-content: flex-end;
+  margin: 0 0 1rem;
 }
 
 .page-toolbar {
@@ -237,11 +247,12 @@ pre {
 }
 
 .artifact-text {
+  display: block;
+  width: 100%;
   min-height: 75vh;
   max-height: 85vh;
   overflow: auto;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
+  white-space: pre;
   background: #0f1726;
   color: #dce8fa;
   padding: 1.25rem;
@@ -316,8 +327,7 @@ pre {
 }
 
 .docs-page,
-.help-page,
-.artifact-text-page {
+.help-page {
   max-width: 1100px;
   margin-right: auto;
   margin-left: auto;

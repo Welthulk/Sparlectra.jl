@@ -171,8 +171,9 @@ Artifact lists come from `list_powerflow_artifacts`. Artifact requests are
 resolved by exact metadata name through `resolve_powerflow_artifact`; browser
 input is never joined directly to a filesystem path. JSON, YAML, logs, CSV,
 HTML, Markdown, and other text artifacts are displayed as escaped text in a
-large, scrollable, pre-wrapped panel. Help excerpts and full documentation pages
-also use wider content panels and readable line spacing. Other files are
+large, scrollable panel that preserves long lines for horizontal scrolling.
+Help excerpts and full documentation pages also use wider content panels and
+readable line spacing. Other files are
 downloaded, and every artifact page also offers an explicit download response.
 The text-artifact viewer uses 75–85 percent of the viewport height and a wider
 page layout for practical inspection of long logs and configuration files.
