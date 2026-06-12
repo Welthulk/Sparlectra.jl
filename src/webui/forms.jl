@@ -1,3 +1,60 @@
+const _WEBUI_PACKAGE_ROOT = normpath(joinpath(@__DIR__, "..", ".."))
+
+"""
+    _webui_application_root([start_dir]) -> String
+
+Resolve the Sparlectra application root used by the local Web UI. The lookup
+supports starting Julia from the repository itself, from a parent directory
+containing `Sparlectra` or `Sparlectra.jl`, and from the installed package root.
+"""
+function _webui_application_root(start_dir::AbstractString = pwd())::String
+  start_root = abspath(start_dir)
+  candidates = unique((
+    start_root,
+    joinpath(start_root, "Sparlectra"),
+    joinpath(start_root, "Sparlectra.jl"),
+    _WEBUI_PACKAGE_ROOT,
+  ))
+  for candidate in candidates
+    isdir(joinpath(candidate, "data", "mpower")) && isdir(joinpath(candidate, "examples")) && return normpath(candidate)
+  end
+  return _WEBUI_PACKAGE_ROOT
+end
+
+"""
+    _webui_casefile_options(application_root) -> Vector{String}
+
+Return sorted MATPOWER `.m` case files from the Web UI application's
+`data/mpower` directory. Missing or empty directories produce an empty list so
+the form can retain its manual-path fallback.
+"""
+function _webui_casefile_options(application_root::AbstractString)::Vector{String}
+  directory = joinpath(application_root, "data", "mpower")
+  isdir(directory) || return String[]
+  files = filter(path -> isfile(path) && lowercase(splitext(path)[2]) == ".m", readdir(directory; join = true))
+  return sort!(normpath.(files); by = path -> lowercase(basename(path)))
+end
+
+function _webui_is_config_file(path::AbstractString)::Bool
+  name = lowercase(basename(path))
+  return endswith(name, ".yaml") || endswith(name, ".yml") || endswith(name, ".yaml.example") || endswith(name, ".yml.example")
+end
+
+"""
+    _webui_config_file_options(application_root) -> Vector{String}
+
+Return sorted YAML configuration files and YAML example templates from the Web
+UI application's `examples` directory. A local `configuration.yaml` or
+`configuration.yaml.example` is ordered first when present.
+"""
+function _webui_config_file_options(application_root::AbstractString)::Vector{String}
+  directory = joinpath(application_root, "examples")
+  isdir(directory) || return String[]
+  files = filter(path -> isfile(path) && _webui_is_config_file(path), readdir(directory; join = true))
+  priority(path) = lowercase(basename(path)) in ("configuration.yaml", "configuration.yaml.example") ? 0 : 1
+  return sort!(normpath.(files); by = path -> (priority(path), lowercase(basename(path))))
+end
+
 const _WEBUI_FORM_CONFIG_FIELDS = (
   ("power_flow.tol", "power_flow_tol", Float64),
   ("power_flow.max_iter", "power_flow_max_iter", Int),

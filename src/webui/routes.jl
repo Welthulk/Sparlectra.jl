@@ -57,7 +57,14 @@ function route_sparlectra_webui(method::AbstractString, target::AbstractString, 
       haskey(result, "run_id") && get(result, "reason", "") != "execution_error" && return _webui_redirect("/powerflow/result/$(_webui_urlencode(result["run_id"]))")
       return _webui_html(render_powerflow_result(result); status = 400)
     catch err
-      return _webui_html(render_powerflow_form(; output_root = output_root, error_message = sprint(showerror, err)); status = 400)
+      selected_casefile = String(something(_webui_form_value(form, "casefile", ""), ""))
+      selected_config_file = String(something(_webui_form_value(form, "config_file", ""), ""))
+      return _webui_html(render_powerflow_form(;
+        output_root = output_root,
+        error_message = sprint(showerror, err),
+        selected_casefile,
+        selected_config_file,
+      ); status = 400)
     end
   elseif verb == "GET" && startswith(path, "/powerflow/result/")
     return handle_powerflow_result(_webui_urldecode(path[(lastindex("/powerflow/result/") + 1):end]))

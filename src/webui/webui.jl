@@ -65,12 +65,79 @@ function _webui_serve_client(socket::Sockets.TCPSocket, output_root::String)
   return nothing
 end
 
+function _webui_platform()::Symbol
+  return Sys.iswindows() ? :windows : Sys.isapple() ? :macos : :linux
+end
+
+function _webui_first_executable(candidates; executable_lookup = Sys.which, path_exists = isfile)
+  for candidate in candidates
+    if isabspath(candidate)
+      path_exists(candidate) && return candidate
+    else
+      executable = executable_lookup(candidate)
+      executable === nothing || return String(executable)
+    end
+  end
+  return nothing
+end
+
+function _webui_windows_browser_candidates(environment)::Vector{String}
+  candidates = String[]
+  locations = (
+    ("PROGRAMFILES", joinpath("Microsoft", "Edge", "Application", "msedge.exe")),
+    ("PROGRAMFILES(X86)", joinpath("Microsoft", "Edge", "Application", "msedge.exe")),
+    ("LOCALAPPDATA", joinpath("Microsoft", "Edge", "Application", "msedge.exe")),
+    ("PROGRAMFILES", joinpath("Google", "Chrome", "Application", "chrome.exe")),
+    ("PROGRAMFILES(X86)", joinpath("Google", "Chrome", "Application", "chrome.exe")),
+    ("LOCALAPPDATA", joinpath("Google", "Chrome", "Application", "chrome.exe")),
+    ("PROGRAMFILES", joinpath("BraveSoftware", "Brave-Browser", "Application", "brave.exe")),
+    ("LOCALAPPDATA", joinpath("BraveSoftware", "Brave-Browser", "Application", "brave.exe")),
+  )
+  for (variable, suffix) in locations
+    root = get(environment, variable, "")
+    isempty(root) || push!(candidates, joinpath(root, suffix))
+  end
+  append!(candidates, ("msedge.exe", "chrome.exe", "brave.exe"))
+  return candidates
+end
+
+function _webui_app_command(url::String; platform::Symbol = _webui_platform(), executable_lookup = Sys.which, path_exists = ispath, environment = ENV)::Union{Cmd,Nothing}
+  if platform == :macos
+    applications = (
+      "/Applications/Microsoft Edge.app",
+      "/Applications/Google Chrome.app",
+      "/Applications/Chromium.app",
+      "/Applications/Brave Browser.app",
+    )
+    application = findfirst(path_exists, applications)
+    application === nothing && return nothing
+    return `open -na $(applications[application]) --args --app=$url`
+  end
+
+  candidates = platform == :windows ? _webui_windows_browser_candidates(environment) : String[
+    "microsoft-edge",
+    "microsoft-edge-stable",
+    "google-chrome",
+    "google-chrome-stable",
+    "chromium",
+    "chromium-browser",
+    "brave-browser",
+  ]
+  executable = _webui_first_executable(candidates; executable_lookup, path_exists)
+  executable === nothing && return nothing
+  return `$executable --app=$url`
+end
+
 function _webui_open_browser(url::String)
-  command = Sys.iswindows() ? `cmd /c start $url` : Sys.isapple() ? `open $url` : `xdg-open $url`
-  @async try
-    run(command)
+  command = _webui_app_command(url)
+  if command === nothing
+    @warn "Could not find an app-capable browser; open the Web UI URL manually" url
+    return nothing
+  end
+  try
+    run(command; wait = false)
   catch err
-    @warn "Could not open the default browser" url exception = (err, catch_backtrace())
+    @warn "Could not open the Web UI app window" url exception = (err, catch_backtrace())
   end
   return nothing
 end
@@ -80,12 +147,14 @@ end
                             output_root="results/powerflow_service",
                             open_browser=false) -> SparlectraWebUIServer
 
-Start the local browser-based PowerFlow interface. The server accepts loopback
+Start the local app-style PowerFlow interface. The server accepts loopback
 hosts only (`127.0.0.1`, `localhost`, or `::1`), defaults to port `8080`, and
 uses the existing PowerFlow service for execution, history, and artifact
 resolution. The call returns immediately with a server handle; call
 `close(server)` to stop it. Set `open_browser=true` to attempt opening the local
-URL with the operating system's default browser.
+URL in a standalone browser app window. This requires an installed Edge,
+Chrome, Chromium, or Brave browser; Sparlectra does not fall back to opening a
+regular browser tab.
 """
 function start_sparlectra_webui(; host::AbstractString = "127.0.0.1", port::Integer = 8080, output_root::AbstractString = "results/powerflow_service", open_browser::Bool = false)::SparlectraWebUIServer
   host_string = String(host)
