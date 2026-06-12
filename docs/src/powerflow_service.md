@@ -53,7 +53,13 @@ available for diagnosis.
 
 - [`start_powerflow_run`](@ref) validates the dictionary-like request, chooses
   the run ID and directory, invokes the programmatic API, registers the result,
-  and updates the persistent index.
+  and updates the persistent index. A trusted caller such as the Web UI can
+  provide the server-owned MATPOWER case directory through the function
+  keyword; bare `.m` or `.jl` names are then resolved with `ensure_casefile`
+  using `to_jl=true`. Existing or generated `.jl` cases are preferred, while a
+  readable `.m` case remains the fallback if conversion fails. Browser form
+  values never control this directory, missing path-like inputs are not
+  downloaded, and URLs are rejected.
 - [`load_powerflow_run_index`](@ref) reads the transport-safe index structure. A
   missing index returns an empty index.
 - [`list_powerflow_runs`](@ref) returns indexed run summaries for a future run
@@ -63,6 +69,8 @@ available for diagnosis.
   and reconstructs the in-process registry after restart. One missing or corrupt
   run does not prevent other runs from loading.
 - [`get_powerflow_result`](@ref) returns serialized run metadata by run ID.
+  Its `casefile` field records the effective local `.m` or `.jl` path passed to
+  the programmatic PowerFlow API.
 - [`list_powerflow_artifacts`](@ref) returns metadata discovered inside the
   registered run directory.
 - [`resolve_powerflow_artifact`](@ref) resolves only an exact artifact metadata

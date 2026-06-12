@@ -24,15 +24,17 @@ end
 """
     _webui_casefile_options(application_root) -> Vector{String}
 
-Return sorted MATPOWER `.m` case files from the Web UI application's
-`data/mpower` directory. Missing or empty directories produce an empty list so
-the form can retain its manual-path fallback.
+Return sorted MATPOWER `.m` and `.jl` case names from the Web UI application's
+`data/mpower` directory. Missing or empty directories produce an empty list.
 """
 function _webui_casefile_options(application_root::AbstractString)::Vector{String}
   directory = joinpath(application_root, "data", "mpower")
   isdir(directory) || return String[]
-  files = filter(path -> isfile(path) && lowercase(splitext(path)[2]) == ".m", readdir(directory; join = true))
-  return sort!(normpath.(files); by = path -> lowercase(basename(path)))
+  files = filter(readdir(directory)) do name
+    extension = lowercase(splitext(name)[2])
+    return isfile(joinpath(directory, name)) && extension in (".m", ".jl")
+  end
+  return sort!(files; by = lowercase)
 end
 
 function _webui_is_config_file(path::AbstractString)::Bool

@@ -171,6 +171,67 @@ function run_api_tests()
       cp(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, config_file)
       output_root = joinpath(tmpdir, "powerflow_service")
 
+      @testset "Web UI case resolution" begin
+        existing_m = _write_api_test_case(joinpath(tmpdir, "existing_case.m"))
+        generated_jl = Sparlectra._resolve_powerflow_casefile(existing_m, joinpath(tmpdir, "cases"))
+        @test lowercase(splitext(generated_jl)[2]) == ".jl"
+        @test isfile(generated_jl)
+
+        existing_jl = joinpath(tmpdir, "existing_case.jl")
+        write(existing_jl, "nothing\n")
+        @test Sparlectra._resolve_powerflow_casefile(existing_jl, joinpath(tmpdir, "cases")) == abspath(existing_jl)
+
+        sibling_m = joinpath(tmpdir, "sibling_case.m")
+        sibling_jl = joinpath(tmpdir, "sibling_case.jl")
+        write(sibling_m, "not parsed when the Julia case exists\n")
+        write(sibling_jl, "nothing\n")
+        fail_emit = (_, _) -> error("emit should not be called")
+        @test Sparlectra._resolve_powerflow_casefile(sibling_m, joinpath(tmpdir, "cases"); emit_julia_case_fn = fail_emit) == abspath(sibling_jl)
+
+        fallback_m = joinpath(tmpdir, "fallback_case.m")
+        write(fallback_m, "invalid MATPOWER used to exercise conversion fallback\n")
+        fallback_resolved = @test_logs (:warn, r"MATPOWER Julia case generation failed") Sparlectra._resolve_powerflow_casefile(fallback_m, joinpath(tmpdir, "cases"); emit_julia_case_fn = (_, _) -> error("conversion failed"))
+        @test fallback_resolved == abspath(fallback_m)
+
+        ensure_calls = NamedTuple[]
+        fake_ensure = function(requested; outdir, to_jl)
+          push!(ensure_calls, (; requested, outdir, to_jl))
+          mfile = joinpath(outdir, first(splitext(requested)) * ".m")
+          jlfile = joinpath(outdir, first(splitext(requested)) * ".jl")
+          write(mfile, "downloaded MATPOWER placeholder\n")
+          write(jlfile, "nothing\n")
+          return endswith(lowercase(requested), ".jl") ? jlfile : mfile
+        end
+        case_directory = joinpath(tmpdir, "downloaded_cases")
+        resolved_missing = Sparlectra._resolve_powerflow_casefile("case118.m", case_directory; ensure_casefile_fn = fake_ensure, emit_julia_case_fn = fail_emit)
+        @test resolved_missing == abspath(joinpath(case_directory, "case118.jl"))
+        @test only(ensure_calls) == (requested = "case118.m", outdir = abspath(case_directory), to_jl = true)
+
+        generation_failure_ensure = function(requested; outdir, to_jl)
+          @test to_jl
+          mfile = joinpath(outdir, first(splitext(requested)) * ".m")
+          write(mfile, "downloaded MATPOWER fallback\n")
+          error("Julia case generation failed")
+        end
+        downloaded_fallback = @test_logs (:warn, r"using the downloaded \.m case") Sparlectra._resolve_powerflow_casefile("case300.jl", case_directory; ensure_casefile_fn = generation_failure_ensure)
+        @test downloaded_fallback == abspath(joinpath(case_directory, "case300.m"))
+
+        empty!(ensure_calls)
+        resolved_requested_jl = Sparlectra._resolve_powerflow_casefile("case14.jl", case_directory; ensure_casefile_fn = fake_ensure, emit_julia_case_fn = fail_emit)
+        @test resolved_requested_jl == abspath(joinpath(case_directory, "case14.jl"))
+        @test only(ensure_calls).to_jl
+
+        empty!(ensure_calls)
+        @test_throws ArgumentError Sparlectra._resolve_powerflow_casefile(joinpath("missing", "case14.m"), case_directory; ensure_casefile_fn = fake_ensure)
+        @test_throws ArgumentError Sparlectra._resolve_powerflow_casefile("https://example.com/case14.m", case_directory; ensure_casefile_fn = fake_ensure)
+        @test isempty(ensure_calls)
+
+        rejected_path = start_powerflow_run(Dict("casefile" => joinpath("missing", "case14.m")); case_directory)
+        @test rejected_path["reason"] == "invalid_casefile"
+        rejected_url = start_powerflow_run(Dict("casefile" => "https://example.com/case14.m"); case_directory)
+        @test rejected_url["reason"] == "invalid_casefile"
+      end
+
       started = start_powerflow_run(Dict(
         "casefile" => casefile,
         "config_file" => config_file,
@@ -189,6 +250,20 @@ function run_api_tests()
       @test started["output_dir"] == joinpath(abspath(output_root), started["run_id"])
       @test isfile(joinpath(started["output_dir"], "result.json"))
       @test isfile(joinpath(started["output_dir"], "effective_config.yaml"))
+
+      resolved_by_service = Ref(false)
+      service_resolver = function(requested, directory)
+        resolved_by_service[] = requested == "case_service.m" && directory == joinpath(tmpdir, "trusted_cases")
+        return abspath(casefile)
+      end
+      resolved_run = start_powerflow_run(Dict(
+        "casefile" => "case_service.m",
+        "config_file" => config_file,
+        "output_root" => output_root,
+      ); case_directory = joinpath(tmpdir, "trusted_cases"), case_resolver = service_resolver)
+      @test resolved_run["success"]
+      @test resolved_by_service[]
+      @test resolved_run["casefile"] == abspath(casefile)
 
       index_path = joinpath(output_root, POWERFLOW_RUN_INDEX_FILENAME)
       @test isfile(index_path)
@@ -228,7 +303,7 @@ function run_api_tests()
       @test get_powerflow_result(started["run_id"])["reason"] == "run_not_found"
       refresh = refresh_powerflow_run_registry!(output_root)
       @test refresh["status"] == "succeeded"
-      @test Set(refresh["loaded_runs"]) == Set([started["run_id"], failed["run_id"]])
+      @test Set(refresh["loaded_runs"]) == Set([started["run_id"], resolved_run["run_id"], failed["run_id"]])
       @test get_powerflow_result(started["run_id"])["run_id"] == started["run_id"]
       recovered_artifacts = list_powerflow_artifacts(started["run_id"])
       recovered_names = Set(artifact["name"] for artifact in recovered_artifacts)
