@@ -208,7 +208,9 @@ end
                             output_root="results/powerflow_service",
                             open_browser=false,
                             auto_shutdown_on_browser_close=true,
-                            browser_heartbeat_timeout_seconds=15.0) -> SparlectraWebUIServer
+                            browser_heartbeat_timeout_seconds=15.0,
+                            warmup=false, warmup_casefile=nothing,
+                            warmup_store_result=false) -> SparlectraWebUIServer
 
 Start the loopback-only PowerFlow interface and load its persistent run registry
 before accepting requests. The returned handle can be stopped with
@@ -216,8 +218,34 @@ before accepting requests. The returned handle can be stopped with
 `auto_shutdown_on_browser_close=true`, the server stops after the first browser
 heartbeat has been seen and then expires; a server started without a browser
 continues running because the timeout is not armed before that first heartbeat.
+When `warmup=true`, a hidden asynchronous run compiles the common import/API/
+solver path. By default it uses the bundled original synthetic case and a
+temporary output directory, so it does not add a run-history entry or retain
+artifacts. Set `warmup_store_result=true` to retain warm-up artifacts beneath
+the configured output root.
 """
-function start_sparlectra_webui(; host::AbstractString = "127.0.0.1", port::Integer = 8080, output_root::AbstractString = "results/powerflow_service", open_browser::Bool = false, auto_shutdown_on_browser_close::Bool = true, browser_heartbeat_timeout_seconds::Real = 15.0)::SparlectraWebUIServer
+function _run_sparlectra_webui_warmup(output_root::AbstractString; warmup_casefile::Union{Nothing,AbstractString} = nothing, warmup_store_result::Bool = false, runner = run_sparlectra_api)
+  casefile = warmup_casefile === nothing ? joinpath(_WEBUI_PACKAGE_ROOT, "data", "webui", "warmup_case3.jl") : abspath(warmup_casefile)
+  isfile(casefile) || throw(ArgumentError("Web UI warm-up case file not found: $(casefile)"))
+  execute(output_dir) = runner(
+    casefile = casefile,
+    config_file = DEFAULT_SPARLECTRA_CONFIG_PATH,
+    output_dir = output_dir,
+    config_overrides = Dict("output.logfile_results" => "off", "benchmark.enabled" => false),
+    performance_timing = :off,
+    run_diagnostics = false,
+  )
+  if warmup_store_result
+    output_dir = joinpath(abspath(output_root), "webui-warmup")
+    mkpath(output_dir)
+    return execute(output_dir)
+  end
+  return mktempdir() do output_dir
+    execute(output_dir)
+  end
+end
+
+function start_sparlectra_webui(; host::AbstractString = "127.0.0.1", port::Integer = 8080, output_root::AbstractString = "results/powerflow_service", open_browser::Bool = false, auto_shutdown_on_browser_close::Bool = true, browser_heartbeat_timeout_seconds::Real = 15.0, warmup::Bool = false, warmup_casefile::Union{Nothing,AbstractString} = nothing, warmup_store_result::Bool = false)::SparlectraWebUIServer
   host_string = String(host)
   host_string in ("127.0.0.1", "localhost", "::1") || throw(ArgumentError("Sparlectra Web UI only accepts loopback hosts: 127.0.0.1, localhost, or ::1."))
   1 <= port <= 65535 || throw(ArgumentError("Web UI port must be between 1 and 65535."))
@@ -242,6 +270,14 @@ function start_sparlectra_webui(; host::AbstractString = "127.0.0.1", port::Inte
   url_host = host_string == "::1" ? "[::1]" : host_string
   url = "http://$(url_host):$(port)/powerflow"
   server = SparlectraWebUIServer(listener, task, url, runtime, heartbeat_task)
+  if warmup
+    @async try
+      warmup_result = _run_sparlectra_webui_warmup(root; warmup_casefile, warmup_store_result)
+      warmup_result.success || @warn "Sparlectra Web UI warm-up run did not converge" reason = warmup_result.reason message = warmup_result.message
+    catch err
+      @warn "Sparlectra Web UI warm-up failed; normal runs remain available" exception = (err, catch_backtrace())
+    end
+  end
   open_browser && _webui_open_browser(url)
   @info "Sparlectra Web UI started" url output_root = abspath(root)
   return server

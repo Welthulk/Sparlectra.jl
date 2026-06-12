@@ -15,6 +15,8 @@ const WEBUI_HELP_TOPICS = Dict(
   "benchmark.enabled" => (label = "Benchmark enabled", page = "performance_profiling", heading = "Benchmark configuration", selector = "`benchmark.enabled`"),
   "benchmark.samples" => (label = "Benchmark samples", page = "performance_profiling", heading = "Benchmark configuration", selector = "`benchmark.samples`"),
   "benchmark.seconds" => (label = "Benchmark seconds", page = "performance_profiling", heading = "Benchmark configuration", selector = "`benchmark.seconds`"),
+  "webui.performance_timing" => (label = "Performance timing", page = "webui", heading = "Run artifacts and output modes", selector = ""),
+  "webui.run_diagnostics" => (label = "Run diagnostics", page = "webui", heading = "Run artifacts and output modes", selector = ""),
 )
 
 const WEBUI_FORM_HELP_TOPICS = Dict(
@@ -32,6 +34,8 @@ const WEBUI_FORM_HELP_TOPICS = Dict(
   "benchmark_enabled" => "benchmark.enabled",
   "benchmark_samples" => "benchmark.samples",
   "benchmark_seconds" => "benchmark.seconds",
+  "performance_timing" => "webui.performance_timing",
+  "run_diagnostics" => "webui.run_diagnostics",
 )
 
 const WEBUI_DOC_PAGES = Dict(

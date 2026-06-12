@@ -6,12 +6,15 @@
 * Added a local PowerFlow service boundary with run-specific output directories, persistent JSON run indexing, restart recovery, run-ID lookup, artifact listing, and traversal-safe artifact resolution for a future local GUI without adding HTTP or Genie.jl dependencies.
 * Added the first loopback-only local PowerFlow Web UI with allowlisted configuration forms, service-backed execution, result and persistent-history views, and metadata-resolved artifact viewing/downloads.
 * Added Markdown-backed contextual help for the Web UI Start voltage mode field and an allowlisted local documentation reader, keeping repository documentation as the single source of explanatory text.
+* Added optional single-run phase timing and existing PowerFlow diagnostic artifacts to the local Web UI/API, producing viewable `performance.log` and `diagnose.txt` files.
+* Added an optional hidden asynchronous Web UI startup warm-up using an original bundled synthetic three-bus Julia case without polluting normal run history by default.
 
 ### Improvements
 
 * Improved the local PowerFlow Web UI with startup run-registry recovery, read-only server-authoritative output roots, timestamped status-badge history, traversal-safe single/all-run deletion, and explicit or heartbeat-driven graceful server shutdown.
 * Improved the local PowerFlow Web UI with Markdown-backed help for every visible form option, safe allowlisted rewriting of internal documentation links, and larger readable documentation, help, log, and text-artifact panels.
 * Improved MATPOWER case selection in the local PowerFlow Web UI with editable local suggestions, on-demand download of bare case names into the server-owned case directory, and automatic preference for generated Julia case files while retaining `.m` fallback behavior.
+* Added the running Sparlectra version to the shared Web UI layout, enlarged text-artifact viewing, added explicit run timing/status summaries, and made `output.logfile_results=full` include effective configuration and status details beyond `classic` output.
 
 ### Bugfixes
 

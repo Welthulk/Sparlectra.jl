@@ -574,17 +574,21 @@ names are resolved there through [`ensure_casefile`](@ref). Generated Julia
 cases are preferred for execution, while existing path behavior is retained.
 """
 function start_powerflow_run(request::AbstractDict; case_directory::Union{Nothing,AbstractString} = nothing, case_resolver = _resolve_powerflow_casefile)::Dict{String,Any}
+  request_start = time_ns()
+  phases = Dict{Symbol,Float64}()
   casefile = _service_request_value(request, "casefile")
   casefile isa AbstractString && !isempty(strip(casefile)) || return _service_failure("missing_casefile", "PowerFlow service request requires a nonempty casefile.")
   if case_directory === nothing
     isfile(casefile) || return _service_failure("missing_casefile", "MATPOWER case file not found: $(abspath(casefile))")
     casefile = abspath(casefile)
   else
+    resolution_start = time_ns()
     casefile = try
       case_resolver(casefile, case_directory)
     catch err
       return _service_failure("invalid_casefile", sprint(showerror, err))
     end
+    phases[:case_resolution] = _api_elapsed_seconds(resolution_start)
   end
 
   config_file = _service_request_value(request, "config_file")
@@ -596,6 +600,10 @@ function start_powerflow_run(request::AbstractDict; case_directory::Union{Nothin
 
   config_overrides = _service_request_value(request, "config_overrides", Dict{String,Any}())
   config_overrides isa AbstractDict || return _service_failure("invalid_request", "config_overrides must be dictionary-like.")
+  performance_timing = _service_request_value(request, "performance_timing", :off)
+  run_diagnostics = _service_request_value(request, "run_diagnostics", false)
+  run_diagnostics isa Bool || return _service_failure("invalid_request", "run_diagnostics must be boolean.")
+  phases[:request_parse] = _api_elapsed_seconds(request_start)
 
   run_id = string(uuid4())
   root = abspath(output_root)
@@ -606,6 +614,9 @@ function start_powerflow_run(request::AbstractDict; case_directory::Union{Nothin
       config_file = config_file,
       output_dir = output_dir,
       config_overrides = config_overrides,
+      performance_timing = performance_timing,
+      run_diagnostics = run_diagnostics,
+      phase_timings = phases,
       run_id = run_id,
     )
   catch err

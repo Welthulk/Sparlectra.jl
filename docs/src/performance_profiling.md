@@ -41,6 +41,14 @@ julia --project=. examples/matpower_import.jl
 | `output.logfile_performance` | Symbol/String | `compact` | `off`, `compact`, `full` | Performance profile logfile detail. |
 | `output.logfile_warnings` | Symbol/String | `table` | `off`, `summary`, `table`, `full` | Warning representation in logfile. |
 
+For API and Web UI runs, `classic` writes the standard result output and a
+compact timing/status summary. `full` additionally writes a **Full run details**
+section with effective typed configuration, selected artifact options, and
+available status diagnostics. The summary reports `solver_time`,
+`representative_time`, iterations, final mismatch, and final outcome where
+available; benchmark median and samples appear only when benchmark mode is
+enabled.
+
 ## Diagnostics configuration
 
 | YAML path | Type | Default | Allowed values | Meaning | Cost notes |
@@ -70,6 +78,15 @@ julia --project=. examples/matpower_import.jl
 | `performance.max_diagnostic_rows` | Int | `25` | non-negative integer | Row cap for diagnostics tables. |
 
 ## Benchmark configuration
+
+The Web UI's `performance_timing=off|compact|full` option is separate from the
+benchmark configuration. It writes `performance.log` for phases of one
+service/API request, such as request parsing, case resolution, configuration,
+case loading/network construction/solve, postprocessing, artifact writing, and
+total time. `full` includes available internal profile entries. In contrast,
+`benchmark.enabled` performs repeated solves and reports representative and
+median timing. Tests assert phase names and artifact presence, not fragile time
+thresholds.
 
 | YAML path | Type | Default | Allowed values | Meaning |
 |---|---:|---:|---|---|
