@@ -262,6 +262,18 @@ function run_webui_tests()
 
       @test !occursin("class=\"button back-button\"", form_html)
 
+      @test occursin("id=\"powerflow-run-form\"", form_html)
+      @test occursin("onsubmit=\"this.classList.add('is-submitting')", form_html)
+      @test occursin("this.setAttribute('aria-busy', 'true')", form_html)
+      @test occursin("this.querySelector('button[type=submit]').disabled = true", form_html)
+      @test occursin("window.addEventListener('pageshow'", form_html)
+      @test occursin("form.classList.remove('is-submitting')", form_html)
+      @test occursin("form.removeAttribute('aria-busy')", form_html)
+      @test occursin("submitButton.disabled = false", form_html)
+      @test occursin("class=\"powerflow-submit\"", form_html)
+      @test occursin("class=\"submit-spinner\" aria-hidden=\"true\"", form_html)
+      @test occursin("class=\"submit-progress-label\" role=\"status\" aria-live=\"polite\">Running PowerFlow…", form_html)
+
       @test occursin("src=\"/assets/logo.png\"", form_html)
       @test occursin("alt=\"Sparlectra.jl logo\"", form_html)
       @test occursin("<span>Sparlectra.jl</span>", form_html)
@@ -307,6 +319,9 @@ function run_webui_tests()
       @test occursin(".artifact-text {\n", css_text)
       @test occursin("  white-space: pre-wrap;\n", css_text)
       @test occursin("  overflow: auto;\n", css_text)
+      @test occursin(".form-grid.is-submitting .submit-spinner {\n", css_text)
+      @test occursin("  animation: submit-spin .8s linear infinite;\n", css_text)
+      @test occursin("@keyframes submit-spin {\n", css_text)
 
       download = Sparlectra.handle_powerflow_artifact_download(run_id, "result.json")
       @test download.status == 200
