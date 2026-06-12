@@ -39,8 +39,17 @@ function _webui_layout(title::AbstractString, content::AbstractString; show_back
   return """<!doctype html>
 <html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">
 <title>$(_webui_escape(title)) · Sparlectra</title><link rel=\"stylesheet\" href=\"/static/sparlectra.css\"></head>
-<body><header class=\"site-header\"><a class=\"brand\" href=\"/powerflow\"><img class=\"brand-logo\" src=\"/assets/logo.png\" alt=\"Sparlectra.jl logo\"><span>Sparlectra.jl</span></a><nav><a href=\"/powerflow\">New run</a><a href=\"/powerflow/history\">Run history</a><a href=\"/docs\">Documentation</a><a class=\"project-docs-link\" href=\"https://welthulk.github.io/Sparlectra.jl/\" target=\"_blank\" rel=\"noopener noreferrer\"><svg class=\"github-icon\" viewBox=\"0 0 16 16\" aria-hidden=\"true\"><path fill=\"currentColor\" d=\"M8 0C3.58 0 0 3.64 0 8.13c0 3.59 2.29 6.64 5.47 7.72.4.08.55-.18.55-.39 0-.19-.01-.83-.01-1.51-2.01.38-2.53-.5-2.69-.96-.09-.23-.48-.96-.82-1.15-.28-.15-.68-.53-.01-.54.63-.01 1.08.59 1.23.83.72 1.23 1.87.88 2.33.67.07-.53.28-.88.51-1.08-1.78-.21-3.64-.91-3.64-4.02 0-.89.31-1.62.82-2.19-.08-.2-.36-1.04.08-2.16 0 0 .67-.22 2.2.84A7.4 7.4 0 0 1 8 3.93c.68 0 1.36.09 2 .27 1.53-1.06 2.2-.84 2.2-.84.44 1.12.16 1.96.08 2.16.51.57.82 1.3.82 2.19 0 3.12-1.87 3.81-3.65 4.02.29.25.54.74.54 1.5 0 1.08-.01 1.95-.01 2.22 0 .22.15.47.55.39A8.15 8.15 0 0 0 16 8.13C16 3.64 12.42 0 8 0Z\"/></svg><span>Project Docs</span></a></nav></header>
-<main>$(back_button)<h1>$(_webui_escape(title))</h1>$(content)</main><footer>Local PowerFlow Web UI · loopback access only</footer></body></html>"""
+<body><header class=\"site-header\"><a class=\"brand\" href=\"/powerflow\"><img class=\"brand-logo\" src=\"/assets/logo.png\" alt=\"Sparlectra.jl logo\"><span>Sparlectra.jl</span></a><nav><a href=\"/powerflow\">New run</a><a href=\"/powerflow/history\">Run history</a><a href=\"/docs\">Documentation</a><a class=\"project-docs-link\" href=\"https://welthulk.github.io/Sparlectra.jl/\" target=\"_blank\" rel=\"noopener noreferrer\"><svg class=\"github-icon\" viewBox=\"0 0 16 16\" aria-hidden=\"true\"><path fill=\"currentColor\" d=\"M8 0C3.58 0 0 3.64 0 8.13c0 3.59 2.29 6.64 5.47 7.72.4.08.55-.18.55-.39 0-.19-.01-.83-.01-1.51-2.01.38-2.53-.5-2.69-.96-.09-.23-.48-.96-.82-1.15-.28-.15-.68-.53-.01-.54.63-.01 1.08.59 1.23.83.72 1.23 1.87.88 2.33.67.07-.53.28-.88.51-1.08-1.78-.21-3.64-.91-3.64-4.02 0-.89.31-1.62.82-2.19-.08-.2-.36-1.04.08-2.16 0 0 .67-.22 2.2.84A7.4 7.4 0 0 1 8 3.93c.68 0 1.36.09 2 .27 1.53-1.06 2.2-.84 2.2-.84.44 1.12.16 1.96.08 2.16.51.57.82 1.3.82 2.19 0 3.12-1.87 3.81-3.65 4.02.29.25.54.74.54 1.5 0 1.08-.01 1.95-.01 2.22 0 .22.15.47.55.39A8.15 8.15 0 0 0 16 8.13C16 3.64 12.42 0 8 0Z\"/></svg><span>Project Docs</span></a><form method="post" action="/webui/shutdown" class="exit-form"><button type="submit" class="exit-button">Stop Web UI</button></form></nav></header>
+<main>$(back_button)<h1>$(_webui_escape(title))</h1>$(content)</main><footer>Local PowerFlow Web UI · loopback access only</footer>
+<script>
+(function () {
+  const sendHeartbeat = function () {
+    fetch('/webui/heartbeat', {method: 'POST', keepalive: true}).catch(function () {});
+  };
+  sendHeartbeat();
+  window.setInterval(sendHeartbeat, 5000);
+})();
+</script></body></html>"""
 end
 
 function _webui_help_link(topic::AbstractString, label::AbstractString)::String
@@ -67,7 +76,7 @@ $(error_html)<p class=\"lede\">Run a local MATPOWER case through the Sparlectra 
 <form id=\"powerflow-run-form\" method=\"post\" action=\"/powerflow/run\" class=\"panel form-grid\" onsubmit=\"this.classList.add('is-submitting'); this.setAttribute('aria-busy', 'true'); this.querySelector('button[type=submit]').disabled = true;\">
 <label>$(_webui_field_label("casefile", "MATPOWER case file"))$(case_control)<small class="field-hint">Cases from <code>$(_webui_escape(case_directory))</code></small></label>
 <label>$(_webui_field_label("config_file", "Configuration template file"))$(config_control)<small class="field-hint">Configurations from <code>$(_webui_escape(config_directory))</code></small></label>
-<label class=\"span-2\">$(_webui_field_label("output_root", "Output root directory"))<input name=\"output_root\" required value=\"$(_webui_escape(output_root))\"></label>
+<p class=\"span-2 output-root-display\"><strong>Output root:</strong> <code>$(_webui_escape(output_root))</code></p>
 <label>$(_webui_field_label("power_flow_tol", "PowerFlow tolerance"))<input name=\"power_flow_tol\" type=\"number\" step=\"any\" min=\"0\" value=\"1e-8\"></label>
 <label>$(_webui_field_label("power_flow_max_iter", "Maximum iterations"))<input name=\"power_flow_max_iter\" type=\"number\" min=\"1\" value=\"80\"></label>
 <label class=\"check\"><input name=\"power_flow_autodamp\" type=\"checkbox\" checked>$(_webui_field_label("power_flow_autodamp", "Autodamping enabled"))</label>
@@ -119,18 +128,42 @@ function render_powerflow_artifacts(run_id::AbstractString, artifacts)::String
   return _webui_layout("Artifacts", table; show_back = true)
 end
 
+function webui_status_class(run::AbstractDict)::String
+  status = lowercase(string(get(run, "status", "unknown")))
+  success = get(run, "success", nothing)
+  status in ("running", "pending", "queued") && return "status-running"
+  status in ("warning", "partial", "questionable") && return "status-warning"
+  status in ("failed", "failure", "error", "not_converged") && return "status-error"
+  status in ("succeeded", "success", "converged", "ok") && return success === false ? "status-error" : "status-success"
+  success === true && return "status-success"
+  success === false && return "status-error"
+  return "status-unknown"
+end
+
+function _webui_run_timestamp(run::AbstractDict)::String
+  timestamp = get(run, "timestamp", "Unknown")
+  return isempty(strip(string(timestamp))) ? "Unknown" : string(timestamp)
+end
+
 function render_powerflow_history(runs, output_root::AbstractString)::String
+  ordered_runs = sort!(collect(runs); by = run -> _webui_run_timestamp(run), rev = true)
   rows = join((begin
-    run_id = get(run, "run_id", "")
+    run_id = string(get(run, "run_id", ""))
     available = get(run, "available", false)
     link = available ? "<a href=\"/powerflow/result/$(_webui_urlencode(run_id))\">$(_webui_escape(run_id))</a>" : _webui_escape(run_id)
-    fields = (link, get(run, "status", ""), get(run, "success", ""), available, get(run, "iterations", ""), get(run, "final_mismatch", ""), get(run, "casefile", ""), get(run, "config_file", ""))
-    cells = "<td>$(fields[1])</td>" * join(("<td>$(_webui_escape(field))</td>" for field in fields[2:end]), "")
-    "<tr>$(cells)</tr>"
-  end for run in runs), "")
-  content = """<form method=\"post\" action=\"/powerflow/refresh\" class=\"panel inline-form\"><label>Output root<input name=\"output_root\" value=\"$(_webui_escape(output_root))\"></label><button type=\"submit\">Refresh registry</button></form>
-<section class=\"panel\"><table><thead><tr><th>Run ID</th><th>Status</th><th>Success</th><th>Available</th><th>Iterations</th><th>Final mismatch</th><th>Case file</th><th>Config file</th></tr></thead><tbody>$(rows)</tbody></table></section>"""
+    status = string(get(run, "status", "unknown"))
+    status_badge = "<span class=\"status-badge $(webui_status_class(run))\">$(_webui_escape(status))</span>"
+    delete_form = "<form method=\"post\" action=\"/powerflow/delete/$(_webui_urlencode(run_id))\" class=\"delete-run-form\"><button type=\"submit\" class=\"danger-button\">Delete</button></form>"
+    fields = (_webui_run_timestamp(run), link, status_badge, available, get(run, "iterations", ""), get(run, "final_mismatch", ""), get(run, "casefile", ""), get(run, "config_file", ""))
+    cells = "<td>$(_webui_escape(fields[1]))</td><td>$(fields[2])</td><td>$(fields[3])</td>" * join(("<td>$(_webui_escape(field))</td>" for field in fields[4:end]), "")
+    "<tr>$(cells)<td>$(delete_form)</td></tr>"
+  end for run in ordered_runs), "")
+  content = "<section class=\"panel history-actions\"><p><strong>Output root:</strong> <code>$(_webui_escape(output_root))</code></p><div class=\"actions\"><form method=\"post\" action=\"/powerflow/refresh\"><button type=\"submit\">Refresh registry</button></form><form method=\"post\" action=\"/powerflow/delete_all\"><button type=\"submit\" class=\"danger-button\">Delete all runs</button></form></div></section>\n<section class=\"panel\"><table><thead><tr><th>Date/Time</th><th>Run ID</th><th>Status</th><th>Available</th><th>Iterations</th><th>Final mismatch</th><th>Case file</th><th>Config file</th><th>Delete</th></tr></thead><tbody>$(rows)</tbody></table></section>"
   return _webui_layout("Run history", content; show_back = true)
+end
+
+function render_webui_shutdown()::String
+  return "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Web UI stopped · Sparlectra</title><link rel=\"stylesheet\" href=\"/static/sparlectra.css\"></head><body><main><section class=\"panel shutdown-message\"><h1>Web UI stopped</h1><p>The local Sparlectra Web UI server is shutting down. You may close this window.</p></section></main></body></html>"
 end
 
 function render_webui_error(status::Integer, message::AbstractString)::String

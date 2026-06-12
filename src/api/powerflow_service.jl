@@ -226,6 +226,7 @@ function _powerflow_run_index_entry(result::SparlectraApiResult)::Dict{String,An
     "config_file" => result.config_file,
     "final_mismatch" => result.final_mismatch,
     "iterations" => result.iterations,
+    "timestamp" => Dates.format(Dates.now(), "yyyy-mm-dd HH:MM:SS"),
   )
 end
 
@@ -260,6 +261,9 @@ function _validated_powerflow_run_entry(entry, output_root::AbstractString)::Dic
   entry isa AbstractDict || return Dict{String,Any}("available" => false, "reason" => "invalid_run_entry")
   listed = Dict{String,Any}(String(key) => _api_transport_value(value) for (key, value) in entry)
   paths = _indexed_run_paths(entry, output_root)
+  if !haskey(listed, "timestamp") && paths.valid && isfile(paths.result_file)
+    listed["timestamp"] = Dates.format(Dates.unix2datetime(stat(paths.result_file).mtime), "yyyy-mm-dd HH:MM:SS")
+  end
   listed["available"] = paths.valid && isdir(paths.output_dir) && isfile(paths.result_file)
   if !paths.valid
     listed["reason"] = paths.reason
@@ -283,13 +287,9 @@ function list_powerflow_runs(output_root::AbstractString)::Vector{Dict{String,An
   return [_validated_powerflow_run_entry(entry, output_root) for entry in index["runs"]]
 end
 
-function _write_powerflow_run_index!(output_root::AbstractString, result::SparlectraApiResult)
+function _write_powerflow_run_entries!(output_root::AbstractString, runs::AbstractVector)
   root = abspath(output_root)
   mkpath(root)
-  index = load_powerflow_run_index(root)
-  runs = Any[entry for entry in index["runs"] if !(entry isa AbstractDict && get(entry, "run_id", nothing) == result.run_id)]
-  push!(runs, _powerflow_run_index_entry(result))
-  sort!(runs; by = entry -> entry isa AbstractDict ? string(get(entry, "run_id", "")) : "")
   contents = Dict{String,Any}("schema_version" => _SPARLECTRA_API_SCHEMA_VERSION, "runs" => runs)
   index_path = _powerflow_index_path(root)
   temporary_path = index_path * ".tmp"
@@ -299,6 +299,14 @@ function _write_powerflow_run_index!(output_root::AbstractString, result::Sparle
   end
   mv(temporary_path, index_path; force = true)
   return index_path
+end
+
+function _write_powerflow_run_index!(output_root::AbstractString, result::SparlectraApiResult)
+  index = load_powerflow_run_index(output_root)
+  runs = Any[entry for entry in index["runs"] if !(entry isa AbstractDict && get(entry, "run_id", nothing) == result.run_id)]
+  push!(runs, _powerflow_run_index_entry(result))
+  sort!(runs; by = entry -> entry isa AbstractDict ? string(get(entry, "run_id", "")) : "")
+  return _write_powerflow_run_entries!(output_root, runs)
 end
 
 function _optional_string(value)
@@ -413,6 +421,86 @@ function refresh_powerflow_run_registry!(output_root::AbstractString)::Dict{Stri
     "success" => isempty(unavailable),
     "loaded_runs" => [result.run_id for result in recovered],
     "unavailable_runs" => unavailable,
+  )
+end
+
+"""
+    delete_powerflow_run(run_id::AbstractString; output_root::AbstractString) -> Dict{String,Any}
+
+Delete one registered PowerFlow run beneath `output_root`. The run ID must be a
+safe index entry whose directory is exactly `<output_root>/<run_id>`; arbitrary
+paths and unregistered directories are never removed.
+"""
+function delete_powerflow_run(run_id::AbstractString; output_root::AbstractString)::Dict{String,Any}
+  id = String(run_id)
+  _unsafe_artifact_name(id) && return _service_failure("unsafe_run_id", "Unsafe PowerFlow run ID rejected."; run_id = id)
+  root = abspath(output_root)
+  index = load_powerflow_run_index(root)
+  entry_index = findfirst(entry -> entry isa AbstractDict && get(entry, "run_id", nothing) == id, index["runs"])
+  entry_index === nothing && return _service_failure("run_not_found", "PowerFlow run is not registered for this output root."; run_id = id)
+  entry = index["runs"][entry_index]
+  paths = _indexed_run_paths(entry, root)
+  paths.valid || return _service_failure(paths.reason, "PowerFlow run has an unsafe indexed path and was not deleted."; run_id = id)
+
+  try
+    ispath(paths.output_dir) && rm(paths.output_dir; recursive = true)
+  catch err
+    return _service_failure("delete_failed", sprint(showerror, err); run_id = id)
+  end
+  remaining = Any[entry for (entry_position, entry) in enumerate(index["runs"]) if entry_position != entry_index]
+  _write_powerflow_run_entries!(root, remaining)
+  lock(_POWERFLOW_SERVICE_LOCK) do
+    result = get(_POWERFLOW_SERVICE_RUNS, id, nothing)
+    result === nothing || (_path_is_within(result.output_dir, root) && delete!(_POWERFLOW_SERVICE_RUNS, id))
+  end
+  return Dict{String,Any}("status" => "succeeded", "success" => true, "run_id" => id)
+end
+
+"""
+    delete_all_powerflow_runs(; output_root::AbstractString) -> Dict{String,Any}
+
+Delete all safely registered PowerFlow run directories beneath `output_root`.
+Entries that cannot be validated or removed remain indexed and are reported in
+`failed_runs`; deletion never follows an indexed path outside the output root.
+"""
+function delete_all_powerflow_runs(; output_root::AbstractString)::Dict{String,Any}
+  root = abspath(output_root)
+  index = load_powerflow_run_index(root)
+  deleted = String[]
+  failed = Dict{String,Any}[]
+  remaining = Any[]
+  for entry in index["runs"]
+    if !(entry isa AbstractDict)
+      push!(remaining, entry)
+      push!(failed, Dict{String,Any}("reason" => "invalid_run_entry"))
+      continue
+    end
+    paths = _indexed_run_paths(entry, root)
+    if !paths.valid
+      push!(remaining, entry)
+      push!(failed, Dict{String,Any}("run_id" => _api_transport_value(paths.run_id), "reason" => paths.reason))
+      continue
+    end
+    try
+      ispath(paths.output_dir) && rm(paths.output_dir; recursive = true)
+      push!(deleted, paths.run_id)
+    catch err
+      push!(remaining, entry)
+      push!(failed, Dict{String,Any}("run_id" => paths.run_id, "reason" => "delete_failed", "message" => sprint(showerror, err)))
+    end
+  end
+  _write_powerflow_run_entries!(root, remaining)
+  lock(_POWERFLOW_SERVICE_LOCK) do
+    for run_id in deleted
+      result = get(_POWERFLOW_SERVICE_RUNS, run_id, nothing)
+      result === nothing || (_path_is_within(result.output_dir, root) && delete!(_POWERFLOW_SERVICE_RUNS, run_id))
+    end
+  end
+  return Dict{String,Any}(
+    "status" => isempty(failed) ? "succeeded" : "partial",
+    "success" => isempty(failed),
+    "deleted_runs" => deleted,
+    "failed_runs" => failed,
   )
 end
 

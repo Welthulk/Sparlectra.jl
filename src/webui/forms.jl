@@ -109,7 +109,7 @@ Convert browser form values into the dictionary accepted by
 function powerflow_webui_request(form::AbstractDict; default_output_root::AbstractString = "results/powerflow_service")::Dict{String,Any}
   casefile = strip(String(something(_webui_form_value(form, "casefile", ""), "")))
   config_file = strip(String(something(_webui_form_value(form, "config_file", ""), "")))
-  output_root = strip(String(something(_webui_form_value(form, "output_root", default_output_root), default_output_root)))
+  output_root = String(default_output_root)
   overrides = Dict{String,Any}()
   for (config_key, field, type) in _WEBUI_FORM_CONFIG_FIELDS
     config_key in GUI_EDITABLE_CONFIG_KEYS || error("Web UI field $(field) is not GUI-editable.")

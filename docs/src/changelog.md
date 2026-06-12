@@ -9,6 +9,7 @@
 
 ### Improvements
 
+* Improved the local PowerFlow Web UI with startup run-registry recovery, read-only server-authoritative output roots, timestamped status-badge history, traversal-safe single/all-run deletion, and explicit or heartbeat-driven graceful server shutdown.
 * Improved the local PowerFlow Web UI with Markdown-backed help for every visible form option, safe allowlisted rewriting of internal documentation links, and larger readable documentation, help, log, and text-artifact panels.
 
 ### Bugfixes

@@ -194,9 +194,9 @@ function run_api_tests()
       @test isfile(index_path)
       index = load_powerflow_run_index(output_root)
       @test index["schema_version"] == "1.0"
-      @test any(run -> run["run_id"] == started["run_id"], index["runs"])
+      @test any(run -> run["run_id"] == started["run_id"] && haskey(run, "timestamp"), index["runs"])
       listed_runs = list_powerflow_runs(output_root)
-      @test any(run -> run["run_id"] == started["run_id"] && run["available"], listed_runs)
+      @test any(run -> run["run_id"] == started["run_id"] && run["available"] && haskey(run, "timestamp"), listed_runs)
       @test isempty(list_powerflow_runs(joinpath(tmpdir, "empty_service")))
 
       failed = start_powerflow_run(Dict(
@@ -295,6 +295,68 @@ function run_api_tests()
       @test listed_by_id[unsafe_id]["reason"] == "unsafe_output_dir"
       @test !listed_by_id[missing_id]["available"]
       @test listed_by_id[missing_id]["reason"] == "output_dir_not_found"
+    end
+  end
+  @testset "PowerFlow run deletion safety" begin
+    mktempdir() do tmpdir
+      output_root = joinpath(tmpdir, "runs")
+      outside_dir = joinpath(tmpdir, "outside")
+      mkpath(outside_dir)
+      outside_file = joinpath(outside_dir, "keep.txt")
+      write(outside_file, "keep")
+
+      entries = Any[]
+      for run_id in ("run-a", "run-b")
+        run_dir = joinpath(output_root, run_id)
+        mkpath(run_dir)
+        result_file = joinpath(run_dir, "result.json")
+        write(result_file, "{}")
+        push!(entries, Dict(
+          "run_id" => run_id,
+          "status" => "succeeded",
+          "success" => true,
+          "output_dir" => run_dir,
+          "result_file" => result_file,
+        ))
+      end
+      push!(entries, Dict(
+        "run_id" => "unsafe-index-entry",
+        "output_dir" => outside_dir,
+        "result_file" => joinpath(outside_dir, "result.json"),
+      ))
+      Sparlectra._write_powerflow_run_entries!(output_root, entries)
+
+      registered = Sparlectra._api_result(
+        run_id = "run-a",
+        status = :succeeded,
+        success = true,
+        output_dir = joinpath(output_root, "run-a"),
+        result_file = joinpath(output_root, "run-a", "result.json"),
+      )
+      Sparlectra._register_powerflow_run!(registered)
+      deleted = delete_powerflow_run("run-a"; output_root)
+      @test deleted["success"]
+      @test !ispath(joinpath(output_root, "run-a"))
+      @test get_powerflow_result("run-a")["reason"] == "run_not_found"
+      @test all(entry -> get(entry, "run_id", "") != "run-a", load_powerflow_run_index(output_root)["runs"])
+      @test isfile(outside_file)
+
+      for unsafe_id in ("../outside", "/tmp/outside", raw"C:\outside", raw"C:\outside\run")
+        rejected = delete_powerflow_run(unsafe_id; output_root)
+        @test !rejected["success"]
+        @test rejected["reason"] == "unsafe_run_id"
+      end
+      @test delete_powerflow_run("unknown"; output_root)["reason"] == "run_not_found"
+
+      deleted_all = delete_all_powerflow_runs(; output_root)
+      @test deleted_all["status"] == "partial"
+      @test deleted_all["deleted_runs"] == ["run-b"]
+      @test get(only(deleted_all["failed_runs"]), "reason", "") == "unsafe_output_dir"
+      @test !ispath(joinpath(output_root, "run-b"))
+      @test isfile(outside_file)
+      remaining = load_powerflow_run_index(output_root)["runs"]
+      @test length(remaining) == 1
+      @test remaining[1]["run_id"] == "unsafe-index-entry"
     end
   end
   return nothing
