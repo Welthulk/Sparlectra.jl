@@ -63,6 +63,17 @@ main {
   padding: 0 1.25rem;
 }
 
+.page-toolbar {
+  display: flex;
+  margin-bottom: 1rem;
+}
+
+.back-button {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+}
+
 footer {
   text-align: center;
   color: #60708a;
@@ -71,6 +82,12 @@ footer {
 
 .lede {
   color: #52627a;
+}
+
+.field-hint {
+  color: #60708a;
+  font-weight: 400;
+  overflow-wrap: anywhere;
 }
 
 .panel {

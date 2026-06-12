@@ -17,10 +17,18 @@ server = start_sparlectra_webui(
 )
 ```
 
-Open `http://127.0.0.1:8080/powerflow` in a browser. The call returns a
-`SparlectraWebUIServer` handle immediately. Stop it with `close(server)`.
-Passing `open_browser=true` asks the operating system to open the URL, but is
-optional.
+The call returns a `SparlectraWebUIServer` handle immediately. Stop it with
+`close(server)`. Pass `open_browser=true` to open the Web UI in a standalone
+app-style window without normal browser tabs or controls:
+
+```julia
+server = start_sparlectra_webui(open_browser = true)
+```
+
+The app-window launcher supports Microsoft Edge, Google Chrome, Chromium, and
+Brave. If none is installed, Sparlectra logs the local URL instead of falling
+back to a regular tab; open `http://127.0.0.1:8080/powerflow` manually if
+needed.
 
 For safety, the first prototype accepts loopback hosts only: `127.0.0.1`,
 `localhost`, or `::1`. It is not intended for public or multi-user deployment.
@@ -48,20 +56,36 @@ Only keys in `GUI_EDITABLE_CONFIG_KEYS` are submitted. The page does not offer
 a generic YAML editor and never modifies the selected template. The service
 creates an `effective_config.yaml` artifact for each run.
 
-The case and configuration fields are browser text fields rather than native
-file uploads. Enter paths that are readable by the local Julia process.
+The Web UI resolves the Sparlectra application directory from the process start
+directory. It supports starting directly in the repository or from a parent
+directory containing `Sparlectra` or `Sparlectra.jl` (for example
+`C:\Users\scud\.julia\dev`). MATPOWER `.m` files found in
+`Sparlectra/data/mpower` are offered in a dropdown. YAML files and
+`*.yaml.example` templates found in `Sparlectra/examples` are offered in a
+second dropdown. Only the basename is shown, while the complete local path is
+submitted to the service.
+
+When `data/mpower` contains no `.m` file, the case field remains a manual path
+input with the expected directory shown as its placeholder. If the `examples`
+directory contains no supported configuration file, the configuration field
+falls back to the package's default `src/configuration.yaml.example`. These are
+local path selections rather than file uploads; every selected path must remain
+readable by the Julia process.
 
 ## PowerFlow input paths
 
 | Help topic | Input | Guidance |
 |---|---|---|
-| `webui.casefile` | MATPOWER case file | Enter a local `.m` case path readable by the Julia process. The Web UI passes the path to the existing PowerFlow service; it does not upload or modify the file. |
-| `webui.config_file` | Configuration template file | Enter a readable Sparlectra YAML template. Form values create allowlisted per-run overrides, while the selected template remains unchanged. |
+| `webui.casefile` | MATPOWER case file | Select a discovered `.m` case from `data/mpower`, or enter a readable local path when that directory is empty. The Web UI passes the path to the existing PowerFlow service; it does not upload or modify the file. |
+| `webui.config_file` | Configuration template file | Select a YAML configuration or `*.yaml.example` template discovered in `examples`. Form values create allowlisted per-run overrides, while the selected template remains unchanged. |
 | `webui.output_root` | Output root directory | Enter the directory beneath which the service creates its persistent run index and one subdirectory per run. |
 
 ## Contextual help and documentation
 
 Every visible PowerFlow form option includes a contextual help link. Help pages
+include a **Back** button that uses the browser history to return to the existing
+PowerFlow form, preserving the values entered before opening help. If no local
+history entry is available, the button falls back to `/powerflow`. Help pages
 load the matching section or option row from repository Markdown at request
 time. Solver options use
 [`powerflow_configuration.md`](powerflow_configuration.md), output and benchmark

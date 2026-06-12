@@ -26,6 +26,73 @@ function run_webui_tests()
     @test isdefined(Sparlectra, :start_sparlectra_webui)
     @test_throws ArgumentError start_sparlectra_webui(host = "0.0.0.0")
 
+    @testset "Case and configuration selection" begin
+      mktempdir() do start_dir
+        application_root = joinpath(start_dir, "Sparlectra")
+        case_directory = joinpath(application_root, "data", "mpower")
+        config_directory = joinpath(application_root, "examples")
+        mkpath(case_directory)
+        mkpath(config_directory)
+        case14 = joinpath(case_directory, "case14.m")
+        case118 = joinpath(case_directory, "case118.m")
+        write(case14, "function mpc = case14\nend\n")
+        write(case118, "function mpc = case118\nend\n")
+        write(joinpath(case_directory, "case14.jl"), "nothing\n")
+        primary_config = joinpath(config_directory, "configuration.yaml.example")
+        secondary_config = joinpath(config_directory, "study.yaml.example")
+        write(primary_config, "power_flow: {}\n")
+        write(secondary_config, "power_flow: {}\n")
+        write(joinpath(config_directory, "README.md"), "ignored\n")
+
+        @test Sparlectra._webui_application_root(start_dir) == application_root
+        @test Sparlectra._webui_casefile_options(application_root) == [case118, case14]
+        @test Sparlectra._webui_config_file_options(application_root) == [primary_config, secondary_config]
+
+        selection_html = Sparlectra.render_powerflow_form(
+          application_root = application_root,
+          selected_casefile = case14,
+          selected_config_file = secondary_config,
+        )
+        @test occursin("<select id=\"casefile\" name=\"casefile\" required>", selection_html)
+        @test occursin("<option value=\"$(case14)\" selected>case14.m</option>", selection_html)
+        @test occursin("<select id=\"config_file\" name=\"config_file\" required>", selection_html)
+        @test occursin("<option value=\"$(secondary_config)\" selected>study.yaml.example</option>", selection_html)
+        @test !occursin("case14.jl", selection_html)
+        @test !occursin("README.md", selection_html)
+
+        rm(case14)
+        rm(case118)
+        manual_case = joinpath(case_directory, "manual_case.m")
+        fallback_html = Sparlectra.render_powerflow_form(
+          application_root = application_root,
+          selected_casefile = manual_case,
+        )
+        @test occursin("<input name=\"casefile\"", fallback_html)
+        @test occursin("value=\"$(manual_case)\"", fallback_html)
+      end
+    end
+
+    @testset "Standalone app-window launcher" begin
+      url = "http://127.0.0.1:8080/powerflow"
+      linux_lookup = name -> name == "google-chrome" ? "/opt/google/chrome" : nothing
+      linux_command = Sparlectra._webui_app_command(url; platform = :linux, executable_lookup = linux_lookup)
+      @test linux_command !== nothing
+      @test linux_command.exec == ["/opt/google/chrome", "--app=$(url)"]
+
+      windows_lookup = name -> name == "msedge.exe" ? raw"C:\Browser\msedge.exe" : nothing
+      windows_command = Sparlectra._webui_app_command(url; platform = :windows, executable_lookup = windows_lookup, environment = Dict{String,String}())
+      @test windows_command !== nothing
+      @test windows_command.exec == [raw"C:\Browser\msedge.exe", "--app=$(url)"]
+
+      macos_exists = path -> path == "/Applications/Google Chrome.app"
+      macos_command = Sparlectra._webui_app_command(url; platform = :macos, path_exists = macos_exists)
+      @test macos_command !== nothing
+      @test macos_command.exec == ["open", "-na", "/Applications/Google Chrome.app", "--args", "--app=$(url)"]
+
+      missing_lookup = _ -> nothing
+      @test Sparlectra._webui_app_command(url; platform = :linux, executable_lookup = missing_lookup) === nothing
+    end
+
     @testset "Markdown-backed contextual help and documentation" begin
       topic = "power_flow.start_mode.voltage_mode"
       @test haskey(Sparlectra.WEBUI_HELP_TOPICS, topic)
@@ -92,6 +159,11 @@ function run_webui_tests()
       @test occursin("/docs/powerflow_configuration", help_html)
       @test occursin("class=\"panel help-page help-panel\"", help_html)
 
+      @test occursin("class=\"button back-button\"", help_html)
+      @test occursin("document.referrer.startsWith(location.origin)", help_html)
+      @test occursin("history.back()", help_html)
+      @test occursin("href=\"/powerflow\"", help_html)
+
       for representative_topic in (
         "power_flow.start_mode.voltage_mode",
         "power_flow.start_mode.angle_mode",
@@ -155,6 +227,14 @@ function run_webui_tests()
       @test overrides["power_flow.autodamp"]
       @test overrides["benchmark.enabled"] === false
 
+      invalid_form = copy(form)
+      invalid_form["power_flow_max_iter"] = "invalid"
+      invalid_response = Sparlectra.route_sparlectra_webui("POST", "/powerflow/run", invalid_form; output_root = output_root)
+      invalid_html = String(invalid_response.body)
+      @test invalid_response.status == 400
+      @test occursin("value=\"$(casefile)\"", invalid_html)
+      @test occursin("value=\"$(config_file)\" selected", invalid_html)
+
       form_html = Sparlectra.render_powerflow_form(output_root = output_root)
       expected_help_topics = Dict(
         "casefile" => "webui.casefile",
@@ -179,6 +259,8 @@ function run_webui_tests()
         @test occursin("href=\"/help/$(help_topic)\"", form_html)
       end
       @test count("class=\"help-link\"", form_html) == length(expected_help_topics)
+
+      @test !occursin("class=\"button back-button\"", form_html)
 
       @test occursin("src=\"/assets/logo.png\"", form_html)
       @test occursin("alt=\"Sparlectra.jl logo\"", form_html)
