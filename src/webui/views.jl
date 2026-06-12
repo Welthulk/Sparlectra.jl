@@ -64,7 +64,7 @@ function render_powerflow_form(; output_root::AbstractString = "results/powerflo
   config_control = isempty(config_files) ? "<input name=\"config_file\" required value=\"$(_webui_escape(config_default))\">" : _webui_path_select("config_file", config_files, selected_config_file)
   form = """
 $(error_html)<p class=\"lede\">Run a local MATPOWER case through the Sparlectra PowerFlow service.</p>
-<form method=\"post\" action=\"/powerflow/run\" class=\"panel form-grid\">
+<form id=\"powerflow-run-form\" method=\"post\" action=\"/powerflow/run\" class=\"panel form-grid\" onsubmit=\"this.classList.add('is-submitting'); this.setAttribute('aria-busy', 'true'); this.querySelector('button[type=submit]').disabled = true;\">
 <label>$(_webui_field_label("casefile", "MATPOWER case file"))$(case_control)<small class="field-hint">Cases from <code>$(_webui_escape(case_directory))</code></small></label>
 <label>$(_webui_field_label("config_file", "Configuration template file"))$(config_control)<small class="field-hint">Configurations from <code>$(_webui_escape(config_directory))</code></small></label>
 <label class=\"span-2\">$(_webui_field_label("output_root", "Output root directory"))<input name=\"output_root\" required value=\"$(_webui_escape(output_root))\"></label>
@@ -80,7 +80,17 @@ $(error_html)<p class=\"lede\">Run a local MATPOWER case through the Sparlectra 
 <label class=\"check\"><input name=\"benchmark_enabled\" type=\"checkbox\">$(_webui_field_label("benchmark_enabled", "Benchmark enabled"))</label>
 <label>$(_webui_field_label("benchmark_samples", "Benchmark samples"))<input name=\"benchmark_samples\" type=\"number\" min=\"1\" value=\"10\"></label>
 <label>$(_webui_field_label("benchmark_seconds", "Benchmark seconds"))<input name=\"benchmark_seconds\" type=\"number\" step=\"any\" min=\"0\" value=\"1.0\"></label>
-<div class=\"span-2 actions\"><button type=\"submit\">Start PowerFlow run</button></div></form>"""
+<div class=\"span-2 actions\"><button class=\"powerflow-submit\" type=\"submit\"><span class=\"submit-spinner\" aria-hidden=\"true\"></span><span class=\"submit-label\">Start PowerFlow run</span><span class=\"submit-progress-label\" role=\"status\" aria-live=\"polite\">Running PowerFlow…</span></button></div></form>
+<script>
+window.addEventListener('pageshow', function () {
+  const form = document.getElementById('powerflow-run-form');
+  if (form === null) return;
+  form.classList.remove('is-submitting');
+  form.removeAttribute('aria-busy');
+  const submitButton = form.querySelector('button[type=submit]');
+  if (submitButton !== null) submitButton.disabled = false;
+});
+</script>"""
   return _webui_layout("PowerFlow run", form)
 end
 

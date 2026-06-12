@@ -154,6 +154,48 @@ button,
   cursor: pointer;
 }
 
+button:disabled {
+  cursor: wait;
+  opacity: .7;
+}
+
+.powerflow-submit {
+  align-items: center;
+  display: inline-flex;
+  gap: .55rem;
+  justify-content: center;
+  min-width: 12.5rem;
+}
+
+.submit-spinner,
+.submit-progress-label {
+  display: none;
+}
+
+.form-grid.is-submitting .submit-spinner {
+  animation: submit-spin .8s linear infinite;
+  border: 2px solid rgb(255 255 255 / 45%);
+  border-radius: 50%;
+  border-top-color: #fff;
+  display: inline-block;
+  height: 1rem;
+  width: 1rem;
+}
+
+.form-grid.is-submitting .submit-label {
+  display: none;
+}
+
+.form-grid.is-submitting .submit-progress-label {
+  display: inline;
+}
+
+@keyframes submit-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .inline-form {
   display: flex;
   align-items: end;
