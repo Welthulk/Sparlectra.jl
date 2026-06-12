@@ -46,7 +46,7 @@ asset route, and no additional branding configuration is required.
 
 The start page accepts:
 
-- a local MATPOWER case file;
+- a typed MATPOWER case name or an existing local case path;
 - a Sparlectra configuration template file;
 - read-only information showing the server's configured output-root directory;
 - PowerFlow tolerance and maximum iterations;
@@ -66,24 +66,32 @@ template. The service creates an `effective_config.yaml` artifact for each run.
 The Web UI resolves the Sparlectra application directory from the process start
 directory. It supports starting directly in the repository or from a parent
 directory containing `Sparlectra` or `Sparlectra.jl` (for example
-`C:\Users\scud\.julia\dev`). MATPOWER `.m` files found in
-`Sparlectra/data/mpower` are offered in a dropdown. YAML files and
-`*.yaml.example` templates found in `Sparlectra/examples` are offered in a
-second dropdown. Only the basename is shown, while the complete local path is
-submitted to the service.
+`C:\Users\scud\.julia\dev`). MATPOWER `.m` and generated `.jl` files found in
+`Sparlectra/data/mpower` are offered as basename suggestions, while the case
+field remains editable. Users can therefore type a bare case name such as
+`case14.m`, `case118.m`, or `case9241pegase.m` even when local suggestions are
+available. YAML files and `*.yaml.example` templates found in
+`Sparlectra/examples` are offered in a separate dropdown.
 
-When `data/mpower` contains no `.m` file, the case field remains a manual path
-input with the expected directory shown as its placeholder. If the `examples`
-directory contains no supported configuration file, the configuration field
-falls back to the package's default `src/configuration.yaml.example`. These are
-local path selections rather than file uploads; every selected path must remain
-readable by the Julia process.
+A missing bare `.m` or `.jl` case name is resolved in the server-owned
+`data/mpower` directory through the standard MATPOWER download helper. For an
+`.m` case, Sparlectra generates a Julia `.jl` representation and uses it for the
+run when generation succeeds. Existing generated `.jl` files are preferred on
+later runs to avoid repeatedly parsing the `.m` source. If generation fails but
+the `.m` file remains readable, the run falls back to that `.m` file.
+
+Existing absolute and relative `.m` or `.jl` paths remain supported. A missing
+input containing a path separator is rejected instead of downloaded, and URL
+input is not accepted. The browser cannot select the case download directory or
+the run output root. If the `examples` directory contains no supported
+configuration file, the configuration field falls back to the package's
+default `src/configuration.yaml.example`.
 
 ## PowerFlow input paths
 
 | Help topic | Input | Guidance |
 |---|---|---|
-| `webui.casefile` | MATPOWER case file | Select a discovered `.m` case from `data/mpower`, or enter a readable local path when that directory is empty. The Web UI passes the path to the existing PowerFlow service; it does not upload or modify the file. |
+| `webui.casefile` | MATPOWER case file | Type a bare `.m` or `.jl` case name, choose a local suggestion, or enter an existing local path. Missing bare names may be downloaded into the server-owned `data/mpower` directory; missing path-like inputs and URLs are rejected. Generated `.jl` cases are preferred for execution. |
 | `webui.config_file` | Configuration template file | Select a YAML configuration or `*.yaml.example` template discovered in `examples`. Form values create allowlisted per-run overrides, while the selected template remains unchanged. |
 | `webui.output_root` | Output root directory | Configure this path when calling `start_sparlectra_webui`; the browser displays it read-only. The service creates its persistent run index and one subdirectory per run beneath this root. |
 

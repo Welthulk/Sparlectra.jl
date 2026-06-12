@@ -504,8 +504,62 @@ function delete_all_powerflow_runs(; output_root::AbstractString)::Dict{String,A
   )
 end
 
+function _prefer_julia_casefile(casefile::AbstractString; emit_julia_case_fn = FetchMatpowerCase.emit_julia_case)::String
+  case_path = abspath(casefile)
+  extension = lowercase(splitext(case_path)[2])
+  extension == ".jl" && return case_path
+  extension == ".m" || throw(ArgumentError("Unsupported casefile extension: $(casefile) (expected .m or .jl)"))
+
+  julia_path = first(splitext(case_path)) * ".jl"
+  isfile(julia_path) && return julia_path
+  try
+    emitted_path = abspath(emit_julia_case_fn(case_path, dirname(case_path)))
+    if isfile(emitted_path)
+      return emitted_path
+    end
+    @warn "MATPOWER Julia case generation did not produce a file; using the .m case" casefile = case_path emitted_path
+  catch err
+    @warn "MATPOWER Julia case generation failed; using the .m case" casefile = case_path exception = (err, catch_backtrace())
+  end
+  return case_path
+end
+
+function _resolve_powerflow_casefile(
+  casefile::AbstractString,
+  case_directory::AbstractString;
+  ensure_casefile_fn = FetchMatpowerCase.ensure_casefile,
+  emit_julia_case_fn = FetchMatpowerCase.emit_julia_case,
+)::String
+  requested = strip(casefile)
+  isempty(requested) && throw(ArgumentError("PowerFlow casefile must not be empty."))
+  occursin(r"^[A-Za-z][A-Za-z0-9+.-]*://", requested) && throw(ArgumentError("MATPOWER case URLs are not accepted."))
+
+  extension = lowercase(splitext(requested)[2])
+  extension in (".m", ".jl") || throw(ArgumentError("Unsupported casefile extension: $(requested) (expected .m or .jl)"))
+  if isfile(requested)
+    return _prefer_julia_casefile(requested; emit_julia_case_fn)
+  end
+  occursin(r"[\\/]", requested) && throw(ArgumentError("Case file not found: $(requested)"))
+
+  trusted_directory = abspath(case_directory)
+  mkpath(trusted_directory)
+  resolved = try
+    ensure_casefile_fn(requested; outdir = trusted_directory, to_jl = true)
+  catch err
+    fallback_name = extension == ".m" ? requested : first(splitext(requested)) * ".m"
+    fallback_path = joinpath(trusted_directory, fallback_name)
+    if isfile(fallback_path)
+      @warn "MATPOWER case resolution could not generate the Julia case; using the downloaded .m case" casefile = fallback_path exception = (err, catch_backtrace())
+      return abspath(fallback_path)
+    end
+    rethrow()
+  end
+  isfile(resolved) || throw(ArgumentError("Resolved MATPOWER case file not found: $(resolved)"))
+  return _prefer_julia_casefile(resolved; emit_julia_case_fn)
+end
+
 """
-    start_powerflow_run(request::AbstractDict) -> Dict{String,Any}
+    start_powerflow_run(request::AbstractDict; case_directory=nothing) -> Dict{String,Any}
 
 Start one local PowerFlow service run above [`run_sparlectra_api`](@ref). The
 request must provide `casefile`, `config_file`, and `output_root`; optional
@@ -514,11 +568,24 @@ chosen before execution, and all generated files are written beneath
 `output_root/run_id`. Completed API runs, including failed runs with a
 `result.json`, are registered in memory and in the persistent run index. Public
 service failures are returned as structured dictionaries.
+
+When `case_directory` is provided by a trusted caller, bare `.m` or `.jl` case
+names are resolved there through [`ensure_casefile`](@ref). Generated Julia
+cases are preferred for execution, while existing path behavior is retained.
 """
-function start_powerflow_run(request::AbstractDict)::Dict{String,Any}
+function start_powerflow_run(request::AbstractDict; case_directory::Union{Nothing,AbstractString} = nothing, case_resolver = _resolve_powerflow_casefile)::Dict{String,Any}
   casefile = _service_request_value(request, "casefile")
   casefile isa AbstractString && !isempty(strip(casefile)) || return _service_failure("missing_casefile", "PowerFlow service request requires a nonempty casefile.")
-  isfile(casefile) || return _service_failure("missing_casefile", "MATPOWER case file not found: $(abspath(casefile))")
+  if case_directory === nothing
+    isfile(casefile) || return _service_failure("missing_casefile", "MATPOWER case file not found: $(abspath(casefile))")
+    casefile = abspath(casefile)
+  else
+    casefile = try
+      case_resolver(casefile, case_directory)
+    catch err
+      return _service_failure("invalid_casefile", sprint(showerror, err))
+    end
+  end
 
   config_file = _service_request_value(request, "config_file")
   config_file isa AbstractString && !isempty(strip(config_file)) || return _service_failure("missing_config_file", "PowerFlow service request requires a nonempty config_file.")

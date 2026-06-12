@@ -54,19 +54,20 @@ function run_webui_tests()
         write(joinpath(config_directory, "README.md"), "ignored\n")
 
         @test Sparlectra._webui_application_root(start_dir) == application_root
-        @test Sparlectra._webui_casefile_options(application_root) == [case118, case14]
+        @test Sparlectra._webui_casefile_options(application_root) == ["case118.m", "case14.jl", "case14.m"]
         @test Sparlectra._webui_config_file_options(application_root) == [primary_config, secondary_config]
 
         selection_html = Sparlectra.render_powerflow_form(
           application_root = application_root,
-          selected_casefile = case14,
+          selected_casefile = "case14.m",
           selected_config_file = secondary_config,
         )
-        @test occursin("<select id=\"casefile\" name=\"casefile\" required>", selection_html)
-        @test occursin("<option value=\"$(case14)\" selected>case14.m</option>", selection_html)
+        @test occursin("<input id=\"casefile\" name=\"casefile\" list=\"available-casefiles\" required value=\"case14.m\"", selection_html)
+        @test occursin("<datalist id=\"available-casefiles\">", selection_html)
+        @test occursin("<option value=\"case14.m\"></option>", selection_html)
+        @test occursin("<option value=\"case14.jl\"></option>", selection_html)
         @test occursin("<select id=\"config_file\" name=\"config_file\" required>", selection_html)
         @test occursin("<option value=\"$(secondary_config)\" selected>study.yaml.example</option>", selection_html)
-        @test !occursin("case14.jl", selection_html)
         @test !occursin("README.md", selection_html)
 
         rm(case14)
@@ -76,7 +77,7 @@ function run_webui_tests()
           application_root = application_root,
           selected_casefile = manual_case,
         )
-        @test occursin("<input name=\"casefile\"", fallback_html)
+        @test occursin("<input id=\"casefile\" name=\"casefile\"", fallback_html)
         @test occursin("value=\"$(manual_case)\"", fallback_html)
       end
     end
@@ -227,6 +228,9 @@ function run_webui_tests()
 
       request = Sparlectra.powerflow_webui_request(form; default_output_root = output_root)
       @test request["casefile"] == casefile
+      typed_form = copy(form)
+      typed_form["casefile"] = "case9241pegase.m"
+      @test Sparlectra.powerflow_webui_request(typed_form; default_output_root = output_root)["casefile"] == "case9241pegase.m"
       @test request["config_file"] == config_file
       @test request["output_root"] == output_root
       untrusted_form = copy(form)

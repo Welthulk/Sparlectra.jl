@@ -26,9 +26,10 @@ function handle_webui_logo()::SparlectraWebUIResponse
 end
 
 """Run a PowerFlow request through the Web UI form-to-service boundary."""
-function handle_powerflow_run(form::AbstractDict; default_output_root::AbstractString = "results/powerflow_service")::Dict{String,Any}
+function handle_powerflow_run(form::AbstractDict; default_output_root::AbstractString = "results/powerflow_service", application_root::AbstractString = _webui_application_root())::Dict{String,Any}
   request = powerflow_webui_request(form; default_output_root = default_output_root)
-  return start_powerflow_run(request)
+  case_directory = joinpath(application_root, "data", "mpower")
+  return start_powerflow_run(request; case_directory)
 end
 
 function handle_powerflow_result(run_id::AbstractString)::SparlectraWebUIResponse
