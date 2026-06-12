@@ -109,7 +109,10 @@ Convert browser form values into the dictionary accepted by
 [`GUI_EDITABLE_CONFIG_KEYS`](@ref) are emitted as configuration overrides.
 """
 function powerflow_webui_request(form::AbstractDict; default_output_root::AbstractString = "results/powerflow_service")::Dict{String,Any}
-  casefile = strip(String(something(_webui_form_value(form, "casefile", ""), "")))
+  existing_casefile = strip(String(something(_webui_form_value(form, "casefile", ""), "")))
+  manual_casefile = strip(String(something(_webui_form_value(form, "casefile_manual", ""), "")))
+  casefile = isempty(manual_casefile) ? existing_casefile : manual_casefile
+  isempty(casefile) && throw(ArgumentError("Select an existing MATPOWER case or type a case name."))
   config_file = strip(String(something(_webui_form_value(form, "config_file", ""), "")))
   output_root = String(default_output_root)
   overrides = Dict{String,Any}()
