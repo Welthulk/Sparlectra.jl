@@ -14,12 +14,17 @@ server = start_sparlectra_webui(
     host = "127.0.0.1",
     port = 8080,
     output_root = "results/powerflow_service",
+    open_browser = true,
+    auto_shutdown_on_browser_close = true,
+    browser_heartbeat_timeout_seconds = 15.0,
 )
 ```
 
 The call returns a `SparlectraWebUIServer` handle immediately. Stop it with
-`close(server)`. Pass `open_browser=true` to open the Web UI in a standalone
-app-style window without normal browser tabs or controls:
+`close(server)`, `Ctrl+C`, or the **Stop Web UI** button in the shared page
+header. The button sends `POST /webui/shutdown`, closes the listening socket,
+and allows `wait(server.task)` to return. Pass `open_browser=true` to open the
+Web UI in a standalone app-style window without normal browser tabs or controls:
 
 ```julia
 server = start_sparlectra_webui(open_browser = true)
@@ -43,7 +48,7 @@ The start page accepts:
 
 - a local MATPOWER case file;
 - a Sparlectra configuration template file;
-- the output-root directory;
+- read-only information showing the server's configured output-root directory;
 - PowerFlow tolerance and maximum iterations;
 - autodamping and its minimum factor;
 - Q-limit handling;
@@ -52,9 +57,11 @@ The start page accepts:
 - logfile result mode; and
 - benchmark enablement, samples, and seconds.
 
-Only keys in `GUI_EDITABLE_CONFIG_KEYS` are submitted. The page does not offer
-a generic YAML editor and never modifies the selected template. The service
-creates an `effective_config.yaml` artifact for each run.
+Only keys in `GUI_EDITABLE_CONFIG_KEYS` are submitted. The output root is
+chosen only through `start_sparlectra_webui(; output_root=...)`, is displayed as
+read-only information, and cannot be overridden by a submitted browser field.
+The page does not offer a generic YAML editor and never modifies the selected
+template. The service creates an `effective_config.yaml` artifact for each run.
 
 The Web UI resolves the Sparlectra application directory from the process start
 directory. It supports starting directly in the repository or from a parent
@@ -78,11 +85,11 @@ readable by the Julia process.
 |---|---|---|
 | `webui.casefile` | MATPOWER case file | Select a discovered `.m` case from `data/mpower`, or enter a readable local path when that directory is empty. The Web UI passes the path to the existing PowerFlow service; it does not upload or modify the file. |
 | `webui.config_file` | Configuration template file | Select a YAML configuration or `*.yaml.example` template discovered in `examples`. Form values create allowlisted per-run overrides, while the selected template remains unchanged. |
-| `webui.output_root` | Output root directory | Enter the directory beneath which the service creates its persistent run index and one subdirectory per run. |
+| `webui.output_root` | Output root directory | Configure this path when calling `start_sparlectra_webui`; the browser displays it read-only. The service creates its persistent run index and one subdirectory per run beneath this root. |
 
 ## Contextual help and documentation
 
-Every visible PowerFlow form option includes a contextual help link. Help pages
+Every editable PowerFlow form option includes a contextual help link. Help pages
 include a **Back** button that uses the browser history to return to the existing
 PowerFlow form, preserving the values entered before opening help. If no local
 history entry is available, the button falls back to `/powerflow`. Help pages
@@ -118,12 +125,41 @@ large, scrollable, pre-wrapped panel. Help excerpts and full documentation pages
 also use wider content panels and readable line spacing. Other files are
 downloaded, and every artifact page also offers an explicit download response.
 
-## Persistent run history
+## Persistent run history and run management
 
-The history page reads `powerflow_runs_index.json` beneath the selected output
-root. Use **Refresh registry** to call `refresh_powerflow_run_registry!` and
-make valid runs from an earlier Julia process available by run ID. Available
-runs can then be opened through the normal result and artifact views.
+`start_sparlectra_webui` refreshes `powerflow_runs_index.json` beneath the
+configured output root before it begins serving pages, so valid runs from an
+earlier Julia process appear immediately. The **Refresh registry** button
+remains available for a manual reload. Missing, corrupt, or unsafe entries are
+reported or skipped without preventing valid runs from loading.
+
+History is ordered newest first and shows a readable local date/time, run ID,
+status text, status badge, solver summary fields, and actions. Green, yellow,
+red, gray, and blue badges distinguish successful, warning/partial, failed,
+unknown, and running states while retaining visible text for accessibility.
+Older indexes without timestamps use the `result.json` modification time.
+
+Each registered run has a **Delete** action, and **Delete all runs** removes all
+safely registered runs for the current configured root. These actions update
+the in-memory registry and persistent index as well as deleting the matching
+run directories. Run IDs are validated, indexed paths must remain beneath the
+configured root, and browser-submitted output roots are ignored; unrelated
+files and directories are never deletion targets.
+
+## Browser and application shutdown
+
+All normal pages send a small local heartbeat after they load. With
+`auto_shutdown_on_browser_close=true`, heartbeat expiry after
+`browser_heartbeat_timeout_seconds` triggers best-effort shutdown after at
+least one heartbeat has been received. A server started with
+`open_browser=false` therefore remains running until a browser actually
+connects, the **Stop Web UI** button is used, `close(server)` is called, or the
+terminal receives `Ctrl+C`.
+
+Browser-close detection is necessarily best effort: browser crashes, forced
+process termination, or operating-system shutdown may prevent a final clean
+lifecycle. `Ctrl+C` remains the fallback. If a port is still occupied, stop the
+old Julia process or start the Web UI with a different `port` value.
 
 ## Current limitations
 

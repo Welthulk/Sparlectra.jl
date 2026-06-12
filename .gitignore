@@ -25,3 +25,4 @@ examples/_out/
 examples/configuration.yaml.example
 examples/configuration.yaml.bck
 results
+_out/powerflow_service

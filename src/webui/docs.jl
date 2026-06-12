@@ -3,7 +3,6 @@ const _WEBUI_DOCS_ROOT = normpath(joinpath(@__DIR__, "..", "..", "docs", "src"))
 const WEBUI_HELP_TOPICS = Dict(
   "webui.casefile" => (label = "MATPOWER case file", page = "webui", heading = "PowerFlow input paths", selector = "`webui.casefile`"),
   "webui.config_file" => (label = "Configuration template file", page = "webui", heading = "PowerFlow input paths", selector = "`webui.config_file`"),
-  "webui.output_root" => (label = "Output root directory", page = "webui", heading = "PowerFlow input paths", selector = "`webui.output_root`"),
   "power_flow.tol" => (label = "PowerFlow tolerance", page = "powerflow_configuration", heading = "Solver core options", selector = "`power_flow.tol`"),
   "power_flow.max_iter" => (label = "Maximum iterations", page = "powerflow_configuration", heading = "Solver core options", selector = "`power_flow.max_iter`"),
   "power_flow.autodamp" => (label = "Autodamping enabled", page = "powerflow_configuration", heading = "Solver core options", selector = "`power_flow.autodamp`"),
@@ -21,7 +20,6 @@ const WEBUI_HELP_TOPICS = Dict(
 const WEBUI_FORM_HELP_TOPICS = Dict(
   "casefile" => "webui.casefile",
   "config_file" => "webui.config_file",
-  "output_root" => "webui.output_root",
   "power_flow_tol" => "power_flow.tol",
   "power_flow_max_iter" => "power_flow.max_iter",
   "power_flow_autodamp" => "power_flow.autodamp",

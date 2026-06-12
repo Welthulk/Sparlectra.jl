@@ -405,6 +405,8 @@ export
   load_powerflow_run_index,               # Load the persistent run index from an output root.
   list_powerflow_runs,                    # List indexed runs and their disk availability.
   refresh_powerflow_run_registry!,        # Recover the in-process registry from disk.
+  delete_powerflow_run,                   # Safely delete one registered run beneath an output root.
+  delete_all_powerflow_runs,              # Safely delete all registered runs beneath an output root.
   get_powerflow_result,                   # Look up serialized run metadata by run ID.
   list_powerflow_artifacts,               # List run artifacts by run ID.
   resolve_powerflow_artifact,             # Safely resolve a run artifact by metadata name.

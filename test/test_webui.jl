@@ -21,6 +21,15 @@ function _webui_test_form(casefile, config_file, output_root)
   )
 end
 
+function _webui_http_request(port::Integer, method::AbstractString, target::AbstractString; body::AbstractString = "")::String
+  socket = connect(ip"127.0.0.1", UInt16(port))
+  headers = isempty(body) ? "" : "Content-Type: application/x-www-form-urlencoded\r\nContent-Length: $(ncodeunits(body))\r\n"
+  write(socket, "$(method) $(target) HTTP/1.1\r\nHost: 127.0.0.1\r\n$(headers)Connection: close\r\n\r\n$(body)")
+  response = read(socket, String)
+  close(socket)
+  return response
+end
+
 function run_webui_tests()
   @testset "Local PowerFlow Web UI" begin
     @test isdefined(Sparlectra, :start_sparlectra_webui)
@@ -216,10 +225,13 @@ function run_webui_tests()
       output_root = joinpath(tmpdir, "runs")
       form = _webui_test_form(casefile, config_file, output_root)
 
-      request = Sparlectra.powerflow_webui_request(form)
+      request = Sparlectra.powerflow_webui_request(form; default_output_root = output_root)
       @test request["casefile"] == casefile
       @test request["config_file"] == config_file
       @test request["output_root"] == output_root
+      untrusted_form = copy(form)
+      untrusted_form["output_root"] = joinpath(tmpdir, "outside")
+      @test Sparlectra.powerflow_webui_request(untrusted_form; default_output_root = output_root)["output_root"] == output_root
       overrides = request["config_overrides"]
       @test Set(keys(overrides)) == Set(key for (key, _, _) in Sparlectra._WEBUI_FORM_CONFIG_FIELDS)
       @test overrides["power_flow.tol"] == 1.0e-8
@@ -239,7 +251,6 @@ function run_webui_tests()
       expected_help_topics = Dict(
         "casefile" => "webui.casefile",
         "config_file" => "webui.config_file",
-        "output_root" => "webui.output_root",
         "power_flow_tol" => "power_flow.tol",
         "power_flow_max_iter" => "power_flow.max_iter",
         "power_flow_autodamp" => "power_flow.autodamp",
@@ -258,6 +269,10 @@ function run_webui_tests()
         @test occursin("name=\"$(field)\"", form_html)
         @test occursin("href=\"/help/$(help_topic)\"", form_html)
       end
+      @test !occursin("name=\"output_root\"", form_html)
+      @test occursin("<strong>Output root:</strong> <code>$(output_root)</code>", form_html)
+      @test occursin("action=\"/webui/shutdown\"", form_html)
+      @test occursin("Stop Web UI", form_html)
       @test count("class=\"help-link\"", form_html) == length(expected_help_topics)
 
       @test !occursin("class=\"button back-button\"", form_html)
@@ -285,9 +300,16 @@ function run_webui_tests()
       for target in ("/assets/tablestyle.css", "/assets/../Project.toml", "/assets/logo.png/extra")
         @test Sparlectra.route_sparlectra_webui("GET", target).status == 404
       end
-      result = Sparlectra.handle_powerflow_run(form)
-      @test result["success"]
-      run_id = result["run_id"]
+      routed_form = copy(form)
+routed_form["output_root"] = joinpath(tmpdir, "outside-runs")
+run_response = Sparlectra.route_sparlectra_webui("POST", "/powerflow/run", routed_form; output_root)
+@test run_response.status == 303
+result_location = only(header.second for header in run_response.headers if header.first == "Location")
+run_id = basename(result_location)
+result = get_powerflow_result(run_id)
+@test result["success"]
+@test result["output_dir"] == joinpath(abspath(output_root), run_id)
+@test !ispath(joinpath(tmpdir, "outside-runs"))
       @test !isempty(run_id)
       result_response = Sparlectra.handle_powerflow_result(run_id)
       result_html = String(result_response.body)
@@ -322,6 +344,14 @@ function run_webui_tests()
       @test occursin(".form-grid.is-submitting .submit-spinner {\n", css_text)
       @test occursin("  animation: submit-spin .8s linear infinite;\n", css_text)
       @test occursin("@keyframes submit-spin {\n", css_text)
+      @test occursin(".status-badge {\n", css_text)
+      @test occursin(".status-success {\n", css_text)
+      @test occursin(".status-warning {\n", css_text)
+      @test occursin(".status-error {\n", css_text)
+      @test occursin(".status-unknown {\n", css_text)
+      @test occursin(".status-running {\n", css_text)
+      @test occursin(".exit-button,\n", css_text)
+
 
       download = Sparlectra.handle_powerflow_artifact_download(run_id, "result.json")
       @test download.status == 200
@@ -342,6 +372,36 @@ function run_webui_tests()
       @test history_response.status == 200
       history_html = String(history_response.body)
       @test occursin(run_id, history_html)
+      @test occursin("<th>Date/Time</th>", history_html)
+      @test occursin("class=\"status-badge status-success\"", history_html)
+      @test occursin("action=\"/powerflow/delete/$(run_id)\"", history_html)
+      @test occursin("action=\"/powerflow/delete_all\"", history_html)
+      @test occursin("action=\"/powerflow/refresh\"", history_html)
+      @test occursin(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}", history_html)
+      @test Sparlectra.route_sparlectra_webui("GET", "/powerflow/delete/$(run_id)"; output_root).status == 404
+      unsafe_delete = Sparlectra.route_sparlectra_webui("POST", "/powerflow/delete/..%2Foutside"; output_root)
+      @test unsafe_delete.status == 400
+      @test occursin("Unsafe PowerFlow run ID rejected", String(unsafe_delete.body))
+      @test Sparlectra.route_sparlectra_webui("GET", "/webui/shutdown"; output_root).status == 404
+      @test Sparlectra.route_sparlectra_webui("POST", "/webui/shutdown"; output_root).status == 503
+      @test Sparlectra.route_sparlectra_webui("POST", "/webui/heartbeat"; output_root).status == 204
+      disposable_id = "disposable-run"
+      disposable_dir = joinpath(output_root, disposable_id)
+      mkpath(disposable_dir)
+      disposable_result = joinpath(disposable_dir, "result.json")
+      write(disposable_result, "{}")
+      disposable_entries = load_powerflow_run_index(output_root)["runs"]
+      push!(disposable_entries, Dict(
+        "run_id" => disposable_id,
+        "output_dir" => disposable_dir,
+        "result_file" => disposable_result,
+      ))
+      Sparlectra._write_powerflow_run_entries!(output_root, disposable_entries)
+      deleted_response = Sparlectra.route_sparlectra_webui("POST", "/powerflow/delete/$(disposable_id)"; output_root)
+      @test deleted_response.status == 303
+      @test !ispath(disposable_dir)
+      @test all(entry -> get(entry, "run_id", "") != disposable_id, load_powerflow_run_index(output_root)["runs"])
+
       @test occursin(run_id, String(Sparlectra.handle_powerflow_result(run_id).body))
       shared_pages = (
         form_html,
@@ -360,28 +420,53 @@ function run_webui_tests()
       @test all(name -> !occursin(name, source), forbidden)
       @test !occursin("Voltage-magnitude/angle blend strategy.", source)
 
+      lock(Sparlectra._POWERFLOW_SERVICE_LOCK) do
+        empty!(Sparlectra._POWERFLOW_SERVICE_RUNS)
+      end
       probe = listen(ip"127.0.0.1", UInt16(0))
       port = Int(getsockname(probe)[2])
       close(probe)
-      server = start_sparlectra_webui(port = port, output_root = output_root)
+      server = start_sparlectra_webui(port = port, output_root = output_root, auto_shutdown_on_browser_close = false)
+      @test get_powerflow_result(run_id)["run_id"] == run_id
       try
         @test server.url == "http://127.0.0.1:$(port)/powerflow"
-        socket = connect(ip"127.0.0.1", UInt16(port))
-        write(socket, "GET /powerflow HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
-        response_text = read(socket, String)
-        close(socket)
+        response_text = _webui_http_request(port, "GET", "/powerflow")
         @test occursin("HTTP/1.1 200 OK", response_text)
         @test occursin("PowerFlow run", response_text)
 
-        logo_socket = connect(ip"127.0.0.1", UInt16(port))
-        write(logo_socket, "GET /assets/logo.png HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
-        logo_response_text = read(logo_socket, String)
-        close(logo_socket)
+        logo_response_text = _webui_http_request(port, "GET", "/assets/logo.png")
         @test occursin("HTTP/1.1 200 OK", logo_response_text)
         @test occursin("Content-Type: image/png", logo_response_text)
+
+        heartbeat_response = _webui_http_request(port, "POST", "/webui/heartbeat")
+        @test occursin("HTTP/1.1 204", heartbeat_response)
+        shutdown_response = _webui_http_request(port, "POST", "/webui/shutdown")
+        @test occursin("HTTP/1.1 200 OK", shutdown_response)
+        @test occursin("Web UI stopped", shutdown_response)
+        @test timedwait(() -> istaskdone(server.task), 2.0) == :ok
+        @test !isopen(server.listener)
       finally
         close(server)
       end
+
+      restarted = start_sparlectra_webui(port = port, output_root = output_root, auto_shutdown_on_browser_close = false)
+      close(restarted)
+      @test timedwait(() -> istaskdone(restarted.task), 2.0) == :ok
+
+      heartbeat_probe = listen(ip"127.0.0.1", UInt16(0))
+      heartbeat_port = Int(getsockname(heartbeat_probe)[2])
+      close(heartbeat_probe)
+      heartbeat_server = start_sparlectra_webui(
+        port = heartbeat_port,
+        output_root = output_root,
+        auto_shutdown_on_browser_close = true,
+        browser_heartbeat_timeout_seconds = 0.2,
+      )
+      sleep(0.3)
+      @test isopen(heartbeat_server.listener)
+      _webui_http_request(heartbeat_port, "POST", "/webui/heartbeat")
+      @test timedwait(() -> istaskdone(heartbeat_server.task), 2.0) == :ok
+      @test !isopen(heartbeat_server.listener)
     end
   end
   return nothing

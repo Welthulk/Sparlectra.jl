@@ -343,3 +343,73 @@ pre {
 .docs-index {
   line-height: 1.8;
 }
+
+nav {
+  align-items: center;
+}
+
+.exit-form,
+.delete-run-form,
+.history-actions form {
+  margin: 0;
+}
+
+.exit-button,
+.danger-button {
+  background: #a32424;
+}
+
+.output-root-display {
+  margin: 0;
+  padding: 0.75rem;
+  background: #f4f7fb;
+  border: 1px solid #dbe3ef;
+  border-radius: 7px;
+}
+
+.history-actions {
+  margin-bottom: 1rem;
+}
+
+.history-actions p {
+  margin-top: 0;
+}
+
+.status-badge {
+  display: inline-block;
+  min-width: 5.5rem;
+  padding: 0.25rem 0.55rem;
+  border-radius: 999px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.status-success {
+  background: #d9f3df;
+  color: #17632a;
+}
+
+.status-warning {
+  background: #fff0c2;
+  color: #7a4b00;
+}
+
+.status-error {
+  background: #f9d8d8;
+  color: #8d1e1e;
+}
+
+.status-unknown {
+  background: #e5e9ef;
+  color: #46556c;
+}
+
+.status-running {
+  background: #dcecff;
+  color: #1557a5;
+}
+
+.shutdown-message {
+  max-width: 40rem;
+  margin: 4rem auto;
+}

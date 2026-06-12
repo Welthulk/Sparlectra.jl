@@ -38,7 +38,7 @@ function _webui_split_target(target::AbstractString)
   return parts[1], length(parts) == 2 ? _webui_parse_pairs(parts[2]) : Dict{String,String}()
 end
 
-function route_sparlectra_webui(method::AbstractString, target::AbstractString, form::AbstractDict = Dict{String,String}(); output_root::AbstractString = "results/powerflow_service")::SparlectraWebUIResponse
+function route_sparlectra_webui(method::AbstractString, target::AbstractString, form::AbstractDict = Dict{String,String}(); output_root::AbstractString = "results/powerflow_service", runtime = nothing)::SparlectraWebUIResponse
   path, query = _webui_split_target(target)
   verb = uppercase(String(method))
   if verb == "GET" && path == "/assets/logo.png"
@@ -50,7 +50,7 @@ function route_sparlectra_webui(method::AbstractString, target::AbstractString, 
   elseif verb == "GET" && startswith(path, "/docs/")
     return handle_webui_doc_page(_webui_urldecode(path[(lastindex("/docs/") + 1):end]))
   elseif verb == "GET" && path in ("/", "/powerflow")
-    return _webui_html(render_powerflow_form(; output_root = output_root))
+    return _webui_html(render_powerflow_form(; output_root))
   elseif verb == "POST" && path == "/powerflow/run"
     try
       result = handle_powerflow_run(form; default_output_root = output_root)
@@ -60,7 +60,7 @@ function route_sparlectra_webui(method::AbstractString, target::AbstractString, 
       selected_casefile = String(something(_webui_form_value(form, "casefile", ""), ""))
       selected_config_file = String(something(_webui_form_value(form, "config_file", ""), ""))
       return _webui_html(render_powerflow_form(;
-        output_root = output_root,
+        output_root,
         error_message = sprint(showerror, err),
         selected_casefile,
         selected_config_file,
@@ -77,12 +77,25 @@ function route_sparlectra_webui(method::AbstractString, target::AbstractString, 
     run_id, artifact_name = _webui_urldecode.(segments)
     return get(query, "download", "") == "1" ? handle_powerflow_artifact_download(run_id, artifact_name) : handle_powerflow_artifact(run_id, artifact_name)
   elseif verb == "GET" && path == "/powerflow/history"
-    root = get(query, "output_root", String(output_root))
-    return handle_powerflow_history(root)
+    return handle_powerflow_history(output_root)
   elseif verb == "POST" && path == "/powerflow/refresh"
-    root = get(form, "output_root", String(output_root))
-    handle_powerflow_refresh(root)
-    return _webui_redirect("/powerflow/history?output_root=$(_webui_urlencode(root))")
+    handle_powerflow_refresh(output_root)
+    return _webui_redirect("/powerflow/history")
+  elseif verb == "POST" && startswith(path, "/powerflow/delete/")
+    run_id = _webui_urldecode(path[(lastindex("/powerflow/delete/") + 1):end])
+    return handle_powerflow_delete(run_id, output_root)
+  elseif verb == "POST" && path == "/powerflow/delete_all"
+    return handle_powerflow_delete_all(output_root)
+  elseif verb == "POST" && path == "/webui/heartbeat"
+    runtime === nothing || _webui_record_heartbeat!(runtime)
+    return SparlectraWebUIResponse(204, ""; content_type = "text/plain; charset=utf-8")
+  elseif verb == "POST" && path == "/webui/shutdown"
+    runtime === nothing && return _webui_html(render_webui_error(503, "Web UI shutdown is unavailable outside a running server."); status = 503)
+    @async begin
+      sleep(0.05)
+      _webui_request_shutdown!(runtime)
+    end
+    return _webui_html(render_webui_shutdown())
   elseif verb == "GET" && path == "/static/sparlectra.css"
     return SparlectraWebUIResponse(200, read(joinpath(@__DIR__, "static", "sparlectra.css"), String); content_type = "text/css; charset=utf-8")
   end

@@ -82,6 +82,20 @@ function handle_powerflow_refresh(output_root::AbstractString)::Dict{String,Any}
   return refresh_powerflow_run_registry!(output_root)
 end
 
+function handle_powerflow_delete(run_id::AbstractString, output_root::AbstractString)::SparlectraWebUIResponse
+  result = delete_powerflow_run(run_id; output_root)
+  get(result, "success", false) && return _webui_redirect("/powerflow/history")
+  status = get(result, "reason", "") in ("unsafe_run_id", "unsafe_output_dir", "unsafe_result_file") ? 400 : 404
+  return _webui_html(render_webui_error(status, get(result, "message", "Run deletion failed.")); status)
+end
+
+function handle_powerflow_delete_all(output_root::AbstractString)::SparlectraWebUIResponse
+  result = delete_all_powerflow_runs(; output_root)
+  get(result, "success", false) && return _webui_redirect("/powerflow/history")
+  message = "Some runs could not be deleted: " * join((string(get(item, "run_id", "unknown"), " (", get(item, "reason", "delete_failed"), ")") for item in result["failed_runs"]), ", ")
+  return _webui_html(render_webui_error(500, message); status = 500)
+end
+
 function handle_webui_help(topic::AbstractString)::SparlectraWebUIResponse
   metadata = resolve_webui_help_topic(topic)
   metadata === nothing && return _webui_html(render_webui_error(404, "Unknown help topic."); status = 404)
