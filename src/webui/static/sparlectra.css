@@ -63,6 +63,12 @@ main {
   padding: 0 1.25rem;
 }
 
+.artifact-text-page {
+  width: min(92vw, 1500px);
+  margin-left: 50%;
+  transform: translateX(-50%);
+}
+
 .page-toolbar {
   display: flex;
   margin-bottom: 1rem;
@@ -231,8 +237,8 @@ pre {
 }
 
 .artifact-text {
-  min-height: 60vh;
-  max-height: 75vh;
+  min-height: 75vh;
+  max-height: 85vh;
   overflow: auto;
   white-space: pre-wrap;
   overflow-wrap: anywhere;

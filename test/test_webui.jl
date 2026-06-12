@@ -17,6 +17,8 @@ function _webui_test_form(casefile, config_file, output_root)
     "power_flow_start_angle_mode" => "dc",
     "power_flow_start_voltage_mode" => "profile_blend",
     "output_logfile_results" => "compact",
+    "performance_timing" => "compact",
+    "run_diagnostics" => "on",
     "benchmark_samples" => "10",
     "benchmark_seconds" => "1.0",
   )
@@ -35,6 +37,18 @@ function run_webui_tests()
   @testset "Local PowerFlow Web UI" begin
     @test isdefined(Sparlectra, :start_sparlectra_webui)
     @test_throws ArgumentError start_sparlectra_webui(host = "0.0.0.0")
+
+    registry_before_warmup = Set(keys(Sparlectra._POWERFLOW_SERVICE_RUNS))
+    warmup_output = Ref("")
+    warmup_runner = function(; output_dir, kwargs...)
+      warmup_output[] = output_dir
+      write(joinpath(output_dir, "warmup-marker.txt"), "compiled\n")
+      return (success = true, reason = nothing, message = nothing)
+    end
+    warmup_result = Sparlectra._run_sparlectra_webui_warmup(mktempdir(); runner = warmup_runner)
+    @test warmup_result.success
+    @test !ispath(warmup_output[])
+    @test Set(keys(Sparlectra._POWERFLOW_SERVICE_RUNS)) == registry_before_warmup
 
     @testset "Case and configuration selection" begin
       mktempdir() do start_dir
@@ -285,6 +299,8 @@ function run_webui_tests()
         "benchmark_enabled" => "benchmark.enabled",
         "benchmark_samples" => "benchmark.samples",
         "benchmark_seconds" => "benchmark.seconds",
+        "performance_timing" => "webui.performance_timing",
+        "run_diagnostics" => "webui.run_diagnostics",
       )
       @test Sparlectra.WEBUI_FORM_HELP_TOPICS == expected_help_topics
       for (field, help_topic) in expected_help_topics
@@ -313,7 +329,10 @@ function run_webui_tests()
 
       @test occursin("src=\"/assets/logo.png\"", form_html)
       @test occursin("alt=\"Sparlectra.jl logo\"", form_html)
-      @test occursin("<span>Sparlectra.jl</span>", form_html)
+      @test occursin("Sparlectra.jl v", form_html)
+      @test occursin("Sparlectra.jl v$(Sparlectra.version())", form_html)
+      @test occursin("name=\"performance_timing\"", form_html)
+      @test occursin("name=\"run_diagnostics\"", form_html)
 
       logo_response = Sparlectra.route_sparlectra_webui("GET", "/assets/logo.png")
       @test logo_response.status == 200
@@ -343,10 +362,10 @@ result = get_powerflow_result(run_id)
 
       artifacts = list_powerflow_artifacts(run_id)
       artifact_names = Set(artifact["name"] for artifact in artifacts)
-      @test Set(("result.json", "run.log", "effective_config.yaml")) ⊆ artifact_names
+      @test Set(("result.json", "run.log", "effective_config.yaml", "performance.log", "diagnose.txt")) ⊆ artifact_names
       artifact_response = Sparlectra.handle_powerflow_artifacts(run_id)
       artifact_html = String(artifact_response.body)
-      for name in ("result.json", "run.log", "effective_config.yaml")
+      for name in ("result.json", "run.log", "effective_config.yaml", "performance.log", "diagnose.txt")
         @test occursin(name, artifact_html)
       end
       result_artifact = Sparlectra.handle_powerflow_artifact(run_id, "result.json")
@@ -363,6 +382,8 @@ result = get_powerflow_result(run_id)
       @test occursin(".artifact-text {\n", css_text)
       @test occursin("  white-space: pre-wrap;\n", css_text)
       @test occursin("  overflow: auto;\n", css_text)
+      @test occursin("  min-height: 75vh;\n", css_text)
+      @test occursin("  max-height: 85vh;\n", css_text)
       @test occursin(".form-grid.is-submitting .submit-spinner {\n", css_text)
       @test occursin("  animation: submit-spin .8s linear infinite;\n", css_text)
       @test occursin("@keyframes submit-spin {\n", css_text)
@@ -434,7 +455,7 @@ result = get_powerflow_result(run_id)
       )
       for page_html in shared_pages
         @test occursin("src=\"/assets/logo.png\"", page_html)
-        @test occursin("<span>Sparlectra.jl</span>", page_html)
+        @test occursin("Sparlectra.jl v$(Sparlectra.version())", page_html)
       end
 
       source = join(read(joinpath(@__DIR__, "..", "src", "webui", file), String) for file in ("docs.jl", "forms.jl", "handlers.jl", "routes.jl", "views.jl", "webui.jl"))

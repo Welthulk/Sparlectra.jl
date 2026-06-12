@@ -60,6 +60,11 @@ available for diagnosis.
   readable `.m` case remains the fallback if conversion fails. Browser form
   values never control this directory, missing path-like inputs are not
   downloaded, and URLs are rejected.
+  Optional `performance_timing` (`off`, `compact`, or `full`) and
+  `run_diagnostics` (Boolean) request fields are forwarded to the API artifact
+  writer. They produce `performance.log` and `diagnose.txt`, respectively.
+  Diagnostic generation reuses existing PowerFlow/Q-limit printers and a
+  diagnostic failure does not replace the primary PowerFlow result.
 - [`load_powerflow_run_index`](@ref) reads the transport-safe index structure. A
   missing index returns an empty index.
 - [`list_powerflow_runs`](@ref) returns indexed run summaries for a future run
@@ -85,6 +90,12 @@ paths, missing artifacts, and paths that resolve outside the run directory.
 Public service failures are dictionaries containing `status`, `success`,
 `reason`, and `message`. Recovery reports invalid entries in
 `unavailable_runs` and continues loading valid runs.
+
+Every completed API `run.log` includes solver time where available,
+representative time, iterations, final mismatch, and final outcome. Benchmark
+median and configured samples are included when benchmarking is enabled.
+`output.logfile_results=full` adds effective configuration, artifact choices,
+and available status diagnostics beyond the `classic` report.
 
 This layer intentionally introduces no HTTP routes, Genie.jl server, browser
 GUI, authentication, or database. See `examples/exp_powerflow_service.jl` for a

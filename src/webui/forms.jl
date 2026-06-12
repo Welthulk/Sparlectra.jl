@@ -72,6 +72,8 @@ const _WEBUI_FORM_CONFIG_FIELDS = (
   ("benchmark.seconds", "benchmark_seconds", Float64),
 )
 
+const _WEBUI_PERFORMANCE_TIMING_VALUES = WEBUI_PERFORMANCE_TIMING_VALUES
+
 function _webui_form_value(form::AbstractDict, key::String, default = nothing)
   haskey(form, key) && return form[key]
   symbol_key = Symbol(key)
@@ -125,5 +127,7 @@ function powerflow_webui_request(form::AbstractDict; default_output_root::Abstra
     "config_file" => config_file,
     "output_root" => output_root,
     "config_overrides" => overrides,
+    "performance_timing" => _webui_parse_form_value(_webui_form_value(form, "performance_timing", "off"), String, "performance_timing"),
+    "run_diagnostics" => _webui_parse_bool(_webui_form_value(form, "run_diagnostics")),
   )
 end

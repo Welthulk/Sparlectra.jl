@@ -40,6 +40,8 @@ function run_api_tests()
           "output.logfile_results" => "compact",
           "benchmark.enabled" => false,
         ),
+        performance_timing = :compact,
+        run_diagnostics = true,
       )
 
       @test result isa SparlectraApiResult
@@ -58,14 +60,55 @@ function run_api_tests()
       effective_cfg = Sparlectra.load_sparlectra_config(joinpath(output_dir, "effective_config.yaml"); reload = true)
       @test effective_cfg.powerflow.tol == 1.0e-9
       @test effective_cfg.powerflow.max_iter == 40
+      run_log = read(joinpath(output_dir, "run.log"), String)
+      for marker in ("solver_time:", "representative_time:", "iterations:", "final_mismatch:", "final_status:", "final_outcome:")
+        @test occursin(marker, run_log)
+      end
+      performance_log = read(joinpath(output_dir, "performance.log"), String)
+      @test occursin("Sparlectra single-run phase timing", performance_log)
+      @test occursin("api_config_build:", performance_log)
+      @test occursin("case_loading_network_solver:", performance_log)
+      @test occursin("total:", performance_log)
+      diagnostic_log = read(joinpath(output_dir, "diagnose.txt"), String)
+      @test occursin("Sparlectra PowerFlow diagnostics", diagnostic_log)
+      @test occursin("Final limit validation:", diagnostic_log)
 
       kinds = Set(artifact.kind for artifact in result.artifacts)
       @test :log in kinds
       @test :result_json in kinds
       @test :effective_config in kinds
+      @test :report in kinds
       @test all(artifact -> artifact.exists && artifact.size_bytes !== nothing, result.artifacts)
-      @test result.logfile == only(artifact.path for artifact in result.artifacts if artifact.kind === :log)
+      @test result.logfile == only(artifact.path for artifact in result.artifacts if artifact.name == "run.log")
       @test result.result_file == only(artifact.path for artifact in result.artifacts if artifact.kind === :result_json)
+
+      classic_dir = joinpath(tmpdir, "classic")
+      full_dir = joinpath(tmpdir, "full")
+      classic = run_sparlectra_api(
+        casefile = casefile,
+        config_file = template,
+        output_dir = classic_dir,
+        config_overrides = Dict("output.logfile_results" => "classic", "benchmark.enabled" => false),
+      )
+      full = run_sparlectra_api(
+        casefile = casefile,
+        config_file = template,
+        output_dir = full_dir,
+        config_overrides = Dict("output.logfile_results" => "full", "benchmark.enabled" => false),
+      )
+      @test classic.success && full.success
+      classic_log = read(joinpath(classic_dir, "run.log"), String)
+      full_log = read(joinpath(full_dir, "run.log"), String)
+      @test !occursin("Full run details", classic_log)
+      @test occursin("Full run details", full_log)
+      @test occursin("Effective Sparlectra Configuration", full_log)
+      @test ncodeunits(full_log) > ncodeunits(classic_log)
+
+      failed_diagnostic = joinpath(tmpdir, "failed_diagnose.txt")
+      Sparlectra._write_powerflow_diagnostics(failed_diagnostic, result.raw_result; diagnostic_fn = (io, _) -> error("diagnostic test failure"))
+      failed_diagnostic_text = read(failed_diagnostic, String)
+      @test occursin("Diagnostic generation failed", failed_diagnostic_text)
+      @test occursin("diagnostic test failure", failed_diagnostic_text)
 
       dict_result = to_dict(result)
       named_result = to_namedtuple(result)

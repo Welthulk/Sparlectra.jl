@@ -8,6 +8,8 @@ function main()
     open_browser = true,
     auto_shutdown_on_browser_close = true,
     browser_heartbeat_timeout_seconds = 15.0,
+    warmup = true,
+    warmup_store_result = false,
   )
   println("Sparlectra Web UI is available at ", server.url)
   application_root = Sparlectra._webui_application_root()
