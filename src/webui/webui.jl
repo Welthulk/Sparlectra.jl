@@ -7,6 +7,7 @@ mutable struct _SparlectraWebUIRuntime
   heartbeat_timeout_seconds::Float64
   heartbeat_received::Bool
   last_heartbeat::Float64
+  active_requests::Int
   lock::ReentrantLock
 end
 
@@ -61,6 +62,7 @@ function _webui_write_response(socket::Sockets.TCPSocket, response::SparlectraWe
 end
 
 function _webui_serve_client(socket::Sockets.TCPSocket, output_root::String, runtime::_SparlectraWebUIRuntime)
+  _webui_begin_request!(runtime)
   try
     method, target, form = _webui_read_request(socket)
     response = route_sparlectra_webui(method, target, form; output_root, runtime)
@@ -71,6 +73,7 @@ function _webui_serve_client(socket::Sockets.TCPSocket, output_root::String, run
     catch
     end
   finally
+    _webui_finish_request!(runtime)
     close(socket)
   end
   return nothing
@@ -161,6 +164,21 @@ function _webui_record_heartbeat!(runtime::_SparlectraWebUIRuntime)
   return nothing
 end
 
+function _webui_begin_request!(runtime::_SparlectraWebUIRuntime)
+  lock(runtime.lock) do
+    runtime.active_requests += 1
+  end
+  return nothing
+end
+
+function _webui_finish_request!(runtime::_SparlectraWebUIRuntime)
+  lock(runtime.lock) do
+    runtime.active_requests -= 1
+    runtime.heartbeat_received && (runtime.last_heartbeat = time())
+  end
+  return nothing
+end
+
 function _webui_request_shutdown!(runtime::_SparlectraWebUIRuntime)
   listener = lock(runtime.lock) do
     runtime.listener
@@ -173,7 +191,7 @@ function _webui_monitor_heartbeat(runtime::_SparlectraWebUIRuntime)
   while true
     listener, should_stop = lock(runtime.lock) do
       current_listener = runtime.listener
-      expired = runtime.auto_shutdown_on_browser_close && runtime.heartbeat_received && time() - runtime.last_heartbeat > runtime.heartbeat_timeout_seconds
+      expired = runtime.auto_shutdown_on_browser_close && runtime.heartbeat_received && runtime.active_requests == 0 && time() - runtime.last_heartbeat > runtime.heartbeat_timeout_seconds
       (current_listener, expired)
     end
     (listener === nothing || !isopen(listener)) && return nothing
@@ -209,7 +227,7 @@ function start_sparlectra_webui(; host::AbstractString = "127.0.0.1", port::Inte
   refresh_powerflow_run_registry!(root)
   address = host_string == "localhost" ? ip"127.0.0.1" : parse(Sockets.IPAddr, host_string)
   listener = Sockets.listen(address, UInt16(port))
-  runtime = _SparlectraWebUIRuntime(listener, auto_shutdown_on_browser_close, timeout, false, 0.0, ReentrantLock())
+  runtime = _SparlectraWebUIRuntime(listener, auto_shutdown_on_browser_close, timeout, false, 0.0, 0, ReentrantLock())
   task = @async begin
     while isopen(listener)
       try
@@ -227,6 +245,19 @@ function start_sparlectra_webui(; host::AbstractString = "127.0.0.1", port::Inte
   open_browser && _webui_open_browser(url)
   @info "Sparlectra Web UI started" url output_root = abspath(root)
   return server
+end
+
+function _wait_sparlectra_webui(server::SparlectraWebUIServer; wait_for_task = wait)::Bool
+  interrupted = false
+  try
+    wait_for_task(server.task)
+  catch err
+    err isa InterruptException || rethrow()
+    interrupted = true
+  finally
+    close(server)
+  end
+  return interrupted
 end
 
 function Base.close(server::SparlectraWebUIServer)

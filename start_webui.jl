@@ -8,7 +8,8 @@ function main()
   println("Configuration selections are loaded from ", joinpath(application_root, "examples"))
   println("Contextual help and selected documentation are available at ", replace(server.url, "/powerflow" => "/docs"))
   println("Use Stop Web UI in the browser, or press Ctrl+C as a fallback.")
-  wait(server.task)
+  interrupted = Sparlectra._wait_sparlectra_webui(server)
+  interrupted && println("\nSparlectra Web UI stopped.")
 end
 
 Base.invokelatest(main)

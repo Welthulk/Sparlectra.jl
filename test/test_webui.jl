@@ -453,6 +453,11 @@ result = get_powerflow_result(run_id)
       close(restarted)
       @test timedwait(() -> istaskdone(restarted.task), 2.0) == :ok
 
+      interrupted = start_sparlectra_webui(port = port, output_root = output_root, auto_shutdown_on_browser_close = false)
+      @test Sparlectra._wait_sparlectra_webui(interrupted; wait_for_task = _ -> throw(InterruptException()))
+      @test timedwait(() -> istaskdone(interrupted.task), 2.0) == :ok
+      @test !isopen(interrupted.listener)
+
       heartbeat_probe = listen(ip"127.0.0.1", UInt16(0))
       heartbeat_port = Int(getsockname(heartbeat_probe)[2])
       close(heartbeat_probe)
@@ -465,6 +470,10 @@ result = get_powerflow_result(run_id)
       sleep(0.3)
       @test isopen(heartbeat_server.listener)
       _webui_http_request(heartbeat_port, "POST", "/webui/heartbeat")
+      Sparlectra._webui_begin_request!(heartbeat_server.runtime)
+      sleep(0.3)
+      @test isopen(heartbeat_server.listener)
+      Sparlectra._webui_finish_request!(heartbeat_server.runtime)
       @test timedwait(() -> istaskdone(heartbeat_server.task), 2.0) == :ok
       @test !isopen(heartbeat_server.listener)
     end
