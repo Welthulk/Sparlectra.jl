@@ -61,6 +61,12 @@ function handle_powerflow_abort(run_id::AbstractString)::SparlectraWebUIResponse
   return _webui_html(render_webui_error(status, get(result, "message", "Abort request failed.")); status)
 end
 
+function handle_powerflow_hard_reset(run_id::AbstractString)::SparlectraWebUIResponse
+  result = hard_reset_webui_powerflow_run(run_id)
+  haskey(result, "reason") && return _webui_html(render_webui_error(409, get(result, "message", "Hard reset failed.")); status = 409)
+  return _webui_html(render_webui_hard_reset())
+end
+
 function handle_powerflow_artifacts(run_id::AbstractString)::SparlectraWebUIResponse
   artifacts = list_powerflow_artifacts(run_id)
   status = artifacts isa AbstractDict ? 404 : 200

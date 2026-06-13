@@ -1,5 +1,15 @@
 # Local PowerFlow Service
 
+Web UI jobs track `current_phase`, `phase_started_at`, `last_progress_at`, and
+`abort_requested_at`. Cancellation boundaries cover case resolution,
+configuration, case loading, Y-bus/start construction, Newton and Q-limit
+iteration boundaries, sparse linear solves, diagnostics, artifact writing, and
+final success persistence. A late abort is checked before success is
+published. If an in-process numerical call cannot return within the Web UI
+timeout, the explicit hard-reset path records an invalid `aborted_unknown`
+result and shuts down the local Web UI instead of unsafely killing a Julia
+task.
+
 The local PowerFlow service is a small, testable boundary above
 [`run_sparlectra_api`](@ref). It is intended for a future local Genie.jl web GUI,
 but it does not start an HTTP server and has no Genie dependency.

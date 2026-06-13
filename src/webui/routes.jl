@@ -86,7 +86,22 @@ function route_sparlectra_webui(method::AbstractString, target::AbstractString, 
     response = handle_powerflow_abort(run_id)
     event = prior_status == "aborting" ? "powerflow_abort_already_requested" : prior_status == "aborted" ? "powerflow_abort_ignored" : "powerflow_abort_requested"
     event_status = prior_status == "aborting" ? "already_aborting" : prior_status == "aborted" ? "already_aborted" : response.status == 303 ? "accepted" : "rejected"
-    _webui_log_route!(log_root, event, verb, path; status = event_status, run_id)
+    current_phase = get(get_webui_powerflow_job(run_id), "current_phase", nothing)
+    _webui_log_route!(log_root, event, verb, path; status = event_status, run_id, current_phase)
+    return response
+  elseif verb == "POST" && startswith(path, "/powerflow/hard-reset/")
+    run_id = _webui_urldecode(path[(lastindex("/powerflow/hard-reset/") + 1):end])
+    job = get_webui_powerflow_job(run_id)
+    current_phase = get(job, "current_phase", nothing)
+    response = handle_powerflow_hard_reset(run_id)
+    _webui_log_route!(log_root, "webui_hard_reset_requested", verb, path; status = response.status == 200 ? "accepted" : "rejected", run_id, current_phase)
+    if response.status == 200 && runtime !== nothing
+      _webui_log_route!(log_root, "webui_shutdown_requested", verb, path; status = "accepted", run_id, current_phase)
+      @async begin
+        sleep(0.05)
+        _webui_request_shutdown!(runtime)
+      end
+    end
     return response
   elseif verb == "GET" && startswith(path, "/powerflow/artifacts/")
     return handle_powerflow_artifacts(_webui_urldecode(path[(lastindex("/powerflow/artifacts/") + 1):end]))

@@ -1,4 +1,5 @@
 using Sparlectra
+using Dates
 using Sockets
 using Test
 
@@ -511,6 +512,7 @@ result = get_powerflow_result(run_id)
       entered_webui = Channel{Nothing}(1)
       release_webui = Channel{Nothing}(1)
       slow_runner = function(request; case_directory = nothing)
+        request["phase_callback"]("linear_solve")
         put!(entered_webui, nothing)
         take!(release_webui)
         return start_powerflow_run(request; case_directory)
@@ -532,6 +534,7 @@ result = get_powerflow_result(run_id)
       @test occursin("http-equiv=\"refresh\"", active_result_html)
       @test occursin("content=\"$(Sparlectra.WEBUI_STATUS_AUTO_REFRESH_SECONDS); url=/powerflow/result/$(active_id)?autorefresh=1\"", active_result_html)
       @test occursin("This page refreshes automatically while the run is active.", active_result_html)
+      @test occursin("<td>linear_solve</td>", active_result_html)
       @test occursin(">Refresh status</a>", active_result_html)
       @test occursin("PowerFlow run is running:", active_form_html)
       @test occursin(abort_action, active_form_html)
@@ -553,9 +556,11 @@ result = get_powerflow_result(run_id)
       @test occursin("Waiting for the calculation to stop at the next safe cancellation point", aborted_html)
       @test !occursin(abort_action, aborted_html)
       @test occursin("\"event\":\"powerflow_abort_requested\"", read(operation_log_path, String))
+      @test occursin("\"current_phase\":\"linear_solve\"", read(operation_log_path, String))
       repeated_abort = Sparlectra.route_sparlectra_webui("POST", "/powerflow/abort/$(active_id)"; output_root)
       @test repeated_abort.status == 303
       @test occursin("\"event\":\"powerflow_abort_already_requested\"", read(operation_log_path, String))
+      @test occursin("Waiting for current sparse solve to finish.", aborted_html)
       active_delete = Sparlectra.route_sparlectra_webui("POST", "/powerflow/delete/$(active_id)"; output_root)
       @test active_delete.status == 409
       @test occursin("This run is still active", String(active_delete.body))
@@ -572,6 +577,31 @@ result = get_powerflow_result(run_id)
       @test Sparlectra.get_active_webui_powerflow_job() === nothing
       terminal_delete = Sparlectra.route_sparlectra_webui("POST", "/powerflow/delete/$(active_id)"; output_root)
       @test terminal_delete.status == 303
+
+      hard_reset_job = Dict{String,Any}(
+        "run_id" => "hard-reset-test",
+        "status" => "aborting",
+        "casefile" => casefile,
+        "config_file" => config_file,
+        "output_root" => output_root,
+        "output_dir" => joinpath(output_root, "hard-reset-test"),
+        "started_at" => Dates.now(Dates.UTC) - Dates.Second(120),
+        "finished_at" => nothing,
+        "message" => "Abort requested.",
+        "abort_requested" => Threads.Atomic{Bool}(true),
+        "abort_requested_at" => Dates.now(Dates.UTC) - Dates.Second(Sparlectra.WEBUI_ABORT_HARD_RESET_AFTER_SECONDS + 1),
+        "current_phase" => "linear_solve",
+        "phase_started_at" => Dates.now(Dates.UTC),
+        "last_progress_at" => Dates.now(Dates.UTC),
+      )
+      Sparlectra._POWERFLOW_WEBUI_JOBS["hard-reset-test"] = hard_reset_job
+      hard_reset_html = String(Sparlectra.handle_powerflow_result("hard-reset-test").body)
+      @test occursin("Hard reset Web UI", hard_reset_html)
+      hard_reset_response = Sparlectra.route_sparlectra_webui("POST", "/powerflow/hard-reset/hard-reset-test"; output_root)
+      @test hard_reset_response.status == 200
+      @test Sparlectra.get_webui_powerflow_job("hard-reset-test")["status"] == "aborted_unknown"
+      @test occursin("\"event\":\"webui_hard_reset_requested\"", read(operation_log_path, String))
+      @test !Sparlectra.get_webui_powerflow_job("hard-reset-test")["success"]
 
       operation_log_page = Sparlectra.route_sparlectra_webui("GET", "/webui/operation-log"; output_root)
       @test operation_log_page.status == 200

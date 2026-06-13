@@ -313,8 +313,13 @@ function start_sparlectra_webui(; host::AbstractString = "127.0.0.1", port::Inte
   catch err
     throw(ArgumentError("Could not create Web UI output directory $(root): $(sprint(showerror, err))"))
   end
-  refresh_powerflow_run_registry!(root)
+  recovery = refresh_powerflow_run_registry!(root)
   record_webui_operation!(paths.operation_log, "webui_start"; route = "/powerflow", method = "START", status = "started", user_action = false, output_root = root, config_file = paths.config_file, case_cache_dir = paths.case_directory, operation_log = paths.operation_log)
+  for result in recovery["runs"]
+    result.status == :aborted_unknown || continue
+    result.reason == "webui_stale_active_run" || continue
+    record_webui_operation!(paths.operation_log, "webui_stale_active_run_recovered"; route = "/powerflow", method = "START", status = "aborted_unknown", user_action = false, run_id = result.run_id)
+  end
   address = host_string == "localhost" ? ip"127.0.0.1" : parse(Sockets.IPAddr, host_string)
   listener = Sockets.listen(address, UInt16(port))
   runtime = _SparlectraWebUIRuntime(listener, paths.case_directory, paths.config_file, paths.operation_log, _test_runner, auto_shutdown_on_browser_close, timeout, false, 0.0, 0, ReentrantLock())
