@@ -273,34 +273,39 @@ function start_webui_powerflow_run(request::AbstractDict; case_directory::Union{
   end
   event_callback("powerflow_submitted"; run_id, requested_case = job["casefile"], status = "accepted")
   job["task"] = Threads.@spawn begin
-    lock(_POWERFLOW_SERVICE_LOCK) do
-      job["status"] = "running"
-      job["message"] = "PowerFlow run is active."
-    end
-    event_callback("powerflow_started"; run_id, requested_case = job["casefile"], status = "running")
-    worker_request = Dict{String,Any}(String(key) => value for (key, value) in request)
-    worker_request["run_id"] = run_id
-    worker_request["cancellation_token"] = job["abort_requested"]
-    result = try
-      runner(worker_request; case_directory)
-    catch err
-      _service_failure("execution_error", sprint(showerror, err, catch_backtrace()); run_id)
-    end
-    lock(_POWERFLOW_SERVICE_LOCK) do
+    try
+      lock(_POWERFLOW_SERVICE_LOCK) do
+        job["status"] = "running"
+        job["message"] = "PowerFlow run is active."
+      end
+      event_callback("powerflow_started"; run_id, requested_case = job["casefile"], status = "running")
+      worker_request = Dict{String,Any}(String(key) => value for (key, value) in request)
+      worker_request["run_id"] = run_id
+      worker_request["cancellation_token"] = job["abort_requested"]
+      result = try
+        runner(worker_request; case_directory)
+      catch err
+        err isa PowerFlowAborted ? Dict{String,Any}("status" => "aborted", "success" => false) :
+          _service_failure("execution_error", sprint(showerror, err, catch_backtrace()); run_id)
+      end
       if job["abort_requested"][]
-        job["status"] = "aborted"
-        job["message"] = "Run aborted by user."
         _write_aborted_powerflow_result!(job)
         event_callback("powerflow_aborted"; run_id = job["run_id"], requested_case = job["casefile"], status = "aborted")
+        lock(_POWERFLOW_SERVICE_LOCK) do
+          job["status"] = "aborted"
+          job["message"] = "Run aborted by user."
+        end
       else
-        job["status"] = get(result, "success", false) ? "success" : "failed"
-        job["message"] = something(get(result, "message", nothing), job["status"] == "success" ? "PowerFlow run completed." : "PowerFlow run failed.")
-        job["resolved_casefile"] = get(result, "casefile", nothing)
-        if haskey(result, "run_id") && result["run_id"] != run_id
-          delete!(_POWERFLOW_WEBUI_JOBS, run_id)
-          job["run_id"] = result["run_id"]
-          job["output_dir"] = get(result, "output_dir", job["output_dir"])
-          _POWERFLOW_WEBUI_JOBS[result["run_id"]] = job
+        lock(_POWERFLOW_SERVICE_LOCK) do
+          job["status"] = get(result, "success", false) ? "success" : "failed"
+          job["message"] = something(get(result, "message", nothing), job["status"] == "success" ? "PowerFlow run completed." : "PowerFlow run failed.")
+          job["resolved_casefile"] = get(result, "casefile", nothing)
+          if haskey(result, "run_id") && result["run_id"] != run_id
+            delete!(_POWERFLOW_WEBUI_JOBS, run_id)
+            job["run_id"] = result["run_id"]
+            job["output_dir"] = get(result, "output_dir", job["output_dir"])
+            _POWERFLOW_WEBUI_JOBS[result["run_id"]] = job
+          end
         end
         event_callback(
           job["status"] == "success" ? "powerflow_completed" : "powerflow_failed";
@@ -311,7 +316,14 @@ function start_webui_powerflow_run(request::AbstractDict; case_directory::Union{
           message = job["message"],
         )
       end
-      job["finished_at"] = Dates.now()
+    finally
+      lock(_POWERFLOW_SERVICE_LOCK) do
+        job["finished_at"] = Dates.now()
+        if get(job, "status", "") in _POWERFLOW_WEBUI_ACTIVE_STATES
+          job["status"] = job["abort_requested"][] ? "aborted" : "failed"
+          job["message"] = job["abort_requested"][] ? "Run aborted by user." : "PowerFlow worker exited before reaching a terminal result."
+        end
+      end
     end
   end
   return _webui_job_snapshot(job)

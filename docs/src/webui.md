@@ -92,9 +92,12 @@ state.
 Abort is cooperative and never kills a Julia task unsafely. The abort request
 changes the visible state to `aborting` immediately, and the Web UI PowerFlow
 path checks cancellation before and after major service phases and inside each
-rectangular Newton iteration. A non-interruptible operation may still finish
-before the next check, so the status page explains that it is waiting for a
-safe cancellation point. Repeated requests are idempotent. Once cancellation
+rectangular Newton iteration. The rectangular path also checks immediately
+before and after Y-bus construction and start projection, after Q-limit active
+set work, and after each Newton step. A sparse factorization or other
+non-interruptible operation may still finish before the next check, so the
+status page explains that it is waiting for a safe cancellation point.
+Repeated requests are idempotent. Once cancellation
 is observed, the terminal state becomes `aborted`, `powerflow_aborted` is
 written to the operation log, the active-run guard is released, and a new
 submission is accepted. Aborted runs retain a normal run directory,

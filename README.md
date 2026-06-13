@@ -134,7 +134,11 @@ Repository developers should run `julia --project=. start_webui.jl`;
 
 Stop the server with the **Stop Web UI** button, `close(server)`, or `Ctrl+C`.
 Run abort is cooperative: the UI changes the run state to `aborting` immediately, while
-an already-blocking solver phase may continue until that phase returns.
+an already-blocking solver phase may continue until that phase returns. The rectangular
+large-case path checks cancellation around Y-bus construction and start projection,
+at Newton/Q-limit iteration boundaries, and immediately after each Newton step. After
+terminal `aborted`, the active-run guard is released and another run can be submitted;
+active runs cannot be deleted until they are terminal.
 Queued, running, and aborting status pages refresh automatically every two seconds;
 terminal pages stop refreshing, and the manual **Refresh status** link remains available.
 The shared layout shows the running Sparlectra version. Support events in
