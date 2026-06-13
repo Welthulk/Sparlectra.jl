@@ -26,11 +26,17 @@ function handle_webui_logo()::SparlectraWebUIResponse
 end
 
 """Run a PowerFlow request through the Web UI form-to-service boundary."""
-function handle_powerflow_run(form::AbstractDict; default_output_root::AbstractString = "results/powerflow_service", application_root::AbstractString = _webui_application_root())::Dict{String,Any}
+function handle_powerflow_run(form::AbstractDict; default_output_root::AbstractString = "results/powerflow_service", application_root::AbstractString = _webui_application_root(), case_directory::Union{Nothing,AbstractString} = nothing)::Dict{String,Any}
   request = powerflow_webui_request(form; default_output_root = default_output_root)
-  case_directory = joinpath(application_root, "data", "mpower")
+  package_case_directory = joinpath(application_root, "data", "mpower")
+  requested_case = String(request["casefile"])
+  if !isabspath(requested_case) && !occursin('/', requested_case) && !occursin('\\', requested_case)
+    package_case = joinpath(package_case_directory, requested_case)
+    isfile(package_case) && (request["casefile"] = package_case)
+  end
+  effective_case_directory = case_directory === nothing ? package_case_directory : String(case_directory)
   event_callback = (event; fields...) -> record_webui_operation!(default_output_root, event; route = "/powerflow/run", method = "POST", user_action = false, fields...)
-  return start_webui_powerflow_run(request; case_directory, event_callback)
+  return start_webui_powerflow_run(request; case_directory = effective_case_directory, event_callback)
 end
 
 function handle_powerflow_result(run_id::AbstractString)::SparlectraWebUIResponse

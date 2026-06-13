@@ -5,22 +5,39 @@ PowerFlow service. The Web UI contains presentation, form parsing, and route
 handling only; numerical execution continues through `start_powerflow_run` and
 `run_sparlectra_api`.
 
-## Start the server
+## Start after package installation
 
 ```julia
 using Sparlectra
 
-server = start_sparlectra_webui(
-    host = "127.0.0.1",
-    port = 8080,
-    output_root = "results/powerflow_service",
-    open_browser = true,
-    auto_shutdown_on_browser_close = true,
-    browser_heartbeat_timeout_seconds = 15.0,
-    warmup = true,
-    warmup_store_result = false,
-)
+server = Sparlectra.start_sparlectra_webui(open_browser = true)
+wait(server.task)
 ```
+
+The package installation directory does not need to be known. By default,
+results are written beneath `%LOCALAPPDATA%\Sparlectra\WebUI\runs` on Windows,
+`$XDG_STATE_HOME/sparlectra/webui/runs` (or
+`~/.local/state/sparlectra/webui/runs`) on Linux, and
+`~/Library/Application Support/Sparlectra/WebUI/runs` on macOS. Directories
+are created automatically. The operation log is
+`<output_root>/webui_operations.jsonl`, and downloaded MATPOWER cases are
+cached beneath `<output_root>/data/mpower`.
+
+Pass `output_root="my_sparlectra_runs"` to override the default, or
+`config_file="my_configuration.yaml"` to select another configuration source.
+The effective configuration, output root, and MATPOWER cache are displayed by
+the Web UI; the browser cannot change the output root.
+
+### Repository developer launcher
+
+From a repository checkout, run:
+
+```sh
+julia --project=. start_webui.jl
+```
+
+`start_webui.jl` is the single maintained developer launcher and delegates
+startup and default-path behavior to `start_sparlectra_webui`.
 
 The call returns a `SparlectraWebUIServer` handle immediately. Stop it with
 `close(server)`, `Ctrl+C`, or the **Stop Web UI** button in the shared page
@@ -50,7 +67,7 @@ The shared header and footer display the running package version from
 
 `start_sparlectra_webui` accepts `warmup`, `warmup_casefile`, and
 `warmup_store_result`. The library default is `warmup=false`, while
-`examples/exp_webui_powerflow.jl` enables it for the local browser workflow.
+`start_webui.jl` enables it for the repository developer workflow.
 Warm-up runs asynchronously and fails softly. With
 `warmup_store_result=false`, it uses a temporary directory and creates no
 normal run-history entry. The bundled `data/webui/warmup_case3.jl` file is an
@@ -111,8 +128,9 @@ or `case9241pegase.m`; a nonempty manual value overrides the selected local
 case. YAML files and `*.yaml.example` templates found in `Sparlectra/examples`
 are offered in a separate dropdown.
 
-A missing bare `.m` or `.jl` case name is resolved in the server-owned
-`data/mpower` directory through the standard MATPOWER download helper. For an
+A missing bare `.m` or `.jl` case name is resolved in the user-writable
+`<output_root>/data/mpower` cache through the standard MATPOWER download
+helper. Bundled package cases remain selectable and are read in place. For an
 `.m` case, Sparlectra generates a Julia `.jl` representation and uses it for the
 run when generation succeeds. Existing generated `.jl` files are preferred on
 later runs to avoid repeatedly parsing the `.m` source. If generation fails but

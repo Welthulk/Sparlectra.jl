@@ -99,6 +99,46 @@ using Sparlectra
 
 ---
 
+## Local Web UI
+
+Installed users can start the local Web UI without knowing the package
+installation directory:
+
+```julia
+using Sparlectra
+
+server = Sparlectra.start_sparlectra_webui(open_browser = true)
+wait(server.task)
+```
+
+The Web UI creates its output, log, and MATPOWER case-cache directories
+automatically. Its default output root is:
+
+- Windows: `%LOCALAPPDATA%\Sparlectra\WebUI\runs`
+- Linux: `$XDG_STATE_HOME/sparlectra/webui/runs`, or
+  `~/.local/state/sparlectra/webui/runs` when `XDG_STATE_HOME` is unset
+- macOS: `~/Library/Application Support/Sparlectra/WebUI/runs`
+
+The operation log is `<output_root>/webui_operations.jsonl`, and downloaded
+cases are cached under `<output_root>/data/mpower`. To choose another root:
+
+```julia
+server = Sparlectra.start_sparlectra_webui(
+    output_root = "my_sparlectra_runs",
+    open_browser = true,
+)
+wait(server.task)
+```
+
+Repository developers should run `julia --project=. start_webui.jl`;
+`start_webui.jl` is the maintained developer launcher.
+
+Stop the server with the **Stop Web UI** button, `close(server)`, or `Ctrl+C`.
+Run abort is cooperative: the UI records the run as aborted immediately, while
+an already-blocking solver phase may continue until that phase returns.
+
+---
+
 ## Quick start
 
 `run_sparlectra` is the preferred public framework entry point. It owns MATPOWER

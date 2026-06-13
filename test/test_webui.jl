@@ -36,7 +36,26 @@ end
 function run_webui_tests()
   @testset "Local PowerFlow Web UI" begin
     @test isdefined(Sparlectra, :start_sparlectra_webui)
+    @test isdefined(Sparlectra, :default_webui_output_root)
     @test_throws ArgumentError start_sparlectra_webui(host = "0.0.0.0")
+    default_root = default_webui_output_root()
+    @test isabspath(default_root)
+    @test !startswith(normpath(default_root), normpath(pkgdir(Sparlectra)))
+    if Sys.islinux()
+      withenv("XDG_STATE_HOME" => joinpath(mktempdir(), "state")) do
+        @test default_webui_output_root() == joinpath(ENV["XDG_STATE_HOME"], "sparlectra", "webui", "runs")
+      end
+    end
+    launcher_source = read(joinpath(@__DIR__, "..", "start_webui.jl"), String)
+    @test occursin("Sparlectra.start_sparlectra_webui", launcher_source)
+    @test count("start_sparlectra_webui", launcher_source) == 1
+    repository_text = join(read(path, String) for path in (
+      joinpath(@__DIR__, "..", "README.md"),
+      joinpath(@__DIR__, "..", "docs", "src", "webui.md"),
+      joinpath(@__DIR__, "..", "docs", "src", "examples_overview.md"),
+    ))
+    @test !occursin("exp_webui_powerflow", repository_text)
+    @test occursin("server = Sparlectra.start_sparlectra_webui", read(joinpath(@__DIR__, "..", "README.md"), String))
 
     registry_before_warmup = Set(keys(Sparlectra._POWERFLOW_SERVICE_RUNS))
     warmup_output = Ref("")
@@ -551,12 +570,19 @@ result = get_powerflow_result(run_id)
       port = Int(getsockname(probe)[2])
       close(probe)
       server = start_sparlectra_webui(port = port, output_root = output_root, auto_shutdown_on_browser_close = false)
+      @test isdir(output_root)
+      @test server.runtime.case_directory == joinpath(abspath(output_root), "data", "mpower")
+      @test isdir(server.runtime.case_directory)
+      @test isfile(Sparlectra.webui_operation_log_path(output_root))
+      @test !startswith(server.runtime.case_directory, normpath(pkgdir(Sparlectra)))
       @test get_powerflow_result(run_id)["run_id"] == run_id
       try
         @test server.url == "http://127.0.0.1:$(port)/powerflow"
         response_text = _webui_http_request(port, "GET", "/powerflow")
         @test occursin("HTTP/1.1 200 OK", response_text)
         @test occursin("PowerFlow run", response_text)
+        @test occursin("<strong>Output root:</strong> <code>$(abspath(output_root))</code>", response_text)
+        @test occursin("<strong>MATPOWER case cache:</strong> <code>$(server.runtime.case_directory)</code>", response_text)
 
         logo_response_text = _webui_http_request(port, "GET", "/assets/logo.png")
         @test occursin("HTTP/1.1 200 OK", logo_response_text)

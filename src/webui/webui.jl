@@ -3,12 +3,35 @@ using Sockets
 
 mutable struct _SparlectraWebUIRuntime
   listener::Union{Sockets.TCPServer,Nothing}
+  case_directory::String
+  config_file::String
   auto_shutdown_on_browser_close::Bool
   heartbeat_timeout_seconds::Float64
   heartbeat_received::Bool
   last_heartbeat::Float64
   active_requests::Int
   lock::ReentrantLock
+end
+
+"""
+    default_webui_output_root() -> String
+
+Return the operating-system-specific, user-writable directory used for Web UI
+runs, downloaded MATPOWER cases, and the operation log.
+"""
+function default_webui_output_root()::String
+  if Sys.iswindows()
+    root = get(ENV, "LOCALAPPDATA", "")
+    return isempty(root) ? joinpath(pwd(), "sparlectra_webui_runs") : joinpath(root, "Sparlectra", "WebUI", "runs")
+  elseif Sys.isapple()
+    home = homedir()
+    return isempty(home) ? joinpath(pwd(), "sparlectra_webui_runs") : joinpath(home, "Library", "Application Support", "Sparlectra", "WebUI", "runs")
+  elseif Sys.islinux()
+    root = get(ENV, "XDG_STATE_HOME", "")
+    isempty(root) && (root = joinpath(homedir(), ".local", "state"))
+    return joinpath(root, "sparlectra", "webui", "runs")
+  end
+  return joinpath(pwd(), "sparlectra_webui_runs")
 end
 
 include("forms.jl")
@@ -207,7 +230,8 @@ end
 
 """
     start_sparlectra_webui(; host="127.0.0.1", port=8080,
-                            output_root="results/powerflow_service",
+                            output_root=nothing,
+                            config_file=DEFAULT_SPARLECTRA_CONFIG_PATH,
                             open_browser=false,
                             auto_shutdown_on_browser_close=true,
                             browser_heartbeat_timeout_seconds=15.0,
@@ -247,18 +271,26 @@ function _run_sparlectra_webui_warmup(output_root::AbstractString; warmup_casefi
   end
 end
 
-function start_sparlectra_webui(; host::AbstractString = "127.0.0.1", port::Integer = 8080, output_root::AbstractString = "results/powerflow_service", open_browser::Bool = false, auto_shutdown_on_browser_close::Bool = true, browser_heartbeat_timeout_seconds::Real = 15.0, warmup::Bool = false, warmup_casefile::Union{Nothing,AbstractString} = nothing, warmup_store_result::Bool = false)::SparlectraWebUIServer
+function start_sparlectra_webui(; host::AbstractString = "127.0.0.1", port::Integer = 8080, output_root::Union{Nothing,AbstractString} = nothing, config_file::AbstractString = DEFAULT_SPARLECTRA_CONFIG_PATH, open_browser::Bool = false, auto_shutdown_on_browser_close::Bool = true, browser_heartbeat_timeout_seconds::Real = 15.0, warmup::Bool = false, warmup_casefile::Union{Nothing,AbstractString} = nothing, warmup_store_result::Bool = false)::SparlectraWebUIServer
   host_string = String(host)
   host_string in ("127.0.0.1", "localhost", "::1") || throw(ArgumentError("Sparlectra Web UI only accepts loopback hosts: 127.0.0.1, localhost, or ::1."))
   1 <= port <= 65535 || throw(ArgumentError("Web UI port must be between 1 and 65535."))
   timeout = Float64(browser_heartbeat_timeout_seconds)
   isfinite(timeout) && timeout > 0 || throw(ArgumentError("Browser heartbeat timeout must be a positive finite number."))
-  root = String(output_root)
+  root = abspath(output_root === nothing ? default_webui_output_root() : String(output_root))
+  configuration = abspath(config_file)
+  isfile(configuration) || throw(ArgumentError("Web UI configuration file not found: $(configuration)"))
+  case_directory = joinpath(root, "data", "mpower")
+  try
+    mkpath(case_directory)
+  catch err
+    throw(ArgumentError("Could not create Web UI output directory $(root): $(sprint(showerror, err))"))
+  end
   refresh_powerflow_run_registry!(root)
   record_webui_operation!(root, "webui_start"; route = "/powerflow", method = "START", status = "started", user_action = false)
   address = host_string == "localhost" ? ip"127.0.0.1" : parse(Sockets.IPAddr, host_string)
   listener = Sockets.listen(address, UInt16(port))
-  runtime = _SparlectraWebUIRuntime(listener, auto_shutdown_on_browser_close, timeout, false, 0.0, 0, ReentrantLock())
+  runtime = _SparlectraWebUIRuntime(listener, case_directory, configuration, auto_shutdown_on_browser_close, timeout, false, 0.0, 0, ReentrantLock())
   task = @async begin
     while isopen(listener)
       try

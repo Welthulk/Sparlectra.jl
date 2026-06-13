@@ -51,10 +51,10 @@ function route_sparlectra_webui(method::AbstractString, target::AbstractString, 
     return handle_webui_doc_page(_webui_urldecode(path[(lastindex("/docs/") + 1):end]))
   elseif verb == "GET" && path in ("/", "/powerflow")
     _webui_log_route!(output_root, "powerflow_form_opened", verb, path; status = "opened")
-    return _webui_html(render_powerflow_form(; output_root))
+    return _webui_html(render_powerflow_form(; output_root, case_directory = runtime === nothing ? nothing : runtime.case_directory, selected_config_file = runtime === nothing ? "" : runtime.config_file))
   elseif verb == "POST" && path == "/powerflow/run"
     try
-      result = handle_powerflow_run(form; default_output_root = output_root)
+      result = handle_powerflow_run(form; default_output_root = output_root, case_directory = runtime === nothing ? nothing : runtime.case_directory)
       manual_case = strip(String(something(_webui_form_value(form, "casefile_manual", ""), "")))
       requested_case = isempty(manual_case) ? String(something(_webui_form_value(form, "casefile", ""), "")) : manual_case
       if haskey(result, "run_id") && !haskey(result, "reason")
