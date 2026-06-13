@@ -78,7 +78,7 @@ function route_sparlectra_webui(method::AbstractString, target::AbstractString, 
     end
   elseif verb == "GET" && startswith(path, "/powerflow/result/")
     run_id = _webui_urldecode(path[(lastindex("/powerflow/result/") + 1):end])
-    _webui_log_route!(log_root, "powerflow_status_opened", verb, path; status = "opened", run_id)
+    get(query, "autorefresh", "") == "1" || _webui_log_route!(log_root, "powerflow_status_opened", verb, path; status = "opened", run_id)
     return handle_powerflow_result(run_id)
   elseif verb == "POST" && startswith(path, "/powerflow/abort/")
     run_id = _webui_urldecode(path[(lastindex("/powerflow/abort/") + 1):end])

@@ -12,6 +12,8 @@
 
 ### Improvements
 
+* Improved active Web UI status pages with two-second automatic refresh until terminal state, without logging automatic refresh requests as user actions, while retaining manual refresh and active Abort controls.
+* Added entry-count compaction for the Web UI operation log above 10,000 valid JSONL entries, preserving the newest 1,000 entries, and added the running Sparlectra version plus millisecond-precision UTC `Z` timestamps to every operation event.
 * Consolidated Web UI startup around the repository-root `start_webui.jl` launcher and the installed-package `start_sparlectra_webui` API, with OS-specific user-writable output defaults, automatic directory creation, and output-root-local operation logs and MATPOWER case downloads.
 * Improved the local PowerFlow Web UI with startup run-registry recovery, read-only server-authoritative output roots, timestamped status-badge history, traversal-safe single/all-run deletion, and explicit or heartbeat-driven graceful server shutdown.
 * Improved the local PowerFlow Web UI with Markdown-backed help for every visible form option, safe allowlisted rewriting of internal documentation links, and larger readable documentation, help, log, and text-artifact panels.

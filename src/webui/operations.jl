@@ -1,4 +1,6 @@
 const WEBUI_OPERATION_LOG_FILENAME = "webui_operations.jsonl"
+const WEBUI_OPERATION_LOG_MAX_ENTRIES = 10_000
+const WEBUI_OPERATION_LOG_KEEP_ENTRIES = 1_000
 const _WEBUI_OPERATION_LOG_MAX_BYTES = 10 * 1024 * 1024
 const _WEBUI_OPERATION_LOG_LOCK = ReentrantLock()
 
@@ -15,6 +17,44 @@ function _rotate_webui_operation_log!(path::AbstractString)
   return nothing
 end
 
+function _compact_webui_operation_log!(
+  path::AbstractString;
+  max_entries::Integer = WEBUI_OPERATION_LOG_MAX_ENTRIES,
+  keep_entries::Integer = WEBUI_OPERATION_LOG_KEEP_ENTRIES,
+)::Bool
+  max_entries >= 0 || throw(ArgumentError("max_entries must be nonnegative."))
+  0 <= keep_entries <= max_entries || throw(ArgumentError("keep_entries must be between zero and max_entries."))
+  isfile(path) || return false
+
+  valid_lines = String[]
+  for line in eachline(path)
+    isempty(strip(line)) && continue
+    try
+      _parse_service_json(line)
+      push!(valid_lines, line)
+    catch
+    end
+  end
+  length(valid_lines) > max_entries || return false
+
+  kept_lines = keep_entries == 0 ? String[] : valid_lines[(end - keep_entries + 1):end]
+  temporary_path = string(path, ".tmp")
+  try
+    open(temporary_path, "w") do io
+      for line in kept_lines
+        println(io, line)
+      end
+    end
+    mv(temporary_path, path; force = true)
+  catch
+    ispath(temporary_path) && rm(temporary_path; force = true)
+    rethrow()
+  end
+  return true
+end
+
+_webui_operation_timestamp() = string(Dates.format(Dates.now(Dates.UTC), dateformat"yyyy-mm-ddTHH:MM:SS.sss"), 'Z')
+
 """
     record_webui_operation!(output_root, event; fields...) -> Bool
 
@@ -26,7 +66,8 @@ function record_webui_operation!(output_root::AbstractString, event::AbstractStr
   try
     path = webui_operation_log_path(output_root)
     entry = Dict{String,Any}(
-      "timestamp" => Dates.format(Dates.now(), dateformat"yyyy-mm-ddTHH:MM:SS.sss"),
+      "timestamp" => _webui_operation_timestamp(),
+      "sparlectra_version" => string(version()),
       "event" => String(event),
     )
     for (key, value) in fields
@@ -39,6 +80,7 @@ function record_webui_operation!(output_root::AbstractString, event::AbstractStr
         _write_json(io, entry)
         println(io)
       end
+      _compact_webui_operation_log!(path)
     end
     return true
   catch err

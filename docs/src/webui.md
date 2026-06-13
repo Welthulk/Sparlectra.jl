@@ -76,7 +76,10 @@ not a derivative of an external MATPOWER case.
 
 Web UI submissions start in a background worker task and redirect immediately to
 a run-status page. The page shows the requested and resolved case paths, status,
-start time, elapsed time, and a manual refresh link. While a job is queued or
+start time, elapsed time, and a manual refresh link. Queued, running, and
+aborting pages also refresh every two seconds through an HTML refresh directive.
+The marked `autorefresh=1` requests are not recorded as user actions. Terminal
+success, failure, and abort pages stop refreshing automatically. While a job is queued or
 running, it also shows an **Abort run** form that sends
 `POST /powerflow/abort/<run-id>`; JavaScript is not required.
 
@@ -229,11 +232,20 @@ modes. Static CSS and image requests are not user-action events.
 Use the shared **Operation Log** navigation link to open the escaped text viewer
 at `/webui/operation-log`, or download the JSONL file from that page for an
 error report. Entries contain concise route, method, status, run/case/artifact,
-message, and timing fields when available. They never include artifact
+message, and timing fields when available. Every event also records
+`sparlectra_version` and a millisecond-precision UTC timestamp using
+`yyyy-mm-ddTHH:MM:SS.sssZ`. They never include artifact
 contents, local file contents, or complete configuration bodies. Logging is
-best effort and cannot fail a normal Web UI request. When the current file
-reaches 10 MiB, it is replaced after being retained as
-`webui_operations.jsonl.1`.
+best effort and cannot fail a normal Web UI request. After an append takes the
+file above 10,000 valid JSONL entries, compaction atomically keeps the newest
+1,000 valid entries and drops empty or malformed lines encountered during
+compaction. When the current file reaches 10 MiB, it is replaced after being
+retained as `webui_operations.jsonl.1`; this byte-size guard remains independent
+of entry-count compaction. The viewer and download read the current file.
+
+Development reports distinguish external **Verification limitations**, such as
+an unavailable browser executable or an HTTP 403/proxy failure while installing
+documentation dependencies, from genuinely unfinished implementation work.
 
 ## Persistent run history and run management
 
