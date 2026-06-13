@@ -3,7 +3,8 @@ const _WEBUI_OPERATION_LOG_MAX_BYTES = 10 * 1024 * 1024
 const _WEBUI_OPERATION_LOG_LOCK = ReentrantLock()
 
 function webui_operation_log_path(output_root::AbstractString)::String
-  return joinpath(abspath(output_root), WEBUI_OPERATION_LOG_FILENAME)
+  path = abspath(output_root)
+  return basename(path) == WEBUI_OPERATION_LOG_FILENAME ? path : joinpath(path, WEBUI_OPERATION_LOG_FILENAME)
 end
 
 function _rotate_webui_operation_log!(path::AbstractString)

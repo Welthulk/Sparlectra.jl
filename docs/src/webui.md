@@ -19,13 +19,11 @@ results are written beneath `%LOCALAPPDATA%\Sparlectra\WebUI\runs` on Windows,
 `$XDG_STATE_HOME/sparlectra/webui/runs` (or
 `~/.local/state/sparlectra/webui/runs`) on Linux, and
 `~/Library/Application Support/Sparlectra/WebUI/runs` on macOS. Directories
-are created automatically. The operation log is
-`<output_root>/webui_operations.jsonl`, and downloaded MATPOWER cases are
-cached beneath `<output_root>/data/mpower`.
+are created automatically. The operation log is in the sibling user Web UI `logs` directory, and downloaded/generated MATPOWER cases are
+cached in the sibling user Web UI `data/mpower` directory. On first start, `warmup_case3.jl` is copied there as a small selectable demo case.
 
-Pass `output_root="my_sparlectra_runs"` to override the default, or
-`config_file="my_configuration.yaml"` to select another configuration source.
-The effective configuration, output root, and MATPOWER cache are displayed by
+On first startup, the Web UI copies the package configuration template to its user-writable `config/configuration.yaml`. Pass `output_root="my_sparlectra_runs"` or `config_file="my_configuration.yaml"` to override these defaults; an explicit configuration file is never overwritten.
+The effective configuration, output root, MATPOWER cache, and operation log are displayed by
 the Web UI; the browser cannot change the output root.
 
 ### Repository developer launcher
@@ -76,7 +74,7 @@ not a derivative of an external MATPOWER case.
 
 ## Starting a PowerFlow run
 
-Web UI submissions start in a background Julia task and redirect immediately to
+Web UI submissions start in a background worker task and redirect immediately to
 a run-status page. The page shows the requested and resolved case paths, status,
 start time, elapsed time, and a manual refresh link. While a job is queued or
 running, it also shows an **Abort run** form that sends
@@ -89,13 +87,12 @@ controls disappear as soon as the run reaches a completed, failed, or aborted
 state.
 
 Abort is cooperative and never injects an exception into solver code. The abort
-request is accepted immediately, the run is recorded as `aborted`, and the form
-is available for another submission. If execution is already inside a blocking
-solver phase, its background task may continue until that phase returns, but
-its result cannot replace the aborted status. Partial files remain in the run
-directory and `run.log` identifies the user abort. Only one non-aborted Web UI
-job is accepted at a time; a second submission receives a controlled message
-asking the user to abort the active run or wait.
+request changes the visible state to `aborting` immediately. If execution is
+already inside a blocking solver phase, that phase may continue until it
+returns; during this non-interruptible interval, a second submission receives a
+clear active-run message. The worker's eventual success is discarded, the
+terminal state becomes `aborted`, and a new submission is then accepted.
+Aborted runs retain a normal run directory and `run.log` status marker.
 
 The start page accepts:
 
@@ -118,30 +115,24 @@ read-only information, and cannot be overridden by a submitted browser field.
 The page does not offer a generic YAML editor and never modifies the selected
 template. The service creates an `effective_config.yaml` artifact for each run.
 
-The Web UI resolves the Sparlectra application directory from the process start
-directory. It supports starting directly in the repository or from a parent
-directory containing `Sparlectra` or `Sparlectra.jl` (for example
-`C:\Users\scud\.julia\dev`). MATPOWER `.m` and generated `.jl` files found in
-`Sparlectra/data/mpower` are shown in an explicit existing-case selector. A
+The existing-case selector lists `.m` and `.jl` files from the user Web UI case
+cache. First startup provisions the small `warmup_case3.jl` demo case. A
 separate manual field accepts a bare case name such as `case14.m`, `case118.m`,
-or `case9241pegase.m`; a nonempty manual value overrides the selected local
-case. YAML files and `*.yaml.example` templates found in `Sparlectra/examples`
-are offered in a separate dropdown.
+or `case9241pegase.m`; a nonempty manual value overrides the selected cached
+case.
 
-A missing bare `.m` or `.jl` case name is resolved in the user-writable
-`<output_root>/data/mpower` cache through the standard MATPOWER download
-helper. Bundled package cases remain selectable and are read in place. For an
-`.m` case, Sparlectra generates a Julia `.jl` representation and uses it for the
-run when generation succeeds. Existing generated `.jl` files are preferred on
-later runs to avoid repeatedly parsing the `.m` source. If generation fails but
-the `.m` file remains readable, the run falls back to that `.m` file.
+A missing bare `.m` or `.jl` case name is resolved in the user Web UI
+`data/mpower` cache through the standard MATPOWER download helper. For an `.m`
+case, Sparlectra generates a Julia `.jl` representation in that cache and uses
+it when generation succeeds. Existing generated `.jl` files are preferred on
+later runs. If generation fails but the `.m` file remains readable, the run
+falls back to that cached `.m` file.
 
 Existing absolute and relative `.m` or `.jl` paths remain supported. A missing
 input containing a path separator is rejected instead of downloaded, and URL
-input is not accepted. The browser cannot select the case download directory or
-the run output root. If the `examples` directory contains no supported
-configuration file, the configuration field falls back to the package's
-default `src/configuration.yaml.example`.
+input is not accepted. The browser cannot select runtime directories. The
+read-only configuration path is the provisioned user file or the explicit file
+passed at startup.
 
 ## Run artifacts and output modes
 
@@ -222,8 +213,7 @@ page layout for practical inspection of long logs and configuration files.
 
 ## Persistent operation log
 
-The Web UI appends support-oriented JSON Lines events to
-`<output_root>/webui_operations.jsonl`. This file is independent of individual
+The Web UI appends support-oriented JSON Lines events to its user-writable `logs/webui_operations.jsonl`. This file is independent of individual
 run directories and survives Web UI restarts that reuse the same output root.
 It records key page opens, submissions and validation failures, asynchronous
 run lifecycle changes, artifact views/downloads, abort requests, history

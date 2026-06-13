@@ -336,16 +336,17 @@ function run_api_tests()
       rejected_concurrent = Sparlectra.start_webui_powerflow_run(async_request; runner = controlled_runner)
       @test rejected_concurrent["reason"] == "active_run"
       aborted = Sparlectra.abort_webui_powerflow_run(active["run_id"])
-      @test aborted["status"] == "aborted"
+      @test aborted["status"] == "aborting"
       @test !aborted["success"]
+      @test Sparlectra.start_webui_powerflow_run(async_request; runner = controlled_runner)["reason"] == "active_run"
+      @test Sparlectra.abort_webui_powerflow_run("../unsafe")["reason"] == "unsafe_run_id"
+      put!(release, nothing)
+      wait(Sparlectra._POWERFLOW_WEBUI_JOBS[active["run_id"]]["task"])
       @test get_powerflow_result(active["run_id"])["status"] == "aborted"
       @test occursin("Run aborted by user.", read(joinpath(aborted["output_dir"], "run.log"), String))
-      @test Sparlectra.abort_webui_powerflow_run("../unsafe")["reason"] == "unsafe_run_id"
       replacement = Sparlectra.start_webui_powerflow_run(async_request; runner = controlled_runner)
       @test replacement["status"] in ("queued", "running")
       put!(release, nothing)
-      put!(release, nothing)
-      wait(Sparlectra._POWERFLOW_WEBUI_JOBS[active["run_id"]]["task"])
       wait(Sparlectra._POWERFLOW_WEBUI_JOBS[replacement["run_id"]]["task"])
       @test Sparlectra.get_webui_powerflow_job(active["run_id"])["status"] == "aborted"
       @test Sparlectra.get_active_webui_powerflow_job() === nothing

@@ -28,7 +28,10 @@ Return sorted MATPOWER `.m` and `.jl` case names from the Web UI application's
 `data/mpower` directory. Missing or empty directories produce an empty list.
 """
 function _webui_casefile_options(application_root::AbstractString)::Vector{String}
-  directory = joinpath(application_root, "data", "mpower")
+  return _webui_casefile_options_in_directory(joinpath(application_root, "data", "mpower"))
+end
+
+function _webui_casefile_options_in_directory(directory::AbstractString)::Vector{String}
   isdir(directory) || return String[]
   files = filter(readdir(directory)) do name
     extension = lowercase(splitext(name)[2])

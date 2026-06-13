@@ -5,6 +5,8 @@ mutable struct _SparlectraWebUIRuntime
   listener::Union{Sockets.TCPServer,Nothing}
   case_directory::String
   config_file::String
+  operation_log::String
+  runner
   auto_shutdown_on_browser_close::Bool
   heartbeat_timeout_seconds::Float64
   heartbeat_received::Bool
@@ -33,6 +35,18 @@ function default_webui_output_root()::String
   end
   return joinpath(pwd(), "sparlectra_webui_runs")
 end
+
+"""Return the user-writable default Web UI configuration path."""
+default_webui_config_path(output_root::AbstractString = default_webui_output_root())::String =
+  joinpath(dirname(abspath(output_root)), "config", "configuration.yaml")
+
+"""Return the user-writable MATPOWER case cache used by the Web UI."""
+default_webui_case_cache_dir(output_root::AbstractString = default_webui_output_root())::String =
+  joinpath(dirname(abspath(output_root)), "data", "mpower")
+
+"""Return the Web UI operation-log path beneath the user application root."""
+default_webui_operation_log_path(output_root::AbstractString = default_webui_output_root())::String =
+  joinpath(dirname(abspath(output_root)), "logs", WEBUI_OPERATION_LOG_FILENAME)
 
 include("forms.jl")
 include("docs.jl")
@@ -271,26 +285,39 @@ function _run_sparlectra_webui_warmup(output_root::AbstractString; warmup_casefi
   end
 end
 
-function start_sparlectra_webui(; host::AbstractString = "127.0.0.1", port::Integer = 8080, output_root::Union{Nothing,AbstractString} = nothing, config_file::AbstractString = DEFAULT_SPARLECTRA_CONFIG_PATH, open_browser::Bool = false, auto_shutdown_on_browser_close::Bool = true, browser_heartbeat_timeout_seconds::Real = 15.0, warmup::Bool = false, warmup_casefile::Union{Nothing,AbstractString} = nothing, warmup_store_result::Bool = false)::SparlectraWebUIServer
+function _provision_webui_runtime!(root::AbstractString, config_file::Union{Nothing,AbstractString})
+  configuration = config_file === nothing ? default_webui_config_path(root) : abspath(config_file)
+  case_directory = default_webui_case_cache_dir(root)
+  operation_log = default_webui_operation_log_path(root)
+  mkpath.(unique((abspath(root), dirname(configuration), case_directory, dirname(operation_log))))
+  config_file === nothing && !isfile(configuration) && cp(DEFAULT_SPARLECTRA_CONFIG_PATH, configuration)
+  isfile(configuration) || throw(ArgumentError("Web UI configuration file not found: $(configuration)"))
+  source = joinpath(_WEBUI_PACKAGE_ROOT, "data", "webui", "warmup_case3.jl")
+  if isfile(source)
+    destination = joinpath(case_directory, basename(source))
+    isfile(destination) || cp(source, destination)
+  end
+  return (config_file = configuration, case_directory, operation_log)
+end
+
+function start_sparlectra_webui(; host::AbstractString = "127.0.0.1", port::Integer = 8080, output_root::Union{Nothing,AbstractString} = nothing, config_file::Union{Nothing,AbstractString} = nothing, open_browser::Bool = false, auto_shutdown_on_browser_close::Bool = true, browser_heartbeat_timeout_seconds::Real = 15.0, warmup::Bool = false, warmup_casefile::Union{Nothing,AbstractString} = nothing, warmup_store_result::Bool = false, _test_runner = start_powerflow_run)::SparlectraWebUIServer
   host_string = String(host)
   host_string in ("127.0.0.1", "localhost", "::1") || throw(ArgumentError("Sparlectra Web UI only accepts loopback hosts: 127.0.0.1, localhost, or ::1."))
   1 <= port <= 65535 || throw(ArgumentError("Web UI port must be between 1 and 65535."))
   timeout = Float64(browser_heartbeat_timeout_seconds)
   isfinite(timeout) && timeout > 0 || throw(ArgumentError("Browser heartbeat timeout must be a positive finite number."))
   root = abspath(output_root === nothing ? default_webui_output_root() : String(output_root))
-  configuration = abspath(config_file)
-  isfile(configuration) || throw(ArgumentError("Web UI configuration file not found: $(configuration)"))
-  case_directory = joinpath(root, "data", "mpower")
+  paths = nothing
   try
-    mkpath(case_directory)
+    paths = _provision_webui_runtime!(root, config_file)
   catch err
     throw(ArgumentError("Could not create Web UI output directory $(root): $(sprint(showerror, err))"))
   end
   refresh_powerflow_run_registry!(root)
-  record_webui_operation!(root, "webui_start"; route = "/powerflow", method = "START", status = "started", user_action = false)
+  record_webui_operation!(paths.operation_log, "webui_start"; route = "/powerflow", method = "START", status = "started", user_action = false, output_root = root, config_file = paths.config_file, case_cache_dir = paths.case_directory, operation_log = paths.operation_log)
   address = host_string == "localhost" ? ip"127.0.0.1" : parse(Sockets.IPAddr, host_string)
   listener = Sockets.listen(address, UInt16(port))
-  runtime = _SparlectraWebUIRuntime(listener, case_directory, configuration, auto_shutdown_on_browser_close, timeout, false, 0.0, 0, ReentrantLock())
+  runtime = _SparlectraWebUIRuntime(listener, paths.case_directory, paths.config_file, paths.operation_log, _test_runner, auto_shutdown_on_browser_close, timeout, false, 0.0, 0, ReentrantLock())
   task = @async begin
     while isopen(listener)
       try
