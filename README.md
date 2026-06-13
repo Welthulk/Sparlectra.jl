@@ -135,6 +135,13 @@ Repository developers should run `julia --project=. start_webui.jl`;
 Stop the server with the **Stop Web UI** button, `close(server)`, or `Ctrl+C`.
 Run abort is cooperative: the UI changes the run state to `aborting` immediately, while
 an already-blocking solver phase may continue until that phase returns.
+Queued, running, and aborting status pages refresh automatically every two seconds;
+terminal pages stop refreshing, and the manual **Refresh status** link remains available.
+The shared layout shows the running Sparlectra version. Support events in
+`webui_operations.jsonl` include that version and an unambiguous UTC timestamp with a
+`Z` suffix. Automatic status refreshes are not logged as user actions. The log is
+compacted after it exceeds 10,000 valid JSONL entries, preserving the newest 1,000
+entries; the existing 10 MiB single-backup size guard remains as an additional limit.
 
 ---
 

@@ -62,7 +62,11 @@ next safe iteration boundary. No unsafe task interruption is used.
 The Web UI supplies a small lifecycle callback to this asynchronous boundary so
 `powerflow_started`, completion/failure, and final abort events can be appended
 to the user Web UI `logs/webui_operations.jsonl` support log. This does not
-change the PowerFlow result schema or per-run artifact contract.
+change the PowerFlow result schema or per-run artifact contract. Every event
+includes the running Sparlectra version and a millisecond-precision UTC
+timestamp ending in `Z`. Marked `autorefresh=1` status requests are omitted from
+user-action logging. Above 10,000 valid entries, the JSONL log atomically keeps
+its newest 1,000 valid entries.
 
 Aborted runs receive a normal run directory, `result.json`, an index entry, and
 a `run.log` status marker. This keeps history recovery and artifact path safety
@@ -121,4 +125,4 @@ runnable local example.
 
 ## Web UI runtime paths and cancellation
 
-The browser submit route schedules work and redirects to the run status page before case loading, solving, diagnostics, or artifact writing. Active status and history/form banners expose a POST-only Abort control while the job is queued or running. Cancellation is cooperative: the UI changes to `aborting` immediately, repeated requests are logged as already requested, and the worker records terminal `aborted` plus `powerflow_aborted` at the next safe phase or rectangular-iteration check. Terminal abort releases the single-active-job guard. Delete requests for queued, running, or aborting jobs are rejected with a controlled explanation; terminal aborted jobs can be deleted normally. The Web UI provisions configuration, case cache, run output, and operation-log paths beneath the user-writable Web UI application directories; explicit startup paths and explicit local case paths remain supported.
+The browser submit route schedules work and redirects to the run status page before case loading, solving, diagnostics, or artifact writing. Active status pages refresh every two seconds until terminal state while retaining the manual refresh link. Active status and history/form banners expose a POST-only Abort control while the job is queued or running. Cancellation is cooperative: the UI changes to `aborting` immediately, repeated requests are logged as already requested, and the worker records terminal `aborted` plus `powerflow_aborted` at the next safe phase or rectangular-iteration check. Terminal abort releases the single-active-job guard and stops automatic refresh. Delete requests for queued, running, or aborting jobs are rejected with a controlled explanation; terminal aborted jobs can be deleted normally. The Web UI provisions configuration, case cache, run output, and operation-log paths beneath the user-writable Web UI application directories; explicit startup paths and explicit local case paths remain supported.
