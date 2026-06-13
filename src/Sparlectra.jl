@@ -410,6 +410,7 @@ export
   get_powerflow_result,                   # Look up serialized run metadata by run ID.
   list_powerflow_artifacts,               # List run artifacts by run ID.
   resolve_powerflow_artifact,             # Safely resolve a run artifact by metadata name.
+  default_webui_output_root,              # Return the user-writable default Web UI output directory.
   start_sparlectra_webui,                 # Start the loopback-only local PowerFlow Web UI.
   to_dict,                                # Convert API results and artifacts to dictionaries.
   to_namedtuple,                          # Convert API results to named tuples.
