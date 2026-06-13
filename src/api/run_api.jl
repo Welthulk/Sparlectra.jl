@@ -171,6 +171,7 @@ function _run_sparlectra_api(;
   run_diagnostics::Bool = false,
   phase_timings::AbstractDict = Dict{Symbol,Float64}(),
   run_id::String,
+  cancellation_token = nothing,
 )::SparlectraApiResult
   total_start = time_ns()
   phases = Dict{Symbol,Float64}(Symbol(key) => Float64(value) for (key, value) in phase_timings)
@@ -191,6 +192,7 @@ function _run_sparlectra_api(;
   logfile = joinpath(output_path, "run.log")
   result_file = joinpath(output_path, "result.json")
   touch(logfile)
+  _check_powerflow_cancelled!(cancellation_token)
 
   isfile(config_path) || return _api_failure("config_file_not_found", "Configuration file not found: $(config_path)"; run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file)
 
@@ -211,10 +213,12 @@ function _run_sparlectra_api(;
 
   effective_config = joinpath(output_path, "effective_config.yaml")
   _write_yaml_file(effective_config, effective_raw)
+  _check_powerflow_cancelled!(cancellation_token)
   phases[:api_config_build] = _api_elapsed_seconds(config_start)
   isfile(case_path) || return _api_failure("casefile_not_found", "MATPOWER case file not found: $(case_path)"; run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file)
 
   raw_result = nothing
+  api_performance_profile = Dict{Symbol,Any}(:cancellation_check => () -> _check_powerflow_cancelled!(cancellation_token))
   execution_start = time_ns()
   try
     open(logfile, "a") do io
@@ -222,13 +226,14 @@ function _run_sparlectra_api(;
         redirect_stdout(io) do
           redirect_stderr(io) do
             cd(output_path) do
-              raw_result = run_sparlectra(casefile = basename(case_path), path = dirname(case_path), config = config)
+              raw_result = run_sparlectra(casefile = basename(case_path), path = dirname(case_path), config = config, performance_profile = api_performance_profile)
             end
           end
         end
       end
     end
   catch err
+    err isa PowerFlowAborted && rethrow()
     message = sprint(showerror, err, catch_backtrace())
     return _api_failure("execution_error", message; run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file)
   end
@@ -239,7 +244,9 @@ function _run_sparlectra_api(;
   end
 
   artifact_start = time_ns()
+  _check_powerflow_cancelled!(cancellation_token)
   run_diagnostics && _write_powerflow_diagnostics(joinpath(output_path, "diagnose.txt"), raw_result)
+  _check_powerflow_cancelled!(cancellation_token)
   open(logfile, "a") do io
     println(io)
     println(io, "API run summary")
@@ -267,6 +274,7 @@ function _run_sparlectra_api(;
   phases[:artifact_writing] = _api_elapsed_seconds(artifact_start)
   phases[:total] = _api_elapsed_seconds(total_start)
   timing_mode === :off || _write_performance_log(joinpath(output_path, "performance.log"), timing_mode, phases, raw_result)
+  _check_powerflow_cancelled!(cancellation_token)
 
   success = raw_result.final_converged && raw_result.solution_available
   mismatch = isfinite(raw_result.final_mismatch) ? raw_result.final_mismatch : nothing

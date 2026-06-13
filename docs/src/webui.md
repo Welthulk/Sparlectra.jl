@@ -86,13 +86,19 @@ discoverable even when the user navigates away from the status page. The
 controls disappear as soon as the run reaches a completed, failed, or aborted
 state.
 
-Abort is cooperative and never injects an exception into solver code. The abort
-request changes the visible state to `aborting` immediately. If execution is
-already inside a blocking solver phase, that phase may continue until it
-returns; during this non-interruptible interval, a second submission receives a
-clear active-run message. The worker's eventual success is discarded, the
-terminal state becomes `aborted`, and a new submission is then accepted.
-Aborted runs retain a normal run directory and `run.log` status marker.
+Abort is cooperative and never kills a Julia task unsafely. The abort request
+changes the visible state to `aborting` immediately, and the Web UI PowerFlow
+path checks cancellation before and after major service phases and inside each
+rectangular Newton iteration. A non-interruptible operation may still finish
+before the next check, so the status page explains that it is waiting for a
+safe cancellation point. Repeated requests are idempotent. Once cancellation
+is observed, the terminal state becomes `aborted`, `powerflow_aborted` is
+written to the operation log, the active-run guard is released, and a new
+submission is accepted. Aborted runs retain a normal run directory,
+`result.json`, and `run.log` status marker, but are never reported as success.
+
+Deletion of a queued, running, or aborting run is rejected with an explanation.
+After the run reaches terminal `aborted` status, normal deletion is available.
 
 The start page accepts:
 

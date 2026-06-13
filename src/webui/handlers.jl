@@ -117,6 +117,10 @@ function handle_powerflow_refresh(output_root::AbstractString)::Dict{String,Any}
 end
 
 function handle_powerflow_delete(run_id::AbstractString, output_root::AbstractString)::SparlectraWebUIResponse
+  job = get_webui_powerflow_job(run_id)
+  if get(job, "status", "") in _POWERFLOW_WEBUI_ACTIVE_STATES
+    return _webui_html(render_webui_error(409, "This run is still active. Abort it first and wait until it reaches aborted status."); status = 409)
+  end
   result = delete_powerflow_run(run_id; output_root)
   get(result, "success", false) && return _webui_redirect("/powerflow/history")
   status = get(result, "reason", "") in ("unsafe_run_id", "unsafe_output_dir", "unsafe_result_file") ? 400 : 404

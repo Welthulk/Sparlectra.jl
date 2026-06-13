@@ -82,8 +82,11 @@ function route_sparlectra_webui(method::AbstractString, target::AbstractString, 
     return handle_powerflow_result(run_id)
   elseif verb == "POST" && startswith(path, "/powerflow/abort/")
     run_id = _webui_urldecode(path[(lastindex("/powerflow/abort/") + 1):end])
+    prior_status = get(get_webui_powerflow_job(run_id), "status", "")
     response = handle_powerflow_abort(run_id)
-    _webui_log_route!(log_root, "powerflow_abort_requested", verb, path; status = response.status == 303 ? "accepted" : "rejected", run_id)
+    event = prior_status == "aborting" ? "powerflow_abort_already_requested" : prior_status == "aborted" ? "powerflow_abort_ignored" : "powerflow_abort_requested"
+    event_status = prior_status == "aborting" ? "already_aborting" : prior_status == "aborted" ? "already_aborted" : response.status == 303 ? "accepted" : "rejected"
+    _webui_log_route!(log_root, event, verb, path; status = event_status, run_id)
     return response
   elseif verb == "GET" && startswith(path, "/powerflow/artifacts/")
     return handle_powerflow_artifacts(_webui_urldecode(path[(lastindex("/powerflow/artifacts/") + 1):end]))
@@ -106,7 +109,8 @@ function route_sparlectra_webui(method::AbstractString, target::AbstractString, 
   elseif verb == "POST" && startswith(path, "/powerflow/delete/")
     run_id = _webui_urldecode(path[(lastindex("/powerflow/delete/") + 1):end])
     response = handle_powerflow_delete(run_id, output_root)
-    _webui_log_route!(log_root, "run_deleted", verb, path; status = response.status == 303 ? "succeeded" : "failed", run_id)
+    event = response.status == 409 ? "run_delete_rejected" : "run_deleted"
+    _webui_log_route!(log_root, event, verb, path; status = response.status == 303 ? "succeeded" : "rejected", run_id)
     return response
   elseif verb == "POST" && path == "/powerflow/delete_all"
     response = handle_powerflow_delete_all(output_root)
