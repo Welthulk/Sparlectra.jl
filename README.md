@@ -101,6 +101,14 @@ using Sparlectra
 
 ## Local Web UI
 
+PowerFlow aborts are cooperative. Active status pages report the current
+execution phase and cancellation timestamps. Sparse factorization and other
+numerical calls may not be interruptible; after 60 seconds of pending abort,
+the page offers **Hard reset Web UI**. This marks the run result invalid
+(`aborted_unknown`) and cleanly shuts down the local server. Restart it with
+`julia --project=. start_webui.jl`. A future process-isolated solver worker
+would permit hard termination while keeping the Web UI process alive.
+
 Installed users can start the local Web UI without knowing the package
 installation directory:
 

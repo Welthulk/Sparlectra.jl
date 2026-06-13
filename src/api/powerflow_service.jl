@@ -3,6 +3,7 @@ const _POWERFLOW_SERVICE_RUNS = Dict{String,SparlectraApiResult}()
 const _POWERFLOW_SERVICE_LOCK = ReentrantLock()
 const _POWERFLOW_WEBUI_JOBS = Dict{String,Dict{String,Any}}()
 const _POWERFLOW_WEBUI_ACTIVE_STATES = Set(("queued", "running", "aborting"))
+const WEBUI_ABORT_HARD_RESET_AFTER_SECONDS = 60
 
 struct PowerFlowAborted <: Exception end
 Base.showerror(io::IO, ::PowerFlowAborted) = print(io, "PowerFlow run aborted by user.")
@@ -11,6 +12,16 @@ function _check_powerflow_cancelled!(token)
   token === nothing && return nothing
   token[] || return nothing
   throw(PowerFlowAborted())
+end
+
+function _update_webui_job_phase!(job::AbstractDict, phase::AbstractString)
+  now = Dates.now(Dates.UTC)
+  lock(_POWERFLOW_SERVICE_LOCK) do
+    job["current_phase"] = String(phase)
+    job["phase_started_at"] = now
+    job["last_progress_at"] = now
+  end
+  return nothing
 end
 
 mutable struct _ServiceJsonParser
@@ -192,7 +203,10 @@ function _webui_job_snapshot(job::AbstractDict)::Dict{String,Any}
   snapshot = Dict{String,Any}(String(key) => value for (key, value) in job if key != "task" && key != "abort_requested")
   started_at = get(job, "started_at", nothing)
   finished_at = get(job, "finished_at", nothing)
-  snapshot["elapsed_seconds"] = started_at === nothing ? nothing : max(0.0, Dates.value(something(finished_at, Dates.now()) - started_at) / 1000)
+  snapshot["elapsed_seconds"] = started_at === nothing ? nothing : max(0.0, Dates.value(something(finished_at, Dates.now(Dates.UTC)) - started_at) / 1000)
+  abort_requested_at = get(job, "abort_requested_at", nothing)
+  snapshot["abort_elapsed_seconds"] = abort_requested_at === nothing ? nothing : max(0.0, Dates.value(Dates.now(Dates.UTC) - abort_requested_at) / 1000)
+  snapshot["hard_reset_available"] = get(snapshot, "status", "") == "aborting" && something(snapshot["abort_elapsed_seconds"], 0.0) >= WEBUI_ABORT_HARD_RESET_AFTER_SECONDS
   snapshot["success"] = get(snapshot, "status", "") == "success"
   return snapshot
 end
@@ -242,6 +256,52 @@ function _write_aborted_powerflow_result!(job::AbstractDict)
   return result
 end
 
+function _write_webui_job_marker!(job::AbstractDict, status::Symbol, reason::String, message::String)
+  output_dir = String(job["output_dir"])
+  mkpath(output_dir)
+  logfile = joinpath(output_dir, "run.log")
+  touch(logfile)
+  result_file = joinpath(output_dir, "result.json")
+  result = _api_result(
+    run_id = String(job["run_id"]),
+    status = status,
+    success = false,
+    reason = reason,
+    message = message,
+    casefile = get(job, "casefile", nothing),
+    config_file = get(job, "config_file", nothing),
+    output_dir = output_dir,
+    logfile = logfile,
+    result_file = result_file,
+  )
+  _write_api_result_file(result)
+  _POWERFLOW_SERVICE_RUNS[result.run_id] = result
+  _write_powerflow_run_index!(String(job["output_root"]), result)
+  return result
+end
+
+function hard_reset_webui_powerflow_run(run_id::AbstractString)::Dict{String,Any}
+  _safe_powerflow_run_id(run_id) || return _service_failure("unsafe_run_id", "Unsafe PowerFlow run ID rejected."; run_id)
+  return lock(_POWERFLOW_SERVICE_LOCK) do
+    job = get(_POWERFLOW_WEBUI_JOBS, String(run_id), nothing)
+    job === nothing && return _service_failure("run_not_found", "No Web UI PowerFlow run found for run_id $(run_id)."; run_id)
+    get(job, "status", "") == "aborting" || return _service_failure("run_not_resettable", "Hard reset is only available while abort is pending."; run_id)
+    previous_phase = get(job, "current_phase", "unknown")
+    job["status"] = "aborted_unknown"
+    job["current_phase"] = "hard_reset_requested"
+    job["message"] = "Hard reset requested while aborting. This result is not a valid solved PowerFlow result."
+    job["finished_at"] = Dates.now(Dates.UTC)
+    mkpath(String(job["output_dir"]))
+    open(joinpath(String(job["output_dir"]), "run.log"), "a") do io
+      println(io, "Hard reset requested by user while aborting.")
+      println(io, "Previous phase: ", previous_phase)
+      println(io, "Result is not a valid solved PowerFlow result.")
+    end
+    _write_webui_job_marker!(job, :aborted_unknown, "hard_reset_requested", job["message"])
+    merge(_webui_job_snapshot(job), Dict("previous_phase" => previous_phase))
+  end
+end
+
 """
     start_webui_powerflow_run(request; case_directory=nothing, runner=start_powerflow_run)
 
@@ -263,13 +323,18 @@ function start_webui_powerflow_run(request::AbstractDict; case_directory::Union{
     "config_file" => _service_request_value(request, "config_file"),
     "output_root" => abspath(output_root),
     "output_dir" => joinpath(abspath(output_root), run_id),
-    "started_at" => Dates.now(),
+    "started_at" => Dates.now(Dates.UTC),
     "finished_at" => nothing,
     "message" => "PowerFlow run queued.",
     "abort_requested" => Threads.Atomic{Bool}(false),
+    "abort_requested_at" => nothing,
+    "current_phase" => "queued",
+    "phase_started_at" => Dates.now(Dates.UTC),
+    "last_progress_at" => Dates.now(Dates.UTC),
   )
   lock(_POWERFLOW_SERVICE_LOCK) do
     _POWERFLOW_WEBUI_JOBS[run_id] = job
+    _write_webui_job_marker!(job, :queued, "webui_job_active", "PowerFlow run queued.")
   end
   event_callback("powerflow_submitted"; run_id, requested_case = job["casefile"], status = "accepted")
   job["task"] = Threads.@spawn begin
@@ -278,26 +343,40 @@ function start_webui_powerflow_run(request::AbstractDict; case_directory::Union{
         job["status"] = "running"
         job["message"] = "PowerFlow run is active."
       end
+      _update_webui_job_phase!(job, "resolving_case")
       event_callback("powerflow_started"; run_id, requested_case = job["casefile"], status = "running")
       worker_request = Dict{String,Any}(String(key) => value for (key, value) in request)
       worker_request["run_id"] = run_id
       worker_request["cancellation_token"] = job["abort_requested"]
+      worker_request["phase_callback"] = phase -> _update_webui_job_phase!(job, phase)
       result = try
         runner(worker_request; case_directory)
       catch err
         err isa PowerFlowAborted ? Dict{String,Any}("status" => "aborted", "success" => false) :
           _service_failure("execution_error", sprint(showerror, err, catch_backtrace()); run_id)
       end
-      if job["abort_requested"][]
+      hard_reset_requested = lock(_POWERFLOW_SERVICE_LOCK) do
+        get(job, "status", "") == "aborted_unknown"
+      end
+      if hard_reset_requested
+        nothing
+      elseif job["abort_requested"][]
+        _update_webui_job_phase!(job, "finalizing_aborted")
         _write_aborted_powerflow_result!(job)
-        event_callback("powerflow_aborted"; run_id = job["run_id"], requested_case = job["casefile"], status = "aborted")
+        event_callback("powerflow_aborted"; run_id = job["run_id"], requested_case = job["casefile"], status = "aborted", current_phase = "finalizing_aborted")
         lock(_POWERFLOW_SERVICE_LOCK) do
           job["status"] = "aborted"
+          job["current_phase"] = "aborted"
           job["message"] = "Run aborted by user."
         end
       else
+        _update_webui_job_phase!(job, "finalizing_success")
         lock(_POWERFLOW_SERVICE_LOCK) do
+          if get(job, "status", "") == "aborted_unknown"
+            return
+          end
           job["status"] = get(result, "success", false) ? "success" : "failed"
+          job["current_phase"] = job["status"]
           job["message"] = something(get(result, "message", nothing), job["status"] == "success" ? "PowerFlow run completed." : "PowerFlow run failed.")
           job["resolved_casefile"] = get(result, "casefile", nothing)
           if haskey(result, "run_id") && result["run_id"] != run_id
@@ -318,7 +397,7 @@ function start_webui_powerflow_run(request::AbstractDict; case_directory::Union{
       end
     finally
       lock(_POWERFLOW_SERVICE_LOCK) do
-        job["finished_at"] = Dates.now()
+        job["finished_at"] = Dates.now(Dates.UTC)
         if get(job, "status", "") in _POWERFLOW_WEBUI_ACTIVE_STATES
           job["status"] = job["abort_requested"][] ? "aborted" : "failed"
           job["message"] = job["abort_requested"][] ? "Run aborted by user." : "PowerFlow worker exited before reaching a terminal result."
@@ -347,6 +426,7 @@ function abort_webui_powerflow_run(run_id::AbstractString)::Dict{String,Any}
     status == "aborted" && return merge(_webui_job_snapshot(job), Dict("abort_status" => "already_aborted"))
     status in _POWERFLOW_WEBUI_ACTIVE_STATES || return _service_failure("run_not_abortable", "PowerFlow run $(run_id) is no longer active."; run_id)
     job["abort_requested"][] = true
+    job["abort_requested_at"] = Dates.now(Dates.UTC)
     job["status"] = "aborting"
     job["message"] = "Abort requested. Waiting for the calculation to stop at the next safe cancellation point."
     merge(_webui_job_snapshot(job), Dict("abort_status" => "accepted"))
@@ -590,6 +670,17 @@ function refresh_powerflow_run_registry!(output_root::AbstractString)::Dict{Stri
     try
       data = _parse_service_json(read(paths.result_file, String))
       data isa AbstractDict || error("result.json must contain a JSON object")
+      if lowercase(string(get(data, "status", ""))) in _POWERFLOW_WEBUI_ACTIVE_STATES
+        data["status"] = "aborted_unknown"
+        data["success"] = false
+        data["solution_available"] = false
+        data["reason"] = "webui_stale_active_run"
+        data["message"] = "The Web UI was restarted while this run was active. This result is not a valid solved PowerFlow result."
+        open(paths.result_file, "w") do io
+          _write_json(io, data)
+          println(io)
+        end
+      end
       push!(recovered, _reconstruct_powerflow_result(data, paths))
     catch err
       push!(unavailable, Dict{String,Any}(
@@ -612,6 +703,7 @@ function refresh_powerflow_run_registry!(output_root::AbstractString)::Dict{Stri
     "status" => isempty(unavailable) ? "succeeded" : "partial",
     "success" => isempty(unavailable),
     "loaded_runs" => [result.run_id for result in recovered],
+    "runs" => recovered,
     "unavailable_runs" => unavailable,
   )
 end
@@ -769,6 +861,9 @@ function start_powerflow_run(request::AbstractDict; case_directory::Union{Nothin
   request_start = time_ns()
   phases = Dict{Symbol,Float64}()
   cancellation_token = _service_request_value(request, "cancellation_token", nothing)
+  phase_callback = _service_request_value(request, "phase_callback", phase -> nothing)
+  set_phase = phase -> (phase_callback(String(phase)); _check_powerflow_cancelled!(cancellation_token))
+  set_phase("resolving_case")
   _check_powerflow_cancelled!(cancellation_token)
   casefile = _service_request_value(request, "casefile")
   casefile isa AbstractString && !isempty(strip(casefile)) || return _service_failure("missing_casefile", "PowerFlow service request requires a nonempty casefile.")
@@ -787,6 +882,7 @@ function start_powerflow_run(request::AbstractDict; case_directory::Union{Nothin
     phases[:case_resolution] = _api_elapsed_seconds(resolution_start)
     _check_powerflow_cancelled!(cancellation_token)
   end
+  set_phase("preparing_configuration")
 
   config_file = _service_request_value(request, "config_file")
   config_file isa AbstractString && !isempty(strip(config_file)) || return _service_failure("missing_config_file", "PowerFlow service request requires a nonempty config_file.")
@@ -818,6 +914,7 @@ function start_powerflow_run(request::AbstractDict; case_directory::Union{Nothin
       phase_timings = phases,
       run_id = run_id,
       cancellation_token = cancellation_token,
+      phase_callback = phase_callback,
     )
   catch err
     err isa PowerFlowAborted && rethrow()

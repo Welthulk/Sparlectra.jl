@@ -1,5 +1,19 @@
 # Local PowerFlow Web UI
 
+## Cooperative abort and hard reset
+
+Active runs expose their current phase, phase start, last progress, and
+abort-request time. Cancellation is cooperative. If abort is requested during
+`linear_solve`, the current sparse solve must return before the cancellation
+check can run.
+
+After 60 seconds in `aborting`, the status page offers **Hard reset Web UI**.
+This does not inject an exception into numerical code: it marks the run
+`aborted_unknown`, records that the result is invalid, and requests a clean
+server shutdown. Restart with `julia --project=. start_webui.jl`.
+Cooperative cancellation logs `powerflow_aborted`; the fallback logs
+`webui_hard_reset_requested` and `webui_shutdown_requested`.
+
 Sparlectra includes a small, local-first browser interface above the existing
 PowerFlow service. The Web UI contains presentation, form parsing, and route
 handling only; numerical execution continues through `start_powerflow_run` and

@@ -131,6 +131,7 @@ const _WEBUI_RESULT_FIELDS = (
   "run_id", "schema_version", "status", "success", "converged", "solution_available",
   "iterations", "final_mismatch", "reason", "message", "casefile", "resolved_casefile",
   "config_file", "started_at", "elapsed_seconds", "output_dir",
+  "current_phase", "phase_started_at", "last_progress_at", "abort_requested_at",
 )
 
 function render_powerflow_result(result::AbstractDict)::String
@@ -140,7 +141,10 @@ function render_powerflow_result(result::AbstractDict)::String
   active = status in _WEBUI_ACTIVE_RUN_STATUSES
   abort_form = status in ("queued", "running") ? "<form method=\"post\" action=\"/powerflow/abort/$(_webui_urlencode(run_id))\"><button type=\"submit\" class=\"danger-button\">Abort run</button></form>" : ""
   active_hint = active ? "<p class=\"status-refresh-hint\">This page refreshes automatically while the run is active.</p>" : ""
-  links = isempty(String(run_id)) ? "" : "<div class=\"actions\">$(abort_form)<a class=\"button\" href=\"/powerflow/artifacts/$(_webui_urlencode(run_id))\">View artifacts</a><a class=\"button\" href=\"/powerflow/result/$(_webui_urlencode(run_id))\">Refresh status</a></div>"
+  abort_hint = status == "aborting" ? "<p>Waiting for the next safe cancellation point.</p>" * (get(result, "current_phase", "") == "linear_solve" ? "<p>Waiting for current sparse solve to finish.</p>" : "") : ""
+  hard_reset = status == "aborting" && get(result, "hard_reset_available", false) ? "<div class=\"alert warning\"><p>Abort is still pending. The calculation may be in a non-interruptible numerical call.</p><form method=\"post\" action=\"/powerflow/hard-reset/$(_webui_urlencode(run_id))\"><button type=\"submit\" class=\"danger-button\">Hard reset Web UI</button></form></div>" : ""
+  interrupted = status == "aborted_unknown" ? "<p>The Web UI was restarted or reset while this run was active. This result is not a valid solved PowerFlow result.</p>" : ""
+  links = isempty(String(run_id)) ? "" : "$(abort_hint)$(hard_reset)$(interrupted)<div class=\"actions\">$(abort_form)<a class=\"button\" href=\"/powerflow/artifacts/$(_webui_urlencode(run_id))\">View artifacts</a><a class=\"button\" href=\"/powerflow/result/$(_webui_urlencode(run_id))\">Refresh status</a></div>"
   refresh_url = active && !isempty(String(run_id)) ? "/powerflow/result/$(_webui_urlencode(run_id))?autorefresh=1" : nothing
   return _webui_layout("PowerFlow result", "<section class=\"panel\"><table class=\"details\">$(rows)</table>$(active_hint)$(links)</section>"; show_back = true, refresh_url)
 end
@@ -162,7 +166,7 @@ function webui_status_class(run::AbstractDict)::String
   status = lowercase(string(get(run, "status", "unknown")))
   success = get(run, "success", nothing)
   status in ("running", "pending", "queued", "aborting") && return "status-running"
-  status in ("aborted", "cancelled", "canceled") && return "status-aborted"
+  status in ("aborted", "aborted_unknown", "interrupted", "cancelled", "canceled") && return "status-aborted"
   status in ("warning", "partial", "questionable") && return "status-warning"
   status in ("failed", "failure", "error", "not_converged") && return "status-error"
   status in ("succeeded", "success", "converged", "ok") && return success === false ? "status-error" : "status-success"
@@ -202,6 +206,10 @@ end
 
 function render_webui_shutdown()::String
   return "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Web UI stopped · Sparlectra</title><link rel=\"stylesheet\" href=\"/static/sparlectra.css\"></head><body><main><section class=\"panel shutdown-message\"><h1>Web UI stopped</h1><p>The local Sparlectra Web UI server is shutting down. You may close this window.</p></section></main></body></html>"
+end
+
+function render_webui_hard_reset()::String
+  return "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Hard reset requested · Sparlectra</title></head><body><main><section><h1>Hard reset requested</h1><p>The Web UI is shutting down to stop the stuck calculation.</p><p>Restart with <code>julia --project=. start_webui.jl</code>.</p></section></main></body></html>"
 end
 
 function render_webui_error(status::Integer, message::AbstractString)::String

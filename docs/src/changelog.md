@@ -1,4 +1,8 @@
 # Change Log
+
+* Added phase-aware Web UI cancellation diagnostics and a 60-second explicit
+  hard-reset fallback that records `aborted_unknown` and cleanly shuts down the
+  local server instead of killing an in-process numerical task.
 ## Version 0.8.4 – 2026-06-10
 ### New features
 
