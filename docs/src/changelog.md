@@ -2,6 +2,7 @@
 ## Version 0.8.4 – 2026-06-10
 ### New features
 
+* Added a persistent output-root-level Web UI operation log with JSONL view/download routes for support reports, concise user-action and run-lifecycle events, best-effort writes, and a 10 MiB single-backup size guard.
 * Added `run_sparlectra_api` as a stable non-interactive MATPOWER power-flow backend contract with unique run IDs, schema-versioned structured status, controlled GUI configuration overrides, effective configuration output, explicit artifact discovery, and Dict/NamedTuple/JSON/YAML serialization.
 * Added a local PowerFlow service boundary with run-specific output directories, persistent JSON run indexing, restart recovery, run-ID lookup, artifact listing, and traversal-safe artifact resolution for a future local GUI without adding HTTP or Genie.jl dependencies.
 * Added the first loopback-only local PowerFlow Web UI with allowlisted configuration forms, service-backed execution, result and persistent-history views, and metadata-resolved artifact viewing/downloads.
@@ -18,6 +19,7 @@
 
 ### Bugfixes
 
+* Made cooperative PowerFlow abort controls visible from active-run banners on both the start form and run-history page, while retaining the POST-only control on the live status page and hiding it after terminal states.
 * Restored an explicit local MATPOWER case selector in the PowerFlow Web UI while retaining separate manual case entry for on-demand downloads.
 
 * Guarded rectangular PV/slack voltage-setpoint initialization so replacing a voltage magnitude preserves an existing phasor angle, with regression coverage for phase-shifted PV starts and intentional flat-start semantics.

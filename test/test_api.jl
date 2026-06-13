@@ -332,6 +332,7 @@ function run_api_tests()
       active = Sparlectra.start_webui_powerflow_run(async_request; runner = controlled_runner)
       take!(entered)
       @test Sparlectra.get_webui_powerflow_job(active["run_id"])["status"] == "running"
+      @test Sparlectra.get_active_webui_powerflow_job()["run_id"] == active["run_id"]
       rejected_concurrent = Sparlectra.start_webui_powerflow_run(async_request; runner = controlled_runner)
       @test rejected_concurrent["reason"] == "active_run"
       aborted = Sparlectra.abort_webui_powerflow_run(active["run_id"])
@@ -347,6 +348,7 @@ function run_api_tests()
       wait(Sparlectra._POWERFLOW_WEBUI_JOBS[active["run_id"]]["task"])
       wait(Sparlectra._POWERFLOW_WEBUI_JOBS[replacement["run_id"]]["task"])
       @test Sparlectra.get_webui_powerflow_job(active["run_id"])["status"] == "aborted"
+      @test Sparlectra.get_active_webui_powerflow_job() === nothing
 
       failed = start_powerflow_run(Dict(
         "casefile" => casefile,
