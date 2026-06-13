@@ -29,7 +29,8 @@ end
 function handle_powerflow_run(form::AbstractDict; default_output_root::AbstractString = "results/powerflow_service", application_root::AbstractString = _webui_application_root())::Dict{String,Any}
   request = powerflow_webui_request(form; default_output_root = default_output_root)
   case_directory = joinpath(application_root, "data", "mpower")
-  return start_webui_powerflow_run(request; case_directory)
+  event_callback = (event; fields...) -> record_webui_operation!(default_output_root, event; route = "/powerflow/run", method = "POST", user_action = false, fields...)
+  return start_webui_powerflow_run(request; case_directory, event_callback)
 end
 
 function handle_powerflow_result(run_id::AbstractString)::SparlectraWebUIResponse
@@ -83,7 +84,17 @@ function handle_powerflow_artifact_download(run_id::AbstractString, artifact_nam
 end
 
 function handle_powerflow_history(output_root::AbstractString)::SparlectraWebUIResponse
-  return _webui_html(render_powerflow_history(list_powerflow_runs(output_root), output_root))
+  return _webui_html(render_powerflow_history(list_powerflow_runs(output_root), output_root; active_run = get_active_webui_powerflow_job()))
+end
+
+function handle_webui_operation_log(output_root::AbstractString; download::Bool = false)::SparlectraWebUIResponse
+  path = webui_operation_log_path(output_root)
+  content = isfile(path) ? read(path, String) : ""
+  if download
+    headers = ["Content-Disposition" => "attachment; filename=\"$(WEBUI_OPERATION_LOG_FILENAME)\""]
+    return SparlectraWebUIResponse(200, content; content_type = "application/x-ndjson; charset=utf-8", headers)
+  end
+  return _webui_html(render_webui_operation_log(content))
 end
 
 function handle_powerflow_refresh(output_root::AbstractString)::Dict{String,Any}

@@ -13,6 +13,7 @@ end
 
 include("forms.jl")
 include("docs.jl")
+include("operations.jl")
 include("views.jl")
 include("handlers.jl")
 include("routes.jl")
@@ -68,6 +69,7 @@ function _webui_serve_client(socket::Sockets.TCPSocket, output_root::String, run
     response = route_sparlectra_webui(method, target, form; output_root, runtime)
     _webui_write_response(socket, response)
   catch err
+    record_webui_operation!(output_root, "internal_error"; method = "UNKNOWN", route = "request", status = 500, message = sprint(showerror, err), user_action = false)
     try
       _webui_write_response(socket, _webui_html(render_webui_error(500, sprint(showerror, err)); status = 500))
     catch
@@ -253,6 +255,7 @@ function start_sparlectra_webui(; host::AbstractString = "127.0.0.1", port::Inte
   isfinite(timeout) && timeout > 0 || throw(ArgumentError("Browser heartbeat timeout must be a positive finite number."))
   root = String(output_root)
   refresh_powerflow_run_registry!(root)
+  record_webui_operation!(root, "webui_start"; route = "/powerflow", method = "START", status = "started", user_action = false)
   address = host_string == "localhost" ? ip"127.0.0.1" : parse(Sockets.IPAddr, host_string)
   listener = Sockets.listen(address, UInt16(port))
   runtime = _SparlectraWebUIRuntime(listener, auto_shutdown_on_browser_close, timeout, false, 0.0, 0, ReentrantLock())

@@ -65,6 +65,12 @@ start time, elapsed time, and a manual refresh link. While a job is queued or
 running, it also shows an **Abort run** form that sends
 `POST /powerflow/abort/<run-id>`; JavaScript is not required.
 
+The start form and run-history page also show a prominent active-run banner
+with **Open status** and POST-only **Abort** controls. This keeps abort
+discoverable even when the user navigates away from the status page. The
+controls disappear as soon as the run reaches a completed, failed, or aborted
+state.
+
 Abort is cooperative and never injects an exception into solver code. The abort
 request is accepted immediately, the run is recorded as `aborted`, and the form
 is available for another submission. If execution is already inside a blocking
@@ -195,6 +201,25 @@ readable line spacing. Other files are
 downloaded, and every artifact page also offers an explicit download response.
 The text-artifact viewer uses 75–85 percent of the viewport height and a wider
 page layout for practical inspection of long logs and configuration files.
+
+## Persistent operation log
+
+The Web UI appends support-oriented JSON Lines events to
+`<output_root>/webui_operations.jsonl`. This file is independent of individual
+run directories and survives Web UI restarts that reuse the same output root.
+It records key page opens, submissions and validation failures, asynchronous
+run lifecycle changes, artifact views/downloads, abort requests, history
+refreshes, deletions, shutdown requests, and enabled diagnostics or timing
+modes. Static CSS and image requests are not user-action events.
+
+Use the shared **Operation Log** navigation link to open the escaped text viewer
+at `/webui/operation-log`, or download the JSONL file from that page for an
+error report. Entries contain concise route, method, status, run/case/artifact,
+message, and timing fields when available. They never include artifact
+contents, local file contents, or complete configuration bodies. Logging is
+best effort and cannot fail a normal Web UI request. When the current file
+reaches 10 MiB, it is replaced after being retained as
+`webui_operations.jsonl.1`.
 
 ## Persistent run history and run management
 

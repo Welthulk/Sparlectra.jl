@@ -50,15 +50,25 @@ function route_sparlectra_webui(method::AbstractString, target::AbstractString, 
   elseif verb == "GET" && startswith(path, "/docs/")
     return handle_webui_doc_page(_webui_urldecode(path[(lastindex("/docs/") + 1):end]))
   elseif verb == "GET" && path in ("/", "/powerflow")
+    _webui_log_route!(output_root, "powerflow_form_opened", verb, path; status = "opened")
     return _webui_html(render_powerflow_form(; output_root))
   elseif verb == "POST" && path == "/powerflow/run"
     try
       result = handle_powerflow_run(form; default_output_root = output_root)
-      haskey(result, "run_id") && !haskey(result, "reason") && return _webui_redirect("/powerflow/result/$(_webui_urlencode(result["run_id"]))")
+      manual_case = strip(String(something(_webui_form_value(form, "casefile_manual", ""), "")))
+      requested_case = isempty(manual_case) ? String(something(_webui_form_value(form, "casefile", ""), "")) : manual_case
+      if haskey(result, "run_id") && !haskey(result, "reason")
+        _webui_log_route!(output_root, "powerflow_submitted", verb, path; status = "accepted", run_id = result["run_id"], requested_case)
+        get(form, "run_diagnostics", nothing) === nothing || _webui_log_route!(output_root, "diagnostics_enabled", verb, path; status = "enabled", run_id = result["run_id"])
+        get(form, "performance_timing", "off") == "off" || _webui_log_route!(output_root, "performance_timing_enabled", verb, path; status = String(form["performance_timing"]), run_id = result["run_id"])
+        return _webui_redirect("/powerflow/result/$(_webui_urlencode(result["run_id"]))")
+      end
+      _webui_log_route!(output_root, "powerflow_submit_rejected", verb, path; status = "rejected", run_id = get(result, "run_id", nothing), requested_case, message = get(result, "message", nothing))
       return _webui_html(render_powerflow_result(result); status = 400)
     catch err
       selected_casefile = String(something(_webui_form_value(form, "casefile", ""), ""))
       selected_config_file = String(something(_webui_form_value(form, "config_file", ""), ""))
+      _webui_log_route!(output_root, "validation_error", verb, path; status = "rejected", requested_case = selected_casefile, message = sprint(showerror, err))
       return _webui_html(render_powerflow_form(;
         output_root,
         error_message = sprint(showerror, err),
@@ -67,9 +77,14 @@ function route_sparlectra_webui(method::AbstractString, target::AbstractString, 
       ); status = 400)
     end
   elseif verb == "GET" && startswith(path, "/powerflow/result/")
-    return handle_powerflow_result(_webui_urldecode(path[(lastindex("/powerflow/result/") + 1):end]))
+    run_id = _webui_urldecode(path[(lastindex("/powerflow/result/") + 1):end])
+    _webui_log_route!(output_root, "powerflow_status_opened", verb, path; status = "opened", run_id)
+    return handle_powerflow_result(run_id)
   elseif verb == "POST" && startswith(path, "/powerflow/abort/")
-    return handle_powerflow_abort(_webui_urldecode(path[(lastindex("/powerflow/abort/") + 1):end]))
+    run_id = _webui_urldecode(path[(lastindex("/powerflow/abort/") + 1):end])
+    response = handle_powerflow_abort(run_id)
+    _webui_log_route!(output_root, "powerflow_aborted_requested", verb, path; status = response.status == 303 ? "accepted" : "rejected", run_id)
+    return response
   elseif verb == "GET" && startswith(path, "/powerflow/artifacts/")
     return handle_powerflow_artifacts(_webui_urldecode(path[(lastindex("/powerflow/artifacts/") + 1):end]))
   elseif verb == "GET" && startswith(path, "/powerflow/artifact/")
@@ -77,21 +92,37 @@ function route_sparlectra_webui(method::AbstractString, target::AbstractString, 
     segments = split(remainder, '/'; limit = 2)
     length(segments) == 2 || return _webui_html(render_webui_error(400, "Artifact route requires a run ID and artifact name."); status = 400)
     run_id, artifact_name = _webui_urldecode.(segments)
-    return get(query, "download", "") == "1" ? handle_powerflow_artifact_download(run_id, artifact_name) : handle_powerflow_artifact(run_id, artifact_name)
+    download = get(query, "download", "") == "1"
+    response = download ? handle_powerflow_artifact_download(run_id, artifact_name) : handle_powerflow_artifact(run_id, artifact_name)
+    _webui_log_route!(output_root, download ? "artifact_downloaded" : "artifact_opened", verb, path; status = response.status, run_id, artifact = artifact_name)
+    return response
   elseif verb == "GET" && path == "/powerflow/history"
+    _webui_log_route!(output_root, "history_opened", verb, path; status = "opened")
     return handle_powerflow_history(output_root)
   elseif verb == "POST" && path == "/powerflow/refresh"
     handle_powerflow_refresh(output_root)
+    _webui_log_route!(output_root, "history_refreshed", verb, path; status = "succeeded")
     return _webui_redirect("/powerflow/history")
   elseif verb == "POST" && startswith(path, "/powerflow/delete/")
     run_id = _webui_urldecode(path[(lastindex("/powerflow/delete/") + 1):end])
-    return handle_powerflow_delete(run_id, output_root)
+    response = handle_powerflow_delete(run_id, output_root)
+    _webui_log_route!(output_root, "run_deleted", verb, path; status = response.status == 303 ? "succeeded" : "failed", run_id)
+    return response
   elseif verb == "POST" && path == "/powerflow/delete_all"
-    return handle_powerflow_delete_all(output_root)
+    response = handle_powerflow_delete_all(output_root)
+    _webui_log_route!(output_root, "all_runs_deleted", verb, path; status = response.status == 303 ? "succeeded" : "failed")
+    return response
+  elseif verb == "GET" && path == "/webui/operation-log"
+    _webui_log_route!(output_root, "page_opened", verb, path; status = "opened")
+    return handle_webui_operation_log(output_root)
+  elseif verb == "GET" && path == "/webui/operation-log/download"
+    _webui_log_route!(output_root, "artifact_downloaded", verb, path; status = "succeeded", artifact = WEBUI_OPERATION_LOG_FILENAME)
+    return handle_webui_operation_log(output_root; download = true)
   elseif verb == "POST" && path == "/webui/heartbeat"
     runtime === nothing || _webui_record_heartbeat!(runtime)
     return SparlectraWebUIResponse(204, ""; content_type = "text/plain; charset=utf-8")
   elseif verb == "POST" && path == "/webui/shutdown"
+    _webui_log_route!(output_root, "webui_shutdown_requested", verb, path; status = runtime === nothing ? "unavailable" : "accepted")
     runtime === nothing && return _webui_html(render_webui_error(503, "Web UI shutdown is unavailable outside a running server."); status = 503)
     @async begin
       sleep(0.05)

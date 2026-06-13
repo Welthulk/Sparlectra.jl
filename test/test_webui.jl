@@ -263,6 +263,9 @@ function run_webui_tests()
       empty_case_response = Sparlectra.route_sparlectra_webui("POST", "/powerflow/run", empty_case_form; output_root = output_root)
       @test empty_case_response.status == 400
       @test occursin("Select an existing MATPOWER case or type a case name.", String(empty_case_response.body))
+      operation_log_path = Sparlectra.webui_operation_log_path(output_root)
+      @test isfile(operation_log_path)
+      @test occursin("\"event\":\"validation_error\"", read(operation_log_path, String))
       @test request["config_file"] == config_file
       @test request["output_root"] == output_root
       untrusted_form = copy(form)
@@ -311,6 +314,7 @@ function run_webui_tests()
       @test occursin("<strong>Output root:</strong> <code>$(output_root)</code>", form_html)
       @test occursin("action=\"/webui/shutdown\"", form_html)
       @test occursin("Stop Web UI", form_html)
+      @test occursin("href=\"/webui/operation-log\"", form_html)
       @test count("class=\"help-link\"", form_html) == length(expected_help_topics)
 
       @test !occursin("class=\"button back-button\"", form_html)
@@ -352,6 +356,12 @@ result = get_powerflow_result(run_id)
 @test result["success"]
 @test result["output_dir"] == joinpath(abspath(output_root), run_id)
 @test !ispath(joinpath(tmpdir, "outside-runs"))
+      operation_log_text = read(operation_log_path, String)
+      @test occursin("\"event\":\"powerflow_submitted\"", operation_log_text)
+      @test occursin("\"event\":\"powerflow_started\"", operation_log_text)
+      @test occursin("\"event\":\"powerflow_completed\"", operation_log_text)
+      @test occursin("\"event\":\"diagnostics_enabled\"", operation_log_text)
+      @test occursin("\"event\":\"performance_timing_enabled\"", operation_log_text)
       @test !isempty(run_id)
       result_response = Sparlectra.handle_powerflow_result(run_id)
       result_html = String(result_response.body)
@@ -360,6 +370,9 @@ result = get_powerflow_result(run_id)
         @test occursin(field, result_html)
       end
       @test occursin(run_id, result_html)
+      @test !occursin("action=\"/powerflow/abort/$(run_id)\"", result_html)
+      failed_result_html = Sparlectra.render_powerflow_result(Dict("run_id" => "failed-run", "status" => "failed", "success" => false))
+      @test !occursin("action=\"/powerflow/abort/failed-run\"", failed_result_html)
 
       artifacts = list_powerflow_artifacts(run_id)
       artifact_names = Set(artifact["name"] for artifact in artifacts)
@@ -401,11 +414,18 @@ result = get_powerflow_result(run_id)
       @test occursin(".status-running {\n", css_text)
       @test occursin(".status-aborted {\n", css_text)
       @test occursin(".exit-button,\n", css_text)
+      @test occursin(".active-run-banner {\n", css_text)
+      @test !occursin(".active-run-banner {\n  display: none;", css_text)
 
 
       download = Sparlectra.handle_powerflow_artifact_download(run_id, "result.json")
       @test download.status == 200
       @test any(header -> header.first == "Content-Disposition", download.headers)
+      @test Sparlectra.route_sparlectra_webui("GET", "/powerflow/artifact/$(run_id)/result.json"; output_root).status == 200
+      @test Sparlectra.route_sparlectra_webui("GET", "/powerflow/artifact/$(run_id)/result.json?download=1"; output_root).status == 200
+      operation_log_text = read(operation_log_path, String)
+      @test occursin("\"event\":\"artifact_opened\"", operation_log_text)
+      @test occursin("\"event\":\"artifact_downloaded\"", operation_log_text)
 
       for unsafe_name in ("../result.json", "../../Project.toml", "/etc/passwd", raw"C:\Users\x\file.txt")
         unsafe = Sparlectra.handle_powerflow_artifact(run_id, unsafe_name)
@@ -418,6 +438,8 @@ result = get_powerflow_result(run_id)
       end
       refreshed = Sparlectra.handle_powerflow_refresh(output_root)
       @test run_id in refreshed["loaded_runs"]
+      @test Sparlectra.route_sparlectra_webui("POST", "/powerflow/refresh"; output_root).status == 303
+      @test occursin("\"event\":\"history_refreshed\"", read(operation_log_path, String))
       history_response = Sparlectra.handle_powerflow_history(output_root)
       @test history_response.status == 200
       history_html = String(history_response.body)
@@ -454,6 +476,55 @@ result = get_powerflow_result(run_id)
       @test deleted_response.status == 303
       @test !ispath(disposable_dir)
       @test all(entry -> get(entry, "run_id", "") != disposable_id, load_powerflow_run_index(output_root)["runs"])
+      @test occursin("\"event\":\"run_deleted\"", read(operation_log_path, String))
+
+      entered_webui = Channel{Nothing}(1)
+      release_webui = Channel{Nothing}(1)
+      slow_runner = function(request; case_directory = nothing)
+        put!(entered_webui, nothing)
+        take!(release_webui)
+        return start_powerflow_run(request; case_directory)
+      end
+      active_request = Dict(
+        "casefile" => casefile,
+        "config_file" => config_file,
+        "output_root" => output_root,
+      )
+      active = Sparlectra.start_webui_powerflow_run(active_request; runner = slow_runner)
+      take!(entered_webui)
+      active_id = active["run_id"]
+      active_result_html = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow/result/$(active_id)"; output_root).body)
+      active_form_html = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow"; output_root).body)
+      active_history_html = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow/history"; output_root).body)
+      abort_action = "action=\"/powerflow/abort/$(active_id)\""
+      @test occursin("<form method=\"post\" $(abort_action)", active_result_html)
+      @test occursin("PowerFlow run is running:", active_form_html)
+      @test occursin(abort_action, active_form_html)
+      @test occursin(abort_action, active_history_html)
+      aborted_response = Sparlectra.route_sparlectra_webui("POST", "/powerflow/abort/$(active_id)"; output_root)
+      @test aborted_response.status == 303
+      aborted_html = String(Sparlectra.handle_powerflow_result(active_id).body)
+      @test !occursin(abort_action, aborted_html)
+      @test occursin("\"event\":\"powerflow_aborted_requested\"", read(operation_log_path, String))
+      put!(release_webui, nothing)
+      wait(Sparlectra._POWERFLOW_WEBUI_JOBS[active_id]["task"])
+
+      operation_log_page = Sparlectra.route_sparlectra_webui("GET", "/webui/operation-log"; output_root)
+      @test operation_log_page.status == 200
+      @test occursin("Download operation log", String(operation_log_page.body))
+      operation_log_download = Sparlectra.route_sparlectra_webui("GET", "/webui/operation-log/download"; output_root)
+      @test operation_log_download.status == 200
+      @test any(header -> header.first == "Content-Disposition", operation_log_download.headers)
+      static_count_before = count(==('\n'), read(operation_log_path, String))
+      @test Sparlectra.route_sparlectra_webui("GET", "/static/sparlectra.css"; output_root).status == 200
+      @test count(==('\n'), read(operation_log_path, String)) == static_count_before
+      logging_failure_root = joinpath(tmpdir, "logging-is-a-file")
+      write(logging_failure_root, "not a directory")
+      @test !Sparlectra.record_webui_operation!(logging_failure_root, "expected_failure")
+      @test Sparlectra.route_sparlectra_webui("GET", "/powerflow"; output_root = logging_failure_root).status == 200
+      empty_delete_root = joinpath(tmpdir, "empty-delete-root")
+      @test Sparlectra.route_sparlectra_webui("POST", "/powerflow/delete_all"; output_root = empty_delete_root).status == 303
+      @test occursin("\"event\":\"all_runs_deleted\"", read(Sparlectra.webui_operation_log_path(empty_delete_root), String))
 
       @test occursin(run_id, String(Sparlectra.handle_powerflow_result(run_id).body))
       shared_pages = (

@@ -59,6 +59,11 @@ is already executing a non-interruptible phase, that task can finish in the
 background, but its eventual result is discarded and cannot overwrite the
 persisted aborted result. No unsafe task interruption is used.
 
+The Web UI supplies a small lifecycle callback to this asynchronous boundary so
+`powerflow_started`, completion/failure, and final abort events can be appended
+to the output-root-level `webui_operations.jsonl` support log. This does not
+change the PowerFlow result schema or per-run artifact contract.
+
 Aborted runs receive a normal run directory, `result.json`, an index entry, and
 a `run.log` status marker. This keeps history recovery and artifact path safety
 identical to completed runs while making it clear that any partial artifacts do

@@ -156,8 +156,15 @@ button,
 
 .actions {
   display: flex;
+  align-items: center;
+  flex-wrap: wrap;
   gap: .75rem;
   margin-top: .5rem;
+}
+
+.active-run-banner {
+  border-color: #1768d4;
+  margin-bottom: 1rem;
 }
 
 button,

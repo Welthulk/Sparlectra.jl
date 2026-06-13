@@ -197,6 +197,13 @@ function _webui_active_job()
   end
 end
 
+function get_active_webui_powerflow_job()::Union{Nothing,Dict{String,Any}}
+  job = _webui_active_job()
+  return job === nothing ? nothing : lock(_POWERFLOW_SERVICE_LOCK) do
+    _webui_job_snapshot(job)
+  end
+end
+
 function _write_aborted_powerflow_result!(job::AbstractDict)
   output_dir = String(job["output_dir"])
   mkpath(output_dir)
@@ -233,7 +240,7 @@ Start one Web UI PowerFlow job in a background task. Only one active Web UI job
 is accepted at a time. Cancellation is cooperative: an abort request releases
 the UI immediately and the worker discards any later solver success.
 """
-function start_webui_powerflow_run(request::AbstractDict; case_directory::Union{Nothing,AbstractString} = nothing, runner = start_powerflow_run)::Dict{String,Any}
+function start_webui_powerflow_run(request::AbstractDict; case_directory::Union{Nothing,AbstractString} = nothing, runner = start_powerflow_run, event_callback = (event; fields...) -> nothing)::Dict{String,Any}
   active = _webui_active_job()
   active === nothing || return _service_failure("active_run", "A PowerFlow run is already active. Abort it or wait for it to finish."; run_id = active["run_id"])
   output_root = _service_request_value(request, "output_root")
@@ -260,6 +267,7 @@ function start_webui_powerflow_run(request::AbstractDict; case_directory::Union{
       job["status"] = "running"
       job["message"] = "PowerFlow run is active."
     end
+    event_callback("powerflow_started"; run_id, requested_case = job["casefile"], status = "running")
     worker_request = Dict{String,Any}(String(key) => value for (key, value) in request)
     worker_request["run_id"] = run_id
     result = try
@@ -272,6 +280,7 @@ function start_webui_powerflow_run(request::AbstractDict; case_directory::Union{
         job["status"] = "aborted"
         job["message"] = "Run aborted by user."
         _write_aborted_powerflow_result!(job)
+        event_callback("powerflow_aborted"; run_id = job["run_id"], requested_case = job["casefile"], status = "aborted")
       else
         job["status"] = get(result, "success", false) ? "success" : "failed"
         job["message"] = something(get(result, "message", nothing), job["status"] == "success" ? "PowerFlow run completed." : "PowerFlow run failed.")
@@ -282,6 +291,14 @@ function start_webui_powerflow_run(request::AbstractDict; case_directory::Union{
           job["output_dir"] = get(result, "output_dir", job["output_dir"])
           _POWERFLOW_WEBUI_JOBS[result["run_id"]] = job
         end
+        event_callback(
+          job["status"] == "success" ? "powerflow_completed" : "powerflow_failed";
+          run_id = job["run_id"],
+          requested_case = job["casefile"],
+          resolved_case = job["resolved_casefile"],
+          status = job["status"],
+          message = job["message"],
+        )
       end
       job["finished_at"] = Dates.now()
     end
