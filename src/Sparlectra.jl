@@ -411,6 +411,9 @@ export
   list_powerflow_artifacts,               # List run artifacts by run ID.
   resolve_powerflow_artifact,             # Safely resolve a run artifact by metadata name.
   default_webui_output_root,              # Return the user-writable default Web UI output directory.
+  default_webui_config_path,              # Return the provisioned Web UI configuration path.
+  default_webui_case_cache_dir,           # Return the user-writable Web UI case cache.
+  default_webui_operation_log_path,       # Return the user-writable Web UI operation-log path.
   start_sparlectra_webui,                 # Start the loopback-only local PowerFlow Web UI.
   to_dict,                                # Convert API results and artifacts to dictionaries.
   to_namedtuple,                          # Convert API results to named tuples.

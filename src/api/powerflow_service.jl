@@ -262,7 +262,8 @@ function start_webui_powerflow_run(request::AbstractDict; case_directory::Union{
   lock(_POWERFLOW_SERVICE_LOCK) do
     _POWERFLOW_WEBUI_JOBS[run_id] = job
   end
-  job["task"] = @async begin
+  event_callback("powerflow_submitted"; run_id, requested_case = job["casefile"], status = "accepted")
+  job["task"] = Threads.@spawn begin
     lock(_POWERFLOW_SERVICE_LOCK) do
       job["status"] = "running"
       job["message"] = "PowerFlow run is active."
@@ -321,10 +322,8 @@ function abort_webui_powerflow_run(run_id::AbstractString)::Dict{String,Any}
     job === nothing && return _service_failure("run_not_found", "No active Web UI PowerFlow run found for run_id $(run_id)."; run_id)
     get(job, "status", "") in _POWERFLOW_WEBUI_ACTIVE_STATES || return _service_failure("run_not_abortable", "PowerFlow run $(run_id) is no longer active."; run_id)
     job["abort_requested"][] = true
-    job["status"] = "aborted"
+    job["status"] = "aborting"
     job["message"] = "Abort requested. The worker will stop at the next safe phase boundary."
-    job["finished_at"] = Dates.now()
-    _write_aborted_powerflow_result!(job)
     _webui_job_snapshot(job)
   end
 end

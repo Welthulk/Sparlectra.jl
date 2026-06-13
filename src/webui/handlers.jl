@@ -26,17 +26,26 @@ function handle_webui_logo()::SparlectraWebUIResponse
 end
 
 """Run a PowerFlow request through the Web UI form-to-service boundary."""
-function handle_powerflow_run(form::AbstractDict; default_output_root::AbstractString = "results/powerflow_service", application_root::AbstractString = _webui_application_root(), case_directory::Union{Nothing,AbstractString} = nothing)::Dict{String,Any}
+function handle_powerflow_run(form::AbstractDict; default_output_root::AbstractString = "results/powerflow_service", application_root::AbstractString = _webui_application_root(), case_directory::Union{Nothing,AbstractString} = nothing, runner = start_powerflow_run, operation_log::AbstractString = default_output_root)::Dict{String,Any}
   request = powerflow_webui_request(form; default_output_root = default_output_root)
   package_case_directory = joinpath(application_root, "data", "mpower")
   requested_case = String(request["casefile"])
   if !isabspath(requested_case) && !occursin('/', requested_case) && !occursin('\\', requested_case)
+    cached_case = case_directory === nothing ? "" : joinpath(case_directory, requested_case)
     package_case = joinpath(package_case_directory, requested_case)
-    isfile(package_case) && (request["casefile"] = package_case)
+    if isfile(cached_case)
+      request["casefile"] = cached_case
+    elseif isfile(package_case) && case_directory !== nothing
+      mkpath(case_directory)
+      cp(package_case, cached_case; force = true)
+      request["casefile"] = cached_case
+    elseif isfile(package_case)
+      request["casefile"] = package_case
+    end
   end
   effective_case_directory = case_directory === nothing ? package_case_directory : String(case_directory)
-  event_callback = (event; fields...) -> record_webui_operation!(default_output_root, event; route = "/powerflow/run", method = "POST", user_action = false, fields...)
-  return start_webui_powerflow_run(request; case_directory = effective_case_directory, event_callback)
+  event_callback = (event; fields...) -> record_webui_operation!(operation_log, event; route = "/powerflow/run", method = "POST", user_action = false, fields...)
+  return start_webui_powerflow_run(request; case_directory = effective_case_directory, runner, event_callback)
 end
 
 function handle_powerflow_result(run_id::AbstractString)::SparlectraWebUIResponse

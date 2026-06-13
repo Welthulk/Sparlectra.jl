@@ -582,3 +582,5 @@
   rendering, and single-active-run protection. Solver execution is never
   interrupted unsafely; an abort requested during a blocking phase remains
   final when that phase returns.
+
+* **Bugfix**: Web UI submissions now run independently of request handling so active status and Abort controls are reachable before completion; first startup also provisions user-writable configuration, case-cache, run, and operation-log paths instead of using package-tree runtime defaults.

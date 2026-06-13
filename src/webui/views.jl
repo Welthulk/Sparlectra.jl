@@ -70,13 +70,11 @@ function _webui_active_run_banner(active_run)::String
   return "<section class=\"panel active-run-banner\"><strong>PowerFlow run is $(status):</strong> <code>$(_webui_escape(run_id))</code><div class=\"actions\"><a class=\"button\" href=\"/powerflow/result/$(_webui_urlencode(run_id))\">Open status</a><form method=\"post\" action=\"/powerflow/abort/$(_webui_urlencode(run_id))\"><button type=\"submit\" class=\"danger-button\">Abort</button></form></div></section>"
 end
 
-function render_powerflow_form(; output_root::AbstractString = "results/powerflow_service", case_directory::Union{Nothing,AbstractString} = nothing, error_message = nothing, application_root::AbstractString = _webui_application_root(), selected_casefile::AbstractString = "", selected_config_file::AbstractString = "", active_run = get_active_webui_powerflow_job())::String
+function render_powerflow_form(; output_root::AbstractString = "results/powerflow_service", case_directory::Union{Nothing,AbstractString} = nothing, operation_log::AbstractString = webui_operation_log_path(output_root), error_message = nothing, application_root::AbstractString = _webui_application_root(), selected_casefile::AbstractString = "", selected_config_file::AbstractString = "", active_run = get_active_webui_powerflow_job())::String
   error_html = error_message === nothing ? "" : "<div class=\"alert error\">$(_webui_escape(error_message))</div>"
-  casefiles = _webui_casefile_options(application_root)
-  config_files = _webui_config_file_options(application_root)
+  casefiles = case_directory === nothing ? _webui_casefile_options(application_root) : _webui_casefile_options_in_directory(case_directory)
   bundled_case_directory = joinpath(application_root, "data", "mpower")
   effective_case_directory = case_directory === nothing ? bundled_case_directory : String(case_directory)
-  config_directory = joinpath(application_root, "examples")
   selected_value = strip(selected_casefile)
   existing_value = selected_value in casefiles ? selected_value : ""
   manual_value = isempty(existing_value) ? selected_value : ""
@@ -84,15 +82,17 @@ function render_powerflow_form(; output_root::AbstractString = "results/powerflo
   case_select = "<select id=\"casefile\" name=\"casefile\"><option value=\"\">-- choose existing case --</option>$(case_options)</select>"
   case_manual = "<input id=\"casefile_manual\" name=\"casefile_manual\" value=\"$(_webui_escape(manual_value))\" placeholder=\"case14.m\">"
   config_default = isempty(selected_config_file) ? DEFAULT_SPARLECTRA_CONFIG_PATH : selected_config_file
-  config_control = isempty(config_files) ? "<input name=\"config_file\" required value=\"$(_webui_escape(config_default))\">" : _webui_path_select("config_file", config_files, selected_config_file)
+  config_control = "<input type=\"hidden\" name=\"config_file\" value=\"$(_webui_escape(config_default))\"><code>$(_webui_escape(config_default))</code>"
   form = """
 $(error_html)$(_webui_active_run_banner(active_run))<p class=\"lede\">Run a local MATPOWER case through the Sparlectra PowerFlow service.</p>
 <form id=\"powerflow-run-form\" method=\"post\" action=\"/powerflow/run\" class=\"panel form-grid\" onsubmit=\"this.classList.add('is-submitting'); this.setAttribute('aria-busy', 'true'); this.querySelector('button[type=submit]').disabled = true;\">
-<label>$(_webui_field_label("casefile", "Existing MATPOWER case"))$(case_select)<small class="field-hint">Bundled cases from <code>$(_webui_escape(bundled_case_directory))</code></small></label>
+<label>$(_webui_field_label("casefile", "Existing MATPOWER case"))$(case_select)<small class="field-hint">Cases from <code>$(_webui_escape(effective_case_directory))</code></small></label>
 <label><span class="field-label">Or type/download MATPOWER case</span>$(case_manual)<small class="field-hint">Manual input overrides the existing-case selection.</small></label>
-<label>$(_webui_field_label("config_file", "Configuration template file"))$(config_control)<small class="field-hint">Configurations from <code>$(_webui_escape(config_directory))</code></small></label>
+<label>$(_webui_field_label("config_file", "Configuration file"))$(config_control)<small class="field-hint">Set at Web UI startup.</small></label>
 <p class=\"span-2 output-root-display\"><strong>Output root:</strong> <code>$(_webui_escape(output_root))</code></p>
+<p class=\"span-2 output-root-display\"><strong>Config file:</strong> <code>$(_webui_escape(config_default))</code></p>
 <p class=\"span-2 output-root-display\"><strong>MATPOWER case cache:</strong> <code>$(_webui_escape(effective_case_directory))</code></p>
+<p class=\"span-2 output-root-display\"><strong>Operation log:</strong> <code>$(_webui_escape(operation_log))</code></p>
 <label>$(_webui_field_label("power_flow_tol", "PowerFlow tolerance"))<input name=\"power_flow_tol\" type=\"number\" step=\"any\" min=\"0\" value=\"1e-8\"></label>
 <label>$(_webui_field_label("power_flow_max_iter", "Maximum iterations"))<input name=\"power_flow_max_iter\" type=\"number\" min=\"1\" value=\"80\"></label>
 <label class=\"check\"><input name=\"power_flow_autodamp\" type=\"checkbox\" checked>$(_webui_field_label("power_flow_autodamp", "Autodamping enabled"))</label>

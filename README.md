@@ -111,16 +111,15 @@ server = Sparlectra.start_sparlectra_webui(open_browser = true)
 wait(server.task)
 ```
 
-The Web UI creates its output, log, and MATPOWER case-cache directories
-automatically. Its default output root is:
+On first start, the Web UI provisions a user-writable configuration file and a small case cache, and creates its output and log directories automatically. Installed users do not need to locate the package directory. Its default output root is:
 
 - Windows: `%LOCALAPPDATA%\Sparlectra\WebUI\runs`
 - Linux: `$XDG_STATE_HOME/sparlectra/webui/runs`, or
   `~/.local/state/sparlectra/webui/runs` when `XDG_STATE_HOME` is unset
 - macOS: `~/Library/Application Support/Sparlectra/WebUI/runs`
 
-The operation log is `<output_root>/webui_operations.jsonl`, and downloaded
-cases are cached under `<output_root>/data/mpower`. To choose another root:
+The operation log is stored in the user Web UI `logs` directory, and downloaded/generated
+cases are cached in the sibling user Web UI `data/mpower` directory. To choose another root:
 
 ```julia
 server = Sparlectra.start_sparlectra_webui(
@@ -134,7 +133,7 @@ Repository developers should run `julia --project=. start_webui.jl`;
 `start_webui.jl` is the maintained developer launcher.
 
 Stop the server with the **Stop Web UI** button, `close(server)`, or `Ctrl+C`.
-Run abort is cooperative: the UI records the run as aborted immediately, while
+Run abort is cooperative: the UI changes the run state to `aborting` immediately, while
 an already-blocking solver phase may continue until that phase returns.
 
 ---

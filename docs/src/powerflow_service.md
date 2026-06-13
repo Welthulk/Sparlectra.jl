@@ -61,7 +61,7 @@ persisted aborted result. No unsafe task interruption is used.
 
 The Web UI supplies a small lifecycle callback to this asynchronous boundary so
 `powerflow_started`, completion/failure, and final abort events can be appended
-to the output-root-level `webui_operations.jsonl` support log. This does not
+to the user Web UI `logs/webui_operations.jsonl` support log. This does not
 change the PowerFlow result schema or per-run artifact contract.
 
 Aborted runs receive a normal run directory, `result.json`, an index entry, and
@@ -118,3 +118,7 @@ and available status diagnostics beyond the `classic` report.
 This layer intentionally introduces no HTTP routes, Genie.jl server, browser
 GUI, authentication, or database. See `examples/exp_powerflow_service.jl` for a
 runnable local example.
+
+## Web UI runtime paths and cancellation
+
+The browser submit route schedules work and redirects to the run status page before case loading, solving, diagnostics, or artifact writing. Active status and history/form banners expose a POST-only Abort control. Cancellation is cooperative: the UI changes to `aborting` immediately, while the worker discards a later success and records `aborted` at the next safe phase boundary. The Web UI provisions configuration, case cache, run output, and operation-log paths beneath the user-writable Web UI application directories; explicit startup paths and explicit local case paths remain supported.
