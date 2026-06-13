@@ -20,6 +20,7 @@
 
 ### Bugfixes
 
+* Fixed Web UI PowerFlow abort completion by propagating cooperative cancellation through service phases and rectangular Newton iterations, persisting terminal aborted results and operation events, releasing the active-run guard, making repeated aborts idempotent, and rejecting deletion until an active run is terminal.
 * Made cooperative PowerFlow abort controls visible from active-run banners on both the start form and run-history page, while retaining the POST-only control on the live status page and hiding it after terminal states.
 * Restored an explicit local MATPOWER case selector in the PowerFlow Web UI while retaining separate manual case entry for on-demand downloads.
 

@@ -4,6 +4,15 @@ const _POWERFLOW_SERVICE_LOCK = ReentrantLock()
 const _POWERFLOW_WEBUI_JOBS = Dict{String,Dict{String,Any}}()
 const _POWERFLOW_WEBUI_ACTIVE_STATES = Set(("queued", "running", "aborting"))
 
+struct PowerFlowAborted <: Exception end
+Base.showerror(io::IO, ::PowerFlowAborted) = print(io, "PowerFlow run aborted by user.")
+
+function _check_powerflow_cancelled!(token)
+  token === nothing && return nothing
+  token[] || return nothing
+  throw(PowerFlowAborted())
+end
+
 mutable struct _ServiceJsonParser
   text::String
   index::Int
@@ -271,6 +280,7 @@ function start_webui_powerflow_run(request::AbstractDict; case_directory::Union{
     event_callback("powerflow_started"; run_id, requested_case = job["casefile"], status = "running")
     worker_request = Dict{String,Any}(String(key) => value for (key, value) in request)
     worker_request["run_id"] = run_id
+    worker_request["cancellation_token"] = job["abort_requested"]
     result = try
       runner(worker_request; case_directory)
     catch err
@@ -320,11 +330,14 @@ function abort_webui_powerflow_run(run_id::AbstractString)::Dict{String,Any}
   return lock(_POWERFLOW_SERVICE_LOCK) do
     job = get(_POWERFLOW_WEBUI_JOBS, String(run_id), nothing)
     job === nothing && return _service_failure("run_not_found", "No active Web UI PowerFlow run found for run_id $(run_id)."; run_id)
-    get(job, "status", "") in _POWERFLOW_WEBUI_ACTIVE_STATES || return _service_failure("run_not_abortable", "PowerFlow run $(run_id) is no longer active."; run_id)
+    status = get(job, "status", "")
+    status == "aborting" && return merge(_webui_job_snapshot(job), Dict("abort_status" => "already_aborting"))
+    status == "aborted" && return merge(_webui_job_snapshot(job), Dict("abort_status" => "already_aborted"))
+    status in _POWERFLOW_WEBUI_ACTIVE_STATES || return _service_failure("run_not_abortable", "PowerFlow run $(run_id) is no longer active."; run_id)
     job["abort_requested"][] = true
     job["status"] = "aborting"
-    job["message"] = "Abort requested. The worker will stop at the next safe phase boundary."
-    _webui_job_snapshot(job)
+    job["message"] = "Abort requested. Waiting for the calculation to stop at the next safe cancellation point."
+    merge(_webui_job_snapshot(job), Dict("abort_status" => "accepted"))
   end
 end
 
@@ -743,19 +756,24 @@ cases are preferred for execution, while existing path behavior is retained.
 function start_powerflow_run(request::AbstractDict; case_directory::Union{Nothing,AbstractString} = nothing, case_resolver = _resolve_powerflow_casefile)::Dict{String,Any}
   request_start = time_ns()
   phases = Dict{Symbol,Float64}()
+  cancellation_token = _service_request_value(request, "cancellation_token", nothing)
+  _check_powerflow_cancelled!(cancellation_token)
   casefile = _service_request_value(request, "casefile")
   casefile isa AbstractString && !isempty(strip(casefile)) || return _service_failure("missing_casefile", "PowerFlow service request requires a nonempty casefile.")
   if case_directory === nothing
+    _check_powerflow_cancelled!(cancellation_token)
     isfile(casefile) || return _service_failure("missing_casefile", "MATPOWER case file not found: $(abspath(casefile))")
     casefile = abspath(casefile)
   else
     resolution_start = time_ns()
+    _check_powerflow_cancelled!(cancellation_token)
     casefile = try
       case_resolver(casefile, case_directory)
     catch err
       return _service_failure("invalid_casefile", sprint(showerror, err))
     end
     phases[:case_resolution] = _api_elapsed_seconds(resolution_start)
+    _check_powerflow_cancelled!(cancellation_token)
   end
 
   config_file = _service_request_value(request, "config_file")
@@ -787,8 +805,10 @@ function start_powerflow_run(request::AbstractDict; case_directory::Union{Nothin
       run_diagnostics = run_diagnostics,
       phase_timings = phases,
       run_id = run_id,
+      cancellation_token = cancellation_token,
     )
   catch err
+    err isa PowerFlowAborted && rethrow()
     return _service_failure("execution_error", sprint(showerror, err, catch_backtrace()); run_id = run_id)
   end
 

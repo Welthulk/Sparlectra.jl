@@ -321,6 +321,11 @@ function run_api_tests()
       release = Channel{Nothing}(1)
       controlled_runner = function(request; case_directory = nothing)
         put!(entered, nothing)
+        token = request["cancellation_token"]
+        while !isready(release)
+          Sparlectra._check_powerflow_cancelled!(token)
+          yield()
+        end
         take!(release)
         return start_powerflow_run(request; case_directory)
       end
@@ -337,19 +342,36 @@ function run_api_tests()
       @test rejected_concurrent["reason"] == "active_run"
       aborted = Sparlectra.abort_webui_powerflow_run(active["run_id"])
       @test aborted["status"] == "aborting"
+      @test aborted["abort_status"] == "accepted"
       @test !aborted["success"]
+      @test Sparlectra.abort_webui_powerflow_run(active["run_id"])["abort_status"] == "already_aborting"
       @test Sparlectra.start_webui_powerflow_run(async_request; runner = controlled_runner)["reason"] == "active_run"
       @test Sparlectra.abort_webui_powerflow_run("../unsafe")["reason"] == "unsafe_run_id"
-      put!(release, nothing)
       wait(Sparlectra._POWERFLOW_WEBUI_JOBS[active["run_id"]]["task"])
       @test get_powerflow_result(active["run_id"])["status"] == "aborted"
+      @test !get_powerflow_result(active["run_id"])["success"]
       @test occursin("Run aborted by user.", read(joinpath(aborted["output_dir"], "run.log"), String))
+      @test Sparlectra.abort_webui_powerflow_run(active["run_id"])["abort_status"] == "already_aborted"
       replacement = Sparlectra.start_webui_powerflow_run(async_request; runner = controlled_runner)
       @test replacement["status"] in ("queued", "running")
       put!(release, nothing)
       wait(Sparlectra._POWERFLOW_WEBUI_JOBS[replacement["run_id"]]["task"])
       @test Sparlectra.get_webui_powerflow_job(active["run_id"])["status"] == "aborted"
       @test Sparlectra.get_active_webui_powerflow_job() === nothing
+
+      pre_cancelled = Threads.Atomic{Bool}(true)
+      @test_throws Sparlectra.PowerFlowAborted start_powerflow_run(merge(async_request, Dict("cancellation_token" => pre_cancelled)))
+
+      solver_checks = Ref(0)
+      solver_profile = Dict{Symbol,Any}(
+        :cancellation_check => () -> begin
+          solver_checks[] += 1
+          throw(Sparlectra.PowerFlowAborted())
+        end,
+      )
+      solver_net = deepcopy(Sparlectra._registered_powerflow_run(started["run_id"]).raw_result.net)
+      @test_throws Sparlectra.PowerFlowAborted runpf!(solver_net; config = powerflow_config(), performance_profile = solver_profile)
+      @test solver_checks[] == 1
 
       failed = start_powerflow_run(Dict(
         "casefile" => casefile,

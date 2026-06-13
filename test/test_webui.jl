@@ -509,7 +509,8 @@ result = get_powerflow_result(run_id)
         "config_file" => config_file,
         "output_root" => output_root,
       )
-      active = Sparlectra.start_webui_powerflow_run(active_request; runner = slow_runner)
+      lifecycle_event = (event; fields...) -> Sparlectra.record_webui_operation!(output_root, event; route = "/powerflow/run", method = "POST", user_action = false, fields...)
+      active = Sparlectra.start_webui_powerflow_run(active_request; runner = slow_runner, event_callback = lifecycle_event)
       take!(entered_webui)
       active_id = active["run_id"]
       active_result_html = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow/result/$(active_id)"; output_root).body)
@@ -529,10 +530,27 @@ result = get_powerflow_result(run_id)
       @test aborted_response.status == 303
       aborted_html = String(Sparlectra.handle_powerflow_result(active_id).body)
       @test occursin("aborting", aborted_html)
-      @test occursin(abort_action, aborted_html)
+      @test occursin("Waiting for the calculation to stop at the next safe cancellation point", aborted_html)
+      @test !occursin(abort_action, aborted_html)
       @test occursin("\"event\":\"powerflow_abort_requested\"", read(operation_log_path, String))
+      repeated_abort = Sparlectra.route_sparlectra_webui("POST", "/powerflow/abort/$(active_id)"; output_root)
+      @test repeated_abort.status == 303
+      @test occursin("\"event\":\"powerflow_abort_already_requested\"", read(operation_log_path, String))
+      active_delete = Sparlectra.route_sparlectra_webui("POST", "/powerflow/delete/$(active_id)"; output_root)
+      @test active_delete.status == 409
+      @test occursin("This run is still active", String(active_delete.body))
+      @test occursin("\"event\":\"run_delete_rejected\"", read(operation_log_path, String))
       put!(release_webui, nothing)
       wait(Sparlectra._POWERFLOW_WEBUI_JOBS[active_id]["task"])
+      terminal_html = String(Sparlectra.handle_powerflow_result(active_id).body)
+      @test occursin("<td>aborted</td>", terminal_html)
+      @test occursin("Run aborted by user.", terminal_html)
+      @test !occursin(abort_action, terminal_html)
+      terminal_log = read(operation_log_path, String)
+      @test any(line -> occursin("\"event\":\"powerflow_aborted\"", line) && occursin("\"run_id\":\"$(active_id)\"", line), eachline(IOBuffer(terminal_log)))
+      @test Sparlectra.get_active_webui_powerflow_job() === nothing
+      terminal_delete = Sparlectra.route_sparlectra_webui("POST", "/powerflow/delete/$(active_id)"; output_root)
+      @test terminal_delete.status == 303
 
       operation_log_page = Sparlectra.route_sparlectra_webui("GET", "/webui/operation-log"; output_root)
       @test operation_log_page.status == 200

@@ -511,6 +511,10 @@ function runpf_rectangular!(
   qlimit_active_set_changes = 0
   qlimit_reenable_events = 0
   for it = 1:maxiter
+    if performance_profile isa AbstractDict
+      cancellation_check = get(performance_profile, :cancellation_check, nothing)
+      cancellation_check === nothing || cancellation_check()
+    end
     iters = it
 
     if has_vdep_control

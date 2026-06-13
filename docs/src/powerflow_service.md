@@ -54,10 +54,10 @@ available for diagnosis.
 The Web UI uses `start_webui_powerflow_run` as a small asynchronous lifecycle
 layer around the synchronous service call. It keeps one active local Web UI job,
 tracks queued/running/success/failed/aborted states, and exposes cooperative
-abort requests. Cancellation is checked at the service boundary: if the solver
-is already executing a non-interruptible phase, that task can finish in the
-background, but its eventual result is discarded and cannot overwrite the
-persisted aborted result. No unsafe task interruption is used.
+abort requests. Cancellation is checked around case resolution, configuration
+and import work, solving, diagnostics, and artifact writing. The rectangular
+solver also checks once per Newton iteration, so long Web UI solves stop at the
+next safe iteration boundary. No unsafe task interruption is used.
 
 The Web UI supplies a small lifecycle callback to this asynchronous boundary so
 `powerflow_started`, completion/failure, and final abort events can be appended
@@ -121,4 +121,4 @@ runnable local example.
 
 ## Web UI runtime paths and cancellation
 
-The browser submit route schedules work and redirects to the run status page before case loading, solving, diagnostics, or artifact writing. Active status and history/form banners expose a POST-only Abort control. Cancellation is cooperative: the UI changes to `aborting` immediately, while the worker discards a later success and records `aborted` at the next safe phase boundary. The Web UI provisions configuration, case cache, run output, and operation-log paths beneath the user-writable Web UI application directories; explicit startup paths and explicit local case paths remain supported.
+The browser submit route schedules work and redirects to the run status page before case loading, solving, diagnostics, or artifact writing. Active status and history/form banners expose a POST-only Abort control while the job is queued or running. Cancellation is cooperative: the UI changes to `aborting` immediately, repeated requests are logged as already requested, and the worker records terminal `aborted` plus `powerflow_aborted` at the next safe phase or rectangular-iteration check. Terminal abort releases the single-active-job guard. Delete requests for queued, running, or aborting jobs are rejected with a controlled explanation; terminal aborted jobs can be deleted normally. The Web UI provisions configuration, case cache, run output, and operation-log paths beneath the user-writable Web UI application directories; explicit startup paths and explicit local case paths remain supported.
