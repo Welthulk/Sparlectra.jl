@@ -347,6 +347,7 @@ run_response = Sparlectra.route_sparlectra_webui("POST", "/powerflow/run", route
 @test run_response.status == 303
 result_location = only(header.second for header in run_response.headers if header.first == "Location")
 run_id = basename(result_location)
+wait(Sparlectra._POWERFLOW_WEBUI_JOBS[run_id]["task"])
 result = get_powerflow_result(run_id)
 @test result["success"]
 @test result["output_dir"] == joinpath(abspath(output_root), run_id)
@@ -398,6 +399,7 @@ result = get_powerflow_result(run_id)
       @test occursin(".status-error {\n", css_text)
       @test occursin(".status-unknown {\n", css_text)
       @test occursin(".status-running {\n", css_text)
+      @test occursin(".status-aborted {\n", css_text)
       @test occursin(".exit-button,\n", css_text)
 
 
@@ -426,6 +428,9 @@ result = get_powerflow_result(run_id)
       @test occursin("action=\"/powerflow/delete_all\"", history_html)
       @test occursin("action=\"/powerflow/refresh\"", history_html)
       @test occursin(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}", history_html)
+      @test Sparlectra.route_sparlectra_webui("GET", "/powerflow/abort/$(run_id)"; output_root).status == 404
+      @test Sparlectra.route_sparlectra_webui("POST", "/powerflow/abort/unknown-run"; output_root).status == 404
+      @test Sparlectra.route_sparlectra_webui("POST", "/powerflow/abort/..%2Foutside"; output_root).status == 404
       @test Sparlectra.route_sparlectra_webui("GET", "/powerflow/delete/$(run_id)"; output_root).status == 404
       unsafe_delete = Sparlectra.route_sparlectra_webui("POST", "/powerflow/delete/..%2Foutside"; output_root)
       @test unsafe_delete.status == 400

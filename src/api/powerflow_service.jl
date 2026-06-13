@@ -1,6 +1,8 @@
 const POWERFLOW_RUN_INDEX_FILENAME = "powerflow_runs_index.json"
 const _POWERFLOW_SERVICE_RUNS = Dict{String,SparlectraApiResult}()
 const _POWERFLOW_SERVICE_LOCK = ReentrantLock()
+const _POWERFLOW_WEBUI_JOBS = Dict{String,Dict{String,Any}}()
+const _POWERFLOW_WEBUI_ACTIVE_STATES = Set(("queued", "running", "aborting"))
 
 mutable struct _ServiceJsonParser
   text::String
@@ -172,6 +174,144 @@ function _register_powerflow_run!(result::SparlectraApiResult)
   return result
 end
 
+function _safe_powerflow_run_id(run_id::AbstractString)::Bool
+  id = String(run_id)
+  return !isempty(id) && !_unsafe_artifact_name(id) && occursin(r"^[A-Za-z0-9][A-Za-z0-9._-]*$", id)
+end
+
+function _webui_job_snapshot(job::AbstractDict)::Dict{String,Any}
+  snapshot = Dict{String,Any}(String(key) => value for (key, value) in job if key != "task" && key != "abort_requested")
+  started_at = get(job, "started_at", nothing)
+  finished_at = get(job, "finished_at", nothing)
+  snapshot["elapsed_seconds"] = started_at === nothing ? nothing : max(0.0, Dates.value(something(finished_at, Dates.now()) - started_at) / 1000)
+  snapshot["success"] = get(snapshot, "status", "") == "success"
+  return snapshot
+end
+
+function _webui_active_job()
+  return lock(_POWERFLOW_SERVICE_LOCK) do
+    for job in values(_POWERFLOW_WEBUI_JOBS)
+      get(job, "status", "") in _POWERFLOW_WEBUI_ACTIVE_STATES && return job
+    end
+    return nothing
+  end
+end
+
+function _write_aborted_powerflow_result!(job::AbstractDict)
+  output_dir = String(job["output_dir"])
+  mkpath(output_dir)
+  logfile = joinpath(output_dir, "run.log")
+  open(logfile, "a") do io
+    println(io, "Run aborted by user.")
+    println(io, "Status: aborted")
+  end
+  result_file = joinpath(output_dir, "result.json")
+  result = _api_result(
+    run_id = String(job["run_id"]),
+    status = :aborted,
+    success = false,
+    reason = "aborted_by_user",
+    message = "Run aborted by user.",
+    casefile = get(job, "casefile", nothing),
+    config_file = get(job, "config_file", nothing),
+    output_dir = output_dir,
+    logfile = logfile,
+    result_file = result_file,
+  )
+  _write_api_result_file(result)
+  result = _refresh_api_artifacts(result)
+  _write_api_result_file(result)
+  _POWERFLOW_SERVICE_RUNS[result.run_id] = result
+  _write_powerflow_run_index!(String(job["output_root"]), result)
+  return result
+end
+
+"""
+    start_webui_powerflow_run(request; case_directory=nothing, runner=start_powerflow_run)
+
+Start one Web UI PowerFlow job in a background task. Only one active Web UI job
+is accepted at a time. Cancellation is cooperative: an abort request releases
+the UI immediately and the worker discards any later solver success.
+"""
+function start_webui_powerflow_run(request::AbstractDict; case_directory::Union{Nothing,AbstractString} = nothing, runner = start_powerflow_run)::Dict{String,Any}
+  active = _webui_active_job()
+  active === nothing || return _service_failure("active_run", "A PowerFlow run is already active. Abort it or wait for it to finish."; run_id = active["run_id"])
+  output_root = _service_request_value(request, "output_root")
+  output_root isa AbstractString && !isempty(strip(output_root)) || return _service_failure("invalid_request", "PowerFlow service request requires a nonempty output_root.")
+  run_id = string(uuid4())
+  job = Dict{String,Any}(
+    "run_id" => run_id,
+    "status" => "queued",
+    "casefile" => _service_request_value(request, "casefile"),
+    "resolved_casefile" => nothing,
+    "config_file" => _service_request_value(request, "config_file"),
+    "output_root" => abspath(output_root),
+    "output_dir" => joinpath(abspath(output_root), run_id),
+    "started_at" => Dates.now(),
+    "finished_at" => nothing,
+    "message" => "PowerFlow run queued.",
+    "abort_requested" => Threads.Atomic{Bool}(false),
+  )
+  lock(_POWERFLOW_SERVICE_LOCK) do
+    _POWERFLOW_WEBUI_JOBS[run_id] = job
+  end
+  job["task"] = @async begin
+    lock(_POWERFLOW_SERVICE_LOCK) do
+      job["status"] = "running"
+      job["message"] = "PowerFlow run is active."
+    end
+    worker_request = Dict{String,Any}(String(key) => value for (key, value) in request)
+    worker_request["run_id"] = run_id
+    result = try
+      runner(worker_request; case_directory)
+    catch err
+      _service_failure("execution_error", sprint(showerror, err, catch_backtrace()); run_id)
+    end
+    lock(_POWERFLOW_SERVICE_LOCK) do
+      if job["abort_requested"][]
+        job["status"] = "aborted"
+        job["message"] = "Run aborted by user."
+        _write_aborted_powerflow_result!(job)
+      else
+        job["status"] = get(result, "success", false) ? "success" : "failed"
+        job["message"] = something(get(result, "message", nothing), job["status"] == "success" ? "PowerFlow run completed." : "PowerFlow run failed.")
+        job["resolved_casefile"] = get(result, "casefile", nothing)
+        if haskey(result, "run_id") && result["run_id"] != run_id
+          delete!(_POWERFLOW_WEBUI_JOBS, run_id)
+          job["run_id"] = result["run_id"]
+          job["output_dir"] = get(result, "output_dir", job["output_dir"])
+          _POWERFLOW_WEBUI_JOBS[result["run_id"]] = job
+        end
+      end
+      job["finished_at"] = Dates.now()
+    end
+  end
+  return _webui_job_snapshot(job)
+end
+
+function get_webui_powerflow_job(run_id::AbstractString)::Dict{String,Any}
+  _safe_powerflow_run_id(run_id) || return _service_failure("unsafe_run_id", "Unsafe PowerFlow run ID rejected."; run_id)
+  return lock(_POWERFLOW_SERVICE_LOCK) do
+    job = get(_POWERFLOW_WEBUI_JOBS, String(run_id), nothing)
+    job === nothing ? get_powerflow_result(run_id) : _webui_job_snapshot(job)
+  end
+end
+
+function abort_webui_powerflow_run(run_id::AbstractString)::Dict{String,Any}
+  _safe_powerflow_run_id(run_id) || return _service_failure("unsafe_run_id", "Unsafe PowerFlow run ID rejected."; run_id)
+  return lock(_POWERFLOW_SERVICE_LOCK) do
+    job = get(_POWERFLOW_WEBUI_JOBS, String(run_id), nothing)
+    job === nothing && return _service_failure("run_not_found", "No active Web UI PowerFlow run found for run_id $(run_id)."; run_id)
+    get(job, "status", "") in _POWERFLOW_WEBUI_ACTIVE_STATES || return _service_failure("run_not_abortable", "PowerFlow run $(run_id) is no longer active."; run_id)
+    job["abort_requested"][] = true
+    job["status"] = "aborted"
+    job["message"] = "Abort requested. The worker will stop at the next safe phase boundary."
+    job["finished_at"] = Dates.now()
+    _write_aborted_powerflow_result!(job)
+    _webui_job_snapshot(job)
+  end
+end
+
 function _powerflow_index_path(output_root::AbstractString)::String
   return joinpath(abspath(output_root), POWERFLOW_RUN_INDEX_FILENAME)
 end
@@ -284,7 +424,18 @@ unsafe indexed paths are described by a structured `reason` instead of raising.
 """
 function list_powerflow_runs(output_root::AbstractString)::Vector{Dict{String,Any}}
   index = load_powerflow_run_index(output_root)
-  return [_validated_powerflow_run_entry(entry, output_root) for entry in index["runs"]]
+  runs = [_validated_powerflow_run_entry(entry, output_root) for entry in index["runs"]]
+  root = abspath(output_root)
+  active_jobs = lock(_POWERFLOW_SERVICE_LOCK) do
+    [_webui_job_snapshot(job) for job in values(_POWERFLOW_WEBUI_JOBS) if job["output_root"] == root && get(job, "status", "") in _POWERFLOW_WEBUI_ACTIVE_STATES]
+  end
+  indexed_ids = Set(string(get(run, "run_id", "")) for run in runs)
+  for job in active_jobs
+    job["available"] = true
+    job["timestamp"] = Dates.format(job["started_at"], "yyyy-mm-dd HH:MM:SS")
+    job["run_id"] in indexed_ids || push!(runs, job)
+  end
+  return runs
 end
 
 function _write_powerflow_run_entries!(output_root::AbstractString, runs::AbstractVector)
@@ -605,7 +756,9 @@ function start_powerflow_run(request::AbstractDict; case_directory::Union{Nothin
   run_diagnostics isa Bool || return _service_failure("invalid_request", "run_diagnostics must be boolean.")
   phases[:request_parse] = _api_elapsed_seconds(request_start)
 
-  run_id = string(uuid4())
+  requested_run_id = _service_request_value(request, "run_id", nothing)
+  run_id = requested_run_id === nothing ? string(uuid4()) : String(requested_run_id)
+  _safe_powerflow_run_id(run_id) || return _service_failure("unsafe_run_id", "Unsafe PowerFlow run ID rejected.")
   root = abspath(output_root)
   output_dir = joinpath(root, run_id)
   result = try

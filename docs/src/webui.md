@@ -59,6 +59,21 @@ not a derivative of an external MATPOWER case.
 
 ## Starting a PowerFlow run
 
+Web UI submissions start in a background Julia task and redirect immediately to
+a run-status page. The page shows the requested and resolved case paths, status,
+start time, elapsed time, and a manual refresh link. While a job is queued or
+running, it also shows an **Abort run** form that sends
+`POST /powerflow/abort/<run-id>`; JavaScript is not required.
+
+Abort is cooperative and never injects an exception into solver code. The abort
+request is accepted immediately, the run is recorded as `aborted`, and the form
+is available for another submission. If execution is already inside a blocking
+solver phase, its background task may continue until that phase returns, but
+its result cannot replace the aborted status. Partial files remain in the run
+directory and `run.log` identifies the user abort. Only one non-aborted Web UI
+job is accepted at a time; a second submission receives a controlled message
+asking the user to abort the active run or wait.
+
 The start page accepts:
 
 - a typed MATPOWER case name or an existing local case path;
@@ -166,6 +181,9 @@ replacement for the Documenter.jl site.
 Successful and failed runs both have a result page. It shows the run ID, schema
 version, status, convergence and solution flags, iteration count, final
 mismatch, reason/message fields, input paths, and output directory.
+Aborted runs are listed distinctly in history and are never rendered as
+successful. After an abort, the user can return to the form and submit new
+inputs without restarting the server.
 
 Artifact lists come from `list_powerflow_artifacts`. Artifact requests are
 resolved by exact metadata name through `resolve_powerflow_artifact`; browser

@@ -271,6 +271,11 @@ pre {
   border: 1px solid #efb8b8;
 }
 
+.status-aborted {
+  background: #fff1d6;
+  color: #7a4a00;
+}
+
 @media (max-width: 760px) {
   .form-grid {
     grid-template-columns: 1fr;

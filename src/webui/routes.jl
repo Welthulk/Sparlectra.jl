@@ -54,7 +54,7 @@ function route_sparlectra_webui(method::AbstractString, target::AbstractString, 
   elseif verb == "POST" && path == "/powerflow/run"
     try
       result = handle_powerflow_run(form; default_output_root = output_root)
-      haskey(result, "run_id") && get(result, "reason", "") != "execution_error" && return _webui_redirect("/powerflow/result/$(_webui_urlencode(result["run_id"]))")
+      haskey(result, "run_id") && !haskey(result, "reason") && return _webui_redirect("/powerflow/result/$(_webui_urlencode(result["run_id"]))")
       return _webui_html(render_powerflow_result(result); status = 400)
     catch err
       selected_casefile = String(something(_webui_form_value(form, "casefile", ""), ""))
@@ -68,6 +68,8 @@ function route_sparlectra_webui(method::AbstractString, target::AbstractString, 
     end
   elseif verb == "GET" && startswith(path, "/powerflow/result/")
     return handle_powerflow_result(_webui_urldecode(path[(lastindex("/powerflow/result/") + 1):end]))
+  elseif verb == "POST" && startswith(path, "/powerflow/abort/")
+    return handle_powerflow_abort(_webui_urldecode(path[(lastindex("/powerflow/abort/") + 1):end]))
   elseif verb == "GET" && startswith(path, "/powerflow/artifacts/")
     return handle_powerflow_artifacts(_webui_urldecode(path[(lastindex("/powerflow/artifacts/") + 1):end]))
   elseif verb == "GET" && startswith(path, "/powerflow/artifact/")

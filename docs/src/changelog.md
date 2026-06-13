@@ -574,3 +574,8 @@
 - Initial public commit of Sparlectra 
 
 * **Bugfix**: Restored MATPOWER runner operational reporting through package-level runners (header, config paths, resolved case, logfile path, compact summary, benchmark/performance blocks) while keeping example scripts thin and free of local YAML parsing.
+* **Feature**: Added asynchronous local Web UI PowerFlow jobs with a POST-only
+  cooperative abort action, persistent aborted status, distinct history
+  rendering, and single-active-run protection. Solver execution is never
+  interrupted unsafely; an abort requested during a blocking phase remains
+  final when that phase returns.

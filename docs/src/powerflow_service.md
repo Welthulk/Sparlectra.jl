@@ -51,6 +51,19 @@ available for diagnosis.
 
 ## Service boundary
 
+The Web UI uses `start_webui_powerflow_run` as a small asynchronous lifecycle
+layer around the synchronous service call. It keeps one active local Web UI job,
+tracks queued/running/success/failed/aborted states, and exposes cooperative
+abort requests. Cancellation is checked at the service boundary: if the solver
+is already executing a non-interruptible phase, that task can finish in the
+background, but its eventual result is discarded and cannot overwrite the
+persisted aborted result. No unsafe task interruption is used.
+
+Aborted runs receive a normal run directory, `result.json`, an index entry, and
+a `run.log` status marker. This keeps history recovery and artifact path safety
+identical to completed runs while making it clear that any partial artifacts do
+not represent a successful solve.
+
 - [`start_powerflow_run`](@ref) validates the dictionary-like request, chooses
   the run ID and directory, invokes the programmatic API, registers the result,
   and updates the persistent index. A trusted caller such as the Web UI can

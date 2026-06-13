@@ -29,13 +29,20 @@ end
 function handle_powerflow_run(form::AbstractDict; default_output_root::AbstractString = "results/powerflow_service", application_root::AbstractString = _webui_application_root())::Dict{String,Any}
   request = powerflow_webui_request(form; default_output_root = default_output_root)
   case_directory = joinpath(application_root, "data", "mpower")
-  return start_powerflow_run(request; case_directory)
+  return start_webui_powerflow_run(request; case_directory)
 end
 
 function handle_powerflow_result(run_id::AbstractString)::SparlectraWebUIResponse
-  result = get_powerflow_result(run_id)
+  result = get_webui_powerflow_job(run_id)
   status = get(result, "success", false) || get(result, "reason", "") != "run_not_found" ? 200 : 404
   return _webui_html(render_powerflow_result(result); status = status)
+end
+
+function handle_powerflow_abort(run_id::AbstractString)::SparlectraWebUIResponse
+  result = abort_webui_powerflow_run(run_id)
+  status = get(result, "reason", "") in ("unsafe_run_id", "run_not_found") ? 404 : 303
+  status == 303 && return _webui_redirect("/powerflow/result/$(_webui_urlencode(run_id))")
+  return _webui_html(render_webui_error(status, get(result, "message", "Abort request failed.")); status)
 end
 
 function handle_powerflow_artifacts(run_id::AbstractString)::SparlectraWebUIResponse

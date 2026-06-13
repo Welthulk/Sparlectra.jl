@@ -317,6 +317,37 @@ function run_api_tests()
       @test any(run -> run["run_id"] == started["run_id"] && run["available"] && haskey(run, "timestamp"), listed_runs)
       @test isempty(list_powerflow_runs(joinpath(tmpdir, "empty_service")))
 
+      entered = Channel{Nothing}(1)
+      release = Channel{Nothing}(1)
+      controlled_runner = function(request; case_directory = nothing)
+        put!(entered, nothing)
+        take!(release)
+        return start_powerflow_run(request; case_directory)
+      end
+      async_request = Dict(
+        "casefile" => casefile,
+        "config_file" => config_file,
+        "output_root" => joinpath(tmpdir, "async-runs"),
+      )
+      active = Sparlectra.start_webui_powerflow_run(async_request; runner = controlled_runner)
+      take!(entered)
+      @test Sparlectra.get_webui_powerflow_job(active["run_id"])["status"] == "running"
+      rejected_concurrent = Sparlectra.start_webui_powerflow_run(async_request; runner = controlled_runner)
+      @test rejected_concurrent["reason"] == "active_run"
+      aborted = Sparlectra.abort_webui_powerflow_run(active["run_id"])
+      @test aborted["status"] == "aborted"
+      @test !aborted["success"]
+      @test get_powerflow_result(active["run_id"])["status"] == "aborted"
+      @test occursin("Run aborted by user.", read(joinpath(aborted["output_dir"], "run.log"), String))
+      @test Sparlectra.abort_webui_powerflow_run("../unsafe")["reason"] == "unsafe_run_id"
+      replacement = Sparlectra.start_webui_powerflow_run(async_request; runner = controlled_runner)
+      @test replacement["status"] in ("queued", "running")
+      put!(release, nothing)
+      put!(release, nothing)
+      wait(Sparlectra._POWERFLOW_WEBUI_JOBS[active["run_id"]]["task"])
+      wait(Sparlectra._POWERFLOW_WEBUI_JOBS[replacement["run_id"]]["task"])
+      @test Sparlectra.get_webui_powerflow_job(active["run_id"])["status"] == "aborted"
+
       failed = start_powerflow_run(Dict(
         "casefile" => casefile,
         "config_file" => config_file,
