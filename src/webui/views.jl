@@ -113,13 +113,16 @@ end
 
 const _WEBUI_RESULT_FIELDS = (
   "run_id", "schema_version", "status", "success", "converged", "solution_available",
-  "iterations", "final_mismatch", "reason", "message", "casefile", "config_file", "output_dir",
+  "iterations", "final_mismatch", "reason", "message", "casefile", "resolved_casefile",
+  "config_file", "started_at", "elapsed_seconds", "output_dir",
 )
 
 function render_powerflow_result(result::AbstractDict)::String
   run_id = get(result, "run_id", "")
   rows = join(("<tr><th>$(_webui_escape(field))</th><td>$(_webui_escape(get(result, field, nothing)))</td></tr>" for field in _WEBUI_RESULT_FIELDS), "")
-  links = isempty(String(run_id)) ? "" : "<div class=\"actions\"><a class=\"button\" href=\"/powerflow/artifacts/$(_webui_urlencode(run_id))\">View artifacts</a></div>"
+  status = lowercase(string(get(result, "status", "unknown")))
+  abort_form = status in ("queued", "running", "aborting") ? "<form method=\"post\" action=\"/powerflow/abort/$(_webui_urlencode(run_id))\"><button type=\"submit\" class=\"danger-button\">Abort run</button></form>" : ""
+  links = isempty(String(run_id)) ? "" : "<div class=\"actions\">$(abort_form)<a class=\"button\" href=\"/powerflow/artifacts/$(_webui_urlencode(run_id))\">View artifacts</a><a class=\"button\" href=\"/powerflow/result/$(_webui_urlencode(run_id))\">Refresh status</a></div>"
   return _webui_layout("PowerFlow result", "<section class=\"panel\"><table class=\"details\">$(rows)</table>$(links)</section>"; show_back = true)
 end
 
@@ -139,7 +142,8 @@ end
 function webui_status_class(run::AbstractDict)::String
   status = lowercase(string(get(run, "status", "unknown")))
   success = get(run, "success", nothing)
-  status in ("running", "pending", "queued") && return "status-running"
+  status in ("running", "pending", "queued", "aborting") && return "status-running"
+  status in ("aborted", "cancelled", "canceled") && return "status-aborted"
   status in ("warning", "partial", "questionable") && return "status-warning"
   status in ("failed", "failure", "error", "not_converged") && return "status-error"
   status in ("succeeded", "success", "converged", "ok") && return success === false ? "status-error" : "status-success"
@@ -162,9 +166,10 @@ function render_powerflow_history(runs, output_root::AbstractString)::String
     status = string(get(run, "status", "unknown"))
     status_badge = "<span class=\"status-badge $(webui_status_class(run))\">$(_webui_escape(status))</span>"
     delete_form = "<form method=\"post\" action=\"/powerflow/delete/$(_webui_urlencode(run_id))\" class=\"delete-run-form\"><button type=\"submit\" class=\"danger-button\">Delete</button></form>"
+    abort_form = lowercase(status) in ("queued", "running", "aborting") ? "<form method=\"post\" action=\"/powerflow/abort/$(_webui_urlencode(run_id))\"><button type=\"submit\" class=\"danger-button\">Abort</button></form>" : ""
     fields = (_webui_run_timestamp(run), link, status_badge, available, get(run, "iterations", ""), get(run, "final_mismatch", ""), get(run, "casefile", ""), get(run, "config_file", ""))
     cells = "<td>$(_webui_escape(fields[1]))</td><td>$(fields[2])</td><td>$(fields[3])</td>" * join(("<td>$(_webui_escape(field))</td>" for field in fields[4:end]), "")
-    "<tr>$(cells)<td>$(delete_form)</td></tr>"
+    "<tr>$(cells)<td>$(abort_form)$(delete_form)</td></tr>"
   end for run in ordered_runs), "")
   content = "<section class=\"panel history-actions\"><p><strong>Output root:</strong> <code>$(_webui_escape(output_root))</code></p><div class=\"actions\"><form method=\"post\" action=\"/powerflow/refresh\"><button type=\"submit\">Refresh registry</button></form><form method=\"post\" action=\"/powerflow/delete_all\"><button type=\"submit\" class=\"danger-button\">Delete all runs</button></form></div></section>\n<section class=\"panel\"><table><thead><tr><th>Date/Time</th><th>Run ID</th><th>Status</th><th>Available</th><th>Iterations</th><th>Final mismatch</th><th>Case file</th><th>Config file</th><th>Delete</th></tr></thead><tbody>$(rows)</tbody></table></section>"
   return _webui_layout("Run history", content; show_back = true)
