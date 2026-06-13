@@ -56,8 +56,11 @@ layer around the synchronous service call. It keeps one active local Web UI job,
 tracks queued/running/success/failed/aborted states, and exposes cooperative
 abort requests. Cancellation is checked around case resolution, configuration
 and import work, solving, diagnostics, and artifact writing. The rectangular
-solver also checks once per Newton iteration, so long Web UI solves stop at the
-next safe iteration boundary. No unsafe task interruption is used.
+solver checks before and after Y-bus construction and start projection, at
+every Newton iteration boundary, after Q-limit active-set work, and after each
+Newton step. A currently executing sparse linear solve remains
+non-interruptible, but the following check terminates the run. No unsafe task
+interruption is used.
 
 The Web UI supplies a small lifecycle callback to this asynchronous boundary so
 `powerflow_started`, completion/failure, and final abort events can be appended
@@ -71,7 +74,10 @@ its newest 1,000 valid entries.
 Aborted runs receive a normal run directory, `result.json`, an index entry, and
 a `run.log` status marker. This keeps history recovery and artifact path safety
 identical to completed runs while making it clear that any partial artifacts do
-not represent a successful solve.
+not represent a successful solve. The worker reaches terminal `aborted` only
+after those records and the `powerflow_aborted` operation event are written;
+its `finally` cleanup prevents queued, running, or aborting state from leaking
+if controlled cancellation exits the worker.
 
 - [`start_powerflow_run`](@ref) validates the dictionary-like request, chooses
   the run ID and directory, invokes the programmatic API, registers the result,

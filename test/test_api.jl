@@ -366,12 +366,12 @@ function run_api_tests()
       solver_profile = Dict{Symbol,Any}(
         :cancellation_check => () -> begin
           solver_checks[] += 1
-          throw(Sparlectra.PowerFlowAborted())
+          solver_checks[] >= 5 && throw(Sparlectra.PowerFlowAborted())
         end,
       )
       solver_net = deepcopy(Sparlectra._registered_powerflow_run(started["run_id"]).raw_result.net)
       @test_throws Sparlectra.PowerFlowAborted runpf!(solver_net; config = powerflow_config(), performance_profile = solver_profile)
-      @test solver_checks[] == 1
+      @test solver_checks[] == 5
 
       failed = start_powerflow_run(Dict(
         "casefile" => casefile,
