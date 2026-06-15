@@ -107,7 +107,9 @@ function start_powerflow_run(request::AbstractDict; case_directory::Union{Nothin
   else
     resolution_start = time_ns()
     _check_powerflow_cancelled!(cancellation_token)
+    set_phase("checking_case_cache")
     casefile = try
+      set_phase("preparing_case_file")
       case_resolver(casefile, case_directory)
     catch err
       return _service_failure("invalid_casefile", sprint(showerror, err))

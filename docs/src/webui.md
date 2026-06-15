@@ -112,12 +112,23 @@ rectangular Newton iteration. The rectangular path also checks immediately
 before and after Y-bus construction and start projection, after Q-limit active
 set work, and after each Newton step. A sparse factorization or other
 non-interruptible operation may still finish before the next check, so the
-status page explains that it is waiting for a safe cancellation point.
+status page shows the current phase and explains that the phase may need to
+finish before cancellation is observed.
 Repeated requests are idempotent. Once cancellation
 is observed, the terminal state becomes `aborted`, `powerflow_aborted` is
 written to the operation log, the active-run guard is released, and a new
 submission is accepted. Aborted runs retain a normal run directory,
 `result.json`, and `run.log` status marker, but are never reported as success.
+
+Large MATPOWER cases can spend substantial time before Newton iterations begin,
+especially while reading `.m` files, evaluating large `.jl` literal cases,
+building the Sparlectra network, assembling Y-bus data, or preparing start
+values. The result page, operation log, `run.log`, `result.json`, and
+`performance.log` (when timing is enabled) now expose service phase timings so
+users can distinguish reader, converter/cache, network-builder, solver, and
+artifact costs. These diagnostics do not guarantee that very large cases finish
+quickly through the local Web UI; they identify where follow-up optimization
+should focus.
 
 Deletion of a queued, running, or aborting run is rejected with an explanation.
 After the run reaches terminal `aborted` status, normal deletion is available.

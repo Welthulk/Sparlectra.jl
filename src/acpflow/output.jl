@@ -5,6 +5,8 @@ end
 
 function _postprocess_sparlectra_result!(result::SparlectraRunResult, cfg::SparlectraConfig; emit_output::Bool = true)
   result.solution_available || return result
+  phase_callback = result.performance_profile isa AbstractDict ? get(result.performance_profile, :phase_callback, phase -> nothing) : phase -> nothing
+  phase_callback("postprocessing_result")
   _perf_profile_time!(result.performance_profile, :postprocess_losses_and_flows) do
     calcNetLosses!(result.net)
     calcLinkFlowsKCL!(result.net)

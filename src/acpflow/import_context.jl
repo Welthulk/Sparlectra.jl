@@ -72,9 +72,14 @@ function _import_sparlectra_context(casefile::String, path::Union{Nothing,String
   filename = _resolve_sparlectra_casefile(casefile, path)
   pf_cfg = cfg.powerflow
   mat_cfg = cfg.matpower
+  phase_callback = performance_profile isa AbstractDict ? get(performance_profile, :phase_callback, phase -> nothing) : phase -> nothing
+  extension = lowercase(splitext(filename)[2])
+  phase_callback(extension == ".jl" ? "loading_julia_case" : "parsing_matpower_file")
+  phase_callback("reading_matpower_case")
   mpc = _perf_profile_time!(performance_profile, :matpower_case_parse) do
     MatpowerIO.read_case(filename; legacy_compat = true)
   end
+  phase_callback("building_sparlectra_net")
   net = _perf_profile_time!(performance_profile, :network_construction) do
     createNetFromMatPowerCase(
       mpc = mpc,
@@ -93,10 +98,12 @@ function _import_sparlectra_context(casefile::String, path::Union{Nothing,String
       profile = performance_profile,
     )
   end
+  phase_callback("applying_import_options")
   MatpowerIO.apply_mp_isolated_buses!(net, mpc; verbose = 0)
   MatpowerIO.apply_mp_bus_vmva_init!(net, mpc; flatstart = pf_cfg.start_mode.flatstart, verbose = 0)
   projected_start_applied = false
   if pf_cfg.start_mode.flatstart && (pf_cfg.start_mode.voltage_mode != :classic || pf_cfg.start_mode.angle_mode != :classic)
+    phase_callback("preparing_start_values")
     _apply_matpower_start_modes!(net, mpc, pf_cfg.start_mode, mat_cfg; performance_profile = performance_profile)
     if _uses_projected_matpower_start(pf_cfg.start_mode)
       net.flatstart = false

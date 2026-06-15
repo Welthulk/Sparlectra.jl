@@ -65,7 +65,11 @@ The Web UI uses `start_webui_powerflow_run` as a small asynchronous lifecycle
 layer around the synchronous service call. It keeps one active local Web UI job,
 tracks queued/running/success/failed/aborted states, and exposes cooperative
 abort requests. Cancellation is checked around case resolution, configuration
-and import work, solving, diagnostics, and artifact writing. The rectangular
+and import work, solving, diagnostics, and artifact writing. Import and service
+work is reported with finer phases such as `reading_matpower_case`,
+`loading_julia_case`, `building_sparlectra_net`, `building_ybus`,
+`preparing_start_values`, `solving_powerflow`, and artifact-writing phases so
+large MATPOWER cases no longer appear only as a broad loading step. The rectangular
 solver checks before and after Y-bus construction and start projection, at
 every Newton iteration boundary, after Q-limit active-set work, and after each
 Newton step. A currently executing sparse linear solve remains
@@ -73,8 +77,9 @@ non-interruptible, but the following check terminates the run. No unsafe task
 interruption is used.
 
 The Web UI supplies a small lifecycle callback to this asynchronous boundary so
-`powerflow_started`, completion/failure, and final abort events can be appended
-to the user Web UI `logs/webui_operations.jsonl` support log. This does not
+`powerflow_started`, `powerflow_phase_started`, completion/failure, and final
+abort events can be appended to the user Web UI
+`logs/webui_operations.jsonl` support log. This does not
 change the PowerFlow result schema or per-run artifact contract. Every event
 includes the running Sparlectra version and a millisecond-precision UTC
 timestamp ending in `Z`. Marked `autorefresh=1` status requests are omitted from
@@ -147,8 +152,9 @@ Public service failures are dictionaries containing `status`, `success`,
 `unavailable_runs` and continues loading valid runs.
 
 Every completed API `run.log` includes solver time where available,
-representative time, iterations, final mismatch, and final outcome. Benchmark
-median and configured samples are included when benchmarking is enabled.
+representative time, iterations, final mismatch, final outcome, case file
+extension and size, service phase timings, and a compact large-case timing
+summary. Benchmark median and configured samples are included when benchmarking is enabled.
 `output.logfile_results=full` adds effective configuration, artifact choices,
 and available status diagnostics beyond the `classic` report.
 
