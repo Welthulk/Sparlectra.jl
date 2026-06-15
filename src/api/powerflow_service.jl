@@ -347,7 +347,9 @@ function start_webui_powerflow_run(request::AbstractDict; case_directory::Union{
       event_callback("powerflow_started"; run_id, requested_case = job["casefile"], status = "running")
       detailed_result_csv = _service_request_value(request, "detailed_result_csv", false)
       detailed_result_csv_semicolon = _service_request_value(request, "detailed_result_csv_semicolon", false)
-      detailed_result_csv && event_callback("detailed_result_csv_export_enabled"; run_id, delimiter = detailed_result_csv_semicolon ? "semicolon" : "comma", status = "enabled")
+      detailed_result_csv_format = _service_request_value(request, "detailed_result_csv_format", nothing)
+      csv_format = _resolve_detailed_csv_format(detailed_result_csv_format === nothing ? (detailed_result_csv_semicolon ? "excel_de" : "technical") : detailed_result_csv_format)
+      detailed_result_csv && event_callback("detailed_result_csv_export_enabled"; run_id, csv_format = csv_format.name, delimiter = string(csv_format.delimiter), decimal_separator = csv_format.decimal_separator, thousands_separator = csv_format.thousands_separator, status = "enabled")
       worker_request = Dict{String,Any}(String(key) => value for (key, value) in request)
       worker_request["run_id"] = run_id
       worker_request["cancellation_token"] = job["abort_requested"]
@@ -401,7 +403,7 @@ function start_webui_powerflow_run(request::AbstractDict; case_directory::Union{
           artifact_names = Set(String(get(artifact, "name", "")) for artifact in get(result, "artifacts", Any[]))
           expected_csv = ["bus_voltages_complex.csv", "branch_flows.csv"]
           if all(name -> name in artifact_names, expected_csv)
-            event_callback("detailed_result_csv_exported"; run_id = job["run_id"], artifacts = expected_csv, status = "succeeded")
+            event_callback("detailed_result_csv_exported"; run_id = job["run_id"], csv_format = csv_format.name, artifacts = expected_csv, status = "succeeded")
           else
             event_callback("detailed_result_csv_export_failed"; run_id = job["run_id"], message = "Detailed result CSV artifacts were not generated.", status = "failed")
           end
@@ -912,6 +914,15 @@ function start_powerflow_run(request::AbstractDict; case_directory::Union{Nothin
   detailed_result_csv isa Bool || return _service_failure("invalid_request", "detailed_result_csv must be boolean.")
   detailed_result_csv_semicolon = _service_request_value(request, "detailed_result_csv_semicolon", false)
   detailed_result_csv_semicolon isa Bool || return _service_failure("invalid_request", "detailed_result_csv_semicolon must be boolean.")
+  detailed_result_csv_format = _service_request_value(request, "detailed_result_csv_format", nothing)
+  if detailed_result_csv_format !== nothing
+    detailed_result_csv_format isa AbstractString || return _service_failure("invalid_request", "detailed_result_csv_format must be a string.")
+    try
+      _resolve_detailed_csv_format(detailed_result_csv_format)
+    catch err
+      return _service_failure("invalid_request", sprint(showerror, err))
+    end
+  end
   phases[:request_parse] = _api_elapsed_seconds(request_start)
 
   requested_run_id = _service_request_value(request, "run_id", nothing)
@@ -928,6 +939,7 @@ function start_powerflow_run(request::AbstractDict; case_directory::Union{Nothin
       performance_timing = performance_timing,
       run_diagnostics = run_diagnostics,
       detailed_result_csv = detailed_result_csv,
+      detailed_result_csv_format = detailed_result_csv_format,
       detailed_result_csv_semicolon = detailed_result_csv_semicolon,
       phase_timings = phases,
       run_id = run_id,

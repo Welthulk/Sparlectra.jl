@@ -40,7 +40,7 @@ function _webui_test_form(casefile, config_file, output_root)
     "performance_timing" => "compact",
     "run_diagnostics" => "on",
     "detailed_result_csv" => "on",
-    "detailed_result_csv_semicolon" => "on",
+    "detailed_result_csv_format" => "excel_de",
     "benchmark_samples" => "10",
     "benchmark_seconds" => "1.0",
   )
@@ -326,12 +326,12 @@ function run_webui_tests()
       @test request["config_file"] == config_file
       @test request["output_root"] == output_root
       @test request["detailed_result_csv"] === true
-      @test request["detailed_result_csv_semicolon"] === true
+      @test request["detailed_result_csv_format"] == "excel_de"
       csv_disabled_form = copy(form)
       delete!(csv_disabled_form, "detailed_result_csv")
       @test Sparlectra.powerflow_webui_request(csv_disabled_form; default_output_root = output_root)["detailed_result_csv"] === false
-      delete!(csv_disabled_form, "detailed_result_csv_semicolon")
-      @test Sparlectra.powerflow_webui_request(csv_disabled_form; default_output_root = output_root)["detailed_result_csv_semicolon"] === false
+      delete!(csv_disabled_form, "detailed_result_csv_format")
+      @test Sparlectra.powerflow_webui_request(csv_disabled_form; default_output_root = output_root)["detailed_result_csv_format"] == "technical"
       untrusted_form = copy(form)
       untrusted_form["output_root"] = joinpath(tmpdir, "outside")
       @test Sparlectra.powerflow_webui_request(untrusted_form; default_output_root = output_root)["output_root"] == output_root
@@ -369,7 +369,7 @@ function run_webui_tests()
         "performance_timing" => "webui.performance_timing",
         "run_diagnostics" => "webui.run_diagnostics",
         "detailed_result_csv" => "webui.detailed_result_csv",
-        "detailed_result_csv_semicolon" => "webui.detailed_result_csv_semicolon",
+        "detailed_result_csv_format" => "webui.detailed_result_csv_format",
       )
       @test Sparlectra.WEBUI_FORM_HELP_TOPICS == expected_help_topics
       for (field, help_topic) in expected_help_topics
@@ -405,8 +405,12 @@ function run_webui_tests()
       @test occursin("name=\"run_diagnostics\"", form_html)
       @test occursin("name=\"detailed_result_csv\" type=\"checkbox\"", form_html)
       @test !occursin("name=\"detailed_result_csv\" type=\"checkbox\" checked", form_html)
-      @test occursin("name=\"detailed_result_csv_semicolon\" type=\"checkbox\"", form_html)
-      @test !occursin("name=\"detailed_result_csv_semicolon\" type=\"checkbox\" checked", form_html)
+      @test occursin("class=\"span-2 detailed-csv-options\"", form_html)
+      @test occursin("name=\"detailed_result_csv_format\"", form_html)
+      @test occursin("<option value=\"technical\" selected>", form_html)
+      @test occursin("<option value=\"excel_de\">", form_html)
+      @test occursin("<option value=\"excel_us\">", form_html)
+      @test !occursin("Use Excel CSV format with semicolon delimiter", form_html)
 
       logo_response = Sparlectra.route_sparlectra_webui("GET", "/assets/logo.png")
       @test logo_response.status == 200
@@ -435,7 +439,10 @@ result = get_powerflow_result(run_id)
       @test occursin("\"event\":\"diagnostics_enabled\"", operation_log_text)
       @test occursin("\"event\":\"performance_timing_enabled\"", operation_log_text)
       @test occursin("\"event\":\"detailed_result_csv_export_enabled\"", operation_log_text)
-      @test occursin("\"delimiter\":\"semicolon\"", operation_log_text)
+      @test occursin("\"csv_format\":\"excel_de\"", operation_log_text)
+      @test occursin("\"delimiter\":\";\"", operation_log_text)
+      @test occursin("\"decimal_separator\":\",\"", operation_log_text)
+      @test occursin("\"thousands_separator\":\".\"", operation_log_text)
       @test occursin("\"event\":\"detailed_result_csv_exported\"", operation_log_text)
       @test occursin("\"artifacts\":[\"bus_voltages_complex.csv\",\"branch_flows.csv\"]", operation_log_text)
       @test !isempty(run_id)

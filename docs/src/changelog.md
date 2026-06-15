@@ -1,7 +1,10 @@
 # Change Log
 
-* Added an optional Excel-oriented semicolon delimiter for detailed PowerFlow
-  CSV artifacts while retaining comma-separated output as the default.
+* Expanded the opt-in detailed PowerFlow CSV export with a subordinate format
+  selector: technical comma CSV remains the default, while German Excel
+  formatting uses semicolon fields, decimal commas, and thousands dots, and US
+  Excel formatting uses comma fields, decimal points, and quoted thousands
+  commas. Operation and full run logs now record the selected notation.
 * Added opt-in detailed PowerFlow CSV artifacts for Excel, including complex
   bus voltages and directional branch flows reused from `ACPFlowReport`, and
   renamed new diagnostic artifacts to `diagnose.log` while preserving access

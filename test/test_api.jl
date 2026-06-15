@@ -38,6 +38,17 @@ function run_api_tests()
         delimiter = ';',
       )
       @test read(semicolon_writer_path, String) == "name;empty_missing;empty_nothing\n\"quoted; \"\"value\"\"\";;\n"
+      number_rows = [(integer = 1000000, decimal = 1234.56, negative = -1234.5, nan = NaN, inf = Inf, neginf = -Inf)]
+      technical_path = joinpath(tmpdir, "writer_technical.csv")
+      Sparlectra._write_namedtuple_csv(technical_path, number_rows, propertynames(only(number_rows)); format = "technical")
+      @test read(technical_path, String) == "integer,decimal,negative,nan,inf,neginf\n1000000,1234.56,-1234.5,NaN,Inf,-Inf\n"
+      german_path = joinpath(tmpdir, "writer_german.csv")
+      Sparlectra._write_namedtuple_csv(german_path, number_rows, propertynames(only(number_rows)); delimiter = ';', format = "excel_de")
+      @test read(german_path, String) == "integer;decimal;negative;nan;inf;neginf\n1.000.000;1.234,56;-1.234,5;NaN;Inf;-Inf\n"
+      us_path = joinpath(tmpdir, "writer_us.csv")
+      Sparlectra._write_namedtuple_csv(us_path, number_rows, propertynames(only(number_rows)); format = "excel_us")
+      @test read(us_path, String) == "integer,decimal,negative,nan,inf,neginf\n\"1,000,000\",\"1,234.56\",\"-1,234.5\",NaN,Inf,-Inf\n"
+      @test_throws ArgumentError Sparlectra._resolve_detailed_csv_format("unknown")
 
       casefile = _write_api_test_case(joinpath(tmpdir, "case_api.m"))
       template = joinpath(tmpdir, "config_template.yaml")
@@ -53,13 +64,13 @@ function run_api_tests()
           "power_flow.tol" => 1.0e-9,
           "power_flow.max_iter" => 40,
           "power_flow.autodamp" => true,
-          "output.logfile_results" => "compact",
+          "output.logfile_results" => "full",
           "benchmark.enabled" => false,
         ),
         performance_timing = :compact,
         run_diagnostics = true,
         detailed_result_csv = true,
-        detailed_result_csv_semicolon = true,
+        detailed_result_csv_format = "excel_de",
       )
 
       @test result isa SparlectraApiResult
@@ -82,6 +93,10 @@ function run_api_tests()
       for marker in ("solver_time:", "representative_time:", "iterations:", "final_mismatch:", "final_status:", "final_outcome:")
         @test occursin(marker, run_log)
       end
+      @test occursin("detailed_result_csv_format: excel_de", run_log)
+      @test occursin("detailed_result_csv_delimiter: semicolon", run_log)
+      @test occursin("detailed_result_csv_decimal_separator: comma", run_log)
+      @test occursin("detailed_result_csv_thousands_separator: dot", run_log)
       performance_log = read(joinpath(output_dir, "performance.log"), String)
       @test occursin("Sparlectra single-run phase timing", performance_log)
       @test occursin("api_config_build:", performance_log)
@@ -96,6 +111,7 @@ function run_api_tests()
       branch_csv = read(joinpath(output_dir, "branch_flows.csv"), String)
       @test startswith(bus_csv, "bus;bus_name;type;vm_pu;va_deg;vn_kV;v_re;v_im;v_complex;v_kV")
       @test startswith(branch_csv, "branch;branch_index;from_bus;to_bus;status;p_from_MW;q_from_MVar;p_to_MW;q_to_MVar")
+      @test occursin(r"\d,\d", bus_csv)
       @test length(collect(eachline(IOBuffer(bus_csv)))) > 1
       @test length(collect(eachline(IOBuffer(branch_csv)))) > 1
 
@@ -134,6 +150,18 @@ function run_api_tests()
       @test occursin("diagnostics_artifact: diagnose.log", full_log)
       @test occursin("detailed_result_csv_delimiter: disabled", full_log)
       @test ncodeunits(full_log) > ncodeunits(classic_log)
+
+      legacy_dir = joinpath(tmpdir, "legacy-semicolon")
+      legacy = run_sparlectra_api(
+        casefile = casefile,
+        config_file = template,
+        output_dir = legacy_dir,
+        config_overrides = Dict("benchmark.enabled" => false),
+        detailed_result_csv = true,
+        detailed_result_csv_semicolon = true,
+      )
+      @test legacy.success
+      @test startswith(read(joinpath(legacy_dir, "bus_voltages_complex.csv"), String), "bus;")
 
       failed_diagnostic = joinpath(tmpdir, "failed_diagnose.txt")
       Sparlectra._write_powerflow_diagnostics(failed_diagnostic, result.raw_result; diagnostic_fn = (io, _) -> error("diagnostic test failure"))
