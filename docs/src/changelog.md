@@ -1,8 +1,6 @@
 ## Version 0.8.4 – 2026-06-10
 ### New features
 
-### New features
-
 * Added a loopback-only local PowerFlow Web UI backed by the new PowerFlow service/API layer, including run history, artifact viewing/downloads, operation log, MATPOWER case selection/cache, contextual help, and user-writable runtime directories.
 * Added optional Web UI/API artifacts for PowerFlow runs, including `run.log`, `performance.log`, `diagnose.log`, effective configuration output, and detailed CSV exports for complex bus voltages and branch flows.
 

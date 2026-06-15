@@ -111,7 +111,10 @@ if controlled cancellation exits the worker.
   `detailed_result_csv_format` accepts `technical` (default comma delimiter,
   decimal point, no grouping), `excel_de` (semicolon delimiter, decimal comma,
   thousands dot), or `excel_us` (comma delimiter, decimal point, thousands
-  comma). Numeric fields containing US thousands commas are quoted. The legacy
+  comma). Excel-oriented formats avoid numeric exponent notation where
+  practical; textual identifiers that resemble scientific notation can still
+  trigger Excel's global auto-conversion warning when opened directly. Numeric
+  fields containing US thousands commas are quoted. The legacy
   `detailed_result_csv_semicolon=true` request remains accepted and maps to
   `excel_de` when no explicit format is supplied. Legacy run directories
   containing `diagnose.txt` remain discoverable and downloadable.
