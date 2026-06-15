@@ -57,6 +57,11 @@ function run_webui_tests()
     ))
     @test !occursin("exp_webui_powerflow", repository_text)
     @test occursin("server = Sparlectra.start_sparlectra_webui", read(joinpath(@__DIR__, "..", "README.md"), String))
+    @test Sparlectra._format_elapsed_duration(0.4) == "00:00:00"
+    @test Sparlectra._format_elapsed_duration(3) == "00:00:03"
+    @test Sparlectra._format_elapsed_duration(83) == "00:01:23"
+    @test Sparlectra._format_elapsed_duration(3725) == "01:02:05"
+    @test Sparlectra._format_elapsed_duration(nothing) == "—"
 
     registry_before_warmup = Set(keys(Sparlectra._POWERFLOW_SERVICE_RUNS))
     warmup_output = Ref("")
@@ -401,8 +406,11 @@ result = get_powerflow_result(run_id)
         @test occursin("action=\"/powerflow/abort/$(active_status)-run\"", active_status_html)
       end
       for terminal_status in ("success", "failed", "aborted")
-        terminal_status_html = Sparlectra.render_powerflow_result(Dict("run_id" => "$(terminal_status)-run", "status" => terminal_status))
+        terminal_status_html = Sparlectra.render_powerflow_result(Dict("run_id" => "$(terminal_status)-run", "status" => terminal_status, "elapsed_seconds" => 83))
         @test !occursin("http-equiv=\"refresh\"", terminal_status_html)
+        @test occursin("class=\"runtime-card\"", terminal_status_html)
+        @test occursin("Elapsed time", terminal_status_html)
+        @test occursin("00:01:23", terminal_status_html)
       end
 
       artifacts = list_powerflow_artifacts(run_id)
@@ -531,6 +539,9 @@ result = get_powerflow_result(run_id)
       active_history_html = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow/history"; output_root).body)
       abort_action = "action=\"/powerflow/abort/$(active_id)\""
       @test occursin("<form method=\"post\" $(abort_action)", active_result_html)
+      @test occursin("class=\"runtime-card\"", active_result_html)
+      @test occursin("Elapsed time", active_result_html)
+      @test occursin("class=\"status-badge status-running\">running</span>", active_result_html)
       @test occursin("http-equiv=\"refresh\"", active_result_html)
       @test occursin("content=\"$(Sparlectra.WEBUI_STATUS_AUTO_REFRESH_SECONDS); url=/powerflow/result/$(active_id)?autorefresh=1\"", active_result_html)
       @test occursin("This page refreshes automatically while the run is active.", active_result_html)
@@ -552,6 +563,7 @@ result = get_powerflow_result(run_id)
       @test aborted_response.status == 303
       aborted_html = String(Sparlectra.handle_powerflow_result(active_id).body)
       @test occursin("aborting", aborted_html)
+      @test occursin("class=\"runtime-card\"", aborted_html)
       @test occursin("http-equiv=\"refresh\"", aborted_html)
       @test occursin("Waiting for the calculation to stop at the next safe cancellation point", aborted_html)
       @test !occursin(abort_action, aborted_html)
@@ -569,6 +581,7 @@ result = get_powerflow_result(run_id)
       wait(Sparlectra._POWERFLOW_WEBUI_JOBS[active_id]["task"])
       terminal_html = String(Sparlectra.handle_powerflow_result(active_id).body)
       @test occursin("<td>aborted</td>", terminal_html)
+      @test occursin("class=\"runtime-card\"", terminal_html)
       @test occursin("Run aborted by user.", terminal_html)
       @test !occursin(abort_action, terminal_html)
       @test !occursin("http-equiv=\"refresh\"", terminal_html)

@@ -37,6 +37,38 @@ end
 const WEBUI_STATUS_AUTO_REFRESH_SECONDS = 2
 const _WEBUI_ACTIVE_RUN_STATUSES = Set(("queued", "running", "aborting"))
 
+function _format_elapsed_duration(seconds)::String
+  seconds === nothing && return "—"
+  elapsed = try
+    Float64(seconds)
+  catch
+    tryparse(Float64, string(seconds))
+  end
+  (elapsed === nothing || !isfinite(elapsed)) && return "—"
+  total_seconds = max(0, floor(Int, elapsed))
+  hours, remainder = divrem(total_seconds, 3600)
+  minutes, secs = divrem(remainder, 60)
+  return lpad(hours, 2, '0') * ":" * lpad(minutes, 2, '0') * ":" * lpad(secs, 2, '0')
+end
+
+function _webui_elapsed_seconds(result::AbstractDict, active::Bool)
+  elapsed = get(result, "elapsed_seconds", nothing)
+  elapsed === nothing || return elapsed
+  active || return nothing
+  started_at = get(result, "started_at", get(result, "submitted_at", nothing))
+  started_at === nothing && return nothing
+  started = if started_at isa Dates.DateTime
+    started_at
+  else
+    try
+      Dates.DateTime(replace(string(started_at), r"Z$" => ""))
+    catch
+      return nothing
+    end
+  end
+  return max(0.0, Dates.value(Dates.now(Dates.UTC) - started) / 1000)
+end
+
 function _webui_layout(title::AbstractString, content::AbstractString; show_back::Bool = false, main_class::AbstractString = "page", refresh_url = nothing, refresh_seconds::Integer = WEBUI_STATUS_AUTO_REFRESH_SECONDS)::String
   back_button = show_back ? "<div class=\"page-toolbar\"><a class=\"button back-button\" href=\"/powerflow\" onclick=\"if (document.referrer.startsWith(location.origin)) { history.back(); return false; }\" aria-label=\"Go back to the previous page\">← Back</a></div>" : ""
   version_text = "Sparlectra.jl v$(version())"
@@ -139,6 +171,9 @@ function render_powerflow_result(result::AbstractDict)::String
   rows = join(("<tr><th>$(_webui_escape(field))</th><td>$(_webui_escape(get(result, field, nothing)))</td></tr>" for field in _WEBUI_RESULT_FIELDS), "")
   status = lowercase(string(get(result, "status", "unknown")))
   active = status in _WEBUI_ACTIVE_RUN_STATUSES
+  status_badge = "<span class=\"status-badge $(webui_status_class(result))\">$(_webui_escape(status))</span>"
+  elapsed_duration = _format_elapsed_duration(_webui_elapsed_seconds(result, active))
+  result_summary = "<div class=\"result-summary\"><div><span class=\"summary-label\">Status</span>$(status_badge)</div><div class=\"runtime-card\"><span class=\"runtime-icon\" aria-hidden=\"true\">⏱</span><span><span class=\"summary-label\">Elapsed time</span><strong>$(_webui_escape(elapsed_duration))</strong></span></div></div>"
   abort_form = status in ("queued", "running") ? "<form method=\"post\" action=\"/powerflow/abort/$(_webui_urlencode(run_id))\"><button type=\"submit\" class=\"danger-button\">Abort run</button></form>" : ""
   active_hint = active ? "<p class=\"status-refresh-hint\">This page refreshes automatically while the run is active.</p>" : ""
   abort_hint = status == "aborting" ? "<p>Waiting for the next safe cancellation point.</p>" * (get(result, "current_phase", "") == "linear_solve" ? "<p>Waiting for current sparse solve to finish.</p>" : "") : ""
@@ -146,7 +181,7 @@ function render_powerflow_result(result::AbstractDict)::String
   interrupted = status == "aborted_unknown" ? "<p>The Web UI was restarted or reset while this run was active. This result is not a valid solved PowerFlow result.</p>" : ""
   links = isempty(String(run_id)) ? "" : "$(abort_hint)$(hard_reset)$(interrupted)<div class=\"actions\">$(abort_form)<a class=\"button\" href=\"/powerflow/artifacts/$(_webui_urlencode(run_id))\">View artifacts</a><a class=\"button\" href=\"/powerflow/result/$(_webui_urlencode(run_id))\">Refresh status</a></div>"
   refresh_url = active && !isempty(String(run_id)) ? "/powerflow/result/$(_webui_urlencode(run_id))?autorefresh=1" : nothing
-  return _webui_layout("PowerFlow result", "<section class=\"panel\"><table class=\"details\">$(rows)</table>$(active_hint)$(links)</section>"; show_back = true, refresh_url)
+  return _webui_layout("PowerFlow result", "<section class=\"panel\">$(result_summary)<table class=\"details\">$(rows)</table>$(active_hint)$(links)</section>"; show_back = true, refresh_url)
 end
 
 function render_powerflow_artifacts(run_id::AbstractString, artifacts)::String

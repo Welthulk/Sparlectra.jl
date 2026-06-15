@@ -89,8 +89,10 @@ not a derivative of an external MATPOWER case.
 ## Starting a PowerFlow run
 
 Web UI submissions start in a background worker task and redirect immediately to
-a run-status page. The page shows the requested and resolved case paths, status,
-start time, elapsed time, and a manual refresh link. Queued, running, and
+a run-status page. Near the top, a highlighted clock card shows elapsed time in
+`HH:MM:SS` format beside the current status. The technical details table retains
+the raw `elapsed_seconds` value along with the requested and resolved case paths,
+start time, and a manual refresh link. Queued, running, and
 aborting pages also refresh every two seconds through an HTML refresh directive.
 The marked `autorefresh=1` requests are not recorded as user actions. Terminal
 success, failure, and abort pages stop refreshing automatically. While a job is queued or

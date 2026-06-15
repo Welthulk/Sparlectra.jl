@@ -167,6 +167,47 @@ button,
   margin-bottom: 1rem;
 }
 
+.result-summary {
+  display: flex;
+  align-items: stretch;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.result-summary > div {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid #dbe3ef;
+  border-radius: 0.75rem;
+  background: #f4f7fb;
+}
+
+.summary-label {
+  display: block;
+  color: #60708a;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.runtime-card {
+  color: #143f75;
+}
+
+.runtime-card strong {
+  display: block;
+  font-size: 1.2rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.runtime-icon {
+  font-size: 1.5rem;
+}
+
 button,
 .button {
   background: #1768d4;
