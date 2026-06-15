@@ -1,46 +1,20 @@
-# Change Log
-
-* Expanded the opt-in detailed PowerFlow CSV export with a subordinate format
-  selector: technical comma CSV remains the default, while German Excel
-  formatting uses semicolon fields, decimal commas, and thousands dots, and US
-  Excel formatting uses comma fields, decimal points, and quoted thousands
-  commas. Operation and full run logs now record the selected notation.
-* Added opt-in detailed PowerFlow CSV artifacts for Excel, including complex
-  bus voltages and directional branch flows reused from `ACPFlowReport`, and
-  renamed new diagnostic artifacts to `diagnose.log` while preserving access
-  to legacy `diagnose.txt` files.
-* Added phase-aware Web UI cancellation diagnostics and a 60-second explicit
-  hard-reset fallback that records `aborted_unknown` and cleanly shuts down the
-  local server instead of killing an in-process numerical task.
 ## Version 0.8.4 – 2026-06-10
 ### New features
 
-* Added a persistent output-root-level Web UI operation log with JSONL view/download routes for support reports, concise user-action and run-lifecycle events, best-effort writes, and a 10 MiB single-backup size guard.
-* Added `run_sparlectra_api` as a stable non-interactive MATPOWER power-flow backend contract with unique run IDs, schema-versioned structured status, controlled GUI configuration overrides, effective configuration output, explicit artifact discovery, and Dict/NamedTuple/JSON/YAML serialization.
-* Added a local PowerFlow service boundary with run-specific output directories, persistent JSON run indexing, restart recovery, run-ID lookup, artifact listing, and traversal-safe artifact resolution for a future local GUI without adding HTTP or Genie.jl dependencies.
-* Added the first loopback-only local PowerFlow Web UI with allowlisted configuration forms, service-backed execution, result and persistent-history views, and metadata-resolved artifact viewing/downloads.
-* Added Markdown-backed contextual help for the Web UI Start voltage mode field and an allowlisted local documentation reader, keeping repository documentation as the single source of explanatory text.
-* Added optional single-run phase timing and existing PowerFlow diagnostic artifacts to the local Web UI/API, producing viewable `performance.log` and diagnostic log files.
-* Added an optional hidden asynchronous Web UI startup warm-up using an original bundled synthetic three-bus Julia case without polluting normal run history by default.
+### New features
+
+* Added a loopback-only local PowerFlow Web UI backed by the new PowerFlow service/API layer, including run history, artifact viewing/downloads, operation log, MATPOWER case selection/cache, contextual help, and user-writable runtime directories.
+* Added optional Web UI/API artifacts for PowerFlow runs, including `run.log`, `performance.log`, `diagnose.log`, effective configuration output, and detailed CSV exports for complex bus voltages and branch flows.
 
 ### Improvements
 
-* Added a compact MATPOWER citation and acknowledgement to the Web UI landing-page case inputs, including project, citation-guidance, DOI, and case-specific citation links and notes.
-* Improved active Web UI status pages with two-second automatic refresh until terminal state, without logging automatic refresh requests as user actions, while retaining manual refresh and active Abort controls.
-* Added entry-count compaction for the Web UI operation log above 10,000 valid JSONL entries, preserving the newest 1,000 entries, and added the running Sparlectra version plus millisecond-precision UTC `Z` timestamps to every operation event.
-* Consolidated Web UI startup around the repository-root `start_webui.jl` launcher and the installed-package `start_sparlectra_webui` API, with OS-specific user-writable output defaults, automatic directory creation, and output-root-local operation logs and MATPOWER case downloads.
-* Improved the local PowerFlow Web UI with startup run-registry recovery, read-only server-authoritative output roots, timestamped status-badge history, traversal-safe single/all-run deletion, and explicit or heartbeat-driven graceful server shutdown.
-* Improved the local PowerFlow Web UI with Markdown-backed help for every visible form option, safe allowlisted rewriting of internal documentation links, and larger readable documentation, help, log, and text-artifact panels.
-* Improved MATPOWER case selection in the local PowerFlow Web UI with editable local suggestions, on-demand download of bare case names into the server-owned case directory, and automatic preference for generated Julia case files while retaining `.m` fallback behavior.
-* Added the running Sparlectra version to the shared Web UI layout, enlarged text-artifact viewing, added explicit run timing/status summaries, and made `output.logfile_results=full` include effective configuration and status details beyond `classic` output.
+* Improved Web UI usability with status auto-refresh, elapsed-time display, MATPOWER citation, project-doc links, readable artifact views, operation-log compaction, Sparlectra version metadata, and UTC timestamps.
+* Added configurable detailed CSV formatting for technical, German Excel, and US Excel notation.
 
 ### Bugfixes
 
-* Fixed Web UI PowerFlow abort completion by adding safe cancellation points around rectangular Y-bus/start construction, Q-limit processing, Newton iterations and Newton steps; persisting terminal aborted results and operation events outside the job-state lock; guaranteeing terminal worker cleanup; releasing the active-run guard; making repeated aborts idempotent; and rejecting deletion until an active run is terminal.
-* Made cooperative PowerFlow abort controls visible from active-run banners on both the start form and run-history page, while retaining the POST-only control on the live status page and hiding it after terminal states.
-* Restored an explicit local MATPOWER case selector in the PowerFlow Web UI while retaining separate manual case entry for on-demand downloads.
-
-* Guarded rectangular PV/slack voltage-setpoint initialization so replacing a voltage magnitude preserves an existing phasor angle, with regression coverage for phase-shifted PV starts and intentional flat-start semantics.
+* Fixed Web UI abort handling with phase-aware cancellation, idempotent abort requests, hard-reset fallback for stuck aborts, stale-run recovery, and safe active-run deletion rules.
+* Fixed rectangular PV/slack voltage initialization so replacing a voltage magnitude preserves the existing phasor angle.
 
 ## Version 0.8.3 – 2026-05-30
 
