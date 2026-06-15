@@ -339,6 +339,13 @@ red, gray, and blue badges distinguish successful, warning/partial, failed,
 unknown, and running states while retaining visible text for accessibility.
 Older indexes without timestamps use the `result.json` modification time.
 
+The navigation bar and run-history pages link to **Large-case benchmark
+artifacts**. This page does not create benchmark runs or download MATPOWER
+cases; it only exposes the output directory used by the existing
+`scripts/benchmark_large_matpower_cases.jl` helper beneath the current Web UI
+output root. When present, `benchmark_large_cases.md` and
+`benchmark_large_cases.json` are listed with view and download links.
+
 Each registered run has a **Delete** action, and **Delete all runs** removes all
 safely registered runs for the current configured root. These actions update
 the in-memory registry and persistent index as well as deleting the matching

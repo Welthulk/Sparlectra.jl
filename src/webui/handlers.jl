@@ -74,6 +74,35 @@ function handle_powerflow_artifacts(run_id::AbstractString)::SparlectraWebUIResp
 end
 
 const _WEBUI_TEXT_MIME_TYPES = Set(("text/plain", "application/json", "application/x-yaml", "text/csv", "text/html", "text/markdown"))
+const _LARGE_CASE_BENCHMARK_ARTIFACTS = Set(("benchmark_large_cases.md", "benchmark_large_cases.json"))
+
+_large_case_benchmark_output_root(output_root::AbstractString)::String =
+  joinpath(abspath(output_root), "large_case_benchmarks")
+
+function _large_case_benchmark_artifacts(output_root::AbstractString)
+  root = _large_case_benchmark_output_root(output_root)
+  artifacts = Dict{String,Any}[]
+  for name in sort!(collect(_LARGE_CASE_BENCHMARK_ARTIFACTS))
+    path = joinpath(root, name)
+    isfile(path) || continue
+    push!(artifacts, Dict(
+      "name" => name,
+      "path" => path,
+      "mime_type" => _artifact_mime_type(path),
+      "size_bytes" => filesize(path),
+    ))
+  end
+  return root, artifacts
+end
+
+function _resolve_large_case_benchmark_artifact(output_root::AbstractString, artifact_name::AbstractString)
+  name = String(artifact_name)
+  name in _LARGE_CASE_BENCHMARK_ARTIFACTS || return nothing
+  root = _large_case_benchmark_output_root(output_root)
+  path = joinpath(root, name)
+  isfile(path) || return nothing
+  return (name = name, path = path, mime_type = _artifact_mime_type(path))
+end
 
 function handle_powerflow_artifact(run_id::AbstractString, artifact_name::AbstractString)::SparlectraWebUIResponse
   artifact = resolve_powerflow_artifact(run_id, artifact_name)
@@ -106,6 +135,26 @@ end
 
 function handle_powerflow_history(output_root::AbstractString)::SparlectraWebUIResponse
   return _webui_html(render_powerflow_history(list_powerflow_runs(output_root), output_root; active_run = get_active_webui_powerflow_job()))
+end
+
+function handle_large_case_benchmark_artifacts(output_root::AbstractString)::SparlectraWebUIResponse
+  benchmark_root, artifacts = _large_case_benchmark_artifacts(output_root)
+  return _webui_html(render_large_case_benchmark_artifacts(benchmark_root, artifacts))
+end
+
+function handle_large_case_benchmark_artifact(output_root::AbstractString, artifact_name::AbstractString; download::Bool = false)::SparlectraWebUIResponse
+  artifact = _resolve_large_case_benchmark_artifact(output_root, artifact_name)
+  artifact === nothing && return _webui_html(render_webui_error(404, "Large-case benchmark artifact not found."); status = 404)
+  if !download && artifact.mime_type in _WEBUI_TEXT_MIME_TYPES
+    content = read(artifact.path, String)
+    page = _webui_layout("Large-case benchmark: $(artifact.name)", "<section class=\"artifact-text-page\"><p><a class=\"button\" href=\"?download=1\">Download</a></p><p><strong>Benchmark output directory:</strong> <code>$(_webui_escape(dirname(artifact.path)))</code></p><pre class=\"artifact-text\">$(_webui_escape(content))</pre></section>"; show_back = true, main_class = "page artifact-page")
+    return _webui_html(page)
+  end
+  headers = Pair{String,String}[
+    "Content-Type" => artifact.mime_type,
+    "Content-Disposition" => "attachment; filename=\"$(replace(basename(artifact.name), '"' => '_'))\"",
+  ]
+  return SparlectraWebUIResponse(200, headers, read(artifact.path))
 end
 
 function handle_webui_operation_log(output_root::AbstractString; download::Bool = false)::SparlectraWebUIResponse
