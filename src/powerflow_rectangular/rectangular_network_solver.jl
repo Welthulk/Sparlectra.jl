@@ -335,6 +335,11 @@ function runpf_rectangular!(
   rectangular_workspace_min_buses::Int = 1000,
 )
   _validate_rectangular_powerflow_options(method = :rectangular, sparse = true)
+  cancellation_check = performance_profile isa AbstractDict ? get(performance_profile, :cancellation_check, nothing) : nothing
+  phase_callback = performance_profile isa AbstractDict ? get(performance_profile, :phase_callback, phase -> nothing) : phase -> nothing
+  check_cancel = () -> (cancellation_check === nothing ? nothing : cancellation_check())
+  set_phase = phase -> (phase_callback(String(phase)); check_cancel())
+  set_phase("building_ybus")
   if verbose > 1
     @info "Running complex rectangular NR power flow..."
   end
@@ -342,12 +347,14 @@ function runpf_rectangular!(
   nodes = net.nodeVec
   n = length(nodes)
   Sbase = net.baseMVA
+  set_phase("building_ybus")
   Yred = _perf_profile_time!(performance_profile, :ybus_assembly) do
     createYBUS(net = net, sparse = true, printYBUS = (verbose > 1))
   end
   Ybus = _perf_profile_time!(performance_profile, :ybus_expand_isolated) do
     (size(Yred, 1) == n) ? Yred : _expand_ybus_for_isolated_nodes(Yred, n, net.isoNodes)
   end
+  set_phase("solver_initialization")
 
   # 1) Initial complex voltages V0 and slack index
   V0, slack_idx = _perf_profile_time!(performance_profile, :solver_initial_voltage) do
@@ -394,9 +401,10 @@ function runpf_rectangular!(
   # Keep its magnitude at the regulating prosumer setpoint even if a MATPOWER
   # flat-start mode temporarily changed node._vm_pu as an initial guess.
   _perf_profile_time!(performance_profile, :solver_slack_voltage_fix) do
-    V0[slack_idx] = ComplexF64(Vset[slack_idx] * cos(angle(V0[slack_idx])), Vset[slack_idx] * sin(angle(V0[slack_idx])))
+    V0[slack_idx] = _apply_voltage_magnitude_preserving_angle(V0[slack_idx], Vset[slack_idx])
   end
 
+  set_phase("start_projection")
   V0 = _perf_profile_time!(performance_profile, :start_projection) do
     project_rectangular_start(
       Ybus,
@@ -417,6 +425,7 @@ function runpf_rectangular!(
       performance_profile = performance_profile,
     )
   end
+  check_cancel()
 
   # 4) Q-limit data 
   qmin_pu, qmax_pu = _perf_profile_time!(performance_profile, :solver_qlimit_extraction) do
@@ -511,6 +520,7 @@ function runpf_rectangular!(
   qlimit_active_set_changes = 0
   qlimit_reenable_events = 0
   for it = 1:maxiter
+    set_phase("newton_iteration")
     iters = it
 
     if has_vdep_control
@@ -533,6 +543,7 @@ function runpf_rectangular!(
     (verbose > 1) && @debug "Rectangular NR iteration" iter = it max_mismatch = max_mis
 
     # --- Q-Limit Active Set: PV -> PQ, optional PQ -> PV (rectangular) ------
+    set_phase("q_limit_processing")
     qlimit_iter = _handle_rectangular_qlimit_iteration!(
       net,
       it,
@@ -571,6 +582,7 @@ function runpf_rectangular!(
       verbose,
       performance_profile,
     )
+    check_cancel()
     F = qlimit_iter.F
     max_mis = qlimit_iter.max_mis
     changed = qlimit_iter.changed
@@ -585,9 +597,11 @@ function runpf_rectangular!(
     end
     # --- Newton step (FD or analytic) -----------------------------------
     try
+      set_phase("linear_solve")
       V = _perf_profile_time!(performance_profile, :iteration_newton_step) do
         complex_newton_step_rectangular(Ybus, V, S; slack_idx = slack_idx, damp = damp, autodamp = autodamp, autodamp_min = autodamp_min, bus_types = bus_types, Vset = Vset, dPinj_dVm = dPinj_dVm, dQinj_dVm = dQinj_dVm, performance_profile = performance_profile)
       end
+      check_cancel()
     catch step_error
       if _is_rectangular_linear_step_failure(step_error)
         verbose > 0 && @warn "Rectangular Newton step failed because the linear Jacobian solve was singular; returning non-convergence." iteration = it max_mismatch = max_mis exception = (typeof(step_error), sprint(showerror, step_error))
@@ -606,6 +620,7 @@ function runpf_rectangular!(
   end
 
   # 6) Update voltages back to network
+  check_cancel()
   # --- mirror bus_types back into Net/node types (PV->PQ switching) ---
   _perf_profile_time!(performance_profile, :solver_final_active_set_sync) do
     _sync_rectangular_bus_types_to_net!(net, bus_types)

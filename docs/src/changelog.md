@@ -1,13 +1,18 @@
-# Change Log
 ## Version 0.8.4 – 2026-06-10
 ### New features
 
-* Added `run_sparlectra_api` as a stable non-interactive MATPOWER power-flow backend contract with unique run IDs, schema-versioned structured status, controlled GUI configuration overrides, effective configuration output, explicit artifact discovery, and Dict/NamedTuple/JSON/YAML serialization.
-* Added a local PowerFlow service boundary with run-specific output directories, persistent JSON run indexing, restart recovery, run-ID lookup, artifact listing, and traversal-safe artifact resolution for a future local GUI without adding HTTP or Genie.jl dependencies.
+* Added a loopback-only local PowerFlow Web UI backed by the new PowerFlow service/API layer, including run history, artifact viewing/downloads, operation log, MATPOWER case selection/cache, contextual help, and user-writable runtime directories.
+* Added optional Web UI/API artifacts for PowerFlow runs, including `run.log`, `performance.log`, `diagnose.log`, effective configuration output, and detailed CSV exports for complex bus voltages and branch flows.
 
 ### Improvements
 
+* Improved Web UI usability with status auto-refresh, elapsed-time display, MATPOWER citation, project-doc links, readable artifact views, operation-log compaction, Sparlectra version metadata, and UTC timestamps.
+* Added configurable detailed CSV formatting for technical, German Excel, and US Excel notation.
+
 ### Bugfixes
+
+* Fixed Web UI abort handling with phase-aware cancellation, idempotent abort requests, hard-reset fallback for stuck aborts, stale-run recovery, and safe active-run deletion rules.
+* Fixed rectangular PV/slack voltage initialization so replacing a voltage magnitude preserves the existing phasor angle.
 
 ## Version 0.8.3 – 2026-05-30
 
@@ -561,3 +566,11 @@
 - Initial public commit of Sparlectra 
 
 * **Bugfix**: Restored MATPOWER runner operational reporting through package-level runners (header, config paths, resolved case, logfile path, compact summary, benchmark/performance blocks) while keeping example scripts thin and free of local YAML parsing.
+* **Feature**: Added asynchronous local Web UI PowerFlow jobs with a POST-only
+  cooperative abort action, persistent aborted status, distinct history
+  rendering, and single-active-run protection. Solver execution is never
+  interrupted unsafely; an abort requested during a blocking phase remains
+  final when that phase returns.
+
+* **Bugfix**: Web UI submissions now run independently of request handling so active status and Abort controls are reachable before completion; first startup also provisions user-writable configuration, case-cache, run, and operation-log paths instead of using package-tree runtime defaults.
+* **Improvement**: The PowerFlow result/status page now highlights elapsed runtime in a clock-style `HH:MM:SS` card beside the run status while retaining raw timing metadata for diagnostics.

@@ -1,6 +1,28 @@
 const POWERFLOW_RUN_INDEX_FILENAME = "powerflow_runs_index.json"
 const _POWERFLOW_SERVICE_RUNS = Dict{String,SparlectraApiResult}()
 const _POWERFLOW_SERVICE_LOCK = ReentrantLock()
+const _POWERFLOW_WEBUI_JOBS = Dict{String,Dict{String,Any}}()
+const _POWERFLOW_WEBUI_ACTIVE_STATES = Set(("queued", "running", "aborting"))
+const WEBUI_ABORT_HARD_RESET_AFTER_SECONDS = 60
+
+struct PowerFlowAborted <: Exception end
+Base.showerror(io::IO, ::PowerFlowAborted) = print(io, "PowerFlow run aborted by user.")
+
+function _check_powerflow_cancelled!(token)
+  token === nothing && return nothing
+  token[] || return nothing
+  throw(PowerFlowAborted())
+end
+
+function _update_webui_job_phase!(job::AbstractDict, phase::AbstractString)
+  now = Dates.now(Dates.UTC)
+  lock(_POWERFLOW_SERVICE_LOCK) do
+    job["current_phase"] = String(phase)
+    job["phase_started_at"] = now
+    job["last_progress_at"] = now
+  end
+  return nothing
+end
 
 mutable struct _ServiceJsonParser
   text::String
@@ -172,6 +194,265 @@ function _register_powerflow_run!(result::SparlectraApiResult)
   return result
 end
 
+function _safe_powerflow_run_id(run_id::AbstractString)::Bool
+  id = String(run_id)
+  return !isempty(id) && !_unsafe_artifact_name(id) && occursin(r"^[A-Za-z0-9][A-Za-z0-9._-]*$", id)
+end
+
+function _webui_job_snapshot(job::AbstractDict)::Dict{String,Any}
+  snapshot = Dict{String,Any}(String(key) => value for (key, value) in job if key != "task" && key != "abort_requested")
+  started_at = get(job, "started_at", nothing)
+  finished_at = get(job, "finished_at", nothing)
+  snapshot["elapsed_seconds"] = started_at === nothing ? nothing : max(0.0, Dates.value(something(finished_at, Dates.now(Dates.UTC)) - started_at) / 1000)
+  abort_requested_at = get(job, "abort_requested_at", nothing)
+  snapshot["abort_elapsed_seconds"] = abort_requested_at === nothing ? nothing : max(0.0, Dates.value(Dates.now(Dates.UTC) - abort_requested_at) / 1000)
+  snapshot["hard_reset_available"] = get(snapshot, "status", "") == "aborting" && something(snapshot["abort_elapsed_seconds"], 0.0) >= WEBUI_ABORT_HARD_RESET_AFTER_SECONDS
+  snapshot["success"] = get(snapshot, "status", "") == "success"
+  return snapshot
+end
+
+function _webui_active_job()
+  return lock(_POWERFLOW_SERVICE_LOCK) do
+    for job in values(_POWERFLOW_WEBUI_JOBS)
+      get(job, "status", "") in _POWERFLOW_WEBUI_ACTIVE_STATES && return job
+    end
+    return nothing
+  end
+end
+
+function get_active_webui_powerflow_job()::Union{Nothing,Dict{String,Any}}
+  job = _webui_active_job()
+  return job === nothing ? nothing : lock(_POWERFLOW_SERVICE_LOCK) do
+    _webui_job_snapshot(job)
+  end
+end
+
+function _write_aborted_powerflow_result!(job::AbstractDict)
+  output_dir = String(job["output_dir"])
+  mkpath(output_dir)
+  logfile = joinpath(output_dir, "run.log")
+  open(logfile, "a") do io
+    println(io, "Run aborted by user.")
+    println(io, "Status: aborted")
+  end
+  result_file = joinpath(output_dir, "result.json")
+  result = _api_result(
+    run_id = String(job["run_id"]),
+    status = :aborted,
+    success = false,
+    reason = "aborted_by_user",
+    message = "Run aborted by user.",
+    casefile = get(job, "casefile", nothing),
+    config_file = get(job, "config_file", nothing),
+    output_dir = output_dir,
+    logfile = logfile,
+    result_file = result_file,
+  )
+  _write_api_result_file(result)
+  result = _refresh_api_artifacts(result)
+  _write_api_result_file(result)
+  _POWERFLOW_SERVICE_RUNS[result.run_id] = result
+  _write_powerflow_run_index!(String(job["output_root"]), result)
+  return result
+end
+
+function _write_webui_job_marker!(job::AbstractDict, status::Symbol, reason::String, message::String)
+  output_dir = String(job["output_dir"])
+  mkpath(output_dir)
+  logfile = joinpath(output_dir, "run.log")
+  touch(logfile)
+  result_file = joinpath(output_dir, "result.json")
+  result = _api_result(
+    run_id = String(job["run_id"]),
+    status = status,
+    success = false,
+    reason = reason,
+    message = message,
+    casefile = get(job, "casefile", nothing),
+    config_file = get(job, "config_file", nothing),
+    output_dir = output_dir,
+    logfile = logfile,
+    result_file = result_file,
+  )
+  _write_api_result_file(result)
+  _POWERFLOW_SERVICE_RUNS[result.run_id] = result
+  _write_powerflow_run_index!(String(job["output_root"]), result)
+  return result
+end
+
+function hard_reset_webui_powerflow_run(run_id::AbstractString)::Dict{String,Any}
+  _safe_powerflow_run_id(run_id) || return _service_failure("unsafe_run_id", "Unsafe PowerFlow run ID rejected."; run_id)
+  reset = lock(_POWERFLOW_SERVICE_LOCK) do
+    job = get(_POWERFLOW_WEBUI_JOBS, String(run_id), nothing)
+    job === nothing && return _service_failure("run_not_found", "No Web UI PowerFlow run found for run_id $(run_id)."; run_id)
+    get(job, "status", "") == "aborting" || return _service_failure("run_not_resettable", "Hard reset is only available while abort is pending."; run_id)
+    previous_phase = get(job, "current_phase", "unknown")
+    output_dir = String(job["output_dir"])
+    message = "Hard reset requested while aborting. This result is not a valid solved PowerFlow result."
+    job["status"] = "aborted_unknown"
+    job["current_phase"] = "hard_reset_requested"
+    job["message"] = message
+    job["finished_at"] = Dates.now(Dates.UTC)
+    (success = true, job = job, previous_phase = previous_phase, output_dir = output_dir, message = message)
+  end
+  haskey(reset, :success) || return reset
+  mkpath(reset.output_dir)
+  open(joinpath(reset.output_dir, "run.log"), "a") do io
+      println(io, "Hard reset requested by user while aborting.")
+      println(io, "Previous phase: ", reset.previous_phase)
+      println(io, "Result is not a valid solved PowerFlow result.")
+  end
+  _write_webui_job_marker!(reset.job, :aborted_unknown, "hard_reset_requested", reset.message)
+  return merge(_webui_job_snapshot(reset.job), Dict("previous_phase" => reset.previous_phase))
+end
+
+"""
+    start_webui_powerflow_run(request; case_directory=nothing, runner=start_powerflow_run)
+
+Start one Web UI PowerFlow job in a background task. Only one active Web UI job
+is accepted at a time. Cancellation is cooperative: an abort request releases
+the UI immediately and the worker discards any later solver success.
+"""
+function start_webui_powerflow_run(request::AbstractDict; case_directory::Union{Nothing,AbstractString} = nothing, runner = start_powerflow_run, event_callback = (event; fields...) -> nothing)::Dict{String,Any}
+  active = _webui_active_job()
+  active === nothing || return _service_failure("active_run", "A PowerFlow run is already active. Abort it or wait for it to finish."; run_id = active["run_id"])
+  output_root = _service_request_value(request, "output_root")
+  output_root isa AbstractString && !isempty(strip(output_root)) || return _service_failure("invalid_request", "PowerFlow service request requires a nonempty output_root.")
+  run_id = string(uuid4())
+  job = Dict{String,Any}(
+    "run_id" => run_id,
+    "status" => "queued",
+    "casefile" => _service_request_value(request, "casefile"),
+    "resolved_casefile" => nothing,
+    "config_file" => _service_request_value(request, "config_file"),
+    "output_root" => abspath(output_root),
+    "output_dir" => joinpath(abspath(output_root), run_id),
+    "started_at" => Dates.now(Dates.UTC),
+    "finished_at" => nothing,
+    "message" => "PowerFlow run queued.",
+    "abort_requested" => Threads.Atomic{Bool}(false),
+    "abort_requested_at" => nothing,
+    "current_phase" => "queued",
+    "phase_started_at" => Dates.now(Dates.UTC),
+    "last_progress_at" => Dates.now(Dates.UTC),
+  )
+  lock(_POWERFLOW_SERVICE_LOCK) do
+    _POWERFLOW_WEBUI_JOBS[run_id] = job
+    _write_webui_job_marker!(job, :queued, "webui_job_active", "PowerFlow run queued.")
+  end
+  event_callback("powerflow_submitted"; run_id, requested_case = job["casefile"], status = "accepted")
+  job["task"] = Threads.@spawn begin
+    try
+      lock(_POWERFLOW_SERVICE_LOCK) do
+        job["status"] = "running"
+        job["message"] = "PowerFlow run is active."
+      end
+      _update_webui_job_phase!(job, "resolving_case")
+      event_callback("powerflow_started"; run_id, requested_case = job["casefile"], status = "running")
+      detailed_result_csv = _service_request_value(request, "detailed_result_csv", false)
+      detailed_result_csv_semicolon = _service_request_value(request, "detailed_result_csv_semicolon", false)
+      detailed_result_csv_format = _service_request_value(request, "detailed_result_csv_format", nothing)
+      if detailed_result_csv
+        csv_format = _resolve_detailed_csv_format(detailed_result_csv_format === nothing ? (detailed_result_csv_semicolon ? "excel_de" : "technical") : detailed_result_csv_format)
+        event_callback("detailed_result_csv_export_enabled"; run_id, csv_format = csv_format.name, delimiter = string(csv_format.delimiter), decimal_separator = csv_format.decimal_separator, thousands_separator = csv_format.thousands_separator, status = "enabled")
+      end
+      worker_request = Dict{String,Any}(String(key) => value for (key, value) in request)
+      worker_request["run_id"] = run_id
+      worker_request["cancellation_token"] = job["abort_requested"]
+      worker_request["phase_callback"] = phase -> _update_webui_job_phase!(job, phase)
+      result = try
+        runner(worker_request; case_directory)
+      catch err
+        err isa PowerFlowAborted ? Dict{String,Any}("status" => "aborted", "success" => false) :
+          _service_failure("execution_error", sprint(showerror, err, catch_backtrace()); run_id)
+      end
+      hard_reset_requested = lock(_POWERFLOW_SERVICE_LOCK) do
+        get(job, "status", "") == "aborted_unknown"
+      end
+      if hard_reset_requested
+        nothing
+      elseif job["abort_requested"][]
+        _update_webui_job_phase!(job, "finalizing_aborted")
+        _write_aborted_powerflow_result!(job)
+        event_callback("powerflow_aborted"; run_id = job["run_id"], requested_case = job["casefile"], status = "aborted", current_phase = "finalizing_aborted")
+        lock(_POWERFLOW_SERVICE_LOCK) do
+          job["status"] = "aborted"
+          job["current_phase"] = "aborted"
+          job["message"] = "Run aborted by user."
+        end
+      else
+        _update_webui_job_phase!(job, "finalizing_success")
+        lock(_POWERFLOW_SERVICE_LOCK) do
+          if get(job, "status", "") == "aborted_unknown"
+            return
+          end
+          job["status"] = get(result, "success", false) ? "success" : "failed"
+          job["current_phase"] = job["status"]
+          job["message"] = something(get(result, "message", nothing), job["status"] == "success" ? "PowerFlow run completed." : "PowerFlow run failed.")
+          job["resolved_casefile"] = get(result, "casefile", nothing)
+          if haskey(result, "run_id") && result["run_id"] != run_id
+            delete!(_POWERFLOW_WEBUI_JOBS, run_id)
+            job["run_id"] = result["run_id"]
+            job["output_dir"] = get(result, "output_dir", job["output_dir"])
+            _POWERFLOW_WEBUI_JOBS[result["run_id"]] = job
+          end
+        end
+        event_callback(
+          job["status"] == "success" ? "powerflow_completed" : "powerflow_failed";
+          run_id = job["run_id"],
+          requested_case = job["casefile"],
+          resolved_case = job["resolved_casefile"],
+          status = job["status"],
+          message = job["message"],
+        )
+        if detailed_result_csv
+          artifact_names = Set(String(get(artifact, "name", "")) for artifact in get(result, "artifacts", Any[]))
+          expected_csv = ["bus_voltages_complex.csv", "branch_flows.csv"]
+          if all(name -> name in artifact_names, expected_csv)
+            event_callback("detailed_result_csv_exported"; run_id = job["run_id"], csv_format = csv_format.name, artifacts = expected_csv, status = "succeeded")
+          else
+            event_callback("detailed_result_csv_export_failed"; run_id = job["run_id"], message = "Detailed result CSV artifacts were not generated.", status = "failed")
+          end
+        end
+      end
+    finally
+      lock(_POWERFLOW_SERVICE_LOCK) do
+        job["finished_at"] = Dates.now(Dates.UTC)
+        if get(job, "status", "") in _POWERFLOW_WEBUI_ACTIVE_STATES
+          job["status"] = job["abort_requested"][] ? "aborted" : "failed"
+          job["message"] = job["abort_requested"][] ? "Run aborted by user." : "PowerFlow worker exited before reaching a terminal result."
+        end
+      end
+    end
+  end
+  return _webui_job_snapshot(job)
+end
+
+function get_webui_powerflow_job(run_id::AbstractString)::Dict{String,Any}
+  _safe_powerflow_run_id(run_id) || return _service_failure("unsafe_run_id", "Unsafe PowerFlow run ID rejected."; run_id)
+  return lock(_POWERFLOW_SERVICE_LOCK) do
+    job = get(_POWERFLOW_WEBUI_JOBS, String(run_id), nothing)
+    job === nothing ? get_powerflow_result(run_id) : _webui_job_snapshot(job)
+  end
+end
+
+function abort_webui_powerflow_run(run_id::AbstractString)::Dict{String,Any}
+  _safe_powerflow_run_id(run_id) || return _service_failure("unsafe_run_id", "Unsafe PowerFlow run ID rejected."; run_id)
+  return lock(_POWERFLOW_SERVICE_LOCK) do
+    job = get(_POWERFLOW_WEBUI_JOBS, String(run_id), nothing)
+    job === nothing && return _service_failure("run_not_found", "No active Web UI PowerFlow run found for run_id $(run_id)."; run_id)
+    status = get(job, "status", "")
+    status == "aborting" && return merge(_webui_job_snapshot(job), Dict("abort_status" => "already_aborting"))
+    status == "aborted" && return merge(_webui_job_snapshot(job), Dict("abort_status" => "already_aborted"))
+    status in _POWERFLOW_WEBUI_ACTIVE_STATES || return _service_failure("run_not_abortable", "PowerFlow run $(run_id) is no longer active."; run_id)
+    job["abort_requested"][] = true
+    job["abort_requested_at"] = Dates.now(Dates.UTC)
+    job["status"] = "aborting"
+    job["message"] = "Abort requested. Waiting for the calculation to stop at the next safe cancellation point."
+    merge(_webui_job_snapshot(job), Dict("abort_status" => "accepted"))
+  end
+end
+
 function _powerflow_index_path(output_root::AbstractString)::String
   return joinpath(abspath(output_root), POWERFLOW_RUN_INDEX_FILENAME)
 end
@@ -226,6 +507,7 @@ function _powerflow_run_index_entry(result::SparlectraApiResult)::Dict{String,An
     "config_file" => result.config_file,
     "final_mismatch" => result.final_mismatch,
     "iterations" => result.iterations,
+    "timestamp" => Dates.format(Dates.now(), "yyyy-mm-dd HH:MM:SS"),
   )
 end
 
@@ -260,6 +542,9 @@ function _validated_powerflow_run_entry(entry, output_root::AbstractString)::Dic
   entry isa AbstractDict || return Dict{String,Any}("available" => false, "reason" => "invalid_run_entry")
   listed = Dict{String,Any}(String(key) => _api_transport_value(value) for (key, value) in entry)
   paths = _indexed_run_paths(entry, output_root)
+  if !haskey(listed, "timestamp") && paths.valid && isfile(paths.result_file)
+    listed["timestamp"] = Dates.format(Dates.unix2datetime(stat(paths.result_file).mtime), "yyyy-mm-dd HH:MM:SS")
+  end
   listed["available"] = paths.valid && isdir(paths.output_dir) && isfile(paths.result_file)
   if !paths.valid
     listed["reason"] = paths.reason
@@ -280,16 +565,23 @@ unsafe indexed paths are described by a structured `reason` instead of raising.
 """
 function list_powerflow_runs(output_root::AbstractString)::Vector{Dict{String,Any}}
   index = load_powerflow_run_index(output_root)
-  return [_validated_powerflow_run_entry(entry, output_root) for entry in index["runs"]]
+  runs = [_validated_powerflow_run_entry(entry, output_root) for entry in index["runs"]]
+  root = abspath(output_root)
+  active_jobs = lock(_POWERFLOW_SERVICE_LOCK) do
+    [_webui_job_snapshot(job) for job in values(_POWERFLOW_WEBUI_JOBS) if job["output_root"] == root && get(job, "status", "") in _POWERFLOW_WEBUI_ACTIVE_STATES]
+  end
+  indexed_ids = Set(string(get(run, "run_id", "")) for run in runs)
+  for job in active_jobs
+    job["available"] = true
+    job["timestamp"] = Dates.format(job["started_at"], "yyyy-mm-dd HH:MM:SS")
+    job["run_id"] in indexed_ids || push!(runs, job)
+  end
+  return runs
 end
 
-function _write_powerflow_run_index!(output_root::AbstractString, result::SparlectraApiResult)
+function _write_powerflow_run_entries!(output_root::AbstractString, runs::AbstractVector)
   root = abspath(output_root)
   mkpath(root)
-  index = load_powerflow_run_index(root)
-  runs = Any[entry for entry in index["runs"] if !(entry isa AbstractDict && get(entry, "run_id", nothing) == result.run_id)]
-  push!(runs, _powerflow_run_index_entry(result))
-  sort!(runs; by = entry -> entry isa AbstractDict ? string(get(entry, "run_id", "")) : "")
   contents = Dict{String,Any}("schema_version" => _SPARLECTRA_API_SCHEMA_VERSION, "runs" => runs)
   index_path = _powerflow_index_path(root)
   temporary_path = index_path * ".tmp"
@@ -299,6 +591,14 @@ function _write_powerflow_run_index!(output_root::AbstractString, result::Sparle
   end
   mv(temporary_path, index_path; force = true)
   return index_path
+end
+
+function _write_powerflow_run_index!(output_root::AbstractString, result::SparlectraApiResult)
+  index = load_powerflow_run_index(output_root)
+  runs = Any[entry for entry in index["runs"] if !(entry isa AbstractDict && get(entry, "run_id", nothing) == result.run_id)]
+  push!(runs, _powerflow_run_index_entry(result))
+  sort!(runs; by = entry -> entry isa AbstractDict ? string(get(entry, "run_id", "")) : "")
+  return _write_powerflow_run_entries!(output_root, runs)
 end
 
 function _optional_string(value)
@@ -390,6 +690,17 @@ function refresh_powerflow_run_registry!(output_root::AbstractString)::Dict{Stri
     try
       data = _parse_service_json(read(paths.result_file, String))
       data isa AbstractDict || error("result.json must contain a JSON object")
+      if lowercase(string(get(data, "status", ""))) in _POWERFLOW_WEBUI_ACTIVE_STATES
+        data["status"] = "aborted_unknown"
+        data["success"] = false
+        data["solution_available"] = false
+        data["reason"] = "webui_stale_active_run"
+        data["message"] = "The Web UI was restarted while this run was active. This result is not a valid solved PowerFlow result."
+        open(paths.result_file, "w") do io
+          _write_json(io, data)
+          println(io)
+        end
+      end
       push!(recovered, _reconstruct_powerflow_result(data, paths))
     catch err
       push!(unavailable, Dict{String,Any}(
@@ -412,12 +723,147 @@ function refresh_powerflow_run_registry!(output_root::AbstractString)::Dict{Stri
     "status" => isempty(unavailable) ? "succeeded" : "partial",
     "success" => isempty(unavailable),
     "loaded_runs" => [result.run_id for result in recovered],
+    "runs" => recovered,
     "unavailable_runs" => unavailable,
   )
 end
 
 """
-    start_powerflow_run(request::AbstractDict) -> Dict{String,Any}
+    delete_powerflow_run(run_id::AbstractString; output_root::AbstractString) -> Dict{String,Any}
+
+Delete one registered PowerFlow run beneath `output_root`. The run ID must be a
+safe index entry whose directory is exactly `<output_root>/<run_id>`; arbitrary
+paths and unregistered directories are never removed.
+"""
+function delete_powerflow_run(run_id::AbstractString; output_root::AbstractString)::Dict{String,Any}
+  id = String(run_id)
+  _unsafe_artifact_name(id) && return _service_failure("unsafe_run_id", "Unsafe PowerFlow run ID rejected."; run_id = id)
+  root = abspath(output_root)
+  index = load_powerflow_run_index(root)
+  entry_index = findfirst(entry -> entry isa AbstractDict && get(entry, "run_id", nothing) == id, index["runs"])
+  entry_index === nothing && return _service_failure("run_not_found", "PowerFlow run is not registered for this output root."; run_id = id)
+  entry = index["runs"][entry_index]
+  paths = _indexed_run_paths(entry, root)
+  paths.valid || return _service_failure(paths.reason, "PowerFlow run has an unsafe indexed path and was not deleted."; run_id = id)
+
+  try
+    ispath(paths.output_dir) && rm(paths.output_dir; recursive = true)
+  catch err
+    return _service_failure("delete_failed", sprint(showerror, err); run_id = id)
+  end
+  remaining = Any[entry for (entry_position, entry) in enumerate(index["runs"]) if entry_position != entry_index]
+  _write_powerflow_run_entries!(root, remaining)
+  lock(_POWERFLOW_SERVICE_LOCK) do
+    result = get(_POWERFLOW_SERVICE_RUNS, id, nothing)
+    result === nothing || (_path_is_within(result.output_dir, root) && delete!(_POWERFLOW_SERVICE_RUNS, id))
+  end
+  return Dict{String,Any}("status" => "succeeded", "success" => true, "run_id" => id)
+end
+
+"""
+    delete_all_powerflow_runs(; output_root::AbstractString) -> Dict{String,Any}
+
+Delete all safely registered PowerFlow run directories beneath `output_root`.
+Entries that cannot be validated or removed remain indexed and are reported in
+`failed_runs`; deletion never follows an indexed path outside the output root.
+"""
+function delete_all_powerflow_runs(; output_root::AbstractString)::Dict{String,Any}
+  root = abspath(output_root)
+  index = load_powerflow_run_index(root)
+  deleted = String[]
+  failed = Dict{String,Any}[]
+  remaining = Any[]
+  for entry in index["runs"]
+    if !(entry isa AbstractDict)
+      push!(remaining, entry)
+      push!(failed, Dict{String,Any}("reason" => "invalid_run_entry"))
+      continue
+    end
+    paths = _indexed_run_paths(entry, root)
+    if !paths.valid
+      push!(remaining, entry)
+      push!(failed, Dict{String,Any}("run_id" => _api_transport_value(paths.run_id), "reason" => paths.reason))
+      continue
+    end
+    try
+      ispath(paths.output_dir) && rm(paths.output_dir; recursive = true)
+      push!(deleted, paths.run_id)
+    catch err
+      push!(remaining, entry)
+      push!(failed, Dict{String,Any}("run_id" => paths.run_id, "reason" => "delete_failed", "message" => sprint(showerror, err)))
+    end
+  end
+  _write_powerflow_run_entries!(root, remaining)
+  lock(_POWERFLOW_SERVICE_LOCK) do
+    for run_id in deleted
+      result = get(_POWERFLOW_SERVICE_RUNS, run_id, nothing)
+      result === nothing || (_path_is_within(result.output_dir, root) && delete!(_POWERFLOW_SERVICE_RUNS, run_id))
+    end
+  end
+  return Dict{String,Any}(
+    "status" => isempty(failed) ? "succeeded" : "partial",
+    "success" => isempty(failed),
+    "deleted_runs" => deleted,
+    "failed_runs" => failed,
+  )
+end
+
+function _prefer_julia_casefile(casefile::AbstractString; emit_julia_case_fn = FetchMatpowerCase.emit_julia_case)::String
+  case_path = abspath(casefile)
+  extension = lowercase(splitext(case_path)[2])
+  extension == ".jl" && return case_path
+  extension == ".m" || throw(ArgumentError("Unsupported casefile extension: $(casefile) (expected .m or .jl)"))
+
+  julia_path = first(splitext(case_path)) * ".jl"
+  isfile(julia_path) && return julia_path
+  try
+    emitted_path = abspath(emit_julia_case_fn(case_path, dirname(case_path)))
+    if isfile(emitted_path)
+      return emitted_path
+    end
+    @warn "MATPOWER Julia case generation did not produce a file; using the .m case" casefile = case_path emitted_path
+  catch err
+    @warn "MATPOWER Julia case generation failed; using the .m case" casefile = case_path exception = (err, catch_backtrace())
+  end
+  return case_path
+end
+
+function _resolve_powerflow_casefile(
+  casefile::AbstractString,
+  case_directory::AbstractString;
+  ensure_casefile_fn = FetchMatpowerCase.ensure_casefile,
+  emit_julia_case_fn = FetchMatpowerCase.emit_julia_case,
+)::String
+  requested = strip(casefile)
+  isempty(requested) && throw(ArgumentError("PowerFlow casefile must not be empty."))
+  occursin(r"^[A-Za-z][A-Za-z0-9+.-]*://", requested) && throw(ArgumentError("MATPOWER case URLs are not accepted."))
+
+  extension = lowercase(splitext(requested)[2])
+  extension in (".m", ".jl") || throw(ArgumentError("Unsupported casefile extension: $(requested) (expected .m or .jl)"))
+  if isfile(requested)
+    return _prefer_julia_casefile(requested; emit_julia_case_fn)
+  end
+  occursin(r"[\\/]", requested) && throw(ArgumentError("Case file not found: $(requested)"))
+
+  trusted_directory = abspath(case_directory)
+  mkpath(trusted_directory)
+  resolved = try
+    ensure_casefile_fn(requested; outdir = trusted_directory, to_jl = true)
+  catch err
+    fallback_name = extension == ".m" ? requested : first(splitext(requested)) * ".m"
+    fallback_path = joinpath(trusted_directory, fallback_name)
+    if isfile(fallback_path)
+      @warn "MATPOWER case resolution could not generate the Julia case; using the downloaded .m case" casefile = fallback_path exception = (err, catch_backtrace())
+      return abspath(fallback_path)
+    end
+    rethrow()
+  end
+  isfile(resolved) || throw(ArgumentError("Resolved MATPOWER case file not found: $(resolved)"))
+  return _prefer_julia_casefile(resolved; emit_julia_case_fn)
+end
+
+"""
+    start_powerflow_run(request::AbstractDict; case_directory=nothing) -> Dict{String,Any}
 
 Start one local PowerFlow service run above [`run_sparlectra_api`](@ref). The
 request must provide `casefile`, `config_file`, and `output_root`; optional
@@ -426,11 +872,37 @@ chosen before execution, and all generated files are written beneath
 `output_root/run_id`. Completed API runs, including failed runs with a
 `result.json`, are registered in memory and in the persistent run index. Public
 service failures are returned as structured dictionaries.
+
+When `case_directory` is provided by a trusted caller, bare `.m` or `.jl` case
+names are resolved there through [`ensure_casefile`](@ref). Generated Julia
+cases are preferred for execution, while existing path behavior is retained.
 """
-function start_powerflow_run(request::AbstractDict)::Dict{String,Any}
+function start_powerflow_run(request::AbstractDict; case_directory::Union{Nothing,AbstractString} = nothing, case_resolver = _resolve_powerflow_casefile)::Dict{String,Any}
+  request_start = time_ns()
+  phases = Dict{Symbol,Float64}()
+  cancellation_token = _service_request_value(request, "cancellation_token", nothing)
+  phase_callback = _service_request_value(request, "phase_callback", phase -> nothing)
+  set_phase = phase -> (phase_callback(String(phase)); _check_powerflow_cancelled!(cancellation_token))
+  set_phase("resolving_case")
+  _check_powerflow_cancelled!(cancellation_token)
   casefile = _service_request_value(request, "casefile")
   casefile isa AbstractString && !isempty(strip(casefile)) || return _service_failure("missing_casefile", "PowerFlow service request requires a nonempty casefile.")
-  isfile(casefile) || return _service_failure("missing_casefile", "MATPOWER case file not found: $(abspath(casefile))")
+  if case_directory === nothing
+    _check_powerflow_cancelled!(cancellation_token)
+    isfile(casefile) || return _service_failure("missing_casefile", "MATPOWER case file not found: $(abspath(casefile))")
+    casefile = abspath(casefile)
+  else
+    resolution_start = time_ns()
+    _check_powerflow_cancelled!(cancellation_token)
+    casefile = try
+      case_resolver(casefile, case_directory)
+    catch err
+      return _service_failure("invalid_casefile", sprint(showerror, err))
+    end
+    phases[:case_resolution] = _api_elapsed_seconds(resolution_start)
+    _check_powerflow_cancelled!(cancellation_token)
+  end
+  set_phase("preparing_configuration")
 
   config_file = _service_request_value(request, "config_file")
   config_file isa AbstractString && !isempty(strip(config_file)) || return _service_failure("missing_config_file", "PowerFlow service request requires a nonempty config_file.")
@@ -441,8 +913,27 @@ function start_powerflow_run(request::AbstractDict)::Dict{String,Any}
 
   config_overrides = _service_request_value(request, "config_overrides", Dict{String,Any}())
   config_overrides isa AbstractDict || return _service_failure("invalid_request", "config_overrides must be dictionary-like.")
+  performance_timing = _service_request_value(request, "performance_timing", :off)
+  run_diagnostics = _service_request_value(request, "run_diagnostics", false)
+  run_diagnostics isa Bool || return _service_failure("invalid_request", "run_diagnostics must be boolean.")
+  detailed_result_csv = _service_request_value(request, "detailed_result_csv", false)
+  detailed_result_csv isa Bool || return _service_failure("invalid_request", "detailed_result_csv must be boolean.")
+  detailed_result_csv_semicolon = _service_request_value(request, "detailed_result_csv_semicolon", false)
+  detailed_result_csv_semicolon isa Bool || return _service_failure("invalid_request", "detailed_result_csv_semicolon must be boolean.")
+  detailed_result_csv_format = _service_request_value(request, "detailed_result_csv_format", nothing)
+  if detailed_result_csv && detailed_result_csv_format !== nothing
+    detailed_result_csv_format isa AbstractString || return _service_failure("invalid_request", "detailed_result_csv_format must be a string.")
+    try
+      _resolve_detailed_csv_format(detailed_result_csv_format)
+    catch err
+      return _service_failure("invalid_request", sprint(showerror, err))
+    end
+  end
+  phases[:request_parse] = _api_elapsed_seconds(request_start)
 
-  run_id = string(uuid4())
+  requested_run_id = _service_request_value(request, "run_id", nothing)
+  run_id = requested_run_id === nothing ? string(uuid4()) : String(requested_run_id)
+  _safe_powerflow_run_id(run_id) || return _service_failure("unsafe_run_id", "Unsafe PowerFlow run ID rejected.")
   root = abspath(output_root)
   output_dir = joinpath(root, run_id)
   result = try
@@ -451,9 +942,18 @@ function start_powerflow_run(request::AbstractDict)::Dict{String,Any}
       config_file = config_file,
       output_dir = output_dir,
       config_overrides = config_overrides,
+      performance_timing = performance_timing,
+      run_diagnostics = run_diagnostics,
+      detailed_result_csv = detailed_result_csv,
+      detailed_result_csv_format = detailed_result_csv_format,
+      detailed_result_csv_semicolon = detailed_result_csv_semicolon,
+      phase_timings = phases,
       run_id = run_id,
+      cancellation_token = cancellation_token,
+      phase_callback = phase_callback,
     )
   catch err
+    err isa PowerFlowAborted && rethrow()
     return _service_failure("execution_error", sprint(showerror, err, catch_backtrace()); run_id = run_id)
   end
 
@@ -494,7 +994,7 @@ run IDs return a structured `run_not_found` failure dictionary.
 function list_powerflow_artifacts(run_id::AbstractString)
   result = _registered_powerflow_run(run_id)
   result === nothing && return _service_failure("run_not_found", "No PowerFlow run found for run_id $(run_id)."; run_id = run_id)
-  return [to_dict(artifact) for artifact in result.artifacts]
+  return [to_dict(artifact) for artifact in collect_sparlectra_api_artifacts(result.output_dir)]
 end
 
 function _unsafe_artifact_name(name::String)::Bool
@@ -529,9 +1029,10 @@ function resolve_powerflow_artifact(run_id::AbstractString, artifact_name::Abstr
   name = String(artifact_name)
   _unsafe_artifact_name(name) && return _service_failure("unsafe_artifact_name", "Unsafe artifact name rejected: $(name)"; run_id = run_id)
 
-  index = findfirst(artifact -> artifact.name == name, result.artifacts)
+  artifacts = collect_sparlectra_api_artifacts(result.output_dir)
+  index = findfirst(artifact -> artifact.name == name, artifacts)
   index === nothing && return _service_failure("artifact_not_found", "No artifact named $(name) belongs to PowerFlow run $(run_id)."; run_id = run_id)
-  artifact = result.artifacts[index]
+  artifact = artifacts[index]
   isfile(artifact.path) || return _service_failure("artifact_not_found", "Artifact $(name) is no longer available for PowerFlow run $(run_id)."; run_id = run_id)
   _artifact_belongs_to_run(artifact, result.output_dir) || return _service_failure("unsafe_artifact_name", "Artifact $(name) does not resolve inside PowerFlow run $(run_id)."; run_id = run_id)
   return artifact
