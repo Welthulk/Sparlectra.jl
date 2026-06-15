@@ -3,8 +3,63 @@ using UUIDs: uuid4
 const _SPARLECTRA_API_SCHEMA_VERSION = "1.0"
 const WEBUI_PERFORMANCE_TIMING_VALUES = (:off, :compact, :full)
 
+mutable struct PowerFlowPhaseTimingRecorder
+  timings::Vector{Dict{String,Any}}
+  active_index::Union{Nothing,Int}
+end
+
+PowerFlowPhaseTimingRecorder() = PowerFlowPhaseTimingRecorder(Dict{String,Any}[], nothing)
+
 function _api_elapsed_seconds(start_ns::UInt64)::Float64
   return (time_ns() - start_ns) / 1.0e9
+end
+
+function _api_datetime_string(value::Dates.DateTime)::String
+  return Dates.format(value, dateformat"yyyy-mm-ddTHH:MM:SS.sss") * "Z"
+end
+
+function _phase_elapsed_seconds(started_at::AbstractString, ended_at::AbstractString)::Float64
+  start = Dates.DateTime(replace(String(started_at), "Z" => ""), dateformat"yyyy-mm-ddTHH:MM:SS.sss")
+  finish = Dates.DateTime(replace(String(ended_at), "Z" => ""), dateformat"yyyy-mm-ddTHH:MM:SS.sss")
+  return max(0.0, Dates.value(finish - start) / 1000)
+end
+
+function _complete_active_phase!(recorder::PowerFlowPhaseTimingRecorder, status::AbstractString = "completed")
+  index = recorder.active_index
+  index === nothing && return nothing
+  timing = recorder.timings[index]
+  haskey(timing, "ended_at") && timing["ended_at"] !== nothing && return nothing
+  ended_at = _api_datetime_string(Dates.now(Dates.UTC))
+  timing["ended_at"] = ended_at
+  timing["elapsed_seconds"] = _phase_elapsed_seconds(timing["started_at"], ended_at)
+  timing["status"] = String(status)
+  recorder.active_index = nothing
+  return timing
+end
+
+function _start_service_phase!(recorder::PowerFlowPhaseTimingRecorder, phase::AbstractString; status::AbstractString = "running")
+  phase_name = String(phase)
+  if recorder.active_index !== nothing && recorder.timings[recorder.active_index]["phase"] == phase_name
+    return recorder.timings[recorder.active_index]
+  end
+  _complete_active_phase!(recorder)
+  timing = Dict{String,Any}(
+    "phase" => phase_name,
+    "started_at" => _api_datetime_string(Dates.now(Dates.UTC)),
+    "ended_at" => nothing,
+    "elapsed_seconds" => nothing,
+    "status" => String(status),
+  )
+  push!(recorder.timings, timing)
+  recorder.active_index = length(recorder.timings)
+  return timing
+end
+
+function _phase_elapsed_lookup(phase_timings::AbstractVector, phase::AbstractString)
+  for timing in phase_timings
+    get(timing, "phase", "") == phase && return get(timing, "elapsed_seconds", nothing)
+  end
+  return nothing
 end
 
 function _api_timing_mode(value)::Symbol
@@ -58,7 +113,46 @@ function _write_powerflow_diagnostics(path::AbstractString, result::SparlectraRu
   return path
 end
 
-function _write_performance_log(path::AbstractString, mode::Symbol, phases::AbstractDict, result::SparlectraRunResult)
+function _write_service_phase_summary(io::IO, phase_timings::AbstractVector)
+  println(io, "Phase timings")
+  println(io, "-------------")
+  for timing in phase_timings
+    elapsed = get(timing, "elapsed_seconds", nothing)
+    elapsed_text = elapsed === nothing ? "running" : string(round(Float64(elapsed); digits = 6), " s")
+    println(io, "  ", rpad(String(get(timing, "phase", "unknown")) * ":", 31), elapsed_text, " (", get(timing, "status", "unknown"), ")")
+  end
+  println(io)
+  return nothing
+end
+
+function _write_large_case_timing_summary(io::IO, case_path::AbstractString, phase_timings::AbstractVector, result::Union{Nothing,SparlectraRunResult})
+  println(io, "Large case timing summary")
+  println(io, "-------------------------")
+  println(io, "case_file: ", basename(case_path))
+  println(io, "case_extension: ", lowercase(splitext(case_path)[2]))
+  println(io, "case_size_bytes: ", isfile(case_path) ? filesize(case_path) : "n/a")
+  if result !== nothing && result.net !== nothing
+    println(io, "n_bus: ", length(result.net.nodeVec))
+    println(io, "n_branch: ", length(result.net.branchVec))
+  end
+  for (label, phase) in (
+    ("reading_matpower_case_seconds", "reading_matpower_case"),
+    ("building_sparlectra_net_seconds", "building_sparlectra_net"),
+    ("building_ybus_seconds", "building_ybus"),
+    ("preparing_start_values_seconds", "preparing_start_values"),
+    ("start_projection_seconds", "start_projection"),
+    ("solving_powerflow_seconds", "solving_powerflow"),
+    ("artifact_seconds", "writing_artifacts"),
+    ("total_service_seconds", "total_service"),
+  )
+    elapsed = _phase_elapsed_lookup(phase_timings, phase)
+    elapsed === nothing || println(io, label, ": ", round(Float64(elapsed); digits = 6))
+  end
+  println(io)
+  return nothing
+end
+
+function _write_performance_log(path::AbstractString, mode::Symbol, phases::AbstractDict, result::SparlectraRunResult, phase_timings::AbstractVector = Dict{String,Any}[])
   open(path, "w") do io
     println(io, "Sparlectra single-run phase timing")
     println(io, "==================================")
@@ -68,6 +162,10 @@ function _write_performance_log(path::AbstractString, mode::Symbol, phases::Abst
     for phase in (:request_parse, :case_resolution, :api_config_build, :case_loading_network_solver, :solver, :postprocessing, :artifact_writing, :total)
       haskey(phases, phase) || continue
       println(io, rpad(String(phase) * ":", 31), round(Float64(phases[phase]); digits = 6), " s")
+    end
+    if !isempty(phase_timings)
+      println(io)
+      _write_service_phase_summary(io, phase_timings)
     end
     if mode === :full && result.performance_profile isa AbstractDict
       println(io)
@@ -221,8 +319,9 @@ function _write_detailed_result_csv(output_path::AbstractString, result::Sparlec
   return artifacts
 end
 
-function _api_result(; run_id::String = string(uuid4()), schema_version::String = _SPARLECTRA_API_SCHEMA_VERSION, status::Symbol, success::Bool, converged = nothing, solution_available::Bool = false, iterations = nothing, final_mismatch = nothing, reason = nothing, message = nothing, casefile = nothing, config_file = nothing, output_dir::String, logfile = nothing, result_file = nothing, artifacts = SparlectraApiArtifact[], raw_result = nothing)
-  return SparlectraApiResult(run_id, schema_version, status, success, converged, solution_available, iterations, final_mismatch, reason, message, casefile, config_file, output_dir, logfile, result_file, artifacts, raw_result)
+function _api_result(; run_id::String = string(uuid4()), schema_version::String = _SPARLECTRA_API_SCHEMA_VERSION, status::Symbol, success::Bool, converged = nothing, solution_available::Bool = false, iterations = nothing, final_mismatch = nothing, reason = nothing, message = nothing, casefile = nothing, config_file = nothing, output_dir::String, logfile = nothing, result_file = nothing, artifacts = SparlectraApiArtifact[], service_phase_timings = Dict{String,Any}[], raw_result = nothing)
+  timings = Dict{String,Any}[Dict{String,Any}(String(key) => value for (key, value) in timing) for timing in service_phase_timings]
+  return SparlectraApiResult(run_id, schema_version, status, success, converged, solution_available, iterations, final_mismatch, reason, message, casefile, config_file, output_dir, logfile, result_file, artifacts, timings, raw_result)
 end
 
 function _write_api_result_file(result::SparlectraApiResult)
@@ -248,6 +347,7 @@ function _refresh_api_artifacts(result::SparlectraApiResult)::SparlectraApiResul
     logfile = result.logfile,
     result_file = result.result_file,
     artifacts = collect_sparlectra_api_artifacts(result.output_dir),
+    service_phase_timings = result.service_phase_timings,
     raw_result = result.raw_result,
   )
 end
@@ -261,12 +361,12 @@ function _finalize_api_result(result::SparlectraApiResult)::SparlectraApiResult
   return refreshed
 end
 
-function _api_failure(reason::String, message::String; run_id::String = string(uuid4()), casefile, config_file, output_dir::String, logfile::String, result_file::String)::SparlectraApiResult
+function _api_failure(reason::String, message::String; run_id::String = string(uuid4()), casefile, config_file, output_dir::String, logfile::String, result_file::String, service_phase_timings = Dict{String,Any}[])::SparlectraApiResult
   open(logfile, "a") do io
     println(io, "Sparlectra API failure: ", reason)
     println(io, message)
   end
-  result = _api_result(run_id = run_id, status = :failed, success = false, reason = reason, message = message, casefile = casefile, config_file = config_file, output_dir = output_dir, logfile = logfile, result_file = result_file)
+  result = _api_result(run_id = run_id, status = :failed, success = false, reason = reason, message = message, casefile = casefile, config_file = config_file, output_dir = output_dir, logfile = logfile, result_file = result_file, service_phase_timings = service_phase_timings)
   return _finalize_api_result(result)
 end
 
@@ -333,6 +433,12 @@ function _run_sparlectra_api(;
 )::SparlectraApiResult
   total_start = time_ns()
   phases = Dict{Symbol,Float64}(Symbol(key) => Float64(value) for (key, value) in phase_timings)
+  phase_recorder = PowerFlowPhaseTimingRecorder()
+  emit_phase = phase -> begin
+    _start_service_phase!(phase_recorder, String(phase))
+    phase_callback(String(phase))
+  end
+  emit_phase("total_service")
   timing_mode = try
     _api_timing_mode(performance_timing)
   catch err
@@ -350,7 +456,7 @@ function _run_sparlectra_api(;
   logfile = joinpath(output_path, "run.log")
   result_file = joinpath(output_path, "result.json")
   touch(logfile)
-  phase_callback("preparing_configuration")
+  emit_phase("preparing_configuration")
   _check_powerflow_cancelled!(cancellation_token)
 
   isfile(config_path) || return _api_failure("config_file_not_found", "Configuration file not found: $(config_path)"; run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file)
@@ -377,10 +483,10 @@ function _run_sparlectra_api(;
   isfile(case_path) || return _api_failure("casefile_not_found", "MATPOWER case file not found: $(case_path)"; run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file)
 
   raw_result = nothing
-  phase_callback("loading_case")
+  emit_phase("reading_matpower_case")
   api_performance_profile = Dict{Symbol,Any}(
     :cancellation_check => () -> _check_powerflow_cancelled!(cancellation_token),
-    :phase_callback => phase -> phase_callback(String(phase)),
+    :phase_callback => phase -> emit_phase(String(phase)),
   )
   execution_start = time_ns()
   try
@@ -407,9 +513,9 @@ function _run_sparlectra_api(;
   end
 
   artifact_start = time_ns()
-  phase_callback("diagnostics")
+  emit_phase("writing_diagnostics")
   _check_powerflow_cancelled!(cancellation_token)
-  phase_callback("artifact_writing")
+  emit_phase("writing_artifacts")
   run_diagnostics && _write_powerflow_diagnostics(joinpath(output_path, "diagnose.log"), raw_result)
   csv_artifacts = String[]
   csv_export_error = nothing
@@ -425,6 +531,7 @@ function _run_sparlectra_api(;
     end
   end
   if detailed_result_csv && raw_result.final_converged && raw_result.solution_available
+    emit_phase("writing_csv_artifacts")
     try
       csv_artifacts = _write_detailed_result_csv(output_path, raw_result; format = csv_format.name)
     catch err
@@ -435,11 +542,19 @@ function _run_sparlectra_api(;
     end
   end
   _check_powerflow_cancelled!(cancellation_token)
+  _complete_active_phase!(phase_recorder)
+  emit_phase("finalizing_success")
+  _complete_active_phase!(phase_recorder)
   open(logfile, "a") do io
     println(io)
     println(io, "API run summary")
     println(io, "===============")
     _write_api_timing_summary(io, raw_result, config)
+    println(io, "Case file format: ", lowercase(splitext(case_path)[2]))
+    println(io, "Case file size: ", filesize(case_path), " bytes")
+    println(io)
+    _write_service_phase_summary(io, phase_recorder.timings)
+    _write_large_case_timing_summary(io, case_path, phase_recorder.timings, raw_result)
     if config.output.logfile_results === :full
       println(io, "Full run details")
       println(io, "----------------")
@@ -467,9 +582,8 @@ function _run_sparlectra_api(;
   end
   phases[:artifact_writing] = _api_elapsed_seconds(artifact_start)
   phases[:total] = _api_elapsed_seconds(total_start)
-  timing_mode === :off || _write_performance_log(joinpath(output_path, "performance.log"), timing_mode, phases, raw_result)
+  timing_mode === :off || _write_performance_log(joinpath(output_path, "performance.log"), timing_mode, phases, raw_result, phase_recorder.timings)
   _check_powerflow_cancelled!(cancellation_token)
-  phase_callback("finalizing_success")
 
   success = raw_result.final_converged && raw_result.solution_available
   mismatch = isfinite(raw_result.final_mismatch) ? raw_result.final_mismatch : nothing
@@ -488,6 +602,7 @@ function _run_sparlectra_api(;
     output_dir = output_path,
     logfile = logfile,
     result_file = result_file,
+    service_phase_timings = phase_recorder.timings,
     raw_result = raw_result,
   )
   return _finalize_api_result(result)

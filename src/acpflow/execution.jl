@@ -5,6 +5,8 @@ end
 function _execute_sparlectra_powerflow!(net::Net, cfg::SparlectraConfig; performance_profile = nothing)
   pf_cfg = cfg.powerflow
   verbose = _runner_verbose(cfg)
+  phase_callback = performance_profile isa AbstractDict ? get(performance_profile, :phase_callback, phase -> nothing) : phase -> nothing
+  phase_callback("solving_powerflow")
   iterations = 0
   erg = 2
   control_status = :none

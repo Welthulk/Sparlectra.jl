@@ -48,6 +48,7 @@ function to_dict(result::SparlectraApiResult; include_raw_result::Bool = false):
     "logfile" => result.logfile,
     "result_file" => result.result_file,
     "artifacts" => [to_dict(artifact) for artifact in result.artifacts],
+    "service_phase_timings" => _api_transport_value(result.service_phase_timings),
   )
   include_raw_result && (data["raw_result"] = _api_transport_value(result.raw_result))
   return data
@@ -56,7 +57,7 @@ end
 """Convert an API result to a transport-safe `NamedTuple`."""
 function to_namedtuple(result::SparlectraApiResult; include_raw_result::Bool = false)::NamedTuple
   data = to_dict(result; include_raw_result = include_raw_result)
-  ordered = (:run_id, :schema_version, :status, :success, :converged, :solution_available, :iterations, :final_mismatch, :reason, :message, :casefile, :config_file, :output_dir, :logfile, :result_file, :artifacts)
+  ordered = (:run_id, :schema_version, :status, :success, :converged, :solution_available, :iterations, :final_mismatch, :reason, :message, :casefile, :config_file, :output_dir, :logfile, :result_file, :artifacts, :service_phase_timings)
   base = NamedTuple{ordered}(Tuple(data[String(key)] for key in ordered))
   return include_raw_result ? merge(base, (raw_result = data["raw_result"],)) : base
 end

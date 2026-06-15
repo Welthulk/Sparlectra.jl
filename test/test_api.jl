@@ -109,6 +109,15 @@ function run_api_tests()
       for marker in ("solver_time:", "representative_time:", "iterations:", "final_mismatch:", "final_status:", "final_outcome:")
         @test occursin(marker, run_log)
       end
+      for phase in ("reading_matpower_case", "building_sparlectra_net", "solving_powerflow", "writing_artifacts", "finalizing_success")
+        @test any(timing -> get(timing, "phase", "") == phase, result.service_phase_timings)
+        @test occursin(phase, run_log)
+      end
+      @test all(timing -> get(timing, "elapsed_seconds", 0.0) === nothing || get(timing, "elapsed_seconds", 0.0) >= 0.0, result.service_phase_timings)
+      @test occursin("Large case timing summary", run_log)
+      result_json = Sparlectra._parse_service_json(read(joinpath(output_dir, "result.json"), String))
+      @test haskey(result_json, "service_phase_timings")
+      @test any(timing -> get(timing, "phase", "") == "finalizing_success", result_json["service_phase_timings"])
       @test occursin("detailed_result_csv_format: excel_de", run_log)
       @test occursin("detailed_result_csv_delimiter: semicolon", run_log)
       @test occursin("detailed_result_csv_decimal_separator: comma", run_log)
@@ -118,6 +127,8 @@ function run_api_tests()
       @test occursin("api_config_build:", performance_log)
       @test occursin("case_loading_network_solver:", performance_log)
       @test occursin("total:", performance_log)
+      @test occursin("Phase timings", performance_log)
+      @test occursin("reading_matpower_case", performance_log)
       diagnostic_log = read(joinpath(output_dir, "diagnose.log"), String)
       @test occursin("Sparlectra PowerFlow diagnostics", diagnostic_log)
       @test occursin("Final limit validation:", diagnostic_log)
@@ -437,6 +448,8 @@ function run_api_tests()
       aborted = Sparlectra.abort_webui_powerflow_run(active["run_id"])
       @test aborted["status"] == "aborting"
       @test aborted["abort_status"] == "accepted"
+      @test haskey(aborted, "abort_phase")
+      @test occursin("Current phase:", aborted["message"])
       @test !aborted["success"]
       @test Sparlectra.abort_webui_powerflow_run(active["run_id"])["abort_status"] == "already_aborting"
       @test Sparlectra.start_webui_powerflow_run(async_request; runner = controlled_runner)["reason"] == "active_run"
@@ -445,6 +458,7 @@ function run_api_tests()
       @test get_powerflow_result(active["run_id"])["status"] == "aborted"
       @test !get_powerflow_result(active["run_id"])["success"]
       @test occursin("Run aborted by user.", read(joinpath(aborted["output_dir"], "run.log"), String))
+      @test occursin("Phase active at abort:", read(joinpath(aborted["output_dir"], "run.log"), String))
       @test Sparlectra.abort_webui_powerflow_run(active["run_id"])["abort_status"] == "already_aborted"
       replacement = Sparlectra.start_webui_powerflow_run(async_request; runner = controlled_runner)
       @test replacement["status"] in ("queued", "running")

@@ -21,6 +21,12 @@ function _update_webui_job_phase!(job::AbstractDict, phase::AbstractString)
   return nothing
 end
 
+function _webui_phase_event!(job::AbstractDict, phase::AbstractString, event_callback)
+  _update_webui_job_phase!(job, phase)
+  event_callback("powerflow_phase_started"; run_id = job["run_id"], phase = String(phase), status = get(job, "status", "running"))
+  return nothing
+end
+
 function _webui_job_snapshot(job::AbstractDict)::Dict{String,Any}
   snapshot = Dict{String,Any}(String(key) => value for (key, value) in job if key != "task" && key != "abort_requested")
   started_at = get(job, "started_at", nothing)
@@ -56,6 +62,7 @@ function _write_aborted_powerflow_result!(job::AbstractDict)
   open(logfile, "a") do io
     println(io, "Run aborted by user.")
     println(io, "Status: aborted")
+    println(io, "Phase active at abort: ", get(job, "abort_phase", get(job, "current_phase", "unknown")))
   end
   result_file = joinpath(output_dir, "result.json")
   result = _api_result(
@@ -169,7 +176,7 @@ function start_webui_powerflow_run(request::AbstractDict; case_directory::Union{
         job["status"] = "running"
         job["message"] = "PowerFlow run is active."
       end
-      _update_webui_job_phase!(job, "resolving_case")
+      _webui_phase_event!(job, "resolving_case", event_callback)
       event_callback("powerflow_started"; run_id, requested_case = job["casefile"], status = "running")
       detailed_result_csv = _service_request_value(request, "detailed_result_csv", false)
       detailed_result_csv_semicolon = _service_request_value(request, "detailed_result_csv_semicolon", false)
@@ -181,7 +188,7 @@ function start_webui_powerflow_run(request::AbstractDict; case_directory::Union{
       worker_request = Dict{String,Any}(String(key) => value for (key, value) in request)
       worker_request["run_id"] = run_id
       worker_request["cancellation_token"] = job["abort_requested"]
-      worker_request["phase_callback"] = phase -> _update_webui_job_phase!(job, phase)
+      worker_request["phase_callback"] = phase -> _webui_phase_event!(job, phase, event_callback)
       result = try
         runner(worker_request; case_directory)
       catch err
@@ -194,7 +201,7 @@ function start_webui_powerflow_run(request::AbstractDict; case_directory::Union{
       if hard_reset_requested
         nothing
       elseif job["abort_requested"][]
-        _update_webui_job_phase!(job, "finalizing_aborted")
+        _webui_phase_event!(job, "finalizing_aborted", event_callback)
         _write_aborted_powerflow_result!(job)
         event_callback("powerflow_aborted"; run_id = job["run_id"], requested_case = job["casefile"], status = "aborted", current_phase = "finalizing_aborted")
         lock(_POWERFLOW_SERVICE_LOCK) do
@@ -203,7 +210,7 @@ function start_webui_powerflow_run(request::AbstractDict; case_directory::Union{
           job["message"] = "Run aborted by user."
         end
       else
-        _update_webui_job_phase!(job, "finalizing_success")
+        _webui_phase_event!(job, "finalizing_success", event_callback)
         lock(_POWERFLOW_SERVICE_LOCK) do
           if get(job, "status", "") == "aborted_unknown"
             return
@@ -269,9 +276,9 @@ function abort_webui_powerflow_run(run_id::AbstractString)::Dict{String,Any}
     status in _POWERFLOW_WEBUI_ACTIVE_STATES || return _service_failure("run_not_abortable", "PowerFlow run $(run_id) is no longer active."; run_id)
     job["abort_requested"][] = true
     job["abort_requested_at"] = Dates.now(Dates.UTC)
+    job["abort_phase"] = get(job, "current_phase", "unknown")
     job["status"] = "aborting"
-    job["message"] = "Abort requested. Waiting for the calculation to stop at the next safe cancellation point."
+    job["message"] = "Abort requested. Current phase: $(job["abort_phase"]). This phase may need to finish before cancellation is observed."
     merge(_webui_job_snapshot(job), Dict("abort_status" => "accepted"))
   end
 end
-

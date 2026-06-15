@@ -7,6 +7,7 @@
 ### Improvements
 
 * Improved Web UI usability with status auto-refresh, elapsed-time display, MATPOWER citation, project-doc links, readable artifact views, operation-log compaction, Sparlectra version metadata, and UTC timestamps.
+* Added finer PowerFlow Web UI/API phase timing for large MATPOWER case loading and execution diagnostics.
 * Added configurable detailed CSV formatting for technical, German Excel, and US Excel notation.
 
 ### Bugfixes
