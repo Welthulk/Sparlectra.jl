@@ -102,11 +102,12 @@ if controlled cancellation exits the worker.
   the run ID and directory, invokes the programmatic API, registers the result,
   and updates the persistent index. A trusted caller such as the Web UI can
   provide the server-owned MATPOWER case directory through the function
-  keyword; bare `.m` or `.jl` names are then resolved with `ensure_casefile`
-  using `to_jl=true`. Existing or generated `.jl` cases are preferred, while a
-  readable `.m` case remains the fallback if conversion fails. Browser form
-  values never control this directory, missing path-like inputs are not
-  downloaded, and URLs are rejected.
+  keyword. Bare `.m` names are resolved with `ensure_casefile` using
+  `to_jl=false` and remain the executed source. Generated MATPOWER `.jl` cache
+  files in that directory are internal artifacts: explicit `.jl` requests resolve
+  to a matching `.m` source when one exists and are rejected when the `.m` source
+  is missing. Browser form values never control this directory, missing
+  path-like inputs are not downloaded, and URLs are rejected.
   Optional `performance_timing` (`off`, `compact`, or `full`),
   `run_diagnostics`, `detailed_result_csv`, and
   `detailed_result_csv_format` request fields are forwarded to the API artifact
@@ -174,11 +175,13 @@ The benchmark intentionally does **not** implement a separate MATPOWER download
 path. It uses the same Web UI case cache directory returned by
 `default_webui_case_cache_dir(output_root)` and resolves bare case names through
 `start_powerflow_run(...; case_directory=cache_dir)`, matching the Web UI/service
-cache path. Missing bare case names therefore trigger the existing
-`ensure_casefile` download/generation behavior used by the Web UI. If a case is
-missing and the local environment cannot reach the MATPOWER source, the summary
-records the failed service resolution and tells the user to fetch the case
-through the Web UI/service cache path.
+cache path. Extensionless benchmark case names resolve to `.m`, and `.m` is used
+when both `.m` and `.jl` cache files exist. Generated `.jl` cache execution is
+unsafe for large cases and is disabled by default; the developer-only
+`--allow-generated-jl-cache` flag must be supplied explicitly to measure that
+path. If only a generated `.jl` exists, the summary records that the canonical
+`.m` source is missing and tells the user to fetch the case through the Web
+UI/service cache path.
 
 The benchmark calls `start_powerflow_run`, `list_powerflow_artifacts`, and
 `resolve_powerflow_artifact` rather than bypassing the service layer. Results
@@ -186,7 +189,10 @@ are written below the selected benchmark output root as
 `benchmark_large_cases.json` and `benchmark_large_cases.md`. The summary
 separates file/cache preparation, `.m` parsing, `.jl` load/parse, Sparlectra
 network construction, solver setup/solve phases, diagnostics, CSV export, and
-artifact writing when those phases are recorded.
+artifact writing when those phases are recorded. Each summary row includes
+`requested_case`, `resolved_case`, `canonical_source`, and
+`used_generated_jl_cache`; normal Web UI/service benchmark runs report
+`used_generated_jl_cache = false`.
 
 Interpret the major loading phases as follows:
 

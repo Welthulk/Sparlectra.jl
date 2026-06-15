@@ -256,6 +256,8 @@ function start_webui_powerflow_run(request::AbstractDict; case_directory::Union{
           run_id = job["run_id"],
           requested_case = job["casefile"],
           resolved_case = job["resolved_casefile"],
+          canonical_case = lowercase(splitext(String(something(job["casefile"], "")))[2]) == ".jl" && lowercase(splitext(String(something(job["resolved_casefile"], "")))[2]) == ".m" ? job["resolved_casefile"] : nothing,
+          reason = lowercase(splitext(String(something(job["casefile"], "")))[2]) == ".jl" && lowercase(splitext(String(something(job["resolved_casefile"], "")))[2]) == ".m" ? _matpower_cache_jl_bypass_reason() : nothing,
           status = job["status"],
           message = job["message"],
         )
