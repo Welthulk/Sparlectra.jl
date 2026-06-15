@@ -25,26 +25,6 @@ const GENERATED_MATPOWER_JL_CACHE_MESSAGE = "Generated MATPOWER .jl cache files 
 
 _matpower_cache_jl_bypass_reason() = "generated_jl_cache_hidden_from_webui"
 
-function _prefer_julia_casefile(casefile::AbstractString; emit_julia_case_fn = FetchMatpowerCase.emit_julia_case)::String
-  case_path = abspath(casefile)
-  extension = lowercase(splitext(case_path)[2])
-  extension == ".jl" && return case_path
-  extension == ".m" || throw(ArgumentError("Unsupported casefile extension: $(casefile) (expected .m or .jl)"))
-
-  julia_path = first(splitext(case_path)) * ".jl"
-  isfile(julia_path) && return julia_path
-  try
-    emitted_path = abspath(emit_julia_case_fn(case_path, dirname(case_path)))
-    if isfile(emitted_path)
-      return emitted_path
-    end
-    @warn "MATPOWER Julia case generation did not produce a file; using the .m case" casefile = case_path emitted_path
-  catch err
-    @warn "MATPOWER Julia case generation failed; using the .m case" casefile = case_path exception = (err, catch_backtrace())
-  end
-  return case_path
-end
-
 function _canonical_matpower_source_for_webui(path::AbstractString, case_directory::AbstractString)::String
   case_path = abspath(path)
   extension = lowercase(splitext(case_path)[2])
@@ -60,8 +40,7 @@ end
 function _resolve_powerflow_casefile(
   casefile::AbstractString,
   case_directory::AbstractString;
-  ensure_casefile_fn = FetchMatpowerCase.ensure_casefile,
-  emit_julia_case_fn = FetchMatpowerCase.emit_julia_case,
+  ensure_casefile_fn = FetchMatpowerCase.ensure_casefile
 )::String
   requested = strip(casefile)
   isempty(requested) && throw(ArgumentError("PowerFlow casefile must not be empty."))

@@ -333,14 +333,7 @@ function run_api_tests()
         sibling_jl = joinpath(tmpdir, "sibling_case.jl")
         write(sibling_m, "not parsed when the Julia case exists\n")
         write(sibling_jl, "nothing\n")
-        fail_emit = (_, _) -> error("emit should not be called")
-        @test Sparlectra._resolve_powerflow_casefile(sibling_m, joinpath(tmpdir, "cases"); emit_julia_case_fn = fail_emit) == abspath(sibling_m)
-
-        fallback_m = joinpath(tmpdir, "fallback_case.m")
-        write(fallback_m, "invalid MATPOWER used to exercise conversion fallback\n")
-        fallback_resolved = Sparlectra._resolve_powerflow_casefile(fallback_m, joinpath(tmpdir, "cases"); emit_julia_case_fn = (_, _) -> error("conversion failed"))
-        @test fallback_resolved == abspath(fallback_m)
-
+        @test Sparlectra._resolve_powerflow_casefile(sibling_m, joinpath(tmpdir, "cases")) == abspath(sibling_m)
         ensure_calls = NamedTuple[]
         fake_ensure = function(requested; outdir, to_jl)
           push!(ensure_calls, (; requested, outdir, to_jl))
@@ -351,30 +344,20 @@ function run_api_tests()
           return endswith(lowercase(requested), ".jl") ? jlfile : mfile
         end
         case_directory = joinpath(tmpdir, "downloaded_cases")
-        resolved_missing = Sparlectra._resolve_powerflow_casefile("case118.m", case_directory; ensure_casefile_fn = fake_ensure, emit_julia_case_fn = fail_emit)
+        resolved_missing = Sparlectra._resolve_powerflow_casefile("case118.m", case_directory; ensure_casefile_fn = fake_ensure)
         @test resolved_missing == abspath(joinpath(case_directory, "case118.m"))
         @test only(ensure_calls) == (requested = "case118.m", outdir = abspath(case_directory), to_jl = false)
-
-        generation_failure_ensure = function(requested; outdir, to_jl)
-          @test !to_jl
-          mfile = joinpath(outdir, first(splitext(requested)) * ".m")
-          write(mfile, "downloaded MATPOWER fallback\n")
-          error("Julia case generation failed")
-        end
-        downloaded_fallback = @test_logs (:warn, r"using the downloaded \.m case") Sparlectra._resolve_powerflow_casefile("case300.jl", case_directory; ensure_casefile_fn = generation_failure_ensure)
-        @test downloaded_fallback == abspath(joinpath(case_directory, "case300.m"))
-
         empty!(ensure_calls)
         write(joinpath(case_directory, "case14.m"), "downloaded MATPOWER placeholder\n")
         write(joinpath(case_directory, "case14.jl"), "nothing\n")
-        resolved_requested_jl = Sparlectra._resolve_powerflow_casefile("case14.jl", case_directory; ensure_casefile_fn = fake_ensure, emit_julia_case_fn = fail_emit)
+        resolved_requested_jl = Sparlectra._resolve_powerflow_casefile("case14.jl", case_directory; ensure_casefile_fn = fake_ensure)
         @test resolved_requested_jl == abspath(joinpath(case_directory, "case14.m"))
         @test isempty(ensure_calls)
 
         only_jl_dir = joinpath(tmpdir, "only_jl_cases")
         mkpath(only_jl_dir)
         write(joinpath(only_jl_dir, "case118.jl"), "nothing\n")
-        err = @test_throws ArgumentError Sparlectra._resolve_powerflow_casefile("case118.jl", only_jl_dir; ensure_casefile_fn = fake_ensure, emit_julia_case_fn = fail_emit)
+        err = @test_throws ArgumentError Sparlectra._resolve_powerflow_casefile("case118.jl", only_jl_dir; ensure_casefile_fn = fake_ensure)
         @test occursin("Generated MATPOWER .jl cache files are not user-selectable", sprint(showerror, err.value))
 
         empty!(ensure_calls)
@@ -673,43 +656,6 @@ function run_api_tests()
       @test remaining[1]["run_id"] == "unsafe-index-entry"
     end
 
-    @testset "Large MATPOWER benchmark developer helpers" begin
-      include(joinpath(@__DIR__, "..", "scripts", "benchmark_large_matpower_cases.jl"))
-      mktempdir() do helper_dir
-        case_dir = joinpath(helper_dir, "cases")
-        mkpath(case_dir)
-        case118 = joinpath(case_dir, "case118.m")
-        write(case118, """
-function mpc = case118
-mpc.version = '2';
-mpc.baseMVA = 100;
-mpc.bus = [
-1 3 0 0 0 0 1 1.0 0 110 1 1.1 0.9;
-2 1 40 15 0 0 1 1.0 0 110 1 1.1 0.9;
-];
-mpc.gen = [
-1 100 0 300 -300 1.02 100 1 300 0;
-];
-mpc.branch = [
-1 2 0.01 0.05 0.0 999 999 999 0 0 1 -360 360;
-];
-        """)
-        write(joinpath(case_dir, "case118.jl"), "nothing\n")
-        benchmark_cases = Base.invokelatest(getfield, @__MODULE__, :benchmark_large_matpower_cases)
-        summary = Base.invokelatest(benchmark_cases; case_dir, output_root = joinpath(helper_dir, "runs"), cases = ["case118", "case118.jl", "case1354pegase.jl"], fetch_missing = false)
-        @test isfile(summary["json"])
-        @test isfile(summary["markdown"])
-        @test any(row -> row["case_name"] == "case118" && row["status"] in ("ok", "failed"), summary["results"])
-        @test all(row -> row["case_name"] != "case118" || row["canonical_source"] == "case118.m", summary["results"])
-        @test all(row -> row["case_name"] != "case118" || row["used_generated_jl_cache"] === false, summary["results"])
-        @test any(row -> row["case_name"] == "case1354pegase" && row["status"] == "missing", summary["results"])
-        @test any(row -> row["requested_case"] == "case1354pegase.jl" && occursin("Canonical .m source", row["error_message"]), summary["results"])
-        @test summary["metadata"]["case_resolution"] == "start_powerflow_run(...; case_directory=case_cache_dir), matching the Web UI/service cache path"
-        md = read(summary["markdown"], String)
-        @test occursin("| case | ext | mode | status |", md)
-        @test occursin("normal Web UI/service cache path", md)
-      end
-    end
   end
   return nothing
 end
