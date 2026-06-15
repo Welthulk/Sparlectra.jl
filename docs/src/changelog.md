@@ -16,6 +16,7 @@
 
 ### Improvements
 
+* Added a compact MATPOWER citation and acknowledgement to the Web UI landing-page case inputs, including project, citation-guidance, DOI, and case-specific citation links and notes.
 * Improved active Web UI status pages with two-second automatic refresh until terminal state, without logging automatic refresh requests as user actions, while retaining manual refresh and active Abort controls.
 * Added entry-count compaction for the Web UI operation log above 10,000 valid JSONL entries, preserving the newest 1,000 entries, and added the running Sparlectra version plus millisecond-precision UTC `Z` timestamps to every operation event.
 * Consolidated Web UI startup around the repository-root `start_webui.jl` launcher and the installed-package `start_sparlectra_webui` API, with OS-specific user-writable output defaults, automatic directory creation, and output-root-local operation logs and MATPOWER case downloads.

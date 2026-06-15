@@ -149,6 +149,12 @@ separate manual field accepts a bare case name such as `case14.m`, `case118.m`,
 or `case9241pegase.m`; a nonempty manual value overrides the selected cached
 case.
 
+The landing page includes a compact, collapsible MATPOWER acknowledgement beside
+the case inputs. It distinguishes Sparlectra from MATPOWER, provides links to
+the MATPOWER project, its citation guidance, and the standard 2011 paper DOI,
+and notes that ACTIVSg, PEGASE, RTE, and other case files may request additional
+case-specific citations in their file headers.
+
 A missing bare `.m` or `.jl` case name is resolved in the user Web UI
 `data/mpower` cache through the standard MATPOWER download helper. For an `.m`
 case, Sparlectra generates a Julia `.jl` representation in that cache and uses
