@@ -421,6 +421,26 @@ function _api_failure(reason::String, message::String; run_id::String = string(u
   return _finalize_api_result(result)
 end
 
+function _api_execution_failure(reason::String, message::String; run_id::String, casefile, config_file, output_dir::String, logfile::String, result_file::String, phase_recorder::PowerFlowPhaseTimingRecorder, performance_timing = :off)::SparlectraApiResult
+  _complete_active_phase!(phase_recorder, "failed")
+  _start_service_phase!(phase_recorder, "finalizing_failed")
+  _complete_active_phase!(phase_recorder, "failed")
+  timing_mode = try
+    _api_timing_mode(performance_timing)
+  catch
+    :off
+  end
+  if timing_mode !== :off
+    open(joinpath(output_dir, "performance.log"), "a") do io
+      println(io, "Sparlectra API failure: ", reason)
+      println(io, message)
+      println(io)
+      _write_service_phase_summary(io, phase_recorder.timings)
+    end
+  end
+  return _api_failure(reason, message; run_id, casefile, config_file, output_dir, logfile, result_file, service_phase_timings = phase_recorder.timings)
+end
+
 """
     run_sparlectra_api(; casefile, config_file, output_dir, config_overrides=Dict(),
                         performance_timing=:off, run_diagnostics=false,
@@ -555,7 +575,8 @@ function _run_sparlectra_api(;
   catch err
     err isa PowerFlowAborted && rethrow()
     message = sprint(showerror, err, catch_backtrace())
-    return _api_failure("execution_error", message; run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file)
+    reason = get(phase_recorder.timings[phase_recorder.active_index === nothing ? length(phase_recorder.timings) : phase_recorder.active_index], "phase", "") == "loading_julia_case" ? "loading_julia_case_failed" : "execution_error"
+    return _api_execution_failure(reason, message; run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file, phase_recorder, performance_timing)
   end
   phases[:case_loading_network_solver] = _api_elapsed_seconds(execution_start)
   raw_result.solver_elapsed_s === nothing || (phases[:solver] = raw_result.solver_elapsed_s)

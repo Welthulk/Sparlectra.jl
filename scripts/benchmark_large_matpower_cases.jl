@@ -5,13 +5,9 @@ using Sparlectra
 const DEFAULT_LARGE_CASE_NAMES = [
   "case118.m",
   "case1354pegase.m",
-  "case1354pegase.jl",
   "case2869pegase.m",
-  "case2869pegase.jl",
   "case9241pegase.m",
-  "case9241pegase.jl",
   "case_ACTIVSg10k.m",
-  "case_ACTIVSg10k.jl",
 ]
 
 const BENCHMARK_PHASES = [
@@ -30,6 +26,7 @@ function _parse_benchmark_args(args = ARGS)
     "case_dir" => nothing,
     "cases" => copy(DEFAULT_LARGE_CASE_NAMES),
     "fetch_missing" => true,
+    "allow_generated_jl_cache" => false,
   )
   index = firstindex(args)
   while index <= lastindex(args)
@@ -54,12 +51,38 @@ function _parse_benchmark_args(args = ARGS)
       options["cases"] = split(split(arg, "="; limit = 2)[2], ",")
     elseif arg == "--no-fetch-missing"
       options["fetch_missing"] = false
+    elseif arg == "--allow-generated-jl-cache"
+      options["allow_generated_jl_cache"] = true
     else
       throw(ArgumentError("Unknown benchmark option: $(arg)"))
     end
     index += 1
   end
   return options
+end
+
+function _canonical_benchmark_case(requested_case::AbstractString, case_dir::AbstractString; allow_generated_jl_cache::Bool = false)
+  name = basename(strip(requested_case))
+  isempty(name) && throw(ArgumentError("Benchmark case name must not be empty."))
+  root, ext = splitext(name)
+  if isempty(ext)
+    name = root * ".m"
+    ext = ".m"
+  end
+  ext = lowercase(ext)
+  if ext == ".jl" && !allow_generated_jl_cache
+    m_name = root * ".m"
+    m_path = joinpath(case_dir, m_name)
+    if isfile(m_path)
+      return (requested = basename(requested_case), resolved = m_name, canonical = m_name, used_generated_jl_cache = false, missing = false, message = nothing)
+    end
+    return (requested = basename(requested_case), resolved = nothing, canonical = m_name, used_generated_jl_cache = false, missing = true, message = "Canonical .m source $(m_name) is missing; generated MATPOWER .jl cache files are not benchmarked by default.")
+  elseif ext == ".jl"
+    return (requested = basename(requested_case), resolved = name, canonical = name, used_generated_jl_cache = true, missing = false, message = nothing)
+  elseif ext == ".m"
+    return (requested = basename(requested_case), resolved = name, canonical = name, used_generated_jl_cache = false, missing = false, message = nothing)
+  end
+  throw(ArgumentError("Unsupported benchmark case extension: $(requested_case) (expected .m or .jl)."))
 end
 
 function _webui_case_cache_dir(output_root::AbstractString, case_dir)::String
@@ -136,6 +159,9 @@ function _run_service_case(requested_case::AbstractString, case_dir::AbstractStr
   row = Dict{String,Any}(
     "case_name" => splitext(basename(requested_case))[1],
     "requested_case" => basename(requested_case),
+    "resolved_case" => resolved_case,
+    "canonical_source" => basename(requested_case),
+    "used_generated_jl_cache" => lowercase(splitext(something(resolved_case, ""))[2]) == ".jl",
     "case_path" => resolved_case,
     "case_extension" => lowercase(splitext(something(resolved_case, requested_case))[2]),
     "case_size_bytes" => resolved_case isa AbstractString && isfile(resolved_case) ? filesize(resolved_case) : 0,
@@ -172,6 +198,15 @@ function _missing_row(requested_case::AbstractString, case_dir::AbstractString)
     "bottleneck" => "not_recorded",
     "case_cache_dir" => case_dir,
   )
+end
+
+function _missing_row(requested_case::AbstractString, case_dir::AbstractString, message::AbstractString; canonical_source::AbstractString = basename(requested_case))
+  row = _missing_row(requested_case, case_dir)
+  row["error_message"] = String(message)
+  row["canonical_source"] = canonical_source
+  row["resolved_case"] = nothing
+  row["used_generated_jl_cache"] = false
+  return row
 end
 
 function _write_benchmark_json(path::AbstractString, rows, metadata::AbstractDict)
@@ -215,7 +250,7 @@ function _write_benchmark_markdown(path::AbstractString, rows, metadata::Abstrac
   return path
 end
 
-function benchmark_large_matpower_cases(; output_root::AbstractString = joinpath(Sparlectra.default_webui_output_root(), "large_case_benchmarks"), case_dir = nothing, cases = DEFAULT_LARGE_CASE_NAMES, fetch_missing::Bool = true)
+function benchmark_large_matpower_cases(; output_root::AbstractString = joinpath(Sparlectra.default_webui_output_root(), "large_case_benchmarks"), case_dir = nothing, cases = DEFAULT_LARGE_CASE_NAMES, fetch_missing::Bool = true, allow_generated_jl_cache::Bool = false)
   root = abspath(output_root)
   cache_dir = _webui_case_cache_dir(root, case_dir)
   mkpath(root)
@@ -224,19 +259,33 @@ function benchmark_large_matpower_cases(; output_root::AbstractString = joinpath
   for requested in String.(cases)
     case_name = strip(requested)
     isempty(case_name) && continue
-    if !fetch_missing && !_cache_contains_case(cache_dir, case_name)
-      push!(rows, _missing_row(case_name, cache_dir))
+    canonical = _canonical_benchmark_case(case_name, cache_dir; allow_generated_jl_cache)
+    if canonical.missing
+      push!(rows, _missing_row(canonical.requested, cache_dir, canonical.message; canonical_source = canonical.canonical))
       continue
     end
-    push!(rows, _run_service_case(case_name, cache_dir, root; mode = "baseline"))
-    if startswith(case_name, "case1354pegase") && endswith(lowercase(case_name), ".m")
-      push!(rows, _run_service_case(case_name, cache_dir, root; mode = "artifact_heavy"))
+    if !fetch_missing && !_cache_contains_case(cache_dir, canonical.resolved)
+      push!(rows, _missing_row(canonical.requested, cache_dir, "Canonical .m source $(canonical.resolved) is not present in the Web UI cache $(cache_dir)."; canonical_source = canonical.canonical))
+      continue
+    end
+    row = _run_service_case(canonical.resolved, cache_dir, root; mode = "baseline")
+    row["requested_case"] = canonical.requested
+    row["canonical_source"] = canonical.canonical
+    row["used_generated_jl_cache"] = canonical.used_generated_jl_cache
+    push!(rows, row)
+    if startswith(canonical.resolved, "case1354pegase") && endswith(lowercase(canonical.resolved), ".m")
+      heavy = _run_service_case(canonical.resolved, cache_dir, root; mode = "artifact_heavy")
+      heavy["requested_case"] = canonical.requested
+      heavy["canonical_source"] = canonical.canonical
+      heavy["used_generated_jl_cache"] = canonical.used_generated_jl_cache
+      push!(rows, heavy)
     end
   end
   metadata = Dict{String,Any}(
     "output_root" => root,
     "case_cache_dir" => cache_dir,
     "fetch_missing" => fetch_missing,
+    "allow_generated_jl_cache" => allow_generated_jl_cache,
     "case_resolution" => "start_powerflow_run(...; case_directory=case_cache_dir), matching the Web UI/service cache path",
   )
   json_path = joinpath(root, "benchmark_large_cases.json")
@@ -248,7 +297,7 @@ end
 
 function main(args = ARGS)
   options = _parse_benchmark_args(args)
-  summary = benchmark_large_matpower_cases(; output_root = abspath(options["output_root"]), case_dir = options["case_dir"], cases = options["cases"], fetch_missing = options["fetch_missing"])
+  summary = benchmark_large_matpower_cases(; output_root = abspath(options["output_root"]), case_dir = options["case_dir"], cases = options["cases"], fetch_missing = options["fetch_missing"], allow_generated_jl_cache = options["allow_generated_jl_cache"])
   println("Web UI case cache: ", summary["metadata"]["case_cache_dir"])
   println("Wrote ", summary["json"])
   println("Wrote ", summary["markdown"])

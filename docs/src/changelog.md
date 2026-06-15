@@ -1,6 +1,7 @@
 ## Version 0.8.4 – 2026-06-10
 ### New features
 
+* Changed the Web UI MATPOWER case resolution to keep selected `.m` cases as the executed source and to avoid automatic execution of generated `.jl` cache files. Generated MATPOWER `.jl` cache files are hidden from the selector, explicit cache `.jl` submissions resolve to matching `.m` sources or fail validation, and the large-case benchmark helper measures the `.m` path by default.
 * Added a loopback-only local PowerFlow Web UI backed by the new PowerFlow service/API layer, including run history, artifact viewing/downloads, operation log, MATPOWER case selection/cache, contextual help, and user-writable runtime directories.
 * Added optional Web UI/API artifacts for PowerFlow runs, including `run.log`, `performance.log`, `diagnose.log`, effective configuration output, and detailed CSV exports for complex bus voltages and branch flows.
 

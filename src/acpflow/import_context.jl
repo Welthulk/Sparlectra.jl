@@ -74,8 +74,8 @@ function _import_sparlectra_context(casefile::String, path::Union{Nothing,String
   mat_cfg = cfg.matpower
   phase_callback = performance_profile isa AbstractDict ? get(performance_profile, :phase_callback, phase -> nothing) : phase -> nothing
   extension = lowercase(splitext(filename)[2])
-  phase_callback(extension == ".jl" ? "loading_julia_case" : "parsing_matpower_file")
   phase_callback("reading_matpower_case")
+  phase_callback(extension == ".jl" ? "loading_julia_case" : "parsing_matpower_file")
   mpc = _perf_profile_time!(performance_profile, :matpower_case_parse) do
     MatpowerIO.read_case(filename; legacy_compat = true)
   end
