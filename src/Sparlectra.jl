@@ -405,9 +405,16 @@ export
   load_powerflow_run_index,               # Load the persistent run index from an output root.
   list_powerflow_runs,                    # List indexed runs and their disk availability.
   refresh_powerflow_run_registry!,        # Recover the in-process registry from disk.
+  delete_powerflow_run,                   # Safely delete one registered run beneath an output root.
+  delete_all_powerflow_runs,              # Safely delete all registered runs beneath an output root.
   get_powerflow_result,                   # Look up serialized run metadata by run ID.
   list_powerflow_artifacts,               # List run artifacts by run ID.
   resolve_powerflow_artifact,             # Safely resolve a run artifact by metadata name.
+  default_webui_output_root,              # Return the user-writable default Web UI output directory.
+  default_webui_config_path,              # Return the provisioned Web UI configuration path.
+  default_webui_case_cache_dir,           # Return the user-writable Web UI case cache.
+  default_webui_operation_log_path,       # Return the user-writable Web UI operation-log path.
+  start_sparlectra_webui,                 # Start the loopback-only local PowerFlow Web UI.
   to_dict,                                # Convert API results and artifacts to dictionaries.
   to_namedtuple,                          # Convert API results to named tuples.
   to_json,                                # Serialize API results as JSON.
@@ -503,12 +510,14 @@ include("api/serialization.jl")
 include("api/artifacts.jl")
 include("api/run_api.jl")
 include("api/powerflow_service.jl")
+include("webui/webui.jl")
 include("matpower_runner.jl")
 include("remove_functions.jl")
 include("solver_core.jl")
 # Rectangular power-flow helper layers. Keep dependency order:
-# core equations -> Jacobian builders -> Newton step -> diagnostics/start/result helpers -> solver loop.
+# core equations -> voltage helpers -> Jacobian builders -> Newton step -> diagnostics/start/result helpers -> solver loop.
 include("powerflow_rectangular/rectangular_core_equations.jl")
+include("powerflow_rectangular/rectangular_voltage_helpers.jl")
 include("powerflow_rectangular/rectangular_jacobian_builders.jl")
 include("powerflow_rectangular/rectangular_newton_step.jl")
 include("powerflow_rectangular/rectangular_standalone_solver.jl")

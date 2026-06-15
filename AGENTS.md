@@ -243,6 +243,40 @@ julia --project=. test/runtests.jl
 Remove-Item Env:\SPARLECTRA_TEST_PROFILE
 ```
 
+## CSS and stylesheet formatting
+
+Stylesheet files must remain readable and reviewable.
+
+- Do not write CSS files as one-line/minified blobs.
+- Do not collapse an existing readable stylesheet into a single line.
+- Format CSS with one selector block per block and one property per line.
+- Use consistent indentation inside CSS blocks.
+- Keep related rules grouped, but prefer readability over compactness.
+- When changing Web UI styling, inspect and, if necessary, reformat the touched `.css` files before committing.
+- For files such as `src/webui/static/sparlectra.css`, preserve human-readable formatting so reviewers can understand style changes in diffs.
+- Do not hide large CSS changes inside generated or minified output unless the task explicitly requires generated assets.
+
+Preferred CSS style:
+
+```css
+.header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.brand-logo {
+  height: 42px;
+  width: auto;
+}
+```
+
+Avoid:
+
+```css
+.header{display:flex;align-items:center;gap:.75rem}.brand-logo{height:42px;width:auto}
+```
+
 ## Repo conventions
 - Keep code comments and docstrings in English.
 - Prefer existing Sparlectra naming and style.

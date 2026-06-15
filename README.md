@@ -99,6 +99,77 @@ using Sparlectra
 
 ---
 
+## Local Web UI
+
+PowerFlow aborts are cooperative. Active status pages report the current
+execution phase and cancellation timestamps. Sparse factorization and other
+numerical calls may not be interruptible; after 60 seconds of pending abort,
+the page offers **Hard reset Web UI**. This marks the run result invalid
+(`aborted_unknown`) and cleanly shuts down the local server. Restart it with
+`julia --project=. start_webui.jl`. A future process-isolated solver worker
+would permit hard termination while keeping the Web UI process alive.
+
+PowerFlow runs can optionally export detailed Excel-friendly CSV artifacts.
+Enable **Export detailed result CSV files** to create
+`bus_voltages_complex.csv` (polar and rectangular complex bus voltages plus
+bus injections/loads) and `branch_flows.csv` (directional active/reactive
+branch flows and losses). This option is off by default. New diagnostic runs
+write `diagnose.log`; the artifact viewer still supports `diagnose.txt` files
+from older run directories.
+The subordinate **CSV format** selector defaults to `technical` (comma
+delimiter, decimal point, and no thousands grouping). Select `excel_de` for a
+semicolon delimiter, decimal comma, and thousands dot, or `excel_us` for a
+comma delimiter, decimal point, and thousands comma. US-formatted numeric
+fields containing thousands commas are quoted according to CSV rules.
+
+Installed users can start the local Web UI without knowing the package
+installation directory:
+
+```julia
+using Sparlectra
+
+server = Sparlectra.start_sparlectra_webui(open_browser = true)
+wait(server.task)
+```
+
+On first start, the Web UI provisions a user-writable configuration file and a small case cache, and creates its output and log directories automatically. Installed users do not need to locate the package directory. Its default output root is:
+
+- Windows: `%LOCALAPPDATA%\Sparlectra\WebUI\runs`
+- Linux: `$XDG_STATE_HOME/sparlectra/webui/runs`, or
+  `~/.local/state/sparlectra/webui/runs` when `XDG_STATE_HOME` is unset
+- macOS: `~/Library/Application Support/Sparlectra/WebUI/runs`
+
+The operation log is stored in the user Web UI `logs` directory, and downloaded/generated
+cases are cached in the sibling user Web UI `data/mpower` directory. To choose another root:
+
+```julia
+server = Sparlectra.start_sparlectra_webui(
+    output_root = "my_sparlectra_runs",
+    open_browser = true,
+)
+wait(server.task)
+```
+
+Repository developers should run `julia --project=. start_webui.jl`;
+`start_webui.jl` is the maintained developer launcher.
+
+Stop the server with the **Stop Web UI** button, `close(server)`, or `Ctrl+C`.
+Run abort is cooperative: the UI changes the run state to `aborting` immediately, while
+an already-blocking solver phase may continue until that phase returns. The rectangular
+large-case path checks cancellation around Y-bus construction and start projection,
+at Newton/Q-limit iteration boundaries, and immediately after each Newton step. After
+terminal `aborted`, the active-run guard is released and another run can be submitted;
+active runs cannot be deleted until they are terminal.
+Queued, running, and aborting status pages refresh automatically every two seconds;
+terminal pages stop refreshing, and the manual **Refresh status** link remains available.
+The shared layout shows the running Sparlectra version. Support events in
+`webui_operations.jsonl` include that version and an unambiguous UTC timestamp with a
+`Z` suffix. Automatic status refreshes are not logged as user actions. The log is
+compacted after it exceeds 10,000 valid JSONL entries, preserving the newest 1,000
+entries; the existing 10 MiB single-backup size guard remains as an additional limit.
+
+---
+
 ## Quick start
 
 `run_sparlectra` is the preferred public framework entry point. It owns MATPOWER
