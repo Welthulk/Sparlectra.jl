@@ -81,28 +81,78 @@ function _write_performance_log(path::AbstractString, mode::Symbol, phases::Abst
   return path
 end
 
-function _csv_field(value, delimiter::Char)::String
+function _resolve_detailed_csv_format(value)::NamedTuple
+  name = String(value)
+  name == "technical" && return (name = name, delimiter = ',', decimal_separator = '.', thousands_separator = "")
+  name == "excel_de" && return (name = name, delimiter = ';', decimal_separator = ',', thousands_separator = ".")
+  name == "excel_us" && return (name = name, delimiter = ',', decimal_separator = '.', thousands_separator = ",")
+  throw(ArgumentError("Unsupported detailed_result_csv_format \"$(name)\". Expected technical, excel_de, or excel_us."))
+end
+
+function _group_csv_integer(text::AbstractString, separator::AbstractString)::String
+  isempty(separator) && return String(text)
+  sign = startswith(text, "-") ? "-" : ""
+  digits = isempty(sign) ? String(text) : text[2:end]
+  first_group = mod(length(digits), 3)
+  first_group == 0 && (first_group = 3)
+  groups = String[digits[1:first_group]]
+  for start in (first_group + 1):3:length(digits)
+    push!(groups, digits[start:(start + 2)])
+  end
+  return sign * join(groups, separator)
+end
+
+function _format_csv_number(value::Integer, format)::String
+  return _group_csv_integer(string(value), format.thousands_separator)
+end
+
+function _format_csv_number(value::AbstractFloat, format)::String
+  isnan(value) && return "NaN"
+  isinf(value) && return signbit(value) ? "-Inf" : "Inf"
+  technical = @sprintf("%.15g", value)
+  mantissa_exponent = split(technical, r"(?=[eE])"; limit = 2)
+  mantissa = mantissa_exponent[1]
+  exponent = length(mantissa_exponent) == 2 ? mantissa_exponent[2] : ""
+  parts = split(mantissa, '.'; limit = 2)
+  integer_part = _group_csv_integer(parts[1], format.thousands_separator)
+  fractional_part = length(parts) == 2 ? format.decimal_separator * parts[2] : ""
+  return integer_part * fractional_part * exponent
+end
+
+function _format_csv_value(value, format)::String
   value === missing && return ""
   value === nothing && return ""
-  text = string(value)
+  value isa Integer && return _format_csv_number(value, format)
+  value isa AbstractFloat && return _format_csv_number(value, format)
+  return string(value)
+end
+
+function _csv_field(value, delimiter::Char, format = _resolve_detailed_csv_format("technical"))::String
+  value === missing && return ""
+  value === nothing && return ""
+  text = _format_csv_value(value, format)
   if any(character -> character in (delimiter, '"', '\r', '\n'), text)
     return "\"" * replace(text, "\"" => "\"\"") * "\""
   end
   return text
 end
 
-function _write_namedtuple_csv(path::AbstractString, rows::AbstractVector, columns; delimiter::Char = ',')
+function _write_namedtuple_csv(path::AbstractString, rows::AbstractVector, columns; delimiter::Char = ',', format = nothing)
   delimiter in (',', ';') || throw(ArgumentError("CSV delimiter must be ',' or ';'."))
+  resolved_format = format === nothing ?
+                    (name = "custom", delimiter = delimiter, decimal_separator = '.', thousands_separator = "") :
+                    _resolve_detailed_csv_format(format)
+  resolved_format.delimiter == delimiter || throw(ArgumentError("CSV delimiter does not match detailed CSV format $(resolved_format.name)."))
   open(path, "w") do io
     println(io, join(String.(columns), delimiter))
     for row in rows
-      println(io, join((_csv_field(getproperty(row, column), delimiter) for column in columns), delimiter))
+      println(io, join((_csv_field(getproperty(row, column), delimiter, resolved_format) for column in columns), delimiter))
     end
   end
   return path
 end
 
-function _complex_voltage_rows(node_rows::AbstractVector)
+function _complex_voltage_rows(node_rows::AbstractVector, format)
   return [begin
     angle = deg2rad(Float64(row.va_deg))
     v_re = Float64(row.vm_pu) * cos(angle)
@@ -112,13 +162,18 @@ function _complex_voltage_rows(node_rows::AbstractVector)
       (
         v_re = round(v_re; sigdigits = 10),
         v_im = round(v_im; sigdigits = 10),
-        v_complex = @sprintf("%.10g %+.10gj", v_re, v_im),
+        v_complex = string(
+          _format_csv_number(v_re, format),
+          signbit(v_im) ? " - j" : " + j",
+          _format_csv_number(abs(v_im), format),
+        ),
       ),
     )
   end for row in node_rows]
 end
 
-function _write_detailed_result_csv(output_path::AbstractString, result::SparlectraRunResult; delimiter::Char = ',')::Vector{String}
+function _write_detailed_result_csv(output_path::AbstractString, result::SparlectraRunResult; format = "technical")::Vector{String}
+  resolved_format = _resolve_detailed_csv_format(format)
   result.net === nothing && throw(ArgumentError("PowerFlow result does not contain a network for detailed CSV export."))
   report = buildACPFlowReport(
     result.net;
@@ -137,8 +192,8 @@ function _write_detailed_result_csv(output_path::AbstractString, result::Sparlec
     :rated_MVA, :overloaded,
   )
   artifacts = ["bus_voltages_complex.csv", "branch_flows.csv"]
-  _write_namedtuple_csv(joinpath(output_path, artifacts[1]), _complex_voltage_rows(report.nodes), bus_columns; delimiter)
-  _write_namedtuple_csv(joinpath(output_path, artifacts[2]), report.branches, branch_columns; delimiter)
+  _write_namedtuple_csv(joinpath(output_path, artifacts[1]), _complex_voltage_rows(report.nodes, resolved_format), bus_columns; delimiter = resolved_format.delimiter, format = resolved_format.name)
+  _write_namedtuple_csv(joinpath(output_path, artifacts[2]), report.branches, branch_columns; delimiter = resolved_format.delimiter, format = resolved_format.name)
   return artifacts
 end
 
@@ -195,6 +250,7 @@ end
     run_sparlectra_api(; casefile, config_file, output_dir, config_overrides=Dict(),
                         performance_timing=:off, run_diagnostics=false,
                         detailed_result_csv=false,
+                        detailed_result_csv_format="technical",
                         detailed_result_csv_semicolon=false) -> SparlectraApiResult
 
 Run one MATPOWER power-flow case through a stable, non-interactive API contract.
@@ -206,8 +262,10 @@ never modified. `performance_timing` may be `:off`, `:compact`, or `:full` and
 writes a single-run `performance.log`; `run_diagnostics=true` captures existing
 PowerFlow diagnostic printers in `diagnose.log`; and `detailed_result_csv=true`
 writes Excel-friendly bus-voltage and branch-flow CSV artifacts. Optional
-`detailed_result_csv_semicolon=true` uses `;` instead of `,` as the CSV
-delimiter. Artifact generation does not change PowerFlow run success.
+`detailed_result_csv_format` accepts `technical`, `excel_de`, or `excel_us`.
+The legacy `detailed_result_csv_semicolon=true` maps to `excel_de` when the
+explicit format is omitted. Artifact generation does not change PowerFlow run
+success.
 """
 function run_sparlectra_api(;
   casefile::AbstractString,
@@ -217,6 +275,7 @@ function run_sparlectra_api(;
   performance_timing = :off,
   run_diagnostics::Bool = false,
   detailed_result_csv::Bool = false,
+  detailed_result_csv_format = nothing,
   detailed_result_csv_semicolon::Bool = false,
 )::SparlectraApiResult
   return _run_sparlectra_api(
@@ -227,6 +286,7 @@ function run_sparlectra_api(;
     performance_timing = performance_timing,
     run_diagnostics = run_diagnostics,
     detailed_result_csv = detailed_result_csv,
+    detailed_result_csv_format = detailed_result_csv_format,
     detailed_result_csv_semicolon = detailed_result_csv_semicolon,
     run_id = string(uuid4()),
   )
@@ -240,6 +300,7 @@ function _run_sparlectra_api(;
   performance_timing = :off,
   run_diagnostics::Bool = false,
   detailed_result_csv::Bool = false,
+  detailed_result_csv_format = nothing,
   detailed_result_csv_semicolon::Bool = false,
   phase_timings::AbstractDict = Dict{Symbol,Float64}(),
   run_id::String,
@@ -328,10 +389,17 @@ function _run_sparlectra_api(;
   run_diagnostics && _write_powerflow_diagnostics(joinpath(output_path, "diagnose.log"), raw_result)
   csv_artifacts = String[]
   csv_export_error = nothing
+  csv_format_name = detailed_result_csv_format === nothing ?
+                    (detailed_result_csv_semicolon ? "excel_de" : "technical") :
+                    String(detailed_result_csv_format)
+  csv_format = try
+    _resolve_detailed_csv_format(csv_format_name)
+  catch err
+    return _api_failure("invalid_detailed_result_csv_format", sprint(showerror, err); run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file)
+  end
   if detailed_result_csv && raw_result.final_converged && raw_result.solution_available
     try
-      csv_delimiter = detailed_result_csv_semicolon ? ';' : ','
-      csv_artifacts = _write_detailed_result_csv(output_path, raw_result; delimiter = csv_delimiter)
+      csv_artifacts = _write_detailed_result_csv(output_path, raw_result; format = csv_format.name)
     catch err
       csv_export_error = sprint(showerror, err)
       open(logfile, "a") do io
@@ -354,7 +422,10 @@ function _run_sparlectra_api(;
       println(io, "diagnostics_artifact: ", run_diagnostics ? "diagnose.log" : "disabled")
       println(io, "performance_artifact: ", timing_mode === :off ? "disabled" : "performance.log")
       println(io, "detailed_result_csv_artifacts: ", detailed_result_csv ? (isempty(csv_artifacts) ? "failed" : join(csv_artifacts, ", ")) : "disabled")
-      println(io, "detailed_result_csv_delimiter: ", detailed_result_csv ? (detailed_result_csv_semicolon ? "semicolon" : "comma") : "disabled")
+      println(io, "detailed_result_csv_format: ", detailed_result_csv ? csv_format.name : "disabled")
+      println(io, "detailed_result_csv_delimiter: ", detailed_result_csv ? (csv_format.delimiter == ';' ? "semicolon" : "comma") : "disabled")
+      println(io, "detailed_result_csv_decimal_separator: ", detailed_result_csv ? (csv_format.decimal_separator == ',' ? "comma" : "dot") : "disabled")
+      println(io, "detailed_result_csv_thousands_separator: ", detailed_result_csv ? (csv_format.thousands_separator == "," ? "comma" : csv_format.thousands_separator == "." ? "dot" : "none") : "disabled")
       csv_export_error === nothing || println(io, "detailed_result_csv_error: ", csv_export_error)
       println(io)
       print_effective_config(io, config)

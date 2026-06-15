@@ -209,11 +209,18 @@ The CSV files reuse the structured `ACPFlowReport` node and branch rows and,
 like the log artifacts, are viewable and downloadable through the normal
 artifact list.
 
-The separate **Use Excel CSV format with semicolon delimiter** checkbox is also
-off by default. Enable it together with detailed CSV export when the local
-Excel installation expects semicolon-separated fields. When unchecked, the
-files use the standard comma delimiter. Quoting and empty-field handling are
-identical for both formats.
+The indented **CSV format** selector is subordinate to the opt-in export:
+
+- `technical` (default) uses a comma delimiter, decimal point, and no
+  thousands grouping.
+- `excel_de` uses a semicolon delimiter, decimal comma, and thousands dot.
+- `excel_us` uses a comma delimiter, decimal point, and thousands comma.
+
+US-formatted numbers containing a thousands comma are quoted because comma is
+also the field delimiter. Empty values and fields containing delimiters,
+quotes, carriage returns, or line feeds follow the same CSV quoting rules in
+all formats. The readable `v_complex` column follows the selected decimal
+notation, while `v_re` and `v_im` remain separate numeric columns.
 
 ## PowerFlow input paths
 

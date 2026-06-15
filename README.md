@@ -116,10 +116,11 @@ bus injections/loads) and `branch_flows.csv` (directional active/reactive
 branch flows and losses). This option is off by default. New diagnostic runs
 write `diagnose.log`; the artifact viewer still supports `diagnose.txt` files
 from older run directories.
-For Excel installations that expect locale-style CSV files, enable
-**Use Excel CSV format with semicolon delimiter** together with the export
-option. It changes the field separator from comma to semicolon and is off by
-default.
+The subordinate **CSV format** selector defaults to `technical` (comma
+delimiter, decimal point, and no thousands grouping). Select `excel_de` for a
+semicolon delimiter, decimal comma, and thousands dot, or `excel_us` for a
+comma delimiter, decimal point, and thousands comma. US-formatted numeric
+fields containing thousands commas are quoted according to CSV rules.
 
 Installed users can start the local Web UI without knowing the package
 installation directory:

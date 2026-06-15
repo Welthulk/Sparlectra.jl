@@ -100,16 +100,20 @@ if controlled cancellation exits the worker.
   downloaded, and URLs are rejected.
   Optional `performance_timing` (`off`, `compact`, or `full`),
   `run_diagnostics`, `detailed_result_csv`, and
-  `detailed_result_csv_semicolon` (Boolean) request fields are forwarded to
-  the API artifact writer. They produce `performance.log`, `diagnose.log`, and
-  the detailed CSV artifacts, respectively.
+  `detailed_result_csv_format` request fields are forwarded to the API artifact
+  writer. They produce `performance.log`, `diagnose.log`, and the detailed CSV
+  artifacts, respectively.
   `detailed_result_csv` defaults to `false`; when enabled after a successful
   solve it writes `bus_voltages_complex.csv` and `branch_flows.csv` from
   `buildACPFlowReport(raw_result.net)`. The bus file includes polar and numeric
   rectangular voltage columns for Excel, while the branch file includes
   active/reactive flows at both ends and losses.
-  `detailed_result_csv_semicolon=true` selects Excel-style semicolon-separated
-  output; its default `false` retains comma-separated output. Legacy run directories
+  `detailed_result_csv_format` accepts `technical` (default comma delimiter,
+  decimal point, no grouping), `excel_de` (semicolon delimiter, decimal comma,
+  thousands dot), or `excel_us` (comma delimiter, decimal point, thousands
+  comma). Numeric fields containing US thousands commas are quoted. The legacy
+  `detailed_result_csv_semicolon=true` request remains accepted and maps to
+  `excel_de` when no explicit format is supplied. Legacy run directories
   containing `diagnose.txt` remain discoverable and downloadable.
   Diagnostic generation reuses existing PowerFlow/Q-limit printers and a
   diagnostic failure does not replace the primary PowerFlow result.
