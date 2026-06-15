@@ -640,6 +640,40 @@ function run_api_tests()
       @test length(remaining) == 1
       @test remaining[1]["run_id"] == "unsafe-index-entry"
     end
+
+    @testset "Large MATPOWER benchmark developer helpers" begin
+      include(joinpath(@__DIR__, "..", "scripts", "benchmark_large_matpower_cases.jl"))
+      mktempdir() do helper_dir
+        case_dir = joinpath(helper_dir, "cases")
+        mkpath(case_dir)
+        case118 = joinpath(case_dir, "case118.m")
+        write(case118, """
+function mpc = case118
+mpc.version = '2';
+mpc.baseMVA = 100;
+mpc.bus = [
+1 3 0 0 0 0 1 1.0 0 110 1 1.1 0.9;
+2 1 40 15 0 0 1 1.0 0 110 1 1.1 0.9;
+];
+mpc.gen = [
+1 100 0 300 -300 1.02 100 1 300 0;
+];
+mpc.branch = [
+1 2 0.01 0.05 0.0 999 999 999 0 0 1 -360 360;
+];
+""")
+        benchmark_cases = Base.invokelatest(getfield, @__MODULE__, :benchmark_large_matpower_cases)
+        summary = Base.invokelatest(benchmark_cases; case_dir, output_root = joinpath(helper_dir, "runs"), cases = ["case118.m", "case1354pegase.m"], fetch_missing = false)
+        @test isfile(summary["json"])
+        @test isfile(summary["markdown"])
+        @test any(row -> row["case_name"] == "case118" && row["status"] in ("ok", "failed"), summary["results"])
+        @test any(row -> row["case_name"] == "case1354pegase" && row["status"] == "missing", summary["results"])
+        @test summary["metadata"]["case_resolution"] == "start_powerflow_run(...; case_directory=case_cache_dir), matching the Web UI/service cache path"
+        md = read(summary["markdown"], String)
+        @test occursin("| case | ext | mode | status |", md)
+        @test occursin("normal Web UI/service cache path", md)
+      end
+    end
   end
   return nothing
 end

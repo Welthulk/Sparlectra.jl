@@ -647,6 +647,10 @@ result = get_powerflow_result(run_id)
       @test repeated_abort.status == 303
       @test occursin("\"event\":\"powerflow_abort_already_requested\"", read(operation_log_path, String))
       @test occursin("\"event\":\"powerflow_phase_started\"", read(operation_log_path, String))
+      @test !any(
+        line -> occursin("\"event\":\"powerflow_phase_started\"", line) && occursin("\"phase\":\"linear_solve\"", line),
+        eachline(operation_log_path),
+      )
       active_delete = Sparlectra.route_sparlectra_webui("POST", "/powerflow/delete/$(active_id)"; output_root)
       @test active_delete.status == 409
       @test occursin("This run is still active", String(active_delete.body))

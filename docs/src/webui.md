@@ -129,6 +129,10 @@ users can distinguish reader, converter/cache, network-builder, solver, and
 artifact costs. These diagnostics do not guarantee that very large cases finish
 quickly through the local Web UI; they identify where follow-up optimization
 should focus.
+The operation log intentionally records only high-level phase starts; detailed
+Y-bus, Newton-iteration, Q-limit, and linear-solve timings belong to each run's
+`performance.log` and are summarized there instead of being repeated in the Web
+UI support log.
 
 Deletion of a queued, running, or aborting run is rejected with an explanation.
 After the run reaches terminal `aborted` status, normal deletion is available.

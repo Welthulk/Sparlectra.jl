@@ -152,6 +152,56 @@ function _write_large_case_timing_summary(io::IO, case_path::AbstractString, pha
   return nothing
 end
 
+function _profile_elapsed_call_tuple(value)
+  if value isa NamedTuple && haskey(value, :elapsed_s)
+    return (elapsed = Float64(value.elapsed_s), calls = Int(get(value, :calls, 1)))
+  elseif value isa AbstractDict && haskey(value, :elapsed_s)
+    return (elapsed = Float64(value[:elapsed_s]), calls = Int(get(value, :calls, 1)))
+  elseif value isa Number
+    return (elapsed = Float64(value), calls = 1)
+  end
+  return nothing
+end
+
+function _profile_aggregate(profile::AbstractDict, keys)::NamedTuple
+  total = 0.0
+  calls = 0
+  max_elapsed = 0.0
+  for key in keys
+    haskey(profile, key) || continue
+    item = _profile_elapsed_call_tuple(profile[key])
+    item === nothing && continue
+    total += item.elapsed
+    calls += item.calls
+    max_elapsed = max(max_elapsed, item.elapsed)
+  end
+  return (total = total, calls = calls, max = max_elapsed)
+end
+
+function _write_compact_internal_timing_aggregates(io::IO, result::SparlectraRunResult)
+  result.performance_profile isa AbstractDict || return nothing
+  profile = result.performance_profile
+  aggregates = (
+    building_ybus = _profile_aggregate(profile, (:ybus_assembly, :ybus_expand_isolated)),
+    solver_initialization = _profile_aggregate(profile, (:solver_initial_voltage, :solver_initial_injections)),
+    start_projection = _profile_aggregate(profile, (:start_projection_dc_linear_solve, :start_projection_apply)),
+    newton_iteration = _profile_aggregate(profile, (:iteration_controlled_injections, :iteration_mismatch, :iteration_newton_step)),
+    q_limit_processing = _profile_aggregate(profile, (:qlimit_iteration, :qlimit_generation_update)),
+    linear_solve = _profile_aggregate(profile, (:newton_step_linear_solve, :start_projection_dc_linear_solve)),
+  )
+  any(item -> item.calls > 0, values(aggregates)) || return nothing
+  println(io)
+  println(io, "Compact internal timing aggregates")
+  println(io, "----------------------------------")
+  for (name, item) in pairs(aggregates)
+    item.calls > 0 || continue
+    println(io, name, "_count: ", item.calls)
+    println(io, name, "_total_seconds: ", round(item.total; digits = 6))
+    name === :linear_solve && println(io, "linear_solve_max_seconds: ", round(item.max; digits = 6))
+  end
+  return nothing
+end
+
 function _write_performance_log(path::AbstractString, mode::Symbol, phases::AbstractDict, result::SparlectraRunResult, phase_timings::AbstractVector = Dict{String,Any}[])
   open(path, "w") do io
     println(io, "Sparlectra single-run phase timing")
@@ -167,6 +217,7 @@ function _write_performance_log(path::AbstractString, mode::Symbol, phases::Abst
       println(io)
       _write_service_phase_summary(io, phase_timings)
     end
+    _write_compact_internal_timing_aggregates(io, result)
     if mode === :full && result.performance_profile isa AbstractDict
       println(io)
       println(io, "Available internal performance profile")
