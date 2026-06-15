@@ -87,3 +87,18 @@ arguments and comma- or semicolon-separated `--configs=A,B,C` lists are both
 supported. In `--status-only` mode it prints the rectangular status and
 wrong-branch diagnostic fields for each configuration; `--runner` delegates to
 the standard `Sparlectra.run_matpower_case` runner output.
+
+## Citation and case-file usage
+
+Sparlectra references MATPOWER case names for diagnostics and comparison workflows,
+but does **not** redistribute MATPOWER case files.
+
+If you use MATPOWER software, data formats, or case files in your workflow, please
+cite MATPOWER as recommended by the official guidance page:
+
+- <https://matpower.org/citing/>
+
+When Sparlectra documentation mentions case names (for example `case300.m`,
+`case1354pegase.m`, `case1951rte.m`, or `case_ACTIVSg10k.m`), users should obtain
+the original files from MATPOWER and/or the original data sources and follow the
+applicable license, citation, and redistribution terms.
