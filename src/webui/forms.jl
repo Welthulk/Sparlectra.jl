@@ -132,5 +132,7 @@ function powerflow_webui_request(form::AbstractDict; default_output_root::Abstra
     "config_overrides" => overrides,
     "performance_timing" => _webui_parse_form_value(_webui_form_value(form, "performance_timing", "off"), String, "performance_timing"),
     "run_diagnostics" => _webui_parse_bool(_webui_form_value(form, "run_diagnostics")),
+    "detailed_result_csv" => _webui_parse_bool(_webui_form_value(form, "detailed_result_csv")),
+    "detailed_result_csv_semicolon" => _webui_parse_bool(_webui_form_value(form, "detailed_result_csv_semicolon")),
   )
 end

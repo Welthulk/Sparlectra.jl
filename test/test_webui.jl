@@ -39,6 +39,8 @@ function _webui_test_form(casefile, config_file, output_root)
     "output_logfile_results" => "compact",
     "performance_timing" => "compact",
     "run_diagnostics" => "on",
+    "detailed_result_csv" => "on",
+    "detailed_result_csv_semicolon" => "on",
     "benchmark_samples" => "10",
     "benchmark_seconds" => "1.0",
   )
@@ -323,6 +325,13 @@ function run_webui_tests()
       @test occursin("\"event\":\"validation_error\"", read(operation_log_path, String))
       @test request["config_file"] == config_file
       @test request["output_root"] == output_root
+      @test request["detailed_result_csv"] === true
+      @test request["detailed_result_csv_semicolon"] === true
+      csv_disabled_form = copy(form)
+      delete!(csv_disabled_form, "detailed_result_csv")
+      @test Sparlectra.powerflow_webui_request(csv_disabled_form; default_output_root = output_root)["detailed_result_csv"] === false
+      delete!(csv_disabled_form, "detailed_result_csv_semicolon")
+      @test Sparlectra.powerflow_webui_request(csv_disabled_form; default_output_root = output_root)["detailed_result_csv_semicolon"] === false
       untrusted_form = copy(form)
       untrusted_form["output_root"] = joinpath(tmpdir, "outside")
       @test Sparlectra.powerflow_webui_request(untrusted_form; default_output_root = output_root)["output_root"] == output_root
@@ -359,6 +368,8 @@ function run_webui_tests()
         "benchmark_seconds" => "benchmark.seconds",
         "performance_timing" => "webui.performance_timing",
         "run_diagnostics" => "webui.run_diagnostics",
+        "detailed_result_csv" => "webui.detailed_result_csv",
+        "detailed_result_csv_semicolon" => "webui.detailed_result_csv_semicolon",
       )
       @test Sparlectra.WEBUI_FORM_HELP_TOPICS == expected_help_topics
       for (field, help_topic) in expected_help_topics
@@ -392,6 +403,10 @@ function run_webui_tests()
       @test occursin("Sparlectra.jl v$(Sparlectra.version())", form_html)
       @test occursin("name=\"performance_timing\"", form_html)
       @test occursin("name=\"run_diagnostics\"", form_html)
+      @test occursin("name=\"detailed_result_csv\" type=\"checkbox\"", form_html)
+      @test !occursin("name=\"detailed_result_csv\" type=\"checkbox\" checked", form_html)
+      @test occursin("name=\"detailed_result_csv_semicolon\" type=\"checkbox\"", form_html)
+      @test !occursin("name=\"detailed_result_csv_semicolon\" type=\"checkbox\" checked", form_html)
 
       logo_response = Sparlectra.route_sparlectra_webui("GET", "/assets/logo.png")
       @test logo_response.status == 200
@@ -419,6 +434,10 @@ result = get_powerflow_result(run_id)
       @test any(line -> occursin(r"\"timestamp\":\"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z\"", line), eachline(IOBuffer(operation_log_text)))
       @test occursin("\"event\":\"diagnostics_enabled\"", operation_log_text)
       @test occursin("\"event\":\"performance_timing_enabled\"", operation_log_text)
+      @test occursin("\"event\":\"detailed_result_csv_export_enabled\"", operation_log_text)
+      @test occursin("\"delimiter\":\"semicolon\"", operation_log_text)
+      @test occursin("\"event\":\"detailed_result_csv_exported\"", operation_log_text)
+      @test occursin("\"artifacts\":[\"bus_voltages_complex.csv\",\"branch_flows.csv\"]", operation_log_text)
       @test !isempty(run_id)
       result_response = Sparlectra.handle_powerflow_result(run_id)
       result_html = String(result_response.body)
@@ -445,12 +464,29 @@ result = get_powerflow_result(run_id)
 
       artifacts = list_powerflow_artifacts(run_id)
       artifact_names = Set(artifact["name"] for artifact in artifacts)
-      @test Set(("result.json", "run.log", "effective_config.yaml", "performance.log", "diagnose.txt")) ⊆ artifact_names
+      @test Set(("result.json", "run.log", "effective_config.yaml", "performance.log", "diagnose.log", "bus_voltages_complex.csv", "branch_flows.csv")) ⊆ artifact_names
       artifact_response = Sparlectra.handle_powerflow_artifacts(run_id)
       artifact_html = String(artifact_response.body)
-      for name in ("result.json", "run.log", "effective_config.yaml", "performance.log", "diagnose.txt")
+      for name in ("result.json", "run.log", "effective_config.yaml", "performance.log", "diagnose.log", "bus_voltages_complex.csv", "branch_flows.csv")
         @test occursin(name, artifact_html)
       end
+      for name in ("bus_voltages_complex.csv", "branch_flows.csv")
+        csv_artifact = only(artifact for artifact in artifacts if artifact["name"] == name)
+        @test csv_artifact["kind"] == "csv"
+        @test csv_artifact["mime_type"] == "text/csv"
+        csv_download = Sparlectra.handle_powerflow_artifact_download(run_id, name)
+        @test csv_download.status == 200
+        @test ("Content-Type" => "text/csv") in csv_download.headers
+        expected_header = name == "bus_voltages_complex.csv" ? "bus;bus_name;type;vm_pu;va_deg" : "branch;branch_index;from_bus;to_bus;status"
+        @test startswith(String(csv_download.body), expected_header)
+      end
+      legacy_diagnostic_path = joinpath(result["output_dir"], "diagnose.txt")
+      write(legacy_diagnostic_path, "legacy diagnostics\n")
+      legacy_artifacts = list_powerflow_artifacts(run_id)
+      @test any(artifact -> artifact["name"] == "diagnose.txt", legacy_artifacts)
+      legacy_download = Sparlectra.handle_powerflow_artifact_download(run_id, "diagnose.txt")
+      @test legacy_download.status == 200
+      @test String(legacy_download.body) == "legacy diagnostics\n"
       result_artifact = Sparlectra.handle_powerflow_artifact(run_id, "result.json")
       @test result_artifact.status == 200
       result_artifact_html = String(result_artifact.body)
