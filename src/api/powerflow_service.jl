@@ -21,22 +21,18 @@ include("artifact_registry.jl")
 include("run_index.jl")
 include("webui_jobs.jl")
 
-function _prefer_julia_casefile(casefile::AbstractString; emit_julia_case_fn = FetchMatpowerCase.emit_julia_case)::String
-  case_path = abspath(casefile)
-  extension = lowercase(splitext(case_path)[2])
-  extension == ".jl" && return case_path
-  extension == ".m" || throw(ArgumentError("Unsupported casefile extension: $(casefile) (expected .m or .jl)"))
+const GENERATED_MATPOWER_JL_CACHE_MESSAGE = "Generated MATPOWER .jl cache files are not user-selectable. Please use or fetch the corresponding .m MATPOWER case source."
 
-  julia_path = first(splitext(case_path)) * ".jl"
-  isfile(julia_path) && return julia_path
-  try
-    emitted_path = abspath(emit_julia_case_fn(case_path, dirname(case_path)))
-    if isfile(emitted_path)
-      return emitted_path
-    end
-    @warn "MATPOWER Julia case generation did not produce a file; using the .m case" casefile = case_path emitted_path
-  catch err
-    @warn "MATPOWER Julia case generation failed; using the .m case" casefile = case_path exception = (err, catch_backtrace())
+_matpower_cache_jl_bypass_reason() = "generated_jl_cache_hidden_from_webui"
+
+function _canonical_matpower_source_for_webui(path::AbstractString, case_directory::AbstractString)::String
+  case_path = abspath(path)
+  extension = lowercase(splitext(case_path)[2])
+  extension == ".m" && return case_path
+  if extension == ".jl" && dirname(case_path) == abspath(case_directory)
+    m_path = first(splitext(case_path)) * ".m"
+    isfile(m_path) && return abspath(m_path)
+    throw(ArgumentError(GENERATED_MATPOWER_JL_CACHE_MESSAGE))
   end
   return case_path
 end
@@ -44,8 +40,7 @@ end
 function _resolve_powerflow_casefile(
   casefile::AbstractString,
   case_directory::AbstractString;
-  ensure_casefile_fn = FetchMatpowerCase.ensure_casefile,
-  emit_julia_case_fn = FetchMatpowerCase.emit_julia_case,
+  ensure_casefile_fn = FetchMatpowerCase.ensure_casefile
 )::String
   requested = strip(casefile)
   isempty(requested) && throw(ArgumentError("PowerFlow casefile must not be empty."))
@@ -54,14 +49,24 @@ function _resolve_powerflow_casefile(
   extension = lowercase(splitext(requested)[2])
   extension in (".m", ".jl") || throw(ArgumentError("Unsupported casefile extension: $(requested) (expected .m or .jl)"))
   if isfile(requested)
-    return _prefer_julia_casefile(requested; emit_julia_case_fn)
+    return _canonical_matpower_source_for_webui(requested, case_directory)
   end
   occursin(r"[\\/]", requested) && throw(ArgumentError("Case file not found: $(requested)"))
 
   trusted_directory = abspath(case_directory)
   mkpath(trusted_directory)
+  if extension == ".jl"
+    requested_jl = joinpath(trusted_directory, requested)
+    requested_m = first(splitext(requested_jl)) * ".m"
+    if isfile(requested_m)
+      return abspath(requested_m)
+    end
+    isfile(requested_jl) && throw(ArgumentError(GENERATED_MATPOWER_JL_CACHE_MESSAGE))
+  end
+  local_m = extension == ".m" ? joinpath(trusted_directory, requested) : joinpath(trusted_directory, first(splitext(requested)) * ".m")
+  isfile(local_m) && return abspath(local_m)
   resolved = try
-    ensure_casefile_fn(requested; outdir = trusted_directory, to_jl = true)
+    ensure_casefile_fn(extension == ".m" ? requested : first(splitext(requested)) * ".m"; outdir = trusted_directory, to_jl = false)
   catch err
     fallback_name = extension == ".m" ? requested : first(splitext(requested)) * ".m"
     fallback_path = joinpath(trusted_directory, fallback_name)
@@ -72,7 +77,7 @@ function _resolve_powerflow_casefile(
     rethrow()
   end
   isfile(resolved) || throw(ArgumentError("Resolved MATPOWER case file not found: $(resolved)"))
-  return _prefer_julia_casefile(resolved; emit_julia_case_fn)
+  return _canonical_matpower_source_for_webui(resolved, trusted_directory)
 end
 
 """
@@ -86,9 +91,11 @@ chosen before execution, and all generated files are written beneath
 `result.json`, are registered in memory and in the persistent run index. Public
 service failures are returned as structured dictionaries.
 
-When `case_directory` is provided by a trusted caller, bare `.m` or `.jl` case
-names are resolved there through [`ensure_casefile`](@ref). Generated Julia
-cases are preferred for execution, while existing path behavior is retained.
+When `case_directory` is provided by a trusted caller, bare `.m` case names are
+resolved there through [`ensure_casefile`](@ref) and remain the executed source.
+Generated Julia cache files in that directory are hidden from the Web UI service
+path: explicit `.jl` requests resolve to a matching `.m` source when present and
+are rejected otherwise.
 """
 function start_powerflow_run(request::AbstractDict; case_directory::Union{Nothing,AbstractString} = nothing, case_resolver = _resolve_powerflow_casefile)::Dict{String,Any}
   request_start = time_ns()

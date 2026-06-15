@@ -152,6 +152,56 @@ function _write_large_case_timing_summary(io::IO, case_path::AbstractString, pha
   return nothing
 end
 
+function _profile_elapsed_call_tuple(value)
+  if value isa NamedTuple && haskey(value, :elapsed_s)
+    return (elapsed = Float64(value.elapsed_s), calls = Int(get(value, :calls, 1)))
+  elseif value isa AbstractDict && haskey(value, :elapsed_s)
+    return (elapsed = Float64(value[:elapsed_s]), calls = Int(get(value, :calls, 1)))
+  elseif value isa Number
+    return (elapsed = Float64(value), calls = 1)
+  end
+  return nothing
+end
+
+function _profile_aggregate(profile::AbstractDict, keys)::NamedTuple
+  total = 0.0
+  calls = 0
+  max_elapsed = 0.0
+  for key in keys
+    haskey(profile, key) || continue
+    item = _profile_elapsed_call_tuple(profile[key])
+    item === nothing && continue
+    total += item.elapsed
+    calls += item.calls
+    max_elapsed = max(max_elapsed, item.elapsed)
+  end
+  return (total = total, calls = calls, max = max_elapsed)
+end
+
+function _write_compact_internal_timing_aggregates(io::IO, result::SparlectraRunResult)
+  result.performance_profile isa AbstractDict || return nothing
+  profile = result.performance_profile
+  aggregates = (
+    building_ybus = _profile_aggregate(profile, (:ybus_assembly, :ybus_expand_isolated)),
+    solver_initialization = _profile_aggregate(profile, (:solver_initial_voltage, :solver_initial_injections)),
+    start_projection = _profile_aggregate(profile, (:start_projection_dc_linear_solve, :start_projection_apply)),
+    newton_iteration = _profile_aggregate(profile, (:iteration_controlled_injections, :iteration_mismatch, :iteration_newton_step)),
+    q_limit_processing = _profile_aggregate(profile, (:qlimit_iteration, :qlimit_generation_update)),
+    linear_solve = _profile_aggregate(profile, (:newton_step_linear_solve, :start_projection_dc_linear_solve)),
+  )
+  any(item -> item.calls > 0, values(aggregates)) || return nothing
+  println(io)
+  println(io, "Compact internal timing aggregates")
+  println(io, "----------------------------------")
+  for (name, item) in pairs(aggregates)
+    item.calls > 0 || continue
+    println(io, name, "_count: ", item.calls)
+    println(io, name, "_total_seconds: ", round(item.total; digits = 6))
+    name === :linear_solve && println(io, "linear_solve_max_seconds: ", round(item.max; digits = 6))
+  end
+  return nothing
+end
+
 function _write_performance_log(path::AbstractString, mode::Symbol, phases::AbstractDict, result::SparlectraRunResult, phase_timings::AbstractVector = Dict{String,Any}[])
   open(path, "w") do io
     println(io, "Sparlectra single-run phase timing")
@@ -167,6 +217,7 @@ function _write_performance_log(path::AbstractString, mode::Symbol, phases::Abst
       println(io)
       _write_service_phase_summary(io, phase_timings)
     end
+    _write_compact_internal_timing_aggregates(io, result)
     if mode === :full && result.performance_profile isa AbstractDict
       println(io)
       println(io, "Available internal performance profile")
@@ -370,6 +421,26 @@ function _api_failure(reason::String, message::String; run_id::String = string(u
   return _finalize_api_result(result)
 end
 
+function _api_execution_failure(reason::String, message::String; run_id::String, casefile, config_file, output_dir::String, logfile::String, result_file::String, phase_recorder::PowerFlowPhaseTimingRecorder, performance_timing = :off)::SparlectraApiResult
+  _complete_active_phase!(phase_recorder, "failed")
+  _start_service_phase!(phase_recorder, "finalizing_failed")
+  _complete_active_phase!(phase_recorder, "failed")
+  timing_mode = try
+    _api_timing_mode(performance_timing)
+  catch
+    :off
+  end
+  if timing_mode !== :off
+    open(joinpath(output_dir, "performance.log"), "a") do io
+      println(io, "Sparlectra API failure: ", reason)
+      println(io, message)
+      println(io)
+      _write_service_phase_summary(io, phase_recorder.timings)
+    end
+  end
+  return _api_failure(reason, message; run_id, casefile, config_file, output_dir, logfile, result_file, service_phase_timings = phase_recorder.timings)
+end
+
 """
     run_sparlectra_api(; casefile, config_file, output_dir, config_overrides=Dict(),
                         performance_timing=:off, run_diagnostics=false,
@@ -504,7 +575,8 @@ function _run_sparlectra_api(;
   catch err
     err isa PowerFlowAborted && rethrow()
     message = sprint(showerror, err, catch_backtrace())
-    return _api_failure("execution_error", message; run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file)
+    reason = get(phase_recorder.timings[phase_recorder.active_index === nothing ? length(phase_recorder.timings) : phase_recorder.active_index], "phase", "") == "loading_julia_case" ? "loading_julia_case_failed" : "execution_error"
+    return _api_execution_failure(reason, message; run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file, phase_recorder, performance_timing)
   end
   phases[:case_loading_network_solver] = _api_elapsed_seconds(execution_start)
   raw_result.solver_elapsed_s === nothing || (phases[:solver] = raw_result.solver_elapsed_s)

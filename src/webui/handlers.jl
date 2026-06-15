@@ -74,7 +74,6 @@ function handle_powerflow_artifacts(run_id::AbstractString)::SparlectraWebUIResp
 end
 
 const _WEBUI_TEXT_MIME_TYPES = Set(("text/plain", "application/json", "application/x-yaml", "text/csv", "text/html", "text/markdown"))
-
 function handle_powerflow_artifact(run_id::AbstractString, artifact_name::AbstractString)::SparlectraWebUIResponse
   artifact = resolve_powerflow_artifact(run_id, artifact_name)
   if artifact isa AbstractDict

@@ -115,7 +115,7 @@ function run_webui_tests()
         write(joinpath(config_directory, "README.md"), "ignored\n")
 
         @test Sparlectra._webui_application_root(start_dir) == application_root
-        @test Sparlectra._webui_casefile_options(application_root) == ["case118.m", "case14.jl", "case14.m"]
+        @test Sparlectra._webui_casefile_options(application_root) == ["case118.m", "case14.m"]
         @test Sparlectra._webui_config_file_options(application_root) == [primary_config, secondary_config]
 
         selection_html = Sparlectra.render_powerflow_form(
@@ -126,7 +126,7 @@ function run_webui_tests()
         @test occursin("<select id=\"casefile\" name=\"casefile\">", selection_html)
         @test occursin("<option value=\"\">-- choose existing case --</option>", selection_html)
         @test occursin("<option value=\"case14.m\" selected>case14.m</option>", selection_html)
-        @test occursin("<option value=\"case14.jl\">case14.jl</option>", selection_html)
+        @test !occursin("<option value=\"case14.jl\">case14.jl</option>", selection_html)
         @test occursin("<option value=\"case118.m\">case118.m</option>", selection_html)
         @test occursin("<input id=\"casefile_manual\" name=\"casefile_manual\" value=\"\" placeholder=\"case14.m\">", selection_html)
         @test !occursin("available-casefiles", selection_html)
@@ -647,6 +647,10 @@ result = get_powerflow_result(run_id)
       @test repeated_abort.status == 303
       @test occursin("\"event\":\"powerflow_abort_already_requested\"", read(operation_log_path, String))
       @test occursin("\"event\":\"powerflow_phase_started\"", read(operation_log_path, String))
+      @test !any(
+        line -> occursin("\"event\":\"powerflow_phase_started\"", line) && occursin("\"phase\":\"linear_solve\"", line),
+        eachline(operation_log_path),
+      )
       active_delete = Sparlectra.route_sparlectra_webui("POST", "/powerflow/delete/$(active_id)"; output_root)
       @test active_delete.status == 409
       @test occursin("This run is still active", String(active_delete.body))
