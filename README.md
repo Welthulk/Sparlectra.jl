@@ -109,6 +109,18 @@ the page offers **Hard reset Web UI**. This marks the run result invalid
 `julia --project=. start_webui.jl`. A future process-isolated solver worker
 would permit hard termination while keeping the Web UI process alive.
 
+PowerFlow runs can optionally export detailed Excel-friendly CSV artifacts.
+Enable **Export detailed result CSV files** to create
+`bus_voltages_complex.csv` (polar and rectangular complex bus voltages plus
+bus injections/loads) and `branch_flows.csv` (directional active/reactive
+branch flows and losses). This option is off by default. New diagnostic runs
+write `diagnose.log`; the artifact viewer still supports `diagnose.txt` files
+from older run directories.
+For Excel installations that expect locale-style CSV files, enable
+**Use Excel CSV format with semicolon delimiter** together with the export
+option. It changes the field separator from comma to semicolon and is off by
+default.
+
 Installed users can start the local Web UI without knowing the package
 installation directory:
 

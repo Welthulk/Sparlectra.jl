@@ -1,5 +1,11 @@
 # Change Log
 
+* Added an optional Excel-oriented semicolon delimiter for detailed PowerFlow
+  CSV artifacts while retaining comma-separated output as the default.
+* Added opt-in detailed PowerFlow CSV artifacts for Excel, including complex
+  bus voltages and directional branch flows reused from `ACPFlowReport`, and
+  renamed new diagnostic artifacts to `diagnose.log` while preserving access
+  to legacy `diagnose.txt` files.
 * Added phase-aware Web UI cancellation diagnostics and a 60-second explicit
   hard-reset fallback that records `aborted_unknown` and cleanly shuts down the
   local server instead of killing an in-process numerical task.
@@ -11,7 +17,7 @@
 * Added a local PowerFlow service boundary with run-specific output directories, persistent JSON run indexing, restart recovery, run-ID lookup, artifact listing, and traversal-safe artifact resolution for a future local GUI without adding HTTP or Genie.jl dependencies.
 * Added the first loopback-only local PowerFlow Web UI with allowlisted configuration forms, service-backed execution, result and persistent-history views, and metadata-resolved artifact viewing/downloads.
 * Added Markdown-backed contextual help for the Web UI Start voltage mode field and an allowlisted local documentation reader, keeping repository documentation as the single source of explanatory text.
-* Added optional single-run phase timing and existing PowerFlow diagnostic artifacts to the local Web UI/API, producing viewable `performance.log` and `diagnose.txt` files.
+* Added optional single-run phase timing and existing PowerFlow diagnostic artifacts to the local Web UI/API, producing viewable `performance.log` and diagnostic log files.
 * Added an optional hidden asynchronous Web UI startup warm-up using an original bundled synthetic three-bus Julia case without polluting normal run history by default.
 
 ### Improvements

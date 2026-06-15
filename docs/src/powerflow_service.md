@@ -98,9 +98,19 @@ if controlled cancellation exits the worker.
   readable `.m` case remains the fallback if conversion fails. Browser form
   values never control this directory, missing path-like inputs are not
   downloaded, and URLs are rejected.
-  Optional `performance_timing` (`off`, `compact`, or `full`) and
-  `run_diagnostics` (Boolean) request fields are forwarded to the API artifact
-  writer. They produce `performance.log` and `diagnose.txt`, respectively.
+  Optional `performance_timing` (`off`, `compact`, or `full`),
+  `run_diagnostics`, `detailed_result_csv`, and
+  `detailed_result_csv_semicolon` (Boolean) request fields are forwarded to
+  the API artifact writer. They produce `performance.log`, `diagnose.log`, and
+  the detailed CSV artifacts, respectively.
+  `detailed_result_csv` defaults to `false`; when enabled after a successful
+  solve it writes `bus_voltages_complex.csv` and `branch_flows.csv` from
+  `buildACPFlowReport(raw_result.net)`. The bus file includes polar and numeric
+  rectangular voltage columns for Excel, while the branch file includes
+  active/reactive flows at both ends and losses.
+  `detailed_result_csv_semicolon=true` selects Excel-style semicolon-separated
+  output; its default `false` retains comma-separated output. Legacy run directories
+  containing `diagnose.txt` remain discoverable and downloadable.
   Diagnostic generation reuses existing PowerFlow/Q-limit printers and a
   diagnostic failure does not replace the primary PowerFlow result.
 - [`load_powerflow_run_index`](@ref) reads the transport-safe index structure. A

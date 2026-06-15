@@ -23,6 +23,22 @@ end
 function run_api_tests()
   @testset "GUI-ready Sparlectra API" begin
     mktempdir() do tmpdir
+      csv_writer_path = joinpath(tmpdir, "writer.csv")
+      Sparlectra._write_namedtuple_csv(
+        csv_writer_path,
+        [(name = "quoted, \"value\"", empty_missing = Base.missing, empty_nothing = nothing)],
+        (:name, :empty_missing, :empty_nothing),
+      )
+      @test read(csv_writer_path, String) == "name,empty_missing,empty_nothing\n\"quoted, \"\"value\"\"\",,\n"
+      semicolon_writer_path = joinpath(tmpdir, "writer_semicolon.csv")
+      Sparlectra._write_namedtuple_csv(
+        semicolon_writer_path,
+        [(name = "quoted; \"value\"", empty_missing = Base.missing, empty_nothing = nothing)],
+        (:name, :empty_missing, :empty_nothing);
+        delimiter = ';',
+      )
+      @test read(semicolon_writer_path, String) == "name;empty_missing;empty_nothing\n\"quoted; \"\"value\"\"\";;\n"
+
       casefile = _write_api_test_case(joinpath(tmpdir, "case_api.m"))
       template = joinpath(tmpdir, "config_template.yaml")
       cp(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, template)
@@ -42,6 +58,8 @@ function run_api_tests()
         ),
         performance_timing = :compact,
         run_diagnostics = true,
+        detailed_result_csv = true,
+        detailed_result_csv_semicolon = true,
       )
 
       @test result isa SparlectraApiResult
@@ -69,15 +87,23 @@ function run_api_tests()
       @test occursin("api_config_build:", performance_log)
       @test occursin("case_loading_network_solver:", performance_log)
       @test occursin("total:", performance_log)
-      diagnostic_log = read(joinpath(output_dir, "diagnose.txt"), String)
+      diagnostic_log = read(joinpath(output_dir, "diagnose.log"), String)
       @test occursin("Sparlectra PowerFlow diagnostics", diagnostic_log)
       @test occursin("Final limit validation:", diagnostic_log)
+      @test !isfile(joinpath(output_dir, "diagnose.txt"))
+
+      bus_csv = read(joinpath(output_dir, "bus_voltages_complex.csv"), String)
+      branch_csv = read(joinpath(output_dir, "branch_flows.csv"), String)
+      @test startswith(bus_csv, "bus;bus_name;type;vm_pu;va_deg;vn_kV;v_re;v_im;v_complex;v_kV")
+      @test startswith(branch_csv, "branch;branch_index;from_bus;to_bus;status;p_from_MW;q_from_MVar;p_to_MW;q_to_MVar")
+      @test length(collect(eachline(IOBuffer(bus_csv)))) > 1
+      @test length(collect(eachline(IOBuffer(branch_csv)))) > 1
 
       kinds = Set(artifact.kind for artifact in result.artifacts)
       @test :log in kinds
       @test :result_json in kinds
       @test :effective_config in kinds
-      @test :report in kinds
+      @test count(artifact -> artifact.kind === :csv && artifact.mime_type == "text/csv", result.artifacts) == 2
       @test all(artifact -> artifact.exists && artifact.size_bytes !== nothing, result.artifacts)
       @test result.logfile == only(artifact.path for artifact in result.artifacts if artifact.name == "run.log")
       @test result.result_file == only(artifact.path for artifact in result.artifacts if artifact.kind === :result_json)
@@ -95,13 +121,18 @@ function run_api_tests()
         config_file = template,
         output_dir = full_dir,
         config_overrides = Dict("output.logfile_results" => "full", "benchmark.enabled" => false),
+        run_diagnostics = true,
       )
       @test classic.success && full.success
+      @test !isfile(joinpath(classic_dir, "bus_voltages_complex.csv"))
+      @test !isfile(joinpath(classic_dir, "branch_flows.csv"))
       classic_log = read(joinpath(classic_dir, "run.log"), String)
       full_log = read(joinpath(full_dir, "run.log"), String)
       @test !occursin("Full run details", classic_log)
       @test occursin("Full run details", full_log)
       @test occursin("Effective Sparlectra Configuration", full_log)
+      @test occursin("diagnostics_artifact: diagnose.log", full_log)
+      @test occursin("detailed_result_csv_delimiter: disabled", full_log)
       @test ncodeunits(full_log) > ncodeunits(classic_log)
 
       failed_diagnostic = joinpath(tmpdir, "failed_diagnose.txt")

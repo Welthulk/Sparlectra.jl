@@ -345,6 +345,9 @@ function start_webui_powerflow_run(request::AbstractDict; case_directory::Union{
       end
       _update_webui_job_phase!(job, "resolving_case")
       event_callback("powerflow_started"; run_id, requested_case = job["casefile"], status = "running")
+      detailed_result_csv = _service_request_value(request, "detailed_result_csv", false)
+      detailed_result_csv_semicolon = _service_request_value(request, "detailed_result_csv_semicolon", false)
+      detailed_result_csv && event_callback("detailed_result_csv_export_enabled"; run_id, delimiter = detailed_result_csv_semicolon ? "semicolon" : "comma", status = "enabled")
       worker_request = Dict{String,Any}(String(key) => value for (key, value) in request)
       worker_request["run_id"] = run_id
       worker_request["cancellation_token"] = job["abort_requested"]
@@ -394,6 +397,15 @@ function start_webui_powerflow_run(request::AbstractDict; case_directory::Union{
           status = job["status"],
           message = job["message"],
         )
+        if detailed_result_csv
+          artifact_names = Set(String(get(artifact, "name", "")) for artifact in get(result, "artifacts", Any[]))
+          expected_csv = ["bus_voltages_complex.csv", "branch_flows.csv"]
+          if all(name -> name in artifact_names, expected_csv)
+            event_callback("detailed_result_csv_exported"; run_id = job["run_id"], artifacts = expected_csv, status = "succeeded")
+          else
+            event_callback("detailed_result_csv_export_failed"; run_id = job["run_id"], message = "Detailed result CSV artifacts were not generated.", status = "failed")
+          end
+        end
       end
     finally
       lock(_POWERFLOW_SERVICE_LOCK) do
@@ -896,6 +908,10 @@ function start_powerflow_run(request::AbstractDict; case_directory::Union{Nothin
   performance_timing = _service_request_value(request, "performance_timing", :off)
   run_diagnostics = _service_request_value(request, "run_diagnostics", false)
   run_diagnostics isa Bool || return _service_failure("invalid_request", "run_diagnostics must be boolean.")
+  detailed_result_csv = _service_request_value(request, "detailed_result_csv", false)
+  detailed_result_csv isa Bool || return _service_failure("invalid_request", "detailed_result_csv must be boolean.")
+  detailed_result_csv_semicolon = _service_request_value(request, "detailed_result_csv_semicolon", false)
+  detailed_result_csv_semicolon isa Bool || return _service_failure("invalid_request", "detailed_result_csv_semicolon must be boolean.")
   phases[:request_parse] = _api_elapsed_seconds(request_start)
 
   requested_run_id = _service_request_value(request, "run_id", nothing)
@@ -911,6 +927,8 @@ function start_powerflow_run(request::AbstractDict; case_directory::Union{Nothin
       config_overrides = config_overrides,
       performance_timing = performance_timing,
       run_diagnostics = run_diagnostics,
+      detailed_result_csv = detailed_result_csv,
+      detailed_result_csv_semicolon = detailed_result_csv_semicolon,
       phase_timings = phases,
       run_id = run_id,
       cancellation_token = cancellation_token,
@@ -958,7 +976,7 @@ run IDs return a structured `run_not_found` failure dictionary.
 function list_powerflow_artifacts(run_id::AbstractString)
   result = _registered_powerflow_run(run_id)
   result === nothing && return _service_failure("run_not_found", "No PowerFlow run found for run_id $(run_id)."; run_id = run_id)
-  return [to_dict(artifact) for artifact in result.artifacts]
+  return [to_dict(artifact) for artifact in collect_sparlectra_api_artifacts(result.output_dir)]
 end
 
 function _unsafe_artifact_name(name::String)::Bool
@@ -993,9 +1011,10 @@ function resolve_powerflow_artifact(run_id::AbstractString, artifact_name::Abstr
   name = String(artifact_name)
   _unsafe_artifact_name(name) && return _service_failure("unsafe_artifact_name", "Unsafe artifact name rejected: $(name)"; run_id = run_id)
 
-  index = findfirst(artifact -> artifact.name == name, result.artifacts)
+  artifacts = collect_sparlectra_api_artifacts(result.output_dir)
+  index = findfirst(artifact -> artifact.name == name, artifacts)
   index === nothing && return _service_failure("artifact_not_found", "No artifact named $(name) belongs to PowerFlow run $(run_id)."; run_id = run_id)
-  artifact = result.artifacts[index]
+  artifact = artifacts[index]
   isfile(artifact.path) || return _service_failure("artifact_not_found", "Artifact $(name) is no longer available for PowerFlow run $(run_id)."; run_id = run_id)
   _artifact_belongs_to_run(artifact, result.output_dir) || return _service_failure("unsafe_artifact_name", "Artifact $(name) does not resolve inside PowerFlow run $(run_id)."; run_id = run_id)
   return artifact

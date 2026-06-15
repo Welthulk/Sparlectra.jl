@@ -17,6 +17,8 @@ const WEBUI_HELP_TOPICS = Dict(
   "benchmark.seconds" => (label = "Benchmark seconds", page = "performance_profiling", heading = "Benchmark configuration", selector = "`benchmark.seconds`"),
   "webui.performance_timing" => (label = "Performance timing", page = "webui", heading = "Run artifacts and output modes", selector = ""),
   "webui.run_diagnostics" => (label = "Run diagnostics", page = "webui", heading = "Run artifacts and output modes", selector = ""),
+  "webui.detailed_result_csv" => (label = "Detailed result CSV export", page = "webui", heading = "Run artifacts and output modes", selector = ""),
+  "webui.detailed_result_csv_semicolon" => (label = "Excel semicolon CSV format", page = "webui", heading = "Run artifacts and output modes", selector = ""),
 )
 
 const WEBUI_FORM_HELP_TOPICS = Dict(
@@ -36,6 +38,8 @@ const WEBUI_FORM_HELP_TOPICS = Dict(
   "benchmark_seconds" => "benchmark.seconds",
   "performance_timing" => "webui.performance_timing",
   "run_diagnostics" => "webui.run_diagnostics",
+  "detailed_result_csv" => "webui.detailed_result_csv",
+  "detailed_result_csv_semicolon" => "webui.detailed_result_csv_semicolon",
 )
 
 const WEBUI_DOC_PAGES = Dict(

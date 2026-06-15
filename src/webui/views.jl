@@ -148,6 +148,8 @@ $(error_html)$(_webui_active_run_banner(active_run))<p class=\"lede\">Run a loca
 <label>$(_webui_field_label("output_logfile_results", "Logfile output mode"))$(_webui_select("output_logfile_results", OUTPUT_LOGFILE_RESULTS_VALUES, :compact))</label>
 <label>$(_webui_field_label("performance_timing", "Performance timing"))$(_webui_select("performance_timing", _WEBUI_PERFORMANCE_TIMING_VALUES, :compact))</label>
 <label class=\"check\"><input name=\"run_diagnostics\" type=\"checkbox\">$(_webui_field_label("run_diagnostics", "Run diagnostics"))</label>
+<label class=\"check\"><input name=\"detailed_result_csv\" type=\"checkbox\">$(_webui_field_label("detailed_result_csv", "Export detailed result CSV files"))</label>
+<label class=\"check\"><input name=\"detailed_result_csv_semicolon\" type=\"checkbox\">$(_webui_field_label("detailed_result_csv_semicolon", "Use Excel CSV format with semicolon delimiter"))</label>
 <label class=\"check\"><input name=\"benchmark_enabled\" type=\"checkbox\">$(_webui_field_label("benchmark_enabled", "Benchmark enabled"))</label>
 <label>$(_webui_field_label("benchmark_samples", "Benchmark samples"))<input name=\"benchmark_samples\" type=\"number\" min=\"1\" value=\"10\"></label>
 <label>$(_webui_field_label("benchmark_seconds", "Benchmark seconds"))<input name=\"benchmark_seconds\" type=\"number\" step=\"any\" min=\"0\" value=\"1.0\"></label>

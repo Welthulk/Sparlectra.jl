@@ -81,6 +81,67 @@ function _write_performance_log(path::AbstractString, mode::Symbol, phases::Abst
   return path
 end
 
+function _csv_field(value, delimiter::Char)::String
+  value === missing && return ""
+  value === nothing && return ""
+  text = string(value)
+  if any(character -> character in (delimiter, '"', '\r', '\n'), text)
+    return "\"" * replace(text, "\"" => "\"\"") * "\""
+  end
+  return text
+end
+
+function _write_namedtuple_csv(path::AbstractString, rows::AbstractVector, columns; delimiter::Char = ',')
+  delimiter in (',', ';') || throw(ArgumentError("CSV delimiter must be ',' or ';'."))
+  open(path, "w") do io
+    println(io, join(String.(columns), delimiter))
+    for row in rows
+      println(io, join((_csv_field(getproperty(row, column), delimiter) for column in columns), delimiter))
+    end
+  end
+  return path
+end
+
+function _complex_voltage_rows(node_rows::AbstractVector)
+  return [begin
+    angle = deg2rad(Float64(row.va_deg))
+    v_re = Float64(row.vm_pu) * cos(angle)
+    v_im = Float64(row.vm_pu) * sin(angle)
+    merge(
+      row,
+      (
+        v_re = round(v_re; sigdigits = 10),
+        v_im = round(v_im; sigdigits = 10),
+        v_complex = @sprintf("%.10g %+.10gj", v_re, v_im),
+      ),
+    )
+  end for row in node_rows]
+end
+
+function _write_detailed_result_csv(output_path::AbstractString, result::SparlectraRunResult; delimiter::Char = ',')::Vector{String}
+  result.net === nothing && throw(ArgumentError("PowerFlow result does not contain a network for detailed CSV export."))
+  report = buildACPFlowReport(
+    result.net;
+    ct = result.elapsed_s,
+    ite = result.iterations,
+    converged = result.final_converged,
+  )
+  bus_columns = (
+    :bus, :bus_name, :type, :vm_pu, :va_deg, :vn_kV, :v_re, :v_im,
+    :v_complex, :v_kV, :p_gen_MW, :q_gen_MVar, :p_load_MW, :q_load_MVar,
+    :q_limit_hit, :control,
+  )
+  branch_columns = (
+    :branch, :branch_index, :from_bus, :to_bus, :status, :p_from_MW,
+    :q_from_MVar, :p_to_MW, :q_to_MVar, :p_loss_MW, :q_loss_MVar,
+    :rated_MVA, :overloaded,
+  )
+  artifacts = ["bus_voltages_complex.csv", "branch_flows.csv"]
+  _write_namedtuple_csv(joinpath(output_path, artifacts[1]), _complex_voltage_rows(report.nodes), bus_columns; delimiter)
+  _write_namedtuple_csv(joinpath(output_path, artifacts[2]), report.branches, branch_columns; delimiter)
+  return artifacts
+end
+
 function _api_result(; run_id::String = string(uuid4()), schema_version::String = _SPARLECTRA_API_SCHEMA_VERSION, status::Symbol, success::Bool, converged = nothing, solution_available::Bool = false, iterations = nothing, final_mismatch = nothing, reason = nothing, message = nothing, casefile = nothing, config_file = nothing, output_dir::String, logfile = nothing, result_file = nothing, artifacts = SparlectraApiArtifact[], raw_result = nothing)
   return SparlectraApiResult(run_id, schema_version, status, success, converged, solution_available, iterations, final_mismatch, reason, message, casefile, config_file, output_dir, logfile, result_file, artifacts, raw_result)
 end
@@ -132,7 +193,9 @@ end
 
 """
     run_sparlectra_api(; casefile, config_file, output_dir, config_overrides=Dict(),
-                        performance_timing=:off, run_diagnostics=false) -> SparlectraApiResult
+                        performance_timing=:off, run_diagnostics=false,
+                        detailed_result_csv=false,
+                        detailed_result_csv_semicolon=false) -> SparlectraApiResult
 
 Run one MATPOWER power-flow case through a stable, non-interactive API contract.
 The function validates GUI overrides, writes `effective_config.yaml`, delegates
@@ -141,7 +204,10 @@ the numerical work to [`run_sparlectra`](@ref), captures textual output in
 structured status and artifact metadata. The input configuration template is
 never modified. `performance_timing` may be `:off`, `:compact`, or `:full` and
 writes a single-run `performance.log`; `run_diagnostics=true` captures existing
-PowerFlow diagnostic printers in `diagnose.txt` without changing run success.
+PowerFlow diagnostic printers in `diagnose.log`; and `detailed_result_csv=true`
+writes Excel-friendly bus-voltage and branch-flow CSV artifacts. Optional
+`detailed_result_csv_semicolon=true` uses `;` instead of `,` as the CSV
+delimiter. Artifact generation does not change PowerFlow run success.
 """
 function run_sparlectra_api(;
   casefile::AbstractString,
@@ -150,6 +216,8 @@ function run_sparlectra_api(;
   config_overrides::AbstractDict = Dict{String,Any}(),
   performance_timing = :off,
   run_diagnostics::Bool = false,
+  detailed_result_csv::Bool = false,
+  detailed_result_csv_semicolon::Bool = false,
 )::SparlectraApiResult
   return _run_sparlectra_api(
     casefile = casefile,
@@ -158,6 +226,8 @@ function run_sparlectra_api(;
     config_overrides = config_overrides,
     performance_timing = performance_timing,
     run_diagnostics = run_diagnostics,
+    detailed_result_csv = detailed_result_csv,
+    detailed_result_csv_semicolon = detailed_result_csv_semicolon,
     run_id = string(uuid4()),
   )
 end
@@ -169,6 +239,8 @@ function _run_sparlectra_api(;
   config_overrides::AbstractDict,
   performance_timing = :off,
   run_diagnostics::Bool = false,
+  detailed_result_csv::Bool = false,
+  detailed_result_csv_semicolon::Bool = false,
   phase_timings::AbstractDict = Dict{Symbol,Float64}(),
   run_id::String,
   cancellation_token = nothing,
@@ -253,7 +325,20 @@ function _run_sparlectra_api(;
   phase_callback("diagnostics")
   _check_powerflow_cancelled!(cancellation_token)
   phase_callback("artifact_writing")
-  run_diagnostics && _write_powerflow_diagnostics(joinpath(output_path, "diagnose.txt"), raw_result)
+  run_diagnostics && _write_powerflow_diagnostics(joinpath(output_path, "diagnose.log"), raw_result)
+  csv_artifacts = String[]
+  csv_export_error = nothing
+  if detailed_result_csv && raw_result.final_converged && raw_result.solution_available
+    try
+      csv_delimiter = detailed_result_csv_semicolon ? ';' : ','
+      csv_artifacts = _write_detailed_result_csv(output_path, raw_result; delimiter = csv_delimiter)
+    catch err
+      csv_export_error = sprint(showerror, err)
+      open(logfile, "a") do io
+        println(io, "Detailed result CSV export failed: ", csv_export_error)
+      end
+    end
+  end
   _check_powerflow_cancelled!(cancellation_token)
   open(logfile, "a") do io
     println(io)
@@ -266,8 +351,11 @@ function _run_sparlectra_api(;
       println(io, "casefile: ", case_path)
       println(io, "config_file: ", config_path)
       println(io, "output_dir: ", output_path)
-      println(io, "diagnostics_artifact: ", run_diagnostics ? "diagnose.txt" : "disabled")
+      println(io, "diagnostics_artifact: ", run_diagnostics ? "diagnose.log" : "disabled")
       println(io, "performance_artifact: ", timing_mode === :off ? "disabled" : "performance.log")
+      println(io, "detailed_result_csv_artifacts: ", detailed_result_csv ? (isempty(csv_artifacts) ? "failed" : join(csv_artifacts, ", ")) : "disabled")
+      println(io, "detailed_result_csv_delimiter: ", detailed_result_csv ? (detailed_result_csv_semicolon ? "semicolon" : "comma") : "disabled")
+      csv_export_error === nothing || println(io, "detailed_result_csv_error: ", csv_export_error)
       println(io)
       print_effective_config(io, config)
       println(io)

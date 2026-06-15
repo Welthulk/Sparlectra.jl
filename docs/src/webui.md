@@ -187,11 +187,33 @@ configuration, case loading/network construction/solve, postprocessing when
 separately available, artifact writing, solver time, and total time. `full`
 also includes available internal profile entries.
 
-The **Run diagnostics** checkbox writes `diagnose.txt` after the PowerFlow
+The **Run diagnostics** checkbox writes `diagnose.log` after the PowerFlow
 result is available. It reuses the existing Q-limit event, PV-limit, and final
 limit-validation printers. A diagnostic exception is contained and recorded in
-that file without changing a successful PowerFlow result. Both new files are
-viewable and downloadable through the normal artifact list.
+that file without changing a successful PowerFlow result. Older run directories
+can still contain `diagnose.txt`; the artifact viewer continues to list and
+download that legacy filename.
+
+The **Export detailed result CSV files** checkbox is off by default because
+large networks can produce large files. When enabled for a successful run, it
+writes Excel-friendly UTF-8 artifacts:
+
+- `bus_voltages_complex.csv` contains one row per bus, including `vm_pu`,
+  `va_deg`, numeric rectangular components `v_re` and `v_im`, a readable
+  `v_complex` value, nominal/actual voltage, generation, load, Q-limit, and
+  control columns.
+- `branch_flows.csv` contains physical branch rows with active/reactive power
+  at both ends, losses, rating, status, and overload information.
+
+The CSV files reuse the structured `ACPFlowReport` node and branch rows and,
+like the log artifacts, are viewable and downloadable through the normal
+artifact list.
+
+The separate **Use Excel CSV format with semicolon delimiter** checkbox is also
+off by default. Enable it together with detailed CSV export when the local
+Excel installation expects semicolon-separated fields. When unchecked, the
+files use the standard comma delimiter. Quoting and empty-field handling are
+identical for both formats.
 
 ## PowerFlow input paths
 
