@@ -126,6 +126,12 @@ $(error_html)$(_webui_active_run_banner(active_run))<p class=\"lede\">Run a loca
 <form id=\"powerflow-run-form\" method=\"post\" action=\"/powerflow/run\" class=\"panel form-grid\" onsubmit=\"this.classList.add('is-submitting'); this.setAttribute('aria-busy', 'true'); this.querySelector('button[type=submit]').disabled = true;\">
 <label>$(_webui_field_label("casefile", "Existing MATPOWER case"))$(case_select)<small class="field-hint">Cases from <code>$(_webui_escape(effective_case_directory))</code></small></label>
 <label><span class="field-label">Or type/download MATPOWER case</span>$(case_manual)<small class="field-hint">Manual input overrides the existing-case selection.</small></label>
+<details class=\"citation-box span-2\">
+<summary>MATPOWER citation</summary>
+<p>Sparlectra supports the <a href=\"https://matpower.org\">MATPOWER</a> case format and MATPOWER test-case data. If you use MATPOWER cases or data in publications, please follow the <a href=\"https://matpower.org/citing/\">MATPOWER citation guidance</a> and cite the software and:</p>
+<p>R. D. Zimmerman, C. E. Murillo-Sanchez, and R. J. Thomas, “MATPOWER: Steady-State Operations, Planning and Analysis Tools for Power Systems Research and Education,” <em>IEEE Transactions on Power Systems</em>, 26(1), 12–19, 2011. <a href=\"https://doi.org/10.1109/TPWRS.2010.2051168\">DOI</a></p>
+<p>Some MATPOWER case files, such as ACTIVSg, PEGASE, and RTE cases, may request additional case-specific citations in their file headers.</p>
+</details>
 <label>$(_webui_field_label("config_file", "Configuration file"))$(config_control)<small class="field-hint">Set at Web UI startup.</small></label>
 <p class=\"span-2 output-root-display\"><strong>Output root:</strong> <code>$(_webui_escape(output_root))</code></p>
 <p class=\"span-2 output-root-display\"><strong>Config file:</strong> <code>$(_webui_escape(config_default))</code></p>

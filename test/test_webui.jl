@@ -3,6 +3,25 @@ using Dates
 using Sockets
 using Test
 
+function _write_webui_test_case(path::AbstractString)
+  write(path, """
+function mpc = case_webui
+mpc.version = '2';
+mpc.baseMVA = 100;
+mpc.bus = [
+1 3 0 0 0 0 1 1.0 0 110 1 1.1 0.9;
+2 1 40 15 0 0 1 1.0 0 110 1 1.1 0.9;
+];
+mpc.gen = [
+1 100 0 300 -300 1.02 100 1 300 0;
+];
+mpc.branch = [
+1 2 0.01 0.05 0.0 999 999 999 0 0 1 -360 360;
+];
+""")
+  return path
+end
+
 function _webui_test_form(casefile, config_file, output_root)
   return Dict(
     "casefile" => "",
@@ -109,6 +128,17 @@ function run_webui_tests()
         @test occursin("<option value=\"case118.m\">case118.m</option>", selection_html)
         @test occursin("<input id=\"casefile_manual\" name=\"casefile_manual\" value=\"\" placeholder=\"case14.m\">", selection_html)
         @test !occursin("available-casefiles", selection_html)
+        @test occursin("<details class=\"citation-box span-2\">", selection_html)
+        @test occursin("MATPOWER citation", selection_html)
+        @test occursin("Zimmerman", selection_html)
+        @test occursin("Murillo-Sanchez", selection_html)
+        @test occursin("IEEE Transactions on Power Systems", selection_html)
+        @test occursin("href=\"https://matpower.org\"", selection_html)
+        @test occursin("href=\"https://matpower.org/citing/\"", selection_html)
+        @test occursin("10.1109/TPWRS.2010.2051168", selection_html)
+        @test occursin("ACTIVSg, PEGASE, and RTE", selection_html)
+        @test occursin("<form id=\"powerflow-run-form\"", selection_html)
+        @test occursin("Start PowerFlow run", selection_html)
         @test occursin("<input type=\"hidden\" name=\"config_file\" value=\"$(secondary_config)\">", selection_html)
         @test occursin("<code>$(secondary_config)</code>", selection_html)
         @test !occursin("README.md", selection_html)
@@ -263,7 +293,7 @@ function run_webui_tests()
     end
 
     mktempdir() do tmpdir
-      casefile = _write_api_test_case(joinpath(tmpdir, "case_webui.m"))
+      casefile = _write_webui_test_case(joinpath(tmpdir, "case_webui.m"))
       config_file = joinpath(tmpdir, "config_template.yaml")
       cp(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, config_file)
       output_root = joinpath(tmpdir, "runs")

@@ -106,6 +106,26 @@ footer {
   overflow-wrap: anywhere;
 }
 
+.citation-box {
+  color: #52627a;
+  font-size: .9rem;
+  line-height: 1.5;
+  padding: .75rem 1rem;
+  background: #f4f7fb;
+  border: 1px solid #dbe3ef;
+  border-radius: 7px;
+}
+
+.citation-box summary {
+  color: #33445f;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.citation-box p:last-child {
+  margin-bottom: 0;
+}
+
 .panel {
   background: #fff;
   border: 1px solid #dbe3ef;
