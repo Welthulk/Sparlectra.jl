@@ -556,32 +556,12 @@ result = get_powerflow_result(run_id)
       @test history_response.status == 200
       history_html = String(history_response.body)
       @test occursin(run_id, history_html)
-      @test occursin("/powerflow/large-case-benchmark", history_html)
       @test occursin("<th>Date/Time</th>", history_html)
       @test occursin("class=\"status-badge status-success\"", history_html)
       @test occursin("action=\"/powerflow/delete/$(run_id)\"", history_html)
       @test occursin("action=\"/powerflow/delete_all\"", history_html)
       @test occursin("action=\"/powerflow/refresh\"", history_html)
       @test occursin(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}", history_html)
-      benchmark_dir = joinpath(output_root, "large_case_benchmarks")
-      mkpath(benchmark_dir)
-      write(joinpath(benchmark_dir, "benchmark_large_cases.md"), "# benchmark\n")
-      write(joinpath(benchmark_dir, "benchmark_large_cases.json"), "{\"results\":[]}\n")
-      benchmark_response = Sparlectra.route_sparlectra_webui("GET", "/powerflow/large-case-benchmark"; output_root)
-      @test benchmark_response.status == 200
-      benchmark_html = String(benchmark_response.body)
-      @test occursin(benchmark_dir, benchmark_html)
-      @test occursin("benchmark_large_cases.md", benchmark_html)
-      @test occursin("benchmark_large_cases.json", benchmark_html)
-      @test occursin("/powerflow/large-case-benchmark/artifact/benchmark_large_cases.md?download=1", benchmark_html)
-      md_response = Sparlectra.route_sparlectra_webui("GET", "/powerflow/large-case-benchmark/artifact/benchmark_large_cases.md"; output_root)
-      @test md_response.status == 200
-      @test occursin("# benchmark", String(md_response.body))
-      json_download = Sparlectra.route_sparlectra_webui("GET", "/powerflow/large-case-benchmark/artifact/benchmark_large_cases.json?download=1"; output_root)
-      @test json_download.status == 200
-      @test any(header -> header.first == "Content-Disposition", json_download.headers)
-      @test String(json_download.body) == "{\"results\":[]}\n"
-      @test Sparlectra.route_sparlectra_webui("GET", "/powerflow/large-case-benchmark/artifact/../result.json"; output_root).status == 404
       @test Sparlectra.route_sparlectra_webui("GET", "/powerflow/abort/$(run_id)"; output_root).status == 404
       @test Sparlectra.route_sparlectra_webui("POST", "/powerflow/abort/unknown-run"; output_root).status == 404
       @test Sparlectra.route_sparlectra_webui("POST", "/powerflow/abort/..%2Foutside"; output_root).status == 404

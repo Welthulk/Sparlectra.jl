@@ -163,37 +163,6 @@ summary. Benchmark median and configured samples are included when benchmarking 
 `output.logfile_results=full` adds effective configuration, artifact choices,
 and available status diagnostics beyond the `classic` report.
 
-## Large MATPOWER benchmark helpers
-
-Run the API/Web UI service-path benchmark with:
-
-```bash
-julia --project=. scripts/benchmark_large_matpower_cases.jl --cases case118.m,case1354pegase.m,case2869pegase.m,case9241pegase.m
-```
-
-The benchmark intentionally does **not** implement a separate MATPOWER download
-path. It uses the same Web UI case cache directory returned by
-`default_webui_case_cache_dir(output_root)` and resolves bare case names through
-`start_powerflow_run(...; case_directory=cache_dir)`, matching the Web UI/service
-cache path. Extensionless benchmark case names resolve to `.m`, and `.m` is used
-when both `.m` and `.jl` cache files exist. Generated `.jl` cache execution is
-unsafe for large cases and is disabled by default; the developer-only
-`--allow-generated-jl-cache` flag must be supplied explicitly to measure that
-path. If only a generated `.jl` exists, the summary records that the canonical
-`.m` source is missing and tells the user to fetch the case through the Web
-UI/service cache path.
-
-The benchmark calls `start_powerflow_run`, `list_powerflow_artifacts`, and
-`resolve_powerflow_artifact` rather than bypassing the service layer. Results
-are written below the selected benchmark output root as
-`benchmark_large_cases.json` and `benchmark_large_cases.md`. The summary
-separates file/cache preparation, `.m` parsing, `.jl` load/parse, Sparlectra
-network construction, solver setup/solve phases, diagnostics, CSV export, and
-artifact writing when those phases are recorded. Each summary row includes
-`requested_case`, `resolved_case`, `canonical_source`, and
-`used_generated_jl_cache`; normal Web UI/service benchmark runs report
-`used_generated_jl_cache = false`.
-
 Interpret the major loading phases as follows:
 
 - `reading_matpower_case`: the service is reading the effective MATPOWER case.

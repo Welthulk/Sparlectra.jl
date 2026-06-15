@@ -114,15 +114,6 @@ function route_sparlectra_webui(method::AbstractString, target::AbstractString, 
     response = download ? handle_powerflow_artifact_download(run_id, artifact_name) : handle_powerflow_artifact(run_id, artifact_name)
     _webui_log_route!(log_root, download ? "artifact_downloaded" : "artifact_opened", verb, path; status = response.status, run_id, artifact = artifact_name)
     return response
-  elseif verb == "GET" && path == "/powerflow/large-case-benchmark"
-    _webui_log_route!(log_root, "large_case_benchmark_opened", verb, path; status = "opened")
-    return handle_large_case_benchmark_artifacts(output_root)
-  elseif verb == "GET" && startswith(path, "/powerflow/large-case-benchmark/artifact/")
-    artifact_name = _webui_urldecode(path[(lastindex("/powerflow/large-case-benchmark/artifact/") + 1):end])
-    download = get(query, "download", "") == "1"
-    response = handle_large_case_benchmark_artifact(output_root, artifact_name; download)
-    _webui_log_route!(log_root, download ? "large_case_benchmark_artifact_downloaded" : "large_case_benchmark_artifact_opened", verb, path; status = response.status, artifact = artifact_name)
-    return response
   elseif verb == "GET" && path == "/powerflow/history"
     _webui_log_route!(log_root, "history_opened", verb, path; status = "opened")
     return handle_powerflow_history(output_root)
