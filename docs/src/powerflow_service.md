@@ -67,9 +67,9 @@ tracks queued/running/success/failed/aborted states, and exposes cooperative
 abort requests. Cancellation is checked around case resolution, configuration
 and import work, solving, diagnostics, and artifact writing. Import and service
 work is reported with finer phases such as `reading_matpower_case`,
-`loading_julia_case`, `building_sparlectra_net`, `building_ybus`,
-`preparing_start_values`, `solving_powerflow`, and artifact-writing phases so
-large MATPOWER cases no longer appear only as a broad loading step. The rectangular
+`loading_julia_case`, `building_sparlectra_net`, `preparing_start_values`,
+`solving_powerflow`, and artifact-writing phases so large MATPOWER cases no
+longer appear only as a broad loading step. The rectangular
 solver checks before and after Y-bus construction and start projection, at
 every Newton iteration boundary, after Q-limit active-set work, and after each
 Newton step. A currently executing sparse linear solve remains
@@ -84,7 +84,11 @@ change the PowerFlow result schema or per-run artifact contract. Every event
 includes the running Sparlectra version and a millisecond-precision UTC
 timestamp ending in `Z`. Marked `autorefresh=1` status requests are omitted from
 user-action logging. Above 10,000 valid entries, the JSONL log atomically keeps
-its newest 1,000 valid entries.
+its newest 1,000 valid entries. Operation-log phase events are intentionally
+high-level: repeated Newton iterations, Q-limit processing, Y-bus substeps, and
+linear solves update the active job phase for abort visibility but are kept out
+of the operation log to avoid per-iteration spam. Detailed solver timings remain
+available in `run.log`, `result.json`, and `performance.log`.
 
 Aborted runs receive a normal run directory, `result.json`, an index entry, and
 a `run.log` status marker. This keeps history recovery and artifact path safety
@@ -157,6 +161,43 @@ extension and size, service phase timings, and a compact large-case timing
 summary. Benchmark median and configured samples are included when benchmarking is enabled.
 `output.logfile_results=full` adds effective configuration, artifact choices,
 and available status diagnostics beyond the `classic` report.
+
+## Large MATPOWER benchmark helpers
+
+Run the API/Web UI service-path benchmark with:
+
+```bash
+julia --project=. scripts/benchmark_large_matpower_cases.jl --cases case118.m,case1354pegase.m,case2869pegase.m,case9241pegase.m
+```
+
+The benchmark intentionally does **not** implement a separate MATPOWER download
+path. It uses the same Web UI case cache directory returned by
+`default_webui_case_cache_dir(output_root)` and resolves bare case names through
+`start_powerflow_run(...; case_directory=cache_dir)`, matching the Web UI/service
+cache path. Missing bare case names therefore trigger the existing
+`ensure_casefile` download/generation behavior used by the Web UI. If a case is
+missing and the local environment cannot reach the MATPOWER source, the summary
+records the failed service resolution and tells the user to fetch the case
+through the Web UI/service cache path.
+
+The benchmark calls `start_powerflow_run`, `list_powerflow_artifacts`, and
+`resolve_powerflow_artifact` rather than bypassing the service layer. Results
+are written below the selected benchmark output root as
+`benchmark_large_cases.json` and `benchmark_large_cases.md`. The summary
+separates file/cache preparation, `.m` parsing, `.jl` load/parse, Sparlectra
+network construction, solver setup/solve phases, diagnostics, CSV export, and
+artifact writing when those phases are recorded.
+
+Interpret the major loading phases as follows:
+
+- `reading_matpower_case`: the service is reading the effective MATPOWER case.
+- `loading_julia_case`: `MatpowerIO.read_case` is evaluating a generated `.jl`
+  case; very large literal Julia cases can take several minutes on cold runs.
+- `building_sparlectra_net`: `createNetFromMatPowerCase` is constructing the
+  Sparlectra network from the parsed MATPOWER data.
+- `solving_powerflow`: the rectangular Newton solve is active; detailed Y-bus,
+  Newton-iteration, Q-limit, and linear-solve aggregates are in
+  `performance.log`.
 
 This layer intentionally introduces no HTTP routes, Genie.jl server, browser
 GUI, authentication, or database. See `examples/exp_powerflow_service.jl` for a
