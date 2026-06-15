@@ -219,8 +219,17 @@ The indented **CSV format** selector is subordinate to the opt-in export:
 US-formatted numbers containing a thousands comma are quoted because comma is
 also the field delimiter. Empty values and fields containing delimiters,
 quotes, carriage returns, or line feeds follow the same CSV quoting rules in
-all formats. The readable `v_complex` column follows the selected decimal
-notation, while `v_re` and `v_im` remain separate numeric columns.
+all formats. The Excel-oriented formats write numeric fields in decimal
+notation instead of exponent notation where practical. The readable `v_complex`
+column follows the selected decimal notation, while `v_re` and `v_im` remain
+separate numeric columns.
+
+Excel may still warn about automatic conversions when opening CSV files
+directly, especially if textual identifiers resemble scientific notation such
+as `1E5`. Use Excel's **Data > From Text/CSV** import flow and select text
+types for exact textual identifiers when that distinction matters. The
+`technical` format remains the clean machine-readable default and does not add
+Excel-specific text hints.
 
 ## PowerFlow input paths
 

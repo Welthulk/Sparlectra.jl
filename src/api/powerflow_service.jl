@@ -282,24 +282,28 @@ end
 
 function hard_reset_webui_powerflow_run(run_id::AbstractString)::Dict{String,Any}
   _safe_powerflow_run_id(run_id) || return _service_failure("unsafe_run_id", "Unsafe PowerFlow run ID rejected."; run_id)
-  return lock(_POWERFLOW_SERVICE_LOCK) do
+  reset = lock(_POWERFLOW_SERVICE_LOCK) do
     job = get(_POWERFLOW_WEBUI_JOBS, String(run_id), nothing)
     job === nothing && return _service_failure("run_not_found", "No Web UI PowerFlow run found for run_id $(run_id)."; run_id)
     get(job, "status", "") == "aborting" || return _service_failure("run_not_resettable", "Hard reset is only available while abort is pending."; run_id)
     previous_phase = get(job, "current_phase", "unknown")
+    output_dir = String(job["output_dir"])
+    message = "Hard reset requested while aborting. This result is not a valid solved PowerFlow result."
     job["status"] = "aborted_unknown"
     job["current_phase"] = "hard_reset_requested"
-    job["message"] = "Hard reset requested while aborting. This result is not a valid solved PowerFlow result."
+    job["message"] = message
     job["finished_at"] = Dates.now(Dates.UTC)
-    mkpath(String(job["output_dir"]))
-    open(joinpath(String(job["output_dir"]), "run.log"), "a") do io
-      println(io, "Hard reset requested by user while aborting.")
-      println(io, "Previous phase: ", previous_phase)
-      println(io, "Result is not a valid solved PowerFlow result.")
-    end
-    _write_webui_job_marker!(job, :aborted_unknown, "hard_reset_requested", job["message"])
-    merge(_webui_job_snapshot(job), Dict("previous_phase" => previous_phase))
+    (success = true, job = job, previous_phase = previous_phase, output_dir = output_dir, message = message)
   end
+  haskey(reset, :success) || return reset
+  mkpath(reset.output_dir)
+  open(joinpath(reset.output_dir, "run.log"), "a") do io
+      println(io, "Hard reset requested by user while aborting.")
+      println(io, "Previous phase: ", reset.previous_phase)
+      println(io, "Result is not a valid solved PowerFlow result.")
+  end
+  _write_webui_job_marker!(reset.job, :aborted_unknown, "hard_reset_requested", reset.message)
+  return merge(_webui_job_snapshot(reset.job), Dict("previous_phase" => reset.previous_phase))
 end
 
 """
@@ -348,8 +352,10 @@ function start_webui_powerflow_run(request::AbstractDict; case_directory::Union{
       detailed_result_csv = _service_request_value(request, "detailed_result_csv", false)
       detailed_result_csv_semicolon = _service_request_value(request, "detailed_result_csv_semicolon", false)
       detailed_result_csv_format = _service_request_value(request, "detailed_result_csv_format", nothing)
-      csv_format = _resolve_detailed_csv_format(detailed_result_csv_format === nothing ? (detailed_result_csv_semicolon ? "excel_de" : "technical") : detailed_result_csv_format)
-      detailed_result_csv && event_callback("detailed_result_csv_export_enabled"; run_id, csv_format = csv_format.name, delimiter = string(csv_format.delimiter), decimal_separator = csv_format.decimal_separator, thousands_separator = csv_format.thousands_separator, status = "enabled")
+      if detailed_result_csv
+        csv_format = _resolve_detailed_csv_format(detailed_result_csv_format === nothing ? (detailed_result_csv_semicolon ? "excel_de" : "technical") : detailed_result_csv_format)
+        event_callback("detailed_result_csv_export_enabled"; run_id, csv_format = csv_format.name, delimiter = string(csv_format.delimiter), decimal_separator = csv_format.decimal_separator, thousands_separator = csv_format.thousands_separator, status = "enabled")
+      end
       worker_request = Dict{String,Any}(String(key) => value for (key, value) in request)
       worker_request["run_id"] = run_id
       worker_request["cancellation_token"] = job["abort_requested"]
@@ -915,7 +921,7 @@ function start_powerflow_run(request::AbstractDict; case_directory::Union{Nothin
   detailed_result_csv_semicolon = _service_request_value(request, "detailed_result_csv_semicolon", false)
   detailed_result_csv_semicolon isa Bool || return _service_failure("invalid_request", "detailed_result_csv_semicolon must be boolean.")
   detailed_result_csv_format = _service_request_value(request, "detailed_result_csv_format", nothing)
-  if detailed_result_csv_format !== nothing
+  if detailed_result_csv && detailed_result_csv_format !== nothing
     detailed_result_csv_format isa AbstractString || return _service_failure("invalid_request", "detailed_result_csv_format must be a string.")
     try
       _resolve_detailed_csv_format(detailed_result_csv_format)

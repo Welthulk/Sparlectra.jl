@@ -48,6 +48,22 @@ function run_api_tests()
       us_path = joinpath(tmpdir, "writer_us.csv")
       Sparlectra._write_namedtuple_csv(us_path, number_rows, propertynames(only(number_rows)); format = "excel_us")
       @test read(us_path, String) == "integer,decimal,negative,nan,inf,neginf\n\"1,000,000\",\"1,234.56\",\"-1,234.5\",NaN,Inf,-Inf\n"
+      exponent_rows = [(id = "1E5", small = 1.23e-5, large = 1.23e5)]
+      exponent_de_path = joinpath(tmpdir, "writer_exponent_de.csv")
+      Sparlectra._write_namedtuple_csv(exponent_de_path, exponent_rows, propertynames(only(exponent_rows)); delimiter = ';', format = "excel_de")
+      exponent_de = read(exponent_de_path, String)
+      @test exponent_de == "id;small;large\n1E5;0,0000123;123.000\n"
+      @test !occursin("1,23e", lowercase(exponent_de))
+      @test !occursin("=", exponent_de)
+      exponent_us_path = joinpath(tmpdir, "writer_exponent_us.csv")
+      Sparlectra._write_namedtuple_csv(exponent_us_path, exponent_rows, propertynames(only(exponent_rows)); format = "excel_us")
+      exponent_us = read(exponent_us_path, String)
+      @test exponent_us == "id,small,large\n1E5,0.0000123,\"123,000\"\n"
+      @test !occursin("1.23e", lowercase(exponent_us))
+      @test !occursin("=", exponent_us)
+      exponent_technical_path = joinpath(tmpdir, "writer_exponent_technical.csv")
+      Sparlectra._write_namedtuple_csv(exponent_technical_path, exponent_rows, propertynames(only(exponent_rows)); format = "technical")
+      @test read(exponent_technical_path, String) == "id,small,large\n1E5,1.23e-05,123000\n"
       @test_throws ArgumentError Sparlectra._resolve_detailed_csv_format("unknown")
 
       casefile = _write_api_test_case(joinpath(tmpdir, "case_api.m"))
@@ -142,6 +158,25 @@ function run_api_tests()
       @test classic.success && full.success
       @test !isfile(joinpath(classic_dir, "bus_voltages_complex.csv"))
       @test !isfile(joinpath(classic_dir, "branch_flows.csv"))
+      ignored_csv_format = run_sparlectra_api(
+        casefile = casefile,
+        config_file = template,
+        output_dir = joinpath(tmpdir, "ignored_csv_format"),
+        config_overrides = Dict("benchmark.enabled" => false),
+        detailed_result_csv = false,
+        detailed_result_csv_format = "unknown",
+      )
+      @test ignored_csv_format.success
+      invalid_csv_format = run_sparlectra_api(
+        casefile = casefile,
+        config_file = template,
+        output_dir = joinpath(tmpdir, "invalid_csv_format"),
+        config_overrides = Dict("benchmark.enabled" => false),
+        detailed_result_csv = true,
+        detailed_result_csv_format = "unknown",
+      )
+      @test !invalid_csv_format.success
+      @test invalid_csv_format.reason == "invalid_detailed_result_csv_format"
       classic_log = read(joinpath(classic_dir, "run.log"), String)
       full_log = read(joinpath(full_dir, "run.log"), String)
       @test !occursin("Full run details", classic_log)

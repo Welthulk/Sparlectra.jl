@@ -110,9 +110,33 @@ function _format_csv_number(value::AbstractFloat, format)::String
   isnan(value) && return "NaN"
   isinf(value) && return signbit(value) ? "-Inf" : "Inf"
   technical = @sprintf("%.15g", value)
+  if format.name != "technical" && occursin(r"[eE]", technical)
+    exponent_marker = findfirst(character -> character in ('e', 'E'), technical)
+    mantissa = technical[begin:prevind(technical, exponent_marker)]
+    exponent = parse(Int, technical[nextind(technical, exponent_marker):end])
+    sign = startswith(mantissa, "-") ? "-" : ""
+    unsigned = isempty(sign) ? mantissa : mantissa[2:end]
+    dot_index = findfirst(==('.'), unsigned)
+    fractional_digits = dot_index === nothing ? 0 : ncodeunits(unsigned) - dot_index
+    digits = replace(unsigned, "." => "")
+    decimal_position = ncodeunits(digits) - fractional_digits + exponent
+    if decimal_position <= 0
+      technical = sign * "0." * repeat("0", -decimal_position) * digits
+    elseif decimal_position >= ncodeunits(digits)
+      technical = sign * digits * repeat("0", decimal_position - ncodeunits(digits))
+    else
+      technical = sign * digits[1:decimal_position] * "." * digits[(decimal_position + 1):end]
+    end
+  end
+  if format.name != "technical" && occursin('.', technical)
+    technical = replace(technical, r"0+$" => "")
+    technical = replace(technical, r"\.$" => "")
+    isempty(technical) && (technical = "0")
+    technical == "-0" && (technical = "0")
+  end
   mantissa_exponent = split(technical, r"(?=[eE])"; limit = 2)
   mantissa = mantissa_exponent[1]
-  exponent = length(mantissa_exponent) == 2 ? mantissa_exponent[2] : ""
+  exponent = format.name == "technical" && length(mantissa_exponent) == 2 ? mantissa_exponent[2] : ""
   parts = split(mantissa, '.'; limit = 2)
   integer_part = _group_csv_integer(parts[1], format.thousands_separator)
   fractional_part = length(parts) == 2 ? format.decimal_separator * parts[2] : ""
@@ -389,13 +413,16 @@ function _run_sparlectra_api(;
   run_diagnostics && _write_powerflow_diagnostics(joinpath(output_path, "diagnose.log"), raw_result)
   csv_artifacts = String[]
   csv_export_error = nothing
-  csv_format_name = detailed_result_csv_format === nothing ?
-                    (detailed_result_csv_semicolon ? "excel_de" : "technical") :
-                    String(detailed_result_csv_format)
-  csv_format = try
-    _resolve_detailed_csv_format(csv_format_name)
-  catch err
-    return _api_failure("invalid_detailed_result_csv_format", sprint(showerror, err); run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file)
+  csv_format = nothing
+  if detailed_result_csv
+    csv_format_name = detailed_result_csv_format === nothing ?
+                      (detailed_result_csv_semicolon ? "excel_de" : "technical") :
+                      String(detailed_result_csv_format)
+    csv_format = try
+      _resolve_detailed_csv_format(csv_format_name)
+    catch err
+      return _api_failure("invalid_detailed_result_csv_format", sprint(showerror, err); run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file)
+    end
   end
   if detailed_result_csv && raw_result.final_converged && raw_result.solution_available
     try
