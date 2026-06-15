@@ -67,9 +67,9 @@ tracks queued/running/success/failed/aborted states, and exposes cooperative
 abort requests. Cancellation is checked around case resolution, configuration
 and import work, solving, diagnostics, and artifact writing. Import and service
 work is reported with finer phases such as `reading_matpower_case`,
-`loading_julia_case`, `building_sparlectra_net`, `building_ybus`,
-`preparing_start_values`, `solving_powerflow`, and artifact-writing phases so
-large MATPOWER cases no longer appear only as a broad loading step. The rectangular
+`loading_julia_case`, `building_sparlectra_net`, `preparing_start_values`,
+`solving_powerflow`, and artifact-writing phases so large MATPOWER cases no
+longer appear only as a broad loading step. The rectangular
 solver checks before and after Y-bus construction and start projection, at
 every Newton iteration boundary, after Q-limit active-set work, and after each
 Newton step. A currently executing sparse linear solve remains
@@ -84,7 +84,11 @@ change the PowerFlow result schema or per-run artifact contract. Every event
 includes the running Sparlectra version and a millisecond-precision UTC
 timestamp ending in `Z`. Marked `autorefresh=1` status requests are omitted from
 user-action logging. Above 10,000 valid entries, the JSONL log atomically keeps
-its newest 1,000 valid entries.
+its newest 1,000 valid entries. Operation-log phase events are intentionally
+high-level: repeated Newton iterations, Q-limit processing, Y-bus substeps, and
+linear solves update the active job phase for abort visibility but are kept out
+of the operation log to avoid per-iteration spam. Detailed solver timings remain
+available in `run.log`, `result.json`, and `performance.log`.
 
 Aborted runs receive a normal run directory, `result.json`, an index entry, and
 a `run.log` status marker. This keeps history recovery and artifact path safety
@@ -98,11 +102,12 @@ if controlled cancellation exits the worker.
   the run ID and directory, invokes the programmatic API, registers the result,
   and updates the persistent index. A trusted caller such as the Web UI can
   provide the server-owned MATPOWER case directory through the function
-  keyword; bare `.m` or `.jl` names are then resolved with `ensure_casefile`
-  using `to_jl=true`. Existing or generated `.jl` cases are preferred, while a
-  readable `.m` case remains the fallback if conversion fails. Browser form
-  values never control this directory, missing path-like inputs are not
-  downloaded, and URLs are rejected.
+  keyword. Bare `.m` names are resolved with `ensure_casefile` using
+  `to_jl=false` and remain the executed source. Generated MATPOWER `.jl` cache
+  files in that directory are internal artifacts: explicit `.jl` requests resolve
+  to a matching `.m` source when one exists and are rejected when the `.m` source
+  is missing. Browser form values never control this directory, missing
+  path-like inputs are not downloaded, and URLs are rejected.
   Optional `performance_timing` (`off`, `compact`, or `full`),
   `run_diagnostics`, `detailed_result_csv`, and
   `detailed_result_csv_format` request fields are forwarded to the API artifact
@@ -157,6 +162,17 @@ extension and size, service phase timings, and a compact large-case timing
 summary. Benchmark median and configured samples are included when benchmarking is enabled.
 `output.logfile_results=full` adds effective configuration, artifact choices,
 and available status diagnostics beyond the `classic` report.
+
+Interpret the major loading phases as follows:
+
+- `reading_matpower_case`: the service is reading the effective MATPOWER case.
+- `loading_julia_case`: `MatpowerIO.read_case` is evaluating a generated `.jl`
+  case; very large literal Julia cases can take several minutes on cold runs.
+- `building_sparlectra_net`: `createNetFromMatPowerCase` is constructing the
+  Sparlectra network from the parsed MATPOWER data.
+- `solving_powerflow`: the rectangular Newton solve is active; detailed Y-bus,
+  Newton-iteration, Q-limit, and linear-solve aggregates are in
+  `performance.log`.
 
 This layer intentionally introduces no HTTP routes, Genie.jl server, browser
 GUI, authentication, or database. See `examples/exp_powerflow_service.jl` for a

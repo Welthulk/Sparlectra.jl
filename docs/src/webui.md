@@ -129,6 +129,10 @@ users can distinguish reader, converter/cache, network-builder, solver, and
 artifact costs. These diagnostics do not guarantee that very large cases finish
 quickly through the local Web UI; they identify where follow-up optimization
 should focus.
+The operation log intentionally records only high-level phase starts; detailed
+Y-bus, Newton-iteration, Q-limit, and linear-solve timings belong to each run's
+`performance.log` and are summarized there instead of being repeated in the Web
+UI support log.
 
 Deletion of a queued, running, or aborting run is rejected with an explanation.
 After the run reaches terminal `aborted` status, normal deletion is available.
@@ -154,8 +158,10 @@ read-only information, and cannot be overridden by a submitted browser field.
 The page does not offer a generic YAML editor and never modifies the selected
 template. The service creates an `effective_config.yaml` artifact for each run.
 
-The existing-case selector lists `.m` and `.jl` files from the user Web UI case
-cache. First startup provisions the small `warmup_case3.jl` demo case. A
+The existing-case selector lists canonical MATPOWER `.m` files from the user Web UI case
+cache. Generated MATPOWER `.jl` cache artifacts are internal and are not user-selectable.
+First startup still provisions the small `warmup_case3.jl` demo case for warmup,
+but generated MATPOWER cache files are hidden from normal case selection. A
 separate manual field accepts a bare case name such as `case14.m`, `case118.m`,
 or `case9241pegase.m`; a nonempty manual value overrides the selected cached
 case.
@@ -166,12 +172,17 @@ the MATPOWER project, its citation guidance, and the standard 2011 paper DOI,
 and notes that ACTIVSg, PEGASE, RTE, and other case files may request additional
 case-specific citations in their file headers.
 
-A missing bare `.m` or `.jl` case name is resolved in the user Web UI
-`data/mpower` cache through the standard MATPOWER download helper. For an `.m`
-case, Sparlectra generates a Julia `.jl` representation in that cache and uses
-it when generation succeeds. Existing generated `.jl` files are preferred on
-later runs. If generation fails but the `.m` file remains readable, the run
-falls back to that cached `.m` file.
+A missing bare `.m` case name is resolved in the user Web UI `data/mpower` cache
+through the standard MATPOWER download helper and remains the executed source.
+Web UI/service PowerFlow runs do not automatically replace selected `.m` files
+with generated `.jl` cache files. If a user manually submits a generated `.jl`
+file from the Web UI MATPOWER cache and a matching `.m` source exists, the
+service resolves back to the `.m` file and records that the generated cache was
+bypassed. If the matching `.m` source is missing, the request is rejected with a
+clear validation error. Large generated `.jl` MATPOWER cases can fail while
+Julia and SparseArrays load literal data, before Sparlectra network construction
+or Newton iterations begin, so `.m` remains the canonical Web UI execution
+source.
 
 Existing absolute and relative `.m` or `.jl` paths remain supported. A missing
 input containing a path separator is rejected instead of downloaded, and URL
@@ -246,7 +257,7 @@ Excel-specific text hints.
 
 | Help topic | Input | Guidance |
 |---|---|---|
-| `webui.casefile` | MATPOWER case file | Choose an available `.m` or `.jl` file from the existing-case selector, or type a bare case name or existing local path in the separate manual field. A nonempty manual value takes precedence. Missing bare names may be downloaded into the server-owned `data/mpower` directory; missing path-like inputs and URLs are rejected. Generated `.jl` cases are preferred for execution. |
+| `webui.casefile` | MATPOWER case file | Choose an available canonical `.m` file from the existing-case selector, or type a bare case name or existing local path in the separate manual field. A nonempty manual value takes precedence. Missing bare `.m` names may be downloaded into the server-owned `data/mpower` directory; generated MATPOWER `.jl` cache files in that directory are not user-selectable and are not preferred for execution. Missing path-like inputs and URLs are rejected. |
 | `webui.config_file` | Configuration template file | Select a YAML configuration or `*.yaml.example` template discovered in `examples`. Form values create allowlisted per-run overrides, while the selected template remains unchanged. |
 | `webui.output_root` | Output root directory | Configure this path when calling `start_sparlectra_webui`; the browser displays it read-only. The service creates its persistent run index and one subdirectory per run beneath this root. |
 

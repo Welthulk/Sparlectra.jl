@@ -1,6 +1,25 @@
 const _POWERFLOW_WEBUI_JOBS = Dict{String,Dict{String,Any}}()
 const _POWERFLOW_WEBUI_ACTIVE_STATES = Set(("queued", "running", "aborting"))
 const WEBUI_ABORT_HARD_RESET_AFTER_SECONDS = 60
+const _WEBUI_OPERATION_LOG_PHASES = Set((
+  "resolving_case",
+  "checking_case_cache",
+  "preparing_case_file",
+  "preparing_configuration",
+  "reading_matpower_case",
+  "loading_julia_case",
+  "converting_matpower_case",
+  "parsing_matpower_file",
+  "building_sparlectra_net",
+  "applying_import_options",
+  "preparing_start_values",
+  "solving_powerflow",
+  "postprocessing_result",
+  "writing_artifacts",
+  "finalizing_success",
+  "finalizing_failed",
+  "finalizing_aborted",
+))
 
 struct PowerFlowAborted <: Exception end
 Base.showerror(io::IO, ::PowerFlowAborted) = print(io, "PowerFlow run aborted by user.")
@@ -22,8 +41,14 @@ function _update_webui_job_phase!(job::AbstractDict, phase::AbstractString)
 end
 
 function _webui_phase_event!(job::AbstractDict, phase::AbstractString, event_callback)
-  _update_webui_job_phase!(job, phase)
-  event_callback("powerflow_phase_started"; run_id = job["run_id"], phase = String(phase), status = get(job, "status", "running"))
+  phase_name = String(phase)
+  phase_name == "total_service" && return nothing
+  previous_logged_phase = get(job, "last_operation_log_phase", nothing)
+  _update_webui_job_phase!(job, phase_name)
+  if phase_name in _WEBUI_OPERATION_LOG_PHASES && previous_logged_phase != phase_name
+    job["last_operation_log_phase"] = phase_name
+    event_callback("powerflow_phase_started"; run_id = job["run_id"], phase = phase_name, status = get(job, "status", "running"))
+  end
   return nothing
 end
 
@@ -231,6 +256,8 @@ function start_webui_powerflow_run(request::AbstractDict; case_directory::Union{
           run_id = job["run_id"],
           requested_case = job["casefile"],
           resolved_case = job["resolved_casefile"],
+          canonical_case = lowercase(splitext(String(something(job["casefile"], "")))[2]) == ".jl" && lowercase(splitext(String(something(job["resolved_casefile"], "")))[2]) == ".m" ? job["resolved_casefile"] : nothing,
+          reason = lowercase(splitext(String(something(job["casefile"], "")))[2]) == ".jl" && lowercase(splitext(String(something(job["resolved_casefile"], "")))[2]) == ".m" ? _matpower_cache_jl_bypass_reason() : nothing,
           status = job["status"],
           message = job["message"],
         )
