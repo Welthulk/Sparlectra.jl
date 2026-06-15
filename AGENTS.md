@@ -133,6 +133,7 @@ Automated coding agents must not perform the following actions unless the user e
 - converting many tests from unqualified public calls to qualified internal calls,
 - adding global variables or dummy functions to satisfy missing local keyword errors,
 - creating new changelog files,
+- creating independent MATPOWER/Web UI benchmark download/cache workflows that duplicate the existing Web UI case cache,
 - creating broad compatibility layers after an intentional API cleanup.
 
 ## Required stop conditions
@@ -512,6 +513,84 @@ Rules:
 - Reason: `run_net_acpflow(...)` also executes post-processing (e.g. `calcNetLosses!`,
   branch-flow calculation, and link-flow calculation) so reported network losses
   and branch/link flows are populated consistently.
+
+
+## Web UI MATPOWER case cache and benchmark policy
+
+The local PowerFlow Web UI already owns the MATPOWER case registry, case resolution, and local cache behavior.
+
+Automated coding agents must not introduce a second independent MATPOWER download/cache workflow unless the user explicitly asks for it.
+
+### Required behavior
+
+- Use the existing Web UI case registry/cache path for Web UI/API benchmarks.
+- Use the same case resolution path that the Web UI uses.
+- Benchmark through the PowerFlow service/API path, not through a parallel standalone workflow.
+- Prefer:
+  ```text
+  Web UI form / service request
+  -> existing case resolution
+  -> existing Web UI cache
+  -> start_powerflow_run(...)
+  -> get_powerflow_result(...)
+  -> list_powerflow_artifacts(...)
+  -> resolve_powerflow_artifact(...)
+  ```
+- If a case is missing, trigger or reuse the existing Web UI download/cache mechanism where it already exists.
+- If the existing Web UI mechanism cannot fetch the case in the current environment, report that explicitly and provide the exact missing case name and expected cache location.
+- Do not create a new `download_large_matpower_cases.jl`-style script merely to duplicate Web UI cache behavior.
+- Do not add a new raw-GitHub/MATPOWER download path beside the Web UI cache path unless the task explicitly requests an independent developer benchmark downloader.
+- Do not commit downloaded MATPOWER benchmark cases or generated large `.jl` case files unless explicitly requested.
+
+### Benchmark helpers
+
+Benchmark helpers may be added only when they measure the existing Sparlectra service path.
+
+They must:
+
+- use the same case names and paths visible to the Web UI,
+- reuse the existing Web UI cache directory,
+- report skipped cases clearly when they are not available through the Web UI mechanism,
+- write benchmark summaries as artifacts or scratch output,
+- avoid changing Web UI user behavior,
+- avoid new mandatory network dependencies for normal tests.
+
+A benchmark helper should measure:
+
+```text
+case resolution
+cache lookup
+.m / .jl loading
+MATPOWER parsing
+Sparlectra network construction
+Y-bus / solver setup
+Newton solve
+diagnostics
+artifact writing
+CSV export if explicitly enabled
+```
+
+### Operation log vs. performance log
+
+For Web UI phase instrumentation:
+
+- Operation-log events should stay high-level and reviewable.
+- Do not log every Newton iteration or every linear solve as Web UI operation-log events.
+- Detailed repeated timings belong in `performance.log`, `run.log`, or structured result metadata.
+- Avoid duplicate `powerflow_phase_started` entries for the same phase unless the phase is genuinely re-entered.
+- Suppress internal aggregate phases such as `total_service` from the operation log unless they are shown as a final summary.
+- If abort is requested, report the most specific known active phase.
+- Do not report only `loading_case` when a more specific phase such as `reading_matpower_case`, `loading_julia_case`, `building_sparlectra_net`, or `solving_powerflow` is available.
+
+### Tests and documentation
+
+When changing Web UI case-cache or benchmark behavior:
+
+- Extend existing API/Web UI tests first.
+- Keep large benchmark cases out of the normal fast test profile.
+- Use small fixtures such as `case14` or `case118` for automated smoke coverage.
+- Document manual or extended benchmark commands in developer documentation.
+- Make proxy/network limitations explicit in verification summaries.
 
 ## Definition: Feature vs Improvement vs Bugfix
 
