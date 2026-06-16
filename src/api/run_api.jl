@@ -1,3 +1,17 @@
+# Copyright 2023–2026 Udo Schmitz
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 using UUIDs: uuid4
 
 const _SPARLECTRA_API_SCHEMA_VERSION = "1.0"
@@ -43,13 +57,7 @@ function _start_service_phase!(recorder::PowerFlowPhaseTimingRecorder, phase::Ab
     return recorder.timings[recorder.active_index]
   end
   _complete_active_phase!(recorder)
-  timing = Dict{String,Any}(
-    "phase" => phase_name,
-    "started_at" => _api_datetime_string(Dates.now(Dates.UTC)),
-    "ended_at" => nothing,
-    "elapsed_seconds" => nothing,
-    "status" => String(status),
-  )
+  timing = Dict{String,Any}("phase" => phase_name, "started_at" => _api_datetime_string(Dates.now(Dates.UTC)), "ended_at" => nothing, "elapsed_seconds" => nothing, "status" => String(status))
   push!(recorder.timings, timing)
   recorder.active_index = length(recorder.timings)
   return timing
@@ -240,13 +248,19 @@ end
 
 function _group_csv_integer(text::AbstractString, separator::AbstractString)::String
   isempty(separator) && return String(text)
+
   sign = startswith(text, "-") ? "-" : ""
   digits = isempty(sign) ? String(text) : text[2:end]
+
+  # Thousands grouping is only valid for integer digit strings. Leave textual
+  # values such as Bool strings unchanged if they accidentally reach this helper.
+  (isempty(digits) || !all(isdigit, digits)) && return String(text)
+
   first_group = mod(length(digits), 3)
   first_group == 0 && (first_group = 3)
   groups = String[digits[1:first_group]]
-  for start in (first_group + 1):3:length(digits)
-    push!(groups, digits[start:(start + 2)])
+  for start = (first_group+1):3:length(digits)
+    push!(groups, digits[start:(start+2)])
   end
   return sign * join(groups, separator)
 end
@@ -274,7 +288,7 @@ function _format_csv_number(value::AbstractFloat, format)::String
     elseif decimal_position >= ncodeunits(digits)
       technical = sign * digits * repeat("0", decimal_position - ncodeunits(digits))
     else
-      technical = sign * digits[1:decimal_position] * "." * digits[(decimal_position + 1):end]
+      technical = sign * digits[1:decimal_position] * "." * digits[(decimal_position+1):end]
     end
   end
   if format.name != "technical" && occursin('.', technical)
@@ -295,6 +309,11 @@ end
 function _format_csv_value(value, format)::String
   value === missing && return ""
   value === nothing && return ""
+
+  # Bool is an Integer subtype in Julia. Format it before Integer values so
+  # Excel-oriented thousands grouping cannot turn true/false into t.rue/fa.lse.
+  value isa Bool && return string(value)
+
   value isa Integer && return _format_csv_number(value, format)
   value isa AbstractFloat && return _format_csv_number(value, format)
   return string(value)
@@ -312,9 +331,7 @@ end
 
 function _write_namedtuple_csv(path::AbstractString, rows::AbstractVector, columns; delimiter::Char = ',', format = nothing)
   delimiter in (',', ';') || throw(ArgumentError("CSV delimiter must be ',' or ';'."))
-  resolved_format = format === nothing ?
-                    (name = "custom", delimiter = delimiter, decimal_separator = '.', thousands_separator = "") :
-                    _resolve_detailed_csv_format(format)
+  resolved_format = format === nothing ? (name = "custom", delimiter = delimiter, decimal_separator = '.', thousands_separator = "") : _resolve_detailed_csv_format(format)
   resolved_format.delimiter == delimiter || throw(ArgumentError("CSV delimiter does not match detailed CSV format $(resolved_format.name)."))
   open(path, "w") do io
     println(io, join(String.(columns), delimiter))
@@ -326,51 +343,48 @@ function _write_namedtuple_csv(path::AbstractString, rows::AbstractVector, colum
 end
 
 function _complex_voltage_rows(node_rows::AbstractVector, format)
-  return [begin
-    angle = deg2rad(Float64(row.va_deg))
-    v_re = Float64(row.vm_pu) * cos(angle)
-    v_im = Float64(row.vm_pu) * sin(angle)
-    merge(
-      row,
-      (
-        v_re = round(v_re; sigdigits = 10),
-        v_im = round(v_im; sigdigits = 10),
-        v_complex = string(
-          _format_csv_number(v_re, format),
-          signbit(v_im) ? " - j" : " + j",
-          _format_csv_number(abs(v_im), format),
-        ),
-      ),
-    )
-  end for row in node_rows]
+  return [
+    begin
+      angle = deg2rad(Float64(row.va_deg))
+      v_re = Float64(row.vm_pu) * cos(angle)
+      v_im = Float64(row.vm_pu) * sin(angle)
+      merge(row, (v_re = round(v_re; sigdigits = 10), v_im = round(v_im; sigdigits = 10), v_complex = string(_format_csv_number(v_re, format), signbit(v_im) ? " - j" : " + j", _format_csv_number(abs(v_im), format))))
+    end for row in node_rows
+  ]
 end
 
 function _write_detailed_result_csv(output_path::AbstractString, result::SparlectraRunResult; format = "technical")::Vector{String}
   resolved_format = _resolve_detailed_csv_format(format)
   result.net === nothing && throw(ArgumentError("PowerFlow result does not contain a network for detailed CSV export."))
-  report = buildACPFlowReport(
-    result.net;
-    ct = result.elapsed_s,
-    ite = result.iterations,
-    converged = result.final_converged,
-  )
-  bus_columns = (
-    :bus, :bus_name, :type, :vm_pu, :va_deg, :vn_kV, :v_re, :v_im,
-    :v_complex, :v_kV, :p_gen_MW, :q_gen_MVar, :p_load_MW, :q_load_MVar,
-    :q_limit_hit, :control,
-  )
-  branch_columns = (
-    :branch, :branch_index, :from_bus, :to_bus, :status, :p_from_MW,
-    :q_from_MVar, :p_to_MW, :q_to_MVar, :p_loss_MW, :q_loss_MVar,
-    :rated_MVA, :overloaded,
-  )
+  report = buildACPFlowReport(result.net; ct = result.elapsed_s, ite = result.iterations, converged = result.final_converged)
+  bus_columns = (:bus, :bus_name, :type, :vm_pu, :va_deg, :vn_kV, :v_re, :v_im, :v_complex, :v_kV, :p_gen_MW, :q_gen_MVar, :p_load_MW, :q_load_MVar, :q_limit_hit, :control)
+  branch_columns = (:branch, :branch_index, :from_bus, :to_bus, :status, :p_from_MW, :q_from_MVar, :p_to_MW, :q_to_MVar, :p_loss_MW, :q_loss_MVar, :rated_MVA, :overloaded)
   artifacts = ["bus_voltages_complex.csv", "branch_flows.csv"]
   _write_namedtuple_csv(joinpath(output_path, artifacts[1]), _complex_voltage_rows(report.nodes, resolved_format), bus_columns; delimiter = resolved_format.delimiter, format = resolved_format.name)
   _write_namedtuple_csv(joinpath(output_path, artifacts[2]), report.branches, branch_columns; delimiter = resolved_format.delimiter, format = resolved_format.name)
   return artifacts
 end
 
-function _api_result(; run_id::String = string(uuid4()), schema_version::String = _SPARLECTRA_API_SCHEMA_VERSION, status::Symbol, success::Bool, converged = nothing, solution_available::Bool = false, iterations = nothing, final_mismatch = nothing, reason = nothing, message = nothing, casefile = nothing, config_file = nothing, output_dir::String, logfile = nothing, result_file = nothing, artifacts = SparlectraApiArtifact[], service_phase_timings = Dict{String,Any}[], raw_result = nothing)
+function _api_result(;
+  run_id::String = string(uuid4()),
+  schema_version::String = _SPARLECTRA_API_SCHEMA_VERSION,
+  status::Symbol,
+  success::Bool,
+  converged = nothing,
+  solution_available::Bool = false,
+  iterations = nothing,
+  final_mismatch = nothing,
+  reason = nothing,
+  message = nothing,
+  casefile = nothing,
+  config_file = nothing,
+  output_dir::String,
+  logfile = nothing,
+  result_file = nothing,
+  artifacts = SparlectraApiArtifact[],
+  service_phase_timings = Dict{String,Any}[],
+  raw_result = nothing,
+)
   timings = Dict{String,Any}[Dict{String,Any}(String(key) => value for (key, value) in timing) for timing in service_phase_timings]
   return SparlectraApiResult(run_id, schema_version, status, success, converged, solution_available, iterations, final_mismatch, reason, message, casefile, config_file, output_dir, logfile, result_file, artifacts, timings, raw_result)
 end
@@ -555,10 +569,7 @@ function _run_sparlectra_api(;
 
   raw_result = nothing
   emit_phase("reading_matpower_case")
-  api_performance_profile = Dict{Symbol,Any}(
-    :cancellation_check => () -> _check_powerflow_cancelled!(cancellation_token),
-    :phase_callback => phase -> emit_phase(String(phase)),
-  )
+  api_performance_profile = Dict{Symbol,Any}(:cancellation_check => () -> _check_powerflow_cancelled!(cancellation_token), :phase_callback => phase -> emit_phase(String(phase)))
   execution_start = time_ns()
   try
     open(logfile, "a") do io
@@ -593,9 +604,7 @@ function _run_sparlectra_api(;
   csv_export_error = nothing
   csv_format = nothing
   if detailed_result_csv
-    csv_format_name = detailed_result_csv_format === nothing ?
-                      (detailed_result_csv_semicolon ? "excel_de" : "technical") :
-                      String(detailed_result_csv_format)
+    csv_format_name = detailed_result_csv_format === nothing ? (detailed_result_csv_semicolon ? "excel_de" : "technical") : String(detailed_result_csv_format)
     csv_format = try
       _resolve_detailed_csv_format(csv_format_name)
     catch err

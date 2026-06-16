@@ -1,32 +1,10 @@
 # Function Reference
 
-```@autodocs 
-  Modules = [Sparlectra] 
-  Pages = [    
-    "Sparlectra.jl",
-    "configuration.jl",
-    "api/api_types.jl",
-    "api/config_overrides.jl",
-    "api/artifacts.jl",
-    "api/run_api.jl",
-    "api/serialization.jl",
-    "node.jl", 
-    "shunt.jl", 
-    "lines.jl", 
-    "link.jl",
-    "transformer.jl", 
-    "nbi.jl", 
-    "equicircuit.jl", 
-    "losses.jl", 
-    "links.jl",
-    "powerflow_rectangular/rectangular_network_solver.jl", 
-    "jacobian_fd.jl",
-    "measurements.jl",
-    "state_estimation.jl",    
-    "remove_functions.jl",         
-    "limits.jl", 
-    "import_export.jl",
-    "losses.jl",
-    "results.jl"
-  ]
-```
+This section contains the generated Sparlectra API reference.
+
+- [API and Web UI service](@ref reference_api)
+- [ACPFlow runner](@ref reference_acpflow)
+- [Network model](@ref reference_network)
+- [Rectangular power flow](@ref reference_powerflow_rectangular)
+- [Import and export](@ref reference_import_export)
+- [State estimation and measurements](@ref reference_state_estimation)

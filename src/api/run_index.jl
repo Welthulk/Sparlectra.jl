@@ -1,3 +1,17 @@
+# Copyright 2023–2026 Udo Schmitz
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 const POWERFLOW_RUN_INDEX_FILENAME = "powerflow_runs_index.json"
 
 function _powerflow_index_path(output_root::AbstractString)::String
@@ -117,6 +131,8 @@ function _write_powerflow_run_entries!(output_root::AbstractString, runs::Abstra
   contents = Dict{String,Any}("schema_version" => _SPARLECTRA_API_SCHEMA_VERSION, "runs" => runs)
   index_path = _powerflow_index_path(root)
   temporary_path = index_path * ".tmp"
+  # Write the run index atomically enough for local Web UI restarts: a complete
+  # JSON file replaces the previous index only after serialization succeeds.
   open(temporary_path, "w") do io
     _write_json(io, contents)
     println(io)
@@ -133,6 +149,14 @@ function _write_powerflow_run_index!(output_root::AbstractString, result::Sparle
   return _write_powerflow_run_entries!(output_root, runs)
 end
 
+"""
+    refresh_powerflow_run_registry!(output_root::AbstractString) -> Dict{String,Any}
+
+Reload valid PowerFlow service runs from the persistent index under
+`output_root` into the in-process registry. Runs that were active when the Web
+UI stopped are marked as stale aborted results before registration, while
+invalid or missing entries are reported in `unavailable_runs`.
+"""
 function refresh_powerflow_run_registry!(output_root::AbstractString)::Dict{String,Any}
   root = abspath(output_root)
   index = load_powerflow_run_index(root)
@@ -162,6 +186,8 @@ function refresh_powerflow_run_registry!(output_root::AbstractString)::Dict{Stri
       data = _parse_service_json(read(paths.result_file, String))
       data isa AbstractDict || error("result.json must contain a JSON object")
       if lowercase(string(get(data, "status", ""))) in _POWERFLOW_WEBUI_ACTIVE_STATES
+        # A restarted Web UI cannot know whether an active run reached a valid
+        # solution, so persist an explicit stale-abort status before recovery.
         data["status"] = "aborted_unknown"
         data["success"] = false
         data["solution_available"] = false
@@ -278,4 +304,3 @@ function delete_all_powerflow_runs(; output_root::AbstractString)::Dict{String,A
     "failed_runs" => failed,
   )
 end
-

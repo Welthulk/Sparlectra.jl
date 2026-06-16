@@ -1,3 +1,17 @@
+# Copyright 2023–2026 Udo Schmitz
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 const _WEBUI_DOCS_ROOT = normpath(joinpath(@__DIR__, "..", "..", "docs", "src"))
 
 const WEBUI_HELP_TOPICS = Dict(
@@ -12,9 +26,9 @@ const WEBUI_HELP_TOPICS = Dict(
   "power_flow.start_mode.angle_mode" => (label = "Start angle mode", page = "powerflow_configuration", heading = "Start mode options", selector = "`power_flow.start_mode.angle_mode`"),
   "power_flow.start_mode.voltage_mode" => (label = "Start voltage mode", page = "powerflow_configuration", heading = "Start mode options", selector = "`power_flow.start_mode.voltage_mode`"),
   "output.logfile_results" => (label = "Logfile output mode", page = "performance_profiling", heading = "Output configuration", selector = "`output.logfile_results`"),
-  "benchmark.enabled" => (label = "Benchmark enabled", page = "performance_profiling", heading = "Benchmark configuration", selector = "`benchmark.enabled`"),
-  "benchmark.samples" => (label = "Benchmark samples", page = "performance_profiling", heading = "Benchmark configuration", selector = "`benchmark.samples`"),
-  "benchmark.seconds" => (label = "Benchmark seconds", page = "performance_profiling", heading = "Benchmark configuration", selector = "`benchmark.seconds`"),
+  "benchmark.enabled" => (label = "Enable benchmark measurements", page = "performance_profiling", heading = "Benchmark configuration", selector = "`benchmark.enabled`"),
+  "benchmark.samples" => (label = "Benchmark samples (max. repeated measurements)", page = "performance_profiling", heading = "Benchmark configuration", selector = "`benchmark.samples`"),
+  "benchmark.seconds" => (label = "Benchmark max. time budget [s]", page = "performance_profiling", heading = "Benchmark configuration", selector = "`benchmark.seconds`"),
   "webui.performance_timing" => (label = "Performance timing", page = "webui", heading = "Run artifacts and output modes", selector = ""),
   "webui.run_diagnostics" => (label = "Run diagnostics", page = "webui", heading = "Run artifacts and output modes", selector = ""),
   "webui.detailed_result_csv" => (label = "Detailed result CSV export", page = "webui", heading = "Run artifacts and output modes", selector = ""),

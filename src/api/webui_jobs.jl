@@ -1,3 +1,17 @@
+# Copyright 2023–2026 Udo Schmitz
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 const _POWERFLOW_WEBUI_JOBS = Dict{String,Dict{String,Any}}()
 const _POWERFLOW_WEBUI_ACTIVE_STATES = Set(("queued", "running", "aborting"))
 const WEBUI_ABORT_HARD_RESET_AFTER_SECONDS = 60
@@ -42,6 +56,8 @@ end
 
 function _webui_phase_event!(job::AbstractDict, phase::AbstractString, event_callback)
   phase_name = String(phase)
+  # Keep the operation log high-level: detailed aggregate timings belong in the
+  # API performance metadata, while repeated service internals stay out of JSONL.
   phase_name == "total_service" && return nothing
   previous_logged_phase = get(job, "last_operation_log_phase", nothing)
   _update_webui_job_phase!(job, phase_name)
@@ -105,6 +121,8 @@ function _write_aborted_powerflow_result!(job::AbstractDict)
   _write_api_result_file(result)
   result = _refresh_api_artifacts(result)
   _write_api_result_file(result)
+  # Persist cooperative aborts like normal runs so history and artifact views
+  # have a stable result.json after the worker exits.
   _POWERFLOW_SERVICE_RUNS[result.run_id] = result
   _write_powerflow_run_index!(String(job["output_root"]), result)
   return result
@@ -143,6 +161,8 @@ function hard_reset_webui_powerflow_run(run_id::AbstractString)::Dict{String,Any
     previous_phase = get(job, "current_phase", "unknown")
     output_dir = String(job["output_dir"])
     message = "Hard reset requested while aborting. This result is not a valid solved PowerFlow result."
+    # Hard reset is a UI recovery marker only; the background task may still
+    # unwind later, so the result is explicitly classified as not solved.
     job["status"] = "aborted_unknown"
     job["current_phase"] = "hard_reset_requested"
     job["message"] = message

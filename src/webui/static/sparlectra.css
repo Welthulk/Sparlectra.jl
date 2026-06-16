@@ -45,6 +45,80 @@ nav {
   gap: 1.25rem;
 }
 
+.topbar-info-menu {
+  position: relative;
+}
+
+.topbar-info-menu summary {
+  cursor: pointer;
+  font-weight: 700;
+  list-style: none;
+}
+
+.topbar-info-menu summary::-webkit-details-marker {
+  display: none;
+}
+
+.topbar-info-panel {
+  position: absolute;
+  top: calc(100% + .75rem);
+  right: 0;
+  z-index: 10;
+  width: min(90vw, 38rem);
+  max-height: min(75vh, 42rem);
+  overflow: auto;
+  padding: 1rem;
+  color: #172033;
+  background: #fff;
+  border: 1px solid #dbe3ef;
+  border-radius: 10px;
+  box-shadow: 0 18px 40px rgba(20, 35, 61, .22);
+  line-height: 1.45;
+}
+
+.topbar-info-panel h2,
+.topbar-info-panel h3 {
+  margin-top: 0;
+  color: #172033;
+}
+
+.topbar-info-panel h2 {
+  font-size: 1rem;
+}
+
+.topbar-info-panel h3 {
+  font-size: .95rem;
+}
+
+.topbar-info-panel p {
+  margin: .5rem 0;
+}
+
+.topbar-info-panel a {
+  color: #1557a5;
+}
+
+.topbar-info-panel dl {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: .45rem .75rem;
+  margin: 1rem 0 0;
+}
+
+.topbar-info-panel dt {
+  font-weight: 700;
+}
+
+.topbar-info-panel dd {
+  margin: 0;
+  min-width: 0;
+}
+
+.topbar-info-panel code {
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
 .project-docs-link {
   display: inline-flex;
   align-items: center;
@@ -106,26 +180,6 @@ footer {
   overflow-wrap: anywhere;
 }
 
-.citation-box {
-  color: #52627a;
-  font-size: .9rem;
-  line-height: 1.5;
-  padding: .75rem 1rem;
-  background: #f4f7fb;
-  border: 1px solid #dbe3ef;
-  border-radius: 7px;
-}
-
-.citation-box summary {
-  color: #33445f;
-  cursor: pointer;
-  font-weight: 700;
-}
-
-.citation-box p:last-child {
-  margin-bottom: 0;
-}
-
 .panel {
   background: #fff;
   border: 1px solid #dbe3ef;
@@ -172,6 +226,33 @@ button,
 
 .span-2 {
   grid-column: 1/-1;
+}
+
+.expert-section {
+  border: 1px solid #dbe3ef;
+  border-radius: 10px;
+  padding: 0.9rem 1rem;
+  background: #f8fbff;
+}
+
+.expert-section summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.benchmark-section {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+  margin-top: 1rem;
+  padding: 1rem;
+  border: 1px solid #dbe3ef;
+  border-radius: 10px;
+}
+
+.benchmark-section legend {
+  padding: 0 .35rem;
+  font-weight: 700;
 }
 
 .actions {
@@ -353,6 +434,10 @@ pre {
     grid-column: auto;
   }
 
+  .benchmark-section {
+    grid-template-columns: 1fr;
+  }
+
   .inline-form {
     display: block;
   }
@@ -369,6 +454,12 @@ pre {
   nav {
     flex-direction: column;
     gap: .35rem;
+    align-items: flex-start;
+  }
+
+  .topbar-info-panel {
+    left: 0;
+    right: auto;
   }
 }
 
@@ -446,14 +537,6 @@ nav {
 .exit-button,
 .danger-button {
   background: #a32424;
-}
-
-.output-root-display {
-  margin: 0;
-  padding: 0.75rem;
-  background: #f4f7fb;
-  border: 1px solid #dbe3ef;
-  border-radius: 7px;
 }
 
 .history-actions {

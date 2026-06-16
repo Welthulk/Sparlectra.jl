@@ -1,3 +1,17 @@
+# Copyright 2023–2026 Udo Schmitz
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 function _safe_powerflow_run_id(run_id::AbstractString)::Bool
   id = String(run_id)
   return !isempty(id) && !_unsafe_artifact_name(id) && occursin(r"^[A-Za-z0-9][A-Za-z0-9._-]*$", id)
@@ -15,9 +29,18 @@ function _existing_path_is_within(path::AbstractString, root::AbstractString)::B
   _path_is_within(path, root) || return false
   ispath(path) || return true
   isdir(root) || return false
+  # Resolve existing paths through realpath so symlinks cannot escape the
+  # service-owned output root during artifact or run-index validation.
   return _path_is_within(realpath(path), realpath(root))
 end
 
+"""
+    list_powerflow_artifacts(run_id::AbstractString)
+
+Return transport-safe metadata for artifacts currently available for a
+registered local PowerFlow service run. Unknown run IDs are returned as a
+structured service failure dictionary.
+"""
 function list_powerflow_artifacts(run_id::AbstractString)
   result = _registered_powerflow_run(run_id)
   result === nothing && return _service_failure("run_not_found", "No PowerFlow run found for run_id $(run_id)."; run_id = run_id)
@@ -38,6 +61,8 @@ function _artifact_belongs_to_run(artifact::SparlectraApiArtifact, output_dir::S
   root = realpath(output_dir)
   path = realpath(artifact.path)
   relative = relpath(path, root)
+  # Artifact resolution is metadata-name based; this final containment check
+  # protects the download path if files were moved or replaced after indexing.
   return first(splitpath(relative)) != ".."
 end
 
@@ -64,4 +89,3 @@ function resolve_powerflow_artifact(run_id::AbstractString, artifact_name::Abstr
   _artifact_belongs_to_run(artifact, result.output_dir) || return _service_failure("unsafe_artifact_name", "Artifact $(name) does not resolve inside PowerFlow run $(run_id)."; run_id = run_id)
   return artifact
 end
-

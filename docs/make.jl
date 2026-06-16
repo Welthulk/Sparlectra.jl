@@ -2,11 +2,15 @@ using Pkg
 Pkg.instantiate()
 using Documenter
 using Sparlectra
+using TOML
+
+project_toml = TOML.parsefile(joinpath(@__DIR__, "..", "Project.toml"))
+sparlectra_version = project_toml["version"]
 
 DocMeta.setdocmeta!(Sparlectra, :DocTestSetup, :(using Sparlectra); recursive = true)
 
 makedocs(
-  sitename = "Sparlectra.jl",
+  sitename = "Sparlectra.jl v$(sparlectra_version)",
   modules = [Sparlectra],
   clean = true,
   doctest = true,
@@ -39,8 +43,14 @@ makedocs(
     "Examples Overview" => "examples_overview.md",
     "State Estimation" => "state_estimation.md",
     "Workshop" => "workshop.md",
-    "API Reference" => "reference.md",
+    "Reference" => [
+      "Overview" => "reference.md",
+      "API and Web UI Service" => "reference_api.md",
+      "ACPFlow Runner" => "reference_acpflow.md",
+      "Network Model" => "reference_network.md",
+      "Rectangular Power Flow" => "reference_powerflow_rectangular.md",
+      "Import and Export" => "reference_import_export.md",
+      "State Estimation and Measurements" => "reference_state_estimation.md",
+    ],
   ],
 )
-
-deploydocs(repo = "github.com/welthulk/Sparlectra.jl", devbranch = "main", push_preview = true)
