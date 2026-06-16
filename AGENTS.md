@@ -12,6 +12,7 @@ This repository is a Julia project.
 - For explicit refactoring or breaking-change tasks, prefer the clean target design over backward-compatibility layers.
 - Do not add compatibility shims, deprecated wrappers, legacy keyword paths, or transitional duplicate APIs unless explicitly requested.
 - When an API, option, file path, or example behavior is intentionally changed, update all in-repository callers, examples, documentation, and tests instead of preserving the old path.
+- Every newly created source, script, or documentation-support file must include the repository's established license header or SPDX notice when that file type supports comments. Use the existing project style; do not invent a new license text.
 
 ## Agent execution discipline
 
@@ -221,18 +222,24 @@ Default verification levels:
 
 ### Documentation build and proxy limitations
 
-`julia --project=docs docs/make.jl` should be run when documentation or public API documentation changes. However, a local failure caused only by dependency-download restrictions, proxy errors, registry access failures, or package-clone failures is not a code-level blocker.
+`julia --project=docs docs/make.jl` is mandatory when a task changes documentation, Documenter configuration, public API documentation, docstrings that are referenced from documentation, or files used by autodocs.
 
-If the docs build fails with an external network error such as HTTP 403, `proxy returned unexpected status`, registry download failure, or package clone failure, record the exact error and classify it as an environment limitation. Do not mark the implementation as failed for that reason alone.
+For documentation-focused tasks, a successful `docs/make.jl` run is the acceptance gate. The task is not complete until the command reaches Documenter rendering/checking and finishes without repository/content errors.
 
-The authoritative documentation verification is the GitHub Actions runner / documentation workflow. A branch may be treated as implementation-ready when package loading, fast tests, extended tests, example smoke tests, and search checks pass, while the local docs build is blocked only by proxy or network access.
+Important distinction:
+
+- If `docs/make.jl` reaches Documenter and fails with unresolved `@ref`, missing docstrings, missing autodocs entries, doctest failures, invalid Markdown, invalid math, duplicate objects, or other repository/content errors, the task is `NOT READY`.
+- If `docs/make.jl` cannot reach Documenter because of a true external dependency-download, registry, clone, or proxy failure, report the exact error and say that the documentation build was not verified locally. Do not claim that docs passed, and do not claim that cross references are clean.
+- A proxy/network failure is only an environment limitation for the local machine. It is not evidence that the documentation build is valid.
+- When proxy/network issues block local verification, the final response must say that CI or another environment with dependencies available still has to run `julia --project=docs docs/make.jl`.
 
 Required rules:
 
 - If a task changes package loading, module exports, function signatures, or central config, run the package load check.
 - If a task changes solver behavior, configuration, tests, examples, MATPOWER runner behavior, or documentation, run the relevant profile or explicitly state why it was not run.
 - If a task is intended to make a branch merge-ready, run package load, fast profile, extended profile, and docs build unless the user explicitly excludes one.
-- If the docs build fails only because of external network/proxy/dependency-download errors, report the exact error and rely on the GitHub Actions documentation workflow for final docs verification.
+- If documentation is touched, run `julia --project=docs docs/make.jl`; if it cannot be completed due to proxy/network limitations, report `docs build not locally verified`.
+- If `docs/make.jl` reports misleading `Base.-` docstring errors after adding `@ref` links, check for hyphenated custom labels such as `reference-api`; use underscore labels instead and rerun the docs build.
 - If any non-docs verification command fails, or if the docs build fails for a repository/content error, the final response must say `NOT READY`.
 - Do not hide warnings that indicate future errors, especially Julia world-age warnings under Julia 1.12. Fix them if they are in touched code or test runner code.
 
@@ -355,6 +362,35 @@ When reporting work:
 - State which smallest relevant test was run.
 - If tests were added, state whether an existing test was extended or why a new test was necessary.
 - If tests were consolidated or removed, state which behavior remains covered.
+
+## File headers, docstrings, and developer comments
+
+These rules apply to all automated coding tasks.
+
+### License headers for new files
+
+- Every newly created source file, script, test file, and documentation-support file must use the repository's existing license-header style.
+- Prefer the short existing SPDX/header pattern already present in neighboring files.
+- Do not invent a new license text.
+- Do not change the project license.
+- If a file type does not support comments, document the exception in the task summary.
+- When touching directories that have inconsistent headers, fix missing headers in the touched path if it is local to the task.
+
+### Docstrings
+
+- Add docstrings where they are useful for public or semi-public APIs, exported bindings, Documenter `@ref` targets, and functions included by `@autodocs`.
+- Docstrings must be written in English.
+- Docstrings should explain purpose, important arguments, return values, side effects, and failure behavior when relevant.
+- Do not add noisy docstrings for trivial private helpers unless they clarify non-obvious behavior.
+- If a Markdown page links to a binding with `@ref`, make sure the exact binding has a visible docstring and is included in the correct Documenter module/autodocs context.
+
+### Inline developer comments
+
+- Add short inline comments where they help future maintainers understand non-obvious implementation choices.
+- Inline comments must be written in English.
+- Prefer comments for invariants, safety checks, path-containment rules, cache-vs-source distinctions, abort/stale-run behavior, and subtle numerical or Web UI/service decisions.
+- Do not add comments that merely restate the next line of code.
+- Do not use comments to hide unclear code; prefer a small well-named helper when that is clearer.
 
 ## Code hygiene / avoiding implementation bloat
 
@@ -757,8 +793,10 @@ If it only makes an existing way faster, cleaner, safer, or more robust, classif
 If it corrects behavior that was wrong, classify it as a **bugfix**.
 
 ## Documentation and examples for new features
-- New functions must include inline docstrings explaining purpose, inputs, outputs, and behavior.
+- New functions must include inline docstrings explaining purpose, inputs, outputs, and behavior when they are public, semi-public, exported, referenced from docs, or included in autodocs.
 - Docstrings must be written in English and follow existing Sparlectra style.
+- New documentation pages, new autodocs entries, or new public `@ref` links require a successful `julia --project=docs docs/make.jl` run before the task can be reported as complete.
+- Do not claim that documentation was verified if `docs/make.jl` did not reach and complete Documenter checks.
 
 - For **new features** (i.e. functionality that adds a new capability, not bugfixes or minor improvements):
   - Add at least one example program in `examples/`
@@ -783,6 +821,20 @@ If it corrects behavior that was wrong, classify it as a **bugfix**.
 ## Documentation (Documenter.jl / Markdown + Math)
 
 To ensure stable and predictable rendering in Documenter.jl:
+
+### Autodocs and cross references
+
+- Every `@ref` target must resolve in `julia --project=docs docs/make.jl`.
+- If a referenced binding lives in a submodule, include the correct module in the relevant `@autodocs` block, for example `Sparlectra.FetchMatpowerCase` rather than only `Sparlectra`.
+- Do not replace `@ref` with plain code markup just to silence a failing docs build unless the binding is intentionally not part of public documentation.
+- If a binding is intentionally internal, use plain code markup and avoid public `@ref` links to it.
+- Public or semi-public functions listed in `@autodocs` should have useful docstrings.
+- Missing `@ref`, missing docstring, doctest, invalid Markdown, and invalid math failures are repository/content failures, not environment limitations.
+
+- When adding custom heading anchors for Documenter cross references, avoid hyphenated anchor IDs such as `{#reference-api}` with links like `(@ref reference-api)`. Documenter may parse the hyphenated target as a Julia expression and report misleading `Base.-` docstring errors. Prefer underscore-based labels such as `{#reference_api}` and links such as `[API](@ref reference_api)`.
+- If a hyphenated or otherwise non-identifier anchor is used intentionally, verify the exact Documenter syntax locally with `julia --project=docs docs/make.jl`; do not assume Markdown-style anchor syntax is enough.
+- After adding, renaming, or splitting documentation pages, run `rg -n "\(@ref [^)]+-[^)]+\)" docs/src` and either remove/rename hyphenated `@ref` targets or confirm they are valid quoted Documenter references.
+- When splitting a large reference page into several pages, each new page must have a stable, Documenter-valid anchor and the overview page must link only to anchors that are actually present after template expansion.
 
 ### Math usage
 - Use `$...$` for **inline math** (variables inside text).

@@ -56,10 +56,15 @@ const _SESSION_REPRESENTATIVE_TIMING_SEEN = Set{Tuple{Symbol,Symbol}}()
 
 function _auto_timing_mode(method::Symbol, warmup_runs::Int)::Symbol
   warmup_runs > 0 && return :warm_steady_state
-  key = (method, Base.active_project() == nothing ? :no_project : Symbol(Base.active_project()))
+
+  active_project = Base.active_project()
+  project_key = isnothing(active_project) ? "__no_project__" : active_project
+  key = (method, project_key)
+
   if key in _SESSION_REPRESENTATIVE_TIMING_SEEN
     return :auto_warm_session_reuse
   end
+
   push!(_SESSION_REPRESENTATIVE_TIMING_SEEN, key)
   return :auto_cold_session_first
 end
@@ -543,12 +548,7 @@ end
 function _matpower_import_auto_profile_convention_scan(mpc)
   rows = NamedTuple[]
   for shift_unit in (:deg, :rad), shift_sign in (1.0, -1.0), ratio in (:normal, :reciprocal)
-    stats = MatpowerIO.vmva_power_mismatch_stats(
-      mpc;
-      matpower_shift_unit = shift_unit,
-      matpower_shift_sign = shift_sign,
-      matpower_ratio = ratio,
-    )
+    stats = MatpowerIO.vmva_power_mismatch_stats(mpc; matpower_shift_unit = shift_unit, matpower_shift_sign = shift_sign, matpower_ratio = ratio)
     push!(rows, (shift_unit = shift_unit, shift_sign = shift_sign, ratio = ratio, stats = stats, score = _matpower_import_auto_profile_residual_score(stats)))
   end
   sort!(rows; by = row -> row.score)
@@ -572,16 +572,19 @@ function _matpower_import_auto_profile_action(mode::Symbol, current, recommended
 end
 
 function _push_auto_profile_row!(rows, mode::Symbol, option::AbstractString, current, recommended; safe_to_apply::Bool, reason::AbstractString, evidence::AbstractString = "")
-  push!(rows, (
-    option = String(option),
-    current = _auto_profile_value_string(current),
-    recommended = _auto_profile_value_string(recommended),
-    action = _matpower_import_auto_profile_action(mode, current, recommended; safe_to_apply = safe_to_apply),
-    reason = String(reason),
-    evidence = String(evidence),
-    raw_current = current,
-    raw_recommended = recommended,
-  ))
+  push!(
+    rows,
+    (
+      option = String(option),
+      current = _auto_profile_value_string(current),
+      recommended = _auto_profile_value_string(recommended),
+      action = _matpower_import_auto_profile_action(mode, current, recommended; safe_to_apply = safe_to_apply),
+      reason = String(reason),
+      evidence = String(evidence),
+      raw_current = current,
+      raw_recommended = recommended,
+    ),
+  )
   return rows
 end
 
@@ -634,7 +637,16 @@ function matpower_import_auto_profile(mpc, cfg::SparlectraConfig; mode::Symbol =
   best_shunt_score = min(shunt_adm_score, shunt_vdi_score)
   strong_shunt = isfinite(current_shunt_score) && isfinite(best_shunt_score) && best_shunt_score + 1.0e-8 < min(current_shunt_score * 0.25, current_shunt_score - 1.0e-6)
   rec_shunt = strong_shunt ? best_shunt_model : mat.bus_shunt_model
-  _push_auto_profile_row!(rows, mode, "matpower_import.bus_shunt_model", mat.bus_shunt_model, rec_shunt; safe_to_apply = strong_shunt, reason = strong_shunt ? "bus-shunt residual scan found a clearly better model" : "bus-shunt residual scan is ambiguous or current model is best", evidence = "admittance=$(round(shunt_adm_score; digits = 8)) voltage_dependent_injection=$(round(shunt_vdi_score; digits = 8))")
+  _push_auto_profile_row!(
+    rows,
+    mode,
+    "matpower_import.bus_shunt_model",
+    mat.bus_shunt_model,
+    rec_shunt;
+    safe_to_apply = strong_shunt,
+    reason = strong_shunt ? "bus-shunt residual scan found a clearly better model" : "bus-shunt residual scan is ambiguous or current model is best",
+    evidence = "admittance=$(round(shunt_adm_score; digits = 8)) voltage_dependent_injection=$(round(shunt_vdi_score; digits = 8))",
+  )
   mode === :apply && strong_shunt && push!(applied_pairs, :bus_shunt_model => rec_shunt)
 
   vg = _matpower_import_auto_profile_has_vg_mismatch(mpc; tol = mat.pv_voltage_mismatch_tol_pu)
@@ -643,22 +655,22 @@ function matpower_import_auto_profile(mpc, cfg::SparlectraConfig; mode::Symbol =
   pv_reason = has_online_vg ? "online GEN.VG values are available for PV/REF buses" : "no online GEN.VG values available for PV/REF buses"
   _push_auto_profile_row!(rows, mode, "matpower_import.pv_voltage_source", mat.pv_voltage_source, rec_pv_source; safe_to_apply = false, reason = pv_reason, evidence = "pv_ref_buses=$(length(vg.rows)) vg_bus_mismatches=$(length(vg.mismatches))")
   rec_compare = isempty(vg.mismatches) ? mat.compare_voltage_reference : :hybrid
-  _push_auto_profile_row!(rows, mode, "matpower_import.compare_voltage_reference", mat.compare_voltage_reference, rec_compare; safe_to_apply = false, reason = isempty(vg.mismatches) ? "BUS.VM and GEN.VG are consistent within tolerance" : "BUS.VM / GEN.VG mismatch detected; hybrid comparison keeps PQ buses on BUS.VM", evidence = "vg_bus_mismatches=$(length(vg.mismatches)) tol=$(mat.pv_voltage_mismatch_tol_pu)")
+  _push_auto_profile_row!(
+    rows,
+    mode,
+    "matpower_import.compare_voltage_reference",
+    mat.compare_voltage_reference,
+    rec_compare;
+    safe_to_apply = false,
+    reason = isempty(vg.mismatches) ? "BUS.VM and GEN.VG are consistent within tolerance" : "BUS.VM / GEN.VG mismatch detected; hybrid comparison keeps PQ buses on BUS.VM",
+    evidence = "vg_bus_mismatches=$(length(vg.mismatches)) tol=$(mat.pv_voltage_mismatch_tol_pu)",
+  )
 
   nbus = size(mpc.bus, 1)
   npv = count(r -> Int(mpc.bus[r, 2]) == 2, axes(mpc.bus, 1))
   fragile_start = nbus >= 1000 || npv >= 100 || (isfinite(best_score) && best_score > 1.0e-3)
   if fragile_start
-    robust_start = (
-      angle_mode = :dc,
-      voltage_mode = :bus_vm_va_blend,
-      start_projection = true,
-      try_dc_start = true,
-      try_blend_scan = true,
-      branch_guard = true,
-      measure_candidates = true,
-      reuse_import_data = true,
-    )
+    robust_start = (angle_mode = :dc, voltage_mode = :bus_vm_va_blend, start_projection = true, try_dc_start = true, try_blend_scan = true, branch_guard = true, measure_candidates = true, reuse_import_data = true)
     for (field, rec) in pairs(robust_start)
       cur = getfield(pf.start_mode, field)
       _push_auto_profile_row!(rows, mode, "power_flow.start_mode.$(field)", cur, rec; safe_to_apply = false, reason = "large or fragile MATPOWER case; robust imported/DC start is safer", evidence = "nbus=$(nbus) npv=$(npv) best_residual=$(round(best_score; digits = 8))")
@@ -937,7 +949,17 @@ function run_matpower_case(; casefile::AbstractString = "", config_file::Abstrac
 end
 
 function _synthetic_pf_perf_row(limit, meta, result)
-  return (limit = limit, nbus = meta.actual_buses, converged = result.final_converged, numerical_converged = result.numerical_converged, solution_available = result.solution_available, outcome = result.outcome, reason = result.reason, iterations = result.iterations, solve_ms = result.elapsed_s * 1000.0)
+  return (
+    limit = limit,
+    nbus = meta.actual_buses,
+    converged = result.final_converged,
+    numerical_converged = result.numerical_converged,
+    solution_available = result.solution_available,
+    outcome = result.outcome,
+    reason = result.reason,
+    iterations = result.iterations,
+    solve_ms = result.elapsed_s * 1000.0,
+  )
 end
 
 function run_synthetic_tiled_grid_pf_perf(; config_file::AbstractString = "", args = String[], outdir::AbstractString = "")

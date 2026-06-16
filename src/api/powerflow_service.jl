@@ -1,3 +1,17 @@
+# Copyright 2023–2026 Udo Schmitz
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 const _POWERFLOW_SERVICE_RUNS = Dict{String,SparlectraApiResult}()
 const _POWERFLOW_SERVICE_LOCK = ReentrantLock()
 
@@ -30,6 +44,8 @@ function _canonical_matpower_source_for_webui(path::AbstractString, case_directo
   extension = lowercase(splitext(case_path)[2])
   extension == ".m" && return case_path
   if extension == ".jl" && dirname(case_path) == abspath(case_directory)
+    # Keep Web UI MATPOWER runs on the canonical .m source. Generated .jl files
+    # in the cache are internal artifacts and should not become the run input.
     m_path = first(splitext(case_path)) * ".m"
     isfile(m_path) && return abspath(m_path)
     throw(ArgumentError(GENERATED_MATPOWER_JL_CACHE_MESSAGE))
@@ -56,6 +72,8 @@ function _resolve_powerflow_casefile(
   trusted_directory = abspath(case_directory)
   mkpath(trusted_directory)
   if extension == ".jl"
+    # A cache-local .jl request may only bypass to its matching .m source; a
+    # standalone generated cache file is rejected so users see the source case.
     requested_jl = joinpath(trusted_directory, requested)
     requested_m = first(splitext(requested_jl)) * ".m"
     if isfile(requested_m)
@@ -158,6 +176,8 @@ function start_powerflow_run(request::AbstractDict; case_directory::Union{Nothin
   _safe_powerflow_run_id(run_id) || return _service_failure("unsafe_run_id", "Unsafe PowerFlow run ID rejected.")
   root = abspath(output_root)
   output_dir = joinpath(root, run_id)
+  # Phase timings collected before the API handoff become service metadata, not
+  # operation-log events for every internal solver step.
   result = try
     _run_sparlectra_api(
       casefile = casefile,
@@ -193,6 +213,14 @@ function start_powerflow_run(request::AbstractDict; case_directory::Union{Nothin
   return to_dict(result)
 end
 
+"""
+    get_powerflow_result(run_id::AbstractString) -> Dict{String,Any}
+
+Return serialized metadata for a registered local PowerFlow service run.
+
+If the run ID is unknown, return a structured service failure dictionary instead
+of throwing, so Web UI callers can render a stable error response.
+"""
 function get_powerflow_result(run_id::AbstractString)::Dict{String,Any}
   result = _registered_powerflow_run(run_id)
   result === nothing && return _service_failure("run_not_found", "No PowerFlow run found for run_id $(run_id)."; run_id = run_id)
