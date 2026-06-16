@@ -1,18 +1,11 @@
 ## Version 0.8.4 – 2026-06-10
 ### New features
-* Added a loopback-only local PowerFlow Web UI backed by the new PowerFlow service/API layer, including run history, artifact viewing/downloads, operation log, MATPOWER case selection/cache, contextual help, and user-writable runtime directories.
-* Added optional Web UI/API artifacts for PowerFlow runs, including `run.log`, `performance.log`, `diagnose.log`, effective configuration output, and detailed CSV exports for complex bus voltages and branch flows.
 
+* A loopback‑only PowerFlow Web UI was added with run history, artifact downloads, logs, MATPOWER case management, help, and writable runtime directories. Optional artifacts now include additional logs, configuration output, and detailed CSV exports for voltages and branch flows.
 ### Improvements
-
-* Improved Web UI usability with status auto-refresh, elapsed-time display, MATPOWER citation, project-doc links, readable artifact views, operation-log compaction, Sparlectra version metadata, and UTC timestamps.
-* Added finer PowerFlow Web UI/API phase timing for large MATPOWER case loading and execution diagnostics.
-* Added a developer helper for benchmarking large MATPOWER cases through the existing Web UI/service case cache, and reduced noisy Web UI phase logging while preserving detailed timing artifacts.
 * Added configurable detailed CSV formatting for technical, German Excel, and US Excel notation.
 
 ### Bugfixes
-
-* Fixed Web UI abort handling with phase-aware cancellation, idempotent abort requests, hard-reset fallback for stuck aborts, stale-run recovery, and safe active-run deletion rules.
 * Fixed rectangular PV/slack voltage initialization so replacing a voltage magnitude preserves the existing phasor angle.
 
 ## Version 0.8.3 – 2026-05-30
