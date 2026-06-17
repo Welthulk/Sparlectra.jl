@@ -2090,6 +2090,55 @@ end
   return true
 end
 
+function test_matpower_matrix_block_scanner_whitespace()::Bool
+  variants = (
+    """
+mpc.bus = [
+1 2 3;
+4 5 6;
+];
+""",
+    """
+mpc.bus=[
+1 2 3;
+4 5 6;
+];
+""",
+    """
+mpc.bus    =    [
+1 2 3;
+4 5 6;
+];
+""",
+  )
+
+  expected = [1.0 2.0 3.0; 4.0 5.0 6.0]
+  for txt in variants
+    parsed = Sparlectra.MatpowerIO.parse_matrix_block(txt, "mpc.bus")
+    parsed == expected || return false
+  end
+  return true
+end
+
+function test_matpower_matrix_block_scanner_large_body()::Bool
+  row_count = 25000
+  rows = join(("$(i) $(i + 1) $(i + 2);" for i in 1:row_count), '\n')
+  txt = string(
+    "function mpc = synthetic_large\n",
+    "mpc.version = '2';\n",
+    "mpc.baseMVA = 100;\n",
+    "mpc.bus = [\n",
+    rows,
+    "\n];\n",
+    "mpc.gen = [\n1 0 0;\n];\n",
+  )
+
+  parsed = Sparlectra.MatpowerIO.parse_matrix_block(txt, "mpc.bus"; ncols = 3)
+  return size(parsed) == (row_count, 3) &&
+         parsed[1, :] == [1.0, 2.0, 3.0] &&
+         parsed[end, :] == [row_count, row_count + 1, row_count + 2]
+end
+
 function _assign_vset_controller!(net::Net, bus_name::String; vstep_pu::Union{Nothing,Float64}, tap_steps_down::Union{Nothing,Int}, tap_steps_up::Union{Nothing,Int}, all_generators::Bool = false)
   bus = geNetBusIdx(net = net, busName = bus_name)
   assigned = 0
@@ -2525,6 +2574,8 @@ function run_grid_tests()
       @test test_mp_inline_vs_manual_shunt() == true
       @test test_bus_shunt_model_modes() == true
       @test test_matpower_read_case_m_postprocessing() == true
+      @test test_matpower_matrix_block_scanner_whitespace() == true
+      @test test_matpower_matrix_block_scanner_large_body() == true
       @test test_matpower_file_import_honors_explicit_overrides() == true
       @test test_run_sparlectra_forwards_wrong_branch_config() == true
       @test test_run_sparlectra_normalizes_projected_matpower_starts() == true
