@@ -429,13 +429,8 @@ function printACPFlowResults(net::Net, ct::Float64, ite::Int, tol::Float64, toFi
   @printf(io, "Tolerance      : %.1e\n", tol)
   @printf(io, "Solver         :%15s\n", string(solver))
   if converged
-    if isnothing(solver_time_s)
-      @printf(io, "Solver time    :%10s\n", "unavailable")
-      @printf(io, "Representative wall time:%10f seconds\n", ct)
-    else
-      @printf(io, "Solver time    :%10f seconds\n", solver_time_s)
-      @printf(io, "Representative wall time:%10f seconds\n", ct)
-    end
+    isnothing(solver_time_s) || @printf(io, "Solver time    :%10f seconds\n", solver_time_s)
+    @printf(io, "Wall time      :%10f seconds\n", ct)
   else
     @printf(io, "Status         :%10s\n", "Not Converged")
   end
