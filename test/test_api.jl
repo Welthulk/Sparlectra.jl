@@ -106,7 +106,10 @@ function run_api_tests()
       @test effective_cfg.powerflow.tol == 1.0e-9
       @test effective_cfg.powerflow.max_iter == 40
       run_log = read(joinpath(output_dir, "run.log"), String)
-      for marker in ("solver_time:", "representative_time:", "iterations:", "final_mismatch:", "final_status:", "final_outcome:")
+      @test occursin("wall_time:", run_log)
+      @test !occursin("representative_time:", run_log)
+      @test !occursin("solver_time:          n/a", run_log)
+      for marker in ("iterations:", "final_mismatch:", "final_status:", "final_outcome:")
         @test occursin(marker, run_log)
       end
       for phase in ("reading_matpower_case", "building_sparlectra_net", "solving_powerflow", "writing_artifacts", "finalizing_success")

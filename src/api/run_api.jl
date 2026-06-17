@@ -81,8 +81,8 @@ function _write_api_timing_summary(io::IO, result::SparlectraRunResult, config::
   representative_time = result.performance_profile isa AbstractDict ? get(result.performance_profile, :representative_elapsed_s, result.elapsed_s) : result.elapsed_s
   println(io, "Timing")
   println(io, "------")
-  println(io, "solver_time:          ", result.solver_elapsed_s === nothing ? "n/a" : "$(round(result.solver_elapsed_s; digits = 6)) s")
-  println(io, "representative_time:  ", round(Float64(representative_time); digits = 6), " s")
+  result.solver_elapsed_s === nothing || println(io, "solver_time:          ", round(result.solver_elapsed_s; digits = 6), " s")
+  println(io, "wall_time:            ", round(Float64(representative_time); digits = 6), " s")
   if config.benchmark.enabled
     println(io, "benchmark_median:     ", benchmark_median === nothing ? "n/a" : "$(round(Float64(benchmark_median); digits = 6)) s")
     println(io, "benchmark_samples:    ", config.benchmark.samples)
