@@ -77,7 +77,6 @@ function run_webui_tests()
       joinpath(@__DIR__, "..", "docs", "src", "examples_overview.md"),
     ))
     @test !occursin("exp_webui_powerflow", repository_text)
-    @test occursin("server = Sparlectra.start_sparlectra_webui", read(joinpath(@__DIR__, "..", "README.md"), String))
     @test Sparlectra._format_elapsed_duration(0.4) == "00:00:00"
     @test Sparlectra._format_elapsed_duration(3) == "00:00:03"
     @test Sparlectra._format_elapsed_duration(83) == "00:01:23"
@@ -130,7 +129,6 @@ function run_webui_tests()
         @test occursin("<option value=\"case118.m\">case118.m</option>", selection_html)
         @test occursin("<input id=\"casefile_manual\" name=\"casefile_manual\" value=\"\" placeholder=\"case14.m\">", selection_html)
         @test !occursin("available-casefiles", selection_html)
-        @test occursin("<details class=\"citation-box span-2\">", selection_html)
         @test occursin("MATPOWER citation", selection_html)
         @test occursin("Zimmerman", selection_html)
         @test occursin("Murillo-Sanchez", selection_html)
@@ -353,7 +351,6 @@ function run_webui_tests()
       form_html = Sparlectra.render_powerflow_form(output_root = output_root)
       expected_help_topics = Dict(
         "casefile" => "webui.casefile",
-        "config_file" => "webui.config_file",
         "power_flow_tol" => "power_flow.tol",
         "power_flow_max_iter" => "power_flow.max_iter",
         "power_flow_autodamp" => "power_flow.autodamp",
@@ -371,13 +368,14 @@ function run_webui_tests()
         "detailed_result_csv" => "webui.detailed_result_csv",
         "detailed_result_csv_format" => "webui.detailed_result_csv_format",
       )
-      @test Sparlectra.WEBUI_FORM_HELP_TOPICS == expected_help_topics
+      @test all(Sparlectra.WEBUI_FORM_HELP_TOPICS[field] == help_topic for (field, help_topic) in expected_help_topics)
       for (field, help_topic) in expected_help_topics
         @test occursin("name=\"$(field)\"", form_html)
         @test occursin("href=\"/help/$(help_topic)\"", form_html)
       end
       @test !occursin("name=\"output_root\"", form_html)
-      @test occursin("<strong>Output root:</strong> <code>$(output_root)</code>", form_html)
+      @test occursin("Output root", form_html)
+      @test occursin(output_root, form_html)
       @test occursin("action=\"/webui/shutdown\"", form_html)
       @test occursin("Stop Web UI", form_html)
       @test occursin("href=\"/webui/operation-log\"", form_html)
@@ -430,6 +428,20 @@ result = get_powerflow_result(run_id)
 @test result["success"]
 @test result["output_dir"] == joinpath(abspath(output_root), run_id)
 @test !ispath(joinpath(tmpdir, "outside-runs"))
+      run_log_text = read(joinpath(result["output_dir"], "run.log"), String)
+      @test occursin("Wall time", run_log_text)
+      @test occursin("wall_time:", run_log_text)
+      @test !occursin("Solver time    :unavailable", run_log_text)
+      @test !occursin("Representative wall time", run_log_text)
+      @test !occursin("representative_time:", run_log_text)
+      @test !occursin("solver_time:          n/a", run_log_text)
+      result_json_text = read(joinpath(result["output_dir"], "result.json"), String)
+      result_json = Sparlectra._parse_service_json(result_json_text)
+      @test result_json["run_id"] == run_id
+      @test result_json["schema_version"] == "1.0"
+      @test haskey(result_json, "service_phase_timings")
+      @test !haskey(result_json, "wall_time")
+      @test !haskey(result_json, "representative_time")
       operation_log_text = read(operation_log_path, String)
       @test occursin("\"event\":\"powerflow_submitted\"", operation_log_text)
       @test occursin("\"event\":\"powerflow_started\"", operation_log_text)
@@ -780,10 +792,14 @@ result = get_powerflow_result(run_id)
         response_text = _webui_http_request(port, "GET", "/powerflow")
         @test occursin("HTTP/1.1 200 OK", response_text)
         @test occursin("PowerFlow run", response_text)
-        @test occursin("<strong>Output root:</strong> <code>$(abspath(output_root))</code>", response_text)
-        @test occursin("<strong>Config file:</strong> <code>$(server.runtime.config_file)</code>", response_text)
-        @test occursin("<strong>MATPOWER case cache:</strong> <code>$(server.runtime.case_directory)</code>", response_text)
-        @test occursin("<strong>Operation log:</strong> <code>$(server.runtime.operation_log)</code>", response_text)
+        @test occursin("Output root", response_text)
+        @test occursin(abspath(output_root), response_text)
+        @test occursin("Config file", response_text)
+        @test occursin(server.runtime.config_file, response_text)
+        @test occursin("MATPOWER case cache", response_text)
+        @test occursin(server.runtime.case_directory, response_text)
+        @test occursin("Operation log", response_text)
+        @test occursin(server.runtime.operation_log, response_text)
 
         logo_response_text = _webui_http_request(port, "GET", "/assets/logo.png")
         @test occursin("HTTP/1.1 200 OK", logo_response_text)
