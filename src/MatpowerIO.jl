@@ -262,16 +262,40 @@ function try_parse_matrix_block(txt::String, key::String)
 end
 
 function parse_matrix_block(txt::String, key::String; ncols::Int = 0)
-  re = Regex(replace(key, "." => "\\.") * raw"\s*=\s*\[\s*(.*?)\s*\]\s*;", "s")
-  m = match(re, txt)
-  m === nothing && error("Could not find matrix block `$key = [ ... ];`")
-  body = m.captures[1]
+  body = _find_matpower_matrix_body(txt, key)
 
   if ncols > 0
     return parse_numeric_matrix_ncols(body, key; ncols = ncols)
   else
     return parse_numeric_matrix(body, key)
   end
+end
+
+function _find_matpower_matrix_body(txt::String, key::String)::SubString{String}
+  key_range = findfirst(key, txt)
+  key_range === nothing && error("Could not find matrix block `$key = [ ... ];`")
+
+  cursor = nextind(txt, last(key_range))
+  while cursor <= lastindex(txt) && isspace(txt[cursor])
+    cursor = nextind(txt, cursor)
+  end
+
+  cursor <= lastindex(txt) && txt[cursor] == '=' ||
+    error("Could not find `=` after matrix block key `$key`.")
+
+  cursor = nextind(txt, cursor)
+  while cursor <= lastindex(txt) && isspace(txt[cursor])
+    cursor = nextind(txt, cursor)
+  end
+
+  cursor <= lastindex(txt) && txt[cursor] == '[' ||
+    error("Could not find `[` after matrix block key `$key`.")
+
+  body_start = nextind(txt, cursor)
+  close_range = findnext("];", txt, body_start)
+  close_range === nothing && error("Could not find closing `];` for matrix block `$key`.")
+
+  return SubString(txt, body_start:prevind(txt, first(close_range)))
 end
 
 @inline function _matpower_row_tokens(row::AbstractString)
