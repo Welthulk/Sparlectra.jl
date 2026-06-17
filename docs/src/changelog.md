@@ -1,12 +1,9 @@
 ## Version 0.8.5 – 2026-06-17
-
-
 ### Bugfixes
-#240 MATPOWER parser fails on large ACTIVSg70k case with PCRE match limit exceeded 
+* Fixed MATPOWER `.m` import for very large cases such as `case_ACTIVSg70k.m` by replacing regex-based matrix block extraction with deterministic string scanning.
 
 ## Version 0.8.4 – 2026-06-10
 ### New features
-
 * A loopback‑only PowerFlow Web UI was added with run history, artifact downloads, logs, MATPOWER case management, help, and writable runtime directories. Optional artifacts now include additional logs, configuration output, and detailed CSV exports for voltages and branch flows.
 ### Improvements
 * Added configurable detailed CSV formatting for technical, German Excel, and US Excel notation.
