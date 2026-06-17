@@ -1,3 +1,9 @@
+## Version 0.8.5 – 2026-06-17
+
+
+### Bugfixes
+#240 MATPOWER parser fails on large ACTIVSg70k case with PCRE match limit exceeded 
+
 ## Version 0.8.4 – 2026-06-10
 ### New features
 
