@@ -430,7 +430,9 @@ result = get_powerflow_result(run_id)
 @test !ispath(joinpath(tmpdir, "outside-runs"))
       run_log_text = read(joinpath(result["output_dir"], "run.log"), String)
       @test occursin("Wall time", run_log_text)
-      @test occursin("wall_time:", run_log_text)
+      @test occursin("Wall time   :", run_log_text)
+      @test occursin("Output time :", run_log_text)
+      @test occursin("Solver time :", run_log_text)
       @test !occursin("Solver time    :unavailable", run_log_text)
       @test !occursin("Representative wall time", run_log_text)
       @test !occursin("representative_time:", run_log_text)
@@ -506,6 +508,16 @@ result = get_powerflow_result(run_id)
       legacy_download = Sparlectra.handle_powerflow_artifact_download(run_id, "diagnose.txt")
       @test legacy_download.status == 200
       @test String(legacy_download.body) == "legacy diagnostics\n"
+      large_artifact_path = joinpath(result["output_dir"], "large_preview.log")
+      large_artifact_text = repeat("0123456789abcdef", 5000)
+      write(large_artifact_path, large_artifact_text)
+      large_preview = Sparlectra.handle_powerflow_artifact(run_id, "large_preview.log")
+      @test large_preview.status == 200
+      large_preview_html = String(large_preview.body)
+      @test occursin("Preview truncated", large_preview_html)
+      @test !occursin(large_artifact_text, large_preview_html)
+      large_download = Sparlectra.handle_powerflow_artifact_download(run_id, "large_preview.log")
+      @test String(large_download.body) == large_artifact_text
       result_artifact = Sparlectra.handle_powerflow_artifact(run_id, "result.json")
       @test result_artifact.status == 200
       result_artifact_html = String(result_artifact.body)
