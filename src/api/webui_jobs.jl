@@ -234,6 +234,7 @@ function start_webui_powerflow_run(request::AbstractDict; case_directory::Union{
       worker_request["run_id"] = run_id
       worker_request["cancellation_token"] = job["abort_requested"]
       worker_request["phase_callback"] = phase -> _webui_phase_event!(job, phase, event_callback)
+      worker_request["operation_callback"] = (event; fields...) -> event_callback(event; fields...)
       result = try
         runner(worker_request; case_directory)
       catch err

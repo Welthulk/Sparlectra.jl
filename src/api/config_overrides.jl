@@ -24,6 +24,12 @@ const GUI_EDITABLE_CONFIG_KEYS = Set([
   "power_flow.start_mode.angle_mode",
   "power_flow.start_mode.voltage_mode",
   "output.logfile_results",
+  "output.detailed_result_csv_write_mode",
+  "output.detailed_result_csv_exporter",
+  "output.detailed_result_csv_direct_threshold_buses",
+  "output.detailed_result_csv_buffer_initial_bytes",
+  "output.detailed_result_csv_buffer_max_bytes",
+  "output.detailed_result_csv_streaming_threshold_rows",
   "benchmark.enabled",
   "benchmark.samples",
   "benchmark.seconds",
@@ -46,9 +52,13 @@ end
 function _validate_gui_override_value(key::String, value)
   if key in ("power_flow.autodamp", "power_flow.qlimits.enabled", "benchmark.enabled")
     _validate_override_type(key, value, Bool)
-  elseif key in ("power_flow.max_iter", "benchmark.samples")
+  elseif key in ("power_flow.max_iter", "benchmark.samples", "output.detailed_result_csv_direct_threshold_buses", "output.detailed_result_csv_buffer_initial_bytes", "output.detailed_result_csv_buffer_max_bytes", "output.detailed_result_csv_streaming_threshold_rows")
     _validate_override_type(key, value, Int)
-    value > 0 || throw(ArgumentError("Override $(key) must be positive; got $(value)."))
+    if key == "output.detailed_result_csv_buffer_initial_bytes"
+      value >= 0 || throw(ArgumentError("Override $(key) must be non-negative; got $(value)."))
+    else
+      value > 0 || throw(ArgumentError("Override $(key) must be positive; got $(value)."))
+    end
   elseif key in ("power_flow.tol", "power_flow.autodamp_min", "benchmark.seconds")
     _validate_override_type(key, value, Float64)
     isfinite(value) && value > 0 || throw(ArgumentError("Override $(key) must be finite and positive; got $(value)."))
@@ -64,6 +74,10 @@ function _validate_gui_override_value(key::String, value)
     _validate_allowed_symbol(key, _as_symbol_cfg(value), POWERFLOW_START_VOLTAGE_MODE_VALUES)
   elseif key == "output.logfile_results"
     _validate_allowed_symbol(key, _as_symbol_cfg(value), OUTPUT_LOGFILE_RESULTS_VALUES)
+  elseif key == "output.detailed_result_csv_write_mode"
+    _validate_allowed_symbol(key, _as_symbol_cfg(value), OUTPUT_DETAILED_RESULT_CSV_WRITE_MODE_VALUES)
+  elseif key == "output.detailed_result_csv_exporter"
+    _validate_allowed_symbol(key, _as_symbol_cfg(value), OUTPUT_DETAILED_RESULT_CSV_EXPORTER_VALUES)
   end
   return nothing
 end

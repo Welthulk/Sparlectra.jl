@@ -60,6 +60,9 @@ Only keys in `GUI_EDITABLE_CONFIG_KEYS` are accepted. The initial allowlist is:
 - `power_flow.start_mode.angle_mode`
 - `power_flow.start_mode.voltage_mode`
 - `output.logfile_results`
+- `output.detailed_result_csv_write_mode`
+- `output.detailed_result_csv_exporter`
+- `output.detailed_result_csv_direct_threshold_buses`
 - `benchmark.enabled`
 - `benchmark.samples`
 - `benchmark.seconds`

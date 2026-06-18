@@ -30,6 +30,7 @@ function update_net_voltages_from_complex!(net::Net, V::Vector{ComplexF64})
   n = length(nodes)
   @assert length(V) == n
 
+  # Node order is solver order; no bus-index remapping is applied here.
   for (k, node) in enumerate(nodes)
     # Write-back uses solver-order complex bus voltages directly.
     Vk = V[k]

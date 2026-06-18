@@ -581,6 +581,10 @@ end
       _, erg_project = runpf!(net_project; config = SparlectraConfig(powerflow = pf_config))
       @test erg_project == 0
 
+      net_rectangular = createTest3BusNet()
+      _, erg_rectangular = runpf_rectangular!(net_rectangular, 20, 1e-8, 0; method = :rectangular)
+      @test erg_rectangular == 0
+
       cfg_output_off = SparlectraConfig(powerflow = pf_config, output = OutputConfig(logfile_results = :off))
       net_runner = createTest3BusNet()
       result = run_sparlectra(net = net_runner, config = cfg_output_off)

@@ -16,6 +16,7 @@ function _artifact_kind(path::AbstractString)::Symbol
   name = lowercase(basename(path))
   name == "effective_config.yaml" && return :effective_config
   name == "result.json" && return :result_json
+  name == "q_limit.log" && return :q_limit_log
   ext = lowercase(splitext(name)[2])
   ext == ".log" && return :log
   ext == ".csv" && return :csv
@@ -38,6 +39,7 @@ end
 
 function _artifact_description(kind::Symbol, name::String)::String
   kind === :log && return "Power-flow execution log"
+  kind === :q_limit_log && return "Q-limit diagnostic log"
   kind === :result_json && return "Serialized Sparlectra API result"
   kind === :csv && return "Generated CSV output"
   kind === :report && return "Generated report"

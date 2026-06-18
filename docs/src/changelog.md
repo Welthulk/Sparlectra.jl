@@ -1,3 +1,12 @@
+## Version 0.8.6 – 2026-06-18
+### Improvements
+* Added configurable detailed CSV artifact writing with `auto`, `buffered`, and `streaming` modes so large output artifacts can stream directly to disk while normal cases keep buffered writes.
+* Improved direct detailed CSV export with lower-allocation cell writing and per-file timing metadata for large Web UI/API runs.
+* Removed the remaining per-bus prosumer scan from direct detailed CSV bus control labels, added operation-log CSV progress events, and bounded Q-limit run-log details while preserving full Q-limit CSV artifacts.
+
+### Bugfixes
+* Fixed Web UI Q-limit checkbox handling so an unchecked form submission explicitly disables `power_flow.qlimits.enabled` in the effective configuration.
+
 ## Version 0.8.5 – 2026-06-17
 ### Improvements
 * Cleaned up single PowerFlow Web UI/API timing output so unavailable solver time is omitted and the measured run duration is shown as wall time.
