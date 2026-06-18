@@ -114,17 +114,40 @@ function _bus_control_flags(net::Net, bus_idx::Int)
   return has_qu, has_pu
 end
 
-function _control_label(net::Net, bus_idx::Int)::String
-  has_qu, has_pu = _bus_control_flags(net, bus_idx)
-  if has_qu && has_pu
+struct BusControlFlags
+  has_qu::Bool
+  has_pu::Bool
+end
+
+const _NO_BUS_CONTROL_FLAGS = BusControlFlags(false, false)
+
+function _bus_control_flag_cache(net::Net)::Dict{Int,BusControlFlags}
+  cache = Dict{Int,BusControlFlags}()
+  for ps in net.prosumpsVec
+    bus_idx = getPosumerBusIndex(ps)
+    old = get(cache, bus_idx, _NO_BUS_CONTROL_FLAGS)
+    cache[bus_idx] = BusControlFlags(old.has_qu | has_qu_controller(ps), old.has_pu | has_pu_controller(ps))
+  end
+  return cache
+end
+
+@inline function _control_label(flags::BusControlFlags)::String
+  if flags.has_qu && flags.has_pu
     return "Q(U), P(U)"
-  elseif has_qu
+  elseif flags.has_qu
     return "Q(U)"
-  elseif has_pu
+  elseif flags.has_pu
     return "P(U)"
   else
     return "-"
   end
+end
+
+@inline _cached_control_label(cache::AbstractDict{Int,BusControlFlags}, bus_idx::Int)::String = _control_label(get(cache, bus_idx, _NO_BUS_CONTROL_FLAGS))
+
+function _control_label(net::Net, bus_idx::Int)::String
+  has_qu, has_pu = _bus_control_flags(net, bus_idx)
+  return _control_label(BusControlFlags(has_qu, has_pu))
 end
 
 function _tap_voltage_target_by_bus(net::Net)::Dict{Int,Float64}
@@ -202,6 +225,56 @@ function _effective_bus_power_components(net::Net, bus_idx::Int)
   return p_gen, q_gen, p_load, q_load
 end
 
+struct BusPowerComponents
+  p_gen::Float64
+  q_gen::Float64
+  p_load::Float64
+  q_load::Float64
+end
+
+Base.Tuple(components::BusPowerComponents) = (components.p_gen, components.q_gen, components.p_load, components.q_load)
+
+function _bus_power_component_cache(net::Net)::Dict{Int,BusPowerComponents}
+  base = net.baseMVA
+  totals = Dict{Int,NTuple{4,Float64}}()
+  for ps in net.prosumpsVec
+    bus_idx = getPosumerBusIndex(ps)
+    node = net.nodeVec[bus_idx]
+    vm = node._vm_pu
+    vm_safe = vm > 1e-9 ? vm : 1e-9
+    p_mw = isnothing(ps.pVal) ? 0.0 : ps.pVal
+    q_mvar = isnothing(ps.qVal) ? 0.0 : ps.qVal
+    if has_pu_controller(ps)
+      p_pu, _ = evaluate_controller(ps.puController, vm_safe)
+      p_mw = p_pu * base
+    end
+    if has_qu_controller(ps)
+      q_pu, _ = evaluate_controller(ps.quController, vm_safe)
+      q_mvar = q_pu * base
+    end
+    old = get(totals, bus_idx, (0.0, 0.0, 0.0, 0.0))
+    totals[bus_idx] = isGenerator(ps) ? (old[1] + p_mw, old[2] + q_mvar, old[3], old[4]) : (old[1], old[2], old[3] + p_mw, old[4] + q_mvar)
+  end
+
+  cache = Dict{Int,BusPowerComponents}()
+  for node in net.nodeVec
+    p_gen, q_gen, p_load, q_load = get(totals, node.busIdx, (0.0, 0.0, 0.0, 0.0))
+    if node._nodeType == Sparlectra.Slack
+      !isnothing(node._pƩGen) && (p_gen = node._pƩGen)
+      !isnothing(node._qƩGen) && (q_gen = node._qƩGen)
+    elseif node._nodeType == Sparlectra.PV
+      abs(q_gen) <= 1e-9 && !isnothing(node._qƩGen) && (q_gen = node._qƩGen)
+      abs(p_gen) <= 1e-9 && !isnothing(node._pƩGen) && (p_gen = node._pƩGen)
+    end
+    cache[node.busIdx] = BusPowerComponents(p_gen, q_gen, p_load, q_load)
+  end
+  return cache
+end
+
+function _bus_power_components(cache::AbstractDict{Int,BusPowerComponents}, bus_idx::Int)
+  return Tuple(get(cache, bus_idx, BusPowerComponents(0.0, 0.0, 0.0, 0.0)))
+end
+
 function _branch_kind_label(br::Branch)::String
   name = br.comp.cName
   if occursin("_ACL_", name)
@@ -224,10 +297,12 @@ This provides a machine-readable alternative to `printACPFlowResults`.
 function buildACPFlowReport(net::Net; ct::Float64 = 0.0, ite::Int = 0, tol::Float64 = 1e-6, converged::Bool = true, solver::Symbol = :NR)::ACPFlowReport
   busNameByIdx = _bus_name_by_idx(net)
   nodes_sorted = sort(net.nodeVec, by = x -> x.busIdx)
+  power_components = _bus_power_component_cache(net)
+  control_labels = _bus_control_flag_cache(net)
 
   node_rows = NamedTuple[]
   for n in nodes_sorted
-    p_gen, q_gen, p_load, q_load = _effective_bus_power_components(net, n.busIdx)
+    p_gen, q_gen, p_load, q_load = _bus_power_components(power_components, n.busIdx)
     push!(
       node_rows,
       (
@@ -246,7 +321,7 @@ function buildACPFlowReport(net::Net; ct::Float64 = 0.0, ite::Int = 0, tol::Floa
         q_shunt_MVar = _default0(n._qShunt),
         is_isolated = isIsolated(n),
         q_limit_hit = haskey(net.qLimitEvents, n.busIdx),
-        control = _control_label(net, n.busIdx),
+        control = _cached_control_label(control_labels, n.busIdx),
       ),
     )
   end
@@ -403,6 +478,7 @@ function printACPFlowResults(net::Net, ct::Float64, ite::Int, tol::Float64, toFi
   shunts = 0
   auxb = 0
   busNameByIdx = _bus_name_by_idx(net)
+  control_labels = _bus_control_flag_cache(net)
 
   nodes = sort(net.nodeVec, by = x -> x.busIdx)
 
@@ -545,7 +621,7 @@ function printACPFlowResults(net::Net, ct::Float64, ite::Int, tol::Float64, toFi
       qShunt_str = ""
     end
     typeStr = toString(n._nodeType)
-    controlStr = _control_label(net, n.busIdx)
+    controlStr = _cached_control_label(control_labels, n.busIdx)
 
     # Mark PV→PQ buses (hit Q-limit) with a star in the Type column
     if haskey(net.qLimitEvents, n.busIdx)

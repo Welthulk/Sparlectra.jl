@@ -57,5 +57,6 @@ struct SparlectraApiResult
   result_file::Union{String,Nothing}
   artifacts::Vector{SparlectraApiArtifact}
   service_phase_timings::Vector{Dict{String,Any}}
+  metadata::Dict{String,Any}
   raw_result::Any
 end

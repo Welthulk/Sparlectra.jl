@@ -3,6 +3,17 @@ using Dates
 using Sockets
 using Test
 
+const WEBUI_TRANSCRIPT_MARKERS = (
+  "git apply",
+  "diff --git",
+  "Search evidence",
+  "Unfinished items",
+  "Created PR metadata",
+  "make_pr",
+)
+
+_assert_no_webui_transcript_markers(text::AbstractString) = foreach(marker -> @test(!occursin(marker, text)), WEBUI_TRANSCRIPT_MARKERS)
+
 function _write_webui_test_case(path::AbstractString)
   write(path, """
 function mpc = case_webui
@@ -325,6 +336,10 @@ function run_webui_tests()
       @test request["output_root"] == output_root
       @test request["detailed_result_csv"] === true
       @test request["detailed_result_csv_format"] == "excel_de"
+      @test request["config_overrides"]["power_flow.qlimits.enabled"] === true
+      qlimits_disabled_form = copy(form)
+      delete!(qlimits_disabled_form, "power_flow_qlimits_enabled")
+      @test Sparlectra.powerflow_webui_request(qlimits_disabled_form; default_output_root = output_root)["config_overrides"]["power_flow.qlimits.enabled"] === false
       csv_disabled_form = copy(form)
       delete!(csv_disabled_form, "detailed_result_csv")
       @test Sparlectra.powerflow_webui_request(csv_disabled_form; default_output_root = output_root)["detailed_result_csv"] === false
@@ -459,6 +474,11 @@ result = get_powerflow_result(run_id)
       @test occursin("\"thousands_separator\":\".\"", operation_log_text)
       @test occursin("\"event\":\"detailed_result_csv_exported\"", operation_log_text)
       @test occursin("\"artifacts\":[\"bus_voltages_complex.csv\",\"branch_flows.csv\"]", operation_log_text)
+      performance_log_text = read(joinpath(result["output_dir"], "performance.log"), String)
+      q_limit_log_text = read(joinpath(result["output_dir"], "q_limit.log"), String)
+      for artifact_text in (run_log_text, result_json_text, operation_log_text, performance_log_text, q_limit_log_text)
+        _assert_no_webui_transcript_markers(artifact_text)
+      end
       @test !isempty(run_id)
       result_response = Sparlectra.handle_powerflow_result(run_id)
       result_html = String(result_response.body)
@@ -485,12 +505,19 @@ result = get_powerflow_result(run_id)
 
       artifacts = list_powerflow_artifacts(run_id)
       artifact_names = Set(artifact["name"] for artifact in artifacts)
-      @test Set(("result.json", "run.log", "effective_config.yaml", "performance.log", "diagnose.log", "bus_voltages_complex.csv", "branch_flows.csv")) ⊆ artifact_names
+      @test Set(("result.json", "run.log", "effective_config.yaml", "performance.log", "diagnose.log", "q_limit.log", "bus_voltages_complex.csv", "branch_flows.csv")) ⊆ artifact_names
       artifact_response = Sparlectra.handle_powerflow_artifacts(run_id)
       artifact_html = String(artifact_response.body)
-      for name in ("result.json", "run.log", "effective_config.yaml", "performance.log", "diagnose.log", "bus_voltages_complex.csv", "branch_flows.csv")
+      for name in ("result.json", "run.log", "effective_config.yaml", "performance.log", "diagnose.log", "q_limit.log", "bus_voltages_complex.csv", "branch_flows.csv")
         @test occursin(name, artifact_html)
       end
+      qlimit_artifact = only(artifact for artifact in artifacts if artifact["name"] == "q_limit.log")
+      @test qlimit_artifact["kind"] == "q_limit_log"
+      @test qlimit_artifact["mime_type"] == "text/plain"
+      qlimit_download = Sparlectra.handle_powerflow_artifact_download(run_id, "q_limit.log")
+      @test qlimit_download.status == 200
+      @test occursin("Resolved Q-limit options", String(qlimit_download.body))
+      @test Sparlectra.route_sparlectra_webui("GET", "/powerflow/artifact/$(run_id)/q_limit.log"; output_root).status == 200
       for name in ("bus_voltages_complex.csv", "branch_flows.csv")
         csv_artifact = only(artifact for artifact in artifacts if artifact["name"] == name)
         @test csv_artifact["kind"] == "csv"
@@ -753,8 +780,14 @@ result = get_powerflow_result(run_id)
       @test occursin("entry-11", String(compact_download.body))
       logging_failure_root = joinpath(tmpdir, "logging-is-a-file")
       write(logging_failure_root, "not a directory")
-      @test !Sparlectra.record_webui_operation!(logging_failure_root, "expected_failure")
-      @test Sparlectra.route_sparlectra_webui("GET", "/powerflow"; output_root = logging_failure_root).status == 200
+      record_result = @test_logs (:warn, r"Could not record Web UI operation") begin
+        Sparlectra.record_webui_operation!(logging_failure_root, "expected_failure")
+      end
+      @test record_result == false
+      route_result = @test_logs (:warn, r"Could not record Web UI operation") begin
+        Sparlectra.route_sparlectra_webui("GET", "/powerflow"; output_root = logging_failure_root)
+      end
+      @test route_result.status == 200
       empty_delete_root = joinpath(tmpdir, "empty-delete-root")
       @test Sparlectra.route_sparlectra_webui("POST", "/powerflow/delete_all"; output_root = empty_delete_root).status == 303
       @test occursin("\"event\":\"all_runs_deleted\"", read(Sparlectra.webui_operation_log_path(empty_delete_root), String))
@@ -783,7 +816,18 @@ result = get_powerflow_result(run_id)
       probe = listen(ip"127.0.0.1", UInt16(0))
       port = Int(getsockname(probe)[2])
       close(probe)
-      server = start_sparlectra_webui(port = port, output_root = output_root, auto_shutdown_on_browser_close = false)
+      server_ref = Ref{Any}()
+      startup_output = mktemp() do path, io
+        server_ref[] = redirect_stdout(io) do
+          redirect_stderr(io) do
+            start_sparlectra_webui(port = port, output_root = output_root, auto_shutdown_on_browser_close = false)
+          end
+        end
+        flush(io)
+        return read(path, String)
+      end
+      server = server_ref[]
+      _assert_no_webui_transcript_markers(startup_output)
       @test isdir(output_root)
       @test server.runtime.case_directory == Sparlectra.default_webui_case_cache_dir(output_root)
       @test isdir(server.runtime.case_directory)

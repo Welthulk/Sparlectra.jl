@@ -59,6 +59,8 @@ function _print_rectangular_qlimit_trace(
   lock_mask::AbstractVector{Bool},
   qlimit_lock_reason::Symbol = :manual,
 )
+  # Decision logic is ordered from structural exclusions to physical violation
+  # checks so trace text explains "why not switched" unambiguously.
   busI = _qlimit_original_bus_id(net, bus)
   qmin = (bus <= length(qmin_pu)) ? qmin_pu[bus] : -Inf
   qmax = (bus <= length(qmax_pu)) ? qmax_pu[bus] : Inf

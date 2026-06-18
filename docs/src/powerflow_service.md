@@ -126,7 +126,14 @@ if controlled cancellation exits the worker.
   trigger Excel's global auto-conversion warning when opened directly. Numeric
   fields containing US thousands commas are quoted. The legacy
   `detailed_result_csv_semicolon=true` request remains accepted and maps to
-  `excel_de` when no explicit format is supplied. Legacy run directories
+  `excel_de` when no explicit format is supplied. The output configuration
+  `detailed_result_csv_write_mode` controls artifact writing: `buffered` keeps
+  the current one-write IOBuffer path, `streaming` writes rows directly to an
+  open file, and the default `auto` mode streams when the configured row or
+  estimated-byte thresholds indicate a very large output.
+  `detailed_result_csv_exporter` controls row generation: `auto` keeps the
+  report-based path for small cases and switches to direct streaming when the
+  bus count reaches `detailed_result_csv_direct_threshold_buses`. Legacy run directories
   containing `diagnose.txt` remain discoverable and downloadable.
   Diagnostic generation reuses existing PowerFlow/Q-limit printers and a
   diagnostic failure does not replace the primary PowerFlow result.

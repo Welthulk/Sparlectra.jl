@@ -35,8 +35,14 @@ julia --project=. examples/matpower_import.jl
 | `output.console_auto_profile` | Symbol/String | `compact` | `off`, `compact`, `full` | MATPOWER auto-profile console detail. |
 | `output.console_diagnostics` | Symbol/String | `compact` | `off`, `compact`, `summary`, `full` | Diagnostic detail on console. |
 | `output.console_q_limit_events` | Symbol/String | `summary` | `off`, `summary`, `full` | Q-limit/PV→PQ event console detail. |
-| `output.console_max_rows` | Int | `5` | non-negative integer | Max rows in compact console tables. |
+| `output.console_max_rows` | Int | `100` | non-negative integer | Max rows in compact console tables. |
 | `output.logfile_results` | Symbol/String | `off` | `off`, `compact`, `classic`, `full` | Solved result table detail in logfile. |
+| `output.detailed_result_csv_write_mode` | Symbol/String | `auto` | `auto`, `buffered`, `streaming` | Detailed CSV artifact write strategy; `auto` streams very large outputs. |
+| `output.detailed_result_csv_exporter` | Symbol/String | `auto` | `auto`, `report`, `direct` | Detailed CSV row-generation path; `auto` uses the direct streaming exporter for large bus counts. |
+| `output.detailed_result_csv_direct_threshold_buses` | Int | `10000` | positive integer | Bus-count threshold where `auto` switches detailed CSV export from report generation to direct streaming. |
+| `output.detailed_result_csv_buffer_initial_bytes` | Int | `8388608` | non-negative integer | Initial size hint for buffered detailed CSV artifact writing. |
+| `output.detailed_result_csv_buffer_max_bytes` | Int | `67108864` | positive integer | Cheap estimated-size limit above which `auto` prefers streaming. |
+| `output.detailed_result_csv_streaming_threshold_rows` | Int | `100000` | positive integer | Row-count threshold above which `auto` prefers streaming. |
 | `output.logfile_diagnostics` | Symbol/String | `compact` | `off`, `compact`, `full` | Diagnostic logfile detail. |
 | `output.logfile_performance` | Symbol/String | `compact` | `off`, `compact`, `full` | Performance profile logfile detail. |
 | `output.logfile_warnings` | Symbol/String | `table` | `off`, `summary`, `table`, `full` | Warning representation in logfile. |
@@ -58,8 +64,8 @@ enabled.
 | `diagnostics.console_auto_profile` | Symbol/String | `compact` | `off`, `compact`, `full` | Auto-profile detail on console. | `full`: medium |
 | `diagnostics.console_diagnostics` | Symbol/String | `compact` | `off`, `compact`, `summary`, `full` | Solver diagnostics detail on console. | `full`: medium/high |
 | `diagnostics.console_q_limit_events` | Symbol/String | `summary` | `off`, `summary`, `full` | PV→PQ event verbosity on console. | `full`: medium |
-| `diagnostics.console_max_rows` | Int | `20` | non-negative integer | Row cap for console diagnostics tables. | low |
-| `diagnostics.logfile_diagnostics` | Symbol/String | `full` | `off`, `compact`, `full` | Diagnostic logfile detail level. | `full`: medium/high |
+| `diagnostics.console_max_rows` | Int | `100` | non-negative integer | Row cap for console diagnostics tables. | low |
+| `diagnostics.logfile_diagnostics` | Symbol/String | `compact` | `off`, `compact`, `full` | Diagnostic logfile detail level. | `full`: medium/high |
 
 ## Performance configuration
 

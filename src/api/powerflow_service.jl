@@ -120,6 +120,7 @@ function start_powerflow_run(request::AbstractDict; case_directory::Union{Nothin
   phases = Dict{Symbol,Float64}()
   cancellation_token = _service_request_value(request, "cancellation_token", nothing)
   phase_callback = _service_request_value(request, "phase_callback", phase -> nothing)
+  operation_callback = _service_request_value(request, "operation_callback", (event; fields...) -> nothing)
   set_phase = phase -> (phase_callback(String(phase)); _check_powerflow_cancelled!(cancellation_token))
   set_phase("resolving_case")
   _check_powerflow_cancelled!(cancellation_token)
@@ -193,6 +194,7 @@ function start_powerflow_run(request::AbstractDict; case_directory::Union{Nothin
       run_id = run_id,
       cancellation_token = cancellation_token,
       phase_callback = phase_callback,
+      operation_callback = operation_callback,
     )
   catch err
     err isa PowerFlowAborted && rethrow()
