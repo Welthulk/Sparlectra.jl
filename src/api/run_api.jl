@@ -76,13 +76,14 @@ function _api_timing_mode(value)::Symbol
   return mode
 end
 
-function _write_api_timing_summary(io::IO, result::SparlectraRunResult, config::SparlectraConfig)
+function _write_api_timing_summary(io::IO, result::SparlectraRunResult, config::SparlectraConfig, phases::AbstractDict = Dict{Symbol,Float64}())
   benchmark_median = result.performance_profile isa AbstractDict ? get(result.performance_profile, :benchmark_median_s, nothing) : nothing
   representative_time = result.performance_profile isa AbstractDict ? get(result.performance_profile, :representative_elapsed_s, result.elapsed_s) : result.elapsed_s
   println(io, "Timing")
   println(io, "------")
-  result.solver_elapsed_s === nothing || println(io, "solver_time:          ", round(result.solver_elapsed_s; digits = 6), " s")
-  println(io, "wall_time:            ", round(Float64(representative_time); digits = 6), " s")
+  println(io, "Solver time : ", result.solver_elapsed_s === nothing ? "n/a" : "$(round(result.solver_elapsed_s; digits = 6)) s")
+  haskey(phases, :artifact_writing) && println(io, "Output time : ", round(Float64(phases[:artifact_writing]); digits = 6), " s")
+  println(io, "Wall time   : ", round(Float64(representative_time); digits = 6), " s")
   if config.benchmark.enabled
     println(io, "benchmark_median:     ", benchmark_median === nothing ? "n/a" : "$(round(Float64(benchmark_median); digits = 6)) s")
     println(io, "benchmark_samples:    ", config.benchmark.samples)
@@ -333,11 +334,13 @@ function _write_namedtuple_csv(path::AbstractString, rows::AbstractVector, colum
   delimiter in (',', ';') || throw(ArgumentError("CSV delimiter must be ',' or ';'."))
   resolved_format = format === nothing ? (name = "custom", delimiter = delimiter, decimal_separator = '.', thousands_separator = "") : _resolve_detailed_csv_format(format)
   resolved_format.delimiter == delimiter || throw(ArgumentError("CSV delimiter does not match detailed CSV format $(resolved_format.name)."))
+  buffer = IOBuffer()
+  println(buffer, join(String.(columns), delimiter))
+  for row in rows
+    println(buffer, join((_csv_field(getproperty(row, column), delimiter, resolved_format) for column in columns), delimiter))
+  end
   open(path, "w") do io
-    println(io, join(String.(columns), delimiter))
-    for row in rows
-      println(io, join((_csv_field(getproperty(row, column), delimiter, resolved_format) for column in columns), delimiter))
-    end
+    write(io, take!(buffer))
   end
   return path
 end
@@ -626,11 +629,13 @@ function _run_sparlectra_api(;
   _complete_active_phase!(phase_recorder)
   emit_phase("finalizing_success")
   _complete_active_phase!(phase_recorder)
+  phases[:artifact_writing] = _api_elapsed_seconds(artifact_start)
+  phases[:total] = _api_elapsed_seconds(total_start)
   open(logfile, "a") do io
     println(io)
     println(io, "API run summary")
     println(io, "===============")
-    _write_api_timing_summary(io, raw_result, config)
+    _write_api_timing_summary(io, raw_result, config, phases)
     println(io, "Case file format: ", lowercase(splitext(case_path)[2]))
     println(io, "Case file size: ", filesize(case_path), " bytes")
     println(io)
@@ -661,8 +666,6 @@ function _run_sparlectra_api(;
       println(io)
     end
   end
-  phases[:artifact_writing] = _api_elapsed_seconds(artifact_start)
-  phases[:total] = _api_elapsed_seconds(total_start)
   timing_mode === :off || _write_performance_log(joinpath(output_path, "performance.log"), timing_mode, phases, raw_result, phase_recorder.timings)
   _check_powerflow_cancelled!(cancellation_token)
 

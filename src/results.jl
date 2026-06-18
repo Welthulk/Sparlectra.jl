@@ -384,7 +384,9 @@ function printACPFlowResults(net::Net, ct::Float64, ite::Int, tol::Float64, toFi
   current_date = Dates.format(Dates.now(), "d-u-yy H:M:S")
 
   formatted_version = format_version(vers)
-  flowResults, totalLosses = formatBranchResults(net; max_rows = max_rows)
+  totalLosses = let (∑pv, ∑qv) = getTotalLosses(net = net)
+    @sprintf("total network power balance (Σ S_branch): P = %10.3f [MW], Q = %10.3f [MVar]\n", ∑pv, ∑qv)
+  end
 
   @printf(io, "================================================================================\n")
   @printf(io, "| SPARLECTRA Version %-10s - AC Power Flow Results                        |\n", formatted_version)
@@ -429,8 +431,8 @@ function printACPFlowResults(net::Net, ct::Float64, ite::Int, tol::Float64, toFi
   @printf(io, "Tolerance      : %.1e\n", tol)
   @printf(io, "Solver         :%15s\n", string(solver))
   if converged
-    isnothing(solver_time_s) || @printf(io, "Solver time    :%10f seconds\n", solver_time_s)
-    @printf(io, "Wall time      :%10f seconds\n", ct)
+    println(io, "Solver time : ", isnothing(solver_time_s) ? "n/a" : @sprintf("%.6f s", solver_time_s))
+    println(io, "Wall time   : ", @sprintf("%.6f s", ct))
   else
     @printf(io, "Status         :%10s\n", "Not Converged")
   end
@@ -471,6 +473,7 @@ function printACPFlowResults(net::Net, ct::Float64, ite::Int, tol::Float64, toFi
     return nothing
   end
 
+  flowResults, _ = formatBranchResults(net; max_rows = max_rows)
   tap_target_vm = _tap_voltage_target_by_bus(net)
   @printf(io, "==========================================================================================================================================================================================================================\n")
   @printf(
