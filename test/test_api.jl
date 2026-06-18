@@ -20,6 +20,27 @@ mpc.branch = [
   return path
 end
 
+function _control_label_test_net()
+  net = Net(name = "control_label_cache", baseMVA = 100.0)
+  for name in ("Slack", "NoControl", "QControl", "PControl", "BothControl")
+    addBus!(net = net, busName = name, vn_kV = 110.0)
+  end
+  addACLine!(net = net, fromBus = "Slack", toBus = "NoControl", length = 1.0, r = 0.01, x = 0.05)
+  addACLine!(net = net, fromBus = "NoControl", toBus = "QControl", length = 1.0, r = 0.01, x = 0.05)
+  addACLine!(net = net, fromBus = "QControl", toBus = "PControl", length = 1.0, r = 0.01, x = 0.05)
+  addACLine!(net = net, fromBus = "PControl", toBus = "BothControl", length = 1.0, r = 0.01, x = 0.05)
+  curve = make_characteristic([(0.9, 0.0), (1.1, 0.0)])
+  qu = QUController(curve; qmin_pu = -1.0, qmax_pu = 1.0)
+  pu = PUController(curve; pmin_pu = 0.0, pmax_pu = 1.0)
+  addProsumer!(net = net, busName = "Slack", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "Slack")
+  addProsumer!(net = net, busName = "NoControl", type = "ENERGYCONSUMER", p = 1.0, q = 0.2)
+  addProsumer!(net = net, busName = "QControl", type = "SYNCHRONOUSMACHINE", p = 1.0, q = 0.0, qu_controller = qu)
+  addProsumer!(net = net, busName = "PControl", type = "SYNCHRONOUSMACHINE", p = 1.0, q = 0.0, pu_controller = pu)
+  addProsumer!(net = net, busName = "BothControl", type = "SYNCHRONOUSMACHINE", p = 1.0, q = 0.0, qu_controller = qu)
+  addProsumer!(net = net, busName = "BothControl", type = "SYNCHRONOUSMACHINE", p = 1.0, q = 0.0, pu_controller = pu)
+  return net
+end
+
 function run_api_tests()
   @testset "GUI-ready Sparlectra API" begin
     mktempdir() do tmpdir
@@ -30,6 +51,21 @@ function run_api_tests()
         (:name, :empty_missing, :empty_nothing),
       )
       @test read(csv_writer_path, String) == "name,empty_missing,empty_nothing\n\"quoted, \"\"value\"\"\",,\n"
+      buffered_writer_path = joinpath(tmpdir, "writer_buffered.csv")
+      streaming_writer_path = joinpath(tmpdir, "writer_streaming.csv")
+      csv_strategy_rows = [(name = "alpha", value = 1.25), (name = "beta, quoted", value = 2.5)]
+      buffered_cfg = Sparlectra.OutputConfig(detailed_result_csv_write_mode = :buffered, detailed_result_csv_buffer_initial_bytes = 128)
+      streaming_cfg = Sparlectra.OutputConfig(detailed_result_csv_write_mode = :streaming)
+      Sparlectra._write_namedtuple_csv(buffered_writer_path, csv_strategy_rows, (:name, :value); config = buffered_cfg)
+      Sparlectra._write_namedtuple_csv(streaming_writer_path, csv_strategy_rows, (:name, :value); config = streaming_cfg)
+      @test read(buffered_writer_path, String) == "name,value\nalpha,1.25\n\"beta, quoted\",2.5\n"
+      @test read(streaming_writer_path, String) == read(buffered_writer_path, String)
+      auto_streaming_cfg = Sparlectra.OutputConfig(detailed_result_csv_write_mode = :auto, detailed_result_csv_streaming_threshold_rows = 1)
+      @test Sparlectra._select_namedtuple_csv_write_mode(csv_strategy_rows, (:name, :value); config = auto_streaming_cfg, estimated_rows = 2) === :streaming
+      safe_default_cfg = Sparlectra.OutputConfig(Dict("output" => Dict("detailed_result_csv_buffer_initial_bytes" => -1, "detailed_result_csv_buffer_max_bytes" => 0, "detailed_result_csv_streaming_threshold_rows" => 0)))
+      @test safe_default_cfg.detailed_result_csv_buffer_initial_bytes == 8 * 1024 * 1024
+      @test safe_default_cfg.detailed_result_csv_buffer_max_bytes == 64 * 1024 * 1024
+      @test safe_default_cfg.detailed_result_csv_streaming_threshold_rows == 100_000
       semicolon_writer_path = joinpath(tmpdir, "writer_semicolon.csv")
       Sparlectra._write_namedtuple_csv(
         semicolon_writer_path,
@@ -64,7 +100,27 @@ function run_api_tests()
       exponent_technical_path = joinpath(tmpdir, "writer_exponent_technical.csv")
       Sparlectra._write_namedtuple_csv(exponent_technical_path, exponent_rows, propertynames(only(exponent_rows)); format = "technical")
       @test read(exponent_technical_path, String) == "id,small,large\n1E5,1.23e-05,123000\n"
+      direct_cell_format = Sparlectra.CsvFormatRuntime(Sparlectra._resolve_detailed_csv_format("excel_de"))
+      for value in (0.0, -0.0, 1.0, -1.0, 1.234567, -1234567.89, NaN, Inf, -Inf, Base.missing, nothing, "quoted; \"value\"\n")
+        old_cell = Sparlectra._csv_field(value, ';', Sparlectra._resolve_detailed_csv_format("excel_de"))
+        direct_buffer = IOBuffer()
+        Sparlectra.write_csv_cell!(direct_buffer, value, ';', direct_cell_format)
+        @test String(take!(direct_buffer)) == old_cell
+      end
       @test_throws ArgumentError Sparlectra._resolve_detailed_csv_format("unknown")
+      control_net = _control_label_test_net()
+      control_cache = Sparlectra._bus_control_flag_cache(control_net)
+      for node in control_net.nodeVec
+        @test Sparlectra._cached_control_label(control_cache, node.busIdx) == Sparlectra._control_label(control_net, node.busIdx)
+      end
+      @test Set(Sparlectra._cached_control_label(control_cache, node.busIdx) for node in control_net.nodeVec) == Set(["-", "Q(U)", "P(U)", "Q(U), P(U)"])
+      direct_source = read(joinpath(dirname(@__DIR__), "src", "api", "run_api.jl"), String)
+      # Keep this as a simple source guard: the behavioral cache equivalence
+      # checks above cover correctness, while these checks prevent accidental
+      # reintroduction of the old per-row control-label path without brittle
+      # regex body extraction.
+      @test !occursin("_control_label(net", direct_source)
+      @test !occursin("_bus_control_flags", direct_source)
 
       casefile = _write_api_test_case(joinpath(tmpdir, "case_api.m"))
       template = joinpath(tmpdir, "config_template.yaml")
@@ -99,6 +155,10 @@ function run_api_tests()
       @test result.iterations isa Int
       @test result.final_mismatch isa Float64
       @test result.raw_result isa SparlectraRunResult
+      @test result.metadata["qlimits_enabled"] === true
+      @test result.metadata["qlimit_guard_enabled"] isa Bool
+      @test result.metadata["q_limit_preview_mode"] == "summary"
+      @test result.metadata["q_limit_runlog_max_rows"] == 0
       @test read(template, String) == template_before
       @test isfile(joinpath(output_dir, "effective_config.yaml"))
       @test occursin("tol: 1.0e-9", read(joinpath(output_dir, "effective_config.yaml"), String))
@@ -106,7 +166,17 @@ function run_api_tests()
       @test effective_cfg.powerflow.tol == 1.0e-9
       @test effective_cfg.powerflow.max_iter == 40
       run_log = read(joinpath(output_dir, "run.log"), String)
-      @test occursin("wall_time:", run_log)
+      @test occursin("Resolved Q-limit options", run_log)
+      @test occursin("Q-limit handling enabled : true", run_log)
+      @test occursin("Q-limit guard enabled    : $(effective_cfg.powerflow.qlimits.guard)", run_log)
+      @test occursin("Q-limit preview mode     : summary", run_log)
+      @test occursin("Q-limit runlog max rows  : 0", run_log)
+      @test occursin("Q-limit detail artifact  : q_limit.log", run_log)
+      @test occursin("full details        : q_limit.log", run_log)
+      @test !occursin("full details     : q_limit_initial_limits.csv", run_log)
+      @test occursin("Wall time   :", run_log)
+      @test occursin("Output time :", run_log)
+      @test occursin("Solver time :", run_log)
       @test !occursin("representative_time:", run_log)
       @test !occursin("solver_time:          n/a", run_log)
       for marker in ("iterations:", "final_mismatch:", "final_status:", "final_outcome:")
@@ -122,6 +192,7 @@ function run_api_tests()
       @test haskey(result_json, "service_phase_timings")
       @test any(timing -> get(timing, "phase", "") == "finalizing_success", result_json["service_phase_timings"])
       @test occursin("detailed_result_csv_format: excel_de", run_log)
+      @test occursin("detailed_result_csv_exporter: report", run_log)
       @test occursin("detailed_result_csv_delimiter: semicolon", run_log)
       @test occursin("detailed_result_csv_decimal_separator: comma", run_log)
       @test occursin("detailed_result_csv_thousands_separator: dot", run_log)
@@ -136,6 +207,12 @@ function run_api_tests()
       @test occursin("Sparlectra PowerFlow diagnostics", diagnostic_log)
       @test occursin("Final limit validation:", diagnostic_log)
       @test !isfile(joinpath(output_dir, "diagnose.txt"))
+      q_limit_log = read(joinpath(output_dir, "q_limit.log"), String)
+      @test occursin("Resolved Q-limit options", q_limit_log)
+      @test occursin("Initial PV Q-limit table", q_limit_log)
+      @test occursin("PV->PQ and PQ->PV event details", q_limit_log)
+      @test occursin("Final PV Q-limit active-set check", q_limit_log)
+      @test occursin("Q-Limit Active-Set Summary", q_limit_log)
 
       bus_csv = read(joinpath(output_dir, "bus_voltages_complex.csv"), String)
       branch_csv = read(joinpath(output_dir, "branch_flows.csv"), String)
@@ -144,13 +221,61 @@ function run_api_tests()
       @test occursin(r"\d,\d", bus_csv)
       @test length(collect(eachline(IOBuffer(bus_csv)))) > 1
       @test length(collect(eachline(IOBuffer(branch_csv)))) > 1
+      power_cache = Sparlectra._bus_power_component_cache(result.raw_result.net)
+      for node in result.raw_result.net.nodeVec
+        @test Sparlectra._bus_power_components(power_cache, node.busIdx) == Sparlectra._effective_bus_power_components(result.raw_result.net, node.busIdx)
+      end
+      direct_csv_dir = joinpath(tmpdir, "direct_csv")
+      mkpath(direct_csv_dir)
+      direct_cfg = Sparlectra.OutputConfig(detailed_result_csv_exporter = :direct)
+      direct_timing = Dict{Symbol,Any}()
+      direct_artifacts = Sparlectra._write_detailed_result_csv(direct_csv_dir, result.raw_result; format = "excel_de", config = direct_cfg, timing_metadata = direct_timing)
+      @test direct_artifacts == ["bus_voltages_complex.csv", "branch_flows.csv"]
+      @test replace(read(joinpath(direct_csv_dir, "bus_voltages_complex.csv"), String), "\r\n" => "\n") == replace(bus_csv, "\r\n" => "\n")
+      @test replace(read(joinpath(direct_csv_dir, "branch_flows.csv"), String), "\r\n" => "\n") == replace(branch_csv, "\r\n" => "\n")
+      @test direct_timing[:exporter] === :direct
+      @test direct_timing[:write_mode] === :streaming
+      @test direct_timing[:bus_rows] == length(result.raw_result.net.nodeVec)
+      @test direct_timing[:branch_rows] == length(result.raw_result.net.branchVec)
+      @test direct_timing[:bus_export_s] >= 0.0
+      @test direct_timing[:branch_export_s] >= 0.0
+      @test direct_timing[:control_label_cache_s] >= 0.0
+      @test Sparlectra._select_detailed_csv_exporter(result.raw_result.net; config = Sparlectra.OutputConfig(detailed_result_csv_exporter = :auto, detailed_result_csv_direct_threshold_buses = 1)) === :direct
+      progress_events = String[]
+      progress_payloads = Dict{String,Any}[]
+      progress_dir = joinpath(tmpdir, "direct_csv_progress")
+      mkpath(progress_dir)
+      Sparlectra._write_detailed_result_csv(
+        progress_dir,
+        result.raw_result;
+        format = "excel_de",
+        config = direct_cfg,
+        timing_metadata = Dict{Symbol,Any}(:progress_callback => ((event; fields...) -> (push!(progress_events, String(event)); push!(progress_payloads, Dict{String,Any}(String(k) => v for (k, v) in fields))))),
+      )
+      @test "detailed_result_csv_export_started" in progress_events
+      @test count(==("detailed_result_csv_file_written"), progress_events) == 2
+      @test any(p -> get(p, "artifact", "") == "bus_voltages_complex.csv" && get(p, "rows", 0) == length(result.raw_result.net.nodeVec) && haskey(p, "elapsed_s"), progress_payloads)
+      @test any(p -> get(p, "artifact", "") == "branch_flows.csv" && get(p, "rows", 0) == length(result.raw_result.net.branchVec) && haskey(p, "elapsed_s"), progress_payloads)
+      abort_checks = Ref(0)
+      abort_dir = joinpath(tmpdir, "direct_csv_abort_checks")
+      mkpath(abort_dir)
+      Sparlectra._write_detailed_result_csv(abort_dir, result.raw_result; format = "technical", config = direct_cfg, abort_checker = () -> (abort_checks[] += 1))
+      @test abort_checks[] >= 1
+      @test length(power_cache) == length(result.raw_result.net.nodeVec)
 
       kinds = Set(artifact.kind for artifact in result.artifacts)
       @test :log in kinds
+      @test :q_limit_log in kinds
       @test :result_json in kinds
       @test :effective_config in kinds
       @test count(artifact -> artifact.kind === :csv && artifact.mime_type == "text/csv", result.artifacts) == 2
       @test all(artifact -> artifact.exists && artifact.size_bytes !== nothing, result.artifacts)
+      @test "q_limit.log" in Set(artifact.name for artifact in result.artifacts)
+      for m in eachmatch(r"full details\s*:\s*(\S+)", run_log)
+        artifact_name = m.captures[1]
+        @test isfile(joinpath(output_dir, artifact_name))
+        @test artifact_name in Set(artifact.name for artifact in result.artifacts)
+      end
       @test result.logfile == only(artifact.path for artifact in result.artifacts if artifact.name == "run.log")
       @test result.result_file == only(artifact.path for artifact in result.artifacts if artifact.kind === :result_json)
 
@@ -212,11 +337,63 @@ function run_api_tests()
       @test legacy.success
       @test startswith(read(joinpath(legacy_dir, "bus_voltages_complex.csv"), String), "bus;")
 
+      qlimit_disabled_dir = joinpath(tmpdir, "q_limit_disabled")
+      mkpath(qlimit_disabled_dir)
+      disabled_metadata = copy(result.metadata)
+      disabled_metadata["qlimits_enabled"] = false
+      Sparlectra._write_q_limit_log_artifact(qlimit_disabled_dir, result.raw_result, disabled_metadata)
+      qlimit_disabled_log = read(joinpath(qlimit_disabled_dir, "q_limit.log"), String)
+      @test occursin("Q-limit handling enabled : false", qlimit_disabled_log)
+      @test occursin("Q-limit enforcement      : skipped", qlimit_disabled_log)
+      @test occursin("Q-limit active set       : not run", qlimit_disabled_log)
+      @test occursin("PV->PQ Q-limit events    : 0", qlimit_disabled_log)
+      @test occursin("Guarded PV->PQ locks     : 0", qlimit_disabled_log)
+
       failed_diagnostic = joinpath(tmpdir, "failed_diagnose.txt")
       Sparlectra._write_powerflow_diagnostics(failed_diagnostic, result.raw_result; diagnostic_fn = (io, _) -> error("diagnostic test failure"))
       failed_diagnostic_text = read(failed_diagnostic, String)
       @test occursin("Diagnostic generation failed", failed_diagnostic_text)
       @test occursin("diagnostic test failure", failed_diagnostic_text)
+
+      for i in 1:5
+        Sparlectra.logQLimitHit!(control_net, i, 2 + (i % 3), i % 2 == 0 ? :max : :min)
+      end
+      qlimit_io = IOBuffer()
+      Sparlectra.printQLimitLog(control_net; io = qlimit_io, max_rows = 2, full_details = "q_limit_events.csv")
+      qlimit_text = String(take!(qlimit_io))
+      @test occursin("PV->PQ switching events:", qlimit_text)
+      @test occursin("total events     : 5", qlimit_text)
+      @test occursin("rows shown       : 2", qlimit_text)
+      @test occursin("rows omitted     : 3", qlimit_text)
+      @test occursin("full details     : q_limit_events.csv", qlimit_text)
+      qlimit_summary_io = IOBuffer()
+      Sparlectra.printQLimitLog(control_net; io = qlimit_summary_io, max_rows = 0, full_details = "q_limit_events.csv")
+      qlimit_summary_text = String(take!(qlimit_summary_io))
+      @test occursin("rows shown       : 0", qlimit_summary_text)
+      @test !occursin("Iteration │ Bus │ Side", qlimit_summary_text)
+      pvlimit_net = _control_label_test_net()
+      for bus in 2:4
+        pvlimit_net.nodeVec[bus]._nodeType = Sparlectra.PV
+      end
+      pvlimit_net.qmin_pu = fill(-1.0, length(pvlimit_net.nodeVec))
+      pvlimit_net.qmax_pu = fill(1.0, length(pvlimit_net.nodeVec))
+      pvlimit_io = IOBuffer()
+      Sparlectra.printPVQLimitsTable(pvlimit_net; io = pvlimit_io, max_rows = 2, full_details = "q_limit_initial_limits.csv")
+      pvlimit_text = String(take!(pvlimit_io))
+      @test occursin("rows shown       : 2", pvlimit_text)
+      @test occursin("rows omitted", pvlimit_text)
+      @test occursin("full details     : q_limit_initial_limits.csv", pvlimit_text)
+      pvlimit_summary_io = IOBuffer()
+      Sparlectra.printPVQLimitsTable(pvlimit_net; io = pvlimit_summary_io, max_rows = 0, full_details = "q_limit_initial_limits.csv")
+      pvlimit_summary_text = String(take!(pvlimit_summary_io))
+      @test occursin("rows shown       : 0", pvlimit_summary_text)
+      @test occursin("preview          : summary-only", pvlimit_summary_text)
+      @test !occursin("Bus │      Qmin", pvlimit_summary_text)
+      qlimit_artifact_dir = joinpath(tmpdir, "q_limit_artifacts")
+      mkpath(qlimit_artifact_dir)
+      qlimit_artifacts = Sparlectra._write_q_limit_detail_artifacts(qlimit_artifact_dir, control_net)
+      @test "q_limit_events.csv" in qlimit_artifacts
+      @test length(collect(eachline(joinpath(qlimit_artifact_dir, "q_limit_events.csv")))) == 6
 
       dict_result = to_dict(result)
       named_result = to_namedtuple(result)
@@ -225,6 +402,8 @@ function run_api_tests()
       @test dict_result["run_id"] == result.run_id
       @test dict_result["schema_version"] == "1.0"
       @test dict_result["status"] == "succeeded"
+      @test dict_result["qlimits_enabled"] === true
+      @test dict_result["q_limit_preview_mode"] == "summary"
       @test !haskey(dict_result, "raw_result")
       @test named_result.run_id == result.run_id
       @test named_result.schema_version == "1.0"
@@ -515,12 +694,16 @@ function run_api_tests()
 
       artifacts = list_powerflow_artifacts(started["run_id"])
       artifact_names = Set(artifact["name"] for artifact in artifacts)
-      @test Set(["result.json", "run.log", "effective_config.yaml"]) ⊆ artifact_names
+      @test Set(["result.json", "run.log", "effective_config.yaml", "q_limit.log"]) ⊆ artifact_names
 
       resolved = resolve_powerflow_artifact(started["run_id"], "result.json")
       @test resolved isa SparlectraApiArtifact
       @test isfile(resolved.path)
       @test !isempty(resolved.mime_type)
+      qlimit_resolved = resolve_powerflow_artifact(started["run_id"], "q_limit.log")
+      @test qlimit_resolved isa SparlectraApiArtifact
+      @test qlimit_resolved.kind === :q_limit_log
+      @test qlimit_resolved.mime_type == "text/plain"
 
       lock(Sparlectra._POWERFLOW_SERVICE_LOCK) do
         empty!(Sparlectra._POWERFLOW_SERVICE_RUNS)

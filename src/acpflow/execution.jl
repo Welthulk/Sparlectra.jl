@@ -19,6 +19,7 @@ end
 function _execute_sparlectra_powerflow!(net::Net, cfg::SparlectraConfig; performance_profile = nothing)
   pf_cfg = cfg.powerflow
   verbose = _runner_verbose(cfg)
+  qlimit_preview_rows = cfg.output.console_q_limit_events === :summary || cfg.output.console_q_limit_events === :off ? 0 : cfg.output.console_max_rows
   phase_callback = performance_profile isa AbstractDict ? get(performance_profile, :phase_callback, phase -> nothing) : phase -> nothing
   phase_callback("solving_powerflow")
   iterations = 0
@@ -28,7 +29,7 @@ function _execute_sparlectra_powerflow!(net::Net, cfg::SparlectraConfig; perform
     iterations, erg, control_status = _perf_profile_time!(performance_profile, :solver_total) do
       controllers = collect_outer_controllers(net)
       if isempty(controllers)
-        ite, status = runpf!(net, pf_cfg; verbose = verbose, pv_table_rows = cfg.output.console_max_rows, performance_profile = performance_profile)
+        ite, status = runpf!(net, pf_cfg; verbose = verbose, pv_table_rows = qlimit_preview_rows, performance_profile = performance_profile)
         (ite, status, :none)
       else
         control_result = run_control!(net; controllers = controllers, pf_config = pf_cfg, control_config = cfg.control, verbose = verbose, performance_profile = performance_profile)

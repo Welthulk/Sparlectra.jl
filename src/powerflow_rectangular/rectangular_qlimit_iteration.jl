@@ -55,11 +55,13 @@ function _handle_rectangular_qlimit_iteration!(
   qlimit_guard_violation_threshold_pu,
   tol,
   verbose,
+  max_console_rows,
   performance_profile,
 )
   changed = false
   reenabled = false
 
+  # qreq vector is tracked across iterations for :auto_q_delta start logic.
   _perf_profile_time!(performance_profile, :iteration_qload) do
     copyto!(workspace.qload_pu, build_qload_pu(net))
   end
@@ -138,6 +140,7 @@ function _handle_rectangular_qlimit_iteration!(
   F = workspace.rhs_vector
   max_mis = history[end]
   if qlimit_check_active
+    # Active-set operation may mutate bus_types and S; mismatch must be recomputed.
     changed, reenabled = _perf_profile_time!(performance_profile, :iteration_qlimit_active_set) do
       active_set_q_limits!(
         net,
@@ -152,6 +155,7 @@ function _handle_rectangular_qlimit_iteration!(
         lock_pv_to_pq_buses = lock_pv_to_pq_buses,
         on_violation! = qlimit_mode == :adjust_vset ? ((bus, qreq, side, qclamp) -> _try_adjust_vset_on_q_limit!(net, bus, side, it, controllers, base_vset, Vset, adjust_counter, qlimit_max_outer, verbose)) : nothing,
         verbose = verbose,
+        max_console_rows = max_console_rows,
         get_qreq_pu = bus -> begin
           (bus_types[bus] == :Slack) && return 0.0
           return imag(Scalc_pu[bus]) + workspace.qload_pu[bus]

@@ -40,6 +40,7 @@ function _resolve_qlimit_trace_buses(net::Net, requested::AbstractVector{Int})::
     end
   end
   unique!(resolved)
+  # Stable sorting keeps logs deterministic across runs.
   sort!(resolved)
   return resolved
 end

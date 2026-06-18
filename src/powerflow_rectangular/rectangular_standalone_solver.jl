@@ -44,6 +44,8 @@ function run_complex_nr_rectangular(
   dQinj_dVm::Vector{Float64} = zeros(Float64, length(V0)),
   performance_profile = nothing,
 )
+  # Standalone path is array-level only; network-level diagnostics/finalization
+  # (Q-limit summary, wrong-branch status storage, write-back) happen elsewhere.
   V = copy(V0)
   history = Float64[]
 

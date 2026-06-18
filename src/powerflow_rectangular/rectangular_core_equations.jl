@@ -57,7 +57,7 @@ function build_complex_jacobian(Ybus, V)
 end
 
 """
-    mismatch_rectangular(Ybus, V, S, bus_types, Vset, slack_idx) -> F::Vector{Float64}
+    mismatch_rectangular(Ybus, V::Vector{ComplexF64}, S::Vector{ComplexF64}, bus_types::Vector{Symbol}, Vset::Vector{Float64}, slack_idx::Int) -> F::Vector{Float64}
 
 Compute the real-valued mismatch vector F(V) for the rectangular
 complex-state formulation with PQ and PV buses.
@@ -77,8 +77,7 @@ function mismatch_rectangular(Ybus, V::Vector{ComplexF64}, S::Vector{ComplexF64}
   # Residual/update convention for the rectangular solver:
   # F = calc - spec, including the PV row ΔV = |V| - Vset, and Newton solves
   # J * δx = -F before applying rectangular absolute updates ΔVr, ΔVi.
-  # The positive PV voltage Jacobian row below is therefore consistent with
-  # the opposite residual sign used by the polar spec-minus-calc solvers.
+  # The row order is fixed as [ΔP_i, second-equation_i] for each non-slack bus i.
   n = length(V)
   @assert length(S) == n
   @assert length(bus_types) == n

@@ -169,9 +169,9 @@ diagnostics:
   console_diagnostics: compact
   # Allowed values: off, summary, full
   console_q_limit_events: summary
-  console_max_rows: 20
+  console_max_rows: 100
   # Allowed values: off, compact, full
-  logfile_diagnostics: full
+  logfile_diagnostics: compact
 
 output:
   console_summary: true
@@ -181,15 +181,25 @@ output:
   console_diagnostics: compact
   # Allowed values: off, summary, full
   console_q_limit_events: summary
-  console_max_rows: 20
+  console_max_rows: 100
   # Allowed values: off, compact, classic, full
   logfile_results: full
   result_table_max_rows: 200
   result_table_large_case_threshold_buses: 1000
   # Allowed values: summary, classic, full
   result_table_large_case_mode: summary
+  # Detailed CSV artifacts use buffered writing for normal cases and streaming
+  # for very large cases by default.
+  # Allowed values: auto, buffered, streaming
+  detailed_result_csv_write_mode: auto
+  # Allowed values: auto, report, direct
+  detailed_result_csv_exporter: auto
+  detailed_result_csv_direct_threshold_buses: 10000
+  detailed_result_csv_buffer_initial_bytes: 8388608
+  detailed_result_csv_buffer_max_bytes: 67108864
+  detailed_result_csv_streaming_threshold_rows: 100000
   # Allowed values: off, compact, full
-  logfile_diagnostics: full
+  logfile_diagnostics: compact
   # Allowed values: off, compact, full
   logfile_performance: full
   # Allowed values: off, summary, table, full

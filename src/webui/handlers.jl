@@ -88,6 +88,17 @@ function handle_powerflow_artifacts(run_id::AbstractString)::SparlectraWebUIResp
 end
 
 const _WEBUI_TEXT_MIME_TYPES = Set(("text/plain", "application/json", "application/x-yaml", "text/csv", "text/html", "text/markdown"))
+const _WEBUI_ARTIFACT_PREVIEW_BYTES = 64 * 1024
+
+function _read_webui_artifact_preview(path::AbstractString; max_bytes::Integer = _WEBUI_ARTIFACT_PREVIEW_BYTES)::NamedTuple
+  open(path, "r") do io
+    bytes = read(io, max_bytes + 1)
+    truncated = length(bytes) > max_bytes
+    truncated && resize!(bytes, max_bytes)
+    return (content = String(bytes), truncated = truncated)
+  end
+end
+
 function handle_powerflow_artifact(run_id::AbstractString, artifact_name::AbstractString)::SparlectraWebUIResponse
   artifact = resolve_powerflow_artifact(run_id, artifact_name)
   if artifact isa AbstractDict
@@ -96,8 +107,9 @@ function handle_powerflow_artifact(run_id::AbstractString, artifact_name::Abstra
     return _webui_html(render_webui_error(status, get(artifact, "message", reason)); status = status)
   end
   if artifact.mime_type in _WEBUI_TEXT_MIME_TYPES
-    content = read(artifact.path, String)
-    page = _webui_layout("Artifact: $(artifact.name)", "<section class=\"artifact-text-page\"><p><a class=\"button\" href=\"?download=1\">Download</a></p><pre class=\"artifact-text\">$(_webui_escape(content))</pre></section>"; show_back = true, main_class = "page artifact-page")
+    preview = _read_webui_artifact_preview(artifact.path)
+    notice = preview.truncated ? "<p class=\"alert warning\">Preview truncated to $(_WEBUI_ARTIFACT_PREVIEW_BYTES) bytes. Use Download for the complete artifact.</p>" : ""
+    page = _webui_layout("Artifact: $(artifact.name)", "<section class=\"artifact-text-page\"><p><a class=\"button\" href=\"?download=1\">Download</a></p>$(notice)<pre class=\"artifact-text\">$(_webui_escape(preview.content))</pre></section>"; show_back = true, main_class = "page artifact-page")
     return _webui_html(page)
   end
   bytes = read(artifact.path)

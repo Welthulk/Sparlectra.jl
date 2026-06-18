@@ -64,6 +64,7 @@ function build_rectangular_jacobian_pq_pv_sparse(
   dQinj_dVm::Vector{Float64} = zeros(Float64, length(V)),
   vm_eps::Float64 = 1e-9,
 )
+  # vm_eps avoids unstable derivatives when |V| is very close to zero.
   n = length(V)
   @assert length(bus_types) == n
   @assert length(Vset) == n
@@ -298,6 +299,7 @@ defined in `mismatch_rectangular`.
 `bus_types` and `Vset` must be consistent with `mismatch_rectangular`.
 """
 function build_rectangular_jacobian_pq_pv_dense(Ybus, V::Vector{ComplexF64}, bus_types::Vector{Symbol}, Vset::Vector{Float64}, slack_idx::Int; dPinj_dVm::Vector{Float64} = zeros(Float64, length(V)), dQinj_dVm::Vector{Float64} = zeros(Float64, length(V)), vm_eps::Float64 = 1e-9)
+  # Dense variant is primarily for diagnostics/parity checks; sparse is default path.
   n = length(V)
   @assert length(bus_types) == n
   @assert length(Vset) == n

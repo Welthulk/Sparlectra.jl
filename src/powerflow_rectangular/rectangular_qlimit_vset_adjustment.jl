@@ -25,6 +25,7 @@ function _build_vset_adjust_controllers(net::Net)
   controllers = Dict{Int,NamedTuple{(:prosumer_idx, :config),Tuple{Int,VoltageAdjustConfig}}}()
 
   for (ps_idx, ps) in enumerate(net.prosumpsVec)
+    # Only generating prosumers may own voltage-step controllers.
     isGenerator(ps) || continue
     bus = getPosumerBusIndex(ps)
 
@@ -36,8 +37,8 @@ function _build_vset_adjust_controllers(net::Net)
       cfg.vstep_pu > 0.0 || error("Bus $(_bus_label(net, bus)): invalid vstep_pu=$(cfg.vstep_pu). Must be > 0.")
       cfg.tap_steps_down >= 0 || error("Bus $(_bus_label(net, bus)): invalid tap_steps_down=$(cfg.tap_steps_down). Must be ≥ 0.")
       cfg.tap_steps_up >= 0 || error("Bus $(_bus_label(net, bus)): invalid tap_steps_up=$(cfg.tap_steps_up). Must be ≥ 0.")
+      # Enforce a single controller per bus to keep adjustment actions deterministic.
       haskey(controllers, bus) && error("Bus $(_bus_label(net, bus)): multiple prosumers define voltage adjustment data. Only one controller per bus is allowed.")
-
       controllers[bus] = (prosumer_idx = ps_idx, config = cfg)
     else
       partially_set = !isnothing(ps.vstep_pu) || !isnothing(ps.tap_steps_down) || !isnothing(ps.tap_steps_up)
