@@ -36,8 +36,8 @@ Pretty-prints the structured Q-limit log (`net.qLimitLog`) as a small table.
 Each line shows:
 where `Side` is `:min` or `:max`.
 """
-function printQLimitLog(net::Net; sort_by::Symbol = :iter, io::IO = stdout)
-  logdata = net.qLimitLog
+function printQLimitLog(net::Net; sort_by::Symbol = :iter, io::IO = stdout, max_rows::Int = 200, full_details::Union{Nothing,AbstractString} = nothing)
+  logdata = collect(net.qLimitLog)
   if isempty(logdata)
     println(io, "No Q-limit events recorded.")
     return
@@ -50,16 +50,23 @@ function printQLimitLog(net::Net; sort_by::Symbol = :iter, io::IO = stdout)
     sort!(logdata, by = x -> x.iter)
   end
 
+  println(io, "PV->PQ switching events:")
+  println(io, "  total events     : ", length(logdata))
+  shown = max_rows < 0 ? length(logdata) : min(max_rows, length(logdata))
+  println(io, "  rows shown       : ", shown)
+  println(io, "  rows omitted     : ", length(logdata) - shown)
+  isnothing(full_details) || println(io, "  full details     : ", full_details)
+  shown == 0 && return
   println(io, "─"^34)
   println(io, " Iteration │ Bus │ Side")
   println(io, "─"^34)
 
-  for ev in logdata
+  for i in 1:shown
+    ev = logdata[i]
     @printf(io, " %9d │ %3d │ %-4s\n", ev.iter, ev.bus, String(ev.side))
   end
 
   println(io, "─"^34)
-  println(io, "Total events: ", length(logdata))
 end
 
 Base.@kwdef struct QLimitEvent
@@ -120,7 +127,7 @@ end
 Print a compact table of PV-bus reactive limits before the PF iteration starts.
 Values are shown in **MVAr**.
 """
-function printPVQLimitsTable(net::Net; io::IO = stdout, max_rows::Int = 30)
+function printPVQLimitsTable(net::Net; io::IO = stdout, max_rows::Int = 30, full_details::Union{Nothing,AbstractString} = nothing)
   qmin_pu, qmax_pu = getQLimits_pu(net)
   rows = Tuple{Int,Float64,Float64}[]
 
@@ -136,12 +143,20 @@ function printPVQLimitsTable(net::Net; io::IO = stdout, max_rows::Int = 30)
     return nothing
   end
 
+  shown = max_rows < 0 ? length(rows) : min(max_rows, length(rows))
   println(io, "PV Q-limits before PF run (MVAr):")
+  println(io, "  rows total       : ", length(rows))
+  println(io, "  rows shown       : ", shown)
+  println(io, "  rows omitted     : ", length(rows) - shown)
+  isnothing(full_details) || println(io, "  full details     : ", full_details)
+  if shown == 0
+    println(io, "  preview          : summary-only")
+    return nothing
+  end
   println(io, "PV->PQ switch comparisons use per-unit internally; switch diagnostics report both p.u. and MVAr.")
   println(io, "──────────────────────────────────────────────")
   println(io, " Bus │      Qmin [MVAr] │      Qmax [MVAr]")
   println(io, "──────────────────────────────────────────────")
-  shown = max_rows < 0 ? length(rows) : min(max_rows, length(rows))
   for i = 1:shown
     bus, qmin, qmax = rows[i]
     @printf(io, " %3d │ %15.6f │ %15.6f\n", bus, qmin, qmax)

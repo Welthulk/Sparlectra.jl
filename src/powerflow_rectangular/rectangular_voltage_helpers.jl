@@ -24,6 +24,7 @@ function _apply_voltage_magnitude_preserving_angle(V::ComplexF64, vm::Float64)::
     # A zero phasor has no defined angle, so use the explicit zero-angle fallback.
     return ComplexF64(vm, 0.0)
   end
+  # Keep phasor direction exactly; only magnitude is replaced.
   return ComplexF64(vm * cis(angle(V)))
 end
 

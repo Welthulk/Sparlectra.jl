@@ -33,7 +33,7 @@ function run_configuration_docs_tests()
 
     for key in [
       "output.console_auto_profile", "output.console_diagnostics", "output.console_q_limit_events",
-      "output.logfile_results", "output.logfile_diagnostics", "output.logfile_performance", "output.logfile_warnings",
+      "output.logfile_results", "output.detailed_result_csv_write_mode", "output.detailed_result_csv_exporter", "output.logfile_diagnostics", "output.logfile_performance", "output.logfile_warnings",
       "performance.level", "benchmark.show_once_output", "matpower_import.auto_profile", "power_flow.qlimits.start_mode",
     ]
       @test occursin(key, docs)
@@ -44,4 +44,3 @@ function run_configuration_docs_tests()
     @test occursin("benchmark.enabled", docs)
   end
 end
-

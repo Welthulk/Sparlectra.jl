@@ -11,6 +11,7 @@ DocMeta.setdocmeta!(Sparlectra, :DocTestSetup, :(using Sparlectra); recursive = 
 
 makedocs(
   sitename = "Sparlectra.jl v$(sparlectra_version)",
+  repo = "https://github.com/Welthulk/Sparlectra.jl/blob/{commit}{path}#L{line}",
   modules = [Sparlectra],
   clean = true,
   doctest = true,

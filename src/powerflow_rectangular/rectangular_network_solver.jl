@@ -35,6 +35,8 @@ using LinearAlgebra
 using SparseArrays
 using Printf
 
+# Treat only solver linear-system singularities as recoverable NR step failures.
+# All other exceptions are considered real errors and are rethrown.
 _is_rectangular_linear_step_failure(e) = e isa LinearAlgebra.SingularException || e isa LinearAlgebra.LAPACKException
 
 function _print_rectangular_qlimit_summary(
@@ -170,9 +172,12 @@ function _expand_ybus_for_isolated_nodes(Yred, n::Int, iso_nodes::Vector{Int})
     iso_mask[bus] || push!(active, bus)
   end
 
+  # Reduced Ybus is expected in active-bus order; enforce dimensional consistency
+  # before embedding to avoid silent index skew for disconnected topologies.
   size(Yred, 1) == length(active) || error("_expand_ybus_for_isolated_nodes: size mismatch between reduced Ybus and active buses.")
   size(Yred, 2) == length(active) || error("_expand_ybus_for_isolated_nodes: Ybus is not square in active-bus space.")
 
+  # Reconstruct full-size matrix with zero rows/cols for isolated buses.
   Yfull = issparse(Yred) ? spzeros(ComplexF64, n, n) : zeros(ComplexF64, n, n)
   Yfull[active, active] = Yred
   return Yfull
@@ -190,6 +195,8 @@ end
   if !isnothing(ps.vset_adjust)
     return ps.vset_adjust
   end
+  # Legacy per-field voltage-adjust settings are only accepted if complete.
+  # Partial definitions are intentionally ignored to avoid ambiguous behavior.
   has_any = _has_vset_adjust_config(ps)
   has_any || return nothing
   all_defined = !isnothing(ps.vstep_pu) && !isnothing(ps.tap_steps_down) && !isnothing(ps.tap_steps_up)
@@ -200,6 +207,8 @@ end
 function _try_adjust_vset_on_q_limit!(net::Net, bus::Int, side::Symbol, it::Int, controllers::Dict{Int,NamedTuple{(:prosumer_idx, :config),Tuple{Int,VoltageAdjustConfig}}}, base_vset::Vector{Float64}, Vset::Vector{Float64}, adjust_counter::Vector{Int}, qlimit_max_outer::Int, verbose::Int)::Bool
   cname = _bus_label(net, bus)
   if !haskey(controllers, bus)
+    # No controller means this bus cannot resolve Q-limit violations by V-set shifts.
+    # The caller then falls back to PV→PQ active-set switching.
     if verbose > 0
       @info "Bus $cname: no voltage adjustment controller -> fallback PV→PQ (it=$it)"
     end
@@ -214,6 +223,7 @@ function _try_adjust_vset_on_q_limit!(net::Net, bus::Int, side::Symbol, it::Int,
   vm_new = side == :max ? vm_old - ctrl.vstep_pu : vm_old + ctrl.vstep_pu
   can_step = (vm_new >= vm_min - 1e-12) && (vm_new <= vm_max + 1e-12)
 
+  # Limit the number of outer adjustments per bus to keep the active-set loop bounded.
   if can_step && adjust_counter[bus] < qlimit_max_outer
     vm_new = clamp(vm_new, vm_min, vm_max)
     Vset[bus] = vm_new
@@ -286,6 +296,7 @@ polar formulations.
 
 function runpf_rectangular!(
   net::Net;
+  method::Symbol = :rectangular,
   maxiter::Int = 20,
   tol::Float64 = 1e-8,
   damp::Float64 = 0.2,
@@ -321,6 +332,7 @@ function runpf_rectangular!(
   qlimit_guard_freeze_after_repeated_switching::Bool = true,
   qlimit_guard_violation_mode::Symbol = :delayed_switch,
   qlimit_guard_violation_threshold_pu::Float64 = 1e-4,
+  qlimits_enabled::Bool = true,
   wrong_branch_detection::Symbol = :warn,
   wrong_branch_rescue::Bool = false,
   wrong_branch_min_vm_pu::Float64 = 0.70,
@@ -334,7 +346,7 @@ function runpf_rectangular!(
   rectangular_preallocate_workspace::Symbol = :auto,
   rectangular_workspace_min_buses::Int = 1000,
 )
-  _validate_rectangular_powerflow_options(method = :rectangular, sparse = true)
+  _validate_rectangular_powerflow_options(method = method, sparse = true)
   cancellation_check = performance_profile isa AbstractDict ? get(performance_profile, :cancellation_check, nothing) : nothing
   phase_callback = performance_profile isa AbstractDict ? get(performance_profile, :phase_callback, phase -> nothing) : phase -> nothing
   check_cancel = () -> (cancellation_check === nothing ? nothing : cancellation_check())
@@ -436,13 +448,16 @@ function runpf_rectangular!(
     resetQLimitLog!(net)
   end
   if verbose > 1
-    printPVQLimitsTable(net; max_rows = typemax(Int))
+    printPVQLimitsTable(net; max_rows = typemax(Int), full_details = "q_limit.log")
+  elseif verbose > 0 && qlimits_enabled
+    printPVQLimitsTable(net; max_rows = pv_table_rows, full_details = "q_limit.log")
   elseif verbose > 0
-    printPVQLimitsTable(net; max_rows = pv_table_rows)
+    println("Q-limit handling: disabled")
+    println("Q-limit diagnostics: skipped")
   end
 
   guarded_qlimit_buses = Int[]
-  if qlimit_guard
+  if qlimits_enabled && qlimit_guard
     guarded_qlimit_buses = _perf_profile_time!(performance_profile, :qlimit_guard_preprocess) do
       _apply_qlimit_guard_to_rectangular_active_set!(net, bus_types, S, build_qload_pu(net), qmin_pu, qmax_pu; min_q_range_pu = qlimit_guard_min_q_range_pu, zero_range_mode = qlimit_guard_zero_range_mode, narrow_range_mode = qlimit_guard_narrow_range_mode, log = qlimit_guard_log, verbose = verbose)
     end
@@ -496,11 +511,14 @@ function runpf_rectangular!(
     rectangular_workspace_preallocated = true
     rectangular_workspace_reason = :forced_on
   elseif rectangular_preallocate_workspace == :auto
+    # Auto mode keeps small systems allocation-light and preallocates only when
+    # state size is large enough to benefit from repeated buffer reuse.
     rectangular_workspace_preallocated = nb >= rectangular_workspace_min_buses
     rectangular_workspace_reason = rectangular_workspace_preallocated ? :auto_threshold : :auto_below_threshold
   else
     error("Unsupported rectangular_preallocate_workspace=$(rectangular_preallocate_workspace). Supported: :off, :on, :auto.")
   end
+
   workspace = RectangularIterationWorkspace(nb)
   if performance_profile !== nothing
     performance_profile[:rectangular_workspace_reuse] = rectangular_workspace_reuse
@@ -544,44 +562,16 @@ function runpf_rectangular!(
 
     # --- Q-Limit Active Set: PV -> PQ, optional PQ -> PV (rectangular) ------
     set_phase("q_limit_processing")
-    qlimit_iter = _handle_rectangular_qlimit_iteration!(
-      net,
-      it,
-      nb,
-      Ybus,
-      V,
-      S,
-      bus_types,
-      Vset,
-      slack_idx,
-      workspace,
-      history,
-      qmin_pu,
-      qmax_pu,
-      pv_orig_mask,
-      qlimit_mode,
-      allow_reenable,
-      q_hyst_pu,
-      cooldown_iters,
-      lock_pv_to_pq_buses,
-      qlimit_start_mode,
-      qlimit_start_iter,
-      qlimit_auto_q_delta_pu,
-      qlimit_trace_enabled,
-      qlimit_trace_internal,
-      qlimit_lock_reason,
-      qlimit_max_outer,
-      controllers,
-      base_vset,
-      adjust_counter,
-      qlimit_guard_max_switches,
-      qlimit_guard_freeze_after_repeated_switching,
-      qlimit_guard_violation_mode,
-      qlimit_guard_violation_threshold_pu,
-      tol,
-      verbose,
-      performance_profile,
-    )
+    qlimit_iter = qlimits_enabled ? _handle_rectangular_qlimit_iteration!(
+      net, it, nb, Ybus, V, S, bus_types, Vset, slack_idx, workspace, history,
+      qmin_pu, qmax_pu, pv_orig_mask, qlimit_mode, allow_reenable, q_hyst_pu,
+      cooldown_iters, lock_pv_to_pq_buses, qlimit_start_mode, qlimit_start_iter,
+      qlimit_auto_q_delta_pu, qlimit_trace_enabled, qlimit_trace_internal,
+      qlimit_lock_reason, qlimit_max_outer, controllers, base_vset, adjust_counter,
+      qlimit_guard_max_switches, qlimit_guard_freeze_after_repeated_switching,
+      qlimit_guard_violation_mode, qlimit_guard_violation_threshold_pu, tol,
+      verbose, pv_table_rows, performance_profile,
+    ) : (F = F, max_mis = max_mis, changed = false, reenabled = false, converged_this_iter = max_mis <= tol)
     check_cancel()
     F = qlimit_iter.F
     max_mis = qlimit_iter.max_mis
@@ -658,7 +648,7 @@ function runpf_rectangular!(
   branch_quality = _wrong_branch_not_checked_result()
   wrong_branch_rescue_attempted = false
   wrong_branch_rescue_reason = :disabled
-  if numerical_converged
+  if numerical_converged && qlimits_enabled
     qlimit_status = _perf_profile_time!(performance_profile, :solver_final_qlimit_summary) do
       _finalize_rectangular_qlimit_summary(
         net,
@@ -738,7 +728,7 @@ function runpf_rectangular!(
     (switch_counts_, oscillating_buses_, max_switching_exceeded_, q_limit_active_set_ok_, converged_, rejection_reason_, final_reason_, final_status_, status_)
   end
   if verbose > 0
-    _print_qlimit_active_set_summary(stdout, status)
+    qlimits_enabled && _print_qlimit_active_set_summary(stdout, status)
     println(stdout, "Wrong-branch check:")
     @printf(stdout, "  status           = %s\n", uppercase(String(status.branch_quality_status)))
     @printf(stdout, "  detection_mode   = %s\n", String(status.wrong_branch_detection))
@@ -789,6 +779,7 @@ function runpf_rectangular!(
   maxIte::Int,
   tolerance::Float64 = 1e-6,
   verbose::Int = 0;
+  method::Symbol = :rectangular,
   damp = 1.0,
   autodamp::Bool = false,
   autodamp_min::Float64 = 0.05,
@@ -823,6 +814,7 @@ function runpf_rectangular!(
   qlimit_guard_freeze_after_repeated_switching::Bool = true,
   qlimit_guard_violation_mode::Symbol = :delayed_switch,
   qlimit_guard_violation_threshold_pu::Float64 = 1e-4,
+  qlimits_enabled::Bool = true,
   wrong_branch_detection::Symbol = :warn,
   wrong_branch_rescue::Bool = false,
   wrong_branch_min_vm_pu::Float64 = 0.70,
@@ -838,6 +830,7 @@ function runpf_rectangular!(
 )
   iters, erg = runpf_rectangular!(
     net;
+    method = method,
     maxiter = maxIte,
     tol = tolerance,
     damp = damp,
@@ -873,6 +866,7 @@ function runpf_rectangular!(
     qlimit_guard_freeze_after_repeated_switching = qlimit_guard_freeze_after_repeated_switching,
     qlimit_guard_violation_mode = qlimit_guard_violation_mode,
     qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu,
+    qlimits_enabled = qlimits_enabled,
     wrong_branch_detection = wrong_branch_detection,
     wrong_branch_rescue = wrong_branch_rescue,
     wrong_branch_min_vm_pu = wrong_branch_min_vm_pu,
@@ -892,6 +886,8 @@ end
 function _runpf_with_config!(net::Net, config::PowerFlowConfig; verbose::Int = 0, damp = 1.0, pv_table_rows::Int = 30, validate_limits_after_pf::Bool = false, q_limit_violation_headroom::Float64 = 0.0, qlimit_lock_reason::Symbol = :manual, performance_profile = nothing)
   start = config.start_mode
   qlim = config.qlimits
+  qlimit_disabled = qlim.ignore_q_limits
+  qlimits_enabled = !qlimit_disabled
   return runpf!(
     net,
     config.max_iter,
@@ -922,12 +918,12 @@ function _runpf_with_config!(net::Net, config::PowerFlowConfig; verbose::Int = 0
     start_projection_accept_unmeasured_dc_start = start.accept_unmeasured_dc_start,
     start_projection_blend_lambdas = start.blend_lambdas,
     start_projection_dc_angle_limit_deg = start.dc_angle_limit_deg,
-    qlimit_start_iter = qlim.start_iter,
+    qlimit_start_iter = qlimit_disabled ? typemax(Int) : qlim.start_iter,
     qlimit_start_mode = qlim.start_mode,
     qlimit_auto_q_delta_pu = qlim.auto_q_delta_pu,
     qlimit_trace_buses = qlim.trace_buses,
-    qlimit_lock_reason = qlimit_lock_reason,
-    qlimit_guard = qlim.guard,
+    qlimit_lock_reason = qlimit_disabled ? :ignore_q_limits : qlimit_lock_reason,
+    qlimit_guard = qlimits_enabled && qlim.guard,
     qlimit_guard_min_q_range_pu = qlim.guard_min_q_range_pu,
     qlimit_guard_zero_range_mode = qlim.guard_zero_range_mode,
     qlimit_guard_narrow_range_mode = qlim.guard_narrow_range_mode,
@@ -938,6 +934,7 @@ function _runpf_with_config!(net::Net, config::PowerFlowConfig; verbose::Int = 0
     qlimit_guard_freeze_after_repeated_switching = qlim.guard_freeze_after_repeated_switching,
     qlimit_guard_violation_mode = qlim.guard_violation_mode,
     qlimit_guard_violation_threshold_pu = qlim.guard_violation_threshold_pu,
+    qlimits_enabled = qlimits_enabled,
     rectangular_workspace_reuse = config.rectangular_workspace_reuse,
     rectangular_preallocate_workspace = config.rectangular_preallocate_workspace,
     rectangular_workspace_min_buses = config.rectangular_workspace_min_buses,
@@ -949,8 +946,11 @@ runpf!(net::Net, config::PowerFlowConfig; kwargs...) = _runpf_with_config!(net, 
 runpf!(net::Net, config::SparlectraConfig; kwargs...) = _runpf_with_config!(net, config.powerflow; kwargs...)
 
 function runpf!(net::Net; config::Union{Nothing,PowerFlowConfig,SparlectraConfig} = nothing, kwargs...)
+  # Keep this entry strict: only runtime-only knobs are accepted as kwargs.
+  # All solver-behavior options must come from config objects for consistency.
   runtime_keys = Set((:verbose, :damp, :pv_table_rows, :validate_limits_after_pf, :q_limit_violation_headroom, :qlimit_lock_reason, :performance_profile))
   cfg0 = config === nothing ? powerflow_config() : (config isa SparlectraConfig ? config.powerflow : config)
+
   if !isempty(kwargs)
     raw = Dict{String,Any}(String(k) => v for (k, v) in pairs(kwargs))
     if all(k -> k in runtime_keys, keys(kwargs))
@@ -988,6 +988,7 @@ function _active_link_representative_map(net::Net)
     ra = find_root(a)
     rb = find_root(b)
     ra == rb && return
+    # Use the smaller index as deterministic representative for stable mappings.
     if ra < rb
       parent[rb] = ra
     else
@@ -1040,6 +1041,9 @@ function _merged_pf_net(net::Net)
       has_pv |= (nref._nodeType == PV)
     end
 
+    # Aggregate electrical injections of each merged cluster at its representative.
+    # Non-representative buses are neutralized and marked Isolated to keep topology
+    # and solver dimensions coherent after link contraction.
     ref._pƩLoad = p_load
     ref._qƩLoad = q_load
     ref._pƩGen = p_gen
@@ -1067,6 +1071,7 @@ function _merged_pf_net(net::Net)
     br.fromBus = f
     br.toBus = t
     if f == t
+      # Internal branch of a merged cluster collapses to a self-loop and is disabled.
       br.status = 0
     end
   end
@@ -1134,6 +1139,7 @@ function runpf!(
   qlimit_guard_freeze_after_repeated_switching::Bool = true,
   qlimit_guard_violation_mode::Symbol = :delayed_switch,
   qlimit_guard_violation_threshold_pu::Float64 = 1e-4,
+  qlimits_enabled::Bool = true,
   wrong_branch_detection::Symbol = :warn,
   wrong_branch_rescue::Bool = false,
   wrong_branch_min_vm_pu::Float64 = 0.70,
@@ -1142,10 +1148,10 @@ function runpf!(
   wrong_branch_max_branch_angle_deg::Float64 = 90.0,
   wrong_branch_min_low_vm_count::Int = 1,
   wrong_branch_rescue_max_attempts::Int = 2,
+  performance_profile = nothing,
   rectangular_workspace_reuse::Bool = true,
   rectangular_preallocate_workspace::Symbol = :auto,
   rectangular_workspace_min_buses::Int = 1000,
-  performance_profile = nothing,
 )
   _validate_rectangular_powerflow_options(method = :rectangular, sparse = true)
   wnet, reps, has_merges = _merged_pf_net(net)
@@ -1153,6 +1159,8 @@ function runpf!(
   has_vdep_control = has_voltage_dependent_control(wnet)
 
   function _sync_merged_results_to_original!()
+    # Only solved voltage state is back-propagated bus-wise; dependent shunt powers
+    # are recomputed on the original net to keep post-processing consistent.
     for i in eachindex(net.nodeVec)
       src = wnet.nodeVec[reps[i]]
       net.nodeVec[i]._vm_pu = src._vm_pu
@@ -1209,6 +1217,7 @@ function runpf!(
         qlimit_guard_freeze_after_repeated_switching = qlimit_guard_freeze_after_repeated_switching,
         qlimit_guard_violation_mode = qlimit_guard_violation_mode,
         qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu,
+        qlimits_enabled = qlimits_enabled,
         rectangular_workspace_reuse = rectangular_workspace_reuse,
         rectangular_preallocate_workspace = rectangular_preallocate_workspace,
         rectangular_workspace_min_buses = rectangular_workspace_min_buses,
@@ -1260,6 +1269,7 @@ function runpf!(
         qlimit_guard_freeze_after_repeated_switching = qlimit_guard_freeze_after_repeated_switching,
         qlimit_guard_violation_mode = qlimit_guard_violation_mode,
         qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu,
+        qlimits_enabled = qlimits_enabled,
         rectangular_workspace_reuse = rectangular_workspace_reuse,
         rectangular_preallocate_workspace = rectangular_preallocate_workspace,
         rectangular_workspace_min_buses = rectangular_workspace_min_buses,
