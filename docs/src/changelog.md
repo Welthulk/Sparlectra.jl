@@ -1,3 +1,6 @@
+## Version 0.8.6 – 2026-06-18
+### Improvements
+
 ## Version 0.8.5 – 2026-06-17
 ### Improvements
 * Cleaned up single PowerFlow Web UI/API timing output so unavailable solver time is omitted and the measured run duration is shown as wall time.
