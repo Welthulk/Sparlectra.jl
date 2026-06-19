@@ -23,6 +23,13 @@ const GUI_EDITABLE_CONFIG_KEYS = Set([
   "power_flow.wrong_branch_detection",
   "power_flow.start_mode.angle_mode",
   "power_flow.start_mode.voltage_mode",
+  "matpower_import.auto_profile",
+  "matpower_import.ratio",
+  "matpower_import.shift_sign",
+  "matpower_import.shift_unit",
+  "matpower_import.bus_shunt_model",
+  "matpower_import.pv_voltage_source",
+  "matpower_import.compare_voltage_reference",
   "output.logfile_results",
   "output.detailed_result_csv_write_mode",
   "output.detailed_result_csv_exporter",
@@ -59,9 +66,13 @@ function _validate_gui_override_value(key::String, value)
     else
       value > 0 || throw(ArgumentError("Override $(key) must be positive; got $(value)."))
     end
-  elseif key in ("power_flow.tol", "power_flow.autodamp_min", "benchmark.seconds")
+  elseif key in ("power_flow.tol", "power_flow.autodamp_min", "benchmark.seconds", "matpower_import.shift_sign")
     _validate_override_type(key, value, Float64)
-    isfinite(value) && value > 0 || throw(ArgumentError("Override $(key) must be finite and positive; got $(value)."))
+    if key == "matpower_import.shift_sign"
+      isfinite(value) && value in (-1.0, 1.0) || throw(ArgumentError("Override $(key) must be -1.0 or 1.0; got $(value)."))
+    else
+      isfinite(value) && value > 0 || throw(ArgumentError("Override $(key) must be finite and positive; got $(value)."))
+    end
     key == "power_flow.autodamp_min" && value > 1 && throw(ArgumentError("Override power_flow.autodamp_min must be <= 1; got $(value)."))
   elseif key == "power_flow.method"
     method = _as_symbol_cfg(value)
@@ -72,6 +83,18 @@ function _validate_gui_override_value(key::String, value)
     _validate_allowed_symbol(key, _as_symbol_cfg(value), POWERFLOW_START_ANGLE_MODE_VALUES)
   elseif key == "power_flow.start_mode.voltage_mode"
     _validate_allowed_symbol(key, _as_symbol_cfg(value), POWERFLOW_START_VOLTAGE_MODE_VALUES)
+  elseif key == "matpower_import.auto_profile"
+    _validate_allowed_symbol(key, _as_auto_profile_symbol_cfg(value), MATPOWER_AUTO_PROFILE_VALUES)
+  elseif key == "matpower_import.ratio"
+    _validate_allowed_symbol(key, _as_symbol_cfg(value), MATPOWER_RATIO_VALUES)
+  elseif key == "matpower_import.shift_unit"
+    _validate_allowed_symbol(key, _as_symbol_cfg(value), MATPOWER_SHIFT_UNIT_VALUES)
+  elseif key == "matpower_import.bus_shunt_model"
+    _validate_allowed_symbol(key, _as_symbol_cfg(value), MATPOWER_BUS_SHUNT_MODEL_VALUES)
+  elseif key == "matpower_import.pv_voltage_source"
+    _validate_allowed_symbol(key, _as_symbol_cfg(value), MATPOWER_PV_VOLTAGE_SOURCE_VALUES)
+  elseif key == "matpower_import.compare_voltage_reference"
+    _validate_allowed_symbol(key, _as_symbol_cfg(value), MATPOWER_COMPARE_VOLTAGE_REFERENCE_VALUES)
   elseif key == "output.logfile_results"
     _validate_allowed_symbol(key, _as_symbol_cfg(value), OUTPUT_LOGFILE_RESULTS_VALUES)
   elseif key == "output.detailed_result_csv_write_mode"

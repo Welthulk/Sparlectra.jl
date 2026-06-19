@@ -163,11 +163,16 @@ function run_api_tests()
       @test isfile(joinpath(output_dir, "effective_config.yaml"))
       effective_config_text = read(joinpath(output_dir, "effective_config.yaml"), String)
       @test occursin("tol: 1.0e-9", effective_config_text)
-      @test occursin("runtime_request:", effective_config_text)
-      @test occursin("casefile: case14.m", effective_config_text)
+      @test !occursin("runtime_request:", effective_config_text)
       effective_cfg = Sparlectra.load_sparlectra_config(joinpath(output_dir, "effective_config.yaml"); reload = true)
       @test effective_cfg.powerflow.tol == 1.0e-9
       @test effective_cfg.powerflow.max_iter == 40
+      @test effective_cfg.matpower.case == "case14.m"
+      @test isfile(joinpath(output_dir, "run_metadata.yaml"))
+      run_metadata_text = read(joinpath(output_dir, "run_metadata.yaml"), String)
+      @test occursin("runtime_request:", run_metadata_text)
+      @test occursin("casefile: case_api.m", run_metadata_text)
+      @test occursin("solver_status: completed", run_metadata_text)
       run_log = read(joinpath(output_dir, "run.log"), String)
       @test occursin("Resolved Q-limit options", run_log)
       @test occursin("Q-limit handling enabled : true", run_log)
@@ -271,6 +276,7 @@ function run_api_tests()
       @test :q_limit_log in kinds
       @test :result_json in kinds
       @test :effective_config in kinds
+      @test :run_metadata in kinds
       @test count(artifact -> artifact.kind === :csv && artifact.mime_type == "text/csv", result.artifacts) == 2
       @test all(artifact -> artifact.exists && artifact.size_bytes !== nothing, result.artifacts)
       @test "q_limit.log" in Set(artifact.name for artifact in result.artifacts)
@@ -488,6 +494,7 @@ function run_api_tests()
       @test missing.run_id != result.run_id
       @test missing.schema_version == "1.0"
       @test any(artifact -> artifact.kind === :effective_config, missing.artifacts)
+      @test any(artifact -> artifact.kind === :run_metadata, missing.artifacts)
 
       invalid_config = joinpath(tmpdir, "invalid.yaml")
       write(invalid_config, "power_flow:\n  typo_tol: 1.0e-8\n")
@@ -545,6 +552,39 @@ function run_api_tests()
       @test !invalid_enum.success
       @test invalid_enum.reason == "invalid_config_override"
       @test occursin("must be one of", something(invalid_enum.message, ""))
+
+      import_overrides = validate_gui_config_overrides(Dict(
+        "matpower_import.auto_profile" => "recommend",
+        "matpower_import.ratio" => "reciprocal",
+        "matpower_import.shift_sign" => -1.0,
+        "matpower_import.shift_unit" => "rad",
+        "matpower_import.bus_shunt_model" => "voltage_dependent_injection",
+      ))
+      @test import_overrides["matpower_import"]["auto_profile"] == "recommend"
+      @test import_overrides["matpower_import"]["ratio"] == "reciprocal"
+      @test import_overrides["matpower_import"]["shift_sign"] == -1.0
+      @test import_overrides["matpower_import"]["shift_unit"] == "rad"
+      @test import_overrides["matpower_import"]["bus_shunt_model"] == "voltage_dependent_injection"
+      @test_throws ArgumentError validate_gui_config_overrides(Dict("matpower_import.ratio" => "sideways"))
+      @test_throws ArgumentError validate_gui_config_overrides(Dict("matpower_import.shift_sign" => 0.0))
+
+      auto_profile_output = joinpath(tmpdir, "auto_profile_recommend")
+      auto_profile_result = run_sparlectra_api(
+        casefile = casefile,
+        config_file = template,
+        output_dir = auto_profile_output,
+        config_overrides = Dict(
+          "matpower_import.auto_profile" => "recommend",
+          "benchmark.enabled" => false,
+        ),
+      )
+      @test auto_profile_result.success
+      @test isfile(joinpath(auto_profile_output, "matpower_auto_profile.log"))
+      @test any(artifact -> artifact.kind === :matpower_auto_profile, auto_profile_result.artifacts)
+      auto_profile_log = read(joinpath(auto_profile_output, "matpower_auto_profile.log"), String)
+      @test occursin("Runtime casefile:", auto_profile_log)
+      @test occursin("matpower_import.ratio", auto_profile_log)
+      @test occursin("Final effective MATPOWER auto-profile options", auto_profile_log)
 
       @test validate_gui_config_overrides(Dict("power_flow.qlimits.enabled" => false))["power_flow"]["qlimits"]["enabled"] === false
     end
@@ -788,7 +828,7 @@ function run_api_tests()
 
       artifacts = list_powerflow_artifacts(started["run_id"])
       artifact_names = Set(artifact["name"] for artifact in artifacts)
-      @test Set(["result.json", "run.log", "effective_config.yaml", "q_limit.log"]) ⊆ artifact_names
+      @test Set(["result.json", "run.log", "effective_config.yaml", "run_metadata.yaml", "q_limit.log"]) ⊆ artifact_names
 
       resolved = resolve_powerflow_artifact(started["run_id"], "result.json")
       @test resolved isa SparlectraApiArtifact
@@ -809,7 +849,7 @@ function run_api_tests()
       @test get_powerflow_result(started["run_id"])["run_id"] == started["run_id"]
       recovered_artifacts = list_powerflow_artifacts(started["run_id"])
       recovered_names = Set(artifact["name"] for artifact in recovered_artifacts)
-      @test Set(["result.json", "run.log", "effective_config.yaml"]) ⊆ recovered_names
+      @test Set(["result.json", "run.log", "effective_config.yaml", "run_metadata.yaml"]) ⊆ recovered_names
       recovered_result = resolve_powerflow_artifact(started["run_id"], "result.json")
       @test recovered_result isa SparlectraApiArtifact
       @test recovered_result.path == joinpath(started["output_dir"], "result.json")

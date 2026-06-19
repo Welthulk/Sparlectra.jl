@@ -47,6 +47,13 @@ function _webui_test_form(casefile, config_file, output_root)
     "power_flow_wrong_branch_detection" => "warn",
     "power_flow_start_angle_mode" => "dc",
     "power_flow_start_voltage_mode" => "profile_blend",
+    "matpower_import_auto_profile" => "recommend",
+    "matpower_import_ratio" => "normal",
+    "matpower_import_shift_sign" => "1.0",
+    "matpower_import_shift_unit" => "deg",
+    "matpower_import_bus_shunt_model" => "admittance",
+    "matpower_import_pv_voltage_source" => "gen_vg",
+    "matpower_import_compare_voltage_reference" => "imported_setpoint",
     "output_logfile_results" => "compact",
     "performance_timing" => "compact",
     "run_diagnostics" => "on",
@@ -374,6 +381,13 @@ function run_webui_tests()
         "power_flow_wrong_branch_detection" => "power_flow.wrong_branch_detection",
         "power_flow_start_angle_mode" => "power_flow.start_mode.angle_mode",
         "power_flow_start_voltage_mode" => "power_flow.start_mode.voltage_mode",
+        "matpower_import_auto_profile" => "matpower_import.auto_profile",
+        "matpower_import_ratio" => "matpower_import.ratio",
+        "matpower_import_shift_sign" => "matpower_import.shift_sign",
+        "matpower_import_shift_unit" => "matpower_import.shift_unit",
+        "matpower_import_bus_shunt_model" => "matpower_import.bus_shunt_model",
+        "matpower_import_pv_voltage_source" => "matpower_import.pv_voltage_source",
+        "matpower_import_compare_voltage_reference" => "matpower_import.compare_voltage_reference",
         "output_logfile_results" => "output.logfile_results",
         "benchmark_enabled" => "benchmark.enabled",
         "benchmark_samples" => "benchmark.samples",
@@ -505,10 +519,10 @@ result = get_powerflow_result(run_id)
 
       artifacts = list_powerflow_artifacts(run_id)
       artifact_names = Set(artifact["name"] for artifact in artifacts)
-      @test Set(("result.json", "run.log", "effective_config.yaml", "performance.log", "diagnose.log", "q_limit.log", "bus_voltages_complex.csv", "branch_flows.csv")) ⊆ artifact_names
+      @test Set(("result.json", "run.log", "effective_config.yaml", "run_metadata.yaml", "performance.log", "diagnose.log", "q_limit.log", "bus_voltages_complex.csv", "branch_flows.csv")) ⊆ artifact_names
       artifact_response = Sparlectra.handle_powerflow_artifacts(run_id)
       artifact_html = String(artifact_response.body)
-      for name in ("result.json", "run.log", "effective_config.yaml", "performance.log", "diagnose.log", "q_limit.log", "bus_voltages_complex.csv", "branch_flows.csv")
+      for name in ("result.json", "run.log", "effective_config.yaml", "run_metadata.yaml", "performance.log", "diagnose.log", "q_limit.log", "bus_voltages_complex.csv", "branch_flows.csv")
         @test occursin(name, artifact_html)
       end
       qlimit_artifact = only(artifact for artifact in artifacts if artifact["name"] == "q_limit.log")

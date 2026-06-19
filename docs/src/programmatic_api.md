@@ -73,7 +73,8 @@ values, and invalid ranges are rejected before execution.
 ## Effective configuration and artifacts
 
 Every run with a valid configuration writes
-`output_dir/effective_config.yaml`. Successful and failed calls also write
+`output_dir/effective_config.yaml` plus runtime-only request/lifecycle metadata
+in `output_dir/run_metadata.yaml`. Successful and failed calls also write
 `run.log` and `result.json`. Artifact discovery recursively classifies these and
 any generated CSV or report files, so clients never need to guess filenames.
 Each `SparlectraApiArtifact` includes an absolute path, MIME type, existence

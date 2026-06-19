@@ -93,6 +93,23 @@ function _import_sparlectra_context(casefile::String, path::Union{Nothing,String
   mpc = _perf_profile_time!(performance_profile, :matpower_case_parse) do
     MatpowerIO.read_case(filename; legacy_compat = true)
   end
+  auto_profile_result = nothing
+  if cfg.matpower.auto_profile !== :off
+    phase_callback("matpower_auto_profile")
+    auto_profile_result = _perf_profile_time!(performance_profile, :matpower_auto_profile) do
+      run_matpower_import_auto_profile(mpc, cfg)
+    end
+    cfg = auto_profile_result.config
+    pf_cfg = cfg.powerflow
+    mat_cfg = cfg.matpower
+    if performance_profile isa AbstractDict
+      performance_profile[:matpower_auto_profile_result] = auto_profile_result
+      performance_profile[:matpower_auto_profile_casefile] = filename
+    end
+    if mat_cfg.auto_profile_log
+      write_matpower_import_auto_profile(stdout, auto_profile_result, cfg; casefile = filename)
+    end
+  end
   phase_callback("building_sparlectra_net")
   net = _perf_profile_time!(performance_profile, :network_construction) do
     createNetFromMatPowerCase(
@@ -126,7 +143,7 @@ function _import_sparlectra_context(casefile::String, path::Union{Nothing,String
   end
   run_cfg = projected_start_applied ? _copy_sparlectra_with_projected_matpower_start(cfg) : cfg
   projected_start_applied && @debug "MATPOWER projected start applied; effective solver flatstart disabled for this run."
-  return (net = net, config = run_cfg, projected_start_applied = projected_start_applied)
+  return (net = net, config = run_cfg, projected_start_applied = projected_start_applied, auto_profile_result = auto_profile_result)
 end
 
 function _import_sparlectra_net(casefile::String, path::Union{Nothing,String}, cfg::SparlectraConfig; performance_profile = nothing)::Net

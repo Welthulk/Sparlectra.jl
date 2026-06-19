@@ -181,6 +181,17 @@ $(config_control)
 </fieldset>
 <details class=\"span-2 expert-section\">
 <summary>Advanced / expert options</summary>
+<fieldset class=\"import-section\">
+<legend>MATPOWER import conventions</legend>
+<p class=\"field-hint span-2\">Use these pre-solve import diagnostics for transformer ratio, phase-shift, and bus-shunt conventions. These options are separate from post-solve wrong-branch plausibility checks.</p>
+<label>$(_webui_field_label("matpower_import_auto_profile", "MATPOWER auto-profile"))$(_webui_select("matpower_import_auto_profile", MATPOWER_AUTO_PROFILE_VALUES, :recommend))</label>
+<label>$(_webui_field_label("matpower_import_ratio", "Transformer ratio convention"))$(_webui_select("matpower_import_ratio", MATPOWER_RATIO_VALUES, :normal))</label>
+<label>$(_webui_field_label("matpower_import_shift_sign", "Phase-shift sign"))<input name=\"matpower_import_shift_sign\" type=\"number\" step=\"2\" min=\"-1\" max=\"1\" value=\"1.0\"></label>
+<label>$(_webui_field_label("matpower_import_shift_unit", "Phase-shift unit"))$(_webui_select("matpower_import_shift_unit", MATPOWER_SHIFT_UNIT_VALUES, :deg))</label>
+<label>$(_webui_field_label("matpower_import_bus_shunt_model", "Bus-shunt model"))$(_webui_select("matpower_import_bus_shunt_model", MATPOWER_BUS_SHUNT_MODEL_VALUES, :admittance))</label>
+<label>$(_webui_field_label("matpower_import_pv_voltage_source", "PV voltage source"))$(_webui_select("matpower_import_pv_voltage_source", MATPOWER_PV_VOLTAGE_SOURCE_VALUES, :gen_vg))</label>
+<label>$(_webui_field_label("matpower_import_compare_voltage_reference", "Voltage reference comparison"))$(_webui_select("matpower_import_compare_voltage_reference", MATPOWER_COMPARE_VOLTAGE_REFERENCE_VALUES, :imported_setpoint))</label>
+</fieldset>
 <fieldset class=\"benchmark-section\">
 <legend>Benchmark / repeated timing</legend>
 <p class=\"field-hint span-2\">Normal runs perform one representative power-flow execution. Benchmarking adds repeated BenchmarkTools measurements for timing statistics and does not change the numerical result.</p>

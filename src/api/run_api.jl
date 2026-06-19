@@ -773,6 +773,48 @@ function _write_detailed_result_csv(output_path::AbstractString, result::Sparlec
   return artifacts
 end
 
+function _update_effective_matpower_raw!(raw::Dict{String,Any}, cfg::SparlectraConfig)
+  mat_raw = get!(raw, "matpower_import", Dict{String,Any}())
+  mat_raw isa Dict{String,Any} || return raw
+  mat_raw["auto_profile"] = String(cfg.matpower.auto_profile)
+  mat_raw["ratio"] = String(cfg.matpower.ratio)
+  mat_raw["shift_sign"] = cfg.matpower.shift_sign
+  mat_raw["shift_unit"] = String(cfg.matpower.shift_unit)
+  mat_raw["bus_shunt_model"] = String(cfg.matpower.bus_shunt_model)
+  mat_raw["pv_voltage_source"] = String(cfg.matpower.pv_voltage_source)
+  mat_raw["compare_voltage_reference"] = String(cfg.matpower.compare_voltage_reference)
+  return raw
+end
+
+function _write_matpower_auto_profile_artifact(output_path::AbstractString, profile, cfg::SparlectraConfig; casefile::AbstractString)::String
+  artifact = joinpath(output_path, "matpower_auto_profile.log")
+  open(artifact, "w") do io
+    println(io, "MATPOWER import auto-profile artifact")
+    println(io, "====================================")
+    write_matpower_import_auto_profile(io, profile, cfg; casefile = casefile)
+  end
+  return artifact
+end
+
+function _runtime_metadata_payload(; case_path::AbstractString, lifecycle::AbstractDict = Dict{String,Any}())
+  payload = Dict{String,Any}(
+    "runtime_request" => Dict{String,Any}(
+      "casefile" => basename(case_path),
+      "casefile_path" => String(case_path),
+    ),
+  )
+  for key in ("solver_status", "artifact_status", "run_status", "last_phase", "last_heartbeat", "final_outcome")
+    haskey(lifecycle, key) && (payload[key] = lifecycle[key])
+  end
+  return payload
+end
+
+function _write_run_metadata_artifact(output_path::AbstractString; case_path::AbstractString, lifecycle::AbstractDict = Dict{String,Any}())::String
+  artifact = joinpath(output_path, "run_metadata.yaml")
+  _write_yaml_file(artifact, _runtime_metadata_payload(case_path = case_path, lifecycle = lifecycle))
+  return artifact
+end
+
 function _api_result(;
   run_id::String = string(uuid4()),
   schema_version::String = _SPARLECTRA_API_SCHEMA_VERSION,
@@ -971,13 +1013,9 @@ function _run_sparlectra_api(;
   catch err
     return _api_failure("invalid_configuration", sprint(showerror, err); run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file)
   end
-  effective_raw["runtime_request"] = Dict{String,Any}(
-    "casefile" => basename(case_path),
-    "casefile_path" => case_path,
-  )
-
   effective_config = joinpath(output_path, "effective_config.yaml")
   _write_yaml_file(effective_config, effective_raw)
+  _write_run_metadata_artifact(output_path; case_path = case_path)
   _check_powerflow_cancelled!(cancellation_token)
   phases[:api_config_build] = _api_elapsed_seconds(config_start)
   isfile(case_path) || return _api_failure("casefile_not_found", "MATPOWER case file not found: $(case_path)"; run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file)
@@ -1006,6 +1044,14 @@ function _run_sparlectra_api(;
     message = sprint(showerror, err, catch_backtrace())
     reason = get(phase_recorder.timings[phase_recorder.active_index === nothing ? length(phase_recorder.timings) : phase_recorder.active_index], "phase", "") == "loading_julia_case" ? "loading_julia_case_failed" : "execution_error"
     return _api_execution_failure(reason, message; run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file, phase_recorder, performance_timing)
+  end
+  auto_profile_result = raw_result.performance_profile isa AbstractDict ? get(raw_result.performance_profile, :matpower_auto_profile_result, nothing) : nothing
+  auto_profile_casefile = raw_result.performance_profile isa AbstractDict ? get(raw_result.performance_profile, :matpower_auto_profile_casefile, case_path) : case_path
+  if auto_profile_result !== nothing
+    config = auto_profile_result.config
+    _update_effective_matpower_raw!(effective_raw, config)
+    _write_yaml_file(effective_config, effective_raw)
+    _write_matpower_auto_profile_artifact(output_path, auto_profile_result, config; casefile = String(auto_profile_casefile))
   end
   phases[:case_loading_network_solver] = _api_elapsed_seconds(execution_start)
   raw_result.solver_elapsed_s === nothing || (phases[:solver] = raw_result.solver_elapsed_s)
@@ -1120,6 +1166,15 @@ function _run_sparlectra_api(;
 
   success = raw_result.final_converged && raw_result.solution_available
   mismatch = isfinite(raw_result.final_mismatch) ? raw_result.final_mismatch : nothing
+  final_metadata = merge(Dict{String,Any}(
+    "solver_status" => "completed",
+    "artifact_status" => csv_export_error === nothing ? "completed" : "failed",
+    "run_status" => success ? "completed" : "failed",
+    "last_phase" => success ? "finalizing_success" : "finalizing_failed",
+    "last_heartbeat" => Dates.format(Dates.now(Dates.UTC), dateformat"yyyy-mm-ddTHH:MM:SS.sssZ"),
+    "final_outcome" => success ? "completed" : "solver_failed",
+  ), qlimit_metadata)
+  _write_run_metadata_artifact(output_path; case_path = case_path, lifecycle = final_metadata)
   result = _api_result(
     run_id = run_id,
     status = success ? :succeeded : :failed,
@@ -1136,14 +1191,7 @@ function _run_sparlectra_api(;
     logfile = logfile,
     result_file = result_file,
     service_phase_timings = phase_recorder.timings,
-    metadata = merge(Dict{String,Any}(
-      "solver_status" => "completed",
-      "artifact_status" => csv_export_error === nothing ? "completed" : "failed",
-      "run_status" => success ? "completed" : "failed",
-      "last_phase" => success ? "finalizing_success" : "finalizing_failed",
-      "last_heartbeat" => Dates.format(Dates.now(Dates.UTC), dateformat"yyyy-mm-ddTHH:MM:SS.sssZ"),
-      "final_outcome" => success ? "completed" : "solver_failed",
-    ), qlimit_metadata),
+    metadata = final_metadata,
     raw_result = raw_result,
   )
   return _finalize_api_result(result)

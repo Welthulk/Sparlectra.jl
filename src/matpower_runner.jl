@@ -752,6 +752,18 @@ function print_matpower_import_auto_profile_effective_options(io::IO, cfg::Sparl
   return nothing
 end
 
+function run_matpower_import_auto_profile(mpc, cfg::SparlectraConfig)
+  cfg.matpower.auto_profile === :off && return (config = cfg, rows = NamedTuple[], applied = NamedTuple[])
+  return matpower_import_auto_profile(mpc, cfg; mode = cfg.matpower.auto_profile)
+end
+
+function write_matpower_import_auto_profile(io::IO, auto_profile_result, cfg::SparlectraConfig; casefile::AbstractString = "")
+  !isempty(casefile) && println(io, "Runtime casefile: ", casefile, "\n")
+  print_matpower_import_auto_profile(io, auto_profile_result.rows)
+  print_matpower_import_auto_profile_effective_options(io, cfg)
+  return nothing
+end
+
 """
     run_matpower_case(; casefile::AbstractString = "", config_file::AbstractString = "")
 
@@ -772,7 +784,7 @@ function run_matpower_case(; casefile::AbstractString = "", config_file::Abstrac
   auto_profile_result = nothing
   if cfg.matpower.auto_profile !== :off
     mpc_for_profile = MatpowerIO.read_case(local_case; legacy_compat = true)
-    auto_profile_result = matpower_import_auto_profile(mpc_for_profile, cfg; mode = cfg.matpower.auto_profile)
+    auto_profile_result = run_matpower_import_auto_profile(mpc_for_profile, cfg)
     cfg = auto_profile_result.config
   end
   print_matpower_runner_header(
@@ -798,11 +810,9 @@ function run_matpower_case(; casefile::AbstractString = "", config_file::Abstrac
     )
   end
   if auto_profile_result !== nothing && cfg.matpower.auto_profile_log
-    print_matpower_import_auto_profile(stdout, auto_profile_result.rows)
-    print_matpower_import_auto_profile_effective_options(stdout, cfg)
+    write_matpower_import_auto_profile(stdout, auto_profile_result, cfg; casefile = local_case)
     open(logfile, "a") do io
-      print_matpower_import_auto_profile(io, auto_profile_result.rows)
-      print_matpower_import_auto_profile_effective_options(io, cfg)
+      write_matpower_import_auto_profile(io, auto_profile_result, cfg; casefile = local_case)
       print_effective_config(io, cfg)
     end
   end
