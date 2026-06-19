@@ -218,6 +218,7 @@ function _reconstruct_powerflow_result(data::AbstractDict, paths)::SparlectraApi
     result_file = paths.result_file,
     artifacts = collect_sparlectra_api_artifacts(paths.output_dir),
     service_phase_timings = get(data, "service_phase_timings", Dict{String,Any}[]),
+    metadata = _powerflow_lifecycle_metadata(data),
     raw_result = nothing,
   )
 end

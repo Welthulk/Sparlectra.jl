@@ -125,11 +125,13 @@ matpower_import:
 ```
 
 `recommend` logs a profile without changing the active run. `apply` applies
-safe recommendations unless the YAML file already contains an explicit value for
-that option. The pre-run checks transformer ratio and phase-shift conventions,
-bus-shunt residual impact, PV/REF voltage-source handling, large-case flat-start
-strategy, and conservative PV→PQ Q-limit settings. For large-case runtime
-profiles it keeps start projection disabled, uses DC-angle and blended-voltage
+only safe import-convention recommendations; solver-start and Q-limit
+recommendations are logged as skipped recommendations unless the corresponding
+runtime options are configured directly. The pre-run checks transformer ratio
+and phase-shift conventions, bus-shunt residual impact, PV/REF voltage-source
+handling, large-case flat-start strategy, and conservative PV→PQ Q-limit
+settings. For large-case runtime profiles it keeps start projection disabled,
+uses DC-angle and blended-voltage
 flat-start seeds, recommends practical validation tolerance, and disables
 expensive diagnostics unless explicitly requested. The terminal summary and
 logfile list the evidence, selected recommendations, applied options, and
@@ -138,6 +140,17 @@ explicit YAML values that were preserved.
 ### Import Parser
 
 The `casefileparser` function parses Matpower case files and returns the raw data arrays:
+
+### Known MATPOWER import limitation: DC lines
+
+Sparlectra currently does not model MATPOWER `mpc.dcline` entries. During
+framework/API/Web UI MATPOWER case handling, cases with at least one active
+DC-line row (`status != 0`) are detected and rejected before the power-flow
+solve starts. The failed result reports `failure_reason =
+unsupported_matpower_dcline`, includes the active DC-line count and compact
+Pf/Pt/loss totals when available, and writes the same unsupported-feature
+message to `run.log`. Empty `mpc.dcline` tables and tables containing only
+inactive rows continue through the normal AC import path.
 
 ```julia
 using Sparlectra

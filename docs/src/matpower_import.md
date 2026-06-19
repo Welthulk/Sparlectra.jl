@@ -15,7 +15,7 @@
 |---|---:|---:|---|---|---|---|---|---|
 | `matpower_import.case` | String | `case14.m` | case path/name | Compatible single-case selector and fallback when `cases` is empty. | Single case studies and benchmarks. | Invalid/missing paths. | Parse/solve scales with case size. | `matpower_import.cases`, runtime/profile. |
 | `matpower_import.cases` | Vector{String} | `[case14.m, case118.m]` | non-empty case names | Ordered batch selector for `run_sparlectra_cases`; a non-empty list takes precedence over `case`. | Deterministic multi-case validation and release checks. | Empty case names or expecting `run_sparlectra` to return a vector. | Sequential parse/solve cost per case. | `matpower_import.case`, `run_sparlectra_cases`. |
-| `matpower_import.auto_profile` | Symbol/String | `recommend` | `off`, `recommend`, `apply` | Run a MATPOWER pre-run profile. `off` disables it, `recommend` logs decisions without changing the active config, and `apply` changes only safe convention recommendations with clear residual evidence. | Development, large-case investigation, reproducible robust imports. | Expecting YAML files to be rewritten; applying ambiguous diagnostics. | Low; scans existing VM/VA residuals before the solve. | Output profile visibility options. |
+| `matpower_import.auto_profile` | Symbol/String | `recommend` | `off`, `recommend`, `apply` | Run a MATPOWER pre-run profile. `off` disables it, `recommend` logs decisions without changing the active config, and `apply` changes only safe import-convention recommendations with clear evidence. Solver-start and Q-limit recommendations remain logged but skipped unless configured directly. | Development, large-case investigation, reproducible robust imports. | Expecting YAML files to be rewritten; applying ambiguous diagnostics. | Low; scans existing VM/VA residuals before the solve. | Output profile visibility options. |
 | `matpower_import.auto_profile_log` | Bool | `true` | `true`, `false` | Print/log auto-profile reasoning and final effective options. | Debug import decisions and reproduce final settings. | Quiet high-volume runs. | Logging overhead only. | `output.console_auto_profile`, logfile settings. |
 | `matpower_import.pv_voltage_source` | Symbol/String | `gen_vg` | `gen_vg`, `bus_vm`, `auto`, `strict_check` | PV voltage setpoint source policy. | Standard MATPOWER semantics. | Nonstandard conversion assumptions. | None. | `compare_voltage_reference`, PF starts. |
 | `matpower_import.pv_voltage_mismatch_tol_pu` | Float64 | `1e-4` | nonnegative real | Tolerance for PV voltage mismatch checks. | Tight validation studies. | Overly strict noisy data. | Low. | `compare_voltage_reference`. |
@@ -59,9 +59,10 @@ Diagnostics used by the pre-run:
 
 Explicit YAML values remain visible. In `apply` mode, a changed option is shown
 as `applied` in the auto-profile table and the final effective options block;
-ambiguous diagnostics are shown as `keep` or `recommend` and do not change the
-active run. Auto-profile never rewrites user YAML files. To reproduce a run,
-copy the logged final effective options (or enable
+ambiguous diagnostics and conservative solver-start or Q-limit recommendations
+are shown as `keep` or `skipped` and do not change the active run. Auto-profile
+never rewrites user YAML files. To reproduce a run, copy the logged final
+effective options (or enable
 `diagnostics.log_effective_config`) into a tracked configuration file.
 
 ### Comparing multiple MATPOWER configurations

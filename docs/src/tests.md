@@ -24,11 +24,11 @@ julia --project=. -e 'using Pkg; Pkg.test()'
 
 | Group | Files | Main checks |
 |---|---|---|
-| `core_model` | `test/testgrid.jl` | Core net construction and validation, inline MATPOWER import helpers including large matrix-block scanning, file-based MATPOWER projected-start normalization, PV/PQ lock-ID resolution, and rectangular status-row diagnostic preservation, link handling, shunts, reporting/output checks, and summary-file output regression |
-| `powerflow_rectangular` | `test/test_solver_interface.jl` | Rectangular power-flow API behavior, sparse-only solver path, Q-limit and typed configuration entry checks, including accepted and rejected framework control-status composition, ordered local MATPOWER batch execution, the thin `run_acpflow` alias, and legacy-keyword rejection |
-| `configuration` | `test/test_configuration_coverage.jl` | Configuration-key coverage, forwarding checks, and value-domain validation |
-| `programmatic_api` | `test/test_api.jl` | GUI-ready power-flow API stable unique run IDs, schema versioning, success/failure status, override validation, effective configuration, classic/full log distinction, timing/status summaries, service phase timing persistence, performance, diagnostic, and detailed CSV artifacts (including buffered/streaming write-mode selection, direct-writer equivalence/timing metadata, bus-control label cache regression coverage, CSV progress events, comma/semicolon quoting, bounded Q-limit logging/detail artifacts, and contained diagnostic failure), artifact discovery, Dict/NamedTuple/JSON/YAML serialization, and local service persistent indexing, timestamp fallback, restart recovery, safe single/all-run deletion, run lookup, and artifact/path safety behavior |
-| `webui` | `test/test_webui.jl` | Public Web UI binding, standalone app-window command selection, application-root discovery and case/configuration dropdowns, version rendering, performance/diagnostic/detailed-CSV controls and help (including default comma and opt-in Excel semicolon format), hidden temporary warm-up behavior, allowlisted form mapping including checked and unchecked Q-limit checkbox propagation, complete Markdown-backed form-help coverage, history-preserving secondary-page navigation, allowlisted documentation-link rewriting, documentation-page whitelisting and traversal rejection, enlarged readable artifact/help/docs structure and CSS formatting, service-backed runs, shared logo/header rendering, exact PNG asset routing, result/artifact/history HTML with timestamps, truncated large artifact previews, status badges, phase-aware abort visibility without per-iteration operation-log spam, refresh/delete controls, authoritative output-root handling, explicit, Ctrl-C, and request-aware heartbeat shutdown, listener reuse, absence of direct solver calls, and loopback HTTP smoke requests |
+| `core_model` | `test/testgrid.jl` | Core net construction and validation, inline MATPOWER import helpers including large matrix-block scanning, file-based MATPOWER projected-start normalization, PV/PQ lock-ID resolution, Q-limit enforcement-mode parsing and classical base-failure/no-reenable dispatch checks, rectangular status-row diagnostic preservation, link handling, shunts, reporting/output checks, and summary-file output regression |
+| `powerflow_rectangular` | `test/test_solver_interface.jl` | Rectangular power-flow API behavior, sparse-only solver path, Q-limit and typed configuration entry checks, current-iteration start rejection diagnostics on a tiny synthetic case, including accepted and rejected framework control-status composition, ordered local MATPOWER batch execution, the thin `run_acpflow` alias, and legacy-keyword rejection |
+| `configuration` | `test/test_configuration_coverage.jl`, `test/test_runner_helpers.jl` | Configuration-key coverage, safe refresh checks including current-iteration start defaults, forwarding checks, start-voltage value-domain validation, and test-runner output-mode helper checks |
+| `programmatic_api` | `test/test_api.jl` | GUI-ready power-flow API stable unique run IDs, schema versioning, success/failure status including unsupported active MATPOWER `mpc.dcline` abort metadata/log/Web UI rendering, override validation including current-iteration start options, effective configuration with runtime casefile metadata, classic/full log distinction, timing/status summaries, service phase timing persistence, performance, diagnostic, and detailed CSV artifacts (including buffered/streaming write-mode selection, direct-writer equivalence/timing metadata, non-converged solution-available CSV export, bus-control label cache regression coverage, CSV progress events, comma/semicolon quoting, bounded Q-limit logging/detail artifacts, pre-mutation Q-limit snapshots, non-converged Q-limit validation skip reporting, and contained diagnostic failure), artifact discovery including stale-metadata CSV rescans, Dict/NamedTuple/JSON/YAML serialization, and local service persistent indexing, timestamp fallback, restart recovery, safe single/all-run deletion, run lookup, and artifact/path safety behavior |
+| `webui` | `test/test_webui.jl` | Public Web UI binding, standalone app-window command selection, application-root discovery and case/configuration dropdowns, case-settings sidecar profile saves next to runtime MATPOWER cases from freshly completed in-memory runs, type-safe reload/override/rejection behavior for saved profile values, sidecar values flowing through GUI override validation into effective configuration, version rendering, performance/diagnostic/detailed-CSV controls and help (including default comma and opt-in Excel semicolon format), hidden temporary warm-up behavior, allowlisted form mapping including start-voltage dropdown values, collapsible current-iteration start controls with hidden-false checkbox propagation, and checked/unchecked Q-limit checkbox propagation, complete Markdown-backed form-help coverage, history-preserving secondary-page navigation, allowlisted documentation-link rewriting, documentation-page whitelisting and traversal rejection, enlarged readable artifact/help/docs structure and CSS formatting, service-backed runs, shared logo/header rendering, exact PNG asset routing, result/artifact/history HTML with timestamps, truncated large artifact previews, status badges, phase-aware abort visibility without per-iteration operation-log spam, refresh/delete controls, authoritative output-root handling, explicit, Ctrl-C, and request-aware heartbeat shutdown, listener reuse, absence of direct solver calls, and loopback HTTP smoke requests |
 | `state_estimation` | `test/test_state_estimation.jl` | WLS state-estimation behavior and observability-oriented regressions |
 | `controls` | `test/test_voltage_dependent_control.jl`, `test/test_transformer_phase_shift.jl`, `test/test_tap_controller.jl` | Voltage-dependent controls, transformer phase-shift control, tap-controller behavior, and successful baseline PF preservation when controls are disabled |
 
@@ -38,17 +38,46 @@ julia --project=. -e 'using Pkg; Pkg.test()'
 |---|---|---|
 | `remove` | `test/testremove.jl` | Remove/delete behavior and consistency after structural edits |
 | `pv_voltage_residuals` | `test/test_pv_voltage_residuals.jl` | PV-voltage residual behavior, angle-preserving voltage-setpoint starts, phase-shifted PV integration coverage, and related solver diagnostics |
-| `matpower_example` | `test/test_matpower_example.jl` | MATPOWER example runner path, output routing, performance/profile rendering, and runtime configuration forwarding |
+| `matpower_example` | `test/test_matpower_example.jl` | MATPOWER example runner path, output routing, performance/profile rendering, and runtime configuration forwarding, removed start-voltage alias rejection, and canonical profile-blend parsing |
 | `synthetic_grids` | `test/test_synthetic_grids.jl` | Synthetic network generation and larger synthetic-grid regression coverage |
 | `configuration_docs` | `test/test_configuration_docs.jl` | Configuration documentation and docs/config consistency checks |
 
 ## Offline and runtime expectations
 
 The default `fast` profile is intended to be offline-safe and should not download MATPOWER cases or run benchmark loops.
+The Q-limit large-case comparison workflow is a manual diagnostic tool: it resolves optional large MATPOWER cases through Sparlectra's case registry/download support, compares `case × start_profile × qlimit_mode`, and uses its CSV/JSON summaries as the primary output. Real runs for cases such as `case13659pegase.m` and `case_SyntheticUSA.m` are intentionally excluded from the fast tests; automated coverage uses stubs for case resolution and API execution.
+The experimental large-case Q-limit comparison test block is suppressed from the normal fast profile; run `test/test_qlimit_large_case_comparison.jl` manually when maintaining that tool.
+
+Default fast-profile output is intentionally compact: the runner prints the selected profile, one `[n/7]` marker per group, and Julia's final test summary. MATPOWER import diagnostics, auto-profile tables, runtime casefile banners, Q-limit tables, and similar artifact-oriented diagnostic blocks are suppressed in normal test stdout so progress remains scannable.
+
+Use an explicit verbose opt-in when debugging a noisy test path:
+
+```bash
+SPARLECTRA_TEST_VERBOSE=1 julia --project=. test/runtests.jl
+julia --project=. test/runtests.jl --verbose
+```
+
+Verbose mode does not change the selected profile. Existing profile selection remains available, for example:
+
+```bash
+julia --project=. test/runtests.jl fast --verbose
+julia --project=. test/runtests.jl extended --verbose
+```
 
 The `extended` profile may include MATPOWER/example/output-heavy tests. These tests stay isolated from the default profile.
 
 Use `fast` during normal development. Use `extended` before merging changes that affect configuration, MATPOWER import, output formatting, performance reporting, or broader integration paths.
+
+## Fast-profile volume review
+
+The fast profile currently contains a mix of true unit/smoke coverage and several integration-style service/UI paths:
+
+- True unit or focused smoke tests: configuration key/value validation, MATPOWER auto-profile decision rules on tiny synthetic cases, rectangular solver API checks with small fixtures, core model invariants, state-estimation smoke/regression cases, and control-loop unit/regression checks.
+- Integration-style tests that remain in fast because they protect recent public behavior: API service request/metadata/artifact smoke checks, Web UI form rendering and routing, allowlisted documentation/help routing, operation-log safety, run deletion safety, and small service-backed Web UI/API runs.
+- Heavier or broader tests already isolated in extended: MATPOWER example runner coverage, synthetic-grid regressions, configuration documentation consistency, PV residual integration coverage, and structural remove/delete behavior.
+- Expensive or duplicate candidates to watch: repeated API/Web UI artifact-generation parity checks, broad service-path status/recovery assertions that overlap between `test_api.jl` and `test_webui.jl`, and any future large-case or repeated auto-profile scans. These should move to `extended` if they become slow, require network/cached large cases, or duplicate a smaller fast regression.
+
+No tests were moved in this review. The current fast-profile volume is acceptable as long as default stdout remains quiet and the service/UI cases continue to use small offline fixtures. Future large-case regressions such as `case13659pegase.m` should use a small reproducible proxy in fast and keep the real large-case check in extended/manual verification unless the case is already cached and cheap.
 
 ## Pre-merge verification gate (config / MATPOWER / output / performance / docs changes)
 

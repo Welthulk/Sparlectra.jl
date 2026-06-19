@@ -28,7 +28,7 @@
 | YAML path | Type | Default | Allowed values | Meaning | Use when | Avoid when | Performance impact | Interactions |
 |---|---:|---:|---|---|---|---|---|---|
 | `power_flow.start_mode.angle_mode` | Symbol/String | `dc` | `classic`, `dc`, `bus_va_blend`, `matpower_va` | Angle initialization source mode. | Transmission-like starts. | If trusted measured/historical state exists. | Can reduce iterations. | `try_dc_start`, `dc_angle_limit_deg`. |
-| `power_flow.start_mode.voltage_mode` | Symbol/String | `profile_blend` | `classic`, `pv_gen_vg`, `pv_bus_vm`, `all_bus_vm`, `profile_blend`, `bus_vm_va_blend` (legacy alias) | Voltage-magnitude/angle blend strategy. | Imported-reference assisted starts. | Untrusted imported data. | Small startup overhead. | `blend_lambdas`, `reuse_import_data`. |
+| `power_flow.start_mode.voltage_mode` | Symbol/String | `profile_blend` | `classic`, `pv_gen_vg`, `pv_bus_vm`, `all_bus_vm`, `profile_blend` | Voltage-magnitude/angle blend strategy. | Imported-reference assisted starts. | Untrusted imported data. | Small startup overhead. | `blend_lambdas`, `reuse_import_data`. |
 | `power_flow.start_mode.profile_source` | Symbol/String | `matpower_reference` | `flat`, `dc`, `bus_metadata`, `historical_profile`, `matpower_reference`, `state_estimation`, `scada_snapshot` | Source for external or model-derived start profiles. `matpower_reference` means imported `BUS.VM`/`BUS.VA` values for regression/benchmarking/import reproduction. | Profile-aware starts. | When source data is unavailable or untrusted. | Minimal parsing overhead. | Keep source explicit for diagnostics and reproducibility. |
 | `power_flow.start_mode.start_projection` | Bool | `true` | `true`, `false` | Enables start-projection workflow. | Robustness on hard cases. | Minimal-path microbench runs. | Extra startup pass. | Gates start-projection sub-options. |
 | `power_flow.start_mode.try_dc_start` | Bool | `true` | `true`, `false` | Try DC candidate start. | Large transmission cases. | Highly resistive distribution cases. | Low overhead. | `dc_angle_limit_deg`. |
@@ -40,11 +40,122 @@
 | `power_flow.start_mode.blend_lambdas` | Vector{Float64} | `[0.25,0.5,0.75]` | real vector (typ. 0..1) | Lambda candidates for blend scan. | Need robust candidate search. | Very large lambda sets. | Linear startup growth with vector size. | `try_blend_scan`. |
 | `power_flow.start_mode.dc_angle_limit_deg` | Float64 | `60.0` | positive real | DC-start angle magnitude cap (deg). | Conservative angle starts. | Overly restrictive values. | Negligible. | `try_dc_start`. |
 
+
+## Guarded current-iteration start pre-solve
+
+`power_flow.start_current_iteration` enables an optional guarded current-injection/current-iteration pre-solve for start values. It is a start-value preconditioner, not a new power-flow solver. The final AC power-flow solve remains the rectangular Newton-Raphson path.
+
+The rectangular power-flow start sequence is:
+
+```text
+Start Voltage Mode + Start Angle Mode
+→ optional start projection / candidate selection
+→ optional current-iteration pre-solve
+→ Newton-Raphson power flow
+→ optional Q-limit handling / outer loop logic
+```
+
+Current iteration does not introduce a new `start_voltage_mode`, `start_angle_mode`, `power_flow.start_mode.voltage_mode`, or `power_flow.start_mode.angle_mode` value. It consumes the voltage profile prepared by the existing start-mode and start-projection settings, then attempts a limited PQ-bus current update before Newton-Raphson starts. The candidate is used only when the guarded checks accept it. If a guard rejects the candidate or the mismatch does not improve enough, Sparlectra restores the original start values before entering Newton-Raphson.
+
+### Configuration block
+
+```yaml
+power_flow:
+  start_current_iteration:
+    enabled: false
+    max_iter: 10
+    tol: 1.0e-3
+    damping: 0.5
+    accept_only_if_improved: true
+    min_improvement_factor: 0.98
+    vm_min_pu: 0.5
+    vm_max_pu: 1.5
+    max_angle_step_deg: 30.0
+    only_for_large_cases: false
+```
+
+| YAML path | Type | Default | Meaning |
+|---|---:|---:|---|
+| `power_flow.start_current_iteration.enabled` | Bool | `false` | Enable the optional guarded current-iteration pre-solve. |
+| `power_flow.start_current_iteration.max_iter` | Int | `10` | Maximum number of current-iteration update steps. |
+| `power_flow.start_current_iteration.tol` | Float64 | `1.0e-3` | Stops the pre-solve early when the rectangular mismatch of the candidate is at or below this tolerance. |
+| `power_flow.start_current_iteration.damping` | Float64 | `0.5` | Damping factor in `(0, 1]` applied to each candidate current update. |
+| `power_flow.start_current_iteration.accept_only_if_improved` | Bool | `true` | Require the best candidate mismatch to improve relative to the original start mismatch. |
+| `power_flow.start_current_iteration.min_improvement_factor` | Float64 | `0.98` | Acceptance threshold multiplier when improvement checking is active; the best mismatch must be at most `initial_mismatch * min_improvement_factor`. |
+| `power_flow.start_current_iteration.vm_min_pu` | Float64 | `0.5` | Lower voltage-magnitude guard for candidate voltages. |
+| `power_flow.start_current_iteration.vm_max_pu` | Float64 | `1.5` | Upper voltage-magnitude guard for candidate voltages. |
+| `power_flow.start_current_iteration.max_angle_step_deg` | Float64 | `30.0` | Maximum allowed candidate angle step in degrees for a single current-iteration update. |
+| `power_flow.start_current_iteration.only_for_large_cases` | Bool | `false` | Attempt the pre-solve only when the bus count reaches the implemented large-case threshold used by the rectangular workspace configuration; smaller cases are skipped with reason `skipped_small_case`. |
+
+### Recommended usage
+
+For difficult MATPOWER starts, a conservative setup is:
+
+```yaml
+power_flow:
+  start_mode:
+    voltage_mode: profile_blend
+    angle_mode: dc
+    profile_source: matpower_reference
+  start_current_iteration:
+    enabled: true
+    max_iter: 10
+    damping: 0.5
+    accept_only_if_improved: true
+```
+
+This combination may reduce the initial mismatch for difficult imported cases, but it is experimental and is not guaranteed to rescue a non-converging case. If the candidate violates guards or does not improve the mismatch enough, the pre-solve is rejected and Newton-Raphson starts from the original start values. It does not replace MATPOWER auto-profile selection, DC angle starts, or start projection.
+
+### Diagnostics and interpretation
+
+When a run has an output directory in its performance profile, the pre-solve writes `current_iteration_start.log`. The artifact records:
+
+- `current_iteration_enabled`, `current_iteration_attempted`, `current_iteration_accepted`, and `current_iteration_reason`.
+- `initial_mismatch`, `final_mismatch`, and `iterations`.
+- Candidate voltage diagnostics: `candidate_voltage_magnitude_min`, `candidate_voltage_magnitude_max`, `candidate_voltage_low_count`, `candidate_voltage_high_count`, `candidate_voltage_worst_low_bus`, `candidate_voltage_worst_high_bus`, and their corresponding values.
+- Candidate angle diagnostics: `candidate_max_angle_step_deg` and `maximum_angle_step_deg`.
+- Rejection diagnostics: `guard_violations`, `rejection_stage`, `rejected_at_iteration`, and `original_start_values_restored`.
+- Restored voltage ranges after rejection: `restored_voltage_magnitude_min` and `restored_voltage_magnitude_max`.
+
+Important interpretations:
+
+```text
+current_iteration_accepted: true
+  The pre-solve result was used as Newton-Raphson start values.
+
+current_iteration_accepted: false and original_start_values_restored: true
+  The candidate was rejected and Newton-Raphson started from the original start values.
+
+current_iteration_reason: voltage_magnitude_guard
+  At least one candidate voltage was outside vm_min_pu/vm_max_pu.
+
+current_iteration_reason: angle_step_guard
+  The candidate changed an angle beyond max_angle_step_deg.
+
+current_iteration_reason: not_improved
+  The candidate did not improve the mismatch enough.
+```
+
+Other implementation reasons include `disabled`, `skipped_small_case`, `max_iter`, `tolerance_reached`, `invalid_voltage`, `singular_current_update`, and `invalid_mismatch`.
+
+### Q-limit interaction
+
+For the active-set path, the guarded current-iteration pre-solve is attempted before the Newton-Raphson solve when enabled. For classical MATPOWER-style Q-limit outer-loop modes, it is applied only to the first inner solve; later inner solves in the same outer loop start without repeating current iteration. Current iteration does not directly change Q-limit switching decisions.
+
+### Limitations
+
+- Experimental diagnostic start-value helper.
+- Can be rejected by voltage, angle-step, finite-value, singular-update, or mismatch-improvement guards.
+- Can reduce the initial mismatch without guaranteeing Newton-Raphson convergence.
+- May not help cases whose main issue is model/convention mismatch, wrong branch, or an invalid MATPOWER import convention.
+- Does not replace MATPOWER auto-profile, DC start, or start projection.
+
 ## Q-limit options and guard
 
 | YAML path | Type | Default | Allowed values | Meaning | Use when | Avoid when | Performance impact | Interactions |
 |---|---:|---:|---|---|---|---|---|---|
 | `power_flow.qlimits.enabled` | Bool | `true` | `true`, `false` | Master switch for Q-limit enforcement. | Realistic PV/PQ behavior needed. | Pure unconstrained PF tests. | Can increase switching iterations. | Gates all `qlimits.*`. |
+| `power_flow.qlimits.enforcement_mode` | Symbol/String | `active_set` | `active_set`, `classic_simultaneous`, `classic_one_at_a_time` | Selects active-set or classical Q-limit switching. | Compare dynamic switching with classical outer-loop enforcement. | Treating legacy `matpower_*` aliases as preferred public values. | Classical modes may require repeated solves. | See [Q-limit Switching Strategy](q_limit_switching_strategy.md). |
 | `power_flow.qlimits.start_iter` | Int | `3` | integer | First iteration index for Q limits. | Delay switching noise early. | Very late switching on hard cases. | Affects convergence speed. | `start_mode`, `auto_q_delta_pu`. |
 | `power_flow.qlimits.start_mode` | Symbol/String | `iteration_or_auto` | `iteration`, `auto`, `iteration_or_auto` | Activation policy. | Mixed robustness/perf runs. | Mismatched with expected policy. | Small control logic overhead. | `auto_q_delta_pu`. |
 | `power_flow.qlimits.auto_q_delta_pu` | Float64 | `1e-4` | nonnegative real | Auto activation threshold. | Fine-tuning switch timing. | Extreme values. | Low. | `start_mode=auto` or `iteration_or_auto`. |
@@ -63,3 +174,9 @@
 | `power_flow.qlimits.guard.accept_bounded_violations` | Bool | `false` | `true`, `false` | Permit bounded residual violations. | Practical operations tradeoff. | Strict compliance studies. | May reduce retries. | `max_remaining_violations`. |
 | `power_flow.qlimits.guard.freeze_after_repeated_switching` | Bool | `true` | `true`, `false` | Freeze after repeated switch cycling. | Anti-chatter behavior. | Cases requiring unrestricted switching. | Can stabilize solves. | `max_switches`. |
 | `power_flow.qlimits.guard.log` | Bool | `true` | `true`, `false` | Emit guard logs. | Diagnostics/debugging. | Quiet batch runs. | I/O overhead when enabled. | `output.console_q_limit_events`. |
+
+## Safe configuration refresh
+
+Use `refresh_sparlectra_config_file(path; write=false)` to check an existing user YAML against the current template without modifying it. The refresh helper preserves existing user-provided values, adds missing keys from `src/configuration.yaml.example`, reports duplicate keys, and can normalize known deprecated aliases when `normalize_deprecated=true`.
+
+Writing is explicit: pass `write=true` to update the file. By default a timestamped `.bak-YYYYmmdd-HHMMSS` backup is created before writing, and duplicate keys prevent automatic writes. This refresh mechanism is a maintenance tool only; normal configuration loading still accepts supported Q-limit enforcement legacy aliases, and Sparlectra never silently rewrites user YAML during startup.

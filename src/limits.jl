@@ -108,6 +108,18 @@ function resetQLimitLog!(net::Net)
   return nothing
 end
 
+function snapshotPVQLimits!(net::Net)
+  qmin_pu, qmax_pu = getQLimits_pu(net)
+  empty!(net.qLimitInitialPVRows)
+  for (bus, node) in enumerate(net.nodeVec)
+    getNodeType(node) == PV || continue
+    qmin = ((bus <= length(qmin_pu)) && isfinite(qmin_pu[bus])) ? (qmin_pu[bus] * net.baseMVA) : -Inf
+    qmax = ((bus <= length(qmax_pu)) && isfinite(qmax_pu[bus])) ? (qmax_pu[bus] * net.baseMVA) : Inf
+    push!(net.qLimitInitialPVRows, (bus = bus, qmin_MVAr = qmin, qmax_MVAr = qmax))
+  end
+  return net.qLimitInitialPVRows
+end
+
 """
     getQLimits_pu(net::Net) -> (qmin_pu, qmax_pu)
 
@@ -128,18 +140,10 @@ Print a compact table of PV-bus reactive limits before the PF iteration starts.
 Values are shown in **MVAr**.
 """
 function printPVQLimitsTable(net::Net; io::IO = stdout, max_rows::Int = 30, full_details::Union{Nothing,AbstractString} = nothing)
-  qmin_pu, qmax_pu = getQLimits_pu(net)
-  rows = Tuple{Int,Float64,Float64}[]
-
-  for (bus, node) in enumerate(net.nodeVec)
-    getNodeType(node) == PV || continue
-    qmin = ((bus <= length(qmin_pu)) && isfinite(qmin_pu[bus])) ? (qmin_pu[bus] * net.baseMVA) : -Inf
-    qmax = ((bus <= length(qmax_pu)) && isfinite(qmax_pu[bus])) ? (qmax_pu[bus] * net.baseMVA) : Inf
-    push!(rows, (bus, qmin, qmax))
-  end
+  rows = isempty(net.qLimitInitialPVRows) ? snapshotPVQLimits!(net) : net.qLimitInitialPVRows
 
   if isempty(rows)
-    println(io, "PV Q-limits (MVAr): no PV buses.")
+    println(io, "PV Q-limits (MVAr): no PV buses in pre-solve snapshot.")
     return nothing
   end
 
@@ -158,7 +162,10 @@ function printPVQLimitsTable(net::Net; io::IO = stdout, max_rows::Int = 30, full
   println(io, " Bus │      Qmin [MVAr] │      Qmax [MVAr]")
   println(io, "──────────────────────────────────────────────")
   for i = 1:shown
-    bus, qmin, qmax = rows[i]
+    row = rows[i]
+    bus = row.bus
+    qmin = row.qmin_MVAr
+    qmax = row.qmax_MVAr
     @printf(io, " %3d │ %15.6f │ %15.6f\n", bus, qmin, qmax)
   end
   if shown < length(rows)
@@ -290,7 +297,7 @@ end
 Prints post-PF validation tables for violated Q limits and voltage limits.
 Returns `(q_violations, v_violations)`.
 """
-function printFinalLimitValidation(net::Net; q_headroom::Float64 = 0.20, io::IO = stdout)
+function printFinalLimitValidation(net::Net; q_headroom::Float64 = 0.20, io::IO = stdout, converged::Bool = true)
   qmin_pu, qmax_pu = getQLimits_pu(net)
   qrows = Tuple{Int,Float64,Float64,Float64,Float64}[]
   vrows = Tuple{Int,Float64,Float64,Float64}[]
@@ -326,12 +333,17 @@ function printFinalLimitValidation(net::Net; q_headroom::Float64 = 0.20, io::IO 
     end
   end
 
-  println(io, "Final limit validation:")
+  if converged
+    println(io, "Final Q-limit validation")
+  else
+    println(io, "Last-iteration Q-limit diagnostic (NR did not converge; values are not a valid final solution)")
+  end
   if isempty(qrows)
     @printf(io, "  Q-limits: no violations beyond %.1f%% headroom.\n", 100 * max(q_headroom, 0.0))
   else
     println(io, "  Q-limit violations (MVAr):")
-    println(io, "  Bus │      Qgen │      Qmin │      Qmax │  Violation")
+    println(io, "  Displayed values are MVAr. Switching comparisons use internal p.u. values.")
+    println(io, "  Bus │ Qgen [MVAr] │ Qmin [MVAr] │ Qmax [MVAr] │ Violation [MVAr]")
     for (bus, qgen, qmin, qmax, vio) in qrows
       @printf(io, " %4d │ %9.3f │ %9.3f │ %9.3f │ %10.3f\n", bus, qgen, qmin, qmax, vio)
     end

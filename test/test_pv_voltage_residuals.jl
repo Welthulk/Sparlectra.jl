@@ -113,7 +113,7 @@ function run_pv_voltage_residual_tests()
       slack_idx = geNetBusIdx(net = net, busName = "1")
       pv_idx = geNetBusIdx(net = net, busName = "2")
 
-      # Mimic flatstart_voltage_mode=bus_vm_va_blend: node voltages are start
+      # Mimic flatstart_voltage_mode=profile_blend with profile_source: matpower_reference: node voltages are start
       # guesses, while regulating prosumer vm_pu stores the imported setpoint.
       net.nodeVec[slack_idx]._vm_pu = 0.5 * (net.nodeVec[slack_idx]._vm_pu + 1.00)
       net.nodeVec[pv_idx]._vm_pu = 0.5 * (net.nodeVec[pv_idx]._vm_pu + 1.02)

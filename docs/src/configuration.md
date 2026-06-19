@@ -125,8 +125,21 @@ power_flow:
     blend_lambdas: [0.25, 0.5, 0.75]
     dc_angle_limit_deg: 60.0
 
+  start_current_iteration:
+    enabled: false
+    max_iter: 10
+    tol: 1.0e-3
+    damping: 0.5
+    accept_only_if_improved: true
+    min_improvement_factor: 0.98
+    vm_min_pu: 0.5
+    vm_max_pu: 1.5
+    max_angle_step_deg: 30.0
+    only_for_large_cases: false
+
   qlimits:
     enabled: true
+    enforcement_mode: active_set
     start_iter: 3
     start_mode: iteration_or_auto
 
@@ -157,10 +170,24 @@ benchmark:
 runtime:
   julia_threads: keep
   blas_threads: keep
+  casefile: ""
+  case_name: ""
+  case_source: ""
+  configured_default_casefile: ""
 
 extensions:
   reserved: true
 ```
+
+`power_flow.qlimits.enforcement_mode` selects the reactive-limit algorithm.
+`active_set` preserves Sparlectra's existing in-iteration PV→PQ active-set
+behavior. `classic_simultaneous` and `classic_one_at_a_time` run a
+classical/reference-style outer loop: solve the base AC power flow first with
+Q-limit switching disabled, clamp violating generator Q to the violated limit
+only after a successful solve, convert affected voltage-controlled buses to PQ,
+and rerun without PQ→PV re-enable inside that enforcement loop. Legacy aliases
+`matpower_simultaneous` and `matpower_one_at_a_time` are still accepted for old
+YAML files and are normalized to the corresponding `classic_*` value.
 
 `matpower_import.auto_profile` controls a MATPOWER pre-run profile. Use `off`
 to disable it, `recommend` to print/log a recommendation table without changing
@@ -321,6 +348,7 @@ The following canonical keys are currently present in `src/configuration.yaml.ex
 - `power_flow.qlimits.auto_q_delta_pu`
 - `power_flow.qlimits.cooldown_iters`
 - `power_flow.qlimits.enabled`
+- `power_flow.qlimits.enforcement_mode`
 - `power_flow.qlimits.guard`
 - `power_flow.qlimits.guard.accept_bounded_violations`
 - `power_flow.qlimits.guard.enabled`
@@ -354,9 +382,24 @@ The following canonical keys are currently present in `src/configuration.yaml.ex
 - `power_flow.start_mode.try_blend_scan`
 - `power_flow.start_mode.try_dc_start`
 - `power_flow.start_mode.voltage_mode`
+- `power_flow.start_current_iteration`
+- `power_flow.start_current_iteration.accept_only_if_improved`
+- `power_flow.start_current_iteration.damping`
+- `power_flow.start_current_iteration.enabled`
+- `power_flow.start_current_iteration.max_angle_step_deg`
+- `power_flow.start_current_iteration.max_iter`
+- `power_flow.start_current_iteration.min_improvement_factor`
+- `power_flow.start_current_iteration.only_for_large_cases`
+- `power_flow.start_current_iteration.tol`
+- `power_flow.start_current_iteration.vm_max_pu`
+- `power_flow.start_current_iteration.vm_min_pu`
 - `power_flow.tol`
 - `runtime`
 - `runtime.blas_threads`
+- `runtime.case_name`
+- `runtime.case_source`
+- `runtime.casefile`
+- `runtime.configured_default_casefile`
 - `runtime.julia_threads`
 - `runtime.print_thread_config`
 - `state_estimation`

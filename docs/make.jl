@@ -16,7 +16,7 @@ makedocs(
   clean = true,
   doctest = true,
   checkdocs = :none,
-  format = Documenter.HTML(assets = ["assets/tablestyle.css"], prettyurls = get(ENV, "CI", "false") == "true", collapselevel = 1, canonical = "https://welthulk.github.io/Sparlectra.jl"),
+  format = Documenter.HTML(assets = ["assets/tablestyle.css"], prettyurls = get(ENV, "CI", "false") == "true", collapselevel = 1, canonical = "https://welthulk.github.io/Sparlectra.jl", repolink = "https://github.com/Welthulk/Sparlectra.jl"),
   pages = [
     "Home" => "index.md",
     "Feature Matrix" => "feature_matrix.md",
@@ -26,6 +26,8 @@ makedocs(
     "Local PowerFlow Service" => "powerflow_service.md",
     "Local PowerFlow Web UI" => "webui.md",
     "Power-Flow Configuration" => "powerflow_configuration.md",
+    "Q-limit Switching Strategy" => "q_limit_switching_strategy.md",
+    "MATPOWER Format" => "matpower_format.md",
     "MATPOWER Import Configuration" => "matpower_import.md",
     "State-Estimation Configuration" => "state_estimation_configuration.md",
     "Performance and Profiling" => "performance_profiling.md",

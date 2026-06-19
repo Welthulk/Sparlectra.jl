@@ -15,8 +15,12 @@
 function _artifact_kind(path::AbstractString)::Symbol
   name = lowercase(basename(path))
   name == "effective_config.yaml" && return :effective_config
+  name == "run_metadata.yaml" && return :run_metadata
+  name == "matpower_auto_profile.log" && return :matpower_auto_profile
+  name == "current_iteration_start.log" && return :current_iteration_start
   name == "result.json" && return :result_json
   name == "q_limit.log" && return :q_limit_log
+  name == "q_limit_classic_outer_loop.csv" && return :q_limit_classic_outer_loop
   ext = lowercase(splitext(name)[2])
   ext == ".log" && return :log
   ext == ".csv" && return :csv
@@ -40,11 +44,15 @@ end
 function _artifact_description(kind::Symbol, name::String)::String
   kind === :log && return "Power-flow execution log"
   kind === :q_limit_log && return "Q-limit diagnostic log"
+  kind === :q_limit_classic_outer_loop && return "Classical Q-limit outer-loop pass details"
+  kind === :matpower_auto_profile && return "MATPOWER import auto-profile diagnostic log"
+  kind === :current_iteration_start && return "Current-iteration start-value diagnostic log"
   kind === :result_json && return "Serialized Sparlectra API result"
   kind === :csv && return "Generated CSV output"
   kind === :report && return "Generated report"
   kind === :config && return "Configuration artifact"
   kind === :effective_config && return "Effective configuration used for this run"
+  kind === :run_metadata && return "Runtime request and lifecycle metadata for this run"
   return "Generated Sparlectra artifact $(name)"
 end
 

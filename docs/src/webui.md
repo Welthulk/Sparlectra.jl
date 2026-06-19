@@ -147,6 +147,12 @@ The start page accepts:
 - Q-limit handling;
 - wrong-branch detection mode;
 - angle and voltage start modes;
+- current-iteration pre-solve fields in the collapsible **Advanced start
+  values** section;
+- a visible MATPOWER import conventions section with auto-profile mode
+  (`off`, `recommend`, or `apply`) plus manual transformer-ratio,
+  phase-shift, bus-shunt, PV-voltage-source, and comparison-reference
+  overrides;
 - logfile result mode;
 - single-run performance timing detail;
 - optional post-run diagnostics; and
@@ -157,6 +163,40 @@ chosen only through `start_sparlectra_webui(; output_root=...)`, is displayed as
 read-only information, and cannot be overridden by a submitted browser field.
 The page does not offer a generic YAML editor and never modifies the selected
 template. The service creates an `effective_config.yaml` artifact for each run.
+The header and `webui_operations.jsonl` include the Sparlectra version, package
+path, and local Git commit when available so users can confirm which checkout
+is serving the browser page.
+
+The current-iteration controls in **Advanced start values** write the same
+`power_flow.start_current_iteration.*` overrides documented in
+[`powerflow_configuration.md`](powerflow_configuration.md#guarded-current-iteration-start-pre-solve).
+They configure a guarded start-value preconditioner that runs after the normal
+start modes and optional start projection, before Newton-Raphson. They do not
+add a new start-voltage/start-angle mode and do not replace the rectangular
+Newton-Raphson solver. When case-specific sidecar saving is enabled, these
+fields are saved and restored through the same profile mechanism as the other
+Web UI form options.
+
+### Case-specific settings profiles
+
+Case-specific Web UI settings are optional. When a terminal result page shows a
+successful or converged run, the compact **Case settings** section offers
+**Save settings for this case**. This writes only the Web UI form options that
+were used for that completed run, plus traceability metadata, into a sanitized
+YAML profile below the Web UI output root. It does not save the run's full
+`effective_config.yaml`, solver internals, artifact paths, or transient
+convergence diagnostics.
+
+If the run did not converge, the result page does not show the normal save
+action. It instead labels the action **Save these settings anyway** and records
+that the user explicitly overrode the non-successful-run warning. No profile is
+saved automatically.
+
+When the same MATPOWER case is opened again with a saved profile, the form is
+prefilled with the profile values and displays a small notice. Precedence stays
+conservative: built-in defaults are loaded first, global configuration remains
+unchanged, the case-specific Web UI profile only prefills editable form fields,
+and any manual browser edit wins for the submitted run.
 
 The existing-case selector lists canonical MATPOWER `.m` files from the user Web UI case
 cache. Generated MATPOWER `.jl` cache artifacts are internal and are not user-selectable.
@@ -305,6 +345,12 @@ downloaded, and every artifact page also offers an explicit download response.
 The text-artifact viewer uses 75–85 percent of the viewport height and a wider
 page layout for practical inspection of long logs and configuration files.
 
+Runs that attempt the guarded current-iteration start pre-solve may include
+`current_iteration_start.log`. The artifact is classified as a
+start-value/current-iteration diagnostic artifact and records whether the
+candidate was attempted, accepted, rejected by a guard, or rejected with the
+original start values restored before Newton-Raphson.
+
 ## Persistent operation log
 
 The Web UI appends support-oriented JSON Lines events to its user-writable `logs/webui_operations.jsonl`. This file is independent of individual
@@ -375,3 +421,9 @@ Estimation UI, authentication, public-server mode, background queue, live
 progress stream, WebSockets, database, topology view, or advanced plotting.
 It uses a compact Julia `Sockets` HTTP layer to avoid a heavy web-framework
 dependency.
+
+### Configuration check and refresh
+
+The PowerFlow page includes explicit **Check configuration** and **Refresh configuration** actions for user YAML files. They exist because the package configuration template can gain new options over time while existing local files remain in place. A check performs a dry run only: it compares the selected configuration against `src/configuration.yaml.example`, reports missing keys, known deprecated aliases, duplicate YAML keys, and shows a refreshed YAML preview without writing.
+
+Refresh is conservative and user-initiated. It preserves existing user values, adds missing keys with current template defaults, and may normalize known deprecated aliases in user files to canonical start-mode settings or legacy `matpower_*` Q-limit mode names. It never rewrites YAML during Web UI startup. When writing a server-local configuration file, Sparlectra first creates a timestamped backup next to the original file. If duplicate YAML keys are detected, refresh refuses to write so the file can be reviewed manually. Browser-uploaded or pasted YAML is not rewritten in place; the refreshed YAML is offered as a download instead.
