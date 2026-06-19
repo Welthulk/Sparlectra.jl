@@ -1,3 +1,7 @@
+## Version 0.8.7 – 2026-06-18
+
+### Bugfixes
+
 ## Version 0.8.6 – 2026-06-18
 ### Improvements
 * Added configurable detailed CSV artifact writing with `auto`, `buffered`, and `streaming` modes so large output artifacts can stream directly to disk while normal cases keep buffered writes.
