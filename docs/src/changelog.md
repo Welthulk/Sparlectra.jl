@@ -2,6 +2,7 @@
 
 ### Improvements
 * Improved the PowerFlow Web UI layout by widening the form, moving MATPOWER import controls into Advanced / expert options, defaulting new Web UI runs to `matpower_import.auto_profile = apply`, and making validation errors dismissible while preserving recent errors in a collapsed details block.
+* Restored compact default test-run output by suppressing verbose MATPOWER/runtime diagnostics in normal `test/runtests.jl` runs while keeping an explicit verbose opt-in for debugging.
 
 ### Bugfixes
 * Fixed Web UI/API MATPOWER import controls so selected auto-profile, transformer ratio, phase-shift, shunt, and voltage-reference options are validated, logged, propagated into runtime case construction, and reflected in effective configuration artifacts.

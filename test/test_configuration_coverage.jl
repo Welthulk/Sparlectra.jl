@@ -2,6 +2,8 @@ using Sparlectra
 using Test
 using Logging
 
+include("test_runner_helpers.jl")
+
 function _leaf_paths(x; prefix = "")
   paths = String[]
   if x isa AbstractDict
@@ -96,6 +98,39 @@ function run_configuration_coverage_tests()
     )
     @test all(haskey(expected_consumers, key) for key in keys(expected_consumers))
     @test expected_consumers["extensions.reserved"] === :Reserved
+  end
+
+  @testset "Test runner output mode helpers" begin
+    @test selected_test_profile(String[], Dict("SPARLECTRA_TEST_PROFILE" => "extended")) === :extended
+    @test selected_test_profile(["fast"], Dict("SPARLECTRA_TEST_PROFILE" => "extended")) === :fast
+    @test selected_test_profile(["--verbose", "all"], Dict{String,String}()) === :all
+    @test sparlectra_test_verbose(["--verbose"], Dict{String,String}())
+    @test sparlectra_test_verbose(String[], Dict("SPARLECTRA_TEST_VERBOSE" => "1"))
+    @test !sparlectra_test_verbose(String[], Dict{String,String}())
+
+    quiet_path = tempname()
+    open(quiet_path, "w+") do io
+      redirect_stdio(stdout = io) do
+        @test quiet_test_output(verbose = false) do
+          println("Runtime casefile: hidden")
+          return :quiet_result
+        end === :quiet_result
+      end
+      seekstart(io)
+      @test isempty(read(io, String))
+    end
+
+    verbose_path = tempname()
+    open(verbose_path, "w+") do io
+      redirect_stdio(stdout = io) do
+        @test quiet_test_output(verbose = true) do
+          println("Runtime casefile: visible")
+          return :verbose_result
+        end === :verbose_result
+      end
+      seekstart(io)
+      @test occursin("Runtime casefile: visible", read(io, String))
+    end
   end
 
   @testset "Configuration forwarding with sentinel values" begin

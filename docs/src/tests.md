@@ -26,7 +26,7 @@ julia --project=. -e 'using Pkg; Pkg.test()'
 |---|---|---|
 | `core_model` | `test/testgrid.jl` | Core net construction and validation, inline MATPOWER import helpers including large matrix-block scanning, file-based MATPOWER projected-start normalization, PV/PQ lock-ID resolution, and rectangular status-row diagnostic preservation, link handling, shunts, reporting/output checks, and summary-file output regression |
 | `powerflow_rectangular` | `test/test_solver_interface.jl` | Rectangular power-flow API behavior, sparse-only solver path, Q-limit and typed configuration entry checks, including accepted and rejected framework control-status composition, ordered local MATPOWER batch execution, the thin `run_acpflow` alias, and legacy-keyword rejection |
-| `configuration` | `test/test_configuration_coverage.jl` | Configuration-key coverage, forwarding checks, and value-domain validation |
+| `configuration` | `test/test_configuration_coverage.jl`, `test/test_runner_helpers.jl` | Configuration-key coverage, forwarding checks, value-domain validation, and test-runner output-mode helper checks |
 | `programmatic_api` | `test/test_api.jl` | GUI-ready power-flow API stable unique run IDs, schema versioning, success/failure status, override validation, effective configuration with runtime casefile metadata, classic/full log distinction, timing/status summaries, service phase timing persistence, performance, diagnostic, and detailed CSV artifacts (including buffered/streaming write-mode selection, direct-writer equivalence/timing metadata, bus-control label cache regression coverage, CSV progress events, comma/semicolon quoting, bounded Q-limit logging/detail artifacts, pre-mutation Q-limit snapshots, non-converged Q-limit validation skip reporting, and contained diagnostic failure), artifact discovery, Dict/NamedTuple/JSON/YAML serialization, and local service persistent indexing, timestamp fallback, restart recovery, safe single/all-run deletion, run lookup, and artifact/path safety behavior |
 | `webui` | `test/test_webui.jl` | Public Web UI binding, standalone app-window command selection, application-root discovery and case/configuration dropdowns, version rendering, performance/diagnostic/detailed-CSV controls and help (including default comma and opt-in Excel semicolon format), hidden temporary warm-up behavior, allowlisted form mapping including checked and unchecked Q-limit checkbox propagation, complete Markdown-backed form-help coverage, history-preserving secondary-page navigation, allowlisted documentation-link rewriting, documentation-page whitelisting and traversal rejection, enlarged readable artifact/help/docs structure and CSS formatting, service-backed runs, shared logo/header rendering, exact PNG asset routing, result/artifact/history HTML with timestamps, truncated large artifact previews, status badges, phase-aware abort visibility without per-iteration operation-log spam, refresh/delete controls, authoritative output-root handling, explicit, Ctrl-C, and request-aware heartbeat shutdown, listener reuse, absence of direct solver calls, and loopback HTTP smoke requests |
 | `state_estimation` | `test/test_state_estimation.jl` | WLS state-estimation behavior and observability-oriented regressions |
@@ -45,10 +45,36 @@ julia --project=. -e 'using Pkg; Pkg.test()'
 ## Offline and runtime expectations
 
 The default `fast` profile is intended to be offline-safe and should not download MATPOWER cases or run benchmark loops.
+Default fast-profile output is intentionally compact: the runner prints the selected profile, one `[n/7]` marker per group, and Julia's final test summary. MATPOWER import diagnostics, auto-profile tables, runtime casefile banners, Q-limit tables, and similar artifact-oriented diagnostic blocks are suppressed in normal test stdout so progress remains scannable.
+
+Use an explicit verbose opt-in when debugging a noisy test path:
+
+```bash
+SPARLECTRA_TEST_VERBOSE=1 julia --project=. test/runtests.jl
+julia --project=. test/runtests.jl --verbose
+```
+
+Verbose mode does not change the selected profile. Existing profile selection remains available, for example:
+
+```bash
+julia --project=. test/runtests.jl fast --verbose
+julia --project=. test/runtests.jl extended --verbose
+```
 
 The `extended` profile may include MATPOWER/example/output-heavy tests. These tests stay isolated from the default profile.
 
 Use `fast` during normal development. Use `extended` before merging changes that affect configuration, MATPOWER import, output formatting, performance reporting, or broader integration paths.
+
+## Fast-profile volume review
+
+The fast profile currently contains a mix of true unit/smoke coverage and several integration-style service/UI paths:
+
+- True unit or focused smoke tests: configuration key/value validation, MATPOWER auto-profile decision rules on tiny synthetic cases, rectangular solver API checks with small fixtures, core model invariants, state-estimation smoke/regression cases, and control-loop unit/regression checks.
+- Integration-style tests that remain in fast because they protect recent public behavior: API service request/metadata/artifact smoke checks, Web UI form rendering and routing, allowlisted documentation/help routing, operation-log safety, run deletion safety, and small service-backed Web UI/API runs.
+- Heavier or broader tests already isolated in extended: MATPOWER example runner coverage, synthetic-grid regressions, configuration documentation consistency, PV residual integration coverage, and structural remove/delete behavior.
+- Expensive or duplicate candidates to watch: repeated API/Web UI artifact-generation parity checks, broad service-path status/recovery assertions that overlap between `test_api.jl` and `test_webui.jl`, and any future large-case or repeated auto-profile scans. These should move to `extended` if they become slow, require network/cached large cases, or duplicate a smaller fast regression.
+
+No tests were moved in this review. The current fast-profile volume is acceptable as long as default stdout remains quiet and the service/UI cases continue to use small offline fixtures. Future large-case regressions such as `case13659pegase.m` should use a small reproducible proxy in fast and keep the real large-case check in extended/manual verification unless the case is already cached and cheap.
 
 ## Pre-merge verification gate (config / MATPOWER / output / performance / docs changes)
 
