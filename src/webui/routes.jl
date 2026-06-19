@@ -85,6 +85,7 @@ function route_sparlectra_webui(method::AbstractString, target::AbstractString, 
       _webui_log_route!(log_root, "validation_error", verb, path; status = "rejected", requested_case = selected_casefile, message = sprint(showerror, err))
       return _webui_html(render_powerflow_form(;
         output_root,
+        operation_log = log_root,
         error_message = sprint(showerror, err),
         selected_casefile,
         selected_config_file,

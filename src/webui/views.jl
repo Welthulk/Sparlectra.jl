@@ -149,8 +149,51 @@ function _webui_active_run_banner(active_run)::String
   return "<section class=\"panel active-run-banner\"><strong>PowerFlow run is $(status):</strong> <code>$(_webui_escape(run_id))</code>$(explanation)<div class=\"actions\"><a class=\"button\" href=\"/powerflow/result/$(_webui_urlencode(run_id))\">Open status</a>$(abort_form)</div></section>"
 end
 
+function _webui_recent_error_entries(operation_log::AbstractString; limit::Integer = 5)::Vector{Dict{String,Any}}
+  operation_log_path = webui_operation_log_path(operation_log)
+  isfile(operation_log_path) || return Dict{String,Any}[]
+  entries = Dict{String,Any}[]
+  for line in eachline(operation_log_path)
+    isempty(strip(line)) && continue
+    event = try
+      _parse_service_json(line)
+    catch
+      nothing
+    end
+    event isa AbstractDict || continue
+    string(get(event, "event", "")) in ("validation_error", "powerflow_submit_rejected", "internal_error") || continue
+    push!(entries, Dict{String,Any}(String(key) => value for (key, value) in event))
+  end
+  length(entries) <= limit && return entries
+  return entries[(end - limit + 1):end]
+end
+
+function _webui_last_errors_html(operation_log::AbstractString)::String
+  entries = _webui_recent_error_entries(operation_log)
+  isempty(entries) && return ""
+  items = join((begin
+    timestamp = get(entry, "timestamp", "unknown time")
+    route = get(entry, "route", "unknown route")
+    casefile = get(entry, "requested_case", get(entry, "casefile", ""))
+    run_id = get(entry, "run_id", "")
+    message = get(entry, "message", get(entry, "status", "error"))
+    meta = String[]
+    isempty(string(casefile)) || push!(meta, "case: $(casefile)")
+    isempty(string(run_id)) || push!(meta, "run: $(run_id)")
+    suffix = isempty(meta) ? "" : " <small>($(_webui_escape(join(meta, ", "))))</small>"
+    "<li><time>$(_webui_escape(timestamp))</time> <code>$(_webui_escape(route))</code>: $(_webui_escape(message))$(suffix)</li>"
+  end for entry in reverse(entries)), "")
+  return "<details class=\"last-errors span-2\"><summary>Last errors</summary><ul>$(items)</ul></details>"
+end
+
+function _webui_error_alert_html(error_message)::String
+  error_message === nothing && return ""
+  return "<div class=\"alert alert-error error\" data-dismissible-alert role=\"alert\"><button type=\"button\" class=\"alert-close\" aria-label=\"Dismiss error\">×</button><span>$(_webui_escape(error_message))</span></div>"
+end
+
 function render_powerflow_form(; output_root::AbstractString = "results/powerflow_service", case_directory::Union{Nothing,AbstractString} = nothing, operation_log::AbstractString = webui_operation_log_path(output_root), error_message = nothing, application_root::AbstractString = _webui_application_root(), selected_casefile::AbstractString = "", selected_config_file::AbstractString = "", active_run = get_active_webui_powerflow_job())::String
-  error_html = error_message === nothing ? "" : "<div class=\"alert error\">$(_webui_escape(error_message))</div>"
+  error_html = _webui_error_alert_html(error_message)
+  last_errors_html = _webui_last_errors_html(operation_log)
   casefiles = case_directory === nothing ? _webui_casefile_options(application_root) : _webui_casefile_options_in_directory(case_directory)
   bundled_case_directory = joinpath(application_root, "data", "mpower")
   effective_case_directory = case_directory === nothing ? bundled_case_directory : String(case_directory)
@@ -164,8 +207,8 @@ function render_powerflow_form(; output_root::AbstractString = "results/powerflo
   config_control = "<input type=\"hidden\" name=\"config_file\" value=\"$(_webui_escape(config_default))\">"
   info_menu = _webui_powerflow_info_menu(; output_root, config_file = config_default, case_directory = effective_case_directory, operation_log)
   form = """
-$(error_html)$(_webui_active_run_banner(active_run))<p class=\"lede\">Run a local MATPOWER case through the Sparlectra PowerFlow service.</p>
-<form id=\"powerflow-run-form\" method=\"post\" action=\"/powerflow/run\" class=\"panel form-grid\" onsubmit=\"this.classList.add('is-submitting'); this.setAttribute('aria-busy', 'true'); this.querySelector('button[type=submit]').disabled = true;\">
+$(error_html)$(last_errors_html)$(_webui_active_run_banner(active_run))<p class=\"lede\">Run a local MATPOWER case through the Sparlectra PowerFlow service.</p>
+<form id=\"powerflow-run-form\" data-powerflow-form method=\"post\" action=\"/powerflow/run\" class=\"panel form-grid powerflow-form-card\" onsubmit=\"this.classList.add('is-submitting'); this.setAttribute('aria-busy', 'true'); this.querySelector('button[type=submit]').disabled = true;\">
 $(config_control)
 <label>$(_webui_field_label("casefile", "Existing MATPOWER case"))$(case_select)<small class="field-hint">Cases from <code>$(_webui_escape(effective_case_directory))</code></small></label>
 <label><span class="field-label">Or type/download MATPOWER case</span>$(case_manual)<small class="field-hint">Manual input overrides the existing-case selection.</small></label>
@@ -183,10 +226,12 @@ $(config_control)
 <fieldset class=\"span-2 detailed-csv-options\"><legend><label class=\"check\"><input name=\"detailed_result_csv\" type=\"checkbox\">$(_webui_field_label("detailed_result_csv", "Export detailed result CSV files"))</label></legend>
 <label class=\"detailed-csv-format\">$(_webui_field_label("detailed_result_csv_format", "CSV format"))$(_webui_select("detailed_result_csv_format", ("technical", "excel_de", "excel_us"), "technical"))<small class=\"field-hint\">technical: comma/decimal point/no grouping; excel_de: semicolon/decimal comma/thousands dot; excel_us: comma/decimal point/thousands comma.</small></label>
 </fieldset>
+<details class=\"span-2 expert-section\">
+<summary>Advanced / expert options</summary>
 <fieldset class=\"import-section\">
 <legend>MATPOWER import conventions</legend>
 <p class=\"field-hint span-2\">Choose how MATPOWER transformer ratio, phase-shift, bus-shunt, and voltage-reference conventions are interpreted before the network is built. Use <strong>off</strong> for manual overrides, <strong>recommend</strong> to log advice without changing the run, or <strong>apply</strong> to let the profile apply safe recommendations. These controls are separate from post-solve wrong-branch plausibility checks.</p>
-<label>$(_webui_field_label("matpower_import_auto_profile", "MATPOWER auto-profile"))$(_webui_select("matpower_import_auto_profile", MATPOWER_AUTO_PROFILE_VALUES, :recommend))</label>
+<label>$(_webui_field_label("matpower_import_auto_profile", "MATPOWER auto-profile"))$(_webui_select("matpower_import_auto_profile", MATPOWER_AUTO_PROFILE_VALUES, :apply))</label>
 <label>$(_webui_field_label("matpower_import_ratio", "Transformer ratio convention"))$(_webui_select("matpower_import_ratio", MATPOWER_RATIO_VALUES, :normal))</label>
 <label>$(_webui_field_label("matpower_import_shift_sign", "Phase-shift sign"))<input name=\"matpower_import_shift_sign\" type=\"number\" step=\"2\" min=\"-1\" max=\"1\" value=\"1.0\"></label>
 <label>$(_webui_field_label("matpower_import_shift_unit", "Phase-shift unit"))$(_webui_select("matpower_import_shift_unit", MATPOWER_SHIFT_UNIT_VALUES, :deg))</label>
@@ -194,8 +239,6 @@ $(config_control)
 <label>$(_webui_field_label("matpower_import_pv_voltage_source", "PV voltage source"))$(_webui_select("matpower_import_pv_voltage_source", MATPOWER_PV_VOLTAGE_SOURCE_VALUES, :gen_vg))</label>
 <label>$(_webui_field_label("matpower_import_compare_voltage_reference", "Voltage reference comparison"))$(_webui_select("matpower_import_compare_voltage_reference", MATPOWER_COMPARE_VOLTAGE_REFERENCE_VALUES, :imported_setpoint))</label>
 </fieldset>
-<details class=\"span-2 expert-section\">
-<summary>Advanced / expert options</summary>
 <fieldset class=\"benchmark-section\">
 <legend>Benchmark / repeated timing</legend>
 <p class=\"field-hint span-2\">Normal runs perform one representative power-flow execution. Benchmarking adds repeated BenchmarkTools measurements for timing statistics and does not change the numerical result.</p>
@@ -207,6 +250,20 @@ $(config_control)
 </details>
 <div class=\"span-2 actions\"><button class=\"powerflow-submit\" type=\"submit\"><span class=\"submit-spinner\" aria-hidden=\"true\"></span><span class=\"submit-label\">Start PowerFlow run</span><span class=\"submit-progress-label\" role=\"status\" aria-live=\"polite\">Running PowerFlow…</span></button></div></form>
 <script>
+document.addEventListener('DOMContentLoaded', function () {
+  const alert = document.querySelector('[data-dismissible-alert]');
+  const form = document.querySelector('form[data-powerflow-form]');
+  if (alert !== null && form !== null) {
+    const clearAlert = function () {
+      alert.hidden = true;
+      alert.classList.add('is-dismissed');
+    };
+    alert.addEventListener('click', clearAlert);
+    form.addEventListener('input', clearAlert, {once: true});
+    form.addEventListener('change', clearAlert, {once: true});
+  }
+});
+
 window.addEventListener('pageshow', function () {
   const form = document.getElementById('powerflow-run-form');
   if (form === null) return;
