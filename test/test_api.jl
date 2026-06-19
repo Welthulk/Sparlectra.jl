@@ -554,17 +554,18 @@ function run_api_tests()
       @test occursin("must be one of", something(invalid_enum.message, ""))
 
       import_overrides = validate_gui_config_overrides(Dict(
-        "matpower_import.auto_profile" => "recommend",
+        "matpower_import.auto_profile" => "apply",
         "matpower_import.ratio" => "reciprocal",
         "matpower_import.shift_sign" => -1.0,
         "matpower_import.shift_unit" => "rad",
         "matpower_import.bus_shunt_model" => "voltage_dependent_injection",
       ))
-      @test import_overrides["matpower_import"]["auto_profile"] == "recommend"
+      @test import_overrides["matpower_import"]["auto_profile"] == "apply"
       @test import_overrides["matpower_import"]["ratio"] == "reciprocal"
       @test import_overrides["matpower_import"]["shift_sign"] == -1.0
       @test import_overrides["matpower_import"]["shift_unit"] == "rad"
       @test import_overrides["matpower_import"]["bus_shunt_model"] == "voltage_dependent_injection"
+      @test_throws ArgumentError validate_gui_config_overrides(Dict("matpower_import.auto_profile" => "nonsense"))
       @test_throws ArgumentError validate_gui_config_overrides(Dict("matpower_import.ratio" => "sideways"))
       @test_throws ArgumentError validate_gui_config_overrides(Dict("matpower_import.shift_sign" => 0.0))
 
@@ -583,8 +584,28 @@ function run_api_tests()
       @test any(artifact -> artifact.kind === :matpower_auto_profile, auto_profile_result.artifacts)
       auto_profile_log = read(joinpath(auto_profile_output, "matpower_auto_profile.log"), String)
       @test occursin("Runtime casefile:", auto_profile_log)
+      @test occursin("Original MATPOWER import options:", auto_profile_log)
+      @test occursin("Auto-profile recommendation:", auto_profile_log)
+      @test occursin("Final effective MATPOWER import options:", auto_profile_log)
       @test occursin("matpower_import.ratio", auto_profile_log)
       @test occursin("Final effective MATPOWER auto-profile options", auto_profile_log)
+
+      auto_profile_apply_output = joinpath(tmpdir, "auto_profile_apply")
+      auto_profile_apply_result = run_sparlectra_api(
+        casefile = casefile,
+        config_file = template,
+        output_dir = auto_profile_apply_output,
+        config_overrides = Dict(
+          "matpower_import.auto_profile" => "apply",
+          "benchmark.enabled" => false,
+        ),
+      )
+      @test auto_profile_apply_result.success
+      apply_effective_text = read(joinpath(auto_profile_apply_output, "effective_config.yaml"), String)
+      apply_profile_log = read(joinpath(auto_profile_apply_output, "matpower_auto_profile.log"), String)
+      @test occursin("auto_profile: apply", apply_effective_text)
+      @test occursin("auto_profile = apply", apply_profile_log)
+      @test any(artifact -> artifact.kind === :matpower_auto_profile, auto_profile_apply_result.artifacts)
 
       @test validate_gui_config_overrides(Dict("power_flow.qlimits.enabled" => false))["power_flow"]["qlimits"]["enabled"] === false
     end

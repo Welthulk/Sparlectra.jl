@@ -173,10 +173,14 @@ benchmark:
     @test shift_unit_row.recommended == "deg"
     @test shift_unit_row.action === :recommend
 
-    applied = Sparlectra.matpower_import_auto_profile(mpc, cfg; mode = :apply)
+    apply_cfg = Sparlectra.SparlectraConfig(Dict(
+      "matpower_import" => Dict("auto_profile" => "apply", "shift_unit" => "rad"),
+    ))
+    applied = Sparlectra.matpower_import_auto_profile(mpc, apply_cfg; mode = :apply)
     @test applied.config.matpower.shift_unit === :deg
     applied_row = only(row for row in applied.rows if row.option == "matpower_import.shift_unit")
     @test applied_row.action === :applied
+    @test any(pair -> first(pair) === :shift_unit && last(pair) === :deg, applied.applied)
 
     ambiguous_cfg = Sparlectra.SparlectraConfig(Dict("matpower_import" => Dict("auto_profile" => "apply")))
     ambiguous = Sparlectra.matpower_import_auto_profile(_auto_profile_pv_mismatch_case(), ambiguous_cfg; mode = :apply)
@@ -192,6 +196,16 @@ benchmark:
     @test occursin("MATPOWER auto-profile recommendations", text)
     @test occursin("Final effective MATPOWER auto-profile options", text)
     @test occursin("matpower_import.compare_voltage_reference", text)
+
+    io = IOBuffer()
+    Sparlectra.write_matpower_import_auto_profile(io, applied, applied.config; casefile = "case13659pegase.m")
+    apply_text = String(take!(io))
+    @test occursin("Runtime casefile: case13659pegase.m", apply_text)
+    @test occursin("Original MATPOWER import options:", apply_text)
+    @test occursin("Auto-profile recommendation:", apply_text)
+    @test occursin("Final effective MATPOWER import options:", apply_text)
+    @test occursin("auto_profile = apply", apply_text)
+    @test occursin("shift_unit   = deg", apply_text)
   end
 
   @testset "Configuration value-domain validation" begin

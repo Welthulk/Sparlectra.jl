@@ -360,6 +360,10 @@ function run_webui_tests()
       @test overrides["power_flow.tol"] == 1.0e-8
       @test overrides["power_flow.max_iter"] == 80
       @test overrides["power_flow.autodamp"]
+      apply_form = copy(form)
+      apply_form["matpower_import_auto_profile"] = "apply"
+      apply_request = Sparlectra.powerflow_webui_request(apply_form; default_output_root = output_root)
+      @test apply_request["config_overrides"]["matpower_import.auto_profile"] == "apply"
       @test overrides["benchmark.enabled"] === false
 
       invalid_form = copy(form)
@@ -371,6 +375,9 @@ function run_webui_tests()
       @test occursin("name=\"config_file\" value=\"$(config_file)\"", invalid_html)
 
       form_html = Sparlectra.render_powerflow_form(output_root = output_root)
+      @test occursin("<option value=\"off\">off</option>", form_html)
+      @test occursin("<option value=\"recommend\" selected>recommend</option>", form_html)
+      @test occursin("<option value=\"apply\">apply</option>", form_html)
       expected_help_topics = Dict(
         "casefile" => "webui.casefile",
         "power_flow_tol" => "power_flow.tol",

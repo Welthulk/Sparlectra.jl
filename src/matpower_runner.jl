@@ -725,6 +725,41 @@ function print_matpower_import_auto_profile(io::IO, rows)
   return nothing
 end
 
+function _auto_profile_row_value(rows, option::AbstractString, field::Symbol)
+  for row in rows
+    row.option == option && return getfield(row, field)
+  end
+  return ""
+end
+
+function print_matpower_import_auto_profile_summary(io::IO, auto_profile_result, cfg::SparlectraConfig)
+  rows = auto_profile_result.rows
+  isempty(rows) && return nothing
+  println(io, "Original MATPOWER import options:")
+  println(io, "  auto_profile = ", cfg.matpower.auto_profile)
+  println(io, "  ratio        = ", _auto_profile_row_value(rows, "matpower_import.ratio", :current))
+  println(io, "  shift_unit   = ", _auto_profile_row_value(rows, "matpower_import.shift_unit", :current))
+  println(io, "  shift_sign   = ", _auto_profile_row_value(rows, "matpower_import.shift_sign", :current))
+  println(io)
+  println(io, "Auto-profile recommendation:")
+  println(io, "  ratio        = ", _auto_profile_row_value(rows, "matpower_import.ratio", :recommended))
+  println(io, "  shift_unit   = ", _auto_profile_row_value(rows, "matpower_import.shift_unit", :recommended))
+  println(io, "  shift_sign   = ", _auto_profile_row_value(rows, "matpower_import.shift_sign", :recommended))
+  println(io)
+  println(io, "Final effective MATPOWER import options:")
+  println(io, "  auto_profile = ", cfg.matpower.auto_profile)
+  println(io, "  ratio        = ", cfg.matpower.ratio)
+  println(io, "  shift_unit   = ", cfg.matpower.shift_unit)
+  println(io, "  shift_sign   = ", cfg.matpower.shift_sign)
+  if cfg.matpower.auto_profile === :apply && isempty(auto_profile_result.applied)
+    println(io, "  applied      = none (all safe recommendations already matched the runtime options or the scan was ambiguous)")
+  elseif cfg.matpower.auto_profile === :apply
+    println(io, "  applied      = ", join((string(first(pair), "=", last(pair)) for pair in auto_profile_result.applied), ", "))
+  end
+  println(io)
+  return nothing
+end
+
 function print_matpower_import_auto_profile_effective_options(io::IO, cfg::SparlectraConfig)
   println(io, "Final effective MATPOWER auto-profile options")
   println(io, "---------------------------------------------")
@@ -759,6 +794,7 @@ end
 
 function write_matpower_import_auto_profile(io::IO, auto_profile_result, cfg::SparlectraConfig; casefile::AbstractString = "")
   !isempty(casefile) && println(io, "Runtime casefile: ", casefile, "\n")
+  print_matpower_import_auto_profile_summary(io, auto_profile_result, cfg)
   print_matpower_import_auto_profile(io, auto_profile_result.rows)
   print_matpower_import_auto_profile_effective_options(io, cfg)
   return nothing
