@@ -39,6 +39,8 @@ using Printf
 # All other exceptions are considered real errors and are rethrown.
 _is_rectangular_linear_step_failure(e) = e isa LinearAlgebra.SingularException || e isa LinearAlgebra.LAPACKException
 
+const QLIMIT_ENFORCEMENT_MODES = (:active_set, :classic_simultaneous, :classic_one_at_a_time)
+
 function _print_rectangular_qlimit_summary(
   io::IO,
   net::Net,
@@ -183,26 +185,6 @@ function _expand_ybus_for_isolated_nodes(Yred, n::Int, iso_nodes::Vector{Int})
   return Yfull
 end
 
-@inline function _has_vset_adjust_config(ps::ProSumer)::Bool
-  return !isnothing(ps.vset_adjust) || !(isnothing(ps.vstep_pu) && isnothing(ps.tap_steps_down) && isnothing(ps.tap_steps_up))
-end
-
-@inline function _bus_label(net::Net, bus::Int)::String
-  return getCompName(net.nodeVec[bus].comp)
-end
-
-@inline function _resolve_vset_adjust_config(ps::ProSumer)::Union{Nothing,VoltageAdjustConfig}
-  if !isnothing(ps.vset_adjust)
-    return ps.vset_adjust
-  end
-  # Legacy per-field voltage-adjust settings are only accepted if complete.
-  # Partial definitions are intentionally ignored to avoid ambiguous behavior.
-  has_any = _has_vset_adjust_config(ps)
-  has_any || return nothing
-  all_defined = !isnothing(ps.vstep_pu) && !isnothing(ps.tap_steps_down) && !isnothing(ps.tap_steps_up)
-  all_defined || return nothing
-  return VoltageAdjustConfig(Float64(ps.vstep_pu), Int(ps.tap_steps_down), Int(ps.tap_steps_up))
-end
 
 function _try_adjust_vset_on_q_limit!(net::Net, bus::Int, side::Symbol, it::Int, controllers::Dict{Int,NamedTuple{(:prosumer_idx, :config),Tuple{Int,VoltageAdjustConfig}}}, base_vset::Vector{Float64}, Vset::Vector{Float64}, adjust_counter::Vector{Int}, qlimit_max_outer::Int, verbose::Int)::Bool
   cname = _bus_label(net, bus)
@@ -316,6 +298,18 @@ function runpf_rectangular!(
   start_projection_accept_unmeasured_dc_start::Bool = false,
   start_projection_blend_lambdas::AbstractVector{<:Real} = [0.25, 0.5, 0.75],
   start_projection_dc_angle_limit_deg::Float64 = 60.0,
+  start_projection_requested_angle_mode::Symbol = :classic,
+  start_projection_requested_voltage_mode::Symbol = :classic,
+  start_current_iteration_enabled::Bool = false,
+  start_current_iteration_max_iter::Int = 10,
+  start_current_iteration_tol::Float64 = 1.0e-3,
+  start_current_iteration_damping::Float64 = 0.5,
+  start_current_iteration_accept_only_if_improved::Bool = true,
+  start_current_iteration_min_improvement_factor::Float64 = 0.98,
+  start_current_iteration_vm_min_pu::Float64 = 0.5,
+  start_current_iteration_vm_max_pu::Float64 = 1.5,
+  start_current_iteration_max_angle_step_deg::Float64 = 30.0,
+  start_current_iteration_only_for_large_cases::Bool = false,
   qlimit_start_iter::Int = 2,
   qlimit_start_mode::Symbol = :iteration,
   qlimit_auto_q_delta_pu::Float64 = 1e-4,
@@ -333,6 +327,7 @@ function runpf_rectangular!(
   qlimit_guard_violation_mode::Symbol = :delayed_switch,
   qlimit_guard_violation_threshold_pu::Float64 = 1e-4,
   qlimits_enabled::Bool = true,
+  qlimit_enforcement_mode::Symbol = :active_set,
   wrong_branch_detection::Symbol = :warn,
   wrong_branch_rescue::Bool = false,
   wrong_branch_min_vm_pu::Float64 = 0.70,
@@ -347,6 +342,59 @@ function runpf_rectangular!(
   rectangular_workspace_min_buses::Int = 1000,
 )
   _validate_rectangular_powerflow_options(method = method, sparse = true)
+  qlimit_enforcement_mode = _canonical_qlimit_enforcement_mode(qlimit_enforcement_mode)
+  qlimit_enforcement_mode in QLIMIT_ENFORCEMENT_MODES || error("Unsupported qlimit_enforcement_mode=$(qlimit_enforcement_mode). Supported: $(QLIMIT_ENFORCEMENT_MODES).")
+  if qlimits_enabled && qlimit_enforcement_mode in (:classic_simultaneous, :classic_one_at_a_time)
+    # Classical Q-limit handling is an outer orchestration layer around whole
+    # rectangular solves. Keep it delegated so the Newton driver below continues
+    # to represent exactly one active-set attempt.
+    return _run_q_limits_matpower_outer_loop!(
+      net;
+      mode = qlimit_enforcement_mode,
+      method = method,
+      maxiter = maxiter,
+      tol = tol,
+      damp = damp,
+      verbose = verbose,
+      autodamp = autodamp,
+      autodamp_min = autodamp_min,
+      opt_flatstart = opt_flatstart,
+      pv_table_rows = pv_table_rows,
+      qlimit_max_outer = qlimit_max_outer,
+      start_projection = start_projection,
+      start_projection_try_dc_start = start_projection_try_dc_start,
+      start_projection_try_blend_scan = start_projection_try_blend_scan,
+      start_projection_branch_guard = start_projection_branch_guard,
+      start_projection_measure_candidates = start_projection_measure_candidates,
+      start_projection_accept_unmeasured_dc_start = start_projection_accept_unmeasured_dc_start,
+      start_projection_blend_lambdas = start_projection_blend_lambdas,
+      start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg,
+      start_projection_requested_angle_mode = start_projection_requested_angle_mode,
+      start_projection_requested_voltage_mode = start_projection_requested_voltage_mode,
+      start_current_iteration_enabled = start_current_iteration_enabled,
+      start_current_iteration_max_iter = start_current_iteration_max_iter,
+      start_current_iteration_tol = start_current_iteration_tol,
+      start_current_iteration_damping = start_current_iteration_damping,
+      start_current_iteration_accept_only_if_improved = start_current_iteration_accept_only_if_improved,
+      start_current_iteration_min_improvement_factor = start_current_iteration_min_improvement_factor,
+      start_current_iteration_vm_min_pu = start_current_iteration_vm_min_pu,
+      start_current_iteration_vm_max_pu = start_current_iteration_vm_max_pu,
+      start_current_iteration_max_angle_step_deg = start_current_iteration_max_angle_step_deg,
+      start_current_iteration_only_for_large_cases = start_current_iteration_only_for_large_cases,
+      wrong_branch_detection = wrong_branch_detection,
+      wrong_branch_rescue = wrong_branch_rescue,
+      wrong_branch_min_vm_pu = wrong_branch_min_vm_pu,
+      wrong_branch_max_vm_pu = wrong_branch_max_vm_pu,
+      wrong_branch_max_angle_spread_deg = wrong_branch_max_angle_spread_deg,
+      wrong_branch_max_branch_angle_deg = wrong_branch_max_branch_angle_deg,
+      wrong_branch_min_low_vm_count = wrong_branch_min_low_vm_count,
+      wrong_branch_rescue_max_attempts = wrong_branch_rescue_max_attempts,
+      performance_profile = performance_profile,
+      rectangular_workspace_reuse = rectangular_workspace_reuse,
+      rectangular_preallocate_workspace = rectangular_preallocate_workspace,
+      rectangular_workspace_min_buses = rectangular_workspace_min_buses,
+    )
+  end
   cancellation_check = performance_profile isa AbstractDict ? get(performance_profile, :cancellation_check, nothing) : nothing
   phase_callback = performance_profile isa AbstractDict ? get(performance_profile, :phase_callback, phase -> nothing) : phase -> nothing
   check_cancel = () -> (cancellation_check === nothing ? nothing : cancellation_check())
@@ -433,6 +481,37 @@ function runpf_rectangular!(
       accept_unmeasured_dc_start = start_projection_accept_unmeasured_dc_start,
       blend_lambdas = start_projection_blend_lambdas,
       dc_angle_limit_deg = start_projection_dc_angle_limit_deg,
+      requested_angle_mode = start_projection_requested_angle_mode,
+      requested_voltage_mode = start_projection_requested_voltage_mode,
+      verbose = verbose,
+      performance_profile = performance_profile,
+    )
+  end
+  check_cancel()
+
+  set_phase("current_iteration_start")
+  V0, _ = _perf_profile_time!(performance_profile, :current_iteration_start) do
+    # Current-iteration is a guarded start-value preconditioner, not a solver.
+    # The helper owns accept/reject and exact restore semantics before Newton
+    # state is constructed from the returned voltage vector.
+    _run_guarded_current_iteration_start(
+      Ybus,
+      V0,
+      S,
+      bus_types,
+      Vset,
+      slack_idx;
+      enabled = start_current_iteration_enabled,
+      max_iter = start_current_iteration_max_iter,
+      tol = start_current_iteration_tol,
+      damping = start_current_iteration_damping,
+      accept_only_if_improved = start_current_iteration_accept_only_if_improved,
+      min_improvement_factor = start_current_iteration_min_improvement_factor,
+      vm_min_pu = start_current_iteration_vm_min_pu,
+      vm_max_pu = start_current_iteration_vm_max_pu,
+      max_angle_step_deg = start_current_iteration_max_angle_step_deg,
+      only_for_large_cases = start_current_iteration_only_for_large_cases,
+      large_case_min_buses = rectangular_workspace_min_buses,
       verbose = verbose,
       performance_profile = performance_profile,
     )
@@ -446,11 +525,15 @@ function runpf_rectangular!(
   # Start fresh each PF run before guard pre-processing records locked buses.
   _perf_profile_time!(performance_profile, :solver_qlimit_log_reset) do
     resetQLimitLog!(net)
+    snapshotPVQLimits!(net)
   end
   if verbose > 1
     printPVQLimitsTable(net; max_rows = typemax(Int), full_details = "q_limit.log")
   elseif verbose > 0 && qlimits_enabled
     printPVQLimitsTable(net; max_rows = pv_table_rows, full_details = "q_limit.log")
+  elseif verbose > 0 && qlimit_lock_reason === :classical_outer_loop
+    println("Inner PF active-set Q-limit switching: disabled for classical outer-loop solve")
+    println("Classical Q-limit outer loop: enabled")
   elseif verbose > 0
     println("Q-limit handling: disabled")
     println("Q-limit diagnostics: skipped")
@@ -481,7 +564,8 @@ function runpf_rectangular!(
   qlimit_mode in (:switch_to_pq, :adjust_vset) || error("Unsupported qlimit_mode=$(qlimit_mode). Supported: :switch_to_pq, :adjust_vset.")
   qlimit_max_outer > 0 || error("qlimit_max_outer must be > 0 (got $(qlimit_max_outer)).")
   qlimit_start_iter > 0 || error("qlimit_start_iter must be > 0 (got $(qlimit_start_iter)).")
-  qlimit_start_mode in (:iteration, :auto_q_delta, :iteration_or_auto) || error("Unsupported qlimit_start_mode=$(qlimit_start_mode). Supported: :iteration, :auto_q_delta, :iteration_or_auto.")
+  qlimit_start_mode = qlimit_start_mode === :auto_q_delta ? :auto : qlimit_start_mode
+  qlimit_start_mode in (:iteration, :auto, :iteration_or_auto) || error("Unsupported qlimit_start_mode=$(qlimit_start_mode). Supported: :iteration, :auto, :iteration_or_auto.")
   qlimit_auto_q_delta_pu >= 0.0 || error("qlimit_auto_q_delta_pu must be >= 0 (got $(qlimit_auto_q_delta_pu)).")
   qlimit_guard_violation_mode in (:delayed_switch, :lock_pq, :ignore) || error("Unsupported qlimit_guard_violation_mode=$(qlimit_guard_violation_mode). Supported: :delayed_switch, :lock_pq, :ignore.")
   qlimit_guard_violation_threshold_pu >= 0.0 || error("qlimit_guard_violation_threshold_pu must be >= 0 (got $(qlimit_guard_violation_threshold_pu)).")
@@ -693,6 +777,8 @@ function runpf_rectangular!(
     wrong_branch_rescue_reason = wrong_branch_status.wrong_branch_rescue_reason
   end
 
+  mismatch_diagnostics = _rectangular_mismatch_diagnostics(Ybus, V, S, bus_types, Vset, slack_idx, final_pv_voltage_residual)
+
   switch_counts, oscillating_buses, max_switching_exceeded, q_limit_active_set_ok, converged, rejection_reason, final_reason, final_status, status = _perf_profile_time!(performance_profile, :solver_status_bookkeeping) do
     switch_counts_ = qlimit_switch_counts(net)
     oscillating_buses_ = count(>=(max(qlimit_guard_max_switches, 1)), values(switch_counts_))
@@ -721,7 +807,9 @@ function runpf_rectangular!(
       wrong_branch_detection,
       wrong_branch_rescue_attempted,
       wrong_branch_rescue_reason,
+      mismatch_diagnostics,
     )
+    status_build_ = _merge_current_iteration_diagnostics(status_build_, performance_profile)
     final_reason_ = status_build_.final_reason
     final_status_ = status_build_.final_status
     status_ = _store_and_print_rectangular_final_status!(net, status_build_.status, verbose)
@@ -762,7 +850,7 @@ Arguments:
 - `autodamp::Bool`: enable residual-based backtracking for rectangular Newton steps
 - `autodamp_min::Float64`: minimum automatic damping factor when `autodamp = true`
 - `qlimit_start_iter::Int`: first Newton iteration where PV→PQ Q-limit switching may run in `:iteration` mode
-- `qlimit_start_mode::Symbol`: `:iteration`, `:auto_q_delta`, or `:iteration_or_auto` start criterion for PV→PQ switching
+- `qlimit_start_mode::Symbol`: `:iteration`, `:auto`, or `:iteration_or_auto` start criterion for PV→PQ switching
 - `qlimit_auto_q_delta_pu::Float64`: PV reactive-power request change threshold for automatic switching start
 
 Notes:
@@ -798,6 +886,18 @@ function runpf_rectangular!(
   start_projection_accept_unmeasured_dc_start::Bool = false,
   start_projection_blend_lambdas::AbstractVector{<:Real} = [0.25, 0.5, 0.75],
   start_projection_dc_angle_limit_deg::Float64 = 60.0,
+  start_projection_requested_angle_mode::Symbol = :classic,
+  start_projection_requested_voltage_mode::Symbol = :classic,
+  start_current_iteration_enabled::Bool = false,
+  start_current_iteration_max_iter::Int = 10,
+  start_current_iteration_tol::Float64 = 1.0e-3,
+  start_current_iteration_damping::Float64 = 0.5,
+  start_current_iteration_accept_only_if_improved::Bool = true,
+  start_current_iteration_min_improvement_factor::Float64 = 0.98,
+  start_current_iteration_vm_min_pu::Float64 = 0.5,
+  start_current_iteration_vm_max_pu::Float64 = 1.5,
+  start_current_iteration_max_angle_step_deg::Float64 = 30.0,
+  start_current_iteration_only_for_large_cases::Bool = false,
   qlimit_start_iter::Int = 2,
   qlimit_start_mode::Symbol = :iteration,
   qlimit_auto_q_delta_pu::Float64 = 1e-4,
@@ -815,6 +915,7 @@ function runpf_rectangular!(
   qlimit_guard_violation_mode::Symbol = :delayed_switch,
   qlimit_guard_violation_threshold_pu::Float64 = 1e-4,
   qlimits_enabled::Bool = true,
+  qlimit_enforcement_mode::Symbol = :active_set,
   wrong_branch_detection::Symbol = :warn,
   wrong_branch_rescue::Bool = false,
   wrong_branch_min_vm_pu::Float64 = 0.70,
@@ -850,6 +951,18 @@ function runpf_rectangular!(
     start_projection_accept_unmeasured_dc_start = start_projection_accept_unmeasured_dc_start,
     start_projection_blend_lambdas = start_projection_blend_lambdas,
     start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg,
+    start_projection_requested_angle_mode = start_projection_requested_angle_mode,
+    start_projection_requested_voltage_mode = start_projection_requested_voltage_mode,
+    start_current_iteration_enabled = start_current_iteration_enabled,
+    start_current_iteration_max_iter = start_current_iteration_max_iter,
+    start_current_iteration_tol = start_current_iteration_tol,
+    start_current_iteration_damping = start_current_iteration_damping,
+    start_current_iteration_accept_only_if_improved = start_current_iteration_accept_only_if_improved,
+    start_current_iteration_min_improvement_factor = start_current_iteration_min_improvement_factor,
+    start_current_iteration_vm_min_pu = start_current_iteration_vm_min_pu,
+    start_current_iteration_vm_max_pu = start_current_iteration_vm_max_pu,
+    start_current_iteration_max_angle_step_deg = start_current_iteration_max_angle_step_deg,
+    start_current_iteration_only_for_large_cases = start_current_iteration_only_for_large_cases,
     qlimit_start_iter = qlimit_start_iter,
     qlimit_start_mode = qlimit_start_mode,
     qlimit_auto_q_delta_pu = qlimit_auto_q_delta_pu,
@@ -867,6 +980,7 @@ function runpf_rectangular!(
     qlimit_guard_violation_mode = qlimit_guard_violation_mode,
     qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu,
     qlimits_enabled = qlimits_enabled,
+    qlimit_enforcement_mode = qlimit_enforcement_mode,
     wrong_branch_detection = wrong_branch_detection,
     wrong_branch_rescue = wrong_branch_rescue,
     wrong_branch_min_vm_pu = wrong_branch_min_vm_pu,
@@ -885,6 +999,7 @@ end
 
 function _runpf_with_config!(net::Net, config::PowerFlowConfig; verbose::Int = 0, damp = 1.0, pv_table_rows::Int = 30, validate_limits_after_pf::Bool = false, q_limit_violation_headroom::Float64 = 0.0, qlimit_lock_reason::Symbol = :manual, performance_profile = nothing)
   start = config.start_mode
+  start_ci = config.start_current_iteration
   qlim = config.qlimits
   qlimit_disabled = qlim.ignore_q_limits
   qlimits_enabled = !qlimit_disabled
@@ -918,6 +1033,18 @@ function _runpf_with_config!(net::Net, config::PowerFlowConfig; verbose::Int = 0
     start_projection_accept_unmeasured_dc_start = start.accept_unmeasured_dc_start,
     start_projection_blend_lambdas = start.blend_lambdas,
     start_projection_dc_angle_limit_deg = start.dc_angle_limit_deg,
+    start_projection_requested_angle_mode = start.angle_mode,
+    start_projection_requested_voltage_mode = start.voltage_mode,
+    start_current_iteration_enabled = start_ci.enabled,
+    start_current_iteration_max_iter = start_ci.max_iter,
+    start_current_iteration_tol = start_ci.tol,
+    start_current_iteration_damping = start_ci.damping,
+    start_current_iteration_accept_only_if_improved = start_ci.accept_only_if_improved,
+    start_current_iteration_min_improvement_factor = start_ci.min_improvement_factor,
+    start_current_iteration_vm_min_pu = start_ci.vm_min_pu,
+    start_current_iteration_vm_max_pu = start_ci.vm_max_pu,
+    start_current_iteration_max_angle_step_deg = start_ci.max_angle_step_deg,
+    start_current_iteration_only_for_large_cases = start_ci.only_for_large_cases,
     qlimit_start_iter = qlimit_disabled ? typemax(Int) : qlim.start_iter,
     qlimit_start_mode = qlim.start_mode,
     qlimit_auto_q_delta_pu = qlim.auto_q_delta_pu,
@@ -935,6 +1062,7 @@ function _runpf_with_config!(net::Net, config::PowerFlowConfig; verbose::Int = 0
     qlimit_guard_violation_mode = qlim.guard_violation_mode,
     qlimit_guard_violation_threshold_pu = qlim.guard_violation_threshold_pu,
     qlimits_enabled = qlimits_enabled,
+    qlimit_enforcement_mode = qlim.enforcement_mode,
     rectangular_workspace_reuse = config.rectangular_workspace_reuse,
     rectangular_preallocate_workspace = config.rectangular_preallocate_workspace,
     rectangular_workspace_min_buses = config.rectangular_workspace_min_buses,
@@ -1123,6 +1251,18 @@ function runpf!(
   start_projection_accept_unmeasured_dc_start::Bool = false,
   start_projection_blend_lambdas::AbstractVector{<:Real} = [0.25, 0.5, 0.75],
   start_projection_dc_angle_limit_deg::Float64 = 60.0,
+  start_projection_requested_angle_mode::Symbol = :classic,
+  start_projection_requested_voltage_mode::Symbol = :classic,
+  start_current_iteration_enabled::Bool = false,
+  start_current_iteration_max_iter::Int = 10,
+  start_current_iteration_tol::Float64 = 1.0e-3,
+  start_current_iteration_damping::Float64 = 0.5,
+  start_current_iteration_accept_only_if_improved::Bool = true,
+  start_current_iteration_min_improvement_factor::Float64 = 0.98,
+  start_current_iteration_vm_min_pu::Float64 = 0.5,
+  start_current_iteration_vm_max_pu::Float64 = 1.5,
+  start_current_iteration_max_angle_step_deg::Float64 = 30.0,
+  start_current_iteration_only_for_large_cases::Bool = false,
   qlimit_start_iter::Int = 2,
   qlimit_start_mode::Symbol = :iteration,
   qlimit_auto_q_delta_pu::Float64 = 1e-4,
@@ -1140,6 +1280,7 @@ function runpf!(
   qlimit_guard_violation_mode::Symbol = :delayed_switch,
   qlimit_guard_violation_threshold_pu::Float64 = 1e-4,
   qlimits_enabled::Bool = true,
+  qlimit_enforcement_mode::Symbol = :active_set,
   wrong_branch_detection::Symbol = :warn,
   wrong_branch_rescue::Bool = false,
   wrong_branch_min_vm_pu::Float64 = 0.70,
@@ -1201,6 +1342,18 @@ function runpf!(
         start_projection_accept_unmeasured_dc_start = start_projection_accept_unmeasured_dc_start,
         start_projection_blend_lambdas = start_projection_blend_lambdas,
         start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg,
+        start_projection_requested_angle_mode = start_projection_requested_angle_mode,
+        start_projection_requested_voltage_mode = start_projection_requested_voltage_mode,
+        start_current_iteration_enabled = start_current_iteration_enabled,
+        start_current_iteration_max_iter = start_current_iteration_max_iter,
+        start_current_iteration_tol = start_current_iteration_tol,
+        start_current_iteration_damping = start_current_iteration_damping,
+        start_current_iteration_accept_only_if_improved = start_current_iteration_accept_only_if_improved,
+        start_current_iteration_min_improvement_factor = start_current_iteration_min_improvement_factor,
+        start_current_iteration_vm_min_pu = start_current_iteration_vm_min_pu,
+        start_current_iteration_vm_max_pu = start_current_iteration_vm_max_pu,
+        start_current_iteration_max_angle_step_deg = start_current_iteration_max_angle_step_deg,
+        start_current_iteration_only_for_large_cases = start_current_iteration_only_for_large_cases,
         qlimit_start_iter = qlimit_start_iter,
         qlimit_start_mode = qlimit_start_mode,
         qlimit_auto_q_delta_pu = qlimit_auto_q_delta_pu,
@@ -1218,6 +1371,7 @@ function runpf!(
         qlimit_guard_violation_mode = qlimit_guard_violation_mode,
         qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu,
         qlimits_enabled = qlimits_enabled,
+        qlimit_enforcement_mode = qlimit_enforcement_mode,
         rectangular_workspace_reuse = rectangular_workspace_reuse,
         rectangular_preallocate_workspace = rectangular_preallocate_workspace,
         rectangular_workspace_min_buses = rectangular_workspace_min_buses,
@@ -1253,6 +1407,18 @@ function runpf!(
         start_projection_accept_unmeasured_dc_start = start_projection_accept_unmeasured_dc_start,
         start_projection_blend_lambdas = start_projection_blend_lambdas,
         start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg,
+        start_projection_requested_angle_mode = start_projection_requested_angle_mode,
+        start_projection_requested_voltage_mode = start_projection_requested_voltage_mode,
+        start_current_iteration_enabled = start_current_iteration_enabled,
+        start_current_iteration_max_iter = start_current_iteration_max_iter,
+        start_current_iteration_tol = start_current_iteration_tol,
+        start_current_iteration_damping = start_current_iteration_damping,
+        start_current_iteration_accept_only_if_improved = start_current_iteration_accept_only_if_improved,
+        start_current_iteration_min_improvement_factor = start_current_iteration_min_improvement_factor,
+        start_current_iteration_vm_min_pu = start_current_iteration_vm_min_pu,
+        start_current_iteration_vm_max_pu = start_current_iteration_vm_max_pu,
+        start_current_iteration_max_angle_step_deg = start_current_iteration_max_angle_step_deg,
+        start_current_iteration_only_for_large_cases = start_current_iteration_only_for_large_cases,
         qlimit_start_iter = qlimit_start_iter,
         qlimit_start_mode = qlimit_start_mode,
         qlimit_auto_q_delta_pu = qlimit_auto_q_delta_pu,
@@ -1270,6 +1436,7 @@ function runpf!(
         qlimit_guard_violation_mode = qlimit_guard_violation_mode,
         qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu,
         qlimits_enabled = qlimits_enabled,
+        qlimit_enforcement_mode = qlimit_enforcement_mode,
         rectangular_workspace_reuse = rectangular_workspace_reuse,
         rectangular_preallocate_workspace = rectangular_preallocate_workspace,
         rectangular_workspace_min_buses = rectangular_workspace_min_buses,

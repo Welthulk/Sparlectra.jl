@@ -7,11 +7,7 @@ using SparseArrays
 
 global_logger(ConsoleLogger(stderr, Logging.Warn))
 
-function selected_test_profile()
-  cli_profile = length(ARGS) >= 1 ? Symbol(strip(ARGS[1])) : nothing
-  env_profile = Symbol(get(ENV, "SPARLECTRA_TEST_PROFILE", "fast"))
-  return something(cli_profile, env_profile)
-end
+include("test_runner_helpers.jl")
 
 const TEST_PROFILE = selected_test_profile()
 
@@ -41,6 +37,7 @@ function include_extended_tests()
   include("test_matpower_example.jl")
   include("test_synthetic_grids.jl")
   include("test_configuration_docs.jl")
+  # Experimental large-case comparison tooling is excluded from normal profiles.
 end
 
 function run_fast_profile_tests()
@@ -65,7 +62,7 @@ function run_fast_profile_tests()
     total = length(groups)
     for (i, (name, runner)) in enumerate(groups)
       print_group_progress(i, total, name)
-      Base.invokelatest(runner)
+      quiet_test_output(runner)
     end
   end
 end
@@ -86,7 +83,7 @@ function run_extended_profile_tests()
     total = length(groups)
     for (i, (name, runner)) in enumerate(groups)
       print_group_progress(i, total, name)
-      Base.invokelatest(runner)
+      quiet_test_output(runner)
     end
   end
 end

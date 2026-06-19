@@ -95,6 +95,7 @@ mutable struct Net
   q_hyst_pu::Float64
   qmin_pu::Vector{Float64}            # pro Bus Qmin (p.u.)
   qmax_pu::Vector{Float64}            # pro Bus Qmax (p.u.)
+  qLimitInitialPVRows::Vector{Any}    # pre-solve PV Q-limit snapshot
   qLimitEvents::Dict{Int,Symbol}      # BusIdx -> :min | :max (PV→PQ Change)  
   measurements::Vector
   bus_shunt_model::Symbol
@@ -129,6 +130,7 @@ mutable struct Net
         q_hyst_pu,
         [],                                    # qmin_pu
         [],                                    # qmax_pu
+        Any[],                                 # qLimitInitialPVRows
         Dict{Int,Symbol}(),
         [],
         shunt_model,

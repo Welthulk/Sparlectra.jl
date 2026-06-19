@@ -62,10 +62,185 @@ function handle_powerflow_run(form::AbstractDict; default_output_root::AbstractS
   return start_webui_powerflow_run(request; case_directory = effective_case_directory, runner, event_callback)
 end
 
+
+function _config_refresh_result_dict(result; config_file::AbstractString = "", downloadable::Bool = false)::Dict{String,Any}
+  return Dict{String,Any}(
+    "success" => result.success,
+    "changed" => result.changed,
+    "written" => result.written,
+    "backup_path" => result.backup_path === nothing ? "" : String(result.backup_path),
+    "missing_keys" => result.missing_keys,
+    "normalized_keys" => result.normalized_keys,
+    "duplicate_keys" => result.duplicate_keys,
+    "warnings" => result.warnings,
+    "refreshed_text" => result.refreshed_text,
+    "config_file" => String(config_file),
+    "downloadable" => downloadable,
+  )
+end
+
+function handle_powerflow_config_refresh(form::AbstractDict; write::Bool = false, operation_log::AbstractString = "results/powerflow_service")::SparlectraWebUIResponse
+  event_prefix = write ? "config_refresh_write" : "config_refresh_check"
+  config_text = strip(String(something(_webui_form_value(form, "config_text", ""), "")))
+  config_file = strip(String(something(_webui_form_value(form, "config_file", ""), "")))
+  record_webui_operation!(operation_log, string(event_prefix, "_started"); route = "/powerflow/config", method = "POST", user_action = true, config_file)
+  try
+    if !isempty(config_text)
+      result = refresh_sparlectra_config_text(config_text)
+      data = _config_refresh_result_dict(result; config_file = "browser upload", downloadable = true)
+      record_webui_operation!(operation_log, string(event_prefix, "_completed"); route = "/powerflow/config", method = "POST", user_action = true, config_file = "browser upload", changed = result.changed, written = false, backup_path = nothing, missing_key_count = length(result.missing_keys), normalized_key_count = length(result.normalized_keys), duplicate_key_count = length(result.duplicate_keys), message = "refreshed YAML available for download")
+      return _webui_html(render_config_refresh_result(data))
+    end
+    isempty(config_file) && throw(ArgumentError("No configuration file was provided."))
+    if write && !isfile(config_file)
+      record_webui_operation!(operation_log, "config_refresh_write_rejected"; route = "/powerflow/config", method = "POST", user_action = true, config_file, message = "configuration file is not writable in place")
+      return _webui_html(render_webui_error(400, "Configuration refresh writes require a server-local file. Use a server-local selected configuration file for in-place refresh."); status = 400)
+    end
+    result = refresh_sparlectra_config_file(config_file; write)
+    data = _config_refresh_result_dict(result; config_file)
+    event = result.success ? string(event_prefix, "_completed") : "config_refresh_write_rejected"
+    record_webui_operation!(operation_log, event; route = "/powerflow/config", method = "POST", user_action = true, config_file, changed = result.changed, written = result.written, backup_path = result.backup_path, missing_key_count = length(result.missing_keys), normalized_key_count = length(result.normalized_keys), duplicate_key_count = length(result.duplicate_keys), message = result.success ? "configuration refresh completed" : "duplicate keys require manual review")
+    return _webui_html(render_config_refresh_result(data); status = result.success ? 200 : 400)
+  catch err
+    record_webui_operation!(operation_log, "config_refresh_failed"; route = "/powerflow/config", method = "POST", user_action = true, config_file, message = sprint(showerror, err))
+    return _webui_html(render_webui_error(400, sprint(showerror, err)); status = 400)
+  end
+end
 function handle_powerflow_result(run_id::AbstractString)::SparlectraWebUIResponse
   result = get_webui_powerflow_job(run_id)
   status = get(result, "success", false) || get(result, "reason", "") != "run_not_found" ? 200 : 404
   return _webui_html(render_powerflow_result(result); status = status)
+end
+
+function _webui_case_profile_scalar(field::AbstractString, value)
+  value === nothing && return nothing
+  value === missing && return nothing
+  value isa Union{Bool,Integer,AbstractFloat,Symbol,AbstractString} || throw(ArgumentError("Case-settings field $(field) has unsupported value type $(typeof(value))."))
+  return _webui_normalize_case_profile_form_value(field, value)
+end
+
+function _webui_case_profile_value(field::AbstractString, value)
+  value isa AbstractVector || return _webui_case_profile_scalar(field, value)
+  return [_webui_case_profile_scalar(field, item) for item in value if !(item === nothing || item === missing)]
+end
+
+function _webui_case_profile_setting!(settings::Dict{String,Any}, field::AbstractString, value)
+  field in _WEBUI_CASE_PROFILE_FIELDS || throw(ArgumentError("Case-settings field $(field) is not allowed."))
+  serialized = _webui_case_profile_value(field, value)
+  serialized === nothing && return settings
+  settings[field] = serialized
+  return settings
+end
+
+const _WEBUI_CASE_PROFILE_CONFIG_FIELD_BY_KEY = Dict{String,String}(config_key => field for (config_key, field, _) in _WEBUI_FORM_CONFIG_FIELDS)
+
+function _webui_case_profile_settings(settings_raw::AbstractDict)::Dict{String,Any}
+  settings = Dict{String,Any}(spec.field => spec.default for spec in WEBUI_OPTION_SPECS if spec.save_in_case_sidecar)
+  for (raw_key, raw_value) in settings_raw
+    key = String(raw_key)
+    field = get(_WEBUI_CASE_PROFILE_CONFIG_FIELD_BY_KEY, key, key)
+    field in _WEBUI_CASE_PROFILE_FIELDS || continue
+    _webui_case_profile_setting!(settings, field, raw_value)
+  end
+  return settings
+end
+
+function _webui_case_settings_saved_html(path::AbstractString, casefile::AbstractString, count::Integer, successful::Bool, override::Bool)::String
+  status = successful ? "successful/converged" : (override ? "non-successful, saved via explicit override" : "non-successful")
+  body = """
+<section class=\"panel case-settings-saved\"><h2>Case settings saved</h2>
+<p class=\"alert info\"><strong>Saved sidecar:</strong> <code>$(_webui_escape(path))</code></p>
+<ul>
+<li><strong>Saved settings:</strong> $(count)</li>
+<li><strong>Run status:</strong> $(_webui_escape(status))</li>
+</ul>
+<p>These settings will be applied when the same case is selected again. Manual edits in the form still override the saved profile for each run.</p>
+<p><a href=\"/powerflow?casefile=$(_webui_urlencode(casefile))\">Open the run form with this case</a></p>
+</section>"""
+  return _webui_layout("Case settings saved", body; show_back = true)
+end
+
+function handle_powerflow_case_settings_save(run_id::AbstractString, form::AbstractDict; output_root::AbstractString, operation_log::AbstractString)::SparlectraWebUIResponse
+  result = get_webui_powerflow_job(run_id)
+  if get(result, "reason", "") == "run_not_found"
+    record_webui_operation!(operation_log, "case_settings_save_failed"; route = "/powerflow/result/$(run_id)/case-settings/save", method = "POST", user_action = true, run_id, status = "rejected", message = "run not found")
+    return _webui_html(render_webui_error(404, "PowerFlow run not found."); status = 404)
+  end
+  successful = _webui_result_successful(result)
+  override = _webui_parse_bool(_webui_form_value(form, "override_non_success", false))
+  if !successful && !override
+    record_webui_operation!(operation_log, "case_settings_save_failed"; route = "/powerflow/result/$(run_id)/case-settings/save", method = "POST", user_action = true, run_id, status = "rejected", message = "non-successful run requires explicit override")
+    return _webui_html(render_webui_error(400, "Saving settings from a non-successful run requires the explicit override action."); status = 400)
+  end
+  metadata = get(result, "metadata", Dict{String,Any}())
+  runtime_casefile = ""
+  for source in (get(result, "runtime_casefile", nothing),
+                 metadata isa AbstractDict ? get(metadata, "runtime_casefile", nothing) : nothing,
+                 get(result, "resolved_casefile", nothing),
+                 get(result, "casefile", nothing),
+                 metadata isa AbstractDict ? get(metadata, "runtime_casefile_path", nothing) : nothing)
+    source === nothing && continue
+    candidate = String(source)
+    if !isempty(candidate)
+      runtime_casefile = candidate
+      break
+    end
+  end
+  runtime_casefile_path = String(something(
+    get(result, "resolved_casefile", nothing),
+    get(result, "casefile", nothing),
+    metadata isa AbstractDict ? get(metadata, "runtime_casefile_path", nothing) : nothing,
+    runtime_casefile,
+  ))
+  settings_raw = metadata isa AbstractDict ? get(metadata, "webui_request_settings", nothing) : nothing
+  if isempty(runtime_casefile) || !(settings_raw isa AbstractDict)
+    record_webui_operation!(operation_log, "case_settings_save_failed"; route = "/powerflow/result/$(run_id)/case-settings/save", method = "POST", user_action = true, run_id, status = "rejected", message = "run metadata incomplete")
+    return _webui_html(render_webui_error(400, "Run metadata is incomplete; case settings were not saved."); status = 400)
+  end
+  settings = try
+    _webui_case_profile_settings(settings_raw)
+  catch err
+    message = err isa ArgumentError ? sprint(showerror, err) : "Case-settings profile contains an unsupported value."
+    record_webui_operation!(operation_log, "case_settings_save_failed"; route = "/powerflow/result/$(run_id)/case-settings/save", method = "POST", user_action = true, run_id, status = "rejected", message)
+    return _webui_html(render_webui_error(400, message); status = 400)
+  end
+  isempty(settings) && return _webui_html(render_webui_error(400, "No Web UI settings were recorded for this run."); status = 400)
+  case_settings_source = !isempty(runtime_casefile_path) ? runtime_casefile_path : runtime_casefile
+  key = _webui_normalized_case_key(case_settings_source)
+  path = try
+    _webui_case_settings_path(output_root, case_settings_source)
+  catch err
+    message = err isa ArgumentError ? sprint(showerror, err) : "Unsafe MATPOWER case path for case-settings profile."
+    record_webui_operation!(operation_log, "case_settings_save_failed"; route = "/powerflow/result/$(run_id)/case-settings/save", method = "POST", user_action = true, run_id, status = "rejected", message)
+    return _webui_html(render_webui_error(400, message); status = 400)
+  end
+  isfile(case_settings_source) || return _webui_html(render_webui_error(400, "The runtime MATPOWER case file is not available; case settings were not saved."); status = 400)
+  profile = Dict{String,Any}(
+    "schema_version" => 1,
+    "profile_kind" => "webui_case_settings",
+    "case" => Dict{String,Any}(
+      "display_name" => basename(runtime_casefile),
+      "profile_path" => path,
+      "normalized_case_key" => key,
+      "source" => "webui_mpower_data",
+      "original_path" => runtime_casefile_path,
+    ),
+    "saved_from_run" => Dict{String,Any}(
+      "run_id" => run_id,
+      "status" => successful ? "converged" : string(get(result, "status", "not_converged")),
+      "saved_at" => Dates.format(Dates.now(Dates.UTC), dateformat"yyyy-mm-ddTHH:MM:SS.sssZ"),
+      "override_non_success" => !successful && override,
+    ),
+    "settings" => settings,
+  )
+  try
+    _write_yaml_file(path, profile)
+    record_webui_operation!(operation_log, "case_settings_saved"; route = "/powerflow/result/$(run_id)/case-settings/save", method = "POST", user_action = true, run_id, status = "succeeded", profile_path = path, normalized_case_key = key)
+    return _webui_html(_webui_case_settings_saved_html(path, case_settings_source, length(settings), successful, !successful && override))
+  catch err
+    record_webui_operation!(operation_log, "case_settings_save_failed"; route = "/powerflow/result/$(run_id)/case-settings/save", method = "POST", user_action = true, run_id, status = "failed", message = sprint(showerror, err))
+    return _webui_html(render_webui_error(500, sprint(showerror, err)); status = 500)
+  end
 end
 
 function handle_powerflow_abort(run_id::AbstractString)::SparlectraWebUIResponse

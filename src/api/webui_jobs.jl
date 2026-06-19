@@ -48,8 +48,13 @@ function _update_webui_job_phase!(job::AbstractDict, phase::AbstractString)
   now = Dates.now(Dates.UTC)
   lock(_POWERFLOW_SERVICE_LOCK) do
     job["current_phase"] = String(phase)
+    job["last_phase"] = String(phase)
     job["phase_started_at"] = now
     job["last_progress_at"] = now
+    job["last_heartbeat"] = Dates.format(now, dateformat"yyyy-mm-ddTHH:MM:SS.sssZ")
+    phase == "solving_powerflow" && (job["solver_status"] = "running")
+    phase == "postprocessing_result" && (job["solver_status"] = "completed")
+    startswith(String(phase), "writing") && (job["artifact_status"] = "running"; job["status"] == "running" && (job["run_status"] = "finalizing"))
   end
   return nothing
 end
@@ -78,6 +83,40 @@ function _webui_job_snapshot(job::AbstractDict)::Dict{String,Any}
   snapshot["hard_reset_available"] = get(snapshot, "status", "") == "aborting" && something(snapshot["abort_elapsed_seconds"], 0.0) >= WEBUI_ABORT_HARD_RESET_AFTER_SECONDS
   snapshot["success"] = get(snapshot, "status", "") == "success"
   return snapshot
+end
+
+function _webui_request_settings_for_profile(request::AbstractDict)::Dict{String,Any}
+  settings = Dict{String,Any}()
+  config_overrides = _service_request_value(request, "config_overrides", Dict{String,Any}())
+  if config_overrides isa AbstractDict
+    for (key, value) in config_overrides
+      settings[String(key)] = value
+    end
+  end
+  for key in _WEBUI_CASE_PROFILE_EXTRA_FIELDS
+    haskey(request, key) && (settings[key] = request[key])
+    haskey(request, Symbol(key)) && (settings[key] = request[Symbol(key)])
+  end
+  return settings
+end
+
+function _merge_webui_job_snapshot_with_persisted_result(snapshot::AbstractDict, persisted::AbstractDict)::Dict{String,Any}
+  get(persisted, "reason", "") == "run_not_found" && return Dict{String,Any}(snapshot)
+  merged = merge(Dict{String,Any}(String(key) => value for (key, value) in persisted),
+                 Dict{String,Any}(String(key) => value for (key, value) in snapshot))
+  for key in ("metadata", "artifacts", "runtime_casefile", "casefile", "resolved_casefile", "result_file", "logfile", "output_dir")
+    haskey(persisted, key) && (merged[key] = persisted[key])
+  end
+  snapshot_metadata = get(snapshot, "metadata", nothing)
+  if snapshot_metadata isa AbstractDict
+    persisted_metadata = get(persisted, "metadata", Dict{String,Any}())
+    merged_metadata = persisted_metadata isa AbstractDict ? Dict{String,Any}(String(key) => value for (key, value) in persisted_metadata) : Dict{String,Any}()
+    for (key, value) in snapshot_metadata
+      haskey(merged_metadata, String(key)) || (merged_metadata[String(key)] = value)
+    end
+    merged["metadata"] = merged_metadata
+  end
+  return merged
 end
 
 function _webui_active_job()
@@ -117,6 +156,7 @@ function _write_aborted_powerflow_result!(job::AbstractDict)
     output_dir = output_dir,
     logfile = logfile,
     result_file = result_file,
+    metadata = _webui_job_lifecycle_metadata(job; run_status = "aborted", final_outcome = "aborted_by_user"),
   )
   _write_api_result_file(result)
   result = _refresh_api_artifacts(result)
@@ -126,6 +166,17 @@ function _write_aborted_powerflow_result!(job::AbstractDict)
   _POWERFLOW_SERVICE_RUNS[result.run_id] = result
   _write_powerflow_run_index!(String(job["output_root"]), result)
   return result
+end
+
+function _webui_job_lifecycle_metadata(job::AbstractDict; run_status = get(job, "run_status", get(job, "status", "unknown")), final_outcome = get(job, "final_outcome", nothing))
+  return Dict{String,Any}(
+    "solver_status" => string(get(job, "solver_status", "not_started")),
+    "artifact_status" => string(get(job, "artifact_status", "not_started")),
+    "run_status" => string(run_status),
+    "last_phase" => string(get(job, "last_phase", get(job, "current_phase", "unknown"))),
+    "last_heartbeat" => string(get(job, "last_heartbeat", "")),
+    "final_outcome" => final_outcome,
+  )
 end
 
 function _write_webui_job_marker!(job::AbstractDict, status::Symbol, reason::String, message::String)
@@ -145,6 +196,7 @@ function _write_webui_job_marker!(job::AbstractDict, status::Symbol, reason::Str
     output_dir = output_dir,
     logfile = logfile,
     result_file = result_file,
+    metadata = _webui_job_lifecycle_metadata(job; run_status = String(status), final_outcome = reason),
   )
   _write_api_result_file(result)
   _POWERFLOW_SERVICE_RUNS[result.run_id] = result
@@ -193,6 +245,7 @@ function start_webui_powerflow_run(request::AbstractDict; case_directory::Union{
   output_root = _service_request_value(request, "output_root")
   output_root isa AbstractString && !isempty(strip(output_root)) || return _service_failure("invalid_request", "PowerFlow service request requires a nonempty output_root.")
   run_id = string(uuid4())
+  webui_request_settings = _webui_request_settings_for_profile(request)
   job = Dict{String,Any}(
     "run_id" => run_id,
     "status" => "queued",
@@ -207,8 +260,15 @@ function start_webui_powerflow_run(request::AbstractDict; case_directory::Union{
     "abort_requested" => Threads.Atomic{Bool}(false),
     "abort_requested_at" => nothing,
     "current_phase" => "queued",
+    "last_phase" => "queued",
+    "solver_status" => "not_started",
+    "artifact_status" => "not_started",
+    "run_status" => "queued",
+    "last_heartbeat" => Dates.format(Dates.now(Dates.UTC), dateformat"yyyy-mm-ddTHH:MM:SS.sssZ"),
     "phase_started_at" => Dates.now(Dates.UTC),
     "last_progress_at" => Dates.now(Dates.UTC),
+    "webui_request_settings" => webui_request_settings,
+    "metadata" => Dict{String,Any}("webui_request_settings" => webui_request_settings),
   )
   lock(_POWERFLOW_SERVICE_LOCK) do
     _POWERFLOW_WEBUI_JOBS[run_id] = job
@@ -219,6 +279,7 @@ function start_webui_powerflow_run(request::AbstractDict; case_directory::Union{
     try
       lock(_POWERFLOW_SERVICE_LOCK) do
         job["status"] = "running"
+        job["run_status"] = "running"
         job["message"] = "PowerFlow run is active."
       end
       _webui_phase_event!(job, "resolving_case", event_callback)
@@ -252,18 +313,32 @@ function start_webui_powerflow_run(request::AbstractDict; case_directory::Union{
         event_callback("powerflow_aborted"; run_id = job["run_id"], requested_case = job["casefile"], status = "aborted", current_phase = "finalizing_aborted")
         lock(_POWERFLOW_SERVICE_LOCK) do
           job["status"] = "aborted"
+          job["run_status"] = "aborted"
+          job["final_outcome"] = "aborted_by_user"
           job["current_phase"] = "aborted"
           job["message"] = "Run aborted by user."
         end
       else
-        _webui_phase_event!(job, "finalizing_success", event_callback)
+        _webui_phase_event!(job, get(result, "success", false) ? "finalizing_success" : "finalizing_failed", event_callback)
         lock(_POWERFLOW_SERVICE_LOCK) do
           if get(job, "status", "") == "aborted_unknown"
             return
           end
-          job["status"] = get(result, "success", false) ? "success" : "failed"
+          numerical_success = get(result, "success", false)
+          result_status = lowercase(string(get(result, "status", numerical_success ? "success" : "failed")))
+          service_completed = get(result, "service_status", "") == "completed" || result_status in ("succeeded", "not_converged")
+          job["status"] = numerical_success ? "success" : (service_completed && get(result, "numerical_status", "") == "not_converged" ? "not_converged" : "failed")
+          job["service_status"] = get(result, "service_status", service_completed ? "completed" : "failed")
+          job["numerical_status"] = get(result, "numerical_status", numerical_success ? "converged" : "failed")
+          job["run_status"] = get(result, "run_status", numerical_success ? "completed" : (job["status"] == "not_converged" ? "completed_nonconverged" : "failed"))
+          job["solver_status"] = get(result, "solver_status", service_completed ? "completed" : get(job, "solver_status", "failed"))
+          job["artifact_status"] = get(result, "artifact_status", service_completed ? "completed" : get(job, "artifact_status", "failed"))
+          job["final_outcome"] = get(result, "final_outcome", job["run_status"])
           job["current_phase"] = job["status"]
-          job["message"] = something(get(result, "message", nothing), job["status"] == "success" ? "PowerFlow run completed." : "PowerFlow run failed.")
+          for key in ("converged", "numerical_converged", "solution_available", "iterations", "final_mismatch", "reason")
+            haskey(result, key) && (job[key] = result[key])
+          end
+          job["message"] = something(get(result, "message", nothing), job["status"] == "success" ? "PowerFlow run completed." : (job["status"] == "not_converged" ? "PowerFlow run completed, but numerical solver did not converge." : "PowerFlow run failed."))
           job["resolved_casefile"] = get(result, "casefile", nothing)
           if haskey(result, "run_id") && result["run_id"] != run_id
             delete!(_POWERFLOW_WEBUI_JOBS, run_id)
@@ -272,21 +347,31 @@ function start_webui_powerflow_run(request::AbstractDict; case_directory::Union{
             _POWERFLOW_WEBUI_JOBS[result["run_id"]] = job
           end
         end
+        if !get(result, "success", false) && job["status"] != "not_converged"
+          _write_webui_job_marker!(job, :failed, string(get(result, "reason", "execution_error")), String(job["message"]))
+        end
+        canonical_case = lowercase(splitext(String(something(job["casefile"], "")))[2]) == ".jl" && lowercase(splitext(String(something(job["resolved_casefile"], "")))[2]) == ".m"
+        failure_metadata = get(result, "metadata", Dict{String,Any}())
+        failure_reason = get(failure_metadata, "failure_reason", get(result, "reason", nothing))
         event_callback(
           job["status"] == "success" ? "powerflow_completed" : "powerflow_failed";
           run_id = job["run_id"],
           requested_case = job["casefile"],
           resolved_case = job["resolved_casefile"],
-          canonical_case = lowercase(splitext(String(something(job["casefile"], "")))[2]) == ".jl" && lowercase(splitext(String(something(job["resolved_casefile"], "")))[2]) == ".m" ? job["resolved_casefile"] : nothing,
-          reason = lowercase(splitext(String(something(job["casefile"], "")))[2]) == ".jl" && lowercase(splitext(String(something(job["resolved_casefile"], "")))[2]) == ".m" ? _matpower_cache_jl_bypass_reason() : nothing,
+          canonical_case = canonical_case ? job["resolved_casefile"] : nothing,
+          reason = job["status"] == "success" ? (canonical_case ? _matpower_cache_jl_bypass_reason() : nothing) : failure_reason,
           status = job["status"],
           message = job["message"],
         )
         if detailed_result_csv
-          artifact_names = Set(String(get(artifact, "name", "")) for artifact in get(result, "artifacts", Any[]))
+          rescanned_artifacts = list_powerflow_artifacts(job["run_id"])
+          artifact_source = rescanned_artifacts isa AbstractVector ? rescanned_artifacts : get(result, "artifacts", Any[])
+          artifact_names = Set(String(get(artifact, "name", "")) for artifact in artifact_source)
           expected_csv = ["bus_voltages_complex.csv", "branch_flows.csv"]
           if all(name -> name in artifact_names, expected_csv)
             event_callback("detailed_result_csv_exported"; run_id = job["run_id"], csv_format = csv_format.name, artifacts = expected_csv, status = "succeeded")
+          elseif get(get(result, "metadata", Dict{String,Any}()), "detailed_result_csv_status", "") == "skipped"
+            event_callback("detailed_result_csv_export_skipped"; run_id = job["run_id"], reason = get(get(result, "metadata", Dict{String,Any}()), "detailed_result_csv_skip_reason", "unknown"), final_converged = get(result, "converged", false), solution_available = get(result, "solution_available", false), has_network = false, csv_format = csv_format.name, status = "skipped")
           else
             event_callback("detailed_result_csv_export_failed"; run_id = job["run_id"], message = "Detailed result CSV artifacts were not generated.", status = "failed")
           end
@@ -297,7 +382,10 @@ function start_webui_powerflow_run(request::AbstractDict; case_directory::Union{
         job["finished_at"] = Dates.now(Dates.UTC)
         if get(job, "status", "") in _POWERFLOW_WEBUI_ACTIVE_STATES
           job["status"] = job["abort_requested"][] ? "aborted" : "failed"
+          job["run_status"] = job["status"]
+          job["final_outcome"] = job["abort_requested"][] ? "aborted_by_user" : "worker_exited_without_terminal_result"
           job["message"] = job["abort_requested"][] ? "Run aborted by user." : "PowerFlow worker exited before reaching a terminal result."
+          _write_webui_job_marker!(job, Symbol(job["status"]), String(job["final_outcome"]), String(job["message"]))
         end
       end
     end
@@ -309,7 +397,10 @@ function get_webui_powerflow_job(run_id::AbstractString)::Dict{String,Any}
   _safe_powerflow_run_id(run_id) || return _service_failure("unsafe_run_id", "Unsafe PowerFlow run ID rejected."; run_id)
   return lock(_POWERFLOW_SERVICE_LOCK) do
     job = get(_POWERFLOW_WEBUI_JOBS, String(run_id), nothing)
-    job === nothing ? get_powerflow_result(run_id) : _webui_job_snapshot(job)
+    job === nothing && return get_powerflow_result(run_id)
+    snapshot = _webui_job_snapshot(job)
+    get(snapshot, "status", "") in _POWERFLOW_WEBUI_ACTIVE_STATES && return snapshot
+    return _merge_webui_job_snapshot_with_persisted_result(snapshot, get_powerflow_result(run_id))
   end
 end
 

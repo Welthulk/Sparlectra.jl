@@ -70,7 +70,23 @@ function _rectangular_status_diagnostics(rect_status)::NamedTuple
     wrong_branch_rescue_used = _rect_status_get(rect_status, :wrong_branch_rescue_used, false),
     wrong_branch_rescue_attempts = _rect_status_get(rect_status, :wrong_branch_rescue_attempts, 0),
     wrong_branch_rescue_profile = _rect_status_get(rect_status, :wrong_branch_rescue_profile, :none),
+    current_iteration_enabled = _rect_status_get(rect_status, :current_iteration_enabled, false),
+    current_iteration_attempted = _rect_status_get(rect_status, :current_iteration_attempted, false),
+    current_iteration_accepted = _rect_status_get(rect_status, :current_iteration_accepted, false),
+    current_iteration_iterations = _rect_status_get(rect_status, :current_iteration_iterations, 0),
+    current_iteration_initial_mismatch = _rect_status_get(rect_status, :current_iteration_initial_mismatch, NaN),
+    current_iteration_final_mismatch = _rect_status_get(rect_status, :current_iteration_final_mismatch, NaN),
+    current_iteration_reason = _rect_status_get(rect_status, :current_iteration_reason, :disabled),
+    current_iteration_artifact = _rect_status_get(rect_status, :current_iteration_artifact, ""),
   )
+end
+
+function _profile_start_projection_diagnostics(performance_profile)::NamedTuple
+  performance_profile isa AbstractDict || return NamedTuple()
+  haskey(performance_profile, :start_projection_summary) || return NamedTuple()
+  summary = performance_profile[:start_projection_summary]
+  summary isa NamedTuple || return NamedTuple()
+  return summary
 end
 
 function _rectangular_solution_available(rect_status)::Bool
@@ -125,7 +141,7 @@ function _build_sparlectra_result(net::Net, cfg::SparlectraConfig, execution, pe
     (outcome = converged ? :converged : :not_converged, numerical_converged = converged, solution_available = converged, limit_validation_status = :skip, final_converged = converged, reason = converged ? :none : :nr_mismatch_not_converged, reason_text = converged ? "none" : "NR mismatch did not converge", final_mismatch = NaN)
   end
   status = _compose_framework_status(status, execution.control_status)
-  diagnostics = cfg.powerflow.method === :rectangular ? _rectangular_status_diagnostics(rect_status) : NamedTuple()
+  diagnostics = cfg.powerflow.method === :rectangular ? merge(_rectangular_status_diagnostics(rect_status), _profile_start_projection_diagnostics(performance_profile)) : NamedTuple()
   return SparlectraRunResult(net, status.outcome, status.numerical_converged, status.solution_available, status.limit_validation_status, status.final_converged, status.reason, status.reason_text, execution.iterations, execution.elapsed_s, execution.solver_elapsed_s, status.final_mismatch, cfg.powerflow.method, execution.control_status, performance_profile, diagnostics)
 end
 

@@ -20,6 +20,7 @@ Markdown.parse(readme_text)
 
 * [Feature Matrix](feature_matrix.md)
 * [Central Configuration](configuration.md)
+* [Q-limit Switching Strategy](q_limit_switching_strategy.md)
 * [Synthetic Tiled Grids](synthetic_grids.md)
 * [Transformer Control](transformer_control.md)
 * [Examples Overview](examples_overview.md)
