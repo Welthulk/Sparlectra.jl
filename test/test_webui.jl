@@ -484,6 +484,10 @@ result = get_powerflow_result(run_id)
       @test occursin("\"event\":\"powerflow_submitted\"", operation_log_text)
       @test occursin("\"event\":\"powerflow_started\"", operation_log_text)
       @test occursin("\"event\":\"powerflow_completed\"", operation_log_text)
+      @test occursin("\"matpower_auto_profile\":\"recommend\"", operation_log_text)
+      @test occursin("\"matpower_ratio\":\"normal\"", operation_log_text)
+      @test occursin("\"matpower_shift_sign\":1.0", operation_log_text)
+      @test occursin("\"matpower_shift_unit\":\"deg\"", operation_log_text)
       @test occursin("\"sparlectra_version\":\"$(Sparlectra.version())\"", operation_log_text)
       @test any(line -> occursin(r"\"timestamp\":\"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z\"", line), eachline(IOBuffer(operation_log_text)))
       @test occursin("\"event\":\"diagnostics_enabled\"", operation_log_text)
@@ -500,6 +504,26 @@ result = get_powerflow_result(run_id)
       for artifact_text in (run_log_text, result_json_text, operation_log_text, performance_log_text, q_limit_log_text)
         _assert_no_webui_transcript_markers(artifact_text)
       end
+      manual_import_form = copy(form)
+      manual_import_form["matpower_import_auto_profile"] = "off"
+      manual_import_form["matpower_import_ratio"] = "reciprocal"
+      manual_import_form["matpower_import_shift_sign"] = "-1.0"
+      manual_import_form["matpower_import_shift_unit"] = "rad"
+      manual_response = Sparlectra.route_sparlectra_webui("POST", "/powerflow/run", manual_import_form; output_root)
+      @test manual_response.status == 303
+      manual_location = only(header.second for header in manual_response.headers if header.first == "Location")
+      manual_run_id = basename(manual_location)
+      wait(Sparlectra._POWERFLOW_WEBUI_JOBS[manual_run_id]["task"])
+      manual_result = get_powerflow_result(manual_run_id)
+      @test manual_result["success"]
+      manual_effective_cfg = Sparlectra.load_sparlectra_config(joinpath(manual_result["output_dir"], "effective_config.yaml"); reload = true)
+      @test manual_effective_cfg.matpower.auto_profile === :off
+      @test manual_effective_cfg.matpower.ratio === :reciprocal
+      @test manual_effective_cfg.matpower.shift_sign == -1.0
+      @test manual_effective_cfg.matpower.shift_unit === :rad
+      manual_run_log = read(joinpath(manual_result["output_dir"], "run.log"), String)
+      @test occursin("Final effective MATPOWER import options", manual_run_log)
+      @test occursin("matpower_import.ratio: reciprocal", manual_run_log)
       @test !isempty(run_id)
       result_response = Sparlectra.handle_powerflow_result(run_id)
       result_html = String(result_response.body)

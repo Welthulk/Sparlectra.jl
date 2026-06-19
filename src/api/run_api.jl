@@ -253,6 +253,18 @@ function _write_large_case_timing_summary(io::IO, case_path::AbstractString, pha
   return nothing
 end
 
+function _resolved_matpower_import_runtime_options(config::SparlectraConfig)::Dict{String,Any}
+  return Dict{String,Any}(
+    "matpower_auto_profile" => String(config.matpower.auto_profile),
+    "matpower_ratio" => String(config.matpower.ratio),
+    "matpower_shift_sign" => config.matpower.shift_sign,
+    "matpower_shift_unit" => String(config.matpower.shift_unit),
+    "matpower_bus_shunt_model" => String(config.matpower.bus_shunt_model),
+    "matpower_pv_voltage_source" => String(config.matpower.pv_voltage_source),
+    "matpower_compare_reference" => String(config.matpower.compare_voltage_reference),
+  )
+end
+
 function _resolved_q_limit_runtime_options(config::SparlectraConfig)::Dict{String,Any}
   qlimits_enabled = !config.powerflow.qlimits.ignore_q_limits
   preview_mode = config.output.console_q_limit_events === :full ? "full" : "summary"
@@ -1022,7 +1034,8 @@ function _run_sparlectra_api(;
 
   raw_result = nothing
   qlimit_metadata = _resolved_q_limit_runtime_options(config)
-  operation_callback("powerflow_effective_options"; run_id = run_id, case = basename(case_path), _metadata_kwargs(qlimit_metadata)...)
+  matpower_metadata = _resolved_matpower_import_runtime_options(config)
+  operation_callback("powerflow_effective_options"; run_id = run_id, case = basename(case_path), _metadata_kwargs(qlimit_metadata)..., _metadata_kwargs(matpower_metadata)...)
   emit_phase("reading_matpower_case")
   api_performance_profile = Dict{Symbol,Any}(:cancellation_check => () -> _check_powerflow_cancelled!(cancellation_token), :phase_callback => phase -> emit_phase(String(phase)))
   execution_start = time_ns()
@@ -1052,6 +1065,7 @@ function _run_sparlectra_api(;
     _update_effective_matpower_raw!(effective_raw, config)
     _write_yaml_file(effective_config, effective_raw)
     _write_matpower_auto_profile_artifact(output_path, auto_profile_result, config; casefile = String(auto_profile_casefile))
+    operation_callback("powerflow_effective_options"; run_id = run_id, case = basename(case_path), _metadata_kwargs(qlimit_metadata)..., _metadata_kwargs(_resolved_matpower_import_runtime_options(config))...)
   end
   phases[:case_loading_network_solver] = _api_elapsed_seconds(execution_start)
   raw_result.solver_elapsed_s === nothing || (phases[:solver] = raw_result.solver_elapsed_s)

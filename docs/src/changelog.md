@@ -1,6 +1,7 @@
 ## Version 0.8.7 – 2026-06-18
 
 ### Bugfixes
+* Fixed Web UI/API MATPOWER import controls so selected auto-profile, transformer ratio, phase-shift, shunt, and voltage-reference options are validated, logged, propagated into runtime case construction, and reflected in effective configuration artifacts.
 * Fixed Web UI/API Q-limit diagnostics so pre-solve PV limit snapshots survive active-set mutation, non-converged solves do not report final Q-limit validation as `OK`, and `effective_config.yaml` records the runtime casefile used for the run.
 
 ## Version 0.8.6 – 2026-06-18

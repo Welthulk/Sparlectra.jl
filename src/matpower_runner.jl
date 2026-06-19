@@ -787,6 +787,20 @@ function print_matpower_import_auto_profile_effective_options(io::IO, cfg::Sparl
   return nothing
 end
 
+function print_matpower_import_runtime_options(io::IO, title::AbstractString, cfg::SparlectraConfig)
+  println(io, title)
+  println(io, "-" ^ textwidth(title))
+  println(io, "matpower_import.auto_profile: ", cfg.matpower.auto_profile)
+  println(io, "matpower_import.ratio: ", cfg.matpower.ratio)
+  println(io, "matpower_import.shift_sign: ", cfg.matpower.shift_sign)
+  println(io, "matpower_import.shift_unit: ", cfg.matpower.shift_unit)
+  println(io, "matpower_import.bus_shunt_model: ", cfg.matpower.bus_shunt_model)
+  println(io, "matpower_import.pv_voltage_source: ", cfg.matpower.pv_voltage_source)
+  println(io, "matpower_import.compare_voltage_reference: ", cfg.matpower.compare_voltage_reference)
+  println(io)
+  return nothing
+end
+
 function run_matpower_import_auto_profile(mpc, cfg::SparlectraConfig)
   cfg.matpower.auto_profile === :off && return (config = cfg, rows = NamedTuple[], applied = NamedTuple[])
   return matpower_import_auto_profile(mpc, cfg; mode = cfg.matpower.auto_profile)

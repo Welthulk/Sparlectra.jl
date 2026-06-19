@@ -182,6 +182,10 @@ function run_api_tests()
       @test occursin("Q-limit detail artifact  : q_limit.log", run_log)
       @test occursin("full details        : q_limit.log", run_log)
       @test !occursin("full details     : q_limit_initial_limits.csv", run_log)
+      @test occursin("Runtime casefile:", run_log)
+      @test occursin("Original MATPOWER import options", run_log)
+      @test occursin("Final effective MATPOWER import options", run_log)
+      @test occursin("matpower_import.auto_profile: recommend", run_log)
       @test occursin("Wall time   :", run_log)
       @test occursin("Output time :", run_log)
       @test occursin("Solver time :", run_log)
@@ -569,6 +573,33 @@ function run_api_tests()
       @test_throws ArgumentError validate_gui_config_overrides(Dict("matpower_import.ratio" => "sideways"))
       @test_throws ArgumentError validate_gui_config_overrides(Dict("matpower_import.shift_sign" => 0.0))
 
+      manual_import_output = joinpath(tmpdir, "manual_import")
+      manual_import_result = run_sparlectra_api(
+        casefile = casefile,
+        config_file = template,
+        output_dir = manual_import_output,
+        config_overrides = Dict(
+          "matpower_import.auto_profile" => "off",
+          "matpower_import.ratio" => "reciprocal",
+          "matpower_import.shift_sign" => -1.0,
+          "matpower_import.shift_unit" => "rad",
+          "benchmark.enabled" => false,
+        ),
+      )
+      @test manual_import_result.success
+      manual_effective_cfg = Sparlectra.load_sparlectra_config(joinpath(manual_import_output, "effective_config.yaml"); reload = true)
+      @test manual_effective_cfg.matpower.auto_profile === :off
+      @test manual_effective_cfg.matpower.ratio === :reciprocal
+      @test manual_effective_cfg.matpower.shift_sign == -1.0
+      @test manual_effective_cfg.matpower.shift_unit === :rad
+      manual_run_log = read(joinpath(manual_import_output, "run.log"), String)
+      @test occursin("Original MATPOWER import options", manual_run_log)
+      @test occursin("Final effective MATPOWER import options", manual_run_log)
+      @test occursin("matpower_import.auto_profile: off", manual_run_log)
+      @test occursin("matpower_import.ratio: reciprocal", manual_run_log)
+      @test occursin("matpower_import.shift_sign: -1.0", manual_run_log)
+      @test occursin("matpower_import.shift_unit: rad", manual_run_log)
+
       auto_profile_output = joinpath(tmpdir, "auto_profile_recommend")
       auto_profile_result = run_sparlectra_api(
         casefile = casefile,
@@ -589,6 +620,11 @@ function run_api_tests()
       @test occursin("Final effective MATPOWER import options:", auto_profile_log)
       @test occursin("matpower_import.ratio", auto_profile_log)
       @test occursin("Final effective MATPOWER auto-profile options", auto_profile_log)
+      recommend_effective_cfg = Sparlectra.load_sparlectra_config(joinpath(auto_profile_output, "effective_config.yaml"); reload = true)
+      @test recommend_effective_cfg.matpower.auto_profile === :recommend
+      @test recommend_effective_cfg.matpower.ratio === :normal
+      @test recommend_effective_cfg.matpower.shift_sign == 1.0
+      @test recommend_effective_cfg.matpower.shift_unit === :deg
 
       auto_profile_apply_output = joinpath(tmpdir, "auto_profile_apply")
       auto_profile_apply_result = run_sparlectra_api(
