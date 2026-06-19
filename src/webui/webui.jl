@@ -329,10 +329,8 @@ function start_sparlectra_webui(; host::AbstractString = "127.0.0.1", port::Inte
   end
   recovery = refresh_powerflow_run_registry!(root)
   record_webui_operation!(paths.operation_log, "webui_start"; route = "/powerflow", method = "START", status = "started", user_action = false, output_root = root, config_file = paths.config_file, case_cache_dir = paths.case_directory, operation_log = paths.operation_log)
-  for result in recovery["runs"]
-    result.status == :aborted_unknown || continue
-    result.reason == "webui_stale_active_run" || continue
-    record_webui_operation!(paths.operation_log, "webui_stale_active_run_recovered"; route = "/powerflow", method = "START", status = "aborted_unknown", user_action = false, run_id = result.run_id)
+  for result in get(recovery, "stale_recovered_runs", SparlectraApiResult[])
+    record_webui_operation!(paths.operation_log, "webui_stale_active_run_recovered"; route = "/powerflow", method = "START", status = "interrupted_unknown", user_action = false, run_id = result.run_id, last_known_phase = get(result.metadata, "last_phase", nothing))
   end
   address = host_string == "localhost" ? ip"127.0.0.1" : parse(Sockets.IPAddr, host_string)
   listener = Sockets.listen(address, UInt16(port))

@@ -209,6 +209,7 @@ const _WEBUI_RESULT_FIELDS = (
   "iterations", "final_mismatch", "reason", "message", "casefile", "resolved_casefile",
   "config_file", "started_at", "elapsed_seconds", "output_dir",
   "current_phase", "phase_started_at", "last_progress_at", "abort_requested_at",
+  "solver_status", "artifact_status", "run_status", "last_phase", "last_heartbeat", "final_outcome",
 )
 
 function render_powerflow_result(result::AbstractDict)::String
@@ -223,7 +224,7 @@ function render_powerflow_result(result::AbstractDict)::String
   active_hint = active ? "<p class=\"status-refresh-hint\">This page refreshes automatically while the run is active.</p>" : ""
   abort_hint = status == "aborting" ? "<p>Aborting requested. Current phase: <code>$(_webui_escape(get(result, "current_phase", "unknown")))</code>.</p><p>This phase may need to finish before cancellation is observed.</p>" : ""
   hard_reset = status == "aborting" && get(result, "hard_reset_available", false) ? "<div class=\"alert warning\"><p>Abort is still pending. The calculation may be in a non-interruptible numerical call.</p><form method=\"post\" action=\"/powerflow/hard-reset/$(_webui_urlencode(run_id))\"><button type=\"submit\" class=\"danger-button\">Hard reset Web UI</button></form></div>" : ""
-  interrupted = status == "aborted_unknown" ? "<p>The Web UI was restarted or reset while this run was active. This result is not a valid solved PowerFlow result.</p>" : ""
+  interrupted = status in ("aborted_unknown", "interrupted_unknown") ? "<div class=\"alert warning\"><p>Run state was recovered after Web UI restart.</p><p>Last known phase: <code>$(_webui_escape(get(result, "last_phase", get(result, "current_phase", "unknown"))))</code>.</p><p>No live solver task is attached anymore. Partial artifacts may be available.</p></div>" : ""
   links = isempty(String(run_id)) ? "" : "$(abort_hint)$(hard_reset)$(interrupted)<div class=\"actions\">$(abort_form)<a class=\"button\" href=\"/powerflow/artifacts/$(_webui_urlencode(run_id))\">View artifacts</a><a class=\"button\" href=\"/powerflow/result/$(_webui_urlencode(run_id))\">Refresh status</a></div>"
   refresh_url = active && !isempty(String(run_id)) ? "/powerflow/result/$(_webui_urlencode(run_id))?autorefresh=1" : nothing
   return _webui_layout("PowerFlow result", "<section class=\"panel\">$(result_summary)<table class=\"details\">$(rows)</table>$(active_hint)$(links)</section>"; show_back = true, refresh_url)

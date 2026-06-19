@@ -719,6 +719,45 @@ function run_api_tests()
       @test Sparlectra.get_webui_powerflow_job(active["run_id"])["status"] == "aborted"
       @test Sparlectra.get_active_webui_powerflow_job() === nothing
 
+      artifact_error_runner = function(request; case_directory = nothing)
+        request["phase_callback"]("solving_powerflow")
+        request["phase_callback"]("postprocessing_result")
+        request["phase_callback"]("writing_artifacts")
+        error("injected artifact failure")
+      end
+      artifact_error = Sparlectra.start_webui_powerflow_run(async_request; runner = artifact_error_runner)
+      wait(Sparlectra._POWERFLOW_WEBUI_JOBS[artifact_error["run_id"]]["task"])
+      artifact_error_result = get_powerflow_result(artifact_error["run_id"])
+      @test artifact_error_result["status"] == "failed"
+      @test artifact_error_result["run_status"] == "failed"
+      @test artifact_error_result["solver_status"] == "completed"
+      @test artifact_error_result["artifact_status"] == "running"
+      @test artifact_error_result["last_phase"] == "finalizing_failed"
+
+      artifact_abort_entered = Channel{Nothing}(1)
+      artifact_abort_release = Channel{Nothing}(1)
+      artifact_abort_runner = function(request; case_directory = nothing)
+        request["phase_callback"]("solving_powerflow")
+        request["phase_callback"]("postprocessing_result")
+        request["phase_callback"]("writing_artifacts")
+        put!(artifact_abort_entered, nothing)
+        token = request["cancellation_token"]
+        while !isready(artifact_abort_release)
+          Sparlectra._check_powerflow_cancelled!(token)
+          yield()
+        end
+        take!(artifact_abort_release)
+        return Dict{String,Any}("status" => "succeeded", "success" => true, "run_id" => request["run_id"], "artifacts" => Any[])
+      end
+      artifact_abort = Sparlectra.start_webui_powerflow_run(async_request; runner = artifact_abort_runner)
+      take!(artifact_abort_entered)
+      @test Sparlectra.abort_webui_powerflow_run(artifact_abort["run_id"])["status"] == "aborting"
+      wait(Sparlectra._POWERFLOW_WEBUI_JOBS[artifact_abort["run_id"]]["task"])
+      artifact_abort_result = get_powerflow_result(artifact_abort["run_id"])
+      @test artifact_abort_result["status"] == "aborted"
+      @test artifact_abort_result["run_status"] == "aborted"
+      @test artifact_abort_result["last_phase"] == "finalizing_aborted"
+
       pre_cancelled = Threads.Atomic{Bool}(true)
       @test_throws Sparlectra.PowerFlowAborted start_powerflow_run(merge(async_request, Dict("cancellation_token" => pre_cancelled)))
 
@@ -774,6 +813,42 @@ function run_api_tests()
       recovered_result = resolve_powerflow_artifact(started["run_id"], "result.json")
       @test recovered_result isa SparlectraApiArtifact
       @test recovered_result.path == joinpath(started["output_dir"], "result.json")
+
+      stale_root = joinpath(tmpdir, "stale-runs")
+      stale_run_id = "stale-run"
+      stale_job = Dict{String,Any}(
+        "run_id" => stale_run_id,
+        "status" => "running",
+        "casefile" => casefile,
+        "config_file" => config_file,
+        "output_root" => stale_root,
+        "output_dir" => joinpath(stale_root, stale_run_id),
+        "started_at" => Dates.now(Dates.UTC),
+        "finished_at" => nothing,
+        "message" => "PowerFlow run is active.",
+        "abort_requested" => Threads.Atomic{Bool}(false),
+        "current_phase" => "writing_artifacts",
+        "last_phase" => "writing_artifacts",
+        "solver_status" => "completed",
+        "artifact_status" => "running",
+        "run_status" => "finalizing",
+        "last_heartbeat" => "2026-06-18T12:17:07.854Z",
+      )
+      Sparlectra._write_webui_job_marker!(stale_job, :running, "webui_job_active", "PowerFlow run is active.")
+      first_stale_refresh = refresh_powerflow_run_registry!(stale_root)
+      @test [result.run_id for result in first_stale_refresh["stale_recovered_runs"]] == [stale_run_id]
+      stale_result = get_powerflow_result(stale_run_id)
+      @test stale_result["status"] == "interrupted_unknown"
+      @test stale_result["final_outcome"] == "webui_restart_lost_live_task"
+      @test stale_result["last_phase"] == "writing_artifacts"
+      @test stale_result["solver_status"] == "completed"
+      @test stale_result["artifact_status"] == "running"
+      second_stale_refresh = refresh_powerflow_run_registry!(stale_root)
+      @test isempty(second_stale_refresh["stale_recovered_runs"])
+      stale_status_html = Sparlectra.render_powerflow_result(stale_result)
+      @test occursin("Run state was recovered after Web UI restart.", stale_status_html)
+      @test occursin("Last known phase: <code>writing_artifacts</code>", stale_status_html)
+      @test occursin("No live solver task is attached anymore.", stale_status_html)
 
       for unsafe_name in ("../result.json", "../../Project.toml", "/etc/passwd", raw"C:\Users\x\file.txt")
         rejected = resolve_powerflow_artifact(started["run_id"], unsafe_name)

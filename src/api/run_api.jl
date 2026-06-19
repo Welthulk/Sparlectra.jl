@@ -1017,6 +1017,7 @@ function _run_sparlectra_api(;
   emit_phase("writing_diagnostics")
   _check_powerflow_cancelled!(cancellation_token)
   emit_phase("writing_artifacts")
+  operation_callback("powerflow_lifecycle_status"; run_id = run_id, solver_status = "completed", artifact_status = "running", run_status = "finalizing", last_phase = "writing_artifacts")
   run_diagnostics && _write_powerflow_diagnostics(joinpath(output_path, "diagnose.log"), raw_result)
   q_limit_artifacts = raw_result.net !== nothing ? [_write_q_limit_log_artifact(output_path, raw_result, qlimit_metadata)] : String[]
   if (run_diagnostics || detailed_result_csv) && raw_result.net !== nothing
@@ -1036,6 +1037,7 @@ function _run_sparlectra_api(;
   end
   if detailed_result_csv && raw_result.final_converged && raw_result.solution_available
     emit_phase("writing_csv_artifacts")
+    operation_callback("powerflow_lifecycle_status"; run_id = run_id, solver_status = "completed", artifact_status = "running", run_status = "finalizing", last_phase = "writing_csv_artifacts")
     try
       csv_artifacts = _write_detailed_result_csv(output_path, raw_result; format = csv_format.name, config, abort_checker = () -> _check_powerflow_cancelled!(cancellation_token), timing_metadata = csv_timing_metadata)
     catch err
@@ -1134,7 +1136,14 @@ function _run_sparlectra_api(;
     logfile = logfile,
     result_file = result_file,
     service_phase_timings = phase_recorder.timings,
-    metadata = qlimit_metadata,
+    metadata = merge(Dict{String,Any}(
+      "solver_status" => "completed",
+      "artifact_status" => csv_export_error === nothing ? "completed" : "failed",
+      "run_status" => success ? "completed" : "failed",
+      "last_phase" => success ? "finalizing_success" : "finalizing_failed",
+      "last_heartbeat" => Dates.format(Dates.now(Dates.UTC), dateformat"yyyy-mm-ddTHH:MM:SS.sssZ"),
+      "final_outcome" => success ? "completed" : "solver_failed",
+    ), qlimit_metadata),
     raw_result = raw_result,
   )
   return _finalize_api_result(result)

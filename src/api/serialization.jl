@@ -68,6 +68,9 @@ function to_dict(result::SparlectraApiResult; include_raw_result::Bool = false):
   for key in ("qlimits_enabled", "qlimit_guard_enabled", "q_limit_preview_mode", "q_limit_runlog_max_rows")
     haskey(result.metadata, key) && (data[key] = _api_transport_value(result.metadata[key]))
   end
+  for key in ("solver_status", "artifact_status", "run_status", "last_phase", "last_heartbeat", "final_outcome")
+    haskey(result.metadata, key) && (data[key] = _api_transport_value(result.metadata[key]))
+  end
   include_raw_result && (data["raw_result"] = _api_transport_value(result.raw_result))
   return data
 end
