@@ -161,7 +161,10 @@ function run_api_tests()
       @test result.metadata["q_limit_runlog_max_rows"] == 0
       @test read(template, String) == template_before
       @test isfile(joinpath(output_dir, "effective_config.yaml"))
-      @test occursin("tol: 1.0e-9", read(joinpath(output_dir, "effective_config.yaml"), String))
+      effective_config_text = read(joinpath(output_dir, "effective_config.yaml"), String)
+      @test occursin("tol: 1.0e-9", effective_config_text)
+      @test occursin("runtime_request:", effective_config_text)
+      @test occursin("casefile: case14.m", effective_config_text)
       effective_cfg = Sparlectra.load_sparlectra_config(joinpath(output_dir, "effective_config.yaml"); reload = true)
       @test effective_cfg.powerflow.tol == 1.0e-9
       @test effective_cfg.powerflow.max_iter == 40
@@ -348,6 +351,58 @@ function run_api_tests()
       @test occursin("Q-limit active set       : not run", qlimit_disabled_log)
       @test occursin("PV->PQ Q-limit events    : 0", qlimit_disabled_log)
       @test occursin("Guarded PV->PQ locks     : 0", qlimit_disabled_log)
+
+      pre_mutation_net = _control_label_test_net()
+      for bus in 2:4
+        pre_mutation_net.nodeVec[bus]._nodeType = Sparlectra.PV
+      end
+      pre_mutation_net.qmin_pu = fill(-1.0, length(pre_mutation_net.nodeVec))
+      pre_mutation_net.qmax_pu = fill(1.0, length(pre_mutation_net.nodeVec))
+      Sparlectra.snapshotPVQLimits!(pre_mutation_net)
+      for bus in 2:4
+        pre_mutation_net.nodeVec[bus]._nodeType = Sparlectra.PQ
+        Sparlectra.logQLimitHit!(pre_mutation_net, 1, bus, :max)
+      end
+      pre_mutation_io = IOBuffer()
+      Sparlectra.printPVQLimitsTable(pre_mutation_net; io = pre_mutation_io, max_rows = 10)
+      pre_mutation_text = String(take!(pre_mutation_io))
+      @test occursin("rows total       : 3", pre_mutation_text)
+      @test !occursin("no PV buses", pre_mutation_text)
+
+      nonconverged_result = SparlectraRunResult(
+        pre_mutation_net,
+        :not_converged,
+        false,
+        false,
+        :skip,
+        false,
+        :nr_mismatch_not_converged_active_set_unstable,
+        "NR mismatch did not converge; Q-limit active set changed repeatedly",
+        80,
+        0.0,
+        nothing,
+        1.0e6,
+        :rectangular,
+        :not_run,
+        nothing,
+        (
+          q_limit_active_set_ok = false,
+          pv_q_limit_violations = 0,
+          ref_q_limit_violations = 0,
+          pv_pq_switching_events = length(pre_mutation_net.qLimitLog),
+          qlimit_active_set_changes = 3,
+          qlimit_reenable_events = 0,
+          oscillating_buses = 0,
+          guarded_narrow_q_pv_buses = 0,
+        ),
+      )
+      nonconverged_dir = joinpath(tmpdir, "q_limit_nonconverged")
+      mkpath(nonconverged_dir)
+      Sparlectra._write_q_limit_log_artifact(nonconverged_dir, nonconverged_result, result.metadata)
+      nonconverged_log = read(joinpath(nonconverged_dir, "q_limit.log"), String)
+      @test occursin("Final Q-limit validation skipped: invalid because NR did not converge.", nonconverged_log)
+      @test occursin("Final PV/REF Q-limit check: SKIPPED (NR did not converge)", nonconverged_log)
+      @test !occursin("Final PV/REF Q-limit check: OK", nonconverged_log)
 
       failed_diagnostic = joinpath(tmpdir, "failed_diagnose.txt")
       Sparlectra._write_powerflow_diagnostics(failed_diagnostic, result.raw_result; diagnostic_fn = (io, _) -> error("diagnostic test failure"))

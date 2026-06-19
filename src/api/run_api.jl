@@ -130,16 +130,16 @@ function _write_q_limit_detail_artifacts(output_path::AbstractString, net::Net; 
     _write_namedtuple_csv(joinpath(output_path, "q_limit_events.csv"), events, (:iteration, :bus, :side); format = format)
     push!(artifacts, "q_limit_events.csv")
   end
-  qmin_pu, qmax_pu = getQLimits_pu(net)
   rows = NamedTuple[]
-  for (bus, node) in enumerate(net.nodeVec)
-    getNodeType(node) == PV || continue
+  snapshot_rows = isempty(net.qLimitInitialPVRows) ? snapshotPVQLimits!(net) : net.qLimitInitialPVRows
+  for row in snapshot_rows
+    bus = row.bus
     push!(rows, (
       bus = bus,
-      qmin_pu = bus <= length(qmin_pu) ? qmin_pu[bus] : -Inf,
-      qmax_pu = bus <= length(qmax_pu) ? qmax_pu[bus] : Inf,
-      qmin_MVAr = bus <= length(qmin_pu) ? qmin_pu[bus] * net.baseMVA : -Inf,
-      qmax_MVAr = bus <= length(qmax_pu) ? qmax_pu[bus] * net.baseMVA : Inf,
+      qmin_pu = row.qmin_MVAr / net.baseMVA,
+      qmax_pu = row.qmax_MVAr / net.baseMVA,
+      qmin_MVAr = row.qmin_MVAr,
+      qmax_MVAr = row.qmax_MVAr,
     ))
   end
   if !isempty(rows)
@@ -182,12 +182,18 @@ function _write_q_limit_log_artifact(output_path::AbstractString, result::Sparle
     println(io)
     println(io, "Final PV Q-limit active-set check")
     println(io, "---------------------------------")
-    printFinalLimitValidation(result.net; io)
+    if result.numerical_converged
+      printFinalLimitValidation(result.net; io)
+    else
+      println(io, "Final Q-limit validation skipped: invalid because NR did not converge.")
+    end
     pv_violations = hasproperty(result.diagnostics, :pv_q_limit_violations) ? result.diagnostics.pv_q_limit_violations : 0
     ref_violations = hasproperty(result.diagnostics, :ref_q_limit_violations) ? result.diagnostics.ref_q_limit_violations : 0
-    println(io, "Final REF Q-limit diagnostic: ", ref_violations > 0 ? "WARN" : "OK")
+    final_ref_status = result.numerical_converged ? (ref_violations > 0 ? "WARN" : "OK") : "SKIPPED (NR did not converge)"
+    final_pvref_status = result.numerical_converged ? (pv_violations > 0 ? "FAIL" : (ref_violations > 0 ? "WARN" : "OK")) : "SKIPPED (NR did not converge)"
+    println(io, "Final REF Q-limit diagnostic: ", final_ref_status)
     println(io, "  REF violations: ", ref_violations)
-    println(io, "Final PV/REF Q-limit check: ", pv_violations > 0 ? "FAIL" : (ref_violations > 0 ? "WARN" : "OK"))
+    println(io, "Final PV/REF Q-limit check: ", final_pvref_status)
     println(io, "  remaining violations: ", pv_violations + ref_violations, " (PV ", pv_violations, ", REF ", ref_violations, ")")
     println(io)
     println(io, "Q-Limit Active-Set Summary")
@@ -965,6 +971,10 @@ function _run_sparlectra_api(;
   catch err
     return _api_failure("invalid_configuration", sprint(showerror, err); run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file)
   end
+  effective_raw["runtime_request"] = Dict{String,Any}(
+    "casefile" => basename(case_path),
+    "casefile_path" => case_path,
+  )
 
   effective_config = joinpath(output_path, "effective_config.yaml")
   _write_yaml_file(effective_config, effective_raw)

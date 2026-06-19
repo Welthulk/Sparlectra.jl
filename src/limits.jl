@@ -108,6 +108,18 @@ function resetQLimitLog!(net::Net)
   return nothing
 end
 
+function snapshotPVQLimits!(net::Net)
+  qmin_pu, qmax_pu = getQLimits_pu(net)
+  empty!(net.qLimitInitialPVRows)
+  for (bus, node) in enumerate(net.nodeVec)
+    getNodeType(node) == PV || continue
+    qmin = ((bus <= length(qmin_pu)) && isfinite(qmin_pu[bus])) ? (qmin_pu[bus] * net.baseMVA) : -Inf
+    qmax = ((bus <= length(qmax_pu)) && isfinite(qmax_pu[bus])) ? (qmax_pu[bus] * net.baseMVA) : Inf
+    push!(net.qLimitInitialPVRows, (bus = bus, qmin_MVAr = qmin, qmax_MVAr = qmax))
+  end
+  return net.qLimitInitialPVRows
+end
+
 """
     getQLimits_pu(net::Net) -> (qmin_pu, qmax_pu)
 
@@ -128,18 +140,10 @@ Print a compact table of PV-bus reactive limits before the PF iteration starts.
 Values are shown in **MVAr**.
 """
 function printPVQLimitsTable(net::Net; io::IO = stdout, max_rows::Int = 30, full_details::Union{Nothing,AbstractString} = nothing)
-  qmin_pu, qmax_pu = getQLimits_pu(net)
-  rows = Tuple{Int,Float64,Float64}[]
-
-  for (bus, node) in enumerate(net.nodeVec)
-    getNodeType(node) == PV || continue
-    qmin = ((bus <= length(qmin_pu)) && isfinite(qmin_pu[bus])) ? (qmin_pu[bus] * net.baseMVA) : -Inf
-    qmax = ((bus <= length(qmax_pu)) && isfinite(qmax_pu[bus])) ? (qmax_pu[bus] * net.baseMVA) : Inf
-    push!(rows, (bus, qmin, qmax))
-  end
+  rows = isempty(net.qLimitInitialPVRows) ? snapshotPVQLimits!(net) : net.qLimitInitialPVRows
 
   if isempty(rows)
-    println(io, "PV Q-limits (MVAr): no PV buses.")
+    println(io, "PV Q-limits (MVAr): no PV buses in pre-solve snapshot.")
     return nothing
   end
 
@@ -158,7 +162,10 @@ function printPVQLimitsTable(net::Net; io::IO = stdout, max_rows::Int = 30, full
   println(io, " Bus │      Qmin [MVAr] │      Qmax [MVAr]")
   println(io, "──────────────────────────────────────────────")
   for i = 1:shown
-    bus, qmin, qmax = rows[i]
+    row = rows[i]
+    bus = row.bus
+    qmin = row.qmin_MVAr
+    qmax = row.qmax_MVAr
     @printf(io, " %3d │ %15.6f │ %15.6f\n", bus, qmin, qmax)
   end
   if shown < length(rows)

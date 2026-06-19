@@ -446,6 +446,7 @@ function runpf_rectangular!(
   # Start fresh each PF run before guard pre-processing records locked buses.
   _perf_profile_time!(performance_profile, :solver_qlimit_log_reset) do
     resetQLimitLog!(net)
+    snapshotPVQLimits!(net)
   end
   if verbose > 1
     printPVQLimitsTable(net; max_rows = typemax(Int), full_details = "q_limit.log")
