@@ -147,6 +147,10 @@ The start page accepts:
 - Q-limit handling;
 - wrong-branch detection mode;
 - angle and voltage start modes;
+- a visible MATPOWER import conventions section with auto-profile mode
+  (`off`, `recommend`, or `apply`) plus manual transformer-ratio,
+  phase-shift, bus-shunt, PV-voltage-source, and comparison-reference
+  overrides;
 - logfile result mode;
 - single-run performance timing detail;
 - optional post-run diagnostics; and
@@ -157,6 +161,9 @@ chosen only through `start_sparlectra_webui(; output_root=...)`, is displayed as
 read-only information, and cannot be overridden by a submitted browser field.
 The page does not offer a generic YAML editor and never modifies the selected
 template. The service creates an `effective_config.yaml` artifact for each run.
+The header and `webui_operations.jsonl` include the Sparlectra version, package
+path, and local Git commit when available so users can confirm which checkout
+is serving the browser page.
 
 The existing-case selector lists canonical MATPOWER `.m` files from the user Web UI case
 cache. Generated MATPOWER `.jl` cache artifacts are internal and are not user-selectable.

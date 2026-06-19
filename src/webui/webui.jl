@@ -62,6 +62,28 @@ default_webui_case_cache_dir(output_root::AbstractString = default_webui_output_
 default_webui_operation_log_path(output_root::AbstractString = default_webui_output_root())::String =
   joinpath(dirname(abspath(output_root)), "logs", WEBUI_OPERATION_LOG_FILENAME)
 
+function _sparlectra_package_path()::String
+  pkg_path = pathof(@__MODULE__)
+  return pkg_path === nothing ? "" : String(pkg_path)
+end
+
+function _sparlectra_git_commit_sha()::Union{String,Nothing}
+  package_path = _sparlectra_package_path()
+  isempty(package_path) && return nothing
+  root = abspath(joinpath(dirname(package_path), ".."))
+  git_head = joinpath(root, ".git", "HEAD")
+  isfile(git_head) || return nothing
+  head = strip(read(git_head, String))
+  if startswith(head, "ref:")
+    ref = strip(chop(head; head = 4, tail = 0))
+    ref_path = joinpath(root, ".git", split(ref, '/')...)
+    isfile(ref_path) || return nothing
+    sha = strip(read(ref_path, String))
+    return isempty(sha) ? nothing : sha
+  end
+  return isempty(head) ? nothing : head
+end
+
 include("forms.jl")
 include("docs.jl")
 include("operations.jl")

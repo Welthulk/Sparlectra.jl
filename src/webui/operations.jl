@@ -82,6 +82,8 @@ function record_webui_operation!(output_root::AbstractString, event::AbstractStr
     entry = Dict{String,Any}(
       "timestamp" => _webui_operation_timestamp(),
       "sparlectra_version" => string(version()),
+      "sparlectra_package_path" => _sparlectra_package_path(),
+      "sparlectra_git_commit" => _sparlectra_git_commit_sha(),
       "event" => String(event),
     )
     for (key, value) in fields

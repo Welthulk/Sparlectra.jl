@@ -40,6 +40,13 @@ header a {
   vertical-align: middle;
 }
 
+.runtime-info {
+  display: inline-flex;
+  flex-direction: column;
+  gap: .1rem;
+  line-height: 1.2;
+}
+
 nav {
   display: flex;
   gap: 1.25rem;
@@ -237,6 +244,22 @@ button,
 
 .expert-section summary {
   cursor: pointer;
+  font-weight: 700;
+}
+
+.import-section {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+  margin-top: 1rem;
+  padding: 1rem;
+  border: 1px solid #b7c3d5;
+  border-radius: 10px;
+  background: #f8fbff;
+}
+
+.import-section legend {
+  padding: 0 .35rem;
   font-weight: 700;
 }
 

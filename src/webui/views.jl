@@ -86,11 +86,15 @@ end
 function _webui_layout(title::AbstractString, content::AbstractString; show_back::Bool = false, main_class::AbstractString = "page", refresh_url = nothing, refresh_seconds::Integer = WEBUI_STATUS_AUTO_REFRESH_SECONDS, header_info::AbstractString = "")::String
   back_button = show_back ? "<div class=\"page-toolbar\"><a class=\"button back-button\" href=\"/powerflow\" onclick=\"if (document.referrer.startsWith(location.origin)) { history.back(); return false; }\" aria-label=\"Go back to the previous page\">← Back</a></div>" : ""
   version_text = "Sparlectra.jl v$(version())"
+  package_path = _sparlectra_package_path()
+  commit_sha = _sparlectra_git_commit_sha()
+  commit_text = commit_sha === nothing ? "unknown" : first(commit_sha, min(12, length(commit_sha)))
+  runtime_info = "<span class=\"runtime-info\" title=\"Package path: $(_webui_escape(package_path))\">$(_webui_escape(version_text)) · commit $(_webui_escape(commit_text))</span>"
   refresh_meta = refresh_url === nothing ? "" : "<meta http-equiv=\"refresh\" content=\"$(refresh_seconds); url=$(_webui_escape(refresh_url))\">"
   return """<!doctype html>
 <html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">
 $(refresh_meta)<title>$(_webui_escape(title)) · Sparlectra</title><link rel=\"stylesheet\" href=\"/static/sparlectra.css\"></head>
-<body><header class=\"site-header\"><a class=\"brand\" href=\"/powerflow\"><img class=\"brand-logo\" src=\"/assets/logo.png\" alt=\"Sparlectra.jl logo\"><span>$(_webui_escape(version_text))</span></a><nav><a href=\"/powerflow\">New run</a><a href=\"/powerflow/history\">Run history</a><a href=\"/webui/operation-log\">Operation Log</a><a href=\"/docs\">Documentation</a><a class=\"project-docs-link\" href=\"https://welthulk.github.io/Sparlectra.jl/\" target=\"_blank\" rel=\"noopener noreferrer\"><svg class=\"github-icon\" viewBox=\"0 0 16 16\" aria-hidden=\"true\"><path fill=\"currentColor\" d=\"M8 0C3.58 0 0 3.64 0 8.13c0 3.59 2.29 6.64 5.47 7.72.4.08.55-.18.55-.39 0-.19-.01-.83-.01-1.51-2.01.38-2.53-.5-2.69-.96-.09-.23-.48-.96-.82-1.15-.28-.15-.68-.53-.01-.54.63-.01 1.08.59 1.23.83.72 1.23 1.87.88 2.33.67.07-.53.28-.88.51-1.08-1.78-.21-3.64-.91-3.64-4.02 0-.89.31-1.62.82-2.19-.08-.2-.36-1.04.08-2.16 0 0 .67-.22 2.2.84A7.4 7.4 0 0 1 8 3.93c.68 0 1.36.09 2 .27 1.53-1.06 2.2-.84 2.2-.84.44 1.12.16 1.96.08 2.16.51.57.82 1.3.82 2.19 0 3.12-1.87 3.81-3.65 4.02.29.25.54.74.54 1.5 0 1.08-.01 1.95-.01 2.22 0 .22.15.47.55.39A8.15 8.15 0 0 0 16 8.13C16 3.64 12.42 0 8 0Z\"/></svg><span>Project Docs</span></a>$(header_info)<form method="post" action="/webui/shutdown" class="exit-form"><button type="submit" class="exit-button">Stop Web UI</button></form></nav></header>
+<body><header class=\"site-header\"><a class=\"brand\" href=\"/powerflow\"><img class=\"brand-logo\" src=\"/assets/logo.png\" alt=\"Sparlectra.jl logo\">$(runtime_info)</a><nav><a href=\"/powerflow\">New run</a><a href=\"/powerflow/history\">Run history</a><a href=\"/webui/operation-log\">Operation Log</a><a href=\"/docs\">Documentation</a><a class=\"project-docs-link\" href=\"https://welthulk.github.io/Sparlectra.jl/\" target=\"_blank\" rel=\"noopener noreferrer\"><svg class=\"github-icon\" viewBox=\"0 0 16 16\" aria-hidden=\"true\"><path fill=\"currentColor\" d=\"M8 0C3.58 0 0 3.64 0 8.13c0 3.59 2.29 6.64 5.47 7.72.4.08.55-.18.55-.39 0-.19-.01-.83-.01-1.51-2.01.38-2.53-.5-2.69-.96-.09-.23-.48-.96-.82-1.15-.28-.15-.68-.53-.01-.54.63-.01 1.08.59 1.23.83.72 1.23 1.87.88 2.33.67.07-.53.28-.88.51-1.08-1.78-.21-3.64-.91-3.64-4.02 0-.89.31-1.62.82-2.19-.08-.2-.36-1.04.08-2.16 0 0 .67-.22 2.2.84A7.4 7.4 0 0 1 8 3.93c.68 0 1.36.09 2 .27 1.53-1.06 2.2-.84 2.2-.84.44 1.12.16 1.96.08 2.16.51.57.82 1.3.82 2.19 0 3.12-1.87 3.81-3.65 4.02.29.25.54.74.54 1.5 0 1.08-.01 1.95-.01 2.22 0 .22.15.47.55.39A8.15 8.15 0 0 0 16 8.13C16 3.64 12.42 0 8 0Z\"/></svg><span>Project Docs</span></a>$(header_info)<form method="post" action="/webui/shutdown" class="exit-form"><button type="submit" class="exit-button">Stop Web UI</button></form></nav></header>
 <main class="$(main_class)">$(back_button)<h1>$(_webui_escape(title))</h1>$(content)</main><footer>$(_webui_escape(version_text)) · Local PowerFlow Web UI · loopback access only</footer>
 <script>
 (function () {
@@ -179,11 +183,9 @@ $(config_control)
 <fieldset class=\"span-2 detailed-csv-options\"><legend><label class=\"check\"><input name=\"detailed_result_csv\" type=\"checkbox\">$(_webui_field_label("detailed_result_csv", "Export detailed result CSV files"))</label></legend>
 <label class=\"detailed-csv-format\">$(_webui_field_label("detailed_result_csv_format", "CSV format"))$(_webui_select("detailed_result_csv_format", ("technical", "excel_de", "excel_us"), "technical"))<small class=\"field-hint\">technical: comma/decimal point/no grouping; excel_de: semicolon/decimal comma/thousands dot; excel_us: comma/decimal point/thousands comma.</small></label>
 </fieldset>
-<details class=\"span-2 expert-section\">
-<summary>Advanced / expert options</summary>
 <fieldset class=\"import-section\">
 <legend>MATPOWER import conventions</legend>
-<p class=\"field-hint span-2\">Use these pre-solve import diagnostics for transformer ratio, phase-shift, and bus-shunt conventions. These options are separate from post-solve wrong-branch plausibility checks.</p>
+<p class=\"field-hint span-2\">Choose how MATPOWER transformer ratio, phase-shift, bus-shunt, and voltage-reference conventions are interpreted before the network is built. Use <strong>off</strong> for manual overrides, <strong>recommend</strong> to log advice without changing the run, or <strong>apply</strong> to let the profile apply safe recommendations. These controls are separate from post-solve wrong-branch plausibility checks.</p>
 <label>$(_webui_field_label("matpower_import_auto_profile", "MATPOWER auto-profile"))$(_webui_select("matpower_import_auto_profile", MATPOWER_AUTO_PROFILE_VALUES, :recommend))</label>
 <label>$(_webui_field_label("matpower_import_ratio", "Transformer ratio convention"))$(_webui_select("matpower_import_ratio", MATPOWER_RATIO_VALUES, :normal))</label>
 <label>$(_webui_field_label("matpower_import_shift_sign", "Phase-shift sign"))<input name=\"matpower_import_shift_sign\" type=\"number\" step=\"2\" min=\"-1\" max=\"1\" value=\"1.0\"></label>
@@ -192,6 +194,8 @@ $(config_control)
 <label>$(_webui_field_label("matpower_import_pv_voltage_source", "PV voltage source"))$(_webui_select("matpower_import_pv_voltage_source", MATPOWER_PV_VOLTAGE_SOURCE_VALUES, :gen_vg))</label>
 <label>$(_webui_field_label("matpower_import_compare_voltage_reference", "Voltage reference comparison"))$(_webui_select("matpower_import_compare_voltage_reference", MATPOWER_COMPARE_VOLTAGE_REFERENCE_VALUES, :imported_setpoint))</label>
 </fieldset>
+<details class=\"span-2 expert-section\">
+<summary>Advanced / expert options</summary>
 <fieldset class=\"benchmark-section\">
 <legend>Benchmark / repeated timing</legend>
 <p class=\"field-hint span-2\">Normal runs perform one representative power-flow execution. Benchmarking adds repeated BenchmarkTools measurements for timing statistics and does not change the numerical result.</p>
