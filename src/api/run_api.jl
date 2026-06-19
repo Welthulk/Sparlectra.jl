@@ -808,6 +808,17 @@ function _write_matpower_auto_profile_artifact(output_path::AbstractString, prof
   return artifact
 end
 
+function _final_outcome_payload(raw_result::SparlectraRunResult)::Dict{String,Any}
+  return Dict{String,Any}(
+    "converged" => raw_result.final_converged,
+    "numerical_converged" => raw_result.numerical_converged,
+    "solution_available" => raw_result.solution_available,
+    "iterations" => raw_result.iterations,
+    "final_mismatch" => isfinite(raw_result.final_mismatch) ? raw_result.final_mismatch : nothing,
+    "reason" => String(raw_result.reason),
+  )
+end
+
 function _runtime_metadata_payload(; case_path::AbstractString, lifecycle::AbstractDict = Dict{String,Any}())
   payload = Dict{String,Any}(
     "runtime_request" => Dict{String,Any}(
@@ -1178,27 +1189,29 @@ function _run_sparlectra_api(;
   timing_mode === :off || _write_performance_log(joinpath(output_path, "performance.log"), timing_mode, phases, raw_result, phase_recorder.timings)
   _check_powerflow_cancelled!(cancellation_token)
 
-  success = raw_result.final_converged && raw_result.solution_available
+  numerical_success = raw_result.final_converged && raw_result.solution_available
   mismatch = isfinite(raw_result.final_mismatch) ? raw_result.final_mismatch : nothing
+  final_outcome = _final_outcome_payload(raw_result)
   final_metadata = merge(Dict{String,Any}(
     "solver_status" => "completed",
     "artifact_status" => csv_export_error === nothing ? "completed" : "failed",
-    "run_status" => success ? "completed" : "failed",
-    "last_phase" => success ? "finalizing_success" : "finalizing_failed",
+    "run_status" => "completed",
+    "last_phase" => "finalizing_success",
     "last_heartbeat" => Dates.format(Dates.now(Dates.UTC), dateformat"yyyy-mm-ddTHH:MM:SS.sssZ"),
-    "final_outcome" => success ? "completed" : "solver_failed",
+    "final_outcome" => final_outcome,
   ), qlimit_metadata)
   _write_run_metadata_artifact(output_path; case_path = case_path, lifecycle = final_metadata)
+  message = numerical_success ? "PowerFlow run completed." : "PowerFlow run completed, but numerical solver did not converge."
   result = _api_result(
     run_id = run_id,
-    status = success ? :succeeded : :failed,
-    success = success,
+    status = :succeeded,
+    success = true,
     converged = raw_result.numerical_converged,
     solution_available = raw_result.solution_available,
     iterations = raw_result.iterations,
     final_mismatch = mismatch,
-    reason = success ? nothing : String(raw_result.reason),
-    message = success ? nothing : raw_result.reason_text,
+    reason = String(raw_result.reason),
+    message = message,
     casefile = case_path,
     config_file = config_path,
     output_dir = output_path,

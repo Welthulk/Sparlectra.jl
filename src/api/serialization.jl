@@ -51,6 +51,7 @@ function to_dict(result::SparlectraApiResult; include_raw_result::Bool = false):
     "status" => String(result.status),
     "success" => result.success,
     "converged" => result.converged,
+    "numerical_converged" => result.converged,
     "solution_available" => result.solution_available,
     "iterations" => result.iterations,
     "final_mismatch" => result.final_mismatch,

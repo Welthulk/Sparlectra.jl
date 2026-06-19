@@ -277,21 +277,48 @@ window.addEventListener('pageshow', function () {
 end
 
 const _WEBUI_RESULT_FIELDS = (
-  "run_id", "schema_version", "status", "success", "converged", "solution_available",
+  "run_id", "schema_version", "status", "success", "converged", "numerical_converged", "solution_available",
   "iterations", "final_mismatch", "reason", "message", "casefile", "resolved_casefile",
   "config_file", "started_at", "elapsed_seconds", "output_dir",
   "current_phase", "phase_started_at", "last_progress_at", "abort_requested_at",
   "solver_status", "artifact_status", "run_status", "last_phase", "last_heartbeat", "final_outcome",
 )
 
+const _WEBUI_IMPORTANT_RESULT_FIELDS = Set(("converged", "numerical_converged", "solution_available", "iterations", "final_mismatch", "reason"))
+
+function _webui_result_value(result::AbstractDict, field::AbstractString)
+  value = get(result, field, nothing)
+  value === nothing && return field in _WEBUI_IMPORTANT_RESULT_FIELDS ? "n/a" : ""
+  value isa AbstractString && isempty(value) && return field in _WEBUI_IMPORTANT_RESULT_FIELDS ? "n/a" : ""
+  return value
+end
+
+function _webui_solver_status(result::AbstractDict)::String
+  converged = get(result, "converged", get(result, "numerical_converged", nothing))
+  converged === true && return "converged"
+  converged === false && return "not_converged"
+  final_outcome = get(result, "final_outcome", nothing)
+  final_outcome isa AbstractDict && haskey(final_outcome, "converged") && return final_outcome["converged"] === true ? "converged" : "not_converged"
+  return "n/a"
+end
+
 function render_powerflow_result(result::AbstractDict)::String
   run_id = get(result, "run_id", "")
-  rows = join(("<tr><th>$(_webui_escape(field))</th><td>$(_webui_escape(get(result, field, nothing)))</td></tr>" for field in _WEBUI_RESULT_FIELDS), "")
+  rows = join(("<tr><th>$(_webui_escape(field))</th><td>$(_webui_escape(_webui_result_value(result, field)))</td></tr>" for field in _WEBUI_RESULT_FIELDS), "")
   status = lowercase(string(get(result, "status", "unknown")))
   active = status in _WEBUI_ACTIVE_RUN_STATUSES
   status_badge = "<span class=\"status-badge $(webui_status_class(result))\">$(_webui_escape(status))</span>"
   elapsed_duration = _format_elapsed_duration(_webui_elapsed_seconds(result, active))
-  result_summary = "<div class=\"result-summary\"><div><span class=\"summary-label\">Status</span>$(status_badge)</div><div class=\"runtime-card\"><span class=\"runtime-icon\" aria-hidden=\"true\">⏱</span><span><span class=\"summary-label\">Elapsed time</span><strong>$(_webui_escape(elapsed_duration))</strong></span></div></div>"
+  summary_rows = (
+    ("Run status", status_badge),
+    ("Solver status", "<strong>$(_webui_escape(_webui_solver_status(result)))</strong>"),
+    ("Iterations", "<strong>$(_webui_escape(_webui_result_value(result, "iterations")))</strong>"),
+    ("Final mismatch", "<strong>$(_webui_escape(_webui_result_value(result, "final_mismatch")))</strong>"),
+    ("Elapsed time", "<strong>$(_webui_escape(elapsed_duration))</strong>"),
+    ("Casefile", "<code>$(_webui_escape(_webui_result_value(result, "casefile")))</code>"),
+    ("Output directory", "<code>$(_webui_escape(_webui_result_value(result, "output_dir")))</code>"),
+  )
+  result_summary = "<div class=\"result-summary\">" * join(("<div$(label == "Elapsed time" ? " class=\"runtime-card\"" : "")><span class=\"summary-label\">$(label)</span>$(value)</div>" for (label, value) in summary_rows), "") * "</div>"
   abort_form = status in ("queued", "running") ? "<form method=\"post\" action=\"/powerflow/abort/$(_webui_urlencode(run_id))\"><button type=\"submit\" class=\"danger-button\">Abort run</button></form>" : ""
   active_hint = active ? "<p class=\"status-refresh-hint\">This page refreshes automatically while the run is active.</p>" : ""
   abort_hint = status == "aborting" ? "<p>Aborting requested. Current phase: <code>$(_webui_escape(get(result, "current_phase", "unknown")))</code>.</p><p>This phase may need to finish before cancellation is observed.</p>" : ""

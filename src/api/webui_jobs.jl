@@ -287,12 +287,16 @@ function start_webui_powerflow_run(request::AbstractDict; case_directory::Union{
           if get(job, "status", "") == "aborted_unknown"
             return
           end
-          job["status"] = get(result, "success", false) ? "success" : "failed"
-          job["run_status"] = get(result, "success", false) ? "completed" : "failed"
-          job["solver_status"] = get(result, "solver_status", get(result, "success", false) ? "completed" : get(job, "solver_status", "failed"))
-          job["artifact_status"] = get(result, "artifact_status", get(result, "success", false) ? "completed" : get(job, "artifact_status", "failed"))
-          job["final_outcome"] = job["run_status"]
+          service_success = get(result, "success", false)
+          job["status"] = service_success ? "success" : "failed"
+          job["run_status"] = get(result, "run_status", service_success ? "completed" : "failed")
+          job["solver_status"] = get(result, "solver_status", service_success ? "completed" : get(job, "solver_status", "failed"))
+          job["artifact_status"] = get(result, "artifact_status", service_success ? "completed" : get(job, "artifact_status", "failed"))
+          job["final_outcome"] = get(result, "final_outcome", job["run_status"])
           job["current_phase"] = job["status"]
+          for key in ("converged", "numerical_converged", "solution_available", "iterations", "final_mismatch", "reason")
+            haskey(result, key) && (job[key] = result[key])
+          end
           job["message"] = something(get(result, "message", nothing), job["status"] == "success" ? "PowerFlow run completed." : "PowerFlow run failed.")
           job["resolved_casefile"] = get(result, "casefile", nothing)
           if haskey(result, "run_id") && result["run_id"] != run_id

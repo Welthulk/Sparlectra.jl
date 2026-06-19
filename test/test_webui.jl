@@ -558,6 +558,41 @@ result = get_powerflow_result(run_id)
       @test !occursin("action=\"/powerflow/abort/$(run_id)\"", result_html)
       failed_result_html = Sparlectra.render_powerflow_result(Dict("run_id" => "failed-run", "status" => "failed", "success" => false))
       @test !occursin("action=\"/powerflow/abort/failed-run\"", failed_result_html)
+      converged_result_html = Sparlectra.render_powerflow_result(Dict(
+        "run_id" => "converged-run",
+        "status" => "success",
+        "success" => true,
+        "converged" => true,
+        "numerical_converged" => true,
+        "solution_available" => true,
+        "iterations" => 6,
+        "final_mismatch" => 6.3e-11,
+        "reason" => "converged",
+      ))
+      @test occursin("Solver status", converged_result_html)
+      @test occursin("converged", converged_result_html)
+      @test occursin("iterations</th><td>6</td>", converged_result_html)
+      @test occursin("final_mismatch</th><td>6.3e-11</td>", converged_result_html)
+      nonconverged_result_html = Sparlectra.render_powerflow_result(Dict(
+        "run_id" => "nonconverged-run",
+        "status" => "success",
+        "success" => true,
+        "converged" => false,
+        "numerical_converged" => false,
+        "solution_available" => false,
+        "iterations" => 80,
+        "reason" => "nr_mismatch_not_converged",
+        "final_outcome" => Dict("converged" => false),
+      ))
+      @test occursin("not_converged", nonconverged_result_html)
+      @test occursin("converged</th><td>false</td>", nonconverged_result_html)
+      @test occursin("solution_available</th><td>false</td>", nonconverged_result_html)
+      @test occursin("iterations</th><td>80</td>", nonconverged_result_html)
+      @test occursin("reason</th><td>nr_mismatch_not_converged</td>", nonconverged_result_html)
+      missing_metric_html = Sparlectra.render_powerflow_result(Dict("run_id" => "missing-metrics", "status" => "success", "success" => true))
+      for field in ("converged", "solution_available", "iterations", "final_mismatch", "reason")
+        @test occursin("$(field)</th><td>n/a</td>", missing_metric_html)
+      end
       for active_status in ("queued", "running")
         active_status_html = Sparlectra.render_powerflow_result(Dict("run_id" => "$(active_status)-run", "status" => active_status))
         @test occursin("http-equiv=\"refresh\"", active_status_html)
