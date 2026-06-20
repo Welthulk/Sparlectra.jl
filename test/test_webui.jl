@@ -294,6 +294,13 @@ function run_webui_tests()
       @test occursin("class=\"panel docs-page docs-content\"", docs_page_html)
       @test occursin("id=\"start-mode-options\"", docs_page_html)
 
+      matpower_format_page = Sparlectra.route_sparlectra_webui("GET", "/docs/matpower_format")
+      @test matpower_format_page.status == 200
+      matpower_format_html = String(matpower_format_page.body)
+      @test occursin("MATPOWER format", matpower_format_html)
+      @test occursin("MATPOWER Manual", matpower_format_html)
+      @test occursin("https://matpower.app/manual/matpower/DataFileFormat.html", matpower_format_html)
+
       webui_docs_page = Sparlectra.route_sparlectra_webui("GET", "/docs/webui")
       @test webui_docs_page.status == 200
       webui_docs_html = String(webui_docs_page.body)

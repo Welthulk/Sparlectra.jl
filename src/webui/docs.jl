@@ -75,6 +75,7 @@ const WEBUI_DOC_PAGES = Dict(
   "powerflow_configuration" => (title = "Power-Flow Configuration", file = "powerflow_configuration.md"),
   "powerflow_service" => (title = "Local PowerFlow Service", file = "powerflow_service.md"),
   "performance_profiling" => (title = "Performance and Profiling Configuration", file = "performance_profiling.md"),
+  "matpower_format" => (title = "MATPOWER format", file = "matpower_format.md"),
   "matpower_import" => (title = "MATPOWER Import", file = "matpower_import.md"),
   "webui" => (title = "Local PowerFlow Web UI", file = "webui.md"),
   "feature_matrix" => (title = "Feature Matrix", file = "feature_matrix.md"),

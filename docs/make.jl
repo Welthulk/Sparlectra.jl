@@ -26,6 +26,7 @@ makedocs(
     "Local PowerFlow Service" => "powerflow_service.md",
     "Local PowerFlow Web UI" => "webui.md",
     "Power-Flow Configuration" => "powerflow_configuration.md",
+    "MATPOWER Format" => "matpower_format.md",
     "MATPOWER Import Configuration" => "matpower_import.md",
     "State-Estimation Configuration" => "state_estimation_configuration.md",
     "Performance and Profiling" => "performance_profiling.md",
