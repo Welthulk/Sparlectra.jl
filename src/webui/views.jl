@@ -99,11 +99,48 @@ $(refresh_meta)<title>$(_webui_escape(title)) · Sparlectra</title><link rel=\"s
 <main class="$(main_class)">$(back_button)<h1>$(_webui_escape(title))</h1>$(content)</main><footer>$(_webui_escape(version_text)) · Local PowerFlow Web UI · loopback access only</footer>
 <script>
 (function () {
+  let internalNavigation = false;
+  const markInternalNavigation = function () {
+    internalNavigation = true;
+  };
+  document.addEventListener('click', function (event) {
+    const link = event.target.closest ? event.target.closest('a[href]') : null;
+    if (link === null) {
+      return;
+    }
+    const target = link.getAttribute('target');
+    if (target !== null && target.toLowerCase() === '_blank') {
+      return;
+    }
+    let url;
+    try {
+      url = new URL(link.href, window.location.href);
+    } catch (_) {
+      return;
+    }
+    if (url.origin === window.location.origin || url.hash !== '') {
+      markInternalNavigation();
+    }
+  }, true);
+  document.addEventListener('submit', function () {
+    markInternalNavigation();
+  }, true);
   const sendHeartbeat = function () {
     fetch('/webui/heartbeat', {method: 'POST', keepalive: true}).catch(function () {});
   };
+  const sendShutdown = function () {
+    if (internalNavigation) {
+      return;
+    }
+    if (navigator.sendBeacon) {
+      navigator.sendBeacon('/webui/shutdown', new Blob([], {type: 'application/x-www-form-urlencoded'}));
+      return;
+    }
+    fetch('/webui/shutdown', {method: 'POST', keepalive: true}).catch(function () {});
+  };
   sendHeartbeat();
   window.setInterval(sendHeartbeat, 5000);
+  window.addEventListener('pagehide', sendShutdown);
 })();
 </script></body></html>"""
 end
@@ -116,8 +153,8 @@ function _webui_powerflow_info_menu(; output_root::AbstractString, config_file::
 <h2>PowerFlow run information</h2>
 <section>
 <h3>MATPOWER citation</h3>
-<p>Sparlectra supports the <a href=\"https://matpower.org\">MATPOWER</a> case format and MATPOWER test-case data. If you use MATPOWER cases or data in publications, please follow the <a href=\"https://matpower.org/citing/\">MATPOWER citation guidance</a> and cite the software and:</p>
-<p>R. D. Zimmerman, C. E. Murillo-Sanchez, and R. J. Thomas, “MATPOWER: Steady-State Operations, Planning and Analysis Tools for Power Systems Research and Education,” <em>IEEE Transactions on Power Systems</em>, 26(1), 12–19, 2011. <a href=\"https://doi.org/10.1109/TPWRS.2010.2051168\">DOI</a></p>
+<p>Sparlectra supports the <a href=\"https://matpower.org\" target=\"_blank\" rel=\"noopener noreferrer\">MATPOWER</a> case format and MATPOWER test-case data. If you use MATPOWER cases or data in publications, please follow the <a href=\"https://matpower.org/citing/\" target=\"_blank\" rel=\"noopener noreferrer\">MATPOWER citation guidance</a> and cite the software and:</p>
+<p>R. D. Zimmerman, C. E. Murillo-Sanchez, and R. J. Thomas, “MATPOWER: Steady-State Operations, Planning and Analysis Tools for Power Systems Research and Education,” <em>IEEE Transactions on Power Systems</em>, 26(1), 12–19, 2011. <a href=\"https://doi.org/10.1109/TPWRS.2010.2051168\" target=\"_blank\" rel=\"noopener noreferrer\">DOI</a></p>
 <p>Some MATPOWER case files, such as ACTIVSg, PEGASE, and RTE cases, may request additional case-specific citations in their file headers.</p>
 </section>
 <dl>

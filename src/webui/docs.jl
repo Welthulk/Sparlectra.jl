@@ -181,6 +181,10 @@ function _webui_rewritten_doc_href(target::AbstractString; current_page::Union{N
   return "/docs/$(page)$(fragment)"
 end
 
+function _webui_doc_link_attributes(href::AbstractString)::String
+  return startswith(href, "https://") || startswith(href, "http://") ? " target=\"_blank\" rel=\"noopener noreferrer\"" : ""
+end
+
 """Rewrite rendered Markdown links to safe, allowlisted local documentation routes."""
 function rewrite_webui_doc_links(rendered_html::AbstractString; current_page::Union{Nothing,String} = nothing)::String
   heading_pattern = r"<h([1-6])>(.*?)</h[1-6]>"s
@@ -195,7 +199,7 @@ function rewrite_webui_doc_links(rendered_html::AbstractString; current_page::Un
   return replace(html, href_pattern => matched_text -> begin
     matched = match(href_pattern, String(matched_text))
     rewritten = _webui_rewritten_doc_href(matched.captures[1]; current_page = current_page)
-    rewritten === nothing ? "aria-disabled=\"true\"" : "href=\"$(rewritten)\""
+    rewritten === nothing ? "aria-disabled=\"true\"" : "href=\"$(rewritten)\"$(_webui_doc_link_attributes(rewritten))"
   end)
 end
 
