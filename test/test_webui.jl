@@ -953,17 +953,11 @@ result = get_powerflow_result(run_id)
       probe = listen(ip"127.0.0.1", UInt16(0))
       port = Int(getsockname(probe)[2])
       close(probe)
-      server_ref = Ref{Any}()
-      startup_output = mktemp() do path, io
-        server_ref[] = redirect_stdout(io) do
-          redirect_stderr(io) do
-            start_sparlectra_webui(port = port, output_root = output_root, auto_shutdown_on_browser_close = false)
-          end
-        end
-        flush(io)
-        return read(path, String)
+      lifecycle_io = IOBuffer()
+      server = redirect_stderr(devnull) do
+        start_sparlectra_webui(port = port, output_root = output_root, auto_shutdown_on_browser_close = false, _lifecycle_io = lifecycle_io)
       end
-      server = server_ref[]
+      startup_output = String(take!(lifecycle_io))
       _assert_no_webui_transcript_markers(startup_output)
       @test occursin("Sparlectra Web UI is available at http://127.0.0.1:$(port)/powerflow", startup_output)
       @test occursin("Stop: use Stop Web UI in the browser, close the app window, or press Ctrl+C here.", startup_output)
@@ -1011,16 +1005,9 @@ result = get_powerflow_result(run_id)
 
         heartbeat_response = _webui_http_request(port, "POST", "/webui/heartbeat")
         @test occursin("HTTP/1.1 204", heartbeat_response)
-        shutdown_response_ref = Ref("")
-        shutdown_output = mktemp() do path, io
-          redirect_stdout(io) do
-            shutdown_response_ref[] = _webui_http_request(port, "POST", "/webui/shutdown")
-            @test timedwait(() -> istaskdone(server.task), 2.0) == :ok
-          end
-          flush(io)
-          return read(path, String)
-        end
-        shutdown_response = shutdown_response_ref[]
+        shutdown_response = _webui_http_request(port, "POST", "/webui/shutdown")
+        @test timedwait(() -> istaskdone(server.task), 2.0) == :ok
+        shutdown_output = String(take!(lifecycle_io))
         @test occursin("HTTP/1.1 200 OK", shutdown_response)
         @test occursin("Web UI stopped", shutdown_response)
         @test occursin("Sparlectra Web UI stopped by Stop Web UI button.", shutdown_output)
@@ -1029,30 +1016,20 @@ result = get_powerflow_result(run_id)
         close(server)
       end
 
-      restarted = redirect_stdout(devnull) do
-        start_sparlectra_webui(port = port, output_root = output_root, auto_shutdown_on_browser_close = false)
-      end
-      close_output = mktemp() do path, io
-        redirect_stdout(io) do
-          close(restarted)
-          @test timedwait(() -> istaskdone(restarted.task), 2.0) == :ok
-        end
-        flush(io)
-        return read(path, String)
-      end
+      close_io = IOBuffer()
+      restarted = start_sparlectra_webui(port = port, output_root = output_root, auto_shutdown_on_browser_close = false, _lifecycle_io = close_io)
+      take!(close_io)
+      close(restarted)
+      @test timedwait(() -> istaskdone(restarted.task), 2.0) == :ok
+      close_output = String(take!(close_io))
       @test occursin("Sparlectra Web UI stopped by close(server).", close_output)
 
-      interrupted = redirect_stdout(devnull) do
-        start_sparlectra_webui(port = port, output_root = output_root, auto_shutdown_on_browser_close = false)
-      end
-      interrupt_output = mktemp() do path, io
-        redirect_stdout(io) do
-          @test Sparlectra._wait_sparlectra_webui(interrupted; wait_for_task = _ -> throw(InterruptException()))
-          @test timedwait(() -> istaskdone(interrupted.task), 2.0) == :ok
-        end
-        flush(io)
-        return read(path, String)
-      end
+      interrupt_io = IOBuffer()
+      interrupted = start_sparlectra_webui(port = port, output_root = output_root, auto_shutdown_on_browser_close = false, _lifecycle_io = interrupt_io)
+      take!(interrupt_io)
+      @test Sparlectra._wait_sparlectra_webui(interrupted; wait_for_task = _ -> throw(InterruptException()))
+      @test timedwait(() -> istaskdone(interrupted.task), 2.0) == :ok
+      interrupt_output = String(take!(interrupt_io))
       @test occursin("Sparlectra Web UI stopped by Ctrl+C.", interrupt_output)
       @test timedwait(() -> istaskdone(interrupted.task), 2.0) == :ok
       @test !isopen(interrupted.listener)
@@ -1060,14 +1037,15 @@ result = get_powerflow_result(run_id)
       heartbeat_probe = listen(ip"127.0.0.1", UInt16(0))
       heartbeat_port = Int(getsockname(heartbeat_probe)[2])
       close(heartbeat_probe)
-      heartbeat_server = redirect_stdout(devnull) do
-        start_sparlectra_webui(
-          port = heartbeat_port,
-          output_root = output_root,
-          auto_shutdown_on_browser_close = true,
-          browser_heartbeat_timeout_seconds = 0.2,
-        )
-      end
+      heartbeat_io = IOBuffer()
+      heartbeat_server = start_sparlectra_webui(
+        port = heartbeat_port,
+        output_root = output_root,
+        auto_shutdown_on_browser_close = true,
+        browser_heartbeat_timeout_seconds = 0.2,
+        _lifecycle_io = heartbeat_io,
+      )
+      take!(heartbeat_io)
       sleep(0.3)
       @test isopen(heartbeat_server.listener)
       _webui_http_request(heartbeat_port, "POST", "/webui/heartbeat")
@@ -1075,13 +1053,8 @@ result = get_powerflow_result(run_id)
       sleep(0.3)
       @test isopen(heartbeat_server.listener)
       Sparlectra._webui_finish_request!(heartbeat_server.runtime)
-      heartbeat_output = mktemp() do path, io
-        redirect_stdout(io) do
-          @test timedwait(() -> istaskdone(heartbeat_server.task), 2.0) == :ok
-        end
-        flush(io)
-        return read(path, String)
-      end
+      @test timedwait(() -> istaskdone(heartbeat_server.task), 2.0) == :ok
+      heartbeat_output = String(take!(heartbeat_io))
       @test occursin("Sparlectra Web UI stopped by browser window close.", heartbeat_output)
       @test !isopen(heartbeat_server.listener)
     end

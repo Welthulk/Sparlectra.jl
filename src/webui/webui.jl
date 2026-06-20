@@ -27,6 +27,7 @@ mutable struct _SparlectraWebUIRuntime
   last_heartbeat::Float64
   active_requests::Int
   shutdown_reason::Union{Symbol,Nothing}
+  lifecycle_io::IO
   lock::ReentrantLock
 end
 
@@ -266,6 +267,12 @@ function _webui_shutdown_reason_text(reason::Union{Symbol,Nothing})::String
   return ""
 end
 
+function _webui_lifecycle_println(runtime::_SparlectraWebUIRuntime, parts...)
+  println(runtime.lifecycle_io, parts...)
+  flush(runtime.lifecycle_io)
+  return nothing
+end
+
 function _webui_request_shutdown!(runtime::_SparlectraWebUIRuntime; reason::Union{Symbol,Nothing} = nothing)
   listener = lock(runtime.lock) do
     if runtime.shutdown_reason === nothing && reason !== nothing
@@ -351,7 +358,7 @@ function _provision_webui_runtime!(root::AbstractString, config_file::Union{Noth
   return (config_file = configuration, case_directory, operation_log)
 end
 
-function start_sparlectra_webui(; host::AbstractString = "127.0.0.1", port::Integer = 8080, output_root::Union{Nothing,AbstractString} = nothing, config_file::Union{Nothing,AbstractString} = nothing, open_browser::Bool = false, auto_shutdown_on_browser_close::Bool = true, browser_heartbeat_timeout_seconds::Real = 15.0, warmup::Bool = false, warmup_casefile::Union{Nothing,AbstractString} = nothing, warmup_store_result::Bool = false, _test_runner = start_powerflow_run)::SparlectraWebUIServer
+function start_sparlectra_webui(; host::AbstractString = "127.0.0.1", port::Integer = 8080, output_root::Union{Nothing,AbstractString} = nothing, config_file::Union{Nothing,AbstractString} = nothing, open_browser::Bool = false, auto_shutdown_on_browser_close::Bool = true, browser_heartbeat_timeout_seconds::Real = 15.0, warmup::Bool = false, warmup_casefile::Union{Nothing,AbstractString} = nothing, warmup_store_result::Bool = false, _test_runner = start_powerflow_run, _lifecycle_io::IO = stdout)::SparlectraWebUIServer
   host_string = String(host)
   host_string in ("127.0.0.1", "localhost", "::1") || throw(ArgumentError("Sparlectra Web UI only accepts loopback hosts: 127.0.0.1, localhost, or ::1."))
   1 <= port <= 65535 || throw(ArgumentError("Web UI port must be between 1 and 65535."))
@@ -371,7 +378,7 @@ function start_sparlectra_webui(; host::AbstractString = "127.0.0.1", port::Inte
   end
   address = host_string == "localhost" ? ip"127.0.0.1" : parse(Sockets.IPAddr, host_string)
   listener = Sockets.listen(address, UInt16(port))
-  runtime = _SparlectraWebUIRuntime(listener, paths.case_directory, paths.config_file, paths.operation_log, _test_runner, auto_shutdown_on_browser_close, timeout, false, 0.0, 0, nothing, ReentrantLock())
+  runtime = _SparlectraWebUIRuntime(listener, paths.case_directory, paths.config_file, paths.operation_log, _test_runner, auto_shutdown_on_browser_close, timeout, false, 0.0, 0, nothing, _lifecycle_io, ReentrantLock())
   task = @async begin
     try
       while isopen(listener)
@@ -386,7 +393,7 @@ function start_sparlectra_webui(; host::AbstractString = "127.0.0.1", port::Inte
       reason = lock(runtime.lock) do
         runtime.shutdown_reason
       end
-      println("Sparlectra Web UI stopped$(_webui_shutdown_reason_text(reason)).")
+      _webui_lifecycle_println(runtime, "Sparlectra Web UI stopped$(_webui_shutdown_reason_text(reason)).")
     end
   end
   heartbeat_task = @async _webui_monitor_heartbeat(runtime)
@@ -402,9 +409,9 @@ function start_sparlectra_webui(; host::AbstractString = "127.0.0.1", port::Inte
     end
   end
   open_browser && _webui_open_browser(url)
-  println("Sparlectra Web UI is available at ", url)
-  println("Stop: use Stop Web UI in the browser, close the app window, or press Ctrl+C here.")
-  println("Operation log: ", paths.operation_log)
+  _webui_lifecycle_println(runtime, "Sparlectra Web UI is available at ", url)
+  _webui_lifecycle_println(runtime, "Stop: use Stop Web UI in the browser, close the app window, or press Ctrl+C here.")
+  _webui_lifecycle_println(runtime, "Operation log: ", paths.operation_log)
   @info "Sparlectra Web UI started" url output_root = abspath(root)
   return server
 end
