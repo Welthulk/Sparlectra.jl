@@ -128,8 +128,11 @@ $(refresh_meta)<title>$(_webui_escape(title)) · Sparlectra</title><link rel=\"s
   const sendHeartbeat = function () {
     fetch('/webui/heartbeat', {method: 'POST', keepalive: true}).catch(function () {});
   };
-  const sendShutdown = function () {
+  const sendShutdown = function (event) {
     if (internalNavigation) {
+      return;
+    }
+    if (event && event.persisted) {
       return;
     }
     if (navigator.sendBeacon) {
