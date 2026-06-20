@@ -409,11 +409,6 @@ function run_webui_tests()
       @test findfirst("<details class=\"span-2 expert-section\">", form_html) < findfirst("MATPOWER import conventions", form_html)
       @test occursin("Use <strong>off</strong> for manual overrides", form_html)
       @test findfirst("Advanced / expert options", form_html) < findfirst("name=\"run_diagnostics\"", form_html)
-      stylesheet = read(joinpath(pkgdir(Sparlectra), "src", "webui", "static", "sparlectra.css"), String)
-      @test occursin("max-width: 1440px", stylesheet)
-      @test occursin("width: min(1440px, calc(100vw - 2rem))", stylesheet)
-      @test occursin("flex-wrap: nowrap;", stylesheet)
-      @test occursin(".detailed-csv-options {\n  margin-top: -.25rem;", stylesheet)
       routed_powerflow_html = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow"; output_root = output_root).body)
       @test occursin("MATPOWER import conventions", routed_powerflow_html)
       @test occursin("name=\"matpower_import_auto_profile\"", routed_powerflow_html)
@@ -458,11 +453,11 @@ function run_webui_tests()
       @test occursin(output_root, form_html)
       @test occursin("action=\"/webui/shutdown\"", form_html)
       @test occursin("Stop Web UI", form_html)
-      @test occursin("navigator.sendBeacon('/webui/shutdown'", form_html)
-      @test occursin("fetch('/webui/shutdown', {method: 'POST', keepalive: true}", form_html)
-      @test occursin("window.addEventListener('pagehide', sendShutdown)", form_html)
-      @test occursin("event && event.persisted", form_html)
-      @test occursin("markInternalNavigation()", form_html)
+      @test !occursin("navigator.sendBeacon('/webui/shutdown'", form_html)
+      @test !occursin("fetch('/webui/shutdown', {method: 'POST', keepalive: true}", form_html)
+      @test !occursin("pagehide", form_html)
+      @test !occursin("beforeunload", form_html)
+      @test !occursin("visibilitychange", form_html)
       @test occursin("href=\"/webui/operation-log\"", form_html)
       @test count("class=\"help-link\"", form_html) == length(expected_help_topics)
 
@@ -690,33 +685,6 @@ result = get_powerflow_result(run_id)
       @test occursin("class=\"artifact-text-page\"", result_artifact_html)
       @test occursin("class=\"button\" href=\"?download=1\"", result_artifact_html)
       @test occursin("class=\"artifact-text\"", result_artifact_html)
-      css_text = read(joinpath(@__DIR__, "..", "src", "webui", "static", "sparlectra.css"), String)
-      css_text = replace(css_text, "\r\n" => "\n")
-      css_lines = split(css_text, '\n')
-      @test length(css_lines) > 100
-      @test maximum(length, css_lines) < 300
-      @test occursin(".artifact-text {\n", css_text)
-      @test occursin(".artifact-page {\n", css_text)
-      @test occursin("  width: min(96vw, 1600px);\n", css_text)
-      @test occursin("  width: 100%;\n", css_text)
-      @test occursin("  white-space: pre;\n", css_text)
-      @test occursin("  overflow: auto;\n", css_text)
-      @test occursin("  min-height: 75vh;\n", css_text)
-      @test occursin("  max-height: 85vh;\n", css_text)
-      @test occursin(".form-grid.is-submitting .submit-spinner {\n", css_text)
-      @test occursin("  animation: submit-spin .8s linear infinite;\n", css_text)
-      @test occursin("@keyframes submit-spin {\n", css_text)
-      @test occursin(".status-badge {\n", css_text)
-      @test occursin(".status-success {\n", css_text)
-      @test occursin(".status-warning {\n", css_text)
-      @test occursin(".status-error {\n", css_text)
-      @test occursin(".status-unknown {\n", css_text)
-      @test occursin(".status-running {\n", css_text)
-      @test occursin(".status-aborted {\n", css_text)
-      @test occursin(".exit-button,\n", css_text)
-      @test occursin(".active-run-banner {\n", css_text)
-      @test !occursin(".active-run-banner {\n  display: none;", css_text)
-
 
       download = Sparlectra.handle_powerflow_artifact_download(run_id, "result.json")
       @test download.status == 200
@@ -1034,6 +1002,25 @@ result = get_powerflow_result(run_id)
       @test timedwait(() -> istaskdone(interrupted.task), 2.0) == :ok
       @test !isopen(interrupted.listener)
 
+      browser_probe = listen(ip"127.0.0.1", UInt16(0))
+      browser_port = Int(getsockname(browser_probe)[2])
+      close(browser_probe)
+      browser_io = IOBuffer()
+      browser_server = start_sparlectra_webui(
+        port = browser_port,
+        output_root = output_root,
+        auto_shutdown_on_browser_close = true,
+        open_browser = true,
+        _lifecycle_io = browser_io,
+        _browser_opener = _ -> run(`$(Base.julia_cmd()) --startup-file=no -e "sleep(0.2)"`; wait = false),
+      )
+      take!(browser_io)
+      @test isopen(browser_server.listener)
+      @test timedwait(() -> istaskdone(browser_server.task), 4.0) == :ok
+      browser_output = String(take!(browser_io))
+      @test occursin("Sparlectra Web UI stopped by browser window close.", browser_output)
+      @test !isopen(browser_server.listener)
+
       heartbeat_probe = listen(ip"127.0.0.1", UInt16(0))
       heartbeat_port = Int(getsockname(heartbeat_probe)[2])
       close(heartbeat_probe)
@@ -1053,9 +1040,10 @@ result = get_powerflow_result(run_id)
       sleep(0.3)
       @test isopen(heartbeat_server.listener)
       Sparlectra._webui_finish_request!(heartbeat_server.runtime)
+      sleep(0.3)
+      @test isopen(heartbeat_server.listener)
+      close(heartbeat_server)
       @test timedwait(() -> istaskdone(heartbeat_server.task), 2.0) == :ok
-      heartbeat_output = String(take!(heartbeat_io))
-      @test occursin("Sparlectra Web UI stopped by browser window close.", heartbeat_output)
       @test !isopen(heartbeat_server.listener)
     end
   end

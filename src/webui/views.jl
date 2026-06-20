@@ -99,51 +99,11 @@ $(refresh_meta)<title>$(_webui_escape(title)) · Sparlectra</title><link rel=\"s
 <main class="$(main_class)">$(back_button)<h1>$(_webui_escape(title))</h1>$(content)</main><footer>$(_webui_escape(version_text)) · Local PowerFlow Web UI · loopback access only</footer>
 <script>
 (function () {
-  let internalNavigation = false;
-  const markInternalNavigation = function () {
-    internalNavigation = true;
-  };
-  document.addEventListener('click', function (event) {
-    const link = event.target.closest ? event.target.closest('a[href]') : null;
-    if (link === null) {
-      return;
-    }
-    const target = link.getAttribute('target');
-    if (target !== null && target.toLowerCase() === '_blank') {
-      return;
-    }
-    let url;
-    try {
-      url = new URL(link.href, window.location.href);
-    } catch (_) {
-      return;
-    }
-    if (url.origin === window.location.origin || url.hash !== '') {
-      markInternalNavigation();
-    }
-  }, true);
-  document.addEventListener('submit', function () {
-    markInternalNavigation();
-  }, true);
   const sendHeartbeat = function () {
     fetch('/webui/heartbeat', {method: 'POST', keepalive: true}).catch(function () {});
   };
-  const sendShutdown = function (event) {
-    if (internalNavigation) {
-      return;
-    }
-    if (event && event.persisted) {
-      return;
-    }
-    if (navigator.sendBeacon) {
-      navigator.sendBeacon('/webui/shutdown', new Blob([], {type: 'application/x-www-form-urlencoded'}));
-      return;
-    }
-    fetch('/webui/shutdown', {method: 'POST', keepalive: true}).catch(function () {});
-  };
   sendHeartbeat();
   window.setInterval(sendHeartbeat, 5000);
-  window.addEventListener('pagehide', sendShutdown);
 })();
 </script></body></html>"""
 end

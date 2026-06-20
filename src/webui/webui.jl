@@ -22,7 +22,6 @@ mutable struct _SparlectraWebUIRuntime
   operation_log::String
   runner
   auto_shutdown_on_browser_close::Bool
-  heartbeat_timeout_seconds::Float64
   heartbeat_received::Bool
   last_heartbeat::Float64
   active_requests::Int
@@ -98,7 +97,7 @@ mutable struct SparlectraWebUIServer
   task::Task
   url::String
   runtime::_SparlectraWebUIRuntime
-  heartbeat_task::Task
+  browser_monitor_task::Union{Task,Nothing}
 end
 
 function _webui_status_text(status::Int)
@@ -228,7 +227,7 @@ function _webui_open_browser(url::String)
     return nothing
   end
   try
-    run(command; wait = false)
+    return run(command; wait = false)
   catch err
     @warn "Could not open the Web UI app window" url exception = (err, catch_backtrace())
   end
@@ -284,20 +283,18 @@ function _webui_request_shutdown!(runtime::_SparlectraWebUIRuntime; reason::Unio
   return nothing
 end
 
-function _webui_monitor_heartbeat(runtime::_SparlectraWebUIRuntime)
-  while true
-    listener, should_stop = lock(runtime.lock) do
-      current_listener = runtime.listener
-      expired = runtime.auto_shutdown_on_browser_close && runtime.heartbeat_received && runtime.active_requests == 0 && time() - runtime.last_heartbeat > runtime.heartbeat_timeout_seconds
-      (current_listener, expired)
-    end
-    (listener === nothing || !isopen(listener)) && return nothing
-    if should_stop
-      _webui_request_shutdown!(runtime; reason = :browser_window_close)
-      return nothing
-    end
-    sleep(min(0.25, runtime.heartbeat_timeout_seconds / 4))
+function _webui_monitor_browser_process(runtime::_SparlectraWebUIRuntime, browser_process)
+  try
+    wait(browser_process)
+  catch err
+    err isa InvalidStateException || @debug "Web UI browser process monitor ended without shutdown" exception = (err, catch_backtrace())
+    return nothing
   end
+  should_shutdown = lock(runtime.lock) do
+    runtime.auto_shutdown_on_browser_close && runtime.listener !== nothing && isopen(runtime.listener)
+  end
+  should_shutdown && _webui_request_shutdown!(runtime; reason = :browser_window_close)
+  return nothing
 end
 
 """
@@ -306,16 +303,16 @@ end
                             config_file=DEFAULT_SPARLECTRA_CONFIG_PATH,
                             open_browser=false,
                             auto_shutdown_on_browser_close=true,
-                            browser_heartbeat_timeout_seconds=15.0,
                             warmup=false, warmup_casefile=nothing,
                             warmup_store_result=false) -> SparlectraWebUIServer
 
 Start the loopback-only PowerFlow interface and load its persistent run registry
 before accepting requests. The returned handle can be stopped with
 `close(server)` or the browser's **Stop Web UI** button. When
-`auto_shutdown_on_browser_close=true`, the server stops after the first browser
-heartbeat has been seen and then expires; a server started without a browser
-continues running because the timeout is not armed before that first heartbeat.
+`auto_shutdown_on_browser_close=true`, the server stops after an app-window
+browser process launched by Sparlectra exits. If no owned browser process is
+available, Sparlectra leaves the server running instead of guessing from browser
+lifecycle events.
 When `warmup=true`, a hidden asynchronous run compiles the common import/API/
 solver path. By default it uses the bundled original synthetic case and a
 temporary output directory, so it does not add a run-history entry or retain
@@ -358,7 +355,7 @@ function _provision_webui_runtime!(root::AbstractString, config_file::Union{Noth
   return (config_file = configuration, case_directory, operation_log)
 end
 
-function start_sparlectra_webui(; host::AbstractString = "127.0.0.1", port::Integer = 8080, output_root::Union{Nothing,AbstractString} = nothing, config_file::Union{Nothing,AbstractString} = nothing, open_browser::Bool = false, auto_shutdown_on_browser_close::Bool = true, browser_heartbeat_timeout_seconds::Real = 15.0, warmup::Bool = false, warmup_casefile::Union{Nothing,AbstractString} = nothing, warmup_store_result::Bool = false, _test_runner = start_powerflow_run, _lifecycle_io::IO = stdout)::SparlectraWebUIServer
+function start_sparlectra_webui(; host::AbstractString = "127.0.0.1", port::Integer = 8080, output_root::Union{Nothing,AbstractString} = nothing, config_file::Union{Nothing,AbstractString} = nothing, open_browser::Bool = false, auto_shutdown_on_browser_close::Bool = true, browser_heartbeat_timeout_seconds::Real = 15.0, warmup::Bool = false, warmup_casefile::Union{Nothing,AbstractString} = nothing, warmup_store_result::Bool = false, _test_runner = start_powerflow_run, _lifecycle_io::IO = stdout, _browser_opener = _webui_open_browser)::SparlectraWebUIServer
   host_string = String(host)
   host_string in ("127.0.0.1", "localhost", "::1") || throw(ArgumentError("Sparlectra Web UI only accepts loopback hosts: 127.0.0.1, localhost, or ::1."))
   1 <= port <= 65535 || throw(ArgumentError("Web UI port must be between 1 and 65535."))
@@ -378,7 +375,7 @@ function start_sparlectra_webui(; host::AbstractString = "127.0.0.1", port::Inte
   end
   address = host_string == "localhost" ? ip"127.0.0.1" : parse(Sockets.IPAddr, host_string)
   listener = Sockets.listen(address, UInt16(port))
-  runtime = _SparlectraWebUIRuntime(listener, paths.case_directory, paths.config_file, paths.operation_log, _test_runner, auto_shutdown_on_browser_close, timeout, false, 0.0, 0, nothing, _lifecycle_io, ReentrantLock())
+  runtime = _SparlectraWebUIRuntime(listener, paths.case_directory, paths.config_file, paths.operation_log, _test_runner, auto_shutdown_on_browser_close, false, 0.0, 0, nothing, _lifecycle_io, ReentrantLock())
   task = @async begin
     try
       while isopen(listener)
@@ -396,10 +393,9 @@ function start_sparlectra_webui(; host::AbstractString = "127.0.0.1", port::Inte
       _webui_lifecycle_println(runtime, "Sparlectra Web UI stopped$(_webui_shutdown_reason_text(reason)).")
     end
   end
-  heartbeat_task = @async _webui_monitor_heartbeat(runtime)
   url_host = host_string == "::1" ? "[::1]" : host_string
   url = "http://$(url_host):$(port)/powerflow"
-  server = SparlectraWebUIServer(listener, task, url, runtime, heartbeat_task)
+  browser_monitor_task = nothing
   if warmup
     @async try
       warmup_result = _run_sparlectra_webui_warmup(root; warmup_casefile, warmup_store_result)
@@ -408,7 +404,15 @@ function start_sparlectra_webui(; host::AbstractString = "127.0.0.1", port::Inte
       @warn "Sparlectra Web UI warm-up failed; normal runs remain available" exception = (err, catch_backtrace())
     end
   end
-  open_browser && _webui_open_browser(url)
+  if open_browser
+    browser_process = _browser_opener(url)
+    # Automatic app-window X shutdown is supported only when Sparlectra owns a
+    # browser process handle; otherwise keep serving until Stop Web UI/Ctrl+C.
+    if browser_process !== nothing
+      browser_monitor_task = @async _webui_monitor_browser_process(runtime, browser_process)
+    end
+  end
+  server = SparlectraWebUIServer(listener, task, url, runtime, browser_monitor_task)
   _webui_lifecycle_println(runtime, "Sparlectra Web UI is available at ", url)
   _webui_lifecycle_println(runtime, "Stop: use Stop Web UI in the browser, close the app window, or press Ctrl+C here.")
   _webui_lifecycle_println(runtime, "Operation log: ", paths.operation_log)
