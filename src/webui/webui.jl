@@ -26,6 +26,7 @@ mutable struct _SparlectraWebUIRuntime
   heartbeat_received::Bool
   last_heartbeat::Float64
   active_requests::Int
+  shutdown_reason::Union{Symbol,Nothing}
   lock::ReentrantLock
 end
 
@@ -256,8 +257,20 @@ function _webui_finish_request!(runtime::_SparlectraWebUIRuntime)
   return nothing
 end
 
-function _webui_request_shutdown!(runtime::_SparlectraWebUIRuntime)
+function _webui_shutdown_reason_text(reason::Union{Symbol,Nothing})::String
+  reason === :stop_button && return " by Stop Web UI button"
+  reason === :browser_window_close && return " by browser window close"
+  reason === :ctrl_c && return " by Ctrl+C"
+  reason === :close && return " by close(server)"
+  reason === :hard_reset && return " after hard reset"
+  return ""
+end
+
+function _webui_request_shutdown!(runtime::_SparlectraWebUIRuntime; reason::Union{Symbol,Nothing} = nothing)
   listener = lock(runtime.lock) do
+    if runtime.shutdown_reason === nothing && reason !== nothing
+      runtime.shutdown_reason = reason
+    end
     runtime.listener
   end
   listener === nothing || (isopen(listener) && close(listener))
@@ -273,7 +286,7 @@ function _webui_monitor_heartbeat(runtime::_SparlectraWebUIRuntime)
     end
     (listener === nothing || !isopen(listener)) && return nothing
     if should_stop
-      _webui_request_shutdown!(runtime)
+      _webui_request_shutdown!(runtime; reason = :browser_window_close)
       return nothing
     end
     sleep(min(0.25, runtime.heartbeat_timeout_seconds / 4))
@@ -358,15 +371,22 @@ function start_sparlectra_webui(; host::AbstractString = "127.0.0.1", port::Inte
   end
   address = host_string == "localhost" ? ip"127.0.0.1" : parse(Sockets.IPAddr, host_string)
   listener = Sockets.listen(address, UInt16(port))
-  runtime = _SparlectraWebUIRuntime(listener, paths.case_directory, paths.config_file, paths.operation_log, _test_runner, auto_shutdown_on_browser_close, timeout, false, 0.0, 0, ReentrantLock())
+  runtime = _SparlectraWebUIRuntime(listener, paths.case_directory, paths.config_file, paths.operation_log, _test_runner, auto_shutdown_on_browser_close, timeout, false, 0.0, 0, nothing, ReentrantLock())
   task = @async begin
-    while isopen(listener)
-      try
-        socket = accept(listener)
-        @async _webui_serve_client(socket, root, runtime)
-      catch err
-        isopen(listener) && @error "Sparlectra Web UI accept loop failed" exception = (err, catch_backtrace())
+    try
+      while isopen(listener)
+        try
+          socket = accept(listener)
+          @async _webui_serve_client(socket, root, runtime)
+        catch err
+          isopen(listener) && @error "Sparlectra Web UI accept loop failed" exception = (err, catch_backtrace())
+        end
       end
+    finally
+      reason = lock(runtime.lock) do
+        runtime.shutdown_reason
+      end
+      println("Sparlectra Web UI stopped$(_webui_shutdown_reason_text(reason)).")
     end
   end
   heartbeat_task = @async _webui_monitor_heartbeat(runtime)
@@ -382,6 +402,9 @@ function start_sparlectra_webui(; host::AbstractString = "127.0.0.1", port::Inte
     end
   end
   open_browser && _webui_open_browser(url)
+  println("Sparlectra Web UI is available at ", url)
+  println("Stop: use Stop Web UI in the browser, close the app window, or press Ctrl+C here.")
+  println("Operation log: ", paths.operation_log)
   @info "Sparlectra Web UI started" url output_root = abspath(root)
   return server
 end
@@ -394,12 +417,12 @@ function _wait_sparlectra_webui(server::SparlectraWebUIServer; wait_for_task = w
     err isa InterruptException || rethrow()
     interrupted = true
   finally
-    close(server)
+    _webui_request_shutdown!(server.runtime; reason = interrupted ? :ctrl_c : :close)
   end
   return interrupted
 end
 
 function Base.close(server::SparlectraWebUIServer)
-  _webui_request_shutdown!(server.runtime)
+  _webui_request_shutdown!(server.runtime; reason = :close)
   return nothing
 end

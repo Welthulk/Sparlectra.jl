@@ -114,7 +114,7 @@ function route_sparlectra_webui(method::AbstractString, target::AbstractString, 
       _webui_log_route!(log_root, "webui_shutdown_requested", verb, path; status = "accepted", run_id, current_phase)
       @async begin
         sleep(0.05)
-        _webui_request_shutdown!(runtime)
+        _webui_request_shutdown!(runtime; reason = :hard_reset)
       end
     end
     return response
@@ -163,7 +163,7 @@ function route_sparlectra_webui(method::AbstractString, target::AbstractString, 
     runtime === nothing && return _webui_html(render_webui_error(503, "Web UI shutdown is unavailable outside a running server."); status = 503)
     @async begin
       sleep(0.05)
-      _webui_request_shutdown!(runtime)
+      _webui_request_shutdown!(runtime; reason = :stop_button)
     end
     return _webui_html(render_webui_shutdown())
   elseif verb == "GET" && path == "/static/sparlectra.css"
