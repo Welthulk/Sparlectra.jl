@@ -59,10 +59,11 @@ function _format_elapsed_duration(seconds)::String
     tryparse(Float64, string(seconds))
   end
   (elapsed === nothing || !isfinite(elapsed)) && return "—"
-  total_seconds = max(0, floor(Int, elapsed))
+  milliseconds_total = max(0, round(Int, elapsed * 1000))
+  total_seconds, milliseconds = divrem(milliseconds_total, 1000)
   hours, remainder = divrem(total_seconds, 3600)
   minutes, secs = divrem(remainder, 60)
-  return lpad(hours, 2, '0') * ":" * lpad(minutes, 2, '0') * ":" * lpad(secs, 2, '0')
+  return lpad(hours, 2, '0') * ":" * lpad(minutes, 2, '0') * ":" * lpad(secs, 2, '0') * "." * lpad(milliseconds, 3, '0')
 end
 
 function _webui_elapsed_seconds(result::AbstractDict, active::Bool)
@@ -94,7 +95,7 @@ function _webui_layout(title::AbstractString, content::AbstractString; show_back
   return """<!doctype html>
 <html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">
 $(refresh_meta)<title>$(_webui_escape(title)) · Sparlectra</title><link rel=\"stylesheet\" href=\"/static/sparlectra.css\"></head>
-<body><header class=\"site-header\"><a class=\"brand\" href=\"/powerflow\"><img class=\"brand-logo\" src=\"/assets/logo.png\" alt=\"Sparlectra.jl logo\">$(runtime_info)</a><nav><a href=\"/powerflow\">New run</a><a href=\"/powerflow/history\">Run history</a><a href=\"/webui/operation-log\">Operation Log</a><a href=\"/docs\">Documentation</a><a class=\"project-docs-link\" href=\"https://welthulk.github.io/Sparlectra.jl/\" target=\"_blank\" rel=\"noopener noreferrer\"><svg class=\"github-icon\" viewBox=\"0 0 16 16\" aria-hidden=\"true\"><path fill=\"currentColor\" d=\"M8 0C3.58 0 0 3.64 0 8.13c0 3.59 2.29 6.64 5.47 7.72.4.08.55-.18.55-.39 0-.19-.01-.83-.01-1.51-2.01.38-2.53-.5-2.69-.96-.09-.23-.48-.96-.82-1.15-.28-.15-.68-.53-.01-.54.63-.01 1.08.59 1.23.83.72 1.23 1.87.88 2.33.67.07-.53.28-.88.51-1.08-1.78-.21-3.64-.91-3.64-4.02 0-.89.31-1.62.82-2.19-.08-.2-.36-1.04.08-2.16 0 0 .67-.22 2.2.84A7.4 7.4 0 0 1 8 3.93c.68 0 1.36.09 2 .27 1.53-1.06 2.2-.84 2.2-.84.44 1.12.16 1.96.08 2.16.51.57.82 1.3.82 2.19 0 3.12-1.87 3.81-3.65 4.02.29.25.54.74.54 1.5 0 1.08-.01 1.95-.01 2.22 0 .22.15.47.55.39A8.15 8.15 0 0 0 16 8.13C16 3.64 12.42 0 8 0Z\"/></svg><span>Project Docs</span></a>$(header_info)<form method="post" action="/webui/shutdown" class="exit-form"><button type="submit" class="exit-button">Stop Web UI</button></form></nav></header>
+<body><header class=\"site-header\"><a class=\"brand\" href=\"/powerflow\"><img class=\"brand-logo\" src=\"/assets/logo.png\" alt=\"Sparlectra.jl logo\">$(runtime_info)</a><nav><a href=\"/powerflow\">New run</a><a href=\"/powerflow/history\">Run history</a><a href=\"/webui/operation-log\">Operation Log</a><a href=\"/docs\">Documentation</a><a class=\"project-docs-link\" href=\"https://welthulk.github.io/Sparlectra.jl/\" target=\"_blank\" rel=\"noopener noreferrer\"><svg class=\"github-icon\" viewBox=\"0 0 16 16\" aria-hidden=\"true\"><path fill=\"currentColor\" d=\"M8 0C3.58 0 0 3.64 0 8.13c0 3.59 2.29 6.64 5.47 7.72.4.08.55-.18.55-.39 0-.19-.01-.83-.01-1.51-2.01.38-2.53-.5-2.69-.96-.09-.23-.48-.96-.82-1.15-.28-.15-.68-.53-.01-.54.63-.01 1.08.59 1.23.83.72 1.23 1.87.88 2.33.67.07-.53.28-.88.51-1.08-1.78-.21-3.64-.91-3.64-4.02 0-.89.31-1.62.82-2.19-.08-.2-.36-1.04.08-2.16 0 0 .67-.22 2.2.84A7.4 7.4 0 0 1 8 3.93c.68 0 1.36.09 2 .27 1.53-1.06 2.2-.84 2.2-.84.44 1.12.16 1.96.08 2.16.51.57.82 1.3.82 2.19 0 3.12-1.87 3.81-3.65 4.02.29.25.54.74.54 1.5 0 1.08-.01 1.95-.01 2.22 0 .22.15.47.55.39A8.15 8.15 0 0 0 16 8.13C16 3.64 12.42 0 8 0Z\"/></svg><span>Project Docs</span></a>$(header_info)<a href=\"/webui/last-errors\">Last errors</a><form method="post" action="/webui/shutdown" class="exit-form"><button type="submit" class="exit-button">Stop Web UI</button></form></nav></header>
 <main class="$(main_class)">$(back_button)<h1>$(_webui_escape(title))</h1>$(content)</main><footer>$(_webui_escape(version_text)) · Local PowerFlow Web UI · loopback access only</footer>
 <script>
 (function () {
@@ -168,9 +169,9 @@ function _webui_recent_error_entries(operation_log::AbstractString; limit::Integ
   return entries[(end - limit + 1):end]
 end
 
-function _webui_last_errors_html(operation_log::AbstractString)::String
+function _webui_last_errors_list_html(operation_log::AbstractString)::String
   entries = _webui_recent_error_entries(operation_log)
-  isempty(entries) && return ""
+  isempty(entries) && return "<p>No recent errors.</p>"
   items = join((begin
     timestamp = get(entry, "timestamp", "unknown time")
     route = get(entry, "route", "unknown route")
@@ -183,7 +184,12 @@ function _webui_last_errors_html(operation_log::AbstractString)::String
     suffix = isempty(meta) ? "" : " <small>($(_webui_escape(join(meta, ", "))))</small>"
     "<li><time>$(_webui_escape(timestamp))</time> <code>$(_webui_escape(route))</code>: $(_webui_escape(message))$(suffix)</li>"
   end for entry in reverse(entries)), "")
-  return "<details class=\"last-errors span-2\"><summary>Last errors</summary><ul>$(items)</ul></details>"
+  return "<ul class=\"last-errors-list\">$(items)</ul>"
+end
+
+function render_webui_last_errors(operation_log::AbstractString)::String
+  panel = "<section class=\"panel last-errors-panel\">$(_webui_last_errors_list_html(operation_log))</section>"
+  return _webui_layout("Last errors", panel; show_back = true)
 end
 
 function _webui_error_alert_html(error_message)::String
@@ -193,7 +199,6 @@ end
 
 function render_powerflow_form(; output_root::AbstractString = "results/powerflow_service", case_directory::Union{Nothing,AbstractString} = nothing, operation_log::AbstractString = webui_operation_log_path(output_root), error_message = nothing, application_root::AbstractString = _webui_application_root(), selected_casefile::AbstractString = "", selected_config_file::AbstractString = "", active_run = get_active_webui_powerflow_job())::String
   error_html = _webui_error_alert_html(error_message)
-  last_errors_html = _webui_last_errors_html(operation_log)
   casefiles = case_directory === nothing ? _webui_casefile_options(application_root) : _webui_casefile_options_in_directory(case_directory)
   bundled_case_directory = joinpath(application_root, "data", "mpower")
   effective_case_directory = case_directory === nothing ? bundled_case_directory : String(case_directory)
@@ -207,7 +212,7 @@ function render_powerflow_form(; output_root::AbstractString = "results/powerflo
   config_control = "<input type=\"hidden\" name=\"config_file\" value=\"$(_webui_escape(config_default))\">"
   info_menu = _webui_powerflow_info_menu(; output_root, config_file = config_default, case_directory = effective_case_directory, operation_log)
   form = """
-$(error_html)$(last_errors_html)$(_webui_active_run_banner(active_run))<p class=\"lede\">Run a local MATPOWER case through the Sparlectra PowerFlow service.</p>
+$(error_html)$(_webui_active_run_banner(active_run))<p class=\"lede\">Run a local MATPOWER case through the Sparlectra PowerFlow service.</p>
 <form id=\"powerflow-run-form\" data-powerflow-form method=\"post\" action=\"/powerflow/run\" class=\"panel form-grid powerflow-form-card\" onsubmit=\"this.classList.add('is-submitting'); this.setAttribute('aria-busy', 'true'); this.querySelector('button[type=submit]').disabled = true;\">
 $(config_control)
 <label>$(_webui_field_label("casefile", "Existing MATPOWER case"))$(case_select)<small class="field-hint">Cases from <code>$(_webui_escape(effective_case_directory))</code></small></label>
@@ -311,12 +316,7 @@ function render_powerflow_result(result::AbstractDict)::String
   elapsed_duration = _format_elapsed_duration(_webui_elapsed_seconds(result, active))
   summary_rows = (
     ("Run status", status_badge),
-    ("Solver status", "<strong>$(_webui_escape(_webui_solver_status(result)))</strong>"),
-    ("Iterations", "<strong>$(_webui_escape(_webui_result_value(result, "iterations")))</strong>"),
-    ("Final mismatch", "<strong>$(_webui_escape(_webui_result_value(result, "final_mismatch")))</strong>"),
     ("Elapsed time", "<strong>$(_webui_escape(elapsed_duration))</strong>"),
-    ("Casefile", "<code>$(_webui_escape(_webui_result_value(result, "casefile")))</code>"),
-    ("Output directory", "<code>$(_webui_escape(_webui_result_value(result, "output_dir")))</code>"),
   )
   result_summary = "<div class=\"result-summary\">" * join(("<div$(label == "Elapsed time" ? " class=\"runtime-card\"" : "")><span class=\"summary-label\">$(label)</span>$(value)</div>" for (label, value) in summary_rows), "") * "</div>"
   abort_form = status in ("queued", "running") ? "<form method=\"post\" action=\"/powerflow/abort/$(_webui_urlencode(run_id))\"><button type=\"submit\" class=\"danger-button\">Abort run</button></form>" : ""

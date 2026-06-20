@@ -95,10 +95,10 @@ function run_webui_tests()
       joinpath(@__DIR__, "..", "docs", "src", "examples_overview.md"),
     ))
     @test !occursin("exp_webui_powerflow", repository_text)
-    @test Sparlectra._format_elapsed_duration(0.4) == "00:00:00"
-    @test Sparlectra._format_elapsed_duration(3) == "00:00:03"
-    @test Sparlectra._format_elapsed_duration(83) == "00:01:23"
-    @test Sparlectra._format_elapsed_duration(3725) == "01:02:05"
+    @test Sparlectra._format_elapsed_duration(0.4) == "00:00:00.400"
+    @test Sparlectra._format_elapsed_duration(3) == "00:00:03.000"
+    @test Sparlectra._format_elapsed_duration(83) == "00:01:23.000"
+    @test Sparlectra._format_elapsed_duration(3725.125) == "01:02:05.125"
     @test Sparlectra._format_elapsed_duration(nothing) == "—"
 
     registry_before_warmup = Set(keys(Sparlectra._POWERFLOW_SERVICE_RUNS))
@@ -379,8 +379,17 @@ function run_webui_tests()
       @test occursin("data-powerflow-form", invalid_html)
       @test occursin("form.addEventListener('input', clearAlert, {once: true})", invalid_html)
       @test occursin("form.addEventListener('change', clearAlert, {once: true})", invalid_html)
-      @test occursin("<details class=\"last-errors span-2\">", invalid_html)
+      @test !occursin("<details class=\"last-errors span-2\">", invalid_html)
       @test occursin("Last errors", invalid_html)
+      @test occursin("href=\"/webui/last-errors\"", invalid_html)
+      last_errors_response = Sparlectra.route_sparlectra_webui("GET", "/webui/last-errors"; output_root = output_root)
+      last_errors_html = String(last_errors_response.body)
+      @test last_errors_response.status == 200
+      @test occursin("Last errors", last_errors_html)
+      @test occursin("validation_error", read(operation_log_path, String))
+      @test occursin("/powerflow/run", last_errors_html)
+      empty_errors_html = Sparlectra.render_webui_last_errors(joinpath(tmpdir, "missing-operation-log.jsonl"))
+      @test occursin("No recent errors.", empty_errors_html)
 
       form_html = Sparlectra.render_powerflow_form(output_root = output_root)
       @test occursin("<option value=\"off\">off</option>", form_html)
@@ -569,8 +578,14 @@ result = get_powerflow_result(run_id)
         "final_mismatch" => 6.3e-11,
         "reason" => "converged",
       ))
-      @test occursin("Solver status", converged_result_html)
+      @test !occursin("<span class=\"summary-label\">Solver status</span>", converged_result_html)
+      @test !occursin("<span class=\"summary-label\">Iterations</span>", converged_result_html)
+      @test !occursin("<span class=\"summary-label\">Final mismatch</span>", converged_result_html)
+      @test occursin("<span class=\"summary-label\">Run status</span>", converged_result_html)
+      @test occursin("<span class=\"summary-label\">Elapsed time</span>", converged_result_html)
       @test occursin("converged", converged_result_html)
+      @test occursin("numerical_converged</th><td>true</td>", converged_result_html)
+      @test occursin("solution_available</th><td>true</td>", converged_result_html)
       @test occursin("iterations</th><td>6</td>", converged_result_html)
       @test occursin("final_mismatch</th><td>6.3e-11</td>", converged_result_html)
       nonconverged_result_html = Sparlectra.render_powerflow_result(Dict(
@@ -586,11 +601,12 @@ result = get_powerflow_result(run_id)
       ))
       @test occursin("not_converged", nonconverged_result_html)
       @test occursin("converged</th><td>false</td>", nonconverged_result_html)
+      @test occursin("numerical_converged</th><td>false</td>", nonconverged_result_html)
       @test occursin("solution_available</th><td>false</td>", nonconverged_result_html)
       @test occursin("iterations</th><td>80</td>", nonconverged_result_html)
       @test occursin("reason</th><td>nr_mismatch_not_converged</td>", nonconverged_result_html)
       missing_metric_html = Sparlectra.render_powerflow_result(Dict("run_id" => "missing-metrics", "status" => "success", "success" => true))
-      for field in ("converged", "solution_available", "iterations", "final_mismatch", "reason")
+      for field in ("converged", "numerical_converged", "solution_available", "iterations", "final_mismatch", "reason")
         @test occursin("$(field)</th><td>n/a</td>", missing_metric_html)
       end
       for active_status in ("queued", "running")
@@ -603,7 +619,7 @@ result = get_powerflow_result(run_id)
         @test !occursin("http-equiv=\"refresh\"", terminal_status_html)
         @test occursin("class=\"runtime-card\"", terminal_status_html)
         @test occursin("Elapsed time", terminal_status_html)
-        @test occursin("00:01:23", terminal_status_html)
+        @test occursin("00:01:23.000", terminal_status_html)
       end
 
       artifacts = list_powerflow_artifacts(run_id)

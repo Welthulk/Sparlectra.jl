@@ -592,4 +592,4 @@
   final when that phase returns.
 
 * **Bugfix**: Web UI submissions now run independently of request handling so active status and Abort controls are reachable before completion; first startup also provisions user-writable configuration, case-cache, run, and operation-log paths instead of using package-tree runtime defaults.
-* **Improvement**: The PowerFlow result/status page now highlights elapsed runtime in a clock-style `HH:MM:SS` card beside the run status while retaining raw timing metadata for diagnostics.
+* **Improvement**: The PowerFlow result/status page now highlights elapsed runtime in a clock-style `HH:MM:SS.mmm` card beside the run status while retaining raw timing metadata for diagnostics.

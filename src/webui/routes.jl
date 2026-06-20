@@ -149,6 +149,9 @@ function route_sparlectra_webui(method::AbstractString, target::AbstractString, 
   elseif verb == "GET" && path == "/webui/operation-log"
     _webui_log_route!(log_root, "page_opened", verb, path; status = "opened")
     return handle_webui_operation_log(log_root)
+  elseif verb == "GET" && path == "/webui/last-errors"
+    _webui_log_route!(log_root, "last_errors_opened", verb, path; status = "opened")
+    return _webui_html(render_webui_last_errors(log_root))
   elseif verb == "GET" && path == "/webui/operation-log/download"
     _webui_log_route!(log_root, "artifact_downloaded", verb, path; status = "succeeded", artifact = WEBUI_OPERATION_LOG_FILENAME)
     return handle_webui_operation_log(log_root; download = true)
