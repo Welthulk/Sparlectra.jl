@@ -545,13 +545,23 @@ function _matpower_import_auto_profile_residual_score(stats)::Float64
   return max(Float64(get(stats, :max_p_mis_pu, Inf)), Float64(get(stats, :max_q_mis_pu, Inf)))
 end
 
-function _matpower_import_auto_profile_convention_scan(mpc)
+function _matpower_import_auto_profile_convention_scan(mpc; vmva_stats = MatpowerIO.vmva_power_mismatch_stats)
   rows = NamedTuple[]
   for shift_unit in (:deg, :rad), shift_sign in (1.0, -1.0), ratio in (:normal, :reciprocal)
-    stats = MatpowerIO.vmva_power_mismatch_stats(mpc; matpower_shift_unit = shift_unit, matpower_shift_sign = shift_sign, matpower_ratio = ratio)
+    stats = vmva_stats(mpc; matpower_shift_unit = shift_unit, matpower_shift_sign = shift_sign, matpower_ratio = ratio)
     push!(rows, (shift_unit = shift_unit, shift_sign = shift_sign, ratio = ratio, stats = stats, score = _matpower_import_auto_profile_residual_score(stats)))
   end
   sort!(rows; by = row -> row.score)
+  return rows
+end
+
+function _matpower_import_auto_profile_scan_skipped_rows(mode::Symbol, mat::MatpowerImportConfig; reason::AbstractString)
+  rows = NamedTuple[]
+  evidence = "matpower_auto_profile_scan_skipped: $(reason); using configured/default MATPOWER conventions"
+  _push_auto_profile_row!(rows, mode, "matpower_import.shift_unit", mat.shift_unit, mat.shift_unit; safe_to_apply = false, reason = evidence)
+  _push_auto_profile_row!(rows, mode, "matpower_import.shift_sign", mat.shift_sign, mat.shift_sign; safe_to_apply = false, reason = evidence)
+  _push_auto_profile_row!(rows, mode, "matpower_import.ratio", mat.ratio, mat.ratio; safe_to_apply = false, reason = evidence)
+  _push_auto_profile_row!(rows, mode, "matpower_import.bus_shunt_model", mat.bus_shunt_model, mat.bus_shunt_model; safe_to_apply = false, reason = evidence)
   return rows
 end
 
@@ -603,7 +613,7 @@ function _copy_config_with(cfg::SparlectraConfig; powerflow = cfg.powerflow, mat
   return SparlectraConfig(; powerflow = powerflow, state_estimation = cfg.state_estimation, matpower = matpower, performance = cfg.performance, benchmark = cfg.benchmark, runtime = cfg.runtime, diagnostics = cfg.diagnostics, output = cfg.output, control = cfg.control)
 end
 
-function matpower_import_auto_profile(mpc, cfg::SparlectraConfig; mode::Symbol = cfg.matpower.auto_profile)
+function matpower_import_auto_profile(mpc, cfg::SparlectraConfig; mode::Symbol = cfg.matpower.auto_profile, convention_scan = _matpower_import_auto_profile_convention_scan)
   mode in (:off, :recommend, :apply) || throw(ArgumentError("matpower auto-profile mode must be off, recommend, or apply."))
   mode === :off && return (config = cfg, rows = NamedTuple[], applied = NamedTuple[])
 
@@ -612,7 +622,15 @@ function matpower_import_auto_profile(mpc, cfg::SparlectraConfig; mode::Symbol =
   rows = NamedTuple[]
   applied_pairs = Pair{Symbol,Any}[]
 
-  convention_rows = _matpower_import_auto_profile_convention_scan(mpc)
+  convention_rows = try
+    convention_scan(mpc)
+  catch err
+    if err isa OutOfMemoryError
+      @warn "matpower_auto_profile_scan_skipped: convention scan skipped because memory allocation failed; using configured/default MATPOWER conventions"
+      return (config = cfg, rows = _matpower_import_auto_profile_scan_skipped_rows(mode, mat; reason = "convention scan skipped because memory allocation failed"), applied = ())
+    end
+    rethrow()
+  end
   current_row = only([row for row in convention_rows if row.shift_unit === mat.shift_unit && row.shift_sign == mat.shift_sign && row.ratio === mat.ratio])
   best = first(convention_rows)
   current_score = current_row.score

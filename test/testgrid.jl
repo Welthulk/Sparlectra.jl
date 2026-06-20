@@ -588,6 +588,57 @@ function test_matpower_vmva_selfcheck_ignores_slack_pq_spec()::Bool
   return get(stats, :ok, false) && isapprox(get(stats, :max_p_mis_pu, NaN), 0.0; atol = 1e-12) && isapprox(get(stats, :max_q_mis_pu, NaN), 0.0; atol = 1e-12)
 end
 
+function test_matpower_build_ybus_returns_sparse_expected_values()::Bool
+  base = 100.0
+  bus = [
+    1 3 0.0 0.0 10.0 -5.0 1 1.0 0.0 110.0 1 1.1 0.9
+    2 1 0.0 0.0 0.0 0.0 1 1.0 0.0 110.0 1 1.1 0.9
+  ]
+  branch = [1 2 0.01 0.05 0.02 9999.0 0.0 0.0 2.0 30.0 1 -60.0 60.0]
+  ybus = Sparlectra.MatpowerIO.build_ybus_matpower(bus, branch, base; matpower_shift_unit = :deg, matpower_shift_sign = 1.0, matpower_ratio = :normal)
+  y = inv(0.01 + 0.05im)
+  ysh = 0.01im
+  tap = 2.0 * cis(pi / 6)
+  expected11 = (10.0 - 5.0im) / base + (y + ysh) / (tap * conj(tap))
+  expected22 = y + ysh
+  expected12 = -y / conj(tap)
+  expected21 = -y / tap
+
+  return SparseArrays.issparse(ybus) &&
+         ybus isa SparseArrays.SparseMatrixCSC{ComplexF64,Int} &&
+         isapprox(ybus[1, 1], expected11; atol = 1e-12) &&
+         isapprox(ybus[2, 2], expected22; atol = 1e-12) &&
+         isapprox(ybus[1, 2], expected12; atol = 1e-12) &&
+         isapprox(ybus[2, 1], expected21; atol = 1e-12)
+end
+
+function test_matpower_build_ybus_large_sparse_smoke()::Bool
+  nbus = 20_000
+  bus = zeros(Float64, nbus, 13)
+  @inbounds for i in axes(bus, 1)
+    bus[i, 1] = i
+    bus[i, 2] = i == 1 ? 3.0 : 1.0
+    bus[i, 7] = 1.0
+    bus[i, 8] = 1.0
+    bus[i, 10] = 110.0
+    bus[i, 11] = 1.0
+    bus[i, 12] = 1.1
+    bus[i, 13] = 0.9
+  end
+  branch = zeros(Float64, nbus - 1, 13)
+  @inbounds for e in axes(branch, 1)
+    branch[e, 1] = e
+    branch[e, 2] = e + 1
+    branch[e, 3] = 0.01
+    branch[e, 4] = 0.05
+    branch[e, 5] = 0.01
+    branch[e, 9] = 1.0
+    branch[e, 11] = 1.0
+  end
+  ybus = Sparlectra.MatpowerIO.build_ybus_matpower(bus, branch, 100.0)
+  return SparseArrays.issparse(ybus) && size(ybus) == (nbus, nbus) && SparseArrays.nnz(ybus) <= 4 * (nbus - 1)
+end
+
 function test_matpower_compare_vmva_wraps_angle_differences()::Bool
   mpc = Sparlectra.MatpowerIO.MatpowerCase(
     "case_angle_wrap_compare",
@@ -2564,6 +2615,8 @@ function run_grid_tests()
       @test test_matpower_flatstart_uses_generator_voltage_setpoints() == true
       @test test_matpower_reference_override_controls_flatstart() == true
       @test test_prosumer_aggregation_preserves_bus_types_and_injections() == true
+      @test test_matpower_build_ybus_returns_sparse_expected_values() == true
+      @test test_matpower_build_ybus_large_sparse_smoke() == true
       @test test_matpower_vmva_selfcheck_noncontiguous_bus_numbers() == true
       @test test_matpower_vmva_selfcheck_ignores_slack_pq_spec() == true
       @test test_matpower_compare_vmva_wraps_angle_differences() == true

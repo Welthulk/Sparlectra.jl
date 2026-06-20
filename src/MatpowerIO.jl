@@ -15,7 +15,7 @@
 # file: src/MatpowerIO.jl
 
 module MatpowerIO
-using LinearAlgebra, Printf
+using LinearAlgebra, Printf, SparseArrays
 
 export MatpowerCase, read_case, read_case_m, read_case_julia, build_ybus_matpower, vmva_power_mismatch_stats
 
@@ -650,7 +650,7 @@ function compare_vm_va(net, mpc; show_diff::Bool = false, tol_vm::Float64 = 1e-6
 end
 
 """
-	build_ybus_matpower(bus, branch, baseMVA) -> Matrix{ComplexF64}
+	build_ybus_matpower(bus, branch, baseMVA) -> SparseMatrixCSC{ComplexF64,Int}
 
 MATPOWER-style Ybus stamping (π-model + tap/shift + bus shunts):
 - series r/x
@@ -666,36 +666,26 @@ function build_ybus_matpower(bus::AbstractMatrix{<:Real}, branch::AbstractMatrix
   ratio_mode = _normalize_matpower_ratio_mode(matpower_ratio)
 
   nbus = size(bus, 1)
-  Y = zeros(ComplexF64, nbus, nbus)
+  rows = Int[]
+  cols = Int[]
+  vals = ComplexF64[]
 
   # MATPOWER BUS_I may be non-contiguous (e.g. 1, 2, 9001).
   # Build a mapping BUS_I -> row index so all stamping uses matrix rows.
   busrow = Dict{Int,Int}()
-  for i ∈ 1:nbus
-    busrow[Int(bus[i, 1])] = i
-  end
-
-  # MATPOWER BUS_I may be non-contiguous (e.g. 1, 2, 9001).
-  # Build a mapping BUS_I -> row index so all stamping uses matrix rows.
-  busrow = Dict{Int,Int}()
-  for i ∈ 1:nbus
-    busrow[Int(bus[i, 1])] = i
-  end
-
-  # MATPOWER BUS_I may be non-contiguous (e.g. 1, 2, 9001).
-  # Build a mapping BUS_I -> row index so all stamping uses matrix rows.
-  busrow = Dict{Int,Int}()
-  for i ∈ 1:nbus
+  for i in axes(bus, 1)
     busrow[Int(bus[i, 1])] = i
   end
   # bus columns (MATPOWER):
   # BUS_I=1, BUS_TYPE=2, PD=3, QD=4, GS=5, BS=6, ...
   # add shunts: (GS + j*BS)/baseMVA
-  for i ∈ 1:nbus
+  for i in axes(bus, 1)
     Gs = bus[i, 5]
     Bs = bus[i, 6]
     if Gs != 0.0 || Bs != 0.0
-      Y[i, i] += (Gs + 1im * Bs) / baseMVA
+      push!(rows, i)
+      push!(cols, i)
+      push!(vals, (Gs + 1im * Bs) / baseMVA)
     end
   end
 
@@ -703,7 +693,7 @@ function build_ybus_matpower(bus::AbstractMatrix{<:Real}, branch::AbstractMatrix
   # F_BUS=1, T_BUS=2, BR_R=3, BR_X=4, BR_B=5, RATEA=6, RATEB=7, RATEC=8,
   # TAP=9, SHIFT=10, BR_STATUS=11, ...
   nbranch = size(branch, 1)
-  for e ∈ 1:nbranch
+  for e in axes(branch, 1)
     status = (size(branch, 2) >= 11) ? branch[e, 11] : 1.0
     status == 0 && continue
 
@@ -731,13 +721,12 @@ function build_ybus_matpower(bus::AbstractMatrix{<:Real}, branch::AbstractMatrix
     a = tap * cis(shift)  # complex tap on from side
 
     # stamping with off-nominal tap
-    Y[f, f] += (y + ysh) / (a * conj(a))
-    Y[t, t] += (y + ysh)
-    Y[f, t] += -y / conj(a)
-    Y[t, f] += -y / a
+    append!(rows, (f, t, f, t))
+    append!(cols, (f, t, t, f))
+    append!(vals, ((y + ysh) / (a * conj(a)), y + ysh, -y / conj(a), -y / a))
   end
 
-  return Y
+  return sparse(rows, cols, vals, nbus, nbus)
 end
 
 """

@@ -216,6 +216,8 @@ benchmark:
     applied_row = only(row for row in applied.rows if row.option == "matpower_import.shift_unit")
     @test applied_row.action === :applied
     @test any(pair -> first(pair) === :shift_unit && last(pair) === :deg, applied.applied)
+    convention_rows = Sparlectra._matpower_import_auto_profile_convention_scan(mpc)
+    @test length(convention_rows) == 8
 
     ambiguous_cfg = Sparlectra.SparlectraConfig(Dict("matpower_import" => Dict("auto_profile" => "apply")))
     ambiguous = Sparlectra.matpower_import_auto_profile(_auto_profile_pv_mismatch_case(), ambiguous_cfg; mode = :apply)
@@ -241,6 +243,19 @@ benchmark:
     @test occursin("Final effective MATPOWER import options:", apply_text)
     @test occursin("auto_profile = apply", apply_text)
     @test occursin("shift_unit   = deg", apply_text)
+
+    oom_cfg = Sparlectra.SparlectraConfig(Dict(
+      "matpower_import" => Dict("auto_profile" => "apply", "shift_unit" => "rad"),
+    ))
+    oom_result = @test_logs (:warn, r"matpower_auto_profile_scan_skipped") Sparlectra.matpower_import_auto_profile(
+      mpc,
+      oom_cfg;
+      mode = :apply,
+      convention_scan = mpc -> throw(OutOfMemoryError()),
+    )
+    @test oom_result.config.matpower.shift_unit === :rad
+    @test isempty(oom_result.applied)
+    @test any(row -> occursin("matpower_auto_profile_scan_skipped", row.reason), oom_result.rows)
   end
 
   @testset "Configuration value-domain validation" begin
