@@ -89,8 +89,8 @@ function _webui_layout(title::AbstractString, content::AbstractString; show_back
   version_text = "Sparlectra.jl v$(version())"
   package_path = _sparlectra_package_path()
   commit_sha = _sparlectra_git_commit_sha()
-  commit_text = commit_sha === nothing ? "unknown" : first(commit_sha, min(12, length(commit_sha)))
-  runtime_info = "<span class=\"runtime-info\" title=\"Package path: $(_webui_escape(package_path))\">$(_webui_escape(version_text)) · commit $(_webui_escape(commit_text))</span>"
+  commit_text = commit_sha === nothing ? "unknown" : first(commit_sha, min(7, length(commit_sha)))
+  runtime_info = "<span class=\"runtime-info\" title=\"Package path: $(_webui_escape(package_path))\"><span class=\"runtime-title\">$(_webui_escape(version_text))</span><span class=\"runtime-commit\">commit $(_webui_escape(commit_text))</span></span>"
   refresh_meta = refresh_url === nothing ? "" : "<meta http-equiv=\"refresh\" content=\"$(refresh_seconds); url=$(_webui_escape(refresh_url))\">"
   return """<!doctype html>
 <html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">

@@ -47,6 +47,18 @@ header a {
   line-height: 1.2;
 }
 
+.runtime-title {
+  font-size: 1.25rem;
+  font-weight: 700;
+}
+
+.runtime-commit {
+  color: #c8d4e8;
+  font-size: .78rem;
+  font-weight: 500;
+  letter-spacing: .01em;
+}
+
 nav {
   display: flex;
   gap: 1.25rem;
