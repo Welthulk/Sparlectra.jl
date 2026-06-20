@@ -178,17 +178,17 @@ function run_webui_tests()
       linux_lookup = name -> name == "google-chrome" ? "/opt/google/chrome" : nothing
       linux_command = Sparlectra._webui_app_command(url; platform = :linux, executable_lookup = linux_lookup)
       @test linux_command !== nothing
-      @test linux_command.exec == ["/opt/google/chrome", "--app=$(url)"]
+      @test linux_command.exec == ["/opt/google/chrome", "--app=$(url)", "--window-size=1500,950"]
 
       windows_lookup = name -> name == "msedge.exe" ? raw"C:\Browser\msedge.exe" : nothing
       windows_command = Sparlectra._webui_app_command(url; platform = :windows, executable_lookup = windows_lookup, environment = Dict{String,String}())
       @test windows_command !== nothing
-      @test windows_command.exec == [raw"C:\Browser\msedge.exe", "--app=$(url)"]
+      @test windows_command.exec == [raw"C:\Browser\msedge.exe", "--app=$(url)", "--window-size=1500,950"]
 
       macos_exists = path -> path == "/Applications/Google Chrome.app"
       macos_command = Sparlectra._webui_app_command(url; platform = :macos, path_exists = macos_exists)
       @test macos_command !== nothing
-      @test macos_command.exec == ["open", "-na", "/Applications/Google Chrome.app", "--args", "--app=$(url)"]
+      @test macos_command.exec == ["open", "-na", "/Applications/Google Chrome.app", "--args", "--app=$(url)", "--window-size=1500,950"]
 
       missing_lookup = _ -> nothing
       @test Sparlectra._webui_app_command(url; platform = :linux, executable_lookup = missing_lookup) === nothing
@@ -408,9 +408,12 @@ function run_webui_tests()
       @test findfirst("Advanced / expert options", form_html) < findfirst("MATPOWER import conventions", form_html)
       @test findfirst("<details class=\"span-2 expert-section\">", form_html) < findfirst("MATPOWER import conventions", form_html)
       @test occursin("Use <strong>off</strong> for manual overrides", form_html)
+      @test findfirst("Advanced / expert options", form_html) < findfirst("name=\"run_diagnostics\"", form_html)
       stylesheet = read(joinpath(pkgdir(Sparlectra), "src", "webui", "static", "sparlectra.css"), String)
       @test occursin("max-width: 1440px", stylesheet)
       @test occursin("width: min(1440px, calc(100vw - 2rem))", stylesheet)
+      @test occursin("flex-wrap: nowrap;", stylesheet)
+      @test occursin(".detailed-csv-options {\n  margin-top: -.25rem;", stylesheet)
       routed_powerflow_html = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow"; output_root = output_root).body)
       @test occursin("MATPOWER import conventions", routed_powerflow_html)
       @test occursin("name=\"matpower_import_auto_profile\"", routed_powerflow_html)
@@ -482,13 +485,14 @@ function run_webui_tests()
       @test occursin("Sparlectra.jl v$(Sparlectra.version())", form_html)
       @test occursin("name=\"performance_timing\"", form_html)
       @test occursin("name=\"run_diagnostics\"", form_html)
-      @test occursin("name=\"detailed_result_csv\" type=\"checkbox\"", form_html)
-      @test !occursin("name=\"detailed_result_csv\" type=\"checkbox\" checked", form_html)
+      @test occursin("name=\"detailed_result_csv\" type=\"checkbox\" checked", form_html)
       @test occursin("class=\"span-2 detailed-csv-options\"", form_html)
       @test occursin("name=\"detailed_result_csv_format\"", form_html)
-      @test occursin("<option value=\"technical\" selected>", form_html)
+      @test occursin("<option value=\"technical\">", form_html)
       @test occursin("<option value=\"excel_de\">", form_html)
-      @test occursin("<option value=\"excel_us\">", form_html)
+      @test occursin("<option value=\"excel_us\" selected>", form_html)
+      @test occursin("navigator.languages", form_html)
+      @test occursin("startsWith('de')", form_html)
       @test !occursin("Use Excel CSV format with semicolon delimiter", form_html)
 
       logo_response = Sparlectra.route_sparlectra_webui("GET", "/assets/logo.png")

@@ -190,6 +190,8 @@ function _webui_windows_browser_candidates(environment)::Vector{String}
   return candidates
 end
 
+const _WEBUI_APP_WINDOW_SIZE = "1500,950"
+
 function _webui_app_command(url::String; platform::Symbol = _webui_platform(), executable_lookup = Sys.which, path_exists = ispath, environment = ENV)::Union{Cmd,Nothing}
   if platform == :macos
     applications = (
@@ -200,7 +202,7 @@ function _webui_app_command(url::String; platform::Symbol = _webui_platform(), e
     )
     application = findfirst(path_exists, applications)
     application === nothing && return nothing
-    return `open -na $(applications[application]) --args --app=$url`
+    return `open -na $(applications[application]) --args --app=$url --window-size=$(_WEBUI_APP_WINDOW_SIZE)`
   end
 
   candidates = platform == :windows ? _webui_windows_browser_candidates(environment) : String[
@@ -214,7 +216,7 @@ function _webui_app_command(url::String; platform::Symbol = _webui_platform(), e
   ]
   executable = _webui_first_executable(candidates; executable_lookup, path_exists)
   executable === nothing && return nothing
-  return `$executable --app=$url`
+  return `$executable --app=$url --window-size=$(_WEBUI_APP_WINDOW_SIZE)`
 end
 
 function _webui_open_browser(url::String)

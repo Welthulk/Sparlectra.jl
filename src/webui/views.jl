@@ -264,12 +264,12 @@ $(config_control)
 <label>$(_webui_field_label("power_flow_start_voltage_mode", "Start voltage mode"))$(_webui_select("power_flow_start_voltage_mode", POWERFLOW_START_VOLTAGE_MODE_VALUES, :profile_blend))</label>
 <label>$(_webui_field_label("output_logfile_results", "Logfile output mode"))$(_webui_select("output_logfile_results", OUTPUT_LOGFILE_RESULTS_VALUES, :compact))</label>
 <label>$(_webui_field_label("performance_timing", "Performance timing"))$(_webui_select("performance_timing", _WEBUI_PERFORMANCE_TIMING_VALUES, :compact))</label>
-<label class=\"check\"><input name=\"run_diagnostics\" type=\"checkbox\">$(_webui_field_label("run_diagnostics", "Run diagnostics"))</label>
-<fieldset class=\"span-2 detailed-csv-options\"><legend><label class=\"check\"><input name=\"detailed_result_csv\" type=\"checkbox\">$(_webui_field_label("detailed_result_csv", "Export detailed result CSV files"))</label></legend>
-<label class=\"detailed-csv-format\">$(_webui_field_label("detailed_result_csv_format", "CSV format"))$(_webui_select("detailed_result_csv_format", ("technical", "excel_de", "excel_us"), "technical"))<small class=\"field-hint\">technical: comma/decimal point/no grouping; excel_de: semicolon/decimal comma/thousands dot; excel_us: comma/decimal point/thousands comma.</small></label>
+<fieldset class=\"span-2 detailed-csv-options\"><legend><label class=\"check\"><input name=\"detailed_result_csv\" type=\"checkbox\" checked>$(_webui_field_label("detailed_result_csv", "Export detailed result CSV files"))</label></legend>
+<label class=\"detailed-csv-format\">$(_webui_field_label("detailed_result_csv_format", "CSV format"))$(_webui_select("detailed_result_csv_format", ("technical", "excel_de", "excel_us"), "excel_us"))<small class=\"field-hint\">technical: comma/decimal point/no grouping; excel_de: semicolon/decimal comma/thousands dot; excel_us: comma/decimal point/thousands comma.</small></label>
 </fieldset>
 <details class=\"span-2 expert-section\">
 <summary>Advanced / expert options</summary>
+<label class=\"check expert-diagnostics\"><input name=\"run_diagnostics\" type=\"checkbox\">$(_webui_field_label("run_diagnostics", "Run diagnostics"))</label>
 <fieldset class=\"import-section\">
 <legend>MATPOWER import conventions</legend>
 <p class=\"field-hint span-2\">Choose how MATPOWER transformer ratio, phase-shift, bus-shunt, and voltage-reference conventions are interpreted before the network is built. Use <strong>off</strong> for manual overrides, <strong>recommend</strong> to log advice without changing the run, or <strong>apply</strong> to let the profile apply safe recommendations. These controls are separate from post-solve wrong-branch plausibility checks.</p>
@@ -303,6 +303,14 @@ document.addEventListener('DOMContentLoaded', function () {
     alert.addEventListener('click', clearAlert);
     form.addEventListener('input', clearAlert, {once: true});
     form.addEventListener('change', clearAlert, {once: true});
+  }
+  const csvFormat = document.querySelector('select[name="detailed_result_csv_format"]');
+  if (csvFormat !== null && csvFormat.value === 'excel_us') {
+    const languages = navigator.languages && navigator.languages.length > 0 ? navigator.languages : [navigator.language || ''];
+    const defaultFormat = languages.some(function (language) {
+      return String(language).toLowerCase().startsWith('de');
+    }) ? 'excel_de' : 'excel_us';
+    csvFormat.value = defaultFormat;
   }
 });
 

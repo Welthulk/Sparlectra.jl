@@ -16,6 +16,7 @@ header {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 1.5rem;
   padding: 1rem 5vw;
   background: #14233d;
   color: #fff;
@@ -61,6 +62,8 @@ header a {
 
 nav {
   display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
   gap: 1.25rem;
 }
 
@@ -269,6 +272,26 @@ button,
 .expert-section summary {
   cursor: pointer;
   font-weight: 700;
+}
+
+.detailed-csv-options {
+  margin-top: -.25rem;
+  padding: .85rem 1rem 1rem;
+  border: 1px solid #dbe3ef;
+  border-radius: 10px;
+}
+
+.detailed-csv-options legend {
+  padding: 0 .35rem;
+  font-weight: 700;
+}
+
+.detailed-csv-options .check {
+  padding: 0;
+}
+
+.expert-diagnostics {
+  margin-top: 1rem;
 }
 
 .import-section {
