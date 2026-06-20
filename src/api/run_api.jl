@@ -1096,6 +1096,8 @@ function _run_sparlectra_api(;
   end
   csv_artifacts = String[]
   csv_export_error = nothing
+  csv_export_status = detailed_result_csv ? "pending" : "disabled"
+  csv_export_skip_reason = nothing
   csv_format = nothing
   csv_timing_metadata = Dict{Symbol,Any}(:progress_callback => ((event; fields...) -> operation_callback(event; run_id = run_id, fields...)))
   if detailed_result_csv
@@ -1106,16 +1108,37 @@ function _run_sparlectra_api(;
       return _api_failure("invalid_detailed_result_csv_format", sprint(showerror, err); run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file)
     end
   end
-  if detailed_result_csv && raw_result.final_converged && raw_result.solution_available
+  if !detailed_result_csv
+    csv_export_skip_reason = "csv_disabled"
+  elseif !raw_result.solution_available
+    csv_export_status = "skipped"
+    csv_export_skip_reason = "no_solution_available"
+  elseif raw_result.net === nothing
+    csv_export_status = "skipped"
+    csv_export_skip_reason = "no_network_available"
+  else
     emit_phase("writing_csv_artifacts")
     operation_callback("powerflow_lifecycle_status"; run_id = run_id, solver_status = "completed", artifact_status = "running", run_status = "finalizing", last_phase = "writing_csv_artifacts")
     try
       csv_artifacts = _write_detailed_result_csv(output_path, raw_result; format = csv_format.name, config, abort_checker = () -> _check_powerflow_cancelled!(cancellation_token), timing_metadata = csv_timing_metadata)
+      csv_export_status = "exported"
     catch err
       csv_export_error = sprint(showerror, err)
+      csv_export_status = "failed"
+      operation_callback("detailed_result_csv_export_failed"; run_id = run_id, error = csv_export_error, final_converged = raw_result.final_converged, solution_available = raw_result.solution_available, has_network = raw_result.net !== nothing, csv_format = csv_format.name, status = "failed")
       open(logfile, "a") do io
         println(io, "Detailed result CSV export failed: ", csv_export_error)
       end
+    end
+  end
+  if detailed_result_csv && csv_export_status == "skipped"
+    operation_callback("detailed_result_csv_export_skipped"; run_id = run_id, reason = csv_export_skip_reason, final_converged = raw_result.final_converged, solution_available = raw_result.solution_available, has_network = raw_result.net !== nothing, csv_format = csv_format.name, status = "skipped")
+    open(logfile, "a") do io
+      println(io, "Detailed result CSV export skipped: ", csv_export_skip_reason)
+      println(io, "  final_converged: ", raw_result.final_converged)
+      println(io, "  solution_available: ", raw_result.solution_available)
+      println(io, "  has_network: ", raw_result.net !== nothing)
+      println(io, "  csv_format: ", csv_format.name)
     end
   end
   _check_powerflow_cancelled!(cancellation_token)
@@ -1152,7 +1175,9 @@ function _run_sparlectra_api(;
       println(io, "performance_artifact: ", timing_mode === :off ? "disabled" : "performance.log")
       println(io, "Q-limit handling enabled : ", !config.powerflow.qlimits.ignore_q_limits)
       println(io, "q_limit_detail_artifacts: ", isempty(q_limit_artifacts) ? "none" : join(q_limit_artifacts, ", "))
-      println(io, "detailed_result_csv_artifacts: ", detailed_result_csv ? (isempty(csv_artifacts) ? "failed" : join(csv_artifacts, ", ")) : "disabled")
+      println(io, "detailed_result_csv_status: ", csv_export_status)
+      csv_export_skip_reason === nothing || println(io, "detailed_result_csv_skip_reason: ", csv_export_skip_reason)
+      println(io, "detailed_result_csv_artifacts: ", detailed_result_csv ? (isempty(csv_artifacts) ? csv_export_status : join(csv_artifacts, ", ")) : "disabled")
       println(io, "detailed_result_csv_format: ", detailed_result_csv ? csv_format.name : "disabled")
       println(io, "detailed_result_csv_exporter: ", detailed_result_csv && raw_result.net !== nothing ? _select_detailed_csv_exporter(raw_result.net; config) : "disabled")
       println(io, "detailed_result_csv_write_mode: ", detailed_result_csv ? config.output.detailed_result_csv_write_mode : "disabled")
@@ -1199,6 +1224,9 @@ function _run_sparlectra_api(;
     "last_phase" => "finalizing_success",
     "last_heartbeat" => Dates.format(Dates.now(Dates.UTC), dateformat"yyyy-mm-ddTHH:MM:SS.sssZ"),
     "final_outcome" => final_outcome,
+    "detailed_result_csv_status" => csv_export_status,
+    "detailed_result_csv_skip_reason" => csv_export_skip_reason,
+    "detailed_result_csv_error" => csv_export_error,
   ), qlimit_metadata)
   _write_run_metadata_artifact(output_path; case_path = case_path, lifecycle = final_metadata)
   message = numerical_success ? "PowerFlow run completed." : "PowerFlow run completed, but numerical solver did not converge."

@@ -320,10 +320,14 @@ function start_webui_powerflow_run(request::AbstractDict; case_directory::Union{
           message = job["message"],
         )
         if detailed_result_csv
-          artifact_names = Set(String(get(artifact, "name", "")) for artifact in get(result, "artifacts", Any[]))
+          rescanned_artifacts = list_powerflow_artifacts(job["run_id"])
+          artifact_source = rescanned_artifacts isa AbstractVector ? rescanned_artifacts : get(result, "artifacts", Any[])
+          artifact_names = Set(String(get(artifact, "name", "")) for artifact in artifact_source)
           expected_csv = ["bus_voltages_complex.csv", "branch_flows.csv"]
           if all(name -> name in artifact_names, expected_csv)
             event_callback("detailed_result_csv_exported"; run_id = job["run_id"], csv_format = csv_format.name, artifacts = expected_csv, status = "succeeded")
+          elseif get(get(result, "metadata", Dict{String,Any}()), "detailed_result_csv_status", "") == "skipped"
+            event_callback("detailed_result_csv_export_skipped"; run_id = job["run_id"], reason = get(get(result, "metadata", Dict{String,Any}()), "detailed_result_csv_skip_reason", "unknown"), final_converged = get(result, "converged", false), solution_available = get(result, "solution_available", false), has_network = false, csv_format = csv_format.name, status = "skipped")
           else
             event_callback("detailed_result_csv_export_failed"; run_id = job["run_id"], message = "Detailed result CSV artifacts were not generated.", status = "failed")
           end

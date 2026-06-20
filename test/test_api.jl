@@ -1,5 +1,6 @@
 using Sparlectra
 using Test
+using Dates
 
 function _write_api_test_case(path::AbstractString)
   write(path, """
@@ -418,6 +419,34 @@ function run_api_tests()
       nonconverged_log = read(joinpath(nonconverged_dir, "q_limit.log"), String)
       @test occursin("Final Q-limit validation skipped: invalid because NR did not converge.", nonconverged_log)
       @test occursin("Final PV/REF Q-limit check: SKIPPED (NR did not converge)", nonconverged_log)
+
+      # Non-converged solver states still carry useful voltages and branch data
+      # when a solution/network state is available; detailed CSV export must not
+      # be gated only by final convergence.
+      nonconverged_solution = SparlectraRunResult(
+        result.raw_result.net,
+        :not_converged,
+        false,
+        true,
+        :skip,
+        false,
+        :nr_mismatch_not_converged,
+        "NR mismatch did not converge",
+        result.raw_result.iterations,
+        result.raw_result.elapsed_s,
+        result.raw_result.solver_elapsed_s,
+        result.raw_result.final_mismatch,
+        result.raw_result.method,
+        result.raw_result.control_status,
+        result.raw_result.performance_profile,
+        result.raw_result.diagnostics,
+      )
+      nonconverged_csv_dir = joinpath(tmpdir, "nonconverged_csv")
+      mkpath(nonconverged_csv_dir)
+      nonconverged_csv = Sparlectra._write_detailed_result_csv(nonconverged_csv_dir, nonconverged_solution; format = "technical", config = direct_cfg)
+      @test nonconverged_csv == ["bus_voltages_complex.csv", "branch_flows.csv"]
+      @test isfile(joinpath(nonconverged_csv_dir, "bus_voltages_complex.csv"))
+      @test isfile(joinpath(nonconverged_csv_dir, "branch_flows.csv"))
       @test !occursin("Final PV/REF Q-limit check: OK", nonconverged_log)
 
       failed_diagnostic = joinpath(tmpdir, "failed_diagnose.txt")
@@ -916,6 +945,28 @@ function run_api_tests()
       recovered_result = resolve_powerflow_artifact(started["run_id"], "result.json")
       @test recovered_result isa SparlectraApiArtifact
       @test recovered_result.path == joinpath(started["output_dir"], "result.json")
+
+      stale_csv_id = "stale-csv-artifacts"
+      stale_csv_dir = joinpath(output_root, stale_csv_id)
+      mkpath(stale_csv_dir)
+      stale_csv_result_file = joinpath(stale_csv_dir, "result.json")
+      write(stale_csv_result_file, "{}\n")
+      write(joinpath(stale_csv_dir, "bus_voltages_complex.csv"), "bus,vm_pu\n1,1.0\n")
+      stale_csv_result = Sparlectra._api_result(
+        run_id = stale_csv_id,
+        status = :succeeded,
+        success = true,
+        output_dir = stale_csv_dir,
+        result_file = stale_csv_result_file,
+        artifacts = SparlectraApiArtifact[],
+      )
+      Sparlectra._register_powerflow_run!(stale_csv_result)
+      stale_csv_artifacts = list_powerflow_artifacts(stale_csv_id)
+      @test "bus_voltages_complex.csv" in Set(artifact["name"] for artifact in stale_csv_artifacts)
+      stale_csv_resolved = resolve_powerflow_artifact(stale_csv_id, "bus_voltages_complex.csv")
+      @test stale_csv_resolved isa SparlectraApiArtifact
+      @test stale_csv_resolved.kind === :csv
+      @test read(stale_csv_resolved.path, String) == "bus,vm_pu\n1,1.0\n"
 
       stale_root = joinpath(tmpdir, "stale-runs")
       stale_run_id = "stale-run"
