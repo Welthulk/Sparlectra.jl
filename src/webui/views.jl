@@ -160,7 +160,7 @@ function _webui_config_notice_html(notice)::String
   (changed || !isempty(duplicates) || !isempty(missing) || !isempty(normalized)) || return ""
   severity = !isempty(duplicates) ? "warning strong-warning" : !isempty(normalized) ? "warning" : "info"
   detail = !isempty(duplicates) ? " Duplicate YAML keys require manual review before refresh can write." : ""
-  return "<div class=\"alert config-notice $(severity)\" role=\"status\"><strong>Configuration notice:</strong> your selected configuration is missing newer options or contains deprecated values.$(detail) Open <a href=\"#configuration-maintenance\">Advanced / expert options → Configuration maintenance</a> to review or refresh it.</div>"
+  return "<div class=\"alert config-notice $(severity)\" role=\"status\"><strong>Configuration notice:</strong> your selected configuration is missing newer options or contains deprecated values.$(detail) Open <a href=\"#configuration-maintenance\">the advanced configuration tools</a> to review or refresh it.</div>"
 end
 
 function _webui_recent_error_entries(operation_log::AbstractString; limit::Integer = 5)::Vector{Dict{String,Any}}
@@ -222,7 +222,10 @@ function render_powerflow_form(;
   selected_config_file::AbstractString = "",
   active_run = get_active_webui_powerflow_job(),
   config_notice = nothing,
+  case_profile = nothing,
 )::String
+  profile_values = case_profile isa AbstractDict ? case_profile : Dict{String,Any}()
+  profile_notice = isempty(profile_values) ? "" : "<div class=\"alert info case-settings-notice\" role=\"status\"><strong>Case-specific settings applied.</strong> Saved Web UI settings for this MATPOWER case prefilled the form. Manual edits on this page override the profile for this run.</div>"
   error_html = _webui_error_alert_html(error_message)
   casefiles = case_directory === nothing ? _webui_casefile_options(application_root) : _webui_casefile_options_in_directory(case_directory)
   bundled_case_directory = joinpath(application_root, "data", "mpower")
@@ -245,47 +248,47 @@ function render_powerflow_form(;
 </fieldset>
 """
   form = """
-$(error_html)$(_webui_active_run_banner(active_run))$(notice_html)<p class=\"lede\">Run a local MATPOWER case through the Sparlectra PowerFlow service.</p>
+$(error_html)$(_webui_active_run_banner(active_run))$(notice_html)$(profile_notice)<p class=\"lede\">Run a local MATPOWER case through the Sparlectra PowerFlow service.</p>
 <form id=\"powerflow-run-form\" data-powerflow-form method=\"post\" action=\"/powerflow/run\" class=\"panel form-grid powerflow-form-card\" onsubmit=\"this.classList.add('is-submitting'); this.setAttribute('aria-busy', 'true'); this.querySelector('button[type=submit]').disabled = true;\">
 $(config_control)
 <label>$(_webui_field_label("casefile", "Existing MATPOWER case"))$(case_select)<small class="field-hint">Cases from <code>$(_webui_escape(effective_case_directory))</code></small></label>
 <label><span class="field-label">Or type/download MATPOWER case</span>$(case_manual)<small class="field-hint">Manual input overrides the existing-case selection.</small></label>
-<label>$(_webui_field_label("power_flow_tol", "PowerFlow tolerance"))<input name=\"power_flow_tol\" type=\"number\" step=\"any\" min=\"0\" value=\"1e-8\"></label>
-<label>$(_webui_field_label("power_flow_max_iter", "Maximum iterations"))<input name=\"power_flow_max_iter\" type=\"number\" min=\"1\" value=\"80\"></label>
-<label class=\"check\"><input name=\"power_flow_autodamp\" type=\"checkbox\" checked>$(_webui_field_label("power_flow_autodamp", "Autodamping enabled"))</label>
-<label>$(_webui_field_label("power_flow_autodamp_min", "Autodamping minimum"))<input name=\"power_flow_autodamp_min\" type=\"number\" step=\"any\" min=\"0\" max=\"1\" value=\"0.05\"></label>
-<label class=\"check\"><input name=\"power_flow_qlimits_enabled\" type=\"checkbox\" checked>$(_webui_field_label("power_flow_qlimits_enabled", "Q-limit handling enabled"))</label>
-<label>$(_webui_field_label("power_flow_qlimits_enforcement_mode", "Q-limit enforcement mode"))$(_webui_select("power_flow_qlimits_enforcement_mode", _WEBUI_QLIMIT_ENFORCEMENT_MODE_VALUES, :active_set))</label>
-<label>$(_webui_field_label("power_flow_wrong_branch_detection", "Wrong-branch detection"))$(_webui_select("power_flow_wrong_branch_detection", WRONG_BRANCH_DETECTION_VALUES, :warn))</label>
-<label>$(_webui_field_label("power_flow_start_angle_mode", "Start angle mode"))$(_webui_select("power_flow_start_angle_mode", POWERFLOW_START_ANGLE_MODE_VALUES, :dc))</label>
-<label>$(_webui_field_label("power_flow_start_voltage_mode", "Start voltage mode"))$(_webui_select("power_flow_start_voltage_mode", POWERFLOW_START_VOLTAGE_MODE_VALUES, :profile_blend))</label>
-<label>$(_webui_field_label("output_logfile_results", "Logfile output mode"))$(_webui_select("output_logfile_results", OUTPUT_LOGFILE_RESULTS_VALUES, :compact))</label>
-<label>$(_webui_field_label("performance_timing", "Performance timing"))$(_webui_select("performance_timing", _WEBUI_PERFORMANCE_TIMING_VALUES, :compact))</label>
-<fieldset class=\"span-2 detailed-csv-options\"><legend><label class=\"check\"><input name=\"detailed_result_csv\" type=\"checkbox\" checked>$(_webui_field_label("detailed_result_csv", "Export detailed result CSV files"))</label></legend>
-<label class=\"detailed-csv-format\">$(_webui_field_label("detailed_result_csv_format", "CSV format"))$(_webui_select("detailed_result_csv_format", ("technical", "excel_de", "excel_us"), "excel_us"))<small class=\"field-hint\">technical: comma/decimal point/no grouping; excel_de: semicolon/decimal comma/thousands dot; excel_us: comma/decimal point/thousands comma.</small></label>
+<label>$(_webui_field_label("power_flow_tol", "PowerFlow tolerance"))<input name=\"power_flow_tol\" type=\"number\" step=\"any\" min=\"0\" value=\"$(_webui_input_value(profile_values, "power_flow_tol", "1e-8"))\"></label>
+<label>$(_webui_field_label("power_flow_max_iter", "Maximum iterations"))<input name=\"power_flow_max_iter\" type=\"number\" min=\"1\" value=\"$(_webui_input_value(profile_values, "power_flow_max_iter", "80"))\"></label>
+<label class=\"check\"><input name=\"power_flow_autodamp\" type=\"checkbox\"$(_webui_checked(profile_values, "power_flow_autodamp", true))>$(_webui_field_label("power_flow_autodamp", "Autodamping enabled"))</label>
+<label>$(_webui_field_label("power_flow_autodamp_min", "Autodamping minimum"))<input name=\"power_flow_autodamp_min\" type=\"number\" step=\"any\" min=\"0\" max=\"1\" value=\"$(_webui_input_value(profile_values, "power_flow_autodamp_min", "0.05"))\"></label>
+<label class=\"check\"><input name=\"power_flow_qlimits_enabled\" type=\"checkbox\"$(_webui_checked(profile_values, "power_flow_qlimits_enabled", true))>$(_webui_field_label("power_flow_qlimits_enabled", "Q-limit handling enabled"))</label>
+<label>$(_webui_field_label("power_flow_qlimits_enforcement_mode", "Q-limit enforcement mode"))$(_webui_select("power_flow_qlimits_enforcement_mode", _WEBUI_QLIMIT_ENFORCEMENT_MODE_VALUES, _webui_selected(profile_values, "power_flow_qlimits_enforcement_mode", :active_set)))</label>
+<label>$(_webui_field_label("power_flow_wrong_branch_detection", "Wrong-branch detection"))$(_webui_select("power_flow_wrong_branch_detection", WRONG_BRANCH_DETECTION_VALUES, _webui_selected(profile_values, "power_flow_wrong_branch_detection", :warn)))</label>
+<label>$(_webui_field_label("power_flow_start_angle_mode", "Start angle mode"))$(_webui_select("power_flow_start_angle_mode", POWERFLOW_START_ANGLE_MODE_VALUES, _webui_selected(profile_values, "power_flow_start_angle_mode", :dc)))</label>
+<label>$(_webui_field_label("power_flow_start_voltage_mode", "Start voltage mode"))$(_webui_select("power_flow_start_voltage_mode", POWERFLOW_START_VOLTAGE_MODE_VALUES, _webui_selected(profile_values, "power_flow_start_voltage_mode", :profile_blend)))</label>
+<label>$(_webui_field_label("output_logfile_results", "Logfile output mode"))$(_webui_select("output_logfile_results", OUTPUT_LOGFILE_RESULTS_VALUES, _webui_selected(profile_values, "output_logfile_results", :compact)))</label>
+<label>$(_webui_field_label("performance_timing", "Performance timing"))$(_webui_select("performance_timing", _WEBUI_PERFORMANCE_TIMING_VALUES, _webui_selected(profile_values, "performance_timing", :compact)))</label>
+<fieldset class=\"span-2 detailed-csv-options\"><legend><label class=\"check\"><input name=\"detailed_result_csv\" type=\"checkbox\"$(_webui_checked(profile_values, "detailed_result_csv", true))>$(_webui_field_label("detailed_result_csv", "Export detailed result CSV files"))</label></legend>
+<label class=\"detailed-csv-format\">$(_webui_field_label("detailed_result_csv_format", "CSV format"))$(_webui_select("detailed_result_csv_format", ("technical", "excel_de", "excel_us"), _webui_selected(profile_values, "detailed_result_csv_format", "excel_us")))<small class=\"field-hint\">technical: comma/decimal point/no grouping; excel_de: semicolon/decimal comma/thousands dot; excel_us: comma/decimal point/thousands comma.</small></label>
 </fieldset>
 <details class=\"span-2 expert-section\">
 <summary>Advanced / expert options</summary>
 $(config_maintenance)
-<label class=\"check expert-diagnostics\"><input name=\"run_diagnostics\" type=\"checkbox\">$(_webui_field_label("run_diagnostics", "Run diagnostics"))</label>
+<label class=\"check expert-diagnostics\"><input name=\"run_diagnostics\" type=\"checkbox\"$(_webui_checked(profile_values, "run_diagnostics", false))>$(_webui_field_label("run_diagnostics", "Run diagnostics"))</label>
 <fieldset class=\"import-section\">
 <legend>MATPOWER import conventions</legend>
 <p class=\"field-hint span-2\">Choose how MATPOWER transformer ratio, phase-shift, bus-shunt, and voltage-reference conventions are interpreted before the network is built. Use <strong>off</strong> for manual overrides, <strong>recommend</strong> to log advice without changing the run, or <strong>apply</strong> to let the profile apply safe recommendations. These controls are separate from post-solve wrong-branch plausibility checks.</p>
-<label>$(_webui_field_label("matpower_import_auto_profile", "MATPOWER auto-profile"))$(_webui_select("matpower_import_auto_profile", MATPOWER_AUTO_PROFILE_VALUES, :apply))</label>
-<label>$(_webui_field_label("matpower_import_ratio", "Transformer ratio convention"))$(_webui_select("matpower_import_ratio", MATPOWER_RATIO_VALUES, :normal))</label>
-<label>$(_webui_field_label("matpower_import_shift_sign", "Phase-shift sign"))<input name=\"matpower_import_shift_sign\" type=\"number\" step=\"2\" min=\"-1\" max=\"1\" value=\"1.0\"></label>
-<label>$(_webui_field_label("matpower_import_shift_unit", "Phase-shift unit"))$(_webui_select("matpower_import_shift_unit", MATPOWER_SHIFT_UNIT_VALUES, :deg))</label>
-<label>$(_webui_field_label("matpower_import_bus_shunt_model", "Bus-shunt model"))$(_webui_select("matpower_import_bus_shunt_model", MATPOWER_BUS_SHUNT_MODEL_VALUES, :admittance))</label>
-<label>$(_webui_field_label("matpower_import_pv_voltage_source", "PV voltage source"))$(_webui_select("matpower_import_pv_voltage_source", MATPOWER_PV_VOLTAGE_SOURCE_VALUES, :gen_vg))</label>
-<label>$(_webui_field_label("matpower_import_compare_voltage_reference", "Voltage reference comparison"))$(_webui_select("matpower_import_compare_voltage_reference", MATPOWER_COMPARE_VOLTAGE_REFERENCE_VALUES, :imported_setpoint))</label>
+<label>$(_webui_field_label("matpower_import_auto_profile", "MATPOWER auto-profile"))$(_webui_select("matpower_import_auto_profile", MATPOWER_AUTO_PROFILE_VALUES, _webui_selected(profile_values, "matpower_import_auto_profile", :apply)))</label>
+<label>$(_webui_field_label("matpower_import_ratio", "Transformer ratio convention"))$(_webui_select("matpower_import_ratio", MATPOWER_RATIO_VALUES, _webui_selected(profile_values, "matpower_import_ratio", :normal)))</label>
+<label>$(_webui_field_label("matpower_import_shift_sign", "Phase-shift sign"))<input name=\"matpower_import_shift_sign\" type=\"number\" step=\"2\" min=\"-1\" max=\"1\" value=\"$(_webui_input_value(profile_values, "matpower_import_shift_sign", "1.0"))\"></label>
+<label>$(_webui_field_label("matpower_import_shift_unit", "Phase-shift unit"))$(_webui_select("matpower_import_shift_unit", MATPOWER_SHIFT_UNIT_VALUES, _webui_selected(profile_values, "matpower_import_shift_unit", :deg)))</label>
+<label>$(_webui_field_label("matpower_import_bus_shunt_model", "Bus-shunt model"))$(_webui_select("matpower_import_bus_shunt_model", MATPOWER_BUS_SHUNT_MODEL_VALUES, _webui_selected(profile_values, "matpower_import_bus_shunt_model", :admittance)))</label>
+<label>$(_webui_field_label("matpower_import_pv_voltage_source", "PV voltage source"))$(_webui_select("matpower_import_pv_voltage_source", MATPOWER_PV_VOLTAGE_SOURCE_VALUES, _webui_selected(profile_values, "matpower_import_pv_voltage_source", :gen_vg)))</label>
+<label>$(_webui_field_label("matpower_import_compare_voltage_reference", "Voltage reference comparison"))$(_webui_select("matpower_import_compare_voltage_reference", MATPOWER_COMPARE_VOLTAGE_REFERENCE_VALUES, _webui_selected(profile_values, "matpower_import_compare_voltage_reference", :imported_setpoint)))</label>
 </fieldset>
 <fieldset class=\"benchmark-section\">
 <legend>Benchmark / repeated timing</legend>
 <p class=\"field-hint span-2\">Normal runs perform one representative power-flow execution. Benchmarking adds repeated BenchmarkTools measurements for timing statistics and does not change the numerical result.</p>
-<label class=\"check span-2\"><input name=\"benchmark_enabled\" type=\"checkbox\">$(_webui_field_label("benchmark_enabled", "Enable benchmark measurements"))</label>
+<label class=\"check span-2\"><input name=\"benchmark_enabled\" type=\"checkbox\"$(_webui_checked(profile_values, "benchmark_enabled", false))>$(_webui_field_label("benchmark_enabled", "Enable benchmark measurements"))</label>
 <p class=\"field-hint span-2\">Enable repeated BenchmarkTools measurements in addition to the representative run. This is intended for performance diagnostics and development work; disable it for normal interactive WebUI use when only one power-flow result is needed.</p>
-<label>$(_webui_field_label("benchmark_samples", "Benchmark samples (max. repeated measurements)"))<input name=\"benchmark_samples\" type=\"number\" min=\"1\" value=\"10\"><small class=\"field-hint\">Maximum repeated timing measurements for each selected method. The benchmark may finish earlier when this count is reached before the time budget, or collect fewer samples when the time budget is reached first.</small></label>
-<label>$(_webui_field_label("benchmark_seconds", "Benchmark max. time budget [s]"))<input name=\"benchmark_seconds\" type=\"number\" step=\"any\" min=\"0\" value=\"1.0\"><small class=\"field-hint\">Maximum BenchmarkTools time budget for repeated timing measurements. This is not a minimum runtime, solver timeout, or iteration limit; a running sample is not interrupted.</small></label>
+<label>$(_webui_field_label("benchmark_samples", "Benchmark samples (max. repeated measurements)"))<input name=\"benchmark_samples\" type=\"number\" min=\"1\" value=\"$(_webui_input_value(profile_values, "benchmark_samples", "10"))\"><small class=\"field-hint\">Maximum repeated timing measurements for each selected method. The benchmark may finish earlier when this count is reached before the time budget, or collect fewer samples when the time budget is reached first.</small></label>
+<label>$(_webui_field_label("benchmark_seconds", "Benchmark max. time budget [s]"))<input name=\"benchmark_seconds\" type=\"number\" step=\"any\" min=\"0\" value=\"$(_webui_input_value(profile_values, "benchmark_seconds", "1.0"))\"><small class=\"field-hint\">Maximum BenchmarkTools time budget for repeated timing measurements. This is not a minimum runtime, solver timeout, or iteration limit; a running sample is not interrupted.</small></label>
 </fieldset>
 </details>
 <div class=\"span-2 actions\"><button class=\"powerflow-submit\" type=\"submit\"><span class=\"submit-spinner\" aria-hidden=\"true\"></span><span class=\"submit-label\">Start PowerFlow run</span><span class=\"submit-progress-label\" role=\"status\" aria-live=\"polite\">Running PowerFlow…</span></button></div></form>
@@ -392,6 +395,34 @@ function _webui_solver_status(result::AbstractDict)::String
   return "n/a"
 end
 
+function _webui_result_successful(result::AbstractDict)::Bool
+  get(result, "success", false) === true && return true
+  lowercase(string(get(result, "status", ""))) in ("succeeded", "success", "converged", "ok") && return true
+  return _webui_solver_status(result) == "converged"
+end
+
+function _webui_case_settings_save_section(result::AbstractDict)::String
+  run_id = String(get(result, "run_id", ""))
+  isempty(run_id) && return ""
+  metadata = get(result, "metadata", Dict{String,Any}())
+  casefile = get(result, "runtime_casefile", get(metadata, "runtime_casefile", get(result, "casefile", "")))
+  isempty(String(casefile)) && return ""
+  successful = _webui_result_successful(result)
+  message = successful ?
+    "This run converged. You can save the current Web UI settings as the default profile for this MATPOWER case." :
+    "This run did not converge. Saving these settings is possible, but they may not be a good default for this case."
+  button = successful ? "Save settings for this case" : "Save these settings anyway"
+  override = successful ? "" : "<input type=\"hidden\" name=\"override_non_success\" value=\"true\">"
+  warning_class = successful ? "info" : "warning"
+  return """
+<section class=\"panel case-settings-save\"><h2>Case settings</h2>
+<p class=\"alert $(warning_class)\">$(_webui_escape(message))</p>
+<p><strong>Case:</strong> <code>$(_webui_escape(casefile))</code></p>
+<form method=\"post\" action=\"/powerflow/result/$(_webui_urlencode(run_id))/case-settings/save\">
+$(override)<button type=\"submit\">$(_webui_escape(button))</button>
+</form></section>"""
+end
+
 
 function render_config_refresh_result(result::AbstractDict)::String
   list_html(items) = isempty(items) ? "<li>none</li>" : join(("<li><code>$(_webui_escape(String(item)))</code></li>" for item in items), "")
@@ -436,7 +467,8 @@ function render_powerflow_result(result::AbstractDict)::String
     isempty(String(run_id)) ? "" :
     "$(abort_hint)$(hard_reset)$(interrupted)<div class=\"actions\">$(abort_form)<a class=\"button\" href=\"/powerflow/artifacts/$(_webui_urlencode(run_id))\">View artifacts</a><a class=\"button\" href=\"/powerflow/result/$(_webui_urlencode(run_id))\">Refresh status</a></div>"
   refresh_url = active && !isempty(String(run_id)) ? "/powerflow/result/$(_webui_urlencode(run_id))?autorefresh=1" : nothing
-  return _webui_layout("PowerFlow result", "<section class=\"panel\">$(result_summary)<table class=\"details\">$(rows)</table>$(active_hint)$(links)</section>"; show_back = true, refresh_url)
+  save_section = active ? "" : _webui_case_settings_save_section(result)
+  return _webui_layout("PowerFlow result", "<section class=\"panel\">$(result_summary)<table class=\"details\">$(rows)</table>$(active_hint)$(links)</section>$(save_section)"; show_back = true, refresh_url)
 end
 
 function render_powerflow_artifacts(run_id::AbstractString, artifacts)::String

@@ -103,6 +103,49 @@ const _WEBUI_QLIMIT_ENFORCEMENT_MODE_VALUES = (:active_set, :classic_simultaneou
 
 const _WEBUI_PERFORMANCE_TIMING_VALUES = WEBUI_PERFORMANCE_TIMING_VALUES
 
+const _WEBUI_CASE_SETTINGS_DIRNAME = ".sparlectra_case_settings"
+const _WEBUI_CASE_PROFILE_FORM_FIELDS = Tuple(field for (_, field, _) in _WEBUI_FORM_CONFIG_FIELDS)
+const _WEBUI_CASE_PROFILE_EXTRA_FIELDS = ("performance_timing", "run_diagnostics", "detailed_result_csv", "detailed_result_csv_format")
+const _WEBUI_CASE_PROFILE_FIELDS = (_WEBUI_CASE_PROFILE_FORM_FIELDS..., _WEBUI_CASE_PROFILE_EXTRA_FIELDS...)
+
+function _webui_normalized_case_key(casefile::AbstractString)::String
+  stem = replace(lowercase(basename(strip(String(casefile)))), r"[^a-z0-9]+" => "_")
+  stem = strip(stem, '_')
+  return isempty(stem) ? "case" : stem
+end
+
+function _webui_case_settings_path(output_root::AbstractString, casefile::AbstractString)::String
+  key = _webui_normalized_case_key(casefile)
+  return joinpath(abspath(output_root), _WEBUI_CASE_SETTINGS_DIRNAME, "$(key).yaml")
+end
+
+function _webui_load_case_settings(output_root::AbstractString, casefile::AbstractString)
+  path = _webui_case_settings_path(output_root, casefile)
+  isfile(path) || return nothing
+  try
+    data = load_yaml_dict(path)
+    get(data, "schema_version", nothing) == 1 || return nothing
+    get(data, "profile_kind", "") == "webui_case_settings" || return nothing
+    settings = get(data, "settings", nothing)
+    settings isa AbstractDict || return nothing
+    return Dict{String,Any}(String(k) => v for (k, v) in settings if String(k) in _WEBUI_CASE_PROFILE_FIELDS)
+  catch
+    return nothing
+  end
+end
+
+function _webui_input_value(values::AbstractDict, field::AbstractString, default)::String
+  return _webui_escape(string(get(values, field, default)))
+end
+
+function _webui_checked(values::AbstractDict, field::AbstractString, default::Bool)::String
+  return _webui_parse_bool(get(values, field, default)) ? " checked" : ""
+end
+
+function _webui_selected(values::AbstractDict, field::AbstractString, default)
+  return get(values, field, default)
+end
+
 function _webui_form_value(form::AbstractDict, key::String, default = nothing)
   haskey(form, key) && return form[key]
   symbol_key = Symbol(key)

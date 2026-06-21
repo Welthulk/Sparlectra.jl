@@ -1335,6 +1335,12 @@ function _run_sparlectra_api(;
     "q_limit_active_set_events" => active_set_events,
     "q_limit_pv_to_pq_events" => pv_to_pq_events,
     "q_limit_classic_outer_loop_passes" => classic_outer_loop_passes,
+    "webui_request_settings" => merge(Dict{String,Any}(String(key) => value for (key, value) in config_overrides), Dict{String,Any}(
+      "performance_timing" => String(performance_timing),
+      "run_diagnostics" => run_diagnostics,
+      "detailed_result_csv" => detailed_result_csv,
+      "detailed_result_csv_format" => detailed_result_csv_format === nothing ? "technical" : String(detailed_result_csv_format),
+    )),
   ), qlimit_metadata)
   haskey(csv_timing_metadata, :partial_error) && (final_metadata["detailed_result_csv_error"] = csv_timing_metadata[:partial_error])
   _write_run_metadata_artifact(output_path; case_path = case_path, lifecycle = final_metadata)

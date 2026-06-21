@@ -165,6 +165,27 @@ The header and `webui_operations.jsonl` include the Sparlectra version, package
 path, and local Git commit when available so users can confirm which checkout
 is serving the browser page.
 
+### Case-specific settings profiles
+
+Case-specific Web UI settings are optional. When a terminal result page shows a
+successful or converged run, the compact **Case settings** section offers
+**Save settings for this case**. This writes only the Web UI form options that
+were used for that completed run, plus traceability metadata, into a sanitized
+YAML profile below the Web UI output root. It does not save the run's full
+`effective_config.yaml`, solver internals, artifact paths, or transient
+convergence diagnostics.
+
+If the run did not converge, the result page does not show the normal save
+action. It instead labels the action **Save these settings anyway** and records
+that the user explicitly overrode the non-successful-run warning. No profile is
+saved automatically.
+
+When the same MATPOWER case is opened again with a saved profile, the form is
+prefilled with the profile values and displays a small notice. Precedence stays
+conservative: built-in defaults are loaded first, global configuration remains
+unchanged, the case-specific Web UI profile only prefills editable form fields,
+and any manual browser edit wins for the submitted run.
+
 The existing-case selector lists canonical MATPOWER `.m` files from the user Web UI case
 cache. Generated MATPOWER `.jl` cache artifacts are internal and are not user-selectable.
 First startup still provisions the small `warmup_case3.jl` demo case for warmup,

@@ -160,6 +160,117 @@ function run_webui_tests()
       @test occursin("config_refresh_write_completed", log)
     end
 
+    @testset "Case-specific settings profiles" begin
+      root = mktempdir()
+      run_id = "case-settings-test"
+      metadata = Dict{String,Any}(
+        "runtime_casefile" => "case145.m",
+        "runtime_casefile_path" => joinpath(root, "case145.m"),
+        "webui_request_settings" => Dict{String,Any}(
+          "power_flow.tol" => 1.0e-7,
+          "power_flow.max_iter" => 42,
+          "power_flow.autodamp" => true,
+          "power_flow.autodamp_min" => 0.07,
+          "power_flow.qlimits.enabled" => true,
+          "power_flow.qlimits.enforcement_mode" => "active_set",
+          "power_flow.wrong_branch_detection" => "warn",
+          "power_flow.start_mode.angle_mode" => "dc",
+          "power_flow.start_mode.voltage_mode" => "profile_blend",
+          "matpower_import.auto_profile" => "recommend",
+          "matpower_import.ratio" => "normal",
+          "matpower_import.shift_sign" => 1.0,
+          "matpower_import.shift_unit" => "deg",
+          "matpower_import.bus_shunt_model" => "admittance",
+          "matpower_import.pv_voltage_source" => "gen_vg",
+          "matpower_import.compare_voltage_reference" => "imported_setpoint",
+          "output.logfile_results" => "compact",
+          "benchmark.enabled" => false,
+          "benchmark.samples" => 10,
+          "benchmark.seconds" => 1.0,
+          "performance_timing" => "compact",
+          "run_diagnostics" => false,
+          "detailed_result_csv" => true,
+          "detailed_result_csv_format" => "excel_de",
+        ),
+      )
+      successful = Sparlectra._api_result(
+        run_id = run_id,
+        status = :succeeded,
+        success = true,
+        converged = true,
+        solution_available = true,
+        iterations = 3,
+        final_mismatch = 1.0e-9,
+        reason = "converged",
+        message = "ok",
+        casefile = joinpath(root, "case145.m"),
+        config_file = "configuration.yaml",
+        output_dir = joinpath(root, run_id),
+        metadata = metadata,
+      )
+      Sparlectra._POWERFLOW_SERVICE_RUNS[run_id] = successful
+      result_html = Sparlectra.render_powerflow_result(Sparlectra.to_dict(successful))
+      @test occursin("Save settings for this case", result_html)
+      @test !occursin("Save these settings anyway", result_html)
+
+      save_response = Sparlectra.handle_powerflow_case_settings_save(run_id, Dict{String,String}(); output_root = root, operation_log = root)
+      @test save_response.status == 303
+      profile_path = Sparlectra._webui_case_settings_path(root, "case145.m")
+      @test isfile(profile_path)
+      profile_text = read(profile_path, String)
+      @test occursin("profile_kind: webui_case_settings", profile_text)
+      @test occursin("power_flow_tol: 1.0e-7", profile_text)
+      @test occursin("detailed_result_csv_format: excel_de", profile_text)
+      @test !occursin("effective_config", profile_text)
+      @test basename(profile_path) == "case145_m.yaml"
+
+      loaded_form = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow?casefile=case145.m"; output_root = root).body)
+      @test occursin("Case-specific settings applied", loaded_form)
+      @test occursin("name=\"power_flow_tol\" type=\"number\" step=\"any\" min=\"0\" value=\"1.0e-7\"", loaded_form)
+      @test occursin("<option value=\"excel_de\" selected>excel de</option>", loaded_form)
+
+      request_form = _webui_test_form("case145.m", "configuration.yaml", root)
+      request_form["power_flow_tol"] = "2e-6"
+      request = Sparlectra.powerflow_webui_request(request_form; default_output_root = root)
+      @test request["config_overrides"]["power_flow.tol"] == 2.0e-6
+
+      write(Sparlectra._webui_case_settings_path(root, "../bad/../../case145.m"), "not: [valid\n")
+      invalid_form = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow?casefile=..%2Fbad%2F..%2F..%2Fcase145.m"; output_root = root).body)
+      @test occursin("PowerFlow run", invalid_form)
+      @test !occursin("Case-specific settings applied", invalid_form)
+
+      failed_run_id = "case-settings-failed"
+      failed = Sparlectra._api_result(
+        run_id = failed_run_id,
+        status = :not_converged,
+        success = false,
+        converged = false,
+        solution_available = true,
+        iterations = 80,
+        final_mismatch = 1.0,
+        reason = "not_converged",
+        message = "not converged",
+        casefile = joinpath(root, "case145.m"),
+        config_file = "configuration.yaml",
+        output_dir = joinpath(root, failed_run_id),
+        metadata = metadata,
+      )
+      Sparlectra._POWERFLOW_SERVICE_RUNS[failed_run_id] = failed
+      failed_html = Sparlectra.render_powerflow_result(Sparlectra.to_dict(failed))
+      @test !occursin("Save settings for this case", failed_html)
+      @test occursin("Save these settings anyway", failed_html)
+      rejected = Sparlectra.handle_powerflow_case_settings_save(failed_run_id, Dict{String,String}(); output_root = root, operation_log = root)
+      @test rejected.status == 400
+      accepted = Sparlectra.handle_powerflow_case_settings_save(failed_run_id, Dict("override_non_success" => "true"); output_root = root, operation_log = root)
+      @test accepted.status == 303
+      log_text = read(Sparlectra.webui_operation_log_path(root), String)
+      @test occursin("case_settings_saved", log_text)
+      @test occursin("case_settings_save_failed", log_text)
+      @test Sparlectra._webui_normalized_case_key("../bad/../../case145.m") == "case145_m"
+      delete!(Sparlectra._POWERFLOW_SERVICE_RUNS, run_id)
+      delete!(Sparlectra._POWERFLOW_SERVICE_RUNS, failed_run_id)
+    end
+
     registry_before_warmup = Set(keys(Sparlectra._POWERFLOW_SERVICE_RUNS))
     warmup_output = Ref("")
     warmup_runner = function(; output_dir, kwargs...)

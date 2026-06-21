@@ -77,13 +77,17 @@ function route_sparlectra_webui(method::AbstractString, target::AbstractString, 
     return handle_webui_doc_page(_webui_urldecode(path[(lastindex("/docs/") + 1):end]))
   elseif verb == "GET" && path in ("/", "/powerflow")
     _webui_log_route!(log_root, "powerflow_form_opened", verb, path; status = "opened")
+    selected_casefile = get(query, "casefile", "")
+    case_profile = isempty(selected_casefile) ? nothing : _webui_load_case_settings(output_root, selected_casefile)
     return _webui_html(render_powerflow_form(;
       output_root,
       case_directory = runtime === nothing ? nothing : runtime.case_directory,
       operation_log = runtime === nothing ? webui_operation_log_path(output_root) : runtime.operation_log,
+      selected_casefile,
       selected_config_file = runtime === nothing ? "" : runtime.config_file,
       error_message = runtime === nothing ? nothing : runtime.startup_config_error,
       config_notice = _powerflow_config_notice(runtime === nothing ? "" : runtime.config_file),
+      case_profile,
     ))
   elseif verb == "POST" && path == "/powerflow/run"
     try
@@ -120,6 +124,12 @@ function route_sparlectra_webui(method::AbstractString, target::AbstractString, 
     run_id = _webui_urldecode(path[(lastindex("/powerflow/result/") + 1):end])
     get(query, "autorefresh", "") == "1" || _webui_log_route!(log_root, "powerflow_status_opened", verb, path; status = "opened", run_id)
     return handle_powerflow_result(run_id)
+  elseif verb == "POST" && startswith(path, "/powerflow/result/") && endswith(path, "/case-settings/save")
+    prefix = "/powerflow/result/"
+    suffix = "/case-settings/save"
+    encoded_run_id = path[(lastindex(prefix) + 1):(lastindex(path) - lastindex(suffix))]
+    run_id = _webui_urldecode(encoded_run_id)
+    return handle_powerflow_case_settings_save(run_id, form; output_root, operation_log = log_root)
   elseif verb == "POST" && startswith(path, "/powerflow/abort/")
     run_id = _webui_urldecode(path[(lastindex("/powerflow/abort/") + 1):end])
     prior_status = get(get_webui_powerflow_job(run_id), "status", "")

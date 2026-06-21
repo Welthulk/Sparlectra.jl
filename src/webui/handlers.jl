@@ -112,6 +112,64 @@ function handle_powerflow_result(run_id::AbstractString)::SparlectraWebUIRespons
   return _webui_html(render_powerflow_result(result); status = status)
 end
 
+function handle_powerflow_case_settings_save(run_id::AbstractString, form::AbstractDict; output_root::AbstractString, operation_log::AbstractString)::SparlectraWebUIResponse
+  result = get_webui_powerflow_job(run_id)
+  if get(result, "reason", "") == "run_not_found"
+    record_webui_operation!(operation_log, "case_settings_save_failed"; route = "/powerflow/result/$(run_id)/case-settings/save", method = "POST", user_action = true, run_id, status = "rejected", message = "run not found")
+    return _webui_html(render_webui_error(404, "PowerFlow run not found."); status = 404)
+  end
+  successful = _webui_result_successful(result)
+  override = _webui_parse_bool(_webui_form_value(form, "override_non_success", false))
+  if !successful && !override
+    record_webui_operation!(operation_log, "case_settings_save_failed"; route = "/powerflow/result/$(run_id)/case-settings/save", method = "POST", user_action = true, run_id, status = "rejected", message = "non-successful run requires explicit override")
+    return _webui_html(render_webui_error(400, "Saving settings from a non-successful run requires the explicit override action."); status = 400)
+  end
+  metadata = get(result, "metadata", Dict{String,Any}())
+  runtime_casefile = String(get(result, "runtime_casefile", get(metadata, "runtime_casefile", "")))
+  runtime_casefile_path = String(get(result, "casefile", get(metadata, "runtime_casefile_path", "")))
+  settings_raw = get(metadata, "webui_request_settings", nothing)
+  if isempty(runtime_casefile) || !(settings_raw isa AbstractDict)
+    record_webui_operation!(operation_log, "case_settings_save_failed"; route = "/powerflow/result/$(run_id)/case-settings/save", method = "POST", user_action = true, run_id, status = "rejected", message = "run metadata incomplete")
+    return _webui_html(render_webui_error(400, "Run metadata is incomplete; case settings were not saved."); status = 400)
+  end
+  settings = Dict{String,Any}()
+  for (config_key, field, _) in _WEBUI_FORM_CONFIG_FIELDS
+    haskey(settings_raw, config_key) && (settings[field] = settings_raw[config_key])
+  end
+  for field in _WEBUI_CASE_PROFILE_EXTRA_FIELDS
+    haskey(settings_raw, field) && (settings[field] = settings_raw[field])
+  end
+  isempty(settings) && return _webui_html(render_webui_error(400, "No Web UI settings were recorded for this run."); status = 400)
+  key = _webui_normalized_case_key(runtime_casefile)
+  path = _webui_case_settings_path(output_root, runtime_casefile)
+  mkpath(dirname(path))
+  profile = Dict{String,Any}(
+    "schema_version" => 1,
+    "profile_kind" => "webui_case_settings",
+    "case" => Dict{String,Any}(
+      "display_name" => basename(runtime_casefile),
+      "normalized_case_key" => key,
+      "source" => "webui_mpower_data",
+      "original_path" => runtime_casefile_path,
+    ),
+    "saved_from_run" => Dict{String,Any}(
+      "run_id" => run_id,
+      "status" => successful ? "converged" : string(get(result, "status", "not_converged")),
+      "saved_at" => Dates.format(Dates.now(Dates.UTC), dateformat"yyyy-mm-ddTHH:MM:SS.sssZ"),
+      "override_non_success" => !successful && override,
+    ),
+    "settings" => settings,
+  )
+  try
+    _write_yaml_file(path, profile)
+    record_webui_operation!(operation_log, "case_settings_saved"; route = "/powerflow/result/$(run_id)/case-settings/save", method = "POST", user_action = true, run_id, status = "succeeded", profile_path = path, normalized_case_key = key)
+    return _webui_redirect("/powerflow?casefile=$(_webui_urlencode(runtime_casefile))")
+  catch err
+    record_webui_operation!(operation_log, "case_settings_save_failed"; route = "/powerflow/result/$(run_id)/case-settings/save", method = "POST", user_action = true, run_id, status = "failed", message = sprint(showerror, err))
+    return _webui_html(render_webui_error(500, sprint(showerror, err)); status = 500)
+  end
+end
+
 function handle_powerflow_abort(run_id::AbstractString)::SparlectraWebUIResponse
   result = abort_webui_powerflow_run(run_id)
   status = get(result, "reason", "") in ("unsafe_run_id", "run_not_found") ? 404 : 303
