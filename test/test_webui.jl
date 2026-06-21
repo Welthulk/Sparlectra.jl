@@ -172,9 +172,9 @@ function run_webui_tests()
           "power_flow.autodamp" => true,
           "power_flow.autodamp_min" => 0.07,
           "power_flow.qlimits.enabled" => true,
-          "power_flow.qlimits.enforcement_mode" => "active_set",
-          "power_flow.wrong_branch_detection" => "warn",
-          "power_flow.start_mode.angle_mode" => "dc",
+          "power_flow.qlimits.enforcement_mode" => :active_set,
+          "power_flow.wrong_branch_detection" => :warn,
+          "power_flow.start_mode.angle_mode" => :dc,
           "power_flow.start_mode.voltage_mode" => "profile_blend",
           "matpower_import.auto_profile" => "recommend",
           "matpower_import.ratio" => "normal",
@@ -220,13 +220,25 @@ function run_webui_tests()
       profile_text = read(profile_path, String)
       @test occursin("profile_kind: webui_case_settings", profile_text)
       @test occursin("power_flow_tol: 1.0e-7", profile_text)
+      @test occursin("power_flow_autodamp: true", profile_text)
+      @test occursin("benchmark_enabled: false", profile_text)
+      @test occursin("power_flow_qlimits_enforcement_mode: active_set", profile_text)
       @test occursin("detailed_result_csv_format: excel_de", profile_text)
       @test !occursin("effective_config", profile_text)
       @test basename(profile_path) == "case145_m.yaml"
+      profile = Sparlectra.load_yaml_dict(profile_path)
+      @test profile["settings"]["power_flow_autodamp"] === true
+      @test profile["settings"]["benchmark_enabled"] === false
+      @test profile["settings"]["power_flow_max_iter"] == 42
+      @test profile["settings"]["benchmark_samples"] == 10
+      @test profile["settings"]["benchmark_seconds"] == 1.0
+      @test profile["settings"]["power_flow_qlimits_enforcement_mode"] == "active_set"
 
       loaded_form = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow?casefile=case145.m"; output_root = root).body)
       @test occursin("Case-specific settings applied", loaded_form)
       @test occursin("name=\"power_flow_tol\" type=\"number\" step=\"any\" min=\"0\" value=\"1.0e-7\"", loaded_form)
+      @test occursin("name=\"power_flow_autodamp\" type=\"checkbox\" checked", loaded_form)
+      @test occursin("<option value=\"active_set\" selected>active set</option>", loaded_form)
       @test occursin("<option value=\"excel_de\" selected>excel de</option>", loaded_form)
 
       request_form = _webui_test_form("case145.m", "configuration.yaml", root)
@@ -325,8 +337,31 @@ function run_webui_tests()
       @test occursin("case_settings_saved", log_text)
       @test occursin("case_settings_save_failed", log_text)
       @test Sparlectra._webui_normalized_case_key("../bad/../../case145.m") == "case145_m"
+
+      unsupported_run_id = "case-settings-unsupported"
+      unsupported_metadata = deepcopy(metadata)
+      unsupported_metadata["webui_request_settings"]["power_flow.autodamp"] = Dates.now()
+      Sparlectra._POWERFLOW_WEBUI_JOBS[unsupported_run_id] = Dict{String,Any}(
+        "run_id" => unsupported_run_id,
+        "status" => "success",
+        "success" => true,
+        "converged" => true,
+        "solution_available" => true,
+        "iterations" => 3,
+        "final_mismatch" => 1.0e-9,
+        "reason" => "converged",
+        "message" => "ok",
+        "casefile" => joinpath(root, "case145.m"),
+        "output_root" => root,
+        "output_dir" => joinpath(root, unsupported_run_id),
+        "metadata" => unsupported_metadata,
+      )
+      unsupported_response = Sparlectra.handle_powerflow_case_settings_save(unsupported_run_id, Dict{String,String}(); output_root = root, operation_log = root)
+      @test unsupported_response.status == 400
+      @test occursin("unsupported value type", String(unsupported_response.body))
       delete!(Sparlectra._POWERFLOW_SERVICE_RUNS, run_id)
       delete!(Sparlectra._POWERFLOW_SERVICE_RUNS, failed_run_id)
+      delete!(Sparlectra._POWERFLOW_WEBUI_JOBS, unsupported_run_id)
     end
 
     registry_before_warmup = Set(keys(Sparlectra._POWERFLOW_SERVICE_RUNS))

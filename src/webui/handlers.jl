@@ -112,6 +112,30 @@ function handle_powerflow_result(run_id::AbstractString)::SparlectraWebUIRespons
   return _webui_html(render_powerflow_result(result); status = status)
 end
 
+function _webui_case_profile_scalar(field::AbstractString, value)
+  value === nothing && return nothing
+  value === missing && return nothing
+  value isa Bool && return value
+  value isa Integer && return Int(value)
+  value isa AbstractFloat && return isfinite(value) ? Float64(value) : throw(ArgumentError("Case-settings field $(field) must be finite."))
+  value isa Symbol && return String(value)
+  value isa AbstractString && return String(value)
+  throw(ArgumentError("Case-settings field $(field) has unsupported value type $(typeof(value))."))
+end
+
+function _webui_case_profile_value(field::AbstractString, value)
+  value isa AbstractVector || return _webui_case_profile_scalar(field, value)
+  return [_webui_case_profile_scalar(field, item) for item in value if !(item === nothing || item === missing)]
+end
+
+function _webui_case_profile_setting!(settings::Dict{String,Any}, field::AbstractString, value)
+  field in _WEBUI_CASE_PROFILE_FIELDS || throw(ArgumentError("Case-settings field $(field) is not allowed."))
+  serialized = _webui_case_profile_value(field, value)
+  serialized === nothing && return settings
+  settings[field] = serialized
+  return settings
+end
+
 function handle_powerflow_case_settings_save(run_id::AbstractString, form::AbstractDict; output_root::AbstractString, operation_log::AbstractString)::SparlectraWebUIResponse
   result = get_webui_powerflow_job(run_id)
   if get(result, "reason", "") == "run_not_found"
@@ -150,11 +174,17 @@ function handle_powerflow_case_settings_save(run_id::AbstractString, form::Abstr
     return _webui_html(render_webui_error(400, "Run metadata is incomplete; case settings were not saved."); status = 400)
   end
   settings = Dict{String,Any}()
-  for (config_key, field, _) in _WEBUI_FORM_CONFIG_FIELDS
-    haskey(settings_raw, config_key) && (settings[field] = settings_raw[config_key])
-  end
-  for field in _WEBUI_CASE_PROFILE_EXTRA_FIELDS
-    haskey(settings_raw, field) && (settings[field] = settings_raw[field])
+  try
+    for (config_key, field, _) in _WEBUI_FORM_CONFIG_FIELDS
+      haskey(settings_raw, config_key) && _webui_case_profile_setting!(settings, field, settings_raw[config_key])
+    end
+    for field in _WEBUI_CASE_PROFILE_EXTRA_FIELDS
+      haskey(settings_raw, field) && _webui_case_profile_setting!(settings, field, settings_raw[field])
+    end
+  catch err
+    message = err isa ArgumentError ? sprint(showerror, err) : "Case-settings profile contains an unsupported value."
+    record_webui_operation!(operation_log, "case_settings_save_failed"; route = "/powerflow/result/$(run_id)/case-settings/save", method = "POST", user_action = true, run_id, status = "rejected", message)
+    return _webui_html(render_webui_error(400, message); status = 400)
   end
   isempty(settings) && return _webui_html(render_webui_error(400, "No Web UI settings were recorded for this run."); status = 400)
   key = _webui_normalized_case_key(runtime_casefile)
