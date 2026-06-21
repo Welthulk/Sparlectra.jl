@@ -162,6 +162,7 @@ function run_webui_tests()
 
     @testset "Case-specific settings profiles" begin
       root = mktempdir()
+      write(joinpath(root, "case145.m"), "% case fixture\n")
       run_id = "case-settings-test"
       metadata = Dict{String,Any}(
         "runtime_casefile" => "case145.m",
@@ -214,8 +215,8 @@ function run_webui_tests()
       @test !occursin("Save these settings anyway", result_html)
 
       save_response = Sparlectra.handle_powerflow_case_settings_save(run_id, Dict{String,String}(); output_root = root, operation_log = root)
-      @test save_response.status == 303
-      profile_path = Sparlectra._webui_case_settings_path(root, "case145.m")
+      @test save_response.status == 200
+      profile_path = Sparlectra._webui_case_settings_path(root, joinpath(root, "case145.m"))
       @test isfile(profile_path)
       profile_text = read(profile_path, String)
       @test occursin("profile_kind: webui_case_settings", profile_text)
@@ -225,7 +226,7 @@ function run_webui_tests()
       @test occursin("power_flow_qlimits_enforcement_mode: active_set", profile_text)
       @test occursin("detailed_result_csv_format: excel_de", profile_text)
       @test !occursin("effective_config", profile_text)
-      @test basename(profile_path) == "case145_m.yaml"
+      @test basename(profile_path) == "case145.sparlectra-webui.yaml"
       profile = Sparlectra.load_yaml_dict(profile_path)
       @test profile["settings"]["power_flow_autodamp"] === true
       @test profile["settings"]["benchmark_enabled"] === false
@@ -234,7 +235,7 @@ function run_webui_tests()
       @test profile["settings"]["benchmark_seconds"] == 1.0
       @test profile["settings"]["power_flow_qlimits_enforcement_mode"] == "active_set"
 
-      loaded_form = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow?casefile=case145.m"; output_root = root).body)
+      loaded_form = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow?casefile=$(Sparlectra._webui_urlencode(joinpath(root, "case145.m")))"; output_root = root).body)
       @test occursin("Case-specific settings applied", loaded_form)
       @test occursin("name=\"power_flow_tol\" type=\"number\" step=\"any\" min=\"0\" value=\"1.0e-7\"", loaded_form)
       @test occursin("name=\"power_flow_autodamp\" type=\"checkbox\" checked", loaded_form)
@@ -246,12 +247,16 @@ function run_webui_tests()
       request = Sparlectra.powerflow_webui_request(request_form; default_output_root = root)
       @test request["config_overrides"]["power_flow.tol"] == 2.0e-6
 
-      write(Sparlectra._webui_case_settings_path(root, "../bad/../../case145.m"), "not: [valid\n")
-      invalid_form = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow?casefile=..%2Fbad%2F..%2F..%2Fcase145.m"; output_root = root).body)
+      invalid_case = joinpath(root, "invalid.m")
+      write(invalid_case, "% case fixture\n")
+      write(Sparlectra._webui_case_settings_path(root, invalid_case), "not: [valid\n")
+      invalid_form = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow?casefile=$(Sparlectra._webui_urlencode(invalid_case))"; output_root = root).body)
       @test occursin("PowerFlow run", invalid_form)
       @test !occursin("Case-specific settings applied", invalid_form)
 
       fresh_root = mktempdir()
+      mkpath(joinpath(fresh_root, "resolved"))
+      write(joinpath(fresh_root, "resolved", "case145.m"), "% case fixture\n")
       fresh_form = _webui_test_form("case145.m", "configuration.yaml", fresh_root)
       fresh_form["power_flow_tol"] = "2.5e-7"
       fresh_form["power_flow_max_iter"] = "37"
@@ -294,7 +299,7 @@ function run_webui_tests()
       @test get(fresh_completed, "status", "") == "success"
       @test get(get(fresh_completed, "metadata", Dict{String,Any}()), "webui_request_settings", nothing) isa AbstractDict
       fresh_response = Sparlectra.route_sparlectra_webui("POST", "/powerflow/result/$(fresh_run_id)/case-settings/save", Dict{String,String}(); output_root = fresh_root)
-      @test fresh_response.status == 303
+      @test fresh_response.status == 200
       fresh_profile_path = Sparlectra._webui_case_settings_path(fresh_root, joinpath(fresh_root, "resolved", "case145.m"))
       @test isfile(fresh_profile_path)
       fresh_profile = Sparlectra.load_yaml_dict(fresh_profile_path)
@@ -332,11 +337,11 @@ function run_webui_tests()
       rejected = Sparlectra.handle_powerflow_case_settings_save(failed_run_id, Dict{String,String}(); output_root = root, operation_log = root)
       @test rejected.status == 400
       accepted = Sparlectra.handle_powerflow_case_settings_save(failed_run_id, Dict("override_non_success" => "true"); output_root = root, operation_log = root)
-      @test accepted.status == 303
+      @test accepted.status == 200
       log_text = read(Sparlectra.webui_operation_log_path(root), String)
       @test occursin("case_settings_saved", log_text)
       @test occursin("case_settings_save_failed", log_text)
-      @test Sparlectra._webui_normalized_case_key("../bad/../../case145.m") == "case145_m"
+      @test Sparlectra._webui_normalized_case_key("../bad/../../case145.m") == "case145"
 
       unsupported_run_id = "case-settings-unsupported"
       unsupported_metadata = deepcopy(metadata)
@@ -359,9 +364,30 @@ function run_webui_tests()
       unsupported_response = Sparlectra.handle_powerflow_case_settings_save(unsupported_run_id, Dict{String,String}(); output_root = root, operation_log = root)
       @test unsupported_response.status == 400
       @test occursin("unsupported value type", String(unsupported_response.body))
+      traversal_run_id = "case-settings-traversal"
+      traversal_metadata = deepcopy(metadata)
+      traversal_metadata["runtime_casefile_path"] = "../outside/case145.m"
+      Sparlectra._POWERFLOW_WEBUI_JOBS[traversal_run_id] = Dict{String,Any}(
+        "run_id" => traversal_run_id,
+        "status" => "success",
+        "success" => true,
+        "converged" => true,
+        "solution_available" => true,
+        "iterations" => 3,
+        "final_mismatch" => 1.0e-9,
+        "reason" => "converged",
+        "message" => "ok",
+        "casefile" => "../outside/case145.m",
+        "output_root" => root,
+        "output_dir" => joinpath(root, traversal_run_id),
+        "metadata" => traversal_metadata,
+      )
+      traversal_response = Sparlectra.handle_powerflow_case_settings_save(traversal_run_id, Dict{String,String}(); output_root = root, operation_log = root)
+      @test traversal_response.status == 400
       delete!(Sparlectra._POWERFLOW_SERVICE_RUNS, run_id)
       delete!(Sparlectra._POWERFLOW_SERVICE_RUNS, failed_run_id)
       delete!(Sparlectra._POWERFLOW_WEBUI_JOBS, unsupported_run_id)
+      delete!(Sparlectra._POWERFLOW_WEBUI_JOBS, traversal_run_id)
     end
 
     registry_before_warmup = Set(keys(Sparlectra._POWERFLOW_SERVICE_RUNS))

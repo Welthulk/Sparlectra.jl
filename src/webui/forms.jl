@@ -103,24 +103,45 @@ const _WEBUI_QLIMIT_ENFORCEMENT_MODE_VALUES = (:active_set, :classic_simultaneou
 
 const _WEBUI_PERFORMANCE_TIMING_VALUES = WEBUI_PERFORMANCE_TIMING_VALUES
 
-const _WEBUI_CASE_SETTINGS_DIRNAME = ".sparlectra_case_settings"
 const _WEBUI_CASE_PROFILE_FORM_FIELDS = Tuple(field for (_, field, _) in _WEBUI_FORM_CONFIG_FIELDS)
-const _WEBUI_CASE_PROFILE_EXTRA_FIELDS = ("performance_timing", "run_diagnostics", "detailed_result_csv", "detailed_result_csv_format")
+const _WEBUI_CASE_PROFILE_EXTRA_FIELDS = ("casefile", "config_file", "performance_timing", "run_diagnostics", "detailed_result_csv", "detailed_result_csv_format")
 const _WEBUI_CASE_PROFILE_FIELDS = (_WEBUI_CASE_PROFILE_FORM_FIELDS..., _WEBUI_CASE_PROFILE_EXTRA_FIELDS...)
 
+function _webui_case_settings_filename(casefile::AbstractString)::String
+  stem = splitext(basename(strip(String(casefile))))[1]
+  isempty(stem) && throw(ArgumentError("Case-settings profile requires a case filename."))
+  return string(stem, ".sparlectra-webui.yaml")
+end
+
 function _webui_normalized_case_key(casefile::AbstractString)::String
-  stem = replace(lowercase(basename(strip(String(casefile)))), r"[^a-z0-9]+" => "_")
+  stem = replace(lowercase(splitext(basename(strip(String(casefile))))[1]), r"[^a-z0-9]+" => "_")
   stem = strip(stem, '_')
   return isempty(stem) ? "case" : stem
 end
 
-function _webui_case_settings_path(output_root::AbstractString, casefile::AbstractString)::String
-  key = _webui_normalized_case_key(casefile)
-  return joinpath(abspath(output_root), _WEBUI_CASE_SETTINGS_DIRNAME, "$(key).yaml")
+function _webui_resolve_case_profile_source(casefile::AbstractString; case_directory::Union{Nothing,AbstractString} = nothing, application_root::AbstractString = _webui_application_root())::String
+  raw = strip(String(casefile))
+  isempty(raw) && return ""
+  if isabspath(raw)
+    return normpath(raw)
+  end
+  ".." in splitpath(raw) && return ""
+  base = case_directory === nothing ? joinpath(application_root, "data", "mpower") : String(case_directory)
+  return normpath(joinpath(base, raw))
 end
 
-function _webui_load_case_settings(output_root::AbstractString, casefile::AbstractString)
-  path = _webui_case_settings_path(output_root, casefile)
+function _webui_case_settings_path(output_root::AbstractString, casefile::AbstractString; case_directory::Union{Nothing,AbstractString} = nothing)::String
+  source = isabspath(strip(String(casefile))) ? normpath(String(casefile)) : _webui_resolve_case_profile_source(casefile; case_directory)
+  isempty(source) && throw(ArgumentError("Unsafe MATPOWER case path for case-settings profile."))
+  return joinpath(dirname(source), _webui_case_settings_filename(source))
+end
+
+function _webui_load_case_settings(output_root::AbstractString, casefile::AbstractString; case_directory::Union{Nothing,AbstractString} = nothing)
+  path = try
+    _webui_case_settings_path(output_root, casefile; case_directory)
+  catch
+    return nothing
+  end
   isfile(path) || return nothing
   try
     data = load_yaml_dict(path)
@@ -128,7 +149,9 @@ function _webui_load_case_settings(output_root::AbstractString, casefile::Abstra
     get(data, "profile_kind", "") == "webui_case_settings" || return nothing
     settings = get(data, "settings", nothing)
     settings isa AbstractDict || return nothing
-    return Dict{String,Any}(String(k) => v for (k, v) in settings if String(k) in _WEBUI_CASE_PROFILE_FIELDS)
+    profile = Dict{String,Any}(String(k) => v for (k, v) in settings if String(k) in _WEBUI_CASE_PROFILE_FIELDS)
+    profile["_profile_path"] = path
+    return profile
   catch
     return nothing
   end

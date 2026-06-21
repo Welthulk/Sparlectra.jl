@@ -6,6 +6,7 @@
 * Restored compact default test-run output by suppressing verbose MATPOWER/runtime diagnostics in normal `test/runtests.jl` runs while keeping an explicit verbose opt-in for debugging.
 
 ### Bugfixes
+* Fixed Web UI case-settings sidecar saves so profiles are written next to the runtime MATPOWER case file as `<case_stem>.sparlectra-webui.yaml`, preserve all standard request fields with type-safe YAML values, and reload safely without changing global configuration.
 * Fixed Web UI/API MATPOWER import controls so selected auto-profile, transformer ratio, phase-shift, shunt, and voltage-reference options are validated, logged, propagated into runtime case construction, and reflected in effective configuration artifacts.
 * Fixed Web UI/API Q-limit diagnostics so pre-solve PV limit snapshots survive active-set mutation, non-converged solves do not report final Q-limit validation as `OK`, and `effective_config.yaml` records the runtime casefile used for the run.
 * Fixed Web UI/API detailed CSV artifact handling so non-converged runs with an available solution/network state still export CSV files, skipped exports are logged with structured reasons, and artifact routes rescan run directories for partial or stale-metadata CSV files.

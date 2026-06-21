@@ -136,6 +136,34 @@ function _webui_case_profile_setting!(settings::Dict{String,Any}, field::Abstrac
   return settings
 end
 
+const _WEBUI_CASE_PROFILE_CONFIG_FIELD_BY_KEY = Dict{String,String}(config_key => field for (config_key, field, _) in _WEBUI_FORM_CONFIG_FIELDS)
+
+function _webui_case_profile_settings(settings_raw::AbstractDict)::Dict{String,Any}
+  settings = Dict{String,Any}()
+  for (raw_key, raw_value) in settings_raw
+    key = String(raw_key)
+    field = get(_WEBUI_CASE_PROFILE_CONFIG_FIELD_BY_KEY, key, key)
+    field in _WEBUI_CASE_PROFILE_FIELDS || continue
+    _webui_case_profile_setting!(settings, field, raw_value)
+  end
+  return settings
+end
+
+function _webui_case_settings_saved_html(path::AbstractString, count::Integer, successful::Bool, override::Bool)::String
+  status = successful ? "successful/converged" : (override ? "non-successful, saved via explicit override" : "non-successful")
+  body = """
+<section class=\"panel case-settings-saved\"><h2>Case settings saved</h2>
+<p class=\"alert info\"><strong>Saved sidecar:</strong> <code>$(_webui_escape(path))</code></p>
+<ul>
+<li><strong>Saved settings:</strong> $(count)</li>
+<li><strong>Run status:</strong> $(_webui_escape(status))</li>
+</ul>
+<p>These settings will be applied when the same case is selected again. Manual edits in the form still override the saved profile for each run.</p>
+<p><a href=\"/powerflow?casefile=$(_webui_urlencode(path))\">Open the run form with this case</a></p>
+</section>"""
+  return _webui_layout("Case settings saved", body; show_back = true)
+end
+
 function handle_powerflow_case_settings_save(run_id::AbstractString, form::AbstractDict; output_root::AbstractString, operation_log::AbstractString)::SparlectraWebUIResponse
   result = get_webui_powerflow_job(run_id)
   if get(result, "reason", "") == "run_not_found"
@@ -173,28 +201,30 @@ function handle_powerflow_case_settings_save(run_id::AbstractString, form::Abstr
     record_webui_operation!(operation_log, "case_settings_save_failed"; route = "/powerflow/result/$(run_id)/case-settings/save", method = "POST", user_action = true, run_id, status = "rejected", message = "run metadata incomplete")
     return _webui_html(render_webui_error(400, "Run metadata is incomplete; case settings were not saved."); status = 400)
   end
-  settings = Dict{String,Any}()
-  try
-    for (config_key, field, _) in _WEBUI_FORM_CONFIG_FIELDS
-      haskey(settings_raw, config_key) && _webui_case_profile_setting!(settings, field, settings_raw[config_key])
-    end
-    for field in _WEBUI_CASE_PROFILE_EXTRA_FIELDS
-      haskey(settings_raw, field) && _webui_case_profile_setting!(settings, field, settings_raw[field])
-    end
+  settings = try
+    _webui_case_profile_settings(settings_raw)
   catch err
     message = err isa ArgumentError ? sprint(showerror, err) : "Case-settings profile contains an unsupported value."
     record_webui_operation!(operation_log, "case_settings_save_failed"; route = "/powerflow/result/$(run_id)/case-settings/save", method = "POST", user_action = true, run_id, status = "rejected", message)
     return _webui_html(render_webui_error(400, message); status = 400)
   end
   isempty(settings) && return _webui_html(render_webui_error(400, "No Web UI settings were recorded for this run."); status = 400)
-  key = _webui_normalized_case_key(runtime_casefile)
-  path = _webui_case_settings_path(output_root, runtime_casefile)
-  mkpath(dirname(path))
+  case_settings_source = !isempty(runtime_casefile_path) ? runtime_casefile_path : runtime_casefile
+  key = _webui_normalized_case_key(case_settings_source)
+  path = try
+    _webui_case_settings_path(output_root, case_settings_source)
+  catch err
+    message = err isa ArgumentError ? sprint(showerror, err) : "Unsafe MATPOWER case path for case-settings profile."
+    record_webui_operation!(operation_log, "case_settings_save_failed"; route = "/powerflow/result/$(run_id)/case-settings/save", method = "POST", user_action = true, run_id, status = "rejected", message)
+    return _webui_html(render_webui_error(400, message); status = 400)
+  end
+  isfile(case_settings_source) || return _webui_html(render_webui_error(400, "The runtime MATPOWER case file is not available; case settings were not saved."); status = 400)
   profile = Dict{String,Any}(
     "schema_version" => 1,
     "profile_kind" => "webui_case_settings",
     "case" => Dict{String,Any}(
       "display_name" => basename(runtime_casefile),
+      "profile_path" => path,
       "normalized_case_key" => key,
       "source" => "webui_mpower_data",
       "original_path" => runtime_casefile_path,
@@ -210,7 +240,7 @@ function handle_powerflow_case_settings_save(run_id::AbstractString, form::Abstr
   try
     _write_yaml_file(path, profile)
     record_webui_operation!(operation_log, "case_settings_saved"; route = "/powerflow/result/$(run_id)/case-settings/save", method = "POST", user_action = true, run_id, status = "succeeded", profile_path = path, normalized_case_key = key)
-    return _webui_redirect("/powerflow?casefile=$(_webui_urlencode(runtime_casefile))")
+    return _webui_html(_webui_case_settings_saved_html(path, length(settings), successful, !successful && override))
   catch err
     record_webui_operation!(operation_log, "case_settings_save_failed"; route = "/powerflow/result/$(run_id)/case-settings/save", method = "POST", user_action = true, run_id, status = "failed", message = sprint(showerror, err))
     return _webui_html(render_webui_error(500, sprint(showerror, err)); status = 500)

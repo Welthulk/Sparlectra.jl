@@ -1336,6 +1336,8 @@ function _run_sparlectra_api(;
     "q_limit_pv_to_pq_events" => pv_to_pq_events,
     "q_limit_classic_outer_loop_passes" => classic_outer_loop_passes,
     "webui_request_settings" => merge(Dict{String,Any}(String(key) => value for (key, value) in config_overrides), Dict{String,Any}(
+      "casefile" => casefile,
+      "config_file" => config_file,
       "performance_timing" => String(performance_timing),
       "run_diagnostics" => run_diagnostics,
       "detailed_result_csv" => detailed_result_csv,

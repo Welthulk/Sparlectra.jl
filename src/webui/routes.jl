@@ -78,7 +78,7 @@ function route_sparlectra_webui(method::AbstractString, target::AbstractString, 
   elseif verb == "GET" && path in ("/", "/powerflow")
     _webui_log_route!(log_root, "powerflow_form_opened", verb, path; status = "opened")
     selected_casefile = get(query, "casefile", "")
-    case_profile = isempty(selected_casefile) ? nothing : _webui_load_case_settings(output_root, selected_casefile)
+    case_profile = isempty(selected_casefile) ? nothing : _webui_load_case_settings(output_root, selected_casefile; case_directory = runtime === nothing ? nothing : runtime.case_directory)
     return _webui_html(render_powerflow_form(;
       output_root,
       case_directory = runtime === nothing ? nothing : runtime.case_directory,
