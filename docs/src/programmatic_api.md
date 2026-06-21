@@ -56,6 +56,7 @@ Only keys in `GUI_EDITABLE_CONFIG_KEYS` are accepted. The initial allowlist is:
 - `power_flow.autodamp`
 - `power_flow.autodamp_min`
 - `power_flow.qlimits.enabled`
+- `power_flow.qlimits.enforcement_mode`
 - `power_flow.wrong_branch_detection`
 - `power_flow.start_mode.angle_mode`
 - `power_flow.start_mode.voltage_mode`

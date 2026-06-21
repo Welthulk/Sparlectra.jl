@@ -45,6 +45,7 @@
 | YAML path | Type | Default | Allowed values | Meaning | Use when | Avoid when | Performance impact | Interactions |
 |---|---:|---:|---|---|---|---|---|---|
 | `power_flow.qlimits.enabled` | Bool | `true` | `true`, `false` | Master switch for Q-limit enforcement. | Realistic PV/PQ behavior needed. | Pure unconstrained PF tests. | Can increase switching iterations. | Gates all `qlimits.*`. |
+| `power_flow.qlimits.enforcement_mode` | Symbol/String | `active_set` | `active_set`, `classic_simultaneous`, `classic_one_at_a_time` | Selects active-set or classical Q-limit switching. | Compare dynamic switching with classical outer-loop enforcement. | Treating legacy `matpower_*` aliases as preferred public values. | Classical modes may require repeated solves. | See [Q-limit Switching Strategy](q_limit_switching_strategy.md). |
 | `power_flow.qlimits.start_iter` | Int | `3` | integer | First iteration index for Q limits. | Delay switching noise early. | Very late switching on hard cases. | Affects convergence speed. | `start_mode`, `auto_q_delta_pu`. |
 | `power_flow.qlimits.start_mode` | Symbol/String | `iteration_or_auto` | `iteration`, `auto`, `iteration_or_auto` | Activation policy. | Mixed robustness/perf runs. | Mismatched with expected policy. | Small control logic overhead. | `auto_q_delta_pu`. |
 | `power_flow.qlimits.auto_q_delta_pu` | Float64 | `1e-4` | nonnegative real | Auto activation threshold. | Fine-tuning switch timing. | Extreme values. | Low. | `start_mode=auto` or `iteration_or_auto`. |

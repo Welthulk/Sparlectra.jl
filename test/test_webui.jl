@@ -53,6 +53,7 @@ function _webui_test_form(casefile, config_file, output_root)
     "power_flow_autodamp" => "on",
     "power_flow_autodamp_min" => "0.05",
     "power_flow_qlimits_enabled" => "on",
+    "power_flow_qlimits_enforcement_mode" => "classic_simultaneous",
     "power_flow_wrong_branch_detection" => "warn",
     "power_flow_start_angle_mode" => "dc",
     "power_flow_start_voltage_mode" => "profile_blend",
@@ -303,6 +304,13 @@ function run_webui_tests()
       @test occursin("class=\"panel docs-page docs-content\"", docs_page_html)
       @test occursin("id=\"start-mode-options\"", docs_page_html)
 
+      qlimit_strategy_page = Sparlectra.route_sparlectra_webui("GET", "/docs/q_limit_switching_strategy")
+      @test qlimit_strategy_page.status == 200
+      qlimit_strategy_html = String(qlimit_strategy_page.body)
+      for term in ("active_set", "classic_simultaneous", "classic_one_at_a_time")
+        @test occursin(term, qlimit_strategy_html)
+      end
+
       matpower_format_page = Sparlectra.route_sparlectra_webui("GET", "/docs/matpower_format")
       @test matpower_format_page.status == 200
       matpower_format_html = String(matpower_format_page.body)
@@ -362,6 +370,7 @@ function run_webui_tests()
       @test request["detailed_result_csv"] === true
       @test request["detailed_result_csv_format"] == "excel_de"
       @test request["config_overrides"]["power_flow.qlimits.enabled"] === true
+      @test request["config_overrides"]["power_flow.qlimits.enforcement_mode"] == "classic_simultaneous"
       qlimits_disabled_form = copy(form)
       delete!(qlimits_disabled_form, "power_flow_qlimits_enabled")
       @test Sparlectra.powerflow_webui_request(qlimits_disabled_form; default_output_root = output_root)["config_overrides"]["power_flow.qlimits.enabled"] === false
@@ -428,6 +437,13 @@ function run_webui_tests()
       @test occursin("name=\"matpower_import_shift_unit\"", routed_powerflow_html)
       @test occursin("Package path:", routed_powerflow_html)
       @test occursin("commit", routed_powerflow_html)
+      @test occursin("name=\"power_flow_qlimits_enforcement_mode\"", form_html)
+      for mode in ("active_set", "classic_simultaneous", "classic_one_at_a_time")
+        @test occursin("<option value=\"$(mode)\"", form_html)
+      end
+      @test !occursin("<option value=\"matpower_simultaneous\"", form_html)
+      @test !occursin("<option value=\"matpower_one_at_a_time\"", form_html)
+      @test Sparlectra.resolve_webui_help_topic("power_flow.qlimits.enforcement_mode") !== nothing
       expected_help_topics = Dict(
         "casefile" => "webui.casefile",
         "power_flow_tol" => "power_flow.tol",
@@ -435,6 +451,7 @@ function run_webui_tests()
         "power_flow_autodamp" => "power_flow.autodamp",
         "power_flow_autodamp_min" => "power_flow.autodamp_min",
         "power_flow_qlimits_enabled" => "power_flow.qlimits.enabled",
+        "power_flow_qlimits_enforcement_mode" => "power_flow.qlimits.enforcement_mode",
         "power_flow_wrong_branch_detection" => "power_flow.wrong_branch_detection",
         "power_flow_start_angle_mode" => "power_flow.start_mode.angle_mode",
         "power_flow_start_voltage_mode" => "power_flow.start_mode.voltage_mode",

@@ -82,6 +82,7 @@ const _WEBUI_FORM_CONFIG_FIELDS = (
   ("power_flow.autodamp", "power_flow_autodamp", Bool),
   ("power_flow.autodamp_min", "power_flow_autodamp_min", Float64),
   ("power_flow.qlimits.enabled", "power_flow_qlimits_enabled", Bool),
+  ("power_flow.qlimits.enforcement_mode", "power_flow_qlimits_enforcement_mode", String),
   ("power_flow.wrong_branch_detection", "power_flow_wrong_branch_detection", String),
   ("power_flow.start_mode.angle_mode", "power_flow_start_angle_mode", String),
   ("power_flow.start_mode.voltage_mode", "power_flow_start_voltage_mode", String),
@@ -97,6 +98,8 @@ const _WEBUI_FORM_CONFIG_FIELDS = (
   ("benchmark.samples", "benchmark_samples", Int),
   ("benchmark.seconds", "benchmark_seconds", Float64),
 )
+
+const _WEBUI_QLIMIT_ENFORCEMENT_MODE_VALUES = (:active_set, :classic_simultaneous, :classic_one_at_a_time)
 
 const _WEBUI_PERFORMANCE_TIMING_VALUES = WEBUI_PERFORMANCE_TIMING_VALUES
 
