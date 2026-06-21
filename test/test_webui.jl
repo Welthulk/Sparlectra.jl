@@ -239,6 +239,64 @@ function run_webui_tests()
       @test occursin("PowerFlow run", invalid_form)
       @test !occursin("Case-specific settings applied", invalid_form)
 
+      fresh_root = mktempdir()
+      fresh_form = _webui_test_form("case145.m", "configuration.yaml", fresh_root)
+      fresh_form["power_flow_tol"] = "2.5e-7"
+      fresh_form["power_flow_max_iter"] = "37"
+      fresh_form["power_flow_qlimits_enforcement_mode"] = "active_set"
+      fresh_form["detailed_result_csv"] = "on"
+      fresh_form["detailed_result_csv_format"] = "excel_us"
+      fresh_request = Sparlectra.powerflow_webui_request(fresh_form; default_output_root = fresh_root)
+      fresh_runner = function(worker_request; case_directory = nothing)
+        fresh_run_id = worker_request["run_id"]
+        output_dir = joinpath(worker_request["output_root"], fresh_run_id)
+        mkpath(output_dir)
+        result = Sparlectra._api_result(
+          run_id = fresh_run_id,
+          status = :succeeded,
+          success = true,
+          converged = true,
+          solution_available = true,
+          iterations = 2,
+          final_mismatch = 1.0e-9,
+          reason = "converged",
+          message = "ok",
+          casefile = joinpath(fresh_root, "resolved", "case145.m"),
+          config_file = "configuration.yaml",
+          output_dir = output_dir,
+          result_file = joinpath(output_dir, "result.json"),
+          metadata = Dict{String,Any}(
+            "runtime_casefile_path" => joinpath(fresh_root, "resolved", "case145.m"),
+          ),
+        )
+        Sparlectra._POWERFLOW_SERVICE_RUNS[fresh_run_id] = result
+        return Sparlectra.to_dict(result)
+      end
+      fresh_active = Sparlectra.start_webui_powerflow_run(fresh_request; runner = fresh_runner)
+      fresh_run_id = fresh_active["run_id"]
+      for _ in 1:100
+        get(Sparlectra.get_webui_powerflow_job(fresh_run_id), "status", "") in Sparlectra._POWERFLOW_WEBUI_ACTIVE_STATES || break
+        sleep(0.05)
+      end
+      fresh_completed = Sparlectra.get_webui_powerflow_job(fresh_run_id)
+      @test get(fresh_completed, "status", "") == "success"
+      @test get(get(fresh_completed, "metadata", Dict{String,Any}()), "webui_request_settings", nothing) isa AbstractDict
+      fresh_response = Sparlectra.route_sparlectra_webui("POST", "/powerflow/result/$(fresh_run_id)/case-settings/save", Dict{String,String}(); output_root = fresh_root)
+      @test fresh_response.status == 303
+      fresh_profile_path = Sparlectra._webui_case_settings_path(fresh_root, joinpath(fresh_root, "resolved", "case145.m"))
+      @test isfile(fresh_profile_path)
+      fresh_profile = Sparlectra.load_yaml_dict(fresh_profile_path)
+      fresh_settings = fresh_profile["settings"]
+      @test Set(keys(fresh_settings)) == Set(Sparlectra._WEBUI_CASE_PROFILE_FIELDS)
+      @test fresh_settings["power_flow_qlimits_enforcement_mode"] == "active_set"
+      @test fresh_settings["power_flow_tol"] == 2.5e-7
+      @test fresh_settings["power_flow_max_iter"] == 37
+      @test fresh_settings["detailed_result_csv"] === true
+      @test fresh_settings["detailed_result_csv_format"] == "excel_us"
+      @test !haskey(fresh_settings, "effective_config")
+      delete!(Sparlectra._POWERFLOW_SERVICE_RUNS, fresh_run_id)
+      delete!(Sparlectra._POWERFLOW_WEBUI_JOBS, fresh_run_id)
+
       failed_run_id = "case-settings-failed"
       failed = Sparlectra._api_result(
         run_id = failed_run_id,

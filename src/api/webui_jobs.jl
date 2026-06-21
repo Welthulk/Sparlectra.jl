@@ -85,6 +85,40 @@ function _webui_job_snapshot(job::AbstractDict)::Dict{String,Any}
   return snapshot
 end
 
+function _webui_request_settings_for_profile(request::AbstractDict)::Dict{String,Any}
+  settings = Dict{String,Any}()
+  config_overrides = _service_request_value(request, "config_overrides", Dict{String,Any}())
+  if config_overrides isa AbstractDict
+    for (key, value) in config_overrides
+      settings[String(key)] = value
+    end
+  end
+  for key in _WEBUI_CASE_PROFILE_EXTRA_FIELDS
+    haskey(request, key) && (settings[key] = request[key])
+    haskey(request, Symbol(key)) && (settings[key] = request[Symbol(key)])
+  end
+  return settings
+end
+
+function _merge_webui_job_snapshot_with_persisted_result(snapshot::AbstractDict, persisted::AbstractDict)::Dict{String,Any}
+  get(persisted, "reason", "") == "run_not_found" && return Dict{String,Any}(snapshot)
+  merged = merge(Dict{String,Any}(String(key) => value for (key, value) in persisted),
+                 Dict{String,Any}(String(key) => value for (key, value) in snapshot))
+  for key in ("metadata", "artifacts", "runtime_casefile", "casefile", "resolved_casefile", "result_file", "logfile", "output_dir")
+    haskey(persisted, key) && (merged[key] = persisted[key])
+  end
+  snapshot_metadata = get(snapshot, "metadata", nothing)
+  if snapshot_metadata isa AbstractDict
+    persisted_metadata = get(persisted, "metadata", Dict{String,Any}())
+    merged_metadata = persisted_metadata isa AbstractDict ? Dict{String,Any}(String(key) => value for (key, value) in persisted_metadata) : Dict{String,Any}()
+    for (key, value) in snapshot_metadata
+      haskey(merged_metadata, String(key)) || (merged_metadata[String(key)] = value)
+    end
+    merged["metadata"] = merged_metadata
+  end
+  return merged
+end
+
 function _webui_active_job()
   return lock(_POWERFLOW_SERVICE_LOCK) do
     for job in values(_POWERFLOW_WEBUI_JOBS)
@@ -211,6 +245,7 @@ function start_webui_powerflow_run(request::AbstractDict; case_directory::Union{
   output_root = _service_request_value(request, "output_root")
   output_root isa AbstractString && !isempty(strip(output_root)) || return _service_failure("invalid_request", "PowerFlow service request requires a nonempty output_root.")
   run_id = string(uuid4())
+  webui_request_settings = _webui_request_settings_for_profile(request)
   job = Dict{String,Any}(
     "run_id" => run_id,
     "status" => "queued",
@@ -232,6 +267,8 @@ function start_webui_powerflow_run(request::AbstractDict; case_directory::Union{
     "last_heartbeat" => Dates.format(Dates.now(Dates.UTC), dateformat"yyyy-mm-ddTHH:MM:SS.sssZ"),
     "phase_started_at" => Dates.now(Dates.UTC),
     "last_progress_at" => Dates.now(Dates.UTC),
+    "webui_request_settings" => webui_request_settings,
+    "metadata" => Dict{String,Any}("webui_request_settings" => webui_request_settings),
   )
   lock(_POWERFLOW_SERVICE_LOCK) do
     _POWERFLOW_WEBUI_JOBS[run_id] = job
@@ -357,7 +394,10 @@ function get_webui_powerflow_job(run_id::AbstractString)::Dict{String,Any}
   _safe_powerflow_run_id(run_id) || return _service_failure("unsafe_run_id", "Unsafe PowerFlow run ID rejected."; run_id)
   return lock(_POWERFLOW_SERVICE_LOCK) do
     job = get(_POWERFLOW_WEBUI_JOBS, String(run_id), nothing)
-    job === nothing ? get_powerflow_result(run_id) : _webui_job_snapshot(job)
+    job === nothing && return get_powerflow_result(run_id)
+    snapshot = _webui_job_snapshot(job)
+    get(snapshot, "status", "") in _POWERFLOW_WEBUI_ACTIVE_STATES && return snapshot
+    return _merge_webui_job_snapshot_with_persisted_result(snapshot, get_powerflow_result(run_id))
   end
 end
 

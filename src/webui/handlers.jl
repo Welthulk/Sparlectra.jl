@@ -125,9 +125,26 @@ function handle_powerflow_case_settings_save(run_id::AbstractString, form::Abstr
     return _webui_html(render_webui_error(400, "Saving settings from a non-successful run requires the explicit override action."); status = 400)
   end
   metadata = get(result, "metadata", Dict{String,Any}())
-  runtime_casefile = String(get(result, "runtime_casefile", get(metadata, "runtime_casefile", "")))
-  runtime_casefile_path = String(get(result, "casefile", get(metadata, "runtime_casefile_path", "")))
-  settings_raw = get(metadata, "webui_request_settings", nothing)
+  runtime_casefile = ""
+  for source in (get(result, "runtime_casefile", nothing),
+                 metadata isa AbstractDict ? get(metadata, "runtime_casefile", nothing) : nothing,
+                 get(result, "resolved_casefile", nothing),
+                 get(result, "casefile", nothing),
+                 metadata isa AbstractDict ? get(metadata, "runtime_casefile_path", nothing) : nothing)
+    source === nothing && continue
+    candidate = String(source)
+    if !isempty(candidate)
+      runtime_casefile = candidate
+      break
+    end
+  end
+  runtime_casefile_path = String(something(
+    get(result, "resolved_casefile", nothing),
+    get(result, "casefile", nothing),
+    metadata isa AbstractDict ? get(metadata, "runtime_casefile_path", nothing) : nothing,
+    runtime_casefile,
+  ))
+  settings_raw = metadata isa AbstractDict ? get(metadata, "webui_request_settings", nothing) : nothing
   if isempty(runtime_casefile) || !(settings_raw isa AbstractDict)
     record_webui_operation!(operation_log, "case_settings_save_failed"; route = "/powerflow/result/$(run_id)/case-settings/save", method = "POST", user_action = true, run_id, status = "rejected", message = "run metadata incomplete")
     return _webui_html(render_webui_error(400, "Run metadata is incomplete; case settings were not saved."); status = 400)
