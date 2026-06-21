@@ -66,6 +66,7 @@ Base.@kwdef struct QLimitConfig
   trace_buses::Vector{Int} = Int[]
   lock_pv_to_pq_buses::Vector{Int} = Int[]
   ignore_q_limits::Bool = false
+  enforcement_mode::Symbol = :active_set
 end
 
 """
@@ -262,6 +263,7 @@ const POWERFLOW_START_VOLTAGE_MODE_VALUES = (:classic, :pv_gen_vg, :pv_bus_vm, :
 const POWERFLOW_START_PROFILE_SOURCE_VALUES = (:flat, :dc, :bus_metadata, :historical_profile, :matpower_reference, :state_estimation, :scada_snapshot)
 const _warned_legacy_bus_vm_va_blend = Ref(false)
 const QLIMIT_START_MODE_VALUES = (:iteration, :auto, :iteration_or_auto)
+const QLIMIT_ENFORCEMENT_MODE_VALUES = (:active_set, :matpower_simultaneous, :matpower_one_at_a_time)
 const QLIMIT_GUARD_ZERO_RANGE_MODE_VALUES = (:lock_pq,)
 const QLIMIT_GUARD_NARROW_RANGE_MODE_VALUES = (:prefer_pq, :lock_pq)
 const QLIMIT_GUARD_VIOLATION_MODE_VALUES = (:delayed_switch, :lock_pq)
@@ -479,6 +481,7 @@ function QLimitConfig(raw::AbstractDict)
     trace_buses = _as_int_vector_cfg(_raw_get(merged, "trace_buses", _raw_get(merged, "qlimit_trace_buses", Int[]))),
     lock_pv_to_pq_buses = _as_int_vector_cfg(_raw_get(merged, "lock_pv_to_pq_buses", Int[])),
     ignore_q_limits = _as_bool_cfg(_raw_get(raw, "ignore_q_limits", qlimits_enabled == false)),
+    enforcement_mode = _validate_allowed_symbol("power_flow.qlimits.enforcement_mode", _as_symbol_cfg(_raw_get(merged, "enforcement_mode", :active_set)), QLIMIT_ENFORCEMENT_MODE_VALUES),
   )
 end
 

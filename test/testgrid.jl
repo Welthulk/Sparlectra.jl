@@ -2269,6 +2269,44 @@ function test_q_limit_default_behavior_unchanged()::Bool
   return erg_default == 0 && erg_explicit == 0 && same_type && same_vm
 end
 
+function test_q_limit_enforcement_mode_config_values()::Bool
+  accepted = all(mode -> Sparlectra.QLimitConfig(Dict("enforcement_mode" => String(mode))).enforcement_mode == mode, (:active_set, :matpower_simultaneous, :matpower_one_at_a_time))
+  invalid_rejected = false
+  try
+    Sparlectra.QLimitConfig(Dict("enforcement_mode" => "classic"))
+  catch err
+    invalid_rejected = err isa ArgumentError && occursin("power_flow.qlimits.enforcement_mode", sprint(showerror, err))
+  end
+  return accepted && invalid_rejected
+end
+
+function test_q_limit_matpower_mode_base_failure_does_not_switch()::Bool
+  net = createTest3BusNet(cooldown = 0, hyst_pu = 0.0, qlim_min = -15.0, qlim_max = 15.0)
+  bus = geNetBusIdx(net = net, busName = "STATION1")
+  _, erg = runpf!(net, 1, 1e-14, 0; method = :rectangular, qlimit_enforcement_mode = :matpower_simultaneous, qlimit_max_outer = 5)
+  st = Sparlectra.rectangular_pf_status(net)
+  return erg == 1 &&
+         getNodeType(net.nodeVec[bus]) == Sparlectra.PV &&
+         isempty(net.qLimitLog) &&
+         !isnothing(st) &&
+         hasproperty(st, :qlimit_enforcement_mode) &&
+         st.qlimit_enforcement_mode == :matpower_simultaneous &&
+         st.base_pf_converged === false &&
+         st.qlimit_enforcement_started === false &&
+         st.final_outcome == :base_pf_not_converged
+end
+
+function test_q_limit_matpower_mode_dispatch_no_reenable()::Bool
+  net = createTest3BusNet(cooldown = 2, hyst_pu = 0.01, qlim_min = -15.0, qlim_max = 15.0)
+  _, _ = runpf!(net, 30, 1e-8, 0; method = :rectangular, qlimit_enforcement_mode = :matpower_one_at_a_time, qlimit_max_outer = 5)
+  st = Sparlectra.rectangular_pf_status(net)
+  return !isnothing(st) &&
+         hasproperty(st, :qlimit_enforcement_mode) &&
+         st.qlimit_enforcement_mode == :matpower_one_at_a_time &&
+         hasproperty(st, :qlimit_reenable_events) &&
+         st.qlimit_reenable_events == 0
+end
+
 
 function test_q_limit_start_iter_delays_switching()::Bool
   net = createTest3BusNet(cooldown = 0, hyst_pu = 0.0, qlim_min = -15.0, qlim_max = 15.0)
@@ -2653,6 +2691,9 @@ function run_grid_tests()
       @test test_q_limit_adjust_vset_step_exhaustion_fallback() == true
       @test test_q_limit_adjust_vset_multigen_single_controller() == true
       @test test_q_limit_default_behavior_unchanged() == true
+      @test test_q_limit_enforcement_mode_config_values() == true
+      @test test_q_limit_matpower_mode_base_failure_does_not_switch() == true
+      @test test_q_limit_matpower_mode_dispatch_no_reenable() == true
       @test test_q_limit_start_iter_delays_switching() == true
       @test test_q_limit_auto_accepts_switching() == true
       @test test_q_limit_hysteresis_delays_small_pv_to_pq_overshoot() == true

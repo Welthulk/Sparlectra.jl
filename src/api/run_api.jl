@@ -146,6 +146,15 @@ function _write_q_limit_detail_artifacts(output_path::AbstractString, net::Net; 
     _write_namedtuple_csv(joinpath(output_path, "q_limit_initial_limits.csv"), rows, (:bus, :qmin_pu, :qmax_pu, :qmin_MVAr, :qmax_MVAr); format = format)
     push!(artifacts, "q_limit_initial_limits.csv")
   end
+  rect_status = rectangular_pf_status(net)
+  if rect_status !== nothing && hasproperty(rect_status, :matpower_outer_loop)
+    outer_rows = collect(rect_status.matpower_outer_loop)
+    if !isempty(outer_rows)
+      columns = (:outer_iter, :mode, :gen_index, :bus_i, :violation_side, :qg_before, :q_limit, :violation_mvar, :action, :bus_type_before, :bus_type_after, :ref_changed)
+      _write_namedtuple_csv(joinpath(output_path, "q_limit_matpower_outer_loop.csv"), outer_rows, columns; format = format)
+      push!(artifacts, "q_limit_matpower_outer_loop.csv")
+    end
+  end
   return artifacts
 end
 
@@ -180,6 +189,18 @@ function _write_q_limit_log_artifact(output_path::AbstractString, result::Sparle
     println(io, "-------------------------------")
     printQLimitLog(result.net; io, max_rows = typemax(Int))
     println(io)
+    rect_status = rectangular_pf_status(result.net)
+    if rect_status !== nothing && hasproperty(rect_status, :qlimit_enforcement_mode) && rect_status.qlimit_enforcement_mode in (:matpower_simultaneous, :matpower_one_at_a_time)
+      println(io, "MATPOWER-compatible Q-limit outer loop")
+      println(io, "--------------------------------------")
+      println(io, "mode                       : ", rect_status.qlimit_enforcement_mode)
+      println(io, "base_pf_converged          : ", getproperty(rect_status, :base_pf_converged))
+      println(io, "qlimit_enforcement_started : ", getproperty(rect_status, :qlimit_enforcement_started))
+      println(io, "final_outcome              : ", getproperty(rect_status, :final_outcome))
+      println(io, "outer_iterations           : ", getproperty(rect_status, :matpower_outer_iterations))
+      println(io, "PQ->PV re-enable events    : 0")
+      println(io)
+    end
     println(io, "Final PV Q-limit active-set check")
     println(io, "---------------------------------")
     if result.numerical_converged
@@ -270,6 +291,7 @@ function _resolved_q_limit_runtime_options(config::SparlectraConfig)::Dict{Strin
   preview_mode = config.output.console_q_limit_events === :full ? "full" : "summary"
   return Dict{String,Any}(
     "qlimits_enabled" => qlimits_enabled,
+    "qlimit_enforcement_mode" => String(config.powerflow.qlimits.enforcement_mode),
     "qlimit_guard_enabled" => qlimits_enabled && config.powerflow.qlimits.guard,
     "logfile_diagnostics" => String(config.output.logfile_diagnostics),
     "console_q_limit_events" => String(config.output.console_q_limit_events),
@@ -285,6 +307,7 @@ function _write_resolved_q_limit_options(io::IO, metadata::AbstractDict)
   println(io, "Resolved Q-limit options")
   println(io, "------------------------")
   println(io, "Q-limit handling enabled : ", metadata["qlimits_enabled"])
+  println(io, "Q-limit enforcement mode : ", get(metadata, "qlimit_enforcement_mode", "active_set"))
   println(io, "Q-limit guard enabled    : ", metadata["qlimit_guard_enabled"])
   println(io, "Q-limit preview mode     : ", metadata["q_limit_preview_mode"])
   println(io, "Q-limit runlog max rows  : ", metadata["q_limit_runlog_max_rows"])
@@ -1205,6 +1228,7 @@ function _run_sparlectra_api(;
       println(io, "diagnostics_artifact: ", run_diagnostics ? "diagnose.log" : "disabled")
       println(io, "performance_artifact: ", timing_mode === :off ? "disabled" : "performance.log")
       println(io, "Q-limit handling enabled : ", !config.powerflow.qlimits.ignore_q_limits)
+      println(io, "Q-limit enforcement mode : ", String(config.powerflow.qlimits.enforcement_mode))
       println(io, "q_limit_detail_artifacts: ", isempty(q_limit_artifacts) ? "none" : join(q_limit_artifacts, ", "))
       println(io, "detailed_result_csv_status: ", csv_export_status)
       csv_export_skip_reason === nothing || println(io, "detailed_result_csv_skip_reason: ", csv_export_skip_reason)

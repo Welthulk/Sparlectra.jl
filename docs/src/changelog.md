@@ -1,6 +1,7 @@
 ## Version 0.8.7 – 2026-06-18
 
 ### Improvements
+* Added MATPOWER-compatible Q-limit enforcement modes (`matpower_simultaneous` and `matpower_one_at_a_time`) alongside the default active-set mode for diagnostic comparisons and large MATPOWER case analysis.
 * Improved the PowerFlow Web UI layout by widening the form, moving MATPOWER import controls into Advanced / expert options, defaulting new Web UI runs to `matpower_import.auto_profile = apply`, and making validation errors dismissible while preserving recent errors in a collapsed details block.
 * Restored compact default test-run output by suppressing verbose MATPOWER/runtime diagnostics in normal `test/runtests.jl` runs while keeping an explicit verbose opt-in for debugging.
 

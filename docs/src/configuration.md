@@ -127,6 +127,7 @@ power_flow:
 
   qlimits:
     enabled: true
+    enforcement_mode: active_set
     start_iter: 3
     start_mode: iteration_or_auto
 
@@ -161,6 +162,14 @@ runtime:
 extensions:
   reserved: true
 ```
+
+`power_flow.qlimits.enforcement_mode` selects the reactive-limit algorithm.
+`active_set` preserves Sparlectra's existing in-iteration PV→PQ active-set
+behavior. `matpower_simultaneous` and `matpower_one_at_a_time` run a
+MATPOWER-compatible outer loop: solve the base AC power flow first with Q-limit
+switching disabled, clamp violating generator Q to the violated limit only after
+a successful solve, convert affected voltage-controlled buses to PQ, and rerun
+without PQ→PV re-enable inside that enforcement loop.
 
 `matpower_import.auto_profile` controls a MATPOWER pre-run profile. Use `off`
 to disable it, `recommend` to print/log a recommendation table without changing
@@ -321,6 +330,7 @@ The following canonical keys are currently present in `src/configuration.yaml.ex
 - `power_flow.qlimits.auto_q_delta_pu`
 - `power_flow.qlimits.cooldown_iters`
 - `power_flow.qlimits.enabled`
+- `power_flow.qlimits.enforcement_mode`
 - `power_flow.qlimits.guard`
 - `power_flow.qlimits.guard.accept_bounded_violations`
 - `power_flow.qlimits.guard.enabled`
