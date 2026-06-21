@@ -931,8 +931,9 @@ result = get_powerflow_result(run_id)
       startup_output = String(take!(lifecycle_io))
       _assert_no_webui_transcript_markers(startup_output)
       @test occursin("Sparlectra Web UI is available at http://127.0.0.1:$(port)/powerflow", startup_output)
-      @test occursin("Stop: use Stop Web UI in the browser, close the app window, or press Ctrl+C here.", startup_output)
+      @test occursin("Stop: use Stop Web UI in the browser, close(server), or press Ctrl+C here.", startup_output)
       @test occursin("Operation log: ", startup_output)
+      @test !istaskdone(server.task)
       @test isdir(output_root)
       @test server.runtime.case_directory == Sparlectra.default_webui_case_cache_dir(output_root)
       @test isdir(server.runtime.case_directory)
@@ -943,6 +944,9 @@ result = get_powerflow_result(run_id)
       @test !startswith(server.runtime.config_file, normpath(pkgdir(Sparlectra)))
       startup_log = read(server.runtime.operation_log, String)
       @test occursin("\"event\":\"webui_start\"", startup_log)
+      @test occursin("\"event\":\"webui_server_bound\"", startup_log)
+      @test occursin("\"event\":\"webui_started\"", startup_log)
+      @test !occursin("browser_window_close", startup_log)
       @test occursin("\"sparlectra_version\":\"$(Sparlectra.version())\"", startup_log)
       @test occursin("\"sparlectra_package_path\":", startup_log)
       @test occursin(basename(Sparlectra._sparlectra_package_path()), startup_log)
@@ -981,7 +985,7 @@ result = get_powerflow_result(run_id)
         shutdown_output = String(take!(lifecycle_io))
         @test occursin("HTTP/1.1 200 OK", shutdown_response)
         @test occursin("Web UI stopped", shutdown_response)
-        @test occursin("Sparlectra Web UI stopped by Stop Web UI button.", shutdown_output)
+        @test occursin("Sparlectra Web UI stopped by explicit shutdown.", shutdown_output)
         @test !isopen(server.listener)
       finally
         close(server)
@@ -1032,7 +1036,7 @@ result = get_powerflow_result(run_id)
       close(restarted)
       @test timedwait(() -> istaskdone(restarted.task), 2.0) == :ok
       close_output = String(take!(close_io))
-      @test occursin("Sparlectra Web UI stopped by close(server).", close_output)
+      @test occursin("Sparlectra Web UI stopped by server close.", close_output)
 
       interrupt_io = IOBuffer()
       interrupted = start_sparlectra_webui(port = port, output_root = output_root, auto_shutdown_on_browser_close = false, _lifecycle_io = interrupt_io)
@@ -1051,16 +1055,25 @@ result = get_powerflow_result(run_id)
       browser_server = start_sparlectra_webui(
         port = browser_port,
         output_root = output_root,
-        auto_shutdown_on_browser_close = true,
+        shutdown_on_browser_close = true,
         open_browser = true,
         _lifecycle_io = browser_io,
         _browser_opener = _ -> run(`$(Base.julia_cmd()) --startup-file=no -e "sleep(0.2)"`; wait = false),
       )
-      take!(browser_io)
+      initial_browser_output = String(take!(browser_io))
       @test isopen(browser_server.listener)
-      @test timedwait(() -> istaskdone(browser_server.task), 4.0) == :ok
-      browser_output = String(take!(browser_io))
-      @test occursin("Sparlectra Web UI stopped by browser window close.", browser_output)
+      @test occursin("browser_close_monitor_skipped reason=not_reliable_on_this_platform", initial_browser_output)
+      sleep(0.5)
+      @test !istaskdone(browser_server.task)
+      browser_response = _webui_http_request(browser_port, "GET", "/powerflow")
+      @test occursin("HTTP/1.1 200 OK", browser_response)
+      @test !isempty(browser_response)
+      @test occursin("PowerFlow run", browser_response)
+      browser_log = read(browser_server.runtime.operation_log, String)
+      @test occursin("\"event\":\"browser_close_monitor_skipped\"", browser_log)
+      @test !occursin("browser_window_close", browser_log)
+      close(browser_server)
+      @test timedwait(() -> istaskdone(browser_server.task), 2.0) == :ok
       @test !isopen(browser_server.listener)
 
       heartbeat_probe = listen(ip"127.0.0.1", UInt16(0))
