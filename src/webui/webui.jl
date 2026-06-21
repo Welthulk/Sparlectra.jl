@@ -20,6 +20,7 @@ mutable struct _SparlectraWebUIRuntime
   case_directory::String
   config_file::String
   operation_log::String
+  startup_config_error::Union{String,Nothing}
   runner
   auto_shutdown_on_browser_close::Bool
   heartbeat_received::Bool
@@ -272,6 +273,22 @@ function _webui_lifecycle_println(runtime::_SparlectraWebUIRuntime, parts...)
   return nothing
 end
 
+function _webui_startup_log(io::IO, event::AbstractString; operation_log::Union{Nothing,AbstractString} = nothing, fields...)
+  println(io, event)
+  flush(io)
+  operation_log === nothing || record_webui_operation!(operation_log, event; route = "/powerflow", method = "START", user_action = false, fields...)
+  return nothing
+end
+
+function _webui_startup_failure!(io::IO, err, bt; operation_log::Union{Nothing,AbstractString} = nothing, phase::AbstractString = "startup")
+  message = sprint(showerror, err)
+  _webui_startup_log(io, "webui_start_failed"; operation_log, status = "failed", phase, message)
+  showerror(io, err, bt)
+  println(io)
+  flush(io)
+  return nothing
+end
+
 function _webui_request_shutdown!(runtime::_SparlectraWebUIRuntime; reason::Union{Symbol,Nothing} = nothing)
   listener = lock(runtime.lock) do
     if runtime.shutdown_reason === nothing && reason !== nothing
@@ -355,27 +372,48 @@ function _provision_webui_runtime!(root::AbstractString, config_file::Union{Noth
   return (config_file = configuration, case_directory, operation_log)
 end
 
+function _webui_validate_startup_config(configuration::AbstractString)
+  try
+    load_sparlectra_config(configuration; reload = true)
+    return nothing
+  catch err
+    return "Configuration error in $(configuration): $(sprint(showerror, err))"
+  end
+end
+
 function start_sparlectra_webui(; host::AbstractString = "127.0.0.1", port::Integer = 8080, output_root::Union{Nothing,AbstractString} = nothing, config_file::Union{Nothing,AbstractString} = nothing, open_browser::Bool = false, auto_shutdown_on_browser_close::Bool = true, browser_heartbeat_timeout_seconds::Real = 15.0, warmup::Bool = false, warmup_casefile::Union{Nothing,AbstractString} = nothing, warmup_store_result::Bool = false, _test_runner = start_powerflow_run, _lifecycle_io::IO = stdout, _browser_opener = _webui_open_browser)::SparlectraWebUIServer
+  _webui_startup_log(_lifecycle_io, "webui_start_requested"; host = String(host), port = Int(port))
   host_string = String(host)
-  host_string in ("127.0.0.1", "localhost", "::1") || throw(ArgumentError("Sparlectra Web UI only accepts loopback hosts: 127.0.0.1, localhost, or ::1."))
-  1 <= port <= 65535 || throw(ArgumentError("Web UI port must be between 1 and 65535."))
+  host_string in ("127.0.0.1", "localhost", "::1") || (err = ArgumentError("Sparlectra Web UI only accepts loopback hosts: 127.0.0.1, localhost, or ::1."); _webui_startup_failure!(_lifecycle_io, err, catch_backtrace(); phase = "validate_arguments"); throw(err))
+  1 <= port <= 65535 || (err = ArgumentError("Web UI port must be between 1 and 65535."); _webui_startup_failure!(_lifecycle_io, err, catch_backtrace(); phase = "validate_arguments"); throw(err))
   timeout = Float64(browser_heartbeat_timeout_seconds)
-  isfinite(timeout) && timeout > 0 || throw(ArgumentError("Browser heartbeat timeout must be a positive finite number."))
+  isfinite(timeout) && timeout > 0 || (err = ArgumentError("Browser heartbeat timeout must be a positive finite number."); _webui_startup_failure!(_lifecycle_io, err, catch_backtrace(); phase = "validate_arguments"); throw(err))
   root = abspath(output_root === nothing ? default_webui_output_root() : String(output_root))
   paths = nothing
   try
     paths = _provision_webui_runtime!(root, config_file)
   catch err
-    throw(ArgumentError("Could not create Web UI output directory $(root): $(sprint(showerror, err))"))
+    wrapped = ArgumentError("Could not create Web UI output directory $(root): $(sprint(showerror, err))")
+    _webui_startup_failure!(_lifecycle_io, wrapped, catch_backtrace(); phase = "provision_runtime")
+    throw(wrapped)
   end
+  config_error = _webui_validate_startup_config(paths.config_file)
+  _webui_startup_log(_lifecycle_io, "webui_config_loaded"; operation_log = paths.operation_log, status = config_error === nothing ? "loaded" : "error_visible", config_file = paths.config_file, message = config_error)
   recovery = refresh_powerflow_run_registry!(root)
+  _webui_startup_log(_lifecycle_io, "webui_routes_registered"; operation_log = paths.operation_log, status = "registered")
   record_webui_operation!(paths.operation_log, "webui_start"; route = "/powerflow", method = "START", status = "started", user_action = false, output_root = root, config_file = paths.config_file, case_cache_dir = paths.case_directory, operation_log = paths.operation_log)
   for result in get(recovery, "stale_recovered_runs", SparlectraApiResult[])
     record_webui_operation!(paths.operation_log, "webui_stale_active_run_recovered"; route = "/powerflow", method = "START", status = "interrupted_unknown", user_action = false, run_id = result.run_id, last_known_phase = get(result.metadata, "last_phase", nothing))
   end
   address = host_string == "localhost" ? ip"127.0.0.1" : parse(Sockets.IPAddr, host_string)
-  listener = Sockets.listen(address, UInt16(port))
-  runtime = _SparlectraWebUIRuntime(listener, paths.case_directory, paths.config_file, paths.operation_log, _test_runner, auto_shutdown_on_browser_close, false, 0.0, 0, nothing, _lifecycle_io, ReentrantLock())
+  listener = try
+    Sockets.listen(address, UInt16(port))
+  catch err
+    _webui_startup_failure!(_lifecycle_io, err, catch_backtrace(); operation_log = paths.operation_log, phase = "bind")
+    rethrow()
+  end
+  _webui_startup_log(_lifecycle_io, "webui_server_bound"; operation_log = paths.operation_log, status = "bound", host = host_string, port = Int(port))
+  runtime = _SparlectraWebUIRuntime(listener, paths.case_directory, paths.config_file, paths.operation_log, config_error, _test_runner, auto_shutdown_on_browser_close, false, 0.0, 0, nothing, _lifecycle_io, ReentrantLock())
   task = @async begin
     try
       while isopen(listener)

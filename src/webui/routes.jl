@@ -66,7 +66,13 @@ function route_sparlectra_webui(method::AbstractString, target::AbstractString, 
     return handle_webui_doc_page(_webui_urldecode(path[(lastindex("/docs/") + 1):end]))
   elseif verb == "GET" && path in ("/", "/powerflow")
     _webui_log_route!(log_root, "powerflow_form_opened", verb, path; status = "opened")
-    return _webui_html(render_powerflow_form(; output_root, case_directory = runtime === nothing ? nothing : runtime.case_directory, operation_log = runtime === nothing ? webui_operation_log_path(output_root) : runtime.operation_log, selected_config_file = runtime === nothing ? "" : runtime.config_file))
+    return _webui_html(render_powerflow_form(;
+      output_root,
+      case_directory = runtime === nothing ? nothing : runtime.case_directory,
+      operation_log = runtime === nothing ? webui_operation_log_path(output_root) : runtime.operation_log,
+      selected_config_file = runtime === nothing ? "" : runtime.config_file,
+      error_message = runtime === nothing ? nothing : runtime.startup_config_error,
+    ))
   elseif verb == "POST" && path == "/powerflow/run"
     try
       result = handle_powerflow_run(form; default_output_root = output_root, case_directory = runtime === nothing ? nothing : runtime.case_directory, runner = runtime === nothing ? start_powerflow_run : runtime.runner, operation_log = log_root)

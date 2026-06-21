@@ -987,6 +987,45 @@ result = get_powerflow_result(run_id)
         close(server)
       end
 
+      for (name, config_text, expected_marker) in (
+        ("new qlimit enforcement mode", "power_flow:\n  qlimits:\n    enforcement_mode: classic_simultaneous\n", "PowerFlow run"),
+        ("deprecated bus_vm_va_blend start alias", "power_flow:\n  start_mode:\n    voltage_mode: bus_vm_va_blend\n", "PowerFlow run"),
+        ("malformed configuration", "power_flow:\n  qlimits:\n    enforcement_mode: definitely_not_supported\n", "Configuration error"),
+      )
+        probe = listen(ip"127.0.0.1", UInt16(0))
+        config_port = Int(getsockname(probe)[2])
+        close(probe)
+        config_root = mktempdir()
+        config_path = joinpath(config_root, "configuration.yaml")
+        write(config_path, config_text)
+        config_io = IOBuffer()
+        config_server = start_sparlectra_webui(
+          port = config_port,
+          output_root = joinpath(config_root, "runs"),
+          config_file = config_path,
+          auto_shutdown_on_browser_close = false,
+          _lifecycle_io = config_io,
+        )
+        try
+          config_response = _webui_http_request(config_port, "GET", "/powerflow")
+          @test occursin("HTTP/1.1 200 OK", config_response)
+          @test !isempty(config_response)
+          @test occursin("Sparlectra", config_response)
+          @test occursin(expected_marker, config_response)
+          config_startup_output = String(take!(config_io))
+          @test occursin("webui_start_requested", config_startup_output)
+          @test occursin("webui_config_loaded", config_startup_output)
+          @test occursin("webui_routes_registered", config_startup_output)
+          @test occursin("webui_server_bound", config_startup_output)
+          config_log = read(config_server.runtime.operation_log, String)
+          @test occursin("\"event\":\"webui_config_loaded\"", config_log)
+          name == "malformed configuration" && @test occursin("error_visible", config_log)
+        finally
+          close(config_server)
+          wait(config_server.task)
+        end
+      end
+
       close_io = IOBuffer()
       restarted = start_sparlectra_webui(port = port, output_root = output_root, auto_shutdown_on_browser_close = false, _lifecycle_io = close_io)
       take!(close_io)
