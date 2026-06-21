@@ -782,6 +782,182 @@ Configuration precedence is `src/configuration.yaml.example`, optional
 `examples/configuration.yaml` (or an explicit `user_path`), CLI-style overrides,
 then explicit Julia API overrides. Unknown user keys throw an `ArgumentError`.
 """
+
+"""
+    refresh_sparlectra_config_file(path; write=false, backup=true, normalize_deprecated=true, default_path=DEFAULT_SPARLECTRA_CONFIG_PATH)
+
+Compare a user YAML configuration with the current Sparlectra template, add
+missing keys from the template, and optionally normalize documented deprecated
+aliases. Dry-run mode returns the refreshed YAML without writing. Writes are
+explicit and create a timestamped backup unless `backup=false` is requested.
+"""
+function refresh_sparlectra_config_file(path::AbstractString; write::Bool = false, backup::Bool = true, normalize_deprecated::Bool = true, default_path::AbstractString = DEFAULT_SPARLECTRA_CONFIG_PATH)
+  isfile(path) || throw(ArgumentError("Sparlectra config file not found: $(path)"))
+  isfile(default_path) || throw(ArgumentError("Default Sparlectra config file not found: $(default_path)"))
+  duplicate_keys = _detect_yaml_duplicate_keys(path)
+  warnings = String[]
+  for key in duplicate_keys
+    push!(warnings, "Duplicate YAML key detected: $(key). Refresh did not write because duplicate keys require manual review.")
+  end
+  defaults = load_yaml_dict(default_path)
+  user = load_yaml_dict(path)
+  refreshed = deepcopy(user)
+  missing_keys = String[]
+  _add_missing_config_keys!(refreshed, defaults, missing_keys)
+  normalized_keys = normalize_deprecated ? _normalize_deprecated_config_aliases!(refreshed) : String[]
+  refreshed_text = _yaml_dict_text(refreshed)
+  original_text = read(path, String)
+  changed = !isempty(missing_keys) || !isempty(normalized_keys) || refreshed_text != original_text
+  backup_path = nothing
+  written = false
+  success = true
+  if write && changed
+    if !isempty(duplicate_keys)
+      success = false
+    else
+      if backup
+        backup_path = string(path, ".bak-", Dates.format(now(), "yyyymmdd-HHMMSS"))
+        cp(path, backup_path; force = false)
+      end
+      Base.write(path, refreshed_text)
+      written = true
+    end
+  end
+  return (;
+    success,
+    changed,
+    written,
+    backup_path,
+    missing_keys = sort!(missing_keys),
+    normalized_keys = sort!(normalized_keys),
+    duplicate_keys = sort!(duplicate_keys),
+    warnings,
+    refreshed_text,
+  )
+end
+
+function refresh_sparlectra_config_text(text::AbstractString; normalize_deprecated::Bool = true, default_path::AbstractString = DEFAULT_SPARLECTRA_CONFIG_PATH)
+  mktemp() do path, io
+    write(io, text)
+    close(io)
+    return refresh_sparlectra_config_file(path; write = false, backup = false, normalize_deprecated, default_path)
+  end
+end
+
+function _detect_yaml_duplicate_keys(path::AbstractString)::Vector{String}
+  duplicates = String[]
+  stack_names = Dict{Int,Vector{String}}(0 => String[])
+  seen = Dict{Int,Set{String}}(0 => Set{String}())
+  open(path, "r") do io
+    for (lineno, rawline) in enumerate(eachline(io))
+      line = rstrip(_strip_yaml_comment(rawline))
+      isempty(strip(line)) && continue
+      indent_count = count(==(' '), first(line, something(findfirst(!=(' '), line), lastindex(line) + 1) - 1))
+      indent_count % 2 == 0 || continue
+      content = strip(line)
+      m = match(r"^([A-Za-z0-9_\-]+)\s*:\s*(.*)$", content)
+      isnothing(m) && continue
+      level = indent_count ÷ 2
+      key = String(m.captures[1])
+      parent_path = get(stack_names, level, String[])
+      level_seen = get!(seen, level, Set{String}())
+      compound = isempty(parent_path) ? key : string(join(parent_path, "."), ".", key)
+      if key in level_seen
+        push!(duplicates, compound)
+      else
+        push!(level_seen, key)
+      end
+      if isempty(String(m.captures[2]))
+        stack_names[level + 1] = [parent_path; key]
+        seen[level + 1] = Set{String}()
+      end
+      for old_level in collect(keys(stack_names))
+        old_level > level + 1 && delete!(stack_names, old_level)
+      end
+      for old_level in collect(keys(seen))
+        old_level > level + 1 && delete!(seen, old_level)
+      end
+    end
+  end
+  return unique(duplicates)
+end
+
+function _add_missing_config_keys!(dst::Dict{String,Any}, defaults::Dict{String,Any}, missing::Vector{String}; prefix::String = "")
+  for key in sort(collect(keys(defaults)))
+    path = isempty(prefix) ? key : string(prefix, ".", key)
+    if !haskey(dst, key)
+      dst[key] = deepcopy(defaults[key])
+      push!(missing, path)
+    elseif dst[key] isa Dict{String,Any} && defaults[key] isa Dict{String,Any}
+      _add_missing_config_keys!(dst[key], defaults[key], missing; prefix = path)
+    end
+  end
+  return dst
+end
+
+function _ensure_config_section!(root::Dict{String,Any}, keys::AbstractVector{<:AbstractString})::Dict{String,Any}
+  current = root
+  for key in keys
+    if !haskey(current, key) || !(current[key] isa Dict{String,Any})
+      current[key] = Dict{String,Any}()
+    end
+    current = current[key]
+  end
+  return current
+end
+
+function _normalize_deprecated_config_aliases!(root::Dict{String,Any})::Vector{String}
+  normalized = String[]
+  pf = haskey(root, "power_flow") ? root["power_flow"] : get(root, "powerflow", nothing)
+  pf isa Dict{String,Any} || return normalized
+  start_mode = get(pf, "start_mode", nothing)
+  if start_mode isa Dict{String,Any} && get(start_mode, "voltage_mode", nothing) in ("bus_vm_va_blend", :bus_vm_va_blend)
+    start_mode["voltage_mode"] = "profile_blend"
+    start_mode["profile_source"] = "matpower_reference"
+    push!(normalized, "power_flow.start_mode.voltage_mode")
+    push!(normalized, "power_flow.start_mode.profile_source")
+  end
+  qlimits = get(pf, "qlimits", nothing)
+  if qlimits isa Dict{String,Any}
+    mode = get(qlimits, "enforcement_mode", nothing)
+    if mode in ("matpower_simultaneous", :matpower_simultaneous)
+      qlimits["enforcement_mode"] = "classic_simultaneous"
+      push!(normalized, "power_flow.qlimits.enforcement_mode")
+    elseif mode in ("matpower_one_at_a_time", :matpower_one_at_a_time)
+      qlimits["enforcement_mode"] = "classic_one_at_a_time"
+      push!(normalized, "power_flow.qlimits.enforcement_mode")
+    end
+  end
+  return unique(normalized)
+end
+
+function _yaml_scalar_text(value)
+  value === nothing && return "null"
+  value isa Bool && return value ? "true" : "false"
+  value isa Symbol && return String(value)
+  value isa AbstractString && return occursin(r"[:#\[\],{}]|^$", value) ? repr(String(value)) : String(value)
+  value isa AbstractVector && return string("[", join((_yaml_scalar_text(v) for v in value), ", "), "]")
+  return string(value)
+end
+
+function _write_yaml_dict(io::IO, data::Dict{String,Any}; indent::Int = 0)
+  pad = repeat(" ", indent)
+  for key in sort(collect(keys(data)))
+    value = data[key]
+    if value isa Dict{String,Any}
+      println(io, pad, key, ":")
+      _write_yaml_dict(io, value; indent = indent + 2)
+    else
+      println(io, pad, key, ": ", _yaml_scalar_text(value))
+    end
+  end
+end
+
+function _yaml_dict_text(data::Dict{String,Any})::String
+  io = IOBuffer()
+  _write_yaml_dict(io, data)
+  return String(take!(io))
+end
 function load_sparlectra_config(user_path::AbstractString = USER_SPARLECTRA_CONFIG_PATH; default_path::AbstractString = DEFAULT_SPARLECTRA_CONFIG_PATH, reload::Bool = false, cli_overrides::AbstractDict = Dict{String,Any}(), overrides::AbstractDict = Dict{String,Any}())
   abspath_default = abspath(default_path)
   abspath_user = abspath(user_path)
@@ -810,6 +986,7 @@ function load_sparlectra_config(user_path::AbstractString = USER_SPARLECTRA_CONF
   end
   return config
 end
+
 
 function load_sparlectra_config!(user_path::AbstractString = USER_SPARLECTRA_CONFIG_PATH; default_path::AbstractString = DEFAULT_SPARLECTRA_CONFIG_PATH, reload::Bool = false, cli_overrides::AbstractDict = Dict{String,Any}(), overrides::AbstractDict = Dict{String,Any}())
   return set_sparlectra_config!(load_sparlectra_config(user_path; default_path = default_path, reload = reload, cli_overrides = cli_overrides, overrides = overrides))

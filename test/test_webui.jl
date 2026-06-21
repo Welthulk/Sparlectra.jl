@@ -111,6 +111,41 @@ function run_webui_tests()
     @test Sparlectra._format_elapsed_duration(3725.125) == "01:02:05.125"
     @test Sparlectra._format_elapsed_duration(nothing) == "—"
 
+
+    @testset "Configuration refresh controls" begin
+      root = mktempdir()
+      config_path = joinpath(root, "configuration.yaml")
+      write(config_path, "power_flow:\n  start_mode:\n    voltage_mode: bus_vm_va_blend\n  qlimits:\n    enabled: true\n")
+      runtime = Sparlectra._SparlectraWebUIRuntime(nothing, root, config_path, Sparlectra.webui_operation_log_path(root), nothing, Sparlectra.start_powerflow_run, false, false, time(), 0, nothing, IOBuffer(), ReentrantLock())
+      page = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow"; output_root = root, runtime).body)
+      @test occursin("Check configuration", page)
+      @test occursin("Refresh configuration", page)
+
+      check = Sparlectra.route_sparlectra_webui("POST", "/powerflow/config/check", Dict("config_file" => config_path); output_root = root, runtime)
+      check_body = String(check.body)
+      @test check.status == 200
+      @test occursin("power_flow.qlimits.enforcement_mode", check_body)
+      @test occursin("power_flow.start_mode.voltage_mode", check_body)
+      @test !occursin(".bak-", check_body)
+
+      refresh = Sparlectra.route_sparlectra_webui("POST", "/powerflow/config/refresh", Dict("config_file" => config_path); output_root = root, runtime)
+      @test refresh.status == 200
+      @test occursin("Configuration refreshed and written", String(refresh.body))
+      @test !isempty(filter(name -> occursin(r"configuration.yaml\.bak-", name), readdir(root)))
+
+      upload = Sparlectra.route_sparlectra_webui("POST", "/powerflow/config/refresh", Dict("config_text" => "power_flow:\n  qlimits:\n    enforcement_mode: matpower_simultaneous\n"); output_root = root, runtime)
+      @test upload.status == 200
+      upload_body = String(upload.body)
+      @test occursin("Download refreshed YAML", upload_body)
+      @test occursin("classic_simultaneous", upload_body)
+
+      log = read(runtime.operation_log, String)
+      @test occursin("config_refresh_check_started", log)
+      @test occursin("config_refresh_check_completed", log)
+      @test occursin("config_refresh_write_started", log)
+      @test occursin("config_refresh_write_completed", log)
+    end
+
     registry_before_warmup = Set(keys(Sparlectra._POWERFLOW_SERVICE_RUNS))
     warmup_output = Ref("")
     warmup_runner = function(; output_dir, kwargs...)

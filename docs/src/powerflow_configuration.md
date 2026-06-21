@@ -64,3 +64,9 @@
 | `power_flow.qlimits.guard.accept_bounded_violations` | Bool | `false` | `true`, `false` | Permit bounded residual violations. | Practical operations tradeoff. | Strict compliance studies. | May reduce retries. | `max_remaining_violations`. |
 | `power_flow.qlimits.guard.freeze_after_repeated_switching` | Bool | `true` | `true`, `false` | Freeze after repeated switch cycling. | Anti-chatter behavior. | Cases requiring unrestricted switching. | Can stabilize solves. | `max_switches`. |
 | `power_flow.qlimits.guard.log` | Bool | `true` | `true`, `false` | Emit guard logs. | Diagnostics/debugging. | Quiet batch runs. | I/O overhead when enabled. | `output.console_q_limit_events`. |
+
+## Safe configuration refresh
+
+Use `refresh_sparlectra_config_file(path; write=false)` to check an existing user YAML against the current template without modifying it. The refresh helper preserves existing user-provided values, adds missing keys from `src/configuration.yaml.example`, reports duplicate keys, and can normalize known deprecated aliases when `normalize_deprecated=true`.
+
+Writing is explicit: pass `write=true` to update the file. By default a timestamped `.bak-YYYYmmdd-HHMMSS` backup is created before writing, and duplicate keys prevent automatic writes. This refresh mechanism is a maintenance tool only; normal configuration loading still accepts supported legacy aliases, and Sparlectra never silently rewrites user YAML during startup.

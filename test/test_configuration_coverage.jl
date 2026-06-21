@@ -346,4 +346,45 @@ power_flow:
       @test cfg.powerflow.qlimits.start_mode === Symbol(mode)
     end
   end
+
+  @testset "Configuration refresh" begin
+    stale = tempname() * ".yaml"
+    write(stale, "power_flow:\n  tol: 1.0e-6\n  start_mode:\n    voltage_mode: bus_vm_va_blend\n  qlimits:\n    enabled: true\n")
+    dry = Sparlectra.refresh_sparlectra_config_file(stale)
+    @test dry.success
+    @test dry.changed
+    @test !dry.written
+    @test "power_flow.qlimits.enforcement_mode" in dry.missing_keys
+    @test "power_flow.start_mode.voltage_mode" in dry.normalized_keys
+    @test occursin("tol: 1.0e-6", dry.refreshed_text)
+    @test occursin("voltage_mode: profile_blend", dry.refreshed_text)
+    @test occursin("profile_source: matpower_reference", dry.refreshed_text)
+
+    written = Sparlectra.refresh_sparlectra_config_file(stale; write = true)
+    @test written.success
+    @test written.written
+    @test written.backup_path !== nothing
+    @test isfile(written.backup_path)
+    cfg = Sparlectra.load_sparlectra_config(stale; reload = true)
+    @test cfg.powerflow.tol == 1.0e-6
+    @test cfg.powerflow.start_mode.voltage_mode === :profile_blend
+    @test cfg.powerflow.start_mode.profile_source === :matpower_reference
+    @test cfg.powerflow.qlimits.enforcement_mode === :active_set
+
+    for (legacy, canonical) in (("matpower_simultaneous", "classic_simultaneous"), ("matpower_one_at_a_time", "classic_one_at_a_time"))
+      p = tempname() * ".yaml"
+      write(p, "power_flow:\n  qlimits:\n    enforcement_mode: $(legacy)\n")
+      result = Sparlectra.refresh_sparlectra_config_file(p)
+      @test "power_flow.qlimits.enforcement_mode" in result.normalized_keys
+      @test occursin("enforcement_mode: $(canonical)", result.refreshed_text)
+    end
+
+    dup = tempname() * ".yaml"
+    write(dup, "output:\n  detailed_result_csv_exporter: auto\n  detailed_result_csv_exporter: direct\n")
+    dup_result = Sparlectra.refresh_sparlectra_config_file(dup; write = true)
+    @test !dup_result.success
+    @test !dup_result.written
+    @test "output.detailed_result_csv_exporter" in dup_result.duplicate_keys
+    @test occursin("direct", read(dup, String))
+  end
 end

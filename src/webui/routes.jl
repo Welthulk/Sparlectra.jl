@@ -97,6 +97,13 @@ function route_sparlectra_webui(method::AbstractString, target::AbstractString, 
         selected_config_file,
       ); status = 400)
     end
+  elseif verb == "POST" && path == "/powerflow/config/check"
+    return handle_powerflow_config_refresh(form; write = false, operation_log = log_root)
+  elseif verb == "POST" && path == "/powerflow/config/refresh"
+    return handle_powerflow_config_refresh(form; write = true, operation_log = log_root)
+  elseif verb == "POST" && path == "/powerflow/config/download"
+    text = String(something(_webui_form_value(form, "refreshed_text", ""), ""))
+    return SparlectraWebUIResponse(200, Pair{String,String}["Content-Type" => "application/x-yaml; charset=utf-8", "Content-Disposition" => "attachment; filename=\"configuration-refreshed.yaml\""], Vector{UInt8}(codeunits(text)))
   elseif verb == "GET" && startswith(path, "/powerflow/result/")
     run_id = _webui_urldecode(path[(lastindex("/powerflow/result/") + 1):end])
     get(query, "autorefresh", "") == "1" || _webui_log_route!(log_root, "powerflow_status_opened", verb, path; status = "opened", run_id)

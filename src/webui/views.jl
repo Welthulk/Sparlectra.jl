@@ -226,6 +226,7 @@ function render_powerflow_form(;
 $(error_html)$(_webui_active_run_banner(active_run))<p class=\"lede\">Run a local MATPOWER case through the Sparlectra PowerFlow service.</p>
 <form id=\"powerflow-run-form\" data-powerflow-form method=\"post\" action=\"/powerflow/run\" class=\"panel form-grid powerflow-form-card\" onsubmit=\"this.classList.add('is-submitting'); this.setAttribute('aria-busy', 'true'); this.querySelector('button[type=submit]').disabled = true;\">
 $(config_control)
+<section class="span-2 panel config-maintenance"><h2>Configuration maintenance</h2><p class="field-hint">Check or explicitly refresh the selected YAML configuration. Refresh preserves existing values, adds newly introduced defaults, can normalize deprecated aliases, and creates a backup before writing. Startup never rewrites YAML automatically.</p><div class="actions"><button type="submit" formaction="/powerflow/config/check" formmethod="post">Check configuration</button><button type="submit" formaction="/powerflow/config/refresh" formmethod="post">Refresh configuration</button></div></section>
 <label>$(_webui_field_label("casefile", "Existing MATPOWER case"))$(case_select)<small class="field-hint">Cases from <code>$(_webui_escape(effective_case_directory))</code></small></label>
 <label><span class="field-label">Or type/download MATPOWER case</span>$(case_manual)<small class="field-hint">Manual input overrides the existing-case selection.</small></label>
 <label>$(_webui_field_label("power_flow_tol", "PowerFlow tolerance"))<input name=\"power_flow_tol\" type=\"number\" step=\"any\" min=\"0\" value=\"1e-8\"></label>
@@ -369,6 +370,23 @@ function _webui_solver_status(result::AbstractDict)::String
   return "n/a"
 end
 
+
+function render_config_refresh_result(result::AbstractDict)::String
+  list_html(items) = isempty(items) ? "<li>none</li>" : join(("<li><code>$(_webui_escape(String(item)))</code></li>" for item in items), "")
+  status = get(result, "written", false) ? "Configuration refreshed and written." : get(result, "changed", false) ? "Configuration refresh changes are available." : "Configuration is already current."
+  backup = isempty(String(get(result, "backup_path", ""))) ? "" : "<p><strong>Backup:</strong> <code>$(_webui_escape(String(result["backup_path"])))</code></p>"
+  download = get(result, "downloadable", false) ? "<form method=\"post\" action=\"/powerflow/config/download\"><textarea name=\"refreshed_text\" hidden>$(_webui_escape(String(result["refreshed_text"])))</textarea><button type=\"submit\">Download refreshed YAML</button></form>" : ""
+  content = """
+<section class=\"panel\"><h1>Configuration refresh</h1><p>$(status)</p>$(backup)
+<h2>Missing keys added from the template</h2><ul>$(list_html(get(result, "missing_keys", String[])))</ul>
+<h2>Deprecated aliases normalized</h2><ul>$(list_html(get(result, "normalized_keys", String[])))</ul>
+<h2>Duplicate keys detected</h2><ul>$(list_html(get(result, "duplicate_keys", String[])))</ul>
+<h2>Warnings</h2><ul>$(list_html(get(result, "warnings", String[])))</ul>
+$(download)<details><summary>Refreshed YAML preview</summary><pre class=\"artifact-text\">$(_webui_escape(String(result["refreshed_text"])))</pre></details>
+<p><a class=\"button\" href=\"/powerflow\">Back to PowerFlow</a></p></section>
+"""
+  return _webui_layout("Configuration refresh", content; show_back = true)
+end
 function render_powerflow_result(result::AbstractDict)::String
   run_id = get(result, "run_id", "")
   rows = join(("<tr><th>$(_webui_escape(field))</th><td>$(_webui_escape(_webui_result_value(result, field)))</td></tr>" for field in _WEBUI_RESULT_FIELDS), "")

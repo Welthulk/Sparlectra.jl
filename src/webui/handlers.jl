@@ -62,6 +62,50 @@ function handle_powerflow_run(form::AbstractDict; default_output_root::AbstractS
   return start_webui_powerflow_run(request; case_directory = effective_case_directory, runner, event_callback)
 end
 
+
+function _config_refresh_result_dict(result; config_file::AbstractString = "", downloadable::Bool = false)::Dict{String,Any}
+  return Dict{String,Any}(
+    "success" => result.success,
+    "changed" => result.changed,
+    "written" => result.written,
+    "backup_path" => result.backup_path === nothing ? "" : String(result.backup_path),
+    "missing_keys" => result.missing_keys,
+    "normalized_keys" => result.normalized_keys,
+    "duplicate_keys" => result.duplicate_keys,
+    "warnings" => result.warnings,
+    "refreshed_text" => result.refreshed_text,
+    "config_file" => String(config_file),
+    "downloadable" => downloadable,
+  )
+end
+
+function handle_powerflow_config_refresh(form::AbstractDict; write::Bool = false, operation_log::AbstractString = "results/powerflow_service")::SparlectraWebUIResponse
+  event_prefix = write ? "config_refresh_write" : "config_refresh_check"
+  config_text = strip(String(something(_webui_form_value(form, "config_text", ""), "")))
+  config_file = strip(String(something(_webui_form_value(form, "config_file", ""), "")))
+  record_webui_operation!(operation_log, string(event_prefix, "_started"); route = "/powerflow/config", method = "POST", user_action = true, config_file)
+  try
+    if !isempty(config_text)
+      result = refresh_sparlectra_config_text(config_text)
+      data = _config_refresh_result_dict(result; config_file = "browser upload", downloadable = true)
+      record_webui_operation!(operation_log, string(event_prefix, "_completed"); route = "/powerflow/config", method = "POST", user_action = true, config_file = "browser upload", changed = result.changed, written = false, backup_path = nothing, missing_key_count = length(result.missing_keys), normalized_key_count = length(result.normalized_keys), duplicate_key_count = length(result.duplicate_keys), message = "refreshed YAML available for download")
+      return _webui_html(render_config_refresh_result(data))
+    end
+    isempty(config_file) && throw(ArgumentError("No configuration file was provided."))
+    if write && !isfile(config_file)
+      record_webui_operation!(operation_log, "config_refresh_write_rejected"; route = "/powerflow/config", method = "POST", user_action = true, config_file, message = "configuration file is not writable in place")
+      return _webui_html(render_webui_error(400, "Configuration refresh writes require a server-local file. Paste/uploaded configs are offered as downloadable refreshed YAML instead."); status = 400)
+    end
+    result = refresh_sparlectra_config_file(config_file; write)
+    data = _config_refresh_result_dict(result; config_file)
+    event = result.success ? string(event_prefix, "_completed") : "config_refresh_write_rejected"
+    record_webui_operation!(operation_log, event; route = "/powerflow/config", method = "POST", user_action = true, config_file, changed = result.changed, written = result.written, backup_path = result.backup_path, missing_key_count = length(result.missing_keys), normalized_key_count = length(result.normalized_keys), duplicate_key_count = length(result.duplicate_keys), message = result.success ? "configuration refresh completed" : "duplicate keys require manual review")
+    return _webui_html(render_config_refresh_result(data); status = result.success ? 200 : 400)
+  catch err
+    record_webui_operation!(operation_log, "config_refresh_failed"; route = "/powerflow/config", method = "POST", user_action = true, config_file, message = sprint(showerror, err))
+    return _webui_html(render_webui_error(400, sprint(showerror, err)); status = 400)
+  end
+end
 function handle_powerflow_result(run_id::AbstractString)::SparlectraWebUIResponse
   result = get_webui_powerflow_job(run_id)
   status = get(result, "success", false) || get(result, "reason", "") != "run_not_found" ? 200 : 404

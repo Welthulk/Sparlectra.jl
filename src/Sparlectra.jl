@@ -147,6 +147,8 @@ export
   SparlectraConfig,
   load_sparlectra_config,                 # Load a configuration file without activating it.
   load_sparlectra_config!,                # Load and activate a configuration file.
+  refresh_sparlectra_config_file,        # Check or explicitly refresh a user YAML configuration file.
+  refresh_sparlectra_config_text,        # Dry-run refresh for uploaded/browser YAML text.
   set_sparlectra_config!,                 # Replace the active global configuration.
   active_sparlectra_config,               # Return the currently active configuration.
   powerflow_config,                       # Access the active power-flow settings.
