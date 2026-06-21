@@ -150,9 +150,23 @@ function _write_q_limit_detail_artifacts(output_path::AbstractString, net::Net; 
   if rect_status !== nothing && hasproperty(rect_status, :matpower_outer_loop)
     outer_rows = collect(rect_status.matpower_outer_loop)
     if !isempty(outer_rows)
-      columns = (:outer_iter, :mode, :gen_index, :bus_i, :violation_side, :qg_before, :q_limit, :violation_mvar, :action, :bus_type_before, :bus_type_after, :ref_changed)
-      _write_namedtuple_csv(joinpath(output_path, "q_limit_matpower_outer_loop.csv"), outer_rows, columns; format = format)
-      push!(artifacts, "q_limit_matpower_outer_loop.csv")
+      rows = [
+        (
+          outer_iteration = row.outer_iter,
+          mode = String(row.mode),
+          selected_count = count(other -> other.outer_iter == row.outer_iter, outer_rows),
+          max_violation_MVAr = maximum(other.violation_mvar for other in outer_rows if other.outer_iter == row.outer_iter),
+          ref_changed = row.ref_changed,
+          bus = row.bus_i,
+          generator_index = row.gen_index,
+          violation_side = String(row.violation_side),
+          action = String(row.action),
+        )
+        for row in outer_rows
+      ]
+      columns = (:outer_iteration, :mode, :selected_count, :max_violation_MVAr, :ref_changed, :bus, :generator_index, :violation_side, :action)
+      _write_namedtuple_csv(joinpath(output_path, "q_limit_classic_outer_loop.csv"), rows, columns; format = format)
+      push!(artifacts, "q_limit_classic_outer_loop.csv")
     end
   end
   return artifacts
@@ -193,12 +207,25 @@ function _write_q_limit_log_artifact(output_path::AbstractString, result::Sparle
     if rect_status !== nothing && hasproperty(rect_status, :qlimit_enforcement_mode) && rect_status.qlimit_enforcement_mode in (:classic_simultaneous, :classic_one_at_a_time)
       println(io, "Classical Q-limit outer loop")
       println(io, "--------------------------------------")
+      println(io, "Q-limit handling enabled    : true")
+      println(io, "active-set switching used   : false")
+      println(io, "classical outer-loop used   : true")
       println(io, "mode                       : ", rect_status.qlimit_enforcement_mode)
       println(io, "base_pf_converged          : ", getproperty(rect_status, :base_pf_converged))
       println(io, "qlimit_enforcement_started : ", getproperty(rect_status, :qlimit_enforcement_started))
       println(io, "final_outcome              : ", getproperty(rect_status, :final_outcome))
       println(io, "outer_iterations           : ", getproperty(rect_status, :matpower_outer_iterations))
+      println(io, "PV->PQ Q-limit events      : ", length(result.net.qLimitLog))
       println(io, "PQ->PV re-enable events    : 0")
+      println(io)
+    else
+      println(io, "Q-limit handling mode")
+      println(io, "---------------------")
+      println(io, "Q-limit handling enabled    : true")
+      println(io, "active-set switching used   : true")
+      println(io, "classical outer-loop used   : false")
+      println(io, "PV->PQ Q-limit events      : ", length(result.net.qLimitLog))
+      println(io, "PQ->PV re-enable events    : ", hasproperty(result.diagnostics, :qlimit_reenable_events) ? result.diagnostics.qlimit_reenable_events : 0)
       println(io)
     end
     println(io, "Final PV Q-limit active-set check")
@@ -883,6 +910,8 @@ function _runtime_metadata_payload(; case_path::AbstractString, lifecycle::Abstr
       "casefile_path" => String(case_path),
     ),
   )
+  haskey(lifecycle, "configured_default_casefile") && (payload["configured_default_casefile"] = lifecycle["configured_default_casefile"])
+  haskey(lifecycle, "runtime_casefile") && (payload["runtime_casefile"] = lifecycle["runtime_casefile"])
   for key in ("solver_status", "artifact_status", "run_status", "last_phase", "last_heartbeat", "final_outcome")
     haskey(lifecycle, key) && (payload[key] = lifecycle[key])
   end
@@ -1102,6 +1131,9 @@ function _run_sparlectra_api(;
 
   raw_result = nothing
   qlimit_metadata = _resolved_q_limit_runtime_options(config)
+  qlimit_metadata["runtime_casefile"] = basename(case_path)
+  qlimit_metadata["runtime_casefile_path"] = case_path
+  qlimit_metadata["configured_default_casefile"] = config.matpower.case
   matpower_metadata = _resolved_matpower_import_runtime_options(config)
   operation_callback("powerflow_effective_options"; run_id = run_id, case = basename(case_path), _metadata_kwargs(qlimit_metadata)..., _metadata_kwargs(matpower_metadata)...)
   emit_phase("reading_matpower_case")
@@ -1217,12 +1249,15 @@ function _run_sparlectra_api(;
       println(io, "full details        : ", Q_LIMIT_LOG_ARTIFACT)
       println(io, "full initial limits : ", "q_limit_initial_limits.csv" in q_limit_artifacts ? "q_limit_initial_limits.csv" : "not generated")
       println(io, "full events         : ", "q_limit_events.csv" in q_limit_artifacts ? "q_limit_events.csv" : "not generated")
+      println(io, "classic outer loop  : ", "q_limit_classic_outer_loop.csv" in q_limit_artifacts ? "q_limit_classic_outer_loop.csv" : "not generated")
       println(io)
     end
     if config.output.logfile_results === :full
       println(io, "Full run details")
       println(io, "----------------")
       println(io, "casefile: ", case_path)
+      println(io, "runtime_casefile: ", basename(case_path))
+      println(io, "configured_default_casefile: ", config.matpower.case)
       println(io, "config_file: ", config_path)
       println(io, "output_dir: ", output_path)
       println(io, "diagnostics_artifact: ", run_diagnostics ? "diagnose.log" : "disabled")
@@ -1278,6 +1313,10 @@ function _run_sparlectra_api(;
   numerical_success = raw_result.final_converged && raw_result.solution_available
   mismatch = isfinite(raw_result.final_mismatch) ? raw_result.final_mismatch : nothing
   final_outcome = _final_outcome_payload(raw_result)
+  rect_status = raw_result.net === nothing ? nothing : rectangular_pf_status(raw_result.net)
+  classic_outer_loop_passes = rect_status !== nothing && hasproperty(rect_status, :matpower_outer_iterations) ? rect_status.matpower_outer_iterations : 0
+  pv_to_pq_events = raw_result.net === nothing ? 0 : length(raw_result.net.qLimitLog)
+  active_set_events = config.powerflow.qlimits.enforcement_mode === :active_set ? pv_to_pq_events : 0
   final_metadata = merge(Dict{String,Any}(
     "solver_status" => "completed",
     "service_status" => "completed",
@@ -1293,6 +1332,9 @@ function _run_sparlectra_api(;
     "detailed_result_csv_artifacts" => csv_artifacts,
     "detailed_result_csv_solution_quality" => detailed_result_csv && csv_export_skip_reason === nothing ? _csv_solution_quality(raw_result) : nothing,
     "detailed_result_csv_warning" => detailed_result_csv && csv_export_skip_reason === nothing && !numerical_success ? "values are from the last Newton iterate and are not a converged power-flow solution" : nothing,
+    "q_limit_active_set_events" => active_set_events,
+    "q_limit_pv_to_pq_events" => pv_to_pq_events,
+    "q_limit_classic_outer_loop_passes" => classic_outer_loop_passes,
   ), qlimit_metadata)
   haskey(csv_timing_metadata, :partial_error) && (final_metadata["detailed_result_csv_error"] = csv_timing_metadata[:partial_error])
   _write_run_metadata_artifact(output_path; case_path = case_path, lifecycle = final_metadata)

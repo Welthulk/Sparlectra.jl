@@ -66,7 +66,7 @@ function to_dict(result::SparlectraApiResult; include_raw_result::Bool = false):
     "service_phase_timings" => _api_transport_value(result.service_phase_timings),
     "metadata" => _api_transport_value(result.metadata),
   )
-  for key in ("qlimits_enabled", "qlimit_guard_enabled", "q_limit_preview_mode", "q_limit_runlog_max_rows")
+  for key in ("qlimits_enabled", "qlimit_enforcement_mode", "qlimit_guard_enabled", "q_limit_preview_mode", "q_limit_runlog_max_rows", "runtime_casefile", "runtime_casefile_path", "configured_default_casefile")
     haskey(result.metadata, key) && (data[key] = _api_transport_value(result.metadata[key]))
   end
   for key in ("service_status", "numerical_status", "solver_status", "artifact_status", "run_status", "last_phase", "last_heartbeat", "final_outcome")

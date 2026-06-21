@@ -802,6 +802,8 @@ function run_api_tests()
       ))
 
       @test started["success"]
+      @test started["runtime_casefile"] == basename(casefile)
+      @test started["configured_default_casefile"] == "case14.m"
       required_result_fields = ("run_id", "schema_version", "status", "success", "converged", "solution_available", "iterations", "final_mismatch", "reason", "message", "artifacts")
       @test all(field -> haskey(started, field), required_result_fields)
       @test !isempty(started["run_id"])
@@ -822,6 +824,41 @@ function run_api_tests()
       @test resolved_run["success"]
       @test resolved_by_service[]
       @test resolved_run["casefile"] == abspath(casefile)
+      @test resolved_run["runtime_casefile"] == basename(casefile)
+      metadata_text = read(joinpath(resolved_run["output_dir"], "run_metadata.yaml"), String)
+      @test occursin("runtime_casefile: $(basename(casefile))", metadata_text)
+      @test occursin("configured_default_casefile: case14.m", metadata_text)
+
+      qlimit_mode_run_ids = String[]
+      @testset "Q-limit mode metadata and result visibility" begin
+        for mode in ("active_set", "classic_simultaneous", "classic_one_at_a_time")
+          mode_run = start_powerflow_run(Dict(
+            "casefile" => casefile,
+            "config_file" => config_file,
+            "output_root" => output_root,
+            "config_overrides" => Dict(
+              "power_flow.max_iter" => 80,
+              "power_flow.qlimits.enforcement_mode" => mode,
+              "benchmark.enabled" => false,
+            ),
+          ))
+          push!(qlimit_mode_run_ids, mode_run["run_id"])
+          @test mode_run["success"]
+          @test mode_run["qlimit_enforcement_mode"] == mode
+          @test mode_run["metadata"]["qlimit_enforcement_mode"] == mode
+          result_html = Sparlectra.render_powerflow_result(mode_run)
+          @test occursin("Q-limit enforcement mode", result_html)
+          @test occursin(mode, result_html)
+          @test occursin("Runtime casefile", result_html)
+          @test occursin(basename(casefile), result_html)
+          if startswith(mode, "classic_")
+            @test occursin("Classical Q-limit outer-loop passes", result_html)
+            run_log = read(joinpath(mode_run["output_dir"], "run.log"), String)
+            @test !occursin("Q-limit handling: disabled\nQ-limit diagnostics: skipped", run_log) ||
+                  occursin("Inner PF active-set Q-limit switching: disabled for classical outer-loop solve", run_log)
+          end
+        end
+      end
 
       index_path = joinpath(output_root, POWERFLOW_RUN_INDEX_FILENAME)
       @test isfile(index_path)
@@ -963,7 +1000,7 @@ function run_api_tests()
       @test get_powerflow_result(started["run_id"])["reason"] == "run_not_found"
       refresh = refresh_powerflow_run_registry!(output_root)
       @test refresh["status"] == "succeeded"
-      @test Set(refresh["loaded_runs"]) == Set([started["run_id"], resolved_run["run_id"], failed["run_id"]])
+      @test Set(refresh["loaded_runs"]) == Set([started["run_id"], resolved_run["run_id"], failed["run_id"], qlimit_mode_run_ids...])
       @test get_powerflow_result(started["run_id"])["run_id"] == started["run_id"]
       recovered_artifacts = list_powerflow_artifacts(started["run_id"])
       recovered_names = Set(artifact["name"] for artifact in recovered_artifacts)

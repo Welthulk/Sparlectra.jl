@@ -158,6 +158,7 @@ function _run_q_limits_matpower_outer_loop!(
       start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg,
       qlimits_enabled = false,
       qlimit_enforcement_mode = :active_set,
+      qlimit_lock_reason = :classical_outer_loop,
       wrong_branch_detection = wrong_branch_detection,
       wrong_branch_rescue = wrong_branch_rescue,
       wrong_branch_min_vm_pu = wrong_branch_min_vm_pu,
@@ -675,6 +676,9 @@ function runpf_rectangular!(
     printPVQLimitsTable(net; max_rows = typemax(Int), full_details = "q_limit.log")
   elseif verbose > 0 && qlimits_enabled
     printPVQLimitsTable(net; max_rows = pv_table_rows, full_details = "q_limit.log")
+  elseif verbose > 0 && qlimit_lock_reason === :classical_outer_loop
+    println("Inner PF active-set Q-limit switching: disabled for classical outer-loop solve")
+    println("Classical Q-limit outer loop: enabled")
   elseif verbose > 0
     println("Q-limit handling: disabled")
     println("Q-limit diagnostics: skipped")

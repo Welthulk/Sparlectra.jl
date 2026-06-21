@@ -19,6 +19,7 @@ function _artifact_kind(path::AbstractString)::Symbol
   name == "matpower_auto_profile.log" && return :matpower_auto_profile
   name == "result.json" && return :result_json
   name == "q_limit.log" && return :q_limit_log
+  name == "q_limit_classic_outer_loop.csv" && return :q_limit_classic_outer_loop
   ext = lowercase(splitext(name)[2])
   ext == ".log" && return :log
   ext == ".csv" && return :csv
@@ -42,6 +43,7 @@ end
 function _artifact_description(kind::Symbol, name::String)::String
   kind === :log && return "Power-flow execution log"
   kind === :q_limit_log && return "Q-limit diagnostic log"
+  kind === :q_limit_classic_outer_loop && return "Classical Q-limit outer-loop pass details"
   kind === :matpower_auto_profile && return "MATPOWER import auto-profile diagnostic log"
   kind === :result_json && return "Serialized Sparlectra API result"
   kind === :csv && return "Generated CSV output"

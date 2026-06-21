@@ -313,6 +313,11 @@ const _WEBUI_RESULT_FIELDS = (
   "final_mismatch",
   "reason",
   "message",
+  "Q-limit enforcement mode",
+  "Q-limit active-set events",
+  "Classical Q-limit outer-loop passes",
+  "Runtime casefile",
+  "Configured default case",
   "casefile",
   "resolved_casefile",
   "config_file",
@@ -336,6 +341,19 @@ const _WEBUI_RESULT_FIELDS = (
 const _WEBUI_IMPORTANT_RESULT_FIELDS = Set(("converged", "numerical_converged", "solution_available", "iterations", "final_mismatch", "reason"))
 
 function _webui_result_value(result::AbstractDict, field::AbstractString)
+  if field == "Q-limit enforcement mode"
+    return get(result, "qlimit_enforcement_mode", get(get(result, "metadata", Dict{String,Any}()), "qlimit_enforcement_mode", "n/a"))
+  elseif field == "Q-limit active-set events"
+    metadata = get(result, "metadata", Dict{String,Any}())
+    return get(metadata, "q_limit_active_set_events", get(metadata, "pv_pq_switching_events", "n/a"))
+  elseif field == "Classical Q-limit outer-loop passes"
+    metadata = get(result, "metadata", Dict{String,Any}())
+    return get(metadata, "q_limit_classic_outer_loop_passes", "n/a")
+  elseif field == "Runtime casefile"
+    return get(result, "runtime_casefile", get(get(result, "metadata", Dict{String,Any}()), "runtime_casefile", "n/a"))
+  elseif field == "Configured default case"
+    return get(result, "configured_default_casefile", get(get(result, "metadata", Dict{String,Any}()), "configured_default_casefile", "n/a"))
+  end
   value = get(result, field, nothing)
   value === nothing && return field in _WEBUI_IMPORTANT_RESULT_FIELDS ? "n/a" : ""
   value isa AbstractString && isempty(value) && return field in _WEBUI_IMPORTANT_RESULT_FIELDS ? "n/a" : ""
