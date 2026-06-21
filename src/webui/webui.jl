@@ -275,24 +275,7 @@ function _webui_lifecycle_println(runtime::_SparlectraWebUIRuntime, parts...)
 end
 
 function _webui_startup_log(io::IO, event::AbstractString; operation_log::Union{Nothing,AbstractString} = nothing, fields...)
-  println(io, event)
-  flush(io)
-  operation_log === nothing || record_webui_operation!(operation_log, event; route = "/powerflow", method = "START", user_action = false, fields...)
-  return nothing
-end
-
-function _webui_startup_failure!(io::IO, err, bt; operation_log::Union{Nothing,AbstractString} = nothing, phase::AbstractString = "startup")
-  message = sprint(showerror, err)
-  _webui_startup_log(io, "webui_start_failed"; operation_log, status = "failed", phase, message)
-  showerror(io, err, bt)
-  println(io)
-  flush(io)
-  return nothing
-end
-
-function _webui_startup_log(io::IO, event::AbstractString; operation_log::Union{Nothing,AbstractString} = nothing, fields...)
-  println(io, event)
-  flush(io)
+  _ = io
   operation_log === nothing || record_webui_operation!(operation_log, event; route = "/powerflow", method = "START", user_action = false, fields...)
   return nothing
 end
@@ -397,7 +380,6 @@ function _webui_validate_startup_config(configuration::AbstractString)
 end
 
 function start_sparlectra_webui(; host::AbstractString = "127.0.0.1", port::Integer = 8080, output_root::Union{Nothing,AbstractString} = nothing, config_file::Union{Nothing,AbstractString} = nothing, open_browser::Bool = false, shutdown_on_browser_close::Bool = false, auto_shutdown_on_browser_close::Union{Nothing,Bool} = nothing, browser_heartbeat_timeout_seconds::Real = 15.0, warmup::Bool = false, warmup_casefile::Union{Nothing,AbstractString} = nothing, warmup_store_result::Bool = false, _test_runner = start_powerflow_run, _lifecycle_io::IO = stdout, _browser_opener = _webui_open_browser)::SparlectraWebUIServer
-  _webui_startup_log(_lifecycle_io, "webui_start_requested"; host = String(host), port = Int(port))
   host_string = String(host)
   host_string in ("127.0.0.1", "localhost", "::1") || (err = ArgumentError("Sparlectra Web UI only accepts loopback hosts: 127.0.0.1, localhost, or ::1."); _webui_startup_failure!(_lifecycle_io, err, catch_backtrace(); phase = "validate_arguments"); throw(err))
   1 <= port <= 65535 || (err = ArgumentError("Web UI port must be between 1 and 65535."); _webui_startup_failure!(_lifecycle_io, err, catch_backtrace(); phase = "validate_arguments"); throw(err))
@@ -412,6 +394,7 @@ function start_sparlectra_webui(; host::AbstractString = "127.0.0.1", port::Inte
     _webui_startup_failure!(_lifecycle_io, wrapped, catch_backtrace(); phase = "provision_runtime")
     throw(wrapped)
   end
+  _webui_startup_log(_lifecycle_io, "webui_start_requested"; operation_log = paths.operation_log, host = host_string, port = Int(port))
   config_error = _webui_validate_startup_config(paths.config_file)
   _webui_startup_log(_lifecycle_io, "webui_config_loaded"; operation_log = paths.operation_log, status = config_error === nothing ? "loaded" : "error_visible", config_file = paths.config_file, message = config_error)
   recovery = refresh_powerflow_run_registry!(root)
@@ -463,13 +446,12 @@ function start_sparlectra_webui(; host::AbstractString = "127.0.0.1", port::Inte
     browser_process = _browser_opener(url)
     if browser_process !== nothing && effective_shutdown_on_browser_close
       record_webui_operation!(paths.operation_log, "browser_close_monitor_skipped"; route = "/powerflow", method = "START", status = "skipped", user_action = false, reason = "not_reliable_on_this_platform")
-      _webui_lifecycle_println(runtime, "browser_close_monitor_skipped reason=not_reliable_on_this_platform")
     end
   end
   server = SparlectraWebUIServer(listener, task, url, runtime, browser_monitor_task)
   record_webui_operation!(paths.operation_log, "webui_started"; route = "/powerflow", method = "START", status = "started", user_action = false, output_root = root, config_file = paths.config_file, case_cache_dir = paths.case_directory, operation_log = paths.operation_log)
   _webui_lifecycle_println(runtime, "Sparlectra Web UI is available at ", url)
-  _webui_lifecycle_println(runtime, "Stop: use Stop Web UI in the browser, close(server), or press Ctrl+C here.")
+  _webui_lifecycle_println(runtime, "Stop: use Stop Web UI in the browser, close(server), or Ctrl+C here.")
   _webui_lifecycle_println(runtime, "Operation log: ", paths.operation_log)
   @info "Sparlectra Web UI started" url output_root = abspath(root)
   return server

@@ -12,7 +12,16 @@ const WEBUI_TRANSCRIPT_MARKERS = (
   "make_pr",
 )
 
+const WEBUI_INTERNAL_LIFECYCLE_MARKERS = (
+  "webui_start_requested",
+  "webui_config_loaded",
+  "webui_routes_registered",
+  "webui_server_bound",
+  "browser_close_monitor_skipped",
+)
+
 _assert_no_webui_transcript_markers(text::AbstractString) = foreach(marker -> @test(!occursin(marker, text)), WEBUI_TRANSCRIPT_MARKERS)
+_assert_no_webui_internal_lifecycle_markers(text::AbstractString) = foreach(marker -> @test(!occursin(marker, text)), WEBUI_INTERNAL_LIFECYCLE_MARKERS)
 
 function _write_webui_test_case(path::AbstractString)
   write(path, """
@@ -930,8 +939,9 @@ result = get_powerflow_result(run_id)
       end
       startup_output = String(take!(lifecycle_io))
       _assert_no_webui_transcript_markers(startup_output)
+      _assert_no_webui_internal_lifecycle_markers(startup_output)
       @test occursin("Sparlectra Web UI is available at http://127.0.0.1:$(port)/powerflow", startup_output)
-      @test occursin("Stop: use Stop Web UI in the browser, close(server), or press Ctrl+C here.", startup_output)
+      @test occursin("Stop: use Stop Web UI in the browser, close(server), or Ctrl+C here.", startup_output)
       @test occursin("Operation log: ", startup_output)
       @test !istaskdone(server.task)
       @test isdir(output_root)
@@ -943,6 +953,9 @@ result = get_powerflow_result(run_id)
       @test !startswith(server.runtime.case_directory, normpath(pkgdir(Sparlectra)))
       @test !startswith(server.runtime.config_file, normpath(pkgdir(Sparlectra)))
       startup_log = read(server.runtime.operation_log, String)
+      @test occursin("\"event\":\"webui_start_requested\"", startup_log)
+      @test occursin("\"event\":\"webui_config_loaded\"", startup_log)
+      @test occursin("\"event\":\"webui_routes_registered\"", startup_log)
       @test occursin("\"event\":\"webui_start\"", startup_log)
       @test occursin("\"event\":\"webui_server_bound\"", startup_log)
       @test occursin("\"event\":\"webui_started\"", startup_log)
@@ -1017,10 +1030,8 @@ result = get_powerflow_result(run_id)
           @test occursin("Sparlectra", config_response)
           @test occursin(expected_marker, config_response)
           config_startup_output = String(take!(config_io))
-          @test occursin("webui_start_requested", config_startup_output)
-          @test occursin("webui_config_loaded", config_startup_output)
-          @test occursin("webui_routes_registered", config_startup_output)
-          @test occursin("webui_server_bound", config_startup_output)
+          @test occursin("Sparlectra Web UI is available at http://127.0.0.1:$(config_port)/powerflow", config_startup_output)
+          _assert_no_webui_internal_lifecycle_markers(config_startup_output)
           config_log = read(config_server.runtime.operation_log, String)
           @test occursin("\"event\":\"webui_config_loaded\"", config_log)
           name == "malformed configuration" && @test occursin("error_visible", config_log)
@@ -1062,7 +1073,8 @@ result = get_powerflow_result(run_id)
       )
       initial_browser_output = String(take!(browser_io))
       @test isopen(browser_server.listener)
-      @test occursin("browser_close_monitor_skipped reason=not_reliable_on_this_platform", initial_browser_output)
+      @test occursin("Sparlectra Web UI is available at http://127.0.0.1:$(browser_port)/powerflow", initial_browser_output)
+      _assert_no_webui_internal_lifecycle_markers(initial_browser_output)
       sleep(0.5)
       @test !istaskdone(browser_server.task)
       browser_response = _webui_http_request(browser_port, "GET", "/powerflow")
