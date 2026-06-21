@@ -227,7 +227,7 @@ function render_powerflow_form(;
   profile_values = case_profile isa AbstractDict ? case_profile : Dict{String,Any}()
   profile_path = String(get(profile_values, "_profile_path", ""))
   profile_location = isempty(profile_path) ? "the sidecar profile" : "<code>$(_webui_escape(profile_path))</code>"
-  profile_notice = isempty(profile_values) ? "" : "<div class=\"alert info case-settings-notice\" role=\"status\"><strong>Case-specific settings applied.</strong> Saved Web UI settings from $(profile_location) prefilled the form. Manual edits on this page override the profile for this run.</div>"
+  profile_notice = isempty(profile_values) ? "" : "<div class=\"alert info case-settings-notice\" role=\"status\"><strong>Case-specific settings loaded from $(profile_location).</strong> Saved Web UI settings prefilled the form. Manual edits on this page override the profile for this run.</div>"
   error_html = _webui_error_alert_html(error_message)
   casefiles = case_directory === nothing ? _webui_casefile_options(application_root) : _webui_casefile_options_in_directory(case_directory)
   bundled_case_directory = joinpath(application_root, "data", "mpower")

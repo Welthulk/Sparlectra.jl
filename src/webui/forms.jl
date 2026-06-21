@@ -136,23 +136,65 @@ function _webui_case_settings_path(output_root::AbstractString, casefile::Abstra
   return joinpath(dirname(source), _webui_case_settings_filename(source))
 end
 
+function _webui_log_case_settings_load(output_root::AbstractString, event::AbstractString; fields...)
+  try
+    record_webui_operation!(output_root, event; route = "/powerflow", method = "GET", user_action = true, fields...)
+  catch
+  end
+  return nothing
+end
+
+function _webui_normalize_case_profile_form_value(field::AbstractString, value)
+  value === nothing && return nothing
+  value === missing && return nothing
+  value isa Bool && return value
+  value isa Integer && return string(value)
+  value isa AbstractFloat && return isfinite(value) ? string(value) : throw(ArgumentError("Case-settings field $(field) must be finite."))
+  value isa AbstractString && return String(value)
+  value isa Symbol && return String(value)
+  value isa AbstractVector && throw(ArgumentError("Case-settings field $(field) does not support vector values for form rendering."))
+  throw(ArgumentError("Case-settings field $(field) has unsupported value type $(typeof(value))."))
+end
+
 function _webui_load_case_settings(output_root::AbstractString, casefile::AbstractString; case_directory::Union{Nothing,AbstractString} = nothing)
   path = try
     _webui_case_settings_path(output_root, casefile; case_directory)
-  catch
+  catch err
+    _webui_log_case_settings_load(output_root, "case_settings_load_failed"; casefile, status = "rejected", message = sprint(showerror, err))
     return nothing
   end
-  isfile(path) || return nothing
+  if !isfile(path)
+    _webui_log_case_settings_load(output_root, "case_settings_not_found"; casefile, profile_path = path, status = "missing")
+    return nothing
+  end
   try
     data = load_yaml_dict(path)
-    get(data, "schema_version", nothing) == 1 || return nothing
-    get(data, "profile_kind", "") == "webui_case_settings" || return nothing
+    if get(data, "schema_version", nothing) != 1
+      _webui_log_case_settings_load(output_root, "case_settings_load_failed"; casefile, profile_path = path, status = "rejected", message = "unsupported schema_version")
+      return nothing
+    end
+    if get(data, "profile_kind", "") != "webui_case_settings"
+      _webui_log_case_settings_load(output_root, "case_settings_load_failed"; casefile, profile_path = path, status = "rejected", message = "unsupported profile_kind")
+      return nothing
+    end
     settings = get(data, "settings", nothing)
-    settings isa AbstractDict || return nothing
-    profile = Dict{String,Any}(String(k) => v for (k, v) in settings if String(k) in _WEBUI_CASE_PROFILE_FIELDS)
+    if !(settings isa AbstractDict)
+      _webui_log_case_settings_load(output_root, "case_settings_load_failed"; casefile, profile_path = path, status = "rejected", message = "settings must be a dictionary")
+      return nothing
+    end
+    profile = Dict{String,Any}()
+    for (key, value) in settings
+      field = String(key)
+      field in _WEBUI_CASE_PROFILE_FIELDS || continue
+      normalized = _webui_normalize_case_profile_form_value(field, value)
+      normalized === nothing && continue
+      profile[field] = normalized
+    end
     profile["_profile_path"] = path
+    _webui_log_case_settings_load(output_root, "case_settings_loaded"; casefile, profile_path = path, status = "loaded", setting_count = length(profile) - 1)
     return profile
-  catch
+  catch err
+    _webui_log_case_settings_load(output_root, "case_settings_load_failed"; casefile, profile_path = path, status = "failed", message = sprint(showerror, err))
     return nothing
   end
 end
@@ -179,7 +221,7 @@ end
 function _webui_parse_bool(value)::Bool
   value isa Bool && return value
   value === nothing && return false
-  return lowercase(strip(String(value))) in ("1", "true", "yes", "on")
+  return lowercase(strip(string(value))) in ("1", "true", "yes", "on")
 end
 
 function _webui_parse_form_value(value, ::Type{Bool}, field::String)
