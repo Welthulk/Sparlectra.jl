@@ -166,24 +166,26 @@ function _webui_recent_error_entries(operation_log::AbstractString; limit::Integ
     push!(entries, Dict{String,Any}(String(key) => value for (key, value) in event))
   end
   length(entries) <= limit && return entries
-  return entries[(end - limit + 1):end]
+  return entries[(end-limit+1):end]
 end
 
 function _webui_last_errors_list_html(operation_log::AbstractString)::String
   entries = _webui_recent_error_entries(operation_log)
   isempty(entries) && return "<p>No recent errors.</p>"
-  items = join((begin
-    timestamp = get(entry, "timestamp", "unknown time")
-    route = get(entry, "route", "unknown route")
-    casefile = get(entry, "requested_case", get(entry, "casefile", ""))
-    run_id = get(entry, "run_id", "")
-    message = get(entry, "message", get(entry, "status", "error"))
-    meta = String[]
-    isempty(string(casefile)) || push!(meta, "case: $(casefile)")
-    isempty(string(run_id)) || push!(meta, "run: $(run_id)")
-    suffix = isempty(meta) ? "" : " <small>($(_webui_escape(join(meta, ", "))))</small>"
-    "<li><time>$(_webui_escape(timestamp))</time> <code>$(_webui_escape(route))</code>: $(_webui_escape(message))$(suffix)</li>"
-  end for entry in reverse(entries)), "")
+  items = join((
+    begin
+      timestamp = get(entry, "timestamp", "unknown time")
+      route = get(entry, "route", "unknown route")
+      casefile = get(entry, "requested_case", get(entry, "casefile", ""))
+      run_id = get(entry, "run_id", "")
+      message = get(entry, "message", get(entry, "status", "error"))
+      meta = String[]
+      isempty(string(casefile)) || push!(meta, "case: $(casefile)")
+      isempty(string(run_id)) || push!(meta, "run: $(run_id)")
+      suffix = isempty(meta) ? "" : " <small>($(_webui_escape(join(meta, ", "))))</small>"
+      "<li><time>$(_webui_escape(timestamp))</time> <code>$(_webui_escape(route))</code>: $(_webui_escape(message))$(suffix)</li>"
+    end for entry in reverse(entries)
+  ), "")
   return "<ul class=\"last-errors-list\">$(items)</ul>"
 end
 
@@ -197,7 +199,16 @@ function _webui_error_alert_html(error_message)::String
   return "<div class=\"alert alert-error error\" data-dismissible-alert role=\"alert\"><button type=\"button\" class=\"alert-close\" aria-label=\"Dismiss error\">×</button><span>$(_webui_escape(error_message))</span></div>"
 end
 
-function render_powerflow_form(; output_root::AbstractString = "results/powerflow_service", case_directory::Union{Nothing,AbstractString} = nothing, operation_log::AbstractString = webui_operation_log_path(output_root), error_message = nothing, application_root::AbstractString = _webui_application_root(), selected_casefile::AbstractString = "", selected_config_file::AbstractString = "", active_run = get_active_webui_powerflow_job())::String
+function render_powerflow_form(;
+  output_root::AbstractString = "results/powerflow_service",
+  case_directory::Union{Nothing,AbstractString} = nothing,
+  operation_log::AbstractString = webui_operation_log_path(output_root),
+  error_message = nothing,
+  application_root::AbstractString = _webui_application_root(),
+  selected_casefile::AbstractString = "",
+  selected_config_file::AbstractString = "",
+  active_run = get_active_webui_powerflow_job(),
+)::String
   error_html = _webui_error_alert_html(error_message)
   casefiles = case_directory === nothing ? _webui_casefile_options(application_root) : _webui_casefile_options_in_directory(case_directory)
   bundled_case_directory = joinpath(application_root, "data", "mpower")
@@ -290,12 +301,35 @@ window.addEventListener('pageshow', function () {
 end
 
 const _WEBUI_RESULT_FIELDS = (
-  "run_id", "schema_version", "status", "success", "converged", "numerical_converged", "solution_available",
-  "iterations", "final_mismatch", "reason", "message", "casefile", "resolved_casefile",
-  "config_file", "started_at", "elapsed_seconds", "output_dir",
-  "current_phase", "phase_started_at", "last_progress_at", "abort_requested_at",
-  "service_status", "numerical_status",
-  "solver_status", "artifact_status", "run_status", "last_phase", "last_heartbeat", "final_outcome",
+  "run_id",
+  "schema_version",
+  "status",
+  "success",
+  "converged",
+  "numerical_converged",
+  "solution_available",
+  "iterations",
+  "final_mismatch",
+  "reason",
+  "message",
+  "casefile",
+  "resolved_casefile",
+  "config_file",
+  "started_at",
+  "elapsed_seconds",
+  "output_dir",
+  "current_phase",
+  "phase_started_at",
+  "last_progress_at",
+  "abort_requested_at",
+  "service_status",
+  "numerical_status",
+  "solver_status",
+  "artifact_status",
+  "run_status",
+  "last_phase",
+  "last_heartbeat",
+  "final_outcome",
 )
 
 const _WEBUI_IMPORTANT_RESULT_FIELDS = Set(("converged", "numerical_converged", "solution_available", "iterations", "final_mismatch", "reason"))
@@ -323,17 +357,22 @@ function render_powerflow_result(result::AbstractDict)::String
   active = status in _WEBUI_ACTIVE_RUN_STATUSES
   status_badge = "<span class=\"status-badge $(webui_status_class(result))\">$(_webui_escape(status))</span>"
   elapsed_duration = _format_elapsed_duration(_webui_elapsed_seconds(result, active))
-  summary_rows = (
-    ("Run status", status_badge),
-    ("Elapsed time", "<strong>$(_webui_escape(elapsed_duration))</strong>"),
-  )
+  summary_rows = (("Run status", status_badge), ("Elapsed time", "<strong>$(_webui_escape(elapsed_duration))</strong>"))
   result_summary = "<div class=\"result-summary\">" * join(("<div$(label == "Elapsed time" ? " class=\"runtime-card\"" : "")><span class=\"summary-label\">$(label)</span>$(value)</div>" for (label, value) in summary_rows), "") * "</div>"
   abort_form = status in ("queued", "running") ? "<form method=\"post\" action=\"/powerflow/abort/$(_webui_urlencode(run_id))\"><button type=\"submit\" class=\"danger-button\">Abort run</button></form>" : ""
   active_hint = active ? "<p class=\"status-refresh-hint\">This page refreshes automatically while the run is active.</p>" : ""
   abort_hint = status == "aborting" ? "<p>Aborting requested. Current phase: <code>$(_webui_escape(get(result, "current_phase", "unknown")))</code>.</p><p>This phase may need to finish before cancellation is observed.</p>" : ""
-  hard_reset = status == "aborting" && get(result, "hard_reset_available", false) ? "<div class=\"alert warning\"><p>Abort is still pending. The calculation may be in a non-interruptible numerical call.</p><form method=\"post\" action=\"/powerflow/hard-reset/$(_webui_urlencode(run_id))\"><button type=\"submit\" class=\"danger-button\">Hard reset Web UI</button></form></div>" : ""
-  interrupted = status in ("aborted_unknown", "interrupted_unknown") ? "<div class=\"alert warning\"><p>Run state was recovered after Web UI restart.</p><p>Last known phase: <code>$(_webui_escape(get(result, "last_phase", get(result, "current_phase", "unknown"))))</code>.</p><p>No live solver task is attached anymore. Partial artifacts may be available.</p></div>" : ""
-  links = isempty(String(run_id)) ? "" : "$(abort_hint)$(hard_reset)$(interrupted)<div class=\"actions\">$(abort_form)<a class=\"button\" href=\"/powerflow/artifacts/$(_webui_urlencode(run_id))\">View artifacts</a><a class=\"button\" href=\"/powerflow/result/$(_webui_urlencode(run_id))\">Refresh status</a></div>"
+  hard_reset =
+    status == "aborting" && get(result, "hard_reset_available", false) ?
+    "<div class=\"alert warning\"><p>Abort is still pending. The calculation may be in a non-interruptible numerical call.</p><form method=\"post\" action=\"/powerflow/hard-reset/$(_webui_urlencode(run_id))\"><button type=\"submit\" class=\"danger-button\">Hard reset Web UI</button></form></div>" :
+    ""
+  interrupted =
+    status in ("aborted_unknown", "interrupted_unknown") ?
+    "<div class=\"alert warning\"><p>Run state was recovered after Web UI restart.</p><p>Last known phase: <code>$(_webui_escape(get(result, "last_phase", get(result, "current_phase", "unknown"))))</code>.</p><p>No live solver task is attached anymore. Partial artifacts may be available.</p></div>" :
+    ""
+  links =
+    isempty(String(run_id)) ? "" :
+    "$(abort_hint)$(hard_reset)$(interrupted)<div class=\"actions\">$(abort_form)<a class=\"button\" href=\"/powerflow/artifacts/$(_webui_urlencode(run_id))\">View artifacts</a><a class=\"button\" href=\"/powerflow/result/$(_webui_urlencode(run_id))\">Refresh status</a></div>"
   refresh_url = active && !isempty(String(run_id)) ? "/powerflow/result/$(_webui_urlencode(run_id))?autorefresh=1" : nothing
   return _webui_layout("PowerFlow result", "<section class=\"panel\">$(result_summary)<table class=\"details\">$(rows)</table>$(active_hint)$(links)</section>"; show_back = true, refresh_url)
 end
@@ -342,11 +381,16 @@ function render_powerflow_artifacts(run_id::AbstractString, artifacts)::String
   if artifacts isa AbstractDict
     return render_powerflow_result(artifacts)
   end
-  rows = join((begin
-    name = get(artifact, "name", "")
-    href = "/powerflow/artifact/$(_webui_urlencode(run_id))/$(_webui_urlencode(name))"
-    "<tr><td><a href=\"$(href)\">$(_webui_escape(name))</a></td><td>$(_webui_escape(get(artifact, "kind", "")))</td><td>$(_webui_escape(get(artifact, "mime_type", "")))</td><td>$(_webui_escape(get(artifact, "size_bytes", "")))</td><td>$(_webui_escape(get(artifact, "description", "")))</td></tr>"
-  end for artifact in artifacts), "")
+  rows = join(
+    (
+      begin
+        name = get(artifact, "name", "")
+        href = "/powerflow/artifact/$(_webui_urlencode(run_id))/$(_webui_urlencode(name))"
+        "<tr><td><a href=\"$(href)\">$(_webui_escape(name))</a></td><td>$(_webui_escape(get(artifact, "kind", "")))</td><td>$(_webui_escape(get(artifact, "mime_type", "")))</td><td>$(_webui_escape(get(artifact, "size_bytes", "")))</td><td>$(_webui_escape(get(artifact, "description", "")))</td></tr>"
+      end for artifact in artifacts
+    ),
+    "",
+  )
   table = "<section class=\"panel\"><p>Run <code>$(_webui_escape(run_id))</code></p><table><thead><tr><th>Name</th><th>Kind</th><th>MIME type</th><th>Bytes</th><th>Description</th></tr></thead><tbody>$(rows)</tbody></table></section>"
   return _webui_layout("Artifacts", table; show_back = true)
 end
@@ -373,18 +417,20 @@ end
 
 function render_powerflow_history(runs, output_root::AbstractString; active_run = nothing)::String
   ordered_runs = sort!(collect(runs); by = run -> _webui_run_timestamp(run), rev = true)
-  rows = join((begin
-    run_id = string(get(run, "run_id", ""))
-    available = get(run, "available", false)
-    link = available ? "<a href=\"/powerflow/result/$(_webui_urlencode(run_id))\">$(_webui_escape(run_id))</a>" : _webui_escape(run_id)
-    status = string(get(run, "status", "unknown"))
-    status_badge = "<span class=\"status-badge $(webui_status_class(run))\">$(_webui_escape(status))</span>"
-    delete_form = "<form method=\"post\" action=\"/powerflow/delete/$(_webui_urlencode(run_id))\" class=\"delete-run-form\"><button type=\"submit\" class=\"danger-button\">Delete</button></form>"
-    abort_form = lowercase(status) in ("queued", "running") ? "<form method=\"post\" action=\"/powerflow/abort/$(_webui_urlencode(run_id))\"><button type=\"submit\" class=\"danger-button\">Abort</button></form>" : ""
-    fields = (_webui_run_timestamp(run), link, status_badge, available, get(run, "iterations", ""), get(run, "final_mismatch", ""), get(run, "casefile", ""), get(run, "config_file", ""))
-    cells = "<td>$(_webui_escape(fields[1]))</td><td>$(fields[2])</td><td>$(fields[3])</td>" * join(("<td>$(_webui_escape(field))</td>" for field in fields[4:end]), "")
-    "<tr>$(cells)<td>$(abort_form)$(delete_form)</td></tr>"
-  end for run in ordered_runs), "")
+  rows = join((
+    begin
+      run_id = string(get(run, "run_id", ""))
+      available = get(run, "available", false)
+      link = available ? "<a href=\"/powerflow/result/$(_webui_urlencode(run_id))\">$(_webui_escape(run_id))</a>" : _webui_escape(run_id)
+      status = string(get(run, "status", "unknown"))
+      status_badge = "<span class=\"status-badge $(webui_status_class(run))\">$(_webui_escape(status))</span>"
+      delete_form = "<form method=\"post\" action=\"/powerflow/delete/$(_webui_urlencode(run_id))\" class=\"delete-run-form\"><button type=\"submit\" class=\"danger-button\">Delete</button></form>"
+      abort_form = lowercase(status) in ("queued", "running") ? "<form method=\"post\" action=\"/powerflow/abort/$(_webui_urlencode(run_id))\"><button type=\"submit\" class=\"danger-button\">Abort</button></form>" : ""
+      fields = (_webui_run_timestamp(run), link, status_badge, available, get(run, "iterations", ""), get(run, "final_mismatch", ""), get(run, "casefile", ""), get(run, "config_file", ""))
+      cells = "<td>$(_webui_escape(fields[1]))</td><td>$(fields[2])</td><td>$(fields[3])</td>" * join(("<td>$(_webui_escape(field))</td>" for field in fields[4:end]), "")
+      "<tr>$(cells)<td>$(abort_form)$(delete_form)</td></tr>"
+    end for run in ordered_runs
+  ), "")
   content = "$(_webui_active_run_banner(active_run))<section class=\"panel history-actions\"><p><strong>Output root:</strong> <code>$(_webui_escape(output_root))</code></p><div class=\"actions\"><form method=\"post\" action=\"/powerflow/refresh\"><button type=\"submit\">Refresh registry</button></form><form method=\"post\" action=\"/powerflow/delete_all\"><button type=\"submit\" class=\"danger-button\">Delete all runs</button></form></div></section>\n<section class=\"panel\"><table><thead><tr><th>Date/Time</th><th>Run ID</th><th>Status</th><th>Available</th><th>Iterations</th><th>Final mismatch</th><th>Case file</th><th>Config file</th><th>Delete</th></tr></thead><tbody>$(rows)</tbody></table></section>"
   return _webui_layout("Run history", content; show_back = true)
 end
