@@ -94,7 +94,7 @@ function handle_powerflow_config_refresh(form::AbstractDict; write::Bool = false
     isempty(config_file) && throw(ArgumentError("No configuration file was provided."))
     if write && !isfile(config_file)
       record_webui_operation!(operation_log, "config_refresh_write_rejected"; route = "/powerflow/config", method = "POST", user_action = true, config_file, message = "configuration file is not writable in place")
-      return _webui_html(render_webui_error(400, "Configuration refresh writes require a server-local file. Paste/uploaded configs are offered as downloadable refreshed YAML instead."); status = 400)
+      return _webui_html(render_webui_error(400, "Configuration refresh writes require a server-local file. Use a server-local selected configuration file for in-place refresh."); status = 400)
     end
     result = refresh_sparlectra_config_file(config_file; write)
     data = _config_refresh_result_dict(result; config_file)

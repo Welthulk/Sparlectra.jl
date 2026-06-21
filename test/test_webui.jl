@@ -117,9 +117,15 @@ function run_webui_tests()
       config_path = joinpath(root, "configuration.yaml")
       write(config_path, "power_flow:\n  start_mode:\n    voltage_mode: bus_vm_va_blend\n  qlimits:\n    enabled: true\n")
       runtime = Sparlectra._SparlectraWebUIRuntime(nothing, root, config_path, Sparlectra.webui_operation_log_path(root), nothing, Sparlectra.start_powerflow_run, false, false, time(), 0, nothing, IOBuffer(), ReentrantLock())
+      before_page_text = read(config_path, String)
       page = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow"; output_root = root, runtime).body)
       @test occursin("Check configuration", page)
       @test occursin("Refresh configuration", page)
+      @test occursin("Configuration notice:", page)
+      @test occursin("#configuration-maintenance", page)
+      @test findfirst("Configuration maintenance", page) > findfirst("Advanced / expert options", page)
+      @test findfirst("Configuration maintenance", page) > findfirst("Existing MATPOWER case", page)
+      @test read(config_path, String) == before_page_text
 
       check = Sparlectra.route_sparlectra_webui("POST", "/powerflow/config/check", Dict("config_file" => config_path); output_root = root, runtime)
       check_body = String(check.body)
@@ -127,17 +133,25 @@ function run_webui_tests()
       @test occursin("power_flow.qlimits.enforcement_mode", check_body)
       @test occursin("power_flow.start_mode.voltage_mode", check_body)
       @test !occursin(".bak-", check_body)
+      @test read(config_path, String) == before_page_text
 
       refresh = Sparlectra.route_sparlectra_webui("POST", "/powerflow/config/refresh", Dict("config_file" => config_path); output_root = root, runtime)
+      refresh_body = String(refresh.body)
       @test refresh.status == 200
-      @test occursin("Configuration refreshed and written", String(refresh.body))
+      @test occursin("Configuration refreshed and written", refresh_body)
+      @test occursin("Restart or reload the Web UI", refresh_body)
+      @test occursin(config_path, refresh_body)
       @test !isempty(filter(name -> occursin(r"configuration.yaml\.bak-", name), readdir(root)))
+      @test occursin("profile_blend", read(config_path, String))
 
-      upload = Sparlectra.route_sparlectra_webui("POST", "/powerflow/config/refresh", Dict("config_text" => "power_flow:\n  qlimits:\n    enforcement_mode: matpower_simultaneous\n"); output_root = root, runtime)
-      @test upload.status == 200
-      upload_body = String(upload.body)
-      @test occursin("Download refreshed YAML", upload_body)
-      @test occursin("classic_simultaneous", upload_body)
+      duplicate_path = joinpath(root, "duplicate.yaml")
+      write(duplicate_path, "power_flow:\n  tol: 1.0e-8\n  tol: 1.0e-7\n")
+      duplicate_before = read(duplicate_path, String)
+      duplicate = Sparlectra.route_sparlectra_webui("POST", "/powerflow/config/refresh", Dict("config_file" => duplicate_path); output_root = root, runtime)
+      @test duplicate.status == 400
+      @test occursin("Duplicate YAML key detected", String(duplicate.body))
+      @test read(duplicate_path, String) == duplicate_before
+      @test isempty(filter(name -> occursin(r"duplicate.yaml\.bak-", name), readdir(root)))
 
       log = read(runtime.operation_log, String)
       @test occursin("config_refresh_check_started", log)

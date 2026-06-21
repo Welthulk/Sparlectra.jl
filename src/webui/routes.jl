@@ -52,6 +52,17 @@ function _webui_split_target(target::AbstractString)
   return parts[1], length(parts) == 2 ? _webui_parse_pairs(parts[2]) : Dict{String,String}()
 end
 
+function _powerflow_config_notice(config_file::AbstractString)
+  isempty(strip(config_file)) && return nothing
+  isfile(config_file) || return nothing
+  try
+    result = refresh_sparlectra_config_file(config_file; write = false)
+    return (result.changed || !isempty(result.duplicate_keys)) ? _config_refresh_result_dict(result; config_file) : nothing
+  catch
+    return nothing
+  end
+end
+
 function route_sparlectra_webui(method::AbstractString, target::AbstractString, form::AbstractDict = Dict{String,String}(); output_root::AbstractString = "results/powerflow_service", runtime = nothing)::SparlectraWebUIResponse
   path, query = _webui_split_target(target)
   verb = uppercase(String(method))
@@ -72,6 +83,7 @@ function route_sparlectra_webui(method::AbstractString, target::AbstractString, 
       operation_log = runtime === nothing ? webui_operation_log_path(output_root) : runtime.operation_log,
       selected_config_file = runtime === nothing ? "" : runtime.config_file,
       error_message = runtime === nothing ? nothing : runtime.startup_config_error,
+      config_notice = _powerflow_config_notice(runtime === nothing ? "" : runtime.config_file),
     ))
   elseif verb == "POST" && path == "/powerflow/run"
     try
