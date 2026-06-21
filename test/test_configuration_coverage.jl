@@ -59,7 +59,7 @@ function run_configuration_coverage_tests()
     mapped_keys = Set([
       "power_flow.method", "power_flow.flatstart", "power_flow.tol", "power_flow.max_iter", "power_flow.autodamp", "power_flow.autodamp_min", "power_flow.wrong_branch_detection", "power_flow.wrong_branch_rescue", "power_flow.wrong_branch_min_vm_pu", "power_flow.wrong_branch_max_vm_pu", "power_flow.wrong_branch_max_angle_spread_deg", "power_flow.wrong_branch_max_branch_angle_deg", "power_flow.wrong_branch_min_low_vm_count", "power_flow.wrong_branch_rescue_max_attempts", "power_flow.rectangular_workspace_reuse", "power_flow.rectangular_preallocate_workspace", "power_flow.rectangular_workspace_min_buses",
       "power_flow.start_mode.angle_mode", "power_flow.start_mode.voltage_mode", "power_flow.start_mode.profile_source", "power_flow.start_mode.start_projection", "power_flow.start_mode.try_dc_start", "power_flow.start_mode.try_blend_scan", "power_flow.start_mode.branch_guard", "power_flow.start_mode.measure_candidates", "power_flow.start_mode.accept_unmeasured_dc_start", "power_flow.start_mode.reuse_import_data", "power_flow.start_mode.blend_lambdas", "power_flow.start_mode.dc_angle_limit_deg",
-      "power_flow.qlimits.enabled", "power_flow.qlimits.start_iter", "power_flow.qlimits.start_mode", "power_flow.qlimits.auto_q_delta_pu", "power_flow.qlimits.hysteresis_pu", "power_flow.qlimits.cooldown_iters", "power_flow.qlimits.trace_buses", "power_flow.qlimits.lock_pv_to_pq_buses",
+      "power_flow.qlimits.enabled", "power_flow.qlimits.enforcement_mode", "power_flow.qlimits.start_iter", "power_flow.qlimits.start_mode", "power_flow.qlimits.auto_q_delta_pu", "power_flow.qlimits.hysteresis_pu", "power_flow.qlimits.cooldown_iters", "power_flow.qlimits.trace_buses", "power_flow.qlimits.lock_pv_to_pq_buses",
       "power_flow.qlimits.guard.enabled", "power_flow.qlimits.guard.min_q_range_pu", "power_flow.qlimits.guard.narrow_range_mode", "power_flow.qlimits.guard.zero_range_mode", "power_flow.qlimits.guard.violation_mode", "power_flow.qlimits.guard.violation_threshold_pu", "power_flow.qlimits.guard.max_switches", "power_flow.qlimits.guard.max_remaining_violations", "power_flow.qlimits.guard.accept_bounded_violations", "power_flow.qlimits.guard.freeze_after_repeated_switching", "power_flow.qlimits.guard.log",
       "state_estimation.enabled", "state_estimation.method", "state_estimation.tol", "state_estimation.max_iter", "state_estimation.flatstart", "state_estimation.jac_eps", "state_estimation.update_net", "state_estimation.observability.enabled",
       "matpower_import.case", "matpower_import.cases", "matpower_import.auto_profile", "matpower_import.auto_profile_log", "matpower_import.pv_voltage_source", "matpower_import.pv_voltage_mismatch_tol_pu", "matpower_import.compare_voltage_reference", "matpower_import.bus_shunt_model", "matpower_import.shift_unit", "matpower_import.shift_sign", "matpower_import.ratio", "matpower_import.enable_pq_gen_controllers", "matpower_import.preallocate_network", "matpower_import.preallocate_min_buses",
@@ -85,6 +85,7 @@ function run_configuration_coverage_tests()
       "power_flow.start_mode.angle_mode" => :StartModeConfig,
       "power_flow.start_mode.voltage_mode" => :StartModeConfig,
       "power_flow.start_mode.profile_source" => :StartModeConfig,
+      "power_flow.qlimits.enforcement_mode" => :QLimitConfig,
       "power_flow.qlimits.start_iter" => :QLimitConfig,
       "matpower_import.shift_sign" => :MatpowerImportConfig,
       "matpower_import.cases" => :MatpowerImportConfig,
@@ -191,6 +192,29 @@ benchmark:
     @test cfg.matpower.ratio === :reciprocal
     @test cfg.output.logfile_performance === :full
     @test cfg.benchmark.enabled === false
+  end
+
+  @testset "Q-limit enforcement mode user YAML keys" begin
+    for mode in (:active_set, :matpower_simultaneous)
+      cfgfile = tempname() * ".yaml"
+      write(cfgfile, """
+power_flow:
+  qlimits:
+    enforcement_mode: $(mode)
+""")
+      cfg = Sparlectra.load_sparlectra_config(cfgfile; reload = true)
+      @test cfg.powerflow.qlimits.enforcement_mode === mode
+    end
+    if :classic_simultaneous in Sparlectra.QLIMIT_ENFORCEMENT_MODE_VALUES
+      cfgfile = tempname() * ".yaml"
+      write(cfgfile, """
+power_flow:
+  qlimits:
+    enforcement_mode: classic_simultaneous
+""")
+      cfg = Sparlectra.load_sparlectra_config(cfgfile; reload = true)
+      @test cfg.powerflow.qlimits.enforcement_mode === :classic_simultaneous
+    end
   end
 
   @testset "MATPOWER auto-profile decision rules" begin
@@ -315,4 +339,3 @@ benchmark:
     end
   end
 end
-

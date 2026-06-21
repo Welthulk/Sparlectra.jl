@@ -70,7 +70,24 @@ power_flow:
   # Reactive-power limit switching.
   qlimits:
     enabled: true
+
+    # Q-limit enforcement strategy.
+    # Allowed values on the current branch:
+    # - active_set: dynamic in-iteration PV/PQ switching
+    # - matpower_simultaneous: classical/reference-style outer loop;
+    #   switch all Q-limit violations after a successful base PF
+    # - matpower_one_at_a_time: classical/reference-style outer loop;
+    #   switch the largest violation per outer-loop pass
+    #
+    # Desired future public names, after the rename task:
+    # - active_set
+    # - classic_simultaneous
+    # - classic_one_at_a_time
+    enforcement_mode: active_set
+
     # First iteration where Q-limit switching is allowed.
+    # Classical outer-loop modes ignore in-iteration switching and check Q limits
+    # only after a successful base PF.
     start_iter: 3
     # Allowed values: iteration, auto, iteration_or_auto
     start_mode: iteration_or_auto
