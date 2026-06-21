@@ -2277,9 +2277,9 @@ function test_q_limit_start_iter_delays_switching()::Bool
   return erg == 1 && getNodeType(net.nodeVec[bus]) == Sparlectra.PV && isempty(net.qLimitLog)
 end
 
-function test_q_limit_auto_q_delta_accepts_switching()::Bool
+function test_q_limit_auto_accepts_switching()::Bool
   net = createTest3BusNet(cooldown = 0, hyst_pu = 0.0, qlim_min = -15.0, qlim_max = 15.0)
-  _, erg = runpf!(net, 30, 1e-8, 0; method = :rectangular, qlimit_start_mode = :auto_q_delta, qlimit_auto_q_delta_pu = Inf)
+  _, erg = runpf!(net, 30, 1e-8, 0; method = :rectangular, qlimit_start_mode = :auto, qlimit_auto_q_delta_pu = Inf)
   bus = geNetBusIdx(net = net, busName = "STATION1")
   return erg == 0 && getNodeType(net.nodeVec[bus]) == Sparlectra.PQ && !isempty(net.qLimitLog)
 end
@@ -2654,7 +2654,7 @@ function run_grid_tests()
       @test test_q_limit_adjust_vset_multigen_single_controller() == true
       @test test_q_limit_default_behavior_unchanged() == true
       @test test_q_limit_start_iter_delays_switching() == true
-      @test test_q_limit_auto_q_delta_accepts_switching() == true
+      @test test_q_limit_auto_accepts_switching() == true
       @test test_q_limit_hysteresis_delays_small_pv_to_pq_overshoot() == true
       @test test_q_limit_violation_guard_bypasses_hysteresis_for_strong_overshoot() == true
       @test test_solve_linear_singular_sparse_qr_fallback() == true

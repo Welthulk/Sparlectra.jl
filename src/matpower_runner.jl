@@ -679,19 +679,20 @@ function matpower_import_auto_profile(mpc, cfg::SparlectraConfig; mode::Symbol =
     "matpower_import.compare_voltage_reference",
     mat.compare_voltage_reference,
     rec_compare;
-    safe_to_apply = false,
+    safe_to_apply = true,
     reason = isempty(vg.mismatches) ? "BUS.VM and GEN.VG are consistent within tolerance" : "BUS.VM / GEN.VG mismatch detected; hybrid comparison keeps PQ buses on BUS.VM",
     evidence = "vg_bus_mismatches=$(length(vg.mismatches)) tol=$(mat.pv_voltage_mismatch_tol_pu)",
   )
+  mode === :apply && rec_compare !== mat.compare_voltage_reference && push!(applied_pairs, :compare_voltage_reference => rec_compare)
 
   nbus = size(mpc.bus, 1)
   npv = count(r -> Int(mpc.bus[r, 2]) == 2, axes(mpc.bus, 1))
   fragile_start = nbus >= 1000 || npv >= 100 || (isfinite(best_score) && best_score > 1.0e-3)
   if fragile_start
-    robust_start = (angle_mode = :dc, voltage_mode = :bus_vm_va_blend, start_projection = true, try_dc_start = true, try_blend_scan = true, branch_guard = true, measure_candidates = true, reuse_import_data = true)
+    robust_start = (angle_mode = :dc, voltage_mode = :profile_blend, start_projection = true, try_dc_start = true, try_blend_scan = true, branch_guard = true, measure_candidates = true, reuse_import_data = true)
     for (field, rec) in pairs(robust_start)
       cur = getfield(pf.start_mode, field)
-      _push_auto_profile_row!(rows, mode, "power_flow.start_mode.$(field)", cur, rec; safe_to_apply = false, reason = "large or fragile MATPOWER case; robust imported/DC start is safer", evidence = "nbus=$(nbus) npv=$(npv) best_residual=$(round(best_score; digits = 8))")
+      _push_auto_profile_row!(rows, mode, "power_flow.start_mode.$(field)", cur, rec; safe_to_apply = true, reason = "large or fragile MATPOWER case; robust imported/DC start is safer", evidence = "nbus=$(nbus) npv=$(npv) best_residual=$(round(best_score; digits = 8))")
     end
   end
 
@@ -721,12 +722,32 @@ function matpower_import_auto_profile(mpc, cfg::SparlectraConfig; mode::Symbol =
     for (field, rec) in pairs(q_recs)
       cur = getfield(pf.qlimits, field)
       option = field in (:guard_min_q_range_pu, :guard_narrow_range_mode, :guard_zero_range_mode, :guard_violation_mode, :guard_max_switches, :guard_max_remaining_violations) ? "power_flow.qlimits.guard.$(replace(String(field), "guard_" => ""))" : "power_flow.qlimits.$(field)"
-      _push_auto_profile_row!(rows, mode, option, cur, rec; safe_to_apply = false, reason = "many PV buses or narrow Q ranges; conservative Q-limit guard recommended", evidence = "npv=$(npv) narrow_q_ranges=$(narrow_q)")
+      _push_auto_profile_row!(rows, mode, option, cur, rec; safe_to_apply = true, reason = "many PV buses or narrow Q ranges; conservative Q-limit guard recommended", evidence = "npv=$(npv) narrow_q_ranges=$(narrow_q)")
     end
   end
 
-  mat2 = isempty(applied_pairs) ? mat : _copy_matpower_with(mat; applied_pairs...)
-  cfg2 = mat2 === mat ? cfg : _copy_config_with(cfg; matpower = mat2)
+  if mode === :apply && fragile_start
+    start_updates = Pair{Symbol,Any}[]
+    for (field, rec) in pairs((angle_mode = :dc, voltage_mode = :profile_blend, start_projection = true, try_dc_start = true, try_blend_scan = true, branch_guard = true, measure_candidates = true, reuse_import_data = true))
+      getfield(pf.start_mode, field) == rec || push!(start_updates, field => rec)
+    end
+    append!(applied_pairs, (Symbol("start_mode_", first(pair)) => last(pair) for pair in start_updates))
+  end
+  qlimit_updates = Pair{Symbol,Any}[]
+  if mode === :apply && qlimit_risk
+    for (field, rec) in pairs((start_iter = 3, start_mode = :iteration_or_auto, hysteresis_pu = 0.01, cooldown_iters = 1, guard = true, guard_min_q_range_pu = 0.02, guard_narrow_range_mode = :lock_pq, guard_zero_range_mode = :lock_pq, guard_violation_mode = :lock_pq, guard_max_switches = 10, guard_max_remaining_violations = 0))
+      getfield(pf.qlimits, field) == rec || push!(qlimit_updates, field => rec)
+    end
+    append!(applied_pairs, (Symbol("qlimits_", first(pair)) => last(pair) for pair in qlimit_updates))
+  end
+  mat_updates = Pair{Symbol,Any}[pair for pair in applied_pairs if first(pair) in fieldnames(MatpowerImportConfig)]
+  start_updates = mode === :apply && fragile_start ? Pair{Symbol,Any}[field => rec for (field, rec) in pairs((angle_mode = :dc, voltage_mode = :profile_blend, start_projection = true, try_dc_start = true, try_blend_scan = true, branch_guard = true, measure_candidates = true, reuse_import_data = true)) if getfield(pf.start_mode, field) != rec] : Pair{Symbol,Any}[]
+  qlimit_updates = qlimit_updates
+  mat2 = isempty(mat_updates) ? mat : _copy_matpower_with(mat; mat_updates...)
+  start2 = isempty(start_updates) ? pf.start_mode : _copy_start_mode_with(pf.start_mode; start_updates...)
+  qlim2 = isempty(qlimit_updates) ? pf.qlimits : _copy_qlimits_with(pf.qlimits; qlimit_updates...)
+  pf2 = (start2 === pf.start_mode && qlim2 === pf.qlimits) ? pf : _copy_powerflow_with(pf; start_mode = start2, qlimits = qlim2)
+  cfg2 = (mat2 === mat && pf2 === pf) ? cfg : _copy_config_with(cfg; matpower = mat2, powerflow = pf2)
   return (config = cfg2, rows = rows, applied = Tuple(applied_pairs))
 end
 

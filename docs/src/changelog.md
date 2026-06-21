@@ -72,7 +72,7 @@
 
 ### Improvements
 
-* Hardened `matpower_import.auto_profile` into a MATPOWER pre-run that logs recommendation evidence, preserves `recommend` mode without changing the active configuration, applies only unambiguous import-convention changes in `apply` mode, and prints final effective options without rewriting YAML files.
+* Hardened `matpower_import.auto_profile` into a MATPOWER pre-run that logs recommendation evidence, preserves `recommend` mode without changing the active configuration, applies safe import-convention, comparison-reference, start-mode, and Q-limit guard changes in `apply` mode, and prints final effective options without rewriting YAML files.
 * Refactored the rectangular complex-state power-flow implementation into focused modules under `src/powerflow_rectangular/`, with `runpf_rectangular!` as the network-integrated entry point and `run_complex_nr_rectangular` as the standalone array-level solver.
 
 ### Bugfixes

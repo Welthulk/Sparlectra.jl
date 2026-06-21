@@ -223,8 +223,9 @@ benchmark:
     ambiguous = Sparlectra.matpower_import_auto_profile(_auto_profile_pv_mismatch_case(), ambiguous_cfg; mode = :apply)
     compare_row = only(row for row in ambiguous.rows if row.option == "matpower_import.compare_voltage_reference")
     @test compare_row.recommended == "hybrid"
-    @test compare_row.action === :recommend
-    @test ambiguous.config.matpower.compare_voltage_reference === :imported_setpoint
+    @test compare_row.action === :applied
+    @test ambiguous.config.matpower.compare_voltage_reference === :hybrid
+    @test any(pair -> first(pair) === :compare_voltage_reference && last(pair) === :hybrid, ambiguous.applied)
 
     io = IOBuffer()
     Sparlectra.print_matpower_import_auto_profile(io, ambiguous.rows)
@@ -305,4 +306,13 @@ benchmark:
     end
   end
 
+  @testset "Q-limit start mode public values" begin
+    for mode in ("iteration", "auto", "iteration_or_auto")
+      cfg = Sparlectra.SparlectraConfig(Dict(
+        "power_flow" => Dict("qlimits" => Dict("start_mode" => mode)),
+      ))
+      @test cfg.powerflow.qlimits.start_mode === Symbol(mode)
+    end
+  end
 end
+

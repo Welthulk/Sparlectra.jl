@@ -81,7 +81,7 @@ function _handle_rectangular_qlimit_iteration!(
   qlimit_iter_ready, qlimit_auto_ready, qlimit_ready, converged_this_iter, qlimit_check_active = _perf_profile_time!(performance_profile, :iteration_control_bookkeeping) do
     qlimit_iter_ready_ = it >= qlimit_start_iter
     qlimit_auto_ready_ = false
-    if qlimit_start_mode in (:auto_q_delta, :iteration_or_auto)
+    if qlimit_start_mode in (:auto, :iteration_or_auto)
       max_q_delta = 0.0
       compared = false
       @inbounds for bus in eachindex(current_pv_qreq_pu)
@@ -92,7 +92,7 @@ function _handle_rectangular_qlimit_iteration!(
       end
       qlimit_auto_ready_ = compared && (max_q_delta <= qlimit_auto_q_delta_pu)
     end
-    qlimit_ready_ = qlimit_start_mode == :iteration ? qlimit_iter_ready_ : qlimit_start_mode == :auto_q_delta ? qlimit_auto_ready_ : (qlimit_iter_ready_ || qlimit_auto_ready_)
+    qlimit_ready_ = qlimit_start_mode == :iteration ? qlimit_iter_ready_ : qlimit_start_mode == :auto ? qlimit_auto_ready_ : (qlimit_iter_ready_ || qlimit_auto_ready_)
     converged_this_iter_ = history[end] <= tol
     violation_guard_active = qlimit_guard_violation_mode == :lock_pq
     qlimit_check_active_ = qlimit_ready_ && (!converged_this_iter_ || violation_guard_active)
