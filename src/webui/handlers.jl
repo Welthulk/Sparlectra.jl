@@ -149,7 +149,7 @@ function _webui_case_profile_settings(settings_raw::AbstractDict)::Dict{String,A
   return settings
 end
 
-function _webui_case_settings_saved_html(path::AbstractString, count::Integer, successful::Bool, override::Bool)::String
+function _webui_case_settings_saved_html(path::AbstractString, casefile::AbstractString, count::Integer, successful::Bool, override::Bool)::String
   status = successful ? "successful/converged" : (override ? "non-successful, saved via explicit override" : "non-successful")
   body = """
 <section class=\"panel case-settings-saved\"><h2>Case settings saved</h2>
@@ -159,7 +159,7 @@ function _webui_case_settings_saved_html(path::AbstractString, count::Integer, s
 <li><strong>Run status:</strong> $(_webui_escape(status))</li>
 </ul>
 <p>These settings will be applied when the same case is selected again. Manual edits in the form still override the saved profile for each run.</p>
-<p><a href=\"/powerflow?casefile=$(_webui_urlencode(path))\">Open the run form with this case</a></p>
+<p><a href=\"/powerflow?casefile=$(_webui_urlencode(casefile))\">Open the run form with this case</a></p>
 </section>"""
   return _webui_layout("Case settings saved", body; show_back = true)
 end
@@ -240,7 +240,7 @@ function handle_powerflow_case_settings_save(run_id::AbstractString, form::Abstr
   try
     _write_yaml_file(path, profile)
     record_webui_operation!(operation_log, "case_settings_saved"; route = "/powerflow/result/$(run_id)/case-settings/save", method = "POST", user_action = true, run_id, status = "succeeded", profile_path = path, normalized_case_key = key)
-    return _webui_html(_webui_case_settings_saved_html(path, length(settings), successful, !successful && override))
+    return _webui_html(_webui_case_settings_saved_html(path, case_settings_source, length(settings), successful, !successful && override))
   catch err
     record_webui_operation!(operation_log, "case_settings_save_failed"; route = "/powerflow/result/$(run_id)/case-settings/save", method = "POST", user_action = true, run_id, status = "failed", message = sprint(showerror, err))
     return _webui_html(render_webui_error(500, sprint(showerror, err)); status = 500)

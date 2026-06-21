@@ -244,8 +244,11 @@ function run_webui_tests()
 
       save_response = Sparlectra.handle_powerflow_case_settings_save(run_id, Dict{String,String}(); output_root = root, operation_log = root)
       @test save_response.status == 200
+      save_html = String(save_response.body)
       profile_path = Sparlectra._webui_case_settings_path(root, joinpath(root, "case145.m"))
       @test isfile(profile_path)
+      @test occursin("/powerflow?casefile=$(Sparlectra._webui_urlencode(joinpath(root, "case145.m")))", save_html)
+      @test !occursin("/powerflow?casefile=$(Sparlectra._webui_urlencode(profile_path))", save_html)
       profile_text = read(profile_path, String)
       @test occursin("profile_kind: webui_case_settings", profile_text)
       @test occursin("power_flow_tol: 1.0e-7", profile_text)
