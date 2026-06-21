@@ -2270,27 +2270,29 @@ function test_q_limit_default_behavior_unchanged()::Bool
 end
 
 function test_q_limit_enforcement_mode_config_values()::Bool
-  accepted = all(mode -> Sparlectra.QLimitConfig(Dict("enforcement_mode" => String(mode))).enforcement_mode == mode, (:active_set, :matpower_simultaneous, :matpower_one_at_a_time))
+  canonical_ok = all(mode -> Sparlectra.QLimitConfig(Dict("enforcement_mode" => String(mode))).enforcement_mode == mode, (:active_set, :classic_simultaneous, :classic_one_at_a_time))
+  aliases_ok = Sparlectra.QLimitConfig(Dict("enforcement_mode" => "matpower_simultaneous")).enforcement_mode == :classic_simultaneous &&
+               Sparlectra.QLimitConfig(Dict("enforcement_mode" => "matpower_one_at_a_time")).enforcement_mode == :classic_one_at_a_time
   invalid_rejected = false
   try
     Sparlectra.QLimitConfig(Dict("enforcement_mode" => "classic"))
   catch err
     invalid_rejected = err isa ArgumentError && occursin("power_flow.qlimits.enforcement_mode", sprint(showerror, err))
   end
-  return accepted && invalid_rejected
+  return canonical_ok && aliases_ok && invalid_rejected
 end
 
 function test_q_limit_matpower_mode_base_failure_does_not_switch()::Bool
   net = createTest3BusNet(cooldown = 0, hyst_pu = 0.0, qlim_min = -15.0, qlim_max = 15.0)
   bus = geNetBusIdx(net = net, busName = "STATION1")
-  _, erg = runpf!(net, 1, 1e-14, 0; method = :rectangular, qlimit_enforcement_mode = :matpower_simultaneous, qlimit_max_outer = 5)
+  _, erg = runpf!(net, 1, 1e-14, 0; method = :rectangular, qlimit_enforcement_mode = :classic_simultaneous, qlimit_max_outer = 5)
   st = Sparlectra.rectangular_pf_status(net)
   return erg == 1 &&
          getNodeType(net.nodeVec[bus]) == Sparlectra.PV &&
          isempty(net.qLimitLog) &&
          !isnothing(st) &&
          hasproperty(st, :qlimit_enforcement_mode) &&
-         st.qlimit_enforcement_mode == :matpower_simultaneous &&
+         st.qlimit_enforcement_mode == :classic_simultaneous &&
          st.base_pf_converged === false &&
          st.qlimit_enforcement_started === false &&
          st.final_outcome == :base_pf_not_converged
@@ -2298,11 +2300,11 @@ end
 
 function test_q_limit_matpower_mode_dispatch_no_reenable()::Bool
   net = createTest3BusNet(cooldown = 2, hyst_pu = 0.01, qlim_min = -15.0, qlim_max = 15.0)
-  _, _ = runpf!(net, 30, 1e-8, 0; method = :rectangular, qlimit_enforcement_mode = :matpower_one_at_a_time, qlimit_max_outer = 5)
+  _, _ = runpf!(net, 30, 1e-8, 0; method = :rectangular, qlimit_enforcement_mode = :classic_one_at_a_time, qlimit_max_outer = 5)
   st = Sparlectra.rectangular_pf_status(net)
   return !isnothing(st) &&
          hasproperty(st, :qlimit_enforcement_mode) &&
-         st.qlimit_enforcement_mode == :matpower_one_at_a_time &&
+         st.qlimit_enforcement_mode == :classic_one_at_a_time &&
          hasproperty(st, :qlimit_reenable_events) &&
          st.qlimit_reenable_events == 0
 end

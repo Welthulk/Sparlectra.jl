@@ -72,17 +72,16 @@ power_flow:
     enabled: true
 
     # Q-limit enforcement strategy.
-    # Allowed values on the current branch:
+    # Allowed values:
     # - active_set: dynamic in-iteration PV/PQ switching
-    # - matpower_simultaneous: classical/reference-style outer loop;
-    #   switch all Q-limit violations after a successful base PF
-    # - matpower_one_at_a_time: classical/reference-style outer loop;
-    #   switch the largest violation per outer-loop pass
+    # - classic_simultaneous: classical outer loop; solve the base PF first,
+    #   then switch all Q-limit violations after successful convergence
+    # - classic_one_at_a_time: classical outer loop; solve the base PF first,
+    #   then switch the largest Q-limit violation per outer-loop pass
     #
-    # Desired future public names, after the rename task:
-    # - active_set
-    # - classic_simultaneous
-    # - classic_one_at_a_time
+    # Legacy aliases still accepted for old YAML files:
+    # - matpower_simultaneous  -> classic_simultaneous
+    # - matpower_one_at_a_time -> classic_one_at_a_time
     enforcement_mode: active_set
 
     # First iteration where Q-limit switching is allowed.

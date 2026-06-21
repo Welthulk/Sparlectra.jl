@@ -195,7 +195,7 @@ benchmark:
   end
 
   @testset "Q-limit enforcement mode user YAML keys" begin
-    for mode in (:active_set, :matpower_simultaneous)
+    for mode in (:active_set, :classic_simultaneous, :classic_one_at_a_time)
       cfgfile = tempname() * ".yaml"
       write(cfgfile, """
 power_flow:
@@ -205,16 +205,24 @@ power_flow:
       cfg = Sparlectra.load_sparlectra_config(cfgfile; reload = true)
       @test cfg.powerflow.qlimits.enforcement_mode === mode
     end
-    if :classic_simultaneous in Sparlectra.QLIMIT_ENFORCEMENT_MODE_VALUES
+    for (legacy, canonical) in ((:matpower_simultaneous, :classic_simultaneous), (:matpower_one_at_a_time, :classic_one_at_a_time))
       cfgfile = tempname() * ".yaml"
       write(cfgfile, """
 power_flow:
   qlimits:
-    enforcement_mode: classic_simultaneous
+    enforcement_mode: $(legacy)
 """)
       cfg = Sparlectra.load_sparlectra_config(cfgfile; reload = true)
-      @test cfg.powerflow.qlimits.enforcement_mode === :classic_simultaneous
+      @test cfg.powerflow.qlimits.enforcement_mode === canonical
     end
+    err = try
+      Sparlectra.QLimitConfig(Dict("enforcement_mode" => "definitely_not_supported"))
+      nothing
+    catch caught
+      caught
+    end
+    @test err isa ArgumentError
+    @test occursin("classic_simultaneous", sprint(showerror, err))
   end
 
   @testset "MATPOWER auto-profile decision rules" begin

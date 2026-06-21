@@ -414,6 +414,8 @@ function run_webui_tests()
       @test occursin("<option value=\"recommend\">recommend</option>", form_html)
       @test occursin("<option value=\"apply\" selected>apply</option>", form_html)
       @test occursin("<legend>MATPOWER import conventions</legend>", form_html)
+      @test !occursin("matpower_simultaneous", form_html)
+      @test !occursin("matpower_one_at_a_time", form_html)
       @test findfirst("Advanced / expert options", form_html) < findfirst("MATPOWER import conventions", form_html)
       @test findfirst("<details class=\"span-2 expert-section\">", form_html) < findfirst("MATPOWER import conventions", form_html)
       @test occursin("Use <strong>off</strong> for manual overrides", form_html)
@@ -1007,6 +1009,7 @@ result = get_powerflow_result(run_id)
 
       for (name, config_text, expected_marker) in (
         ("new qlimit enforcement mode", "power_flow:\n  qlimits:\n    enforcement_mode: classic_simultaneous\n", "PowerFlow run"),
+        ("legacy qlimit enforcement alias", "power_flow:\n  qlimits:\n    enforcement_mode: matpower_one_at_a_time\n", "PowerFlow run"),
         ("deprecated bus_vm_va_blend start alias", "power_flow:\n  start_mode:\n    voltage_mode: bus_vm_va_blend\n", "PowerFlow run"),
         ("malformed configuration", "power_flow:\n  qlimits:\n    enforcement_mode: definitely_not_supported\n", "Configuration error"),
       )

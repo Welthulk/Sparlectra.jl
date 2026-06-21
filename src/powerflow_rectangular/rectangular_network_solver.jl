@@ -39,7 +39,7 @@ using Printf
 # All other exceptions are considered real errors and are rethrown.
 _is_rectangular_linear_step_failure(e) = e isa LinearAlgebra.SingularException || e isa LinearAlgebra.LAPACKException
 
-const QLIMIT_ENFORCEMENT_MODES = (:active_set, :matpower_simultaneous, :matpower_one_at_a_time)
+const QLIMIT_ENFORCEMENT_MODES = (:active_set, :classic_simultaneous, :classic_one_at_a_time)
 
 function _rectangular_qgen_requirements_pu(net::Net, Ybus, V::Vector{ComplexF64})
   Sbus_pu, _ = _compute_rectangular_final_injections(Ybus, V, net.baseMVA)
@@ -86,7 +86,7 @@ function _select_new_reference_bus!(net::Net, old_ref::Int)
   for (bus, node) in enumerate(net.nodeVec)
     getNodeType(node) == PV || continue
     setNodeType!(node, "Slack")
-    @info "MATPOWER-compatible Q-limit enforcement changed reference bus" old_ref = old_ref new_ref = bus
+    @info "Classical Q-limit enforcement changed reference bus" old_ref = old_ref new_ref = bus
     return bus
   end
   return nothing
@@ -126,7 +126,7 @@ function _run_q_limits_matpower_outer_loop!(
   rectangular_preallocate_workspace::Symbol,
   rectangular_workspace_min_buses::Int,
 )
-  mode in (:matpower_simultaneous, :matpower_one_at_a_time) || error("Unsupported MATPOWER-compatible Q-limit mode $(mode).")
+  mode in (:classic_simultaneous, :classic_one_at_a_time) || error("Unsupported classical Q-limit mode $(mode).")
   resetQLimitLog!(net)
   fixed_gens = falses(length(net.prosumpsVec))
   outer_rows = NamedTuple[]
@@ -190,7 +190,7 @@ function _run_q_limits_matpower_outer_loop!(
       break
     end
     qlimit_enforcement_started = true
-    selected = mode == :matpower_simultaneous ? violations : [violations[argmax(getfield.(violations, :violation_pu))]]
+    selected = mode == :classic_simultaneous ? violations : [violations[argmax(getfield.(violations, :violation_pu))]]
     ref_changed = false
     for v in selected
       bus = v.bus
@@ -213,7 +213,7 @@ function _run_q_limits_matpower_outer_loop!(
       end
       push!(outer_rows, (outer_iter = outer + 1, mode = mode, gen_index = v.gen_index, bus_i = bus, violation_side = v.side, qg_before = v.q_before_pu * net.baseMVA, q_limit = v.q_limit_pu * net.baseMVA, violation_mvar = v.violation_pu * net.baseMVA, action = :clamp_and_convert, bus_type_before = old_type, bus_type_after = getNodeType(net.nodeVec[bus]), ref_changed = ref_changed))
     end
-    verbose > 0 && @printf(stdout, "MATPOWER-compatible Q-limit outer iter %d mode=%s selected=%d max_violation=%.6g MVAr ref_changed=%s\n", outer + 1, String(mode), length(selected), maximum(getfield.(violations, :violation_pu)) * net.baseMVA, string(ref_changed))
+    verbose > 0 && @printf(stdout, "Classical Q-limit outer iter %d mode=%s selected=%d max_violation=%.6g MVAr ref_changed=%s\n", outer + 1, String(mode), length(selected), maximum(getfield.(violations, :violation_pu)) * net.baseMVA, string(ref_changed))
     outer == qlimit_max_outer && (final_outcome = :max_outer_iterations)
   end
   st = rectangular_pf_status(net)
@@ -532,8 +532,9 @@ function runpf_rectangular!(
   rectangular_workspace_min_buses::Int = 1000,
 )
   _validate_rectangular_powerflow_options(method = method, sparse = true)
+  qlimit_enforcement_mode = _canonical_qlimit_enforcement_mode(qlimit_enforcement_mode)
   qlimit_enforcement_mode in QLIMIT_ENFORCEMENT_MODES || error("Unsupported qlimit_enforcement_mode=$(qlimit_enforcement_mode). Supported: $(QLIMIT_ENFORCEMENT_MODES).")
-  if qlimits_enabled && qlimit_enforcement_mode in (:matpower_simultaneous, :matpower_one_at_a_time)
+  if qlimits_enabled && qlimit_enforcement_mode in (:classic_simultaneous, :classic_one_at_a_time)
     return _run_q_limits_matpower_outer_loop!(
       net;
       mode = qlimit_enforcement_mode,

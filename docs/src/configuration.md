@@ -165,11 +165,13 @@ extensions:
 
 `power_flow.qlimits.enforcement_mode` selects the reactive-limit algorithm.
 `active_set` preserves Sparlectra's existing in-iteration PV→PQ active-set
-behavior. `matpower_simultaneous` and `matpower_one_at_a_time` run a
-MATPOWER-compatible outer loop: solve the base AC power flow first with Q-limit
-switching disabled, clamp violating generator Q to the violated limit only after
-a successful solve, convert affected voltage-controlled buses to PQ, and rerun
-without PQ→PV re-enable inside that enforcement loop.
+behavior. `classic_simultaneous` and `classic_one_at_a_time` run a
+classical/reference-style outer loop: solve the base AC power flow first with
+Q-limit switching disabled, clamp violating generator Q to the violated limit
+only after a successful solve, convert affected voltage-controlled buses to PQ,
+and rerun without PQ→PV re-enable inside that enforcement loop. Legacy aliases
+`matpower_simultaneous` and `matpower_one_at_a_time` are still accepted for old
+YAML files and are normalized to the corresponding `classic_*` value.
 
 `matpower_import.auto_profile` controls a MATPOWER pre-run profile. Use `off`
 to disable it, `recommend` to print/log a recommendation table without changing
