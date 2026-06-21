@@ -287,17 +287,21 @@ function start_webui_powerflow_run(request::AbstractDict; case_directory::Union{
           if get(job, "status", "") == "aborted_unknown"
             return
           end
-          service_success = get(result, "success", false)
-          job["status"] = service_success ? "success" : "failed"
-          job["run_status"] = get(result, "run_status", service_success ? "completed" : "failed")
-          job["solver_status"] = get(result, "solver_status", service_success ? "completed" : get(job, "solver_status", "failed"))
-          job["artifact_status"] = get(result, "artifact_status", service_success ? "completed" : get(job, "artifact_status", "failed"))
+          numerical_success = get(result, "success", false)
+          result_status = lowercase(string(get(result, "status", numerical_success ? "success" : "failed")))
+          service_completed = get(result, "service_status", "") == "completed" || result_status in ("succeeded", "not_converged")
+          job["status"] = numerical_success ? "success" : (service_completed && get(result, "numerical_status", "") == "not_converged" ? "not_converged" : "failed")
+          job["service_status"] = get(result, "service_status", service_completed ? "completed" : "failed")
+          job["numerical_status"] = get(result, "numerical_status", numerical_success ? "converged" : "failed")
+          job["run_status"] = get(result, "run_status", numerical_success ? "completed" : (job["status"] == "not_converged" ? "completed_nonconverged" : "failed"))
+          job["solver_status"] = get(result, "solver_status", service_completed ? "completed" : get(job, "solver_status", "failed"))
+          job["artifact_status"] = get(result, "artifact_status", service_completed ? "completed" : get(job, "artifact_status", "failed"))
           job["final_outcome"] = get(result, "final_outcome", job["run_status"])
           job["current_phase"] = job["status"]
           for key in ("converged", "numerical_converged", "solution_available", "iterations", "final_mismatch", "reason")
             haskey(result, key) && (job[key] = result[key])
           end
-          job["message"] = something(get(result, "message", nothing), job["status"] == "success" ? "PowerFlow run completed." : "PowerFlow run failed.")
+          job["message"] = something(get(result, "message", nothing), job["status"] == "success" ? "PowerFlow run completed." : (job["status"] == "not_converged" ? "PowerFlow run completed, but numerical solver did not converge." : "PowerFlow run failed."))
           job["resolved_casefile"] = get(result, "casefile", nothing)
           if haskey(result, "run_id") && result["run_id"] != run_id
             delete!(_POWERFLOW_WEBUI_JOBS, run_id)
@@ -306,7 +310,7 @@ function start_webui_powerflow_run(request::AbstractDict; case_directory::Union{
             _POWERFLOW_WEBUI_JOBS[result["run_id"]] = job
           end
         end
-        if !get(result, "success", false)
+        if !get(result, "success", false) && job["status"] != "not_converged"
           _write_webui_job_marker!(job, :failed, string(get(result, "reason", "execution_error")), String(job["message"]))
         end
         event_callback(

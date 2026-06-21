@@ -710,47 +710,53 @@ function _write_detailed_result_csv_artifacts_direct!(artifacts::Vector{String},
     bus_elapsed = _api_elapsed_seconds(bus_start)
     _emit_csv_progress("detailed_result_csv_file_written"; artifact = artifacts[1], rows = bus_rows, elapsed_s = bus_elapsed)
 
-    current_artifact = artifacts[2]
-    current_rows[] = 0
-    branch_start = time_ns()
-    open(joinpath(output_path, artifacts[2]), "w") do io
-      println(io, join(String.(branch_columns), resolved_format.delimiter))
-      row_count = 0
-      for br in net.branchVec
-        row_count += 1
-        current_rows[] = row_count
-      f = br.fBranchFlow
-      t = br.tBranchFlow
-      p_from = isnothing(f) || isnothing(f.pFlow) ? 0.0 : f.pFlow
-      q_from = isnothing(f) || isnothing(f.qFlow) ? 0.0 : f.qFlow
-      p_to = isnothing(t) || isnothing(t.pFlow) ? 0.0 : t.pFlow
-      q_to = isnothing(t) || isnothing(t.qFlow) ? 0.0 : t.qFlow
-      rated = isnothing(br.sn_MVA) ? 0.0 : br.sn_MVA
-      overloaded = rated > 0.0 && max(abs(p_from), abs(p_to)) > rated
-      write_csv_row_direct!(
-        io,
-        resolved_format.delimiter,
-        runtime_format,
-        br.comp.cName,
-        br.branchIdx,
-        br.fromBus,
-        br.toBus,
-        br.status,
-        p_from,
-        q_from,
-        p_to,
-        q_to,
-        _default0(br.pLosses),
-        _default0(br.qLosses),
-        rated,
-        overloaded,
-      )
-      _check_csv_abort(abort_checker, row_count)
+    try
+      current_artifact = artifacts[2]
+      current_rows[] = 0
+      branch_start = time_ns()
+      open(joinpath(output_path, artifacts[2]), "w") do io
+        println(io, join(String.(branch_columns), resolved_format.delimiter))
+        row_count = 0
+        for br in net.branchVec
+          row_count += 1
+          current_rows[] = row_count
+          f = br.fBranchFlow
+          t = br.tBranchFlow
+          p_from = isnothing(f) || isnothing(f.pFlow) ? 0.0 : f.pFlow
+          q_from = isnothing(f) || isnothing(f.qFlow) ? 0.0 : f.qFlow
+          p_to = isnothing(t) || isnothing(t.pFlow) ? 0.0 : t.pFlow
+          q_to = isnothing(t) || isnothing(t.qFlow) ? 0.0 : t.qFlow
+          rated = isnothing(br.sn_MVA) ? 0.0 : br.sn_MVA
+          overloaded = rated > 0.0 && max(abs(p_from), abs(p_to)) > rated
+          write_csv_row_direct!(
+            io,
+            resolved_format.delimiter,
+            runtime_format,
+            br.comp.cName,
+            br.branchIdx,
+            br.fromBus,
+            br.toBus,
+            br.status,
+            p_from,
+            q_from,
+            p_to,
+            q_to,
+            _default0(br.pLosses),
+            _default0(br.qLosses),
+            rated,
+            overloaded,
+          )
+          _check_csv_abort(abort_checker, row_count)
+        end
+        branch_rows = row_count
       end
-      branch_rows = row_count
+      branch_elapsed = _api_elapsed_seconds(branch_start)
+      _emit_csv_progress("detailed_result_csv_file_written"; artifact = artifacts[2], rows = branch_rows, elapsed_s = branch_elapsed)
+    catch err
+      timing_metadata !== nothing && (timing_metadata[:partial_error] = "branch_flows.csv failed: $(sprint(showerror, err))")
+      _emit_csv_progress("detailed_result_csv_export_partial"; artifact = artifacts[2], rows_written = current_rows[], elapsed_s = _api_elapsed_seconds(total_start), error = timing_metadata === nothing ? sprint(showerror, err) : timing_metadata[:partial_error])
+      return [artifacts[1]]
     end
-    branch_elapsed = _api_elapsed_seconds(branch_start)
-    _emit_csv_progress("detailed_result_csv_file_written"; artifact = artifacts[2], rows = branch_rows, elapsed_s = branch_elapsed)
   catch err
     _emit_csv_progress("detailed_result_csv_export_aborted"; artifact = current_artifact, rows_written = current_rows[], elapsed_s = _api_elapsed_seconds(total_start))
     rethrow()
@@ -781,8 +787,36 @@ function _write_detailed_result_csv(output_path::AbstractString, result::Sparlec
   branch_columns = (:branch, :branch_index, :from_bus, :to_bus, :status, :p_from_MW, :q_from_MVar, :p_to_MW, :q_to_MVar, :p_loss_MW, :q_loss_MVar, :rated_MVA, :overloaded)
   estimated_rows = length(report.nodes) + length(report.branches)
   _write_namedtuple_csv(joinpath(output_path, artifacts[1]), _complex_voltage_rows(report.nodes, resolved_format), bus_columns; delimiter = resolved_format.delimiter, format = resolved_format.name, config, estimated_rows)
-  _write_namedtuple_csv(joinpath(output_path, artifacts[2]), report.branches, branch_columns; delimiter = resolved_format.delimiter, format = resolved_format.name, config, estimated_rows)
+  try
+    _write_namedtuple_csv(joinpath(output_path, artifacts[2]), report.branches, branch_columns; delimiter = resolved_format.delimiter, format = resolved_format.name, config, estimated_rows)
+  catch err
+    timing_metadata !== nothing && (timing_metadata[:partial_error] = "branch_flows.csv failed: $(sprint(showerror, err))")
+    return [artifacts[1]]
+  end
   return artifacts
+end
+
+function _csv_solution_quality(raw_result::SparlectraRunResult)::String
+  return raw_result.final_converged && raw_result.solution_available ? "converged" : "not_converged_last_iterate"
+end
+
+function _write_numerical_outcome_summary(io::IO, raw_result::SparlectraRunResult)
+  raw_result.final_converged && raw_result.solution_available && return nothing
+  println(io)
+  println(io, "Numerical outcome: not_converged")
+  println(io, "Primary reason: ", raw_result.reason_text)
+  println(io, "Final mismatch: ", raw_result.final_mismatch)
+  qlimit_ok = hasproperty(raw_result.diagnostics, :q_limit_active_set_ok) ? getproperty(raw_result.diagnostics, :q_limit_active_set_ok) : nothing
+  qlimit_ok === nothing || println(io, "Q-limit active-set convergence: ", qlimit_ok ? "yes" : "no")
+  for (label, field) in (
+    ("PV->PQ switching events", :pv_pq_switching_events),
+    ("Q-limit active-set changes", :qlimit_active_set_changes),
+    ("Q-limit re-enable events", :qlimit_reenable_events),
+    ("Guarded narrow-Q PV buses", :guarded_narrow_q_pv_buses),
+  )
+    hasproperty(raw_result.diagnostics, field) && println(io, label, ": ", getproperty(raw_result.diagnostics, field))
+  end
+  return nothing
 end
 
 function _update_effective_matpower_raw!(raw::Dict{String,Any}, cfg::SparlectraConfig)
@@ -1110,9 +1144,6 @@ function _run_sparlectra_api(;
   end
   if !detailed_result_csv
     csv_export_skip_reason = "csv_disabled"
-  elseif !raw_result.solution_available
-    csv_export_status = "skipped"
-    csv_export_skip_reason = "no_solution_available"
   elseif raw_result.net === nothing
     csv_export_status = "skipped"
     csv_export_skip_reason = "no_network_available"
@@ -1121,7 +1152,7 @@ function _run_sparlectra_api(;
     operation_callback("powerflow_lifecycle_status"; run_id = run_id, solver_status = "completed", artifact_status = "running", run_status = "finalizing", last_phase = "writing_csv_artifacts")
     try
       csv_artifacts = _write_detailed_result_csv(output_path, raw_result; format = csv_format.name, config, abort_checker = () -> _check_powerflow_cancelled!(cancellation_token), timing_metadata = csv_timing_metadata)
-      csv_export_status = "exported"
+      csv_export_status = haskey(csv_timing_metadata, :partial_error) ? "partial" : (raw_result.final_converged && raw_result.solution_available ? "exported" : "exported_diagnostic")
     catch err
       csv_export_error = sprint(showerror, err)
       csv_export_status = "failed"
@@ -1177,6 +1208,10 @@ function _run_sparlectra_api(;
       println(io, "q_limit_detail_artifacts: ", isempty(q_limit_artifacts) ? "none" : join(q_limit_artifacts, ", "))
       println(io, "detailed_result_csv_status: ", csv_export_status)
       csv_export_skip_reason === nothing || println(io, "detailed_result_csv_skip_reason: ", csv_export_skip_reason)
+      if detailed_result_csv && csv_export_skip_reason === nothing
+        println(io, "detailed_result_csv_solution_quality: ", _csv_solution_quality(raw_result))
+        raw_result.final_converged && raw_result.solution_available || println(io, "detailed_result_csv_warning: values are from the last Newton iterate and are not a converged power-flow solution")
+      end
       println(io, "detailed_result_csv_artifacts: ", detailed_result_csv ? (isempty(csv_artifacts) ? csv_export_status : join(csv_artifacts, ", ")) : "disabled")
       println(io, "detailed_result_csv_format: ", detailed_result_csv ? csv_format.name : "disabled")
       println(io, "detailed_result_csv_exporter: ", detailed_result_csv && raw_result.net !== nothing ? _select_detailed_csv_exporter(raw_result.net; config) : "disabled")
@@ -1200,6 +1235,7 @@ function _run_sparlectra_api(;
         println(io, "CSV formatting mode         : ", csv_timing_metadata[:formatting_mode])
       end
       csv_export_error === nothing || println(io, "detailed_result_csv_error: ", csv_export_error)
+      haskey(csv_timing_metadata, :partial_error) && println(io, "detailed_result_csv_error: ", csv_timing_metadata[:partial_error])
       println(io)
       print_effective_config(io, config)
       println(io)
@@ -1210,6 +1246,7 @@ function _run_sparlectra_api(;
       end
       println(io)
     end
+    _write_numerical_outcome_summary(io, raw_result)
   end
   timing_mode === :off || _write_performance_log(joinpath(output_path, "performance.log"), timing_mode, phases, raw_result, phase_recorder.timings)
   _check_powerflow_cancelled!(cancellation_token)
@@ -1219,21 +1256,27 @@ function _run_sparlectra_api(;
   final_outcome = _final_outcome_payload(raw_result)
   final_metadata = merge(Dict{String,Any}(
     "solver_status" => "completed",
-    "artifact_status" => csv_export_error === nothing ? "completed" : "failed",
-    "run_status" => "completed",
+    "service_status" => "completed",
+    "numerical_status" => numerical_success ? "converged" : "not_converged",
+    "artifact_status" => csv_export_error === nothing ? (csv_export_status == "partial" ? "partial" : "completed") : "failed",
+    "run_status" => numerical_success ? "completed" : "completed_nonconverged",
     "last_phase" => "finalizing_success",
     "last_heartbeat" => Dates.format(Dates.now(Dates.UTC), dateformat"yyyy-mm-ddTHH:MM:SS.sssZ"),
     "final_outcome" => final_outcome,
     "detailed_result_csv_status" => csv_export_status,
     "detailed_result_csv_skip_reason" => csv_export_skip_reason,
     "detailed_result_csv_error" => csv_export_error,
+    "detailed_result_csv_artifacts" => csv_artifacts,
+    "detailed_result_csv_solution_quality" => detailed_result_csv && csv_export_skip_reason === nothing ? _csv_solution_quality(raw_result) : nothing,
+    "detailed_result_csv_warning" => detailed_result_csv && csv_export_skip_reason === nothing && !numerical_success ? "values are from the last Newton iterate and are not a converged power-flow solution" : nothing,
   ), qlimit_metadata)
+  haskey(csv_timing_metadata, :partial_error) && (final_metadata["detailed_result_csv_error"] = csv_timing_metadata[:partial_error])
   _write_run_metadata_artifact(output_path; case_path = case_path, lifecycle = final_metadata)
   message = numerical_success ? "PowerFlow run completed." : "PowerFlow run completed, but numerical solver did not converge."
   result = _api_result(
     run_id = run_id,
-    status = :succeeded,
-    success = true,
+    status = numerical_success ? :succeeded : :not_converged,
+    success = numerical_success,
     converged = raw_result.numerical_converged,
     solution_available = raw_result.solution_available,
     iterations = raw_result.iterations,

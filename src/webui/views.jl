@@ -294,6 +294,7 @@ const _WEBUI_RESULT_FIELDS = (
   "iterations", "final_mismatch", "reason", "message", "casefile", "resolved_casefile",
   "config_file", "started_at", "elapsed_seconds", "output_dir",
   "current_phase", "phase_started_at", "last_progress_at", "abort_requested_at",
+  "service_status", "numerical_status",
   "solver_status", "artifact_status", "run_status", "last_phase", "last_heartbeat", "final_outcome",
 )
 
@@ -357,6 +358,8 @@ function webui_status_class(run::AbstractDict)::String
   status in ("aborted", "aborted_unknown", "interrupted", "cancelled", "canceled") && return "status-aborted"
   status in ("warning", "partial", "questionable") && return "status-warning"
   status in ("failed", "failure", "error", "not_converged") && return "status-error"
+  get(run, "numerical_status", nothing) == "not_converged" && return "status-error"
+  get(run, "converged", nothing) === false && return "status-error"
   status in ("succeeded", "success", "converged", "ok") && return success === false ? "status-error" : "status-success"
   success === true && return "status-success"
   success === false && return "status-error"

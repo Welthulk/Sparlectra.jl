@@ -427,7 +427,7 @@ function run_api_tests()
         result.raw_result.net,
         :not_converged,
         false,
-        true,
+        false,
         :skip,
         false,
         :nr_mismatch_not_converged,
@@ -447,6 +447,32 @@ function run_api_tests()
       @test nonconverged_csv == ["bus_voltages_complex.csv", "branch_flows.csv"]
       @test isfile(joinpath(nonconverged_csv_dir, "bus_voltages_complex.csv"))
       @test isfile(joinpath(nonconverged_csv_dir, "branch_flows.csv"))
+      @test Sparlectra._csv_solution_quality(nonconverged_solution) == "not_converged_last_iterate"
+      synthetic_nonconverged_api = Sparlectra._api_result(
+        status = :not_converged,
+        success = false,
+        converged = false,
+        solution_available = false,
+        iterations = nonconverged_solution.iterations,
+        final_mismatch = nonconverged_solution.final_mismatch,
+        reason = String(nonconverged_solution.reason),
+        message = "PowerFlow run completed, but numerical solver did not converge.",
+        output_dir = nonconverged_csv_dir,
+        metadata = Dict{String,Any}(
+          "service_status" => "completed",
+          "numerical_status" => "not_converged",
+          "run_status" => "completed_nonconverged",
+          "detailed_result_csv_status" => "exported_diagnostic",
+          "detailed_result_csv_solution_quality" => "not_converged_last_iterate",
+        ),
+        raw_result = nonconverged_solution,
+      )
+      synthetic_nonconverged_dict = Sparlectra.to_dict(synthetic_nonconverged_api)
+      @test synthetic_nonconverged_dict["status"] == "not_converged"
+      @test synthetic_nonconverged_dict["success"] === false
+      @test synthetic_nonconverged_dict["service_status"] == "completed"
+      @test synthetic_nonconverged_dict["numerical_status"] == "not_converged"
+      @test synthetic_nonconverged_dict["run_status"] == "completed_nonconverged"
       @test !occursin("Final PV/REF Q-limit check: OK", nonconverged_log)
 
       failed_diagnostic = joinpath(tmpdir, "failed_diagnose.txt")

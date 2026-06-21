@@ -603,8 +603,10 @@ result = get_powerflow_result(run_id)
       @test occursin("final_mismatch</th><td>6.3e-11</td>", converged_result_html)
       nonconverged_result_html = Sparlectra.render_powerflow_result(Dict(
         "run_id" => "nonconverged-run",
-        "status" => "success",
-        "success" => true,
+        "status" => "not_converged",
+        "success" => false,
+        "service_status" => "completed",
+        "numerical_status" => "not_converged",
         "converged" => false,
         "numerical_converged" => false,
         "solution_available" => false,
@@ -612,6 +614,7 @@ result = get_powerflow_result(run_id)
         "reason" => "nr_mismatch_not_converged",
         "final_outcome" => Dict("converged" => false),
       ))
+      @test occursin("status-badge status-error", nonconverged_result_html)
       @test occursin("not_converged", nonconverged_result_html)
       @test occursin("converged</th><td>false</td>", nonconverged_result_html)
       @test occursin("numerical_converged</th><td>false</td>", nonconverged_result_html)
