@@ -17,8 +17,11 @@ using Sparlectra
 function _parse_args(args)
   cases = String[]
   start_profiles = collect(Sparlectra.QLIMIT_LARGE_CASE_START_PROFILES)
+  modes = collect(Sparlectra.QLIMIT_LARGE_CASE_MODES)
   output_root = nothing
-  full_logs = false
+  verbose_logs = false
+  profiles_overridden = false
+  modes_overridden = false
   i = firstindex(args)
   while i <= lastindex(args)
     arg = args[i]
@@ -26,8 +29,24 @@ function _parse_args(args)
       start_profiles = [:classic_start]
     elseif arg == "--robust-only"
       start_profiles = [:robust_dc_start]
+    elseif arg == "--case"
+      i == lastindex(args) && throw(ArgumentError("--case requires a case name or path"))
+      i += 1
+      push!(cases, args[i])
+    elseif arg == "--profile"
+      i == lastindex(args) && throw(ArgumentError("--profile requires a profile name"))
+      i += 1
+      profiles_overridden || (empty!(start_profiles); profiles_overridden = true)
+      push!(start_profiles, Symbol(args[i]))
+    elseif arg == "--mode"
+      i == lastindex(args) && throw(ArgumentError("--mode requires a Q-limit mode"))
+      i += 1
+      modes_overridden || (empty!(modes); modes_overridden = true)
+      push!(modes, Symbol(args[i]))
     elseif arg == "--full-logs"
-      full_logs = true
+      verbose_logs = true
+    elseif arg == "--compact-logs"
+      verbose_logs = false
     elseif arg == "--output-root"
       i == lastindex(args) && throw(ArgumentError("--output-root requires a path argument"))
       i += 1
@@ -40,7 +59,7 @@ function _parse_args(args)
     i += 1
   end
   isempty(cases) && append!(cases, Sparlectra.QLIMIT_LARGE_CASE_DEFAULTS)
-  return (cases = cases, start_profiles = start_profiles, output_root = output_root, full_logs = full_logs)
+  return (cases = cases, start_profiles = start_profiles, modes = modes, output_root = output_root, verbose_logs = verbose_logs)
 end
 
 function main(args = ARGS)
@@ -48,22 +67,17 @@ function main(args = ARGS)
   kwargs = Dict{Symbol,Any}(
     :cases => parsed.cases,
     :start_profiles => parsed.start_profiles,
-    :verbose_logs => parsed.full_logs,
+    :modes => parsed.modes,
+    :verbose_logs => parsed.verbose_logs,
     :io => stdout,
     :verbose => true,
   )
   parsed.output_root === nothing || (kwargs[:output_root] = parsed.output_root)
   result = Sparlectra.compare_qlimit_large_case_modes(; kwargs...)
-  println("Q-limit large-case mode comparison complete")
-  println("rows: ", length(result.rows))
-  println("csv : ", result.csv_path)
-  println("json: ", result.json_path)
-  for row in result.rows
-    println(row["case"], " | ", row["start_profile"], " | ", row["mode"], " | ", row["run_status"], " | ", row["numerical_status"], " | ", row["run_directory"])
-  end
   return result
 end
 
 if get(ENV, "SPARLECTRA_QLIMIT_LARGE_CASE_NO_MAIN", "0") != "1"
   Base.invokelatest(main)
+  nothing
 end
