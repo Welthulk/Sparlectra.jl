@@ -457,6 +457,9 @@ settings:
       manual_override_form["power_flow_tol"] = "3e-6"
       manual_override_request = Sparlectra.powerflow_webui_request(manual_override_form; default_output_root = fresh_root)
       @test manual_override_request["config_overrides"]["power_flow.tol"] == 3.0e-6
+      manual_override_nested = Sparlectra.validate_gui_config_overrides(manual_override_request["config_overrides"])
+      manual_override_cfg, _ = Sparlectra._load_api_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, manual_override_nested)
+      @test manual_override_cfg.powerflow.tol == 3.0e-6
       delete!(Sparlectra._POWERFLOW_SERVICE_RUNS, fresh_run_id)
       delete!(Sparlectra._POWERFLOW_WEBUI_JOBS, fresh_run_id)
 
@@ -803,7 +806,7 @@ settings:
       delete!(csv_disabled_form, "detailed_result_csv")
       @test Sparlectra.powerflow_webui_request(csv_disabled_form; default_output_root = output_root)["detailed_result_csv"] === false
       delete!(csv_disabled_form, "detailed_result_csv_format")
-      @test Sparlectra.powerflow_webui_request(csv_disabled_form; default_output_root = output_root)["detailed_result_csv_format"] == "technical"
+      @test Sparlectra.powerflow_webui_request(csv_disabled_form; default_output_root = output_root)["detailed_result_csv_format"] == "excel_us"
       untrusted_form = copy(form)
       untrusted_form["output_root"] = joinpath(tmpdir, "outside")
       @test Sparlectra.powerflow_webui_request(untrusted_form; default_output_root = output_root)["output_root"] == output_root

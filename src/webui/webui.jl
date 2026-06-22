@@ -86,6 +86,7 @@ function _sparlectra_git_commit_sha()::Union{String,Nothing}
   return isempty(head) ? nothing : head
 end
 
+include("options.jl")
 include("forms.jl")
 include("docs.jl")
 include("operations.jl")
