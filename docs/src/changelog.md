@@ -1,6 +1,7 @@
 ## Version 0.8.7 – 2026-06-18
 
 ### Improvements
+* Improved the Q-limit large-case diagnostic comparison with live flushed progress output, selectable classic/robust start profiles, compact default logs, per-combination CSV/JSON rows, and offline-safe stubbed orchestration tests.
 * Added classical Q-limit enforcement modes (`classic_simultaneous` and `classic_one_at_a_time`) alongside the default active-set mode for diagnostic comparisons and large MATPOWER case analysis; legacy `matpower_*` aliases remain accepted for old YAML files.
 * Improved the PowerFlow Web UI layout by widening the form, moving MATPOWER import controls into Advanced / expert options, defaulting new Web UI runs to `matpower_import.auto_profile = apply`, and making validation errors dismissible while preserving recent errors in a collapsed details block.
 * Restored compact default test-run output by suppressing verbose MATPOWER/runtime diagnostics in normal `test/runtests.jl` runs while keeping an explicit verbose opt-in for debugging.

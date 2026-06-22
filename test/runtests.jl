@@ -28,6 +28,7 @@ function include_fast_tests()
   include("test_tap_controller.jl")
   include("test_configuration_coverage.jl")
   include("test_api.jl")
+  include("test_qlimit_large_case_comparison.jl")
   include("test_webui.jl")
 end
 
