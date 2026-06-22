@@ -88,6 +88,7 @@ function _webui_form_string(value)::String
 end
 
 function _webui_form_bool(value)::Bool
+  value isa AbstractVector && return any(_webui_form_bool, value)
   value isa Bool && return value
   value === nothing && return false
   value === missing && return false
@@ -327,13 +328,14 @@ function powerflow_webui_request(form::AbstractDict; default_output_root::Abstra
   for (config_key, field, type) in _WEBUI_FORM_CONFIG_FIELDS
     config_key in GUI_EDITABLE_CONFIG_KEYS || error("Web UI field $(field) is not GUI-editable.")
     spec = _webui_option_spec(field)
-    raw = _webui_form_value(form, field, spec.control == :checkbox ? false : spec.default)
+    _webui_form_value(form, field, nothing) === nothing && continue
+    raw = _webui_form_value(form, field)
     overrides[config_key] = _webui_parse_form_value(raw, type, field)
   end
   request_options = Dict{String,Any}()
   for field in _WEBUI_CASE_PROFILE_EXTRA_FIELDS
     spec = _webui_option_spec(field)
-    raw = _webui_form_value(form, field, spec.control == :checkbox ? false : spec.default)
+    raw = _webui_form_value(form, field, spec.default)
     request_options[field] = _webui_parse_form_value(raw, spec.value_type, field)
   end
   return Dict{String,Any}(

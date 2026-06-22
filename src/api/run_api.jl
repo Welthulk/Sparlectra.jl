@@ -1314,6 +1314,25 @@ function _run_sparlectra_api(;
   mismatch = isfinite(raw_result.final_mismatch) ? raw_result.final_mismatch : nothing
   final_outcome = _final_outcome_payload(raw_result)
   rect_status = raw_result.net === nothing ? nothing : rectangular_pf_status(raw_result.net)
+  current_iteration_metadata = rect_status === nothing ? Dict{String,Any}(
+    "current_iteration_enabled" => false,
+    "current_iteration_attempted" => false,
+    "current_iteration_accepted" => false,
+    "current_iteration_iterations" => 0,
+    "current_iteration_initial_mismatch" => NaN,
+    "current_iteration_final_mismatch" => NaN,
+    "current_iteration_reason" => "unavailable",
+    "current_iteration_artifact" => "",
+  ) : Dict{String,Any}(
+    "current_iteration_enabled" => getproperty(rect_status, :current_iteration_enabled),
+    "current_iteration_attempted" => getproperty(rect_status, :current_iteration_attempted),
+    "current_iteration_accepted" => getproperty(rect_status, :current_iteration_accepted),
+    "current_iteration_iterations" => getproperty(rect_status, :current_iteration_iterations),
+    "current_iteration_initial_mismatch" => getproperty(rect_status, :current_iteration_initial_mismatch),
+    "current_iteration_final_mismatch" => getproperty(rect_status, :current_iteration_final_mismatch),
+    "current_iteration_reason" => String(getproperty(rect_status, :current_iteration_reason)),
+    "current_iteration_artifact" => getproperty(rect_status, :current_iteration_artifact),
+  )
   classic_outer_loop_passes = rect_status !== nothing && hasproperty(rect_status, :matpower_outer_iterations) ? rect_status.matpower_outer_iterations : 0
   pv_to_pq_events = raw_result.net === nothing ? 0 : length(raw_result.net.qLimitLog)
   active_set_events = config.powerflow.qlimits.enforcement_mode === :active_set ? pv_to_pq_events : 0
@@ -1343,7 +1362,7 @@ function _run_sparlectra_api(;
       "detailed_result_csv" => detailed_result_csv,
       "detailed_result_csv_format" => detailed_result_csv_format === nothing ? "technical" : String(detailed_result_csv_format),
     )),
-  ), qlimit_metadata)
+  ), qlimit_metadata, current_iteration_metadata)
   haskey(csv_timing_metadata, :partial_error) && (final_metadata["detailed_result_csv_error"] = csv_timing_metadata[:partial_error])
   _write_run_metadata_artifact(output_path; case_path = case_path, lifecycle = final_metadata)
   message = numerical_success ? "PowerFlow run completed." : "PowerFlow run completed, but numerical solver did not converge."

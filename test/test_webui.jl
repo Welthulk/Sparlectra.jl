@@ -24,7 +24,8 @@ _assert_no_webui_transcript_markers(text::AbstractString) = foreach(marker -> @t
 _assert_no_webui_internal_lifecycle_markers(text::AbstractString) = foreach(marker -> @test(!occursin(marker, text)), WEBUI_INTERNAL_LIFECYCLE_MARKERS)
 
 function _webui_input_tag(html::AbstractString, name::AbstractString)
-  match = Base.match(Regex("<input[^>]*name=\\\"$(name)\\\"[^>]*>"), html)
+  match = Base.match(Regex("<input[^>]*name=\\\"$(name)\\\"[^>]*type=\\\"checkbox\\\"[^>]*>"), html)
+  match === nothing && (match = Base.match(Regex("<input[^>]*name=\\\"$(name)\\\"[^>]*>"), html))
   @test match !== nothing
   return match === nothing ? "" : match.match
 end
@@ -85,6 +86,16 @@ function _webui_test_form(casefile, config_file, output_root)
     "power_flow_wrong_branch_detection" => "warn",
     "power_flow_start_angle_mode" => "dc",
     "power_flow_start_voltage_mode" => "profile_blend",
+    "power_flow_start_current_iteration_enabled" => "true",
+    "power_flow_start_current_iteration_max_iter" => "7",
+    "power_flow_start_current_iteration_tol" => "1e-4",
+    "power_flow_start_current_iteration_damping" => "0.4",
+    "power_flow_start_current_iteration_accept_only_if_improved" => "true",
+    "power_flow_start_current_iteration_min_improvement_factor" => "0.95",
+    "power_flow_start_current_iteration_vm_min_pu" => "0.6",
+    "power_flow_start_current_iteration_vm_max_pu" => "1.4",
+    "power_flow_start_current_iteration_max_angle_step_deg" => "20.0",
+    "power_flow_start_current_iteration_only_for_large_cases" => "false",
     "matpower_import_auto_profile" => "recommend",
     "matpower_import_ratio" => "normal",
     "matpower_import_shift_sign" => "1.0",
@@ -97,6 +108,7 @@ function _webui_test_form(casefile, config_file, output_root)
     "run_diagnostics" => "on",
     "detailed_result_csv" => "on",
     "detailed_result_csv_format" => "excel_de",
+    "benchmark_enabled" => "false",
     "benchmark_samples" => "10",
     "benchmark_seconds" => "1.0",
   )
@@ -802,11 +814,20 @@ settings:
       @test request["detailed_result_csv_format"] == "excel_de"
       @test request["config_overrides"]["power_flow.qlimits.enabled"] === true
       @test request["config_overrides"]["power_flow.qlimits.enforcement_mode"] == "classic_simultaneous"
+      @test request["config_overrides"]["power_flow.start_current_iteration.enabled"] === true
+      @test request["config_overrides"]["power_flow.start_current_iteration.max_iter"] == 7
+      @test request["config_overrides"]["power_flow.start_current_iteration.tol"] == 1.0e-4
       qlimits_disabled_form = copy(form)
-      delete!(qlimits_disabled_form, "power_flow_qlimits_enabled")
+      qlimits_disabled_form["power_flow_qlimits_enabled"] = "false"
       @test Sparlectra.powerflow_webui_request(qlimits_disabled_form; default_output_root = output_root)["config_overrides"]["power_flow.qlimits.enabled"] === false
+      missing_field_form = copy(form)
+      delete!(missing_field_form, "power_flow_start_current_iteration_enabled")
+      @test !haskey(Sparlectra.powerflow_webui_request(missing_field_form; default_output_root = output_root)["config_overrides"], "power_flow.start_current_iteration.enabled")
+      ci_disabled_form = copy(form)
+      ci_disabled_form["power_flow_start_current_iteration_enabled"] = "false"
+      @test Sparlectra.powerflow_webui_request(ci_disabled_form; default_output_root = output_root)["config_overrides"]["power_flow.start_current_iteration.enabled"] === false
       csv_disabled_form = copy(form)
-      delete!(csv_disabled_form, "detailed_result_csv")
+      csv_disabled_form["detailed_result_csv"] = "false"
       @test Sparlectra.powerflow_webui_request(csv_disabled_form; default_output_root = output_root)["detailed_result_csv"] === false
       delete!(csv_disabled_form, "detailed_result_csv_format")
       @test Sparlectra.powerflow_webui_request(csv_disabled_form; default_output_root = output_root)["detailed_result_csv_format"] == "excel_us"
@@ -886,6 +907,16 @@ settings:
         "power_flow_wrong_branch_detection" => "power_flow.wrong_branch_detection",
         "power_flow_start_angle_mode" => "power_flow.start_mode.angle_mode",
         "power_flow_start_voltage_mode" => "power_flow.start_mode.voltage_mode",
+        "power_flow_start_current_iteration_enabled" => "power_flow.start_current_iteration.enabled",
+        "power_flow_start_current_iteration_max_iter" => "power_flow.start_current_iteration.max_iter",
+        "power_flow_start_current_iteration_tol" => "power_flow.start_current_iteration.tol",
+        "power_flow_start_current_iteration_damping" => "power_flow.start_current_iteration.damping",
+        "power_flow_start_current_iteration_accept_only_if_improved" => "power_flow.start_current_iteration.accept_only_if_improved",
+        "power_flow_start_current_iteration_min_improvement_factor" => "power_flow.start_current_iteration.min_improvement_factor",
+        "power_flow_start_current_iteration_vm_min_pu" => "power_flow.start_current_iteration.vm_min_pu",
+        "power_flow_start_current_iteration_vm_max_pu" => "power_flow.start_current_iteration.vm_max_pu",
+        "power_flow_start_current_iteration_max_angle_step_deg" => "power_flow.start_current_iteration.max_angle_step_deg",
+        "power_flow_start_current_iteration_only_for_large_cases" => "power_flow.start_current_iteration.only_for_large_cases",
         "matpower_import_auto_profile" => "matpower_import.auto_profile",
         "matpower_import_ratio" => "matpower_import.ratio",
         "matpower_import_shift_sign" => "matpower_import.shift_sign",
@@ -940,7 +971,24 @@ settings:
       @test occursin("Sparlectra.jl v$(Sparlectra.version())", form_html)
       @test occursin("name=\"performance_timing\"", form_html)
       @test occursin("name=\"run_diagnostics\"", form_html)
-      @test occursin("name=\"detailed_result_csv\" type=\"checkbox\" checked", form_html)
+      @test occursin("Advanced start values", form_html)
+      @test occursin("Current-iteration pre-solve", form_html)
+      for field in (
+        "power_flow_start_current_iteration_enabled",
+        "power_flow_start_current_iteration_max_iter",
+        "power_flow_start_current_iteration_tol",
+        "power_flow_start_current_iteration_damping",
+        "power_flow_start_current_iteration_accept_only_if_improved",
+        "power_flow_start_current_iteration_min_improvement_factor",
+        "power_flow_start_current_iteration_vm_min_pu",
+        "power_flow_start_current_iteration_vm_max_pu",
+        "power_flow_start_current_iteration_max_angle_step_deg",
+        "power_flow_start_current_iteration_only_for_large_cases",
+      )
+        @test occursin("name=\"$(field)\"", form_html)
+      end
+      @test occursin("name=\"power_flow_start_current_iteration_enabled\" type=\"hidden\" value=\"false\"", form_html)
+      @test occursin("name=\"detailed_result_csv\" type=\"checkbox\" value=\"true\" checked", form_html)
       @test occursin("class=\"span-2 detailed-csv-options\"", form_html)
       @test occursin("name=\"detailed_result_csv_format\"", form_html)
       @test occursin("<option value=\"technical\">", form_html)

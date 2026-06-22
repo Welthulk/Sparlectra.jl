@@ -47,6 +47,7 @@ const WEBUI_OPTION_SPECS = (
   WebUIOptionSpec("power_flow.start_current_iteration.vm_min_pu", "power_flow_start_current_iteration_vm_min_pu", Float64, :number, 0.5, (), :basic, true),
   WebUIOptionSpec("power_flow.start_current_iteration.vm_max_pu", "power_flow_start_current_iteration_vm_max_pu", Float64, :number, 1.5, (), :basic, true),
   WebUIOptionSpec("power_flow.start_current_iteration.max_angle_step_deg", "power_flow_start_current_iteration_max_angle_step_deg", Float64, :number, 30.0, (), :basic, true),
+  WebUIOptionSpec("power_flow.start_current_iteration.only_for_large_cases", "power_flow_start_current_iteration_only_for_large_cases", Bool, :checkbox, false, (), :basic, true),
   WebUIOptionSpec("matpower_import.auto_profile", "matpower_import_auto_profile", String, :select, "apply", MATPOWER_AUTO_PROFILE_VALUES, :expert, true),
   WebUIOptionSpec("matpower_import.ratio", "matpower_import_ratio", String, :select, "normal", MATPOWER_RATIO_VALUES, :expert, true),
   WebUIOptionSpec("matpower_import.shift_sign", "matpower_import_shift_sign", Float64, :number, 1.0, (), :expert, true),

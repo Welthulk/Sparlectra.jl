@@ -24,8 +24,12 @@ function main(; casefile::AbstractString = "case5.m", output_dir::AbstractString
 
   println("run ID: ", result.run_id)
   println("status: ", result.status)
+  println("current iteration enabled: ", get(result.metadata, "current_iteration_enabled", false))
   println("current iteration attempted: ", get(result.metadata, "current_iteration_attempted", false))
   println("current iteration accepted: ", get(result.metadata, "current_iteration_accepted", false))
+  println("current iteration iterations: ", get(result.metadata, "current_iteration_iterations", 0))
+  println("current iteration initial mismatch: ", get(result.metadata, "current_iteration_initial_mismatch", "n/a"))
+  println("current iteration final mismatch: ", get(result.metadata, "current_iteration_final_mismatch", "n/a"))
   println("current iteration reason: ", get(result.metadata, "current_iteration_reason", ""))
   for artifact in result.artifacts
     artifact.name == "current_iteration_start.log" && println("diagnostic artifact: ", artifact.path)

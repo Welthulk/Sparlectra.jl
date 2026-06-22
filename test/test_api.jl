@@ -160,6 +160,8 @@ function run_api_tests()
       @test result.metadata["qlimit_guard_enabled"] isa Bool
       @test result.metadata["q_limit_preview_mode"] == "summary"
       @test result.metadata["q_limit_runlog_max_rows"] == 0
+      @test result.metadata["current_iteration_enabled"] === false
+      @test result.metadata["current_iteration_attempted"] === false
       @test read(template, String) == template_before
       @test isfile(joinpath(output_dir, "effective_config.yaml"))
       effective_config_text = read(joinpath(output_dir, "effective_config.yaml"), String)
@@ -854,6 +856,9 @@ function run_api_tests()
             "config_overrides" => Dict(
               "power_flow.max_iter" => 80,
               "power_flow.qlimits.enforcement_mode" => mode,
+              "power_flow.start_current_iteration.enabled" => true,
+              "power_flow.start_current_iteration.max_iter" => 3,
+              "power_flow.start_current_iteration.only_for_large_cases" => false,
               "benchmark.enabled" => false,
             ),
           ))
@@ -861,6 +866,13 @@ function run_api_tests()
           @test mode_run["success"]
           @test mode_run["qlimit_enforcement_mode"] == mode
           @test mode_run["metadata"]["qlimit_enforcement_mode"] == mode
+          @test mode_run["metadata"]["current_iteration_enabled"] === true
+          @test mode_run["metadata"]["current_iteration_attempted"] === true
+          @test haskey(mode_run["metadata"], "current_iteration_accepted")
+          @test mode_run["metadata"]["current_iteration_iterations"] isa Integer
+          @test haskey(mode_run["metadata"], "current_iteration_initial_mismatch")
+          @test haskey(mode_run["metadata"], "current_iteration_final_mismatch")
+          @test haskey(mode_run["metadata"], "current_iteration_reason")
           result_html = Sparlectra.render_powerflow_result(mode_run)
           @test occursin("Q-limit enforcement mode", result_html)
           @test occursin(mode, result_html)
