@@ -147,6 +147,8 @@ The start page accepts:
 - Q-limit handling;
 - wrong-branch detection mode;
 - angle and voltage start modes;
+- current-iteration pre-solve fields in the collapsible **Advanced start
+  values** section;
 - a visible MATPOWER import conventions section with auto-profile mode
   (`off`, `recommend`, or `apply`) plus manual transformer-ratio,
   phase-shift, bus-shunt, PV-voltage-source, and comparison-reference
@@ -164,6 +166,16 @@ template. The service creates an `effective_config.yaml` artifact for each run.
 The header and `webui_operations.jsonl` include the Sparlectra version, package
 path, and local Git commit when available so users can confirm which checkout
 is serving the browser page.
+
+The current-iteration controls in **Advanced start values** write the same
+`power_flow.start_current_iteration.*` overrides documented in
+[`powerflow_configuration.md`](powerflow_configuration.md#guarded-current-iteration-start-pre-solve).
+They configure a guarded start-value preconditioner that runs after the normal
+start modes and optional start projection, before Newton-Raphson. They do not
+add a new start-voltage/start-angle mode and do not replace the rectangular
+Newton-Raphson solver. When case-specific sidecar saving is enabled, these
+fields are saved and restored through the same profile mechanism as the other
+Web UI form options.
 
 ### Case-specific settings profiles
 
@@ -332,6 +344,12 @@ readable line spacing. Other files are
 downloaded, and every artifact page also offers an explicit download response.
 The text-artifact viewer uses 75–85 percent of the viewport height and a wider
 page layout for practical inspection of long logs and configuration files.
+
+Runs that attempt the guarded current-iteration start pre-solve may include
+`current_iteration_start.log`. The artifact is classified as a
+start-value/current-iteration diagnostic artifact and records whether the
+candidate was attempted, accepted, rejected by a guard, or rejected with the
+original start values restored before Newton-Raphson.
 
 ## Persistent operation log
 
