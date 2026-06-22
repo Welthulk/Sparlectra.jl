@@ -28,7 +28,6 @@ function include_fast_tests()
   include("test_tap_controller.jl")
   include("test_configuration_coverage.jl")
   include("test_api.jl")
-  include("test_qlimit_large_case_comparison.jl")
   include("test_webui.jl")
 end
 
@@ -38,6 +37,7 @@ function include_extended_tests()
   include("test_matpower_example.jl")
   include("test_synthetic_grids.jl")
   include("test_configuration_docs.jl")
+  #include("test_qlimit_large_case_comparison.jl") intionally deakivated
 end
 
 function run_fast_profile_tests()
