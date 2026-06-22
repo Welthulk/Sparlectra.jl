@@ -412,6 +412,7 @@ export
   get_powerflow_result,                   # Look up serialized run metadata by run ID.
   list_powerflow_artifacts,               # List run artifacts by run ID.
   resolve_powerflow_artifact,             # Safely resolve a run artifact by metadata name.
+  compare_qlimit_large_case_modes,        # Diagnostic comparison for Q-limit modes on downloaded large cases.
   default_webui_output_root,              # Return the user-writable default Web UI output directory.
   default_webui_config_path,              # Return the provisioned Web UI configuration path.
   default_webui_case_cache_dir,           # Return the user-writable Web UI case cache.
@@ -539,6 +540,7 @@ include("powerflow_rectangular/rectangular_network_solver.jl")
 include("solver_interface.jl")
 include("FetchMatpowerCase.jl")
 using .FetchMatpowerCase: ensure_casefile
+include("qlimit_large_case_comparison.jl")
 include("measurements.jl")
 include("state_estimation.jl")
 #! format: on

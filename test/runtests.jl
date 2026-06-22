@@ -28,6 +28,7 @@ function include_fast_tests()
   include("test_tap_controller.jl")
   include("test_configuration_coverage.jl")
   include("test_api.jl")
+  include("test_qlimit_large_case_comparison.jl")
   include("test_webui.jl")
 end
 
@@ -49,6 +50,7 @@ function run_fast_profile_tests()
     ("powerflow_rectangular", () -> run_entry(:run_solver_interface_tests)),
     ("configuration", () -> run_entry(:run_configuration_coverage_tests)),
     ("programmatic_api", () -> run_entry(:run_api_tests)),
+    ("qlimit_large_case_comparison", () -> run_entry(:run_qlimit_large_case_comparison_tests)),
     ("webui", () -> run_entry(:run_webui_tests)),
     ("state_estimation", () -> run_entry(:run_state_estimation_tests)),
     ("controls", () -> begin
