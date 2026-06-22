@@ -281,27 +281,29 @@ function run_webui_tests()
 profile_kind: webui_case_settings
 schema_version: 1
 settings:
-  power_flow_autodamp: false
-  power_flow_qlimits_enabled: false
-  power_flow_tol: 1.0e-8
-  power_flow_max_iter: 80
-  power_flow_autodamp_min: 0.02
-  power_flow_start_angle_mode: classic
-  power_flow_start_voltage_mode: classic
-  power_flow_qlimits_enforcement_mode: active_set
+  benchmark_enabled: false
+  benchmark_samples: 10
+  benchmark_seconds: 1.0
+  detailed_result_csv: false
+  detailed_result_csv_format: excel_de
   matpower_import_auto_profile: apply
-  matpower_import_ratio: reciprocal
-  matpower_import_shift_sign: -1.0
-  matpower_import_shift_unit: rad
-  matpower_import_bus_shunt_model: voltage_dependent_injection
-  matpower_import_pv_voltage_source: bus_vm
-  matpower_import_compare_voltage_reference: hybrid
+  matpower_import_bus_shunt_model: admittance
+  matpower_import_compare_voltage_reference: imported_setpoint
+  matpower_import_pv_voltage_source: gen_vg
+  matpower_import_ratio: normal
+  matpower_import_shift_sign: 1.0
+  matpower_import_shift_unit: deg
   output_logfile_results: compact
   performance_timing: compact
-  benchmark_enabled: false
-  benchmark_samples: 7
-  benchmark_seconds: 0.25
-  detailed_result_csv: false
+  power_flow_autodamp: false
+  power_flow_autodamp_min: 0.05
+  power_flow_max_iter: 80
+  power_flow_qlimits_enabled: false
+  power_flow_qlimits_enforcement_mode: active_set
+  power_flow_start_angle_mode: classic
+  power_flow_start_voltage_mode: classic
+  power_flow_tol: 1.0e-8
+  power_flow_wrong_branch_detection: off
   run_diagnostics: false
 """)
       case118_form = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow?casefile=$(Sparlectra._webui_urlencode(case118))"; output_root = root).body)
@@ -314,28 +316,33 @@ settings:
       _webui_assert_checked(case118_form, "detailed_result_csv", false)
       _webui_assert_value(case118_form, "power_flow_tol", "1.0e-8")
       _webui_assert_value(case118_form, "power_flow_max_iter", "80")
-      _webui_assert_value(case118_form, "power_flow_autodamp_min", "0.02")
-      _webui_assert_value(case118_form, "benchmark_samples", "7")
-      _webui_assert_value(case118_form, "benchmark_seconds", "0.25")
-      _webui_assert_value(case118_form, "matpower_import_shift_sign", "-1.0")
+      _webui_assert_value(case118_form, "power_flow_autodamp_min", "0.05")
+      _webui_assert_value(case118_form, "benchmark_samples", "10")
+      _webui_assert_value(case118_form, "benchmark_seconds", "1.0")
+      _webui_assert_value(case118_form, "matpower_import_shift_sign", "1.0")
       _webui_assert_selected(case118_form, "power_flow_start_angle_mode", "classic")
       _webui_assert_selected(case118_form, "power_flow_start_voltage_mode", "classic")
+      _webui_assert_selected(case118_form, "power_flow_wrong_branch_detection", "off")
       _webui_assert_selected(case118_form, "matpower_import_auto_profile", "apply")
-      _webui_assert_selected(case118_form, "matpower_import_ratio", "reciprocal")
-      _webui_assert_selected(case118_form, "matpower_import_shift_unit", "rad")
-      _webui_assert_selected(case118_form, "matpower_import_bus_shunt_model", "voltage_dependent_injection")
-      _webui_assert_selected(case118_form, "matpower_import_pv_voltage_source", "bus_vm")
-      _webui_assert_selected(case118_form, "matpower_import_compare_voltage_reference", "hybrid")
+      _webui_assert_selected(case118_form, "matpower_import_ratio", "normal")
+      _webui_assert_selected(case118_form, "matpower_import_shift_unit", "deg")
+      _webui_assert_selected(case118_form, "matpower_import_bus_shunt_model", "admittance")
+      _webui_assert_selected(case118_form, "matpower_import_pv_voltage_source", "gen_vg")
+      _webui_assert_selected(case118_form, "matpower_import_compare_voltage_reference", "imported_setpoint")
       _webui_assert_selected(case118_form, "output_logfile_results", "compact")
       _webui_assert_selected(case118_form, "performance_timing", "compact")
+      _webui_assert_selected(case118_form, "detailed_result_csv_format", "excel_de")
 
-      dropdown_form = Sparlectra.render_powerflow_form(output_root = root, case_directory = root)
+      dropdown_form = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow"; output_root = root, runtime = (; case_directory = root, config_file = "configuration.yaml", operation_log = Sparlectra.webui_operation_log_path(root), startup_config_error = nothing, runner = Sparlectra.start_powerflow_run)).body)
       @test occursin("case118.m ★", dropdown_form)
       @test occursin("<option value=\"case118.m\">case118.m ★</option>", dropdown_form)
       @test !occursin("value=\"case118.m ★\"", dropdown_form)
       @test occursin("data-case-settings-reload=\"true\"", dropdown_form)
       @test occursin("target.searchParams.set('casefile', caseSelect.value)", dropdown_form)
       @test occursin("target.searchParams.set('config_file', configInput.value)", dropdown_form)
+      dropdown_loaded_form = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow?casefile=$(Sparlectra._webui_urlencode(case118))&config_file=$(Sparlectra._webui_urlencode("configuration.yaml"))"; output_root = root).body)
+      _webui_assert_value(dropdown_loaded_form, "power_flow_max_iter", "80")
+      _webui_assert_selected(dropdown_loaded_form, "detailed_result_csv_format", "excel_de")
 
       case14 = joinpath(root, "case14.m")
       write(case14, "% case fixture\n")
@@ -364,6 +371,25 @@ settings:
       @test occursin("PowerFlow run", invalid_form)
       @test !occursin("Case-specific settings loaded from", invalid_form)
       @test occursin("case_settings_load_failed", read(Sparlectra.webui_operation_log_path(root), String))
+
+      unsupported_case = joinpath(root, "unsupported_field.m")
+      write(unsupported_case, "% case fixture\n")
+      write(Sparlectra._webui_case_settings_path(root, unsupported_case), """
+profile_kind: webui_case_settings
+schema_version: 1
+settings:
+  power_flow_autodamp: false
+  power_flow_start_angle_mode: [bad]
+  detailed_result_csv_format: impossible
+  power_flow_tol: 9.0e-7
+""")
+      unsupported_form = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow?casefile=$(Sparlectra._webui_urlencode(unsupported_case))"; output_root = root).body)
+      @test occursin("PowerFlow run", unsupported_form)
+      _webui_assert_checked(unsupported_form, "power_flow_autodamp", false)
+      _webui_assert_value(unsupported_form, "power_flow_tol", "9.0e-7")
+      _webui_assert_selected(unsupported_form, "power_flow_start_angle_mode", "dc")
+      _webui_assert_selected(unsupported_form, "detailed_result_csv_format", "excel_us")
+      @test occursin("case_settings_field_ignored", read(Sparlectra.webui_operation_log_path(root), String))
 
       fresh_root = mktempdir()
       mkpath(joinpath(fresh_root, "resolved"))

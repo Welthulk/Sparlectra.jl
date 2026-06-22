@@ -106,6 +106,66 @@ const _WEBUI_PERFORMANCE_TIMING_VALUES = WEBUI_PERFORMANCE_TIMING_VALUES
 const _WEBUI_CASE_PROFILE_FORM_FIELDS = Tuple(field for (_, field, _) in _WEBUI_FORM_CONFIG_FIELDS)
 const _WEBUI_CASE_PROFILE_EXTRA_FIELDS = ("casefile", "config_file", "performance_timing", "run_diagnostics", "detailed_result_csv", "detailed_result_csv_format")
 const _WEBUI_CASE_PROFILE_FIELDS = (_WEBUI_CASE_PROFILE_FORM_FIELDS..., _WEBUI_CASE_PROFILE_EXTRA_FIELDS...)
+const _WEBUI_CASE_PROFILE_FIELD_TYPES = Dict{String,Type}(
+  (field => type for (_, field, type) in _WEBUI_FORM_CONFIG_FIELDS)...,
+  "casefile" => String,
+  "config_file" => String,
+  "performance_timing" => String,
+  "run_diagnostics" => Bool,
+  "detailed_result_csv" => Bool,
+  "detailed_result_csv_format" => String,
+)
+
+const _WEBUI_CASE_PROFILE_SELECT_VALUES = Dict{String,Set{String}}(
+  "power_flow_qlimits_enforcement_mode" => Set(string.(collect(_WEBUI_QLIMIT_ENFORCEMENT_MODE_VALUES))),
+  "power_flow_wrong_branch_detection" => Set(string.(collect(WRONG_BRANCH_DETECTION_VALUES))),
+  "power_flow_start_angle_mode" => Set(string.(collect(POWERFLOW_START_ANGLE_MODE_VALUES))),
+  "power_flow_start_voltage_mode" => Set(string.(collect(POWERFLOW_START_VOLTAGE_MODE_VALUES))),
+  "output_logfile_results" => Set(string.(collect(OUTPUT_LOGFILE_RESULTS_VALUES))),
+  "performance_timing" => Set(string.(collect(_WEBUI_PERFORMANCE_TIMING_VALUES))),
+  "detailed_result_csv_format" => Set(["technical", "excel_de", "excel_us"]),
+  "matpower_import_auto_profile" => Set(string.(collect(MATPOWER_AUTO_PROFILE_VALUES))),
+  "matpower_import_ratio" => Set(string.(collect(MATPOWER_RATIO_VALUES))),
+  "matpower_import_shift_unit" => Set(string.(collect(MATPOWER_SHIFT_UNIT_VALUES))),
+  "matpower_import_bus_shunt_model" => Set(string.(collect(MATPOWER_BUS_SHUNT_MODEL_VALUES))),
+  "matpower_import_pv_voltage_source" => Set(string.(collect(MATPOWER_PV_VOLTAGE_SOURCE_VALUES))),
+  "matpower_import_compare_voltage_reference" => Set(string.(collect(MATPOWER_COMPARE_VOLTAGE_REFERENCE_VALUES))),
+)
+
+function _webui_form_string(value)::String
+  value === nothing && return ""
+  value === missing && return ""
+  value isa AbstractString && return String(value)
+  value isa Symbol && return String(value)
+  value isa Bool && return value ? "true" : "false"
+  value isa Integer && return string(value)
+  value isa AbstractFloat && return isfinite(value) ? string(value) : throw(ArgumentError("Web UI form value must be finite."))
+  throw(ArgumentError("Unsupported Web UI form value type $(typeof(value))."))
+end
+
+function _webui_form_bool(value)::Bool
+  value isa Bool && return value
+  value === nothing && return false
+  value === missing && return false
+  value isa AbstractString && return lowercase(strip(value)) in ("1", "true", "yes", "on")
+  value isa Integer && return value != 0
+  throw(ArgumentError("Unsupported Web UI checkbox value type $(typeof(value))."))
+end
+
+function _webui_form_number_string(value)::String
+  value isa Bool && throw(ArgumentError("Boolean is not a numeric Web UI form value."))
+  value isa Integer && return string(value)
+  value isa AbstractFloat && return isfinite(value) ? string(value) : throw(ArgumentError("Web UI numeric form value must be finite."))
+  value isa AbstractString && begin
+    text = strip(value)
+    isempty(text) && throw(ArgumentError("Web UI numeric form value must not be empty."))
+    parsed = tryparse(Float64, text)
+    parsed === nothing && throw(ArgumentError("Invalid numeric Web UI form value $(repr(text))."))
+    isfinite(parsed) || throw(ArgumentError("Web UI numeric form value must be finite."))
+    return text
+  end
+  throw(ArgumentError("Unsupported Web UI numeric value type $(typeof(value))."))
+end
 
 function _webui_case_settings_filename(casefile::AbstractString)::String
   stem = splitext(basename(strip(String(casefile))))[1]
@@ -147,13 +207,24 @@ end
 function _webui_normalize_case_profile_form_value(field::AbstractString, value)
   value === nothing && return nothing
   value === missing && return nothing
-  value isa Bool && return value
-  value isa Integer && return string(value)
-  value isa AbstractFloat && return isfinite(value) ? string(value) : throw(ArgumentError("Case-settings field $(field) must be finite."))
-  value isa AbstractString && return String(value)
-  value isa Symbol && return String(value)
   value isa AbstractVector && throw(ArgumentError("Case-settings field $(field) does not support vector values for form rendering."))
-  throw(ArgumentError("Case-settings field $(field) has unsupported value type $(typeof(value))."))
+  type = get(_WEBUI_CASE_PROFILE_FIELD_TYPES, String(field), String)
+  allowed = get(_WEBUI_CASE_PROFILE_SELECT_VALUES, String(field), nothing)
+  if allowed !== nothing && value isa Bool
+    !value && "off" in allowed && return "off"
+    value && "on" in allowed && return "on"
+  end
+  normalized = if type === Bool
+    _webui_form_bool(value)
+  elseif type <: Number
+    _webui_form_number_string(value)
+  else
+    _webui_form_string(value)
+  end
+  if allowed !== nothing && !(String(normalized) in allowed)
+    throw(ArgumentError("Case-settings field $(field) has unsupported value $(repr(normalized))."))
+  end
+  return normalized
 end
 
 function _webui_load_case_settings(output_root::AbstractString, casefile::AbstractString; case_directory::Union{Nothing,AbstractString} = nothing)
@@ -186,9 +257,13 @@ function _webui_load_case_settings(output_root::AbstractString, casefile::Abstra
     for (key, value) in settings
       field = String(key)
       field in _WEBUI_CASE_PROFILE_FIELDS || continue
-      normalized = _webui_normalize_case_profile_form_value(field, value)
-      normalized === nothing && continue
-      profile[field] = normalized
+      try
+        normalized = _webui_normalize_case_profile_form_value(field, value)
+        normalized === nothing && continue
+        profile[field] = normalized
+      catch err
+        _webui_log_case_settings_load(output_root, "case_settings_field_ignored"; casefile, profile_path = path, status = "ignored", field, message = sprint(showerror, err))
+      end
     end
     profile["_profile_path"] = path
     _webui_log_case_settings_load(output_root, "case_settings_loaded"; casefile, profile_path = path, status = "loaded", setting_count = length(profile) - 1)
@@ -200,7 +275,7 @@ function _webui_load_case_settings(output_root::AbstractString, casefile::Abstra
 end
 
 function _webui_input_value(values::AbstractDict, field::AbstractString, default)::String
-  return _webui_escape(string(get(values, field, default)))
+  return _webui_escape(_webui_form_string(get(values, field, default)))
 end
 
 function _webui_checked(values::AbstractDict, field::AbstractString, default::Bool)::String
@@ -219,9 +294,7 @@ function _webui_form_value(form::AbstractDict, key::String, default = nothing)
 end
 
 function _webui_parse_bool(value)::Bool
-  value isa Bool && return value
-  value === nothing && return false
-  return lowercase(strip(string(value))) in ("1", "true", "yes", "on")
+  return _webui_form_bool(value)
 end
 
 function _webui_parse_form_value(value, ::Type{Bool}, field::String)

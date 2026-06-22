@@ -31,12 +31,12 @@ function _webui_urlencode(value)::String
 end
 
 function _webui_option(value, label, selected)
-  marker = String(value) == String(selected) ? " selected" : ""
+  marker = _webui_form_string(value) == _webui_form_string(selected) ? " selected" : ""
   return "<option value=\"$(_webui_escape(value))\"$(marker)>$(_webui_escape(label))</option>"
 end
 
 function _webui_select(name, values, selected)
-  options = join((_webui_option(value, replace(String(value), '_' => ' '), selected) for value in values), "")
+  options = join((_webui_option(value, replace(_webui_form_string(value), '_' => ' '), selected) for value in values), "")
   return "<select id=\"$(name)\" name=\"$(name)\">$(options)</select>"
 end
 
