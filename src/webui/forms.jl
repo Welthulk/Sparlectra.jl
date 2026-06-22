@@ -76,60 +76,58 @@ function _webui_config_file_options(application_root::AbstractString)::Vector{St
   return sort!(normpath.(files); by = path -> (priority(path), lowercase(basename(path))))
 end
 
-const _WEBUI_FORM_CONFIG_FIELDS = (
-  ("power_flow.tol", "power_flow_tol", Float64),
-  ("power_flow.max_iter", "power_flow_max_iter", Int),
-  ("power_flow.autodamp", "power_flow_autodamp", Bool),
-  ("power_flow.autodamp_min", "power_flow_autodamp_min", Float64),
-  ("power_flow.qlimits.enabled", "power_flow_qlimits_enabled", Bool),
-  ("power_flow.qlimits.enforcement_mode", "power_flow_qlimits_enforcement_mode", String),
-  ("power_flow.wrong_branch_detection", "power_flow_wrong_branch_detection", String),
-  ("power_flow.start_mode.angle_mode", "power_flow_start_angle_mode", String),
-  ("power_flow.start_mode.voltage_mode", "power_flow_start_voltage_mode", String),
-  ("matpower_import.auto_profile", "matpower_import_auto_profile", String),
-  ("matpower_import.ratio", "matpower_import_ratio", String),
-  ("matpower_import.shift_sign", "matpower_import_shift_sign", Float64),
-  ("matpower_import.shift_unit", "matpower_import_shift_unit", String),
-  ("matpower_import.bus_shunt_model", "matpower_import_bus_shunt_model", String),
-  ("matpower_import.pv_voltage_source", "matpower_import_pv_voltage_source", String),
-  ("matpower_import.compare_voltage_reference", "matpower_import_compare_voltage_reference", String),
-  ("output.logfile_results", "output_logfile_results", String),
-  ("benchmark.enabled", "benchmark_enabled", Bool),
-  ("benchmark.samples", "benchmark_samples", Int),
-  ("benchmark.seconds", "benchmark_seconds", Float64),
-)
+struct WebUIOptionSpec
+  config_key::Union{Nothing,String}
+  field::String
+  value_type::Type
+  control::Symbol
+  default::Any
+  allowed_values::Any
+  section::Symbol
+  save_in_case_sidecar::Bool
+end
 
 const _WEBUI_QLIMIT_ENFORCEMENT_MODE_VALUES = (:active_set, :classic_simultaneous, :classic_one_at_a_time)
 
 const _WEBUI_PERFORMANCE_TIMING_VALUES = WEBUI_PERFORMANCE_TIMING_VALUES
 
-const _WEBUI_CASE_PROFILE_FORM_FIELDS = Tuple(field for (_, field, _) in _WEBUI_FORM_CONFIG_FIELDS)
-const _WEBUI_CASE_PROFILE_EXTRA_FIELDS = ("casefile", "config_file", "performance_timing", "run_diagnostics", "detailed_result_csv", "detailed_result_csv_format")
-const _WEBUI_CASE_PROFILE_FIELDS = (_WEBUI_CASE_PROFILE_FORM_FIELDS..., _WEBUI_CASE_PROFILE_EXTRA_FIELDS...)
+const WEBUI_OPTION_SPECS = (
+  WebUIOptionSpec("power_flow.tol", "power_flow_tol", Float64, :number, "1e-8", (), :basic, true),
+  WebUIOptionSpec("power_flow.max_iter", "power_flow_max_iter", Int, :number, 80, (), :basic, true),
+  WebUIOptionSpec("power_flow.autodamp", "power_flow_autodamp", Bool, :checkbox, true, (), :basic, true),
+  WebUIOptionSpec("power_flow.autodamp_min", "power_flow_autodamp_min", Float64, :number, 0.05, (), :basic, true),
+  WebUIOptionSpec("power_flow.qlimits.enabled", "power_flow_qlimits_enabled", Bool, :checkbox, true, (), :basic, true),
+  WebUIOptionSpec("power_flow.qlimits.enforcement_mode", "power_flow_qlimits_enforcement_mode", String, :select, "active_set", _WEBUI_QLIMIT_ENFORCEMENT_MODE_VALUES, :basic, true),
+  WebUIOptionSpec("power_flow.wrong_branch_detection", "power_flow_wrong_branch_detection", String, :select, "warn", WRONG_BRANCH_DETECTION_VALUES, :basic, true),
+  WebUIOptionSpec("power_flow.start_mode.angle_mode", "power_flow_start_angle_mode", String, :select, "dc", POWERFLOW_START_ANGLE_MODE_VALUES, :basic, true),
+  WebUIOptionSpec("power_flow.start_mode.voltage_mode", "power_flow_start_voltage_mode", String, :select, "profile_blend", POWERFLOW_START_VOLTAGE_MODE_VALUES, :basic, true),
+  WebUIOptionSpec("matpower_import.auto_profile", "matpower_import_auto_profile", String, :select, "apply", MATPOWER_AUTO_PROFILE_VALUES, :expert, true),
+  WebUIOptionSpec("matpower_import.ratio", "matpower_import_ratio", String, :select, "normal", MATPOWER_RATIO_VALUES, :expert, true),
+  WebUIOptionSpec("matpower_import.shift_sign", "matpower_import_shift_sign", Float64, :number, 1.0, (), :expert, true),
+  WebUIOptionSpec("matpower_import.shift_unit", "matpower_import_shift_unit", String, :select, "deg", MATPOWER_SHIFT_UNIT_VALUES, :expert, true),
+  WebUIOptionSpec("matpower_import.bus_shunt_model", "matpower_import_bus_shunt_model", String, :select, "admittance", MATPOWER_BUS_SHUNT_MODEL_VALUES, :expert, true),
+  WebUIOptionSpec("matpower_import.pv_voltage_source", "matpower_import_pv_voltage_source", String, :select, "gen_vg", MATPOWER_PV_VOLTAGE_SOURCE_VALUES, :expert, true),
+  WebUIOptionSpec("matpower_import.compare_voltage_reference", "matpower_import_compare_voltage_reference", String, :select, "imported_setpoint", MATPOWER_COMPARE_VOLTAGE_REFERENCE_VALUES, :expert, true),
+  WebUIOptionSpec("output.logfile_results", "output_logfile_results", String, :select, "compact", OUTPUT_LOGFILE_RESULTS_VALUES, :basic, true),
+  WebUIOptionSpec("benchmark.enabled", "benchmark_enabled", Bool, :checkbox, false, (), :expert, true),
+  WebUIOptionSpec("benchmark.samples", "benchmark_samples", Int, :number, 10, (), :expert, true),
+  WebUIOptionSpec("benchmark.seconds", "benchmark_seconds", Float64, :number, 1.0, (), :expert, true),
+  WebUIOptionSpec(nothing, "performance_timing", String, :select, "compact", _WEBUI_PERFORMANCE_TIMING_VALUES, :basic, true),
+  WebUIOptionSpec(nothing, "run_diagnostics", Bool, :checkbox, false, (), :expert, true),
+  WebUIOptionSpec(nothing, "detailed_result_csv", Bool, :checkbox, true, (), :basic, true),
+  WebUIOptionSpec(nothing, "detailed_result_csv_format", String, :select, "excel_us", ("technical", "excel_de", "excel_us"), :basic, true),
+)
+
+const _WEBUI_OPTION_BY_FIELD = Dict(spec.field => spec for spec in WEBUI_OPTION_SPECS)
+const _WEBUI_FORM_CONFIG_FIELDS = Tuple((spec.config_key, spec.field, spec.value_type) for spec in WEBUI_OPTION_SPECS if spec.config_key !== nothing)
+const _WEBUI_CASE_PROFILE_EXTRA_FIELDS = Tuple(spec.field for spec in WEBUI_OPTION_SPECS if spec.config_key === nothing && spec.save_in_case_sidecar)
+const _WEBUI_CASE_PROFILE_FIELDS = Tuple(spec.field for spec in WEBUI_OPTION_SPECS if spec.save_in_case_sidecar)
 const _WEBUI_CASE_PROFILE_FIELD_TYPES = Dict{String,Type}(
-  (field => type for (_, field, type) in _WEBUI_FORM_CONFIG_FIELDS)...,
-  "casefile" => String,
-  "config_file" => String,
-  "performance_timing" => String,
-  "run_diagnostics" => Bool,
-  "detailed_result_csv" => Bool,
-  "detailed_result_csv_format" => String,
+  spec.field => spec.value_type for spec in WEBUI_OPTION_SPECS if spec.save_in_case_sidecar
 )
 
 const _WEBUI_CASE_PROFILE_SELECT_VALUES = Dict{String,Set{String}}(
-  "power_flow_qlimits_enforcement_mode" => Set(string.(collect(_WEBUI_QLIMIT_ENFORCEMENT_MODE_VALUES))),
-  "power_flow_wrong_branch_detection" => Set(string.(collect(WRONG_BRANCH_DETECTION_VALUES))),
-  "power_flow_start_angle_mode" => Set(string.(collect(POWERFLOW_START_ANGLE_MODE_VALUES))),
-  "power_flow_start_voltage_mode" => Set(string.(collect(POWERFLOW_START_VOLTAGE_MODE_VALUES))),
-  "output_logfile_results" => Set(string.(collect(OUTPUT_LOGFILE_RESULTS_VALUES))),
-  "performance_timing" => Set(string.(collect(_WEBUI_PERFORMANCE_TIMING_VALUES))),
-  "detailed_result_csv_format" => Set(["technical", "excel_de", "excel_us"]),
-  "matpower_import_auto_profile" => Set(string.(collect(MATPOWER_AUTO_PROFILE_VALUES))),
-  "matpower_import_ratio" => Set(string.(collect(MATPOWER_RATIO_VALUES))),
-  "matpower_import_shift_unit" => Set(string.(collect(MATPOWER_SHIFT_UNIT_VALUES))),
-  "matpower_import_bus_shunt_model" => Set(string.(collect(MATPOWER_BUS_SHUNT_MODEL_VALUES))),
-  "matpower_import_pv_voltage_source" => Set(string.(collect(MATPOWER_PV_VOLTAGE_SOURCE_VALUES))),
-  "matpower_import_compare_voltage_reference" => Set(string.(collect(MATPOWER_COMPARE_VOLTAGE_REFERENCE_VALUES))),
+  spec.field => Set(string.(collect(spec.allowed_values))) for spec in WEBUI_OPTION_SPECS if spec.control == :select
 )
 
 function _webui_form_string(value)::String
@@ -216,15 +214,64 @@ function _webui_normalize_case_profile_form_value(field::AbstractString, value)
   end
   normalized = if type === Bool
     _webui_form_bool(value)
-  elseif type <: Number
-    _webui_form_number_string(value)
+  elseif type <: Integer
+    value isa Bool && throw(ArgumentError("Case-settings field $(field) must be an integer."))
+    if value isa Integer
+      Int(value)
+    elseif value isa AbstractFloat && isinteger(value) && isfinite(value)
+      Int(value)
+    else
+      text = value isa AbstractString ? strip(value) : _webui_form_string(value)
+      parsed = tryparse(type, text)
+      parsed === nothing && throw(ArgumentError("Case-settings field $(field) has invalid integer value $(repr(text))."))
+      parsed
+    end
+  elseif type <: AbstractFloat
+    text = _webui_form_number_string(value)
+    parsed = tryparse(type, text)
+    parsed === nothing && throw(ArgumentError("Case-settings field $(field) has invalid numeric value $(repr(text))."))
+    parsed
   else
     _webui_form_string(value)
   end
-  if allowed !== nothing && !(String(normalized) in allowed)
+  if allowed !== nothing && !(_webui_form_string(normalized) in allowed)
     throw(ArgumentError("Case-settings field $(field) has unsupported value $(repr(normalized))."))
   end
   return normalized
+end
+
+function webui_form_state(; selected_casefile::AbstractString = "", selected_config_file::AbstractString = "", sidecar_profile = nothing, submitted_form = nothing)
+  values = Dict{String,Any}(spec.field => spec.default for spec in WEBUI_OPTION_SPECS)
+  values["casefile"] = selected_casefile
+  values["casefile_manual"] = ""
+  values["config_file"] = isempty(selected_config_file) ? DEFAULT_SPARLECTRA_CONFIG_PATH : selected_config_file
+  if sidecar_profile isa AbstractDict
+    for (field, value) in sidecar_profile
+      field == "_profile_path" && continue
+      haskey(_WEBUI_OPTION_BY_FIELD, String(field)) || continue
+      values[String(field)] = _webui_normalize_case_profile_form_value(String(field), value)
+    end
+    haskey(sidecar_profile, "_profile_path") && (values["_profile_path"] = sidecar_profile["_profile_path"])
+  end
+  if submitted_form isa AbstractDict
+    for spec in WEBUI_OPTION_SPECS
+      if spec.control == :checkbox
+        values[spec.field] = _webui_form_bool(_webui_form_value(submitted_form, spec.field, false))
+      elseif _webui_form_value(submitted_form, spec.field, nothing) !== nothing
+        raw = _webui_form_value(submitted_form, spec.field)
+        values[spec.field] = try
+          _webui_normalize_case_profile_form_value(spec.field, raw)
+        catch
+          _webui_form_string(raw)
+        end
+      end
+    end
+    for field in ("casefile", "casefile_manual", "config_file")
+      raw = _webui_form_value(submitted_form, field, nothing)
+      raw === nothing || (values[field] = strip(_webui_form_string(raw)))
+    end
+  end
+  return values
 end
 
 function _webui_load_case_settings(output_root::AbstractString, casefile::AbstractString; case_directory::Union{Nothing,AbstractString} = nothing)
@@ -256,7 +303,10 @@ function _webui_load_case_settings(output_root::AbstractString, casefile::Abstra
     profile = Dict{String,Any}()
     for (key, value) in settings
       field = String(key)
-      field in _WEBUI_CASE_PROFILE_FIELDS || continue
+      if !(field in _WEBUI_CASE_PROFILE_FIELDS)
+        _webui_log_case_settings_load(output_root, "case_settings_field_ignored"; casefile, profile_path = path, status = "ignored", field, message = "unknown field")
+        continue
+      end
       try
         normalized = _webui_normalize_case_profile_form_value(field, value)
         normalized === nothing && continue

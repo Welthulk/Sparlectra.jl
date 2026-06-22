@@ -115,12 +115,8 @@ end
 function _webui_case_profile_scalar(field::AbstractString, value)
   value === nothing && return nothing
   value === missing && return nothing
-  value isa Bool && return value
-  value isa Integer && return Int(value)
-  value isa AbstractFloat && return isfinite(value) ? Float64(value) : throw(ArgumentError("Case-settings field $(field) must be finite."))
-  value isa Symbol && return String(value)
-  value isa AbstractString && return String(value)
-  throw(ArgumentError("Case-settings field $(field) has unsupported value type $(typeof(value))."))
+  value isa Union{Bool,Integer,AbstractFloat,Symbol,AbstractString} || throw(ArgumentError("Case-settings field $(field) has unsupported value type $(typeof(value))."))
+  return _webui_normalize_case_profile_form_value(field, value)
 end
 
 function _webui_case_profile_value(field::AbstractString, value)
@@ -139,7 +135,7 @@ end
 const _WEBUI_CASE_PROFILE_CONFIG_FIELD_BY_KEY = Dict{String,String}(config_key => field for (config_key, field, _) in _WEBUI_FORM_CONFIG_FIELDS)
 
 function _webui_case_profile_settings(settings_raw::AbstractDict)::Dict{String,Any}
-  settings = Dict{String,Any}()
+  settings = Dict{String,Any}(spec.field => spec.default for spec in WEBUI_OPTION_SPECS if spec.save_in_case_sidecar)
   for (raw_key, raw_value) in settings_raw
     key = String(raw_key)
     field = get(_WEBUI_CASE_PROFILE_CONFIG_FIELD_BY_KEY, key, key)

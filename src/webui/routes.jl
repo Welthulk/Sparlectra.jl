@@ -112,6 +112,7 @@ function route_sparlectra_webui(method::AbstractString, target::AbstractString, 
         error_message = sprint(showerror, err),
         selected_casefile,
         selected_config_file,
+        submitted_form = form,
       ); status = 400)
     end
   elseif verb == "POST" && path == "/powerflow/config/check"
