@@ -356,6 +356,9 @@ settings:
       _webui_assert_value(case14_form, "power_flow_max_iter", "80")
       _webui_assert_selected(case14_form, "power_flow_start_angle_mode", "dc")
       _webui_assert_selected(case14_form, "power_flow_start_voltage_mode", "profile_blend")
+      start_voltage_select = _webui_select_block(case14_form, "power_flow_start_voltage_mode")
+      @test occursin("value=\"profile_blend\"", start_voltage_select)
+      @test !occursin("bus_vm_va_blend", start_voltage_select)
       _webui_assert_selected(case14_form, "matpower_import_auto_profile", "apply")
       _webui_assert_selected(case14_form, "output_logfile_results", "compact")
 
@@ -1455,7 +1458,7 @@ result = get_powerflow_result(run_id)
       for (name, config_text, expected_marker) in (
         ("new qlimit enforcement mode", "power_flow:\n  qlimits:\n    enforcement_mode: classic_simultaneous\n", "PowerFlow run"),
         ("legacy qlimit enforcement alias", "power_flow:\n  qlimits:\n    enforcement_mode: matpower_one_at_a_time\n", "PowerFlow run"),
-        ("deprecated bus_vm_va_blend start alias", "power_flow:\n  start_mode:\n    voltage_mode: bus_vm_va_blend\n", "PowerFlow run"),
+        ("removed start-voltage alias", "power_flow:\n  start_mode:\n    voltage_mode: bus_vm_va_blend\n", "Configuration error"),
         ("malformed configuration", "power_flow:\n  qlimits:\n    enforcement_mode: definitely_not_supported\n", "Configuration error"),
       )
         probe = listen(ip"127.0.0.1", UInt16(0))

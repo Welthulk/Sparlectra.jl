@@ -259,9 +259,8 @@ const USER_SPARLECTRA_CONFIG_PATH = normpath(joinpath(@__DIR__, "..", "examples"
 
 const SUPPORTED_POWERFLOW_METHOD = :rectangular
 const POWERFLOW_START_ANGLE_MODE_VALUES = (:classic, :dc, :bus_va_blend, :matpower_va)
-const POWERFLOW_START_VOLTAGE_MODE_VALUES = (:classic, :pv_gen_vg, :pv_bus_vm, :all_bus_vm, :profile_blend, :bus_vm_va_blend)
+const POWERFLOW_START_VOLTAGE_MODE_VALUES = (:classic, :pv_gen_vg, :pv_bus_vm, :all_bus_vm, :profile_blend)
 const POWERFLOW_START_PROFILE_SOURCE_VALUES = (:flat, :dc, :bus_metadata, :historical_profile, :matpower_reference, :state_estimation, :scada_snapshot)
-const _warned_legacy_bus_vm_va_blend = Ref(false)
 const QLIMIT_START_MODE_VALUES = (:iteration, :auto, :iteration_or_auto)
 const QLIMIT_ENFORCEMENT_MODE_VALUES = (:active_set, :classic_simultaneous, :classic_one_at_a_time)
 const QLIMIT_ENFORCEMENT_MODE_LEGACY_ALIASES = Dict(
@@ -408,7 +407,11 @@ function _validate_nonnegative(name::AbstractString, value::Real)
   return value
 end
 function _validate_allowed_symbol(name::AbstractString, value::Symbol, allowed::Tuple)
-  value in allowed || throw(ArgumentError("$(name) must be one of $(collect(allowed)); got $(value)."))
+  if !(value in allowed)
+    guidance = name == "power_flow.start_mode.voltage_mode" && value === :bus_vm_va_blend ?
+      " The former bus_vm_va_blend alias has been removed; use voltage_mode: profile_blend with profile_source: matpower_reference." : ""
+    throw(ArgumentError("$(name) must be one of $(collect(allowed)); got $(value).$(guidance)"))
+  end
   return value
 end
 
@@ -435,14 +438,6 @@ function StartModeConfig(raw::AbstractDict)
   angle_mode = _validate_allowed_symbol("power_flow.start_mode.angle_mode", _as_symbol_cfg(_raw_get(raw, "angle_mode", :dc)), POWERFLOW_START_ANGLE_MODE_VALUES)
   voltage_mode = _validate_allowed_symbol("power_flow.start_mode.voltage_mode", _as_symbol_cfg(_raw_get(raw, "voltage_mode", :profile_blend)), POWERFLOW_START_VOLTAGE_MODE_VALUES)
   profile_source = _validate_allowed_symbol("power_flow.start_mode.profile_source", _as_symbol_cfg(_raw_get(raw, "profile_source", :matpower_reference)), POWERFLOW_START_PROFILE_SOURCE_VALUES)
-  if voltage_mode === :bus_vm_va_blend
-    voltage_mode = :profile_blend
-    profile_source = :matpower_reference
-    if !_warned_legacy_bus_vm_va_blend[]
-      @warn "Deprecated start mode `bus_vm_va_blend` was mapped to `start_values.voltage_mode = profile_blend` with `start_values.profile_source = matpower_reference`. Please update the YAML configuration."
-      _warned_legacy_bus_vm_va_blend[] = true
-    end
-  end
   return StartModeConfig(
     flatstart = _as_bool_cfg(_raw_get(raw, "flatstart", _raw_get(raw, "opt_flatstart", false))),
     angle_mode = angle_mode,

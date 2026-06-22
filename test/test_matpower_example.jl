@@ -66,10 +66,21 @@ power_flow:
     end
     cfg_legacy = tempname() * ".yaml"
     write(cfg_legacy, "power_flow:\n  start_mode:\n    voltage_mode: bus_vm_va_blend\n")
-    Sparlectra._warned_legacy_bus_vm_va_blend[] = false
-    cfg_legacy_loaded = @test_logs (:warn, r"Deprecated start mode `bus_vm_va_blend`") Sparlectra.load_sparlectra_config(cfg_legacy; reload = true)
-    @test cfg_legacy_loaded.powerflow.start_mode.voltage_mode === :profile_blend
-    @test cfg_legacy_loaded.powerflow.start_mode.profile_source === :matpower_reference
+    err_legacy = try
+      Sparlectra.load_sparlectra_config(cfg_legacy; reload = true)
+      nothing
+    catch err
+      err
+    end
+    @test err_legacy isa ArgumentError
+    @test occursin("bus_vm_va_blend alias has been removed", sprint(showerror, err_legacy))
+    @test occursin("profile_source: matpower_reference", sprint(showerror, err_legacy))
+
+    cfg_canonical = tempname() * ".yaml"
+    write(cfg_canonical, "power_flow:\n  start_mode:\n    voltage_mode: profile_blend\n    profile_source: matpower_reference\n")
+    cfg_canonical_loaded = Sparlectra.load_sparlectra_config(cfg_canonical; reload = true)
+    @test cfg_canonical_loaded.powerflow.start_mode.voltage_mode === :profile_blend
+    @test cfg_canonical_loaded.powerflow.start_mode.profile_source === :matpower_reference
 
     bad_startmode_cfg = tempname() * ".yaml"
     write(bad_startmode_cfg, "power_flow:\n  start_mode:\n    voltage_mode: nonsense\n")

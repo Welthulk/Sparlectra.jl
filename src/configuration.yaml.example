@@ -43,8 +43,8 @@ power_flow:
   start_mode:
     # Allowed values: classic, dc, bus_va_blend, matpower_va
     angle_mode: dc
-    # Allowed values: classic, pv_gen_vg, pv_bus_vm, all_bus_vm, profile_blend, bus_vm_va_blend
-    # Note: bus_vm_va_blend is accepted as a legacy alias and mapped internally.
+    # Allowed values: classic, pv_gen_vg, pv_bus_vm, all_bus_vm, profile_blend
+    # To use imported MATPOWER reference values, keep profile_blend with profile_source: matpower_reference.
     voltage_mode: profile_blend
     # Allowed values: flat, dc, bus_metadata, historical_profile, matpower_reference, state_estimation, scada_snapshot
     profile_source: matpower_reference
