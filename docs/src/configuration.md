@@ -125,6 +125,18 @@ power_flow:
     blend_lambdas: [0.25, 0.5, 0.75]
     dc_angle_limit_deg: 60.0
 
+  start_current_iteration:
+    enabled: false
+    max_iter: 10
+    tol: 1.0e-3
+    damping: 0.5
+    accept_only_if_improved: true
+    min_improvement_factor: 0.98
+    vm_min_pu: 0.5
+    vm_max_pu: 1.5
+    max_angle_step_deg: 30.0
+    only_for_large_cases: false
+
   qlimits:
     enabled: true
     enforcement_mode: active_set
@@ -366,6 +378,17 @@ The following canonical keys are currently present in `src/configuration.yaml.ex
 - `power_flow.start_mode.try_blend_scan`
 - `power_flow.start_mode.try_dc_start`
 - `power_flow.start_mode.voltage_mode`
+- `power_flow.start_current_iteration`
+- `power_flow.start_current_iteration.accept_only_if_improved`
+- `power_flow.start_current_iteration.damping`
+- `power_flow.start_current_iteration.enabled`
+- `power_flow.start_current_iteration.max_angle_step_deg`
+- `power_flow.start_current_iteration.max_iter`
+- `power_flow.start_current_iteration.min_improvement_factor`
+- `power_flow.start_current_iteration.only_for_large_cases`
+- `power_flow.start_current_iteration.tol`
+- `power_flow.start_current_iteration.vm_max_pu`
+- `power_flow.start_current_iteration.vm_min_pu`
 - `power_flow.tol`
 - `runtime`
 - `runtime.blas_threads`

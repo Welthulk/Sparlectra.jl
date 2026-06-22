@@ -67,6 +67,19 @@ power_flow:
     # Positive DC-angle clamp in degrees.
     dc_angle_limit_deg: 60.0
 
+  # Optional guarded current-injection pre-solve after start modes and before NR.
+  start_current_iteration:
+    enabled: false
+    max_iter: 10
+    tol: 1.0e-3
+    damping: 0.5
+    accept_only_if_improved: true
+    min_improvement_factor: 0.98
+    vm_min_pu: 0.5
+    vm_max_pu: 1.5
+    max_angle_step_deg: 30.0
+    only_for_large_cases: false
+
   # Reactive-power limit switching.
   qlimits:
     enabled: true

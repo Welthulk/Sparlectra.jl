@@ -368,6 +368,134 @@ function _expand_ybus_for_isolated_nodes(Yred, n::Int, iso_nodes::Vector{Int})
   return Yfull
 end
 
+function _current_iteration_summary(; enabled::Bool, attempted::Bool = false, accepted::Bool = false, iterations::Int = 0, initial_mismatch::Float64 = NaN, final_mismatch::Float64 = NaN, reason::Symbol = enabled ? :disabled : :disabled, artifact::String = "")
+  return (
+    current_iteration_enabled = enabled,
+    current_iteration_attempted = attempted,
+    current_iteration_accepted = accepted,
+    current_iteration_iterations = iterations,
+    current_iteration_initial_mismatch = initial_mismatch,
+    current_iteration_final_mismatch = final_mismatch,
+    current_iteration_reason = reason,
+    current_iteration_artifact = artifact,
+  )
+end
+
+function _write_current_iteration_start_log(performance_profile, summary; damping::Float64, tol::Float64, vm_before, vm_after, max_angle_step::Float64, restored::Bool, guard_violations = String[])
+  performance_profile isa AbstractDict || return ""
+  output_dir = get(performance_profile, :output_dir, "")
+  output_dir isa AbstractString && !isempty(output_dir) || return ""
+  mkpath(output_dir)
+  path = joinpath(output_dir, "current_iteration_start.log")
+  open(path, "w") do io
+    println(io, "current_iteration_enabled: ", summary.current_iteration_enabled)
+    println(io, "current_iteration_attempted: ", summary.current_iteration_attempted)
+    println(io, "current_iteration_accepted: ", summary.current_iteration_accepted)
+    println(io, "current_iteration_reason: ", summary.current_iteration_reason)
+    println(io, "initial_mismatch: ", summary.current_iteration_initial_mismatch)
+    println(io, "final_mismatch: ", summary.current_iteration_final_mismatch)
+    println(io, "iterations: ", summary.current_iteration_iterations)
+    println(io, "damping: ", damping)
+    println(io, "tol: ", tol)
+    println(io, "voltage_magnitude_min_before: ", isempty(vm_before) ? NaN : minimum(vm_before))
+    println(io, "voltage_magnitude_max_before: ", isempty(vm_before) ? NaN : maximum(vm_before))
+    println(io, "voltage_magnitude_min_after: ", isempty(vm_after) ? NaN : minimum(vm_after))
+    println(io, "voltage_magnitude_max_after: ", isempty(vm_after) ? NaN : maximum(vm_after))
+    println(io, "maximum_angle_step_deg: ", max_angle_step)
+    println(io, "guard_violations: ", isempty(guard_violations) ? "none" : join(guard_violations, ", "))
+    println(io, "original_start_values_restored: ", restored)
+  end
+  return path
+end
+
+function _run_guarded_current_iteration_start(Ybus, Vraw::Vector{ComplexF64}, S::Vector{ComplexF64}, bus_types::Vector{Symbol}, Vset::Vector{Float64}, slack_idx::Int; enabled::Bool, max_iter::Int, tol::Float64, damping::Float64, accept_only_if_improved::Bool, min_improvement_factor::Float64, vm_min_pu::Float64, vm_max_pu::Float64, max_angle_step_deg::Float64, only_for_large_cases::Bool, large_case_min_buses::Int, verbose::Int = 0, performance_profile = nothing)
+  if !enabled
+    summary = _current_iteration_summary(enabled = false, reason = :disabled)
+    performance_profile isa AbstractDict && (performance_profile[:current_iteration_start] = summary)
+    return Vraw, summary
+  end
+  if only_for_large_cases && length(Vraw) < large_case_min_buses
+    summary = _current_iteration_summary(enabled = true, reason = :skipped_small_case)
+    performance_profile isa AbstractDict && (performance_profile[:current_iteration_start] = summary)
+    return Vraw, summary
+  end
+  original = copy(Vraw)
+  initial_mismatch = _max_rectangular_mismatch(Ybus, original, S, bus_types, Vset, slack_idx)
+  V = copy(original)
+  best = copy(original)
+  best_mismatch = initial_mismatch
+  guard_violations = String[]
+  max_angle_step = 0.0
+  iterations = 0
+  reason = :max_iter
+  for it in 1:max_iter
+    iterations = it
+    Vnext = copy(V)
+    I = Ybus * V
+    @inbounds for k in eachindex(V)
+      k == slack_idx && continue
+      bus_types[k] == :PQ || continue
+      if abs(V[k]) <= eps(Float64) || !isfinite(real(V[k])) || !isfinite(imag(V[k]))
+        push!(guard_violations, "non_finite_or_zero_voltage_bus_$(k)")
+        reason = :invalid_voltage
+        break
+      end
+      yii = Ybus[k, k]
+      if abs(yii) <= eps(Float64)
+        push!(guard_violations, "zero_diagonal_admittance_bus_$(k)")
+        reason = :singular_current_update
+        break
+      end
+      target_i = conj(S[k] / V[k])
+      candidate = (target_i - (I[k] - yii * V[k])) / yii
+      Vnext[k] = (1.0 - damping) * V[k] + damping * candidate
+    end
+    isempty(guard_violations) || break
+    Vnext[slack_idx] = original[slack_idx]
+    @inbounds for k in eachindex(Vnext)
+      bus_types[k] == :PV || continue
+      Vnext[k] = _apply_voltage_magnitude_preserving_angle(Vnext[k], Vset[k])
+    end
+    if any(v -> !isfinite(real(v)) || !isfinite(imag(v)), Vnext)
+      push!(guard_violations, "non_finite_voltage")
+      reason = :invalid_voltage
+      break
+    end
+    vm = abs.(Vnext)
+    if any(v -> v < vm_min_pu || v > vm_max_pu, vm)
+      push!(guard_violations, "voltage_magnitude_out_of_range")
+      reason = :voltage_magnitude_guard
+      break
+    end
+    step_deg = maximum(abs.(angle.(Vnext ./ V))) * 180.0 / π
+    max_angle_step = max(max_angle_step, step_deg)
+    if step_deg > max_angle_step_deg
+      push!(guard_violations, "angle_step_guard")
+      reason = :angle_step_guard
+      break
+    end
+    mis = _max_rectangular_mismatch(Ybus, Vnext, S, bus_types, Vset, slack_idx)
+    if isfinite(mis) && mis < best_mismatch
+      best = copy(Vnext)
+      best_mismatch = mis
+    end
+    V = Vnext
+    if mis <= tol
+      reason = :tolerance_reached
+      break
+    end
+  end
+  threshold = accept_only_if_improved ? initial_mismatch * min_improvement_factor : Inf
+  accepted = isfinite(best_mismatch) && (accept_only_if_improved ? best_mismatch <= threshold : true)
+  accepted || (reason = isempty(guard_violations) ? :not_improved : reason)
+  summary0 = _current_iteration_summary(enabled = true, attempted = true, accepted = accepted, iterations = iterations, initial_mismatch = initial_mismatch, final_mismatch = best_mismatch, reason = reason)
+  artifact = _write_current_iteration_start_log(performance_profile, summary0; damping, tol, vm_before = abs.(original), vm_after = abs.(accepted ? best : original), max_angle_step, restored = !accepted, guard_violations)
+  summary = merge(summary0, (current_iteration_artifact = artifact,))
+  performance_profile isa AbstractDict && (performance_profile[:current_iteration_start] = summary)
+  verbose > 0 && @info "Current-iteration start pre-solve" accepted = accepted reason = reason initial_mismatch = initial_mismatch final_mismatch = best_mismatch iterations = iterations
+  return accepted ? best : original, summary
+end
+
 @inline function _has_vset_adjust_config(ps::ProSumer)::Bool
   return !isnothing(ps.vset_adjust) || !(isnothing(ps.vstep_pu) && isnothing(ps.tap_steps_down) && isnothing(ps.tap_steps_up))
 end
@@ -501,6 +629,16 @@ function runpf_rectangular!(
   start_projection_accept_unmeasured_dc_start::Bool = false,
   start_projection_blend_lambdas::AbstractVector{<:Real} = [0.25, 0.5, 0.75],
   start_projection_dc_angle_limit_deg::Float64 = 60.0,
+  start_current_iteration_enabled::Bool = false,
+  start_current_iteration_max_iter::Int = 10,
+  start_current_iteration_tol::Float64 = 1.0e-3,
+  start_current_iteration_damping::Float64 = 0.5,
+  start_current_iteration_accept_only_if_improved::Bool = true,
+  start_current_iteration_min_improvement_factor::Float64 = 0.98,
+  start_current_iteration_vm_min_pu::Float64 = 0.5,
+  start_current_iteration_vm_max_pu::Float64 = 1.5,
+  start_current_iteration_max_angle_step_deg::Float64 = 30.0,
+  start_current_iteration_only_for_large_cases::Bool = false,
   qlimit_start_iter::Int = 2,
   qlimit_start_mode::Symbol = :iteration,
   qlimit_auto_q_delta_pu::Float64 = 1e-4,
@@ -657,6 +795,32 @@ function runpf_rectangular!(
       accept_unmeasured_dc_start = start_projection_accept_unmeasured_dc_start,
       blend_lambdas = start_projection_blend_lambdas,
       dc_angle_limit_deg = start_projection_dc_angle_limit_deg,
+      verbose = verbose,
+      performance_profile = performance_profile,
+    )
+  end
+  check_cancel()
+
+  set_phase("current_iteration_start")
+  V0, _ = _perf_profile_time!(performance_profile, :current_iteration_start) do
+    _run_guarded_current_iteration_start(
+      Ybus,
+      V0,
+      S,
+      bus_types,
+      Vset,
+      slack_idx;
+      enabled = start_current_iteration_enabled,
+      max_iter = start_current_iteration_max_iter,
+      tol = start_current_iteration_tol,
+      damping = start_current_iteration_damping,
+      accept_only_if_improved = start_current_iteration_accept_only_if_improved,
+      min_improvement_factor = start_current_iteration_min_improvement_factor,
+      vm_min_pu = start_current_iteration_vm_min_pu,
+      vm_max_pu = start_current_iteration_vm_max_pu,
+      max_angle_step_deg = start_current_iteration_max_angle_step_deg,
+      only_for_large_cases = start_current_iteration_only_for_large_cases,
+      large_case_min_buses = rectangular_workspace_min_buses,
       verbose = verbose,
       performance_profile = performance_profile,
     )
@@ -951,6 +1115,10 @@ function runpf_rectangular!(
       wrong_branch_rescue_attempted,
       wrong_branch_rescue_reason,
     )
+    if performance_profile isa AbstractDict && haskey(performance_profile, :current_iteration_start)
+      ci = performance_profile[:current_iteration_start]
+      status_build_ = merge(status_build_, (status = (; status_build_.status..., ci...),))
+    end
     final_reason_ = status_build_.final_reason
     final_status_ = status_build_.final_status
     status_ = _store_and_print_rectangular_final_status!(net, status_build_.status, verbose)
@@ -1027,6 +1195,16 @@ function runpf_rectangular!(
   start_projection_accept_unmeasured_dc_start::Bool = false,
   start_projection_blend_lambdas::AbstractVector{<:Real} = [0.25, 0.5, 0.75],
   start_projection_dc_angle_limit_deg::Float64 = 60.0,
+  start_current_iteration_enabled::Bool = false,
+  start_current_iteration_max_iter::Int = 10,
+  start_current_iteration_tol::Float64 = 1.0e-3,
+  start_current_iteration_damping::Float64 = 0.5,
+  start_current_iteration_accept_only_if_improved::Bool = true,
+  start_current_iteration_min_improvement_factor::Float64 = 0.98,
+  start_current_iteration_vm_min_pu::Float64 = 0.5,
+  start_current_iteration_vm_max_pu::Float64 = 1.5,
+  start_current_iteration_max_angle_step_deg::Float64 = 30.0,
+  start_current_iteration_only_for_large_cases::Bool = false,
   qlimit_start_iter::Int = 2,
   qlimit_start_mode::Symbol = :iteration,
   qlimit_auto_q_delta_pu::Float64 = 1e-4,
@@ -1080,6 +1258,16 @@ function runpf_rectangular!(
     start_projection_accept_unmeasured_dc_start = start_projection_accept_unmeasured_dc_start,
     start_projection_blend_lambdas = start_projection_blend_lambdas,
     start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg,
+    start_current_iteration_enabled = start_current_iteration_enabled,
+    start_current_iteration_max_iter = start_current_iteration_max_iter,
+    start_current_iteration_tol = start_current_iteration_tol,
+    start_current_iteration_damping = start_current_iteration_damping,
+    start_current_iteration_accept_only_if_improved = start_current_iteration_accept_only_if_improved,
+    start_current_iteration_min_improvement_factor = start_current_iteration_min_improvement_factor,
+    start_current_iteration_vm_min_pu = start_current_iteration_vm_min_pu,
+    start_current_iteration_vm_max_pu = start_current_iteration_vm_max_pu,
+    start_current_iteration_max_angle_step_deg = start_current_iteration_max_angle_step_deg,
+    start_current_iteration_only_for_large_cases = start_current_iteration_only_for_large_cases,
     qlimit_start_iter = qlimit_start_iter,
     qlimit_start_mode = qlimit_start_mode,
     qlimit_auto_q_delta_pu = qlimit_auto_q_delta_pu,
@@ -1116,6 +1304,7 @@ end
 
 function _runpf_with_config!(net::Net, config::PowerFlowConfig; verbose::Int = 0, damp = 1.0, pv_table_rows::Int = 30, validate_limits_after_pf::Bool = false, q_limit_violation_headroom::Float64 = 0.0, qlimit_lock_reason::Symbol = :manual, performance_profile = nothing)
   start = config.start_mode
+  start_ci = config.start_current_iteration
   qlim = config.qlimits
   qlimit_disabled = qlim.ignore_q_limits
   qlimits_enabled = !qlimit_disabled
@@ -1149,6 +1338,16 @@ function _runpf_with_config!(net::Net, config::PowerFlowConfig; verbose::Int = 0
     start_projection_accept_unmeasured_dc_start = start.accept_unmeasured_dc_start,
     start_projection_blend_lambdas = start.blend_lambdas,
     start_projection_dc_angle_limit_deg = start.dc_angle_limit_deg,
+    start_current_iteration_enabled = start_ci.enabled,
+    start_current_iteration_max_iter = start_ci.max_iter,
+    start_current_iteration_tol = start_ci.tol,
+    start_current_iteration_damping = start_ci.damping,
+    start_current_iteration_accept_only_if_improved = start_ci.accept_only_if_improved,
+    start_current_iteration_min_improvement_factor = start_ci.min_improvement_factor,
+    start_current_iteration_vm_min_pu = start_ci.vm_min_pu,
+    start_current_iteration_vm_max_pu = start_ci.vm_max_pu,
+    start_current_iteration_max_angle_step_deg = start_ci.max_angle_step_deg,
+    start_current_iteration_only_for_large_cases = start_ci.only_for_large_cases,
     qlimit_start_iter = qlimit_disabled ? typemax(Int) : qlim.start_iter,
     qlimit_start_mode = qlim.start_mode,
     qlimit_auto_q_delta_pu = qlim.auto_q_delta_pu,
@@ -1355,6 +1554,16 @@ function runpf!(
   start_projection_accept_unmeasured_dc_start::Bool = false,
   start_projection_blend_lambdas::AbstractVector{<:Real} = [0.25, 0.5, 0.75],
   start_projection_dc_angle_limit_deg::Float64 = 60.0,
+  start_current_iteration_enabled::Bool = false,
+  start_current_iteration_max_iter::Int = 10,
+  start_current_iteration_tol::Float64 = 1.0e-3,
+  start_current_iteration_damping::Float64 = 0.5,
+  start_current_iteration_accept_only_if_improved::Bool = true,
+  start_current_iteration_min_improvement_factor::Float64 = 0.98,
+  start_current_iteration_vm_min_pu::Float64 = 0.5,
+  start_current_iteration_vm_max_pu::Float64 = 1.5,
+  start_current_iteration_max_angle_step_deg::Float64 = 30.0,
+  start_current_iteration_only_for_large_cases::Bool = false,
   qlimit_start_iter::Int = 2,
   qlimit_start_mode::Symbol = :iteration,
   qlimit_auto_q_delta_pu::Float64 = 1e-4,
@@ -1434,6 +1643,16 @@ function runpf!(
         start_projection_accept_unmeasured_dc_start = start_projection_accept_unmeasured_dc_start,
         start_projection_blend_lambdas = start_projection_blend_lambdas,
         start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg,
+        start_current_iteration_enabled = start_current_iteration_enabled,
+        start_current_iteration_max_iter = start_current_iteration_max_iter,
+        start_current_iteration_tol = start_current_iteration_tol,
+        start_current_iteration_damping = start_current_iteration_damping,
+        start_current_iteration_accept_only_if_improved = start_current_iteration_accept_only_if_improved,
+        start_current_iteration_min_improvement_factor = start_current_iteration_min_improvement_factor,
+        start_current_iteration_vm_min_pu = start_current_iteration_vm_min_pu,
+        start_current_iteration_vm_max_pu = start_current_iteration_vm_max_pu,
+        start_current_iteration_max_angle_step_deg = start_current_iteration_max_angle_step_deg,
+        start_current_iteration_only_for_large_cases = start_current_iteration_only_for_large_cases,
         qlimit_start_iter = qlimit_start_iter,
         qlimit_start_mode = qlimit_start_mode,
         qlimit_auto_q_delta_pu = qlimit_auto_q_delta_pu,
@@ -1487,6 +1706,16 @@ function runpf!(
         start_projection_accept_unmeasured_dc_start = start_projection_accept_unmeasured_dc_start,
         start_projection_blend_lambdas = start_projection_blend_lambdas,
         start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg,
+        start_current_iteration_enabled = start_current_iteration_enabled,
+        start_current_iteration_max_iter = start_current_iteration_max_iter,
+        start_current_iteration_tol = start_current_iteration_tol,
+        start_current_iteration_damping = start_current_iteration_damping,
+        start_current_iteration_accept_only_if_improved = start_current_iteration_accept_only_if_improved,
+        start_current_iteration_min_improvement_factor = start_current_iteration_min_improvement_factor,
+        start_current_iteration_vm_min_pu = start_current_iteration_vm_min_pu,
+        start_current_iteration_vm_max_pu = start_current_iteration_vm_max_pu,
+        start_current_iteration_max_angle_step_deg = start_current_iteration_max_angle_step_deg,
+        start_current_iteration_only_for_large_cases = start_current_iteration_only_for_large_cases,
         qlimit_start_iter = qlimit_start_iter,
         qlimit_start_mode = qlimit_start_mode,
         qlimit_auto_q_delta_pu = qlimit_auto_q_delta_pu,

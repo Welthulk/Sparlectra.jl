@@ -42,6 +42,26 @@ Base.@kwdef struct StartModeConfig
 end
 
 """
+    StartCurrentIterationConfig
+
+Guarded fixed-point current-injection pre-solve configuration. The stage is
+disabled by default and, when enabled, only prepares the initial voltage profile
+before the normal rectangular Newton-Raphson solve.
+"""
+Base.@kwdef struct StartCurrentIterationConfig
+  enabled::Bool = false
+  max_iter::Int = 10
+  tol::Float64 = 1.0e-3
+  damping::Float64 = 0.5
+  accept_only_if_improved::Bool = true
+  min_improvement_factor::Float64 = 0.98
+  vm_min_pu::Float64 = 0.5
+  vm_max_pu::Float64 = 1.5
+  max_angle_step_deg::Float64 = 30.0
+  only_for_large_cases::Bool = false
+end
+
+"""
     QLimitConfig
 
 Typed reactive-power limit switching configuration used by power-flow runners.
@@ -94,6 +114,7 @@ Base.@kwdef struct PowerFlowConfig
   rectangular_preallocate_workspace::Symbol = :auto
   rectangular_workspace_min_buses::Int = 1000
   start_mode::StartModeConfig = StartModeConfig()
+  start_current_iteration::StartCurrentIterationConfig = StartCurrentIterationConfig()
   qlimits::QLimitConfig = QLimitConfig()
 end
 
@@ -455,6 +476,30 @@ function StartModeConfig(raw::AbstractDict)
   )
 end
 
+function StartCurrentIterationConfig(raw::AbstractDict)
+  max_iter = _as_int_cfg(_raw_get(raw, "max_iter", 10))
+  max_iter >= 0 || throw(ArgumentError("power_flow.start_current_iteration.max_iter must be non-negative; got $(max_iter)."))
+  damping = _as_float_cfg(_raw_get(raw, "damping", 0.5))
+  isfinite(damping) && 0.0 < damping <= 1.0 || throw(ArgumentError("power_flow.start_current_iteration.damping must be finite and in (0, 1]; got $(damping)."))
+  min_improvement_factor = _as_float_cfg(_raw_get(raw, "min_improvement_factor", 0.98))
+  isfinite(min_improvement_factor) && min_improvement_factor >= 0.0 || throw(ArgumentError("power_flow.start_current_iteration.min_improvement_factor must be finite and non-negative; got $(min_improvement_factor)."))
+  vm_min_pu = _validate_positive("power_flow.start_current_iteration.vm_min_pu", _as_float_cfg(_raw_get(raw, "vm_min_pu", 0.5)))
+  vm_max_pu = _validate_positive("power_flow.start_current_iteration.vm_max_pu", _as_float_cfg(_raw_get(raw, "vm_max_pu", 1.5)))
+  vm_min_pu <= vm_max_pu || throw(ArgumentError("power_flow.start_current_iteration.vm_min_pu must be <= vm_max_pu."))
+  return StartCurrentIterationConfig(
+    enabled = _as_bool_cfg(_raw_get(raw, "enabled", false)),
+    max_iter = max_iter,
+    tol = _validate_positive("power_flow.start_current_iteration.tol", _as_float_cfg(_raw_get(raw, "tol", 1.0e-3))),
+    damping = damping,
+    accept_only_if_improved = _as_bool_cfg(_raw_get(raw, "accept_only_if_improved", true)),
+    min_improvement_factor = min_improvement_factor,
+    vm_min_pu = vm_min_pu,
+    vm_max_pu = vm_max_pu,
+    max_angle_step_deg = _validate_positive("power_flow.start_current_iteration.max_angle_step_deg", _as_float_cfg(_raw_get(raw, "max_angle_step_deg", 30.0))),
+    only_for_large_cases = _as_bool_cfg(_raw_get(raw, "only_for_large_cases", false)),
+  )
+end
+
 function QLimitConfig(raw::AbstractDict)
   qlimits_enabled = _raw_get(raw, "enabled", true)
   guard_raw = _raw_get(raw, "guard", Dict{String,Any}())
@@ -511,6 +556,7 @@ function PowerFlowConfig(raw::AbstractDict)
   end
   _validate_rectangular_powerflow_options(method = method, sparse = true)
   start_raw = _raw_get(merged, "start_values", _raw_section(merged, "start_mode"))
+  start_current_iteration_raw = _raw_section(merged, "start_current_iteration")
   qlimit_raw = _raw_section(merged, "qlimits")
   wrong_branch_min_vm_pu = _validate_nonnegative("power_flow.wrong_branch_min_vm_pu", _as_float_cfg(_raw_get(merged, "wrong_branch_min_vm_pu", 0.70)))
   wrong_branch_max_vm_pu = _validate_positive("power_flow.wrong_branch_max_vm_pu", _as_float_cfg(_raw_get(merged, "wrong_branch_max_vm_pu", 1.30)))
@@ -538,6 +584,7 @@ function PowerFlowConfig(raw::AbstractDict)
     rectangular_preallocate_workspace = _validate_allowed_symbol("power_flow.rectangular_preallocate_workspace", _as_symbol_cfg(_raw_get(merged, "rectangular_preallocate_workspace", :auto)), RECTANGULAR_PREALLOCATE_WORKSPACE_VALUES),
     rectangular_workspace_min_buses = _as_int_cfg(_raw_get(merged, "rectangular_workspace_min_buses", 1000)),
     start_mode = StartModeConfig(merge(Dict{Any,Any}(merged), Dict{Any,Any}(start_raw))),
+    start_current_iteration = StartCurrentIterationConfig(start_current_iteration_raw),
     qlimits = QLimitConfig(merge(Dict{Any,Any}(merged), Dict{Any,Any}(qlimit_raw))),
   )
 end

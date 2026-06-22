@@ -1137,7 +1137,7 @@ function _run_sparlectra_api(;
   matpower_metadata = _resolved_matpower_import_runtime_options(config)
   operation_callback("powerflow_effective_options"; run_id = run_id, case = basename(case_path), _metadata_kwargs(qlimit_metadata)..., _metadata_kwargs(matpower_metadata)...)
   emit_phase("reading_matpower_case")
-  api_performance_profile = Dict{Symbol,Any}(:cancellation_check => () -> _check_powerflow_cancelled!(cancellation_token), :phase_callback => phase -> emit_phase(String(phase)))
+  api_performance_profile = Dict{Symbol,Any}(:cancellation_check => () -> _check_powerflow_cancelled!(cancellation_token), :phase_callback => phase -> emit_phase(String(phase)), :output_dir => output_path)
   execution_start = time_ns()
   try
     open(logfile, "a") do io

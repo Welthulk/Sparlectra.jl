@@ -42,6 +42,7 @@ Legend:
 | Rectangular NR solver | ✅ | ❌ | Available for PF, not as separate SE formulation. |
 | Automatic rectangular Newton damping (`autodamp`) | ✅ | ❌ | PF rectangular solver can backtrack the Newton step from `damp` down to `autodamp_min` for difficult flat starts. |
 | Start projection (`start_projection`) | ✅ | ⚠️ | Internal PF and external-solver `PFModel` starts can use DC-angle and blend-scan projection; SE does not consume `PFModel`. |
+| Guarded current-iteration start pre-solve | ⚠️ | ❌ | Optional PF-only start-value improver (`power_flow.start_current_iteration.enabled`) that runs after normal start modes and before the final rectangular NR solve; it accepts the prepared profile only when mismatch improves and guard checks pass. |
 | Wrong-branch plausibility check (`wrong_branch_detection`) | ✅ | ❌ | Post-convergence PF plausibility guard for suspicious low-voltage/non-finite solutions (`off|warn|fail|rescue`); this is a heuristic check and not a global-optimality proof or a replacement for start-value candidate selection. |
 | Sparse PF matrices | ✅ | ⚠️ | PF requires sparse Y-bus and Jacobian matrices; SE internally builds Jacobians for WLS. |
 | Flat start control | ✅ | ✅ | Available in both PF and SE workflows. |

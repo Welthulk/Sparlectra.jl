@@ -70,6 +70,14 @@ function _rectangular_status_diagnostics(rect_status)::NamedTuple
     wrong_branch_rescue_used = _rect_status_get(rect_status, :wrong_branch_rescue_used, false),
     wrong_branch_rescue_attempts = _rect_status_get(rect_status, :wrong_branch_rescue_attempts, 0),
     wrong_branch_rescue_profile = _rect_status_get(rect_status, :wrong_branch_rescue_profile, :none),
+    current_iteration_enabled = _rect_status_get(rect_status, :current_iteration_enabled, false),
+    current_iteration_attempted = _rect_status_get(rect_status, :current_iteration_attempted, false),
+    current_iteration_accepted = _rect_status_get(rect_status, :current_iteration_accepted, false),
+    current_iteration_iterations = _rect_status_get(rect_status, :current_iteration_iterations, 0),
+    current_iteration_initial_mismatch = _rect_status_get(rect_status, :current_iteration_initial_mismatch, NaN),
+    current_iteration_final_mismatch = _rect_status_get(rect_status, :current_iteration_final_mismatch, NaN),
+    current_iteration_reason = _rect_status_get(rect_status, :current_iteration_reason, :disabled),
+    current_iteration_artifact = _rect_status_get(rect_status, :current_iteration_artifact, ""),
   )
 end
 

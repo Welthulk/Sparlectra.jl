@@ -705,6 +705,21 @@ function run_api_tests()
       @test any(artifact -> artifact.kind === :matpower_auto_profile, auto_profile_apply_result.artifacts)
 
       @test validate_gui_config_overrides(Dict("power_flow.qlimits.enabled" => false))["power_flow"]["qlimits"]["enabled"] === false
+      current_iteration_overrides = validate_gui_config_overrides(Dict(
+        "power_flow.start_current_iteration.enabled" => true,
+        "power_flow.start_current_iteration.max_iter" => 3,
+        "power_flow.start_current_iteration.tol" => 1.0e-4,
+        "power_flow.start_current_iteration.damping" => 0.5,
+        "power_flow.start_current_iteration.accept_only_if_improved" => true,
+        "power_flow.start_current_iteration.min_improvement_factor" => 0.95,
+        "power_flow.start_current_iteration.vm_min_pu" => 0.6,
+        "power_flow.start_current_iteration.vm_max_pu" => 1.4,
+        "power_flow.start_current_iteration.max_angle_step_deg" => 25.0,
+        "power_flow.start_current_iteration.only_for_large_cases" => false,
+      ))
+      @test current_iteration_overrides["power_flow"]["start_current_iteration"]["enabled"] === true
+      @test current_iteration_overrides["power_flow"]["start_current_iteration"]["max_iter"] == 3
+      @test_throws ArgumentError validate_gui_config_overrides(Dict("power_flow.start_current_iteration.damping" => 1.5))
     end
   end
   @testset "Local PowerFlow service" begin

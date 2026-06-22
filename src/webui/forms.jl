@@ -298,7 +298,7 @@ function _webui_parse_form_value(value, ::Type{Bool}, field::String)
 end
 
 function _webui_parse_form_value(value, type::Type{<:Number}, field::String)
-  text = value === nothing ? "" : strip(String(value))
+  text = value === nothing ? "" : strip(string(value))
   isempty(text) && throw(ArgumentError("Web UI field $(field) must not be empty."))
   try
     return parse(type, text)
@@ -326,7 +326,9 @@ function powerflow_webui_request(form::AbstractDict; default_output_root::Abstra
   overrides = Dict{String,Any}()
   for (config_key, field, type) in _WEBUI_FORM_CONFIG_FIELDS
     config_key in GUI_EDITABLE_CONFIG_KEYS || error("Web UI field $(field) is not GUI-editable.")
-    overrides[config_key] = _webui_parse_form_value(_webui_form_value(form, field), type, field)
+    spec = _webui_option_spec(field)
+    raw = _webui_form_value(form, field, spec.control == :checkbox ? false : spec.default)
+    overrides[config_key] = _webui_parse_form_value(raw, type, field)
   end
   request_options = Dict{String,Any}()
   for field in _WEBUI_CASE_PROFILE_EXTRA_FIELDS
