@@ -786,6 +786,63 @@ mpc.branch = [
       @test_throws ErrorException Sparlectra._validate_rectangular_damping(1.01, 0.05)
     end
 
+    @testset "Current-iteration rejection log reports candidate guard details" begin
+      mktempdir() do tmpdir
+        run_guarded_current_iteration_start = getfield(Sparlectra, :_run_guarded_current_iteration_start)
+        Ybus = ComplexF64[1 -1; -1 1]
+        original = ComplexF64[1.0 + 0.0im, 1.0 + 0.0im]
+        S = ComplexF64[0.0 + 0.0im, 10.0 + 0.0im]
+        bus_types = [:Slack, :PQ]
+        profile = Dict{Symbol, Any}(:output_dir => tmpdir)
+
+        restored, summary = run_guarded_current_iteration_start(
+          Ybus,
+          original,
+          S,
+          bus_types,
+          [1.0, 1.0],
+          1;
+          enabled = true,
+          max_iter = 1,
+          tol = 1.0e-6,
+          damping = 1.0,
+          accept_only_if_improved = true,
+          min_improvement_factor = 0.98,
+          vm_min_pu = 0.5,
+          vm_max_pu = 1.5,
+          max_angle_step_deg = 30.0,
+          only_for_large_cases = false,
+          large_case_min_buses = 10,
+          performance_profile = profile,
+        )
+
+        @test restored == original
+        @test summary.current_iteration_attempted === true
+        @test summary.current_iteration_accepted === false
+        @test summary.current_iteration_reason === :voltage_magnitude_guard
+        log_text = read(joinpath(tmpdir, "current_iteration_start.log"), String)
+        for needle in (
+          "current_iteration_attempted: true",
+          "current_iteration_accepted: false",
+          "current_iteration_reason: voltage_magnitude_guard",
+          "candidate_voltage_magnitude_min:",
+          "candidate_voltage_magnitude_max: 11.0",
+          "candidate_voltage_low_count:",
+          "candidate_voltage_high_count: 1",
+          "candidate_voltage_worst_high_bus: 2",
+          "candidate_voltage_worst_high_value: 11.0",
+          "candidate_max_angle_step_deg:",
+          "rejected_at_iteration: 1",
+          "rejection_stage: candidate_guard",
+          "original_start_values_restored: true",
+          "restored_voltage_magnitude_min: 1.0",
+          "restored_voltage_magnitude_max: 1.0",
+        )
+          @test occursin(needle, log_text)
+        end
+      end
+    end
+
 # Ensures final-limit validation remains robust when q-generation data is partially missing.
     @testset "Final limit validation tolerates missing qgen" begin
       net = createTest3BusNet()

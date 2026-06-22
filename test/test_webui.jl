@@ -972,6 +972,8 @@ settings:
       @test occursin("name=\"performance_timing\"", form_html)
       @test occursin("name=\"run_diagnostics\"", form_html)
       @test occursin("Advanced start values", form_html)
+      @test occursin("<details class=\"span-2 start-current-iteration-options advanced-start-values\">", form_html)
+      @test occursin("<summary>Advanced start values</summary>", form_html)
       @test occursin("Current-iteration pre-solve", form_html)
       for field in (
         "power_flow_start_current_iteration_enabled",
@@ -988,6 +990,8 @@ settings:
         @test occursin("name=\"$(field)\"", form_html)
       end
       @test occursin("name=\"power_flow_start_current_iteration_enabled\" type=\"hidden\" value=\"false\"", form_html)
+      @test occursin("name=\"power_flow_start_current_iteration_accept_only_if_improved\" type=\"hidden\" value=\"false\"", form_html)
+      @test occursin("name=\"power_flow_start_current_iteration_only_for_large_cases\" type=\"hidden\" value=\"false\"", form_html)
       @test occursin("name=\"detailed_result_csv\" type=\"checkbox\" value=\"true\" checked", form_html)
       @test occursin("class=\"span-2 detailed-csv-options\"", form_html)
       @test occursin("name=\"detailed_result_csv_format\"", form_html)

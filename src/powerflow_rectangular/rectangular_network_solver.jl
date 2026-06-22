@@ -401,12 +401,30 @@ function _current_iteration_summary(; enabled::Bool, attempted::Bool = false, ac
   )
 end
 
-function _write_current_iteration_start_log(performance_profile, summary; damping::Float64, tol::Float64, vm_before, vm_after, max_angle_step::Float64, restored::Bool, guard_violations = String[])
+function _current_iteration_voltage_guard_diagnostics(vm, vm_min_pu::Float64, vm_max_pu::Float64)
+  low = findall(<(vm_min_pu), vm)
+  high = findall(>(vm_max_pu), vm)
+  low_bus = isempty(low) ? "none" : string(low[argmin(vm[low])])
+  low_value = isempty(low) ? "none" : string(minimum(vm[low]))
+  high_bus = isempty(high) ? "none" : string(high[argmax(vm[high])])
+  high_value = isempty(high) ? "none" : string(maximum(vm[high]))
+  return (
+    low_count = length(low),
+    high_count = length(high),
+    worst_low_bus = low_bus,
+    worst_low_value = low_value,
+    worst_high_bus = high_bus,
+    worst_high_value = high_value,
+  )
+end
+
+function _write_current_iteration_start_log(performance_profile, summary; damping::Float64, tol::Float64, vm_before, vm_after, vm_candidate, vm_min_pu::Float64, vm_max_pu::Float64, candidate_max_angle_step::Float64, max_angle_step::Float64, restored::Bool, rejected_at_iteration::Int = 0, rejection_stage::Symbol = :other, guard_violations = String[])
   performance_profile isa AbstractDict || return ""
   output_dir = get(performance_profile, :output_dir, "")
   output_dir isa AbstractString && !isempty(output_dir) || return ""
   mkpath(output_dir)
   path = joinpath(output_dir, "current_iteration_start.log")
+  candidate_guard = _current_iteration_voltage_guard_diagnostics(vm_candidate, vm_min_pu, vm_max_pu)
   open(path, "w") do io
     println(io, "current_iteration_enabled: ", summary.current_iteration_enabled)
     println(io, "current_iteration_attempted: ", summary.current_iteration_attempted)
@@ -421,9 +439,22 @@ function _write_current_iteration_start_log(performance_profile, summary; dampin
     println(io, "voltage_magnitude_max_before: ", isempty(vm_before) ? NaN : maximum(vm_before))
     println(io, "voltage_magnitude_min_after: ", isempty(vm_after) ? NaN : minimum(vm_after))
     println(io, "voltage_magnitude_max_after: ", isempty(vm_after) ? NaN : maximum(vm_after))
+    println(io, "candidate_voltage_magnitude_min: ", isempty(vm_candidate) ? NaN : minimum(vm_candidate))
+    println(io, "candidate_voltage_magnitude_max: ", isempty(vm_candidate) ? NaN : maximum(vm_candidate))
+    println(io, "candidate_voltage_low_count: ", candidate_guard.low_count)
+    println(io, "candidate_voltage_high_count: ", candidate_guard.high_count)
+    println(io, "candidate_voltage_worst_low_bus: ", candidate_guard.worst_low_bus)
+    println(io, "candidate_voltage_worst_low_value: ", candidate_guard.worst_low_value)
+    println(io, "candidate_voltage_worst_high_bus: ", candidate_guard.worst_high_bus)
+    println(io, "candidate_voltage_worst_high_value: ", candidate_guard.worst_high_value)
+    println(io, "candidate_max_angle_step_deg: ", candidate_max_angle_step)
+    println(io, "rejected_at_iteration: ", rejected_at_iteration)
+    println(io, "rejection_stage: ", rejection_stage)
     println(io, "maximum_angle_step_deg: ", max_angle_step)
     println(io, "guard_violations: ", isempty(guard_violations) ? "none" : join(guard_violations, ", "))
     println(io, "original_start_values_restored: ", restored)
+    println(io, "restored_voltage_magnitude_min: ", restored && !isempty(vm_after) ? minimum(vm_after) : "none")
+    println(io, "restored_voltage_magnitude_max: ", restored && !isempty(vm_after) ? maximum(vm_after) : "none")
   end
   return path
 end
@@ -446,6 +477,10 @@ function _run_guarded_current_iteration_start(Ybus, Vraw::Vector{ComplexF64}, S:
   best_mismatch = initial_mismatch
   guard_violations = String[]
   max_angle_step = 0.0
+  candidate = copy(original)
+  candidate_max_angle_step = 0.0
+  rejected_at_iteration = 0
+  rejection_stage = :other
   iterations = 0
   reason = :max_iter
   for it in 1:max_iter
@@ -458,12 +493,16 @@ function _run_guarded_current_iteration_start(Ybus, Vraw::Vector{ComplexF64}, S:
       if abs(V[k]) <= eps(Float64) || !isfinite(real(V[k])) || !isfinite(imag(V[k]))
         push!(guard_violations, "non_finite_or_zero_voltage_bus_$(k)")
         reason = :invalid_voltage
+        rejected_at_iteration = it
+        rejection_stage = :nonfinite_check
         break
       end
       yii = Ybus[k, k]
       if abs(yii) <= eps(Float64)
         push!(guard_violations, "zero_diagonal_admittance_bus_$(k)")
         reason = :singular_current_update
+        rejected_at_iteration = it
+        rejection_stage = :candidate_guard
         break
       end
       target_i = conj(S[k] / V[k])
@@ -477,28 +516,47 @@ function _run_guarded_current_iteration_start(Ybus, Vraw::Vector{ComplexF64}, S:
       Vnext[k] = _apply_voltage_magnitude_preserving_angle(Vnext[k], Vset[k])
     end
     if any(v -> !isfinite(real(v)) || !isfinite(imag(v)), Vnext)
+      candidate = copy(Vnext)
       push!(guard_violations, "non_finite_voltage")
       reason = :invalid_voltage
-      break
-    end
-    vm = abs.(Vnext)
-    if any(v -> v < vm_min_pu || v > vm_max_pu, vm)
-      push!(guard_violations, "voltage_magnitude_out_of_range")
-      reason = :voltage_magnitude_guard
+      rejected_at_iteration = it
+      rejection_stage = :nonfinite_check
       break
     end
     step_deg = maximum(abs.(angle.(Vnext ./ V))) * 180.0 / π
+    candidate_max_angle_step = step_deg
+    vm = abs.(Vnext)
+    if any(v -> v < vm_min_pu || v > vm_max_pu, vm)
+      candidate = copy(Vnext)
+      push!(guard_violations, "voltage_magnitude_out_of_range")
+      reason = :voltage_magnitude_guard
+      rejected_at_iteration = it
+      rejection_stage = :candidate_guard
+      break
+    end
     max_angle_step = max(max_angle_step, step_deg)
     if step_deg > max_angle_step_deg
+      candidate = copy(Vnext)
       push!(guard_violations, "angle_step_guard")
       reason = :angle_step_guard
+      rejected_at_iteration = it
+      rejection_stage = :candidate_guard
       break
     end
     mis = _max_rectangular_mismatch(Ybus, Vnext, S, bus_types, Vset, slack_idx)
+    if !isfinite(mis)
+      candidate = copy(Vnext)
+      push!(guard_violations, "non_finite_mismatch")
+      reason = :invalid_mismatch
+      rejected_at_iteration = it
+      rejection_stage = :mismatch_check
+      break
+    end
     if isfinite(mis) && mis < best_mismatch
       best = copy(Vnext)
       best_mismatch = mis
     end
+    candidate = copy(Vnext)
     V = Vnext
     if mis <= tol
       reason = :tolerance_reached
@@ -509,7 +567,7 @@ function _run_guarded_current_iteration_start(Ybus, Vraw::Vector{ComplexF64}, S:
   accepted = isfinite(best_mismatch) && (accept_only_if_improved ? best_mismatch <= threshold : true)
   accepted || (reason = isempty(guard_violations) ? :not_improved : reason)
   summary0 = _current_iteration_summary(enabled = true, attempted = true, accepted = accepted, iterations = iterations, initial_mismatch = initial_mismatch, final_mismatch = best_mismatch, reason = reason)
-  artifact = _write_current_iteration_start_log(performance_profile, summary0; damping, tol, vm_before = abs.(original), vm_after = abs.(accepted ? best : original), max_angle_step, restored = !accepted, guard_violations)
+  artifact = _write_current_iteration_start_log(performance_profile, summary0; damping, tol, vm_before = abs.(original), vm_after = abs.(accepted ? best : original), vm_candidate = abs.(accepted ? best : candidate), vm_min_pu, vm_max_pu, candidate_max_angle_step, max_angle_step, restored = !accepted, rejected_at_iteration, rejection_stage, guard_violations)
   summary = merge(summary0, (current_iteration_artifact = artifact,))
   performance_profile isa AbstractDict && (performance_profile[:current_iteration_start] = summary)
   verbose > 0 && @info "Current-iteration start pre-solve" accepted = accepted reason = reason initial_mismatch = initial_mismatch final_mismatch = best_mismatch iterations = iterations
