@@ -329,6 +329,29 @@ settings:
       _webui_assert_selected(case118_form, "output_logfile_results", "compact")
       _webui_assert_selected(case118_form, "performance_timing", "compact")
 
+      dropdown_form = Sparlectra.render_powerflow_form(output_root = root, case_directory = root)
+      @test occursin("case118.m ★", dropdown_form)
+      @test occursin("<option value=\"case118.m\">case118.m ★</option>", dropdown_form)
+      @test !occursin("value=\"case118.m ★\"", dropdown_form)
+      @test occursin("data-case-settings-reload=\"true\"", dropdown_form)
+      @test occursin("target.searchParams.set('casefile', caseSelect.value)", dropdown_form)
+      @test occursin("target.searchParams.set('config_file', configInput.value)", dropdown_form)
+
+      case14 = joinpath(root, "case14.m")
+      write(case14, "% case fixture\n")
+      case14_form = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow?casefile=$(Sparlectra._webui_urlencode(case14))"; output_root = root).body)
+      @test !occursin("Case-specific settings loaded from", case14_form)
+      _webui_assert_checked(case14_form, "power_flow_autodamp", true)
+      _webui_assert_checked(case14_form, "power_flow_qlimits_enabled", true)
+      _webui_assert_checked(case14_form, "benchmark_enabled", false)
+      _webui_assert_checked(case14_form, "run_diagnostics", false)
+      _webui_assert_value(case14_form, "power_flow_tol", "1e-8")
+      _webui_assert_value(case14_form, "power_flow_max_iter", "80")
+      _webui_assert_selected(case14_form, "power_flow_start_angle_mode", "dc")
+      _webui_assert_selected(case14_form, "power_flow_start_voltage_mode", "profile_blend")
+      _webui_assert_selected(case14_form, "matpower_import_auto_profile", "apply")
+      _webui_assert_selected(case14_form, "output_logfile_results", "compact")
+
       request_form = _webui_test_form("case145.m", "configuration.yaml", root)
       request_form["power_flow_tol"] = "2e-6"
       request = Sparlectra.powerflow_webui_request(request_form; default_output_root = root)
@@ -526,7 +549,7 @@ settings:
           selected_casefile = "case14.m",
           selected_config_file = secondary_config,
         )
-        @test occursin("<select id=\"casefile\" name=\"casefile\">", selection_html)
+        @test occursin("<select id=\"casefile\" name=\"casefile\" data-case-settings-reload=\"true\">", selection_html)
         @test occursin("<option value=\"\">-- choose existing case --</option>", selection_html)
         @test occursin("<option value=\"case14.m\" selected>case14.m</option>", selection_html)
         @test !occursin("<option value=\"case14.jl\">case14.jl</option>", selection_html)
@@ -554,7 +577,7 @@ settings:
           application_root = application_root,
           selected_casefile = manual_case,
         )
-        @test occursin("<select id=\"casefile\" name=\"casefile\">", fallback_html)
+        @test occursin("<select id=\"casefile\" name=\"casefile\" data-case-settings-reload=\"true\">", fallback_html)
         @test occursin("<input id=\"casefile_manual\" name=\"casefile_manual\" value=\"$(manual_case)\"", fallback_html)
       end
     end

@@ -235,8 +235,14 @@ function render_powerflow_form(;
   selected_value = strip(selected_casefile)
   existing_value = selected_value in casefiles ? selected_value : ""
   manual_value = isempty(existing_value) ? selected_value : ""
-  case_options = join(("<option value=\"$(_webui_escape(casefile))\"$(casefile == existing_value ? " selected" : "")>$(_webui_escape(casefile))</option>" for casefile in casefiles), "")
-  case_select = "<select id=\"casefile\" name=\"casefile\"><option value=\"\">-- choose existing case --</option>$(case_options)</select>"
+  case_options = join((
+    begin
+      has_settings = isfile(_webui_case_settings_path(output_root, casefile; case_directory = effective_case_directory))
+      label = has_settings ? "$(casefile) ★" : casefile
+      "<option value=\"$(_webui_escape(casefile))\"$(casefile == existing_value ? " selected" : "")>$(_webui_escape(label))</option>"
+    end for casefile in casefiles
+  ), "")
+  case_select = "<select id=\"casefile\" name=\"casefile\" data-case-settings-reload=\"true\"><option value=\"\">-- choose existing case --</option>$(case_options)</select>"
   case_manual = "<input id=\"casefile_manual\" name=\"casefile_manual\" value=\"$(_webui_escape(manual_value))\" placeholder=\"case14.m\">"
   config_default = isempty(selected_config_file) ? DEFAULT_SPARLECTRA_CONFIG_PATH : selected_config_file
   config_control = "<input type=\"hidden\" name=\"config_file\" value=\"$(_webui_escape(config_default))\">"
@@ -314,6 +320,19 @@ document.addEventListener('DOMContentLoaded', function () {
       return String(language).toLowerCase().startsWith('de');
     }) ? 'excel_de' : 'excel_us';
     csvFormat.value = defaultFormat;
+  }
+  const caseSelect = document.querySelector('select[name="casefile"][data-case-settings-reload="true"]');
+  if (caseSelect !== null) {
+    caseSelect.addEventListener('change', function () {
+      if (caseSelect.value === '') return;
+      const target = new URL('/powerflow', window.location.origin);
+      target.searchParams.set('casefile', caseSelect.value);
+      const configInput = document.querySelector('input[name="config_file"]');
+      if (configInput !== null && configInput.value !== '') {
+        target.searchParams.set('config_file', configInput.value);
+      }
+      window.location.href = target.pathname + target.search;
+    });
   }
 });
 

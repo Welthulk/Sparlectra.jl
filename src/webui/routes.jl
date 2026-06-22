@@ -79,12 +79,13 @@ function route_sparlectra_webui(method::AbstractString, target::AbstractString, 
     _webui_log_route!(log_root, "powerflow_form_opened", verb, path; status = "opened")
     selected_casefile = get(query, "casefile", "")
     case_profile = isempty(selected_casefile) ? nothing : _webui_load_case_settings(output_root, selected_casefile; case_directory = runtime === nothing ? nothing : runtime.case_directory)
+    selected_config_file = get(query, "config_file", runtime === nothing ? "" : runtime.config_file)
     return _webui_html(render_powerflow_form(;
       output_root,
       case_directory = runtime === nothing ? nothing : runtime.case_directory,
       operation_log = runtime === nothing ? webui_operation_log_path(output_root) : runtime.operation_log,
       selected_casefile,
-      selected_config_file = runtime === nothing ? "" : runtime.config_file,
+      selected_config_file,
       error_message = runtime === nothing ? nothing : runtime.startup_config_error,
       config_notice = _powerflow_config_notice(runtime === nothing ? "" : runtime.config_file),
       case_profile,
