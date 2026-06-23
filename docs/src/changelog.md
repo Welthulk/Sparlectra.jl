@@ -2,6 +2,7 @@
 
 ### Improvements
 * Added an optional guarded current-injection start pre-solve with YAML/API/Web UI configuration, case-sidecar persistence, diagnostics metadata, and a compact `current_iteration_start.log` artifact while keeping the Newton-Raphson solve as the final power-flow method.
+* Added early MATPOWER `mpc.dcline` detection so active unsupported DC-line data aborts API/Web UI power-flow runs with structured failure metadata and clear run-log diagnostics instead of being silently ignored.
 * Improved power-flow diagnostics by exposing DC-start quality metrics, compact/full mismatch summaries, explicit final-mismatch status, and Q-limit validation tables with MVAr units and non-converged last-iteration validity labels.
 * Improved the Q-limit large-case diagnostic comparison with live flushed progress output, selectable classic/robust start profiles, compact default logs, per-combination CSV/JSON rows, and offline-safe stubbed orchestration tests.
 * Added classical Q-limit enforcement modes (`classic_simultaneous` and `classic_one_at_a_time`) alongside the default active-set mode for diagnostic comparisons and large MATPOWER case analysis; legacy `matpower_*` aliases remain accepted for old YAML files.

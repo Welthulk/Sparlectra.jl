@@ -93,6 +93,21 @@ function _import_sparlectra_context(casefile::String, path::Union{Nothing,String
   mpc = _perf_profile_time!(performance_profile, :matpower_case_parse) do
     MatpowerIO.read_case(filename; legacy_compat = true)
   end
+  try
+    MatpowerIO.assert_no_active_dcline(mpc; casefile = filename)
+  catch err
+    if err isa MatpowerIO.UnsupportedMatpowerDclineError
+      details = err.details
+      println(stdout, "matpower_dcline_detected")
+      println(stdout, "matpower_dcline_unsupported")
+      println(stdout, "powerflow_aborted_unsupported_matpower_dcline")
+      println(stdout, err.message)
+      if performance_profile isa AbstractDict
+        performance_profile[:unsupported_matpower_dcline] = details
+      end
+    end
+    rethrow()
+  end
   auto_profile_result = nothing
   println(stdout, "Runtime casefile: ", filename)
   print_matpower_import_runtime_options(stdout, "Original MATPOWER import options", cfg)

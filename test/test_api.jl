@@ -21,6 +21,16 @@ mpc.branch = [
   return path
 end
 
+function _write_api_dcline_case(path::AbstractString; rows::AbstractString)
+  _write_api_test_case(path)
+  open(path, "a") do io
+    write(io, "\nmpc.dcline = [\n")
+    write(io, rows)
+    write(io, "\n];\n")
+  end
+  return path
+end
+
 function _control_label_test_net()
   net = Net(name = "control_label_cache", baseMVA = 100.0)
   for name in ("Slack", "NoControl", "QControl", "PControl", "BothControl")
@@ -162,6 +172,46 @@ function run_api_tests()
       @test result.metadata["q_limit_runlog_max_rows"] == 0
       @test result.metadata["current_iteration_enabled"] === false
       @test result.metadata["current_iteration_attempted"] === false
+      no_dcline_mpc = Sparlectra.MatpowerIO.read_case(casefile; legacy_compat = false)
+      @test Sparlectra.MatpowerIO.matpower_dcline_diagnostics(no_dcline_mpc)["matpower_dcline_active_count"] == 0
+      empty_dcline_case = _write_api_dcline_case(joinpath(tmpdir, "case_empty_dcline.m"); rows = "")
+      empty_dcline_mpc = Sparlectra.MatpowerIO.read_case(empty_dcline_case; legacy_compat = false)
+      @test Sparlectra.MatpowerIO.matpower_dcline_diagnostics(empty_dcline_mpc)["matpower_dcline_active_count"] == 0
+      inactive_dcline_case = _write_api_dcline_case(joinpath(tmpdir, "case_inactive_dcline.m"); rows = "1 2 0 10 9 0 0 1 1 0 100;")
+      inactive_dcline_mpc = Sparlectra.MatpowerIO.read_case(inactive_dcline_case; legacy_compat = false)
+      @test Sparlectra.MatpowerIO.matpower_dcline_diagnostics(inactive_dcline_mpc)["matpower_dcline_active_count"] == 0
+      active_dcline_case = _write_api_dcline_case(joinpath(tmpdir, "case_active_dcline.m"); rows = "1 2 1 10 9 0 0 1 1 0 100;\n1 2 0 3 2 0 0 1 1 0 100;")
+      active_result = run_sparlectra_api(
+        casefile = active_dcline_case,
+        config_file = template,
+        output_dir = joinpath(tmpdir, "active-dcline"),
+        config_overrides = Dict("output.logfile_results" => "full", "benchmark.enabled" => false),
+        performance_timing = :compact,
+      )
+      @test active_result.status === :failed
+      @test !active_result.success
+      @test active_result.reason == "unsupported_matpower_dcline"
+      @test active_result.metadata["failure_reason"] == "unsupported_matpower_dcline"
+      @test active_result.metadata["matpower_dcline_present"] === true
+      @test active_result.metadata["matpower_dcline_unsupported"] === true
+      @test active_result.metadata["matpower_dcline_active_count"] == 1
+      @test active_result.metadata["total_pf_mw"] == 10.0
+      @test active_result.metadata["total_pt_mw"] == 9.0
+      @test occursin("MATPOWER case contains active `mpc.dcline` entries", active_result.message)
+      active_run_log = read(joinpath(active_result.output_dir, "run.log"), String)
+      @test occursin("matpower_dcline_detected", active_run_log)
+      @test occursin("matpower_dcline_unsupported", active_run_log)
+      @test occursin("powerflow_aborted_unsupported_matpower_dcline", active_run_log)
+      active_result_html = Sparlectra.render_powerflow_result(Dict(
+        "run_id" => active_result.run_id,
+        "status" => String(active_result.status),
+        "success" => active_result.success,
+        "reason" => active_result.reason,
+        "message" => active_result.message,
+      ))
+      @test occursin("failed", active_result_html)
+      @test occursin("MATPOWER case contains active", active_result_html)
+      @test occursin("unsupported_matpower_dcline", active_result_html)
       @test read(template, String) == template_before
       @test isfile(joinpath(output_dir, "effective_config.yaml"))
       effective_config_text = read(joinpath(output_dir, "effective_config.yaml"), String)

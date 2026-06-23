@@ -1041,16 +1041,17 @@ function _finalize_api_result(result::SparlectraApiResult)::SparlectraApiResult
   return refreshed
 end
 
-function _api_failure(reason::String, message::String; run_id::String = string(uuid4()), casefile, config_file, output_dir::String, logfile::String, result_file::String, service_phase_timings = Dict{String,Any}[])::SparlectraApiResult
+function _api_failure(reason::String, message::String; run_id::String = string(uuid4()), casefile, config_file, output_dir::String, logfile::String, result_file::String, service_phase_timings = Dict{String,Any}[], metadata = Dict{String,Any}())::SparlectraApiResult
   open(logfile, "a") do io
     println(io, "Sparlectra API failure: ", reason)
     println(io, message)
   end
-  result = _api_result(run_id = run_id, status = :failed, success = false, reason = reason, message = message, casefile = casefile, config_file = config_file, output_dir = output_dir, logfile = logfile, result_file = result_file, service_phase_timings = service_phase_timings)
+  failure_metadata = merge(Dict{String,Any}("failure_reason" => reason), Dict{String,Any}(String(key) => value for (key, value) in metadata))
+  result = _api_result(run_id = run_id, status = :failed, success = false, reason = reason, message = message, casefile = casefile, config_file = config_file, output_dir = output_dir, logfile = logfile, result_file = result_file, service_phase_timings = service_phase_timings, metadata = failure_metadata)
   return _finalize_api_result(result)
 end
 
-function _api_execution_failure(reason::String, message::String; run_id::String, casefile, config_file, output_dir::String, logfile::String, result_file::String, phase_recorder::PowerFlowPhaseTimingRecorder, performance_timing = :off)::SparlectraApiResult
+function _api_execution_failure(reason::String, message::String; run_id::String, casefile, config_file, output_dir::String, logfile::String, result_file::String, phase_recorder::PowerFlowPhaseTimingRecorder, performance_timing = :off, metadata = Dict{String,Any}())::SparlectraApiResult
   _complete_active_phase!(phase_recorder, "failed")
   _start_service_phase!(phase_recorder, "finalizing_failed")
   _complete_active_phase!(phase_recorder, "failed")
@@ -1067,7 +1068,7 @@ function _api_execution_failure(reason::String, message::String; run_id::String,
       _write_service_phase_summary(io, phase_recorder.timings)
     end
   end
-  return _api_failure(reason, message; run_id, casefile, config_file, output_dir, logfile, result_file, service_phase_timings = phase_recorder.timings)
+  return _api_failure(reason, message; run_id, casefile, config_file, output_dir, logfile, result_file, service_phase_timings = phase_recorder.timings, metadata = metadata)
 end
 
 """
@@ -1208,6 +1209,18 @@ function _run_sparlectra_api(;
     end
   catch err
     err isa PowerFlowAborted && rethrow()
+    if err isa MatpowerIO.UnsupportedMatpowerDclineError
+      details = Dict{String,Any}(String(key) => value for (key, value) in err.details)
+      details["solver_status"] = "aborted"
+      details["service_status"] = "failed"
+      details["run_status"] = "failed"
+      details["last_phase"] = "reading_matpower_case"
+      operation_callback("matpower_dcline_detected"; run_id = run_id, _metadata_kwargs(details)...)
+      operation_callback("matpower_dcline_unsupported"; run_id = run_id, _metadata_kwargs(details)...)
+      operation_callback("powerflow_aborted_unsupported_matpower_dcline"; run_id = run_id, _metadata_kwargs(details)...)
+      _write_run_metadata_artifact(output_path; case_path = case_path, lifecycle = details)
+      return _api_execution_failure("unsupported_matpower_dcline", err.message; run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file, phase_recorder, performance_timing, metadata = details)
+    end
     message = sprint(showerror, err, catch_backtrace())
     reason = get(phase_recorder.timings[phase_recorder.active_index === nothing ? length(phase_recorder.timings) : phase_recorder.active_index], "phase", "") == "loading_julia_case" ? "loading_julia_case_failed" : "execution_error"
     return _api_execution_failure(reason, message; run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file, phase_recorder, performance_timing)

@@ -571,7 +571,7 @@ function _matpower_import_auto_profile_shunt_score(mpc, include_shunts::Bool; sh
     bus[:, 5] .= 0.0
     bus[:, 6] .= 0.0
   end
-  mpc2 = MatpowerIO.MatpowerCase(mpc.name, mpc.baseMVA, bus, mpc.gen, mpc.branch, mpc.gencost, mpc.bus_name)
+  mpc2 = MatpowerIO.MatpowerCase(mpc.name, mpc.baseMVA, bus, mpc.gen, mpc.branch, mpc.gencost, mpc.bus_name, mpc.dcline)
   return _matpower_import_auto_profile_residual_score(MatpowerIO.vmva_power_mismatch_stats(mpc2; matpower_shift_unit = shift_unit, matpower_shift_sign = shift_sign, matpower_ratio = ratio))
 end
 

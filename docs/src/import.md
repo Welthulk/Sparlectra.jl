@@ -139,6 +139,17 @@ explicit YAML values that were preserved.
 
 The `casefileparser` function parses Matpower case files and returns the raw data arrays:
 
+### Known MATPOWER import limitation: DC lines
+
+Sparlectra currently does not model MATPOWER `mpc.dcline` entries. During
+framework/API/Web UI MATPOWER case handling, cases with at least one active
+DC-line row (`status != 0`) are detected and rejected before the power-flow
+solve starts. The failed result reports `failure_reason =
+unsupported_matpower_dcline`, includes the active DC-line count and compact
+Pf/Pt/loss totals when available, and writes the same unsupported-feature
+message to `run.log`. Empty `mpc.dcline` tables and tables containing only
+inactive rows continue through the normal AC import path.
+
 ```julia
 using Sparlectra
 
