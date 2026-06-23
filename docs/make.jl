@@ -16,7 +16,7 @@ makedocs(
   clean = true,
   doctest = true,
   checkdocs = :none,
-  format = Documenter.HTML(assets = ["assets/tablestyle.css"], prettyurls = get(ENV, "CI", "false") == "true", collapselevel = 1, canonical = "https://welthulk.github.io/Sparlectra.jl"),
+  format = Documenter.HTML(assets = ["assets/tablestyle.css"], prettyurls = get(ENV, "CI", "false") == "true", collapselevel = 1, canonical = "https://welthulk.github.io/Sparlectra.jl", repolink = "https://github.com/Welthulk/Sparlectra.jl"),
   pages = [
     "Home" => "index.md",
     "Feature Matrix" => "feature_matrix.md",
