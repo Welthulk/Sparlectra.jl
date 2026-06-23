@@ -211,7 +211,7 @@ runpf!(net, 60, 1e-8, 1;
 )
 ```
 
-Use `qlimit_start_mode = :auto_q_delta` to wait until the PV reactive-power
+Use `qlimit_start_mode = :auto` to wait until the PV reactive-power
 requests have stabilized. The threshold is `qlimit_auto_q_delta_pu` in p.u.
 The hybrid `:iteration_or_auto` mode starts when either the configured iteration
 or the reactive-power stabilization criterion is reached.

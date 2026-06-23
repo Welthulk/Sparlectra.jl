@@ -52,6 +52,17 @@ function _webui_split_target(target::AbstractString)
   return parts[1], length(parts) == 2 ? _webui_parse_pairs(parts[2]) : Dict{String,String}()
 end
 
+function _powerflow_config_notice(config_file::AbstractString)
+  isempty(strip(config_file)) && return nothing
+  isfile(config_file) || return nothing
+  try
+    result = refresh_sparlectra_config_file(config_file; write = false)
+    return (result.changed || !isempty(result.duplicate_keys)) ? _config_refresh_result_dict(result; config_file) : nothing
+  catch
+    return nothing
+  end
+end
+
 function route_sparlectra_webui(method::AbstractString, target::AbstractString, form::AbstractDict = Dict{String,String}(); output_root::AbstractString = "results/powerflow_service", runtime = nothing)::SparlectraWebUIResponse
   path, query = _webui_split_target(target)
   verb = uppercase(String(method))
@@ -66,7 +77,19 @@ function route_sparlectra_webui(method::AbstractString, target::AbstractString, 
     return handle_webui_doc_page(_webui_urldecode(path[(lastindex("/docs/") + 1):end]))
   elseif verb == "GET" && path in ("/", "/powerflow")
     _webui_log_route!(log_root, "powerflow_form_opened", verb, path; status = "opened")
-    return _webui_html(render_powerflow_form(; output_root, case_directory = runtime === nothing ? nothing : runtime.case_directory, operation_log = runtime === nothing ? webui_operation_log_path(output_root) : runtime.operation_log, selected_config_file = runtime === nothing ? "" : runtime.config_file))
+    selected_casefile = get(query, "casefile", "")
+    case_profile = isempty(selected_casefile) ? nothing : _webui_load_case_settings(output_root, selected_casefile; case_directory = runtime === nothing ? nothing : runtime.case_directory)
+    selected_config_file = get(query, "config_file", runtime === nothing ? "" : runtime.config_file)
+    return _webui_html(render_powerflow_form(;
+      output_root,
+      case_directory = runtime === nothing ? nothing : runtime.case_directory,
+      operation_log = runtime === nothing ? webui_operation_log_path(output_root) : runtime.operation_log,
+      selected_casefile,
+      selected_config_file,
+      error_message = runtime === nothing ? nothing : runtime.startup_config_error,
+      config_notice = _powerflow_config_notice(runtime === nothing ? "" : runtime.config_file),
+      case_profile,
+    ))
   elseif verb == "POST" && path == "/powerflow/run"
     try
       result = handle_powerflow_run(form; default_output_root = output_root, case_directory = runtime === nothing ? nothing : runtime.case_directory, runner = runtime === nothing ? start_powerflow_run : runtime.runner, operation_log = log_root)
@@ -85,15 +108,30 @@ function route_sparlectra_webui(method::AbstractString, target::AbstractString, 
       _webui_log_route!(log_root, "validation_error", verb, path; status = "rejected", requested_case = selected_casefile, message = sprint(showerror, err))
       return _webui_html(render_powerflow_form(;
         output_root,
+        operation_log = log_root,
         error_message = sprint(showerror, err),
         selected_casefile,
         selected_config_file,
+        submitted_form = form,
       ); status = 400)
     end
+  elseif verb == "POST" && path == "/powerflow/config/check"
+    return handle_powerflow_config_refresh(form; write = false, operation_log = log_root)
+  elseif verb == "POST" && path == "/powerflow/config/refresh"
+    return handle_powerflow_config_refresh(form; write = true, operation_log = log_root)
+  elseif verb == "POST" && path == "/powerflow/config/download"
+    text = String(something(_webui_form_value(form, "refreshed_text", ""), ""))
+    return SparlectraWebUIResponse(200, Pair{String,String}["Content-Type" => "application/x-yaml; charset=utf-8", "Content-Disposition" => "attachment; filename=\"configuration-refreshed.yaml\""], Vector{UInt8}(codeunits(text)))
   elseif verb == "GET" && startswith(path, "/powerflow/result/")
     run_id = _webui_urldecode(path[(lastindex("/powerflow/result/") + 1):end])
     get(query, "autorefresh", "") == "1" || _webui_log_route!(log_root, "powerflow_status_opened", verb, path; status = "opened", run_id)
     return handle_powerflow_result(run_id)
+  elseif verb == "POST" && startswith(path, "/powerflow/result/") && endswith(path, "/case-settings/save")
+    prefix = "/powerflow/result/"
+    suffix = "/case-settings/save"
+    encoded_run_id = path[(lastindex(prefix) + 1):(lastindex(path) - lastindex(suffix))]
+    run_id = _webui_urldecode(encoded_run_id)
+    return handle_powerflow_case_settings_save(run_id, form; output_root, operation_log = log_root)
   elseif verb == "POST" && startswith(path, "/powerflow/abort/")
     run_id = _webui_urldecode(path[(lastindex("/powerflow/abort/") + 1):end])
     prior_status = get(get_webui_powerflow_job(run_id), "status", "")
@@ -113,7 +151,7 @@ function route_sparlectra_webui(method::AbstractString, target::AbstractString, 
       _webui_log_route!(log_root, "webui_shutdown_requested", verb, path; status = "accepted", run_id, current_phase)
       @async begin
         sleep(0.05)
-        _webui_request_shutdown!(runtime)
+        _webui_request_shutdown!(runtime; reason = :hard_reset)
       end
     end
     return response
@@ -148,6 +186,9 @@ function route_sparlectra_webui(method::AbstractString, target::AbstractString, 
   elseif verb == "GET" && path == "/webui/operation-log"
     _webui_log_route!(log_root, "page_opened", verb, path; status = "opened")
     return handle_webui_operation_log(log_root)
+  elseif verb == "GET" && path == "/webui/last-errors"
+    _webui_log_route!(log_root, "last_errors_opened", verb, path; status = "opened")
+    return _webui_html(render_webui_last_errors(log_root))
   elseif verb == "GET" && path == "/webui/operation-log/download"
     _webui_log_route!(log_root, "artifact_downloaded", verb, path; status = "succeeded", artifact = WEBUI_OPERATION_LOG_FILENAME)
     return handle_webui_operation_log(log_root; download = true)
@@ -159,7 +200,7 @@ function route_sparlectra_webui(method::AbstractString, target::AbstractString, 
     runtime === nothing && return _webui_html(render_webui_error(503, "Web UI shutdown is unavailable outside a running server."); status = 503)
     @async begin
       sleep(0.05)
-      _webui_request_shutdown!(runtime)
+      _webui_request_shutdown!(runtime; reason = :explicit_shutdown)
     end
     return _webui_html(render_webui_shutdown())
   elseif verb == "GET" && path == "/static/sparlectra.css"

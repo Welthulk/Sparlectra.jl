@@ -42,6 +42,26 @@ Base.@kwdef struct StartModeConfig
 end
 
 """
+    StartCurrentIterationConfig
+
+Guarded fixed-point current-injection pre-solve configuration. The stage is
+disabled by default and, when enabled, only prepares the initial voltage profile
+before the normal rectangular Newton-Raphson solve.
+"""
+Base.@kwdef struct StartCurrentIterationConfig
+  enabled::Bool = false
+  max_iter::Int = 10
+  tol::Float64 = 1.0e-3
+  damping::Float64 = 0.5
+  accept_only_if_improved::Bool = true
+  min_improvement_factor::Float64 = 0.98
+  vm_min_pu::Float64 = 0.5
+  vm_max_pu::Float64 = 1.5
+  max_angle_step_deg::Float64 = 30.0
+  only_for_large_cases::Bool = false
+end
+
+"""
     QLimitConfig
 
 Typed reactive-power limit switching configuration used by power-flow runners.
@@ -66,6 +86,7 @@ Base.@kwdef struct QLimitConfig
   trace_buses::Vector{Int} = Int[]
   lock_pv_to_pq_buses::Vector{Int} = Int[]
   ignore_q_limits::Bool = false
+  enforcement_mode::Symbol = :active_set
 end
 
 """
@@ -93,6 +114,7 @@ Base.@kwdef struct PowerFlowConfig
   rectangular_preallocate_workspace::Symbol = :auto
   rectangular_workspace_min_buses::Int = 1000
   start_mode::StartModeConfig = StartModeConfig()
+  start_current_iteration::StartCurrentIterationConfig = StartCurrentIterationConfig()
   qlimits::QLimitConfig = QLimitConfig()
 end
 
@@ -187,6 +209,10 @@ Base.@kwdef struct RuntimeConfig
   julia_threads::String = "keep"
   blas_threads::String = "keep"
   print_thread_config::Bool = true
+  casefile::String = ""
+  case_name::String = ""
+  case_source::String = ""
+  configured_default_casefile::String = ""
 end
 
 """
@@ -258,10 +284,14 @@ const USER_SPARLECTRA_CONFIG_PATH = normpath(joinpath(@__DIR__, "..", "examples"
 
 const SUPPORTED_POWERFLOW_METHOD = :rectangular
 const POWERFLOW_START_ANGLE_MODE_VALUES = (:classic, :dc, :bus_va_blend, :matpower_va)
-const POWERFLOW_START_VOLTAGE_MODE_VALUES = (:classic, :pv_gen_vg, :pv_bus_vm, :all_bus_vm, :profile_blend, :bus_vm_va_blend)
+const POWERFLOW_START_VOLTAGE_MODE_VALUES = (:classic, :pv_gen_vg, :pv_bus_vm, :all_bus_vm, :profile_blend)
 const POWERFLOW_START_PROFILE_SOURCE_VALUES = (:flat, :dc, :bus_metadata, :historical_profile, :matpower_reference, :state_estimation, :scada_snapshot)
-const _warned_legacy_bus_vm_va_blend = Ref(false)
 const QLIMIT_START_MODE_VALUES = (:iteration, :auto, :iteration_or_auto)
+const QLIMIT_ENFORCEMENT_MODE_VALUES = (:active_set, :classic_simultaneous, :classic_one_at_a_time)
+const QLIMIT_ENFORCEMENT_MODE_LEGACY_ALIASES = Dict(
+  :matpower_simultaneous => :classic_simultaneous,
+  :matpower_one_at_a_time => :classic_one_at_a_time,
+)
 const QLIMIT_GUARD_ZERO_RANGE_MODE_VALUES = (:lock_pq,)
 const QLIMIT_GUARD_NARROW_RANGE_MODE_VALUES = (:prefer_pq, :lock_pq)
 const QLIMIT_GUARD_VIOLATION_MODE_VALUES = (:delayed_switch, :lock_pq)
@@ -402,13 +432,26 @@ function _validate_nonnegative(name::AbstractString, value::Real)
   return value
 end
 function _validate_allowed_symbol(name::AbstractString, value::Symbol, allowed::Tuple)
-  value in allowed || throw(ArgumentError("$(name) must be one of $(collect(allowed)); got $(value)."))
+  if !(value in allowed)
+    guidance = name == "power_flow.start_mode.voltage_mode" && value === :bus_vm_va_blend ?
+      " The former bus_vm_va_blend alias has been removed; use voltage_mode: profile_blend with profile_source: matpower_reference." : ""
+    throw(ArgumentError("$(name) must be one of $(collect(allowed)); got $(value).$(guidance)"))
+  end
   return value
 end
 
 function _validate_allowed_symbol(name::AbstractString, value::Symbol, allowed::AbstractVector{Symbol})
   value in allowed || throw(ArgumentError("$(name) must be one of $(allowed); got $(value)."))
   return value
+end
+
+function _canonical_qlimit_enforcement_mode(value::Symbol)::Symbol
+  canonical = get(QLIMIT_ENFORCEMENT_MODE_LEGACY_ALIASES, value, value)
+  if canonical in QLIMIT_ENFORCEMENT_MODE_VALUES
+    return canonical
+  end
+  legacy_aliases = ["$(alias) -> $(target)" for (alias, target) in sort(collect(QLIMIT_ENFORCEMENT_MODE_LEGACY_ALIASES); by = first)]
+  throw(ArgumentError("power_flow.qlimits.enforcement_mode must be one of $(collect(QLIMIT_ENFORCEMENT_MODE_VALUES)); got $(value). Legacy aliases accepted: $(legacy_aliases)."))
 end
 
 function _validate_positive(name::AbstractString, value::Real)
@@ -420,14 +463,6 @@ function StartModeConfig(raw::AbstractDict)
   angle_mode = _validate_allowed_symbol("power_flow.start_mode.angle_mode", _as_symbol_cfg(_raw_get(raw, "angle_mode", :dc)), POWERFLOW_START_ANGLE_MODE_VALUES)
   voltage_mode = _validate_allowed_symbol("power_flow.start_mode.voltage_mode", _as_symbol_cfg(_raw_get(raw, "voltage_mode", :profile_blend)), POWERFLOW_START_VOLTAGE_MODE_VALUES)
   profile_source = _validate_allowed_symbol("power_flow.start_mode.profile_source", _as_symbol_cfg(_raw_get(raw, "profile_source", :matpower_reference)), POWERFLOW_START_PROFILE_SOURCE_VALUES)
-  if voltage_mode === :bus_vm_va_blend
-    voltage_mode = :profile_blend
-    profile_source = :matpower_reference
-    if !_warned_legacy_bus_vm_va_blend[]
-      @warn "Deprecated start mode `bus_vm_va_blend` was mapped to `start_values.voltage_mode = profile_blend` with `start_values.profile_source = matpower_reference`. Please update the YAML configuration."
-      _warned_legacy_bus_vm_va_blend[] = true
-    end
-  end
   return StartModeConfig(
     flatstart = _as_bool_cfg(_raw_get(raw, "flatstart", _raw_get(raw, "opt_flatstart", false))),
     angle_mode = angle_mode,
@@ -442,6 +477,30 @@ function StartModeConfig(raw::AbstractDict)
     reuse_import_data = _as_bool_cfg(_raw_get(raw, "reuse_import_data", _raw_get(raw, "start_projection_reuse_import_data", true))),
     blend_lambdas = _as_float_vector_cfg(_raw_get(raw, "blend_lambdas", _raw_get(raw, "start_projection_blend_lambdas", [0.25, 0.5, 0.75]))),
     dc_angle_limit_deg = _validate_positive("start_projection_dc_angle_limit_deg", _as_float_cfg(_raw_get(raw, "dc_angle_limit_deg", _raw_get(raw, "start_projection_dc_angle_limit_deg", 60.0)))),
+  )
+end
+
+function StartCurrentIterationConfig(raw::AbstractDict)
+  max_iter = _as_int_cfg(_raw_get(raw, "max_iter", 10))
+  max_iter >= 0 || throw(ArgumentError("power_flow.start_current_iteration.max_iter must be non-negative; got $(max_iter)."))
+  damping = _as_float_cfg(_raw_get(raw, "damping", 0.5))
+  isfinite(damping) && 0.0 < damping <= 1.0 || throw(ArgumentError("power_flow.start_current_iteration.damping must be finite and in (0, 1]; got $(damping)."))
+  min_improvement_factor = _as_float_cfg(_raw_get(raw, "min_improvement_factor", 0.98))
+  isfinite(min_improvement_factor) && min_improvement_factor >= 0.0 || throw(ArgumentError("power_flow.start_current_iteration.min_improvement_factor must be finite and non-negative; got $(min_improvement_factor)."))
+  vm_min_pu = _validate_positive("power_flow.start_current_iteration.vm_min_pu", _as_float_cfg(_raw_get(raw, "vm_min_pu", 0.5)))
+  vm_max_pu = _validate_positive("power_flow.start_current_iteration.vm_max_pu", _as_float_cfg(_raw_get(raw, "vm_max_pu", 1.5)))
+  vm_min_pu <= vm_max_pu || throw(ArgumentError("power_flow.start_current_iteration.vm_min_pu must be <= vm_max_pu."))
+  return StartCurrentIterationConfig(
+    enabled = _as_bool_cfg(_raw_get(raw, "enabled", false)),
+    max_iter = max_iter,
+    tol = _validate_positive("power_flow.start_current_iteration.tol", _as_float_cfg(_raw_get(raw, "tol", 1.0e-3))),
+    damping = damping,
+    accept_only_if_improved = _as_bool_cfg(_raw_get(raw, "accept_only_if_improved", true)),
+    min_improvement_factor = min_improvement_factor,
+    vm_min_pu = vm_min_pu,
+    vm_max_pu = vm_max_pu,
+    max_angle_step_deg = _validate_positive("power_flow.start_current_iteration.max_angle_step_deg", _as_float_cfg(_raw_get(raw, "max_angle_step_deg", 30.0))),
+    only_for_large_cases = _as_bool_cfg(_raw_get(raw, "only_for_large_cases", false)),
   )
 end
 
@@ -479,6 +538,7 @@ function QLimitConfig(raw::AbstractDict)
     trace_buses = _as_int_vector_cfg(_raw_get(merged, "trace_buses", _raw_get(merged, "qlimit_trace_buses", Int[]))),
     lock_pv_to_pq_buses = _as_int_vector_cfg(_raw_get(merged, "lock_pv_to_pq_buses", Int[])),
     ignore_q_limits = _as_bool_cfg(_raw_get(raw, "ignore_q_limits", qlimits_enabled == false)),
+    enforcement_mode = _canonical_qlimit_enforcement_mode(_as_symbol_cfg(_raw_get(merged, "enforcement_mode", :active_set))),
   )
 end
 
@@ -500,6 +560,7 @@ function PowerFlowConfig(raw::AbstractDict)
   end
   _validate_rectangular_powerflow_options(method = method, sparse = true)
   start_raw = _raw_get(merged, "start_values", _raw_section(merged, "start_mode"))
+  start_current_iteration_raw = _raw_section(merged, "start_current_iteration")
   qlimit_raw = _raw_section(merged, "qlimits")
   wrong_branch_min_vm_pu = _validate_nonnegative("power_flow.wrong_branch_min_vm_pu", _as_float_cfg(_raw_get(merged, "wrong_branch_min_vm_pu", 0.70)))
   wrong_branch_max_vm_pu = _validate_positive("power_flow.wrong_branch_max_vm_pu", _as_float_cfg(_raw_get(merged, "wrong_branch_max_vm_pu", 1.30)))
@@ -527,6 +588,7 @@ function PowerFlowConfig(raw::AbstractDict)
     rectangular_preallocate_workspace = _validate_allowed_symbol("power_flow.rectangular_preallocate_workspace", _as_symbol_cfg(_raw_get(merged, "rectangular_preallocate_workspace", :auto)), RECTANGULAR_PREALLOCATE_WORKSPACE_VALUES),
     rectangular_workspace_min_buses = _as_int_cfg(_raw_get(merged, "rectangular_workspace_min_buses", 1000)),
     start_mode = StartModeConfig(merge(Dict{Any,Any}(merged), Dict{Any,Any}(start_raw))),
+    start_current_iteration = StartCurrentIterationConfig(start_current_iteration_raw),
     qlimits = QLimitConfig(merge(Dict{Any,Any}(merged), Dict{Any,Any}(qlimit_raw))),
   )
 end
@@ -610,7 +672,15 @@ end
 
 function RuntimeConfig(raw::AbstractDict)
   merged = _merged_section(raw, "runtime")
-  return RuntimeConfig(julia_threads = _as_string_cfg(_raw_get(merged, "julia_threads", "keep")), blas_threads = _as_string_cfg(_raw_get(merged, "blas_threads", "keep")), print_thread_config = _as_bool_cfg(_raw_get(merged, "print_thread_config", true)))
+  return RuntimeConfig(
+    julia_threads = _as_string_cfg(_raw_get(merged, "julia_threads", "keep")),
+    blas_threads = _as_string_cfg(_raw_get(merged, "blas_threads", "keep")),
+    print_thread_config = _as_bool_cfg(_raw_get(merged, "print_thread_config", true)),
+    casefile = _as_string_cfg(_raw_get(merged, "casefile", "")),
+    case_name = _as_string_cfg(_raw_get(merged, "case_name", "")),
+    case_source = _as_string_cfg(_raw_get(merged, "case_source", "")),
+    configured_default_casefile = _as_string_cfg(_raw_get(merged, "configured_default_casefile", "")),
+  )
 end
 
 function BenchmarkConfig(raw::AbstractDict)
@@ -766,6 +836,182 @@ Configuration precedence is `src/configuration.yaml.example`, optional
 `examples/configuration.yaml` (or an explicit `user_path`), CLI-style overrides,
 then explicit Julia API overrides. Unknown user keys throw an `ArgumentError`.
 """
+
+"""
+    refresh_sparlectra_config_file(path; write=false, backup=true, normalize_deprecated=true, default_path=DEFAULT_SPARLECTRA_CONFIG_PATH)
+
+Compare a user YAML configuration with the current Sparlectra template, add
+missing keys from the template, and optionally normalize documented deprecated
+aliases. Dry-run mode returns the refreshed YAML without writing. Writes are
+explicit and create a timestamped backup unless `backup=false` is requested.
+"""
+function refresh_sparlectra_config_file(path::AbstractString; write::Bool = false, backup::Bool = true, normalize_deprecated::Bool = true, default_path::AbstractString = DEFAULT_SPARLECTRA_CONFIG_PATH)
+  isfile(path) || throw(ArgumentError("Sparlectra config file not found: $(path)"))
+  isfile(default_path) || throw(ArgumentError("Default Sparlectra config file not found: $(default_path)"))
+  duplicate_keys = _detect_yaml_duplicate_keys(path)
+  warnings = String[]
+  for key in duplicate_keys
+    push!(warnings, "Duplicate YAML key detected: $(key). Refresh did not write because duplicate keys require manual review.")
+  end
+  defaults = load_yaml_dict(default_path)
+  user = load_yaml_dict(path)
+  refreshed = deepcopy(user)
+  missing_keys = String[]
+  _add_missing_config_keys!(refreshed, defaults, missing_keys)
+  normalized_keys = normalize_deprecated ? _normalize_deprecated_config_aliases!(refreshed) : String[]
+  refreshed_text = _yaml_dict_text(refreshed)
+  original_text = read(path, String)
+  changed = !isempty(missing_keys) || !isempty(normalized_keys) || refreshed_text != original_text
+  backup_path = nothing
+  written = false
+  success = true
+  if write && changed
+    if !isempty(duplicate_keys)
+      success = false
+    else
+      if backup
+        backup_path = string(path, ".bak-", Dates.format(now(), "yyyymmdd-HHMMSS"))
+        cp(path, backup_path; force = false)
+      end
+      Base.write(path, refreshed_text)
+      written = true
+    end
+  end
+  return (;
+    success,
+    changed,
+    written,
+    backup_path,
+    missing_keys = sort!(missing_keys),
+    normalized_keys = sort!(normalized_keys),
+    duplicate_keys = sort!(duplicate_keys),
+    warnings,
+    refreshed_text,
+  )
+end
+
+function refresh_sparlectra_config_text(text::AbstractString; normalize_deprecated::Bool = true, default_path::AbstractString = DEFAULT_SPARLECTRA_CONFIG_PATH)
+  mktemp() do path, io
+    write(io, text)
+    close(io)
+    return refresh_sparlectra_config_file(path; write = false, backup = false, normalize_deprecated, default_path)
+  end
+end
+
+function _detect_yaml_duplicate_keys(path::AbstractString)::Vector{String}
+  duplicates = String[]
+  stack_names = Dict{Int,Vector{String}}(0 => String[])
+  seen = Dict{Int,Set{String}}(0 => Set{String}())
+  open(path, "r") do io
+    for (lineno, rawline) in enumerate(eachline(io))
+      line = rstrip(_strip_yaml_comment(rawline))
+      isempty(strip(line)) && continue
+      indent_count = count(==(' '), first(line, something(findfirst(!=(' '), line), lastindex(line) + 1) - 1))
+      indent_count % 2 == 0 || continue
+      content = strip(line)
+      m = match(r"^([A-Za-z0-9_\-]+)\s*:\s*(.*)$", content)
+      isnothing(m) && continue
+      level = indent_count ÷ 2
+      key = String(m.captures[1])
+      parent_path = get(stack_names, level, String[])
+      level_seen = get!(seen, level, Set{String}())
+      compound = isempty(parent_path) ? key : string(join(parent_path, "."), ".", key)
+      if key in level_seen
+        push!(duplicates, compound)
+      else
+        push!(level_seen, key)
+      end
+      if isempty(String(m.captures[2]))
+        stack_names[level + 1] = [parent_path; key]
+        seen[level + 1] = Set{String}()
+      end
+      for old_level in collect(keys(stack_names))
+        old_level > level + 1 && delete!(stack_names, old_level)
+      end
+      for old_level in collect(keys(seen))
+        old_level > level + 1 && delete!(seen, old_level)
+      end
+    end
+  end
+  return unique(duplicates)
+end
+
+function _add_missing_config_keys!(dst::Dict{String,Any}, defaults::Dict{String,Any}, missing::Vector{String}; prefix::String = "")
+  for key in sort(collect(keys(defaults)))
+    path = isempty(prefix) ? key : string(prefix, ".", key)
+    if !haskey(dst, key)
+      dst[key] = deepcopy(defaults[key])
+      push!(missing, path)
+    elseif dst[key] isa Dict{String,Any} && defaults[key] isa Dict{String,Any}
+      _add_missing_config_keys!(dst[key], defaults[key], missing; prefix = path)
+    end
+  end
+  return dst
+end
+
+function _ensure_config_section!(root::Dict{String,Any}, keys::AbstractVector{<:AbstractString})::Dict{String,Any}
+  current = root
+  for key in keys
+    if !haskey(current, key) || !(current[key] isa Dict{String,Any})
+      current[key] = Dict{String,Any}()
+    end
+    current = current[key]
+  end
+  return current
+end
+
+function _normalize_deprecated_config_aliases!(root::Dict{String,Any})::Vector{String}
+  normalized = String[]
+  pf = haskey(root, "power_flow") ? root["power_flow"] : get(root, "powerflow", nothing)
+  pf isa Dict{String,Any} || return normalized
+  start_mode = get(pf, "start_mode", nothing)
+  if start_mode isa Dict{String,Any} && get(start_mode, "voltage_mode", nothing) in ("bus_vm_va_blend", :bus_vm_va_blend)
+    start_mode["voltage_mode"] = "profile_blend"
+    start_mode["profile_source"] = "matpower_reference"
+    push!(normalized, "power_flow.start_mode.voltage_mode")
+    push!(normalized, "power_flow.start_mode.profile_source")
+  end
+  qlimits = get(pf, "qlimits", nothing)
+  if qlimits isa Dict{String,Any}
+    mode = get(qlimits, "enforcement_mode", nothing)
+    if mode in ("matpower_simultaneous", :matpower_simultaneous)
+      qlimits["enforcement_mode"] = "classic_simultaneous"
+      push!(normalized, "power_flow.qlimits.enforcement_mode")
+    elseif mode in ("matpower_one_at_a_time", :matpower_one_at_a_time)
+      qlimits["enforcement_mode"] = "classic_one_at_a_time"
+      push!(normalized, "power_flow.qlimits.enforcement_mode")
+    end
+  end
+  return unique(normalized)
+end
+
+function _yaml_scalar_text(value)
+  value === nothing && return "null"
+  value isa Bool && return value ? "true" : "false"
+  value isa Symbol && return String(value)
+  value isa AbstractString && return occursin(r"[:#\[\],{}]|^$", value) ? repr(String(value)) : String(value)
+  value isa AbstractVector && return string("[", join((_yaml_scalar_text(v) for v in value), ", "), "]")
+  return string(value)
+end
+
+function _write_yaml_dict(io::IO, data::Dict{String,Any}; indent::Int = 0)
+  pad = repeat(" ", indent)
+  for key in sort(collect(keys(data)))
+    value = data[key]
+    if value isa Dict{String,Any}
+      println(io, pad, key, ":")
+      _write_yaml_dict(io, value; indent = indent + 2)
+    else
+      println(io, pad, key, ": ", _yaml_scalar_text(value))
+    end
+  end
+end
+
+function _yaml_dict_text(data::Dict{String,Any})::String
+  io = IOBuffer()
+  _write_yaml_dict(io, data)
+  return String(take!(io))
+end
 function load_sparlectra_config(user_path::AbstractString = USER_SPARLECTRA_CONFIG_PATH; default_path::AbstractString = DEFAULT_SPARLECTRA_CONFIG_PATH, reload::Bool = false, cli_overrides::AbstractDict = Dict{String,Any}(), overrides::AbstractDict = Dict{String,Any}())
   abspath_default = abspath(default_path)
   abspath_user = abspath(user_path)
@@ -794,6 +1040,7 @@ function load_sparlectra_config(user_path::AbstractString = USER_SPARLECTRA_CONF
   end
   return config
 end
+
 
 function load_sparlectra_config!(user_path::AbstractString = USER_SPARLECTRA_CONFIG_PATH; default_path::AbstractString = DEFAULT_SPARLECTRA_CONFIG_PATH, reload::Bool = false, cli_overrides::AbstractDict = Dict{String,Any}(), overrides::AbstractDict = Dict{String,Any}())
   return set_sparlectra_config!(load_sparlectra_config(user_path; default_path = default_path, reload = reload, cli_overrides = cli_overrides, overrides = overrides))

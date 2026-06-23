@@ -93,6 +93,42 @@ function _import_sparlectra_context(casefile::String, path::Union{Nothing,String
   mpc = _perf_profile_time!(performance_profile, :matpower_case_parse) do
     MatpowerIO.read_case(filename; legacy_compat = true)
   end
+  try
+    MatpowerIO.assert_no_active_dcline(mpc; casefile = filename)
+  catch err
+    if err isa MatpowerIO.UnsupportedMatpowerDclineError
+      details = err.details
+      println(stdout, "matpower_dcline_detected")
+      println(stdout, "matpower_dcline_unsupported")
+      println(stdout, "powerflow_aborted_unsupported_matpower_dcline")
+      println(stdout, err.message)
+      if performance_profile isa AbstractDict
+        performance_profile[:unsupported_matpower_dcline] = details
+      end
+    end
+    rethrow()
+  end
+  auto_profile_result = nothing
+  println(stdout, "Runtime casefile: ", filename)
+  print_matpower_import_runtime_options(stdout, "Original MATPOWER import options", cfg)
+  if cfg.matpower.auto_profile !== :off
+    phase_callback("matpower_auto_profile")
+    auto_profile_result = _perf_profile_time!(performance_profile, :matpower_auto_profile) do
+      run_matpower_import_auto_profile(mpc, cfg)
+    end
+    cfg = auto_profile_result.config
+    pf_cfg = cfg.powerflow
+    mat_cfg = cfg.matpower
+    if performance_profile isa AbstractDict
+      performance_profile[:matpower_auto_profile_result] = auto_profile_result
+      performance_profile[:matpower_auto_profile_casefile] = filename
+    end
+    if mat_cfg.auto_profile_log
+      write_matpower_import_auto_profile(stdout, auto_profile_result, cfg; casefile = filename)
+    end
+  else
+    print_matpower_import_runtime_options(stdout, "Final effective MATPOWER import options", cfg)
+  end
   phase_callback("building_sparlectra_net")
   net = _perf_profile_time!(performance_profile, :network_construction) do
     createNetFromMatPowerCase(
@@ -126,7 +162,7 @@ function _import_sparlectra_context(casefile::String, path::Union{Nothing,String
   end
   run_cfg = projected_start_applied ? _copy_sparlectra_with_projected_matpower_start(cfg) : cfg
   projected_start_applied && @debug "MATPOWER projected start applied; effective solver flatstart disabled for this run."
-  return (net = net, config = run_cfg, projected_start_applied = projected_start_applied)
+  return (net = net, config = run_cfg, projected_start_applied = projected_start_applied, auto_profile_result = auto_profile_result)
 end
 
 function _import_sparlectra_net(casefile::String, path::Union{Nothing,String}, cfg::SparlectraConfig; performance_profile = nothing)::Net

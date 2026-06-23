@@ -49,6 +49,7 @@ output_root/
     run.log
     result.json
     effective_config.yaml
+    run_metadata.yaml
     ...
 ```
 
@@ -56,8 +57,8 @@ The in-process registry provides fast lookup while Julia is running. The
 `powerflow_runs_index.json` file makes completed runs discoverable after a
 process restart. It stores only lightweight run metadata; full run details are
 read from each run's `result.json`. Failed API runs are indexed when they
-produce `result.json`, so their status, log, and effective configuration remain
-available for diagnosis.
+produce `result.json`, so their status, log, effective configuration, and
+runtime metadata remain available for diagnosis.
 
 ## Service boundary
 

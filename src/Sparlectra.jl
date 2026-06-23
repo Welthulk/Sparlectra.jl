@@ -37,7 +37,7 @@ const MPOWER_DIR = normpath(joinpath(pkgdir(@__MODULE__), "data", "mpower"))
 
 # resource data types for working with Sparlectra
 const Wurzel3 = 1.7320508075688772
-const SparlectraVersion = v"0.8.6"
+const SparlectraVersion = v"0.8.7"
 version() = SparlectraVersion
 abstract type AbstractBranch end
 
@@ -147,6 +147,8 @@ export
   SparlectraConfig,
   load_sparlectra_config,                 # Load a configuration file without activating it.
   load_sparlectra_config!,                # Load and activate a configuration file.
+  refresh_sparlectra_config_file,        # Check or explicitly refresh a user YAML configuration file.
+  refresh_sparlectra_config_text,        # Dry-run refresh for uploaded/browser YAML text.
   set_sparlectra_config!,                 # Replace the active global configuration.
   active_sparlectra_config,               # Return the currently active configuration.
   powerflow_config,                       # Access the active power-flow settings.
@@ -508,6 +510,7 @@ include("api/api_types.jl")
 include("api/config_overrides.jl")
 include("api/serialization.jl")
 include("api/artifacts.jl")
+include("api/run_metadata.jl")
 include("api/run_api.jl")
 include("api/powerflow_service.jl")
 include("webui/webui.jl")
@@ -530,9 +533,12 @@ include("powerflow_rectangular/rectangular_qlimit_trace_logging.jl")
 include("powerflow_rectangular/rectangular_qlimit_vset_adjustment.jl")
 include("powerflow_rectangular/rectangular_qlimit_guard.jl")
 include("powerflow_rectangular/rectangular_qlimit_iteration.jl")
+include("powerflow_rectangular/rectangular_qlimit_outer_loop.jl")
+include("powerflow_rectangular/current_iteration_start.jl")
 include("powerflow_rectangular/rectangular_status_workspace.jl")
 include("powerflow_rectangular/rectangular_finalization.jl")
 include("powerflow_rectangular/rectangular_final_status.jl")
+include("powerflow_rectangular/rectangular_diagnostics.jl")
 include("powerflow_rectangular/rectangular_network_solver.jl")
 include("solver_interface.jl")
 include("FetchMatpowerCase.jl")

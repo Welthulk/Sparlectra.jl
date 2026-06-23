@@ -15,9 +15,9 @@
 # file: src/MatpowerIO.jl
 
 module MatpowerIO
-using LinearAlgebra, Printf
+using LinearAlgebra, Printf, SparseArrays
 
-export MatpowerCase, read_case, read_case_m, read_case_julia, build_ybus_matpower, vmva_power_mismatch_stats
+export MatpowerCase, UnsupportedMatpowerDclineError, read_case, read_case_m, read_case_julia, build_ybus_matpower, vmva_power_mismatch_stats
 
 using LinearAlgebra
 
@@ -77,6 +77,64 @@ struct MatpowerCase
   branch::Matrix{Float64}
   gencost::Union{Nothing,Matrix{Float64}}
   bus_name::Union{Nothing,Vector{String}}
+  dcline::Union{Nothing,Matrix{Float64}}
+end
+
+MatpowerCase(name::String, baseMVA::Float64, bus::Matrix{Float64}, gen::Matrix{Float64}, branch::Matrix{Float64}, gencost::Union{Nothing,Matrix{Float64}}, bus_name::Union{Nothing,Vector{String}}) =
+  MatpowerCase(name, baseMVA, bus, gen, branch, gencost, bus_name, nothing)
+
+struct UnsupportedMatpowerDclineError <: Exception
+  message::String
+  details::Dict{String,Any}
+end
+
+Base.showerror(io::IO, err::UnsupportedMatpowerDclineError) = print(io, err.message)
+
+function matpower_dcline_diagnostics(mpc::MatpowerCase; casefile::Union{Nothing,AbstractString} = nothing)::Dict{String,Any}
+  dcline = mpc.dcline
+  details = Dict{String,Any}(
+    "matpower_dcline_present" => dcline !== nothing,
+    "matpower_dcline_unsupported" => false,
+    "matpower_dcline_active_count" => 0,
+    "failure_reason" => "none",
+    "casefile" => casefile === nothing ? mpc.name : String(casefile),
+  )
+  dcline === nothing && return details
+  details["matpower_dcline_rows"] = size(dcline, 1)
+  status_col = size(dcline, 2) >= 3 ? 3 : 0
+  active_rows = status_col == 0 ? Int[] : findall(row -> dcline[row, status_col] != 0.0, axes(dcline, 1))
+  details["matpower_dcline_active_count"] = length(active_rows)
+  isempty(active_rows) && return details
+  details["matpower_dcline_unsupported"] = true
+  details["failure_reason"] = "unsupported_matpower_dcline"
+  if size(dcline, 2) >= 5
+    total_pf = sum(dcline[active_rows, 4])
+    total_pt = sum(dcline[active_rows, 5])
+    details["total_pf_mw"] = total_pf
+    details["total_pt_mw"] = total_pt
+    details["total_loss_mw"] = total_pf - total_pt
+  end
+  return details
+end
+
+function unsupported_dcline_message(details::AbstractDict)::String
+  casefile = get(details, "casefile", "unknown")
+  active_count = get(details, "matpower_dcline_active_count", 0)
+  parts = String[
+    "MATPOWER case contains active `mpc.dcline` entries. DC lines are currently not supported by Sparlectra MATPOWER import. The run was aborted before power-flow solution.",
+    "casefile = $(casefile)",
+    "active_dcline_count = $(active_count)",
+  ]
+  haskey(details, "total_pf_mw") && push!(parts, string("total_pf_mw = ", get(details, "total_pf_mw", 0.0)))
+  haskey(details, "total_pt_mw") && push!(parts, string("total_pt_mw = ", get(details, "total_pt_mw", 0.0)))
+  haskey(details, "total_loss_mw") && push!(parts, string("total_loss_mw = ", get(details, "total_loss_mw", 0.0)))
+  return join(parts, "\n")
+end
+
+function assert_no_active_dcline(mpc::MatpowerCase; casefile::Union{Nothing,AbstractString} = nothing)
+  details = matpower_dcline_diagnostics(mpc; casefile = casefile)
+  get(details, "matpower_dcline_unsupported", false) || return details
+  throw(UnsupportedMatpowerDclineError(unsupported_dcline_message(details), details))
 end
 
 """
@@ -91,7 +149,7 @@ function legacy_sort_bus(mpc::MatpowerCase)::MatpowerCase
   bus = mpc.bus
   perm = sortperm(bus[:, 1])  # sort by BUS_I
   bus_sorted = bus[perm, :]
-  return MatpowerCase(mpc.name, mpc.baseMVA, bus_sorted, mpc.gen, mpc.branch, mpc.gencost, mpc.bus_name)
+  return MatpowerCase(mpc.name, mpc.baseMVA, bus_sorted, mpc.gen, mpc.branch, mpc.gencost, mpc.bus_name, mpc.dcline)
 end
 
 """
@@ -154,7 +212,8 @@ function read_case_julia(path::AbstractString; legacy_compat::Bool = true)
 
     gencost = haskey(obj, :gencost) ? (obj.gencost === nothing ? nothing : Matrix{Float64}(obj.gencost)) : nothing
     bus_name = haskey(obj, :bus_name) ? (obj.bus_name === nothing ? nothing : Vector{String}(obj.bus_name)) : nothing
-    MatpowerCase(String(name), baseMVA, bus, gen, branch, gencost, bus_name)
+    dcline = haskey(obj, :dcline) ? (obj.dcline === nothing ? nothing : Matrix{Float64}(obj.dcline)) : nothing
+    MatpowerCase(String(name), baseMVA, bus, gen, branch, gencost, bus_name, dcline)
   else
     error("Julia case file must return MatpowerCase or NamedTuple, got: $(typeof(obj))")
   end
@@ -196,8 +255,9 @@ function read_case_m(path::AbstractString; legacy_compat::Bool = true)
 
   gencost = try_parse_matrix_block(txt, "mpc.gencost")
   bus_name = try_parse_bus_name(txt)
+  dcline = try_parse_matrix_block(txt, "mpc.dcline")
 
-  mpc = MatpowerCase(name, baseMVA, bus, gen, branch, gencost, bus_name)
+  mpc = MatpowerCase(name, baseMVA, bus, gen, branch, gencost, bus_name, dcline)
   apply_supported_postprocessing!(mpc, txt)
   return legacy_compat ? legacy_sort_bus(mpc) : mpc
 end
@@ -650,7 +710,7 @@ function compare_vm_va(net, mpc; show_diff::Bool = false, tol_vm::Float64 = 1e-6
 end
 
 """
-	build_ybus_matpower(bus, branch, baseMVA) -> Matrix{ComplexF64}
+	build_ybus_matpower(bus, branch, baseMVA) -> SparseMatrixCSC{ComplexF64,Int}
 
 MATPOWER-style Ybus stamping (π-model + tap/shift + bus shunts):
 - series r/x
@@ -666,36 +726,26 @@ function build_ybus_matpower(bus::AbstractMatrix{<:Real}, branch::AbstractMatrix
   ratio_mode = _normalize_matpower_ratio_mode(matpower_ratio)
 
   nbus = size(bus, 1)
-  Y = zeros(ComplexF64, nbus, nbus)
+  rows = Int[]
+  cols = Int[]
+  vals = ComplexF64[]
 
   # MATPOWER BUS_I may be non-contiguous (e.g. 1, 2, 9001).
   # Build a mapping BUS_I -> row index so all stamping uses matrix rows.
   busrow = Dict{Int,Int}()
-  for i ∈ 1:nbus
-    busrow[Int(bus[i, 1])] = i
-  end
-
-  # MATPOWER BUS_I may be non-contiguous (e.g. 1, 2, 9001).
-  # Build a mapping BUS_I -> row index so all stamping uses matrix rows.
-  busrow = Dict{Int,Int}()
-  for i ∈ 1:nbus
-    busrow[Int(bus[i, 1])] = i
-  end
-
-  # MATPOWER BUS_I may be non-contiguous (e.g. 1, 2, 9001).
-  # Build a mapping BUS_I -> row index so all stamping uses matrix rows.
-  busrow = Dict{Int,Int}()
-  for i ∈ 1:nbus
+  for i in axes(bus, 1)
     busrow[Int(bus[i, 1])] = i
   end
   # bus columns (MATPOWER):
   # BUS_I=1, BUS_TYPE=2, PD=3, QD=4, GS=5, BS=6, ...
   # add shunts: (GS + j*BS)/baseMVA
-  for i ∈ 1:nbus
+  for i in axes(bus, 1)
     Gs = bus[i, 5]
     Bs = bus[i, 6]
     if Gs != 0.0 || Bs != 0.0
-      Y[i, i] += (Gs + 1im * Bs) / baseMVA
+      push!(rows, i)
+      push!(cols, i)
+      push!(vals, (Gs + 1im * Bs) / baseMVA)
     end
   end
 
@@ -703,7 +753,7 @@ function build_ybus_matpower(bus::AbstractMatrix{<:Real}, branch::AbstractMatrix
   # F_BUS=1, T_BUS=2, BR_R=3, BR_X=4, BR_B=5, RATEA=6, RATEB=7, RATEC=8,
   # TAP=9, SHIFT=10, BR_STATUS=11, ...
   nbranch = size(branch, 1)
-  for e ∈ 1:nbranch
+  for e in axes(branch, 1)
     status = (size(branch, 2) >= 11) ? branch[e, 11] : 1.0
     status == 0 && continue
 
@@ -731,13 +781,12 @@ function build_ybus_matpower(bus::AbstractMatrix{<:Real}, branch::AbstractMatrix
     a = tap * cis(shift)  # complex tap on from side
 
     # stamping with off-nominal tap
-    Y[f, f] += (y + ysh) / (a * conj(a))
-    Y[t, t] += (y + ysh)
-    Y[f, t] += -y / conj(a)
-    Y[t, f] += -y / a
+    append!(rows, (f, t, f, t))
+    append!(cols, (f, t, t, f))
+    append!(vals, ((y + ysh) / (a * conj(a)), y + ysh, -y / conj(a), -y / a))
   end
 
-  return Y
+  return sparse(rows, cols, vals, nbus, nbus)
 end
 
 """
