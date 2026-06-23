@@ -852,7 +852,21 @@ mpc.branch = [
       out = String(take!(io))
       @test haskey(res, :q_violations)
       @test haskey(res, :v_violations)
-      @test occursin("Final limit validation:", out)
+      @test occursin("Final Q-limit validation", out)
+      @test occursin("Qgen [MVAr]", out) || occursin("Q-limits: no violations", out)
+      empty!(net.qmin_pu)
+      append!(net.qmin_pu, [-Inf, -0.01, -Inf])
+      empty!(net.qmax_pu)
+      append!(net.qmax_pu, [Inf, 0.01, Inf])
+      net.nodeVec[2]._qƩGen = 5.0
+      io = IOBuffer()
+      printFinalLimitValidation(net; q_headroom = 0.0, io = io)
+      out = String(take!(io))
+      @test occursin("Bus │ Qgen [MVAr] │ Qmin [MVAr] │ Qmax [MVAr] │ Violation [MVAr]", out)
+      @test occursin("Displayed values are MVAr. Switching comparisons use internal p.u. values.", out)
+      io = IOBuffer()
+      printFinalLimitValidation(net; q_headroom = 0.20, io = io, converged = false)
+      @test occursin("Last-iteration Q-limit diagnostic (NR did not converge; values are not a valid final solution)", String(take!(io)))
     end
   end
 end

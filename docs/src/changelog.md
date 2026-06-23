@@ -2,6 +2,7 @@
 
 ### Improvements
 * Added an optional guarded current-injection start pre-solve with YAML/API/Web UI configuration, case-sidecar persistence, diagnostics metadata, and a compact `current_iteration_start.log` artifact while keeping the Newton-Raphson solve as the final power-flow method.
+* Clarified Q-limit diagnostics by labeling validation-table values in MVAr and marking non-converged tables as last-iteration diagnostics rather than valid final solutions.
 * Improved the Q-limit large-case diagnostic comparison with live flushed progress output, selectable classic/robust start profiles, compact default logs, per-combination CSV/JSON rows, and offline-safe stubbed orchestration tests.
 * Added classical Q-limit enforcement modes (`classic_simultaneous` and `classic_one_at_a_time`) alongside the default active-set mode for diagnostic comparisons and large MATPOWER case analysis; legacy `matpower_*` aliases remain accepted for old YAML files.
 * Improved the PowerFlow Web UI layout by widening the form, moving MATPOWER import controls into Advanced / expert options, defaulting new Web UI runs to `matpower_import.auto_profile = apply`, and making validation errors dismissible while preserving recent errors in a collapsed details block.

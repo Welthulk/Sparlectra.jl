@@ -297,7 +297,7 @@ end
 Prints post-PF validation tables for violated Q limits and voltage limits.
 Returns `(q_violations, v_violations)`.
 """
-function printFinalLimitValidation(net::Net; q_headroom::Float64 = 0.20, io::IO = stdout)
+function printFinalLimitValidation(net::Net; q_headroom::Float64 = 0.20, io::IO = stdout, converged::Bool = true)
   qmin_pu, qmax_pu = getQLimits_pu(net)
   qrows = Tuple{Int,Float64,Float64,Float64,Float64}[]
   vrows = Tuple{Int,Float64,Float64,Float64}[]
@@ -333,12 +333,17 @@ function printFinalLimitValidation(net::Net; q_headroom::Float64 = 0.20, io::IO 
     end
   end
 
-  println(io, "Final limit validation:")
+  if converged
+    println(io, "Final Q-limit validation")
+  else
+    println(io, "Last-iteration Q-limit diagnostic (NR did not converge; values are not a valid final solution)")
+  end
   if isempty(qrows)
     @printf(io, "  Q-limits: no violations beyond %.1f%% headroom.\n", 100 * max(q_headroom, 0.0))
   else
     println(io, "  Q-limit violations (MVAr):")
-    println(io, "  Bus │      Qgen │      Qmin │      Qmax │  Violation")
+    println(io, "  Displayed values are MVAr. Switching comparisons use internal p.u. values.")
+    println(io, "  Bus │ Qgen [MVAr] │ Qmin [MVAr] │ Qmax [MVAr] │ Violation [MVAr]")
     for (bus, qgen, qmin, qmax, vio) in qrows
       @printf(io, " %4d │ %9.3f │ %9.3f │ %9.3f │ %10.3f\n", bus, qgen, qmin, qmax, vio)
     end

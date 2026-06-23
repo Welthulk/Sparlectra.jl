@@ -90,9 +90,13 @@ function _write_api_timing_summary(io::IO, result::SparlectraRunResult, config::
     println(io, "benchmark_samples:    ", config.benchmark.samples)
   end
   println(io, "iterations:           ", result.iterations)
-  println(io, "final_mismatch:       ", isfinite(result.final_mismatch) ? result.final_mismatch : "n/a")
+  println(io, "final_mismatch:       ", isfinite(result.final_mismatch) ? result.final_mismatch : (isnan(result.final_mismatch) ? "NaN" : "unavailable"))
+  println(io, "final_mismatch_status:", isfinite(result.final_mismatch) ? "finite" : (isnan(result.final_mismatch) ? "nonfinite" : "not_reported_by_solver"))
   println(io, "final_status:         ", result.outcome)
   println(io, "final_outcome:        ", result.final_converged ? "converged" : result.reason)
+  if !result.numerical_converged
+    println(io, "q_limit_validity:     last-iteration diagnostic only; NR did not converge")
+  end
   println(io)
   return nothing
 end
@@ -110,7 +114,7 @@ function _write_powerflow_diagnostics(path::AbstractString, result::SparlectraRu
         println(io)
         printPVQLimitsTable(result.net; io)
         println(io)
-        printFinalLimitValidation(result.net; io)
+        printFinalLimitValidation(result.net; io, converged = result.numerical_converged)
       else
         diagnostic_fn(io, result)
       end
@@ -231,9 +235,9 @@ function _write_q_limit_log_artifact(output_path::AbstractString, result::Sparle
     println(io, "Final PV Q-limit active-set check")
     println(io, "---------------------------------")
     if result.numerical_converged
-      printFinalLimitValidation(result.net; io)
+      printFinalLimitValidation(result.net; io, converged = true)
     else
-      println(io, "Final Q-limit validation skipped: invalid because NR did not converge.")
+      printFinalLimitValidation(result.net; io, converged = false)
     end
     pv_violations = hasproperty(result.diagnostics, :pv_q_limit_violations) ? result.diagnostics.pv_q_limit_violations : 0
     ref_violations = hasproperty(result.diagnostics, :ref_q_limit_violations) ? result.diagnostics.ref_q_limit_violations : 0
