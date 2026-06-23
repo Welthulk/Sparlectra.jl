@@ -12,6 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Experimental diagnostic tooling for large-case Q-limit comparison.
+# This file is not part of the stable Sparlectra API and may change.
+
+using Sparlectra
+
+const default_webui_output_root = Sparlectra.default_webui_output_root
+const default_webui_case_cache_dir = Sparlectra.default_webui_case_cache_dir
+const DEFAULT_SPARLECTRA_CONFIG_PATH = Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH
+const run_sparlectra_api = Sparlectra.run_sparlectra_api
+const SparlectraApiResult = Sparlectra.SparlectraApiResult
+
 const QLIMIT_LARGE_CASE_MODES = (:active_set, :classic_simultaneous, :classic_one_at_a_time)
 const QLIMIT_LARGE_CASE_DEFAULTS = ("case13659pegase.m", "case_SyntheticUSA.m")
 const QLIMIT_LARGE_CASE_START_PROFILES = (:classic_start, :robust_dc_start, :autoprofile_dc_start)

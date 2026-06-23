@@ -69,7 +69,7 @@ function run_qlimit_large_case_comparison_tests()
         return _fake_api_result(status = mode == "classic_one_at_a_time" ? :not_converged : :succeeded, success = mode != "classic_one_at_a_time", converged = mode != "classic_one_at_a_time", output_dir = output_dir, mode = mode)
       end
       progress = IOBuffer()
-      result = Sparlectra.compare_qlimit_large_case_modes(
+      result = compare_qlimit_large_case_modes(
         cases = ["present.m", "downloaded.m", "missing.m"],
         output_root = joinpath(dir, "out"),
         case_cache_dir = joinpath(dir, "cache"),
@@ -85,7 +85,7 @@ function run_qlimit_large_case_comparison_tests()
       @test count(row -> row["numerical_status"] == "converged", result.rows) == 8
       @test count(row -> row["numerical_status"] == "not_converged", result.rows) == 6
       @test all(row -> haskey(row, "start_profile") && haskey(row, "case_path") && haskey(row, "api_completed") && haskey(row, "matpower_shift_unit"), result.rows)
-      @test Set((row["case"], row["start_profile"], row["mode"]) for row in result.rows) == Set((case, String(profile), String(mode)) for case in ["present.m", "downloaded.m", "missing.m"] for profile in Sparlectra.QLIMIT_LARGE_CASE_START_PROFILES for mode in Sparlectra.QLIMIT_LARGE_CASE_MODES)
+      @test Set((row["case"], row["start_profile"], row["mode"]) for row in result.rows) == Set((case, String(profile), String(mode)) for case in ["present.m", "downloaded.m", "missing.m"] for profile in QLIMIT_LARGE_CASE_START_PROFILES for mode in QLIMIT_LARGE_CASE_MODES)
       @test all(endswith(call, ":compact") for call in calls)
       skipped = filter(row -> row["case"] == "missing.m", result.rows)
       @test length(skipped) == 9
@@ -115,7 +115,7 @@ function run_qlimit_large_case_comparison_tests()
         mkpath(output_dir)
         return Sparlectra.SparlectraApiResult("fake-invalid", "1", :not_converged, false, false, true, nothing, nothing, "not_converged", "fake result", casefile, config_file, output_dir, joinpath(output_dir, "run.log"), joinpath(output_dir, "result.json"), Sparlectra.SparlectraApiArtifact[], Dict{String,Any}[], Dict{String,Any}(), nothing)
       end
-      result = Sparlectra.compare_qlimit_large_case_modes(
+      result = compare_qlimit_large_case_modes(
         cases = ["present.m"],
         output_root = joinpath(dir, "out"),
         case_cache_dir = joinpath(dir, "cache"),

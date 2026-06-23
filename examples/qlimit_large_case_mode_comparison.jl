@@ -13,11 +13,12 @@
 # limitations under the License.
 # file: examples/qlimit_large_case_mode_comparison.jl
 using Sparlectra
+include(joinpath(@__DIR__, "experimental", "qlimit_large_case_comparison.jl"))
 
 function _parse_args(args)
   cases = String[]
-  start_profiles = collect(Sparlectra.QLIMIT_LARGE_CASE_START_PROFILES)
-  modes = collect(Sparlectra.QLIMIT_LARGE_CASE_MODES)
+  start_profiles = collect(QLIMIT_LARGE_CASE_START_PROFILES)
+  modes = collect(QLIMIT_LARGE_CASE_MODES)
   output_root = nothing
   verbose_logs = false
   profiles_overridden = false
@@ -58,7 +59,7 @@ function _parse_args(args)
     end
     i += 1
   end
-  isempty(cases) && append!(cases, Sparlectra.QLIMIT_LARGE_CASE_DEFAULTS)
+  isempty(cases) && append!(cases, QLIMIT_LARGE_CASE_DEFAULTS)
   return (cases = cases, start_profiles = start_profiles, modes = modes, output_root = output_root, verbose_logs = verbose_logs)
 end
 
@@ -73,7 +74,7 @@ function main(args = ARGS)
     :verbose => true,
   )
   parsed.output_root === nothing || (kwargs[:output_root] = parsed.output_root)
-  result = Sparlectra.compare_qlimit_large_case_modes(; kwargs...)
+  result = compare_qlimit_large_case_modes(; kwargs...)
   return result
 end
 
