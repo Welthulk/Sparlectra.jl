@@ -705,6 +705,28 @@ settings:
         @test Sparlectra.load_webui_help_excerpt(configured_topic) !== nothing
       end
 
+      current_iteration_help = Dict(
+        "power_flow.start_current_iteration.enabled" => ("not a separate power-flow solver", "start-value preconditioner", "before the Newton-Raphson power-flow solver starts", "accepted only if it passes the voltage and angle guards", "current_iteration_start.log"),
+        "power_flow.start_current_iteration.max_iter" => ("maximum number of current-iteration pre-solve steps", "extra time", "Default: 10", "pre-solve stops too early"),
+        "power_flow.start_current_iteration.tol" => ("stopping tolerance", "not the final Newton-Raphson power-flow tolerance", "Default: 1.0e-3", "improve the starting point"),
+        "power_flow.start_current_iteration.damping" => ("damping factor", "Smaller values blend the update", "Default: 0.5", "rejected by voltage or angle guards"),
+        "power_flow.start_current_iteration.accept_only_if_improved" => ("improves the existing Sparlectra mismatch metric", "restores the original start values", "Default: enabled", "expert experiments"),
+        "power_flow.start_current_iteration.min_improvement_factor" => ("required improvement ratio", "0.98 means", "Default: 0.98", "clearly better starts"),
+        "power_flow.start_current_iteration.vm_min_pu" => ("lower voltage-magnitude guard", "candidate is rejected", "Default: 0.5 pu", "candidate voltage minima"),
+        "power_flow.start_current_iteration.vm_max_pu" => ("upper voltage-magnitude guard", "unrealistic over-voltage", "Default: 1.5 pu", "candidate voltage maxima"),
+        "power_flow.start_current_iteration.max_angle_step_deg" => ("maximum allowed angle change", "angle jump larger than this limit", "Default: 30 degrees", "angle-step guard"),
+        "power_flow.start_current_iteration.only_for_large_cases" => ("classifies as large enough", "avoids spending time on small cases", "Default: disabled", "difficult large MATPOWER cases"),
+      )
+      for (current_iteration_topic, required_fragments) in current_iteration_help
+        current_iteration_excerpt = Sparlectra.load_webui_help_excerpt(current_iteration_topic)
+        @test current_iteration_excerpt !== nothing
+        @test occursin(current_iteration_topic, current_iteration_excerpt)
+        @test !startswith(strip(current_iteration_excerpt), "|")
+        for fragment in required_fragments
+          @test occursin(fragment, current_iteration_excerpt)
+        end
+      end
+
       help_response = Sparlectra.route_sparlectra_webui("GET", "/help/$(topic)")
       @test help_response.status == 200
       help_html = String(help_response.body)

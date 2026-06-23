@@ -518,7 +518,7 @@ function test_rectangular_start_projection_keeps_raw_without_finite_improvement(
   Vnonfinite = Sparlectra.project_rectangular_start(
     Y,
     Vraw,
-    ComplexF64[0.0 + 0.0im, Inf + 0.0im],
+    ComplexF64[0.0 + 0.0im, NaN + 0.0im],
     bus_types,
     Vset,
     1;
@@ -529,7 +529,49 @@ function test_rectangular_start_projection_keeps_raw_without_finite_improvement(
     performance_profile = nonfinite_profile,
   )
 
-  # Regression: an unmeasured or non-finite DC candidate must not be treated as a proven improvement.
+  requested_dc_profile = Dict{Symbol,Any}(:enabled => true)
+  Vrequested_dc = Sparlectra.project_rectangular_start(
+    Y,
+    Vraw,
+    ComplexF64[0.0 + 0.0im, 0.0 + 0.0im],
+    bus_types,
+    Vset,
+    1;
+    enabled = true,
+    try_dc_start = true,
+    try_blend_scan = false,
+    measure_candidates = true,
+    requested_angle_mode = :dc,
+    requested_voltage_mode = :profile_blend,
+    performance_profile = requested_dc_profile,
+  )
+
+  invalid_dc_profile = Dict{Symbol,Any}(:enabled => true)
+  Vinvalid_dc = Sparlectra.project_rectangular_start(
+    Y,
+    Vraw,
+    ComplexF64[0.0 + 0.0im, NaN + 0.0im],
+    bus_types,
+    Vset,
+    1;
+    enabled = true,
+    try_dc_start = false,
+    try_blend_scan = false,
+    measure_candidates = true,
+    requested_angle_mode = :dc,
+    requested_voltage_mode = :profile_blend,
+    performance_profile = invalid_dc_profile,
+  )
+
+  required_fields = (:requested_angle_mode, :requested_voltage_mode, :dc_angle_start_built,
+                     :dc_angle_start_valid, :dc_angle_start_applied, :selected_start_candidate,
+                     :selection_reason, :raw_mismatch, :dc_mismatch, :best_blend_mismatch,
+                     :projected_mismatch, :fallback_to_raw, :fallback_reason)
+  requested_summary = requested_dc_profile[:start_projection_summary]
+  invalid_summary = invalid_dc_profile[:start_projection_summary]
+
+  # Regression: optional DC candidates still require measured improvement, but an explicitly
+  # requested DC angle start is applied whenever it passes the hard finite-voltage guard.
   return Vunmeasured == Vraw &&
          unmeasured_profile[:start_projection_summary].selected === :raw &&
          unmeasured_profile[:start_projection_summary].reason === :candidate_mismatch_not_measured &&
@@ -537,7 +579,24 @@ function test_rectangular_start_projection_keeps_raw_without_finite_improvement(
          Vnonfinite == Vraw &&
          nonfinite_profile[:start_projection_summary].selected === :raw &&
          nonfinite_profile[:start_projection_summary].reason === :no_finite_improvement &&
-         ismissing(nonfinite_profile[:start_projection_summary].best_mismatch)
+         ismissing(nonfinite_profile[:start_projection_summary].best_mismatch) &&
+         Vrequested_dc == Sparlectra._dc_angle_start_rectangular(Y, Vraw, ComplexF64[0.0 + 0.0im, 0.0 + 0.0im], bus_types, Vset, 1; dc_angle_limit_deg = 60.0) &&
+         requested_summary.selected === :dc_start &&
+         requested_summary.reason === :requested_dc_angle_start &&
+         requested_summary.dc_angle_start_built === true &&
+         requested_summary.dc_angle_start_valid === true &&
+         requested_summary.dc_angle_start_applied === true &&
+         requested_summary.fallback_to_raw === false &&
+         all(field -> hasproperty(requested_summary, field), required_fields) &&
+         Vinvalid_dc == Vraw &&
+         invalid_summary.selected === :explicit_fallback_raw &&
+         invalid_summary.reason === :invalid_dc_angle_start &&
+         invalid_summary.dc_angle_start_built === true &&
+         invalid_summary.dc_angle_start_valid === false &&
+         invalid_summary.dc_angle_start_applied === false &&
+         invalid_summary.fallback_to_raw === true &&
+         invalid_summary.fallback_reason === :invalid_dc_angle_start &&
+         all(field -> hasproperty(invalid_summary, field), required_fields)
 end
 
 function test_matpower_vmva_selfcheck_noncontiguous_bus_numbers()::Bool

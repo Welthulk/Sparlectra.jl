@@ -374,6 +374,8 @@ function project_rectangular_start(
   accept_unmeasured_dc_start::Bool = false,
   blend_lambdas::AbstractVector{<:Real} = [0.25, 0.5, 0.75],
   dc_angle_limit_deg::Float64 = 60.0,
+  requested_angle_mode::Symbol = :classic,
+  requested_voltage_mode::Symbol = :classic,
   verbose::Int = 0,
   performance_profile = nothing,
 )
@@ -395,16 +397,38 @@ function project_rectangular_start(
   best_mis = raw_mis
   selection_reason = measure_candidates ? :raw_baseline : :candidate_mismatch_not_measured
   Vdc = nothing
+  dc_mis = NaN
+  dc_angle_required = requested_angle_mode === :dc
+  dc_angle_start_built = false
+  dc_angle_start_valid = false
+  dc_angle_start_applied = false
+  fallback_to_raw = false
+  fallback_reason = missing
+  best_blend_mis = NaN
 
-  if try_dc_start
+  if try_dc_start || dc_angle_required
     Vdc = _perf_profile_time!(performance_profile, :start_projection_dc_start_construction) do
       _dc_angle_start_rectangular_profiled(Ybus, raw, S, bus_types, Vset, slack_idx; dc_angle_limit_deg = dc_angle_limit_deg, performance_profile = performance_profile)
     end
+    dc_angle_start_built = true
+    dc_angle_start_valid = all(isfinite, real.(Vdc)) && all(isfinite, imag.(Vdc))
     candidate_count += 1
     dc_mis = measure_candidates ? _perf_profile_time!(performance_profile, :start_projection_mismatch_evaluation) do
       _max_rectangular_mismatch(Ybus, Vdc, S, bus_types, Vset, slack_idx)
     end : NaN
-    if measure_candidates && isfinite(dc_mis) && (!isfinite(best_mis) || dc_mis < best_mis)
+    if dc_angle_required && dc_angle_start_valid
+      best = Vdc
+      best_name = :dc_start
+      best_mis = dc_mis
+      dc_angle_start_applied = true
+      selection_reason = :requested_dc_angle_start
+    elseif dc_angle_required
+      best_name = :explicit_fallback_raw
+      best_mis = raw_mis
+      fallback_to_raw = true
+      fallback_reason = :invalid_dc_angle_start
+      selection_reason = fallback_reason
+    elseif measure_candidates && isfinite(dc_mis) && (!isfinite(best_mis) || dc_mis < best_mis)
       best = Vdc
       best_name = :dc_start
       best_mis = dc_mis
@@ -426,7 +450,10 @@ function project_rectangular_start(
         blend_mis = measure_candidates ? _perf_profile_time!(performance_profile, :start_projection_mismatch_evaluation) do
           _max_rectangular_mismatch(Ybus, Vblend, S, bus_types, Vset, slack_idx)
         end : NaN
-        if measure_candidates && isfinite(blend_mis) && (!isfinite(best_mis) || blend_mis < best_mis)
+        if isfinite(blend_mis) && (!isfinite(best_blend_mis) || blend_mis < best_blend_mis)
+          best_blend_mis = blend_mis
+        end
+        if !dc_angle_required && measure_candidates && isfinite(blend_mis) && (!isfinite(best_mis) || blend_mis < best_mis)
           best = Vblend
           best_name = Symbol("blend_", λ)
           best_mis = blend_mis
@@ -442,9 +469,12 @@ function project_rectangular_start(
       # If a candidate became invalid, deterministically fall back to sanitized raw.
       if !all(isfinite, real.(best)) || !all(isfinite, imag.(best))
         best = raw
-        best_name = :raw
+        best_name = dc_angle_required ? :explicit_fallback_raw : :raw
         best_mis = raw_mis
-        selection_reason = :nonfinite_selected_voltage
+        selection_reason = dc_angle_required ? :invalid_dc_angle_start : :nonfinite_selected_voltage
+        fallback_to_raw = dc_angle_required
+        fallback_reason = dc_angle_required ? :invalid_dc_angle_start : fallback_reason
+        dc_angle_start_applied = false
       end
     end
   end
@@ -460,11 +490,30 @@ function project_rectangular_start(
   end
   if performance_profile isa AbstractDict && Bool(get(performance_profile, :enabled, false))
     # Compact selection summary for diagnostics/UI without storing all candidate vectors.
-    performance_profile[:start_projection_summary] = (selected = best_name, reason = selection_reason, candidates = candidate_count, best_mismatch = reported_best_mis, raw_mismatch = isfinite(raw_mis) ? raw_mis : missing, elapsed_s = (time_ns() - t0) / 1e9)
+    performance_profile[:start_projection_summary] = (
+      selected = best_name,
+      reason = selection_reason,
+      candidates = candidate_count,
+      best_mismatch = reported_best_mis,
+      raw_mismatch = isfinite(raw_mis) ? raw_mis : missing,
+      elapsed_s = (time_ns() - t0) / 1e9,
+      requested_angle_mode = requested_angle_mode,
+      requested_voltage_mode = requested_voltage_mode,
+      dc_angle_start_built = dc_angle_start_built,
+      dc_angle_start_valid = dc_angle_start_valid,
+      dc_angle_start_applied = dc_angle_start_applied,
+      selected_start_candidate = best_name,
+      selection_reason = selection_reason,
+      dc_mismatch = isfinite(dc_mis) ? dc_mis : missing,
+      best_blend_mismatch = isfinite(best_blend_mis) ? best_blend_mis : missing,
+      projected_mismatch = reported_best_mis,
+      fallback_to_raw = fallback_to_raw,
+      fallback_reason = fallback_reason,
+    )
   end
 
   if verbose > 0
-    @info "start projection selected $(best_name)" reason = selection_reason raw_mismatch = (isfinite(raw_mis) ? raw_mis : missing) projected_mismatch = reported_best_mis
+    @info "start projection selected $(best_name)" requested_angle_mode = requested_angle_mode requested_voltage_mode = requested_voltage_mode reason = selection_reason raw_mismatch = (isfinite(raw_mis) ? raw_mis : missing) dc_mismatch = (isfinite(dc_mis) ? dc_mis : missing) projected_mismatch = reported_best_mis dc_angle_start_built = dc_angle_start_built dc_angle_start_valid = dc_angle_start_valid dc_angle_start_applied = dc_angle_start_applied fallback_to_raw = fallback_to_raw fallback_reason = fallback_reason
   end
   return best
 end
