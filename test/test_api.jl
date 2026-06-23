@@ -3,7 +3,9 @@ using Test
 using Dates
 
 function _write_api_test_case(path::AbstractString)
-  write(path, """
+  write(
+    path,
+    """
 function mpc = case_api
 mpc.version = '2';
 mpc.baseMVA = 100;
@@ -17,7 +19,8 @@ mpc.gen = [
 mpc.branch = [
 1 2 0.01 0.05 0.0 999 999 999 0 0 1 -360 360;
 ];
-""")
+""",
+  )
   return path
 end
 
@@ -56,11 +59,7 @@ function run_api_tests()
   @testset "GUI-ready Sparlectra API" begin
     mktempdir() do tmpdir
       csv_writer_path = joinpath(tmpdir, "writer.csv")
-      Sparlectra._write_namedtuple_csv(
-        csv_writer_path,
-        [(name = "quoted, \"value\"", empty_missing = Base.missing, empty_nothing = nothing)],
-        (:name, :empty_missing, :empty_nothing),
-      )
+      Sparlectra._write_namedtuple_csv(csv_writer_path, [(name = "quoted, \"value\"", empty_missing = Base.missing, empty_nothing = nothing)], (:name, :empty_missing, :empty_nothing))
       @test read(csv_writer_path, String) == "name,empty_missing,empty_nothing\n\"quoted, \"\"value\"\"\",,\n"
       buffered_writer_path = joinpath(tmpdir, "writer_buffered.csv")
       streaming_writer_path = joinpath(tmpdir, "writer_streaming.csv")
@@ -78,12 +77,7 @@ function run_api_tests()
       @test safe_default_cfg.detailed_result_csv_buffer_max_bytes == 64 * 1024 * 1024
       @test safe_default_cfg.detailed_result_csv_streaming_threshold_rows == 100_000
       semicolon_writer_path = joinpath(tmpdir, "writer_semicolon.csv")
-      Sparlectra._write_namedtuple_csv(
-        semicolon_writer_path,
-        [(name = "quoted; \"value\"", empty_missing = Base.missing, empty_nothing = nothing)],
-        (:name, :empty_missing, :empty_nothing);
-        delimiter = ';',
-      )
+      Sparlectra._write_namedtuple_csv(semicolon_writer_path, [(name = "quoted; \"value\"", empty_missing = Base.missing, empty_nothing = nothing)], (:name, :empty_missing, :empty_nothing); delimiter = ';')
       @test read(semicolon_writer_path, String) == "name;empty_missing;empty_nothing\n\"quoted; \"\"value\"\"\";;\n"
       number_rows = [(integer = 1000000, decimal = 1234.56, negative = -1234.5, nan = NaN, inf = Inf, neginf = -Inf)]
       technical_path = joinpath(tmpdir, "writer_technical.csv")
@@ -143,13 +137,7 @@ function run_api_tests()
         casefile = casefile,
         config_file = template,
         output_dir = output_dir,
-        config_overrides = Dict(
-          "power_flow.tol" => 1.0e-9,
-          "power_flow.max_iter" => 40,
-          "power_flow.autodamp" => true,
-          "output.logfile_results" => "full",
-          "benchmark.enabled" => false,
-        ),
+        config_overrides = Dict("power_flow.tol" => 1.0e-9, "power_flow.max_iter" => 40, "power_flow.autodamp" => true, "output.logfile_results" => "full", "benchmark.enabled" => false),
         performance_timing = :compact,
         run_diagnostics = true,
         detailed_result_csv = true,
@@ -181,13 +169,7 @@ function run_api_tests()
       inactive_dcline_mpc = Sparlectra.MatpowerIO.read_case(inactive_dcline_case; legacy_compat = false)
       @test Sparlectra.MatpowerIO.matpower_dcline_diagnostics(inactive_dcline_mpc)["matpower_dcline_active_count"] == 0
       active_dcline_case = _write_api_dcline_case(joinpath(tmpdir, "case_active_dcline.m"); rows = "1 2 1 10 9 0 0 1 1 0 100;\n1 2 0 3 2 0 0 1 1 0 100;")
-      active_result = run_sparlectra_api(
-        casefile = active_dcline_case,
-        config_file = template,
-        output_dir = joinpath(tmpdir, "active-dcline"),
-        config_overrides = Dict("output.logfile_results" => "full", "benchmark.enabled" => false),
-        performance_timing = :compact,
-      )
+      active_result = run_sparlectra_api(casefile = active_dcline_case, config_file = template, output_dir = joinpath(tmpdir, "active-dcline"), config_overrides = Dict("output.logfile_results" => "full", "benchmark.enabled" => false), performance_timing = :compact)
       @test active_result.status === :failed
       @test !active_result.success
       @test active_result.reason == "unsupported_matpower_dcline"
@@ -202,29 +184,26 @@ function run_api_tests()
       @test occursin("matpower_dcline_detected", active_run_log)
       @test occursin("matpower_dcline_unsupported", active_run_log)
       @test occursin("powerflow_aborted_unsupported_matpower_dcline", active_run_log)
-      active_result_html = Sparlectra.render_powerflow_result(Dict(
-        "run_id" => active_result.run_id,
-        "status" => String(active_result.status),
-        "success" => active_result.success,
-        "reason" => active_result.reason,
-        "message" => active_result.message,
-      ))
+      active_result_html = Sparlectra.render_powerflow_result(Dict("run_id" => active_result.run_id, "status" => String(active_result.status), "success" => active_result.success, "reason" => active_result.reason, "message" => active_result.message))
       @test occursin("failed", active_result_html)
       @test occursin("MATPOWER case contains active", active_result_html)
       @test occursin("unsupported_matpower_dcline", active_result_html)
       @test read(template, String) == template_before
       @test isfile(joinpath(output_dir, "effective_config.yaml"))
-      effective_config_text = read(joinpath(output_dir, "effective_config.yaml"), String)
+      effective_config_path = joinpath(output_dir, "effective_config.yaml")
+      effective_config_text = read(effective_config_path, String)
       @test occursin("tol: 1.0e-9", effective_config_text)
       @test occursin("runtime:", effective_config_text)
-      @test occursin("casefile: $(casefile)", effective_config_text)
-      @test occursin("case_name: case_api", effective_config_text)
-      @test occursin("case_source: webui_mpower_data", effective_config_text)
       @test !occursin("runtime_request:", effective_config_text)
-      effective_cfg = Sparlectra.load_sparlectra_config(joinpath(output_dir, "effective_config.yaml"); reload = true)
+
+      effective_cfg = Sparlectra.load_sparlectra_config(effective_config_path; reload = true)
       @test effective_cfg.powerflow.tol == 1.0e-9
       @test effective_cfg.powerflow.max_iter == 40
       @test effective_cfg.matpower.case == "case14.m"
+      @test normpath(effective_cfg.runtime.casefile) == normpath(casefile)
+      @test effective_cfg.runtime.case_name == "case_api"
+      @test effective_cfg.runtime.case_source == "webui_mpower_data"
+      @test effective_cfg.runtime.configured_default_casefile == "case14.m"
       @test isfile(joinpath(output_dir, "run_metadata.yaml"))
       run_metadata_text = read(joinpath(output_dir, "run_metadata.yaml"), String)
       @test occursin("runtime_request:", run_metadata_text)
@@ -360,39 +339,14 @@ function run_api_tests()
 
       classic_dir = joinpath(tmpdir, "classic")
       full_dir = joinpath(tmpdir, "full")
-      classic = run_sparlectra_api(
-        casefile = casefile,
-        config_file = template,
-        output_dir = classic_dir,
-        config_overrides = Dict("output.logfile_results" => "classic", "benchmark.enabled" => false),
-      )
-      full = run_sparlectra_api(
-        casefile = casefile,
-        config_file = template,
-        output_dir = full_dir,
-        config_overrides = Dict("output.logfile_results" => "full", "benchmark.enabled" => false),
-        run_diagnostics = true,
-      )
+      classic = run_sparlectra_api(casefile = casefile, config_file = template, output_dir = classic_dir, config_overrides = Dict("output.logfile_results" => "classic", "benchmark.enabled" => false))
+      full = run_sparlectra_api(casefile = casefile, config_file = template, output_dir = full_dir, config_overrides = Dict("output.logfile_results" => "full", "benchmark.enabled" => false), run_diagnostics = true)
       @test classic.success && full.success
       @test !isfile(joinpath(classic_dir, "bus_voltages_complex.csv"))
       @test !isfile(joinpath(classic_dir, "branch_flows.csv"))
-      ignored_csv_format = run_sparlectra_api(
-        casefile = casefile,
-        config_file = template,
-        output_dir = joinpath(tmpdir, "ignored_csv_format"),
-        config_overrides = Dict("benchmark.enabled" => false),
-        detailed_result_csv = false,
-        detailed_result_csv_format = "unknown",
-      )
+      ignored_csv_format = run_sparlectra_api(casefile = casefile, config_file = template, output_dir = joinpath(tmpdir, "ignored_csv_format"), config_overrides = Dict("benchmark.enabled" => false), detailed_result_csv = false, detailed_result_csv_format = "unknown")
       @test ignored_csv_format.success
-      invalid_csv_format = run_sparlectra_api(
-        casefile = casefile,
-        config_file = template,
-        output_dir = joinpath(tmpdir, "invalid_csv_format"),
-        config_overrides = Dict("benchmark.enabled" => false),
-        detailed_result_csv = true,
-        detailed_result_csv_format = "unknown",
-      )
+      invalid_csv_format = run_sparlectra_api(casefile = casefile, config_file = template, output_dir = joinpath(tmpdir, "invalid_csv_format"), config_overrides = Dict("benchmark.enabled" => false), detailed_result_csv = true, detailed_result_csv_format = "unknown")
       @test !invalid_csv_format.success
       @test invalid_csv_format.reason == "invalid_detailed_result_csv_format"
       classic_log = read(joinpath(classic_dir, "run.log"), String)
@@ -412,14 +366,7 @@ function run_api_tests()
       @test occursin("Final Q-limit validation", full_diagnostic_log)
 
       legacy_dir = joinpath(tmpdir, "legacy-semicolon")
-      legacy = run_sparlectra_api(
-        casefile = casefile,
-        config_file = template,
-        output_dir = legacy_dir,
-        config_overrides = Dict("benchmark.enabled" => false),
-        detailed_result_csv = true,
-        detailed_result_csv_semicolon = true,
-      )
+      legacy = run_sparlectra_api(casefile = casefile, config_file = template, output_dir = legacy_dir, config_overrides = Dict("benchmark.enabled" => false), detailed_result_csv = true, detailed_result_csv_semicolon = true)
       @test legacy.success
       @test startswith(read(joinpath(legacy_dir, "bus_voltages_complex.csv"), String), "bus;")
 
@@ -435,10 +382,7 @@ function run_api_tests()
 
       final_ok_q_limit_dir = joinpath(tmpdir, "q_limit_final_ok")
       mkpath(final_ok_q_limit_dir)
-      final_ok_diagnostics = merge(result.raw_result.diagnostics, (
-        pv_q_limit_violations = 0,
-        ref_q_limit_violations = 0,
-      ))
+      final_ok_diagnostics = merge(result.raw_result.diagnostics, (pv_q_limit_violations = 0, ref_q_limit_violations = 0))
       final_ok_result = Sparlectra.SparlectraRunResult(
         result.raw_result.net,
         result.raw_result.outcome,
@@ -465,13 +409,13 @@ function run_api_tests()
       @test occursin("Guarded PV->PQ locks     : 0", qlimit_disabled_log)
 
       pre_mutation_net = _control_label_test_net()
-      for bus in 2:4
+      for bus = 2:4
         pre_mutation_net.nodeVec[bus]._nodeType = Sparlectra.PV
       end
       pre_mutation_net.qmin_pu = fill(-1.0, length(pre_mutation_net.nodeVec))
       pre_mutation_net.qmax_pu = fill(1.0, length(pre_mutation_net.nodeVec))
       Sparlectra.snapshotPVQLimits!(pre_mutation_net)
-      for bus in 2:4
+      for bus = 2:4
         pre_mutation_net.nodeVec[bus]._nodeType = Sparlectra.PQ
         Sparlectra.logQLimitHit!(pre_mutation_net, 1, bus, :max)
       end
@@ -497,16 +441,7 @@ function run_api_tests()
         :rectangular,
         :not_run,
         nothing,
-        (
-          q_limit_active_set_ok = false,
-          pv_q_limit_violations = 0,
-          ref_q_limit_violations = 0,
-          pv_pq_switching_events = length(pre_mutation_net.qLimitLog),
-          qlimit_active_set_changes = 3,
-          qlimit_reenable_events = 0,
-          oscillating_buses = 0,
-          guarded_narrow_q_pv_buses = 0,
-        ),
+        (q_limit_active_set_ok = false, pv_q_limit_violations = 0, ref_q_limit_violations = 0, pv_pq_switching_events = length(pre_mutation_net.qLimitLog), qlimit_active_set_changes = 3, qlimit_reenable_events = 0, oscillating_buses = 0, guarded_narrow_q_pv_buses = 0),
       )
       nonconverged_dir = joinpath(tmpdir, "q_limit_nonconverged")
       mkpath(nonconverged_dir)
@@ -553,13 +488,7 @@ function run_api_tests()
         reason = String(nonconverged_solution.reason),
         message = "PowerFlow run completed, but numerical solver did not converge.",
         output_dir = nonconverged_csv_dir,
-        metadata = Dict{String,Any}(
-          "service_status" => "completed",
-          "numerical_status" => "not_converged",
-          "run_status" => "completed_nonconverged",
-          "detailed_result_csv_status" => "exported_diagnostic",
-          "detailed_result_csv_solution_quality" => "not_converged_last_iterate",
-        ),
+        metadata = Dict{String,Any}("service_status" => "completed", "numerical_status" => "not_converged", "run_status" => "completed_nonconverged", "detailed_result_csv_status" => "exported_diagnostic", "detailed_result_csv_solution_quality" => "not_converged_last_iterate"),
         raw_result = nonconverged_solution,
       )
       synthetic_nonconverged_dict = Sparlectra.to_dict(synthetic_nonconverged_api)
@@ -576,7 +505,7 @@ function run_api_tests()
       @test occursin("Diagnostic generation failed", failed_diagnostic_text)
       @test occursin("diagnostic test failure", failed_diagnostic_text)
 
-      for i in 1:5
+      for i = 1:5
         Sparlectra.logQLimitHit!(control_net, i, 2 + (i % 3), i % 2 == 0 ? :max : :min)
       end
       qlimit_io = IOBuffer()
@@ -593,7 +522,7 @@ function run_api_tests()
       @test occursin("rows shown       : 0", qlimit_summary_text)
       @test !occursin("Iteration │ Bus │ Side", qlimit_summary_text)
       pvlimit_net = _control_label_test_net()
-      for bus in 2:4
+      for bus = 2:4
         pvlimit_net.nodeVec[bus]._nodeType = Sparlectra.PV
       end
       pvlimit_net.qmin_pu = fill(-1.0, length(pvlimit_net.nodeVec))
@@ -663,63 +592,32 @@ function run_api_tests()
       @test invalid.reason == "invalid_configuration"
       @test invalid.message !== nothing
 
-      invalid_override = run_sparlectra_api(
-        casefile = casefile,
-        config_file = template,
-        output_dir = joinpath(tmpdir, "invalid_override"),
-        config_overrides = Dict("power_flow.typo_tol" => 1.0e-8),
-      )
+      invalid_override = run_sparlectra_api(casefile = casefile, config_file = template, output_dir = joinpath(tmpdir, "invalid_override"), config_overrides = Dict("power_flow.typo_tol" => 1.0e-8))
       @test !invalid_override.success
       @test invalid_override.reason == "invalid_config_override"
       @test occursin("Unknown", something(invalid_override.message, ""))
 
-      disallowed_override = run_sparlectra_api(
-        casefile = casefile,
-        config_file = template,
-        output_dir = joinpath(tmpdir, "disallowed_override"),
-        config_overrides = Dict("runtime.julia_threads" => "auto"),
-      )
+      disallowed_override = run_sparlectra_api(casefile = casefile, config_file = template, output_dir = joinpath(tmpdir, "disallowed_override"), config_overrides = Dict("runtime.julia_threads" => "auto"))
       @test !disallowed_override.success
       @test disallowed_override.reason == "invalid_config_override"
       @test occursin("not allowed", something(disallowed_override.message, ""))
 
-      invalid_value = run_sparlectra_api(
-        casefile = casefile,
-        config_file = template,
-        output_dir = joinpath(tmpdir, "invalid_value"),
-        config_overrides = Dict("power_flow.max_iter" => 0),
-      )
+      invalid_value = run_sparlectra_api(casefile = casefile, config_file = template, output_dir = joinpath(tmpdir, "invalid_value"), config_overrides = Dict("power_flow.max_iter" => 0))
       @test !invalid_value.success
       @test invalid_value.reason == "invalid_config_override"
       @test occursin("positive", something(invalid_value.message, ""))
 
-      invalid_type = run_sparlectra_api(
-        casefile = casefile,
-        config_file = template,
-        output_dir = joinpath(tmpdir, "invalid_type"),
-        config_overrides = Dict("power_flow.autodamp" => "true"),
-      )
+      invalid_type = run_sparlectra_api(casefile = casefile, config_file = template, output_dir = joinpath(tmpdir, "invalid_type"), config_overrides = Dict("power_flow.autodamp" => "true"))
       @test !invalid_type.success
       @test invalid_type.reason == "invalid_config_override"
       @test occursin("invalid type", something(invalid_type.message, ""))
 
-      invalid_enum = run_sparlectra_api(
-        casefile = casefile,
-        config_file = template,
-        output_dir = joinpath(tmpdir, "invalid_enum"),
-        config_overrides = Dict("power_flow.wrong_branch_detection" => "unknown"),
-      )
+      invalid_enum = run_sparlectra_api(casefile = casefile, config_file = template, output_dir = joinpath(tmpdir, "invalid_enum"), config_overrides = Dict("power_flow.wrong_branch_detection" => "unknown"))
       @test !invalid_enum.success
       @test invalid_enum.reason == "invalid_config_override"
       @test occursin("must be one of", something(invalid_enum.message, ""))
 
-      import_overrides = validate_gui_config_overrides(Dict(
-        "matpower_import.auto_profile" => "apply",
-        "matpower_import.ratio" => "reciprocal",
-        "matpower_import.shift_sign" => -1.0,
-        "matpower_import.shift_unit" => "rad",
-        "matpower_import.bus_shunt_model" => "voltage_dependent_injection",
-      ))
+      import_overrides = validate_gui_config_overrides(Dict("matpower_import.auto_profile" => "apply", "matpower_import.ratio" => "reciprocal", "matpower_import.shift_sign" => -1.0, "matpower_import.shift_unit" => "rad", "matpower_import.bus_shunt_model" => "voltage_dependent_injection"))
       @test import_overrides["matpower_import"]["auto_profile"] == "apply"
       @test import_overrides["matpower_import"]["ratio"] == "reciprocal"
       @test import_overrides["matpower_import"]["shift_sign"] == -1.0
@@ -734,13 +632,7 @@ function run_api_tests()
         casefile = casefile,
         config_file = template,
         output_dir = manual_import_output,
-        config_overrides = Dict(
-          "matpower_import.auto_profile" => "off",
-          "matpower_import.ratio" => "reciprocal",
-          "matpower_import.shift_sign" => -1.0,
-          "matpower_import.shift_unit" => "rad",
-          "benchmark.enabled" => false,
-        ),
+        config_overrides = Dict("matpower_import.auto_profile" => "off", "matpower_import.ratio" => "reciprocal", "matpower_import.shift_sign" => -1.0, "matpower_import.shift_unit" => "rad", "benchmark.enabled" => false),
       )
       @test manual_import_result.success
       manual_effective_cfg = Sparlectra.load_sparlectra_config(joinpath(manual_import_output, "effective_config.yaml"); reload = true)
@@ -757,15 +649,7 @@ function run_api_tests()
       @test occursin("matpower_import.shift_unit: rad", manual_run_log)
 
       auto_profile_output = joinpath(tmpdir, "auto_profile_recommend")
-      auto_profile_result = run_sparlectra_api(
-        casefile = casefile,
-        config_file = template,
-        output_dir = auto_profile_output,
-        config_overrides = Dict(
-          "matpower_import.auto_profile" => "recommend",
-          "benchmark.enabled" => false,
-        ),
-      )
+      auto_profile_result = run_sparlectra_api(casefile = casefile, config_file = template, output_dir = auto_profile_output, config_overrides = Dict("matpower_import.auto_profile" => "recommend", "benchmark.enabled" => false))
       @test auto_profile_result.success
       @test isfile(joinpath(auto_profile_output, "matpower_auto_profile.log"))
       @test any(artifact -> artifact.kind === :matpower_auto_profile, auto_profile_result.artifacts)
@@ -783,15 +667,7 @@ function run_api_tests()
       @test recommend_effective_cfg.matpower.shift_unit === :deg
 
       auto_profile_apply_output = joinpath(tmpdir, "auto_profile_apply")
-      auto_profile_apply_result = run_sparlectra_api(
-        casefile = casefile,
-        config_file = template,
-        output_dir = auto_profile_apply_output,
-        config_overrides = Dict(
-          "matpower_import.auto_profile" => "apply",
-          "benchmark.enabled" => false,
-        ),
-      )
+      auto_profile_apply_result = run_sparlectra_api(casefile = casefile, config_file = template, output_dir = auto_profile_apply_output, config_overrides = Dict("matpower_import.auto_profile" => "apply", "benchmark.enabled" => false))
       @test auto_profile_apply_result.success
       apply_effective_text = read(joinpath(auto_profile_apply_output, "effective_config.yaml"), String)
       apply_profile_log = read(joinpath(auto_profile_apply_output, "matpower_auto_profile.log"), String)
@@ -800,18 +676,20 @@ function run_api_tests()
       @test any(artifact -> artifact.kind === :matpower_auto_profile, auto_profile_apply_result.artifacts)
 
       @test validate_gui_config_overrides(Dict("power_flow.qlimits.enabled" => false))["power_flow"]["qlimits"]["enabled"] === false
-      current_iteration_overrides = validate_gui_config_overrides(Dict(
-        "power_flow.start_current_iteration.enabled" => true,
-        "power_flow.start_current_iteration.max_iter" => 3,
-        "power_flow.start_current_iteration.tol" => 1.0e-4,
-        "power_flow.start_current_iteration.damping" => 0.5,
-        "power_flow.start_current_iteration.accept_only_if_improved" => true,
-        "power_flow.start_current_iteration.min_improvement_factor" => 0.95,
-        "power_flow.start_current_iteration.vm_min_pu" => 0.6,
-        "power_flow.start_current_iteration.vm_max_pu" => 1.4,
-        "power_flow.start_current_iteration.max_angle_step_deg" => 25.0,
-        "power_flow.start_current_iteration.only_for_large_cases" => false,
-      ))
+      current_iteration_overrides = validate_gui_config_overrides(
+        Dict(
+          "power_flow.start_current_iteration.enabled" => true,
+          "power_flow.start_current_iteration.max_iter" => 3,
+          "power_flow.start_current_iteration.tol" => 1.0e-4,
+          "power_flow.start_current_iteration.damping" => 0.5,
+          "power_flow.start_current_iteration.accept_only_if_improved" => true,
+          "power_flow.start_current_iteration.min_improvement_factor" => 0.95,
+          "power_flow.start_current_iteration.vm_min_pu" => 0.6,
+          "power_flow.start_current_iteration.vm_max_pu" => 1.4,
+          "power_flow.start_current_iteration.max_angle_step_deg" => 25.0,
+          "power_flow.start_current_iteration.only_for_large_cases" => false,
+        ),
+      )
       @test current_iteration_overrides["power_flow"]["start_current_iteration"]["enabled"] === true
       @test current_iteration_overrides["power_flow"]["start_current_iteration"]["max_iter"] == 3
       @test_throws ArgumentError validate_gui_config_overrides(Dict("power_flow.start_current_iteration.damping" => 1.5))
@@ -840,7 +718,7 @@ function run_api_tests()
         write(sibling_jl, "nothing\n")
         @test Sparlectra._resolve_powerflow_casefile(sibling_m, joinpath(tmpdir, "cases")) == abspath(sibling_m)
         ensure_calls = NamedTuple[]
-        fake_ensure = function(requested; outdir, to_jl)
+        fake_ensure = function (requested; outdir, to_jl)
           push!(ensure_calls, (; requested, outdir, to_jl))
           mfile = joinpath(outdir, first(splitext(requested)) * ".m")
           jlfile = joinpath(outdir, first(splitext(requested)) * ".jl")
@@ -882,13 +760,7 @@ function run_api_tests()
         mkpath(broken_dir)
         broken_case = joinpath(broken_dir, "case_broken.jl")
         write(broken_case, "throw(StackOverflowError())\n")
-        broken = start_powerflow_run(Dict(
-          "casefile" => broken_case,
-          "config_file" => config_file,
-          "output_root" => output_broken,
-          "performance_timing" => "compact",
-          "config_overrides" => Dict("benchmark.enabled" => false),
-        ))
+        broken = start_powerflow_run(Dict("casefile" => broken_case, "config_file" => config_file, "output_root" => output_broken, "performance_timing" => "compact", "config_overrides" => Dict("benchmark.enabled" => false)))
         @test broken["success"] === false
         @test broken["status"] == "failed"
         @test broken["reason"] == "loading_julia_case_failed"
@@ -900,16 +772,7 @@ function run_api_tests()
         @test occursin("StackOverflowError", read(joinpath(broken["output_dir"], "result.json"), String))
       end
 
-      started = start_powerflow_run(Dict(
-        "casefile" => casefile,
-        "config_file" => config_file,
-        "output_root" => output_root,
-        "config_overrides" => Dict(
-          "power_flow.tol" => 1.0e-8,
-          "power_flow.max_iter" => 80,
-          "benchmark.enabled" => false,
-        ),
-      ))
+      started = start_powerflow_run(Dict("casefile" => casefile, "config_file" => config_file, "output_root" => output_root, "config_overrides" => Dict("power_flow.tol" => 1.0e-8, "power_flow.max_iter" => 80, "benchmark.enabled" => false)))
 
       @test started["success"]
       @test started["runtime_casefile"] == basename(casefile)
@@ -922,15 +785,11 @@ function run_api_tests()
       @test isfile(joinpath(started["output_dir"], "effective_config.yaml"))
 
       resolved_by_service = Ref(false)
-      service_resolver = function(requested, directory)
+      service_resolver = function (requested, directory)
         resolved_by_service[] = requested == "case_service.m" && directory == joinpath(tmpdir, "trusted_cases")
         return abspath(casefile)
       end
-      resolved_run = start_powerflow_run(Dict(
-        "casefile" => "case_service.m",
-        "config_file" => config_file,
-        "output_root" => output_root,
-      ); case_directory = joinpath(tmpdir, "trusted_cases"), case_resolver = service_resolver)
+      resolved_run = start_powerflow_run(Dict("casefile" => "case_service.m", "config_file" => config_file, "output_root" => output_root); case_directory = joinpath(tmpdir, "trusted_cases"), case_resolver = service_resolver)
       @test resolved_run["success"]
       @test resolved_by_service[]
       @test resolved_run["casefile"] == abspath(casefile)
@@ -942,19 +801,21 @@ function run_api_tests()
       qlimit_mode_run_ids = String[]
       @testset "Q-limit mode metadata and result visibility" begin
         for mode in ("active_set", "classic_simultaneous", "classic_one_at_a_time")
-          mode_run = start_powerflow_run(Dict(
-            "casefile" => casefile,
-            "config_file" => config_file,
-            "output_root" => output_root,
-            "config_overrides" => Dict(
-              "power_flow.max_iter" => 80,
-              "power_flow.qlimits.enforcement_mode" => mode,
-              "power_flow.start_current_iteration.enabled" => true,
-              "power_flow.start_current_iteration.max_iter" => 3,
-              "power_flow.start_current_iteration.only_for_large_cases" => false,
-              "benchmark.enabled" => false,
+          mode_run = start_powerflow_run(
+            Dict(
+              "casefile" => casefile,
+              "config_file" => config_file,
+              "output_root" => output_root,
+              "config_overrides" => Dict(
+                "power_flow.max_iter" => 80,
+                "power_flow.qlimits.enforcement_mode" => mode,
+                "power_flow.start_current_iteration.enabled" => true,
+                "power_flow.start_current_iteration.max_iter" => 3,
+                "power_flow.start_current_iteration.only_for_large_cases" => false,
+                "benchmark.enabled" => false,
+              ),
             ),
-          ))
+          )
           push!(qlimit_mode_run_ids, mode_run["run_id"])
           @test mode_run["success"]
           @test mode_run["qlimit_enforcement_mode"] == mode
@@ -985,8 +846,7 @@ function run_api_tests()
           @test occursin(basename(casefile), result_html)
           if startswith(mode, "classic_")
             @test occursin("Classical Q-limit outer-loop passes", result_html)
-            @test !occursin("Q-limit handling: disabled\nQ-limit diagnostics: skipped", run_log) ||
-                  occursin("Inner PF active-set Q-limit switching: disabled for classical outer-loop solve", run_log)
+            @test !occursin("Q-limit handling: disabled\nQ-limit diagnostics: skipped", run_log) || occursin("Inner PF active-set Q-limit switching: disabled for classical outer-loop solve", run_log)
           end
         end
       end
@@ -1002,7 +862,7 @@ function run_api_tests()
 
       entered = Channel{Nothing}(1)
       release = Channel{Nothing}(1)
-      controlled_runner = function(request; case_directory = nothing)
+      controlled_runner = function (request; case_directory = nothing)
         put!(entered, nothing)
         token = request["cancellation_token"]
         while !isready(release)
@@ -1012,11 +872,7 @@ function run_api_tests()
         take!(release)
         return start_powerflow_run(request; case_directory)
       end
-      async_request = Dict(
-        "casefile" => casefile,
-        "config_file" => config_file,
-        "output_root" => joinpath(tmpdir, "async-runs"),
-      )
+      async_request = Dict("casefile" => casefile, "config_file" => config_file, "output_root" => joinpath(tmpdir, "async-runs"))
       active = Sparlectra.start_webui_powerflow_run(async_request; runner = controlled_runner)
       take!(entered)
       @test Sparlectra.get_webui_powerflow_job(active["run_id"])["status"] == "running"
@@ -1045,7 +901,7 @@ function run_api_tests()
       @test Sparlectra.get_webui_powerflow_job(active["run_id"])["status"] == "aborted"
       @test Sparlectra.get_active_webui_powerflow_job() === nothing
 
-      artifact_error_runner = function(request; case_directory = nothing)
+      artifact_error_runner = function (request; case_directory = nothing)
         request["phase_callback"]("solving_powerflow")
         request["phase_callback"]("postprocessing_result")
         request["phase_callback"]("writing_artifacts")
@@ -1062,7 +918,7 @@ function run_api_tests()
 
       artifact_abort_entered = Channel{Nothing}(1)
       artifact_abort_release = Channel{Nothing}(1)
-      artifact_abort_runner = function(request; case_directory = nothing)
+      artifact_abort_runner = function (request; case_directory = nothing)
         request["phase_callback"]("solving_powerflow")
         request["phase_callback"]("postprocessing_result")
         request["phase_callback"]("writing_artifacts")
@@ -1088,22 +944,15 @@ function run_api_tests()
       @test_throws Sparlectra.PowerFlowAborted start_powerflow_run(merge(async_request, Dict("cancellation_token" => pre_cancelled)))
 
       solver_checks = Ref(0)
-      solver_profile = Dict{Symbol,Any}(
-        :cancellation_check => () -> begin
-          solver_checks[] += 1
-          solver_checks[] >= 5 && throw(Sparlectra.PowerFlowAborted())
-        end,
-      )
+      solver_profile = Dict{Symbol,Any}(:cancellation_check => () -> begin
+        solver_checks[] += 1
+        solver_checks[] >= 5 && throw(Sparlectra.PowerFlowAborted())
+      end)
       solver_net = deepcopy(Sparlectra._registered_powerflow_run(started["run_id"]).raw_result.net)
       @test_throws Sparlectra.PowerFlowAborted runpf!(solver_net; config = powerflow_config(), performance_profile = solver_profile)
       @test solver_checks[] == 5
 
-      failed = start_powerflow_run(Dict(
-        "casefile" => casefile,
-        "config_file" => config_file,
-        "output_root" => output_root,
-        "config_overrides" => Dict("power_flow.tol" => -1.0),
-      ))
+      failed = start_powerflow_run(Dict("casefile" => casefile, "config_file" => config_file, "output_root" => output_root, "config_overrides" => Dict("power_flow.tol" => -1.0)))
       @test !failed["success"]
       @test isfile(joinpath(failed["output_dir"], "result.json"))
       @test any(run -> run["run_id"] == failed["run_id"], load_powerflow_run_index(output_root)["runs"])
@@ -1146,14 +995,7 @@ function run_api_tests()
       stale_csv_result_file = joinpath(stale_csv_dir, "result.json")
       write(stale_csv_result_file, "{}\n")
       write(joinpath(stale_csv_dir, "bus_voltages_complex.csv"), "bus,vm_pu\n1,1.0\n")
-      stale_csv_result = Sparlectra._api_result(
-        run_id = stale_csv_id,
-        status = :succeeded,
-        success = true,
-        output_dir = stale_csv_dir,
-        result_file = stale_csv_result_file,
-        artifacts = SparlectraApiArtifact[],
-      )
+      stale_csv_result = Sparlectra._api_result(run_id = stale_csv_id, status = :succeeded, success = true, output_dir = stale_csv_dir, result_file = stale_csv_result_file, artifacts = SparlectraApiArtifact[])
       Sparlectra._register_powerflow_run!(stale_csv_result)
       stale_csv_artifacts = list_powerflow_artifacts(stale_csv_id)
       @test "bus_voltages_complex.csv" in Set(artifact["name"] for artifact in stale_csv_artifacts)
@@ -1220,21 +1062,9 @@ function run_api_tests()
       unsafe_id = "unsafe-run"
       missing_id = "missing-run"
       modified_index = load_powerflow_run_index(output_root)
-      push!(modified_index["runs"], Dict(
-        "run_id" => corrupt_id,
-        "output_dir" => corrupt_dir,
-        "result_file" => joinpath(corrupt_dir, "result.json"),
-      ))
-      push!(modified_index["runs"], Dict(
-        "run_id" => unsafe_id,
-        "output_dir" => tmpdir,
-        "result_file" => joinpath(tmpdir, "result.json"),
-      ))
-      push!(modified_index["runs"], Dict(
-        "run_id" => missing_id,
-        "output_dir" => joinpath(output_root, missing_id),
-        "result_file" => joinpath(output_root, missing_id, "result.json"),
-      ))
+      push!(modified_index["runs"], Dict("run_id" => corrupt_id, "output_dir" => corrupt_dir, "result_file" => joinpath(corrupt_dir, "result.json")))
+      push!(modified_index["runs"], Dict("run_id" => unsafe_id, "output_dir" => tmpdir, "result_file" => joinpath(tmpdir, "result.json")))
+      push!(modified_index["runs"], Dict("run_id" => missing_id, "output_dir" => joinpath(output_root, missing_id), "result_file" => joinpath(output_root, missing_id, "result.json")))
       open(index_path, "w") do io
         Sparlectra._write_json(io, modified_index)
         println(io)
@@ -1272,28 +1102,12 @@ function run_api_tests()
         mkpath(run_dir)
         result_file = joinpath(run_dir, "result.json")
         write(result_file, "{}")
-        push!(entries, Dict(
-          "run_id" => run_id,
-          "status" => "succeeded",
-          "success" => true,
-          "output_dir" => run_dir,
-          "result_file" => result_file,
-        ))
+        push!(entries, Dict("run_id" => run_id, "status" => "succeeded", "success" => true, "output_dir" => run_dir, "result_file" => result_file))
       end
-      push!(entries, Dict(
-        "run_id" => "unsafe-index-entry",
-        "output_dir" => outside_dir,
-        "result_file" => joinpath(outside_dir, "result.json"),
-      ))
+      push!(entries, Dict("run_id" => "unsafe-index-entry", "output_dir" => outside_dir, "result_file" => joinpath(outside_dir, "result.json")))
       Sparlectra._write_powerflow_run_entries!(output_root, entries)
 
-      registered = Sparlectra._api_result(
-        run_id = "run-a",
-        status = :succeeded,
-        success = true,
-        output_dir = joinpath(output_root, "run-a"),
-        result_file = joinpath(output_root, "run-a", "result.json"),
-      )
+      registered = Sparlectra._api_result(run_id = "run-a", status = :succeeded, success = true, output_dir = joinpath(output_root, "run-a"), result_file = joinpath(output_root, "run-a", "result.json"))
       Sparlectra._register_powerflow_run!(registered)
       deleted = delete_powerflow_run("run-a"; output_root)
       @test deleted["success"]
@@ -1319,7 +1133,6 @@ function run_api_tests()
       @test length(remaining) == 1
       @test remaining[1]["run_id"] == "unsafe-index-entry"
     end
-
   end
   return nothing
 end
