@@ -57,6 +57,15 @@ function _powerflow_run_index_entry(result::SparlectraApiResult)::Dict{String,An
   )
 end
 
+function _powerflow_lifecycle_metadata(data::AbstractDict)::Dict{String,Any}
+  metadata = get(data, "metadata", Dict{String,Any}())
+  lifecycle = metadata isa AbstractDict ? Dict{String,Any}(String(key) => value for (key, value) in metadata) : Dict{String,Any}()
+  for key in ("solver_status", "artifact_status", "run_status", "last_phase", "last_heartbeat", "final_outcome")
+    haskey(data, key) && (lifecycle[key] = data[key])
+  end
+  return lifecycle
+end
+
 """
     load_powerflow_run_index(output_root::AbstractString) -> Dict{String,Any}
 
@@ -161,6 +170,7 @@ function refresh_powerflow_run_registry!(output_root::AbstractString)::Dict{Stri
   root = abspath(output_root)
   index = load_powerflow_run_index(root)
   recovered = SparlectraApiResult[]
+  stale_recovered = SparlectraApiResult[]
   unavailable = Dict{String,Any}[]
   if haskey(index, "reason")
     push!(unavailable, Dict{String,Any}(
@@ -187,16 +197,24 @@ function refresh_powerflow_run_registry!(output_root::AbstractString)::Dict{Stri
       data isa AbstractDict || error("result.json must contain a JSON object")
       if lowercase(string(get(data, "status", ""))) in _POWERFLOW_WEBUI_ACTIVE_STATES
         # A restarted Web UI cannot know whether an active run reached a valid
-        # solution, so persist an explicit stale-abort status before recovery.
-        data["status"] = "aborted_unknown"
+        # solution, so persist one explicit interrupted status before recovery.
+        last_phase = string(get(data, "last_phase", get(data, "current_phase", "unknown")))
+        data["status"] = "interrupted_unknown"
         data["success"] = false
         data["solution_available"] = false
-        data["reason"] = "webui_stale_active_run"
-        data["message"] = "The Web UI was restarted while this run was active. This result is not a valid solved PowerFlow result."
+        data["reason"] = "webui_restart_lost_live_task"
+        data["message"] = "Run state was recovered after Web UI restart. No live solver task is attached anymore; partial artifacts may be available."
+        data["solver_status"] = string(get(data, "solver_status", last_phase in ("postprocessing_result", "writing_artifacts", "writing_csv_artifacts", "finalizing_success") ? "completed" : "running"))
+        data["artifact_status"] = string(get(data, "artifact_status", startswith(last_phase, "writing") ? "running" : "not_started"))
+        data["run_status"] = "interrupted_unknown"
+        data["final_outcome"] = "webui_restart_lost_live_task"
+        data["last_phase"] = last_phase
+        data["last_heartbeat"] = Dates.format(Dates.now(Dates.UTC), dateformat"yyyy-mm-ddTHH:MM:SS.sssZ")
         open(paths.result_file, "w") do io
           _write_json(io, data)
           println(io)
         end
+        push!(stale_recovered, _reconstruct_powerflow_result(data, paths))
       end
       push!(recovered, _reconstruct_powerflow_result(data, paths))
     catch err
@@ -221,6 +239,7 @@ function refresh_powerflow_run_registry!(output_root::AbstractString)::Dict{Stri
     "success" => isempty(unavailable),
     "loaded_runs" => [result.run_id for result in recovered],
     "runs" => recovered,
+    "stale_recovered_runs" => stale_recovered,
     "unavailable_runs" => unavailable,
   )
 end

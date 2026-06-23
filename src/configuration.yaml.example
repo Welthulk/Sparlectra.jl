@@ -43,8 +43,8 @@ power_flow:
   start_mode:
     # Allowed values: classic, dc, bus_va_blend, matpower_va
     angle_mode: dc
-    # Allowed values: classic, pv_gen_vg, pv_bus_vm, all_bus_vm, profile_blend, bus_vm_va_blend
-    # Note: bus_vm_va_blend is accepted as a legacy alias and mapped internally.
+    # Allowed values: classic, pv_gen_vg, pv_bus_vm, all_bus_vm, profile_blend
+    # To use imported MATPOWER reference values, keep profile_blend with profile_source: matpower_reference.
     voltage_mode: profile_blend
     # Allowed values: flat, dc, bus_metadata, historical_profile, matpower_reference, state_estimation, scada_snapshot
     profile_source: matpower_reference
@@ -67,10 +67,39 @@ power_flow:
     # Positive DC-angle clamp in degrees.
     dc_angle_limit_deg: 60.0
 
+  # Optional guarded current-injection pre-solve after start modes and before NR.
+  start_current_iteration:
+    enabled: false
+    max_iter: 10
+    tol: 1.0e-3
+    damping: 0.5
+    accept_only_if_improved: true
+    min_improvement_factor: 0.98
+    vm_min_pu: 0.5
+    vm_max_pu: 1.5
+    max_angle_step_deg: 30.0
+    only_for_large_cases: false
+
   # Reactive-power limit switching.
   qlimits:
     enabled: true
+
+    # Q-limit enforcement strategy.
+    # Allowed values:
+    # - active_set: dynamic in-iteration PV/PQ switching
+    # - classic_simultaneous: classical outer loop; solve the base PF first,
+    #   then switch all Q-limit violations after successful convergence
+    # - classic_one_at_a_time: classical outer loop; solve the base PF first,
+    #   then switch the largest Q-limit violation per outer-loop pass
+    #
+    # Legacy aliases still accepted for old YAML files:
+    # - matpower_simultaneous  -> classic_simultaneous
+    # - matpower_one_at_a_time -> classic_one_at_a_time
+    enforcement_mode: active_set
+
     # First iteration where Q-limit switching is allowed.
+    # Classical outer-loop modes ignore in-iteration switching and check Q limits
+    # only after a successful base PF.
     start_iter: 3
     # Allowed values: iteration, auto, iteration_or_auto
     start_mode: iteration_or_auto
@@ -159,6 +188,11 @@ runtime:
   # keep = keep current process setting.
   julia_threads: keep  # requires process startup or script re-exec
   blas_threads: keep   # can be applied at runtime
+  # Runtime case fields are populated in API/Web UI effective_config.yaml artifacts.
+  casefile: ""
+  case_name: ""
+  case_source: ""
+  configured_default_casefile: ""
 
 diagnostics:
   log_effective_config: false

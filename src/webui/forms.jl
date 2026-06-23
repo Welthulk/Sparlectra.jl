@@ -76,22 +76,212 @@ function _webui_config_file_options(application_root::AbstractString)::Vector{St
   return sort!(normpath.(files); by = path -> (priority(path), lowercase(basename(path))))
 end
 
-const _WEBUI_FORM_CONFIG_FIELDS = (
-  ("power_flow.tol", "power_flow_tol", Float64),
-  ("power_flow.max_iter", "power_flow_max_iter", Int),
-  ("power_flow.autodamp", "power_flow_autodamp", Bool),
-  ("power_flow.autodamp_min", "power_flow_autodamp_min", Float64),
-  ("power_flow.qlimits.enabled", "power_flow_qlimits_enabled", Bool),
-  ("power_flow.wrong_branch_detection", "power_flow_wrong_branch_detection", String),
-  ("power_flow.start_mode.angle_mode", "power_flow_start_angle_mode", String),
-  ("power_flow.start_mode.voltage_mode", "power_flow_start_voltage_mode", String),
-  ("output.logfile_results", "output_logfile_results", String),
-  ("benchmark.enabled", "benchmark_enabled", Bool),
-  ("benchmark.samples", "benchmark_samples", Int),
-  ("benchmark.seconds", "benchmark_seconds", Float64),
-)
+function _webui_form_string(value)::String
+  value === nothing && return ""
+  value === missing && return ""
+  value isa AbstractString && return String(value)
+  value isa Symbol && return String(value)
+  value isa Bool && return value ? "true" : "false"
+  value isa Integer && return string(value)
+  value isa AbstractFloat && return isfinite(value) ? string(value) : throw(ArgumentError("Web UI form value must be finite."))
+  throw(ArgumentError("Unsupported Web UI form value type $(typeof(value))."))
+end
 
-const _WEBUI_PERFORMANCE_TIMING_VALUES = WEBUI_PERFORMANCE_TIMING_VALUES
+function _webui_form_bool(value)::Bool
+  value isa AbstractVector && return any(_webui_form_bool, value)
+  value isa Bool && return value
+  value === nothing && return false
+  value === missing && return false
+  value isa AbstractString && return lowercase(strip(value)) in ("1", "true", "yes", "on")
+  value isa Integer && return value != 0
+  throw(ArgumentError("Unsupported Web UI checkbox value type $(typeof(value))."))
+end
+
+function _webui_form_number_string(value)::String
+  value isa Bool && throw(ArgumentError("Boolean is not a numeric Web UI form value."))
+  value isa Integer && return string(value)
+  value isa AbstractFloat && return isfinite(value) ? string(value) : throw(ArgumentError("Web UI numeric form value must be finite."))
+  value isa AbstractString && begin
+    text = strip(value)
+    isempty(text) && throw(ArgumentError("Web UI numeric form value must not be empty."))
+    parsed = tryparse(Float64, text)
+    parsed === nothing && throw(ArgumentError("Invalid numeric Web UI form value $(repr(text))."))
+    isfinite(parsed) || throw(ArgumentError("Web UI numeric form value must be finite."))
+    return text
+  end
+  throw(ArgumentError("Unsupported Web UI numeric value type $(typeof(value))."))
+end
+
+function _webui_case_settings_filename(casefile::AbstractString)::String
+  stem = splitext(basename(strip(String(casefile))))[1]
+  isempty(stem) && throw(ArgumentError("Case-settings profile requires a case filename."))
+  return string(stem, ".sparlectra-webui.yaml")
+end
+
+function _webui_normalized_case_key(casefile::AbstractString)::String
+  stem = replace(lowercase(splitext(basename(strip(String(casefile))))[1]), r"[^a-z0-9]+" => "_")
+  stem = strip(stem, '_')
+  return isempty(stem) ? "case" : stem
+end
+
+function _webui_resolve_case_profile_source(casefile::AbstractString; case_directory::Union{Nothing,AbstractString} = nothing, application_root::AbstractString = _webui_application_root())::String
+  raw = strip(String(casefile))
+  isempty(raw) && return ""
+  if isabspath(raw)
+    return normpath(raw)
+  end
+  ".." in splitpath(raw) && return ""
+  base = case_directory === nothing ? joinpath(application_root, "data", "mpower") : String(case_directory)
+  return normpath(joinpath(base, raw))
+end
+
+function _webui_case_settings_path(output_root::AbstractString, casefile::AbstractString; case_directory::Union{Nothing,AbstractString} = nothing)::String
+  source = isabspath(strip(String(casefile))) ? normpath(String(casefile)) : _webui_resolve_case_profile_source(casefile; case_directory)
+  isempty(source) && throw(ArgumentError("Unsafe MATPOWER case path for case-settings profile."))
+  return joinpath(dirname(source), _webui_case_settings_filename(source))
+end
+
+function _webui_log_case_settings_load(output_root::AbstractString, event::AbstractString; fields...)
+  try
+    record_webui_operation!(output_root, event; route = "/powerflow", method = "GET", user_action = true, fields...)
+  catch
+  end
+  return nothing
+end
+
+function _webui_normalize_case_profile_form_value(field::AbstractString, value)
+  value === nothing && return nothing
+  value === missing && return nothing
+  value isa AbstractVector && throw(ArgumentError("Case-settings field $(field) does not support vector values for form rendering."))
+  type = get(_WEBUI_CASE_PROFILE_FIELD_TYPES, String(field), String)
+  allowed = get(_WEBUI_CASE_PROFILE_SELECT_VALUES, String(field), nothing)
+  if allowed !== nothing && value isa Bool
+    !value && "off" in allowed && return "off"
+    value && "on" in allowed && return "on"
+  end
+  normalized = if type === Bool
+    _webui_form_bool(value)
+  elseif type <: Integer
+    value isa Bool && throw(ArgumentError("Case-settings field $(field) must be an integer."))
+    if value isa Integer
+      Int(value)
+    elseif value isa AbstractFloat && isinteger(value) && isfinite(value)
+      Int(value)
+    else
+      text = value isa AbstractString ? strip(value) : _webui_form_string(value)
+      parsed = tryparse(type, text)
+      parsed === nothing && throw(ArgumentError("Case-settings field $(field) has invalid integer value $(repr(text))."))
+      parsed
+    end
+  elseif type <: AbstractFloat
+    text = _webui_form_number_string(value)
+    parsed = tryparse(type, text)
+    parsed === nothing && throw(ArgumentError("Case-settings field $(field) has invalid numeric value $(repr(text))."))
+    parsed
+  else
+    _webui_form_string(value)
+  end
+  if allowed !== nothing && !(_webui_form_string(normalized) in allowed)
+    throw(ArgumentError("Case-settings field $(field) has unsupported value $(repr(normalized))."))
+  end
+  return normalized
+end
+
+function webui_form_state(; selected_casefile::AbstractString = "", selected_config_file::AbstractString = "", sidecar_profile = nothing, submitted_form = nothing)
+  values = Dict{String,Any}(spec.field => spec.default for spec in WEBUI_OPTION_SPECS)
+  values["casefile"] = selected_casefile
+  values["casefile_manual"] = ""
+  values["config_file"] = isempty(selected_config_file) ? DEFAULT_SPARLECTRA_CONFIG_PATH : selected_config_file
+  if sidecar_profile isa AbstractDict
+    for (field, value) in sidecar_profile
+      field == "_profile_path" && continue
+      haskey(_WEBUI_OPTION_BY_FIELD, String(field)) || continue
+      values[String(field)] = _webui_normalize_case_profile_form_value(String(field), value)
+    end
+    haskey(sidecar_profile, "_profile_path") && (values["_profile_path"] = sidecar_profile["_profile_path"])
+  end
+  if submitted_form isa AbstractDict
+    for spec in WEBUI_OPTION_SPECS
+      if spec.control == :checkbox
+        values[spec.field] = _webui_form_bool(_webui_form_value(submitted_form, spec.field, false))
+      elseif _webui_form_value(submitted_form, spec.field, nothing) !== nothing
+        raw = _webui_form_value(submitted_form, spec.field)
+        values[spec.field] = try
+          _webui_normalize_case_profile_form_value(spec.field, raw)
+        catch
+          _webui_form_string(raw)
+        end
+      end
+    end
+    for field in ("casefile", "casefile_manual", "config_file")
+      raw = _webui_form_value(submitted_form, field, nothing)
+      raw === nothing || (values[field] = strip(_webui_form_string(raw)))
+    end
+  end
+  return values
+end
+
+function _webui_load_case_settings(output_root::AbstractString, casefile::AbstractString; case_directory::Union{Nothing,AbstractString} = nothing)
+  path = try
+    _webui_case_settings_path(output_root, casefile; case_directory)
+  catch err
+    _webui_log_case_settings_load(output_root, "case_settings_load_failed"; casefile, status = "rejected", message = sprint(showerror, err))
+    return nothing
+  end
+  if !isfile(path)
+    _webui_log_case_settings_load(output_root, "case_settings_not_found"; casefile, profile_path = path, status = "missing")
+    return nothing
+  end
+  try
+    data = load_yaml_dict(path)
+    if get(data, "schema_version", nothing) != 1
+      _webui_log_case_settings_load(output_root, "case_settings_load_failed"; casefile, profile_path = path, status = "rejected", message = "unsupported schema_version")
+      return nothing
+    end
+    if get(data, "profile_kind", "") != "webui_case_settings"
+      _webui_log_case_settings_load(output_root, "case_settings_load_failed"; casefile, profile_path = path, status = "rejected", message = "unsupported profile_kind")
+      return nothing
+    end
+    settings = get(data, "settings", nothing)
+    if !(settings isa AbstractDict)
+      _webui_log_case_settings_load(output_root, "case_settings_load_failed"; casefile, profile_path = path, status = "rejected", message = "settings must be a dictionary")
+      return nothing
+    end
+    profile = Dict{String,Any}()
+    for (key, value) in settings
+      field = String(key)
+      if !(field in _WEBUI_CASE_PROFILE_FIELDS)
+        _webui_log_case_settings_load(output_root, "case_settings_field_ignored"; casefile, profile_path = path, status = "ignored", field, message = "unknown field")
+        continue
+      end
+      try
+        normalized = _webui_normalize_case_profile_form_value(field, value)
+        normalized === nothing && continue
+        profile[field] = normalized
+      catch err
+        _webui_log_case_settings_load(output_root, "case_settings_field_ignored"; casefile, profile_path = path, status = "ignored", field, message = sprint(showerror, err))
+      end
+    end
+    profile["_profile_path"] = path
+    _webui_log_case_settings_load(output_root, "case_settings_loaded"; casefile, profile_path = path, status = "loaded", setting_count = length(profile) - 1)
+    return profile
+  catch err
+    _webui_log_case_settings_load(output_root, "case_settings_load_failed"; casefile, profile_path = path, status = "failed", message = sprint(showerror, err))
+    return nothing
+  end
+end
+
+function _webui_input_value(values::AbstractDict, field::AbstractString, default)::String
+  return _webui_escape(_webui_form_string(get(values, field, default)))
+end
+
+function _webui_checked(values::AbstractDict, field::AbstractString, default::Bool)::String
+  return _webui_parse_bool(get(values, field, default)) ? " checked" : ""
+end
+
+function _webui_selected(values::AbstractDict, field::AbstractString, default)
+  return get(values, field, default)
+end
 
 function _webui_form_value(form::AbstractDict, key::String, default = nothing)
   haskey(form, key) && return form[key]
@@ -101,9 +291,7 @@ function _webui_form_value(form::AbstractDict, key::String, default = nothing)
 end
 
 function _webui_parse_bool(value)::Bool
-  value isa Bool && return value
-  value === nothing && return false
-  return lowercase(strip(String(value))) in ("1", "true", "yes", "on")
+  return _webui_form_bool(value)
 end
 
 function _webui_parse_form_value(value, ::Type{Bool}, field::String)
@@ -111,7 +299,7 @@ function _webui_parse_form_value(value, ::Type{Bool}, field::String)
 end
 
 function _webui_parse_form_value(value, type::Type{<:Number}, field::String)
-  text = value === nothing ? "" : strip(String(value))
+  text = value === nothing ? "" : strip(string(value))
   isempty(text) && throw(ArgumentError("Web UI field $(field) must not be empty."))
   try
     return parse(type, text)
@@ -139,16 +327,25 @@ function powerflow_webui_request(form::AbstractDict; default_output_root::Abstra
   overrides = Dict{String,Any}()
   for (config_key, field, type) in _WEBUI_FORM_CONFIG_FIELDS
     config_key in GUI_EDITABLE_CONFIG_KEYS || error("Web UI field $(field) is not GUI-editable.")
-    overrides[config_key] = _webui_parse_form_value(_webui_form_value(form, field), type, field)
+    spec = _webui_option_spec(field)
+    _webui_form_value(form, field, nothing) === nothing && continue
+    raw = _webui_form_value(form, field)
+    overrides[config_key] = _webui_parse_form_value(raw, type, field)
+  end
+  request_options = Dict{String,Any}()
+  for field in _WEBUI_CASE_PROFILE_EXTRA_FIELDS
+    spec = _webui_option_spec(field)
+    raw = _webui_form_value(form, field, spec.default)
+    request_options[field] = _webui_parse_form_value(raw, spec.value_type, field)
   end
   return Dict{String,Any}(
     "casefile" => casefile,
     "config_file" => config_file,
     "output_root" => output_root,
     "config_overrides" => overrides,
-    "performance_timing" => _webui_parse_form_value(_webui_form_value(form, "performance_timing", "off"), String, "performance_timing"),
-    "run_diagnostics" => _webui_parse_bool(_webui_form_value(form, "run_diagnostics")),
-    "detailed_result_csv" => _webui_parse_bool(_webui_form_value(form, "detailed_result_csv")),
-    "detailed_result_csv_format" => _webui_parse_form_value(_webui_form_value(form, "detailed_result_csv_format", "technical"), String, "detailed_result_csv_format"),
+    "performance_timing" => request_options["performance_timing"],
+    "run_diagnostics" => request_options["run_diagnostics"],
+    "detailed_result_csv" => request_options["detailed_result_csv"],
+    "detailed_result_csv_format" => request_options["detailed_result_csv_format"],
   )
 end

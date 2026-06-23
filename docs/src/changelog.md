@@ -1,3 +1,33 @@
+## Version 0.8.7 – 2026-06-23
+
+### New Features
+
+* Added a guarded current-injection start pre-solve for large MATPOWER workflows, including YAML/API/Web UI configuration, sidecar persistence, and `current_iteration_start.log` diagnostics.
+* Added conservative MATPOWER auto-profile handling with safer default recommendations, explicit apply/skip logging, and no silent solver-start or Q-limit overrides.
+* Added explicit fail-fast detection for unsupported active MATPOWER `mpc.dcline` data in API/Web UI runs.
+* Added classical Q-limit enforcement modes (`classic_simultaneous`, `classic_one_at_a_time`) for diagnostic and large-case analysis.
+* Added Web UI case-sidecar settings and compact operation-log retention for local support workflows.
+
+### Improvements
+
+* Improved power-flow diagnostics with DC-start quality metrics, compact/full mismatch summaries, clearer final-mismatch status, and Q-limit validation output with MVAr units and non-converged validity labels.
+* Improved Web UI/API transparency by recording runtime case metadata, MATPOWER import decisions, Q-limit settings, output options, and partial artifact status in logs and effective configuration artifacts.
+* Improved the PowerFlow Web UI layout, Advanced/Expert option grouping, dismissible validation errors, and collapsed Last Errors handling.
+* Improved detailed CSV handling for large and non-converged runs, including partial exports, structured skip reasons, and artifact rediscovery.
+* Restored compact default test-run output while keeping verbose diagnostics available as an explicit opt-in.
+
+### Experimental / Developer Tooling
+
+* Moved the large-case Q-limit comparison utility to `examples/experimental/qlimit_large_case_comparison.jl` and removed it from the stable API and normal fast test profile.
+
+### Bugfixes
+
+* Fixed MATPOWER import option propagation for Web UI/API runs, including auto-profile, transformer ratio, phase shift, shunt, and voltage-reference options.
+* Fixed Web UI case-sidecar save/load handling with type-safe YAML values and case-local persistence.
+* Fixed Q-limit diagnostics so stale/intermediate violations are not reported as final violations when the final PV/REF check is OK.
+* Fixed effective configuration artifacts so they include the actual resolved runtime casefile and case name.
+* Fixed CSV artifact handling for non-converged runs with available network state.
+
 ## Version 0.8.6 – 2026-06-18
 ### Improvements
 * Added configurable detailed CSV artifact writing with `auto`, `buffered`, and `streaming` modes so large output artifacts can stream directly to disk while normal cases keep buffered writes.
@@ -61,7 +91,7 @@
 
 ### Improvements
 
-* Hardened `matpower_import.auto_profile` into a MATPOWER pre-run that logs recommendation evidence, preserves `recommend` mode without changing the active configuration, applies only unambiguous import-convention changes in `apply` mode, and prints final effective options without rewriting YAML files.
+* Hardened `matpower_import.auto_profile` into a MATPOWER pre-run that logs recommendation evidence, preserves `recommend` mode without changing the active configuration, applies safe import-convention, comparison-reference, start-mode, and Q-limit guard changes in `apply` mode, and prints final effective options without rewriting YAML files.
 * Refactored the rectangular complex-state power-flow implementation into focused modules under `src/powerflow_rectangular/`, with `runpf_rectangular!` as the network-integrated entry point and `run_complex_nr_rectangular` as the standalone array-level solver.
 
 ### Bugfixes
@@ -582,4 +612,4 @@
   final when that phase returns.
 
 * **Bugfix**: Web UI submissions now run independently of request handling so active status and Abort controls are reachable before completion; first startup also provisions user-writable configuration, case-cache, run, and operation-log paths instead of using package-tree runtime defaults.
-* **Improvement**: The PowerFlow result/status page now highlights elapsed runtime in a clock-style `HH:MM:SS` card beside the run status while retaining raw timing metadata for diagnostics.
+* **Improvement**: The PowerFlow result/status page now highlights elapsed runtime in a clock-style `HH:MM:SS.mmm` card beside the run status while retaining raw timing metadata for diagnostics.

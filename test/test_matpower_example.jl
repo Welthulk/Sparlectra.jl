@@ -50,6 +50,39 @@ power_flow:
     cfg_startmode = Sparlectra.load_sparlectra_config(startmode_cfg; reload = true)
     @test cfg_startmode.powerflow.start_mode.angle_mode === :dc
     @test cfg_startmode.powerflow.start_mode.voltage_mode === :pv_gen_vg
+    @test cfg_startmode.powerflow.start_current_iteration.enabled === false
+
+    current_iteration_cfg = tempname() * ".yaml"
+    write(current_iteration_cfg, """
+power_flow:
+  start_current_iteration:
+    enabled: true
+    max_iter: 4
+    tol: 1.0e-4
+    damping: 0.75
+    accept_only_if_improved: false
+    min_improvement_factor: 0.9
+    vm_min_pu: 0.6
+    vm_max_pu: 1.4
+    max_angle_step_deg: 20.0
+    only_for_large_cases: true
+""")
+    cfg_current_iteration = Sparlectra.load_sparlectra_config(current_iteration_cfg; reload = true)
+    @test cfg_current_iteration.powerflow.start_current_iteration.enabled === true
+    @test cfg_current_iteration.powerflow.start_current_iteration.max_iter == 4
+    @test cfg_current_iteration.powerflow.start_current_iteration.damping == 0.75
+    @test cfg_current_iteration.powerflow.start_current_iteration.accept_only_if_improved === false
+    @test cfg_current_iteration.powerflow.start_current_iteration.only_for_large_cases === true
+    bad_current_iteration_cfg = tempname() * ".yaml"
+    write(bad_current_iteration_cfg, "power_flow:\n  start_current_iteration:\n    damping: 2.0\n")
+    @test_throws ArgumentError Sparlectra.load_sparlectra_config(bad_current_iteration_cfg; reload = true)
+
+    old_refresh_cfg = tempname() * ".yaml"
+    write(old_refresh_cfg, "power_flow:\n  tol: 2.0e-6\n")
+    refresh = Sparlectra.refresh_sparlectra_config_file(old_refresh_cfg; write = false, backup = false)
+    @test "power_flow.start_current_iteration" in refresh.missing_keys
+    @test occursin("start_current_iteration:", refresh.refreshed_text)
+    @test occursin("tol: 2.0e-6", refresh.refreshed_text)
 
     for mode in ("classic", "dc", "bus_va_blend", "matpower_va")
       cfg_mode = tempname() * ".yaml"
@@ -66,10 +99,21 @@ power_flow:
     end
     cfg_legacy = tempname() * ".yaml"
     write(cfg_legacy, "power_flow:\n  start_mode:\n    voltage_mode: bus_vm_va_blend\n")
-    Sparlectra._warned_legacy_bus_vm_va_blend[] = false
-    cfg_legacy_loaded = @test_logs (:warn, r"Deprecated start mode `bus_vm_va_blend`") Sparlectra.load_sparlectra_config(cfg_legacy; reload = true)
-    @test cfg_legacy_loaded.powerflow.start_mode.voltage_mode === :profile_blend
-    @test cfg_legacy_loaded.powerflow.start_mode.profile_source === :matpower_reference
+    err_legacy = try
+      Sparlectra.load_sparlectra_config(cfg_legacy; reload = true)
+      nothing
+    catch err
+      err
+    end
+    @test err_legacy isa ArgumentError
+    @test occursin("bus_vm_va_blend alias has been removed", sprint(showerror, err_legacy))
+    @test occursin("profile_source: matpower_reference", sprint(showerror, err_legacy))
+
+    cfg_canonical = tempname() * ".yaml"
+    write(cfg_canonical, "power_flow:\n  start_mode:\n    voltage_mode: profile_blend\n    profile_source: matpower_reference\n")
+    cfg_canonical_loaded = Sparlectra.load_sparlectra_config(cfg_canonical; reload = true)
+    @test cfg_canonical_loaded.powerflow.start_mode.voltage_mode === :profile_blend
+    @test cfg_canonical_loaded.powerflow.start_mode.profile_source === :matpower_reference
 
     bad_startmode_cfg = tempname() * ".yaml"
     write(bad_startmode_cfg, "power_flow:\n  start_mode:\n    voltage_mode: nonsense\n")

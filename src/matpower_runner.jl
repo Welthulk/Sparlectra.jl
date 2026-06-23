@@ -545,13 +545,23 @@ function _matpower_import_auto_profile_residual_score(stats)::Float64
   return max(Float64(get(stats, :max_p_mis_pu, Inf)), Float64(get(stats, :max_q_mis_pu, Inf)))
 end
 
-function _matpower_import_auto_profile_convention_scan(mpc)
+function _matpower_import_auto_profile_convention_scan(mpc; vmva_stats = MatpowerIO.vmva_power_mismatch_stats)
   rows = NamedTuple[]
   for shift_unit in (:deg, :rad), shift_sign in (1.0, -1.0), ratio in (:normal, :reciprocal)
-    stats = MatpowerIO.vmva_power_mismatch_stats(mpc; matpower_shift_unit = shift_unit, matpower_shift_sign = shift_sign, matpower_ratio = ratio)
+    stats = vmva_stats(mpc; matpower_shift_unit = shift_unit, matpower_shift_sign = shift_sign, matpower_ratio = ratio)
     push!(rows, (shift_unit = shift_unit, shift_sign = shift_sign, ratio = ratio, stats = stats, score = _matpower_import_auto_profile_residual_score(stats)))
   end
   sort!(rows; by = row -> row.score)
+  return rows
+end
+
+function _matpower_import_auto_profile_scan_skipped_rows(mode::Symbol, mat::MatpowerImportConfig; reason::AbstractString)
+  rows = NamedTuple[]
+  evidence = "matpower_auto_profile_scan_skipped: $(reason); using configured/default MATPOWER conventions"
+  _push_auto_profile_row!(rows, mode, "matpower_import.shift_unit", mat.shift_unit, mat.shift_unit; safe_to_apply = false, reason = evidence)
+  _push_auto_profile_row!(rows, mode, "matpower_import.shift_sign", mat.shift_sign, mat.shift_sign; safe_to_apply = false, reason = evidence)
+  _push_auto_profile_row!(rows, mode, "matpower_import.ratio", mat.ratio, mat.ratio; safe_to_apply = false, reason = evidence)
+  _push_auto_profile_row!(rows, mode, "matpower_import.bus_shunt_model", mat.bus_shunt_model, mat.bus_shunt_model; safe_to_apply = false, reason = evidence)
   return rows
 end
 
@@ -561,13 +571,14 @@ function _matpower_import_auto_profile_shunt_score(mpc, include_shunts::Bool; sh
     bus[:, 5] .= 0.0
     bus[:, 6] .= 0.0
   end
-  mpc2 = MatpowerIO.MatpowerCase(mpc.name, mpc.baseMVA, bus, mpc.gen, mpc.branch, mpc.gencost, mpc.bus_name)
+  mpc2 = MatpowerIO.MatpowerCase(mpc.name, mpc.baseMVA, bus, mpc.gen, mpc.branch, mpc.gencost, mpc.bus_name, mpc.dcline)
   return _matpower_import_auto_profile_residual_score(MatpowerIO.vmva_power_mismatch_stats(mpc2; matpower_shift_unit = shift_unit, matpower_shift_sign = shift_sign, matpower_ratio = ratio))
 end
 
 function _matpower_import_auto_profile_action(mode::Symbol, current, recommended; safe_to_apply::Bool)::Symbol
   current == recommended && return :keep
   mode === :apply && safe_to_apply && return :applied
+  mode === :apply && return :skipped
   return :recommend
 end
 
@@ -603,7 +614,7 @@ function _copy_config_with(cfg::SparlectraConfig; powerflow = cfg.powerflow, mat
   return SparlectraConfig(; powerflow = powerflow, state_estimation = cfg.state_estimation, matpower = matpower, performance = cfg.performance, benchmark = cfg.benchmark, runtime = cfg.runtime, diagnostics = cfg.diagnostics, output = cfg.output, control = cfg.control)
 end
 
-function matpower_import_auto_profile(mpc, cfg::SparlectraConfig; mode::Symbol = cfg.matpower.auto_profile)
+function matpower_import_auto_profile(mpc, cfg::SparlectraConfig; mode::Symbol = cfg.matpower.auto_profile, convention_scan = _matpower_import_auto_profile_convention_scan)
   mode in (:off, :recommend, :apply) || throw(ArgumentError("matpower auto-profile mode must be off, recommend, or apply."))
   mode === :off && return (config = cfg, rows = NamedTuple[], applied = NamedTuple[])
 
@@ -612,7 +623,15 @@ function matpower_import_auto_profile(mpc, cfg::SparlectraConfig; mode::Symbol =
   rows = NamedTuple[]
   applied_pairs = Pair{Symbol,Any}[]
 
-  convention_rows = _matpower_import_auto_profile_convention_scan(mpc)
+  convention_rows = try
+    convention_scan(mpc)
+  catch err
+    if err isa OutOfMemoryError
+      @warn "matpower_auto_profile_scan_skipped: convention scan skipped because memory allocation failed; using configured/default MATPOWER conventions"
+      return (config = cfg, rows = _matpower_import_auto_profile_scan_skipped_rows(mode, mat; reason = "convention scan skipped because memory allocation failed"), applied = ())
+    end
+    rethrow()
+  end
   current_row = only([row for row in convention_rows if row.shift_unit === mat.shift_unit && row.shift_sign == mat.shift_sign && row.ratio === mat.ratio])
   best = first(convention_rows)
   current_score = current_row.score
@@ -661,19 +680,23 @@ function matpower_import_auto_profile(mpc, cfg::SparlectraConfig; mode::Symbol =
     "matpower_import.compare_voltage_reference",
     mat.compare_voltage_reference,
     rec_compare;
-    safe_to_apply = false,
+    safe_to_apply = true,
     reason = isempty(vg.mismatches) ? "BUS.VM and GEN.VG are consistent within tolerance" : "BUS.VM / GEN.VG mismatch detected; hybrid comparison keeps PQ buses on BUS.VM",
     evidence = "vg_bus_mismatches=$(length(vg.mismatches)) tol=$(mat.pv_voltage_mismatch_tol_pu)",
   )
+  mode === :apply && rec_compare !== mat.compare_voltage_reference && push!(applied_pairs, :compare_voltage_reference => rec_compare)
 
   nbus = size(mpc.bus, 1)
   npv = count(r -> Int(mpc.bus[r, 2]) == 2, axes(mpc.bus, 1))
   fragile_start = nbus >= 1000 || npv >= 100 || (isfinite(best_score) && best_score > 1.0e-3)
   if fragile_start
-    robust_start = (angle_mode = :dc, voltage_mode = :bus_vm_va_blend, start_projection = true, try_dc_start = true, try_blend_scan = true, branch_guard = true, measure_candidates = true, reuse_import_data = true)
+    robust_start = (angle_mode = :dc, voltage_mode = :profile_blend, start_projection = true, try_dc_start = true, try_blend_scan = true, branch_guard = true, measure_candidates = true, reuse_import_data = true)
     for (field, rec) in pairs(robust_start)
       cur = getfield(pf.start_mode, field)
-      _push_auto_profile_row!(rows, mode, "power_flow.start_mode.$(field)", cur, rec; safe_to_apply = false, reason = "large or fragile MATPOWER case; robust imported/DC start is safer", evidence = "nbus=$(nbus) npv=$(npv) best_residual=$(round(best_score; digits = 8))")
+      # Auto-profile may recommend solver-start settings, but applying them can
+      # change the Newton basin. Keep solver-start overrides conservative unless
+      # the user explicitly opted into them.
+      _push_auto_profile_row!(rows, mode, "power_flow.start_mode.$(field)", cur, rec; safe_to_apply = false, reason = "large or fragile MATPOWER case; robust imported/DC start is only a recommendation", evidence = "nbus=$(nbus) npv=$(npv) best_residual=$(round(best_score; digits = 8))")
     end
   end
 
@@ -703,12 +726,20 @@ function matpower_import_auto_profile(mpc, cfg::SparlectraConfig; mode::Symbol =
     for (field, rec) in pairs(q_recs)
       cur = getfield(pf.qlimits, field)
       option = field in (:guard_min_q_range_pu, :guard_narrow_range_mode, :guard_zero_range_mode, :guard_violation_mode, :guard_max_switches, :guard_max_remaining_violations) ? "power_flow.qlimits.guard.$(replace(String(field), "guard_" => ""))" : "power_flow.qlimits.$(field)"
-      _push_auto_profile_row!(rows, mode, option, cur, rec; safe_to_apply = false, reason = "many PV buses or narrow Q ranges; conservative Q-limit guard recommended", evidence = "npv=$(npv) narrow_q_ranges=$(narrow_q)")
+      # Explicit user/sidecar settings win over auto-profile recommendations.
+      # This prevents Web UI profile detection from silently changing convergence behavior.
+      _push_auto_profile_row!(rows, mode, option, cur, rec; safe_to_apply = false, reason = "many PV buses or narrow Q ranges; Q-limit guard change is only a recommendation", evidence = "npv=$(npv) narrow_q_ranges=$(narrow_q)")
     end
   end
 
-  mat2 = isempty(applied_pairs) ? mat : _copy_matpower_with(mat; applied_pairs...)
-  cfg2 = mat2 === mat ? cfg : _copy_config_with(cfg; matpower = mat2)
+  qlimit_updates = Pair{Symbol,Any}[]
+  mat_updates = Pair{Symbol,Any}[pair for pair in applied_pairs if first(pair) in fieldnames(MatpowerImportConfig)]
+  start_updates = Pair{Symbol,Any}[]
+  mat2 = isempty(mat_updates) ? mat : _copy_matpower_with(mat; mat_updates...)
+  start2 = isempty(start_updates) ? pf.start_mode : _copy_start_mode_with(pf.start_mode; start_updates...)
+  qlim2 = isempty(qlimit_updates) ? pf.qlimits : _copy_qlimits_with(pf.qlimits; qlimit_updates...)
+  pf2 = (start2 === pf.start_mode && qlim2 === pf.qlimits) ? pf : _copy_powerflow_with(pf; start_mode = start2, qlimits = qlim2)
+  cfg2 = (mat2 === mat && pf2 === pf) ? cfg : _copy_config_with(cfg; matpower = mat2, powerflow = pf2)
   return (config = cfg2, rows = rows, applied = Tuple(applied_pairs))
 end
 
@@ -720,6 +751,41 @@ function print_matpower_import_auto_profile(io::IO, rows)
   for row in rows
     reason = isempty(row.evidence) ? row.reason : string(row.reason, " (", row.evidence, ")")
     @printf(io, "%-46s %-14s %-14s %-10s %s\n", row.option, row.current, row.recommended, string(row.action), reason)
+  end
+  println(io)
+  return nothing
+end
+
+function _auto_profile_row_value(rows, option::AbstractString, field::Symbol)
+  for row in rows
+    row.option == option && return getfield(row, field)
+  end
+  return ""
+end
+
+function print_matpower_import_auto_profile_summary(io::IO, auto_profile_result, cfg::SparlectraConfig)
+  rows = auto_profile_result.rows
+  isempty(rows) && return nothing
+  println(io, "Original MATPOWER import options:")
+  println(io, "  auto_profile = ", cfg.matpower.auto_profile)
+  println(io, "  ratio        = ", _auto_profile_row_value(rows, "matpower_import.ratio", :current))
+  println(io, "  shift_unit   = ", _auto_profile_row_value(rows, "matpower_import.shift_unit", :current))
+  println(io, "  shift_sign   = ", _auto_profile_row_value(rows, "matpower_import.shift_sign", :current))
+  println(io)
+  println(io, "Auto-profile recommendation:")
+  println(io, "  ratio        = ", _auto_profile_row_value(rows, "matpower_import.ratio", :recommended))
+  println(io, "  shift_unit   = ", _auto_profile_row_value(rows, "matpower_import.shift_unit", :recommended))
+  println(io, "  shift_sign   = ", _auto_profile_row_value(rows, "matpower_import.shift_sign", :recommended))
+  println(io)
+  println(io, "Final effective MATPOWER import options:")
+  println(io, "  auto_profile = ", cfg.matpower.auto_profile)
+  println(io, "  ratio        = ", cfg.matpower.ratio)
+  println(io, "  shift_unit   = ", cfg.matpower.shift_unit)
+  println(io, "  shift_sign   = ", cfg.matpower.shift_sign)
+  if cfg.matpower.auto_profile === :apply && isempty(auto_profile_result.applied)
+    println(io, "  applied      = none (all safe recommendations already matched the runtime options or the scan was ambiguous)")
+  elseif cfg.matpower.auto_profile === :apply
+    println(io, "  applied      = ", join((string(first(pair), "=", last(pair)) for pair in auto_profile_result.applied), ", "))
   end
   println(io)
   return nothing
@@ -752,6 +818,33 @@ function print_matpower_import_auto_profile_effective_options(io::IO, cfg::Sparl
   return nothing
 end
 
+function print_matpower_import_runtime_options(io::IO, title::AbstractString, cfg::SparlectraConfig)
+  println(io, title)
+  println(io, "-" ^ textwidth(title))
+  println(io, "matpower_import.auto_profile: ", cfg.matpower.auto_profile)
+  println(io, "matpower_import.ratio: ", cfg.matpower.ratio)
+  println(io, "matpower_import.shift_sign: ", cfg.matpower.shift_sign)
+  println(io, "matpower_import.shift_unit: ", cfg.matpower.shift_unit)
+  println(io, "matpower_import.bus_shunt_model: ", cfg.matpower.bus_shunt_model)
+  println(io, "matpower_import.pv_voltage_source: ", cfg.matpower.pv_voltage_source)
+  println(io, "matpower_import.compare_voltage_reference: ", cfg.matpower.compare_voltage_reference)
+  println(io)
+  return nothing
+end
+
+function run_matpower_import_auto_profile(mpc, cfg::SparlectraConfig)
+  cfg.matpower.auto_profile === :off && return (config = cfg, rows = NamedTuple[], applied = NamedTuple[])
+  return matpower_import_auto_profile(mpc, cfg; mode = cfg.matpower.auto_profile)
+end
+
+function write_matpower_import_auto_profile(io::IO, auto_profile_result, cfg::SparlectraConfig; casefile::AbstractString = "")
+  !isempty(casefile) && println(io, "Runtime casefile: ", casefile, "\n")
+  print_matpower_import_auto_profile_summary(io, auto_profile_result, cfg)
+  print_matpower_import_auto_profile(io, auto_profile_result.rows)
+  print_matpower_import_auto_profile_effective_options(io, cfg)
+  return nothing
+end
+
 """
     run_matpower_case(; casefile::AbstractString = "", config_file::AbstractString = "")
 
@@ -772,7 +865,7 @@ function run_matpower_case(; casefile::AbstractString = "", config_file::Abstrac
   auto_profile_result = nothing
   if cfg.matpower.auto_profile !== :off
     mpc_for_profile = MatpowerIO.read_case(local_case; legacy_compat = true)
-    auto_profile_result = matpower_import_auto_profile(mpc_for_profile, cfg; mode = cfg.matpower.auto_profile)
+    auto_profile_result = run_matpower_import_auto_profile(mpc_for_profile, cfg)
     cfg = auto_profile_result.config
   end
   print_matpower_runner_header(
@@ -798,11 +891,9 @@ function run_matpower_case(; casefile::AbstractString = "", config_file::Abstrac
     )
   end
   if auto_profile_result !== nothing && cfg.matpower.auto_profile_log
-    print_matpower_import_auto_profile(stdout, auto_profile_result.rows)
-    print_matpower_import_auto_profile_effective_options(stdout, cfg)
+    write_matpower_import_auto_profile(stdout, auto_profile_result, cfg; casefile = local_case)
     open(logfile, "a") do io
-      print_matpower_import_auto_profile(io, auto_profile_result.rows)
-      print_matpower_import_auto_profile_effective_options(io, cfg)
+      write_matpower_import_auto_profile(io, auto_profile_result, cfg; casefile = local_case)
       print_effective_config(io, cfg)
     end
   end
