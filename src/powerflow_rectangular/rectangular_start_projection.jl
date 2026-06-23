@@ -305,6 +305,71 @@ function _dc_angle_start_rectangular_profiled(Ybus, Vraw::Vector{ComplexF64}, S:
   return Vdc
 end
 
+function _dc_start_quality_diagnostics(Ybus, Vdc::Union{Nothing,Vector{ComplexF64}}, raw_mis::Float64, dc_mis::Float64, slack_idx::Int, dc_angle_limit_deg::Float64)
+  if Vdc === nothing || isempty(Vdc)
+    return (
+      dc_angle_min_deg = missing, dc_angle_max_deg = missing, dc_angle_spread_deg = missing,
+      dc_angle_mean_deg = missing, dc_angle_std_deg = missing, dc_angle_clipped_count = 0,
+      dc_angle_clip_limit_deg = dc_angle_limit_deg, dc_max_branch_angle_deg = missing,
+      dc_branch_angle_violation_count = 0, worst_dc_branch_from_bus = missing,
+      worst_dc_branch_to_bus = missing, worst_dc_branch_angle_deg = missing,
+      dc_voltage_magnitude_min = missing, dc_voltage_magnitude_max = missing,
+      dc_mismatch_ratio_vs_raw = missing, dc_mismatch_growth_factor = missing,
+      requested_dc_worse_than_raw = false,
+    )
+  end
+  angles = angle.(Vdc) .* (180.0 / π)
+  slack_angle = angles[slack_idx]
+  rel_angles = angles .- slack_angle
+  vm = abs.(Vdc)
+  finite_rel = filter(isfinite, rel_angles)
+  mean_angle = isempty(finite_rel) ? NaN : sum(finite_rel) / length(finite_rel)
+  std_angle = isempty(finite_rel) ? NaN : sqrt(sum((a - mean_angle)^2 for a in finite_rel) / length(finite_rel))
+  clipped_count = count(a -> isfinite(a) && abs(a) >= dc_angle_limit_deg - 1.0e-8, rel_angles)
+  worst_from = missing
+  worst_to = missing
+  worst_angle = 0.0
+  violation_count = 0
+  limit = dc_angle_limit_deg
+  @inbounds for j in axes(Ybus, 2)
+    for ptr in (Ybus isa SparseMatrixCSC ? nzrange(Ybus, j) : axes(Ybus, 1))
+      i = Ybus isa SparseMatrixCSC ? rowvals(Ybus)[ptr] : ptr
+      i < j || continue
+      yij = Ybus isa SparseMatrixCSC ? nonzeros(Ybus)[ptr] : Ybus[i, j]
+      iszero(yij) && continue
+      Δ = abs((angle(Vdc[i]) - angle(Vdc[j])) * 180.0 / π)
+      if isfinite(Δ)
+        Δ > limit && (violation_count += 1)
+        if Δ > worst_angle
+          worst_angle = Δ
+          worst_from = i
+          worst_to = j
+        end
+      end
+    end
+  end
+  ratio = isfinite(raw_mis) && raw_mis > 0.0 && isfinite(dc_mis) ? dc_mis / raw_mis : missing
+  return (
+    dc_angle_min_deg = isempty(finite_rel) ? missing : minimum(finite_rel),
+    dc_angle_max_deg = isempty(finite_rel) ? missing : maximum(finite_rel),
+    dc_angle_spread_deg = isempty(finite_rel) ? missing : maximum(finite_rel) - minimum(finite_rel),
+    dc_angle_mean_deg = isempty(finite_rel) ? missing : mean_angle,
+    dc_angle_std_deg = isempty(finite_rel) ? missing : std_angle,
+    dc_angle_clipped_count = clipped_count,
+    dc_angle_clip_limit_deg = dc_angle_limit_deg,
+    dc_max_branch_angle_deg = ismissing(worst_from) ? missing : worst_angle,
+    dc_branch_angle_violation_count = violation_count,
+    worst_dc_branch_from_bus = worst_from,
+    worst_dc_branch_to_bus = worst_to,
+    worst_dc_branch_angle_deg = ismissing(worst_from) ? missing : worst_angle,
+    dc_voltage_magnitude_min = isempty(vm) ? missing : minimum(vm),
+    dc_voltage_magnitude_max = isempty(vm) ? missing : maximum(vm),
+    dc_mismatch_ratio_vs_raw = ratio,
+    dc_mismatch_growth_factor = ratio,
+    requested_dc_worse_than_raw = isfinite(raw_mis) && isfinite(dc_mis) && dc_mis > raw_mis,
+  )
+end
+
 function _blend_voltage_starts(Vraw::Vector{ComplexF64}, Vdc::Vector{ComplexF64}, λ::Float64, slack_idx::Int)
   0.0 <= λ <= 1.0 || error("blend lambda must satisfy 0 ≤ λ ≤ 1 (got $(λ)).")
   V = similar(Vraw)
@@ -331,10 +396,11 @@ The function optionally evaluates multiple start candidates derived from the raw
 - DC-angle start,
 - optional raw/DC blended starts.
 
-If mismatch evaluation is enabled, the candidate with the lowest finite maximum
-rectangular mismatch is selected. The slack-bus complex voltage is preserved as
-reference in all generated candidates. Optional branch-guard checks prevent
-returning non-finite voltages.
+Default behavior chooses the best finite measured start candidate. Requested DC
+behavior is different: when `requested_angle_mode == :dc`, a finite and guarded
+DC-angle start is used as the requested baseline, and raw is used only if the
+DC candidate is invalid/non-finite or rejected by a start guard. The slack-bus
+complex voltage is preserved as reference in all generated candidates.
 
 # Arguments
 - `Ybus`: Bus admittance matrix (dense or sparse).
@@ -488,6 +554,7 @@ function project_rectangular_start(
   _perf_profile_time!(performance_profile, :start_projection_final_selection) do
     nothing
   end
+  dc_quality = _dc_start_quality_diagnostics(Ybus, Vdc, raw_mis, dc_mis, slack_idx, dc_angle_limit_deg)
   if performance_profile isa AbstractDict && Bool(get(performance_profile, :enabled, false))
     # Compact selection summary for diagnostics/UI without storing all candidate vectors.
     performance_profile[:start_projection_summary] = (
@@ -509,11 +576,15 @@ function project_rectangular_start(
       projected_mismatch = reported_best_mis,
       fallback_to_raw = fallback_to_raw,
       fallback_reason = fallback_reason,
+      raw_fallback_reason = fallback_reason,
+      start_projection_mismatch_before = isfinite(raw_mis) ? raw_mis : missing,
+      start_projection_mismatch_after = reported_best_mis,
+      dc_quality...,
     )
   end
 
   if verbose > 0
-    @info "start projection selected $(best_name)" requested_angle_mode = requested_angle_mode requested_voltage_mode = requested_voltage_mode reason = selection_reason raw_mismatch = (isfinite(raw_mis) ? raw_mis : missing) dc_mismatch = (isfinite(dc_mis) ? dc_mis : missing) projected_mismatch = reported_best_mis dc_angle_start_built = dc_angle_start_built dc_angle_start_valid = dc_angle_start_valid dc_angle_start_applied = dc_angle_start_applied fallback_to_raw = fallback_to_raw fallback_reason = fallback_reason
+    @info "start projection selected $(best_name)" requested_angle_mode = requested_angle_mode requested_voltage_mode = requested_voltage_mode reason = selection_reason raw_mismatch = (isfinite(raw_mis) ? raw_mis : missing) dc_mismatch = (isfinite(dc_mis) ? dc_mis : missing) projected_mismatch = reported_best_mis dc_angle_start_built = dc_angle_start_built dc_angle_start_valid = dc_angle_start_valid dc_angle_start_applied = dc_angle_start_applied fallback_to_raw = fallback_to_raw fallback_reason = fallback_reason dc_angle_spread_deg = dc_quality.dc_angle_spread_deg dc_max_branch_angle_deg = dc_quality.dc_max_branch_angle_deg dc_mismatch_ratio_vs_raw = dc_quality.dc_mismatch_ratio_vs_raw
   end
   return best
 end

@@ -101,7 +101,51 @@ function _write_api_timing_summary(io::IO, result::SparlectraRunResult, config::
   return nothing
 end
 
-function _write_powerflow_diagnostics(path::AbstractString, result::SparlectraRunResult; diagnostic_fn = nothing)
+_final_mismatch_status(result::SparlectraRunResult)::String = isfinite(result.final_mismatch) ? "finite" : (isnan(result.final_mismatch) ? "nonfinite" : "not_reported_by_solver")
+_final_mismatch_available(result::SparlectraRunResult)::Bool = isfinite(result.final_mismatch)
+_final_mismatch_reason(result::SparlectraRunResult)::String = _final_mismatch_available(result) ? "available" : (isnan(result.final_mismatch) ? "solver returned nonfinite final mismatch" : "solver returned unavailable final mismatch")
+_diag_value(result::SparlectraRunResult, name::Symbol, default = "unavailable") = hasproperty(result.diagnostics, name) ? getproperty(result.diagnostics, name) : default
+
+function _write_powerflow_mismatch_diagnostics(io::IO, result::SparlectraRunResult; mode::Symbol)
+  println(io, "Mismatch summary")
+  println(io, "----------------")
+  println(io, "initial_mismatch: ", _diag_value(result, :initial_mismatch, _diag_value(result, :nr_initial_mismatch, "unavailable")))
+  println(io, "final_mismatch: ", isfinite(result.final_mismatch) ? result.final_mismatch : (isnan(result.final_mismatch) ? "NaN" : "unavailable"))
+  println(io, "final_mismatch_status: ", _final_mismatch_status(result))
+  println(io, "final_mismatch_available: ", _final_mismatch_available(result))
+  _final_mismatch_available(result) || println(io, "final_mismatch_reason_if_unavailable: ", _final_mismatch_reason(result))
+  println(io, "iterations: ", result.iterations)
+  println(io, "converged: ", result.final_converged)
+  println(io, "failure_reason: ", result.final_converged ? "none" : result.reason)
+  for key in (:selected_start_candidate, :raw_mismatch, :dc_mismatch, :projected_mismatch,
+              :current_iteration_initial_mismatch, :current_iteration_final_mismatch,
+              :current_iteration_accepted, :current_iteration_reason)
+    println(io, key, ": ", _diag_value(result, key))
+  end
+  if mode === :full
+    for key in (:best_blend_mismatch, :start_projection_mismatch_before,
+                :start_projection_mismatch_after, :current_iteration_candidate_mismatch,
+                :nr_initial_mismatch, :nr_final_mismatch, :max_active_power_mismatch,
+                :max_reactive_power_mismatch,
+                :max_voltage_residual_or_setpoint_residual_where_available,
+                :requested_angle_mode, :requested_voltage_mode, :selection_reason,
+                :fallback_to_raw, :raw_fallback_reason, :dc_angle_start_built,
+                :dc_angle_start_valid, :dc_angle_start_applied, :dc_angle_min_deg,
+                :dc_angle_max_deg, :dc_angle_spread_deg, :dc_angle_mean_deg,
+                :dc_angle_std_deg, :dc_angle_clipped_count, :dc_angle_clip_limit_deg,
+                :dc_max_branch_angle_deg, :dc_branch_angle_violation_count,
+                :worst_dc_branch_from_bus, :worst_dc_branch_to_bus,
+                :worst_dc_branch_angle_deg, :dc_voltage_magnitude_min,
+                :dc_voltage_magnitude_max, :dc_mismatch_ratio_vs_raw,
+                :requested_dc_worse_than_raw, :dc_mismatch_growth_factor)
+      println(io, key, ": ", _diag_value(result, key))
+    end
+  end
+  println(io)
+  return nothing
+end
+
+function _write_powerflow_diagnostics(path::AbstractString, result::SparlectraRunResult; diagnostic_fn = nothing, mode::Symbol = :compact)
   open(path, "w") do io
     println(io, "Sparlectra PowerFlow diagnostics")
     println(io, "================================")
@@ -110,11 +154,16 @@ function _write_powerflow_diagnostics(path::AbstractString, result::SparlectraRu
         println(io, "outcome: ", result.outcome)
         println(io, "reason: ", result.reason_text)
         println(io)
-        printQLimitLog(result.net; io)
-        println(io)
-        printPVQLimitsTable(result.net; io)
-        println(io)
-        printFinalLimitValidation(result.net; io, converged = result.numerical_converged)
+        _write_powerflow_mismatch_diagnostics(io, result; mode = mode)
+        if mode === :full
+          printQLimitLog(result.net; io)
+          println(io)
+          printPVQLimitsTable(result.net; io)
+          println(io)
+          printFinalLimitValidation(result.net; io, converged = result.numerical_converged)
+        else
+          println(io, "Q-limit validity: ", result.numerical_converged ? "valid final validation available in q_limit.log" : "last-iteration diagnostic only; NR did not converge")
+        end
       else
         diagnostic_fn(io, result)
       end
@@ -859,7 +908,8 @@ function _write_numerical_outcome_summary(io::IO, raw_result::SparlectraRunResul
   println(io)
   println(io, "Numerical outcome: not_converged")
   println(io, "Primary reason: ", raw_result.reason_text)
-  println(io, "Final mismatch: ", raw_result.final_mismatch)
+  println(io, "Final mismatch: ", isfinite(raw_result.final_mismatch) ? raw_result.final_mismatch : (isnan(raw_result.final_mismatch) ? "NaN" : "unavailable"))
+  println(io, "Final mismatch status: ", _final_mismatch_status(raw_result))
   qlimit_ok = hasproperty(raw_result.diagnostics, :q_limit_active_set_ok) ? getproperty(raw_result.diagnostics, :q_limit_active_set_ok) : nothing
   qlimit_ok === nothing || println(io, "Q-limit active-set convergence: ", qlimit_ok ? "yes" : "no")
   for (label, field) in (
@@ -1182,7 +1232,7 @@ function _run_sparlectra_api(;
   _check_powerflow_cancelled!(cancellation_token)
   emit_phase("writing_artifacts")
   operation_callback("powerflow_lifecycle_status"; run_id = run_id, solver_status = "completed", artifact_status = "running", run_status = "finalizing", last_phase = "writing_artifacts")
-  run_diagnostics && _write_powerflow_diagnostics(joinpath(output_path, "diagnose.log"), raw_result)
+  run_diagnostics && _write_powerflow_diagnostics(joinpath(output_path, "diagnose.log"), raw_result; mode = config.output.logfile_diagnostics)
   q_limit_artifacts = raw_result.net !== nothing ? [_write_q_limit_log_artifact(output_path, raw_result, qlimit_metadata)] : String[]
   if (run_diagnostics || detailed_result_csv) && raw_result.net !== nothing
     append!(q_limit_artifacts, _write_q_limit_detail_artifacts(output_path, raw_result.net; format = "technical"))

@@ -173,6 +173,7 @@ function _build_rectangular_final_status(
   wrong_branch_detection::Symbol,
   wrong_branch_rescue_attempted::Bool,
   wrong_branch_rescue_reason::Symbol,
+  mismatch_diagnostics = NamedTuple(),
 )
   final_reason = converged ? :none : rejection_reason
 
@@ -196,6 +197,10 @@ function _build_rectangular_final_status(
     ref_q_limit_violations = isnothing(qlimit_summary) ? 0 : qlimit_summary.ref_violations,
     final_pv_voltage_residual = final_pv_voltage_residual,
     final_mismatch = isempty(history) ? Inf : history[end],
+    initial_mismatch = isempty(history) ? NaN : history[1],
+    nr_initial_mismatch = isempty(history) ? NaN : history[1],
+    nr_final_mismatch = isempty(history) ? Inf : history[end],
+    mismatch_diagnostics...,
     pv_pq_switching_events = length(net.qLimitLog),
     qlimit_active_set_changes = qlimit_active_set_changes,
     qlimit_reenable_events = qlimit_reenable_events,

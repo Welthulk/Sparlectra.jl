@@ -1184,6 +1184,27 @@ function runpf_rectangular!(
     wrong_branch_rescue_reason = wrong_branch_status.wrong_branch_rescue_reason
   end
 
+  final_F = mismatch_rectangular(Ybus, V, S, bus_types, Vset, slack_idx)
+  max_active_power_mismatch = 0.0
+  max_reactive_power_mismatch = 0.0
+  max_voltage_residual_or_setpoint_residual = final_pv_voltage_residual
+  row = 1
+  @inbounds for bus in eachindex(V)
+    bus == slack_idx && continue
+    max_active_power_mismatch = max(max_active_power_mismatch, abs(final_F[row]))
+    if bus_types[bus] == :PQ
+      max_reactive_power_mismatch = max(max_reactive_power_mismatch, abs(final_F[row + 1]))
+    else
+      max_voltage_residual_or_setpoint_residual = max(max_voltage_residual_or_setpoint_residual, abs(final_F[row + 1]))
+    end
+    row += 2
+  end
+  mismatch_diagnostics = (
+    max_active_power_mismatch = max_active_power_mismatch,
+    max_reactive_power_mismatch = max_reactive_power_mismatch,
+    max_voltage_residual_or_setpoint_residual_where_available = max_voltage_residual_or_setpoint_residual,
+  )
+
   switch_counts, oscillating_buses, max_switching_exceeded, q_limit_active_set_ok, converged, rejection_reason, final_reason, final_status, status = _perf_profile_time!(performance_profile, :solver_status_bookkeeping) do
     switch_counts_ = qlimit_switch_counts(net)
     oscillating_buses_ = count(>=(max(qlimit_guard_max_switches, 1)), values(switch_counts_))
@@ -1212,6 +1233,7 @@ function runpf_rectangular!(
       wrong_branch_detection,
       wrong_branch_rescue_attempted,
       wrong_branch_rescue_reason,
+      mismatch_diagnostics,
     )
     if performance_profile isa AbstractDict && haskey(performance_profile, :current_iteration_start)
       ci = performance_profile[:current_iteration_start]

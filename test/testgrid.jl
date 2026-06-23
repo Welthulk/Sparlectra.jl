@@ -566,7 +566,15 @@ function test_rectangular_start_projection_keeps_raw_without_finite_improvement(
   required_fields = (:requested_angle_mode, :requested_voltage_mode, :dc_angle_start_built,
                      :dc_angle_start_valid, :dc_angle_start_applied, :selected_start_candidate,
                      :selection_reason, :raw_mismatch, :dc_mismatch, :best_blend_mismatch,
-                     :projected_mismatch, :fallback_to_raw, :fallback_reason)
+                     :projected_mismatch, :fallback_to_raw, :fallback_reason,
+                     :raw_fallback_reason, :dc_angle_min_deg, :dc_angle_max_deg,
+                     :dc_angle_spread_deg, :dc_angle_mean_deg, :dc_angle_std_deg,
+                     :dc_angle_clipped_count, :dc_angle_clip_limit_deg,
+                     :dc_max_branch_angle_deg, :dc_branch_angle_violation_count,
+                     :worst_dc_branch_from_bus, :worst_dc_branch_to_bus,
+                     :worst_dc_branch_angle_deg, :dc_voltage_magnitude_min,
+                     :dc_voltage_magnitude_max, :dc_mismatch_ratio_vs_raw,
+                     :requested_dc_worse_than_raw, :dc_mismatch_growth_factor)
   requested_summary = requested_dc_profile[:start_projection_summary]
   invalid_summary = invalid_dc_profile[:start_projection_summary]
 
@@ -587,6 +595,7 @@ function test_rectangular_start_projection_keeps_raw_without_finite_improvement(
          requested_summary.dc_angle_start_valid === true &&
          requested_summary.dc_angle_start_applied === true &&
          requested_summary.fallback_to_raw === false &&
+         requested_summary.requested_dc_worse_than_raw === (requested_summary.dc_mismatch > requested_summary.raw_mismatch) &&
          all(field -> hasproperty(requested_summary, field), required_fields) &&
          Vinvalid_dc == Vraw &&
          invalid_summary.selected === :explicit_fallback_raw &&
