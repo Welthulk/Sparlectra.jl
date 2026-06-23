@@ -892,6 +892,79 @@ settings:
       empty_errors_html = Sparlectra.render_webui_last_errors(joinpath(tmpdir, "missing-operation-log.jsonl"))
       @test occursin("No recent errors.", empty_errors_html)
 
+      api_failure_root = joinpath(tmpdir, "api-failure-runs")
+      api_failure_case = _write_webui_test_case(joinpath(tmpdir, "case_with_dcline.m"))
+      api_failure_form = _webui_test_form(api_failure_case, config_file, api_failure_root)
+      api_failure_message = "Unsupported MATPOWER dcline data: active mpc.dcline entries detected. DC lines are currently not supported; the run was aborted before power-flow solution."
+      api_failure_runner = function(worker_request; case_directory = nothing)
+        api_failure_run_id = worker_request["run_id"]
+        api_failure_output_dir = joinpath(worker_request["output_root"], api_failure_run_id)
+        mkpath(api_failure_output_dir)
+        result = Sparlectra._api_result(
+          run_id = api_failure_run_id,
+          status = :failed,
+          success = false,
+          converged = false,
+          solution_available = false,
+          iterations = nothing,
+          final_mismatch = nothing,
+          reason = "unsupported_matpower_dcline",
+          message = api_failure_message,
+          casefile = api_failure_case,
+          config_file = config_file,
+          output_dir = api_failure_output_dir,
+          result_file = joinpath(api_failure_output_dir, "result.json"),
+          metadata = Dict{String,Any}("failure_reason" => "unsupported_matpower_dcline"),
+        )
+        Sparlectra._POWERFLOW_SERVICE_RUNS[api_failure_run_id] = result
+        return Sparlectra.to_dict(result)
+      end
+      api_failure_response = Sparlectra.handle_powerflow_run(api_failure_form; default_output_root = api_failure_root, runner = api_failure_runner, operation_log = api_failure_root)
+      api_failure_run_id = api_failure_response["run_id"]
+      wait(Sparlectra._POWERFLOW_WEBUI_JOBS[api_failure_run_id]["task"])
+      api_failure_job = Sparlectra.get_webui_powerflow_job(api_failure_run_id)
+      @test api_failure_job["status"] == "failed"
+      @test api_failure_job["run_status"] == "failed"
+      @test api_failure_job["reason"] == "unsupported_matpower_dcline"
+      api_failure_result_html = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow/result/$(api_failure_run_id)"; output_root = api_failure_root).body)
+      @test occursin(api_failure_message, api_failure_result_html)
+      api_failure_last_errors_html = String(Sparlectra.route_sparlectra_webui("GET", "/webui/last-errors"; output_root = api_failure_root).body)
+      @test occursin("Last errors", api_failure_last_errors_html)
+      @test occursin("unsupported_matpower_dcline", api_failure_last_errors_html)
+      @test occursin("case_with_dcline.m", api_failure_last_errors_html)
+      @test occursin("Unsupported MATPOWER dcline data", api_failure_last_errors_html)
+      @test occursin("/powerflow/result/$(api_failure_run_id)", api_failure_last_errors_html)
+
+      api_success_root = joinpath(tmpdir, "api-success-runs")
+      api_success_form = _webui_test_form(casefile, config_file, api_success_root)
+      api_success_runner = function(worker_request; case_directory = nothing)
+        api_success_run_id = worker_request["run_id"]
+        api_success_output_dir = joinpath(worker_request["output_root"], api_success_run_id)
+        mkpath(api_success_output_dir)
+        result = Sparlectra._api_result(
+          run_id = api_success_run_id,
+          status = :succeeded,
+          success = true,
+          converged = true,
+          solution_available = true,
+          iterations = 2,
+          final_mismatch = 1.0e-9,
+          reason = "converged",
+          message = "PowerFlow run completed.",
+          casefile = casefile,
+          config_file = config_file,
+          output_dir = api_success_output_dir,
+          result_file = joinpath(api_success_output_dir, "result.json"),
+        )
+        Sparlectra._POWERFLOW_SERVICE_RUNS[api_success_run_id] = result
+        return Sparlectra.to_dict(result)
+      end
+      api_success_response = Sparlectra.handle_powerflow_run(api_success_form; default_output_root = api_success_root, runner = api_success_runner, operation_log = api_success_root)
+      api_success_run_id = api_success_response["run_id"]
+      wait(Sparlectra._POWERFLOW_WEBUI_JOBS[api_success_run_id]["task"])
+      api_success_last_errors_html = String(Sparlectra.route_sparlectra_webui("GET", "/webui/last-errors"; output_root = api_success_root).body)
+      @test occursin("No recent errors.", api_success_last_errors_html)
+
       form_html = Sparlectra.render_powerflow_form(output_root = output_root)
       @test occursin("<option value=\"off\">off</option>", form_html)
       @test occursin("<option value=\"recommend\">recommend</option>", form_html)

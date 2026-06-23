@@ -175,7 +175,7 @@ function _webui_recent_error_entries(operation_log::AbstractString; limit::Integ
       nothing
     end
     event isa AbstractDict || continue
-    string(get(event, "event", "")) in ("validation_error", "powerflow_submit_rejected", "internal_error") || continue
+    string(get(event, "event", "")) in ("validation_error", "powerflow_submit_rejected", "powerflow_failed", "internal_error") || continue
     push!(entries, Dict{String,Any}(String(key) => value for (key, value) in event))
   end
   length(entries) <= limit && return entries
@@ -191,12 +191,15 @@ function _webui_last_errors_list_html(operation_log::AbstractString)::String
       route = get(entry, "route", "unknown route")
       casefile = get(entry, "requested_case", get(entry, "casefile", ""))
       run_id = get(entry, "run_id", "")
+      reason = get(entry, "reason", "")
       message = get(entry, "message", get(entry, "status", "error"))
       meta = String[]
       isempty(string(casefile)) || push!(meta, "case: $(casefile)")
       isempty(string(run_id)) || push!(meta, "run: $(run_id)")
+      isempty(string(reason)) || push!(meta, "reason: $(reason)")
       suffix = isempty(meta) ? "" : " <small>($(_webui_escape(join(meta, ", "))))</small>"
-      "<li><time>$(_webui_escape(timestamp))</time> <code>$(_webui_escape(route))</code>: $(_webui_escape(message))$(suffix)</li>"
+      result_link = isempty(string(run_id)) ? "" : " <a href=\"/powerflow/result/$(_webui_urlencode(string(run_id)))\">Open result</a>"
+      "<li><time>$(_webui_escape(timestamp))</time> <code>$(_webui_escape(route))</code>: $(_webui_escape(message))$(suffix)$(result_link)</li>"
     end for entry in reverse(entries)
   ), "")
   return "<ul class=\"last-errors-list\">$(items)</ul>"

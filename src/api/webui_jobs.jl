@@ -350,13 +350,16 @@ function start_webui_powerflow_run(request::AbstractDict; case_directory::Union{
         if !get(result, "success", false) && job["status"] != "not_converged"
           _write_webui_job_marker!(job, :failed, string(get(result, "reason", "execution_error")), String(job["message"]))
         end
+        canonical_case = lowercase(splitext(String(something(job["casefile"], "")))[2]) == ".jl" && lowercase(splitext(String(something(job["resolved_casefile"], "")))[2]) == ".m"
+        failure_metadata = get(result, "metadata", Dict{String,Any}())
+        failure_reason = get(failure_metadata, "failure_reason", get(result, "reason", nothing))
         event_callback(
           job["status"] == "success" ? "powerflow_completed" : "powerflow_failed";
           run_id = job["run_id"],
           requested_case = job["casefile"],
           resolved_case = job["resolved_casefile"],
-          canonical_case = lowercase(splitext(String(something(job["casefile"], "")))[2]) == ".jl" && lowercase(splitext(String(something(job["resolved_casefile"], "")))[2]) == ".m" ? job["resolved_casefile"] : nothing,
-          reason = lowercase(splitext(String(something(job["casefile"], "")))[2]) == ".jl" && lowercase(splitext(String(something(job["resolved_casefile"], "")))[2]) == ".m" ? _matpower_cache_jl_bypass_reason() : nothing,
+          canonical_case = canonical_case ? job["resolved_casefile"] : nothing,
+          reason = job["status"] == "success" ? (canonical_case ? _matpower_cache_jl_bypass_reason() : nothing) : failure_reason,
           status = job["status"],
           message = job["message"],
         )
