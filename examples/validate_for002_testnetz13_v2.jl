@@ -68,6 +68,9 @@ struct CliOptions
   tol_branch_p_MW::Float64
   tol_branch_q_MVar::Float64
   branch_b_scale::Float64
+  line_b_scale::Float64
+  trafo_b_scale::Float64
+  matpower_ratio::Symbol
 end
 
 struct ModelRunResult
@@ -121,7 +124,10 @@ function _parse_cli_args(args::Vector{String})::CliOptions
     "tol-branch-p-mw" => "1.00",
     "tol-branch-q-mvar" => "2.00",
     "branch-b-scale" => "1.0",
+    "matpower-ratio" => "normal",
   )
+  line_b_scale_value = nothing
+  trafo_b_scale_value = nothing
   run_matpower = true
   run_builder = true
   run_contingencies = false
@@ -168,11 +174,21 @@ function _parse_cli_args(args::Vector{String})::CliOptions
       println("  --tol-branch-p-mw=X        branch active-power tolerance")
       println("  --tol-branch-q-mvar=X      branch reactive-power tolerance")
       println("  --branch-b-scale=X         diagnostic multiplier for branch b_pu before solving")
+      println("  --line-b-scale=X           diagnostic multiplier for AC-line branch b_pu before solving")
+      println("  --trafo-b-scale=X          diagnostic multiplier for transformer branch b_pu before solving")
+      println("  --matpower-ratio=normal|reciprocal")
+      println("                              MATPOWER import transformer-ratio convention for this validator")
       exit(0)
     elseif startswith(arg, "--") && occursin("=", arg)
       key, value = split(arg[3:end], "="; limit = 2)
-      haskey(defaults, key) || throw(ArgumentError("Unsupported option --$key"))
-      defaults[key] = value
+      if key == "line-b-scale"
+        line_b_scale_value = value
+      elseif key == "trafo-b-scale"
+        trafo_b_scale_value = value
+      else
+        haskey(defaults, key) || throw(ArgumentError("Unsupported option --$key"))
+        defaults[key] = value
+      end
     elseif startswith(arg, "--")
       throw(ArgumentError("Unsupported flag: $arg"))
     else
@@ -181,6 +197,11 @@ function _parse_cli_args(args::Vector{String})::CliOptions
   end
 
   run_matpower || run_builder || throw(ArgumentError("At least one model path must be enabled."))
+  branch_b_scale = parse(Float64, defaults["branch-b-scale"])
+  line_b_scale = line_b_scale_value === nothing ? branch_b_scale : parse(Float64, line_b_scale_value)
+  trafo_b_scale = trafo_b_scale_value === nothing ? branch_b_scale : parse(Float64, trafo_b_scale_value)
+  matpower_ratio = Symbol(defaults["matpower-ratio"])
+  matpower_ratio in (:normal, :reciprocal) || throw(ArgumentError("Unsupported --matpower-ratio=$(defaults["matpower-ratio"]); expected normal or reciprocal."))
 
   return CliOptions(
     defaults["for002"],
@@ -204,7 +225,10 @@ function _parse_cli_args(args::Vector{String})::CliOptions
     parse(Float64, defaults["tol-q-mvar"]),
     parse(Float64, defaults["tol-branch-p-mw"]),
     parse(Float64, defaults["tol-branch-q-mvar"]),
-    parse(Float64, defaults["branch-b-scale"]),
+    branch_b_scale,
+    line_b_scale,
+    trafo_b_scale,
+    matpower_ratio,
   )
 end
 
@@ -396,6 +420,46 @@ function _safe_residual_inf(net::Net)::Union{Nothing,Float64}
   end
 end
 
+function _branch_kind_from_metadata(net::Net, branch_index::Int)
+  metadata = get(net.matpower_branch_metadata, branch_index, nothing)
+  metadata === nothing && return nothing
+  hasproperty(metadata, :orig_kind) || return nothing
+  kind = metadata.orig_kind
+  kind isa Symbol && return kind
+  return Symbol(lowercase(strip(String(kind))))
+end
+
+function _branch_diagnostic_kind(net::Net, br)::Symbol
+  metadata_kind = _branch_kind_from_metadata(net, br.branchIdx)
+  metadata_kind in (:line, :transformer) && return metadata_kind
+  br.ratio == 0.0 && return :line
+  return :transformer
+end
+
+function _branch_model_kind_label(net::Net, br)::String
+  kind = _branch_diagnostic_kind(net, br)
+  kind === :line && return "line"
+  kind === :transformer && return "transformer"
+  return String(kind)
+end
+
+function _scale_branch_b!(net::Net, opt::CliOptions)
+  counts = Dict(:line => 0, :transformer => 0, :unknown => 0)
+  for br in net.branchVec
+    kind = _branch_diagnostic_kind(net, br)
+    if kind === :line
+      br.b_pu *= opt.line_b_scale
+      counts[:line] += 1
+    elseif kind === :transformer
+      br.b_pu *= opt.trafo_b_scale
+      counts[:transformer] += 1
+    else
+      counts[:unknown] += 1
+    end
+  end
+  return counts
+end
+
 function _scale_branch_b!(net::Net, scale::Float64)
   scale == 1.0 && return nothing
   for br in net.branchVec
@@ -417,33 +481,95 @@ function _branch_b_diagnostic_rows(opt::CliOptions, model_builders::Vector{Tuple
   end
 
   b_by_model = Dict{String,Vector{Float64}}()
+  kind_by_model = Dict{String,Vector{String}}()
+  bus_by_model = Dict{String,Vector{NamedTuple}}()
   for (model_name, buildfn) in model_builders
     net = buildfn()
-    _scale_branch_b!(net, opt.branch_b_scale)
+    _scale_branch_b!(net, opt)
     b_by_model[String(model_name)] = [br.b_pu for br in net.branchVec]
+    kind_by_model[String(model_name)] = [_branch_model_kind_label(net, br) for br in net.branchVec]
+    names_by_idx = _bus_name_by_idx(net)
+    bus_by_model[String(model_name)] = [
+      (
+        from_bus = get(names_by_idx, br.fromBus, string(br.fromBus)),
+        to_bus = get(names_by_idx, br.toBus, string(br.toBus)),
+        from_base_kv = net.nodeVec[br.fromBus].comp.cVN,
+        to_base_kv = net.nodeVec[br.toBus].comp.cVN,
+      ) for br in net.branchVec
+    ]
   end
 
   nbranch = length(matpower_br_b)
   rows = NamedTuple[]
   for idx in 1:nbranch
-    matpower_b = matpower_br_b[idx] * opt.branch_b_scale
     matpower_net_b = get(b_by_model, "matpower", Float64[])
     builder_net_b = get(b_by_model, "builder", Float64[])
+    matpower_kind = get(kind_by_model, "matpower", String[])
+    builder_kind = get(kind_by_model, "builder", String[])
+    bus_rows = get(bus_by_model, "matpower", get(bus_by_model, "builder", NamedTuple[]))
+    bus_row = idx <= length(bus_rows) ? bus_rows[idx] : (from_bus = "", to_bus = "", from_base_kv = missing, to_base_kv = missing)
+    model_kind = idx <= length(matpower_kind) ? matpower_kind[idx] : idx <= length(builder_kind) ? builder_kind[idx] : "missing"
+    kind = mpc.branch_kind === nothing || idx > length(mpc.branch_kind) ? missing : mpc.branch_kind[idx]
+    scale = model_kind == "line" ? opt.line_b_scale : model_kind == "transformer" ? opt.trafo_b_scale : opt.branch_b_scale
+    matpower_b_scaled = matpower_br_b[idx] * scale
     sparlectra_b = idx <= length(matpower_net_b) ? matpower_net_b[idx] : idx <= length(builder_net_b) ? builder_net_b[idx] : missing
     push!(
       rows,
       (
         branch_index = idx,
         branch_label = idx <= length(branch_labels) ? branch_labels[idx] : string(idx),
-        raw_for001_b_S = raw_for001_b_si[idx],
-        matpower_br_b_total_pu = matpower_b,
-        matpower_net_b_pu = idx <= length(matpower_net_b) ? matpower_net_b[idx] : missing,
-        builder_net_b_pu = idx <= length(builder_net_b) ? builder_net_b[idx] : missing,
+        from_bus = bus_row.from_bus,
+        to_bus = bus_row.to_bus,
+        from_base_kv = bus_row.from_base_kv,
+        to_base_kv = bus_row.to_base_kv,
+        branch_kind_metadata = kind,
+        sparlectra_model_kind = model_kind,
+        raw_or_inferred_for001_b_S = raw_for001_b_si[idx],
+        matpower_br_b_total_pu_unscaled = matpower_br_b[idx],
+        matpower_br_b_total_pu_scaled = matpower_b_scaled,
+        matpower_net_b_pu_after_scaling = idx <= length(matpower_net_b) ? matpower_net_b[idx] : missing,
+        builder_net_b_pu_after_scaling = idx <= length(builder_net_b) ? builder_net_b[idx] : missing,
         sparlectra_per_end_b_pu = sparlectra_b === missing ? missing : sparlectra_b / 2.0,
+        line_b_scale = opt.line_b_scale,
+        trafo_b_scale = opt.trafo_b_scale,
+        branch_b_scale = opt.branch_b_scale,
+        matpower_ratio = String(opt.matpower_ratio),
       ),
     )
   end
   return rows
+end
+
+function _write_branch_b_diagnostic_csv(path::AbstractString, rows::Vector{NamedTuple})
+  open(path, "w") do io
+    println(io, "branch_index,branch_label,from_bus,to_bus,from_base_kv,to_base_kv,branch_kind_metadata,sparlectra_model_kind,raw_or_inferred_for001_b_S,matpower_br_b_total_pu_unscaled,matpower_br_b_total_pu_scaled,matpower_net_b_pu_after_scaling,builder_net_b_pu_after_scaling,sparlectra_per_end_b_pu_after_scaling,line_b_scale,trafo_b_scale,branch_b_scale,matpower_ratio")
+    for row in rows
+      println(
+        io,
+        _csv_line(
+          row.branch_index,
+          row.branch_label,
+          row.from_bus,
+          row.to_bus,
+          row.from_base_kv,
+          row.to_base_kv,
+          row.branch_kind_metadata,
+          row.sparlectra_model_kind,
+          row.raw_or_inferred_for001_b_S,
+          row.matpower_br_b_total_pu_unscaled,
+          row.matpower_br_b_total_pu_scaled,
+          row.matpower_net_b_pu_after_scaling,
+          row.builder_net_b_pu_after_scaling,
+          row.sparlectra_per_end_b_pu,
+          row.line_b_scale,
+          row.trafo_b_scale,
+          row.branch_b_scale,
+          row.matpower_ratio,
+        ),
+      )
+    end
+  end
+  return path
 end
 
 function _print_branch_b_diagnostic_table(rows::Vector{NamedTuple})
@@ -470,12 +596,12 @@ function _print_branch_b_diagnostic_table(rows::Vector{NamedTuple})
       "%-4d %-34s %14.8g %-12s %16.8g %-12s %16s %16s %-12s %16s %-12s\n",
       row.branch_index,
       row.branch_label,
-      row.raw_for001_b_S,
-      "raw/infer",
-      row.matpower_br_b_total_pu,
+      row.raw_or_inferred_for001_b_S,
+      "inferred",
+      row.matpower_br_b_total_pu_scaled,
       "total",
-      row.matpower_net_b_pu === missing ? "missing" : @sprintf("%.8g", row.matpower_net_b_pu),
-      row.builder_net_b_pu === missing ? "missing" : @sprintf("%.8g", row.builder_net_b_pu),
+      row.matpower_net_b_pu_after_scaling === missing ? "missing" : @sprintf("%.8g", row.matpower_net_b_pu_after_scaling),
+      row.builder_net_b_pu_after_scaling === missing ? "missing" : @sprintf("%.8g", row.builder_net_b_pu_after_scaling),
       "total",
       row.sparlectra_per_end_b_pu === missing ? "missing" : @sprintf("%.8g", row.sparlectra_per_end_b_pu),
       "b/2/end",
@@ -498,7 +624,7 @@ end
 
 function _run_model(model_name::AbstractString, buildfn::Function, opt::CliOptions, scenario_name::AbstractString; branch_index_out::Union{Nothing,Int} = nothing)::ModelRunResult
   net = buildfn()
-  _scale_branch_b!(net, opt.branch_b_scale)
+  _scale_branch_b!(net, opt)
   report, iters, status, residual = _run_powerflow!(net, opt; branch_index_out = branch_index_out)
   return ModelRunResult(String(model_name), String(scenario_name), branch_index_out, net, report, iters, status, residual)
 end
@@ -762,7 +888,7 @@ function _scenario_file_prefix(result::ModelRunResult)::String
   return lowercase(result.model_name) * "_" * scenario_tag
 end
 
-function _write_summary(path::AbstractString, opt::CliOptions, ref_scenarios::Vector{For002Scenario}, branch_labels::Vector{String}, base_summaries::Vector{NamedTuple}, contingency_summaries::Vector{NamedTuple}, model_compare_file::Union{Nothing,String})
+function _write_summary(path::AbstractString, opt::CliOptions, ref_scenarios::Vector{For002Scenario}, branch_labels::Vector{String}, base_summaries::Vector{NamedTuple}, contingency_summaries::Vector{NamedTuple}, model_compare_file::Union{Nothing,String}, branch_b_diagnostic_csv::AbstractString)
   open(path, "w") do io
     println(io, "# FOR002 validation summary")
     println(io)
@@ -776,6 +902,10 @@ function _write_summary(path::AbstractString, opt::CliOptions, ref_scenarios::Ve
     println(io, "- Parsed FOR002 scenarios with data: ", length(ref_scenarios))
     println(io, "- Parsed branch labels: ", length(branch_labels))
     println(io, "- Branch b scale: ", opt.branch_b_scale)
+    println(io, "- Line b scale: ", opt.line_b_scale)
+    println(io, "- Transformer b scale: ", opt.trafo_b_scale)
+    println(io, "- MATPOWER ratio: ", opt.matpower_ratio)
+    println(io, "- Branch charging diagnostic CSV: `", branch_b_diagnostic_csv, "`")
     println(io)
     println(io, "## Solver settings")
     println(io, "- maxiter: ", opt.maxiter)
@@ -868,7 +998,7 @@ function _load_builder_function(builder_path::AbstractString, builder_function::
   return () -> Base.invokelatest(fn)
 end
 
-function _load_matpower_builder(matpower_path::AbstractString)
+function _load_matpower_builder(matpower_path::AbstractString, opt::CliOptions)
   isfile(matpower_path) || throw(ArgumentError("MATPOWER file not found: $matpower_path"))
   mpc = Sparlectra.MatpowerIO.read_case(matpower_path; legacy_compat = true)
   return () -> Sparlectra.createNetFromMatPowerCase(
@@ -879,6 +1009,7 @@ function _load_matpower_builder(matpower_path::AbstractString)
     apply_branch_names = true,
     apply_branch_kind = true,
     import_for001_contingencies = true,
+    matpower_ratio = opt.matpower_ratio,
   )
 end
 
@@ -894,6 +1025,9 @@ function main(args = ARGS)
   println("  output directory        = ", opt.output_dir)
   println("  contingencies           = ", opt.run_contingencies)
   println("  branch b scale          = ", opt.branch_b_scale)
+  println("  line b scale            = ", opt.line_b_scale)
+  println("  transformer b scale     = ", opt.trafo_b_scale)
+  println("  MATPOWER ratio          = ", opt.matpower_ratio)
   println()
 
   ref_scenarios = parse_for002(opt.for002_path)
@@ -903,14 +1037,17 @@ function main(args = ARGS)
 
   model_builders = Tuple{String,Function}[]
   if opt.run_matpower
-    push!(model_builders, ("matpower", _load_matpower_builder(opt.matpower_path)))
+    push!(model_builders, ("matpower", _load_matpower_builder(opt.matpower_path, opt)))
   end
   if opt.run_builder
     push!(model_builders, ("builder", _load_builder_function(opt.builder_path, opt.builder_function)))
   end
 
   branch_b_diagnostic_rows = _branch_b_diagnostic_rows(opt, model_builders, branch_labels)
+  branch_b_diagnostic_csv = _write_branch_b_diagnostic_csv(joinpath(opt.output_dir, "branch_b_diagnostics.csv"), branch_b_diagnostic_rows)
   _print_branch_b_diagnostic_table(branch_b_diagnostic_rows)
+  println("Branch charging diagnostic CSV: ", branch_b_diagnostic_csv)
+  println()
 
   base_results = ModelRunResult[]
   base_summaries = NamedTuple[]
@@ -964,11 +1101,12 @@ function main(args = ARGS)
   end
 
   summary_path = joinpath(opt.output_dir, "for002_validation_summary.md")
-  _write_summary(summary_path, opt, ref_scenarios, branch_labels, base_summaries, contingency_summaries, model_compare_file)
+  _write_summary(summary_path, opt, ref_scenarios, branch_labels, base_summaries, contingency_summaries, model_compare_file, branch_b_diagnostic_csv)
 
   println()
   println("Output files written to:")
   println("  summary                = ", summary_path)
+  println("  branch b diagnostics   = ", branch_b_diagnostic_csv)
   for s in base_summaries
     println("  ", s.model_name, " bus comparison     = ", s.bus_csv)
     println("  ", s.model_name, " branch comparison  = ", s.branch_csv)
