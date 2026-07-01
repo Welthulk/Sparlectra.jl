@@ -76,6 +76,8 @@ struct CliOptions
   sweep_branch_b::Bool
   infer_pv_buses::Symbol
   diagnose_active_flow::Bool
+  diagnose_worst_branches::Bool
+  sweep_worst_branch_angle::Bool
 end
 
 struct ModelRunResult
@@ -144,6 +146,8 @@ function _parse_cli_args(args::Vector{String})::CliOptions
   qlimits_enabled = false
   sweep_branch_b = false
   diagnose_active_flow = false
+  diagnose_worst_branches = false
+  sweep_worst_branch_angle = false
 
   for arg in args
     if arg == "--contingencies"
@@ -152,6 +156,10 @@ function _parse_cli_args(args::Vector{String})::CliOptions
       sweep_branch_b = true
     elseif arg == "--diagnose-active-flow"
       diagnose_active_flow = true
+    elseif arg == "--diagnose-worst-branches"
+      diagnose_worst_branches = true
+    elseif arg == "--sweep-worst-branch-angle"
+      sweep_worst_branch_angle = true
     elseif arg == "--no-matpower"
       run_matpower = false
     elseif arg == "--no-builder"
@@ -192,6 +200,8 @@ function _parse_cli_args(args::Vector{String})::CliOptions
       println("  --trafo-b-scale=X          diagnostic multiplier for transformer branch b_pu before solving")
       println("  --sweep-branch-b           run compact base-case line/transformer branch-charging sweep")
       println("  --diagnose-active-flow     write active-power and branch/tap diagnostic CSVs")
+      println("  --diagnose-worst-branches  write detailed top branch-flow offender diagnostics")
+      println("  --sweep-worst-branch-angle diagnostic one-at-a-time phase-shift sweep for top branch-flow offenders")
       println("  --infer-pv-buses=off|from-q-limits|from-gen-vg|all-generator-buses")
       println("                              diagnostic PV-bus inference mode; default off")
       println("  --matpower-ratio=normal|reciprocal")
@@ -260,6 +270,8 @@ function _parse_cli_args(args::Vector{String})::CliOptions
     sweep_branch_b,
     infer_pv_buses,
     diagnose_active_flow,
+    diagnose_worst_branches,
+    sweep_worst_branch_angle,
   )
 end
 
@@ -934,6 +946,8 @@ function _with_branch_b_sweep_point(opt::CliOptions, line_b_scale::Float64, traf
     opt.sweep_branch_b,
     opt.infer_pv_buses,
     opt.diagnose_active_flow,
+    opt.diagnose_worst_branches,
+    opt.sweep_worst_branch_angle,
   )
 end
 
@@ -1500,6 +1514,153 @@ function _write_active_flow_diagnostics(opt::CliOptions, ref::For002Scenario, ba
   return (active_csv = active_csv, branch_csv = branch_csv, transformer_csv = transformer_csv, console_rows = console_rows)
 end
 
+function _branch_by_index(net::Net, idx::Int)
+  for br in net.branchVec
+    br.branchIdx == idx && return br
+  end
+  return nothing
+end
+
+function _estimated_dc_p_mw(net::Net, br, from_idx::Int, to_idx::Int)
+  (br === nothing || !isfinite(br.x_pu) || abs(br.x_pu) < eps(Float64)) && return nothing
+  va_from = net.nodeVec[from_idx]._va_deg
+  va_to = net.nodeVec[to_idx]._va_deg
+  theta = deg2rad(_angle_delta_deg(va_from - br.angle, va_to))
+  return net.baseMVA * theta / br.x_pu
+end
+
+function _worst_branch_diagnostic_rows(ref::For002Scenario, result::ModelRunResult, branch_labels::Vector{String})
+  deviations = _branch_flow_deviation_rows(ref, result, branch_labels)
+  top = first(sort(deviations; by = row -> abs(row.d_p_MW), rev = true), min(10, length(deviations)))
+  top_keys = Set((row.branch_index, _norm_name(row.from_bus), _norm_name(row.to_bus)) for row in top)
+  refd = _reference_branch_dict(ref)
+  calcd = _branch_result_dict(result, branch_labels)
+  rows = NamedTuple[]
+  for key in sort(collect(keys(refd)); by = x -> (x[1], x[2], x[3]))
+    r = refd[key]
+    c = get(calcd, key, nothing)
+    c === nothing && continue
+    br = _branch_by_index(result.net, c.branch_index)
+    from_idx = c.direction == :from ? c.from_bus : c.to_bus
+    to_idx = c.direction == :from ? c.to_bus : c.from_bus
+    from_node = result.net.nodeVec[from_idx]
+    to_node = result.net.nodeVec[to_idx]
+    from_va = from_node._va_deg
+    to_va = to_node._va_deg
+    push!(
+      rows,
+      (
+        model = result.model_name,
+        branch_index = c.branch_index,
+        branch_label = c.label,
+        comparison_direction_from = c.from_name,
+        comparison_direction_to = c.to_name,
+        branch_kind = br === nothing ? "missing" : _branch_model_kind_label(result.net, br),
+        from_bus_internal = from_idx,
+        to_bus_internal = to_idx,
+        from_base_kV = from_node.comp.cVN,
+        to_base_kV = to_node.comp.cVN,
+        r_pu = br === nothing ? missing : br.r_pu,
+        x_pu = br === nothing ? missing : br.x_pu,
+        b_pu_after_scaling = br === nothing ? missing : br.b_pu,
+        ratio = br === nothing ? missing : br.ratio,
+        angle_deg = br === nothing ? missing : br.angle,
+        status = br === nothing ? missing : br.status,
+        calculated_p_MW = c.p_MW,
+        reference_for002_p_MW = r.p_MW,
+        d_p_MW = c.p_MW - r.p_MW,
+        calculated_q_MVar = c.q_MVar,
+        reference_for002_q_MVar = r.q_MVar,
+        d_q_MVar = c.q_MVar - r.q_MVar,
+        calculated_loss_p_MW = c.p_loss_MW,
+        reference_loss_p_MW = r.p_loss_MW,
+        calculated_loss_q_MVar = c.q_loss_MVar,
+        reference_loss_q_MVar = r.q_loss_MVar,
+        from_va_deg = from_va,
+        to_va_deg = to_va,
+        angle_difference_deg = _angle_delta_deg(from_va, to_va),
+        estimated_dc_p_MW = br === nothing ? nothing : _estimated_dc_p_mw(result.net, br, from_idx, to_idx),
+        is_top_active_flow_offender = (c.branch_index, _norm_name(c.from_name), _norm_name(c.to_name)) in top_keys,
+      ),
+    )
+  end
+  return sort(rows; by = row -> abs(row.d_p_MW), rev = true)
+end
+
+function _write_worst_branch_flow_diagnostics_csv(path::AbstractString, rows::Vector{NamedTuple})
+  open(path, "w") do io
+    println(io, "model,branch_index,branch_label,comparison_direction_from,comparison_direction_to,branch_kind,from_bus_internal,to_bus_internal,from_base_kV,to_base_kV,r_pu,x_pu,b_pu_after_scaling,ratio,angle_deg,status,calculated_p_MW,reference_for002_p_MW,d_p_MW,calculated_q_MVar,reference_for002_q_MVar,d_q_MVar,calculated_loss_p_MW,reference_loss_p_MW,calculated_loss_q_MVar,reference_loss_q_MVar,from_va_deg,to_va_deg,angle_difference_deg,estimated_dc_p_MW,is_top_active_flow_offender")
+    for row in rows
+      println(io, _csv_line(row.model, row.branch_index, row.branch_label, row.comparison_direction_from, row.comparison_direction_to, row.branch_kind, row.from_bus_internal, row.to_bus_internal, row.from_base_kV, row.to_base_kV, row.r_pu, row.x_pu, row.b_pu_after_scaling, row.ratio, row.angle_deg, row.status, row.calculated_p_MW, row.reference_for002_p_MW, row.d_p_MW, row.calculated_q_MVar, row.reference_for002_q_MVar, row.d_q_MVar, row.calculated_loss_p_MW, row.reference_loss_p_MW, row.calculated_loss_q_MVar, row.reference_loss_q_MVar, row.from_va_deg, row.to_va_deg, row.angle_difference_deg, row.estimated_dc_p_MW, row.is_top_active_flow_offender))
+    end
+  end
+  return path
+end
+
+function _run_worst_branch_angle_sweep(opt::CliOptions, ref::For002Scenario, model_builders::Vector{Tuple{String,Function}}, branch_labels::Vector{String}, diagnostic_rows::Vector{NamedTuple})
+  offsets = [-2.0, -1.0, -0.5, 0.0, 0.5, 1.0, 2.0]
+  top_indices = unique(row.branch_index for row in diagnostic_rows if row.is_top_active_flow_offender)
+  rows = NamedTuple[]
+  scratch = joinpath(opt.output_dir, "_worst_branch_angle_sweep_details")
+  mkpath(scratch)
+  for (model_name, buildfn) in model_builders, idx in top_indices, offset in offsets
+    net = buildfn()
+    _scale_branch_b!(net, opt)
+    br = _branch_by_index(net, idx)
+    br !== nothing && (br.angle += offset)
+    report, iters, status, residual = _run_powerflow!(net, opt)
+    result = ModelRunResult(String(model_name), "base", nothing, net, report, iters, status, residual)
+    tag = "$(model_name)_branch$(idx)_angle$(_case_tag(string(offset)))"
+    bus_cmp = _compare_bus_rows(ref, result, opt, joinpath(scratch, tag * "_bus_comparison.csv"))
+    branch_cmp = _compare_branch_rows(ref, result, branch_labels, opt, joinpath(scratch, tag * "_branch_comparison.csv"))
+    totals = _compare_totals(ref, result)
+    push!(rows, (model = String(model_name), branch_index = idx, branch_label = idx <= length(branch_labels) ? branch_labels[idx] : string(idx), angle_offset_deg = offset, solver_status = status, max_abs_branch_d_p_MW = branch_cmp.max_abs_d_p_MW, max_abs_d_va_deg = bus_cmp.max_abs_d_va_deg, max_abs_d_v_kV = bus_cmp.max_abs_d_v_kV, total_d_p_loss_MW = totals.d_p_loss_MW, objective = bus_cmp.max_abs_d_v_kV + 10.0 * bus_cmp.max_abs_d_va_deg + branch_cmp.max_abs_d_p_MW))
+  end
+  return rows
+end
+
+function _write_worst_branch_angle_sweep_csv(path::AbstractString, rows::Vector{NamedTuple})
+  open(path, "w") do io
+    println(io, "model,branch_index,branch_label,angle_offset_deg,solver_status,max_abs_branch_d_p_MW,max_abs_d_va_deg,max_abs_d_v_kV,total_d_p_loss_MW,objective")
+    for row in rows
+      println(io, _csv_line(row.model, row.branch_index, row.branch_label, row.angle_offset_deg, row.solver_status, row.max_abs_branch_d_p_MW, row.max_abs_d_va_deg, row.max_abs_d_v_kV, row.total_d_p_loss_MW, row.objective))
+    end
+  end
+  return path
+end
+
+function _write_worst_branch_diagnostics(opt::CliOptions, ref::For002Scenario, base_results::Vector{ModelRunResult}, model_builders::Vector{Tuple{String,Function}}, branch_labels::Vector{String})
+  rows = NamedTuple[]
+  for result in base_results
+    append!(rows, _worst_branch_diagnostic_rows(ref, result, branch_labels))
+  end
+  rows = sort(rows; by = row -> abs(row.d_p_MW), rev = true)
+  flow_csv = _write_worst_branch_flow_diagnostics_csv(joinpath(opt.output_dir, "worst_branch_flow_diagnostics.csv"), rows)
+  sweep_rows = opt.sweep_worst_branch_angle ? _run_worst_branch_angle_sweep(opt, ref, model_builders, branch_labels, rows) : NamedTuple[]
+  sweep_csv = opt.sweep_worst_branch_angle ? _write_worst_branch_angle_sweep_csv(joinpath(opt.output_dir, "worst_branch_angle_sweep.csv"), sweep_rows) : nothing
+  return (flow_csv = flow_csv, sweep_csv = sweep_csv, rows = rows, sweep_rows = sweep_rows)
+end
+
+function _print_worst_branch_console_summary(diagnostics)
+  diagnostics === nothing && return nothing
+  println("Worst branch-flow diagnostic summary")
+  top = first(diagnostics.rows, min(10, length(diagnostics.rows)))
+  kind_counts = Dict{String,Int}()
+  for row in top
+    kind_counts[row.branch_kind] = get(kind_counts, row.branch_kind, 0) + 1
+    @printf("  %-8s #%-3d %-34s %-12s -> %-12s dP=% .6g MW r=% .6g x=% .6g ratio=%s angle=%s kind=%s\n", row.model, row.branch_index, row.branch_label, row.comparison_direction_from, row.comparison_direction_to, row.d_p_MW, row.r_pu, row.x_pu, string(row.ratio), string(row.angle_deg), row.branch_kind)
+  end
+  println("  Top-offender branch kinds: ", join(["$k=$v" for (k, v) in sort(collect(kind_counts))], ", "))
+  tapped = [row for row in top if row.ratio !== missing && (abs(Float64(row.ratio)) > 0.0 || abs(Float64(row.angle_deg)) > 0.0)]
+  println("  Tapped/phase-shifting among top offenders: ", isempty(tapped) ? "none" : join(unique(row.branch_label for row in tapped), "; "))
+  if diagnostics.sweep_csv !== nothing && !isempty(diagnostics.sweep_rows)
+    best = first(sort(diagnostics.sweep_rows; by = row -> row.objective))
+    @printf("  Best angle sweep: model=%s branch=%d %s offset=% .3g deg max|dP|=% .6g MW max|dVa|=% .6g deg objective=% .6g\n", best.model, best.branch_index, best.branch_label, best.angle_offset_deg, best.max_abs_branch_d_p_MW, best.max_abs_d_va_deg, best.objective)
+  end
+  println()
+  return nothing
+end
+
 function _print_active_flow_console_summary(diagnostics)
   diagnostics === nothing && return nothing
   println("Active-flow diagnostic summary")
@@ -1526,7 +1687,7 @@ function _scenario_file_prefix(result::ModelRunResult)::String
   return lowercase(result.model_name) * "_" * scenario_tag
 end
 
-function _write_summary(path::AbstractString, opt::CliOptions, ref_scenarios::Vector{For002Scenario}, branch_labels::Vector{String}, base_summaries::Vector{NamedTuple}, contingency_summaries::Vector{NamedTuple}, model_compare_file::Union{Nothing,String}, branch_b_diagnostic_csv::AbstractString, branch_b_sweep_csv::Union{Nothing,String}, worst_offenders_csv::Union{Nothing,String}, pv_bus_diagnostics_csv::Union{Nothing,String}, pv_bus_diagnostics_note::Union{Nothing,String}, active_flow_diagnostics)
+function _write_summary(path::AbstractString, opt::CliOptions, ref_scenarios::Vector{For002Scenario}, branch_labels::Vector{String}, base_summaries::Vector{NamedTuple}, contingency_summaries::Vector{NamedTuple}, model_compare_file::Union{Nothing,String}, branch_b_diagnostic_csv::AbstractString, branch_b_sweep_csv::Union{Nothing,String}, worst_offenders_csv::Union{Nothing,String}, pv_bus_diagnostics_csv::Union{Nothing,String}, pv_bus_diagnostics_note::Union{Nothing,String}, active_flow_diagnostics, worst_branch_diagnostics)
   open(path, "w") do io
     println(io, "# FOR002 validation summary")
     println(io)
@@ -1545,6 +1706,8 @@ function _write_summary(path::AbstractString, opt::CliOptions, ref_scenarios::Ve
     println(io, "- MATPOWER ratio: ", opt.matpower_ratio)
     println(io, "- Infer PV buses mode: ", opt.infer_pv_buses)
     println(io, "- Diagnose active flow: ", opt.diagnose_active_flow)
+    println(io, "- Diagnose worst branches: ", opt.diagnose_worst_branches)
+    println(io, "- Sweep worst branch angle: ", opt.sweep_worst_branch_angle)
     println(io, "- MATPOWER PQ generator controllers: ", opt.matpower_pq_gen_controllers)
     println(io, "- Builder PQ generator controllers: ", opt.builder_pq_gen_controllers)
     println(io, "- Builder controller handling: native-builder control is applied by clearing P(U)/Q(U) controllers on non-regulating generators after the builder returns; if none are present, the option is a no-op for that builder.")
@@ -1566,6 +1729,12 @@ function _write_summary(path::AbstractString, opt::CliOptions, ref_scenarios::Ve
       println(io, "- Active power balance diagnostics CSV: `", active_flow_diagnostics.active_csv, "`")
       println(io, "- Branch parameter diagnostics CSV: `", active_flow_diagnostics.branch_csv, "`")
       println(io, "- Transformer tap diagnostics CSV: `", active_flow_diagnostics.transformer_csv, "`")
+    end
+    if worst_branch_diagnostics !== nothing
+      println(io, "- Worst branch-flow diagnostics CSV: `", worst_branch_diagnostics.flow_csv, "`")
+      if worst_branch_diagnostics.sweep_csv !== nothing
+        println(io, "- Worst branch angle sweep CSV: `", worst_branch_diagnostics.sweep_csv, "`")
+      end
     end
     println(io)
     println(io, "## Solver settings")
@@ -1704,6 +1873,8 @@ function main(args = ARGS)
   println("  branch b sweep          = ", opt.sweep_branch_b)
   println("  infer PV buses          = ", opt.infer_pv_buses)
   println("  diagnose active flow    = ", opt.diagnose_active_flow)
+  println("  diagnose worst branches = ", opt.diagnose_worst_branches)
+  println("  sweep worst br. angle   = ", opt.sweep_worst_branch_angle)
   println("  MATPOWER ratio          = ", opt.matpower_ratio)
   println("  MATPOWER PQ controllers = ", opt.matpower_pq_gen_controllers)
   println("  builder PQ controllers  = ", opt.builder_pq_gen_controllers)
@@ -1771,6 +1942,8 @@ function main(args = ARGS)
   worst_offenders_csv = isempty(base_results) ? nothing : _write_worst_offenders_csv(joinpath(opt.output_dir, "for002_worst_offenders.csv"), ref_base, base_results, branch_labels)
   active_flow_diagnostics = opt.diagnose_active_flow ? _write_active_flow_diagnostics(opt, ref_base, base_results, branch_labels) : nothing
   _print_active_flow_console_summary(active_flow_diagnostics)
+  worst_branch_diagnostics = opt.diagnose_worst_branches ? _write_worst_branch_diagnostics(opt, ref_base, base_results, model_builders, branch_labels) : nothing
+  _print_worst_branch_console_summary(worst_branch_diagnostics)
 
   contingency_summaries = NamedTuple[]
   if opt.run_contingencies
@@ -1801,7 +1974,7 @@ function main(args = ARGS)
   end
 
   summary_path = joinpath(opt.output_dir, "for002_validation_summary.md")
-  _write_summary(summary_path, opt, ref_scenarios, branch_labels, base_summaries, contingency_summaries, model_compare_file, branch_b_diagnostic_csv, branch_b_sweep_csv, worst_offenders_csv, pv_bus_diagnostics_csv, pv_bus_diagnostics_note, active_flow_diagnostics)
+  _write_summary(summary_path, opt, ref_scenarios, branch_labels, base_summaries, contingency_summaries, model_compare_file, branch_b_diagnostic_csv, branch_b_sweep_csv, worst_offenders_csv, pv_bus_diagnostics_csv, pv_bus_diagnostics_note, active_flow_diagnostics, worst_branch_diagnostics)
 
   println()
   println("Output files written to:")
@@ -1812,6 +1985,10 @@ function main(args = ARGS)
     println("  active power balance  = ", active_flow_diagnostics.active_csv)
     println("  branch parameters     = ", active_flow_diagnostics.branch_csv)
     println("  transformer taps      = ", active_flow_diagnostics.transformer_csv)
+  end
+  if worst_branch_diagnostics !== nothing
+    println("  worst branch flows    = ", worst_branch_diagnostics.flow_csv)
+    worst_branch_diagnostics.sweep_csv !== nothing && println("  worst branch angle    = ", worst_branch_diagnostics.sweep_csv)
   end
   branch_b_sweep_csv !== nothing && println("  branch b sweep summary = ", branch_b_sweep_csv)
   worst_offenders_csv !== nothing && println("  worst offenders        = ", worst_offenders_csv)
