@@ -83,6 +83,7 @@ struct CliOptions
   sweep_line_x_scale::Bool
   line_x_scale::Float64
   diagnose_bus_injection_balance::Bool
+  diagnose_for002_kcl::Bool
 end
 
 struct ModelRunResult
@@ -157,6 +158,7 @@ function _parse_cli_args(args::Vector{String})::CliOptions
   diagnose_for001_conversion = false
   sweep_line_x_scale = false
   diagnose_bus_injection_balance = false
+  diagnose_for002_kcl = false
 
   for arg in args
     if arg == "--contingencies"
@@ -175,6 +177,8 @@ function _parse_cli_args(args::Vector{String})::CliOptions
       diagnose_for001_conversion = true
     elseif arg == "--diagnose-bus-injection-balance"
       diagnose_bus_injection_balance = true
+    elseif arg == "--diagnose-for002-kcl"
+      diagnose_for002_kcl = true
     elseif arg == "--sweep-line-x-scale"
       sweep_line_x_scale = true
     elseif arg == "--no-matpower"
@@ -225,6 +229,8 @@ function _parse_cli_args(args::Vector{String})::CliOptions
       println("                              write raw FOR001-to-converted branch parameter diagnostics")
       println("  --diagnose-bus-injection-balance")
       println("                              write bus and regional generation/load/shunt injection balance diagnostics")
+      println("  --diagnose-for002-kcl")
+      println("                              write parsed FOR002 and model-side bus/branch KCL consistency diagnostics")
       println("  --sweep-line-x-scale        run diagnostic ordinary AC-line x scaling sweep")
       println("  --infer-pv-buses=off|from-q-limits|from-gen-vg|all-generator-buses")
       println("                              diagnostic PV-bus inference mode; default off")
@@ -301,6 +307,7 @@ function _parse_cli_args(args::Vector{String})::CliOptions
     sweep_line_x_scale,
     1.0,
     diagnose_bus_injection_balance,
+    diagnose_for002_kcl,
   )
 end
 
@@ -2281,6 +2288,193 @@ function _print_bus_injection_balance_console_summary(diagnostics)
   return nothing
 end
 
+function _for002_kcl_top_adjacent_buses(ref::For002Scenario, base_results::Vector{ModelRunResult}, branch_labels::Vector{String})::Set{String}
+  adjacent = Set{String}()
+  for result in base_results
+    union!(adjacent, _top_active_flow_adjacent_buses(ref, result, branch_labels))
+  end
+  return adjacent
+end
+
+function _for002_branch_kcl_terms(ref::For002Scenario)
+  terms = Dict{String,NamedTuple}()
+  for key in keys(ref.buses)
+    terms[key] = (p_out = 0.0, q_out = 0.0, p_loss_share = 0.0, q_loss_share = 0.0, incident = 0)
+  end
+  for br in ref.branches
+    key = _norm_name(br.from_bus)
+    old = get(terms, key, (p_out = 0.0, q_out = 0.0, p_loss_share = 0.0, q_loss_share = 0.0, incident = 0))
+    terms[key] = (
+      p_out = old.p_out + br.p_MW,
+      q_out = old.q_out + br.q_MVar,
+      p_loss_share = old.p_loss_share + br.p_loss_MW,
+      q_loss_share = old.q_loss_share + br.q_loss_MVar,
+      incident = old.incident + 1,
+    )
+  end
+  return terms
+end
+
+function _model_branch_kcl_terms(result::ModelRunResult)
+  names = _bus_name_by_idx(result.net)
+  terms = Dict{String,NamedTuple}()
+  for row in result.report.nodes
+    terms[_norm_name(row.bus_name)] = (p_out = 0.0, q_out = 0.0, incident = 0)
+  end
+  for br in result.report.branches
+    from_name = get(names, br.from_bus, string(br.from_bus))
+    to_name = get(names, br.to_bus, string(br.to_bus))
+    for (bus_name, p, q) in ((from_name, br.p_from_MW, br.q_from_MVar), (to_name, br.p_to_MW, br.q_to_MVar))
+      key = _norm_name(bus_name)
+      old = get(terms, key, (p_out = 0.0, q_out = 0.0, incident = 0))
+      terms[key] = (p_out = old.p_out + p, q_out = old.q_out + q, incident = old.incident + 1)
+    end
+  end
+  return terms
+end
+
+function _for002_kcl_diagnostic_rows(ref::For002Scenario, base_results::Vector{ModelRunResult}, branch_labels::Vector{String})
+  adjacent = _for002_kcl_top_adjacent_buses(ref, base_results, branch_labels)
+  for002_terms = _for002_branch_kcl_terms(ref)
+  rows = NamedTuple[]
+  for key in sort(collect(keys(ref.buses)))
+    bus = ref.buses[key]
+    t = get(for002_terms, key, (p_out = 0.0, q_out = 0.0, p_loss_share = 0.0, q_loss_share = 0.0, incident = 0))
+    p_net = bus.p_gen_MW - bus.p_load_MW
+    q_net = bus.q_gen_MVar - bus.q_load_MVar
+    push!(rows, (
+      scenario = ref.name,
+      model = "FOR002",
+      bus_name = bus.bus_name,
+      p_gen_for002_MW = bus.p_gen_MW,
+      q_gen_for002_MVar = bus.q_gen_MVar,
+      p_load_for002_MW = bus.p_load_MW,
+      q_load_for002_MVar = bus.q_load_MVar,
+      p_net_for002_bus_table_MW = p_net,
+      q_net_for002_bus_table_MVar = q_net,
+      p_out_from_parsed_for002_branch_rows_MW = t.p_out,
+      q_out_from_parsed_for002_branch_rows_MVar = t.q_out,
+      p_loss_share_from_for002_branch_rows_MW = t.p_loss_share,
+      q_loss_share_from_for002_branch_rows_MVar = t.q_loss_share,
+      reconstructed_p_net_from_for002_branches_MW = t.p_out,
+      reconstructed_q_net_from_for002_branches_MVar = t.q_out,
+      d_p_kcl_for002_MW = p_net - t.p_out,
+      d_q_kcl_for002_MVar = q_net - t.q_out,
+      number_of_incident_for002_branch_rows = t.incident,
+      marker = key in adjacent ? "adjacent_to_top_active_flow_offender" : "",
+      model_p_net_from_bus_report_MW = missing,
+      model_q_net_from_bus_report_MVar = missing,
+      model_reconstructed_p_net_from_branch_rows_MW = missing,
+      model_reconstructed_q_net_from_branch_rows_MVar = missing,
+      model_d_p_kcl_MW = missing,
+      model_d_q_kcl_MVar = missing,
+      model_incident_branch_rows = missing,
+    ))
+  end
+  for result in base_results
+    terms = _model_branch_kcl_terms(result)
+    for row in result.report.nodes
+      key = _norm_name(row.bus_name)
+      t = get(terms, key, (p_out = 0.0, q_out = 0.0, incident = 0))
+      p_net = row.p_gen_MW - row.p_load_MW
+      q_net = row.q_gen_MVar - row.q_load_MVar
+      refbus = get(ref.buses, key, nothing)
+      push!(rows, (
+        scenario = result.scenario_name,
+        model = result.model_name,
+        bus_name = row.bus_name,
+        p_gen_for002_MW = refbus === nothing ? missing : refbus.p_gen_MW,
+        q_gen_for002_MVar = refbus === nothing ? missing : refbus.q_gen_MVar,
+        p_load_for002_MW = refbus === nothing ? missing : refbus.p_load_MW,
+        q_load_for002_MVar = refbus === nothing ? missing : refbus.q_load_MVar,
+        p_net_for002_bus_table_MW = refbus === nothing ? missing : refbus.p_gen_MW - refbus.p_load_MW,
+        q_net_for002_bus_table_MVar = refbus === nothing ? missing : refbus.q_gen_MVar - refbus.q_load_MVar,
+        p_out_from_parsed_for002_branch_rows_MW = missing,
+        q_out_from_parsed_for002_branch_rows_MVar = missing,
+        p_loss_share_from_for002_branch_rows_MW = missing,
+        q_loss_share_from_for002_branch_rows_MVar = missing,
+        reconstructed_p_net_from_for002_branches_MW = missing,
+        reconstructed_q_net_from_for002_branches_MVar = missing,
+        d_p_kcl_for002_MW = missing,
+        d_q_kcl_for002_MVar = missing,
+        number_of_incident_for002_branch_rows = missing,
+        marker = key in adjacent ? "adjacent_to_top_active_flow_offender" : "",
+        model_p_net_from_bus_report_MW = p_net,
+        model_q_net_from_bus_report_MVar = q_net,
+        model_reconstructed_p_net_from_branch_rows_MW = t.p_out,
+        model_reconstructed_q_net_from_branch_rows_MVar = t.q_out,
+        model_d_p_kcl_MW = p_net - t.p_out,
+        model_d_q_kcl_MVar = q_net - t.q_out,
+        model_incident_branch_rows = t.incident,
+      ))
+    end
+  end
+  return rows
+end
+
+function _for002_kcl_summary_rows(rows::Vector{NamedTuple})
+  out = NamedTuple[]
+  for scenario in sort(unique(row.scenario for row in rows if row.model == "FOR002"))
+    rs = [row for row in rows if row.model == "FOR002" && row.scenario == scenario]
+    push!(out, (
+      scenario = scenario,
+      max_abs_for002_kcl_d_p_MW = maximum(abs(row.d_p_kcl_for002_MW) for row in rs),
+      max_abs_for002_kcl_d_q_MVar = maximum(abs(row.d_q_kcl_for002_MVar) for row in rs),
+      mean_abs_for002_kcl_d_p_MW = sum(abs(row.d_p_kcl_for002_MW) for row in rs) / length(rs),
+      mean_abs_for002_kcl_d_q_MVar = sum(abs(row.d_q_kcl_for002_MVar) for row in rs) / length(rs),
+      total_for002_bus_table_p_net_MW = sum(row.p_net_for002_bus_table_MW for row in rs),
+      total_for002_branch_reconstructed_p_net_MW = sum(row.reconstructed_p_net_from_for002_branches_MW for row in rs),
+      total_for002_bus_table_q_net_MVar = sum(row.q_net_for002_bus_table_MVar for row in rs),
+      total_for002_branch_reconstructed_q_net_MVar = sum(row.reconstructed_q_net_from_for002_branches_MVar for row in rs),
+    ))
+  end
+  return out
+end
+
+function _write_for002_kcl_csvs(opt::CliOptions, ref::For002Scenario, base_results::Vector{ModelRunResult}, branch_labels::Vector{String})
+  rows = _for002_kcl_diagnostic_rows(ref, base_results, branch_labels)
+  summary_rows = _for002_kcl_summary_rows(rows)
+  diagnostics_csv = joinpath(opt.output_dir, "for002_kcl_diagnostics.csv")
+  summary_csv = joinpath(opt.output_dir, "for002_kcl_summary.csv")
+  headers = propertynames(first(rows))
+  open(diagnostics_csv, "w") do io
+    println(io, join(headers, ","))
+    for row in rows
+      println(io, _csv_line((getproperty(row, h) for h in headers)...))
+    end
+  end
+  open(summary_csv, "w") do io
+    println(io, "scenario,max_abs_for002_kcl_d_p_MW,max_abs_for002_kcl_d_q_MVar,mean_abs_for002_kcl_d_p_MW,mean_abs_for002_kcl_d_q_MVar,total_for002_bus_table_p_net_MW,total_for002_branch_reconstructed_p_net_MW,total_for002_bus_table_q_net_MVar,total_for002_branch_reconstructed_q_net_MVar")
+    for row in summary_rows
+      println(io, _csv_line(row.scenario, row.max_abs_for002_kcl_d_p_MW, row.max_abs_for002_kcl_d_q_MVar, row.mean_abs_for002_kcl_d_p_MW, row.mean_abs_for002_kcl_d_q_MVar, row.total_for002_bus_table_p_net_MW, row.total_for002_branch_reconstructed_p_net_MW, row.total_for002_bus_table_q_net_MVar, row.total_for002_branch_reconstructed_q_net_MVar))
+    end
+  end
+  return (diagnostics_csv = diagnostics_csv, summary_csv = summary_csv, rows = rows, summary_rows = summary_rows)
+end
+
+function _print_for002_kcl_console_summary(diagnostics)
+  diagnostics === nothing && return nothing
+  for002_rows = [row for row in diagnostics.rows if row.model == "FOR002"]
+  println("FOR002 internal KCL diagnostic summary")
+  for summary in diagnostics.summary_rows
+    consistent = summary.max_abs_for002_kcl_d_p_MW <= 1.0 && summary.max_abs_for002_kcl_d_q_MVar <= 2.0
+    @printf("  %s max|dP|=%.6g MW mean|dP|=%.6g MW max|dQ|=%.6g MVar mean|dQ|=%.6g MVar => %s\n", summary.scenario, summary.max_abs_for002_kcl_d_p_MW, summary.mean_abs_for002_kcl_d_p_MW, summary.max_abs_for002_kcl_d_q_MVar, summary.mean_abs_for002_kcl_d_q_MVar, consistent ? "branch rows appear KCL-consistent with bus rows" : "branch rows do not reconstruct bus rows")
+  end
+  println("    Top 10 FOR002 bus KCL mismatches by P:")
+  for row in first(sort(for002_rows; by = row -> abs(row.d_p_kcl_for002_MW), rev = true), min(10, length(for002_rows)))
+    @printf("      %-12s dP=% .6g MW bus_net=% .6g branch_recon=% .6g %s\n", row.bus_name, row.d_p_kcl_for002_MW, row.p_net_for002_bus_table_MW, row.reconstructed_p_net_from_for002_branches_MW, row.marker)
+  end
+  println("    Top 10 FOR002 bus KCL mismatches by Q:")
+  for row in first(sort(for002_rows; by = row -> abs(row.d_q_kcl_for002_MVar), rev = true), min(10, length(for002_rows)))
+    @printf("      %-12s dQ=% .6g MVar bus_net=% .6g branch_recon=% .6g %s\n", row.bus_name, row.d_q_kcl_for002_MVar, row.q_net_for002_bus_table_MVar, row.reconstructed_q_net_from_for002_branches_MVar, row.marker)
+  end
+  offender_rows = [row for row in for002_rows if row.marker != ""]
+  high = [row.bus_name for row in offender_rows if abs(row.d_p_kcl_for002_MW) > 1.0 || abs(row.d_q_kcl_for002_MVar) > 2.0]
+  println("    Top active-flow offender buses with high FOR002 KCL mismatch: ", isempty(high) ? "none" : join(high, ", "))
+  println()
+  return nothing
+end
+
 function _print_worst_branch_console_summary(diagnostics)
   diagnostics === nothing && return nothing
   println("Worst branch-flow diagnostic summary")
@@ -2327,7 +2521,7 @@ function _scenario_file_prefix(result::ModelRunResult)::String
   return lowercase(result.model_name) * "_" * scenario_tag
 end
 
-function _write_summary(path::AbstractString, opt::CliOptions, ref_scenarios::Vector{For002Scenario}, branch_labels::Vector{String}, base_summaries::Vector{NamedTuple}, contingency_summaries::Vector{NamedTuple}, model_compare_file::Union{Nothing,String}, branch_b_diagnostic_csv::AbstractString, branch_b_sweep_csv::Union{Nothing,String}, line_x_sweep_csv::Union{Nothing,String}, for001_conversion_csv::Union{Nothing,String}, for001_conversion_raw_parsed::Union{Nothing,Bool}, worst_offenders_csv::Union{Nothing,String}, pv_bus_diagnostics_csv::Union{Nothing,String}, pv_bus_diagnostics_note::Union{Nothing,String}, active_flow_diagnostics, worst_branch_diagnostics, flow_semantics_diagnostics, bus_injection_balance_diagnostics)
+function _write_summary(path::AbstractString, opt::CliOptions, ref_scenarios::Vector{For002Scenario}, branch_labels::Vector{String}, base_summaries::Vector{NamedTuple}, contingency_summaries::Vector{NamedTuple}, model_compare_file::Union{Nothing,String}, branch_b_diagnostic_csv::AbstractString, branch_b_sweep_csv::Union{Nothing,String}, line_x_sweep_csv::Union{Nothing,String}, for001_conversion_csv::Union{Nothing,String}, for001_conversion_raw_parsed::Union{Nothing,Bool}, worst_offenders_csv::Union{Nothing,String}, pv_bus_diagnostics_csv::Union{Nothing,String}, pv_bus_diagnostics_note::Union{Nothing,String}, active_flow_diagnostics, worst_branch_diagnostics, flow_semantics_diagnostics, bus_injection_balance_diagnostics, for002_kcl_diagnostics)
   open(path, "w") do io
     println(io, "# FOR002 validation summary")
     println(io)
@@ -2351,6 +2545,7 @@ function _write_summary(path::AbstractString, opt::CliOptions, ref_scenarios::Ve
     println(io, "- Diagnose FOR002 flow semantics: ", opt.diagnose_for002_flow_semantics)
     println(io, "- Diagnose FOR001 conversion: ", opt.diagnose_for001_conversion)
     println(io, "- Diagnose bus injection balance: ", opt.diagnose_bus_injection_balance)
+    println(io, "- Diagnose FOR002 KCL: ", opt.diagnose_for002_kcl)
     println(io, "- Sweep line x scale: ", opt.sweep_line_x_scale)
     println(io, "- MATPOWER PQ generator controllers: ", opt.matpower_pq_gen_controllers)
     println(io, "- Builder PQ generator controllers: ", opt.builder_pq_gen_controllers)
@@ -2395,6 +2590,10 @@ function _write_summary(path::AbstractString, opt::CliOptions, ref_scenarios::Ve
     if bus_injection_balance_diagnostics !== nothing
       println(io, "- Bus injection balance diagnostics CSV: `", bus_injection_balance_diagnostics.bus_csv, "`")
       println(io, "- Regional injection balance diagnostics CSV: `", bus_injection_balance_diagnostics.regional_csv, "`")
+    end
+    if for002_kcl_diagnostics !== nothing
+      println(io, "- FOR002 KCL diagnostics CSV: `", for002_kcl_diagnostics.diagnostics_csv, "`")
+      println(io, "- FOR002 KCL summary CSV: `", for002_kcl_diagnostics.summary_csv, "`")
     end
     println(io)
     println(io, "## Solver settings")
@@ -2538,6 +2737,7 @@ function main(args = ARGS)
   println("  diagnose flow semantics = ", opt.diagnose_for002_flow_semantics)
   println("  diagnose FOR001 conv.   = ", opt.diagnose_for001_conversion)
   println("  diagnose bus injections = ", opt.diagnose_bus_injection_balance)
+  println("  diagnose FOR002 KCL     = ", opt.diagnose_for002_kcl)
   println("  sweep line x scale      = ", opt.sweep_line_x_scale)
   println("  MATPOWER ratio          = ", opt.matpower_ratio)
   println("  MATPOWER PQ controllers = ", opt.matpower_pq_gen_controllers)
@@ -2623,6 +2823,8 @@ function main(args = ARGS)
   _print_flow_semantics_console_summary(flow_semantics_diagnostics)
   bus_injection_balance_diagnostics = opt.diagnose_bus_injection_balance ? _write_bus_injection_balance_diagnostics(opt, ref_base, base_results, branch_labels) : nothing
   _print_bus_injection_balance_console_summary(bus_injection_balance_diagnostics)
+  for002_kcl_diagnostics = opt.diagnose_for002_kcl ? _write_for002_kcl_csvs(opt, ref_base, base_results, branch_labels) : nothing
+  _print_for002_kcl_console_summary(for002_kcl_diagnostics)
   for001_conversion_csv = nothing
   for001_conversion_raw_parsed = nothing
   if opt.diagnose_for001_conversion
@@ -2661,7 +2863,7 @@ function main(args = ARGS)
   end
 
   summary_path = joinpath(opt.output_dir, "for002_validation_summary.md")
-  _write_summary(summary_path, opt, ref_scenarios, branch_labels, base_summaries, contingency_summaries, model_compare_file, branch_b_diagnostic_csv, branch_b_sweep_csv, line_x_sweep_csv, for001_conversion_csv, for001_conversion_raw_parsed, worst_offenders_csv, pv_bus_diagnostics_csv, pv_bus_diagnostics_note, active_flow_diagnostics, worst_branch_diagnostics, flow_semantics_diagnostics, bus_injection_balance_diagnostics)
+  _write_summary(summary_path, opt, ref_scenarios, branch_labels, base_summaries, contingency_summaries, model_compare_file, branch_b_diagnostic_csv, branch_b_sweep_csv, line_x_sweep_csv, for001_conversion_csv, for001_conversion_raw_parsed, worst_offenders_csv, pv_bus_diagnostics_csv, pv_bus_diagnostics_note, active_flow_diagnostics, worst_branch_diagnostics, flow_semantics_diagnostics, bus_injection_balance_diagnostics, for002_kcl_diagnostics)
 
   println()
   println("Output files written to:")
@@ -2684,6 +2886,10 @@ function main(args = ARGS)
   if bus_injection_balance_diagnostics !== nothing
     println("  bus injection balance = ", bus_injection_balance_diagnostics.bus_csv)
     println("  regional injections   = ", bus_injection_balance_diagnostics.regional_csv)
+  end
+  if for002_kcl_diagnostics !== nothing
+    println("  FOR002 KCL diag       = ", for002_kcl_diagnostics.diagnostics_csv)
+    println("  FOR002 KCL summary    = ", for002_kcl_diagnostics.summary_csv)
   end
   branch_b_sweep_csv !== nothing && println("  branch b sweep summary = ", branch_b_sweep_csv)
   line_x_sweep_csv !== nothing && println("  line x sweep summary   = ", line_x_sweep_csv)
