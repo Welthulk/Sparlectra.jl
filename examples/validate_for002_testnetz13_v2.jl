@@ -82,6 +82,10 @@ end
 
 _case_tag(s::AbstractString) = replace(splitext(basename(s))[1], r"[^A-Za-z0-9_.-]" => "_")
 _norm_name(s::AbstractString) = uppercase(strip(replace(String(s), r"\s+" => " ")))
+function _normalize_for002_bus_name(name::AbstractString)::String
+  s = String(strip(name))
+  return endswith(s, " S") ? String(strip(s[1:end-2])) : s
+end
 _angle_delta_deg(calc_deg::Real, ref_deg::Real)::Float64 = mod(Float64(calc_deg) - Float64(ref_deg) + 180.0, 360.0) - 180.0
 _csv_quote(s::AbstractString) = "\"" * replace(String(s), "\"" => "\"\"") * "\""
 _csv_value(x) = x === nothing ? "" : x isa AbstractString ? _csv_quote(x) : x isa Missing ? "" : string(x)
@@ -205,15 +209,15 @@ function _try_parse_for002_outage(line::AbstractString)
   m = match(r"AUSFALL DES ZWEIGES\s+(?:([A-Z])\s+)?VON\s+(.+?)\s+NACH\s+(.+?)\s+I", line)
   m === nothing && return (letter = nothing, from = nothing, to = nothing, title = strip(line))
   letter = m.captures[1] === nothing ? nothing : String(strip(m.captures[1]))
-  from_bus = String(strip(m.captures[2]))
-  to_bus = String(strip(m.captures[3]))
+  from_bus = _normalize_for002_bus_name(m.captures[2])
+  to_bus = _normalize_for002_bus_name(m.captures[3])
   title = isnothing(letter) ? "outage $from_bus -> $to_bus" : "outage $letter $from_bus -> $to_bus"
   return (letter = letter, from = from_bus, to = to_bus, title = title)
 end
 
 function _try_parse_for002_bus(line::AbstractString)
   startswith(line, "I ") || return nothing
-  name = String(strip(_field(line, 3, 13)))
+  name = _normalize_for002_bus_name(_field(line, 3, 13))
   isempty(name) && return nothing
   v = _numbers(_field(line, 15, 28))
   gen = _numbers(_field(line, 30, 44))
@@ -228,7 +232,7 @@ function _try_parse_for002_branch(line::AbstractString, current_bus::Union{Nothi
   # A branch row has an empty bus column and a filled branch-target field.
   strip(_field(line, 3, 13)) == "" || return nothing
   target_field = _field(line, 62, 85)
-  to_bus = String(strip(_field(target_field, 6, 13)))
+  to_bus = _normalize_for002_bus_name(_field(target_field, 6, 13))
   isempty(to_bus) && return nothing
   nr = String(strip(_field(target_field, 15, 15)))
   branch_type = String(strip(_field(target_field, 19, 22)))
@@ -237,7 +241,7 @@ function _try_parse_for002_branch(line::AbstractString, current_bus::Union{Nothi
   current = _numbers(_field(line, 121, 127))
   length(flow) == 2 || return nothing
   length(losses) == 2 || return nothing
-  return (from_bus = String(current_bus), to_bus = to_bus, nr = nr, type = branch_type, p_MW = flow[1], q_MVar = flow[2], p_loss_MW = losses[1], q_loss_MVar = losses[2], loading_percent = isempty(current) ? missing : current[1])
+  return (from_bus = _normalize_for002_bus_name(current_bus), to_bus = to_bus, nr = nr, type = branch_type, p_MW = flow[1], q_MVar = flow[2], p_loss_MW = losses[1], q_loss_MVar = losses[2], loading_percent = isempty(current) ? missing : current[1])
 end
 
 function parse_for002(path::AbstractString)::Vector{For002Scenario}
@@ -771,7 +775,16 @@ end
 
 function _load_matpower_builder(matpower_path::AbstractString)
   isfile(matpower_path) || throw(ArgumentError("MATPOWER file not found: $matpower_path"))
-  return () -> createNetFromMatPowerFile(filename = matpower_path, log = false, flatstart = false)
+  mpc = Sparlectra.MatpowerIO.read_case(matpower_path; legacy_compat = true)
+  return () -> Sparlectra.createNetFromMatPowerCase(
+    mpc = mpc,
+    log = false,
+    flatstart = false,
+    apply_bus_names = true,
+    apply_branch_names = true,
+    apply_branch_kind = true,
+    import_for001_contingencies = true,
+  )
 end
 
 function main(args = ARGS)
