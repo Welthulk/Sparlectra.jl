@@ -943,6 +943,7 @@ function _write_summary(path::AbstractString, opt::CliOptions, ref_scenarios::Ve
     println(io, "- MATPOWER ratio: ", opt.matpower_ratio)
     println(io, "- MATPOWER PQ generator controllers: ", opt.matpower_pq_gen_controllers)
     println(io, "- Builder PQ generator controllers: ", opt.builder_pq_gen_controllers)
+    println(io, "- Builder controller handling: native-builder control is applied by clearing P(U)/Q(U) controllers on non-regulating generators after the builder returns; if none are present, the option is a no-op for that builder.")
     println(io, "- Branch charging diagnostic CSV: `", branch_b_diagnostic_csv, "`")
     println(io)
     println(io, "## Solver settings")
@@ -1076,9 +1077,7 @@ function main(args = ARGS)
   println("  MATPOWER ratio          = ", opt.matpower_ratio)
   println("  MATPOWER PQ controllers = ", opt.matpower_pq_gen_controllers)
   println("  builder PQ controllers  = ", opt.builder_pq_gen_controllers)
-  if !opt.builder_pq_gen_controllers
-    println("  builder controller note = generic builder control clears P(U)/Q(U) controllers on non-regulating generators after build; this FOR001 builder normally has none.")
-  end
+  println("  builder controller note = generic builder control clears P(U)/Q(U) controllers on non-regulating generators after build when disabled; if none exist, the option is a no-op.")
   println()
 
   ref_scenarios = parse_for002(opt.for002_path)
