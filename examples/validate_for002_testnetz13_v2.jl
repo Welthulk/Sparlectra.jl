@@ -78,6 +78,9 @@ struct CliOptions
   diagnose_active_flow::Bool
   diagnose_worst_branches::Bool
   sweep_worst_branch_angle::Bool
+  diagnose_for001_conversion::Bool
+  sweep_line_x_scale::Bool
+  line_x_scale::Float64
 end
 
 struct ModelRunResult
@@ -148,6 +151,8 @@ function _parse_cli_args(args::Vector{String})::CliOptions
   diagnose_active_flow = false
   diagnose_worst_branches = false
   sweep_worst_branch_angle = false
+  diagnose_for001_conversion = false
+  sweep_line_x_scale = false
 
   for arg in args
     if arg == "--contingencies"
@@ -160,6 +165,10 @@ function _parse_cli_args(args::Vector{String})::CliOptions
       diagnose_worst_branches = true
     elseif arg == "--sweep-worst-branch-angle"
       sweep_worst_branch_angle = true
+    elseif arg == "--diagnose-for001-conversion"
+      diagnose_for001_conversion = true
+    elseif arg == "--sweep-line-x-scale"
+      sweep_line_x_scale = true
     elseif arg == "--no-matpower"
       run_matpower = false
     elseif arg == "--no-builder"
@@ -202,6 +211,9 @@ function _parse_cli_args(args::Vector{String})::CliOptions
       println("  --diagnose-active-flow     write active-power and branch/tap diagnostic CSVs")
       println("  --diagnose-worst-branches  write detailed top branch-flow offender diagnostics")
       println("  --sweep-worst-branch-angle diagnostic one-at-a-time phase-shift sweep for top branch-flow offenders")
+      println("  --diagnose-for001-conversion")
+      println("                              write raw FOR001-to-converted branch parameter diagnostics")
+      println("  --sweep-line-x-scale        run diagnostic ordinary AC-line x scaling sweep")
       println("  --infer-pv-buses=off|from-q-limits|from-gen-vg|all-generator-buses")
       println("                              diagnostic PV-bus inference mode; default off")
       println("  --matpower-ratio=normal|reciprocal")
@@ -272,6 +284,9 @@ function _parse_cli_args(args::Vector{String})::CliOptions
     diagnose_active_flow,
     diagnose_worst_branches,
     sweep_worst_branch_angle,
+    diagnose_for001_conversion,
+    sweep_line_x_scale,
+    1.0,
   )
 end
 
@@ -518,6 +533,15 @@ function _scale_branch_b!(net::Net, scale::Float64)
   return nothing
 end
 
+function _scale_line_x!(net::Net, scale::Float64)
+  scale == 1.0 && return nothing
+  for br in net.branchVec
+    _branch_diagnostic_kind(net, br) === :line || continue
+    br.x_pu *= scale
+  end
+  return nothing
+end
+
 function _clear_pq_gen_controllers!(net::Net)
   cleared = 0
   for ps in net.prosumpsVec
@@ -692,6 +716,7 @@ end
 function _run_model(model_name::AbstractString, buildfn::Function, opt::CliOptions, scenario_name::AbstractString; branch_index_out::Union{Nothing,Int} = nothing)::ModelRunResult
   net = buildfn()
   _scale_branch_b!(net, opt)
+  _scale_line_x!(net, opt.line_x_scale)
   report, iters, status, residual = _run_powerflow!(net, opt; branch_index_out = branch_index_out)
   return ModelRunResult(String(model_name), String(scenario_name), branch_index_out, net, report, iters, status, residual)
 end
@@ -948,6 +973,49 @@ function _with_branch_b_sweep_point(opt::CliOptions, line_b_scale::Float64, traf
     opt.diagnose_active_flow,
     opt.diagnose_worst_branches,
     opt.sweep_worst_branch_angle,
+    opt.diagnose_for001_conversion,
+    opt.sweep_line_x_scale,
+    opt.line_x_scale,
+  )
+end
+
+function _with_line_x_sweep_point(opt::CliOptions, x_scale::Float64)::CliOptions
+  return CliOptions(
+    opt.for002_path,
+    opt.matpower_path,
+    opt.builder_path,
+    opt.builder_function,
+    opt.output_dir,
+    opt.run_matpower,
+    opt.run_builder,
+    false,
+    opt.maxiter,
+    opt.solver_tol,
+    opt.verbose,
+    opt.autodamp,
+    opt.opt_flatstart,
+    opt.qlimits_enabled,
+    opt.tol_v_kV,
+    opt.tol_vm_pu,
+    opt.tol_va_deg,
+    opt.tol_p_MW,
+    opt.tol_q_MVar,
+    opt.tol_branch_p_MW,
+    opt.tol_branch_q_MVar,
+    opt.branch_b_scale,
+    0.35,
+    0.0,
+    :normal,
+    opt.matpower_pq_gen_controllers,
+    opt.builder_pq_gen_controllers,
+    false,
+    opt.infer_pv_buses,
+    opt.diagnose_active_flow,
+    opt.diagnose_worst_branches,
+    opt.sweep_worst_branch_angle,
+    opt.diagnose_for001_conversion,
+    opt.sweep_line_x_scale,
+    x_scale,
   )
 end
 
@@ -1016,6 +1084,63 @@ function _write_branch_b_sweep_summary_csv(path::AbstractString, rows::Vector{Na
     println(io, "line_b_scale,trafo_b_scale,matpower_status,builder_status,matpower_max_abs_d_v_kV,matpower_max_abs_d_va_deg,matpower_max_abs_d_q_gen_MVar,matpower_max_abs_branch_d_p_MW,matpower_max_abs_branch_d_q_MVar,matpower_total_d_p_loss_MW,matpower_total_d_q_loss_MVar,matpower_objective,builder_max_abs_d_v_kV,builder_max_abs_d_va_deg,builder_max_abs_d_q_gen_MVar,builder_max_abs_branch_d_p_MW,builder_max_abs_branch_d_q_MVar,builder_total_d_p_loss_MW,builder_total_d_q_loss_MVar,builder_objective")
     for row in rows
       println(io, _csv_line(row.line_b_scale, row.trafo_b_scale, row.matpower_status, row.builder_status, row.matpower_max_abs_d_v_kV, row.matpower_max_abs_d_va_deg, row.matpower_max_abs_d_q_gen_MVar, row.matpower_max_abs_branch_d_p_MW, row.matpower_max_abs_branch_d_q_MVar, row.matpower_total_d_p_loss_MW, row.matpower_total_d_q_loss_MVar, row.matpower_objective, row.builder_max_abs_d_v_kV, row.builder_max_abs_d_va_deg, row.builder_max_abs_d_q_gen_MVar, row.builder_max_abs_branch_d_p_MW, row.builder_max_abs_branch_d_q_MVar, row.builder_total_d_p_loss_MW, row.builder_total_d_q_loss_MVar, row.builder_objective))
+    end
+  end
+  return path
+end
+
+function _run_line_x_sweep(opt::CliOptions, ref_base::For002Scenario, model_builders::Vector{Tuple{String,Function}}, branch_labels::Vector{String})
+  x_scales = [0.80, 0.90, 0.95, 1.00, 1.05, 1.10, 1.20]
+  rows = NamedTuple[]
+  scratch_dir = joinpath(opt.output_dir, "_line_x_sweep_details")
+  mkpath(scratch_dir)
+  missing_metrics = (status = missing, max_abs_d_v_kV = missing, max_abs_d_va_deg = missing, max_abs_d_q_gen_MVar = missing, max_abs_branch_d_p_MW = missing, max_abs_branch_d_q_MVar = missing, total_d_p_loss_MW = missing, objective = Inf)
+
+  for x_scale in x_scales
+    sweep_opt = _with_line_x_sweep_point(opt, x_scale)
+    metrics = Dict{String,NamedTuple}()
+    for (model_name, buildfn) in model_builders
+      result = _run_model(model_name, buildfn, sweep_opt, "base")
+      tag = "$(model_name)_x$(_case_tag(string(x_scale)))"
+      bus_cmp = _compare_bus_rows(ref_base, result, sweep_opt, joinpath(scratch_dir, tag * "_bus_comparison.csv"))
+      branch_cmp = _compare_branch_rows(ref_base, result, branch_labels, sweep_opt, joinpath(scratch_dir, tag * "_branch_comparison.csv"))
+      totals = _compare_totals(ref_base, result)
+      metrics[String(model_name)] = (
+        status = result.status,
+        max_abs_d_v_kV = bus_cmp.max_abs_d_v_kV,
+        max_abs_d_va_deg = bus_cmp.max_abs_d_va_deg,
+        max_abs_d_q_gen_MVar = bus_cmp.max_abs_d_q_gen_MVar,
+        max_abs_branch_d_p_MW = branch_cmp.max_abs_d_p_MW,
+        max_abs_branch_d_q_MVar = branch_cmp.max_abs_d_q_MVar,
+        total_d_p_loss_MW = totals.d_p_loss_MW,
+        objective = _diagnostic_objective(bus_cmp, branch_cmp) + branch_cmp.max_abs_d_p_MW,
+      )
+    end
+    matpower = get(metrics, "matpower", missing_metrics)
+    builder = get(metrics, "builder", missing_metrics)
+    push!(rows, (
+      x_scale = x_scale,
+      matpower_status = matpower.status,
+      builder_status = builder.status,
+      max_abs_branch_d_p_MW = matpower.max_abs_branch_d_p_MW,
+      max_abs_d_va_deg = matpower.max_abs_d_va_deg,
+      max_abs_d_v_kV = matpower.max_abs_d_v_kV,
+      max_abs_d_q_gen_MVar = matpower.max_abs_d_q_gen_MVar,
+      max_abs_branch_d_q_MVar = matpower.max_abs_branch_d_q_MVar,
+      total_d_p_loss_MW = matpower.total_d_p_loss_MW,
+      objective = matpower.objective,
+      builder_max_abs_branch_d_p_MW = builder.max_abs_branch_d_p_MW,
+      builder_objective = builder.objective,
+    ))
+  end
+  return rows
+end
+
+function _write_line_x_sweep_summary_csv(path::AbstractString, rows::Vector{NamedTuple})
+  open(path, "w") do io
+    println(io, "x_scale,matpower_status,builder_status,max_abs_branch_d_p_MW,max_abs_d_va_deg,max_abs_d_v_kV,max_abs_d_q_gen_MVar,max_abs_branch_d_q_MVar,total_d_p_loss_MW,objective,builder_max_abs_branch_d_p_MW,builder_objective")
+    for row in rows
+      println(io, _csv_line(row.x_scale, row.matpower_status, row.builder_status, row.max_abs_branch_d_p_MW, row.max_abs_d_va_deg, row.max_abs_d_v_kV, row.max_abs_d_q_gen_MVar, row.max_abs_branch_d_q_MVar, row.total_d_p_loss_MW, row.objective, row.builder_max_abs_branch_d_p_MW, row.builder_objective))
     end
   end
   return path
@@ -1486,6 +1611,138 @@ function _write_transformer_tap_diagnostics_csv(path::AbstractString, rows::Vect
   return path
 end
 
+function _metadata_path_for_matpower(matpower_path::AbstractString)::String
+  return joinpath(dirname(matpower_path), "for001_conversion_metadata.json")
+end
+
+function _extract_json_number(block::AbstractString, key::AbstractString)
+  m = match(Regex("\"" * key * "\"\\s*:\\s*(" * NUMBER_PAT * "|null)"), block)
+  m === nothing && return missing
+  m.captures[1] == "null" && return missing
+  return parse(Float64, m.captures[1])
+end
+
+function _extract_json_string(block::AbstractString, key::AbstractString)
+  m = match(Regex("\"" * key * "\"\\s*:\\s*\"([^\"]*)\""), block)
+  return m === nothing ? missing : m.captures[1]
+end
+
+function _parse_for001_branch_metadata(path::AbstractString)
+  isfile(path) || return Dict{Int,NamedTuple}()
+  text = read(path, String)
+  branches_start = findfirst("\"branches\"", text)
+  branches_start === nothing && return Dict{Int,NamedTuple}()
+  tail = text[branches_start[1]:end]
+  branches_end = findfirst("\n  ]", tail)
+  branch_text = branches_end === nothing ? tail : tail[1:branches_end[end]]
+  d = Dict{Int,NamedTuple}()
+  for m in eachmatch(r"\{\s*\"idx\"\s*:\s*\d+.*?\n\s*\}"s, branch_text)
+    block = m.match
+    idx = Int(_extract_json_number(block, "idx"))
+    d[idx] = (
+      label = _extract_json_string(block, "label"),
+      kind = _extract_json_string(block, "kind"),
+      raw_r = _extract_json_number(block, "r_ohm"),
+      raw_x = _extract_json_number(block, "x_ohm"),
+      raw_b = _extract_json_number(block, "b_s"),
+      vbase_kv = _extract_json_number(block, "vbase_kv"),
+      unit_assumption = "r/x=ohm, b=siemens; converted on from-side voltage base",
+    )
+  end
+  return d
+end
+
+function _ratio_or_missing(raw, converted)
+  (raw isa Missing || converted isa Missing || converted == 0.0) && return missing
+  return raw / converted
+end
+
+function _for001_conversion_diagnostic_rows(opt::CliOptions, ref::For002Scenario, base_results::Vector{ModelRunResult}, branch_labels::Vector{String})
+  metadata = _parse_for001_branch_metadata(_metadata_path_for_matpower(opt.matpower_path))
+  if isempty(metadata)
+    println("FOR001 conversion diagnostics note: raw branch metadata was not found; writing converted values only.")
+  else
+    println("FOR001 conversion diagnostics note: parsed raw branch parameters from ", _metadata_path_for_matpower(opt.matpower_path))
+  end
+
+  mpc = Sparlectra.MatpowerIO.read_case(opt.matpower_path; legacy_compat = true)
+  matpower_branch = mpc.branch
+  builder_result = findfirst(r -> r.model_name == "builder", base_results)
+  matpower_result = findfirst(r -> r.model_name == "matpower", base_results)
+  reference_result = builder_result === nothing ? (matpower_result === nothing ? nothing : base_results[matpower_result]) : base_results[builder_result]
+  names = reference_result === nothing ? Dict{Int,String}() : _bus_name_by_idx(reference_result.net)
+  branch_devs = reference_result === nothing ? NamedTuple[] : _branch_flow_deviation_rows(ref, reference_result, branch_labels)
+  top_indices = Set(row.branch_index for row in first(sort(branch_devs; by = row -> abs(row.d_p_MW), rev = true), min(10, length(branch_devs))))
+  builder_by_idx = Dict{Int,Any}()
+  if builder_result !== nothing
+    for br in base_results[builder_result].net.branchVec
+      builder_by_idx[br.branchIdx] = br
+    end
+  end
+
+  rows = NamedTuple[]
+  for idx in axes(matpower_branch, 1)
+    from_idx = Int(matpower_branch[idx, 1])
+    to_idx = Int(matpower_branch[idx, 2])
+    from_kv = reference_result === nothing ? missing : reference_result.net.nodeVec[from_idx].comp.cVN
+    to_kv = reference_result === nothing ? missing : reference_result.net.nodeVec[to_idx].comp.cVN
+    zbase = from_kv isa Missing ? missing : from_kv^2 / mpc.baseMVA
+    ybase = zbase isa Missing ? missing : 1.0 / zbase
+    raw = get(metadata, idx, nothing)
+    raw_r = raw === nothing ? missing : raw.raw_r
+    raw_x = raw === nothing ? missing : raw.raw_x
+    raw_b = raw === nothing ? missing : raw.raw_b
+    recomputed_r = (raw_r isa Missing || zbase isa Missing) ? missing : raw_r / zbase
+    recomputed_x = (raw_x isa Missing || zbase isa Missing) ? missing : raw_x / zbase
+    recomputed_b = (raw_b isa Missing || ybase isa Missing) ? missing : raw_b / ybase
+    builder_br = get(builder_by_idx, idx, nothing)
+    converted_r = Float64(matpower_branch[idx, 3])
+    converted_x = Float64(matpower_branch[idx, 4])
+    converted_b = Float64(matpower_branch[idx, 5])
+    push!(rows, (
+      branch_index = idx,
+      branch_label = idx <= length(branch_labels) ? branch_labels[idx] : string(idx),
+      from_bus = get(names, from_idx, string(from_idx)),
+      to_bus = get(names, to_idx, string(to_idx)),
+      branch_kind = raw === nothing ? missing : raw.kind,
+      nominal_voltage_from_kV = from_kv,
+      nominal_voltage_to_kV = to_kv,
+      raw_for001_r = raw_r,
+      raw_for001_x = raw_x,
+      raw_for001_b = raw_b,
+      raw_for001_unit_assumption = raw === nothing ? "raw FOR001 branch metadata unavailable" : raw.unit_assumption,
+      raw_data_missing_note = raw === nothing ? "missing raw branch metadata" : "",
+      converted_matpower_r_pu = converted_r,
+      converted_matpower_x_pu = converted_x,
+      converted_matpower_b_pu = converted_b,
+      builder_r_pu = builder_br === nothing ? missing : builder_br.r_pu,
+      builder_x_pu = builder_br === nothing ? missing : builder_br.x_pu,
+      builder_b_pu_after_scaling = builder_br === nothing ? missing : builder_br.b_pu,
+      baseMVA = mpc.baseMVA,
+      zbase_from_ohm = zbase,
+      ybase_from_S = ybase,
+      recomputed_r_pu_from_raw = recomputed_r,
+      recomputed_x_pu_from_raw = recomputed_x,
+      recomputed_b_pu_from_raw = recomputed_b,
+      ratio_raw_to_converted_r = _ratio_or_missing(recomputed_r, converted_r),
+      ratio_raw_to_converted_x = _ratio_or_missing(recomputed_x, converted_x),
+      ratio_raw_to_converted_b = _ratio_or_missing(recomputed_b, converted_b),
+      top_active_flow_offender_marker = idx in top_indices,
+    ))
+  end
+  return (rows = rows, raw_parsed = !isempty(metadata))
+end
+
+function _write_for001_conversion_diagnostics_csv(path::AbstractString, rows::Vector{NamedTuple})
+  open(path, "w") do io
+    println(io, "branch_index,branch_label,from_bus,to_bus,branch_kind,nominal_voltage_from_kV,nominal_voltage_to_kV,raw_for001_r,raw_for001_x,raw_for001_b,raw_for001_unit_assumption,raw_data_missing_note,converted_matpower_r_pu,converted_matpower_x_pu,converted_matpower_b_pu,builder_r_pu,builder_x_pu,builder_b_pu_after_scaling,baseMVA,zbase_from_ohm,ybase_from_S,recomputed_r_pu_from_raw,recomputed_x_pu_from_raw,recomputed_b_pu_from_raw,ratio_raw_to_converted_r,ratio_raw_to_converted_x,ratio_raw_to_converted_b,top_active_flow_offender_marker")
+    for row in rows
+      println(io, _csv_line(row.branch_index, row.branch_label, row.from_bus, row.to_bus, row.branch_kind, row.nominal_voltage_from_kV, row.nominal_voltage_to_kV, row.raw_for001_r, row.raw_for001_x, row.raw_for001_b, row.raw_for001_unit_assumption, row.raw_data_missing_note, row.converted_matpower_r_pu, row.converted_matpower_x_pu, row.converted_matpower_b_pu, row.builder_r_pu, row.builder_x_pu, row.builder_b_pu_after_scaling, row.baseMVA, row.zbase_from_ohm, row.ybase_from_S, row.recomputed_r_pu_from_raw, row.recomputed_x_pu_from_raw, row.recomputed_b_pu_from_raw, row.ratio_raw_to_converted_r, row.ratio_raw_to_converted_x, row.ratio_raw_to_converted_b, row.top_active_flow_offender_marker))
+    end
+  end
+  return path
+end
+
 function _write_active_flow_diagnostics(opt::CliOptions, ref::For002Scenario, base_results::Vector{ModelRunResult}, branch_labels::Vector{String})
   active_rows = NamedTuple[]
   branch_parameter_rows = NamedTuple[]
@@ -1687,7 +1944,7 @@ function _scenario_file_prefix(result::ModelRunResult)::String
   return lowercase(result.model_name) * "_" * scenario_tag
 end
 
-function _write_summary(path::AbstractString, opt::CliOptions, ref_scenarios::Vector{For002Scenario}, branch_labels::Vector{String}, base_summaries::Vector{NamedTuple}, contingency_summaries::Vector{NamedTuple}, model_compare_file::Union{Nothing,String}, branch_b_diagnostic_csv::AbstractString, branch_b_sweep_csv::Union{Nothing,String}, worst_offenders_csv::Union{Nothing,String}, pv_bus_diagnostics_csv::Union{Nothing,String}, pv_bus_diagnostics_note::Union{Nothing,String}, active_flow_diagnostics, worst_branch_diagnostics)
+function _write_summary(path::AbstractString, opt::CliOptions, ref_scenarios::Vector{For002Scenario}, branch_labels::Vector{String}, base_summaries::Vector{NamedTuple}, contingency_summaries::Vector{NamedTuple}, model_compare_file::Union{Nothing,String}, branch_b_diagnostic_csv::AbstractString, branch_b_sweep_csv::Union{Nothing,String}, line_x_sweep_csv::Union{Nothing,String}, for001_conversion_csv::Union{Nothing,String}, for001_conversion_raw_parsed::Union{Nothing,Bool}, worst_offenders_csv::Union{Nothing,String}, pv_bus_diagnostics_csv::Union{Nothing,String}, pv_bus_diagnostics_note::Union{Nothing,String}, active_flow_diagnostics, worst_branch_diagnostics)
   open(path, "w") do io
     println(io, "# FOR002 validation summary")
     println(io)
@@ -1708,6 +1965,8 @@ function _write_summary(path::AbstractString, opt::CliOptions, ref_scenarios::Ve
     println(io, "- Diagnose active flow: ", opt.diagnose_active_flow)
     println(io, "- Diagnose worst branches: ", opt.diagnose_worst_branches)
     println(io, "- Sweep worst branch angle: ", opt.sweep_worst_branch_angle)
+    println(io, "- Diagnose FOR001 conversion: ", opt.diagnose_for001_conversion)
+    println(io, "- Sweep line x scale: ", opt.sweep_line_x_scale)
     println(io, "- MATPOWER PQ generator controllers: ", opt.matpower_pq_gen_controllers)
     println(io, "- Builder PQ generator controllers: ", opt.builder_pq_gen_controllers)
     println(io, "- Builder controller handling: native-builder control is applied by clearing P(U)/Q(U) controllers on non-regulating generators after the builder returns; if none are present, the option is a no-op for that builder.")
@@ -1715,6 +1974,14 @@ function _write_summary(path::AbstractString, opt::CliOptions, ref_scenarios::Ve
     if branch_b_sweep_csv !== nothing
       println(io, "- Branch charging sweep summary CSV: `", branch_b_sweep_csv, "`")
       println(io, "- Branch charging sweep objective: `max_abs_d_v_kV + 10.0 * max_abs_d_va_deg + 0.05 * max_abs_d_q_gen_MVar + 0.05 * max_abs_branch_d_q_MVar`")
+    end
+    if line_x_sweep_csv !== nothing
+      println(io, "- Line x-scale sweep summary CSV: `", line_x_sweep_csv, "`")
+      println(io, "- Line x-scale sweep setting: ordinary AC lines only, line_b_scale=0.35, trafo_b_scale=0.0, matpower_ratio=normal.")
+    end
+    if for001_conversion_csv !== nothing
+      println(io, "- FOR001 conversion diagnostics CSV: `", for001_conversion_csv, "`")
+      println(io, "- Raw FOR001 branch metadata parsed: ", for001_conversion_raw_parsed)
     end
     if worst_offenders_csv !== nothing
       println(io, "- Worst-offender deviations CSV: `", worst_offenders_csv, "`")
@@ -1875,6 +2142,8 @@ function main(args = ARGS)
   println("  diagnose active flow    = ", opt.diagnose_active_flow)
   println("  diagnose worst branches = ", opt.diagnose_worst_branches)
   println("  sweep worst br. angle   = ", opt.sweep_worst_branch_angle)
+  println("  diagnose FOR001 conv.   = ", opt.diagnose_for001_conversion)
+  println("  sweep line x scale      = ", opt.sweep_line_x_scale)
   println("  MATPOWER ratio          = ", opt.matpower_ratio)
   println("  MATPOWER PQ controllers = ", opt.matpower_pq_gen_controllers)
   println("  builder PQ controllers  = ", opt.builder_pq_gen_controllers)
@@ -1916,6 +2185,17 @@ function main(args = ARGS)
     println()
   end
 
+  line_x_sweep_csv = nothing
+  if opt.sweep_line_x_scale
+    println("[sweep] running ordinary AC-line x scale sweep")
+    line_x_rows = _run_line_x_sweep(opt, ref_base, model_builders, branch_labels)
+    line_x_sweep_csv = _write_line_x_sweep_summary_csv(joinpath(opt.output_dir, "line_x_sweep_summary.csv"), line_x_rows)
+    best_line_x = first(sort(line_x_rows; by = row -> row.objective))
+    @printf("  Best line x-scale x_scale=%.2f objective=%.6g max|dP|=%.6g MW max|dVa|=%.6g deg\n", best_line_x.x_scale, best_line_x.objective, best_line_x.max_abs_branch_d_p_MW, best_line_x.max_abs_d_va_deg)
+    println("Line x-scale sweep summary CSV: ", line_x_sweep_csv)
+    println()
+  end
+
   base_results = ModelRunResult[]
   base_summaries = NamedTuple[]
   for (model_name, buildfn) in model_builders
@@ -1944,6 +2224,14 @@ function main(args = ARGS)
   _print_active_flow_console_summary(active_flow_diagnostics)
   worst_branch_diagnostics = opt.diagnose_worst_branches ? _write_worst_branch_diagnostics(opt, ref_base, base_results, model_builders, branch_labels) : nothing
   _print_worst_branch_console_summary(worst_branch_diagnostics)
+  for001_conversion_csv = nothing
+  for001_conversion_raw_parsed = nothing
+  if opt.diagnose_for001_conversion
+    conv = _for001_conversion_diagnostic_rows(opt, ref_base, base_results, branch_labels)
+    for001_conversion_csv = _write_for001_conversion_diagnostics_csv(joinpath(opt.output_dir, "for001_conversion_diagnostics.csv"), conv.rows)
+    for001_conversion_raw_parsed = conv.raw_parsed
+    println("FOR001 conversion diagnostics CSV: ", for001_conversion_csv)
+  end
 
   contingency_summaries = NamedTuple[]
   if opt.run_contingencies
@@ -1974,7 +2262,7 @@ function main(args = ARGS)
   end
 
   summary_path = joinpath(opt.output_dir, "for002_validation_summary.md")
-  _write_summary(summary_path, opt, ref_scenarios, branch_labels, base_summaries, contingency_summaries, model_compare_file, branch_b_diagnostic_csv, branch_b_sweep_csv, worst_offenders_csv, pv_bus_diagnostics_csv, pv_bus_diagnostics_note, active_flow_diagnostics, worst_branch_diagnostics)
+  _write_summary(summary_path, opt, ref_scenarios, branch_labels, base_summaries, contingency_summaries, model_compare_file, branch_b_diagnostic_csv, branch_b_sweep_csv, line_x_sweep_csv, for001_conversion_csv, for001_conversion_raw_parsed, worst_offenders_csv, pv_bus_diagnostics_csv, pv_bus_diagnostics_note, active_flow_diagnostics, worst_branch_diagnostics)
 
   println()
   println("Output files written to:")
@@ -1991,6 +2279,8 @@ function main(args = ARGS)
     worst_branch_diagnostics.sweep_csv !== nothing && println("  worst branch angle    = ", worst_branch_diagnostics.sweep_csv)
   end
   branch_b_sweep_csv !== nothing && println("  branch b sweep summary = ", branch_b_sweep_csv)
+  line_x_sweep_csv !== nothing && println("  line x sweep summary   = ", line_x_sweep_csv)
+  for001_conversion_csv !== nothing && println("  FOR001 conversion diag = ", for001_conversion_csv)
   worst_offenders_csv !== nothing && println("  worst offenders        = ", worst_offenders_csv)
   for s in base_summaries
     println("  ", s.model_name, " bus comparison     = ", s.bus_csv)
