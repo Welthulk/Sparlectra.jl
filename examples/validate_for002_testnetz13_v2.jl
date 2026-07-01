@@ -67,6 +67,7 @@ struct CliOptions
   tol_q_MVar::Float64
   tol_branch_p_MW::Float64
   tol_branch_q_MVar::Float64
+  branch_b_scale::Float64
 end
 
 struct ModelRunResult
@@ -119,6 +120,7 @@ function _parse_cli_args(args::Vector{String})::CliOptions
     "tol-q-mvar" => "1.50",
     "tol-branch-p-mw" => "1.00",
     "tol-branch-q-mvar" => "2.00",
+    "branch-b-scale" => "1.0",
   )
   run_matpower = true
   run_builder = true
@@ -165,6 +167,7 @@ function _parse_cli_args(args::Vector{String})::CliOptions
       println("  --tol-q-mvar=X             bus/loss reactive-power tolerance")
       println("  --tol-branch-p-mw=X        branch active-power tolerance")
       println("  --tol-branch-q-mvar=X      branch reactive-power tolerance")
+      println("  --branch-b-scale=X         diagnostic multiplier for branch b_pu before solving")
       exit(0)
     elseif startswith(arg, "--") && occursin("=", arg)
       key, value = split(arg[3:end], "="; limit = 2)
@@ -201,6 +204,7 @@ function _parse_cli_args(args::Vector{String})::CliOptions
     parse(Float64, defaults["tol-q-mvar"]),
     parse(Float64, defaults["tol-branch-p-mw"]),
     parse(Float64, defaults["tol-branch-q-mvar"]),
+    parse(Float64, defaults["branch-b-scale"]),
   )
 end
 
@@ -392,6 +396,14 @@ function _safe_residual_inf(net::Net)::Union{Nothing,Float64}
   end
 end
 
+function _scale_branch_b!(net::Net, scale::Float64)
+  scale == 1.0 && return nothing
+  for br in net.branchVec
+    br.b_pu *= scale
+  end
+  return nothing
+end
+
 function _run_powerflow!(net::Net, opt::CliOptions; branch_index_out::Union{Nothing,Int} = nothing)
   if branch_index_out !== nothing
     setNetBranchStatus!(net = net, branchNr = branch_index_out, status = 0)
@@ -405,6 +417,7 @@ end
 
 function _run_model(model_name::AbstractString, buildfn::Function, opt::CliOptions, scenario_name::AbstractString; branch_index_out::Union{Nothing,Int} = nothing)::ModelRunResult
   net = buildfn()
+  _scale_branch_b!(net, opt.branch_b_scale)
   report, iters, status, residual = _run_powerflow!(net, opt; branch_index_out = branch_index_out)
   return ModelRunResult(String(model_name), String(scenario_name), branch_index_out, net, report, iters, status, residual)
 end
@@ -681,6 +694,7 @@ function _write_summary(path::AbstractString, opt::CliOptions, ref_scenarios::Ve
     println(io, "- Builder function: `", opt.builder_function, "`")
     println(io, "- Parsed FOR002 scenarios with data: ", length(ref_scenarios))
     println(io, "- Parsed branch labels: ", length(branch_labels))
+    println(io, "- Branch b scale: ", opt.branch_b_scale)
     println(io)
     println(io, "## Solver settings")
     println(io, "- maxiter: ", opt.maxiter)
@@ -798,6 +812,7 @@ function main(args = ARGS)
   println("  Sparlectra builder      = ", opt.builder_path)
   println("  output directory        = ", opt.output_dir)
   println("  contingencies           = ", opt.run_contingencies)
+  println("  branch b scale          = ", opt.branch_b_scale)
   println()
 
   ref_scenarios = parse_for002(opt.for002_path)
