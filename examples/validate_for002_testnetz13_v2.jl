@@ -404,6 +404,87 @@ function _scale_branch_b!(net::Net, scale::Float64)
   return nothing
 end
 
+function _branch_b_diagnostic_rows(opt::CliOptions, model_builders::Vector{Tuple{String,Function}}, branch_labels::Vector{String})
+  mpc = Sparlectra.MatpowerIO.read_case(opt.matpower_path; legacy_compat = true)
+  bus_base_kv = Dict(Int(row[1]) => Float64(row[10]) for row in eachrow(mpc.bus))
+  matpower_br_b = [Float64(row[5]) for row in eachrow(mpc.branch)]
+  raw_for001_b_si = Float64[]
+  for row in eachrow(mpc.branch)
+    fbus = Int(row[1])
+    base_kv = get(bus_base_kv, fbus, 0.0)
+    br_b = Float64(row[5])
+    push!(raw_for001_b_si, base_kv == 0.0 ? NaN : br_b * Float64(mpc.baseMVA) / base_kv^2)
+  end
+
+  b_by_model = Dict{String,Vector{Float64}}()
+  for (model_name, buildfn) in model_builders
+    net = buildfn()
+    _scale_branch_b!(net, opt.branch_b_scale)
+    b_by_model[String(model_name)] = [br.b_pu for br in net.branchVec]
+  end
+
+  nbranch = length(matpower_br_b)
+  rows = NamedTuple[]
+  for idx in 1:nbranch
+    matpower_b = matpower_br_b[idx] * opt.branch_b_scale
+    matpower_net_b = get(b_by_model, "matpower", Float64[])
+    builder_net_b = get(b_by_model, "builder", Float64[])
+    sparlectra_b = idx <= length(matpower_net_b) ? matpower_net_b[idx] : idx <= length(builder_net_b) ? builder_net_b[idx] : missing
+    push!(
+      rows,
+      (
+        branch_index = idx,
+        branch_label = idx <= length(branch_labels) ? branch_labels[idx] : string(idx),
+        raw_for001_b_S = raw_for001_b_si[idx],
+        matpower_br_b_total_pu = matpower_b,
+        matpower_net_b_pu = idx <= length(matpower_net_b) ? matpower_net_b[idx] : missing,
+        builder_net_b_pu = idx <= length(builder_net_b) ? builder_net_b[idx] : missing,
+        sparlectra_per_end_b_pu = sparlectra_b === missing ? missing : sparlectra_b / 2.0,
+      ),
+    )
+  end
+  return rows
+end
+
+function _print_branch_b_diagnostic_table(rows::Vector{NamedTuple})
+  isempty(rows) && return nothing
+  println("Branch charging diagnostic table")
+  println("  raw FOR001 B is inferred from converted BR_B, baseMVA, and from-side base kV.")
+  println("  MATPOWER BR_B and Sparlectra Branch.b_pu are total branch charging; Sparlectra stamps b/2 at each end.")
+  @printf(
+    "%-4s %-34s %14s %-12s %16s %-12s %16s %16s %-12s %16s %-12s\n",
+    "idx",
+    "branch",
+    "FOR001_B_S",
+    "src_basis",
+    "MATPOWER_BR_B",
+    "mp_basis",
+    "mp_net_b_pu",
+    "builder_b_pu",
+    "sp_basis",
+    "per_end_b_pu",
+    "stamp_basis",
+  )
+  for row in rows
+    @printf(
+      "%-4d %-34s %14.8g %-12s %16.8g %-12s %16s %16s %-12s %16s %-12s\n",
+      row.branch_index,
+      row.branch_label,
+      row.raw_for001_b_S,
+      "raw/infer",
+      row.matpower_br_b_total_pu,
+      "total",
+      row.matpower_net_b_pu === missing ? "missing" : @sprintf("%.8g", row.matpower_net_b_pu),
+      row.builder_net_b_pu === missing ? "missing" : @sprintf("%.8g", row.builder_net_b_pu),
+      "total",
+      row.sparlectra_per_end_b_pu === missing ? "missing" : @sprintf("%.8g", row.sparlectra_per_end_b_pu),
+      "b/2/end",
+    )
+  end
+  println()
+  return nothing
+end
+
 function _run_powerflow!(net::Net, opt::CliOptions; branch_index_out::Union{Nothing,Int} = nothing)
   if branch_index_out !== nothing
     setNetBranchStatus!(net = net, branchNr = branch_index_out, status = 0)
@@ -827,6 +908,9 @@ function main(args = ARGS)
   if opt.run_builder
     push!(model_builders, ("builder", _load_builder_function(opt.builder_path, opt.builder_function)))
   end
+
+  branch_b_diagnostic_rows = _branch_b_diagnostic_rows(opt, model_builders, branch_labels)
+  _print_branch_b_diagnostic_table(branch_b_diagnostic_rows)
 
   base_results = ModelRunResult[]
   base_summaries = NamedTuple[]
