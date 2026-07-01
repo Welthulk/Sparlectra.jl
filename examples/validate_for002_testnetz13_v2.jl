@@ -78,6 +78,7 @@ struct CliOptions
   diagnose_active_flow::Bool
   diagnose_worst_branches::Bool
   sweep_worst_branch_angle::Bool
+  diagnose_for002_flow_semantics::Bool
   diagnose_for001_conversion::Bool
   sweep_line_x_scale::Bool
   line_x_scale::Float64
@@ -151,6 +152,7 @@ function _parse_cli_args(args::Vector{String})::CliOptions
   diagnose_active_flow = false
   diagnose_worst_branches = false
   sweep_worst_branch_angle = false
+  diagnose_for002_flow_semantics = false
   diagnose_for001_conversion = false
   sweep_line_x_scale = false
 
@@ -165,6 +167,8 @@ function _parse_cli_args(args::Vector{String})::CliOptions
       diagnose_worst_branches = true
     elseif arg == "--sweep-worst-branch-angle"
       sweep_worst_branch_angle = true
+    elseif arg == "--diagnose-for002-flow-semantics"
+      diagnose_for002_flow_semantics = true
     elseif arg == "--diagnose-for001-conversion"
       diagnose_for001_conversion = true
     elseif arg == "--sweep-line-x-scale"
@@ -211,6 +215,8 @@ function _parse_cli_args(args::Vector{String})::CliOptions
       println("  --diagnose-active-flow     write active-power and branch/tap diagnostic CSVs")
       println("  --diagnose-worst-branches  write detailed top branch-flow offender diagnostics")
       println("  --sweep-worst-branch-angle diagnostic one-at-a-time phase-shift sweep for top branch-flow offenders")
+      println("  --diagnose-for002-flow-semantics")
+      println("                              compare FOR002 branch rows against alternative calculated flow conventions")
       println("  --diagnose-for001-conversion")
       println("                              write raw FOR001-to-converted branch parameter diagnostics")
       println("  --sweep-line-x-scale        run diagnostic ordinary AC-line x scaling sweep")
@@ -284,6 +290,7 @@ function _parse_cli_args(args::Vector{String})::CliOptions
     diagnose_active_flow,
     diagnose_worst_branches,
     sweep_worst_branch_angle,
+    diagnose_for002_flow_semantics,
     diagnose_for001_conversion,
     sweep_line_x_scale,
     1.0,
@@ -1898,6 +1905,197 @@ function _write_worst_branch_diagnostics(opt::CliOptions, ref::For002Scenario, b
   return (flow_csv = flow_csv, sweep_csv = sweep_csv, rows = rows, sweep_rows = sweep_rows)
 end
 
+function _best_convention(errors::Vector{Tuple{String,Float64}})
+  return first(sort(errors; by = x -> x[2]))
+end
+
+function _flow_semantics_rows(ref::For002Scenario, result::ModelRunResult, branch_labels::Vector{String})
+  refd = _reference_branch_dict(ref)
+  calcd = _branch_result_dict(result, branch_labels)
+  deviations = _branch_flow_deviation_rows(ref, result, branch_labels)
+  top = first(sort(deviations; by = row -> abs(row.d_p_MW), rev = true), min(10, length(deviations)))
+  top_keys = Set((row.branch_index, _norm_name(row.from_bus), _norm_name(row.to_bus)) for row in top)
+  rows = NamedTuple[]
+  for key in sort(collect(keys(refd)); by = x -> (x[1], x[2], x[3]))
+    r = refd[key]
+    c = get(calcd, key, nothing)
+    c === nothing && continue
+    current_p = c.p_MW
+    current_q = c.q_MVar
+    opposite_p = c.direction == :from ? c.p_to_MW : c.p_from_MW
+    opposite_q = c.direction == :from ? c.q_to_MVar : c.q_from_MVar
+    loss_p = c.p_loss_MW
+    loss_q = c.q_loss_MVar
+    through_p = (current_p - opposite_p) / 2.0
+    through_q = (current_q - opposite_q) / 2.0
+    p_values = [
+      ("current", current_p),
+      ("opposite_end", opposite_p),
+      ("signflip_current", -current_p),
+      ("signflip_opposite", -opposite_p),
+      ("through_approx", through_p),
+      ("receiving_end_approx", opposite_p),
+      ("sending_end_approx", current_p),
+      ("current_minus_calc_loss", current_p - loss_p),
+      ("current_plus_calc_loss", current_p + loss_p),
+      ("signflip_opposite_minus_calc_loss", -opposite_p - loss_p),
+      ("signflip_opposite_plus_calc_loss", -opposite_p + loss_p),
+    ]
+    q_values = [
+      ("current", current_q),
+      ("opposite_end", opposite_q),
+      ("signflip_current", -current_q),
+      ("signflip_opposite", -opposite_q),
+      ("through_approx", through_q),
+      ("receiving_end_approx", opposite_q),
+      ("sending_end_approx", current_q),
+      ("current_minus_calc_loss", current_q - loss_q),
+      ("current_plus_calc_loss", current_q + loss_q),
+      ("signflip_opposite_minus_calc_loss", -opposite_q - loss_q),
+      ("signflip_opposite_plus_calc_loss", -opposite_q + loss_q),
+    ]
+    best_p = _best_convention([(name, abs(value - r.p_MW)) for (name, value) in p_values])
+    best_q = _best_convention([(name, abs(value - r.q_MVar)) for (name, value) in q_values])
+    push!(
+      rows,
+      (
+        model = result.model_name,
+        branch_index = c.branch_index,
+        branch_label = c.label,
+        for002_row_bus = r.from_bus,
+        for002_target_bus = r.to_bus,
+        for002_direction_label = isempty(c.nr) ? "$(r.from_bus) -> $(r.to_bus)" : "$(r.from_bus) -> $(r.to_bus) [$(c.nr)]",
+        calculated_from_bus = c.from_name,
+        calculated_to_bus = c.to_name,
+        reference_for002_p_MW = r.p_MW,
+        reference_for002_q_MVar = r.q_MVar,
+        current_calc_p_MW = current_p,
+        current_calc_q_MVar = current_q,
+        opposite_end_calc_p_MW = opposite_p,
+        opposite_end_calc_q_MVar = opposite_q,
+        signflip_current_p_MW = -current_p,
+        signflip_current_q_MVar = -current_q,
+        signflip_opposite_p_MW = -opposite_p,
+        signflip_opposite_q_MVar = -opposite_q,
+        through_approx_p_MW = through_p,
+        through_approx_q_MVar = through_q,
+        receiving_end_approx_p_MW = opposite_p,
+        receiving_end_approx_q_MVar = opposite_q,
+        sending_end_approx_p_MW = current_p,
+        sending_end_approx_q_MVar = current_q,
+        calc_p_loss_MW = loss_p,
+        ref_p_loss_MW = r.p_loss_MW,
+        calc_q_loss_MVar = loss_q,
+        ref_q_loss_MVar = r.q_loss_MVar,
+        abs_error_current_p = abs(current_p - r.p_MW),
+        abs_error_opposite_p = abs(opposite_p - r.p_MW),
+        abs_error_signflip_current_p = abs(-current_p - r.p_MW),
+        abs_error_signflip_opposite_p = abs(-opposite_p - r.p_MW),
+        abs_error_through_p = abs(through_p - r.p_MW),
+        best_p_convention = best_p[1],
+        best_p_abs_error = best_p[2],
+        best_q_convention = best_q[1],
+        best_q_abs_error = best_q[2],
+        top_active_flow_offender_marker = (c.branch_index, _norm_name(c.from_name), _norm_name(c.to_name)) in top_keys,
+        p_conventions = p_values,
+        q_conventions = q_values,
+      ),
+    )
+  end
+  return rows
+end
+
+function _write_flow_semantics_diagnostics_csv(path::AbstractString, rows::Vector{NamedTuple})
+  open(path, "w") do io
+    println(io, "model,branch_index,branch_label,for002_row_bus,for002_target_bus,for002_direction_label,calculated_from_bus,calculated_to_bus,reference_for002_p_MW,reference_for002_q_MVar,current_calc_p_MW,current_calc_q_MVar,opposite_end_calc_p_MW,opposite_end_calc_q_MVar,signflip_current_p_MW,signflip_current_q_MVar,signflip_opposite_p_MW,signflip_opposite_q_MVar,through_approx_p_MW,through_approx_q_MVar,receiving_end_approx_p_MW,receiving_end_approx_q_MVar,sending_end_approx_p_MW,sending_end_approx_q_MVar,calc_p_loss_MW,ref_p_loss_MW,calc_q_loss_MVar,ref_q_loss_MVar,abs_error_current_p,abs_error_opposite_p,abs_error_signflip_current_p,abs_error_signflip_opposite_p,abs_error_through_p,best_p_convention,best_p_abs_error,best_q_convention,best_q_abs_error,top_active_flow_offender_marker")
+    for row in rows
+      println(io, _csv_line(row.model, row.branch_index, row.branch_label, row.for002_row_bus, row.for002_target_bus, row.for002_direction_label, row.calculated_from_bus, row.calculated_to_bus, row.reference_for002_p_MW, row.reference_for002_q_MVar, row.current_calc_p_MW, row.current_calc_q_MVar, row.opposite_end_calc_p_MW, row.opposite_end_calc_q_MVar, row.signflip_current_p_MW, row.signflip_current_q_MVar, row.signflip_opposite_p_MW, row.signflip_opposite_q_MVar, row.through_approx_p_MW, row.through_approx_q_MVar, row.receiving_end_approx_p_MW, row.receiving_end_approx_q_MVar, row.sending_end_approx_p_MW, row.sending_end_approx_q_MVar, row.calc_p_loss_MW, row.ref_p_loss_MW, row.calc_q_loss_MVar, row.ref_q_loss_MVar, row.abs_error_current_p, row.abs_error_opposite_p, row.abs_error_signflip_current_p, row.abs_error_signflip_opposite_p, row.abs_error_through_p, row.best_p_convention, row.best_p_abs_error, row.best_q_convention, row.best_q_abs_error, row.top_active_flow_offender_marker))
+    end
+  end
+  return path
+end
+
+function _flow_semantics_summary_rows(rows::Vector{NamedTuple})
+  summary_rows = NamedTuple[]
+  for model in sort(unique(row.model for row in rows))
+    model_rows = [row for row in rows if row.model == model]
+    conventions = sort(unique(name for row in model_rows for (name, _) in row.p_conventions))
+    for convention in conventions
+      p_errors = Float64[]
+      q_errors = Float64[]
+      top_p_errors = Float64[]
+      for row in model_rows
+        p_value = only(value for (name, value) in row.p_conventions if name == convention)
+        q_value = only(value for (name, value) in row.q_conventions if name == convention)
+        p_err = abs(p_value - row.reference_for002_p_MW)
+        q_err = abs(q_value - row.reference_for002_q_MVar)
+        push!(p_errors, p_err)
+        push!(q_errors, q_err)
+        row.top_active_flow_offender_marker && push!(top_p_errors, p_err)
+      end
+      push!(summary_rows, (
+        model = model,
+        convention = convention,
+        row_count = length(model_rows),
+        mean_abs_p_error = isempty(p_errors) ? NaN : sum(p_errors) / length(p_errors),
+        max_abs_p_error = isempty(p_errors) ? NaN : maximum(p_errors),
+        mean_abs_q_error = isempty(q_errors) ? NaN : sum(q_errors) / length(q_errors),
+        max_abs_q_error = isempty(q_errors) ? NaN : maximum(q_errors),
+        top10_mean_abs_p_error = isempty(top_p_errors) ? NaN : sum(top_p_errors) / length(top_p_errors),
+        top10_max_abs_p_error = isempty(top_p_errors) ? NaN : maximum(top_p_errors),
+      ))
+    end
+  end
+  return sort(summary_rows; by = row -> (row.model, row.mean_abs_p_error))
+end
+
+function _write_flow_semantics_summary_csv(path::AbstractString, rows::Vector{NamedTuple})
+  open(path, "w") do io
+    println(io, "model,convention,row_count,mean_abs_p_error,max_abs_p_error,mean_abs_q_error,max_abs_q_error,top10_mean_abs_p_error,top10_max_abs_p_error")
+    for row in rows
+      println(io, _csv_line(row.model, row.convention, row.row_count, row.mean_abs_p_error, row.max_abs_p_error, row.mean_abs_q_error, row.max_abs_q_error, row.top10_mean_abs_p_error, row.top10_max_abs_p_error))
+    end
+  end
+  return path
+end
+
+function _write_for002_flow_semantics_diagnostics(opt::CliOptions, ref::For002Scenario, base_results::Vector{ModelRunResult}, branch_labels::Vector{String})
+  rows = NamedTuple[]
+  for result in base_results
+    append!(rows, _flow_semantics_rows(ref, result, branch_labels))
+  end
+  rows = sort(rows; by = row -> (row.model, !row.top_active_flow_offender_marker, row.best_p_abs_error))
+  summary_rows = _flow_semantics_summary_rows(rows)
+  diagnostic_csv = _write_flow_semantics_diagnostics_csv(joinpath(opt.output_dir, "for002_flow_semantics_diagnostics.csv"), rows)
+  summary_csv = _write_flow_semantics_summary_csv(joinpath(opt.output_dir, "for002_flow_semantics_summary.csv"), summary_rows)
+  return (diagnostic_csv = diagnostic_csv, summary_csv = summary_csv, rows = rows, summary_rows = summary_rows)
+end
+
+function _print_flow_semantics_console_summary(diagnostics)
+  diagnostics === nothing && return nothing
+  println("FOR002 flow-semantics diagnostic summary")
+  for model in sort(unique(row.model for row in diagnostics.summary_rows))
+    model_summary = [row for row in diagnostics.summary_rows if row.model == model]
+    best_mean = first(sort(model_summary; by = row -> row.mean_abs_p_error))
+    best_top = first(sort(model_summary; by = row -> row.top10_mean_abs_p_error))
+    @printf("  %-8s best mean P convention: %s mean|dP|=%.6g MW\n", model, best_mean.convention, best_mean.mean_abs_p_error)
+    @printf("  %-8s best top10 P convention: %s top10 mean|dP|=%.6g MW\n", model, best_top.convention, best_top.top10_mean_abs_p_error)
+    top_rows = [row for row in diagnostics.rows if row.model == model && row.top_active_flow_offender_marker]
+    counts = Dict{String,Int}()
+    for row in top_rows
+      counts[row.best_p_convention] = get(counts, row.best_p_convention, 0) + 1
+    end
+    pref = isempty(counts) ? "none" : join(["$k=$v" for (k, v) in sort(collect(counts))], ", ")
+    println("    Top-offender preferred conventions: ", pref)
+    println("    Top 5 current vs best:")
+    for row in first(sort(top_rows; by = row -> row.abs_error_current_p, rev = true), min(5, length(top_rows)))
+      @printf("      #%-3d %-34s %s -> %s current|dP|=%.6g best=%s best|dP|=%.6g\n", row.branch_index, row.branch_label, row.for002_row_bus, row.for002_target_bus, row.abs_error_current_p, row.best_p_convention, row.best_p_abs_error)
+    end
+  end
+  println()
+  return nothing
+end
+
 function _print_worst_branch_console_summary(diagnostics)
   diagnostics === nothing && return nothing
   println("Worst branch-flow diagnostic summary")
@@ -1944,7 +2142,7 @@ function _scenario_file_prefix(result::ModelRunResult)::String
   return lowercase(result.model_name) * "_" * scenario_tag
 end
 
-function _write_summary(path::AbstractString, opt::CliOptions, ref_scenarios::Vector{For002Scenario}, branch_labels::Vector{String}, base_summaries::Vector{NamedTuple}, contingency_summaries::Vector{NamedTuple}, model_compare_file::Union{Nothing,String}, branch_b_diagnostic_csv::AbstractString, branch_b_sweep_csv::Union{Nothing,String}, line_x_sweep_csv::Union{Nothing,String}, for001_conversion_csv::Union{Nothing,String}, for001_conversion_raw_parsed::Union{Nothing,Bool}, worst_offenders_csv::Union{Nothing,String}, pv_bus_diagnostics_csv::Union{Nothing,String}, pv_bus_diagnostics_note::Union{Nothing,String}, active_flow_diagnostics, worst_branch_diagnostics)
+function _write_summary(path::AbstractString, opt::CliOptions, ref_scenarios::Vector{For002Scenario}, branch_labels::Vector{String}, base_summaries::Vector{NamedTuple}, contingency_summaries::Vector{NamedTuple}, model_compare_file::Union{Nothing,String}, branch_b_diagnostic_csv::AbstractString, branch_b_sweep_csv::Union{Nothing,String}, line_x_sweep_csv::Union{Nothing,String}, for001_conversion_csv::Union{Nothing,String}, for001_conversion_raw_parsed::Union{Nothing,Bool}, worst_offenders_csv::Union{Nothing,String}, pv_bus_diagnostics_csv::Union{Nothing,String}, pv_bus_diagnostics_note::Union{Nothing,String}, active_flow_diagnostics, worst_branch_diagnostics, flow_semantics_diagnostics)
   open(path, "w") do io
     println(io, "# FOR002 validation summary")
     println(io)
@@ -1965,6 +2163,7 @@ function _write_summary(path::AbstractString, opt::CliOptions, ref_scenarios::Ve
     println(io, "- Diagnose active flow: ", opt.diagnose_active_flow)
     println(io, "- Diagnose worst branches: ", opt.diagnose_worst_branches)
     println(io, "- Sweep worst branch angle: ", opt.sweep_worst_branch_angle)
+    println(io, "- Diagnose FOR002 flow semantics: ", opt.diagnose_for002_flow_semantics)
     println(io, "- Diagnose FOR001 conversion: ", opt.diagnose_for001_conversion)
     println(io, "- Sweep line x scale: ", opt.sweep_line_x_scale)
     println(io, "- MATPOWER PQ generator controllers: ", opt.matpower_pq_gen_controllers)
@@ -2002,6 +2201,10 @@ function _write_summary(path::AbstractString, opt::CliOptions, ref_scenarios::Ve
       if worst_branch_diagnostics.sweep_csv !== nothing
         println(io, "- Worst branch angle sweep CSV: `", worst_branch_diagnostics.sweep_csv, "`")
       end
+    end
+    if flow_semantics_diagnostics !== nothing
+      println(io, "- FOR002 flow semantics diagnostics CSV: `", flow_semantics_diagnostics.diagnostic_csv, "`")
+      println(io, "- FOR002 flow semantics summary CSV: `", flow_semantics_diagnostics.summary_csv, "`")
     end
     println(io)
     println(io, "## Solver settings")
@@ -2142,6 +2345,7 @@ function main(args = ARGS)
   println("  diagnose active flow    = ", opt.diagnose_active_flow)
   println("  diagnose worst branches = ", opt.diagnose_worst_branches)
   println("  sweep worst br. angle   = ", opt.sweep_worst_branch_angle)
+  println("  diagnose flow semantics = ", opt.diagnose_for002_flow_semantics)
   println("  diagnose FOR001 conv.   = ", opt.diagnose_for001_conversion)
   println("  sweep line x scale      = ", opt.sweep_line_x_scale)
   println("  MATPOWER ratio          = ", opt.matpower_ratio)
@@ -2224,6 +2428,8 @@ function main(args = ARGS)
   _print_active_flow_console_summary(active_flow_diagnostics)
   worst_branch_diagnostics = opt.diagnose_worst_branches ? _write_worst_branch_diagnostics(opt, ref_base, base_results, model_builders, branch_labels) : nothing
   _print_worst_branch_console_summary(worst_branch_diagnostics)
+  flow_semantics_diagnostics = opt.diagnose_for002_flow_semantics ? _write_for002_flow_semantics_diagnostics(opt, ref_base, base_results, branch_labels) : nothing
+  _print_flow_semantics_console_summary(flow_semantics_diagnostics)
   for001_conversion_csv = nothing
   for001_conversion_raw_parsed = nothing
   if opt.diagnose_for001_conversion
@@ -2262,7 +2468,7 @@ function main(args = ARGS)
   end
 
   summary_path = joinpath(opt.output_dir, "for002_validation_summary.md")
-  _write_summary(summary_path, opt, ref_scenarios, branch_labels, base_summaries, contingency_summaries, model_compare_file, branch_b_diagnostic_csv, branch_b_sweep_csv, line_x_sweep_csv, for001_conversion_csv, for001_conversion_raw_parsed, worst_offenders_csv, pv_bus_diagnostics_csv, pv_bus_diagnostics_note, active_flow_diagnostics, worst_branch_diagnostics)
+  _write_summary(summary_path, opt, ref_scenarios, branch_labels, base_summaries, contingency_summaries, model_compare_file, branch_b_diagnostic_csv, branch_b_sweep_csv, line_x_sweep_csv, for001_conversion_csv, for001_conversion_raw_parsed, worst_offenders_csv, pv_bus_diagnostics_csv, pv_bus_diagnostics_note, active_flow_diagnostics, worst_branch_diagnostics, flow_semantics_diagnostics)
 
   println()
   println("Output files written to:")
@@ -2277,6 +2483,10 @@ function main(args = ARGS)
   if worst_branch_diagnostics !== nothing
     println("  worst branch flows    = ", worst_branch_diagnostics.flow_csv)
     worst_branch_diagnostics.sweep_csv !== nothing && println("  worst branch angle    = ", worst_branch_diagnostics.sweep_csv)
+  end
+  if flow_semantics_diagnostics !== nothing
+    println("  flow semantics diag   = ", flow_semantics_diagnostics.diagnostic_csv)
+    println("  flow semantics summary= ", flow_semantics_diagnostics.summary_csv)
   end
   branch_b_sweep_csv !== nothing && println("  branch b sweep summary = ", branch_b_sweep_csv)
   line_x_sweep_csv !== nothing && println("  line x sweep summary   = ", line_x_sweep_csv)
