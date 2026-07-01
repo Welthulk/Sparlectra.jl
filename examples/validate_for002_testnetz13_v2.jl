@@ -74,6 +74,7 @@ struct CliOptions
   matpower_pq_gen_controllers::Bool
   builder_pq_gen_controllers::Bool
   sweep_branch_b::Bool
+  infer_pv_buses::Symbol
 end
 
 struct ModelRunResult
@@ -130,6 +131,7 @@ function _parse_cli_args(args::Vector{String})::CliOptions
     "matpower-ratio" => "normal",
     "matpower-pq-gen-controllers" => "true",
     "builder-pq-gen-controllers" => "true",
+    "infer-pv-buses" => "off",
   )
   line_b_scale_value = nothing
   trafo_b_scale_value = nothing
@@ -185,6 +187,8 @@ function _parse_cli_args(args::Vector{String})::CliOptions
       println("  --line-b-scale=X           diagnostic multiplier for AC-line branch b_pu before solving")
       println("  --trafo-b-scale=X          diagnostic multiplier for transformer branch b_pu before solving")
       println("  --sweep-branch-b           run compact base-case line/transformer branch-charging sweep")
+      println("  --infer-pv-buses=off|from-q-limits|from-gen-vg|all-generator-buses")
+      println("                              diagnostic PV-bus inference mode; default off")
       println("  --matpower-ratio=normal|reciprocal")
       println("                              MATPOWER import transformer-ratio convention for this validator")
       println("  --matpower-pq-gen-controllers=true|false")
@@ -215,6 +219,8 @@ function _parse_cli_args(args::Vector{String})::CliOptions
   trafo_b_scale = trafo_b_scale_value === nothing ? branch_b_scale : parse(Float64, trafo_b_scale_value)
   matpower_ratio = Symbol(defaults["matpower-ratio"])
   matpower_ratio in (:normal, :reciprocal) || throw(ArgumentError("Unsupported --matpower-ratio=$(defaults["matpower-ratio"]); expected normal or reciprocal."))
+  infer_pv_buses = Symbol(defaults["infer-pv-buses"])
+  infer_pv_buses in (:off, Symbol("from-q-limits"), Symbol("from-gen-vg"), Symbol("all-generator-buses")) || throw(ArgumentError("Unsupported --infer-pv-buses=$(defaults["infer-pv-buses"]); expected off, from-q-limits, from-gen-vg, or all-generator-buses."))
   matpower_pq_gen_controllers = _parse_bool_option("--matpower-pq-gen-controllers", defaults["matpower-pq-gen-controllers"])
   builder_pq_gen_controllers = _parse_bool_option("--builder-pq-gen-controllers", defaults["builder-pq-gen-controllers"])
 
@@ -247,6 +253,7 @@ function _parse_cli_args(args::Vector{String})::CliOptions
     matpower_pq_gen_controllers,
     builder_pq_gen_controllers,
     sweep_branch_b,
+    infer_pv_buses,
   )
 end
 
@@ -919,6 +926,7 @@ function _with_branch_b_sweep_point(opt::CliOptions, line_b_scale::Float64, traf
     true,
     true,
     opt.sweep_branch_b,
+    opt.infer_pv_buses,
   )
 end
 
@@ -1112,12 +1120,149 @@ function _write_worst_offenders_csv(path::AbstractString, ref::For002Scenario, b
   return path
 end
 
+function _matpower_generator_bus_metadata(mpc)
+  by_bus = Dict{Int,NamedTuple}()
+  size(mpc.gen, 2) >= 10 || return by_bus
+  @inbounds for g in axes(mpc.gen, 1)
+    size(mpc.gen, 2) >= 8 && Float64(mpc.gen[g, 8]) <= 0.0 && continue
+    bus = Int(mpc.gen[g, 1])
+    prev = get(by_bus, bus, (qmin = nothing, qmax = nothing, vg = nothing))
+    qmin = Float64(mpc.gen[g, 5])
+    qmax = Float64(mpc.gen[g, 4])
+    vg = size(mpc.gen, 2) >= 6 ? Float64(mpc.gen[g, 6]) : NaN
+    by_bus[bus] = (
+      qmin = prev.qmin === nothing ? qmin : prev.qmin + qmin,
+      qmax = prev.qmax === nothing ? qmax : prev.qmax + qmax,
+      vg = prev.vg === nothing && isfinite(vg) && vg > 0.0 ? vg : prev.vg,
+    )
+  end
+  return by_bus
+end
+
+function _first_valid_generator_vset(generators)::Union{Nothing,Float64}
+  for ps in generators
+    ps.vm_pu === nothing && continue
+    vm = Float64(ps.vm_pu)
+    isfinite(vm) && vm > 0.0 && return vm
+  end
+  return nothing
+end
+
+function _pv_inference_rows_and_apply!(net::Net, opt::CliOptions, model_name::AbstractString; mpc = nothing, apply::Bool = true)
+  mode = opt.infer_pv_buses
+  rows = NamedTuple[]
+  bus_names = _bus_name_by_idx(net)
+  matpower_meta = mpc === nothing ? Dict{Int,NamedTuple}() : _matpower_generator_bus_metadata(mpc)
+
+  for bus_idx in sort(collect(keys(bus_names)))
+    node = net.nodeVec[bus_idx]
+    prosumers = Sparlectra.getBusProsumers(net, bus_idx)
+    generators = [ps for ps in prosumers if Sparlectra.isGenerator(ps)]
+    isempty(generators) && continue
+
+    original_type = String(Sparlectra.toString(Sparlectra.getNodeType(node)))
+    original_regulated = any(ps -> ps.isRegulated, generators)
+    p_gen = sum((ps.pVal === nothing ? 0.0 : Float64(ps.pVal)) for ps in generators)
+    q_gen = sum((ps.qVal === nothing ? 0.0 : Float64(ps.qVal)) for ps in generators)
+    q_min_local = all(ps -> ps.minQ !== nothing, generators) ? sum(Float64(ps.minQ) for ps in generators) : nothing
+    q_max_local = all(ps -> ps.maxQ !== nothing, generators) ? sum(Float64(ps.maxQ) for ps in generators) : nothing
+    orig_bus = get(net.busOrigIdxDict, bus_idx, bus_idx)
+    raw_meta = get(matpower_meta, orig_bus, nothing)
+    q_min = raw_meta === nothing ? q_min_local : raw_meta.qmin
+    q_max = raw_meta === nothing ? q_max_local : raw_meta.qmax
+    vg = raw_meta === nothing ? nothing : raw_meta.vg
+    ps_vset = _first_valid_generator_vset(generators)
+    current_vm = isfinite(node._vm_pu) && node._vm_pu > 0.0 ? node._vm_pu : nothing
+
+    vset = nothing
+    should_infer = false
+    reason = "mode off"
+    if mode == :off
+      vset = vg === nothing ? ps_vset : vg
+    elseif Sparlectra.getNodeType(node) == Sparlectra.Slack
+      vset = vg === nothing ? something(ps_vset, current_vm) : vg
+      reason = "slack generator bus left unchanged"
+    elseif mode == Symbol("from-q-limits")
+      vset = vg === nothing ? ps_vset : vg
+      finite_limits = q_min !== nothing && q_max !== nothing && isfinite(q_min) && isfinite(q_max)
+      should_infer = finite_limits && vset !== nothing && isfinite(vset) && vset > 0.0
+      reason = should_infer ? "finite Q limits and voltage setpoint" : "missing finite Q limits or voltage setpoint"
+    elseif mode == Symbol("from-gen-vg")
+      vset = vg === nothing ? ps_vset : vg
+      should_infer = vset !== nothing && isfinite(vset) && vset > 0.0
+      reason = raw_meta === nothing ? "native generator voltage setpoint" : "MATPOWER GEN.VG voltage setpoint"
+    elseif mode == Symbol("all-generator-buses")
+      vset = something(vg, ps_vset, current_vm, 1.0)
+      should_infer = isfinite(vset) && vset > 0.0
+      reason = "diagnostic all non-slack generator buses"
+    end
+
+    if apply && should_infer
+      for ps in generators
+        ps.isRegulated = true
+        ps.vm_pu = vset
+      end
+      Sparlectra.setVmVa!(node = node, vm_pu = vset)
+    end
+
+    inferred_type = if should_infer
+      "PV"
+    else
+      original_type
+    end
+    push!(
+      rows,
+      (
+        model = String(model_name),
+        bus_name = bus_names[bus_idx],
+        original_bus_type = original_type,
+        original_regulation_state = original_regulated,
+        inferred_bus_type = inferred_type,
+        has_generator = true,
+        p_gen_MW = p_gen,
+        q_gen_MVar_before = q_gen,
+        q_min_MVar = q_min,
+        q_max_MVar = q_max,
+        voltage_setpoint_pu = vset,
+        inference_reason = reason,
+      ),
+    )
+  end
+
+  if apply && mode != :off
+    Sparlectra.refreshBusTypesFromProsumers!(net)
+    Sparlectra.buildQLimits!(net)
+  end
+  return rows
+end
+
+function _write_pv_bus_diagnostics_csv(path::AbstractString, rows::Vector{NamedTuple})
+  open(path, "w") do io
+    println(io, "model,bus_name,original_bus_type,original_regulation_state,inferred_bus_type,has_generator,p_gen_MW,q_gen_MVar_before,q_min_MVar,q_max_MVar,voltage_setpoint_pu,inference_reason")
+    for row in rows
+      println(io, _csv_line(row.model, row.bus_name, row.original_bus_type, row.original_regulation_state, row.inferred_bus_type, row.has_generator, row.p_gen_MW, row.q_gen_MVar_before, row.q_min_MVar, row.q_max_MVar, row.voltage_setpoint_pu, row.inference_reason))
+    end
+  end
+  return path
+end
+
+function _pv_bus_diagnostics_note(opt::CliOptions, rows::Vector{NamedTuple})::Union{Nothing,String}
+  opt.infer_pv_buses == :off && return nothing
+  builder_rows = [row for row in rows if row.model == "builder"]
+  isempty(builder_rows) && return "Native Builder PV inference was not evaluated because the Builder model path was disabled."
+  blocked = [row.bus_name for row in builder_rows if occursin("missing finite Q limits", row.inference_reason)]
+  if !isempty(blocked)
+    return "Native Builder from-q-limits inference was not technically feasible for buses without finite builder-side Q limits: " * join(blocked, ", ")
+  end
+  return nothing
+end
+
 function _scenario_file_prefix(result::ModelRunResult)::String
   scenario_tag = replace(result.scenario_name, r"[^A-Za-z0-9_.-]" => "_")
   return lowercase(result.model_name) * "_" * scenario_tag
 end
 
-function _write_summary(path::AbstractString, opt::CliOptions, ref_scenarios::Vector{For002Scenario}, branch_labels::Vector{String}, base_summaries::Vector{NamedTuple}, contingency_summaries::Vector{NamedTuple}, model_compare_file::Union{Nothing,String}, branch_b_diagnostic_csv::AbstractString, branch_b_sweep_csv::Union{Nothing,String}, worst_offenders_csv::Union{Nothing,String})
+function _write_summary(path::AbstractString, opt::CliOptions, ref_scenarios::Vector{For002Scenario}, branch_labels::Vector{String}, base_summaries::Vector{NamedTuple}, contingency_summaries::Vector{NamedTuple}, model_compare_file::Union{Nothing,String}, branch_b_diagnostic_csv::AbstractString, branch_b_sweep_csv::Union{Nothing,String}, worst_offenders_csv::Union{Nothing,String}, pv_bus_diagnostics_csv::Union{Nothing,String}, pv_bus_diagnostics_note::Union{Nothing,String})
   open(path, "w") do io
     println(io, "# FOR002 validation summary")
     println(io)
@@ -1134,6 +1279,7 @@ function _write_summary(path::AbstractString, opt::CliOptions, ref_scenarios::Ve
     println(io, "- Line b scale: ", opt.line_b_scale)
     println(io, "- Transformer b scale: ", opt.trafo_b_scale)
     println(io, "- MATPOWER ratio: ", opt.matpower_ratio)
+    println(io, "- Infer PV buses mode: ", opt.infer_pv_buses)
     println(io, "- MATPOWER PQ generator controllers: ", opt.matpower_pq_gen_controllers)
     println(io, "- Builder PQ generator controllers: ", opt.builder_pq_gen_controllers)
     println(io, "- Builder controller handling: native-builder control is applied by clearing P(U)/Q(U) controllers on non-regulating generators after the builder returns; if none are present, the option is a no-op for that builder.")
@@ -1144,6 +1290,12 @@ function _write_summary(path::AbstractString, opt::CliOptions, ref_scenarios::Ve
     end
     if worst_offenders_csv !== nothing
       println(io, "- Worst-offender deviations CSV: `", worst_offenders_csv, "`")
+    end
+    if pv_bus_diagnostics_csv !== nothing
+      println(io, "- PV bus diagnostics CSV: `", pv_bus_diagnostics_csv, "`")
+    end
+    if pv_bus_diagnostics_note !== nothing
+      println(io, "- PV bus diagnostics note: ", pv_bus_diagnostics_note)
     end
     println(io)
     println(io, "## Solver settings")
@@ -1221,7 +1373,7 @@ function _write_summary(path::AbstractString, opt::CliOptions, ref_scenarios::Ve
   return path
 end
 
-function _load_builder_function(builder_path::AbstractString, builder_function::AbstractString, opt::CliOptions)
+function _load_builder_function(builder_path::AbstractString, builder_function::AbstractString, opt::CliOptions, pv_bus_diagnostic_rows::Vector{NamedTuple})
   isfile(builder_path) || throw(ArgumentError("Native Sparlectra builder file not found: $builder_path"))
 
   # Julia 1.12 + Revise can otherwise see the freshly included builder method
@@ -1240,24 +1392,29 @@ function _load_builder_function(builder_path::AbstractString, builder_function::
       cleared = _clear_pq_gen_controllers!(net)
       cleared == 0 && @info "Builder PQ generator controller diagnostic requested, but no native-builder PQ generator P(U)/Q(U) controllers were present to clear."
     end
+    append!(pv_bus_diagnostic_rows, _pv_inference_rows_and_apply!(net, opt, "builder"; apply = true))
     return net
   end
 end
 
-function _load_matpower_builder(matpower_path::AbstractString, opt::CliOptions)
+function _load_matpower_builder(matpower_path::AbstractString, opt::CliOptions, pv_bus_diagnostic_rows::Vector{NamedTuple})
   isfile(matpower_path) || throw(ArgumentError("MATPOWER file not found: $matpower_path"))
   mpc = Sparlectra.MatpowerIO.read_case(matpower_path; legacy_compat = true)
-  return () -> Sparlectra.createNetFromMatPowerCase(
-    mpc = mpc,
-    log = false,
-    flatstart = false,
-    apply_bus_names = true,
-    apply_branch_names = true,
-    apply_branch_kind = true,
-    import_for001_contingencies = true,
-    matpower_ratio = opt.matpower_ratio,
-    enable_pq_gen_controllers = opt.matpower_pq_gen_controllers,
-  )
+  return () -> begin
+    net = Sparlectra.createNetFromMatPowerCase(
+      mpc = mpc,
+      log = false,
+      flatstart = false,
+      apply_bus_names = true,
+      apply_branch_names = true,
+      apply_branch_kind = true,
+      import_for001_contingencies = true,
+      matpower_ratio = opt.matpower_ratio,
+      enable_pq_gen_controllers = opt.matpower_pq_gen_controllers,
+    )
+    append!(pv_bus_diagnostic_rows, _pv_inference_rows_and_apply!(net, opt, "matpower"; mpc = mpc, apply = true))
+    return net
+  end
 end
 
 function main(args = ARGS)
@@ -1275,6 +1432,7 @@ function main(args = ARGS)
   println("  line b scale            = ", opt.line_b_scale)
   println("  transformer b scale     = ", opt.trafo_b_scale)
   println("  branch b sweep          = ", opt.sweep_branch_b)
+  println("  infer PV buses          = ", opt.infer_pv_buses)
   println("  MATPOWER ratio          = ", opt.matpower_ratio)
   println("  MATPOWER PQ controllers = ", opt.matpower_pq_gen_controllers)
   println("  builder PQ controllers  = ", opt.builder_pq_gen_controllers)
@@ -1286,18 +1444,24 @@ function main(args = ARGS)
   ref_base = ref_scenarios[1]
   branch_labels = _parse_matpower_string_vector(opt.matpower_path, "branch_name")
 
+  pv_bus_diagnostic_rows = NamedTuple[]
   model_builders = Tuple{String,Function}[]
   if opt.run_matpower
-    push!(model_builders, ("matpower", _load_matpower_builder(opt.matpower_path, opt)))
+    push!(model_builders, ("matpower", _load_matpower_builder(opt.matpower_path, opt, pv_bus_diagnostic_rows)))
   end
   if opt.run_builder
-    push!(model_builders, ("builder", _load_builder_function(opt.builder_path, opt.builder_function, opt)))
+    push!(model_builders, ("builder", _load_builder_function(opt.builder_path, opt.builder_function, opt, pv_bus_diagnostic_rows)))
   end
 
   branch_b_diagnostic_rows = _branch_b_diagnostic_rows(opt, model_builders, branch_labels)
   branch_b_diagnostic_csv = _write_branch_b_diagnostic_csv(joinpath(opt.output_dir, "branch_b_diagnostics.csv"), branch_b_diagnostic_rows)
   _print_branch_b_diagnostic_table(branch_b_diagnostic_rows)
   println("Branch charging diagnostic CSV: ", branch_b_diagnostic_csv)
+  first_pv_bus_diagnostic_rows = copy(pv_bus_diagnostic_rows)
+  pv_bus_diagnostics_csv = _write_pv_bus_diagnostics_csv(joinpath(opt.output_dir, "pv_bus_diagnostics.csv"), first_pv_bus_diagnostic_rows)
+  pv_bus_diagnostics_note = _pv_bus_diagnostics_note(opt, first_pv_bus_diagnostic_rows)
+  println("PV bus diagnostics CSV: ", pv_bus_diagnostics_csv)
+  pv_bus_diagnostics_note !== nothing && println("PV bus diagnostics note: ", pv_bus_diagnostics_note)
   println()
 
   branch_b_sweep_csv = nothing
@@ -1364,12 +1528,13 @@ function main(args = ARGS)
   end
 
   summary_path = joinpath(opt.output_dir, "for002_validation_summary.md")
-  _write_summary(summary_path, opt, ref_scenarios, branch_labels, base_summaries, contingency_summaries, model_compare_file, branch_b_diagnostic_csv, branch_b_sweep_csv, worst_offenders_csv)
+  _write_summary(summary_path, opt, ref_scenarios, branch_labels, base_summaries, contingency_summaries, model_compare_file, branch_b_diagnostic_csv, branch_b_sweep_csv, worst_offenders_csv, pv_bus_diagnostics_csv, pv_bus_diagnostics_note)
 
   println()
   println("Output files written to:")
   println("  summary                = ", summary_path)
   println("  branch b diagnostics   = ", branch_b_diagnostic_csv)
+  println("  PV bus diagnostics     = ", pv_bus_diagnostics_csv)
   branch_b_sweep_csv !== nothing && println("  branch b sweep summary = ", branch_b_sweep_csv)
   worst_offenders_csv !== nothing && println("  worst offenders        = ", worst_offenders_csv)
   for s in base_summaries
