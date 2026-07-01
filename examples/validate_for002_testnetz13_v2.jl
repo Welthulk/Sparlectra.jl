@@ -71,6 +71,8 @@ struct CliOptions
   line_b_scale::Float64
   trafo_b_scale::Float64
   matpower_ratio::Symbol
+  matpower_pq_gen_controllers::Bool
+  builder_pq_gen_controllers::Bool
 end
 
 struct ModelRunResult
@@ -125,6 +127,8 @@ function _parse_cli_args(args::Vector{String})::CliOptions
     "tol-branch-q-mvar" => "2.00",
     "branch-b-scale" => "1.0",
     "matpower-ratio" => "normal",
+    "matpower-pq-gen-controllers" => "true",
+    "builder-pq-gen-controllers" => "true",
   )
   line_b_scale_value = nothing
   trafo_b_scale_value = nothing
@@ -178,6 +182,10 @@ function _parse_cli_args(args::Vector{String})::CliOptions
       println("  --trafo-b-scale=X          diagnostic multiplier for transformer branch b_pu before solving")
       println("  --matpower-ratio=normal|reciprocal")
       println("                              MATPOWER import transformer-ratio convention for this validator")
+      println("  --matpower-pq-gen-controllers=true|false")
+      println("                              enable MATPOWER-import P/Q controllers on PQ generators")
+      println("  --builder-pq-gen-controllers=true|false")
+      println("                              keep or clear native-builder P/Q controllers on PQ generators")
       exit(0)
     elseif startswith(arg, "--") && occursin("=", arg)
       key, value = split(arg[3:end], "="; limit = 2)
@@ -202,6 +210,8 @@ function _parse_cli_args(args::Vector{String})::CliOptions
   trafo_b_scale = trafo_b_scale_value === nothing ? branch_b_scale : parse(Float64, trafo_b_scale_value)
   matpower_ratio = Symbol(defaults["matpower-ratio"])
   matpower_ratio in (:normal, :reciprocal) || throw(ArgumentError("Unsupported --matpower-ratio=$(defaults["matpower-ratio"]); expected normal or reciprocal."))
+  matpower_pq_gen_controllers = _parse_bool_option("--matpower-pq-gen-controllers", defaults["matpower-pq-gen-controllers"])
+  builder_pq_gen_controllers = _parse_bool_option("--builder-pq-gen-controllers", defaults["builder-pq-gen-controllers"])
 
   return CliOptions(
     defaults["for002"],
@@ -229,7 +239,16 @@ function _parse_cli_args(args::Vector{String})::CliOptions
     line_b_scale,
     trafo_b_scale,
     matpower_ratio,
+    matpower_pq_gen_controllers,
+    builder_pq_gen_controllers,
   )
+end
+
+function _parse_bool_option(name::AbstractString, value::AbstractString)::Bool
+  normalized = lowercase(strip(String(value)))
+  normalized == "true" && return true
+  normalized == "false" && return false
+  throw(ArgumentError("Unsupported $name=$value; expected true or false."))
 end
 
 function _try_parse_for002_outage(line::AbstractString)
@@ -468,6 +487,19 @@ function _scale_branch_b!(net::Net, scale::Float64)
   return nothing
 end
 
+function _clear_pq_gen_controllers!(net::Net)
+  cleared = 0
+  for ps in net.prosumpsVec
+    Sparlectra.isGenerator(ps) || continue
+    ps.isRegulated && continue
+    had_controller = Sparlectra.has_pu_controller(ps) || Sparlectra.has_qu_controller(ps)
+    ps.puController = nothing
+    ps.quController = nothing
+    cleared += had_controller ? 1 : 0
+  end
+  return cleared
+end
+
 function _branch_b_diagnostic_rows(opt::CliOptions, model_builders::Vector{Tuple{String,Function}}, branch_labels::Vector{String})
   mpc = Sparlectra.MatpowerIO.read_case(opt.matpower_path; legacy_compat = true)
   bus_base_kv = Dict(Int(row[1]) => Float64(row[10]) for row in eachrow(mpc.bus))
@@ -534,6 +566,8 @@ function _branch_b_diagnostic_rows(opt::CliOptions, model_builders::Vector{Tuple
         trafo_b_scale = opt.trafo_b_scale,
         branch_b_scale = opt.branch_b_scale,
         matpower_ratio = String(opt.matpower_ratio),
+        matpower_pq_gen_controllers = opt.matpower_pq_gen_controllers,
+        builder_pq_gen_controllers = opt.builder_pq_gen_controllers,
       ),
     )
   end
@@ -542,7 +576,7 @@ end
 
 function _write_branch_b_diagnostic_csv(path::AbstractString, rows::Vector{NamedTuple})
   open(path, "w") do io
-    println(io, "branch_index,branch_label,from_bus,to_bus,from_base_kv,to_base_kv,branch_kind_metadata,sparlectra_model_kind,raw_or_inferred_for001_b_S,matpower_br_b_total_pu_unscaled,matpower_br_b_total_pu_scaled,matpower_net_b_pu_after_scaling,builder_net_b_pu_after_scaling,sparlectra_per_end_b_pu_after_scaling,line_b_scale,trafo_b_scale,branch_b_scale,matpower_ratio")
+    println(io, "branch_index,branch_label,from_bus,to_bus,from_base_kv,to_base_kv,branch_kind_metadata,sparlectra_model_kind,raw_or_inferred_for001_b_S,matpower_br_b_total_pu_unscaled,matpower_br_b_total_pu_scaled,matpower_net_b_pu_after_scaling,builder_net_b_pu_after_scaling,sparlectra_per_end_b_pu_after_scaling,line_b_scale,trafo_b_scale,branch_b_scale,matpower_ratio,matpower_pq_gen_controllers,builder_pq_gen_controllers")
     for row in rows
       println(
         io,
@@ -565,6 +599,8 @@ function _write_branch_b_diagnostic_csv(path::AbstractString, rows::Vector{Named
           row.trafo_b_scale,
           row.branch_b_scale,
           row.matpower_ratio,
+          row.matpower_pq_gen_controllers,
+          row.builder_pq_gen_controllers,
         ),
       )
     end
@@ -905,6 +941,8 @@ function _write_summary(path::AbstractString, opt::CliOptions, ref_scenarios::Ve
     println(io, "- Line b scale: ", opt.line_b_scale)
     println(io, "- Transformer b scale: ", opt.trafo_b_scale)
     println(io, "- MATPOWER ratio: ", opt.matpower_ratio)
+    println(io, "- MATPOWER PQ generator controllers: ", opt.matpower_pq_gen_controllers)
+    println(io, "- Builder PQ generator controllers: ", opt.builder_pq_gen_controllers)
     println(io, "- Branch charging diagnostic CSV: `", branch_b_diagnostic_csv, "`")
     println(io)
     println(io, "## Solver settings")
@@ -982,7 +1020,7 @@ function _write_summary(path::AbstractString, opt::CliOptions, ref_scenarios::Ve
   return path
 end
 
-function _load_builder_function(builder_path::AbstractString, builder_function::AbstractString)
+function _load_builder_function(builder_path::AbstractString, builder_function::AbstractString, opt::CliOptions)
   isfile(builder_path) || throw(ArgumentError("Native Sparlectra builder file not found: $builder_path"))
 
   # Julia 1.12 + Revise can otherwise see the freshly included builder method
@@ -995,7 +1033,14 @@ function _load_builder_function(builder_path::AbstractString, builder_function::
     getfield(Main, sym)
   end)
   fn isa Function || throw(ArgumentError("`$builder_function` is defined but is not a function."))
-  return () -> Base.invokelatest(fn)
+  return () -> begin
+    net = Base.invokelatest(fn)
+    if !opt.builder_pq_gen_controllers
+      cleared = _clear_pq_gen_controllers!(net)
+      cleared == 0 && @info "Builder PQ generator controller diagnostic requested, but no native-builder PQ generator P(U)/Q(U) controllers were present to clear."
+    end
+    return net
+  end
 end
 
 function _load_matpower_builder(matpower_path::AbstractString, opt::CliOptions)
@@ -1010,6 +1055,7 @@ function _load_matpower_builder(matpower_path::AbstractString, opt::CliOptions)
     apply_branch_kind = true,
     import_for001_contingencies = true,
     matpower_ratio = opt.matpower_ratio,
+    enable_pq_gen_controllers = opt.matpower_pq_gen_controllers,
   )
 end
 
@@ -1028,6 +1074,11 @@ function main(args = ARGS)
   println("  line b scale            = ", opt.line_b_scale)
   println("  transformer b scale     = ", opt.trafo_b_scale)
   println("  MATPOWER ratio          = ", opt.matpower_ratio)
+  println("  MATPOWER PQ controllers = ", opt.matpower_pq_gen_controllers)
+  println("  builder PQ controllers  = ", opt.builder_pq_gen_controllers)
+  if !opt.builder_pq_gen_controllers
+    println("  builder controller note = generic builder control clears P(U)/Q(U) controllers on non-regulating generators after build; this FOR001 builder normally has none.")
+  end
   println()
 
   ref_scenarios = parse_for002(opt.for002_path)
@@ -1040,7 +1091,7 @@ function main(args = ARGS)
     push!(model_builders, ("matpower", _load_matpower_builder(opt.matpower_path, opt)))
   end
   if opt.run_builder
-    push!(model_builders, ("builder", _load_builder_function(opt.builder_path, opt.builder_function)))
+    push!(model_builders, ("builder", _load_builder_function(opt.builder_path, opt.builder_function, opt)))
   end
 
   branch_b_diagnostic_rows = _branch_b_diagnostic_rows(opt, model_builders, branch_labels)
