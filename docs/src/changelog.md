@@ -1,3 +1,6 @@
+## Version 0.8.8 – 2026-07-01
+### New Features
+
 ## Version 0.8.7 – 2026-06-23
 
 ### New Features
