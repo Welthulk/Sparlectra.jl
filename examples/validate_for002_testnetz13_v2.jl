@@ -82,6 +82,7 @@ struct CliOptions
   diagnose_for001_conversion::Bool
   sweep_line_x_scale::Bool
   line_x_scale::Float64
+  diagnose_bus_injection_balance::Bool
 end
 
 struct ModelRunResult
@@ -155,6 +156,7 @@ function _parse_cli_args(args::Vector{String})::CliOptions
   diagnose_for002_flow_semantics = false
   diagnose_for001_conversion = false
   sweep_line_x_scale = false
+  diagnose_bus_injection_balance = false
 
   for arg in args
     if arg == "--contingencies"
@@ -171,6 +173,8 @@ function _parse_cli_args(args::Vector{String})::CliOptions
       diagnose_for002_flow_semantics = true
     elseif arg == "--diagnose-for001-conversion"
       diagnose_for001_conversion = true
+    elseif arg == "--diagnose-bus-injection-balance"
+      diagnose_bus_injection_balance = true
     elseif arg == "--sweep-line-x-scale"
       sweep_line_x_scale = true
     elseif arg == "--no-matpower"
@@ -219,6 +223,8 @@ function _parse_cli_args(args::Vector{String})::CliOptions
       println("                              compare FOR002 branch rows against alternative calculated flow conventions")
       println("  --diagnose-for001-conversion")
       println("                              write raw FOR001-to-converted branch parameter diagnostics")
+      println("  --diagnose-bus-injection-balance")
+      println("                              write bus and regional generation/load/shunt injection balance diagnostics")
       println("  --sweep-line-x-scale        run diagnostic ordinary AC-line x scaling sweep")
       println("  --infer-pv-buses=off|from-q-limits|from-gen-vg|all-generator-buses")
       println("                              diagnostic PV-bus inference mode; default off")
@@ -294,6 +300,7 @@ function _parse_cli_args(args::Vector{String})::CliOptions
     diagnose_for001_conversion,
     sweep_line_x_scale,
     1.0,
+    diagnose_bus_injection_balance,
   )
 end
 
@@ -983,6 +990,7 @@ function _with_branch_b_sweep_point(opt::CliOptions, line_b_scale::Float64, traf
     opt.diagnose_for001_conversion,
     opt.sweep_line_x_scale,
     opt.line_x_scale,
+    opt.diagnose_bus_injection_balance,
   )
 end
 
@@ -1023,6 +1031,7 @@ function _with_line_x_sweep_point(opt::CliOptions, x_scale::Float64)::CliOptions
     opt.diagnose_for001_conversion,
     opt.sweep_line_x_scale,
     x_scale,
+    opt.diagnose_bus_injection_balance,
   )
 end
 
@@ -2096,6 +2105,182 @@ function _print_flow_semantics_console_summary(diagnostics)
   return nothing
 end
 
+const FOR002_LOCAL_INJECTION_REGION_BUSES = Set(_norm_name.(String["DELTA2S1", "WEILERS1", "BETA2 S1", "ASTADTS1", "DELTA1S1", "BETA1 S1"]))
+
+function _top_active_flow_adjacent_buses(ref::For002Scenario, result::ModelRunResult, branch_labels::Vector{String}; top_n::Int = 10)::Set{String}
+  deviations = _branch_flow_deviation_rows(ref, result, branch_labels)
+  top = first(sort(deviations; by = row -> abs(row.d_p_MW), rev = true), min(top_n, length(deviations)))
+  adjacent = Set{String}()
+  for row in top
+    push!(adjacent, _norm_name(row.from_bus))
+    push!(adjacent, _norm_name(row.to_bus))
+  end
+  return adjacent
+end
+
+function _bus_shunt_power(result::ModelRunResult, bus_idx::Int)
+  p = 0.0
+  q = 0.0
+  for sh in result.net.shuntVec
+    sh.status == 0 && continue
+    sh.busIdx == bus_idx || continue
+    p += sh.p_shunt
+    q += sh.q_shunt
+  end
+  return (p = p, q = q)
+end
+
+function _bus_injection_balance_rows(ref::For002Scenario, result::ModelRunResult, branch_labels::Vector{String})
+  adjacent = _top_active_flow_adjacent_buses(ref, result, branch_labels)
+  rows = NamedTuple[]
+  for row in result.report.nodes
+    key = _norm_name(row.bus_name)
+    refrow = get(ref.buses, key, nothing)
+    refrow === nothing && continue
+    bus_idx = get(result.net.busDict, row.bus_name, 0)
+    node = bus_idx == 0 ? nothing : result.net.nodeVec[bus_idx]
+    prosumers = bus_idx == 0 ? Any[] : Sparlectra.getBusProsumers(result.net, bus_idx)
+    sh = bus_idx == 0 ? (p = missing, q = missing) : _bus_shunt_power(result, bus_idx)
+    p_net_model = row.p_gen_MW - row.p_load_MW - (sh.p === missing ? 0.0 : sh.p)
+    q_net_model = row.q_gen_MVar - row.q_load_MVar - (sh.q === missing ? 0.0 : sh.q)
+    p_net_ref = refrow.p_gen_MW - refrow.p_load_MW
+    q_net_ref = refrow.q_gen_MVar - refrow.q_load_MVar
+    bus_type = node === nothing ? "" : String(Sparlectra.toString(Sparlectra.getNodeType(node)))
+    regulated = any(ps -> ps.isRegulated, prosumers)
+    push!(rows, (
+      model = result.model_name,
+      bus_name = row.bus_name,
+      base_kV = row.vn_kV,
+      bus_type = bus_type,
+      regulation_state = regulated,
+      area = node === nothing ? missing : node._area,
+      zone = node === nothing ? missing : node._lZone,
+      is_slack = node !== nothing && Sparlectra.getNodeType(node) == Sparlectra.Slack,
+      is_generator_bus = any(ps -> Sparlectra.isGenerator(ps), prosumers),
+      p_gen_model_MW = row.p_gen_MW,
+      q_gen_model_MVar = row.q_gen_MVar,
+      p_load_model_MW = row.p_load_MW,
+      q_load_model_MVar = row.q_load_MVar,
+      p_shunt_model_MW = sh.p,
+      q_shunt_model_MVar = sh.q,
+      p_net_injection_model_MW = p_net_model,
+      q_net_injection_model_MVar = q_net_model,
+      p_gen_for002_MW = refrow.p_gen_MW,
+      q_gen_for002_MVar = refrow.q_gen_MVar,
+      p_load_for002_MW = refrow.p_load_MW,
+      q_load_for002_MVar = refrow.q_load_MVar,
+      p_net_injection_for002_MW = p_net_ref,
+      q_net_injection_for002_MVar = q_net_ref,
+      d_p_gen_MW = row.p_gen_MW - refrow.p_gen_MW,
+      d_q_gen_MVar = row.q_gen_MVar - refrow.q_gen_MVar,
+      d_p_load_MW = row.p_load_MW - refrow.p_load_MW,
+      d_q_load_MVar = row.q_load_MVar - refrow.q_load_MVar,
+      d_p_net_injection_MW = p_net_model - p_net_ref,
+      d_q_net_injection_MVar = q_net_model - q_net_ref,
+      adjacent_to_top_active_flow_offender = key in adjacent,
+      local_top_offender_region = key in FOR002_LOCAL_INJECTION_REGION_BUSES,
+    ))
+  end
+  return rows
+end
+
+function _write_bus_injection_balance_csv(path::AbstractString, rows::Vector{NamedTuple})
+  open(path, "w") do io
+    println(io, "model,bus_name,base_kV,bus_type,regulation_state,area,zone,is_slack,is_generator_bus,p_gen_model_MW,q_gen_model_MVar,p_load_model_MW,q_load_model_MVar,p_shunt_model_MW,q_shunt_model_MVar,p_net_injection_model_MW,q_net_injection_model_MVar,p_gen_for002_MW,q_gen_for002_MVar,p_load_for002_MW,q_load_for002_MVar,p_net_injection_for002_MW,q_net_injection_for002_MVar,d_p_gen_MW,d_q_gen_MVar,d_p_load_MW,d_q_load_MVar,d_p_net_injection_MW,d_q_net_injection_MVar,adjacent_to_top_active_flow_offender,local_top_offender_region")
+    for row in rows
+      println(io, _csv_line(row.model, row.bus_name, row.base_kV, row.bus_type, row.regulation_state, row.area, row.zone, row.is_slack, row.is_generator_bus, row.p_gen_model_MW, row.q_gen_model_MVar, row.p_load_model_MW, row.q_load_model_MVar, row.p_shunt_model_MW, row.q_shunt_model_MVar, row.p_net_injection_model_MW, row.q_net_injection_model_MVar, row.p_gen_for002_MW, row.q_gen_for002_MVar, row.p_load_for002_MW, row.q_load_for002_MVar, row.p_net_injection_for002_MW, row.q_net_injection_for002_MVar, row.d_p_gen_MW, row.d_q_gen_MVar, row.d_p_load_MW, row.d_q_load_MVar, row.d_p_net_injection_MW, row.d_q_net_injection_MVar, row.adjacent_to_top_active_flow_offender, row.local_top_offender_region))
+    end
+  end
+  return path
+end
+
+function _aggregate_injection_rows(rows::Vector{NamedTuple})
+  out = NamedTuple[]
+  for model in sort(unique(row.model for row in rows))
+    model_rows = [row for row in rows if row.model == model]
+    groups = Pair{String,Vector{NamedTuple}}[]
+    append!(groups, ["voltage_level=$(kv)" => [row for row in model_rows if row.base_kV == kv] for kv in sort(unique(row.base_kV for row in model_rows))])
+    append!(groups, ["area=$(a)" => [row for row in model_rows if row.area == a] for a in sort(unique(row.area for row in model_rows); by = string)])
+    append!(groups, ["zone=$(z)" => [row for row in model_rows if row.zone == z] for z in sort(unique(row.zone for row in model_rows); by = string)])
+    push!(groups, "local_region_WEILERS1_DELTA2S1_BETA2S1_ASTADTS1" => [row for row in model_rows if row.local_top_offender_region])
+    push!(groups, "adjacent_to_top_active_flow_offenders" => [row for row in model_rows if row.adjacent_to_top_active_flow_offender])
+    for (group, rs) in groups
+      isempty(rs) && continue
+      s(field) = sum(Float64(getfield(row, field)) for row in rs)
+      push!(out, (
+        model = model,
+        aggregate = group,
+        bus_count = length(rs),
+        p_gen_model_MW = s(:p_gen_model_MW),
+        q_gen_model_MVar = s(:q_gen_model_MVar),
+        p_load_model_MW = s(:p_load_model_MW),
+        q_load_model_MVar = s(:q_load_model_MVar),
+        p_shunt_model_MW = s(:p_shunt_model_MW),
+        q_shunt_model_MVar = s(:q_shunt_model_MVar),
+        p_net_injection_model_MW = s(:p_net_injection_model_MW),
+        q_net_injection_model_MVar = s(:q_net_injection_model_MVar),
+        p_gen_for002_MW = s(:p_gen_for002_MW),
+        q_gen_for002_MVar = s(:q_gen_for002_MVar),
+        p_load_for002_MW = s(:p_load_for002_MW),
+        q_load_for002_MVar = s(:q_load_for002_MVar),
+        p_net_injection_for002_MW = s(:p_net_injection_for002_MW),
+        q_net_injection_for002_MVar = s(:q_net_injection_for002_MVar),
+        d_p_net_injection_MW = s(:d_p_net_injection_MW),
+        d_q_net_injection_MVar = s(:d_q_net_injection_MVar),
+      ))
+    end
+  end
+  return out
+end
+
+function _write_regional_injection_balance_csv(path::AbstractString, rows::Vector{NamedTuple})
+  open(path, "w") do io
+    println(io, "model,aggregate,bus_count,p_gen_model_MW,q_gen_model_MVar,p_load_model_MW,q_load_model_MVar,p_shunt_model_MW,q_shunt_model_MVar,p_net_injection_model_MW,q_net_injection_model_MVar,p_gen_for002_MW,q_gen_for002_MVar,p_load_for002_MW,q_load_for002_MVar,p_net_injection_for002_MW,q_net_injection_for002_MVar,d_p_net_injection_MW,d_q_net_injection_MVar")
+    for row in rows
+      println(io, _csv_line(row.model, row.aggregate, row.bus_count, row.p_gen_model_MW, row.q_gen_model_MVar, row.p_load_model_MW, row.q_load_model_MVar, row.p_shunt_model_MW, row.q_shunt_model_MVar, row.p_net_injection_model_MW, row.q_net_injection_model_MVar, row.p_gen_for002_MW, row.q_gen_for002_MVar, row.p_load_for002_MW, row.q_load_for002_MVar, row.p_net_injection_for002_MW, row.q_net_injection_for002_MVar, row.d_p_net_injection_MW, row.d_q_net_injection_MVar))
+    end
+  end
+  return path
+end
+
+function _write_bus_injection_balance_diagnostics(opt::CliOptions, ref::For002Scenario, base_results::Vector{ModelRunResult}, branch_labels::Vector{String})
+  rows = NamedTuple[]
+  for result in base_results
+    append!(rows, _bus_injection_balance_rows(ref, result, branch_labels))
+  end
+  regional_rows = _aggregate_injection_rows(rows)
+  bus_csv = _write_bus_injection_balance_csv(joinpath(opt.output_dir, "bus_injection_balance_diagnostics.csv"), rows)
+  regional_csv = _write_regional_injection_balance_csv(joinpath(opt.output_dir, "regional_injection_balance_diagnostics.csv"), regional_rows)
+  return (bus_csv = bus_csv, regional_csv = regional_csv, rows = rows, regional_rows = regional_rows)
+end
+
+function _print_bus_injection_balance_console_summary(diagnostics)
+  diagnostics === nothing && return nothing
+  println("Bus injection-balance diagnostic summary")
+  for model in sort(unique(row.model for row in diagnostics.rows))
+    model_rows = [row for row in diagnostics.rows if row.model == model]
+    println("  Model: ", model)
+    println("    Top bus |dP net injection|:")
+    for row in first(sort(model_rows; by = row -> abs(row.d_p_net_injection_MW), rev = true), min(10, length(model_rows)))
+      @printf("      %-12s dPnet=% .6g MW model=% .6g for002=% .6g loadΔ=% .6g genΔ=% .6g shunt=% .6g\n", row.bus_name, row.d_p_net_injection_MW, row.p_net_injection_model_MW, row.p_net_injection_for002_MW, row.d_p_load_MW, row.d_p_gen_MW, row.p_shunt_model_MW)
+    end
+    println("    Top bus |dQ net injection|:")
+    for row in first(sort(model_rows; by = row -> abs(row.d_q_net_injection_MVar), rev = true), min(10, length(model_rows)))
+      @printf("      %-12s dQnet=% .6g MVar model=% .6g for002=% .6g loadΔ=% .6g genΔ=% .6g shunt=% .6g\n", row.bus_name, row.d_q_net_injection_MVar, row.q_net_injection_model_MVar, row.q_net_injection_for002_MVar, row.d_q_load_MVar, row.d_q_gen_MVar, row.q_shunt_model_MVar)
+    end
+    region = [row for row in diagnostics.regional_rows if row.model == model && row.aggregate == "local_region_WEILERS1_DELTA2S1_BETA2S1_ASTADTS1"]
+    if !isempty(region)
+      r = only(region)
+      @printf("    Local WEILERS1/DELTA2S1/BETA2 S1/ASTADTS1 region: buses=%d dPnet=% .6g MW dQnet=% .6g MVar model_net=(% .6g,% .6g) FOR002_net=(% .6g,% .6g)\n", r.bus_count, r.d_p_net_injection_MW, r.d_q_net_injection_MVar, r.p_net_injection_model_MW, r.q_net_injection_model_MVar, r.p_net_injection_for002_MW, r.q_net_injection_for002_MVar)
+    end
+    total = (p_gen_model = sum(row.p_gen_model_MW for row in model_rows), q_gen_model = sum(row.q_gen_model_MVar for row in model_rows), p_load_model = sum(row.p_load_model_MW for row in model_rows), q_load_model = sum(row.q_load_model_MVar for row in model_rows), p_net_model = sum(row.p_net_injection_model_MW for row in model_rows), q_net_model = sum(row.q_net_injection_model_MVar for row in model_rows), p_gen_ref = sum(row.p_gen_for002_MW for row in model_rows), q_gen_ref = sum(row.q_gen_for002_MVar for row in model_rows), p_load_ref = sum(row.p_load_for002_MW for row in model_rows), q_load_ref = sum(row.q_load_for002_MVar for row in model_rows), p_net_ref = sum(row.p_net_injection_for002_MW for row in model_rows), q_net_ref = sum(row.q_net_injection_for002_MVar for row in model_rows))
+    @printf("    Totals: model gen=(% .6g MW,% .6g MVar) load=(% .6g MW,% .6g MVar) net=(% .6g MW,% .6g MVar)\n", total.p_gen_model, total.q_gen_model, total.p_load_model, total.q_load_model, total.p_net_model, total.q_net_model)
+    @printf("            FOR002 gen=(% .6g MW,% .6g MVar) load=(% .6g MW,% .6g MVar) net=(% .6g MW,% .6g MVar)\n", total.p_gen_ref, total.q_gen_ref, total.p_load_ref, total.q_load_ref, total.p_net_ref, total.q_net_ref)
+  end
+  println()
+  return nothing
+end
+
 function _print_worst_branch_console_summary(diagnostics)
   diagnostics === nothing && return nothing
   println("Worst branch-flow diagnostic summary")
@@ -2142,7 +2327,7 @@ function _scenario_file_prefix(result::ModelRunResult)::String
   return lowercase(result.model_name) * "_" * scenario_tag
 end
 
-function _write_summary(path::AbstractString, opt::CliOptions, ref_scenarios::Vector{For002Scenario}, branch_labels::Vector{String}, base_summaries::Vector{NamedTuple}, contingency_summaries::Vector{NamedTuple}, model_compare_file::Union{Nothing,String}, branch_b_diagnostic_csv::AbstractString, branch_b_sweep_csv::Union{Nothing,String}, line_x_sweep_csv::Union{Nothing,String}, for001_conversion_csv::Union{Nothing,String}, for001_conversion_raw_parsed::Union{Nothing,Bool}, worst_offenders_csv::Union{Nothing,String}, pv_bus_diagnostics_csv::Union{Nothing,String}, pv_bus_diagnostics_note::Union{Nothing,String}, active_flow_diagnostics, worst_branch_diagnostics, flow_semantics_diagnostics)
+function _write_summary(path::AbstractString, opt::CliOptions, ref_scenarios::Vector{For002Scenario}, branch_labels::Vector{String}, base_summaries::Vector{NamedTuple}, contingency_summaries::Vector{NamedTuple}, model_compare_file::Union{Nothing,String}, branch_b_diagnostic_csv::AbstractString, branch_b_sweep_csv::Union{Nothing,String}, line_x_sweep_csv::Union{Nothing,String}, for001_conversion_csv::Union{Nothing,String}, for001_conversion_raw_parsed::Union{Nothing,Bool}, worst_offenders_csv::Union{Nothing,String}, pv_bus_diagnostics_csv::Union{Nothing,String}, pv_bus_diagnostics_note::Union{Nothing,String}, active_flow_diagnostics, worst_branch_diagnostics, flow_semantics_diagnostics, bus_injection_balance_diagnostics)
   open(path, "w") do io
     println(io, "# FOR002 validation summary")
     println(io)
@@ -2165,6 +2350,7 @@ function _write_summary(path::AbstractString, opt::CliOptions, ref_scenarios::Ve
     println(io, "- Sweep worst branch angle: ", opt.sweep_worst_branch_angle)
     println(io, "- Diagnose FOR002 flow semantics: ", opt.diagnose_for002_flow_semantics)
     println(io, "- Diagnose FOR001 conversion: ", opt.diagnose_for001_conversion)
+    println(io, "- Diagnose bus injection balance: ", opt.diagnose_bus_injection_balance)
     println(io, "- Sweep line x scale: ", opt.sweep_line_x_scale)
     println(io, "- MATPOWER PQ generator controllers: ", opt.matpower_pq_gen_controllers)
     println(io, "- Builder PQ generator controllers: ", opt.builder_pq_gen_controllers)
@@ -2205,6 +2391,10 @@ function _write_summary(path::AbstractString, opt::CliOptions, ref_scenarios::Ve
     if flow_semantics_diagnostics !== nothing
       println(io, "- FOR002 flow semantics diagnostics CSV: `", flow_semantics_diagnostics.diagnostic_csv, "`")
       println(io, "- FOR002 flow semantics summary CSV: `", flow_semantics_diagnostics.summary_csv, "`")
+    end
+    if bus_injection_balance_diagnostics !== nothing
+      println(io, "- Bus injection balance diagnostics CSV: `", bus_injection_balance_diagnostics.bus_csv, "`")
+      println(io, "- Regional injection balance diagnostics CSV: `", bus_injection_balance_diagnostics.regional_csv, "`")
     end
     println(io)
     println(io, "## Solver settings")
@@ -2347,6 +2537,7 @@ function main(args = ARGS)
   println("  sweep worst br. angle   = ", opt.sweep_worst_branch_angle)
   println("  diagnose flow semantics = ", opt.diagnose_for002_flow_semantics)
   println("  diagnose FOR001 conv.   = ", opt.diagnose_for001_conversion)
+  println("  diagnose bus injections = ", opt.diagnose_bus_injection_balance)
   println("  sweep line x scale      = ", opt.sweep_line_x_scale)
   println("  MATPOWER ratio          = ", opt.matpower_ratio)
   println("  MATPOWER PQ controllers = ", opt.matpower_pq_gen_controllers)
@@ -2430,6 +2621,8 @@ function main(args = ARGS)
   _print_worst_branch_console_summary(worst_branch_diagnostics)
   flow_semantics_diagnostics = opt.diagnose_for002_flow_semantics ? _write_for002_flow_semantics_diagnostics(opt, ref_base, base_results, branch_labels) : nothing
   _print_flow_semantics_console_summary(flow_semantics_diagnostics)
+  bus_injection_balance_diagnostics = opt.diagnose_bus_injection_balance ? _write_bus_injection_balance_diagnostics(opt, ref_base, base_results, branch_labels) : nothing
+  _print_bus_injection_balance_console_summary(bus_injection_balance_diagnostics)
   for001_conversion_csv = nothing
   for001_conversion_raw_parsed = nothing
   if opt.diagnose_for001_conversion
@@ -2468,7 +2661,7 @@ function main(args = ARGS)
   end
 
   summary_path = joinpath(opt.output_dir, "for002_validation_summary.md")
-  _write_summary(summary_path, opt, ref_scenarios, branch_labels, base_summaries, contingency_summaries, model_compare_file, branch_b_diagnostic_csv, branch_b_sweep_csv, line_x_sweep_csv, for001_conversion_csv, for001_conversion_raw_parsed, worst_offenders_csv, pv_bus_diagnostics_csv, pv_bus_diagnostics_note, active_flow_diagnostics, worst_branch_diagnostics, flow_semantics_diagnostics)
+  _write_summary(summary_path, opt, ref_scenarios, branch_labels, base_summaries, contingency_summaries, model_compare_file, branch_b_diagnostic_csv, branch_b_sweep_csv, line_x_sweep_csv, for001_conversion_csv, for001_conversion_raw_parsed, worst_offenders_csv, pv_bus_diagnostics_csv, pv_bus_diagnostics_note, active_flow_diagnostics, worst_branch_diagnostics, flow_semantics_diagnostics, bus_injection_balance_diagnostics)
 
   println()
   println("Output files written to:")
@@ -2487,6 +2680,10 @@ function main(args = ARGS)
   if flow_semantics_diagnostics !== nothing
     println("  flow semantics diag   = ", flow_semantics_diagnostics.diagnostic_csv)
     println("  flow semantics summary= ", flow_semantics_diagnostics.summary_csv)
+  end
+  if bus_injection_balance_diagnostics !== nothing
+    println("  bus injection balance = ", bus_injection_balance_diagnostics.bus_csv)
+    println("  regional injections   = ", bus_injection_balance_diagnostics.regional_csv)
   end
   branch_b_sweep_csv !== nothing && println("  branch b sweep summary = ", branch_b_sweep_csv)
   line_x_sweep_csv !== nothing && println("  line x sweep summary   = ", line_x_sweep_csv)
