@@ -38,6 +38,9 @@ Represents an electrical network.
 - `totalLosses::Vector{Tuple{Float64,Float64}}`: Vector containing tuples of total power losses.
 - `_locked::Bool`: Boolean indicating if the network is locked.
 - `measurements::Vector`: State-estimation measurements stored on the network.
+- `matpower_branch_metadata::Dict{Int,NamedTuple}`: Optional MATPOWER branch metadata keyed by imported branch index.
+- `for001Contingencies::Vector{String}`: Optional FOR001 contingency branch names imported from MATPOWER metadata.
+- `matpowerDclineMetadata::Vector{NamedTuple}`: Optional imported MATPOWER DC-line terminal-injection metadata.
 
 # Constructors
 - `Net(name::String, baseMVA::Float64, vmin_pu::Float64 = 0.9, vmax_pu::Float64 = 1.1)`: Creates a new `Net` object with the given name, base MVA, and optional voltage limits.
@@ -100,6 +103,9 @@ mutable struct Net
   measurements::Vector
   bus_shunt_model::Symbol
   control_result::Union{Nothing,ControlRunResult}
+  matpower_branch_metadata::Dict{Int,NamedTuple}
+  for001Contingencies::Vector{String}
+  matpowerDclineMetadata::Vector{NamedTuple}
 
   #! format: off
   function Net(; name::String, baseMVA::Float64, vmin_pu::Float64 = 0.9, vmax_pu::Float64 = 1.1, cooldown_iters::Int = 0, q_hyst_pu::Float64 = 0.0, flatstart::Bool = false, bus_shunt_model = :admittance)    
@@ -134,7 +140,10 @@ mutable struct Net
         Dict{Int,Symbol}(),
         [],
         shunt_model,
-        nothing)
+        nothing,
+        Dict{Int,NamedTuple}(),
+        String[],
+        NamedTuple[])
   end
   #! format: on
   function Base.show(io::IO, net::Net)

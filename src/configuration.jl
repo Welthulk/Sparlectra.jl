@@ -167,6 +167,11 @@ Base.@kwdef struct MatpowerImportConfig
   enable_pq_gen_controllers::Bool = true
   preallocate_network::Symbol = :auto
   preallocate_min_buses::Int = 1000
+  apply_bus_names::Bool = false
+  apply_branch_names::Bool = false
+  apply_branch_kind::Bool = false
+  import_for001_contingencies::Bool = true
+  matpower_dcline_mode::Symbol = :reject_active
 end
 
 """
@@ -303,6 +308,7 @@ const MATPOWER_SHIFT_UNIT_VALUES = (:deg, :rad)
 const MATPOWER_RATIO_VALUES = (:normal, :reciprocal)
 const MATPOWER_BUS_SHUNT_MODEL_VALUES = (:admittance, :voltage_dependent_injection)
 const MATPOWER_AUTO_PROFILE_VALUES = (:off, :recommend, :apply)
+const MATPOWER_DCLINE_MODE_VALUES = (:reject_active, :ignore_inactive, :pf_injections)
 const PERFORMANCE_LEVEL_VALUES = (:off, :summary, :iteration, :full)
 const OUTPUT_CONSOLE_AUTO_PROFILE_VALUES = (:off, :compact, :full)
 const OUTPUT_CONSOLE_DIAGNOSTICS_VALUES = (:off, :compact, :summary, :full)
@@ -633,6 +639,11 @@ function MatpowerImportConfig(raw::AbstractDict)
     enable_pq_gen_controllers = _as_bool_cfg(_raw_get(merged, "enable_pq_gen_controllers", true)),
     preallocate_network = _validate_allowed_symbol("matpower_import.preallocate_network", _as_symbol_cfg(_raw_get(merged, "preallocate_network", :auto)), [:off, :on, :auto]),
     preallocate_min_buses = _as_int_cfg(_raw_get(merged, "preallocate_min_buses", 1000)),
+    apply_bus_names = _as_bool_cfg(_raw_get(merged, "apply_bus_names", false)),
+    apply_branch_names = _as_bool_cfg(_raw_get(merged, "apply_branch_names", false)),
+    apply_branch_kind = _as_bool_cfg(_raw_get(merged, "apply_branch_kind", false)),
+    import_for001_contingencies = _as_bool_cfg(_raw_get(merged, "import_for001_contingencies", true)),
+    matpower_dcline_mode = _validate_allowed_symbol("matpower_import.matpower_dcline_mode", _as_symbol_cfg(_raw_get(merged, "matpower_dcline_mode", :reject_active)), MATPOWER_DCLINE_MODE_VALUES),
   )
 end
 

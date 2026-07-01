@@ -78,6 +78,19 @@ Sparlectra docs distinguish option categories:
 
 Prefer canonical nested keys shown in the example YAML and module pages.
 
+### MATPOWER import metadata and DC-line options
+
+`matpower_import.apply_bus_names`, `apply_branch_names`, and
+`apply_branch_kind` default to `false` so existing imports keep numeric bus
+names and heuristic branch classification. Enable them when MATPOWER cases
+carry validation metadata such as standard `mpc.bus_name` and user-defined
+`mpc.branch_name`/`mpc.branch_kind`. `import_for001_contingencies` defaults to
+`true` and preserves user-defined `mpc.for001_contingencies` for validation
+workflows. `matpower_import.matpower_dcline_mode` defaults to
+`:reject_active`; use `:pf_injections` only when simple MATPOWER power-flow
+DC-line terminal injections are desired. OPF and `dclinecost` remain
+unsupported.
+
 ## Loader and validation behavior
 
 ### Key validation

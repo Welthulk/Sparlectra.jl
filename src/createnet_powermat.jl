@@ -108,7 +108,51 @@ function _apply_matpower_reference_override!(net::Net, slack_orig_idx::Int, bus_
   return nothing
 end
 
-function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false, cooldown::Int = 0, q_hyst_pu::Float64 = 0.0, enable_pq_gen_controllers::Bool = true, bus_shunt_model = :admittance, matpower_shift_sign::Real = 1.0, matpower_shift_unit = :deg, matpower_ratio = :normal, reference_vm_pu::Union{Nothing,Float64} = nothing, reference_va_deg::Union{Nothing,Float64} = nothing, matpower_pv_voltage_source = :gen_vg, matpower_pv_voltage_mismatch_tol_pu::Float64 = 1e-4, preallocate_network::Symbol = :auto, preallocate_min_buses::Int = 1000, profile::Union{Nothing,AbstractDict}=nothing)::Net
+function _matpower_metadata_vector(mpc, field::Symbol)
+  return hasproperty(mpc, field) ? getproperty(mpc, field) : nothing
+end
+
+function _matpower_bus_names(mpc, busData, BUS_I::Int; apply_bus_names::Bool)
+  names = Dict{Int,String}()
+  for row in eachrow(busData)
+    names[Int(row[BUS_I])] = string(Int(row[BUS_I]))
+  end
+  apply_bus_names || return names
+  bus_name = _matpower_metadata_vector(mpc, :bus_name)
+  if bus_name === nothing || length(bus_name) != size(busData, 1)
+    @warn "MATPOWER bus_name metadata missing or length-mismatched; falling back to numeric BUS_I names." expected = size(busData, 1) actual = bus_name === nothing ? 0 : length(bus_name)
+    return names
+  end
+  seen = Set{String}()
+  for (row_index, row) in enumerate(eachrow(busData))
+    name = bus_name[row_index]
+    !isempty(name) || throw(ArgumentError("MATPOWER bus_name at row $(row_index) is empty."))
+    name in seen && throw(ArgumentError("Duplicate MATPOWER bus_name `$(name)`; cannot import ambiguous bus names."))
+    push!(seen, name)
+    names[Int(row[BUS_I])] = name
+  end
+  return names
+end
+
+function _normalize_matpower_branch_kind(kind)::Symbol
+  k = uppercase(strip(String(kind)))
+  k in ("L", "LINE", "ACL") && return :line
+  k in ("T", "TRAFO", "TRANSFORMER", "2WT") && return :transformer
+  return :unknown
+end
+
+function _matpower_branch_kind_overrides(mpc, nbranch::Int; apply_branch_kind::Bool)
+  kinds = _matpower_metadata_vector(mpc, :branch_kind)
+  if !apply_branch_kind
+    return nothing
+  elseif kinds === nothing || length(kinds) != nbranch
+    @warn "MATPOWER branch_kind metadata missing or length-mismatched; using electrical branch classification heuristic." expected = nbranch actual = kinds === nothing ? 0 : length(kinds)
+    return nothing
+  end
+  return [_normalize_matpower_branch_kind(k) for k in kinds]
+end
+
+function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false, cooldown::Int = 0, q_hyst_pu::Float64 = 0.0, enable_pq_gen_controllers::Bool = true, bus_shunt_model = :admittance, matpower_shift_sign::Real = 1.0, matpower_shift_unit = :deg, matpower_ratio = :normal, reference_vm_pu::Union{Nothing,Float64} = nothing, reference_va_deg::Union{Nothing,Float64} = nothing, matpower_pv_voltage_source = :gen_vg, matpower_pv_voltage_mismatch_tol_pu::Float64 = 1e-4, preallocate_network::Symbol = :auto, preallocate_min_buses::Int = 1000, apply_bus_names::Bool = false, apply_branch_names::Bool = false, apply_branch_kind::Bool = false, import_for001_contingencies::Bool = true, matpower_dcline_mode::Symbol = :reject_active, profile::Union{Nothing,AbstractDict}=nothing)::Net
   # Small logger helper
   pInfo(msg::String) = (log ? (@info msg) : nothing)
 
@@ -159,6 +203,13 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
   pv_voltage_source = MatpowerIO._normalize_pv_voltage_source(matpower_pv_voltage_source)
   pv_voltage_rows = MatpowerIO.pv_voltage_reference_rows(mpc; matpower_pv_voltage_source = pv_voltage_source, tol = matpower_pv_voltage_mismatch_tol_pu, warn = log)
   pv_vset_by_bus = Dict(row.busI => row.imported_vset for row in pv_voltage_rows)
+  matpower_dcline_mode in (:reject_active, :ignore_inactive, :pf_injections) || throw(ArgumentError("matpower_dcline_mode must be one of :reject_active, :ignore_inactive, :pf_injections."))
+  matpower_dcline_mode === :pf_injections || MatpowerIO.assert_no_active_dcline(mpc)
+  bus_name_by_orig = _matpower_bus_names(mpc, busData, BUS_I; apply_bus_names = apply_bus_names)
+  branch_kind_overrides = _matpower_branch_kind_overrides(mpc, nbranch; apply_branch_kind = apply_branch_kind)
+  branch_names = _matpower_metadata_vector(mpc, :branch_name)
+  branch_names_valid = apply_branch_names && branch_names !== nothing && length(branch_names) == nbranch
+  apply_branch_names && !branch_names_valid && @warn "MATPOWER branch_name metadata missing or length-mismatched; branch metadata names will not be attached." expected = nbranch actual = branch_names === nothing ? 0 : length(branch_names)
 
   if log
     @info "Creating new Net: $(name) with baseMVA=$(baseMVA), flatstart=$(flatstart)"
@@ -196,7 +247,7 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
   for row in eachrow(busData)
     btype = Int(row[BUS_TYPE])
     kIdx  = Int(row[BUS_I])     # original bus number
-    busName = string(kIdx)
+    busName = bus_name_by_orig[kIdx]
 
     raw_vn = Float64(row[BASE_KV])
     vn_kv  = raw_vn <= 0.0 ? 1.0 : raw_vn
@@ -269,7 +320,7 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
   end
 
   # --- Branches (line vs transformer decision same as old importer) ---
-  for row in eachrow(brData)
+  for (branch_row_index, row) in enumerate(eachrow(brData))
     fbus_orig = Int(row[F_BUS])
     tbus_orig = Int(row[T_BUS])
     from_idx = get(bus_idx_by_orig, fbus_orig, 0)
@@ -302,7 +353,9 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
     # MATPOWER uses TAP == 0 for ordinary lines and a non-zero TAP value for
     # transformers. Preserve explicit nominal-tap transformers (`TAP == 1`) so
     # case300-style branches such as BUS_I 196 -> 2040 are not demoted to lines.
-    isLine = ((!tap_specified && angle == 0.0) && (vn_from == vn_to))
+    heuristic_is_line = ((!tap_specified && angle == 0.0) && (vn_from == vn_to))
+    kind = branch_kind_overrides === nothing ? :unknown : branch_kind_overrides[branch_row_index]
+    isLine = kind === :line ? true : kind === :transformer ? false : heuristic_is_line
 
     if isLine
       _addPIModelACLine_by_idx!(
@@ -329,6 +382,14 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
         shift_deg = angle,
       )
     end
+    imported_branch_index = length(myNet.branchVec)
+    if branch_names_valid || branch_kind_overrides !== nothing
+      myNet.matpower_branch_metadata[imported_branch_index] = (
+        orig_name = branch_names_valid ? branch_names[branch_row_index] : nothing,
+        orig_kind = kind,
+        orig_index = branch_row_index,
+      )
+    end
   end
 
   # --- Generators ---
@@ -337,7 +398,7 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
     status = Int(row[GEN_STATUS])
     status < 1 && continue
 
-    bus = string(Int(row[GEN_BUS]))
+    bus = bus_name_by_orig[Int(row[GEN_BUS])]
 
     pGen = Float64(row[PG])
     qGen = Float64(row[QG])
@@ -390,6 +451,49 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
     )
   end
 
+  if matpower_dcline_mode === :pf_injections
+    dcline = _matpower_metadata_vector(mpc, :dcline)
+    if dcline !== nothing
+      @inbounds for r in axes(dcline, 1)
+        size(dcline, 2) >= 3 && dcline[r, 3] == 0.0 && continue
+        size(dcline, 2) >= 5 || throw(ArgumentError("MATPOWER dcline row $(r) must have at least 5 columns for :pf_injections mode."))
+        fbus = Int(dcline[r, 1])
+        tbus = Int(dcline[r, 2])
+        f_name = get(bus_name_by_orig, fbus, nothing)
+        t_name = get(bus_name_by_orig, tbus, nothing)
+        f_name !== nothing || throw(ArgumentError("MATPOWER dcline row $(r) references unknown F_BUS $(fbus)."))
+        t_name !== nothing || throw(ArgumentError("MATPOWER dcline row $(r) references unknown T_BUS $(tbus)."))
+        pf = Float64(dcline[r, 4])
+        pt = Float64(dcline[r, 5])
+        if size(dcline, 2) >= 17
+          pt = pf - (Float64(dcline[r, 16]) + Float64(dcline[r, 17]) * pf)
+        end
+        qf = size(dcline, 2) >= 6 ? Float64(dcline[r, 6]) : 0.0
+        qt = size(dcline, 2) >= 7 ? Float64(dcline[r, 7]) : 0.0
+        addProsumer!(net = myNet, busName = f_name, type = "GENERATOR", p = -pf, q = qf, isRegulated = false, defer_bus_type_refresh = true)
+        from_prosumer = length(myNet.prosumpsVec)
+        addProsumer!(net = myNet, busName = t_name, type = "GENERATOR", p = pt, q = qt, isRegulated = false, defer_bus_type_refresh = true)
+        to_prosumer = length(myNet.prosumpsVec)
+        push!(myNet.matpowerDclineMetadata, (
+          orig_index = r,
+          from_bus = fbus,
+          to_bus = tbus,
+          from_bus_name = f_name,
+          to_bus_name = t_name,
+          pf_mw = pf,
+          pt_mw = pt,
+          loss_mw = pf - pt,
+          from_prosumer = from_prosumer,
+          to_prosumer = to_prosumer,
+        ))
+      end
+    end
+  end
+
+  if import_for001_contingencies && hasproperty(mpc, :for001_contingencies) && getproperty(mpc, :for001_contingencies) !== nothing
+    append!(myNet.for001Contingencies, getproperty(mpc, :for001_contingencies))
+  end
+
   refreshBusTypesFromProsumers!(myNet)
   _buildQLimits!(myNet)
 
@@ -438,6 +542,11 @@ function createNetFromMatPowerFile(; filename::String,
     reference_va_deg::Union{Nothing,Float64} = nothing,
     matpower_pv_voltage_source = nothing,
     matpower_pv_voltage_mismatch_tol_pu::Union{Nothing,Float64} = nothing,
+    apply_bus_names::Union{Nothing,Bool} = nothing,
+    apply_branch_names::Union{Nothing,Bool} = nothing,
+    apply_branch_kind::Union{Nothing,Bool} = nothing,
+    import_for001_contingencies::Union{Nothing,Bool} = nothing,
+    matpower_dcline_mode = nothing,
     verbose::Int = 0,
     profile::Union{Nothing,AbstractDict}=nothing)::Net
 
@@ -451,6 +560,11 @@ function createNetFromMatPowerFile(; filename::String,
   matpower_ratio = isnothing(matpower_ratio) ? mat_cfg.ratio : matpower_ratio
   matpower_pv_voltage_source = isnothing(matpower_pv_voltage_source) ? mat_cfg.pv_voltage_source : matpower_pv_voltage_source
   matpower_pv_voltage_mismatch_tol_pu = isnothing(matpower_pv_voltage_mismatch_tol_pu) ? mat_cfg.pv_voltage_mismatch_tol_pu : matpower_pv_voltage_mismatch_tol_pu
+  apply_bus_names = isnothing(apply_bus_names) ? mat_cfg.apply_bus_names : apply_bus_names
+  apply_branch_names = isnothing(apply_branch_names) ? mat_cfg.apply_branch_names : apply_branch_names
+  apply_branch_kind = isnothing(apply_branch_kind) ? mat_cfg.apply_branch_kind : apply_branch_kind
+  import_for001_contingencies = isnothing(import_for001_contingencies) ? mat_cfg.import_for001_contingencies : import_for001_contingencies
+  matpower_dcline_mode = isnothing(matpower_dcline_mode) ? mat_cfg.matpower_dcline_mode : matpower_dcline_mode
   preallocate_network = mat_cfg.preallocate_network
   preallocate_min_buses = mat_cfg.preallocate_min_buses
 
@@ -464,6 +578,9 @@ function createNetFromMatPowerFile(; filename::String,
                                   reference_vm_pu=reference_vm_pu, reference_va_deg=reference_va_deg,
                                   matpower_pv_voltage_source=matpower_pv_voltage_source,
                                   matpower_pv_voltage_mismatch_tol_pu=matpower_pv_voltage_mismatch_tol_pu,
+                                  apply_bus_names=apply_bus_names, apply_branch_names=apply_branch_names,
+                                  apply_branch_kind=apply_branch_kind, import_for001_contingencies=import_for001_contingencies,
+                                  matpower_dcline_mode=matpower_dcline_mode,
                                   preallocate_network=preallocate_network, preallocate_min_buses=preallocate_min_buses, profile=profile)
 
   # Always apply MATPOWER isolated flags (BUS_TYPE==4) onto net

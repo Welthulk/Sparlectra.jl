@@ -27,6 +27,7 @@ function include_fast_tests()
   include("test_transformer_phase_shift.jl")
   include("test_tap_controller.jl")
   include("test_configuration_coverage.jl")
+  include("test_matpower_metadata.jl")
   include("test_api.jl")
   include("test_webui.jl")
 end
@@ -49,6 +50,7 @@ function run_fast_profile_tests()
     ("core_model", () -> run_entry(:run_grid_tests)),
     ("powerflow_rectangular", () -> run_entry(:run_solver_interface_tests)),
     ("configuration", () -> run_entry(:run_configuration_coverage_tests)),
+    ("matpower_metadata", () -> run_entry(:run_matpower_metadata_tests)),
     ("programmatic_api", () -> run_entry(:run_api_tests)),
     ("webui", () -> run_entry(:run_webui_tests)),
     ("state_estimation", () -> run_entry(:run_state_estimation_tests)),

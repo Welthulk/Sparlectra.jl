@@ -63,6 +63,11 @@ function _resolved_matpower_import_runtime_options(config::SparlectraConfig)::Di
     "matpower_bus_shunt_model" => String(config.matpower.bus_shunt_model),
     "matpower_pv_voltage_source" => String(config.matpower.pv_voltage_source),
     "matpower_compare_reference" => String(config.matpower.compare_voltage_reference),
+    "matpower_apply_bus_names" => config.matpower.apply_bus_names,
+    "matpower_apply_branch_names" => config.matpower.apply_branch_names,
+    "matpower_apply_branch_kind" => config.matpower.apply_branch_kind,
+    "matpower_import_for001_contingencies" => config.matpower.import_for001_contingencies,
+    "matpower_dcline_mode" => String(config.matpower.matpower_dcline_mode),
   )
 end
 
@@ -173,4 +178,3 @@ function _write_performance_log(path::AbstractString, mode::Symbol, phases::Abst
   end
   return path
 end
-

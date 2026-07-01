@@ -41,6 +41,11 @@ const GUI_EDITABLE_CONFIG_KEYS = Set([
   "matpower_import.bus_shunt_model",
   "matpower_import.pv_voltage_source",
   "matpower_import.compare_voltage_reference",
+  "matpower_import.apply_bus_names",
+  "matpower_import.apply_branch_names",
+  "matpower_import.apply_branch_kind",
+  "matpower_import.import_for001_contingencies",
+  "matpower_import.matpower_dcline_mode",
   "output.logfile_results",
   "output.detailed_result_csv_write_mode",
   "output.detailed_result_csv_exporter",
@@ -68,7 +73,7 @@ function _validate_override_type(key::String, value, expected::Type)
 end
 
 function _validate_gui_override_value(key::String, value)
-  if key in ("power_flow.autodamp", "power_flow.qlimits.enabled", "power_flow.start_current_iteration.enabled", "power_flow.start_current_iteration.accept_only_if_improved", "power_flow.start_current_iteration.only_for_large_cases", "benchmark.enabled")
+  if key in ("power_flow.autodamp", "power_flow.qlimits.enabled", "power_flow.start_current_iteration.enabled", "power_flow.start_current_iteration.accept_only_if_improved", "power_flow.start_current_iteration.only_for_large_cases", "benchmark.enabled", "matpower_import.apply_bus_names", "matpower_import.apply_branch_names", "matpower_import.apply_branch_kind", "matpower_import.import_for001_contingencies")
     _validate_override_type(key, value, Bool)
   elseif key in ("power_flow.max_iter", "power_flow.start_current_iteration.max_iter", "benchmark.samples", "output.detailed_result_csv_direct_threshold_buses", "output.detailed_result_csv_buffer_initial_bytes", "output.detailed_result_csv_buffer_max_bytes", "output.detailed_result_csv_streaming_threshold_rows")
     _validate_override_type(key, value, Int)
@@ -111,6 +116,8 @@ function _validate_gui_override_value(key::String, value)
     _validate_allowed_symbol(key, _as_symbol_cfg(value), MATPOWER_PV_VOLTAGE_SOURCE_VALUES)
   elseif key == "matpower_import.compare_voltage_reference"
     _validate_allowed_symbol(key, _as_symbol_cfg(value), MATPOWER_COMPARE_VOLTAGE_REFERENCE_VALUES)
+  elseif key == "matpower_import.matpower_dcline_mode"
+    _validate_allowed_symbol(key, _as_symbol_cfg(value), MATPOWER_DCLINE_MODE_VALUES)
   elseif key == "output.logfile_results"
     _validate_allowed_symbol(key, _as_symbol_cfg(value), OUTPUT_LOGFILE_RESULTS_VALUES)
   elseif key == "output.detailed_result_csv_write_mode"

@@ -166,6 +166,12 @@ matpower_import:
   # Allowed values: off, on, auto
   preallocate_network: auto
   preallocate_min_buses: 500
+  apply_bus_names: false
+  apply_branch_names: false
+  apply_branch_kind: false
+  import_for001_contingencies: true
+  # Allowed values: reject_active, ignore_inactive, pf_injections
+  matpower_dcline_mode: reject_active
 
 performance:
   enabled: true

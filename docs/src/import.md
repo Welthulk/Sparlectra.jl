@@ -141,16 +141,33 @@ explicit YAML values that were preserved.
 
 The `casefileparser` function parses Matpower case files and returns the raw data arrays:
 
-### Known MATPOWER import limitation: DC lines
+### MATPOWER metadata and DC lines
 
-Sparlectra currently does not model MATPOWER `mpc.dcline` entries. During
-framework/API/Web UI MATPOWER case handling, cases with at least one active
-DC-line row (`status != 0`) are detected and rejected before the power-flow
-solve starts. The failed result reports `failure_reason =
-unsupported_matpower_dcline`, includes the active DC-line count and compact
-Pf/Pt/loss totals when available, and writes the same unsupported-feature
-message to `run.log`. Empty `mpc.dcline` tables and tables containing only
-inactive rows continue through the normal AC import path.
+By default Sparlectra preserves the historical numeric bus naming behavior for
+MATPOWER imports. Set `matpower_import.apply_bus_names: true` (or pass
+`apply_bus_names = true`) to use the standard optional MATPOWER `mpc.bus_name`
+field as imported bus names while preserving original `BUS_I` values in
+`busOrigIdxDict`. Sparlectra also supports user-defined MATPOWER-compatible
+metadata fields `mpc.branch_name`, `mpc.branch_kind`, and
+`mpc.for001_contingencies`. Enable them with
+`apply_branch_names = true`, `apply_branch_kind = true`, and
+`import_for001_contingencies = true`; branch names/kinds are attached as
+`net.matpower_branch_metadata`, and FOR001 contingency names are copied to
+`net.for001Contingencies`. `mpc.branch_kind` values `L`, `LINE`, and `ACL`
+force line import, while `T`, `TRAFO`, `TRANSFORMER`, and `2WT` force
+transformer import. Missing or length-mismatched metadata falls back to the
+legacy electrical heuristic.
+
+`matpower_import.matpower_dcline_mode` controls `mpc.dcline` handling. The
+default `:reject_active` preserves old fail-fast behavior: active DC-line rows
+(`status != 0`) abort before solving with `failure_reason =
+unsupported_matpower_dcline`, while empty or inactive-only tables are ignored.
+`:ignore_inactive` has the same active-row rejection behavior and documents the
+inactive-row ignore policy. `:pf_injections` emulates MATPOWER's simple
+power-flow treatment by adding fixed terminal generator injections for active
+DC lines: from-side `PG = -PF`, to-side `PG = PT`, with `PT` recomputed as
+`PF - (LOSS0 + LOSS1 * PF)` when loss columns are present. OPF constraints,
+`dclinecost`, and DC-line optimization remain unsupported.
 
 ```julia
 using Sparlectra
