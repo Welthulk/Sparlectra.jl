@@ -75,6 +75,7 @@ struct CliOptions
   builder_pq_gen_controllers::Bool
   sweep_branch_b::Bool
   infer_pv_buses::Symbol
+  diagnose_active_flow::Bool
 end
 
 struct ModelRunResult
@@ -142,12 +143,15 @@ function _parse_cli_args(args::Vector{String})::CliOptions
   opt_flatstart = false
   qlimits_enabled = false
   sweep_branch_b = false
+  diagnose_active_flow = false
 
   for arg in args
     if arg == "--contingencies"
       run_contingencies = true
     elseif arg == "--sweep-branch-b"
       sweep_branch_b = true
+    elseif arg == "--diagnose-active-flow"
+      diagnose_active_flow = true
     elseif arg == "--no-matpower"
       run_matpower = false
     elseif arg == "--no-builder"
@@ -187,6 +191,7 @@ function _parse_cli_args(args::Vector{String})::CliOptions
       println("  --line-b-scale=X           diagnostic multiplier for AC-line branch b_pu before solving")
       println("  --trafo-b-scale=X          diagnostic multiplier for transformer branch b_pu before solving")
       println("  --sweep-branch-b           run compact base-case line/transformer branch-charging sweep")
+      println("  --diagnose-active-flow     write active-power and branch/tap diagnostic CSVs")
       println("  --infer-pv-buses=off|from-q-limits|from-gen-vg|all-generator-buses")
       println("                              diagnostic PV-bus inference mode; default off")
       println("  --matpower-ratio=normal|reciprocal")
@@ -254,6 +259,7 @@ function _parse_cli_args(args::Vector{String})::CliOptions
     builder_pq_gen_controllers,
     sweep_branch_b,
     infer_pv_buses,
+    diagnose_active_flow,
   )
 end
 
@@ -927,6 +933,7 @@ function _with_branch_b_sweep_point(opt::CliOptions, line_b_scale::Float64, traf
     true,
     opt.sweep_branch_b,
     opt.infer_pv_buses,
+    opt.diagnose_active_flow,
   )
 end
 
@@ -1257,12 +1264,269 @@ function _pv_bus_diagnostics_note(opt::CliOptions, rows::Vector{NamedTuple})::Un
   return nothing
 end
 
+function _bus_angle_deviation_rows(ref::For002Scenario, result::ModelRunResult)
+  calc = _bus_result_dict(result.report)
+  rows = NamedTuple[]
+  for key in sort(collect(keys(ref.buses)))
+    r = ref.buses[key]
+    c = get(calc, key, nothing)
+    c === nothing && continue
+    push!(rows, (bus_name = r.bus_name, d_va_deg = _angle_delta_deg(c.va_deg, r.va_deg), ref_va_deg = r.va_deg, calc_va_deg = c.va_deg))
+  end
+  return rows
+end
+
+function _branch_flow_deviation_rows(ref::For002Scenario, result::ModelRunResult, branch_labels::Vector{String})
+  refd = _reference_branch_dict(ref)
+  calcd = _branch_result_dict(result, branch_labels)
+  rows = NamedTuple[]
+  for key in sort(collect(keys(refd)); by = x -> (x[1], x[2], x[3]))
+    r = refd[key]
+    c = get(calcd, key, nothing)
+    c === nothing && continue
+    push!(
+      rows,
+      (
+        branch_index = c.branch_index,
+        label = c.label,
+        from_bus = c.from_name,
+        to_bus = c.to_name,
+        nr = c.nr,
+        d_p_MW = c.p_MW - r.p_MW,
+        d_q_MVar = c.q_MVar - r.q_MVar,
+        ref_p_MW = r.p_MW,
+        calc_p_MW = c.p_MW,
+        ref_q_MVar = r.q_MVar,
+        calc_q_MVar = c.q_MVar,
+      ),
+    )
+  end
+  return rows
+end
+
+function _slack_bus_power_deviation(ref::For002Scenario, result::ModelRunResult)
+  calc = _bus_result_dict(result.report)
+  for node in result.net.nodeVec
+    Sparlectra.getNodeType(node) == Sparlectra.Slack || continue
+    bus_name = get(_bus_name_by_idx(result.net), node.busIdx, string(node.busIdx))
+    r = get(ref.buses, _norm_name(bus_name), nothing)
+    c = get(calc, _norm_name(bus_name), nothing)
+    r === nothing || c === nothing || return (
+      bus_name = bus_name,
+      d_p_gen_MW = c.p_gen_MW - r.p_gen_MW,
+      d_q_gen_MVar = c.q_gen_MVar - r.q_gen_MVar,
+      ref_p_gen_MW = r.p_gen_MW,
+      calc_p_gen_MW = c.p_gen_MW,
+      ref_q_gen_MVar = r.q_gen_MVar,
+      calc_q_gen_MVar = c.q_gen_MVar,
+    )
+  end
+  return nothing
+end
+
+function _active_power_balance_rows(ref::For002Scenario, result::ModelRunResult)
+  rows = NamedTuple[]
+  ref_buses = ref.buses
+  for row in result.report.nodes
+    key = _norm_name(row.bus_name)
+    refrow = get(ref_buses, key, nothing)
+    node_idx = get(result.net.busDict, row.bus_name, 0)
+    bus_type = node_idx == 0 ? "" : String(Sparlectra.toString(Sparlectra.getNodeType(result.net.nodeVec[node_idx])))
+    bus_prosumers = node_idx == 0 ? Any[] : Sparlectra.getBusProsumers(result.net, node_idx)
+    regulated = any(ps -> ps.isRegulated, bus_prosumers)
+    is_slack_bus = node_idx != 0 && Sparlectra.getNodeType(result.net.nodeVec[node_idx]) == Sparlectra.Slack
+    push!(
+      rows,
+      (
+        model = result.model_name,
+        bus_name = row.bus_name,
+        bus_type = bus_type,
+        regulation_state = regulated,
+        p_gen_MW = row.p_gen_MW,
+        q_gen_MVar = row.q_gen_MVar,
+        p_load_MW = row.p_load_MW,
+        q_load_MVar = row.q_load_MVar,
+        net_p_injection_MW = row.p_gen_MW - row.p_load_MW,
+        net_q_injection_MVar = row.q_gen_MVar - row.q_load_MVar,
+        ref_p_gen_MW = refrow === nothing ? nothing : refrow.p_gen_MW,
+        ref_q_gen_MVar = refrow === nothing ? nothing : refrow.q_gen_MVar,
+        ref_p_load_MW = refrow === nothing ? nothing : refrow.p_load_MW,
+        ref_q_load_MVar = refrow === nothing ? nothing : refrow.q_load_MVar,
+        d_p_gen_MW = refrow === nothing ? nothing : row.p_gen_MW - refrow.p_gen_MW,
+        d_q_gen_MVar = refrow === nothing ? nothing : row.q_gen_MVar - refrow.q_gen_MVar,
+        d_p_load_MW = refrow === nothing ? nothing : row.p_load_MW - refrow.p_load_MW,
+        d_q_load_MVar = refrow === nothing ? nothing : row.q_load_MVar - refrow.q_load_MVar,
+        is_slack_bus = is_slack_bus,
+      ),
+    )
+  end
+  return rows
+end
+
+function _voltage_coupling_note(from_kv, to_kv)::String
+  if from_kv === missing || to_kv === missing
+    return "unknown voltage coupling"
+  end
+  if isapprox(max(from_kv, to_kv), 400.0; atol = 1.0) && isapprox(min(from_kv, to_kv), 230.0; atol = 1.0)
+    return "400/230-kV coupling"
+  elseif isapprox(from_kv, to_kv; atol = 1e-6)
+    return "same-voltage transformer"
+  else
+    return "other voltage coupling"
+  end
+end
+
+function _branch_parameter_rows(result::ModelRunResult, branch_labels::Vector{String}, top_p_indices::Set{Int}, top_angle_branch_indices::Set{Int})
+  names = _bus_name_by_idx(result.net)
+  rows = NamedTuple[]
+  for br in result.net.branchVec
+    idx = br.branchIdx
+    from_base_kv = result.net.nodeVec[br.fromBus].comp.cVN
+    to_base_kv = result.net.nodeVec[br.toBus].comp.cVN
+    push!(
+      rows,
+      (
+        model = result.model_name,
+        branch_index = idx,
+        branch_label = idx <= length(branch_labels) ? branch_labels[idx] : string(idx),
+        from_bus = get(names, br.fromBus, string(br.fromBus)),
+        to_bus = get(names, br.toBus, string(br.toBus)),
+        branch_kind = _branch_model_kind_label(result.net, br),
+        r_pu = br.r_pu,
+        x_pu = br.x_pu,
+        b_pu_after_effective_scaling = br.b_pu,
+        ratio = br.ratio,
+        angle = br.angle,
+        status = br.status,
+        from_base_kV = from_base_kv,
+        to_base_kV = to_base_kv,
+        is_top_p_flow_offender = idx in top_p_indices,
+        is_top_angle_offender = idx in top_angle_branch_indices,
+      ),
+    )
+  end
+  return rows
+end
+
+function _transformer_tap_rows(result::ModelRunResult, branch_labels::Vector{String}, branch_deviations::Vector{NamedTuple})
+  names = _bus_name_by_idx(result.net)
+  deviation_by_index = Dict(row.branch_index => row for row in branch_deviations)
+  rows = NamedTuple[]
+  for br in result.net.branchVec
+    _branch_diagnostic_kind(result.net, br) == :transformer || continue
+    idx = br.branchIdx
+    from_base_kv = result.net.nodeVec[br.fromBus].comp.cVN
+    to_base_kv = result.net.nodeVec[br.toBus].comp.cVN
+    dev = get(deviation_by_index, idx, nothing)
+    push!(
+      rows,
+      (
+        model = result.model_name,
+        branch_index = idx,
+        branch_label = idx <= length(branch_labels) ? branch_labels[idx] : string(idx),
+        from_bus = get(names, br.fromBus, string(br.fromBus)),
+        to_bus = get(names, br.toBus, string(br.toBus)),
+        from_base_kV = from_base_kv,
+        to_base_kV = to_base_kv,
+        ratio = br.ratio,
+        angle_deg = br.angle,
+        r_pu = br.r_pu,
+        x_pu = br.x_pu,
+        b_pu = br.b_pu,
+        d_p_MW = dev === nothing ? nothing : dev.d_p_MW,
+        d_q_MVar = dev === nothing ? nothing : dev.d_q_MVar,
+        coupling_note = _voltage_coupling_note(from_base_kv, to_base_kv),
+      ),
+    )
+  end
+  return rows
+end
+
+function _write_active_power_balance_diagnostics_csv(path::AbstractString, rows::Vector{NamedTuple})
+  open(path, "w") do io
+    println(io, "model,bus_name,bus_type,regulation_state,p_gen_MW,q_gen_MVar,p_load_MW,q_load_MVar,net_p_injection_MW,net_q_injection_MVar,ref_p_gen_MW,ref_q_gen_MVar,ref_p_load_MW,ref_q_load_MVar,d_p_gen_MW,d_q_gen_MVar,d_p_load_MW,d_q_load_MVar,is_slack_bus")
+    for row in rows
+      println(io, _csv_line(row.model, row.bus_name, row.bus_type, row.regulation_state, row.p_gen_MW, row.q_gen_MVar, row.p_load_MW, row.q_load_MVar, row.net_p_injection_MW, row.net_q_injection_MVar, row.ref_p_gen_MW, row.ref_q_gen_MVar, row.ref_p_load_MW, row.ref_q_load_MVar, row.d_p_gen_MW, row.d_q_gen_MVar, row.d_p_load_MW, row.d_q_load_MVar, row.is_slack_bus))
+    end
+  end
+  return path
+end
+
+function _write_branch_parameter_diagnostics_csv(path::AbstractString, rows::Vector{NamedTuple})
+  open(path, "w") do io
+    println(io, "model,branch_index,branch_label,from_bus,to_bus,branch_kind,r_pu,x_pu,b_pu_after_effective_scaling,ratio,angle,status,from_base_kV,to_base_kV,is_top_p_flow_offender,is_top_angle_offender")
+    for row in rows
+      println(io, _csv_line(row.model, row.branch_index, row.branch_label, row.from_bus, row.to_bus, row.branch_kind, row.r_pu, row.x_pu, row.b_pu_after_effective_scaling, row.ratio, row.angle, row.status, row.from_base_kV, row.to_base_kV, row.is_top_p_flow_offender, row.is_top_angle_offender))
+    end
+  end
+  return path
+end
+
+function _write_transformer_tap_diagnostics_csv(path::AbstractString, rows::Vector{NamedTuple})
+  open(path, "w") do io
+    println(io, "model,branch_index,branch_label,from_bus,to_bus,from_base_kV,to_base_kV,ratio,angle_deg,r_pu,x_pu,b_pu,d_p_MW,d_q_MVar,coupling_note")
+    for row in rows
+      println(io, _csv_line(row.model, row.branch_index, row.branch_label, row.from_bus, row.to_bus, row.from_base_kV, row.to_base_kV, row.ratio, row.angle_deg, row.r_pu, row.x_pu, row.b_pu, row.d_p_MW, row.d_q_MVar, row.coupling_note))
+    end
+  end
+  return path
+end
+
+function _write_active_flow_diagnostics(opt::CliOptions, ref::For002Scenario, base_results::Vector{ModelRunResult}, branch_labels::Vector{String})
+  active_rows = NamedTuple[]
+  branch_parameter_rows = NamedTuple[]
+  transformer_rows = NamedTuple[]
+  console_rows = NamedTuple[]
+  for result in base_results
+    branch_deviations = _branch_flow_deviation_rows(ref, result, branch_labels)
+    angle_deviations = _bus_angle_deviation_rows(ref, result)
+    top_p = first(sort(branch_deviations; by = row -> abs(row.d_p_MW), rev = true), min(10, length(branch_deviations)))
+    top_angles = first(sort(angle_deviations; by = row -> abs(row.d_va_deg), rev = true), min(10, length(angle_deviations)))
+    top_p_indices = Set(row.branch_index for row in top_p)
+    top_angle_buses = Set(_norm_name(row.bus_name) for row in top_angles)
+    top_angle_branch_indices = Set(
+      br.branchIdx for br in result.net.branchVec if
+      _norm_name(get(_bus_name_by_idx(result.net), br.fromBus, string(br.fromBus))) in top_angle_buses ||
+      _norm_name(get(_bus_name_by_idx(result.net), br.toBus, string(br.toBus))) in top_angle_buses
+    )
+    append!(active_rows, _active_power_balance_rows(ref, result))
+    append!(branch_parameter_rows, _branch_parameter_rows(result, branch_labels, top_p_indices, top_angle_branch_indices))
+    append!(transformer_rows, _transformer_tap_rows(result, branch_labels, branch_deviations))
+    push!(console_rows, (model = result.model_name, top_p = top_p, top_angles = top_angles, slack = _slack_bus_power_deviation(ref, result)))
+  end
+  active_csv = _write_active_power_balance_diagnostics_csv(joinpath(opt.output_dir, "active_power_balance_diagnostics.csv"), active_rows)
+  branch_csv = _write_branch_parameter_diagnostics_csv(joinpath(opt.output_dir, "branch_parameter_diagnostics.csv"), branch_parameter_rows)
+  transformer_csv = _write_transformer_tap_diagnostics_csv(joinpath(opt.output_dir, "transformer_tap_diagnostics.csv"), transformer_rows)
+  return (active_csv = active_csv, branch_csv = branch_csv, transformer_csv = transformer_csv, console_rows = console_rows)
+end
+
+function _print_active_flow_console_summary(diagnostics)
+  diagnostics === nothing && return nothing
+  println("Active-flow diagnostic summary")
+  for row in diagnostics.console_rows
+    println("  Model: ", row.model)
+    println("    Top branch |dP|:")
+    for br in row.top_p
+      @printf("      %-34s %s -> %s dP=% .6g MW dQ=% .6g MVar\n", br.label, br.from_bus, br.to_bus, br.d_p_MW, br.d_q_MVar)
+    end
+    println("    Top bus |dVa|:")
+    for bus in row.top_angles
+      @printf("      %-12s dVa=% .6g deg ref=% .6g calc=% .6g\n", bus.bus_name, bus.d_va_deg, bus.ref_va_deg, bus.calc_va_deg)
+    end
+    if row.slack !== nothing
+      @printf("    Slack %s dPgen=% .6g MW dQgen=% .6g MVar\n", row.slack.bus_name, row.slack.d_p_gen_MW, row.slack.d_q_gen_MVar)
+    end
+  end
+  println()
+  return nothing
+end
+
 function _scenario_file_prefix(result::ModelRunResult)::String
   scenario_tag = replace(result.scenario_name, r"[^A-Za-z0-9_.-]" => "_")
   return lowercase(result.model_name) * "_" * scenario_tag
 end
 
-function _write_summary(path::AbstractString, opt::CliOptions, ref_scenarios::Vector{For002Scenario}, branch_labels::Vector{String}, base_summaries::Vector{NamedTuple}, contingency_summaries::Vector{NamedTuple}, model_compare_file::Union{Nothing,String}, branch_b_diagnostic_csv::AbstractString, branch_b_sweep_csv::Union{Nothing,String}, worst_offenders_csv::Union{Nothing,String}, pv_bus_diagnostics_csv::Union{Nothing,String}, pv_bus_diagnostics_note::Union{Nothing,String})
+function _write_summary(path::AbstractString, opt::CliOptions, ref_scenarios::Vector{For002Scenario}, branch_labels::Vector{String}, base_summaries::Vector{NamedTuple}, contingency_summaries::Vector{NamedTuple}, model_compare_file::Union{Nothing,String}, branch_b_diagnostic_csv::AbstractString, branch_b_sweep_csv::Union{Nothing,String}, worst_offenders_csv::Union{Nothing,String}, pv_bus_diagnostics_csv::Union{Nothing,String}, pv_bus_diagnostics_note::Union{Nothing,String}, active_flow_diagnostics)
   open(path, "w") do io
     println(io, "# FOR002 validation summary")
     println(io)
@@ -1280,6 +1544,7 @@ function _write_summary(path::AbstractString, opt::CliOptions, ref_scenarios::Ve
     println(io, "- Transformer b scale: ", opt.trafo_b_scale)
     println(io, "- MATPOWER ratio: ", opt.matpower_ratio)
     println(io, "- Infer PV buses mode: ", opt.infer_pv_buses)
+    println(io, "- Diagnose active flow: ", opt.diagnose_active_flow)
     println(io, "- MATPOWER PQ generator controllers: ", opt.matpower_pq_gen_controllers)
     println(io, "- Builder PQ generator controllers: ", opt.builder_pq_gen_controllers)
     println(io, "- Builder controller handling: native-builder control is applied by clearing P(U)/Q(U) controllers on non-regulating generators after the builder returns; if none are present, the option is a no-op for that builder.")
@@ -1297,6 +1562,11 @@ function _write_summary(path::AbstractString, opt::CliOptions, ref_scenarios::Ve
     if pv_bus_diagnostics_note !== nothing
       println(io, "- PV bus diagnostics note: ", pv_bus_diagnostics_note)
     end
+    if active_flow_diagnostics !== nothing
+      println(io, "- Active power balance diagnostics CSV: `", active_flow_diagnostics.active_csv, "`")
+      println(io, "- Branch parameter diagnostics CSV: `", active_flow_diagnostics.branch_csv, "`")
+      println(io, "- Transformer tap diagnostics CSV: `", active_flow_diagnostics.transformer_csv, "`")
+    end
     println(io)
     println(io, "## Solver settings")
     println(io, "- maxiter: ", opt.maxiter)
@@ -1306,10 +1576,10 @@ function _write_summary(path::AbstractString, opt::CliOptions, ref_scenarios::Ve
     println(io, "- qlimits_enabled: ", opt.qlimits_enabled)
     println(io)
     println(io, "## Tolerances")
-    println(io, "- voltage: ±", opt.tol_v_kV, " kV / ±", opt.tol_vm_pu, " pu")
-    println(io, "- angle: ±", opt.tol_va_deg, " deg")
-    println(io, "- bus and total P/Q: ±", opt.tol_p_MW, " MW / ±", opt.tol_q_MVar, " MVar")
-    println(io, "- branch P/Q: ±", opt.tol_branch_p_MW, " MW / ±", opt.tol_branch_q_MVar, " MVar")
+    println(io, "- voltage: Â±", opt.tol_v_kV, " kV / Â±", opt.tol_vm_pu, " pu")
+    println(io, "- angle: Â±", opt.tol_va_deg, " deg")
+    println(io, "- bus and total P/Q: Â±", opt.tol_p_MW, " MW / Â±", opt.tol_q_MVar, " MVar")
+    println(io, "- branch P/Q: Â±", opt.tol_branch_p_MW, " MW / Â±", opt.tol_branch_q_MVar, " MVar")
     println(io)
     println(io, "## Base-case validation")
     println(io, "| Model | Solver status | Iterations | Residual inf | Validation |")
@@ -1433,6 +1703,7 @@ function main(args = ARGS)
   println("  transformer b scale     = ", opt.trafo_b_scale)
   println("  branch b sweep          = ", opt.sweep_branch_b)
   println("  infer PV buses          = ", opt.infer_pv_buses)
+  println("  diagnose active flow    = ", opt.diagnose_active_flow)
   println("  MATPOWER ratio          = ", opt.matpower_ratio)
   println("  MATPOWER PQ controllers = ", opt.matpower_pq_gen_controllers)
   println("  builder PQ controllers  = ", opt.builder_pq_gen_controllers)
@@ -1498,6 +1769,8 @@ function main(args = ARGS)
   end
 
   worst_offenders_csv = isempty(base_results) ? nothing : _write_worst_offenders_csv(joinpath(opt.output_dir, "for002_worst_offenders.csv"), ref_base, base_results, branch_labels)
+  active_flow_diagnostics = opt.diagnose_active_flow ? _write_active_flow_diagnostics(opt, ref_base, base_results, branch_labels) : nothing
+  _print_active_flow_console_summary(active_flow_diagnostics)
 
   contingency_summaries = NamedTuple[]
   if opt.run_contingencies
@@ -1528,13 +1801,18 @@ function main(args = ARGS)
   end
 
   summary_path = joinpath(opt.output_dir, "for002_validation_summary.md")
-  _write_summary(summary_path, opt, ref_scenarios, branch_labels, base_summaries, contingency_summaries, model_compare_file, branch_b_diagnostic_csv, branch_b_sweep_csv, worst_offenders_csv, pv_bus_diagnostics_csv, pv_bus_diagnostics_note)
+  _write_summary(summary_path, opt, ref_scenarios, branch_labels, base_summaries, contingency_summaries, model_compare_file, branch_b_diagnostic_csv, branch_b_sweep_csv, worst_offenders_csv, pv_bus_diagnostics_csv, pv_bus_diagnostics_note, active_flow_diagnostics)
 
   println()
   println("Output files written to:")
   println("  summary                = ", summary_path)
   println("  branch b diagnostics   = ", branch_b_diagnostic_csv)
   println("  PV bus diagnostics     = ", pv_bus_diagnostics_csv)
+  if active_flow_diagnostics !== nothing
+    println("  active power balance  = ", active_flow_diagnostics.active_csv)
+    println("  branch parameters     = ", active_flow_diagnostics.branch_csv)
+    println("  transformer taps      = ", active_flow_diagnostics.transformer_csv)
+  end
   branch_b_sweep_csv !== nothing && println("  branch b sweep summary = ", branch_b_sweep_csv)
   worst_offenders_csv !== nothing && println("  worst offenders        = ", worst_offenders_csv)
   for s in base_summaries
