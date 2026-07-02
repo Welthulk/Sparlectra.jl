@@ -338,8 +338,22 @@ function powerflow_webui_request(form::AbstractDict; default_output_root::Abstra
     raw = _webui_form_value(form, field, spec.default)
     request_options[field] = _webui_parse_form_value(raw, spec.value_type, field)
   end
+  case_format = strip(String(something(_webui_form_value(form, "case_format", "auto"), "auto")))
+  for002_reference_file = strip(String(something(_webui_form_value(form, "for002_reference_file", ""), "")))
+  outage_mode = strip(String(something(_webui_form_value(form, "dtf_outage_selection_mode", "none"), "none")))
+  raw_selection = _webui_form_value(form, "dtf_outage_selection", String[])
+  selection = raw_selection isa AbstractVector ? String.(raw_selection) : (isempty(strip(String(raw_selection))) ? String[] : [String(raw_selection)])
   return Dict{String,Any}(
     "casefile" => casefile,
+    "case_format" => case_format,
+    "for002_reference_file" => isempty(for002_reference_file) ? nothing : for002_reference_file,
+    "run_dtf_outages" => outage_mode != "none",
+    "dtf_outage_selection" => selection,
+    "dtf_outage_selection_mode" => outage_mode,
+    "compare_for002_outages" => !isempty(for002_reference_file) && outage_mode != "none",
+    "write_outage_artifacts" => _webui_parse_form_value(_webui_form_value(form, "write_outage_artifacts", "true"), Bool, "write_outage_artifacts"),
+    "write_outage_matpower_exports" => _webui_parse_form_value(_webui_form_value(form, "write_outage_matpower_exports", "false"), Bool, "write_outage_matpower_exports"),
+    "matpower_export_requested" => _webui_parse_form_value(_webui_form_value(form, "matpower_export_requested", "false"), Bool, "matpower_export_requested"),
     "config_file" => config_file,
     "output_root" => output_root,
     "config_overrides" => overrides,
