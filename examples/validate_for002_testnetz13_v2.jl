@@ -86,6 +86,9 @@ struct CliOptions
   diagnose_for002_kcl::Bool
   diagnose_for002_state_replay::Bool
   diagnose_for002_angle_convention::Bool
+  diagnose_structural_conversion::Bool
+  audit_lower_voltage_base::Symbol
+  audit_transformer_tap_mode::Symbol
 end
 
 struct ModelRunResult
@@ -143,6 +146,8 @@ function _parse_cli_args(args::Vector{String})::CliOptions
     "matpower-pq-gen-controllers" => "true",
     "builder-pq-gen-controllers" => "true",
     "infer-pv-buses" => "off",
+    "audit-lower-voltage-base" => "as-built",
+    "audit-transformer-tap-mode" => "as-built",
   )
   line_b_scale_value = nothing
   trafo_b_scale_value = nothing
@@ -163,6 +168,7 @@ function _parse_cli_args(args::Vector{String})::CliOptions
   diagnose_for002_kcl = false
   diagnose_for002_state_replay = false
   diagnose_for002_angle_convention = false
+  diagnose_structural_conversion = false
 
   for arg in args
     if arg == "--contingencies"
@@ -187,6 +193,8 @@ function _parse_cli_args(args::Vector{String})::CliOptions
       diagnose_for002_state_replay = true
     elseif arg == "--diagnose-for002-angle-convention"
       diagnose_for002_angle_convention = true
+    elseif arg == "--diagnose-structural-conversion"
+      diagnose_structural_conversion = true
     elseif arg == "--sweep-line-x-scale"
       sweep_line_x_scale = true
     elseif arg == "--no-matpower"
@@ -243,6 +251,12 @@ function _parse_cli_args(args::Vector{String})::CliOptions
       println("                              force parsed FOR002 base-case voltages into each model and compare branch flows without Newton")
       println("  --diagnose-for002-angle-convention")
       println("                              replay FOR002 voltages with alternative angle conventions and compare branch flows")
+      println("  --diagnose-structural-conversion")
+      println("                              write structural, parallel-branch, transformer, and MATPOWER roundtrip audit CSVs")
+      println("  --audit-lower-voltage-base=as-built|force-231")
+      println("                              diagnostic-only lower-voltage base assumption for structural sensitivity audit")
+      println("  --audit-transformer-tap-mode=as-built|tap-1|reciprocal|from-231-base")
+      println("                              diagnostic-only transformer tap mode for structural sensitivity audit")
       println("  --sweep-line-x-scale        run diagnostic ordinary AC-line x scaling sweep")
       println("  --infer-pv-buses=off|from-q-limits|from-gen-vg|all-generator-buses")
       println("                              diagnostic PV-bus inference mode; default off")
@@ -278,6 +292,10 @@ function _parse_cli_args(args::Vector{String})::CliOptions
   matpower_ratio in (:normal, :reciprocal) || throw(ArgumentError("Unsupported --matpower-ratio=$(defaults["matpower-ratio"]); expected normal or reciprocal."))
   infer_pv_buses = Symbol(defaults["infer-pv-buses"])
   infer_pv_buses in (:off, Symbol("from-q-limits"), Symbol("from-gen-vg"), Symbol("all-generator-buses")) || throw(ArgumentError("Unsupported --infer-pv-buses=$(defaults["infer-pv-buses"]); expected off, from-q-limits, from-gen-vg, or all-generator-buses."))
+  audit_lower_voltage_base = Symbol(get(defaults, "audit-lower-voltage-base", "as-built"))
+  audit_lower_voltage_base in (Symbol("as-built"), Symbol("force-231")) || throw(ArgumentError("Unsupported --audit-lower-voltage-base=$(defaults["audit-lower-voltage-base"]); expected as-built or force-231."))
+  audit_transformer_tap_mode = Symbol(get(defaults, "audit-transformer-tap-mode", "as-built"))
+  audit_transformer_tap_mode in (Symbol("as-built"), Symbol("tap-1"), :reciprocal, Symbol("from-231-base")) || throw(ArgumentError("Unsupported --audit-transformer-tap-mode=$(defaults["audit-transformer-tap-mode"]); expected as-built, tap-1, reciprocal, or from-231-base."))
   matpower_pq_gen_controllers = _parse_bool_option("--matpower-pq-gen-controllers", defaults["matpower-pq-gen-controllers"])
   builder_pq_gen_controllers = _parse_bool_option("--builder-pq-gen-controllers", defaults["builder-pq-gen-controllers"])
 
@@ -322,6 +340,9 @@ function _parse_cli_args(args::Vector{String})::CliOptions
     diagnose_for002_kcl,
     diagnose_for002_state_replay,
     diagnose_for002_angle_convention,
+    diagnose_structural_conversion,
+    audit_lower_voltage_base,
+    audit_transformer_tap_mode,
   )
 end
 
@@ -756,6 +777,298 @@ function _run_model(model_name::AbstractString, buildfn::Function, opt::CliOptio
   return ModelRunResult(String(model_name), String(scenario_name), branch_index_out, net, report, iters, status, residual)
 end
 
+function _write_audit_csv(path::AbstractString, columns, rows::AbstractVector)
+  open(path, "w") do io
+    println(io, join(string.(columns), ","))
+    for row in rows
+      println(io, _csv_line((getproperty(row, c) for c in columns)...))
+    end
+  end
+  return path
+end
+
+function _branch_label_from_net(net::Net, i::Int)::String
+  metadata = get(net.matpower_branch_metadata, i, nothing)
+  if metadata !== nothing && hasproperty(metadata, :orig_name) && metadata.orig_name !== nothing
+    return String(metadata.orig_name)
+  end
+  return i <= length(net.branchVec) ? net.branchVec[i].comp.cName : string(i)
+end
+
+function _mpc_entries(mpc, source_model::AbstractString)
+  bus_names = mpc.bus_name === nothing ? [string(Int(row[1])) for row in eachrow(mpc.bus)] : mpc.bus_name
+  bus_base = Dict(Int(row[1]) => Float64(row[10]) for row in eachrow(mpc.bus))
+  branch_names = mpc.branch_name === nothing ? [string(i) for i in axes(mpc.branch, 1)] : mpc.branch_name
+  branch_kinds = mpc.branch_kind === nothing ? [Float64(mpc.branch[i, 9]) == 0.0 ? "line" : "transformer" for i in axes(mpc.branch, 1)] : string.(mpc.branch_kind)
+  entries = NamedTuple[]
+  for i in axes(mpc.branch, 1)
+    row = mpc.branch[i, :]
+    f = Int(row[1]); t = Int(row[2])
+    push!(entries, (
+      source_model = String(source_model), index = i, label = branch_names[i],
+      from_bus = bus_names[f], to_bus = bus_names[t],
+      from_base_kV = get(bus_base, f, missing), to_base_kV = get(bus_base, t, missing),
+      branch_kind = lowercase(branch_kinds[i]) in ("t", "transformer", "trafo") ? "transformer" : "line", r_pu = Float64(row[3]), x_pu = Float64(row[4]),
+      b_pu = Float64(row[5]), g_pu = 0.0, ratio = Float64(row[9]), angle = Float64(row[10]),
+      status = Int(row[11]),
+    ))
+  end
+  return entries
+end
+
+function _net_entries(net::Net, source_model::AbstractString)
+  names = _bus_name_by_idx(net)
+  entries = NamedTuple[]
+  for (i, br) in enumerate(net.branchVec)
+    push!(entries, (
+      source_model = String(source_model), index = i, label = _branch_label_from_net(net, i),
+      from_bus = get(names, br.fromBus, string(br.fromBus)), to_bus = get(names, br.toBus, string(br.toBus)),
+      from_base_kV = net.nodeVec[br.fromBus].comp.cVN, to_base_kV = net.nodeVec[br.toBus].comp.cVN,
+      branch_kind = _branch_model_kind_label(net, br), r_pu = br.r_pu, x_pu = br.x_pu,
+      b_pu = br.b_pu, g_pu = br.g_pu, ratio = br.ratio, angle = br.angle, status = br.status,
+    ))
+  end
+  return entries
+end
+
+_unordered_pair(a::AbstractString, b::AbstractString) = _norm_name(a) <= _norm_name(b) ? (_norm_name(a), _norm_name(b)) : (_norm_name(b), _norm_name(a))
+_join_values(xs) = join(string.(xs), ";")
+
+function _parallel_rows(entries_by_source::Vector{Vector{NamedTuple}}, for001_entries::Vector{NamedTuple})
+  for001_mult = Dict{Tuple{String,String,String},Int}()
+  for e in for001_entries
+    a, b = _unordered_pair(e.from_bus, e.to_bus)
+    for001_mult[(a, b, e.branch_kind)] = get(for001_mult, (a, b, e.branch_kind), 0) + 1
+  end
+  rows = NamedTuple[]
+  for entries in entries_by_source
+    groups = Dict{Tuple{String,String,String},Vector{NamedTuple}}()
+    for e in entries
+      a, b = _unordered_pair(e.from_bus, e.to_bus)
+      push!(get!(groups, (a, b, e.branch_kind), NamedTuple[]), e)
+    end
+    for key in sort(collect(keys(groups)))
+      g = groups[key]
+      labels = [e.label for e in g]
+      push!(rows, (
+        source_model = g[1].source_model, from_bus_normalized = key[1], to_bus_normalized = key[2],
+        branch_kind = key[3], multiplicity = length(g), branch_labels = _join_values(labels),
+        r_pu_values = _join_values([e.r_pu for e in g]), x_pu_values = _join_values([e.x_pu for e in g]),
+        b_pu_values = _join_values([e.b_pu for e in g]), g_pu_values = _join_values([e.g_pu for e in g]),
+        ratio_values = _join_values([e.ratio for e in g]), angle_values = _join_values([e.angle for e in g]),
+        status_values = _join_values([e.status for e in g]),
+        multiplicity_matches_for001_metadata = length(g) == get(for001_mult, key, 0),
+        branch_labels_are_unique = length(unique(labels)) == length(labels),
+        branch_ordering_is_stable = issorted([e.index for e in g]),
+      ))
+    end
+  end
+  return rows
+end
+
+function _structural_rows(models::Vector{Tuple{String,Any,Vector{NamedTuple}}}, mpc_direct)
+  rows = NamedTuple[]
+  for (name, obj, entries) in models
+    if obj isa Net
+      buses230 = count(n -> isapprox(n.comp.cVN, 230.0; atol = 1e-6), obj.nodeVec)
+      buses231 = count(n -> isapprox(n.comp.cVN, 231.0; atol = 1e-6), obj.nodeVec)
+      push!(rows, (source_model = name, bus_count = length(obj.nodeVec), branch_count = length(obj.branchVec),
+        line_count = count(e -> e.branch_kind == "line", entries), transformer_count = count(e -> e.branch_kind == "transformer", entries),
+        generator_count = count(Sparlectra.isGenerator, obj.prosumpsVec), load_count = count(ps -> !Sparlectra.isGenerator(ps), obj.prosumpsVec),
+        shunt_count = length(obj.shuntVec), baseMVA = obj.baseMVA, lower_voltage_bus_count_230_kV = buses230,
+        lower_voltage_bus_count_231_kV = buses231, notes = "native Net"))
+    else
+      buses230 = count(row -> isapprox(Float64(row[10]), 230.0; atol = 1e-6), eachrow(obj.bus))
+      buses231 = count(row -> isapprox(Float64(row[10]), 231.0; atol = 1e-6), eachrow(obj.bus))
+      push!(rows, (source_model = name, bus_count = size(obj.bus, 1), branch_count = size(obj.branch, 1),
+        line_count = count(e -> e.branch_kind == "line", entries), transformer_count = count(e -> e.branch_kind == "transformer", entries),
+        generator_count = size(obj.gen, 1), load_count = count(row -> abs(Float64(row[3])) + abs(Float64(row[4])) > 0.0, eachrow(obj.bus)),
+        shunt_count = count(row -> abs(Float64(row[5])) + abs(Float64(row[6])) > 0.0, eachrow(obj.bus)), baseMVA = obj.baseMVA,
+        lower_voltage_bus_count_230_kV = buses230, lower_voltage_bus_count_231_kV = buses231, notes = name == "for001_metadata" ? "from direct MATPOWER metadata proxy" : "MATPOWER case"))
+    end
+  end
+  return rows
+end
+
+function _transformer_rows(entries_by_source::Vector{Vector{NamedTuple}}, for001_by_label::AbstractDict)
+  rows = NamedTuple[]
+  for entries in entries_by_source, e in entries
+    e.branch_kind == "transformer" || continue
+    raw = get(for001_by_label, e.label, nothing)
+    lower = min(e.from_base_kV, e.to_base_kV)
+    nominal = e.to_base_kV == 0 ? missing : e.from_base_kV / e.to_base_kV
+    expected230 = max(e.from_base_kV, e.to_base_kV) / 230.0
+    expected231 = max(e.from_base_kV, e.to_base_kV) / 231.0
+    note = occursin("BETA1 S1", e.from_bus * " " * e.to_bus) && occursin("BETA2 S1", e.from_bus * " " * e.to_bus) ? "BETA transformer group" :
+      (occursin("DELTA1S1", e.from_bus * " " * e.to_bus) && occursin("DELTA2S1", e.from_bus * " " * e.to_bus) ? "DELTA transformer group" : "")
+    push!(rows, (
+      source_model = e.source_model, branch_label = e.label, from_bus = e.from_bus, to_bus = e.to_bus,
+      from_base_kV = e.from_base_kV, to_base_kV = e.to_base_kV,
+      raw_for001_u_from_kV = raw === nothing ? missing : raw.from_base_kV, raw_for001_u_to_kV = raw === nothing ? missing : raw.to_base_kV,
+      raw_for001_r_ohm = missing, raw_for001_x_ohm = missing, raw_for001_g_s = missing, raw_for001_b_s = missing,
+      converted_r_pu = e.r_pu, converted_x_pu = e.x_pu, converted_g_pu = e.g_pu, converted_b_pu = e.b_pu,
+      tap_or_ratio = e.ratio, shift_deg = e.angle, actual_ratio = e.ratio == 0.0 ? 1.0 : e.ratio,
+      nominal_base_ratio = nominal, nominal_ratio_deviation = nominal isa Missing ? missing : (e.ratio == 0.0 ? 1.0 : e.ratio) - nominal,
+      expected_ratio_if_lower_bus_230 = expected230, expected_ratio_if_lower_bus_231 = expected231,
+      diagnostic_note = note,
+    ))
+  end
+  for entries in entries_by_source
+    for (a, b) in (("BETA1 S1", "BETA2 S1"), ("DELTA1S1", "DELTA2S1"))
+      group = [e for e in entries if e.branch_kind == "transformer" && _unordered_pair(e.from_bus, e.to_bus) == _unordered_pair(a, b)]
+      isempty(group) && continue
+      same = length(unique((e.r_pu, e.x_pu, e.g_pu, e.b_pu, e.ratio, e.angle) for e in group)) == 1
+      y_eq = sum(inv(complex(e.r_pu, e.x_pu)) for e in group)
+      x_eq = abs(imag(inv(y_eq)))
+      line_x = [abs(e.x_pu) for e in entries if e.branch_kind == "line" && isfinite(e.x_pu) && e.x_pu != 0.0]
+      stiff = !isempty(line_x) && x_eq < minimum(line_x) / 5
+      ratio230 = 400.0 / 230.0
+      ratio231 = 400.0 / 231.0
+      note = "group_consistency: parallel_transformers=$(length(group)); identical_r_x_g_b_tap_shift=$(same); equivalent_admittance=$(y_eq); equivalent_x_pu=$(x_eq); extremely_stiff_relative_to_surrounding_lines=$(stiff); effective_tap_delta_230_vs_231=$(ratio230 - ratio231)"
+      push!(rows, (
+        source_model = group[1].source_model, branch_label = "GROUP " * a * " -> " * b, from_bus = a, to_bus = b,
+        from_base_kV = group[1].from_base_kV, to_base_kV = group[1].to_base_kV,
+        raw_for001_u_from_kV = missing, raw_for001_u_to_kV = missing,
+        raw_for001_r_ohm = missing, raw_for001_x_ohm = missing, raw_for001_g_s = missing, raw_for001_b_s = missing,
+        converted_r_pu = missing, converted_x_pu = x_eq, converted_g_pu = real(y_eq), converted_b_pu = imag(y_eq),
+        tap_or_ratio = _join_values([e.ratio for e in group]), shift_deg = _join_values([e.angle for e in group]),
+        actual_ratio = _join_values([e.ratio == 0.0 ? 1.0 : e.ratio for e in group]),
+        nominal_base_ratio = group[1].to_base_kV == 0 ? missing : group[1].from_base_kV / group[1].to_base_kV,
+        nominal_ratio_deviation = missing,
+        expected_ratio_if_lower_bus_230 = ratio230, expected_ratio_if_lower_bus_231 = ratio231,
+        diagnostic_note = note,
+      ))
+    end
+  end
+  return rows
+end
+
+function _roundtrip_rows(direct, exported)
+  rows = NamedTuple[]
+  for row_type in ("bus", "gen", "branch")
+    a = getproperty(direct, Symbol(row_type)); b = getproperty(exported, Symbol(row_type))
+    n = max(size(a, 1), size(b, 1))
+    for i in 1:n
+      av = i <= size(a, 1) ? vec(a[i, :]) : Float64[]
+      bv = i <= size(b, 1) ? vec(b[i, :]) : Float64[]
+      diffs = (i <= size(a, 1) && i <= size(b, 1)) ? abs.(av .- bv) : Float64[]
+      push!(rows, (row_type = row_type, row_index = i, key_name = "", direct_matpower_values = _join_values(av),
+        exported_matpower_values = _join_values(bv), numeric_abs_differences = _join_values(diffs),
+        branch_name = row_type == "branch" && direct.branch_name !== nothing && i <= length(direct.branch_name) ? direct.branch_name[i] : "",
+        branch_kind = row_type == "branch" && direct.branch_kind !== nothing && i <= length(direct.branch_kind) ? string(direct.branch_kind[i]) : "",
+        match_status = size(a) == size(b) && i <= size(a, 1) && i <= size(b, 1) && all(diffs .<= 1e-9) ? "match" : "different"))
+    end
+  end
+  return rows
+end
+
+function _special_pair_key(from::AbstractString, to::AbstractString)
+  a, b = _unordered_pair(from, to)
+  return a * " -> " * b
+end
+
+function _write_structural_conversion_audit(opt::CliOptions, model_builders::Vector{Tuple{String,Function}}, base_results::Vector{ModelRunResult})
+  mpc = Sparlectra.MatpowerIO.read_case(opt.matpower_path; legacy_compat = true)
+  direct_entries = _mpc_entries(mpc, "direct_matpower")
+  models = Tuple{String,Any,Vector{NamedTuple}}[("for001_metadata", mpc, _mpc_entries(mpc, "for001_metadata")), ("direct_matpower", mpc, direct_entries)]
+  entries_by_source = Vector{NamedTuple}[_mpc_entries(mpc, "for001_metadata"), direct_entries]
+  built_nets = Dict{String,Net}()
+  for (name, buildfn) in model_builders
+    net = buildfn()
+    _scale_branch_b!(net, opt)
+    if name == "builder"
+      built_nets["native_builder"] = net
+      entries = _net_entries(net, "native_builder")
+      push!(models, ("native_builder", net, entries)); push!(entries_by_source, entries)
+    end
+  end
+  exported_mpc = nothing
+  if haskey(built_nets, "native_builder") && isdefined(Sparlectra, :writeMatpowerCasefile)
+    export_path = joinpath(opt.output_dir, "native_builder_exported_matpower.m")
+    Sparlectra.writeMatpowerCasefile(built_nets["native_builder"], export_path)
+    exported_mpc = Sparlectra.MatpowerIO.read_case(export_path; legacy_compat = true)
+    exported_entries = _mpc_entries(exported_mpc, "exported_matpower")
+    push!(models, ("exported_matpower", exported_mpc, exported_entries)); push!(entries_by_source, exported_entries)
+    imported = Sparlectra.createNetFromMatPowerCase(mpc = exported_mpc, log = false, flatstart = false, apply_bus_names = true, apply_branch_names = true, apply_branch_kind = true, import_for001_contingencies = true, matpower_ratio = opt.matpower_ratio)
+    imported_entries = _net_entries(imported, "imported_exported_matpower")
+    push!(models, ("imported_exported_matpower", imported, imported_entries)); push!(entries_by_source, imported_entries)
+  else
+    println("Structural audit note: MATPOWER exporter not found or native builder disabled; skipping MATPOWER roundtrip audit.")
+  end
+
+  structural_csv = _write_audit_csv(joinpath(opt.output_dir, "structural_conversion_audit.csv"),
+    (:source_model, :bus_count, :branch_count, :line_count, :transformer_count, :generator_count, :load_count, :shunt_count, :baseMVA, :lower_voltage_bus_count_230_kV, :lower_voltage_bus_count_231_kV, :notes),
+    _structural_rows(models, mpc))
+  parallel_rows = _parallel_rows(entries_by_source, entries_by_source[1])
+  parallel_csv = _write_audit_csv(joinpath(opt.output_dir, "parallel_branch_audit.csv"),
+    (:source_model, :from_bus_normalized, :to_bus_normalized, :branch_kind, :multiplicity, :branch_labels, :r_pu_values, :x_pu_values, :b_pu_values, :g_pu_values, :ratio_values, :angle_values, :status_values, :multiplicity_matches_for001_metadata, :branch_labels_are_unique, :branch_ordering_is_stable),
+    parallel_rows)
+  for001_by_label = Dict(e.label => e for e in entries_by_source[1])
+  transformer_csv = _write_audit_csv(joinpath(opt.output_dir, "transformer_conversion_audit.csv"),
+    (:source_model, :branch_label, :from_bus, :to_bus, :from_base_kV, :to_base_kV, :raw_for001_u_from_kV, :raw_for001_u_to_kV, :raw_for001_r_ohm, :raw_for001_x_ohm, :raw_for001_g_s, :raw_for001_b_s, :converted_r_pu, :converted_x_pu, :converted_g_pu, :converted_b_pu, :tap_or_ratio, :shift_deg, :actual_ratio, :nominal_base_ratio, :nominal_ratio_deviation, :expected_ratio_if_lower_bus_230, :expected_ratio_if_lower_bus_231, :diagnostic_note),
+    _transformer_rows(entries_by_source, for001_by_label))
+  roundtrip_csv = nothing
+  if exported_mpc !== nothing
+    roundtrip_csv = _write_audit_csv(joinpath(opt.output_dir, "matpower_roundtrip_audit.csv"),
+      (:row_type, :row_index, :key_name, :direct_matpower_values, :exported_matpower_values, :numeric_abs_differences, :branch_name, :branch_kind, :match_status),
+      _roundtrip_rows(mpc, exported_mpc))
+  end
+
+  sensitivity_csv = nothing
+  if opt.audit_lower_voltage_base != Symbol("as-built") || opt.audit_transformer_tap_mode != Symbol("as-built")
+    rows = NamedTuple[]
+    for (name, buildfn) in model_builders
+      name == "builder" || continue
+      net = buildfn()
+      if opt.audit_lower_voltage_base == Symbol("force-231")
+        for n in net.nodeVec
+          isapprox(n.comp.cVN, 230.0; atol = 1e-6) && (n.comp.cVN = 231.0)
+        end
+      end
+      for br in net.branchVec
+        _branch_diagnostic_kind(net, br) === :transformer || continue
+        opt.audit_transformer_tap_mode == Symbol("tap-1") && (br.ratio = 1.0; br.tap_ratio = 1.0)
+        opt.audit_transformer_tap_mode == :reciprocal && br.ratio != 0.0 && (br.ratio = inv(br.ratio); br.tap_ratio = br.ratio)
+        opt.audit_transformer_tap_mode == Symbol("from-231-base") && (br.ratio = 400.0 / 231.0; br.tap_ratio = br.ratio)
+      end
+      _scale_branch_b!(net, opt)
+      report, iters, status, residual = _run_powerflow!(net, opt)
+      result = ModelRunResult("builder_sensitivity", "base", nothing, net, report, iters, status, residual)
+      ref_base = parse_for002(opt.for002_path)[1]
+      branch_labels = _parse_matpower_string_vector(opt.matpower_path, "branch_name")
+      bus_cmp = _compare_bus_rows(ref_base, result, opt, joinpath(opt.output_dir, "transformer_sensitivity_bus_comparison.csv"))
+      branch_cmp = _compare_branch_rows(ref_base, result, branch_labels, opt, joinpath(opt.output_dir, "transformer_sensitivity_branch_comparison.csv"))
+      beta = [br.ratio == 0.0 ? 1.0 : br.ratio for br in net.branchVec if occursin("BETA1 S1", _branch_label_from_net(net, br.branchIdx)) || (occursin("BETA1 S1", get(_bus_name_by_idx(net), br.fromBus, "")) && occursin("BETA2 S1", get(_bus_name_by_idx(net), br.toBus, "")))]
+      delta = [br.ratio == 0.0 ? 1.0 : br.ratio for br in net.branchVec if occursin("DELTA1S1", _branch_label_from_net(net, br.branchIdx)) || (occursin("DELTA1S1", get(_bus_name_by_idx(net), br.fromBus, "")) && occursin("DELTA2S1", get(_bus_name_by_idx(net), br.toBus, "")))]
+      push!(rows, (mode = name, bus_voltage_base_assumption = opt.audit_lower_voltage_base, transformer_tap_mode = opt.audit_transformer_tap_mode,
+        beta_transformer_effective_ratios = _join_values(beta), delta_transformer_effective_ratios = _join_values(delta),
+        max_abs_branch_d_p_MW = branch_cmp.max_abs_d_p_MW, max_abs_d_va_deg = bus_cmp.max_abs_d_va_deg, max_abs_d_v_kV = bus_cmp.max_abs_d_v_kV, max_abs_d_q_gen_MVar = bus_cmp.max_abs_d_q_gen_MVar,
+        objective = _diagnostic_objective(bus_cmp, branch_cmp)))
+    end
+    sensitivity_csv = _write_audit_csv(joinpath(opt.output_dir, "transformer_sensitivity_audit.csv"),
+      (:mode, :bus_voltage_base_assumption, :transformer_tap_mode, :beta_transformer_effective_ratios, :delta_transformer_effective_ratios, :max_abs_branch_d_p_MW, :max_abs_d_va_deg, :max_abs_d_v_kV, :max_abs_d_q_gen_MVar, :objective), rows)
+  end
+
+  println("Structural conversion audit:")
+  println("  structural CSV          = ", structural_csv)
+  println("  parallel branch CSV     = ", parallel_csv)
+  println("  transformer CSV         = ", transformer_csv)
+  roundtrip_csv === nothing ? println("  MATPOWER roundtrip CSV  = skipped") : println("  MATPOWER roundtrip CSV  = ", roundtrip_csv)
+  sensitivity_csv === nothing || println("  transformer sensitivity = ", sensitivity_csv)
+  for source in unique(row.source_model for row in parallel_rows)
+    multi = [row for row in parallel_rows if row.source_model == source && row.multiplicity > 1]
+    println("  parallel groups in ", source, ": ", length(multi))
+    for row in multi
+      println("    ", row.from_bus_normalized, " <-> ", row.to_bus_normalized, " ", row.branch_kind, " x", row.multiplicity, " [", row.branch_labels, "]")
+    end
+  end
+  if roundtrip_csv !== nothing
+    differs = any(row -> row.match_status != "match", _roundtrip_rows(mpc, exported_mpc))
+    println("  exported MATPOWER differs from direct MATPOWER: ", differs)
+  end
+  return (structural_csv = structural_csv, parallel_csv = parallel_csv, transformer_csv = transformer_csv, roundtrip_csv = roundtrip_csv, sensitivity_csv = sensitivity_csv)
+end
+
 function _bus_result_dict(report::ACPFlowReport)::Dict{String,NamedTuple}
   d = Dict{String,NamedTuple}()
   for row in report.nodes
@@ -1016,6 +1329,9 @@ function _with_branch_b_sweep_point(opt::CliOptions, line_b_scale::Float64, traf
     opt.diagnose_for002_kcl,
     opt.diagnose_for002_state_replay,
     opt.diagnose_for002_angle_convention,
+    opt.diagnose_structural_conversion,
+    opt.audit_lower_voltage_base,
+    opt.audit_transformer_tap_mode,
   )
 end
 
@@ -1061,6 +1377,9 @@ function _with_line_x_sweep_point(opt::CliOptions, x_scale::Float64)::CliOptions
     opt.diagnose_for002_kcl,
     opt.diagnose_for002_state_replay,
     opt.diagnose_for002_angle_convention,
+    opt.diagnose_structural_conversion,
+    opt.audit_lower_voltage_base,
+    opt.audit_transformer_tap_mode,
   )
 end
 
@@ -3013,6 +3332,9 @@ function main(args = ARGS)
   println("  diagnose FOR002 KCL     = ", opt.diagnose_for002_kcl)
   println("  diagnose state replay   = ", opt.diagnose_for002_state_replay)
   println("  diagnose angle conv.    = ", opt.diagnose_for002_angle_convention)
+  println("  diagnose structural     = ", opt.diagnose_structural_conversion)
+  println("  audit lower kV base     = ", opt.audit_lower_voltage_base)
+  println("  audit transformer taps  = ", opt.audit_transformer_tap_mode)
   println("  sweep line x scale      = ", opt.sweep_line_x_scale)
   println("  MATPOWER ratio          = ", opt.matpower_ratio)
   println("  MATPOWER PQ controllers = ", opt.matpower_pq_gen_controllers)
@@ -3104,6 +3426,7 @@ function main(args = ARGS)
   _print_for002_state_replay_console_summary(for002_state_replay_diagnostics)
   for002_angle_convention_diagnostics = opt.diagnose_for002_angle_convention ? _write_for002_angle_convention_csvs(opt, ref_base, base_results, model_builders, branch_labels) : nothing
   _print_for002_angle_convention_console_summary(for002_angle_convention_diagnostics)
+  structural_conversion_diagnostics = opt.diagnose_structural_conversion ? _write_structural_conversion_audit(opt, model_builders, base_results) : nothing
   for001_conversion_csv = nothing
   for001_conversion_raw_parsed = nothing
   if opt.diagnose_for001_conversion
