@@ -85,6 +85,8 @@ struct CliOptions
   diagnose_bus_injection_balance::Bool
   diagnose_for002_kcl::Bool
   diagnose_for002_state_replay::Bool
+  diagnose_for002_state_residual::Bool
+  sweep_state_residual_line_b::Bool
   diagnose_for002_angle_convention::Bool
   diagnose_structural_conversion::Bool
   diagnose_transformer_shunt_model::Bool
@@ -172,6 +174,8 @@ function _parse_cli_args(args::Vector{String})::CliOptions
   diagnose_bus_injection_balance = false
   diagnose_for002_kcl = false
   diagnose_for002_state_replay = false
+  diagnose_for002_state_residual = false
+  sweep_state_residual_line_b = false
   diagnose_for002_angle_convention = false
   diagnose_structural_conversion = false
   diagnose_transformer_shunt_model = false
@@ -197,6 +201,10 @@ function _parse_cli_args(args::Vector{String})::CliOptions
       diagnose_for002_kcl = true
     elseif arg == "--diagnose-for002-state-replay"
       diagnose_for002_state_replay = true
+    elseif arg == "--diagnose-for002-state-residual"
+      diagnose_for002_state_residual = true
+    elseif arg == "--sweep-state-residual-line-b"
+      sweep_state_residual_line_b = true
     elseif arg == "--diagnose-for002-angle-convention"
       diagnose_for002_angle_convention = true
     elseif arg == "--diagnose-structural-conversion"
@@ -257,6 +265,10 @@ function _parse_cli_args(args::Vector{String})::CliOptions
       println("                              write parsed FOR002 and model-side bus/branch KCL consistency diagnostics")
       println("  --diagnose-for002-state-replay")
       println("                              force parsed FOR002 base-case voltages into each model and compare branch flows without Newton")
+      println("  --diagnose-for002-state-residual")
+      println("                              force parsed FOR002 base-case voltages into each model and compare Ybus bus injections")
+      println("  --sweep-state-residual-line-b")
+      println("                              sweep line b scale for FOR002-state Ybus residuals")
       println("  --diagnose-for002-angle-convention")
       println("                              replay FOR002 voltages with alternative angle conventions and compare branch flows")
       println("  --diagnose-structural-conversion")
@@ -358,6 +370,8 @@ function _parse_cli_args(args::Vector{String})::CliOptions
     diagnose_bus_injection_balance,
     diagnose_for002_kcl,
     diagnose_for002_state_replay,
+    diagnose_for002_state_residual,
+    sweep_state_residual_line_b,
     diagnose_for002_angle_convention,
     diagnose_structural_conversion,
     diagnose_transformer_shunt_model,
@@ -1547,6 +1561,8 @@ function _with_branch_b_sweep_point(opt::CliOptions, line_b_scale::Float64, traf
     opt.diagnose_bus_injection_balance,
     opt.diagnose_for002_kcl,
     opt.diagnose_for002_state_replay,
+    opt.diagnose_for002_state_residual,
+    opt.sweep_state_residual_line_b,
     opt.diagnose_for002_angle_convention,
     opt.diagnose_structural_conversion,
     opt.diagnose_transformer_shunt_model,
@@ -1598,6 +1614,8 @@ function _with_line_x_sweep_point(opt::CliOptions, x_scale::Float64)::CliOptions
     opt.diagnose_bus_injection_balance,
     opt.diagnose_for002_kcl,
     opt.diagnose_for002_state_replay,
+    opt.diagnose_for002_state_residual,
+    opt.sweep_state_residual_line_b,
     opt.diagnose_for002_angle_convention,
     opt.diagnose_structural_conversion,
     opt.diagnose_transformer_shunt_model,
@@ -2871,6 +2889,7 @@ function _print_flow_semantics_console_summary(diagnostics)
 end
 
 const FOR002_LOCAL_INJECTION_REGION_BUSES = Set(_norm_name.(String["DELTA2S1", "WEILERS1", "BETA2 S1", "ASTADTS1", "DELTA1S1", "BETA1 S1"]))
+const FOR002_STATE_RESIDUAL_LOCAL_BUSES = Set(_norm_name.(String["WEILERS1", "DELTA2S1", "BETA2 S1", "ASTADTS1"]))
 
 function _top_active_flow_adjacent_buses(ref::For002Scenario, result::ModelRunResult, branch_labels::Vector{String}; top_n::Int = 10)::Set{String}
   deviations = _branch_flow_deviation_rows(ref, result, branch_labels)
@@ -3044,6 +3063,137 @@ function _print_bus_injection_balance_console_summary(diagnostics)
   end
   println()
   return nothing
+end
+
+function _state_residual_rows(ref::For002Scenario, result::ModelRunResult, branch_labels::Vector{String})
+  adjacent = _top_active_flow_adjacent_buses(ref, result, branch_labels)
+  model = Sparlectra.buildPfModel(result.net; flatstart = false, include_limits = false, verbose = 0)
+  names = _bus_name_by_idx(result.net)
+  V = Vector{ComplexF64}(undef, length(model.busIdx_net))
+  for (k, bus_idx) in enumerate(model.busIdx_net)
+    node = result.net.nodeVec[bus_idx]
+    refrow = get(ref.buses, _norm_name(get(names, bus_idx, node.comp.cName)), nothing)
+    if refrow === nothing
+      V[k] = ComplexF64(node._vm_pu * cosd(node._va_deg), node._vm_pu * sind(node._va_deg))
+    else
+      vm = refrow.v_kV / node.comp.cVN
+      V[k] = ComplexF64(vm * cosd(refrow.va_deg), vm * sind(refrow.va_deg))
+    end
+  end
+  Scalc = Sparlectra.calc_injections(model.Ybus, V) .* result.net.baseMVA
+  report_by_name = Dict(_norm_name(row.bus_name) => row for row in result.report.nodes)
+  rows = NamedTuple[]
+  for (k, bus_idx) in enumerate(model.busIdx_net)
+    node = result.net.nodeVec[bus_idx]
+    key = _norm_name(get(names, bus_idx, node.comp.cName))
+    refrow = get(ref.buses, key, nothing)
+    refrow === nothing && continue
+    report_row = get(report_by_name, key, nothing)
+    bus_p = refrow.p_gen_MW - refrow.p_load_MW
+    bus_q = refrow.q_gen_MVar - refrow.q_load_MVar
+    solved_p = report_row === nothing ? missing : report_row.p_gen_MW - report_row.p_load_MW
+    solved_q = report_row === nothing ? missing : report_row.q_gen_MVar - report_row.q_load_MVar
+    push!(rows, (
+      model = result.model_name,
+      bus_name = get(names, bus_idx, node.comp.cName),
+      base_kV = node.comp.cVN,
+      forced_vm_pu_from_for002 = abs(V[k]),
+      forced_va_deg_from_for002 = angle(V[k]) * 180.0 / pi,
+      ybus_calc_p_injection_MW = real(Scalc[k]),
+      ybus_calc_q_injection_MVar = imag(Scalc[k]),
+      for002_bus_table_p_net_MW = bus_p,
+      for002_bus_table_q_net_MVar = bus_q,
+      model_bus_report_p_net_MW = solved_p,
+      model_bus_report_q_net_MVar = solved_q,
+      d_p_ybus_vs_for002_MW = real(Scalc[k]) - bus_p,
+      d_q_ybus_vs_for002_MVar = imag(Scalc[k]) - bus_q,
+      d_p_model_solved_vs_for002_MW = solved_p === missing ? missing : solved_p - bus_p,
+      d_q_model_solved_vs_for002_MVar = solved_q === missing ? missing : solved_q - bus_q,
+      is_slack = Sparlectra.getNodeType(node) == Sparlectra.Slack,
+      is_generator_bus = any(ps -> Sparlectra.isGenerator(ps), Sparlectra.getBusProsumers(result.net, bus_idx)),
+      adjacent_to_top_active_flow_offender = key in adjacent,
+    ))
+  end
+  return rows
+end
+
+function _state_residual_summary_rows(rows::Vector{NamedTuple})
+  out = NamedTuple[]
+  for model in sort(unique(row.model for row in rows))
+    rs = [row for row in rows if row.model == model]
+    slack = [row for row in rs if row.is_slack]
+    local_rows = [row for row in rs if _norm_name(row.bus_name) in FOR002_STATE_RESIDUAL_LOCAL_BUSES]
+    top = [row for row in rs if row.adjacent_to_top_active_flow_offender]
+    push!(out, (
+      model = model,
+      row_count = length(rs),
+      max_abs_d_p_ybus_vs_for002_MW = maximum(abs(row.d_p_ybus_vs_for002_MW) for row in rs),
+      mean_abs_d_p_ybus_vs_for002_MW = sum(abs(row.d_p_ybus_vs_for002_MW) for row in rs) / length(rs),
+      max_abs_d_q_ybus_vs_for002_MVar = maximum(abs(row.d_q_ybus_vs_for002_MVar) for row in rs),
+      mean_abs_d_q_ybus_vs_for002_MVar = sum(abs(row.d_q_ybus_vs_for002_MVar) for row in rs) / length(rs),
+      slack_d_p_ybus_vs_for002_MW = isempty(slack) ? missing : sum(row.d_p_ybus_vs_for002_MW for row in slack),
+      slack_d_q_ybus_vs_for002_MVar = isempty(slack) ? missing : sum(row.d_q_ybus_vs_for002_MVar for row in slack),
+      local_region_d_p_ybus_vs_for002_MW = sum(row.d_p_ybus_vs_for002_MW for row in local_rows),
+      local_region_d_q_ybus_vs_for002_MVar = sum(row.d_q_ybus_vs_for002_MVar for row in local_rows),
+      top_offender_region_d_p_ybus_vs_for002_MW = isempty(top) ? missing : sum(row.d_p_ybus_vs_for002_MW for row in top),
+      top_offender_region_d_q_ybus_vs_for002_MVar = isempty(top) ? missing : sum(row.d_q_ybus_vs_for002_MVar for row in top),
+    ))
+  end
+  return out
+end
+
+function _write_state_residual_csvs(opt::CliOptions, ref::For002Scenario, base_results::Vector{ModelRunResult}, branch_labels::Vector{String})
+  rows = NamedTuple[]
+  for result in base_results
+    append!(rows, _state_residual_rows(ref, result, branch_labels))
+  end
+  summary_rows = _state_residual_summary_rows(rows)
+  diagnostics_csv = _write_audit_csv(joinpath(opt.output_dir, "for002_state_residual_diagnostics.csv"), (:model, :bus_name, :base_kV, :forced_vm_pu_from_for002, :forced_va_deg_from_for002, :ybus_calc_p_injection_MW, :ybus_calc_q_injection_MVar, :for002_bus_table_p_net_MW, :for002_bus_table_q_net_MVar, :model_bus_report_p_net_MW, :model_bus_report_q_net_MVar, :d_p_ybus_vs_for002_MW, :d_q_ybus_vs_for002_MVar, :d_p_model_solved_vs_for002_MW, :d_q_model_solved_vs_for002_MVar, :is_slack, :is_generator_bus, :adjacent_to_top_active_flow_offender), rows)
+  summary_csv = _write_audit_csv(joinpath(opt.output_dir, "for002_state_residual_summary.csv"), (:model, :row_count, :max_abs_d_p_ybus_vs_for002_MW, :mean_abs_d_p_ybus_vs_for002_MW, :max_abs_d_q_ybus_vs_for002_MVar, :mean_abs_d_q_ybus_vs_for002_MVar, :slack_d_p_ybus_vs_for002_MW, :slack_d_q_ybus_vs_for002_MVar, :local_region_d_p_ybus_vs_for002_MW, :local_region_d_q_ybus_vs_for002_MVar, :top_offender_region_d_p_ybus_vs_for002_MW, :top_offender_region_d_q_ybus_vs_for002_MVar), summary_rows)
+  return (diagnostics_csv = diagnostics_csv, summary_csv = summary_csv, rows = rows, summary_rows = summary_rows)
+end
+
+function _print_state_residual_console_summary(diagnostics)
+  diagnostics === nothing && return nothing
+  println("FOR002 state residual diagnostic summary")
+  for model in sort(unique(row.model for row in diagnostics.rows))
+    model_rows = [row for row in diagnostics.rows if row.model == model]
+    println("  Model: ", model)
+    println("    Top bus |dP Ybus vs FOR002|:")
+    for row in first(sort(model_rows; by = row -> abs(row.d_p_ybus_vs_for002_MW), rev = true), min(10, length(model_rows)))
+      @printf("      %-12s dP=% .6g MW ybus=% .6g for002=% .6g\n", row.bus_name, row.d_p_ybus_vs_for002_MW, row.ybus_calc_p_injection_MW, row.for002_bus_table_p_net_MW)
+    end
+    println("    Top bus |dQ Ybus vs FOR002|:")
+    for row in first(sort(model_rows; by = row -> abs(row.d_q_ybus_vs_for002_MVar), rev = true), min(10, length(model_rows)))
+      @printf("      %-12s dQ=% .6g MVar ybus=% .6g for002=% .6g\n", row.bus_name, row.d_q_ybus_vs_for002_MVar, row.ybus_calc_q_injection_MVar, row.for002_bus_table_q_net_MVar)
+    end
+    summary = only([row for row in diagnostics.summary_rows if row.model == model])
+    @printf("    Local WEILERS1/DELTA2S1/BETA2 S1/ASTADTS1 aggregate: dP=% .6g MW dQ=% .6g MVar\n", summary.local_region_d_p_ybus_vs_for002_MW, summary.local_region_d_q_ybus_vs_for002_MVar)
+    approx = summary.max_abs_d_p_ybus_vs_for002_MW <= 1.0 && summary.max_abs_d_q_ybus_vs_for002_MVar <= 2.0
+    println("    FOR002 voltage state approximately satisfies converted Ybus: ", approx)
+  end
+  println()
+  return nothing
+end
+
+function _run_state_residual_line_b_sweep(opt::CliOptions, ref::For002Scenario, model_builders::Vector{Tuple{String,Function}}, branch_labels::Vector{String})
+  rows = NamedTuple[]
+  for line_b_scale in [0.0, 0.25, 0.30, 0.35, 0.40, 0.50, 1.0]
+    sweep_opt = _with_branch_b_sweep_point(opt, line_b_scale, 0.0)
+    results = [_run_model(model_name, buildfn, sweep_opt, "base") for (model_name, buildfn) in model_builders]
+    residual_rows = NamedTuple[]
+    for result in results
+      append!(residual_rows, _state_residual_rows(ref, result, branch_labels))
+    end
+    for row in _state_residual_summary_rows(residual_rows)
+      objective = row.max_abs_d_p_ybus_vs_for002_MW + 0.05 * row.max_abs_d_q_ybus_vs_for002_MVar + row.mean_abs_d_p_ybus_vs_for002_MW + 0.05 * row.mean_abs_d_q_ybus_vs_for002_MVar
+      push!(rows, merge((line_b_scale = line_b_scale, trafo_b_scale = 0.0), row, (objective = objective,)))
+    end
+  end
+  csv = _write_audit_csv(joinpath(opt.output_dir, "for002_state_residual_line_b_sweep.csv"), (:line_b_scale, :trafo_b_scale, :model, :max_abs_d_p_ybus_vs_for002_MW, :mean_abs_d_p_ybus_vs_for002_MW, :max_abs_d_q_ybus_vs_for002_MVar, :mean_abs_d_q_ybus_vs_for002_MVar, :slack_d_p_ybus_vs_for002_MW, :slack_d_q_ybus_vs_for002_MVar, :local_region_d_p_ybus_vs_for002_MW, :local_region_d_q_ybus_vs_for002_MVar, :objective), rows)
+  best = first(sort(rows; by = row -> row.objective))
+  @printf("FOR002 state residual line-B sweep: best line_b_scale=%.2f model=%s objective=%.6g; line_b_scale=0.35 minimizes=%s\n", best.line_b_scale, best.model, best.objective, best.line_b_scale == 0.35)
+  return (sweep_csv = csv, rows = rows)
 end
 
 function _for002_kcl_top_adjacent_buses(ref::For002Scenario, base_results::Vector{ModelRunResult}, branch_labels::Vector{String})::Set{String}
@@ -3328,7 +3478,7 @@ function _scenario_file_prefix(result::ModelRunResult)::String
   return lowercase(result.model_name) * "_" * scenario_tag
 end
 
-function _write_summary(path::AbstractString, opt::CliOptions, ref_scenarios::Vector{For002Scenario}, branch_labels::Vector{String}, base_summaries::Vector{NamedTuple}, contingency_summaries::Vector{NamedTuple}, model_compare_file::Union{Nothing,String}, branch_b_diagnostic_csv::AbstractString, branch_b_sweep_csv::Union{Nothing,String}, line_x_sweep_csv::Union{Nothing,String}, for001_conversion_csv::Union{Nothing,String}, for001_conversion_raw_parsed::Union{Nothing,Bool}, worst_offenders_csv::Union{Nothing,String}, pv_bus_diagnostics_csv::Union{Nothing,String}, pv_bus_diagnostics_note::Union{Nothing,String}, active_flow_diagnostics, worst_branch_diagnostics, flow_semantics_diagnostics, bus_injection_balance_diagnostics, for002_kcl_diagnostics, for002_state_replay_diagnostics, for002_angle_convention_diagnostics, transformer_shunt_diagnostics)
+function _write_summary(path::AbstractString, opt::CliOptions, ref_scenarios::Vector{For002Scenario}, branch_labels::Vector{String}, base_summaries::Vector{NamedTuple}, contingency_summaries::Vector{NamedTuple}, model_compare_file::Union{Nothing,String}, branch_b_diagnostic_csv::AbstractString, branch_b_sweep_csv::Union{Nothing,String}, line_x_sweep_csv::Union{Nothing,String}, for001_conversion_csv::Union{Nothing,String}, for001_conversion_raw_parsed::Union{Nothing,Bool}, worst_offenders_csv::Union{Nothing,String}, pv_bus_diagnostics_csv::Union{Nothing,String}, pv_bus_diagnostics_note::Union{Nothing,String}, active_flow_diagnostics, worst_branch_diagnostics, flow_semantics_diagnostics, bus_injection_balance_diagnostics, for002_kcl_diagnostics, for002_state_replay_diagnostics, for002_angle_convention_diagnostics, transformer_shunt_diagnostics, state_residual_diagnostics, state_residual_line_b_sweep)
   open(path, "w") do io
     println(io, "# FOR002 validation summary")
     println(io)
@@ -3354,6 +3504,8 @@ function _write_summary(path::AbstractString, opt::CliOptions, ref_scenarios::Ve
     println(io, "- Diagnose bus injection balance: ", opt.diagnose_bus_injection_balance)
     println(io, "- Diagnose FOR002 KCL: ", opt.diagnose_for002_kcl)
     println(io, "- Diagnose FOR002 state replay: ", opt.diagnose_for002_state_replay)
+    println(io, "- Diagnose FOR002 state residual: ", opt.diagnose_for002_state_residual)
+    println(io, "- Sweep state residual line b: ", opt.sweep_state_residual_line_b)
     println(io, "- Diagnose FOR002 angle convention: ", opt.diagnose_for002_angle_convention)
     println(io, "- Diagnose transformer shunt model: ", opt.diagnose_transformer_shunt_model)
     println(io, "- Audit transformer G mode: ", opt.audit_transformer_g_mode)
@@ -3410,6 +3562,13 @@ function _write_summary(path::AbstractString, opt::CliOptions, ref_scenarios::Ve
     if for002_state_replay_diagnostics !== nothing
       println(io, "- FOR002-state replay branch diagnostics CSV: `", for002_state_replay_diagnostics.branch_csv, "`")
       println(io, "- FOR002-state replay summary CSV: `", for002_state_replay_diagnostics.summary_csv, "`")
+    end
+    if state_residual_diagnostics !== nothing
+      println(io, "- FOR002 state residual diagnostics CSV: `", state_residual_diagnostics.diagnostics_csv, "`")
+      println(io, "- FOR002 state residual summary CSV: `", state_residual_diagnostics.summary_csv, "`")
+    end
+    if state_residual_line_b_sweep !== nothing
+      println(io, "- FOR002 state residual line-B sweep CSV: `", state_residual_line_b_sweep.sweep_csv, "`")
     end
     if for002_angle_convention_diagnostics !== nothing
       println(io, "- FOR002 angle-convention replay diagnostics CSV: `", for002_angle_convention_diagnostics.diagnostics_csv, "`")
@@ -3564,6 +3723,8 @@ function main(args = ARGS)
   println("  diagnose bus injections = ", opt.diagnose_bus_injection_balance)
   println("  diagnose FOR002 KCL     = ", opt.diagnose_for002_kcl)
   println("  diagnose state replay   = ", opt.diagnose_for002_state_replay)
+  println("  diagnose state residual = ", opt.diagnose_for002_state_residual)
+  println("  sweep state residual B  = ", opt.sweep_state_residual_line_b)
   println("  diagnose angle conv.    = ", opt.diagnose_for002_angle_convention)
   println("  diagnose structural     = ", opt.diagnose_structural_conversion)
   println("  diagnose trafo shunts   = ", opt.diagnose_transformer_shunt_model)
@@ -3660,6 +3821,9 @@ function main(args = ARGS)
   _print_for002_kcl_console_summary(for002_kcl_diagnostics)
   for002_state_replay_diagnostics = opt.diagnose_for002_state_replay ? _write_for002_state_replay_csvs(opt, ref_base, base_results, model_builders, branch_labels) : nothing
   _print_for002_state_replay_console_summary(for002_state_replay_diagnostics)
+  state_residual_diagnostics = opt.diagnose_for002_state_residual ? _write_state_residual_csvs(opt, ref_base, base_results, branch_labels) : nothing
+  _print_state_residual_console_summary(state_residual_diagnostics)
+  state_residual_line_b_sweep = opt.sweep_state_residual_line_b ? _run_state_residual_line_b_sweep(opt, ref_base, model_builders, branch_labels) : nothing
   for002_angle_convention_diagnostics = opt.diagnose_for002_angle_convention ? _write_for002_angle_convention_csvs(opt, ref_base, base_results, model_builders, branch_labels) : nothing
   _print_for002_angle_convention_console_summary(for002_angle_convention_diagnostics)
   structural_conversion_diagnostics = opt.diagnose_structural_conversion ? _write_structural_conversion_audit(opt, model_builders, base_results) : nothing
@@ -3702,7 +3866,7 @@ function main(args = ARGS)
   end
 
   summary_path = joinpath(opt.output_dir, "for002_validation_summary.md")
-  _write_summary(summary_path, opt, ref_scenarios, branch_labels, base_summaries, contingency_summaries, model_compare_file, branch_b_diagnostic_csv, branch_b_sweep_csv, line_x_sweep_csv, for001_conversion_csv, for001_conversion_raw_parsed, worst_offenders_csv, pv_bus_diagnostics_csv, pv_bus_diagnostics_note, active_flow_diagnostics, worst_branch_diagnostics, flow_semantics_diagnostics, bus_injection_balance_diagnostics, for002_kcl_diagnostics, for002_state_replay_diagnostics, for002_angle_convention_diagnostics, transformer_shunt_diagnostics)
+  _write_summary(summary_path, opt, ref_scenarios, branch_labels, base_summaries, contingency_summaries, model_compare_file, branch_b_diagnostic_csv, branch_b_sweep_csv, line_x_sweep_csv, for001_conversion_csv, for001_conversion_raw_parsed, worst_offenders_csv, pv_bus_diagnostics_csv, pv_bus_diagnostics_note, active_flow_diagnostics, worst_branch_diagnostics, flow_semantics_diagnostics, bus_injection_balance_diagnostics, for002_kcl_diagnostics, for002_state_replay_diagnostics, for002_angle_convention_diagnostics, transformer_shunt_diagnostics, state_residual_diagnostics, state_residual_line_b_sweep)
 
   println()
   println("Output files written to:")
@@ -3733,6 +3897,13 @@ function main(args = ARGS)
   if for002_state_replay_diagnostics !== nothing
     println("  state replay branches = ", for002_state_replay_diagnostics.branch_csv)
     println("  state replay summary  = ", for002_state_replay_diagnostics.summary_csv)
+  end
+  if state_residual_diagnostics !== nothing
+    println("  state residual diag  = ", state_residual_diagnostics.diagnostics_csv)
+    println("  state residual summary= ", state_residual_diagnostics.summary_csv)
+  end
+  if state_residual_line_b_sweep !== nothing
+    println("  state residual sweep = ", state_residual_line_b_sweep.sweep_csv)
   end
   if for002_angle_convention_diagnostics !== nothing
     println("  angle convention diagnostics = ", for002_angle_convention_diagnostics.diagnostics_csv)
