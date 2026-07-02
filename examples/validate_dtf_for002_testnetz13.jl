@@ -32,13 +32,28 @@ struct DTFFor002ValidationResult
 end
 
 function _parse_bool(s::AbstractString)
-  v = lowercase(strip(s)); v in ("true", "1", "yes") && return true; v in ("false", "0", "no") && return false
+  v = lowercase(strip(s));
+  v in ("true", "1", "yes") && return true;
+  v in ("false", "0", "no") && return false
   throw(ArgumentError("invalid boolean: $s"))
 end
 
 function parse_cli(args)
   dtf_default = isfile(joinpath(@__DIR__, "..", "test", "fixtures", "dtf", "FOR001.DAT")) ? joinpath(@__DIR__, "..", "test", "fixtures", "dtf", "FOR001.DAT") : joinpath(@__DIR__, "FOR001.DAT")
-  opt = Dict{String,Any}("dtf-file" => normpath(dtf_default), "for002-file" => joinpath(@__DIR__, "FOR002.DAT"), "output-dir" => joinpath(@__DIR__, "_out", "dtf_for002_native_validation"), "tol" => 1e-8, "max-iter" => 50, "method" => "rectangular", "write-csv" => true, "write-markdown" => true, "quiet" => false, "strict" => false, "details" => false, "print-summary" => true)
+  opt = Dict{String,Any}(
+    "dtf-file" => normpath(dtf_default),
+    "for002-file" => joinpath(@__DIR__, "FOR002.DAT"),
+    "output-dir" => joinpath(@__DIR__, "_out", "dtf_for002_native_validation"),
+    "tol" => 1e-8,
+    "max-iter" => 50,
+    "method" => "rectangular",
+    "write-csv" => true,
+    "write-markdown" => true,
+    "quiet" => false,
+    "strict" => false,
+    "details" => false,
+    "print-summary" => true,
+  )
   for arg in args
     arg == "--quiet" && (opt["quiet"] = true; continue)
     startswith(arg, "--") || throw(ArgumentError("unsupported argument: $arg"))
@@ -120,7 +135,19 @@ function run_validation(args = ARGS; return_details::Bool = false)
   converged = status == 0
 
   bus_by_name = Dict(_norm_name(b.name) => b for b in case.buses)
-  import_rows = [(baseMVA = case.baseMVA, bus_count = length(case.buses), branch_count = length(case.branches), line_count = count(b -> b.kind != 'T', case.branches), transformer_count = count(b -> b.kind == 'T', case.branches), transformer_control_count = length(case.transformer_controls), outage_count = length(case.outages), nominal_voltages_kv = join(case.nominal_voltages_kv, ";"), dtf_slack_bus = case.size.slack, net_slack_bus = _slack_bus_name(net), notes = "native DTFImporter path; ground-load-flow only")]
+  import_rows = [(
+    baseMVA = case.baseMVA,
+    bus_count = length(case.buses),
+    branch_count = length(case.branches),
+    line_count = count(b -> b.kind != 'T', case.branches),
+    transformer_count = count(b -> b.kind == 'T', case.branches),
+    transformer_control_count = length(case.transformer_controls),
+    outage_count = length(case.outages),
+    nominal_voltages_kv = join(case.nominal_voltages_kv, ";"),
+    dtf_slack_bus = case.size.slack,
+    net_slack_bus = _slack_bus_name(net),
+    notes = "native DTFImporter path; ground-load-flow only",
+  )]
 
   branch_kcl_p, branch_kcl_q = _branch_kcl_arrays(net)
   bus_rows = NamedTuple[];
@@ -238,7 +265,23 @@ function run_validation(args = ARGS; return_details::Bool = false)
   kcl_rows = branch_kcl_rows(net, case, ref)
   q_diag_rows = q_semantics_diagnostic_rows(gen_rows, kcl_rows, residual_rows)
   p_loss, q_loss = Sparlectra.getTotalLosses(net = net)
-  metrics_rows = [(converged = converged, iterations = iters, final_mismatch = final_mismatch, max_abs_d_vm_kV = _maxabs(bus_rows, :d_vm_kV), max_abs_d_vm_pu = _maxabs(bus_rows, :d_vm_pu), max_abs_d_va_deg = _maxabs(bus_rows, :d_va_deg), max_abs_d_pg_MW = _maxabs(gen_rows, :d_pg_result_vs_for002_MW), max_abs_d_qg_MVar = _maxabs(gen_rows, :d_qg_result_vs_for002_MVar), max_abs_branch_d_p_MW = max(_maxabs(branch_rows, :d_p_from_MW), _maxabs(branch_rows, :d_p_to_MW)), max_abs_branch_d_q_MVar = max(_maxabs(branch_rows, :d_q_from_MVar), _maxabs(branch_rows, :d_q_to_MVar)), max_abs_state_residual_p_MW = _maxabs(residual_rows, :d_p_MW), max_abs_state_residual_q_MVar = _maxabs(residual_rows, :d_q_MVar), max_abs_branch_kcl_vs_for002_q_MVar = _maxabs(kcl_rows, :d_branch_kcl_vs_for002_q_MVar), mean_abs_state_residual_p_MW = _meanabs(residual_rows, :d_p_MW), mean_abs_state_residual_q_MVar = _meanabs(residual_rows, :d_q_MVar))]
+  metrics_rows = [(
+    converged = converged,
+    iterations = iters,
+    final_mismatch = final_mismatch,
+    max_abs_d_vm_kV = _maxabs(bus_rows, :d_vm_kV),
+    max_abs_d_vm_pu = _maxabs(bus_rows, :d_vm_pu),
+    max_abs_d_va_deg = _maxabs(bus_rows, :d_va_deg),
+    max_abs_d_pg_MW = _maxabs(gen_rows, :d_pg_result_vs_for002_MW),
+    max_abs_d_qg_MVar = _maxabs(gen_rows, :d_qg_result_vs_for002_MVar),
+    max_abs_branch_d_p_MW = max(_maxabs(branch_rows, :d_p_from_MW), _maxabs(branch_rows, :d_p_to_MW)),
+    max_abs_branch_d_q_MVar = max(_maxabs(branch_rows, :d_q_from_MVar), _maxabs(branch_rows, :d_q_to_MVar)),
+    max_abs_state_residual_p_MW = _maxabs(residual_rows, :d_p_MW),
+    max_abs_state_residual_q_MVar = _maxabs(residual_rows, :d_q_MVar),
+    max_abs_branch_kcl_vs_for002_q_MVar = _maxabs(kcl_rows, :d_branch_kcl_vs_for002_q_MVar),
+    mean_abs_state_residual_p_MW = _meanabs(residual_rows, :d_p_MW),
+    mean_abs_state_residual_q_MVar = _meanabs(residual_rows, :d_q_MVar),
+  )]
 
   written_files = String[]
   if opt["write-csv"]
@@ -303,7 +346,10 @@ function run_validation(args = ARGS; return_details::Bool = false)
       largest_class = max_qg.is_slack ? "slack" : (max_qg.is_regulating ? "PV/regulating" : (max_qg.has_generator ? "PQ generator" : "non-generator"))
       transformer_adjacent = _norm_name(max_qg.bus_name) in Set(_norm_name.(["BETA1 S1", "BETA2 S1", "DELTA1S1", "DELTA2S1"]))
       println(io, "- largest Q-generator discrepancy class: ", largest_class, transformer_adjacent ? " and transformer-adjacent" : "")
-      println(io, "\nBranch Q deviations remain small relative to the large bus/generator-Q diagnostics. This indicates that the branch-flow model is consistent with FOR002, while FOR002 bus-table and generator-Q reporting semantics still need interpretation. The KCL CSV documents that branch endpoint flows include branch charging/taps as represented by solved branch flows; explicit bus shunts are not added separately.")
+      println(
+        io,
+        "\nBranch Q deviations remain small relative to the large bus/generator-Q diagnostics. This indicates that the branch-flow model is consistent with FOR002, while FOR002 bus-table and generator-Q reporting semantics still need interpretation. The KCL CSV documents that branch endpoint flows include branch charging/taps as represented by solved branch flows; explicit bus shunts are not added separately.",
+      )
     end
     pushfirst!(written_files, summary_path)
   end
@@ -322,10 +368,24 @@ function run_validation(args = ARGS; return_details::Bool = false)
   )
   (!opt["quiet"] && opt["print-summary"]) && _print_summary(result)
   opt["strict"] && !converged && exit(1)
-  return return_details ? (case = case, net = net, metrics = metrics_rows[1], residuals = residual_rows, generator_rows = gen_rows, kcl_rows = kcl_rows, q_diagnostics = q_diag_rows, output_dir = opt["output-dir"], converged = converged, iterations = iters, final_mismatch = final_mismatch, written_files = written_files) : result
+  return return_details ?
+         (
+    case = case,
+    net = net,
+    metrics = metrics_rows[1],
+    residuals = residual_rows,
+    generator_rows = gen_rows,
+    kcl_rows = kcl_rows,
+    q_diagnostics = q_diag_rows,
+    output_dir = opt["output-dir"],
+    converged = converged,
+    iterations = iters,
+    final_mismatch = final_mismatch,
+    written_files = written_files,
+  ) : result
 end
 
-if abspath(PROGRAM_FILE) == @__FILE__
+if get(ENV, "SPARLECTRA_FOR002_VALIDATION_NO_MAIN", "0") != "1"
   Base.invokelatest(run_validation, ARGS; return_details = false)
   nothing
 end
