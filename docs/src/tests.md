@@ -43,7 +43,7 @@ julia --project=. -e 'using Pkg; Pkg.test()'
 | `synthetic_grids` | `test/test_synthetic_grids.jl` | Synthetic network generation and larger synthetic-grid regression coverage |
 | `configuration_docs` | `test/test_configuration_docs.jl` | Configuration documentation and docs/config consistency checks |
 | `dtf_importer` | `test/extended/test_dtf_importer.jl` | Native DTF/FOR001 parser and direct Net-builder coverage, including voltage-level-index branch conversion, transformer controls, bus-type semantics, and parsed outage metadata |
-| `dtf_for002_validation_example` | `test/extended/test_dtf_for002_validation_example.jl` | Native FOR001/DTF -> `DTFImporter` -> `Net` -> power-flow validation example smoke coverage against FOR002 diagnostics; verifies generated CSV/Markdown artifacts and does not invoke the fast suite |
+| `dtf_for002_validation_example` | `test/extended/test_dtf_for002_validation_example.jl` | Native FOR001/DTF -> `DTFImporter` -> `Net` -> power-flow validation example smoke coverage against FOR002 diagnostics; verifies generated CSV/Markdown artifacts, lightweight default result/concise CLI output, explicit detailed diagnostics mode, and does not invoke the fast suite |
 
 ## Offline and runtime expectations
 

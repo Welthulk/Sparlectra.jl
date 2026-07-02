@@ -60,6 +60,30 @@ function run_dtf_for002_validation_example_tests()
       ],
     )
     @test result.converged
+    @test nameof(typeof(result)) == :DTFFor002ValidationResult
+    result_fields = fieldnames(typeof(result))
+    for field in (:case, :net, :residuals, :generator_rows, :kcl_rows, :q_diagnostics)
+      @test field ∉ result_fields
+      @test !hasproperty(result, field)
+    end
+
+    detailed = Base.invokelatest(
+      runner,
+      [
+        "--dtf-file=$(joinpath(repo, "test", "fixtures", "dtf", "FOR001.DAT"))",
+        "--for002-file=$(joinpath(repo, "examples", "FOR002.DAT"))",
+        "--output-dir=$(mktempdir())",
+        "--write-csv=true",
+        "--write-markdown=true",
+        "--quiet=true",
+      ];
+      return_details = true,
+    )
+    @test detailed.converged
+    @test hasproperty(detailed, :generator_rows)
+    @test hasproperty(detailed, :kcl_rows)
+    @test hasproperty(detailed, :residuals)
+    @test hasproperty(detailed, :q_diagnostics)
 
     expected = [
       "dtf_for002_validation_summary.md",
@@ -76,10 +100,32 @@ function run_dtf_for002_validation_example_tests()
       @test isfile(joinpath(outdir, name))
     end
     @test _csv_data_rows(joinpath(outdir, "dtf_bus_comparison.csv")) == 13
-    @test _csv_data_rows(joinpath(outdir, "dtf_generator_comparison.csv")) >= count(r -> r.has_generator, result.generator_rows)
+    @test _csv_data_rows(joinpath(outdir, "dtf_generator_comparison.csv")) >= count(r -> r.has_generator, detailed.generator_rows)
     @test _csv_data_rows(joinpath(outdir, "dtf_bus_kcl_comparison.csv")) == 13
     @test _csv_data_rows(joinpath(outdir, "dtf_q_semantics_diagnostics.csv")) > 0
     @test _csv_data_rows(joinpath(outdir, "dtf_branch_comparison.csv")) == 27
     @test all(isfinite, _finite_metric_values(joinpath(outdir, "dtf_validation_metrics.csv")))
+
+    cli_outdir = mktempdir()
+    cli_output = read(
+      `julia --project=$repo $script --dtf-file=$(joinpath(repo, "test", "fixtures", "dtf", "FOR001.DAT")) --for002-file=$(joinpath(repo, "examples", "FOR002.DAT")) --output-dir=$cli_outdir --write-csv=true --write-markdown=true`,
+      String,
+    )
+    @test occursin("Native DTF/FOR002 validation", cli_output)
+    @test occursin("Output directory: $cli_outdir", cli_output)
+    @test occursin("Converged: true", cli_output)
+    @test occursin("Iterations:", cli_output)
+    @test occursin("Final mismatch:", cli_output)
+    @test occursin("Max |dV|:", cli_output)
+    @test occursin("Max branch |dP|:", cli_output)
+    @test occursin("Written files:", cli_output)
+    @test occursin("  - dtf_validation_metrics.csv", cli_output)
+    @test !occursin("DTFCase(", cli_output)
+    @test !occursin("Net:", cli_output)
+    @test !occursin("generator_rows =", cli_output)
+    @test !occursin("kcl_rows =", cli_output)
+    for name in expected
+      @test isfile(joinpath(cli_outdir, name))
+    end
   end
 end

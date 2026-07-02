@@ -17,27 +17,28 @@ using Printf
 
 include(joinpath(@__DIR__, "dtf_for002_validation_utils.jl"))
 
+struct DTFFor002ValidationResult
+  output_dir::String
+  converged::Bool
+  iterations::Int
+  final_mismatch::Float64
+  metrics::NamedTuple
+  written_files::Vector{String}
+  max_branch_d_p_MW::Float64
+  max_branch_d_q_MVar::Float64
+  max_qgen_d_MVar::Float64
+  max_state_residual_p_MW::Float64
+  max_state_residual_q_MVar::Float64
+end
+
 function _parse_bool(s::AbstractString)
-  v = lowercase(strip(s));
-  v in ("true", "1", "yes") && return true;
-  v in ("false", "0", "no") && return false
+  v = lowercase(strip(s)); v in ("true", "1", "yes") && return true; v in ("false", "0", "no") && return false
   throw(ArgumentError("invalid boolean: $s"))
 end
 
 function parse_cli(args)
   dtf_default = isfile(joinpath(@__DIR__, "..", "test", "fixtures", "dtf", "FOR001.DAT")) ? joinpath(@__DIR__, "..", "test", "fixtures", "dtf", "FOR001.DAT") : joinpath(@__DIR__, "FOR001.DAT")
-  opt = Dict{String,Any}(
-    "dtf-file" => normpath(dtf_default),
-    "for002-file" => joinpath(@__DIR__, "FOR002.DAT"),
-    "output-dir" => joinpath(@__DIR__, "_out", "dtf_for002_native_validation"),
-    "tol" => 1e-8,
-    "max-iter" => 50,
-    "method" => "rectangular",
-    "write-csv" => true,
-    "write-markdown" => true,
-    "quiet" => false,
-    "strict" => false,
-  )
+  opt = Dict{String,Any}("dtf-file" => normpath(dtf_default), "for002-file" => joinpath(@__DIR__, "FOR002.DAT"), "output-dir" => joinpath(@__DIR__, "_out", "dtf_for002_native_validation"), "tol" => 1e-8, "max-iter" => 50, "method" => "rectangular", "write-csv" => true, "write-markdown" => true, "quiet" => false, "strict" => false, "details" => false, "print-summary" => true)
   for arg in args
     arg == "--quiet" && (opt["quiet"] = true; continue)
     startswith(arg, "--") || throw(ArgumentError("unsupported argument: $arg"))
@@ -46,7 +47,7 @@ function parse_cli(args)
       opt[k] = parse(Float64, v)
     elseif k in ("max-iter",)
       opt[k] = parse(Int, v)
-    elseif k in ("write-csv", "write-markdown", "strict", "quiet")
+    elseif k in ("write-csv", "write-markdown", "strict", "quiet", "details", "print-summary")
       opt[k] = _parse_bool(v)
     else
       opt[k] = v
@@ -78,8 +79,30 @@ function _top(rows, field; n = 10)
   return first(sort(rows, by = r -> -abs(Float64(getproperty(r, field)))), min(n, length(rows)))
 end
 
-function run_validation(args = ARGS)
+function _print_summary(result::DTFFor002ValidationResult)
+  m = result.metrics
+  println("Native DTF/FOR002 validation")
+  println("Output directory: ", result.output_dir)
+  println("Converged: ", result.converged)
+  println("Iterations: ", result.iterations)
+  println("Final mismatch: ", result.final_mismatch)
+  println("Max |dV|: ", m.max_abs_d_vm_kV, " kV / ", m.max_abs_d_vm_pu, " pu")
+  println("Max |dVa|: ", m.max_abs_d_va_deg, " deg")
+  println("Max branch |dP|: ", result.max_branch_d_p_MW, " MW")
+  println("Max branch |dQ|: ", result.max_branch_d_q_MVar, " MVar")
+  println("Max |dQgen| solved-vs-FOR002: ", result.max_qgen_d_MVar, " MVar")
+  println("Max state residual |P|: ", result.max_state_residual_p_MW, " MW")
+  println("Max state residual |Q|: ", result.max_state_residual_q_MVar, " MVar")
+  println("Written files:")
+  for path in result.written_files
+    println("  - ", basename(path))
+  end
+  return nothing
+end
+
+function run_validation(args = ARGS; return_details::Bool = false)
   opt = parse_cli(args)
+  return_details = return_details || opt["details"]
   mkpath(opt["output-dir"])
   case = Sparlectra.DTFImporter.read_dtf(opt["dtf-file"])
   net = Sparlectra.DTFImporter.build_net(case)
@@ -97,19 +120,7 @@ function run_validation(args = ARGS)
   converged = status == 0
 
   bus_by_name = Dict(_norm_name(b.name) => b for b in case.buses)
-  import_rows = [(
-    baseMVA = case.baseMVA,
-    bus_count = length(case.buses),
-    branch_count = length(case.branches),
-    line_count = count(b -> b.kind != 'T', case.branches),
-    transformer_count = count(b -> b.kind == 'T', case.branches),
-    transformer_control_count = length(case.transformer_controls),
-    outage_count = length(case.outages),
-    nominal_voltages_kv = join(case.nominal_voltages_kv, ";"),
-    dtf_slack_bus = case.size.slack,
-    net_slack_bus = _slack_bus_name(net),
-    notes = "native DTFImporter path; ground-load-flow only",
-  )]
+  import_rows = [(baseMVA = case.baseMVA, bus_count = length(case.buses), branch_count = length(case.branches), line_count = count(b -> b.kind != 'T', case.branches), transformer_count = count(b -> b.kind == 'T', case.branches), transformer_control_count = length(case.transformer_controls), outage_count = length(case.outages), nominal_voltages_kv = join(case.nominal_voltages_kv, ";"), dtf_slack_bus = case.size.slack, net_slack_bus = _slack_bus_name(net), notes = "native DTFImporter path; ground-load-flow only")]
 
   branch_kcl_p, branch_kcl_q = _branch_kcl_arrays(net)
   bus_rows = NamedTuple[];
@@ -227,36 +238,28 @@ function run_validation(args = ARGS)
   kcl_rows = branch_kcl_rows(net, case, ref)
   q_diag_rows = q_semantics_diagnostic_rows(gen_rows, kcl_rows, residual_rows)
   p_loss, q_loss = Sparlectra.getTotalLosses(net = net)
-  metrics_rows = [(
-    converged = converged,
-    iterations = iters,
-    final_mismatch = final_mismatch,
-    max_abs_d_vm_kV = _maxabs(bus_rows, :d_vm_kV),
-    max_abs_d_vm_pu = _maxabs(bus_rows, :d_vm_pu),
-    max_abs_d_va_deg = _maxabs(bus_rows, :d_va_deg),
-    max_abs_d_pg_MW = _maxabs(gen_rows, :d_pg_result_vs_for002_MW),
-    max_abs_d_qg_MVar = _maxabs(gen_rows, :d_qg_result_vs_for002_MVar),
-    max_abs_branch_d_p_MW = max(_maxabs(branch_rows, :d_p_from_MW), _maxabs(branch_rows, :d_p_to_MW)),
-    max_abs_branch_d_q_MVar = max(_maxabs(branch_rows, :d_q_from_MVar), _maxabs(branch_rows, :d_q_to_MVar)),
-    max_abs_state_residual_p_MW = _maxabs(residual_rows, :d_p_MW),
-    max_abs_state_residual_q_MVar = _maxabs(residual_rows, :d_q_MVar),
-    max_abs_branch_kcl_vs_for002_q_MVar = _maxabs(kcl_rows, :d_branch_kcl_vs_for002_q_MVar),
-    mean_abs_state_residual_p_MW = _meanabs(residual_rows, :d_p_MW),
-    mean_abs_state_residual_q_MVar = _meanabs(residual_rows, :d_q_MVar),
-  )]
+  metrics_rows = [(converged = converged, iterations = iters, final_mismatch = final_mismatch, max_abs_d_vm_kV = _maxabs(bus_rows, :d_vm_kV), max_abs_d_vm_pu = _maxabs(bus_rows, :d_vm_pu), max_abs_d_va_deg = _maxabs(bus_rows, :d_va_deg), max_abs_d_pg_MW = _maxabs(gen_rows, :d_pg_result_vs_for002_MW), max_abs_d_qg_MVar = _maxabs(gen_rows, :d_qg_result_vs_for002_MVar), max_abs_branch_d_p_MW = max(_maxabs(branch_rows, :d_p_from_MW), _maxabs(branch_rows, :d_p_to_MW)), max_abs_branch_d_q_MVar = max(_maxabs(branch_rows, :d_q_from_MVar), _maxabs(branch_rows, :d_q_to_MVar)), max_abs_state_residual_p_MW = _maxabs(residual_rows, :d_p_MW), max_abs_state_residual_q_MVar = _maxabs(residual_rows, :d_q_MVar), max_abs_branch_kcl_vs_for002_q_MVar = _maxabs(kcl_rows, :d_branch_kcl_vs_for002_q_MVar), mean_abs_state_residual_p_MW = _meanabs(residual_rows, :d_p_MW), mean_abs_state_residual_q_MVar = _meanabs(residual_rows, :d_q_MVar))]
 
+  written_files = String[]
   if opt["write-csv"]
-    write_csv(joinpath(opt["output-dir"], "dtf_import_summary.csv"), import_rows)
-    write_csv(joinpath(opt["output-dir"], "dtf_bus_comparison.csv"), bus_rows)
-    write_csv(joinpath(opt["output-dir"], "dtf_generator_comparison.csv"), gen_rows)
-    write_csv(joinpath(opt["output-dir"], "dtf_bus_kcl_comparison.csv"), kcl_rows)
-    write_csv(joinpath(opt["output-dir"], "dtf_q_semantics_diagnostics.csv"), q_diag_rows)
-    write_csv(joinpath(opt["output-dir"], "dtf_branch_comparison.csv"), branch_rows)
-    write_csv(joinpath(opt["output-dir"], "dtf_state_residual.csv"), residual_rows)
-    write_csv(joinpath(opt["output-dir"], "dtf_validation_metrics.csv"), metrics_rows)
+    for (filename, rows) in [
+      ("dtf_import_summary.csv", import_rows),
+      ("dtf_bus_comparison.csv", bus_rows),
+      ("dtf_generator_comparison.csv", gen_rows),
+      ("dtf_bus_kcl_comparison.csv", kcl_rows),
+      ("dtf_q_semantics_diagnostics.csv", q_diag_rows),
+      ("dtf_branch_comparison.csv", branch_rows),
+      ("dtf_state_residual.csv", residual_rows),
+      ("dtf_validation_metrics.csv", metrics_rows),
+    ]
+      path = joinpath(opt["output-dir"], filename)
+      write_csv(path, rows)
+      push!(written_files, path)
+    end
   end
   if opt["write-markdown"]
-    open(joinpath(opt["output-dir"], "dtf_for002_validation_summary.md"), "w") do io
+    summary_path = joinpath(opt["output-dir"], "dtf_for002_validation_summary.md")
+    open(summary_path, "w") do io
       println(io, "# Native DTF/FOR002 validation summary\n")
       println(io, "This validation uses `DTFImporter.read_dtf` -> `DTFImporter.build_net` and does not use MATPOWER import, MATPOWER export, or the generated FOR001 builder. Outages are parsed but not executed.\n")
       println(io, "- DTF file: `", opt["dtf-file"], "`")
@@ -300,17 +303,29 @@ function run_validation(args = ARGS)
       largest_class = max_qg.is_slack ? "slack" : (max_qg.is_regulating ? "PV/regulating" : (max_qg.has_generator ? "PQ generator" : "non-generator"))
       transformer_adjacent = _norm_name(max_qg.bus_name) in Set(_norm_name.(["BETA1 S1", "BETA2 S1", "DELTA1S1", "DELTA2S1"]))
       println(io, "- largest Q-generator discrepancy class: ", largest_class, transformer_adjacent ? " and transformer-adjacent" : "")
-      println(
-        io,
-        "\nBranch Q deviations remain small relative to the large bus/generator-Q diagnostics. This indicates that the branch-flow model is consistent with FOR002, while FOR002 bus-table and generator-Q reporting semantics still need interpretation. The KCL CSV documents that branch endpoint flows include branch charging/taps as represented by solved branch flows; explicit bus shunts are not added separately.",
-      )
+      println(io, "\nBranch Q deviations remain small relative to the large bus/generator-Q diagnostics. This indicates that the branch-flow model is consistent with FOR002, while FOR002 bus-table and generator-Q reporting semantics still need interpretation. The KCL CSV documents that branch endpoint flows include branch charging/taps as represented by solved branch flows; explicit bus shunts are not added separately.")
     end
+    pushfirst!(written_files, summary_path)
   end
-  opt["quiet"] || println("Native DTF/FOR002 validation wrote diagnostics to ", opt["output-dir"], "; converged=", converged, ", iterations=", iters, ", final_mismatch=", final_mismatch)
+  result = DTFFor002ValidationResult(
+    opt["output-dir"],
+    converged,
+    iters,
+    final_mismatch,
+    metrics_rows[1],
+    written_files,
+    metrics_rows[1].max_abs_branch_d_p_MW,
+    metrics_rows[1].max_abs_branch_d_q_MVar,
+    metrics_rows[1].max_abs_d_qg_MVar,
+    metrics_rows[1].max_abs_state_residual_p_MW,
+    metrics_rows[1].max_abs_state_residual_q_MVar,
+  )
+  (!opt["quiet"] && opt["print-summary"]) && _print_summary(result)
   opt["strict"] && !converged && exit(1)
-  return (case = case, net = net, metrics = metrics_rows[1], residuals = residual_rows, generator_rows = gen_rows, kcl_rows = kcl_rows, q_diagnostics = q_diag_rows, output_dir = opt["output-dir"], converged = converged, iterations = iters, final_mismatch = final_mismatch)
+  return return_details ? (case = case, net = net, metrics = metrics_rows[1], residuals = residual_rows, generator_rows = gen_rows, kcl_rows = kcl_rows, q_diagnostics = q_diag_rows, output_dir = opt["output-dir"], converged = converged, iterations = iters, final_mismatch = final_mismatch, written_files = written_files) : result
 end
 
-if get(ENV, "SPARLECTRA_FOR002_VALIDATION_NO_MAIN", "0") != "1"
-  Base.invokelatest(run_validation, ARGS)
+if abspath(PROGRAM_FILE) == @__FILE__
+  Base.invokelatest(run_validation, ARGS; return_details = false)
+  nothing
 end

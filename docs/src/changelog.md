@@ -7,6 +7,7 @@
 ### Improvements
 
 * Added FOR002 validator diagnostics for transformer no-load/shunt sensitivity and branch-identity auditing, including opt-in CSV artifacts for transformer shunt modeling and MATPOWER round-trip metadata preservation checks.
+* Improved the native DTF/FOR002 validation example so normal script and REPL usage returns a lightweight result and prints a concise summary, while detailed row-level diagnostics remain available through an explicit details mode.
 
 ## Version 0.8.7 – 2026-06-23
 
