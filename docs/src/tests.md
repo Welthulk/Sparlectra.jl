@@ -44,6 +44,7 @@ julia --project=. -e 'using Pkg; Pkg.test()'
 | `configuration_docs` | `test/test_configuration_docs.jl` | Configuration documentation and docs/config consistency checks |
 | `dtf_importer` | `test/extended/test_dtf_importer.jl` | Native DTF/FOR001 parser and direct Net-builder coverage, including voltage-level-index branch conversion, transformer controls, bus-type semantics, and parsed outage metadata |
 | `dtf_for002_validation_example` | `test/extended/test_dtf_for002_validation_example.jl` | Native FOR001/DTF -> `DTFImporter` -> `Net` -> power-flow validation example smoke coverage against FOR002 diagnostics; verifies generated CSV/Markdown artifacts, lightweight default result/concise CLI output, explicit detailed diagnostics mode, and does not invoke the fast suite |
+| `dtf_matpower_export_validation_example` | `test/extended/test_dtf_matpower_export_validation_example.jl` | DTF -> `Sparlectra.Net` -> existing `writeMatpowerCasefile` -> MATPOWER import roundtrip validation for the Testnetz13 base case and DTF-listed outages |
 
 ## Native DTF/FOR002 validation examples
 
@@ -63,6 +64,36 @@ julia --project=. examples/validate_dtf_for002_outages_testnetz13.jl --dtf-file=
 ```
 
 Each command writes concise console output plus CSV and Markdown files in the requested `--output-dir`. The Markdown files summarize the run, while CSV files keep row-level bus, generator, branch, KCL, state-residual, and metric diagnostics.
+
+The MATPOWER export validation example checks a different question: whether an
+already-built native DTF `Net` can be exported by Sparlectra's existing
+MATPOWER exporter and re-imported without materially changing the solved
+Sparlectra result. Its required path is
+`DTFImporter.read_dtf` -> `DTFImporter.build_net` -> `writeMatpowerCasefile` ->
+`createNetFromMatPowerFile`; it does not implement a DTF-specific exporter and
+does not use FOR002 as the primary roundtrip reference. Run it with:
+
+```bash
+julia --project=. examples/validate_dtf_matpower_export_testnetz13.jl --dtf-file=test/fixtures/dtf/FOR001.DAT --for002-file=examples/FOR002.DAT --output-dir=examples/_out/dtf_matpower_export_testnetz13 --write-csv=true --write-markdown=true --write-matpower=true --run-outages=true
+```
+
+The command writes `dtf_matpower_export_summary.md`,
+`dtf_matpower_export_metrics.csv`, bus/branch/generator comparison CSV files,
+and exported MATPOWER `.m` cases in the selected output directory. The exporter
+uses Sparlectra's established optional MATPOWER metadata fields
+`mpc.bus_name`, `mpc.branch_name`, `mpc.branch_kind`, and
+`mpc.for001_contingencies` when that information is available, so DTF bus names,
+stable branch labels, DTF branch kind (`L`/`T`), and the parsed outage cards can
+be recovered by `MatpowerIO.read_case_m`. Standard MATPOWER bus, generator, and
+branch data remain sufficient for solving files that do not contain that
+metadata. The roundtrip proves preservation through Sparlectra's MATPOWER
+export/import path; it does not independently certify agreement with external
+FOR002 outage blocks.
+
+The roundtrip import disables MATPOWER PQ-generator controller reinterpretation
+for this diagnostic so DTF PQ generators remain fixed injections. The exporter
+also writes MATPOWER TAP as `0.0` for line rows and as the explicit Sparlectra
+ratio for transformer rows, matching MATPOWER's line/transformer convention.
 
 Important metrics:
 

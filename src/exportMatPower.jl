@@ -30,7 +30,20 @@ function writeHeader(sb_mva::Float64, file, case::AbstractString)
   write(file, "mpc.baseMVA = $sb_mva;\n")
 end # writeHeader
 
-function writeBusData(NodeVec::Vector{Node}, file)
+function _matpower_bus_shunts(net::Net)
+  gs = Dict(n.busIdx => 0.0 for n in net.nodeVec)
+  bs = Dict(n.busIdx => 0.0 for n in net.nodeVec)
+  for sh in net.shuntVec
+    sh.status == 1 || continue
+    gs[sh.busIdx] = get(gs, sh.busIdx, 0.0) + real(sh.y_pu_shunt) * net.baseMVA
+    bs[sh.busIdx] = get(bs, sh.busIdx, 0.0) + imag(sh.y_pu_shunt) * net.baseMVA
+  end
+  return gs, bs
+end
+
+function writeBusData(net::Net, file)
+  NodeVec = net.nodeVec
+  shunt_gs, shunt_bs = _matpower_bus_shunts(net)
   write(file, "%% bus data\n")
   write(file, "mpc.bus = [\n")
   write(file, "%bus\ttype\tPd\tQd\tGs\tBs\tarea\tVm\tVa\tbaseKV\tzone\tVmax\tVmin\n")
@@ -67,15 +80,13 @@ function writeBusData(NodeVec::Vector{Node}, file)
     pSum = (node._pƩLoad === nothing) ? 0.0 : node._pƩLoad
     qSum = (node._qƩLoad === nothing) ? 0.0 : node._qƩLoad
 
-    GS = (node._pShunt === nothing) ? 0.0 : node._pShunt
-    BS = (node._qShunt === nothing) ? 0.0 : node._qShunt
+    GS = get(shunt_gs, node.busIdx, 0.0)
+    BS = get(shunt_bs, node.busIdx, 0.0)
 
     area = (node._area === nothing) ? 1 : node._area #https://zepben.github.io/evolve/docs/cim/cim100/TC57CIM/IEC61970/Base/ControlArea/ControlArea/      
 
     vm_pu = (node._vm_pu === nothing) ? 1.0 : node._vm_pu
-    vm_pu = round(vm_pu, digits = 2)
     va_deg = (node._va_deg === nothing) ? 0.0 : node._va_deg
-    va_deg = round(va_deg, digits = 2)
     if isnothing(node.comp.cVN)
       @warn "Base Voltage not defined for node $(node.comp.cID) -> set to 1.0"
       baseKV = 1.0
@@ -112,7 +123,6 @@ function writeGeneratorData(sb_mva::Float64, NodeDict::Dict{Int,Node}, ProSumVec
     bus_i = node.busIdx
 
     Vg = (node._vm_pu === nothing) ? 1.0 : node._vm_pu
-    Vg = round(Vg, digits = 2)
 
     p = (prosum.pVal === nothing) ? 0 : prosum.pVal
     q = (prosum.qVal === nothing) ? 0 : prosum.qVal
@@ -179,21 +189,33 @@ function writeGeneratorData(sb_mva::Float64, NodeDict::Dict{Int,Node}, ProSumVec
   write(file, "];\n")
 end # WriteGeneratorData
 
-function writeBranchData(sb_mva::Float64, branchVec::Vector{Branch}, file)
+function _matpower_branch_kind(net::Net, i::Int, br::Branch)
+  meta = get(net.matpower_branch_metadata, i, nothing)
+  if meta !== nothing && hasproperty(meta, :dtf_kind)
+    return uppercase(string(meta.dtf_kind)) == "T" ? "T" : "L"
+  elseif meta !== nothing && hasproperty(meta, :orig_kind)
+    k = uppercase(String(meta.orig_kind))
+    return k in ("T", "TRAFO", "TRANSFORMER") ? "T" : "L"
+  end
+  return (br.ratio != 1.0 || br.angle != 0.0) ? "T" : "L"
+end
+
+function writeBranchData(net::Net, file)
+  branchVec = net.branchVec
   #! format: off
   write(file, "%% branch data\n")
   write(file, "mpc.branch = [\n")
   write(file, "%fbus\ttbus\tr\tx\tb\trateA\trateB\trateC\tratio\tangle\tstatus\tangmin\tangmax\n")
   #! format: on
-  for br in branchVec
+  for (i, br) in enumerate(branchVec)
     fbus = br.fromBus
     tbus = br.toBus
-    r = round(br.r_pu, digits = 8)
-    x = round(br.x_pu, digits = 8)
-    b = round(br.b_pu, digits = 8)
-    g = round(br.g_pu, digits = 8)
+    r = br.r_pu
+    x = br.x_pu
+    b = br.b_pu
+    g = br.g_pu
     if abs(g) > 1e-6
-      @info "Conductance g not zero and negleted in matpower export, g=", g
+      @info "Branch shunt conductance g is not directly represented by standard MATPOWER branch rows; export diagnostics should account for equivalent bus shunts" g
     end
     rateA = 0 # 0 for unlimited
     if !isnothing(br.sn_MVA)
@@ -202,7 +224,8 @@ function writeBranchData(sb_mva::Float64, branchVec::Vector{Branch}, file)
     rateB = 0 # 0 for unlimited
     rateC = 0 # 0 for unlimited
 
-    ratio = br.ratio
+    kind = _matpower_branch_kind(net, i, br)
+    ratio = kind == "T" ? br.ratio : 0.0
     angle = br.angle
     status = Int(br.status)
     angmin = -360 #br.angmin
@@ -223,6 +246,39 @@ function writeBranchData(sb_mva::Float64, branchVec::Vector{Branch}, file)
 
   write(file, "];\n")
 end # writeBranchData
+
+function _matpower_quote(s::AbstractString)
+  return "'" * replace(String(s), "'" => "''") * "'"
+end
+
+function writeSparlectraMetadata(net::Net, file)
+  write(file, "%% optional Sparlectra metadata (ignored by standard MATPOWER solvers)\n")
+  write(file, "mpc.bus_name = {\n")
+  for n in net.nodeVec
+    write(file, _matpower_quote(n.comp.cName), ";\n")
+  end
+  write(file, "};\n")
+  write(file, "mpc.branch_name = {\n")
+  for (i, br) in enumerate(net.branchVec)
+    meta = get(net.matpower_branch_metadata, i, nothing)
+    name = meta !== nothing && hasproperty(meta, :orig_name) ? String(meta.orig_name) : br.comp.cName
+    write(file, _matpower_quote(name), ";\n")
+  end
+  write(file, "};\n")
+  write(file, "mpc.branch_kind = {\n")
+  for (i, br) in enumerate(net.branchVec)
+    kind = _matpower_branch_kind(net, i, br)
+    write(file, _matpower_quote(kind), ";\n")
+  end
+  write(file, "};\n")
+  if !isempty(net.for001Contingencies)
+    write(file, "mpc.for001_contingencies = {\n")
+    for contingency in net.for001Contingencies
+      write(file, _matpower_quote(contingency), ";\n")
+    end
+    write(file, "};\n")
+  end
+end
 
 """
     writeMatpowerCasefile(net::Net, pathfilename::String)
@@ -252,11 +308,12 @@ function writeMatpowerCasefile(net::Net, pathfilename::String)
 
   file = open(pathfilename, "w")
   writeHeader(net.baseMVA, file, case)
-  hasPVBus, slackIdx, vgSlack = writeBusData(net.nodeVec, file)
+  hasPVBus, slackIdx, vgSlack = writeBusData(net, file)
 
   writeGeneratorData(net.baseMVA, NodeDict, net.prosumpsVec, file, hasPVBus, slackIdx, vgSlack)
 
-  writeBranchData(net.baseMVA, net.branchVec, file)
+  writeBranchData(net, file)
+  writeSparlectraMetadata(net, file)
   #writeCostData(file)
   close(file)
 end # writeMatpowerCasefile

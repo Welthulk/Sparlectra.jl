@@ -16,7 +16,8 @@ module DTFImporter
 
 using ..Sparlectra: Net, addBus!, addProsumer!, addShuntMatpower!, _addPIModelACLine_by_idx!, _addPIModelTrafo_by_idx!, geNetBusIdx, validate!, normalize_bus_shunt_model
 
-export DTFCase, DTFParams, DTFSize, DTFBranch, DTFBus, DTFCompensation, DTFTransformerControl, DTFOutage, read_dtf, build_net
+export DTFCase, DTFParams, DTFSize, DTFBranch, DTFBus, DTFCompensation, DTFTransformerControl, DTFOutage, read_dtf, build_net,
+  dtf_branch_key, find_outage_branch_indices, outage_match_diagnostic, apply_single_branch_outage!, case_summary, outage_label
 
 """Native DTF/FOR001 importer parameter card values preserved for auditing."""
 struct DTFParams
@@ -115,6 +116,7 @@ struct DTFCase
 end
 
 _slice(s::AbstractString, a::Int, b::Int) = a > lastindex(s) ? "" : s[a:min(b, lastindex(s))]
+_norm_name(s::AbstractString) = uppercase(replace(strip(String(s)), r"\s+" => ""))
 _parse_float(s::AbstractString) = isempty(strip(s)) ? nothing : parse(Float64, replace(strip(s), 'D' => 'E', 'd' => 'E'))
 _parse_int(s::AbstractString) = (x = _parse_float(s); x === nothing ? nothing : Int(round(x)))
 _numbers(s::AbstractString) = [parse(Float64, replace(m.match, 'D' => 'E', 'd' => 'E')) for m in eachmatch(r"[-+]?\d*\.?\d+(?:[EeDd][-+]?\d+)?", s)]
@@ -139,6 +141,49 @@ function _parse_outage(line::String, index::Int)::DTFOutage
   to = String(strip(_slice(line, 16, 23)))
   return DTFOutage(line, index, kind, voltage_level_index, parallel_id, from, to)
 end
+
+"""Return the strict branch-matching key used for DTF parallel branches."""
+dtf_branch_key(x) = (kind = x.kind, voltage_level_index = x.voltage_level_index,
+  parallel_id = uppercase(strip(x.parallel_id)), from = _norm_name(x.from), to = _norm_name(x.to))
+
+"""Return a concise human-readable DTF outage label."""
+outage_label(o::DTFOutage) = string(o.kind, o.voltage_level_index, o.parallel_id, " ", o.from, " -> ", o.to)
+
+"""Find native branch indices matching a DTF outage card with strict parallel-branch keys."""
+function find_outage_branch_indices(case::DTFCase, outage::DTFOutage)::Vector{Int}
+  key = dtf_branch_key(outage)
+  return [i for (i, br) in enumerate(case.branches) if dtf_branch_key(br) == key]
+end
+
+"""Build a clear diagnostic for missing or ambiguous DTF outage branch matches."""
+function outage_match_diagnostic(case::DTFCase, outage::DTFOutage, matches::Vector{Int}=find_outage_branch_indices(case, outage))
+  if isempty(matches)
+    return "No native DTF branch matches outage $(outage_label(outage)); key=$(dtf_branch_key(outage))"
+  end
+  if length(matches) > 1
+    candidates = join(matches, ", ")
+    return "Ambiguous native DTF branch match for outage $(outage_label(outage)); candidates=$(candidates)"
+  end
+  return "Matched native DTF branch $(only(matches)) for outage $(outage_label(outage))"
+end
+
+"""Safely set exactly one branch out of service and verify no other status changed."""
+function apply_single_branch_outage!(net::Net, branch_index::Int)
+  1 <= branch_index <= length(net.branchVec) || throw(ArgumentError("branch index $branch_index is outside 1:$(length(net.branchVec))"))
+  before = [br.status for br in net.branchVec]
+  before[branch_index] == 1 || throw(ArgumentError("matched branch $branch_index was not initially in service"))
+  net.branchVec[branch_index].status = 0
+  after = [br.status for br in net.branchVec]
+  changed = findall(i -> before[i] != after[i], eachindex(before))
+  length(changed) == 1 && only(changed) == branch_index || throw(ArgumentError("branch outage changed $(length(changed)) branches, expected exactly one"))
+  net.branchVec[branch_index].status == 0 || throw(ArgumentError("matched branch $branch_index is still in service after outage"))
+  return nothing
+end
+
+"""Return stable summary counts for a parsed DTF case."""
+case_summary(case::DTFCase) = (baseMVA = case.baseMVA, bus_count = length(case.buses), branch_count = length(case.branches),
+  line_count = count(b -> b.kind != 'T', case.branches), transformer_count = count(b -> b.kind == 'T', case.branches),
+  outage_count = length(case.outages), slack_bus = case.size.slack)
 
 function _parse_bus(line::String, index::Int)::DTFBus
   bus_type = line[1] == ' ' ? 0 : parse(Int, string(line[1]))
@@ -337,6 +382,7 @@ function build_net(case::DTFCase; bus_shunt_model = :admittance)::Net
   end
   ok, msg = validate!(net = net)
   ok || error(msg)
+  append!(net.for001Contingencies, outage_label.(case.outages))
   return net
 end
 
