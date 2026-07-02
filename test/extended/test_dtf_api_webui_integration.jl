@@ -1,0 +1,77 @@
+# Copyright 2023–2026 Udo Schmitz
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+using Test
+using Sparlectra
+
+function run_dtf_api_webui_integration_tests()
+  @testset "DTF/FOR001 API and Web UI integration" begin
+    mktempdir() do tmp
+      dtf = joinpath(@__DIR__, "..", "fixtures", "dtf", "FOR001.DAT")
+      for002 = joinpath(@__DIR__, "..", "..", "examples", "FOR002.DAT")
+      result = Sparlectra.run_sparlectra_api(
+        casefile = dtf,
+        output_dir = joinpath(tmp, "dtf-api"),
+        case_format = :dtf_for001,
+        for002_reference_file = for002,
+        matpower_export_requested = true,
+        config_overrides = Dict("benchmark.enabled" => false, "output.logfile_results" => "classic"),
+      )
+      @test result.status == :succeeded
+      @test result.metadata["input_format_detected"] == "dtf_for001"
+      @test result.metadata["native_dtf_import_used"] == true
+      @test result.metadata["dtf_bus_count"] == 13
+      @test result.metadata["dtf_outage_count"] > 0
+      artifact_names = Set(a.name for a in result.artifacts)
+      @test "dtf_import_summary.md" in artifact_names
+      @test "dtf_native_matpower_export.m" in artifact_names
+      @test "dtf_for002_base_comparison.md" in artifact_names
+
+      outage = Sparlectra.run_sparlectra_api(
+        casefile = dtf,
+        output_dir = joinpath(tmp, "dtf-outage"),
+        case_format = :dtf_for001,
+        run_dtf_outages = true,
+        dtf_outage_selection_mode = :selected,
+        dtf_outage_selection = ["1"],
+        config_overrides = Dict("benchmark.enabled" => false, "output.logfile_results" => "classic"),
+      )
+      @test outage.status == :succeeded
+      @test length(outage.metadata["dtf_outage_results"]) == 1
+      @test outage.metadata["dtf_outage_results"][1]["converged"] == true
+      @test any(a -> occursin("dtf_outage_1_metrics.csv", a.name), outage.artifacts)
+
+      form_html = Sparlectra.render_powerflow_form(output_root = tmp, case_directory = dirname(dtf), selected_casefile = basename(dtf))
+      @test occursin("Input format", form_html)
+      @test occursin("DTF/FOR001 diagnostics (experimental/internal)", form_html)
+      @test !occursin("New: full DTF/FOR001 support", form_html)
+
+      request = Sparlectra.powerflow_webui_request(Dict(
+        "casefile" => basename(dtf),
+        "casefile_manual" => dtf,
+        "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH,
+        "case_format" => "dtf_for001",
+        "for002_reference_file" => for002,
+        "dtf_outage_selection_mode" => "selected",
+        "dtf_outage_selection" => "1",
+        "write_outage_artifacts" => "true",
+        "matpower_export_requested" => "true",
+      ); default_output_root = tmp)
+      @test request["case_format"] == "dtf_for001"
+      @test request["run_dtf_outages"] == true
+      @test request["dtf_outage_selection"] == ["1"]
+      @test request["for002_reference_file"] == for002
+    end
+  end
+end

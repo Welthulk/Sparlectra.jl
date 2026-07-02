@@ -63,8 +63,9 @@ function _resolve_powerflow_casefile(
   occursin(r"^[A-Za-z][A-Za-z0-9+.-]*://", requested) && throw(ArgumentError("MATPOWER case URLs are not accepted."))
 
   extension = lowercase(splitext(requested)[2])
-  extension in (".m", ".jl") || throw(ArgumentError("Unsupported casefile extension: $(requested) (expected .m or .jl)"))
+  extension in (".m", ".jl", ".dat") || throw(ArgumentError("Unsupported casefile extension: $(requested) (expected .m, .jl, or .DAT)"))
   if isfile(requested)
+    extension == ".dat" && return abspath(requested)
     return _canonical_matpower_source_for_webui(requested, case_directory)
   end
   occursin(r"[\\/]", requested) && throw(ArgumentError("Case file not found: $(requested)"))
@@ -80,6 +81,11 @@ function _resolve_powerflow_casefile(
       return abspath(requested_m)
     end
     isfile(requested_jl) && throw(ArgumentError(GENERATED_MATPOWER_JL_CACHE_MESSAGE))
+  end
+  if extension == ".dat"
+    local_dat = joinpath(trusted_directory, requested)
+    isfile(local_dat) && return abspath(local_dat)
+    throw(ArgumentError("Case file not found: $(requested)"))
   end
   local_m = extension == ".m" ? joinpath(trusted_directory, requested) : joinpath(trusted_directory, first(splitext(requested)) * ".m")
   isfile(local_m) && return abspath(local_m)
@@ -155,6 +161,20 @@ function start_powerflow_run(request::AbstractDict; case_directory::Union{Nothin
   config_overrides = _service_request_value(request, "config_overrides", Dict{String,Any}())
   config_overrides isa AbstractDict || return _service_failure("invalid_request", "config_overrides must be dictionary-like.")
   performance_timing = _service_request_value(request, "performance_timing", :off)
+  case_format = _service_request_value(request, "case_format", :auto)
+  for002_reference_file = _service_request_value(request, "for002_reference_file", nothing)
+  run_dtf_outages = _service_request_value(request, "run_dtf_outages", false)
+  run_dtf_outages isa Bool || return _service_failure("invalid_request", "run_dtf_outages must be boolean.")
+  dtf_outage_selection = _service_request_value(request, "dtf_outage_selection", String[])
+  dtf_outage_selection_mode = _service_request_value(request, "dtf_outage_selection_mode", :none)
+  compare_for002_outages = _service_request_value(request, "compare_for002_outages", false)
+  compare_for002_outages isa Bool || return _service_failure("invalid_request", "compare_for002_outages must be boolean.")
+  write_outage_artifacts = _service_request_value(request, "write_outage_artifacts", true)
+  write_outage_artifacts isa Bool || return _service_failure("invalid_request", "write_outage_artifacts must be boolean.")
+  write_outage_matpower_exports = _service_request_value(request, "write_outage_matpower_exports", false)
+  write_outage_matpower_exports isa Bool || return _service_failure("invalid_request", "write_outage_matpower_exports must be boolean.")
+  matpower_export_requested = _service_request_value(request, "matpower_export_requested", false)
+  matpower_export_requested isa Bool || return _service_failure("invalid_request", "matpower_export_requested must be boolean.")
   run_diagnostics = _service_request_value(request, "run_diagnostics", false)
   run_diagnostics isa Bool || return _service_failure("invalid_request", "run_diagnostics must be boolean.")
   detailed_result_csv = _service_request_value(request, "detailed_result_csv", false)
@@ -184,6 +204,15 @@ function start_powerflow_run(request::AbstractDict; case_directory::Union{Nothin
       casefile = casefile,
       config_file = config_file,
       output_dir = output_dir,
+      case_format = case_format,
+      for002_reference_file = for002_reference_file,
+      run_dtf_outages = run_dtf_outages,
+      dtf_outage_selection = dtf_outage_selection,
+      dtf_outage_selection_mode = dtf_outage_selection_mode,
+      compare_for002_outages = compare_for002_outages,
+      write_outage_artifacts = write_outage_artifacts,
+      write_outage_matpower_exports = write_outage_matpower_exports,
+      matpower_export_requested = matpower_export_requested,
       config_overrides = config_overrides,
       performance_timing = performance_timing,
       run_diagnostics = run_diagnostics,
