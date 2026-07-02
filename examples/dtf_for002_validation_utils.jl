@@ -232,3 +232,69 @@ function for002_state_residual_rows(net, case, ref::For002Scenario)
   end
   return rows
 end
+
+mutable struct For002OutageScenario
+  scenario_index::Int
+  raw_heading::String
+  outage_kind::Union{Nothing,Char}
+  parallel_id::Union{Nothing,String}
+  from_bus::Union{Nothing,String}
+  to_bus::Union{Nothing,String}
+  buses::Dict{String,NamedTuple}
+  branches::Vector{NamedTuple}
+  total_p_loss_MW::Union{Nothing,Float64}
+  total_q_loss_MVar::Union{Nothing,Float64}
+  iterations::Union{Nothing,Int}
+end
+
+function For002OutageScenario(i::Int, heading::String)
+  kind, pid, from_bus, to_bus = _parse_for002_outage_heading(heading)
+  return For002OutageScenario(i, heading, kind, pid, from_bus, to_bus, Dict{String,NamedTuple}(), NamedTuple[], nothing, nothing, nothing)
+end
+
+function _parse_for002_outage_heading(line::AbstractString)
+  clean = replace(strip(String(line)), r"\s+" => " ")
+  m = match(r"AUSFALL DES ZWEIGES\s*([A-Z0-9]?)\s*VON\s+(.+?)\s+NACH\s+(.+?)(?:\s+I)?$", uppercase(clean))
+  m === nothing && return (nothing, nothing, nothing, nothing)
+  pid = strip(m.captures[1])
+  from_bus = _normalize_for002_bus_name(m.captures[2])
+  to_bus = _normalize_for002_bus_name(replace(m.captures[3], r"\s+I$" => ""))
+  return (nothing, isempty(pid) ? "" : pid, from_bus, to_bus)
+end
+
+function _scenario_from_outage(s::For002OutageScenario)
+  sc = For002Scenario("outage_$(s.scenario_index)")
+  sc.buses = s.buses; sc.branches = s.branches
+  sc.total_p_loss_MW = s.total_p_loss_MW; sc.total_q_loss_MVar = s.total_q_loss_MVar; sc.iterations = s.iterations
+  return sc
+end
+
+function parse_for002_outage_scenarios(path::AbstractString)::Vector{For002OutageScenario}
+  isfile(path) || throw(ArgumentError("FOR002 reference file not found: $path"))
+  scenarios = For002OutageScenario[]
+  current::Union{Nothing,For002OutageScenario} = nothing
+  current_bus::Union{Nothing,String} = nothing
+  for raw_line in eachline(path)
+    line = replace(raw_line, '\f' => ' ')
+    if occursin("AUSFALL DES ZWEIGES", uppercase(line))
+      current = For002OutageScenario(length(scenarios) + 1, String(strip(line)))
+      push!(scenarios, current)
+      current_bus = nothing
+      continue
+    end
+    current === nothing && continue
+    bus = _try_parse_for002_bus(line)
+    if bus !== nothing
+      current.buses[_norm_name(bus.bus_name)] = bus
+      current_bus = String(bus.bus_name)
+      continue
+    end
+    branch = _try_parse_for002_branch(line, current_bus)
+    branch !== nothing && push!(current.branches, branch)
+    m = match(r"VERLUSTE\s+([-+]?\d*\.?\d+)\s+MW\s+([-+]?\d*\.?\d+)\s+MVAR", uppercase(line))
+    m !== nothing && (current.total_p_loss_MW = parse(Float64, m.captures[1]); current.total_q_loss_MVar = parse(Float64, m.captures[2]))
+    im = match(r"NEWTONITERATION\s+(\d+)\s+ITERATIONEN", line)
+    im !== nothing && (current.iterations = parse(Int, im.captures[1]))
+  end
+  return scenarios
+end
