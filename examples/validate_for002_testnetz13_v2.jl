@@ -87,8 +87,11 @@ struct CliOptions
   diagnose_for002_state_replay::Bool
   diagnose_for002_angle_convention::Bool
   diagnose_structural_conversion::Bool
+  diagnose_transformer_shunt_model::Bool
   audit_lower_voltage_base::Symbol
   audit_transformer_tap_mode::Symbol
+  audit_transformer_g_mode::Symbol
+  audit_transformer_b_mode::Symbol
 end
 
 struct ModelRunResult
@@ -148,6 +151,8 @@ function _parse_cli_args(args::Vector{String})::CliOptions
     "infer-pv-buses" => "off",
     "audit-lower-voltage-base" => "as-built",
     "audit-transformer-tap-mode" => "as-built",
+    "audit-transformer-g-mode" => "as-built",
+    "audit-transformer-b-mode" => "as-built",
   )
   line_b_scale_value = nothing
   trafo_b_scale_value = nothing
@@ -169,6 +174,7 @@ function _parse_cli_args(args::Vector{String})::CliOptions
   diagnose_for002_state_replay = false
   diagnose_for002_angle_convention = false
   diagnose_structural_conversion = false
+  diagnose_transformer_shunt_model = false
 
   for arg in args
     if arg == "--contingencies"
@@ -195,6 +201,8 @@ function _parse_cli_args(args::Vector{String})::CliOptions
       diagnose_for002_angle_convention = true
     elseif arg == "--diagnose-structural-conversion"
       diagnose_structural_conversion = true
+    elseif arg == "--diagnose-transformer-shunt-model"
+      diagnose_transformer_shunt_model = true
     elseif arg == "--sweep-line-x-scale"
       sweep_line_x_scale = true
     elseif arg == "--no-matpower"
@@ -253,10 +261,16 @@ function _parse_cli_args(args::Vector{String})::CliOptions
       println("                              replay FOR002 voltages with alternative angle conventions and compare branch flows")
       println("  --diagnose-structural-conversion")
       println("                              write structural, parallel-branch, transformer, and MATPOWER roundtrip audit CSVs")
+      println("  --diagnose-transformer-shunt-model")
+      println("                              write transformer no-load/shunt sensitivity and branch-identity diagnostics")
       println("  --audit-lower-voltage-base=as-built|force-231")
       println("                              diagnostic-only lower-voltage base assumption for structural sensitivity audit")
       println("  --audit-transformer-tap-mode=as-built|tap-1|reciprocal|from-231-base")
       println("                              diagnostic-only transformer tap mode for structural sensitivity audit")
+      println("  --audit-transformer-g-mode=as-built|off|split-bus|from-side|to-side")
+      println("                              diagnostic-only transformer conductance mode for shunt-model audit")
+      println("  --audit-transformer-b-mode=as-built|off|split-bus|from-side|to-side")
+      println("                              diagnostic-only transformer susceptance mode for shunt-model audit")
       println("  --sweep-line-x-scale        run diagnostic ordinary AC-line x scaling sweep")
       println("  --infer-pv-buses=off|from-q-limits|from-gen-vg|all-generator-buses")
       println("                              diagnostic PV-bus inference mode; default off")
@@ -296,6 +310,11 @@ function _parse_cli_args(args::Vector{String})::CliOptions
   audit_lower_voltage_base in (Symbol("as-built"), Symbol("force-231")) || throw(ArgumentError("Unsupported --audit-lower-voltage-base=$(defaults["audit-lower-voltage-base"]); expected as-built or force-231."))
   audit_transformer_tap_mode = Symbol(get(defaults, "audit-transformer-tap-mode", "as-built"))
   audit_transformer_tap_mode in (Symbol("as-built"), Symbol("tap-1"), :reciprocal, Symbol("from-231-base")) || throw(ArgumentError("Unsupported --audit-transformer-tap-mode=$(defaults["audit-transformer-tap-mode"]); expected as-built, tap-1, reciprocal, or from-231-base."))
+  audit_transformer_g_mode = Symbol(get(defaults, "audit-transformer-g-mode", "as-built"))
+  audit_transformer_b_mode = Symbol(get(defaults, "audit-transformer-b-mode", "as-built"))
+  shunt_modes = (Symbol("as-built"), :off, Symbol("split-bus"), Symbol("from-side"), Symbol("to-side"))
+  audit_transformer_g_mode in shunt_modes || throw(ArgumentError("Unsupported --audit-transformer-g-mode=$(defaults["audit-transformer-g-mode"]); expected as-built, off, split-bus, from-side, or to-side."))
+  audit_transformer_b_mode in shunt_modes || throw(ArgumentError("Unsupported --audit-transformer-b-mode=$(defaults["audit-transformer-b-mode"]); expected as-built, off, split-bus, from-side, or to-side."))
   matpower_pq_gen_controllers = _parse_bool_option("--matpower-pq-gen-controllers", defaults["matpower-pq-gen-controllers"])
   builder_pq_gen_controllers = _parse_bool_option("--builder-pq-gen-controllers", defaults["builder-pq-gen-controllers"])
 
@@ -341,8 +360,11 @@ function _parse_cli_args(args::Vector{String})::CliOptions
     diagnose_for002_state_replay,
     diagnose_for002_angle_convention,
     diagnose_structural_conversion,
+    diagnose_transformer_shunt_model,
     audit_lower_voltage_base,
     audit_transformer_tap_mode,
+    audit_transformer_g_mode,
+    audit_transformer_b_mode,
   )
 end
 
@@ -598,6 +620,64 @@ function _scale_line_x!(net::Net, scale::Float64)
   return nothing
 end
 
+function _add_diagnostic_bus_shunt_pu!(net::Net, bus_idx::Int, g_pu::Float64, b_pu::Float64)
+  abs(g_pu) + abs(b_pu) == 0.0 && return nothing
+  if haskey(net.shuntDict, bus_idx)
+    sh = net.shuntVec[net.shuntDict[bus_idx]]
+    sh.y_pu_shunt += complex(g_pu, b_pu)
+    sh.G_shunt = real(sh.y_pu_shunt)
+    sh.B_shunt = imag(sh.y_pu_shunt)
+    sh.p_shunt = real(sh.y_pu_shunt) * net.baseMVA
+    sh.q_shunt = imag(sh.y_pu_shunt) * net.baseMVA
+  else
+    addShuntMatpower!(net = net, busName = net.nodeVec[bus_idx].comp.cName, Gs = g_pu * net.baseMVA, Bs = b_pu * net.baseMVA)
+  end
+  return nothing
+end
+
+function _apply_transformer_shunt_mode!(net::Net, g_mode::Symbol, b_mode::Symbol)
+  g_mode == Symbol("as-built") && b_mode == Symbol("as-built") && return net
+  orig_shunts = Dict(i => _bus_shunt_mw_mvar(net, i) for i in eachindex(net.nodeVec))
+  group_counts = Dict{Tuple{String,String},Int}()
+  names = _bus_name_by_idx(net)
+  for br in net.branchVec
+    _branch_diagnostic_kind(net, br) === :transformer || continue
+    key = _unordered_pair(get(names, br.fromBus, string(br.fromBus)), get(names, br.toBus, string(br.toBus)))
+    group_counts[key] = get(group_counts, key, 0) + 1
+  end
+  for br in net.branchVec
+    _branch_diagnostic_kind(net, br) === :transformer || continue
+    key = _unordered_pair(get(names, br.fromBus, string(br.fromBus)), get(names, br.toBus, string(br.toBus)))
+    group_n = get(group_counts, key, 1)
+    shf0 = orig_shunts[br.fromBus]; sht0 = orig_shunts[br.toBus]
+    inferred_g = (Float64(shf0.g) + Float64(sht0.g)) / net.baseMVA / group_n
+    g = br.g_pu != 0.0 ? br.g_pu : inferred_g
+    b = br.b_pu
+    if g_mode == :off
+      br.g_pu == 0.0 && (_add_diagnostic_bus_shunt_pu!(net, br.fromBus, -g / 2, 0.0); _add_diagnostic_bus_shunt_pu!(net, br.toBus, -g / 2, 0.0))
+      br.g_pu = 0.0
+    elseif g_mode == Symbol("split-bus")
+      br.g_pu != 0.0 && (_add_diagnostic_bus_shunt_pu!(net, br.fromBus, g / 2, 0.0); _add_diagnostic_bus_shunt_pu!(net, br.toBus, g / 2, 0.0)); br.g_pu = 0.0
+    elseif g_mode == Symbol("from-side")
+      br.g_pu == 0.0 && (_add_diagnostic_bus_shunt_pu!(net, br.fromBus, -g / 2, 0.0); _add_diagnostic_bus_shunt_pu!(net, br.toBus, -g / 2, 0.0))
+      _add_diagnostic_bus_shunt_pu!(net, br.fromBus, g, 0.0); br.g_pu = 0.0
+    elseif g_mode == Symbol("to-side")
+      br.g_pu == 0.0 && (_add_diagnostic_bus_shunt_pu!(net, br.fromBus, -g / 2, 0.0); _add_diagnostic_bus_shunt_pu!(net, br.toBus, -g / 2, 0.0))
+      _add_diagnostic_bus_shunt_pu!(net, br.toBus, g, 0.0); br.g_pu = 0.0
+    end
+    if b_mode == :off
+      br.b_pu = 0.0
+    elseif b_mode == Symbol("split-bus")
+      _add_diagnostic_bus_shunt_pu!(net, br.fromBus, 0.0, b / 2); _add_diagnostic_bus_shunt_pu!(net, br.toBus, 0.0, b / 2); br.b_pu = 0.0
+    elseif b_mode == Symbol("from-side")
+      _add_diagnostic_bus_shunt_pu!(net, br.fromBus, 0.0, b); br.b_pu = 0.0
+    elseif b_mode == Symbol("to-side")
+      _add_diagnostic_bus_shunt_pu!(net, br.toBus, 0.0, b); br.b_pu = 0.0
+    end
+  end
+  return net
+end
+
 function _clear_pq_gen_controllers!(net::Net)
   cleared = 0
   for ps in net.prosumpsVec
@@ -772,6 +852,7 @@ end
 function _run_model(model_name::AbstractString, buildfn::Function, opt::CliOptions, scenario_name::AbstractString; branch_index_out::Union{Nothing,Int} = nothing)::ModelRunResult
   net = buildfn()
   _scale_branch_b!(net, opt)
+  opt.diagnose_transformer_shunt_model && _apply_transformer_shunt_mode!(net, opt.audit_transformer_g_mode, opt.audit_transformer_b_mode)
   _scale_line_x!(net, opt.line_x_scale)
   report, iters, status, residual = _run_powerflow!(net, opt; branch_index_out = branch_index_out)
   return ModelRunResult(String(model_name), String(scenario_name), branch_index_out, net, report, iters, status, residual)
@@ -960,6 +1041,144 @@ function _roundtrip_rows(direct, exported)
     end
   end
   return rows
+end
+
+function _bus_shunt_mw_mvar(net::Net, bus_idx::Int)
+  haskey(net.shuntDict, bus_idx) || return (g = 0.0, b = 0.0)
+  y = net.shuntVec[net.shuntDict[bus_idx]].y_pu_shunt
+  return (g = real(y) * net.baseMVA, b = imag(y) * net.baseMVA)
+end
+
+function _transformer_shunt_model_rows(entries_by_source::Vector{Vector{NamedTuple}}, nets_by_source::Dict{String,Net}, opt::CliOptions)
+  rows = NamedTuple[]
+  for entries in entries_by_source, e in entries
+    e.branch_kind == "transformer" || continue
+    net = get(nets_by_source, e.source_model, nothing)
+    br = net === nothing || e.index > length(net.branchVec) ? nothing : net.branchVec[e.index]
+    shf = br === nothing ? (g = missing, b = missing) : _bus_shunt_mw_mvar(net, br.fromBus)
+    sht = br === nothing ? (g = missing, b = missing) : _bus_shunt_mw_mvar(net, br.toBus)
+    group_n = count(x -> x.branch_kind == "transformer" && _unordered_pair(x.from_bus, x.to_bus) == _unordered_pair(e.from_bus, e.to_bus), entries)
+    inferred_g = (e.g_pu == 0.0 && br !== nothing && group_n > 0 && shf.g !== missing && sht.g !== missing) ? (Float64(shf.g) + Float64(sht.g)) / net.baseMVA / group_n : e.g_pu
+    inferred_b = (e.b_pu == 0.0 && br !== nothing && group_n > 0 && shf.b !== missing && sht.b !== missing && abs(Float64(shf.b) + Float64(sht.b)) > 0.0) ? (Float64(shf.b) + Float64(sht.b)) / net.baseMVA / group_n : e.b_pu
+    pair = _special_pair_key(e.from_bus, e.to_bus)
+    note = pair == _special_pair_key("BETA1 S1", "BETA2 S1") ? "BETA transformer group" : pair == _special_pair_key("DELTA1S1", "DELTA2S1") ? "DELTA transformer group" : ""
+    push!(rows, (
+      source_model = e.source_model, branch_label = e.label, from_bus = e.from_bus, to_bus = e.to_bus,
+      parallel_id = _branch_nr_from_label(e.label), r_pu = e.r_pu, x_pu = e.x_pu,
+      g_pu_raw_or_inferred = inferred_g, b_pu_raw_or_inferred = inferred_b,
+      current_g_modeling = e.g_pu == 0.0 && br !== nothing && abs(inferred_g) > 0.0 ? "bus_shunt_split_inferred" : e.g_pu == 0.0 ? "none" : "branch_pi_split",
+      current_b_modeling = e.b_pu == 0.0 && br !== nothing && abs(inferred_b) > 0.0 ? "bus_shunt_split_inferred" : e.b_pu == 0.0 ? "none" : "branch_pi_split",
+      split_from_g_MW = inferred_g * 0.5 * 100.0,
+      split_to_g_MW = inferred_g * 0.5 * 100.0,
+      split_from_q_MVar = inferred_b * 0.5 * 100.0,
+      split_to_q_MVar = inferred_b * 0.5 * 100.0,
+      bus_shunt_gs_from_MW = shf.g, bus_shunt_gs_to_MW = sht.g,
+      bus_shunt_bs_from_MVar = shf.b, bus_shunt_bs_to_MVar = sht.b,
+      calculated_no_load_p_MW_at_1pu = inferred_g * 100.0,
+      calculated_no_load_q_MVar_at_1pu = inferred_b * 100.0,
+      diagnostic_note = note,
+    ))
+  end
+  return rows
+end
+
+function _branch_identity_rows(entries_by_source::Vector{Vector{NamedTuple}})
+  direct = isempty(entries_by_source) ? Dict{Int,String}() : Dict(e.index => e.label for e in entries_by_source[1])
+  rows = NamedTuple[]
+  for entries in entries_by_source
+    counts = Dict{String,Int}()
+    for e in entries
+      counts[e.label] = get(counts, e.label, 0) + 1
+    end
+    for e in entries
+      direct_label = get(direct, e.index, "")
+      status = e.label == direct_label ? "exact_label_match" : counts[e.label] > 1 ? "duplicate_or_lost_label" : "label_differs"
+      push!(rows, (
+        source_model = e.source_model, branch_index = e.index, branch_label = e.label,
+        fallback_component_name = e.label, branch_kind = e.branch_kind, from_bus = e.from_bus, to_bus = e.to_bus,
+        parallel_id = _branch_nr_from_label(e.label), duplicate_label_marker = counts[e.label] > 1,
+        stable_identity_key = join((_norm_name(e.from_bus), _norm_name(e.to_bus), e.branch_kind, string(e.index)), "|"),
+        corresponding_for001_label = direct_label, corresponding_direct_matpower_label = direct_label,
+        identity_match_status = status,
+      ))
+    end
+  end
+  return rows
+end
+
+function _local_region_delta(ref::For002Scenario, result::ModelRunResult)
+  calc = _bus_result_dict(result.report)
+  buses = Set(_norm_name.(["WEILERS1", "DELTA2S1", "BETA2 S1", "ASTADTS1"]))
+  dp = 0.0; dq = 0.0
+  for key in buses
+    haskey(ref.buses, key) && haskey(calc, key) || continue
+    r = ref.buses[key]; c = calc[key]
+    dp += (c.p_gen_MW - c.p_load_MW) - (r.p_gen_MW - r.p_load_MW)
+    dq += (c.q_gen_MVar - c.q_load_MVar) - (r.q_gen_MVar - r.q_load_MVar)
+  end
+  return (dp = dp, dq = dq)
+end
+
+function _write_transformer_shunt_diagnostics(opt::CliOptions, ref_base::For002Scenario, model_builders::Vector{Tuple{String,Function}}, branch_labels::Vector{String})
+  mpc = Sparlectra.MatpowerIO.read_case(opt.matpower_path; legacy_compat = true)
+  entries_by_source = Vector{NamedTuple}[_mpc_entries(mpc, "for001_metadata"), _mpc_entries(mpc, "direct_matpower")]
+  nets_by_source = Dict{String,Net}()
+  for (name, buildfn) in model_builders
+    net = buildfn()
+    source = name == "builder" ? "native_builder" : "matpower_imported"
+    nets_by_source[source] = net
+    push!(entries_by_source, _net_entries(net, source))
+  end
+  if haskey(nets_by_source, "native_builder") && isdefined(Sparlectra, :writeMatpowerCasefile)
+    export_path = joinpath(opt.output_dir, "native_builder_transformer_shunt_exported_matpower.m")
+    Sparlectra.writeMatpowerCasefile(nets_by_source["native_builder"], export_path)
+    exported = Sparlectra.MatpowerIO.read_case(export_path; legacy_compat = true)
+    push!(entries_by_source, _mpc_entries(exported, "exported_matpower"))
+    imported = Sparlectra.createNetFromMatPowerCase(mpc = exported, log = false, flatstart = false, apply_bus_names = true, apply_branch_names = true, apply_branch_kind = true, import_for001_contingencies = true, matpower_ratio = opt.matpower_ratio)
+    push!(entries_by_source, _net_entries(imported, "imported_exported_matpower"))
+  end
+  audit_csv = _write_audit_csv(joinpath(opt.output_dir, "transformer_shunt_model_audit.csv"),
+    (:source_model, :branch_label, :from_bus, :to_bus, :parallel_id, :r_pu, :x_pu, :g_pu_raw_or_inferred, :b_pu_raw_or_inferred, :current_g_modeling, :current_b_modeling, :split_from_g_MW, :split_to_g_MW, :split_from_q_MVar, :split_to_q_MVar, :bus_shunt_gs_from_MW, :bus_shunt_gs_to_MW, :bus_shunt_bs_from_MVar, :bus_shunt_bs_to_MVar, :calculated_no_load_p_MW_at_1pu, :calculated_no_load_q_MVar_at_1pu, :diagnostic_note),
+    _transformer_shunt_model_rows(entries_by_source, nets_by_source, opt))
+  identity_csv = _write_audit_csv(joinpath(opt.output_dir, "branch_identity_audit.csv"),
+    (:source_model, :branch_index, :branch_label, :fallback_component_name, :branch_kind, :from_bus, :to_bus, :parallel_id, :duplicate_label_marker, :stable_identity_key, :corresponding_for001_label, :corresponding_direct_matpower_label, :identity_match_status),
+    _branch_identity_rows(entries_by_source))
+  rows = NamedTuple[]
+  buildfn = last(model_builders)[2]
+  for gm in (Symbol("as-built"), :off, Symbol("split-bus"), Symbol("from-side"), Symbol("to-side")), bm in (Symbol("as-built"), :off, Symbol("split-bus"), Symbol("from-side"), Symbol("to-side"))
+    net = buildfn(); _scale_branch_b!(net, opt); _apply_transformer_shunt_mode!(net, gm, bm)
+    report, iters, status, residual = _run_powerflow!(net, opt)
+    result = ModelRunResult("transformer_shunt_sensitivity", "base", nothing, net, report, iters, status, residual)
+    bus_cmp = _compare_bus_rows(ref_base, result, opt, joinpath(opt.output_dir, "_tmp_bus_$(gm)_$(bm).csv"))
+    branch_cmp = _compare_branch_rows(ref_base, result, branch_labels, opt, joinpath(opt.output_dir, "_tmp_branch_$(gm)_$(bm).csv"))
+    slack = _slack_bus_name(result); calc = _bus_result_dict(result.report); loc = _local_region_delta(ref_base, result)
+    srow = slack === nothing ? nothing : get(ref_base.buses, _norm_name(slack), nothing)
+    crow = slack === nothing ? nothing : get(calc, _norm_name(slack), nothing)
+    push!(rows, (transformer_g_mode = gm, transformer_b_mode = bm, solver_status = status,
+      max_abs_branch_d_p_MW = branch_cmp.max_abs_d_p_MW, max_abs_branch_d_q_MVar = branch_cmp.max_abs_d_q_MVar,
+      max_abs_d_va_deg = bus_cmp.max_abs_d_va_deg, max_abs_d_v_kV = bus_cmp.max_abs_d_v_kV, max_abs_d_q_gen_MVar = bus_cmp.max_abs_d_q_gen_MVar,
+      slack_dP_MW = srow === nothing || crow === nothing ? missing : crow.p_gen_MW - srow.p_gen_MW,
+      slack_dQ_MVar = srow === nothing || crow === nothing ? missing : crow.q_gen_MVar - srow.q_gen_MVar,
+      local_region_dP_MW = loc.dp, local_region_dQ_MVar = loc.dq, objective = _diagnostic_objective(bus_cmp, branch_cmp)))
+  end
+  sensitivity_csv = _write_audit_csv(joinpath(opt.output_dir, "transformer_shunt_sensitivity.csv"),
+    (:transformer_g_mode, :transformer_b_mode, :solver_status, :max_abs_branch_d_p_MW, :max_abs_branch_d_q_MVar, :max_abs_d_va_deg, :max_abs_d_v_kV, :max_abs_d_q_gen_MVar, :slack_dP_MW, :slack_dQ_MVar, :local_region_dP_MW, :local_region_dQ_MVar, :objective), rows)
+  println("Transformer shunt/no-load audit:")
+  audit_rows = _transformer_shunt_model_rows(entries_by_source, nets_by_source, opt)
+  for (a, b) in (("BETA1 S1", "BETA2 S1"), ("DELTA1S1", "DELTA2S1"))
+    group = [e for e in audit_rows if e.source_model == "native_builder" && _unordered_pair(e.from_bus, e.to_bus) == _unordered_pair(a, b)]
+    isempty(group) && continue
+    total_g = sum(e.g_pu_raw_or_inferred for e in group); total_b = sum(e.b_pu_raw_or_inferred for e in group)
+    @printf("  %s <-> %s: total G=%.8f pu (%.6f MW), total B=%.8f pu (%.6f MVar), split G %.6f/%.6f MW, split B %.6f/%.6f MVar\n", a, b, total_g, 100.0 * total_g, total_b, 100.0 * total_b, 50.0 * total_g, 50.0 * total_g, 50.0 * total_b, 50.0 * total_b)
+  end
+  bymode = Dict((String(r.transformer_g_mode), String(r.transformer_b_mode)) => r for r in rows)
+  base = bymode[("as-built", "as-built")]
+  haskey(bymode, ("off", "as-built")) && println("  transformer G off changes max |dP| by ", bymode[("off", "as-built")].max_abs_branch_d_p_MW - base.max_abs_branch_d_p_MW, " MW")
+  haskey(bymode, ("as-built", "off")) && println("  transformer B off changes max |dQ| by ", bymode[("as-built", "off")].max_abs_branch_d_q_MVar - base.max_abs_branch_d_q_MVar, " MVar")
+  println("  transformer shunt model CSV = ", audit_csv)
+  println("  transformer sensitivity CSV = ", sensitivity_csv)
+  println("  branch identity CSV         = ", identity_csv)
+  return (audit_csv = audit_csv, sensitivity_csv = sensitivity_csv, identity_csv = identity_csv, rows = rows)
 end
 
 function _special_pair_key(from::AbstractString, to::AbstractString)
@@ -1330,8 +1549,11 @@ function _with_branch_b_sweep_point(opt::CliOptions, line_b_scale::Float64, traf
     opt.diagnose_for002_state_replay,
     opt.diagnose_for002_angle_convention,
     opt.diagnose_structural_conversion,
+    opt.diagnose_transformer_shunt_model,
     opt.audit_lower_voltage_base,
     opt.audit_transformer_tap_mode,
+    opt.audit_transformer_g_mode,
+    opt.audit_transformer_b_mode,
   )
 end
 
@@ -1378,8 +1600,11 @@ function _with_line_x_sweep_point(opt::CliOptions, x_scale::Float64)::CliOptions
     opt.diagnose_for002_state_replay,
     opt.diagnose_for002_angle_convention,
     opt.diagnose_structural_conversion,
+    opt.diagnose_transformer_shunt_model,
     opt.audit_lower_voltage_base,
     opt.audit_transformer_tap_mode,
+    opt.audit_transformer_g_mode,
+    opt.audit_transformer_b_mode,
   )
 end
 
@@ -3103,7 +3328,7 @@ function _scenario_file_prefix(result::ModelRunResult)::String
   return lowercase(result.model_name) * "_" * scenario_tag
 end
 
-function _write_summary(path::AbstractString, opt::CliOptions, ref_scenarios::Vector{For002Scenario}, branch_labels::Vector{String}, base_summaries::Vector{NamedTuple}, contingency_summaries::Vector{NamedTuple}, model_compare_file::Union{Nothing,String}, branch_b_diagnostic_csv::AbstractString, branch_b_sweep_csv::Union{Nothing,String}, line_x_sweep_csv::Union{Nothing,String}, for001_conversion_csv::Union{Nothing,String}, for001_conversion_raw_parsed::Union{Nothing,Bool}, worst_offenders_csv::Union{Nothing,String}, pv_bus_diagnostics_csv::Union{Nothing,String}, pv_bus_diagnostics_note::Union{Nothing,String}, active_flow_diagnostics, worst_branch_diagnostics, flow_semantics_diagnostics, bus_injection_balance_diagnostics, for002_kcl_diagnostics, for002_state_replay_diagnostics, for002_angle_convention_diagnostics)
+function _write_summary(path::AbstractString, opt::CliOptions, ref_scenarios::Vector{For002Scenario}, branch_labels::Vector{String}, base_summaries::Vector{NamedTuple}, contingency_summaries::Vector{NamedTuple}, model_compare_file::Union{Nothing,String}, branch_b_diagnostic_csv::AbstractString, branch_b_sweep_csv::Union{Nothing,String}, line_x_sweep_csv::Union{Nothing,String}, for001_conversion_csv::Union{Nothing,String}, for001_conversion_raw_parsed::Union{Nothing,Bool}, worst_offenders_csv::Union{Nothing,String}, pv_bus_diagnostics_csv::Union{Nothing,String}, pv_bus_diagnostics_note::Union{Nothing,String}, active_flow_diagnostics, worst_branch_diagnostics, flow_semantics_diagnostics, bus_injection_balance_diagnostics, for002_kcl_diagnostics, for002_state_replay_diagnostics, for002_angle_convention_diagnostics, transformer_shunt_diagnostics)
   open(path, "w") do io
     println(io, "# FOR002 validation summary")
     println(io)
@@ -3130,6 +3355,9 @@ function _write_summary(path::AbstractString, opt::CliOptions, ref_scenarios::Ve
     println(io, "- Diagnose FOR002 KCL: ", opt.diagnose_for002_kcl)
     println(io, "- Diagnose FOR002 state replay: ", opt.diagnose_for002_state_replay)
     println(io, "- Diagnose FOR002 angle convention: ", opt.diagnose_for002_angle_convention)
+    println(io, "- Diagnose transformer shunt model: ", opt.diagnose_transformer_shunt_model)
+    println(io, "- Audit transformer G mode: ", opt.audit_transformer_g_mode)
+    println(io, "- Audit transformer B mode: ", opt.audit_transformer_b_mode)
     println(io, "- Sweep line x scale: ", opt.sweep_line_x_scale)
     println(io, "- MATPOWER PQ generator controllers: ", opt.matpower_pq_gen_controllers)
     println(io, "- Builder PQ generator controllers: ", opt.builder_pq_gen_controllers)
@@ -3186,6 +3414,11 @@ function _write_summary(path::AbstractString, opt::CliOptions, ref_scenarios::Ve
     if for002_angle_convention_diagnostics !== nothing
       println(io, "- FOR002 angle-convention replay diagnostics CSV: `", for002_angle_convention_diagnostics.diagnostics_csv, "`")
       println(io, "- FOR002 angle-convention replay summary CSV: `", for002_angle_convention_diagnostics.summary_csv, "`")
+    end
+    if transformer_shunt_diagnostics !== nothing
+      println(io, "- Transformer shunt model audit CSV: `", transformer_shunt_diagnostics.audit_csv, "`")
+      println(io, "- Transformer shunt sensitivity CSV: `", transformer_shunt_diagnostics.sensitivity_csv, "`")
+      println(io, "- Branch identity audit CSV: `", transformer_shunt_diagnostics.identity_csv, "`")
     end
     println(io)
     println(io, "## Solver settings")
@@ -3333,8 +3566,11 @@ function main(args = ARGS)
   println("  diagnose state replay   = ", opt.diagnose_for002_state_replay)
   println("  diagnose angle conv.    = ", opt.diagnose_for002_angle_convention)
   println("  diagnose structural     = ", opt.diagnose_structural_conversion)
+  println("  diagnose trafo shunts   = ", opt.diagnose_transformer_shunt_model)
   println("  audit lower kV base     = ", opt.audit_lower_voltage_base)
   println("  audit transformer taps  = ", opt.audit_transformer_tap_mode)
+  println("  audit transformer G     = ", opt.audit_transformer_g_mode)
+  println("  audit transformer B     = ", opt.audit_transformer_b_mode)
   println("  sweep line x scale      = ", opt.sweep_line_x_scale)
   println("  MATPOWER ratio          = ", opt.matpower_ratio)
   println("  MATPOWER PQ controllers = ", opt.matpower_pq_gen_controllers)
@@ -3427,6 +3663,7 @@ function main(args = ARGS)
   for002_angle_convention_diagnostics = opt.diagnose_for002_angle_convention ? _write_for002_angle_convention_csvs(opt, ref_base, base_results, model_builders, branch_labels) : nothing
   _print_for002_angle_convention_console_summary(for002_angle_convention_diagnostics)
   structural_conversion_diagnostics = opt.diagnose_structural_conversion ? _write_structural_conversion_audit(opt, model_builders, base_results) : nothing
+  transformer_shunt_diagnostics = opt.diagnose_transformer_shunt_model ? _write_transformer_shunt_diagnostics(opt, ref_base, model_builders, branch_labels) : nothing
   for001_conversion_csv = nothing
   for001_conversion_raw_parsed = nothing
   if opt.diagnose_for001_conversion
@@ -3465,7 +3702,7 @@ function main(args = ARGS)
   end
 
   summary_path = joinpath(opt.output_dir, "for002_validation_summary.md")
-  _write_summary(summary_path, opt, ref_scenarios, branch_labels, base_summaries, contingency_summaries, model_compare_file, branch_b_diagnostic_csv, branch_b_sweep_csv, line_x_sweep_csv, for001_conversion_csv, for001_conversion_raw_parsed, worst_offenders_csv, pv_bus_diagnostics_csv, pv_bus_diagnostics_note, active_flow_diagnostics, worst_branch_diagnostics, flow_semantics_diagnostics, bus_injection_balance_diagnostics, for002_kcl_diagnostics, for002_state_replay_diagnostics, for002_angle_convention_diagnostics)
+  _write_summary(summary_path, opt, ref_scenarios, branch_labels, base_summaries, contingency_summaries, model_compare_file, branch_b_diagnostic_csv, branch_b_sweep_csv, line_x_sweep_csv, for001_conversion_csv, for001_conversion_raw_parsed, worst_offenders_csv, pv_bus_diagnostics_csv, pv_bus_diagnostics_note, active_flow_diagnostics, worst_branch_diagnostics, flow_semantics_diagnostics, bus_injection_balance_diagnostics, for002_kcl_diagnostics, for002_state_replay_diagnostics, for002_angle_convention_diagnostics, transformer_shunt_diagnostics)
 
   println()
   println("Output files written to:")
@@ -3500,6 +3737,11 @@ function main(args = ARGS)
   if for002_angle_convention_diagnostics !== nothing
     println("  angle convention diagnostics = ", for002_angle_convention_diagnostics.diagnostics_csv)
     println("  angle convention summary     = ", for002_angle_convention_diagnostics.summary_csv)
+  end
+  if transformer_shunt_diagnostics !== nothing
+    println("  transformer shunt audit = ", transformer_shunt_diagnostics.audit_csv)
+    println("  transformer shunt sens. = ", transformer_shunt_diagnostics.sensitivity_csv)
+    println("  branch identity audit   = ", transformer_shunt_diagnostics.identity_csv)
   end
   branch_b_sweep_csv !== nothing && println("  branch b sweep summary = ", branch_b_sweep_csv)
   line_x_sweep_csv !== nothing && println("  line x sweep summary   = ", line_x_sweep_csv)
