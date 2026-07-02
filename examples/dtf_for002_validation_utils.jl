@@ -15,6 +15,18 @@
 using Printf
 using SparseArrays
 
+# Developer notes:
+# - Shared helpers validate native Testnetz13 DTF/FOR001/FOR002 examples.
+# - The intended path is DTFImporter.read_dtf -> DTFImporter.build_net -> runpf!;
+#   MATPOWER import/export and the generated FOR001 builder are intentionally bypassed.
+# - FOR002 is a legacy textual reference report, not a machine-stable schema.
+# - State residuals are diagnostic only; branch-flow and solved generator/slack
+#   comparisons are the stronger validation signals for now.
+# - Console output should stay concise; detailed rows belong in CSV/Markdown and
+#   in optional detailed-mode return values.
+
+# FOR002 and DTF names differ in spacing/case, so matching keys must ignore
+# report padding while preserving the human-readable names in output rows.
 _norm_name(s::AbstractString) = uppercase(replace(strip(String(s)), r"\s+" => ""))
 _field(s::AbstractString, a::Int, b::Int) = a > lastindex(s) ? "" : s[a:min(b, lastindex(s))]
 _numbers(s::AbstractString) = [parse(Float64, replace(m.match, 'D' => 'E', 'd' => 'E')) for m in eachmatch(r"[-+]?\d*\.?\d+(?:[EeDd][-+]?\d+)?", s)]
@@ -35,6 +47,8 @@ function _try_parse_for002_bus(line::AbstractString)
   startswith(line, "I ") || return nothing
   name = _normalize_for002_bus_name(_field(line, 3, 13))
   isempty(name) && return nothing
+  # The FOR002 report is fixed-width-ish, but alignment varies around names and
+  # numeric fields; parse by tolerant slices plus numeric extraction.
   v = _numbers(_field(line, 15, 28)); gen = _numbers(_field(line, 30, 44)); load = _numbers(_field(line, 46, 60))
   length(v) == 2 && length(gen) == 2 && length(load) == 2 || return nothing
   return (bus_name = name, v_kV = v[1], va_deg = v[2], p_gen_MW = gen[1], q_gen_MVar = gen[2], p_load_MW = load[1], q_load_MVar = load[2])
@@ -51,6 +65,8 @@ function _try_parse_for002_branch(line::AbstractString, current_bus::Union{Nothi
   branch_type = String(strip(_field(target_field, 19, 22)))
   flow = _numbers(_field(line, 87, 102)); losses = _numbers(_field(line, 104, 119))
   length(flow) == 2 || return nothing
+  # Branch-flow rows are directional: the current bus is the reported source,
+  # and the later comparison matches both source->target and target->source rows.
   return (from_bus = _normalize_for002_bus_name(current_bus), to_bus = to_bus, nr = nr, type = branch_type, p_MW = flow[1], q_MVar = flow[2], p_loss_MW = length(losses) >= 1 ? losses[1] : missing, q_loss_MVar = length(losses) >= 2 ? losses[2] : missing)
 end
 
@@ -60,6 +76,7 @@ function parse_for002_ground_load_flow(path::AbstractString)::For002Scenario
   current_bus::Union{Nothing,String} = nothing
   for raw_line in eachline(path)
     line = replace(raw_line, '\f' => ' ')
+    # Stop at the first outage heading; the preceding block is the base case.
     occursin("AUSFALL DES ZWEIGES", uppercase(line)) && !isempty(scenario.buses) && break
     bus = _try_parse_for002_bus(line)
     if bus !== nothing
@@ -114,6 +131,8 @@ end
 
 function _branch_kcl_arrays(net)
   branch_p = zeros(Float64, length(net.nodeVec)); branch_q = zeros(Float64, length(net.nodeVec))
+  # Use solved endpoint flows. They already include branch charging and taps as
+  # represented by the branch model; explicit bus shunts are not added here.
   for br in net.branchVec
     if br.fBranchFlow !== nothing
       branch_p[br.fromBus] += something(br.fBranchFlow.pFlow, 0.0)
@@ -200,6 +219,8 @@ end
 function branch_ref_dict(s::For002Scenario)
   d = Dict{Tuple{String,String,String},NamedTuple}()
   for b in s.branches
+    # Keep the direction in the key; FOR002 prints endpoint flows separately for
+    # each direction and the comparison must not collapse them.
     d[(_norm_name(b.from_bus), _norm_name(b.to_bus), uppercase(strip(b.nr)))] = b
   end
   return d
@@ -215,6 +236,10 @@ function for002_state_residual_rows(net, case, ref::For002Scenario)
     key = _norm_name(bus.name)
     haskey(ref.buses, key) || continue
     fb = ref.buses[key]
+    # Force the printed FOR002 voltage state into the native Ybus, calculate the
+    # implied injection, then compare it with the printed FOR002 bus table.
+    # These residuals can be larger than branch-flow deviations because printed
+    # magnitudes/angles are rounded and transformer-adjacent nodes are sensitive.
     vm = fb.v_kV / node.comp.cVN
     va = fb.va_deg
     V[idx] = vm * cis(deg2rad(va))
@@ -254,6 +279,8 @@ end
 
 function _parse_for002_outage_heading(line::AbstractString)
   clean = replace(strip(String(line)), r"\s+" => " ")
+  # Headings encode parallel id and endpoints; the DTF branch kind is usually
+  # unavailable in the legacy FOR002 text and is matched from FOR001 instead.
   m = match(r"AUSFALL DES ZWEIGES\s*([A-Z0-9]?)\s*VON\s+(.+?)\s+NACH\s+(.+?)(?:\s+I)?$", uppercase(clean))
   m === nothing && return (nothing, nothing, nothing, nothing)
   pid = strip(m.captures[1])
@@ -277,6 +304,8 @@ function parse_for002_outage_scenarios(path::AbstractString)::Vector{For002Outag
   for raw_line in eachline(path)
     line = replace(raw_line, '\f' => ' ')
     if occursin("AUSFALL DES ZWEIGES", uppercase(line))
+      # Every outage heading starts a new legacy report block; only blocks that
+      # match DTF-listed outage cards are executed by the outage example.
       current = For002OutageScenario(length(scenarios) + 1, String(strip(line)))
       push!(scenarios, current)
       current_bus = nothing

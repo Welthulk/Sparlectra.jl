@@ -45,6 +45,43 @@ julia --project=. -e 'using Pkg; Pkg.test()'
 | `dtf_importer` | `test/extended/test_dtf_importer.jl` | Native DTF/FOR001 parser and direct Net-builder coverage, including voltage-level-index branch conversion, transformer controls, bus-type semantics, and parsed outage metadata |
 | `dtf_for002_validation_example` | `test/extended/test_dtf_for002_validation_example.jl` | Native FOR001/DTF -> `DTFImporter` -> `Net` -> power-flow validation example smoke coverage against FOR002 diagnostics; verifies generated CSV/Markdown artifacts, lightweight default result/concise CLI output, explicit detailed diagnostics mode, and does not invoke the fast suite |
 
+## Native DTF/FOR002 validation examples
+
+The native DTF/FOR002 examples validate Testnetz13 through the direct DTF path:
+`DTFImporter.read_dtf` -> `DTFImporter.build_net` -> `runpf!`. They deliberately avoid MATPOWER import/export and the generated FOR001 builder so that native DTF parsing, Net construction, and solved branch-flow reporting are exercised directly. FOR002 is used as a legacy textual reference report.
+
+Run the base-case validation with:
+
+```bash
+julia --project=. examples/validate_dtf_for002_testnetz13.jl --dtf-file=test/fixtures/dtf/FOR001.DAT --for002-file=examples/FOR002.DAT --output-dir=examples/_out/dtf_for002_native_validation --write-csv=true --write-markdown=true
+```
+
+Run the outage validation with:
+
+```bash
+julia --project=. examples/validate_dtf_for002_outages_testnetz13.jl --dtf-file=test/fixtures/dtf/FOR001.DAT --for002-file=examples/FOR002.DAT --output-dir=examples/_out/dtf_for002_native_outages --write-csv=true --write-markdown=true
+```
+
+Each command writes concise console output plus CSV and Markdown files in the requested `--output-dir`. The Markdown files summarize the run, while CSV files keep row-level bus, generator, branch, KCL, state-residual, and metric diagnostics.
+
+Important metrics:
+
+- `converged`: whether `runpf!` reported successful convergence.
+- `iterations`: Newton iterations used by the native solve.
+- `final mismatch`: infinity-norm mismatch recomputed from the solved state.
+- `max voltage deviation`: largest voltage magnitude or angle difference from FOR002 printed bus values.
+- `max branch P/Q deviation`: largest directed branch endpoint-flow difference from FOR002.
+- `max generator/slack Q deviation`: difference between solved generator/slack reactive output and FOR002 generator-Q reporting.
+- `state residual P/Q`: injection residual from forcing FOR002 printed voltage magnitudes/angles into the native Ybus and comparing the calculated injections with the FOR002 bus table.
+
+Current Testnetz13 interpretation:
+
+- Branch-flow deviations are small and are the strongest validation signal for the native DTF path.
+- Slack Q is solved by the power flow and should not be compared with the specified input Q as if it were fixed.
+- State residuals are diagnostic, not hard pass/fail criteria; they are sensitive to FOR002 rounding and transformer-adjacent bus voltage/angle differences.
+- Outage validation currently executes only the outages listed in FOR001/DTF.
+- FOR002 may contain more outage blocks than FOR001 lists; unmatched FOR002 blocks are treated as reference text, not executed scenarios.
+
 ## Offline and runtime expectations
 
 The default `fast` profile is intended to be offline-safe and should not download MATPOWER cases or run benchmark loops.

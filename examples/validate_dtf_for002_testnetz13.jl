@@ -17,6 +17,15 @@ using Printf
 
 include(joinpath(@__DIR__, "dtf_for002_validation_utils.jl"))
 
+# Developer notes:
+# - Validates the native Testnetz13 DTF/FOR001 base case against FOR002.
+# - The intentional execution path is DTFImporter.read_dtf -> DTFImporter.build_net -> runpf!.
+# - MATPOWER import/export and the generated FOR001 builder are intentionally not used.
+# - FOR002 is treated as a legacy textual reference report.
+# - State residuals are diagnostic, not pass/fail thresholds.
+# - Console output is intentionally concise; detailed rows are written to
+#   CSV/Markdown and returned only in detailed mode.
+
 struct DTFFor002ValidationResult
   output_dir::String
   converged::Bool
@@ -77,9 +86,11 @@ function _method_symbol(s::AbstractString)
   return Symbol(s)
 end
 
-function _slack_bus_name(net)
-  for n in net.nodeVec
-    occursin("Slack", Sparlectra.toString(n._nodeType)) && return n.comp.cName
+function _slack_bus_name(net, case)
+  for (idx, n) in enumerate(net.nodeVec)
+    if uppercase(Sparlectra.toString(n._nodeType)) == "SLACK"
+      return idx <= length(case.buses) ? case.buses[idx].name : n.comp.cName
+    end
   end
   return ""
 end
@@ -145,7 +156,7 @@ function run_validation(args = ARGS; return_details::Bool = false)
     outage_count = length(case.outages),
     nominal_voltages_kv = join(case.nominal_voltages_kv, ";"),
     dtf_slack_bus = case.size.slack,
-    net_slack_bus = _slack_bus_name(net),
+    net_slack_bus = _slack_bus_name(net, case),
     notes = "native DTFImporter path; ground-load-flow only",
   )]
 
@@ -179,6 +190,9 @@ function run_validation(args = ARGS; return_details::Bool = false)
         is_pq = flags.is_pq,
       ),
     )
+    # Slack/PV generator P/Q are solved quantities, not the specified input
+    # values. For Slack Q, infer the solved value from branch KCL plus load.
+    # PQ generator Q is expected to stay at its fixed specified value.
     solved_pg = (flags.is_slack || flags.is_pv) ? branch_kcl_p[node.busIdx] + gl.pl : gl.pg_res
     solved_qg = (flags.is_slack || flags.is_pv) ? branch_kcl_q[node.busIdx] + gl.ql : gl.qg_res
     push!(
@@ -309,10 +323,12 @@ function run_validation(args = ARGS; return_details::Bool = false)
       println(io, "- FOR002 file: `", opt["for002-file"], "`")
       println(io, "- baseMVA: ", case.baseMVA, "; buses: ", length(case.buses), "; branches: ", length(case.branches), "; lines: ", count(b -> b.kind != 'T', case.branches), "; transformers: ", count(b -> b.kind == 'T', case.branches))
       println(io, "- transformer controls: ", length(case.transformer_controls), "; outages parsed: ", length(case.outages), "; nominal voltages kV: ", join(case.nominal_voltages_kv, ", "))
-      println(io, "- DTF slack bus: ", case.size.slack, "; Sparlectra slack bus: ", _slack_bus_name(net))
+      println(io, "- DTF slack bus: ", case.size.slack, "; Sparlectra slack bus: ", _slack_bus_name(net, case))
       println(io, "- solver method: ", opt["method"], "; converged: ", converged, "; iterations: ", iters, "; final mismatch: ", final_mismatch)
       println(io, "- total generation MW/MVar: ", sum(r.model_pg_result_MW for r in gen_rows), " / ", sum(r.model_qg_result_MVar for r in gen_rows))
       println(io, "- total load MW/MVar: ", sum(fb.p_load_MW for fb in values(ref.buses)), " / ", sum(fb.q_load_MVar for fb in values(ref.buses)), "; losses MW/MVar: ", p_loss, " / ", q_loss, "\n")
+      println(io, "## What are state residuals?\n")
+      println(io, "State residuals force FOR002 printed voltage magnitudes/angles into the native Sparlectra Ybus. The resulting bus injections are compared with the FOR002 printed bus table. This is more sensitive than solved branch-flow comparisons because FOR002 values may be rounded and transformer-adjacent nodes react strongly to small voltage/angle differences. These residuals are diagnostic, not hard pass/fail criteria yet; branch-flow deviations and solved generator/slack comparisons are currently stronger validation signals.\n")
       for (title, rows, field, label) in [
         ("Top 10 bus voltage deviations", bus_rows, :d_vm_kV, "kV"),
         ("Top 10 branch P deviations", branch_rows, :d_p_from_MW, "MW"),
@@ -368,6 +384,8 @@ function run_validation(args = ARGS; return_details::Bool = false)
   )
   (!opt["quiet"] && opt["print-summary"]) && _print_summary(result)
   opt["strict"] && !converged && exit(1)
+  # The default return value is lightweight for scripts/CLI use; detailed mode
+  # returns diagnostic rows for tests and focused investigations.
   return return_details ?
          (
     case = case,

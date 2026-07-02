@@ -17,6 +17,15 @@ using Printf
 
 include(joinpath(@__DIR__, "dtf_for002_validation_utils.jl"))
 
+# Developer notes:
+# - Validates native Testnetz13 DTF/FOR001 outage cards against FOR002 outage blocks.
+# - The intentional execution path is DTFImporter.read_dtf -> DTFImporter.build_net -> runpf!.
+# - MATPOWER import/export and the generated FOR001 builder are intentionally not used.
+# - FOR002 is treated as a legacy textual reference report.
+# - State residuals are diagnostic, not pass/fail thresholds.
+# - Console output is intentionally concise; detailed rows are written to
+#   CSV/Markdown and returned only in detailed mode.
+
 struct DTFFor002OutageValidationResult
   output_dir::String
   parsed_outages::Int
@@ -97,6 +106,7 @@ _outage_label(o) = string(o.kind, o.voltage_level_index, o.parallel_id, " ", o.f
 function _find_branch(case, outage)
   matches = Int[]
   for (i, b) in enumerate(case.branches)
+    # Be strict: same branch kind, voltage level, parallel id, and endpoints.
     b.kind == outage.kind || continue
     b.voltage_level_index == outage.voltage_level_index || continue
     uppercase(strip(b.parallel_id)) == uppercase(strip(outage.parallel_id)) || continue
@@ -110,6 +120,8 @@ end
 function _find_for002_scenario(scenarios, outage)
   candidates = Int[]
   for (i, s) in enumerate(scenarios)
+    # FOR002 headings usually omit the DTF scenario/branch kind, so only the
+    # available endpoint and parallel-id fields participate in text matching.
     _norm_name(s.from_bus === nothing ? "" : s.from_bus) == _norm_name(outage.from) || continue
     _norm_name(s.to_bus === nothing ? "" : s.to_bus) == _norm_name(outage.to) || continue
     uppercase(strip(s.parallel_id === nothing ? "" : s.parallel_id)) == uppercase(strip(outage.parallel_id)) || continue
@@ -121,6 +133,8 @@ end
 function _apply_single_branch_outage!(net, idx::Int)
   before = [br.status for br in net.branchVec]
   before[idx] == 1 || throw(ArgumentError("matched branch $idx was not initially in service"))
+  # Apply exactly one native branch status change and verify no other branch
+  # moved; this protects the single-branch DTF outage-card interpretation.
   net.branchVec[idx].status = 0
   after = [br.status for br in net.branchVec]
   changed = findall(i -> before[i] != after[i], eachindex(before))
@@ -297,6 +311,8 @@ function _write_markdown(path, opt, case, for002_scenarios, matching_rows, metri
     println(io, "- FOR002 file: `", opt["for002-file"], "`")
     println(io, "- parsed DTF outages: ", length(case.outages))
     println(io, "- parsed FOR002 outage blocks: ", length(for002_scenarios), "\n")
+    println(io, "## What are state residuals?\n")
+    println(io, "State residuals force FOR002 printed voltage magnitudes/angles into the native Sparlectra outage Ybus. The resulting bus injections are compared with the FOR002 printed bus table. This is more sensitive than solved branch-flow comparisons because FOR002 values may be rounded and transformer-adjacent nodes react strongly to small voltage/angle differences. These residuals are diagnostic, not hard pass/fail criteria yet; branch-flow deviations and solved generator/slack comparisons are currently stronger validation signals.\n")
     println(io, "## Matching summary\n")
     for r in matching_rows
       println(io, "- [", r.outage_index, "] ", r.outage_label, ": branch=", r.matched_branch_index, ", FOR002=", r.matched_for002_scenario_index, ", status=", r.match_status)
@@ -326,6 +342,8 @@ function _write_markdown(path, opt, case, for002_scenarios, matching_rows, metri
 end
 
 function _print_summary(result, opt)
+  # Keep normal CLI output short; CSV/Markdown and detailed mode carry row-level
+  # diagnostics for developers.
   println("Native DTF/FOR002 outage validation")
   println("DTF file: ", opt["dtf-file"])
   println("FOR002 file: ", opt["for002-file"])
@@ -373,6 +391,8 @@ function run_validation(args = ARGS; return_details::Bool = false)
   all_kcl = NamedTuple[];
   all_res = NamedTuple[];
   outage_results = NamedTuple[]
+  # Execute only DTF-listed outage cards. FOR002 may contain additional legacy
+  # report blocks, but they are reference material until FOR001 requests them.
   for outage in case.outages
     label = _outage_label(outage);
     branch_matches = _find_branch(case, outage);
@@ -399,6 +419,8 @@ function run_validation(args = ARGS; return_details::Bool = false)
       ),
     )
     status == "matched" || continue
+    # Build a fresh Net per outage so branch-status mutations and solved state
+    # from one contingency cannot leak into the next.
     net = Sparlectra.DTFImporter.build_net(case)
     _apply_single_branch_outage!(net, branch_idx)
     iters, pfstatus = method === nothing ? Sparlectra.runpf!(net, opt["max-iter"], opt["tol"], 0) : Sparlectra.runpf!(net, opt["max-iter"], opt["tol"], 0; method = method)

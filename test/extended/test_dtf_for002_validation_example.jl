@@ -105,6 +105,9 @@ function run_dtf_for002_validation_example_tests()
     @test _csv_data_rows(joinpath(outdir, "dtf_q_semantics_diagnostics.csv")) > 0
     @test _csv_data_rows(joinpath(outdir, "dtf_branch_comparison.csv")) == 27
     @test all(isfinite, _finite_metric_values(joinpath(outdir, "dtf_validation_metrics.csv")))
+    summary = read(joinpath(outdir, "dtf_for002_validation_summary.md"), String)
+    @test occursin("Sparlectra slack bus: BSTADTS1", summary)
+    @test occursin("## What are state residuals?", summary)
 
     cli_outdir = mktempdir()
     cli_output = read(

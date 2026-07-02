@@ -42,6 +42,8 @@ function run_dtf_for002_outage_validation_example_tests()
     @test _csv_data_rows(joinpath(outdir, "dtf_outage_metrics.csv")) == 2
     @test _csv_data_rows(joinpath(outdir, "dtf_outage_bus_comparison.csv")) == 26
     @test _csv_data_rows(joinpath(outdir, "dtf_outage_branch_comparison.csv")) == 54
+    summary = read(joinpath(outdir, "dtf_outage_validation_summary.md"), String)
+    @test occursin("## What are state residuals?", summary)
     for r in detailed.metrics_rows
       @test all(isfinite, Float64[r.final_mismatch, r.max_abs_d_vm_kV, r.max_abs_d_vm_pu, r.max_abs_d_va_deg, r.max_abs_branch_d_p_MW, r.max_abs_branch_d_q_MVar])
     end
