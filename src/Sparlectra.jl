@@ -339,6 +339,8 @@ export
 
   # import.jl
   createNetFromMatPowerFile,              # Import a MATPOWER case file as Net.
+  DTFImporter,                            # Native DTF/FOR001 parser and Net builder.
+  createNetFromDTFFile,                   # Import a legacy DTF/FOR001 file as Net.
   _createDict,
   apply_matpower_bus_voltage!,            # Apply MATPOWER bus voltage data.
   apply_mp_bus_vmva_init!,                # Initialize Vm/Va from MATPOWER data.
@@ -500,6 +502,7 @@ include("tap_control.jl")
 include("busdata.jl")
 include("MatpowerIO.jl")
 include("createnet_powermat.jl")
+include("DTFImporter.jl")
 include("equicircuit.jl")
 include("limits.jl")
 include("losses.jl")
