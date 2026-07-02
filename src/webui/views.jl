@@ -261,6 +261,19 @@ $(error_html)$(_webui_active_run_banner(active_run))$(notice_html)$(profile_noti
 $(config_control)
 <label>$(_webui_field_label("casefile", "Existing MATPOWER case"))$(case_select)<small class="field-hint">Cases from <code>$(_webui_escape(effective_case_directory))</code></small></label>
 <label><span class="field-label">Or type/download MATPOWER case</span>$(case_manual)<small class="field-hint">Manual input overrides the existing-case selection.</small></label>
+<details class="span-2 dtf-internal-section">
+<summary>Input format</summary>
+<fieldset>
+<p class="field-hint span-2">Default remains MATPOWER-oriented. The native DTF/FOR001 path is experimental/internal and intended for diagnostics and validation.</p>
+<label><span class="field-label">Case input format</span><select name="case_format"><option value="auto">Auto</option><option value="matpower">MATPOWER</option><option value="dtf_for001">DTF/FOR001 diagnostics (experimental/internal)</option></select></label>
+<label><span class="field-label">Optional FOR002 reference file</span><input name="for002_reference_file" placeholder="examples/FOR002.DAT"><small class="field-hint">Used only for legacy reference comparison diagnostics.</small></label>
+<label><span class="field-label">DTF outage run mode</span><select name="dtf_outage_selection_mode"><option value="none">Run base case only</option><option value="all">Run all DTF-listed outages</option><option value="selected">Run selected DTF-listed outages</option></select></label>
+<label><span class="field-label">Selected DTF outage labels/indices</span><input name="dtf_outage_selection" placeholder="1 or L1 ALPHA S1 -> BETA1 S1"><small class="field-hint">For selected mode, enter one parsed label or outage index. The result page reports the compact outage summary; detailed rows stay in artifacts.</small></label>
+<label class="check"><input name="write_outage_artifacts" type="hidden" value="false"><input name="write_outage_artifacts" type="checkbox" value="true" checked>Write DTF outage artifacts</label>
+<label class="check"><input name="matpower_export_requested" type="hidden" value="false"><input name="matpower_export_requested" type="checkbox" value="true">Write MATPOWER export artifact</label>
+<label class="check"><input name="write_outage_matpower_exports" type="hidden" value="false"><input name="write_outage_matpower_exports" type="checkbox" value="true">Write MATPOWER outage exports</label>
+</fieldset>
+</details>
 <label>$(_webui_field_label("power_flow_tol", "PowerFlow tolerance"))<input name=\"power_flow_tol\" type=\"number\" step=\"any\" min=\"0\" value=\"$(_webui_input_value(profile_values, "power_flow_tol", _webui_option_default("power_flow_tol")))\"></label>
 <label>$(_webui_field_label("power_flow_max_iter", "Maximum iterations"))<input name=\"power_flow_max_iter\" type=\"number\" min=\"1\" value=\"$(_webui_input_value(profile_values, "power_flow_max_iter", _webui_option_default("power_flow_max_iter")))\"></label>
 <label class=\"check\"><input name=\"power_flow_autodamp\" type=\"hidden\" value=\"false\"><input name=\"power_flow_autodamp\" type=\"checkbox\" value=\"true\"$(_webui_checked(profile_values, "power_flow_autodamp", _webui_option_default("power_flow_autodamp")))>$(_webui_field_label("power_flow_autodamp", "Autodamping enabled"))</label>
@@ -376,6 +389,20 @@ const _WEBUI_RESULT_FIELDS = (
   "final_mismatch",
   "reason",
   "message",
+  "input_format",
+  "input_format_detected",
+  "native_dtf_import_used",
+  "dtf_bus_count",
+  "dtf_branch_count",
+  "dtf_outage_count",
+  "dtf_slack_bus",
+  "for002_reference_used",
+  "outage_validation_requested",
+  "matpower_export_requested",
+  "matpower_export_file",
+  "dcline_status",
+  "unsupported_dcline_status",
+  "dtf_outage_results",
   "Q-limit enforcement mode",
   "Q-limit active-set events",
   "Classical Q-limit outer-loop passes",
@@ -417,7 +444,8 @@ function _webui_result_value(result::AbstractDict, field::AbstractString)
   elseif field == "Configured default case"
     return get(result, "configured_default_casefile", get(get(result, "metadata", Dict{String,Any}()), "configured_default_casefile", "n/a"))
   end
-  value = get(result, field, nothing)
+  metadata = get(result, "metadata", Dict{String,Any}())
+  value = get(result, field, get(metadata, field, nothing))
   value === nothing && return field in _WEBUI_IMPORTANT_RESULT_FIELDS ? "n/a" : ""
   value isa AbstractString && isempty(value) && return field in _WEBUI_IMPORTANT_RESULT_FIELDS ? "n/a" : ""
   return value

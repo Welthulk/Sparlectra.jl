@@ -204,3 +204,13 @@ Julia's final `Test Summary` remains unchanged and visible at the end.
 
 The rectangular convergence and Q-limit active-set diagnostic block is not printed in normal test runs.
 Those diagnostics remain available only through explicit diagnostic requests (for example solver `verbose > 0` paths used during focused debugging).
+
+## Experimental/internal DTF/FOR001 Web/API input path
+
+The PowerFlow service and Web UI include an experimental/internal DTF/FOR001 input path for diagnostics and validation. This path is deliberately cautious and is not yet announced as a public supported file format. Use `case_format = :dtf_for001` for explicit native input, or `case_format = :auto` only when the FOR001 markers are unambiguous; ambiguous `.DAT` files are rejected instead of being silently interpreted.
+
+The native API path uses `DTFImporter.read_dtf` -> `DTFImporter.build_net` -> `Sparlectra.Net` -> `run_sparlectra`/`runpf!` and does not solve through a MATPOWER intermediate conversion. The Web UI places the selector in the advanced/internal **Input format** section with the cautious label "DTF/FOR001 diagnostics (experimental/internal)". FOR002 can be supplied as an optional legacy reference report for diagnostics. DTF-listed outages can be requested explicitly as all outages or selected outage labels/indices; the default remains base-case-only.
+
+Generated artifacts use the existing PowerFlow run artifact mechanism. Stable DTF artifact names include `dtf_import_summary.md`, `dtf_import_summary.csv`, `dtf_for002_base_comparison.md`, `dtf_for002_base_metrics.csv`, `dtf_native_matpower_export.m`, and per-outage files such as `dtf_outage_1_summary.md` and `dtf_outage_1_metrics.csv`.
+
+Limitation/TODO: DC lines, HVDC links, and active MATPOWER `mpc.dcline` data are not modeled by this native DTF/MATPOWER power-flow path. They fail clearly with structured unsupported-DC-line diagnostics instead of being approximated or dropped.
