@@ -474,7 +474,7 @@ end
 
 function _running_as_script()
   return true
-  return !isempty(PROGRAM_FILE) && abspath(PROGRAM_FILE) == abspath(@__FILE__)
+  #return !isempty(PROGRAM_FILE) && abspath(PROGRAM_FILE) == abspath(@__FILE__)
 end
 
 if get(ENV, "SPARLECTRA_FOR002_OUTAGE_VALIDATION_NO_MAIN", "0") != "1" && _running_as_script()
