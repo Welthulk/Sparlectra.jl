@@ -41,6 +41,9 @@ function run_dtf_for002_validation_example_tests()
     @test occursin("DTFImporter.build_net", source)
     @test !occursin("createNetFromMatPower", source)
     @test !occursin("build_for001_testnetz13", source)
+    extended_runner = read(joinpath(repo, "test", "extended", "runtests_extended.jl"), String)
+    @test !occursin("test/runtests.jl", extended_runner)
+    @test !occursin("runtests.jl", replace(extended_runner, "runtests_extended.jl" => ""))
 
     outdir = mktempdir()
     Base.include(Main, joinpath(repo, "examples", "validate_dtf_for002_testnetz13.jl"))
@@ -62,6 +65,9 @@ function run_dtf_for002_validation_example_tests()
       "dtf_for002_validation_summary.md",
       "dtf_import_summary.csv",
       "dtf_bus_comparison.csv",
+      "dtf_generator_comparison.csv",
+      "dtf_bus_kcl_comparison.csv",
+      "dtf_q_semantics_diagnostics.csv",
       "dtf_branch_comparison.csv",
       "dtf_state_residual.csv",
       "dtf_validation_metrics.csv",
@@ -70,6 +76,9 @@ function run_dtf_for002_validation_example_tests()
       @test isfile(joinpath(outdir, name))
     end
     @test _csv_data_rows(joinpath(outdir, "dtf_bus_comparison.csv")) == 13
+    @test _csv_data_rows(joinpath(outdir, "dtf_generator_comparison.csv")) >= count(r -> r.has_generator, result.generator_rows)
+    @test _csv_data_rows(joinpath(outdir, "dtf_bus_kcl_comparison.csv")) == 13
+    @test _csv_data_rows(joinpath(outdir, "dtf_q_semantics_diagnostics.csv")) > 0
     @test _csv_data_rows(joinpath(outdir, "dtf_branch_comparison.csv")) == 27
     @test all(isfinite, _finite_metric_values(joinpath(outdir, "dtf_validation_metrics.csv")))
   end

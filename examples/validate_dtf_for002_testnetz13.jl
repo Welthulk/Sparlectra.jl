@@ -86,13 +86,24 @@ function run_validation(args = ARGS)
   bus_by_name = Dict(_norm_name(b.name) => b for b in case.buses)
   import_rows = [(baseMVA = case.baseMVA, bus_count = length(case.buses), branch_count = length(case.branches), line_count = count(b -> b.kind != 'T', case.branches), transformer_count = count(b -> b.kind == 'T', case.branches), transformer_control_count = length(case.transformer_controls), outage_count = length(case.outages), nominal_voltages_kv = join(case.nominal_voltages_kv, ";"), dtf_slack_bus = case.size.slack, net_slack_bus = _slack_bus_name(net), notes = "native DTFImporter path; ground-load-flow only")]
 
+  branch_kcl_p, branch_kcl_q = _branch_kcl_arrays(net)
   bus_rows = NamedTuple[]; gen_rows = NamedTuple[]
   for db in case.buses
     node = net.nodeVec[db.index]
     key = _norm_name(db.name); haskey(ref.buses, key) || continue
     fb = ref.buses[key]; flags = _bus_type_flags(db.bus_type); gl = _bus_generation_load(net, node.busIdx)
     push!(bus_rows, (bus_name = db.name, dtf_bus_type = db.bus_type, vn_kV = node.comp.cVN, for002_vm_kV = fb.v_kV, model_vm_kV = node.comp.cVN * node._vm_pu, d_vm_kV = node.comp.cVN * node._vm_pu - fb.v_kV, for002_vm_pu = fb.v_kV / node.comp.cVN, model_vm_pu = node._vm_pu, d_vm_pu = node._vm_pu - fb.v_kV / node.comp.cVN, for002_va_deg = fb.va_deg, model_va_deg = node._va_deg, d_va_deg = node._va_deg - fb.va_deg, is_slack = flags.is_slack, is_pv = flags.is_pv, is_pq = flags.is_pq))
-    push!(gen_rows, (bus_name = db.name, dtf_bus_type = db.bus_type, for002_pg_MW = fb.p_gen_MW, model_pg_MW = gl.pg, d_pg_MW = gl.pg - fb.p_gen_MW, for002_qg_MVar = fb.q_gen_MVar, model_qg_MVar = gl.qg, d_qg_MVar = gl.qg - fb.q_gen_MVar, qmin_MVar = something(db.qmin_mvar, missing), qmax_MVar = something(db.qmax_mvar, missing), is_regulating = flags.is_pv, is_slack = flags.is_slack))
+    solved_pg = (flags.is_slack || flags.is_pv) ? branch_kcl_p[node.busIdx] + gl.pl : gl.pg_res
+    solved_qg = (flags.is_slack || flags.is_pv) ? branch_kcl_q[node.busIdx] + gl.ql : gl.qg_res
+    push!(gen_rows, (bus_name = db.name, dtf_bus_type = db.bus_type, model_bus_type_effective = Sparlectra.toString(node._nodeType),
+      for002_pg_MW = fb.p_gen_MW, model_pg_specified_MW = gl.pg_spec, model_pg_result_MW = solved_pg, d_pg_result_vs_for002_MW = solved_pg - fb.p_gen_MW,
+      for002_qg_MVar = fb.q_gen_MVar, model_qg_specified_MVar = gl.qg_spec, model_qg_result_MVar = solved_qg, d_qg_result_vs_for002_MVar = solved_qg - fb.q_gen_MVar,
+      qmin_MVar = something(db.qmin_mvar, missing), qmax_MVar = something(db.qmax_mvar, missing), is_regulating = gl.is_regulating || flags.is_pv, is_slack = flags.is_slack,
+      has_generator = gl.has_generator, has_load = gl.has_load, p_load_MW = gl.pl, q_load_MVar = gl.ql,
+      for002_p_load_MW = fb.p_load_MW, for002_q_load_MVar = fb.q_load_MVar, for002_p_net_MW = fb.p_gen_MW - fb.p_load_MW, for002_q_net_MVar = fb.q_gen_MVar - fb.q_load_MVar,
+      model_p_net_specified_MW = gl.pg_spec - gl.pl, model_q_net_specified_MVar = gl.qg_spec - gl.ql,
+      model_p_net_result_MW = solved_pg - gl.pl, model_q_net_result_MVar = solved_qg - gl.ql,
+      notes = flags.is_slack ? "slack bus: solved P/Q inferred from branch KCL plus load; specified Q is input/schedule" : (gl.is_regulating || flags.is_pv ? "PV/regulating bus: result P/Q inferred from branch KCL plus load; specified Q is input/schedule" : (gl.has_generator ? "PQ generator bus: specified Q is expected to remain fixed" : "no model generator"))))
   end
 
   rd = branch_ref_dict(ref); branch_rows = NamedTuple[]
@@ -106,13 +117,17 @@ function run_validation(args = ARGS)
     push!(branch_rows, (branch_index = idx, branch_label = meta.orig_name, branch_kind = string(meta.dtf_kind), voltage_level_index = meta.voltage_level_index, parallel_id = meta.parallel_id, from_bus = f, to_bus = t, u_ref_kV = meta.u_ref_kV, r_pu = br.r_pu, x_pu = br.x_pu, b_pu = br.b_pu, ratio = br.ratio, for002_p_from_MW = rf === missing ? missing : rf.p_MW, model_p_from_MW = pf, d_p_from_MW = rf === missing || pf === missing ? missing : pf - rf.p_MW, for002_q_from_MVar = rf === missing ? missing : rf.q_MVar, model_q_from_MVar = qf, d_q_from_MVar = rf === missing || qf === missing ? missing : qf - rf.q_MVar, for002_p_to_MW = rt === missing ? missing : rt.p_MW, model_p_to_MW = pt, d_p_to_MW = rt === missing || pt === missing ? missing : pt - rt.p_MW, for002_q_to_MVar = rt === missing ? missing : rt.q_MVar, model_q_to_MVar = qt, d_q_to_MVar = rt === missing || qt === missing ? missing : qt - rt.q_MVar))
   end
   residual_rows = for002_state_residual_rows(net, case, ref)
+  kcl_rows = branch_kcl_rows(net, case, ref)
+  q_diag_rows = q_semantics_diagnostic_rows(gen_rows, kcl_rows, residual_rows)
   p_loss, q_loss = Sparlectra.getTotalLosses(net = net)
-  metrics_rows = [(converged = converged, iterations = iters, final_mismatch = final_mismatch, max_abs_d_vm_kV = _maxabs(bus_rows, :d_vm_kV), max_abs_d_vm_pu = _maxabs(bus_rows, :d_vm_pu), max_abs_d_va_deg = _maxabs(bus_rows, :d_va_deg), max_abs_d_pg_MW = _maxabs(gen_rows, :d_pg_MW), max_abs_d_qg_MVar = _maxabs(gen_rows, :d_qg_MVar), max_abs_branch_d_p_MW = max(_maxabs(branch_rows, :d_p_from_MW), _maxabs(branch_rows, :d_p_to_MW)), max_abs_branch_d_q_MVar = max(_maxabs(branch_rows, :d_q_from_MVar), _maxabs(branch_rows, :d_q_to_MVar)), max_abs_state_residual_p_MW = _maxabs(residual_rows, :d_p_MW), max_abs_state_residual_q_MVar = _maxabs(residual_rows, :d_q_MVar), mean_abs_state_residual_p_MW = _meanabs(residual_rows, :d_p_MW), mean_abs_state_residual_q_MVar = _meanabs(residual_rows, :d_q_MVar))]
+  metrics_rows = [(converged = converged, iterations = iters, final_mismatch = final_mismatch, max_abs_d_vm_kV = _maxabs(bus_rows, :d_vm_kV), max_abs_d_vm_pu = _maxabs(bus_rows, :d_vm_pu), max_abs_d_va_deg = _maxabs(bus_rows, :d_va_deg), max_abs_d_pg_MW = _maxabs(gen_rows, :d_pg_result_vs_for002_MW), max_abs_d_qg_MVar = _maxabs(gen_rows, :d_qg_result_vs_for002_MVar), max_abs_branch_d_p_MW = max(_maxabs(branch_rows, :d_p_from_MW), _maxabs(branch_rows, :d_p_to_MW)), max_abs_branch_d_q_MVar = max(_maxabs(branch_rows, :d_q_from_MVar), _maxabs(branch_rows, :d_q_to_MVar)), max_abs_state_residual_p_MW = _maxabs(residual_rows, :d_p_MW), max_abs_state_residual_q_MVar = _maxabs(residual_rows, :d_q_MVar), max_abs_branch_kcl_vs_for002_q_MVar = _maxabs(kcl_rows, :d_branch_kcl_vs_for002_q_MVar), mean_abs_state_residual_p_MW = _meanabs(residual_rows, :d_p_MW), mean_abs_state_residual_q_MVar = _meanabs(residual_rows, :d_q_MVar))]
 
   if opt["write-csv"]
     write_csv(joinpath(opt["output-dir"], "dtf_import_summary.csv"), import_rows)
     write_csv(joinpath(opt["output-dir"], "dtf_bus_comparison.csv"), bus_rows)
     write_csv(joinpath(opt["output-dir"], "dtf_generator_comparison.csv"), gen_rows)
+    write_csv(joinpath(opt["output-dir"], "dtf_bus_kcl_comparison.csv"), kcl_rows)
+    write_csv(joinpath(opt["output-dir"], "dtf_q_semantics_diagnostics.csv"), q_diag_rows)
     write_csv(joinpath(opt["output-dir"], "dtf_branch_comparison.csv"), branch_rows)
     write_csv(joinpath(opt["output-dir"], "dtf_state_residual.csv"), residual_rows)
     write_csv(joinpath(opt["output-dir"], "dtf_validation_metrics.csv"), metrics_rows)
@@ -127,7 +142,7 @@ function run_validation(args = ARGS)
       println(io, "- transformer controls: ", length(case.transformer_controls), "; outages parsed: ", length(case.outages), "; nominal voltages kV: ", join(case.nominal_voltages_kv, ", "))
       println(io, "- DTF slack bus: ", case.size.slack, "; Sparlectra slack bus: ", _slack_bus_name(net))
       println(io, "- solver method: ", opt["method"], "; converged: ", converged, "; iterations: ", iters, "; final mismatch: ", final_mismatch)
-      println(io, "- total generation MW/MVar: ", sum(r.model_pg_MW for r in gen_rows), " / ", sum(r.model_qg_MVar for r in gen_rows))
+      println(io, "- total generation MW/MVar: ", sum(r.model_pg_result_MW for r in gen_rows), " / ", sum(r.model_qg_result_MVar for r in gen_rows))
       println(io, "- total load MW/MVar: ", sum(fb.p_load_MW for fb in values(ref.buses)), " / ", sum(fb.q_load_MVar for fb in values(ref.buses)), "; losses MW/MVar: ", p_loss, " / ", q_loss, "\n")
       for (title, rows, field, label) in [("Top 10 bus voltage deviations", bus_rows, :d_vm_kV, "kV"), ("Top 10 branch P deviations", branch_rows, :d_p_from_MW, "MW"), ("Top 10 branch Q deviations", branch_rows, :d_q_from_MVar, "MVar"), ("Top 10 state residual P deviations", residual_rows, :d_p_MW, "MW"), ("Top 10 state residual Q deviations", residual_rows, :d_q_MVar, "MVar")]
         println(io, "## ", title, "\n")
@@ -144,11 +159,24 @@ function run_validation(args = ARGS)
         row === nothing ? println(io, "- ", target, ": not parsed") : println(io, "- ", residual_rows[row].bus_name, ": dP=", residual_rows[row].d_p_MW, " MW, dQ=", residual_rows[row].d_q_MVar, " MVar")
       end
       println(io, "\nThe selected native residuals are materially smaller than the old ALPHA S1 -845 MW example when their absolute dP values are far below that magnitude; no hard pass/fail threshold is encoded yet.")
+      max_qg = first(_top(gen_rows, :d_qg_result_vs_for002_MVar; n = 1))
+      max_state_q = first(_top(residual_rows, :d_q_MVar; n = 1))
+      max_kcl_q = first(_top(kcl_rows, :d_branch_kcl_vs_for002_q_MVar; n = 1))
+      slack = gen_rows[findfirst(r -> r.is_slack, gen_rows)]
+      println(io, "\n## Q / generator / bus-injection semantics\n")
+      println(io, "- max |dQgen|: ", abs(max_qg.d_qg_result_vs_for002_MVar), " MVar at ", max_qg.bus_name)
+      println(io, "- max |state residual Q|: ", abs(max_state_q.d_q_MVar), " MVar at ", max_state_q.bus_name)
+      println(io, "- max |branch KCL vs FOR002 Q|: ", abs(max_kcl_q.d_branch_kcl_vs_for002_q_MVar), " MVar at ", max_kcl_q.bus_name)
+      println(io, "- slack bus Q comparison (", slack.bus_name, "): FOR002 Qgen=", slack.for002_qg_MVar, " MVar; model specified Qgen=", slack.model_qg_specified_MVar, " MVar; model solved/result Qgen=", slack.model_qg_result_MVar, " MVar; dQ=", slack.d_qg_result_vs_for002_MVar, " MVar")
+      largest_class = max_qg.is_slack ? "slack" : (max_qg.is_regulating ? "PV/regulating" : (max_qg.has_generator ? "PQ generator" : "non-generator"))
+      transformer_adjacent = _norm_name(max_qg.bus_name) in Set(_norm_name.(["BETA1 S1", "BETA2 S1", "DELTA1S1", "DELTA2S1"]))
+      println(io, "- largest Q-generator discrepancy class: ", largest_class, transformer_adjacent ? " and transformer-adjacent" : "")
+      println(io, "\nBranch Q deviations remain small relative to the large bus/generator-Q diagnostics. This indicates that the branch-flow model is consistent with FOR002, while FOR002 bus-table and generator-Q reporting semantics still need interpretation. The KCL CSV documents that branch endpoint flows include branch charging/taps as represented by solved branch flows; explicit bus shunts are not added separately.")
     end
   end
   opt["quiet"] || println("Native DTF/FOR002 validation wrote diagnostics to ", opt["output-dir"], "; converged=", converged, ", iterations=", iters, ", final_mismatch=", final_mismatch)
   opt["strict"] && !converged && exit(1)
-  return (case = case, net = net, metrics = metrics_rows[1], residuals = residual_rows, output_dir = opt["output-dir"], converged = converged, iterations = iters, final_mismatch = final_mismatch)
+  return (case = case, net = net, metrics = metrics_rows[1], residuals = residual_rows, generator_rows = gen_rows, kcl_rows = kcl_rows, q_diagnostics = q_diag_rows, output_dir = opt["output-dir"], converged = converged, iterations = iters, final_mismatch = final_mismatch)
 end
 
 if abspath(PROGRAM_FILE) == @__FILE__

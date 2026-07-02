@@ -95,15 +95,106 @@ function _find_ps_by_bus(net, bus_idx::Int)
 end
 
 function _bus_generation_load(net, bus_idx::Int)
-  pg = qg = pl = ql = 0.0
+  pg_spec = qg_spec = pg_res = qg_res = pl = ql = 0.0
+  has_generator = has_load = is_regulating = false
   for ps in _find_ps_by_bus(net, bus_idx)
     if Sparlectra.isGenerator(ps)
-      pg += something(ps.pRes, ps.pVal, 0.0); qg += something(ps.qRes, ps.qVal, 0.0)
+      has_generator = true
+      is_regulating |= ps.isRegulated
+      p_spec = something(ps.pVal, 0.0); q_spec = something(ps.qVal, 0.0)
+      pg_spec += p_spec; qg_spec += q_spec
+      pg_res += something(ps.pRes, p_spec); qg_res += something(ps.qRes, q_spec)
     else
+      has_load = true
       pl += something(ps.pVal, 0.0); ql += something(ps.qVal, 0.0)
     end
   end
-  return (pg = pg, qg = qg, pl = pl, ql = ql)
+  return (pg_spec = pg_spec, qg_spec = qg_spec, pg_res = pg_res, qg_res = qg_res, pl = pl, ql = ql, has_generator = has_generator, has_load = has_load, is_regulating = is_regulating)
+end
+
+function _branch_kcl_arrays(net)
+  branch_p = zeros(Float64, length(net.nodeVec)); branch_q = zeros(Float64, length(net.nodeVec))
+  for br in net.branchVec
+    if br.fBranchFlow !== nothing
+      branch_p[br.fromBus] += something(br.fBranchFlow.pFlow, 0.0)
+      branch_q[br.fromBus] += something(br.fBranchFlow.qFlow, 0.0)
+    end
+    if br.tBranchFlow !== nothing
+      branch_p[br.toBus] += something(br.tBranchFlow.pFlow, 0.0)
+      branch_q[br.toBus] += something(br.tBranchFlow.qFlow, 0.0)
+    end
+  end
+  return branch_p, branch_q
+end
+
+function branch_kcl_rows(net, case, ref::For002Scenario)
+  branch_p, branch_q = _branch_kcl_arrays(net)
+  rows = NamedTuple[]
+  for bus in case.buses
+    idx = bus.index; node = net.nodeVec[idx]; key = _norm_name(bus.name)
+    haskey(ref.buses, key) || continue
+    fb = ref.buses[key]; flags = _bus_type_flags(bus.bus_type); gl = _bus_generation_load(net, idx)
+    for002_pnet = fb.p_gen_MW - fb.p_load_MW; for002_qnet = fb.q_gen_MVar - fb.q_load_MVar
+    spec_pnet = gl.pg_spec - gl.pl; spec_qnet = gl.qg_spec - gl.ql
+    solved_pg = (flags.is_slack || flags.is_pv) ? branch_p[idx] + gl.pl : gl.pg_res
+    solved_qg = (flags.is_slack || flags.is_pv) ? branch_q[idx] + gl.ql : gl.qg_res
+    res_pnet = solved_pg - gl.pl; res_qnet = solved_qg - gl.ql
+    notes = "branch_kcl sums solved branch endpoint flows; branch charging/taps are included in endpoint flows; explicit bus shunts are not added separately"
+    (abs(node._pShunt) > 1e-12 || abs(node._qShunt) > 1e-12) && (notes *= "; bus has nonzero explicit shunt fields")
+    push!(rows, (bus_name = bus.name, dtf_bus_type = bus.bus_type, is_slack = flags.is_slack, is_pv = flags.is_pv, is_pq = flags.is_pq,
+      for002_p_gen_MW = fb.p_gen_MW, for002_q_gen_MVar = fb.q_gen_MVar, for002_p_load_MW = fb.p_load_MW, for002_q_load_MVar = fb.q_load_MVar,
+      for002_p_net_MW = for002_pnet, for002_q_net_MVar = for002_qnet,
+      model_specified_p_net_MW = spec_pnet, model_specified_q_net_MVar = spec_qnet,
+      model_result_p_net_MW = res_pnet, model_result_q_net_MVar = res_qnet,
+      branch_kcl_p_net_MW = branch_p[idx], branch_kcl_q_net_MVar = branch_q[idx],
+      d_model_result_vs_for002_p_MW = res_pnet - for002_pnet, d_model_result_vs_for002_q_MVar = res_qnet - for002_qnet,
+      d_branch_kcl_vs_for002_p_MW = branch_p[idx] - for002_pnet, d_branch_kcl_vs_for002_q_MVar = branch_q[idx] - for002_qnet,
+      d_branch_kcl_vs_model_result_p_MW = branch_p[idx] - res_pnet, d_branch_kcl_vs_model_result_q_MVar = branch_q[idx] - res_qnet,
+      notes = notes))
+  end
+  return rows
+end
+
+function _likely_q_explanation(genrow, kclrow, residualrow)
+  genrow.is_slack && return "slack_q_reporting_difference"
+  genrow.is_regulating && abs(genrow.d_qg_result_vs_for002_MVar) > 1e-6 && return "pv_q_result_vs_input_difference"
+  genrow.has_generator && !genrow.is_regulating && abs(genrow.model_qg_specified_MVar - genrow.for002_qg_MVar) <= 1e-6 && return "pq_generator_fixed_q_matches_input"
+  abs(kclrow.d_branch_kcl_vs_for002_q_MVar) > 10 && abs(kclrow.d_branch_kcl_vs_model_result_q_MVar) <= 1e-6 && return "for002_bus_q_net_not_equal_simple_gen_minus_load"
+  abs(kclrow.d_branch_kcl_vs_for002_q_MVar) > 10 && return "branch_flows_match_but_bus_q_table_differs"
+  return "needs_manual_review"
+end
+
+function q_semantics_diagnostic_rows(gen_rows, kcl_rows, residual_rows)
+  gen_by_bus = Dict(_norm_name(r.bus_name) => r for r in gen_rows)
+  kcl_by_bus = Dict(_norm_name(r.bus_name) => r for r in kcl_rows)
+  res_by_bus = Dict(_norm_name(r.bus_name) => r for r in residual_rows)
+  wanted = Set{Tuple{String,String}}()
+  for r in first(sort(gen_rows, by = r -> -abs(r.d_qg_result_vs_for002_MVar)), min(10, length(gen_rows)))
+    push!(wanted, ("top_abs_d_qg_result_vs_for002", _norm_name(r.bus_name)))
+  end
+  for r in first(sort(residual_rows, by = r -> -abs(r.d_q_MVar)), min(10, length(residual_rows)))
+    push!(wanted, ("top_abs_state_residual_q", _norm_name(r.bus_name)))
+  end
+  for r in first(sort(kcl_rows, by = r -> -abs(r.d_branch_kcl_vs_for002_q_MVar)), min(10, length(kcl_rows)))
+    push!(wanted, ("top_abs_branch_kcl_vs_for002_q", _norm_name(r.bus_name)))
+  end
+  for r in gen_rows
+    (r.is_slack || r.has_generator) && push!(wanted, (r.is_slack ? "slack_bus" : "generator_bus", _norm_name(r.bus_name)))
+  end
+  for name in ["BETA1 S1", "BETA2 S1", "DELTA1S1", "DELTA2S1"]
+    push!(wanted, ("transformer_adjacent_bus", _norm_name(name)))
+  end
+  rows = NamedTuple[]
+  for (category, key) in sort(collect(wanted))
+    haskey(gen_by_bus, key) && haskey(kcl_by_bus, key) && haskey(res_by_bus, key) || continue
+    g = gen_by_bus[key]; k = kcl_by_bus[key]; r = res_by_bus[key]
+    push!(rows, (category = category, bus_name = g.bus_name, dtf_bus_type = g.dtf_bus_type, is_slack = g.is_slack, is_regulating = g.is_regulating,
+      for002_q_gen_MVar = g.for002_qg_MVar, model_qg_specified_MVar = g.model_qg_specified_MVar, model_qg_result_MVar = g.model_qg_result_MVar,
+      d_qg_result_vs_for002_MVar = g.d_qg_result_vs_for002_MVar, for002_q_net_MVar = g.for002_q_net_MVar,
+      model_q_net_result_MVar = g.model_q_net_result_MVar, branch_kcl_q_net_MVar = k.branch_kcl_q_net_MVar,
+      state_residual_q_MVar = r.d_q_MVar, likely_explanation = _likely_q_explanation(g, k, r)))
+  end
+  return rows
 end
 
 function branch_ref_dict(s::For002Scenario)
