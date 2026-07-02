@@ -60,6 +60,16 @@ Only keys in `GUI_EDITABLE_CONFIG_KEYS` are accepted. The initial allowlist is:
 - `power_flow.wrong_branch_detection`
 - `power_flow.start_mode.angle_mode`
 - `power_flow.start_mode.voltage_mode`
+- `power_flow.start_current_iteration.enabled`
+- `power_flow.start_current_iteration.max_iter`
+- `power_flow.start_current_iteration.tol`
+- `power_flow.start_current_iteration.damping`
+- `power_flow.start_current_iteration.accept_only_if_improved`
+- `power_flow.start_current_iteration.min_improvement_factor`
+- `power_flow.start_current_iteration.vm_min_pu`
+- `power_flow.start_current_iteration.vm_max_pu`
+- `power_flow.start_current_iteration.max_angle_step_deg`
+- `power_flow.start_current_iteration.only_for_large_cases`
 - `output.logfile_results`
 - `output.detailed_result_csv_write_mode`
 - `output.detailed_result_csv_exporter`
@@ -80,6 +90,17 @@ in `output_dir/run_metadata.yaml`. Successful and failed calls also write
 any generated CSV or report files, so clients never need to guess filenames.
 Each `SparlectraApiArtifact` includes an absolute path, MIME type, existence
 flag, byte size, kind, and description.
+
+When the guarded current-iteration start pre-solve is present in rectangular
+solver status, API result metadata exposes the start-preconditioner outcome:
+`current_iteration_enabled`, `current_iteration_attempted`,
+`current_iteration_accepted`, `current_iteration_iterations`,
+`current_iteration_initial_mismatch`, `current_iteration_final_mismatch`,
+`current_iteration_reason`, and `current_iteration_artifact`. The metadata
+describes only the start-value pre-solve; Newton-Raphson remains the power-flow
+solver. The `current_iteration_start.log` artifact is classified as a
+start-value/current-iteration diagnostic artifact, not merely as a generic run
+log.
 
 ## Serialization
 
