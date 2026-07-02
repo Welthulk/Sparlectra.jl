@@ -86,7 +86,8 @@ struct DTFTransformerControl
   max_tap_step::Union{Nothing,Int}
   actual_tap_step::Union{Nothing,Int}
   quadrature_range_percent::Union{Nothing,Float64}
-  quadrature_steps::Union{Nothing,Int}
+  quadrature_max_steps::Union{Nothing,Int}
+  quadrature_actual_step::Union{Nothing,Int}
 end
 
 struct DTFOutage
@@ -151,19 +152,26 @@ function _parse_bus(line::String, index::Int)::DTFBus
 end
 
 function _parse_transformer_control(line::String, index::Int)::DTFTransformerControl
+  control_type = String(strip(_slice(line, 1, 1)))
+  variable_flag = String(strip(_slice(line, 2, 2)))
   parallel_id = String(strip(_slice(line, 3, 3)))
+  phase_shifter_flag = String(strip(_slice(line, 4, 4)))
   from = String(strip(_slice(line, 6, 13)))
   to = String(strip(_slice(line, 16, 23)))
-  vals = _numbers(_slice(line, 24, lastindex(line)))
-  return DTFTransformerControl(line, index, strip(_slice(line, 1, 1)), strip(_slice(line, 2, 2)), parallel_id, "", from, to,
-    length(vals) >= 1 ? vals[1] : nothing,
-    length(vals) >= 2 ? vals[2] : nothing,
-    length(vals) >= 3 ? vals[3] : nothing,
-    length(vals) >= 4 ? vals[4] : nothing,
-    length(vals) >= 5 ? Int(round(vals[5])) : nothing,
-    length(vals) >= 6 ? Int(round(vals[6])) : nothing,
-    length(vals) >= 7 ? vals[7] : nothing,
-    length(vals) >= 8 ? Int(round(vals[8])) : nothing)
+
+  # DTF transformer-control cards are fixed-column records. Adjacent numeric
+  # fields may appear without separators (for example `400.0231.012.50`), so
+  # this parser must not use the generic `_numbers` scanner here.
+  return DTFTransformerControl(line, index, control_type, variable_flag, parallel_id, phase_shifter_flag, from, to,
+    _parse_float(_slice(line, 26, 30)),
+    _parse_float(_slice(line, 31, 35)),
+    _parse_float(_slice(line, 36, 40)),
+    _parse_float(_slice(line, 41, 45)),
+    _parse_int(_slice(line, 46, 50)),
+    _parse_int(_slice(line, 51, 55)),
+    _parse_float(_slice(line, 56, 60)),
+    _parse_int(_slice(line, 61, 65)),
+    _parse_int(_slice(line, 66, 70)))
 end
 
 function _find_control(branch::DTFBranch, controls::Vector{DTFTransformerControl})
@@ -238,13 +246,21 @@ function _branch_pu(case::DTFCase, branch::DTFBranch)
   return (r = branch.r_ohm / z_base_ohm, x = branch.x_ohm / z_base_ohm, g = branch.g_s * z_base_ohm, b = branch.b_s * z_base_ohm, u_ref_kv = u_ref_kv)
 end
 
-function _actual_ratio(control::Union{Nothing,DTFTransformerControl})
+function _dtf_transformer_ratio(case::DTFCase, branch::DTFBranch, control::Union{Nothing,DTFTransformerControl}, from_bus::DTFBus, to_bus::DTFBus)
   control === nothing && return nothing
   control.nominal_unregulated_kv === nothing && return nothing
   control.nominal_regulated_kv === nothing && return nothing
   control.nominal_regulated_kv == 0.0 && return nothing
-  # Task-1 MVP: keep the fixed actual ratio used by the existing FOR001 builder.
-  return control.nominal_unregulated_kv / control.nominal_regulated_kv
+  from_vn = case.nominal_voltages_kv[from_bus.voltage_level_index]
+  to_vn = case.nominal_voltages_kv[to_bus.voltage_level_index]
+  to_vn == 0.0 && return nothing
+
+  # DTF control cards carry transformer winding nominal voltages. Sparlectra
+  # expects the fixed off-nominal deviation relative to the bus voltage-level
+  # ratio, matching the legacy FOR001 builder/MATPOWER path.
+  actual_ratio = control.nominal_unregulated_kv / control.nominal_regulated_kv
+  nominal_network_ratio = from_vn / to_vn
+  return actual_ratio / nominal_network_ratio
 end
 
 """
@@ -258,30 +274,45 @@ executed by this Task-1 MVP.
 function build_net(case::DTFCase; bus_shunt_model = :admittance)::Net
   shunt_model = normalize_bus_shunt_model(bus_shunt_model)
   net = Net(name = isempty(case.texts) ? "DTF" : String(strip(case.texts[1])), baseMVA = case.baseMVA, bus_shunt_model = shunt_model)
+  bus_by_name = Dict(bus.name => bus for bus in case.buses)
   for bus in case.buses
-    vn = bus.start_kv > 0 ? bus.start_kv : case.nominal_voltages_kv[bus.voltage_level_index]
-    vm = vn / case.nominal_voltages_kv[bus.voltage_level_index]
+    vn = case.nominal_voltages_kv[bus.voltage_level_index]
+    vm = bus.start_kv > 0 ? bus.start_kv / vn : 1.0
     addBus!(net = net, busName = bus.name, vn_kV = vn, vm_pu = vm, va_deg = bus.angle_deg, isAux = false, oBusIdx = bus.index)
     if bus.pd_mw != 0.0 || bus.qd_mvar != 0.0
       addProsumer!(net = net, busName = bus.name, type = "ENERGYCONSUMER", p = bus.pd_mw, q = bus.qd_mvar, defer_bus_type_refresh = true)
     end
     if bus.pg_mw != 0.0 || bus.qg_mvar != 0.0 || bus.bus_type == 2
-      type = bus.bus_type == 2 ? "SYNCHRONOUSMACHINE" : "GENERATOR"
-      ref = bus.bus_type == 2 ? bus.name : nothing
-      addProsumer!(net = net, busName = bus.name, type = type, p = bus.pg_mw, q = bus.qg_mvar, qMin = something(bus.qmin_mvar, -case.baseMVA), qMax = something(bus.qmax_mvar, case.baseMVA), referencePri = ref, vm_pu = vm, va_deg = bus.angle_deg)
+      if bus.bus_type == 2
+        addProsumer!(net = net, busName = bus.name, type = "SYNCHRONOUSMACHINE", p = bus.pg_mw, q = bus.qg_mvar, qMin = bus.qmin_mvar, qMax = bus.qmax_mvar, referencePri = bus.name, vm_pu = vm, va_deg = bus.angle_deg)
+      elseif bus.bus_type == 1 || bus.bus_type == 4
+        addProsumer!(net = net, busName = bus.name, type = "GENERATOR", p = bus.pg_mw, q = bus.qg_mvar, qMin = bus.qmin_mvar, qMax = bus.qmax_mvar, vm_pu = vm, va_deg = bus.angle_deg)
+      else
+        # DTF bus types 0 and 3 are PQ buses. Do not pass `vm_pu` here:
+        # `addProsumer!` treats the presence of a voltage setpoint as voltage
+        # regulation, which would incorrectly turn PQ generator injections into
+        # PV buses solely because Pg/Qg are present.
+        addProsumer!(net = net, busName = bus.name, type = "GENERATOR", p = bus.pg_mw, q = bus.qg_mvar, qMin = bus.qmin_mvar, qMax = bus.qmax_mvar, isRegulated = false)
+      end
     end
   end
   for branch in case.branches
     pu = _branch_pu(case, branch)
     from = geNetBusIdx(net = net, busName = branch.from)
     to = geNetBusIdx(net = net, busName = branch.to)
+    # TODO: confirm whether DTF branch current ratings should use the branch
+    # voltage-level reference or a physical terminal voltage. Preserve Task-1
+    # behavior for now and expose the chosen/reference voltages in metadata.
     ratedS = branch.imax_ka === nothing ? nothing : sqrt(3.0) * pu.u_ref_kv * branch.imax_ka
     if branch.kind == 'T'
       control = _find_control(branch, case.transformer_controls)
-      _addPIModelTrafo_by_idx!(net = net, from = from, to = to, r_pu = pu.r, x_pu = pu.x, b_pu = pu.b, status = 1, ratedU = pu.u_ref_kv, ratedS = ratedS, ratio = _actual_ratio(control), shift_deg = something(control === nothing ? nothing : control.added_voltage_angle_deg, 0.0))
+      ratio = _dtf_transformer_ratio(case, branch, control, bus_by_name[branch.from], bus_by_name[branch.to])
+      _addPIModelTrafo_by_idx!(net = net, from = from, to = to, r_pu = pu.r, x_pu = pu.x, b_pu = pu.b, status = 1, ratedU = pu.u_ref_kv, ratedS = ratedS, ratio = ratio, shift_deg = something(control === nothing ? nothing : control.added_voltage_angle_deg, 0.0))
     else
       _addPIModelACLine_by_idx!(net = net, from = from, to = to, r_pu = pu.r, x_pu = pu.x, b_pu = pu.b, status = 1, ratedS = ratedS)
     end
+    from_bus = bus_by_name[branch.from]
+    to_bus = bus_by_name[branch.to]
     net.matpower_branch_metadata[length(net.branchVec)] = (
       orig_name = string(branch.kind, branch.voltage_level_index, branch.parallel_id, " ", branch.from, " -> ", branch.to),
       orig_kind = branch.kind == 'T' ? :transformer : :line,
@@ -290,6 +321,9 @@ function build_net(case::DTFCase; bus_shunt_model = :admittance)::Net
       parallel_id = branch.parallel_id,
       voltage_level_index = branch.voltage_level_index,
       u_ref_kV = pu.u_ref_kv,
+      rate_u_ref_kV = pu.u_ref_kv,
+      from_bus_vn_kV = case.nominal_voltages_kv[from_bus.voltage_level_index],
+      to_bus_vn_kV = case.nominal_voltages_kv[to_bus.voltage_level_index],
       g_pu = pu.g,
       r_ohm = branch.r_ohm,
       x_ohm = branch.x_ohm,

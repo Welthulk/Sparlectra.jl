@@ -23,6 +23,16 @@ function _branch(case, from::String, to::String; kind::Char = 'L')
   return first(matches)
 end
 
+function _branch(case, from::String, to::String, parallel_id::String; kind::Char = 'L')
+  matches = [b for b in case.branches if b.from == from && b.to == to && b.kind == kind && b.parallel_id == parallel_id]
+  return first(matches)
+end
+
+function _control(case, from::String, to::String, parallel_id::String)
+  matches = [c for c in case.transformer_controls if c.from == from && c.to == to && c.parallel_id == parallel_id]
+  return first(matches)
+end
+
 function _net_multiplicity(net, from::String, to::String)
   from_idx = Sparlectra.geNetBusIdx(net = net, busName = from)
   to_idx = Sparlectra.geNetBusIdx(net = net, busName = to)
@@ -78,6 +88,28 @@ function run_dtf_importer_tests()
     @test trafo_pu.b ≈ -1.84e-5 * zbase_231
     @test !(trafo_pu.x ≈ 0.0051375)
 
+    beta_control = _control(case, "BETA1 S1", "BETA2 S1", "C")
+    @test beta_control.regulated_side == "R"
+    @test beta_control.unregulated_side == ""
+    @test beta_control.parallel_id == "C"
+    @test beta_control.phase_shifter_flag == ""
+    @test beta_control.nominal_unregulated_kv == 400.0
+    @test beta_control.nominal_regulated_kv == 231.0
+    @test beta_control.longitudinal_range_percent == 12.5
+    @test beta_control.added_voltage_angle_deg == 0.0
+    @test beta_control.max_tap_step == 9
+    @test beta_control.actual_tap_step == 0
+    @test beta_control.quadrature_range_percent == 0.0
+    @test beta_control.quadrature_max_steps == 0
+    @test beta_control.quadrature_actual_step == 0
+
+    delta_control = _control(case, "DELTA1S1", "DELTA2S1", "B")
+    @test delta_control.nominal_unregulated_kv == 400.0
+    @test delta_control.nominal_regulated_kv == 231.0
+    @test delta_control.longitudinal_range_percent == 18.0
+    @test delta_control.max_tap_step == 13
+    @test delta_control.actual_tap_step == 0
+
     net = Sparlectra.createNetFromDTFFile(DTF_FIXTURE)
     @test net isa Sparlectra.Net
     ok, msg = Sparlectra.validate!(net = net)
@@ -87,6 +119,53 @@ function run_dtf_importer_tests()
     for ((from, to), expected) in expected_parallel
       @test _net_multiplicity(net, from, to) == expected
     end
+
+    beta_branch = _branch(case, "BETA1 S1", "BETA2 S1", "C"; kind = 'T')
+    delta_branch = _branch(case, "DELTA1S1", "DELTA2S1", "B"; kind = 'T')
+    @test net.branchVec[beta_branch.index].ratio ≈ 230.0 / 231.0
+    @test !(net.branchVec[beta_branch.index].ratio ≈ 400.0 / 231.0)
+    @test net.branchVec[delta_branch.index].ratio ≈ 230.0 / 231.0
+
+    for bus in case.buses
+      idx = Sparlectra.geNetBusIdx(net = net, busName = bus.name)
+      @test Sparlectra.getNodeVn(net.nodeVec[idx]) == case.nominal_voltages_kv[bus.voltage_level_index]
+      @test net.nodeVec[idx]._vm_pu == 1.0
+    end
+
+    for bus_name in ("BETA2 S1", "NORD  S1", "WEILERS1", "SUED  S1")
+      idx = Sparlectra.geNetBusIdx(net = net, busName = bus_name)
+      gens = [ps for ps in net.prosumpsVec if Sparlectra.getPosumerBusIndex(ps) == idx && Sparlectra.isGenerator(ps.proSumptionType)]
+      @test !isempty(gens)
+      @test all(ps -> !ps.isRegulated, gens)
+      @test Sparlectra.isPQNode(net.nodeVec[idx])
+    end
+
+    slack_idx = Sparlectra.geNetBusIdx(net = net, busName = "BSTADTS1")
+    @test slack_idx in net.slackVec
+    slack_gens = [ps for ps in net.prosumpsVec if Sparlectra.getPosumerBusIndex(ps) == slack_idx && ps.referencePri == slack_idx]
+    @test !isempty(slack_gens)
+
+    synthetic = Sparlectra.DTFImporter.DTFCase(
+      "synthetic",
+      100.0,
+      Sparlectra.DTFImporter.DTFParams("", Float64[]),
+      ["synthetic"],
+      [230.0],
+      Sparlectra.DTFImporter.DTFSize("", 2, 1, 0, 0, "SLACK"),
+      [Sparlectra.DTFImporter.DTFBranch("", 1, 'L', 1, "", "PV", "SLACK", 0.01, 0.1, 0.0, 0.0, nothing)],
+      Sparlectra.DTFImporter.DTFCompensation[],
+      Sparlectra.DTFImporter.DTFTransformerControl[],
+      [
+        Sparlectra.DTFImporter.DTFBus("", 1, 1, 1, "PV", 230.0, 0.0, 0.0, 0.0, 10.0, 2.0, -5.0, 5.0),
+        Sparlectra.DTFImporter.DTFBus("", 2, 2, 1, "SLACK", 230.0, 0.0, 0.0, 0.0, 20.0, 3.0, -10.0, 10.0),
+      ],
+      Sparlectra.DTFImporter.DTFOutage[],
+    )
+    synthetic_net = Sparlectra.DTFImporter.build_net(synthetic)
+    pv_idx = Sparlectra.geNetBusIdx(net = synthetic_net, busName = "PV")
+    pv_gens = [ps for ps in synthetic_net.prosumpsVec if Sparlectra.getPosumerBusIndex(ps) == pv_idx && Sparlectra.isGenerator(ps.proSumptionType)]
+    @test !isempty(pv_gens)
+    @test any(ps -> ps.isRegulated && ps.vm_pu == 1.0, pv_gens)
 
     @test case.outages isa Vector{Sparlectra.DTFImporter.DTFOutage}
     @test length(case.outages) == 2
