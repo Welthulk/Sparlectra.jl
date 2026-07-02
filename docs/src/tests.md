@@ -42,6 +42,8 @@ julia --project=. -e 'using Pkg; Pkg.test()'
 | `matpower_example` | `test/test_matpower_example.jl` | MATPOWER example runner path, output routing, performance/profile rendering, and runtime configuration forwarding, removed start-voltage alias rejection, and canonical profile-blend parsing |
 | `synthetic_grids` | `test/test_synthetic_grids.jl` | Synthetic network generation and larger synthetic-grid regression coverage |
 | `configuration_docs` | `test/test_configuration_docs.jl` | Configuration documentation and docs/config consistency checks |
+| `dtf_importer` | `test/extended/test_dtf_importer.jl` | Native DTF/FOR001 parser and direct Net-builder coverage, including voltage-level-index branch conversion, transformer controls, bus-type semantics, and parsed outage metadata |
+| `dtf_for002_validation_example` | `test/extended/test_dtf_for002_validation_example.jl` | Native FOR001/DTF -> `DTFImporter` -> `Net` -> power-flow validation example smoke coverage against FOR002 diagnostics; verifies generated CSV/Markdown artifacts and does not invoke the fast suite |
 
 ## Offline and runtime expectations
 
@@ -49,7 +51,7 @@ The default `fast` profile is intended to be offline-safe and should not downloa
 The Q-limit large-case comparison workflow is a manual diagnostic tool: it resolves optional large MATPOWER cases through Sparlectra's case registry/download support, compares `case × start_profile × qlimit_mode`, and uses its CSV/JSON summaries as the primary output. Real runs for cases such as `case13659pegase.m` and `case_SyntheticUSA.m` are intentionally excluded from the fast tests; automated coverage uses stubs for case resolution and API execution.
 The experimental large-case Q-limit comparison test block is suppressed from the normal fast profile; run `test/test_qlimit_large_case_comparison.jl` manually when maintaining that tool.
 
-Default fast-profile output is intentionally compact: the runner prints the selected profile, one `[n/7]` marker per group, and Julia's final test summary. MATPOWER import diagnostics, auto-profile tables, runtime casefile banners, Q-limit tables, and similar artifact-oriented diagnostic blocks are suppressed in normal test stdout so progress remains scannable.
+Default fast-profile output is intentionally compact: the runner prints the selected profile, one `[n/8]` marker per group, and Julia's final test summary. MATPOWER import diagnostics, auto-profile tables, runtime casefile banners, Q-limit tables, and similar artifact-oriented diagnostic blocks are suppressed in normal test stdout so progress remains scannable.
 
 Use an explicit verbose opt-in when debugging a noisy test path:
 
@@ -65,7 +67,7 @@ julia --project=. test/runtests.jl fast --verbose
 julia --project=. test/runtests.jl extended --verbose
 ```
 
-The `extended` profile may include MATPOWER/example/output-heavy tests. These tests stay isolated from the default profile.
+The `extended` profile may include MATPOWER/example/output-heavy tests and native DTF/FOR002 diagnostic-example checks. These tests stay isolated from the default profile.
 
 Use `fast` during normal development. Use `extended` before merging changes that affect configuration, MATPOWER import, output formatting, performance reporting, or broader integration paths.
 

@@ -16,5 +16,7 @@ using Sparlectra
 using Test
 
 include("test_dtf_importer.jl")
+include("test_dtf_for002_validation_example.jl")
 
 Base.invokelatest(run_dtf_importer_tests)
+Base.invokelatest(run_dtf_for002_validation_example_tests)
