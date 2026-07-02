@@ -629,9 +629,41 @@ settings:
     @testset "Standalone app-window launcher" begin
       url = "http://127.0.0.1:8080/powerflow"
       linux_lookup = name -> name == "google-chrome" ? "/opt/google/chrome" : nothing
-      linux_command = Sparlectra._webui_app_command(url; platform = :linux, executable_lookup = linux_lookup)
+      linux_selected = Sparlectra._webui_browser_open_command(url; platform = :linux, executable_lookup = linux_lookup)
+      @test linux_selected !== nothing
+      linux_command, linux_strategy = linux_selected
+      @test linux_strategy == :app_window
       @test linux_command !== nothing
       @test linux_command.exec == ["/opt/google/chrome", "--app=$(url)", "--window-size=1500,950"]
+      @test Sparlectra._webui_app_command(url; platform = :linux, executable_lookup = linux_lookup).exec == linux_command.exec
+
+      xdg_lookup = name -> name == "xdg-open" ? "/usr/bin/xdg-open" : nothing
+      xdg_selected = Sparlectra._webui_browser_open_command(url; platform = :linux, executable_lookup = xdg_lookup)
+      @test xdg_selected !== nothing
+      xdg_command, xdg_strategy = xdg_selected
+      @test xdg_strategy == :xdg_open
+      @test xdg_command.exec == ["/usr/bin/xdg-open", url]
+      @test !any(arg -> startswith(arg, "--app="), xdg_command.exec)
+
+      gio_lookup = name -> name == "gio" ? "/usr/bin/gio" : nothing
+      gio_selected = Sparlectra._webui_browser_open_command(url; platform = :linux, executable_lookup = gio_lookup)
+      @test gio_selected !== nothing
+      gio_command, gio_strategy = gio_selected
+      @test gio_strategy == :gio_open
+      @test gio_command.exec == ["/usr/bin/gio", "open", url]
+      @test !any(arg -> startswith(arg, "--app="), gio_command.exec)
+
+      sensible_lookup = name -> name == "sensible-browser" ? "/usr/bin/sensible-browser" : nothing
+      sensible_selected = Sparlectra._webui_browser_open_command(url; platform = :linux, executable_lookup = sensible_lookup)
+      @test sensible_selected !== nothing
+      sensible_command, sensible_strategy = sensible_selected
+      @test sensible_strategy == :sensible_browser
+      @test sensible_command.exec == ["/usr/bin/sensible-browser", url]
+      @test !any(arg -> startswith(arg, "--app="), sensible_command.exec)
+
+      firefox_lookup = name -> name == "firefox" ? "/usr/bin/firefox" : nothing
+      firefox_selected = Sparlectra._webui_browser_open_command(url; platform = :linux, executable_lookup = firefox_lookup)
+      @test firefox_selected === nothing
 
       windows_lookup = name -> name == "msedge.exe" ? raw"C:\Browser\msedge.exe" : nothing
       windows_command = Sparlectra._webui_app_command(url; platform = :windows, executable_lookup = windows_lookup, environment = Dict{String,String}())
@@ -645,6 +677,7 @@ settings:
 
       missing_lookup = _ -> nothing
       @test Sparlectra._webui_app_command(url; platform = :linux, executable_lookup = missing_lookup) === nothing
+      @test Sparlectra._webui_browser_open_command(url; platform = :linux, executable_lookup = missing_lookup) === nothing
     end
 
     @testset "Markdown-backed contextual help and documentation" begin
@@ -1686,6 +1719,29 @@ result = get_powerflow_result(run_id)
       close(browser_server)
       @test timedwait(() -> istaskdone(browser_server.task), 2.0) == :ok
       @test !isopen(browser_server.listener)
+
+      manual_probe = listen(ip"127.0.0.1", UInt16(0))
+      manual_port = Int(getsockname(manual_probe)[2])
+      close(manual_probe)
+      manual_io = IOBuffer()
+      manual_server = start_sparlectra_webui(
+        port = manual_port,
+        output_root = output_root,
+        open_browser = true,
+        _lifecycle_io = manual_io,
+        _browser_opener = _ -> nothing,
+      )
+      try
+        manual_output = String(take!(manual_io))
+        @test isopen(manual_server.listener)
+        @test occursin("Sparlectra Web UI is available at http://127.0.0.1:$(manual_port)/powerflow", manual_output)
+        manual_response = _webui_http_request(manual_port, "GET", "/powerflow")
+        @test occursin("HTTP/1.1 200 OK", manual_response)
+        @test occursin("PowerFlow run", manual_response)
+      finally
+        close(manual_server)
+        @test timedwait(() -> istaskdone(manual_server.task), 2.0) == :ok
+      end
 
       heartbeat_probe = listen(ip"127.0.0.1", UInt16(0))
       heartbeat_port = Int(getsockname(heartbeat_probe)[2])
