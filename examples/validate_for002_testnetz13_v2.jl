@@ -85,6 +85,7 @@ struct CliOptions
   diagnose_bus_injection_balance::Bool
   diagnose_for002_kcl::Bool
   diagnose_for002_state_replay::Bool
+  diagnose_for002_angle_convention::Bool
 end
 
 struct ModelRunResult
@@ -161,6 +162,7 @@ function _parse_cli_args(args::Vector{String})::CliOptions
   diagnose_bus_injection_balance = false
   diagnose_for002_kcl = false
   diagnose_for002_state_replay = false
+  diagnose_for002_angle_convention = false
 
   for arg in args
     if arg == "--contingencies"
@@ -183,6 +185,8 @@ function _parse_cli_args(args::Vector{String})::CliOptions
       diagnose_for002_kcl = true
     elseif arg == "--diagnose-for002-state-replay"
       diagnose_for002_state_replay = true
+    elseif arg == "--diagnose-for002-angle-convention"
+      diagnose_for002_angle_convention = true
     elseif arg == "--sweep-line-x-scale"
       sweep_line_x_scale = true
     elseif arg == "--no-matpower"
@@ -237,6 +241,8 @@ function _parse_cli_args(args::Vector{String})::CliOptions
       println("                              write parsed FOR002 and model-side bus/branch KCL consistency diagnostics")
       println("  --diagnose-for002-state-replay")
       println("                              force parsed FOR002 base-case voltages into each model and compare branch flows without Newton")
+      println("  --diagnose-for002-angle-convention")
+      println("                              replay FOR002 voltages with alternative angle conventions and compare branch flows")
       println("  --sweep-line-x-scale        run diagnostic ordinary AC-line x scaling sweep")
       println("  --infer-pv-buses=off|from-q-limits|from-gen-vg|all-generator-buses")
       println("                              diagnostic PV-bus inference mode; default off")
@@ -315,6 +321,7 @@ function _parse_cli_args(args::Vector{String})::CliOptions
     diagnose_bus_injection_balance,
     diagnose_for002_kcl,
     diagnose_for002_state_replay,
+    diagnose_for002_angle_convention,
   )
 end
 
@@ -1008,6 +1015,7 @@ function _with_branch_b_sweep_point(opt::CliOptions, line_b_scale::Float64, traf
     opt.diagnose_bus_injection_balance,
     opt.diagnose_for002_kcl,
     opt.diagnose_for002_state_replay,
+    opt.diagnose_for002_angle_convention,
   )
 end
 
@@ -1052,6 +1060,7 @@ function _with_line_x_sweep_point(opt::CliOptions, x_scale::Float64)::CliOptions
     opt.diagnose_bus_injection_balance,
     opt.diagnose_for002_kcl,
     opt.diagnose_for002_state_replay,
+    opt.diagnose_for002_angle_convention,
   )
 end
 
@@ -1934,7 +1943,7 @@ function _write_worst_branch_diagnostics(opt::CliOptions, ref::For002Scenario, b
   return (flow_csv = flow_csv, sweep_csv = sweep_csv, rows = rows, sweep_rows = sweep_rows)
 end
 
-function _apply_for002_base_voltages!(net::Net, ref::For002Scenario)
+function _apply_for002_base_voltages!(net::Net, ref::For002Scenario; angle_transform::Function = row -> row.va_deg)
   bus_by_name = Dict(_norm_name(name) => idx for (name, idx) in net.busDict)
   for (key, row) in ref.buses
     idx = get(bus_by_name, key, nothing)
@@ -1943,19 +1952,19 @@ function _apply_for002_base_voltages!(net::Net, ref::For002Scenario)
     # FOR002 prints line-to-line kV and angle; convert magnitude to per-unit on
     # the model bus base, then let Sparlectra's normal branch-flow report code
     # recompute flows from the forced complex bus voltages.
-    Sparlectra.setVmVa!(node = node, vm_pu = row.v_kV / node.comp.cVN, va_deg = row.va_deg)
+    Sparlectra.setVmVa!(node = node, vm_pu = row.v_kV / node.comp.cVN, va_deg = angle_transform(row))
   end
   return net
 end
 
-function _state_replay_result(model_name::AbstractString, buildfn::Function, opt::CliOptions, ref::For002Scenario)::ModelRunResult
+function _state_replay_result(model_name::AbstractString, buildfn::Function, opt::CliOptions, ref::For002Scenario; angle_transform::Function = row -> row.va_deg, scenario_name::AbstractString = "base_for002_state_replay")::ModelRunResult
   net = buildfn()
   _scale_branch_b!(net, opt)
   _scale_line_x!(net, opt.line_x_scale)
-  _apply_for002_base_voltages!(net, ref)
+  _apply_for002_base_voltages!(net, ref; angle_transform = angle_transform)
   calcNetLosses!(net)
   report = buildACPFlowReport(net; ite = 0, tol = opt.solver_tol, converged = true, solver = :FOR002_state_replay)
-  return ModelRunResult(String(model_name), "base_for002_state_replay", nothing, net, report, 0, 0, nothing)
+  return ModelRunResult(String(model_name), String(scenario_name), nothing, net, report, 0, 0, nothing)
 end
 
 _mean_abs(vals::Vector{Float64}) = isempty(vals) ? NaN : sum(abs, vals) / length(vals)
@@ -2037,6 +2046,93 @@ function _write_for002_state_replay_csvs(opt::CliOptions, ref::For002Scenario, b
     end
   end
   return (branch_csv = branch_csv, summary_csv = summary_csv, rows = rows, summary_rows = summary_rows)
+end
+
+function _slack_bus_name(result::ModelRunResult)::Union{Nothing,String}
+  for (name, idx) in result.net.busDict
+    if result.net.nodeVec[idx]._nodeType == Sparlectra.Slack
+      return String(name)
+    end
+  end
+  return isempty(result.net.busDict) ? nothing : String(first(keys(result.net.busDict)))
+end
+
+function _angle_convention_transforms(ref::For002Scenario, normal::ModelRunResult)
+  slack_name = _slack_bus_name(normal)
+  slack_key = slack_name === nothing ? nothing : _norm_name(slack_name)
+  ref_slack_va = slack_key === nothing ? 0.0 : get(ref.buses, slack_key, (va_deg = 0.0,)).va_deg
+  model_slack_va = slack_key === nothing ? 0.0 : normal.net.nodeVec[normal.net.busDict[slack_name]]._va_deg
+  bus_by_name = Dict(_norm_name(name) => idx for (name, idx) in normal.net.busDict)
+  level_offset = Dict{Float64,Float64}()
+  for key in sort(collect(keys(ref.buses)))
+    idx = get(bus_by_name, key, nothing)
+    idx === nothing && continue
+    node = normal.net.nodeVec[idx]
+    level = Float64(node.comp.cVN)
+    haskey(level_offset, level) && continue
+    level_offset[level] = node._va_deg - ref.buses[key].va_deg
+  end
+  return [
+    ("as_printed", row -> row.va_deg),
+    ("sign_flipped", row -> -row.va_deg),
+    ("subtract_slack", row -> row.va_deg - ref_slack_va),
+    ("sign_flipped_subtract_slack", row -> -(row.va_deg - ref_slack_va)),
+    ("model_slack_aligned", row -> row.va_deg - ref_slack_va + model_slack_va),
+    ("sign_flipped_model_slack_aligned", row -> -(row.va_deg - ref_slack_va) + model_slack_va),
+    ("per_voltage_level_slack_aligned", row -> begin
+      idx = get(bus_by_name, _norm_name(row.bus_name), nothing)
+      idx === nothing && return row.va_deg
+      level = Float64(normal.net.nodeVec[idx].comp.cVN)
+      return row.va_deg + get(level_offset, level, 0.0)
+    end),
+  ]
+end
+
+function _write_for002_angle_convention_csvs(opt::CliOptions, ref::For002Scenario, base_results::Vector{ModelRunResult}, model_builders::Vector{Tuple{String,Function}}, branch_labels::Vector{String})
+  normal_by_model = Dict(result.model_name => result for result in base_results)
+  rows = NamedTuple[]
+  for (model_name, buildfn) in model_builders
+    normal = get(normal_by_model, String(model_name), nothing)
+    normal === nothing && continue
+    for (convention, transform) in _angle_convention_transforms(ref, normal)
+      replay = _state_replay_result(model_name, buildfn, opt, ref; angle_transform = transform, scenario_name = "base_for002_angle_" * convention)
+      append!(rows, [merge(row, (
+        angle_convention = convention,
+        forced_angle_difference_deg = _angle_delta_deg(row.forced_from_va_deg, row.forced_to_va_deg),
+      )) for row in _for002_state_replay_rows(ref, replay, normal, branch_labels)])
+    end
+  end
+  diagnostics_csv = joinpath(opt.output_dir, "for002_angle_convention_replay_diagnostics.csv")
+  open(diagnostics_csv, "w") do io
+    println(io, "model,angle_convention,branch_index,branch_label,from_bus,to_bus,forced_from_va_deg,forced_to_va_deg,forced_angle_difference_deg,replay_calc_p_MW,for002_p_MW,replay_d_p_MW,replay_calc_q_MVar,for002_q_MVar,replay_d_q_MVar,normal_solved_d_p_MW,top_active_flow_offender_marker")
+    for row in rows
+      println(io, _csv_line(row.model, row.angle_convention, row.branch_index, row.branch_label, row.from_bus, row.to_bus, row.forced_from_va_deg, row.forced_to_va_deg, row.forced_angle_difference_deg, row.replay_calc_p_MW, row.for002_p_MW, row.replay_d_p_MW, row.replay_calc_q_MVar, row.for002_q_MVar, row.replay_d_q_MVar, row.normal_solved_d_p_MW, row.top_active_flow_offender_marker))
+    end
+  end
+  summary_rows = NamedTuple[]
+  for model in sort(unique(row.model for row in rows)), convention in sort(unique(row.angle_convention for row in rows if row.model == model))
+    model_rows = [row for row in rows if row.model == model && row.angle_convention == convention]
+    top_rows = [row for row in model_rows if row.top_active_flow_offender_marker]
+    offender = first(sort(model_rows; by = row -> abs(row.replay_d_p_MW), rev = true))
+    mean_p = _mean_abs([row.replay_d_p_MW for row in model_rows])
+    top10_mean_p = _mean_abs([row.replay_d_p_MW for row in top_rows])
+    push!(summary_rows, (
+      model = model, angle_convention = convention, row_count = length(model_rows),
+      mean_abs_replay_d_p_MW = mean_p, max_abs_replay_d_p_MW = _max_abs([row.replay_d_p_MW for row in model_rows]),
+      top10_mean_abs_replay_d_p_MW = top10_mean_p, top10_max_abs_replay_d_p_MW = _max_abs([row.replay_d_p_MW for row in top_rows]),
+      mean_abs_replay_d_q_MVar = _mean_abs([row.replay_d_q_MVar for row in model_rows]), max_abs_replay_d_q_MVar = _max_abs([row.replay_d_q_MVar for row in model_rows]),
+      top_offender_branch_label = offender.branch_label,
+      objective = mean_p + top10_mean_p,
+    ))
+  end
+  summary_csv = joinpath(opt.output_dir, "for002_angle_convention_replay_summary.csv")
+  open(summary_csv, "w") do io
+    println(io, "model,angle_convention,row_count,mean_abs_replay_d_p_MW,max_abs_replay_d_p_MW,top10_mean_abs_replay_d_p_MW,top10_max_abs_replay_d_p_MW,mean_abs_replay_d_q_MVar,max_abs_replay_d_q_MVar,top_offender_branch_label,objective")
+    for row in summary_rows
+      println(io, _csv_line(row.model, row.angle_convention, row.row_count, row.mean_abs_replay_d_p_MW, row.max_abs_replay_d_p_MW, row.top10_mean_abs_replay_d_p_MW, row.top10_max_abs_replay_d_p_MW, row.mean_abs_replay_d_q_MVar, row.max_abs_replay_d_q_MVar, row.top_offender_branch_label, row.objective))
+    end
+  end
+  return (diagnostics_csv = diagnostics_csv, summary_csv = summary_csv, rows = rows, summary_rows = summary_rows)
 end
 
 function _best_convention(errors::Vector{Tuple{String,Float64}})
@@ -2636,6 +2732,32 @@ function _print_for002_state_replay_console_summary(diagnostics)
   return nothing
 end
 
+function _print_for002_angle_convention_console_summary(diagnostics)
+  diagnostics === nothing && return nothing
+  println("FOR002 angle-convention replay diagnostic summary")
+  by_mean = first(sort(diagnostics.summary_rows; by = row -> row.mean_abs_replay_d_p_MW))
+  by_top10 = first(sort(diagnostics.summary_rows; by = row -> row.top10_mean_abs_replay_d_p_MW))
+  @printf("  Best by mean |dP|: model=%s convention=%s mean=%.6g MW max=%.6g MW\n", by_mean.model, by_mean.angle_convention, by_mean.mean_abs_replay_d_p_MW, by_mean.max_abs_replay_d_p_MW)
+  @printf("  Best by top10 mean |dP|: model=%s convention=%s top10_mean=%.6g MW top10_max=%.6g MW\n", by_top10.model, by_top10.angle_convention, by_top10.top10_mean_abs_replay_d_p_MW, by_top10.top10_max_abs_replay_d_p_MW)
+  for model in sort(unique(row.model for row in diagnostics.summary_rows))
+    model_rows = [row for row in diagnostics.summary_rows if row.model == model]
+    base = first([row for row in model_rows if row.angle_convention == "as_printed"])
+    best_sign = first(sort([row for row in model_rows if occursin("sign_flipped", row.angle_convention)]; by = row -> row.mean_abs_replay_d_p_MW))
+    best_aligned = first(sort([row for row in model_rows if occursin("slack", row.angle_convention) || occursin("aligned", row.angle_convention)]; by = row -> row.mean_abs_replay_d_p_MW))
+    @printf("  %s sign flip mean |dP| change vs as_printed: %.6g -> %.6g MW (%s)\n", model, base.mean_abs_replay_d_p_MW, best_sign.mean_abs_replay_d_p_MW, best_sign.mean_abs_replay_d_p_MW <= 0.9 * base.mean_abs_replay_d_p_MW ? "material improvement" : "no material improvement")
+    @printf("  %s slack/reference alignment mean |dP| change vs as_printed: %.6g -> %.6g MW (%s)\n", model, base.mean_abs_replay_d_p_MW, best_aligned.mean_abs_replay_d_p_MW, best_aligned.mean_abs_replay_d_p_MW <= 0.9 * base.mean_abs_replay_d_p_MW ? "material improvement" : "no material improvement")
+  end
+  for (a, b) in [("ALPHA S1", "BETA1 S1"), ("ALPHA S1", "DELTA1S1"), ("DELTA2S1", "WEILERS1"), ("BETA2 S1", "WEILERS1")]
+    println("  ", a, " <-> ", b, ":")
+    matches = [row for row in diagnostics.rows if Set([_norm_name(row.from_bus), _norm_name(row.to_bus)]) == Set([_norm_name(a), _norm_name(b)])]
+    for row in first(sort(matches; by = row -> abs(row.replay_d_p_MW)), min(6, length(matches)))
+      @printf("    %-8s %-34s replay dP=% .6g MW forced dVa=% .6g deg\n", row.model, row.angle_convention, row.replay_d_p_MW, row.forced_angle_difference_deg)
+    end
+  end
+  println()
+  return nothing
+end
+
 function _print_active_flow_console_summary(diagnostics)
   diagnostics === nothing && return nothing
   println("Active-flow diagnostic summary")
@@ -2662,7 +2784,7 @@ function _scenario_file_prefix(result::ModelRunResult)::String
   return lowercase(result.model_name) * "_" * scenario_tag
 end
 
-function _write_summary(path::AbstractString, opt::CliOptions, ref_scenarios::Vector{For002Scenario}, branch_labels::Vector{String}, base_summaries::Vector{NamedTuple}, contingency_summaries::Vector{NamedTuple}, model_compare_file::Union{Nothing,String}, branch_b_diagnostic_csv::AbstractString, branch_b_sweep_csv::Union{Nothing,String}, line_x_sweep_csv::Union{Nothing,String}, for001_conversion_csv::Union{Nothing,String}, for001_conversion_raw_parsed::Union{Nothing,Bool}, worst_offenders_csv::Union{Nothing,String}, pv_bus_diagnostics_csv::Union{Nothing,String}, pv_bus_diagnostics_note::Union{Nothing,String}, active_flow_diagnostics, worst_branch_diagnostics, flow_semantics_diagnostics, bus_injection_balance_diagnostics, for002_kcl_diagnostics, for002_state_replay_diagnostics)
+function _write_summary(path::AbstractString, opt::CliOptions, ref_scenarios::Vector{For002Scenario}, branch_labels::Vector{String}, base_summaries::Vector{NamedTuple}, contingency_summaries::Vector{NamedTuple}, model_compare_file::Union{Nothing,String}, branch_b_diagnostic_csv::AbstractString, branch_b_sweep_csv::Union{Nothing,String}, line_x_sweep_csv::Union{Nothing,String}, for001_conversion_csv::Union{Nothing,String}, for001_conversion_raw_parsed::Union{Nothing,Bool}, worst_offenders_csv::Union{Nothing,String}, pv_bus_diagnostics_csv::Union{Nothing,String}, pv_bus_diagnostics_note::Union{Nothing,String}, active_flow_diagnostics, worst_branch_diagnostics, flow_semantics_diagnostics, bus_injection_balance_diagnostics, for002_kcl_diagnostics, for002_state_replay_diagnostics, for002_angle_convention_diagnostics)
   open(path, "w") do io
     println(io, "# FOR002 validation summary")
     println(io)
@@ -2688,6 +2810,7 @@ function _write_summary(path::AbstractString, opt::CliOptions, ref_scenarios::Ve
     println(io, "- Diagnose bus injection balance: ", opt.diagnose_bus_injection_balance)
     println(io, "- Diagnose FOR002 KCL: ", opt.diagnose_for002_kcl)
     println(io, "- Diagnose FOR002 state replay: ", opt.diagnose_for002_state_replay)
+    println(io, "- Diagnose FOR002 angle convention: ", opt.diagnose_for002_angle_convention)
     println(io, "- Sweep line x scale: ", opt.sweep_line_x_scale)
     println(io, "- MATPOWER PQ generator controllers: ", opt.matpower_pq_gen_controllers)
     println(io, "- Builder PQ generator controllers: ", opt.builder_pq_gen_controllers)
@@ -2740,6 +2863,10 @@ function _write_summary(path::AbstractString, opt::CliOptions, ref_scenarios::Ve
     if for002_state_replay_diagnostics !== nothing
       println(io, "- FOR002-state replay branch diagnostics CSV: `", for002_state_replay_diagnostics.branch_csv, "`")
       println(io, "- FOR002-state replay summary CSV: `", for002_state_replay_diagnostics.summary_csv, "`")
+    end
+    if for002_angle_convention_diagnostics !== nothing
+      println(io, "- FOR002 angle-convention replay diagnostics CSV: `", for002_angle_convention_diagnostics.diagnostics_csv, "`")
+      println(io, "- FOR002 angle-convention replay summary CSV: `", for002_angle_convention_diagnostics.summary_csv, "`")
     end
     println(io)
     println(io, "## Solver settings")
@@ -2885,6 +3012,7 @@ function main(args = ARGS)
   println("  diagnose bus injections = ", opt.diagnose_bus_injection_balance)
   println("  diagnose FOR002 KCL     = ", opt.diagnose_for002_kcl)
   println("  diagnose state replay   = ", opt.diagnose_for002_state_replay)
+  println("  diagnose angle conv.    = ", opt.diagnose_for002_angle_convention)
   println("  sweep line x scale      = ", opt.sweep_line_x_scale)
   println("  MATPOWER ratio          = ", opt.matpower_ratio)
   println("  MATPOWER PQ controllers = ", opt.matpower_pq_gen_controllers)
@@ -2974,6 +3102,8 @@ function main(args = ARGS)
   _print_for002_kcl_console_summary(for002_kcl_diagnostics)
   for002_state_replay_diagnostics = opt.diagnose_for002_state_replay ? _write_for002_state_replay_csvs(opt, ref_base, base_results, model_builders, branch_labels) : nothing
   _print_for002_state_replay_console_summary(for002_state_replay_diagnostics)
+  for002_angle_convention_diagnostics = opt.diagnose_for002_angle_convention ? _write_for002_angle_convention_csvs(opt, ref_base, base_results, model_builders, branch_labels) : nothing
+  _print_for002_angle_convention_console_summary(for002_angle_convention_diagnostics)
   for001_conversion_csv = nothing
   for001_conversion_raw_parsed = nothing
   if opt.diagnose_for001_conversion
@@ -3012,7 +3142,7 @@ function main(args = ARGS)
   end
 
   summary_path = joinpath(opt.output_dir, "for002_validation_summary.md")
-  _write_summary(summary_path, opt, ref_scenarios, branch_labels, base_summaries, contingency_summaries, model_compare_file, branch_b_diagnostic_csv, branch_b_sweep_csv, line_x_sweep_csv, for001_conversion_csv, for001_conversion_raw_parsed, worst_offenders_csv, pv_bus_diagnostics_csv, pv_bus_diagnostics_note, active_flow_diagnostics, worst_branch_diagnostics, flow_semantics_diagnostics, bus_injection_balance_diagnostics, for002_kcl_diagnostics, for002_state_replay_diagnostics)
+  _write_summary(summary_path, opt, ref_scenarios, branch_labels, base_summaries, contingency_summaries, model_compare_file, branch_b_diagnostic_csv, branch_b_sweep_csv, line_x_sweep_csv, for001_conversion_csv, for001_conversion_raw_parsed, worst_offenders_csv, pv_bus_diagnostics_csv, pv_bus_diagnostics_note, active_flow_diagnostics, worst_branch_diagnostics, flow_semantics_diagnostics, bus_injection_balance_diagnostics, for002_kcl_diagnostics, for002_state_replay_diagnostics, for002_angle_convention_diagnostics)
 
   println()
   println("Output files written to:")
@@ -3043,6 +3173,10 @@ function main(args = ARGS)
   if for002_state_replay_diagnostics !== nothing
     println("  state replay branches = ", for002_state_replay_diagnostics.branch_csv)
     println("  state replay summary  = ", for002_state_replay_diagnostics.summary_csv)
+  end
+  if for002_angle_convention_diagnostics !== nothing
+    println("  angle convention diagnostics = ", for002_angle_convention_diagnostics.diagnostics_csv)
+    println("  angle convention summary     = ", for002_angle_convention_diagnostics.summary_csv)
   end
   branch_b_sweep_csv !== nothing && println("  branch b sweep summary = ", branch_b_sweep_csv)
   line_x_sweep_csv !== nothing && println("  line x sweep summary   = ", line_x_sweep_csv)
