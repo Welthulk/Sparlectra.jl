@@ -164,7 +164,7 @@ function run_webui_tests()
       @test occursin("Configuration notice:", page)
       @test occursin("#configuration-maintenance", page)
       @test findfirst("Configuration maintenance", page) > findfirst("Advanced / expert options", page)
-      @test findfirst("Configuration maintenance", page) > findfirst("Existing MATPOWER case", page)
+      @test findfirst("Configuration maintenance", page) > findfirst("Existing case file", page)
       @test read(config_path, String) == before_page_text
 
       check = Sparlectra.route_sparlectra_webui("POST", "/powerflow/config/check", Dict("config_file" => config_path); output_root = root, runtime)
@@ -575,9 +575,16 @@ settings:
         mkpath(config_directory)
         case14 = joinpath(case_directory, "case14.m")
         case118 = joinpath(case_directory, "case118.m")
+        casejl = joinpath(case_directory, "case14.jl")
+        for001 = joinpath(case_directory, "FOR001.DAT")
         write(case14, "function mpc = case14\nend\n")
         write(case118, "function mpc = case118\nend\n")
-        write(joinpath(case_directory, "case14.jl"), "nothing\n")
+        write(casejl, "nothing\n")
+        write(for001, "0 / END\n")
+        for ext in ("csv", "json", "yaml", "log", "md")
+          write(joinpath(case_directory, "artifact." * ext), "ignored\n")
+        end
+        write(joinpath(case_directory, "artifact.sparlectra-webui.yaml"), "power_flow: {}\n")
         primary_config = joinpath(config_directory, "configuration.yaml.example")
         secondary_config = joinpath(config_directory, "study.yaml.example")
         write(primary_config, "power_flow: {}\n")
@@ -585,7 +592,7 @@ settings:
         write(joinpath(config_directory, "README.md"), "ignored\n")
 
         @test Sparlectra._webui_application_root(start_dir) == application_root
-        @test Sparlectra._webui_casefile_options(application_root) == ["case118.m", "case14.m"]
+        @test Sparlectra._webui_casefile_options(application_root) == ["case118.m", "case14.jl", "case14.m", "FOR001.DAT"]
         @test Sparlectra._webui_config_file_options(application_root) == [primary_config, secondary_config]
 
         selection_html = Sparlectra.render_powerflow_form(
@@ -596,9 +603,10 @@ settings:
         @test occursin("<select id=\"casefile\" name=\"casefile\" data-case-settings-reload=\"true\">", selection_html)
         @test occursin("<option value=\"\">-- choose existing case --</option>", selection_html)
         @test occursin("<option value=\"case14.m\" selected>case14.m</option>", selection_html)
-        @test !occursin("<option value=\"case14.jl\">case14.jl</option>", selection_html)
+        @test occursin("<option value=\"case14.jl\">case14.jl</option>", selection_html)
+        @test occursin("<option value=\"FOR001.DAT\">FOR001.DAT</option>", selection_html)
         @test occursin("<option value=\"case118.m\">case118.m</option>", selection_html)
-        @test occursin("<input id=\"casefile_manual\" name=\"casefile_manual\" value=\"\" placeholder=\"case14.m\">", selection_html)
+        @test occursin("<input id=\"casefile_manual\" name=\"casefile_manual\" value=\"\" placeholder=\"case14.m or /path/to/FOR001.DAT\">", selection_html)
         @test !occursin("available-casefiles", selection_html)
         @test occursin("MATPOWER citation", selection_html)
         @test occursin("Zimmerman", selection_html)
@@ -613,6 +621,22 @@ settings:
         @test occursin("<input type=\"hidden\" name=\"config_file\" value=\"$(secondary_config)\">", selection_html)
         @test occursin("<code>$(secondary_config)</code>", selection_html)
         @test !occursin("README.md", selection_html)
+        for ignored in ("artifact.csv", "artifact.json", "artifact.yaml", "artifact.log", "artifact.md", "artifact.sparlectra-webui.yaml")
+          @test !occursin(ignored, selection_html)
+        end
+        @test occursin("Existing case file", selection_html)
+        @test occursin("Or type case file path", selection_html)
+        @test occursin("Default remains MATPOWER-oriented.", selection_html)
+        @test occursin("DTF/FOR001 diagnostics (experimental/internal)", selection_html)
+        @test occursin("absolute path or a path copied from the same case cache directory", selection_html)
+        @test !occursin("full DTF/FOR001 support", selection_html)
+
+        dat_html = Sparlectra.render_powerflow_form(
+          application_root = application_root,
+          selected_casefile = "FOR001.DAT",
+        )
+        @test occursin("<option value=\"FOR001.DAT\" selected>FOR001.DAT</option>", dat_html)
+        @test occursin("<input id=\"casefile_manual\" name=\"casefile_manual\" value=\"\"", dat_html)
 
         rm(case14)
         rm(case118)
@@ -852,6 +876,26 @@ settings:
       typed_form["casefile"] = "case9.m"
       typed_form["casefile_manual"] = "  case9241pegase.m  "
       @test Sparlectra.powerflow_webui_request(typed_form; default_output_root = output_root)["casefile"] == "case9241pegase.m"
+
+      dtf_form = copy(form)
+      dtf_form["casefile"] = "FOR001.DAT"
+      dtf_form["casefile_manual"] = "  "
+      dtf_form["case_format"] = "dtf_for001"
+      dtf_request = Sparlectra.powerflow_webui_request(dtf_form; default_output_root = output_root)
+      @test dtf_request["casefile"] == "FOR001.DAT"
+      @test dtf_request["case_format"] == "dtf_for001"
+
+      auto_dtf_form = copy(dtf_form)
+      auto_dtf_form["case_format"] = "auto"
+      auto_dtf_request = Sparlectra.powerflow_webui_request(auto_dtf_form; default_output_root = output_root)
+      @test auto_dtf_request["casefile"] == "FOR001.DAT"
+      @test auto_dtf_request["case_format"] == "auto"
+
+      manual_dtf = joinpath(tmpdir, "FOR001.DAT")
+      manual_dtf_form = copy(dtf_form)
+      manual_dtf_form["casefile"] = "case9.m"
+      manual_dtf_form["casefile_manual"] = "  " * manual_dtf * "  "
+      @test Sparlectra.powerflow_webui_request(manual_dtf_form; default_output_root = output_root)["casefile"] == manual_dtf
 
       empty_case_form = copy(form)
       empty_case_form["casefile"] = ""

@@ -38,10 +38,11 @@ end
 """
     _webui_casefile_options(application_root) -> Vector{String}
 
-Return sorted user-selectable MATPOWER `.m` case names from the Web UI
-application's `data/mpower` directory. Generated `.jl` cache artifacts are
-internal and are not shown in the selector. Missing or empty directories produce
-an empty list.
+Return sorted user-selectable case filenames from the Web UI application's
+`data/mpower` directory. The selector stays conservative: MATPOWER `.m`/`.jl`
+files and copied internal DTF/FOR001 `.DAT` candidates are shown, while generated
+result artifacts and sidecar profiles stay hidden. Missing or empty directories
+produce an empty list.
 """
 function _webui_casefile_options(application_root::AbstractString)::Vector{String}
   return _webui_casefile_options_in_directory(joinpath(application_root, "data", "mpower"))
@@ -49,9 +50,12 @@ end
 
 function _webui_casefile_options_in_directory(directory::AbstractString)::Vector{String}
   isdir(directory) || return String[]
+  visible_extensions = Set([".m", ".jl", ".dat"])
   files = filter(readdir(directory)) do name
     extension = lowercase(splitext(name)[2])
-    return isfile(joinpath(directory, name)) && extension == ".m"
+    lowered_name = lowercase(name)
+    endswith(lowered_name, ".sparlectra-webui.yaml") && return false
+    return isfile(joinpath(directory, name)) && extension in visible_extensions
   end
   return sort!(files; by = lowercase)
 end

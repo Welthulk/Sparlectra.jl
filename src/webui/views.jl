@@ -243,7 +243,7 @@ function render_powerflow_form(;
     "<option value=\"$(_webui_escape(casefile))\"$(casefile == existing_value ? " selected" : "")>$(_webui_escape(label))</option>"
   end for casefile in casefiles), "")
   case_select = "<select id=\"casefile\" name=\"casefile\" data-case-settings-reload=\"true\"><option value=\"\">-- choose existing case --</option>$(case_options)</select>"
-  case_manual = "<input id=\"casefile_manual\" name=\"casefile_manual\" value=\"$(_webui_escape(manual_value))\" placeholder=\"case14.m\">"
+  case_manual = "<input id=\"casefile_manual\" name=\"casefile_manual\" value=\"$(_webui_escape(manual_value))\" placeholder=\"case14.m or /path/to/FOR001.DAT\">"
   config_default = isempty(selected_config_file) ? DEFAULT_SPARLECTRA_CONFIG_PATH : selected_config_file
   config_control = "<input type=\"hidden\" name=\"config_file\" value=\"$(_webui_escape(config_default))\">"
   info_menu = _webui_powerflow_info_menu(; output_root, config_file = config_default, case_directory = effective_case_directory, operation_log)
@@ -259,14 +259,14 @@ function render_powerflow_form(;
 $(error_html)$(_webui_active_run_banner(active_run))$(notice_html)$(profile_notice)<p class=\"lede\">Run a local MATPOWER case through the Sparlectra PowerFlow service.</p>
 <form id=\"powerflow-run-form\" data-powerflow-form method=\"post\" action=\"/powerflow/run\" class=\"panel form-grid powerflow-form-card\" onsubmit=\"this.classList.add('is-submitting'); this.setAttribute('aria-busy', 'true'); this.querySelector('button[type=submit]').disabled = true;\">
 $(config_control)
-<label>$(_webui_field_label("casefile", "Existing MATPOWER case"))$(case_select)<small class="field-hint">Cases from <code>$(_webui_escape(effective_case_directory))</code></small></label>
-<label><span class="field-label">Or type/download MATPOWER case</span>$(case_manual)<small class="field-hint">Manual input overrides the existing-case selection.</small></label>
+<label>$(_webui_field_label("casefile", "Existing case file"))$(case_select)<small class="field-hint">Cases from <code>$(_webui_escape(effective_case_directory))</code></small></label>
+<label><span class="field-label">Or type case file path</span>$(case_manual)<small class="field-hint">Manual input overrides the existing-case selection.</small></label>
 <details class="span-2 dtf-internal-section">
 <summary>Input format</summary>
 <fieldset>
 <p class="field-hint span-2">Default remains MATPOWER-oriented. The native DTF/FOR001 path is experimental/internal and intended for diagnostics and validation.</p>
 <label><span class="field-label">Case input format</span><select name="case_format"><option value="auto">Auto</option><option value="matpower">MATPOWER</option><option value="dtf_for001">DTF/FOR001 diagnostics (experimental/internal)</option></select></label>
-<label><span class="field-label">Optional FOR002 reference file</span><input name="for002_reference_file" placeholder="examples/FOR002.DAT"><small class="field-hint">Used only for legacy reference comparison diagnostics.</small></label>
+<label><span class="field-label">Optional FOR002 reference file</span><input name="for002_reference_file" placeholder="examples/FOR002.DAT"><small class="field-hint">Used only for legacy reference comparison diagnostics; enter an absolute path or a path copied from the same case cache directory.</small></label>
 <label><span class="field-label">DTF outage run mode</span><select name="dtf_outage_selection_mode"><option value="none">Run base case only</option><option value="all">Run all DTF-listed outages</option><option value="selected">Run selected DTF-listed outages</option></select></label>
 <label><span class="field-label">Selected DTF outage labels/indices</span><input name="dtf_outage_selection" placeholder="1 or L1 ALPHA S1 -> BETA1 S1"><small class="field-hint">For selected mode, enter one parsed label or outage index. The result page reports the compact outage summary; detailed rows stay in artifacts.</small></label>
 <label class="check"><input name="write_outage_artifacts" type="hidden" value="false"><input name="write_outage_artifacts" type="checkbox" value="true" checked>Write DTF outage artifacts</label>
