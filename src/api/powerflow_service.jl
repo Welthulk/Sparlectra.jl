@@ -39,6 +39,10 @@ const GENERATED_MATPOWER_JL_CACHE_MESSAGE = "Generated MATPOWER .jl cache files 
 
 _matpower_cache_jl_bypass_reason() = "generated_jl_cache_hidden_from_webui"
 
+_is_for002_reference_dat(path::AbstractString)::Bool = occursin(r"^for002.*\.dat$"i, basename(strip(String(path))))
+
+_for002_primary_case_message() = "FOR002.DAT is a reference/result file and cannot be used as the primary DTF/FOR001 input case. Use FOR001.DAT as the case and enter FOR002.DAT as optional FOR002 reference file."
+
 function _canonical_matpower_source_for_webui(path::AbstractString, case_directory::AbstractString)::String
   case_path = abspath(path)
   extension = lowercase(splitext(case_path)[2])
@@ -132,6 +136,7 @@ function start_powerflow_run(request::AbstractDict; case_directory::Union{Nothin
   _check_powerflow_cancelled!(cancellation_token)
   casefile = _service_request_value(request, "casefile")
   casefile isa AbstractString && !isempty(strip(casefile)) || return _service_failure("missing_casefile", "PowerFlow service request requires a nonempty casefile.")
+  _is_for002_reference_dat(casefile) && return _service_failure("invalid_casefile", _for002_primary_case_message())
   if case_directory === nothing
     _check_powerflow_cancelled!(cancellation_token)
     isfile(casefile) || return _service_failure("missing_casefile", "MATPOWER case file not found: $(abspath(casefile))")
@@ -163,6 +168,10 @@ function start_powerflow_run(request::AbstractDict; case_directory::Union{Nothin
   performance_timing = _service_request_value(request, "performance_timing", :off)
   case_format = _service_request_value(request, "case_format", :auto)
   for002_reference_file = _service_request_value(request, "for002_reference_file", nothing)
+  if for002_reference_file isa AbstractString && !isempty(strip(for002_reference_file)) && case_directory !== nothing && !isfile(for002_reference_file) && !occursin(r"[\\/]", for002_reference_file)
+    cache_for002 = joinpath(abspath(case_directory), strip(for002_reference_file))
+    isfile(cache_for002) && (for002_reference_file = abspath(cache_for002))
+  end
   run_dtf_outages = _service_request_value(request, "run_dtf_outages", false)
   run_dtf_outages isa Bool || return _service_failure("invalid_request", "run_dtf_outages must be boolean.")
   dtf_outage_selection = _service_request_value(request, "dtf_outage_selection", String[])

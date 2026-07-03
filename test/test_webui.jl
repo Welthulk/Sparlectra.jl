@@ -577,10 +577,14 @@ settings:
         case118 = joinpath(case_directory, "case118.m")
         casejl = joinpath(case_directory, "case14.jl")
         for001 = joinpath(case_directory, "FOR001.DAT")
+        for002 = joinpath(case_directory, "FOR002.DAT")
+        for002_variant = joinpath(case_directory, "FOR002_reference.DAT")
         write(case14, "function mpc = case14\nend\n")
         write(case118, "function mpc = case118\nend\n")
         write(casejl, "nothing\n")
         write(for001, "0 / END\n")
+        write(for002, "legacy reference\n")
+        write(for002_variant, "legacy reference variant\n")
         for ext in ("csv", "json", "yaml", "log", "md")
           write(joinpath(case_directory, "artifact." * ext), "ignored\n")
         end
@@ -593,6 +597,7 @@ settings:
 
         @test Sparlectra._webui_application_root(start_dir) == application_root
         @test Sparlectra._webui_casefile_options(application_root) == ["case118.m", "case14.jl", "case14.m", "FOR001.DAT"]
+        @test Sparlectra._webui_for002_reference_options_in_directory(case_directory) == ["FOR002.DAT", "FOR002_reference.DAT"]
         @test Sparlectra._webui_config_file_options(application_root) == [primary_config, secondary_config]
 
         selection_html = Sparlectra.render_powerflow_form(
@@ -605,6 +610,9 @@ settings:
         @test occursin("<option value=\"case14.m\" selected>case14.m</option>", selection_html)
         @test occursin("<option value=\"case14.jl\">case14.jl</option>", selection_html)
         @test occursin("<option value=\"FOR001.DAT\">FOR001.DAT</option>", selection_html)
+        primary_selector_html = split(selection_html, "<datalist id=\"for002-reference-candidates\">")[1]
+        @test !occursin("<option value=\"FOR002.DAT\">FOR002.DAT</option>", primary_selector_html)
+        @test !occursin("<option value=\"FOR002_reference.DAT\">FOR002_reference.DAT</option>", primary_selector_html)
         @test occursin("<option value=\"case118.m\">case118.m</option>", selection_html)
         @test occursin("<input id=\"casefile_manual\" name=\"casefile_manual\" value=\"\" placeholder=\"case14.m or /path/to/FOR001.DAT\">", selection_html)
         @test !occursin("available-casefiles", selection_html)
@@ -628,7 +636,10 @@ settings:
         @test occursin("Or type case file path", selection_html)
         @test occursin("Default remains MATPOWER-oriented.", selection_html)
         @test occursin("DTF/FOR001 diagnostics (experimental/internal)", selection_html)
-        @test occursin("absolute path or a path copied from the same case cache directory", selection_html)
+        @test occursin("name=\"for002_reference_file\"", selection_html)
+        @test occursin("list=\"for002-reference-candidates\"", selection_html)
+        @test occursin("<datalist id=\"for002-reference-candidates\"><option value=\"FOR002.DAT\">FOR002.DAT</option><option value=\"FOR002_reference.DAT\">FOR002_reference.DAT</option></datalist>", selection_html)
+        @test occursin("FOR002.DAT is available in the case cache and can be selected here", selection_html)
         @test !occursin("full DTF/FOR001 support", selection_html)
         @test occursin("const updateDatCaseAssistance = function ()", selection_html)
         @test occursin("new RegExp('\\\\.dat\$', 'i').test(effectiveValue)", selection_html)
@@ -646,7 +657,16 @@ settings:
         @test occursin("<option value=\"dtf_for001\" selected>DTF/FOR001 diagnostics (experimental/internal)</option>", dat_html)
         @test occursin("<details class=\"span-2 dtf-internal-section is-dat-selected\" open>", dat_html)
         @test occursin(".DAT selected:</strong> using internal DTF/FOR001 diagnostics.", dat_html)
+        @test occursin("name=\"for002_reference_file\" value=\"\"", dat_html)
         @test !occursin("full DTF/FOR001 support", dat_html)
+
+        for002_reference_html = Sparlectra.render_powerflow_form(
+          application_root = application_root,
+          selected_casefile = "FOR001.DAT",
+          submitted_form = Dict("for002_reference_file" => "/manual/FOR002.DAT"),
+        )
+        @test occursin("name=\"for002_reference_file\" value=\"/manual/FOR002.DAT\"", for002_reference_html)
+        @test !occursin("for002_reference_file\" value=\"FOR002.DAT\"", dat_html)
 
         submitted_auto_dat_html = Sparlectra.render_powerflow_form(
           application_root = application_root,
@@ -949,6 +969,7 @@ settings:
       dtf_request = Sparlectra.powerflow_webui_request(dtf_form; default_output_root = output_root)
       @test dtf_request["casefile"] == "FOR001.DAT"
       @test dtf_request["case_format"] == "dtf_for001"
+      @test dtf_request["for002_reference_file"] === nothing
 
       auto_dtf_form = copy(dtf_form)
       auto_dtf_form["case_format"] = "auto"
@@ -963,6 +984,30 @@ settings:
       manual_dtf_request = Sparlectra.powerflow_webui_request(manual_dtf_form; default_output_root = output_root)
       @test manual_dtf_request["casefile"] == manual_dtf
       @test manual_dtf_request["case_format"] == "dtf_for001"
+
+      reference_dtf_form = copy(dtf_form)
+      reference_dtf_form["for002_reference_file"] = "  /manual/FOR002.DAT  "
+      reference_dtf_request = Sparlectra.powerflow_webui_request(reference_dtf_form; default_output_root = output_root)
+      @test reference_dtf_request["casefile"] == "FOR001.DAT"
+      @test reference_dtf_request["for002_reference_file"] == "/manual/FOR002.DAT"
+
+      cache_for002 = joinpath(tmpdir, "FOR002.DAT")
+      write(cache_for002, "legacy reference\n")
+      write(manual_dtf, "0 / END\n")
+      base_service_request = Dict{String,Any}(
+        "config_file" => config_file,
+        "output_root" => output_root,
+        "case_format" => "dtf_for001",
+      )
+      for002_primary_response = Sparlectra.start_powerflow_run(merge(copy(base_service_request), Dict{String,Any}("casefile" => "FOR002.DAT")); case_directory = tmpdir)
+      @test !for002_primary_response["success"]
+      @test for002_primary_response["reason"] == "invalid_casefile"
+      @test occursin("FOR002.DAT is a reference/result file and cannot be used as the primary DTF/FOR001 input case.", for002_primary_response["message"])
+
+      manual_for002_primary_response = Sparlectra.start_powerflow_run(merge(copy(base_service_request), Dict{String,Any}("casefile" => cache_for002)); case_directory = tmpdir)
+      @test !manual_for002_primary_response["success"]
+      @test manual_for002_primary_response["reason"] == "invalid_casefile"
+      @test occursin("Use FOR001.DAT as the case and enter FOR002.DAT as optional FOR002 reference file.", manual_for002_primary_response["message"])
 
       empty_case_form = copy(form)
       empty_case_form["casefile"] = ""
