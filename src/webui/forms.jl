@@ -294,6 +294,8 @@ function _webui_form_value(form::AbstractDict, key::String, default = nothing)
   return default
 end
 
+_webui_is_dat_casefile(casefile::AbstractString)::Bool = lowercase(splitext(strip(String(casefile)))[2]) == ".dat"
+
 function _webui_parse_bool(value)::Bool
   return _webui_form_bool(value)
 end

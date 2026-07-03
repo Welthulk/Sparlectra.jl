@@ -237,6 +237,24 @@ function render_powerflow_form(;
   selected_value = strip(selected_casefile)
   existing_value = selected_value in casefiles ? selected_value : ""
   manual_value = isempty(existing_value) ? selected_value : ""
+  if submitted_form isa AbstractDict
+    submitted_existing = strip(_webui_form_string(get(profile_values, "casefile", existing_value)))
+    submitted_manual = strip(_webui_form_string(get(profile_values, "casefile_manual", manual_value)))
+    existing_value = submitted_existing in casefiles ? submitted_existing : ""
+    manual_value = submitted_manual
+  end
+  explicit_case_format = submitted_form isa AbstractDict && _webui_form_value(submitted_form, "case_format", nothing) !== nothing
+  effective_case_value = isempty(strip(manual_value)) ? existing_value : manual_value
+  case_format_value = if explicit_case_format
+    strip(_webui_form_string(_webui_form_value(submitted_form, "case_format", "auto")))
+  elseif _webui_is_dat_casefile(effective_case_value)
+    "dtf_for001"
+  else
+    "auto"
+  end
+  dat_case_assistance = _webui_is_dat_casefile(effective_case_value)
+  dtf_details_attrs = dat_case_assistance ? " class=\"span-2 dtf-internal-section is-dat-selected\" open" : " class=\"span-2 dtf-internal-section\""
+  dat_hint_html = dat_case_assistance ? "<p id=\"dtf-dat-format-hint\" class=\"field-hint dat-format-hint span-2\" role=\"status\"><strong>.DAT selected:</strong> using internal DTF/FOR001 diagnostics.</p>" : "<p id=\"dtf-dat-format-hint\" class=\"field-hint dat-format-hint span-2\" role=\"status\" hidden></p>"
   case_options = join((begin
     has_settings = isfile(_webui_case_settings_path(output_root, casefile; case_directory = effective_case_directory))
     label = has_settings ? "$(casefile) ★" : casefile
@@ -261,11 +279,12 @@ $(error_html)$(_webui_active_run_banner(active_run))$(notice_html)$(profile_noti
 $(config_control)
 <label>$(_webui_field_label("casefile", "Existing case file"))$(case_select)<small class="field-hint">Cases from <code>$(_webui_escape(effective_case_directory))</code></small></label>
 <label><span class="field-label">Or type case file path</span>$(case_manual)<small class="field-hint">Manual input overrides the existing-case selection.</small></label>
-<details class="span-2 dtf-internal-section">
+$(dat_hint_html)
+<details$(dtf_details_attrs)>
 <summary>Input format</summary>
 <fieldset>
 <p class="field-hint span-2">Default remains MATPOWER-oriented. The native DTF/FOR001 path is experimental/internal and intended for diagnostics and validation.</p>
-<label><span class="field-label">Case input format</span><select name="case_format"><option value="auto">Auto</option><option value="matpower">MATPOWER</option><option value="dtf_for001">DTF/FOR001 diagnostics (experimental/internal)</option></select></label>
+<label><span class="field-label">Case input format</span><select name="case_format"><option value="auto"$(_webui_form_string(case_format_value) == "auto" ? " selected" : "")>Auto</option><option value="matpower"$(_webui_form_string(case_format_value) == "matpower" ? " selected" : "")>MATPOWER</option><option value="dtf_for001"$(_webui_form_string(case_format_value) == "dtf_for001" ? " selected" : "")>DTF/FOR001 diagnostics (experimental/internal)</option></select></label>
 <label><span class="field-label">Optional FOR002 reference file</span><input name="for002_reference_file" placeholder="examples/FOR002.DAT"><small class="field-hint">Used only for legacy reference comparison diagnostics; enter an absolute path or a path copied from the same case cache directory.</small></label>
 <label><span class="field-label">DTF outage run mode</span><select name="dtf_outage_selection_mode"><option value="none">Run base case only</option><option value="all">Run all DTF-listed outages</option><option value="selected">Run selected DTF-listed outages</option></select></label>
 <label><span class="field-label">Selected DTF outage labels/indices</span><input name="dtf_outage_selection" placeholder="1 or L1 ALPHA S1 -> BETA1 S1"><small class="field-hint">For selected mode, enter one parsed label or outage index. The result page reports the compact outage summary; detailed rows stay in artifacts.</small></label>
@@ -351,6 +370,33 @@ document.addEventListener('DOMContentLoaded', function () {
     csvFormat.value = defaultFormat;
   }
   const caseSelect = document.querySelector('select[name="casefile"][data-case-settings-reload="true"]');
+  const caseManual = document.querySelector('input[name="casefile_manual"]');
+  const caseFormat = document.querySelector('select[name="case_format"]');
+  const dtfInternalSection = document.querySelector('.dtf-internal-section');
+  const datFormatHint = document.getElementById('dtf-dat-format-hint');
+  const updateDatCaseAssistance = function () {
+    const manualValue = caseManual === null ? '' : caseManual.value.trim();
+    const selectedValue = caseSelect === null ? '' : caseSelect.value.trim();
+    const effectiveValue = manualValue === '' ? selectedValue : manualValue;
+    const isDatCase = new RegExp('\\\\.dat\$', 'i').test(effectiveValue);
+    if (isDatCase && caseFormat !== null) caseFormat.value = 'dtf_for001';
+    if (dtfInternalSection !== null) {
+      dtfInternalSection.classList.toggle('is-dat-selected', isDatCase);
+      if (isDatCase) dtfInternalSection.open = true;
+    }
+    if (datFormatHint !== null) {
+      datFormatHint.hidden = !isDatCase;
+      datFormatHint.textContent = isDatCase ? '.DAT selected: using internal DTF/FOR001 diagnostics.' : '';
+    }
+  };
+  updateDatCaseAssistance();
+  if (caseManual !== null) {
+    caseManual.addEventListener('input', updateDatCaseAssistance);
+    caseManual.addEventListener('change', updateDatCaseAssistance);
+  }
+  if (caseSelect !== null) {
+    caseSelect.addEventListener('change', updateDatCaseAssistance);
+  }
   if (caseSelect !== null) {
     caseSelect.addEventListener('change', function () {
       if (caseSelect.value === '') return;

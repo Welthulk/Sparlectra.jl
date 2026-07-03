@@ -630,6 +630,11 @@ settings:
         @test occursin("DTF/FOR001 diagnostics (experimental/internal)", selection_html)
         @test occursin("absolute path or a path copied from the same case cache directory", selection_html)
         @test !occursin("full DTF/FOR001 support", selection_html)
+        @test occursin("const updateDatCaseAssistance = function ()", selection_html)
+        @test occursin("new RegExp('\\\\.dat\$', 'i').test(effectiveValue)", selection_html)
+        @test occursin("caseFormat.value = 'dtf_for001'", selection_html)
+        @test occursin("dtfInternalSection.open = true", selection_html)
+        @test occursin("target.searchParams.set('casefile', caseSelect.value)", selection_html)
 
         dat_html = Sparlectra.render_powerflow_form(
           application_root = application_root,
@@ -637,6 +642,62 @@ settings:
         )
         @test occursin("<option value=\"FOR001.DAT\" selected>FOR001.DAT</option>", dat_html)
         @test occursin("<input id=\"casefile_manual\" name=\"casefile_manual\" value=\"\"", dat_html)
+        @test occursin("<option value=\"auto\">Auto</option>", dat_html)
+        @test occursin("<option value=\"dtf_for001\" selected>DTF/FOR001 diagnostics (experimental/internal)</option>", dat_html)
+        @test occursin("<details class=\"span-2 dtf-internal-section is-dat-selected\" open>", dat_html)
+        @test occursin(".DAT selected:</strong> using internal DTF/FOR001 diagnostics.", dat_html)
+        @test !occursin("full DTF/FOR001 support", dat_html)
+
+        submitted_auto_dat_html = Sparlectra.render_powerflow_form(
+          application_root = application_root,
+          selected_casefile = "FOR001.DAT",
+          submitted_form = Dict("case_format" => "auto"),
+        )
+        @test occursin("<option value=\"auto\" selected>Auto</option>", submitted_auto_dat_html)
+        @test occursin("<option value=\"dtf_for001\">DTF/FOR001 diagnostics (experimental/internal)</option>", submitted_auto_dat_html)
+
+        case14_html = Sparlectra.render_powerflow_form(
+          application_root = application_root,
+          selected_casefile = "case14.m",
+        )
+        @test occursin("<option value=\"case14.m\" selected>case14.m</option>", case14_html)
+        @test occursin("<option value=\"auto\" selected>Auto</option>", case14_html)
+        @test occursin("<option value=\"dtf_for001\">DTF/FOR001 diagnostics (experimental/internal)</option>", case14_html)
+
+        casejl_html = Sparlectra.render_powerflow_form(
+          application_root = application_root,
+          selected_casefile = "case14.jl",
+        )
+        @test occursin("<option value=\"case14.jl\" selected>case14.jl</option>", casejl_html)
+        @test occursin("<option value=\"auto\" selected>Auto</option>", casejl_html)
+        @test occursin("<option value=\"dtf_for001\">DTF/FOR001 diagnostics (experimental/internal)</option>", casejl_html)
+
+        manual_dat = joinpath(case_directory, "manual", "FOR001.DAT")
+        manual_dat_html = Sparlectra.render_powerflow_form(
+          application_root = application_root,
+          selected_casefile = manual_dat,
+        )
+        @test occursin("<input id=\"casefile_manual\" name=\"casefile_manual\" value=\"$(manual_dat)\"", manual_dat_html)
+        @test occursin("<option value=\"dtf_for001\" selected>DTF/FOR001 diagnostics (experimental/internal)</option>", manual_dat_html)
+        @test occursin("<details class=\"span-2 dtf-internal-section is-dat-selected\" open>", manual_dat_html)
+
+        for manual_matpower in (joinpath(case_directory, "manual", "case14.m"), joinpath(case_directory, "manual", "case14.jl"))
+          manual_matpower_html = Sparlectra.render_powerflow_form(
+            application_root = application_root,
+            selected_casefile = manual_matpower,
+          )
+          @test occursin("<input id=\"casefile_manual\" name=\"casefile_manual\" value=\"$(manual_matpower)\"", manual_matpower_html)
+          @test occursin("<option value=\"auto\" selected>Auto</option>", manual_matpower_html)
+          @test occursin("<option value=\"dtf_for001\">DTF/FOR001 diagnostics (experimental/internal)</option>", manual_matpower_html)
+        end
+
+        manual_overrides_dropdown_html = Sparlectra.render_powerflow_form(
+          application_root = application_root,
+          selected_casefile = "case14.m",
+          submitted_form = Dict("casefile" => "case14.m", "casefile_manual" => manual_dat),
+        )
+        @test occursin("<input id=\"casefile_manual\" name=\"casefile_manual\" value=\"$(manual_dat)\"", manual_overrides_dropdown_html)
+        @test occursin("<option value=\"dtf_for001\" selected>DTF/FOR001 diagnostics (experimental/internal)</option>", manual_overrides_dropdown_html)
 
         rm(case14)
         rm(case118)
@@ -870,12 +931,16 @@ settings:
       existing_form = copy(form)
       existing_form["casefile"] = "  case118.jl  "
       existing_form["casefile_manual"] = "  "
-      @test Sparlectra.powerflow_webui_request(existing_form; default_output_root = output_root)["casefile"] == "case118.jl"
+      existing_request = Sparlectra.powerflow_webui_request(existing_form; default_output_root = output_root)
+      @test existing_request["casefile"] == "case118.jl"
+      @test existing_request["case_format"] == "auto"
 
       typed_form = copy(form)
       typed_form["casefile"] = "case9.m"
       typed_form["casefile_manual"] = "  case9241pegase.m  "
-      @test Sparlectra.powerflow_webui_request(typed_form; default_output_root = output_root)["casefile"] == "case9241pegase.m"
+      typed_request = Sparlectra.powerflow_webui_request(typed_form; default_output_root = output_root)
+      @test typed_request["casefile"] == "case9241pegase.m"
+      @test typed_request["case_format"] == "auto"
 
       dtf_form = copy(form)
       dtf_form["casefile"] = "FOR001.DAT"
@@ -895,7 +960,9 @@ settings:
       manual_dtf_form = copy(dtf_form)
       manual_dtf_form["casefile"] = "case9.m"
       manual_dtf_form["casefile_manual"] = "  " * manual_dtf * "  "
-      @test Sparlectra.powerflow_webui_request(manual_dtf_form; default_output_root = output_root)["casefile"] == manual_dtf
+      manual_dtf_request = Sparlectra.powerflow_webui_request(manual_dtf_form; default_output_root = output_root)
+      @test manual_dtf_request["casefile"] == manual_dtf
+      @test manual_dtf_request["case_format"] == "dtf_for001"
 
       empty_case_form = copy(form)
       empty_case_form["casefile"] = ""
