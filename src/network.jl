@@ -34,6 +34,7 @@ Represents an electrical network.
 - `shuntVec::Vector{Shunt}`: Vector containing shunts in the network.
 - `busDict::Dict{String,Int}`: Dictionary mapping bus names to indices.
 - `busOrigIdxDict::Dict{Int,Int}`: Dictionary mapping current bus indices to original indices.
+- `busOriginalNameDict::Dict{Int,String}`: Optional original source-file bus names keyed by current bus index.
 - `branchDict::Dict{Tuple{Int, Int},Int}`: Dictionary mapping branch tuples to indices.
 - `totalLosses::Vector{Tuple{Float64,Float64}}`: Vector containing tuples of total power losses.
 - `_locked::Bool`: Boolean indicating if the network is locked.
@@ -87,6 +88,7 @@ mutable struct Net
   shuntVec::Vector{Shunt}
   busDict::Dict{String,Int}
   busOrigIdxDict::Dict{Int,Int}
+  busOriginalNameDict::Dict{Int,String}
   totalLosses::Vector{Tuple{Float64,Float64}}
   totalBusPower::Vector{Tuple{Float64,Float64}}
   _locked::Bool
@@ -125,6 +127,7 @@ mutable struct Net
         [], # shuntVec
         Dict{String,Int}(), # busDict
         Dict{Int,Int}(), # busOrigIdxDict
+        Dict{Int,String}(), # busOriginalNameDict
         [], # totalLosses
         [], # totalBusPower
         false, # _locked

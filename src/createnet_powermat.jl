@@ -206,9 +206,17 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
   matpower_dcline_mode in (:reject_active, :ignore_inactive, :pf_injections) || throw(ArgumentError("matpower_dcline_mode must be one of :reject_active, :ignore_inactive, :pf_injections."))
   matpower_dcline_mode === :pf_injections || MatpowerIO.assert_no_active_dcline(mpc)
   bus_name_by_orig = _matpower_bus_names(mpc, busData, BUS_I; apply_bus_names = apply_bus_names)
+  bus_original_name_by_orig = Dict{Int,String}()
+  raw_bus_names = _matpower_metadata_vector(mpc, :bus_name)
+  if raw_bus_names !== nothing && length(raw_bus_names) == nbus
+    for (row_index, row) in enumerate(eachrow(busData))
+      name = raw_bus_names[row_index]
+      isempty(name) || (bus_original_name_by_orig[Int(row[BUS_I])] = name)
+    end
+  end
   branch_kind_overrides = _matpower_branch_kind_overrides(mpc, nbranch; apply_branch_kind = apply_branch_kind)
   branch_names = _matpower_metadata_vector(mpc, :branch_name)
-  branch_names_valid = apply_branch_names && branch_names !== nothing && length(branch_names) == nbranch
+  branch_names_valid = branch_names !== nothing && length(branch_names) == nbranch
   apply_branch_names && !branch_names_valid && @warn "MATPOWER branch_name metadata missing or length-mismatched; branch metadata names will not be attached." expected = nbranch actual = branch_names === nothing ? 0 : length(branch_names)
 
   if log
@@ -294,6 +302,9 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
     qShunt = Float64(row[BS])
 
     bus_idx_by_orig[kIdx] = length(myNet.nodeVec)
+    if haskey(bus_original_name_by_orig, kIdx)
+      myNet.busOriginalNameDict[bus_idx_by_orig[kIdx]] = bus_original_name_by_orig[kIdx]
+    end
 
     if pShunt != 0.0 || qShunt != 0.0
       addShuntMatpower!(net=myNet, busName=busName, Gs=pShunt, Bs=qShunt, bus_shunt_model = shunt_model)

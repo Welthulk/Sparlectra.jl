@@ -19,6 +19,13 @@ mpc.gen = [
 mpc.branch = [
 1 2 0.01 0.05 0.0 999 999 999 0 0 1 -360 360;
 ];
+mpc.bus_name = {
+'Source Bus';
+'Load Bus';
+};
+mpc.branch_name = {
+'API-LINE-1';
+};
 """,
   )
   return path
@@ -275,6 +282,15 @@ function run_api_tests()
       branch_csv = read(joinpath(output_dir, "branch_flows.csv"), String)
       @test startswith(bus_csv, "bus;bus_name;type;vm_pu;va_deg;vn_kV;v_re;v_im;v_complex;v_kV")
       @test startswith(branch_csv, "branch;branch_index;from_bus;to_bus;status;p_from_MW;q_from_MVar;p_to_MW;q_to_MVar")
+      bus_header = split(first(eachline(IOBuffer(bus_csv))), ';')
+      branch_header = split(first(eachline(IOBuffer(branch_csv))), ';')
+      @test "original_bus_name" in bus_header
+      @test all(name -> name in branch_header, ("branch_name", "original_branch_name", "from_bus_name", "to_bus_name", "original_from_bus_name", "original_to_bus_name", "branch_kind"))
+      @test occursin("Source Bus", bus_csv)
+      @test occursin("Load Bus", bus_csv)
+      @test occursin("API-LINE-1", branch_csv)
+      @test occursin("Source Bus", branch_csv)
+      @test occursin("Load Bus", branch_csv)
       @test occursin(r"\d,\d", bus_csv)
       @test length(collect(eachline(IOBuffer(bus_csv)))) > 1
       @test length(collect(eachline(IOBuffer(branch_csv)))) > 1
@@ -290,6 +306,8 @@ function run_api_tests()
       @test direct_artifacts == ["bus_voltages_complex.csv", "branch_flows.csv"]
       @test replace(read(joinpath(direct_csv_dir, "bus_voltages_complex.csv"), String), "\r\n" => "\n") == replace(bus_csv, "\r\n" => "\n")
       @test replace(read(joinpath(direct_csv_dir, "branch_flows.csv"), String), "\r\n" => "\n") == replace(branch_csv, "\r\n" => "\n")
+      @test split(first(eachline(joinpath(direct_csv_dir, "bus_voltages_complex.csv"))), ';') == bus_header
+      @test split(first(eachline(joinpath(direct_csv_dir, "branch_flows.csv"))), ';') == branch_header
       @test direct_timing[:exporter] === :direct
       @test direct_timing[:write_mode] === :streaming
       @test direct_timing[:bus_rows] == length(result.raw_result.net.nodeVec)

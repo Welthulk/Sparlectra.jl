@@ -43,6 +43,15 @@ function run_dtf_api_webui_integration_tests()
       @test result.metadata["dtf_outage_count"] == 2
       @test length(result.metadata["dtf_outage_results"]) >= 1
       artifact_names = Set(a.name for a in result.artifacts)
+      bus_csv = read(joinpath(direct_output, "bus_voltages_complex.csv"), String)
+      branch_csv = read(joinpath(direct_output, "branch_flows.csv"), String)
+      bus_header = split(first(eachline(IOBuffer(bus_csv))), ',')
+      branch_header = split(first(eachline(IOBuffer(branch_csv))), ',')
+      @test "original_bus_name" in bus_header
+      @test all(name -> name in branch_header, ("branch_name", "original_branch_name", "from_bus_name", "to_bus_name", "original_from_bus_name", "original_to_bus_name", "branch_kind"))
+      @test occursin("ALPHA", bus_csv)
+      @test occursin("ALPHA", branch_csv)
+      @test occursin("L1 ALPHA S1 -> BETA1 S1", branch_csv)
       @test "dtf_import_summary.md" in artifact_names
       @test "dtf_import_summary.csv" in artifact_names
       @test "dtf_native_matpower_export.m" in artifact_names

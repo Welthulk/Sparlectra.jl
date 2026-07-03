@@ -324,6 +324,7 @@ function build_net(case::DTFCase; bus_shunt_model = :admittance)::Net
     vn = case.nominal_voltages_kv[bus.voltage_level_index]
     vm = bus.start_kv > 0 ? bus.start_kv / vn : 1.0
     addBus!(net = net, busName = bus.name, vn_kV = vn, vm_pu = vm, va_deg = bus.angle_deg, isAux = false, oBusIdx = bus.index)
+    net.busOriginalNameDict[geNetBusIdx(net = net, busName = bus.name)] = bus.name
     if bus.pd_mw != 0.0 || bus.qd_mvar != 0.0
       addProsumer!(net = net, busName = bus.name, type = "ENERGYCONSUMER", p = bus.pd_mw, q = bus.qd_mvar, defer_bus_type_refresh = true)
     end
@@ -360,6 +361,7 @@ function build_net(case::DTFCase; bus_shunt_model = :admittance)::Net
     to_bus = bus_by_name[branch.to]
     net.matpower_branch_metadata[length(net.branchVec)] = (
       orig_name = string(branch.kind, branch.voltage_level_index, branch.parallel_id, " ", branch.from, " -> ", branch.to),
+      source_label = string(branch.kind, branch.voltage_level_index, branch.parallel_id),
       orig_kind = branch.kind == 'T' ? :transformer : :line,
       orig_index = branch.index,
       dtf_kind = branch.kind,
