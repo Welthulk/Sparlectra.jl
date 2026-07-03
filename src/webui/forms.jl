@@ -55,7 +55,16 @@ function _webui_casefile_options_in_directory(directory::AbstractString)::Vector
     extension = lowercase(splitext(name)[2])
     lowered_name = lowercase(name)
     endswith(lowered_name, ".sparlectra-webui.yaml") && return false
+    _is_for002_reference_dat(name) && return false
     return isfile(joinpath(directory, name)) && extension in visible_extensions
+  end
+  return sort!(files; by = lowercase)
+end
+
+function _webui_for002_reference_options_in_directory(directory::AbstractString)::Vector{String}
+  isdir(directory) || return String[]
+  files = filter(readdir(directory)) do name
+    return isfile(joinpath(directory, name)) && _is_for002_reference_dat(name)
   end
   return sort!(files; by = lowercase)
 end

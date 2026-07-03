@@ -234,6 +234,7 @@ function render_powerflow_form(;
   casefiles = case_directory === nothing ? _webui_casefile_options(application_root) : _webui_casefile_options_in_directory(case_directory)
   bundled_case_directory = joinpath(application_root, "data", "mpower")
   effective_case_directory = case_directory === nothing ? bundled_case_directory : String(case_directory)
+  for002_candidates = _webui_for002_reference_options_in_directory(effective_case_directory)
   selected_value = strip(selected_casefile)
   existing_value = selected_value in casefiles ? selected_value : ""
   manual_value = isempty(existing_value) ? selected_value : ""
@@ -262,6 +263,11 @@ function render_powerflow_form(;
   end for casefile in casefiles), "")
   case_select = "<select id=\"casefile\" name=\"casefile\" data-case-settings-reload=\"true\"><option value=\"\">-- choose existing case --</option>$(case_options)</select>"
   case_manual = "<input id=\"casefile_manual\" name=\"casefile_manual\" value=\"$(_webui_escape(manual_value))\" placeholder=\"case14.m or /path/to/FOR001.DAT\">"
+  for002_reference_value = submitted_form isa AbstractDict ? strip(_webui_form_string(_webui_form_value(submitted_form, "for002_reference_file", ""))) : ""
+  for002_list_options = join(("<option value=\"$(_webui_escape(candidate))\">$(_webui_escape(candidate))</option>" for candidate in for002_candidates), "")
+  for002_list_html = isempty(for002_candidates) ? "" : "<datalist id=\"for002-reference-candidates\">$(for002_list_options)</datalist>"
+  for002_list_attr = isempty(for002_candidates) ? "" : " list=\"for002-reference-candidates\""
+  for002_hint = isempty(for002_candidates) ? "Used only for legacy reference comparison diagnostics; enter an absolute path or a path copied from the same case cache directory." : "Used only for legacy reference comparison diagnostics. FOR002.DAT is available in the case cache and can be selected here, or enter an absolute/manual path."
   config_default = isempty(selected_config_file) ? DEFAULT_SPARLECTRA_CONFIG_PATH : selected_config_file
   config_control = "<input type=\"hidden\" name=\"config_file\" value=\"$(_webui_escape(config_default))\">"
   info_menu = _webui_powerflow_info_menu(; output_root, config_file = config_default, case_directory = effective_case_directory, operation_log)
@@ -285,7 +291,7 @@ $(dat_hint_html)
 <fieldset>
 <p class="field-hint span-2">Default remains MATPOWER-oriented. The native DTF/FOR001 path is experimental/internal and intended for diagnostics and validation.</p>
 <label><span class="field-label">Case input format</span><select name="case_format"><option value="auto"$(_webui_form_string(case_format_value) == "auto" ? " selected" : "")>Auto</option><option value="matpower"$(_webui_form_string(case_format_value) == "matpower" ? " selected" : "")>MATPOWER</option><option value="dtf_for001"$(_webui_form_string(case_format_value) == "dtf_for001" ? " selected" : "")>DTF/FOR001 diagnostics (experimental/internal)</option></select></label>
-<label><span class="field-label">Optional FOR002 reference file</span><input name="for002_reference_file" placeholder="examples/FOR002.DAT"><small class="field-hint">Used only for legacy reference comparison diagnostics; enter an absolute path or a path copied from the same case cache directory.</small></label>
+<label><span class="field-label">Optional FOR002 reference file</span><input name="for002_reference_file" value=\"$(_webui_escape(for002_reference_value))\" placeholder="examples/FOR002.DAT"$for002_list_attr>$(for002_list_html)<small class="field-hint">$(_webui_escape(for002_hint))</small></label>
 <label><span class="field-label">DTF outage run mode</span><select name="dtf_outage_selection_mode"><option value="none">Run base case only</option><option value="all">Run all DTF-listed outages</option><option value="selected">Run selected DTF-listed outages</option></select></label>
 <label><span class="field-label">Selected DTF outage labels/indices</span><input name="dtf_outage_selection" placeholder="1 or L1 ALPHA S1 -> BETA1 S1"><small class="field-hint">For selected mode, enter one parsed label or outage index. The result page reports the compact outage summary; detailed rows stay in artifacts.</small></label>
 <label class="check"><input name="write_outage_artifacts" type="hidden" value="false"><input name="write_outage_artifacts" type="checkbox" value="true" checked>Write DTF outage artifacts</label>
