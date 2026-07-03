@@ -109,6 +109,65 @@ For a standard Web UI power-flow run, Sparlectra primarily uses the topology and
 
 When Q-limit handling is enabled, the generator reactive power limits from `QMAX` and `QMIN` become important. If a generator cannot maintain its voltage setpoint within those limits, the solver may have to treat the bus differently depending on the selected configuration.
 
+## Sparlectra-specific optional metadata and import options
+
+The standard MATPOWER case concepts are `mpc.bus`, `mpc.gen`, `mpc.branch` and, when present, `mpc.gencost`. The official MATPOWER documentation remains authoritative for those standard tables and their columns.
+
+Sparlectra can also read a small set of optional metadata fields when a conversion or validation workflow provides them. These fields are Sparlectra-recognized extensions, not required MATPOWER fields. If they are absent, standard MATPOWER imports still work. If they are present but the corresponding `apply_*` import options remain `false`, Sparlectra keeps conservative/default naming and branch-classification behavior.
+
+Names and source metadata are useful for CSV exports, FOR001/FOR002 validation, outage mapping, diagnostics and support workflows.
+
+| Field | Purpose | Used when |
+|---|---|---|
+| `mpc.bus_name` | Optional readable bus names. | `matpower_import.apply_bus_names = true` |
+| `mpc.branch_name` | Optional readable branch/source names. | `matpower_import.apply_branch_names = true` |
+| `mpc.branch_kind` | Optional branch-kind hints such as line/transformer. | `matpower_import.apply_branch_kind = true` |
+| `mpc.for001_contingencies` | Optional FOR001-derived outage/contingency metadata for validation workflows. | `matpower_import.import_for001_contingencies = true` |
+| `mpc.dcline` | MATPOWER DC-line data. | Controlled by `matpower_import.matpower_dcline_mode`; active rows are rejected by default unless configured otherwise. |
+
+## Sparlectra MATPOWER import options overview
+
+The options below are the most common import-convention controls users may need when a case was converted from another tool or carries optional metadata. See the full [MATPOWER import configuration reference](matpower_import.md) for allowed values, defaults and interactions.
+
+| Option | User-facing purpose |
+|---|---|
+| `matpower_import.auto_profile` | Runs a pre-run profile that can log or safely apply import-convention recommendations. |
+| `matpower_import.auto_profile_log` | Controls whether auto-profile reasoning and final effective options are printed/logged. |
+| `matpower_import.pv_voltage_source` | Selects whether PV voltage setpoints come from generator `VG`, bus `VM`, or an automatic/strict policy. |
+| `matpower_import.compare_voltage_reference` | Chooses the voltage reference used for MATPOWER comparison diagnostics. |
+| `matpower_import.bus_shunt_model` | Selects how MATPOWER bus shunts are interpreted during import. |
+| `matpower_import.shift_unit` | Declares whether branch phase-shift values are in degrees or radians. |
+| `matpower_import.shift_sign` | Controls the phase-shift sign convention used for branch import. |
+| `matpower_import.ratio` | Controls the transformer tap-ratio interpretation. |
+| `matpower_import.enable_pq_gen_controllers` | Enables controller behavior for imported PQ generators when appropriate. |
+| `matpower_import.apply_bus_names` | Applies optional `mpc.bus_name` metadata to imported bus names. |
+| `matpower_import.apply_branch_names` | Preserves optional `mpc.branch_name` metadata for branch/source mapping. |
+| `matpower_import.apply_branch_kind` | Uses optional `mpc.branch_kind` metadata to classify lines and transformers. |
+| `matpower_import.import_for001_contingencies` | Imports optional `mpc.for001_contingencies` validation metadata. |
+| `matpower_import.matpower_dcline_mode` | Controls whether active `mpc.dcline` rows are rejected, ignored when inactive, or mapped as fixed injections. |
+
+For example, a case-conversion or validation workflow might use:
+
+```yaml
+matpower_import:
+  auto_profile: recommend
+  pv_voltage_source: gen_vg
+  compare_voltage_reference: imported_setpoint
+  ratio: normal
+  shift_unit: deg
+  shift_sign: 1.0
+  bus_shunt_model: admittance
+  apply_bus_names: true
+  apply_branch_names: true
+  apply_branch_kind: true
+  import_for001_contingencies: true
+  matpower_dcline_mode: reject_active
+```
+
+This is an example configuration, not a requirement for every case.
+
+The Web UI exposes selected MATPOWER import convention controls in the form and writes the effective configuration as a run artifact. It does not rewrite the user YAML automatically. With `auto_profile = recommend`, Sparlectra logs recommendations without changing the active configuration; with `auto_profile = apply`, it applies only safe convention recommendations. Use the result artifacts and logs to reproduce the final effective settings for a run.
+
 ## Full reference
 
 This page is intentionally short. For the complete MATPOWER format, use the official MATPOWER documentation:

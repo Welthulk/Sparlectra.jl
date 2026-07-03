@@ -198,13 +198,16 @@ conservative: built-in defaults are loaded first, global configuration remains
 unchanged, the case-specific Web UI profile only prefills editable form fields,
 and any manual browser edit wins for the submitted run.
 
-The existing-case selector lists canonical MATPOWER `.m` files from the user Web UI case
-cache. Generated MATPOWER `.jl` cache artifacts are internal and are not user-selectable.
-First startup still provisions the small `warmup_case3.jl` demo case for warmup,
-but generated MATPOWER cache files are hidden from normal case selection. A
-separate manual field accepts a bare case name such as `case14.m`, `case118.m`,
-or `case9241pegase.m`; a nonempty manual value overrides the selected cached
-case.
+The existing-case selector is MATPOWER-oriented by default and may list `.m`,
+`.jl`, and runnable internal DTF/FOR001 `.DAT` candidates when they are
+supported by the current Web UI case-resolution logic. FOR002-like `.DAT` files
+are not primary cases; use the optional FOR002 reference field for those
+validation references. First startup still provisions the small
+`warmup_case3.jl` demo case for warmup. A separate manual field accepts a bare
+case name such as `case14.m`, `case118.m`, or `case9241pegase.m`; a nonempty
+manual value overrides the selected cached case. Internal DTF/FOR001 support is
+intended for supported conversion and validation workflows and does not change
+the normal MATPOWER-first workflow.
 
 The landing page includes a compact, collapsible MATPOWER acknowledgement beside
 the case inputs. It distinguishes Sparlectra from MATPOWER, provides links to
@@ -297,7 +300,7 @@ Excel-specific text hints.
 
 | Help topic | Input | Guidance |
 |---|---|---|
-| `webui.casefile` | MATPOWER case file | Choose an available canonical `.m` file from the existing-case selector, or type a bare case name or existing local path in the separate manual field. A nonempty manual value takes precedence. Missing bare `.m` names may be downloaded into the server-owned `data/mpower` directory; generated MATPOWER `.jl` cache files in that directory are not user-selectable and are not preferred for execution. Missing path-like inputs and URLs are rejected. |
+| `webui.casefile` | MATPOWER case file | Choose an available `.m`, `.jl`, or supported runnable internal DTF/FOR001 `.DAT` candidate from the existing-case selector, or type a bare case name or existing local path in the separate manual field. A nonempty manual value takes precedence. Missing bare `.m` names may be downloaded into the server-owned `data/mpower` directory; MATPOWER `.m` remains the default-oriented workflow, while FOR002-like `.DAT` files belong in the optional FOR002 reference field rather than the primary case field. Missing path-like inputs and URLs are rejected. |
 | `webui.config_file` | Configuration template file | Select a YAML configuration or `*.yaml.example` template discovered in `examples`. Form values create allowlisted per-run overrides, while the selected template remains unchanged. |
 | `webui.output_root` | Output root directory | Configure this path when calling `start_sparlectra_webui`; the browser displays it read-only. The service creates its persistent run index and one subdirectory per run beneath this root. |
 
