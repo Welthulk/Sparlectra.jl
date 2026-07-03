@@ -152,6 +152,23 @@ function _matpower_branch_kind_overrides(mpc, nbranch::Int; apply_branch_kind::B
   return [_normalize_matpower_branch_kind(k) for k in kinds]
 end
 
+function _matpower_dcline_col(dcline::AbstractMatrix, row::Integer, col::Integer, name::AbstractString; required::Bool = false, default::Float64 = 0.0)
+  if size(dcline, 2) >= col
+    return Float64(dcline[row, col])
+  end
+  required && throw(ArgumentError("MATPOWER dcline row $(row) requires column $(col) ($(name)) for :pf_injections mode."))
+  return default
+end
+
+function _matpower_dcline_terminal_voltage_control(net::Net, bus_idx::Int, bus_type::Int, vm::Union{Nothing,Float64})::Bool
+  vm === nothing && return false
+  bus_type == 4 && return false
+  bus_type == 3 && return false
+  (1 <= bus_idx <= length(net.nodeVec)) || return false
+  getNodeType(net.nodeVec[bus_idx]) == Isolated && return false
+  return true
+end
+
 function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false, cooldown::Int = 0, q_hyst_pu::Float64 = 0.0, enable_pq_gen_controllers::Bool = true, bus_shunt_model = :admittance, matpower_shift_sign::Real = 1.0, matpower_shift_unit = :deg, matpower_ratio = :normal, reference_vm_pu::Union{Nothing,Float64} = nothing, reference_va_deg::Union{Nothing,Float64} = nothing, matpower_pv_voltage_source = :gen_vg, matpower_pv_voltage_mismatch_tol_pu::Float64 = 1e-4, preallocate_network::Symbol = :auto, preallocate_min_buses::Int = 1000, apply_bus_names::Bool = false, apply_branch_names::Bool = false, apply_branch_kind::Bool = false, import_for001_contingencies::Bool = true, matpower_dcline_mode::Symbol = :reject_active, profile::Union{Nothing,AbstractDict}=nothing)::Net
   # Small logger helper
   pInfo(msg::String) = (log ? (@info msg) : nothing)
@@ -467,23 +484,40 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
     if dcline !== nothing
       @inbounds for r in axes(dcline, 1)
         size(dcline, 2) >= 3 && dcline[r, 3] == 0.0 && continue
-        size(dcline, 2) >= 5 || throw(ArgumentError("MATPOWER dcline row $(r) must have at least 5 columns for :pf_injections mode."))
+        size(dcline, 2) >= 4 || throw(ArgumentError("MATPOWER dcline row $(r) must have at least 4 columns (F_BUS, T_BUS, BR_STATUS, PF) for :pf_injections mode."))
         fbus = Int(dcline[r, 1])
         tbus = Int(dcline[r, 2])
         f_name = get(bus_name_by_orig, fbus, nothing)
         t_name = get(bus_name_by_orig, tbus, nothing)
         f_name !== nothing || throw(ArgumentError("MATPOWER dcline row $(r) references unknown F_BUS $(fbus)."))
         t_name !== nothing || throw(ArgumentError("MATPOWER dcline row $(r) references unknown T_BUS $(tbus)."))
+        f_idx = bus_idx_by_orig[fbus]
+        t_idx = bus_idx_by_orig[tbus]
+        f_bus_type = get(mp_bus_type, fbus, 1)
+        t_bus_type = get(mp_bus_type, tbus, 1)
         pf = Float64(dcline[r, 4])
-        pt = Float64(dcline[r, 5])
+        input_pt = _matpower_dcline_col(dcline, r, 5, "PT"; required = size(dcline, 2) < 17)
+        loss0 = _matpower_dcline_col(dcline, r, 16, "LOSS0"; default = 0.0)
+        loss1 = _matpower_dcline_col(dcline, r, 17, "LOSS1"; default = 0.0)
+        pt = input_pt
         if size(dcline, 2) >= 17
-          pt = pf - (Float64(dcline[r, 16]) + Float64(dcline[r, 17]) * pf)
+          pt = pf - (loss0 + loss1 * pf)
         end
-        qf = size(dcline, 2) >= 6 ? Float64(dcline[r, 6]) : 0.0
-        qt = size(dcline, 2) >= 7 ? Float64(dcline[r, 7]) : 0.0
-        addProsumer!(net = myNet, busName = f_name, type = "GENERATOR", p = -pf, q = qf, isRegulated = false, defer_bus_type_refresh = true)
+        qf = _matpower_dcline_col(dcline, r, 6, "QF")
+        qt = _matpower_dcline_col(dcline, r, 7, "QT")
+        vf = size(dcline, 2) >= 8 ? Float64(dcline[r, 8]) : nothing
+        vt = size(dcline, 2) >= 9 ? Float64(dcline[r, 9]) : nothing
+        qminf = size(dcline, 2) >= 12 ? Float64(dcline[r, 12]) : nothing
+        qmaxf = size(dcline, 2) >= 13 ? Float64(dcline[r, 13]) : nothing
+        qmint = size(dcline, 2) >= 14 ? Float64(dcline[r, 14]) : nothing
+        qmaxt = size(dcline, 2) >= 15 ? Float64(dcline[r, 15]) : nothing
+        from_voltage_controlled = _matpower_dcline_terminal_voltage_control(myNet, f_idx, f_bus_type, vf)
+        to_voltage_controlled = _matpower_dcline_terminal_voltage_control(myNet, t_idx, t_bus_type, vt)
+        from_vm = f_bus_type == 4 ? nothing : vf
+        to_vm = t_bus_type == 4 ? nothing : vt
+        addProsumer!(net = myNet, busName = f_name, type = "GENERATOR", p = -pf, q = qf, qMin = qminf, qMax = qmaxf, vm_pu = from_vm, isRegulated = from_voltage_controlled, defer_bus_type_refresh = true)
         from_prosumer = length(myNet.prosumpsVec)
-        addProsumer!(net = myNet, busName = t_name, type = "GENERATOR", p = pt, q = qt, isRegulated = false, defer_bus_type_refresh = true)
+        addProsumer!(net = myNet, busName = t_name, type = "GENERATOR", p = pt, q = qt, qMin = qmint, qMax = qmaxt, vm_pu = to_vm, isRegulated = to_voltage_controlled, defer_bus_type_refresh = true)
         to_prosumer = length(myNet.prosumpsVec)
         push!(myNet.matpowerDclineMetadata, (
           orig_index = r,
@@ -491,13 +525,29 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
           to_bus = tbus,
           from_bus_name = f_name,
           to_bus_name = t_name,
+          status = size(dcline, 2) >= 3 ? Float64(dcline[r, 3]) : 1.0,
           pf_mw = pf,
+          input_pt_mw = input_pt,
+          effective_pt_mw = pt,
           pt_mw = pt,
+          loss0_mw = loss0,
+          loss1 = loss1,
           loss_mw = pf - pt,
+          qf_mvar = qf,
+          qt_mvar = qt,
+          vf_pu = vf,
+          vt_pu = vt,
+          qminf_mvar = qminf,
+          qmaxf_mvar = qmaxf,
+          qmint_mvar = qmint,
+          qmaxt_mvar = qmaxt,
           from_prosumer = from_prosumer,
           to_prosumer = to_prosumer,
+          from_voltage_controlled = from_voltage_controlled,
+          to_voltage_controlled = to_voltage_controlled,
         ))
       end
+      !isempty(myNet.matpowerDclineMetadata) && @info "MATPOWER active mpc.dcline rows imported using toggle_dcline-compatible PF injections" active_dcline_count = length(myNet.matpowerDclineMetadata)
     end
   end
 

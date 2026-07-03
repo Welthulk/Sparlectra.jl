@@ -163,10 +163,18 @@ default `:reject_active` preserves old fail-fast behavior: active DC-line rows
 (`status != 0`) abort before solving with `failure_reason =
 unsupported_matpower_dcline`, while empty or inactive-only tables are ignored.
 `:ignore_inactive` has the same active-row rejection behavior and documents the
-inactive-row ignore policy. `:pf_injections` emulates MATPOWER's simple
-power-flow treatment by adding fixed terminal generator injections for active
-DC lines: from-side `PG = -PF`, to-side `PG = PT`, with `PT` recomputed as
-`PF - (LOSS0 + LOSS1 * PF)` when loss columns are present. OPF constraints,
+inactive-row ignore policy. `:pf_injections` uses a MATPOWER
+`toggle_dcline`-compatible power-flow approximation by adding two
+generator-like terminal prosumers for each active row. The from terminal uses
+`F_BUS`, `PF`, `QF`, `VF`, and `QMINF`/`QMAXF` with active injection
+`PG = -PF`. The to terminal uses `T_BUS`, `QT`, `VT`, and
+`QMINT`/`QMAXT`; received active power is recomputed as
+`PF - (LOSS0 + LOSS1 * PF)` when `LOSS0`/`LOSS1` are present, otherwise the
+input `PT` column is used. Terminal buses with voltage setpoints are treated as
+voltage-controlled where MATPOWER would make them PV, without demoting
+reference buses or activating isolated buses. API/Web UI runs write a compact
+`matpower_dcline.csv` artifact describing the mapping. This is not a full HVDC
+converter or DC-grid model; OPF constraints, converter controls,
 `dclinecost`, and DC-line optimization remain unsupported.
 
 ```julia

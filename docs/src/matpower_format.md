@@ -123,7 +123,7 @@ Names and source metadata are useful for CSV exports, FOR001/FOR002 validation, 
 | `mpc.branch_name` | Optional readable branch/source names. | `matpower_import.apply_branch_names = true` |
 | `mpc.branch_kind` | Optional branch-kind hints such as line/transformer. | `matpower_import.apply_branch_kind = true` |
 | `mpc.for001_contingencies` | Optional FOR001-derived outage/contingency metadata for validation workflows. | `matpower_import.import_for001_contingencies = true` |
-| `mpc.dcline` | MATPOWER DC-line data. | Controlled by `matpower_import.matpower_dcline_mode`; active rows are rejected by default unless configured otherwise. |
+| `mpc.dcline` | MATPOWER DC-line data. | Controlled by `matpower_import.matpower_dcline_mode`; active rows are rejected by default unless `pf_injections` is selected. |
 
 ## Sparlectra MATPOWER import options overview
 
@@ -144,7 +144,7 @@ The options below are the most common import-convention controls users may need 
 | `matpower_import.apply_branch_names` | Preserves optional `mpc.branch_name` metadata for branch/source mapping. |
 | `matpower_import.apply_branch_kind` | Uses optional `mpc.branch_kind` metadata to classify lines and transformers. |
 | `matpower_import.import_for001_contingencies` | Imports optional `mpc.for001_contingencies` validation metadata. |
-| `matpower_import.matpower_dcline_mode` | Controls whether active `mpc.dcline` rows are rejected, ignored when inactive, or mapped as fixed injections. |
+| `matpower_import.matpower_dcline_mode` | Controls whether active `mpc.dcline` rows are rejected, ignored when inactive, or mapped with the MATPOWER DC-line PF injections approximation. |
 
 For example, a case-conversion or validation workflow might use:
 
@@ -165,6 +165,29 @@ matpower_import:
 ```
 
 This is an example configuration, not a requirement for every case.
+
+## MATPOWER `mpc.dcline`
+
+Sparlectra recognizes `mpc.dcline` tables. The default
+`matpower_import.matpower_dcline_mode: reject_active` remains fail-fast for
+active rows so that DC lines are not silently dropped. Empty and inactive-only
+tables are tolerated.
+
+For ordinary power-flow compatibility studies, opt in to
+`matpower_import.matpower_dcline_mode: pf_injections`. This imports active rows
+with a MATPOWER `toggle_dcline`-compatible PF approximation: each DC line is
+represented by from/to generator-like terminal injections, from-side
+`PG = -PF`, to-side received power from `PF - (LOSS0 + LOSS1 * PF)` when loss
+columns are available (or input `PT` otherwise), row `QF`/`QT`, voltage
+setpoints `VF`/`VT`, and terminal Q limits where present. Terminal buses with
+voltage setpoints become voltage-controlled where appropriate, while existing
+reference buses stay reference buses and isolated buses are not activated.
+API/Web UI runs with imported active DC lines include `matpower_dcline.csv` as
+a compact diagnostic artifact.
+
+This option is a `toggle_dcline`-compatible PF approximation, not a full HVDC
+converter model. OPF-style behavior, converter controls, `dclinecost`, and
+detailed DC-grid modeling are not provided by Sparlectra yet.
 
 The Web UI exposes selected MATPOWER import convention controls in the form and writes the effective configuration as a run artifact. It does not rewrite the user YAML automatically. With `auto_profile = recommend`, Sparlectra logs recommendations without changing the active configuration; with `auto_profile = apply`, it applies only safe convention recommendations. Use the result artifacts and logs to reproduce the final effective settings for a run.
 

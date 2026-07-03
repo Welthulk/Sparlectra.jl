@@ -102,13 +102,63 @@ mpc.dcline = [
     net_dcline = Sparlectra.createNetFromMatPowerCase(mpc = mpc_dcline, apply_bus_names = true, matpower_dcline_mode = :pf_injections)
     meta = only(net_dcline.matpowerDclineMetadata)
     @test meta.pf_mw == 100.0
+    @test meta.input_pt_mw == 0.0
+    @test meta.effective_pt_mw == 97.0
     @test meta.pt_mw == 97.0
     @test meta.loss_mw == 3.0
+    @test meta.qf_mvar == 4.0
+    @test meta.qt_mvar == 5.0
+    @test meta.vf_pu == 1.0
+    @test meta.vt_pu == 1.0
+    @test meta.qminf_mvar == -50.0
+    @test meta.qmaxf_mvar == 50.0
+    @test meta.qmint_mvar == -50.0
+    @test meta.qmaxt_mvar == 50.0
+    @test meta.from_voltage_controlled === false
+    @test meta.to_voltage_controlled === true
     @test net_dcline.prosumpsVec[meta.from_prosumer].pVal == -100.0
     @test net_dcline.prosumpsVec[meta.to_prosumer].pVal == 97.0
+    @test net_dcline.prosumpsVec[meta.from_prosumer].qVal == 4.0
+    @test net_dcline.prosumpsVec[meta.to_prosumer].qVal == 5.0
+    @test net_dcline.prosumpsVec[meta.from_prosumer].minQ == -50.0
+    @test net_dcline.prosumpsVec[meta.to_prosumer].maxQ == 50.0
+    @test Sparlectra.getNodeType(net_dcline.nodeVec[net_dcline.busDict["SlackBus"]]) == Sparlectra.Slack
+    @test Sparlectra.getNodeType(net_dcline.nodeVec[net_dcline.busDict["LoadBus"]]) == Sparlectra.PV
 
     inactive = [1.0 2.0 0.0 100.0 99.0]
     net_inactive = Sparlectra.createNetFromMatPowerCase(mpc = Sparlectra.MatpowerIO.legacy_sort_bus(_metadata_case(dcline = inactive)), matpower_dcline_mode = :reject_active)
     @test isempty(net_inactive.matpowerDclineMetadata)
+
+    short_dcline = [1.0 2.0 1.0 25.0 24.0 1.5 2.5 1.01 1.02 0.0 100.0 -8.0 9.0 -6.0 7.0]
+    net_short = Sparlectra.createNetFromMatPowerCase(mpc = Sparlectra.MatpowerIO.legacy_sort_bus(_metadata_case(dcline = short_dcline)), apply_bus_names = true, matpower_dcline_mode = :pf_injections)
+    short_meta = only(net_short.matpowerDclineMetadata)
+    @test short_meta.input_pt_mw == 24.0
+    @test short_meta.effective_pt_mw == 24.0
+    @test short_meta.loss0_mw == 0.0
+    @test short_meta.loss1 == 0.0
+    @test net_short.prosumpsVec[short_meta.from_prosumer].pVal == -25.0
+    @test net_short.prosumpsVec[short_meta.to_prosumer].pVal == 24.0
+
+    unknown_dcline = [1.0 999.0 1.0 25.0 24.0]
+    @test_throws ArgumentError Sparlectra.createNetFromMatPowerCase(mpc = Sparlectra.MatpowerIO.legacy_sort_bus(_metadata_case(dcline = unknown_dcline)), matpower_dcline_mode = :pf_injections)
+
+    isolated_case = Sparlectra.MatpowerIO.MatpowerCase(
+      "isolated_dcline_case",
+      100.0,
+      [1 3 0.0 0.0 0.0 0.0 1 1.0 0.0 110.0 1 1.1 0.9;
+       2 4 0.0 0.0 0.0 0.0 1 1.0 0.0 110.0 1 1.1 0.9],
+      [1 10.0 0.0 100.0 -100.0 1.0 100.0 1 100.0 0.0 0 0 0 0 0 0 0 0 0 0 0],
+      zeros(0, 13),
+      nothing,
+      nothing,
+      nothing,
+      nothing,
+      nothing,
+      [1.0 2.0 1.0 5.0 4.0 0.0 0.0 1.0 1.03],
+    )
+    net_isolated = Sparlectra.createNetFromMatPowerCase(mpc = isolated_case, matpower_dcline_mode = :pf_injections)
+    isolated_meta = only(net_isolated.matpowerDclineMetadata)
+    @test isolated_meta.to_voltage_controlled === false
+    @test Sparlectra.getNodeType(net_isolated.nodeVec[net_isolated.busDict["2"]]) != Sparlectra.PV
   end
 end

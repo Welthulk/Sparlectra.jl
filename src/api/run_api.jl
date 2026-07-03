@@ -17,6 +17,7 @@ using UUIDs: uuid4
 const _SPARLECTRA_API_SCHEMA_VERSION = "1.0"
 const WEBUI_PERFORMANCE_TIMING_VALUES = (:off, :compact, :full)
 const Q_LIMIT_LOG_ARTIFACT = "q_limit.log"
+const MATPOWER_DCLINE_ARTIFACT = "matpower_dcline.csv"
 
 
 mutable struct PowerFlowPhaseTimingRecorder
@@ -32,6 +33,39 @@ end
 
 function _api_datetime_string(value::Dates.DateTime)::String
   return Dates.format(value, dateformat"yyyy-mm-ddTHH:MM:SS.sss") * "Z"
+end
+
+function _write_matpower_dcline_artifact(output_path::AbstractString, net::Net; format = "technical")::Union{Nothing,String}
+  rows = getproperty(net, :matpowerDclineMetadata)
+  isempty(rows) && return nothing
+  columns = (
+    :orig_index,
+    :from_bus,
+    :to_bus,
+    :from_bus_name,
+    :to_bus_name,
+    :status,
+    :pf_mw,
+    :input_pt_mw,
+    :effective_pt_mw,
+    :loss0_mw,
+    :loss1,
+    :loss_mw,
+    :qf_mvar,
+    :qt_mvar,
+    :vf_pu,
+    :vt_pu,
+    :qminf_mvar,
+    :qmaxf_mvar,
+    :qmint_mvar,
+    :qmaxt_mvar,
+    :from_prosumer,
+    :to_prosumer,
+    :from_voltage_controlled,
+    :to_voltage_controlled,
+  )
+  _write_namedtuple_csv(joinpath(output_path, MATPOWER_DCLINE_ARTIFACT), rows, columns; format = format)
+  return MATPOWER_DCLINE_ARTIFACT
 end
 
 function _effective_config_with_runtime_case(effective_raw, case_path::AbstractString, config::SparlectraConfig)
@@ -724,6 +758,14 @@ function _run_sparlectra_api(;
   if (run_diagnostics || detailed_result_csv) && raw_result.net !== nothing
     append!(q_limit_artifacts, _write_q_limit_detail_artifacts(output_path, raw_result.net; format = "technical"))
   end
+  matpower_dcline_artifact = raw_result.net === nothing ? nothing : _write_matpower_dcline_artifact(output_path, raw_result.net; format = "technical")
+  if matpower_dcline_artifact !== nothing
+    operation_callback("matpower_dcline_pf_injections_imported"; run_id = run_id, active_dcline_count = length(raw_result.net.matpowerDclineMetadata), artifact = matpower_dcline_artifact)
+    open(logfile, "a") do io
+      println(io, "MATPOWER active mpc.dcline rows imported through toggle_dcline-compatible PF injections.")
+      println(io, "MATPOWER DC-line artifact: ", matpower_dcline_artifact)
+    end
+  end
   csv_artifacts = String[]
   csv_export_error = nothing
   csv_export_status = detailed_result_csv ? "pending" : "disabled"
@@ -809,6 +851,7 @@ function _run_sparlectra_api(;
       println(io, "Q-limit handling enabled : ", !config.powerflow.qlimits.ignore_q_limits)
       println(io, "Q-limit enforcement mode : ", String(config.powerflow.qlimits.enforcement_mode))
       println(io, "q_limit_detail_artifacts: ", isempty(q_limit_artifacts) ? "none" : join(q_limit_artifacts, ", "))
+      println(io, "matpower_dcline_artifact: ", matpower_dcline_artifact === nothing ? "none" : matpower_dcline_artifact)
       println(io, "detailed_result_csv_status: ", csv_export_status)
       csv_export_skip_reason === nothing || println(io, "detailed_result_csv_skip_reason: ", csv_export_skip_reason)
       if detailed_result_csv && csv_export_skip_reason === nothing
