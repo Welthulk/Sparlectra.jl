@@ -203,6 +203,7 @@ function _build_rectangular_final_status(
     final_pv_voltage_residual = final_pv_voltage_residual,
     final_mismatch = isempty(history) ? Inf : history[end],
     initial_mismatch = isempty(history) ? NaN : history[1],
+    best_mismatch = isempty(history) ? NaN : minimum(history),
     nr_initial_mismatch = isempty(history) ? NaN : history[1],
     nr_final_mismatch = isempty(history) ? Inf : history[end],
     mismatch_diagnostics...,

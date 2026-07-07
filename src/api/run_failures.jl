@@ -35,6 +35,9 @@ function _api_failure(reason::String, message::String; run_id::String = string(u
     ),
     Dict{String,Any}(String(key) => value for (key, value) in metadata),
   )
+  if artifact_status == "completed"
+    failure_metadata["artifact_status"] = "completed"
+  end
   result = _api_result(run_id = run_id, status = :failed, success = false, reason = reason, message = message, casefile = casefile, config_file = config_file, output_dir = output_dir, logfile = logfile, result_file = result_file, service_phase_timings = service_phase_timings, metadata = failure_metadata)
   return _finalize_api_result(result)
 end

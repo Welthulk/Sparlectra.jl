@@ -584,6 +584,7 @@ function runpf_rectangular!(
   # 5) NR-Loop
   V = copy(V0)
   history = Float64[]
+  step_diagnostics = NamedTuple[]
   converged = false
   iters = 0
   rejection_reason = :nr_mismatch_not_converged
@@ -673,7 +674,7 @@ function runpf_rectangular!(
     try
       set_phase("linear_solve")
       V = _perf_profile_time!(performance_profile, :iteration_newton_step) do
-        complex_newton_step_rectangular(Ybus, V, S; slack_idx = slack_idx, damp = damp, autodamp = autodamp, autodamp_min = autodamp_min, bus_types = bus_types, Vset = Vset, dPinj_dVm = dPinj_dVm, dQinj_dVm = dQinj_dVm, performance_profile = performance_profile)
+        complex_newton_step_rectangular(Ybus, V, S; slack_idx = slack_idx, damp = damp, autodamp = autodamp, autodamp_min = autodamp_min, bus_types = bus_types, Vset = Vset, dPinj_dVm = dPinj_dVm, dQinj_dVm = dQinj_dVm, performance_profile = performance_profile, step_diagnostics = step_diagnostics)
       end
       check_cancel()
     catch step_error
@@ -777,7 +778,7 @@ function runpf_rectangular!(
     wrong_branch_rescue_reason = wrong_branch_status.wrong_branch_rescue_reason
   end
 
-  mismatch_diagnostics = _rectangular_mismatch_diagnostics(Ybus, V, S, bus_types, Vset, slack_idx, final_pv_voltage_residual)
+  mismatch_diagnostics = _rectangular_mismatch_diagnostics(Ybus, V, S, bus_types, Vset, slack_idx, final_pv_voltage_residual; net, history, step_diagnostics)
 
   switch_counts, oscillating_buses, max_switching_exceeded, q_limit_active_set_ok, converged, rejection_reason, final_reason, final_status, status = _perf_profile_time!(performance_profile, :solver_status_bookkeeping) do
     switch_counts_ = qlimit_switch_counts(net)

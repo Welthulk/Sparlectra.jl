@@ -84,6 +84,26 @@ function _status_for_island(performance_profile, island_id::Integer, fallback)
   return fallback
 end
 
+function _write_island_mismatch_history_artifact(output_dir::AbstractString, island_id::Integer, row_status)::String
+  artifact = joinpath(output_dir, "ac_island_$(island_id)_mismatch_history.csv")
+  history = _status_property(row_status, :mismatch_history, Float64[])
+  open(artifact, "w") do io
+    println(io, "iteration,max_mismatch")
+    if history isa AbstractVector
+      for (idx, value) in pairs(history)
+        println(io, idx, ",", value)
+      end
+    end
+  end
+  return artifact
+end
+
+function _format_top_mismatch_rows(rows)::String
+  rows isa AbstractVector || return "unavailable"
+  isempty(rows) && return "none"
+  return join(("$(row.bus_id)/$(row.bus_index)/$(row.equation)/$(row.mismatch)" for row in rows), "; ")
+end
+
 function _island_solver_settings(cfg::PowerFlowConfig)
   return (
     max_iter = cfg.max_iter,
@@ -158,7 +178,10 @@ function _write_ac_island_diagnostics!(net::Net, cfg::PowerFlowConfig, performan
       final_pv_voltage_residual = _status_property(row_status, :final_pv_voltage_residual, "unavailable")
       artifact = joinpath(output_dir, "ac_island_$(row.island_id)_solver.log")
       push!(artifacts, artifact)
+      history_artifact = _write_island_mismatch_history_artifact(output_dir, row.island_id, row_status)
+      push!(artifacts, history_artifact)
       mismatch_status = _mismatch_status(final_mismatch)
+      top_mismatch_rows = _status_property(row_status, :top_mismatch_rows, NamedTuple[])
       open(artifact, "w") do log
         println(log, "island_id: ", row.island_id)
         println(log, "n_bus: ", row.n_bus)
@@ -171,7 +194,7 @@ function _write_ac_island_diagnostics!(net::Net, cfg::PowerFlowConfig, performan
         println(log, "n_ref: ", row.n_ref)
         println(log, "iterations: ", iterations)
         println(log, "initial_mismatch: ", initial_mismatch)
-        println(log, "first_mismatch: unavailable")
+        println(log, "first_mismatch: ", _status_property(row_status, :mismatch_history_first, initial_mismatch))
         println(log, "last_mismatch: ", final_mismatch)
         println(log, "best_mismatch: ", best_mismatch)
         println(log, "min_voltage_magnitude: unavailable")
@@ -179,8 +202,19 @@ function _write_ac_island_diagnostics!(net::Net, cfg::PowerFlowConfig, performan
         println(log, "max_angle_step: unavailable")
         println(log, "first_nonfinite_iteration: none")
         println(log, "last_finite_mismatch: ", last_finite_mismatch)
-        println(log, "worst_bus: unavailable")
-        println(log, "worst_equation: unavailable")
+        println(log, "worst_bus: ", _status_property(row_status, :worst_mismatch_bus_id, "unavailable"))
+        println(log, "worst_bus_internal_index: ", _status_property(row_status, :worst_mismatch_bus_index, "unavailable"))
+        println(log, "worst_equation: ", _status_property(row_status, :worst_mismatch_equation, "unavailable"))
+        println(log, "worst_mismatch_value: ", _status_property(row_status, :worst_mismatch_value, "unavailable"))
+        println(log, "top_mismatch_rows: ", _format_top_mismatch_rows(top_mismatch_rows))
+        println(log, "mismatch_history_csv: ", basename(history_artifact))
+        println(log, "mismatch_history_trend: ", _status_property(row_status, :mismatch_history_trend, "unavailable"))
+        println(log, "autodamp_step_count: ", _status_property(row_status, :autodamp_step_count, 0))
+        println(log, "autodamp_min_alpha: ", _status_property(row_status, :autodamp_min_alpha, "unavailable"))
+        println(log, "autodamp_max_alpha: ", _status_property(row_status, :autodamp_max_alpha, "unavailable"))
+        println(log, "autodamp_mean_alpha: ", _status_property(row_status, :autodamp_mean_alpha, "unavailable"))
+        println(log, "autodamp_floor_hits: ", _status_property(row_status, :autodamp_floor_hits, 0))
+        println(log, "autodamp_nonimproving_steps: ", _status_property(row_status, :autodamp_nonimproving_steps, 0))
         println(log, "final_mismatch: ", final_mismatch)
         println(log, "mismatch_status: ", mismatch_status)
         println(log, "final_status: ", final_status)
@@ -249,6 +283,7 @@ function _islandwise_failure_message(performance_profile)::Union{Nothing,String}
   lines = String["Island-wise power-flow failed:"]
   qlimits_enabled = false
   qlimit_modes = Set{String}()
+  start_current_iteration_enabled = false
   failed_descriptions = String[]
   for row in diagnostics
     row_status = _status_for_island(performance_profile, row.island_id, nothing)
@@ -263,11 +298,14 @@ function _islandwise_failure_message(performance_profile)::Union{Nothing,String}
       push!(failed_descriptions, "island $(row.island_id) $(final_status)")
     end
     qlimits_enabled |= row.settings.qlimits_enabled
+    start_current_iteration_enabled |= row.settings.start_current_iteration_enabled
     row.settings.qlimits_enabled && push!(qlimit_modes, String(row.settings.qlimit_enforcement_mode))
   end
   if qlimits_enabled
     modes = isempty(qlimit_modes) ? "unknown" : join(sort!(collect(qlimit_modes)), ", ")
     push!(lines, "Q-limit handling was enabled for this run (mode=$(modes)); $(join(failed_descriptions, " and ")) failed under Q-limit enforcement.")
+  elseif start_current_iteration_enabled
+    push!(lines, "Island run with current-iteration start: qlimits.enabled=false; start_current_iteration.enabled=true.")
   else
     push!(lines, "Pure island NR diagnostic run: qlimits.enabled=false and start_current_iteration.enabled=false.")
   end

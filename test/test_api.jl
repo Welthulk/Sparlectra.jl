@@ -337,6 +337,15 @@ function run_api_tests()
       @test occursin("island 3: converged, iterations=7", synthetic_message)
       @test occursin("Q-limit handling was enabled for this run (mode=active_set)", synthetic_message)
       @test !occursin("Stacktrace:", synthetic_message)
+      current_iteration_profile = copy(synthetic_profile)
+      current_iteration_settings = (qlimits_enabled = false, qlimit_enforcement_mode = :none, start_current_iteration_enabled = true)
+      current_iteration_profile[:ac_island_diagnostics] = [
+        (island_id = 1, settings = current_iteration_settings),
+      ]
+      current_iteration_profile[:ac_island_solver_statuses] = Dict(1 => (status = :not_converged, iterations = 80, final_mismatch = 0.021662725542886882, reason = :nr_mismatch_not_converged))
+      current_iteration_message = Sparlectra._islandwise_failure_message(current_iteration_profile)
+      @test occursin("Island run with current-iteration start: qlimits.enabled=false; start_current_iteration.enabled=true.", current_iteration_message)
+      @test !occursin("Pure island NR diagnostic run", current_iteration_message)
       @test read(template, String) == template_before
       @test isfile(joinpath(output_dir, "effective_config.yaml"))
       effective_config_path = joinpath(output_dir, "effective_config.yaml")
@@ -751,6 +760,8 @@ power_flow:
       @test occursin("\"run_id\":\"$(result.run_id)\"", result_file_text)
       @test occursin("\"schema_version\":\"1.0\"", result_file_text)
       @test occursin("\"artifacts\"", result_file_text)
+      result_file_payload = Sparlectra._parse_service_json(result_file_text)
+      @test Set(String(artifact["name"]) for artifact in result_file_payload["artifacts"]) == Set(artifact.name for artifact in collect_sparlectra_api_artifacts(result.output_dir))
 
       write(joinpath(output_dir, "buses.csv"), "bus,vm\n1,1.0\n")
       write(joinpath(output_dir, "report.txt"), "report\n")

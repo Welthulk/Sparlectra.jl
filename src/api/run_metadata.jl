@@ -68,7 +68,7 @@ function _write_api_result_file(result::SparlectraApiResult)
   return result
 end
 
-function _refresh_api_artifacts(result::SparlectraApiResult)::SparlectraApiResult
+function _api_result_with_artifacts(result::SparlectraApiResult, artifacts::Vector{SparlectraApiArtifact})::SparlectraApiResult
   return _api_result(
     run_id = result.run_id,
     schema_version = result.schema_version,
@@ -85,11 +85,23 @@ function _refresh_api_artifacts(result::SparlectraApiResult)::SparlectraApiResul
     output_dir = result.output_dir,
     logfile = result.logfile,
     result_file = result.result_file,
-    artifacts = collect_sparlectra_api_artifacts(result.output_dir),
+    artifacts = artifacts,
     service_phase_timings = result.service_phase_timings,
     metadata = result.metadata,
     raw_result = result.raw_result,
   )
+end
+
+function _refresh_api_artifacts(result::SparlectraApiResult)::SparlectraApiResult
+  return _api_result_with_artifacts(result, collect_sparlectra_api_artifacts(result.output_dir))
+end
+
+function _write_api_result_file_with_discovered_artifacts(result::SparlectraApiResult)::SparlectraApiResult
+  result.result_file === nothing && return result
+  discovered = collect_sparlectra_api_artifacts(result.output_dir)
+  refreshed = _api_result_with_artifacts(result, discovered)
+  _write_api_result_file(refreshed)
+  return refreshed
 end
 
 function _finalize_api_result(result::SparlectraApiResult)::SparlectraApiResult
@@ -118,7 +130,5 @@ function _finalize_api_result(result::SparlectraApiResult)::SparlectraApiResult
     )
   end
   _write_api_result_file(refreshed)
-  refreshed = _refresh_api_artifacts(refreshed)
-  _write_api_result_file(refreshed)
-  return refreshed
+  return _write_api_result_file_with_discovered_artifacts(refreshed)
 end
