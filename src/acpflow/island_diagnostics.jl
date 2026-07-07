@@ -232,3 +232,46 @@ function _append_island_failure_message(status, performance_profile)
   )
   return merge(status, (reason_text = text,))
 end
+
+function _island_status_value(row_status, key::Symbol, default)
+  row_status === nothing && return default
+  return hasproperty(row_status, key) ? getproperty(row_status, key) : default
+end
+
+function _islandwise_failure_message(performance_profile)::Union{Nothing,String}
+  performance_profile isa AbstractDict || return nothing
+  artifacts = get(performance_profile, :ac_island_artifacts, ())
+  diagnostics = get(performance_profile, :ac_island_diagnostics, ())
+  statuses = get(performance_profile, :ac_island_solver_statuses, nothing)
+  isempty(diagnostics) && return nothing
+  statuses === nothing && return nothing
+
+  lines = String["Island-wise power-flow failed:"]
+  qlimits_enabled = false
+  qlimit_modes = Set{String}()
+  failed_descriptions = String[]
+  for row in diagnostics
+    row_status = _status_for_island(performance_profile, row.island_id, nothing)
+    final_status = _island_status_value(row_status, :status, :not_attempted)
+    reason = _island_status_value(row_status, :reason, final_status == :converged ? :none : :unavailable)
+    iterations = _island_status_value(row_status, :iterations, 0)
+    final_mismatch = _island_status_value(row_status, :final_mismatch, NaN)
+    if final_status == :converged
+      push!(lines, "  island $(row.island_id): converged, iterations=$(iterations)")
+    else
+      push!(lines, "  island $(row.island_id): $(final_status), iterations=$(iterations), final_mismatch=$(final_mismatch), reason=$(reason)")
+      push!(failed_descriptions, "island $(row.island_id) $(final_status)")
+    end
+    qlimits_enabled |= row.settings.qlimits_enabled
+    row.settings.qlimits_enabled && push!(qlimit_modes, String(row.settings.qlimit_enforcement_mode))
+  end
+  if qlimits_enabled
+    modes = isempty(qlimit_modes) ? "unknown" : join(sort!(collect(qlimit_modes)), ", ")
+    push!(lines, "Q-limit handling was enabled for this run (mode=$(modes)); $(join(failed_descriptions, " and ")) failed under Q-limit enforcement.")
+  else
+    push!(lines, "Pure island NR diagnostic run: qlimits.enabled=false and start_current_iteration.enabled=false.")
+  end
+  artifact_names = isempty(artifacts) ? ["ac_island_solver_summary.csv", "ac_island_<id>_solver.log"] : basename.(collect(artifacts))
+  push!(lines, "See $(join(artifact_names, " and ")).")
+  return join(lines, '\n')
+end

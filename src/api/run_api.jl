@@ -735,9 +735,17 @@ function _run_sparlectra_api(;
       _write_run_metadata_artifact(output_path; case_path = case_path, lifecycle = details)
       return _api_execution_failure("unsupported_matpower_dcline", err.message; run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file, phase_recorder, performance_timing, metadata = details)
     end
-    message = sprint(showerror, err, catch_backtrace())
+    island_message = _islandwise_failure_message(api_performance_profile)
+    message = island_message === nothing ? sprint(showerror, err, catch_backtrace()) : island_message
     reason = get(phase_recorder.timings[phase_recorder.active_index === nothing ? length(phase_recorder.timings) : phase_recorder.active_index], "phase", "") == "loading_julia_case" ? "loading_julia_case_failed" : "execution_error"
-    return _api_execution_failure(reason, message; run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file, phase_recorder, performance_timing)
+    metadata = island_message === nothing ? Dict{String,Any}() : Dict{String,Any}(
+      "solver_status" => "failed",
+      "service_status" => "failed",
+      "run_status" => "failed",
+      "numerical_status" => "not_converged",
+      "last_phase" => "solving_powerflow",
+    )
+    return _api_execution_failure(reason, message; run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file, phase_recorder, performance_timing, metadata = metadata)
   end
   end
   auto_profile_result = raw_result.performance_profile isa AbstractDict ? get(raw_result.performance_profile, :matpower_auto_profile_result, nothing) : nothing

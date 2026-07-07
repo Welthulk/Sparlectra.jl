@@ -248,7 +248,11 @@ function run_api_tests()
         performance_timing = :compact,
       )
       @test island_result.success === false
-      @test occursin("AC island 1 power-flow solve failed", island_result.message) || occursin("AC island 2 power-flow solve failed", island_result.message)
+      @test occursin("Island-wise power-flow failed:", island_result.message)
+      @test occursin("island 1:", island_result.message)
+      @test occursin("island 2:", island_result.message)
+      @test occursin("Q-limit handling was enabled", island_result.message)
+      @test !occursin("Stacktrace:", island_result.message)
       island_summary = joinpath(island_result.output_dir, "ac_island_solver_summary.csv")
       island_one_log = joinpath(island_result.output_dir, "ac_island_1_solver.log")
       island_two_log = joinpath(island_result.output_dir, "ac_island_2_solver.log")
@@ -284,7 +288,31 @@ function run_api_tests()
       @test occursin("tol = ", replace(island_two_text, "=>" => " ="))
       island_result_json = Sparlectra._parse_service_json(read(joinpath(island_result.output_dir, "result.json"), String))
       @test island_result_json["artifact_status"] != "not_started"
+      @test island_result_json["solver_status"] != "running"
       @test Set(["result.json", "run.log", "effective_config.yaml", "run_metadata.yaml", "performance.log", "ac_islands.csv", "ac_island_solver_summary.csv", "ac_island_1_solver.log", "ac_island_2_solver.log"]) ⊆ Set(String(artifact["name"]) for artifact in island_result_json["artifacts"])
+
+      synthetic_settings = (qlimits_enabled = true, qlimit_enforcement_mode = :active_set, start_current_iteration_enabled = false)
+      synthetic_profile = Dict{Symbol,Any}(
+        :ac_island_artifacts => ("ac_island_solver_summary.csv", "ac_island_1_solver.log", "ac_island_2_solver.log", "ac_island_3_solver.log"),
+        :ac_island_diagnostics => [
+          (island_id = 1, settings = synthetic_settings),
+          (island_id = 2, settings = synthetic_settings),
+          (island_id = 3, settings = synthetic_settings),
+        ],
+        :ac_island_solver_statuses => Dict(
+          1 => (status = :not_converged, iterations = 80, final_mismatch = 4721.338328525473, reason = :nr_mismatch_not_converged_active_set_unstable),
+          2 => (status = :nr_nonfinite, iterations = 80, final_mismatch = NaN, reason = :nr_nonfinite),
+          3 => (status = :converged, iterations = 7, final_mismatch = 1.1295320234694373e-10, reason = :none),
+        ),
+      )
+      synthetic_message = Sparlectra._islandwise_failure_message(synthetic_profile)
+      @test occursin("island 1: not_converged, iterations=80", synthetic_message)
+      @test occursin("final_mismatch=4721.338328525473", synthetic_message)
+      @test occursin("reason=nr_mismatch_not_converged_active_set_unstable", synthetic_message)
+      @test occursin("island 2: nr_nonfinite, iterations=80, final_mismatch=NaN, reason=nr_nonfinite", synthetic_message)
+      @test occursin("island 3: converged, iterations=7", synthetic_message)
+      @test occursin("Q-limit handling was enabled for this run (mode=active_set)", synthetic_message)
+      @test !occursin("Stacktrace:", synthetic_message)
       @test read(template, String) == template_before
       @test isfile(joinpath(output_dir, "effective_config.yaml"))
       effective_config_path = joinpath(output_dir, "effective_config.yaml")

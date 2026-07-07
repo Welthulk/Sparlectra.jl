@@ -1437,7 +1437,10 @@ function runpf!(
         islands_diagnostic_continue_after_failure || rethrow()
       end
     end
-    first_failure === nothing || throw(first_failure)
+    if first_failure !== nothing
+      island_message = _islandwise_failure_message(performance_profile)
+      throw(ErrorException(island_message === nothing ? sprint(showerror, first_failure) : island_message))
+    end
     updateShuntPowers!(net = wnet)
     if has_merges
       _sync_merged_results_to_original!()

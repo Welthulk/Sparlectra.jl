@@ -24,7 +24,17 @@ function _api_failure(reason::String, message::String; run_id::String = string(u
   end
   generated_artifacts = collect_sparlectra_api_artifacts(output_dir)
   artifact_status = isempty(generated_artifacts) ? "not_started" : "completed"
-  failure_metadata = merge(Dict{String,Any}("failure_reason" => reason, "artifact_status" => artifact_status), Dict{String,Any}(String(key) => value for (key, value) in metadata))
+  failure_metadata = merge(
+    Dict{String,Any}(
+      "failure_reason" => reason,
+      "artifact_status" => artifact_status,
+      "solver_status" => "failed",
+      "service_status" => "failed",
+      "run_status" => "failed",
+      "numerical_status" => "failed",
+    ),
+    Dict{String,Any}(String(key) => value for (key, value) in metadata),
+  )
   result = _api_result(run_id = run_id, status = :failed, success = false, reason = reason, message = message, casefile = casefile, config_file = config_file, output_dir = output_dir, logfile = logfile, result_file = result_file, service_phase_timings = service_phase_timings, metadata = failure_metadata)
   return _finalize_api_result(result)
 end
