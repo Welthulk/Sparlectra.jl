@@ -78,6 +78,10 @@ function _rectangular_status_diagnostics(rect_status)::NamedTuple
     current_iteration_final_mismatch = _rect_status_get(rect_status, :current_iteration_final_mismatch, NaN),
     current_iteration_reason = _rect_status_get(rect_status, :current_iteration_reason, :disabled),
     current_iteration_artifact = _rect_status_get(rect_status, :current_iteration_artifact, ""),
+    island_wise_all_converged = _rect_status_get(rect_status, :island_wise_all_converged, false),
+    post_merge_validation_status = _rect_status_get(rect_status, :post_merge_validation_status, :not_applicable),
+    post_merge_final_mismatch = _rect_status_get(rect_status, :post_merge_final_mismatch, NaN),
+    post_merge_mismatch_status = _rect_status_get(rect_status, :post_merge_mismatch_status, :not_applicable),
   )
 end
 

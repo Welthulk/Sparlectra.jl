@@ -1442,6 +1442,43 @@ function runpf!(
       throw(ErrorException(island_message === nothing ? sprint(showerror, first_failure) : island_message))
     end
     updateShuntPowers!(net = wnet)
+    island_final_mismatches = Float64[
+      Float64(getproperty(status, :final_mismatch)) for status in values(island_statuses)
+      if hasproperty(status, :final_mismatch) && isfinite(Float64(getproperty(status, :final_mismatch)))
+    ]
+    aggregate_final_mismatch = isempty(island_final_mismatches) ? NaN : maximum(island_final_mismatches)
+    aggregate_base_status = first(values(island_statuses))
+    aggregate_status = merge(
+      aggregate_base_status,
+      (;
+        numerical_converged = true,
+        nr_converged = true,
+        active_set_converged = true,
+        q_limit_active_set_ok = true,
+        final_converged = true,
+        status = :converged,
+        reason = :none,
+        reason_text = "All AC islands converged independently.",
+        final_mismatch = aggregate_final_mismatch,
+        nr_final_mismatch = aggregate_final_mismatch,
+        iterations = total_iters,
+        island_wise_all_converged = true,
+        post_merge_validation_status = :not_applicable,
+        post_merge_final_mismatch = NaN,
+        post_merge_mismatch_status = :not_applicable,
+        stage = :island_wise_complete,
+        exception_type = "",
+        exception_message = "",
+        stacktrace_top = "",
+      ),
+    )
+    _set_rectangular_pf_status!(net, aggregate_status)
+    if performance_profile isa AbstractDict
+      performance_profile[:island_wise_all_converged] = true
+      performance_profile[:post_merge_validation_status] = :not_applicable
+      performance_profile[:post_merge_final_mismatch] = NaN
+      performance_profile[:post_merge_mismatch_status] = :not_applicable
+    end
     if has_merges
       _sync_merged_results_to_original!()
     elseif wnet !== net

@@ -313,6 +313,10 @@ function _final_outcome_payload(raw_result::SparlectraRunResult)::Dict{String,An
     "iterations" => raw_result.iterations,
     "final_mismatch" => isfinite(raw_result.final_mismatch) ? raw_result.final_mismatch : nothing,
     "reason" => String(raw_result.reason),
+    "island_wise_all_converged" => hasproperty(raw_result.diagnostics, :island_wise_all_converged) ? raw_result.diagnostics.island_wise_all_converged : false,
+    "post_merge_validation_status" => hasproperty(raw_result.diagnostics, :post_merge_validation_status) ? String(raw_result.diagnostics.post_merge_validation_status) : "not_applicable",
+    "post_merge_final_mismatch" => hasproperty(raw_result.diagnostics, :post_merge_final_mismatch) && isfinite(raw_result.diagnostics.post_merge_final_mismatch) ? raw_result.diagnostics.post_merge_final_mismatch : nothing,
+    "post_merge_mismatch_status" => hasproperty(raw_result.diagnostics, :post_merge_mismatch_status) ? String(raw_result.diagnostics.post_merge_mismatch_status) : "not_applicable",
   )
 end
 

@@ -291,6 +291,30 @@ function run_api_tests()
       @test island_result_json["solver_status"] != "running"
       @test Set(["result.json", "run.log", "effective_config.yaml", "run_metadata.yaml", "performance.log", "ac_islands.csv", "ac_island_solver_summary.csv", "ac_island_1_solver.log", "ac_island_2_solver.log"]) ⊆ Set(String(artifact["name"]) for artifact in island_result_json["artifacts"])
 
+      island_success = run_sparlectra_api(
+        casefile = island_case,
+        config_file = template,
+        output_dir = joinpath(tmpdir, "island-success"),
+        config_overrides = Dict(
+          "power_flow.max_iter" => 40,
+          "power_flow.islands.enabled" => true,
+          "power_flow.islands.mode" => "solve_independent",
+          "power_flow.islands.reference_policy" => "matpower_like",
+          "benchmark.enabled" => false,
+        ),
+        performance_timing = :compact,
+      )
+      @test island_success.success === true
+      @test !occursin("AC island 1 power-flow solve failed", island_success.message)
+      island_success_json = Sparlectra._parse_service_json(read(joinpath(island_success.output_dir, "result.json"), String))
+      @test island_success_json["run_status"] == "completed"
+      @test island_success_json["final_outcome"]["reason"] == "none"
+      @test island_success_json["final_outcome"]["island_wise_all_converged"] === true
+      @test island_success_json["metadata"]["island_wise_all_converged"] === true
+      @test island_success_json["metadata"]["post_merge_validation_status"] == "not_applicable"
+      @test island_success_json["metadata"]["post_merge_mismatch_status"] == "not_applicable"
+      @test island_success_json["iterations"] == sum(getproperty(status, :iterations) for status in values(island_success.raw_result.performance_profile[:ac_island_solver_statuses]))
+
       synthetic_settings = (qlimits_enabled = true, qlimit_enforcement_mode = :active_set, start_current_iteration_enabled = false)
       synthetic_profile = Dict{Symbol,Any}(
         :ac_island_artifacts => ("ac_island_solver_summary.csv", "ac_island_1_solver.log", "ac_island_2_solver.log", "ac_island_3_solver.log"),

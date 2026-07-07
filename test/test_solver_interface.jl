@@ -871,7 +871,8 @@ mpc.branch = [
 
       mktempdir() do tmpdir
         solved = deepcopy(net)
-        _, erg = runpf!(solved; config = PowerFlowConfig(max_iter = 40, islands_enabled = true), performance_profile = Dict{Symbol,Any}(:output_dir => tmpdir))
+        profile = Dict{Symbol,Any}(:output_dir => tmpdir)
+        iterations, erg = runpf!(solved; config = PowerFlowConfig(max_iter = 40, islands_enabled = true), performance_profile = profile)
         @test erg == 0
         @test isfile(joinpath(tmpdir, "ac_islands.csv"))
         for artifact in ("ac_islands.csv", "ac_island_solver_summary.csv", "ac_island_1_solver.log", "q_limit.log", "matpower_dcline.csv")
@@ -879,6 +880,17 @@ mpc.branch = [
         end
         @test count(!isempty, split(read(joinpath(tmpdir, "ac_islands.csv"), String), '\n')) == 3
         @test all(node -> isfinite(node._vm_pu) && isfinite(node._va_deg), solved.nodeVec)
+        rect_status = Sparlectra.rectangular_pf_status(solved)
+        @test rect_status.status == :converged
+        @test rect_status.reason == :none
+        @test rect_status.reason_text == "All AC islands converged independently."
+        @test rect_status.island_wise_all_converged === true
+        @test rect_status.post_merge_validation_status == :not_applicable
+        @test rect_status.post_merge_mismatch_status == :not_applicable
+        @test isnan(rect_status.post_merge_final_mismatch)
+        @test !occursin("AC island 1 power-flow solve failed", rect_status.reason_text)
+        @test iterations == sum(getproperty(status, :iterations) for status in values(profile[:ac_island_solver_statuses]))
+        @test rect_status.iterations == iterations
       end
 
       pv_ref_net = two_island_net(second_ref = :pv)
