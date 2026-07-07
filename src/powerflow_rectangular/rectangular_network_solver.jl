@@ -1069,6 +1069,7 @@ function _runpf_with_config!(net::Net, config::PowerFlowConfig; verbose::Int = 0
     islands_enabled = config.islands_enabled,
     islands_mode = config.islands_mode,
     islands_reference_policy = config.islands_reference_policy,
+    islands_diagnostic_continue_after_failure = config.islands.diagnostic_continue_after_failure,
     performance_profile = performance_profile,
   )
 end
@@ -1299,6 +1300,7 @@ function runpf!(
   islands_enabled::Bool = false,
   islands_mode::Symbol = :solve_independent,
   islands_reference_policy::Symbol = :matpower_like,
+  islands_diagnostic_continue_after_failure::Bool = false,
 )
   _validate_rectangular_powerflow_options(method = :rectangular, sparse = true)
   wnet, reps, has_merges = _merged_pf_net(net)
@@ -1323,9 +1325,20 @@ function runpf!(
     islands_reference_policy === :matpower_like || error("Unsupported power_flow.islands.reference_policy=$(islands_reference_policy).")
     _validate_island_references!(island_report)
     total_iters = 0
+    first_failure = nothing
     for row in island_report.rows
-      inet = _prepare_island_net(wnet, row)
-      it, status = runpf_rectangular!(
+      if first_failure !== nothing && !islands_diagnostic_continue_after_failure
+        skipped_status = (; final_mismatch = NaN, iterations = 0, reason = :skipped_after_previous_failure, status = :skipped, stage = :skipped_after_previous_failure, exception_type = "", exception_message = "previous island failed and diagnostic continuation is disabled", stacktrace_top = "")
+        _set_rectangular_pf_status!(net, skipped_status)
+        break
+      end
+      local it = 0
+      local status = 2
+      local stage = :island_net_setup
+      try
+        inet = _prepare_island_net(wnet, row)
+        stage = :pre_nr_setup
+        it, status = runpf_rectangular!(
         inet,
         maxIte,
         tolerance,
@@ -1389,11 +1402,24 @@ function runpf!(
         rectangular_workspace_min_buses = rectangular_workspace_min_buses,
         performance_profile = performance_profile,
       )
-      total_iters += it
-      status == 0 || error("AC island $(row.island_id) power-flow solve failed:\n  buses=$(row.n_bus) branches=$(row.n_branch) ref=$(row.chosen_ref_bus)\n  bus_types: PV=$(row.n_pv) PQ=$(row.n_pq) REF=$(row.n_ref)\n  iterations=$(it) final_status=$(status)")
-      all(isfinite(something(wnode._vm_pu, NaN)) && isfinite(something(wnode._va_deg, NaN)) for wnode in inet.nodeVec) || error("AC island $(row.island_id) produced nonfinite voltage results.")
-      _sync_island_solution!(wnet, inet, row)
+        total_iters += it
+        if status != 0
+          stage = it == 0 ? :pre_nr_setup : :newton_iteration
+          error("AC island $(row.island_id) power-flow solve failed:\n  buses=$(row.n_bus) branches=$(row.n_branch) ref=$(row.chosen_ref_bus)\n  bus_types: PV=$(row.n_pv) PQ=$(row.n_pq) REF=$(row.n_ref)\n  iterations=$(it) final_status=$(status)")
+        end
+        stage = :post_solve_validation
+        all(isfinite(something(wnode._vm_pu, NaN)) && isfinite(something(wnode._va_deg, NaN)) for wnode in inet.nodeVec) || error("AC island $(row.island_id) produced nonfinite voltage results.")
+        _sync_island_solution!(wnet, inet, row)
+      catch err
+        frames = stacktrace(catch_backtrace())
+        top = isempty(frames) ? "" : sprint(show, first(frames))
+        failure_status = (; island_id = row.island_id, final_mismatch = NaN, iterations = it, reason = :solver_exception, status = :failed, stage = stage, exception_type = nameof(typeof(err)), exception_message = sprint(showerror, err), stacktrace_top = top)
+        _set_rectangular_pf_status!(net, failure_status)
+        first_failure = err
+        islands_diagnostic_continue_after_failure || rethrow()
+      end
     end
+    first_failure === nothing || throw(first_failure)
     updateShuntPowers!(net = wnet)
     if has_merges
       _sync_merged_results_to_original!()

@@ -248,8 +248,8 @@ function run_api_tests()
         performance_timing = :compact,
       )
       @test island_result.success === false
-      @test occursin("AC island 1 power-flow solve failed", island_result.message)
-      @test occursin("ref=1", island_result.message)
+      @test occursin("AC island 2 power-flow solve failed", island_result.message)
+      @test occursin("ref=3", island_result.message)
       island_summary = joinpath(island_result.output_dir, "ac_island_solver_summary.csv")
       island_one_log = joinpath(island_result.output_dir, "ac_island_1_solver.log")
       island_two_log = joinpath(island_result.output_dir, "ac_island_2_solver.log")
@@ -257,10 +257,17 @@ function run_api_tests()
       @test isfile(island_one_log)
       @test isfile(island_two_log)
       summary_text = read(island_summary, String)
+      @test occursin("exception_type,exception_message,stacktrace_top", summary_text)
+      @test occursin("solver_exception", summary_text)
+      @test occursin("ErrorException", summary_text)
       @test occursin("island_id,n_bus,n_branch,ref_bus", summary_text)
       @test occursin("1,2,1,1", summary_text)
       @test occursin("2,2,1,3", summary_text)
       island_two_text = read(island_two_log, String)
+      @test occursin("failure_reason: solver_exception", island_two_text)
+      @test occursin("exception_type: ErrorException", island_two_text)
+      @test occursin("exception_message: AC island 2 power-flow solve failed", island_two_text)
+      @test occursin("stacktrace_top: ", island_two_text)
       @test occursin("ref_promoted: true", island_two_text)
       @test occursin("max_iter = 1", replace(island_two_text, "=>" => " ="))
       @test occursin("tol = ", replace(island_two_text, "=>" => " ="))
@@ -271,6 +278,29 @@ function run_api_tests()
       @test occursin("tol: 1.0e-9", effective_config_text)
       @test occursin("runtime:", effective_config_text)
       @test !occursin("runtime_request:", effective_config_text)
+
+      yaml_override_config = joinpath(tmpdir, "yaml-runtime-precedence.yaml")
+      write(yaml_override_config, """
+power_flow:
+  qlimits:
+    enabled: false
+  start_current_iteration:
+    enabled: false
+  tol: 1.0e-5
+  islands:
+    diagnostic_continue_after_failure: true
+""")
+      yaml_precedence_result = run_sparlectra_api(casefile = casefile, config_file = yaml_override_config, output_dir = joinpath(tmpdir, "yaml-precedence"), config_overrides = Dict{String,Any}(), performance_timing = :off)
+      yaml_effective = Sparlectra.load_yaml_dict(joinpath(yaml_precedence_result.output_dir, "effective_config.yaml"))
+      @test yaml_effective["power_flow"]["qlimits"]["enabled"] === false
+      @test yaml_effective["power_flow"]["start_current_iteration"]["enabled"] === false
+      @test yaml_effective["power_flow"]["tol"] == 1.0e-5
+      @test yaml_effective["power_flow"]["islands"]["diagnostic_continue_after_failure"] === true
+      yaml_sources = yaml_effective["_config_sources"]
+      @test yaml_sources["power_flow"]["qlimits"]["enabled"]["source"] == "user_yaml"
+      @test yaml_sources["power_flow"]["start_current_iteration"]["enabled"]["source"] == "user_yaml"
+      @test yaml_sources["power_flow"]["tol"]["source"] == "user_yaml"
+      @test yaml_sources["power_flow"]["islands"]["diagnostic_continue_after_failure"]["source"] == "user_yaml"
 
       effective_cfg = Sparlectra.load_sparlectra_config(effective_config_path; reload = true)
       @test effective_cfg.powerflow.tol == 1.0e-9

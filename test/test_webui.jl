@@ -77,6 +77,7 @@ function _webui_test_form(casefile, config_file, output_root)
     "casefile_manual" => casefile,
     "config_file" => config_file,
     "output_root" => output_root,
+    "apply_webui_runtime_overrides" => "true",
     "power_flow_tol" => "1e-8",
     "power_flow_max_iter" => "80",
     "power_flow_autodamp" => "on",
@@ -362,9 +363,9 @@ settings:
       @test !occursin("Case-specific settings loaded from", case14_form)
       _webui_assert_checked(case14_form, "power_flow_autodamp", true)
       _webui_assert_checked(case14_form, "power_flow_qlimits_enabled", true)
-      _webui_assert_checked(case14_form, "benchmark_enabled", false)
+      _webui_assert_checked(case14_form, "benchmark_enabled", true)
       _webui_assert_checked(case14_form, "run_diagnostics", false)
-      _webui_assert_value(case14_form, "power_flow_tol", "1e-8")
+      _webui_assert_value(case14_form, "power_flow_tol", "1.0e-5")
       _webui_assert_value(case14_form, "power_flow_max_iter", "80")
       _webui_assert_selected(case14_form, "power_flow_start_angle_mode", "dc")
       _webui_assert_selected(case14_form, "power_flow_start_voltage_mode", "profile_blend")
@@ -372,12 +373,18 @@ settings:
       @test occursin("value=\"profile_blend\"", start_voltage_select)
       @test !occursin("bus_vm_va_blend", start_voltage_select)
       _webui_assert_selected(case14_form, "matpower_import_auto_profile", "recommend")
-      _webui_assert_selected(case14_form, "output_logfile_results", "compact")
+      _webui_assert_selected(case14_form, "output_logfile_results", "full")
 
       request_form = _webui_test_form("case145.m", "configuration.yaml", root)
       request_form["power_flow_tol"] = "2e-6"
       request = Sparlectra.powerflow_webui_request(request_form; default_output_root = root)
       @test request["config_overrides"]["power_flow.tol"] == 2.0e-6
+
+      yaml_first_form = copy(request_form)
+      delete!(yaml_first_form, "apply_webui_runtime_overrides")
+      yaml_first_request = Sparlectra.powerflow_webui_request(yaml_first_form; default_output_root = root)
+      @test isempty(yaml_first_request["config_overrides"])
+      @test yaml_first_request["config_override_source"] == "user_yaml"
 
       invalid_case = joinpath(root, "invalid.m")
       write(invalid_case, "% case fixture\n")

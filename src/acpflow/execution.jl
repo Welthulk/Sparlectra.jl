@@ -40,14 +40,16 @@ function _execute_sparlectra_powerflow!(net::Net, cfg::SparlectraConfig; perform
       end
     catch err
       if cfg.powerflow.islands.enabled
-        diagnostic_status = (;
+        existing_status = rectangular_pf_status(net)
+        diagnostic_status = existing_status !== nothing ? existing_status : (;
           final_mismatch = NaN,
           iterations = iterations,
           reason = :solver_error,
           status = :failed,
-          stage = :pre_solve_validation,
+          stage = :pre_nr_setup,
           exception_type = nameof(typeof(err)),
           exception_message = sprint(showerror, err),
+          stacktrace_top = "",
         )
         _write_ac_island_diagnostics!(net, cfg.powerflow, performance_profile; status = diagnostic_status)
       end

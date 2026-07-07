@@ -283,6 +283,7 @@ function render_powerflow_form(;
 $(error_html)$(_webui_active_run_banner(active_run))$(notice_html)$(profile_notice)<p class=\"lede\">Run a local MATPOWER case through the Sparlectra PowerFlow service.</p>
 <form id=\"powerflow-run-form\" data-powerflow-form method=\"post\" action=\"/powerflow/run\" class=\"panel form-grid powerflow-form-card\" onsubmit=\"this.classList.add('is-submitting'); this.setAttribute('aria-busy', 'true'); this.querySelector('button[type=submit]').disabled = true;\">
 $(config_control)
+<label class="check span-2"><input name="apply_webui_runtime_overrides" type="hidden" value="false"><input name="apply_webui_runtime_overrides" type="checkbox" value="true">Apply Web UI runtime controls as overrides<small class="field-hint">Leave unchecked to use the saved YAML configuration as-is. Check only when the form controls should override YAML for this run.</small></label>
 <label>$(_webui_field_label("casefile", "Existing case file"))$(case_select)<small class="field-hint">Cases from <code>$(_webui_escape(effective_case_directory))</code></small></label>
 <label><span class="field-label">Or type case file path</span>$(case_manual)<small class="field-hint">Manual input overrides the existing-case selection.</small></label>
 $(dat_hint_html)

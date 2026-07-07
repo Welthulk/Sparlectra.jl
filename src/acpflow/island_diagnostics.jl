@@ -119,7 +119,7 @@ end
 
 function _write_ac_island_diagnostics!(net::Net, cfg::PowerFlowConfig, performance_profile; status = nothing)
   cfg.islands.enabled || return NamedTuple()
-  output_dir = performance_profile isa AbstractDict ? get(performance_profile, :output_dir, pwd()) : pwd()
+  output_dir = performance_profile isa AbstractDict ? get(performance_profile, :output_dir, tempdir()) : tempdir()
   mkpath(output_dir)
   pre = _collect_ac_island_diagnostics(net, cfg)
   final_mismatch = status === nothing || !hasproperty(status, :final_mismatch) ? NaN : Float64(status.final_mismatch)
@@ -129,10 +129,11 @@ function _write_ac_island_diagnostics!(net::Net, cfg::PowerFlowConfig, performan
   stage = status !== nothing && hasproperty(status, :stage) ? String(status.stage) : status === nothing ? "pre_solve_validation" : (iterations == 0 ? "pre_solve_validation" : (final_status == :converged ? "post_solve_validation" : "newton_iteration"))
   exception_type = status !== nothing && hasproperty(status, :exception_type) ? String(status.exception_type) : ""
   exception_message = status !== nothing && hasproperty(status, :exception_message) ? String(status.exception_message) : ""
+  stacktrace_top = status !== nothing && hasproperty(status, :stacktrace_top) ? String(status.stacktrace_top) : ""
   artifacts = String[]
   summary_path = joinpath(output_dir, "ac_island_solver_summary.csv")
   open(summary_path, "w") do io
-    println(io, "island_id,n_bus,n_branch,ref_bus,chosen_ref_bus,n_pq,n_pv,n_ref,ref_promoted,initial_mismatch,first_mismatch,last_mismatch,best_mismatch,min_voltage_magnitude,max_voltage_magnitude,max_angle_step,first_nonfinite_iteration,worst_bus,worst_equation,iterations,final_mismatch,mismatch_status,final_status,failure_reason,stage,exception_type,exception_message,start_projection,autodamp,autodamp_min,max_iter,tol,angle_mode,voltage_mode,qlimits_enabled,qlimit_enforcement_mode,wrong_branch_detection,start_current_iteration_enabled,workspace_reuse,workspace_preallocate")
+    println(io, "island_id,n_bus,n_branch,ref_bus,chosen_ref_bus,n_pq,n_pv,n_ref,ref_promoted,initial_mismatch,first_mismatch,last_mismatch,best_mismatch,min_voltage_magnitude,max_voltage_magnitude,max_angle_step,first_nonfinite_iteration,worst_bus,worst_equation,iterations,final_mismatch,mismatch_status,final_status,failure_reason,stage,exception_type,exception_message,stacktrace_top,start_projection,autodamp,autodamp_min,max_iter,tol,angle_mode,voltage_mode,qlimits_enabled,qlimit_enforcement_mode,wrong_branch_detection,start_current_iteration_enabled,workspace_reuse,workspace_preallocate")
     for row in pre
       artifact = joinpath(output_dir, "ac_island_$(row.island_id)_solver.log")
       push!(artifacts, artifact)
@@ -165,9 +166,10 @@ function _write_ac_island_diagnostics!(net::Net, cfg::PowerFlowConfig, performan
         println(log, "stage: ", stage)
         println(log, "exception_type: ", exception_type)
         println(log, "exception_message: ", exception_message)
+        println(log, "stacktrace_top: ", stacktrace_top)
         println(log, "solver_settings: ", row.settings)
       end
-      println(io, join((row.island_id, row.n_bus, row.n_branch, row.ref_bus, row.ref_bus, row.n_pq, row.n_pv, row.n_ref, row.ref_promoted, "unavailable", "unavailable", final_mismatch, "unavailable", "unavailable", "unavailable", "unavailable", "none", "unavailable", "unavailable", iterations, final_mismatch, mismatch_status, final_status, reason, stage, _csv_field(exception_type, ','), _csv_field(exception_message, ','), row.settings.start_projection, row.settings.autodamp, row.settings.autodamp_min, row.settings.max_iter, row.settings.tol, row.settings.angle_mode, row.settings.voltage_mode, row.settings.qlimits_enabled, row.settings.qlimit_enforcement_mode, row.settings.wrong_branch_detection, row.settings.start_current_iteration_enabled, row.settings.rectangular_workspace_reuse, row.settings.rectangular_preallocate_workspace), ','))
+      println(io, join((row.island_id, row.n_bus, row.n_branch, row.ref_bus, row.ref_bus, row.n_pq, row.n_pv, row.n_ref, row.ref_promoted, "unavailable", "unavailable", final_mismatch, "unavailable", "unavailable", "unavailable", "unavailable", "none", "unavailable", "unavailable", iterations, final_mismatch, mismatch_status, final_status, reason, stage, _csv_field(exception_type, ','), _csv_field(exception_message, ','), _csv_field(stacktrace_top, ','), row.settings.start_projection, row.settings.autodamp, row.settings.autodamp_min, row.settings.max_iter, row.settings.tol, row.settings.angle_mode, row.settings.voltage_mode, row.settings.qlimits_enabled, row.settings.qlimit_enforcement_mode, row.settings.wrong_branch_detection, row.settings.start_current_iteration_enabled, row.settings.rectangular_workspace_reuse, row.settings.rectangular_preallocate_workspace), ','))
     end
   end
   artifacts_summary = (summary_path, artifacts...)
@@ -181,7 +183,8 @@ function _append_island_failure_message(status, performance_profile)
   diagnostics = get(performance_profile, :ac_island_diagnostics, ())
   isempty(artifacts) && return status
   status.final_converged && return status
-  first_island = isempty(diagnostics) ? nothing : first(diagnostics)
+  failed_island_id = hasproperty(status, :island_id) ? status.island_id : nothing
+  first_island = failed_island_id === nothing ? (isempty(diagnostics) ? nothing : first(diagnostics)) : only(row for row in diagnostics if row.island_id == failed_island_id)
   first_island === nothing && return status
   artifact = basename(first(artifacts))
   iterations = hasproperty(status, :iterations) ? status.iterations : 0
@@ -193,7 +196,7 @@ function _append_island_failure_message(status, performance_profile)
     "  mismatch_status=", _mismatch_status(status.final_mismatch), "\n",
     "  reason=", status.reason, "\n",
     "  start_projection=", first_island.settings.start_projection, "\n",
-    "  stage=", (iterations == 0 ? "before_nr" : "during_nr"), "\n",
+    "  stage=", (hasproperty(status, :stage) ? String(status.stage) : (iterations == 0 ? "before_nr" : "during_nr")), "\n",
     "  artifact=", artifact,
   )
   return merge(status, (reason_text = text,))

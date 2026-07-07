@@ -567,7 +567,7 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
   log && log_bus_shunt_model(myNet)
 
   ok, msg = validate!(net = myNet)
-  ok || @error "network is invalid: $msg"
+  ok || @debug "network is invalid: $msg"
   if profile !== nothing
     profile[:network_construction_preallocated] = do_prealloc
     profile[:network_construction_nbus] = nbus

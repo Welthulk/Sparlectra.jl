@@ -509,6 +509,7 @@ function run_sparlectra_api(;
   write_outage_matpower_exports::Bool = false,
   matpower_export_requested::Bool = false,
   config_overrides::AbstractDict = Dict{String,Any}(),
+  config_override_source::AbstractString = "explicit_api_request",
   performance_timing = :off,
   run_diagnostics::Bool = false,
   detailed_result_csv::Bool = false,
@@ -529,6 +530,7 @@ function run_sparlectra_api(;
     write_outage_matpower_exports = write_outage_matpower_exports,
     matpower_export_requested = matpower_export_requested,
     config_overrides = config_overrides,
+    config_override_source = config_override_source,
     performance_timing = performance_timing,
     run_diagnostics = run_diagnostics,
     detailed_result_csv = detailed_result_csv,
@@ -552,6 +554,7 @@ function _run_sparlectra_api(;
   write_outage_matpower_exports::Bool = false,
   matpower_export_requested::Bool = false,
   config_overrides::AbstractDict,
+  config_override_source::AbstractString = "explicit_api_request",
   performance_timing = :off,
   run_diagnostics::Bool = false,
   detailed_result_csv::Bool = false,
@@ -607,7 +610,7 @@ function _run_sparlectra_api(;
   catch err
     return _api_failure("invalid_configuration", sprint(showerror, err); run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file)
   end
-  config_sources = _config_source_report(config_path, nested_overrides, effective_raw)
+  config_sources = _config_source_report(config_path, nested_overrides, effective_raw; override_source = config_override_source)
   effective_config = joinpath(output_path, "effective_config.yaml")
   _write_yaml_file(effective_config, _effective_config_with_runtime_case(effective_raw, case_path, config; config_sources))
   _write_run_metadata_artifact(output_path; case_path = case_path)
@@ -742,7 +745,7 @@ function _run_sparlectra_api(;
   if auto_profile_result !== nothing
     config = auto_profile_result.config
     _update_effective_matpower_raw!(effective_raw, config)
-    config_sources = _config_source_report(config_path, nested_overrides, effective_raw)
+    config_sources = _config_source_report(config_path, nested_overrides, effective_raw; override_source = config_override_source)
     _write_yaml_file(effective_config, _effective_config_with_runtime_case(effective_raw, case_path, config; config_sources))
     _write_matpower_auto_profile_artifact(output_path, auto_profile_result, config; casefile = String(auto_profile_casefile))
     operation_callback("powerflow_effective_options"; run_id = run_id, case = basename(case_path), _metadata_kwargs(qlimit_metadata)..., _metadata_kwargs(_resolved_matpower_import_runtime_options(config))...)

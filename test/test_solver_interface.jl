@@ -874,7 +874,9 @@ mpc.branch = [
         _, erg = runpf!(solved; config = PowerFlowConfig(max_iter = 40, islands_enabled = true), performance_profile = Dict{Symbol,Any}(:output_dir => tmpdir))
         @test erg == 0
         @test isfile(joinpath(tmpdir, "ac_islands.csv"))
-        @test !isfile(joinpath(pwd(), "ac_islands.csv"))
+        for artifact in ("ac_islands.csv", "ac_island_solver_summary.csv", "ac_island_1_solver.log", "q_limit.log", "matpower_dcline.csv")
+          @test !isfile(joinpath(pwd(), artifact))
+        end
         @test count(!isempty, split(read(joinpath(tmpdir, "ac_islands.csv"), String), '\n')) == 3
         @test all(node -> isfinite(node._vm_pu) && isfinite(node._va_deg), solved.nodeVec)
       end

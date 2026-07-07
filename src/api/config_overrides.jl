@@ -215,11 +215,11 @@ function _set_dotted_metadata!(raw::Dict{String,Any}, key::AbstractString, value
   return raw
 end
 
-function _config_source_report(config_file::String, nested_overrides::Dict{String,Any}, effective_raw::AbstractDict)
+function _config_source_report(config_file::String, nested_overrides::Dict{String,Any}, effective_raw::AbstractDict; override_source::AbstractString = "explicit_api_request")
   user = isfile(config_file) ? load_yaml_dict(config_file) : Dict{String,Any}()
   report = Dict{String,Any}()
   for key in CONFIG_OVERRIDE_REPORT_KEYS
-    source = _dotted_config_value(nested_overrides, key) !== nothing ? "api_request_override" :
+    source = _dotted_config_value(nested_overrides, key) !== nothing ? String(override_source) :
              _dotted_config_value(user, key) !== nothing ? "user_yaml" :
              "default"
     _set_dotted_metadata!(report, key, Dict{String,Any}(

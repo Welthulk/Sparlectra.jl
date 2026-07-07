@@ -165,6 +165,8 @@ function start_powerflow_run(request::AbstractDict; case_directory::Union{Nothin
 
   config_overrides = _service_request_value(request, "config_overrides", Dict{String,Any}())
   config_overrides isa AbstractDict || return _service_failure("invalid_request", "config_overrides must be dictionary-like.")
+  config_override_source = String(_service_request_value(request, "config_override_source", "explicit_api_request"))
+  config_override_source in ("explicit_api_request", "webui_form_runtime", "case_sidecar", "user_yaml") || return _service_failure("invalid_request", "config_override_source has unsupported value: $(config_override_source)")
   performance_timing = _service_request_value(request, "performance_timing", :off)
   case_format = _service_request_value(request, "case_format", :auto)
   for002_reference_file = _service_request_value(request, "for002_reference_file", nothing)
@@ -223,6 +225,7 @@ function start_powerflow_run(request::AbstractDict; case_directory::Union{Nothin
       write_outage_matpower_exports = write_outage_matpower_exports,
       matpower_export_requested = matpower_export_requested,
       config_overrides = config_overrides,
+      config_override_source = config_override_source,
       performance_timing = performance_timing,
       run_diagnostics = run_diagnostics,
       detailed_result_csv = detailed_result_csv,

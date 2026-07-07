@@ -200,11 +200,32 @@ function _webui_normalize_case_profile_form_value(field::AbstractString, value)
   return normalized
 end
 
+
+function _webui_config_field_values(config_file::AbstractString)::Dict{String,Any}
+  values = Dict{String,Any}()
+  path = strip(String(config_file))
+  isempty(path) && return values
+  isfile(path) || return values
+  try
+    raw = load_yaml_dict(path)
+    for (config_key, field, _) in _WEBUI_FORM_CONFIG_FIELDS
+      value = _dotted_config_value(raw, config_key)
+      value === nothing && continue
+      values[field] = _webui_normalize_case_profile_form_value(field, value)
+    end
+    return values
+  catch
+    return Dict{String,Any}()
+  end
+end
+
 function webui_form_state(; selected_casefile::AbstractString = "", selected_config_file::AbstractString = "", sidecar_profile = nothing, submitted_form = nothing)
+  config_path = isempty(selected_config_file) ? DEFAULT_SPARLECTRA_CONFIG_PATH : selected_config_file
   values = Dict{String,Any}(spec.field => spec.default for spec in WEBUI_OPTION_SPECS)
+  merge!(values, _webui_config_field_values(config_path))
   values["casefile"] = selected_casefile
   values["casefile_manual"] = ""
-  values["config_file"] = isempty(selected_config_file) ? DEFAULT_SPARLECTRA_CONFIG_PATH : selected_config_file
+  values["config_file"] = config_path
   if sidecar_profile isa AbstractDict
     for (field, value) in sidecar_profile
       field == "_profile_path" && continue
@@ -339,13 +360,16 @@ function powerflow_webui_request(form::AbstractDict; default_output_root::Abstra
   isempty(casefile) && throw(ArgumentError("Select an existing MATPOWER case or type a case name."))
   config_file = strip(String(something(_webui_form_value(form, "config_file", ""), "")))
   output_root = String(default_output_root)
+  apply_runtime_overrides = _webui_parse_form_value(_webui_form_value(form, "apply_webui_runtime_overrides", "false"), Bool, "apply_webui_runtime_overrides")
   overrides = Dict{String,Any}()
-  for (config_key, field, type) in _WEBUI_FORM_CONFIG_FIELDS
-    config_key in GUI_EDITABLE_CONFIG_KEYS || error("Web UI field $(field) is not GUI-editable.")
-    spec = _webui_option_spec(field)
-    _webui_form_value(form, field, nothing) === nothing && continue
-    raw = _webui_form_value(form, field)
-    overrides[config_key] = _webui_parse_form_value(raw, type, field)
+  if apply_runtime_overrides
+    for (config_key, field, type) in _WEBUI_FORM_CONFIG_FIELDS
+      config_key in GUI_EDITABLE_CONFIG_KEYS || error("Web UI field $(field) is not GUI-editable.")
+      spec = _webui_option_spec(field)
+      _webui_form_value(form, field, nothing) === nothing && continue
+      raw = _webui_form_value(form, field)
+      overrides[config_key] = _webui_parse_form_value(raw, type, field)
+    end
   end
   request_options = Dict{String,Any}()
   for field in _WEBUI_CASE_PROFILE_EXTRA_FIELDS
@@ -372,6 +396,7 @@ function powerflow_webui_request(form::AbstractDict; default_output_root::Abstra
     "config_file" => config_file,
     "output_root" => output_root,
     "config_overrides" => overrides,
+    "config_override_source" => apply_runtime_overrides ? "webui_form_runtime" : "user_yaml",
     "performance_timing" => request_options["performance_timing"],
     "run_diagnostics" => request_options["run_diagnostics"],
     "detailed_result_csv" => request_options["detailed_result_csv"],
