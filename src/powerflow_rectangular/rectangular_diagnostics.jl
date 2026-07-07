@@ -122,6 +122,11 @@ end
 
 function _rectangular_mismatch_trend(history::AbstractVector{<:Real}; window::Int = 10)
   isempty(history) && return :unavailable
+  finite_history = filter(isfinite, history)
+  if length(finite_history) < length(history)
+    isempty(finite_history) && return :nonfinite
+    return last(finite_history) > first(finite_history) ? :diverging_to_nonfinite : :nonfinite_after_improvement
+  end
   tail = collect(Iterators.drop(history, max(length(history) - window, 0)))
   length(tail) < 3 && return :insufficient_history
   diffs = diff(tail)
@@ -135,6 +140,12 @@ function _rectangular_mismatch_trend(history::AbstractVector{<:Real}; window::In
   return :mixed
 end
 
+function _rectangular_mismatch_snapshot(label::Symbol, iteration::Int, Ybus, V::Union{Nothing,Vector{ComplexF64}}, S::Vector{ComplexF64}, bus_types::Vector{Symbol}, Vset::Vector{Float64}, slack_idx::Int; net = nothing, top_n::Int = 10)
+  V === nothing && return (label = label, iteration = iteration, rows = NamedTuple[])
+  rows = _rectangular_mismatch_rows(Ybus, V, S, bus_types, Vset, slack_idx; net, top_n).top
+  return (label = label, iteration = iteration, rows = rows)
+end
+
 function _rectangular_step_statistics(step_diagnostics)
   step_diagnostics isa AbstractVector || return (
     autodamp_step_count = 0,
@@ -143,6 +154,7 @@ function _rectangular_step_statistics(step_diagnostics)
     autodamp_mean_alpha = NaN,
     autodamp_floor_hits = 0,
     autodamp_nonimproving_steps = 0,
+    autodamp_failure = false,
   )
   isempty(step_diagnostics) && return (
     autodamp_step_count = 0,
@@ -151,6 +163,7 @@ function _rectangular_step_statistics(step_diagnostics)
     autodamp_mean_alpha = NaN,
     autodamp_floor_hits = 0,
     autodamp_nonimproving_steps = 0,
+    autodamp_failure = false,
   )
   alphas = Float64[getproperty(row, :alpha) for row in step_diagnostics]
   min_alpha = minimum(alphas)
@@ -161,10 +174,11 @@ function _rectangular_step_statistics(step_diagnostics)
     autodamp_mean_alpha = sum(alphas) / length(alphas),
     autodamp_floor_hits = count(a -> isapprox(a, min_alpha; atol = 1e-12, rtol = 1e-12), alphas),
     autodamp_nonimproving_steps = count(row -> !getproperty(row, :accepted_improvement), step_diagnostics),
+    autodamp_failure = count(row -> !getproperty(row, :accepted_improvement), step_diagnostics) >= max(5, length(step_diagnostics) ÷ 2) && count(a -> isapprox(a, min_alpha; atol = 1e-12, rtol = 1e-12), alphas) >= max(5, length(step_diagnostics) ÷ 2),
   )
 end
 
-function _rectangular_mismatch_diagnostics(Ybus, V::Vector{ComplexF64}, S::Vector{ComplexF64}, bus_types::Vector{Symbol}, Vset::Vector{Float64}, slack_idx::Int, final_pv_voltage_residual::Float64; net = nothing, history = Float64[], step_diagnostics = nothing, top_n::Int = 10)
+function _rectangular_mismatch_diagnostics(Ybus, V::Vector{ComplexF64}, S::Vector{ComplexF64}, bus_types::Vector{Symbol}, Vset::Vector{Float64}, slack_idx::Int, final_pv_voltage_residual::Float64; net = nothing, history = Float64[], step_diagnostics = nothing, top_n::Int = 10, best_finite_iteration::Int = 0, best_finite_voltage = nothing, last_finite_iteration::Int = 0, last_finite_voltage = nothing, first_nonfinite_iteration::Int = 0, first_nonfinite_voltage = nothing)
   final_F = mismatch_rectangular(Ybus, V, S, bus_types, Vset, slack_idx)
   max_active_power_mismatch = 0.0
   max_reactive_power_mismatch = 0.0
@@ -182,6 +196,15 @@ function _rectangular_mismatch_diagnostics(Ybus, V::Vector{ComplexF64}, S::Vecto
   end
   mismatch_rows = _rectangular_mismatch_rows(Ybus, V, S, bus_types, Vset, slack_idx; net, top_n)
   step_stats = _rectangular_step_statistics(step_diagnostics)
+  finite_history = filter(isfinite, history)
+  primary_mismatch_rows = !isempty(finite_history) && !all(isfinite, final_F) ?
+    _rectangular_mismatch_snapshot(:last_finite_iteration, last_finite_iteration, Ybus, last_finite_voltage, S, bus_types, Vset, slack_idx; net, top_n).rows :
+    mismatch_rows.top
+  top_mismatch_snapshots = [
+    _rectangular_mismatch_snapshot(:best_finite_iteration, best_finite_iteration, Ybus, best_finite_voltage, S, bus_types, Vset, slack_idx; net, top_n),
+    _rectangular_mismatch_snapshot(:last_finite_iteration, last_finite_iteration, Ybus, last_finite_voltage, S, bus_types, Vset, slack_idx; net, top_n),
+  ]
+  first_nonfinite_iteration > 0 && push!(top_mismatch_snapshots, _rectangular_mismatch_snapshot(:first_nonfinite_iteration, first_nonfinite_iteration, Ybus, first_nonfinite_voltage, S, bus_types, Vset, slack_idx; net, top_n))
   return (
     max_active_power_mismatch = max_active_power_mismatch,
     max_reactive_power_mismatch = max_reactive_power_mismatch,
@@ -190,12 +213,16 @@ function _rectangular_mismatch_diagnostics(Ybus, V::Vector{ComplexF64}, S::Vecto
     worst_mismatch_bus_index = mismatch_rows.worst.bus_index,
     worst_mismatch_equation = mismatch_rows.worst.equation,
     worst_mismatch_value = mismatch_rows.worst.mismatch,
-    top_mismatch_rows = mismatch_rows.top,
+    top_mismatch_rows = primary_mismatch_rows,
+    top_mismatch_rows_by_iteration = top_mismatch_snapshots,
     mismatch_history = collect(history),
     mismatch_history_first = isempty(history) ? NaN : first(history),
     mismatch_history_last = isempty(history) ? NaN : last(history),
-    mismatch_history_best = isempty(history) ? NaN : minimum(history),
+    mismatch_history_best = isempty(finite_history) ? NaN : minimum(finite_history),
+    best_mismatch = isempty(finite_history) ? NaN : minimum(finite_history),
     mismatch_history_trend = _rectangular_mismatch_trend(history),
+    first_nonfinite_iteration = first_nonfinite_iteration > 0 ? first_nonfinite_iteration : nothing,
+    last_finite_mismatch = isempty(finite_history) ? NaN : finite_history[end],
     step_stats...,
   )
 end

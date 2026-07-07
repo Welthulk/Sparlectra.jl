@@ -585,6 +585,13 @@ function runpf_rectangular!(
   V = copy(V0)
   history = Float64[]
   step_diagnostics = NamedTuple[]
+  best_finite_mismatch = Inf
+  best_finite_iteration = 0
+  best_finite_voltage = nothing
+  last_finite_iteration = 0
+  last_finite_voltage = nothing
+  first_nonfinite_iteration = 0
+  first_nonfinite_voltage = nothing
   converged = false
   iters = 0
   rejection_reason = :nr_mismatch_not_converged
@@ -638,6 +645,20 @@ function runpf_rectangular!(
     end
     max_mis = maximum(abs.(F))
     push!(history, max_mis)
+    if isfinite(max_mis)
+      last_finite_iteration = it
+      last_finite_voltage = copy(V)
+      if max_mis < best_finite_mismatch
+        best_finite_mismatch = max_mis
+        best_finite_iteration = it
+        best_finite_voltage = copy(V)
+      end
+    else
+      first_nonfinite_iteration == 0 && (first_nonfinite_iteration = it; first_nonfinite_voltage = copy(V))
+      converged = false
+      rejection_reason = :nr_nonfinite
+      break
+    end
     if rectangular_workspace_preallocated
       resize!(workspace.rhs_vector, length(F))
       copyto!(workspace.rhs_vector, F)
@@ -778,7 +799,24 @@ function runpf_rectangular!(
     wrong_branch_rescue_reason = wrong_branch_status.wrong_branch_rescue_reason
   end
 
-  mismatch_diagnostics = _rectangular_mismatch_diagnostics(Ybus, V, S, bus_types, Vset, slack_idx, final_pv_voltage_residual; net, history, step_diagnostics)
+  mismatch_diagnostics = _rectangular_mismatch_diagnostics(
+    Ybus,
+    V,
+    S,
+    bus_types,
+    Vset,
+    slack_idx,
+    final_pv_voltage_residual;
+    net,
+    history,
+    step_diagnostics,
+    best_finite_iteration,
+    best_finite_voltage,
+    last_finite_iteration,
+    last_finite_voltage,
+    first_nonfinite_iteration,
+    first_nonfinite_voltage,
+  )
 
   switch_counts, oscillating_buses, max_switching_exceeded, q_limit_active_set_ok, converged, rejection_reason, final_reason, final_status, status = _perf_profile_time!(performance_profile, :solver_status_bookkeeping) do
     switch_counts_ = qlimit_switch_counts(net)

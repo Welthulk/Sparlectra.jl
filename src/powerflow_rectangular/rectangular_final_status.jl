@@ -188,6 +188,7 @@ function _build_rectangular_final_status(
   end
 
   final_status = _rectangular_solver_status_symbol(numerical_converged, q_limit_active_set_ok, converged, final_reason)
+  finite_history = filter(isfinite, history)
 
   status = (
     numerical_converged = numerical_converged,
@@ -203,7 +204,7 @@ function _build_rectangular_final_status(
     final_pv_voltage_residual = final_pv_voltage_residual,
     final_mismatch = isempty(history) ? Inf : history[end],
     initial_mismatch = isempty(history) ? NaN : history[1],
-    best_mismatch = isempty(history) ? NaN : minimum(history),
+    best_mismatch = isempty(finite_history) ? NaN : minimum(finite_history),
     nr_initial_mismatch = isempty(history) ? NaN : history[1],
     nr_final_mismatch = isempty(history) ? Inf : history[end],
     mismatch_diagnostics...,
