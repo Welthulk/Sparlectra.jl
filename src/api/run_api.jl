@@ -924,7 +924,7 @@ function _run_sparlectra_api(;
   )
   isempty(dtf_metadata) || merge!(final_metadata, dtf_metadata)
   _write_run_metadata_artifact(output_path; case_path = case_path, lifecycle = final_metadata)
-  message = numerical_success ? "PowerFlow run completed." : "PowerFlow run completed, but numerical solver did not converge."
+  message = numerical_success ? "PowerFlow run completed." : raw_result.reason_text
   result = _api_result(
     run_id = run_id,
     status = numerical_success ? :succeeded : :not_converged,

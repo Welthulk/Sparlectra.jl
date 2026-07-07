@@ -7,6 +7,7 @@
 
 ### Improvements
 
+* Improved AC island diagnostics by writing per-island solver artifacts and reporting island topology, selected reference bus, propagated solver settings, mismatch status, and artifact paths in island-aware failure messages.
 * Improved Linux Web UI browser launching by keeping Chromium-family app windows as the preferred path and falling back to desktop openers such as `xdg-open`, `gio open`, or `sensible-browser` without passing Chromium-only flags to generic browsers.
 * Added FOR002 validator diagnostics for transformer no-load/shunt sensitivity and branch-identity auditing, including opt-in CSV artifacts for transformer shunt modeling and MATPOWER round-trip metadata preservation checks.
 * Improved the native DTF/FOR002 validation example so normal script and REPL usage returns a lightweight result and prints a concise summary, while detailed row-level diagnostics remain available through an explicit details mode.

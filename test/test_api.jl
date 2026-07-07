@@ -41,6 +41,32 @@ function _write_api_dcline_case(path::AbstractString; rows::AbstractString)
   return path
 end
 
+function _write_api_two_island_case(path::AbstractString)
+  write(
+    path,
+    """
+function mpc = case_two_islands
+mpc.version = '2';
+mpc.baseMVA = 100;
+mpc.bus = [
+1 3 0 0 0 0 1 1.0 0 110 1 1.1 0.9;
+2 1 30 10 0 0 1 1.0 0 110 1 1.1 0.9;
+3 2 0 0 0 0 1 1.0 0 110 1 1.1 0.9;
+4 1 20 5 0 0 1 1.0 0 110 1 1.1 0.9;
+];
+mpc.gen = [
+1 50 0 300 -300 1.02 100 1 300 0;
+3 30 0 300 -300 1.01 100 1 300 0;
+];
+mpc.branch = [
+1 2 0.01 0.05 0.0 999 999 999 0 0 1 -360 360;
+3 4 0.01 0.05 0.0 999 999 999 0 0 1 -360 360;
+];
+""",
+  )
+  return path
+end
+
 function _control_label_test_net()
   net = Net(name = "control_label_cache", baseMVA = 100.0)
   for name in ("Slack", "NoControl", "QControl", "PControl", "BothControl")
@@ -205,6 +231,39 @@ function run_api_tests()
       dcline_pf_csv = read(joinpath(dcline_pf_result.output_dir, "matpower_dcline.csv"), String)
       @test occursin("effective_pt_mw", dcline_pf_csv)
       @test occursin(",8,", dcline_pf_csv)
+
+      island_case = _write_api_two_island_case(joinpath(tmpdir, "case_two_islands.m"))
+      island_result = run_sparlectra_api(
+        casefile = island_case,
+        config_file = template,
+        output_dir = joinpath(tmpdir, "island-diagnostics"),
+        config_overrides = Dict(
+          "power_flow.max_iter" => 1,
+          "power_flow.islands.enabled" => true,
+          "power_flow.islands.mode" => "solve_independent",
+          "power_flow.islands.reference_policy" => "matpower_like",
+          "power_flow.islands.diagnostic_continue_after_failure" => true,
+          "benchmark.enabled" => false,
+        ),
+        performance_timing = :compact,
+      )
+      @test island_result.success === false
+      @test occursin("AC island 1 power-flow solve failed", island_result.message)
+      @test occursin("ref=1", island_result.message)
+      island_summary = joinpath(island_result.output_dir, "ac_island_solver_summary.csv")
+      island_one_log = joinpath(island_result.output_dir, "ac_island_1_solver.log")
+      island_two_log = joinpath(island_result.output_dir, "ac_island_2_solver.log")
+      @test isfile(island_summary)
+      @test isfile(island_one_log)
+      @test isfile(island_two_log)
+      summary_text = read(island_summary, String)
+      @test occursin("island_id,n_bus,n_branch,ref_bus", summary_text)
+      @test occursin("1,2,1,1", summary_text)
+      @test occursin("2,2,1,3", summary_text)
+      island_two_text = read(island_two_log, String)
+      @test occursin("ref_promoted: true", island_two_text)
+      @test occursin("max_iter = 1", replace(island_two_text, "=>" => " ="))
+      @test occursin("tol = ", replace(island_two_text, "=>" => " ="))
       @test read(template, String) == template_before
       @test isfile(joinpath(output_dir, "effective_config.yaml"))
       effective_config_path = joinpath(output_dir, "effective_config.yaml")

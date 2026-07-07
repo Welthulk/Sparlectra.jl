@@ -22,6 +22,7 @@ function _execute_sparlectra_powerflow!(net::Net, cfg::SparlectraConfig; perform
   qlimit_preview_rows = cfg.output.console_q_limit_events === :summary || cfg.output.console_q_limit_events === :off ? 0 : cfg.output.console_max_rows
   phase_callback = performance_profile isa AbstractDict ? get(performance_profile, :phase_callback, phase -> nothing) : phase -> nothing
   phase_callback("solving_powerflow")
+  cfg.powerflow.islands.enabled && _write_ac_island_diagnostics!(net, cfg.powerflow, performance_profile)
   iterations = 0
   erg = 2
   control_status = :none
@@ -40,5 +41,9 @@ function _execute_sparlectra_powerflow!(net::Net, cfg::SparlectraConfig; perform
   timings = performance_profile isa AbstractDict ? get(performance_profile, :timings, nothing) : nothing
   row = timings isa AbstractDict ? get(timings, :solver_total, nothing) : nothing
   solver_elapsed_s = row isa NamedTuple && hasproperty(row, :elapsed_s) ? Float64(row.elapsed_s) : nothing
+  if cfg.powerflow.islands.enabled
+    status = rectangular_pf_status(net)
+    _write_ac_island_diagnostics!(net, cfg.powerflow, performance_profile; status = status)
+  end
   return (iterations = iterations, erg = erg, elapsed_s = elapsed_s, solver_elapsed_s = solver_elapsed_s, control_status = control_status)
 end

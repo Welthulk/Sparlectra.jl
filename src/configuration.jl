@@ -90,6 +90,18 @@ Base.@kwdef struct QLimitConfig
 end
 
 """
+    IslandPowerFlowConfig
+
+Configuration for AC-island-aware power-flow diagnostics.
+"""
+Base.@kwdef struct IslandPowerFlowConfig
+  enabled::Bool = false
+  mode::Symbol = :solve_independent
+  reference_policy::Symbol = :matpower_like
+  diagnostic_continue_after_failure::Bool = false
+end
+
+"""
     PowerFlowConfig
 
 Typed power-flow configuration. It owns solver tolerances, sparse execution
@@ -119,6 +131,7 @@ Base.@kwdef struct PowerFlowConfig
   start_mode::StartModeConfig = StartModeConfig()
   start_current_iteration::StartCurrentIterationConfig = StartCurrentIterationConfig()
   qlimits::QLimitConfig = QLimitConfig()
+  islands::IslandPowerFlowConfig = IslandPowerFlowConfig()
 end
 
 const WRONG_BRANCH_DETECTION_VALUES = [:off, :warn, :fail, :rescue]
@@ -305,6 +318,8 @@ const QLIMIT_ENFORCEMENT_MODE_LEGACY_ALIASES = Dict(
 const QLIMIT_GUARD_ZERO_RANGE_MODE_VALUES = (:lock_pq,)
 const QLIMIT_GUARD_NARROW_RANGE_MODE_VALUES = (:prefer_pq, :lock_pq)
 const QLIMIT_GUARD_VIOLATION_MODE_VALUES = (:delayed_switch, :lock_pq)
+const POWERFLOW_ISLAND_MODE_VALUES = (:solve_independent,)
+const POWERFLOW_ISLAND_REFERENCE_POLICY_VALUES = (:matpower_like,)
 const RECTANGULAR_PREALLOCATE_WORKSPACE_VALUES = (:off, :on, :auto)
 const STATE_ESTIMATION_METHOD_VALUES = (:wls,)
 const MATPOWER_PV_VOLTAGE_SOURCE_VALUES = (:gen_vg, :bus_vm, :auto, :strict_check)
@@ -605,6 +620,17 @@ function PowerFlowConfig(raw::AbstractDict)
     start_mode = StartModeConfig(merge(Dict{Any,Any}(merged), Dict{Any,Any}(start_raw))),
     start_current_iteration = StartCurrentIterationConfig(start_current_iteration_raw),
     qlimits = QLimitConfig(merge(Dict{Any,Any}(merged), Dict{Any,Any}(qlimit_raw))),
+    islands = IslandPowerFlowConfig(islands_raw),
+  )
+end
+
+function IslandPowerFlowConfig(raw::AbstractDict)
+  merged = haskey(raw, "islands") || haskey(raw, :islands) ? _merged_section(raw, "islands") : raw
+  return IslandPowerFlowConfig(
+    enabled = _as_bool_cfg(_raw_get(merged, "enabled", false)),
+    mode = _validate_allowed_symbol("power_flow.islands.mode", _as_symbol_cfg(_raw_get(merged, "mode", :solve_independent)), POWERFLOW_ISLAND_MODE_VALUES),
+    reference_policy = _validate_allowed_symbol("power_flow.islands.reference_policy", _as_symbol_cfg(_raw_get(merged, "reference_policy", :matpower_like)), POWERFLOW_ISLAND_REFERENCE_POLICY_VALUES),
+    diagnostic_continue_after_failure = _as_bool_cfg(_raw_get(merged, "diagnostic_continue_after_failure", false)),
   )
 end
 

@@ -23,6 +23,51 @@
 | `power_flow.autodamp` | Bool | `true` | `true`, `false` | Adaptive damping. | Difficult convergence. | Strict algorithm comparison. | Small overhead, often fewer failures. | `autodamp_min`. |
 | `power_flow.autodamp_min` | Float64 | `0.05` | positive real | Minimum damping factor. | Stabilizing hard cases. | Near-zero damping on easy grids. | Lower can increase iterations. | Active only with `autodamp=true`. |
 
+## AC island diagnostics
+
+`power_flow.islands` enables structural AC-island diagnostics for imported or
+constructed networks that contain multiple disconnected AC components. Island
+diagnostics do not model DC lines as AC branches and do not add artificial
+admittance bridges. They report the AC topology that the existing rectangular
+solver sees after import; `matpower_import.matpower_dcline_mode:
+pf_injections` remains a fixed terminal-injection approximation only.
+
+```yaml
+power_flow:
+  islands:
+    enabled: true
+    mode: solve_independent
+    reference_policy: matpower_like
+    diagnostic_continue_after_failure: true
+```
+
+| YAML path | Type | Default | Allowed values | Meaning |
+|---|---:|---:|---|---|
+| `power_flow.islands.enabled` | Bool | `false` | `true`, `false` | Write AC island diagnostics before and after the solve. |
+| `power_flow.islands.mode` | Symbol/String | `solve_independent` | `solve_independent` | Reserved island solve mode; diagnostics preserve the island-wise solving concept. |
+| `power_flow.islands.reference_policy` | Symbol/String | `matpower_like` | `matpower_like` | Select the in-island REF bus when present, otherwise report the first PV/PQ bus that would be promoted for diagnostics. |
+| `power_flow.islands.diagnostic_continue_after_failure` | Bool | `false` | `true`, `false` | Keep diagnostics for all detected islands even when the combined run fails. |
+
+When an island-aware run fails, the API/result message identifies the first
+failing island with its island id, bus and branch counts, selected reference
+bus, PV/PQ/REF counts, iteration count, final mismatch, mismatch status
+(`finite`, `nonfinite`, `NaN`, or `Inf`), failure reason, stage
+(`before_nr`, `during_nr`, or `after_nr_validation`), start-projection setting,
+and the diagnostic artifact path.
+
+Each run output directory receives:
+
+- `ac_island_solver_summary.csv`: one row per detected AC island, including the
+  selected reference bus, PV/PQ/REF counts, propagated solver settings, final
+  status, final mismatch, and failure reason.
+- `ac_island_<id>_solver.log`: compact per-island details with the same
+  topology, setting, and solve-status fields.
+
+Island-wise solving is structural support, not a convergence guarantee. A large
+island can fail independently while smaller islands are structurally valid. If
+any island or the combined solve fails, Sparlectra still reports the combined
+run as failed and preserves the island artifacts for diagnosis.
+
 ## Start mode options
 
 | YAML path | Type | Default | Allowed values | Meaning | Use when | Avoid when | Performance impact | Interactions |
