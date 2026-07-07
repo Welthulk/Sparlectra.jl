@@ -183,6 +183,9 @@ function _build_rectangular_final_status(
   if final_reason == :nr_mismatch_not_converged && qlimit_active_set_changes >= 3
     final_reason = :nr_mismatch_not_converged_active_set_unstable
   end
+  if !isempty(history) && !isfinite(history[end])
+    final_reason = :nr_nonfinite
+  end
 
   final_status = _rectangular_solver_status_symbol(numerical_converged, q_limit_active_set_ok, converged, final_reason)
 

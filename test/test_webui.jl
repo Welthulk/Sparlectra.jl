@@ -351,6 +351,9 @@ settings:
       @test occursin("<option value=\"case118.m\">case118.m ★</option>", dropdown_form)
       @test !occursin("value=\"case118.m ★\"", dropdown_form)
       @test occursin("data-case-settings-reload=\"true\"", dropdown_form)
+      @test occursin("Runtime overrides disabled by default.", dropdown_form)
+      @test occursin("normal form changes are ignored unless you save them to YAML", dropdown_form)
+      @test occursin("data-runtime-overrides-toggle", dropdown_form)
       @test occursin("target.searchParams.set('casefile', caseSelect.value)", dropdown_form)
       @test occursin("target.searchParams.set('config_file', configInput.value)", dropdown_form)
       dropdown_loaded_form = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow?casefile=$(Sparlectra._webui_urlencode(case118))&config_file=$(Sparlectra._webui_urlencode("configuration.yaml"))"; output_root = root).body)
@@ -385,6 +388,14 @@ settings:
       yaml_first_request = Sparlectra.powerflow_webui_request(yaml_first_form; default_output_root = root)
       @test isempty(yaml_first_request["config_overrides"])
       @test yaml_first_request["config_override_source"] == "user_yaml"
+      yaml_result_html = Sparlectra.render_powerflow_result(Dict(
+        "run_id" => "yaml-first",
+        "status" => "not_converged",
+        "success" => false,
+        "metadata" => Dict("config_override_source" => "user_yaml"),
+      ))
+      @test occursin("Runtime overrides disabled.", yaml_result_html)
+      @test occursin("This run used YAML values.", yaml_result_html)
 
       invalid_case = joinpath(root, "invalid.m")
       write(invalid_case, "% case fixture\n")

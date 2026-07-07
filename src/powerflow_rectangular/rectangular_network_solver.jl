@@ -1411,7 +1411,8 @@ function runpf!(
         if status != 0
           stage = it == 0 ? :pre_nr_setup : :newton_iteration
           failure_reason = island_rect_status !== nothing && hasproperty(island_rect_status, :reason) ? island_rect_status.reason : :nr_not_converged
-          failure_status = merge(island_rect_status === nothing ? NamedTuple() : island_rect_status, (; island_id = row.island_id, iterations = it, reason = failure_reason, status = :not_converged, stage = stage, exception_type = "", exception_message = "", stacktrace_top = ""))
+          failure_outcome = island_rect_status !== nothing && hasproperty(island_rect_status, :status) ? island_rect_status.status : :not_converged
+          failure_status = merge(island_rect_status === nothing ? NamedTuple() : island_rect_status, (; island_id = row.island_id, iterations = it, reason = failure_reason, status = failure_outcome, stage = stage, exception_type = "", exception_message = "", stacktrace_top = ""))
           island_statuses[Int(row.island_id)] = failure_status
           _set_rectangular_pf_status!(net, failure_status)
           err = ErrorException("AC island $(row.island_id) power-flow solve failed:\n  buses=$(row.n_bus) branches=$(row.n_branch) ref=$(row.chosen_ref_bus)\n  bus_types: PV=$(row.n_pv) PQ=$(row.n_pq) REF=$(row.n_ref)\n  iterations=$(it) final_status=$(status)")

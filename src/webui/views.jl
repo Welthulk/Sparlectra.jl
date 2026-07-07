@@ -283,7 +283,8 @@ function render_powerflow_form(;
 $(error_html)$(_webui_active_run_banner(active_run))$(notice_html)$(profile_notice)<p class=\"lede\">Run a local MATPOWER case through the Sparlectra PowerFlow service.</p>
 <form id=\"powerflow-run-form\" data-powerflow-form method=\"post\" action=\"/powerflow/run\" class=\"panel form-grid powerflow-form-card\" onsubmit=\"this.classList.add('is-submitting'); this.setAttribute('aria-busy', 'true'); this.querySelector('button[type=submit]').disabled = true;\">
 $(config_control)
-<label class="check span-2"><input name="apply_webui_runtime_overrides" type="hidden" value="false"><input name="apply_webui_runtime_overrides" type="checkbox" value="true">Apply Web UI runtime controls as overrides<small class="field-hint">Leave unchecked to use the saved YAML configuration as-is. Check only when the form controls should override YAML for this run.</small></label>
+<div class="alert warning span-2" data-runtime-overrides-disabled-notice><strong>Runtime overrides disabled by default.</strong> The run uses YAML values; normal form changes are ignored unless you save them to YAML or check “Apply Web UI runtime controls as overrides” for this run.</div>
+<label class="check span-2"><input name="apply_webui_runtime_overrides" type="hidden" value="false"><input name="apply_webui_runtime_overrides" type="checkbox" value="true" data-runtime-overrides-toggle>Apply Web UI runtime controls as overrides<small class="field-hint">Leave unchecked to use the saved YAML configuration as-is. Check only when the form controls should override YAML for this run.</small></label>
 <label>$(_webui_field_label("casefile", "Existing case file"))$(case_select)<small class="field-hint">Cases from <code>$(_webui_escape(effective_case_directory))</code></small></label>
 <label><span class="field-label">Or type case file path</span>$(case_manual)<small class="field-hint">Manual input overrides the existing-case selection.</small></label>
 $(dat_hint_html)
@@ -583,7 +584,10 @@ function render_powerflow_result(result::AbstractDict)::String
     "$(abort_hint)$(hard_reset)$(interrupted)<div class=\"actions\">$(abort_form)<a class=\"button\" href=\"/powerflow/artifacts/$(_webui_urlencode(run_id))\">View artifacts</a><a class=\"button\" href=\"/powerflow/artifact-zip/$(_webui_urlencode(run_id))\">Download all artifacts as ZIP</a><a class=\"button\" href=\"/powerflow/result/$(_webui_urlencode(run_id))\">Refresh status</a></div>"
   refresh_url = active && !isempty(String(run_id)) ? "/powerflow/result/$(_webui_urlencode(run_id))?autorefresh=1" : nothing
   save_section = active ? "" : _webui_case_settings_save_section(result)
-  return _webui_layout("PowerFlow result", "<section class=\"panel\">$(result_summary)<table class=\"details\">$(rows)</table>$(active_hint)$(links)</section>$(save_section)"; show_back = true, refresh_url)
+  metadata = get(result, "metadata", Dict{String,Any}())
+  override_source = String(get(result, "config_override_source", get(metadata, "config_override_source", "")))
+  runtime_notice = override_source == "user_yaml" ? "<div class=\"alert warning\"><strong>Runtime overrides disabled.</strong> This run used YAML values. Normal form changes were ignored unless they were saved to YAML or runtime overrides were enabled.</div>" : ""
+  return _webui_layout("PowerFlow result", "<section class=\"panel\">$(result_summary)$(runtime_notice)<table class=\"details\">$(rows)</table>$(active_hint)$(links)</section>$(save_section)"; show_back = true, refresh_url)
 end
 
 function render_powerflow_artifacts(run_id::AbstractString, artifacts)::String

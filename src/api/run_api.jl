@@ -922,6 +922,7 @@ function _run_sparlectra_api(;
     csv_artifacts,
     detailed_result_csv,
     config_overrides,
+    config_override_source,
     casefile,
     config_file,
     performance_timing,
