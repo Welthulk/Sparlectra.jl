@@ -173,3 +173,60 @@ function _load_api_config(config_file::String, nested_overrides::Dict{String,Any
   raw, _ = _load_and_validate_config(DEFAULT_SPARLECTRA_CONFIG_PATH, config_file; cli_overrides = Dict{String,Any}(), overrides = nested_overrides)
   return SparlectraConfig(raw), raw
 end
+
+const CONFIG_OVERRIDE_REPORT_KEYS = (
+  "matpower_import.auto_profile",
+  "matpower_import.compare_voltage_reference",
+  "matpower_import.matpower_dcline_mode",
+  "power_flow.tol",
+  "power_flow.max_iter",
+  "power_flow.autodamp",
+  "power_flow.autodamp_min",
+  "power_flow.start_mode.angle_mode",
+  "power_flow.start_mode.voltage_mode",
+  "power_flow.qlimits.enabled",
+  "power_flow.qlimits.enforcement_mode",
+  "power_flow.start_current_iteration.enabled",
+  "power_flow.islands.enabled",
+  "power_flow.islands.mode",
+  "power_flow.islands.reference_policy",
+  "power_flow.islands.diagnostic_continue_after_failure",
+)
+
+function _dotted_config_value(raw::AbstractDict, key::AbstractString)
+  current = raw
+  for part in split(String(key), '.')
+    current isa AbstractDict || return nothing
+    haskey(current, part) || return nothing
+    current = current[part]
+  end
+  return current
+end
+
+function _set_dotted_metadata!(raw::Dict{String,Any}, key::AbstractString, value)
+  parts = split(String(key), '.')
+  current = raw
+  for part in parts[1:(end - 1)]
+    child = get!(current, part, Dict{String,Any}())
+    child isa Dict{String,Any} || (child = current[part] = Dict{String,Any}())
+    current = child
+  end
+  current[parts[end]] = value
+  return raw
+end
+
+function _config_source_report(config_file::String, nested_overrides::Dict{String,Any}, effective_raw::AbstractDict)
+  user = isfile(config_file) ? load_yaml_dict(config_file) : Dict{String,Any}()
+  report = Dict{String,Any}()
+  for key in CONFIG_OVERRIDE_REPORT_KEYS
+    source = _dotted_config_value(nested_overrides, key) !== nothing ? "api_request_override" :
+             _dotted_config_value(user, key) !== nothing ? "user_yaml" :
+             "default"
+    _set_dotted_metadata!(report, key, Dict{String,Any}(
+      "value" => _dotted_config_value(effective_raw, key),
+      "source" => source,
+      "precedence" => "default < user_yaml < case_sidecar < webui_form_runtime < explicit_api_request",
+    ))
+  end
+  return report
+end

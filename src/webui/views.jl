@@ -276,7 +276,7 @@ function render_powerflow_form(;
 <fieldset id="configuration-maintenance" class="config-maintenance">
 <legend>Configuration maintenance</legend>
 <p class="field-hint span-2">Check or explicitly refresh the selected YAML configuration. Refresh creates a backup and rewrites the selected YAML in canonical Sparlectra format. Existing option values are preserved, but comments and ordering may not be preserved. Restart or reload the Web UI after refresh. Startup and page-load checks never rewrite YAML automatically.</p>
-<div class="actions span-2"><button class="secondary-button" type="submit" formaction="/powerflow/config/check" formmethod="post">Check configuration</button><button class="secondary-button" type="submit" formaction="/powerflow/config/refresh" formmethod="post">Refresh configuration</button></div>
+<div class="actions span-2"><a class="secondary-button" href="/powerflow/config/edit?config_file=$(_webui_urlencode(config_default))">Configuration Editor</a><button class="secondary-button" type="submit" formaction="/powerflow/config/check" formmethod="post">Check configuration</button><button class="secondary-button" type="submit" formaction="/powerflow/config/refresh" formmethod="post">Refresh configuration</button></div>
 </fieldset>
 """
   form = """
@@ -579,7 +579,7 @@ function render_powerflow_result(result::AbstractDict)::String
     ""
   links =
     isempty(String(run_id)) ? "" :
-    "$(abort_hint)$(hard_reset)$(interrupted)<div class=\"actions\">$(abort_form)<a class=\"button\" href=\"/powerflow/artifacts/$(_webui_urlencode(run_id))\">View artifacts</a><a class=\"button\" href=\"/powerflow/result/$(_webui_urlencode(run_id))\">Refresh status</a></div>"
+    "$(abort_hint)$(hard_reset)$(interrupted)<div class=\"actions\">$(abort_form)<a class=\"button\" href=\"/powerflow/artifacts/$(_webui_urlencode(run_id))\">View artifacts</a><a class=\"button\" href=\"/powerflow/artifact-zip/$(_webui_urlencode(run_id))\">Download all artifacts as ZIP</a><a class=\"button\" href=\"/powerflow/result/$(_webui_urlencode(run_id))\">Refresh status</a></div>"
   refresh_url = active && !isempty(String(run_id)) ? "/powerflow/result/$(_webui_urlencode(run_id))?autorefresh=1" : nothing
   save_section = active ? "" : _webui_case_settings_save_section(result)
   return _webui_layout("PowerFlow result", "<section class=\"panel\">$(result_summary)<table class=\"details\">$(rows)</table>$(active_hint)$(links)</section>$(save_section)"; show_back = true, refresh_url)
@@ -599,7 +599,7 @@ function render_powerflow_artifacts(run_id::AbstractString, artifacts)::String
     ),
     "",
   )
-  table = "<section class=\"panel\"><p>Run <code>$(_webui_escape(run_id))</code></p><table><thead><tr><th>Name</th><th>Kind</th><th>MIME type</th><th>Bytes</th><th>Description</th></tr></thead><tbody>$(rows)</tbody></table></section>"
+  table = "<section class=\"panel\"><p>Run <code>$(_webui_escape(run_id))</code></p><p><a class=\"button\" href=\"/powerflow/artifact-zip/$(_webui_urlencode(run_id))\">Download all artifacts as ZIP</a></p><table><thead><tr><th>Name</th><th>Kind</th><th>MIME type</th><th>Bytes</th><th>Description</th></tr></thead><tbody>$(rows)</tbody></table></section>"
   return _webui_layout("Artifacts", table; show_back = true)
 end
 

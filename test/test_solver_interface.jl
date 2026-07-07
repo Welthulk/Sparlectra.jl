@@ -870,14 +870,13 @@ mpc.branch = [
       @test_throws ErrorException runpf!(deepcopy(net); config = PowerFlowConfig(max_iter = 40))
 
       mktempdir() do tmpdir
-        cd(tmpdir) do
-          solved = deepcopy(net)
-          _, erg = runpf!(solved; config = PowerFlowConfig(max_iter = 40, islands_enabled = true))
-          @test erg == 0
-          @test isfile("ac_islands.csv")
-          @test count(!isempty, split(read("ac_islands.csv", String), '\n')) == 3
-          @test all(node -> isfinite(node._vm_pu) && isfinite(node._va_deg), solved.nodeVec)
-        end
+        solved = deepcopy(net)
+        _, erg = runpf!(solved; config = PowerFlowConfig(max_iter = 40, islands_enabled = true), performance_profile = Dict{Symbol,Any}(:output_dir => tmpdir))
+        @test erg == 0
+        @test isfile(joinpath(tmpdir, "ac_islands.csv"))
+        @test !isfile(joinpath(pwd(), "ac_islands.csv"))
+        @test count(!isempty, split(read(joinpath(tmpdir, "ac_islands.csv"), String), '\n')) == 3
+        @test all(node -> isfinite(node._vm_pu) && isfinite(node._va_deg), solved.nodeVec)
       end
 
       pv_ref_net = two_island_net(second_ref = :pv)

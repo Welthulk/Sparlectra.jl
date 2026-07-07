@@ -68,7 +68,7 @@ function _write_matpower_dcline_artifact(output_path::AbstractString, net::Net; 
   return MATPOWER_DCLINE_ARTIFACT
 end
 
-function _effective_config_with_runtime_case(effective_raw, case_path::AbstractString, config::SparlectraConfig)
+function _effective_config_with_runtime_case(effective_raw, case_path::AbstractString, config::SparlectraConfig; config_sources = nothing)
   raw = deepcopy(effective_raw)
   runtime = get!(raw, "runtime", Dict{String,Any}())
   runtime isa AbstractDict || (runtime = raw["runtime"] = Dict{String,Any}())
@@ -78,6 +78,9 @@ function _effective_config_with_runtime_case(effective_raw, case_path::AbstractS
   runtime["case_name"] = splitext(basename(case_path))[1]
   runtime["case_source"] = "webui_mpower_data"
   runtime["configured_default_casefile"] = config.matpower.case
+  if config_sources !== nothing
+    raw["_config_sources"] = config_sources
+  end
   return raw
 end
 
@@ -604,8 +607,9 @@ function _run_sparlectra_api(;
   catch err
     return _api_failure("invalid_configuration", sprint(showerror, err); run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file)
   end
+  config_sources = _config_source_report(config_path, nested_overrides, effective_raw)
   effective_config = joinpath(output_path, "effective_config.yaml")
-  _write_yaml_file(effective_config, _effective_config_with_runtime_case(effective_raw, case_path, config))
+  _write_yaml_file(effective_config, _effective_config_with_runtime_case(effective_raw, case_path, config; config_sources))
   _write_run_metadata_artifact(output_path; case_path = case_path)
   _check_powerflow_cancelled!(cancellation_token)
   phases[:api_config_build] = _api_elapsed_seconds(config_start)
@@ -738,7 +742,8 @@ function _run_sparlectra_api(;
   if auto_profile_result !== nothing
     config = auto_profile_result.config
     _update_effective_matpower_raw!(effective_raw, config)
-    _write_yaml_file(effective_config, _effective_config_with_runtime_case(effective_raw, case_path, config))
+    config_sources = _config_source_report(config_path, nested_overrides, effective_raw)
+    _write_yaml_file(effective_config, _effective_config_with_runtime_case(effective_raw, case_path, config; config_sources))
     _write_matpower_auto_profile_artifact(output_path, auto_profile_result, config; casefile = String(auto_profile_casefile))
     operation_callback("powerflow_effective_options"; run_id = run_id, case = basename(case_path), _metadata_kwargs(qlimit_metadata)..., _metadata_kwargs(_resolved_matpower_import_runtime_options(config))...)
   end

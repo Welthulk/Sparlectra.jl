@@ -26,3 +26,13 @@ examples/configuration.yaml.example
 examples/configuration.yaml.bck
 results
 _out/powerflow_service
+ac_islands.csv
+ac_island_solver_summary.csv
+ac_island_*_solver.log
+matpower_dcline.csv
+current_iteration_start.log
+q_limit.log
+performance.log
+run.log
+effective_config.yaml
+matpower_auto_profile.log

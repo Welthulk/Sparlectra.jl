@@ -27,15 +27,31 @@ function _execute_sparlectra_powerflow!(net::Net, cfg::SparlectraConfig; perform
   erg = 2
   control_status = :none
   elapsed_s = @elapsed begin
-    iterations, erg, control_status = _perf_profile_time!(performance_profile, :solver_total) do
-      controllers = collect_outer_controllers(net)
-      if isempty(controllers)
-        ite, status = runpf!(net, pf_cfg; verbose = verbose, pv_table_rows = qlimit_preview_rows, performance_profile = performance_profile)
-        (ite, status, :none)
-      else
-        control_result = run_control!(net; controllers = controllers, pf_config = pf_cfg, control_config = cfg.control, verbose = verbose, performance_profile = performance_profile)
-        (control_result.last_pf_iterations, control_result.status == :pf_failed ? 1 : 0, control_result.status)
+    try
+      iterations, erg, control_status = _perf_profile_time!(performance_profile, :solver_total) do
+        controllers = collect_outer_controllers(net)
+        if isempty(controllers)
+          ite, status = runpf!(net, pf_cfg; verbose = verbose, pv_table_rows = qlimit_preview_rows, performance_profile = performance_profile)
+          (ite, status, :none)
+        else
+          control_result = run_control!(net; controllers = controllers, pf_config = pf_cfg, control_config = cfg.control, verbose = verbose, performance_profile = performance_profile)
+          (control_result.last_pf_iterations, control_result.status == :pf_failed ? 1 : 0, control_result.status)
+        end
       end
+    catch err
+      if cfg.powerflow.islands.enabled
+        diagnostic_status = (;
+          final_mismatch = NaN,
+          iterations = iterations,
+          reason = :solver_error,
+          status = :failed,
+          stage = :pre_solve_validation,
+          exception_type = nameof(typeof(err)),
+          exception_message = sprint(showerror, err),
+        )
+        _write_ac_island_diagnostics!(net, cfg.powerflow, performance_profile; status = diagnostic_status)
+      end
+      rethrow()
     end
   end
   timings = performance_profile isa AbstractDict ? get(performance_profile, :timings, nothing) : nothing

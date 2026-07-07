@@ -1308,8 +1308,11 @@ function runpf!(
   if length(island_report.rows) > 1 && any(row -> row.n_branch > 0, island_report.rows)
     _print_ac_island_summary(island_report)
     try
-      write_ac_island_report(joinpath(pwd(), "ac_islands.csv"), island_report)
-      println("AC island diagnostic artifact: ac_islands.csv")
+      artifact_dir = performance_profile isa AbstractDict ? String(get(performance_profile, :output_dir, tempdir())) : tempdir()
+      mkpath(artifact_dir)
+      island_artifact = joinpath(artifact_dir, "ac_islands.csv")
+      write_ac_island_report(island_artifact, island_report)
+      println("AC island diagnostic artifact: ", island_artifact)
     catch err
       @warn "Unable to write AC island diagnostic artifact" exception = (err, catch_backtrace())
     end
@@ -1387,7 +1390,7 @@ function runpf!(
         performance_profile = performance_profile,
       )
       total_iters += it
-      status == 0 || error("AC island $(row.island_id) power-flow solve failed with status $(status).")
+      status == 0 || error("AC island $(row.island_id) power-flow solve failed:\n  buses=$(row.n_bus) branches=$(row.n_branch) ref=$(row.chosen_ref_bus)\n  bus_types: PV=$(row.n_pv) PQ=$(row.n_pq) REF=$(row.n_ref)\n  iterations=$(it) final_status=$(status)")
       all(isfinite(something(wnode._vm_pu, NaN)) && isfinite(something(wnode._va_deg, NaN)) for wnode in inet.nodeVec) || error("AC island $(row.island_id) produced nonfinite voltage results.")
       _sync_island_solution!(wnet, inet, row)
     end

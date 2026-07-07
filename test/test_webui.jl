@@ -1490,6 +1490,14 @@ result = get_powerflow_result(run_id)
       @test any(header -> header.first == "Content-Disposition", download.headers)
       @test Sparlectra.route_sparlectra_webui("GET", "/powerflow/artifact/$(run_id)/result.json"; output_root).status == 200
       @test Sparlectra.route_sparlectra_webui("GET", "/powerflow/artifact/$(run_id)/result.json?download=1"; output_root).status == 200
+      zip_download = Sparlectra.handle_powerflow_artifacts_zip(run_id)
+      @test zip_download.status == 200
+      @test ("Content-Type" => "application/zip") in zip_download.headers
+      @test zip_download.body[1:4] == UInt8[0x50, 0x4b, 0x03, 0x04]
+      @test occursin("result.json", String(zip_download.body))
+      @test !occursin("Project.toml", String(zip_download.body))
+      @test Sparlectra.route_sparlectra_webui("GET", "/powerflow/artifact-zip/$(run_id)"; output_root).status == 200
+      @test Sparlectra.handle_powerflow_artifacts_zip("unknown-run").status == 404
       operation_log_text = read(operation_log_path, String)
       @test occursin("\"event\":\"artifact_opened\"", operation_log_text)
       @test occursin("\"event\":\"artifact_downloaded\"", operation_log_text)

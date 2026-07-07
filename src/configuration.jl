@@ -834,6 +834,7 @@ end
 function _validate_known_config_keys(user::AbstractDict, defaults::AbstractDict; path::String = "")
   for (key, value) in user
     skey = _canonical_config_key(_config_key(key))
+    isempty(path) && skey in ("_config_sources", "_config_metadata") && continue
     current_path = isempty(path) ? skey : string(path, ".", skey)
     if current_path == "matpower_import.benchmark"
       throw(ArgumentError("Removed Sparlectra configuration key: matpower_import.benchmark.\nUse top-level benchmark.enabled instead, e.g.\n\nbenchmark:\n  enabled: true"))
