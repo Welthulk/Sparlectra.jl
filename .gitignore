@@ -36,3 +36,4 @@ performance.log
 run.log
 effective_config.yaml
 matpower_auto_profile.log
+setup_linux.md
