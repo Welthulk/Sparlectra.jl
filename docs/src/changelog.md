@@ -7,6 +7,7 @@
 
 ### Improvements
 
+* Improved island-wise failure diagnostics so each AC island keeps its own solver status, returned non-convergence is not reported as a solver exception, Q-limit state is included in per-island artifacts, and failed API runs keep generated artifacts discoverable for ZIP downloads.
 * Improved AC island diagnostics by writing per-island solver artifacts and reporting island topology, selected reference bus, propagated solver settings, mismatch status, and artifact paths in island-aware failure messages.
 * Improved Linux Web UI browser launching by keeping Chromium-family app windows as the preferred path and falling back to desktop openers such as `xdg-open`, `gio open`, or `sensible-browser` without passing Chromium-only flags to generic browsers.
 * Added FOR002 validator diagnostics for transformer no-load/shunt sensitivity and branch-identity auditing, including opt-in CSV artifacts for transformer shunt modeling and MATPOWER round-trip metadata preservation checks.

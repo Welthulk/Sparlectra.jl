@@ -68,6 +68,52 @@ island can fail independently while smaller islands are structurally valid. If
 any island or the combined solve fails, Sparlectra still reports the combined
 run as failed and preserves the island artifacts for diagnosis.
 
+For pure SyntheticUSA island diagnostics, start with Q-limit handling disabled
+so the baseline tests island topology, reference selection, start projection,
+and rectangular NR behavior before adding active-set effects:
+
+```yaml
+matpower_import:
+  matpower_dcline_mode: pf_injections
+  auto_profile: apply
+  compare_voltage_reference: hybrid
+
+power_flow:
+  tol: 1.0e-5
+  max_iter: 80
+  autodamp: true
+  autodamp_min: 0.01
+
+  islands:
+    enabled: true
+    mode: solve_independent
+    reference_policy: matpower_like
+    diagnostic_continue_after_failure: true
+
+  qlimits:
+    enabled: false
+
+  start_current_iteration:
+    enabled: false
+
+  start_mode:
+    angle_mode: dc
+    voltage_mode: profile_blend
+    profile_source: matpower_reference
+    start_projection: true
+    try_dc_start: true
+    try_blend_scan: true
+    branch_guard: true
+    measure_candidates: true
+    reuse_import_data: true
+```
+
+After this pure baseline is understood, enable `power_flow.qlimits.enabled` to
+diagnose active-set behavior. Per-island logs then include Q-limit state such as
+`q_limit_processing_status`, switching-event counts, active-set changes,
+reenable events, guarded narrow-range PV buses, final PV voltage residual, and
+available mismatch metrics.
+
 ## Start mode options
 
 | YAML path | Type | Default | Allowed values | Meaning | Use when | Avoid when | Performance impact | Interactions |

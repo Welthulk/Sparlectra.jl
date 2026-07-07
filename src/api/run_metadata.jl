@@ -95,6 +95,28 @@ end
 function _finalize_api_result(result::SparlectraApiResult)::SparlectraApiResult
   _write_api_result_file(result)
   refreshed = _refresh_api_artifacts(result)
+  if haskey(refreshed.metadata, "artifact_status") && refreshed.metadata["artifact_status"] == "not_started" && !isempty(refreshed.artifacts)
+    refreshed = _api_result(
+      run_id = refreshed.run_id,
+      status = refreshed.status,
+      success = refreshed.success,
+      converged = refreshed.converged,
+      solution_available = refreshed.solution_available,
+      iterations = refreshed.iterations,
+      final_mismatch = refreshed.final_mismatch,
+      reason = refreshed.reason,
+      message = refreshed.message,
+      casefile = refreshed.casefile,
+      config_file = refreshed.config_file,
+      output_dir = refreshed.output_dir,
+      logfile = refreshed.logfile,
+      result_file = refreshed.result_file,
+      artifacts = refreshed.artifacts,
+      service_phase_timings = refreshed.service_phase_timings,
+      metadata = merge(refreshed.metadata, Dict{String,Any}("artifact_status" => "completed")),
+      raw_result = refreshed.raw_result,
+    )
+  end
   _write_api_result_file(refreshed)
   refreshed = _refresh_api_artifacts(refreshed)
   _write_api_result_file(refreshed)
