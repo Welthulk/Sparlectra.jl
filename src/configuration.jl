@@ -113,12 +113,17 @@ Base.@kwdef struct PowerFlowConfig
   rectangular_workspace_reuse::Bool = true
   rectangular_preallocate_workspace::Symbol = :auto
   rectangular_workspace_min_buses::Int = 1000
+  islands_enabled::Bool = false
+  islands_mode::Symbol = :solve_independent
+  islands_reference_policy::Symbol = :matpower_like
   start_mode::StartModeConfig = StartModeConfig()
   start_current_iteration::StartCurrentIterationConfig = StartCurrentIterationConfig()
   qlimits::QLimitConfig = QLimitConfig()
 end
 
 const WRONG_BRANCH_DETECTION_VALUES = [:off, :warn, :fail, :rescue]
+const POWERFLOW_ISLAND_MODE_VALUES = [:solve_independent]
+const POWERFLOW_ISLAND_REFERENCE_POLICY_VALUES = [:matpower_like]
 
 """
     ObservabilityConfig
@@ -568,6 +573,7 @@ function PowerFlowConfig(raw::AbstractDict)
   start_raw = _raw_get(merged, "start_values", _raw_section(merged, "start_mode"))
   start_current_iteration_raw = _raw_section(merged, "start_current_iteration")
   qlimit_raw = _raw_section(merged, "qlimits")
+  islands_raw = _raw_section(merged, "islands")
   wrong_branch_min_vm_pu = _validate_nonnegative("power_flow.wrong_branch_min_vm_pu", _as_float_cfg(_raw_get(merged, "wrong_branch_min_vm_pu", 0.70)))
   wrong_branch_max_vm_pu = _validate_positive("power_flow.wrong_branch_max_vm_pu", _as_float_cfg(_raw_get(merged, "wrong_branch_max_vm_pu", 1.30)))
   wrong_branch_min_vm_pu <= wrong_branch_max_vm_pu || throw(ArgumentError("power_flow.wrong_branch_min_vm_pu must be <= power_flow.wrong_branch_max_vm_pu."))
@@ -593,6 +599,9 @@ function PowerFlowConfig(raw::AbstractDict)
     rectangular_workspace_reuse = _as_bool_cfg(_raw_get(merged, "rectangular_workspace_reuse", true)),
     rectangular_preallocate_workspace = _validate_allowed_symbol("power_flow.rectangular_preallocate_workspace", _as_symbol_cfg(_raw_get(merged, "rectangular_preallocate_workspace", :auto)), RECTANGULAR_PREALLOCATE_WORKSPACE_VALUES),
     rectangular_workspace_min_buses = _as_int_cfg(_raw_get(merged, "rectangular_workspace_min_buses", 1000)),
+    islands_enabled = _as_bool_cfg(_raw_get(islands_raw, "enabled", false)),
+    islands_mode = _validate_allowed_symbol("power_flow.islands.mode", _as_symbol_cfg(_raw_get(islands_raw, "mode", :solve_independent)), POWERFLOW_ISLAND_MODE_VALUES),
+    islands_reference_policy = _validate_allowed_symbol("power_flow.islands.reference_policy", _as_symbol_cfg(_raw_get(islands_raw, "reference_policy", :matpower_like)), POWERFLOW_ISLAND_REFERENCE_POLICY_VALUES),
     start_mode = StartModeConfig(merge(Dict{Any,Any}(merged), Dict{Any,Any}(start_raw))),
     start_current_iteration = StartCurrentIterationConfig(start_current_iteration_raw),
     qlimits = QLimitConfig(merge(Dict{Any,Any}(merged), Dict{Any,Any}(qlimit_raw))),

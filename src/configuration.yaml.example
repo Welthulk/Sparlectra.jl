@@ -39,6 +39,15 @@ power_flow:
   rectangular_preallocate_workspace: auto
   rectangular_workspace_min_buses: 1000
 
+  # Explicit opt-in for disconnected AC networks. MATPOWER dcline PF
+  # injections do not connect Ybus islands.
+  islands:
+    enabled: false
+    # Allowed values: solve_independent
+    mode: solve_independent
+    # Allowed values: matpower_like
+    reference_policy: matpower_like
+
   # Start projection and warmstart controls.
   start_mode:
     # Allowed values: classic, dc, bus_va_blend, matpower_va

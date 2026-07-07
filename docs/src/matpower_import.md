@@ -33,6 +33,24 @@
 | `matpower_import.import_for001_contingencies` | Bool | `true` | `true`, `false` | Preserve user-defined `mpc.for001_contingencies`. | FOR001/FOR002 validation. | Ignore validation metadata. | None. | `mpc.branch_name` enables index mapping. |
 | `matpower_import.matpower_dcline_mode` | Symbol/String | `reject_active` | `reject_active`, `ignore_inactive`, `pf_injections` | Controls active `mpc.dcline` rows. | Use `pf_injections` to emulate MATPOWER simple PF DC-line injections. | OPF/dclinecost studies. | Adds two fixed prosumers per active row in `pf_injections`. | Default keeps fail-fast behavior. |
 
+### DC lines and disconnected AC islands
+
+`matpower_import.matpower_dcline_mode = pf_injections` keeps the
+toggle-dcline-compatible approximation: each active `mpc.dcline` row becomes
+fixed terminal injections (`PG = -PF` at the from terminal and the effective
+received `PT` at the to terminal, with the existing Q/V metadata mapping).
+This is not full HVDC modeling and it does not create AC branches, dummy
+admittances, or tiny impedance bridges between terminals.
+
+Large MATPOWER cases such as `case_SyntheticUSA.m` can therefore have several
+disconnected AC Ybus components coupled only through fixed DC-line terminal
+injections. Enable `power_flow.islands.enabled = true` with
+`power_flow.islands.mode = solve_independent` to solve each AC island with the
+rectangular NR solver and merge the voltage/flow state into one user-facing
+result. The diagnostic artifact `ac_islands.csv` records the selected
+reference bus, island status, active DC-line terminal counts, power totals, and
+pre-slack active-power imbalance for each island.
+
 ## Auto-profile pre-run
 
 `matpower_import.auto_profile` is evaluated by the MATPOWER runner before the

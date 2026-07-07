@@ -1066,6 +1066,9 @@ function _runpf_with_config!(net::Net, config::PowerFlowConfig; verbose::Int = 0
     rectangular_workspace_reuse = config.rectangular_workspace_reuse,
     rectangular_preallocate_workspace = config.rectangular_preallocate_workspace,
     rectangular_workspace_min_buses = config.rectangular_workspace_min_buses,
+    islands_enabled = config.islands_enabled,
+    islands_mode = config.islands_mode,
+    islands_reference_policy = config.islands_reference_policy,
     performance_profile = performance_profile,
   )
 end
@@ -1293,11 +1296,112 @@ function runpf!(
   rectangular_workspace_reuse::Bool = true,
   rectangular_preallocate_workspace::Symbol = :auto,
   rectangular_workspace_min_buses::Int = 1000,
+  islands_enabled::Bool = false,
+  islands_mode::Symbol = :solve_independent,
+  islands_reference_policy::Symbol = :matpower_like,
 )
   _validate_rectangular_powerflow_options(method = :rectangular, sparse = true)
   wnet, reps, has_merges = _merged_pf_net(net)
   refreshBusTypesFromProsumers!(wnet)
   has_vdep_control = has_voltage_dependent_control(wnet)
+  island_report = detect_ac_islands(wnet)
+  if length(island_report.rows) > 1 && any(row -> row.n_branch > 0, island_report.rows)
+    _print_ac_island_summary(island_report)
+    try
+      write_ac_island_report(joinpath(pwd(), "ac_islands.csv"), island_report)
+      println("AC island diagnostic artifact: ac_islands.csv")
+    catch err
+      @warn "Unable to write AC island diagnostic artifact" exception = (err, catch_backtrace())
+    end
+    if !islands_enabled
+      error(AC_ISLAND_DISABLED_MESSAGE)
+    end
+    islands_mode === :solve_independent || error("Unsupported power_flow.islands.mode=$(islands_mode).")
+    islands_reference_policy === :matpower_like || error("Unsupported power_flow.islands.reference_policy=$(islands_reference_policy).")
+    _validate_island_references!(island_report)
+    total_iters = 0
+    for row in island_report.rows
+      inet = _prepare_island_net(wnet, row)
+      it, status = runpf_rectangular!(
+        inet,
+        maxIte,
+        tolerance,
+        verbose;
+        damp = damp,
+        autodamp = autodamp,
+        autodamp_min = autodamp_min,
+        wrong_branch_detection = wrong_branch_detection,
+        wrong_branch_rescue = false,
+        wrong_branch_min_vm_pu = wrong_branch_min_vm_pu,
+        wrong_branch_max_vm_pu = wrong_branch_max_vm_pu,
+        wrong_branch_max_angle_spread_deg = wrong_branch_max_angle_spread_deg,
+        wrong_branch_max_branch_angle_deg = wrong_branch_max_branch_angle_deg,
+        wrong_branch_min_low_vm_count = wrong_branch_min_low_vm_count,
+        wrong_branch_rescue_max_attempts = 0,
+        opt_flatstart = opt_flatstart,
+        pv_table_rows = pv_table_rows,
+        lock_pv_to_pq_buses = lock_pv_to_pq_buses,
+        qlimit_mode = qlimit_mode,
+        qlimit_max_outer = qlimit_max_outer,
+        start_projection = start_projection,
+        start_projection_try_dc_start = start_projection_try_dc_start,
+        start_projection_try_blend_scan = start_projection_try_blend_scan,
+        start_projection_branch_guard = start_projection_branch_guard,
+        start_projection_measure_candidates = start_projection_measure_candidates,
+        start_projection_accept_unmeasured_dc_start = start_projection_accept_unmeasured_dc_start,
+        start_projection_blend_lambdas = start_projection_blend_lambdas,
+        start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg,
+        start_projection_requested_angle_mode = start_projection_requested_angle_mode,
+        start_projection_requested_voltage_mode = start_projection_requested_voltage_mode,
+        start_current_iteration_enabled = start_current_iteration_enabled,
+        start_current_iteration_max_iter = start_current_iteration_max_iter,
+        start_current_iteration_tol = start_current_iteration_tol,
+        start_current_iteration_damping = start_current_iteration_damping,
+        start_current_iteration_accept_only_if_improved = start_current_iteration_accept_only_if_improved,
+        start_current_iteration_min_improvement_factor = start_current_iteration_min_improvement_factor,
+        start_current_iteration_vm_min_pu = start_current_iteration_vm_min_pu,
+        start_current_iteration_vm_max_pu = start_current_iteration_vm_max_pu,
+        start_current_iteration_max_angle_step_deg = start_current_iteration_max_angle_step_deg,
+        start_current_iteration_only_for_large_cases = start_current_iteration_only_for_large_cases,
+        qlimit_start_iter = qlimit_start_iter,
+        qlimit_start_mode = qlimit_start_mode,
+        qlimit_auto_q_delta_pu = qlimit_auto_q_delta_pu,
+        qlimit_trace_buses = qlimit_trace_buses,
+        qlimit_lock_reason = qlimit_lock_reason,
+        qlimit_guard = qlimit_guard,
+        qlimit_guard_min_q_range_pu = qlimit_guard_min_q_range_pu,
+        qlimit_guard_zero_range_mode = qlimit_guard_zero_range_mode,
+        qlimit_guard_narrow_range_mode = qlimit_guard_narrow_range_mode,
+        qlimit_guard_log = qlimit_guard_log,
+        qlimit_guard_max_switches = qlimit_guard_max_switches,
+        qlimit_guard_accept_bounded_violations = qlimit_guard_accept_bounded_violations,
+        qlimit_guard_max_remaining_violations = qlimit_guard_max_remaining_violations,
+        qlimit_guard_freeze_after_repeated_switching = qlimit_guard_freeze_after_repeated_switching,
+        qlimit_guard_violation_mode = qlimit_guard_violation_mode,
+        qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu,
+        qlimits_enabled = qlimits_enabled,
+        qlimit_enforcement_mode = qlimit_enforcement_mode,
+        rectangular_workspace_reuse = rectangular_workspace_reuse,
+        rectangular_preallocate_workspace = rectangular_preallocate_workspace,
+        rectangular_workspace_min_buses = rectangular_workspace_min_buses,
+        performance_profile = performance_profile,
+      )
+      total_iters += it
+      status == 0 || error("AC island $(row.island_id) power-flow solve failed with status $(status).")
+      all(isfinite(something(wnode._vm_pu, NaN)) && isfinite(something(wnode._va_deg, NaN)) for wnode in inet.nodeVec) || error("AC island $(row.island_id) produced nonfinite voltage results.")
+      _sync_island_solution!(wnet, inet, row)
+    end
+    updateShuntPowers!(net = wnet)
+    if has_merges
+      _sync_merged_results_to_original!()
+    elseif wnet !== net
+      for i in eachindex(net.nodeVec)
+        net.nodeVec[i]._vm_pu = wnet.nodeVec[i]._vm_pu
+        net.nodeVec[i]._va_deg = wnet.nodeVec[i]._va_deg
+      end
+    end
+    return total_iters, 0
+  end
 
   function _sync_merged_results_to_original!()
     # Only solved voltage state is back-propagated bus-wise; dependent shunt powers
