@@ -152,6 +152,14 @@ function _matpower_branch_kind_overrides(mpc, nbranch::Int; apply_branch_kind::B
   return [_normalize_matpower_branch_kind(k) for k in kinds]
 end
 
+function _matpower_sparlectra_transformer_losses(mpc)
+  hasproperty(mpc, :sparlectra) || return NamedTuple[]
+  ext = getproperty(mpc, :sparlectra)
+  ext === nothing && return NamedTuple[]
+  hasproperty(ext, :format_version) && ext.format_version != 1 && throw(ArgumentError("Unsupported Sparlectra MATPOWER extension format_version=$(ext.format_version)."))
+  return hasproperty(ext, :transformer_losses) ? collect(ext.transformer_losses) : NamedTuple[]
+end
+
 function _matpower_dcline_col(dcline::AbstractMatrix, row::Integer, col::Integer, name::AbstractString; required::Bool = false, default::Float64 = 0.0)
   if size(dcline, 2) >= col
     return Float64(dcline[row, col])
@@ -235,6 +243,13 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
   branch_names = _matpower_metadata_vector(mpc, :branch_name)
   branch_names_valid = branch_names !== nothing && length(branch_names) == nbranch
   apply_branch_names && !branch_names_valid && @warn "MATPOWER branch_name metadata missing or length-mismatched; branch metadata names will not be attached." expected = nbranch actual = branch_names === nothing ? 0 : length(branch_names)
+  sparlectra_transformer_losses = _matpower_sparlectra_transformer_losses(mpc)
+  transformer_loss_by_row = Dict{Int,NamedTuple}()
+  for entry in sparlectra_transformer_losses
+    hasproperty(entry, :branch_row) || continue
+    transformer_loss_by_row[Int(entry.branch_row)] = entry
+  end
+  !isempty(transformer_loss_by_row) && @info "Sparlectra MATPOWER transformer-loss metadata found" transformer_loss_records = length(transformer_loss_by_row)
 
   if log
     @info "Creating new Net: $(name) with baseMVA=$(baseMVA), flatstart=$(flatstart)"
@@ -411,11 +426,35 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
       )
     end
     imported_branch_index = length(myNet.branchVec)
-    if branch_names_valid || branch_kind_overrides !== nothing
+    loss_meta = get(transformer_loss_by_row, branch_row_index, nothing)
+    if loss_meta !== nothing
+      g_pu = hasproperty(loss_meta, :g_pu) ? Float64(loss_meta.g_pu) : 0.0
+      b_loss_pu = hasproperty(loss_meta, :b_pu) ? Float64(loss_meta.b_pu) : 0.0
+      expected_gs_each = g_pu * baseMVA / 2
+      expected_bs_each = b_loss_pu * baseMVA / 2
+      from_bus_name = bus_name_by_orig[fbus_orig]
+      to_bus_name = bus_name_by_orig[tbus_orig]
+      if expected_gs_each != 0.0 || expected_bs_each != 0.0
+        from_row = bus_row_by_i[fbus_orig]
+        to_row = bus_row_by_i[tbus_orig]
+        represented =
+          abs(Float64(busData[from_row, GS])) + 1e-9 >= abs(expected_gs_each) &&
+          abs(Float64(busData[to_row, GS])) + 1e-9 >= abs(expected_gs_each)
+        if represented
+          @info "Sparlectra transformer-loss metadata restored without adding shunts; standard MATPOWER Gs/Bs already carries the equivalent approximation." branch_row = branch_row_index g_pu = g_pu
+        else
+          addShuntMatpower!(net = myNet, busName = from_bus_name, Gs = expected_gs_each, Bs = expected_bs_each, bus_shunt_model = shunt_model)
+          addShuntMatpower!(net = myNet, busName = to_bus_name, Gs = expected_gs_each, Bs = expected_bs_each, bus_shunt_model = shunt_model)
+          @info "Applied Sparlectra transformer-loss metadata as equivalent terminal bus shunts." branch_row = branch_row_index g_pu = g_pu added_Gs_each = expected_gs_each
+        end
+      end
+    end
+    if branch_names_valid || branch_kind_overrides !== nothing || loss_meta !== nothing
       myNet.matpower_branch_metadata[imported_branch_index] = (
         orig_name = branch_names_valid ? branch_names[branch_row_index] : nothing,
         orig_kind = kind,
         orig_index = branch_row_index,
+        transformer_loss = loss_meta,
       )
     end
   end

@@ -1,6 +1,7 @@
 ## Version 0.8.8 – 2026-07-01
 ### New Features
 
+* Added a Sparlectra MATPOWER transformer-loss extension that preserves FOR/DTF transformer active no-load conductance metadata, writes an explicit warning in exported `.m` files, and restores the metadata on Sparlectra re-import without double-counting equivalent bus shunts.
 * Added an experimental/internal PowerFlow API and Web UI path for direct native DTF/FOR001 diagnostic input, including cautious input-format selection, DTF import metadata, optional MATPOWER export artifacts, selected/all DTF outage execution controls, and explicit unsupported DC-line diagnostics.
 * Added opt-in MATPOWER metadata import for `bus_name`, user-defined `branch_name`, `branch_kind`, and `for001_contingencies`, including stable bus-name mapping and FOR001 contingency branch-index mapping helpers.
 * Added controlled MATPOWER `mpc.dcline` handling with the default active-row rejection preserved and an opt-in `:pf_injections` mode that creates MATPOWER-like fixed terminal injections.

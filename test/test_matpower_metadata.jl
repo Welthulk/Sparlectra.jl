@@ -96,6 +96,53 @@ mpc.dcline = [
     @test length(net_kind.linesAC) == 0
     @test length(net_kind.trafos) == 1
 
+    @testset "Sparlectra transformer-loss extension" begin
+      net_loss = Sparlectra.Net(name = "loss_extension", baseMVA = 100.0)
+      Sparlectra.addBus!(net = net_loss, busName = "FROM", vn_kV = 110.0, oBusIdx = 1)
+      Sparlectra.addBus!(net = net_loss, busName = "TO", vn_kV = 110.0, oBusIdx = 2)
+      Sparlectra.addProsumer!(net = net_loss, busName = "FROM", type = "GENERATOR", p = 0.0, q = 0.0, referencePri = "FROM", vm_pu = 1.0)
+      Sparlectra._addPIModelTrafo_by_idx!(net = net_loss, from = 1, to = 2, r_pu = 0.01, x_pu = 0.05, b_pu = -0.002, status = 1, ratedS = 100.0, ratio = 1.0, shift_deg = 0.0)
+      Sparlectra.addShuntMatpower!(net = net_loss, busName = "FROM", Gs = 0.25, Bs = 0.0, bus_shunt_model = :admittance)
+      Sparlectra.addShuntMatpower!(net = net_loss, busName = "TO", Gs = 0.25, Bs = 0.0, bus_shunt_model = :admittance)
+      net_loss.matpower_branch_metadata[1] = (
+        orig_name = "T1A FROM -> TO",
+        source_label = "T1A",
+        orig_kind = :transformer,
+        orig_index = 1,
+        dtf_kind = 'T',
+        u_ref_kV = 110.0,
+        from_bus_vn_kV = 110.0,
+        to_bus_vn_kV = 110.0,
+        r_ohm = 1.21,
+        x_ohm = 6.05,
+        g_s = 4.132231404958678e-5,
+        b_s = -1.652892561983471e-5,
+        g_pu = 0.005,
+        b_pu = -0.002,
+        active_no_load_g_pu = 0.005,
+        transformer_loss_allocation = :split_equally_to_terminal_bus_shunts,
+        tap_ratio = 1.0,
+        actual_tap_step = 0,
+        max_tap_step = 9,
+        phase_shift_deg = 0.0,
+      )
+      @test Sparlectra.bus_shunt_totals_pu(net_loss).total_g_pu ≈ 0.005
+      mktempdir() do dir
+        path = joinpath(dir, "loss_extension.m")
+        Sparlectra.writeMatpowerCasefile(net_loss, path)
+        txt = read(path, String)
+        @test occursin("SPARLECTRA EXTENSION WARNING", txt)
+        @test occursin("mpc.sparlectra.format_version = 1;", txt)
+        @test occursin("mpc.sparlectra.transformer_losses", txt)
+        mpc_loss = Sparlectra.MatpowerIO.read_case_m(path; legacy_compat = false)
+        @test mpc_loss.sparlectra !== nothing
+        @test length(mpc_loss.sparlectra.transformer_losses) == 1
+        net_roundtrip = Sparlectra.createNetFromMatPowerCase(mpc = mpc_loss, apply_bus_names = true, apply_branch_names = true, apply_branch_kind = true)
+        @test Sparlectra.bus_shunt_totals_pu(net_roundtrip).total_g_pu ≈ 0.005
+        @test only(values(net_roundtrip.matpower_branch_metadata)).transformer_loss.g_pu ≈ 0.005
+      end
+    end
+
     dcline = [1.0 2.0 1.0 100.0 0.0 4.0 5.0 1.0 1.0 0.0 200.0 -50.0 50.0 -50.0 50.0 2.0 0.01]
     mpc_dcline = Sparlectra.MatpowerIO.legacy_sort_bus(_metadata_case(dcline = dcline))
     @test_throws Sparlectra.MatpowerIO.UnsupportedMatpowerDclineError Sparlectra.createNetFromMatPowerCase(mpc = mpc_dcline)

@@ -124,6 +124,27 @@ Names and source metadata are useful for CSV exports, FOR001/FOR002 validation, 
 | `mpc.branch_kind` | Optional branch-kind hints such as line/transformer. | `matpower_import.apply_branch_kind = true` |
 | `mpc.for001_contingencies` | Optional FOR001-derived outage/contingency metadata for validation workflows. | `matpower_import.import_for001_contingencies = true` |
 | `mpc.dcline` | MATPOWER DC-line data. | Controlled by `matpower_import.matpower_dcline_mode`; active rows are rejected by default unless `pf_injections` is selected. |
+| `mpc.sparlectra` | Versioned Sparlectra extension namespace for metadata that standard MATPOWER does not model. | Automatically recognized when present. |
+
+### Sparlectra transformer-loss extension
+
+Standard MATPOWER has no branch-local field equivalent to the active no-load
+conductance found on some FOR/DTF transformer records. Sparlectra therefore
+exports transformer active-loss metadata under `mpc.sparlectra` when such data
+exists. The block is versioned with `mpc.sparlectra.format_version = 1` and
+stores `mpc.sparlectra.transformer_losses` entries with the MATPOWER branch row,
+original FOR/DTF identifier, terminal bus names, raw `R/X/G/B` values where
+available, converted per-unit values, tap/phase-shift data, source marker, and
+the allocation convention.
+
+Sparlectra applies FOR/DTF transformer conductance conservatively as equivalent
+terminal bus shunt conductance, split equally between the from and to buses,
+while preserving the original transformer-local metadata for diagnostics and
+round trips. Exported `.m` files include an explicit `SPARLECTRA EXTENSION
+WARNING` comment because plain MATPOWER ignores the proprietary metadata and may
+therefore compute different transformer active losses. When Sparlectra reimports
+one of these files it restores the metadata and avoids double-counting if the
+standard `Gs/Bs` bus-shunt approximation is already present.
 
 ## Sparlectra MATPOWER import options overview
 

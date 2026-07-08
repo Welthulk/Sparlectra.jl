@@ -158,6 +158,19 @@ force line import, while `T`, `TRAFO`, `TRANSFORMER`, and `2WT` force
 transformer import. Missing or length-mismatched metadata falls back to the
 legacy electrical heuristic.
 
+FOR/DTF transformer records can carry active no-load conductance (`G`) and
+reactive shunt susceptance (`B`) that standard MATPOWER branch rows cannot
+represent with transformer-local semantics. The native DTF importer converts
+nonzero transformer `G` to equivalent bus shunt conductance split equally across
+the transformer terminals, preserving the original branch label, terminal names,
+raw values, converted per-unit values, tap/stage data, and an explicit allocation
+marker in branch metadata. MATPOWER export writes this richer data in a
+versioned `mpc.sparlectra.transformer_losses` extension block and adds a visible
+warning comment near the top of the `.m` file. Plain MATPOWER may ignore this
+block, so transformer active losses can differ outside Sparlectra; Sparlectra
+reimports the block and avoids adding the equivalent `Gs/Bs` shunts twice when
+they are already present in the standard bus table.
+
 `matpower_import.matpower_dcline_mode` controls `mpc.dcline` handling. The
 default `:reject_active` preserves old fail-fast behavior: active DC-line rows
 (`status != 0`) abort before solving with `failure_reason =

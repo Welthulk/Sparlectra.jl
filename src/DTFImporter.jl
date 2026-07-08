@@ -350,6 +350,8 @@ function build_net(case::DTFCase; bus_shunt_model = :admittance)::Net
     # voltage-level reference or a physical terminal voltage. Preserve Task-1
     # behavior for now and expose the chosen/reference voltages in metadata.
     ratedS = branch.imax_ka === nothing ? nothing : sqrt(3.0) * pu.u_ref_kv * branch.imax_ka
+    control = nothing
+    ratio = 1.0
     if branch.kind == 'T'
       control = _find_control(branch, case.transformer_controls)
       ratio = _dtf_transformer_ratio(case, branch, control, bus_by_name[branch.from], bus_by_name[branch.to])
@@ -372,10 +374,17 @@ function build_net(case::DTFCase; bus_shunt_model = :admittance)::Net
       from_bus_vn_kV = case.nominal_voltages_kv[from_bus.voltage_level_index],
       to_bus_vn_kV = case.nominal_voltages_kv[to_bus.voltage_level_index],
       g_pu = pu.g,
+      b_pu = pu.b,
+      transformer_loss_allocation = branch.kind == 'T' ? :split_equally_to_terminal_bus_shunts : :not_transformer,
+      active_no_load_g_pu = branch.kind == 'T' ? pu.g : 0.0,
       r_ohm = branch.r_ohm,
       x_ohm = branch.x_ohm,
       g_s = branch.g_s,
       b_s = branch.b_s,
+      tap_ratio = branch.kind == 'T' ? ratio : 1.0,
+      actual_tap_step = control === nothing ? nothing : control.actual_tap_step,
+      max_tap_step = control === nothing ? nothing : control.max_tap_step,
+      phase_shift_deg = control === nothing ? 0.0 : something(control.added_voltage_angle_deg, 0.0),
     )
     if pu.g != 0.0
       addShuntMatpower!(net = net, busName = branch.from, Gs = pu.g * case.baseMVA / 2, Bs = 0.0, bus_shunt_model = shunt_model)
