@@ -130,7 +130,7 @@ function run_validation(args = ARGS; return_details::Bool = false)
   opt = parse_cli(args)
   return_details = return_details || opt["details"]
   mkpath(opt["output-dir"])
-  case = Sparlectra.DTFImporter.read_dtf(opt["dtf-file"])
+  case = Sparlectra.DTFImporter.read_dtf(opt["dtf-file"]; strict = opt["strict"])
   net = Sparlectra.DTFImporter.build_net(case)
   ref = parse_for002_ground_load_flow(opt["for002-file"])
   method = _method_symbol(opt["method"])

@@ -30,7 +30,7 @@ using SparseArrays
 _norm_name(s::AbstractString) = uppercase(replace(strip(String(s)), r"\s+" => ""))
 _field(s::AbstractString, a::Int, b::Int) = a > lastindex(s) ? "" : s[a:min(b, lastindex(s))]
 _numbers(s::AbstractString) = [parse(Float64, replace(m.match, 'D' => 'E', 'd' => 'E')) for m in eachmatch(r"[-+]?\d*\.?\d+(?:[EeDd][-+]?\d+)?", s)]
-_normalize_for002_bus_name(s::AbstractString) = replace(strip(String(s)), r"\s+S$" => "")
+_normalize_for002_bus_name(s::AbstractString) = replace(strip(replace(String(s), "*" => "")), r"\s+S$" => "")
 _csv(x) = x === missing || x === nothing ? "" : x isa AbstractString ? "\"" * replace(x, "\"" => "\"\"") * "\"" : string(x)
 
 mutable struct For002Scenario
@@ -86,7 +86,7 @@ function parse_for002_ground_load_flow(path::AbstractString)::For002Scenario
     end
     branch = _try_parse_for002_branch(line, current_bus)
     branch !== nothing && push!(scenario.branches, branch)
-    m = match(r"VERLUSTE\s+([-+]?\d*\.?\d+)\s+MW\s+([-+]?\d*\.?\d+)\s+MVAR", uppercase(line))
+    m = match(r"VERLUSTE.*?P\s*=\s*([-+]?\d*\.?\d+)\s+MW\s+Q\s*=\s*([-+]?\d*\.?\d+)\s+MVAR", uppercase(line))
     m !== nothing && (scenario.total_p_loss_MW = parse(Float64, m.captures[1]); scenario.total_q_loss_MVar = parse(Float64, m.captures[2]))
     im = match(r"NEWTONITERATION\s+(\d+)\s+ITERATIONEN", line)
     im !== nothing && (scenario.iterations = parse(Int, im.captures[1]))
@@ -320,7 +320,7 @@ function parse_for002_outage_scenarios(path::AbstractString)::Vector{For002Outag
     end
     branch = _try_parse_for002_branch(line, current_bus)
     branch !== nothing && push!(current.branches, branch)
-    m = match(r"VERLUSTE\s+([-+]?\d*\.?\d+)\s+MW\s+([-+]?\d*\.?\d+)\s+MVAR", uppercase(line))
+    m = match(r"VERLUSTE.*?P\s*=\s*([-+]?\d*\.?\d+)\s+MW\s+Q\s*=\s*([-+]?\d*\.?\d+)\s+MVAR", uppercase(line))
     m !== nothing && (current.total_p_loss_MW = parse(Float64, m.captures[1]); current.total_q_loss_MVar = parse(Float64, m.captures[2]))
     im = match(r"NEWTONITERATION\s+(\d+)\s+ITERATIONEN", line)
     im !== nothing && (current.iterations = parse(Int, im.captures[1]))
