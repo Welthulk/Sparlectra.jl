@@ -122,7 +122,11 @@ function run_dtf_importer_tests()
       bus_by_name_e[delta_e_branch.to],
     )
     expected_fraction = 0.18 * 7 / 13
-    expected_complex = 1 + expected_fraction * cis(deg2rad(60.0))
+    skew_tap = Sparlectra.calcSkewAngleTap(; tap_fraction = expected_fraction, skew_angle_deg = 60.0)
+    expected_complex = skew_tap.regulating_vector
+    @test skew_tap.effective_ratio ≈ 1 / abs(expected_complex)
+    @test skew_tap.effective_shift_deg ≈ -rad2deg(angle(expected_complex))
+    @test skew_tap.convention == :reciprocal_from_side
     @test delta_e_tap.model == :skew_angle
     @test delta_e_tap.tap_fraction ≈ expected_fraction
     @test delta_e_tap.skew_angle_deg == 60.0

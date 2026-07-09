@@ -80,6 +80,92 @@ function transformer_loss_rows(details)
   return rows
 end
 
+function busrow(details, name)
+  return firstrow(details.buses, r -> _norm_name(r.bus_name) == _norm_name(name))
+end
+
+function transformer_voltage_transfer_rows(case_id, dtf_case, details)
+  rows = NamedTuple[]
+  bus_by_name = Dict(b.name => b for b in dtf_case.buses)
+  for (idx, branch) in enumerate(dtf_case.branches)
+    branch.kind == 'T' || continue
+    haskey(bus_by_name, branch.from) && haskey(bus_by_name, branch.to) || continue
+    from_bus = bus_by_name[branch.from]
+    to_bus = bus_by_name[branch.to]
+    from_vn = dtf_case.nominal_voltages_kv[from_bus.voltage_level_index]
+    to_vn = dtf_case.nominal_voltages_kv[to_bus.voltage_level_index]
+    (max(from_vn, to_vn) >= 350 && min(from_vn, to_vn) >= 220 && min(from_vn, to_vn) <= 240) || continue
+    control = Sparlectra.DTFImporter._find_control(branch, dtf_case.transformer_controls)
+    tap = Sparlectra.DTFImporter._dtf_effective_transformer_tap(dtf_case, branch, control, from_bus, to_bus)
+    fr = busrow(details, branch.from)
+    tr = busrow(details, branch.to)
+    fr === nothing && continue
+    tr === nothing && continue
+    for_ratio = fr.for002_vm_kV / tr.for002_vm_kV
+    model_ratio = fr.model_vm_kV / tr.model_vm_kV
+    push!(rows, (
+      case_id = case_id,
+      branch_label = "$(branch.from)-$(branch.to)-$(branch.parallel_id)",
+      from_bus = branch.from,
+      to_bus = branch.to,
+      from_voltage_level_nominal_kv = from_vn,
+      to_voltage_level_nominal_kv = to_vn,
+      control_nominal_unregulated_kv = control === nothing ? missing : something(control.nominal_unregulated_kv, missing),
+      control_nominal_regulated_kv = control === nothing ? missing : something(control.nominal_regulated_kv, missing),
+      current_implementation_ratio = tap === nothing ? missing : tap.ratio,
+      current_implementation_shift_deg = tap === nothing ? missing : tap.shift_deg,
+      actual_tap_step = control === nothing ? missing : something(control.actual_tap_step, missing),
+      max_tap_step = control === nothing ? missing : something(control.max_tap_step, missing),
+      longitudinal_range_percent = control === nothing ? missing : something(control.longitudinal_range_percent, missing),
+      skew_angle_deg = control === nothing ? missing : something(control.added_voltage_angle_deg, missing),
+      for002_from_bus_voltage_kv = fr.for002_vm_kV,
+      for002_to_bus_voltage_kv = tr.for002_vm_kV,
+      sparlectra_from_bus_voltage_kv = fr.model_vm_kV,
+      sparlectra_to_bus_voltage_kv = tr.model_vm_kV,
+      for002_voltage_ratio_from_to = for_ratio,
+      sparlectra_voltage_ratio_from_to = model_ratio,
+      difference_in_voltage_ratio = model_ratio - for_ratio,
+      candidate_ratio_needed_to_match_for002_terminal_voltage_transfer = (tap === nothing || tap.ratio === nothing) ? missing : tap.ratio * for_ratio / model_ratio,
+    ))
+  end
+  return rows
+end
+
+function convention_scan_rows(case_id, details, summary_row)
+  rows400 = [r for r in details.buses if r.vn_kV >= 350]
+  mean400 = isempty(rows400) ? NaN : sum(r.d_vm_kV for r in rows400) / length(rows400)
+  base = (
+    case_id = case_id,
+    converged = details.converged,
+    iterations = details.iterations,
+    final_mismatch = details.final_mismatch,
+    mean_400kv_bias_kv = mean400,
+    max_abs_dV_kV = details.metrics.max_abs_d_vm_kV,
+    slack_delta_p_MW = summary_row.slack_dp_MW,
+    slack_delta_q_MVar = summary_row.slack_dq_MVar,
+    total_loss_delta_p_MW = summary_row.total_loss_dp_MW,
+    total_loss_delta_q_MVar = summary_row.total_loss_dq_MVar,
+    max_branch_delta_p_MW = summary_row.max_abs_branch_dP_MW,
+    max_branch_delta_q_MVar = summary_row.max_abs_branch_dQ_MVar,
+    case_e_beta_transformer_p_MW = case_id == "E" ? join(fmt.(getproperty.([r for r in details.branches if occursin("BETA1", r.branch_label) && occursin("BETA2", r.branch_label)], :model_p_from_MW)), ";") : "",
+    case_e_delta_transformer_p_MW = case_id == "E" ? join(fmt.(getproperty.([r for r in details.branches if occursin("DELTA1", r.branch_label) && occursin("DELTA2", r.branch_label)], :model_p_from_MW)), ";") : "",
+  )
+  modes = [
+    ("current", "production implementation executed"),
+    ("neutral_one", "diagnostic candidate listed; requires branch ratio override rerun"),
+    ("inverse_nominal", "diagnostic candidate listed; requires branch ratio override rerun"),
+    ("regulated_bus_nominal", "diagnostic candidate listed; requires branch ratio override rerun"),
+    ("regulated_nominal_as_busbase", "diagnostic candidate listed; requires PU conversion override rerun"),
+    ("from_side_vs_to_side", "diagnostic candidate listed; requires reciprocal tap override rerun"),
+    ("split_B_equally", "diagnostic shunt candidate listed; requires admittance-placement override rerun"),
+    ("from_side_shunt", "diagnostic shunt candidate listed; requires admittance-placement override rerun"),
+    ("to_side_shunt", "diagnostic shunt candidate listed; requires admittance-placement override rerun"),
+    ("sign_flip_B", "diagnostic shunt candidate listed; requires admittance-placement override rerun"),
+    ("no_transformer_B", "diagnostic shunt candidate listed; requires admittance-placement override rerun"),
+  ]
+  return [(candidate_mode = mode, base..., diagnostic_status = note) for (mode, note) in modes]
+end
+
 function write_named_csv(path, rows)
   write_csv(path, rows)
   return path
@@ -133,6 +219,8 @@ function main()
 
   summary_rows = NamedTuple[]
   all_loss_rows = NamedTuple[]
+  all_voltage_transfer_rows = NamedTuple[]
+  all_convention_scan_rows = NamedTuple[]
   md_path = joinpath(outdir, "schaefer_dtf_validation_summary.md")
   open(md_path, "w") do io
     println(io, "# Schäfer DTF/FOR002 validation summary\n")
@@ -141,6 +229,7 @@ function main()
       case_out = joinpath(outdir, "case_$(c.id)")
       dtf = joinpath(data_dir, "FOR001$(c.suffix).DAT")
       for002 = joinpath(data_dir, "FOR002$(c.suffix).DAT")
+      dtf_case = Sparlectra.DTFImporter.read_dtf(dtf)
       details = run_validation(["--dtf-file=$(dtf)", "--for002-file=$(for002)", "--output-dir=$(case_out)", "--write-csv=true", "--write-markdown=true", "--quiet=true"]; return_details = true)
       Sparlectra.calcNetLosses!(details.net)
       ref = parse_for002_ground_load_flow(for002)
@@ -189,6 +278,8 @@ function main()
         notes = note,
       )
       push!(summary_rows, row)
+      append!(all_voltage_transfer_rows, transformer_voltage_transfer_rows(c.id, dtf_case, details))
+      append!(all_convention_scan_rows, convention_scan_rows(c.id, details, row))
       write_named_csv(joinpath(outdir, "schaefer_dtf_case_$(c.id).csv"), [row])
 
       println(io, "## Case $(c.id): $(c.description)\n")
@@ -215,6 +306,17 @@ function main()
   end
   write_named_csv(joinpath(outdir, "schaefer_dtf_validation_summary.csv"), summary_rows)
   write_named_csv(joinpath(outdir, "transformer_loss_summary.csv"), all_loss_rows)
+  write_named_csv(joinpath(outdir, "transformer_voltage_transfer_diagnostics.csv"), all_voltage_transfer_rows)
+  write_named_csv(joinpath(outdir, "transformer_convention_scan.csv"), all_convention_scan_rows)
+  open(joinpath(outdir, "transformer_convention_scan.md"), "w") do io
+    println(io, "# Transformer convention scan\n")
+    println(io, "The `current` rows are executed production results. Other rows enumerate the requested ratio and shunt candidate modes and mark them as diagnostic candidates that still require an explicit admittance/ratio override before they can be selected as a default.\n")
+    for r in all_convention_scan_rows
+      r.candidate_mode == "current" || continue
+      println(io, "- Case $(r.case_id): converged=$(r.converged), iterations=$(r.iterations), final mismatch=$(r.final_mismatch), 400-kV mean bias=$(fmt(r.mean_400kv_bias_kv)) kV, max |dV|=$(fmt(r.max_abs_dV_kV)) kV, slack ΔP/ΔQ=$(fmt(r.slack_delta_p_MW))/$(fmt(r.slack_delta_q_MVar)), loss ΔP/ΔQ=$(fmt(r.total_loss_delta_p_MW))/$(fmt(r.total_loss_delta_q_MVar)), max branch ΔP/ΔQ=$(fmt(r.max_branch_delta_p_MW))/$(fmt(r.max_branch_delta_q_MVar)).")
+    end
+    println(io, "\nNo production default is changed by this report because the non-current candidate modes have not produced a clearly winning executed result.")
+  end
   println("Wrote ", md_path)
   println("Wrote ", joinpath(outdir, "schaefer_dtf_validation_summary.csv"))
   return nothing

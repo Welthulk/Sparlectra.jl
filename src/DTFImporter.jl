@@ -14,7 +14,7 @@
 
 module DTFImporter
 
-using ..Sparlectra: Net, addBus!, addProsumer!, addShuntMatpower!, _addPIModelACLine_by_idx!, _addPIModelTrafo_by_idx!, geNetBusIdx, validate!, normalize_bus_shunt_model
+using ..Sparlectra: Net, addBus!, addProsumer!, addShuntMatpower!, _addPIModelACLine_by_idx!, _addPIModelTrafo_by_idx!, geNetBusIdx, validate!, normalize_bus_shunt_model, calcSkewAngleTap
 
 export DTFCase, DTFParams, DTFSize, DTFBranch, DTFBus, DTFCompensation, DTFTransformerControl, DTFOutage, DTFTrailingRecord, read_dtf, build_net,
   dtf_branch_key, find_outage_branch_indices, outage_match_diagnostic, apply_single_branch_outage!, case_summary, outage_label
@@ -362,8 +362,9 @@ function _dtf_effective_transformer_tap(case::DTFCase, branch::DTFBranch, contro
     tap_fraction = (control.longitudinal_range_percent / 100.0) * control.actual_tap_step / control.max_tap_step
     if tap_fraction != 0.0
       model = skew_angle_deg == 0.0 ? :longitudinal : :skew_angle
-      effective_complex = model == :skew_angle ? 1.0 + tap_fraction * cis(deg2rad(skew_angle_deg)) : complex(1.0 + tap_fraction, 0.0)
-      actual_ratio /= abs(effective_complex)
+      tap_result = calcSkewAngleTap(; tap_fraction = tap_fraction, skew_angle_deg = skew_angle_deg)
+      effective_complex = tap_result.regulating_vector
+      actual_ratio *= tap_result.effective_ratio
     end
   end
   nominal_network_ratio = from_vn / to_vn
@@ -371,7 +372,7 @@ function _dtf_effective_transformer_tap(case::DTFCase, branch::DTFBranch, contro
   # DTF stores the regulating-voltage skew angle, not a final PST angle. The
   # regulating vector z is converted to Sparlectra's from-side off-nominal tap
   # convention by using its reciprocal: magnitude 1/|z| and phase -arg(z).
-  shift_deg = model == :skew_angle ? -rad2deg(angle(effective_complex)) : 0.0
+  shift_deg = model == :skew_angle ? calcSkewAngleTap(; tap_fraction = tap_fraction, skew_angle_deg = skew_angle_deg).effective_shift_deg : 0.0
   return (ratio = ratio, shift_deg = shift_deg, model = model, tap_fraction = tap_fraction,
     skew_angle_deg = skew_angle_deg, effective_complex = effective_complex,
     convention = :dtf_regulating_vector_reciprocal)

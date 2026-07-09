@@ -350,6 +350,7 @@ export
 
   # equicircuit.jl
   calcComplexRatio,
+  calcSkewAngleTap,
   calcNeutralU,
   createYBUS,                             # Build the network admittance matrix.
   adjacentBranches,
@@ -502,8 +503,8 @@ include("tap_control.jl")
 include("busdata.jl")
 include("MatpowerIO.jl")
 include("createnet_powermat.jl")
-include("DTFImporter.jl")
 include("equicircuit.jl")
+include("DTFImporter.jl")
 include("limits.jl")
 include("losses.jl")
 include("exportMatPower.jl")
