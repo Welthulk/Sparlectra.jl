@@ -23,7 +23,7 @@ const CASES = [
   (id = "B", suffix = "B", description = "NORD PV bus at 230.5 kV"),
   (id = "C", suffix = "C", description = "DELTA fixed tap step 7"),
   (id = "D", suffix = "D", description = "slack moved to ALPHA"),
-  (id = "E", suffix = "E", description = "DELTA tap step 7 plus 60 degree phase shifter"),
+  (id = "E", suffix = "E", description = "DELTA tap step 7 plus 60 degree skew-angle regulator"),
 ]
 
 missing_to_float(x) = x === missing || x === nothing ? NaN : Float64(x)
@@ -70,6 +70,11 @@ function transformer_loss_rows(details)
       tap_ratio = hasproperty(meta, :tap_ratio) ? meta.tap_ratio : missing,
       actual_tap_step = hasproperty(meta, :actual_tap_step) ? something(meta.actual_tap_step, missing) : missing,
       phase_shift_deg = hasproperty(meta, :phase_shift_deg) ? meta.phase_shift_deg : missing,
+      dtf_control_model = hasproperty(meta, :dtf_control_model) ? meta.dtf_control_model : missing,
+      tap_fraction = hasproperty(meta, :tap_fraction) ? meta.tap_fraction : missing,
+      skew_angle_deg = hasproperty(meta, :skew_angle_deg) ? meta.skew_angle_deg : missing,
+      effective_complex_tap = hasproperty(meta, :effective_complex_tap) ? meta.effective_complex_tap : missing,
+      dtf_tap_convention = hasproperty(meta, :dtf_tap_convention) ? meta.dtf_tap_convention : missing,
     ))
   end
   return rows

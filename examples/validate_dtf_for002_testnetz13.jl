@@ -77,6 +77,7 @@ function parse_cli(args)
     "strict" => false,
     "details" => false,
     "print-summary" => true,
+    "legacy-voltage-level-collapse-230kv" => false,
   )
   for arg in args
     arg == "--quiet" && (opt["quiet"] = true; continue)
@@ -86,7 +87,7 @@ function parse_cli(args)
       opt[k] = parse(Float64, v)
     elseif k in ("max-iter",)
       opt[k] = parse(Int, v)
-    elseif k in ("write-csv", "write-markdown", "strict", "quiet", "details", "print-summary")
+    elseif k in ("write-csv", "write-markdown", "strict", "quiet", "details", "print-summary", "legacy-voltage-level-collapse-230kv")
       opt[k] = _parse_bool(v)
     else
       opt[k] = v
@@ -147,7 +148,7 @@ function run_validation(args = ARGS; return_details::Bool = false)
   mkpath(opt["output-dir"])
   case = Sparlectra.DTFImporter.read_dtf(opt["dtf-file"]; strict = opt["strict"])
   _assert_finite_dtf_model(case)
-  net = Sparlectra.DTFImporter.build_net(case)
+  net = Sparlectra.DTFImporter.build_net(case; legacy_voltage_level_collapse_230kv = opt["legacy-voltage-level-collapse-230kv"])
   ref = parse_for002_ground_load_flow(opt["for002-file"])
   method = _method_symbol(opt["method"])
   iters, status = method === nothing ? Sparlectra.runpf!(net, opt["max-iter"], opt["tol"], 0) : Sparlectra.runpf!(net, opt["max-iter"], opt["tol"], 0; method = method)

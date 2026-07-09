@@ -194,51 +194,51 @@ Generated with native `DTFImporter.read_dtf` -> `DTFImporter.build_net` -> `runp
 - L1 BETA2 S1 -> WEILERS1: model -65.436 MVar vs FOR002 -65.3 MVar; dQ=-0.136 MVar
 - L1 DELTA2S1 -> ASTADTS1: model -15.434 MVar vs FOR002 -15.3 MVar; dQ=-0.134 MVar
 
-## Case E: DELTA tap step 7 plus 60 degree phase shifter
+## Case E: DELTA tap step 7 plus 60 degree skew-angle regulator
 
-- converged: `false`, iterations: `50`, final mismatch: `23.669309729144167`
-- slack: `BSTADTS1` Sparlectra P/Q=1270.097/6962.898; FOR002 P/Q=311.0/-231.5; delta=959.097/7194.398
-- losses Sparlectra P/Q=1229.953/9289.658; FOR002 P/Q=11.0/-271.5; delta=1218.953/9561.158
-- max deviations: |dV|=398.6 kV (0.996 pu), |dVa|=172.762 deg, branch |dP|=344.499 MW, branch |dQ|=2617.367 MVar
-- transformer active losses: series=28.91 MW, no-load G/shunt=0.293 MW, total=29.203 MW; total active network loss=1229.953 MW
-- note: BETA transformer P(from) MW=-174.7, -174.7, -174.7; DELTA transformer P(from) MW=0.0, 0.0.
+- converged: `true`, iterations: `5`, final mismatch: `2.867515326986552e-13`
+- slack: `BSTADTS1` Sparlectra P/Q=311.107/-228.056; FOR002 P/Q=311.0/-231.5; delta=0.107/3.444
+- losses Sparlectra P/Q=9.55/-268.056; FOR002 P/Q=11.0/-271.5; delta=-1.45/3.444
+- max deviations: |dV|=2.095 kV (0.005 pu), |dVa|=0.036 deg, branch |dP|=2.176 MW, branch |dQ|=2.805 MVar
+- transformer active losses: series=0.385 MW, no-load G/shunt=1.557 MW, total=1.942 MW; total active network loss=9.55 MW
+- note: BETA transformer P(from) MW=-182.368, -182.368, -182.368; DELTA transformer P(from) MW=72.128, 72.128.
 
 ### Top voltage deviations
 
-- DELTA1S1: model 0.0 kV vs FOR002 398.6 kV; dV=-398.6 kV; dVa=-172.762 deg
-- BETA1 S1: model 169.822 kV vs FOR002 402.1 kV; dV=-232.278 kV; dVa=-0.786 deg
-- ALPHA S1: model 213.129 kV vs FOR002 395.9 kV; dV=-182.771 kV; dVa=-7.956 deg
-- DELTA2S1: model 68.072 kV vs FOR002 238.2 kV; dV=-170.128 kV; dVa=7.886 deg
-- BETA2 S1: model 138.617 kV vs FOR002 232.5 kV; dV=-93.883 kV; dVa=3.265 deg
-- WEILERS1: model 153.424 kV vs FOR002 234.3 kV; dV=-80.876 kV; dVa=2.456 deg
-- GAMMA S1: model 173.343 kV vs FOR002 227.4 kV; dV=-54.057 kV; dVa=-0.352 deg
-- BURG  S1: model 175.9 kV vs FOR002 229.3 kV; dV=-53.4 kV; dVa=0.184 deg
-- ASTADTS1: model 188.716 kV vs FOR002 231.5 kV; dV=-42.784 kV; dVa=0.751 deg
-- NORD  S1: model 190.725 kV vs FOR002 233.1 kV; dV=-42.375 kV; dVa=1.071 deg
+- DELTA1S1: model 396.505 kV vs FOR002 398.6 kV; dV=-2.095 kV; dVa=0.016 deg
+- ALPHA S1: model 393.855 kV vs FOR002 395.9 kV; dV=-2.045 kV; dVa=-0.005 deg
+- BETA1 S1: model 400.123 kV vs FOR002 402.1 kV; dV=-1.977 kV; dVa=0.026 deg
+- GAMMA S1: model 227.305 kV vs FOR002 227.4 kV; dV=-0.095 kV; dVa=0.002 deg
+- BURG  S1: model 229.245 kV vs FOR002 229.3 kV; dV=-0.055 kV; dVa=-0.011 deg
+- OST   S1: model 229.648 kV vs FOR002 229.7 kV; dV=-0.052 kV; dVa=0.005 deg
+- ASTADTS1: model 231.458 kV vs FOR002 231.5 kV; dV=-0.042 kV; dVa=-0.036 deg
+- BETA2 S1: model 232.465 kV vs FOR002 232.5 kV; dV=-0.035 kV; dVa=0.005 deg
+- SUED  S1: model 230.973 kV vs FOR002 231.0 kV; dV=-0.027 kV; dVa=-0.016 deg
+- NORD  S1: model 233.127 kV vs FOR002 233.1 kV; dV=0.027 kV; dVa=-0.023 deg
 
 ### Top branch P deviations
 
-- L1 BSTADTS1 -> BURG  S1: model 579.774 MW vs FOR002 280.7 MW; dP=299.074 MW
-- L1 ALPHA S1 -> DELTA1S1: model 160.546 MW vs FOR002 -71.0 MW; dP=231.546 MW
-- L1 WEILERS1 -> ASTADTS1: model -12.304 MW vs FOR002 174.3 MW; dP=-186.604 MW
-- L1 BSTADTS1 -> OST   S1: model 284.519 MW vs FOR002 121.4 MW; dP=163.119 MW
-- L1B ASTADTS1 -> BSTADTS1: model -174.904 MW vs FOR002 -35.5 MW; dP=-139.404 MW
-- L1A ASTADTS1 -> BSTADTS1: model -174.904 MW vs FOR002 -35.5 MW; dP=-139.404 MW
-- L1 ASTADTS1 -> OST   S1: model -46.989 MW vs FOR002 79.2 MW; dP=-126.189 MW
-- L1 BSTADTS1 -> WEILERS1: model 107.429 MW vs FOR002 -12.7 MW; dP=120.129 MW
-- L1 DELTA2S1 -> WEILERS1: model -12.083 MW vs FOR002 106.1 MW; dP=-118.183 MW
-- L1 BETA2 S1 -> WEILERS1: model -64.833 MW vs FOR002 -168.0 MW; dP=103.167 MW
+- L1 DELTA2S1 -> WEILERS1: model 108.276 MW vs FOR002 106.1 MW; dP=2.176 MW
+- L1 BETA2 S1 -> WEILERS1: model -169.799 MW vs FOR002 -168.0 MW; dP=-1.799 MW
+- T1B DELTA1S1 -> DELTA2S1: model 72.128 MW vs FOR002 70.9 MW; dP=1.228 MW
+- T1A DELTA1S1 -> DELTA2S1: model 72.128 MW vs FOR002 70.9 MW; dP=1.228 MW
+- T1C BETA1 S1 -> BETA2 S1: model -182.368 MW vs FOR002 -181.3 MW; dP=-1.068 MW
+- T1A BETA1 S1 -> BETA2 S1: model -182.368 MW vs FOR002 -181.3 MW; dP=-1.068 MW
+- T1B BETA1 S1 -> BETA2 S1: model -182.368 MW vs FOR002 -181.3 MW; dP=-1.068 MW
+- L1B BETA1 S1 -> DELTA1S1: model 106.801 MW vs FOR002 105.8 MW; dP=1.001 MW
+- L1A BETA1 S1 -> DELTA1S1: model 108.761 MW vs FOR002 107.8 MW; dP=0.961 MW
+- L1 BSTADTS1 -> BURG  S1: model 281.528 MW vs FOR002 280.7 MW; dP=0.828 MW
 
 ### Top branch Q deviations
 
-- L1 BSTADTS1 -> BURG  S1: model 2612.467 MVar vs FOR002 -4.9 MVar; dQ=2617.367 MVar
-- L1 WEILERS1 -> ASTADTS1: model -1848.967 MVar vs FOR002 192.7 MVar; dQ=-2041.667 MVar
-- L1 ALPHA S1 -> DELTA1S1: model 1532.255 MVar vs FOR002 -67.3 MVar; dQ=1599.555 MVar
-- L1B ASTADTS1 -> BSTADTS1: model -1134.594 MVar vs FOR002 57.9 MVar; dQ=-1192.494 MVar
-- L1A ASTADTS1 -> BSTADTS1: model -1134.594 MVar vs FOR002 57.9 MVar; dQ=-1192.494 MVar
-- L1 DELTA2S1 -> WEILERS1: model -910.383 MVar vs FOR002 121.8 MVar; dQ=-1032.183 MVar
-- L1A BETA1 S1 -> DELTA1S1: model 959.205 MVar vs FOR002 -4.1 MVar; dQ=963.305 MVar
-- L1B BETA1 S1 -> DELTA1S1: model 941.733 MVar vs FOR002 -5.3 MVar; dQ=947.033 MVar
-- L1 BSTADTS1 -> OST   S1: model 904.717 MVar vs FOR002 -13.4 MVar; dQ=918.117 MVar
-- L1 BSTADTS1 -> WEILERS1: model 737.56 MVar vs FOR002 -44.4 MVar; dQ=781.96 MVar
+- L1 BETA2 S1 -> WEILERS1: model -66.903 MVar vs FOR002 -64.2 MVar; dQ=-2.703 MVar
+- L1 BSTADTS1 -> BURG  S1: model -2.716 MVar vs FOR002 -4.9 MVar; dQ=2.184 MVar
+- T1C BETA1 S1 -> BETA2 S1: model -32.52 MVar vs FOR002 -30.9 MVar; dQ=-1.62 MVar
+- T1A BETA1 S1 -> BETA2 S1: model -32.52 MVar vs FOR002 -30.9 MVar; dQ=-1.62 MVar
+- T1B BETA1 S1 -> BETA2 S1: model -32.52 MVar vs FOR002 -30.9 MVar; dQ=-1.62 MVar
+- L1A BETA1 S1 -> DELTA1S1: model -2.487 MVar vs FOR002 -4.1 MVar; dQ=1.613 MVar
+- L1B BETA1 S1 -> DELTA1S1: model -3.688 MVar vs FOR002 -5.3 MVar; dQ=1.612 MVar
+- L1 DELTA2S1 -> WEILERS1: model 123.277 MVar vs FOR002 121.8 MVar; dQ=1.477 MVar
+- L1 WEILERS1 -> ASTADTS1: model 191.557 MVar vs FOR002 192.7 MVar; dQ=-1.143 MVar
+- L1 ALPHA S1 -> DELTA1S1: model -66.387 MVar vs FOR002 -67.3 MVar; dQ=0.913 MVar
 

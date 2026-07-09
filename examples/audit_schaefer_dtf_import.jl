@@ -36,13 +36,32 @@ function audit_case(io, case_id, path)
   println(io, "- branch b S: ", finite_range([b.b_s for b in case.branches]))
   println(io, "\n### Transformer controls")
   for c in case.transformer_controls
+    br_idx = findfirst(b -> b.kind == 'T' && b.from == c.from && b.to == c.to && b.parallel_id == c.parallel_id, case.branches)
+    br = br_idx === nothing ? nothing : case.branches[br_idx]
+    tap = br === nothing ? nothing : Sparlectra.DTFImporter._dtf_effective_transformer_tap(case, br, c,
+      first(b for b in case.buses if b.name == c.from),
+      first(b for b in case.buses if b.name == c.to))
     println(io, "- source line ", c.index, ": ", c.from, " -> ", c.to, " parallel=", c.parallel_id,
+      " raw=", repr(c.raw),
+      " regulated_side=", c.regulated_side,
+      " unregulated_side=", c.unregulated_side,
+      " phase_skew_flag=", c.phase_shifter_flag,
       " nominal_unregulated_kV=", c.nominal_unregulated_kv,
       " nominal_regulated_kV=", c.nominal_regulated_kv,
       " longitudinal_range_percent=", c.longitudinal_range_percent,
       " actual_tap_step=", c.actual_tap_step,
       " max_tap_step=", c.max_tap_step,
-      " added_voltage_angle_deg=", c.added_voltage_angle_deg)
+      " skew_angle_deg=", c.added_voltage_angle_deg,
+      " quadrature_range_percent=", c.quadrature_range_percent,
+      " quadrature_max_steps=", c.quadrature_max_steps,
+      " quadrature_actual_step=", c.quadrature_actual_step,
+      tap === nothing ? "" : string(
+        " computed_model=", tap.model,
+        " tap_fraction=", tap.tap_fraction,
+        " effective_complex=", tap.effective_complex,
+        " effective_ratio=", tap.ratio,
+        " effective_shift_deg=", tap.shift_deg,
+        " sign_reciprocal_convention=", tap.convention))
   end
   println(io, "\n### Node start voltages")
   for b in case.buses

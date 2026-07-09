@@ -110,6 +110,27 @@ function run_dtf_importer_tests()
     @test delta_control.max_tap_step == 13
     @test delta_control.actual_tap_step == 0
 
+    case_e = Sparlectra.DTFImporter.read_dtf(joinpath(@__DIR__, "..", "..", "data", "DTF", "FOR001E.DAT"))
+    delta_e_control = _control(case_e, "DELTA1S1", "DELTA2S1", "B")
+    delta_e_branch = _branch(case_e, "DELTA1S1", "DELTA2S1", "B"; kind = 'T')
+    bus_by_name_e = Dict(b.name => b for b in case_e.buses)
+    delta_e_tap = Sparlectra.DTFImporter._dtf_effective_transformer_tap(
+      case_e,
+      delta_e_branch,
+      delta_e_control,
+      bus_by_name_e[delta_e_branch.from],
+      bus_by_name_e[delta_e_branch.to],
+    )
+    expected_fraction = 0.18 * 7 / 13
+    expected_complex = 1 + expected_fraction * cis(deg2rad(60.0))
+    @test delta_e_tap.model == :skew_angle
+    @test delta_e_tap.tap_fraction ≈ expected_fraction
+    @test delta_e_tap.skew_angle_deg == 60.0
+    @test delta_e_tap.effective_complex ≈ expected_complex
+    @test delta_e_tap.ratio ≈ (230.0 / 231.0) / abs(expected_complex)
+    @test delta_e_tap.shift_deg ≈ -rad2deg(angle(expected_complex))
+    @test delta_e_tap.convention == :dtf_regulating_vector_reciprocal
+
     net = Sparlectra.createNetFromDTFFile(DTF_FIXTURE)
     @test net isa Sparlectra.Net
     ok, msg = Sparlectra.validate!(net = net)

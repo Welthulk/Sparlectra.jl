@@ -321,34 +321,64 @@ function read_dtf(path; baseMVA::Real = 100.0, strict::Bool = true)::DTFCase
   return DTFCase(String(path), Float64(baseMVA), params, texts, Float64.(nominal), size, branches, comps, controls, buses, outages, trailing)
 end
 
-function _branch_pu(case::DTFCase, branch::DTFBranch)
+function _dtf_nominal_voltage_levels(case::DTFCase; legacy_voltage_level_collapse_230kv::Bool = false)
+  legacy_voltage_level_collapse_230kv || return case.nominal_voltages_kv
+  levels = copy(case.nominal_voltages_kv)
+  for i in eachindex(levels)
+    (isapprox(levels[i], 231.0; atol = 1e-9) || isapprox(levels[i], 230.0; atol = 1e-9)) && (levels[i] = 230.0)
+  end
+  return levels
+end
+
+function _branch_pu(case::DTFCase, branch::DTFBranch; nominal_voltages_kv = case.nominal_voltages_kv)
   idx = branch.voltage_level_index
-  1 <= idx <= length(case.nominal_voltages_kv) || error("DTF branch $(branch.index) references missing voltage level $(idx)")
-  u_ref_kv = case.nominal_voltages_kv[idx]
+  1 <= idx <= length(nominal_voltages_kv) || error("DTF branch $(branch.index) references missing voltage level $(idx)")
+  u_ref_kv = nominal_voltages_kv[idx]
   z_base_ohm = u_ref_kv^2 / case.baseMVA
   return (r = branch.r_ohm / z_base_ohm, x = branch.x_ohm / z_base_ohm, g = branch.g_s * z_base_ohm, b = branch.b_s * z_base_ohm, u_ref_kv = u_ref_kv)
 end
 
-function _dtf_transformer_ratio(case::DTFCase, branch::DTFBranch, control::Union{Nothing,DTFTransformerControl}, from_bus::DTFBus, to_bus::DTFBus)
-  control === nothing && return nothing
+function _dtf_effective_transformer_tap(case::DTFCase, branch::DTFBranch, control::Union{Nothing,DTFTransformerControl}, from_bus::DTFBus, to_bus::DTFBus; nominal_voltages_kv = case.nominal_voltages_kv)
+  no_control = (ratio = nothing, shift_deg = 0.0, model = :fixed_ratio, tap_fraction = 0.0,
+    skew_angle_deg = 0.0, effective_complex = 1.0 + 0.0im, convention = :dtf_regulating_vector_reciprocal)
+  control === nothing && return no_control
   control.nominal_unregulated_kv === nothing && return nothing
   control.nominal_regulated_kv === nothing && return nothing
   control.nominal_regulated_kv == 0.0 && return nothing
-  from_vn = case.nominal_voltages_kv[from_bus.voltage_level_index]
-  to_vn = case.nominal_voltages_kv[to_bus.voltage_level_index]
+  from_vn = nominal_voltages_kv[from_bus.voltage_level_index]
+  to_vn = nominal_voltages_kv[to_bus.voltage_level_index]
   to_vn == 0.0 && return nothing
 
   # DTF control cards carry transformer winding nominal voltages. Sparlectra
   # expects the fixed off-nominal deviation relative to the bus voltage-level
   # ratio, matching the legacy FOR001 builder/MATPOWER path.
   actual_ratio = control.nominal_unregulated_kv / control.nominal_regulated_kv
+  tap_fraction = 0.0
+  skew_angle_deg = something(control.added_voltage_angle_deg, 0.0)
+  model = :fixed_ratio
+  effective_complex = 1.0 + 0.0im
   if control.longitudinal_range_percent !== nothing && control.max_tap_step !== nothing &&
       control.actual_tap_step !== nothing && control.max_tap_step != 0
-    step_fraction = (control.longitudinal_range_percent / 100.0) * control.actual_tap_step / control.max_tap_step
-    actual_ratio /= 1.0 + step_fraction
+    tap_fraction = (control.longitudinal_range_percent / 100.0) * control.actual_tap_step / control.max_tap_step
+    if tap_fraction != 0.0
+      model = skew_angle_deg == 0.0 ? :longitudinal : :skew_angle
+      effective_complex = model == :skew_angle ? 1.0 + tap_fraction * cis(deg2rad(skew_angle_deg)) : complex(1.0 + tap_fraction, 0.0)
+      actual_ratio /= abs(effective_complex)
+    end
   end
   nominal_network_ratio = from_vn / to_vn
-  return actual_ratio / nominal_network_ratio
+  ratio = actual_ratio / nominal_network_ratio
+  # DTF stores the regulating-voltage skew angle, not a final PST angle. The
+  # regulating vector z is converted to Sparlectra's from-side off-nominal tap
+  # convention by using its reciprocal: magnitude 1/|z| and phase -arg(z).
+  shift_deg = model == :skew_angle ? -rad2deg(angle(effective_complex)) : 0.0
+  return (ratio = ratio, shift_deg = shift_deg, model = model, tap_fraction = tap_fraction,
+    skew_angle_deg = skew_angle_deg, effective_complex = effective_complex,
+    convention = :dtf_regulating_vector_reciprocal)
+end
+
+function _dtf_transformer_ratio(case::DTFCase, branch::DTFBranch, control::Union{Nothing,DTFTransformerControl}, from_bus::DTFBus, to_bus::DTFBus)
+  return _dtf_effective_transformer_tap(case, branch, control, from_bus, to_bus).ratio
 end
 
 """
@@ -359,12 +389,13 @@ R/X/G/B are converted with the branch voltage-level index as reference voltage,
 not with the from-side bus voltage. Outages remain parsed metadata and are not
 executed by this Task-1 MVP.
 """
-function build_net(case::DTFCase; bus_shunt_model = :admittance)::Net
+function build_net(case::DTFCase; bus_shunt_model = :admittance, legacy_voltage_level_collapse_230kv::Bool = false)::Net
   shunt_model = normalize_bus_shunt_model(bus_shunt_model)
+  nominal_voltages_kv = _dtf_nominal_voltage_levels(case; legacy_voltage_level_collapse_230kv = legacy_voltage_level_collapse_230kv)
   net = Net(name = isempty(case.texts) ? "DTF" : String(strip(case.texts[1])), baseMVA = case.baseMVA, bus_shunt_model = shunt_model)
   bus_by_name = Dict(bus.name => bus for bus in case.buses)
   for bus in case.buses
-    vn = case.nominal_voltages_kv[bus.voltage_level_index]
+    vn = nominal_voltages_kv[bus.voltage_level_index]
     vm = bus.start_kv > 0 ? bus.start_kv / vn : 1.0
     addBus!(net = net, busName = bus.name, vn_kV = vn, vm_pu = vm, va_deg = bus.angle_deg, isAux = false, oBusIdx = bus.index)
     net.busOriginalNameDict[geNetBusIdx(net = net, busName = bus.name)] = bus.name
@@ -386,7 +417,7 @@ function build_net(case::DTFCase; bus_shunt_model = :admittance)::Net
     end
   end
   for branch in case.branches
-    pu = _branch_pu(case, branch)
+    pu = _branch_pu(case, branch; nominal_voltages_kv = nominal_voltages_kv)
     from = geNetBusIdx(net = net, busName = branch.from)
     to = geNetBusIdx(net = net, busName = branch.to)
     # TODO: confirm whether DTF branch current ratings should use the branch
@@ -397,8 +428,9 @@ function build_net(case::DTFCase; bus_shunt_model = :admittance)::Net
     ratio = 1.0
     if branch.kind == 'T'
       control = _find_control(branch, case.transformer_controls)
-      ratio = _dtf_transformer_ratio(case, branch, control, bus_by_name[branch.from], bus_by_name[branch.to])
-      shift_deg = something(control === nothing ? nothing : control.added_voltage_angle_deg, 0.0)
+      tap = _dtf_effective_transformer_tap(case, branch, control, bus_by_name[branch.from], bus_by_name[branch.to]; nominal_voltages_kv = nominal_voltages_kv)
+      ratio = tap.ratio
+      shift_deg = tap.shift_deg
       _addPIModelTrafo_by_idx!(net = net, from = from, to = to, r_pu = pu.r, x_pu = pu.x, b_pu = pu.b, status = 1, ratedU = pu.u_ref_kv, ratedS = ratedS, ratio = ratio, shift_deg = shift_deg)
     else
       _addPIModelACLine_by_idx!(net = net, from = from, to = to, r_pu = pu.r, x_pu = pu.x, b_pu = pu.b, status = 1, ratedS = ratedS)
@@ -415,8 +447,8 @@ function build_net(case::DTFCase; bus_shunt_model = :admittance)::Net
       voltage_level_index = branch.voltage_level_index,
       u_ref_kV = pu.u_ref_kv,
       rate_u_ref_kV = pu.u_ref_kv,
-      from_bus_vn_kV = case.nominal_voltages_kv[from_bus.voltage_level_index],
-      to_bus_vn_kV = case.nominal_voltages_kv[to_bus.voltage_level_index],
+      from_bus_vn_kV = nominal_voltages_kv[from_bus.voltage_level_index],
+      to_bus_vn_kV = nominal_voltages_kv[to_bus.voltage_level_index],
       g_pu = pu.g,
       b_pu = pu.b,
       transformer_loss_allocation = branch.kind == 'T' ? :split_equally_to_terminal_bus_shunts : :not_transformer,
@@ -428,7 +460,12 @@ function build_net(case::DTFCase; bus_shunt_model = :admittance)::Net
       tap_ratio = branch.kind == 'T' ? ratio : 1.0,
       actual_tap_step = control === nothing ? nothing : control.actual_tap_step,
       max_tap_step = control === nothing ? nothing : control.max_tap_step,
-      phase_shift_deg = control === nothing ? 0.0 : something(control.added_voltage_angle_deg, 0.0),
+      phase_shift_deg = branch.kind == 'T' ? tap.shift_deg : 0.0,
+      dtf_control_model = branch.kind == 'T' ? tap.model : :not_transformer,
+      tap_fraction = branch.kind == 'T' ? tap.tap_fraction : 0.0,
+      skew_angle_deg = branch.kind == 'T' ? tap.skew_angle_deg : 0.0,
+      effective_complex_tap = branch.kind == 'T' ? tap.effective_complex : 1.0 + 0.0im,
+      dtf_tap_convention = branch.kind == 'T' ? tap.convention : :not_transformer,
     )
     if pu.g != 0.0
       addShuntMatpower!(net = net, busName = branch.from, Gs = pu.g * case.baseMVA / 2, Bs = 0.0, bus_shunt_model = shunt_model)
@@ -450,6 +487,8 @@ Read a legacy DTF/FOR001 file and build a Sparlectra `Net` without routing
 through MATPOWER. Outage cards are parsed and preserved in `DTFCase` by
 `DTFImporter.read_dtf`, but are not executed by this Task-1 importer MVP.
 """
-function createNetFromDTFFile(path; baseMVA::Real = 100.0, strict::Bool = true, bus_shunt_model = :admittance)::Net
-  return DTFImporter.build_net(DTFImporter.read_dtf(path; baseMVA = baseMVA, strict = strict); bus_shunt_model = bus_shunt_model)
+function createNetFromDTFFile(path; baseMVA::Real = 100.0, strict::Bool = true, bus_shunt_model = :admittance, legacy_voltage_level_collapse_230kv::Bool = false)::Net
+  return DTFImporter.build_net(DTFImporter.read_dtf(path; baseMVA = baseMVA, strict = strict);
+    bus_shunt_model = bus_shunt_model,
+    legacy_voltage_level_collapse_230kv = legacy_voltage_level_collapse_230kv)
 end
