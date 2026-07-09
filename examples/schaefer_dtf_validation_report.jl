@@ -103,8 +103,8 @@ function case_note(case_id, details, summary, loss_rows)
   elseif case_id == "E"
     beta = [r for r in details.branches if occursin("BETA1", r.branch_label) && occursin("BETA2", r.branch_label)]
     delta = [r for r in details.branches if occursin("DELTA1", r.branch_label) && occursin("DELTA2", r.branch_label)]
-    bp = isempty(beta) ? "missing" : join(fmt.(getproperty.(beta, :model_p_from_MW)), ", ")
-    dp = isempty(delta) ? "missing" : join(fmt.(getproperty.(delta, :model_p_from_MW)), ", ")
+    bp = isempty(beta) ? "missing" : join(fmt.(getproperty.(beta, :model_p_from_MW)); separator = ", ")
+    dp = isempty(delta) ? "missing" : join(fmt.(getproperty.(delta, :model_p_from_MW)); separator = ", ")
     return "BETA transformer P(from) MW=$(bp); DELTA transformer P(from) MW=$(dp)."
   end
   return ""
