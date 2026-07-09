@@ -283,8 +283,6 @@ function render_powerflow_form(;
 $(error_html)$(_webui_active_run_banner(active_run))$(notice_html)$(profile_notice)<p class=\"lede\">Run a local MATPOWER case through the Sparlectra PowerFlow service.</p>
 <form id=\"powerflow-run-form\" data-powerflow-form method=\"post\" action=\"/powerflow/run\" class=\"panel form-grid powerflow-form-card\" onsubmit=\"this.classList.add('is-submitting'); this.setAttribute('aria-busy', 'true'); this.querySelector('button[type=submit]').disabled = true;\">
 $(config_control)
-<div class="alert warning span-2" data-runtime-overrides-disabled-notice><strong>Runtime overrides disabled by default.</strong> The run uses YAML values; normal form changes are ignored unless you save them to YAML or check “Apply Web UI runtime controls as overrides” for this run.</div>
-<label class="check span-2"><input name="apply_webui_runtime_overrides" type="hidden" value="false"><input name="apply_webui_runtime_overrides" type="checkbox" value="true" data-runtime-overrides-toggle>Apply Web UI runtime controls as overrides<small class="field-hint">Leave unchecked to use the saved YAML configuration as-is. Check only when the form controls should override YAML for this run.</small></label>
 <label>$(_webui_field_label("casefile", "Existing case file"))$(case_select)<small class="field-hint">Cases from <code>$(_webui_escape(effective_case_directory))</code></small></label>
 <label><span class="field-label">Or type case file path</span>$(case_manual)<small class="field-hint">Manual input overrides the existing-case selection.</small></label>
 $(dat_hint_html)
@@ -354,6 +352,7 @@ $(config_maintenance)
 <label>$(_webui_field_label("benchmark_samples", "Benchmark samples (max. repeated measurements)"))<input name=\"benchmark_samples\" type=\"number\" min=\"1\" value=\"$(_webui_input_value(profile_values, "benchmark_samples", _webui_option_default("benchmark_samples")))\"><small class=\"field-hint\">Maximum repeated timing measurements for each selected method. The benchmark may finish earlier when this count is reached before the time budget, or collect fewer samples when the time budget is reached first.</small></label>
 <label>$(_webui_field_label("benchmark_seconds", "Benchmark max. time budget [s]"))<input name=\"benchmark_seconds\" type=\"number\" step=\"any\" min=\"0\" value=\"$(_webui_input_value(profile_values, "benchmark_seconds", _webui_option_default("benchmark_seconds")))\"><small class=\"field-hint\">Maximum BenchmarkTools time budget for repeated timing measurements. This is not a minimum runtime, solver timeout, or iteration limit; a running sample is not interrupted.</small></label>
 </fieldset>
+<label class=\"check span-2\"><input name=\"ignore_webui_settings\" type=\"hidden\" value=\"false\"><input name=\"ignore_webui_settings\" type=\"checkbox\" value=\"true\">Ignore Web UI settings and use configuration defaults<small class=\"field-hint\">Leave unchecked for normal runs so values entered on this page are applied. Check only to ignore the Web UI controls for this run and use the selected YAML/default configuration.</small></label>
 </details>
 <div class=\"span-2 actions\"><button class=\"powerflow-submit\" type=\"submit\"><span class=\"submit-spinner\" aria-hidden=\"true\"></span><span class=\"submit-label\">Start PowerFlow run</span><span class=\"submit-progress-label\" role=\"status\" aria-live=\"polite\">Running PowerFlow…</span></button></div></form>
 <script>
@@ -586,7 +585,7 @@ function render_powerflow_result(result::AbstractDict)::String
   save_section = active ? "" : _webui_case_settings_save_section(result)
   metadata = get(result, "metadata", Dict{String,Any}())
   override_source = String(get(result, "config_override_source", get(metadata, "config_override_source", "")))
-  runtime_notice = override_source == "user_yaml" ? "<div class=\"alert warning\"><strong>Runtime overrides disabled.</strong> This run used YAML values. Normal form changes were ignored unless they were saved to YAML or runtime overrides were enabled.</div>" : ""
+  runtime_notice = override_source == "user_yaml" ? "<div class=\"alert warning\"><strong>Web UI settings ignored.</strong> This run used YAML/default configuration values because the run was submitted with Web UI settings ignored.</div>" : ""
   return _webui_layout("PowerFlow result", "<section class=\"panel\">$(result_summary)$(runtime_notice)<table class=\"details\">$(rows)</table>$(active_hint)$(links)</section>$(save_section)"; show_back = true, refresh_url)
 end
 

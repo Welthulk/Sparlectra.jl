@@ -360,7 +360,12 @@ function powerflow_webui_request(form::AbstractDict; default_output_root::Abstra
   isempty(casefile) && throw(ArgumentError("Select an existing MATPOWER case or type a case name."))
   config_file = strip(String(something(_webui_form_value(form, "config_file", ""), "")))
   output_root = String(default_output_root)
-  apply_runtime_overrides = _webui_parse_form_value(_webui_form_value(form, "apply_webui_runtime_overrides", "false"), Bool, "apply_webui_runtime_overrides")
+  ignore_webui_settings = if _webui_form_value(form, "ignore_webui_settings", nothing) !== nothing
+    _webui_parse_form_value(_webui_form_value(form, "ignore_webui_settings", "false"), Bool, "ignore_webui_settings")
+  else
+    !_webui_parse_form_value(_webui_form_value(form, "apply_webui_runtime_overrides", "true"), Bool, "apply_webui_runtime_overrides")
+  end
+  apply_runtime_overrides = !ignore_webui_settings
   overrides = Dict{String,Any}()
   if apply_runtime_overrides
     for (config_key, field, type) in _WEBUI_FORM_CONFIG_FIELDS

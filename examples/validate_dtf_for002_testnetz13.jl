@@ -392,6 +392,8 @@ function run_validation(args = ARGS; return_details::Bool = false)
     net = net,
     metrics = metrics_rows[1],
     residuals = residual_rows,
+    buses = bus_rows,
+    branches = branch_rows,
     generator_rows = gen_rows,
     kcl_rows = kcl_rows,
     q_diagnostics = q_diag_rows,
