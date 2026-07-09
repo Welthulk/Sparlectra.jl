@@ -77,7 +77,7 @@ function _webui_test_form(casefile, config_file, output_root)
     "casefile_manual" => casefile,
     "config_file" => config_file,
     "output_root" => output_root,
-    "apply_webui_runtime_overrides" => "true",
+    "ignore_webui_settings" => "false",
     "power_flow_tol" => "1e-8",
     "power_flow_max_iter" => "80",
     "power_flow_autodamp" => "on",
@@ -351,9 +351,8 @@ settings:
       @test occursin("<option value=\"case118.m\">case118.m ★</option>", dropdown_form)
       @test !occursin("value=\"case118.m ★\"", dropdown_form)
       @test occursin("data-case-settings-reload=\"true\"", dropdown_form)
-      @test occursin("Runtime overrides disabled by default.", dropdown_form)
-      @test occursin("normal form changes are ignored unless you save them to YAML", dropdown_form)
-      @test occursin("data-runtime-overrides-toggle", dropdown_form)
+      @test occursin("Ignore Web UI settings and use configuration defaults", dropdown_form)
+      @test occursin("Leave unchecked for normal runs so values entered on this page are applied.", dropdown_form)
       @test occursin("target.searchParams.set('casefile', caseSelect.value)", dropdown_form)
       @test occursin("target.searchParams.set('config_file', configInput.value)", dropdown_form)
       dropdown_loaded_form = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow?casefile=$(Sparlectra._webui_urlencode(case118))&config_file=$(Sparlectra._webui_urlencode("configuration.yaml"))"; output_root = root).body)
@@ -384,7 +383,7 @@ settings:
       @test request["config_overrides"]["power_flow.tol"] == 2.0e-6
 
       yaml_first_form = copy(request_form)
-      delete!(yaml_first_form, "apply_webui_runtime_overrides")
+      yaml_first_form["ignore_webui_settings"] = "true"
       yaml_first_request = Sparlectra.powerflow_webui_request(yaml_first_form; default_output_root = root)
       @test isempty(yaml_first_request["config_overrides"])
       @test yaml_first_request["config_override_source"] == "user_yaml"
@@ -394,8 +393,8 @@ settings:
         "success" => false,
         "metadata" => Dict("config_override_source" => "user_yaml"),
       ))
-      @test occursin("Runtime overrides disabled.", yaml_result_html)
-      @test occursin("This run used YAML values.", yaml_result_html)
+      @test occursin("Web UI settings ignored.", yaml_result_html)
+      @test occursin("This run used YAML/default configuration values", yaml_result_html)
 
       invalid_case = joinpath(root, "invalid.m")
       write(invalid_case, "% case fixture\n")
