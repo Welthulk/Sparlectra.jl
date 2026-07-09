@@ -68,6 +68,9 @@ function transformer_loss_rows(details)
       g_pu = g_pu,
       gs_each_MW_at_1pu = gs_each,
       tap_ratio = hasproperty(meta, :tap_ratio) ? meta.tap_ratio : missing,
+      transformer_ratio_mode = hasproperty(meta, :transformer_ratio_mode) ? meta.transformer_ratio_mode : missing,
+      base_ratio_used = hasproperty(meta, :base_ratio_used) ? meta.base_ratio_used : missing,
+      winding_over_network_base_ratio = hasproperty(meta, :winding_over_network_base_ratio) ? meta.winding_over_network_base_ratio : missing,
       actual_tap_step = hasproperty(meta, :actual_tap_step) ? something(meta.actual_tap_step, missing) : missing,
       phase_shift_deg = hasproperty(meta, :phase_shift_deg) ? meta.phase_shift_deg : missing,
       dtf_control_model = hasproperty(meta, :dtf_control_model) ? meta.dtf_control_model : missing,
@@ -96,7 +99,7 @@ function transformer_voltage_transfer_rows(case_id, dtf_case, details)
     to_vn = dtf_case.nominal_voltages_kv[to_bus.voltage_level_index]
     (max(from_vn, to_vn) >= 350 && min(from_vn, to_vn) >= 220 && min(from_vn, to_vn) <= 240) || continue
     control = Sparlectra.DTFImporter._find_control(branch, dtf_case.transformer_controls)
-    tap = Sparlectra.DTFImporter._dtf_effective_transformer_tap(dtf_case, branch, control, from_bus, to_bus)
+    tap = Sparlectra.DTFImporter._dtf_effective_transformer_tap(dtf_case, branch, control, from_bus, to_bus; transformer_ratio_mode = details.transformer_ratio_mode)
     fr = busrow(details, branch.from)
     tr = busrow(details, branch.to)
     fr === nothing && continue
@@ -113,6 +116,9 @@ function transformer_voltage_transfer_rows(case_id, dtf_case, details)
       control_nominal_unregulated_kv = control === nothing ? missing : something(control.nominal_unregulated_kv, missing),
       control_nominal_regulated_kv = control === nothing ? missing : something(control.nominal_regulated_kv, missing),
       current_implementation_ratio = tap === nothing ? missing : tap.ratio,
+      transformer_ratio_mode = details.transformer_ratio_mode,
+      base_ratio_used = tap === nothing ? missing : tap.base_ratio_used,
+      winding_over_network_base_ratio = tap === nothing ? missing : tap.winding_over_network_base_ratio,
       current_implementation_shift_deg = tap === nothing ? missing : tap.shift_deg,
       actual_tap_step = control === nothing ? missing : something(control.actual_tap_step, missing),
       max_tap_step = control === nothing ? missing : something(control.max_tap_step, missing),
@@ -147,23 +153,10 @@ function convention_scan_rows(case_id, details, summary_row)
     total_loss_delta_q_MVar = summary_row.total_loss_dq_MVar,
     max_branch_delta_p_MW = summary_row.max_abs_branch_dP_MW,
     max_branch_delta_q_MVar = summary_row.max_abs_branch_dQ_MVar,
-    case_e_beta_transformer_p_MW = case_id == "E" ? join(fmt.(getproperty.([r for r in details.branches if occursin("BETA1", r.branch_label) && occursin("BETA2", r.branch_label)], :model_p_from_MW)), ";") : "",
-    case_e_delta_transformer_p_MW = case_id == "E" ? join(fmt.(getproperty.([r for r in details.branches if occursin("DELTA1", r.branch_label) && occursin("DELTA2", r.branch_label)], :model_p_from_MW)), ";") : "",
+    case_e_beta_transformer_p_MW = case_id == "E" ? join(fmt.(missing_to_float.(getproperty.([r for r in details.branches if occursin("BETA1", r.branch_label) && occursin("BETA2", r.branch_label)], :model_p_from_MW))), ";") : "",
+    case_e_delta_transformer_p_MW = case_id == "E" ? join(fmt.(missing_to_float.(getproperty.([r for r in details.branches if occursin("DELTA1", r.branch_label) && occursin("DELTA2", r.branch_label)], :model_p_from_MW))), ";") : "",
   )
-  modes = [
-    ("current", "production implementation executed"),
-    ("neutral_one", "diagnostic candidate listed; requires branch ratio override rerun"),
-    ("inverse_nominal", "diagnostic candidate listed; requires branch ratio override rerun"),
-    ("regulated_bus_nominal", "diagnostic candidate listed; requires branch ratio override rerun"),
-    ("regulated_nominal_as_busbase", "diagnostic candidate listed; requires PU conversion override rerun"),
-    ("from_side_vs_to_side", "diagnostic candidate listed; requires reciprocal tap override rerun"),
-    ("split_B_equally", "diagnostic shunt candidate listed; requires admittance-placement override rerun"),
-    ("from_side_shunt", "diagnostic shunt candidate listed; requires admittance-placement override rerun"),
-    ("to_side_shunt", "diagnostic shunt candidate listed; requires admittance-placement override rerun"),
-    ("sign_flip_B", "diagnostic shunt candidate listed; requires admittance-placement override rerun"),
-    ("no_transformer_B", "diagnostic shunt candidate listed; requires admittance-placement override rerun"),
-  ]
-  return [(candidate_mode = mode, base..., diagnostic_status = note) for (mode, note) in modes]
+  return (candidate_mode = String(details.transformer_ratio_mode), base..., diagnostic_status = "executed transformer_ratio_mode")
 end
 
 function write_named_csv(path, rows)
@@ -224,13 +217,18 @@ function main()
   md_path = joinpath(outdir, "schaefer_dtf_validation_summary.md")
   open(md_path, "w") do io
     println(io, "# Schäfer DTF/FOR002 validation summary\n")
-    println(io, "Generated with native `DTFImporter.read_dtf` -> `DTFImporter.build_net` -> `runpf!`; this is a diagnostic report, not an electrical-model fix.\n")
+    println(io, "Generated with native `DTFImporter.read_dtf` -> `DTFImporter.build_net` -> `runpf!` using executed `transformer_ratio_mode` alternatives. DTF winding/nameplate ratios are preserved for diagnostics; neutral-one mode intentionally does not apply them as neutral off-nominal taps.\n")
     for c in CASES
-      case_out = joinpath(outdir, "case_$(c.id)")
       dtf = joinpath(data_dir, "FOR001$(c.suffix).DAT")
       for002 = joinpath(data_dir, "FOR002$(c.suffix).DAT")
       dtf_case = Sparlectra.DTFImporter.read_dtf(dtf)
-      details = run_validation(["--dtf-file=$(dtf)", "--for002-file=$(for002)", "--output-dir=$(case_out)", "--write-csv=true", "--write-markdown=true", "--quiet=true"]; return_details = true)
+      selected_details = nothing
+      selected_row = nothing
+      selected_loss_rows = NamedTuple[]
+      println(io, "## Case $(c.id): $(c.description)\n")
+      for ratio_mode in (:neutral_one, :winding_over_network)
+        case_out = joinpath(outdir, "case_$(c.id)_$(ratio_mode)")
+        details = run_validation(["--dtf-file=$(dtf)", "--for002-file=$(for002)", "--output-dir=$(case_out)", "--write-csv=true", "--write-markdown=true", "--quiet=true", "--transformer-ratio-mode=$(ratio_mode)"]; return_details = true)
       Sparlectra.calcNetLosses!(details.net)
       ref = parse_for002_ground_load_flow(for002)
       p_loss, q_loss = Sparlectra.getTotalLosses(net = details.net)
@@ -244,6 +242,7 @@ function main()
       note = case_note(c.id, details, nothing, loss_rows)
       row = (
         case_id = c.id,
+        transformer_ratio_mode = ratio_mode,
         for001_file = relpath(dtf, repo),
         for002_file = relpath(for002, repo),
         converged = details.converged,
@@ -277,12 +276,12 @@ function main()
         transformer_total_q_loss_MVar = missing,
         notes = note,
       )
-      push!(summary_rows, row)
-      append!(all_voltage_transfer_rows, transformer_voltage_transfer_rows(c.id, dtf_case, details))
-      append!(all_convention_scan_rows, convention_scan_rows(c.id, details, row))
-      write_named_csv(joinpath(outdir, "schaefer_dtf_case_$(c.id).csv"), [row])
-
-      println(io, "## Case $(c.id): $(c.description)\n")
+        push!(summary_rows, row)
+        append!(all_voltage_transfer_rows, transformer_voltage_transfer_rows(c.id, dtf_case, details))
+        push!(all_convention_scan_rows, convention_scan_rows(c.id, details, row))
+        write_named_csv(joinpath(outdir, "schaefer_dtf_case_$(c.id)_$(ratio_mode).csv"), [row])
+        ratio_mode == :neutral_one && (selected_details = details; selected_row = row; selected_loss_rows = loss_rows)
+        println(io, "### Mode $(ratio_mode)\n")
       println(io, "- converged: `$(details.converged)`, iterations: `$(details.iterations)`, final mismatch: `$(details.final_mismatch)`")
       println(io, "- slack: `$(row.slack_bus)` Sparlectra P/Q=$(fmt(row.slack_p_sparlectra_MW))/$(fmt(row.slack_q_sparlectra_MVar)); FOR002 P/Q=$(fmt(row.slack_p_for002_MW))/$(fmt(row.slack_q_for002_MVar)); delta=$(fmt(row.slack_dp_MW))/$(fmt(row.slack_dq_MVar))")
       println(io, "- losses Sparlectra P/Q=$(fmt(row.total_loss_p_sparlectra_MW))/$(fmt(row.total_loss_q_sparlectra_MVar)); FOR002 P/Q=$(fmt(row.total_loss_p_for002_MW))/$(fmt(row.total_loss_q_for002_MVar)); delta=$(fmt(row.total_loss_dp_MW))/$(fmt(row.total_loss_dq_MVar))")
@@ -302,6 +301,8 @@ function main()
         println(io, "- $(r.branch_label): model $(fmt(missing_to_float(r.model_q_from_MVar))) MVar vs FOR002 $(fmt(missing_to_float(r.for002_q_from_MVar))) MVar; dQ=$(fmt(missing_to_float(r.d_q_from_MVar))) MVar")
       end
       println(io)
+      end
+      write_named_csv(joinpath(outdir, "schaefer_dtf_case_$(c.id).csv"), [selected_row])
     end
   end
   write_named_csv(joinpath(outdir, "schaefer_dtf_validation_summary.csv"), summary_rows)
@@ -310,13 +311,13 @@ function main()
   write_named_csv(joinpath(outdir, "transformer_convention_scan.csv"), all_convention_scan_rows)
   open(joinpath(outdir, "transformer_convention_scan.md"), "w") do io
     println(io, "# Transformer convention scan\n")
-    println(io, "The `current` rows are executed production results. Other rows enumerate the requested ratio and shunt candidate modes and mark them as diagnostic candidates that still require an explicit admittance/ratio override before they can be selected as a default.\n")
+    println(io, "Rows are true executed native DTF builds for the supported transformer ratio modes.\n")
     for r in all_convention_scan_rows
-      r.candidate_mode == "current" || continue
       println(io, "- Case $(r.case_id): converged=$(r.converged), iterations=$(r.iterations), final mismatch=$(r.final_mismatch), 400-kV mean bias=$(fmt(r.mean_400kv_bias_kv)) kV, max |dV|=$(fmt(r.max_abs_dV_kV)) kV, slack ΔP/ΔQ=$(fmt(r.slack_delta_p_MW))/$(fmt(r.slack_delta_q_MVar)), loss ΔP/ΔQ=$(fmt(r.total_loss_delta_p_MW))/$(fmt(r.total_loss_delta_q_MVar)), max branch ΔP/ΔQ=$(fmt(r.max_branch_delta_p_MW))/$(fmt(r.max_branch_delta_q_MVar)).")
     end
-    println(io, "\nNo production default is changed by this report because the non-current candidate modes have not produced a clearly winning executed result.")
   end
+  write_named_csv(joinpath(outdir, "transformer_ratio_mode_comparison.csv"), all_convention_scan_rows)
+  cp(joinpath(outdir, "transformer_convention_scan.md"), joinpath(outdir, "transformer_ratio_mode_comparison.md"); force = true)
   println("Wrote ", md_path)
   println("Wrote ", joinpath(outdir, "schaefer_dtf_validation_summary.csv"))
   return nothing

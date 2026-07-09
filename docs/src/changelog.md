@@ -3,6 +3,8 @@
 
 * Added a Sparlectra MATPOWER transformer-loss extension that preserves FOR/DTF transformer active no-load conductance metadata, writes an explicit warning in exported `.m` files, and restores the metadata on Sparlectra re-import without double-counting equivalent bus shunts.
 * Added an experimental/internal PowerFlow API and Web UI path for direct native DTF/FOR001 diagnostic input, including cautious input-format selection, DTF import metadata, optional MATPOWER export artifacts, selected/all DTF outage execution controls, and explicit unsupported DC-line diagnostics.
+* Added native DTF/FOR001 transformer ratio modes with `:neutral_one` as the default legacy-compatible convention and `:winding_over_network` preserved as an explicit diagnostic compatibility mode.
+* Added Web UI-visible FOR001/DTF format documentation covering fixed-column sections, trailing branch-echo records, transformer ratio conventions, Schraegregler/skew-angle controls, and FOR002 validation notes.
 * Added opt-in MATPOWER metadata import for `bus_name`, user-defined `branch_name`, `branch_kind`, and `for001_contingencies`, including stable bus-name mapping and FOR001 contingency branch-index mapping helpers.
 * Added controlled MATPOWER `mpc.dcline` handling with the default active-row rejection preserved and an opt-in `:pf_injections` mode that creates MATPOWER-like fixed terminal injections.
 

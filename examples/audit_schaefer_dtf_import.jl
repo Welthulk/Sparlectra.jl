@@ -41,6 +41,10 @@ function audit_case(io, case_id, path)
     tap = br === nothing ? nothing : Sparlectra.DTFImporter._dtf_effective_transformer_tap(case, br, c,
       first(b for b in case.buses if b.name == c.from),
       first(b for b in case.buses if b.name == c.to))
+    compat_tap = br === nothing ? nothing : Sparlectra.DTFImporter._dtf_effective_transformer_tap(case, br, c,
+      first(b for b in case.buses if b.name == c.from),
+      first(b for b in case.buses if b.name == c.to);
+      transformer_ratio_mode = :winding_over_network)
     println(io, "- source line ", c.index, ": ", c.from, " -> ", c.to, " parallel=", c.parallel_id,
       " raw=", repr(c.raw),
       " regulated_side=", c.regulated_side,
@@ -57,11 +61,15 @@ function audit_case(io, case_id, path)
       " quadrature_actual_step=", c.quadrature_actual_step,
       tap === nothing ? "" : string(
         " computed_model=", tap.model,
+        " transformer_ratio_mode=", tap.transformer_ratio_mode,
+        " base_ratio_used=", tap.base_ratio_used,
+        " winding_over_network_base_ratio=", tap.winding_over_network_base_ratio,
         " tap_fraction=", tap.tap_fraction,
         " effective_complex=", tap.effective_complex,
         " effective_ratio=", tap.ratio,
         " effective_shift_deg=", tap.shift_deg,
-        " sign_reciprocal_convention=", tap.convention))
+        " sign_reciprocal_convention=", tap.convention,
+        compat_tap === nothing ? "" : string(" compatibility_winding_over_network_ratio=", compat_tap.ratio)))
   end
   println(io, "\n### Node start voltages")
   for b in case.buses

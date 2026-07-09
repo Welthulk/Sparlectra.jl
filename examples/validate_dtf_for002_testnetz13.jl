@@ -78,6 +78,7 @@ function parse_cli(args)
     "details" => false,
     "print-summary" => true,
     "legacy-voltage-level-collapse-230kv" => false,
+    "transformer-ratio-mode" => "neutral_one",
   )
   for arg in args
     arg == "--quiet" && (opt["quiet"] = true; continue)
@@ -100,6 +101,12 @@ function _method_symbol(s::AbstractString)
   s == "default" && return nothing
   s in ("rectangular", "polar") || throw(ArgumentError("--method must be rectangular, polar, or default"))
   return Symbol(s)
+end
+
+function _transformer_ratio_mode_symbol(s::AbstractString)
+  normalized = replace(lowercase(strip(s)), "-" => "_")
+  normalized in ("neutral_one", "winding_over_network") || throw(ArgumentError("--transformer-ratio-mode must be neutral_one or winding_over_network"))
+  return Symbol(normalized)
 end
 
 function _slack_bus_name(net, case)
@@ -148,7 +155,8 @@ function run_validation(args = ARGS; return_details::Bool = false)
   mkpath(opt["output-dir"])
   case = Sparlectra.DTFImporter.read_dtf(opt["dtf-file"]; strict = opt["strict"])
   _assert_finite_dtf_model(case)
-  net = Sparlectra.DTFImporter.build_net(case; legacy_voltage_level_collapse_230kv = opt["legacy-voltage-level-collapse-230kv"])
+  transformer_ratio_mode = _transformer_ratio_mode_symbol(opt["transformer-ratio-mode"])
+  net = Sparlectra.DTFImporter.build_net(case; legacy_voltage_level_collapse_230kv = opt["legacy-voltage-level-collapse-230kv"], transformer_ratio_mode = transformer_ratio_mode)
   ref = parse_for002_ground_load_flow(opt["for002-file"])
   method = _method_symbol(opt["method"])
   iters, status = method === nothing ? Sparlectra.runpf!(net, opt["max-iter"], opt["tol"], 0) : Sparlectra.runpf!(net, opt["max-iter"], opt["tol"], 0; method = method)
@@ -175,6 +183,7 @@ function run_validation(args = ARGS; return_details::Bool = false)
     dtf_slack_bus = case.size.slack,
     net_slack_bus = _slack_bus_name(net, case),
     notes = "native DTFImporter path; ground-load-flow only",
+    transformer_ratio_mode = transformer_ratio_mode,
   )]
 
   branch_kcl_p, branch_kcl_q = _branch_kcl_arrays(net)
@@ -277,6 +286,15 @@ function run_validation(args = ARGS; return_details::Bool = false)
         x_pu = br.x_pu,
         b_pu = br.b_pu,
         ratio = br.ratio,
+        transformer_ratio_mode = hasproperty(meta, :transformer_ratio_mode) ? meta.transformer_ratio_mode : missing,
+        base_ratio_used = hasproperty(meta, :base_ratio_used) ? meta.base_ratio_used : missing,
+        winding_over_network_base_ratio = hasproperty(meta, :winding_over_network_base_ratio) ? meta.winding_over_network_base_ratio : missing,
+        nominal_unregulated_kv = hasproperty(meta, :nominal_unregulated_kv) ? something(meta.nominal_unregulated_kv, missing) : missing,
+        nominal_regulated_kv = hasproperty(meta, :nominal_regulated_kv) ? something(meta.nominal_regulated_kv, missing) : missing,
+        tap_fraction = hasproperty(meta, :tap_fraction) ? meta.tap_fraction : missing,
+        skew_angle_deg = hasproperty(meta, :skew_angle_deg) ? meta.skew_angle_deg : missing,
+        effective_ratio = hasproperty(meta, :effective_ratio) ? meta.effective_ratio : missing,
+        phase_shift_deg = hasproperty(meta, :phase_shift_deg) ? meta.phase_shift_deg : missing,
         for002_p_from_MW = rf === missing ? missing : rf.p_MW,
         model_p_from_MW = pf,
         d_p_from_MW = rf === missing || pf === missing ? missing : pf - rf.p_MW,
@@ -338,6 +356,7 @@ function run_validation(args = ARGS; return_details::Bool = false)
       println(io, "This validation uses `DTFImporter.read_dtf` -> `DTFImporter.build_net` and does not use MATPOWER import, MATPOWER export, or the generated FOR001 builder. Outages are parsed but not executed.\n")
       println(io, "- DTF file: `", opt["dtf-file"], "`")
       println(io, "- FOR002 file: `", opt["for002-file"], "`")
+      println(io, "- transformer ratio mode: `", transformer_ratio_mode, "`")
       println(io, "- baseMVA: ", case.baseMVA, "; buses: ", length(case.buses), "; branches: ", length(case.branches), "; lines: ", count(b -> b.kind != 'T', case.branches), "; transformers: ", count(b -> b.kind == 'T', case.branches))
       println(io, "- transformer controls: ", length(case.transformer_controls), "; outages parsed: ", length(case.outages), "; nominal voltages kV: ", join(case.nominal_voltages_kv, ", "))
       println(io, "- DTF slack bus: ", case.size.slack, "; Sparlectra slack bus: ", _slack_bus_name(net, case))
@@ -418,6 +437,7 @@ function run_validation(args = ARGS; return_details::Bool = false)
     converged = converged,
     iterations = iters,
     final_mismatch = final_mismatch,
+    transformer_ratio_mode = transformer_ratio_mode,
     written_files = written_files,
   ) : result
 end

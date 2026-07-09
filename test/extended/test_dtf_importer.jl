@@ -131,9 +131,23 @@ function run_dtf_importer_tests()
     @test delta_e_tap.tap_fraction ≈ expected_fraction
     @test delta_e_tap.skew_angle_deg == 60.0
     @test delta_e_tap.effective_complex ≈ expected_complex
-    @test delta_e_tap.ratio ≈ (230.0 / 231.0) / abs(expected_complex)
+    @test delta_e_tap.ratio ≈ 1 / abs(expected_complex)
     @test delta_e_tap.shift_deg ≈ -rad2deg(angle(expected_complex))
     @test delta_e_tap.convention == :dtf_regulating_vector_reciprocal
+    @test delta_e_tap.transformer_ratio_mode == :neutral_one
+    @test delta_e_tap.winding_over_network_base_ratio ≈ 230.0 / 231.0
+    @test delta_e_tap.base_ratio_used ≈ 1.0
+
+    delta_e_compat_tap = Sparlectra.DTFImporter._dtf_effective_transformer_tap(
+      case_e,
+      delta_e_branch,
+      delta_e_control,
+      bus_by_name_e[delta_e_branch.from],
+      bus_by_name_e[delta_e_branch.to];
+      transformer_ratio_mode = :winding_over_network,
+    )
+    @test delta_e_compat_tap.ratio ≈ (230.0 / 231.0) / abs(expected_complex)
+    @test delta_e_compat_tap.base_ratio_used ≈ 230.0 / 231.0
 
     net = Sparlectra.createNetFromDTFFile(DTF_FIXTURE)
     @test net isa Sparlectra.Net
@@ -147,9 +161,15 @@ function run_dtf_importer_tests()
 
     beta_branch = _branch(case, "BETA1 S1", "BETA2 S1", "C"; kind = 'T')
     delta_branch = _branch(case, "DELTA1S1", "DELTA2S1", "B"; kind = 'T')
-    @test net.branchVec[beta_branch.index].ratio ≈ 230.0 / 231.0
+    @test net.branchVec[beta_branch.index].ratio ≈ 1.0
     @test !(net.branchVec[beta_branch.index].ratio ≈ 400.0 / 231.0)
-    @test net.branchVec[delta_branch.index].ratio ≈ 230.0 / 231.0
+    @test net.branchVec[delta_branch.index].ratio ≈ 1.0
+    @test net.matpower_branch_metadata[beta_branch.index].transformer_ratio_mode == :neutral_one
+    @test net.matpower_branch_metadata[beta_branch.index].winding_over_network_base_ratio ≈ 230.0 / 231.0
+
+    compat_net = Sparlectra.createNetFromDTFFile(DTF_FIXTURE; transformer_ratio_mode = :winding_over_network)
+    @test compat_net.branchVec[beta_branch.index].ratio ≈ 230.0 / 231.0
+    @test compat_net.matpower_branch_metadata[beta_branch.index].transformer_ratio_mode == :winding_over_network
 
     for bus in case.buses
       idx = Sparlectra.geNetBusIdx(net = net, busName = bus.name)

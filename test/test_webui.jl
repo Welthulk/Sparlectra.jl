@@ -939,6 +939,14 @@ settings:
       @test occursin("href=\"https://matpower.app/manual/matpower/DataFileFormat.html\" target=\"_blank\" rel=\"noopener noreferrer\"", matpower_format_html)
       @test occursin("href=\"https://matpower.org/documentation/ref-manual/legacy/functions/caseformat.html\" target=\"_blank\" rel=\"noopener noreferrer\"", matpower_format_html)
 
+      for001_format_page = Sparlectra.route_sparlectra_webui("GET", "/docs/for001_dtf_format")
+      @test for001_format_page.status == 200
+      for001_format_html = String(for001_format_page.body)
+      @test occursin("FOR001 / DTF legacy input format", for001_format_html)
+      @test occursin("Transformer ratio convention", for001_format_html)
+      @test occursin("neutral-one", for001_format_html)
+      @test occursin("branch-echo records", for001_format_html)
+
       webui_docs_page = Sparlectra.route_sparlectra_webui("GET", "/docs/webui")
       @test webui_docs_page.status == 200
       webui_docs_html = String(webui_docs_page.body)

@@ -19,6 +19,14 @@ using ..Sparlectra: Net, addBus!, addProsumer!, addShuntMatpower!, _addPIModelAC
 export DTFCase, DTFParams, DTFSize, DTFBranch, DTFBus, DTFCompensation, DTFTransformerControl, DTFOutage, DTFTrailingRecord, read_dtf, build_net,
   dtf_branch_key, find_outage_branch_indices, outage_match_diagnostic, apply_single_branch_outage!, case_summary, outage_label
 
+const DTF_TRANSFORMER_RATIO_MODES = (:neutral_one, :winding_over_network)
+
+function _normalize_transformer_ratio_mode(mode)::Symbol
+  sym = mode isa Symbol ? mode : Symbol(mode)
+  sym in DTF_TRANSFORMER_RATIO_MODES || throw(ArgumentError("transformer_ratio_mode must be one of $(collect(DTF_TRANSFORMER_RATIO_MODES)); got $(sym)."))
+  return sym
+end
+
 """Native DTF/FOR001 importer parameter card values preserved for auditing."""
 struct DTFParams
   raw::String
@@ -338,9 +346,13 @@ function _branch_pu(case::DTFCase, branch::DTFBranch; nominal_voltages_kv = case
   return (r = branch.r_ohm / z_base_ohm, x = branch.x_ohm / z_base_ohm, g = branch.g_s * z_base_ohm, b = branch.b_s * z_base_ohm, u_ref_kv = u_ref_kv)
 end
 
-function _dtf_effective_transformer_tap(case::DTFCase, branch::DTFBranch, control::Union{Nothing,DTFTransformerControl}, from_bus::DTFBus, to_bus::DTFBus; nominal_voltages_kv = case.nominal_voltages_kv)
+function _dtf_effective_transformer_tap(case::DTFCase, branch::DTFBranch, control::Union{Nothing,DTFTransformerControl}, from_bus::DTFBus, to_bus::DTFBus; nominal_voltages_kv = case.nominal_voltages_kv, transformer_ratio_mode = :neutral_one)
+  ratio_mode = _normalize_transformer_ratio_mode(transformer_ratio_mode)
   no_control = (ratio = nothing, shift_deg = 0.0, model = :fixed_ratio, tap_fraction = 0.0,
-    skew_angle_deg = 0.0, effective_complex = 1.0 + 0.0im, convention = :dtf_regulating_vector_reciprocal)
+    skew_angle_deg = 0.0, effective_complex = 1.0 + 0.0im, convention = :dtf_regulating_vector_reciprocal,
+    nominal_unregulated_kv = nothing, nominal_regulated_kv = nothing, from_bus_vn_kV = nominal_voltages_kv[from_bus.voltage_level_index],
+    to_bus_vn_kV = nominal_voltages_kv[to_bus.voltage_level_index], winding_over_network_base_ratio = 1.0,
+    transformer_ratio_mode = ratio_mode, base_ratio_used = 1.0, effective_ratio = 1.0)
   control === nothing && return no_control
   control.nominal_unregulated_kv === nothing && return nothing
   control.nominal_regulated_kv === nothing && return nothing
@@ -349,14 +361,14 @@ function _dtf_effective_transformer_tap(case::DTFCase, branch::DTFBranch, contro
   to_vn = nominal_voltages_kv[to_bus.voltage_level_index]
   to_vn == 0.0 && return nothing
 
-  # DTF control cards carry transformer winding nominal voltages. Sparlectra
-  # expects the fixed off-nominal deviation relative to the bus voltage-level
-  # ratio, matching the legacy FOR001 builder/MATPOWER path.
-  actual_ratio = control.nominal_unregulated_kv / control.nominal_regulated_kv
+  winding_over_network_base_ratio = (control.nominal_unregulated_kv / control.nominal_regulated_kv) / (from_vn / to_vn)
+  base_ratio = ratio_mode == :neutral_one ? 1.0 : winding_over_network_base_ratio
   tap_fraction = 0.0
   skew_angle_deg = something(control.added_voltage_angle_deg, 0.0)
   model = :fixed_ratio
   effective_complex = 1.0 + 0.0im
+  relative_ratio = 1.0
+  shift_deg = 0.0
   if control.longitudinal_range_percent !== nothing && control.max_tap_step !== nothing &&
       control.actual_tap_step !== nothing && control.max_tap_step != 0
     tap_fraction = (control.longitudinal_range_percent / 100.0) * control.actual_tap_step / control.max_tap_step
@@ -364,18 +376,25 @@ function _dtf_effective_transformer_tap(case::DTFCase, branch::DTFBranch, contro
       model = skew_angle_deg == 0.0 ? :longitudinal : :skew_angle
       tap_result = calcSkewAngleTap(; tap_fraction = tap_fraction, skew_angle_deg = skew_angle_deg)
       effective_complex = tap_result.regulating_vector
-      actual_ratio *= tap_result.effective_ratio
+      relative_ratio = tap_result.effective_ratio
+      shift_deg = model == :skew_angle ? tap_result.effective_shift_deg : 0.0
     end
   end
-  nominal_network_ratio = from_vn / to_vn
-  ratio = actual_ratio / nominal_network_ratio
-  # DTF stores the regulating-voltage skew angle, not a final PST angle. The
-  # regulating vector z is converted to Sparlectra's from-side off-nominal tap
-  # convention by using its reciprocal: magnitude 1/|z| and phase -arg(z).
-  shift_deg = model == :skew_angle ? calcSkewAngleTap(; tap_fraction = tap_fraction, skew_angle_deg = skew_angle_deg).effective_shift_deg : 0.0
+  # DTF/FOR001 compatibility treats winding voltages as nameplate/control
+  # metadata by default.  The off-nominal network tap is neutral at Stufe 0 and
+  # only receives longitudinal/skew deviations relative to that neutral point.
+  ratio = base_ratio * relative_ratio
   return (ratio = ratio, shift_deg = shift_deg, model = model, tap_fraction = tap_fraction,
     skew_angle_deg = skew_angle_deg, effective_complex = effective_complex,
-    convention = :dtf_regulating_vector_reciprocal)
+    convention = :dtf_regulating_vector_reciprocal,
+    nominal_unregulated_kv = control.nominal_unregulated_kv,
+    nominal_regulated_kv = control.nominal_regulated_kv,
+    from_bus_vn_kV = from_vn,
+    to_bus_vn_kV = to_vn,
+    winding_over_network_base_ratio = winding_over_network_base_ratio,
+    transformer_ratio_mode = ratio_mode,
+    base_ratio_used = base_ratio,
+    effective_ratio = relative_ratio)
 end
 
 function _dtf_transformer_ratio(case::DTFCase, branch::DTFBranch, control::Union{Nothing,DTFTransformerControl}, from_bus::DTFBus, to_bus::DTFBus)
@@ -390,7 +409,8 @@ R/X/G/B are converted with the branch voltage-level index as reference voltage,
 not with the from-side bus voltage. Outages remain parsed metadata and are not
 executed by this Task-1 MVP.
 """
-function build_net(case::DTFCase; bus_shunt_model = :admittance, legacy_voltage_level_collapse_230kv::Bool = false)::Net
+function build_net(case::DTFCase; bus_shunt_model = :admittance, legacy_voltage_level_collapse_230kv::Bool = false, transformer_ratio_mode = :neutral_one)::Net
+  ratio_mode = _normalize_transformer_ratio_mode(transformer_ratio_mode)
   shunt_model = normalize_bus_shunt_model(bus_shunt_model)
   nominal_voltages_kv = _dtf_nominal_voltage_levels(case; legacy_voltage_level_collapse_230kv = legacy_voltage_level_collapse_230kv)
   net = Net(name = isempty(case.texts) ? "DTF" : String(strip(case.texts[1])), baseMVA = case.baseMVA, bus_shunt_model = shunt_model)
@@ -429,7 +449,7 @@ function build_net(case::DTFCase; bus_shunt_model = :admittance, legacy_voltage_
     ratio = 1.0
     if branch.kind == 'T'
       control = _find_control(branch, case.transformer_controls)
-      tap = _dtf_effective_transformer_tap(case, branch, control, bus_by_name[branch.from], bus_by_name[branch.to]; nominal_voltages_kv = nominal_voltages_kv)
+      tap = _dtf_effective_transformer_tap(case, branch, control, bus_by_name[branch.from], bus_by_name[branch.to]; nominal_voltages_kv = nominal_voltages_kv, transformer_ratio_mode = ratio_mode)
       ratio = tap.ratio
       shift_deg = tap.shift_deg
       _addPIModelTrafo_by_idx!(net = net, from = from, to = to, r_pu = pu.r, x_pu = pu.x, b_pu = pu.b, status = 1, ratedU = pu.u_ref_kv, ratedS = ratedS, ratio = ratio, shift_deg = shift_deg)
@@ -459,12 +479,18 @@ function build_net(case::DTFCase; bus_shunt_model = :admittance, legacy_voltage_
       g_s = branch.g_s,
       b_s = branch.b_s,
       tap_ratio = branch.kind == 'T' ? ratio : 1.0,
+      nominal_unregulated_kv = branch.kind == 'T' ? tap.nominal_unregulated_kv : nothing,
+      nominal_regulated_kv = branch.kind == 'T' ? tap.nominal_regulated_kv : nothing,
+      winding_over_network_base_ratio = branch.kind == 'T' ? tap.winding_over_network_base_ratio : 1.0,
+      transformer_ratio_mode = branch.kind == 'T' ? tap.transformer_ratio_mode : ratio_mode,
+      base_ratio_used = branch.kind == 'T' ? tap.base_ratio_used : 1.0,
       actual_tap_step = control === nothing ? nothing : control.actual_tap_step,
       max_tap_step = control === nothing ? nothing : control.max_tap_step,
       phase_shift_deg = branch.kind == 'T' ? tap.shift_deg : 0.0,
       dtf_control_model = branch.kind == 'T' ? tap.model : :not_transformer,
       tap_fraction = branch.kind == 'T' ? tap.tap_fraction : 0.0,
       skew_angle_deg = branch.kind == 'T' ? tap.skew_angle_deg : 0.0,
+      effective_ratio = branch.kind == 'T' ? tap.effective_ratio : 1.0,
       effective_complex_tap = branch.kind == 'T' ? tap.effective_complex : 1.0 + 0.0im,
       dtf_tap_convention = branch.kind == 'T' ? tap.convention : :not_transformer,
     )
@@ -482,14 +508,15 @@ end
 end # module DTFImporter
 
 """
-    createNetFromDTFFile(path; baseMVA = 100.0, strict = true, bus_shunt_model = :admittance) -> Net
+    createNetFromDTFFile(path; baseMVA = 100.0, strict = true, bus_shunt_model = :admittance, transformer_ratio_mode = :neutral_one) -> Net
 
 Read a legacy DTF/FOR001 file and build a Sparlectra `Net` without routing
 through MATPOWER. Outage cards are parsed and preserved in `DTFCase` by
 `DTFImporter.read_dtf`, but are not executed by this Task-1 importer MVP.
 """
-function createNetFromDTFFile(path; baseMVA::Real = 100.0, strict::Bool = true, bus_shunt_model = :admittance, legacy_voltage_level_collapse_230kv::Bool = false)::Net
+function createNetFromDTFFile(path; baseMVA::Real = 100.0, strict::Bool = true, bus_shunt_model = :admittance, legacy_voltage_level_collapse_230kv::Bool = false, transformer_ratio_mode = :neutral_one)::Net
   return DTFImporter.build_net(DTFImporter.read_dtf(path; baseMVA = baseMVA, strict = strict);
     bus_shunt_model = bus_shunt_model,
-    legacy_voltage_level_collapse_230kv = legacy_voltage_level_collapse_230kv)
+    legacy_voltage_level_collapse_230kv = legacy_voltage_level_collapse_230kv,
+    transformer_ratio_mode = transformer_ratio_mode)
 end
