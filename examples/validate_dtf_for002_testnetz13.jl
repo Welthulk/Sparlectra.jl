@@ -40,6 +40,21 @@ struct DTFFor002ValidationResult
   max_state_residual_q_MVar::Float64
 end
 
+function _assert_finite_dtf_model(case)
+  problems = String[]
+  for br in case.branches
+    all(isfinite, (br.r_ohm, br.x_ohm, br.g_s, br.b_s)) || push!(problems, "branch $(br.index) $(br.from)->$(br.to) has non-finite r/x/g/b")
+  end
+  for bus in case.buses
+    vn = case.nominal_voltages_kv[bus.voltage_level_index]
+    vm = bus.start_kv > 0 ? bus.start_kv / vn : 1.0
+    isfinite(vn) && vn > 0 || push!(problems, "bus $(bus.name) has invalid nominal voltage $(vn)")
+    isfinite(vm) || push!(problems, "bus $(bus.name) has non-finite start vm_pu")
+  end
+  isempty(problems) || error("DTF parser/model audit failed before solve:\n" * join(problems, "\n"))
+  return nothing
+end
+
 function _parse_bool(s::AbstractString)
   v = lowercase(strip(s));
   v in ("true", "1", "yes") && return true;
@@ -131,6 +146,7 @@ function run_validation(args = ARGS; return_details::Bool = false)
   return_details = return_details || opt["details"]
   mkpath(opt["output-dir"])
   case = Sparlectra.DTFImporter.read_dtf(opt["dtf-file"]; strict = opt["strict"])
+  _assert_finite_dtf_model(case)
   net = Sparlectra.DTFImporter.build_net(case)
   ref = parse_for002_ground_load_flow(opt["for002-file"])
   method = _method_symbol(opt["method"])

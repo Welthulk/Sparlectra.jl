@@ -160,6 +160,7 @@ function run_dtf_importer_tests()
         Sparlectra.DTFImporter.DTFBus("", 2, 2, 1, "SLACK", 230.0, 0.0, 0.0, 0.0, 20.0, 3.0, -10.0, 10.0),
       ],
       Sparlectra.DTFImporter.DTFOutage[],
+      Sparlectra.DTFImporter.DTFTrailingRecord[],
     )
     synthetic_net = Sparlectra.DTFImporter.build_net(synthetic)
     pv_idx = Sparlectra.geNetBusIdx(net = synthetic_net, busName = "PV")

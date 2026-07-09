@@ -16,7 +16,7 @@ module DTFImporter
 
 using ..Sparlectra: Net, addBus!, addProsumer!, addShuntMatpower!, _addPIModelACLine_by_idx!, _addPIModelTrafo_by_idx!, geNetBusIdx, validate!, normalize_bus_shunt_model
 
-export DTFCase, DTFParams, DTFSize, DTFBranch, DTFBus, DTFCompensation, DTFTransformerControl, DTFOutage, read_dtf, build_net,
+export DTFCase, DTFParams, DTFSize, DTFBranch, DTFBus, DTFCompensation, DTFTransformerControl, DTFOutage, DTFTrailingRecord, read_dtf, build_net,
   dtf_branch_key, find_outage_branch_indices, outage_match_diagnostic, apply_single_branch_outage!, case_summary, outage_label
 
 """Native DTF/FOR001 importer parameter card values preserved for auditing."""
@@ -101,6 +101,14 @@ struct DTFOutage
   to::String
 end
 
+struct DTFTrailingRecord
+  raw::String
+  index::Int
+  kind::Symbol
+  interpreted_kind::Symbol
+  paired_marker_index::Union{Nothing,Int}
+end
+
 struct DTFCase
   source_path::String
   baseMVA::Float64
@@ -113,6 +121,7 @@ struct DTFCase
   transformer_controls::Vector{DTFTransformerControl}
   buses::Vector{DTFBus}
   outages::Vector{DTFOutage}
+  trailing_records::Vector{DTFTrailingRecord}
 end
 
 _slice(s::AbstractString, a::Int, b::Int) = a > lastindex(s) ? "" : s[a:min(b, lastindex(s))]
@@ -120,6 +129,17 @@ _norm_name(s::AbstractString) = uppercase(replace(strip(String(s)), r"\s+" => ""
 _parse_float(s::AbstractString) = isempty(strip(s)) ? nothing : parse(Float64, replace(strip(s), 'D' => 'E', 'd' => 'E'))
 _parse_int(s::AbstractString) = (x = _parse_float(s); x === nothing ? nothing : Int(round(x)))
 _numbers(s::AbstractString) = [parse(Float64, replace(m.match, 'D' => 'E', 'd' => 'E')) for m in eachmatch(r"[-+]?\d*\.?\d+(?:[EeDd][-+]?\d+)?", s)]
+function _nominal_voltages(s::AbstractString)
+  vals = _numbers(s)
+  length(vals) > 1 && occursin(r"\s", strip(s)) && return vals
+  chunks = Float64[]
+  for i in 1:5:lastindex(s)
+    field = strip(_slice(s, i, i + 4))
+    isempty(field) && continue
+    push!(chunks, parse(Float64, field))
+  end
+  return chunks
+end
 
 function _parse_branch(line::String, index::Int)::DTFBranch
   kind = isempty(line) || line[1] == ' ' ? 'L' : line[1]
@@ -183,7 +203,7 @@ end
 """Return stable summary counts for a parsed DTF case."""
 case_summary(case::DTFCase) = (baseMVA = case.baseMVA, bus_count = length(case.buses), branch_count = length(case.branches),
   line_count = count(b -> b.kind != 'T', case.branches), transformer_count = count(b -> b.kind == 'T', case.branches),
-  outage_count = length(case.outages), slack_bus = case.size.slack)
+  outage_count = length(case.outages), trailing_record_count = length(case.trailing_records), slack_bus = case.size.slack)
 
 function _parse_bus(line::String, index::Int)::DTFBus
   bus_type = line[1] == ' ' ? 0 : parse(Int, string(line[1]))
@@ -240,11 +260,11 @@ function read_dtf(path; baseMVA::Real = 100.0, strict::Bool = true)::DTFCase
   length(lines) >= 7 || error("DTF/FOR001 file is too short: $(path)")
   params = DTFParams(lines[1], _numbers(lines[1]))
   texts = String.(lines[2:5])
-  nominal = _numbers(lines[6])
+  nominal = _nominal_voltages(lines[6])
   size_vals = _numbers(lines[7])
   length(size_vals) >= 4 || error("DTF/FOR001 network size card is incomplete")
   size_tokens = split(strip(lines[7]))
-  size = DTFSize(lines[7], Int(size_vals[1]), Int(size_vals[2]), Int(size_vals[3]), Int(size_vals[4]), length(size_tokens) >= 5 ? String(size_tokens[5]) : "")
+  size = DTFSize(lines[7], Int(size_vals[1]), Int(size_vals[2]), Int(size_vals[3]), Int(size_vals[4]), length(size_tokens) >= 5 ? String(size_tokens[end]) : "")
   i = 8
   branches = DTFBranch[]
   for idx in 1:size.LGES
@@ -263,24 +283,42 @@ function read_dtf(path; baseMVA::Real = 100.0, strict::Bool = true)::DTFCase
     push!(buses, _parse_bus(lines[i], idx)); i += 1
   end
   outages = DTFOutage[]
+  trailing = DTFTrailingRecord[]
   in_outage = false
   outage_index = 0
+  trailing_index = 0
+  pending_variant_marker = nothing
   while i <= length(lines)
     line = lines[i]
     token = uppercase(strip(line))
     if token == "AUSFALL"
       in_outage = true
+      pending_variant_marker = nothing
     elseif token == "ENDE"
       in_outage = false
+      pending_variant_marker = nothing
     elseif in_outage && !isempty(strip(line))
       outage_index += 1
       push!(outages, _parse_outage(line, outage_index))
+    elseif token == "A"
+      trailing_index += 1
+      push!(trailing, DTFTrailingRecord(line, trailing_index, :variant_a_marker, :variant_branch_echo_marker, nothing))
+      pending_variant_marker = trailing_index
+    elseif pending_variant_marker !== nothing && !isempty(strip(line)) && first(strip(line)) in ('L', 'T')
+      # Schäfer cases B-E contain post-bus standalone `A` cards followed by a
+      # branch-like line for every in-service branch.  The payload duplicates
+      # the already counted branch data in a tighter legacy print format; it is
+      # preserved as a trailing branch echo for diagnostics, not added as an
+      # electrical branch or outage.
+      trailing_index += 1
+      push!(trailing, DTFTrailingRecord(line, trailing_index, :variant_a_payload, :variant_branch_echo, pending_variant_marker))
+      pending_variant_marker = nothing
     elseif strict && !isempty(strip(line))
       error("Unexpected DTF/FOR001 content after bus cards: $(line)")
     end
     i += 1
   end
-  return DTFCase(String(path), Float64(baseMVA), params, texts, Float64.(nominal), size, branches, comps, controls, buses, outages)
+  return DTFCase(String(path), Float64(baseMVA), params, texts, Float64.(nominal), size, branches, comps, controls, buses, outages, trailing)
 end
 
 function _branch_pu(case::DTFCase, branch::DTFBranch)
@@ -304,6 +342,11 @@ function _dtf_transformer_ratio(case::DTFCase, branch::DTFBranch, control::Union
   # expects the fixed off-nominal deviation relative to the bus voltage-level
   # ratio, matching the legacy FOR001 builder/MATPOWER path.
   actual_ratio = control.nominal_unregulated_kv / control.nominal_regulated_kv
+  if control.longitudinal_range_percent !== nothing && control.max_tap_step !== nothing &&
+      control.actual_tap_step !== nothing && control.max_tap_step != 0
+    step_fraction = (control.longitudinal_range_percent / 100.0) * control.actual_tap_step / control.max_tap_step
+    actual_ratio /= 1.0 + step_fraction
+  end
   nominal_network_ratio = from_vn / to_vn
   return actual_ratio / nominal_network_ratio
 end
@@ -355,7 +398,8 @@ function build_net(case::DTFCase; bus_shunt_model = :admittance)::Net
     if branch.kind == 'T'
       control = _find_control(branch, case.transformer_controls)
       ratio = _dtf_transformer_ratio(case, branch, control, bus_by_name[branch.from], bus_by_name[branch.to])
-      _addPIModelTrafo_by_idx!(net = net, from = from, to = to, r_pu = pu.r, x_pu = pu.x, b_pu = pu.b, status = 1, ratedU = pu.u_ref_kv, ratedS = ratedS, ratio = ratio, shift_deg = something(control === nothing ? nothing : control.added_voltage_angle_deg, 0.0))
+      shift_deg = something(control === nothing ? nothing : control.added_voltage_angle_deg, 0.0)
+      _addPIModelTrafo_by_idx!(net = net, from = from, to = to, r_pu = pu.r, x_pu = pu.x, b_pu = pu.b, status = 1, ratedU = pu.u_ref_kv, ratedS = ratedS, ratio = ratio, shift_deg = shift_deg)
     else
       _addPIModelACLine_by_idx!(net = net, from = from, to = to, r_pu = pu.r, x_pu = pu.x, b_pu = pu.b, status = 1, ratedS = ratedS)
     end
