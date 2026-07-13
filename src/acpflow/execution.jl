@@ -22,23 +22,45 @@ function _execute_sparlectra_powerflow!(net::Net, cfg::SparlectraConfig; perform
   qlimit_preview_rows = cfg.output.console_q_limit_events === :summary || cfg.output.console_q_limit_events === :off ? 0 : cfg.output.console_max_rows
   phase_callback = performance_profile isa AbstractDict ? get(performance_profile, :phase_callback, phase -> nothing) : phase -> nothing
   phase_callback("solving_powerflow")
+  cfg.powerflow.islands.enabled && _write_ac_island_diagnostics!(net, cfg.powerflow, performance_profile)
   iterations = 0
   erg = 2
   control_status = :none
   elapsed_s = @elapsed begin
-    iterations, erg, control_status = _perf_profile_time!(performance_profile, :solver_total) do
-      controllers = collect_outer_controllers(net)
-      if isempty(controllers)
-        ite, status = runpf!(net, pf_cfg; verbose = verbose, pv_table_rows = qlimit_preview_rows, performance_profile = performance_profile)
-        (ite, status, :none)
-      else
-        control_result = run_control!(net; controllers = controllers, pf_config = pf_cfg, control_config = cfg.control, verbose = verbose, performance_profile = performance_profile)
-        (control_result.last_pf_iterations, control_result.status == :pf_failed ? 1 : 0, control_result.status)
+    try
+      iterations, erg, control_status = _perf_profile_time!(performance_profile, :solver_total) do
+        controllers = collect_outer_controllers(net)
+        if isempty(controllers)
+          ite, status = runpf!(net, pf_cfg; verbose = verbose, pv_table_rows = qlimit_preview_rows, performance_profile = performance_profile)
+          (ite, status, :none)
+        else
+          control_result = run_control!(net; controllers = controllers, pf_config = pf_cfg, control_config = cfg.control, verbose = verbose, performance_profile = performance_profile)
+          (control_result.last_pf_iterations, control_result.status == :pf_failed ? 1 : 0, control_result.status)
+        end
       end
+    catch err
+      if cfg.powerflow.islands.enabled
+        existing_status = rectangular_pf_status(net)
+        diagnostic_status = existing_status !== nothing ? existing_status : (;
+          final_mismatch = NaN,
+          iterations = iterations,
+          reason = :solver_error,
+          status = :failed,
+          stage = :pre_nr_setup,
+          exception_type = nameof(typeof(err)),
+          exception_message = sprint(showerror, err),
+          stacktrace_top = "",
+        )
+        _write_ac_island_diagnostics!(net, cfg.powerflow, performance_profile; status = diagnostic_status)
+      end
+      rethrow()
     end
   end
-  timings = performance_profile isa AbstractDict ? get(performance_profile, :timings, nothing) : nothing
-  row = timings isa AbstractDict ? get(timings, :solver_total, nothing) : nothing
-  solver_elapsed_s = row isa NamedTuple && hasproperty(row, :elapsed_s) ? Float64(row.elapsed_s) : nothing
+  solver_elapsed_s = _solver_elapsed_from_profile(performance_profile)
+  solver_elapsed_s === nothing && (solver_elapsed_s = max(0.0, Float64(elapsed_s)))
+  if cfg.powerflow.islands.enabled
+    status = rectangular_pf_status(net)
+    _write_ac_island_diagnostics!(net, cfg.powerflow, performance_profile; status = status)
+  end
   return (iterations = iterations, erg = erg, elapsed_s = elapsed_s, solver_elapsed_s = solver_elapsed_s, control_status = control_status)
 end

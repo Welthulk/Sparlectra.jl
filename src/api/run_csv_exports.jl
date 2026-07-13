@@ -135,6 +135,9 @@ function _branch_csv_values(br)
   return (br.comp.cName, br.branchIdx, br.fromBus, br.toBus, br.status, p_from, q_from, p_to, q_to, _default0(br.pLosses), _default0(br.qLosses), rated, overloaded)
 end
 
+const _DETAILED_BUS_CSV_COLUMNS = (:bus, :bus_name, :type, :vm_pu, :va_deg, :vn_kV, :v_re, :v_im, :v_complex, :v_kV, :p_gen_MW, :q_gen_MVar, :p_load_MW, :q_load_MVar, :q_limit_hit, :control, :original_bus_name)
+const _DETAILED_BRANCH_CSV_COLUMNS = (:branch, :branch_index, :from_bus, :to_bus, :status, :p_from_MW, :q_from_MVar, :p_to_MW, :q_to_MVar, :p_loss_MW, :q_loss_MVar, :rated_MVA, :overloaded, :branch_name, :original_branch_name, :from_bus_name, :to_bus_name, :original_from_bus_name, :original_to_bus_name, :branch_kind)
+
 function _check_csv_abort(abort_checker, row_count::Integer)
   if abort_checker !== nothing && row_count % 1000 == 0
     abort_checker()
@@ -145,8 +148,8 @@ end
 function _write_detailed_result_csv_artifacts_direct!(artifacts::Vector{String}, output_path::AbstractString, net::Net, result::SparlectraRunResult, config; format = "technical", abort_checker = nothing, timing_metadata = nothing)::Vector{String}
   resolved_format = _resolve_detailed_csv_format(format)
   runtime_format = CsvFormatRuntime(resolved_format)
-  bus_columns = (:bus, :bus_name, :type, :vm_pu, :va_deg, :vn_kV, :v_re, :v_im, :v_complex, :v_kV, :p_gen_MW, :q_gen_MVar, :p_load_MW, :q_load_MVar, :q_limit_hit, :control)
-  branch_columns = (:branch, :branch_index, :from_bus, :to_bus, :status, :p_from_MW, :q_from_MVar, :p_to_MW, :q_to_MVar, :p_loss_MW, :q_loss_MVar, :rated_MVA, :overloaded)
+  bus_columns = _DETAILED_BUS_CSV_COLUMNS
+  branch_columns = _DETAILED_BRANCH_CSV_COLUMNS
   busNameByIdx = _bus_name_by_idx(net)
   power_components = _bus_power_component_cache(net)
   cache_start = time_ns()
@@ -207,6 +210,7 @@ function _write_detailed_result_csv_artifacts_direct!(artifacts::Vector{String},
         q_load,
         haskey(net.qLimitEvents, n.busIdx),
         _cached_control_label(control_labels, n.busIdx),
+        _original_bus_name(busNameByIdx, net, n.busIdx),
       )
       _check_csv_abort(abort_checker, row_count)
       end
@@ -233,6 +237,8 @@ function _write_detailed_result_csv_artifacts_direct!(artifacts::Vector{String},
           q_to = isnothing(t) || isnothing(t.qFlow) ? 0.0 : t.qFlow
           rated = isnothing(br.sn_MVA) ? 0.0 : br.sn_MVA
           overloaded = rated > 0.0 && max(abs(p_from), abs(p_to)) > rated
+          from_name = _effective_bus_name(busNameByIdx, net, br.fromBus)
+          to_name = _effective_bus_name(busNameByIdx, net, br.toBus)
           write_csv_row_direct!(
             io,
             resolved_format.delimiter,
@@ -250,6 +256,13 @@ function _write_detailed_result_csv_artifacts_direct!(artifacts::Vector{String},
             _default0(br.qLosses),
             rated,
             overloaded,
+            br.comp.cName,
+            _original_branch_name(net, br),
+            from_name,
+            to_name,
+            _original_bus_name(busNameByIdx, net, br.fromBus),
+            _original_bus_name(busNameByIdx, net, br.toBus),
+            _branch_kind_name(net, br),
           )
           _check_csv_abort(abort_checker, row_count)
         end
@@ -288,8 +301,8 @@ function _write_detailed_result_csv(output_path::AbstractString, result::Sparlec
   exporter = _select_detailed_csv_exporter(result.net; config)
   exporter === :direct && return _write_detailed_result_csv_artifacts_direct!(artifacts, output_path, result.net, result, config; format = resolved_format.name, abort_checker, timing_metadata)
   report = buildACPFlowReport(result.net; ct = result.elapsed_s, ite = result.iterations, converged = result.final_converged)
-  bus_columns = (:bus, :bus_name, :type, :vm_pu, :va_deg, :vn_kV, :v_re, :v_im, :v_complex, :v_kV, :p_gen_MW, :q_gen_MVar, :p_load_MW, :q_load_MVar, :q_limit_hit, :control)
-  branch_columns = (:branch, :branch_index, :from_bus, :to_bus, :status, :p_from_MW, :q_from_MVar, :p_to_MW, :q_to_MVar, :p_loss_MW, :q_loss_MVar, :rated_MVA, :overloaded)
+  bus_columns = _DETAILED_BUS_CSV_COLUMNS
+  branch_columns = _DETAILED_BRANCH_CSV_COLUMNS
   estimated_rows = length(report.nodes) + length(report.branches)
   _write_namedtuple_csv(joinpath(output_path, artifacts[1]), _complex_voltage_rows(report.nodes, resolved_format), bus_columns; delimiter = resolved_format.delimiter, format = resolved_format.name, config, estimated_rows)
   try
@@ -300,4 +313,3 @@ function _write_detailed_result_csv(output_path::AbstractString, result::Sparlec
   end
   return artifacts
 end
-

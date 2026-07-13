@@ -34,10 +34,14 @@ Represents an electrical network.
 - `shuntVec::Vector{Shunt}`: Vector containing shunts in the network.
 - `busDict::Dict{String,Int}`: Dictionary mapping bus names to indices.
 - `busOrigIdxDict::Dict{Int,Int}`: Dictionary mapping current bus indices to original indices.
+- `busOriginalNameDict::Dict{Int,String}`: Optional original source-file bus names keyed by current bus index.
 - `branchDict::Dict{Tuple{Int, Int},Int}`: Dictionary mapping branch tuples to indices.
 - `totalLosses::Vector{Tuple{Float64,Float64}}`: Vector containing tuples of total power losses.
 - `_locked::Bool`: Boolean indicating if the network is locked.
 - `measurements::Vector`: State-estimation measurements stored on the network.
+- `matpower_branch_metadata::Dict{Int,NamedTuple}`: Optional MATPOWER branch metadata keyed by imported branch index.
+- `for001Contingencies::Vector{String}`: Optional FOR001 contingency branch names imported from MATPOWER metadata.
+- `matpowerDclineMetadata::Vector{NamedTuple}`: Optional imported MATPOWER DC-line terminal-injection metadata.
 
 # Constructors
 - `Net(name::String, baseMVA::Float64, vmin_pu::Float64 = 0.9, vmax_pu::Float64 = 1.1)`: Creates a new `Net` object with the given name, base MVA, and optional voltage limits.
@@ -84,6 +88,7 @@ mutable struct Net
   shuntVec::Vector{Shunt}
   busDict::Dict{String,Int}
   busOrigIdxDict::Dict{Int,Int}
+  busOriginalNameDict::Dict{Int,String}
   totalLosses::Vector{Tuple{Float64,Float64}}
   totalBusPower::Vector{Tuple{Float64,Float64}}
   _locked::Bool
@@ -100,6 +105,9 @@ mutable struct Net
   measurements::Vector
   bus_shunt_model::Symbol
   control_result::Union{Nothing,ControlRunResult}
+  matpower_branch_metadata::Dict{Int,NamedTuple}
+  for001Contingencies::Vector{String}
+  matpowerDclineMetadata::Vector{NamedTuple}
 
   #! format: off
   function Net(; name::String, baseMVA::Float64, vmin_pu::Float64 = 0.9, vmax_pu::Float64 = 1.1, cooldown_iters::Int = 0, q_hyst_pu::Float64 = 0.0, flatstart::Bool = false, bus_shunt_model = :admittance)    
@@ -119,6 +127,7 @@ mutable struct Net
         [], # shuntVec
         Dict{String,Int}(), # busDict
         Dict{Int,Int}(), # busOrigIdxDict
+        Dict{Int,String}(), # busOriginalNameDict
         [], # totalLosses
         [], # totalBusPower
         false, # _locked
@@ -134,7 +143,10 @@ mutable struct Net
         Dict{Int,Symbol}(),
         [],
         shunt_model,
-        nothing)
+        nothing,
+        Dict{Int,NamedTuple}(),
+        String[],
+        NamedTuple[])
   end
   #! format: on
   function Base.show(io::IO, net::Net)
@@ -845,6 +857,7 @@ function _addPIModelTrafo_by_idx!(;
   r_pu::Float64,
   x_pu::Float64,
   b_pu::Float64,
+  g_pu::Float64 = 0.0,
   status::Int,
   ratedU::Union{Nothing,Float64} = nothing,
   ratedS::Union{Nothing,Float64} = nothing,
@@ -857,7 +870,7 @@ function _addPIModelTrafo_by_idx!(;
   @assert from != to "From and to bus must be different"
   vn_hv_kV = getNodeVn(net.nodeVec[from])
   vn_lv_kV = getNodeVn(net.nodeVec[to])
-  w1 = PowerTransformerWinding(vn_hv_kV, r_pu, x_pu, b_pu, 0.0, ratio, shift_deg, ratedU, ratedS, nothing, true)
+  w1 = PowerTransformerWinding(vn_hv_kV, r_pu, x_pu, b_pu, g_pu, ratio, shift_deg, ratedU, ratedS, nothing, true)
   w2 = PowerTransformerWinding(vn_lv_kV, 0.0, 0.0)
   if !isnothing(controls)
     if side == 1

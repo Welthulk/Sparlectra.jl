@@ -90,13 +90,41 @@ function _perf_profile_time!(f::F, profile, phase::Symbol) where {F}
   if !_perf_profile_enabled(profile)
     return f()
   elseif _perf_profile_wants_allocations(profile)
-    timed = @timed f()
-    _perf_profile_add!(profile, phase, timed.time, timed.bytes)
-    return timed.value
+    t0 = time_ns()
+    completed = false
+    timed = nothing
+    try
+      timed = @timed f()
+      completed = true
+      _perf_profile_add!(profile, phase, timed.time, timed.bytes)
+      return timed.value
+    finally
+      completed || _perf_profile_add!(profile, phase, (time_ns() - t0) / 1e9, 0)
+    end
   else
     t0 = time_ns()
-    value = f()
-    _perf_profile_add!(profile, phase, (time_ns() - t0) / 1e9, 0)
-    return value
+    completed = false
+    try
+      value = f()
+      completed = true
+      _perf_profile_add!(profile, phase, (time_ns() - t0) / 1e9, 0)
+      return value
+    finally
+      completed || _perf_profile_add!(profile, phase, (time_ns() - t0) / 1e9, 0)
+    end
   end
+end
+
+function _solver_elapsed_from_profile(profile)
+  timings = profile isa AbstractDict ? get(profile, :timings, nothing) : nothing
+  row = timings isa AbstractDict ? get(timings, :solver_total, nothing) : nothing
+  if row isa NamedTuple && hasproperty(row, :elapsed_s)
+    elapsed = Float64(row.elapsed_s)
+    return isfinite(elapsed) ? max(0.0, elapsed) : nothing
+  end
+  legacy_row = profile isa AbstractDict ? get(profile, :solver_total, nothing) : nothing
+  elapsed =
+    legacy_row isa NamedTuple && hasproperty(legacy_row, :elapsed_s) ? Float64(legacy_row.elapsed_s) :
+    legacy_row isa Number ? Float64(legacy_row) : nothing
+  return elapsed !== nothing && isfinite(elapsed) ? max(0.0, elapsed) : nothing
 end

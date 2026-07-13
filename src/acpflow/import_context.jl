@@ -93,20 +93,22 @@ function _import_sparlectra_context(casefile::String, path::Union{Nothing,String
   mpc = _perf_profile_time!(performance_profile, :matpower_case_parse) do
     MatpowerIO.read_case(filename; legacy_compat = true)
   end
-  try
-    MatpowerIO.assert_no_active_dcline(mpc; casefile = filename)
-  catch err
-    if err isa MatpowerIO.UnsupportedMatpowerDclineError
-      details = err.details
-      println(stdout, "matpower_dcline_detected")
-      println(stdout, "matpower_dcline_unsupported")
-      println(stdout, "powerflow_aborted_unsupported_matpower_dcline")
-      println(stdout, err.message)
-      if performance_profile isa AbstractDict
-        performance_profile[:unsupported_matpower_dcline] = details
+  if mat_cfg.matpower_dcline_mode !== :pf_injections
+    try
+      MatpowerIO.assert_no_active_dcline(mpc; casefile = filename)
+    catch err
+      if err isa MatpowerIO.UnsupportedMatpowerDclineError
+        details = err.details
+        println(stdout, "matpower_dcline_detected")
+        println(stdout, "matpower_dcline_unsupported")
+        println(stdout, "powerflow_aborted_unsupported_matpower_dcline")
+        println(stdout, err.message)
+        if performance_profile isa AbstractDict
+          performance_profile[:unsupported_matpower_dcline] = details
+        end
       end
+      rethrow()
     end
-    rethrow()
   end
   auto_profile_result = nothing
   println(stdout, "Runtime casefile: ", filename)
@@ -143,6 +145,11 @@ function _import_sparlectra_context(casefile::String, path::Union{Nothing,String
       matpower_ratio = mat_cfg.ratio,
       matpower_pv_voltage_source = mat_cfg.pv_voltage_source,
       matpower_pv_voltage_mismatch_tol_pu = mat_cfg.pv_voltage_mismatch_tol_pu,
+      apply_bus_names = mat_cfg.apply_bus_names,
+      apply_branch_names = mat_cfg.apply_branch_names,
+      apply_branch_kind = mat_cfg.apply_branch_kind,
+      import_for001_contingencies = mat_cfg.import_for001_contingencies,
+      matpower_dcline_mode = mat_cfg.matpower_dcline_mode,
       preallocate_network = mat_cfg.preallocate_network,
       preallocate_min_buses = mat_cfg.preallocate_min_buses,
       profile = performance_profile,

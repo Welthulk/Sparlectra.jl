@@ -12,6 +12,10 @@ This page summarizes the most relevant runnable examples in `examples/`.
   Synthetic tiled-grid PF performance example.
 - `exp_configured_matpower_cases.jl`
   Runs ordered `matpower_import.cases` entries sequentially through `run_sparlectra_cases`.
+- `exp_transformer_loss_extension.jl`
+  Demonstrates Sparlectra's MATPOWER transformer-loss extension by exporting a
+  small transformer case with active no-load conductance metadata and reimporting
+  it without double-counting the equivalent bus shunts.
 - `exp_programmatic_api.jl`
   Runs one MATPOWER case through the GUI-ready `run_sparlectra_api` contract and lists explicit artifacts.
 - `exp_current_iteration_start.jl`

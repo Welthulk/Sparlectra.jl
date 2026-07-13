@@ -27,6 +27,27 @@ function _write_service_phase_summary(io::IO, phase_timings::AbstractVector)
   return nothing
 end
 
+function _service_total_timing(total_start_ns::UInt64; status::AbstractString = "completed")
+  elapsed = max(0.0, (time_ns() - total_start_ns) / 1.0e9)
+  ended_at = _api_datetime_string(Dates.now(Dates.UTC))
+  return Dict{String,Any}(
+    "phase" => "total_service",
+    "started_at" => nothing,
+    "ended_at" => ended_at,
+    "elapsed_seconds" => isfinite(elapsed) ? elapsed : 0.0,
+    "status" => String(status),
+    "timing_role" => "envelope",
+  )
+end
+
+function _finalize_service_timings!(phase_recorder::PowerFlowPhaseTimingRecorder, total_start_ns::UInt64; status::AbstractString = "completed")
+  _complete_active_phase!(phase_recorder, status)
+  filter!(timing -> get(timing, "phase", "") != "total_service", phase_recorder.timings)
+  push!(phase_recorder.timings, _service_total_timing(total_start_ns; status = status))
+  phase_recorder.active_index = nothing
+  return phase_recorder.timings
+end
+
 function _write_large_case_timing_summary(io::IO, case_path::AbstractString, phase_timings::AbstractVector, result::Union{Nothing,SparlectraRunResult})
   println(io, "Large case timing summary")
   println(io, "-------------------------")
@@ -37,13 +58,15 @@ function _write_large_case_timing_summary(io::IO, case_path::AbstractString, pha
     println(io, "n_bus: ", length(result.net.nodeVec))
     println(io, "n_branch: ", length(result.net.branchVec))
   end
+  if result !== nothing && result.solver_elapsed_s !== nothing
+    println(io, "solver_elapsed_s: ", round(Float64(result.solver_elapsed_s); digits = 6))
+  end
   for (label, phase) in (
     ("reading_matpower_case_seconds", "reading_matpower_case"),
     ("building_sparlectra_net_seconds", "building_sparlectra_net"),
     ("building_ybus_seconds", "building_ybus"),
     ("preparing_start_values_seconds", "preparing_start_values"),
     ("start_projection_seconds", "start_projection"),
-    ("solving_powerflow_seconds", "solving_powerflow"),
     ("artifact_seconds", "writing_artifacts"),
     ("total_service_seconds", "total_service"),
   )
@@ -63,6 +86,11 @@ function _resolved_matpower_import_runtime_options(config::SparlectraConfig)::Di
     "matpower_bus_shunt_model" => String(config.matpower.bus_shunt_model),
     "matpower_pv_voltage_source" => String(config.matpower.pv_voltage_source),
     "matpower_compare_reference" => String(config.matpower.compare_voltage_reference),
+    "matpower_apply_bus_names" => config.matpower.apply_bus_names,
+    "matpower_apply_branch_names" => config.matpower.apply_branch_names,
+    "matpower_apply_branch_kind" => config.matpower.apply_branch_kind,
+    "matpower_import_for001_contingencies" => config.matpower.import_for001_contingencies,
+    "matpower_dcline_mode" => String(config.matpower.matpower_dcline_mode),
   )
 end
 
@@ -173,4 +201,3 @@ function _write_performance_log(path::AbstractString, mode::Symbol, phases::Abst
   end
   return path
 end
-

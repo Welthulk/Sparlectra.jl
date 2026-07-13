@@ -1,3 +1,52 @@
+# Version 0.8.9 — 2026-07-16
+
+## New Features
+
+* Added multi-file import for MATPOWER `.m` and DFT `.DAT` cases in the Web UI. Imported runnable cases are added to the case selector.
+
+### Improvements
+
+* Enabled MATPOWER DC-line handling through terminal P/Q injections by default.
+* Enabled independent AC-island solving and continued per-island diagnostics by default.
+* Added SyntheticUSA diagnostics and documented the validated solver profile.
+* Improved Web UI file-import validation, filename handling, conflict reporting, and per-file status output.
+* Split the test suite into a compact fast profile and separate extended integration and stress tests.
+
+### Bug Fixes
+
+* Separated numerical `Solver time` from overall `Total time` in API and Web UI results, including failed solver runs.
+* Fixed timing persistence in `result.json`, `performance.log`, and large-case summaries.
+* Improved test-run diagnostics, bounded failure output, and excluded generated files from repository-hygiene checks.
+* Made DFT `.DAT` classification content-aware so only runnable cases and valid FOR002 references appear in the corresponding selectors.
+* Improved the tolerance spinner behavior in the Web UI.
+* Hidden unavailable commit information instead of displaying `commit unknown`.
+
+# Version 0.8.8 — 2026-07-14
+
+### New Features
+
+* Added native DFT import with support for transformer ratio conventions, Schrägregler/skew-angle controls, trailing branch records, and FOR001 contingency metadata.
+* Added an experimental DFT input path for the PowerFlow API and Web UI, including optional MATPOWER export, outage selection, import diagnostics, and explicit handling of unsupported DC-line data.
+* Extended MATPOWER import and export with Sparlectra metadata for bus and branch names, branch types, FOR001 contingencies, and transformer loss data.
+* Added support for the existing `mpc.sparlectra.transformer_losses` extension so transformer no-load conductance can be preserved across Sparlectra–MATPOWER roundtrips.
+* Added optional MATPOWER DC-line handling through fixed terminal power injections while keeping rejection of active DC-line records as the default.
+* Added user-facing documentation for the DFT format, transformer conventions, Schrägregler controls, trailing records, and FOR002 validation.
+
+### Improvements
+
+* Improved AC-island diagnostics and failure reporting, including per-island status, reference-bus selection, solver settings, mismatch information, Q-limit state, and downloadable diagnostic artifacts.
+* Improved API failure handling so non-converged runs retain their generated artifacts and remain available for ZIP download.
+* Improved Linux Web UI browser startup by using Chromium app windows where available and falling back cleanly to standard desktop browser launchers.
+* Added validation workflows for FOR002 cases A–E, including transformer ratios, branch identity, no-load losses, shunt sensitivity, outage handling, and MATPOWER roundtrip checks.
+* Simplified the DTF/FOR002 validation examples so normal use prints a concise summary while detailed diagnostics remain available on demand.
+
+### Bug Fixes
+
+* Preserved transformer conductance through the existing `PowerTransformerWinding.g` → `getTrafoRXBG` / `getTrafoRXBG_pu` → `Branch.g_pu` path without creating synthetic terminal bus shunts.
+* Fixed MATPOWER reimport so `mpc.sparlectra.transformer_losses` restores transformer conductance correctly and does not duplicate loss contributions.
+* Fixed transformer loss reporting so total branch losses can be separated into longitudinal copper losses and voltage-dependent no-load losses.
+* Fixed the Web UI case selector so internal warm-up cases are no longer shown as selectable user cases.
+
 ## Version 0.8.7 – 2026-06-23
 
 ### New Features

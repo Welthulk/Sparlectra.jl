@@ -35,6 +35,14 @@ function _webui_option(value, label, selected)
   return "<option value=\"$(_webui_escape(value))\"$(marker)>$(_webui_escape(label))</option>"
 end
 
+function _webui_case_import_message(imported::Vector{String}, rejected)::String
+  lines = String[]
+  isempty(imported) || push!(lines, "Imported $(length(imported)) file$(length(imported) == 1 ? "" : "s"): $(join(imported, ", ")).")
+  isempty(rejected) || push!(lines, "Rejected $(length(rejected)) file$(length(rejected) == 1 ? "" : "s"): " * join(("$(first(item)): $(last(item))" for item in rejected), "; ") * ".")
+  isempty(lines) && push!(lines, "No files were selected for import.")
+  return join(lines, " ")
+end
+
 function _webui_select(name, values, selected)
   options = join((_webui_option(value, replace(_webui_form_string(value), '_' => ' '), selected) for value in values), "")
   return "<select id=\"$(name)\" name=\"$(name)\">$(options)</select>"
@@ -84,13 +92,44 @@ function _webui_elapsed_seconds(result::AbstractDict, active::Bool)
   return max(0.0, Dates.value(Dates.now(Dates.UTC) - started) / 1000)
 end
 
+function _webui_phase_elapsed_seconds(result::AbstractDict, phase::AbstractString)
+  timings = get(result, "service_phase_timings", Any[])
+  timings isa AbstractVector || return nothing
+  for timing in timings
+    timing isa AbstractDict || continue
+    get(timing, "phase", "") == phase || continue
+    elapsed = get(timing, "elapsed_seconds", nothing)
+    elapsed === nothing && return nothing
+    parsed = elapsed isa Number ? Float64(elapsed) : tryparse(Float64, string(elapsed))
+    return parsed !== nothing && isfinite(parsed) ? max(0.0, parsed) : nothing
+  end
+  return nothing
+end
+
+function _webui_solver_elapsed_seconds(result::AbstractDict)
+  elapsed = get(result, "solver_elapsed_s", get(get(result, "metadata", Dict{String,Any}()), "solver_elapsed_s", nothing))
+  elapsed === nothing && return nothing
+  parsed = elapsed isa Number ? Float64(elapsed) : tryparse(Float64, string(elapsed))
+  return parsed !== nothing && isfinite(parsed) ? max(0.0, parsed) : nothing
+end
+
+function _webui_total_elapsed_seconds(result::AbstractDict)
+  total = _webui_phase_elapsed_seconds(result, "total_service")
+  total !== nothing && return total
+  elapsed = get(result, "elapsed_seconds", nothing)
+  elapsed === nothing && return nothing
+  parsed = elapsed isa Number ? Float64(elapsed) : tryparse(Float64, string(elapsed))
+  return parsed !== nothing && isfinite(parsed) ? max(0.0, parsed) : nothing
+end
+
 function _webui_layout(title::AbstractString, content::AbstractString; show_back::Bool = false, main_class::AbstractString = "page", refresh_url = nothing, refresh_seconds::Integer = WEBUI_STATUS_AUTO_REFRESH_SECONDS, header_info::AbstractString = "")::String
   back_button = show_back ? "<div class=\"page-toolbar\"><a class=\"button back-button\" href=\"/powerflow\" onclick=\"if (document.referrer.startsWith(location.origin)) { history.back(); return false; }\" aria-label=\"Go back to the previous page\">← Back</a></div>" : ""
   version_text = "Sparlectra.jl v$(version())"
   package_path = _sparlectra_package_path()
   commit_sha = _sparlectra_git_commit_sha()
-  commit_text = commit_sha === nothing ? "unknown" : first(commit_sha, min(7, length(commit_sha)))
-  runtime_info = "<span class=\"runtime-info\" title=\"Package path: $(_webui_escape(package_path))\"><span class=\"runtime-title\">$(_webui_escape(version_text))</span><span class=\"runtime-commit\">commit $(_webui_escape(commit_text))</span></span>"
+  commit_text = commit_sha === nothing || isempty(strip(String(commit_sha))) ? "" : first(commit_sha, min(7, length(commit_sha)))
+  commit_html = isempty(commit_text) ? "" : "<span class=\"runtime-commit\">commit $(_webui_escape(commit_text))</span>"
+  runtime_info = "<span class=\"runtime-info\" title=\"Package path: $(_webui_escape(package_path))\"><span class=\"runtime-title\">$(_webui_escape(version_text))</span>$(commit_html)</span>"
   refresh_meta = refresh_url === nothing ? "" : "<meta http-equiv=\"refresh\" content=\"$(refresh_seconds); url=$(_webui_escape(refresh_url))\">"
   return """<!doctype html>
 <html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">
@@ -225,25 +264,51 @@ function render_powerflow_form(;
   config_notice = nothing,
   case_profile = nothing,
   submitted_form = nothing,
+  import_message::AbstractString = "",
 )::String
   profile_values = webui_form_state(; selected_casefile, selected_config_file, sidecar_profile = case_profile, submitted_form)
   profile_path = String(get(profile_values, "_profile_path", ""))
   profile_location = isempty(profile_path) ? "the sidecar profile" : "<code>$(_webui_escape(profile_path))</code>"
   profile_notice = isempty(profile_path) ? "" : "<div class=\"alert info case-settings-notice\" role=\"status\"><strong>Case-specific settings loaded from $(profile_location).</strong> Saved Web UI settings prefilled the form. Manual edits on this page override the profile for this run.</div>"
   error_html = _webui_error_alert_html(error_message)
+  import_html = isempty(strip(import_message)) ? "" : "<div class=\"alert info case-import-result\" role=\"status\">$(_webui_escape(import_message))</div>"
   casefiles = case_directory === nothing ? _webui_casefile_options(application_root) : _webui_casefile_options_in_directory(case_directory)
   bundled_case_directory = joinpath(application_root, "data", "mpower")
   effective_case_directory = case_directory === nothing ? bundled_case_directory : String(case_directory)
+  for002_candidates = _webui_for002_reference_options_in_directory(effective_case_directory)
   selected_value = strip(selected_casefile)
   existing_value = selected_value in casefiles ? selected_value : ""
   manual_value = isempty(existing_value) ? selected_value : ""
+  if submitted_form isa AbstractDict
+    submitted_existing = strip(_webui_form_string(get(profile_values, "casefile", existing_value)))
+    submitted_manual = strip(_webui_form_string(get(profile_values, "casefile_manual", manual_value)))
+    existing_value = submitted_existing in casefiles ? submitted_existing : ""
+    manual_value = submitted_manual
+  end
+  explicit_case_format = submitted_form isa AbstractDict && _webui_form_value(submitted_form, "case_format", nothing) !== nothing
+  effective_case_value = isempty(strip(manual_value)) ? existing_value : manual_value
+  case_format_value = if explicit_case_format
+    strip(_webui_form_string(_webui_form_value(submitted_form, "case_format", "auto")))
+  elseif _webui_is_dat_casefile(effective_case_value)
+    "dtf_for001"
+  else
+    "auto"
+  end
+  dat_case_assistance = _webui_is_dat_casefile(effective_case_value)
+  dtf_details_attrs = dat_case_assistance ? " class=\"span-2 dtf-internal-section is-dat-selected\" open" : " class=\"span-2 dtf-internal-section\""
+  dat_hint_html = dat_case_assistance ? "<p id=\"dtf-dat-format-hint\" class=\"field-hint dat-format-hint span-2\" role=\"status\"><strong>.DAT selected:</strong> using internal DFT diagnostics.</p>" : "<p id=\"dtf-dat-format-hint\" class=\"field-hint dat-format-hint span-2\" role=\"status\" hidden></p>"
   case_options = join((begin
     has_settings = isfile(_webui_case_settings_path(output_root, casefile; case_directory = effective_case_directory))
     label = has_settings ? "$(casefile) ★" : casefile
     "<option value=\"$(_webui_escape(casefile))\"$(casefile == existing_value ? " selected" : "")>$(_webui_escape(label))</option>"
   end for casefile in casefiles), "")
   case_select = "<select id=\"casefile\" name=\"casefile\" data-case-settings-reload=\"true\"><option value=\"\">-- choose existing case --</option>$(case_options)</select>"
-  case_manual = "<input id=\"casefile_manual\" name=\"casefile_manual\" value=\"$(_webui_escape(manual_value))\" placeholder=\"case14.m\">"
+  case_manual = "<input id=\"casefile_manual\" name=\"casefile_manual\" value=\"$(_webui_escape(manual_value))\" placeholder=\"case14.m or /path/to/FOR001.DAT\">"
+  for002_reference_value = submitted_form isa AbstractDict ? strip(_webui_form_string(_webui_form_value(submitted_form, "for002_reference_file", ""))) : ""
+  for002_list_options = join(("<option value=\"$(_webui_escape(candidate))\">$(_webui_escape(candidate))</option>" for candidate in for002_candidates), "")
+  for002_list_html = isempty(for002_candidates) ? "" : "<datalist id=\"for002-reference-candidates\">$(for002_list_options)</datalist>"
+  for002_list_attr = isempty(for002_candidates) ? "" : " list=\"for002-reference-candidates\""
+  for002_hint = isempty(for002_candidates) ? "Used only for legacy reference comparison diagnostics; enter an absolute path or a path copied from the same case cache directory." : "Used only for legacy reference comparison diagnostics. FOR002.DAT is available in the case cache and can be selected here, or enter an absolute/manual path."
   config_default = isempty(selected_config_file) ? DEFAULT_SPARLECTRA_CONFIG_PATH : selected_config_file
   config_control = "<input type=\"hidden\" name=\"config_file\" value=\"$(_webui_escape(config_default))\">"
   info_menu = _webui_powerflow_info_menu(; output_root, config_file = config_default, case_directory = effective_case_directory, operation_log)
@@ -252,16 +317,37 @@ function render_powerflow_form(;
 <fieldset id="configuration-maintenance" class="config-maintenance">
 <legend>Configuration maintenance</legend>
 <p class="field-hint span-2">Check or explicitly refresh the selected YAML configuration. Refresh creates a backup and rewrites the selected YAML in canonical Sparlectra format. Existing option values are preserved, but comments and ordering may not be preserved. Restart or reload the Web UI after refresh. Startup and page-load checks never rewrite YAML automatically.</p>
-<div class="actions span-2"><button class="secondary-button" type="submit" formaction="/powerflow/config/check" formmethod="post">Check configuration</button><button class="secondary-button" type="submit" formaction="/powerflow/config/refresh" formmethod="post">Refresh configuration</button></div>
+<div class="actions span-2"><a class="secondary-button" href="/powerflow/config/edit?config_file=$(_webui_urlencode(config_default))">Configuration Editor</a><button class="secondary-button" type="submit" formaction="/powerflow/config/check" formmethod="post">Check configuration</button><button class="secondary-button" type="submit" formaction="/powerflow/config/refresh" formmethod="post">Refresh configuration</button></div>
 </fieldset>
 """
+  import_form = """
+<form id=\"case-import-form\" method=\"post\" action=\"/powerflow/import-cases\" enctype=\"multipart/form-data\" class=\"panel form-grid case-import-form\">
+<label class=\"span-2\"><span class=\"field-label\">Import case files</span><input type=\"file\" name=\"casefiles\" accept=\".m,.M,.dat,.DAT\" multiple><small class=\"field-hint\">Select one or more MATPOWER (.m) or DFT (.DAT) files. Importing files copies them to <code>$(_webui_escape(effective_case_directory))</code>, classifies their role, and does not start a PowerFlow calculation. Limits: 100 MiB per file, 250 MiB per request.</small></label>
+<div class=\"actions span-2\"><button class=\"secondary-button\" type=\"submit\">Import case files</button></div>
+</form>
+"""
   form = """
-$(error_html)$(_webui_active_run_banner(active_run))$(notice_html)$(profile_notice)<p class=\"lede\">Run a local MATPOWER case through the Sparlectra PowerFlow service.</p>
+$(error_html)$(import_html)$(_webui_active_run_banner(active_run))$(notice_html)$(profile_notice)<p class=\"lede\">Run a local MATPOWER case through the Sparlectra PowerFlow service.</p>
+$(import_form)
 <form id=\"powerflow-run-form\" data-powerflow-form method=\"post\" action=\"/powerflow/run\" class=\"panel form-grid powerflow-form-card\" onsubmit=\"this.classList.add('is-submitting'); this.setAttribute('aria-busy', 'true'); this.querySelector('button[type=submit]').disabled = true;\">
 $(config_control)
-<label>$(_webui_field_label("casefile", "Existing MATPOWER case"))$(case_select)<small class="field-hint">Cases from <code>$(_webui_escape(effective_case_directory))</code></small></label>
-<label><span class="field-label">Or type/download MATPOWER case</span>$(case_manual)<small class="field-hint">Manual input overrides the existing-case selection.</small></label>
-<label>$(_webui_field_label("power_flow_tol", "PowerFlow tolerance"))<input name=\"power_flow_tol\" type=\"number\" step=\"any\" min=\"0\" value=\"$(_webui_input_value(profile_values, "power_flow_tol", _webui_option_default("power_flow_tol")))\"></label>
+<label>$(_webui_field_label("casefile", "Existing case file"))$(case_select)<small class="field-hint">Cases from <code>$(_webui_escape(effective_case_directory))</code></small></label>
+<label><span class="field-label">Or type case file path</span>$(case_manual)<small class="field-hint">Manual input overrides the existing-case selection.</small></label>
+$(dat_hint_html)
+<details$(dtf_details_attrs)>
+<summary>Input format</summary>
+<fieldset>
+<p class="field-hint span-2">Default remains MATPOWER-oriented. The native DFT path is experimental/internal and intended for diagnostics and validation.</p>
+<label><span class="field-label">Case input format</span><select name="case_format"><option value="auto"$(_webui_form_string(case_format_value) == "auto" ? " selected" : "")>Auto</option><option value="matpower"$(_webui_form_string(case_format_value) == "matpower" ? " selected" : "")>MATPOWER</option><option value="dtf_for001"$(_webui_form_string(case_format_value) == "dtf_for001" ? " selected" : "")>DFT diagnostics (experimental/internal)</option></select></label>
+<label><span class="field-label">Optional FOR002 reference file</span><input name="for002_reference_file" value=\"$(_webui_escape(for002_reference_value))\" placeholder="examples/FOR002.DAT"$for002_list_attr>$(for002_list_html)<small class="field-hint">$(_webui_escape(for002_hint))</small></label>
+<label><span class="field-label">DFT outage run mode</span><select name="dtf_outage_selection_mode"><option value="none">Run base case only</option><option value="all">Run all DFT outage records</option><option value="selected">Run selected DFT outage records</option></select></label>
+<label><span class="field-label">Selected DFT outage labels/indices</span><input name="dtf_outage_selection" placeholder="1 or L1 ALPHA S1 -> BETA1 S1"><small class="field-hint">For selected mode, enter one parsed label or outage index. The result page reports the compact outage summary; detailed rows stay in artifacts.</small></label>
+<label class="check"><input name="write_outage_artifacts" type="hidden" value="false"><input name="write_outage_artifacts" type="checkbox" value="true" checked>Write DFT outage artifacts</label>
+<label class="check"><input name="matpower_export_requested" type="hidden" value="false"><input name="matpower_export_requested" type="checkbox" value="true">Write MATPOWER export artifact</label>
+<label class="check"><input name="write_outage_matpower_exports" type="hidden" value="false"><input name="write_outage_matpower_exports" type="checkbox" value="true">Write MATPOWER outage exports</label>
+</fieldset>
+</details>
+<label>$(_webui_field_label("power_flow_tol", "PowerFlow tolerance"))<input name=\"power_flow_tol\" type=\"number\" data-tolerance-step=\"dynamic\" step=\"1e-9\" min=\"0\" value=\"$(_webui_input_value(profile_values, "power_flow_tol", _webui_option_default("power_flow_tol")))\"></label>
 <label>$(_webui_field_label("power_flow_max_iter", "Maximum iterations"))<input name=\"power_flow_max_iter\" type=\"number\" min=\"1\" value=\"$(_webui_input_value(profile_values, "power_flow_max_iter", _webui_option_default("power_flow_max_iter")))\"></label>
 <label class=\"check\"><input name=\"power_flow_autodamp\" type=\"hidden\" value=\"false\"><input name=\"power_flow_autodamp\" type=\"checkbox\" value=\"true\"$(_webui_checked(profile_values, "power_flow_autodamp", _webui_option_default("power_flow_autodamp")))>$(_webui_field_label("power_flow_autodamp", "Autodamping enabled"))</label>
 <label>$(_webui_field_label("power_flow_autodamp_min", "Autodamping minimum"))<input name=\"power_flow_autodamp_min\" type=\"number\" step=\"any\" min=\"0\" max=\"1\" value=\"$(_webui_input_value(profile_values, "power_flow_autodamp_min", _webui_option_default("power_flow_autodamp_min")))\"></label>
@@ -314,6 +400,7 @@ $(config_maintenance)
 <label>$(_webui_field_label("benchmark_samples", "Benchmark samples (max. repeated measurements)"))<input name=\"benchmark_samples\" type=\"number\" min=\"1\" value=\"$(_webui_input_value(profile_values, "benchmark_samples", _webui_option_default("benchmark_samples")))\"><small class=\"field-hint\">Maximum repeated timing measurements for each selected method. The benchmark may finish earlier when this count is reached before the time budget, or collect fewer samples when the time budget is reached first.</small></label>
 <label>$(_webui_field_label("benchmark_seconds", "Benchmark max. time budget [s]"))<input name=\"benchmark_seconds\" type=\"number\" step=\"any\" min=\"0\" value=\"$(_webui_input_value(profile_values, "benchmark_seconds", _webui_option_default("benchmark_seconds")))\"><small class=\"field-hint\">Maximum BenchmarkTools time budget for repeated timing measurements. This is not a minimum runtime, solver timeout, or iteration limit; a running sample is not interrupted.</small></label>
 </fieldset>
+<label class=\"check span-2\"><input name=\"ignore_webui_settings\" type=\"hidden\" value=\"false\"><input name=\"ignore_webui_settings\" type=\"checkbox\" value=\"true\">Ignore Web UI settings and use configuration defaults<small class=\"field-hint\">Leave unchecked for normal runs so values entered on this page are applied. Check only to ignore the Web UI controls for this run and use the selected YAML/default configuration.</small></label>
 </details>
 <div class=\"span-2 actions\"><button class=\"powerflow-submit\" type=\"submit\"><span class=\"submit-spinner\" aria-hidden=\"true\"></span><span class=\"submit-label\">Start PowerFlow run</span><span class=\"submit-progress-label\" role=\"status\" aria-live=\"polite\">Running PowerFlow…</span></button></div></form>
 <script>
@@ -338,6 +425,33 @@ document.addEventListener('DOMContentLoaded', function () {
     csvFormat.value = defaultFormat;
   }
   const caseSelect = document.querySelector('select[name="casefile"][data-case-settings-reload="true"]');
+  const caseManual = document.querySelector('input[name="casefile_manual"]');
+  const caseFormat = document.querySelector('select[name="case_format"]');
+  const dtfInternalSection = document.querySelector('.dtf-internal-section');
+  const datFormatHint = document.getElementById('dtf-dat-format-hint');
+  const updateDatCaseAssistance = function () {
+    const manualValue = caseManual === null ? '' : caseManual.value.trim();
+    const selectedValue = caseSelect === null ? '' : caseSelect.value.trim();
+    const effectiveValue = manualValue === '' ? selectedValue : manualValue;
+    const isDatCase = new RegExp('\\\\.dat\$', 'i').test(effectiveValue);
+    if (isDatCase && caseFormat !== null) caseFormat.value = 'dtf_for001';
+    if (dtfInternalSection !== null) {
+      dtfInternalSection.classList.toggle('is-dat-selected', isDatCase);
+      if (isDatCase) dtfInternalSection.open = true;
+    }
+    if (datFormatHint !== null) {
+      datFormatHint.hidden = !isDatCase;
+      datFormatHint.textContent = isDatCase ? '.DAT selected: using internal DFT diagnostics.' : '';
+    }
+  };
+  updateDatCaseAssistance();
+  if (caseManual !== null) {
+    caseManual.addEventListener('input', updateDatCaseAssistance);
+    caseManual.addEventListener('change', updateDatCaseAssistance);
+  }
+  if (caseSelect !== null) {
+    caseSelect.addEventListener('change', updateDatCaseAssistance);
+  }
   if (caseSelect !== null) {
     caseSelect.addEventListener('change', function () {
       if (caseSelect.value === '') return;
@@ -349,6 +463,25 @@ document.addEventListener('DOMContentLoaded', function () {
       }
       window.location.href = target.pathname + target.search;
     });
+  }
+  const toleranceInput = document.querySelector('input[name="power_flow_tol"][data-tolerance-step="dynamic"]');
+  const toleranceStep = function (valueText) {
+    const value = Number(valueText);
+    if (!Number.isFinite(value) || value <= 0) return '1e-9';
+    const exponent = Math.floor(Math.log10(value));
+    const mantissa = value / Math.pow(10, exponent);
+    const factor = (mantissa <= 1.000000000001 && value >= 1e-4) ? 0.5 : (mantissa <= 1.000000000001 ? 0.9 : 0.5);
+    const step = factor * Math.pow(10, exponent);
+    return step.toExponential(15).replace(/0+e/, 'e').replace(/\\.e/, 'e');
+  };
+  if (toleranceInput !== null) {
+    const updateToleranceStep = function () {
+      toleranceInput.step = toleranceStep(toleranceInput.value);
+      toleranceInput.dataset.currentStep = toleranceInput.step;
+    };
+    updateToleranceStep();
+    toleranceInput.addEventListener('input', updateToleranceStep);
+    toleranceInput.addEventListener('change', updateToleranceStep);
   }
 });
 
@@ -376,6 +509,20 @@ const _WEBUI_RESULT_FIELDS = (
   "final_mismatch",
   "reason",
   "message",
+  "input_format",
+  "input_format_detected",
+  "native_dtf_import_used",
+  "dtf_bus_count",
+  "dtf_branch_count",
+  "dtf_outage_count",
+  "dtf_slack_bus",
+  "for002_reference_used",
+  "outage_validation_requested",
+  "matpower_export_requested",
+  "matpower_export_file",
+  "dcline_status",
+  "unsupported_dcline_status",
+  "dtf_outage_results",
   "Q-limit enforcement mode",
   "Q-limit active-set events",
   "Classical Q-limit outer-loop passes",
@@ -417,7 +564,8 @@ function _webui_result_value(result::AbstractDict, field::AbstractString)
   elseif field == "Configured default case"
     return get(result, "configured_default_casefile", get(get(result, "metadata", Dict{String,Any}()), "configured_default_casefile", "n/a"))
   end
-  value = get(result, field, nothing)
+  metadata = get(result, "metadata", Dict{String,Any}())
+  value = get(result, field, get(metadata, field, nothing))
   value === nothing && return field in _WEBUI_IMPORTANT_RESULT_FIELDS ? "n/a" : ""
   value isa AbstractString && isempty(value) && return field in _WEBUI_IMPORTANT_RESULT_FIELDS ? "n/a" : ""
   return value
@@ -483,9 +631,16 @@ function render_powerflow_result(result::AbstractDict)::String
   status = lowercase(string(get(result, "status", "unknown")))
   active = status in _WEBUI_ACTIVE_RUN_STATUSES
   status_badge = "<span class=\"status-badge $(webui_status_class(result))\">$(_webui_escape(status))</span>"
-  elapsed_duration = _format_elapsed_duration(_webui_elapsed_seconds(result, active))
-  summary_rows = (("Run status", status_badge), ("Elapsed time", "<strong>$(_webui_escape(elapsed_duration))</strong>"))
-  result_summary = "<div class=\"result-summary\">" * join(("<div$(label == "Elapsed time" ? " class=\"runtime-card\"" : "")><span class=\"summary-label\">$(label)</span>$(value)</div>" for (label, value) in summary_rows), "") * "</div>"
+  summary_rows = if active
+    (("Run status", status_badge), ("Elapsed time", "<strong>$(_webui_escape(_format_elapsed_duration(_webui_elapsed_seconds(result, active))))</strong>"))
+  else
+    base = [("Run status", status_badge)]
+    solver_elapsed = _webui_solver_elapsed_seconds(result)
+    solver_elapsed === nothing || push!(base, ("Solver time", "<strong>$(_webui_escape(_format_elapsed_duration(solver_elapsed)))</strong>"))
+    push!(base, ("Total time", "<strong>$(_webui_escape(_format_elapsed_duration(_webui_total_elapsed_seconds(result))))</strong>"))
+    Tuple(base)
+  end
+  result_summary = "<div class=\"result-summary\">" * join(("<div$(label in ("Elapsed time", "Solver time", "Total time") ? " class=\"runtime-card\"" : "")><span class=\"summary-label\">$(label)</span>$(value)</div>" for (label, value) in summary_rows), "") * "</div>"
   abort_form = status in ("queued", "running") ? "<form method=\"post\" action=\"/powerflow/abort/$(_webui_urlencode(run_id))\"><button type=\"submit\" class=\"danger-button\">Abort run</button></form>" : ""
   active_hint = active ? "<p class=\"status-refresh-hint\">This page refreshes automatically while the run is active.</p>" : ""
   abort_hint = status == "aborting" ? "<p>Aborting requested. Current phase: <code>$(_webui_escape(get(result, "current_phase", "unknown")))</code>.</p><p>This phase may need to finish before cancellation is observed.</p>" : ""
@@ -499,10 +654,13 @@ function render_powerflow_result(result::AbstractDict)::String
     ""
   links =
     isempty(String(run_id)) ? "" :
-    "$(abort_hint)$(hard_reset)$(interrupted)<div class=\"actions\">$(abort_form)<a class=\"button\" href=\"/powerflow/artifacts/$(_webui_urlencode(run_id))\">View artifacts</a><a class=\"button\" href=\"/powerflow/result/$(_webui_urlencode(run_id))\">Refresh status</a></div>"
+    "$(abort_hint)$(hard_reset)$(interrupted)<div class=\"actions\">$(abort_form)<a class=\"button\" href=\"/powerflow/artifacts/$(_webui_urlencode(run_id))\">View artifacts</a><a class=\"button\" href=\"/powerflow/artifact-zip/$(_webui_urlencode(run_id))\">Download all artifacts as ZIP</a><a class=\"button\" href=\"/powerflow/result/$(_webui_urlencode(run_id))\">Refresh status</a></div>"
   refresh_url = active && !isempty(String(run_id)) ? "/powerflow/result/$(_webui_urlencode(run_id))?autorefresh=1" : nothing
   save_section = active ? "" : _webui_case_settings_save_section(result)
-  return _webui_layout("PowerFlow result", "<section class=\"panel\">$(result_summary)<table class=\"details\">$(rows)</table>$(active_hint)$(links)</section>$(save_section)"; show_back = true, refresh_url)
+  metadata = get(result, "metadata", Dict{String,Any}())
+  override_source = String(get(result, "config_override_source", get(metadata, "config_override_source", "")))
+  runtime_notice = override_source == "user_yaml" ? "<div class=\"alert warning\"><strong>Web UI settings ignored.</strong> This run used YAML/default configuration values because the run was submitted with Web UI settings ignored.</div>" : ""
+  return _webui_layout("PowerFlow result", "<section class=\"panel\">$(result_summary)$(runtime_notice)<table class=\"details\">$(rows)</table>$(active_hint)$(links)</section>$(save_section)"; show_back = true, refresh_url)
 end
 
 function render_powerflow_artifacts(run_id::AbstractString, artifacts)::String
@@ -519,7 +677,7 @@ function render_powerflow_artifacts(run_id::AbstractString, artifacts)::String
     ),
     "",
   )
-  table = "<section class=\"panel\"><p>Run <code>$(_webui_escape(run_id))</code></p><table><thead><tr><th>Name</th><th>Kind</th><th>MIME type</th><th>Bytes</th><th>Description</th></tr></thead><tbody>$(rows)</tbody></table></section>"
+  table = "<section class=\"panel\"><p>Run <code>$(_webui_escape(run_id))</code></p><p><a class=\"button\" href=\"/powerflow/artifact-zip/$(_webui_urlencode(run_id))\">Download all artifacts as ZIP</a></p><table><thead><tr><th>Name</th><th>Kind</th><th>MIME type</th><th>Bytes</th><th>Description</th></tr></thead><tbody>$(rows)</tbody></table></section>"
   return _webui_layout("Artifacts", table; show_back = true)
 end
 

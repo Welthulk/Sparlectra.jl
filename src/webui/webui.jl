@@ -119,9 +119,46 @@ function _webui_read_request(socket::Sockets.TCPSocket)
     length(header) == 2 && (headers[lowercase(strip(header[1]))] = strip(header[2]))
   end
   length_bytes = parse(Int, get(headers, "content-length", "0"))
-  body = length_bytes > 0 ? String(read(socket, length_bytes)) : ""
-  form = get(headers, "content-type", "") |> lowercase |> content_type -> startswith(content_type, "application/x-www-form-urlencoded") ? _webui_parse_pairs(body) : Dict{String,String}()
+  content_type_raw = get(headers, "content-type", "")
+  if length_bytes > WEBUI_CASE_IMPORT_MAX_REQUEST_BYTES && occursin("multipart/form-data", lowercase(content_type_raw))
+    return method, target, Dict{String,Any}("casefiles" => WebUICaseUpload[], "case_import_request_oversized" => "true")
+  end
+  body_bytes = length_bytes > 0 ? read(socket, length_bytes) : UInt8[]
+  content_type = lowercase(content_type_raw)
+  form = if startswith(content_type, "application/x-www-form-urlencoded")
+    _webui_parse_pairs(String(body_bytes))
+  elseif startswith(content_type, "multipart/form-data")
+    _webui_parse_multipart_form(body_bytes, content_type_raw)
+  else
+    Dict{String,String}()
+  end
   return method, target, form
+end
+
+function _webui_parse_multipart_form(body::Vector{UInt8}, content_type::AbstractString)
+  boundary_match = match(r"boundary=([^;]+)", content_type)
+  boundary_match === nothing && return Dict{String,Any}()
+  boundary = "--" * strip(boundary_match.captures[1], ['"'])
+  text = String(body)
+  form = Dict{String,Any}()
+  uploads = WebUICaseUpload[]
+  for part in split(text, boundary)
+    occursin("\r\n\r\n", part) || continue
+    header_text, content = split(part, "\r\n\r\n"; limit = 2)
+    content = replace(content, r"\r\n--$" => "")
+    content = replace(content, r"\r\n$" => "")
+    name_match = match(r"name=\"([^\"]+)\"", header_text)
+    name_match === nothing && continue
+    filename_match = match(r"filename=\"([^\"]*)\"", header_text)
+    field = name_match.captures[1]
+    if filename_match !== nothing
+      push!(uploads, WebUICaseUpload(filename_match.captures[1], Vector{UInt8}(codeunits(content))))
+    else
+      form[field] = content
+    end
+  end
+  form["casefiles"] = uploads
+  return form
 end
 
 function _webui_write_response(socket::Sockets.TCPSocket, response::SparlectraWebUIResponse)
@@ -195,7 +232,7 @@ end
 
 const _WEBUI_APP_WINDOW_SIZE = "1500,950"
 
-function _webui_app_command(url::String; platform::Symbol = _webui_platform(), executable_lookup = Sys.which, path_exists = ispath, environment = ENV)::Union{Cmd,Nothing}
+function _webui_app_window_command(url::String; platform::Symbol = _webui_platform(), executable_lookup = Sys.which, path_exists = ispath, environment = ENV)::Union{Cmd,Nothing}
   if platform == :macos
     applications = (
       "/Applications/Microsoft Edge.app",
@@ -222,12 +259,42 @@ function _webui_app_command(url::String; platform::Symbol = _webui_platform(), e
   return `$executable --app=$url --window-size=$(_WEBUI_APP_WINDOW_SIZE)`
 end
 
+function _webui_generic_open_command(url::String; platform::Symbol = _webui_platform(), executable_lookup = Sys.which)::Union{Tuple{Cmd,Symbol},Nothing}
+  platform == :linux || return nothing
+
+  xdg_open = executable_lookup("xdg-open")
+  xdg_open === nothing || return (`$(String(xdg_open)) $url`, :xdg_open)
+
+  gio = executable_lookup("gio")
+  gio === nothing || return (`$(String(gio)) open $url`, :gio_open)
+
+  sensible_browser = executable_lookup("sensible-browser")
+  sensible_browser === nothing || return (`$(String(sensible_browser)) $url`, :sensible_browser)
+
+  return nothing
+end
+
+function _webui_browser_open_command(url::String; platform::Symbol = _webui_platform(), executable_lookup = Sys.which, path_exists = ispath, environment = ENV)::Union{Tuple{Cmd,Symbol},Nothing}
+  app_command = _webui_app_window_command(url; platform, executable_lookup, path_exists, environment)
+  app_command === nothing || return (app_command, :app_window)
+  return _webui_generic_open_command(url; platform, executable_lookup)
+end
+
+function _webui_app_command(url::String; platform::Symbol = _webui_platform(), executable_lookup = Sys.which, path_exists = ispath, environment = ENV)::Union{Cmd,Nothing}
+  selected = _webui_browser_open_command(url; platform, executable_lookup, path_exists, environment)
+  selected === nothing && return nothing
+  return selected[1]
+end
+
 function _webui_open_browser(url::String)
-  command = _webui_app_command(url)
-  if command === nothing
+  selected = _webui_browser_open_command(url)
+  if selected === nothing
+    @info "Selected Web UI browser-opening strategy" strategy = "manual_only" url
     @warn "Could not find an app-capable browser; open the Web UI URL manually" url
     return nothing
   end
+  command, strategy = selected
+  @info "Selected Web UI browser-opening strategy" strategy = String(strategy) url
   try
     return run(command; wait = false)
   catch err

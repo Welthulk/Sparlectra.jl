@@ -33,8 +33,11 @@ results are written beneath `%LOCALAPPDATA%\Sparlectra\WebUI\runs` on Windows,
 `$XDG_STATE_HOME/sparlectra/webui/runs` (or
 `~/.local/state/sparlectra/webui/runs`) on Linux, and
 `~/Library/Application Support/Sparlectra/WebUI/runs` on macOS. Directories
-are created automatically. The operation log is in the sibling user Web UI `logs` directory, and downloaded/generated MATPOWER cases are
-cached in the sibling user Web UI `data/mpower` directory. On first start, `warmup_case3.jl` is copied there as a small selectable demo case.
+are created automatically. The operation log is in the sibling user Web UI
+`logs` directory, and downloaded/generated MATPOWER cases are cached in the
+sibling user Web UI `data/mpower` directory. On first start,
+`warmup_case3.jl` is copied there only for internal startup warm-up and is not
+shown in the normal user-selectable case list.
 
 On first startup, the Web UI copies the package configuration template to its user-writable `config/configuration.yaml`. Pass `output_root="my_sparlectra_runs"` or `config_file="my_configuration.yaml"` to override these defaults; an explicit configuration file is never overwritten.
 The effective configuration, output root, MATPOWER cache, and operation log are displayed by
@@ -84,7 +87,10 @@ Warm-up runs asynchronously and fails softly. With
 `warmup_store_result=false`, it uses a temporary directory and creates no
 normal run-history entry. The bundled `data/webui/warmup_case3.jl` file is an
 original Sparlectra-owned synthetic three-bus MATPOWER-compatible Julia case,
-not a derivative of an external MATPOWER case.
+not a derivative of an external MATPOWER case. Files whose names start with the
+reserved `warmup_` prefix are internal-only and are hidden from the case
+selector; pass `warmup_casefile` when a different explicit warm-up case is
+needed.
 
 ## Starting a PowerFlow run
 
@@ -198,13 +204,18 @@ conservative: built-in defaults are loaded first, global configuration remains
 unchanged, the case-specific Web UI profile only prefills editable form fields,
 and any manual browser edit wins for the submitted run.
 
-The existing-case selector lists canonical MATPOWER `.m` files from the user Web UI case
-cache. Generated MATPOWER `.jl` cache artifacts are internal and are not user-selectable.
-First startup still provisions the small `warmup_case3.jl` demo case for warmup,
-but generated MATPOWER cache files are hidden from normal case selection. A
-separate manual field accepts a bare case name such as `case14.m`, `case118.m`,
-or `case9241pegase.m`; a nonempty manual value overrides the selected cached
-case.
+The existing-case selector is MATPOWER-oriented by default and lists
+user-selectable `.m` files plus runnable DFT `.DAT` candidates when they
+are supported by the current Web UI case-resolution logic. Generated `.jl`
+cache artifacts are hidden from the selector, and files with the reserved
+`warmup_` prefix are internal-only. FOR002-like `.DAT` files are not primary
+cases; use the optional FOR002 reference field for those validation references.
+First startup still provisions the small `warmup_case3.jl` case for warmup, but
+it is not user-selectable. A separate manual field accepts a bare case name such
+as `case14.m`, `case118.m`, or `case9241pegase.m`; a nonempty manual value
+overrides the selected cached case. Internal DFT support is intended for
+supported conversion and validation workflows and does not change
+the normal MATPOWER-first workflow.
 
 The landing page includes a compact, collapsible MATPOWER acknowledgement beside
 the case inputs. It distinguishes Sparlectra from MATPOWER, provides links to
@@ -297,7 +308,7 @@ Excel-specific text hints.
 
 | Help topic | Input | Guidance |
 |---|---|---|
-| `webui.casefile` | MATPOWER case file | Choose an available canonical `.m` file from the existing-case selector, or type a bare case name or existing local path in the separate manual field. A nonempty manual value takes precedence. Missing bare `.m` names may be downloaded into the server-owned `data/mpower` directory; generated MATPOWER `.jl` cache files in that directory are not user-selectable and are not preferred for execution. Missing path-like inputs and URLs are rejected. |
+| `webui.casefile` | MATPOWER case file | Choose an available `.m`, `.jl`, or supported runnable internal DFT `.DAT` candidate from the existing-case selector, or type a bare case name or existing local path in the separate manual field. A nonempty manual value takes precedence. Missing bare `.m` names may be downloaded into the server-owned `data/mpower` directory; MATPOWER `.m` remains the default-oriented workflow, while FOR002-like `.DAT` files belong in the optional FOR002 reference field rather than the primary case field. Missing path-like inputs and URLs are rejected. |
 | `webui.config_file` | Configuration template file | Select a YAML configuration or `*.yaml.example` template discovered in `examples`. Form values create allowlisted per-run overrides, while the selected template remains unchanged. |
 | `webui.output_root` | Output root directory | Configure this path when calling `start_sparlectra_webui`; the browser displays it read-only. The service creates its persistent run index and one subdirectory per run beneath this root. |
 
@@ -427,3 +438,31 @@ dependency.
 The PowerFlow page includes explicit **Check configuration** and **Refresh configuration** actions for user YAML files. They exist because the package configuration template can gain new options over time while existing local files remain in place. A check performs a dry run only: it compares the selected configuration against `src/configuration.yaml.example`, reports missing keys, known deprecated aliases, duplicate YAML keys, and shows a refreshed YAML preview without writing.
 
 Refresh is conservative and user-initiated. It preserves existing user values, adds missing keys with current template defaults, and may normalize known deprecated aliases in user files to canonical start-mode settings or legacy `matpower_*` Q-limit mode names. It never rewrites YAML during Web UI startup. When writing a server-local configuration file, Sparlectra first creates a timestamped backup next to the original file. If duplicate YAML keys are detected, refresh refuses to write so the file can be reviewed manually. Browser-uploaded or pasted YAML is not rewritten in place; the refreshed YAML is offered as a download instead.
+
+## Configuration precedence and artifact downloads
+
+PowerFlow API and Web UI runs apply configuration in a deterministic order: built-in defaults from `src/configuration.yaml.example`, the selected user YAML file, saved case-sidecar settings when the Web UI loads them into the run form, enabled Web UI form/runtime values, explicit API `config_overrides`, and intentional post-processing such as `matpower_import.auto_profile: apply`. Each run writes the actual `effective_config.yaml`; the file includes `_config_sources` metadata for the diagnostic options most likely to affect MATPOWER DC-line and island-aware solves, including Q-limit handling, start-current iteration, island mode, tolerance, iteration limits, start modes, and MATPOWER DC-line mode.
+
+Web UI runtime controls are applied by default, so checked/enabled options and values entered or selected on the PowerFlow form are intentional runtime overrides. Boolean values are distinct from override participation: an unchecked functional checkbox can intentionally override YAML to `false`. The advanced **Ignore Web UI settings and use configuration defaults** checkbox inverts that behavior for diagnostic runs: when checked, the run ignores the form controls and uses the selected YAML/default configuration values instead. `matpower_import.auto_profile: apply` may still adjust supported MATPOWER import conventions after GUI and API values are assembled, and `effective_config.yaml` records those auto-profile applications. Active MATPOWER DC lines are supported by default as fixed terminal injections; they do not add Ybus connections, so AC islands are detected and solved independently by default. This is a power-flow approximation, not a complete HVDC converter or DC-grid model. When the YAML editor saves successfully, the server reloads the saved file so the PowerFlow form reflects the new YAML values on the next page load.
+
+The plain **Configuration Editor** link on the PowerFlow page opens the active YAML in a textarea, validates it with the same lightweight YAML parser and duplicate-key checks used by configuration refresh, writes only after validation succeeds, and creates a timestamped backup next to the edited file. If case-sidecar settings exist for a selected case, they can still override the global YAML via the prefilled form; the editor warns about that interaction so stale case-specific settings are not mistaken for global configuration changes.
+
+Result pages and artifact lists include **Download all artifacts as ZIP**. The ZIP is named `sparlectra_run_<run_id>_artifacts.zip` and is assembled only from files already exposed as artifacts for that run directory. Missing optional artifacts are skipped, and unsafe names are ignored rather than allowing path traversal.
+
+Island diagnostics are run artifacts. Files such as `ac_islands.csv`, `ac_island_solver_summary.csv`, `ac_island_<id>_solver.log`, `matpower_dcline.csv`, `q_limit.log`, `performance.log`, `run.log`, and `effective_config.yaml` belong in the run output directory or a test-owned temporary directory; they must not be committed from the repository root.
+
+## Importing case files through the Web UI
+
+The PowerFlow page includes a separate **Import case files** control near the case selection area. It uses the browser's native file picker and accepts multiple files in one selection. The picker advertises MATPOWER `.m`/`.M` files and DFT `.dat`/`.DAT` files; the server validates the extension again because browser-side filters can be bypassed.
+
+Importing is a copy-only operation. It does not submit the PowerFlow form, create a run ID, create a result directory, parse uploaded `.m` code, or invoke the solver. After the POST/Redirect/GET refresh, the normal case selector is rebuilt from disk. If at least one imported file is runnable in the normal selector, the first such file may be preselected; the user must still press **Start PowerFlow run** to calculate it.
+
+Uploaded files are stored in the same effective Web UI case directory shown in the form and used by the selector. Development checkouts use the writable `data/mpower` directory when it is available; installed or immutable package contexts fall back to the user-writable Web UI application data directory, specifically the sibling `data/mpower` directory next to the configured Web UI output root. The directory is created as needed. Manual full paths remain available for advanced users and continue to override the selector when filled in.
+
+Upload limits are centralized in the Web UI implementation: 100 MiB per file and 250 MiB per multipart request. Oversized files are rejected cleanly and reported in the import summary. Existing files are not overwritten; conflicting uploads are rejected as `already exists`, while other selected files can still be imported. Filenames are treated as untrusted: directory components, traversal attempts, empty names, control characters, and names that would resolve outside the case directory are rejected. Writes are staged through a temporary file in the destination directory and then renamed into place.
+
+The normal case selector continues to use the existing Web UI filtering rules. Imported MATPOWER `.m` files and runnable DFT `.DAT` files appear after refresh. FOR002 reference `.DAT` files may be copied for validation workflows but remain hidden from the normal runnable-case selector and belong in the optional FOR002 reference field.
+
+## PowerFlow tolerance spinner
+
+The PowerFlow tolerance control accepts ordinary decimal values and scientific notation. The Web UI updates the number-input increment from the current value before native spinner actions so small tolerances remain convenient: for example, stepping down from `0.01` uses `0.005`, while stepping down from `1e-5` uses `9e-6` and lands on `1e-6`. Manual entry and submitted solver tolerance values are unchanged.

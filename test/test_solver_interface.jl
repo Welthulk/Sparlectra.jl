@@ -540,7 +540,7 @@ end
     end
 
     @testset "Wrong-branch detection modes are distinct" begin
-      base_cfg = PowerFlowConfig(max_iter = 20, tol = 1e-8, start_mode = StartModeConfig(flatstart = true), wrong_branch_min_vm_pu = 1.20)
+      base_cfg = PowerFlowConfig(max_iter = 40, tol = 1e-8, start_mode = StartModeConfig(flatstart = true), wrong_branch_min_vm_pu = 1.20)
 
       net_warn = createTest3BusNet()
       _, erg_warn = runpf!(net_warn; config = PowerFlowConfig(; NamedTuple{fieldnames(PowerFlowConfig)}(getfield.(Ref(base_cfg), fieldnames(PowerFlowConfig)))..., wrong_branch_detection = :warn))
@@ -571,7 +571,7 @@ end
       @test isdefined(Main, :ensure_casefile)
       @test Sparlectra.ensure_casefile === Sparlectra.FetchMatpowerCase.ensure_casefile
 
-      pf_config = PowerFlowConfig(max_iter = 20, tol = 1e-8, sparse = true, start_mode = StartModeConfig(flatstart = true))
+      pf_config = PowerFlowConfig(max_iter = 40, tol = 1e-8, sparse = true, start_mode = StartModeConfig(flatstart = true))
 
       net_direct = createTest3BusNet()
       _, erg_direct = runpf!(net_direct; config = pf_config)
@@ -841,6 +841,71 @@ mpc.branch = [
           @test occursin(needle, log_text)
         end
       end
+    end
+
+    @testset "AC island detection and independent solving" begin
+      function two_island_net(; second_ref::Symbol = :slack)
+        net = Net(name = "two_island", baseMVA = 100.0)
+        for name in ("A1", "A2", "B1", "B2")
+          addBus!(net = net, busName = name, vn_kV = 110.0)
+        end
+        addPIModelACLine!(net = net, fromBus = "A1", toBus = "A2", r_pu = 0.01, x_pu = 0.10, b_pu = 0.0, status = 1)
+        addPIModelACLine!(net = net, fromBus = "B1", toBus = "B2", r_pu = 0.01, x_pu = 0.10, b_pu = 0.0, status = 1)
+        addProsumer!(net = net, busName = "A1", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "A1")
+        addProsumer!(net = net, busName = "A2", type = "ENERGYCONSUMER", p = 10.0, q = 3.0)
+        if second_ref === :slack
+          addProsumer!(net = net, busName = "B1", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "B1")
+        elseif second_ref === :pv
+          addProsumer!(net = net, busName = "B1", type = "SYNCHRONOUSMACHINE", p = 12.0, q = 0.0, vm_pu = 1.0, isRegulated = true)
+        end
+        addProsumer!(net = net, busName = "B2", type = "ENERGYCONSUMER", p = 8.0, q = 2.0)
+        refreshBusTypesFromProsumers!(net)
+        return net
+      end
+
+      net = two_island_net()
+      report = Sparlectra.detect_ac_islands(net)
+      @test length(report.rows) == 2
+      @test all(row -> row.n_branch == 1, report.rows)
+      default_solved = deepcopy(net)
+      default_iterations, default_erg = runpf!(default_solved; config = PowerFlowConfig(max_iter = 40))
+      @test default_erg == 0
+      @test default_iterations > 0
+
+      mktempdir() do tmpdir
+        solved = deepcopy(net)
+        profile = Dict{Symbol,Any}(:output_dir => tmpdir)
+        iterations, erg = runpf!(solved; config = PowerFlowConfig(max_iter = 40, islands_enabled = true), performance_profile = profile)
+        @test erg == 0
+        @test isfile(joinpath(tmpdir, "ac_islands.csv"))
+        for artifact in ("ac_islands.csv", "ac_island_solver_summary.csv", "ac_island_1_solver.log", "q_limit.log", "matpower_dcline.csv")
+          @test !isfile(joinpath(pwd(), artifact))
+        end
+        @test count(!isempty, split(read(joinpath(tmpdir, "ac_islands.csv"), String), '\n')) == 3
+        @test all(node -> isfinite(node._vm_pu) && isfinite(node._va_deg), solved.nodeVec)
+        rect_status = Sparlectra.rectangular_pf_status(solved)
+        @test rect_status.status == :converged
+        @test rect_status.reason == :none
+        @test rect_status.reason_text == "All AC islands converged independently."
+        @test rect_status.island_wise_all_converged === true
+        @test rect_status.post_merge_validation_status == :not_applicable
+        @test rect_status.post_merge_mismatch_status == :not_applicable
+        @test isnan(rect_status.post_merge_final_mismatch)
+        @test !occursin("AC island 1 power-flow solve failed", rect_status.reason_text)
+        @test iterations == sum(getproperty(status, :iterations) for status in values(profile[:ac_island_solver_statuses]))
+        @test rect_status.iterations == iterations
+      end
+
+      pv_ref_net = two_island_net(second_ref = :pv)
+      pv_report = Sparlectra.detect_ac_islands(pv_ref_net)
+      @test pv_report.rows[2].status == "promote_pv_ref"
+      _, pv_erg = runpf!(pv_ref_net; config = PowerFlowConfig(max_iter = 40, islands_enabled = true))
+      @test pv_erg == 0
+
+      no_ref_net = two_island_net(second_ref = :none)
+      no_ref_report = Sparlectra.detect_ac_islands(no_ref_net)
+      @test no_ref_report.rows[2].status == "missing_ref"
+      @test_throws ErrorException runpf!(no_ref_net; config = PowerFlowConfig(max_iter = 40, islands_enabled = true))
     end
 
 # Ensures final-limit validation remains robust when q-generation data is partially missing.
