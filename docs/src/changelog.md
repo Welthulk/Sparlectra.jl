@@ -1,3 +1,13 @@
+# Version 0.8.9 — Unreleased
+
+### New Features
+
+* Added a multi-file case import control to the Web UI for MATPOWER `.m` and DTF/FOR001 `.DAT` files. Imported files are added to the normal case selector without starting a power-flow calculation.
+
+### Improvements
+
+* Added server-side validation, safe filename handling, conflict reporting, and per-file import results for Web UI case uploads.
+
 # Version 0.8.8 — 2026-07-14
 
 ### New Features

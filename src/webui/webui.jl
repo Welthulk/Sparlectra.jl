@@ -119,9 +119,46 @@ function _webui_read_request(socket::Sockets.TCPSocket)
     length(header) == 2 && (headers[lowercase(strip(header[1]))] = strip(header[2]))
   end
   length_bytes = parse(Int, get(headers, "content-length", "0"))
-  body = length_bytes > 0 ? String(read(socket, length_bytes)) : ""
-  form = get(headers, "content-type", "") |> lowercase |> content_type -> startswith(content_type, "application/x-www-form-urlencoded") ? _webui_parse_pairs(body) : Dict{String,String}()
+  content_type_raw = get(headers, "content-type", "")
+  if length_bytes > WEBUI_CASE_IMPORT_MAX_REQUEST_BYTES && occursin("multipart/form-data", lowercase(content_type_raw))
+    return method, target, Dict{String,Any}("casefiles" => WebUICaseUpload[], "case_import_request_oversized" => "true")
+  end
+  body_bytes = length_bytes > 0 ? read(socket, length_bytes) : UInt8[]
+  content_type = lowercase(content_type_raw)
+  form = if startswith(content_type, "application/x-www-form-urlencoded")
+    _webui_parse_pairs(String(body_bytes))
+  elseif startswith(content_type, "multipart/form-data")
+    _webui_parse_multipart_form(body_bytes, content_type_raw)
+  else
+    Dict{String,String}()
+  end
   return method, target, form
+end
+
+function _webui_parse_multipart_form(body::Vector{UInt8}, content_type::AbstractString)
+  boundary_match = match(r"boundary=([^;]+)", content_type)
+  boundary_match === nothing && return Dict{String,Any}()
+  boundary = "--" * strip(boundary_match.captures[1], ['"'])
+  text = String(body)
+  form = Dict{String,Any}()
+  uploads = WebUICaseUpload[]
+  for part in split(text, boundary)
+    occursin("\r\n\r\n", part) || continue
+    header_text, content = split(part, "\r\n\r\n"; limit = 2)
+    content = replace(content, r"\r\n--$" => "")
+    content = replace(content, r"\r\n$" => "")
+    name_match = match(r"name=\"([^\"]+)\"", header_text)
+    name_match === nothing && continue
+    filename_match = match(r"filename=\"([^\"]*)\"", header_text)
+    field = name_match.captures[1]
+    if filename_match !== nothing
+      push!(uploads, WebUICaseUpload(filename_match.captures[1], Vector{UInt8}(codeunits(content))))
+    else
+      form[field] = content
+    end
+  end
+  form["casefiles"] = uploads
+  return form
 end
 
 function _webui_write_response(socket::Sockets.TCPSocket, response::SparlectraWebUIResponse)

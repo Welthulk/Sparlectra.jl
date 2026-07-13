@@ -45,8 +45,27 @@ Julia cache artifacts, warm-up cases, result artifacts, and sidecar profiles
 stay hidden. Missing or empty directories produce an empty list.
 """
 function _webui_casefile_options(application_root::AbstractString)::Vector{String}
-  return _webui_casefile_options_in_directory(joinpath(application_root, "data", "mpower"))
+  return _webui_casefile_options_in_directory(_webui_case_directory(; application_root))
 end
+
+"""Return the effective Web UI case directory used for selection and imports."""
+function _webui_case_directory(; case_directory::Union{Nothing,AbstractString} = nothing, application_root::AbstractString = _webui_application_root(), output_root::AbstractString = default_webui_output_root())::String
+  case_directory === nothing || return normpath(String(case_directory))
+  package_case_directory = joinpath(application_root, "data", "mpower")
+  try
+    mkpath(package_case_directory)
+    test_path = tempname(package_case_directory)
+    open(test_path, "w") do io
+      write(io, "")
+    end
+    rm(test_path; force = true)
+    return normpath(package_case_directory)
+  catch
+    return normpath(default_webui_case_cache_dir(output_root))
+  end
+end
+
+_webui_supported_upload_case_extension(name::AbstractString)::Bool = lowercase(splitext(basename(String(name)))[2]) in (".m", ".dat")
 
 """
     _webui_is_user_selectable_case(name) -> Bool

@@ -35,6 +35,14 @@ function _webui_option(value, label, selected)
   return "<option value=\"$(_webui_escape(value))\"$(marker)>$(_webui_escape(label))</option>"
 end
 
+function _webui_case_import_message(imported::Vector{String}, rejected)::String
+  lines = String[]
+  isempty(imported) || push!(lines, "Imported $(length(imported)) file$(length(imported) == 1 ? "" : "s"): $(join(imported, ", ")).")
+  isempty(rejected) || push!(lines, "Rejected $(length(rejected)) file$(length(rejected) == 1 ? "" : "s"): " * join(("$(first(item)): $(last(item))" for item in rejected), "; ") * ".")
+  isempty(lines) && push!(lines, "No files were selected for import.")
+  return join(lines, " ")
+end
+
 function _webui_select(name, values, selected)
   options = join((_webui_option(value, replace(_webui_form_string(value), '_' => ' '), selected) for value in values), "")
   return "<select id=\"$(name)\" name=\"$(name)\">$(options)</select>"
@@ -225,12 +233,14 @@ function render_powerflow_form(;
   config_notice = nothing,
   case_profile = nothing,
   submitted_form = nothing,
+  import_message::AbstractString = "",
 )::String
   profile_values = webui_form_state(; selected_casefile, selected_config_file, sidecar_profile = case_profile, submitted_form)
   profile_path = String(get(profile_values, "_profile_path", ""))
   profile_location = isempty(profile_path) ? "the sidecar profile" : "<code>$(_webui_escape(profile_path))</code>"
   profile_notice = isempty(profile_path) ? "" : "<div class=\"alert info case-settings-notice\" role=\"status\"><strong>Case-specific settings loaded from $(profile_location).</strong> Saved Web UI settings prefilled the form. Manual edits on this page override the profile for this run.</div>"
   error_html = _webui_error_alert_html(error_message)
+  import_html = isempty(strip(import_message)) ? "" : "<div class=\"alert info case-import-result\" role=\"status\">$(_webui_escape(import_message))</div>"
   casefiles = case_directory === nothing ? _webui_casefile_options(application_root) : _webui_casefile_options_in_directory(case_directory)
   bundled_case_directory = joinpath(application_root, "data", "mpower")
   effective_case_directory = case_directory === nothing ? bundled_case_directory : String(case_directory)
@@ -279,8 +289,15 @@ function render_powerflow_form(;
 <div class="actions span-2"><a class="secondary-button" href="/powerflow/config/edit?config_file=$(_webui_urlencode(config_default))">Configuration Editor</a><button class="secondary-button" type="submit" formaction="/powerflow/config/check" formmethod="post">Check configuration</button><button class="secondary-button" type="submit" formaction="/powerflow/config/refresh" formmethod="post">Refresh configuration</button></div>
 </fieldset>
 """
+  import_form = """
+<form id=\"case-import-form\" method=\"post\" action=\"/powerflow/import-cases\" enctype=\"multipart/form-data\" class=\"panel form-grid case-import-form\">
+<label class=\"span-2\"><span class=\"field-label\">Import case files</span><input type=\"file\" name=\"casefiles\" accept=\".m,.M,.dat,.DAT\" multiple><small class=\"field-hint\">Select one or more MATPOWER (.m) or DTF/FOR001 (.DAT) files. Importing files copies them to <code>$(_webui_escape(effective_case_directory))</code> and does not start a PowerFlow calculation. Limits: 100 MiB per file, 250 MiB per request.</small></label>
+<div class=\"actions span-2\"><button class=\"secondary-button\" type=\"submit\">Import case files</button></div>
+</form>
+"""
   form = """
-$(error_html)$(_webui_active_run_banner(active_run))$(notice_html)$(profile_notice)<p class=\"lede\">Run a local MATPOWER case through the Sparlectra PowerFlow service.</p>
+$(error_html)$(import_html)$(_webui_active_run_banner(active_run))$(notice_html)$(profile_notice)<p class=\"lede\">Run a local MATPOWER case through the Sparlectra PowerFlow service.</p>
+$(import_form)
 <form id=\"powerflow-run-form\" data-powerflow-form method=\"post\" action=\"/powerflow/run\" class=\"panel form-grid powerflow-form-card\" onsubmit=\"this.classList.add('is-submitting'); this.setAttribute('aria-busy', 'true'); this.querySelector('button[type=submit]').disabled = true;\">
 $(config_control)
 <label>$(_webui_field_label("casefile", "Existing case file"))$(case_select)<small class="field-hint">Cases from <code>$(_webui_escape(effective_case_directory))</code></small></label>

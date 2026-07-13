@@ -450,3 +450,15 @@ The plain **Configuration Editor** link on the PowerFlow page opens the active Y
 Result pages and artifact lists include **Download all artifacts as ZIP**. The ZIP is named `sparlectra_run_<run_id>_artifacts.zip` and is assembled only from files already exposed as artifacts for that run directory. Missing optional artifacts are skipped, and unsafe names are ignored rather than allowing path traversal.
 
 Island diagnostics are run artifacts. Files such as `ac_islands.csv`, `ac_island_solver_summary.csv`, `ac_island_<id>_solver.log`, `matpower_dcline.csv`, `q_limit.log`, `performance.log`, `run.log`, and `effective_config.yaml` belong in the run output directory or a test-owned temporary directory; they must not be committed from the repository root.
+
+## Importing case files through the Web UI
+
+The PowerFlow page includes a separate **Import case files** control near the case selection area. It uses the browser's native file picker and accepts multiple files in one selection. The picker advertises MATPOWER `.m`/`.M` files and DTF/FOR001 `.dat`/`.DAT` files; the server validates the extension again because browser-side filters can be bypassed.
+
+Importing is a copy-only operation. It does not submit the PowerFlow form, create a run ID, create a result directory, parse uploaded `.m` code, or invoke the solver. After the POST/Redirect/GET refresh, the normal case selector is rebuilt from disk. If at least one imported file is runnable in the normal selector, the first such file may be preselected; the user must still press **Start PowerFlow run** to calculate it.
+
+Uploaded files are stored in the same effective Web UI case directory shown in the form and used by the selector. Development checkouts use the writable `data/mpower` directory when it is available; installed or immutable package contexts fall back to the user-writable Web UI application data directory, specifically the sibling `data/mpower` directory next to the configured Web UI output root. The directory is created as needed. Manual full paths remain available for advanced users and continue to override the selector when filled in.
+
+Upload limits are centralized in the Web UI implementation: 100 MiB per file and 250 MiB per multipart request. Oversized files are rejected cleanly and reported in the import summary. Existing files are not overwritten; conflicting uploads are rejected as `already exists`, while other selected files can still be imported. Filenames are treated as untrusted: directory components, traversal attempts, empty names, control characters, and names that would resolve outside the case directory are rejected. Writes are staged through a temporary file in the destination directory and then renamed into place.
+
+The normal case selector continues to use the existing Web UI filtering rules. Imported MATPOWER `.m` files and runnable DTF/FOR001 `.DAT` files appear after refresh. FOR002 reference `.DAT` files may be copied for validation workflows but remain hidden from the normal runnable-case selector and belong in the optional FOR002 reference field.

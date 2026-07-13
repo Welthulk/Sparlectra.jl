@@ -33,10 +33,107 @@ function _webui_redirect(location::AbstractString)
 end
 
 const _WEBUI_LOGO_PATH = normpath(joinpath(@__DIR__, "..", "..", "docs", "src", "assets", "logo.png"))
+const WEBUI_CASE_IMPORT_MAX_FILE_BYTES = 100 * 1024 * 1024
+const WEBUI_CASE_IMPORT_MAX_REQUEST_BYTES = 250 * 1024 * 1024
+
+struct WebUICaseUpload
+  filename::String
+  data::Vector{UInt8}
+end
 
 function handle_webui_logo()::SparlectraWebUIResponse
   isfile(_WEBUI_LOGO_PATH) || return _webui_html(render_webui_error(404, "Sparlectra.jl logo asset is unavailable."); status = 404)
   return SparlectraWebUIResponse(200, ["Content-Type" => "image/png"], read(_WEBUI_LOGO_PATH))
+end
+
+function _webui_sanitize_upload_filename(filename::AbstractString)
+  raw = String(filename)
+  isempty(raw) && return "", "empty filename"
+  any(c -> c == '\0' || (iscntrl(c) && c != '\t'), raw) && return basename(raw), "invalid filename"
+  base = basename(raw)
+  isempty(base) && return "", "empty filename"
+  base in (".", "..") && return base, "invalid filename"
+  base != raw && return base, "invalid filename"
+  occursin('/', base) || occursin('\\', base) ? (base, "invalid filename") : (base, "")
+end
+
+function _webui_case_import_uploads(form::AbstractDict)::Vector{WebUICaseUpload}
+  value = _webui_form_value(form, "casefiles", WebUICaseUpload[])
+  if value isa WebUICaseUpload
+    return [value]
+  elseif value isa AbstractVector
+    return WebUICaseUpload[value...]
+  end
+  return WebUICaseUpload[]
+end
+
+function _webui_write_import_file_atomic(destination::AbstractString, data::Vector{UInt8})
+  temp = tempname(dirname(destination))
+  try
+    open(temp, "w") do io
+      write(io, data)
+      flush(io)
+    end
+    mv(temp, destination; force = false)
+  catch
+    rm(temp; force = true)
+    rethrow()
+  end
+  return nothing
+end
+
+function handle_powerflow_case_import(form::AbstractDict; output_root::AbstractString = "results/powerflow_service", application_root::AbstractString = _webui_application_root(), case_directory::Union{Nothing,AbstractString} = nothing, operation_log::AbstractString = output_root, max_file_bytes::Integer = WEBUI_CASE_IMPORT_MAX_FILE_BYTES, max_request_bytes::Integer = WEBUI_CASE_IMPORT_MAX_REQUEST_BYTES)::SparlectraWebUIResponse
+  directory = _webui_case_directory(; case_directory, application_root, output_root)
+  mkpath(directory)
+  uploads = _webui_case_import_uploads(form)
+  imported = String[]
+  rejected = Pair{String,String}[]
+  if _webui_form_value(form, "case_import_request_oversized", "false") == "true"
+    push!(rejected, "request" => "oversized")
+  end
+  total_bytes = sum((length(upload.data) for upload in uploads); init = 0)
+  total_bytes > max_request_bytes && (rejected = [basename(upload.filename) => "oversized" for upload in uploads])
+  uploads_to_process = total_bytes > max_request_bytes ? WebUICaseUpload[] : uploads
+  for upload in uploads_to_process
+    name, reason = _webui_sanitize_upload_filename(upload.filename)
+    if !isempty(reason)
+      push!(rejected, (isempty(name) ? "(empty)" : name) => reason)
+      continue
+    elseif !_webui_supported_upload_case_extension(name)
+      push!(rejected, name => "unsupported extension")
+      continue
+    elseif length(upload.data) > max_file_bytes
+      push!(rejected, name => "oversized")
+      continue
+    end
+    destination = normpath(joinpath(directory, name))
+    root = string(normpath(directory), Base.Filesystem.path_separator)
+    if destination != normpath(joinpath(directory, basename(destination))) || !startswith(string(destination, Base.Filesystem.path_separator), root)
+      push!(rejected, name => "invalid filename")
+      continue
+    elseif ispath(destination)
+      push!(rejected, name => "already exists")
+      continue
+    end
+    try
+      _webui_write_import_file_atomic(destination, upload.data)
+      push!(imported, name)
+    catch
+      push!(rejected, name => "write failure")
+    end
+  end
+  selected = ""
+  for name in imported
+    if _webui_is_user_selectable_case(name)
+      selected = name
+      break
+    end
+  end
+  record_webui_operation!(operation_log, "case_import_completed"; route = "/powerflow/import-cases", method = "POST", user_action = true, selected_count = length(uploads), imported_count = length(imported), rejected_count = length(rejected), imported, rejected = ["$(first(item)): $(last(item))" for item in rejected])
+  query = isempty(selected) ? "" : "?casefile=$(_webui_urlencode(selected))"
+  message = _webui_urlencode(_webui_case_import_message(imported, rejected))
+  separator = isempty(query) ? "?" : "&"
+  return _webui_redirect("/powerflow$(query)$(separator)import_message=$(message)")
 end
 
 """Run a PowerFlow request through the Web UI form-to-service boundary."""

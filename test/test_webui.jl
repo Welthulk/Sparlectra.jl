@@ -620,6 +620,16 @@ settings:
 
         @test Sparlectra._webui_application_root(start_dir) == application_root
         @test Sparlectra._webui_is_user_selectable_case("case3.m")
+        @test Sparlectra._webui_supported_upload_case_extension("case3.m")
+        @test Sparlectra._webui_supported_upload_case_extension("case3.M")
+        @test Sparlectra._webui_supported_upload_case_extension("FOR001.dat")
+        @test Sparlectra._webui_supported_upload_case_extension("FOR001.DAT")
+        @test !Sparlectra._webui_supported_upload_case_extension("case3.jl")
+        @test !Sparlectra._webui_supported_upload_case_extension("case3.zip")
+        @test !Sparlectra._webui_supported_upload_case_extension("case3")
+        @test Sparlectra._webui_sanitize_upload_filename("case3.m") == ("case3.m", "")
+        @test last(Sparlectra._webui_sanitize_upload_filename("../case3.m")) == "invalid filename"
+        @test last(Sparlectra._webui_sanitize_upload_filename("")) == "empty filename"
         @test Sparlectra._webui_is_user_selectable_case("case14.m")
         @test !Sparlectra._webui_is_user_selectable_case("warmup_case3.m")
         @test !Sparlectra._webui_is_user_selectable_case("warmup_case3.jl")
@@ -657,6 +667,9 @@ settings:
         @test occursin("10.1109/TPWRS.2010.2051168", selection_html)
         @test occursin("ACTIVSg, PEGASE, and RTE", selection_html)
         @test occursin("<form id=\"powerflow-run-form\"", selection_html)
+        @test occursin("<form id=\"case-import-form\" method=\"post\" action=\"/powerflow/import-cases\" enctype=\"multipart/form-data\"", selection_html)
+        @test occursin("type=\"file\" name=\"casefiles\" accept=\".m,.M,.dat,.DAT\" multiple", selection_html)
+        @test occursin("Importing files copies them", selection_html)
         @test occursin("Start PowerFlow run", selection_html)
         @test occursin("<input type=\"hidden\" name=\"config_file\" value=\"$(secondary_config)\">", selection_html)
         @test occursin("<code>$(secondary_config)</code>", selection_html)
@@ -761,6 +774,66 @@ settings:
         )
         @test occursin("<select id=\"casefile\" name=\"casefile\" data-case-settings-reload=\"true\">", fallback_html)
         @test occursin("<input id=\"casefile_manual\" name=\"casefile_manual\" value=\"$(manual_case)\"", fallback_html)
+      end
+    end
+
+    @testset "Case file import" begin
+      mktempdir() do tmpdir
+        case_directory = joinpath(tmpdir, "cases")
+        output_root = joinpath(tmpdir, "runs")
+        runtime = Sparlectra._SparlectraWebUIRuntime(nothing, case_directory, "configuration.yaml", Sparlectra.webui_operation_log_path(output_root), nothing, Sparlectra.start_powerflow_run, false, false, time(), 0, nothing, IOBuffer(), ReentrantLock())
+        upload(name, text) = Sparlectra.WebUICaseUpload(name, Vector{UInt8}(codeunits(text)))
+
+        response = Sparlectra.route_sparlectra_webui("POST", "/powerflow/import-cases", Dict("casefiles" => [upload("case_upload.m", "function mpc = case_upload\nend\n")]); output_root, runtime)
+        @test response.status == 303
+        @test isfile(joinpath(case_directory, "case_upload.m"))
+        @test read(joinpath(case_directory, "case_upload.m"), String) == "function mpc = case_upload\nend\n"
+        refreshed = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow"; output_root, runtime).body)
+        @test occursin("<option value=\"case_upload.m\"", refreshed)
+
+        dat_response = Sparlectra.route_sparlectra_webui("POST", "/powerflow/import-cases", Dict("casefiles" => [upload("FOR001.DAT", "0 / END\n")]); output_root, runtime)
+        @test dat_response.status == 303
+        @test isfile(joinpath(case_directory, "FOR001.DAT"))
+        @test Sparlectra._webui_casefile_options_in_directory(case_directory) == ["case_upload.m", "FOR001.DAT"]
+
+        multi = Dict("casefiles" => [upload("case_a.M", "a"), upload("case_b.dat", "b"), upload("bad.zip", "z")])
+        multi_response = Sparlectra.route_sparlectra_webui("POST", "/powerflow/import-cases", multi; output_root, runtime)
+        @test multi_response.status == 303
+        @test isfile(joinpath(case_directory, "case_a.M"))
+        @test isfile(joinpath(case_directory, "case_b.dat"))
+        @test !isfile(joinpath(case_directory, "bad.zip"))
+        multi_page = String(Sparlectra.route_sparlectra_webui("GET", String(Dict(multi_response.headers)["Location"]); output_root, runtime).body)
+        @test occursin("Rejected 1 file", multi_page)
+        @test occursin("bad.zip: unsupported extension", multi_page)
+
+        write(joinpath(case_directory, "duplicate.m"), "old")
+        duplicate_response = Sparlectra.route_sparlectra_webui("POST", "/powerflow/import-cases", Dict("casefiles" => [upload("duplicate.m", "new")]); output_root, runtime)
+        @test duplicate_response.status == 303
+        @test read(joinpath(case_directory, "duplicate.m"), String) == "old"
+
+        traversal_response = Sparlectra.route_sparlectra_webui("POST", "/powerflow/import-cases", Dict("casefiles" => [upload("../escape.m", "bad")]); output_root, runtime)
+        @test traversal_response.status == 303
+        @test !isfile(joinpath(tmpdir, "escape.m"))
+
+        oversized = Sparlectra.handle_powerflow_case_import(Dict("casefiles" => [upload("huge.m", "12345")]); output_root, case_directory, operation_log = output_root, max_file_bytes = 4)
+        @test oversized.status == 303
+        @test !isfile(joinpath(case_directory, "huge.m"))
+
+        empty_response = Sparlectra.route_sparlectra_webui("POST", "/powerflow/import-cases", Dict("casefiles" => Sparlectra.WebUICaseUpload[]); output_root, runtime)
+        @test empty_response.status == 303
+
+        for002_response = Sparlectra.route_sparlectra_webui("POST", "/powerflow/import-cases", Dict("casefiles" => [upload("FOR002.DAT", "reference")]); output_root, runtime)
+        @test for002_response.status == 303
+        @test isfile(joinpath(case_directory, "FOR002.DAT"))
+        selector_html = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow"; output_root, runtime).body)
+        primary_selector_html = split(selector_html, "<datalist id=\"for002-reference-candidates\">")[1]
+        @test !occursin("<option value=\"FOR002.DAT\">FOR002.DAT</option>", primary_selector_html)
+
+        @test !isdir(joinpath(output_root, "runs"))
+        @test isempty(Sparlectra.list_powerflow_runs(output_root))
+        log_text = read(Sparlectra.webui_operation_log_path(output_root), String)
+        @test occursin("case_import_completed", log_text)
+        @test !occursin("powerflow_run_started", log_text)
       end
     end
 
