@@ -17,6 +17,7 @@ using UUIDs: uuid4
 const _SPARLECTRA_API_SCHEMA_VERSION = "1.0"
 const WEBUI_PERFORMANCE_TIMING_VALUES = (:off, :compact, :full)
 const Q_LIMIT_LOG_ARTIFACT = "q_limit.log"
+const MATPOWER_DCLINE_ARTIFACT = "matpower_dcline.csv"
 
 
 mutable struct PowerFlowPhaseTimingRecorder
@@ -34,7 +35,40 @@ function _api_datetime_string(value::Dates.DateTime)::String
   return Dates.format(value, dateformat"yyyy-mm-ddTHH:MM:SS.sss") * "Z"
 end
 
-function _effective_config_with_runtime_case(effective_raw, case_path::AbstractString, config::SparlectraConfig)
+function _write_matpower_dcline_artifact(output_path::AbstractString, net::Net; format = "technical")::Union{Nothing,String}
+  rows = getproperty(net, :matpowerDclineMetadata)
+  isempty(rows) && return nothing
+  columns = (
+    :orig_index,
+    :from_bus,
+    :to_bus,
+    :from_bus_name,
+    :to_bus_name,
+    :status,
+    :pf_mw,
+    :input_pt_mw,
+    :effective_pt_mw,
+    :loss0_mw,
+    :loss1,
+    :loss_mw,
+    :qf_mvar,
+    :qt_mvar,
+    :vf_pu,
+    :vt_pu,
+    :qminf_mvar,
+    :qmaxf_mvar,
+    :qmint_mvar,
+    :qmaxt_mvar,
+    :from_prosumer,
+    :to_prosumer,
+    :from_voltage_controlled,
+    :to_voltage_controlled,
+  )
+  _write_namedtuple_csv(joinpath(output_path, MATPOWER_DCLINE_ARTIFACT), rows, columns; format = format)
+  return MATPOWER_DCLINE_ARTIFACT
+end
+
+function _effective_config_with_runtime_case(effective_raw, case_path::AbstractString, config::SparlectraConfig; config_sources = nothing)
   raw = deepcopy(effective_raw)
   runtime = get!(raw, "runtime", Dict{String,Any}())
   runtime isa AbstractDict || (runtime = raw["runtime"] = Dict{String,Any}())
@@ -44,6 +78,9 @@ function _effective_config_with_runtime_case(effective_raw, case_path::AbstractS
   runtime["case_name"] = splitext(basename(case_path))[1]
   runtime["case_source"] = "webui_mpower_data"
   runtime["configured_default_casefile"] = config.matpower.case
+  if config_sources !== nothing
+    raw["_config_sources"] = config_sources
+  end
   return raw
 end
 
@@ -276,7 +313,167 @@ function _final_outcome_payload(raw_result::SparlectraRunResult)::Dict{String,An
     "iterations" => raw_result.iterations,
     "final_mismatch" => isfinite(raw_result.final_mismatch) ? raw_result.final_mismatch : nothing,
     "reason" => String(raw_result.reason),
+    "island_wise_all_converged" => hasproperty(raw_result.diagnostics, :island_wise_all_converged) ? raw_result.diagnostics.island_wise_all_converged : false,
+    "post_merge_validation_status" => hasproperty(raw_result.diagnostics, :post_merge_validation_status) ? String(raw_result.diagnostics.post_merge_validation_status) : "not_applicable",
+    "post_merge_final_mismatch" => hasproperty(raw_result.diagnostics, :post_merge_final_mismatch) && isfinite(raw_result.diagnostics.post_merge_final_mismatch) ? raw_result.diagnostics.post_merge_final_mismatch : nothing,
+    "post_merge_mismatch_status" => hasproperty(raw_result.diagnostics, :post_merge_mismatch_status) ? String(raw_result.diagnostics.post_merge_mismatch_status) : "not_applicable",
   )
+end
+
+const DTF_FOR001_UNSUPPORTED_DCLINE_MESSAGE = "DC lines are currently not supported by the native DTF/MATPOWER power-flow path."
+
+function _normalize_case_format(value)::Symbol
+  format = value isa Symbol ? value : Symbol(lowercase(strip(String(value))))
+  format in (:auto, :matpower, :dtf_for001) || throw(ArgumentError("case_format must be auto, matpower, or dtf_for001; got $(repr(value))."))
+  return format
+end
+
+function _detect_case_format(case_path::AbstractString; requested::Symbol = :auto)::Symbol
+  requested !== :auto && return requested
+  ext = lowercase(splitext(case_path)[2])
+  ext in (".m", ".jl") && return :matpower
+  text = read(case_path, String)
+  # Native FOR001 test data has explicit section cards and a DTF size card.  Do
+  # not infer arbitrary .DAT files unless these FOR001 markers are present.
+  has_for001_sections = occursin("##Z", text) && occursin("##L", text) && occursin("##K", text)
+  has_size_card = occursin(r"(?m)^##G\s+\d+\s+\d+", text)
+  if has_for001_sections && has_size_card
+    return :dtf_for001
+  end
+  ext == ".dat" && throw(ArgumentError("Ambiguous .DAT input; set case_format = :dtf_for001 to use the experimental/internal native DTF/FOR001 path."))
+  return :matpower
+end
+
+function _reject_dtf_dcline_like_content!(case_path::AbstractString)
+  for (line_no, line) in enumerate(eachline(case_path))
+    if occursin(r"(?i)\b(HVDC|DCLINE|DC\s*LINE)\b", line)
+      throw(ArgumentError("unsupported_dtf_dc_line at line $(line_no): $(DTF_FOR001_UNSUPPORTED_DCLINE_MESSAGE)"))
+    end
+  end
+  return nothing
+end
+
+function _dtf_metadata(case, requested::Symbol, detected::Symbol; for002_file=nothing, run_dtf_outages=false, matpower_export_requested=false, matpower_export_file=nothing)
+  summary = DTFImporter.case_summary(case)
+  return Dict{String,Any}(
+    "input_format" => String(requested),
+    "input_format_detected" => String(detected),
+    "native_dtf_import_used" => true,
+    "dtf_bus_count" => summary.bus_count,
+    "dtf_branch_count" => summary.branch_count,
+    "dtf_outage_count" => summary.outage_count,
+    "dtf_slack_bus" => summary.slack_bus,
+    "dtf_nominal_voltage_levels" => case.nominal_voltages_kv,
+    "for002_reference_used" => for002_file !== nothing && !isempty(String(for002_file)),
+    "for002_reference_file" => for002_file === nothing ? nothing : String(for002_file),
+    "outage_validation_requested" => run_dtf_outages,
+    "matpower_export_requested" => matpower_export_requested,
+    "matpower_export_file" => matpower_export_file,
+    "dcline_status" => "unsupported_not_present",
+    "unsupported_dcline_status" => "not_detected",
+  )
+end
+
+function _write_dtf_summary_artifacts(output_path::AbstractString, case, metadata::AbstractDict)
+  csv = joinpath(output_path, "dtf_import_summary.csv")
+  open(csv, "w") do io
+    println(io, "key,value")
+    for key in ("input_format", "input_format_detected", "dtf_bus_count", "dtf_branch_count", "dtf_outage_count", "dtf_slack_bus", "dcline_status")
+      println(io, _csv_field(key, ','), ",", _csv_field(get(metadata, key, ""), ','))
+    end
+  end
+  md = joinpath(output_path, "dtf_import_summary.md")
+  open(md, "w") do io
+    println(io, "# Native DTF/FOR001 input summary (experimental/internal)\n")
+    println(io, "- buses: ", length(case.buses))
+    println(io, "- branches: ", length(case.branches))
+    println(io, "- outages: ", length(case.outages))
+    println(io, "- slack bus: ", case.size.slack)
+    println(io, "- nominal voltage levels [kV]: ", join(case.nominal_voltages_kv, ", "))
+    println(io, "- DC-line status: ", get(metadata, "dcline_status", "unsupported_not_present"))
+  end
+  return [basename(csv), basename(md)]
+end
+
+function _write_for002_placeholder_artifacts(output_path::AbstractString, for002_file)
+  for002_file === nothing && return String[]
+  isempty(String(for002_file)) && return String[]
+  isfile(String(for002_file)) || throw(ArgumentError("invalid FOR002 reference file: $(for002_file)"))
+  artifacts = String[]
+  md = joinpath(output_path, "dtf_for002_base_comparison.md")
+  open(md, "w") do io
+    println(io, "# FOR002 reference comparison")
+    println(io)
+    println(io, "FOR002 reference file: `", String(for002_file), "`")
+    println(io, "Detailed native validation remains available through the existing validation examples.")
+  end
+  push!(artifacts, basename(md))
+  csv = joinpath(output_path, "dtf_for002_base_metrics.csv")
+  open(csv, "w") do io
+    println(io, "metric,value")
+    println(io, "for002_reference_file,", _csv_field(String(for002_file), ','))
+    println(io, "comparison_status,reference_recorded")
+  end
+  push!(artifacts, basename(csv))
+  return artifacts
+end
+
+function _selected_dtf_outages(case, mode, selection)
+  mode_symbol = mode isa Symbol ? mode : Symbol(lowercase(strip(String(mode))))
+  mode_symbol == :none && return DTFImporter.DTFOutage[]
+  mode_symbol == :all && return collect(case.outages)
+  mode_symbol == :selected || throw(ArgumentError("dtf_outage_selection_mode must be none, all, or selected."))
+  selected = Set(String.(selection isa AbstractVector ? selection : [selection]))
+  outages = DTFImporter.DTFOutage[]
+  for outage in case.outages
+    label = DTFImporter.outage_label(outage)
+    if string(outage.index) in selected || label in selected
+      push!(outages, outage)
+    end
+  end
+  length(outages) == length(selected) || throw(ArgumentError("missing_or_ambiguous_outage_selection: selected DTF outage was not found unambiguously."))
+  return outages
+end
+
+function _run_dtf_outages(case_path::AbstractString, case, config, output_path::AbstractString; mode=:none, selection=String[], write_artifacts::Bool=true, write_matpower_exports::Bool=false, performance_profile=nothing)
+  results = Dict{String,Any}[]
+  for outage in _selected_dtf_outages(case, mode, selection)
+    matches = DTFImporter.find_outage_branch_indices(case, outage)
+    length(matches) == 1 || throw(ArgumentError("missing_ambiguous_outage_branch_matching: " * DTFImporter.outage_match_diagnostic(case, outage, matches)))
+    fresh_case = DTFImporter.read_dtf(case_path)
+    net = DTFImporter.build_net(fresh_case)
+    branch_index = only(matches)
+    DTFImporter.apply_single_branch_outage!(net, branch_index)
+    raw = _run_sparlectra(net = net, config = config, performance_profile = performance_profile, emit_output = false)
+    label = DTFImporter.outage_label(outage)
+    safe = replace(label, r"[^A-Za-z0-9_.-]+" => "_")
+    artifacts = String[]
+    if write_artifacts
+      md = joinpath(output_path, "dtf_outage_$(outage.index)_summary.md")
+      open(md, "w") do io
+        println(io, "# DTF outage summary\n")
+        println(io, "- label: ", label)
+        println(io, "- matched branch index: ", branch_index)
+        println(io, "- converged: ", raw.final_converged)
+        println(io, "- iterations: ", raw.iterations)
+        println(io, "- final mismatch: ", raw.final_mismatch)
+      end
+      push!(artifacts, basename(md))
+      csv = joinpath(output_path, "dtf_outage_$(outage.index)_metrics.csv")
+      open(csv, "w") do io
+        println(io, "outage_label,matched_branch_index,branch_kind,from_bus,to_bus,converged,iterations,final_mismatch")
+        println(io, join((_csv_field(label, ','), branch_index, outage.kind, _csv_field(outage.from, ','), _csv_field(outage.to, ','), raw.final_converged, raw.iterations, raw.final_mismatch), ','))
+      end
+      push!(artifacts, basename(csv))
+    end
+    if write_matpower_exports
+      mpath = joinpath(output_path, "dtf_outage_$(outage.index)_$(safe).m")
+      writeMatpowerCasefile(net, mpath)
+      push!(artifacts, basename(mpath))
+    end
+    push!(results, Dict{String,Any}("outage_label" => label, "matched_branch_index" => branch_index, "branch_kind" => string(outage.kind), "from_bus" => outage.from, "to_bus" => outage.to, "converged" => raw.final_converged, "iterations" => raw.iterations, "final_mismatch" => raw.final_mismatch, "artifacts" => artifacts))
+  end
+  return results
 end
 
 
@@ -306,7 +503,17 @@ function run_sparlectra_api(;
   casefile::AbstractString,
   config_file::AbstractString = DEFAULT_SPARLECTRA_CONFIG_PATH,
   output_dir::AbstractString,
+  case_format = :auto,
+  for002_reference_file = nothing,
+  run_dtf_outages::Bool = false,
+  dtf_outage_selection = String[],
+  dtf_outage_selection_mode = :none,
+  compare_for002_outages::Bool = false,
+  write_outage_artifacts::Bool = true,
+  write_outage_matpower_exports::Bool = false,
+  matpower_export_requested::Bool = false,
   config_overrides::AbstractDict = Dict{String,Any}(),
+  config_override_source::AbstractString = "explicit_api_request",
   performance_timing = :off,
   run_diagnostics::Bool = false,
   detailed_result_csv::Bool = false,
@@ -317,7 +524,17 @@ function run_sparlectra_api(;
     casefile = casefile,
     config_file = config_file,
     output_dir = output_dir,
+    case_format = case_format,
+    for002_reference_file = for002_reference_file,
+    run_dtf_outages = run_dtf_outages,
+    dtf_outage_selection = dtf_outage_selection,
+    dtf_outage_selection_mode = dtf_outage_selection_mode,
+    compare_for002_outages = compare_for002_outages,
+    write_outage_artifacts = write_outage_artifacts,
+    write_outage_matpower_exports = write_outage_matpower_exports,
+    matpower_export_requested = matpower_export_requested,
     config_overrides = config_overrides,
+    config_override_source = config_override_source,
     performance_timing = performance_timing,
     run_diagnostics = run_diagnostics,
     detailed_result_csv = detailed_result_csv,
@@ -331,7 +548,17 @@ function _run_sparlectra_api(;
   casefile::AbstractString,
   config_file::AbstractString,
   output_dir::AbstractString,
+  case_format = :auto,
+  for002_reference_file = nothing,
+  run_dtf_outages::Bool = false,
+  dtf_outage_selection = String[],
+  dtf_outage_selection_mode = :none,
+  compare_for002_outages::Bool = false,
+  write_outage_artifacts::Bool = true,
+  write_outage_matpower_exports::Bool = false,
+  matpower_export_requested::Bool = false,
   config_overrides::AbstractDict,
+  config_override_source::AbstractString = "explicit_api_request",
   performance_timing = :off,
   run_diagnostics::Bool = false,
   detailed_result_csv::Bool = false,
@@ -387,12 +614,24 @@ function _run_sparlectra_api(;
   catch err
     return _api_failure("invalid_configuration", sprint(showerror, err); run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file)
   end
+  config_sources = _config_source_report(config_path, nested_overrides, effective_raw; override_source = config_override_source)
   effective_config = joinpath(output_path, "effective_config.yaml")
-  _write_yaml_file(effective_config, _effective_config_with_runtime_case(effective_raw, case_path, config))
+  _write_yaml_file(effective_config, _effective_config_with_runtime_case(effective_raw, case_path, config; config_sources))
   _write_run_metadata_artifact(output_path; case_path = case_path)
   _check_powerflow_cancelled!(cancellation_token)
   phases[:api_config_build] = _api_elapsed_seconds(config_start)
   isfile(case_path) || return _api_failure("casefile_not_found", "MATPOWER case file not found: $(case_path)"; run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file)
+
+  requested_case_format = try
+    _normalize_case_format(case_format)
+  catch err
+    return _api_failure("invalid_case_format", sprint(showerror, err); run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file)
+  end
+  detected_case_format = try
+    _detect_case_format(case_path; requested = requested_case_format)
+  catch err
+    return _api_failure("ambiguous_case_format", sprint(showerror, err); run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file, metadata = Dict("input_format" => String(requested_case_format), "input_format_detected" => "ambiguous"))
+  end
 
   raw_result = nothing
   qlimit_metadata = _resolved_q_limit_runtime_options(config)
@@ -401,9 +640,78 @@ function _run_sparlectra_api(;
   qlimit_metadata["configured_default_casefile"] = config.matpower.case
   matpower_metadata = _resolved_matpower_import_runtime_options(config)
   operation_callback("powerflow_effective_options"; run_id = run_id, case = basename(case_path), _metadata_kwargs(qlimit_metadata)..., _metadata_kwargs(matpower_metadata)...)
-  emit_phase("reading_matpower_case")
   api_performance_profile = Dict{Symbol,Any}(:cancellation_check => () -> _check_powerflow_cancelled!(cancellation_token), :phase_callback => phase -> emit_phase(String(phase)), :output_dir => output_path)
   execution_start = time_ns()
+  dtf_metadata = Dict{String,Any}()
+  if detected_case_format === :dtf_for001
+    emit_phase("reading_dtf_for001_case")
+    dtf_case = try
+      _reject_dtf_dcline_like_content!(case_path)
+      DTFImporter.read_dtf(case_path)
+    catch err
+      message = sprint(showerror, err)
+      reason = occursin("unsupported_dtf_dc_line", message) ? "unsupported_dtf_dc_line" : "dtf_parse_error"
+      metadata = Dict("input_format" => String(requested_case_format), "input_format_detected" => "dtf_for001", "native_dtf_import_used" => false, "unsupported_dcline_status" => reason)
+      return _api_execution_failure(reason, message; run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file, phase_recorder, performance_timing, metadata = metadata)
+    end
+    emit_phase("building_sparlectra_net")
+    dtf_net = try
+      DTFImporter.build_net(dtf_case)
+    catch err
+      return _api_execution_failure("dtf_build_net_error", sprint(showerror, err, catch_backtrace()); run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file, phase_recorder, performance_timing)
+    end
+    raw_result = try
+      open(logfile, "a") do io
+        println(io, "Native DTF/FOR001 input (experimental/internal)")
+        _write_resolved_q_limit_options(io, qlimit_metadata)
+        with_logger(ConsoleLogger(io)) do
+          redirect_stdout(io) do
+            redirect_stderr(io) do
+              _run_sparlectra(net = dtf_net, config = config, performance_profile = api_performance_profile, emit_output = false)
+            end
+          end
+        end
+      end
+    catch err
+      err isa PowerFlowAborted && rethrow()
+      return _api_execution_failure("execution_error", sprint(showerror, err, catch_backtrace()); run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file, phase_recorder, performance_timing)
+    end
+    matpower_export_file = nothing
+    if matpower_export_requested
+      matpower_export_file = joinpath(output_path, "dtf_native_matpower_export.m")
+      try
+        writeMatpowerCasefile(raw_result.net, matpower_export_file)
+      catch err
+        return _api_execution_failure("artifact_write_error", sprint(showerror, err); run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file, phase_recorder, performance_timing)
+      end
+    end
+    dtf_metadata = _dtf_metadata(dtf_case, requested_case_format, detected_case_format; for002_file = for002_reference_file, run_dtf_outages = run_dtf_outages, matpower_export_requested = matpower_export_requested, matpower_export_file = matpower_export_file)
+    _write_dtf_summary_artifacts(output_path, dtf_case, dtf_metadata)
+    try
+      for002_artifacts = _write_for002_placeholder_artifacts(output_path, for002_reference_file)
+      dtf_metadata["for002_comparison_artifacts"] = for002_artifacts
+      dtf_metadata["for002_comparison_status"] = isempty(for002_artifacts) ? "not_requested" : "reference_recorded"
+    catch err
+      return _api_execution_failure("invalid_for002_reference_file", sprint(showerror, err); run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file, phase_recorder, performance_timing, metadata = dtf_metadata)
+    end
+    dtf_outage_results = Dict{String,Any}[]
+    if run_dtf_outages || Symbol(lowercase(strip(String(dtf_outage_selection_mode)))) != :none
+      try
+        mode = run_dtf_outages && Symbol(lowercase(strip(String(dtf_outage_selection_mode)))) == :none ? :all : dtf_outage_selection_mode
+        dtf_outage_results = _run_dtf_outages(case_path, dtf_case, config, output_path; mode = mode, selection = dtf_outage_selection, write_artifacts = write_outage_artifacts, write_matpower_exports = write_outage_matpower_exports, performance_profile = api_performance_profile)
+      catch err
+        return _api_execution_failure("missing_ambiguous_outage_branch_matching", sprint(showerror, err); run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file, phase_recorder, performance_timing, metadata = dtf_metadata)
+      end
+    end
+    dtf_metadata["dtf_outage_results"] = dtf_outage_results
+    dtf_metadata["compare_for002_outages"] = compare_for002_outages
+    operation_callback("dtf_for001_import_summary"; run_id = run_id, _metadata_kwargs(dtf_metadata)...)
+    # Rejoin the normal artifact/finalization path with a native Net result.
+  elseif detected_case_format !== :matpower
+    return _api_failure("invalid_case_format", "Unsupported detected case format: $(detected_case_format)"; run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file)
+  end
+  if detected_case_format === :matpower
+    emit_phase("reading_matpower_case")
   try
     open(logfile, "a") do io
       _write_resolved_q_limit_options(io, qlimit_metadata)
@@ -431,16 +739,26 @@ function _run_sparlectra_api(;
       _write_run_metadata_artifact(output_path; case_path = case_path, lifecycle = details)
       return _api_execution_failure("unsupported_matpower_dcline", err.message; run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file, phase_recorder, performance_timing, metadata = details)
     end
-    message = sprint(showerror, err, catch_backtrace())
+    island_message = _islandwise_failure_message(api_performance_profile)
+    message = island_message === nothing ? sprint(showerror, err, catch_backtrace()) : island_message
     reason = get(phase_recorder.timings[phase_recorder.active_index === nothing ? length(phase_recorder.timings) : phase_recorder.active_index], "phase", "") == "loading_julia_case" ? "loading_julia_case_failed" : "execution_error"
-    return _api_execution_failure(reason, message; run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file, phase_recorder, performance_timing)
+    metadata = island_message === nothing ? Dict{String,Any}() : Dict{String,Any}(
+      "solver_status" => "failed",
+      "service_status" => "failed",
+      "run_status" => "failed",
+      "numerical_status" => "not_converged",
+      "last_phase" => "solving_powerflow",
+    )
+    return _api_execution_failure(reason, message; run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file, phase_recorder, performance_timing, metadata = metadata)
+  end
   end
   auto_profile_result = raw_result.performance_profile isa AbstractDict ? get(raw_result.performance_profile, :matpower_auto_profile_result, nothing) : nothing
   auto_profile_casefile = raw_result.performance_profile isa AbstractDict ? get(raw_result.performance_profile, :matpower_auto_profile_casefile, case_path) : case_path
   if auto_profile_result !== nothing
     config = auto_profile_result.config
     _update_effective_matpower_raw!(effective_raw, config)
-    _write_yaml_file(effective_config, _effective_config_with_runtime_case(effective_raw, case_path, config))
+    config_sources = _config_source_report(config_path, nested_overrides, effective_raw; override_source = config_override_source)
+    _write_yaml_file(effective_config, _effective_config_with_runtime_case(effective_raw, case_path, config; config_sources))
     _write_matpower_auto_profile_artifact(output_path, auto_profile_result, config; casefile = String(auto_profile_casefile))
     operation_callback("powerflow_effective_options"; run_id = run_id, case = basename(case_path), _metadata_kwargs(qlimit_metadata)..., _metadata_kwargs(_resolved_matpower_import_runtime_options(config))...)
   end
@@ -459,6 +777,14 @@ function _run_sparlectra_api(;
   q_limit_artifacts = raw_result.net !== nothing ? [_write_q_limit_log_artifact(output_path, raw_result, qlimit_metadata)] : String[]
   if (run_diagnostics || detailed_result_csv) && raw_result.net !== nothing
     append!(q_limit_artifacts, _write_q_limit_detail_artifacts(output_path, raw_result.net; format = "technical"))
+  end
+  matpower_dcline_artifact = raw_result.net === nothing ? nothing : _write_matpower_dcline_artifact(output_path, raw_result.net; format = "technical")
+  if matpower_dcline_artifact !== nothing
+    operation_callback("matpower_dcline_pf_injections_imported"; run_id = run_id, active_dcline_count = length(raw_result.net.matpowerDclineMetadata), artifact = matpower_dcline_artifact)
+    open(logfile, "a") do io
+      println(io, "MATPOWER active mpc.dcline rows imported through toggle_dcline-compatible PF injections.")
+      println(io, "MATPOWER DC-line artifact: ", matpower_dcline_artifact)
+    end
   end
   csv_artifacts = String[]
   csv_export_error = nothing
@@ -545,6 +871,7 @@ function _run_sparlectra_api(;
       println(io, "Q-limit handling enabled : ", !config.powerflow.qlimits.ignore_q_limits)
       println(io, "Q-limit enforcement mode : ", String(config.powerflow.qlimits.enforcement_mode))
       println(io, "q_limit_detail_artifacts: ", isempty(q_limit_artifacts) ? "none" : join(q_limit_artifacts, ", "))
+      println(io, "matpower_dcline_artifact: ", matpower_dcline_artifact === nothing ? "none" : matpower_dcline_artifact)
       println(io, "detailed_result_csv_status: ", csv_export_status)
       csv_export_skip_reason === nothing || println(io, "detailed_result_csv_skip_reason: ", csv_export_skip_reason)
       if detailed_result_csv && csv_export_skip_reason === nothing
@@ -607,6 +934,7 @@ function _run_sparlectra_api(;
     csv_artifacts,
     detailed_result_csv,
     config_overrides,
+    config_override_source,
     casefile,
     config_file,
     performance_timing,
@@ -615,8 +943,9 @@ function _run_sparlectra_api(;
     qlimit_metadata,
     csv_timing_metadata,
   )
+  isempty(dtf_metadata) || merge!(final_metadata, dtf_metadata)
   _write_run_metadata_artifact(output_path; case_path = case_path, lifecycle = final_metadata)
-  message = numerical_success ? "PowerFlow run completed." : "PowerFlow run completed, but numerical solver did not converge."
+  message = numerical_success ? "PowerFlow run completed." : raw_result.reason_text
   result = _api_result(
     run_id = run_id,
     status = numerical_success ? :succeeded : :not_converged,

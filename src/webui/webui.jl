@@ -195,7 +195,7 @@ end
 
 const _WEBUI_APP_WINDOW_SIZE = "1500,950"
 
-function _webui_app_command(url::String; platform::Symbol = _webui_platform(), executable_lookup = Sys.which, path_exists = ispath, environment = ENV)::Union{Cmd,Nothing}
+function _webui_app_window_command(url::String; platform::Symbol = _webui_platform(), executable_lookup = Sys.which, path_exists = ispath, environment = ENV)::Union{Cmd,Nothing}
   if platform == :macos
     applications = (
       "/Applications/Microsoft Edge.app",
@@ -222,12 +222,42 @@ function _webui_app_command(url::String; platform::Symbol = _webui_platform(), e
   return `$executable --app=$url --window-size=$(_WEBUI_APP_WINDOW_SIZE)`
 end
 
+function _webui_generic_open_command(url::String; platform::Symbol = _webui_platform(), executable_lookup = Sys.which)::Union{Tuple{Cmd,Symbol},Nothing}
+  platform == :linux || return nothing
+
+  xdg_open = executable_lookup("xdg-open")
+  xdg_open === nothing || return (`$(String(xdg_open)) $url`, :xdg_open)
+
+  gio = executable_lookup("gio")
+  gio === nothing || return (`$(String(gio)) open $url`, :gio_open)
+
+  sensible_browser = executable_lookup("sensible-browser")
+  sensible_browser === nothing || return (`$(String(sensible_browser)) $url`, :sensible_browser)
+
+  return nothing
+end
+
+function _webui_browser_open_command(url::String; platform::Symbol = _webui_platform(), executable_lookup = Sys.which, path_exists = ispath, environment = ENV)::Union{Tuple{Cmd,Symbol},Nothing}
+  app_command = _webui_app_window_command(url; platform, executable_lookup, path_exists, environment)
+  app_command === nothing || return (app_command, :app_window)
+  return _webui_generic_open_command(url; platform, executable_lookup)
+end
+
+function _webui_app_command(url::String; platform::Symbol = _webui_platform(), executable_lookup = Sys.which, path_exists = ispath, environment = ENV)::Union{Cmd,Nothing}
+  selected = _webui_browser_open_command(url; platform, executable_lookup, path_exists, environment)
+  selected === nothing && return nothing
+  return selected[1]
+end
+
 function _webui_open_browser(url::String)
-  command = _webui_app_command(url)
-  if command === nothing
+  selected = _webui_browser_open_command(url)
+  if selected === nothing
+    @info "Selected Web UI browser-opening strategy" strategy = "manual_only" url
     @warn "Could not find an app-capable browser; open the Web UI URL manually" url
     return nothing
   end
+  command, strategy = selected
+  @info "Selected Web UI browser-opening strategy" strategy = String(strategy) url
   try
     return run(command; wait = false)
   catch err

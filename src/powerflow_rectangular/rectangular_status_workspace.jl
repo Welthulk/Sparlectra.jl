@@ -171,6 +171,7 @@ function _rectangular_solver_status_symbol(numerical_converged::Bool, active_set
   # Keep symbol mapping stable: downstream status semantics/log text depend on it.
   # This avoids exposing internal flag details to logging, UI, and user APIs.
   final_converged && return :converged
+  reason in (:nr_nonfinite, :nonfinite_mismatch) && return :nr_nonfinite
   numerical_converged || return reason == :singular_newton_step ? :singular_jacobian : :not_converged
   reason == :wrong_branch_detected && return :wrong_branch_detected
   reason == :wrong_branch_rescue_not_implemented && return :wrong_branch_rescue_not_implemented

@@ -141,16 +141,54 @@ explicit YAML values that were preserved.
 
 The `casefileparser` function parses Matpower case files and returns the raw data arrays:
 
-### Known MATPOWER import limitation: DC lines
+### MATPOWER metadata and DC lines
 
-Sparlectra currently does not model MATPOWER `mpc.dcline` entries. During
-framework/API/Web UI MATPOWER case handling, cases with at least one active
-DC-line row (`status != 0`) are detected and rejected before the power-flow
-solve starts. The failed result reports `failure_reason =
-unsupported_matpower_dcline`, includes the active DC-line count and compact
-Pf/Pt/loss totals when available, and writes the same unsupported-feature
-message to `run.log`. Empty `mpc.dcline` tables and tables containing only
-inactive rows continue through the normal AC import path.
+By default Sparlectra preserves the historical numeric bus naming behavior for
+MATPOWER imports. Set `matpower_import.apply_bus_names: true` (or pass
+`apply_bus_names = true`) to use the standard optional MATPOWER `mpc.bus_name`
+field as imported bus names while preserving original `BUS_I` values in
+`busOrigIdxDict`. Sparlectra also supports user-defined MATPOWER-compatible
+metadata fields `mpc.branch_name`, `mpc.branch_kind`, and
+`mpc.for001_contingencies`. Enable them with
+`apply_branch_names = true`, `apply_branch_kind = true`, and
+`import_for001_contingencies = true`; branch names/kinds are attached as
+`net.matpower_branch_metadata`, and FOR001 contingency names are copied to
+`net.for001Contingencies`. `mpc.branch_kind` values `L`, `LINE`, and `ACL`
+force line import, while `T`, `TRAFO`, `TRANSFORMER`, and `2WT` force
+transformer import. Missing or length-mismatched metadata falls back to the
+legacy electrical heuristic.
+
+FOR/DTF transformer records can carry active no-load conductance (`G`) and
+reactive shunt susceptance (`B`) that standard MATPOWER branch rows cannot
+represent with transformer-local semantics. The native DTF importer converts
+nonzero transformer `G` to equivalent bus shunt conductance split equally across
+the transformer terminals, preserving the original branch label, terminal names,
+raw values, converted per-unit values, tap/stage data, and an explicit allocation
+marker in branch metadata. MATPOWER export writes this richer data in a
+versioned `mpc.sparlectra.transformer_losses` extension block and adds a visible
+warning comment near the top of the `.m` file. Plain MATPOWER may ignore this
+block, so transformer active losses can differ outside Sparlectra; Sparlectra
+reimports the block and avoids adding the equivalent `Gs/Bs` shunts twice when
+they are already present in the standard bus table.
+
+`matpower_import.matpower_dcline_mode` controls `mpc.dcline` handling. The
+default `:reject_active` preserves old fail-fast behavior: active DC-line rows
+(`status != 0`) abort before solving with `failure_reason =
+unsupported_matpower_dcline`, while empty or inactive-only tables are ignored.
+`:ignore_inactive` has the same active-row rejection behavior and documents the
+inactive-row ignore policy. `:pf_injections` uses a MATPOWER
+`toggle_dcline`-compatible power-flow approximation by adding two
+generator-like terminal prosumers for each active row. The from terminal uses
+`F_BUS`, `PF`, `QF`, `VF`, and `QMINF`/`QMAXF` with active injection
+`PG = -PF`. The to terminal uses `T_BUS`, `QT`, `VT`, and
+`QMINT`/`QMAXT`; received active power is recomputed as
+`PF - (LOSS0 + LOSS1 * PF)` when `LOSS0`/`LOSS1` are present, otherwise the
+input `PT` column is used. Terminal buses with voltage setpoints are treated as
+voltage-controlled where MATPOWER would make them PV, without demoting
+reference buses or activating isolated buses. API/Web UI runs write a compact
+`matpower_dcline.csv` artifact describing the mapping. This is not a full HVDC
+converter or DC-grid model; OPF constraints, converter controls,
+`dclinecost`, and DC-line optimization remain unsupported.
 
 ```julia
 using Sparlectra

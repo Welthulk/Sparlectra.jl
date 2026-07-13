@@ -98,6 +98,30 @@ function _bus_name_by_idx(net::Net)
   return busNameByIdx
 end
 
+_effective_bus_name(busNameByIdx::AbstractDict, net::Net, bus_idx::Int)::String = get(busNameByIdx, bus_idx, string(bus_idx))
+
+function _original_bus_name(busNameByIdx::AbstractDict, net::Net, bus_idx::Int)::String
+  return get(net.busOriginalNameDict, bus_idx, _effective_bus_name(busNameByIdx, net, bus_idx))
+end
+
+function _original_branch_name(net::Net, br::Branch)::String
+  meta = get(net.matpower_branch_metadata, br.branchIdx, nothing)
+  if meta !== nothing && hasproperty(meta, :orig_name)
+    name = getproperty(meta, :orig_name)
+    name === nothing || isempty(String(name)) || return String(name)
+  end
+  return br.comp.cName
+end
+
+function _branch_kind_name(net::Net, br::Branch)::String
+  meta = get(net.matpower_branch_metadata, br.branchIdx, nothing)
+  if meta !== nothing
+    hasproperty(meta, :orig_kind) && return String(getproperty(meta, :orig_kind))
+    hasproperty(meta, :dtf_kind) && return String(getproperty(meta, :dtf_kind))
+  end
+  return string(br.comp.cTyp)
+end
+
 function _effective_pf_node_count(net::Net)::Int
   reps = _active_link_representative_map(net)
   return length(unique(reps))
@@ -307,7 +331,7 @@ function buildACPFlowReport(net::Net; ct::Float64 = 0.0, ite::Int = 0, tol::Floa
       node_rows,
       (
         bus = n.busIdx,
-        bus_name = get(busNameByIdx, n.busIdx, n.comp.cName),
+        bus_name = _effective_bus_name(busNameByIdx, net, n.busIdx),
         type = toString(n._nodeType),
         vm_pu = n._vm_pu,
         va_deg = n._va_deg,
@@ -322,6 +346,7 @@ function buildACPFlowReport(net::Net; ct::Float64 = 0.0, ite::Int = 0, tol::Floa
         is_isolated = isIsolated(n),
         q_limit_hit = haskey(net.qLimitEvents, n.busIdx),
         control = _cached_control_label(control_labels, n.busIdx),
+        original_bus_name = _original_bus_name(busNameByIdx, net, n.busIdx),
       ),
     )
   end
@@ -339,7 +364,9 @@ function buildACPFlowReport(net::Net; ct::Float64 = 0.0, ite::Int = 0, tol::Floa
     rated = isnothing(br.sn_MVA) ? 0.0 : br.sn_MVA
     overload = rated > 0.0 && max(abs(p_from), abs(p_to)) > rated
 
-    push!(branch_rows, (branch = br.comp.cName, branch_index = br.branchIdx, from_bus = br.fromBus, to_bus = br.toBus, status = br.status, p_from_MW = p_from, q_from_MVar = q_from, p_to_MW = p_to, q_to_MVar = q_to, p_loss_MW = p_loss, q_loss_MVar = q_loss, rated_MVA = rated, overloaded = overload))
+    from_name = _effective_bus_name(busNameByIdx, net, br.fromBus)
+    to_name = _effective_bus_name(busNameByIdx, net, br.toBus)
+    push!(branch_rows, (branch = br.comp.cName, branch_index = br.branchIdx, from_bus = br.fromBus, to_bus = br.toBus, status = br.status, p_from_MW = p_from, q_from_MVar = q_from, p_to_MW = p_to, q_to_MVar = q_to, p_loss_MW = p_loss, q_loss_MVar = q_loss, rated_MVA = rated, overloaded = overload, branch_name = br.comp.cName, original_branch_name = _original_branch_name(net, br), from_bus_name = from_name, to_bus_name = to_name, original_from_bus_name = _original_bus_name(busNameByIdx, net, br.fromBus), original_to_bus_name = _original_bus_name(busNameByIdx, net, br.toBus), branch_kind = _branch_kind_name(net, br)))
   end
 
   link_rows = NamedTuple[]

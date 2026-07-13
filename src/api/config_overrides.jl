@@ -34,6 +34,10 @@ const GUI_EDITABLE_CONFIG_KEYS = Set([
   "power_flow.start_current_iteration.vm_max_pu",
   "power_flow.start_current_iteration.max_angle_step_deg",
   "power_flow.start_current_iteration.only_for_large_cases",
+  "power_flow.islands.enabled",
+  "power_flow.islands.mode",
+  "power_flow.islands.reference_policy",
+  "power_flow.islands.diagnostic_continue_after_failure",
   "matpower_import.auto_profile",
   "matpower_import.ratio",
   "matpower_import.shift_sign",
@@ -41,6 +45,11 @@ const GUI_EDITABLE_CONFIG_KEYS = Set([
   "matpower_import.bus_shunt_model",
   "matpower_import.pv_voltage_source",
   "matpower_import.compare_voltage_reference",
+  "matpower_import.apply_bus_names",
+  "matpower_import.apply_branch_names",
+  "matpower_import.apply_branch_kind",
+  "matpower_import.import_for001_contingencies",
+  "matpower_import.matpower_dcline_mode",
   "output.logfile_results",
   "output.detailed_result_csv_write_mode",
   "output.detailed_result_csv_exporter",
@@ -68,7 +77,7 @@ function _validate_override_type(key::String, value, expected::Type)
 end
 
 function _validate_gui_override_value(key::String, value)
-  if key in ("power_flow.autodamp", "power_flow.qlimits.enabled", "power_flow.start_current_iteration.enabled", "power_flow.start_current_iteration.accept_only_if_improved", "power_flow.start_current_iteration.only_for_large_cases", "benchmark.enabled")
+  if key in ("power_flow.autodamp", "power_flow.qlimits.enabled", "power_flow.start_current_iteration.enabled", "power_flow.start_current_iteration.accept_only_if_improved", "power_flow.start_current_iteration.only_for_large_cases", "power_flow.islands.enabled", "power_flow.islands.diagnostic_continue_after_failure", "benchmark.enabled", "matpower_import.apply_bus_names", "matpower_import.apply_branch_names", "matpower_import.apply_branch_kind", "matpower_import.import_for001_contingencies")
     _validate_override_type(key, value, Bool)
   elseif key in ("power_flow.max_iter", "power_flow.start_current_iteration.max_iter", "benchmark.samples", "output.detailed_result_csv_direct_threshold_buses", "output.detailed_result_csv_buffer_initial_bytes", "output.detailed_result_csv_buffer_max_bytes", "output.detailed_result_csv_streaming_threshold_rows")
     _validate_override_type(key, value, Int)
@@ -99,6 +108,10 @@ function _validate_gui_override_value(key::String, value)
     _validate_allowed_symbol(key, _as_symbol_cfg(value), POWERFLOW_START_ANGLE_MODE_VALUES)
   elseif key == "power_flow.start_mode.voltage_mode"
     _validate_allowed_symbol(key, _as_symbol_cfg(value), POWERFLOW_START_VOLTAGE_MODE_VALUES)
+  elseif key == "power_flow.islands.mode"
+    _validate_allowed_symbol(key, _as_symbol_cfg(value), POWERFLOW_ISLAND_MODE_VALUES)
+  elseif key == "power_flow.islands.reference_policy"
+    _validate_allowed_symbol(key, _as_symbol_cfg(value), POWERFLOW_ISLAND_REFERENCE_POLICY_VALUES)
   elseif key == "matpower_import.auto_profile"
     _validate_allowed_symbol(key, _as_auto_profile_symbol_cfg(value), MATPOWER_AUTO_PROFILE_VALUES)
   elseif key == "matpower_import.ratio"
@@ -111,6 +124,8 @@ function _validate_gui_override_value(key::String, value)
     _validate_allowed_symbol(key, _as_symbol_cfg(value), MATPOWER_PV_VOLTAGE_SOURCE_VALUES)
   elseif key == "matpower_import.compare_voltage_reference"
     _validate_allowed_symbol(key, _as_symbol_cfg(value), MATPOWER_COMPARE_VOLTAGE_REFERENCE_VALUES)
+  elseif key == "matpower_import.matpower_dcline_mode"
+    _validate_allowed_symbol(key, _as_symbol_cfg(value), MATPOWER_DCLINE_MODE_VALUES)
   elseif key == "output.logfile_results"
     _validate_allowed_symbol(key, _as_symbol_cfg(value), OUTPUT_LOGFILE_RESULTS_VALUES)
   elseif key == "output.detailed_result_csv_write_mode"
@@ -157,4 +172,61 @@ end
 function _load_api_config(config_file::String, nested_overrides::Dict{String,Any})
   raw, _ = _load_and_validate_config(DEFAULT_SPARLECTRA_CONFIG_PATH, config_file; cli_overrides = Dict{String,Any}(), overrides = nested_overrides)
   return SparlectraConfig(raw), raw
+end
+
+const CONFIG_OVERRIDE_REPORT_KEYS = (
+  "matpower_import.auto_profile",
+  "matpower_import.compare_voltage_reference",
+  "matpower_import.matpower_dcline_mode",
+  "power_flow.tol",
+  "power_flow.max_iter",
+  "power_flow.autodamp",
+  "power_flow.autodamp_min",
+  "power_flow.start_mode.angle_mode",
+  "power_flow.start_mode.voltage_mode",
+  "power_flow.qlimits.enabled",
+  "power_flow.qlimits.enforcement_mode",
+  "power_flow.start_current_iteration.enabled",
+  "power_flow.islands.enabled",
+  "power_flow.islands.mode",
+  "power_flow.islands.reference_policy",
+  "power_flow.islands.diagnostic_continue_after_failure",
+)
+
+function _dotted_config_value(raw::AbstractDict, key::AbstractString)
+  current = raw
+  for part in split(String(key), '.')
+    current isa AbstractDict || return nothing
+    haskey(current, part) || return nothing
+    current = current[part]
+  end
+  return current
+end
+
+function _set_dotted_metadata!(raw::Dict{String,Any}, key::AbstractString, value)
+  parts = split(String(key), '.')
+  current = raw
+  for part in parts[1:(end - 1)]
+    child = get!(current, part, Dict{String,Any}())
+    child isa Dict{String,Any} || (child = current[part] = Dict{String,Any}())
+    current = child
+  end
+  current[parts[end]] = value
+  return raw
+end
+
+function _config_source_report(config_file::String, nested_overrides::Dict{String,Any}, effective_raw::AbstractDict; override_source::AbstractString = "explicit_api_request")
+  user = isfile(config_file) ? load_yaml_dict(config_file) : Dict{String,Any}()
+  report = Dict{String,Any}()
+  for key in CONFIG_OVERRIDE_REPORT_KEYS
+    source = _dotted_config_value(nested_overrides, key) !== nothing ? String(override_source) :
+             _dotted_config_value(user, key) !== nothing ? "user_yaml" :
+             "default"
+    _set_dotted_metadata!(report, key, Dict{String,Any}(
+      "value" => _dotted_config_value(effective_raw, key),
+      "source" => source,
+      "precedence" => "default < user_yaml < case_sidecar < webui_form_runtime < explicit_api_request",
+    ))
+  end
+  return report
 end

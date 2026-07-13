@@ -17,6 +17,7 @@ function _artifact_kind(path::AbstractString)::Symbol
   name == "effective_config.yaml" && return :effective_config
   name == "run_metadata.yaml" && return :run_metadata
   name == "matpower_auto_profile.log" && return :matpower_auto_profile
+  name == "matpower_dcline.csv" && return :matpower_dcline
   name == "current_iteration_start.log" && return :current_iteration_start
   name == "result.json" && return :result_json
   name == "q_limit.log" && return :q_limit_log
@@ -46,6 +47,7 @@ function _artifact_description(kind::Symbol, name::String)::String
   kind === :q_limit_log && return "Q-limit diagnostic log"
   kind === :q_limit_classic_outer_loop && return "Classical Q-limit outer-loop pass details"
   kind === :matpower_auto_profile && return "MATPOWER import auto-profile diagnostic log"
+  kind === :matpower_dcline && return "MATPOWER DC-line PF injection mapping"
   kind === :current_iteration_start && return "Current-iteration start-value diagnostic log"
   kind === :result_json && return "Serialized Sparlectra API result"
   kind === :csv && return "Generated CSV output"

@@ -456,6 +456,67 @@ function test_rectangular_autodamp_backtracks_oversized_step()::Bool
          Vtrial[1] == V[1]
 end
 
+function test_rectangular_nonfinite_mismatch_diagnostics_use_finite_history()::Bool
+  Y = ComplexF64[0.0 - 10.0im 0.0 + 10.0im; 0.0 + 10.0im 0.0 - 10.0im]
+  S = ComplexF64[0.0 + 0.0im, -1.0 - 0.2im]
+  bus_types = [:Slack, :PQ]
+  Vset = [1.0, 1.0]
+  V1 = ComplexF64[1.0 + 0.0im, 1.0 + 0.0im]
+  V2 = ComplexF64[1.0 + 0.0im, 0.9 - 0.1im]
+  diagnostics = Sparlectra._rectangular_mismatch_diagnostics(
+    Y,
+    ComplexF64[1.0 + 0.0im, NaN + NaN * im],
+    S,
+    bus_types,
+    Vset,
+    1,
+    0.0;
+    history = [239.0, 1609.0, 5.55e290, NaN],
+    step_diagnostics = [(alpha = 0.05, trial_mismatch = 1609.0, accepted_improvement = false) for _ in 1:8],
+    best_finite_iteration = 1,
+    best_finite_voltage = V1,
+    last_finite_iteration = 3,
+    last_finite_voltage = V2,
+    first_nonfinite_iteration = 4,
+    first_nonfinite_voltage = ComplexF64[1.0 + 0.0im, NaN + NaN * im],
+  )
+
+  return diagnostics.first_nonfinite_iteration == 4 &&
+         diagnostics.last_finite_mismatch == 5.55e290 &&
+         diagnostics.best_mismatch == 239.0 &&
+         diagnostics.mismatch_history_trend == :diverging_to_nonfinite &&
+         length(diagnostics.top_mismatch_rows_by_iteration) == 3 &&
+         diagnostics.top_mismatch_rows_by_iteration[1].label == :best_finite_iteration &&
+         diagnostics.top_mismatch_rows_by_iteration[2].label == :last_finite_iteration &&
+         diagnostics.autodamp_failure === true
+end
+
+function test_rectangular_final_status_best_mismatch_ignores_nan()::Bool
+  status = Sparlectra._build_rectangular_final_status(
+    Net(name = "diagnostic_status", baseMVA = 100.0),
+    false,
+    false,
+    false,
+    :nr_mismatch_not_converged,
+    nothing,
+    0.0,
+    [239.0, 1609.0, 5.55e290, NaN],
+    0,
+    0,
+    0,
+    Int[],
+    Sparlectra._wrong_branch_not_checked_result(),
+    :warn,
+    false,
+    :disabled,
+    NamedTuple(),
+  ).status
+
+  return status.reason == :nr_nonfinite &&
+         status.status == :nr_nonfinite &&
+         status.best_mismatch == 239.0
+end
+
 function test_rectangular_start_projection_improves_dc_seed()::Bool
   Ydense = ComplexF64[0.0 - 10.0im 0.0 + 10.0im; 0.0 + 10.0im 0.0 - 10.0im]
   Y = sparse(Ydense)
@@ -2752,6 +2813,8 @@ function run_grid_tests()
       @test test_acpflow(0; lLine_6a6b = 0.01, damp = 1.0, method = :rectangular) == true
       @test test_acpflow(0; lLine_6a6b = 0.01, damp = 1.0, method = :rectangular) == true
       @test test_rectangular_autodamp_backtracks_oversized_step() == true
+      @test test_rectangular_nonfinite_mismatch_diagnostics_use_finite_history() == true
+      @test test_rectangular_final_status_best_mismatch_ignores_nan() == true
       @test test_rectangular_start_projection_improves_dc_seed() == true
       @test test_rectangular_start_projection_keeps_raw_without_finite_improvement() == true
       @test test_q_limit_adjust_vset_success() == true

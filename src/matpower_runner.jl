@@ -571,7 +571,7 @@ function _matpower_import_auto_profile_shunt_score(mpc, include_shunts::Bool; sh
     bus[:, 5] .= 0.0
     bus[:, 6] .= 0.0
   end
-  mpc2 = MatpowerIO.MatpowerCase(mpc.name, mpc.baseMVA, bus, mpc.gen, mpc.branch, mpc.gencost, mpc.bus_name, mpc.dcline)
+  mpc2 = MatpowerIO.MatpowerCase(mpc.name, mpc.baseMVA, bus, mpc.gen, mpc.branch, mpc.gencost, mpc.bus_name, mpc.branch_name, mpc.branch_kind, mpc.for001_contingencies, mpc.dcline)
   return _matpower_import_auto_profile_residual_score(MatpowerIO.vmva_power_mismatch_stats(mpc2; matpower_shift_unit = shift_unit, matpower_shift_sign = shift_sign, matpower_ratio = ratio))
 end
 
@@ -801,6 +801,11 @@ function print_matpower_import_auto_profile_effective_options(io::IO, cfg::Sparl
   println(io, "matpower_import.bus_shunt_model: ", cfg.matpower.bus_shunt_model)
   println(io, "matpower_import.pv_voltage_source: ", cfg.matpower.pv_voltage_source)
   println(io, "matpower_import.compare_voltage_reference: ", cfg.matpower.compare_voltage_reference)
+  println(io, "matpower_import.apply_bus_names: ", cfg.matpower.apply_bus_names)
+  println(io, "matpower_import.apply_branch_names: ", cfg.matpower.apply_branch_names)
+  println(io, "matpower_import.apply_branch_kind: ", cfg.matpower.apply_branch_kind)
+  println(io, "matpower_import.import_for001_contingencies: ", cfg.matpower.import_for001_contingencies)
+  println(io, "matpower_import.matpower_dcline_mode: ", cfg.matpower.matpower_dcline_mode)
   println(io, "power_flow.start_mode.angle_mode: ", cfg.powerflow.start_mode.angle_mode)
   println(io, "power_flow.start_mode.voltage_mode: ", cfg.powerflow.start_mode.voltage_mode)
   println(io, "power_flow.start_mode.start_projection: ", cfg.powerflow.start_mode.start_projection)
@@ -828,6 +833,11 @@ function print_matpower_import_runtime_options(io::IO, title::AbstractString, cf
   println(io, "matpower_import.bus_shunt_model: ", cfg.matpower.bus_shunt_model)
   println(io, "matpower_import.pv_voltage_source: ", cfg.matpower.pv_voltage_source)
   println(io, "matpower_import.compare_voltage_reference: ", cfg.matpower.compare_voltage_reference)
+  println(io, "matpower_import.apply_bus_names: ", cfg.matpower.apply_bus_names)
+  println(io, "matpower_import.apply_branch_names: ", cfg.matpower.apply_branch_names)
+  println(io, "matpower_import.apply_branch_kind: ", cfg.matpower.apply_branch_kind)
+  println(io, "matpower_import.import_for001_contingencies: ", cfg.matpower.import_for001_contingencies)
+  println(io, "matpower_import.matpower_dcline_mode: ", cfg.matpower.matpower_dcline_mode)
   println(io)
   return nothing
 end

@@ -37,7 +37,7 @@ const MPOWER_DIR = normpath(joinpath(pkgdir(@__MODULE__), "data", "mpower"))
 
 # resource data types for working with Sparlectra
 const Wurzel3 = 1.7320508075688772
-const SparlectraVersion = v"0.8.7"
+const SparlectraVersion = v"0.8.8"
 version() = SparlectraVersion
 abstract type AbstractBranch end
 
@@ -339,6 +339,8 @@ export
 
   # import.jl
   createNetFromMatPowerFile,              # Import a MATPOWER case file as Net.
+  DTFImporter,                            # Native DTF/FOR001 parser and Net builder.
+  createNetFromDTFFile,                   # Import a legacy DTF/FOR001 file as Net.
   _createDict,
   apply_matpower_bus_voltage!,            # Apply MATPOWER bus voltage data.
   apply_mp_bus_vmva_init!,                # Initialize Vm/Va from MATPOWER data.
@@ -348,6 +350,7 @@ export
 
   # equicircuit.jl
   calcComplexRatio,
+  calcSkewAngleTap,
   calcNeutralU,
   createYBUS,                             # Build the network admittance matrix.
   adjacentBranches,
@@ -501,11 +504,13 @@ include("busdata.jl")
 include("MatpowerIO.jl")
 include("createnet_powermat.jl")
 include("equicircuit.jl")
+include("DTFImporter.jl")
 include("limits.jl")
 include("losses.jl")
 include("exportMatPower.jl")
 include("results.jl")
 include("acpflow.jl")
+include("acpflow/island_diagnostics.jl")
 include("api/api_types.jl")
 include("api/config_overrides.jl")
 include("api/serialization.jl")
@@ -539,6 +544,7 @@ include("powerflow_rectangular/rectangular_status_workspace.jl")
 include("powerflow_rectangular/rectangular_finalization.jl")
 include("powerflow_rectangular/rectangular_final_status.jl")
 include("powerflow_rectangular/rectangular_diagnostics.jl")
+include("powerflow_rectangular/ac_islands.jl")
 include("powerflow_rectangular/rectangular_network_solver.jl")
 include("solver_interface.jl")
 include("FetchMatpowerCase.jl")

@@ -125,6 +125,37 @@ function calcComplexRatio(; tapRatio::Float64, angleInDegrees::Float64)::Complex
 end
 
 """
+    calcSkewAngleTap(; tap_fraction::Real, skew_angle_deg::Real, convention::Symbol = :reciprocal_from_side)
+
+Convert a longitudinal regulating-voltage fraction and skew angle into the
+effective complex tap quantities used by transformer equivalent circuits.
+
+The regulating vector is `1 + tap_fraction * cis(skew_angle_deg)`.  With the
+default `:reciprocal_from_side` convention, the returned magnitude/angle
+represent the from-side off-nominal tap convention used by Sparlectra: the
+effective ratio multiplier is `1 / abs(regulating_vector)` and the effective
+phase shift is `-angle(regulating_vector)`.
+"""
+function calcSkewAngleTap(; tap_fraction::Real, skew_angle_deg::Real, convention::Symbol = :reciprocal_from_side)
+  regulating_vector = 1.0 + Float64(tap_fraction) * cis(deg2rad(Float64(skew_angle_deg)))
+  if convention == :reciprocal_from_side
+    effective_ratio = 1.0 / abs(regulating_vector)
+    effective_shift_deg = -rad2deg(angle(regulating_vector))
+  elseif convention == :direct_regulating_vector
+    effective_ratio = abs(regulating_vector)
+    effective_shift_deg = rad2deg(angle(regulating_vector))
+  else
+    throw(ArgumentError("Unsupported skew-angle tap convention: $(convention)"))
+  end
+  return (
+    regulating_vector = ComplexF64(regulating_vector),
+    effective_ratio = effective_ratio,
+    effective_shift_deg = effective_shift_deg,
+    convention = convention,
+  )
+end
+
+"""
     calcNeutralU(neutralU_ratio::Float64, vn_hv::Float64, tap_min::Integer, tap_max::Integer, tap_step_percent::Float64)::Float64
 
 Calculates the neutral voltage of a transformer based on the given parameters.

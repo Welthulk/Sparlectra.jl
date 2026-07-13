@@ -39,6 +39,15 @@ power_flow:
   rectangular_preallocate_workspace: auto
   rectangular_workspace_min_buses: 1000
 
+  # AC island diagnostic artifacts.
+  islands:
+    enabled: false
+    # Allowed values: solve_independent
+    mode: solve_independent
+    # Allowed values: matpower_like
+    reference_policy: matpower_like
+    diagnostic_continue_after_failure: false
+
   # Start projection and warmstart controls.
   start_mode:
     # Allowed values: classic, dc, bus_va_blend, matpower_va
@@ -166,6 +175,12 @@ matpower_import:
   # Allowed values: off, on, auto
   preallocate_network: auto
   preallocate_min_buses: 500
+  apply_bus_names: false
+  apply_branch_names: false
+  apply_branch_kind: false
+  import_for001_contingencies: true
+  # Allowed values: reject_active, ignore_inactive, pf_injections
+  matpower_dcline_mode: reject_active
 
 performance:
   enabled: true
