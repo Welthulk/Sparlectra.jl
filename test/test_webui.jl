@@ -593,12 +593,18 @@ settings:
         case14 = joinpath(case_directory, "case14.m")
         case118 = joinpath(case_directory, "case118.m")
         casejl = joinpath(case_directory, "case14.jl")
+        warmup_m = joinpath(case_directory, "warmup_internal.m")
+        warmup_jl = joinpath(case_directory, "warmup_case3.jl")
+        generated_cache = joinpath(case_directory, "generated_cache.jl")
         for001 = joinpath(case_directory, "FOR001.DAT")
         for002 = joinpath(case_directory, "FOR002.DAT")
         for002_variant = joinpath(case_directory, "FOR002_reference.DAT")
         write(case14, "function mpc = case14\nend\n")
         write(case118, "function mpc = case118\nend\n")
         write(casejl, "nothing\n")
+        write(warmup_m, "function mpc = warmup_internal\nend\n")
+        write(warmup_jl, "nothing\n")
+        write(generated_cache, "nothing\n")
         write(for001, "0 / END\n")
         write(for002, "legacy reference\n")
         write(for002_variant, "legacy reference variant\n")
@@ -613,7 +619,13 @@ settings:
         write(joinpath(config_directory, "README.md"), "ignored\n")
 
         @test Sparlectra._webui_application_root(start_dir) == application_root
-        @test Sparlectra._webui_casefile_options(application_root) == ["case118.m", "case14.jl", "case14.m", "FOR001.DAT"]
+        @test Sparlectra._webui_is_user_selectable_case("case3.m")
+        @test Sparlectra._webui_is_user_selectable_case("case14.m")
+        @test !Sparlectra._webui_is_user_selectable_case("warmup_case3.m")
+        @test !Sparlectra._webui_is_user_selectable_case("warmup_case3.jl")
+        @test !Sparlectra._webui_is_user_selectable_case("warmup_internal.m")
+        @test !Sparlectra._webui_is_user_selectable_case("generated_cache.jl")
+        @test Sparlectra._webui_casefile_options(application_root) == ["case118.m", "case14.m", "FOR001.DAT"]
         @test Sparlectra._webui_for002_reference_options_in_directory(case_directory) == ["FOR002.DAT", "FOR002_reference.DAT"]
         @test Sparlectra._webui_config_file_options(application_root) == [primary_config, secondary_config]
 
@@ -625,7 +637,10 @@ settings:
         @test occursin("<select id=\"casefile\" name=\"casefile\" data-case-settings-reload=\"true\">", selection_html)
         @test occursin("<option value=\"\">-- choose existing case --</option>", selection_html)
         @test occursin("<option value=\"case14.m\" selected>case14.m</option>", selection_html)
-        @test occursin("<option value=\"case14.jl\">case14.jl</option>", selection_html)
+        @test !occursin("<option value=\"case14.jl\">case14.jl</option>", selection_html)
+        @test !occursin("warmup_case3", selection_html)
+        @test !occursin("warmup_internal", selection_html)
+        @test !occursin("generated_cache", selection_html)
         @test occursin("<option value=\"FOR001.DAT\">FOR001.DAT</option>", selection_html)
         primary_selector_html = split(selection_html, "<datalist id=\"for002-reference-candidates\">")[1]
         @test !occursin("<option value=\"FOR002.DAT\">FOR002.DAT</option>", primary_selector_html)
@@ -705,7 +720,8 @@ settings:
           application_root = application_root,
           selected_casefile = "case14.jl",
         )
-        @test occursin("<option value=\"case14.jl\" selected>case14.jl</option>", casejl_html)
+        @test !occursin("<option value=\"case14.jl\" selected>case14.jl</option>", casejl_html)
+        @test occursin("<input id=\"casefile_manual\" name=\"casefile_manual\" value=\"case14.jl\"", casejl_html)
         @test occursin("<option value=\"auto\" selected>Auto</option>", casejl_html)
         @test occursin("<option value=\"dtf_for001\">DTF/FOR001 diagnostics (experimental/internal)</option>", casejl_html)
 

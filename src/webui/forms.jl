@@ -39,24 +39,39 @@ end
     _webui_casefile_options(application_root) -> Vector{String}
 
 Return sorted user-selectable case filenames from the Web UI application's
-`data/mpower` directory. The selector stays conservative: MATPOWER `.m`/`.jl`
-files and copied internal DTF/FOR001 `.DAT` candidates are shown, while generated
-result artifacts and sidecar profiles stay hidden. Missing or empty directories
-produce an empty list.
+`data/mpower` directory. The selector stays conservative: MATPOWER `.m` files
+and copied internal DTF/FOR001 `.DAT` candidates are shown, while generated
+Julia cache artifacts, warm-up cases, result artifacts, and sidecar profiles
+stay hidden. Missing or empty directories produce an empty list.
 """
 function _webui_casefile_options(application_root::AbstractString)::Vector{String}
   return _webui_casefile_options_in_directory(joinpath(application_root, "data", "mpower"))
 end
 
+"""
+    _webui_is_user_selectable_case(name) -> Bool
+
+Return whether `name` should be shown in the normal Web UI case selector.
+Internal warm-up cases use the reserved `warmup_` prefix and remain available
+to startup warm-up code by explicit path only. Generated Julia cache artifacts
+are also hidden from the selector; users can still enter an explicit path in the
+manual case field when they intentionally want to run such a file.
+"""
+function _webui_is_user_selectable_case(name::AbstractString)::Bool
+  lowered_name = lowercase(basename(name))
+  _, extension = splitext(lowered_name)
+  endswith(lowered_name, ".sparlectra-webui.yaml") && return false
+  startswith(lowered_name, "warmup_") && extension in (".m", ".jl") && return false
+  extension == ".jl" && return false
+  extension in (".m", ".dat") || return false
+  _is_for002_reference_dat(name) && return false
+  return true
+end
+
 function _webui_casefile_options_in_directory(directory::AbstractString)::Vector{String}
   isdir(directory) || return String[]
-  visible_extensions = Set([".m", ".jl", ".dat"])
   files = filter(readdir(directory)) do name
-    extension = lowercase(splitext(name)[2])
-    lowered_name = lowercase(name)
-    endswith(lowered_name, ".sparlectra-webui.yaml") && return false
-    _is_for002_reference_dat(name) && return false
-    return isfile(joinpath(directory, name)) && extension in visible_extensions
+    return isfile(joinpath(directory, name)) && _webui_is_user_selectable_case(name)
   end
   return sort!(files; by = lowercase)
 end

@@ -224,7 +224,7 @@ function main()
     end
   end
   if !isempty(missing)
-    error("Missing DTF/FOR002 files: " * join(missing, ", "))
+    error("External FOR001/FOR002 validation data not found. Provide the FOR001*.DAT and FOR002*.DAT files in data/DTF, or call the single-case validation examples with explicit --dtf-file and --for002-file paths. Missing: " * join(missing, ", "))
   end
 
   summary_rows = NamedTuple[]

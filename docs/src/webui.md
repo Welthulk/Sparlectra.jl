@@ -33,8 +33,11 @@ results are written beneath `%LOCALAPPDATA%\Sparlectra\WebUI\runs` on Windows,
 `$XDG_STATE_HOME/sparlectra/webui/runs` (or
 `~/.local/state/sparlectra/webui/runs`) on Linux, and
 `~/Library/Application Support/Sparlectra/WebUI/runs` on macOS. Directories
-are created automatically. The operation log is in the sibling user Web UI `logs` directory, and downloaded/generated MATPOWER cases are
-cached in the sibling user Web UI `data/mpower` directory. On first start, `warmup_case3.jl` is copied there as a small selectable demo case.
+are created automatically. The operation log is in the sibling user Web UI
+`logs` directory, and downloaded/generated MATPOWER cases are cached in the
+sibling user Web UI `data/mpower` directory. On first start,
+`warmup_case3.jl` is copied there only for internal startup warm-up and is not
+shown in the normal user-selectable case list.
 
 On first startup, the Web UI copies the package configuration template to its user-writable `config/configuration.yaml`. Pass `output_root="my_sparlectra_runs"` or `config_file="my_configuration.yaml"` to override these defaults; an explicit configuration file is never overwritten.
 The effective configuration, output root, MATPOWER cache, and operation log are displayed by
@@ -84,7 +87,10 @@ Warm-up runs asynchronously and fails softly. With
 `warmup_store_result=false`, it uses a temporary directory and creates no
 normal run-history entry. The bundled `data/webui/warmup_case3.jl` file is an
 original Sparlectra-owned synthetic three-bus MATPOWER-compatible Julia case,
-not a derivative of an external MATPOWER case.
+not a derivative of an external MATPOWER case. Files whose names start with the
+reserved `warmup_` prefix are internal-only and are hidden from the case
+selector; pass `warmup_casefile` when a different explicit warm-up case is
+needed.
 
 ## Starting a PowerFlow run
 
@@ -198,15 +204,17 @@ conservative: built-in defaults are loaded first, global configuration remains
 unchanged, the case-specific Web UI profile only prefills editable form fields,
 and any manual browser edit wins for the submitted run.
 
-The existing-case selector is MATPOWER-oriented by default and may list `.m`,
-`.jl`, and runnable internal DTF/FOR001 `.DAT` candidates when they are
-supported by the current Web UI case-resolution logic. FOR002-like `.DAT` files
-are not primary cases; use the optional FOR002 reference field for those
-validation references. First startup still provisions the small
-`warmup_case3.jl` demo case for warmup. A separate manual field accepts a bare
-case name such as `case14.m`, `case118.m`, or `case9241pegase.m`; a nonempty
-manual value overrides the selected cached case. Internal DTF/FOR001 support is
-intended for supported conversion and validation workflows and does not change
+The existing-case selector is MATPOWER-oriented by default and lists
+user-selectable `.m` files plus runnable DTF/FOR001 `.DAT` candidates when they
+are supported by the current Web UI case-resolution logic. Generated `.jl`
+cache artifacts are hidden from the selector, and files with the reserved
+`warmup_` prefix are internal-only. FOR002-like `.DAT` files are not primary
+cases; use the optional FOR002 reference field for those validation references.
+First startup still provisions the small `warmup_case3.jl` case for warmup, but
+it is not user-selectable. A separate manual field accepts a bare case name such
+as `case14.m`, `case118.m`, or `case9241pegase.m`; a nonempty manual value
+overrides the selected cached case. Internal DTF/FOR001 support is intended for
+supported conversion and validation workflows and does not change
 the normal MATPOWER-first workflow.
 
 The landing page includes a compact, collapsible MATPOWER acknowledgement beside

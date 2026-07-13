@@ -137,14 +137,13 @@ original FOR/DTF identifier, terminal bus names, raw `R/X/G/B` values where
 available, converted per-unit values, tap/phase-shift data, source marker, and
 the allocation convention.
 
-Sparlectra applies FOR/DTF transformer conductance conservatively as equivalent
-terminal bus shunt conductance, split equally between the from and to buses,
-while preserving the original transformer-local metadata for diagnostics and
-round trips. Exported `.m` files include an explicit `SPARLECTRA EXTENSION
+Sparlectra applies FOR/DTF transformer conductance as part of the native
+transformer PI branch model (`Branch.g_pu`) rather than as synthetic terminal
+bus shunts. Exported `.m` files include an explicit `SPARLECTRA EXTENSION
 WARNING` comment because plain MATPOWER ignores the proprietary metadata and may
 therefore compute different transformer active losses. When Sparlectra reimports
-one of these files it restores the metadata and avoids double-counting if the
-standard `Gs/Bs` bus-shunt approximation is already present.
+one of these files it restores the branch conductance metadata without adding
+terminal bus-shunt approximations.
 
 ## Sparlectra MATPOWER import options overview
 
