@@ -1,28 +1,28 @@
-## Version 0.8.8 — Unreleased
+# Version 0.8.8 — 2026-07-14
+
 ### New Features
 
-* Added MATPOWER export support for the existing Sparlectra `mpc.sparlectra.transformer_losses` roundtrip metadata that preserves FOR/DTF transformer active no-load conductance metadata, writes an explicit warning in exported `.m` files, and restores the metadata on Sparlectra re-import without double-counting equivalent bus shunts.
-* Added an experimental/internal PowerFlow API and Web UI path for direct native DTF/FOR001 diagnostic input, including cautious input-format selection, DTF import metadata, optional MATPOWER export artifacts, selected/all DTF outage execution controls, and explicit unsupported DC-line diagnostics.
-* Added native DTF/FOR001 import support with explicit transformer ratio modes: `:neutral_one` as the default legacy-compatible format convention and `:winding_over_network` preserved as an explicit nameplate/network-base diagnostic mode.
-* Added Schrägregler/skew-angle transformer support for native DTF/FOR001 controls.
-* Added Web UI-visible FOR001/DTF format documentation covering fixed-column sections, trailing branch-echo records, transformer ratio conventions, Schraegregler/skew-angle controls, and FOR002 validation notes.
-* Added opt-in MATPOWER metadata import for `bus_name`, user-defined `branch_name`, `branch_kind`, `for001_contingencies`, and proprietary `mpc.sparlectra.transformer_losses` metadata, including stable bus-name mapping and FOR001 contingency branch-index mapping helpers.
-* Added controlled MATPOWER `mpc.dcline` handling with the default active-row rejection preserved and an opt-in `:pf_injections` mode that creates MATPOWER-like fixed terminal injections.
+* Added native DTF/FOR001 import with support for transformer ratio conventions, Schrägregler/skew-angle controls, trailing branch records, and FOR001 contingency metadata.
+* Added an experimental DTF/FOR001 input path for the PowerFlow API and Web UI, including optional MATPOWER export, outage selection, import diagnostics, and explicit handling of unsupported DC-line data.
+* Extended MATPOWER import and export with Sparlectra metadata for bus and branch names, branch types, FOR001 contingencies, and transformer loss data.
+* Added support for the existing `mpc.sparlectra.transformer_losses` extension so transformer no-load conductance can be preserved across Sparlectra–MATPOWER roundtrips.
+* Added optional MATPOWER DC-line handling through fixed terminal power injections while keeping rejection of active DC-line records as the default.
+* Added user-facing documentation for the DTF/FOR001 format, transformer conventions, Schrägregler controls, trailing records, and FOR002 validation.
 
 ### Improvements
 
-* Improved island-wise failure diagnostics so each AC island keeps its own solver status, returned non-convergence is not reported as a solver exception, Q-limit state is included in per-island artifacts, and failed API runs keep generated artifacts discoverable for ZIP downloads.
-* Improved AC island diagnostics by writing per-island solver artifacts and reporting island topology, selected reference bus, propagated solver settings, mismatch status, and artifact paths in island-aware failure messages.
-* Improved Linux Web UI browser launching by keeping Chromium-family app windows as the preferred path and falling back to desktop openers such as `xdg-open`, `gio open`, or `sensible-browser` without passing Chromium-only flags to generic browsers.
-* Added true A-E FOR002 ratio-mode validation workflow and diagnostics for transformer metadata, native PI transformer losses, no-load/shunt sensitivity, and branch-identity auditing, including opt-in CSV artifacts and MATPOWER round-trip metadata preservation checks.
-* Improved the native DTF/FOR002 validation example so normal script and REPL usage returns a lightweight result and prints a concise summary, while detailed row-level diagnostics remain available through an explicit details mode.
+* Improved AC-island diagnostics and failure reporting, including per-island status, reference-bus selection, solver settings, mismatch information, Q-limit state, and downloadable diagnostic artifacts.
+* Improved API failure handling so non-converged runs retain their generated artifacts and remain available for ZIP download.
+* Improved Linux Web UI browser startup by using Chromium app windows where available and falling back cleanly to standard desktop browser launchers.
+* Added validation workflows for FOR002 cases A–E, including transformer ratios, branch identity, no-load losses, shunt sensitivity, outage handling, and MATPOWER roundtrip checks.
+* Simplified the DTF/FOR002 validation examples so normal use prints a concise summary while detailed diagnostics remain available on demand.
 
-### Bugfixes
+### Bug Fixes
 
-* Preserved DTF transformer `G` handling through the existing `PowerTransformerWinding.g` -> `getTrafoRXBG`/`getTrafoRXBG_pu` -> `Branch.g_pu` transformer PI path, with no synthetic terminal bus shunts.
-* Fixed Sparlectra MATPOWER reimport so `mpc.sparlectra.transformer_losses` restores native transformer `g`/branch `g_pu` without recreating terminal bus-shunt approximations.
-* Fixed transformer branch-loss attribution so native branch-end losses can be decomposed into longitudinal I²R and voltage-dependent branch-`G` components.
-* Fixed the Web UI case selector so internal warm-up cases are not offered as user-selectable cases.
+* Preserved transformer conductance through the existing `PowerTransformerWinding.g` → `getTrafoRXBG` / `getTrafoRXBG_pu` → `Branch.g_pu` path without creating synthetic terminal bus shunts.
+* Fixed MATPOWER reimport so `mpc.sparlectra.transformer_losses` restores transformer conductance correctly and does not duplicate loss contributions.
+* Fixed transformer loss reporting so total branch losses can be separated into longitudinal copper losses and voltage-dependent no-load losses.
+* Fixed the Web UI case selector so internal warm-up cases are no longer shown as selectable user cases.
 
 ## Version 0.8.7 – 2026-06-23
 
