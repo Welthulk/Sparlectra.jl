@@ -27,12 +27,10 @@ function main(; output_dir = joinpath(@__DIR__, "_out", "transformer_loss_extens
   Sparlectra.addBus!(net = net, busName = "FROM", vn_kV = 110.0, oBusIdx = 1)
   Sparlectra.addBus!(net = net, busName = "TO", vn_kV = 110.0, oBusIdx = 2)
   Sparlectra.addProsumer!(net = net, busName = "FROM", type = "GENERATOR", p = 0.0, q = 0.0, referencePri = "FROM", vm_pu = 1.0)
-  Sparlectra._addPIModelTrafo_by_idx!(net = net, from = 1, to = 2, r_pu = 0.01, x_pu = 0.05, b_pu = -0.002, status = 1, ratedS = 100.0, ratio = 1.0, shift_deg = 0.0)
+  Sparlectra._addPIModelTrafo_by_idx!(net = net, from = 1, to = 2, r_pu = 0.01, x_pu = 0.05, b_pu = -0.002, g_pu = 0.005, status = 1, ratedS = 100.0, ratio = 1.0, shift_deg = 0.0)
 
-  # FOR/DTF transformer G is represented internally as equivalent terminal bus
-  # shunts while the transformer-local metadata is kept for Sparlectra round trips.
-  Sparlectra.addShuntMatpower!(net = net, busName = "FROM", Gs = 0.25, Bs = 0.0, bus_shunt_model = :admittance)
-  Sparlectra.addShuntMatpower!(net = net, busName = "TO", Gs = 0.25, Bs = 0.0, bus_shunt_model = :admittance)
+  # FOR/DTF transformer G is represented by the native branch PI conductance.
+  # The proprietary MATPOWER metadata preserves it for Sparlectra round trips.
   net.matpower_branch_metadata[1] = (
     orig_name = "T1A FROM -> TO",
     source_label = "T1A",
@@ -49,7 +47,7 @@ function main(; output_dir = joinpath(@__DIR__, "_out", "transformer_loss_extens
     g_pu = 0.005,
     b_pu = -0.002,
     active_no_load_g_pu = 0.005,
-    transformer_loss_allocation = :split_equally_to_terminal_bus_shunts,
+    transformer_loss_allocation = :native_branch_pi,
     tap_ratio = 1.0,
     actual_tap_step = 0,
     max_tap_step = 9,
@@ -60,7 +58,7 @@ function main(; output_dir = joinpath(@__DIR__, "_out", "transformer_loss_extens
   Sparlectra.writeMatpowerCasefile(net, path)
   mpc = Sparlectra.MatpowerIO.read_case_m(path; legacy_compat = false)
   roundtrip = Sparlectra.createNetFromMatPowerCase(mpc = mpc, apply_bus_names = true, apply_branch_names = true, apply_branch_kind = true)
-  return (path = path, transformer_loss_records = length(mpc.sparlectra.transformer_losses), total_g_pu = Sparlectra.bus_shunt_totals_pu(roundtrip).total_g_pu)
+  return (path = path, transformer_loss_records = length(mpc.sparlectra.transformer_losses), total_g_pu = roundtrip.branchVec[1].g_pu)
 end
 
 if abspath(PROGRAM_FILE) == @__FILE__

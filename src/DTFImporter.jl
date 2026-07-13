@@ -14,7 +14,7 @@
 
 module DTFImporter
 
-using ..Sparlectra: Net, addBus!, addProsumer!, addShuntMatpower!, _addPIModelACLine_by_idx!, _addPIModelTrafo_by_idx!, geNetBusIdx, validate!, normalize_bus_shunt_model, calcSkewAngleTap
+using ..Sparlectra: Net, addBus!, addProsumer!, _addPIModelACLine_by_idx!, _addPIModelTrafo_by_idx!, geNetBusIdx, validate!, normalize_bus_shunt_model, calcSkewAngleTap
 
 export DTFCase, DTFParams, DTFSize, DTFBranch, DTFBus, DTFCompensation, DTFTransformerControl, DTFOutage, DTFTrailingRecord, read_dtf, build_net,
   dtf_branch_key, find_outage_branch_indices, outage_match_diagnostic, apply_single_branch_outage!, case_summary, outage_label
@@ -452,7 +452,7 @@ function build_net(case::DTFCase; bus_shunt_model = :admittance, legacy_voltage_
       tap = _dtf_effective_transformer_tap(case, branch, control, bus_by_name[branch.from], bus_by_name[branch.to]; nominal_voltages_kv = nominal_voltages_kv, transformer_ratio_mode = ratio_mode)
       ratio = tap.ratio
       shift_deg = tap.shift_deg
-      _addPIModelTrafo_by_idx!(net = net, from = from, to = to, r_pu = pu.r, x_pu = pu.x, b_pu = pu.b, status = 1, ratedU = pu.u_ref_kv, ratedS = ratedS, ratio = ratio, shift_deg = shift_deg)
+      _addPIModelTrafo_by_idx!(net = net, from = from, to = to, r_pu = pu.r, x_pu = pu.x, b_pu = pu.b, g_pu = pu.g, status = 1, ratedU = pu.u_ref_kv, ratedS = ratedS, ratio = ratio, shift_deg = shift_deg)
     else
       _addPIModelACLine_by_idx!(net = net, from = from, to = to, r_pu = pu.r, x_pu = pu.x, b_pu = pu.b, status = 1, ratedS = ratedS)
     end
@@ -472,7 +472,7 @@ function build_net(case::DTFCase; bus_shunt_model = :admittance, legacy_voltage_
       to_bus_vn_kV = nominal_voltages_kv[to_bus.voltage_level_index],
       g_pu = pu.g,
       b_pu = pu.b,
-      transformer_loss_allocation = branch.kind == 'T' ? :split_equally_to_terminal_bus_shunts : :not_transformer,
+      transformer_loss_allocation = branch.kind == 'T' ? :native_branch_pi : :not_transformer,
       active_no_load_g_pu = branch.kind == 'T' ? pu.g : 0.0,
       r_ohm = branch.r_ohm,
       x_ohm = branch.x_ohm,
@@ -494,10 +494,6 @@ function build_net(case::DTFCase; bus_shunt_model = :admittance, legacy_voltage_
       effective_complex_tap = branch.kind == 'T' ? tap.effective_complex : 1.0 + 0.0im,
       dtf_tap_convention = branch.kind == 'T' ? tap.convention : :not_transformer,
     )
-    if pu.g != 0.0
-      addShuntMatpower!(net = net, busName = branch.from, Gs = pu.g * case.baseMVA / 2, Bs = 0.0, bus_shunt_model = shunt_model)
-      addShuntMatpower!(net = net, busName = branch.to, Gs = pu.g * case.baseMVA / 2, Bs = 0.0, bus_shunt_model = shunt_model)
-    end
   end
   ok, msg = validate!(net = net)
   ok || error(msg)

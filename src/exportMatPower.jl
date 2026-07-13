@@ -67,7 +67,7 @@ function _sparlectra_transformer_loss_rows(net::Net)
       b_pu = Float64(br.b_pu),
       active_no_load_g_pu = g_pu,
       reactive_shunt_b_pu = Float64(br.b_pu),
-      allocation = "split_equally_to_terminal_bus_shunts",
+      allocation = "native_branch_pi",
       tap_ratio = Float64(br.ratio),
       phase_shift_deg = Float64(br.angle),
       stage_position = meta !== nothing && hasproperty(meta, :actual_tap_step) && meta.actual_tap_step !== nothing ? Float64(meta.actual_tap_step) : NaN,
@@ -261,7 +261,7 @@ function writeBranchData(net::Net, file)
     b = br.b_pu
     g = br.g_pu
     if abs(g) > 1e-6
-      @info "Branch shunt conductance g is not directly represented by standard MATPOWER branch rows; export diagnostics should account for equivalent bus shunts" g
+      @info "Branch shunt conductance g is not directly represented by standard MATPOWER branch rows; export preserves Sparlectra branch g_pu in proprietary metadata for round trips" g
     end
     rateA = 0 # 0 for unlimited
     if !isnothing(br.sn_MVA)

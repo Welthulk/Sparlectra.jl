@@ -857,6 +857,7 @@ function _addPIModelTrafo_by_idx!(;
   r_pu::Float64,
   x_pu::Float64,
   b_pu::Float64,
+  g_pu::Float64 = 0.0,
   status::Int,
   ratedU::Union{Nothing,Float64} = nothing,
   ratedS::Union{Nothing,Float64} = nothing,
@@ -869,7 +870,7 @@ function _addPIModelTrafo_by_idx!(;
   @assert from != to "From and to bus must be different"
   vn_hv_kV = getNodeVn(net.nodeVec[from])
   vn_lv_kV = getNodeVn(net.nodeVec[to])
-  w1 = PowerTransformerWinding(vn_hv_kV, r_pu, x_pu, b_pu, 0.0, ratio, shift_deg, ratedU, ratedS, nothing, true)
+  w1 = PowerTransformerWinding(vn_hv_kV, r_pu, x_pu, b_pu, g_pu, ratio, shift_deg, ratedU, ratedS, nothing, true)
   w2 = PowerTransformerWinding(vn_lv_kV, 0.0, 0.0)
   if !isnothing(controls)
     if side == 1

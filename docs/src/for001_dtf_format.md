@@ -31,7 +31,7 @@ The size card gives the expected counts for buses, branches, compensation record
 
 ## Branch cards
 
-Branch cards describe lines and transformers. The card kind identifies transformer records with `T`; other branch records are treated as AC lines. The branch voltage-level index controls R/X/G/B per-unit conversion. Transformer no-load conductance metadata is preserved and may be reported separately from the series branch quantities.
+Branch cards describe lines and transformers. The card kind identifies transformer records with `T`; other branch records are treated as AC lines. The branch voltage-level index controls R/X/G/B per-unit conversion. Transformer transverse conductance and susceptance are represented by the native PI branch fields `g_pu` and `b_pu`; the resulting `G/2` arms are internal branch shunt arms, not separate node shunts.
 
 ## Transformer-control cards
 
@@ -73,3 +73,7 @@ The native DTF path is deliberately format-aware. It preserves winding/nameplate
 ## Validation against FOR002
 
 The Schaefer validation examples compare native DTF solves against FOR002 reports for cases A-E. The report workflow executes both `:neutral_one` and `:winding_over_network` transformer ratio modes so voltage bias, slack injections, losses and branch-flow anchors can be compared as true alternative network builds.
+
+## Transformer shunt conductance and losses
+
+DTF transformer `G` is stored on the Sparlectra transformer branch as `Branch.g_pu`, alongside `Branch.b_pu`, `r_pu`, `x_pu`, tap ratio and phase shift. It is not converted to separate terminal bus shunts. `calcNetLosses!` sums branch-end powers (`S_from + S_to`), so total branch losses include both longitudinal `R` losses and voltage-dependent branch-shunt `G` losses. The separate I²R helper reports only the longitudinal copper/winding component. Sparlectra's proprietary MATPOWER transformer-loss extension preserves `g_pu` for Sparlectra export/reimport round trips; standard MATPOWER readers ignore that extension.

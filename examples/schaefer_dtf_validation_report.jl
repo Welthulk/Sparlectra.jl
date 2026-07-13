@@ -52,21 +52,38 @@ function transformer_loss_rows(details)
     qt = br.tBranchFlow === nothing || br.tBranchFlow.qFlow === nothing ? 0.0 : Float64(br.tBranchFlow.qFlow)
     g_pu = hasproperty(meta, :active_no_load_g_pu) ? Float64(meta.active_no_load_g_pu) : 0.0
     gs_each = g_pu * net.baseMVA / 2
-    vf2 = net.nodeVec[br.fromBus]._vm_pu^2
+    tap = Sparlectra.calcComplexRatio(tapRatio = br.ratio == 0.0 ? 1.0 : br.ratio, angleInDegrees = br.ratio == 0.0 ? 0.0 : br.angle)
+    vf2 = abs(net.nodeVec[br.fromBus]._vm_pu / tap)^2
     vt2 = net.nodeVec[br.toBus]._vm_pu^2
-    no_load = gs_each * (vf2 + vt2)
+    branch_g_loss = gs_each * (vf2 + vt2)
+    branch_p_loss = pf + pt
+    i2r_loss = branch_p_loss - branch_g_loss
     push!(rows, (
       branch_index = idx,
       branch_label = meta.orig_name,
       from_bus = meta.orig_name,
-      transformer_series_p_loss_MW = pf + pt,
-      transformer_no_load_g_p_loss_MW = no_load,
-      transformer_total_p_loss_MW = pf + pt + no_load,
+      transformer_series_p_loss_MW = i2r_loss,
+      transformer_no_load_g_p_loss_MW = branch_g_loss,
+      transformer_total_p_loss_MW = branch_p_loss,
       transformer_series_q_loss_MVar = qf + qt,
       transformer_shunt_b_q_loss_MVar = missing,
       transformer_total_q_loss_MVar = missing,
+      from_p_MW = pf,
+      from_q_MVar = qf,
+      to_p_MW = pt,
+      to_q_MVar = qt,
+      branch_p_loss_MW = branch_p_loss,
+      branch_q_loss_MVar = qf + qt,
+      calculated_i2r_active_loss_MW = i2r_loss,
+      calculated_branch_g_active_loss_MW = branch_g_loss,
+      branch_p_loss_minus_i2r_plus_g_MW = branch_p_loss - (i2r_loss + branch_g_loss),
+      synthetic_terminal_g_shunt_present = false,
       g_pu = g_pu,
       gs_each_MW_at_1pu = gs_each,
+      r_pu = Float64(br.r_pu),
+      x_pu = Float64(br.x_pu),
+      b_pu = Float64(br.b_pu),
+      ratio = Float64(br.ratio),
       tap_ratio = hasproperty(meta, :tap_ratio) ? meta.tap_ratio : missing,
       transformer_ratio_mode = hasproperty(meta, :transformer_ratio_mode) ? meta.transformer_ratio_mode : missing,
       base_ratio_used = hasproperty(meta, :base_ratio_used) ? meta.base_ratio_used : missing,
@@ -286,7 +303,7 @@ function main()
       println(io, "- slack: `$(row.slack_bus)` Sparlectra P/Q=$(fmt(row.slack_p_sparlectra_MW))/$(fmt(row.slack_q_sparlectra_MVar)); FOR002 P/Q=$(fmt(row.slack_p_for002_MW))/$(fmt(row.slack_q_for002_MVar)); delta=$(fmt(row.slack_dp_MW))/$(fmt(row.slack_dq_MVar))")
       println(io, "- losses Sparlectra P/Q=$(fmt(row.total_loss_p_sparlectra_MW))/$(fmt(row.total_loss_q_sparlectra_MVar)); FOR002 P/Q=$(fmt(row.total_loss_p_for002_MW))/$(fmt(row.total_loss_q_for002_MVar)); delta=$(fmt(row.total_loss_dp_MW))/$(fmt(row.total_loss_dq_MVar))")
       println(io, "- max deviations: |dV|=$(fmt(row.max_abs_dV_kV)) kV ($(fmt(row.max_abs_dV_pu)) pu), |dVa|=$(fmt(row.max_abs_dVa_deg)) deg, branch |dP|=$(fmt(row.max_abs_branch_dP_MW)) MW, branch |dQ|=$(fmt(row.max_abs_branch_dQ_MVar)) MVar")
-      println(io, "- transformer active losses: series=$(fmt(series_p)) MW, no-load G/shunt=$(fmt(no_load_p)) MW, total=$(fmt(total_p)) MW; total active network loss=$(fmt(p_loss)) MW")
+      println(io, "- transformer active losses from native PI branch model: I²R=$(fmt(series_p)) MW, branch-G=$(fmt(no_load_p)) MW, branch-end total=$(fmt(total_p)) MW; total active network loss=$(fmt(p_loss)) MW")
       println(io, "- note: $(note)\n")
       println(io, "### Top voltage deviations\n")
       for r in top_rows(details.buses, :d_vm_kV)
@@ -307,6 +324,15 @@ function main()
   end
   write_named_csv(joinpath(outdir, "schaefer_dtf_validation_summary.csv"), summary_rows)
   write_named_csv(joinpath(outdir, "transformer_loss_summary.csv"), all_loss_rows)
+  write_named_csv(joinpath(outdir, "transformer_pi_loss_diagnostics.csv"), all_loss_rows)
+  open(joinpath(outdir, "transformer_pi_loss_diagnostics.md"), "w") do io
+    println(io, "# Transformer PI loss diagnostics\n")
+    println(io, "DTF transformer `G` is represented once as native branch `g_pu`. The branch-end loss is `S_from + S_to`; the active component is decomposed here into calculated longitudinal I²R loss plus voltage-dependent branch-G loss.\n")
+    for case_id in unique(r.case_id for r in all_loss_rows)
+      rows = [r for r in all_loss_rows if r.case_id == case_id && r.transformer_ratio_mode == :neutral_one]
+      println(io, "- Case $(case_id): branch-G active loss=$(fmt(sum(r.calculated_branch_g_active_loss_MW for r in rows))) MW; synthetic transformer-G terminal shunts present=$(any(r.synthetic_terminal_g_shunt_present for r in rows)).")
+    end
+  end
   write_named_csv(joinpath(outdir, "transformer_voltage_transfer_diagnostics.csv"), all_voltage_transfer_rows)
   write_named_csv(joinpath(outdir, "transformer_convention_scan.csv"), all_convention_scan_rows)
   open(joinpath(outdir, "transformer_convention_scan.md"), "w") do io

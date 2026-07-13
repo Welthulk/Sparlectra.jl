@@ -375,6 +375,7 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
     r_pu = Float64(row[BR_R])
     x_pu = Float64(row[BR_X])
     b_pu = Float64(row[BR_B])
+    g_pu = 0.0
 
     ratedS_raw = Float64(row[RATE_A])
     ratedS = ratedS_raw > 0.0 ? ratedS_raw : Inf
@@ -419,6 +420,7 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
         r_pu = r_pu,
         x_pu = x_pu,
         b_pu = b_pu,
+        g_pu = g_pu,
         status = status,
         ratedS = ratedS,
         ratio = ratio,
@@ -430,24 +432,11 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
     if loss_meta !== nothing
       g_pu = hasproperty(loss_meta, :g_pu) ? Float64(loss_meta.g_pu) : 0.0
       b_loss_pu = hasproperty(loss_meta, :b_pu) ? Float64(loss_meta.b_pu) : 0.0
-      expected_gs_each = g_pu * baseMVA / 2
-      expected_bs_each = b_loss_pu * baseMVA / 2
-      from_bus_name = bus_name_by_orig[fbus_orig]
-      to_bus_name = bus_name_by_orig[tbus_orig]
-      if expected_gs_each != 0.0 || expected_bs_each != 0.0
-        from_row = bus_row_by_i[fbus_orig]
-        to_row = bus_row_by_i[tbus_orig]
-        represented =
-          abs(Float64(busData[from_row, GS])) + 1e-9 >= abs(expected_gs_each) &&
-          abs(Float64(busData[to_row, GS])) + 1e-9 >= abs(expected_gs_each)
-        if represented
-          @info "Sparlectra transformer-loss metadata restored without adding shunts; standard MATPOWER Gs/Bs already carries the equivalent approximation." branch_row = branch_row_index g_pu = g_pu
-        else
-          addShuntMatpower!(net = myNet, busName = from_bus_name, Gs = expected_gs_each, Bs = expected_bs_each, bus_shunt_model = shunt_model)
-          addShuntMatpower!(net = myNet, busName = to_bus_name, Gs = expected_gs_each, Bs = expected_bs_each, bus_shunt_model = shunt_model)
-          @info "Applied Sparlectra transformer-loss metadata as equivalent terminal bus shunts." branch_row = branch_row_index g_pu = g_pu added_Gs_each = expected_gs_each
-        end
+      myNet.branchVec[imported_branch_index].g_pu = g_pu
+      if b_loss_pu != 0.0 && myNet.branchVec[imported_branch_index].b_pu == 0.0
+        myNet.branchVec[imported_branch_index].b_pu = b_loss_pu
       end
+      @info "Restored Sparlectra transformer-loss metadata into native branch PI conductance." branch_row = branch_row_index g_pu = g_pu
     end
     if branch_names_valid || branch_kind_overrides !== nothing || loss_meta !== nothing
       myNet.matpower_branch_metadata[imported_branch_index] = (

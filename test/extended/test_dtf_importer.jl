@@ -86,6 +86,7 @@ function run_dtf_importer_tests()
     @test trafo_pu.u_ref_kv == 231.0
     @test trafo_pu.x ≈ 8.22 / zbase_231
     @test trafo_pu.b ≈ -1.84e-5 * zbase_231
+    @test trafo_pu.g ≈ trafo.g_s * zbase_231
     @test !(trafo_pu.x ≈ 0.0051375)
 
     beta_control = _control(case, "BETA1 S1", "BETA2 S1", "C")
@@ -162,10 +163,17 @@ function run_dtf_importer_tests()
     beta_branch = _branch(case, "BETA1 S1", "BETA2 S1", "C"; kind = 'T')
     delta_branch = _branch(case, "DELTA1S1", "DELTA2S1", "B"; kind = 'T')
     @test net.branchVec[beta_branch.index].ratio ≈ 1.0
+    @test net.branchVec[beta_branch.index].g_pu ≈ Sparlectra.DTFImporter._branch_pu(case, beta_branch).g
+    @test net.branchVec[beta_branch.index].b_pu ≈ Sparlectra.DTFImporter._branch_pu(case, beta_branch).b
+    @test net.branchVec[beta_branch.index].r_pu ≈ Sparlectra.DTFImporter._branch_pu(case, beta_branch).r
+    @test net.branchVec[beta_branch.index].x_pu ≈ Sparlectra.DTFImporter._branch_pu(case, beta_branch).x
+    @test net.branchVec[beta_branch.index].g_pu != 0.0
+    @test Sparlectra.bus_shunt_totals_pu(net).total_g_pu ≈ 0.0
     @test !(net.branchVec[beta_branch.index].ratio ≈ 400.0 / 231.0)
     @test net.branchVec[delta_branch.index].ratio ≈ 1.0
     @test net.matpower_branch_metadata[beta_branch.index].transformer_ratio_mode == :neutral_one
     @test net.matpower_branch_metadata[beta_branch.index].winding_over_network_base_ratio ≈ 230.0 / 231.0
+    @test net.matpower_branch_metadata[beta_branch.index].transformer_loss_allocation == :native_branch_pi
 
     compat_net = Sparlectra.createNetFromDTFFile(DTF_FIXTURE; transformer_ratio_mode = :winding_over_network)
     @test compat_net.branchVec[beta_branch.index].ratio ≈ 230.0 / 231.0
@@ -212,6 +220,25 @@ function run_dtf_importer_tests()
     pv_gens = [ps for ps in synthetic_net.prosumpsVec if Sparlectra.getPosumerBusIndex(ps) == pv_idx && Sparlectra.isGenerator(ps.proSumptionType)]
     @test !isempty(pv_gens)
     @test any(ps -> ps.isRegulated && ps.vm_pu == 1.0, pv_gens)
+
+    synthetic_zero_g = Sparlectra.DTFImporter.DTFCase(
+      "synthetic_zero_g",
+      synthetic.baseMVA,
+      synthetic.params,
+      synthetic.texts,
+      synthetic.nominal_voltages_kv,
+      synthetic.size,
+      [Sparlectra.DTFImporter.DTFBranch("", 1, 'T', 1, "", "PV", "SLACK", 0.01, 0.1, 0.0, -0.001, nothing)],
+      synthetic.compensations,
+      synthetic.transformer_controls,
+      synthetic.buses,
+      synthetic.outages,
+      synthetic.trailing_records,
+    )
+    zero_g_net = Sparlectra.DTFImporter.build_net(synthetic_zero_g)
+    @test zero_g_net.branchVec[1].g_pu == 0.0
+    @test zero_g_net.branchVec[1].b_pu != 0.0
+    @test Sparlectra.bus_shunt_totals_pu(zero_g_net).total_g_pu ≈ 0.0
 
     @test case.outages isa Vector{Sparlectra.DTFImporter.DTFOutage}
     @test length(case.outages) == 2

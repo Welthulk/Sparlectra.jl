@@ -101,9 +101,7 @@ mpc.dcline = [
       Sparlectra.addBus!(net = net_loss, busName = "FROM", vn_kV = 110.0, oBusIdx = 1)
       Sparlectra.addBus!(net = net_loss, busName = "TO", vn_kV = 110.0, oBusIdx = 2)
       Sparlectra.addProsumer!(net = net_loss, busName = "FROM", type = "GENERATOR", p = 0.0, q = 0.0, referencePri = "FROM", vm_pu = 1.0)
-      Sparlectra._addPIModelTrafo_by_idx!(net = net_loss, from = 1, to = 2, r_pu = 0.01, x_pu = 0.05, b_pu = -0.002, status = 1, ratedS = 100.0, ratio = 1.0, shift_deg = 0.0)
-      Sparlectra.addShuntMatpower!(net = net_loss, busName = "FROM", Gs = 0.25, Bs = 0.0, bus_shunt_model = :admittance)
-      Sparlectra.addShuntMatpower!(net = net_loss, busName = "TO", Gs = 0.25, Bs = 0.0, bus_shunt_model = :admittance)
+      Sparlectra._addPIModelTrafo_by_idx!(net = net_loss, from = 1, to = 2, r_pu = 0.01, x_pu = 0.05, b_pu = -0.002, g_pu = 0.005, status = 1, ratedS = 100.0, ratio = 1.0, shift_deg = 0.0)
       net_loss.matpower_branch_metadata[1] = (
         orig_name = "T1A FROM -> TO",
         source_label = "T1A",
@@ -120,13 +118,14 @@ mpc.dcline = [
         g_pu = 0.005,
         b_pu = -0.002,
         active_no_load_g_pu = 0.005,
-        transformer_loss_allocation = :split_equally_to_terminal_bus_shunts,
+        transformer_loss_allocation = :native_branch_pi,
         tap_ratio = 1.0,
         actual_tap_step = 0,
         max_tap_step = 9,
         phase_shift_deg = 0.0,
       )
-      @test Sparlectra.bus_shunt_totals_pu(net_loss).total_g_pu ≈ 0.005
+      @test net_loss.branchVec[1].g_pu ≈ 0.005
+      @test Sparlectra.bus_shunt_totals_pu(net_loss).total_g_pu ≈ 0.0
       mktempdir() do dir
         path = joinpath(dir, "loss_extension.m")
         Sparlectra.writeMatpowerCasefile(net_loss, path)
@@ -138,7 +137,8 @@ mpc.dcline = [
         @test mpc_loss.sparlectra !== nothing
         @test length(mpc_loss.sparlectra.transformer_losses) == 1
         net_roundtrip = Sparlectra.createNetFromMatPowerCase(mpc = mpc_loss, apply_bus_names = true, apply_branch_names = true, apply_branch_kind = true)
-        @test Sparlectra.bus_shunt_totals_pu(net_roundtrip).total_g_pu ≈ 0.005
+        @test net_roundtrip.branchVec[1].g_pu ≈ 0.005
+        @test Sparlectra.bus_shunt_totals_pu(net_roundtrip).total_g_pu ≈ 0.0
         @test only(values(net_roundtrip.matpower_branch_metadata)).transformer_loss.g_pu ≈ 0.005
       end
     end
