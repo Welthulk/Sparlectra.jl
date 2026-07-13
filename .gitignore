@@ -5,6 +5,16 @@ test/workshop*.jl
 data/mpower/*.m
 data/mpower/*.jl
 data/mpower/result_*
+
+# Local DTF/FOR001/FOR002 validation networks
+data/DTF/*.DAT
+data/DTF/*.dat
+data/DTF/*.dtf
+data/DTF/*.DTF
+examples/FOR001*.DAT
+examples/FOR001*.dat
+examples/FOR002*.DAT
+examples/FOR002*.dat
 docs/build
 TODO.md
 Roadmap.md
@@ -26,3 +36,14 @@ examples/configuration.yaml.example
 examples/configuration.yaml.bck
 results
 _out/powerflow_service
+ac_islands.csv
+ac_island_solver_summary.csv
+ac_island_*_solver.log
+matpower_dcline.csv
+current_iteration_start.log
+q_limit.log
+performance.log
+run.log
+effective_config.yaml
+matpower_auto_profile.log
+setup_linux.md

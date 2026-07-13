@@ -106,6 +106,54 @@ function handle_powerflow_config_refresh(form::AbstractDict; write::Bool = false
     return _webui_html(render_webui_error(400, sprint(showerror, err)); status = 400)
   end
 end
+
+function handle_powerflow_config_editor(config_file::AbstractString; message::AbstractString = "", status::Integer = 200)::SparlectraWebUIResponse
+  path = isempty(strip(config_file)) ? DEFAULT_SPARLECTRA_CONFIG_PATH : String(config_file)
+  text = isfile(path) ? read(path, String) : ""
+  notice = isempty(message) ? "" : "<div class=\"alert info\">$(_webui_escape(message))</div>"
+  sidecar_note = "<p class=\"alert warning\">Case-sidecar settings, when present for a selected case, have higher precedence than this global YAML. Delete or refresh the case settings from a run result if they should no longer override the edited file.</p>"
+  body = """
+<section class="panel">
+<h2>Configuration Editor</h2>
+$(notice)
+<p>Active configuration file: <code>$(_webui_escape(path))</code></p>
+$(sidecar_note)
+<form method="post" action="/powerflow/config/edit">
+<input type="hidden" name="config_file" value="$(_webui_escape(path))">
+<textarea name="config_text" rows="30" style="width: 100%; font-family: monospace;">$(_webui_escape(text))</textarea>
+<p><button type="submit">Save YAML configuration</button></p>
+</form>
+</section>
+"""
+  return _webui_html(_webui_layout("Configuration Editor", body; show_back = true); status)
+end
+
+function handle_powerflow_config_editor_save(form::AbstractDict; operation_log::AbstractString = "results/powerflow_service")::SparlectraWebUIResponse
+  config_file = strip(String(something(_webui_form_value(form, "config_file", ""), "")))
+  config_text = String(something(_webui_form_value(form, "config_text", ""), ""))
+  try
+    isempty(config_file) && return _webui_html(render_webui_error(400, "No configuration file was provided."); status = 400)
+    mktemp() do path, io
+      write(io, config_text)
+      close(io)
+      duplicates = _detect_yaml_duplicate_keys(path)
+      if !isempty(duplicates)
+        return handle_powerflow_config_editor(config_file; message = "Duplicate YAML key(s) detected: $(join(duplicates, ", ")). Save refused.", status = 400)
+      end
+      load_yaml_dict(path)
+      _load_and_validate_config(DEFAULT_SPARLECTRA_CONFIG_PATH, path; cli_overrides = Dict{String,Any}(), overrides = Dict{String,Any}())
+    end
+    backup_path = string(config_file, ".bak-", Dates.format(now(), "yyyymmdd-HHMMSS"))
+    isfile(config_file) && cp(config_file, backup_path; force = false)
+    write(config_file, config_text)
+    load_sparlectra_config(config_file; reload = true)
+    record_webui_operation!(operation_log, "config_editor_saved"; route = "/powerflow/config/edit", method = "POST", user_action = true, config_file, backup_path)
+    return handle_powerflow_config_editor(config_file; message = "Configuration saved. Backup: $(backup_path)")
+  catch err
+    record_webui_operation!(operation_log, "config_editor_save_failed"; route = "/powerflow/config/edit", method = "POST", user_action = true, config_file, message = sprint(showerror, err))
+    return handle_powerflow_config_editor(config_file; message = sprint(showerror, err), status = 400)
+  end
+end
 function handle_powerflow_result(run_id::AbstractString)::SparlectraWebUIResponse
   result = get_webui_powerflow_job(run_id)
   status = get(result, "success", false) || get(result, "reason", "") != "run_not_found" ? 200 : 404
@@ -302,6 +350,75 @@ function handle_powerflow_artifact_download(run_id::AbstractString, artifact_nam
     "Content-Disposition" => "attachment; filename=\"$(replace(basename(artifact.name), '"' => '_'))\"",
   ]
   return SparlectraWebUIResponse(200, headers, read(artifact.path))
+end
+
+function _zip_crc32(bytes::Vector{UInt8})::UInt32
+  crc = 0xffffffff % UInt32
+  for byte in bytes
+    crc ⊻= UInt32(byte)
+    for _ in 1:8
+      crc = (crc & 0x00000001) == 1 ? (crc >> 1) ⊻ 0xedb88320 % UInt32 : crc >> 1
+    end
+  end
+  return ~crc
+end
+
+function _zip_write_u16(io::IO, value::Integer)
+  write(io, UInt8(value & 0xff), UInt8((value >> 8) & 0xff))
+end
+
+function _zip_write_u32(io::IO, value::Integer)
+  for shift in (0, 8, 16, 24)
+    write(io, UInt8((value >> shift) & 0xff))
+  end
+end
+
+function _build_uncompressed_zip(entries::Vector{Pair{String,Vector{UInt8}}})::Vector{UInt8}
+  io = IOBuffer()
+  central = IOBuffer()
+  for (name, bytes) in entries
+    name_bytes = Vector{UInt8}(codeunits(name))
+    crc = _zip_crc32(bytes)
+    offset = position(io)
+    _zip_write_u32(io, 0x04034b50)
+    _zip_write_u16(io, 20); _zip_write_u16(io, 0); _zip_write_u16(io, 0)
+    _zip_write_u16(io, 0); _zip_write_u16(io, 0)
+    _zip_write_u32(io, crc); _zip_write_u32(io, length(bytes)); _zip_write_u32(io, length(bytes))
+    _zip_write_u16(io, length(name_bytes)); _zip_write_u16(io, 0)
+    write(io, name_bytes); write(io, bytes)
+    _zip_write_u32(central, 0x02014b50)
+    _zip_write_u16(central, 20); _zip_write_u16(central, 20); _zip_write_u16(central, 0); _zip_write_u16(central, 0)
+    _zip_write_u16(central, 0); _zip_write_u16(central, 0)
+    _zip_write_u32(central, crc); _zip_write_u32(central, length(bytes)); _zip_write_u32(central, length(bytes))
+    _zip_write_u16(central, length(name_bytes)); _zip_write_u16(central, 0); _zip_write_u16(central, 0)
+    _zip_write_u16(central, 0); _zip_write_u16(central, 0); _zip_write_u32(central, 0); _zip_write_u32(central, offset)
+    write(central, name_bytes)
+  end
+  central_bytes = take!(central)
+  central_offset = position(io)
+  write(io, central_bytes)
+  _zip_write_u32(io, 0x06054b50)
+  _zip_write_u16(io, 0); _zip_write_u16(io, 0); _zip_write_u16(io, length(entries)); _zip_write_u16(io, length(entries))
+  _zip_write_u32(io, length(central_bytes)); _zip_write_u32(io, central_offset); _zip_write_u16(io, 0)
+  return take!(io)
+end
+
+function handle_powerflow_artifacts_zip(run_id::AbstractString)::SparlectraWebUIResponse
+  artifacts = list_powerflow_artifacts(run_id)
+  artifacts isa AbstractDict && return _webui_html(render_webui_error(404, get(artifacts, "message", "Run not found.")); status = 404)
+  entries = Pair{String,Vector{UInt8}}[]
+  for artifact in artifacts
+    name = String(artifact["name"])
+    occursin("..", name) && continue
+    (occursin('/', name) || occursin('\\', name)) && continue
+    path = String(artifact["path"])
+    isfile(path) || continue
+    push!(entries, name => read(path))
+  end
+  isempty(entries) && return _webui_html(render_webui_error(404, "No artifacts are available for this run."); status = 404)
+  filename = "sparlectra_run_$(replace(String(run_id), r"[^A-Za-z0-9_.-]" => "_"))_artifacts.zip"
+  headers = Pair{String,String}["Content-Type" => "application/zip", "Content-Disposition" => "attachment; filename=\"$(filename)\""]
+  return SparlectraWebUIResponse(200, headers, _build_uncompressed_zip(entries))
 end
 
 function handle_powerflow_history(output_root::AbstractString)::SparlectraWebUIResponse

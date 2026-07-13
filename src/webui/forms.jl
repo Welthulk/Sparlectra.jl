@@ -38,20 +38,48 @@ end
 """
     _webui_casefile_options(application_root) -> Vector{String}
 
-Return sorted user-selectable MATPOWER `.m` case names from the Web UI
-application's `data/mpower` directory. Generated `.jl` cache artifacts are
-internal and are not shown in the selector. Missing or empty directories produce
-an empty list.
+Return sorted user-selectable case filenames from the Web UI application's
+`data/mpower` directory. The selector stays conservative: MATPOWER `.m` files
+and copied internal DTF/FOR001 `.DAT` candidates are shown, while generated
+Julia cache artifacts, warm-up cases, result artifacts, and sidecar profiles
+stay hidden. Missing or empty directories produce an empty list.
 """
 function _webui_casefile_options(application_root::AbstractString)::Vector{String}
   return _webui_casefile_options_in_directory(joinpath(application_root, "data", "mpower"))
 end
 
+"""
+    _webui_is_user_selectable_case(name) -> Bool
+
+Return whether `name` should be shown in the normal Web UI case selector.
+Internal warm-up cases use the reserved `warmup_` prefix and remain available
+to startup warm-up code by explicit path only. Generated Julia cache artifacts
+are also hidden from the selector; users can still enter an explicit path in the
+manual case field when they intentionally want to run such a file.
+"""
+function _webui_is_user_selectable_case(name::AbstractString)::Bool
+  lowered_name = lowercase(basename(name))
+  _, extension = splitext(lowered_name)
+  endswith(lowered_name, ".sparlectra-webui.yaml") && return false
+  startswith(lowered_name, "warmup_") && extension in (".m", ".jl") && return false
+  extension == ".jl" && return false
+  extension in (".m", ".dat") || return false
+  _is_for002_reference_dat(name) && return false
+  return true
+end
+
 function _webui_casefile_options_in_directory(directory::AbstractString)::Vector{String}
   isdir(directory) || return String[]
   files = filter(readdir(directory)) do name
-    extension = lowercase(splitext(name)[2])
-    return isfile(joinpath(directory, name)) && extension == ".m"
+    return isfile(joinpath(directory, name)) && _webui_is_user_selectable_case(name)
+  end
+  return sort!(files; by = lowercase)
+end
+
+function _webui_for002_reference_options_in_directory(directory::AbstractString)::Vector{String}
+  isdir(directory) || return String[]
+  files = filter(readdir(directory)) do name
+    return isfile(joinpath(directory, name)) && _is_for002_reference_dat(name)
   end
   return sort!(files; by = lowercase)
 end
@@ -187,11 +215,32 @@ function _webui_normalize_case_profile_form_value(field::AbstractString, value)
   return normalized
 end
 
+
+function _webui_config_field_values(config_file::AbstractString)::Dict{String,Any}
+  values = Dict{String,Any}()
+  path = strip(String(config_file))
+  isempty(path) && return values
+  isfile(path) || return values
+  try
+    raw = load_yaml_dict(path)
+    for (config_key, field, _) in _WEBUI_FORM_CONFIG_FIELDS
+      value = _dotted_config_value(raw, config_key)
+      value === nothing && continue
+      values[field] = _webui_normalize_case_profile_form_value(field, value)
+    end
+    return values
+  catch
+    return Dict{String,Any}()
+  end
+end
+
 function webui_form_state(; selected_casefile::AbstractString = "", selected_config_file::AbstractString = "", sidecar_profile = nothing, submitted_form = nothing)
+  config_path = isempty(selected_config_file) ? DEFAULT_SPARLECTRA_CONFIG_PATH : selected_config_file
   values = Dict{String,Any}(spec.field => spec.default for spec in WEBUI_OPTION_SPECS)
+  merge!(values, _webui_config_field_values(config_path))
   values["casefile"] = selected_casefile
   values["casefile_manual"] = ""
-  values["config_file"] = isempty(selected_config_file) ? DEFAULT_SPARLECTRA_CONFIG_PATH : selected_config_file
+  values["config_file"] = config_path
   if sidecar_profile isa AbstractDict
     for (field, value) in sidecar_profile
       field == "_profile_path" && continue
@@ -290,6 +339,8 @@ function _webui_form_value(form::AbstractDict, key::String, default = nothing)
   return default
 end
 
+_webui_is_dat_casefile(casefile::AbstractString)::Bool = lowercase(splitext(strip(String(casefile)))[2]) == ".dat"
+
 function _webui_parse_bool(value)::Bool
   return _webui_form_bool(value)
 end
@@ -324,13 +375,21 @@ function powerflow_webui_request(form::AbstractDict; default_output_root::Abstra
   isempty(casefile) && throw(ArgumentError("Select an existing MATPOWER case or type a case name."))
   config_file = strip(String(something(_webui_form_value(form, "config_file", ""), "")))
   output_root = String(default_output_root)
+  ignore_webui_settings = if _webui_form_value(form, "ignore_webui_settings", nothing) !== nothing
+    _webui_parse_form_value(_webui_form_value(form, "ignore_webui_settings", "false"), Bool, "ignore_webui_settings")
+  else
+    !_webui_parse_form_value(_webui_form_value(form, "apply_webui_runtime_overrides", "true"), Bool, "apply_webui_runtime_overrides")
+  end
+  apply_runtime_overrides = !ignore_webui_settings
   overrides = Dict{String,Any}()
-  for (config_key, field, type) in _WEBUI_FORM_CONFIG_FIELDS
-    config_key in GUI_EDITABLE_CONFIG_KEYS || error("Web UI field $(field) is not GUI-editable.")
-    spec = _webui_option_spec(field)
-    _webui_form_value(form, field, nothing) === nothing && continue
-    raw = _webui_form_value(form, field)
-    overrides[config_key] = _webui_parse_form_value(raw, type, field)
+  if apply_runtime_overrides
+    for (config_key, field, type) in _WEBUI_FORM_CONFIG_FIELDS
+      config_key in GUI_EDITABLE_CONFIG_KEYS || error("Web UI field $(field) is not GUI-editable.")
+      spec = _webui_option_spec(field)
+      _webui_form_value(form, field, nothing) === nothing && continue
+      raw = _webui_form_value(form, field)
+      overrides[config_key] = _webui_parse_form_value(raw, type, field)
+    end
   end
   request_options = Dict{String,Any}()
   for field in _WEBUI_CASE_PROFILE_EXTRA_FIELDS
@@ -338,11 +397,26 @@ function powerflow_webui_request(form::AbstractDict; default_output_root::Abstra
     raw = _webui_form_value(form, field, spec.default)
     request_options[field] = _webui_parse_form_value(raw, spec.value_type, field)
   end
+  case_format = strip(String(something(_webui_form_value(form, "case_format", "auto"), "auto")))
+  for002_reference_file = strip(String(something(_webui_form_value(form, "for002_reference_file", ""), "")))
+  outage_mode = strip(String(something(_webui_form_value(form, "dtf_outage_selection_mode", "none"), "none")))
+  raw_selection = _webui_form_value(form, "dtf_outage_selection", String[])
+  selection = raw_selection isa AbstractVector ? String.(raw_selection) : (isempty(strip(String(raw_selection))) ? String[] : [String(raw_selection)])
   return Dict{String,Any}(
     "casefile" => casefile,
+    "case_format" => case_format,
+    "for002_reference_file" => isempty(for002_reference_file) ? nothing : for002_reference_file,
+    "run_dtf_outages" => outage_mode != "none",
+    "dtf_outage_selection" => selection,
+    "dtf_outage_selection_mode" => outage_mode,
+    "compare_for002_outages" => !isempty(for002_reference_file) && outage_mode != "none",
+    "write_outage_artifacts" => _webui_parse_form_value(_webui_form_value(form, "write_outage_artifacts", "true"), Bool, "write_outage_artifacts"),
+    "write_outage_matpower_exports" => _webui_parse_form_value(_webui_form_value(form, "write_outage_matpower_exports", "false"), Bool, "write_outage_matpower_exports"),
+    "matpower_export_requested" => _webui_parse_form_value(_webui_form_value(form, "matpower_export_requested", "false"), Bool, "matpower_export_requested"),
     "config_file" => config_file,
     "output_root" => output_root,
     "config_overrides" => overrides,
+    "config_override_source" => apply_runtime_overrides ? "webui_form_runtime" : "user_yaml",
     "performance_timing" => request_options["performance_timing"],
     "run_diagnostics" => request_options["run_diagnostics"],
     "detailed_result_csv" => request_options["detailed_result_csv"],

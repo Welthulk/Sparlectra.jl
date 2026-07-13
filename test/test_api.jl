@@ -19,6 +19,13 @@ mpc.gen = [
 mpc.branch = [
 1 2 0.01 0.05 0.0 999 999 999 0 0 1 -360 360;
 ];
+mpc.bus_name = {
+'Source Bus';
+'Load Bus';
+};
+mpc.branch_name = {
+'API-LINE-1';
+};
 """,
   )
   return path
@@ -31,6 +38,32 @@ function _write_api_dcline_case(path::AbstractString; rows::AbstractString)
     write(io, rows)
     write(io, "\n];\n")
   end
+  return path
+end
+
+function _write_api_two_island_case(path::AbstractString)
+  write(
+    path,
+    """
+function mpc = case_two_islands
+mpc.version = '2';
+mpc.baseMVA = 100;
+mpc.bus = [
+1 3 0 0 0 0 1 1.0 0 110 1 1.1 0.9;
+2 1 30 10 0 0 1 1.0 0 110 1 1.1 0.9;
+3 2 0 0 0 0 1 1.0 0 110 1 1.1 0.9;
+4 1 20 5 0 0 1 1.0 0 110 1 1.1 0.9;
+];
+mpc.gen = [
+1 50 0 300 -300 1.02 100 1 300 0;
+3 30 0 300 -300 1.01 100 1 300 0;
+];
+mpc.branch = [
+1 2 0.01 0.05 0.0 999 999 999 0 0 1 -360 360;
+3 4 0.01 0.05 0.0 999 999 999 0 0 1 -360 360;
+];
+""",
+  )
   return path
 end
 
@@ -188,6 +221,131 @@ function run_api_tests()
       @test occursin("failed", active_result_html)
       @test occursin("MATPOWER case contains active", active_result_html)
       @test occursin("unsupported_matpower_dcline", active_result_html)
+      dcline_pf_case = _write_api_dcline_case(joinpath(tmpdir, "case_pf_dcline.m"); rows = "1 2 1 10 0 1 2 1.0 1.01 0 100 -20 20 -30 30 1 0.1;")
+      dcline_pf_result = run_sparlectra_api(casefile = dcline_pf_case, config_file = template, output_dir = joinpath(tmpdir, "pf-dcline"), config_overrides = Dict("matpower_import.matpower_dcline_mode" => "pf_injections", "output.logfile_results" => "full", "benchmark.enabled" => false), performance_timing = :compact)
+      @test dcline_pf_result.reason != "unsupported_matpower_dcline"
+      @test isfile(joinpath(dcline_pf_result.output_dir, "matpower_dcline.csv"))
+      @test any(artifact -> artifact.name == "matpower_dcline.csv", dcline_pf_result.artifacts)
+      dcline_pf_log = read(joinpath(dcline_pf_result.output_dir, "run.log"), String)
+      @test occursin("toggle_dcline-compatible PF injections", dcline_pf_log)
+      dcline_pf_csv = read(joinpath(dcline_pf_result.output_dir, "matpower_dcline.csv"), String)
+      @test occursin("effective_pt_mw", dcline_pf_csv)
+      @test occursin(",8,", dcline_pf_csv)
+
+      island_case = _write_api_two_island_case(joinpath(tmpdir, "case_two_islands.m"))
+      island_result = run_sparlectra_api(
+        casefile = island_case,
+        config_file = template,
+        output_dir = joinpath(tmpdir, "island-diagnostics"),
+        config_overrides = Dict(
+          "power_flow.max_iter" => 1,
+          "power_flow.islands.enabled" => true,
+          "power_flow.islands.mode" => "solve_independent",
+          "power_flow.islands.reference_policy" => "matpower_like",
+          "power_flow.islands.diagnostic_continue_after_failure" => true,
+          "benchmark.enabled" => false,
+        ),
+        performance_timing = :compact,
+      )
+      @test island_result.success === false
+      @test occursin("Island-wise power-flow failed:", island_result.message)
+      @test occursin("island 1:", island_result.message)
+      @test occursin("island 2:", island_result.message)
+      @test occursin("Q-limit handling was enabled", island_result.message)
+      @test !occursin("Stacktrace:", island_result.message)
+      island_summary = joinpath(island_result.output_dir, "ac_island_solver_summary.csv")
+      island_one_log = joinpath(island_result.output_dir, "ac_island_1_solver.log")
+      island_two_log = joinpath(island_result.output_dir, "ac_island_2_solver.log")
+      @test isfile(island_summary)
+      @test isfile(island_one_log)
+      @test isfile(island_two_log)
+      summary_text = read(island_summary, String)
+      @test occursin("exception_type,exception_message,stacktrace_top", summary_text)
+      @test !occursin("solver_exception", summary_text)
+      @test !occursin("ErrorException", summary_text)
+      @test occursin("island_id,n_bus,n_branch,ref_bus", summary_text)
+      @test occursin("1,2,1,1", summary_text)
+      @test occursin("2,2,1,3", summary_text)
+      island_one_text = read(island_one_log, String)
+      island_two_text = read(island_two_log, String)
+      @test !occursin("exception_message: AC island 2 power-flow solve failed", island_one_text)
+      @test occursin("final_status: not_converged", island_one_text) || occursin("final_status: converged", island_one_text)
+      @test occursin("failure_reason: nr_mismatch_not_converged", island_two_text) || occursin("failure_reason: nr_mismatch_not_converged_active_set_unstable", island_two_text)
+      @test occursin("exception_type: ", island_two_text)
+      @test !occursin("failure_reason: solver_exception", island_two_text)
+      @test !occursin("exception_message: AC island 2 power-flow solve failed", island_two_text)
+      @test occursin("stacktrace_top: ", island_two_text)
+      @test occursin("qlimits_enabled: true", island_two_text)
+      @test occursin("qlimit_enforcement_mode: active_set", island_two_text)
+      @test occursin("q_limit_processing_status: ", island_two_text)
+      @test occursin("pv_pq_switching_events: ", island_two_text)
+      @test occursin("qlimit_active_set_changes: ", island_two_text)
+      @test occursin("qlimit_reenable_events: ", island_two_text)
+      @test occursin("guarded_narrow_q_pv_buses: ", island_two_text)
+      @test occursin("final_pv_voltage_residual: ", island_two_text)
+      @test occursin("ref_promoted: true", island_two_text)
+      @test occursin("max_iter = 1", replace(island_two_text, "=>" => " ="))
+      @test occursin("tol = ", replace(island_two_text, "=>" => " ="))
+      island_result_json = Sparlectra._parse_service_json(read(joinpath(island_result.output_dir, "result.json"), String))
+      @test island_result_json["artifact_status"] != "not_started"
+      @test island_result_json["solver_status"] != "running"
+      @test Set(["result.json", "run.log", "effective_config.yaml", "run_metadata.yaml", "performance.log", "ac_islands.csv", "ac_island_solver_summary.csv", "ac_island_1_solver.log", "ac_island_2_solver.log"]) ⊆ Set(String(artifact["name"]) for artifact in island_result_json["artifacts"])
+
+      island_success = run_sparlectra_api(
+        casefile = island_case,
+        config_file = template,
+        output_dir = joinpath(tmpdir, "island-success"),
+        config_overrides = Dict(
+          "power_flow.max_iter" => 40,
+          "power_flow.islands.enabled" => true,
+          "power_flow.islands.mode" => "solve_independent",
+          "power_flow.islands.reference_policy" => "matpower_like",
+          "benchmark.enabled" => false,
+        ),
+        performance_timing = :compact,
+      )
+      @test island_success.success === true
+      @test !occursin("AC island 1 power-flow solve failed", island_success.message)
+      island_success_json = Sparlectra._parse_service_json(read(joinpath(island_success.output_dir, "result.json"), String))
+      @test island_success_json["run_status"] == "completed"
+      @test island_success_json["final_outcome"]["reason"] == "none"
+      @test island_success_json["final_outcome"]["island_wise_all_converged"] === true
+      @test island_success_json["metadata"]["island_wise_all_converged"] === true
+      @test island_success_json["metadata"]["post_merge_validation_status"] == "not_applicable"
+      @test island_success_json["metadata"]["post_merge_mismatch_status"] == "not_applicable"
+      @test island_success_json["iterations"] == sum(getproperty(status, :iterations) for status in values(island_success.raw_result.performance_profile[:ac_island_solver_statuses]))
+
+      synthetic_settings = (qlimits_enabled = true, qlimit_enforcement_mode = :active_set, start_current_iteration_enabled = false)
+      synthetic_profile = Dict{Symbol,Any}(
+        :ac_island_artifacts => ("ac_island_solver_summary.csv", "ac_island_1_solver.log", "ac_island_2_solver.log", "ac_island_3_solver.log"),
+        :ac_island_diagnostics => [
+          (island_id = 1, settings = synthetic_settings),
+          (island_id = 2, settings = synthetic_settings),
+          (island_id = 3, settings = synthetic_settings),
+        ],
+        :ac_island_solver_statuses => Dict(
+          1 => (status = :not_converged, iterations = 80, final_mismatch = 4721.338328525473, reason = :nr_mismatch_not_converged_active_set_unstable),
+          2 => (status = :nr_nonfinite, iterations = 80, final_mismatch = NaN, reason = :nr_nonfinite),
+          3 => (status = :converged, iterations = 7, final_mismatch = 1.1295320234694373e-10, reason = :none),
+        ),
+      )
+      synthetic_message = Sparlectra._islandwise_failure_message(synthetic_profile)
+      @test occursin("island 1: not_converged, iterations=80", synthetic_message)
+      @test occursin("final_mismatch=4721.338328525473", synthetic_message)
+      @test occursin("reason=nr_mismatch_not_converged_active_set_unstable", synthetic_message)
+      @test occursin("island 2: nr_nonfinite, iterations=80, final_mismatch=NaN, reason=nr_nonfinite", synthetic_message)
+      @test occursin("island 3: converged, iterations=7", synthetic_message)
+      @test occursin("Q-limit handling was enabled for this run (mode=active_set)", synthetic_message)
+      @test !occursin("Stacktrace:", synthetic_message)
+      current_iteration_profile = copy(synthetic_profile)
+      current_iteration_settings = (qlimits_enabled = false, qlimit_enforcement_mode = :none, start_current_iteration_enabled = true)
+      current_iteration_profile[:ac_island_diagnostics] = [
+        (island_id = 1, settings = current_iteration_settings),
+      ]
+      current_iteration_profile[:ac_island_solver_statuses] = Dict(1 => (status = :not_converged, iterations = 80, final_mismatch = 0.021662725542886882, reason = :nr_mismatch_not_converged))
+      current_iteration_message = Sparlectra._islandwise_failure_message(current_iteration_profile)
+      @test occursin("Island run with current-iteration start: qlimits.enabled=false; start_current_iteration.enabled=true.", current_iteration_message)
+      @test !occursin("Pure island NR diagnostic run", current_iteration_message)
       @test read(template, String) == template_before
       @test isfile(joinpath(output_dir, "effective_config.yaml"))
       effective_config_path = joinpath(output_dir, "effective_config.yaml")
@@ -195,6 +353,29 @@ function run_api_tests()
       @test occursin("tol: 1.0e-9", effective_config_text)
       @test occursin("runtime:", effective_config_text)
       @test !occursin("runtime_request:", effective_config_text)
+
+      yaml_override_config = joinpath(tmpdir, "yaml-runtime-precedence.yaml")
+      write(yaml_override_config, """
+power_flow:
+  qlimits:
+    enabled: false
+  start_current_iteration:
+    enabled: false
+  tol: 1.0e-5
+  islands:
+    diagnostic_continue_after_failure: true
+""")
+      yaml_precedence_result = run_sparlectra_api(casefile = casefile, config_file = yaml_override_config, output_dir = joinpath(tmpdir, "yaml-precedence"), config_overrides = Dict{String,Any}(), performance_timing = :off)
+      yaml_effective = Sparlectra.load_yaml_dict(joinpath(yaml_precedence_result.output_dir, "effective_config.yaml"))
+      @test yaml_effective["power_flow"]["qlimits"]["enabled"] === false
+      @test yaml_effective["power_flow"]["start_current_iteration"]["enabled"] === false
+      @test yaml_effective["power_flow"]["tol"] == 1.0e-5
+      @test yaml_effective["power_flow"]["islands"]["diagnostic_continue_after_failure"] === true
+      yaml_sources = yaml_effective["_config_sources"]
+      @test yaml_sources["power_flow"]["qlimits"]["enabled"]["source"] == "user_yaml"
+      @test yaml_sources["power_flow"]["start_current_iteration"]["enabled"]["source"] == "user_yaml"
+      @test yaml_sources["power_flow"]["tol"]["source"] == "user_yaml"
+      @test yaml_sources["power_flow"]["islands"]["diagnostic_continue_after_failure"]["source"] == "user_yaml"
 
       effective_cfg = Sparlectra.load_sparlectra_config(effective_config_path; reload = true)
       @test effective_cfg.powerflow.tol == 1.0e-9
@@ -275,6 +456,15 @@ function run_api_tests()
       branch_csv = read(joinpath(output_dir, "branch_flows.csv"), String)
       @test startswith(bus_csv, "bus;bus_name;type;vm_pu;va_deg;vn_kV;v_re;v_im;v_complex;v_kV")
       @test startswith(branch_csv, "branch;branch_index;from_bus;to_bus;status;p_from_MW;q_from_MVar;p_to_MW;q_to_MVar")
+      bus_header = split(first(eachline(IOBuffer(bus_csv))), ';')
+      branch_header = split(first(eachline(IOBuffer(branch_csv))), ';')
+      @test "original_bus_name" in bus_header
+      @test all(name -> name in branch_header, ("branch_name", "original_branch_name", "from_bus_name", "to_bus_name", "original_from_bus_name", "original_to_bus_name", "branch_kind"))
+      @test occursin("Source Bus", bus_csv)
+      @test occursin("Load Bus", bus_csv)
+      @test occursin("API-LINE-1", branch_csv)
+      @test occursin("Source Bus", branch_csv)
+      @test occursin("Load Bus", branch_csv)
       @test occursin(r"\d,\d", bus_csv)
       @test length(collect(eachline(IOBuffer(bus_csv)))) > 1
       @test length(collect(eachline(IOBuffer(branch_csv)))) > 1
@@ -290,6 +480,8 @@ function run_api_tests()
       @test direct_artifacts == ["bus_voltages_complex.csv", "branch_flows.csv"]
       @test replace(read(joinpath(direct_csv_dir, "bus_voltages_complex.csv"), String), "\r\n" => "\n") == replace(bus_csv, "\r\n" => "\n")
       @test replace(read(joinpath(direct_csv_dir, "branch_flows.csv"), String), "\r\n" => "\n") == replace(branch_csv, "\r\n" => "\n")
+      @test split(first(eachline(joinpath(direct_csv_dir, "bus_voltages_complex.csv"))), ';') == bus_header
+      @test split(first(eachline(joinpath(direct_csv_dir, "branch_flows.csv"))), ';') == branch_header
       @test direct_timing[:exporter] === :direct
       @test direct_timing[:write_mode] === :streaming
       @test direct_timing[:bus_rows] == length(result.raw_result.net.nodeVec)
@@ -568,6 +760,8 @@ function run_api_tests()
       @test occursin("\"run_id\":\"$(result.run_id)\"", result_file_text)
       @test occursin("\"schema_version\":\"1.0\"", result_file_text)
       @test occursin("\"artifacts\"", result_file_text)
+      result_file_payload = Sparlectra._parse_service_json(result_file_text)
+      @test Set(String(artifact["name"]) for artifact in result_file_payload["artifacts"]) == Set(artifact.name for artifact in collect_sparlectra_api_artifacts(result.output_dir))
 
       write(joinpath(output_dir, "buses.csv"), "bus,vm\n1,1.0\n")
       write(joinpath(output_dir, "report.txt"), "report\n")

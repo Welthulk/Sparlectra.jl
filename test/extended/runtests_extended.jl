@@ -1,0 +1,28 @@
+# Copyright 2023–2026 Udo Schmitz
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+using Sparlectra
+using Test
+
+include("test_dtf_importer.jl")
+include("test_dtf_for002_validation_example.jl")
+include("test_dtf_for002_outage_validation_example.jl")
+include("test_dtf_matpower_export_validation_example.jl")
+include("test_dtf_api_webui_integration.jl")
+
+Base.invokelatest(run_dtf_importer_tests)
+Base.invokelatest(run_dtf_for002_validation_example_tests)
+Base.invokelatest(run_dtf_for002_outage_validation_example_tests)
+Base.invokelatest(run_dtf_matpower_export_validation_example_tests)
+Base.invokelatest(run_dtf_api_webui_integration_tests)

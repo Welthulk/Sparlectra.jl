@@ -17,7 +17,7 @@
 module MatpowerIO
 using LinearAlgebra, Printf, SparseArrays
 
-export MatpowerCase, UnsupportedMatpowerDclineError, read_case, read_case_m, read_case_julia, build_ybus_matpower, vmva_power_mismatch_stats
+export MatpowerCase, UnsupportedMatpowerDclineError, read_case, read_case_m, read_case_julia, build_ybus_matpower, vmva_power_mismatch_stats, for001_contingency_branch_indices
 
 using LinearAlgebra
 
@@ -77,11 +77,21 @@ struct MatpowerCase
   branch::Matrix{Float64}
   gencost::Union{Nothing,Matrix{Float64}}
   bus_name::Union{Nothing,Vector{String}}
+  branch_name::Union{Nothing,Vector{String}}
+  branch_kind::Union{Nothing,Vector{String}}
+  for001_contingencies::Union{Nothing,Vector{String}}
   dcline::Union{Nothing,Matrix{Float64}}
+  sparlectra::Union{Nothing,NamedTuple}
 end
+
+MatpowerCase(name::String, baseMVA::Float64, bus::Matrix{Float64}, gen::Matrix{Float64}, branch::Matrix{Float64}, gencost::Union{Nothing,Matrix{Float64}}, bus_name::Union{Nothing,Vector{String}}, dcline::Union{Nothing,Matrix{Float64}}) =
+  MatpowerCase(name, baseMVA, bus, gen, branch, gencost, bus_name, nothing, nothing, nothing, dcline, nothing)
 
 MatpowerCase(name::String, baseMVA::Float64, bus::Matrix{Float64}, gen::Matrix{Float64}, branch::Matrix{Float64}, gencost::Union{Nothing,Matrix{Float64}}, bus_name::Union{Nothing,Vector{String}}) =
   MatpowerCase(name, baseMVA, bus, gen, branch, gencost, bus_name, nothing)
+
+MatpowerCase(name::String, baseMVA::Float64, bus::Matrix{Float64}, gen::Matrix{Float64}, branch::Matrix{Float64}, gencost::Union{Nothing,Matrix{Float64}}, bus_name::Union{Nothing,Vector{String}}, branch_name::Union{Nothing,Vector{String}}, branch_kind::Union{Nothing,Vector{String}}, for001_contingencies::Union{Nothing,Vector{String}}, dcline::Union{Nothing,Matrix{Float64}}) =
+  MatpowerCase(name, baseMVA, bus, gen, branch, gencost, bus_name, branch_name, branch_kind, for001_contingencies, dcline, nothing)
 
 struct UnsupportedMatpowerDclineError <: Exception
   message::String
@@ -117,6 +127,13 @@ function matpower_dcline_diagnostics(mpc::MatpowerCase; casefile::Union{Nothing,
   return details
 end
 
+function matpower_dcline_diagnostics(mpc; casefile::Union{Nothing,AbstractString} = nothing)::Dict{String,Any}
+  name = hasproperty(mpc, :name) ? String(getproperty(mpc, :name)) : "mpc"
+  dcline = hasproperty(mpc, :dcline) ? getproperty(mpc, :dcline) : nothing
+  case = MatpowerCase(name, 1.0, zeros(0, 13), zeros(0, 21), zeros(0, 13), nothing, nothing, dcline === nothing ? nothing : Matrix{Float64}(dcline))
+  return matpower_dcline_diagnostics(case; casefile = casefile)
+end
+
 function unsupported_dcline_message(details::AbstractDict)::String
   casefile = get(details, "casefile", "unknown")
   active_count = get(details, "matpower_dcline_active_count", 0)
@@ -137,6 +154,12 @@ function assert_no_active_dcline(mpc::MatpowerCase; casefile::Union{Nothing,Abst
   throw(UnsupportedMatpowerDclineError(unsupported_dcline_message(details), details))
 end
 
+function assert_no_active_dcline(mpc; casefile::Union{Nothing,AbstractString} = nothing)
+  details = matpower_dcline_diagnostics(mpc; casefile = casefile)
+  get(details, "matpower_dcline_unsupported", false) || return details
+  throw(UnsupportedMatpowerDclineError(unsupported_dcline_message(details), details))
+end
+
 """
 	legacy_sort_bus(mpc::MatpowerCase) -> MatpowerCase
 
@@ -149,7 +172,8 @@ function legacy_sort_bus(mpc::MatpowerCase)::MatpowerCase
   bus = mpc.bus
   perm = sortperm(bus[:, 1])  # sort by BUS_I
   bus_sorted = bus[perm, :]
-  return MatpowerCase(mpc.name, mpc.baseMVA, bus_sorted, mpc.gen, mpc.branch, mpc.gencost, mpc.bus_name, mpc.dcline)
+  bus_name = (mpc.bus_name !== nothing && length(mpc.bus_name) == size(bus, 1)) ? mpc.bus_name[perm] : mpc.bus_name
+  return MatpowerCase(mpc.name, mpc.baseMVA, bus_sorted, mpc.gen, mpc.branch, mpc.gencost, bus_name, mpc.branch_name, mpc.branch_kind, mpc.for001_contingencies, mpc.dcline, mpc.sparlectra)
 end
 
 """
@@ -212,8 +236,12 @@ function read_case_julia(path::AbstractString; legacy_compat::Bool = true)
 
     gencost = haskey(obj, :gencost) ? (obj.gencost === nothing ? nothing : Matrix{Float64}(obj.gencost)) : nothing
     bus_name = haskey(obj, :bus_name) ? (obj.bus_name === nothing ? nothing : Vector{String}(obj.bus_name)) : nothing
+    branch_name = haskey(obj, :branch_name) ? (obj.branch_name === nothing ? nothing : Vector{String}(obj.branch_name)) : nothing
+    branch_kind = haskey(obj, :branch_kind) ? (obj.branch_kind === nothing ? nothing : Vector{String}(obj.branch_kind)) : nothing
+    for001_contingencies = haskey(obj, :for001_contingencies) ? (obj.for001_contingencies === nothing ? nothing : Vector{String}(obj.for001_contingencies)) : nothing
     dcline = haskey(obj, :dcline) ? (obj.dcline === nothing ? nothing : Matrix{Float64}(obj.dcline)) : nothing
-    MatpowerCase(String(name), baseMVA, bus, gen, branch, gencost, bus_name, dcline)
+    sparlectra = haskey(obj, :sparlectra) ? obj.sparlectra : nothing
+    MatpowerCase(String(name), baseMVA, bus, gen, branch, gencost, bus_name, branch_name, branch_kind, for001_contingencies, dcline, sparlectra)
   else
     error("Julia case file must return MatpowerCase or NamedTuple, got: $(typeof(obj))")
   end
@@ -254,10 +282,14 @@ function read_case_m(path::AbstractString; legacy_compat::Bool = true)
   branch = parse_matrix_block(txt, "mpc.branch"; ncols = 13)
 
   gencost = try_parse_matrix_block(txt, "mpc.gencost")
-  bus_name = try_parse_bus_name(txt)
+  bus_name = try_parse_string_vector(txt, "mpc.bus_name")
+  branch_name = try_parse_string_vector(txt, "mpc.branch_name")
+  branch_kind = try_parse_string_vector(txt, "mpc.branch_kind")
+  for001_contingencies = try_parse_string_vector(txt, "mpc.for001_contingencies")
   dcline = try_parse_matrix_block(txt, "mpc.dcline")
+  sparlectra = try_parse_sparlectra_extension(txt)
 
-  mpc = MatpowerCase(name, baseMVA, bus, gen, branch, gencost, bus_name, dcline)
+  mpc = MatpowerCase(name, baseMVA, bus, gen, branch, gencost, bus_name, branch_name, branch_kind, for001_contingencies, dcline, sparlectra)
   apply_supported_postprocessing!(mpc, txt)
   return legacy_compat ? legacy_sort_bus(mpc) : mpc
 end
@@ -415,8 +447,9 @@ function parse_numeric_matrix_ncols(body::AbstractString, key::AbstractString; n
   return M
 end
 
-function try_parse_bus_name(txt::String)
-  re = r"mpc\.bus_name\s*=\s*\{\s*(.*?)\s*\}\s*;"s
+function try_parse_string_vector(txt::String, key::String)
+  key_re = replace(key, "." => raw"\.")
+  re = Regex(key_re * raw"\s*=\s*\{\s*(.*?)\s*\}\s*;", "s")
   m = match(re, txt)
   m === nothing && return nothing
   body = m.captures[1]
@@ -426,6 +459,62 @@ function try_parse_bus_name(txt::String)
     push!(names, mm.captures[1])
   end
   isempty(names) ? nothing : names
+end
+
+try_parse_bus_name(txt::String) = try_parse_string_vector(txt, "mpc.bus_name")
+
+function _parse_matlab_struct_value(value::AbstractString)
+  v = strip(String(value))
+  if startswith(v, "'") && endswith(v, "'")
+    return replace(v[2:prevind(v, lastindex(v))], "''" => "'")
+  end
+  if lowercase(v) == "nan"
+    return NaN
+  end
+  return parse(Float64, v)
+end
+
+function _parse_sparlectra_transformer_loss_struct(body::AbstractString)
+  pairs = Pair{Symbol,Any}[]
+  for m in eachmatch(r"'([^']+)'\s*,\s*([^,]+)(?:,|$)", String(body))
+    push!(pairs, Symbol(m.captures[1]) => _parse_matlab_struct_value(m.captures[2]))
+  end
+  return (; pairs...)
+end
+
+function try_parse_sparlectra_extension(txt::String)
+  occursin("mpc.sparlectra", txt) || return nothing
+  version_match = match(r"mpc\.sparlectra\.format_version\s*=\s*([0-9]+)\s*;", txt)
+  version = version_match === nothing ? 0 : parse(Int, version_match.captures[1])
+  version == 1 || throw(ArgumentError("Unsupported Sparlectra MATPOWER extension format_version=$(version)."))
+  warning_match = match(r"mpc\.sparlectra\.warning\s*=\s*'((?:''|[^'])*)'\s*;", txt)
+  warning = warning_match === nothing ? "" : replace(warning_match.captures[1], "''" => "'")
+  losses = NamedTuple[]
+  block_match = match(r"(?s)mpc\.sparlectra\.transformer_losses\s*=\s*\{(.*?)\}\s*;", txt)
+  if block_match !== nothing
+    for m in eachmatch(r"struct\((.*?)\)\s*;?", block_match.captures[1])
+      push!(losses, _parse_sparlectra_transformer_loss_struct(m.captures[1]))
+    end
+  end
+  return (format_version = version, warning = warning, transformer_losses = losses)
+end
+
+function for001_contingency_branch_indices(mpc::MatpowerCase)::Vector{Int}
+  contingencies = mpc.for001_contingencies
+  names = mpc.branch_name
+  contingencies === nothing && return Int[]
+  names === nothing && throw(ArgumentError("Cannot map FOR001 contingencies: mpc.branch_name is missing."))
+  index_by_name = Dict{String,Int}()
+  for (idx, name) in pairs(names)
+    haskey(index_by_name, name) && throw(ArgumentError("Cannot map FOR001 contingencies: duplicate branch_name `$(name)`."))
+    index_by_name[name] = idx
+  end
+  indices = Int[]
+  for name in contingencies
+    haskey(index_by_name, name) || throw(ArgumentError("Cannot map FOR001 contingency `$(name)`: no exact mpc.branch_name match."))
+    push!(indices, index_by_name[name])
+  end
+  return indices
 end
 
 # -----------------------------------------------------------------------------

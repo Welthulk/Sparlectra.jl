@@ -122,6 +122,11 @@ function route_sparlectra_webui(method::AbstractString, target::AbstractString, 
   elseif verb == "POST" && path == "/powerflow/config/download"
     text = String(something(_webui_form_value(form, "refreshed_text", ""), ""))
     return SparlectraWebUIResponse(200, Pair{String,String}["Content-Type" => "application/x-yaml; charset=utf-8", "Content-Disposition" => "attachment; filename=\"configuration-refreshed.yaml\""], Vector{UInt8}(codeunits(text)))
+  elseif verb == "GET" && path == "/powerflow/config/edit"
+    config_file = get(query, "config_file", runtime === nothing ? DEFAULT_SPARLECTRA_CONFIG_PATH : runtime.config_file)
+    return handle_powerflow_config_editor(config_file)
+  elseif verb == "POST" && path == "/powerflow/config/edit"
+    return handle_powerflow_config_editor_save(form; operation_log = log_root)
   elseif verb == "GET" && startswith(path, "/powerflow/result/")
     run_id = _webui_urldecode(path[(lastindex("/powerflow/result/") + 1):end])
     get(query, "autorefresh", "") == "1" || _webui_log_route!(log_root, "powerflow_status_opened", verb, path; status = "opened", run_id)
@@ -157,6 +162,11 @@ function route_sparlectra_webui(method::AbstractString, target::AbstractString, 
     return response
   elseif verb == "GET" && startswith(path, "/powerflow/artifacts/")
     return handle_powerflow_artifacts(_webui_urldecode(path[(lastindex("/powerflow/artifacts/") + 1):end]))
+  elseif verb == "GET" && startswith(path, "/powerflow/artifact-zip/")
+    run_id = _webui_urldecode(path[(lastindex("/powerflow/artifact-zip/") + 1):end])
+    response = handle_powerflow_artifacts_zip(run_id)
+    _webui_log_route!(log_root, "artifacts_zip_downloaded", verb, path; status = response.status, run_id)
+    return response
   elseif verb == "GET" && startswith(path, "/powerflow/artifact/")
     remainder = path[(lastindex("/powerflow/artifact/") + 1):end]
     segments = split(remainder, '/'; limit = 2)

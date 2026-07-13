@@ -78,6 +78,10 @@ function _rectangular_status_diagnostics(rect_status)::NamedTuple
     current_iteration_final_mismatch = _rect_status_get(rect_status, :current_iteration_final_mismatch, NaN),
     current_iteration_reason = _rect_status_get(rect_status, :current_iteration_reason, :disabled),
     current_iteration_artifact = _rect_status_get(rect_status, :current_iteration_artifact, ""),
+    island_wise_all_converged = _rect_status_get(rect_status, :island_wise_all_converged, false),
+    post_merge_validation_status = _rect_status_get(rect_status, :post_merge_validation_status, :not_applicable),
+    post_merge_final_mismatch = _rect_status_get(rect_status, :post_merge_final_mismatch, NaN),
+    post_merge_mismatch_status = _rect_status_get(rect_status, :post_merge_mismatch_status, :not_applicable),
   )
 end
 
@@ -141,6 +145,7 @@ function _build_sparlectra_result(net::Net, cfg::SparlectraConfig, execution, pe
     (outcome = converged ? :converged : :not_converged, numerical_converged = converged, solution_available = converged, limit_validation_status = :skip, final_converged = converged, reason = converged ? :none : :nr_mismatch_not_converged, reason_text = converged ? "none" : "NR mismatch did not converge", final_mismatch = NaN)
   end
   status = _compose_framework_status(status, execution.control_status)
+  status = _append_island_failure_message(status, performance_profile)
   diagnostics = cfg.powerflow.method === :rectangular ? merge(_rectangular_status_diagnostics(rect_status), _profile_start_projection_diagnostics(performance_profile)) : NamedTuple()
   return SparlectraRunResult(net, status.outcome, status.numerical_converged, status.solution_available, status.limit_validation_status, status.final_converged, status.reason, status.reason_text, execution.iterations, execution.elapsed_s, execution.solver_elapsed_s, status.final_mismatch, cfg.powerflow.method, execution.control_status, performance_profile, diagnostics)
 end

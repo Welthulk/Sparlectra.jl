@@ -78,6 +78,42 @@ Sparlectra docs distinguish option categories:
 
 Prefer canonical nested keys shown in the example YAML and module pages.
 
+### MATPOWER import metadata and DC-line options
+
+`matpower_import.apply_bus_names`, `apply_branch_names`, and
+`apply_branch_kind` default to `false` so existing imports keep numeric bus
+names and heuristic branch classification. Enable them when MATPOWER cases
+carry validation metadata such as standard `mpc.bus_name` and user-defined
+`mpc.branch_name`/`mpc.branch_kind`. `import_for001_contingencies` defaults to
+`true` and preserves user-defined `mpc.for001_contingencies` for validation
+workflows. `matpower_import.matpower_dcline_mode` defaults to
+`:reject_active`; use `:pf_injections` only when simple MATPOWER power-flow
+DC-line terminal injections are desired. OPF and `dclinecost` remain
+unsupported.
+
+### AC island solving
+
+Disconnected AC islands are not tied together by MATPOWER `mpc.dcline`
+terminal injections: those injections affect bus power balance but do not add
+Ybus branches. Keep the conservative default (`power_flow.islands.enabled:
+false`) to fail before Newton-Raphson when a case contains multiple AC
+components, or explicitly enable independent island solves:
+
+```yaml
+power_flow:
+  islands:
+    enabled: true
+    mode: solve_independent
+    reference_policy: matpower_like
+```
+
+The `matpower_like` policy keeps an existing island REF/Slack bus, otherwise
+promotes the deterministic first PV/voltage-controlled bus as that island's
+angle reference. Islands without REF/Slack or PV support fail before NR. When
+multiple islands are detected, Sparlectra writes `ac_islands.csv` in the run
+directory with bus, branch, generator/load, DC-line terminal, power-balance,
+reference, and status diagnostics.
+
 ## Loader and validation behavior
 
 ### Key validation

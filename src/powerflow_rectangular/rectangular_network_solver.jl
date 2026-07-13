@@ -584,6 +584,14 @@ function runpf_rectangular!(
   # 5) NR-Loop
   V = copy(V0)
   history = Float64[]
+  step_diagnostics = NamedTuple[]
+  best_finite_mismatch = Inf
+  best_finite_iteration = 0
+  best_finite_voltage = nothing
+  last_finite_iteration = 0
+  last_finite_voltage = nothing
+  first_nonfinite_iteration = 0
+  first_nonfinite_voltage = nothing
   converged = false
   iters = 0
   rejection_reason = :nr_mismatch_not_converged
@@ -637,6 +645,20 @@ function runpf_rectangular!(
     end
     max_mis = maximum(abs.(F))
     push!(history, max_mis)
+    if isfinite(max_mis)
+      last_finite_iteration = it
+      last_finite_voltage = copy(V)
+      if max_mis < best_finite_mismatch
+        best_finite_mismatch = max_mis
+        best_finite_iteration = it
+        best_finite_voltage = copy(V)
+      end
+    else
+      first_nonfinite_iteration == 0 && (first_nonfinite_iteration = it; first_nonfinite_voltage = copy(V))
+      converged = false
+      rejection_reason = :nr_nonfinite
+      break
+    end
     if rectangular_workspace_preallocated
       resize!(workspace.rhs_vector, length(F))
       copyto!(workspace.rhs_vector, F)
@@ -673,7 +695,7 @@ function runpf_rectangular!(
     try
       set_phase("linear_solve")
       V = _perf_profile_time!(performance_profile, :iteration_newton_step) do
-        complex_newton_step_rectangular(Ybus, V, S; slack_idx = slack_idx, damp = damp, autodamp = autodamp, autodamp_min = autodamp_min, bus_types = bus_types, Vset = Vset, dPinj_dVm = dPinj_dVm, dQinj_dVm = dQinj_dVm, performance_profile = performance_profile)
+        complex_newton_step_rectangular(Ybus, V, S; slack_idx = slack_idx, damp = damp, autodamp = autodamp, autodamp_min = autodamp_min, bus_types = bus_types, Vset = Vset, dPinj_dVm = dPinj_dVm, dQinj_dVm = dQinj_dVm, performance_profile = performance_profile, step_diagnostics = step_diagnostics)
       end
       check_cancel()
     catch step_error
@@ -777,7 +799,24 @@ function runpf_rectangular!(
     wrong_branch_rescue_reason = wrong_branch_status.wrong_branch_rescue_reason
   end
 
-  mismatch_diagnostics = _rectangular_mismatch_diagnostics(Ybus, V, S, bus_types, Vset, slack_idx, final_pv_voltage_residual)
+  mismatch_diagnostics = _rectangular_mismatch_diagnostics(
+    Ybus,
+    V,
+    S,
+    bus_types,
+    Vset,
+    slack_idx,
+    final_pv_voltage_residual;
+    net,
+    history,
+    step_diagnostics,
+    best_finite_iteration,
+    best_finite_voltage,
+    last_finite_iteration,
+    last_finite_voltage,
+    first_nonfinite_iteration,
+    first_nonfinite_voltage,
+  )
 
   switch_counts, oscillating_buses, max_switching_exceeded, q_limit_active_set_ok, converged, rejection_reason, final_reason, final_status, status = _perf_profile_time!(performance_profile, :solver_status_bookkeeping) do
     switch_counts_ = qlimit_switch_counts(net)
@@ -1066,6 +1105,10 @@ function _runpf_with_config!(net::Net, config::PowerFlowConfig; verbose::Int = 0
     rectangular_workspace_reuse = config.rectangular_workspace_reuse,
     rectangular_preallocate_workspace = config.rectangular_preallocate_workspace,
     rectangular_workspace_min_buses = config.rectangular_workspace_min_buses,
+    islands_enabled = config.islands_enabled,
+    islands_mode = config.islands_mode,
+    islands_reference_policy = config.islands_reference_policy,
+    islands_diagnostic_continue_after_failure = config.islands.diagnostic_continue_after_failure,
     performance_profile = performance_profile,
   )
 end
@@ -1293,11 +1336,198 @@ function runpf!(
   rectangular_workspace_reuse::Bool = true,
   rectangular_preallocate_workspace::Symbol = :auto,
   rectangular_workspace_min_buses::Int = 1000,
+  islands_enabled::Bool = false,
+  islands_mode::Symbol = :solve_independent,
+  islands_reference_policy::Symbol = :matpower_like,
+  islands_diagnostic_continue_after_failure::Bool = false,
 )
   _validate_rectangular_powerflow_options(method = :rectangular, sparse = true)
   wnet, reps, has_merges = _merged_pf_net(net)
   refreshBusTypesFromProsumers!(wnet)
   has_vdep_control = has_voltage_dependent_control(wnet)
+  island_report = detect_ac_islands(wnet)
+  if length(island_report.rows) > 1 && any(row -> row.n_branch > 0, island_report.rows)
+    _print_ac_island_summary(island_report)
+    try
+      artifact_dir = performance_profile isa AbstractDict ? String(get(performance_profile, :output_dir, tempdir())) : tempdir()
+      mkpath(artifact_dir)
+      island_artifact = joinpath(artifact_dir, "ac_islands.csv")
+      write_ac_island_report(island_artifact, island_report)
+      println("AC island diagnostic artifact: ", island_artifact)
+    catch err
+      @warn "Unable to write AC island diagnostic artifact" exception = (err, catch_backtrace())
+    end
+    if !islands_enabled
+      error(AC_ISLAND_DISABLED_MESSAGE)
+    end
+    islands_mode === :solve_independent || error("Unsupported power_flow.islands.mode=$(islands_mode).")
+    islands_reference_policy === :matpower_like || error("Unsupported power_flow.islands.reference_policy=$(islands_reference_policy).")
+    _validate_island_references!(island_report)
+    total_iters = 0
+    first_failure = nothing
+    island_statuses = Dict{Int,Any}()
+    performance_profile isa AbstractDict && (performance_profile[:ac_island_solver_statuses] = island_statuses)
+    for row in island_report.rows
+      if first_failure !== nothing && !islands_diagnostic_continue_after_failure
+        skipped_status = (; island_id = row.island_id, final_mismatch = NaN, iterations = 0, reason = :skipped_after_previous_failure, status = :skipped_after_previous_failure, stage = :skipped_after_previous_failure, exception_type = "", exception_message = "previous island failed and diagnostic continuation is disabled", stacktrace_top = "")
+        island_statuses[Int(row.island_id)] = skipped_status
+        _set_rectangular_pf_status!(net, skipped_status)
+        continue
+      end
+      local it = 0
+      local status = 2
+      local stage = :island_net_setup
+      local inet = nothing
+      try
+        inet = _prepare_island_net(wnet, row)
+        stage = :pre_nr_setup
+        it, status = runpf_rectangular!(
+        inet,
+        maxIte,
+        tolerance,
+        verbose;
+        damp = damp,
+        autodamp = autodamp,
+        autodamp_min = autodamp_min,
+        wrong_branch_detection = wrong_branch_detection,
+        wrong_branch_rescue = false,
+        wrong_branch_min_vm_pu = wrong_branch_min_vm_pu,
+        wrong_branch_max_vm_pu = wrong_branch_max_vm_pu,
+        wrong_branch_max_angle_spread_deg = wrong_branch_max_angle_spread_deg,
+        wrong_branch_max_branch_angle_deg = wrong_branch_max_branch_angle_deg,
+        wrong_branch_min_low_vm_count = wrong_branch_min_low_vm_count,
+        wrong_branch_rescue_max_attempts = 0,
+        opt_flatstart = opt_flatstart,
+        pv_table_rows = pv_table_rows,
+        lock_pv_to_pq_buses = lock_pv_to_pq_buses,
+        qlimit_mode = qlimit_mode,
+        qlimit_max_outer = qlimit_max_outer,
+        start_projection = start_projection,
+        start_projection_try_dc_start = start_projection_try_dc_start,
+        start_projection_try_blend_scan = start_projection_try_blend_scan,
+        start_projection_branch_guard = start_projection_branch_guard,
+        start_projection_measure_candidates = start_projection_measure_candidates,
+        start_projection_accept_unmeasured_dc_start = start_projection_accept_unmeasured_dc_start,
+        start_projection_blend_lambdas = start_projection_blend_lambdas,
+        start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg,
+        start_projection_requested_angle_mode = start_projection_requested_angle_mode,
+        start_projection_requested_voltage_mode = start_projection_requested_voltage_mode,
+        start_current_iteration_enabled = start_current_iteration_enabled,
+        start_current_iteration_max_iter = start_current_iteration_max_iter,
+        start_current_iteration_tol = start_current_iteration_tol,
+        start_current_iteration_damping = start_current_iteration_damping,
+        start_current_iteration_accept_only_if_improved = start_current_iteration_accept_only_if_improved,
+        start_current_iteration_min_improvement_factor = start_current_iteration_min_improvement_factor,
+        start_current_iteration_vm_min_pu = start_current_iteration_vm_min_pu,
+        start_current_iteration_vm_max_pu = start_current_iteration_vm_max_pu,
+        start_current_iteration_max_angle_step_deg = start_current_iteration_max_angle_step_deg,
+        start_current_iteration_only_for_large_cases = start_current_iteration_only_for_large_cases,
+        qlimit_start_iter = qlimit_start_iter,
+        qlimit_start_mode = qlimit_start_mode,
+        qlimit_auto_q_delta_pu = qlimit_auto_q_delta_pu,
+        qlimit_trace_buses = qlimit_trace_buses,
+        qlimit_lock_reason = qlimit_lock_reason,
+        qlimit_guard = qlimit_guard,
+        qlimit_guard_min_q_range_pu = qlimit_guard_min_q_range_pu,
+        qlimit_guard_zero_range_mode = qlimit_guard_zero_range_mode,
+        qlimit_guard_narrow_range_mode = qlimit_guard_narrow_range_mode,
+        qlimit_guard_log = qlimit_guard_log,
+        qlimit_guard_max_switches = qlimit_guard_max_switches,
+        qlimit_guard_accept_bounded_violations = qlimit_guard_accept_bounded_violations,
+        qlimit_guard_max_remaining_violations = qlimit_guard_max_remaining_violations,
+        qlimit_guard_freeze_after_repeated_switching = qlimit_guard_freeze_after_repeated_switching,
+        qlimit_guard_violation_mode = qlimit_guard_violation_mode,
+        qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu,
+        qlimits_enabled = qlimits_enabled,
+        qlimit_enforcement_mode = qlimit_enforcement_mode,
+        rectangular_workspace_reuse = rectangular_workspace_reuse,
+        rectangular_preallocate_workspace = rectangular_preallocate_workspace,
+        rectangular_workspace_min_buses = rectangular_workspace_min_buses,
+        performance_profile = performance_profile,
+      )
+        total_iters += it
+        island_rect_status = rectangular_pf_status(inet)
+        if status != 0
+          stage = it == 0 ? :pre_nr_setup : :newton_iteration
+          failure_reason = island_rect_status !== nothing && hasproperty(island_rect_status, :reason) ? island_rect_status.reason : :nr_not_converged
+          failure_outcome = island_rect_status !== nothing && hasproperty(island_rect_status, :status) ? island_rect_status.status : :not_converged
+          failure_status = merge(island_rect_status === nothing ? NamedTuple() : island_rect_status, (; island_id = row.island_id, iterations = it, reason = failure_reason, status = failure_outcome, stage = stage, exception_type = "", exception_message = "", stacktrace_top = ""))
+          island_statuses[Int(row.island_id)] = failure_status
+          _set_rectangular_pf_status!(net, failure_status)
+          err = ErrorException("AC island $(row.island_id) power-flow solve failed:\n  buses=$(row.n_bus) branches=$(row.n_branch) ref=$(row.chosen_ref_bus)\n  bus_types: PV=$(row.n_pv) PQ=$(row.n_pq) REF=$(row.n_ref)\n  iterations=$(it) final_status=$(status)")
+          first_failure === nothing && (first_failure = err)
+          islands_diagnostic_continue_after_failure || throw(err)
+          continue
+        end
+        stage = :post_solve_validation
+        all(isfinite(something(wnode._vm_pu, NaN)) && isfinite(something(wnode._va_deg, NaN)) for wnode in inet.nodeVec) || error("AC island $(row.island_id) produced nonfinite voltage results.")
+        success_status = merge(island_rect_status === nothing ? NamedTuple() : island_rect_status, (; island_id = row.island_id, iterations = it, status = :converged, reason = :none, stage = stage, exception_type = "", exception_message = "", stacktrace_top = ""))
+        island_statuses[Int(row.island_id)] = success_status
+        _sync_island_solution!(wnet, inet, row)
+      catch err
+        frames = stacktrace(catch_backtrace())
+        top = isempty(frames) ? "" : sprint(show, first(frames))
+        island_rect_status = inet === nothing ? nothing : rectangular_pf_status(inet)
+        base_status = island_rect_status === nothing ? NamedTuple() : island_rect_status
+        failure_status = merge(base_status, (; island_id = row.island_id, final_mismatch = hasproperty(base_status, :final_mismatch) ? base_status.final_mismatch : NaN, iterations = it, reason = :solver_exception, status = :failed, stage = stage, exception_type = nameof(typeof(err)), exception_message = sprint(showerror, err), stacktrace_top = top))
+        island_statuses[Int(row.island_id)] = failure_status
+        _set_rectangular_pf_status!(net, failure_status)
+        first_failure === nothing && (first_failure = err)
+        islands_diagnostic_continue_after_failure || rethrow()
+      end
+    end
+    if first_failure !== nothing
+      island_message = _islandwise_failure_message(performance_profile)
+      throw(ErrorException(island_message === nothing ? sprint(showerror, first_failure) : island_message))
+    end
+    updateShuntPowers!(net = wnet)
+    island_final_mismatches = Float64[
+      Float64(getproperty(status, :final_mismatch)) for status in values(island_statuses)
+      if hasproperty(status, :final_mismatch) && isfinite(Float64(getproperty(status, :final_mismatch)))
+    ]
+    aggregate_final_mismatch = isempty(island_final_mismatches) ? NaN : maximum(island_final_mismatches)
+    aggregate_base_status = first(values(island_statuses))
+    aggregate_status = merge(
+      aggregate_base_status,
+      (;
+        numerical_converged = true,
+        nr_converged = true,
+        active_set_converged = true,
+        q_limit_active_set_ok = true,
+        final_converged = true,
+        status = :converged,
+        reason = :none,
+        reason_text = "All AC islands converged independently.",
+        final_mismatch = aggregate_final_mismatch,
+        nr_final_mismatch = aggregate_final_mismatch,
+        iterations = total_iters,
+        island_wise_all_converged = true,
+        post_merge_validation_status = :not_applicable,
+        post_merge_final_mismatch = NaN,
+        post_merge_mismatch_status = :not_applicable,
+        stage = :island_wise_complete,
+        exception_type = "",
+        exception_message = "",
+        stacktrace_top = "",
+      ),
+    )
+    _set_rectangular_pf_status!(net, aggregate_status)
+    if performance_profile isa AbstractDict
+      performance_profile[:island_wise_all_converged] = true
+      performance_profile[:post_merge_validation_status] = :not_applicable
+      performance_profile[:post_merge_final_mismatch] = NaN
+      performance_profile[:post_merge_mismatch_status] = :not_applicable
+    end
+    if has_merges
+      _sync_merged_results_to_original!()
+    elseif wnet !== net
+      for i in eachindex(net.nodeVec)
+        net.nodeVec[i]._vm_pu = wnet.nodeVec[i]._vm_pu
+        net.nodeVec[i]._va_deg = wnet.nodeVec[i]._va_deg
+      end
+    end
+    return total_iters, 0
+  end
 
   function _sync_merged_results_to_original!()
     # Only solved voltage state is back-propagated bus-wise; dependent shunt powers
