@@ -41,9 +41,19 @@ function _current_iteration_lifecycle_metadata(rect_status)::Dict{String,Any}
   )
 end
 
-function _build_success_lifecycle_metadata(raw_result::SparlectraRunResult, config::SparlectraConfig; numerical_success::Bool, final_outcome::Dict{String,Any}, csv_export_status::AbstractString, csv_export_skip_reason, csv_export_error, csv_artifacts::Vector{String}, detailed_result_csv::Bool, config_overrides, casefile, config_file, performance_timing, run_diagnostics::Bool, detailed_result_csv_format, qlimit_metadata::AbstractDict, csv_timing_metadata::AbstractDict)::Dict{String,Any}
+function _island_wise_lifecycle_metadata(rect_status)::Dict{String,Any}
+  return Dict{String,Any}(
+    "island_wise_all_converged" => rect_status !== nothing && hasproperty(rect_status, :island_wise_all_converged) ? getproperty(rect_status, :island_wise_all_converged) : false,
+    "post_merge_validation_status" => rect_status !== nothing && hasproperty(rect_status, :post_merge_validation_status) ? String(getproperty(rect_status, :post_merge_validation_status)) : "not_applicable",
+    "post_merge_final_mismatch" => rect_status !== nothing && hasproperty(rect_status, :post_merge_final_mismatch) ? getproperty(rect_status, :post_merge_final_mismatch) : NaN,
+    "post_merge_mismatch_status" => rect_status !== nothing && hasproperty(rect_status, :post_merge_mismatch_status) ? String(getproperty(rect_status, :post_merge_mismatch_status)) : "not_applicable",
+  )
+end
+
+function _build_success_lifecycle_metadata(raw_result::SparlectraRunResult, config::SparlectraConfig; numerical_success::Bool, final_outcome::Dict{String,Any}, csv_export_status::AbstractString, csv_export_skip_reason, csv_export_error, csv_artifacts::Vector{String}, detailed_result_csv::Bool, config_overrides, config_override_source::AbstractString, casefile, config_file, performance_timing, run_diagnostics::Bool, detailed_result_csv_format, qlimit_metadata::AbstractDict, csv_timing_metadata::AbstractDict)::Dict{String,Any}
   rect_status = raw_result.net === nothing ? nothing : rectangular_pf_status(raw_result.net)
   current_iteration_metadata = _current_iteration_lifecycle_metadata(rect_status)
+  island_wise_metadata = _island_wise_lifecycle_metadata(rect_status)
   classic_outer_loop_passes = rect_status !== nothing && hasproperty(rect_status, :matpower_outer_iterations) ? rect_status.matpower_outer_iterations : 0
   pv_to_pq_events = raw_result.net === nothing ? 0 : length(raw_result.net.qLimitLog)
   active_set_events = config.powerflow.qlimits.enforcement_mode === :active_set ? pv_to_pq_events : 0
@@ -62,18 +72,21 @@ function _build_success_lifecycle_metadata(raw_result::SparlectraRunResult, conf
     "detailed_result_csv_artifacts" => csv_artifacts,
     "detailed_result_csv_solution_quality" => detailed_result_csv && csv_export_skip_reason === nothing ? _csv_solution_quality(raw_result) : nothing,
     "detailed_result_csv_warning" => detailed_result_csv && csv_export_skip_reason === nothing && !numerical_success ? "values are from the last Newton iterate and are not a converged power-flow solution" : nothing,
+    "config_override_source" => String(config_override_source),
+    "webui_runtime_overrides" => String(config_override_source) == "webui_form_runtime" ? "enabled" : "disabled",
     "q_limit_active_set_events" => active_set_events,
     "q_limit_pv_to_pq_events" => pv_to_pq_events,
     "q_limit_classic_outer_loop_passes" => classic_outer_loop_passes,
     "webui_request_settings" => merge(Dict{String,Any}(String(key) => value for (key, value) in config_overrides), Dict{String,Any}(
       "casefile" => casefile,
       "config_file" => config_file,
+      "config_override_source" => String(config_override_source),
       "performance_timing" => String(performance_timing),
       "run_diagnostics" => run_diagnostics,
       "detailed_result_csv" => detailed_result_csv,
       "detailed_result_csv_format" => detailed_result_csv_format === nothing ? "technical" : String(detailed_result_csv_format),
     )),
-  ), qlimit_metadata, current_iteration_metadata)
+  ), qlimit_metadata, current_iteration_metadata, island_wise_metadata)
   # Partial CSV exports are still successful API runs, but the Web UI needs the
   # partial file error in the stable lifecycle field used by Last Errors.
   haskey(csv_timing_metadata, :partial_error) && (metadata["detailed_result_csv_error"] = csv_timing_metadata[:partial_error])

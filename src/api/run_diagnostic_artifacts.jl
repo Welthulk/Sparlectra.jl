@@ -18,12 +18,11 @@
 
 function _write_api_timing_summary(io::IO, result::SparlectraRunResult, config::SparlectraConfig, phases::AbstractDict = Dict{Symbol,Float64}())
   benchmark_median = result.performance_profile isa AbstractDict ? get(result.performance_profile, :benchmark_median_s, nothing) : nothing
-  representative_time = result.performance_profile isa AbstractDict ? get(result.performance_profile, :representative_elapsed_s, result.elapsed_s) : result.elapsed_s
   println(io, "Timing")
   println(io, "------")
-  println(io, "Solver time : ", result.solver_elapsed_s === nothing ? "n/a" : "$(round(result.solver_elapsed_s; digits = 6)) s")
+  result.solver_elapsed_s === nothing || println(io, "Solver time : ", round(result.solver_elapsed_s; digits = 6), " s")
   haskey(phases, :artifact_writing) && println(io, "Output time : ", round(Float64(phases[:artifact_writing]); digits = 6), " s")
-  println(io, "Wall time   : ", round(Float64(representative_time); digits = 6), " s")
+  haskey(phases, :total) && println(io, "Total time  : ", round(Float64(phases[:total]); digits = 6), " s")
   if config.benchmark.enabled
     println(io, "benchmark_median:     ", benchmark_median === nothing ? "n/a" : "$(round(Float64(benchmark_median); digits = 6)) s")
     println(io, "benchmark_samples:    ", config.benchmark.samples)

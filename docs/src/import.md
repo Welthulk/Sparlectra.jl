@@ -141,16 +141,54 @@ explicit YAML values that were preserved.
 
 The `casefileparser` function parses Matpower case files and returns the raw data arrays:
 
-### Known MATPOWER import limitation: DC lines
+### MATPOWER metadata and DC lines
 
-Sparlectra currently does not model MATPOWER `mpc.dcline` entries. During
-framework/API/Web UI MATPOWER case handling, cases with at least one active
-DC-line row (`status != 0`) are detected and rejected before the power-flow
-solve starts. The failed result reports `failure_reason =
-unsupported_matpower_dcline`, includes the active DC-line count and compact
-Pf/Pt/loss totals when available, and writes the same unsupported-feature
-message to `run.log`. Empty `mpc.dcline` tables and tables containing only
-inactive rows continue through the normal AC import path.
+By default Sparlectra preserves the historical numeric bus naming behavior for
+MATPOWER imports. Set `matpower_import.apply_bus_names: true` (or pass
+`apply_bus_names = true`) to use the standard optional MATPOWER `mpc.bus_name`
+field as imported bus names while preserving original `BUS_I` values in
+`busOrigIdxDict`. Sparlectra also supports user-defined MATPOWER-compatible
+metadata fields `mpc.branch_name`, `mpc.branch_kind`, and
+`mpc.for001_contingencies`. Enable them with
+`apply_branch_names = true`, `apply_branch_kind = true`, and
+`import_for001_contingencies = true`; branch names/kinds are attached as
+`net.matpower_branch_metadata`, and FOR001 contingency names are copied to
+`net.for001Contingencies`. `mpc.branch_kind` values `L`, `LINE`, and `ACL`
+force line import, while `T`, `TRAFO`, `TRANSFORMER`, and `2WT` force
+transformer import. Missing or length-mismatched metadata falls back to the
+legacy electrical heuristic.
+
+FOR/DTF transformer records can carry active no-load conductance (`G`) and
+reactive shunt susceptance (`B`) that standard MATPOWER branch rows cannot
+represent with transformer-local semantics. The native DTF importer converts
+nonzero transformer `G` to equivalent bus shunt conductance split equally across
+the transformer terminals, preserving the original branch label, terminal names,
+raw values, converted per-unit values, tap/stage data, and an explicit allocation
+marker in branch metadata. MATPOWER export writes this richer data in a
+versioned `mpc.sparlectra.transformer_losses` extension block and adds a visible
+warning comment near the top of the `.m` file. Plain MATPOWER may ignore this
+block, so transformer active losses can differ outside Sparlectra; Sparlectra
+reimports the block and avoids adding the equivalent `Gs/Bs` shunts twice when
+they are already present in the standard bus table.
+
+`matpower_import.matpower_dcline_mode` controls `mpc.dcline` handling. The
+default `:pf_injections` imports active DC-line rows as fixed terminal injections. Explicit `:reject_active` remains available for strict validation and
+(`status != 0`) abort before solving with `failure_reason =
+unsupported_matpower_dcline`, while empty or inactive-only tables are ignored.
+`:ignore_inactive` has the same active-row rejection behavior and documents the
+inactive-row ignore policy. `:pf_injections` uses a MATPOWER
+`toggle_dcline`-compatible power-flow approximation by adding two
+generator-like terminal prosumers for each active row. The from terminal uses
+`F_BUS`, `PF`, `QF`, `VF`, and `QMINF`/`QMAXF` with active injection
+`PG = -PF`. The to terminal uses `T_BUS`, `QT`, `VT`, and
+`QMINT`/`QMAXT`; received active power is recomputed as
+`PF - (LOSS0 + LOSS1 * PF)` when `LOSS0`/`LOSS1` are present, otherwise the
+input `PT` column is used. Terminal buses with voltage setpoints are treated as
+voltage-controlled where MATPOWER would make them PV, without demoting
+reference buses or activating isolated buses. API/Web UI runs write a compact
+`matpower_dcline.csv` artifact describing the mapping. This is not a full HVDC
+converter or DC-grid model; OPF constraints, converter controls,
+`dclinecost`, and DC-line optimization remain unsupported. DC terminal injections do not create Ybus branches, so disconnected AC components are detected and solved island-wise by default; this is a power-flow approximation, not a complete HVDC converter or DC-grid model.
 
 ```julia
 using Sparlectra
@@ -238,3 +276,11 @@ writeMatpowerCasefile(net, output_path)
 
 !!! Note 
     Please note that providing support for individualized network data issues is beyond the scope of this project, as it is not maintained by an organization. Users are encouraged to take initiative in resolving such issues independently and sharing their results with the community.
+
+## Web UI case-file import
+
+The local Web UI can copy downloaded case files into its case storage from the PowerFlow page. Use **Import case files** to open the browser's native picker, choose one or more MATPOWER `.m`/`.M` files or DFT `.dat`/`.DAT` files, and submit the import form. The import form is separate from **Start PowerFlow run**: uploading files only stores them and refreshes the selector; it does not parse uploaded MATPOWER code or start a calculation.
+
+Imported files go to the same effective case directory used by the Web UI case selector. In a writable repository checkout this is the Web UI `data/mpower` case directory; in installed-package or restricted launch contexts the Web UI uses its user-writable application data `data/mpower` directory next to the run output root. The manual full-path field remains available for advanced workflows.
+
+The Web UI rejects unsupported extensions such as `.jl`, `.zip`, `.yaml`, executables, scripts, and files without an extension. Uploads are limited to 100 MiB per file and 250 MiB per request. Existing files are not overwritten: the import result reports `already exists` for conflicts and still imports other valid files from the same selection. FOR002 reference `.DAT` files remain hidden from the normal runnable selector even when copied into the case directory.

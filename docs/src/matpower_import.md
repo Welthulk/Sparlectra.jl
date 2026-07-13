@@ -27,6 +27,29 @@
 | `matpower_import.enable_pq_gen_controllers` | Bool | `true` | `true`, `false` | Enable controller behavior on imported PQ generators. | Realistic controlled studies. | Raw imported behavior reproduction. | Small control bookkeeping cost. | PF Q-limit behavior. |
 | `matpower_import.preallocate_network` | Symbol/String | `auto` | `off`, `on`, `auto` | Controls import-time `sizehint!` preallocation for large MATPOWER network construction. | Large imports where construction allocations dominate runtime. | Tiny cases where tuning is unnecessary. | Can reduce import allocations/time; no model changes. | `matpower_import.preallocate_min_buses`. |
 | `matpower_import.preallocate_min_buses` | Int | `1000` | positive integer | Bus-count threshold used when `preallocate_network = auto`. | Auto-tuning preallocation trigger for site-specific case sizes. | If fixed always-on/off behavior is preferred. | Threshold only; no model changes. | `matpower_import.preallocate_network`. |
+| `matpower_import.apply_bus_names` | Bool | `false` | `true`, `false` | Use standard `mpc.bus_name` metadata for imported bus names. | FOR001/FOR002 validation and named-bus workflows. | Preserve historical numeric names. | None. | Fails on duplicate names. |
+| `matpower_import.apply_branch_names` | Bool | `false` | `true`, `false` | Attach user-defined `mpc.branch_name` metadata to `net.matpower_branch_metadata`. | Outage and contingency mapping. | Cases without branch metadata. | None. | `import_for001_contingencies`. |
+| `matpower_import.apply_branch_kind` | Bool | `false` | `true`, `false` | Use user-defined `mpc.branch_kind` to override line/transformer classification. | Conversion workflows that know row kinds. | Prefer electrical heuristic. | None. | Accepts `L`/`LINE`/`ACL` and `T`/`TRAFO`/`TRANSFORMER`/`2WT`. |
+| `matpower_import.import_for001_contingencies` | Bool | `true` | `true`, `false` | Preserve user-defined `mpc.for001_contingencies`. | FOR001/FOR002 validation. | Ignore validation metadata. | None. | `mpc.branch_name` enables index mapping. |
+| `matpower_import.matpower_dcline_mode` | Symbol/String | `pf_injections` | `reject_active`, `ignore_inactive`, `pf_injections` | Controls active `mpc.dcline` rows. | Use `pf_injections` to emulate MATPOWER simple PF DC-line injections. | OPF/dclinecost studies. | Adds two fixed prosumers per active row in `pf_injections`. | Default supports active DC-line rows as fixed terminal injections; choose `reject_active` for strict fail-fast behavior. |
+
+### DC lines and disconnected AC islands
+
+`matpower_import.matpower_dcline_mode = pf_injections` keeps the
+toggle-dcline-compatible approximation: each active `mpc.dcline` row becomes
+fixed terminal injections (`PG = -PF` at the from terminal and the effective
+received `PT` at the to terminal, with the existing Q/V metadata mapping).
+This is not full HVDC modeling and it does not create AC branches, dummy
+admittances, or tiny impedance bridges between terminals.
+
+Large MATPOWER cases such as `case_SyntheticUSA.m` can therefore have several
+disconnected AC Ybus components coupled only through fixed DC-line terminal
+injections. `power_flow.islands.enabled = true` is the default; keep
+`power_flow.islands.mode = solve_independent` to solve each AC island with the
+rectangular NR solver and merge the voltage/flow state into one user-facing
+result. The diagnostic artifact `ac_islands.csv` records the selected
+reference bus, island status, active DC-line terminal counts, power totals, and
+pre-slack active-power imbalance for each island.
 
 ## Auto-profile pre-run
 
@@ -103,3 +126,8 @@ When Sparlectra documentation mentions case names (for example `case300.m`,
 `case1354pegase.m`, `case1951rte.m`, or `case_ACTIVSg10k.m`), users should obtain
 the original files from MATPOWER and/or the original data sources and follow the
 applicable license, citation, and redistribution terms.
+
+
+## SyntheticUSA DC-line/island diagnostic
+
+The detailed SyntheticUSA entry in the [MATPOWER case diagnostics matrix](sparlectra_matpower_case_matrix.md) documents the v0.8.9 Web UI/API run that combines `matpower_dcline_mode: pf_injections` with independent AC-island solving. It records the validated robust profile, island sizes, DC-line interpretation, and convergence results.

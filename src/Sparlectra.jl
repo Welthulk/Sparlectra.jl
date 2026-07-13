@@ -31,14 +31,31 @@ using LinearAlgebra
 using Logging
 using Printf
 using SparseArrays
+using TOML
 
-const MPOWER_DIR = normpath(joinpath(pkgdir(@__MODULE__), "data", "mpower"))
+const SPARLECTRA_ROOT = normpath(joinpath(@__DIR__, ".."))
+const MPOWER_DIR = normpath(joinpath(SPARLECTRA_ROOT, "data", "mpower"))
 
-
-# resource data types for working with Sparlectra
 const Wurzel3 = 1.7320508075688772
-const SparlectraVersion = v"0.8.7"
+
+function _read_project_version()::VersionNumber
+    project_file = joinpath(SPARLECTRA_ROOT, "Project.toml")
+
+    isfile(project_file) ||
+        error("Project.toml wurde nicht gefunden: $project_file")
+
+    project_data = TOML.parsefile(project_file)
+
+    haskey(project_data, "version") ||
+        error("In $project_file fehlt der Eintrag 'version'.")
+
+    return VersionNumber(project_data["version"])
+end
+
+const SparlectraVersion = _read_project_version()
+
 version() = SparlectraVersion
+
 abstract type AbstractBranch end
 
 const _MODULE_DOC = """
@@ -339,6 +356,8 @@ export
 
   # import.jl
   createNetFromMatPowerFile,              # Import a MATPOWER case file as Net.
+  DTFImporter,                            # Native DFT parser and Net builder.
+  createNetFromDTFFile,                   # Import a legacy DFT file as Net.
   _createDict,
   apply_matpower_bus_voltage!,            # Apply MATPOWER bus voltage data.
   apply_mp_bus_vmva_init!,                # Initialize Vm/Va from MATPOWER data.
@@ -348,6 +367,7 @@ export
 
   # equicircuit.jl
   calcComplexRatio,
+  calcSkewAngleTap,
   calcNeutralU,
   createYBUS,                             # Build the network admittance matrix.
   adjacentBranches,
@@ -501,11 +521,13 @@ include("busdata.jl")
 include("MatpowerIO.jl")
 include("createnet_powermat.jl")
 include("equicircuit.jl")
+include("DTFImporter.jl")
 include("limits.jl")
 include("losses.jl")
 include("exportMatPower.jl")
 include("results.jl")
 include("acpflow.jl")
+include("acpflow/island_diagnostics.jl")
 include("api/api_types.jl")
 include("api/config_overrides.jl")
 include("api/serialization.jl")
@@ -539,6 +561,7 @@ include("powerflow_rectangular/rectangular_status_workspace.jl")
 include("powerflow_rectangular/rectangular_finalization.jl")
 include("powerflow_rectangular/rectangular_final_status.jl")
 include("powerflow_rectangular/rectangular_diagnostics.jl")
+include("powerflow_rectangular/ac_islands.jl")
 include("powerflow_rectangular/rectangular_network_solver.jl")
 include("solver_interface.jl")
 include("FetchMatpowerCase.jl")

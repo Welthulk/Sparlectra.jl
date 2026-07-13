@@ -33,10 +33,111 @@ function _webui_redirect(location::AbstractString)
 end
 
 const _WEBUI_LOGO_PATH = normpath(joinpath(@__DIR__, "..", "..", "docs", "src", "assets", "logo.png"))
+const WEBUI_CASE_IMPORT_MAX_FILE_BYTES = 100 * 1024 * 1024
+const WEBUI_CASE_IMPORT_MAX_REQUEST_BYTES = 250 * 1024 * 1024
+
+struct WebUICaseUpload
+  filename::String
+  data::Vector{UInt8}
+end
 
 function handle_webui_logo()::SparlectraWebUIResponse
   isfile(_WEBUI_LOGO_PATH) || return _webui_html(render_webui_error(404, "Sparlectra.jl logo asset is unavailable."); status = 404)
   return SparlectraWebUIResponse(200, ["Content-Type" => "image/png"], read(_WEBUI_LOGO_PATH))
+end
+
+function _webui_sanitize_upload_filename(filename::AbstractString)
+  raw = String(filename)
+  isempty(raw) && return "", "empty filename"
+  any(c -> c == '\0' || (iscntrl(c) && c != '\t'), raw) && return basename(raw), "invalid filename"
+  base = basename(raw)
+  isempty(base) && return "", "empty filename"
+  base in (".", "..") && return base, "invalid filename"
+  base != raw && return base, "invalid filename"
+  occursin('/', base) || occursin('\\', base) ? (base, "invalid filename") : (base, "")
+end
+
+function _webui_case_import_uploads(form::AbstractDict)::Vector{WebUICaseUpload}
+  value = _webui_form_value(form, "casefiles", WebUICaseUpload[])
+  if value isa WebUICaseUpload
+    return [value]
+  elseif value isa AbstractVector
+    return WebUICaseUpload[value...]
+  end
+  return WebUICaseUpload[]
+end
+
+function _webui_write_import_file_atomic(destination::AbstractString, data::Vector{UInt8})
+  temp = tempname(dirname(destination))
+  try
+    open(temp, "w") do io
+      write(io, data)
+      flush(io)
+    end
+    mv(temp, destination; force = false)
+  catch
+    rm(temp; force = true)
+    rethrow()
+  end
+  return nothing
+end
+
+function handle_powerflow_case_import(form::AbstractDict; output_root::AbstractString = "results/powerflow_service", application_root::AbstractString = _webui_application_root(), case_directory::Union{Nothing,AbstractString} = nothing, operation_log::AbstractString = output_root, max_file_bytes::Integer = WEBUI_CASE_IMPORT_MAX_FILE_BYTES, max_request_bytes::Integer = WEBUI_CASE_IMPORT_MAX_REQUEST_BYTES)::SparlectraWebUIResponse
+  directory = _webui_case_directory(; case_directory, application_root, output_root)
+  mkpath(directory)
+  uploads = _webui_case_import_uploads(form)
+  imported = String[]
+  imported_roles = Dict{String,String}()
+  rejected = Pair{String,String}[]
+  if _webui_form_value(form, "case_import_request_oversized", "false") == "true"
+    push!(rejected, "request" => "oversized")
+  end
+  total_bytes = sum((length(upload.data) for upload in uploads); init = 0)
+  total_bytes > max_request_bytes && (rejected = [basename(upload.filename) => "oversized" for upload in uploads])
+  uploads_to_process = total_bytes > max_request_bytes ? WebUICaseUpload[] : uploads
+  for upload in uploads_to_process
+    name, reason = _webui_sanitize_upload_filename(upload.filename)
+    if !isempty(reason)
+      push!(rejected, (isempty(name) ? "(empty)" : name) => reason)
+      continue
+    elseif !_webui_supported_upload_case_extension(name)
+      push!(rejected, name => "unsupported extension")
+      continue
+    elseif length(upload.data) > max_file_bytes
+      push!(rejected, name => "oversized")
+      continue
+    end
+    destination = normpath(joinpath(directory, name))
+    root = string(normpath(directory), Base.Filesystem.path_separator)
+    if destination != normpath(joinpath(directory, basename(destination))) || !startswith(string(destination, Base.Filesystem.path_separator), root)
+      push!(rejected, name => "invalid filename")
+      continue
+    elseif ispath(destination)
+      push!(rejected, name => "already exists")
+      continue
+    end
+    try
+      _webui_write_import_file_atomic(destination, upload.data)
+      push!(imported, name)
+      role = lowercase(splitext(name)[2]) == ".dat" ? _webui_dat_role_label(_webui_classify_dat_content(destination)) : "matpower_case"
+      imported_roles[name] = role
+    catch
+      push!(rejected, name => "write failure")
+    end
+  end
+  selected = ""
+  for name in imported
+    if _webui_is_user_selectable_case(joinpath(directory, name))
+      selected = name
+      break
+    end
+  end
+  record_webui_operation!(operation_log, "case_import_completed"; route = "/powerflow/import-cases", method = "POST", user_action = true, selected_count = length(uploads), imported_count = length(imported), rejected_count = length(rejected), imported, rejected = ["$(first(item)): $(last(item))" for item in rejected])
+  query = isempty(selected) ? "" : "?casefile=$(_webui_urlencode(selected))"
+  display_imported = ["$(name) ($(get(imported_roles, name, "unknown")))" for name in imported]
+  message = _webui_urlencode(_webui_case_import_message(display_imported, rejected))
+  separator = isempty(query) ? "?" : "&"
+  return _webui_redirect("/powerflow$(query)$(separator)import_message=$(message)")
 end
 
 """Run a PowerFlow request through the Web UI form-to-service boundary."""
@@ -104,6 +205,85 @@ function handle_powerflow_config_refresh(form::AbstractDict; write::Bool = false
   catch err
     record_webui_operation!(operation_log, "config_refresh_failed"; route = "/powerflow/config", method = "POST", user_action = true, config_file, message = sprint(showerror, err))
     return _webui_html(render_webui_error(400, sprint(showerror, err)); status = 400)
+  end
+end
+
+function handle_powerflow_config_editor(config_file::AbstractString; message::AbstractString = "", status::Integer = 200, config_text::Union{Nothing,AbstractString} = nothing)::SparlectraWebUIResponse
+  path = isempty(strip(config_file)) ? DEFAULT_SPARLECTRA_CONFIG_PATH : String(config_file)
+  text = config_text === nothing ? (isfile(path) ? read(path, String) : "") : String(config_text)
+  notice = isempty(message) ? "" : "<div class=\"alert info\">$(_webui_escape(message))</div>"
+  sidecar_note = "<p class=\"alert warning\">Case-sidecar settings, when present for a selected case, have higher precedence than this global YAML. Delete or refresh the case settings from a run result if they should no longer override the edited file.</p>"
+  body = """
+<section class="panel">
+<h2>Configuration Editor</h2>
+$(notice)
+<p>Active configuration file: <code>$(_webui_escape(path))</code></p>
+$(sidecar_note)
+<form method="post" action="/powerflow/config/edit">
+<input type="hidden" name="config_file" value="$(_webui_escape(path))">
+<textarea name="config_text" rows="30" style="width: 100%; font-family: monospace;">$(_webui_escape(text))</textarea>
+<p><button type="submit">Save YAML configuration</button></p>
+</form>
+</section>
+"""
+  return _webui_html(_webui_layout("Configuration Editor", body; show_back = true); status)
+end
+
+function _validate_powerflow_config_editor_text!(config_text::AbstractString)::Dict{String,Any}
+  mktemp() do path, io
+    write(io, config_text)
+    close(io)
+    duplicates = _detect_yaml_duplicate_keys(path)
+    if !isempty(duplicates)
+      throw(ArgumentError("Duplicate YAML key(s) detected: $(join(duplicates, ", ")). Save refused."))
+    end
+    load_yaml_dict(path)
+    _load_and_validate_config(DEFAULT_SPARLECTRA_CONFIG_PATH, path; cli_overrides = Dict{String,Any}(), overrides = Dict{String,Any}())
+    load_sparlectra_config(path; reload = true)
+    return load_yaml_dict(path)
+  end
+end
+
+function _config_editor_error_message(err)::String
+  return string("Configuration could not be saved.\n\n", sprint(showerror, err))
+end
+
+function _config_editor_backup_path(config_file::AbstractString)::String
+  stamp = Dates.format(now(), "yyyymmdd-HHMMSS")
+  candidate = string(config_file, ".bak-", stamp)
+  !isfile(candidate) && return candidate
+  for i in 1:10_000
+    numbered = string(candidate, "-", i)
+    !isfile(numbered) && return numbered
+  end
+  throw(ArgumentError("Could not choose a unique backup path for $(config_file)."))
+end
+
+function handle_powerflow_config_editor_save(form::AbstractDict; operation_log::AbstractString = "results/powerflow_service")::SparlectraWebUIResponse
+  config_file = strip(String(something(_webui_form_value(form, "config_file", ""), "")))
+  config_text = String(something(_webui_form_value(form, "config_text", ""), ""))
+  tmp_path = nothing
+  try
+    isempty(config_file) && return _webui_html(render_webui_error(400, "No configuration file was provided."); status = 400)
+    parsed = _validate_powerflow_config_editor_text!(config_text)
+    parent = dirname(abspath(config_file))
+    mkpath(parent)
+    tmp_path = tempname(parent; cleanup = false)
+    write(tmp_path, _yaml_dict_text(parsed))
+    _load_and_validate_config(DEFAULT_SPARLECTRA_CONFIG_PATH, tmp_path; cli_overrides = Dict{String,Any}(), overrides = Dict{String,Any}())
+    load_sparlectra_config(tmp_path; reload = true)
+    backup_path = _config_editor_backup_path(config_file)
+    isfile(config_file) && cp(config_file, backup_path; force = false)
+    mv(tmp_path, config_file; force = true)
+    tmp_path = nothing
+    load_sparlectra_config(config_file; reload = true)
+    record_webui_operation!(operation_log, "config_editor_saved"; route = "/powerflow/config/edit", method = "POST", user_action = true, config_file, backup_path)
+    return handle_powerflow_config_editor(config_file; message = "Configuration saved. Backup: $(backup_path)")
+  catch err
+    record_webui_operation!(operation_log, "config_editor_save_failed"; route = "/powerflow/config/edit", method = "POST", user_action = true, config_file, message = sprint(showerror, err))
+    return handle_powerflow_config_editor(config_file; message = _config_editor_error_message(err), status = 400, config_text)
+  finally
+    tmp_path !== nothing && isfile(tmp_path) && rm(tmp_path; force = true)
   end
 end
 function handle_powerflow_result(run_id::AbstractString)::SparlectraWebUIResponse
@@ -302,6 +482,75 @@ function handle_powerflow_artifact_download(run_id::AbstractString, artifact_nam
     "Content-Disposition" => "attachment; filename=\"$(replace(basename(artifact.name), '"' => '_'))\"",
   ]
   return SparlectraWebUIResponse(200, headers, read(artifact.path))
+end
+
+function _zip_crc32(bytes::Vector{UInt8})::UInt32
+  crc = 0xffffffff % UInt32
+  for byte in bytes
+    crc ⊻= UInt32(byte)
+    for _ in 1:8
+      crc = (crc & 0x00000001) == 1 ? (crc >> 1) ⊻ 0xedb88320 % UInt32 : crc >> 1
+    end
+  end
+  return ~crc
+end
+
+function _zip_write_u16(io::IO, value::Integer)
+  write(io, UInt8(value & 0xff), UInt8((value >> 8) & 0xff))
+end
+
+function _zip_write_u32(io::IO, value::Integer)
+  for shift in (0, 8, 16, 24)
+    write(io, UInt8((value >> shift) & 0xff))
+  end
+end
+
+function _build_uncompressed_zip(entries::Vector{Pair{String,Vector{UInt8}}})::Vector{UInt8}
+  io = IOBuffer()
+  central = IOBuffer()
+  for (name, bytes) in entries
+    name_bytes = Vector{UInt8}(codeunits(name))
+    crc = _zip_crc32(bytes)
+    offset = position(io)
+    _zip_write_u32(io, 0x04034b50)
+    _zip_write_u16(io, 20); _zip_write_u16(io, 0); _zip_write_u16(io, 0)
+    _zip_write_u16(io, 0); _zip_write_u16(io, 0)
+    _zip_write_u32(io, crc); _zip_write_u32(io, length(bytes)); _zip_write_u32(io, length(bytes))
+    _zip_write_u16(io, length(name_bytes)); _zip_write_u16(io, 0)
+    write(io, name_bytes); write(io, bytes)
+    _zip_write_u32(central, 0x02014b50)
+    _zip_write_u16(central, 20); _zip_write_u16(central, 20); _zip_write_u16(central, 0); _zip_write_u16(central, 0)
+    _zip_write_u16(central, 0); _zip_write_u16(central, 0)
+    _zip_write_u32(central, crc); _zip_write_u32(central, length(bytes)); _zip_write_u32(central, length(bytes))
+    _zip_write_u16(central, length(name_bytes)); _zip_write_u16(central, 0); _zip_write_u16(central, 0)
+    _zip_write_u16(central, 0); _zip_write_u16(central, 0); _zip_write_u32(central, 0); _zip_write_u32(central, offset)
+    write(central, name_bytes)
+  end
+  central_bytes = take!(central)
+  central_offset = position(io)
+  write(io, central_bytes)
+  _zip_write_u32(io, 0x06054b50)
+  _zip_write_u16(io, 0); _zip_write_u16(io, 0); _zip_write_u16(io, length(entries)); _zip_write_u16(io, length(entries))
+  _zip_write_u32(io, length(central_bytes)); _zip_write_u32(io, central_offset); _zip_write_u16(io, 0)
+  return take!(io)
+end
+
+function handle_powerflow_artifacts_zip(run_id::AbstractString)::SparlectraWebUIResponse
+  artifacts = list_powerflow_artifacts(run_id)
+  artifacts isa AbstractDict && return _webui_html(render_webui_error(404, get(artifacts, "message", "Run not found.")); status = 404)
+  entries = Pair{String,Vector{UInt8}}[]
+  for artifact in artifacts
+    name = String(artifact["name"])
+    occursin("..", name) && continue
+    (occursin('/', name) || occursin('\\', name)) && continue
+    path = String(artifact["path"])
+    isfile(path) || continue
+    push!(entries, name => read(path))
+  end
+  isempty(entries) && return _webui_html(render_webui_error(404, "No artifacts are available for this run."); status = 404)
+  filename = "sparlectra_run_$(replace(String(run_id), r"[^A-Za-z0-9_.-]" => "_"))_artifacts.zip"
+  headers = Pair{String,String}["Content-Type" => "application/zip", "Content-Disposition" => "attachment; filename=\"$(filename)\""]
+  return SparlectraWebUIResponse(200, headers, _build_uncompressed_zip(entries))
 end
 
 function handle_powerflow_history(output_root::AbstractString)::SparlectraWebUIResponse

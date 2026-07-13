@@ -22,15 +22,34 @@ function _api_failure(reason::String, message::String; run_id::String = string(u
     println(io, "Sparlectra API failure: ", reason)
     println(io, message)
   end
-  failure_metadata = merge(Dict{String,Any}("failure_reason" => reason), Dict{String,Any}(String(key) => value for (key, value) in metadata))
+  generated_artifacts = collect_sparlectra_api_artifacts(output_dir)
+  artifact_status = isempty(generated_artifacts) ? "not_started" : "completed"
+  failure_metadata = merge(
+    Dict{String,Any}(
+      "failure_reason" => reason,
+      "artifact_status" => artifact_status,
+      "solver_status" => "failed",
+      "service_status" => "failed",
+      "run_status" => "failed",
+      "numerical_status" => "failed",
+    ),
+    Dict{String,Any}(String(key) => value for (key, value) in metadata),
+  )
+  if artifact_status == "completed"
+    failure_metadata["artifact_status"] = "completed"
+  end
   result = _api_result(run_id = run_id, status = :failed, success = false, reason = reason, message = message, casefile = casefile, config_file = config_file, output_dir = output_dir, logfile = logfile, result_file = result_file, service_phase_timings = service_phase_timings, metadata = failure_metadata)
   return _finalize_api_result(result)
 end
 
-function _api_execution_failure(reason::String, message::String; run_id::String, casefile, config_file, output_dir::String, logfile::String, result_file::String, phase_recorder::PowerFlowPhaseTimingRecorder, performance_timing = :off, metadata = Dict{String,Any}())::SparlectraApiResult
+function _api_execution_failure(reason::String, message::String; run_id::String, casefile, config_file, output_dir::String, logfile::String, result_file::String, phase_recorder::PowerFlowPhaseTimingRecorder, performance_timing = :off, metadata = Dict{String,Any}(), total_start_ns::Union{Nothing,UInt64} = nothing)::SparlectraApiResult
   _complete_active_phase!(phase_recorder, "failed")
   _start_service_phase!(phase_recorder, "finalizing_failed")
-  _complete_active_phase!(phase_recorder, "failed")
+  if total_start_ns === nothing
+    _complete_active_phase!(phase_recorder, "failed")
+  else
+    _finalize_service_timings!(phase_recorder, total_start_ns; status = "failed")
+  end
   timing_mode = try
     _api_timing_mode(performance_timing)
   catch

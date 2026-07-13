@@ -75,7 +75,7 @@ step.
 
 Returns `(alpha, Vtrial, trial_mismatch)`.
 """
-function choose_rectangular_autodamp(Ybus, V::Vector{ComplexF64}, S::Vector{ComplexF64}, δx::Vector{Float64}, F0::Vector{Float64}; slack_idx::Int, damp::Float64 = 1.0, autodamp_min::Float64 = 0.05, bus_types::Vector{Symbol}, Vset::Vector{Float64})
+function choose_rectangular_autodamp(Ybus, V::Vector{ComplexF64}, S::Vector{ComplexF64}, δx::Vector{Float64}, F0::Vector{Float64}; slack_idx::Int, damp::Float64 = 1.0, autodamp_min::Float64 = 0.05, bus_types::Vector{Symbol}, Vset::Vector{Float64}, diagnostics = nothing)
   _validate_rectangular_damping(damp, autodamp_min)
   non_slack = non_slack_indices(length(V), slack_idx)
   current_mismatch = _max_abs_mismatch(F0)
@@ -100,6 +100,7 @@ function choose_rectangular_autodamp(Ybus, V::Vector{ComplexF64}, S::Vector{Comp
     # Accept first strict improvement over current mismatch for predictable behavior.
     if isfinite(trial_mismatch) && trial_mismatch < current_mismatch
       # Return an owned vector; caller should not alias the internal scratch buffer.
+      diagnostics isa AbstractVector && push!(diagnostics, (alpha = alpha, trial_mismatch = trial_mismatch, accepted_improvement = true))
       return alpha, copy(Vtrial), trial_mismatch
     end
     # Track best finite non-improving candidate as a safe fallback.
@@ -112,6 +113,7 @@ function choose_rectangular_autodamp(Ybus, V::Vector{ComplexF64}, S::Vector{Comp
   end
 
   # Conservative fallback: best finite trial seen during backtracking.
+  diagnostics isa AbstractVector && push!(diagnostics, (alpha = best_alpha, trial_mismatch = best_mismatch, accepted_improvement = false))
   return best_alpha, best_V, best_mismatch
 end
 
@@ -145,6 +147,7 @@ function complex_newton_step_rectangular(
   dPinj_dVm::Vector{Float64} = zeros(Float64, length(V)),
   dQinj_dVm::Vector{Float64} = zeros(Float64, length(V)),
   performance_profile = nothing,
+  step_diagnostics = nothing,
 )
   n = length(V)
   # Solver assumes state ordering [Vr(non-slack); Vi(non-slack)] consistently
@@ -179,7 +182,7 @@ function complex_newton_step_rectangular(
   if autodamp
     # Autodamp path evaluates multiple trial voltages and returns accepted/fallback trial.
     _, Vtrial, _ = _perf_profile_time!(performance_profile, :newton_step_autodamp) do
-      choose_rectangular_autodamp(Ybus, V, S, δx, F0; slack_idx = slack_idx, damp = damp, autodamp_min = autodamp_min, bus_types = bus_types, Vset = Vset)
+      choose_rectangular_autodamp(Ybus, V, S, δx, F0; slack_idx = slack_idx, damp = damp, autodamp_min = autodamp_min, bus_types = bus_types, Vset = Vset, diagnostics = step_diagnostics)
     end
     return Vtrial
   end
@@ -187,5 +190,6 @@ function complex_newton_step_rectangular(
   # Fixed damping path: single update with validated step length.
   _validate_rectangular_damping(damp, min(autodamp_min, damp))
   Vnext = similar(V)
+  step_diagnostics isa AbstractVector && push!(step_diagnostics, (alpha = damp, trial_mismatch = NaN, accepted_improvement = true))
   return _apply_rectangular_delta!(Vnext, V, δx, slack_idx, non_slack, damp)
 end

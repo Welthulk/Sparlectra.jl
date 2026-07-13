@@ -1,7 +1,7 @@
 # Sparlectra.jl MATPOWER Case Diagnostics Matrix
 
-Date: 2026-05-29  
-Sparlectra versions covered: 0.7.7–0.8.2  
+Date: 2026-07-14
+Sparlectra versions covered: 0.7.7–0.8.9
 Purpose: compact tracking table for MATPOWER import, reference-data consistency, and solver diagnostics.
 
 > **Data and license note**  
@@ -13,6 +13,40 @@ Purpose: compact tracking table for MATPOWER import, reference-data consistency,
 This note is intended as a living diagnostic matrix. Add one row per MATPOWER case and keep the findings short.
 
 The matrix distinguishes solver convergence failures, wrong Newton solution branches, Sparlectra import/Y-bus mismatches, and inconsistent stored MATPOWER reference data. When a large fixed-reference residual is already reproducible with a raw MATPOWER-style Y-bus using the stored `VM`/`VA` values and branch data, classify the case as a reference-data consistency diagnostic rather than as a clean solver benchmark failure.
+
+## Latest addition: `case_SyntheticUSA.m` in v0.8.9
+
+`case_SyntheticUSA.m` is documented from a successful v0.8.9 Web UI/API-path run. The network has 82,000 buses split across three disconnected AC islands: island 1 has 70,000 buses and 88,209 active AC branches, island 2 has 10,000 buses and 12,706 active AC branches, and island 3 has 2,000 buses and 3,206 active AC branches. The case contains nine active `mpc.dcline` rows. Each active DC-line row is imported as two fixed terminal injections; this steady-state PF injection approximation does not create an AC branch, dummy admittance, impedance bridge, or complete HVDC control/OPF model, and it does not electrically merge the AC Y-bus components.
+
+Validated robust profile:
+
+```yaml
+power_flow:
+  tol: 1.0e-5
+  max_iter: 80
+  autodamp: true
+  autodamp_min: 0.01
+  islands:
+    enabled: true
+    mode: solve_independent
+    diagnostic_continue_after_failure: true
+  start_mode:
+    angle_mode: dc
+    voltage_mode: profile_blend
+    profile_source: matpower_reference
+  qlimits:
+    enabled: false
+  start_current_iteration:
+    enabled: false
+
+matpower_import:
+  matpower_dcline_mode: pf_injections
+  auto_profile: apply
+```
+
+Verified result: Web UI/API status succeeded, all three islands converged, aggregate iteration count was 68, and final mismatch was approximately `5.597176064853215e-6`. Island 1 used reference bus 30902 and converged in 29 iterations with final mismatch approximately `5.597176064853215e-6`; island 2 promoted bus 70684 and converged in 32 iterations with final mismatch approximately `9.838130310413362e-12`; island 3 promoted bus 80004 and converged in 7 iterations with final mismatch approximately `9.086420504900161e-11`.
+
+A diagnostic run with `autodamp=false`, Q-limits disabled, and current-iteration start disabled produced `nr_nonfinite` on islands 1 and 2 while island 3 converged. Use the validated autodamped profile above for reproducibility.
 
 ## Latest addition: `case_ACTIVSg25k.m`
 
@@ -51,6 +85,7 @@ This forced-threshold test proves that the `wrong_branch_*` YAML values are now 
 
 | Case | Size / type | Status in Sparlectra | Recommended YAML profile | Main findings | Case-specific anomalies / deviations | Wrong-branch risk | Open checks |
 |---|---:|---|---|---|---|---|---|
+| `case_SyntheticUSA.m` | 82,000 buses; three disconnected AC islands; nine active `mpc.dcline` rows | v0.8.9 Web UI/API path succeeds with independent island solving and PF-injection DC-line import: all islands converged, aggregate iterations 68, final mismatch `≈5.597176064853215e-6`. | Validated robust SyntheticUSA profile documented above | Active DC lines are fixed terminal P/Q injections only; no AC branch or Y-bus bridge is created. Reference buses: 30902, promoted 70684, promoted 80004. | Low with autodamping. Non-autodamped diagnostic produced `nr_nonfinite` on islands 1 and 2. | Do not redistribute the case file; keep MATPOWER/case licensing checks external. |
 | `case_ACTIVSg10k.m` | 10,000 buses; large synthetic transmission case | Current v0.8.2 file-based MATPOWER runs converge to a healthy rectangular solution with profile-blend/MATPOWER-reference starts. Typical status: `status=converged`, `numerical_converged=true`, `final_converged=true`, `final_mismatch≈5e-8` or smaller, and `wrong_branch_status=ok`. | `large_flatstart_dc_blend` for robust production runs; `activsg10k_wrong_branch_historical_scan` only for manual diagnostics | MATPOWER import conventions confirmed: `shift_sign=1.0`, `shift_unit=deg`, `ratio=normal`, `bus_shunt_model=admittance`. Branch-shift scan strongly rejects opposite sign, radians, and reciprocal ratio. Bus shunts are required for reactive balance. Current healthy runs show approximately `min_vm_pu≈0.9234…0.9460`, `max_vm_pu≈1.0889…1.1087`, `angle_spread≈107°`, and worst active branch angle `≈22°`. | 273 PV/REF buses have no online generator; fallback to `BUS.VM` is required. Many PV buses have `Qmin=0` or `Qmax=0`. Large number of PV→PQ switches can occur when Q-limits are enforced. A delayed-Q-limit scan can produce `converged_limits_failed` due to remaining PV Q-limit violations while branch-quality metrics remain `ok`. | Historical, not currently reproduced. An earlier classic flat-start run converged formally to a low-voltage / wrong-branch solution with `max|dVm|≈1.0187 pu`, `max|dVa|≈90.73°`, `minVm=0.0 pu`, but current v0.8.2 scans either converge to a healthy branch or fail before numerical convergence. `wrong_branch_detection` itself is validated by forced-threshold tests (`90° => ok`, `20° warn => branch_angle_exceeded`, `20° fail => wrong_branch_detected`). | Preserve the historical wrong-branch note, but do not treat it as a current natural reproducer. If a true reproducer is still required, search old commits/configs rather than adding more YAML guesses. Keep compact Q-limit reporting, PV/REF-without-online-generator diagnostics, and forced-threshold wrong-branch regression coverage. |
 | `case_ACTIVSg25k.m` | 25,000 buses; large ACTIVSg synthetic transmission case; 32,230 branches | Rectangular NR converges with strengthened Q-limit guard. Successful run: `numerical_solution=OK`, `q_limit_active_set=OK`, `final_converged=true`, `status=converged`, `iterations=8`, PF time `≈74.55 s`, total example runtime `≈85.11 s`, final mismatch `≈4.651e-08`. | `activsg25k_q_limit_guard` + `large_flatstart_dc_blend` | MATPOWER fixed-reference self-check is good for this size: `max|ΔP|≈7.118 MW`, `max|ΔQ|≈4.611 MVAr`. Auto-profile detects `2034/3779` online generators with zero or narrow Q range. Q-limit guard locks `960` narrow-range PV buses as PQ before rectangular NR. Active set converges cleanly: `PV violations=0`, `REF violations=0`, final `PV/REF Q-limit check=OK`. Switching statistics: `pv2pq_events=2004`, `pv2pq_buses=1996`, `oscillating_buses=0`. Compare against imported setpoints is `OK`: `max|dVm|≈0.04291 pu`, aligned `max|dVa|≈0.3683°`, slack Δ `≈0.0°`. | `2753/3235` PV/REF buses have online `GEN.VG` targets; `502` differ from `BUS.VM` by more than `1e-4 pu`. `482` PV/REF buses have no online generator and use `BUS.VM` fallback. Negative branch impedance is present and preserved: `BR_R<0` on `447` rows, `BR_X<0` on `503` rows, both negative on `447` rows. Compare reference kinds: `active_pv_imported_setpoint=1238`, `final_pq_after_qlimit=1996`, `pq_bus_vm=21765`, `ref_slack_imported_setpoint=1`. | Low with the successful profile. Previous failures were active-set stabilization failures caused by many zero/narrow-Q generators and infeasible PV setpoints, not classical Newton wrong-branch convergence. | Console output is still too verbose: keep full auto-profile, negative-branch diagnostics, PV voltage diagnostics, and per-bus PV→PQ events in the logfile; show only compact statistics on console. Consider whether `qlimit_guard_violation_mode=lock_pq` should become an auto-profile recommendation for large narrow-Q cases. |
 | `case300.m` | 300 buses; medium test case | Rectangular NR converges in about 5 iterations with 3 PV→PQ switches. Final voltage magnitudes are close, but angle comparison fails mainly around the `BUS_I 196 / 2040` area. | `large_flatstart_dc_blend` + `diagnostic_import_scan` | The MATPOWER fixed-reference self-check is not power-balanced around `BUS_I 196 / 2040`. The dominant mismatch is already reproducible with a MATPOWER-style Y-bus using the stored `VM`/`VA` values and raw branch data. Main residual: about 926.9 MW at `BUS_I 2040` and `BUS_I 196`. | Not classified as a Sparlectra Newton wrong-branch issue. The dominant mismatch appears to be caused by the stored case reference angles together with a low-reactance active branch `196 -> 2040` (`x = 0.02`, `TAP = 1`, `SHIFT = 0`). Treat this case as a reference-data consistency diagnostic, not as a clean pass/fail solver benchmark. | Low for the documented run; angle-reference comparison is dominated by the stored fixed-reference inconsistency rather than a known wrong branch. | Keep the fixed-reference diagnostic classification visible when updating MATPOWER comparison tolerances or profiles. Keep the explicit `TAP = 1` preservation regression, but do not treat lost nominal TAP as the remaining root cause. |

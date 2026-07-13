@@ -90,6 +90,18 @@ Base.@kwdef struct QLimitConfig
 end
 
 """
+    IslandPowerFlowConfig
+
+Configuration for AC-island-aware power-flow diagnostics.
+"""
+Base.@kwdef struct IslandPowerFlowConfig
+  enabled::Bool = true
+  mode::Symbol = :solve_independent
+  reference_policy::Symbol = :matpower_like
+  diagnostic_continue_after_failure::Bool = true
+end
+
+"""
     PowerFlowConfig
 
 Typed power-flow configuration. It owns solver tolerances, sparse execution
@@ -113,12 +125,18 @@ Base.@kwdef struct PowerFlowConfig
   rectangular_workspace_reuse::Bool = true
   rectangular_preallocate_workspace::Symbol = :auto
   rectangular_workspace_min_buses::Int = 1000
+  islands_enabled::Bool = true
+  islands_mode::Symbol = :solve_independent
+  islands_reference_policy::Symbol = :matpower_like
   start_mode::StartModeConfig = StartModeConfig()
   start_current_iteration::StartCurrentIterationConfig = StartCurrentIterationConfig()
   qlimits::QLimitConfig = QLimitConfig()
+  islands::IslandPowerFlowConfig = IslandPowerFlowConfig()
 end
 
 const WRONG_BRANCH_DETECTION_VALUES = [:off, :warn, :fail, :rescue]
+const POWERFLOW_ISLAND_MODE_VALUES = [:solve_independent]
+const POWERFLOW_ISLAND_REFERENCE_POLICY_VALUES = [:matpower_like]
 
 """
     ObservabilityConfig
@@ -167,6 +185,11 @@ Base.@kwdef struct MatpowerImportConfig
   enable_pq_gen_controllers::Bool = true
   preallocate_network::Symbol = :auto
   preallocate_min_buses::Int = 1000
+  apply_bus_names::Bool = false
+  apply_branch_names::Bool = false
+  apply_branch_kind::Bool = false
+  import_for001_contingencies::Bool = true
+  matpower_dcline_mode::Symbol = :pf_injections
 end
 
 """
@@ -295,6 +318,8 @@ const QLIMIT_ENFORCEMENT_MODE_LEGACY_ALIASES = Dict(
 const QLIMIT_GUARD_ZERO_RANGE_MODE_VALUES = (:lock_pq,)
 const QLIMIT_GUARD_NARROW_RANGE_MODE_VALUES = (:prefer_pq, :lock_pq)
 const QLIMIT_GUARD_VIOLATION_MODE_VALUES = (:delayed_switch, :lock_pq)
+const POWERFLOW_ISLAND_MODE_VALUES = (:solve_independent,)
+const POWERFLOW_ISLAND_REFERENCE_POLICY_VALUES = (:matpower_like,)
 const RECTANGULAR_PREALLOCATE_WORKSPACE_VALUES = (:off, :on, :auto)
 const STATE_ESTIMATION_METHOD_VALUES = (:wls,)
 const MATPOWER_PV_VOLTAGE_SOURCE_VALUES = (:gen_vg, :bus_vm, :auto, :strict_check)
@@ -303,6 +328,7 @@ const MATPOWER_SHIFT_UNIT_VALUES = (:deg, :rad)
 const MATPOWER_RATIO_VALUES = (:normal, :reciprocal)
 const MATPOWER_BUS_SHUNT_MODEL_VALUES = (:admittance, :voltage_dependent_injection)
 const MATPOWER_AUTO_PROFILE_VALUES = (:off, :recommend, :apply)
+const MATPOWER_DCLINE_MODE_VALUES = (:reject_active, :ignore_inactive, :pf_injections)
 const PERFORMANCE_LEVEL_VALUES = (:off, :summary, :iteration, :full)
 const OUTPUT_CONSOLE_AUTO_PROFILE_VALUES = (:off, :compact, :full)
 const OUTPUT_CONSOLE_DIAGNOSTICS_VALUES = (:off, :compact, :summary, :full)
@@ -435,13 +461,17 @@ function _validate_allowed_symbol(name::AbstractString, value::Symbol, allowed::
   if !(value in allowed)
     guidance = name == "power_flow.start_mode.voltage_mode" && value === :bus_vm_va_blend ?
       " The former bus_vm_va_blend alias has been removed; use voltage_mode: profile_blend with profile_source: matpower_reference." : ""
-    throw(ArgumentError("$(name) must be one of $(collect(allowed)); got $(value).$(guidance)"))
+    allowed_text = join(string.(allowed), ", ")
+    throw(ArgumentError("Invalid value:\n$(name) = \"$(value)\"\n\nAllowed values:\n$(allowed_text)\n\n$(name) must be one of $(collect(allowed)); got $(value).$(guidance)"))
   end
   return value
 end
 
 function _validate_allowed_symbol(name::AbstractString, value::Symbol, allowed::AbstractVector{Symbol})
-  value in allowed || throw(ArgumentError("$(name) must be one of $(allowed); got $(value)."))
+  if !(value in allowed)
+    allowed_text = join(string.(allowed), ", ")
+    throw(ArgumentError("Invalid value:\n$(name) = \"$(value)\"\n\nAllowed values:\n$(allowed_text)\n\n$(name) must be one of $(allowed); got $(value)."))
+  end
   return value
 end
 
@@ -562,6 +592,7 @@ function PowerFlowConfig(raw::AbstractDict)
   start_raw = _raw_get(merged, "start_values", _raw_section(merged, "start_mode"))
   start_current_iteration_raw = _raw_section(merged, "start_current_iteration")
   qlimit_raw = _raw_section(merged, "qlimits")
+  islands_raw = _raw_section(merged, "islands")
   wrong_branch_min_vm_pu = _validate_nonnegative("power_flow.wrong_branch_min_vm_pu", _as_float_cfg(_raw_get(merged, "wrong_branch_min_vm_pu", 0.70)))
   wrong_branch_max_vm_pu = _validate_positive("power_flow.wrong_branch_max_vm_pu", _as_float_cfg(_raw_get(merged, "wrong_branch_max_vm_pu", 1.30)))
   wrong_branch_min_vm_pu <= wrong_branch_max_vm_pu || throw(ArgumentError("power_flow.wrong_branch_min_vm_pu must be <= power_flow.wrong_branch_max_vm_pu."))
@@ -587,9 +618,23 @@ function PowerFlowConfig(raw::AbstractDict)
     rectangular_workspace_reuse = _as_bool_cfg(_raw_get(merged, "rectangular_workspace_reuse", true)),
     rectangular_preallocate_workspace = _validate_allowed_symbol("power_flow.rectangular_preallocate_workspace", _as_symbol_cfg(_raw_get(merged, "rectangular_preallocate_workspace", :auto)), RECTANGULAR_PREALLOCATE_WORKSPACE_VALUES),
     rectangular_workspace_min_buses = _as_int_cfg(_raw_get(merged, "rectangular_workspace_min_buses", 1000)),
+    islands_enabled = _as_bool_cfg(_raw_get(islands_raw, "enabled", true)),
+    islands_mode = _validate_allowed_symbol("power_flow.islands.mode", _as_symbol_cfg(_raw_get(islands_raw, "mode", :solve_independent)), POWERFLOW_ISLAND_MODE_VALUES),
+    islands_reference_policy = _validate_allowed_symbol("power_flow.islands.reference_policy", _as_symbol_cfg(_raw_get(islands_raw, "reference_policy", :matpower_like)), POWERFLOW_ISLAND_REFERENCE_POLICY_VALUES),
     start_mode = StartModeConfig(merge(Dict{Any,Any}(merged), Dict{Any,Any}(start_raw))),
     start_current_iteration = StartCurrentIterationConfig(start_current_iteration_raw),
     qlimits = QLimitConfig(merge(Dict{Any,Any}(merged), Dict{Any,Any}(qlimit_raw))),
+    islands = IslandPowerFlowConfig(islands_raw),
+  )
+end
+
+function IslandPowerFlowConfig(raw::AbstractDict)
+  merged = haskey(raw, "islands") || haskey(raw, :islands) ? _merged_section(raw, "islands") : raw
+  return IslandPowerFlowConfig(
+    enabled = _as_bool_cfg(_raw_get(merged, "enabled", true)),
+    mode = _validate_allowed_symbol("power_flow.islands.mode", _as_symbol_cfg(_raw_get(merged, "mode", :solve_independent)), POWERFLOW_ISLAND_MODE_VALUES),
+    reference_policy = _validate_allowed_symbol("power_flow.islands.reference_policy", _as_symbol_cfg(_raw_get(merged, "reference_policy", :matpower_like)), POWERFLOW_ISLAND_REFERENCE_POLICY_VALUES),
+    diagnostic_continue_after_failure = _as_bool_cfg(_raw_get(merged, "diagnostic_continue_after_failure", true)),
   )
 end
 
@@ -633,6 +678,11 @@ function MatpowerImportConfig(raw::AbstractDict)
     enable_pq_gen_controllers = _as_bool_cfg(_raw_get(merged, "enable_pq_gen_controllers", true)),
     preallocate_network = _validate_allowed_symbol("matpower_import.preallocate_network", _as_symbol_cfg(_raw_get(merged, "preallocate_network", :auto)), [:off, :on, :auto]),
     preallocate_min_buses = _as_int_cfg(_raw_get(merged, "preallocate_min_buses", 1000)),
+    apply_bus_names = _as_bool_cfg(_raw_get(merged, "apply_bus_names", false)),
+    apply_branch_names = _as_bool_cfg(_raw_get(merged, "apply_branch_names", false)),
+    apply_branch_kind = _as_bool_cfg(_raw_get(merged, "apply_branch_kind", false)),
+    import_for001_contingencies = _as_bool_cfg(_raw_get(merged, "import_for001_contingencies", true)),
+    matpower_dcline_mode = _validate_allowed_symbol("matpower_import.matpower_dcline_mode", _as_symbol_cfg(_raw_get(merged, "matpower_dcline_mode", :pf_injections)), MATPOWER_DCLINE_MODE_VALUES),
   )
 end
 
@@ -788,6 +838,7 @@ end
 function _validate_known_config_keys(user::AbstractDict, defaults::AbstractDict; path::String = "")
   for (key, value) in user
     skey = _canonical_config_key(_config_key(key))
+    isempty(path) && skey in ("_config_sources", "_config_metadata") && continue
     current_path = isempty(path) ? skey : string(path, ".", skey)
     if current_path == "matpower_import.benchmark"
       throw(ArgumentError("Removed Sparlectra configuration key: matpower_import.benchmark.\nUse top-level benchmark.enabled instead, e.g.\n\nbenchmark:\n  enabled: true"))
