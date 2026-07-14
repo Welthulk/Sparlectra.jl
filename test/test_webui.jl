@@ -683,7 +683,7 @@ settings:
         write(warmup_m, "function mpc = warmup_internal\nend\n")
         write(warmup_jl, "nothing\n")
         write(generated_cache, "nothing\n")
-        write(for001, "P\nT\nN\nX\nY\n110\n2 1 0 0 SLACK\nL 1 A PV SLACK 1.0 2.0 0.0 0.0\nK 1 1 1 PV 110 0 0 0 10 2 -5 5\nK 2 2 1 SLACK 110 0 0 0 20 3 -10 10\n")
+        write(for001, "P\nT\nN\nX\nY\n110\n2 1 0 0 SLACK\nL1A  PV       SLACK   1.0 2.0 0.0 0.0\n11   PV      110 0 0 0 10 2 -5 5\n21   SLACK   110 0 0 0 20 3 -10 10\n")
         write(for002, "legacy reference\n")
         write(for002_variant, "legacy reference variant\n")
         for ext in ("csv", "json", "yaml", "log", "md")
@@ -869,7 +869,7 @@ settings:
         refreshed = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow"; output_root, runtime).body)
         @test occursin("<option value=\"case_upload.m\"", refreshed)
 
-        dat_response = Sparlectra.route_sparlectra_webui("POST", "/powerflow/import-cases", Dict("casefiles" => [upload("FOR001.DAT", "P\nT\nN\nX\nY\n110\n2 1 0 0 SLACK\nL 1 A PV SLACK 1.0 2.0 0.0 0.0\nK 1 1 1 PV 110 0 0 0 10 2 -5 5\nK 2 2 1 SLACK 110 0 0 0 20 3 -10 10\n")]); output_root, runtime)
+        dat_response = Sparlectra.route_sparlectra_webui("POST", "/powerflow/import-cases", Dict("casefiles" => [upload("FOR001.DAT", "P\nT\nN\nX\nY\n110\n2 1 0 0 SLACK\nL1A  PV       SLACK   1.0 2.0 0.0 0.0\n11   PV      110 0 0 0 10 2 -5 5\n21   SLACK   110 0 0 0 20 3 -10 10\n")]); output_root, runtime)
         @test dat_response.status == 303
         @test isfile(joinpath(case_directory, "FOR001.DAT"))
         @test Sparlectra._webui_casefile_options_in_directory(case_directory) == ["case_upload.m", "FOR001.DAT"]
@@ -1129,27 +1129,6 @@ settings:
         unsafe_route = Sparlectra.route_sparlectra_webui("GET", "/docs/" * Sparlectra._webui_urlencode(unsafe_page))
         @test unsafe_route.status == 404
       end
-    end
-
-    @testset "canonical DFT terminology guard" begin
-      repo_root = normpath(joinpath(@__DIR__, ".."))
-      forbidden_terms = ["schae" * "fer", "DTF" * "/FOR001", "FOR001" * "/DTF", "FOR001" * " / DTF", "DTF" * " format", "FOR001" * " format", "native DTF" * " path", "DTF" * " outage"]
-      hits = String[]
-      for root in ("docs", "src", "test", "examples")
-        for (dir, _, files) in walkdir(joinpath(repo_root, root))
-          for file in files
-            path = joinpath(dir, file)
-            text = read(path, String)
-            rel = relpath(path, repo_root)
-            rel == "test/test_webui.jl" && continue
-            for term in forbidden_terms
-              occursin(Regex(term, "i"), text) || continue
-              push!(hits, "$(rel): $(term)")
-            end
-          end
-        end
-      end
-      @test isempty(hits)
     end
 
     mktempdir() do tmpdir
@@ -1518,12 +1497,13 @@ result = get_powerflow_result(run_id)
 @test result["output_dir"] == joinpath(abspath(output_root), run_id)
 @test !ispath(joinpath(tmpdir, "outside-runs"))
       run_log_text = read(joinpath(result["output_dir"], "run.log"), String)
-      @test occursin("Wall time", run_log_text)
+      @test !occursin("Wall time", run_log_text)
       @test !occursin("Unknown Sparlectra configuration key: power_flow.qlimits.enforcement_mode", run_log_text)
-      @test occursin("Wall time   :", run_log_text)
+      @test occursin("Total time  :", run_log_text)
       @test occursin("Output time :", run_log_text)
       @test occursin("Solver time :", run_log_text)
-      @test !occursin("Solver time    :unavailable", run_log_text)
+      @test !occursin("Solver time: n/a", run_log_text)
+      @test !occursin("solving_powerflow_seconds", run_log_text)
       @test !occursin("Representative wall time", run_log_text)
       @test !occursin("representative_time:", run_log_text)
       @test !occursin("solver_time:          n/a", run_log_text)

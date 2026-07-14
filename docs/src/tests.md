@@ -141,6 +141,8 @@ julia --project=. test/runtests.jl fast --verbose
 julia --project=. test/runtests.jl extended --verbose
 ```
 
+The `fast` profile runs normal unit and focused integration tests. The `extended` profile runs only extended repository-hygiene, documentation-coverage, example, and fixture-heavy checks. The `all` profile runs fast followed by extended. Set `SPARLECTRA_TEST_GC_BETWEEN_GROUPS=1` to request a GC cycle after each completed group; per-group output reports elapsed seconds, allocated MiB, and GC seconds.
+
 The `extended` profile may include MATPOWER/example/output-heavy tests and native DTF/FOR002 diagnostic-example checks. These tests stay isolated from the default profile.
 
 Use `fast` during normal development. Use `extended` before merging changes that affect configuration, MATPOWER import, output formatting, performance reporting, or broader integration paths.

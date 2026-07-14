@@ -69,7 +69,7 @@ abort requests. Cancellation is checked around case resolution, configuration
 and import work, solving, diagnostics, and artifact writing. Import and service
 work is reported with finer phases such as `reading_matpower_case`,
 `loading_julia_case`, `building_sparlectra_net`, `preparing_start_values`,
-`solving_powerflow`, and artifact-writing phases so large MATPOWER cases no
+`solver_orchestration`, and artifact-writing phases so large MATPOWER cases no
 longer appear only as a broad loading step. The rectangular
 solver checks before and after Y-bus construction and start projection, at
 every Newton iteration boundary, after Q-limit active-set work, and after each
@@ -178,7 +178,7 @@ Interpret the major loading phases as follows:
   case; very large literal Julia cases can take several minutes on cold runs.
 - `building_sparlectra_net`: `createNetFromMatPowerCase` is constructing the
   Sparlectra network from the parsed MATPOWER data.
-- `solving_powerflow`: the rectangular Newton solve is active; detailed Y-bus,
+- `solver_orchestration`: the service has entered the power-flow orchestration path; use `solver_elapsed_s` for pure numerical solver time; detailed Y-bus,
   Newton-iteration, Q-limit, and linear-solve aggregates are in
   `performance.log`.
 

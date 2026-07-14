@@ -15,9 +15,7 @@ function print_test_progress_header(profile::Symbol)
   println("Test framework: ", profile)
 end
 
-function print_group_progress(i::Int, total::Int, name::AbstractString)
-  println("[", i, "/", total, "] ", name)
-end
+function print_group_progress(i::Int, total::Int, name::AbstractString) end
 
 function include_fast_tests()
   include("testgrid.jl")
@@ -33,11 +31,13 @@ function include_fast_tests()
 end
 
 function include_extended_tests()
+  include("testgrid.jl")
   include("testremove.jl")
   include("test_pv_voltage_residuals.jl")
   include("test_matpower_example.jl")
   include("test_synthetic_grids.jl")
   include("test_configuration_docs.jl")
+  include("test_repository_hygiene.jl")
   # Experimental large-case comparison tooling is excluded from normal profiles.
 end
 
@@ -63,8 +63,7 @@ function run_fast_profile_tests()
   @testset "Sparlectra.jl fast profile" begin
     total = length(groups)
     for (i, (name, runner)) in enumerate(groups)
-      print_group_progress(i, total, name)
-      quiet_test_output(runner)
+      run_profile_group(i, total, name, runner)
     end
   end
 end
@@ -80,35 +79,35 @@ function run_extended_profile_tests()
     ("matpower_examples", () -> run_entry(:run_matpower_example_tests)),
     ("synthetic_grids", () -> run_entry(:run_synthetic_grid_tests)),
     ("configuration_docs", () -> run_entry(:run_configuration_docs_tests)),
+    ("repository_hygiene", () -> run_entry(:run_repository_hygiene_tests)),
   ]
   @testset "Sparlectra.jl extended profile" begin
     total = length(groups)
     for (i, (name, runner)) in enumerate(groups)
-      print_group_progress(i, total, name)
-      quiet_test_output(runner)
+      run_profile_group(i, total, name, runner)
     end
   end
 end
 
-if TEST_PROFILE === :fast
-  print_test_progress_header(:fast)
-  include_fast_tests()
-  run_fast_profile_tests()
-elseif TEST_PROFILE === :extended
-  print_test_progress_header(:extended)
-  include_fast_tests()
-  include_extended_tests()
-  run_fast_profile_tests()
-  run_extended_profile_tests()
-elseif TEST_PROFILE === :all
-  print_test_progress_header(:all)
-  include_fast_tests()
-  include_extended_tests()
-  # At the moment, `all` is an alias for `extended`.
-  # Keep the profile for future all-only suites and CI matrix clarity.
-  run_fast_profile_tests()
-  run_extended_profile_tests()
-else
-  error("Unknown test profile=$(TEST_PROFILE). Allowed: fast, extended, all. Selection precedence: CLI arg, SPARLECTRA_TEST_PROFILE, default fast.")
+function main()
+  if TEST_PROFILE === :fast
+    print_test_progress_header(:fast)
+    include_fast_tests()
+    run_fast_profile_tests()
+  elseif TEST_PROFILE === :extended
+    print_test_progress_header(:extended)
+    include_extended_tests()
+    run_extended_profile_tests()
+  elseif TEST_PROFILE === :all
+    print_test_progress_header(:all)
+    include_fast_tests()
+    include_extended_tests()
+    run_fast_profile_tests()
+    run_extended_profile_tests()
+  else
+    error("Unknown test profile=$(TEST_PROFILE). Allowed: fast, extended, all. Selection precedence: CLI arg, SPARLECTRA_TEST_PROFILE, default fast.")
+  end
 end
+
+Base.invokelatest(main)
 return nothing

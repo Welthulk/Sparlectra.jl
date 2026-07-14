@@ -74,17 +74,17 @@ function _webui_classify_dat_content(path::AbstractString)::Symbol
   catch
     return :unknown_dat
   end
-  lines = split(text, '\n')
-  stripped = [strip(line) for line in lines if !isempty(strip(line))]
-  has_outages = any(==("AUSFALL"), stripped) && any(==("ENDE"), stripped)
-  has_size_card = length(stripped) >= 7 && length(split(stripped[7])) >= 4 &&
-    all(token -> tryparse(Float64, token) !== nothing, split(stripped[7])[1:4])
-  has_branch = any(line -> startswith(line, "L") || startswith(line, "T"), stripped)
-  has_bus = any(line -> startswith(line, "K"), stripped)
-  has_network = has_size_card && has_branch && has_bus
-  has_network && has_outages && return :dft_network_case_with_outages
-  has_network && return :dft_network_case
-  if has_outages || _is_for002_reference_dat(path) || occursin(r"(?i)(for002|reference|ausfall|outage|vergleich|result)", text)
+  try
+    case = DTFImporter.read_dtf(path; strict = false)
+    if case.size.NGES > 0 && length(case.buses) == case.size.NGES && length(case.branches) == case.size.LGES
+      return isempty(case.outages) ? :dft_network_case : :dft_network_case_with_outages
+    end
+  catch
+  end
+  has_outages = occursin(r"(?im)^\s*AUSFALL\s*$", text) && occursin(r"(?im)^\s*ENDE\s*$", text)
+  if has_outages
+    return :dft_outage_file
+  elseif _is_for002_reference_dat(path) || occursin(r"(?i)(for002|reference|vergleich|result)", text)
     return :dft_outage_or_reference
   end
   return :unknown_dat

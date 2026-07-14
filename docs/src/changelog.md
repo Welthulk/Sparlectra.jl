@@ -13,7 +13,10 @@
 
 ### Bug Fixes
 
-* Service and wall timing remain finite and meaningful on successful and failed API/Web UI runs.
+* API/Web UI runs now report pure numerical `Solver time` separately from service-envelope `Total time`, with no generic `Wall time` label.
+* Large-case summaries use `solver_elapsed_s` and no longer emit misleading `solving_powerflow_seconds`.
+* Test failure output is bounded, fast/extended/all profiles are distinct, generated directories are excluded from repository hygiene checks, and each test group reports elapsed time, allocated MiB, and GC time.
+* `.DAT` upload classification now uses parser-consistent DFT structure, keeping FOR002 references and outage-only or unknown files out of the runnable selector.
 * Failed runs retain their service phase timing records in `result.json` and `performance.log`.
 * The Web UI PowerFlow tolerance increment follows the current value instead of using browser-generic `step="any"` behavior.
 * Tagged or installed builds no longer display `commit unknown`; the commit element is omitted when unavailable.
