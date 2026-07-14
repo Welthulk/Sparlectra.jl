@@ -757,7 +757,7 @@ function _run_sparlectra_api(;
   if auto_profile_result !== nothing
     config = auto_profile_result.config
     _update_effective_matpower_raw!(effective_raw, config)
-    config_sources = _config_source_report(config_path, nested_overrides, effective_raw; override_source = config_override_source)
+    config_sources = _config_source_report(config_path, nested_overrides, effective_raw; override_source = config_override_source, auto_profile_result = auto_profile_result)
     _write_yaml_file(effective_config, _effective_config_with_runtime_case(effective_raw, case_path, config; config_sources))
     _write_matpower_auto_profile_artifact(output_path, auto_profile_result, config; casefile = String(auto_profile_casefile))
     operation_callback("powerflow_effective_options"; run_id = run_id, case = basename(case_path), _metadata_kwargs(qlimit_metadata)..., _metadata_kwargs(_resolved_matpower_import_runtime_options(config))...)

@@ -41,12 +41,12 @@ power_flow:
 
   # AC island diagnostic artifacts.
   islands:
-    enabled: false
+    enabled: true
     # Allowed values: solve_independent
     mode: solve_independent
     # Allowed values: matpower_like
     reference_policy: matpower_like
-    diagnostic_continue_after_failure: false
+    diagnostic_continue_after_failure: true
 
   # Start projection and warmstart controls.
   start_mode:
@@ -180,7 +180,7 @@ matpower_import:
   apply_branch_kind: false
   import_for001_contingencies: true
   # Allowed values: reject_active, ignore_inactive, pf_injections
-  matpower_dcline_mode: reject_active
+  matpower_dcline_mode: pf_injections
 
 performance:
   enabled: true

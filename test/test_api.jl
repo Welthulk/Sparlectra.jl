@@ -202,7 +202,12 @@ function run_api_tests()
       inactive_dcline_mpc = Sparlectra.MatpowerIO.read_case(inactive_dcline_case; legacy_compat = false)
       @test Sparlectra.MatpowerIO.matpower_dcline_diagnostics(inactive_dcline_mpc)["matpower_dcline_active_count"] == 0
       active_dcline_case = _write_api_dcline_case(joinpath(tmpdir, "case_active_dcline.m"); rows = "1 2 1 10 9 0 0 1 1 0 100;\n1 2 0 3 2 0 0 1 1 0 100;")
-      active_result = run_sparlectra_api(casefile = active_dcline_case, config_file = template, output_dir = joinpath(tmpdir, "active-dcline"), config_overrides = Dict("output.logfile_results" => "full", "benchmark.enabled" => false), performance_timing = :compact)
+      active_default_cfg = Sparlectra.SparlectraConfig(Dict())
+      @test active_default_cfg.matpower.matpower_dcline_mode === :pf_injections
+      active_default_mpc = Sparlectra.MatpowerIO.read_case(active_dcline_case; legacy_compat = false)
+      active_default_net = Sparlectra.createNetFromMatPowerCase(mpc = active_default_mpc)
+      @test !isempty(active_default_net.matpowerDclineMetadata)
+      active_result = run_sparlectra_api(casefile = active_dcline_case, config_file = template, output_dir = joinpath(tmpdir, "active-dcline"), config_overrides = Dict("matpower_import.matpower_dcline_mode" => "reject_active", "output.logfile_results" => "full", "benchmark.enabled" => false), performance_timing = :compact)
       @test active_result.status === :failed
       @test !active_result.success
       @test active_result.reason == "unsupported_matpower_dcline"
@@ -239,10 +244,6 @@ function run_api_tests()
         output_dir = joinpath(tmpdir, "island-diagnostics"),
         config_overrides = Dict(
           "power_flow.max_iter" => 1,
-          "power_flow.islands.enabled" => true,
-          "power_flow.islands.mode" => "solve_independent",
-          "power_flow.islands.reference_policy" => "matpower_like",
-          "power_flow.islands.diagnostic_continue_after_failure" => true,
           "benchmark.enabled" => false,
         ),
         performance_timing = :compact,
@@ -286,6 +287,8 @@ function run_api_tests()
       @test occursin("ref_promoted: true", island_two_text)
       @test occursin("max_iter = 1", replace(island_two_text, "=>" => " ="))
       @test occursin("tol = ", replace(island_two_text, "=>" => " ="))
+      @test occursin("autodamp = true", replace(island_two_text, "=>" => " ="))
+      @test occursin("autodamp_min = 0.05", replace(island_two_text, "=>" => " ="))
       island_result_json = Sparlectra._parse_service_json(read(joinpath(island_result.output_dir, "result.json"), String))
       @test island_result_json["artifact_status"] != "not_started"
       @test island_result_json["solver_status"] != "running"
@@ -297,9 +300,6 @@ function run_api_tests()
         output_dir = joinpath(tmpdir, "island-success"),
         config_overrides = Dict(
           "power_flow.max_iter" => 40,
-          "power_flow.islands.enabled" => true,
-          "power_flow.islands.mode" => "solve_independent",
-          "power_flow.islands.reference_policy" => "matpower_like",
           "benchmark.enabled" => false,
         ),
         performance_timing = :compact,

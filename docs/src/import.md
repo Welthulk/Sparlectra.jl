@@ -172,7 +172,7 @@ reimports the block and avoids adding the equivalent `Gs/Bs` shunts twice when
 they are already present in the standard bus table.
 
 `matpower_import.matpower_dcline_mode` controls `mpc.dcline` handling. The
-default `:reject_active` preserves old fail-fast behavior: active DC-line rows
+default `:pf_injections` imports active DC-line rows as fixed terminal injections. Explicit `:reject_active` remains available for strict validation and
 (`status != 0`) abort before solving with `failure_reason =
 unsupported_matpower_dcline`, while empty or inactive-only tables are ignored.
 `:ignore_inactive` has the same active-row rejection behavior and documents the
@@ -188,7 +188,7 @@ voltage-controlled where MATPOWER would make them PV, without demoting
 reference buses or activating isolated buses. API/Web UI runs write a compact
 `matpower_dcline.csv` artifact describing the mapping. This is not a full HVDC
 converter or DC-grid model; OPF constraints, converter controls,
-`dclinecost`, and DC-line optimization remain unsupported.
+`dclinecost`, and DC-line optimization remain unsupported. DC terminal injections do not create Ybus branches, so disconnected AC components are detected and solved island-wise by default; this is a power-flow approximation, not a complete HVDC converter or DC-grid model.
 
 ```julia
 using Sparlectra

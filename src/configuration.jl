@@ -95,10 +95,10 @@ end
 Configuration for AC-island-aware power-flow diagnostics.
 """
 Base.@kwdef struct IslandPowerFlowConfig
-  enabled::Bool = false
+  enabled::Bool = true
   mode::Symbol = :solve_independent
   reference_policy::Symbol = :matpower_like
-  diagnostic_continue_after_failure::Bool = false
+  diagnostic_continue_after_failure::Bool = true
 end
 
 """
@@ -125,7 +125,7 @@ Base.@kwdef struct PowerFlowConfig
   rectangular_workspace_reuse::Bool = true
   rectangular_preallocate_workspace::Symbol = :auto
   rectangular_workspace_min_buses::Int = 1000
-  islands_enabled::Bool = false
+  islands_enabled::Bool = true
   islands_mode::Symbol = :solve_independent
   islands_reference_policy::Symbol = :matpower_like
   start_mode::StartModeConfig = StartModeConfig()
@@ -189,7 +189,7 @@ Base.@kwdef struct MatpowerImportConfig
   apply_branch_names::Bool = false
   apply_branch_kind::Bool = false
   import_for001_contingencies::Bool = true
-  matpower_dcline_mode::Symbol = :reject_active
+  matpower_dcline_mode::Symbol = :pf_injections
 end
 
 """
@@ -618,7 +618,7 @@ function PowerFlowConfig(raw::AbstractDict)
     rectangular_workspace_reuse = _as_bool_cfg(_raw_get(merged, "rectangular_workspace_reuse", true)),
     rectangular_preallocate_workspace = _validate_allowed_symbol("power_flow.rectangular_preallocate_workspace", _as_symbol_cfg(_raw_get(merged, "rectangular_preallocate_workspace", :auto)), RECTANGULAR_PREALLOCATE_WORKSPACE_VALUES),
     rectangular_workspace_min_buses = _as_int_cfg(_raw_get(merged, "rectangular_workspace_min_buses", 1000)),
-    islands_enabled = _as_bool_cfg(_raw_get(islands_raw, "enabled", false)),
+    islands_enabled = _as_bool_cfg(_raw_get(islands_raw, "enabled", true)),
     islands_mode = _validate_allowed_symbol("power_flow.islands.mode", _as_symbol_cfg(_raw_get(islands_raw, "mode", :solve_independent)), POWERFLOW_ISLAND_MODE_VALUES),
     islands_reference_policy = _validate_allowed_symbol("power_flow.islands.reference_policy", _as_symbol_cfg(_raw_get(islands_raw, "reference_policy", :matpower_like)), POWERFLOW_ISLAND_REFERENCE_POLICY_VALUES),
     start_mode = StartModeConfig(merge(Dict{Any,Any}(merged), Dict{Any,Any}(start_raw))),
@@ -631,10 +631,10 @@ end
 function IslandPowerFlowConfig(raw::AbstractDict)
   merged = haskey(raw, "islands") || haskey(raw, :islands) ? _merged_section(raw, "islands") : raw
   return IslandPowerFlowConfig(
-    enabled = _as_bool_cfg(_raw_get(merged, "enabled", false)),
+    enabled = _as_bool_cfg(_raw_get(merged, "enabled", true)),
     mode = _validate_allowed_symbol("power_flow.islands.mode", _as_symbol_cfg(_raw_get(merged, "mode", :solve_independent)), POWERFLOW_ISLAND_MODE_VALUES),
     reference_policy = _validate_allowed_symbol("power_flow.islands.reference_policy", _as_symbol_cfg(_raw_get(merged, "reference_policy", :matpower_like)), POWERFLOW_ISLAND_REFERENCE_POLICY_VALUES),
-    diagnostic_continue_after_failure = _as_bool_cfg(_raw_get(merged, "diagnostic_continue_after_failure", false)),
+    diagnostic_continue_after_failure = _as_bool_cfg(_raw_get(merged, "diagnostic_continue_after_failure", true)),
   )
 end
 
@@ -682,7 +682,7 @@ function MatpowerImportConfig(raw::AbstractDict)
     apply_branch_names = _as_bool_cfg(_raw_get(merged, "apply_branch_names", false)),
     apply_branch_kind = _as_bool_cfg(_raw_get(merged, "apply_branch_kind", false)),
     import_for001_contingencies = _as_bool_cfg(_raw_get(merged, "import_for001_contingencies", true)),
-    matpower_dcline_mode = _validate_allowed_symbol("matpower_import.matpower_dcline_mode", _as_symbol_cfg(_raw_get(merged, "matpower_dcline_mode", :reject_active)), MATPOWER_DCLINE_MODE_VALUES),
+    matpower_dcline_mode = _validate_allowed_symbol("matpower_import.matpower_dcline_mode", _as_symbol_cfg(_raw_get(merged, "matpower_dcline_mode", :pf_injections)), MATPOWER_DCLINE_MODE_VALUES),
   )
 end
 

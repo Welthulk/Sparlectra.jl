@@ -31,7 +31,7 @@
 | `matpower_import.apply_branch_names` | Bool | `false` | `true`, `false` | Attach user-defined `mpc.branch_name` metadata to `net.matpower_branch_metadata`. | Outage and contingency mapping. | Cases without branch metadata. | None. | `import_for001_contingencies`. |
 | `matpower_import.apply_branch_kind` | Bool | `false` | `true`, `false` | Use user-defined `mpc.branch_kind` to override line/transformer classification. | Conversion workflows that know row kinds. | Prefer electrical heuristic. | None. | Accepts `L`/`LINE`/`ACL` and `T`/`TRAFO`/`TRANSFORMER`/`2WT`. |
 | `matpower_import.import_for001_contingencies` | Bool | `true` | `true`, `false` | Preserve user-defined `mpc.for001_contingencies`. | FOR001/FOR002 validation. | Ignore validation metadata. | None. | `mpc.branch_name` enables index mapping. |
-| `matpower_import.matpower_dcline_mode` | Symbol/String | `reject_active` | `reject_active`, `ignore_inactive`, `pf_injections` | Controls active `mpc.dcline` rows. | Use `pf_injections` to emulate MATPOWER simple PF DC-line injections. | OPF/dclinecost studies. | Adds two fixed prosumers per active row in `pf_injections`. | Default keeps fail-fast behavior. |
+| `matpower_import.matpower_dcline_mode` | Symbol/String | `pf_injections` | `reject_active`, `ignore_inactive`, `pf_injections` | Controls active `mpc.dcline` rows. | Use `pf_injections` to emulate MATPOWER simple PF DC-line injections. | OPF/dclinecost studies. | Adds two fixed prosumers per active row in `pf_injections`. | Default supports active DC-line rows as fixed terminal injections; choose `reject_active` for strict fail-fast behavior. |
 
 ### DC lines and disconnected AC islands
 
@@ -44,7 +44,7 @@ admittances, or tiny impedance bridges between terminals.
 
 Large MATPOWER cases such as `case_SyntheticUSA.m` can therefore have several
 disconnected AC Ybus components coupled only through fixed DC-line terminal
-injections. Enable `power_flow.islands.enabled = true` with
+injections. `power_flow.islands.enabled = true` is the default; keep
 `power_flow.islands.mode = solve_independent` to solve each AC island with the
 rectangular NR solver and merge the voltage/flow state into one user-facing
 result. The diagnostic artifact `ac_islands.csv` records the selected
