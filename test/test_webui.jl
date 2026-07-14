@@ -201,6 +201,84 @@ function run_webui_tests()
       @test occursin("config_refresh_write_completed", log)
     end
 
+    @testset "Configuration editor validates before atomic save" begin
+      root = mktempdir()
+      config_path = joinpath(root, "configuration.yaml")
+      operation_log = Sparlectra.webui_operation_log_path(root)
+      original_text = "matpower_import:\n  matpower_dcline_mode: reject_active\npower_flow:\n  tol: 1.0e-8\n  autodamp: false\n"
+      write(config_path, original_text)
+
+      temp_leftovers() = filter(name -> !(name in ("configuration.yaml", "webui_operations.jsonl")) && !occursin(r"configuration\.yaml\.bak-", name), readdir(root))
+
+      for mode in ("reject_active", "ignore_inactive", "pf_injections")
+        response = Sparlectra.handle_powerflow_config_editor_save(
+          Dict("config_file" => config_path, "config_text" => "matpower_import:\n  matpower_dcline_mode: $(mode)\n");
+          operation_log,
+        )
+        @test response.status == 200
+        @test load_sparlectra_config(config_path; reload = true).matpower.matpower_dcline_mode == Symbol(mode)
+        @test isempty(temp_leftovers())
+      end
+
+      nested_text = "power_flow:\n  start_current_iteration:\n    enabled: true\n    damping: 0.8\nmatpower_import:\n  matpower_dcline_mode: pf_injections\n"
+      nested_response = Sparlectra.handle_powerflow_config_editor_save(Dict("config_file" => config_path, "config_text" => nested_text); operation_log)
+      @test nested_response.status == 200
+      nested_cfg = load_sparlectra_config(config_path; reload = true)
+      @test nested_cfg.powerflow.start_current_iteration.enabled === true
+      @test nested_cfg.powerflow.start_current_iteration.damping == 0.8
+      @test isempty(temp_leftovers())
+
+      unchanged_before_invalid = read(config_path, String)
+      invalid_enum = Sparlectra.handle_powerflow_config_editor_save(
+        Dict("config_file" => config_path, "config_text" => "matpower_import:\n  matpower_dcline_mode: ignore\n");
+        operation_log,
+      )
+      invalid_enum_body = String(invalid_enum.body)
+      @test invalid_enum.status == 400
+      @test read(config_path, String) == unchanged_before_invalid
+      @test occursin("Configuration could not be saved.", invalid_enum_body)
+      @test occursin("matpower_import.matpower_dcline_mode", invalid_enum_body)
+      @test occursin("ignore", invalid_enum_body)
+      @test occursin("reject_active, ignore_inactive, pf_injections", invalid_enum_body)
+      @test occursin("matpower_dcline_mode: ignore", invalid_enum_body)
+      @test isempty(temp_leftovers())
+
+      invalid_enabled = Sparlectra.handle_powerflow_config_editor_save(
+        Dict("config_file" => config_path, "config_text" => "matpower_import:\n  matpower_dcline_mode: enabled\n");
+        operation_log,
+      )
+      invalid_enabled_body = String(invalid_enabled.body)
+      @test invalid_enabled.status == 400
+      @test read(config_path, String) == unchanged_before_invalid
+      @test occursin("matpower_import.matpower_dcline_mode", invalid_enabled_body)
+      @test occursin("reject_active, ignore_inactive, pf_injections", invalid_enabled_body)
+      @test isempty(temp_leftovers())
+
+      invalid_range = Sparlectra.handle_powerflow_config_editor_save(Dict("config_file" => config_path, "config_text" => "power_flow:\n  tol: -1.0\n"); operation_log)
+      @test invalid_range.status == 400
+      @test read(config_path, String) == unchanged_before_invalid
+      @test occursin("powerflow.tol must be positive", String(invalid_range.body))
+      @test isempty(temp_leftovers())
+
+      invalid_bool = Sparlectra.handle_powerflow_config_editor_save(Dict("config_file" => config_path, "config_text" => "output:\n  console_summary: enabled\n"); operation_log)
+      invalid_bool_body = String(invalid_bool.body)
+      @test invalid_bool.status == 400
+      @test read(config_path, String) == unchanged_before_invalid
+      @test occursin("Cannot convert", invalid_bool_body)
+      @test occursin("Bool", invalid_bool_body)
+      @test isempty(temp_leftovers())
+
+      unknown = Sparlectra.handle_powerflow_config_editor_save(Dict("config_file" => config_path, "config_text" => "matpower_import:\n  not_a_real_option: true\n"); operation_log)
+      @test unknown.status == 400
+      @test read(config_path, String) == unchanged_before_invalid
+      @test occursin("Unknown Sparlectra configuration key: matpower_import.not_a_real_option", String(unknown.body))
+      @test isempty(temp_leftovers())
+
+      log = read(operation_log, String)
+      @test occursin("config_editor_saved", log)
+      @test occursin("config_editor_save_failed", log)
+    end
+
     @testset "Case-specific settings profiles" begin
       root = mktempdir()
       write(joinpath(root, "case145.m"), "% case fixture\n")

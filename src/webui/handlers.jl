@@ -204,9 +204,9 @@ function handle_powerflow_config_refresh(form::AbstractDict; write::Bool = false
   end
 end
 
-function handle_powerflow_config_editor(config_file::AbstractString; message::AbstractString = "", status::Integer = 200)::SparlectraWebUIResponse
+function handle_powerflow_config_editor(config_file::AbstractString; message::AbstractString = "", status::Integer = 200, config_text::Union{Nothing,AbstractString} = nothing)::SparlectraWebUIResponse
   path = isempty(strip(config_file)) ? DEFAULT_SPARLECTRA_CONFIG_PATH : String(config_file)
-  text = isfile(path) ? read(path, String) : ""
+  text = config_text === nothing ? (isfile(path) ? read(path, String) : "") : String(config_text)
   notice = isempty(message) ? "" : "<div class=\"alert info\">$(_webui_escape(message))</div>"
   sidecar_note = "<p class=\"alert warning\">Case-sidecar settings, when present for a selected case, have higher precedence than this global YAML. Delete or refresh the case settings from a run result if they should no longer override the edited file.</p>"
   body = """
@@ -225,30 +225,61 @@ $(sidecar_note)
   return _webui_html(_webui_layout("Configuration Editor", body; show_back = true); status)
 end
 
+function _validate_powerflow_config_editor_text!(config_text::AbstractString)::Dict{String,Any}
+  mktemp() do path, io
+    write(io, config_text)
+    close(io)
+    duplicates = _detect_yaml_duplicate_keys(path)
+    if !isempty(duplicates)
+      throw(ArgumentError("Duplicate YAML key(s) detected: $(join(duplicates, ", ")). Save refused."))
+    end
+    load_yaml_dict(path)
+    _load_and_validate_config(DEFAULT_SPARLECTRA_CONFIG_PATH, path; cli_overrides = Dict{String,Any}(), overrides = Dict{String,Any}())
+    load_sparlectra_config(path; reload = true)
+    return load_yaml_dict(path)
+  end
+end
+
+function _config_editor_error_message(err)::String
+  return string("Configuration could not be saved.\n\n", sprint(showerror, err))
+end
+
+function _config_editor_backup_path(config_file::AbstractString)::String
+  stamp = Dates.format(now(), "yyyymmdd-HHMMSS")
+  candidate = string(config_file, ".bak-", stamp)
+  !isfile(candidate) && return candidate
+  for i in 1:10_000
+    numbered = string(candidate, "-", i)
+    !isfile(numbered) && return numbered
+  end
+  throw(ArgumentError("Could not choose a unique backup path for $(config_file)."))
+end
+
 function handle_powerflow_config_editor_save(form::AbstractDict; operation_log::AbstractString = "results/powerflow_service")::SparlectraWebUIResponse
   config_file = strip(String(something(_webui_form_value(form, "config_file", ""), "")))
   config_text = String(something(_webui_form_value(form, "config_text", ""), ""))
+  tmp_path = nothing
   try
     isempty(config_file) && return _webui_html(render_webui_error(400, "No configuration file was provided."); status = 400)
-    mktemp() do path, io
-      write(io, config_text)
-      close(io)
-      duplicates = _detect_yaml_duplicate_keys(path)
-      if !isempty(duplicates)
-        return handle_powerflow_config_editor(config_file; message = "Duplicate YAML key(s) detected: $(join(duplicates, ", ")). Save refused.", status = 400)
-      end
-      load_yaml_dict(path)
-      _load_and_validate_config(DEFAULT_SPARLECTRA_CONFIG_PATH, path; cli_overrides = Dict{String,Any}(), overrides = Dict{String,Any}())
-    end
-    backup_path = string(config_file, ".bak-", Dates.format(now(), "yyyymmdd-HHMMSS"))
+    parsed = _validate_powerflow_config_editor_text!(config_text)
+    parent = dirname(abspath(config_file))
+    mkpath(parent)
+    tmp_path = tempname(parent; cleanup = false)
+    write(tmp_path, _yaml_dict_text(parsed))
+    _load_and_validate_config(DEFAULT_SPARLECTRA_CONFIG_PATH, tmp_path; cli_overrides = Dict{String,Any}(), overrides = Dict{String,Any}())
+    load_sparlectra_config(tmp_path; reload = true)
+    backup_path = _config_editor_backup_path(config_file)
     isfile(config_file) && cp(config_file, backup_path; force = false)
-    write(config_file, config_text)
+    mv(tmp_path, config_file; force = true)
+    tmp_path = nothing
     load_sparlectra_config(config_file; reload = true)
     record_webui_operation!(operation_log, "config_editor_saved"; route = "/powerflow/config/edit", method = "POST", user_action = true, config_file, backup_path)
     return handle_powerflow_config_editor(config_file; message = "Configuration saved. Backup: $(backup_path)")
   catch err
     record_webui_operation!(operation_log, "config_editor_save_failed"; route = "/powerflow/config/edit", method = "POST", user_action = true, config_file, message = sprint(showerror, err))
-    return handle_powerflow_config_editor(config_file; message = sprint(showerror, err), status = 400)
+    return handle_powerflow_config_editor(config_file; message = _config_editor_error_message(err), status = 400, config_text)
+  finally
+    tmp_path !== nothing && isfile(tmp_path) && rm(tmp_path; force = true)
   end
 end
 function handle_powerflow_result(run_id::AbstractString)::SparlectraWebUIResponse

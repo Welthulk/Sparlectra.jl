@@ -461,13 +461,17 @@ function _validate_allowed_symbol(name::AbstractString, value::Symbol, allowed::
   if !(value in allowed)
     guidance = name == "power_flow.start_mode.voltage_mode" && value === :bus_vm_va_blend ?
       " The former bus_vm_va_blend alias has been removed; use voltage_mode: profile_blend with profile_source: matpower_reference." : ""
-    throw(ArgumentError("$(name) must be one of $(collect(allowed)); got $(value).$(guidance)"))
+    allowed_text = join(string.(allowed), ", ")
+    throw(ArgumentError("Invalid value:\n$(name) = \"$(value)\"\n\nAllowed values:\n$(allowed_text)\n\n$(name) must be one of $(collect(allowed)); got $(value).$(guidance)"))
   end
   return value
 end
 
 function _validate_allowed_symbol(name::AbstractString, value::Symbol, allowed::AbstractVector{Symbol})
-  value in allowed || throw(ArgumentError("$(name) must be one of $(allowed); got $(value)."))
+  if !(value in allowed)
+    allowed_text = join(string.(allowed), ", ")
+    throw(ArgumentError("Invalid value:\n$(name) = \"$(value)\"\n\nAllowed values:\n$(allowed_text)\n\n$(name) must be one of $(allowed); got $(value)."))
+  end
   return value
 end
 
