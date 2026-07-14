@@ -27,6 +27,27 @@ function _write_service_phase_summary(io::IO, phase_timings::AbstractVector)
   return nothing
 end
 
+function _service_total_timing(total_start_ns::UInt64; status::AbstractString = "completed")
+  elapsed = max(0.0, (time_ns() - total_start_ns) / 1.0e9)
+  ended_at = _api_datetime_string(Dates.now(Dates.UTC))
+  return Dict{String,Any}(
+    "phase" => "total_service",
+    "started_at" => nothing,
+    "ended_at" => ended_at,
+    "elapsed_seconds" => isfinite(elapsed) ? elapsed : 0.0,
+    "status" => String(status),
+    "timing_role" => "envelope",
+  )
+end
+
+function _finalize_service_timings!(phase_recorder::PowerFlowPhaseTimingRecorder, total_start_ns::UInt64; status::AbstractString = "completed")
+  _complete_active_phase!(phase_recorder, status)
+  filter!(timing -> get(timing, "phase", "") != "total_service", phase_recorder.timings)
+  push!(phase_recorder.timings, _service_total_timing(total_start_ns; status = status))
+  phase_recorder.active_index = nothing
+  return phase_recorder.timings
+end
+
 function _write_large_case_timing_summary(io::IO, case_path::AbstractString, phase_timings::AbstractVector, result::Union{Nothing,SparlectraRunResult})
   println(io, "Large case timing summary")
   println(io, "-------------------------")

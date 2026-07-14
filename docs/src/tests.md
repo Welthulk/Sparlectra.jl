@@ -42,8 +42,8 @@ julia --project=. -e 'using Pkg; Pkg.test()'
 | `matpower_example` | `test/test_matpower_example.jl` | MATPOWER example runner path, output routing, performance/profile rendering, and runtime configuration forwarding, removed start-voltage alias rejection, and canonical profile-blend parsing |
 | `synthetic_grids` | `test/test_synthetic_grids.jl` | Synthetic network generation and larger synthetic-grid regression coverage |
 | `configuration_docs` | `test/test_configuration_docs.jl` | Configuration documentation and docs/config consistency checks |
-| `dtf_importer` | `test/extended/test_dtf_importer.jl` | Native DTF/FOR001 parser and direct Net-builder coverage, including voltage-level-index branch conversion, transformer controls, bus-type semantics, and parsed outage metadata |
-| `dtf_for002_validation_example` | `test/extended/test_dtf_for002_validation_example.jl` | Native FOR001/DTF -> `DTFImporter` -> `Net` -> power-flow validation example smoke coverage against FOR002 diagnostics; verifies generated CSV/Markdown artifacts, lightweight default result/concise CLI output, explicit detailed diagnostics mode, and does not invoke the fast suite |
+| `dtf_importer` | `test/extended/test_dtf_importer.jl` | Native DFT parser and direct Net-builder coverage, including voltage-level-index branch conversion, transformer controls, bus-type semantics, and parsed outage metadata |
+| `dtf_for002_validation_example` | `test/extended/test_dtf_for002_validation_example.jl` | Native DFT -> `DTFImporter` -> `Net` -> power-flow validation example smoke coverage against FOR002 diagnostics; verifies generated CSV/Markdown artifacts, lightweight default result/concise CLI output, explicit detailed diagnostics mode, and does not invoke the fast suite |
 | `dtf_matpower_export_validation_example` | `test/extended/test_dtf_matpower_export_validation_example.jl` | DTF -> `Sparlectra.Net` -> existing `writeMatpowerCasefile` -> MATPOWER import roundtrip validation for the Testnetz13 base case and DTF-listed outages |
 
 ## Native DTF/FOR002 validation examples
@@ -60,13 +60,13 @@ substituting unrelated data or claiming that validation was executed.
 Run the base-case validation with:
 
 ```bash
-julia --project=. examples/validate_dtf_for002_testnetz13.jl --dtf-file=data/DTF/FOR001.DAT --for002-file=data/DTF/FOR002.DAT --output-dir=examples/_out/dtf_for002_native_validation --write-csv=true --write-markdown=true
+julia --project=. examples/validate_dtf_for002_testnetz13.jl --dtf-file=data/DFT.DAT --for002-file=data/DTF/FOR002.DAT --output-dir=examples/_out/dtf_for002_native_validation --write-csv=true --write-markdown=true
 ```
 
 Run the outage validation with:
 
 ```bash
-julia --project=. examples/validate_dtf_for002_outages_testnetz13.jl --dtf-file=data/DTF/FOR001.DAT --for002-file=data/DTF/FOR002.DAT --output-dir=examples/_out/dtf_for002_native_outages --write-csv=true --write-markdown=true
+julia --project=. examples/validate_dtf_for002_outages_testnetz13.jl --dtf-file=data/DFT.DAT --for002-file=data/DTF/FOR002.DAT --output-dir=examples/_out/dtf_for002_native_outages --write-csv=true --write-markdown=true
 ```
 
 Each command writes concise console output plus CSV and Markdown files in the requested `--output-dir`. The Markdown files summarize the run, while CSV files keep row-level bus, generator, branch, KCL, state-residual, and metric diagnostics.
@@ -80,7 +80,7 @@ Sparlectra result. Its required path is
 does not use FOR002 as the primary roundtrip reference. Run it with:
 
 ```bash
-julia --project=. examples/validate_dtf_matpower_export_testnetz13.jl --dtf-file=data/DTF/FOR001.DAT --for002-file=data/DTF/FOR002.DAT --output-dir=examples/_out/dtf_matpower_export_testnetz13 --write-csv=true --write-markdown=true --write-matpower=true --run-outages=true
+julia --project=. examples/validate_dtf_matpower_export_testnetz13.jl --dtf-file=data/DFT.DAT --for002-file=data/DTF/FOR002.DAT --output-dir=examples/_out/dtf_matpower_export_testnetz13 --write-csv=true --write-markdown=true --write-matpower=true --run-outages=true
 ```
 
 The command writes `dtf_matpower_export_summary.md`,
@@ -113,10 +113,10 @@ Important metrics:
 
 Current Testnetz13 interpretation:
 
-- Branch-flow deviations are small and are the strongest validation signal for the native DTF path.
+- Branch-flow deviations are small and are the strongest validation signal for the native DFT path.
 - Slack Q is solved by the power flow and should not be compared with the specified input Q as if it were fixed.
 - State residuals are diagnostic, not hard pass/fail criteria; they are sensitive to FOR002 rounding and transformer-adjacent bus voltage/angle differences.
-- Outage validation currently executes only the outages listed in FOR001/DTF.
+- Outage validation currently executes only the outages listed in DFT.
 - FOR002 may contain more outage blocks than FOR001 lists; unmatched FOR002 blocks are treated as reference text, not executed scenarios.
 
 ## Offline and runtime expectations
@@ -211,11 +211,11 @@ Julia's final `Test Summary` remains unchanged and visible at the end.
 The rectangular convergence and Q-limit active-set diagnostic block is not printed in normal test runs.
 Those diagnostics remain available only through explicit diagnostic requests (for example solver `verbose > 0` paths used during focused debugging).
 
-## Experimental/internal DTF/FOR001 Web/API input path
+## Experimental/internal DFT Web/API input path
 
-The PowerFlow service and Web UI include an experimental/internal DTF/FOR001 input path for diagnostics and validation. This path is deliberately cautious and is not yet announced as a public supported file format. Use `case_format = :dtf_for001` for explicit native input, or `case_format = :auto` only when the FOR001 markers are unambiguous; ambiguous `.DAT` files are rejected instead of being silently interpreted.
+The PowerFlow service and Web UI include an experimental/internal DFT input path for diagnostics and validation. This path is deliberately cautious and is not yet announced as a public supported file format. Use `case_format = :dtf_for001` for explicit native input, or `case_format = :auto` only when the FOR001 markers are unambiguous; ambiguous `.DAT` files are rejected instead of being silently interpreted.
 
-The native API path uses `DTFImporter.read_dtf` -> `DTFImporter.build_net` -> `Sparlectra.Net` -> `run_sparlectra`/`runpf!` and does not solve through a MATPOWER intermediate conversion. The Web UI places the selector in the advanced/internal **Input format** section with the cautious label "DTF/FOR001 diagnostics (experimental/internal)". FOR002 is treated as a reference/result file rather than a runnable input case: FOR002-like `.DAT` files are hidden from the primary case selector, can be selected or typed as an optional FOR002 reference file when available in the case cache, and must not be auto-paired with FOR001. DTF-listed outages can be requested explicitly as all outages or selected outage labels/indices; the default remains base-case-only.
+The native API path uses `DTFImporter.read_dtf` -> `DTFImporter.build_net` -> `Sparlectra.Net` -> `run_sparlectra`/`runpf!` and does not solve through a MATPOWER intermediate conversion. The Web UI places the selector in the advanced/internal **Input format** section with the cautious label "DFT diagnostics (experimental/internal)". FOR002 is treated as a reference/result file rather than a runnable input case: FOR002-like `.DAT` files are hidden from the primary case selector, can be selected or typed as an optional FOR002 reference file when available in the case cache, and must not be auto-paired with FOR001. DTF-listed outages can be requested explicitly as all outages or selected outage labels/indices; the default remains base-case-only.
 
 Generated artifacts use the existing PowerFlow run artifact mechanism. Stable DTF artifact names include `dtf_import_summary.md`, `dtf_import_summary.csv`, `dtf_for002_base_comparison.md`, `dtf_for002_base_metrics.csv`, `dtf_native_matpower_export.m`, and per-outage files such as `dtf_outage_1_summary.md` and `dtf_outage_1_metrics.csv`.
 

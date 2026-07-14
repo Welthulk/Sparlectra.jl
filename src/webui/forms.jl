@@ -40,7 +40,7 @@ end
 
 Return sorted user-selectable case filenames from the Web UI application's
 `data/mpower` directory. The selector stays conservative: MATPOWER `.m` files
-and copied internal DTF/FOR001 `.DAT` candidates are shown, while generated
+and copied internal DFT `.DAT` candidates are shown, while generated
 Julia cache artifacts, warm-up cases, result artifacts, and sidecar profiles
 stay hidden. Missing or empty directories produce an empty list.
 """
@@ -67,6 +67,33 @@ end
 
 _webui_supported_upload_case_extension(name::AbstractString)::Bool = lowercase(splitext(basename(String(name)))[2]) in (".m", ".dat")
 
+function _webui_classify_dat_content(path::AbstractString)::Symbol
+  lowercase(splitext(path)[2]) == ".dat" || return :not_dat
+  text = try
+    read(path, String)
+  catch
+    return :unknown_dat
+  end
+  lines = split(text, '\n')
+  stripped = [strip(line) for line in lines if !isempty(strip(line))]
+  has_outages = any(==("AUSFALL"), stripped) && any(==("ENDE"), stripped)
+  has_size_card = length(stripped) >= 7 && length(split(stripped[7])) >= 4 &&
+    all(token -> tryparse(Float64, token) !== nothing, split(stripped[7])[1:4])
+  has_branch = any(line -> startswith(line, "L") || startswith(line, "T"), stripped)
+  has_bus = any(line -> startswith(line, "K"), stripped)
+  has_network = has_size_card && has_branch && has_bus
+  has_network && has_outages && return :dft_network_case_with_outages
+  has_network && return :dft_network_case
+  if has_outages || _is_for002_reference_dat(path) || occursin(r"(?i)(for002|reference|ausfall|outage|vergleich|result)", text)
+    return :dft_outage_or_reference
+  end
+  return :unknown_dat
+end
+
+_webui_dat_role_label(role::Symbol)::String = replace(String(role), '_' => ' ')
+
+_webui_is_runnable_dat_role(role::Symbol)::Bool = role in (:dft_network_case, :dft_network_case_with_outages)
+
 """
     _webui_is_user_selectable_case(name) -> Bool
 
@@ -83,14 +110,18 @@ function _webui_is_user_selectable_case(name::AbstractString)::Bool
   startswith(lowered_name, "warmup_") && extension in (".m", ".jl") && return false
   extension == ".jl" && return false
   extension in (".m", ".dat") || return false
-  _is_for002_reference_dat(name) && return false
+  if extension == ".dat"
+    isfile(name) || return !_is_for002_reference_dat(name)
+    return _webui_is_runnable_dat_role(_webui_classify_dat_content(name))
+  end
   return true
 end
 
 function _webui_casefile_options_in_directory(directory::AbstractString)::Vector{String}
   isdir(directory) || return String[]
   files = filter(readdir(directory)) do name
-    return isfile(joinpath(directory, name)) && _webui_is_user_selectable_case(name)
+    path = joinpath(directory, name)
+    return isfile(path) && _webui_is_user_selectable_case(path)
   end
   return sort!(files; by = lowercase)
 end
@@ -98,7 +129,8 @@ end
 function _webui_for002_reference_options_in_directory(directory::AbstractString)::Vector{String}
   isdir(directory) || return String[]
   files = filter(readdir(directory)) do name
-    return isfile(joinpath(directory, name)) && _is_for002_reference_dat(name)
+    path = joinpath(directory, name)
+    return isfile(path) && lowercase(splitext(name)[2]) == ".dat" && !_webui_is_runnable_dat_role(_webui_classify_dat_content(path))
   end
   return sort!(files; by = lowercase)
 end

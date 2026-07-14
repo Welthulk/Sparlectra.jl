@@ -196,7 +196,7 @@ const WEBUI_DOC_PAGES = Dict(
   "q_limit_switching_strategy" => (title = "Q-limit Switching Strategy", file = "q_limit_switching_strategy.md"),
   "performance_profiling" => (title = "Performance and Profiling Configuration", file = "performance_profiling.md"),
   "matpower_format" => (title = "MATPOWER format", file = "matpower_format.md"),
-  "for001_dtf_format" => (title = "FOR001 / DTF legacy input format", file = "for001_dtf_format.md"),
+  "dft_format" => (title = "DFT legacy input format", file = "dft_format.md"),
   "matpower_import" => (title = "MATPOWER Import", file = "matpower_import.md"),
   "webui" => (title = "Local PowerFlow Web UI", file = "webui.md"),
   "feature_matrix" => (title = "Feature Matrix", file = "feature_matrix.md"),

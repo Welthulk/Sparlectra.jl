@@ -87,6 +87,7 @@ function handle_powerflow_case_import(form::AbstractDict; output_root::AbstractS
   mkpath(directory)
   uploads = _webui_case_import_uploads(form)
   imported = String[]
+  imported_roles = Dict{String,String}()
   rejected = Pair{String,String}[]
   if _webui_form_value(form, "case_import_request_oversized", "false") == "true"
     push!(rejected, "request" => "oversized")
@@ -118,20 +119,23 @@ function handle_powerflow_case_import(form::AbstractDict; output_root::AbstractS
     try
       _webui_write_import_file_atomic(destination, upload.data)
       push!(imported, name)
+      role = lowercase(splitext(name)[2]) == ".dat" ? _webui_dat_role_label(_webui_classify_dat_content(destination)) : "matpower_case"
+      imported_roles[name] = role
     catch
       push!(rejected, name => "write failure")
     end
   end
   selected = ""
   for name in imported
-    if _webui_is_user_selectable_case(name)
+    if _webui_is_user_selectable_case(joinpath(directory, name))
       selected = name
       break
     end
   end
   record_webui_operation!(operation_log, "case_import_completed"; route = "/powerflow/import-cases", method = "POST", user_action = true, selected_count = length(uploads), imported_count = length(imported), rejected_count = length(rejected), imported, rejected = ["$(first(item)): $(last(item))" for item in rejected])
   query = isempty(selected) ? "" : "?casefile=$(_webui_urlencode(selected))"
-  message = _webui_urlencode(_webui_case_import_message(imported, rejected))
+  display_imported = ["$(name) ($(get(imported_roles, name, "unknown")))" for name in imported]
+  message = _webui_urlencode(_webui_case_import_message(display_imported, rejected))
   separator = isempty(query) ? "?" : "&"
   return _webui_redirect("/powerflow$(query)$(separator)import_message=$(message)")
 end

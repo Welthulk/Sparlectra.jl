@@ -279,7 +279,7 @@ writeMatpowerCasefile(net, output_path)
 
 ## Web UI case-file import
 
-The local Web UI can copy downloaded case files into its case storage from the PowerFlow page. Use **Import case files** to open the browser's native picker, choose one or more MATPOWER `.m`/`.M` files or DTF/FOR001 `.dat`/`.DAT` files, and submit the import form. The import form is separate from **Start PowerFlow run**: uploading files only stores them and refreshes the selector; it does not parse uploaded MATPOWER code or start a calculation.
+The local Web UI can copy downloaded case files into its case storage from the PowerFlow page. Use **Import case files** to open the browser's native picker, choose one or more MATPOWER `.m`/`.M` files or DFT `.dat`/`.DAT` files, and submit the import form. The import form is separate from **Start PowerFlow run**: uploading files only stores them and refreshes the selector; it does not parse uploaded MATPOWER code or start a calculation.
 
 Imported files go to the same effective case directory used by the Web UI case selector. In a writable repository checkout this is the Web UI `data/mpower` case directory; in installed-package or restricted launch contexts the Web UI uses its user-writable application data `data/mpower` directory next to the run output root. The manual full-path field remains available for advanced workflows.
 
