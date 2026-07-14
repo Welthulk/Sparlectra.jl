@@ -14,6 +14,15 @@ Profile selection precedence is:
 | `extended` | `julia --project=. test/runtests.jl extended` | Fast + integration/heavier tests | Before merge and after configuration, MATPOWER, or integration changes |
 | `all` | `julia --project=. test/runtests.jl all` | Currently alias for `extended` | Reserved for future all-only suites and CI matrix clarity |
 
+## Fast versus extended ownership
+
+| Area | Fast coverage | Extended coverage |
+|---|---|---|
+| Core/model | Small constructors, transformer checks, bus/prosumer semantics, link behavior, representative rectangular PF/Q-limit regressions, and small sparse fallbacks. | Large sparse Ybus smoke, large MATPOWER matrix-body scanner, synthetic/stress grids, and longer integration examples. |
+| API | Serialization helpers, path safety, one successful small run, one pre-solver failure, one numerical/island failure, solver/total timing contracts, and critical DC-line mode smokes. | Exhaustive CSV/export matrices, repeated artifact inventories, island artifact-content matrices, persistent history/delete/reload lifecycle coverage, and repeated presentation/performance-log modes. |
+| Web UI | Pure form parsing, backend validation, rendering/timing cards, path traversal rejection, DFT role classification, selector filtering, and stubbed route smoke coverage without real solver jobs. | Case-profile persistence with asynchronous jobs, real run/result polling, artifact preview/download/ZIP/history/delete lifecycle checks, browser-launcher matrices, socket/server lifecycle, and Markdown/help/documentation cross-products. |
+| Documentation/hygiene | No repository-wide documentation/help scan in fast; only focused source-level smoke checks tied to edited paths. | Configuration documentation consistency and normalized tracked-path/content repository hygiene scans. |
+
 `Pkg.test()` uses the same test runner and therefore the default `fast` profile unless `SPARLECTRA_TEST_PROFILE` is set:
 
 ```bash

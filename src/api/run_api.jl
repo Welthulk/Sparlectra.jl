@@ -741,6 +741,7 @@ function _run_sparlectra_api(;
     island_message = _islandwise_failure_message(api_performance_profile)
     message = island_message === nothing ? sprint(showerror, err, catch_backtrace()) : island_message
     reason = get(phase_recorder.timings[phase_recorder.active_index === nothing ? length(phase_recorder.timings) : phase_recorder.active_index], "phase", "") == "loading_julia_case" ? "loading_julia_case_failed" : "execution_error"
+    solver_elapsed_s = _solver_elapsed_from_profile(api_performance_profile)
     metadata = island_message === nothing ? Dict{String,Any}() : Dict{String,Any}(
       "solver_status" => "failed",
       "service_status" => "failed",
@@ -748,6 +749,7 @@ function _run_sparlectra_api(;
       "numerical_status" => "not_converged",
       "last_phase" => "solving_powerflow",
     )
+    solver_elapsed_s === nothing || (metadata["solver_elapsed_s"] = solver_elapsed_s)
     return _api_execution_failure(reason, message; run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file, phase_recorder, performance_timing, total_start_ns = total_start, metadata = metadata)
   end
   end

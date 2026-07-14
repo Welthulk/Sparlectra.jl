@@ -32,6 +32,8 @@ end
 
 function include_extended_tests()
   include("testgrid.jl")
+  include("test_api_extended.jl")
+  include("test_webui_extended.jl")
   include("testremove.jl")
   include("test_pv_voltage_residuals.jl")
   include("test_matpower_example.jl")
@@ -47,12 +49,12 @@ function run_fast_profile_tests()
     return Base.invokelatest(runner)
   end
   groups = [
-    ("core_model", () -> run_entry(:run_grid_tests)),
+    ("core_model", () -> run_entry(:run_grid_fast_tests)),
     ("powerflow_rectangular", () -> run_entry(:run_solver_interface_tests)),
     ("configuration", () -> run_entry(:run_configuration_coverage_tests)),
     ("matpower_metadata", () -> run_entry(:run_matpower_metadata_tests)),
-    ("programmatic_api", () -> run_entry(:run_api_tests)),
-    ("webui", () -> run_entry(:run_webui_tests)),
+    ("programmatic_api", () -> run_entry(:run_api_fast_tests)),
+    ("webui", () -> run_entry(:run_webui_fast_tests)),
     ("state_estimation", () -> run_entry(:run_state_estimation_tests)),
     ("controls", () -> begin
       run_entry(:run_voltage_dependent_control_tests)
@@ -75,6 +77,9 @@ function run_extended_profile_tests()
   end
   groups = [
     ("legacy/remove", () -> run_entry(:run_remove_tests)),
+    ("core_model_extended", () -> run_entry(:run_grid_extended_tests)),
+    ("programmatic_api_extended", () -> run_entry(:run_api_extended_tests)),
+    ("webui_extended", () -> run_entry(:run_webui_extended_tests)),
     ("pv_voltage_residuals", () -> run_entry(:run_pv_voltage_residual_tests)),
     ("matpower_examples", () -> run_entry(:run_matpower_example_tests)),
     ("synthetic_grids", () -> run_entry(:run_synthetic_grid_tests)),

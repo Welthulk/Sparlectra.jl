@@ -130,7 +130,7 @@ function _webui_for002_reference_options_in_directory(directory::AbstractString)
   isdir(directory) || return String[]
   files = filter(readdir(directory)) do name
     path = joinpath(directory, name)
-    return isfile(path) && lowercase(splitext(name)[2]) == ".dat" && !_webui_is_runnable_dat_role(_webui_classify_dat_content(path))
+    return isfile(path) && lowercase(splitext(name)[2]) == ".dat" && _webui_classify_dat_content(path) === :dft_outage_or_reference
   end
   return sort!(files; by = lowercase)
 end

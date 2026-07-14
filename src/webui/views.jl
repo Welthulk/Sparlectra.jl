@@ -92,6 +92,36 @@ function _webui_elapsed_seconds(result::AbstractDict, active::Bool)
   return max(0.0, Dates.value(Dates.now(Dates.UTC) - started) / 1000)
 end
 
+function _webui_phase_elapsed_seconds(result::AbstractDict, phase::AbstractString)
+  timings = get(result, "service_phase_timings", Any[])
+  timings isa AbstractVector || return nothing
+  for timing in timings
+    timing isa AbstractDict || continue
+    get(timing, "phase", "") == phase || continue
+    elapsed = get(timing, "elapsed_seconds", nothing)
+    elapsed === nothing && return nothing
+    parsed = elapsed isa Number ? Float64(elapsed) : tryparse(Float64, string(elapsed))
+    return parsed !== nothing && isfinite(parsed) ? max(0.0, parsed) : nothing
+  end
+  return nothing
+end
+
+function _webui_solver_elapsed_seconds(result::AbstractDict)
+  elapsed = get(result, "solver_elapsed_s", get(get(result, "metadata", Dict{String,Any}()), "solver_elapsed_s", nothing))
+  elapsed === nothing && return nothing
+  parsed = elapsed isa Number ? Float64(elapsed) : tryparse(Float64, string(elapsed))
+  return parsed !== nothing && isfinite(parsed) ? max(0.0, parsed) : nothing
+end
+
+function _webui_total_elapsed_seconds(result::AbstractDict)
+  total = _webui_phase_elapsed_seconds(result, "total_service")
+  total !== nothing && return total
+  elapsed = get(result, "elapsed_seconds", nothing)
+  elapsed === nothing && return nothing
+  parsed = elapsed isa Number ? Float64(elapsed) : tryparse(Float64, string(elapsed))
+  return parsed !== nothing && isfinite(parsed) ? max(0.0, parsed) : nothing
+end
+
 function _webui_layout(title::AbstractString, content::AbstractString; show_back::Bool = false, main_class::AbstractString = "page", refresh_url = nothing, refresh_seconds::Integer = WEBUI_STATUS_AUTO_REFRESH_SECONDS, header_info::AbstractString = "")::String
   back_button = show_back ? "<div class=\"page-toolbar\"><a class=\"button back-button\" href=\"/powerflow\" onclick=\"if (document.referrer.startsWith(location.origin)) { history.back(); return false; }\" aria-label=\"Go back to the previous page\">← Back</a></div>" : ""
   version_text = "Sparlectra.jl v$(version())"
@@ -601,9 +631,16 @@ function render_powerflow_result(result::AbstractDict)::String
   status = lowercase(string(get(result, "status", "unknown")))
   active = status in _WEBUI_ACTIVE_RUN_STATUSES
   status_badge = "<span class=\"status-badge $(webui_status_class(result))\">$(_webui_escape(status))</span>"
-  elapsed_duration = _format_elapsed_duration(_webui_elapsed_seconds(result, active))
-  summary_rows = (("Run status", status_badge), ("Elapsed time", "<strong>$(_webui_escape(elapsed_duration))</strong>"))
-  result_summary = "<div class=\"result-summary\">" * join(("<div$(label == "Elapsed time" ? " class=\"runtime-card\"" : "")><span class=\"summary-label\">$(label)</span>$(value)</div>" for (label, value) in summary_rows), "") * "</div>"
+  summary_rows = if active
+    (("Run status", status_badge), ("Elapsed time", "<strong>$(_webui_escape(_format_elapsed_duration(_webui_elapsed_seconds(result, active))))</strong>"))
+  else
+    base = [("Run status", status_badge)]
+    solver_elapsed = _webui_solver_elapsed_seconds(result)
+    solver_elapsed === nothing || push!(base, ("Solver time", "<strong>$(_webui_escape(_format_elapsed_duration(solver_elapsed)))</strong>"))
+    push!(base, ("Total time", "<strong>$(_webui_escape(_format_elapsed_duration(_webui_total_elapsed_seconds(result))))</strong>"))
+    Tuple(base)
+  end
+  result_summary = "<div class=\"result-summary\">" * join(("<div$(label in ("Elapsed time", "Solver time", "Total time") ? " class=\"runtime-card\"" : "")><span class=\"summary-label\">$(label)</span>$(value)</div>" for (label, value) in summary_rows), "") * "</div>"
   abort_form = status in ("queued", "running") ? "<form method=\"post\" action=\"/powerflow/abort/$(_webui_urlencode(run_id))\"><button type=\"submit\" class=\"danger-button\">Abort run</button></form>" : ""
   active_hint = active ? "<p class=\"status-refresh-hint\">This page refreshes automatically while the run is active.</p>" : ""
   abort_hint = status == "aborting" ? "<p>Aborting requested. Current phase: <code>$(_webui_escape(get(result, "current_phase", "unknown")))</code>.</p><p>This phase may need to finish before cancellation is observed.</p>" : ""

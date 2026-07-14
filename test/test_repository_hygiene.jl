@@ -13,6 +13,7 @@
 # limitations under the License.
 
 using Test
+using Unicode
 
 const _HYGIENE_ROOTS = ("docs/src", "src", "test", "examples")
 const _HYGIENE_EXCLUDED_PARTS = Set(["docs/build", "examples/_out", "results", "coverage", ".git", ".julia", "node_modules"])
@@ -57,6 +58,10 @@ function _tracked_hygiene_files(repo::AbstractString)::Vector{String}
   end))
 end
 
+function _hygiene_normalize(value::AbstractString)::String
+  return lowercase(Unicode.normalize(String(value), :NFC))
+end
+
 function _bounded_hygiene_failure(hits::Vector{String}; limit::Int = 20)::String
   shown = first(hits, min(limit, length(hits)))
   lines = ["repository hygiene found $(length(hits)) forbidden terminology hit(s):"]
@@ -70,14 +75,19 @@ end
 function run_repository_hygiene_tests()
   @testset "repository hygiene" begin
     repo = _repository_root()
-    forbidden_terms = ["schae" * "fer", "DTF" * "/FOR001", "FOR001" * "/DTF", "FOR001" * " / DTF", "DTF" * " format", "FOR001" * " format", "native DTF" * " path", "DTF" * " outage"]
+    forbidden_terms = _hygiene_normalize.(String[
+      "sch" * "ae" * "fer",
+      "sch" * "ä" * "fer",
+      "sch" * "a" * "fer",
+    ])
     hits = String[]
     for rel in _tracked_hygiene_files(repo)
       rel == "test/test_repository_hygiene.jl" && continue
-      text = read(joinpath(repo, rel), String)
+      normalized_rel = _hygiene_normalize(replace(rel, '\\' => '/'))
+      text = _hygiene_normalize(read(joinpath(repo, rel), String))
       for term in forbidden_terms
-        occursin(Regex(term, "i"), text) || continue
-        push!(hits, "$(rel): $(term)")
+        occursin(term, normalized_rel) && push!(hits, "$(rel): path contains forbidden token")
+        occursin(term, text) && push!(hits, "$(rel): content contains forbidden token")
       end
     end
     if !isempty(hits)

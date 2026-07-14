@@ -56,14 +56,7 @@ function _execute_sparlectra_powerflow!(net::Net, cfg::SparlectraConfig; perform
       rethrow()
     end
   end
-  timings = performance_profile isa AbstractDict ? get(performance_profile, :timings, nothing) : nothing
-  row = timings isa AbstractDict ? get(timings, :solver_total, nothing) : nothing
-  solver_elapsed_s = row isa NamedTuple && hasproperty(row, :elapsed_s) ? max(0.0, Float64(row.elapsed_s)) : nothing
-  if solver_elapsed_s === nothing && performance_profile isa AbstractDict && haskey(performance_profile, :solver_total)
-    legacy_row = performance_profile[:solver_total]
-    solver_elapsed_s = legacy_row isa NamedTuple && hasproperty(legacy_row, :elapsed_s) ? max(0.0, Float64(legacy_row.elapsed_s)) :
-      legacy_row isa Number ? max(0.0, Float64(legacy_row)) : nothing
-  end
+  solver_elapsed_s = _solver_elapsed_from_profile(performance_profile)
   solver_elapsed_s === nothing && (solver_elapsed_s = max(0.0, Float64(elapsed_s)))
   if cfg.powerflow.islands.enabled
     status = rectangular_pf_status(net)

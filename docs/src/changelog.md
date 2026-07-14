@@ -10,13 +10,16 @@
 * Independent AC-island solving is enabled by default, and per-island diagnostics continue after an individual island failure by default.
 * Added SyntheticUSA case diagnostics documentation for the validated DC-line/island model and robust solver profile.
 * Added server-side validation, safe filename handling, conflict reporting, and per-file import results for Web UI case uploads.
+* Split oversized core, API, and Web UI checks into smaller fast runners plus explicit extended ownership for heavier integration, lifecycle, matrix, and stress coverage.
 
 ### Bug Fixes
 
 * API/Web UI runs now report pure numerical `Solver time` separately from service-envelope `Total time`, with no generic `Wall time` label.
+* Solver-time profiling now records elapsed time in exceptional solver exits so failed API/Web UI runs preserve finite `solver_elapsed_s` when the numerical solver was entered.
 * Large-case summaries use `solver_elapsed_s` and no longer emit misleading `solving_powerflow_seconds`.
 * Test failure output is bounded, fast/extended/all profiles are distinct, generated directories are excluded from repository hygiene checks, and each test group reports elapsed time, allocated MiB, and GC time.
-* `.DAT` upload classification now uses parser-consistent DFT structure, keeping FOR002 references and outage-only or unknown files out of the runnable selector.
+* `.DAT` upload classification now uses parser-consistent DFT structure, keeping FOR002 references and outage-only or unknown files out of the runnable selector and limiting FOR002 reference choices to explicit reference/result files.
+* Repository hygiene now checks normalized tracked contents and paths for personal-name variants while keeping failure output bounded.
 * Failed runs retain their service phase timing records in `result.json` and `performance.log`.
 * The Web UI PowerFlow tolerance increment follows the current value instead of using browser-generic `step="any"` behavior.
 * Tagged or installed builds no longer display `commit unknown`; the commit element is omitted when unavailable.
