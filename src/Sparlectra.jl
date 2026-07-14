@@ -31,14 +31,31 @@ using LinearAlgebra
 using Logging
 using Printf
 using SparseArrays
+using TOML
 
-const MPOWER_DIR = normpath(joinpath(pkgdir(@__MODULE__), "data", "mpower"))
+const SPARLECTRA_ROOT = normpath(joinpath(@__DIR__, ".."))
+const MPOWER_DIR = normpath(joinpath(SPARLECTRA_ROOT, "data", "mpower"))
 
-
-# resource data types for working with Sparlectra
 const Wurzel3 = 1.7320508075688772
-const SparlectraVersion = v"0.8.8"
+
+function _read_project_version()::VersionNumber
+    project_file = joinpath(SPARLECTRA_ROOT, "Project.toml")
+
+    isfile(project_file) ||
+        error("Project.toml wurde nicht gefunden: $project_file")
+
+    project_data = TOML.parsefile(project_file)
+
+    haskey(project_data, "version") ||
+        error("In $project_file fehlt der Eintrag 'version'.")
+
+    return VersionNumber(project_data["version"])
+end
+
+const SparlectraVersion = _read_project_version()
+
 version() = SparlectraVersion
+
 abstract type AbstractBranch end
 
 const _MODULE_DOC = """
