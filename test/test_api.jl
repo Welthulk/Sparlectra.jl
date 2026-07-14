@@ -406,7 +406,7 @@ power_flow:
       @test occursin("Original MATPOWER import options", run_log)
       @test occursin("Final effective MATPOWER import options", run_log)
       @test occursin("matpower_import.auto_profile: recommend", run_log)
-      @test occursin("Wall time   :", run_log)
+      @test occursin("Total time  :", run_log)
       @test occursin("Output time :", run_log)
       @test occursin("Solver time :", run_log)
       @test !occursin("representative_time:", run_log)

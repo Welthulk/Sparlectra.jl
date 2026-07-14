@@ -58,13 +58,15 @@ function _write_large_case_timing_summary(io::IO, case_path::AbstractString, pha
     println(io, "n_bus: ", length(result.net.nodeVec))
     println(io, "n_branch: ", length(result.net.branchVec))
   end
+  if result !== nothing && result.solver_elapsed_s !== nothing
+    println(io, "solver_elapsed_s: ", round(Float64(result.solver_elapsed_s); digits = 6))
+  end
   for (label, phase) in (
     ("reading_matpower_case_seconds", "reading_matpower_case"),
     ("building_sparlectra_net_seconds", "building_sparlectra_net"),
     ("building_ybus_seconds", "building_ybus"),
     ("preparing_start_values_seconds", "preparing_start_values"),
     ("start_projection_seconds", "start_projection"),
-    ("solving_powerflow_seconds", "solving_powerflow"),
     ("artifact_seconds", "writing_artifacts"),
     ("total_service_seconds", "total_service"),
   )

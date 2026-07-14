@@ -1,5 +1,7 @@
 # DFT legacy input format
 
+Sparlectra reports `Solver time` as time spent inside numerical PowerFlow solver invocation(s), while `Total time` is the complete API/Web UI service envelope.
+
 Sparlectra includes a native reader for the legacy DFT files used by the legacy validation Testnetz13 examples. The importer is intended to reproduce the legacy network-model semantics used by the matching FOR002 ground-load-flow reports while preserving source fields for audit and diagnostics.
 
 ## Overview
