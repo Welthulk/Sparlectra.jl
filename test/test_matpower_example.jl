@@ -1,4 +1,5 @@
 using Sparlectra
+using LinearAlgebra
 using Test
 
 function run_matpower_example_tests()

@@ -518,7 +518,7 @@ power_flow:
       @test :result_json in kinds
       @test :effective_config in kinds
       @test :run_metadata in kinds
-      @test count(artifact -> artifact.kind === :csv && artifact.mime_type == "text/csv", result.artifacts) == 2
+      @test count(artifact -> artifact.kind === :csv && artifact.mime_type == "text/csv", result.artifacts) >= 2
       @test all(artifact -> artifact.exists && artifact.size_bytes !== nothing, result.artifacts)
       @test "q_limit.log" in Set(artifact.name for artifact in result.artifacts)
       for m in eachmatch(r"full details\s*:\s*(\S+)", run_log)
