@@ -52,7 +52,7 @@ function _read_project_version()::VersionNumber
     return VersionNumber(project_data["version"])
 end
 
-const SparlectraVersion = _read_project_version()
+const SparlectraVersion = v"0.8.7"
 
 version() = SparlectraVersion
 
