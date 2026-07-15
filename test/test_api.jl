@@ -19,6 +19,9 @@ include("test_api_support.jl")
 
 function run_api_fast_tests()
   @testset "API fast smoke and timing contracts" begin
+    @test Sparlectra.version() == v"0.8.9" &&
+          Sparlectra.version() == Sparlectra._read_project_version()
+
     @testset "profiling wrapper records successes and exceptions" begin
       profile = Dict{Symbol,Any}(:enabled => true)
       @test Sparlectra._perf_profile_time!(profile, :solver_total) do

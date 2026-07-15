@@ -20,6 +20,7 @@
 * Made DFT `.DAT` classification content-aware so only runnable cases and valid FOR002 references appear in the corresponding selectors.
 * Improved the tolerance spinner behavior in the Web UI.
 * Hidden unavailable commit information instead of displaying `commit unknown`.
+* Corrected `Sparlectra.version()` to read `Project.toml` instead of a stale hardcoded constant, completed `dft_extended` test-profile ownership of the DFT test suite, and removed a duplicate obsolete Config Editor implementation left over from the merge.
 
 # Version 0.8.8 — 2026-07-14
 
