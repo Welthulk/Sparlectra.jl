@@ -2,8 +2,6 @@ using Sparlectra
 using Test
 using Logging
 
-include("test_runner_helpers.jl")
-
 function _leaf_paths(x; prefix = "")
   paths = String[]
   if x isa AbstractDict
