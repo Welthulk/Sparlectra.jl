@@ -140,6 +140,58 @@ function handle_powerflow_case_import(form::AbstractDict; output_root::AbstractS
   return _webui_redirect("/powerflow$(query)$(separator)import_message=$(message)")
 end
 
+"""
+Resolve a manually typed case reference (a bare MATPOWER case name to download,
+or a full local path to copy) into the case cache directory, without starting
+a PowerFlow run. The resolved file then appears in the "choose existing case"
+selector, mirroring `handle_powerflow_case_import` for typed rather than
+uploaded cases.
+"""
+function handle_powerflow_case_resolve(form::AbstractDict; output_root::AbstractString = "results/powerflow_service", application_root::AbstractString = _webui_application_root(), case_directory::Union{Nothing,AbstractString} = nothing, operation_log::AbstractString = output_root, max_file_bytes::Integer = WEBUI_CASE_IMPORT_MAX_FILE_BYTES)::SparlectraWebUIResponse
+  directory = _webui_case_directory(; case_directory, application_root, output_root)
+  mkpath(directory)
+  manual_value = strip(String(something(_webui_form_value(form, "casefile_manual", ""), "")))
+  if isempty(manual_value)
+    message = _webui_urlencode("Enter a case name or path before resolving.")
+    return _webui_redirect("/powerflow?import_message=$(message)")
+  end
+  resolved_name = ""
+  error_text = ""
+  try
+    if occursin(r"[\\/]", manual_value)
+      # Full/relative path: must already exist locally; copy it into the case
+      # cache directory using the same validation as file-upload import.
+      isfile(manual_value) || error("case file not found: $(manual_value)")
+      name, reason = _webui_sanitize_upload_filename(basename(manual_value))
+      isempty(reason) || error("invalid filename ($(reason))")
+      _webui_supported_upload_case_extension(name) || error("unsupported extension")
+      destination = normpath(joinpath(directory, name))
+      root = string(normpath(directory), Base.Filesystem.path_separator)
+      (destination == normpath(joinpath(directory, basename(destination))) && startswith(string(destination, Base.Filesystem.path_separator), root)) || error("invalid filename")
+      if normpath(manual_value) != destination
+        ispath(destination) && error("a case named $(name) already exists in the case directory")
+        filesize(manual_value) <= max_file_bytes || error("case file too large")
+        _webui_write_import_file_atomic(destination, read(manual_value))
+      end
+      resolved_name = name
+    else
+      # Bare MATPOWER case name: download into the case cache directory.
+      resolved_path = ensure_casefile(manual_value; outdir = directory)
+      resolved_name = basename(resolved_path)
+    end
+  catch err
+    error_text = sprint(showerror, err)
+  end
+  if isempty(error_text)
+    record_webui_operation!(operation_log, "case_resolve_completed"; route = "/powerflow/resolve-case", method = "POST", user_action = true, requested = manual_value, resolved = resolved_name)
+    message = _webui_urlencode("Resolved case: $(resolved_name)")
+    return _webui_redirect("/powerflow?casefile=$(_webui_urlencode(resolved_name))&import_message=$(message)")
+  end
+  record_webui_operation!(operation_log, "case_resolve_failed"; route = "/powerflow/resolve-case", method = "POST", user_action = true, requested = manual_value, message = error_text)
+  message = _webui_urlencode("Could not resolve case '$(manual_value)': $(error_text)")
+  return _webui_redirect("/powerflow?import_message=$(message)")
+end
+
 """Run a PowerFlow request through the Web UI form-to-service boundary."""
 function handle_powerflow_run(form::AbstractDict; default_output_root::AbstractString = "results/powerflow_service", application_root::AbstractString = _webui_application_root(), case_directory::Union{Nothing,AbstractString} = nothing, runner = start_powerflow_run, operation_log::AbstractString = default_output_root)::Dict{String,Any}
   request = powerflow_webui_request(form; default_output_root = default_output_root)

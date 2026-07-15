@@ -28,7 +28,7 @@ makedocs(
     "Power-Flow Configuration" => "powerflow_configuration.md",
     "Q-limit Switching Strategy" => "q_limit_switching_strategy.md",
     "MATPOWER Format" => "matpower_format.md",
-    "DFT Format" => "dft_format.md",
+    "DTF Format" => "dtf_format.md",
     "MATPOWER Import Configuration" => "matpower_import.md",
     "State-Estimation Configuration" => "state_estimation_configuration.md",
     "Performance and Profiling" => "performance_profiling.md",

@@ -16,7 +16,7 @@ using Printf
 using SparseArrays
 
 # Developer notes:
-# - Shared helpers validate native Testnetz13 DFT/FOR002 examples.
+# - Shared helpers validate native Testnetz13 DTF/FOR002 examples.
 # - The intended path is DTFImporter.read_dtf -> DTFImporter.build_net -> runpf!;
 #   MATPOWER import/export and the generated FOR001 builder are intentionally bypassed.
 # - FOR002 is a legacy textual reference report, not a machine-stable schema.

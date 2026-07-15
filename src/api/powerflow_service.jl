@@ -41,7 +41,7 @@ _matpower_cache_jl_bypass_reason() = "generated_jl_cache_hidden_from_webui"
 
 _is_for002_reference_dat(path::AbstractString)::Bool = occursin(r"^for002.*\.dat$"i, basename(strip(String(path))))
 
-_for002_primary_case_message() = "FOR002.DAT is a reference/result file and cannot be used as the primary DFT network input case. Use a runnable DFT network case as the case and enter FOR002.DAT as optional FOR002 reference file."
+_for002_primary_case_message() = "FOR002.DAT is a reference/result file and cannot be used as the primary DTF network input case. Use a runnable DTF network case as the case and enter FOR002.DAT as optional FOR002 reference file."
 
 function _canonical_matpower_source_for_webui(path::AbstractString, case_directory::AbstractString)::String
   case_path = abspath(path)
@@ -71,7 +71,7 @@ function _resolve_powerflow_casefile(
   if isfile(requested)
     if extension == ".dat"
       role = _webui_classify_dat_content(requested)
-      _webui_is_runnable_dat_role(role) || throw(ArgumentError("$(basename(requested)) is a $(_webui_dat_role_label(role)) file and cannot be used as the primary PowerFlow case. Choose a runnable DFT network case."))
+      _webui_is_runnable_dat_role(role) || throw(ArgumentError("$(basename(requested)) is a $(_webui_dat_role_label(role)) file and cannot be used as the primary PowerFlow case. Choose a runnable DTF network case."))
       return abspath(requested)
     end
     return _canonical_matpower_source_for_webui(requested, case_directory)
@@ -94,7 +94,7 @@ function _resolve_powerflow_casefile(
     local_dat = joinpath(trusted_directory, requested)
     if isfile(local_dat)
       role = _webui_classify_dat_content(local_dat)
-      _webui_is_runnable_dat_role(role) || throw(ArgumentError("$(requested) is a $(_webui_dat_role_label(role)) file and cannot be used as the primary PowerFlow case. Choose a runnable DFT network case."))
+      _webui_is_runnable_dat_role(role) || throw(ArgumentError("$(requested) is a $(_webui_dat_role_label(role)) file and cannot be used as the primary PowerFlow case. Choose a runnable DTF network case."))
       return abspath(local_dat)
     end
     throw(ArgumentError("Case file not found: $(requested)"))

@@ -18,7 +18,7 @@ using Printf
 include(joinpath(@__DIR__, "dtf_for002_validation_utils.jl"))
 
 # Developer notes:
-# - Validates the native Testnetz13 DFT base case against FOR002.
+# - Validates the native Testnetz13 DTF base case against FOR002.
 # - The intentional execution path is DTFImporter.read_dtf -> DTFImporter.build_net -> runpf!.
 # - MATPOWER import/export and the generated FOR001 builder are intentionally not used.
 # - FOR002 is treated as a legacy textual reference report.

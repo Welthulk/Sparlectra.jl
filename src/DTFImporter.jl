@@ -27,7 +27,7 @@ function _normalize_transformer_ratio_mode(mode)::Symbol
   return sym
 end
 
-"""Native DFT importer parameter card values preserved for auditing."""
+"""Native DTF importer parameter card values preserved for auditing."""
 struct DTFParams
   raw::String
   values::Vector{Float64}
@@ -174,16 +174,16 @@ end
 dtf_branch_key(x) = (kind = x.kind, voltage_level_index = x.voltage_level_index,
   parallel_id = uppercase(strip(x.parallel_id)), from = _norm_name(x.from), to = _norm_name(x.to))
 
-"""Return a concise human-readable DFT outage label."""
+"""Return a concise human-readable DTF outage label."""
 outage_label(o::DTFOutage) = string(o.kind, o.voltage_level_index, o.parallel_id, " ", o.from, " -> ", o.to)
 
-"""Find native branch indices matching a DFT outage card with strict parallel-branch keys."""
+"""Find native branch indices matching a DTF outage card with strict parallel-branch keys."""
 function find_outage_branch_indices(case::DTFCase, outage::DTFOutage)::Vector{Int}
   key = dtf_branch_key(outage)
   return [i for (i, br) in enumerate(case.branches) if dtf_branch_key(br) == key]
 end
 
-"""Build a clear diagnostic for missing or ambiguous DFT outage branch matches."""
+"""Build a clear diagnostic for missing or ambiguous DTF outage branch matches."""
 function outage_match_diagnostic(case::DTFCase, outage::DTFOutage, matches::Vector{Int}=find_outage_branch_indices(case, outage))
   if isempty(matches)
     return "No native DTF branch matches outage $(outage_label(outage)); key=$(dtf_branch_key(outage))"
@@ -259,18 +259,18 @@ end
 """
     read_dtf(path; baseMVA = 100.0, strict = true) -> DTFCase
 
-Read a legacy DFT fixed-column input file into a typed `DTFCase`.
+Read a legacy DTF fixed-column input file into a typed `DTFCase`.
 This MVP parses outage cards into `DTFOutage` records but intentionally does
 not execute outage simulations.
 """
 function read_dtf(path; baseMVA::Real = 100.0, strict::Bool = true)::DTFCase
   lines = readlines(path)
-  length(lines) >= 7 || error("DFT file is too short: $(path)")
+  length(lines) >= 7 || error("DTF file is too short: $(path)")
   params = DTFParams(lines[1], _numbers(lines[1]))
   texts = String.(lines[2:5])
   nominal = _nominal_voltages(lines[6])
   size_vals = _numbers(lines[7])
-  length(size_vals) >= 4 || error("DFT network size card is incomplete")
+  length(size_vals) >= 4 || error("DTF network size card is incomplete")
   size_tokens = split(strip(lines[7]))
   size = DTFSize(lines[7], Int(size_vals[1]), Int(size_vals[2]), Int(size_vals[3]), Int(size_vals[4]), length(size_tokens) >= 5 ? String(size_tokens[end]) : "")
   i = 8
@@ -322,7 +322,7 @@ function read_dtf(path; baseMVA::Real = 100.0, strict::Bool = true)::DTFCase
       push!(trailing, DTFTrailingRecord(line, trailing_index, :variant_a_payload, :variant_branch_echo, pending_variant_marker))
       pending_variant_marker = nothing
     elseif strict && !isempty(strip(line))
-      error("Unexpected DFT content after bus cards: $(line)")
+      error("Unexpected DTF content after bus cards: $(line)")
     end
     i += 1
   end
@@ -380,7 +380,7 @@ function _dtf_effective_transformer_tap(case::DTFCase, branch::DTFBranch, contro
       shift_deg = model == :skew_angle ? tap_result.effective_shift_deg : 0.0
     end
   end
-  # DFT compatibility treats winding voltages as nameplate/control
+  # DTF compatibility treats winding voltages as nameplate/control
   # metadata by default.  The off-nominal network tap is neutral at Stufe 0 and
   # only receives longitudinal/skew deviations relative to that neutral point.
   ratio = base_ratio * relative_ratio
@@ -404,7 +404,7 @@ end
 """
     build_net(case; bus_shunt_model = :admittance) -> Net
 
-Build a Sparlectra `Net` from a parsed native DFT case. Branch
+Build a Sparlectra `Net` from a parsed native DTF case. Branch
 R/X/G/B are converted with the branch voltage-level index as reference voltage,
 not with the from-side bus voltage. Outages remain parsed metadata and are not
 executed by this Task-1 MVP.
@@ -413,7 +413,7 @@ function build_net(case::DTFCase; bus_shunt_model = :admittance, legacy_voltage_
   ratio_mode = _normalize_transformer_ratio_mode(transformer_ratio_mode)
   shunt_model = normalize_bus_shunt_model(bus_shunt_model)
   nominal_voltages_kv = _dtf_nominal_voltage_levels(case; legacy_voltage_level_collapse_230kv = legacy_voltage_level_collapse_230kv)
-  net = Net(name = isempty(case.texts) ? "DTF" : String(strip(case.texts[1])), baseMVA = case.baseMVA, bus_shunt_model = shunt_model)
+  net = Net(name = isempty(case.source_path) ? "DTF" : basename(case.source_path), baseMVA = case.baseMVA, bus_shunt_model = shunt_model)
   bus_by_name = Dict(bus.name => bus for bus in case.buses)
   for bus in case.buses
     vn = nominal_voltages_kv[bus.voltage_level_index]
@@ -506,7 +506,7 @@ end # module DTFImporter
 """
     createNetFromDTFFile(path; baseMVA = 100.0, strict = true, bus_shunt_model = :admittance, transformer_ratio_mode = :neutral_one) -> Net
 
-Read a legacy DFT file and build a Sparlectra `Net` without routing
+Read a legacy DTF file and build a Sparlectra `Net` without routing
 through MATPOWER. Outage cards are parsed and preserved in `DTFCase` by
 `DTFImporter.read_dtf`, but are not executed by this Task-1 importer MVP.
 """

@@ -40,7 +40,7 @@ end
 
 Return sorted user-selectable case filenames from the Web UI application's
 `data/mpower` directory. The selector stays conservative: MATPOWER `.m` files
-and copied internal DFT `.DAT` candidates are shown, while generated
+and copied internal DTF `.DAT` candidates are shown, while generated
 Julia cache artifacts, warm-up cases, result artifacts, and sidecar profiles
 stay hidden. Missing or empty directories produce an empty list.
 """
@@ -77,22 +77,22 @@ function _webui_classify_dat_content(path::AbstractString)::Symbol
   try
     case = DTFImporter.read_dtf(path; strict = false)
     if case.size.NGES > 0 && length(case.buses) == case.size.NGES && length(case.branches) == case.size.LGES
-      return isempty(case.outages) ? :dft_network_case : :dft_network_case_with_outages
+      return isempty(case.outages) ? :dtf_network_case : :dtf_network_case_with_outages
     end
   catch
   end
   has_outages = occursin(r"(?im)^\s*AUSFALL\s*$", text) && occursin(r"(?im)^\s*ENDE\s*$", text)
   if has_outages
-    return :dft_outage_file
+    return :dtf_outage_file
   elseif _is_for002_reference_dat(path) || occursin(r"(?i)(for002|reference|vergleich|result)", text)
-    return :dft_outage_or_reference
+    return :dtf_outage_or_reference
   end
   return :unknown_dat
 end
 
 _webui_dat_role_label(role::Symbol)::String = replace(String(role), '_' => ' ')
 
-_webui_is_runnable_dat_role(role::Symbol)::Bool = role in (:dft_network_case, :dft_network_case_with_outages)
+_webui_is_runnable_dat_role(role::Symbol)::Bool = role in (:dtf_network_case, :dtf_network_case_with_outages)
 
 """
     _webui_is_user_selectable_case(name) -> Bool
@@ -130,7 +130,7 @@ function _webui_for002_reference_options_in_directory(directory::AbstractString)
   isdir(directory) || return String[]
   files = filter(readdir(directory)) do name
     path = joinpath(directory, name)
-    return isfile(path) && lowercase(splitext(name)[2]) == ".dat" && _webui_classify_dat_content(path) === :dft_outage_or_reference
+    return isfile(path) && lowercase(splitext(name)[2]) == ".dat" && _webui_classify_dat_content(path) === :dtf_outage_or_reference
   end
   return sort!(files; by = lowercase)
 end

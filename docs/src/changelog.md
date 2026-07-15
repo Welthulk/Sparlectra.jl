@@ -2,7 +2,7 @@
 
 ## New Features
 
-* Added multi-file import for MATPOWER `.m` and DFT `.DAT` cases in the Web UI. Imported runnable cases are added to the case selector.
+* Added multi-file import for MATPOWER `.m` and DTF `.DAT` cases in the Web UI. Imported runnable cases are added to the case selector.
 
 ### Improvements
 
@@ -13,7 +13,7 @@
 ### Bug Fixes
 
 * Improved test-run diagnostics, bounded failure output, and excluded generated files from repository-hygiene checks.
-* Made DFT `.DAT` classification content-aware so only runnable cases and valid FOR002 references appear in the corresponding selectors.
+* Made DTF `.DAT` classification content-aware so only runnable cases and valid FOR002 references appear in the corresponding selectors.
 * Improved the tolerance spinner behavior in the Web UI.
 * Hidden unavailable commit information instead of displaying `commit unknown`.
 
@@ -21,12 +21,12 @@
 
 ### New Features
 
-* Added native DFT import with support for transformer ratio conventions, Schrägregler/skew-angle controls, trailing branch records, and FOR001 contingency metadata.
-* Added an experimental DFT input path for the PowerFlow API and Web UI, including optional MATPOWER export, outage selection, import diagnostics, and explicit handling of unsupported DC-line data.
+* Added native DTF import with support for transformer ratio conventions, Schrägregler/skew-angle controls, trailing branch records, and FOR001 contingency metadata.
+* Added an experimental DTF input path for the PowerFlow API and Web UI, including optional MATPOWER export, outage selection, import diagnostics, and explicit handling of unsupported DC-line data.
 * Extended MATPOWER import and export with Sparlectra metadata for bus and branch names, branch types, FOR001 contingencies, and transformer loss data.
 * Added support for the existing `mpc.sparlectra.transformer_losses` extension so transformer no-load conductance can be preserved across Sparlectra–MATPOWER roundtrips.
 * Added optional MATPOWER DC-line handling through fixed terminal power injections while keeping rejection of active DC-line records as the default.
-* Added user-facing documentation for the DFT format, transformer conventions, Schrägregler controls, trailing records, and FOR002 validation.
+* Added user-facing documentation for the DTF format, transformer conventions, Schrägregler controls, trailing records, and FOR002 validation.
 
 ### Improvements
 

@@ -60,7 +60,7 @@ function _execute_sparlectra_powerflow!(net::Net, cfg::SparlectraConfig; perform
   solver_elapsed_s === nothing && (solver_elapsed_s = max(0.0, Float64(elapsed_s)))
   if cfg.powerflow.islands.enabled
     status = rectangular_pf_status(net)
-    _write_ac_island_diagnostics!(net, cfg.powerflow, performance_profile; status = status)
+    _write_ac_island_diagnostics!(net, cfg.powerflow, performance_profile; status = status, iterations = iterations)
   end
   return (iterations = iterations, erg = erg, elapsed_s = elapsed_s, solver_elapsed_s = solver_elapsed_s, control_status = control_status)
 end

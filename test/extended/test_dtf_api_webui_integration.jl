@@ -16,12 +16,12 @@ using Test
 using Sparlectra
 
 function run_dtf_api_webui_integration_tests()
-  @testset "DFT API and Web UI integration" begin
+  @testset "DTF API and Web UI integration" begin
     mktempdir() do tmp
       dtf = joinpath(@__DIR__, "..", "..", "data", "DTF", "FOR001.DAT")
       for002 = joinpath(@__DIR__, "..", "..", "data", "DTF", "FOR002.DAT")
       if !(isfile(dtf) && isfile(for002))
-        @info "Skipping full DFT API and Web UI integration; local external FOR001/FOR002 files are absent." dtf for002
+        @info "Skipping full DTF API and Web UI integration; local external FOR001/FOR002 files are absent." dtf for002
         @test_skip "local FOR001/FOR002 validation data not available"
         return
       end
@@ -41,6 +41,11 @@ function run_dtf_api_webui_integration_tests()
         config_overrides = Dict("benchmark.enabled" => false, "output.logfile_results" => "classic"),
       )
       @test result.status == :succeeded
+      # DTF/FOR001 runs must get the same classic Sparlectra print as MATPOWER
+      # runs under output.logfile_results=classic, not a suppressed summary.
+      direct_run_log = read(joinpath(direct_output, "run.log"), String)
+      @test occursin("Iterations     :", direct_run_log)
+      @test occursin("Nodes          :", direct_run_log)
       @test result.metadata["input_format_detected"] == "dtf_for001"
       @test result.metadata["native_dtf_import_used"] == true
       @test result.metadata["dtf_bus_count"] == 13
@@ -80,10 +85,10 @@ function run_dtf_api_webui_integration_tests()
 
       form_html = Sparlectra.render_powerflow_form(output_root = tmp, case_directory = dirname(dtf), selected_casefile = basename(dtf))
       @test occursin("Input format", form_html)
-      @test occursin("DFT diagnostics (experimental/internal)", form_html)
+      @test occursin("DTF diagnostics (experimental/internal)", form_html)
       @test occursin("MATPOWER", form_html)
       @test occursin("option value=\"auto\">Auto", form_html)
-      @test !occursin("New: full DFT support", form_html)
+      @test !occursin("New: full DTF support", form_html)
 
       request = Sparlectra.powerflow_webui_request(Dict(
         "casefile" => basename(dtf),
