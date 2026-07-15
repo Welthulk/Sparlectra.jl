@@ -1,5 +1,5 @@
-﻿.VSCodeCounter
-.vscode/settings.json
+﻿.c*
+.v*
 test/workshop*.jl
 # Ignore downloaded MATPOWER cases
 data/mpower/*.m

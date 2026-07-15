@@ -347,7 +347,7 @@ $(dat_hint_html)
 <label class="check"><input name="write_outage_matpower_exports" type="hidden" value="false"><input name="write_outage_matpower_exports" type="checkbox" value="true">Write MATPOWER outage exports</label>
 </fieldset>
 </details>
-<label>$(_webui_field_label("power_flow_tol", "PowerFlow tolerance"))<input name=\"power_flow_tol\" type=\"number\" data-tolerance-step=\"dynamic\" step=\"1e-9\" min=\"0\" value=\"$(_webui_input_value(profile_values, "power_flow_tol", _webui_option_default("power_flow_tol")))\"></label>
+<label>$(_webui_field_label("power_flow_tol", "PowerFlow tolerance"))<span class=\"tolerance-field\"><input name=\"power_flow_tol\" type=\"text\" autocomplete=\"off\" spellcheck=\"false\" data-tolerance-input value=\"$(_webui_input_value(profile_values, "power_flow_tol", _webui_option_default("power_flow_tol")))\"><span class=\"tolerance-spin\"><button type=\"button\" class=\"tolerance-spin-up\" data-tolerance-direction=\"up\" aria-label=\"Increase tolerance exponent\">&#9650;</button><button type=\"button\" class=\"tolerance-spin-down\" data-tolerance-direction=\"down\" aria-label=\"Decrease tolerance exponent\">&#9660;</button></span></span><small class=\"field-hint\">Accepts scientific notation, for example 1e-8. Use the arrows or Up/Down keys to step the exponent.</small></label>
 <label>$(_webui_field_label("power_flow_max_iter", "Maximum iterations"))<input name=\"power_flow_max_iter\" type=\"number\" min=\"1\" value=\"$(_webui_input_value(profile_values, "power_flow_max_iter", _webui_option_default("power_flow_max_iter")))\"></label>
 <label class=\"check\"><input name=\"power_flow_autodamp\" type=\"hidden\" value=\"false\"><input name=\"power_flow_autodamp\" type=\"checkbox\" value=\"true\"$(_webui_checked(profile_values, "power_flow_autodamp", _webui_option_default("power_flow_autodamp")))>$(_webui_field_label("power_flow_autodamp", "Autodamping enabled"))</label>
 <label>$(_webui_field_label("power_flow_autodamp_min", "Autodamping minimum"))<input name=\"power_flow_autodamp_min\" type=\"number\" step=\"any\" min=\"0\" max=\"1\" value=\"$(_webui_input_value(profile_values, "power_flow_autodamp_min", _webui_option_default("power_flow_autodamp_min")))\"></label>
@@ -464,24 +464,49 @@ document.addEventListener('DOMContentLoaded', function () {
       window.location.href = target.pathname + target.search;
     });
   }
-  const toleranceInput = document.querySelector('input[name="power_flow_tol"][data-tolerance-step="dynamic"]');
-  const toleranceStep = function (valueText) {
-    const value = Number(valueText);
-    if (!Number.isFinite(value) || value <= 0) return '1e-9';
-    const exponent = Math.floor(Math.log10(value));
-    const mantissa = value / Math.pow(10, exponent);
-    const factor = (mantissa <= 1.000000000001 && value >= 1e-4) ? 0.5 : (mantissa <= 1.000000000001 ? 0.9 : 0.5);
-    const step = factor * Math.pow(10, exponent);
-    return step.toExponential(15).replace(/0+e/, 'e').replace(/\\.e/, 'e');
+  const toleranceInput = document.querySelector('input[name="power_flow_tol"][data-tolerance-input]');
+  const parseToleranceParts = function (valueText) {
+    const trimmed = String(valueText).trim();
+    if (trimmed === '') return null;
+    const lower = trimmed.toLowerCase();
+    const eIndex = lower.indexOf('e');
+    const mantissaText = eIndex === -1 ? trimmed : trimmed.slice(0, eIndex);
+    const exponentText = eIndex === -1 ? '0' : trimmed.slice(eIndex + 1);
+    const rawMantissa = Number(mantissaText);
+    const rawExponent = Number(exponentText);
+    if (!Number.isFinite(rawMantissa) || rawMantissa <= 0 || !Number.isFinite(rawExponent)) return null;
+    if (eIndex === -1) {
+      const exponent = Math.floor(Math.log10(rawMantissa));
+      return {mantissa: rawMantissa / Math.pow(10, exponent), exponent: exponent};
+    }
+    return {mantissa: rawMantissa, exponent: rawExponent};
+  };
+  const formatToleranceParts = function (mantissa, exponent) {
+    const rounded = Number(mantissa.toPrecision(12));
+    return String(rounded) + 'e' + String(exponent);
+  };
+  const stepTolerance = function (direction) {
+    if (toleranceInput === null) return;
+    const parts = parseToleranceParts(toleranceInput.value) || {mantissa: 1, exponent: -8};
+    toleranceInput.value = formatToleranceParts(parts.mantissa, parts.exponent + direction);
+    toleranceInput.dispatchEvent(new Event('change', {bubbles: true}));
   };
   if (toleranceInput !== null) {
-    const updateToleranceStep = function () {
-      toleranceInput.step = toleranceStep(toleranceInput.value);
-      toleranceInput.dataset.currentStep = toleranceInput.step;
-    };
-    updateToleranceStep();
-    toleranceInput.addEventListener('input', updateToleranceStep);
-    toleranceInput.addEventListener('change', updateToleranceStep);
+    toleranceInput.addEventListener('keydown', function (event) {
+      if (event.key === 'ArrowUp') {
+        event.preventDefault();
+        stepTolerance(1);
+      } else if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        stepTolerance(-1);
+      }
+    });
+    document.querySelectorAll('.tolerance-spin button[data-tolerance-direction]').forEach(function (button) {
+      button.addEventListener('click', function () {
+        stepTolerance(button.dataset.toleranceDirection === 'up' ? 1 : -1);
+        toleranceInput.focus();
+      });
+    });
   }
 });
 
