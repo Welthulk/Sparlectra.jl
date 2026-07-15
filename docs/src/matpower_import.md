@@ -127,7 +127,3 @@ When Sparlectra documentation mentions case names (for example `case300.m`,
 the original files from MATPOWER and/or the original data sources and follow the
 applicable license, citation, and redistribution terms.
 
-
-## SyntheticUSA DC-line/island diagnostic
-
-The detailed SyntheticUSA entry in the [MATPOWER case diagnostics matrix](sparlectra_matpower_case_matrix.md) documents the v0.8.9 Web UI/API run that combines `matpower_dcline_mode: pf_injections` with independent AC-island solving. It records the validated robust profile, island sizes, DC-line interpretation, and convergence results.
