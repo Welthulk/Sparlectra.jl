@@ -92,7 +92,7 @@ end
 function main()
   repo = normpath(joinpath(@__DIR__, ".."))
   data_dir = joinpath(repo, "data", "DTF")
-  outdir = joinpath(@__DIR__, "_out", "dft_validation")
+  outdir = joinpath(@__DIR__, "_out", "dtf_validation")
   missing = [joinpath(data_dir, "FOR001$(suffix).DAT") for (_, suffix) in CASES if !isfile(joinpath(data_dir, "FOR001$(suffix).DAT"))]
   if !isempty(missing)
     error("External FOR001 validation data not found. Provide the case files in data/DTF or adapt this optional audit script to explicit local paths. Missing: " * join(missing, ", "))
@@ -100,7 +100,7 @@ function main()
   mkpath(outdir)
   out = joinpath(outdir, "dtf_import_audit.md")
   open(out, "w") do io
-    println(io, "# legacy validation DFT import audit\n")
+    println(io, "# legacy validation DTF import audit\n")
     println(io, "Standalone post-bus `A` cards in cases B-E are interpreted as variant branch-echo markers; the following branch-like payload line is preserved as a branch echo and is not added to the electrical model.\n")
     for (case_id, suffix) in CASES
       audit_case(io, case_id, joinpath(data_dir, "FOR001$(suffix).DAT"))

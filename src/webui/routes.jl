@@ -118,6 +118,8 @@ function route_sparlectra_webui(method::AbstractString, target::AbstractString, 
     end
   elseif verb == "POST" && path == "/powerflow/import-cases"
     return handle_powerflow_case_import(form; output_root, application_root = _webui_application_root(), case_directory = runtime === nothing ? nothing : runtime.case_directory, operation_log = log_root)
+  elseif verb == "POST" && path == "/powerflow/resolve-case"
+    return handle_powerflow_case_resolve(form; output_root, application_root = _webui_application_root(), case_directory = runtime === nothing ? nothing : runtime.case_directory, operation_log = log_root)
   elseif verb == "POST" && path == "/powerflow/config/check"
     return handle_powerflow_config_refresh(form; write = false, operation_log = log_root)
   elseif verb == "POST" && path == "/powerflow/config/refresh"

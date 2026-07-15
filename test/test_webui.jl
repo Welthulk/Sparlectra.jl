@@ -27,15 +27,15 @@ function run_webui_fast_tests()
       case_directory = joinpath(root, "cases")
       mkpath(case_directory)
       write(joinpath(case_directory, "case14.m"), "function mpc = case14\nend\n")
-      write(joinpath(case_directory, "FOR001.DAT"), _dft_network_fixture())
-      write(joinpath(case_directory, "FOR001_OUTAGES.DAT"), _dft_network_with_outage_fixture())
-      write(joinpath(case_directory, "OUTAGE.DAT"), _dft_outage_fixture())
-      write(joinpath(case_directory, "FOR002.DAT"), _dft_reference_fixture())
+      write(joinpath(case_directory, "FOR001.DAT"), _dtf_network_fixture())
+      write(joinpath(case_directory, "FOR001_OUTAGES.DAT"), _dtf_network_with_outage_fixture())
+      write(joinpath(case_directory, "OUTAGE.DAT"), _dtf_outage_fixture())
+      write(joinpath(case_directory, "FOR002.DAT"), _dtf_reference_fixture())
       write(joinpath(case_directory, "UNKNOWN.DAT"), "plain unsupported data\n")
-      @test Sparlectra._webui_classify_dat_content(joinpath(case_directory, "FOR001.DAT")) === :dft_network_case
-      @test Sparlectra._webui_classify_dat_content(joinpath(case_directory, "FOR001_OUTAGES.DAT")) === :dft_network_case_with_outages
-      @test Sparlectra._webui_classify_dat_content(joinpath(case_directory, "OUTAGE.DAT")) === :dft_outage_file
-      @test Sparlectra._webui_classify_dat_content(joinpath(case_directory, "FOR002.DAT")) === :dft_outage_or_reference
+      @test Sparlectra._webui_classify_dat_content(joinpath(case_directory, "FOR001.DAT")) === :dtf_network_case
+      @test Sparlectra._webui_classify_dat_content(joinpath(case_directory, "FOR001_OUTAGES.DAT")) === :dtf_network_case_with_outages
+      @test Sparlectra._webui_classify_dat_content(joinpath(case_directory, "OUTAGE.DAT")) === :dtf_outage_file
+      @test Sparlectra._webui_classify_dat_content(joinpath(case_directory, "FOR002.DAT")) === :dtf_outage_or_reference
       @test Sparlectra._webui_classify_dat_content(joinpath(case_directory, "UNKNOWN.DAT")) === :unknown_dat
       primary = Sparlectra._webui_casefile_options_in_directory(case_directory)
       reference = Sparlectra._webui_for002_reference_options_in_directory(case_directory)

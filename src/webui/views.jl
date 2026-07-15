@@ -296,7 +296,7 @@ function render_powerflow_form(;
   end
   dat_case_assistance = _webui_is_dat_casefile(effective_case_value)
   dtf_details_attrs = dat_case_assistance ? " class=\"span-2 dtf-internal-section is-dat-selected\" open" : " class=\"span-2 dtf-internal-section\""
-  dat_hint_html = dat_case_assistance ? "<p id=\"dtf-dat-format-hint\" class=\"field-hint dat-format-hint span-2\" role=\"status\"><strong>.DAT selected:</strong> using internal DFT diagnostics.</p>" : "<p id=\"dtf-dat-format-hint\" class=\"field-hint dat-format-hint span-2\" role=\"status\" hidden></p>"
+  dat_hint_html = dat_case_assistance ? "<p id=\"dtf-dat-format-hint\" class=\"field-hint dat-format-hint span-2\" role=\"status\"><strong>.DAT selected:</strong> using internal DTF diagnostics.</p>" : "<p id=\"dtf-dat-format-hint\" class=\"field-hint dat-format-hint span-2\" role=\"status\" hidden></p>"
   case_options = join((begin
     has_settings = isfile(_webui_case_settings_path(output_root, casefile; case_directory = effective_case_directory))
     label = has_settings ? "$(casefile) ★" : casefile
@@ -322,7 +322,7 @@ function render_powerflow_form(;
 """
   import_form = """
 <form id=\"case-import-form\" method=\"post\" action=\"/powerflow/import-cases\" enctype=\"multipart/form-data\" class=\"panel form-grid case-import-form\">
-<label class=\"span-2\"><span class=\"field-label\">Import case files</span><input type=\"file\" name=\"casefiles\" accept=\".m,.M,.dat,.DAT\" multiple><small class=\"field-hint\">Select one or more MATPOWER (.m) or DFT (.DAT) files. Importing files copies them to <code>$(_webui_escape(effective_case_directory))</code>, classifies their role, and does not start a PowerFlow calculation. Limits: 100 MiB per file, 250 MiB per request.</small></label>
+<label class=\"span-2\"><span class=\"field-label\">Import case files</span><input type=\"file\" name=\"casefiles\" accept=\".m,.M,.dat,.DAT\" multiple><small class=\"field-hint\">Select one or more MATPOWER (.m) or DTF (.DAT) files. Importing files copies them to <code>$(_webui_escape(effective_case_directory))</code>, classifies their role, and does not start a PowerFlow calculation. Limits: 100 MiB per file, 250 MiB per request.</small></label>
 <div class=\"actions span-2\"><button class=\"secondary-button\" type=\"submit\">Import case files</button></div>
 </form>
 """
@@ -332,17 +332,17 @@ $(import_form)
 <form id=\"powerflow-run-form\" data-powerflow-form method=\"post\" action=\"/powerflow/run\" class=\"panel form-grid powerflow-form-card\" onsubmit=\"this.classList.add('is-submitting'); this.setAttribute('aria-busy', 'true'); this.querySelector('button[type=submit]').disabled = true;\">
 $(config_control)
 <label>$(_webui_field_label("casefile", "Existing case file"))$(case_select)<small class="field-hint">Cases from <code>$(_webui_escape(effective_case_directory))</code></small></label>
-<label><span class="field-label">Or type case file path</span>$(case_manual)<small class="field-hint">Manual input overrides the existing-case selection.</small></label>
+<label><span class="field-label">Or type case file path</span>$(case_manual)<button type="submit" id="resolve-case-button" formaction="/powerflow/resolve-case" formmethod="post" formnovalidate hidden>Resolve case</button><small class="field-hint">Manual input overrides the existing-case selection. Press Enter here to resolve/download the case into the case directory (it then appears under "choose existing case") without starting a run.</small></label>
 $(dat_hint_html)
 <details$(dtf_details_attrs)>
 <summary>Input format</summary>
 <fieldset>
-<p class="field-hint span-2">Default remains MATPOWER-oriented. The native DFT path is experimental/internal and intended for diagnostics and validation.</p>
-<label><span class="field-label">Case input format</span><select name="case_format"><option value="auto"$(_webui_form_string(case_format_value) == "auto" ? " selected" : "")>Auto</option><option value="matpower"$(_webui_form_string(case_format_value) == "matpower" ? " selected" : "")>MATPOWER</option><option value="dtf_for001"$(_webui_form_string(case_format_value) == "dtf_for001" ? " selected" : "")>DFT diagnostics (experimental/internal)</option></select></label>
+<p class="field-hint span-2">Default remains MATPOWER-oriented. The native DTF path is experimental/internal and intended for diagnostics and validation.</p>
+<label><span class="field-label">Case input format</span><select name="case_format"><option value="auto"$(_webui_form_string(case_format_value) == "auto" ? " selected" : "")>Auto</option><option value="matpower"$(_webui_form_string(case_format_value) == "matpower" ? " selected" : "")>MATPOWER</option><option value="dtf_for001"$(_webui_form_string(case_format_value) == "dtf_for001" ? " selected" : "")>DTF diagnostics (experimental/internal)</option></select></label>
 <label><span class="field-label">Optional FOR002 reference file</span><input name="for002_reference_file" value=\"$(_webui_escape(for002_reference_value))\" placeholder="examples/FOR002.DAT"$for002_list_attr>$(for002_list_html)<small class="field-hint">$(_webui_escape(for002_hint))</small></label>
-<label><span class="field-label">DFT outage run mode</span><select name="dtf_outage_selection_mode"><option value="none">Run base case only</option><option value="all">Run all DFT outage records</option><option value="selected">Run selected DFT outage records</option></select></label>
-<label><span class="field-label">Selected DFT outage labels/indices</span><input name="dtf_outage_selection" placeholder="1 or L1 ALPHA S1 -> BETA1 S1"><small class="field-hint">For selected mode, enter one parsed label or outage index. The result page reports the compact outage summary; detailed rows stay in artifacts.</small></label>
-<label class="check"><input name="write_outage_artifacts" type="hidden" value="false"><input name="write_outage_artifacts" type="checkbox" value="true" checked>Write DFT outage artifacts</label>
+<label><span class="field-label">DTF outage run mode</span><select name="dtf_outage_selection_mode"><option value="none">Run base case only</option><option value="all">Run all DTF outage records</option><option value="selected">Run selected DTF outage records</option></select></label>
+<label><span class="field-label">Selected DTF outage labels/indices</span><input name="dtf_outage_selection" placeholder="1 or L1 ALPHA S1 -> BETA1 S1"><small class="field-hint">For selected mode, enter one parsed label or outage index. The result page reports the compact outage summary; detailed rows stay in artifacts.</small></label>
+<label class="check"><input name="write_outage_artifacts" type="hidden" value="false"><input name="write_outage_artifacts" type="checkbox" value="true" checked>Write DTF outage artifacts</label>
 <label class="check"><input name="matpower_export_requested" type="hidden" value="false"><input name="matpower_export_requested" type="checkbox" value="true">Write MATPOWER export artifact</label>
 <label class="check"><input name="write_outage_matpower_exports" type="hidden" value="false"><input name="write_outage_matpower_exports" type="checkbox" value="true">Write MATPOWER outage exports</label>
 </fieldset>
@@ -441,13 +441,24 @@ document.addEventListener('DOMContentLoaded', function () {
     }
     if (datFormatHint !== null) {
       datFormatHint.hidden = !isDatCase;
-      datFormatHint.textContent = isDatCase ? '.DAT selected: using internal DFT diagnostics.' : '';
+      datFormatHint.textContent = isDatCase ? '.DAT selected: using internal DTF diagnostics.' : '';
     }
   };
   updateDatCaseAssistance();
   if (caseManual !== null) {
     caseManual.addEventListener('input', updateDatCaseAssistance);
     caseManual.addEventListener('change', updateDatCaseAssistance);
+    caseManual.addEventListener('keydown', function (event) {
+      if (event.key !== 'Enter') return;
+      event.preventDefault();
+      const resolveButton = document.getElementById('resolve-case-button');
+      if (resolveButton === null || form === null) return;
+      if (typeof form.requestSubmit === 'function') {
+        form.requestSubmit(resolveButton);
+      } else {
+        resolveButton.click();
+      }
+    });
   }
   if (caseSelect !== null) {
     caseSelect.addEventListener('change', updateDatCaseAssistance);
@@ -508,6 +519,13 @@ document.addEventListener('DOMContentLoaded', function () {
       });
     });
   }
+  document.addEventListener('click', function (event) {
+    document.querySelectorAll('.topbar-info-menu[open]').forEach(function (menu) {
+      if (!menu.contains(event.target)) {
+        menu.removeAttribute('open');
+      }
+    });
+  });
 });
 
 window.addEventListener('pageshow', function () {

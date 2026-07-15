@@ -340,7 +340,7 @@ function _detect_case_format(case_path::AbstractString; requested::Symbol = :aut
   if has_for001_sections && has_size_card
     return :dtf_for001
   end
-  ext == ".dat" && throw(ArgumentError("Ambiguous .DAT input; set case_format = :dtf_for001 to use the experimental/internal native DFT path."))
+  ext == ".dat" && throw(ArgumentError("Ambiguous .DAT input; set case_format = :dtf_for001 to use the experimental/internal native DTF path."))
   return :matpower
 end
 
@@ -384,7 +384,7 @@ function _write_dtf_summary_artifacts(output_path::AbstractString, case, metadat
   end
   md = joinpath(output_path, "dtf_import_summary.md")
   open(md, "w") do io
-    println(io, "# Native DFT input summary (experimental/internal)\n")
+    println(io, "# Native DTF input summary (experimental/internal)\n")
     println(io, "- buses: ", length(case.buses))
     println(io, "- branches: ", length(case.branches))
     println(io, "- outages: ", length(case.outages))
@@ -431,7 +431,7 @@ function _selected_dtf_outages(case, mode, selection)
       push!(outages, outage)
     end
   end
-  length(outages) == length(selected) || throw(ArgumentError("missing_or_ambiguous_outage_selection: selected DFT outage was not found unambiguously."))
+  length(outages) == length(selected) || throw(ArgumentError("missing_or_ambiguous_outage_selection: selected DTF outage was not found unambiguously."))
   return outages
 end
 
@@ -451,7 +451,7 @@ function _run_dtf_outages(case_path::AbstractString, case, config, output_path::
     if write_artifacts
       md = joinpath(output_path, "dtf_outage_$(outage.index)_summary.md")
       open(md, "w") do io
-        println(io, "# DFT outage summary\n")
+        println(io, "# DTF outage summary\n")
         println(io, "- label: ", label)
         println(io, "- matched branch index: ", branch_index)
         println(io, "- converged: ", raw.final_converged)
@@ -661,12 +661,12 @@ function _run_sparlectra_api(;
     end
     raw_result = try
       open(logfile, "a") do io
-        println(io, "Native DFT input (experimental/internal)")
+        println(io, "Native DTF input (experimental/internal)")
         _write_resolved_q_limit_options(io, qlimit_metadata)
         with_logger(ConsoleLogger(io)) do
           redirect_stdout(io) do
             redirect_stderr(io) do
-              _run_sparlectra(net = dtf_net, config = config, performance_profile = api_performance_profile, emit_output = false)
+              _run_sparlectra(net = dtf_net, config = config, performance_profile = api_performance_profile)
             end
           end
         end

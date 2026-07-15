@@ -90,7 +90,7 @@ function run_extended_profile_tests()
     ("synthetic_grids", () -> run_entry(:run_synthetic_grid_tests)),
     ("configuration_docs", () -> run_entry(:run_configuration_docs_tests)),
     ("repository_hygiene", () -> run_entry(:run_repository_hygiene_tests)),
-    ("dft_extended", () -> begin
+    ("dtf_extended", () -> begin
       run_entry(:run_dtf_importer_tests)
       run_entry(:run_dtf_for002_validation_example_tests)
       run_entry(:run_dtf_for002_outage_validation_example_tests)

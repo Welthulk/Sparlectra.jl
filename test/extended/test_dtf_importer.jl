@@ -14,9 +14,9 @@
 
 const DTF_FIXTURE = joinpath(@__DIR__, "..", "fixtures", "dtf", "FOR001.DAT")
 
-function _synthetic_dtf_case(; kind::Char = 'T', g_s::Float64 = 4.0e-5, b_s::Float64 = -1.0e-5)
+function _synthetic_dtf_case(; kind::Char = 'T', g_s::Float64 = 4.0e-5, b_s::Float64 = -1.0e-5, path::String = "synthetic")
   return Sparlectra.DTFImporter.DTFCase(
-    "synthetic",
+    path,
     100.0,
     Sparlectra.DTFImporter.DTFParams("", Float64[]),
     ["synthetic"],
@@ -35,7 +35,7 @@ function _synthetic_dtf_case(; kind::Char = 'T', g_s::Float64 = 4.0e-5, b_s::Flo
 end
 
 function run_dtf_importer_tests()
-  @testset "native DFT importer focused synthetic checks" begin
+  @testset "native DTF importer focused synthetic checks" begin
     case = _synthetic_dtf_case()
     branch = only(case.branches)
     pu = Sparlectra.DTFImporter._branch_pu(case, branch)
@@ -70,11 +70,17 @@ function run_dtf_importer_tests()
     @test length(case.outages) == 1
     @test only(case.outages).from == "PV"
     @test length(case.trailing_records) == 1
+
+    # The classic result print shows `net.name` as "Case"; it must reflect the
+    # originating file name, not a free-text description card from the file.
+    named_net = Sparlectra.DTFImporter.build_net(_synthetic_dtf_case(path = "/some/dir/FOR001B.DAT"))
+    @test named_net.name == "FOR001B.DAT"
+    @test net.name == "synthetic"
   end
 
-  @testset "native DFT full local fixture" begin
+  @testset "native DTF full local fixture" begin
     if !isfile(DTF_FIXTURE)
-      @info "Skipping full FOR001 fixture validation; external reference network is not tracked. Place a local file at test/fixtures/dft/FOR001.DAT or data/DFT/FOR001.DAT for manual validation."
+      @info "Skipping full FOR001 fixture validation; external reference network is not tracked. Place a local file at test/fixtures/dtf/FOR001.DAT or data/DTF/FOR001.DAT for manual validation."
       @test_skip "FOR001 full reference fixture not available"
       return
     end

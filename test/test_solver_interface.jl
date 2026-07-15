@@ -908,6 +908,38 @@ mpc.branch = [
       @test_throws ErrorException runpf!(no_ref_net; config = PowerFlowConfig(max_iter = 40, islands_enabled = true))
     end
 
+    # A network with a single AC island never enters the independent per-island
+    # solve branch above, so it must not fall back to reporting the pre-solve
+    # placeholder (iterations=0, stage=pre_solve_validation, island_wise_all_converged=false)
+    # once it has actually converged.
+    @testset "Single-island run reports real convergence, not pre-solve placeholders" begin
+      single_island_net = Net(name = "single_island", baseMVA = 100.0)
+      addBus!(net = single_island_net, busName = "A1", vn_kV = 110.0)
+      addBus!(net = single_island_net, busName = "A2", vn_kV = 110.0)
+      addPIModelACLine!(net = single_island_net, fromBus = "A1", toBus = "A2", r_pu = 0.01, x_pu = 0.10, b_pu = 0.0, status = 1)
+      addProsumer!(net = single_island_net, busName = "A1", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "A1")
+      addProsumer!(net = single_island_net, busName = "A2", type = "ENERGYCONSUMER", p = 10.0, q = 3.0)
+      refreshBusTypesFromProsumers!(single_island_net)
+
+      mktempdir() do tmpdir
+        profile = Dict{Symbol,Any}(:output_dir => tmpdir)
+        cfg = SparlectraConfig(powerflow = PowerFlowConfig(islands_enabled = true), output = OutputConfig(logfile_results = :off))
+        result = run_sparlectra(; net = single_island_net, config = cfg, performance_profile = profile)
+        @test result.outcome == :converged
+        @test result.iterations > 0
+        @test result.diagnostics.island_wise_all_converged === true
+
+        rect_status = Sparlectra.rectangular_pf_status(single_island_net)
+        @test rect_status.island_wise_all_converged === true
+
+        island_log = read(joinpath(tmpdir, "ac_island_1_solver.log"), String)
+        @test occursin("iterations: $(result.iterations)", island_log)
+        @test occursin("stage: post_solve_validation", island_log)
+        @test !occursin("iterations: 0", island_log)
+        @test !occursin("stage: pre_solve_validation", island_log)
+      end
+    end
+
 # Ensures final-limit validation remains robust when q-generation data is partially missing.
     @testset "Final limit validation tolerates missing qgen" begin
       net = createTest3BusNet()

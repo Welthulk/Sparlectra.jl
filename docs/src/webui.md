@@ -205,7 +205,7 @@ unchanged, the case-specific Web UI profile only prefills editable form fields,
 and any manual browser edit wins for the submitted run.
 
 The existing-case selector is MATPOWER-oriented by default and lists
-user-selectable `.m` files plus runnable DFT `.DAT` candidates when they
+user-selectable `.m` files plus runnable DTF `.DAT` candidates when they
 are supported by the current Web UI case-resolution logic. Generated `.jl`
 cache artifacts are hidden from the selector, and files with the reserved
 `warmup_` prefix are internal-only. FOR002-like `.DAT` files are not primary
@@ -213,7 +213,7 @@ cases; use the optional FOR002 reference field for those validation references.
 First startup still provisions the small `warmup_case3.jl` case for warmup, but
 it is not user-selectable. A separate manual field accepts a bare case name such
 as `case14.m`, `case118.m`, or `case9241pegase.m`; a nonempty manual value
-overrides the selected cached case. Internal DFT support is intended for
+overrides the selected cached case. Internal DTF support is intended for
 supported conversion and validation workflows and does not change
 the normal MATPOWER-first workflow.
 
@@ -251,6 +251,15 @@ choices, and available status diagnostics. The summary records
 `solver_time`, `representative_time`, iterations, final mismatch, and final
 outcome where available. Benchmark median and sample count appear when
 benchmark mode is enabled.
+
+MATPOWER `.m` imports additionally print "Original/Final effective MATPOWER
+import options" and a "MATPOWER auto-profile recommendations" table, because
+MATPOWER files leave branch-convention details (`shift_sign`, `shift_unit`,
+`ratio`, ...) ambiguous enough to warrant a residual-scan recommendation step.
+DTF/FOR001 `.DAT` imports do not carry this ambiguity and therefore never print
+these sections, at any logfile output mode — a shorter `run.log` for a DTF
+case is expected, not a sign that `classic`/`full` logging is broken for that
+format.
 
 The **Performance timing** control accepts `off`, `compact`, or `full` and
 writes `performance.log` when enabled. It describes phases of one request,
@@ -308,7 +317,7 @@ Excel-specific text hints.
 
 | Help topic | Input | Guidance |
 |---|---|---|
-| `webui.casefile` | MATPOWER case file | Choose an available `.m`, `.jl`, or supported runnable internal DFT `.DAT` candidate from the existing-case selector, or type a bare case name or existing local path in the separate manual field. A nonempty manual value takes precedence. Missing bare `.m` names may be downloaded into the server-owned `data/mpower` directory; MATPOWER `.m` remains the default-oriented workflow, while FOR002-like `.DAT` files belong in the optional FOR002 reference field rather than the primary case field. Missing path-like inputs and URLs are rejected. |
+| `webui.casefile` | MATPOWER case file | Choose an available `.m`, `.jl`, or supported runnable internal DTF `.DAT` candidate from the existing-case selector, or type a bare case name or existing local path in the separate manual field. A nonempty manual value takes precedence. Missing bare `.m` names may be downloaded into the server-owned `data/mpower` directory; MATPOWER `.m` remains the default-oriented workflow, while FOR002-like `.DAT` files belong in the optional FOR002 reference field rather than the primary case field. Missing path-like inputs and URLs are rejected. |
 | `webui.config_file` | Configuration template file | Select a YAML configuration or `*.yaml.example` template discovered in `examples`. Form values create allowlisted per-run overrides, while the selected template remains unchanged. |
 | `webui.output_root` | Output root directory | Configure this path when calling `start_sparlectra_webui`; the browser displays it read-only. The service creates its persistent run index and one subdirectory per run beneath this root. |
 
@@ -453,15 +462,17 @@ Island diagnostics are run artifacts. Files such as `ac_islands.csv`, `ac_island
 
 ## Importing case files through the Web UI
 
-The PowerFlow page includes a separate **Import case files** control near the case selection area. It uses the browser's native file picker and accepts multiple files in one selection. The picker advertises MATPOWER `.m`/`.M` files and DFT `.dat`/`.DAT` files; the server validates the extension again because browser-side filters can be bypassed.
+The PowerFlow page includes a separate **Import case files** control near the case selection area. It uses the browser's native file picker and accepts multiple files in one selection. The picker advertises MATPOWER `.m`/`.M` files and DTF `.dat`/`.DAT` files; the server validates the extension again because browser-side filters can be bypassed.
 
 Importing is a copy-only operation. It does not submit the PowerFlow form, create a run ID, create a result directory, parse uploaded `.m` code, or invoke the solver. After the POST/Redirect/GET refresh, the normal case selector is rebuilt from disk. If at least one imported file is runnable in the normal selector, the first such file may be preselected; the user must still press **Start PowerFlow run** to calculate it.
+
+Pressing Enter in the **Or type case file path** field resolves the typed value the same copy-only way instead of starting a run: a bare MATPOWER case name (for example `case300.m`) is downloaded through [`ensure_casefile`](@ref) into the case directory, while a full local path to an existing file is copied into the case directory with the same validation as file import (unsupported extensions, oversized files, and name collisions are rejected with an inline message). Either way the resolved file then appears in the **Existing case file** selector; it does not submit the PowerFlow form or invoke the solver.
 
 Uploaded files are stored in the same effective Web UI case directory shown in the form and used by the selector. Development checkouts use the writable `data/mpower` directory when it is available; installed or immutable package contexts fall back to the user-writable Web UI application data directory, specifically the sibling `data/mpower` directory next to the configured Web UI output root. The directory is created as needed. Manual full paths remain available for advanced users and continue to override the selector when filled in.
 
 Upload limits are centralized in the Web UI implementation: 100 MiB per file and 250 MiB per multipart request. Oversized files are rejected cleanly and reported in the import summary. Existing files are not overwritten; conflicting uploads are rejected as `already exists`, while other selected files can still be imported. Filenames are treated as untrusted: directory components, traversal attempts, empty names, control characters, and names that would resolve outside the case directory are rejected. Writes are staged through a temporary file in the destination directory and then renamed into place.
 
-The normal case selector continues to use the existing Web UI filtering rules. Imported MATPOWER `.m` files and runnable DFT `.DAT` files appear after refresh. FOR002 reference `.DAT` files may be copied for validation workflows but remain hidden from the normal runnable-case selector and belong in the optional FOR002 reference field.
+The normal case selector continues to use the existing Web UI filtering rules. Imported MATPOWER `.m` files and runnable DTF `.DAT` files appear after refresh. FOR002 reference `.DAT` files may be copied for validation workflows but remain hidden from the normal runnable-case selector and belong in the optional FOR002 reference field.
 
 ## PowerFlow tolerance spinner
 

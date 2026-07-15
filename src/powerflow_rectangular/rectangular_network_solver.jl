@@ -1675,6 +1675,12 @@ function runpf!(
     end
     rect_status = rectangular_pf_status(wnet)
     if rect_status !== nothing
+      # A network with at most one AC island never enters the independent
+      # per-island solve branch above, so this trivial case must report its
+      # own convergence here instead of leaving the default `false` behind.
+      if islands_enabled && erg == 0 && length(island_report.rows) <= 1
+        rect_status = merge(rect_status, (; island_wise_all_converged = true))
+      end
       _set_rectangular_pf_status!(net, rect_status)
     end
     if erg == 0 && has_merges
