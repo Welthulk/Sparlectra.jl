@@ -465,4 +465,4 @@ The normal case selector continues to use the existing Web UI filtering rules. I
 
 ## PowerFlow tolerance spinner
 
-The PowerFlow tolerance control accepts ordinary decimal values and scientific notation. The Web UI updates the number-input increment from the current value before native spinner actions so small tolerances remain convenient: for example, stepping down from `0.01` uses `0.005`, while stepping down from `1e-5` uses `9e-6` and lands on `1e-6`. Manual entry and submitted solver tolerance values are unchanged.
+The PowerFlow tolerance control is a text field that accepts ordinary decimal values and scientific notation (for example `1e-8`). A dedicated exponent spinner — the up/down buttons next to the field, or the Up/Down arrow keys while the field is focused — steps the exponent by one while keeping the mantissa unchanged: stepping down from `1e-5` yields `1e-6`, stepping up from `1e-5` yields `1e-4`. Manual entry and submitted solver tolerance values are unchanged.

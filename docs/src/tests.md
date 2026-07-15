@@ -56,9 +56,9 @@ Current extended-only groups are:
 
 | Extended addition | File | Main checks |
 |---|---|---|
-| `remove` | `test/testremove.jl` | Remove/delete behavior and consistency after structural edits |
+| `legacy/remove` | `test/testremove.jl` | Remove/delete behavior and consistency after structural edits |
 | `pv_voltage_residuals` | `test/test_pv_voltage_residuals.jl` | PV-voltage residual behavior, angle-preserving voltage-setpoint starts, phase-shifted PV integration coverage, and related solver diagnostics |
-| `matpower_example` | `test/test_matpower_example.jl` | MATPOWER example runner path, output routing, performance/profile rendering, and runtime configuration forwarding, removed start-voltage alias rejection, and canonical profile-blend parsing |
+| `matpower_examples` | `test/test_matpower_example.jl` | MATPOWER example runner path, output routing, performance/profile rendering, and runtime configuration forwarding, removed start-voltage alias rejection, and canonical profile-blend parsing |
 | `synthetic_grids` | `test/test_synthetic_grids.jl` | Synthetic network generation and larger synthetic-grid regression coverage |
 | `configuration_docs` | `test/test_configuration_docs.jl` | Configuration documentation and docs/config consistency checks |
 
@@ -239,9 +239,10 @@ The runner prints a lightweight progress view, for example:
 
 ```text
 Test framework: fast
-[1/5] core_model
-[2/5] powerflow_rectangular
+[1/8] core_model
+[2/8] powerflow_rectangular
 ...
+[8/8] controls
 ```
 
 Julia's final `Test Summary` remains unchanged and visible at the end.

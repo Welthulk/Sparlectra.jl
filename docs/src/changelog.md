@@ -8,19 +8,14 @@
 
 * Enabled MATPOWER DC-line handling through terminal P/Q injections by default.
 * Enabled independent AC-island solving and continued per-island diagnostics by default.
-* Added SyntheticUSA diagnostics and documented the validated solver profile.
 * Improved Web UI file-import validation, filename handling, conflict reporting, and per-file status output.
-* Split the test suite into a compact fast profile and separate extended integration and stress tests.
 
 ### Bug Fixes
 
-* Separated numerical `Solver time` from overall `Total time` in API and Web UI results, including failed solver runs.
-* Fixed timing persistence in `result.json`, `performance.log`, and large-case summaries.
 * Improved test-run diagnostics, bounded failure output, and excluded generated files from repository-hygiene checks.
 * Made DFT `.DAT` classification content-aware so only runnable cases and valid FOR002 references appear in the corresponding selectors.
 * Improved the tolerance spinner behavior in the Web UI.
 * Hidden unavailable commit information instead of displaying `commit unknown`.
-* Corrected `Sparlectra.version()` to read `Project.toml` instead of a stale hardcoded constant, completed `dft_extended` test-profile ownership of the DFT test suite, and removed a duplicate obsolete Config Editor implementation left over from the merge.
 
 # Version 0.8.8 — 2026-07-14
 
