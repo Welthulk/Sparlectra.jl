@@ -42,10 +42,14 @@ function _api_failure(reason::String, message::String; run_id::String = string(u
   return _finalize_api_result(result)
 end
 
-function _api_execution_failure(reason::String, message::String; run_id::String, casefile, config_file, output_dir::String, logfile::String, result_file::String, phase_recorder::PowerFlowPhaseTimingRecorder, performance_timing = :off, metadata = Dict{String,Any}())::SparlectraApiResult
+function _api_execution_failure(reason::String, message::String; run_id::String, casefile, config_file, output_dir::String, logfile::String, result_file::String, phase_recorder::PowerFlowPhaseTimingRecorder, performance_timing = :off, metadata = Dict{String,Any}(), total_start_ns::Union{Nothing,UInt64} = nothing)::SparlectraApiResult
   _complete_active_phase!(phase_recorder, "failed")
   _start_service_phase!(phase_recorder, "finalizing_failed")
-  _complete_active_phase!(phase_recorder, "failed")
+  if total_start_ns === nothing
+    _complete_active_phase!(phase_recorder, "failed")
+  else
+    _finalize_service_timings!(phase_recorder, total_start_ns; status = "failed")
+  end
   timing_mode = try
     _api_timing_mode(performance_timing)
   catch

@@ -340,7 +340,7 @@ function _detect_case_format(case_path::AbstractString; requested::Symbol = :aut
   if has_for001_sections && has_size_card
     return :dtf_for001
   end
-  ext == ".dat" && throw(ArgumentError("Ambiguous .DAT input; set case_format = :dtf_for001 to use the experimental/internal native DTF/FOR001 path."))
+  ext == ".dat" && throw(ArgumentError("Ambiguous .DAT input; set case_format = :dtf_for001 to use the experimental/internal native DFT path."))
   return :matpower
 end
 
@@ -384,7 +384,7 @@ function _write_dtf_summary_artifacts(output_path::AbstractString, case, metadat
   end
   md = joinpath(output_path, "dtf_import_summary.md")
   open(md, "w") do io
-    println(io, "# Native DTF/FOR001 input summary (experimental/internal)\n")
+    println(io, "# Native DFT input summary (experimental/internal)\n")
     println(io, "- buses: ", length(case.buses))
     println(io, "- branches: ", length(case.branches))
     println(io, "- outages: ", length(case.outages))
@@ -431,7 +431,7 @@ function _selected_dtf_outages(case, mode, selection)
       push!(outages, outage)
     end
   end
-  length(outages) == length(selected) || throw(ArgumentError("missing_or_ambiguous_outage_selection: selected DTF outage was not found unambiguously."))
+  length(outages) == length(selected) || throw(ArgumentError("missing_or_ambiguous_outage_selection: selected DFT outage was not found unambiguously."))
   return outages
 end
 
@@ -451,7 +451,7 @@ function _run_dtf_outages(case_path::AbstractString, case, config, output_path::
     if write_artifacts
       md = joinpath(output_path, "dtf_outage_$(outage.index)_summary.md")
       open(md, "w") do io
-        println(io, "# DTF outage summary\n")
+        println(io, "# DFT outage summary\n")
         println(io, "- label: ", label)
         println(io, "- matched branch index: ", branch_index)
         println(io, "- converged: ", raw.final_converged)
@@ -577,7 +577,6 @@ function _run_sparlectra_api(;
     _start_service_phase!(phase_recorder, String(phase))
     phase_callback(String(phase))
   end
-  emit_phase("total_service")
   timing_mode = try
     _api_timing_mode(performance_timing)
   catch err
@@ -652,17 +651,17 @@ function _run_sparlectra_api(;
       message = sprint(showerror, err)
       reason = occursin("unsupported_dtf_dc_line", message) ? "unsupported_dtf_dc_line" : "dtf_parse_error"
       metadata = Dict("input_format" => String(requested_case_format), "input_format_detected" => "dtf_for001", "native_dtf_import_used" => false, "unsupported_dcline_status" => reason)
-      return _api_execution_failure(reason, message; run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file, phase_recorder, performance_timing, metadata = metadata)
+      return _api_execution_failure(reason, message; run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file, phase_recorder, performance_timing, total_start_ns = total_start, metadata = metadata)
     end
     emit_phase("building_sparlectra_net")
     dtf_net = try
       DTFImporter.build_net(dtf_case)
     catch err
-      return _api_execution_failure("dtf_build_net_error", sprint(showerror, err, catch_backtrace()); run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file, phase_recorder, performance_timing)
+      return _api_execution_failure("dtf_build_net_error", sprint(showerror, err, catch_backtrace()); run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file, phase_recorder, performance_timing, total_start_ns = total_start)
     end
     raw_result = try
       open(logfile, "a") do io
-        println(io, "Native DTF/FOR001 input (experimental/internal)")
+        println(io, "Native DFT input (experimental/internal)")
         _write_resolved_q_limit_options(io, qlimit_metadata)
         with_logger(ConsoleLogger(io)) do
           redirect_stdout(io) do
@@ -674,7 +673,7 @@ function _run_sparlectra_api(;
       end
     catch err
       err isa PowerFlowAborted && rethrow()
-      return _api_execution_failure("execution_error", sprint(showerror, err, catch_backtrace()); run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file, phase_recorder, performance_timing)
+      return _api_execution_failure("execution_error", sprint(showerror, err, catch_backtrace()); run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file, phase_recorder, performance_timing, total_start_ns = total_start)
     end
     matpower_export_file = nothing
     if matpower_export_requested
@@ -682,7 +681,7 @@ function _run_sparlectra_api(;
       try
         writeMatpowerCasefile(raw_result.net, matpower_export_file)
       catch err
-        return _api_execution_failure("artifact_write_error", sprint(showerror, err); run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file, phase_recorder, performance_timing)
+        return _api_execution_failure("artifact_write_error", sprint(showerror, err); run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file, phase_recorder, performance_timing, total_start_ns = total_start)
       end
     end
     dtf_metadata = _dtf_metadata(dtf_case, requested_case_format, detected_case_format; for002_file = for002_reference_file, run_dtf_outages = run_dtf_outages, matpower_export_requested = matpower_export_requested, matpower_export_file = matpower_export_file)
@@ -692,7 +691,7 @@ function _run_sparlectra_api(;
       dtf_metadata["for002_comparison_artifacts"] = for002_artifacts
       dtf_metadata["for002_comparison_status"] = isempty(for002_artifacts) ? "not_requested" : "reference_recorded"
     catch err
-      return _api_execution_failure("invalid_for002_reference_file", sprint(showerror, err); run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file, phase_recorder, performance_timing, metadata = dtf_metadata)
+      return _api_execution_failure("invalid_for002_reference_file", sprint(showerror, err); run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file, phase_recorder, performance_timing, total_start_ns = total_start, metadata = dtf_metadata)
     end
     dtf_outage_results = Dict{String,Any}[]
     if run_dtf_outages || Symbol(lowercase(strip(String(dtf_outage_selection_mode)))) != :none
@@ -700,7 +699,7 @@ function _run_sparlectra_api(;
         mode = run_dtf_outages && Symbol(lowercase(strip(String(dtf_outage_selection_mode)))) == :none ? :all : dtf_outage_selection_mode
         dtf_outage_results = _run_dtf_outages(case_path, dtf_case, config, output_path; mode = mode, selection = dtf_outage_selection, write_artifacts = write_outage_artifacts, write_matpower_exports = write_outage_matpower_exports, performance_profile = api_performance_profile)
       catch err
-        return _api_execution_failure("missing_ambiguous_outage_branch_matching", sprint(showerror, err); run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file, phase_recorder, performance_timing, metadata = dtf_metadata)
+        return _api_execution_failure("missing_ambiguous_outage_branch_matching", sprint(showerror, err); run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file, phase_recorder, performance_timing, total_start_ns = total_start, metadata = dtf_metadata)
       end
     end
     dtf_metadata["dtf_outage_results"] = dtf_outage_results
@@ -737,11 +736,12 @@ function _run_sparlectra_api(;
       operation_callback("matpower_dcline_unsupported"; run_id = run_id, _metadata_kwargs(details)...)
       operation_callback("powerflow_aborted_unsupported_matpower_dcline"; run_id = run_id, _metadata_kwargs(details)...)
       _write_run_metadata_artifact(output_path; case_path = case_path, lifecycle = details)
-      return _api_execution_failure("unsupported_matpower_dcline", err.message; run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file, phase_recorder, performance_timing, metadata = details)
+      return _api_execution_failure("unsupported_matpower_dcline", err.message; run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file, phase_recorder, performance_timing, total_start_ns = total_start, metadata = details)
     end
     island_message = _islandwise_failure_message(api_performance_profile)
     message = island_message === nothing ? sprint(showerror, err, catch_backtrace()) : island_message
     reason = get(phase_recorder.timings[phase_recorder.active_index === nothing ? length(phase_recorder.timings) : phase_recorder.active_index], "phase", "") == "loading_julia_case" ? "loading_julia_case_failed" : "execution_error"
+    solver_elapsed_s = _solver_elapsed_from_profile(api_performance_profile)
     metadata = island_message === nothing ? Dict{String,Any}() : Dict{String,Any}(
       "solver_status" => "failed",
       "service_status" => "failed",
@@ -749,7 +749,8 @@ function _run_sparlectra_api(;
       "numerical_status" => "not_converged",
       "last_phase" => "solving_powerflow",
     )
-    return _api_execution_failure(reason, message; run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file, phase_recorder, performance_timing, metadata = metadata)
+    solver_elapsed_s === nothing || (metadata["solver_elapsed_s"] = solver_elapsed_s)
+    return _api_execution_failure(reason, message; run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file, phase_recorder, performance_timing, total_start_ns = total_start, metadata = metadata)
   end
   end
   auto_profile_result = raw_result.performance_profile isa AbstractDict ? get(raw_result.performance_profile, :matpower_auto_profile_result, nothing) : nothing
@@ -757,7 +758,7 @@ function _run_sparlectra_api(;
   if auto_profile_result !== nothing
     config = auto_profile_result.config
     _update_effective_matpower_raw!(effective_raw, config)
-    config_sources = _config_source_report(config_path, nested_overrides, effective_raw; override_source = config_override_source)
+    config_sources = _config_source_report(config_path, nested_overrides, effective_raw; override_source = config_override_source, auto_profile_result = auto_profile_result)
     _write_yaml_file(effective_config, _effective_config_with_runtime_case(effective_raw, case_path, config; config_sources))
     _write_matpower_auto_profile_artifact(output_path, auto_profile_result, config; casefile = String(auto_profile_casefile))
     operation_callback("powerflow_effective_options"; run_id = run_id, case = basename(case_path), _metadata_kwargs(qlimit_metadata)..., _metadata_kwargs(_resolved_matpower_import_runtime_options(config))...)
@@ -834,9 +835,8 @@ function _run_sparlectra_api(;
     end
   end
   _check_powerflow_cancelled!(cancellation_token)
-  _complete_active_phase!(phase_recorder)
   emit_phase("finalizing_success")
-  _complete_active_phase!(phase_recorder)
+  _finalize_service_timings!(phase_recorder, total_start; status = "completed")
   phases[:artifact_writing] = _api_elapsed_seconds(artifact_start)
   phases[:total] = _api_elapsed_seconds(total_start)
   open(logfile, "a") do io

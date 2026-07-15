@@ -18,7 +18,7 @@ using Printf
 include(joinpath(@__DIR__, "dtf_for002_validation_utils.jl"))
 
 # Developer notes:
-# - Validates native Testnetz13 DTF/FOR001 outage cards against FOR002 outage blocks.
+# - Validates native Testnetz13 DFT outage cards against FOR002 outage blocks.
 # - The intentional execution path is DTFImporter.read_dtf -> DTFImporter.build_net -> runpf!.
 # - MATPOWER import/export and the generated FOR001 builder are intentionally not used.
 # - FOR002 is treated as a legacy textual reference report.
@@ -134,7 +134,7 @@ function _apply_single_branch_outage!(net, idx::Int)
   before = [br.status for br in net.branchVec]
   before[idx] == 1 || throw(ArgumentError("matched branch $idx was not initially in service"))
   # Apply exactly one native branch status change and verify no other branch
-  # moved; this protects the single-branch DTF outage-card interpretation.
+  # moved; this protects the single-branch DFT outage-card interpretation.
   net.branchVec[idx].status = 0
   after = [br.status for br in net.branchVec]
   changed = findall(i -> before[i] != after[i], eachindex(before))
@@ -309,7 +309,7 @@ function _write_markdown(path, opt, case, for002_scenarios, matching_rows, metri
     println(io, "This validation uses `DTFImporter.read_dtf` -> `DTFImporter.build_net` for each outage and does not use MATPOWER import/export or the generated FOR001 builder.\n")
     println(io, "- DTF file: `", opt["dtf-file"], "`")
     println(io, "- FOR002 file: `", opt["for002-file"], "`")
-    println(io, "- parsed DTF outages: ", length(case.outages))
+    println(io, "- parsed DFT outages: ", length(case.outages))
     println(io, "- parsed FOR002 outage blocks: ", length(for002_scenarios), "\n")
     println(io, "## What are state residuals?\n")
     println(io, "State residuals force FOR002 printed voltage magnitudes/angles into the native Sparlectra outage Ybus. The resulting bus injections are compared with the FOR002 printed bus table. This is more sensitive than solved branch-flow comparisons because FOR002 values may be rounded and transformer-adjacent nodes react strongly to small voltage/angle differences. These residuals are diagnostic, not hard pass/fail criteria yet; branch-flow deviations and solved generator/slack comparisons are currently stronger validation signals.\n")

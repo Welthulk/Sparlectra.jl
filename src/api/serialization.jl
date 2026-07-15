@@ -66,6 +66,10 @@ function to_dict(result::SparlectraApiResult; include_raw_result::Bool = false):
     "service_phase_timings" => _api_transport_value(result.service_phase_timings),
     "metadata" => _api_transport_value(result.metadata),
   )
+  solver_elapsed_s =
+    result.raw_result !== nothing && hasproperty(result.raw_result, :solver_elapsed_s) ? getproperty(result.raw_result, :solver_elapsed_s) :
+    get(result.metadata, "solver_elapsed_s", nothing)
+  solver_elapsed_s === nothing || (data["solver_elapsed_s"] = _api_transport_value(solver_elapsed_s))
   for key in ("qlimits_enabled", "qlimit_enforcement_mode", "qlimit_guard_enabled", "q_limit_preview_mode", "q_limit_runlog_max_rows", "runtime_casefile", "runtime_casefile_path", "configured_default_casefile")
     haskey(result.metadata, key) && (data[key] = _api_transport_value(result.metadata[key]))
   end

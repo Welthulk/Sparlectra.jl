@@ -172,7 +172,7 @@ reimports the block and avoids adding the equivalent `Gs/Bs` shunts twice when
 they are already present in the standard bus table.
 
 `matpower_import.matpower_dcline_mode` controls `mpc.dcline` handling. The
-default `:reject_active` preserves old fail-fast behavior: active DC-line rows
+default `:pf_injections` imports active DC-line rows as fixed terminal injections. Explicit `:reject_active` remains available for strict validation and
 (`status != 0`) abort before solving with `failure_reason =
 unsupported_matpower_dcline`, while empty or inactive-only tables are ignored.
 `:ignore_inactive` has the same active-row rejection behavior and documents the
@@ -188,7 +188,7 @@ voltage-controlled where MATPOWER would make them PV, without demoting
 reference buses or activating isolated buses. API/Web UI runs write a compact
 `matpower_dcline.csv` artifact describing the mapping. This is not a full HVDC
 converter or DC-grid model; OPF constraints, converter controls,
-`dclinecost`, and DC-line optimization remain unsupported.
+`dclinecost`, and DC-line optimization remain unsupported. DC terminal injections do not create Ybus branches, so disconnected AC components are detected and solved island-wise by default; this is a power-flow approximation, not a complete HVDC converter or DC-grid model.
 
 ```julia
 using Sparlectra
@@ -276,3 +276,11 @@ writeMatpowerCasefile(net, output_path)
 
 !!! Note 
     Please note that providing support for individualized network data issues is beyond the scope of this project, as it is not maintained by an organization. Users are encouraged to take initiative in resolving such issues independently and sharing their results with the community.
+
+## Web UI case-file import
+
+The local Web UI can copy downloaded case files into its case storage from the PowerFlow page. Use **Import case files** to open the browser's native picker, choose one or more MATPOWER `.m`/`.M` files or DFT `.dat`/`.DAT` files, and submit the import form. The import form is separate from **Start PowerFlow run**: uploading files only stores them and refreshes the selector; it does not parse uploaded MATPOWER code or start a calculation.
+
+Imported files go to the same effective case directory used by the Web UI case selector. In a writable repository checkout this is the Web UI `data/mpower` case directory; in installed-package or restricted launch contexts the Web UI uses its user-writable application data `data/mpower` directory next to the run output root. The manual full-path field remains available for advanced workflows.
+
+The Web UI rejects unsupported extensions such as `.jl`, `.zip`, `.yaml`, executables, scripts, and files without an extension. Uploads are limited to 100 MiB per file and 250 MiB per request. Existing files are not overwritten: the import result reports `already exists` for conflicts and still imports other valid files from the same selection. FOR002 reference `.DAT` files remain hidden from the normal runnable selector even when copied into the case directory.

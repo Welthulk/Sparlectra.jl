@@ -214,7 +214,7 @@ end
 function main()
   repo = normpath(joinpath(@__DIR__, ".."))
   data_dir = joinpath(repo, "data", "DTF")
-  outdir = joinpath(@__DIR__, "_out", "schaefer_dtf_validation")
+  outdir = joinpath(@__DIR__, "_out", "dft_validation")
   mkpath(outdir)
   missing = String[]
   for c in CASES
@@ -231,9 +231,9 @@ function main()
   all_loss_rows = NamedTuple[]
   all_voltage_transfer_rows = NamedTuple[]
   all_convention_scan_rows = NamedTuple[]
-  md_path = joinpath(outdir, "schaefer_dtf_validation_summary.md")
+  md_path = joinpath(outdir, "dft_validation_summary.md")
   open(md_path, "w") do io
-    println(io, "# Schäfer DTF/FOR002 validation summary\n")
+    println(io, "# legacy validation DTF/FOR002 validation summary\n")
     println(io, "Generated with native `DTFImporter.read_dtf` -> `DTFImporter.build_net` -> `runpf!` using executed `transformer_ratio_mode` alternatives. DTF winding/nameplate ratios are preserved for diagnostics; neutral-one mode intentionally does not apply them as neutral off-nominal taps.\n")
     for c in CASES
       dtf = joinpath(data_dir, "FOR001$(c.suffix).DAT")
@@ -296,7 +296,7 @@ function main()
         push!(summary_rows, row)
         append!(all_voltage_transfer_rows, transformer_voltage_transfer_rows(c.id, dtf_case, details))
         push!(all_convention_scan_rows, convention_scan_rows(c.id, details, row))
-        write_named_csv(joinpath(outdir, "schaefer_dtf_case_$(c.id)_$(ratio_mode).csv"), [row])
+        write_named_csv(joinpath(outdir, "dft_case_$(c.id)_$(ratio_mode).csv"), [row])
         ratio_mode == :neutral_one && (selected_details = details; selected_row = row; selected_loss_rows = loss_rows)
         println(io, "### Mode $(ratio_mode)\n")
       println(io, "- converged: `$(details.converged)`, iterations: `$(details.iterations)`, final mismatch: `$(details.final_mismatch)`")
@@ -319,10 +319,10 @@ function main()
       end
       println(io)
       end
-      write_named_csv(joinpath(outdir, "schaefer_dtf_case_$(c.id).csv"), [selected_row])
+      write_named_csv(joinpath(outdir, "dft_case_$(c.id).csv"), [selected_row])
     end
   end
-  write_named_csv(joinpath(outdir, "schaefer_dtf_validation_summary.csv"), summary_rows)
+  write_named_csv(joinpath(outdir, "dft_validation_summary.csv"), summary_rows)
   write_named_csv(joinpath(outdir, "transformer_loss_summary.csv"), all_loss_rows)
   write_named_csv(joinpath(outdir, "transformer_pi_loss_diagnostics.csv"), all_loss_rows)
   open(joinpath(outdir, "transformer_pi_loss_diagnostics.md"), "w") do io
@@ -345,7 +345,7 @@ function main()
   write_named_csv(joinpath(outdir, "transformer_ratio_mode_comparison.csv"), all_convention_scan_rows)
   cp(joinpath(outdir, "transformer_convention_scan.md"), joinpath(outdir, "transformer_ratio_mode_comparison.md"); force = true)
   println("Wrote ", md_path)
-  println("Wrote ", joinpath(outdir, "schaefer_dtf_validation_summary.csv"))
+  println("Wrote ", joinpath(outdir, "dft_validation_summary.csv"))
   return nothing
 end
 

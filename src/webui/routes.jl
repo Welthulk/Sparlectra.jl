@@ -86,6 +86,7 @@ function route_sparlectra_webui(method::AbstractString, target::AbstractString, 
       operation_log = runtime === nothing ? webui_operation_log_path(output_root) : runtime.operation_log,
       selected_casefile,
       selected_config_file,
+      import_message = get(query, "import_message", ""),
       error_message = runtime === nothing ? nothing : runtime.startup_config_error,
       config_notice = _powerflow_config_notice(runtime === nothing ? "" : runtime.config_file),
       case_profile,
@@ -115,6 +116,8 @@ function route_sparlectra_webui(method::AbstractString, target::AbstractString, 
         submitted_form = form,
       ); status = 400)
     end
+  elseif verb == "POST" && path == "/powerflow/import-cases"
+    return handle_powerflow_case_import(form; output_root, application_root = _webui_application_root(), case_directory = runtime === nothing ? nothing : runtime.case_directory, operation_log = log_root)
   elseif verb == "POST" && path == "/powerflow/config/check"
     return handle_powerflow_config_refresh(form; write = false, operation_log = log_root)
   elseif verb == "POST" && path == "/powerflow/config/refresh"

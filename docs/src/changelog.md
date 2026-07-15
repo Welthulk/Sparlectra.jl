@@ -1,13 +1,36 @@
+# Version 0.8.9 — 2026-07-16
+
+## New Features
+
+* Added multi-file import for MATPOWER `.m` and DFT `.DAT` cases in the Web UI. Imported runnable cases are added to the case selector.
+
+### Improvements
+
+* Enabled MATPOWER DC-line handling through terminal P/Q injections by default.
+* Enabled independent AC-island solving and continued per-island diagnostics by default.
+* Added SyntheticUSA diagnostics and documented the validated solver profile.
+* Improved Web UI file-import validation, filename handling, conflict reporting, and per-file status output.
+* Split the test suite into a compact fast profile and separate extended integration and stress tests.
+
+### Bug Fixes
+
+* Separated numerical `Solver time` from overall `Total time` in API and Web UI results, including failed solver runs.
+* Fixed timing persistence in `result.json`, `performance.log`, and large-case summaries.
+* Improved test-run diagnostics, bounded failure output, and excluded generated files from repository-hygiene checks.
+* Made DFT `.DAT` classification content-aware so only runnable cases and valid FOR002 references appear in the corresponding selectors.
+* Improved the tolerance spinner behavior in the Web UI.
+* Hidden unavailable commit information instead of displaying `commit unknown`.
+
 # Version 0.8.8 — 2026-07-14
 
 ### New Features
 
-* Added native DTF/FOR001 import with support for transformer ratio conventions, Schrägregler/skew-angle controls, trailing branch records, and FOR001 contingency metadata.
-* Added an experimental DTF/FOR001 input path for the PowerFlow API and Web UI, including optional MATPOWER export, outage selection, import diagnostics, and explicit handling of unsupported DC-line data.
+* Added native DFT import with support for transformer ratio conventions, Schrägregler/skew-angle controls, trailing branch records, and FOR001 contingency metadata.
+* Added an experimental DFT input path for the PowerFlow API and Web UI, including optional MATPOWER export, outage selection, import diagnostics, and explicit handling of unsupported DC-line data.
 * Extended MATPOWER import and export with Sparlectra metadata for bus and branch names, branch types, FOR001 contingencies, and transformer loss data.
 * Added support for the existing `mpc.sparlectra.transformer_losses` extension so transformer no-load conductance can be preserved across Sparlectra–MATPOWER roundtrips.
 * Added optional MATPOWER DC-line handling through fixed terminal power injections while keeping rejection of active DC-line records as the default.
-* Added user-facing documentation for the DTF/FOR001 format, transformer conventions, Schrägregler controls, trailing records, and FOR002 validation.
+* Added user-facing documentation for the DFT format, transformer conventions, Schrägregler controls, trailing records, and FOR002 validation.
 
 ### Improvements
 
