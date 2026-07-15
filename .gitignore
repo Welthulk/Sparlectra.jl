@@ -18,6 +18,7 @@ examples/FOR002*.dat
 docs/build
 TODO.md
 Roadmap.md
+AGENTS.md
 network_dump.txt
 test/test_experments.jl
 test/test_experment.jl
