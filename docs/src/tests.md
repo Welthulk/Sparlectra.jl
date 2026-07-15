@@ -52,6 +52,7 @@ Current extended-only groups are:
 - `programmatic_api_extended`
 - `webui_extended`
 - `repository_hygiene`
+- `dft_extended`
 
 | Extended addition | File | Main checks |
 |---|---|---|
@@ -60,9 +61,26 @@ Current extended-only groups are:
 | `matpower_example` | `test/test_matpower_example.jl` | MATPOWER example runner path, output routing, performance/profile rendering, and runtime configuration forwarding, removed start-voltage alias rejection, and canonical profile-blend parsing |
 | `synthetic_grids` | `test/test_synthetic_grids.jl` | Synthetic network generation and larger synthetic-grid regression coverage |
 | `configuration_docs` | `test/test_configuration_docs.jl` | Configuration documentation and docs/config consistency checks |
-| `dtf_importer` | `test/extended/test_dtf_importer.jl` | DFT format parser and direct Net-builder coverage, including voltage-level-index branch conversion, transformer controls, bus-type semantics, and parsed outage metadata |
-| `dtf_for002_validation_example` | `test/extended/test_dtf_for002_validation_example.jl` | DFT format -> current Julia compatibility module `DTFImporter` -> `Net` -> power-flow validation example smoke coverage against FOR002 diagnostics; verifies generated CSV/Markdown artifacts, lightweight default result/concise CLI output, explicit detailed diagnostics mode, and does not invoke the fast suite |
-| `dtf_matpower_export_validation_example` | `test/extended/test_dtf_matpower_export_validation_example.jl` | DFT format -> `Sparlectra.Net` -> existing `writeMatpowerCasefile` -> MATPOWER import roundtrip validation for the Testnetz13 base case and outages listed by the DFT file |
+
+### `dft_extended` group
+
+`dft_extended` is a normal `extended`-only group. It owns exactly five DFT test files and invokes each of their run functions once:
+
+| File | Run function | Main checks |
+|---|---|---|
+| `test/extended/test_dtf_importer.jl` | `run_dtf_importer_tests` | DFT format parser and direct Net-builder coverage, including voltage-level-index branch conversion, transformer controls, bus-type semantics, and parsed outage metadata |
+| `test/extended/test_dtf_for002_validation_example.jl` | `run_dtf_for002_validation_example_tests` | DFT format -> current Julia compatibility module `DTFImporter` -> `Net` -> power-flow validation example smoke coverage against FOR002 diagnostics; verifies generated CSV/Markdown artifacts, lightweight default result/concise CLI output, explicit detailed diagnostics mode, and does not invoke the fast suite |
+| `test/extended/test_dtf_for002_outage_validation_example.jl` | `run_dtf_for002_outage_validation_example_tests` | DFT-listed outage validation against FOR002 outage reference reports for the Testnetz13 cases |
+| `test/extended/test_dtf_matpower_export_validation_example.jl` | `run_dtf_matpower_export_validation_example_tests` | DFT format -> `Sparlectra.Net` -> existing `writeMatpowerCasefile` -> MATPOWER import roundtrip validation for the Testnetz13 base case and outages listed by the DFT file |
+| `test/extended/test_dtf_api_webui_integration.jl` | `run_dtf_api_webui_integration_tests` | DFT format input through the API and Web UI paths |
+
+`extended` includes `dft_extended`, and `all` runs `fast` once followed by the complete `extended` profile once, so the DFT tests run exactly once per `extended` or `all` invocation. Optional external FOR001/FOR002 fixtures continue to skip cleanly (as `Broken`, not failed) when absent.
+
+`test/extended/runtests_extended.jl` remains an optional standalone DFT-focused runner. It includes the same five files directly and is useful for iterating on DFT coverage without running the rest of the extended profile:
+
+```bash
+julia --project=. test/extended/runtests_extended.jl
+```
 
 ## Native DFT validation examples with FOR002 reference reports
 
