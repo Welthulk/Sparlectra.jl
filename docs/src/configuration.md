@@ -87,7 +87,7 @@ carry validation metadata such as standard `mpc.bus_name` and user-defined
 `mpc.branch_name`/`mpc.branch_kind`. `import_for001_contingencies` defaults to
 `true` and preserves user-defined `mpc.for001_contingencies` for validation
 workflows. `matpower_import.matpower_dcline_mode` defaults to
-`:reject_active`; use `:pf_injections` only when simple MATPOWER power-flow
+`:pf_injections`; use explicit `:reject_active` when strict active-row rejection is required. The default uses simple MATPOWER power-flow
 DC-line terminal injections are desired. OPF and `dclinecost` remain
 unsupported.
 
@@ -95,9 +95,7 @@ unsupported.
 
 Disconnected AC islands are not tied together by MATPOWER `mpc.dcline`
 terminal injections: those injections affect bus power balance but do not add
-Ybus branches. Keep the conservative default (`power_flow.islands.enabled:
-false`) to fail before Newton-Raphson when a case contains multiple AC
-components, or explicitly enable independent island solves:
+Ybus branches. `power_flow.islands.enabled: true` is the default, so these disconnected AC components are solved independently unless the user explicitly disables island solving:
 
 ```yaml
 power_flow:

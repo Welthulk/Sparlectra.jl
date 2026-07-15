@@ -41,7 +41,7 @@ _matpower_cache_jl_bypass_reason() = "generated_jl_cache_hidden_from_webui"
 
 _is_for002_reference_dat(path::AbstractString)::Bool = occursin(r"^for002.*\.dat$"i, basename(strip(String(path))))
 
-_for002_primary_case_message() = "FOR002.DAT is a reference/result file and cannot be used as the primary DTF/FOR001 input case. Use FOR001.DAT as the case and enter FOR002.DAT as optional FOR002 reference file."
+_for002_primary_case_message() = "FOR002.DAT is a reference/result file and cannot be used as the primary DFT network input case. Use a runnable DFT network case as the case and enter FOR002.DAT as optional FOR002 reference file."
 
 function _canonical_matpower_source_for_webui(path::AbstractString, case_directory::AbstractString)::String
   case_path = abspath(path)
@@ -69,7 +69,11 @@ function _resolve_powerflow_casefile(
   extension = lowercase(splitext(requested)[2])
   extension in (".m", ".jl", ".dat") || throw(ArgumentError("Unsupported casefile extension: $(requested) (expected .m, .jl, or .DAT)"))
   if isfile(requested)
-    extension == ".dat" && return abspath(requested)
+    if extension == ".dat"
+      role = _webui_classify_dat_content(requested)
+      _webui_is_runnable_dat_role(role) || throw(ArgumentError("$(basename(requested)) is a $(_webui_dat_role_label(role)) file and cannot be used as the primary PowerFlow case. Choose a runnable DFT network case."))
+      return abspath(requested)
+    end
     return _canonical_matpower_source_for_webui(requested, case_directory)
   end
   occursin(r"[\\/]", requested) && throw(ArgumentError("Case file not found: $(requested)"))
@@ -88,7 +92,11 @@ function _resolve_powerflow_casefile(
   end
   if extension == ".dat"
     local_dat = joinpath(trusted_directory, requested)
-    isfile(local_dat) && return abspath(local_dat)
+    if isfile(local_dat)
+      role = _webui_classify_dat_content(local_dat)
+      _webui_is_runnable_dat_role(role) || throw(ArgumentError("$(requested) is a $(_webui_dat_role_label(role)) file and cannot be used as the primary PowerFlow case. Choose a runnable DFT network case."))
+      return abspath(local_dat)
+    end
     throw(ArgumentError("Case file not found: $(requested)"))
   end
   local_m = extension == ".m" ? joinpath(trusted_directory, requested) : joinpath(trusted_directory, first(splitext(requested)) * ".m")

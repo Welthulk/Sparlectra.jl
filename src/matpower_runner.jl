@@ -58,7 +58,7 @@ function _auto_timing_mode(method::Symbol, warmup_runs::Int)::Symbol
   warmup_runs > 0 && return :warm_steady_state
 
   active_project = Base.active_project()
-  project_key = isnothing(active_project) ? "__no_project__" : active_project
+  project_key = Symbol(isnothing(active_project) ? "__no_project__" : active_project)
   key = (method, project_key)
 
   if key in _SESSION_REPRESENTATIVE_TIMING_SEEN

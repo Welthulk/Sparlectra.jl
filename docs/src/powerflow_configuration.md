@@ -43,10 +43,10 @@ power_flow:
 
 | YAML path | Type | Default | Allowed values | Meaning |
 |---|---:|---:|---|---|
-| `power_flow.islands.enabled` | Bool | `false` | `true`, `false` | Write AC island diagnostics before and after the solve. |
+| `power_flow.islands.enabled` | Bool | `true` | `true`, `false` | Write AC island diagnostics before and after the solve. |
 | `power_flow.islands.mode` | Symbol/String | `solve_independent` | `solve_independent` | Reserved island solve mode; diagnostics preserve the island-wise solving concept. |
 | `power_flow.islands.reference_policy` | Symbol/String | `matpower_like` | `matpower_like` | Select the in-island REF bus when present, otherwise report the first PV/PQ bus that would be promoted for diagnostics. |
-| `power_flow.islands.diagnostic_continue_after_failure` | Bool | `false` | `true`, `false` | Keep diagnostics for all detected islands even when the combined run fails. |
+| `power_flow.islands.diagnostic_continue_after_failure` | Bool | `true` | `true`, `false` | Keep diagnostics for all detected islands even when the combined run fails. |
 
 When an island-aware run fails, the API/result message identifies the first
 failing island with its island id, bus and branch counts, selected reference

@@ -40,13 +40,59 @@ end
 
 Return sorted user-selectable case filenames from the Web UI application's
 `data/mpower` directory. The selector stays conservative: MATPOWER `.m` files
-and copied internal DTF/FOR001 `.DAT` candidates are shown, while generated
+and copied internal DFT `.DAT` candidates are shown, while generated
 Julia cache artifacts, warm-up cases, result artifacts, and sidecar profiles
 stay hidden. Missing or empty directories produce an empty list.
 """
 function _webui_casefile_options(application_root::AbstractString)::Vector{String}
-  return _webui_casefile_options_in_directory(joinpath(application_root, "data", "mpower"))
+  return _webui_casefile_options_in_directory(_webui_case_directory(; application_root))
 end
+
+"""Return the effective Web UI case directory used for selection and imports."""
+function _webui_case_directory(; case_directory::Union{Nothing,AbstractString} = nothing, application_root::AbstractString = _webui_application_root(), output_root::AbstractString = default_webui_output_root())::String
+  case_directory === nothing || return normpath(String(case_directory))
+  package_case_directory = joinpath(application_root, "data", "mpower")
+  try
+    mkpath(package_case_directory)
+    test_path = tempname(package_case_directory)
+    open(test_path, "w") do io
+      write(io, "")
+    end
+    rm(test_path; force = true)
+    return normpath(package_case_directory)
+  catch
+    return normpath(default_webui_case_cache_dir(output_root))
+  end
+end
+
+_webui_supported_upload_case_extension(name::AbstractString)::Bool = lowercase(splitext(basename(String(name)))[2]) in (".m", ".dat")
+
+function _webui_classify_dat_content(path::AbstractString)::Symbol
+  lowercase(splitext(path)[2]) == ".dat" || return :not_dat
+  text = try
+    read(path, String)
+  catch
+    return :unknown_dat
+  end
+  try
+    case = DTFImporter.read_dtf(path; strict = false)
+    if case.size.NGES > 0 && length(case.buses) == case.size.NGES && length(case.branches) == case.size.LGES
+      return isempty(case.outages) ? :dft_network_case : :dft_network_case_with_outages
+    end
+  catch
+  end
+  has_outages = occursin(r"(?im)^\s*AUSFALL\s*$", text) && occursin(r"(?im)^\s*ENDE\s*$", text)
+  if has_outages
+    return :dft_outage_file
+  elseif _is_for002_reference_dat(path) || occursin(r"(?i)(for002|reference|vergleich|result)", text)
+    return :dft_outage_or_reference
+  end
+  return :unknown_dat
+end
+
+_webui_dat_role_label(role::Symbol)::String = replace(String(role), '_' => ' ')
+
+_webui_is_runnable_dat_role(role::Symbol)::Bool = role in (:dft_network_case, :dft_network_case_with_outages)
 
 """
     _webui_is_user_selectable_case(name) -> Bool
@@ -64,14 +110,18 @@ function _webui_is_user_selectable_case(name::AbstractString)::Bool
   startswith(lowered_name, "warmup_") && extension in (".m", ".jl") && return false
   extension == ".jl" && return false
   extension in (".m", ".dat") || return false
-  _is_for002_reference_dat(name) && return false
+  if extension == ".dat"
+    isfile(name) || return !_is_for002_reference_dat(name)
+    return _webui_is_runnable_dat_role(_webui_classify_dat_content(name))
+  end
   return true
 end
 
 function _webui_casefile_options_in_directory(directory::AbstractString)::Vector{String}
   isdir(directory) || return String[]
   files = filter(readdir(directory)) do name
-    return isfile(joinpath(directory, name)) && _webui_is_user_selectable_case(name)
+    path = joinpath(directory, name)
+    return isfile(path) && _webui_is_user_selectable_case(path)
   end
   return sort!(files; by = lowercase)
 end
@@ -79,7 +129,8 @@ end
 function _webui_for002_reference_options_in_directory(directory::AbstractString)::Vector{String}
   isdir(directory) || return String[]
   files = filter(readdir(directory)) do name
-    return isfile(joinpath(directory, name)) && _is_for002_reference_dat(name)
+    path = joinpath(directory, name)
+    return isfile(path) && lowercase(splitext(name)[2]) == ".dat" && _webui_classify_dat_content(path) === :dft_outage_or_reference
   end
   return sort!(files; by = lowercase)
 end

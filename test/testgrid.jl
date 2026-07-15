@@ -2768,7 +2768,7 @@ function test_summary_result_output_closes_file_handle()::Bool
          occursin("Iterative PV→PQ events", out)
 end
 
-function run_grid_tests()
+function run_grid_fast_tests()
   @testset "Grid and power-flow regression tests" begin
     @testset "Transformer and network validation" begin
       @test test_2WTPITrafo() == true
@@ -2785,7 +2785,6 @@ function run_grid_tests()
       @test test_matpower_reference_override_controls_flatstart() == true
       @test test_prosumer_aggregation_preserves_bus_types_and_injections() == true
       @test test_matpower_build_ybus_returns_sparse_expected_values() == true
-      @test test_matpower_build_ybus_large_sparse_smoke() == true
       @test test_matpower_vmva_selfcheck_noncontiguous_bus_numbers() == true
       @test test_matpower_vmva_selfcheck_ignores_slack_pq_spec() == true
       @test test_matpower_compare_vmva_wraps_angle_differences() == true
@@ -2797,7 +2796,6 @@ function run_grid_tests()
       @test test_bus_shunt_model_modes() == true
       @test test_matpower_read_case_m_postprocessing() == true
       @test test_matpower_matrix_block_scanner_whitespace() == true
-      @test test_matpower_matrix_block_scanner_large_body() == true
       @test test_matpower_file_import_honors_explicit_overrides() == true
       @test test_run_sparlectra_forwards_wrong_branch_config() == true
       @test test_run_sparlectra_normalizes_projected_matpower_starts() == true
@@ -2807,10 +2805,6 @@ function run_grid_tests()
     @testset "Power flow scenarios" begin
       @test test_5BusNet(0, 10.0) == true
       @test test_3BusNet(0, 150.0, :rectangular, true) == true
-      @test test_3BusNet(0, 150.0, :rectangular, true) == true
-      @test test_acpflow(0; lLine_6a6b = 0.01, damp = 1.0, method = :rectangular) == true
-      @test test_acpflow(0; lLine_6a6b = 0.01, damp = 1.0, method = :rectangular) == true
-      @test test_acpflow(0; lLine_6a6b = 0.01, damp = 1.0, method = :rectangular) == true
       @test test_acpflow(0; lLine_6a6b = 0.01, damp = 1.0, method = :rectangular) == true
       @test test_rectangular_autodamp_backtracks_oversized_step() == true
       @test test_rectangular_nonfinite_mismatch_diagnostics_use_finite_history() == true
@@ -2859,3 +2853,14 @@ function run_grid_tests()
     end
   end
 end
+
+function run_grid_extended_tests()
+  @testset "Grid extended scale and parser coverage" begin
+    @testset "large/stress MATPOWER helpers" begin
+      @test test_matpower_build_ybus_large_sparse_smoke() == true
+      @test test_matpower_matrix_block_scanner_large_body() == true
+    end
+  end
+end
+
+run_grid_tests() = run_grid_fast_tests()

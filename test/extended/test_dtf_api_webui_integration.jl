@@ -16,12 +16,12 @@ using Test
 using Sparlectra
 
 function run_dtf_api_webui_integration_tests()
-  @testset "DTF/FOR001 API and Web UI integration" begin
+  @testset "DFT API and Web UI integration" begin
     mktempdir() do tmp
       dtf = joinpath(@__DIR__, "..", "..", "data", "DTF", "FOR001.DAT")
       for002 = joinpath(@__DIR__, "..", "..", "data", "DTF", "FOR002.DAT")
       if !(isfile(dtf) && isfile(for002))
-        @info "Skipping full DTF/FOR001 API and Web UI integration; local external FOR001/FOR002 files are absent." dtf for002
+        @info "Skipping full DFT API and Web UI integration; local external FOR001/FOR002 files are absent." dtf for002
         @test_skip "local FOR001/FOR002 validation data not available"
         return
       end
@@ -80,10 +80,10 @@ function run_dtf_api_webui_integration_tests()
 
       form_html = Sparlectra.render_powerflow_form(output_root = tmp, case_directory = dirname(dtf), selected_casefile = basename(dtf))
       @test occursin("Input format", form_html)
-      @test occursin("DTF/FOR001 diagnostics (experimental/internal)", form_html)
+      @test occursin("DFT diagnostics (experimental/internal)", form_html)
       @test occursin("MATPOWER", form_html)
       @test occursin("option value=\"auto\">Auto", form_html)
-      @test !occursin("New: full DTF/FOR001 support", form_html)
+      @test !occursin("New: full DFT support", form_html)
 
       request = Sparlectra.powerflow_webui_request(Dict(
         "casefile" => basename(dtf),

@@ -867,7 +867,10 @@ mpc.branch = [
       report = Sparlectra.detect_ac_islands(net)
       @test length(report.rows) == 2
       @test all(row -> row.n_branch == 1, report.rows)
-      @test_throws ErrorException runpf!(deepcopy(net); config = PowerFlowConfig(max_iter = 40))
+      default_solved = deepcopy(net)
+      default_iterations, default_erg = runpf!(default_solved; config = PowerFlowConfig(max_iter = 40))
+      @test default_erg == 0
+      @test default_iterations > 0
 
       mktempdir() do tmpdir
         solved = deepcopy(net)

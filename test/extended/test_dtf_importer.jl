@@ -35,7 +35,7 @@ function _synthetic_dtf_case(; kind::Char = 'T', g_s::Float64 = 4.0e-5, b_s::Flo
 end
 
 function run_dtf_importer_tests()
-  @testset "native DTF/FOR001 importer focused synthetic checks" begin
+  @testset "native DFT importer focused synthetic checks" begin
     case = _synthetic_dtf_case()
     branch = only(case.branches)
     pu = Sparlectra.DTFImporter._branch_pu(case, branch)
@@ -72,9 +72,9 @@ function run_dtf_importer_tests()
     @test length(case.trailing_records) == 1
   end
 
-  @testset "native DTF/FOR001 full local fixture" begin
+  @testset "native DFT full local fixture" begin
     if !isfile(DTF_FIXTURE)
-      @info "Skipping full FOR001 fixture validation; external reference network is not tracked. Place a local file at test/fixtures/dtf/FOR001.DAT or data/DTF/FOR001.DAT for manual validation."
+      @info "Skipping full FOR001 fixture validation; external reference network is not tracked. Place a local file at test/fixtures/dft/FOR001.DAT or data/DFT/FOR001.DAT for manual validation."
       @test_skip "FOR001 full reference fixture not available"
       return
     end

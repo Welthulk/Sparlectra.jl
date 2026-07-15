@@ -123,7 +123,7 @@ Names and source metadata are useful for CSV exports, FOR001/FOR002 validation, 
 | `mpc.branch_name` | Optional readable branch/source names. | `matpower_import.apply_branch_names = true` |
 | `mpc.branch_kind` | Optional branch-kind hints such as line/transformer. | `matpower_import.apply_branch_kind = true` |
 | `mpc.for001_contingencies` | Optional FOR001-derived outage/contingency metadata for validation workflows. | `matpower_import.import_for001_contingencies = true` |
-| `mpc.dcline` | MATPOWER DC-line data. | Controlled by `matpower_import.matpower_dcline_mode`; active rows are rejected by default unless `pf_injections` is selected. |
+| `mpc.dcline` | MATPOWER DC-line data. | Controlled by `matpower_import.matpower_dcline_mode`; active rows are imported by default as fixed terminal injections; `reject_active` is available as an explicit strict mode. |
 | `mpc.sparlectra` | Versioned Sparlectra extension namespace for metadata that standard MATPOWER does not model. | Automatically recognized when present. |
 
 ### Sparlectra transformer-loss extension
@@ -183,7 +183,7 @@ matpower_import:
   apply_branch_names: true
   apply_branch_kind: true
   import_for001_contingencies: true
-  matpower_dcline_mode: reject_active
+  matpower_dcline_mode: pf_injections
 ```
 
 This is an example configuration, not a requirement for every case.
@@ -191,8 +191,7 @@ This is an example configuration, not a requirement for every case.
 ## MATPOWER `mpc.dcline`
 
 Sparlectra recognizes `mpc.dcline` tables. The default
-`matpower_import.matpower_dcline_mode: reject_active` remains fail-fast for
-active rows so that DC lines are not silently dropped. Empty and inactive-only
+`matpower_import.matpower_dcline_mode: pf_injections` is the default and imports active rows as fixed terminal injections. `reject_active` remains an explicit fail-fast mode. Empty and inactive-only
 tables are tolerated.
 
 For ordinary power-flow compatibility studies, opt in to

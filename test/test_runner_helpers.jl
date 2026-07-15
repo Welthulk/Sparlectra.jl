@@ -24,28 +24,66 @@ function sparlectra_test_verbose(args = ARGS, env = ENV)::Bool
   return lowercase(strip(get(env, "SPARLECTRA_TEST_VERBOSE", ""))) in ("1", "true", "yes", "on")
 end
 
-function quiet_test_output(f::Function; verbose::Bool = sparlectra_test_verbose())
+const QUIET_TEST_OUTPUT_MAX_BYTES = 64 * 1024
+const QUIET_TEST_OUTPUT_MAX_LINES = 200
+
+function _bounded_test_output_excerpt(path::AbstractString; max_bytes::Int = QUIET_TEST_OUTPUT_MAX_BYTES, max_lines::Int = QUIET_TEST_OUTPUT_MAX_LINES)
+  isfile(path) || return ""
+  total_bytes = filesize(path)
+  text = open(path, "r") do io
+    read(io, String; maxbytes = min(Int(total_bytes), max_bytes))
+  end
+  lines = split(text, '\n'; keepempty = true)
+  omitted_lines = max(length(lines) - max_lines, 0)
+  if length(lines) > max_lines
+    keep_head = max_lines ÷ 2
+    keep_tail = max_lines - keep_head
+    lines = vcat(lines[1:keep_head], ["... $(omitted_lines) captured lines omitted ..."], lines[end - keep_tail + 1:end])
+  end
+  omitted_bytes = max(total_bytes - sizeof(text), 0)
+  omitted_bytes > 0 && push!(lines, "... $(omitted_bytes) captured bytes omitted ...")
+  return join(lines, '\n')
+end
+
+function quiet_test_output(f::Function; verbose::Bool = sparlectra_test_verbose(), group::AbstractString = "test group")
   verbose && return Base.invokelatest(f)
   path = tempname()
   result = nothing
-  captured = ""
+  failed = false
   try
     open(path, "w+") do io
       result = redirect_stdio(stdout = io) do
         Base.invokelatest(f)
       end
-      seekstart(io)
-      captured = read(io, String)
     end
-  catch
-    isfile(path) && (captured = read(path, String))
-    !isempty(captured) && print(captured)
+  catch err
+    if err isa InterruptException
+      println(stderr, "Interrupted while running ", group, "; captured output excerpt follows.")
+      excerpt = _bounded_test_output_excerpt(path)
+      !isempty(excerpt) && print(excerpt)
+      rethrow()
+    end
+    failed = true
+    excerpt = _bounded_test_output_excerpt(path)
+    !isempty(excerpt) && print(excerpt)
     rethrow()
   finally
     ispath(path) && rm(path; force = true)
   end
-  if occursin("Test Failed", captured) || occursin("Error During Test", captured)
-    print(captured)
-  end
+  failed && print(_bounded_test_output_excerpt(path))
   return result
+end
+
+function run_profile_group(i::Int, total::Int, name::AbstractString, runner::Function)
+  print("[", i, "/", total, "] ", name, " ... ")
+  timed = try
+    @timed quiet_test_output(runner; group = name)
+  catch err
+    err isa InterruptException && (println("INTERRUPTED"); rethrow())
+    println("FAIL")
+    rethrow()
+  end
+  @printf("PASS %.3f s, %.1f MiB allocated, %.3f s GC\n", timed.time, timed.bytes / 1024.0^2, timed.gctime)
+  get(ENV, "SPARLECTRA_TEST_GC_BETWEEN_GROUPS", "0") in ("1", "true", "yes", "on") && GC.gc()
+  return timed.value
 end

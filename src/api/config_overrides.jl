@@ -215,7 +215,7 @@ function _set_dotted_metadata!(raw::Dict{String,Any}, key::AbstractString, value
   return raw
 end
 
-function _config_source_report(config_file::String, nested_overrides::Dict{String,Any}, effective_raw::AbstractDict; override_source::AbstractString = "explicit_api_request")
+function _config_source_report(config_file::String, nested_overrides::Dict{String,Any}, effective_raw::AbstractDict; override_source::AbstractString = "explicit_api_request", auto_profile_result = nothing)
   user = isfile(config_file) ? load_yaml_dict(config_file) : Dict{String,Any}()
   report = Dict{String,Any}()
   for key in CONFIG_OVERRIDE_REPORT_KEYS
@@ -227,6 +227,21 @@ function _config_source_report(config_file::String, nested_overrides::Dict{Strin
       "source" => source,
       "precedence" => "default < user_yaml < case_sidecar < webui_form_runtime < explicit_api_request",
     ))
+  end
+  if auto_profile_result !== nothing
+    for pair in auto_profile_result.applied
+      option = string("matpower_import.", first(pair))
+      option in CONFIG_OVERRIDE_REPORT_KEYS || continue
+      entry = _dotted_config_value(report, option)
+      entry isa AbstractDict || continue
+      entry["requested_value"] = _auto_profile_row_value(auto_profile_result.rows, option, :current)
+      entry["value_before_auto_profile"] = _auto_profile_row_value(auto_profile_result.rows, option, :current)
+      entry["applied_value"] = string(last(pair))
+      entry["value"] = _dotted_config_value(effective_raw, option)
+      entry["source"] = "matpower_auto_profile_apply"
+      entry["reason"] = _auto_profile_row_value(auto_profile_result.rows, option, :reason)
+      entry["replaced_explicit_or_runtime_value"] = _dotted_config_value(nested_overrides, option) !== nothing || _dotted_config_value(user, option) !== nothing
+    end
   end
   return report
 end

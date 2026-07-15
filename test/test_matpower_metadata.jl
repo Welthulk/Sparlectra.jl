@@ -157,7 +157,7 @@ mpc.dcline = [
 
     dcline = [1.0 2.0 1.0 100.0 0.0 4.0 5.0 1.0 1.0 0.0 200.0 -50.0 50.0 -50.0 50.0 2.0 0.01]
     mpc_dcline = Sparlectra.MatpowerIO.legacy_sort_bus(_metadata_case(dcline = dcline))
-    @test_throws Sparlectra.MatpowerIO.UnsupportedMatpowerDclineError Sparlectra.createNetFromMatPowerCase(mpc = mpc_dcline)
+    @test_throws Sparlectra.MatpowerIO.UnsupportedMatpowerDclineError Sparlectra.createNetFromMatPowerCase(mpc = mpc_dcline, matpower_dcline_mode = :reject_active)
     net_dcline = Sparlectra.createNetFromMatPowerCase(mpc = mpc_dcline, apply_bus_names = true, matpower_dcline_mode = :pf_injections)
     meta = only(net_dcline.matpowerDclineMetadata)
     @test meta.pf_mw == 100.0

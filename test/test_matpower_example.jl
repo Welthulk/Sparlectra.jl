@@ -1,10 +1,26 @@
 using Sparlectra
+using LinearAlgebra
 using Test
 
 function run_matpower_example_tests()
   @testset "Central Sparlectra configuration" begin
     cfg = Sparlectra.load_sparlectra_config(; reload = true)
     @test cfg.powerflow.method === :rectangular
+    @test cfg.matpower.matpower_dcline_mode === :pf_injections
+    @test cfg.powerflow.islands.enabled === true
+    @test cfg.powerflow.islands.diagnostic_continue_after_failure === true
+
+    missing_safe_defaults_cfg = tempname() * ".yaml"
+    write(missing_safe_defaults_cfg, "power_flow:\n  tol: 1.0e-8\nmatpower_import:\n  auto_profile: off\n")
+    missing_safe_defaults = Sparlectra.load_sparlectra_config(missing_safe_defaults_cfg; reload = true)
+    @test missing_safe_defaults.matpower.matpower_dcline_mode === :pf_injections
+    @test missing_safe_defaults.powerflow.islands.enabled === true
+
+    explicit_strict_cfg = tempname() * ".yaml"
+    write(explicit_strict_cfg, "power_flow:\n  islands:\n    enabled: false\nmatpower_import:\n  matpower_dcline_mode: reject_active\n")
+    explicit_strict = Sparlectra.load_sparlectra_config(explicit_strict_cfg; reload = true)
+    @test explicit_strict.matpower.matpower_dcline_mode === :reject_active
+    @test explicit_strict.powerflow.islands.enabled === false
 
     bad_method_cfg = tempname() * ".yaml"
     write(bad_method_cfg, "power_flow:\n  method: polar\n")
