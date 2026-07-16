@@ -12,10 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Internal DTF validation module: native base-case validation against FOR002.
+# Extracted from validate_dtf_suite.jl; used by the suite runner and directly
+# runnable as its own CLI entry point.
+
+module NativeBaseValidation
 using Sparlectra
 using Printf
 
-include(joinpath(@__DIR__, "dtf_for002_validation_utils.jl"))
+include(joinpath(@__DIR__, "..", "dtf_for002_validation_utils.jl"))
 
 # Developer notes:
 # - Validates the native Testnetz13 DTF base case against FOR002.
@@ -63,11 +68,17 @@ function _parse_bool(s::AbstractString)
 end
 
 function parse_cli(args)
-  dtf_default = isfile(joinpath(@__DIR__, "..", "test", "fixtures", "dtf", "FOR001.DAT")) ? joinpath(@__DIR__, "..", "test", "fixtures", "dtf", "FOR001.DAT") : joinpath(@__DIR__, "FOR001.DAT")
+  # The validation data are stored in <repository>/data/DTF.  Resolve the
+  # paths relative to this script so that the program works independently of
+  # the current working directory.
+  dtf_data_dir = normpath(joinpath(@__DIR__, "..", "..", "data", "DTF"))
+  dtf_default = joinpath(dtf_data_dir, "FOR001.DAT")
+  for002_default = joinpath(dtf_data_dir, "FOR002.DAT")
+
   opt = Dict{String,Any}(
-    "dtf-file" => normpath(dtf_default),
-    "for002-file" => joinpath(@__DIR__, "FOR002.DAT"),
-    "output-dir" => joinpath(@__DIR__, "_out", "dtf_for002_native_validation"),
+    "dtf-file" => dtf_default,
+    "for002-file" => for002_default,
+    "output-dir" => joinpath(@__DIR__, "..", "_out", "dtf_for002_native_validation"),
     "tol" => 1e-8,
     "max-iter" => 50,
     "method" => "rectangular",
@@ -364,7 +375,10 @@ function run_validation(args = ARGS; return_details::Bool = false)
       println(io, "- total generation MW/MVar: ", sum(r.model_pg_result_MW for r in gen_rows), " / ", sum(r.model_qg_result_MVar for r in gen_rows))
       println(io, "- total load MW/MVar: ", sum(fb.p_load_MW for fb in values(ref.buses)), " / ", sum(fb.q_load_MVar for fb in values(ref.buses)), "; losses MW/MVar: ", p_loss, " / ", q_loss, "\n")
       println(io, "## What are state residuals?\n")
-      println(io, "State residuals force FOR002 printed voltage magnitudes/angles into the native Sparlectra Ybus. The resulting bus injections are compared with the FOR002 printed bus table. This is more sensitive than solved branch-flow comparisons because FOR002 values may be rounded and transformer-adjacent nodes react strongly to small voltage/angle differences. These residuals are diagnostic, not hard pass/fail criteria yet; branch-flow deviations and solved generator/slack comparisons are currently stronger validation signals.\n")
+      println(
+        io,
+        "State residuals force FOR002 printed voltage magnitudes/angles into the native Sparlectra Ybus. The resulting bus injections are compared with the FOR002 printed bus table. This is more sensitive than solved branch-flow comparisons because FOR002 values may be rounded and transformer-adjacent nodes react strongly to small voltage/angle differences. These residuals are diagnostic, not hard pass/fail criteria yet; branch-flow deviations and solved generator/slack comparisons are currently stronger validation signals.\n",
+      )
       for (title, rows, field, label) in [
         ("Top 10 bus voltage deviations", bus_rows, :d_vm_kV, "kV"),
         ("Top 10 branch P deviations", branch_rows, :d_p_from_MW, "MW"),
@@ -419,7 +433,6 @@ function run_validation(args = ARGS; return_details::Bool = false)
     metrics_rows[1].max_abs_state_residual_q_MVar,
   )
   (!opt["quiet"] && opt["print-summary"]) && _print_summary(result)
-  opt["strict"] && !converged && exit(1)
   # The default return value is lightweight for scripts/CLI use; detailed mode
   # returns diagnostic rows for tests and focused investigations.
   return return_details ?
@@ -442,7 +455,13 @@ function run_validation(args = ARGS; return_details::Bool = false)
   ) : result
 end
 
-if get(ENV, "SPARLECTRA_FOR002_VALIDATION_NO_MAIN", "0") != "1"
-  Base.invokelatest(run_validation, ARGS; return_details = false)
-  nothing
+_running_as_cli_script() = !isempty(PROGRAM_FILE) && abspath(PROGRAM_FILE) == abspath(@__FILE__)
+
+if _running_as_cli_script()
+  Base.invokelatest() do
+    result = run_validation(ARGS)
+    parse_cli(ARGS)["strict"] && !result.converged && exit(1)
+  end
 end
+
+end # module NativeBaseValidation

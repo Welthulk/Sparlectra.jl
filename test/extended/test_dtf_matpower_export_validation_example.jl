@@ -14,7 +14,7 @@
 
 function run_dtf_matpower_export_validation_example_tests()
   repo = dirname(dirname(@__DIR__))
-  script = joinpath(repo, "examples", "validate_dtf_matpower_export_testnetz13.jl")
+  script = joinpath(repo, "examples", "internal", "dtf_validation_matpower.jl")
   @testset "DTF MATPOWER export validation example" begin
     source = read(script, String)
     @test occursin("DTFImporter.read_dtf", source)
@@ -70,12 +70,17 @@ function run_dtf_matpower_export_validation_example_tests()
     Core.eval(mod, :(using Sparlectra))
     Core.eval(mod, :(include(path) = Base.include($mod, path)))
     Base.include(mod, script)
-    runner = Base.invokelatest(getfield, mod, :run_validation)
+    runner = Base.invokelatest(() -> getfield(getfield(mod, :MatpowerRoundtripValidation), :run_validation))
     details = Base.invokelatest(runner, ["--dtf-file=$dtf_file", "--for002-file=$for002_file", "--output-dir=$(mktempdir())", "--quiet=true", "--write-matpower=true", "--run-outages=true"]; return_details = true)
     @test hasproperty(details, :scenario_results)
     @test length(details.scenario_results) == 3
     @test all(r -> r.metric.roundtrip_converged, details.scenario_results)
-    @test all(r -> r.metric.max_abs_branch_g_pu_native == 0.0, details.scenario_results)
+    # Testnetz13's BETA1S1<->BETA2S1 and DELTA1S1<->DELTA2S1 transformers carry
+    # real nonzero no-load conductance (DTF G parameter); the roundtrip must
+    # preserve their Ybus contribution via equivalent bus shunts (checked
+    # below), not force branch g_pu to zero.
+    @test all(r -> r.metric.count_nonzero_branch_g_pu_native == 5, details.scenario_results)
+    @test all(r -> r.metric.max_abs_branch_g_pu_native > 0.0, details.scenario_results)
     @test all(r -> isapprox(r.metric.native_total_bus_Gs, r.metric.roundtrip_total_bus_Gs; atol = 1e-12), details.scenario_results)
     @test all(r -> length(r.roundtrip.linesAC) == 22, details.scenario_results)
     @test all(r -> length(r.roundtrip.trafos) == 5, details.scenario_results)

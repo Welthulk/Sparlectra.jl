@@ -52,6 +52,10 @@ function _read_project_version()::VersionNumber
     return VersionNumber(project_data["version"])
 end
 
+# SparlectraVersion is baked in at precompile time; declare Project.toml as a
+# precompile dependency so a version bump alone invalidates the cache and
+# version() cannot report a stale number.
+Base.include_dependency(joinpath(SPARLECTRA_ROOT, "Project.toml"))
 const SparlectraVersion = _read_project_version()
 
 version() = SparlectraVersion

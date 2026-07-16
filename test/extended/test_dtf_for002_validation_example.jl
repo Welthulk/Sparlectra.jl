@@ -35,7 +35,7 @@ end
 function run_dtf_for002_validation_example_tests()
   @testset "native DTF/FOR002 validation example" begin
     repo = normpath(joinpath(@__DIR__, "..", ".."))
-    script = joinpath(repo, "examples", "validate_dtf_for002_testnetz13.jl")
+    script = joinpath(repo, "examples", "internal", "dtf_validation_base.jl")
     source = read(script, String)
     @test occursin("DTFImporter.read_dtf", source)
     @test occursin("DTFImporter.build_net", source)
@@ -54,8 +54,8 @@ function run_dtf_for002_validation_example_tests()
     end
 
     outdir = mktempdir()
-    Base.include(Main, joinpath(repo, "examples", "validate_dtf_for002_testnetz13.jl"))
-    runner = Base.invokelatest(getfield, Main, :run_validation)
+    Base.include(Main, script)
+    runner = Base.invokelatest(() -> getfield(getfield(Main, :NativeBaseValidation), :run_validation))
     result = Base.invokelatest(
       runner,
       [

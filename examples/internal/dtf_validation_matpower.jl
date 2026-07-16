@@ -12,11 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Internal DTF validation module: DTF -> existing MATPOWER export/import
+# roundtrip validation. Extracted from validate_dtf_suite.jl; used by the
+# suite runner and directly runnable as its own CLI entry point.
+
+module MatpowerRoundtripValidation
 using Logging
 using Printf
 using Sparlectra
 
-include(joinpath(@__DIR__, "dtf_for002_validation_utils.jl"))
+include(joinpath(@__DIR__, "..", "dtf_for002_validation_utils.jl"))
 
 Base.@kwdef struct DTFMatpowerExportValidationResult
   output_dir::String
@@ -30,9 +35,9 @@ end
 
 function parse_cli(args)
   opt = Dict{String,Any}(
-    "dtf-file" => joinpath(@__DIR__, "..", "data", "DTF", "FOR001.DAT"),
-    "for002-file" => joinpath(@__DIR__, "..", "data", "DTF", "FOR002.DAT"),
-    "output-dir" => joinpath(@__DIR__, "_out", "dtf_matpower_export_testnetz13"),
+    "dtf-file" => joinpath(@__DIR__, "..", "..", "data", "DTF", "FOR001.DAT"),
+    "for002-file" => joinpath(@__DIR__, "..", "..", "data", "DTF", "FOR002.DAT"),
+    "output-dir" => joinpath(@__DIR__, "..", "_out", "dtf_matpower_export_testnetz13"),
     "tol" => 1e-8,
     "max-iter" => 50,
     "method" => "default",
@@ -431,6 +436,10 @@ function run_validation(args = ARGS; return_details::Bool = false)
   return return_details ? result : (output_dir = result.output_dir, metrics_rows = result.metrics_rows, written_files = result.written_files)
 end
 
-#if abspath(PROGRAM_FILE) == @__FILE__
-Base.invokelatest(run_validation)
-#end
+_running_as_cli_script() = !isempty(PROGRAM_FILE) && abspath(PROGRAM_FILE) == abspath(@__FILE__)
+
+if _running_as_cli_script()
+  Base.invokelatest(run_validation, ARGS)
+end
+
+end # module MatpowerRoundtripValidation
