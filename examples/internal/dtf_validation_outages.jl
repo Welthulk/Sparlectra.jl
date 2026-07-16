@@ -20,7 +20,7 @@ module NativeOutageValidation
 using Sparlectra
 using Printf
 
-include(joinpath(@__DIR__, "..", "dtf_for002_validation_utils.jl"))
+include(joinpath(@__DIR__, "dtf_for002_validation_utils.jl"))
 
 # Developer notes:
 # - Validates native Testnetz13 DTF outage cards against FOR002 outage blocks.

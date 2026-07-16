@@ -20,7 +20,7 @@ module NativeBaseValidation
 using Sparlectra
 using Printf
 
-include(joinpath(@__DIR__, "..", "dtf_for002_validation_utils.jl"))
+include(joinpath(@__DIR__, "dtf_for002_validation_utils.jl"))
 
 # Developer notes:
 # - Validates the native Testnetz13 DTF base case against FOR002.
