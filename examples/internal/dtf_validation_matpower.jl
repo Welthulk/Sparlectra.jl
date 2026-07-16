@@ -21,7 +21,7 @@ using Logging
 using Printf
 using Sparlectra
 
-include(joinpath(@__DIR__, "..", "dtf_for002_validation_utils.jl"))
+include(joinpath(@__DIR__, "dtf_for002_validation_utils.jl"))
 
 Base.@kwdef struct DTFMatpowerExportValidationResult
   output_dir::String

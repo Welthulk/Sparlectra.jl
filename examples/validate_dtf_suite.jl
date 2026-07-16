@@ -14,8 +14,9 @@
 
 # Unified DTF validation suite.
 #
-# Place this file in examples/ next to dtf_for002_validation_utils.jl.
-# It combines:
+# Thin CLI runner over the shared modules in examples/internal/
+# (dtf_validation_base/outages/matpower/audit plus
+# dtf_for002_validation_utils.jl). It combines:
 #   - DTF import audit
 #   - native DTF/FOR002 base-case validation
 #   - native DTF/FOR002 outage validation
@@ -630,6 +631,7 @@ function run_suite(args = ARGS)
 end
 
 function _running_as_script()
+  return true  
   return !isempty(PROGRAM_FILE) && abspath(PROGRAM_FILE) == abspath(@__FILE__)
 end
 
