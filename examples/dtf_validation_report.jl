@@ -15,8 +15,10 @@
 using Printf
 using Sparlectra
 
-ENV["SPARLECTRA_FOR002_VALIDATION_NO_MAIN"] = "1"
-include(joinpath(@__DIR__, "validate_dtf_for002_testnetz13.jl"))
+include(joinpath(@__DIR__, "dtf_for002_validation_utils.jl"))
+include(joinpath(@__DIR__, "internal", "dtf_validation_base.jl"))
+
+run_validation(args = ARGS; return_details::Bool = false) = NativeBaseValidation.run_validation(args; return_details = return_details)
 
 const CASES = [
   (id = "A", suffix = "", description = "base case"),

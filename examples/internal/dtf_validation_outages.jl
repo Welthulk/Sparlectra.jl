@@ -12,10 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Internal DTF validation module: native outage-case validation against FOR002.
+# Extracted from validate_dtf_suite.jl; used by the suite runner and directly
+# runnable as its own CLI entry point.
+
+module NativeOutageValidation
 using Sparlectra
 using Printf
 
-include(joinpath(@__DIR__, "dtf_for002_validation_utils.jl"))
+include(joinpath(@__DIR__, "..", "dtf_for002_validation_utils.jl"))
 
 # Developer notes:
 # - Validates native Testnetz13 DTF outage cards against FOR002 outage blocks.
@@ -43,11 +48,11 @@ function _parse_bool(s::AbstractString)
 end
 
 function parse_cli(args)
-  dtf_default = isfile(joinpath(@__DIR__, "..", "test", "fixtures", "dtf", "FOR001.DAT")) ? joinpath(@__DIR__, "..", "test", "fixtures", "dtf", "FOR001.DAT") : joinpath(@__DIR__, "FOR001.DAT")
+  dtf_default = isfile(joinpath(@__DIR__, "..", "..", "test", "fixtures", "dtf", "FOR001.DAT")) ? joinpath(@__DIR__, "..", "..", "test", "fixtures", "dtf", "FOR001.DAT") : joinpath(@__DIR__, "..", "FOR001.DAT")
   opt = Dict{String,Any}(
     "dtf-file" => normpath(dtf_default),
-    "for002-file" => joinpath(@__DIR__, "FOR002.DAT"),
-    "output-dir" => joinpath(@__DIR__, "_out", "dtf_for002_native_outages"),
+    "for002-file" => joinpath(@__DIR__, "..", "FOR002.DAT"),
+    "output-dir" => joinpath(@__DIR__, "..", "_out", "dtf_for002_native_outages"),
     "tol" => 1e-8,
     "max-iter" => 50,
     "method" => "rectangular",
@@ -476,7 +481,6 @@ function run_validation(args = ARGS; return_details::Bool = false)
   end
   result = DTFFor002OutageValidationResult(opt["output-dir"], length(case.outages), length(for002_scenarios), matching_rows, metrics_rows, written_files)
   (!opt["quiet"] && opt["print-summary"]) && _print_summary(result, opt)
-  opt["strict"] && any(r -> r.match_status != "matched", matching_rows) && exit(1)
   return return_details ?
          (
     case = case,
@@ -494,12 +498,13 @@ function run_validation(args = ARGS; return_details::Bool = false)
   ) : result
 end
 
-function _running_as_script()
-  return true
-  #return !isempty(PROGRAM_FILE) && abspath(PROGRAM_FILE) == abspath(@__FILE__)
+_running_as_cli_script() = !isempty(PROGRAM_FILE) && abspath(PROGRAM_FILE) == abspath(@__FILE__)
+
+if _running_as_cli_script()
+  Base.invokelatest() do
+    result = run_validation(ARGS)
+    parse_cli(ARGS)["strict"] && any(r -> r.match_status != "matched", result.matching_rows) && exit(1)
+  end
 end
 
-if get(ENV, "SPARLECTRA_FOR002_OUTAGE_VALIDATION_NO_MAIN", "0") != "1" && _running_as_script()
-  Base.invokelatest(run_validation, ARGS; return_details = false)
-  nothing
-end
+end # module NativeOutageValidation

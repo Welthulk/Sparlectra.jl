@@ -17,7 +17,7 @@ using Test
 function run_dtf_for002_outage_validation_example_tests()
   @testset "native DTF/FOR002 outage validation example" begin
     repo = normpath(joinpath(@__DIR__, "..", ".."))
-    script = joinpath(repo, "examples", "validate_dtf_for002_outages_testnetz13.jl")
+    script = joinpath(repo, "examples", "internal", "dtf_validation_outages.jl")
     source = read(script, String)
     @test occursin("DTFImporter.read_dtf", source)
     @test occursin("DTFImporter.build_net", source)
@@ -37,7 +37,7 @@ function run_dtf_for002_outage_validation_example_tests()
 
     outdir = mktempdir()
     Base.include(Main, script)
-    runner = Base.invokelatest(getfield, Main, :run_validation)
+    runner = Base.invokelatest(() -> getfield(getfield(Main, :NativeOutageValidation), :run_validation))
     detailed = Base.invokelatest(runner, ["--dtf-file=$dtf_file", "--for002-file=$for002_file", "--output-dir=$outdir", "--write-csv=true", "--write-markdown=true", "--quiet=true"]; return_details=true)
     @test hasproperty(detailed, :outage_results)
     @test length(detailed.outage_results) == 2

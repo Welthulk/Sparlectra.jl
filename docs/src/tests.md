@@ -93,16 +93,23 @@ Place local validation files under `data/DTF/` or pass explicit paths with
 validation scripts stop with a clear missing-data message instead of
 substituting unrelated data or claiming that validation was executed.
 
+`examples/validate_dtf_suite.jl` is the shared CLI runner for all three checks
+(plus the DTF import audit). It bundles cases and modes into one command and
+dispatches to library modules under `examples/internal/` (`dtf_validation_base.jl`,
+`dtf_validation_outages.jl`, `dtf_validation_matpower.jl`, `dtf_validation_audit.jl`),
+so there is one implementation of each check shared by the CLI, the suite, and
+the extended test files.
+
 Run the base-case validation with:
 
 ```bash
-julia --project=. examples/validate_dtf_for002_testnetz13.jl --dtf-file=data/DTF.DAT --for002-file=data/DTF/FOR002.DAT --output-dir=examples/_out/dtf_for002_native_validation --write-csv=true --write-markdown=true
+julia --project=. examples/validate_dtf_suite.jl --mode=base --case=A --data-dir=data/DTF --output-dir=examples/_out/dtf_for002_native_validation --write-csv=true --write-markdown=true
 ```
 
 Run the outage validation with:
 
 ```bash
-julia --project=. examples/validate_dtf_for002_outages_testnetz13.jl --dtf-file=data/DTF.DAT --for002-file=data/DTF/FOR002.DAT --output-dir=examples/_out/dtf_for002_native_outages --write-csv=true --write-markdown=true
+julia --project=. examples/validate_dtf_suite.jl --mode=outages --case=A --data-dir=data/DTF --output-dir=examples/_out/dtf_for002_native_outages --write-csv=true --write-markdown=true
 ```
 
 Each command writes concise console output plus CSV and Markdown files in the requested `--output-dir`. The Markdown files summarize the run, while CSV files keep row-level bus, generator, branch, KCL, state-residual, and metric diagnostics.
@@ -116,8 +123,14 @@ Sparlectra result. Its required path is
 does not use FOR002 as the primary roundtrip reference. Run it with:
 
 ```bash
-julia --project=. examples/validate_dtf_matpower_export_testnetz13.jl --dtf-file=data/DTF.DAT --for002-file=data/DTF/FOR002.DAT --output-dir=examples/_out/dtf_matpower_export_testnetz13 --write-csv=true --write-markdown=true --write-matpower=true --run-outages=true
+julia --project=. examples/validate_dtf_suite.jl --mode=matpower --case=A --data-dir=data/DTF --output-dir=examples/_out/dtf_matpower_export_testnetz13 --write-csv=true --write-markdown=true --write-matpower=true --run-outages=true
 ```
+
+Each `examples/internal/dtf_validation_*.jl` module is also directly runnable
+as its own single-purpose CLI entry point (for example
+`julia --project=. examples/internal/dtf_validation_base.jl --dtf-file=... --for002-file=...`),
+which is what the extended example tests drive for exact console-output
+coverage; prefer the suite above for everyday case/mode selection.
 
 The command writes `dtf_matpower_export_summary.md`,
 `dtf_matpower_export_metrics.csv`, bus/branch/generator comparison CSV files,

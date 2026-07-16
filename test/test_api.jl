@@ -19,8 +19,10 @@ include("test_api_support.jl")
 
 function run_api_fast_tests()
   @testset "API fast smoke and timing contracts" begin
-    @test Sparlectra.version() == v"0.8.9" &&
-          Sparlectra.version() == Sparlectra._read_project_version()
+    # Version-independent on purpose: assert only that the precompile-baked
+    # version() matches the current Project.toml, so a version bump alone
+    # cannot break the test.
+    @test Sparlectra.version() == Sparlectra._read_project_version()
 
     @testset "profiling wrapper records successes and exceptions" begin
       profile = Dict{Symbol,Any}(:enabled => true)
