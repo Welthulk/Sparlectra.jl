@@ -158,13 +158,13 @@ Important metrics:
 - `max voltage deviation`: largest voltage magnitude or angle difference from FOR002 printed bus values.
 - `max branch P/Q deviation`: largest directed branch endpoint-flow difference from FOR002.
 - `max generator/slack Q deviation`: difference between solved generator/slack reactive output and FOR002 generator-Q reporting.
-- `state residual P/Q`: injection residual from forcing FOR002 printed voltage magnitudes/angles into the native Ybus and comparing the calculated injections with the FOR002 bus table.
+- `state residual P/Q`: injection residual from forcing FOR002 printed voltage magnitudes/angles into the native Ybus and comparing the calculated injections with the FOR002 bus table. Reported only in the CSV diagnostics (`dtf_state_residual.csv`, `dtf_validation_metrics.csv`, and the outage equivalents), not in console or Markdown summaries.
 
 Current Testnetz13 interpretation:
 
 - Branch-flow deviations are small and are the strongest validation signal for the native DTF path.
 - Slack Q is solved by the power flow and should not be compared with the specified input Q as if it were fixed.
-- State residuals are diagnostic, not hard pass/fail criteria; they are sensitive to FOR002 rounding and transformer-adjacent bus voltage/angle differences.
+- State residuals are gross-error diagnostics only: their rounding-noise floor (FOR002 prints rounded voltages/angles, and transformer-adjacent buses amplify tiny differences) sits far above real model deviations, so they are kept in the row-level CSVs but excluded from console and Markdown summaries.
 - Outage validation currently executes only the outages listed in DTF.
 - FOR002 may contain more outage blocks than FOR001 lists; unmatched FOR002 blocks are treated as reference text, not executed scenarios.
 

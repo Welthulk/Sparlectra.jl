@@ -251,6 +251,7 @@ function _comparison_rows(case, net, ref, outage_index, outage_label, outaged_id
         r_pu = br.r_pu,
         x_pu = br.x_pu,
         b_pu = br.b_pu,
+        g_pu = br.g_pu,
         ratio = br.ratio,
         for002_p_from_MW = rf===missing ? missing : rf.p_MW,
         model_p_from_MW = pf,
@@ -308,7 +309,7 @@ function _comparison_rows(case, net, ref, outage_index, outage_label, outaged_id
   return bus_rows, gen_rows, branch_rows, kcl_rows, res_rows
 end
 
-function _write_markdown(path, opt, case, for002_scenarios, matching_rows, metrics_rows, bus_rows, branch_rows, residual_rows)
+function _write_markdown(path, opt, case, for002_scenarios, matching_rows, metrics_rows, bus_rows, branch_rows)
   open(path, "w") do io
     println(io, "# Native DTF/FOR002 outage validation summary\n")
     println(io, "This validation uses `DTFImporter.read_dtf` -> `DTFImporter.build_net` for each outage and does not use MATPOWER import/export or the generated FOR001 builder.\n")
@@ -317,7 +318,7 @@ function _write_markdown(path, opt, case, for002_scenarios, matching_rows, metri
     println(io, "- parsed DTF outages: ", length(case.outages))
     println(io, "- parsed FOR002 outage blocks: ", length(for002_scenarios), "\n")
     println(io, "## What are state residuals?\n")
-    println(io, "State residuals force FOR002 printed voltage magnitudes/angles into the native Sparlectra outage Ybus. The resulting bus injections are compared with the FOR002 printed bus table. This is more sensitive than solved branch-flow comparisons because FOR002 values may be rounded and transformer-adjacent nodes react strongly to small voltage/angle differences. These residuals are diagnostic, not hard pass/fail criteria yet; branch-flow deviations and solved generator/slack comparisons are currently stronger validation signals.\n")
+    println(io, "State residuals force FOR002 printed voltage magnitudes/angles into the native Sparlectra outage Ybus and compare the resulting bus injections with the FOR002 printed bus table. Because FOR002 prints rounded values and transformer-adjacent nodes react strongly to tiny voltage/angle differences, the rounding-noise floor of this metric is far above real model deviations. They therefore remain available as row-level gross-error diagnostics in `dtf_outage_state_residual.csv` and `dtf_outage_metrics.csv` only and are intentionally not part of this summary; branch-flow deviations and solved generator/slack comparisons are the validation signals.\n")
     println(io, "## Matching summary\n")
     for r in matching_rows
       println(io, "- [", r.outage_index, "] ", r.outage_label, ": branch=", r.matched_branch_index, ", FOR002=", r.matched_for002_scenario_index, ", status=", r.match_status)
@@ -331,8 +332,6 @@ function _write_markdown(path, opt, case, for002_scenarios, matching_rows, metri
         ("Top voltage deviations", bus_rows, :d_vm_kV, "kV"),
         ("Top branch P deviations", branch_rows, :d_p_from_MW, "MW"),
         ("Top branch Q deviations", branch_rows, :d_q_from_MVar, "MVar"),
-        ("Top state residual P deviations", residual_rows, :d_p_MW, "MW"),
-        ("Top state residual Q deviations", residual_rows, :d_q_MVar, "MVar"),
       ]
         println(io, "\n### ", title, "\n")
         subset = [r for r in rows if r.outage_index == m.outage_index && !(getproperty(r, field) isa Missing)]
@@ -342,7 +341,6 @@ function _write_markdown(path, opt, case, for002_scenarios, matching_rows, metri
         end
       end
     end
-    println(io, "\nState-residual rows force FOR002 outage voltages into the native outage Y-bus; remaining differences are diagnostic and not a pass/fail gate.")
   end
 end
 
@@ -476,7 +474,7 @@ function run_validation(args = ARGS; return_details::Bool = false)
   end
   if opt["write-markdown"]
     path = joinpath(opt["output-dir"], "dtf_outage_validation_summary.md")
-    _write_markdown(path, opt, case, for002_scenarios, matching_rows, metrics_rows, all_bus, all_branch, all_res)
+    _write_markdown(path, opt, case, for002_scenarios, matching_rows, metrics_rows, all_bus, all_branch)
     pushfirst!(written_files, path)
   end
   result = DTFFor002OutageValidationResult(opt["output-dir"], length(case.outages), length(for002_scenarios), matching_rows, metrics_rows, written_files)

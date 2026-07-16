@@ -151,8 +151,6 @@ function _print_summary(result::DTFFor002ValidationResult)
   println("Max branch |dP|: ", result.max_branch_d_p_MW, " MW")
   println("Max branch |dQ|: ", result.max_branch_d_q_MVar, " MVar")
   println("Max |dQgen| solved-vs-FOR002: ", result.max_qgen_d_MVar, " MVar")
-  println("Max state residual |P|: ", result.max_state_residual_p_MW, " MW")
-  println("Max state residual |Q|: ", result.max_state_residual_q_MVar, " MVar")
   println("Written files:")
   for path in result.written_files
     println("  - ", basename(path))
@@ -296,6 +294,7 @@ function run_validation(args = ARGS; return_details::Bool = false)
         r_pu = br.r_pu,
         x_pu = br.x_pu,
         b_pu = br.b_pu,
+        g_pu = br.g_pu,
         ratio = br.ratio,
         transformer_ratio_mode = hasproperty(meta, :transformer_ratio_mode) ? meta.transformer_ratio_mode : missing,
         base_ratio_used = hasproperty(meta, :base_ratio_used) ? meta.base_ratio_used : missing,
@@ -377,14 +376,12 @@ function run_validation(args = ARGS; return_details::Bool = false)
       println(io, "## What are state residuals?\n")
       println(
         io,
-        "State residuals force FOR002 printed voltage magnitudes/angles into the native Sparlectra Ybus. The resulting bus injections are compared with the FOR002 printed bus table. This is more sensitive than solved branch-flow comparisons because FOR002 values may be rounded and transformer-adjacent nodes react strongly to small voltage/angle differences. These residuals are diagnostic, not hard pass/fail criteria yet; branch-flow deviations and solved generator/slack comparisons are currently stronger validation signals.\n",
+        "State residuals force FOR002 printed voltage magnitudes/angles into the native Sparlectra Ybus and compare the resulting bus injections with the FOR002 printed bus table. Because FOR002 prints rounded values and transformer-adjacent nodes react strongly to tiny voltage/angle differences, the rounding-noise floor of this metric is far above real model deviations. They therefore remain available as row-level gross-error diagnostics in `dtf_state_residual.csv` and `dtf_validation_metrics.csv` only and are intentionally not part of this summary; branch-flow deviations and solved generator/slack comparisons are the validation signals.\n",
       )
       for (title, rows, field, label) in [
         ("Top 10 bus voltage deviations", bus_rows, :d_vm_kV, "kV"),
         ("Top 10 branch P deviations", branch_rows, :d_p_from_MW, "MW"),
         ("Top 10 branch Q deviations", branch_rows, :d_q_from_MVar, "MVar"),
-        ("Top 10 state residual P deviations", residual_rows, :d_p_MW, "MW"),
-        ("Top 10 state residual Q deviations", residual_rows, :d_q_MVar, "MVar"),
       ]
         println(io, "## ", title, "\n")
         for r in _top([x for x in rows if !(getproperty(x, field) isa Missing)], field)
@@ -393,20 +390,11 @@ function run_validation(args = ARGS; return_details::Bool = false)
         end
         println(io)
       end
-      println(io, "## Before/after residual interpretation\n")
-      println(io, "Old converted-model FOR002-state residuals included examples such as ALPHA S1 dP around -845 MW. Native DTF residuals for selected buses are:")
-      for target in ["ALPHA S1", "BETA1 S1", "DELTA1S1", "BETA2 S1", "DELTA2S1", "WEILERS1"]
-        row = findfirst(r -> _norm_name(r.bus_name) == _norm_name(target), residual_rows)
-        row === nothing ? println(io, "- ", target, ": not parsed") : println(io, "- ", residual_rows[row].bus_name, ": dP=", residual_rows[row].d_p_MW, " MW, dQ=", residual_rows[row].d_q_MVar, " MVar")
-      end
-      println(io, "\nThe selected native residuals are materially smaller than the old ALPHA S1 -845 MW example when their absolute dP values are far below that magnitude; no hard pass/fail threshold is encoded yet.")
       max_qg = first(_top(gen_rows, :d_qg_result_vs_for002_MVar; n = 1))
-      max_state_q = first(_top(residual_rows, :d_q_MVar; n = 1))
       max_kcl_q = first(_top(kcl_rows, :d_branch_kcl_vs_for002_q_MVar; n = 1))
       slack = gen_rows[findfirst(r -> r.is_slack, gen_rows)]
       println(io, "\n## Q / generator / bus-injection semantics\n")
       println(io, "- max |dQgen|: ", abs(max_qg.d_qg_result_vs_for002_MVar), " MVar at ", max_qg.bus_name)
-      println(io, "- max |state residual Q|: ", abs(max_state_q.d_q_MVar), " MVar at ", max_state_q.bus_name)
       println(io, "- max |branch KCL vs FOR002 Q|: ", abs(max_kcl_q.d_branch_kcl_vs_for002_q_MVar), " MVar at ", max_kcl_q.bus_name)
       println(io, "- slack bus Q comparison (", slack.bus_name, "): FOR002 Qgen=", slack.for002_qg_MVar, " MVar; model specified Qgen=", slack.model_qg_specified_MVar, " MVar; model solved/result Qgen=", slack.model_qg_result_MVar, " MVar; dQ=", slack.d_qg_result_vs_for002_MVar, " MVar")
       largest_class = max_qg.is_slack ? "slack" : (max_qg.is_regulating ? "PV/regulating" : (max_qg.has_generator ? "PQ generator" : "non-generator"))
