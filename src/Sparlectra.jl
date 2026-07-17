@@ -52,6 +52,10 @@ function _read_project_version()::VersionNumber
     return VersionNumber(project_data["version"])
 end
 
+# SparlectraVersion is baked in at precompile time; declare Project.toml as a
+# precompile dependency so a version bump alone invalidates the cache and
+# version() cannot report a stale number.
+Base.include_dependency(joinpath(SPARLECTRA_ROOT, "Project.toml"))
 const SparlectraVersion = _read_project_version()
 
 version() = SparlectraVersion
@@ -156,6 +160,7 @@ export
   ObservabilityConfig,
   StateEstimationConfig,
   MatpowerImportConfig,
+  TransformerConfig,                      # Transformer-modeling settings (tap-changer model).
   PerformanceConfig,
   BenchmarkConfig,
   RuntimeConfig,
@@ -170,6 +175,7 @@ export
   active_sparlectra_config,               # Return the currently active configuration.
   powerflow_config,                       # Access the active power-flow settings.
   matpower_import_config,                 # Access MATPOWER import settings.
+  transformer_config,                     # Access transformer-modeling settings.
   configured_matpower_cases,              # Resolve configured MATPOWER batch order.
   state_estimation_config,
   diagnostics_config,
@@ -368,6 +374,8 @@ export
   # equicircuit.jl
   calcComplexRatio,
   calcSkewAngleTap,
+  calcTapImpedanceCorrectionFactor,       # Tap-changer impedance-correction factor (central model).
+  calcTapCorrectedRX,                     # Apply the tap-changer impedance correction to R/X.
   calcNeutralU,
   createYBUS,                             # Build the network admittance matrix.
   adjacentBranches,

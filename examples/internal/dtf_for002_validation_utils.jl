@@ -33,6 +33,34 @@ _numbers(s::AbstractString) = [parse(Float64, replace(m.match, 'D' => 'E', 'd' =
 _normalize_for002_bus_name(s::AbstractString) = replace(strip(replace(String(s), "*" => "")), r"\s+S$" => "")
 _csv(x) = x === missing || x === nothing ? "" : x isa AbstractString ? "\"" * replace(x, "\"" => "\"\"") * "\"" : string(x)
 
+"""
+    _fmt_num(x::AbstractFloat)::String
+
+Format a floating-point value for human-readable Markdown/console report
+output. Raw Sparlectra floats otherwise print with full double precision
+(15-17 digits), which clutters comparison tables without adding information.
+
+- Values that would normally print in scientific notation (very small or very
+  large magnitude, e.g. solver mismatches around `1e-13`) are shown with a
+  3-decimal mantissa (`5.684e-14`).
+- Small decimal-range values (`0.0001 <= |x| < 0.01`) keep two significant,
+  non-zero digits instead of collapsing to a near-zero value under fixed
+  3-decimal rounding (`0.0005435345` -> `0.00054`, not `0.001`).
+- All other values are rounded to 3 decimal places.
+
+Row-level CSV diagnostics are unaffected; only report-facing text should call
+this.
+"""
+function _fmt_num(x::AbstractFloat)::String
+  isfinite(x) || return string(x)
+  x == 0.0 && return "0.0"
+  ax = abs(x)
+  (ax < 1.0e-4 || ax >= 1.0e6) && return @sprintf("%.3e", x)
+  ax < 0.01 && return string(round(x; digits = 1 - floor(Int, log10(ax))))
+  return string(round(x; digits = 3))
+end
+_fmt_num(x::Real) = _fmt_num(Float64(x))
+
 mutable struct For002Scenario
   name::String
   buses::Dict{String,NamedTuple}

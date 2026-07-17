@@ -38,6 +38,7 @@ The merged YAML is converted into:
   - `powerflow::PowerFlowConfig`
   - `state_estimation::StateEstimationConfig`
   - `matpower::MatpowerImportConfig`
+  - `transformer::TransformerConfig`
   - `performance::PerformanceConfig`
   - `benchmark::BenchmarkConfig`
   - `runtime::RuntimeConfig`
@@ -53,6 +54,7 @@ This typed model is the canonical internal representation that should be consume
 |---|---|---|---|
 | `power_flow` | `PowerFlowConfig` | Rectangular power-flow solver controls, start mode, Q-limits | Public / supported |
 | `matpower_import` | `MatpowerImportConfig` | MATPOWER case path + import interpretation options | Public / supported |
+| `transformer` | `TransformerConfig` | Transformer-modeling options shared by all importers (tap-changer model) | Public / supported |
 | `state_estimation` | `StateEstimationConfig` | State-estimation runtime controls | Public / supported |
 | `output` | `OutputConfig` | Console/logfile behavior and result table sizing | Public / supported |
 | `performance` | `PerformanceConfig` | Profiling/reporting toggles and diagnostic volume controls | Public / supported |
@@ -111,6 +113,35 @@ angle reference. Islands without REF/Slack or PV support fail before NR. When
 multiple islands are detected, Sparlectra writes `ac_islands.csv` in the run
 directory with bus, branch, generator/load, DC-line terminal, power-balance,
 reference, and status diagnostics.
+
+### Transformer tap-changer model
+
+`transformer.tap_changer_model` selects, for **all** transformers of an
+imported case, whether the tap changer is treated as electrically ideal or as
+affecting the series impedance:
+
+```yaml
+transformer:
+  # Allowed values: ideal, impedance_correction
+  tap_changer_model: ideal
+```
+
+- `ideal` (default): tap steps only change the complex winding ratio; the
+  transformer series impedance (R, X) keeps its neutral-position value. This
+  preserves prior Sparlectra behavior.
+- `impedance_correction`: tap steps additionally re-refer the series impedance
+  through the tapped winding. R and X are scaled with the squared magnitude of
+  the regulating vector, `|1 + f·e^(jφ)|²`, where `f` is the longitudinal
+  regulating-voltage fraction and `φ` the skew angle (0° for a pure
+  longitudinal/ratio tap changer).
+
+The option is read by both the MATPOWER importer
+(`createNetFromMatPowerFile`/`createNetFromMatPowerCase`) and the native DTF
+importer (`DTFImporter.build_net`/`createNetFromDTFFile`), but the correction
+math itself lives in a single place,
+[`calcTapCorrectedRX`](@ref)/[`calcTapImpedanceCorrectionFactor`](@ref) in
+`src/equicircuit.jl`, so importers stay free of duplicated tap-impedance
+mathematics.
 
 ## Loader and validation behavior
 
@@ -445,3 +476,5 @@ The following canonical keys are currently present in `src/configuration.yaml.ex
 - `state_estimation.observability`
 - `state_estimation.observability.enabled`- `state_estimation.tol`
 - `state_estimation.update_net`
+- `transformer`
+- `transformer.tap_changer_model`

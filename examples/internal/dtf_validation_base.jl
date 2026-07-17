@@ -12,6 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Internal DTF validation module: native base-case validation against FOR002.
+# Extracted from validate_dtf_suite.jl; used by the suite runner and directly
+# runnable as its own CLI entry point.
+
+module NativeBaseValidation
 using Sparlectra
 using Printf
 
@@ -63,11 +68,17 @@ function _parse_bool(s::AbstractString)
 end
 
 function parse_cli(args)
-  dtf_default = isfile(joinpath(@__DIR__, "..", "test", "fixtures", "dtf", "FOR001.DAT")) ? joinpath(@__DIR__, "..", "test", "fixtures", "dtf", "FOR001.DAT") : joinpath(@__DIR__, "FOR001.DAT")
+  # The validation data are stored in <repository>/data/DTF.  Resolve the
+  # paths relative to this script so that the program works independently of
+  # the current working directory.
+  dtf_data_dir = normpath(joinpath(@__DIR__, "..", "..", "data", "DTF"))
+  dtf_default = joinpath(dtf_data_dir, "FOR001.DAT")
+  for002_default = joinpath(dtf_data_dir, "FOR002.DAT")
+
   opt = Dict{String,Any}(
-    "dtf-file" => normpath(dtf_default),
-    "for002-file" => joinpath(@__DIR__, "FOR002.DAT"),
-    "output-dir" => joinpath(@__DIR__, "_out", "dtf_for002_native_validation"),
+    "dtf-file" => dtf_default,
+    "for002-file" => for002_default,
+    "output-dir" => joinpath(@__DIR__, "..", "_out", "dtf_for002_native_validation"),
     "tol" => 1e-8,
     "max-iter" => 50,
     "method" => "rectangular",
@@ -79,6 +90,7 @@ function parse_cli(args)
     "print-summary" => true,
     "legacy-voltage-level-collapse-230kv" => false,
     "transformer-ratio-mode" => "neutral_one",
+    "tap-changer-model" => "ideal",
   )
   for arg in args
     arg == "--quiet" && (opt["quiet"] = true; continue)
@@ -106,6 +118,12 @@ end
 function _transformer_ratio_mode_symbol(s::AbstractString)
   normalized = replace(lowercase(strip(s)), "-" => "_")
   normalized in ("neutral_one", "winding_over_network") || throw(ArgumentError("--transformer-ratio-mode must be neutral_one or winding_over_network"))
+  return Symbol(normalized)
+end
+
+function _tap_changer_model_symbol(s::AbstractString)
+  normalized = replace(lowercase(strip(s)), "-" => "_")
+  normalized in ("ideal", "impedance_correction") || throw(ArgumentError("--tap-changer-model must be ideal or impedance_correction"))
   return Symbol(normalized)
 end
 
@@ -140,8 +158,6 @@ function _print_summary(result::DTFFor002ValidationResult)
   println("Max branch |dP|: ", result.max_branch_d_p_MW, " MW")
   println("Max branch |dQ|: ", result.max_branch_d_q_MVar, " MVar")
   println("Max |dQgen| solved-vs-FOR002: ", result.max_qgen_d_MVar, " MVar")
-  println("Max state residual |P|: ", result.max_state_residual_p_MW, " MW")
-  println("Max state residual |Q|: ", result.max_state_residual_q_MVar, " MVar")
   println("Written files:")
   for path in result.written_files
     println("  - ", basename(path))
@@ -156,7 +172,8 @@ function run_validation(args = ARGS; return_details::Bool = false)
   case = Sparlectra.DTFImporter.read_dtf(opt["dtf-file"]; strict = opt["strict"])
   _assert_finite_dtf_model(case)
   transformer_ratio_mode = _transformer_ratio_mode_symbol(opt["transformer-ratio-mode"])
-  net = Sparlectra.DTFImporter.build_net(case; legacy_voltage_level_collapse_230kv = opt["legacy-voltage-level-collapse-230kv"], transformer_ratio_mode = transformer_ratio_mode)
+  tap_changer_model = _tap_changer_model_symbol(opt["tap-changer-model"])
+  net = Sparlectra.DTFImporter.build_net(case; legacy_voltage_level_collapse_230kv = opt["legacy-voltage-level-collapse-230kv"], transformer_ratio_mode = transformer_ratio_mode, tap_changer_model = tap_changer_model)
   ref = parse_for002_ground_load_flow(opt["for002-file"])
   method = _method_symbol(opt["method"])
   iters, status = method === nothing ? Sparlectra.runpf!(net, opt["max-iter"], opt["tol"], 0) : Sparlectra.runpf!(net, opt["max-iter"], opt["tol"], 0; method = method)
@@ -184,6 +201,7 @@ function run_validation(args = ARGS; return_details::Bool = false)
     net_slack_bus = _slack_bus_name(net, case),
     notes = "native DTFImporter path; ground-load-flow only",
     transformer_ratio_mode = transformer_ratio_mode,
+    tap_changer_model = tap_changer_model,
   )]
 
   branch_kcl_p, branch_kcl_q = _branch_kcl_arrays(net)
@@ -285,8 +303,11 @@ function run_validation(args = ARGS; return_details::Bool = false)
         r_pu = br.r_pu,
         x_pu = br.x_pu,
         b_pu = br.b_pu,
+        g_pu = br.g_pu,
         ratio = br.ratio,
         transformer_ratio_mode = hasproperty(meta, :transformer_ratio_mode) ? meta.transformer_ratio_mode : missing,
+        tap_changer_model = hasproperty(meta, :tap_changer_model) ? meta.tap_changer_model : missing,
+        tap_impedance_correction_factor = hasproperty(meta, :tap_impedance_correction_factor) ? meta.tap_impedance_correction_factor : missing,
         base_ratio_used = hasproperty(meta, :base_ratio_used) ? meta.base_ratio_used : missing,
         winding_over_network_base_ratio = hasproperty(meta, :winding_over_network_base_ratio) ? meta.winding_over_network_base_ratio : missing,
         nominal_unregulated_kv = hasproperty(meta, :nominal_unregulated_kv) ? something(meta.nominal_unregulated_kv, missing) : missing,
@@ -357,44 +378,37 @@ function run_validation(args = ARGS; return_details::Bool = false)
       println(io, "- DTF file: `", opt["dtf-file"], "`")
       println(io, "- FOR002 file: `", opt["for002-file"], "`")
       println(io, "- transformer ratio mode: `", transformer_ratio_mode, "`")
+      println(io, "- tap-changer model: `", tap_changer_model, "`")
       println(io, "- baseMVA: ", case.baseMVA, "; buses: ", length(case.buses), "; branches: ", length(case.branches), "; lines: ", count(b -> b.kind != 'T', case.branches), "; transformers: ", count(b -> b.kind == 'T', case.branches))
       println(io, "- transformer controls: ", length(case.transformer_controls), "; outages parsed: ", length(case.outages), "; nominal voltages kV: ", join(case.nominal_voltages_kv, ", "))
       println(io, "- DTF slack bus: ", case.size.slack, "; Sparlectra slack bus: ", _slack_bus_name(net, case))
-      println(io, "- solver method: ", opt["method"], "; converged: ", converged, "; iterations: ", iters, "; final mismatch: ", final_mismatch)
-      println(io, "- total generation MW/MVar: ", sum(r.model_pg_result_MW for r in gen_rows), " / ", sum(r.model_qg_result_MVar for r in gen_rows))
-      println(io, "- total load MW/MVar: ", sum(fb.p_load_MW for fb in values(ref.buses)), " / ", sum(fb.q_load_MVar for fb in values(ref.buses)), "; losses MW/MVar: ", p_loss, " / ", q_loss, "\n")
+      println(io, "- solver method: ", opt["method"], "; converged: ", converged, "; iterations: ", iters, "; final mismatch: ", _fmt_num(final_mismatch))
+      println(io, "- total generation MW/MVar: ", _fmt_num(sum(r.model_pg_result_MW for r in gen_rows)), " / ", _fmt_num(sum(r.model_qg_result_MVar for r in gen_rows)))
+      println(io, "- total load MW/MVar: ", _fmt_num(sum(fb.p_load_MW for fb in values(ref.buses))), " / ", _fmt_num(sum(fb.q_load_MVar for fb in values(ref.buses))), "; losses MW/MVar: ", _fmt_num(p_loss), " / ", _fmt_num(q_loss), "\n")
       println(io, "## What are state residuals?\n")
-      println(io, "State residuals force FOR002 printed voltage magnitudes/angles into the native Sparlectra Ybus. The resulting bus injections are compared with the FOR002 printed bus table. This is more sensitive than solved branch-flow comparisons because FOR002 values may be rounded and transformer-adjacent nodes react strongly to small voltage/angle differences. These residuals are diagnostic, not hard pass/fail criteria yet; branch-flow deviations and solved generator/slack comparisons are currently stronger validation signals.\n")
+      println(
+        io,
+        "State residuals force FOR002 printed voltage magnitudes/angles into the native Sparlectra Ybus and compare the resulting bus injections with the FOR002 printed bus table. Because FOR002 prints rounded values and transformer-adjacent nodes react strongly to tiny voltage/angle differences, the rounding-noise floor of this metric is far above real model deviations. They therefore remain available as row-level gross-error diagnostics in `dtf_state_residual.csv` and `dtf_validation_metrics.csv` only and are intentionally not part of this summary; branch-flow deviations and solved generator/slack comparisons are the validation signals.\n",
+      )
       for (title, rows, field, label) in [
         ("Top 10 bus voltage deviations", bus_rows, :d_vm_kV, "kV"),
         ("Top 10 branch P deviations", branch_rows, :d_p_from_MW, "MW"),
         ("Top 10 branch Q deviations", branch_rows, :d_q_from_MVar, "MVar"),
-        ("Top 10 state residual P deviations", residual_rows, :d_p_MW, "MW"),
-        ("Top 10 state residual Q deviations", residual_rows, :d_q_MVar, "MVar"),
       ]
         println(io, "## ", title, "\n")
         for r in _top([x for x in rows if !(getproperty(x, field) isa Missing)], field)
           name = hasproperty(r, :bus_name) ? r.bus_name : hasproperty(r, :branch_label) ? r.branch_label : string(r)
-          println(io, "- ", name, ": ", getproperty(r, field), " ", label)
+          println(io, "- ", name, ": ", _fmt_num(getproperty(r, field)), " ", label)
         end
         println(io)
       end
-      println(io, "## Before/after residual interpretation\n")
-      println(io, "Old converted-model FOR002-state residuals included examples such as ALPHA S1 dP around -845 MW. Native DTF residuals for selected buses are:")
-      for target in ["ALPHA S1", "BETA1 S1", "DELTA1S1", "BETA2 S1", "DELTA2S1", "WEILERS1"]
-        row = findfirst(r -> _norm_name(r.bus_name) == _norm_name(target), residual_rows)
-        row === nothing ? println(io, "- ", target, ": not parsed") : println(io, "- ", residual_rows[row].bus_name, ": dP=", residual_rows[row].d_p_MW, " MW, dQ=", residual_rows[row].d_q_MVar, " MVar")
-      end
-      println(io, "\nThe selected native residuals are materially smaller than the old ALPHA S1 -845 MW example when their absolute dP values are far below that magnitude; no hard pass/fail threshold is encoded yet.")
       max_qg = first(_top(gen_rows, :d_qg_result_vs_for002_MVar; n = 1))
-      max_state_q = first(_top(residual_rows, :d_q_MVar; n = 1))
       max_kcl_q = first(_top(kcl_rows, :d_branch_kcl_vs_for002_q_MVar; n = 1))
       slack = gen_rows[findfirst(r -> r.is_slack, gen_rows)]
       println(io, "\n## Q / generator / bus-injection semantics\n")
-      println(io, "- max |dQgen|: ", abs(max_qg.d_qg_result_vs_for002_MVar), " MVar at ", max_qg.bus_name)
-      println(io, "- max |state residual Q|: ", abs(max_state_q.d_q_MVar), " MVar at ", max_state_q.bus_name)
-      println(io, "- max |branch KCL vs FOR002 Q|: ", abs(max_kcl_q.d_branch_kcl_vs_for002_q_MVar), " MVar at ", max_kcl_q.bus_name)
-      println(io, "- slack bus Q comparison (", slack.bus_name, "): FOR002 Qgen=", slack.for002_qg_MVar, " MVar; model specified Qgen=", slack.model_qg_specified_MVar, " MVar; model solved/result Qgen=", slack.model_qg_result_MVar, " MVar; dQ=", slack.d_qg_result_vs_for002_MVar, " MVar")
+      println(io, "- max |dQgen|: ", _fmt_num(abs(max_qg.d_qg_result_vs_for002_MVar)), " MVar at ", max_qg.bus_name)
+      println(io, "- max |branch KCL vs FOR002 Q|: ", _fmt_num(abs(max_kcl_q.d_branch_kcl_vs_for002_q_MVar)), " MVar at ", max_kcl_q.bus_name)
+      println(io, "- slack bus Q comparison (", slack.bus_name, "): FOR002 Qgen=", _fmt_num(slack.for002_qg_MVar), " MVar; model specified Qgen=", _fmt_num(slack.model_qg_specified_MVar), " MVar; model solved/result Qgen=", _fmt_num(slack.model_qg_result_MVar), " MVar; dQ=", _fmt_num(slack.d_qg_result_vs_for002_MVar), " MVar")
       largest_class = max_qg.is_slack ? "slack" : (max_qg.is_regulating ? "PV/regulating" : (max_qg.has_generator ? "PQ generator" : "non-generator"))
       transformer_adjacent = _norm_name(max_qg.bus_name) in Set(_norm_name.(["BETA1 S1", "BETA2 S1", "DELTA1S1", "DELTA2S1"]))
       println(io, "- largest Q-generator discrepancy class: ", largest_class, transformer_adjacent ? " and transformer-adjacent" : "")
@@ -419,7 +433,6 @@ function run_validation(args = ARGS; return_details::Bool = false)
     metrics_rows[1].max_abs_state_residual_q_MVar,
   )
   (!opt["quiet"] && opt["print-summary"]) && _print_summary(result)
-  opt["strict"] && !converged && exit(1)
   # The default return value is lightweight for scripts/CLI use; detailed mode
   # returns diagnostic rows for tests and focused investigations.
   return return_details ?
@@ -442,7 +455,13 @@ function run_validation(args = ARGS; return_details::Bool = false)
   ) : result
 end
 
-if get(ENV, "SPARLECTRA_FOR002_VALIDATION_NO_MAIN", "0") != "1"
-  Base.invokelatest(run_validation, ARGS; return_details = false)
-  nothing
+_running_as_cli_script() = !isempty(PROGRAM_FILE) && abspath(PROGRAM_FILE) == abspath(@__FILE__)
+
+if _running_as_cli_script()
+  Base.invokelatest() do
+    result = run_validation(ARGS)
+    parse_cli(ARGS)["strict"] && !result.converged && exit(1)
+  end
 end
+
+end # module NativeBaseValidation

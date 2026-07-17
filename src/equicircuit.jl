@@ -156,6 +156,72 @@ function calcSkewAngleTap(; tap_fraction::Real, skew_angle_deg::Real, convention
 end
 
 """
+    calcTapImpedanceCorrectionFactor(; tap_changer_model::Symbol, tap_fraction::Union{Nothing,Real} = nothing, skew_angle_deg::Real = 0.0, ratio::Union{Nothing,Real} = nothing)::Float64
+
+Return the multiplicative correction factor applied to the transformer series
+impedance (R and X) for the selected tap-changer model.
+
+Sparlectra distinguishes two tap-changer models:
+- `:ideal` — the tap changer only changes the complex winding ratio; the
+  short-circuit impedance keeps its neutral-position value (factor `1.0`).
+- `:impedance_correction` — the tap changer acts on a physical winding, so the
+  short-circuit impedance is re-referred through the tapped winding. R and X
+  are scaled with ``|1 + f e^{j\\varphi}|^2``, where `f` is the
+  additional-voltage fraction (`tap_fraction`) and ``\\varphi`` the skew angle
+  in degrees (`skew_angle_deg`).
+
+Callers provide either the regulating-vector parameters (`tap_fraction` and
+`skew_angle_deg`; used by the native DTF importer) or the effective Sparlectra
+off-nominal tap `ratio` (used by the MATPOWER importer). With Sparlectra's
+reciprocal from-side tap convention (`ratio = 1 / |1 + f e^{jφ}|`, see
+[`calcSkewAngleTap`](@ref)) both forms are equivalent; the ratio form yields
+`1 / ratio^2`. A `ratio` of `0.0` (MATPOWER "no tap") or `1.0` is treated as
+neutral. When neither `tap_fraction` nor `ratio` is given, the factor is `1.0`.
+
+# Arguments
+- `tap_changer_model::Symbol`: `:ideal` or `:impedance_correction`.
+- `tap_fraction::Union{Nothing,Real}`: longitudinal regulating-voltage fraction `f`.
+- `skew_angle_deg::Real`: skew angle of the additional voltage in degrees.
+- `ratio::Union{Nothing,Real}`: effective Sparlectra off-nominal tap ratio.
+
+# Returns
+- `Float64`: multiplicative factor for the series resistance and reactance.
+
+# Failure behavior
+Throws an `ArgumentError` for an unsupported `tap_changer_model` value.
+"""
+function calcTapImpedanceCorrectionFactor(; tap_changer_model::Symbol, tap_fraction::Union{Nothing,Real} = nothing, skew_angle_deg::Real = 0.0, ratio::Union{Nothing,Real} = nothing)::Float64
+  tap_changer_model === :ideal && return 1.0
+  tap_changer_model === :impedance_correction || throw(ArgumentError("Unsupported tap-changer model: $(tap_changer_model). Allowed values: ideal, impedance_correction."))
+  if tap_fraction !== nothing
+    return abs2(1.0 + Float64(tap_fraction) * cis(deg2rad(Float64(skew_angle_deg))))
+  elseif ratio !== nothing
+    r = Float64(ratio)
+    # ratio == 0.0 is the MATPOWER "no transformer tap" marker; treat as neutral.
+    (r == 0.0 || r == 1.0) && return 1.0
+    return 1.0 / (r * r)
+  end
+  return 1.0
+end
+
+"""
+    calcTapCorrectedRX(; r_pu::Real, x_pu::Real, tap_changer_model::Symbol, tap_fraction::Union{Nothing,Real} = nothing, skew_angle_deg::Real = 0.0, ratio::Union{Nothing,Real} = nothing)
+
+Apply the tap-changer impedance correction of
+[`calcTapImpedanceCorrectionFactor`](@ref) to a transformer series impedance.
+This is the central implementation used by both the MATPOWER and the native
+DTF importer; importers must not duplicate the correction math.
+
+# Returns
+- NamedTuple `(r_pu, x_pu, factor)` with the corrected per-unit series
+  resistance/reactance and the applied correction factor.
+"""
+function calcTapCorrectedRX(; r_pu::Real, x_pu::Real, tap_changer_model::Symbol, tap_fraction::Union{Nothing,Real} = nothing, skew_angle_deg::Real = 0.0, ratio::Union{Nothing,Real} = nothing)
+  factor = calcTapImpedanceCorrectionFactor(; tap_changer_model, tap_fraction, skew_angle_deg, ratio)
+  return (r_pu = Float64(r_pu) * factor, x_pu = Float64(x_pu) * factor, factor = factor)
+end
+
+"""
     calcNeutralU(neutralU_ratio::Float64, vn_hv::Float64, tap_min::Integer, tap_max::Integer, tap_step_percent::Float64)::Float64
 
 Calculates the neutral voltage of a transformer based on the given parameters.

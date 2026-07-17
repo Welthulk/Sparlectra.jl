@@ -34,6 +34,31 @@ function _synthetic_dtf_case(; kind::Char = 'T', g_s::Float64 = 4.0e-5, b_s::Flo
   )
 end
 
+function _synthetic_dtf_case_with_tap_control(; longitudinal_range_percent::Float64, actual_tap_step::Int, max_tap_step::Int, added_voltage_angle_deg::Float64 = 0.0)
+  control = Sparlectra.DTFImporter.DTFTransformerControl(
+    "", 1, "PV", "SLACK", "A", "", "PV", "SLACK",
+    110.0, 110.0, longitudinal_range_percent, added_voltage_angle_deg, max_tap_step, actual_tap_step,
+    nothing, nothing, nothing,
+  )
+  return Sparlectra.DTFImporter.DTFCase(
+    "synthetic_tap",
+    100.0,
+    Sparlectra.DTFImporter.DTFParams("", Float64[]),
+    ["synthetic_tap"],
+    [110.0],
+    Sparlectra.DTFImporter.DTFSize("", 2, 1, 0, 1, "SLACK"),
+    [Sparlectra.DTFImporter.DTFBranch("", 1, 'T', 1, "A", "PV", "SLACK", 1.21, 6.05, 0.0, 0.0, nothing)],
+    Sparlectra.DTFImporter.DTFCompensation[],
+    [control],
+    [
+      Sparlectra.DTFImporter.DTFBus("", 1, 1, 1, "PV", 110.0, 0.0, 0.0, 0.0, 10.0, 2.0, -5.0, 5.0),
+      Sparlectra.DTFImporter.DTFBus("", 2, 2, 1, "SLACK", 110.0, 0.0, 0.0, 0.0, 20.0, 3.0, -10.0, 10.0),
+    ],
+    Sparlectra.DTFImporter.DTFOutage[],
+    Sparlectra.DTFImporter.DTFTrailingRecord[],
+  )
+end
+
 function run_dtf_importer_tests()
   @testset "native DTF importer focused synthetic checks" begin
     case = _synthetic_dtf_case()
@@ -76,6 +101,24 @@ function run_dtf_importer_tests()
     named_net = Sparlectra.DTFImporter.build_net(_synthetic_dtf_case(path = "/some/dir/FOR001B.DAT"))
     @test named_net.name == "FOR001B.DAT"
     @test net.name == "synthetic"
+  end
+
+  @testset "native DTF importer honors configured tap-changer model" begin
+    case = _synthetic_dtf_case_with_tap_control(longitudinal_range_percent = 10.0, actual_tap_step = 7, max_tap_step = 10)
+
+    net_ideal = Sparlectra.DTFImporter.build_net(case; tap_changer_model = :ideal)
+    net_corrected = Sparlectra.DTFImporter.build_net(case; tap_changer_model = :impedance_correction)
+
+    branch_ideal = only(net_ideal.branchVec)
+    branch_corrected = only(net_corrected.branchVec)
+
+    tap_fraction = (10.0 / 100.0) * 7 / 10
+    expected_factor = (1.0 + tap_fraction)^2
+    @test isapprox(branch_corrected.r_pu, branch_ideal.r_pu * expected_factor; atol = 1e-12)
+    @test isapprox(branch_corrected.x_pu, branch_ideal.x_pu * expected_factor; atol = 1e-12)
+    @test get(net_corrected.matpower_branch_metadata, 1, nothing).tap_changer_model == :impedance_correction
+    @test isapprox(get(net_corrected.matpower_branch_metadata, 1, nothing).tap_impedance_correction_factor, expected_factor; atol = 1e-12)
+    @test get(net_ideal.matpower_branch_metadata, 1, nothing).tap_impedance_correction_factor == 1.0
   end
 
   @testset "native DTF full local fixture" begin
