@@ -219,5 +219,84 @@ mpc.dcline = [
     isolated_meta = only(net_isolated.matpowerDclineMetadata)
     @test isolated_meta.to_voltage_controlled === false
     @test Sparlectra.getNodeType(net_isolated.nodeVec[net_isolated.busDict["2"]]) != Sparlectra.PV
+
+    @testset "MATPOWER export write_solution" begin
+      net_ws = Sparlectra.Net(name = "write_solution_case", baseMVA = 100.0)
+      Sparlectra.addBus!(net = net_ws, busName = "SLACK", vn_kV = 110.0, oBusIdx = 1)
+      Sparlectra.addBus!(net = net_ws, busName = "LOAD", vn_kV = 110.0, oBusIdx = 2)
+      Sparlectra.addProsumer!(net = net_ws, busName = "SLACK", type = "GENERATOR", p = 0.0, q = 0.0, referencePri = "SLACK", vm_pu = 1.0)
+      Sparlectra.addProsumer!(net = net_ws, busName = "LOAD", type = "ENERGYCONSUMER", p = 10.0, q = 2.0)
+      Sparlectra._addPIModelACLine_by_idx!(net = net_ws, from = 1, to = 2, r_pu = 0.01, x_pu = 0.05, b_pu = 0.0, status = 1, ratedS = 100.0)
+      ite, erg = Sparlectra.runpf!(net_ws, 20, 1e-8, 0)
+      @test erg == 0
+      Sparlectra.calcNetLosses!(net_ws)
+
+      mktempdir() do dir
+        path_true = joinpath(dir, "solved_true.m")
+        Sparlectra.writeMatpowerCasefile(net_ws, path_true; write_solution = true)
+        txt_true = read(path_true, String)
+        @test occursin("%fbus\ttbus\tr\tx\tb\trateA\trateB\trateC\tratio\tangle\tstatus\tangmin\tangmax\tPF\tQF\tPT\tQT\n", txt_true)
+        @test occursin("mpc.sparlectra.solution_written = 1;", txt_true)
+        mpc_true = Sparlectra.MatpowerIO.read_case_m(path_true; legacy_compat = false)
+        @test mpc_true.sparlectra !== nothing
+        @test mpc_true.sparlectra.solution_written === true
+
+        path_false = joinpath(dir, "solved_false.m")
+        Sparlectra.writeMatpowerCasefile(net_ws, path_false; write_solution = false)
+        txt_false = read(path_false, String)
+        @test occursin("%fbus\ttbus\tr\tx\tb\trateA\trateB\trateC\tratio\tangle\tstatus\tangmin\tangmax\n", txt_false)
+        @test !occursin("\tPF\tQF\tPT\tQT", txt_false)
+        @test !occursin("mpc.sparlectra.solution_written", txt_false)
+        mpc_false = Sparlectra.MatpowerIO.read_case_m(path_false; legacy_compat = false)
+        @test mpc_false.sparlectra === nothing || !mpc_false.sparlectra.solution_written
+        load_row = findfirst(==(2.0), mpc_false.bus[:, 1])
+        @test mpc_false.bus[load_row, 8] == 1.0 # Vm reset for non-slack/PV bus
+        @test mpc_false.bus[load_row, 9] == 0.0 # Va reset for non-slack/PV bus
+        slack_row = findfirst(==(1.0), mpc_false.bus[:, 1])
+        @test mpc_false.bus[slack_row, 8] == net_ws.nodeVec[1]._vm_pu # slack setpoint preserved
+      end
+    end
+
+    @testset "Tap-changer-model marker prevents double correction on reimport" begin
+      tap_bus = [1 3 0.0 0.0 0.0 0.0 1 1.0 0.0 110.0 1 1.1 0.9; 2 1 0.0 0.0 0.0 0.0 1 1.0 0.0 110.0 1 1.1 0.9]
+      tap_gen = [1 10.0 0.0 100.0 -100.0 1.0 100.0 1 100.0 0.0 0 0 0 0 0 0 0 0 0 0 0]
+      tap_branch = [1 2 0.01 0.05 0.0 100.0 0.0 0.0 0.9 0.0 1 -60.0 60.0]
+      mpc_tap = Sparlectra.MatpowerIO.MatpowerCase("tap_marker_case", 100.0, tap_bus, tap_gen, tap_branch, nothing, nothing)
+
+      net_native = Sparlectra.createNetFromMatPowerCase(mpc = mpc_tap, tap_changer_model = :impedance_correction)
+      @test length(net_native.trafos) == 1
+      x_pu_corrected = net_native.branchVec[1].x_pu
+      @test x_pu_corrected != 0.05 # correction actually applied
+
+      mktempdir() do dir
+        path = joinpath(dir, "tap_marker.m")
+        Sparlectra.writeMatpowerCasefile(net_native, path; write_solution = false)
+        txt = read(path, String)
+        @test occursin("mpc.sparlectra.tap_changer_model = 'impedance_correction';", txt)
+        mpc_reimport = Sparlectra.MatpowerIO.read_case_m(path; legacy_compat = false)
+        @test mpc_reimport.sparlectra !== nothing
+        @test mpc_reimport.sparlectra.tap_changer_model == "impedance_correction"
+
+        # Reimport with impedance_correction active in the config path too: the
+        # marker must make the importer skip a second correction, so x_pu/r_pu
+        # match the already-corrected native values exactly (no double factor).
+        net_roundtrip = Sparlectra.createNetFromMatPowerCase(mpc = mpc_reimport, tap_changer_model = :impedance_correction)
+        @test net_roundtrip.branchVec[1].x_pu ≈ x_pu_corrected
+        @test net_roundtrip.branchVec[1].r_pu ≈ net_native.branchVec[1].r_pu
+      end
+    end
+
+    @testset "Standard MATPOWER case without tap-changer-model marker is unaffected" begin
+      no_marker_bus = [1 3 0.0 0.0 0.0 0.0 1 1.0 0.0 110.0 1 1.1 0.9; 2 1 0.0 0.0 0.0 0.0 1 1.0 0.0 110.0 1 1.1 0.9]
+      no_marker_gen = [1 10.0 0.0 100.0 -100.0 1.0 100.0 1 100.0 0.0 0 0 0 0 0 0 0 0 0 0 0]
+      no_marker_branch = [1 2 0.01 0.05 0.0 100.0 0.0 0.0 0.9 0.0 1 -60.0 60.0]
+      mpc_no_marker = Sparlectra.MatpowerIO.MatpowerCase("no_marker_case", 100.0, no_marker_bus, no_marker_gen, no_marker_branch, nothing, nothing)
+      @test mpc_no_marker.sparlectra === nothing
+
+      net_ideal = Sparlectra.createNetFromMatPowerCase(mpc = mpc_no_marker, tap_changer_model = :ideal)
+      net_corrected = Sparlectra.createNetFromMatPowerCase(mpc = mpc_no_marker, tap_changer_model = :impedance_correction)
+      @test net_ideal.branchVec[1].x_pu ≈ 0.05
+      @test net_corrected.branchVec[1].x_pu != net_ideal.branchVec[1].x_pu
+    end
   end
 end

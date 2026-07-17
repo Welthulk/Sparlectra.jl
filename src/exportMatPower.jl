@@ -87,7 +87,7 @@ function _matpower_bus_shunts(net::Net)
   return gs, bs
 end
 
-function writeBusData(net::Net, file)
+function writeBusData(net::Net, file; write_solution::Bool = true)
   NodeVec = net.nodeVec
   shunt_gs, shunt_bs = _matpower_bus_shunts(net)
   write(file, "%% bus data\n")
@@ -129,10 +129,18 @@ function writeBusData(net::Net, file)
     GS = get(shunt_gs, node.busIdx, 0.0)
     BS = get(shunt_bs, node.busIdx, 0.0)
 
-    area = (node._area === nothing) ? 1 : node._area #https://zepben.github.io/evolve/docs/cim/cim100/TC57CIM/IEC61970/Base/ControlArea/ControlArea/      
+    area = (node._area === nothing) ? 1 : node._area #https://zepben.github.io/evolve/docs/cim/cim100/TC57CIM/IEC61970/Base/ControlArea/ControlArea/
 
-    vm_pu = (node._vm_pu === nothing) ? 1.0 : node._vm_pu
-    va_deg = (node._va_deg === nothing) ? 0.0 : node._va_deg
+    # write_solution = false: the export is a pure model file, so non-slack/
+    # non-PV buses do not carry a (possibly solved) voltage state. Slack and
+    # PV setpoints are meaningful pre-solve input and are preserved.
+    if write_solution || num in (2, 3)
+      vm_pu = (node._vm_pu === nothing) ? 1.0 : node._vm_pu
+      va_deg = (node._va_deg === nothing) ? 0.0 : node._va_deg
+    else
+      vm_pu = 1.0
+      va_deg = 0.0
+    end
     if isnothing(node.comp.cVN)
       @warn "Base Voltage not defined for node $(node.comp.cID) -> set to 1.0"
       baseKV = 1.0
@@ -246,12 +254,16 @@ function _matpower_branch_kind(net::Net, i::Int, br::Branch)
   return (br.ratio != 1.0 || br.angle != 0.0) ? "T" : "L"
 end
 
-function writeBranchData(net::Net, file)
+function writeBranchData(net::Net, file; write_solution::Bool = true)
   branchVec = net.branchVec
   #! format: off
   write(file, "%% branch data\n")
   write(file, "mpc.branch = [\n")
-  write(file, "%fbus\ttbus\tr\tx\tb\trateA\trateB\trateC\tratio\tangle\tstatus\tangmin\tangmax\n")
+  if write_solution
+    write(file, "%fbus\ttbus\tr\tx\tb\trateA\trateB\trateC\tratio\tangle\tstatus\tangmin\tangmax\tPF\tQF\tPT\tQT\n")
+  else
+    write(file, "%fbus\ttbus\tr\tx\tb\trateA\trateB\trateC\tratio\tangle\tstatus\tangmin\tangmax\n")
+  end
   #! format: on
   for (i, br) in enumerate(branchVec)
     fbus = br.fromBus
@@ -285,13 +297,47 @@ function writeBranchData(net::Net, file)
 
     cID = br.comp.cID
     #! format: off
-    line = string(fbus, "\t", tbus, "\t", r, "\t", x, "\t", b, "\t", rateA, "\t", rateB, "\t", rateC, "\t", ratio, "\t", angle, "\t", status, "\t", angmin, "\t", angmax, "; %Branch: " * type * " (ID: " * cID * ")\n")
+    if write_solution
+      pf = br.fBranchFlow === nothing ? 0.0 : br.fBranchFlow.pFlow
+      qf = br.fBranchFlow === nothing ? 0.0 : br.fBranchFlow.qFlow
+      pt = br.tBranchFlow === nothing ? 0.0 : br.tBranchFlow.pFlow
+      qt = br.tBranchFlow === nothing ? 0.0 : br.tBranchFlow.qFlow
+      line = string(fbus, "\t", tbus, "\t", r, "\t", x, "\t", b, "\t", rateA, "\t", rateB, "\t", rateC, "\t", ratio, "\t", angle, "\t", status, "\t", angmin, "\t", angmax, "\t", pf, "\t", qf, "\t", pt, "\t", qt, "; %Branch: " * type * " (ID: " * cID * ")\n")
+    else
+      line = string(fbus, "\t", tbus, "\t", r, "\t", x, "\t", b, "\t", rateA, "\t", rateB, "\t", rateC, "\t", ratio, "\t", angle, "\t", status, "\t", angmin, "\t", angmax, "; %Branch: " * type * " (ID: " * cID * ")\n")
+    end
     #! format: on
     write(file, line)
   end # for
 
   write(file, "];\n")
 end # writeBranchData
+
+
+# Whether every in-service branch carries solved branch-flow results
+# (fBranchFlow/tBranchFlow), i.e. the network has been run through a power
+# flow since the flows were last invalidated. Out-of-service branches are not
+# required to carry flow results.
+function _matpower_export_has_solution(net::Net)::Bool
+  for br in net.branchVec
+    br.status == 0 && continue
+    (br.fBranchFlow === nothing || br.tBranchFlow === nothing) && return false
+  end
+  return true
+end
+
+# :impedance_correction when any imported transformer branch was tap-
+# impedance-corrected on import (net.matpower_branch_metadata[i].tap_changer_model),
+# nothing otherwise. Written by writeMatpowerCasefile as the
+# mpc.sparlectra.tap_changer_model roundtrip marker so a Sparlectra reimport
+# does not reapply calcTapCorrectedRX on already-corrected BR_R/BR_X.
+function _matpower_export_tap_changer_model_marker(net::Net)::Union{Nothing,Symbol}
+  for meta in values(net.matpower_branch_metadata)
+    hasproperty(meta, :tap_changer_model) || continue
+    getproperty(meta, :tap_changer_model) === :impedance_correction && return :impedance_correction
+  end
+  return nothing
+end
 
 function _matpower_quote(s::AbstractString)
   return "'" * replace(String(s), "'" => "''") * "'"
@@ -301,10 +347,7 @@ _matpower_value(x::AbstractString) = _matpower_quote(x)
 _matpower_value(x::Integer) = string(x)
 _matpower_value(x::Real) = isfinite(Float64(x)) ? string(Float64(x)) : "NaN"
 
-function writeSparlectraTransformerLossMetadata(net::Net, file, rows)
-  isempty(rows) && return nothing
-  write(file, "mpc.sparlectra = struct();\n")
-  write(file, "mpc.sparlectra.format_version = 1;\n")
+function writeSparlectraTransformerLossMetadata(file, rows)
   write(file, "mpc.sparlectra.warning = ", _matpower_quote("This file contains Sparlectra-specific transformer loss metadata. Plain MATPOWER does not apply this extension. Results may deviate when run outside Sparlectra."), ";\n")
   write(file, "mpc.sparlectra.transformer_losses = {\n")
   for row in rows
@@ -318,7 +361,22 @@ function writeSparlectraTransformerLossMetadata(net::Net, file, rows)
   return nothing
 end
 
-function writeSparlectraMetadata(net::Net, file)
+# Write the versioned mpc.sparlectra.* extension namespace. The
+# "mpc.sparlectra = struct(); mpc.sparlectra.format_version = 1;" preamble is
+# emitted once whenever any extension content is present (transformer-loss
+# metadata, the tap-changer-model roundtrip marker, or the solution-written
+# marker); each sub-field is otherwise independently optional.
+function writeSparlectraExtensionBlock(file; loss_rows, tap_changer_model_marker::Union{Nothing,Symbol}, solution_written::Bool)
+  isempty(loss_rows) && tap_changer_model_marker === nothing && !solution_written && return nothing
+  write(file, "mpc.sparlectra = struct();\n")
+  write(file, "mpc.sparlectra.format_version = 1;\n")
+  !isempty(loss_rows) && writeSparlectraTransformerLossMetadata(file, loss_rows)
+  tap_changer_model_marker !== nothing && write(file, "mpc.sparlectra.tap_changer_model = ", _matpower_quote(String(tap_changer_model_marker)), ";\n")
+  solution_written && write(file, "mpc.sparlectra.solution_written = 1;\n")
+  return nothing
+end
+
+function writeSparlectraMetadata(net::Net, file; solution_written::Bool = false)
   write(file, "%% optional Sparlectra metadata (ignored by standard MATPOWER solvers)\n")
   write(file, "mpc.bus_name = {\n")
   for n in net.nodeVec
@@ -328,7 +386,7 @@ function writeSparlectraMetadata(net::Net, file)
   write(file, "mpc.branch_name = {\n")
   for (i, br) in enumerate(net.branchVec)
     meta = get(net.matpower_branch_metadata, i, nothing)
-    name = meta !== nothing && hasproperty(meta, :orig_name) ? String(meta.orig_name) : br.comp.cName
+    name = meta !== nothing && hasproperty(meta, :orig_name) && meta.orig_name !== nothing ? String(meta.orig_name) : br.comp.cName
     write(file, _matpower_quote(name), ";\n")
   end
   write(file, "};\n")
@@ -345,17 +403,29 @@ function writeSparlectraMetadata(net::Net, file)
     end
     write(file, "};\n")
   end
-  writeSparlectraTransformerLossMetadata(net, file, _sparlectra_transformer_loss_rows(net))
+  writeSparlectraExtensionBlock(file; loss_rows = _sparlectra_transformer_loss_rows(net), tap_changer_model_marker = _matpower_export_tap_changer_model_marker(net), solution_written = solution_written)
 end
 
 """
-    writeMatpowerCasefile(net::Net, pathfilename::String)
+    writeMatpowerCasefile(net::Net, pathfilename::String; write_solution::Union{Nothing,Bool} = nothing)
 
 Write Matpower case files.
 
 # Arguments
 - `net::Net`: Network object.
 - `pathfilename::String`: Path and filename to write the Matpower case file.
+- `write_solution::Union{Nothing,Bool}`: Whether to write the solved AC
+  power-flow state back into the export: `mpc.bus` `VM`/`VA` reflect the
+  solved node state, and `mpc.branch` gains the MATPOWER result columns 14–17
+  (`PF`, `QF`, `PT`, `QT`) sourced from the existing branch-flow report path
+  (no flow recomputation in the exporter). `nothing` (default) reads
+  `matpower_export.write_solution` from the active configuration
+  (default `true`, see [`MatpowerExportConfig`](@ref)). When `true` but the
+  network has no solved branch flows, the exporter warns and falls back to
+  the historical 13-column model-only `mpc.branch` export instead of writing
+  empty result columns. When `false`, the export is a pure model file:
+  `mpc.branch` keeps 13 columns and `VM = 1.0`/`VA = 0.0` for all
+  non-slack/non-PV buses (slack and PV setpoints are preserved).
 
 # Example
 ```julia
@@ -363,7 +433,7 @@ net = Net(...)
 writeMatpowerCasefile(net, "casefile.m")
 ```
 """
-function writeMatpowerCasefile(net::Net, pathfilename::String)
+function writeMatpowerCasefile(net::Net, pathfilename::String; write_solution::Union{Nothing,Bool} = nothing)
   base, ext = splitext(pathfilename)
 
   case = basename(base)
@@ -375,14 +445,21 @@ function writeMatpowerCasefile(net::Net, pathfilename::String)
     NodeDict[n.busIdx] = n
   end
 
+  requested_write_solution = write_solution === nothing ? matpower_export_config().write_solution : write_solution
+  has_solution = _matpower_export_has_solution(net)
+  if requested_write_solution && !has_solution
+    @warn "matpower_export.write_solution=true requested but the network has no solved branch flows; falling back to a 13-column model-only mpc.branch export." pathfilename
+  end
+  write_result_columns = requested_write_solution && has_solution
+
   file = open(pathfilename, "w")
   writeHeader(net.baseMVA, file, case; has_transformer_loss_metadata = !isempty(transformer_loss_rows))
-  hasPVBus, slackIdx, vgSlack = writeBusData(net, file)
+  hasPVBus, slackIdx, vgSlack = writeBusData(net, file; write_solution = requested_write_solution)
 
   writeGeneratorData(net.baseMVA, NodeDict, net.prosumpsVec, file, hasPVBus, slackIdx, vgSlack)
 
-  writeBranchData(net, file)
-  writeSparlectraMetadata(net, file)
+  writeBranchData(net, file; write_solution = write_result_columns)
+  writeSparlectraMetadata(net, file; solution_written = write_result_columns)
   #writeCostData(file)
   close(file)
 end # writeMatpowerCasefile

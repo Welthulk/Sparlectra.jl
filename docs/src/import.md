@@ -222,6 +222,38 @@ filepath = "path/to/output/export_example.m"
 writeMatpowerCasefile(net, filepath)
 ```
 
+### Writing the solved state (`write_solution`)
+
+`writeMatpowerCasefile` accepts a `write_solution::Union{Nothing,Bool}` keyword
+that controls whether the export carries the solved AC power-flow state:
+
+```julia
+# Explicit control (bypasses the active configuration):
+writeMatpowerCasefile(net, filepath; write_solution = true)   # solved state
+writeMatpowerCasefile(net, filepath; write_solution = false)  # model only
+
+# Default: read matpower_export.write_solution from the active configuration
+# (default true).
+writeMatpowerCasefile(net, filepath)
+```
+
+- `true` (default): `mpc.bus` `VM`/`VA` reflect the current solved node state,
+  and `mpc.branch` gains the standard MATPOWER result columns 14–17
+  (`PF`, `QF`, `PT`, `QT`), taken from the existing branch-flow report path —
+  the exporter does not recompute flows. A `mpc.sparlectra.solution_written = 1`
+  marker documents that columns 8/9 and 14–17 represent a solution. If the
+  network has not been solved (no branch flows available), the exporter warns
+  and falls back to the 13-column model-only export instead of writing empty
+  result columns.
+- `false`: the export is a pure model file. `mpc.branch` keeps its historical
+  13 columns, and `VM = 1.0`/`VA = 0.0` for all non-slack/non-PV buses (slack
+  and PV setpoints are preserved).
+
+Before this option existed, `VM`/`VA` implicitly reflected whatever state the
+`Net` happened to be in at export time — either unsolved start values or a
+solved result, depending on when `writeMatpowerCasefile` was called. That
+behavior is now explicit through `write_solution`.
+
 ## Running Power Flow on Imported Networks
 
 After importing a network, you can run a power flow analysis:

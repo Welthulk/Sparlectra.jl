@@ -468,7 +468,7 @@ function _run_dtf_outages(case_path::AbstractString, case, config, output_path::
     end
     if write_matpower_exports
       mpath = joinpath(output_path, "dtf_outage_$(outage.index)_$(safe).m")
-      writeMatpowerCasefile(net, mpath)
+      writeMatpowerCasefile(net, mpath; write_solution = config.matpower_export.write_solution)
       push!(artifacts, basename(mpath))
     end
     push!(results, Dict{String,Any}("outage_label" => label, "matched_branch_index" => branch_index, "branch_kind" => string(outage.kind), "from_bus" => outage.from, "to_bus" => outage.to, "converged" => raw.final_converged, "iterations" => raw.iterations, "final_mismatch" => raw.final_mismatch, "artifacts" => artifacts))
@@ -679,7 +679,7 @@ function _run_sparlectra_api(;
     if matpower_export_requested
       matpower_export_file = joinpath(output_path, "dtf_native_matpower_export.m")
       try
-        writeMatpowerCasefile(raw_result.net, matpower_export_file)
+        writeMatpowerCasefile(raw_result.net, matpower_export_file; write_solution = config.matpower_export.write_solution)
       catch err
         return _api_execution_failure("artifact_write_error", sprint(showerror, err); run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file, phase_recorder, performance_timing, total_start_ns = total_start)
       end

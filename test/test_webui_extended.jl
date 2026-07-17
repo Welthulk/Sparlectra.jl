@@ -105,6 +105,7 @@ function _webui_test_form(casefile, config_file, output_root)
     "matpower_import_pv_voltage_source" => "gen_vg",
     "matpower_import_compare_voltage_reference" => "imported_setpoint",
     "transformer_tap_changer_model" => "ideal",
+    "matpower_export_write_solution" => "true",
     "output_logfile_results" => "compact",
     "performance_timing" => "compact",
     "run_diagnostics" => "on",
@@ -460,6 +461,11 @@ settings:
       request_form["power_flow_tol"] = "2e-6"
       request = Sparlectra.powerflow_webui_request(request_form; default_output_root = root)
       @test request["config_overrides"]["power_flow.tol"] == 2.0e-6
+
+      write_solution_form = _webui_test_form("case145.m", "configuration.yaml", root)
+      write_solution_form["matpower_export_write_solution"] = "false"
+      write_solution_request = Sparlectra.powerflow_webui_request(write_solution_form; default_output_root = root)
+      @test write_solution_request["config_overrides"]["matpower_export.write_solution"] === false
 
       yaml_first_form = copy(request_form)
       yaml_first_form["ignore_webui_settings"] = "true"
@@ -1410,6 +1416,7 @@ settings:
       @test occursin("name=\"matpower_import_ratio\"", routed_powerflow_html)
       @test occursin("name=\"matpower_import_shift_sign\"", routed_powerflow_html)
       @test occursin("name=\"matpower_import_shift_unit\"", routed_powerflow_html)
+      @test occursin("name=\"matpower_export_write_solution\"", routed_powerflow_html)
       @test occursin("Package path:", routed_powerflow_html)
       @test occursin("commit", routed_powerflow_html)
       @test occursin("name=\"power_flow_qlimits_enforcement_mode\"", form_html)
@@ -1448,6 +1455,7 @@ settings:
         "matpower_import_pv_voltage_source" => "matpower_import.pv_voltage_source",
         "matpower_import_compare_voltage_reference" => "matpower_import.compare_voltage_reference",
         "transformer_tap_changer_model" => "transformer.tap_changer_model",
+        "matpower_export_write_solution" => "matpower_export.write_solution",
         "output_logfile_results" => "output.logfile_results",
         "benchmark_enabled" => "benchmark.enabled",
         "benchmark_samples" => "benchmark.samples",

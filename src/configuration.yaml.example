@@ -191,6 +191,20 @@ transformer:
   #   through the tapped winding; R and X are scaled with |1 + f*e^(j*phi)|^2.
   tap_changer_model: ideal
 
+matpower_export:
+  # Whether writeMatpowerCasefile writes the solved AC power-flow state back
+  # into the exported case.
+  # - true (default): bus VM/VA reflect the solved node state, and mpc.branch
+  #   gains the standard MATPOWER result columns 14-17 (PF, QF, PT, QT) sourced
+  #   from the existing branch-flow report path. A
+  #   mpc.sparlectra.solution_written = 1 marker documents this. If the network
+  #   has not been solved, the exporter warns and falls back to the 13-column
+  #   model-only export.
+  # - false: pure model file. mpc.branch keeps its historical 13 columns, and
+  #   VM = 1.0 / VA = 0.0 for all non-slack/non-PV buses (slack and PV
+  #   setpoints are preserved).
+  write_solution: true
+
 performance:
   enabled: true
   # Allowed values: off, summary, iteration, full

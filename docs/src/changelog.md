@@ -1,3 +1,13 @@
+# Version 0.8.11 — 2026-07-17
+
+## New Features
+
+* Added a `matpower_export.write_solution` option (default `true`) to `writeMatpowerCasefile`. When enabled, the exporter writes the solved AC power flow back into the MATPOWER case: bus `VM`/`VA` reflect the solved state, and `mpc.branch` gains the standard MATPOWER result columns 14–17 (`PF`, `QF`, `PT`, `QT`), sourced from the existing report/loss path without any exporter-side flow recomputation. A `mpc.sparlectra.solution_written = 1` marker documents that the case carries a solution. When disabled, the export stays a pure model file: 13 branch columns and `VM = 1.0`/`VA = 0.0` for all non-slack/non-PV buses. If a solution is requested but the network has not been solved, the exporter falls back to the 13-column model output with a warning instead of writing empty result columns. Configurable via YAML, the configuration API, and a new Web UI expert option.
+
+### Improvements
+
+* The tap-impedance correction factor applied by `calcTapCorrectedRX` during import (MATPOWER and native DTF) is now persisted on the `Branch`/transformer metadata. When a MATPOWER case exported by Sparlectra carries the `mpc.sparlectra.tap_changer_model = 'impedance_correction'` marker, reimport skips reapplying the correction instead of stacking a second, differently-derived correction factor on top of the already-corrected R/X. Cases without the marker (including standard third-party MATPOWER cases) are unaffected.
+
 # Version 0.8.10 — 2026-07-17
 
 ## New Features
@@ -653,14 +663,4 @@
 - Initial release of Sparlectra
 
 ## Version 0.4.0 (2023-11-30)
-- Initial public commit of Sparlectra 
-
-* **Bugfix**: Restored MATPOWER runner operational reporting through package-level runners (header, config paths, resolved case, logfile path, compact summary, benchmark/performance blocks) while keeping example scripts thin and free of local YAML parsing.
-* **Feature**: Added asynchronous local Web UI PowerFlow jobs with a POST-only
-  cooperative abort action, persistent aborted status, distinct history
-  rendering, and single-active-run protection. Solver execution is never
-  interrupted unsafely; an abort requested during a blocking phase remains
-  final when that phase returns.
-
-* **Bugfix**: Web UI submissions now run independently of request handling so active status and Abort controls are reachable before completion; first startup also provisions user-writable configuration, case-cache, run, and operation-log paths instead of using package-tree runtime defaults.
-* **Improvement**: The PowerFlow result/status page now highlights elapsed runtime in a clock-style `HH:MM:SS.mmm` card beside the run status while retaining raw timing metadata for diagnostics.
+- Initial public commit of Sparlectra

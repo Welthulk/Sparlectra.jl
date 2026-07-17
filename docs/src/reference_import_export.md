@@ -3,7 +3,8 @@
 ```@autodocs
 Modules = [Sparlectra]
 Pages = [
-    "import_export.jl"
+    "import_export.jl",
+    "exportMatPower.jl"
 ]
 ```
 
