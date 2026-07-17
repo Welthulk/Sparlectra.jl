@@ -62,6 +62,7 @@ function parse_cli(args)
     "strict" => false,
     "details" => false,
     "print-summary" => true,
+    "tap-changer-model" => "ideal",
   )
   for arg in args
     arg == "--quiet" && (opt["quiet"] = true; continue)
@@ -88,6 +89,12 @@ function _method_symbol(s::AbstractString)
   s == "default" && return nothing
   s in ("rectangular", "polar") || throw(ArgumentError("--method must be rectangular, polar, or default"))
   return Symbol(s)
+end
+
+function _tap_changer_model_symbol(s::AbstractString)
+  normalized = replace(lowercase(strip(s)), "-" => "_")
+  normalized in ("ideal", "impedance_correction") || throw(ArgumentError("--tap-changer-model must be ideal or impedance_correction"))
+  return Symbol(normalized)
 end
 
 function _maxabs(rows, field)
@@ -315,6 +322,7 @@ function _write_markdown(path, opt, case, for002_scenarios, matching_rows, metri
     println(io, "This validation uses `DTFImporter.read_dtf` -> `DTFImporter.build_net` for each outage and does not use MATPOWER import/export or the generated FOR001 builder.\n")
     println(io, "- DTF file: `", opt["dtf-file"], "`")
     println(io, "- FOR002 file: `", opt["for002-file"], "`")
+    println(io, "- tap-changer model: `", opt["tap-changer-model"], "`")
     println(io, "- parsed DTF outages: ", length(case.outages))
     println(io, "- parsed FOR002 outage blocks: ", length(for002_scenarios), "\n")
     println(io, "## What are state residuals?\n")
@@ -325,9 +333,9 @@ function _write_markdown(path, opt, case, for002_scenarios, matching_rows, metri
     end
     for m in metrics_rows
       println(io, "\n## Outage ", m.outage_index, ": ", m.outage_label, "\n")
-      println(io, "- converged: ", m.converged, "; iterations: ", m.iterations, "; final mismatch: ", m.final_mismatch)
-      println(io, "- max |dV|: ", m.max_abs_d_vm_kV, " kV / ", m.max_abs_d_vm_pu, " pu; max |dVa|: ", m.max_abs_d_va_deg, " deg")
-      println(io, "- max branch |dP|/|dQ|: ", m.max_abs_branch_d_p_MW, " MW / ", m.max_abs_branch_d_q_MVar, " MVar")
+      println(io, "- converged: ", m.converged, "; iterations: ", m.iterations, "; final mismatch: ", _fmt_num(m.final_mismatch))
+      println(io, "- max |dV|: ", _fmt_num(m.max_abs_d_vm_kV), " kV / ", _fmt_num(m.max_abs_d_vm_pu), " pu; max |dVa|: ", _fmt_num(m.max_abs_d_va_deg), " deg")
+      println(io, "- max branch |dP|/|dQ|: ", _fmt_num(m.max_abs_branch_d_p_MW), " MW / ", _fmt_num(m.max_abs_branch_d_q_MVar), " MVar")
       for (title, rows, field, unit) in [
         ("Top voltage deviations", bus_rows, :d_vm_kV, "kV"),
         ("Top branch P deviations", branch_rows, :d_p_from_MW, "MW"),
@@ -337,7 +345,7 @@ function _write_markdown(path, opt, case, for002_scenarios, matching_rows, metri
         subset = [r for r in rows if r.outage_index == m.outage_index && !(getproperty(r, field) isa Missing)]
         for r in _top(subset, field; n = 5)
           name = hasproperty(r, :bus_name) ? r.bus_name : r.branch_label
-          println(io, "- ", name, ": ", getproperty(r, field), " ", unit)
+          println(io, "- ", name, ": ", _fmt_num(getproperty(r, field)), " ", unit)
         end
       end
     end
@@ -386,6 +394,7 @@ function run_validation(args = ARGS; return_details::Bool = false)
   case = Sparlectra.DTFImporter.read_dtf(opt["dtf-file"])
   for002_scenarios = parse_for002_outage_scenarios(opt["for002-file"])
   method = _method_symbol(opt["method"])
+  tap_changer_model = _tap_changer_model_symbol(opt["tap-changer-model"])
   matching_rows = NamedTuple[];
   metrics_rows = NamedTuple[];
   all_bus = NamedTuple[];
@@ -424,7 +433,7 @@ function run_validation(args = ARGS; return_details::Bool = false)
     status == "matched" || continue
     # Build a fresh Net per outage so branch-status mutations and solved state
     # from one contingency cannot leak into the next.
-    net = Sparlectra.DTFImporter.build_net(case)
+    net = Sparlectra.DTFImporter.build_net(case; tap_changer_model = tap_changer_model)
     _apply_single_branch_outage!(net, branch_idx)
     iters, pfstatus = method === nothing ? Sparlectra.runpf!(net, opt["max-iter"], opt["tol"], 0) : Sparlectra.runpf!(net, opt["max-iter"], opt["tol"], 0; method = method)
     Sparlectra.calcNetLosses!(net)

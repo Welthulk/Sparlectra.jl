@@ -49,6 +49,7 @@ function parse_cli(args)
     "print-summary" => true,
     "details" => false,
     "strict" => false,
+    "tap-changer-model" => "ideal",
   )
   for a in args
     startswith(a, "--") || continue
@@ -61,6 +62,11 @@ function parse_cli(args)
 end
 
 _method_symbol(s) = s == "default" ? nothing : Symbol(s)
+function _tap_changer_model_symbol(s::AbstractString)
+  normalized = replace(lowercase(strip(s)), "-" => "_")
+  normalized in ("ideal", "impedance_correction") || throw(ArgumentError("--tap-changer-model must be ideal or impedance_correction"))
+  return Symbol(normalized)
+end
 _outage_label(o) = Sparlectra.DTFImporter.outage_label(o)
 _final_mismatch(net) =
   try
@@ -287,7 +293,7 @@ function _gen_rows(scenario, outage_index, outage_label, native, rt)
 end
 
 function _scenario(case, opt, scenario, outage, outaged_idx)
-  native = Sparlectra.DTFImporter.build_net(case)
+  native = Sparlectra.DTFImporter.build_net(case; tap_changer_model = _tap_changer_model_symbol(opt["tap-changer-model"]))
   if outaged_idx !== nothing
     Sparlectra.DTFImporter.apply_single_branch_outage!(native, outaged_idx)
   end
@@ -345,6 +351,7 @@ function _write_summary(path, opt, results)
     println(io, "This diagnostic uses `DTFImporter.read_dtf` -> `DTFImporter.build_net` -> `Sparlectra.Net` -> existing `writeMatpowerCasefile` -> `createNetFromMatPowerFile`. It does not implement a DTF-specific MATPOWER exporter.\n")
     println(io, "- native DTF input: `", opt["dtf-file"], "`")
     println(io, "- output directory: `", opt["output-dir"], "`")
+    println(io, "- tap-changer model (native build): `", opt["tap-changer-model"], "`")
     println(io, "- metadata fields: `mpc.bus_name`, `mpc.branch_name`, `mpc.branch_kind`, and `mpc.for001_contingencies` are exported when available; solving does not require them.\n")
     println(io, "- roundtrip import option: `enable_pq_gen_controllers=false`, because native DTF PQ generators are fixed injections and enabling MATPOWER PQ generator controllers changes the solved roundtrip semantics.\n")
     println(io, "- TAP convention: line rows export TAP = 0.0; transformer rows export their explicit ratio. This keeps MATPOWER line rows from being re-imported as nominal-tap transformer rows.\n")
@@ -353,26 +360,26 @@ function _write_summary(path, opt, results)
       println(io, "## ", m.scenario)
       println(io, "- exported MATPOWER: `", r.matpower_file, "`")
       println(io, "- metadata counts: bus_name=", r.metadata.bus_name_count, ", branch_name=", r.metadata.branch_name_count, ", branch_kind=", r.metadata.branch_kind_count, ", for001_contingencies=", r.metadata.for001_contingency_count)
-      println(io, "- exported line TAP values: `", join(r.metadata.tap_line_values, ", "), "`")
-      println(io, "- exported transformer TAP values: `", join(r.metadata.tap_transformer_values, ", "), "`")
+      println(io, "- exported line TAP values: `", join(_fmt_num.(r.metadata.tap_line_values), ", "), "`")
+      println(io, "- exported transformer TAP values: `", join(_fmt_num.(r.metadata.tap_transformer_values), ", "), "`")
       println(io, "- metadata complete: ", r.metadata.metadata_complete)
       if !r.metadata.metadata_complete
         println(io, "- metadata limitation: one or more established MATPOWER metadata fields were not preserved with the expected Testnetz13 counts")
       end
       println(io, "- native converged: ", m.native_converged)
       println(io, "- roundtrip converged: ", m.roundtrip_converged)
-      println(io, "- max |dV| pu: ", m.max_abs_d_vm_pu)
-      println(io, "- max branch |dP| MW: ", m.max_abs_branch_d_p_MW)
-      println(io, "- max branch |dQ| MVar: ", m.max_abs_branch_d_q_MVar)
-      println(io, "- max native branch g_pu: ", m.max_abs_branch_g_pu_native, " (count > 1e-12: ", m.count_nonzero_branch_g_pu_native, ")")
+      println(io, "- max |dV| pu: ", _fmt_num(m.max_abs_d_vm_pu))
+      println(io, "- max branch |dP| MW: ", _fmt_num(m.max_abs_branch_d_p_MW))
+      println(io, "- max branch |dQ| MVar: ", _fmt_num(m.max_abs_branch_d_q_MVar))
+      println(io, "- max native branch g_pu: ", _fmt_num(m.max_abs_branch_g_pu_native), " (count > 1e-12: ", m.count_nonzero_branch_g_pu_native, ")")
       if m.count_nonzero_branch_g_pu_native == 0
         println(io, "- branch shunt conductance: all native branch `g_pu` values are zero/negligible")
       else
-        affected = [string(row.branch_index_native, ":", row.branch_name_native, "=", row.g_pu_native) for row in r.branch_rows if abs(row.g_pu_native) > 1e-12]
+        affected = [string(row.branch_index_native, ":", row.branch_name_native, "=", _fmt_num(row.g_pu_native)) for row in r.branch_rows if abs(row.g_pu_native) > 1e-12]
         println(io, "- branch shunt conductance limitation: standard MATPOWER branch data cannot preserve branch `g_pu` exactly; equivalent endpoint bus `Gs` is exported through MATPOWER bus shunts for Ybus preservation. Affected branches: ", join(affected, "; "))
       end
-      println(io, "- bus shunt totals native/exported/roundtrip Gs: ", m.native_total_bus_Gs, " / ", m.exported_total_bus_Gs, " / ", m.roundtrip_total_bus_Gs)
-      println(io, "- bus shunt totals native/exported/roundtrip Bs: ", m.native_total_bus_Bs, " / ", m.exported_total_bus_Bs, " / ", m.roundtrip_total_bus_Bs)
+      println(io, "- bus shunt totals native/exported/roundtrip Gs: ", _fmt_num(m.native_total_bus_Gs), " / ", _fmt_num(m.exported_total_bus_Gs), " / ", _fmt_num(m.roundtrip_total_bus_Gs))
+      println(io, "- bus shunt totals native/exported/roundtrip Bs: ", _fmt_num(m.native_total_bus_Bs), " / ", _fmt_num(m.exported_total_bus_Bs), " / ", _fmt_num(m.roundtrip_total_bus_Bs))
       println(io, "- status match: ", m.status_match, "\n")
     end
   end

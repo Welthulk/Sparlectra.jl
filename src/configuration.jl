@@ -193,6 +193,27 @@ Base.@kwdef struct MatpowerImportConfig
 end
 
 """
+    TransformerConfig
+
+Typed transformer-modeling configuration shared by all network importers.
+
+`tap_changer_model` selects how transformer tap changers act on the equivalent
+circuit:
+- `:ideal` — tap steps only change the complex winding ratio; the series
+  impedance keeps its neutral-position value (no impedance feedback; previous
+  Sparlectra behavior).
+- `:impedance_correction` — tap steps additionally re-refer the transformer
+  series impedance through the tapped winding (R and X scaled with
+  `|1 + f·e^(jφ)|²`, implemented centrally in `src/equicircuit.jl`).
+
+The option applies to all transformers of an imported case and is read by both
+the MATPOWER and the native DTF importer.
+"""
+Base.@kwdef struct TransformerConfig
+  tap_changer_model::Symbol = :ideal
+end
+
+"""
     PerformanceConfig
 
 Typed performance and diagnostic-volume configuration.
@@ -292,6 +313,7 @@ Base.@kwdef struct SparlectraConfig
   powerflow::PowerFlowConfig = PowerFlowConfig()
   state_estimation::StateEstimationConfig = StateEstimationConfig()
   matpower::MatpowerImportConfig = MatpowerImportConfig()
+  transformer::TransformerConfig = TransformerConfig()
   performance::PerformanceConfig = PerformanceConfig()
   benchmark::BenchmarkConfig = BenchmarkConfig()
   runtime::RuntimeConfig = RuntimeConfig()
@@ -329,6 +351,7 @@ const MATPOWER_RATIO_VALUES = (:normal, :reciprocal)
 const MATPOWER_BUS_SHUNT_MODEL_VALUES = (:admittance, :voltage_dependent_injection)
 const MATPOWER_AUTO_PROFILE_VALUES = (:off, :recommend, :apply)
 const MATPOWER_DCLINE_MODE_VALUES = (:reject_active, :ignore_inactive, :pf_injections)
+const TRANSFORMER_TAP_CHANGER_MODEL_VALUES = (:ideal, :impedance_correction)
 const PERFORMANCE_LEVEL_VALUES = (:off, :summary, :iteration, :full)
 const OUTPUT_CONSOLE_AUTO_PROFILE_VALUES = (:off, :compact, :full)
 const OUTPUT_CONSOLE_DIAGNOSTICS_VALUES = (:off, :compact, :summary, :full)
@@ -382,6 +405,7 @@ end
 active_sparlectra_config()::SparlectraConfig = ACTIVE_SPARLECTRA_CONFIG[]
 powerflow_config()::PowerFlowConfig = active_sparlectra_config().powerflow
 matpower_import_config()::MatpowerImportConfig = active_sparlectra_config().matpower
+transformer_config()::TransformerConfig = active_sparlectra_config().transformer
 state_estimation_config()::StateEstimationConfig = active_sparlectra_config().state_estimation
 diagnostics_config()::DiagnosticsConfig = active_sparlectra_config().diagnostics
 output_config()::OutputConfig = active_sparlectra_config().output
@@ -686,6 +710,13 @@ function MatpowerImportConfig(raw::AbstractDict)
   )
 end
 
+function TransformerConfig(raw::AbstractDict)
+  merged = _merged_section(raw, "transformer")
+  return TransformerConfig(
+    tap_changer_model = _validate_allowed_symbol("transformer.tap_changer_model", _as_symbol_cfg(_raw_get(merged, "tap_changer_model", :ideal)), TRANSFORMER_TAP_CHANGER_MODEL_VALUES),
+  )
+end
+
 """
     configured_matpower_cases(config) -> Vector{String}
 
@@ -809,6 +840,7 @@ function SparlectraConfig(raw::AbstractDict)
     powerflow = PowerFlowConfig(raw),
     state_estimation = StateEstimationConfig(raw),
     matpower = MatpowerImportConfig(raw),
+    transformer = TransformerConfig(raw),
     performance = PerformanceConfig(raw),
     benchmark = BenchmarkConfig(raw),
     runtime = RuntimeConfig(raw),
@@ -1124,6 +1156,7 @@ function print_effective_config(io::IO, config::SparlectraConfig)
   _print_config_section(io, "power_flow", config.powerflow)
   _print_config_section(io, "state_estimation", config.state_estimation)
   _print_config_section(io, "matpower_import", config.matpower)
+  _print_config_section(io, "transformer", config.transformer)
   _print_config_section(io, "performance", config.performance)
   _print_config_section(io, "runtime", config.runtime)
   _print_config_section(io, "diagnostics", config.diagnostics)

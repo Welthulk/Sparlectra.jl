@@ -441,7 +441,7 @@ function _run_dtf_outages(case_path::AbstractString, case, config, output_path::
     matches = DTFImporter.find_outage_branch_indices(case, outage)
     length(matches) == 1 || throw(ArgumentError("missing_ambiguous_outage_branch_matching: " * DTFImporter.outage_match_diagnostic(case, outage, matches)))
     fresh_case = DTFImporter.read_dtf(case_path)
-    net = DTFImporter.build_net(fresh_case)
+    net = DTFImporter.build_net(fresh_case; tap_changer_model = config.transformer.tap_changer_model)
     branch_index = only(matches)
     DTFImporter.apply_single_branch_outage!(net, branch_index)
     raw = _run_sparlectra(net = net, config = config, performance_profile = performance_profile, emit_output = false)
@@ -655,7 +655,7 @@ function _run_sparlectra_api(;
     end
     emit_phase("building_sparlectra_net")
     dtf_net = try
-      DTFImporter.build_net(dtf_case)
+      DTFImporter.build_net(dtf_case; tap_changer_model = config.transformer.tap_changer_model)
     catch err
       return _api_execution_failure("dtf_build_net_error", sprint(showerror, err, catch_backtrace()); run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file, phase_recorder, performance_timing, total_start_ns = total_start)
     end

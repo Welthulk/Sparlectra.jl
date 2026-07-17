@@ -65,6 +65,7 @@ function _default_suite_options()
     "continue-on-error" => true,
     "legacy-voltage-level-collapse-230kv" => false,
     "transformer-ratio-mode" => "neutral_one",
+    "tap-changer-model" => "impedance_correction",
   )
 end
 
@@ -88,6 +89,11 @@ Solver options:
   --max-iter=50
   --method=rectangular|polar|default
   --transformer-ratio-mode=neutral_one|winding_over_network
+  --tap-changer-model=ideal|impedance_correction
+      ideal (default) keeps prior Sparlectra behavior where the tap changer
+      does not affect R/X. impedance_correction re-refers R/X through the
+      tapped winding (|1 + f*e^(j*phi)|^2); this removes the residual
+      deviations seen in tap-stepped cases (for example C/E) against FOR002.
   --legacy-voltage-level-collapse-230kv=true|false
 
 Output and control:
@@ -251,9 +257,21 @@ function _finite_max(values)
   return isempty(usable) ? missing : maximum(usable)
 end
 
+# Keep in sync with the identical helper in examples/internal/dtf_for002_validation_utils.jl.
+function _fmt_num(x::AbstractFloat)::String
+  isfinite(x) || return string(x)
+  x == 0.0 && return "0.0"
+  ax = abs(x)
+  (ax < 1.0e-4 || ax >= 1.0e6) && return @sprintf("%.3e", x)
+  ax < 0.01 && return string(round(x; digits = 1 - floor(Int, log10(ax))))
+  return string(round(x; digits = 3))
+end
+_fmt_num(x::Real) = _fmt_num(Float64(x))
+
 function _md(value)
   value isa Missing && return ""
   value === nothing && return ""
+  value isa AbstractFloat && return _fmt_num(value)
   return replace(string(value), "|" => "\\|", "\n" => " ", "\r" => " ")
 end
 
@@ -303,6 +321,7 @@ function _common_validation_args(opt, dtf_file, for002_file, output_dir)
     "--write-markdown=$(opt["write-markdown"])",
     "--quiet=true",
     "--print-summary=false",
+    "--tap-changer-model=$(opt["tap-changer-model"])",
   ]
 end
 
@@ -353,6 +372,7 @@ function _write_suite_markdown(path, opt, inventory, rows, modes)
     println(io, "- selected cases: `", opt["case"], "`")
     println(io, "- method: `", opt["method"], "`; tolerance: `", opt["tol"], "`; max iterations: `", opt["max-iter"], "`")
     println(io, "- transformer ratio mode: `", opt["transformer-ratio-mode"], "`")
+    println(io, "- tap-changer model: `", opt["tap-changer-model"], "`")
     println(io, "- parser strict mode: `", opt["parser-strict"], "`\n")
 
     println(io, "## Input inventory\n")
@@ -363,7 +383,7 @@ function _write_suite_markdown(path, opt, inventory, rows, modes)
     end
 
     println(io, "\n## Results\n")
-    println(io, "| Case | Mode | Status | Converged | Scenarios | max |dV| kV | max |dVa| deg | max |dP| MW | max |dQ| MVar |")
+    println(io, "| Case | Mode | Status | Converged | Scenarios | max abs(dV) kV | max abs(dVa) deg | max abs(dP) MW | max abs(dQ) MVar |")
     println(io, "|---|---|---|---:|---:|---:|---:|---:|---:|")
     for row in rows
       println(

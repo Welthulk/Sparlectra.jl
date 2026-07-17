@@ -90,6 +90,7 @@ function parse_cli(args)
     "print-summary" => true,
     "legacy-voltage-level-collapse-230kv" => false,
     "transformer-ratio-mode" => "neutral_one",
+    "tap-changer-model" => "ideal",
   )
   for arg in args
     arg == "--quiet" && (opt["quiet"] = true; continue)
@@ -117,6 +118,12 @@ end
 function _transformer_ratio_mode_symbol(s::AbstractString)
   normalized = replace(lowercase(strip(s)), "-" => "_")
   normalized in ("neutral_one", "winding_over_network") || throw(ArgumentError("--transformer-ratio-mode must be neutral_one or winding_over_network"))
+  return Symbol(normalized)
+end
+
+function _tap_changer_model_symbol(s::AbstractString)
+  normalized = replace(lowercase(strip(s)), "-" => "_")
+  normalized in ("ideal", "impedance_correction") || throw(ArgumentError("--tap-changer-model must be ideal or impedance_correction"))
   return Symbol(normalized)
 end
 
@@ -165,7 +172,8 @@ function run_validation(args = ARGS; return_details::Bool = false)
   case = Sparlectra.DTFImporter.read_dtf(opt["dtf-file"]; strict = opt["strict"])
   _assert_finite_dtf_model(case)
   transformer_ratio_mode = _transformer_ratio_mode_symbol(opt["transformer-ratio-mode"])
-  net = Sparlectra.DTFImporter.build_net(case; legacy_voltage_level_collapse_230kv = opt["legacy-voltage-level-collapse-230kv"], transformer_ratio_mode = transformer_ratio_mode)
+  tap_changer_model = _tap_changer_model_symbol(opt["tap-changer-model"])
+  net = Sparlectra.DTFImporter.build_net(case; legacy_voltage_level_collapse_230kv = opt["legacy-voltage-level-collapse-230kv"], transformer_ratio_mode = transformer_ratio_mode, tap_changer_model = tap_changer_model)
   ref = parse_for002_ground_load_flow(opt["for002-file"])
   method = _method_symbol(opt["method"])
   iters, status = method === nothing ? Sparlectra.runpf!(net, opt["max-iter"], opt["tol"], 0) : Sparlectra.runpf!(net, opt["max-iter"], opt["tol"], 0; method = method)
@@ -193,6 +201,7 @@ function run_validation(args = ARGS; return_details::Bool = false)
     net_slack_bus = _slack_bus_name(net, case),
     notes = "native DTFImporter path; ground-load-flow only",
     transformer_ratio_mode = transformer_ratio_mode,
+    tap_changer_model = tap_changer_model,
   )]
 
   branch_kcl_p, branch_kcl_q = _branch_kcl_arrays(net)
@@ -297,6 +306,8 @@ function run_validation(args = ARGS; return_details::Bool = false)
         g_pu = br.g_pu,
         ratio = br.ratio,
         transformer_ratio_mode = hasproperty(meta, :transformer_ratio_mode) ? meta.transformer_ratio_mode : missing,
+        tap_changer_model = hasproperty(meta, :tap_changer_model) ? meta.tap_changer_model : missing,
+        tap_impedance_correction_factor = hasproperty(meta, :tap_impedance_correction_factor) ? meta.tap_impedance_correction_factor : missing,
         base_ratio_used = hasproperty(meta, :base_ratio_used) ? meta.base_ratio_used : missing,
         winding_over_network_base_ratio = hasproperty(meta, :winding_over_network_base_ratio) ? meta.winding_over_network_base_ratio : missing,
         nominal_unregulated_kv = hasproperty(meta, :nominal_unregulated_kv) ? something(meta.nominal_unregulated_kv, missing) : missing,
@@ -367,12 +378,13 @@ function run_validation(args = ARGS; return_details::Bool = false)
       println(io, "- DTF file: `", opt["dtf-file"], "`")
       println(io, "- FOR002 file: `", opt["for002-file"], "`")
       println(io, "- transformer ratio mode: `", transformer_ratio_mode, "`")
+      println(io, "- tap-changer model: `", tap_changer_model, "`")
       println(io, "- baseMVA: ", case.baseMVA, "; buses: ", length(case.buses), "; branches: ", length(case.branches), "; lines: ", count(b -> b.kind != 'T', case.branches), "; transformers: ", count(b -> b.kind == 'T', case.branches))
       println(io, "- transformer controls: ", length(case.transformer_controls), "; outages parsed: ", length(case.outages), "; nominal voltages kV: ", join(case.nominal_voltages_kv, ", "))
       println(io, "- DTF slack bus: ", case.size.slack, "; Sparlectra slack bus: ", _slack_bus_name(net, case))
-      println(io, "- solver method: ", opt["method"], "; converged: ", converged, "; iterations: ", iters, "; final mismatch: ", final_mismatch)
-      println(io, "- total generation MW/MVar: ", sum(r.model_pg_result_MW for r in gen_rows), " / ", sum(r.model_qg_result_MVar for r in gen_rows))
-      println(io, "- total load MW/MVar: ", sum(fb.p_load_MW for fb in values(ref.buses)), " / ", sum(fb.q_load_MVar for fb in values(ref.buses)), "; losses MW/MVar: ", p_loss, " / ", q_loss, "\n")
+      println(io, "- solver method: ", opt["method"], "; converged: ", converged, "; iterations: ", iters, "; final mismatch: ", _fmt_num(final_mismatch))
+      println(io, "- total generation MW/MVar: ", _fmt_num(sum(r.model_pg_result_MW for r in gen_rows)), " / ", _fmt_num(sum(r.model_qg_result_MVar for r in gen_rows)))
+      println(io, "- total load MW/MVar: ", _fmt_num(sum(fb.p_load_MW for fb in values(ref.buses))), " / ", _fmt_num(sum(fb.q_load_MVar for fb in values(ref.buses))), "; losses MW/MVar: ", _fmt_num(p_loss), " / ", _fmt_num(q_loss), "\n")
       println(io, "## What are state residuals?\n")
       println(
         io,
@@ -386,7 +398,7 @@ function run_validation(args = ARGS; return_details::Bool = false)
         println(io, "## ", title, "\n")
         for r in _top([x for x in rows if !(getproperty(x, field) isa Missing)], field)
           name = hasproperty(r, :bus_name) ? r.bus_name : hasproperty(r, :branch_label) ? r.branch_label : string(r)
-          println(io, "- ", name, ": ", getproperty(r, field), " ", label)
+          println(io, "- ", name, ": ", _fmt_num(getproperty(r, field)), " ", label)
         end
         println(io)
       end
@@ -394,9 +406,9 @@ function run_validation(args = ARGS; return_details::Bool = false)
       max_kcl_q = first(_top(kcl_rows, :d_branch_kcl_vs_for002_q_MVar; n = 1))
       slack = gen_rows[findfirst(r -> r.is_slack, gen_rows)]
       println(io, "\n## Q / generator / bus-injection semantics\n")
-      println(io, "- max |dQgen|: ", abs(max_qg.d_qg_result_vs_for002_MVar), " MVar at ", max_qg.bus_name)
-      println(io, "- max |branch KCL vs FOR002 Q|: ", abs(max_kcl_q.d_branch_kcl_vs_for002_q_MVar), " MVar at ", max_kcl_q.bus_name)
-      println(io, "- slack bus Q comparison (", slack.bus_name, "): FOR002 Qgen=", slack.for002_qg_MVar, " MVar; model specified Qgen=", slack.model_qg_specified_MVar, " MVar; model solved/result Qgen=", slack.model_qg_result_MVar, " MVar; dQ=", slack.d_qg_result_vs_for002_MVar, " MVar")
+      println(io, "- max |dQgen|: ", _fmt_num(abs(max_qg.d_qg_result_vs_for002_MVar)), " MVar at ", max_qg.bus_name)
+      println(io, "- max |branch KCL vs FOR002 Q|: ", _fmt_num(abs(max_kcl_q.d_branch_kcl_vs_for002_q_MVar)), " MVar at ", max_kcl_q.bus_name)
+      println(io, "- slack bus Q comparison (", slack.bus_name, "): FOR002 Qgen=", _fmt_num(slack.for002_qg_MVar), " MVar; model specified Qgen=", _fmt_num(slack.model_qg_specified_MVar), " MVar; model solved/result Qgen=", _fmt_num(slack.model_qg_result_MVar), " MVar; dQ=", _fmt_num(slack.d_qg_result_vs_for002_MVar), " MVar")
       largest_class = max_qg.is_slack ? "slack" : (max_qg.is_regulating ? "PV/regulating" : (max_qg.has_generator ? "PQ generator" : "non-generator"))
       transformer_adjacent = _norm_name(max_qg.bus_name) in Set(_norm_name.(["BETA1 S1", "BETA2 S1", "DELTA1S1", "DELTA2S1"]))
       println(io, "- largest Q-generator discrepancy class: ", largest_class, transformer_adjacent ? " and transformer-adjacent" : "")

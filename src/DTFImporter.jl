@@ -14,7 +14,7 @@
 
 module DTFImporter
 
-using ..Sparlectra: Net, addBus!, addProsumer!, _addPIModelACLine_by_idx!, _addPIModelTrafo_by_idx!, geNetBusIdx, validate!, normalize_bus_shunt_model, calcSkewAngleTap
+using ..Sparlectra: Net, addBus!, addProsumer!, _addPIModelACLine_by_idx!, _addPIModelTrafo_by_idx!, geNetBusIdx, validate!, normalize_bus_shunt_model, calcSkewAngleTap, calcTapCorrectedRX, transformer_config
 
 export DTFCase, DTFParams, DTFSize, DTFBranch, DTFBus, DTFCompensation, DTFTransformerControl, DTFOutage, DTFTrailingRecord, read_dtf, build_net,
   dtf_branch_key, find_outage_branch_indices, outage_match_diagnostic, apply_single_branch_outage!, case_summary, outage_label
@@ -408,9 +408,17 @@ Build a Sparlectra `Net` from a parsed native DTF case. Branch
 R/X/G/B are converted with the branch voltage-level index as reference voltage,
 not with the from-side bus voltage. Outages remain parsed metadata and are not
 executed by this Task-1 MVP.
+
+`tap_changer_model` selects the tap-changer model applied to all transformers
+(`transformer.tap_changer_model` in the central configuration; `nothing` reads
+the active configuration). `:ideal` keeps the neutral-position series
+impedance; `:impedance_correction` re-refers R/X through the tapped winding via
+the central `calcTapCorrectedRX` using the parsed regulating vector
+`1 + f·e^(jφ)`.
 """
-function build_net(case::DTFCase; bus_shunt_model = :admittance, legacy_voltage_level_collapse_230kv::Bool = false, transformer_ratio_mode = :neutral_one)::Net
+function build_net(case::DTFCase; bus_shunt_model = :admittance, legacy_voltage_level_collapse_230kv::Bool = false, transformer_ratio_mode = :neutral_one, tap_changer_model::Union{Nothing,Symbol} = nothing)::Net
   ratio_mode = _normalize_transformer_ratio_mode(transformer_ratio_mode)
+  tap_model = tap_changer_model === nothing ? transformer_config().tap_changer_model : tap_changer_model
   shunt_model = normalize_bus_shunt_model(bus_shunt_model)
   nominal_voltages_kv = _dtf_nominal_voltage_levels(case; legacy_voltage_level_collapse_230kv = legacy_voltage_level_collapse_230kv)
   net = Net(name = isempty(case.source_path) ? "DTF" : basename(case.source_path), baseMVA = case.baseMVA, bus_shunt_model = shunt_model)
@@ -452,7 +460,11 @@ function build_net(case::DTFCase; bus_shunt_model = :admittance, legacy_voltage_
       tap = _dtf_effective_transformer_tap(case, branch, control, bus_by_name[branch.from], bus_by_name[branch.to]; nominal_voltages_kv = nominal_voltages_kv, transformer_ratio_mode = ratio_mode)
       ratio = tap.ratio
       shift_deg = tap.shift_deg
-      _addPIModelTrafo_by_idx!(net = net, from = from, to = to, r_pu = pu.r, x_pu = pu.x, b_pu = pu.b, g_pu = pu.g, status = 1, ratedU = pu.u_ref_kv, ratedS = ratedS, ratio = ratio, shift_deg = shift_deg)
+      # Central tap-changer impedance model (src/equicircuit.jl): with
+      # :impedance_correction the series impedance is re-referred through the
+      # tapped winding using the parsed regulating vector 1 + f·e^(jφ).
+      tap_rx = calcTapCorrectedRX(r_pu = pu.r, x_pu = pu.x, tap_changer_model = tap_model, tap_fraction = tap.tap_fraction, skew_angle_deg = tap.skew_angle_deg)
+      _addPIModelTrafo_by_idx!(net = net, from = from, to = to, r_pu = tap_rx.r_pu, x_pu = tap_rx.x_pu, b_pu = pu.b, g_pu = pu.g, status = 1, ratedU = pu.u_ref_kv, ratedS = ratedS, ratio = ratio, shift_deg = shift_deg)
     else
       _addPIModelACLine_by_idx!(net = net, from = from, to = to, r_pu = pu.r, x_pu = pu.x, b_pu = pu.b, status = 1, ratedS = ratedS)
     end
@@ -493,6 +505,8 @@ function build_net(case::DTFCase; bus_shunt_model = :admittance, legacy_voltage_
       effective_ratio = branch.kind == 'T' ? tap.effective_ratio : 1.0,
       effective_complex_tap = branch.kind == 'T' ? tap.effective_complex : 1.0 + 0.0im,
       dtf_tap_convention = branch.kind == 'T' ? tap.convention : :not_transformer,
+      tap_changer_model = tap_model,
+      tap_impedance_correction_factor = branch.kind == 'T' ? tap_rx.factor : 1.0,
     )
   end
   ok, msg = validate!(net = net)
@@ -510,9 +524,10 @@ Read a legacy DTF file and build a Sparlectra `Net` without routing
 through MATPOWER. Outage cards are parsed and preserved in `DTFCase` by
 `DTFImporter.read_dtf`, but are not executed by this Task-1 importer MVP.
 """
-function createNetFromDTFFile(path; baseMVA::Real = 100.0, strict::Bool = true, bus_shunt_model = :admittance, legacy_voltage_level_collapse_230kv::Bool = false, transformer_ratio_mode = :neutral_one)::Net
+function createNetFromDTFFile(path; baseMVA::Real = 100.0, strict::Bool = true, bus_shunt_model = :admittance, legacy_voltage_level_collapse_230kv::Bool = false, transformer_ratio_mode = :neutral_one, tap_changer_model::Union{Nothing,Symbol} = nothing)::Net
   return DTFImporter.build_net(DTFImporter.read_dtf(path; baseMVA = baseMVA, strict = strict);
     bus_shunt_model = bus_shunt_model,
     legacy_voltage_level_collapse_230kv = legacy_voltage_level_collapse_230kv,
-    transformer_ratio_mode = transformer_ratio_mode)
+    transformer_ratio_mode = transformer_ratio_mode,
+    tap_changer_model = tap_changer_model)
 end
