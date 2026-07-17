@@ -12,6 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Internal DTF validation module: native outage-case validation against FOR002.
+# Extracted from validate_dtf_suite.jl; used by the suite runner and directly
+# runnable as its own CLI entry point.
+
+module NativeOutageValidation
 using Sparlectra
 using Printf
 
@@ -43,11 +48,11 @@ function _parse_bool(s::AbstractString)
 end
 
 function parse_cli(args)
-  dtf_default = isfile(joinpath(@__DIR__, "..", "test", "fixtures", "dtf", "FOR001.DAT")) ? joinpath(@__DIR__, "..", "test", "fixtures", "dtf", "FOR001.DAT") : joinpath(@__DIR__, "FOR001.DAT")
+  dtf_default = isfile(joinpath(@__DIR__, "..", "..", "test", "fixtures", "dtf", "FOR001.DAT")) ? joinpath(@__DIR__, "..", "..", "test", "fixtures", "dtf", "FOR001.DAT") : joinpath(@__DIR__, "..", "FOR001.DAT")
   opt = Dict{String,Any}(
     "dtf-file" => normpath(dtf_default),
-    "for002-file" => joinpath(@__DIR__, "FOR002.DAT"),
-    "output-dir" => joinpath(@__DIR__, "_out", "dtf_for002_native_outages"),
+    "for002-file" => joinpath(@__DIR__, "..", "FOR002.DAT"),
+    "output-dir" => joinpath(@__DIR__, "..", "_out", "dtf_for002_native_outages"),
     "tol" => 1e-8,
     "max-iter" => 50,
     "method" => "rectangular",
@@ -57,6 +62,7 @@ function parse_cli(args)
     "strict" => false,
     "details" => false,
     "print-summary" => true,
+    "tap-changer-model" => "ideal",
   )
   for arg in args
     arg == "--quiet" && (opt["quiet"] = true; continue)
@@ -83,6 +89,12 @@ function _method_symbol(s::AbstractString)
   s == "default" && return nothing
   s in ("rectangular", "polar") || throw(ArgumentError("--method must be rectangular, polar, or default"))
   return Symbol(s)
+end
+
+function _tap_changer_model_symbol(s::AbstractString)
+  normalized = replace(lowercase(strip(s)), "-" => "_")
+  normalized in ("ideal", "impedance_correction") || throw(ArgumentError("--tap-changer-model must be ideal or impedance_correction"))
+  return Symbol(normalized)
 end
 
 function _maxabs(rows, field)
@@ -246,6 +258,7 @@ function _comparison_rows(case, net, ref, outage_index, outage_label, outaged_id
         r_pu = br.r_pu,
         x_pu = br.x_pu,
         b_pu = br.b_pu,
+        g_pu = br.g_pu,
         ratio = br.ratio,
         for002_p_from_MW = rf===missing ? missing : rf.p_MW,
         model_p_from_MW = pf,
@@ -303,41 +316,39 @@ function _comparison_rows(case, net, ref, outage_index, outage_label, outaged_id
   return bus_rows, gen_rows, branch_rows, kcl_rows, res_rows
 end
 
-function _write_markdown(path, opt, case, for002_scenarios, matching_rows, metrics_rows, bus_rows, branch_rows, residual_rows)
+function _write_markdown(path, opt, case, for002_scenarios, matching_rows, metrics_rows, bus_rows, branch_rows)
   open(path, "w") do io
     println(io, "# Native DTF/FOR002 outage validation summary\n")
     println(io, "This validation uses `DTFImporter.read_dtf` -> `DTFImporter.build_net` for each outage and does not use MATPOWER import/export or the generated FOR001 builder.\n")
     println(io, "- DTF file: `", opt["dtf-file"], "`")
     println(io, "- FOR002 file: `", opt["for002-file"], "`")
+    println(io, "- tap-changer model: `", opt["tap-changer-model"], "`")
     println(io, "- parsed DTF outages: ", length(case.outages))
     println(io, "- parsed FOR002 outage blocks: ", length(for002_scenarios), "\n")
     println(io, "## What are state residuals?\n")
-    println(io, "State residuals force FOR002 printed voltage magnitudes/angles into the native Sparlectra outage Ybus. The resulting bus injections are compared with the FOR002 printed bus table. This is more sensitive than solved branch-flow comparisons because FOR002 values may be rounded and transformer-adjacent nodes react strongly to small voltage/angle differences. These residuals are diagnostic, not hard pass/fail criteria yet; branch-flow deviations and solved generator/slack comparisons are currently stronger validation signals.\n")
+    println(io, "State residuals force FOR002 printed voltage magnitudes/angles into the native Sparlectra outage Ybus and compare the resulting bus injections with the FOR002 printed bus table. Because FOR002 prints rounded values and transformer-adjacent nodes react strongly to tiny voltage/angle differences, the rounding-noise floor of this metric is far above real model deviations. They therefore remain available as row-level gross-error diagnostics in `dtf_outage_state_residual.csv` and `dtf_outage_metrics.csv` only and are intentionally not part of this summary; branch-flow deviations and solved generator/slack comparisons are the validation signals.\n")
     println(io, "## Matching summary\n")
     for r in matching_rows
       println(io, "- [", r.outage_index, "] ", r.outage_label, ": branch=", r.matched_branch_index, ", FOR002=", r.matched_for002_scenario_index, ", status=", r.match_status)
     end
     for m in metrics_rows
       println(io, "\n## Outage ", m.outage_index, ": ", m.outage_label, "\n")
-      println(io, "- converged: ", m.converged, "; iterations: ", m.iterations, "; final mismatch: ", m.final_mismatch)
-      println(io, "- max |dV|: ", m.max_abs_d_vm_kV, " kV / ", m.max_abs_d_vm_pu, " pu; max |dVa|: ", m.max_abs_d_va_deg, " deg")
-      println(io, "- max branch |dP|/|dQ|: ", m.max_abs_branch_d_p_MW, " MW / ", m.max_abs_branch_d_q_MVar, " MVar")
+      println(io, "- converged: ", m.converged, "; iterations: ", m.iterations, "; final mismatch: ", _fmt_num(m.final_mismatch))
+      println(io, "- max |dV|: ", _fmt_num(m.max_abs_d_vm_kV), " kV / ", _fmt_num(m.max_abs_d_vm_pu), " pu; max |dVa|: ", _fmt_num(m.max_abs_d_va_deg), " deg")
+      println(io, "- max branch |dP|/|dQ|: ", _fmt_num(m.max_abs_branch_d_p_MW), " MW / ", _fmt_num(m.max_abs_branch_d_q_MVar), " MVar")
       for (title, rows, field, unit) in [
         ("Top voltage deviations", bus_rows, :d_vm_kV, "kV"),
         ("Top branch P deviations", branch_rows, :d_p_from_MW, "MW"),
         ("Top branch Q deviations", branch_rows, :d_q_from_MVar, "MVar"),
-        ("Top state residual P deviations", residual_rows, :d_p_MW, "MW"),
-        ("Top state residual Q deviations", residual_rows, :d_q_MVar, "MVar"),
       ]
         println(io, "\n### ", title, "\n")
         subset = [r for r in rows if r.outage_index == m.outage_index && !(getproperty(r, field) isa Missing)]
         for r in _top(subset, field; n = 5)
           name = hasproperty(r, :bus_name) ? r.bus_name : r.branch_label
-          println(io, "- ", name, ": ", getproperty(r, field), " ", unit)
+          println(io, "- ", name, ": ", _fmt_num(getproperty(r, field)), " ", unit)
         end
       end
     end
-    println(io, "\nState-residual rows force FOR002 outage voltages into the native outage Y-bus; remaining differences are diagnostic and not a pass/fail gate.")
   end
 end
 
@@ -383,6 +394,7 @@ function run_validation(args = ARGS; return_details::Bool = false)
   case = Sparlectra.DTFImporter.read_dtf(opt["dtf-file"])
   for002_scenarios = parse_for002_outage_scenarios(opt["for002-file"])
   method = _method_symbol(opt["method"])
+  tap_changer_model = _tap_changer_model_symbol(opt["tap-changer-model"])
   matching_rows = NamedTuple[];
   metrics_rows = NamedTuple[];
   all_bus = NamedTuple[];
@@ -421,7 +433,7 @@ function run_validation(args = ARGS; return_details::Bool = false)
     status == "matched" || continue
     # Build a fresh Net per outage so branch-status mutations and solved state
     # from one contingency cannot leak into the next.
-    net = Sparlectra.DTFImporter.build_net(case)
+    net = Sparlectra.DTFImporter.build_net(case; tap_changer_model = tap_changer_model)
     _apply_single_branch_outage!(net, branch_idx)
     iters, pfstatus = method === nothing ? Sparlectra.runpf!(net, opt["max-iter"], opt["tol"], 0) : Sparlectra.runpf!(net, opt["max-iter"], opt["tol"], 0; method = method)
     Sparlectra.calcNetLosses!(net)
@@ -471,12 +483,11 @@ function run_validation(args = ARGS; return_details::Bool = false)
   end
   if opt["write-markdown"]
     path = joinpath(opt["output-dir"], "dtf_outage_validation_summary.md")
-    _write_markdown(path, opt, case, for002_scenarios, matching_rows, metrics_rows, all_bus, all_branch, all_res)
+    _write_markdown(path, opt, case, for002_scenarios, matching_rows, metrics_rows, all_bus, all_branch)
     pushfirst!(written_files, path)
   end
   result = DTFFor002OutageValidationResult(opt["output-dir"], length(case.outages), length(for002_scenarios), matching_rows, metrics_rows, written_files)
   (!opt["quiet"] && opt["print-summary"]) && _print_summary(result, opt)
-  opt["strict"] && any(r -> r.match_status != "matched", matching_rows) && exit(1)
   return return_details ?
          (
     case = case,
@@ -494,12 +505,13 @@ function run_validation(args = ARGS; return_details::Bool = false)
   ) : result
 end
 
-function _running_as_script()
-  return true
-  #return !isempty(PROGRAM_FILE) && abspath(PROGRAM_FILE) == abspath(@__FILE__)
+_running_as_cli_script() = !isempty(PROGRAM_FILE) && abspath(PROGRAM_FILE) == abspath(@__FILE__)
+
+if _running_as_cli_script()
+  Base.invokelatest() do
+    result = run_validation(ARGS)
+    parse_cli(ARGS)["strict"] && any(r -> r.match_status != "matched", result.matching_rows) && exit(1)
+  end
 end
 
-if get(ENV, "SPARLECTRA_FOR002_OUTAGE_VALIDATION_NO_MAIN", "0") != "1" && _running_as_script()
-  Base.invokelatest(run_validation, ARGS; return_details = false)
-  nothing
-end
+end # module NativeOutageValidation

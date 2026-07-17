@@ -95,6 +95,13 @@ positive on the branch from side. PEGASE-style data sets may require
 uses the `TAP` value directly (with MATPOWER `0` treated as `1`). Set
 `matpower_ratio = "reciprocal"` when an input data set stores the inverse tap
 ratio expected by Sparlectra.
+
+`tap_changer_model` selects the tap-changer model applied to all transformers
+(`transformer.tap_changer_model` in the central configuration). `:ideal`
+(default) keeps the imported series impedance unchanged;
+`:impedance_correction` re-refers R/X through the tapped winding via
+[`calcTapCorrectedRX`](@ref), interpreting the effective off-nominal tap ratio
+as the tap deviation of the tapped winding.
 """
 function _apply_matpower_reference_override!(net::Net, slack_orig_idx::Int, bus_idx_by_orig::Dict{Int,Int}; reference_vm_pu::Union{Nothing,Float64} = nothing, reference_va_deg::Union{Nothing,Float64} = nothing)
   slack_orig_idx != 0 || return nothing
@@ -177,7 +184,7 @@ function _matpower_dcline_terminal_voltage_control(net::Net, bus_idx::Int, bus_t
   return true
 end
 
-function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false, cooldown::Int = 0, q_hyst_pu::Float64 = 0.0, enable_pq_gen_controllers::Bool = true, bus_shunt_model = :admittance, matpower_shift_sign::Real = 1.0, matpower_shift_unit = :deg, matpower_ratio = :normal, reference_vm_pu::Union{Nothing,Float64} = nothing, reference_va_deg::Union{Nothing,Float64} = nothing, matpower_pv_voltage_source = :gen_vg, matpower_pv_voltage_mismatch_tol_pu::Float64 = 1e-4, preallocate_network::Symbol = :auto, preallocate_min_buses::Int = 1000, apply_bus_names::Bool = false, apply_branch_names::Bool = false, apply_branch_kind::Bool = false, import_for001_contingencies::Bool = true, matpower_dcline_mode::Symbol = :pf_injections, profile::Union{Nothing,AbstractDict}=nothing)::Net
+function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false, cooldown::Int = 0, q_hyst_pu::Float64 = 0.0, enable_pq_gen_controllers::Bool = true, bus_shunt_model = :admittance, matpower_shift_sign::Real = 1.0, matpower_shift_unit = :deg, matpower_ratio = :normal, tap_changer_model::Symbol = :ideal, reference_vm_pu::Union{Nothing,Float64} = nothing, reference_va_deg::Union{Nothing,Float64} = nothing, matpower_pv_voltage_source = :gen_vg, matpower_pv_voltage_mismatch_tol_pu::Float64 = 1e-4, preallocate_network::Symbol = :auto, preallocate_min_buses::Int = 1000, apply_bus_names::Bool = false, apply_branch_names::Bool = false, apply_branch_kind::Bool = false, import_for001_contingencies::Bool = true, matpower_dcline_mode::Symbol = :pf_injections, profile::Union{Nothing,AbstractDict}=nothing)::Net
   # Small logger helper
   pInfo(msg::String) = (log ? (@info msg) : nothing)
 
@@ -415,12 +422,16 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
         ratedS = ratedS,
       )
     else
+      # Central tap-changer impedance model (src/equicircuit.jl): :ideal keeps
+      # R/X at the imported values; :impedance_correction re-refers the series
+      # impedance through the tapped winding based on the effective tap ratio.
+      tap_rx = calcTapCorrectedRX(r_pu = r_pu, x_pu = x_pu, tap_changer_model = tap_changer_model, ratio = ratio)
       _addPIModelTrafo_by_idx!(
         net = myNet,
         from = from_idx,
         to = to_idx,
-        r_pu = r_pu,
-        x_pu = x_pu,
+        r_pu = tap_rx.r_pu,
+        x_pu = tap_rx.x_pu,
         b_pu = b_pu,
         g_pu = g_pu,
         status = status,
@@ -631,6 +642,7 @@ function createNetFromMatPowerFile(; filename::String,
     matpower_shift_sign::Union{Nothing,Real} = nothing,
     matpower_shift_unit = nothing,
     matpower_ratio = nothing,
+    tap_changer_model::Union{Nothing,Symbol} = nothing,
     reference_vm_pu::Union{Nothing,Float64} = nothing,
     reference_va_deg::Union{Nothing,Float64} = nothing,
     matpower_pv_voltage_source = nothing,
@@ -651,6 +663,7 @@ function createNetFromMatPowerFile(; filename::String,
   matpower_shift_sign = isnothing(matpower_shift_sign) ? mat_cfg.shift_sign : matpower_shift_sign
   matpower_shift_unit = isnothing(matpower_shift_unit) ? mat_cfg.shift_unit : matpower_shift_unit
   matpower_ratio = isnothing(matpower_ratio) ? mat_cfg.ratio : matpower_ratio
+  tap_changer_model = isnothing(tap_changer_model) ? transformer_config().tap_changer_model : tap_changer_model
   matpower_pv_voltage_source = isnothing(matpower_pv_voltage_source) ? mat_cfg.pv_voltage_source : matpower_pv_voltage_source
   matpower_pv_voltage_mismatch_tol_pu = isnothing(matpower_pv_voltage_mismatch_tol_pu) ? mat_cfg.pv_voltage_mismatch_tol_pu : matpower_pv_voltage_mismatch_tol_pu
   apply_bus_names = isnothing(apply_bus_names) ? mat_cfg.apply_bus_names : apply_bus_names
@@ -668,6 +681,7 @@ function createNetFromMatPowerFile(; filename::String,
                                   cooldown=cooldown, q_hyst_pu=q_hyst_pu, enable_pq_gen_controllers=enable_pq_gen_controllers,
                                   bus_shunt_model=bus_shunt_model, matpower_shift_sign=matpower_shift_sign,
                                   matpower_shift_unit=matpower_shift_unit, matpower_ratio=matpower_ratio,
+                                  tap_changer_model=tap_changer_model,
                                   reference_vm_pu=reference_vm_pu, reference_va_deg=reference_va_deg,
                                   matpower_pv_voltage_source=matpower_pv_voltage_source,
                                   matpower_pv_voltage_mismatch_tol_pu=matpower_pv_voltage_mismatch_tol_pu,

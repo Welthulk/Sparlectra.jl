@@ -50,6 +50,7 @@ const GUI_EDITABLE_CONFIG_KEYS = Set([
   "matpower_import.apply_branch_kind",
   "matpower_import.import_for001_contingencies",
   "matpower_import.matpower_dcline_mode",
+  "transformer.tap_changer_model",
   "output.logfile_results",
   "output.detailed_result_csv_write_mode",
   "output.detailed_result_csv_exporter",
@@ -126,6 +127,8 @@ function _validate_gui_override_value(key::String, value)
     _validate_allowed_symbol(key, _as_symbol_cfg(value), MATPOWER_COMPARE_VOLTAGE_REFERENCE_VALUES)
   elseif key == "matpower_import.matpower_dcline_mode"
     _validate_allowed_symbol(key, _as_symbol_cfg(value), MATPOWER_DCLINE_MODE_VALUES)
+  elseif key == "transformer.tap_changer_model"
+    _validate_allowed_symbol(key, _as_symbol_cfg(value), TRANSFORMER_TAP_CHANGER_MODEL_VALUES)
   elseif key == "output.logfile_results"
     _validate_allowed_symbol(key, _as_symbol_cfg(value), OUTPUT_LOGFILE_RESULTS_VALUES)
   elseif key == "output.detailed_result_csv_write_mode"
@@ -178,6 +181,7 @@ const CONFIG_OVERRIDE_REPORT_KEYS = (
   "matpower_import.auto_profile",
   "matpower_import.compare_voltage_reference",
   "matpower_import.matpower_dcline_mode",
+  "transformer.tap_changer_model",
   "power_flow.tol",
   "power_flow.max_iter",
   "power_flow.autodamp",

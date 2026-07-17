@@ -12,6 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Internal DTF validation module: DTF import audit.
+# Extracted from validate_dtf_suite.jl; used by the suite runner.
+
+module ImportAudit
 using Printf
 using Sparlectra
 
@@ -19,8 +23,8 @@ const CASES = ["A" => "", "B" => "B", "C" => "C", "D" => "D", "E" => "E"]
 
 finite_range(xs) = isempty(xs) ? "n/a" : @sprintf("[%g, %g], finite=%s", minimum(xs), maximum(xs), all(isfinite, xs))
 
-function audit_case(io, case_id, path)
-  case = Sparlectra.DTFImporter.read_dtf(path; strict = true)
+function audit_case(io, case_id, path; strict::Bool = true)
+  case = Sparlectra.DTFImporter.read_dtf(path; strict = strict)
   println(io, "## Case ", case_id)
   println(io, "- file: ", path)
   println(io, "- parsed branch count: ", length(case.branches))
@@ -89,25 +93,5 @@ function audit_case(io, case_id, path)
   return nothing
 end
 
-function main()
-  repo = normpath(joinpath(@__DIR__, ".."))
-  data_dir = joinpath(repo, "data", "DTF")
-  outdir = joinpath(@__DIR__, "_out", "dtf_validation")
-  missing = [joinpath(data_dir, "FOR001$(suffix).DAT") for (_, suffix) in CASES if !isfile(joinpath(data_dir, "FOR001$(suffix).DAT"))]
-  if !isempty(missing)
-    error("External FOR001 validation data not found. Provide the case files in data/DTF or adapt this optional audit script to explicit local paths. Missing: " * join(missing, ", "))
-  end
-  mkpath(outdir)
-  out = joinpath(outdir, "dtf_import_audit.md")
-  open(out, "w") do io
-    println(io, "# legacy validation DTF import audit\n")
-    println(io, "Standalone post-bus `A` cards in cases B-E are interpreted as variant branch-echo markers; the following branch-like payload line is preserved as a branch echo and is not added to the electrical model.\n")
-    for (case_id, suffix) in CASES
-      audit_case(io, case_id, joinpath(data_dir, "FOR001$(suffix).DAT"))
-    end
-  end
-  println("Wrote ", out)
-  return nothing
-end
 
-Base.invokelatest(main)
+end # module ImportAudit

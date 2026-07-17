@@ -15,8 +15,10 @@
 using Printf
 using Sparlectra
 
-ENV["SPARLECTRA_FOR002_VALIDATION_NO_MAIN"] = "1"
-include(joinpath(@__DIR__, "validate_dtf_for002_testnetz13.jl"))
+include(joinpath(@__DIR__, "internal", "dtf_for002_validation_utils.jl"))
+include(joinpath(@__DIR__, "internal", "dtf_validation_base.jl"))
+
+run_validation(args = ARGS; return_details::Bool = false) = NativeBaseValidation.run_validation(args; return_details = return_details)
 
 const CASES = [
   (id = "A", suffix = "", description = "base case"),
@@ -27,7 +29,7 @@ const CASES = [
 ]
 
 missing_to_float(x) = x === missing || x === nothing ? NaN : Float64(x)
-fmt(x; digits = 3) = isfinite(Float64(x)) ? string(round(Float64(x); digits)) : "n/a"
+fmt(x; digits = 3) = isfinite(Float64(x)) ? _fmt_num(Float64(x)) : "n/a"
 
 function firstrow(rows, pred)
   idx = findfirst(pred, rows)
@@ -283,8 +285,6 @@ function main()
         max_abs_dVa_deg = details.metrics.max_abs_d_va_deg,
         max_abs_branch_dP_MW = details.metrics.max_abs_branch_d_p_MW,
         max_abs_branch_dQ_MVar = details.metrics.max_abs_branch_d_q_MVar,
-        max_abs_bus_dP_MW = details.metrics.max_abs_state_residual_p_MW,
-        max_abs_bus_dQ_MVar = details.metrics.max_abs_state_residual_q_MVar,
         transformer_series_p_loss_MW = series_p,
         transformer_no_load_g_p_loss_MW = no_load_p,
         transformer_total_p_loss_MW = total_p,
@@ -299,7 +299,7 @@ function main()
         write_named_csv(joinpath(outdir, "dtf_case_$(c.id)_$(ratio_mode).csv"), [row])
         ratio_mode == :neutral_one && (selected_details = details; selected_row = row; selected_loss_rows = loss_rows)
         println(io, "### Mode $(ratio_mode)\n")
-      println(io, "- converged: `$(details.converged)`, iterations: `$(details.iterations)`, final mismatch: `$(details.final_mismatch)`")
+      println(io, "- converged: `$(details.converged)`, iterations: `$(details.iterations)`, final mismatch: `$(fmt(details.final_mismatch))`")
       println(io, "- slack: `$(row.slack_bus)` Sparlectra P/Q=$(fmt(row.slack_p_sparlectra_MW))/$(fmt(row.slack_q_sparlectra_MVar)); FOR002 P/Q=$(fmt(row.slack_p_for002_MW))/$(fmt(row.slack_q_for002_MVar)); delta=$(fmt(row.slack_dp_MW))/$(fmt(row.slack_dq_MVar))")
       println(io, "- losses Sparlectra P/Q=$(fmt(row.total_loss_p_sparlectra_MW))/$(fmt(row.total_loss_q_sparlectra_MVar)); FOR002 P/Q=$(fmt(row.total_loss_p_for002_MW))/$(fmt(row.total_loss_q_for002_MVar)); delta=$(fmt(row.total_loss_dp_MW))/$(fmt(row.total_loss_dq_MVar))")
       println(io, "- max deviations: |dV|=$(fmt(row.max_abs_dV_kV)) kV ($(fmt(row.max_abs_dV_pu)) pu), |dVa|=$(fmt(row.max_abs_dVa_deg)) deg, branch |dP|=$(fmt(row.max_abs_branch_dP_MW)) MW, branch |dQ|=$(fmt(row.max_abs_branch_dQ_MVar)) MVar")
@@ -339,7 +339,7 @@ function main()
     println(io, "# Transformer convention scan\n")
     println(io, "Rows are true executed native DTF builds for the supported transformer ratio modes.\n")
     for r in all_convention_scan_rows
-      println(io, "- Case $(r.case_id): converged=$(r.converged), iterations=$(r.iterations), final mismatch=$(r.final_mismatch), 400-kV mean bias=$(fmt(r.mean_400kv_bias_kv)) kV, max |dV|=$(fmt(r.max_abs_dV_kV)) kV, slack ΔP/ΔQ=$(fmt(r.slack_delta_p_MW))/$(fmt(r.slack_delta_q_MVar)), loss ΔP/ΔQ=$(fmt(r.total_loss_delta_p_MW))/$(fmt(r.total_loss_delta_q_MVar)), max branch ΔP/ΔQ=$(fmt(r.max_branch_delta_p_MW))/$(fmt(r.max_branch_delta_q_MVar)).")
+      println(io, "- Case $(r.case_id): converged=$(r.converged), iterations=$(r.iterations), final mismatch=$(fmt(r.final_mismatch)), 400-kV mean bias=$(fmt(r.mean_400kv_bias_kv)) kV, max |dV|=$(fmt(r.max_abs_dV_kV)) kV, slack ΔP/ΔQ=$(fmt(r.slack_delta_p_MW))/$(fmt(r.slack_delta_q_MVar)), loss ΔP/ΔQ=$(fmt(r.total_loss_delta_p_MW))/$(fmt(r.total_loss_delta_q_MVar)), max branch ΔP/ΔQ=$(fmt(r.max_branch_delta_p_MW))/$(fmt(r.max_branch_delta_q_MVar)).")
     end
   end
   write_named_csv(joinpath(outdir, "transformer_ratio_mode_comparison.csv"), all_convention_scan_rows)

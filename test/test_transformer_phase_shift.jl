@@ -77,5 +77,73 @@ function run_transformer_phase_shift_tests()
     @test ctrl_step_when_above_target > 0.0
   end
 
+  @testset "Tap-changer impedance-correction factor (central equicircuit.jl model)" begin
+    # :ideal never applies impedance feedback, regardless of tap deviation.
+    @test calcTapImpedanceCorrectionFactor(tap_changer_model = :ideal, tap_fraction = 0.5, skew_angle_deg = 30.0) == 1.0
+    @test calcTapImpedanceCorrectionFactor(tap_changer_model = :ideal, ratio = 0.9) == 1.0
+    @test calcTapImpedanceCorrectionFactor(tap_changer_model = :ideal) == 1.0
+
+    # Longitudinal-only regulation (skew angle 0): factor = (1+f)^2.
+    f = 0.097
+    expected_longitudinal = (1.0 + f)^2
+    @test isapprox(calcTapImpedanceCorrectionFactor(tap_changer_model = :impedance_correction, tap_fraction = f, skew_angle_deg = 0.0), expected_longitudinal; atol = 1e-12)
+
+    # Skew-angle regulation: factor = |1 + f*e^(j*phi)|^2.
+    phi = 60.0
+    expected_skew = abs2(1.0 + f * cis(deg2rad(phi)))
+    @test isapprox(calcTapImpedanceCorrectionFactor(tap_changer_model = :impedance_correction, tap_fraction = f, skew_angle_deg = phi), expected_skew; atol = 1e-12)
+
+    # Ratio-based form (MATPOWER path): Sparlectra's reciprocal from-side tap
+    # convention gives ratio = 1/|1+f*e^(j*phi)|, so factor = 1/ratio^2.
+    ratio_equiv = calcSkewAngleTap(tap_fraction = f, skew_angle_deg = phi).effective_ratio
+    @test isapprox(calcTapImpedanceCorrectionFactor(tap_changer_model = :impedance_correction, ratio = ratio_equiv), expected_skew; atol = 1e-9)
+
+    # MATPOWER neutral markers (ratio == 0.0 or == 1.0) are treated as neutral.
+    @test calcTapImpedanceCorrectionFactor(tap_changer_model = :impedance_correction, ratio = 0.0) == 1.0
+    @test calcTapImpedanceCorrectionFactor(tap_changer_model = :impedance_correction, ratio = 1.0) == 1.0
+
+    # No tap information supplied: neutral factor.
+    @test calcTapImpedanceCorrectionFactor(tap_changer_model = :impedance_correction) == 1.0
+
+    @test_throws ArgumentError calcTapImpedanceCorrectionFactor(tap_changer_model = :bogus)
+
+    rx = calcTapCorrectedRX(r_pu = 0.01, x_pu = 0.10, tap_changer_model = :impedance_correction, tap_fraction = f, skew_angle_deg = 0.0)
+    @test isapprox(rx.factor, expected_longitudinal; atol = 1e-12)
+    @test isapprox(rx.r_pu, 0.01 * expected_longitudinal; atol = 1e-12)
+    @test isapprox(rx.x_pu, 0.10 * expected_longitudinal; atol = 1e-12)
+  end
+
+  @testset "MATPOWER import applies configured tap-changer model" begin
+    function _mpc_with_transformer(; ratio::Float64, angle::Float64)
+      return (
+        name = "tap_model_probe",
+        baseMVA = 100.0,
+        bus = [
+          1 3 0.0 0.0 0.0 0.0 1 1.0 0.0 110.0 1 1.1 0.9
+          2 1 0.0 0.0 0.0 0.0 1 1.0 0.0 110.0 1 1.1 0.9
+        ],
+        gen = [1 0.0 0.0 999.0 -999.0 1.0 100.0 1 999.0 0.0 0 0 0 0 0 0 0 0 0 0 0;],
+        branch = [1 2 0.01 0.10 0.0 9999.0 0.0 0.0 ratio angle 1 -60.0 60.0;],
+        gencost = nothing,
+        bus_name = nothing,
+      )
+    end
+
+    ratio = 0.95
+    mpc = _mpc_with_transformer(ratio = ratio, angle = 0.0)
+
+    net_ideal = Sparlectra.createNetFromMatPowerCase(mpc = mpc, log = false, flatstart = false, tap_changer_model = :ideal)
+    net_corrected = Sparlectra.createNetFromMatPowerCase(mpc = mpc, log = false, flatstart = false, tap_changer_model = :impedance_correction)
+
+    branch_ideal = only(net_ideal.branchVec)
+    branch_corrected = only(net_corrected.branchVec)
+
+    expected_factor = 1.0 / ratio^2
+    @test isapprox(branch_ideal.r_pu, 0.01; atol = 1e-12)
+    @test isapprox(branch_ideal.x_pu, 0.10; atol = 1e-12)
+    @test isapprox(branch_corrected.r_pu, 0.01 * expected_factor; atol = 1e-12)
+    @test isapprox(branch_corrected.x_pu, 0.10 * expected_factor; atol = 1e-12)
+  end
+
   return nothing
 end
