@@ -64,6 +64,7 @@ function run_configuration_coverage_tests()
       "state_estimation.enabled", "state_estimation.method", "state_estimation.tol", "state_estimation.max_iter", "state_estimation.flatstart", "state_estimation.jac_eps", "state_estimation.update_net", "state_estimation.observability.enabled",
       "matpower_import.case", "matpower_import.cases", "matpower_import.auto_profile", "matpower_import.auto_profile_log", "matpower_import.pv_voltage_source", "matpower_import.pv_voltage_mismatch_tol_pu", "matpower_import.compare_voltage_reference", "matpower_import.bus_shunt_model", "matpower_import.shift_unit", "matpower_import.shift_sign", "matpower_import.ratio", "matpower_import.enable_pq_gen_controllers", "matpower_import.preallocate_network", "matpower_import.preallocate_min_buses", "matpower_import.apply_bus_names", "matpower_import.apply_branch_names", "matpower_import.apply_branch_kind", "matpower_import.import_for001_contingencies", "matpower_import.matpower_dcline_mode",
       "transformer.tap_changer_model",
+      "matpower_export.write_solution",
       "performance.enabled", "performance.level", "performance.print_to_console", "performance.write_to_logfile", "performance.show_allocations", "performance.show_iteration_table", "performance.compact_logging", "performance.representative_warmup_runs", "performance.compare_cold_warm", "performance.skip_reference_comparison", "performance.skip_expensive_diagnostics", "performance.skip_branch_neighborhood_report", "performance.max_diagnostic_rows",
       "runtime.print_thread_config", "runtime.julia_threads", "runtime.blas_threads", "runtime.casefile", "runtime.case_name", "runtime.case_source", "runtime.configured_default_casefile",
       "diagnostics.log_effective_config", "diagnostics.console_summary", "diagnostics.console_auto_profile", "diagnostics.console_diagnostics", "diagnostics.console_q_limit_events", "diagnostics.console_max_rows", "diagnostics.logfile_diagnostics",
@@ -91,6 +92,7 @@ function run_configuration_coverage_tests()
       "matpower_import.shift_sign" => :MatpowerImportConfig,
       "matpower_import.cases" => :MatpowerImportConfig,
       "transformer.tap_changer_model" => :TransformerConfig,
+      "matpower_export.write_solution" => :MatpowerExportConfig,
       "output.logfile_performance" => :OutputConfig,
       "benchmark.enabled" => :BenchmarkConfig,
       "state_estimation.method" => :StateEstimationConfig,
@@ -169,6 +171,8 @@ output:
   logfile_performance: full
 benchmark:
   enabled: false
+matpower_export:
+  write_solution: false
 """)
     cfg = Sparlectra.load_sparlectra_config(cfgfile; reload = true)
     @test cfg.powerflow.tol == 1.0e-7
@@ -194,6 +198,7 @@ benchmark:
     @test cfg.matpower.ratio === :reciprocal
     @test cfg.output.logfile_performance === :full
     @test cfg.benchmark.enabled === false
+    @test cfg.matpower_export.write_solution === false
   end
 
   @testset "Q-limit enforcement mode user YAML keys" begin

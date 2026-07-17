@@ -214,6 +214,27 @@ Base.@kwdef struct TransformerConfig
 end
 
 """
+    MatpowerExportConfig
+
+Typed MATPOWER export configuration.
+
+`write_solution` selects whether [`writeMatpowerCasefile`](@ref) writes the
+solved AC power-flow state back into the exported case:
+- `true` (default): `mpc.bus` `VM`/`VA` reflect the solved node state and
+  `mpc.branch` gains the standard MATPOWER result columns 14–17
+  (`PF`, `QF`, `PT`, `QT`), sourced from the existing branch-flow report path.
+  A `mpc.sparlectra.solution_written = 1` marker documents this. If the network
+  has not been solved, the exporter warns and falls back to the 13-column
+  model-only export instead of writing empty result columns.
+- `false`: the export is a pure model file. `mpc.branch` keeps its historical
+  13 columns, and `VM = 1.0`/`VA = 0.0` for all non-slack/non-PV buses (slack
+  and PV setpoints are preserved).
+"""
+Base.@kwdef struct MatpowerExportConfig
+  write_solution::Bool = true
+end
+
+"""
     PerformanceConfig
 
 Typed performance and diagnostic-volume configuration.
@@ -313,6 +334,7 @@ Base.@kwdef struct SparlectraConfig
   powerflow::PowerFlowConfig = PowerFlowConfig()
   state_estimation::StateEstimationConfig = StateEstimationConfig()
   matpower::MatpowerImportConfig = MatpowerImportConfig()
+  matpower_export::MatpowerExportConfig = MatpowerExportConfig()
   transformer::TransformerConfig = TransformerConfig()
   performance::PerformanceConfig = PerformanceConfig()
   benchmark::BenchmarkConfig = BenchmarkConfig()
@@ -405,6 +427,7 @@ end
 active_sparlectra_config()::SparlectraConfig = ACTIVE_SPARLECTRA_CONFIG[]
 powerflow_config()::PowerFlowConfig = active_sparlectra_config().powerflow
 matpower_import_config()::MatpowerImportConfig = active_sparlectra_config().matpower
+matpower_export_config()::MatpowerExportConfig = active_sparlectra_config().matpower_export
 transformer_config()::TransformerConfig = active_sparlectra_config().transformer
 state_estimation_config()::StateEstimationConfig = active_sparlectra_config().state_estimation
 diagnostics_config()::DiagnosticsConfig = active_sparlectra_config().diagnostics
@@ -717,6 +740,13 @@ function TransformerConfig(raw::AbstractDict)
   )
 end
 
+function MatpowerExportConfig(raw::AbstractDict)
+  merged = _merged_section(raw, "matpower_export")
+  return MatpowerExportConfig(
+    write_solution = _as_bool_cfg(_raw_get(merged, "write_solution", true)),
+  )
+end
+
 """
     configured_matpower_cases(config) -> Vector{String}
 
@@ -840,6 +870,7 @@ function SparlectraConfig(raw::AbstractDict)
     powerflow = PowerFlowConfig(raw),
     state_estimation = StateEstimationConfig(raw),
     matpower = MatpowerImportConfig(raw),
+    matpower_export = MatpowerExportConfig(raw),
     transformer = TransformerConfig(raw),
     performance = PerformanceConfig(raw),
     benchmark = BenchmarkConfig(raw),

@@ -84,5 +84,17 @@ function run_dtf_matpower_export_validation_example_tests()
     @test all(r -> isapprox(r.metric.native_total_bus_Gs, r.metric.roundtrip_total_bus_Gs; atol = 1e-12), details.scenario_results)
     @test all(r -> length(r.roundtrip.linesAC) == 22, details.scenario_results)
     @test all(r -> length(r.roundtrip.trafos) == 5, details.scenario_results)
+
+    # Regression: with tap_changer_model=impedance_correction, the exporter's
+    # mpc.sparlectra.tap_changer_model marker must prevent the reimport from
+    # reapplying calcTapCorrectedRX on top of the already-corrected r/x (see
+    # matpower_import.md "Tap-impedance correction and reimport"). Transformer
+    # branch impedances must be bit-identical between native and roundtrip.
+    impedance_details = Base.invokelatest(runner, ["--dtf-file=$dtf_file", "--for002-file=$for002_file", "--output-dir=$(mktempdir())", "--quiet=true", "--write-matpower=true", "--run-outages=false", "--tap-changer-model=impedance_correction"]; return_details = true)
+    @test all(r -> r.metric.roundtrip_converged, impedance_details.scenario_results)
+    transformer_rows = [row for row in impedance_details.branch_rows if row.branch_kind_native == "T"]
+    @test !isempty(transformer_rows)
+    @test all(row -> row.x_pu_native == row.x_pu_roundtrip, transformer_rows)
+    @test all(row -> row.r_pu_native == row.r_pu_roundtrip, transformer_rows)
   end
 end

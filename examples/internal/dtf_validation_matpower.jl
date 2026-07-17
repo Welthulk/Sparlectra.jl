@@ -134,12 +134,22 @@ function _roundtrip(native_net, matpower_path, opt)
   Logging.with_logger(Logging.NullLogger()) do
     Sparlectra.writeMatpowerCasefile(native_net, matpower_path)
   end
+  # Set the reimport tap-changer model explicitly from the same option that
+  # built the native net, instead of implicitly falling back to the active
+  # global transformer_config(). That implicit coupling was a double-correction
+  # source: when the native build used impedance_correction, r/x in the
+  # exported file are already corrected, and a reimport that separately reads
+  # impedance_correction from the global config would stack a second,
+  # differently-derived correction on top (ratio-based vs. tap-fraction-based).
+  # The exporter's mpc.sparlectra.tap_changer_model marker independently
+  # prevents that double application on the importer side.
+  tap_model = _tap_changer_model_symbol(opt["tap-changer-model"])
   rt = Logging.with_logger(Logging.NullLogger()) do
     # DTF PQ generators are fixed injections. Disable MATPOWER PQ generator
     # controller reinterpretation for this roundtrip so the imported Net
     # preserves native DTF generator semantics instead of voltage-dependent
     # controller behavior.
-    Sparlectra.createNetFromMatPowerFile(filename = matpower_path, log = false, flatstart = false, enable_pq_gen_controllers = false, apply_bus_names = true, apply_branch_names = true, apply_branch_kind = true)
+    Sparlectra.createNetFromMatPowerFile(filename = matpower_path, log = false, flatstart = false, enable_pq_gen_controllers = false, apply_bus_names = true, apply_branch_names = true, apply_branch_kind = true, tap_changer_model = tap_model)
   end
   pf = _run_pf!(rt, opt)
   return rt, pf
