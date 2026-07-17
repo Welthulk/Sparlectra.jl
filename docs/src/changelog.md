@@ -1,3 +1,9 @@
+# Version 0.8.10 — 2026-07-17
+
+## New Features
+
+* Added a configurable transformer tap-changer model (`transformer.tap_changer_model`, allowed values `ideal`/`impedance_correction`), applied centrally to all transformers of an imported case. `ideal` (default) preserves prior Sparlectra behavior where the tap changer only changes the complex winding ratio. `impedance_correction` re-refers the transformer series impedance through the tapped winding, scaling R and X with the squared magnitude of the regulating vector, `|1 + f·e^(jφ)|²`. The option is read by both the MATPOWER importer and the native DTF importer, but the correction math lives centrally in `calcTapCorrectedRX`/`calcTapImpedanceCorrectionFactor` (`src/equicircuit.jl`) so importers stay free of duplicated tap-impedance mathematics. Configurable via YAML, the GUI-editable configuration API, and a new Web UI expert option.
+
 # Version 0.8.9 — 2026-07-16
 
 ## New Features

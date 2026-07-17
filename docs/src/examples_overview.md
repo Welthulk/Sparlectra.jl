@@ -23,6 +23,11 @@ This page summarizes the most relevant runnable examples in `examples/`.
 
 ## Transformer and tap control
 
+- `exp_transformer_tap_changer_model.jl`
+  Imports the same off-nominal-tap MATPOWER transformer once with
+  `transformer.tap_changer_model = :ideal` and once with
+  `:impedance_correction`, and compares the resulting series impedance and
+  power-flow solution.
 - `tap_control_demo_grid.jl`  
   Lightweight three-controller demo (OLTC + PST + Schrägregler) using `run_sparlectra(net = ...)`,
   central Sparlectra configuration (`examples/configuration.yaml` or

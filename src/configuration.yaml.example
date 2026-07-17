@@ -182,6 +182,15 @@ matpower_import:
   # Allowed values: reject_active, ignore_inactive, pf_injections
   matpower_dcline_mode: pf_injections
 
+transformer:
+  # Tap-changer model used by all network importers (MATPOWER and native DTF).
+  # Allowed values: ideal, impedance_correction
+  # - ideal: tap steps only change the complex winding ratio; transformer R/X
+  #   keep their neutral-position values (no impedance feedback).
+  # - impedance_correction: tap steps re-refer the transformer series impedance
+  #   through the tapped winding; R and X are scaled with |1 + f*e^(j*phi)|^2.
+  tap_changer_model: ideal
+
 performance:
   enabled: true
   # Allowed values: off, summary, iteration, full

@@ -534,7 +534,7 @@ function with_powerflow_method(cfg::SparlectraConfig, method::Symbol)::Sparlectr
   pf = cfg.powerflow
   pf_kwargs = NamedTuple{fieldnames(PowerFlowConfig)}(getfield.(Ref(pf), fieldnames(PowerFlowConfig)))
   pf2 = PowerFlowConfig(; pf_kwargs..., method = method)
-  return SparlectraConfig(; powerflow = pf2, state_estimation = cfg.state_estimation, matpower = cfg.matpower, performance = cfg.performance, benchmark = cfg.benchmark, runtime = cfg.runtime, diagnostics = cfg.diagnostics, output = cfg.output, control = cfg.control)
+  return SparlectraConfig(; powerflow = pf2, state_estimation = cfg.state_estimation, matpower = cfg.matpower, transformer = cfg.transformer, performance = cfg.performance, benchmark = cfg.benchmark, runtime = cfg.runtime, diagnostics = cfg.diagnostics, output = cfg.output, control = cfg.control)
 end
 
 _auto_profile_value_string(x)::String = x isa AbstractFloat ? string(round(x; digits = 8)) : string(x)
@@ -611,7 +611,7 @@ function _copy_matpower_with(mat::MatpowerImportConfig; kwargs...)
 end
 
 function _copy_config_with(cfg::SparlectraConfig; powerflow = cfg.powerflow, matpower = cfg.matpower)
-  return SparlectraConfig(; powerflow = powerflow, state_estimation = cfg.state_estimation, matpower = matpower, performance = cfg.performance, benchmark = cfg.benchmark, runtime = cfg.runtime, diagnostics = cfg.diagnostics, output = cfg.output, control = cfg.control)
+  return SparlectraConfig(; powerflow = powerflow, state_estimation = cfg.state_estimation, matpower = matpower, transformer = cfg.transformer, performance = cfg.performance, benchmark = cfg.benchmark, runtime = cfg.runtime, diagnostics = cfg.diagnostics, output = cfg.output, control = cfg.control)
 end
 
 function matpower_import_auto_profile(mpc, cfg::SparlectraConfig; mode::Symbol = cfg.matpower.auto_profile, convention_scan = _matpower_import_auto_profile_convention_scan)
