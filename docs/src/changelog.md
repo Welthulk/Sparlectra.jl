@@ -7,6 +7,8 @@
 ### Improvements
 
 * The tap-impedance correction factor applied by `calcTapCorrectedRX` during import (MATPOWER and native DTF) is now persisted on the `Branch`/transformer metadata. When a MATPOWER case exported by Sparlectra carries the `mpc.sparlectra.tap_changer_model = 'impedance_correction'` marker, reimport skips reapplying the correction instead of stacking a second, differently-derived correction factor on top of the already-corrected R/X. Cases without the marker (including standard third-party MATPOWER cases) are unaffected.
+* Shortened the Web UI "Tolerance" and "Export Solution" field labels so the round help (`?`) icon no longer gets visually squeezed next to long label text, and restyled the tolerance exponent stepper to look like a native number-input spinbox (same stepping behavior).
+* Removed the inline explanation text next to the "Export Solution" checkbox and the "Tap-changer model" dropdown; the `.check` row layout was cramming the checkbox, label, help icon, and hint text onto one line, visually overlapping the icon. The full explanations remain one click away via each field's `?` help link, and the `matpower_export.write_solution` documentation table row was expanded to also cover the `write_solution = false` case.
 
 # Version 0.8.10 — 2026-07-17
 
