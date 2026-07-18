@@ -17,6 +17,12 @@ const _WEBUI_DOCS_ROOT = normpath(joinpath(@__DIR__, "..", "..", "docs", "src"))
 const WEBUI_HELP_TOPICS = Dict(
   "webui.casefile" => (label = "MATPOWER case file", page = "webui", heading = "PowerFlow input paths", selector = "`webui.casefile`"),
   "webui.config_file" => (label = "Configuration template file", page = "webui", heading = "PowerFlow input paths", selector = "`webui.config_file`"),
+  "webui.import_case_files" => (label = "Import case files", page = "webui", heading = "Importing case files through the Web UI", selector = ""),
+  "webui.case_format" => (label = "Case input format", page = "webui", heading = "Starting a PowerFlow run", selector = ""),
+  "webui.for002_reference_file" => (label = "Optional FOR002 reference file", page = "webui", heading = "Starting a PowerFlow run", selector = ""),
+  "webui.dtf_outage_selection" => (label = "Selected DTF outage labels/indices", page = "webui", heading = "Starting a PowerFlow run", selector = ""),
+  "webui.config_maintenance" => (label = "Configuration maintenance", page = "webui", heading = "Configuration check and refresh", selector = ""),
+  "webui.ignore_webui_settings" => (label = "Ignore Web UI settings and use configuration defaults", page = "webui", heading = "Configuration precedence and artifact downloads", selector = ""),
   "power_flow.tol" => (label = "PowerFlow tolerance", page = "powerflow_configuration", heading = "Solver core options", selector = "`power_flow.tol`"),
   "power_flow.max_iter" => (label = "Maximum iterations", page = "powerflow_configuration", heading = "Solver core options", selector = "`power_flow.max_iter`"),
   "power_flow.autodamp" => (label = "Autodamping enabled", page = "powerflow_configuration", heading = "Solver core options", selector = "`power_flow.autodamp`"),
@@ -57,7 +63,14 @@ const WEBUI_HELP_TOPICS = Dict(
 
 const WEBUI_FORM_HELP_TOPICS = Dict(
   "casefile" => "webui.casefile",
+  "casefile_manual" => "webui.casefile",
   "config_file" => "webui.config_file",
+  "casefiles" => "webui.import_case_files",
+  "case_format" => "webui.case_format",
+  "for002_reference_file" => "webui.for002_reference_file",
+  "dtf_outage_selection" => "webui.dtf_outage_selection",
+  "config_maintenance" => "webui.config_maintenance",
+  "ignore_webui_settings" => "webui.ignore_webui_settings",
   "power_flow_tol" => "power_flow.tol",
   "power_flow_max_iter" => "power_flow.max_iter",
   "power_flow_autodamp" => "power_flow.autodamp",

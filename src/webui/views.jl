@@ -249,7 +249,21 @@ end
 
 function _webui_error_alert_html(error_message)::String
   error_message === nothing && return ""
-  return "<div class=\"alert alert-error error\" data-dismissible-alert role=\"alert\"><button type=\"button\" class=\"alert-close\" aria-label=\"Dismiss error\">×</button><span>$(_webui_escape(error_message))</span></div>"
+  return "<div class=\"alert alert-error error\" role=\"alert\"><span>$(_webui_escape(error_message))</span></div>"
+end
+
+"""
+    _webui_feedback_modal_html(parts) -> String
+
+Combine one-off feedback/error messages (submission errors, case-import
+results, case-settings-loaded notices) into a single dismissible `<dialog>`
+popup instead of pushing them inline into the page flow. Returns `""` when
+every part is empty, so no empty modal is rendered.
+"""
+function _webui_feedback_modal_html(parts::AbstractVector{<:AbstractString})::String
+  content = join(filter(!isempty, parts), "")
+  isempty(content) && return ""
+  return "<dialog id=\"feedback-modal\" class=\"feedback-modal\" aria-label=\"PowerFlow notices\"><form method=\"dialog\" class=\"feedback-modal-close-form\"><button type=\"submit\" class=\"feedback-modal-close\" aria-label=\"Close\">×</button></form><div class=\"feedback-modal-body\">$(content)</div></dialog>"
 end
 
 function render_powerflow_form(;
@@ -308,49 +322,46 @@ function render_powerflow_form(;
   for002_list_options = join(("<option value=\"$(_webui_escape(candidate))\">$(_webui_escape(candidate))</option>" for candidate in for002_candidates), "")
   for002_list_html = isempty(for002_candidates) ? "" : "<datalist id=\"for002-reference-candidates\">$(for002_list_options)</datalist>"
   for002_list_attr = isempty(for002_candidates) ? "" : " list=\"for002-reference-candidates\""
-  for002_hint = isempty(for002_candidates) ? "Used only for legacy reference comparison diagnostics; enter an absolute path or a path copied from the same case cache directory." : "Used only for legacy reference comparison diagnostics. FOR002.DAT is available in the case cache and can be selected here, or enter an absolute/manual path."
   config_default = isempty(selected_config_file) ? DEFAULT_SPARLECTRA_CONFIG_PATH : selected_config_file
   config_control = "<input type=\"hidden\" name=\"config_file\" value=\"$(_webui_escape(config_default))\">"
   info_menu = _webui_powerflow_info_menu(; output_root, config_file = config_default, case_directory = effective_case_directory, operation_log)
   notice_html = _webui_config_notice_html(config_notice)
   config_maintenance = """
 <fieldset id="configuration-maintenance" class="config-maintenance">
-<legend>Configuration maintenance</legend>
-<p class="field-hint span-2">Check or explicitly refresh the selected YAML configuration. Refresh creates a backup and rewrites the selected YAML in canonical Sparlectra format. Existing option values are preserved, but comments and ordering may not be preserved. Restart or reload the Web UI after refresh. Startup and page-load checks never rewrite YAML automatically.</p>
+<legend>$(_webui_field_label("config_maintenance", "Configuration maintenance"))</legend>
 <div class="actions span-2"><a class="secondary-button" href="/powerflow/config/edit?config_file=$(_webui_urlencode(config_default))">Configuration Editor</a><button class="secondary-button" type="submit" formaction="/powerflow/config/check" formmethod="post">Check configuration</button><button class="secondary-button" type="submit" formaction="/powerflow/config/refresh" formmethod="post">Refresh configuration</button></div>
 </fieldset>
 """
   import_form = """
 <form id=\"case-import-form\" method=\"post\" action=\"/powerflow/import-cases\" enctype=\"multipart/form-data\" class=\"panel form-grid case-import-form\">
-<label class=\"span-2\"><span class=\"field-label\">Import case files</span><input type=\"file\" name=\"casefiles\" accept=\".m,.M,.dat,.DAT\" multiple><small class=\"field-hint\">Select one or more MATPOWER (.m) or DTF (.DAT) files. Importing files copies them to <code>$(_webui_escape(effective_case_directory))</code>, classifies their role, and does not start a PowerFlow calculation. Limits: 100 MiB per file, 250 MiB per request.</small></label>
+<label class=\"span-2\">$(_webui_field_label("casefiles", "Import case files"))<input type=\"file\" name=\"casefiles\" accept=\".m,.M,.dat,.DAT\" multiple></label>
 <div class=\"actions span-2\"><button class=\"secondary-button\" type=\"submit\">Import case files</button></div>
 </form>
 """
   form = """
-$(error_html)$(import_html)$(_webui_active_run_banner(active_run))$(notice_html)$(profile_notice)<p class=\"lede\">Run a local MATPOWER case through the Sparlectra PowerFlow service.</p>
+$(_webui_feedback_modal_html([error_html, import_html, profile_notice]))$(_webui_active_run_banner(active_run))$(notice_html)<p class=\"lede\">Run a local MATPOWER case through the Sparlectra PowerFlow service.</p>
 $(import_form)
 <form id=\"powerflow-run-form\" data-powerflow-form method=\"post\" action=\"/powerflow/run\" class=\"panel form-grid powerflow-form-card\" onsubmit=\"this.classList.add('is-submitting'); this.setAttribute('aria-busy', 'true'); this.querySelector('button[type=submit]').disabled = true;\">
 $(config_control)
 <label>$(_webui_field_label("casefile", "Existing case file"))$(case_select)<small class="field-hint">Cases from <code>$(_webui_escape(effective_case_directory))</code></small></label>
-<label><span class="field-label">Or type case file path</span>$(case_manual)<button type="submit" id="resolve-case-button" formaction="/powerflow/resolve-case" formmethod="post" formnovalidate hidden>Resolve case</button><small class="field-hint">Manual input overrides the existing-case selection. Press Enter here to resolve/download the case into the case directory (it then appears under "choose existing case") without starting a run.</small></label>
+<label>$(_webui_field_label("casefile_manual", "Or type case file path"))$(case_manual)<button type="submit" id="resolve-case-button" formaction="/powerflow/resolve-case" formmethod="post" formnovalidate hidden>Resolve case</button></label>
 $(dat_hint_html)
 <details$(dtf_details_attrs)>
 <summary>Input format</summary>
 <fieldset>
-<p class="field-hint span-2">Default remains MATPOWER-oriented. The native DTF path is experimental/internal and intended for diagnostics and validation.</p>
-<label><span class="field-label">Case input format</span><select name="case_format"><option value="auto"$(_webui_form_string(case_format_value) == "auto" ? " selected" : "")>Auto</option><option value="matpower"$(_webui_form_string(case_format_value) == "matpower" ? " selected" : "")>MATPOWER</option><option value="dtf_for001"$(_webui_form_string(case_format_value) == "dtf_for001" ? " selected" : "")>DTF diagnostics (experimental/internal)</option></select></label>
-<label><span class="field-label">Optional FOR002 reference file</span><input name="for002_reference_file" value=\"$(_webui_escape(for002_reference_value))\" placeholder="examples/FOR002.DAT"$for002_list_attr>$(for002_list_html)<small class="field-hint">$(_webui_escape(for002_hint))</small></label>
+<label>$(_webui_field_label("case_format", "Case input format"))<select name="case_format"><option value="auto"$(_webui_form_string(case_format_value) == "auto" ? " selected" : "")>Auto</option><option value="matpower"$(_webui_form_string(case_format_value) == "matpower" ? " selected" : "")>MATPOWER</option><option value="dtf_for001"$(_webui_form_string(case_format_value) == "dtf_for001" ? " selected" : "")>DTF diagnostics (experimental/internal)</option></select></label>
+<label>$(_webui_field_label("for002_reference_file", "Optional FOR002 reference file"))<input name="for002_reference_file" value=\"$(_webui_escape(for002_reference_value))\" placeholder="examples/FOR002.DAT"$for002_list_attr>$(for002_list_html)</label>
 <label><span class="field-label">DTF outage run mode</span><select name="dtf_outage_selection_mode"><option value="none">Run base case only</option><option value="all">Run all DTF outage records</option><option value="selected">Run selected DTF outage records</option></select></label>
-<label><span class="field-label">Selected DTF outage labels/indices</span><input name="dtf_outage_selection" placeholder="1 or L1 ALPHA S1 -> BETA1 S1"><small class="field-hint">For selected mode, enter one parsed label or outage index. The result page reports the compact outage summary; detailed rows stay in artifacts.</small></label>
+<label>$(_webui_field_label("dtf_outage_selection", "Selected DTF outage labels/indices"))<input name="dtf_outage_selection" placeholder="1 or L1 ALPHA S1 -> BETA1 S1"></label>
 <label class="check"><input name="write_outage_artifacts" type="hidden" value="false"><input name="write_outage_artifacts" type="checkbox" value="true" checked>Write DTF outage artifacts</label>
 <label class="check"><input name="matpower_export_requested" type="hidden" value="false"><input name="matpower_export_requested" type="checkbox" value="true">Write MATPOWER export artifact</label>
 <label class="check"><input name="write_outage_matpower_exports" type="hidden" value="false"><input name="write_outage_matpower_exports" type="checkbox" value="true">Write MATPOWER outage exports</label>
 </fieldset>
 </details>
-<label>$(_webui_field_label("power_flow_tol", "Tolerance"))<span class=\"tolerance-field\"><input name=\"power_flow_tol\" type=\"text\" autocomplete=\"off\" spellcheck=\"false\" data-tolerance-input value=\"$(_webui_input_value(profile_values, "power_flow_tol", _webui_option_default("power_flow_tol")))\"><span class=\"tolerance-spin\"><button type=\"button\" class=\"tolerance-spin-up\" data-tolerance-direction=\"up\" aria-label=\"Increase tolerance exponent\">&#9650;</button><button type=\"button\" class=\"tolerance-spin-down\" data-tolerance-direction=\"down\" aria-label=\"Decrease tolerance exponent\">&#9660;</button></span></span><small class=\"field-hint\">Accepts scientific notation, for example 1e-8. Use the arrows or Up/Down keys to step the exponent.</small></label>
+<label>$(_webui_field_label("power_flow_tol", "Tolerance"))<span class=\"tolerance-field\"><input name=\"power_flow_tol\" type=\"text\" autocomplete=\"off\" spellcheck=\"false\" data-tolerance-input value=\"$(_webui_input_value(profile_values, "power_flow_tol", _webui_option_default("power_flow_tol")))\"><span class=\"tolerance-spin\"><button type=\"button\" class=\"tolerance-spin-up\" data-tolerance-direction=\"up\" aria-label=\"Increase tolerance exponent\">&#9650;</button><button type=\"button\" class=\"tolerance-spin-down\" data-tolerance-direction=\"down\" aria-label=\"Decrease tolerance exponent\">&#9660;</button></span></span></label>
 <label>$(_webui_field_label("power_flow_max_iter", "Maximum iterations"))<input name=\"power_flow_max_iter\" type=\"number\" min=\"1\" value=\"$(_webui_input_value(profile_values, "power_flow_max_iter", _webui_option_default("power_flow_max_iter")))\"></label>
 <label class=\"check\"><input name=\"power_flow_autodamp\" type=\"hidden\" value=\"false\"><input name=\"power_flow_autodamp\" type=\"checkbox\" value=\"true\"$(_webui_checked(profile_values, "power_flow_autodamp", _webui_option_default("power_flow_autodamp")))>$(_webui_field_label("power_flow_autodamp", "Autodamping enabled"))</label>
-<label>$(_webui_field_label("power_flow_autodamp_min", "Autodamping minimum"))<input name=\"power_flow_autodamp_min\" type=\"number\" step=\"any\" min=\"0\" max=\"1\" value=\"$(_webui_input_value(profile_values, "power_flow_autodamp_min", _webui_option_default("power_flow_autodamp_min")))\"></label>
+<label>$(_webui_field_label("power_flow_autodamp_min", "Autodamping minimum"))<input name=\"power_flow_autodamp_min\" type=\"number\" step=\"0.01\" min=\"0\" max=\"1\" value=\"$(_webui_input_value(profile_values, "power_flow_autodamp_min", _webui_option_default("power_flow_autodamp_min")))\"></label>
 <label class=\"check\"><input name=\"power_flow_qlimits_enabled\" type=\"hidden\" value=\"false\"><input name=\"power_flow_qlimits_enabled\" type=\"checkbox\" value=\"true\"$(_webui_checked(profile_values, "power_flow_qlimits_enabled", _webui_option_default("power_flow_qlimits_enabled")))>$(_webui_field_label("power_flow_qlimits_enabled", "Q-limit handling enabled"))</label>
 <label>$(_webui_field_label("power_flow_qlimits_enforcement_mode", "Q-limit enforcement mode"))$(_webui_select("power_flow_qlimits_enforcement_mode", _webui_option_allowed_values("power_flow_qlimits_enforcement_mode"), _webui_selected(profile_values, "power_flow_qlimits_enforcement_mode", _webui_option_default("power_flow_qlimits_enforcement_mode"))))</label>
 <label>$(_webui_field_label("power_flow_wrong_branch_detection", "Wrong-branch detection"))$(_webui_select("power_flow_wrong_branch_detection", _webui_option_allowed_values("power_flow_wrong_branch_detection"), _webui_selected(profile_values, "power_flow_wrong_branch_detection", _webui_option_default("power_flow_wrong_branch_detection"))))</label>
@@ -359,7 +370,6 @@ $(dat_hint_html)
 <details class=\"span-2 start-current-iteration-options advanced-start-values\">
 <summary>Advanced start values</summary>
 <fieldset>
-<p class=\"field-hint span-2\"><strong>Current-iteration pre-solve</strong> runs after the selected voltage and angle start values and before the normal rectangular Newton-Raphson solve. It is accepted only when the configured guards allow it.</p>
 <label class=\"check span-2\"><input name=\"power_flow_start_current_iteration_enabled\" type=\"hidden\" value=\"false\"><input name=\"power_flow_start_current_iteration_enabled\" type=\"checkbox\" value=\"true\"$(_webui_checked(profile_values, "power_flow_start_current_iteration_enabled", _webui_option_default("power_flow_start_current_iteration_enabled")))>$(_webui_field_label("power_flow_start_current_iteration_enabled", "Enable current-iteration pre-solve"))</label>
 <label>$(_webui_field_label("power_flow_start_current_iteration_max_iter", "Current-iteration max iterations"))<input name=\"power_flow_start_current_iteration_max_iter\" type=\"number\" min=\"1\" value=\"$(_webui_input_value(profile_values, "power_flow_start_current_iteration_max_iter", _webui_option_default("power_flow_start_current_iteration_max_iter")))\"></label>
 <label>$(_webui_field_label("power_flow_start_current_iteration_tol", "Current-iteration tolerance"))<input name=\"power_flow_start_current_iteration_tol\" type=\"number\" step=\"any\" min=\"0\" value=\"$(_webui_input_value(profile_values, "power_flow_start_current_iteration_tol", _webui_option_default("power_flow_start_current_iteration_tol")))\"></label>
@@ -375,7 +385,7 @@ $(dat_hint_html)
 <label>$(_webui_field_label("output_logfile_results", "Logfile output mode"))$(_webui_select("output_logfile_results", _webui_option_allowed_values("output_logfile_results"), _webui_selected(profile_values, "output_logfile_results", _webui_option_default("output_logfile_results"))))</label>
 <label>$(_webui_field_label("performance_timing", "Performance timing"))$(_webui_select("performance_timing", _webui_option_allowed_values("performance_timing"), _webui_selected(profile_values, "performance_timing", _webui_option_default("performance_timing"))))</label>
 <fieldset class=\"span-2 detailed-csv-options\"><legend><label class=\"check\"><input name=\"detailed_result_csv\" type=\"hidden\" value=\"false\"><input name=\"detailed_result_csv\" type=\"checkbox\" value=\"true\"$(_webui_checked(profile_values, "detailed_result_csv", _webui_option_default("detailed_result_csv")))>$(_webui_field_label("detailed_result_csv", "Export detailed result CSV files"))</label></legend>
-<label class=\"detailed-csv-format\">$(_webui_field_label("detailed_result_csv_format", "CSV format"))$(_webui_select("detailed_result_csv_format", _webui_option_allowed_values("detailed_result_csv_format"), _webui_selected(profile_values, "detailed_result_csv_format", _webui_option_default("detailed_result_csv_format"))))<small class=\"field-hint\">technical: comma/decimal point/no grouping; excel_de: semicolon/decimal comma/thousands dot; excel_us: comma/decimal point/thousands comma.</small></label>
+<label class=\"detailed-csv-format\">$(_webui_field_label("detailed_result_csv_format", "CSV format"))$(_webui_select("detailed_result_csv_format", _webui_option_allowed_values("detailed_result_csv_format"), _webui_selected(profile_values, "detailed_result_csv_format", _webui_option_default("detailed_result_csv_format"))))</label>
 </fieldset>
 <details class=\"span-2 expert-section\">
 <summary>Advanced / expert options</summary>
@@ -383,7 +393,6 @@ $(config_maintenance)
 <label class=\"check expert-diagnostics\"><input name=\"run_diagnostics\" type=\"hidden\" value=\"false\"><input name=\"run_diagnostics\" type=\"checkbox\" value=\"true\"$(_webui_checked(profile_values, "run_diagnostics", _webui_option_default("run_diagnostics")))>$(_webui_field_label("run_diagnostics", "Run diagnostics"))</label>
 <fieldset class=\"import-section\">
 <legend>MATPOWER import conventions</legend>
-<p class=\"field-hint span-2\">Choose how MATPOWER transformer ratio, phase-shift, bus-shunt, and voltage-reference conventions are interpreted before the network is built. Use <strong>off</strong> for manual overrides, <strong>recommend</strong> to log advice without changing the run, or <strong>apply</strong> to let the profile apply safe import-convention recommendations. Solver start and Q-limit recommendations remain conservative unless configured directly. These controls are separate from post-solve wrong-branch plausibility checks.</p>
 <label>$(_webui_field_label("matpower_import_auto_profile", "MATPOWER auto-profile"))$(_webui_select("matpower_import_auto_profile", _webui_option_allowed_values("matpower_import_auto_profile"), _webui_selected(profile_values, "matpower_import_auto_profile", _webui_option_default("matpower_import_auto_profile"))))</label>
 <label>$(_webui_field_label("matpower_import_ratio", "Transformer ratio convention"))$(_webui_select("matpower_import_ratio", _webui_option_allowed_values("matpower_import_ratio"), _webui_selected(profile_values, "matpower_import_ratio", _webui_option_default("matpower_import_ratio"))))</label>
 <label>$(_webui_field_label("matpower_import_shift_sign", "Phase-shift sign"))<input name=\"matpower_import_shift_sign\" type=\"number\" step=\"2\" min=\"-1\" max=\"1\" value=\"$(_webui_input_value(profile_values, "matpower_import_shift_sign", _webui_option_default("matpower_import_shift_sign")))\"></label>
@@ -396,27 +405,23 @@ $(config_maintenance)
 </fieldset>
 <fieldset class=\"benchmark-section\">
 <legend>Benchmark / repeated timing</legend>
-<p class=\"field-hint span-2\">Normal runs perform one representative power-flow execution. Benchmarking adds repeated BenchmarkTools measurements for timing statistics and does not change the numerical result.</p>
 <label class=\"check span-2\"><input name=\"benchmark_enabled\" type=\"hidden\" value=\"false\"><input name=\"benchmark_enabled\" type=\"checkbox\" value=\"true\"$(_webui_checked(profile_values, "benchmark_enabled", _webui_option_default("benchmark_enabled")))>$(_webui_field_label("benchmark_enabled", "Enable benchmark measurements"))</label>
-<p class=\"field-hint span-2\">Enable repeated BenchmarkTools measurements in addition to the representative run. This is intended for performance diagnostics and development work; disable it for normal interactive WebUI use when only one power-flow result is needed.</p>
-<label>$(_webui_field_label("benchmark_samples", "Benchmark samples (max. repeated measurements)"))<input name=\"benchmark_samples\" type=\"number\" min=\"1\" value=\"$(_webui_input_value(profile_values, "benchmark_samples", _webui_option_default("benchmark_samples")))\"><small class=\"field-hint\">Maximum repeated timing measurements for each selected method. The benchmark may finish earlier when this count is reached before the time budget, or collect fewer samples when the time budget is reached first.</small></label>
-<label>$(_webui_field_label("benchmark_seconds", "Benchmark max. time budget [s]"))<input name=\"benchmark_seconds\" type=\"number\" step=\"any\" min=\"0\" value=\"$(_webui_input_value(profile_values, "benchmark_seconds", _webui_option_default("benchmark_seconds")))\"><small class=\"field-hint\">Maximum BenchmarkTools time budget for repeated timing measurements. This is not a minimum runtime, solver timeout, or iteration limit; a running sample is not interrupted.</small></label>
+<label>$(_webui_field_label("benchmark_samples", "Benchmark samples (max. repeated measurements)"))<input name=\"benchmark_samples\" type=\"number\" min=\"1\" value=\"$(_webui_input_value(profile_values, "benchmark_samples", _webui_option_default("benchmark_samples")))\"></label>
+<label>$(_webui_field_label("benchmark_seconds", "Benchmark max. time budget [s]"))<input name=\"benchmark_seconds\" type=\"number\" step=\"any\" min=\"0\" value=\"$(_webui_input_value(profile_values, "benchmark_seconds", _webui_option_default("benchmark_seconds")))\"></label>
 </fieldset>
-<label class=\"check span-2\"><input name=\"ignore_webui_settings\" type=\"hidden\" value=\"false\"><input name=\"ignore_webui_settings\" type=\"checkbox\" value=\"true\">Ignore Web UI settings and use configuration defaults<small class=\"field-hint\">Leave unchecked for normal runs so values entered on this page are applied. Check only to ignore the Web UI controls for this run and use the selected YAML/default configuration.</small></label>
+<label class=\"check span-2\"><input name=\"ignore_webui_settings\" type=\"hidden\" value=\"false\"><input name=\"ignore_webui_settings\" type=\"checkbox\" value=\"true\">$(_webui_field_label("ignore_webui_settings", "Ignore Web UI settings and use configuration defaults"))</label>
 </details>
 <div class=\"span-2 actions\"><button class=\"powerflow-submit\" type=\"submit\"><span class=\"submit-spinner\" aria-hidden=\"true\"></span><span class=\"submit-label\">Start PowerFlow run</span><span class=\"submit-progress-label\" role=\"status\" aria-live=\"polite\">Running PowerFlow…</span></button></div></form>
 <script>
 document.addEventListener('DOMContentLoaded', function () {
-  const alert = document.querySelector('[data-dismissible-alert]');
-  const form = document.querySelector('form[data-powerflow-form]');
-  if (alert !== null && form !== null) {
-    const clearAlert = function () {
-      alert.hidden = true;
-      alert.classList.add('is-dismissed');
-    };
-    alert.addEventListener('click', clearAlert);
-    form.addEventListener('input', clearAlert, {once: true});
-    form.addEventListener('change', clearAlert, {once: true});
+  const feedbackModal = document.getElementById('feedback-modal');
+  if (feedbackModal !== null) {
+    feedbackModal.showModal();
+    feedbackModal.addEventListener('click', function (event) {
+      if (event.target === feedbackModal) {
+        feedbackModal.close();
+      }
+    });
   }
   const csvFormat = document.querySelector('select[name="detailed_result_csv_format"]');
   if (csvFormat !== null && csvFormat.value === 'excel_us') {

@@ -432,7 +432,6 @@ settings:
       @test !occursin("value=\"case118.m ★\"", dropdown_form)
       @test occursin("data-case-settings-reload=\"true\"", dropdown_form)
       @test occursin("Ignore Web UI settings and use configuration defaults", dropdown_form)
-      @test occursin("Leave unchecked for normal runs so values entered on this page are applied.", dropdown_form)
       @test occursin("target.searchParams.set('casefile', caseSelect.value)", dropdown_form)
       @test occursin("target.searchParams.set('config_file', configInput.value)", dropdown_form)
       dropdown_loaded_form = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow?casefile=$(Sparlectra._webui_urlencode(case118))&config_file=$(Sparlectra._webui_urlencode("configuration.yaml"))"; output_root = root).body)
@@ -754,7 +753,7 @@ settings:
         @test occursin("<form id=\"powerflow-run-form\"", selection_html)
         @test occursin("<form id=\"case-import-form\" method=\"post\" action=\"/powerflow/import-cases\" enctype=\"multipart/form-data\"", selection_html)
         @test occursin("type=\"file\" name=\"casefiles\" accept=\".m,.M,.dat,.DAT\" multiple", selection_html)
-        @test occursin("Importing files copies them", selection_html)
+        @test occursin("Import case files", selection_html)
         @test occursin("Start PowerFlow run", selection_html)
         @test occursin("<input type=\"hidden\" name=\"config_file\" value=\"$(secondary_config)\">", selection_html)
         @test occursin("<code>$(secondary_config)</code>", selection_html)
@@ -764,12 +763,12 @@ settings:
         end
         @test occursin("Existing case file", selection_html)
         @test occursin("Or type case file path", selection_html)
-        @test occursin("Default remains MATPOWER-oriented.", selection_html)
+        @test occursin("Case input format", selection_html)
         @test occursin("DTF diagnostics (experimental/internal)", selection_html)
         @test occursin("name=\"for002_reference_file\"", selection_html)
         @test occursin("list=\"for002-reference-candidates\"", selection_html)
         @test occursin("<datalist id=\"for002-reference-candidates\"><option value=\"FOR002.DAT\">FOR002.DAT</option><option value=\"FOR002_reference.DAT\">FOR002_reference.DAT</option></datalist>", selection_html)
-        @test occursin("FOR002.DAT is available in the case cache and can be selected here", selection_html)
+        @test occursin("Optional FOR002 reference file", selection_html)
         @test !occursin("full DTF support", selection_html)
         @test occursin("const updateDatCaseAssistance = function ()", selection_html)
         @test occursin("new RegExp('\\\\.dat\$', 'i').test(effectiveValue)", selection_html)
@@ -1308,12 +1307,11 @@ settings:
       @test invalid_response.status == 400
       @test occursin("name=\"casefile_manual\"", invalid_html)
       @test occursin("name=\"config_file\" value=\"$(config_file)\"", invalid_html)
-      @test occursin("data-dismissible-alert", invalid_html)
+      @test occursin("id=\"feedback-modal\" class=\"feedback-modal\"", invalid_html)
       @test occursin("class=\"alert alert-error error\"", invalid_html)
-      @test occursin("class=\"alert-close\"", invalid_html)
+      @test occursin("class=\"feedback-modal-close\"", invalid_html)
       @test occursin("data-powerflow-form", invalid_html)
-      @test occursin("form.addEventListener('input', clearAlert, {once: true})", invalid_html)
-      @test occursin("form.addEventListener('change', clearAlert, {once: true})", invalid_html)
+      @test occursin("feedbackModal.showModal()", invalid_html)
       @test !occursin("<details class=\"last-errors span-2\">", invalid_html)
       @test occursin("Last errors", invalid_html)
       @test occursin("href=\"/webui/last-errors\"", invalid_html)
@@ -1408,7 +1406,6 @@ settings:
       @test !occursin("matpower_one_at_a_time", form_html)
       @test findfirst("Advanced / expert options", form_html) < findfirst("MATPOWER import conventions", form_html)
       @test findfirst("<details class=\"span-2 expert-section\">", form_html) < findfirst("MATPOWER import conventions", form_html)
-      @test occursin("Use <strong>off</strong> for manual overrides", form_html)
       @test findfirst("Advanced / expert options", form_html) < findfirst("name=\"run_diagnostics\"", form_html)
       routed_powerflow_html = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow"; output_root = output_root).body)
       @test occursin("MATPOWER import conventions", routed_powerflow_html)
@@ -1428,6 +1425,13 @@ settings:
       @test Sparlectra.resolve_webui_help_topic("power_flow.qlimits.enforcement_mode") !== nothing
       expected_help_topics = Dict(
         "casefile" => "webui.casefile",
+        "casefile_manual" => "webui.casefile",
+        "casefiles" => "webui.import_case_files",
+        "config_maintenance" => "webui.config_maintenance",
+        "ignore_webui_settings" => "webui.ignore_webui_settings",
+        "case_format" => "webui.case_format",
+        "for002_reference_file" => "webui.for002_reference_file",
+        "dtf_outage_selection" => "webui.dtf_outage_selection",
         "power_flow_tol" => "power_flow.tol",
         "power_flow_max_iter" => "power_flow.max_iter",
         "power_flow_autodamp" => "power_flow.autodamp",
@@ -1467,7 +1471,8 @@ settings:
       )
       @test all(Sparlectra.WEBUI_FORM_HELP_TOPICS[field] == help_topic for (field, help_topic) in expected_help_topics)
       for (field, help_topic) in expected_help_topics
-        @test occursin("name=\"$(field)\"", form_html)
+        # config_maintenance labels a fieldset <legend>, not a form input.
+        field == "config_maintenance" ? (@test occursin("Configuration maintenance", form_html)) : (@test occursin("name=\"$(field)\"", form_html))
         @test occursin("href=\"/help/$(help_topic)\"", form_html)
       end
       @test !occursin("name=\"output_root\"", form_html)
@@ -1506,7 +1511,7 @@ settings:
       @test occursin("Advanced start values", form_html)
       @test occursin("<details class=\"span-2 start-current-iteration-options advanced-start-values\">", form_html)
       @test occursin("<summary>Advanced start values</summary>", form_html)
-      @test occursin("Current-iteration pre-solve", form_html)
+      @test occursin("Enable current-iteration pre-solve", form_html)
       for field in (
         "power_flow_start_current_iteration_enabled",
         "power_flow_start_current_iteration_max_iter",
