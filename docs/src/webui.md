@@ -19,6 +19,19 @@ PowerFlow service. The Web UI contains presentation, form parsing, and route
 handling only; numerical execution continues through `start_powerflow_run` and
 `run_sparlectra_api`.
 
+## Feedback and error popups
+
+One-off feedback (a rejected submission's validation error, the case-import
+result summary, a case-specific-settings-loaded notice) is combined into a
+single dismissible `<dialog>` popup that opens over the PowerFlow form instead
+of being pushed inline into the page flow. It closes via its own close button,
+by clicking the dimmed backdrop, or with the Escape key. Persistent
+in-page notices with an actionable link — for example the configuration
+notice pointing at **the advanced configuration tools** — stay inline instead,
+since a modal would hide the target they link to. A separate, permanent
+history of recent errors remains available on the **Last errors** page linked
+from the header, independent of the popup.
+
 ## Start after package installation
 
 ```julia
@@ -210,6 +223,15 @@ are supported by the current Web UI case-resolution logic. Generated `.jl`
 cache artifacts are hidden from the selector, and files with the reserved
 `warmup_` prefix are internal-only. FOR002-like `.DAT` files are not primary
 cases; use the optional FOR002 reference field for those validation references.
+The FOR002 reference field is used only for legacy reference comparison
+diagnostics: enter an absolute path, a path copied from the same case cache
+directory, or select a FOR002.DAT candidate already present in the case cache
+when one is offered. The **Case input format** selector defaults to
+**Auto** (MATPOWER-oriented); the native DTF path is experimental/internal and
+intended for diagnostics and validation, not the primary workflow. For the
+selected-outage-records mode, the **Selected DTF outage labels/indices** field
+accepts one parsed label or outage index at a time; the result page reports
+the compact outage summary while detailed rows stay in artifacts.
 First startup still provisions the small `warmup_case3.jl` case for warmup, but
 it is not user-selectable. A separate manual field accepts a bare case name such
 as `case14.m`, `case118.m`, or `case9241pegase.m`; a nonempty manual value
