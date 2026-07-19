@@ -13,6 +13,12 @@
 * Removed the remaining inline field-hint texts throughout the PowerFlow form (Tolerance, CSV format, benchmark options, current-iteration pre-solve intro, MATPOWER import conventions intro, case-file/case-import/config-maintenance/ignore-webui-settings/DTF-input-format guidance) in favor of each field's `?` help link, restoring the Web UI's documented "explanatory text lives in Markdown, not in Julia views" principle. Added or extended the corresponding `docs/src/webui.md`, `performance_profiling.md`, and `matpower_import.md` sections so no information was lost.
 * Combined one-off Web UI feedback (submission errors, case-import results, case-settings-loaded notices) into a single dismissible `<dialog>` popup that opens over the PowerFlow form instead of being written inline into the page flow. Persistent notices with an in-page action link (the configuration notice) stay inline since a modal would hide their target; the separate **Last errors** history page is unchanged.
 
+### Bug Fixes
+
+* Fixed `run.log`/`result_*.txt` reporting the wrong `Case` name for MATPOWER cases that carry `mpc.bus_name` metadata (present independent of `apply_bus_names`): a loop variable used to record original bus names inside `createNetFromMatPowerCase` shared its name with the outer case-name variable, so `net.name` ended up as the last bus's original name (for example `case14.m` reporting `Bus 14    LV` instead of `case14`) instead of the case name.
+* Fixed the `PV→PQ locks`/`PV→PQ events` header lines in `printACPFlowResults` not fitting the report's fixed label-column width (their previous longer wording, `Guarded PV→PQ locks`/`Iterative PV→PQ events`, overran the column other fields align to).
+* Fixed the `Solver time`/`Total time` header lines in `printACPFlowResults` not lining up with the report's fixed label-column width (they were 3 characters narrower than every other label).
+
 # Version 0.8.10 — 2026-07-17
 
 ## New Features

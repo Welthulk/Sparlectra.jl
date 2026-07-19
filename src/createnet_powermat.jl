@@ -261,8 +261,8 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
   raw_bus_names = _matpower_metadata_vector(mpc, :bus_name)
   if raw_bus_names !== nothing && length(raw_bus_names) == nbus
     for (row_index, row) in enumerate(eachrow(busData))
-      name = raw_bus_names[row_index]
-      isempty(name) || (bus_original_name_by_orig[Int(row[BUS_I])] = name)
+      orig_bus_name = raw_bus_names[row_index]
+      isempty(orig_bus_name) || (bus_original_name_by_orig[Int(row[BUS_I])] = orig_bus_name)
     end
   end
   branch_kind_overrides = _matpower_branch_kind_overrides(mpc, nbranch; apply_branch_kind = apply_branch_kind)
