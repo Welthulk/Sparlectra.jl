@@ -81,8 +81,15 @@ mpc.dcline = [
     net_default = Sparlectra.createNetFromMatPowerCase(mpc = mpc)
     @test haskey(net_default.busDict, "1")
     @test haskey(net_default.busDict, "2")
+    # Regression: a local loop variable used to build bus_original_name_by_orig
+    # from mpc.bus_name shared its name with the outer case-name variable, so
+    # net.name ended up as the last bus's original name (e.g. "LoadBus")
+    # instead of the case name, whenever mpc.bus_name metadata was present
+    # (independent of apply_bus_names).
+    @test net_default.name == "metadata_case"
 
     net_named = Sparlectra.createNetFromMatPowerCase(mpc = mpc, apply_bus_names = true, apply_branch_names = true)
+    @test net_named.name == "metadata_case"
     @test haskey(net_named.busDict, "SlackBus")
     @test haskey(net_named.busDict, "LoadBus")
     @test net_named.busOrigIdxDict[net_named.busDict["SlackBus"]] == 1
