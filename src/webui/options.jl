@@ -56,6 +56,7 @@ const WEBUI_OPTION_SPECS = (
   WebUIOptionSpec("matpower_import.pv_voltage_source", "matpower_import_pv_voltage_source", String, :select, "gen_vg", MATPOWER_PV_VOLTAGE_SOURCE_VALUES, :expert, true),
   WebUIOptionSpec("matpower_import.compare_voltage_reference", "matpower_import_compare_voltage_reference", String, :select, "imported_setpoint", MATPOWER_COMPARE_VOLTAGE_REFERENCE_VALUES, :expert, true),
   WebUIOptionSpec("transformer.tap_changer_model", "transformer_tap_changer_model", String, :select, "ideal", TRANSFORMER_TAP_CHANGER_MODEL_VALUES, :expert, true),
+  WebUIOptionSpec("matpower_export.write_solution", "matpower_export_write_solution", Bool, :checkbox, true, (), :expert, true),
   WebUIOptionSpec("output.logfile_results", "output_logfile_results", String, :select, "compact", OUTPUT_LOGFILE_RESULTS_VALUES, :basic, true),
   WebUIOptionSpec("benchmark.enabled", "benchmark_enabled", Bool, :checkbox, false, (), :expert, true),
   WebUIOptionSpec("benchmark.samples", "benchmark_samples", Int, :number, 10, (), :expert, true),

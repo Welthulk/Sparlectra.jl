@@ -160,6 +160,7 @@ export
   ObservabilityConfig,
   StateEstimationConfig,
   MatpowerImportConfig,
+  MatpowerExportConfig,                   # MATPOWER export settings (write_solution).
   TransformerConfig,                      # Transformer-modeling settings (tap-changer model).
   PerformanceConfig,
   BenchmarkConfig,
@@ -175,6 +176,7 @@ export
   active_sparlectra_config,               # Return the currently active configuration.
   powerflow_config,                       # Access the active power-flow settings.
   matpower_import_config,                 # Access MATPOWER import settings.
+  matpower_export_config,                 # Access MATPOWER export settings.
   transformer_config,                     # Access transformer-modeling settings.
   configured_matpower_cases,              # Resolve configured MATPOWER batch order.
   state_estimation_config,

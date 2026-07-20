@@ -143,6 +143,14 @@ math itself lives in a single place,
 `src/equicircuit.jl`, so importers stay free of duplicated tap-impedance
 mathematics.
 
+The corrected R/X values are what a subsequent [`writeMatpowerCasefile`](@ref)
+export writes out (both the MATPOWER and the native DTF import path use the
+same `Branch.r_pu`/`Branch.x_pu` fields the exporter reads). When such a case
+was corrected on import, the exporter records a
+`mpc.sparlectra.tap_changer_model = 'impedance_correction'` roundtrip marker so
+a Sparlectra reimport does not reapply the correction a second time; see [Tap-impedance
+correction and reimport](matpower_import.md#tap-impedance-correction-and-reimport).
+
 ## Loader and validation behavior
 
 ### Key validation
@@ -353,6 +361,8 @@ The following canonical keys are currently present in `src/configuration.yaml.ex
 - `diagnostics.logfile_diagnostics`
 - `extensions`
 - `extensions.reserved`
+- `matpower_export`
+- `matpower_export.write_solution`
 - `matpower_import`
 - `matpower_import.auto_profile`
 - `matpower_import.auto_profile_log`

@@ -256,26 +256,47 @@ button,
 .tolerance-field {
   display: flex;
   align-items: stretch;
-  gap: .35rem;
 }
 
 .tolerance-field input {
   flex: 1;
   min-width: 0;
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+  border-right: none;
 }
 
 .tolerance-spin {
   display: flex;
   flex-direction: column;
-  gap: .15rem;
+  width: 1.4rem;
+  border: 1px solid #b7c3d5;
+  border-top-right-radius: 7px;
+  border-bottom-right-radius: 7px;
+  overflow: hidden;
 }
 
 .tolerance-spin button {
   flex: 1;
+  min-height: 0;
   line-height: 1;
-  padding: 0 .5rem;
-  font-size: .65rem;
+  padding: 0;
+  font-size: .55rem;
   cursor: pointer;
+  border: none;
+  border-radius: 0;
+  background: #f4f6f9;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tolerance-spin-up {
+  border-bottom: 1px solid #b7c3d5;
+}
+
+.tolerance-spin button:hover {
+  background: #e2e9f2;
 }
 
 .check input {
@@ -521,15 +542,41 @@ pre {
   gap: 0.75rem;
 }
 
-.alert-error.is-dismissed {
-  display: none;
+dialog.feedback-modal {
+  border: none;
+  border-radius: 12px;
+  padding: 0;
+  width: min(90vw, 560px);
+  max-width: 560px;
+  box-shadow: 0 20px 60px rgb(15 23 42 / 35%);
 }
 
-.alert-close {
+dialog.feedback-modal::backdrop {
+  background: rgb(15 23 42 / 55%);
+}
+
+.feedback-modal-body {
+  padding: 1.25rem 1.5rem 1.5rem;
+}
+
+.feedback-modal-body .alert:last-child {
+  margin-bottom: 0;
+}
+
+.feedback-modal-close-form {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0.6rem 0.6rem 0;
+}
+
+.feedback-modal-close {
   flex: 0 0 auto;
-  padding: 0.1rem 0.45rem;
-  background: #8d1e1e;
-  line-height: 1.2;
+  padding: 0.1rem 0.6rem;
+  line-height: 1.4;
+  font-size: 1.1rem;
+  background: #eef1f6;
+  color: #172033;
+  border: 1px solid #b7c3d5;
 }
 
 .last-errors {
@@ -606,10 +653,12 @@ pre {
   display: flex;
   align-items: center;
   gap: .4rem;
+  min-width: 0;
 }
 
 .help-link {
   display: inline-flex;
+  flex-shrink: 0;
   align-items: center;
   justify-content: center;
   width: 1.35rem;

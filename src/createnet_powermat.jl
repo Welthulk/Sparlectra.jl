@@ -167,6 +167,25 @@ function _matpower_sparlectra_transformer_losses(mpc)
   return hasproperty(ext, :transformer_losses) ? collect(ext.transformer_losses) : NamedTuple[]
 end
 
+"""
+    _matpower_sparlectra_tap_changer_model_marker(mpc) -> Union{Nothing,String}
+
+Read the optional `mpc.sparlectra.tap_changer_model` roundtrip marker written
+by [`writeMatpowerCasefile`](@ref). When it is `"impedance_correction"`, the
+exported `BR_R`/`BR_X` values already carry the tap-impedance correction, so
+`createNetFromMatPowerCase` must not reapply [`calcTapCorrectedRX`](@ref) on
+reimport (that would stack a second, differently-derived correction factor on
+top of the already-corrected values). Absent the marker, import behavior is
+unchanged so standard third-party MATPOWER cases are unaffected.
+"""
+function _matpower_sparlectra_tap_changer_model_marker(mpc)::Union{Nothing,String}
+  hasproperty(mpc, :sparlectra) || return nothing
+  ext = getproperty(mpc, :sparlectra)
+  ext === nothing && return nothing
+  hasproperty(ext, :tap_changer_model) || return nothing
+  return ext.tap_changer_model
+end
+
 function _matpower_dcline_col(dcline::AbstractMatrix, row::Integer, col::Integer, name::AbstractString; required::Bool = false, default::Float64 = 0.0)
   if size(dcline, 2) >= col
     return Float64(dcline[row, col])
@@ -242,8 +261,8 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
   raw_bus_names = _matpower_metadata_vector(mpc, :bus_name)
   if raw_bus_names !== nothing && length(raw_bus_names) == nbus
     for (row_index, row) in enumerate(eachrow(busData))
-      name = raw_bus_names[row_index]
-      isempty(name) || (bus_original_name_by_orig[Int(row[BUS_I])] = name)
+      orig_bus_name = raw_bus_names[row_index]
+      isempty(orig_bus_name) || (bus_original_name_by_orig[Int(row[BUS_I])] = orig_bus_name)
     end
   end
   branch_kind_overrides = _matpower_branch_kind_overrides(mpc, nbranch; apply_branch_kind = apply_branch_kind)
@@ -257,6 +276,9 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
     transformer_loss_by_row[Int(entry.branch_row)] = entry
   end
   !isempty(transformer_loss_by_row) && @info "Sparlectra MATPOWER transformer-loss metadata found" transformer_loss_records = length(transformer_loss_by_row)
+  sparlectra_tap_marker = _matpower_sparlectra_tap_changer_model_marker(mpc)
+  skip_tap_rx_correction = sparlectra_tap_marker == "impedance_correction"
+  skip_tap_rx_correction && @info "Sparlectra MATPOWER tap_changer_model marker found: BR_R/BR_X are already impedance-corrected; skipping calcTapCorrectedRX on reimport." tap_changer_model = sparlectra_tap_marker
 
   if log
     @info "Creating new Net: $(name) with baseMVA=$(baseMVA), flatstart=$(flatstart)"
@@ -410,6 +432,8 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
     kind = loss_meta !== nothing ? :transformer : kind
     isLine = kind === :line ? true : kind === :transformer ? false : heuristic_is_line
 
+    tap_correction_model = nothing
+    tap_correction_factor = 1.0
     if isLine
       _addPIModelACLine_by_idx!(
         net = myNet,
@@ -425,7 +449,13 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
       # Central tap-changer impedance model (src/equicircuit.jl): :ideal keeps
       # R/X at the imported values; :impedance_correction re-refers the series
       # impedance through the tapped winding based on the effective tap ratio.
-      tap_rx = calcTapCorrectedRX(r_pu = r_pu, x_pu = x_pu, tap_changer_model = tap_changer_model, ratio = ratio)
+      # When the exporting Sparlectra run already applied this correction
+      # (mpc.sparlectra.tap_changer_model marker on this case), skip reapplying
+      # it here so reimport does not stack a second, differently-derived
+      # correction on top of the already-corrected R/X.
+      tap_rx = skip_tap_rx_correction ? (r_pu = r_pu, x_pu = x_pu, factor = 1.0) : calcTapCorrectedRX(r_pu = r_pu, x_pu = x_pu, tap_changer_model = tap_changer_model, ratio = ratio)
+      tap_correction_model = skip_tap_rx_correction ? :impedance_correction : tap_changer_model
+      tap_correction_factor = tap_rx.factor
       _addPIModelTrafo_by_idx!(
         net = myNet,
         from = from_idx,
@@ -453,12 +483,14 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
       end
       @info "Restored Sparlectra transformer-loss metadata into native branch PI conductance." branch_row = branch_row_index g_pu = g_pu
     end
-    if branch_names_valid || branch_kind_overrides !== nothing || loss_meta !== nothing
+    if branch_names_valid || branch_kind_overrides !== nothing || loss_meta !== nothing || !isLine
       myNet.matpower_branch_metadata[imported_branch_index] = (
         orig_name = branch_names_valid ? branch_names[branch_row_index] : nothing,
         orig_kind = kind,
         orig_index = branch_row_index,
         transformer_loss = loss_meta,
+        tap_changer_model = tap_correction_model,
+        tap_impedance_correction_factor = tap_correction_factor,
       )
     end
   end

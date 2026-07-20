@@ -98,8 +98,8 @@ thresholds.
 |---|---:|---:|---|---|
 | `benchmark.enabled` | Bool | `true` | `true`, `false` | Enable benchmark mode. |
 | `benchmark.methods` | Vector{Symbol/String} | `[rectangular]` | `rectangular` (current PF core) | Methods benchmarked. |
-| `benchmark.seconds` | Float64 | `2.0` | positive real | Benchmark target duration. |
-| `benchmark.samples` | Int | `50` | positive integer | Max benchmark samples. |
+| `benchmark.seconds` | Float64 | `2.0` | positive real | Benchmark max. time budget. This is not a minimum runtime, solver timeout, or iteration limit; a running sample is not interrupted. |
+| `benchmark.samples` | Int | `50` | positive integer | Max benchmark samples per method. The benchmark may finish earlier when this count is reached before the time budget, or collect fewer samples when the time budget is reached first. |
 | `benchmark.show_once` | Bool | `false` | `true`, `false` | Run one full visible solve before timing loop. |
 | `benchmark.show_once_output` | Symbol/String | `classic` | `classic`, `dataframe`, `compact` | Output format for `show_once`. |
 | `benchmark.show_once_max_nodes` | Int | `0` | non-negative integer | Row cap for one-shot output. |

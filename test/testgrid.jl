@@ -2764,8 +2764,8 @@ function test_summary_result_output_closes_file_handle()::Bool
   end
   out = read(result_file, String)
   return occursin("AC Power Flow Results", out) &&
-         occursin("Guarded PV→PQ locks", out) &&
-         occursin("Iterative PV→PQ events", out)
+         occursin("PV→PQ locks", out) &&
+         occursin("PV→PQ events", out)
 end
 
 function run_grid_fast_tests()

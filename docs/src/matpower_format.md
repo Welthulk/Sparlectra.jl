@@ -87,6 +87,28 @@ Important columns are:
 
 In MATPOWER, lines and transformers are represented in the same `branch` matrix. A non-zero tap ratio or phase shift indicates transformer behavior.
 
+## Sparlectra result columns and `write_solution`
+
+Standard MATPOWER solvers write a solved case back into the same input
+matrices: `mpc.bus` `VM`/`VA` are overwritten in place, and `mpc.gen`
+`PG`/`QG` are overwritten in place. `mpc.branch` is different — a solved
+MATPOWER case gains genuine additional columns 14–17 (`PF`, `QF`, `PT`, `QT`;
+an OPF run additionally adds columns 18–21 for the OPF-specific results).
+These are not a Sparlectra extension; they are the standard MATPOWER solved-case
+branch layout.
+
+`writeMatpowerCasefile` controls this through the `write_solution` argument
+(config key `matpower_export.write_solution`, default `true`): when enabled,
+`mpc.branch` gains columns 14–17 (`PF`, `QF`, `PT`, `QT`, MATPOWER sign
+convention: flow **into** the branch at the respective end), sourced from the
+existing branch-flow report path without exporter-side flow recomputation, and
+`VM`/`VA` reflect the current solved node state. A
+`mpc.sparlectra.solution_written = 1` marker documents that columns 8/9 and
+14–17 represent a solution. Sparlectra does not write OPF columns 18–21 or
+`mpc.gencost`. See [`writeMatpowerCasefile`](@ref) and the "Writing the solved
+state" section of the [import guide](import.md) for the full option reference
+and the model-only (`write_solution = false`) behavior.
+
 ## `gencost`: optional cost data
 
 `mpc.gencost` contains generator cost data for optimal power-flow studies. It can be present in many public MATPOWER cases, but it is usually not needed for a plain power-flow run.
