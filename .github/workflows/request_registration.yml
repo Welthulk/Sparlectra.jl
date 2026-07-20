@@ -1,0 +1,38 @@
+name: Request Julia Registration
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  request-registration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: julia-actions/setup-julia@v1
+        with:
+          version: '1.12'
+
+      - name: Determine unreleased version and prepare issue text
+        run: julia .github/scripts/prepare_registration_issue.jl
+
+      - name: Create JuliaRegistrator issue
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const title = fs.readFileSync('release_issue_title.txt', 'utf8').trim();
+            const body = fs.readFileSync('release_issue_body.txt', 'utf8');
+            const issue = await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title,
+              body,
+            });
+            core.notice(`Created registration issue #${issue.data.number}: ${issue.data.html_url}`);
