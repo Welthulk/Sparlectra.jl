@@ -6,10 +6,8 @@ on:
   workflow_dispatch:
     inputs:
       lookback:
-        default: '3'
-permissions:
-  contents: write
-  issues: read
+        description: "[DEPRECATED] No longer has any effect"
+        default: "3"
 jobs:
   TagBot:
     if: github.event_name == 'workflow_dispatch' || github.actor == 'JuliaTagBot'
@@ -18,4 +16,3 @@ jobs:
       - uses: JuliaRegistries/TagBot@v1
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          lookback: ${{ github.event.inputs.lookback }}
