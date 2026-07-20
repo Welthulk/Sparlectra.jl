@@ -12,7 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Date: 2026-07-13
+# file: examples/exp_transformer_loss_extension.jl
+# purpose: demonstrates Sparlectra's MATPOWER transformer-loss extension by exporting a small transformer case with active no-load conductance metadata and reimporting it losslessly
+
 using Sparlectra
+
+include(joinpath(@__DIR__, "internal", "example_header.jl"))
 
 """
     main(; output_dir = joinpath(@__DIR__, "_out", "transformer_loss_extension"))
@@ -22,6 +28,7 @@ export it as MATPOWER, and reimport it to demonstrate Sparlectra's proprietary
 transformer-loss extension round trip.
 """
 function main(; output_dir = joinpath(@__DIR__, "_out", "transformer_loss_extension"))
+  print_example_banner("examples/exp_transformer_loss_extension.jl", "demonstrates Sparlectra's MATPOWER transformer-loss extension by exporting a small transformer case with active no-load conductance metadata and reimporting it losslessly")
   mkpath(output_dir)
   net = Sparlectra.Net(name = "transformer_loss_extension", baseMVA = 100.0)
   Sparlectra.addBus!(net = net, busName = "FROM", vn_kV = 110.0, oBusIdx = 1)
@@ -61,9 +68,7 @@ function main(; output_dir = joinpath(@__DIR__, "_out", "transformer_loss_extens
   return (path = path, transformer_loss_records = length(mpc.sparlectra.transformer_losses), total_g_pu = roundtrip.branchVec[1].g_pu)
 end
 
-if abspath(PROGRAM_FILE) == @__FILE__
-  result = Base.invokelatest(main)
-  println("Wrote ", result.path)
-  println("Transformer-loss records: ", result.transformer_loss_records)
-  println("Round-trip total G pu: ", result.total_g_pu)
-end
+result = run_example(main)
+println("Wrote ", result.path)
+println("Transformer-loss records: ", result.transformer_loss_records)
+println("Round-trip total G pu: ", result.total_g_pu)

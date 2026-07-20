@@ -17,11 +17,15 @@
 # This script progressively deactivates branch-flow measurements and logs
 # global/local redundancy metrics and warnings when local observability is lost.
 
+# Date: 2026-03-13
 # file: examples/state_estimation_observability.jl
+# purpose: progressively deactivates branch-flow measurements and logs global/local observability-redundancy metrics and warnings when local observability is lost
 
 using Sparlectra
 using Printf
 using Dates
+
+include(joinpath(@__DIR__, "internal", "example_header.jl"))
 using Random
 
 include("state_estimation_wls.jl")
@@ -496,6 +500,7 @@ end
 Run the observability example and write the output to a timestamped log file.
 """
 function main()
+  print_example_banner("examples/state_estimation_observability.jl", "progressively deactivates branch-flow measurements and logs global/local observability-redundancy metrics and warnings when local observability is lost")
   mkpath(OUTDIR_OBS)
   timestamp = Dates.format(Dates.now(), "yyyymmdd_HHMMSS")
   logfile = joinpath(OUTDIR_OBS, "run_observability_$(CASEFILE_OBS)_$(timestamp).log")
@@ -506,6 +511,5 @@ function main()
   return logfile
 end
 
-if get(ENV, "SPARLECTRA_USING_STATE_ESTIMATION_OBSERVABILITY", "0") != "1"
-  Base.invokelatest(getfield(@__MODULE__, :main))
-end
+run_example(main)
+

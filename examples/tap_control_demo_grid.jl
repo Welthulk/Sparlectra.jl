@@ -1,5 +1,25 @@
+# Copyright 2023–2026 Udo Schmitz
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Date: 2026-04-24
+# file: examples/tap_control_demo_grid.jl
+# purpose: lightweight three-controller demo (OLTC + PST + Schraegregler) via run_sparlectra(net=...), reporting controller/trace rows from latest_control_result(net)
+
 using Sparlectra
 using Printf
+
+include(joinpath(@__DIR__, "internal", "example_header.jl"))
 
 function demo_yaml_path(args::AbstractVector{String} = ARGS)
   if length(args) >= 1
@@ -161,6 +181,7 @@ function tap_demo_run_config(sparlectra_config::SparlectraConfig, show_classic::
 end
 
 function main(args::AbstractVector{String} = ARGS)
+  print_example_banner("examples/tap_control_demo_grid.jl", "lightweight three-controller demo (OLTC + PST + Schraegregler) via run_sparlectra(net=...), reporting controller/trace rows from latest_control_result(net)")
   demo_path, demo_settings = load_demo_settings(args)
   config_label, sparlectra_config = load_demo_sparlectra_config(demo_settings, demo_path)
   show_classic = get(ENV, "SPARLECTRA_TAP_DEMO_CLASSIC", "1") != "0"
@@ -215,6 +236,5 @@ function main(args::AbstractVector{String} = ARGS)
   end
 end
 
-if get(ENV, "SPARLECTRA_TAP_CONTROL_DEMO_NO_MAIN", "0") != "1"
-  Base.invokelatest(getfield(@__MODULE__, :main), ARGS)
-end
+run_example(main, ARGS)
+

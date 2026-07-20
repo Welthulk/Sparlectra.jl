@@ -2,8 +2,23 @@
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Date: 2026-05-18
+# file: examples/matpower_import.jl
+# purpose: CLI runner that imports a MATPOWER case via run_matpower_case using the resolved Sparlectra configuration, with optional Julia-thread re-exec
 
 using Sparlectra
+
+include(joinpath(@__DIR__, "internal", "example_header.jl"))
 
 """
     _parse_cli_args(args)
@@ -74,6 +89,7 @@ end
 Entry point for the MATPOWER import runner.
 """
 function main()
+  print_example_banner("examples/matpower_import.jl", "CLI runner that imports a MATPOWER case via run_matpower_case using the resolved Sparlectra configuration, with optional Julia-thread re-exec")
   parsed = _parse_cli_args(copy(ARGS))
   config_file = Sparlectra.configuration_path_from_inputs(
     env_var = "SPARLECTRA_CONFIGURATION_YAML",
@@ -83,10 +99,16 @@ function main()
   return Sparlectra.run_matpower_case(; config_file = config_file, casefile = parsed.casefile)
 end
 
+# SPARLECTRA_MATPOWER_IMPORT_NO_MAIN=1 is a test-only escape hatch: it lets
+# test/test_matpower_example.jl load this file's function definitions into a
+# throwaway module (to smoke-test its structure) without actually running the
+# CLI import. It has no effect on normal console/interactive use — those
+# always run main() unconditionally, exactly like every other examples/*.jl
+# program (see examples/exp_transformer_tap_changer_model.jl for why no
+# `abspath(PROGRAM_FILE) == @__FILE__` guard is used here).
 if get(ENV, "SPARLECTRA_MATPOWER_IMPORT_NO_MAIN", "0") != "1"
   try
-    # Use invokelatest for script-style execution under Revise/Julia 1.12.
-    _ = Base.invokelatest(getfield(@__MODULE__, :main))
+    _ = run_example(main)
     nothing
   catch err
     if err isa InterruptException
@@ -96,3 +118,4 @@ if get(ENV, "SPARLECTRA_MATPOWER_IMPORT_NO_MAIN", "0") != "1"
     rethrow()
   end
 end
+

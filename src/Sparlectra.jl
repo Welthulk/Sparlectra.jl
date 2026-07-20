@@ -96,7 +96,10 @@ export
 
   # Trafo
   TrafoTyp,
+  AbstractTapChangerModel,
   PowerTransformerTaps,
+  PhaseTapChangerModel,
+  TapTablePoint,
   PowerTransformerWinding,
   PowerTransformer,
   TransformerModelParameters,
@@ -378,6 +381,12 @@ export
   calcSkewAngleTap,
   calcTapImpedanceCorrectionFactor,       # Tap-changer impedance-correction factor (central model).
   calcTapCorrectedRX,                     # Apply the tap-changer impedance correction to R/X.
+  calcRatioTapCorrection,                 # Ratio-tap correction factor for the :neutral_relative convention.
+  calcRatioTapRange,                      # Ratio-terms tap range (tap_min, tap_max, tap_step).
+  calcPhaseTapFraction,                   # CGMES phase-tap-changer n-n0 tap fraction.
+  calcPhaseTapAngleRatio,                 # CGMES phase-tap-changer effective ratio/shift/regulating vector.
+  calcPhaseTapReactance,                  # CGMES phase-tap-changer series-reactance dependence on tap angle.
+  calcPhaseTapTable,                      # Tabular phase-tap-changer exact lookup (overrides formulas).
   calcNeutralU,
   createYBUS,                             # Build the network admittance matrix.
   adjacentBranches,

@@ -14,11 +14,15 @@
 #
 # Example: compare state estimation with and without ZIB (zero-injection bus)
 
+# Date: 2026-03-18
 # file: examples/state_estimation_passive_bus_zib_comparison.jl
+# purpose: compares WLS state-estimation results with and without zero-injection (ZIB) measurements at passive buses
 
 using Sparlectra
 using Printf
 using Random
+
+include(joinpath(@__DIR__, "internal", "example_header.jl"))
 
 function build_passive_transit_example_net()
   net = Net(name = "se_passive_transit_example", baseMVA = 100.0)
@@ -107,6 +111,7 @@ function _run_scenario(label::String, base_net::Net, measurements::Vector{Measur
 end
 
 function run_passive_bus_zib_comparison()
+  print_example_banner("examples/state_estimation_passive_bus_zib_comparison.jl", "compares WLS state-estimation results with and without zero-injection (ZIB) measurements at passive buses")
   net = build_passive_transit_example_net()
   ite_pf, sparse_meas = build_sparse_measurements_for_zib_demo(net)
   passive = findPassiveBuses(net)
@@ -128,4 +133,4 @@ function run_passive_bus_zib_comparison()
   return nothing
 end
 
-run_passive_bus_zib_comparison()
+run_example(run_passive_bus_zib_comparison)

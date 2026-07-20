@@ -109,6 +109,16 @@ function calcTransformerRXGB(Vn_kV::Float64, modelData::TransformerModelParamete
   return (rk, xk, gm, bm)
 end
 """
+    AbstractTapChangerModel
+
+Supertype for tap-changer model structs attached to a `PowerTransformerWinding`
+(`PowerTransformerTaps` for the ratio-tap-changer case; further variants, e.g.
+a CGMES-style phase-tap-changer model, are staged separately). See
+`docs/src/branchmodel.md` for the overall layering.
+"""
+abstract type AbstractTapChangerModel end
+
+"""
     PowerTransformerTaps
 
 A mutable structure representing the tap settings of a power transformer.
@@ -123,28 +133,41 @@ A mutable structure representing the tap settings of a power transformer.
 - `neutralU_ratio::Float64`: The ratio of the neutral voltage to the rated voltage.
 - `tapStepPercent::Float64`: The percentage change in voltage per step.
 - `tapSign::Integer`: The direction of the tap changer, 1 for increasing voltage with increasing step, -1 for decreasing.
+- `convention::Symbol`: The ratio-tap correction convention. Only `:neutral_relative` is currently supported: the [`calcRatioTapCorrection`](@ref) factor is applied as a **divisor** on the winding ratio (`ratio / corr`), matching `calcTransformerRatio`.
 
 # Constructors
-- `PowerTransformerTaps(; Vn_kV::Float64, step::Int, lowStep::Int, highStep::Int, neutralStep::Int, voltageIncrement_kV::Float64, neutralU::Union{Nothing,Float64} = nothing, neutralU_ratio::Union{Nothing,Float64} = nothing)`: Creates a new `PowerTransformerTaps` instance.
+- `PowerTransformerTaps(; Vn_kV::Float64, step::Int, lowStep::Int, highStep::Int, neutralStep::Int, voltageIncrement_kV::Float64, neutralU::Union{Nothing,Float64} = nothing, neutralU_ratio::Union{Nothing,Float64} = nothing, convention::Symbol = :neutral_relative)`: Creates a new `PowerTransformerTaps` instance.
 
 # Methods
 - `Base.show(io::IO, x::PowerTransformerTaps)`: Prints the `PowerTransformerTaps` instance.
 """
-mutable struct PowerTransformerTaps
+mutable struct PowerTransformerTaps <: AbstractTapChangerModel
   step::Int                          # actual step/position
   lowStep::Int                       # cim:TapChanger.lowStep
   highStep::Int                      # cim:TapChanger.highStep
-  neutralStep::Int                   # cim:TapChanger.neutralStep # 
+  neutralStep::Int                   # cim:TapChanger.neutralStep #
   voltageIncrement_kV::Float64       # cim:RatioTapChanger.stepVoltageIncrement in kV
 
   neutralU::Float64                  # cim:TapChanger.neutralU, usually = ratedU of the transformer end, but can deviate
   neutralU_ratio::Float64
   tapStepPercent::Float64
   tapSign::Integer
+  convention::Symbol                 # ratio-tap correction convention, see docs/src/branchmodel.md
 
-  function PowerTransformerTaps(; Vn_kV::Float64, step::Int, lowStep::Int, highStep::Int, neutralStep::Int, voltageIncrement_kV::Float64, neutralU::Union{Nothing,Float64} = nothing, neutralU_ratio::Union{Nothing,Float64} = nothing)
+  function PowerTransformerTaps(;
+    Vn_kV::Float64,
+    step::Int,
+    lowStep::Int,
+    highStep::Int,
+    neutralStep::Int,
+    voltageIncrement_kV::Float64,
+    neutralU::Union{Nothing,Float64} = nothing,
+    neutralU_ratio::Union{Nothing,Float64} = nothing,
+    convention::Symbol = :neutral_relative,
+  )
     @assert Vn_kV > 0.0 "Vn_kV must be > 0.0"
     @assert highStep != lowStep "tap high position equals low position $(highStep) = $(lowStep)"
+    convention == :neutral_relative || throw(ArgumentError("PowerTransformerTaps: unsupported convention=$(convention). Allowed values: :neutral_relative."))
 
     tapStepPercent = 0.0
     if voltageIncrement_kV != 0.0
@@ -158,19 +181,147 @@ mutable struct PowerTransformerTaps
       neutralU_ratio = neutralU / Vn_kV
     end
     tapSign = (highStep > lowStep) ? 1 : -1
-    new(step, lowStep, highStep, neutralStep, voltageIncrement_kV, neutralU, neutralU_ratio, tapStepPercent, tapSign)
+    new(step, lowStep, highStep, neutralStep, voltageIncrement_kV, neutralU, neutralU_ratio, tapStepPercent, tapSign, convention)
   end
 
   function Base.show(io::IO, x::PowerTransformerTaps)
     print(io, "PowerTransformerTaps(")
     print(io, "step=$(x.step), ")
     print(io, "lowStep=$(x.lowStep), ")
-    print(io, "hightStep=$(x.highStep), ")
+    print(io, "highStep=$(x.highStep), ")
     print(io, "neutralStep=$(x.neutralStep), ")
     print(io, "voltageIncrement_kV=$(x.voltageIncrement_kV), ")
     print(io, "neutralU=$(x.neutralU), ")
     print(io, "neutralU_ratio=$(x.neutralU_ratio), ")
-    print(io, "tapStepPercent=$(x.tapStepPercent) ")
+    print(io, "tapStepPercent=$(x.tapStepPercent), ")
+    print(io, "convention=$(x.convention) ")
+    print(io, ")")
+  end
+end
+
+"""
+    TapTablePoint
+
+An immutable row of a tabular phase-tap-changer characteristic
+(cim:PhaseTapChangerTablePoint / cim:TapChangerTablePoint): `step` maps to
+`ratio`/`angle_deg` (and optionally `x_pu`), overriding formula-based
+reconstruction whenever present on a [`PhaseTapChangerModel`](@ref).
+
+# Fields
+- `step::Int`: cim:TapChangerTablePoint.step.
+- `ratio::Float64`: effective off-nominal ratio at this step, cim:TapChangerTablePoint.ratio.
+- `angle_deg::Float64`: effective phase shift in degrees at this step, cim:TapChangerTablePoint.angle.
+- `x_pu::Union{Nothing,Float64}`: series reactance in per unit at this step, cim:TapChangerTablePoint.x; `nothing` if not provided.
+
+# Constructors
+- `TapTablePoint(; step::Int, ratio::Float64, angle_deg::Float64, x_pu::Union{Nothing,Float64} = nothing)`: Creates a new `TapTablePoint` instance.
+"""
+struct TapTablePoint
+  step::Int
+  ratio::Float64
+  angle_deg::Float64
+  x_pu::Union{Nothing,Float64}
+
+  TapTablePoint(; step::Int, ratio::Float64, angle_deg::Float64, x_pu::Union{Nothing,Float64} = nothing) = new(step, ratio, angle_deg, x_pu)
+end
+
+"""
+    PhaseTapChangerModel
+
+A mutable structure representing a CGMES-style phase-tap-changer (PST) model,
+data only — the CGMES formulas are implemented in `equicircuit.jl`
+(`calcPhaseTapFraction`, `calcPhaseTapAngleRatio`, `calcPhaseTapReactance`,
+`calcPhaseTapTable`). See `docs/src/branchmodel.md`.
+
+# Fields
+- `kind::Symbol`: `:symmetrical`, `:asymmetrical`, or `:tabular`.
+- `step::Int`: The actual step/position.
+- `lowStep::Int`: The lowest step/position (auto-derived from `table` for `:tabular` if omitted).
+- `highStep::Int`: The highest step/position (auto-derived from `table` for `:tabular` if omitted).
+- `neutralStep::Int`: The neutral step/position; for `:tabular` it must be a step present in `table`.
+- `voltage_step_increment::Union{Nothing,Float64}`: `u`, per step, in per unit of rated voltage (cim:PhaseTapChangerNonLinear.voltageStepIncrement); must be `nothing` for `:tabular`.
+- `step_phase_shift_increment::Union{Nothing,Float64}`: Degrees per step for linear models (cim:PhaseTapChangerLinear.stepPhaseShiftIncrement).
+- `winding_connection_angle_deg::Union{Nothing,Float64}`: `ψ`, required for `:asymmetrical` (cim:PhaseTapChangerAsymmetrical.windingConnectionAngle). A quadrature booster is `:asymmetrical` with `ψ = 90°`. Must be `nothing` for `:tabular`.
+- `x_min::Union{Nothing,Float64}`: `X(0)` in per unit; must be `nothing` for `:tabular`.
+- `x_max::Union{Nothing,Float64}`: `X(αmax)` in per unit; must be `nothing` for `:tabular`.
+- `convention::Symbol`: sign/reciprocal convention forwarded to `calcSkewAngleTap` for `:asymmetrical` models, and used to reconstruct the regulating vector for `:tabular` models; default `:reciprocal_from_side`.
+- `table::Union{Nothing,Vector{TapTablePoint}}`: required, non-empty, strictly ascending/unique-by-`step` for `:tabular`; must be `nothing` otherwise. The table is the single source of truth whenever present — no formula reconstruction and no interpolation between steps.
+
+# Constructors
+- `PhaseTapChangerModel(; kind::Symbol, step::Int, lowStep::Union{Nothing,Int} = nothing, highStep::Union{Nothing,Int} = nothing, neutralStep::Int, voltage_step_increment::Union{Nothing,Float64} = nothing, step_phase_shift_increment::Union{Nothing,Float64} = nothing, winding_connection_angle_deg::Union{Nothing,Float64} = nothing, x_min::Union{Nothing,Float64} = nothing, x_max::Union{Nothing,Float64} = nothing, convention::Symbol = :reciprocal_from_side, table::Union{Nothing,Vector{TapTablePoint}} = nothing)`: Creates a new `PhaseTapChangerModel` instance. `lowStep`/`highStep` are required for `:symmetrical`/`:asymmetrical`; for `:tabular` they are derived from `table` when omitted, and validated against it otherwise.
+
+# Methods
+- `Base.show(io::IO, x::PhaseTapChangerModel)`: Prints the `PhaseTapChangerModel` instance.
+"""
+mutable struct PhaseTapChangerModel <: AbstractTapChangerModel
+  kind::Symbol
+  step::Int
+  lowStep::Int
+  highStep::Int
+  neutralStep::Int
+  voltage_step_increment::Union{Nothing,Float64}
+  step_phase_shift_increment::Union{Nothing,Float64}
+  winding_connection_angle_deg::Union{Nothing,Float64}
+  x_min::Union{Nothing,Float64}
+  x_max::Union{Nothing,Float64}
+  convention::Symbol
+  table::Union{Nothing,Vector{TapTablePoint}}
+
+  function PhaseTapChangerModel(;
+    kind::Symbol,
+    step::Int,
+    lowStep::Union{Nothing,Int} = nothing,
+    highStep::Union{Nothing,Int} = nothing,
+    neutralStep::Int,
+    voltage_step_increment::Union{Nothing,Float64} = nothing,
+    step_phase_shift_increment::Union{Nothing,Float64} = nothing,
+    winding_connection_angle_deg::Union{Nothing,Float64} = nothing,
+    x_min::Union{Nothing,Float64} = nothing,
+    x_max::Union{Nothing,Float64} = nothing,
+    convention::Symbol = :reciprocal_from_side,
+    table::Union{Nothing,Vector{TapTablePoint}} = nothing,
+  )
+    kind in (:symmetrical, :asymmetrical, :tabular) || throw(ArgumentError("PhaseTapChangerModel: unsupported kind=$(kind). Allowed values: :symmetrical, :asymmetrical, :tabular."))
+
+    if kind === :tabular
+      isnothing(table) && throw(ArgumentError("PhaseTapChangerModel: kind=:tabular requires a table."))
+      isempty(table) && throw(ArgumentError("PhaseTapChangerModel: kind=:tabular requires a non-empty table."))
+      steps = [p.step for p in table]
+      for i in axes(steps, 1)[1:end-1]
+        steps[i] < steps[i + 1] || throw(ArgumentError("PhaseTapChangerModel: table steps must be strictly ascending and unique (got $(steps))."))
+      end
+      isnothing(voltage_step_increment) || throw(ArgumentError("PhaseTapChangerModel: kind=:tabular must not set voltage_step_increment (the table is the single source of truth)."))
+      isnothing(winding_connection_angle_deg) || throw(ArgumentError("PhaseTapChangerModel: kind=:tabular must not set winding_connection_angle_deg (the table is the single source of truth)."))
+      isnothing(x_min) || throw(ArgumentError("PhaseTapChangerModel: kind=:tabular must not set x_min (the table is the single source of truth)."))
+      isnothing(x_max) || throw(ArgumentError("PhaseTapChangerModel: kind=:tabular must not set x_max (the table is the single source of truth)."))
+      derivedLowStep = first(steps)
+      derivedHighStep = last(steps)
+      lowStep = isnothing(lowStep) ? derivedLowStep : lowStep
+      highStep = isnothing(highStep) ? derivedHighStep : highStep
+      lowStep == derivedLowStep || throw(ArgumentError("PhaseTapChangerModel: lowStep=$(lowStep) inconsistent with table (first step=$(derivedLowStep))."))
+      highStep == derivedHighStep || throw(ArgumentError("PhaseTapChangerModel: highStep=$(highStep) inconsistent with table (last step=$(derivedHighStep))."))
+      neutralStep in steps || throw(ArgumentError("PhaseTapChangerModel: neutralStep=$(neutralStep) is not a step present in table."))
+    else
+      isnothing(table) || throw(ArgumentError("PhaseTapChangerModel: kind=$(kind) must not set a table (table models require kind=:tabular)."))
+      kind === :asymmetrical && isnothing(winding_connection_angle_deg) && throw(ArgumentError("PhaseTapChangerModel: kind=:asymmetrical requires winding_connection_angle_deg."))
+      isnothing(lowStep) && throw(ArgumentError("PhaseTapChangerModel: lowStep is required for kind=$(kind)."))
+      isnothing(highStep) && throw(ArgumentError("PhaseTapChangerModel: highStep is required for kind=$(kind)."))
+      lowStep <= highStep || throw(ArgumentError("PhaseTapChangerModel: lowStep must be <= highStep ($(lowStep) > $(highStep))."))
+    end
+    new(kind, step, lowStep, highStep, neutralStep, voltage_step_increment, step_phase_shift_increment, winding_connection_angle_deg, x_min, x_max, convention, table)
+  end
+
+  function Base.show(io::IO, x::PhaseTapChangerModel)
+    print(io, "PhaseTapChangerModel(")
+    print(io, "kind=$(x.kind), ")
+    print(io, "step=$(x.step), ")
+    print(io, "lowStep=$(x.lowStep), ")
+    print(io, "highStep=$(x.highStep), ")
+    print(io, "neutralStep=$(x.neutralStep), ")
+    if x.kind === :tabular
+      print(io, "table=$(length(x.table)) points, ")
+    end
+    print(io, "convention=$(x.convention) ")
     print(io, ")")
   end
 end
@@ -265,10 +416,11 @@ A mutable structure representing a winding of a power transformer.
 - `isPu_RXGB::Union{Nothing,Bool}`: Whether the resistance, reactance, susceptance, and conductance are given in per unit.
 - `modelData::Union{Nothing,TransformerModelParameters}`: The model parameters of the transformer.
 - `_isEmpty::Bool`: Whether the has no model data.
+- `phase_taps::Union{Nothing,PhaseTapChangerModel}`: The phase-tap-changer (PST) model of the winding, parallel to `taps`; `nothing` if this winding has no PST.
 
 # Constructors
-- `PowerTransformerWinding(Vn::Float64, r::Float64, x::Float64, b::Union{Nothing,Float64} = nothing, g::Union{Nothing,Float64} = nothing, ratio::Union{Nothing,Float64} = nothing, shift_degree::Union{Nothing,Float64} = nothing, ratedU::Union{Nothing,Float64} = nothing, ratedS::Union{Nothing,Float64} = nothing, taps::Union{Nothing,PowerTransformerTaps} = nothing, isPu_RXGB::Union{Nothing,Bool} = nothing, modelData::Union{Nothing,TransformerModelParameters} = nothing)`: Creates a new `PowerTransformerWinding` instance.
-- `PowerTransformerWinding(; Vn_kV::Float64, modelData::Union{Nothing,TransformerModelParameters} = nothing, ratio::Union{Nothing,Float64} = nothing, shift_degree::Union{Nothing,Float64} = nothing, ratedU::Union{Nothing,Float64} = nothing, ratedS::Union{Nothing,Float64} = nothing, taps::Union{Nothing,PowerTransformerTaps} = nothing)`: Creates a new `PowerTransformerWinding` instance.
+- `PowerTransformerWinding(Vn::Float64, r::Float64, x::Float64, b::Union{Nothing,Float64} = nothing, g::Union{Nothing,Float64} = nothing, ratio::Union{Nothing,Float64} = nothing, shift_degree::Union{Nothing,Float64} = nothing, ratedU::Union{Nothing,Float64} = nothing, ratedS::Union{Nothing,Float64} = nothing, taps::Union{Nothing,PowerTransformerTaps} = nothing, isPu_RXGB::Union{Nothing,Bool} = nothing, modelData::Union{Nothing,TransformerModelParameters} = nothing, controls::Union{Nothing,Vector{PowerTransformerControl}} = nothing, phase_taps::Union{Nothing,PhaseTapChangerModel} = nothing)`: Creates a new `PowerTransformerWinding` instance.
+- `PowerTransformerWinding(; Vn_kV::Float64, modelData::Union{Nothing,TransformerModelParameters} = nothing, ratio::Union{Nothing,Float64} = nothing, shift_degree::Union{Nothing,Float64} = nothing, ratedU::Union{Nothing,Float64} = nothing, ratedS::Union{Nothing,Float64} = nothing, taps::Union{Nothing,PowerTransformerTaps} = nothing, controls::Union{Nothing,Vector{PowerTransformerControl}} = nothing, phase_taps::Union{Nothing,PhaseTapChangerModel} = nothing)`: Creates a new `PowerTransformerWinding` instance.
 
 # Methods
 - `Base.show(io::IO, x::PowerTransformerWinding)`: Prints the `PowerTransformerWinding` instance.
@@ -288,6 +440,7 @@ mutable struct PowerTransformerWinding
   isPu_RXGB::Union{Nothing,Bool}          # r,x,b in p.u. given? nothing = false
   modelData::Union{Nothing,TransformerModelParameters}
   _isEmpty::Bool
+  phase_taps::Union{Nothing,PhaseTapChangerModel}   # PST model, parallel to `taps`; see docs/src/branchmodel.md
 
   function PowerTransformerWinding(
     Vn::Float64,
@@ -303,9 +456,10 @@ mutable struct PowerTransformerWinding
     isPu_RXGB::Union{Nothing,Bool} = nothing,
     modelData::Union{Nothing,TransformerModelParameters} = nothing,
     controls::Union{Nothing,Vector{PowerTransformerControl}} = nothing,
+    phase_taps::Union{Nothing,PhaseTapChangerModel} = nothing,
   )
     ctrls = isnothing(controls) ? PowerTransformerControl[] : controls
-    new(Vn, r, x, b, g, ratio, shift_degree, ratedU, ratedS, taps, ctrls, isPu_RXGB, modelData, isnothing(modelData))
+    new(Vn, r, x, b, g, ratio, shift_degree, ratedU, ratedS, taps, ctrls, isPu_RXGB, modelData, isnothing(modelData), phase_taps)
   end
 
   function PowerTransformerWinding(;
@@ -317,6 +471,7 @@ mutable struct PowerTransformerWinding
     ratedS::Union{Nothing,Float64} = nothing,
     taps::Union{Nothing,PowerTransformerTaps} = nothing,
     controls::Union{Nothing,Vector{PowerTransformerControl}} = nothing,
+    phase_taps::Union{Nothing,PhaseTapChangerModel} = nothing,
   )
     @assert Vn_kV > 0.0 "Vn_kv must be > 0.0"
     if isnothing(ratedU)
@@ -325,11 +480,11 @@ mutable struct PowerTransformerWinding
 
     if isnothing(modelData)
       ctrls = isnothing(controls) ? PowerTransformerControl[] : controls
-      new(Vn_kV, 0.0, 0.0, 0.0, 0.0, ratio, shift_degree, ratedU, ratedS, taps, ctrls, false, nothing, true)
+      new(Vn_kV, 0.0, 0.0, 0.0, 0.0, ratio, shift_degree, ratedU, ratedS, taps, ctrls, false, nothing, true, phase_taps)
     else
       r, x, b, g = calcTransformerRXGB(ratedU, modelData)
       ctrls = isnothing(controls) ? PowerTransformerControl[] : controls
-      new(Vn_kV, r, x, b, g, ratio, shift_degree, ratedU, ratedS, taps, ctrls, false, modelData, false)
+      new(Vn_kV, r, x, b, g, ratio, shift_degree, ratedU, ratedS, taps, ctrls, false, modelData, false, phase_taps)
     end
   end
 
@@ -358,6 +513,9 @@ mutable struct PowerTransformerWinding
     end
     if !isnothing(x.taps)
       print(io, "taps=$(x.taps), ")
+    end
+    if !isnothing(x.phase_taps)
+      print(io, "phase_taps=$(x.phase_taps), ")
     end
     if !isempty(x.controls)
       print(io, "controls=$(length(x.controls)), ")
@@ -639,10 +797,9 @@ function calcTransformerRatio(x::PowerTransformer)
   if isTapInNeutralPosition(x)
     return ratio
   else
-    stat, tapStepPercent = getTapStepPercent(x)
+    stat, _ = getTapStepPercent(x)
     if stat
-      tapStepPercent = (taps.voltageIncrement_kV / getVn2WT(x)) * 100.0
-      corr = 1 + (taps.step - taps.neutralStep) * tapStepPercent / 100
+      corr = calcRatioTapCorrection(taps)
       return ratio / corr
     else
       @warn "no taps, but tapSideNumber != 0!"
@@ -691,7 +848,7 @@ end
 #ajustVkTap = 1.0 # FIXME: implement adjustVkTap!
 
 """
-    create3WTWindings!(; u_kV::Array{Float64,1}, sn_MVA::Array{Float64,1}, addEx_Side::Array{TransformerModelParameters,1}, sh_deg::Array{Float64,1}, tap_side::Int, tap::PowerTransformerTaps)::Tuple{PowerTransformerWinding,PowerTransformerWinding,PowerTransformerWinding}
+    create3WTWindings!(; u_kV::Array{Float64,1}, sn_MVA::Array{Float64,1}, addEx_Side::Array{TransformerModelParameters,1}, sh_deg::Array{Float64,1}, tap_side::Int, tap::PowerTransformerTaps, phase_tap_side::Int = 0, phase_taps::Union{Nothing,PhaseTapChangerModel} = nothing)::Tuple{PowerTransformerWinding,PowerTransformerWinding,PowerTransformerWinding}
 
 Creates windings for a three-winding transformer using the MVA method.
 
@@ -702,16 +859,35 @@ Creates windings for a three-winding transformer using the MVA method.
 - `sh_deg::Array{Float64,1}`: The phase shift of each winding in degrees.
 - `tap_side::Int`: The number of the tap side [1,2,3]. It is 0 if there is no tap.
 - `tap::PowerTransformerTaps`: The tap settings of the winding.
+- `phase_tap_side::Int = 0`: Winding index `[1,2,3]` carrying a [`PhaseTapChangerModel`](@ref) (Schrägregler);
+  `0` means none. Uses the same 1-based winding-index convention as `tap_side`. May equal `tap_side` —
+  a ratio tap and a phase tap on the same winding is a valid configuration and is not rejected.
+- `phase_taps::Union{Nothing,PhaseTapChangerModel} = nothing`: The phase-tap-changer model attached at
+  `phase_tap_side`. Must be `nothing` iff `phase_tap_side == 0`; a `PhaseTapChangerModel` is required
+  whenever `phase_tap_side != 0`.
 
 # Returns
 Returns a tuple of `PowerTransformerWinding` instances for the three windings of the transformer.
+
+!!! note
+    Resolving `phase_taps` into an effective ratio/shift on the AUX-bus branch is out of scope for
+    this function; it only stores the model on the selected winding's `phase_taps` field.
 
 # Example
 ```julia
 create3WTWindings!(u_kV = [110.0, 20.0, 10.0], sn_MVA = [100.0, 80.0, 20.0], addEx_Side = [tmp1, tmp2, tmp3], sh_deg = [0.0, 0.0, 0.0], tap_side = 1, tap = tapSettings)
 ```
+
+With a phase-tap-changer model attached to winding 2:
+```julia
+psc = PhaseTapChangerModel(kind = :asymmetrical, step = 0, lowStep = -8, highStep = 8, neutralStep = 0, winding_connection_angle_deg = 60.0)
+create3WTWindings!(u_kV = [110.0, 20.0, 10.0], sn_MVA = [100.0, 80.0, 20.0], addEx_Side = [tmp1, tmp2, tmp3], sh_deg = [0.0, 0.0, 0.0], tap_side = 1, tap = tapSettings, phase_tap_side = 2, phase_taps = psc)
+```
 """
-function create3WTWindings!(; u_kV::Array{Float64,1}, sn_MVA::Array{Float64,1}, addEx_Side::Array{TransformerModelParameters,1}, sh_deg::Array{Float64,1}, tap_side::Int, tap::PowerTransformerTaps)::Tuple{PowerTransformerWinding,PowerTransformerWinding,PowerTransformerWinding}
+function create3WTWindings!(; u_kV::Array{Float64,1}, sn_MVA::Array{Float64,1}, addEx_Side::Array{TransformerModelParameters,1}, sh_deg::Array{Float64,1}, tap_side::Int, tap::PowerTransformerTaps, phase_tap_side::Int = 0, phase_taps::Union{Nothing,PhaseTapChangerModel} = nothing)::Tuple{PowerTransformerWinding,PowerTransformerWinding,PowerTransformerWinding}
+  phase_tap_side in 0:3 || throw(ArgumentError("create3WTWindings!: phase_tap_side must be in 0:3 (winding index 1..3, 0 = none), got $(phase_tap_side)"))
+  (phase_tap_side == 0) == (phase_taps === nothing) || throw(ArgumentError("create3WTWindings!: phase_tap_side and phase_taps must be set together — phase_tap_side != 0 requires a PhaseTapChangerModel, and phase_taps requires phase_tap_side != 0"))
+
   for side = 1:3
     if isnothing(addEx_Side[side].vkr_percent)
       @assert !isnothing(addEx_Side[side].pk_kW) "Either pk_kW or vkr_percent must be set!"
@@ -745,7 +921,8 @@ function create3WTWindings!(; u_kV::Array{Float64,1}, sn_MVA::Array{Float64,1}, 
   wVec = []
   for side = 1:3
     tap = (side - 1 == tap_side) ? tap : nothing
-    w = PowerTransformerWinding(u_kV[side], pVec[side][1], pVec[side][2], pVec[side][3], pVec[side][4], sh_deg[side], u_kV[side], sn_MVA[side], tap, false, addEx_Side[side])
+    wpt = (side == phase_tap_side) ? phase_taps : nothing
+    w = PowerTransformerWinding(u_kV[side], pVec[side][1], pVec[side][2], pVec[side][3], pVec[side][4], nothing, sh_deg[side], u_kV[side], sn_MVA[side], tap, false, addEx_Side[side], nothing, wpt)
     push!(wVec, w)
   end
 

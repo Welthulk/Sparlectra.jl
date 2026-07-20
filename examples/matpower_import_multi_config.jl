@@ -2,8 +2,23 @@
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Date: 2026-05-29
+# file: examples/matpower_import_multi_config.jl
+# purpose: compares one MATPOWER case against one or more YAML configuration files to check whether config choices change the final rectangular PF status
 
 using Sparlectra
+
+include(joinpath(@__DIR__, "internal", "example_header.jl"))
 
 # ---------------------------------------------------------------------------
 # Developer defaults for VS Code / Run File workflows
@@ -326,6 +341,7 @@ end
 Entry point for the MATPOWER multi-configuration runner.
 """
 function main()
+  print_example_banner("examples/matpower_import_multi_config.jl", "compares one MATPOWER case against one or more YAML configuration files to check whether config choices change the final rectangular PF status")
   parsed = _parse_cli_args(copy(ARGS))
 
   if parsed.show_help
@@ -358,16 +374,14 @@ function main()
   return nothing
 end
 
-if get(ENV, "SPARLECTRA_MATPOWER_IMPORT_NO_MAIN", "0") != "1"
-  try
-    # Use invokelatest for script-style execution under Revise/Julia 1.12.
-    _ = Base.invokelatest(getfield(@__MODULE__, :main))
-    nothing
-  catch err
-    if err isa InterruptException
-      println(stderr, "\nInterrupted by user.")
-      exit(130)
-    end
-    rethrow()
+try
+  _ = run_example(main)
+  nothing
+catch err
+  if err isa InterruptException
+    println(stderr, "\nInterrupted by user.")
+    exit(130)
   end
+  rethrow()
 end
+

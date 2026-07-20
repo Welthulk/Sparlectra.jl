@@ -1,4 +1,24 @@
+# Copyright 2023–2026 Udo Schmitz
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Date: 2026-04-10
+# file: examples/example_q_limit_voltage_adjustment.jl
+# purpose: compares Q-limit :adjust_vset outcomes across three PV->PQ voltage-adjustment scenarios (successful, no controller, exhausted controller)
+
 using Sparlectra
+
+include(joinpath(@__DIR__, "internal", "example_header.jl"))
 
 function build_case(; qmin = -15.0, qmax = 15.0)
   net = Net(name = "q_limit_adjust_demo", baseMVA = 100.0)
@@ -40,6 +60,8 @@ function report_case(label::String, net::Net, mode::Symbol)
 end
 
 function main()
+  print_example_banner("examples/example_q_limit_voltage_adjustment.jl", "compares Q-limit :adjust_vset outcomes across three PV->PQ voltage-adjustment scenarios (successful, no controller, exhausted controller)")
+
   # Case A — successful voltage adjustment
   net_a = build_case(qmin = -30.0, qmax = 30.0)
   set_controller!(net_a, "PV1"; vstep_pu = 0.005, tap_steps_down = 20, tap_steps_up = 2)
@@ -58,6 +80,5 @@ function main()
   report_case("Case C (controller exhausted -> fallback)", net_c, :adjust_vset)
 end
 
-if get(ENV, "SPARLECTRA_Q_LIMIT_ADJUST_NO_MAIN", "0") != "1"
-  Base.invokelatest(getfield(@__MODULE__, :main))
-end
+run_example(main)
+

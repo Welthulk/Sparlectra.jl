@@ -1,6 +1,27 @@
+# Copyright 2023–2026 Udo Schmitz
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Date: 2026-06-19
+# file: examples/exp_current_iteration_start.jl
+# purpose: demonstrates enabling the guarded current-iteration start pre-solve via API configuration overrides and prints its metadata/artifact status
+
 using Sparlectra
 
+include(joinpath(@__DIR__, "internal", "example_header.jl"))
+
 function main(; casefile::AbstractString = "case5.m", output_dir::AbstractString = joinpath(@__DIR__, "_out", "current_iteration_start"))
+  print_example_banner("examples/exp_current_iteration_start.jl", "demonstrates enabling the guarded current-iteration start pre-solve via API configuration overrides and prints its metadata/artifact status")
   case_path = ensure_casefile(casefile)
   result = run_sparlectra_api(
     casefile = case_path,
@@ -37,4 +58,4 @@ function main(; casefile::AbstractString = "case5.m", output_dir::AbstractString
   return result
 end
 
-Base.invokelatest(main)
+run_example(main)

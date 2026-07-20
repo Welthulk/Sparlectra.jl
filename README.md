@@ -124,7 +124,7 @@ Useful entry points:
 - [Feature Matrix](docs/src/feature_matrix.md) — power-flow and state-estimation capability overview
 - [Network Reports](docs/src/netreports.md) — machine-readable `ACPFlowReport` output
 - [Solver Guide](docs/src/solver.md) — numerical solver formulations
-- [Transformer Control](docs/src/transformer_control.md) — transformer tap and voltage-control behavior
+- [Branch Model](docs/src/branchmodel.md) — transformer tap and voltage-control behavior
 - [Function Reference](docs/src/reference.md) — public API reference
 
 ---

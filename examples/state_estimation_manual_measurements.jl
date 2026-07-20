@@ -18,11 +18,15 @@
 # (`addVmMeasurement!`, `addPinjMeasurement!`, ...) to build a measurement
 # vector without manual `Measurement(...)` construction.
 
+# Date: 2026-03-18
 # file: examples/state_estimation_manual_measurements.jl
+# purpose: demonstrates building a state-estimation measurement set with the manual measurement helpers (addVmMeasurement!, addPinjMeasurement!, ...) instead of raw Measurement(...) construction
 
 using Sparlectra
 using Printf
 using Random
+
+include(joinpath(@__DIR__, "internal", "example_header.jl"))
 
 function build_manual_measurement_example_net()
   net = Net(name = "se_manual_measurements", baseMVA = 100.0)
@@ -92,6 +96,7 @@ function reset_to_flatstart!(net::Net)
 end
 
 function main()
+  print_example_banner("examples/state_estimation_manual_measurements.jl", "demonstrates building a state-estimation measurement set with the manual measurement helpers (addVmMeasurement!, addPinjMeasurement!, ...) instead of raw Measurement(...) construction")
   net = build_manual_measurement_example_net()
   ite_pf = build_manual_measurements(net)
   reset_to_flatstart!(net)
@@ -123,6 +128,5 @@ function main()
   return se
 end
 
-if get(ENV, "SPARLECTRA_MANUAL_MEASURMENT_EXAMPLE", "0") != "1"
-  Base.invokelatest(getfield(@__MODULE__, :main))
-end
+run_example(main)
+

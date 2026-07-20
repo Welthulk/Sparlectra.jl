@@ -12,7 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Date: 2026-07-13
+# file: examples/for002_matpower_metadata_validation.jl
+# purpose: imports a FOR001/FOR002 MATPOWER fixture with metadata enabled and writes compact CSV/Markdown validation artifacts
+
 using Sparlectra
+
+include(joinpath(@__DIR__, "internal", "example_header.jl"))
 
 """
     main(; casefile, output_dir = "for002_metadata_artifacts")
@@ -24,6 +30,7 @@ removing only the explicit trailing slack suffix before comparing them with
 `mpc.bus_name` values such as `BSTADTS1`.
 """
 function main(; casefile::AbstractString, output_dir::AbstractString = "for002_metadata_artifacts")
+  print_example_banner("examples/for002_matpower_metadata_validation.jl", "imports a FOR001/FOR002 MATPOWER fixture with metadata enabled and writes compact CSV/Markdown validation artifacts")
   mpc = Sparlectra.MatpowerIO.read_case(casefile; legacy_compat = true)
   net = Sparlectra.createNetFromMatPowerCase(
     mpc = mpc,
@@ -56,7 +63,12 @@ function main(; casefile::AbstractString, output_dir::AbstractString = "for002_m
   return (net = net, mpc = mpc, contingency_indices = contingency_indices)
 end
 
+# Unlike most examples/*.jl programs (see examples/exp_transformer_tap_changer_model.jl),
+# this one keeps the `abspath(PROGRAM_FILE) == @__FILE__` guard: `casefile` is a
+# mandatory keyword with no default, so there is nothing sensible to run when the
+# file is merely include()'d interactively without a real MATPOWER fixture path in
+# `ARGS` — this is a CLI validation tool, not a self-contained interactive demo.
 if abspath(PROGRAM_FILE) == @__FILE__
   isempty(ARGS) && error("usage: julia --project=. examples/for002_matpower_metadata_validation.jl CASEFILE [OUTPUT_DIR]")
-  Base.invokelatest(main; casefile = ARGS[1], output_dir = length(ARGS) >= 2 ? ARGS[2] : "for002_metadata_artifacts")
+  run_example(main; casefile = ARGS[1], output_dir = length(ARGS) >= 2 ? ARGS[2] : "for002_metadata_artifacts")
 end
