@@ -496,7 +496,11 @@ function try_parse_sparlectra_extension(txt::String)
       push!(losses, _parse_sparlectra_transformer_loss_struct(m.captures[1]))
     end
   end
-  return (format_version = version, warning = warning, transformer_losses = losses)
+  tap_changer_model_match = match(r"mpc\.sparlectra\.tap_changer_model\s*=\s*'((?:''|[^'])*)'\s*;", txt)
+  tap_changer_model = tap_changer_model_match === nothing ? nothing : replace(tap_changer_model_match.captures[1], "''" => "'")
+  solution_written_match = match(r"mpc\.sparlectra\.solution_written\s*=\s*([0-9]+)\s*;", txt)
+  solution_written = solution_written_match === nothing ? false : parse(Int, solution_written_match.captures[1]) == 1
+  return (format_version = version, warning = warning, transformer_losses = losses, tap_changer_model = tap_changer_model, solution_written = solution_written)
 end
 
 function for001_contingency_branch_indices(mpc::MatpowerCase)::Vector{Int}

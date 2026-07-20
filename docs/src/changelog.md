@@ -1,3 +1,24 @@
+# Version 0.8.11 — 2026-07-17
+
+## New Features
+
+* `writeMatpowerCasefile` now has a `matpower_export.write_solution` option (default `true`). It writes the solved power flow back into the MATPOWER case — bus VM/VA get the solved values, branches gain result columns 14–17 (PF, QF, PT, QT), pulled from the existing report/loss path, no extra recomputation. A `mpc.sparlectra.solution_written = 1` marker flags that the case has a solution. Turned off, you get the old pure model file: 13 branch columns, VM = 1.0, VA = 0.0. Ask for a solution before solving, and it falls back to the 13-column output with a warning. Configurable via YAML, the config API, or the new Web UI option.
+
+### Improvements
+
+* The tap-impedance correction factor from `calcTapCorrectedRX` (MATPOWER and native DTF import) is now saved on the Branch/transformer metadata. Reimporting a Sparlectra-exported case with the `tap_changer_model = 'impedance_correction'` marker won't stack a second correction on top. Cases without the marker — including third-party ones — work as before.
+* Shortened the "Tolerance" and "Export Solution" labels so the help icon isn't crammed against the text. The tolerance exponent stepper now looks and behaves like a real number spinbox.
+* Removed the inline explanation text next to "Export Solution" and "Tap-changer model" — it was overlapping the help icon. Full explanations are still one click away; docs were expanded to cover it.
+* Fixed the "Autodamping minimum" spinner step: was 1.0 (way too coarse for a 0–1 range), now 0.01.
+* Removed the remaining inline hints across the PowerFlow form (Tolerance, CSV format, benchmarks, etc.) — help text belongs in the docs, not hardcoded in the views. Docs updated accordingly.
+* Combined one-off Web UI messages (errors, import results, settings-loaded notices) into a single popup dialog instead of scattering them inline. The configuration notice stays inline since it has a link you need to see. Error history page unchanged.
+
+### Bug Fixes
+
+* Fixed wrong `Case` name in run.log/result files for MATPOWER cases with bus_name metadata — a loop variable was overwriting the case name with the last bus's name.
+* Fixed misaligned PV→PQ header lines in the report (labels too long for the column).
+* Fixed misaligned Solver time/Total time headers (3 characters too narrow).
+
 # Version 0.8.10 — 2026-07-17
 
 ## New Features
@@ -653,14 +674,4 @@
 - Initial release of Sparlectra
 
 ## Version 0.4.0 (2023-11-30)
-- Initial public commit of Sparlectra 
-
-* **Bugfix**: Restored MATPOWER runner operational reporting through package-level runners (header, config paths, resolved case, logfile path, compact summary, benchmark/performance blocks) while keeping example scripts thin and free of local YAML parsing.
-* **Feature**: Added asynchronous local Web UI PowerFlow jobs with a POST-only
-  cooperative abort action, persistent aborted status, distinct history
-  rendering, and single-active-run protection. Solver execution is never
-  interrupted unsafely; an abort requested during a blocking phase remains
-  final when that phase returns.
-
-* **Bugfix**: Web UI submissions now run independently of request handling so active status and Abort controls are reachable before completion; first startup also provisions user-writable configuration, case-cache, run, and operation-log paths instead of using package-tree runtime defaults.
-* **Improvement**: The PowerFlow result/status page now highlights elapsed runtime in a clock-style `HH:MM:SS.mmm` card beside the run status while retaining raw timing metadata for diagnostics.
+- Initial public commit of Sparlectra

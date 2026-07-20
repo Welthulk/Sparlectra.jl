@@ -62,7 +62,7 @@ function _copy_powerflow_with(pf::PowerFlowConfig; kwargs...)::PowerFlowConfig
 end
 
 function _copy_sparlectra_with_powerflow(cfg::SparlectraConfig, powerflow::PowerFlowConfig)::SparlectraConfig
-  return SparlectraConfig(; powerflow = powerflow, state_estimation = cfg.state_estimation, matpower = cfg.matpower, transformer = cfg.transformer, performance = cfg.performance, benchmark = cfg.benchmark, runtime = cfg.runtime, diagnostics = cfg.diagnostics, output = cfg.output, control = cfg.control)
+  return SparlectraConfig(; powerflow = powerflow, state_estimation = cfg.state_estimation, matpower = cfg.matpower, matpower_export = cfg.matpower_export, transformer = cfg.transformer, performance = cfg.performance, benchmark = cfg.benchmark, runtime = cfg.runtime, diagnostics = cfg.diagnostics, output = cfg.output, control = cfg.control)
 end
 
 function _resolve_matpower_powerflow_ids_after_import(net::Net, cfg::SparlectraConfig; verbose::Int = 0)::SparlectraConfig

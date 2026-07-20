@@ -534,8 +534,8 @@ function printACPFlowResults(net::Net, ct::Float64, ite::Int, tol::Float64, toFi
   @printf(io, "Tolerance      : %.1e\n", tol)
   @printf(io, "Solver         :%15s\n", string(solver))
   if converged
-    isnothing(solver_time_s) || println(io, "Solver time : ", @sprintf("%.6f s", solver_time_s))
-    println(io, "Total time  : ", @sprintf("%.6f s", ct))
+    isnothing(solver_time_s) || println(io, "Solver time    : ", @sprintf("%.6f s", solver_time_s))
+    println(io, "Total time     : ", @sprintf("%.6f s", ct))
   else
     @printf(io, "Status         :%10s\n", "Not Converged")
   end
@@ -565,8 +565,8 @@ function printACPFlowResults(net::Net, ct::Float64, ite::Int, tol::Float64, toFi
 
   num_guarded_locks = length(net.qLimitEvents)
   num_iterative_events = length(net.qLimitLog)
-  @printf(io, "Guarded PV→PQ locks     :%10d\n", num_guarded_locks)
-  @printf(io, "Iterative PV→PQ events  :%10d\n", num_iterative_events)
+  @printf(io, "PV→PQ locks    :%10d\n", num_guarded_locks)
+  @printf(io, "PV→PQ events   :%10d\n", num_iterative_events)
 
   println(io, "\n", totalLosses)
   if result_mode === :summary

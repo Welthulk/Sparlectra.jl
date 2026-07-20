@@ -25,6 +25,7 @@
 | `matpower_import.shift_sign` | Float64 | `1.0` | real (typ. `1.0`, `-1.0`) | Phase-shift sign convention. | Cross-tool convention alignment. | Unnecessary flipping. | None. | `shift_unit`, branch-shift diagnostics. |
 | `matpower_import.ratio` | Symbol/String | `normal` | `normal`, `reciprocal` | Branch ratio interpretation mode. | Standard MATPOWER import. | Unsupported alternate conventions. | None. | Transformer/tap interpretation. |
 | `transformer.tap_changer_model` | Symbol/String | `ideal` | `ideal`, `impedance_correction` | Tap-changer model applied to all transformers after import; see [Transformer tap-changer model](configuration.md#transformer-tap-changer-model). | Cases where reference data corrects R/X with the tap position. | Standard ideal-tap-changer imports. | None (constant per-branch scale factor). | Shared with the native DTF importer; implemented centrally in `src/equicircuit.jl`. |
+| `matpower_export.write_solution` | Bool | `true` | `true`, `false` | Whether [`writeMatpowerCasefile`](@ref) writes the solved bus `VM`/`VA` state and branch result columns 14–17 (`PF`/`QF`/`PT`/`QT`) into the export, marked with `mpc.sparlectra.solution_written`. When `false`, `mpc.branch` keeps its historical 13 columns and `VM = 1.0`/`VA = 0.0` for all non-slack/non-PV buses (slack and PV setpoints are preserved). | Exporting a solved case for downstream tools or roundtrip validation. | Exporting a pure, state-independent model file. | None; sourced from the existing branch-flow report, no recomputation. | If the network is unsolved, falls back to a 13-column model-only export with a warning; interacts with `transformer.tap_changer_model` through the `mpc.sparlectra.tap_changer_model` roundtrip marker (see [Tap-impedance correction and reimport](#tap-impedance-correction-and-reimport)). |
 | `matpower_import.enable_pq_gen_controllers` | Bool | `true` | `true`, `false` | Enable controller behavior on imported PQ generators. | Realistic controlled studies. | Raw imported behavior reproduction. | Small control bookkeeping cost. | PF Q-limit behavior. |
 | `matpower_import.preallocate_network` | Symbol/String | `auto` | `off`, `on`, `auto` | Controls import-time `sizehint!` preallocation for large MATPOWER network construction. | Large imports where construction allocations dominate runtime. | Tiny cases where tuning is unnecessary. | Can reduce import allocations/time; no model changes. | `matpower_import.preallocate_min_buses`. |
 | `matpower_import.preallocate_min_buses` | Int | `1000` | positive integer | Bus-count threshold used when `preallocate_network = auto`. | Auto-tuning preallocation trigger for site-specific case sizes. | If fixed always-on/off behavior is preferred. | Threshold only; no model changes. | `matpower_import.preallocate_network`. |
@@ -51,6 +52,23 @@ rectangular NR solver and merge the voltage/flow state into one user-facing
 result. The diagnostic artifact `ac_islands.csv` records the selected
 reference bus, island status, active DC-line terminal counts, power totals, and
 pre-slack active-power imbalance for each island.
+
+### Tap-impedance correction and reimport
+
+When a case was built with `transformer.tap_changer_model =
+impedance_correction`, the exported `BR_R`/`BR_X` values already carry the
+tap-impedance correction (see [Transformer tap-changer
+model](configuration.md#transformer-tap-changer-model)). `writeMatpowerCasefile`
+records this with a `mpc.sparlectra.tap_changer_model = 'impedance_correction'`
+roundtrip marker. When such a file is reimported, `createNetFromMatPowerFile`/
+`createNetFromMatPowerCase` detect the marker and skip reapplying
+`calcTapCorrectedRX`, regardless of the active `transformer.tap_changer_model`
+configuration at reimport time — otherwise the reimport would stack a second,
+differently-derived correction (MATPOWER reimport uses the `ratio`-based
+factor, `1/ratio²`, while the native DTF importer uses the `tap_fraction`-based
+regulating-vector factor) on top of the already-corrected values. Cases without
+the marker, including standard third-party MATPOWER cases, are unaffected and
+import exactly as before.
 
 ## Auto-profile pre-run
 
