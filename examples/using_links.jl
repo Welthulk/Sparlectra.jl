@@ -14,6 +14,7 @@
 
 # file: examples/using_links.jl
 # Date: 2026-03-10
+# purpose: example network with a busbar coupler (Bus1 <-> Bus1a) modeled as a Sparlectra bus link, demonstrating open/close link behavior
 
 using Printf
 
@@ -46,6 +47,8 @@ The script runs two scenarios:
 """
 
 using Sparlectra
+
+include(joinpath(@__DIR__, "internal", "example_header.jl"))
 
 function build_link_demo_net(; link_closed::Bool)
   net = Net(name = link_closed ? "using_links_closed" : "using_links_open", baseMVA = 100.0)
@@ -117,12 +120,12 @@ function run_link_demo(; link_closed::Bool)
 end
 
 function main(; args = ARGS)
+  print_example_banner("examples/using_links.jl", "example network with a busbar coupler (Bus1 <-> Bus1a) modeled as a Sparlectra bus link, demonstrating open/close link behavior")
   _ = args
   # Run both variants for direct comparison.
   run_link_demo(link_closed = true)
   return run_link_demo(link_closed = false)
 end
 
-if get(ENV, "SPARLECTRA_USING_LINKS_NO_MAIN", "0") != "1"
-  Base.invokelatest(getfield(@__MODULE__, :main))
-end
+run_example(main)
+

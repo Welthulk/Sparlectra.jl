@@ -12,7 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Date: 2026-03-17
 # file: examples/h_matrix_observability_demo.jl
+# purpose: builds small measurement Jacobians H (m×n) and demonstrates the public observability helpers (evaluate_observability_matrix, numerical/structural observability and row-redundancy checks)
 
 """
 Demo for small measurement Jacobians H (m×n).
@@ -29,6 +31,8 @@ Run from project root:
 
 using Sparlectra
 using Printf
+
+include(joinpath(@__DIR__, "internal", "example_header.jl"))
 
 abstract type Meas end
 struct FlowMeas <: Meas
@@ -160,6 +164,7 @@ function analyze_local(name::String, H::AbstractMatrix{<:Real}, cols::Vector{Int
 end
 
 function main()
+  print_example_banner("examples/h_matrix_observability_demo.jl", "builds small measurement Jacobians H (m×n) and demonstrates the public observability helpers (evaluate_observability_matrix, numerical/structural observability and row-redundancy checks)")
   tol = 1e-10
 
   # H_A: clearly observable with intentional duplicate information.
@@ -290,4 +295,4 @@ function main()
   return nothing
 end
 
-main()
+run_example(main)

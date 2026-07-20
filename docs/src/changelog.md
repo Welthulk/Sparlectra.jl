@@ -1,3 +1,21 @@
+# Version 0.8.12 — 2026-07-20
+
+## New Features
+
+* Added an `AbstractTapChangerModel` supertype and an explicit `PowerTransformerTaps.convention` field (currently only `:neutral_relative`), documenting the ratio-tap correction convention on the struct itself instead of leaving it implicit. See `docs/src/branchmodel.md` for the tap-changer/PST modeling layering (Issue #261 Stage 2).
+* Added a CGMES-style `PhaseTapChangerModel <: AbstractTapChangerModel` (`:symmetrical`/`:asymmetrical`, `:tabular` staged for later) and three pure formula functions in `equicircuit.jl`: `calcPhaseTapFraction`, `calcPhaseTapAngleRatio` (effective ratio/shift/regulating vector per CGMES v2.4 ch. 4.2/6.2), and `calcPhaseTapReactance` (CGMES ch. 3 `X(α)` interpolation, standalone for now — not yet wired into branch `x_pu` or the outer control loop). `PowerTransformerWinding` gained a parallel `phase_taps` field (Issue #261 Stage 3).
+* Added `kind = :tabular` support to `PhaseTapChangerModel`, backed by a new `TapTablePoint` struct (`step`, `ratio`, `angle_deg`, optional `x_pu`) and a `calcPhaseTapTable` exact lookup in `equicircuit.jl`. A table overrides formula-based reconstruction whenever present, integrated into `calcPhaseTapAngleRatio`/`calcPhaseTapFraction`/`calcPhaseTapReactance`. No interpolation between table steps; no importer produces tabular data yet (Issue #261 Stage 4).
+* Added `phase_tap_side::Int` / `phase_taps::Union{Nothing,PhaseTapChangerModel}` keywords to `create3WTWindings!`, letting one winding of a three-winding transformer (MVA-method, star/AUX-bus model) carry a `PhaseTapChangerModel` — i.e. a Schrägregler on a single 3WT winding, optionally combined with a ratio tap on the same winding. Validated: `phase_tap_side ∈ 0:3`, and `phase_tap_side`/`phase_taps` must be set together. Resolving the attached model into an effective branch ratio/shift, and addressing a single 3WT winding from the outer-loop `PowerTransformerControl` framework, are analysed but intentionally not implemented — see `docs/dev/3wt_phase_tap_controller_addressing.md` (Issue #261).
+
+### Improvements
+
+* Consolidated the ratio-tap correction and tap-range formulas into `equicircuit.jl` (`calcRatioTapCorrection`, `calcRatioTapRange`), the single source of truth used by both `calcTransformerRatio` (`transformer.jl`) and the `Branch` tap-limit derivation (`branch.jl`). Removed the duplicated inline formulas from both call sites; no change in computed values.
+* The native DTF importer's skew-angle tap computation (`_dtf_effective_transformer_tap`) now constructs a `PhaseTapChangerModel` and calls `calcPhaseTapAngleRatio` instead of computing `tap_fraction` and calling `calcSkewAngleTap` inline. Reproduces prior behavior exactly, including the pure-longitudinal case (Issue #261 Stage 3).
+
+### Bug Fixes
+
+* `create3WTWindings!` previously raised a `MethodError` for every call, including its own docstring example: the `PowerTransformerWinding(...)` positional call had drifted out of sync with the struct's field order (a `ratio` field was inserted ahead of `shift_degree` without updating this call site), so every argument from `shift_degree` onward landed one field too early. Fixed by inserting the missing `ratio` slot; the pre-existing `tap_side` side-selection logic itself (documented as 1-based `[1,2,3]`, `0` = no tap) was left unchanged — see `docs/dev/3wt_phase_tap_controller_addressing.md` for the remaining discrepancy between that documentation and the current implementation.
+
 # Version 0.8.11 — 2026-07-17
 
 ## New Features
