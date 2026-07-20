@@ -2,22 +2,22 @@
 
 ## New Features
 
-* Added a `matpower_export.write_solution` option (default `true`) to `writeMatpowerCasefile`. When enabled, the exporter writes the solved AC power flow back into the MATPOWER case: bus `VM`/`VA` reflect the solved state, and `mpc.branch` gains the standard MATPOWER result columns 14–17 (`PF`, `QF`, `PT`, `QT`), sourced from the existing report/loss path without any exporter-side flow recomputation. A `mpc.sparlectra.solution_written = 1` marker documents that the case carries a solution. When disabled, the export stays a pure model file: 13 branch columns and `VM = 1.0`/`VA = 0.0` for all non-slack/non-PV buses. If a solution is requested but the network has not been solved, the exporter falls back to the 13-column model output with a warning instead of writing empty result columns. Configurable via YAML, the configuration API, and a new Web UI expert option.
+* `writeMatpowerCasefile` now has a `matpower_export.write_solution` option (default `true`). It writes the solved power flow back into the MATPOWER case — bus VM/VA get the solved values, branches gain result columns 14–17 (PF, QF, PT, QT), pulled from the existing report/loss path, no extra recomputation. A `mpc.sparlectra.solution_written = 1` marker flags that the case has a solution. Turned off, you get the old pure model file: 13 branch columns, VM = 1.0, VA = 0.0. Ask for a solution before solving, and it falls back to the 13-column output with a warning. Configurable via YAML, the config API, or the new Web UI option.
 
 ### Improvements
 
-* The tap-impedance correction factor applied by `calcTapCorrectedRX` during import (MATPOWER and native DTF) is now persisted on the `Branch`/transformer metadata. When a MATPOWER case exported by Sparlectra carries the `mpc.sparlectra.tap_changer_model = 'impedance_correction'` marker, reimport skips reapplying the correction instead of stacking a second, differently-derived correction factor on top of the already-corrected R/X. Cases without the marker (including standard third-party MATPOWER cases) are unaffected.
-* Shortened the Web UI "Tolerance" and "Export Solution" field labels so the round help (`?`) icon no longer gets visually squeezed next to long label text, and restyled the tolerance exponent stepper to look like a native number-input spinbox (same stepping behavior).
-* Removed the inline explanation text next to the "Export Solution" checkbox and the "Tap-changer model" dropdown; the `.check` row layout was cramming the checkbox, label, help icon, and hint text onto one line, visually overlapping the icon. The full explanations remain one click away via each field's `?` help link, and the `matpower_export.write_solution` documentation table row was expanded to also cover the `write_solution = false` case.
-* Adjusted the too-coarse "Autodamping minimum" number spinner from a default step of 1.0 (its `step="any"` fell back to the browser default) to `step="0.01"`, matching its 0–1 value range.
-* Removed the remaining inline field-hint texts throughout the PowerFlow form (Tolerance, CSV format, benchmark options, current-iteration pre-solve intro, MATPOWER import conventions intro, case-file/case-import/config-maintenance/ignore-webui-settings/DTF-input-format guidance) in favor of each field's `?` help link, restoring the Web UI's documented "explanatory text lives in Markdown, not in Julia views" principle. Added or extended the corresponding `docs/src/webui.md`, `performance_profiling.md`, and `matpower_import.md` sections so no information was lost.
-* Combined one-off Web UI feedback (submission errors, case-import results, case-settings-loaded notices) into a single dismissible `<dialog>` popup that opens over the PowerFlow form instead of being written inline into the page flow. Persistent notices with an in-page action link (the configuration notice) stay inline since a modal would hide their target; the separate **Last errors** history page is unchanged.
+* The tap-impedance correction factor from `calcTapCorrectedRX` (MATPOWER and native DTF import) is now saved on the Branch/transformer metadata. Reimporting a Sparlectra-exported case with the `tap_changer_model = 'impedance_correction'` marker won't stack a second correction on top. Cases without the marker — including third-party ones — work as before.
+* Shortened the "Tolerance" and "Export Solution" labels so the help icon isn't crammed against the text. The tolerance exponent stepper now looks and behaves like a real number spinbox.
+* Removed the inline explanation text next to "Export Solution" and "Tap-changer model" — it was overlapping the help icon. Full explanations are still one click away; docs were expanded to cover it.
+* Fixed the "Autodamping minimum" spinner step: was 1.0 (way too coarse for a 0–1 range), now 0.01.
+* Removed the remaining inline hints across the PowerFlow form (Tolerance, CSV format, benchmarks, etc.) — help text belongs in the docs, not hardcoded in the views. Docs updated accordingly.
+* Combined one-off Web UI messages (errors, import results, settings-loaded notices) into a single popup dialog instead of scattering them inline. The configuration notice stays inline since it has a link you need to see. Error history page unchanged.
 
 ### Bug Fixes
 
-* Fixed `run.log`/`result_*.txt` reporting the wrong `Case` name for MATPOWER cases that carry `mpc.bus_name` metadata (present independent of `apply_bus_names`): a loop variable used to record original bus names inside `createNetFromMatPowerCase` shared its name with the outer case-name variable, so `net.name` ended up as the last bus's original name (for example `case14.m` reporting `Bus 14    LV` instead of `case14`) instead of the case name.
-* Fixed the `PV→PQ locks`/`PV→PQ events` header lines in `printACPFlowResults` not fitting the report's fixed label-column width (their previous longer wording, `Guarded PV→PQ locks`/`Iterative PV→PQ events`, overran the column other fields align to).
-* Fixed the `Solver time`/`Total time` header lines in `printACPFlowResults` not lining up with the report's fixed label-column width (they were 3 characters narrower than every other label).
+* Fixed wrong `Case` name in run.log/result files for MATPOWER cases with bus_name metadata — a loop variable was overwriting the case name with the last bus's name.
+* Fixed misaligned PV→PQ header lines in the report (labels too long for the column).
+* Fixed misaligned Solver time/Total time headers (3 characters too narrow).
 
 # Version 0.8.10 — 2026-07-17
 
