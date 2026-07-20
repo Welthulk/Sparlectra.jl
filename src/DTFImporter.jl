@@ -14,7 +14,7 @@
 
 module DTFImporter
 
-using ..Sparlectra: Net, addBus!, addProsumer!, _addPIModelACLine_by_idx!, _addPIModelTrafo_by_idx!, geNetBusIdx, validate!, normalize_bus_shunt_model, calcSkewAngleTap, calcTapCorrectedRX, transformer_config
+using ..Sparlectra: Net, addBus!, addProsumer!, _addPIModelACLine_by_idx!, _addPIModelTrafo_by_idx!, geNetBusIdx, validate!, normalize_bus_shunt_model, PhaseTapChangerModel, calcPhaseTapAngleRatio, calcPhaseTapFraction, calcTapCorrectedRX, transformer_config
 
 export DTFCase, DTFParams, DTFSize, DTFBranch, DTFBus, DTFCompensation, DTFTransformerControl, DTFOutage, DTFTrailingRecord, read_dtf, build_net,
   dtf_branch_key, find_outage_branch_indices, outage_match_diagnostic, apply_single_branch_outage!, case_summary, outage_label
@@ -371,10 +371,20 @@ function _dtf_effective_transformer_tap(case::DTFCase, branch::DTFBranch, contro
   shift_deg = 0.0
   if control.longitudinal_range_percent !== nothing && control.max_tap_step !== nothing &&
       control.actual_tap_step !== nothing && control.max_tap_step != 0
-    tap_fraction = (control.longitudinal_range_percent / 100.0) * control.actual_tap_step / control.max_tap_step
+    phase_model = PhaseTapChangerModel(
+      kind = :asymmetrical,
+      step = control.actual_tap_step,
+      lowStep = -control.max_tap_step,
+      highStep = control.max_tap_step,
+      neutralStep = 0,
+      voltage_step_increment = control.longitudinal_range_percent / 100.0 / control.max_tap_step,
+      winding_connection_angle_deg = skew_angle_deg,
+      convention = :reciprocal_from_side,
+    )
+    tap_fraction = calcPhaseTapFraction(phase_model)
     if tap_fraction != 0.0
       model = skew_angle_deg == 0.0 ? :longitudinal : :skew_angle
-      tap_result = calcSkewAngleTap(; tap_fraction = tap_fraction, skew_angle_deg = skew_angle_deg)
+      tap_result = calcPhaseTapAngleRatio(phase_model)
       effective_complex = tap_result.regulating_vector
       relative_ratio = tap_result.effective_ratio
       shift_deg = model == :skew_angle ? tap_result.effective_shift_deg : 0.0

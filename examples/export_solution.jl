@@ -12,6 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Date: 2026-05-18
+# file: examples/export_solution.jl
+# purpose: runs Sparlectra's internal solver, exports a solver-agnostic PFModel/PFSolution, and optionally compares against an external-solver run via runpf_external!
+
 """
 export_solution_for_external_solver.jl
 
@@ -24,6 +28,8 @@ reference.
 using Sparlectra
 using Dates
 using Printf
+
+include(joinpath(@__DIR__, "internal", "example_header.jl"))
 
 const EXPORT_OUTDIR = joinpath(@__DIR__, "_out", "export_solution")
 
@@ -133,6 +139,7 @@ function Sparlectra.solvePf(solver::DummyExternalSolver, model::Sparlectra.PFMod
 end
 
 function main(args = ARGS)
+  print_example_banner("examples/export_solution.jl", "runs Sparlectra's internal solver, exports a solver-agnostic PFModel/PFSolution, and optionally compares against an external-solver run via runpf_external!")
   cli = _parse_cli_args(collect(args))
 
   config_file = Sparlectra.configuration_path_from_inputs(env_var = "SPARLECTRA_CONFIGURATION_YAML", fallback_paths = [Sparlectra.USER_SPARLECTRA_CONFIG_PATH])
@@ -299,6 +306,5 @@ function main(args = ARGS)
   return (output_dir = output_dir, summary_file = summary_file, matpower_export_file = matpower_export_file, internal_solution_file = internal_solution_file, external_solution_file = external_solution_file, comparison_file = comparison_file)
 end
 
-if get(ENV, "SPARLECTRA_EXPORT_SOLUTION_NO_MAIN", "0") != "1"
-  Base.invokelatest(getfield(@__MODULE__, :main), ARGS)
-end
+run_example(main, ARGS)
+

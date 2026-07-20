@@ -1,9 +1,30 @@
+# Copyright 2023–2026 Udo Schmitz
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Date: 2026-06-10
+# file: examples/exp_powerflow_service.jl
+# purpose: starts a local PowerFlow service run, looks up its serialized result by run ID, and lists its artifacts without an HTTP server
+
 using Sparlectra
+
+include(joinpath(@__DIR__, "internal", "example_header.jl"))
 
 function main(;
   casefile::AbstractString = "case5.m",
   output_root::AbstractString = joinpath(@__DIR__, "_out", "powerflow_service"),
 )
+  print_example_banner("examples/exp_powerflow_service.jl", "starts a local PowerFlow service run, looks up its serialized result by run ID, and lists its artifacts without an HTTP server")
   request = Dict(
     "casefile" => ensure_casefile(casefile),
     "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH,
@@ -35,4 +56,4 @@ function main(;
   return result
 end
 
-Base.invokelatest(main)
+run_example(main)

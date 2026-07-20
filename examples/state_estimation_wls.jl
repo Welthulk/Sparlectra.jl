@@ -21,11 +21,15 @@
 # 4) Run WLS state estimation
 # 5) Compare estimated voltages with PF reference
 
+# Date: 2026-03-13
 # file: examples/state_estimation_wls.jl
+# purpose: runs a first classical WLS state-estimation workflow: build/import network, solve PF, generate synthetic measurements, and estimate the state
 
 using Sparlectra
 using Printf
 using Dates
+
+include(joinpath(@__DIR__, "internal", "example_header.jl"))
 using Random
 
 const OUTDIR = joinpath(@__DIR__, "_out")
@@ -199,6 +203,7 @@ function _run_state_estimation_example(io::IO)
 end
 
 function main()
+  print_example_banner("examples/state_estimation_wls.jl", "runs a first classical WLS state-estimation workflow: build/import network, solve PF, generate synthetic measurements, and estimate the state")
   mkpath(OUTDIR)
   timestamp = Dates.format(Dates.now(), "yyyymmdd_HHMMSS")
   logfile = joinpath(OUTDIR, "run_$(CASEFILE)_$(timestamp).log")
@@ -216,6 +221,5 @@ function main()
   return logfile
 end
 
-if get(ENV, "SPARLECTRA_USING_STATE_ESTIMATION_EXAMPLE", "0") != "1"
-  Base.invokelatest(getfield(@__MODULE__, :main))
-end
+run_example(main)
+

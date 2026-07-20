@@ -208,7 +208,7 @@ state_estimation:
     @test !occursin("_nested_yaml_get", source)
     @test !occursin("Dict{String,Any}", source)
     @test occursin("Sparlectra.run_matpower_case", source)
-    @test occursin("Base.invokelatest(getfield(@__MODULE__, :main))", source)
+    @test occursin("run_example(main)", source)
     @test occursin("Base.invokelatest(getfield(@__MODULE__, :_ensure_julia_threads_for_script)", source)
     @test occursin("Base.invokelatest(getfield(@__MODULE__, :_resolve_julia_threads_request)", source)
     @test occursin("Base.invokelatest(", source)
@@ -217,6 +217,8 @@ state_estimation:
     old_no_main = get(ENV, "SPARLECTRA_MATPOWER_IMPORT_NO_MAIN", nothing)
     ENV["SPARLECTRA_MATPOWER_IMPORT_NO_MAIN"] = "1"
     mod = Module(:MatpowerImportExampleSmoke)
+    Core.eval(mod, :(using Sparlectra))
+    Core.eval(mod, :(include(path) = Base.include($mod, path)))
     try
       Base.include(mod, example_path)
       @test isdefined(mod, :main)

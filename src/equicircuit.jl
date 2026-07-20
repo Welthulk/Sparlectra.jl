@@ -222,6 +222,188 @@ function calcTapCorrectedRX(; r_pu::Real, x_pu::Real, tap_changer_model::Symbol,
 end
 
 """
+    calcRatioTapCorrection(taps::PowerTransformerTaps; step::Int = taps.step) -> Float64
+
+Multiplicative ratio-tap correction `1 + (step - neutralStep) * tapStepPercent/100`
+for the `:neutral_relative` convention (the only convention `PowerTransformerTaps`
+currently supports). Applied as a divisor on the winding ratio by `calcTransformerRatio`; this is
+the single source of truth for that formula, see
+`docs/src/branchmodel.md`.
+
+# Arguments
+- `taps::PowerTransformerTaps`: the tap-changer model.
+- `step::Int`: tap position to evaluate at; defaults to `taps.step`.
+
+# Returns
+- `Float64`: the correction factor (`1.0` at the neutral step).
+"""
+function calcRatioTapCorrection(taps::PowerTransformerTaps; step::Int = taps.step)::Float64
+  return 1.0 + (step - taps.neutralStep) * taps.tapStepPercent / 100.0
+end
+
+"""
+    calcRatioTapRange(taps::PowerTransformerTaps) -> NamedTuple
+
+Ratio-terms tap range `(tap_min, tap_max, tap_step)`, evaluated with
+[`calcRatioTapCorrection`](@ref) at `lowStep` and `highStep`:
+`tap_min = min(corr(lowStep), corr(highStep))`, `tap_max = max(...)`,
+`tap_step = abs(tapStepPercent / 100)`.
+
+# Returns
+- NamedTuple `(tap_min, tap_max, tap_step)`.
+"""
+function calcRatioTapRange(taps::PowerTransformerTaps)
+  low_ratio = calcRatioTapCorrection(taps; step = taps.lowStep)
+  high_ratio = calcRatioTapCorrection(taps; step = taps.highStep)
+  return (tap_min = min(low_ratio, high_ratio), tap_max = max(low_ratio, high_ratio), tap_step = abs(taps.tapStepPercent / 100.0))
+end
+
+"""
+    calcPhaseTapFraction(m::PhaseTapChangerModel; step::Int = m.step) -> Float64
+
+`(step - neutralStep) * voltage_step_increment`, the CGMES `n-n₀` tap fraction
+`f` shared by the `:symmetrical` and `:asymmetrical` formulas in
+[`calcPhaseTapAngleRatio`](@ref).
+
+# Failure behavior
+Errors if `m.voltage_step_increment` is `nothing`. Always throws
+`ArgumentError` for `kind == :tabular` — a tabular model has no linear tap
+fraction, only discrete `(ratio, angle_deg)` rows (see
+[`calcPhaseTapTable`](@ref)).
+"""
+function calcPhaseTapFraction(m::PhaseTapChangerModel; step::Int = m.step)::Float64
+  m.kind === :tabular && throw(ArgumentError("calcPhaseTapFraction: kind=:tabular has no linear tap fraction; use calcPhaseTapTable instead."))
+  isnothing(m.voltage_step_increment) && error("calcPhaseTapFraction: voltage_step_increment is not set for this PhaseTapChangerModel.")
+  return (step - m.neutralStep) * m.voltage_step_increment
+end
+
+"""
+    calcPhaseTapTable(m::PhaseTapChangerModel; step::Int = m.step) -> NamedTuple
+
+Exact lookup of the `m.table` row for `step` (no interpolation between table
+steps — taps are discrete; continuous interpolation is deferred to a later,
+outer-loop-facing stage). Implemented as a linear `findfirst` scan over the
+already-validated, strictly ascending table — no `Dict` caching in this
+stage.
+
+# Returns
+- NamedTuple `(effective_ratio, effective_shift_deg, x_pu)`, taken verbatim
+  from the matching `TapTablePoint` (`ratio`, `angle_deg`, `x_pu`).
+
+# Failure behavior
+Throws `ArgumentError` if `m.table === nothing` or if no row matches `step`.
+"""
+function calcPhaseTapTable(m::PhaseTapChangerModel; step::Int = m.step)
+  isnothing(m.table) && throw(ArgumentError("calcPhaseTapTable: model has no table (m.table === nothing)."))
+  idx = findfirst(p -> p.step == step, m.table)
+  isnothing(idx) && throw(ArgumentError("calcPhaseTapTable: step=$(step) has no matching table row."))
+  row = m.table[idx]
+  return (effective_ratio = row.ratio, effective_shift_deg = row.angle_deg, x_pu = row.x_pu)
+end
+
+# Inverse of calcSkewAngleTap's regulating-vector -> (ratio, shift_deg) mapping,
+# used to reconstruct a regulating vector from a table row's (ratio, angle_deg).
+function _regulating_vector_from_ratio_shift(ratio::Float64, shift_deg::Float64, convention::Symbol)::ComplexF64
+  if convention === :reciprocal_from_side
+    return ComplexF64((1.0 / ratio) * cis(-deg2rad(shift_deg)))
+  elseif convention === :direct_regulating_vector
+    return ComplexF64(ratio * cis(deg2rad(shift_deg)))
+  else
+    throw(ArgumentError("Unsupported skew-angle tap convention: $(convention)"))
+  end
+end
+
+"""
+    calcPhaseTapAngleRatio(m::PhaseTapChangerModel; step::Int = m.step) -> NamedTuple
+
+Effective ratio/shift/regulating-vector of a CGMES phase-tap-changer model
+(ENTSO-E PST Modelling, CGMES v2.4, 2014-05-28) at the given tap `step`.
+
+- `kind == :symmetrical` (ch. 4.2): `α = 2·atand(f/2)`, magnitude is always
+  `1.0` (`effective_ratio == 1.0` regardless of `convention`). With the
+  default `:reciprocal_from_side` convention the returned
+  `effective_shift_deg` is `-α` (mirroring `calcSkewAngleTap`'s sign
+  convention); `:direct_regulating_vector` returns `+α`.
+- `kind == :asymmetrical` (ch. 6.2, quadrature booster = `ψ = 90°`):
+  delegates to `calcSkewAngleTap(tap_fraction = f, skew_angle_deg =
+  winding_connection_angle_deg, convention = m.convention)` unchanged.
+- `kind == :tabular`: table OVERRIDES the formula path — delegates to
+  [`calcPhaseTapTable`](@ref) for `(effective_ratio, effective_shift_deg)`
+  and reconstructs `regulating_vector` as the exact inverse of
+  `calcSkewAngleTap`'s regulating-vector-to-(ratio,shift) mapping for
+  `m.convention` (`:reciprocal_from_side`:
+  `regulating_vector = (1/ratio) * cis(-deg2rad(shift_deg))`;
+  `:direct_regulating_vector`: `regulating_vector = ratio * cis(deg2rad(shift_deg))`).
+
+# Returns
+- NamedTuple `(effective_ratio, effective_shift_deg, regulating_vector)`.
+"""
+function calcPhaseTapAngleRatio(m::PhaseTapChangerModel; step::Int = m.step)
+  if m.kind === :tabular
+    row = calcPhaseTapTable(m; step = step)
+    return (
+      effective_ratio = row.effective_ratio,
+      effective_shift_deg = row.effective_shift_deg,
+      regulating_vector = _regulating_vector_from_ratio_shift(row.effective_ratio, row.effective_shift_deg, m.convention),
+    )
+  end
+  f = calcPhaseTapFraction(m; step = step)
+  if m.kind === :symmetrical
+    alpha_deg = 2.0 * atand(f / 2.0)
+    regulating_vector = ComplexF64(cis(deg2rad(alpha_deg)))
+    if m.convention === :reciprocal_from_side
+      effective_shift_deg = -alpha_deg
+    elseif m.convention === :direct_regulating_vector
+      effective_shift_deg = alpha_deg
+    else
+      throw(ArgumentError("Unsupported skew-angle tap convention: $(m.convention)"))
+    end
+    effective_ratio = 1.0
+  else # :asymmetrical (only remaining possibility)
+    tap_result = calcSkewAngleTap(; tap_fraction = f, skew_angle_deg = m.winding_connection_angle_deg, convention = m.convention)
+    effective_ratio = tap_result.effective_ratio
+    effective_shift_deg = tap_result.effective_shift_deg
+    regulating_vector = tap_result.regulating_vector
+  end
+  return (effective_ratio = effective_ratio, effective_shift_deg = effective_shift_deg, regulating_vector = regulating_vector)
+end
+
+"""
+    calcPhaseTapReactance(m::PhaseTapChangerModel, alpha_deg::Real) -> Union{Nothing,Float64}
+
+CGMES series-reactance dependence on the phase-tap angle (ch. 3 summary
+table), evaluated at the given `alpha_deg` (typically the `effective_shift_deg`
+of [`calcPhaseTapAngleRatio`](@ref) at some step):
+
+- `:symmetrical`:  `X(α) = x_min + (x_max - x_min) * (sind(α/2) / sind(αmax/2))^2`
+- `:asymmetrical`: `X(α) = x_min + (x_max - x_min) * (tand(α) / tand(αmax))^2`
+- `:tabular`: returns the `x_pu` of the `m.table` row at `m.step` (may be
+  `nothing`); `alpha_deg` is ignored — the table is the single source of
+  truth and carries no continuous angle dependence.
+
+where (for the formula kinds) `αmax` is
+`calcPhaseTapAngleRatio(m; step = m.highStep).effective_shift_deg`. Squaring
+cancels any sign flip from `m.convention`, so the result does not depend on
+which convention was used to obtain `alpha_deg` as long as it is consistent
+with `m`.
+
+# Returns
+- `Float64`, or `nothing` if `m.x_min`/`m.x_max` (formula kinds) or the table
+  row's `x_pu` (`:tabular`) is `nothing`.
+"""
+function calcPhaseTapReactance(m::PhaseTapChangerModel, alpha_deg::Real)::Union{Nothing,Float64}
+  m.kind === :tabular && return calcPhaseTapTable(m; step = m.step).x_pu
+  (isnothing(m.x_min) || isnothing(m.x_max)) && return nothing
+  alphamax_deg = calcPhaseTapAngleRatio(m; step = m.highStep).effective_shift_deg
+  frac = if m.kind === :symmetrical
+    sind(Float64(alpha_deg) / 2.0) / sind(alphamax_deg / 2.0)
+  else # :asymmetrical
+    tand(Float64(alpha_deg)) / tand(alphamax_deg)
+  end
+  return m.x_min + (m.x_max - m.x_min) * frac^2
+end
+
+"""
     calcNeutralU(neutralU_ratio::Float64, vn_hv::Float64, tap_min::Integer, tap_max::Integer, tap_step_percent::Float64)::Float64
 
 Calculates the neutral voltage of a transformer based on the given parameters.
