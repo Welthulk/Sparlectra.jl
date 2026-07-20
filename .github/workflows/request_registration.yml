@@ -2,6 +2,11 @@ name: Request Julia Registration
 
 on:
   workflow_dispatch:
+    inputs:
+      force:
+        description: "Trotzdem registrieren, wenn HEAD Workflow-Dateien aendert (TagBot muss dann manuell nachgetaggt werden)"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -14,6 +19,21 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
+
+      # TagBot kann Commits, die .github/workflows/* aendern, nicht mit dem
+      # GITHUB_TOKEN taggen (403: Resource not accessible by integration).
+      # Deshalb hier abbrechen, bevor Registrator ueberhaupt losrennt.
+      - name: Guard - HEAD darf keine Workflow-Dateien aendern
+        if: ${{ !inputs.force }}
+        run: |
+          changed=$(git diff --name-only HEAD^ HEAD -- .github/workflows/)
+          if [ -n "$changed" ]; then
+            echo "Der zu registrierende Commit aendert Workflow-Dateien:"
+            echo "$changed"
+            echo "::error::TagBot kann diesen Commit nicht automatisch taggen. Erst einen normalen Commit (z. B. Versions-Bump) pushen und dann registrieren - oder den Workflow mit force=true erneut starten und den Tag anschliessend manuell setzen."
+            exit 1
+          fi
+          echo "OK: HEAD aendert keine Workflow-Dateien."
 
       - uses: julia-actions/setup-julia@v3
         with:
@@ -36,3 +56,8 @@ jobs:
               body,
             });
             core.notice(`Created registration issue #${issue.data.number}: ${issue.data.html_url}`);
+            await core.summary
+              .addHeading(title)
+              .addLink(`Registrierungs-Issue #${issue.data.number}`, issue.data.html_url)
+              .addRaw(`\n\nRegistriert wird der Stand von main: \`${context.sha}\``)
+              .write();
