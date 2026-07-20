@@ -14,7 +14,13 @@
 
 # Network Analyzer for Sparlectra
 
+# Date: 2025-03-13
+# file: examples/network_analyzer.jl
+# purpose: builds a small test network, analyzes its topology, removes a branch, and re-analyzes to show the resulting state
+
 using Sparlectra
+
+include(joinpath(@__DIR__, "internal", "example_header.jl"))
 
 """
     analyze_network(net::Net)
@@ -96,6 +102,7 @@ Create a test network and analyze it with detailed debug information.
 This helps understand the network structure before and after removal operations.
 """
 function test_debug()
+  print_example_banner("examples/network_analyzer.jl", "builds a small test network, analyzes its topology, removes a branch, and re-analyzes to show the resulting state")
   # Create a test network as in testremove.jl
   net = Net(name = "remove_test", baseMVA = 100.0)
 
@@ -137,5 +144,4 @@ function test_debug()
   return net
 end
 
-# Call the test_debug function
-net = test_debug()
+net = run_example(test_debug)

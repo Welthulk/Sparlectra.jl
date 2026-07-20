@@ -21,9 +21,15 @@
 # 4) Run validate_measurements(...) and inspect ranking
 # 5) Run runse_diagnostics(...; deactivate_and_rerun=true)
 
+# Date: 2026-03-24
+# file: examples/usage_state_estimation_diagnostics.jl
+# purpose: demonstrates bad-data diagnostics for state estimation: inject one bad measurement, run validate_measurements, and inspect deactivate-and-rerun diagnostics
+
 using Sparlectra
 using Random
 using Printf
+
+include(joinpath(@__DIR__, "internal", "example_header.jl"))
 
 function _create_demo_net()
   net = Net(name = "se_diagnostics_demo", baseMVA = 100.0)
@@ -44,6 +50,7 @@ function _create_demo_net()
 end
 
 function run_usage_state_estimation_diagnostics()
+  print_example_banner("examples/usage_state_estimation_diagnostics.jl", "demonstrates bad-data diagnostics for state estimation: inject one bad measurement, run validate_measurements, and inspect deactivate-and-rerun diagnostics")
   net = _create_demo_net()
 
   ite_pf, erg_pf = runpf!(net, 40, 1e-10, 0; method = :rectangular)
@@ -75,4 +82,4 @@ function run_usage_state_estimation_diagnostics()
   return nothing #diag
 end
 
-run_usage_state_estimation_diagnostics()
+run_example(run_usage_state_estimation_diagnostics)

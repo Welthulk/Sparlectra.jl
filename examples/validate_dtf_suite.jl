@@ -12,6 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Date: 2026-07-16
+# file: examples/validate_dtf_suite.jl
+# purpose: unified CLI runner for DTF import audit, native DTF/FOR002 base/outage validation, and DTF->MATPOWER->Sparlectra roundtrip validation
+
 # Unified DTF validation suite.
 #
 # Thin CLI runner over the shared modules in examples/internal/
@@ -35,6 +39,7 @@ include(joinpath(@__DIR__, "internal", "dtf_validation_base.jl"))
 include(joinpath(@__DIR__, "internal", "dtf_validation_outages.jl"))
 include(joinpath(@__DIR__, "internal", "dtf_validation_matpower.jl"))
 include(joinpath(@__DIR__, "internal", "dtf_validation_audit.jl"))
+include(joinpath(@__DIR__, "internal", "example_header.jl"))
 
 const _SUITE_MODES = ("audit", "base", "outages", "matpower")
 
@@ -433,6 +438,7 @@ function _handle_error!(rows, item, mode, mode_output, err, opt)
 end
 
 function run_suite(args = ARGS)
+  print_example_banner("examples/validate_dtf_suite.jl", "unified CLI runner for DTF import audit, native DTF/FOR002 base/outage validation, and DTF->MATPOWER->Sparlectra roundtrip validation")
   opt = parse_suite_cli(args)
   opt === nothing && return nothing
 
@@ -650,12 +656,5 @@ function run_suite(args = ARGS)
   return result
 end
 
-function _running_as_script()
-  return true  
-  return !isempty(PROGRAM_FILE) && abspath(PROGRAM_FILE) == abspath(@__FILE__)
-end
-
-if _running_as_script()
-  Base.invokelatest(run_suite, ARGS)
-  nothing
-end
+run_example(run_suite, ARGS)
+nothing

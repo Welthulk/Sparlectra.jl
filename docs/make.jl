@@ -43,7 +43,6 @@ makedocs(
     "Synthetic Tiled Grids" => "synthetic_grids.md",
     "Voltage Dependent Control" => "voltage_dependent_control.md",
     "Control Framework" => "control_framework.md",
-    "Transformer Control" => "transformer_control.md",
     "Examples Overview" => "examples_overview.md",
     "State Estimation" => "state_estimation.md",
     "Workshop" => "workshop.md",

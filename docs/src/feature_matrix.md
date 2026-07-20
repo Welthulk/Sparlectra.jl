@@ -33,6 +33,7 @@ Legend:
 | Voltage-dependent prosumer control (`Q(U)`, `P(U)`) | ✅ | ❌ | Implemented for PF with controller-aware mismatch/Jacobian terms in rectangular formulation; not part of SE model. |
 | MATPOWER import / cases | ✅ | ✅ | Typical SE studies can start from imported PF-ready networks; PF import supports configurable SHIFT unit/sign and TAP ratio (`normal` or `reciprocal`) conventions, Sparlectra transformer-loss metadata round trips for FOR/DTF exports, plus example-workflow auto-profile recommendations for robust large-case settings. |
 | Tap-changer model (`transformer.tap_changer_model`) | ✅ | ⚠️ | `ideal` (default) keeps the tap changer free of series-impedance feedback; `impedance_correction` re-refers transformer R/X through the tapped winding (`|1 + f·e^(jφ)|²`). Applies to all transformers of an imported case, read by both the MATPOWER and the native DTF importer; implemented centrally in `calcTapCorrectedRX`/`calcTapImpedanceCorrectionFactor` (`src/equicircuit.jl`). SE reads the same imported `Net`, so the model choice is inherited but not independently configurable per SE run. |
+| Typed phase-tap-changer models (CGMES PST) | ⚠️ | ❌ | `PhaseTapChangerModel` (`:symmetrical`/`:asymmetrical`, quadrature booster as ψ=90°) and `:tabular` models with `TapTablePoint` provide CGMES-oriented phase-shifter semantics; formula/lookup helpers (`calcPhaseTapAngleRatio`, `calcPhaseTapReactance`, `calcPhaseTapTable`) are centralized in `src/equicircuit.jl` (Issue #261). Currently a developer-facing modeling/equivalent-circuit layer: `PowerTransformerWinding.phase_taps` can be populated directly (2WT) or via `create3WTWindings!`'s `phase_tap_side`/`phase_taps` keywords (3WT, `examples/exp_3wt_phase_taps.jl`), and the DTF importer uses `calcPhaseTapAngleRatio` to derive branch `ratio`/`shift` (result unchanged) — but a persisted `phase_taps` model has no effect on the solved branch yet: `calcPhaseTapReactance` is not wired into the solver, `Branch.phase_min_deg/phase_max_deg/phase_step_deg` are still hard-coded constants regardless of `phase_taps`, and there is no config-driven per-transformer selection. Tabular data overrides formula reconstruction where present. |
 | Synthetic tiled-grid generator | ✅ | ⚠️ | `build_synthetic_tiled_grid_net` creates artificial one-voltage-level AC PF benchmark networks; SE can use the resulting `Net` as an artificial study case when measurements are supplied. |
 
 ## Solvers, operations & limits
@@ -85,6 +86,6 @@ Legend:
 * [Links (bus couplers)](links.md)
 * [External Solvers](external_solvers.md)
 * [Network Reports](netreports.md)
-* [Transformer Control](transformer_control.md)
+* [Branch Model](branchmodel.md)
 * [Workshop](workshop.md)
 * [Changelog](changelog.md)

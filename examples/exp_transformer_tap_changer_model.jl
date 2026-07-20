@@ -12,7 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Date: 2026-07-17
+# file: examples/exp_transformer_tap_changer_model.jl
+# purpose: imports the same off-nominal-tap MATPOWER transformer with :ideal vs :impedance_correction tap_changer_model and compares the resulting series impedance and power-flow solution
+
 using Sparlectra
+
+include(joinpath(@__DIR__, "internal", "example_header.jl"))
 
 """
     main()
@@ -31,6 +37,7 @@ the MATPOWER and the native DTF importer through
 `transformer.tap_changer_model`.
 """
 function main()
+  print_example_banner("examples/exp_transformer_tap_changer_model.jl", "imports the same off-nominal-tap MATPOWER transformer with :ideal vs :impedance_correction tap_changer_model and compares the resulting series impedance and power-flow solution")
   mpc = (
     name = "tap_changer_model_demo",
     baseMVA = 100.0,
@@ -71,10 +78,8 @@ function main()
   )
 end
 
-if abspath(PROGRAM_FILE) == @__FILE__
-  result = Base.invokelatest(main)
-  println("Off-nominal tap ratio: ", result.ratio)
-  println("ideal:                R=", result.r_pu_ideal, " pu  X=", result.x_pu_ideal, " pu  converged=", result.converged_ideal, " (", result.iterations_ideal, " it.)  Vm(bus2)=", result.vm_bus2_ideal, " pu")
-  println("impedance_correction: R=", result.r_pu_impedance_correction, " pu  X=", result.x_pu_impedance_correction, " pu  converged=", result.converged_impedance_correction, " (", result.iterations_impedance_correction, " it.)  Vm(bus2)=", result.vm_bus2_impedance_correction, " pu")
-  println("R/X correction factor: ", result.correction_factor)
-end
+result = run_example(main)
+println("Off-nominal tap ratio: ", result.ratio)
+println("ideal:                R=", result.r_pu_ideal, " pu  X=", result.x_pu_ideal, " pu  converged=", result.converged_ideal, " (", result.iterations_ideal, " it.)  Vm(bus2)=", result.vm_bus2_ideal, " pu")
+println("impedance_correction: R=", result.r_pu_impedance_correction, " pu  X=", result.x_pu_impedance_correction, " pu  converged=", result.converged_impedance_correction, " (", result.iterations_impedance_correction, " it.)  Vm(bus2)=", result.vm_bus2_impedance_correction, " pu")
+println("R/X correction factor: ", result.correction_factor)
