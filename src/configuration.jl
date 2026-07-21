@@ -62,6 +62,24 @@ Base.@kwdef struct StartCurrentIterationConfig
 end
 
 """
+    MeritLineSearchConfig
+
+Typed configuration for the optional Armijo merit-function line search used
+as an alternative acceptance criterion inside the rectangular Newton-Raphson
+autodamp backtracking loop. Disabled by default; when disabled the solver
+behaves exactly as before this feature was added. See
+[Merit-Function Line Search](@ref) for the theoretical background.
+"""
+Base.@kwdef struct MeritLineSearchConfig
+  enabled::Bool = false
+  armijo_c1::Float64 = 1.0e-4
+  scale_p::Float64 = 1.0
+  scale_q::Float64 = 1.0
+  scale_v::Float64 = 1.0
+  fallback_max_mismatch::Bool = true
+end
+
+"""
     QLimitConfig
 
 Typed reactive-power limit switching configuration used by power-flow runners.
@@ -158,6 +176,7 @@ Base.@kwdef struct PowerFlowConfig
   islands_reference_policy::Symbol = :matpower_like
   start_mode::StartModeConfig = StartModeConfig()
   start_current_iteration::StartCurrentIterationConfig = StartCurrentIterationConfig()
+  merit::MeritLineSearchConfig = MeritLineSearchConfig()
   qlimits::QLimitConfig = QLimitConfig()
   islands::IslandPowerFlowConfig = IslandPowerFlowConfig()
 end
@@ -610,6 +629,19 @@ function StartCurrentIterationConfig(raw::AbstractDict)
   )
 end
 
+function MeritLineSearchConfig(raw::AbstractDict)
+  armijo_c1 = _as_float_cfg(_raw_get(raw, "armijo_c1", 1.0e-4))
+  isfinite(armijo_c1) && 0.0 < armijo_c1 < 0.5 || throw(ArgumentError("power_flow.merit.armijo_c1 must be finite and in (0, 0.5); got $(armijo_c1)."))
+  return MeritLineSearchConfig(
+    enabled = _as_bool_cfg(_raw_get(raw, "enabled", false)),
+    armijo_c1 = armijo_c1,
+    scale_p = _validate_positive("power_flow.merit.scale_p", _as_float_cfg(_raw_get(raw, "scale_p", 1.0))),
+    scale_q = _validate_positive("power_flow.merit.scale_q", _as_float_cfg(_raw_get(raw, "scale_q", 1.0))),
+    scale_v = _validate_positive("power_flow.merit.scale_v", _as_float_cfg(_raw_get(raw, "scale_v", 1.0))),
+    fallback_max_mismatch = _as_bool_cfg(_raw_get(raw, "fallback_max_mismatch", true)),
+  )
+end
+
 function ApslfConfig(raw::AbstractDict)
   order = _as_int_cfg(_raw_get(raw, "order", 40))
   order >= 1 || throw(ArgumentError("power_flow.apslf.order must be >= 1; got $(order)."))
@@ -686,6 +718,7 @@ function PowerFlowConfig(raw::AbstractDict)
   _validate_rectangular_powerflow_options(method = method, sparse = true)
   start_raw = _raw_get(merged, "start_values", _raw_section(merged, "start_mode"))
   start_current_iteration_raw = _raw_section(merged, "start_current_iteration")
+  merit_raw = _raw_section(merged, "merit")
   qlimit_raw = _raw_section(merged, "qlimits")
   islands_raw = _raw_section(merged, "islands")
   apslf_raw = _raw_section(merged, "apslf")
@@ -703,6 +736,11 @@ function PowerFlowConfig(raw::AbstractDict)
   wrong_branch_min_low_vm_count >= 0 || throw(ArgumentError("power_flow.wrong_branch_min_low_vm_count must be >= 0."))
   wrong_branch_rescue_max_attempts = _as_int_cfg(_raw_get(merged, "wrong_branch_rescue_max_attempts", 2))
   wrong_branch_rescue_max_attempts >= 0 || throw(ArgumentError("power_flow.wrong_branch_rescue_max_attempts must be >= 0."))
+  autodamp = _as_bool_cfg(_raw_get(merged, "autodamp", false))
+  merit_cfg = MeritLineSearchConfig(merit_raw)
+  if merit_cfg.enabled && !autodamp
+    throw(ArgumentError("power_flow.merit.enabled=true requires power_flow.autodamp=true. The merit-function line search only acts as an acceptance criterion inside the autodamp backtracking loop; set power_flow.autodamp=true or power_flow.merit.enabled=false."))
+  end
   return PowerFlowConfig(
     method = method,
     solver = solver,
@@ -711,7 +749,7 @@ function PowerFlowConfig(raw::AbstractDict)
     tol = _validate_positive("powerflow.tol", _as_float_cfg(_raw_get(merged, "tol", 1.0e-8))),
     max_iter = _as_int_cfg(_raw_get(merged, "max_iter", _raw_get(merged, "max_ite", 30))),
     sparse = true,
-    autodamp = _as_bool_cfg(_raw_get(merged, "autodamp", false)),
+    autodamp = autodamp,
     autodamp_min = _validate_positive("powerflow.autodamp_min", _as_float_cfg(_raw_get(merged, "autodamp_min", 0.05))),
     wrong_branch_detection = _validate_allowed_symbol("power_flow.wrong_branch_detection", _as_symbol_cfg(_raw_get(merged, "wrong_branch_detection", :warn)), WRONG_BRANCH_DETECTION_VALUES),
     wrong_branch_rescue = _as_bool_cfg(_raw_get(merged, "wrong_branch_rescue", false)),
@@ -729,6 +767,7 @@ function PowerFlowConfig(raw::AbstractDict)
     islands_reference_policy = _validate_allowed_symbol("power_flow.islands.reference_policy", _as_symbol_cfg(_raw_get(islands_raw, "reference_policy", :matpower_like)), POWERFLOW_ISLAND_REFERENCE_POLICY_VALUES),
     start_mode = StartModeConfig(merge(Dict{Any,Any}(merged), Dict{Any,Any}(start_raw))),
     start_current_iteration = StartCurrentIterationConfig(start_current_iteration_raw),
+    merit = merit_cfg,
     qlimits = QLimitConfig(merge(Dict{Any,Any}(merged), Dict{Any,Any}(qlimit_raw))),
     islands = IslandPowerFlowConfig(islands_raw),
   )

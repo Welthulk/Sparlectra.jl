@@ -110,6 +110,21 @@ power_flow:
     max_angle_step_deg: 30.0
     only_for_large_cases: false
 
+  # Optional Armijo merit-function line search inside the autodamp backtracking
+  # loop. enabled=false (default) leaves today's max-mismatch autodamp behavior
+  # unchanged. enabled=true requires autodamp=true (validation error otherwise).
+  merit:
+    enabled: false
+    # Sufficient-decrease constant, must be in (0, 0.5).
+    armijo_c1: 1.0e-4
+    # Diagonal scaling weights for P/Q/voltage residuals (positive reals).
+    scale_p: 1.0
+    scale_q: 1.0
+    scale_v: 1.0
+    # true = fall back to the max-mismatch criterion if no trial satisfies Armijo;
+    # false = fall back to the most conservative finite trial (today's autodamp fallback).
+    fallback_max_mismatch: true
+
   # Reactive-power limit switching.
   qlimits:
     enabled: true
