@@ -17,6 +17,21 @@
   `examples/apslf_demo.jl`.
 * Web UI: solver dropdown with APSLF options; run status shows the solver
   that produced the result.
+* **Feature**: Optional Armijo merit-function line search inside the
+  rectangular solver's autodamp backtracking loop (Issue #196, "Merit
+  Function / Optimization View"). New config block `power_flow.merit`
+  (`enabled`, `armijo_c1`, `scale_p`/`scale_q`/`scale_v`,
+  `fallback_max_mismatch`), disabled by default so existing autodamp
+  behavior is unchanged. `merit.enabled = true` requires
+  `power_flow.autodamp = true`. Adds `merit_*` solver-status/API-result
+  fields and a `merit_linesearch.log` diagnostic artifact (per-iteration
+  `f_before`, `directional_derivative`, tested/accepted λ, `accept_reason`).
+  Configurable via YAML, `run_sparlectra_api` overrides, and a new WebUI
+  "Merit-function line search" section. See
+  [Merit-Function Line Search](@ref) in `docs/src/solver.md` for the
+  theoretical background and
+  [Merit-function line search options](@ref) in
+  `docs/src/powerflow_configuration.md` for configuration details.
 
 # Version 0.8.12 — 2026-07-20
 

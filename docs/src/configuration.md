@@ -418,6 +418,13 @@ The following canonical keys are currently present in `src/configuration.yaml.ex
 - `power_flow.wrong_branch_rescue_max_attempts`
 - `power_flow.flatstart`
 - `power_flow.max_iter`
+- `power_flow.merit`
+- `power_flow.merit.armijo_c1`
+- `power_flow.merit.enabled`
+- `power_flow.merit.fallback_max_mismatch`
+- `power_flow.merit.scale_p`
+- `power_flow.merit.scale_q`
+- `power_flow.merit.scale_v`
 - `power_flow.method`
 - `power_flow.qlimits`
 - `power_flow.qlimits.auto_q_delta_pu`

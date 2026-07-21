@@ -70,6 +70,9 @@ Only keys in `GUI_EDITABLE_CONFIG_KEYS` are accepted. The initial allowlist is:
 - `power_flow.start_current_iteration.vm_max_pu`
 - `power_flow.start_current_iteration.max_angle_step_deg`
 - `power_flow.start_current_iteration.only_for_large_cases`
+- `power_flow.merit.enabled`
+- `power_flow.merit.armijo_c1`
+- `power_flow.merit.fallback_max_mismatch`
 - `output.logfile_results`
 - `output.detailed_result_csv_write_mode`
 - `output.detailed_result_csv_exporter`
@@ -101,6 +104,14 @@ describes only the start-value pre-solve; Newton-Raphson remains the power-flow
 solver. The `current_iteration_start.log` artifact is classified as a
 start-value/current-iteration diagnostic artifact, not merely as a generic run
 log.
+
+When `power_flow.merit.enabled = true`, API result metadata additionally
+exposes the merit-function line-search outcome: `merit_enabled`,
+`merit_used_iterations`, `merit_fallback_count`, `merit_active_set_skip_count`,
+`merit_initial`, `merit_final`, and `merit_linesearch_artifact`. The metadata
+describes only the autodamp step-acceptance criterion; it does not change the
+Newton-Raphson iteration itself. The `merit_linesearch.log` artifact is
+classified as a merit-function line-search diagnostic artifact.
 
 ## Serialization
 

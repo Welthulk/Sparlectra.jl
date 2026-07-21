@@ -130,6 +130,129 @@ scalar step length for the already computed rectangular Newton correction.
 
 ---
 
+### Merit-Function Line Search
+
+Autodamp (above) accepts the first trial step length that reduces the
+**maximum absolute mismatch** — an $\infty$-norm criterion with no formal
+sufficient-decrease guarantee. `power_flow.merit` adds an optional, opt-in
+alternative acceptance test based on a scalar merit function, used *inside*
+the same backtracking loop rather than replacing it. It is disabled by
+default (`power_flow.merit.enabled = false`), which leaves the historical
+autodamp behavior byte-for-byte unchanged.
+
+#### Root-finding vs. optimization view
+
+Newton-Raphson solves the power-flow equations as a root-finding problem,
+$F(x) = 0$. The same residual can be viewed through an optimization lens by
+defining the scalar merit function
+
+```math
+f(x) = \frac{1}{2} \lVert W F(x) \rVert_2^2
+```
+
+where $W$ is an optional diagonal scaling matrix (see below). Minimizing
+$f$ and solving $F(x) = 0$ share the same solutions whenever $F(x) = 0$ is
+attainable ($f = 0$ there), so a solver that drives $f$ down along the way
+is consistent with driving $F$ to zero.
+
+The key fact that makes the *existing* Newton direction usable as a merit
+descent direction, without any extra factorization, is its gradient:
+
+```math
+\nabla f(x) = J(x)^\top W^\top W F(x)
+```
+
+With the Newton direction $\Delta x = -J(x)^{-1} F(x)$ (already computed for
+the ordinary Newton step) and $W = I$:
+
+```math
+\nabla f(x)^\top \Delta x = -F(x)^\top J(x)^{-\top} J(x)^\top J(x)^\top J(x)^{-1} F(x)
+```
+
+reduces, using $J \Delta x = -F$, to
+
+```math
+\nabla f(x)^\top \Delta x = -\lVert W F(x) \rVert_2^2 < 0
+```
+
+whenever $F(x) \ne 0$. So the Newton direction is always a **descent
+direction** for $f$, and the directional derivative is available directly
+from the already-computed mismatch vector — no extra Jacobian-vector product
+or factorization is needed to evaluate it.
+
+#### Armijo sufficient-decrease acceptance
+
+For each backtracking trial step length $\lambda$ (tried in the same order
+as autodamp: `damp`, then halved down to `autodamp_min`), the merit line
+search accepts the first $\lambda$ satisfying the Armijo condition:
+
+```math
+f(x + \lambda \Delta x) \le f(x) + c_1 \, \lambda \, \nabla f(x)^\top \Delta x
+```
+
+`power_flow.merit.armijo_c1` is $c_1 \in (0, 0.5)$, the sufficient-decrease
+constant. Smaller $c_1$ accepts almost any step that decreases $f$ at all;
+larger $c_1$ requires the decrease to be a larger fraction of the predicted
+linear decrease, rejecting more trials and backtracking further. This is the
+standard Armijo (backtracking) line-search condition — see Nocedal & Wright,
+*Numerical Optimization*, the chapter on line-search methods, for the general
+theory.
+
+Compared to the existing $\infty$-norm autodamp criterion, Armijo acceptance
+gives a **globally aware** descent guarantee on the aggregate residual energy
+$f$, whereas the max-mismatch criterion only asks whether the single
+worst-offending bus equation improved. A step can reduce the worst-bus
+mismatch while increasing the overall residual energy elsewhere, or vice
+versa; the two criteria can therefore accept different trial step lengths on
+the same iteration.
+
+If no trial step length satisfies Armijo, `power_flow.merit.fallback_max_mismatch`
+selects the fallback behavior:
+
+* `true` (default): fall back to the classic max-mismatch criterion for this
+  iteration (first improving trial, else the conservative best-finite trial —
+  identical to disabling merit for that iteration);
+* `false`: skip straight to the conservative best-finite-trial fallback,
+  without checking whether any trial merely improved the max mismatch.
+
+#### Limits
+
+* Minimizing $f$ is not equivalent to solving $F(x) = 0$: $f$ can have local
+  minima with $F(x) \ne 0$ (e.g. saddle-like residual configurations), so
+  satisfying Armijo at every iteration does not by itself guarantee
+  convergence to a root.
+* The merit criterion does not influence *which* numerical solution branch
+  (e.g. a high-voltage vs. a low-voltage operating point) the solver
+  converges to; it only accepts or rejects step lengths along the path
+  Newton-Raphson already takes.
+* A PV/PQ active-set switch (Q-limit handling) changes what the residual
+  vector's entries *mean* (a $\Delta Q$ entry becomes a $\Delta V$ entry, or
+  vice versa) for the buses that switched. Comparing $f$ across such a switch
+  is not well-defined, so the merit comparison is skipped for the Newton
+  iteration in which a switch occurred; that iteration falls back to the
+  classic max-mismatch criterion and is logged with
+  `accept_reason = active_set_skip` (see
+  [Merit-function line search options](@ref) in the configuration reference
+  for the diagnostic log format).
+
+#### Residual scaling
+
+$P$, $Q$, and voltage-setpoint ($V$) residual entries can differ in
+magnitude by orders of magnitude depending on the per-unit base and grid
+mix (e.g. a large-$P$/small-$Q$ transmission grid, or PV buses with tight
+voltage tolerances). Because $f$ sums squared residuals, an unscaled merit
+value can be dominated by whichever equation type happens to have the
+largest natural magnitude, which weakens the sufficient-decrease guarantee
+for the other equation types. `power_flow.merit.scale_p`,
+`power_flow.merit.scale_q`, and `power_flow.merit.scale_v` apply positive
+diagonal weights ($W$ above) per equation type — `ΔP_i` entries always use
+`scale_p`; the second equation per non-slack bus uses `scale_q` for PQ buses
+and `scale_v` for PV buses. Leave all three at `1.0` (the default) unless
+diagnostics show one residual type dominating the merit value in a specific
+case.
+
+---
+
 ### Start Projection for Difficult Seeds
 
 #### DC-angle flat-start background
