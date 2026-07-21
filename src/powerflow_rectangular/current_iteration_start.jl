@@ -137,6 +137,73 @@ function _run_guarded_current_iteration_start(Ybus, Vraw::Vector{ComplexF64}, S:
   return accepted ? best : original, summary
 end
 
+"""
+    _run_guarded_apslf_start(Ybus, Vraw, S, bus_types, Vset, slack_idx; enabled, order, baseMVA, verbose=0, performance_profile=nothing) -> (V, summary)
+
+Guarded start-value preconditioner ahead of the rectangular Newton-Raphson
+solve (`power_flow.apslf_start`), analogous to
+[`_run_guarded_current_iteration_start`](@ref) but sourcing the candidate
+profile from the AnalyticLoadFlow.jl-backed analytic power-series solver
+instead of a manual current-injection update.
+
+APSLF is used purely as a start-value improver here, not a solver:
+`nr_polish` is always disabled (the downstream Newton-Raphson step performs
+the polish) and Q-limits are not considered (matching the scope of the
+existing current-iteration pre-solve). The candidate is only adopted when it
+strictly improves the rectangular mismatch relative to the incoming start
+profile; if AnalyticLoadFlow.jl is not loaded, `apslf_solver` raises its
+standard "not installed" error immediately (this is a hard configuration
+error, not a numerical guard rejection). Numerical failures of the APSLF
+solve itself (non-finite result, internal exception) are caught and treated
+as "not improved", restoring the incoming start values.
+"""
+function _run_guarded_apslf_start(Ybus, Vraw::Vector{ComplexF64}, S::Vector{ComplexF64}, bus_types::Vector{Symbol}, Vset::Vector{Float64}, slack_idx::Int; enabled::Bool, order::Int, baseMVA::Float64, verbose::Int = 0, performance_profile = nothing)
+  if !enabled
+    summary = _apslf_start_summary(enabled = false, reason = :disabled)
+    summary = _record_apslf_start_summary!(performance_profile, summary)
+    return Vraw, summary
+  end
+  n = length(Vraw)
+  initial_mismatch = _max_rectangular_mismatch(Ybus, Vraw, S, bus_types, Vset, slack_idx)
+  solver = apslf_solver(order = order, use_pade = true, nr_polish = false)
+  accepted = false
+  final_mismatch = initial_mismatch
+  reason = :not_improved
+  candidate = Vraw
+  try
+    model = PFModel(
+      Ybus = Ybus,
+      baseMVA = baseMVA,
+      busIdx_net = collect(1:n),
+      busType = bus_types,
+      slack_idx = slack_idx,
+      Vset = Vset,
+      Sspec = S,
+      V0 = Vraw,
+    )
+    sol = solvePf(solver, model)
+    if length(sol.V) == n && all(v -> isfinite(real(v)) && isfinite(imag(v)), sol.V)
+      candidate = sol.V
+      trial_mismatch = _max_rectangular_mismatch(Ybus, candidate, S, bus_types, Vset, slack_idx)
+      if isfinite(trial_mismatch) && trial_mismatch < initial_mismatch
+        accepted = true
+        final_mismatch = trial_mismatch
+        reason = :improved
+      end
+    else
+      reason = :invalid_voltage
+    end
+  catch err
+    reason = :apslf_solve_error
+    verbose > 0 && @warn "APSLF start pre-solve failed; keeping incoming start values" exception = (err, catch_backtrace())
+  end
+  summary = _apslf_start_summary(enabled = true, attempted = true, accepted = accepted, order = order, initial_mismatch = initial_mismatch, final_mismatch = final_mismatch, reason = reason)
+  summary = _record_apslf_start_summary!(performance_profile, summary)
+  _write_apslf_start_log(performance_profile, summary)
+  verbose > 0 && @info "APSLF start pre-solve" accepted = accepted reason = reason initial_mismatch = initial_mismatch final_mismatch = final_mismatch order = order
+  return accepted ? candidate : Vraw, summary
+end
+
 @inline function _has_vset_adjust_config(ps::ProSumer)::Bool
   return !isnothing(ps.vset_adjust) || !(isnothing(ps.vstep_pu) && isnothing(ps.tap_steps_down) && isnothing(ps.tap_steps_up))
 end
