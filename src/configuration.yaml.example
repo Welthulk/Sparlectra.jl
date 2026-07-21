@@ -125,6 +125,29 @@ power_flow:
     # false = fall back to the most conservative finite trial (today's autodamp fallback).
     fallback_max_mismatch: true
 
+  # Optional scaled-Newton trust-region step control: an alternative to
+  # autodamp that caps the Newton step norm at an adaptive radius and
+  # accepts/rejects steps by merit decrease. enabled=false (default) leaves
+  # the solver unchanged. Mutually exclusive with autodamp=true (validation
+  # error otherwise).
+  trust_region:
+    enabled: false
+    # Initial trust-region radius, in per-unit state-vector (2-)norm.
+    initial_radius: 1.0
+    # Radius floor; falling below it declares non-convergence
+    # (reason = :trust_region_collapsed) instead of looping forever.
+    min_radius: 1.0e-4
+    # Radius ceiling.
+    max_radius: 10.0
+    # Minimum actual/predicted reduction ratio (rho) required to accept a step.
+    eta_accept: 0.1
+    # Radius multiplier on a rejected step, in (0, 1).
+    shrink_factor: 0.5
+    # Radius multiplier on a strongly successful boundary step, > 1.
+    expand_factor: 2.0
+    # rho threshold (in (0, 1)) above which a boundary-hitting accepted step expands the radius.
+    expand_threshold: 0.75
+
   # Reactive-power limit switching.
   qlimits:
     enabled: true
