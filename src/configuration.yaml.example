@@ -7,6 +7,27 @@ power_flow:
   # Allowed values: rectangular
   # Rectangular is the supported public AC power-flow path.
   method: rectangular
+  # Selects which solver actually computes the power-flow solution.
+  # Allowed values: rectangular, apslf
+  # - rectangular: the internal Newton-Raphson solver (rectangular_network_solver.jl).
+  # - apslf: the AnalyticLoadFlow.jl-backed analytic power-series solver (ApslfSolver);
+  #   requires the optional AnalyticLoadFlow.jl dependency to be loaded.
+  solver: rectangular
+  # Options for solver: apslf.
+  apslf:
+    # Highest power-series coefficient to compute.
+    order: 40
+    # Evaluate the voltage series via Pade [L/M] approximants instead of direct Taylor summation.
+    use_pade: true
+    # Run a Newton-Raphson polishing step on the series result.
+    nr_polish: true
+  # Use the APSLF solver as a start-value generator ahead of the rectangular
+  # Newton-Raphson solve. Incompatible with solver: apslf (start generator is
+  # only meaningful ahead of NR). No use_pade/nr_polish here: polishing is left
+  # to the downstream NR solve (nr_polish=false internally).
+  apslf_start:
+    enabled: false
+    order: 40
   # Legacy start switch (true = synthetic flat start). Keep aligned with start_mode below.
   flatstart: true
   # Positive solver tolerance and iteration cap.

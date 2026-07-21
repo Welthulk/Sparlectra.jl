@@ -1,6 +1,6 @@
 name = "Sparlectra"
 uuid = "31ce9bba-fd9d-44a1-b005-f5f509afda38"
-version = "0.8.12"
+version = "0.8.14"
 authors = ["Udo Schmitz"]
 description = "load flow calculation using newton-raphson"
 
@@ -21,7 +21,14 @@ SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
 TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
 UUIDs = "cf7118a7-6976-5b1a-9a39-7adc72f591a4"
 
+[weakdeps]
+AnalyticLoadFlow = "19ecf91d-4042-490c-adc1-7fb0fdb392c0"
+
+[extensions]
+SparlectraAnalyticLoadFlowExt = "AnalyticLoadFlow"
+
 [compat]
+AnalyticLoadFlow = "0.9"
 BenchmarkTools = "1.6"
 DataFrames = "1"
 Dates = "1"
@@ -40,8 +47,9 @@ UUIDs = "1"
 julia = "1.12"
 
 [extras]
+AnalyticLoadFlow = "19ecf91d-4042-490c-adc1-7fb0fdb392c0"
 BenchmarkTools = "6e4b80f9-dd63-53aa-95a3-0cdb28fa8baf"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [targets]
-test = ["Test", "BenchmarkTools"]
+test = ["Test", "BenchmarkTools", "AnalyticLoadFlow"]

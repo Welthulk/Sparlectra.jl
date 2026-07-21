@@ -140,6 +140,94 @@ to avoid global display side effects.
 
 ---
 
+## APSLF (AnalyticLoadFlow.jl)
+
+`ApslfSolver` is a built-in `AbstractExternalSolver` implementation that bridges
+to [AnalyticLoadFlow.jl](https://github.com/Welthulk/AnalyticLoadFlow.jl), an
+analytic power-series (holomorphic-embedding-style) load-flow solver. It ships
+as a Julia [package extension](https://pkgdocs.julialang.org/v1/creating-packages/#Conditional-loading-of-code-in-packages-(extensions))
+in `ext/SparlectraAnalyticLoadFlowExt.jl`: AnalyticLoadFlow.jl is only a
+**weak dependency** of Sparlectra, so it never gets installed for users who
+don't need it. The adapter, its config keys, and the framework wiring only
+become active once the host session loads both packages:
+
+```julia
+using Sparlectra
+using AnalyticLoadFlow   # activates ext/SparlectraAnalyticLoadFlowExt.jl
+```
+
+### Constructing a solver
+
+```julia
+solver = apslf_solver(; order = 40, use_pade = true, nr_polish = true, mode = :direct)
+```
+
+`apslf_solver` is the public reachability point in the base package: if
+AnalyticLoadFlow.jl is not loaded, it raises a clear error
+(`"AnalyticLoadFlow.jl nicht installiert — ..."`) instead of silently doing
+nothing or falling back to another solver.
+
+- `order::Int` — highest power-series coefficient to compute.
+- `use_pade::Bool` — evaluate the voltage series via Padé `[L/M]` approximants
+  instead of direct Taylor summation (generally improves the convergence
+  radius).
+- `nr_polish::Bool` — run a Newton-Raphson polishing step on the series
+  result to tighten the final mismatch.
+- `mode::Symbol` — `:direct` (native PV handling) or `:outer` (PQ-only series
+  plus an outer secant loop for PV enforcement).
+
+### Standalone use via the external-solver bridge
+
+```julia
+iters, status, sol = runpf_external!(net, apslf_solver(); tol = 1e-8)
+```
+
+This follows the same `buildPfModel` → `solvePf` → write-back contract as any
+other `AbstractExternalSolver` (see above). The `PFModel → AnalyticLoadFlow`
+spec mapping is: `Ybus → Y`, `busType → bustype`, `real/imag(Sspec) →
+Pspec/Qspec`, `Vset → Vm`, `qmin_pu/qmax_pu → Qmin/Qmax` (unconstrained when
+`model` carries no Q-limits), `slack_idx → slack`. `sol.meta` carries
+solver-specific diagnostics: the series/Padé `order`, an APSLF stability
+indicator (`dmin`/`pole`/`bus`/`level`, from the distance of Padé poles to the
+physical evaluation point `s = 1`), and NR-polish bookkeeping.
+
+### Framework integration
+
+`power_flow.solver = apslf` routes the central framework run
+(`run_sparlectra`) through `ApslfSolver` instead of the internal rectangular
+Newton-Raphson solver — including per-island handling for networks with
+multiple AC islands. `power_flow.apslf_start.enabled = true` uses APSLF as a
+**guarded start-value generator** ahead of the rectangular Newton-Raphson
+solve instead (`power_flow.solver` stays `rectangular` in that mode). See
+[Solver selection (rectangular vs. APSLF)](powerflow_configuration.md#solver-selection-rectangular-vs-apslf)
+for the full configuration reference and the [Web UI guide](webui.md) for the
+corresponding form controls.
+
+### Capability limits
+
+APSLF is a genuinely different solution method from the rectangular
+Newton-Raphson solver, not a drop-in replacement with identical modeling
+depth. Concretely, compared to the internal rectangular path:
+
+- **No selectable start voltage.** The series always starts from the
+  canonical analytic germ `V(s=0) = 1∠0`; `model.V0`, `start_mode`, and
+  `start_projection` have no effect on an APSLF solve. This is inherent to
+  the embedding construction, not a missing feature.
+- **No OLTC / tap-changer / phase-shifting-transformer control and no
+  Q(U)/P(U) voltage-dependent control.** Runs with `power_flow.solver =
+  apslf` and any active outer-loop controller (tap, PST, Q(U), P(U)) are
+  rejected up front with a clear error — there is no silent fallback to a
+  partially-controlled solve.
+- **Q-limits are simple PV→PQ only.** AnalyticLoadFlow.jl performs its own
+  internal PV↔PQ switching against `Qmin`/`Qmax` during the series solve; it
+  does not reproduce the rectangular solver's active-set guard, hysteresis,
+  or classical outer-loop enforcement modes (`power_flow.qlimits.guard`,
+  `enforcement_mode`, hysteresis/cooldown settings do not apply to APSLF
+  runs).
+- **No wrong-branch detection/rescue.** `power_flow.wrong_branch_detection`
+  and the guarded current-iteration start pre-solve are rectangular-solver-
+  specific and are not part of the APSLF path.
+
 ## Example: Exporting a Reference Solution
 
 See:

@@ -19,25 +19,20 @@
 # this metadata to explain completed, failed, and non-converged runs.
 
 function _current_iteration_lifecycle_metadata(rect_status)::Dict{String,Any}
-  rect_status === nothing && return Dict{String,Any}(
-    "current_iteration_enabled" => false,
-    "current_iteration_attempted" => false,
-    "current_iteration_accepted" => false,
-    "current_iteration_iterations" => 0,
-    "current_iteration_initial_mismatch" => NaN,
-    "current_iteration_final_mismatch" => NaN,
-    "current_iteration_reason" => "unavailable",
-    "current_iteration_artifact" => "",
-  )
+  # rect_status may come from a non-rectangular solver route (e.g. the APSLF
+  # solver's status NamedTuple), which has no current-iteration fields at
+  # all. Default gracefully per-field instead of assuming the rectangular
+  # NR-specific shape, matching _island_wise_lifecycle_metadata below.
+  get_field(name, default) = rect_status !== nothing && hasproperty(rect_status, name) ? getproperty(rect_status, name) : default
   return Dict{String,Any}(
-    "current_iteration_enabled" => getproperty(rect_status, :current_iteration_enabled),
-    "current_iteration_attempted" => getproperty(rect_status, :current_iteration_attempted),
-    "current_iteration_accepted" => getproperty(rect_status, :current_iteration_accepted),
-    "current_iteration_iterations" => getproperty(rect_status, :current_iteration_iterations),
-    "current_iteration_initial_mismatch" => getproperty(rect_status, :current_iteration_initial_mismatch),
-    "current_iteration_final_mismatch" => getproperty(rect_status, :current_iteration_final_mismatch),
-    "current_iteration_reason" => String(getproperty(rect_status, :current_iteration_reason)),
-    "current_iteration_artifact" => getproperty(rect_status, :current_iteration_artifact),
+    "current_iteration_enabled" => get_field(:current_iteration_enabled, false),
+    "current_iteration_attempted" => get_field(:current_iteration_attempted, false),
+    "current_iteration_accepted" => get_field(:current_iteration_accepted, false),
+    "current_iteration_iterations" => get_field(:current_iteration_iterations, 0),
+    "current_iteration_initial_mismatch" => get_field(:current_iteration_initial_mismatch, NaN),
+    "current_iteration_final_mismatch" => get_field(:current_iteration_final_mismatch, NaN),
+    "current_iteration_reason" => String(get_field(:current_iteration_reason, "unavailable")),
+    "current_iteration_artifact" => get_field(:current_iteration_artifact, ""),
   )
 end
 

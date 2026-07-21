@@ -51,6 +51,7 @@ Legend:
 | PV/PQ reactive limit handling | ✅ | ❌ | PF includes the default active-set Q-limit logic plus classical simultaneous and one-at-a-time outer-loop modes; SE currently does not expose PV/PQ switching logic. |
 | `Q(U)` / `P(U)` controller solver support | ⚠️ | ❌ | Supported on the default rectangular PF path; legacy polar/classic PF modes are unsupported. |
 | External solver interface | ✅ | ❌ | PF has external solver integration; SE is internal WLS. |
+| APSLF solver (`power_flow.solver = apslf`) | ⚠️ | ❌ | Analytic power-series solver bridged from the optional weak dependency AnalyticLoadFlow.jl (`ApslfSolver`, `apslf_solver()`); usable standalone (`runpf_external!`), as the framework solver (`run_sparlectra`, including per-island handling), or as a guarded start-value generator ahead of the rectangular NR solve (`power_flow.apslf_start`). No selectable start voltage (always the canonical analytic germ), no OLTC/PST/Q(U)/P(U) controller support (rejected up front), and only simple internal PV→PQ Q-limit switching (no active-set guard/classical outer-loop modes). See [External Solver Interface](external_solvers.md#apslf-analyticloadflowjl). |
 
 ## State-estimation measurements, observability & diagnostics
 

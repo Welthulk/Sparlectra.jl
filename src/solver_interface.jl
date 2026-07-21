@@ -141,6 +141,37 @@ function solvePf(::AbstractExternalSolver, ::PFModel; kwargs...)
   error("solvePf(::AbstractExternalSolver, ::PFModel) is not implemented for this solver.")
 end
 
+"""
+    apslf_solver(; order::Int=40, use_pade::Bool=true, nr_polish::Bool=true, mode::Symbol=:direct) -> AbstractExternalSolver
+
+Reachability point for the AnalyticLoadFlow.jl-backed external solver (`ApslfSolver`),
+an analytic power-series (holomorphic-embedding-style) load-flow method.
+
+AnalyticLoadFlow.jl is only a weak dependency of Sparlectra, loaded via the package
+extension `ext/SparlectraAnalyticLoadFlowExt.jl`. Once the session has `using
+AnalyticLoadFlow` in addition to `using Sparlectra`, this method is replaced by the
+extension's implementation and returns a usable solver; pass it to [`solvePf`](@ref)
+or [`runpf_external!`](@ref).
+
+# Keyword Arguments
+- `order::Int = 40`: highest power-series coefficient to compute.
+- `use_pade::Bool = true`: evaluate the voltage series via Padé `[L/M]` approximants
+  instead of direct Taylor summation.
+- `nr_polish::Bool = true`: run a Newton-Raphson polishing step on the series result.
+- `mode::Symbol = :direct`: `:direct` (native PV handling) or `:outer` (PQ-only series
+  plus an outer secant loop for PV enforcement).
+
+# Throws
+`ErrorException` if AnalyticLoadFlow.jl is not loaded in the current session.
+"""
+function apslf_solver(; order::Int = 40, use_pade::Bool = true, nr_polish::Bool = true, mode::Symbol = :direct)
+  ext = Base.get_extension(Sparlectra, :SparlectraAnalyticLoadFlowExt)
+  if ext === nothing
+    error("AnalyticLoadFlow.jl nicht installiert — Pkg.add(\"AnalyticLoadFlow\") und anschließend `using AnalyticLoadFlow` laden, um den APSLF-Solver (ApslfSolver) zu aktivieren.")
+  end
+  return ext.ApslfSolver(order = order, use_pade = use_pade, nr_polish = nr_polish, mode = mode)
+end
+
 # -----------------------------------------------------------------------------
 # Model builder
 # -----------------------------------------------------------------------------
