@@ -1,9 +1,44 @@
 # Version 0.8.14 — unreleased
+
 ## Breaking News
 
-### Improvements
+* Added AnalyticLoadFlow.jl integration (APSLF, an analytic
+  power-series load-flow solver) as a weak dependency via a Julia package
+  extension (`ext/SparlectraAnalyticLoadFlowExt.jl`). New `PowerFlowConfig`
+  keys: `power_flow.solver` (`rectangular` | `apslf`, default `rectangular`),
+  `power_flow.apslf.{order,use_pade,nr_polish}`,
+  `power_flow.apslf_start.{enabled,order}`. Existing configuration files and
+  API calls are unaffected by default (`solver` defaults to `rectangular`,
+  reproducing prior behavior exactly), but the configuration schema and the
+  `GUI_EDITABLE_CONFIG_KEYS` allowlist changed: tooling that hardcodes the
+  previous key set, or performs strict schema comparisons against an older
+  Sparlectra version, needs to account for the new keys.
+  `power_flow.apslf_start.enabled=true` together with `power_flow.solver=apslf`
+  is rejected at config-validation time — the start-value generator only
+  applies ahead of the rectangular Newton-Raphson solve.
 
-###Bugfixes
+## New Features
+
+* `apslf_solver(; order=40, use_pade=true, nr_polish=true, mode=:direct)` —
+  reachability point for the AnalyticLoadFlow.jl-backed `ApslfSolver
+  <: AbstractExternalSolver`. Usable standalone via `runpf_external!`, as the
+  framework solver (`run_sparlectra` with `power_flow.solver = apslf`,
+  including per-island handling and up-front rejection of runs with active
+  outer-loop controllers), or as a guarded APSLF start-value generator ahead
+  of the rectangular Newton-Raphson solve
+  (`power_flow.apslf_start.enabled = true`, always with `nr_polish=false`
+  internally since the downstream NR solve performs the polish). Without
+  AnalyticLoadFlow.jl loaded, `apslf_solver()` raises a clear "not installed"
+  error instead of silently doing nothing or falling back to another solver.
+  See `docs/src/external_solvers.md` for the adapter contract and capability
+  limits (no selectable start voltage, no OLTC/PST/Q(U)/P(U) controller
+  support, simple PV→PQ Q-limit switching only), and
+  `examples/apslf_demo.jl` for a worked comparison against the rectangular
+  solver.
+* Web UI: a Solver dropdown (`Newton-Raphson (rectangular)` /
+  `APSLF (AnalyticLoadFlow)`) with conditional, indented APSLF/APSLF-start
+  option panels; the run status header now shows the solver identity
+  (`rectangular`/`apslf`) that actually produced the result.
 
 # Version 0.8.12 — 2026-07-20
 

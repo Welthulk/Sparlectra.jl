@@ -52,6 +52,7 @@ Current extended-only groups are:
 - `programmatic_api_extended`
 - `webui_extended`
 - `repository_hygiene`
+- `apslf`
 - `dtf_extended`
 
 | Extended addition | File | Main checks |
@@ -61,6 +62,7 @@ Current extended-only groups are:
 | `matpower_examples` | `test/test_matpower_example.jl` | MATPOWER example runner path, output routing, performance/profile rendering, and runtime configuration forwarding, removed start-voltage alias rejection, and canonical profile-blend parsing |
 | `synthetic_grids` | `test/test_synthetic_grids.jl` | Synthetic network generation and larger synthetic-grid regression coverage |
 | `configuration_docs` | `test/test_configuration_docs.jl` | Configuration documentation and docs/config consistency checks |
+| `apslf` | `test/test_apslf.jl` | APSLF (AnalyticLoadFlow.jl) integration: `power_flow.solver`/`apslf`/`apslf_start` config validation (including the `solver=apslf` + `apslf_start.enabled` conflict), outer-loop-controller rejection with `solver=apslf` (no AnalyticLoadFlow.jl needed for this check), Web UI form parsing of the new fields into the effective config, and the "AnalyticLoadFlow.jl not installed" error path. The adapter-mapping (`PFModel` -> AnalyticLoadFlow spec, PF ordering), standalone case14 convergence-vs-NR, and start-value-generator guard/`nr_polish=false` tests additionally require AnalyticLoadFlow.jl to be resolvable in the active environment (a weak dependency, not part of the default project); they skip with an informational message otherwise instead of failing. |
 
 ### `dtf_extended` group
 

@@ -49,14 +49,40 @@ Base.@kwdef struct ApslfSolver <: Sparlectra.AbstractExternalSolver
 end
 
 """
+    _apslf_spec_from_model(model::PFModel) -> NamedTuple
+
+Pure mapping from the canonical `PFModel` fields onto the AnalyticLoadFlow
+spec expected by `solve_pf_apslf`: `Ybus → Y`, `busType → bustype`,
+`real/imag(Sspec) → Pspec/Qspec`, `Vset → Vm`, `qmin_pu/qmax_pu → Qmin/Qmax`
+(defaulting to `-Inf`/`Inf` when `model` carries no Q-limits), `slack_idx →
+slack`. Split out from `solvePf` so the mapping itself is independently
+testable.
+"""
+function _apslf_spec_from_model(model::Sparlectra.PFModel)
+  n = length(model.busIdx_net)
+
+  qmin_pu = isempty(model.qmin_pu) ? fill(-Inf, n) : model.qmin_pu
+  qmax_pu = isempty(model.qmax_pu) ? fill(Inf, n) : model.qmax_pu
+
+  return (
+    Y = model.Ybus,
+    bustype = model.busType,
+    Pspec = real.(model.Sspec),
+    Qspec = imag.(model.Sspec),
+    Vm = model.Vset,
+    Qmin = qmin_pu,
+    Qmax = qmax_pu,
+    slack = model.slack_idx,
+  )
+end
+
+"""
     solvePf(solver::ApslfSolver, model::PFModel; kwargs...) -> PFSolution
 
 Solve `model` with AnalyticLoadFlow.jl's analytic power-series solver.
 
-Maps the canonical `PFModel` fields onto the AnalyticLoadFlow spec expected by
-`solve_pf_apslf`: `Ybus → Y`, `busType → bustype`, `real/imag(Sspec) → Pspec/Qspec`,
-`Vset → Vm`, `qmin_pu/qmax_pu → Qmin/Qmax` (defaulting to `-Inf`/`Inf` when `model`
-carries no Q-limits), `slack_idx → slack`. The returned voltage vector is in the same
+Maps the canonical `PFModel` fields onto the AnalyticLoadFlow spec via
+[`_apslf_spec_from_model`](@ref). The returned voltage vector is in the same
 PF ordering as `model.busIdx_net`.
 
 `model.V0` is **not** used: AnalyticLoadFlow always starts from the canonical
@@ -71,21 +97,7 @@ Extra `kwargs` (e.g. `tol` forwarded by `runpf_external!`) are accepted and igno
 convergence/polish behavior is controlled entirely via the `ApslfSolver` fields.
 """
 function Sparlectra.solvePf(solver::ApslfSolver, model::Sparlectra.PFModel; kwargs...)
-  n = length(model.busIdx_net)
-
-  qmin_pu = isempty(model.qmin_pu) ? fill(-Inf, n) : model.qmin_pu
-  qmax_pu = isempty(model.qmax_pu) ? fill(Inf, n) : model.qmax_pu
-
-  spec = (
-    Y = model.Ybus,
-    bustype = model.busType,
-    Pspec = real.(model.Sspec),
-    Qspec = imag.(model.Sspec),
-    Vm = model.Vset,
-    Qmin = qmin_pu,
-    Qmax = qmax_pu,
-    slack = model.slack_idx,
-  )
+  spec = _apslf_spec_from_model(model)
 
   res = AnalyticLoadFlow.solve_pf_apslf(
     spec;

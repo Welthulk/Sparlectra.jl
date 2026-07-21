@@ -714,7 +714,8 @@ function render_powerflow_result(result::AbstractDict)::String
   status = lowercase(string(get(result, "status", "unknown")))
   active = status in _WEBUI_ACTIVE_RUN_STATUSES
   status_badge = "<span class=\"status-badge $(webui_status_class(result))\">$(_webui_escape(status))</span>"
-  solver_name = String(get(get(result, "final_outcome", Dict{String,Any}()), "solver", "rectangular"))
+  final_outcome_value = get(result, "final_outcome", nothing)
+  solver_name = final_outcome_value isa AbstractDict ? String(get(final_outcome_value, "solver", "rectangular")) : "rectangular"
   summary_rows = if active
     (("Run status", status_badge), ("Elapsed time", "<strong>$(_webui_escape(_format_elapsed_duration(_webui_elapsed_seconds(result, active))))</strong>"))
   else
