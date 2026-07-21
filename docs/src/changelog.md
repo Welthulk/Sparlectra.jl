@@ -1,8 +1,8 @@
 # Version 0.8.14 — unreleased
 
 ## Breaking News
-* AnalyticLoadFlow.jl (APSLF) integration
-  New config keys: `power_flow.solver` (`rectangular` | `apslf`),
+* AnalyticLoadFlow.jl (APSLF) integrated as a weak dependency via a package
+  extension. New config keys: `power_flow.solver` (`rectangular` | `apslf`),
   `power_flow.apslf.*`, `power_flow.apslf_start.*`. Default behavior is
   unchanged (`solver = rectangular`), but tooling with hardcoded key sets or
   strict schema checks must account for the new keys. Combining
@@ -15,7 +15,9 @@
   installed. Capability limits (no OLTC/PST/Q(U)/P(U), simple Q-limit
   switching only): see `docs/src/external_solvers.md`; demo in
   `examples/apslf_demo.jl`.
-  
+* Web UI: solver dropdown with APSLF options; run status shows the solver
+  that produced the result.
+
 # Version 0.8.12 — 2026-07-20
 
 ## New Features
