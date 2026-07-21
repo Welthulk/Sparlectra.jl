@@ -64,23 +64,31 @@ function _max_rectangular_mismatch(Ybus, V::Vector{ComplexF64}, S::Vector{Comple
   return _max_abs_mismatch(F)
 end
 
-"""
-    choose_rectangular_autodamp(Ybus, V, S, δx, F0; slack_idx, damp, autodamp_min, bus_types, Vset)
+# Weighted squared residual norm ‖W F‖² for the merit function f(x) = 1/2 ‖W F(x)‖².
+# F is stacked as [ΔP_i, second-equation_i] per non-slack bus i (see mismatch_rectangular);
+# the second equation is ΔQ_i for PQ buses and ΔV_i for PV buses, so scale_q/scale_v are
+# applied positionally via bus_types, not via the raw F index.
+@inline function _rectangular_merit_weighted_sqnorm(F::AbstractVector{Float64}, non_slack::Vector{Int}, bus_types::Vector{Symbol}, scale_p::Float64, scale_q::Float64, scale_v::Float64)
+  total = 0.0
+  @inbounds for (k, bus) in enumerate(non_slack)
+    row = 2k - 1
+    wp = scale_p * F[row]
+    total += wp * wp
+    w2 = bus_types[bus] == :PV ? scale_v : scale_q
+    wq = w2 * F[row+1]
+    total += wq * wq
+  end
+  return total
+end
 
-Select a Newton step length for the rectangular power-flow solver by backtracking
-from `damp` toward `autodamp_min`. The first trial step that reduces the maximum
-absolute mismatch is accepted. If no trial reduces the mismatch, the smallest
-finite trial is returned so the solver can continue safely with a conservative
-step.
+# Merit function value f(x) = 1/2 ‖W F(x)‖². See docs/src/solver.md, "Merit-Function Line Search".
+@inline _rectangular_merit_value(F::AbstractVector{Float64}, non_slack::Vector{Int}, bus_types::Vector{Symbol}, scale_p::Float64, scale_q::Float64, scale_v::Float64) =
+  0.5 * _rectangular_merit_weighted_sqnorm(F, non_slack, bus_types, scale_p, scale_q, scale_v)
 
-Returns `(alpha, Vtrial, trial_mismatch)`.
-"""
-function choose_rectangular_autodamp(Ybus, V::Vector{ComplexF64}, S::Vector{ComplexF64}, δx::Vector{Float64}, F0::Vector{Float64}; slack_idx::Int, damp::Float64 = 1.0, autodamp_min::Float64 = 0.05, bus_types::Vector{Symbol}, Vset::Vector{Float64}, diagnostics = nothing)
-  _validate_rectangular_damping(damp, autodamp_min)
-  non_slack = non_slack_indices(length(V), slack_idx)
-  current_mismatch = _max_abs_mismatch(F0)
-
-  # Reused trial buffers avoid per-backtracking-step allocations.
+# Classic max-mismatch backtracking search: the exact original `choose_rectangular_autodamp`
+# algorithm, factored out so both the default (merit-disabled) path and the merit path's
+# active-set-skip fallback share one implementation.
+function _classic_rectangular_autodamp_search(Ybus, V::Vector{ComplexF64}, S::Vector{ComplexF64}, δx::Vector{Float64}, non_slack::Vector{Int}, current_mismatch::Float64; slack_idx::Int, damp::Float64, autodamp_min::Float64, bus_types::Vector{Symbol}, Vset::Vector{Float64}, diagnostics)
   Vtrial = similar(V)
   best_V = similar(V)
 
@@ -118,6 +126,130 @@ function choose_rectangular_autodamp(Ybus, V::Vector{ComplexF64}, S::Vector{Comp
 end
 
 """
+    choose_rectangular_autodamp(Ybus, V, S, δx, F0; slack_idx, damp, autodamp_min, bus_types, Vset)
+
+Select a Newton step length for the rectangular power-flow solver by backtracking
+from `damp` toward `autodamp_min`. The first trial step that reduces the maximum
+absolute mismatch is accepted. If no trial reduces the mismatch, the smallest
+finite trial is returned so the solver can continue safely with a conservative
+step.
+
+When `merit_enabled = true` (opt-in, requires `autodamp = true`), an Armijo
+sufficient-decrease criterion on the merit function `f(x) = 1/2 ‖W F(x)‖²`
+is tried first for each trial step, in the same backtracking order; see
+[Merit-Function Line Search](@ref) for the theoretical background. If
+`active_set_changed = true` (a PV/PQ switch happened this Newton iteration),
+the merit comparison is skipped for this call and the classic max-mismatch
+criterion is used instead, since the residual vector's entries change meaning
+across an active-set switch. If no trial satisfies Armijo, `fallback_max_mismatch`
+selects whether to fall back to the classic max-mismatch criterion (`true`) or
+directly to the conservative best-finite-trial fallback (`false`).
+
+Returns `(alpha, Vtrial, trial_mismatch)`. When `merit_enabled = true`, per-trial
+diagnostics (`f_before`, `directional_derivative`, tested/accepted λ, `accept_reason`)
+are pushed to `merit_log` if it is an `AbstractVector`.
+"""
+function choose_rectangular_autodamp(
+  Ybus,
+  V::Vector{ComplexF64},
+  S::Vector{ComplexF64},
+  δx::Vector{Float64},
+  F0::Vector{Float64};
+  slack_idx::Int,
+  damp::Float64 = 1.0,
+  autodamp_min::Float64 = 0.05,
+  bus_types::Vector{Symbol},
+  Vset::Vector{Float64},
+  diagnostics = nothing,
+  merit_enabled::Bool = false,
+  armijo_c1::Float64 = 1.0e-4,
+  scale_p::Float64 = 1.0,
+  scale_q::Float64 = 1.0,
+  scale_v::Float64 = 1.0,
+  fallback_max_mismatch::Bool = true,
+  active_set_changed::Bool = false,
+  merit_log = nothing,
+)
+  _validate_rectangular_damping(damp, autodamp_min)
+  non_slack = non_slack_indices(length(V), slack_idx)
+  current_mismatch = _max_abs_mismatch(F0)
+
+  if !merit_enabled
+    # Default path: bit-identical to the pre-merit implementation, no extra
+    # allocations or computations.
+    return _classic_rectangular_autodamp_search(Ybus, V, S, δx, non_slack, current_mismatch; slack_idx = slack_idx, damp = damp, autodamp_min = autodamp_min, bus_types = bus_types, Vset = Vset, diagnostics = diagnostics)
+  end
+
+  if active_set_changed
+    # PV/PQ switching changed what the residual entries mean at this bus; a
+    # merit comparison across the switch is not well-defined for this iteration.
+    alpha, Vout, mismatch = _classic_rectangular_autodamp_search(Ybus, V, S, δx, non_slack, current_mismatch; slack_idx = slack_idx, damp = damp, autodamp_min = autodamp_min, bus_types = bus_types, Vset = Vset, diagnostics = diagnostics)
+    merit_log isa AbstractVector && push!(merit_log, (f_before = NaN, directional_derivative = NaN, f_after = NaN, tested_alphas = Float64[], accepted_alpha = alpha, accept_reason = :active_set_skip))
+    return alpha, Vout, mismatch
+  end
+
+  # --- Merit-function Armijo line search --------------------------------
+  f0 = _rectangular_merit_value(F0, non_slack, bus_types, scale_p, scale_q, scale_v)
+  # ∇f = JᵀWᵀWF and Δx = −J⁻¹F, so ∇fᵀΔx = −‖WF‖² without an extra Jacobian matvec.
+  directional_derivative = -2.0 * f0
+  tested_alphas = Float64[]
+
+  Vtrial = similar(V)
+  best_V = similar(V)
+  best_alpha = autodamp_min
+  _apply_rectangular_delta!(Vtrial, V, δx, slack_idx, non_slack, autodamp_min)
+  F_base = mismatch_rectangular(Ybus, Vtrial, S, bus_types, Vset, slack_idx)
+  best_mismatch = _max_abs_mismatch(F_base)
+  best_f = _rectangular_merit_value(F_base, non_slack, bus_types, scale_p, scale_q, scale_v)
+  copyto!(best_V, Vtrial)
+
+  first_improving_alpha = nothing
+  first_improving_V = nothing
+  first_improving_mismatch = NaN
+  first_improving_f = NaN
+
+  alpha = damp
+  while alpha >= autodamp_min
+    _apply_rectangular_delta!(Vtrial, V, δx, slack_idx, non_slack, alpha)
+    F_trial = mismatch_rectangular(Ybus, Vtrial, S, bus_types, Vset, slack_idx)
+    trial_mismatch = _max_abs_mismatch(F_trial)
+    f_trial = _rectangular_merit_value(F_trial, non_slack, bus_types, scale_p, scale_q, scale_v)
+    push!(tested_alphas, alpha)
+
+    if isfinite(f_trial) && f_trial <= f0 + armijo_c1 * alpha * directional_derivative
+      diagnostics isa AbstractVector && push!(diagnostics, (alpha = alpha, trial_mismatch = trial_mismatch, accepted_improvement = isfinite(trial_mismatch) && trial_mismatch < current_mismatch))
+      merit_log isa AbstractVector && push!(merit_log, (f_before = f0, directional_derivative = directional_derivative, f_after = f_trial, tested_alphas = copy(tested_alphas), accepted_alpha = alpha, accept_reason = :armijo))
+      return alpha, copy(Vtrial), trial_mismatch
+    end
+
+    if first_improving_alpha === nothing && isfinite(trial_mismatch) && trial_mismatch < current_mismatch
+      first_improving_alpha = alpha
+      first_improving_V = copy(Vtrial)
+      first_improving_mismatch = trial_mismatch
+      first_improving_f = f_trial
+    end
+    if isfinite(trial_mismatch) && trial_mismatch < best_mismatch
+      best_alpha = alpha
+      best_mismatch = trial_mismatch
+      best_f = f_trial
+      copyto!(best_V, Vtrial)
+    end
+    alpha *= 0.5
+  end
+
+  # No trial satisfied the Armijo condition.
+  if fallback_max_mismatch && first_improving_alpha !== nothing
+    diagnostics isa AbstractVector && push!(diagnostics, (alpha = first_improving_alpha, trial_mismatch = first_improving_mismatch, accepted_improvement = true))
+    merit_log isa AbstractVector && push!(merit_log, (f_before = f0, directional_derivative = directional_derivative, f_after = first_improving_f, tested_alphas = copy(tested_alphas), accepted_alpha = first_improving_alpha, accept_reason = :fallback_max_mismatch))
+    return first_improving_alpha, first_improving_V, first_improving_mismatch
+  end
+
+  diagnostics isa AbstractVector && push!(diagnostics, (alpha = best_alpha, trial_mismatch = best_mismatch, accepted_improvement = false))
+  merit_log isa AbstractVector && push!(merit_log, (f_before = f0, directional_derivative = directional_derivative, f_after = best_f, tested_alphas = copy(tested_alphas), accepted_alpha = best_alpha, accept_reason = :fallback_conservative))
+  return best_alpha, best_V, best_mismatch
+end
+
+"""
     complex_newton_step_rectangular(
         Ybus,
         V,
@@ -148,6 +280,14 @@ function complex_newton_step_rectangular(
   dQinj_dVm::Vector{Float64} = zeros(Float64, length(V)),
   performance_profile = nothing,
   step_diagnostics = nothing,
+  merit_enabled::Bool = false,
+  armijo_c1::Float64 = 1.0e-4,
+  scale_p::Float64 = 1.0,
+  scale_q::Float64 = 1.0,
+  scale_v::Float64 = 1.0,
+  fallback_max_mismatch::Bool = true,
+  active_set_changed::Bool = false,
+  merit_log = nothing,
 )
   n = length(V)
   # Solver assumes state ordering [Vr(non-slack); Vi(non-slack)] consistently
@@ -182,7 +322,12 @@ function complex_newton_step_rectangular(
   if autodamp
     # Autodamp path evaluates multiple trial voltages and returns accepted/fallback trial.
     _, Vtrial, _ = _perf_profile_time!(performance_profile, :newton_step_autodamp) do
-      choose_rectangular_autodamp(Ybus, V, S, δx, F0; slack_idx = slack_idx, damp = damp, autodamp_min = autodamp_min, bus_types = bus_types, Vset = Vset, diagnostics = step_diagnostics)
+      choose_rectangular_autodamp(
+        Ybus, V, S, δx, F0;
+        slack_idx = slack_idx, damp = damp, autodamp_min = autodamp_min, bus_types = bus_types, Vset = Vset, diagnostics = step_diagnostics,
+        merit_enabled = merit_enabled, armijo_c1 = armijo_c1, scale_p = scale_p, scale_q = scale_q, scale_v = scale_v,
+        fallback_max_mismatch = fallback_max_mismatch, active_set_changed = active_set_changed, merit_log = merit_log,
+      )
     end
     return Vtrial
   end
