@@ -5,29 +5,29 @@
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
 [![Julia](https://img.shields.io/badge/Julia-1.x-9558B2.svg)](https://julialang.org/)
 
-**Sparlectra.jl is a Julia package for transparent power-system calculations.**
+**Sparlectra.jl is a Julia framework for transparent, inspectable power-system analysis.**
 
 <a href="https://github.com/Welthulk/Sparlectra.jl/tree/main/"><img align="left" width="100" src="docs/src/assets/logo.png" style="margin-right: 20px" /></a>
 
-Sparlectra focuses on understandable and inspectable algorithms for AC power flow, PV/PQ switching, MATPOWER-based studies, transformer-control experiments, and experimental weighted-least-squares state estimation.
+Sparlectra provides a full AC power-flow workflow — from Network import through solving to configurable reporting — built around a design principle that sets it apart from black-box tools: every stage of the numerical pipeline is open, documented, and directly accessible. Model construction, Jacobian assembly, PV/PQ active-set handling, and convergence behavior can all be inspected and instrumented at runtime. Two solver backends are available: the built-in rectangular Newton-Raphson solver, and an optional analytic power-series solver (APSLF, via the AnalyticLoadFlow.jl package extension) usable standalone, as the primary solver, or as a guarded start-value generator ahead of Newton-Raphson.
 
-It is intended for engineers, researchers, and students who want to understand, test, and extend power-flow and state-estimation algorithms without hiding the numerical core behind a black box.
+That transparency is not a research-only trade-off. Deterministic, configuration-driven runs, explicit Q-limit and AC-island handling, and machine-readable reporting make Sparlectra suitable for production grid studies and planning work, alongside algorithm development, solver benchmarking, and cross-validation.
 
 ---
 
 ## Why Sparlectra?
 
-| Need | Sparlectra focus |
+| Requirement | Sparlectra approach |
 |---|---|
-| Understand Newton-Raphson power-flow internals | Transparent rectangular complex-state formulation |
-| Study PV/PQ switching | Explicit Q-limit and active-set diagnostics |
-| Work with MATPOWER cases | Import helpers, local casefile workflow, and comparison diagnostics |
-| Teach or inspect power-system algorithms | Readable Julia implementation with direct model access |
-| Experiment with state estimation | Experimental nonlinear WLS workflow |
-| Integrate external solvers | `PFModel` / `PFSolution` interface |
-| Investigate voltage-control behavior | Transformer tap and voltage-control experiments |
-
-Sparlectra is not primarily an optimization framework; it focuses on solver mechanics, model transparency, diagnostics, and engineering-oriented experimentation.
+| Reproducible AC power-flow studies | Deterministic, configuration-driven framework runs |
+| Insight into Newton-Raphson internals | Transparent rectangular complex-state formulation |
+| Robust PV/PQ handling | Explicit Q-limit enforcement with active-set diagnostics |
+| MATPOWER interoperability | Case import, local casefile workflow, comparison diagnostics |
+| Custom solver integration | Clean `PFModel` / `PFSolution` interface for external solvers |
+| Voltage- and tap-control studies | Outer-loop control framework for transformer regulation |
+| Alternative solver backend | Optional analytic power-series solver (APSLF, via AnalyticLoadFlow.jl) — standalone, as the primary solver, or as an NR start-value generator |
+| State estimation | Nonlinear weighted-least-squares workflow (experimental) |
+| Scalability | Sparse-matrix-oriented implementation for realistic network sizes |
 
 ---
 
@@ -35,25 +35,22 @@ Sparlectra is not primarily an optimization framework; it focuses on solver mech
 
 - Rectangular complex-state Newton-Raphson AC power flow.
 - Sparse-matrix-oriented implementation for realistic network studies.
-- PV/PQ bus handling with Q-limit checks and active-set diagnostics.
-- MATPOWER-compatible case import and comparison diagnostics.
-- Network modeling for buses, lines, transformers, generators, loads, shunts, links, and π-equivalent branch models.
-- Experimental nonlinear weighted-least-squares state estimation.
-- Transformer tap and voltage-control experiments.
-- Optional local Web UI for MATPOWER power-flow studies.
+- PV/PQ bus handling with Q-limit enforcement and active-set diagnostics.
+- Comprehensive network modeling: buses, lines, transformers, generators, loads, shunts, links, and π-equivalent branch models.
+- Outer-loop control framework for transformer tap and voltage control.
+- Configuration-driven batch execution for systematic case studies.
+- External-solver integration via the `PFModel` / `PFSolution` interface, including an optional analytic power-series solver (APSLF, via AnalyticLoadFlow.jl) usable standalone, as the primary solver, or as a Newton-Raphson start-value generator.
+- Nonlinear weighted-least-squares state estimation (experimental).
+- Machine-readable reporting (`ACPFlowReport`) and an optional local Web UI.
 
 ---
 
 ## Installation
 
-Install Sparlectra from the Julia package manager:
-
 ```julia
 using Pkg
 Pkg.add("Sparlectra")
 ```
-
-Then load it with:
 
 ```julia
 using Sparlectra
@@ -63,9 +60,9 @@ using Sparlectra
 
 ## Quick start
 
-`run_sparlectra` is the preferred public framework entry point. It owns MATPOWER import, configuration, optional control-loop execution, solving, post-processing, and configured output. For AC power-flow examples, `run_acpflow` is kept as a thin compatibility alias with the same minimal configuration-driven signature.
+`run_sparlectra` is the primary framework entry point. It orchestrates MATPOWER import, configuration, optional control-loop execution, solving, post-processing, and configured output. For AC power-flow scripts, `run_acpflow` remains available as a thin compatibility alias with the same configuration-driven signature.
 
-This example is runnable from a fresh checkout or package installation. The `ensure_casefile` helper downloads `case14.m` on demand if it is not already available locally.
+The example below runs from a fresh checkout or package installation; `ensure_casefile` downloads `case14.m` on demand if it is not present locally.
 
 ```julia
 using Sparlectra
@@ -82,7 +79,7 @@ println(result.iterations)
 println(result.final_mismatch)
 ```
 
-For custom network construction, batch execution, solver internals, and the local Web UI, see the documentation links below.
+For custom network construction, batch execution, solver internals, and the local Web UI, see the documentation linked below.
 
 ---
 
@@ -90,7 +87,7 @@ For custom network construction, batch execution, solver internals, and the loca
 
 [![Sparlectra local Web UI](docs/src/assets/sparlectra_powerflow_web_ui_mockup.png)](https://welthulk.github.io/Sparlectra.jl/webui/)
 
-Sparlectra includes an optional browser-based local Web UI for MATPOWER power-flow studies. See the [Local Web UI documentation](https://welthulk.github.io/Sparlectra.jl/webui/) for startup commands, configuration, run history, artifacts, and MATPOWER case handling.
+Sparlectra ships with an optional browser-based local Web UI for MATPOWER power-flow studies, including run history, artifacts, and case management. See the [Web UI documentation](https://welthulk.github.io/Sparlectra.jl/webui/) for setup and configuration.
 
 ---
 
@@ -101,45 +98,43 @@ Sparlectra includes an optional browser-based local Web UI for MATPOWER power-fl
 | Framework | `run_sparlectra` (`run_acpflow` alias) | Import/config/control/solve/output orchestration for one run |
 | Framework batch | `run_sparlectra_cases` | Sequential deterministic execution of configured `matpower_import.cases` |
 | Solver | `runpf!` | Solve an already built `Net` using `PowerFlowConfig` |
+| Alternative solver | `apslf_solver` | Reachability point for the APSLF (AnalyticLoadFlow.jl) external-solver backend |
 | Control | `run_control!` | Execute outer-loop controllers |
-| Import | `createNetFromMatPowerFile` | Convert a MATPOWER file into a `Net` without running the full framework workflow |
+| Import | `createNetFromMatPowerFile` | Convert a MATPOWER file into a `Net` without the full framework workflow |
 
 ---
 
 ## Documentation
 
-The full documentation is available here:
+Full documentation: <https://welthulk.github.io/Sparlectra.jl/>
 
-<https://welthulk.github.io/Sparlectra.jl/>
-
-Useful entry points:
+Key entry points:
 
 - [Local Web UI](https://welthulk.github.io/Sparlectra.jl/webui/) — browser-based local MATPOWER power-flow workflow
 - [Changelog](docs/src/changelog.md) — version history and release notes
-- [Networks](docs/src/networks.md) — creating and manipulating network models
-- [Branch Model](docs/src/branchmodel.md) — line and transformer branch modeling
+- [Networks](docs/src/networks.md) — building and manipulating network models
+- [Branch Model](docs/src/branchmodel.md) — line and transformer branch modeling, tap and voltage control
 - [Import/Export](docs/src/import.md) — importing and exporting network data
-- [Workshop](docs/src/workshop.md) — guided examples and exercises
 - [State Estimation](docs/src/state_estimation.md) — WLS state-estimation workflow
 - [Feature Matrix](docs/src/feature_matrix.md) — power-flow and state-estimation capability overview
 - [Network Reports](docs/src/netreports.md) — machine-readable `ACPFlowReport` output
 - [Solver Guide](docs/src/solver.md) — numerical solver formulations
-- [Branch Model](docs/src/branchmodel.md) — transformer tap and voltage-control behavior
+- [External Solvers](docs/src/external_solvers.md) — `PFModel`/`PFSolution` interface and the APSLF (AnalyticLoadFlow.jl) backend
 - [Function Reference](docs/src/reference.md) — public API reference
+- [Workshop](docs/src/workshop.md) — guided examples and exercises
 
 ---
 
-## Who is this for?
+## Use cases
 
-Sparlectra may be useful if you are:
+Sparlectra is used for:
 
-- learning AC power-flow and state-estimation methods,
-- teaching Newton-Raphson power-flow mechanics,
-- testing PV/PQ switching and Q-limit behavior,
-- investigating MATPOWER import behavior,
-- experimenting with transformer-control concepts,
-- building your own solver and need a transparent reference workflow,
-- interested in power-system algorithms implemented in Julia.
+- production and planning AC power-flow studies,
+- development and benchmarking of power-flow solvers, including cross-validation between the rectangular Newton-Raphson and APSLF (AnalyticLoadFlow.jl) backends,
+- analysis of PV/PQ switching and Q-limit behavior,
+- transformer tap and voltage-control studies,
+- state estimation on realistic networks,
+- teaching and training.
 
 ---
 
@@ -147,28 +142,27 @@ Sparlectra may be useful if you are:
 
 Contributions, bug reports, test cases, and documentation improvements are welcome.
 
-Before contributing, please read:
+Please read before contributing:
 
 - [CONTRIBUTING.md](CONTRIBUTING.md)
 - [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
 
-Good first contributions include:
+Valuable contributions include:
 
-- improving examples,
-- adding small reproducible test networks,
-- extending documentation,
-- reporting MATPOWER import edge cases,
-- improving diagnostics and error messages.
+- reproducible test networks and regression cases,
+- MATPOWER import edge cases,
+- improved diagnostics and error messages,
+- documentation and example improvements.
 
 ---
 
 ## Citing Sparlectra
 
-If you use Sparlectra.jl in teaching, research, presentations, or project reports, please cite the repository.
+If you use Sparlectra.jl in research, engineering studies, presentations, or reports, please cite the repository:
 
 ```bibtex
 @software{sparlectra_jl,
-  title  = {Sparlectra.jl: Transparent Power-Flow and State-Estimation Experiments in Julia},
+  title  = {Sparlectra.jl: Transparent Power-Flow and State-Estimation Framework in Julia},
   author = {Schmitz, Udo},
   year   = {2026},
   url    = {https://github.com/Welthulk/Sparlectra.jl}
