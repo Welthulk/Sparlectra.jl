@@ -126,7 +126,15 @@ power_flow:
   autodamp_min: 0.05
 
   wrong_branch_detection: warn   # use fail for strict CI-style rejection
-  wrong_branch_rescue: false     # rescue mode is reserved; no active retry loop yet
+  # Maintainer decision (Issue #196): the wrong-branch rescue retry loop is
+  # intentionally out of scope and will not be implemented as part of that
+  # work. `wrong_branch_detection: rescue` stays a reserved mode that reports
+  # `wrong_branch_rescue_not_implemented` rather than retrying. Detection
+  # with full output visibility (report/CSV/console/Web UI/API metadata) plus
+  # the APSLF solver as an alternative start/solve path (see
+  # docs/src/external_solvers.md) are the supported mitigations for hard
+  # flat-start cases.
+  wrong_branch_rescue: false
   wrong_branch_min_vm_pu: 0.60
   wrong_branch_max_vm_pu: 1.30
   wrong_branch_max_angle_spread_deg: 180.0
