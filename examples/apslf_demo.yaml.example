@@ -1,0 +1,10 @@
+# Optional local override for examples/apslf_demo.jl.
+#
+# Copy to examples/apslf_demo.yaml (gitignored) to change the APSLF series
+# order or flags without editing the example script. If this file is absent,
+# the example falls back to the defaults shown below (power_flow.apslf
+# defaults from src/configuration.yaml.example).
+
+order: 40
+use_pade: true
+nr_polish: true
