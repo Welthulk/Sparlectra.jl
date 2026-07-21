@@ -57,7 +57,14 @@ power_flow:
 
 `power_flow.apslf_start` deliberately has no `use_pade`/`nr_polish` fields:
 polishing is left to the downstream NR solve, so the generator always runs
-with `nr_polish=false` internally.
+with `nr_polish=false` internally. It also always runs unconstrained
+(`Qmin`/`Qmax` are not passed to the series solve), independent of
+`power_flow.qlimits.enabled` or any other Q-limit setting: `power_flow.qlimits.*`
+only governs the rectangular NR solve that follows, not the guarded start-value
+candidate itself. This is a fixed internal behavior, not a separate
+configurable option — the generator's only job is producing a better starting
+voltage profile; Q-limit enforcement is entirely the downstream NR solve's
+responsibility.
 
 ## AC island diagnostics
 
