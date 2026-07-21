@@ -14,7 +14,7 @@
 
 # Date: 2026-07-21
 # file: examples/apslf_demo.jl
-# purpose: compares the internal rectangular Newton-Raphson solver against the AnalyticLoadFlow.jl-backed APSLF solver (standalone and as an NR start-value generator) on case14
+# purpose: compares the internal rectangular Newton-Raphson solver against the AnalyticLoadFlow.jl-backed APSLF solver (standalone and as an NR start-value generator) on case30
 
 # APSLF (used by AnalyticLoadFlow.jl, an optional weak dependency — see
 # ext/SparlectraAnalyticLoadFlowExt.jl) is an analytic power-series load-flow
@@ -42,6 +42,7 @@
 # and C.
 
 using Sparlectra
+using AnalyticLoadFlow
 
 include(joinpath(@__DIR__, "internal", "example_header.jl"))
 
@@ -54,7 +55,7 @@ a small standalone YAML file via the existing YAML-subset parser
 (order=40, use_pade=true, nr_polish=true) when `path` does not exist.
 """
 function _apslf_demo_options(path::AbstractString)
-  order = 40
+  order = 6
   use_pade = true
   nr_polish = true
   if isfile(path)
@@ -79,10 +80,10 @@ function _apslf_demo_deltas(net::Net, reference_net::Net)
 end
 
 function main(;
-  casefile::AbstractString = "case14.m",
+  casefile::AbstractString = "case30.m",
   demo_config_file::AbstractString = joinpath(@__DIR__, "apslf_demo.yaml.example"),
 )
-  print_example_banner("examples/apslf_demo.jl", "compares the internal rectangular Newton-Raphson solver against the AnalyticLoadFlow.jl-backed APSLF solver (standalone and as an NR start-value generator) on case14")
+  print_example_banner("examples/apslf_demo.jl", "compares the internal rectangular Newton-Raphson solver against the AnalyticLoadFlow.jl-backed APSLF solver (standalone and as an NR start-value generator) on case30")
 
   opts = _apslf_demo_options(demo_config_file)
   println("APSLF options: order=", opts.order, "  use_pade=", opts.use_pade, "  nr_polish=", opts.nr_polish)

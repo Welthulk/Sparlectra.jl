@@ -2,7 +2,7 @@
 
 julia_version = "1.12.6"
 manifest_format = "2.0"
-project_hash = "96ddb95d4f03d1a9b0dc46b8f67289b41f3f7a62"
+project_hash = "f24e9c29f41db9d2241a8371c60722d1e54c0b72"
 
 [[deps.ArgTools]]
 uuid = "0dad84c5-d112-42e6-8d28-ef12dabb789f"
@@ -284,7 +284,13 @@ version = "1.2.2"
 deps = ["BenchmarkTools", "DataFrames", "Dates", "Downloads", "InlineStrings", "LinearAlgebra", "Logging", "Markdown", "Printf", "Random", "SHA", "Sockets", "SparseArrays", "TOML", "UUIDs"]
 path = "."
 uuid = "31ce9bba-fd9d-44a1-b005-f5f509afda38"
-version = "0.8.9"
+version = "0.8.14"
+
+    [deps.Sparlectra.extensions]
+    SparlectraAnalyticLoadFlowExt = "AnalyticLoadFlow"
+
+    [deps.Sparlectra.weakdeps]
+    AnalyticLoadFlow = "19ecf91d-4042-490c-adc1-7fb0fdb392c0"
 
 [[deps.SparseArrays]]
 deps = ["Libdl", "LinearAlgebra", "Random", "Serialization", "SuiteSparse_jll"]
