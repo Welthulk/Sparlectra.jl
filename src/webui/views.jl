@@ -394,6 +394,15 @@ $(dat_hint_html)
 <label class=\"check\"><input name=\"power_flow_start_current_iteration_only_for_large_cases\" type=\"hidden\" value=\"false\"><input name=\"power_flow_start_current_iteration_only_for_large_cases\" type=\"checkbox\" value=\"true\"$(_webui_checked(profile_values, "power_flow_start_current_iteration_only_for_large_cases", _webui_option_default("power_flow_start_current_iteration_only_for_large_cases")))>$(_webui_field_label("power_flow_start_current_iteration_only_for_large_cases", "Only for large cases"))</label>
 </fieldset>
 </details>
+<details class=\"span-2 merit-linesearch-options\">
+<summary>Merit-function line search</summary>
+<fieldset>
+<label class=\"check span-2\"><input name=\"power_flow_merit_enabled\" type=\"hidden\" value=\"false\"><input name=\"power_flow_merit_enabled\" type=\"checkbox\" value=\"true\"$(_webui_checked(profile_values, "power_flow_merit_enabled", _webui_option_default("power_flow_merit_enabled")))>$(_webui_field_label("power_flow_merit_enabled", "Enable Armijo merit-function line search (requires Automatic damping)"))</label>
+<label>$(_webui_field_label("power_flow_merit_armijo_c1", "Armijo sufficient-decrease constant"))<input name=\"power_flow_merit_armijo_c1\" type=\"number\" step=\"any\" min=\"0\" max=\"0.5\" value=\"$(_webui_input_value(profile_values, "power_flow_merit_armijo_c1", _webui_option_default("power_flow_merit_armijo_c1")))\"></label>
+<label class=\"check\"><input name=\"power_flow_merit_fallback_max_mismatch\" type=\"hidden\" value=\"false\"><input name=\"power_flow_merit_fallback_max_mismatch\" type=\"checkbox\" value=\"true\"$(_webui_checked(profile_values, "power_flow_merit_fallback_max_mismatch", _webui_option_default("power_flow_merit_fallback_max_mismatch")))>$(_webui_field_label("power_flow_merit_fallback_max_mismatch", "Fall back to max-mismatch criterion when Armijo is not satisfied"))</label>
+<p class=\"field-help span-2\">Residual scaling (<code>scale_p</code>/<code>scale_q</code>/<code>scale_v</code>) is YAML-only and not exposed here.</p>
+</fieldset>
+</details>
 <label>$(_webui_field_label("output_logfile_results", "Logfile output mode"))$(_webui_select("output_logfile_results", _webui_option_allowed_values("output_logfile_results"), _webui_selected(profile_values, "output_logfile_results", _webui_option_default("output_logfile_results"))))</label>
 <label>$(_webui_field_label("performance_timing", "Performance timing"))$(_webui_select("performance_timing", _webui_option_allowed_values("performance_timing"), _webui_selected(profile_values, "performance_timing", _webui_option_default("performance_timing"))))</label>
 <fieldset class=\"span-2 detailed-csv-options\"><legend><label class=\"check\"><input name=\"detailed_result_csv\" type=\"hidden\" value=\"false\"><input name=\"detailed_result_csv\" type=\"checkbox\" value=\"true\"$(_webui_checked(profile_values, "detailed_result_csv", _webui_option_default("detailed_result_csv")))>$(_webui_field_label("detailed_result_csv", "Export detailed result CSV files"))</label></legend>
