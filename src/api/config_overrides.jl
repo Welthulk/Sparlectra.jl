@@ -40,6 +40,9 @@ const GUI_EDITABLE_CONFIG_KEYS = Set([
   "power_flow.start_current_iteration.vm_max_pu",
   "power_flow.start_current_iteration.max_angle_step_deg",
   "power_flow.start_current_iteration.only_for_large_cases",
+  "power_flow.merit.enabled",
+  "power_flow.merit.armijo_c1",
+  "power_flow.merit.fallback_max_mismatch",
   "power_flow.islands.enabled",
   "power_flow.islands.mode",
   "power_flow.islands.reference_policy",
@@ -85,7 +88,7 @@ function _validate_override_type(key::String, value, expected::Type)
 end
 
 function _validate_gui_override_value(key::String, value)
-  if key in ("power_flow.autodamp", "power_flow.qlimits.enabled", "power_flow.start_current_iteration.enabled", "power_flow.start_current_iteration.accept_only_if_improved", "power_flow.start_current_iteration.only_for_large_cases", "power_flow.apslf.use_pade", "power_flow.apslf.nr_polish", "power_flow.apslf_start.enabled", "power_flow.islands.enabled", "power_flow.islands.diagnostic_continue_after_failure", "benchmark.enabled", "matpower_import.apply_bus_names", "matpower_import.apply_branch_names", "matpower_import.apply_branch_kind", "matpower_import.import_for001_contingencies", "matpower_export.write_solution")
+  if key in ("power_flow.autodamp", "power_flow.qlimits.enabled", "power_flow.start_current_iteration.enabled", "power_flow.start_current_iteration.accept_only_if_improved", "power_flow.start_current_iteration.only_for_large_cases", "power_flow.merit.enabled", "power_flow.merit.fallback_max_mismatch", "power_flow.apslf.use_pade", "power_flow.apslf.nr_polish", "power_flow.apslf_start.enabled", "power_flow.islands.enabled", "power_flow.islands.diagnostic_continue_after_failure", "benchmark.enabled", "matpower_import.apply_bus_names", "matpower_import.apply_branch_names", "matpower_import.apply_branch_kind", "matpower_import.import_for001_contingencies", "matpower_export.write_solution")
     _validate_override_type(key, value, Bool)
   elseif key in ("power_flow.max_iter", "power_flow.start_current_iteration.max_iter", "power_flow.apslf.order", "power_flow.apslf_start.order", "benchmark.samples", "output.detailed_result_csv_direct_threshold_buses", "output.detailed_result_csv_buffer_initial_bytes", "output.detailed_result_csv_buffer_max_bytes", "output.detailed_result_csv_streaming_threshold_rows")
     _validate_override_type(key, value, Int)
@@ -96,7 +99,7 @@ function _validate_gui_override_value(key::String, value)
     else
       value > 0 || throw(ArgumentError("Override $(key) must be positive; got $(value)."))
     end
-  elseif key in ("power_flow.tol", "power_flow.autodamp_min", "power_flow.start_current_iteration.tol", "power_flow.start_current_iteration.damping", "power_flow.start_current_iteration.min_improvement_factor", "power_flow.start_current_iteration.vm_min_pu", "power_flow.start_current_iteration.vm_max_pu", "power_flow.start_current_iteration.max_angle_step_deg", "benchmark.seconds", "matpower_import.shift_sign")
+  elseif key in ("power_flow.tol", "power_flow.autodamp_min", "power_flow.start_current_iteration.tol", "power_flow.start_current_iteration.damping", "power_flow.start_current_iteration.min_improvement_factor", "power_flow.start_current_iteration.vm_min_pu", "power_flow.start_current_iteration.vm_max_pu", "power_flow.start_current_iteration.max_angle_step_deg", "power_flow.merit.armijo_c1", "benchmark.seconds", "matpower_import.shift_sign")
     _validate_override_type(key, value, Float64)
     if key == "matpower_import.shift_sign"
       isfinite(value) && value in (-1.0, 1.0) || throw(ArgumentError("Override $(key) must be -1.0 or 1.0; got $(value)."))
@@ -105,6 +108,7 @@ function _validate_gui_override_value(key::String, value)
     end
     key == "power_flow.autodamp_min" && value > 1 && throw(ArgumentError("Override power_flow.autodamp_min must be <= 1; got $(value)."))
     key == "power_flow.start_current_iteration.damping" && value > 1 && throw(ArgumentError("Override $(key) must be <= 1; got $(value)."))
+    key == "power_flow.merit.armijo_c1" && value >= 0.5 && throw(ArgumentError("Override power_flow.merit.armijo_c1 must be < 0.5; got $(value)."))
   elseif key == "power_flow.method"
     method = _as_symbol_cfg(value)
     method === :rectangular || throw(ArgumentError(unsupported_powerflow_method_message(method)))
@@ -200,6 +204,7 @@ const CONFIG_OVERRIDE_REPORT_KEYS = (
   "power_flow.qlimits.enabled",
   "power_flow.qlimits.enforcement_mode",
   "power_flow.start_current_iteration.enabled",
+  "power_flow.merit.enabled",
   "power_flow.islands.enabled",
   "power_flow.islands.mode",
   "power_flow.islands.reference_policy",
