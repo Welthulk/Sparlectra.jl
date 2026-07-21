@@ -29,7 +29,7 @@ function _postprocess_sparlectra_result!(result::SparlectraRunResult, cfg::Sparl
   if emit_output && out_cfg.logfile_results !== :off
     max_rows = out_cfg.result_table_max_rows > 0 ? out_cfg.result_table_max_rows : nothing
     _perf_profile_time!(result.performance_profile, :result_output) do
-      printACPFlowResults(result.net, result.elapsed_s, result.iterations, cfg.powerflow.tol, false, ""; converged = result.final_converged, solver = result.method, solver_time_s = result.solver_elapsed_s, result_mode = _sparlectra_result_mode(result.net, out_cfg), max_rows = max_rows)
+      printACPFlowResults(result.net, result.elapsed_s, result.iterations, cfg.powerflow.tol, false, ""; converged = result.final_converged, solver = result.diagnostics.solver, solver_time_s = result.solver_elapsed_s, result_mode = _sparlectra_result_mode(result.net, out_cfg), max_rows = max_rows)
     end
   end
   return result
