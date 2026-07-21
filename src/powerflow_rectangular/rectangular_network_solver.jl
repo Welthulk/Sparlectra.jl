@@ -285,6 +285,20 @@ function runpf_rectangular!(
   verbose::Int = 0,
   autodamp::Bool = false,
   autodamp_min::Float64 = 0.05,
+  merit_enabled::Bool = false,
+  merit_armijo_c1::Float64 = 1.0e-4,
+  merit_scale_p::Float64 = 1.0,
+  merit_scale_q::Float64 = 1.0,
+  merit_scale_v::Float64 = 1.0,
+  merit_fallback_max_mismatch::Bool = true,
+  trust_region_enabled::Bool = false,
+  trust_region_initial_radius::Float64 = 1.0,
+  trust_region_min_radius::Float64 = 1e-4,
+  trust_region_max_radius::Float64 = 10.0,
+  trust_region_eta_accept::Float64 = 0.1,
+  trust_region_shrink_factor::Float64 = 0.5,
+  trust_region_expand_factor::Float64 = 2.0,
+  trust_region_expand_threshold::Float64 = 0.75,
   opt_flatstart::Bool = net.flatstart,
   pv_table_rows::Int = 30,
   lock_pv_to_pq_buses::AbstractVector{Int} = Int[],
@@ -343,6 +357,8 @@ function runpf_rectangular!(
   rectangular_preallocate_workspace::Symbol = :auto,
   rectangular_workspace_min_buses::Int = 1000,
 )
+  merit_enabled && !autodamp && throw(ArgumentError("runpf_rectangular!: merit_enabled=true requires autodamp=true."))
+  trust_region_enabled && autodamp && throw(ArgumentError("runpf_rectangular!: trust_region_enabled=true is incompatible with autodamp=true."))
   _validate_rectangular_powerflow_options(method = method, sparse = true)
   qlimit_enforcement_mode = _canonical_qlimit_enforcement_mode(qlimit_enforcement_mode)
   qlimit_enforcement_mode in QLIMIT_ENFORCEMENT_MODES || error("Unsupported qlimit_enforcement_mode=$(qlimit_enforcement_mode). Supported: $(QLIMIT_ENFORCEMENT_MODES).")
@@ -360,6 +376,20 @@ function runpf_rectangular!(
       verbose = verbose,
       autodamp = autodamp,
       autodamp_min = autodamp_min,
+      merit_enabled = merit_enabled,
+      merit_armijo_c1 = merit_armijo_c1,
+      merit_scale_p = merit_scale_p,
+      merit_scale_q = merit_scale_q,
+      merit_scale_v = merit_scale_v,
+      merit_fallback_max_mismatch = merit_fallback_max_mismatch,
+      trust_region_enabled = trust_region_enabled,
+      trust_region_initial_radius = trust_region_initial_radius,
+      trust_region_min_radius = trust_region_min_radius,
+      trust_region_max_radius = trust_region_max_radius,
+      trust_region_eta_accept = trust_region_eta_accept,
+      trust_region_shrink_factor = trust_region_shrink_factor,
+      trust_region_expand_factor = trust_region_expand_factor,
+      trust_region_expand_threshold = trust_region_expand_threshold,
       opt_flatstart = opt_flatstart,
       pv_table_rows = pv_table_rows,
       qlimit_max_outer = qlimit_max_outer,
@@ -610,6 +640,9 @@ function runpf_rectangular!(
   V = copy(V0)
   history = Float64[]
   step_diagnostics = NamedTuple[]
+  merit_step_diagnostics = merit_enabled ? NamedTuple[] : nothing
+  tr_radius_ref = trust_region_enabled ? Ref(trust_region_initial_radius) : nothing
+  tr_step_diagnostics = trust_region_enabled ? NamedTuple[] : nothing
   best_finite_mismatch = Inf
   best_finite_iteration = 0
   best_finite_voltage = nothing
@@ -720,7 +753,15 @@ function runpf_rectangular!(
     try
       set_phase("linear_solve")
       V = _perf_profile_time!(performance_profile, :iteration_newton_step) do
-        complex_newton_step_rectangular(Ybus, V, S; slack_idx = slack_idx, damp = damp, autodamp = autodamp, autodamp_min = autodamp_min, bus_types = bus_types, Vset = Vset, dPinj_dVm = dPinj_dVm, dQinj_dVm = dQinj_dVm, performance_profile = performance_profile, step_diagnostics = step_diagnostics)
+        complex_newton_step_rectangular(
+          Ybus, V, S; slack_idx = slack_idx, damp = damp, autodamp = autodamp, autodamp_min = autodamp_min, bus_types = bus_types, Vset = Vset,
+          dPinj_dVm = dPinj_dVm, dQinj_dVm = dQinj_dVm, performance_profile = performance_profile, step_diagnostics = step_diagnostics,
+          merit_enabled = merit_enabled, armijo_c1 = merit_armijo_c1, scale_p = merit_scale_p, scale_q = merit_scale_q, scale_v = merit_scale_v,
+          fallback_max_mismatch = merit_fallback_max_mismatch, active_set_changed = (changed || reenabled), merit_log = merit_step_diagnostics,
+          trust_region_enabled = trust_region_enabled, tr_radius_ref = tr_radius_ref, tr_min_radius = trust_region_min_radius, tr_max_radius = trust_region_max_radius,
+          tr_eta_accept = trust_region_eta_accept, tr_shrink_factor = trust_region_shrink_factor, tr_expand_factor = trust_region_expand_factor,
+          tr_expand_threshold = trust_region_expand_threshold, tr_log = tr_step_diagnostics,
+        )
       end
       check_cancel()
     catch step_error
@@ -728,6 +769,12 @@ function runpf_rectangular!(
         verbose > 0 && @warn "Rectangular Newton step failed because the linear Jacobian solve was singular; returning non-convergence." iteration = it max_mismatch = max_mis exception = (typeof(step_error), sprint(showerror, step_error))
         converged = false
         rejection_reason = :singular_newton_step
+        break
+      end
+      if step_error isa RectangularTrustRegionCollapsed
+        verbose > 0 && @warn "Rectangular Newton step failed because the trust-region radius collapsed below min_radius; returning non-convergence." iteration = it max_mismatch = max_mis radius = tr_radius_ref[]
+        converged = false
+        rejection_reason = :trust_region_collapsed
         break
       end
       rethrow(step_error)
@@ -874,6 +921,8 @@ function runpf_rectangular!(
       mismatch_diagnostics,
     )
     status_build_ = _merge_current_iteration_diagnostics(status_build_, performance_profile)
+    status_build_ = _merge_merit_linesearch_diagnostics(status_build_, performance_profile, merit_step_diagnostics, merit_enabled)
+    status_build_ = _merge_trust_region_diagnostics(status_build_, performance_profile, tr_step_diagnostics, trust_region_enabled)
     final_reason_ = status_build_.final_reason
     final_status_ = status_build_.final_status
     status_ = _store_and_print_rectangular_final_status!(net, status_build_.status, verbose)
@@ -935,6 +984,20 @@ function runpf_rectangular!(
   damp = 1.0,
   autodamp::Bool = false,
   autodamp_min::Float64 = 0.05,
+  merit_enabled::Bool = false,
+  merit_armijo_c1::Float64 = 1.0e-4,
+  merit_scale_p::Float64 = 1.0,
+  merit_scale_q::Float64 = 1.0,
+  merit_scale_v::Float64 = 1.0,
+  merit_fallback_max_mismatch::Bool = true,
+  trust_region_enabled::Bool = false,
+  trust_region_initial_radius::Float64 = 1.0,
+  trust_region_min_radius::Float64 = 1e-4,
+  trust_region_max_radius::Float64 = 10.0,
+  trust_region_eta_accept::Float64 = 0.1,
+  trust_region_shrink_factor::Float64 = 0.5,
+  trust_region_expand_factor::Float64 = 2.0,
+  trust_region_expand_threshold::Float64 = 0.75,
   opt_flatstart::Bool = net.flatstart,
   pv_table_rows::Int = 30,
   validate_limits_after_pf::Bool = false,
@@ -1003,6 +1066,20 @@ function runpf_rectangular!(
     damp = damp,
     autodamp = autodamp,
     autodamp_min = autodamp_min,
+    merit_enabled = merit_enabled,
+    merit_armijo_c1 = merit_armijo_c1,
+    merit_scale_p = merit_scale_p,
+    merit_scale_q = merit_scale_q,
+    merit_scale_v = merit_scale_v,
+    merit_fallback_max_mismatch = merit_fallback_max_mismatch,
+    trust_region_enabled = trust_region_enabled,
+    trust_region_initial_radius = trust_region_initial_radius,
+    trust_region_min_radius = trust_region_min_radius,
+    trust_region_max_radius = trust_region_max_radius,
+    trust_region_eta_accept = trust_region_eta_accept,
+    trust_region_shrink_factor = trust_region_shrink_factor,
+    trust_region_expand_factor = trust_region_expand_factor,
+    trust_region_expand_threshold = trust_region_expand_threshold,
     verbose = verbose,
     opt_flatstart = opt_flatstart,
     pv_table_rows = pv_table_rows,
@@ -1082,6 +1159,20 @@ function _runpf_with_config!(net::Net, config::PowerFlowConfig; verbose::Int = 0
     damp = damp,
     autodamp = config.autodamp,
     autodamp_min = config.autodamp_min,
+    merit_enabled = config.merit.enabled,
+    merit_armijo_c1 = config.merit.armijo_c1,
+    merit_scale_p = config.merit.scale_p,
+    merit_scale_q = config.merit.scale_q,
+    merit_scale_v = config.merit.scale_v,
+    merit_fallback_max_mismatch = config.merit.fallback_max_mismatch,
+    trust_region_enabled = config.trust_region.enabled,
+    trust_region_initial_radius = config.trust_region.initial_radius,
+    trust_region_min_radius = config.trust_region.min_radius,
+    trust_region_max_radius = config.trust_region.max_radius,
+    trust_region_eta_accept = config.trust_region.eta_accept,
+    trust_region_shrink_factor = config.trust_region.shrink_factor,
+    trust_region_expand_factor = config.trust_region.expand_factor,
+    trust_region_expand_threshold = config.trust_region.expand_threshold,
     wrong_branch_detection = config.wrong_branch_detection,
     wrong_branch_rescue = config.wrong_branch_rescue,
     wrong_branch_min_vm_pu = config.wrong_branch_min_vm_pu,
@@ -1311,6 +1402,20 @@ function runpf!(
   damp = 1.0,
   autodamp::Bool = false,
   autodamp_min::Float64 = 0.05,
+  merit_enabled::Bool = false,
+  merit_armijo_c1::Float64 = 1.0e-4,
+  merit_scale_p::Float64 = 1.0,
+  merit_scale_q::Float64 = 1.0,
+  merit_scale_v::Float64 = 1.0,
+  merit_fallback_max_mismatch::Bool = true,
+  trust_region_enabled::Bool = false,
+  trust_region_initial_radius::Float64 = 1.0,
+  trust_region_min_radius::Float64 = 1e-4,
+  trust_region_max_radius::Float64 = 10.0,
+  trust_region_eta_accept::Float64 = 0.1,
+  trust_region_shrink_factor::Float64 = 0.5,
+  trust_region_expand_factor::Float64 = 2.0,
+  trust_region_expand_threshold::Float64 = 0.75,
   opt_flatstart::Bool = net.flatstart,
   pv_table_rows::Int = 30,
   validate_limits_after_pf::Bool = false,
@@ -1423,6 +1528,20 @@ function runpf!(
         damp = damp,
         autodamp = autodamp,
         autodamp_min = autodamp_min,
+        merit_enabled = merit_enabled,
+        merit_armijo_c1 = merit_armijo_c1,
+        merit_scale_p = merit_scale_p,
+        merit_scale_q = merit_scale_q,
+        merit_scale_v = merit_scale_v,
+        merit_fallback_max_mismatch = merit_fallback_max_mismatch,
+        trust_region_enabled = trust_region_enabled,
+        trust_region_initial_radius = trust_region_initial_radius,
+        trust_region_min_radius = trust_region_min_radius,
+        trust_region_max_radius = trust_region_max_radius,
+        trust_region_eta_accept = trust_region_eta_accept,
+        trust_region_shrink_factor = trust_region_shrink_factor,
+        trust_region_expand_factor = trust_region_expand_factor,
+        trust_region_expand_threshold = trust_region_expand_threshold,
         wrong_branch_detection = wrong_branch_detection,
         wrong_branch_rescue = false,
         wrong_branch_min_vm_pu = wrong_branch_min_vm_pu,
@@ -1587,6 +1706,20 @@ function runpf!(
         damp = damp,
         autodamp = autodamp,
         autodamp_min = autodamp_min,
+        merit_enabled = merit_enabled,
+        merit_armijo_c1 = merit_armijo_c1,
+        merit_scale_p = merit_scale_p,
+        merit_scale_q = merit_scale_q,
+        merit_scale_v = merit_scale_v,
+        merit_fallback_max_mismatch = merit_fallback_max_mismatch,
+        trust_region_enabled = trust_region_enabled,
+        trust_region_initial_radius = trust_region_initial_radius,
+        trust_region_min_radius = trust_region_min_radius,
+        trust_region_max_radius = trust_region_max_radius,
+        trust_region_eta_accept = trust_region_eta_accept,
+        trust_region_shrink_factor = trust_region_shrink_factor,
+        trust_region_expand_factor = trust_region_expand_factor,
+        trust_region_expand_threshold = trust_region_expand_threshold,
         wrong_branch_detection = wrong_branch_detection,
         wrong_branch_rescue = wrong_branch_rescue,
         wrong_branch_min_vm_pu = wrong_branch_min_vm_pu,
@@ -1654,6 +1787,20 @@ function runpf!(
         damp = damp,
         autodamp = autodamp,
         autodamp_min = autodamp_min,
+        merit_enabled = merit_enabled,
+        merit_armijo_c1 = merit_armijo_c1,
+        merit_scale_p = merit_scale_p,
+        merit_scale_q = merit_scale_q,
+        merit_scale_v = merit_scale_v,
+        merit_fallback_max_mismatch = merit_fallback_max_mismatch,
+        trust_region_enabled = trust_region_enabled,
+        trust_region_initial_radius = trust_region_initial_radius,
+        trust_region_min_radius = trust_region_min_radius,
+        trust_region_max_radius = trust_region_max_radius,
+        trust_region_eta_accept = trust_region_eta_accept,
+        trust_region_shrink_factor = trust_region_shrink_factor,
+        trust_region_expand_factor = trust_region_expand_factor,
+        trust_region_expand_threshold = trust_region_expand_threshold,
         wrong_branch_detection = wrong_branch_detection,
         wrong_branch_rescue = wrong_branch_rescue,
         wrong_branch_min_vm_pu = wrong_branch_min_vm_pu,

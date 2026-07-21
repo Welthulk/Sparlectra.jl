@@ -281,6 +281,20 @@ For complete key references and allowed-value tables, see the module-specific pa
 
 The thresholds include voltage magnitude range, global angle spread, and active-branch angle-difference checks via `power_flow.wrong_branch_max_branch_angle_deg`.
 
+### Where the result is visible
+
+The check result — not just the setting — is surfaced in every output surface, so a suspicious solution is visible without reading console warnings:
+
+- **`ACPFlowReport.metadata`** (`src/results.jl`, `buildACPFlowReport`): `wrong_branch_status` and `wrong_branch_reason`.
+- **AC island diagnostics CSV** (`ac_island_solver_summary.csv`, one row per AC island): trailing `wrong_branch_status`/`wrong_branch_reason` columns, alongside the existing `wrong_branch_detection` *setting* column. The matching per-island `ac_island_<id>_solver.log` also lists both fields.
+- **Console/log summary** (`printACPFlowResults`): a single `wrong-branch check: SUSPECT (...)` or `wrong-branch check: FAIL (...)` line is printed only when the result is neither `ok` nor `not_checked`; clean runs and `wrong_branch_detection = off` print nothing extra.
+- **Web UI run result page**: a `status-badge` ("Wrong-branch check" row) using the same success/warning/error styling as the run-status badge; omitted entirely when the result is `not_checked`.
+- **`run_sparlectra_api` result metadata**: `wrong_branch_status`, `wrong_branch_reason`, `wrong_branch_low_vm_count`, `wrong_branch_high_vm_count`, `wrong_branch_angle_spread_deg`, `wrong_branch_branch_angle_violation_count`.
+
+`status` values: `ok` (checked, no finding), `warn` (suspicious but the numerical result was still accepted per `wrong_branch_detection = warn`), `fail` (suspicious and treated as non-convergence per `wrong_branch_detection = fail`), `wrong_branch_rescue_not_implemented` (the reserved `rescue` mode was requested; no retry loop runs — see below), or `not_checked` (`wrong_branch_detection = off`, or the check never ran, e.g. a non-finite solution short-circuits earlier reporting). `reason` values mirror the case listed above (`none`, `low_voltage_magnitude`, `high_voltage_magnitude`, `angle_spread_exceeded`, `branch_angle_exceeded`, `nonfinite_voltage`, `disabled`, `rescue_requested_but_not_available`).
+
+**Maintainer decision:** the wrong-branch **rescue retry loop is intentionally out of scope** and will not be implemented as part of this detection work; `wrong_branch_detection = rescue` stays a reserved mode that reports `wrong_branch_rescue_not_implemented` rather than retrying. Detection with full output visibility (this section) plus the APSLF solver as an alternative start/solve path (see `docs/src/external_solvers.md`) are the supported mitigations for hard flat-start cases.
+
 ## Control configuration (generic outer loop)
 
 ```yaml
@@ -418,6 +432,22 @@ The following canonical keys are currently present in `src/configuration.yaml.ex
 - `power_flow.wrong_branch_rescue_max_attempts`
 - `power_flow.flatstart`
 - `power_flow.max_iter`
+- `power_flow.merit`
+- `power_flow.merit.armijo_c1`
+- `power_flow.merit.enabled`
+- `power_flow.merit.fallback_max_mismatch`
+- `power_flow.merit.scale_p`
+- `power_flow.merit.scale_q`
+- `power_flow.merit.scale_v`
+- `power_flow.trust_region`
+- `power_flow.trust_region.enabled`
+- `power_flow.trust_region.initial_radius`
+- `power_flow.trust_region.min_radius`
+- `power_flow.trust_region.max_radius`
+- `power_flow.trust_region.eta_accept`
+- `power_flow.trust_region.shrink_factor`
+- `power_flow.trust_region.expand_factor`
+- `power_flow.trust_region.expand_threshold`
 - `power_flow.method`
 - `power_flow.qlimits`
 - `power_flow.qlimits.auto_q_delta_pu`

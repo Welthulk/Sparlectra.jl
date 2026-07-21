@@ -394,6 +394,15 @@ $(dat_hint_html)
 <label class=\"check\"><input name=\"power_flow_start_current_iteration_only_for_large_cases\" type=\"hidden\" value=\"false\"><input name=\"power_flow_start_current_iteration_only_for_large_cases\" type=\"checkbox\" value=\"true\"$(_webui_checked(profile_values, "power_flow_start_current_iteration_only_for_large_cases", _webui_option_default("power_flow_start_current_iteration_only_for_large_cases")))>$(_webui_field_label("power_flow_start_current_iteration_only_for_large_cases", "Only for large cases"))</label>
 </fieldset>
 </details>
+<details class=\"span-2 merit-linesearch-options\">
+<summary>Merit-function line search</summary>
+<fieldset>
+<label class=\"check span-2\"><input name=\"power_flow_merit_enabled\" type=\"hidden\" value=\"false\"><input name=\"power_flow_merit_enabled\" type=\"checkbox\" value=\"true\"$(_webui_checked(profile_values, "power_flow_merit_enabled", _webui_option_default("power_flow_merit_enabled")))>$(_webui_field_label("power_flow_merit_enabled", "Enable Armijo merit-function line search (requires Automatic damping)"))</label>
+<label>$(_webui_field_label("power_flow_merit_armijo_c1", "Armijo sufficient-decrease constant"))<input name=\"power_flow_merit_armijo_c1\" type=\"number\" step=\"any\" min=\"0\" max=\"0.5\" value=\"$(_webui_input_value(profile_values, "power_flow_merit_armijo_c1", _webui_option_default("power_flow_merit_armijo_c1")))\"></label>
+<label class=\"check\"><input name=\"power_flow_merit_fallback_max_mismatch\" type=\"hidden\" value=\"false\"><input name=\"power_flow_merit_fallback_max_mismatch\" type=\"checkbox\" value=\"true\"$(_webui_checked(profile_values, "power_flow_merit_fallback_max_mismatch", _webui_option_default("power_flow_merit_fallback_max_mismatch")))>$(_webui_field_label("power_flow_merit_fallback_max_mismatch", "Fall back to max-mismatch criterion when Armijo is not satisfied"))</label>
+<p class=\"field-help span-2\">Residual scaling (<code>scale_p</code>/<code>scale_q</code>/<code>scale_v</code>) is YAML-only and not exposed here.</p>
+</fieldset>
+</details>
 <label>$(_webui_field_label("output_logfile_results", "Logfile output mode"))$(_webui_select("output_logfile_results", _webui_option_allowed_values("output_logfile_results"), _webui_selected(profile_values, "output_logfile_results", _webui_option_default("output_logfile_results"))))</label>
 <label>$(_webui_field_label("performance_timing", "Performance timing"))$(_webui_select("performance_timing", _webui_option_allowed_values("performance_timing"), _webui_selected(profile_values, "performance_timing", _webui_option_default("performance_timing"))))</label>
 <fieldset class=\"span-2 detailed-csv-options\"><legend><label class=\"check\"><input name=\"detailed_result_csv\" type=\"hidden\" value=\"false\"><input name=\"detailed_result_csv\" type=\"checkbox\" value=\"true\"$(_webui_checked(profile_values, "detailed_result_csv", _webui_option_default("detailed_result_csv")))>$(_webui_field_label("detailed_result_csv", "Export detailed result CSV files"))</label></legend>
@@ -707,6 +716,24 @@ $(download)<details><summary>Refreshed YAML preview</summary><pre class=\"artifa
 """
   return _webui_layout("Configuration refresh", content; show_back = true)
 end
+"""
+    _webui_wrong_branch_badge(result) -> Union{Nothing,String}
+
+Builds a `status-badge` HTML fragment for the wrong-branch detection outcome
+carried in `result["metadata"]["wrong_branch_status"]`. Returns `nothing` for
+`not_checked` (detection off or never reached) so the summary row is omitted
+entirely rather than showing an empty/uninformative badge.
+"""
+function _webui_wrong_branch_badge(result::AbstractDict)::Union{Nothing,String}
+  metadata = get(result, "metadata", Dict{String,Any}())
+  status = lowercase(String(get(metadata, "wrong_branch_status", "not_checked")))
+  status == "not_checked" && return nothing
+  reason = String(get(metadata, "wrong_branch_reason", "unknown"))
+  css_class = status == "ok" ? "status-success" : status == "fail" ? "status-error" : "status-warning"
+  label = status == "ok" ? "ok" : reason
+  return "<span class=\"status-badge $(css_class)\">$(_webui_escape(label))</span>"
+end
+
 function render_powerflow_result(result::AbstractDict)::String
   run_id = get(result, "run_id", "")
   rows = join(("<tr><th>$(_webui_escape(field))</th><td>$(_webui_escape(_webui_result_value(result, field)))</td></tr>" for field in _WEBUI_RESULT_FIELDS), "")
@@ -722,6 +749,8 @@ function render_powerflow_result(result::AbstractDict)::String
     solver_elapsed = _webui_solver_elapsed_seconds(result)
     solver_elapsed === nothing || push!(base, ("Solver time", "<strong>$(_webui_escape(_format_elapsed_duration(solver_elapsed)))</strong>"))
     push!(base, ("Total time", "<strong>$(_webui_escape(_format_elapsed_duration(_webui_total_elapsed_seconds(result))))</strong>"))
+    wrong_branch_badge = _webui_wrong_branch_badge(result)
+    wrong_branch_badge === nothing || push!(base, ("Wrong-branch check", wrong_branch_badge))
     Tuple(base)
   end
   result_summary = "<div class=\"result-summary\">" * join(("<div$(label in ("Elapsed time", "Solver time", "Total time") ? " class=\"runtime-card\"" : "")><span class=\"summary-label\">$(label)</span>$(value)</div>" for (label, value) in summary_rows), "") * "</div>"

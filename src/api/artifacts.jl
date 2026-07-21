@@ -19,6 +19,8 @@ function _artifact_kind(path::AbstractString)::Symbol
   name == "matpower_auto_profile.log" && return :matpower_auto_profile
   name == "matpower_dcline.csv" && return :matpower_dcline
   name == "current_iteration_start.log" && return :current_iteration_start
+  name == "merit_linesearch.log" && return :merit_linesearch
+  name == "trust_region.log" && return :trust_region
   name == "result.json" && return :result_json
   name == "q_limit.log" && return :q_limit_log
   name == "q_limit_classic_outer_loop.csv" && return :q_limit_classic_outer_loop
@@ -49,6 +51,8 @@ function _artifact_description(kind::Symbol, name::String)::String
   kind === :matpower_auto_profile && return "MATPOWER import auto-profile diagnostic log"
   kind === :matpower_dcline && return "MATPOWER DC-line PF injection mapping"
   kind === :current_iteration_start && return "Current-iteration start-value diagnostic log"
+  kind === :merit_linesearch && return "Merit-function Armijo line-search diagnostic log"
+  kind === :trust_region && return "Trust-region step-control diagnostic log"
   kind === :result_json && return "Serialized Sparlectra API result"
   kind === :csv && return "Generated CSV output"
   kind === :report && return "Generated report"
