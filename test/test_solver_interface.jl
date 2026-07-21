@@ -786,6 +786,127 @@ mpc.branch = [
       @test_throws ErrorException Sparlectra._validate_rectangular_damping(1.01, 0.05)
     end
 
+    @testset "Merit-function line search" begin
+      @testset "Merit value and Armijo acceptance (unit)" begin
+        Y = ComplexF64[0.0 - 10.0im 0.0 + 10.0im; 0.0 + 10.0im 0.0 - 10.0im]
+        V = ComplexF64[1.0 + 0.0im, 1.0 + 0.0im]
+        S = ComplexF64[0.0 + 0.0im, -1.0 - 0.2im]
+        bus_types = [:Slack, :PQ]
+        Vset = [1.0, 1.0]
+        F0 = Sparlectra.mismatch_rectangular(Y, V, S, bus_types, Vset, 1)
+        non_slack = Sparlectra.non_slack_indices(2, 1)
+
+        expected_f0 = 0.5 * (F0[1]^2 + F0[2]^2)
+        @test Sparlectra._rectangular_merit_value(F0, non_slack, bus_types, 1.0, 1.0, 1.0) ≈ expected_f0
+        scaled = Sparlectra._rectangular_merit_value(F0, non_slack, bus_types, 2.0, 1.0, 1.0)
+        @test scaled ≈ 0.5 * ((2.0 * F0[1])^2 + F0[2]^2)
+
+        oversized_delta = [0.0, -1.0]
+        merit_log = NamedTuple[]
+        alpha, Vtrial, trial_mismatch = Sparlectra.choose_rectangular_autodamp(
+          Y, V, S, oversized_delta, F0;
+          slack_idx = 1, damp = 1.0, autodamp_min = 1e-3, bus_types = bus_types, Vset = Vset,
+          merit_enabled = true, armijo_c1 = 1.0e-4, fallback_max_mismatch = true, merit_log = merit_log,
+        )
+        @test length(merit_log) == 1
+        @test merit_log[1].accept_reason == :armijo
+        @test merit_log[1].directional_derivative ≈ -2 * merit_log[1].f_before
+        @test merit_log[1].directional_derivative < 0
+
+        # merit-disabled (default) path stays bit-identical to the classic algorithm.
+        alpha_classic, Vtrial_classic, trial_mismatch_classic = Sparlectra.choose_rectangular_autodamp(
+          Y, V, S, oversized_delta, F0; slack_idx = 1, damp = 1.0, autodamp_min = 1e-3, bus_types = bus_types, Vset = Vset,
+        )
+        @test alpha == alpha_classic
+        @test Vtrial == Vtrial_classic
+        @test trial_mismatch == trial_mismatch_classic
+
+        # active_set_changed=true skips the merit comparison for this call.
+        skip_log = NamedTuple[]
+        Sparlectra.choose_rectangular_autodamp(
+          Y, V, S, oversized_delta, F0;
+          slack_idx = 1, damp = 1.0, autodamp_min = 1e-3, bus_types = bus_types, Vset = Vset,
+          merit_enabled = true, active_set_changed = true, merit_log = skip_log,
+        )
+        @test skip_log[1].accept_reason == :active_set_skip
+
+        # fallback_max_mismatch=false skips straight to the conservative fallback when Armijo fails.
+        strict_log = NamedTuple[]
+        Sparlectra.choose_rectangular_autodamp(
+          Y, V, S, oversized_delta, F0;
+          slack_idx = 1, damp = 1.0, autodamp_min = 1e-3, bus_types = bus_types, Vset = Vset,
+          merit_enabled = true, armijo_c1 = 0.4999, fallback_max_mismatch = false, merit_log = strict_log,
+        )
+        @test strict_log[1].accept_reason in (:armijo, :fallback_conservative)
+      end
+
+      @testset "Config validation" begin
+        armijo_bad = tempname() * ".yaml"
+        write(armijo_bad, "power_flow:\n  autodamp: true\n  merit:\n    armijo_c1: 0.5\n")
+        @test_throws ArgumentError Sparlectra.load_sparlectra_config(armijo_bad; reload = true)
+
+        scale_bad = tempname() * ".yaml"
+        write(scale_bad, "power_flow:\n  autodamp: true\n  merit:\n    scale_p: -1.0\n")
+        @test_throws ArgumentError Sparlectra.load_sparlectra_config(scale_bad; reload = true)
+
+        enabled_without_autodamp = tempname() * ".yaml"
+        write(enabled_without_autodamp, "power_flow:\n  autodamp: false\n  merit:\n    enabled: true\n")
+        @test_throws ArgumentError Sparlectra.load_sparlectra_config(enabled_without_autodamp; reload = true)
+
+        ok_cfg = tempname() * ".yaml"
+        write(ok_cfg, "power_flow:\n  autodamp: true\n  merit:\n    enabled: true\n")
+        loaded = Sparlectra.load_sparlectra_config(ok_cfg; reload = true)
+        @test loaded.powerflow.merit.enabled == true
+      end
+
+      @testset "Regression: merit.enabled=false is bit-identical to pre-merit autodamp" begin
+        net_classic = createCIGRE()
+        it_classic, erg_classic = runpf_rectangular!(net_classic, 30, 1e-8, 0; autodamp = true, merit_enabled = false)
+
+        net_merit_off = createCIGRE()
+        it_merit_off, erg_merit_off = runpf_rectangular!(net_merit_off, 30, 1e-8, 0; autodamp = true, merit_enabled = false, merit_armijo_c1 = 0.25, merit_scale_p = 3.0)
+
+        @test it_classic == it_merit_off
+        @test erg_classic == erg_merit_off == 0
+        @test [n._vm_pu for n in net_classic.nodeVec] == [n._vm_pu for n in net_merit_off.nodeVec]
+        @test [n._va_deg for n in net_classic.nodeVec] == [n._va_deg for n in net_merit_off.nodeVec]
+
+        net_3bus_classic = createTest3BusNet()
+        it3_classic, erg3_classic = runpf_rectangular!(net_3bus_classic, 20, 1e-6, 0; autodamp = true, merit_enabled = false)
+        net_3bus_merit_off = createTest3BusNet()
+        it3_merit_off, erg3_merit_off = runpf_rectangular!(net_3bus_merit_off, 20, 1e-6, 0; autodamp = true, merit_enabled = false)
+        @test it3_classic == it3_merit_off
+        @test erg3_classic == erg3_merit_off
+      end
+
+      @testset "Functional: merit.enabled=true converges and logs an armijo acceptance" begin
+        mktempdir() do tmpdir
+          perf = Dict{Symbol,Any}(:output_dir => tmpdir)
+          net = createCIGRE()
+          _, erg = runpf_rectangular!(net, 30, 1e-8, 0; autodamp = true, merit_enabled = true, performance_profile = perf)
+          @test erg == 0
+          st = Sparlectra.rectangular_pf_status(net)
+          @test st.merit_enabled == true
+          @test st.merit_used_iterations >= 1
+
+          logpath = joinpath(tmpdir, "merit_linesearch.log")
+          @test isfile(logpath)
+          log_text = read(logpath, String)
+          @test occursin("accept_reason=armijo", log_text)
+          @test occursin("merit_enabled: true", log_text)
+        end
+      end
+
+      @testset "Active-set change skips merit comparison for that iteration" begin
+        net = createTest3BusNet()
+        setQLimits!(net = net, qmin_MVar = -1.0, qmax_MVar = 1.0, busName = "STATION1")
+        _, erg = runpf!(net, 20, 1e-6, 0; method = :rectangular, autodamp = true, merit_enabled = true)
+        @test erg == 0
+        st = Sparlectra.rectangular_pf_status(net)
+        @test st.merit_active_set_skip_count > 0
+      end
+    end
+
     @testset "Current-iteration rejection log reports candidate guard details" begin
       mktempdir() do tmpdir
         run_guarded_current_iteration_start = getfield(Sparlectra, :_run_guarded_current_iteration_start)
