@@ -164,6 +164,8 @@ The start page accepts:
 - PowerFlow tolerance and maximum iterations;
 - autodamping and its minimum factor;
 - Q-limit handling;
+- solver selection (Newton-Raphson (rectangular) or APSLF (AnalyticLoadFlow)),
+  with conditional, indented sub-options for the chosen solver;
 - wrong-branch detection mode;
 - angle and voltage start modes;
 - current-iteration pre-solve fields in the collapsible **Advanced start
@@ -195,6 +197,27 @@ add a new start-voltage/start-angle mode and do not replace the rectangular
 Newton-Raphson solver. When case-specific sidecar saving is enabled, these
 fields are saved and restored through the same profile mechanism as the other
 Web UI form options.
+
+The **Solver** dropdown selects `power_flow.solver` and writes the same
+`power_flow.solver`/`power_flow.apslf.*`/`power_flow.apslf_start.*` overrides
+documented in
+[`powerflow_configuration.md`](powerflow_configuration.md#solver-selection-rectangular-vs-apslf).
+Choosing `APSLF (AnalyticLoadFlow)` reveals an indented **APSLF solver
+options** block (highest coefficient/order, Padé evaluation, NR polish) and
+hides the Newton-Raphson start-value block below it; choosing
+`Newton-Raphson (rectangular)` does the reverse. The **Use APSLF start
+values** checkbox in the Newton-Raphson block only enables its indented order
+field when checked; it is unrelated to and mutually exclusive with the APSLF
+solver selection (the underlying configuration rejects setting both at once).
+As with the Q-limit and current-iteration checkboxes, an unchecked APSLF
+checkbox explicitly submits `false` rather than omitting the key. The APSLF
+solver requires the optional AnalyticLoadFlow.jl dependency to be loaded in
+the server process; if it is not installed, the run fails immediately with a
+clear pre-solve error instead of a silent fallback to the rectangular solver.
+Result and status pages reuse the existing summary, timing-card, artifact, and
+history views unchanged; the run status header additionally shows a
+**Solver** entry (`rectangular` or `apslf`) identifying which solver actually
+produced the result.
 
 ### Case-specific settings profiles
 

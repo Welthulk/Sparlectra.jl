@@ -310,6 +310,7 @@ function _final_outcome_payload(raw_result::SparlectraRunResult)::Dict{String,An
     "converged" => raw_result.final_converged,
     "numerical_converged" => raw_result.numerical_converged,
     "solution_available" => raw_result.solution_available,
+    "solver" => hasproperty(raw_result.diagnostics, :solver) ? String(raw_result.diagnostics.solver) : "rectangular",
     "iterations" => raw_result.iterations,
     "final_mismatch" => isfinite(raw_result.final_mismatch) ? raw_result.final_mismatch : nothing,
     "reason" => String(raw_result.reason),
