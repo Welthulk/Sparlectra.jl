@@ -80,6 +80,26 @@ Base.@kwdef struct MeritLineSearchConfig
 end
 
 """
+    TrustRegionConfig
+
+Typed configuration for the optional scaled-Newton trust-region step control
+in the rectangular Newton-Raphson solver: an alternative to `autodamp` that
+caps the Newton step norm at an adaptive radius and accepts/rejects steps by
+merit decrease. Disabled by default; mutually exclusive with `autodamp`. See
+[Trust-Region Step Control](@ref) for the theoretical background.
+"""
+Base.@kwdef struct TrustRegionConfig
+  enabled::Bool = false
+  initial_radius::Float64 = 1.0
+  min_radius::Float64 = 1e-4
+  max_radius::Float64 = 10.0
+  eta_accept::Float64 = 0.1
+  shrink_factor::Float64 = 0.5
+  expand_factor::Float64 = 2.0
+  expand_threshold::Float64 = 0.75
+end
+
+"""
     QLimitConfig
 
 Typed reactive-power limit switching configuration used by power-flow runners.
@@ -177,6 +197,7 @@ Base.@kwdef struct PowerFlowConfig
   start_mode::StartModeConfig = StartModeConfig()
   start_current_iteration::StartCurrentIterationConfig = StartCurrentIterationConfig()
   merit::MeritLineSearchConfig = MeritLineSearchConfig()
+  trust_region::TrustRegionConfig = TrustRegionConfig()
   qlimits::QLimitConfig = QLimitConfig()
   islands::IslandPowerFlowConfig = IslandPowerFlowConfig()
 end
@@ -642,6 +663,30 @@ function MeritLineSearchConfig(raw::AbstractDict)
   )
 end
 
+function TrustRegionConfig(raw::AbstractDict)
+  initial_radius = _validate_positive("power_flow.trust_region.initial_radius", _as_float_cfg(_raw_get(raw, "initial_radius", 1.0)))
+  min_radius = _validate_positive("power_flow.trust_region.min_radius", _as_float_cfg(_raw_get(raw, "min_radius", 1e-4)))
+  max_radius = _validate_positive("power_flow.trust_region.max_radius", _as_float_cfg(_raw_get(raw, "max_radius", 10.0)))
+  min_radius < initial_radius <= max_radius || throw(ArgumentError("power_flow.trust_region must satisfy min_radius < initial_radius <= max_radius; got min_radius=$(min_radius), initial_radius=$(initial_radius), max_radius=$(max_radius)."))
+  eta_accept = _validate_positive("power_flow.trust_region.eta_accept", _as_float_cfg(_raw_get(raw, "eta_accept", 0.1)))
+  shrink_factor = _as_float_cfg(_raw_get(raw, "shrink_factor", 0.5))
+  isfinite(shrink_factor) && 0.0 < shrink_factor < 1.0 || throw(ArgumentError("power_flow.trust_region.shrink_factor must be finite and in (0, 1); got $(shrink_factor)."))
+  expand_factor = _as_float_cfg(_raw_get(raw, "expand_factor", 2.0))
+  isfinite(expand_factor) && expand_factor > 1.0 || throw(ArgumentError("power_flow.trust_region.expand_factor must be finite and > 1; got $(expand_factor)."))
+  expand_threshold = _as_float_cfg(_raw_get(raw, "expand_threshold", 0.75))
+  isfinite(expand_threshold) && 0.0 < expand_threshold < 1.0 || throw(ArgumentError("power_flow.trust_region.expand_threshold must be finite and in (0, 1); got $(expand_threshold)."))
+  return TrustRegionConfig(
+    enabled = _as_bool_cfg(_raw_get(raw, "enabled", false)),
+    initial_radius = initial_radius,
+    min_radius = min_radius,
+    max_radius = max_radius,
+    eta_accept = eta_accept,
+    shrink_factor = shrink_factor,
+    expand_factor = expand_factor,
+    expand_threshold = expand_threshold,
+  )
+end
+
 function ApslfConfig(raw::AbstractDict)
   order = _as_int_cfg(_raw_get(raw, "order", 40))
   order >= 1 || throw(ArgumentError("power_flow.apslf.order must be >= 1; got $(order)."))
@@ -719,6 +764,7 @@ function PowerFlowConfig(raw::AbstractDict)
   start_raw = _raw_get(merged, "start_values", _raw_section(merged, "start_mode"))
   start_current_iteration_raw = _raw_section(merged, "start_current_iteration")
   merit_raw = _raw_section(merged, "merit")
+  trust_region_raw = _raw_section(merged, "trust_region")
   qlimit_raw = _raw_section(merged, "qlimits")
   islands_raw = _raw_section(merged, "islands")
   apslf_raw = _raw_section(merged, "apslf")
@@ -740,6 +786,10 @@ function PowerFlowConfig(raw::AbstractDict)
   merit_cfg = MeritLineSearchConfig(merit_raw)
   if merit_cfg.enabled && !autodamp
     throw(ArgumentError("power_flow.merit.enabled=true requires power_flow.autodamp=true. The merit-function line search only acts as an acceptance criterion inside the autodamp backtracking loop; set power_flow.autodamp=true or power_flow.merit.enabled=false."))
+  end
+  trust_region_cfg = TrustRegionConfig(trust_region_raw)
+  if trust_region_cfg.enabled && autodamp
+    throw(ArgumentError("power_flow.trust_region.enabled=true is incompatible with power_flow.autodamp=true. Both are Newton step-control mechanisms; layering them is undefined. Set power_flow.autodamp=false or power_flow.trust_region.enabled=false."))
   end
   return PowerFlowConfig(
     method = method,
@@ -768,6 +818,7 @@ function PowerFlowConfig(raw::AbstractDict)
     start_mode = StartModeConfig(merge(Dict{Any,Any}(merged), Dict{Any,Any}(start_raw))),
     start_current_iteration = StartCurrentIterationConfig(start_current_iteration_raw),
     merit = merit_cfg,
+    trust_region = trust_region_cfg,
     qlimits = QLimitConfig(merge(Dict{Any,Any}(merged), Dict{Any,Any}(qlimit_raw))),
     islands = IslandPowerFlowConfig(islands_raw),
   )
