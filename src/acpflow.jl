@@ -7,6 +7,7 @@
 include("acpflow/start_modes.jl")
 include("acpflow/import_context.jl")
 include("acpflow/execution.jl")
+include("acpflow/apslf_execution.jl")
 include("acpflow/status.jl")
 include("acpflow/output.jl")
 include("acpflow/entrypoint.jl")
