@@ -1517,6 +1517,11 @@ function runpf!(
       local status = 2
       local stage = :island_net_setup
       local inet = nothing
+      # Islands share one performance_profile/output_dir; without a per-island
+      # prefix, fixed-name diagnostic artifacts (merit_linesearch.log,
+      # trust_region.log, current_iteration_start.log, apslf_start.log) would
+      # be silently overwritten by each subsequent island's solve.
+      performance_profile isa AbstractDict && (performance_profile[:diagnostic_artifact_prefix] = "ac_island_$(row.island_id)_")
       try
         inet = _prepare_island_net(wnet, row)
         stage = :pre_nr_setup
@@ -1631,6 +1636,7 @@ function runpf!(
         islands_diagnostic_continue_after_failure || rethrow()
       end
     end
+    performance_profile isa AbstractDict && delete!(performance_profile, :diagnostic_artifact_prefix)
     if first_failure !== nothing
       island_message = _islandwise_failure_message(performance_profile)
       throw(ErrorException(island_message === nothing ? sprint(showerror, first_failure) : island_message))
