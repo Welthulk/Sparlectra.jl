@@ -310,6 +310,8 @@ function runpf_rectangular!(
   start_current_iteration_vm_max_pu::Float64 = 1.5,
   start_current_iteration_max_angle_step_deg::Float64 = 30.0,
   start_current_iteration_only_for_large_cases::Bool = false,
+  apslf_start_enabled::Bool = false,
+  apslf_start_order::Int = 40,
   qlimit_start_iter::Int = 2,
   qlimit_start_mode::Symbol = :iteration,
   qlimit_auto_q_delta_pu::Float64 = 1e-4,
@@ -381,6 +383,8 @@ function runpf_rectangular!(
       start_current_iteration_vm_max_pu = start_current_iteration_vm_max_pu,
       start_current_iteration_max_angle_step_deg = start_current_iteration_max_angle_step_deg,
       start_current_iteration_only_for_large_cases = start_current_iteration_only_for_large_cases,
+      apslf_start_enabled = apslf_start_enabled,
+      apslf_start_order = apslf_start_order,
       wrong_branch_detection = wrong_branch_detection,
       wrong_branch_rescue = wrong_branch_rescue,
       wrong_branch_min_vm_pu = wrong_branch_min_vm_pu,
@@ -518,7 +522,28 @@ function runpf_rectangular!(
   end
   check_cancel()
 
-  # 4) Q-limit data 
+  set_phase("apslf_start")
+  V0, _ = _perf_profile_time!(performance_profile, :apslf_start) do
+    # APSLF start is a guarded start-value improver, not a solver: it only
+    # candidates a profile for the Newton-Raphson solve below and is accepted
+    # only if it strictly improves the rectangular mismatch.
+    _run_guarded_apslf_start(
+      Ybus,
+      V0,
+      S,
+      bus_types,
+      Vset,
+      slack_idx;
+      enabled = apslf_start_enabled,
+      order = apslf_start_order,
+      baseMVA = Sbase,
+      verbose = verbose,
+      performance_profile = performance_profile,
+    )
+  end
+  check_cancel()
+
+  # 4) Q-limit data
   qmin_pu, qmax_pu = _perf_profile_time!(performance_profile, :solver_qlimit_extraction) do
     getQLimits_pu(net)
   end
@@ -937,6 +962,8 @@ function runpf_rectangular!(
   start_current_iteration_vm_max_pu::Float64 = 1.5,
   start_current_iteration_max_angle_step_deg::Float64 = 30.0,
   start_current_iteration_only_for_large_cases::Bool = false,
+  apslf_start_enabled::Bool = false,
+  apslf_start_order::Int = 40,
   qlimit_start_iter::Int = 2,
   qlimit_start_mode::Symbol = :iteration,
   qlimit_auto_q_delta_pu::Float64 = 1e-4,
@@ -1002,6 +1029,8 @@ function runpf_rectangular!(
     start_current_iteration_vm_max_pu = start_current_iteration_vm_max_pu,
     start_current_iteration_max_angle_step_deg = start_current_iteration_max_angle_step_deg,
     start_current_iteration_only_for_large_cases = start_current_iteration_only_for_large_cases,
+    apslf_start_enabled = apslf_start_enabled,
+    apslf_start_order = apslf_start_order,
     qlimit_start_iter = qlimit_start_iter,
     qlimit_start_mode = qlimit_start_mode,
     qlimit_auto_q_delta_pu = qlimit_auto_q_delta_pu,
@@ -1039,6 +1068,7 @@ end
 function _runpf_with_config!(net::Net, config::PowerFlowConfig; verbose::Int = 0, damp = 1.0, pv_table_rows::Int = 30, validate_limits_after_pf::Bool = false, q_limit_violation_headroom::Float64 = 0.0, qlimit_lock_reason::Symbol = :manual, performance_profile = nothing)
   start = config.start_mode
   start_ci = config.start_current_iteration
+  start_apslf = config.apslf_start
   qlim = config.qlimits
   qlimit_disabled = qlim.ignore_q_limits
   qlimits_enabled = !qlimit_disabled
@@ -1084,6 +1114,8 @@ function _runpf_with_config!(net::Net, config::PowerFlowConfig; verbose::Int = 0
     start_current_iteration_vm_max_pu = start_ci.vm_max_pu,
     start_current_iteration_max_angle_step_deg = start_ci.max_angle_step_deg,
     start_current_iteration_only_for_large_cases = start_ci.only_for_large_cases,
+    apslf_start_enabled = start_apslf.enabled,
+    apslf_start_order = start_apslf.order,
     qlimit_start_iter = qlimit_disabled ? typemax(Int) : qlim.start_iter,
     qlimit_start_mode = qlim.start_mode,
     qlimit_auto_q_delta_pu = qlim.auto_q_delta_pu,
@@ -1306,6 +1338,8 @@ function runpf!(
   start_current_iteration_vm_max_pu::Float64 = 1.5,
   start_current_iteration_max_angle_step_deg::Float64 = 30.0,
   start_current_iteration_only_for_large_cases::Bool = false,
+  apslf_start_enabled::Bool = false,
+  apslf_start_order::Int = 40,
   qlimit_start_iter::Int = 2,
   qlimit_start_mode::Symbol = :iteration,
   qlimit_auto_q_delta_pu::Float64 = 1e-4,
@@ -1422,6 +1456,8 @@ function runpf!(
         start_current_iteration_vm_max_pu = start_current_iteration_vm_max_pu,
         start_current_iteration_max_angle_step_deg = start_current_iteration_max_angle_step_deg,
         start_current_iteration_only_for_large_cases = start_current_iteration_only_for_large_cases,
+        apslf_start_enabled = apslf_start_enabled,
+        apslf_start_order = apslf_start_order,
         qlimit_start_iter = qlimit_start_iter,
         qlimit_start_mode = qlimit_start_mode,
         qlimit_auto_q_delta_pu = qlimit_auto_q_delta_pu,
@@ -1584,6 +1620,8 @@ function runpf!(
         start_current_iteration_vm_max_pu = start_current_iteration_vm_max_pu,
         start_current_iteration_max_angle_step_deg = start_current_iteration_max_angle_step_deg,
         start_current_iteration_only_for_large_cases = start_current_iteration_only_for_large_cases,
+        apslf_start_enabled = apslf_start_enabled,
+        apslf_start_order = apslf_start_order,
         qlimit_start_iter = qlimit_start_iter,
         qlimit_start_mode = qlimit_start_mode,
         qlimit_auto_q_delta_pu = qlimit_auto_q_delta_pu,
@@ -1649,6 +1687,8 @@ function runpf!(
         start_current_iteration_vm_max_pu = start_current_iteration_vm_max_pu,
         start_current_iteration_max_angle_step_deg = start_current_iteration_max_angle_step_deg,
         start_current_iteration_only_for_large_cases = start_current_iteration_only_for_large_cases,
+        apslf_start_enabled = apslf_start_enabled,
+        apslf_start_order = apslf_start_order,
         qlimit_start_iter = qlimit_start_iter,
         qlimit_start_mode = qlimit_start_mode,
         qlimit_auto_q_delta_pu = qlimit_auto_q_delta_pu,

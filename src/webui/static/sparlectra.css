@@ -336,6 +336,24 @@ button,
   padding: 0;
 }
 
+.apslf-solver-options,
+.apslf-start-options {
+  margin-top: -.25rem;
+  padding: .85rem 1rem 1rem;
+  border: 1px solid #dbe3ef;
+  border-radius: 10px;
+}
+
+.apslf-solver-options legend,
+.apslf-start-options legend {
+  padding: 0 .35rem;
+  font-weight: 700;
+}
+
+.field-indent {
+  margin-left: 1.5rem;
+}
+
 .expert-diagnostics {
   margin-top: 1rem;
 }

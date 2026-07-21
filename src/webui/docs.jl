@@ -29,6 +29,12 @@ const WEBUI_HELP_TOPICS = Dict(
   "power_flow.autodamp_min" => (label = "Autodamping minimum", page = "powerflow_configuration", heading = "Solver core options", selector = "`power_flow.autodamp_min`"),
   "power_flow.qlimits.enabled" => (label = "Q-limit handling enabled", page = "powerflow_configuration", heading = "Q-limit options and guard", selector = "`power_flow.qlimits.enabled`"),
   "power_flow.qlimits.enforcement_mode" => (label = "Q-limit enforcement mode", page = "powerflow_configuration", heading = "Q-limit options and guard", selector = "`power_flow.qlimits.enforcement_mode`"),
+  "power_flow.solver" => (label = "Solver", page = "powerflow_configuration", heading = "Solver selection (rectangular vs. APSLF)", selector = "`power_flow.solver`"),
+  "power_flow.apslf.order" => (label = "APSLF highest coefficient (order)", page = "powerflow_configuration", heading = "Solver selection (rectangular vs. APSLF)", selector = "`power_flow.apslf.order`"),
+  "power_flow.apslf.use_pade" => (label = "APSLF Padé evaluation", page = "powerflow_configuration", heading = "Solver selection (rectangular vs. APSLF)", selector = "`power_flow.apslf.use_pade`"),
+  "power_flow.apslf.nr_polish" => (label = "APSLF NR polish", page = "powerflow_configuration", heading = "Solver selection (rectangular vs. APSLF)", selector = "`power_flow.apslf.nr_polish`"),
+  "power_flow.apslf_start.enabled" => (label = "Use APSLF start values", page = "powerflow_configuration", heading = "Solver selection (rectangular vs. APSLF)", selector = "`power_flow.apslf_start.enabled`"),
+  "power_flow.apslf_start.order" => (label = "APSLF start highest coefficient (order)", page = "powerflow_configuration", heading = "Solver selection (rectangular vs. APSLF)", selector = "`power_flow.apslf_start.order`"),
   "power_flow.wrong_branch_detection" => (label = "Wrong-branch detection", page = "configuration", heading = "Wrong-branch detection semantics (rectangular PF)", selector = ""),
   "power_flow.start_mode.angle_mode" => (label = "Start angle mode", page = "powerflow_configuration", heading = "Start mode options", selector = "`power_flow.start_mode.angle_mode`"),
   "power_flow.start_mode.voltage_mode" => (label = "Start voltage mode", page = "powerflow_configuration", heading = "Start mode options", selector = "`power_flow.start_mode.voltage_mode`"),
@@ -77,6 +83,12 @@ const WEBUI_FORM_HELP_TOPICS = Dict(
   "power_flow_autodamp_min" => "power_flow.autodamp_min",
   "power_flow_qlimits_enabled" => "power_flow.qlimits.enabled",
   "power_flow_qlimits_enforcement_mode" => "power_flow.qlimits.enforcement_mode",
+  "power_flow_solver" => "power_flow.solver",
+  "power_flow_apslf_order" => "power_flow.apslf.order",
+  "power_flow_apslf_use_pade" => "power_flow.apslf.use_pade",
+  "power_flow_apslf_nr_polish" => "power_flow.apslf.nr_polish",
+  "power_flow_apslf_start_enabled" => "power_flow.apslf_start.enabled",
+  "power_flow_apslf_start_order" => "power_flow.apslf_start.order",
   "power_flow_wrong_branch_detection" => "power_flow.wrong_branch_detection",
   "power_flow_start_angle_mode" => "power_flow.start_mode.angle_mode",
   "power_flow_start_voltage_mode" => "power_flow.start_mode.voltage_mode",
@@ -203,6 +215,29 @@ Default: 30 degrees. Lower it for a more conservative pre-solve. Increase it onl
 This avoids spending time on small cases where normal start values usually work well and where the pre-solve is not needed. The exact large-case threshold follows the existing Sparlectra configuration logic.
 
 Default: disabled. Enable this if you want current iteration available for difficult large MATPOWER cases without changing behavior for small examples.
+""",
+  "power_flow.apslf_start.enabled" => """
+## Use APSLF start values
+
+`power_flow.apslf_start.enabled` uses the AnalyticLoadFlow.jl-backed APSLF solver as a guarded start-value generator ahead of the rectangular Newton-Raphson solve, the same insertion point and accept/reject guard style as the current-iteration pre-solve: the candidate is only adopted when it strictly improves the rectangular mismatch, otherwise the original start values are restored.
+
+This mode always runs with **no NR polish** and **no Q-limit enforcement**, and neither is configurable here:
+
+- NR polish is always off internally (`nr_polish=false`) because the downstream rectangular Newton-Raphson solve performs that polishing step itself.
+- Q-limits are always unconstrained during this pre-solve, independent of `power_flow.qlimits.enabled` or any other Q-limit setting. `power_flow.qlimits.*` only governs the rectangular NR solve that follows; the generator's only job is producing a better starting voltage profile, not enforcing reactive limits.
+
+Requires AnalyticLoadFlow.jl to be loaded; mutually exclusive with `power_flow.solver = apslf` (rejected at configuration time — the start-value generator only makes sense ahead of the NR solve).
+
+Default: disabled. Diagnostic artifact: `apslf_start.log`.
+""",
+  "power_flow.apslf_start.order" => """
+## APSLF start highest coefficient (order)
+
+`power_flow.apslf_start.order` sets the highest power-series coefficient used by the APSLF start-value generator (see **Use APSLF start values**). Same considerations as `power_flow.apslf.order`: higher orders can improve the series approximation but cost more before the candidate is even evaluated for acceptance.
+
+This option has no effect unless `power_flow.apslf_start.enabled = true`.
+
+Default: 40.
 """,
 )
 

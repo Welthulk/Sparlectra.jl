@@ -42,6 +42,7 @@ _rect_status_get(rect_status, name::Symbol, default) = rect_status !== nothing &
 
 function _rectangular_status_diagnostics(rect_status)::NamedTuple
   return (
+    solver = _rect_status_get(rect_status, :solver, :rectangular),
     nr_converged = _rect_status_get(rect_status, :nr_converged, false),
     active_set_converged = _rect_status_get(rect_status, :active_set_converged, false),
     q_limit_active_set_ok = _rect_status_get(rect_status, :q_limit_active_set_ok, false),

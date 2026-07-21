@@ -102,6 +102,48 @@ function _write_current_iteration_start_log(performance_profile, summary; dampin
   return path
 end
 
+function _apslf_start_summary(; enabled::Bool, attempted::Bool = false, accepted::Bool = false, order::Int = 0, initial_mismatch::Float64 = NaN, final_mismatch::Float64 = NaN, reason::Symbol = :disabled)
+  return (
+    apslf_start_enabled = enabled,
+    apslf_start_attempted = attempted,
+    apslf_start_accepted = accepted,
+    apslf_start_order = order,
+    apslf_start_initial_mismatch = initial_mismatch,
+    apslf_start_final_mismatch = final_mismatch,
+    apslf_start_reason = reason,
+  )
+end
+
+function _record_apslf_start_summary!(performance_profile, summary)
+  performance_profile isa AbstractDict || return summary
+  previous = get(performance_profile, :apslf_start, nothing)
+  if previous !== nothing && getproperty(previous, :apslf_start_attempted) === true && summary.apslf_start_attempted !== true
+    # Preserve attempted/accepted metadata across Q-limit outer-loop retries
+    # (only the first outer pass runs the APSLF start pre-solve).
+    return previous
+  end
+  performance_profile[:apslf_start] = summary
+  return summary
+end
+
+function _write_apslf_start_log(performance_profile, summary)
+  performance_profile isa AbstractDict || return ""
+  output_dir = get(performance_profile, :output_dir, "")
+  output_dir isa AbstractString && !isempty(output_dir) || return ""
+  mkpath(output_dir)
+  path = joinpath(output_dir, "apslf_start.log")
+  open(path, "w") do io
+    println(io, "apslf_start_enabled: ", summary.apslf_start_enabled)
+    println(io, "apslf_start_attempted: ", summary.apslf_start_attempted)
+    println(io, "apslf_start_accepted: ", summary.apslf_start_accepted)
+    println(io, "apslf_start_order: ", summary.apslf_start_order)
+    println(io, "apslf_start_reason: ", summary.apslf_start_reason)
+    println(io, "initial_mismatch: ", summary.apslf_start_initial_mismatch)
+    println(io, "final_mismatch: ", summary.apslf_start_final_mismatch)
+  end
+  return path
+end
+
 function _rectangular_mismatch_rows(Ybus, V::Vector{ComplexF64}, S::Vector{ComplexF64}, bus_types::Vector{Symbol}, Vset::Vector{Float64}, slack_idx::Int; net = nothing, top_n::Int = 10)
   final_F = mismatch_rectangular(Ybus, V, S, bus_types, Vset, slack_idx)
   rows = NamedTuple[]

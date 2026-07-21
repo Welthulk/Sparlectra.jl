@@ -21,6 +21,12 @@ const GUI_EDITABLE_CONFIG_KEYS = Set([
   "power_flow.autodamp_min",
   "power_flow.qlimits.enabled",
   "power_flow.qlimits.enforcement_mode",
+  "power_flow.solver",
+  "power_flow.apslf.order",
+  "power_flow.apslf.use_pade",
+  "power_flow.apslf.nr_polish",
+  "power_flow.apslf_start.enabled",
+  "power_flow.apslf_start.order",
   "power_flow.wrong_branch_detection",
   "power_flow.start_mode.angle_mode",
   "power_flow.start_mode.voltage_mode",
@@ -79,9 +85,9 @@ function _validate_override_type(key::String, value, expected::Type)
 end
 
 function _validate_gui_override_value(key::String, value)
-  if key in ("power_flow.autodamp", "power_flow.qlimits.enabled", "power_flow.start_current_iteration.enabled", "power_flow.start_current_iteration.accept_only_if_improved", "power_flow.start_current_iteration.only_for_large_cases", "power_flow.islands.enabled", "power_flow.islands.diagnostic_continue_after_failure", "benchmark.enabled", "matpower_import.apply_bus_names", "matpower_import.apply_branch_names", "matpower_import.apply_branch_kind", "matpower_import.import_for001_contingencies", "matpower_export.write_solution")
+  if key in ("power_flow.autodamp", "power_flow.qlimits.enabled", "power_flow.start_current_iteration.enabled", "power_flow.start_current_iteration.accept_only_if_improved", "power_flow.start_current_iteration.only_for_large_cases", "power_flow.apslf.use_pade", "power_flow.apslf.nr_polish", "power_flow.apslf_start.enabled", "power_flow.islands.enabled", "power_flow.islands.diagnostic_continue_after_failure", "benchmark.enabled", "matpower_import.apply_bus_names", "matpower_import.apply_branch_names", "matpower_import.apply_branch_kind", "matpower_import.import_for001_contingencies", "matpower_export.write_solution")
     _validate_override_type(key, value, Bool)
-  elseif key in ("power_flow.max_iter", "power_flow.start_current_iteration.max_iter", "benchmark.samples", "output.detailed_result_csv_direct_threshold_buses", "output.detailed_result_csv_buffer_initial_bytes", "output.detailed_result_csv_buffer_max_bytes", "output.detailed_result_csv_streaming_threshold_rows")
+  elseif key in ("power_flow.max_iter", "power_flow.start_current_iteration.max_iter", "power_flow.apslf.order", "power_flow.apslf_start.order", "benchmark.samples", "output.detailed_result_csv_direct_threshold_buses", "output.detailed_result_csv_buffer_initial_bytes", "output.detailed_result_csv_buffer_max_bytes", "output.detailed_result_csv_streaming_threshold_rows")
     _validate_override_type(key, value, Int)
     if key == "power_flow.start_current_iteration.max_iter"
       value >= 0 || throw(ArgumentError("Override $(key) must be non-negative; got $(value)."))
@@ -102,6 +108,8 @@ function _validate_gui_override_value(key::String, value)
   elseif key == "power_flow.method"
     method = _as_symbol_cfg(value)
     method === :rectangular || throw(ArgumentError(unsupported_powerflow_method_message(method)))
+  elseif key == "power_flow.solver"
+    _validate_allowed_symbol(key, _as_symbol_cfg(value), POWERFLOW_SOLVER_VALUES)
   elseif key == "power_flow.qlimits.enforcement_mode"
     _canonical_qlimit_enforcement_mode(_as_symbol_cfg(value))
   elseif key == "power_flow.wrong_branch_detection"

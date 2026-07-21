@@ -23,6 +23,49 @@
 | `power_flow.autodamp` | Bool | `true` | `true`, `false` | Adaptive damping. | Difficult convergence. | Strict algorithm comparison. | Small overhead, often fewer failures. | `autodamp_min`. |
 | `power_flow.autodamp_min` | Float64 | `0.05` | positive real | Minimum damping factor. | Stabilizing hard cases. | Near-zero damping on easy grids. | Lower can increase iterations. | Active only with `autodamp=true`. |
 
+## Solver selection (rectangular vs. APSLF)
+
+`power_flow.solver` selects which solver actually computes the power-flow
+solution; it is independent of `power_flow.method`, which fixes the AC
+formulation family (currently always `rectangular`). `apslf` routes the run
+through the external-solver bridge (`buildPfModel` → `solvePf(ApslfSolver(...))`
+→ `applyPfSolution!`) to AnalyticLoadFlow.jl's analytic power-series solver
+instead of the internal Newton-Raphson loop. It requires the optional
+AnalyticLoadFlow.jl dependency to be loaded (`using AnalyticLoadFlow`); see
+`apslf_solver`.
+
+```yaml
+power_flow:
+  solver: rectangular   # rectangular | apslf
+  apslf:
+    order: 40
+    use_pade: true
+    nr_polish: true
+  apslf_start:
+    enabled: false
+    order: 40
+```
+
+| YAML path | Type | Default | Allowed values | Meaning | Use when | Avoid when | Performance impact | Interactions |
+|---|---:|---:|---|---|---|---|---|---|
+| `power_flow.solver` | Symbol/String | `rectangular` | `rectangular`, `apslf` | Selects the executing solver. | `apslf` to use the analytic power-series solver instead of NR. | `apslf` without AnalyticLoadFlow.jl loaded (raises a clear error). | `apslf` skips the NR iteration loop entirely. | Rejects `apslf_start.enabled=true` when set to `apslf`. |
+| `power_flow.apslf.order` | Int | `40` | `>= 1` | Highest power-series coefficient computed. | Higher for stressed/large-angle cases. | Unnecessarily high orders on easy cases (cost). | Higher order increases solve cost. | `use_pade`. |
+| `power_flow.apslf.use_pade` | Bool | `true` | `true`, `false` | Evaluate the voltage series via Padé `[L/M]` approximants instead of direct Taylor summation. | Default; improves convergence radius. | Direct Taylor comparison studies. | Small evaluation overhead, usually better accuracy per order. | `order`. |
+| `power_flow.apslf.nr_polish` | Bool | `true` | `true`, `false` | Run a Newton-Raphson polishing step on the series result. | Default; tightens the final residual. | Pure series-accuracy studies. | Adds a small number of NR iterations. | Only active when `solver=apslf`. |
+| `power_flow.apslf_start.enabled` | Bool | `false` | `true`, `false` | Use the APSLF solver as a start-value generator ahead of the rectangular NR solve (guarded, like `start_current_iteration`). | Difficult NR starts. | `solver=apslf` (rejected: start generator only makes sense ahead of NR). | Adds one series solve before NR. | `solver`, `apslf_start.order`. |
+| `power_flow.apslf_start.order` | Int | `40` | `>= 1` | Series order used by the start-value generator. | Same considerations as `apslf.order`. | Unnecessarily high orders for a start-only pass. | Higher order increases pre-solve cost. | `apslf_start.enabled`. |
+
+`power_flow.apslf_start` deliberately has no `use_pade`/`nr_polish` fields:
+polishing is left to the downstream NR solve, so the generator always runs
+with `nr_polish=false` internally. It also always runs unconstrained
+(`Qmin`/`Qmax` are not passed to the series solve), independent of
+`power_flow.qlimits.enabled` or any other Q-limit setting: `power_flow.qlimits.*`
+only governs the rectangular NR solve that follows, not the guarded start-value
+candidate itself. This is a fixed internal behavior, not a separate
+configurable option — the generator's only job is producing a better starting
+voltage profile; Q-limit enforcement is entirely the downstream NR solve's
+responsibility.
+
 ## AC island diagnostics
 
 `power_flow.islands` enables structural AC-island diagnostics for imported or
