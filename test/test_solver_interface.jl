@@ -907,6 +907,58 @@ mpc.branch = [
       end
     end
 
+    @testset "Independently solved AC islands do not overwrite each other's diagnostic logs" begin
+      # Regression for a real bug: islands share one performance_profile/output_dir,
+      # so fixed-name diagnostic artifacts (merit_linesearch.log, trust_region.log,
+      # current_iteration_start.log, apslf_start.log) were silently overwritten by
+      # whichever island solved last, making per-island diagnosis on a failing
+      # multi-island run impossible/misleading.
+      net = Net(name = "island_log_prefix_test", baseMVA = 100.0)
+      for busName in ("A1", "A2", "B1", "B2")
+        addBus!(net = net, busName = busName, vn_kV = 110.0)
+      end
+      addPIModelACLine!(net = net, fromBus = "A1", toBus = "A2", r_pu = 0.01, x_pu = 0.10, b_pu = 0.0, status = 1)
+      addPIModelACLine!(net = net, fromBus = "B1", toBus = "B2", r_pu = 0.01, x_pu = 0.10, b_pu = 0.0, status = 1)
+      addProsumer!(net = net, busName = "A1", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "A1")
+      addProsumer!(net = net, busName = "A2", type = "ENERGYCONSUMER", p = 10.0, q = 3.0)
+      addProsumer!(net = net, busName = "B1", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "B1")
+      addProsumer!(net = net, busName = "B2", type = "ENERGYCONSUMER", p = 25.0, q = 8.0)
+      refreshBusTypesFromProsumers!(net)
+
+      mktempdir() do outdir
+        profile = Dict{Symbol,Any}(:output_dir => outdir)
+        cfg = SparlectraConfig(powerflow = PowerFlowConfig(max_iter = 40, tol = 1e-8, islands_enabled = true, autodamp = true, merit = Sparlectra.MeritLineSearchConfig(enabled = true)))
+        result = run_sparlectra(net = net, config = cfg, performance_profile = profile)
+        @test result.final_converged
+
+        @test !isfile(joinpath(outdir, "merit_linesearch.log"))
+        @test isfile(joinpath(outdir, "ac_island_1_merit_linesearch.log"))
+        @test isfile(joinpath(outdir, "ac_island_2_merit_linesearch.log"))
+
+        log1 = read(joinpath(outdir, "ac_island_1_merit_linesearch.log"), String)
+        log2 = read(joinpath(outdir, "ac_island_2_merit_linesearch.log"), String)
+        @test log1 != log2
+        @test occursin("merit_initial: 0.005450000000000001", log1)
+        @test occursin("merit_initial: 0.03445", log2)
+
+        artifacts = Sparlectra.collect_sparlectra_api_artifacts(outdir)
+        island1_artifact = only(a for a in artifacts if a.name == "ac_island_1_merit_linesearch.log")
+        island2_artifact = only(a for a in artifacts if a.name == "ac_island_2_merit_linesearch.log")
+        @test island1_artifact.kind === :merit_linesearch
+        @test island2_artifact.kind === :merit_linesearch
+      end
+
+      # Non-island (single-network) runs keep the unprefixed filename.
+      mktempdir() do outdir
+        profile = Dict{Symbol,Any}(:output_dir => outdir)
+        single_net = createCIGRE()
+        _, erg = runpf_rectangular!(single_net, 30, 1e-8, 0; autodamp = true, merit_enabled = true, performance_profile = profile)
+        @test erg == 0
+        @test isfile(joinpath(outdir, "merit_linesearch.log"))
+        @test !any(startswith(f, "ac_island_") for f in readdir(outdir))
+      end
+    end
+
     @testset "Trust-region step control" begin
       @testset "Config validation" begin
         min_ge_initial = tempname() * ".yaml"

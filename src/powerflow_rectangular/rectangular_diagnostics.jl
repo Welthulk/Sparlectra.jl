@@ -17,6 +17,14 @@
 # This file contains diagnostic assembly helpers for rectangular power-flow runs.
 # It must not change numerical iteration behavior.
 
+# Independently solved AC islands share one performance_profile/output_dir; the
+# solver driver sets :diagnostic_artifact_prefix (e.g. "ac_island_2_") for the
+# duration of each island's solve so fixed-name diagnostic artifacts written
+# here (current_iteration_start.log, apslf_start.log, merit_linesearch.log,
+# trust_region.log) do not silently overwrite each other. Empty/absent outside
+# an island split, so filenames are unchanged for the common single-network case.
+_diagnostic_artifact_prefix(performance_profile)::String = performance_profile isa AbstractDict ? String(get(performance_profile, :diagnostic_artifact_prefix, "")) : ""
+
 function _current_iteration_summary(; enabled::Bool, attempted::Bool = false, accepted::Bool = false, iterations::Int = 0, initial_mismatch::Float64 = NaN, final_mismatch::Float64 = NaN, reason::Symbol = enabled ? :disabled : :disabled, artifact::String = "")
   return (
     current_iteration_enabled = enabled,
@@ -66,7 +74,7 @@ function _write_current_iteration_start_log(performance_profile, summary; dampin
   output_dir = get(performance_profile, :output_dir, "")
   output_dir isa AbstractString && !isempty(output_dir) || return ""
   mkpath(output_dir)
-  path = joinpath(output_dir, "current_iteration_start.log")
+  path = joinpath(output_dir, string(_diagnostic_artifact_prefix(performance_profile), "current_iteration_start.log"))
   candidate_guard = _current_iteration_voltage_guard_diagnostics(vm_candidate, vm_min_pu, vm_max_pu)
   open(path, "w") do io
     println(io, "current_iteration_enabled: ", summary.current_iteration_enabled)
@@ -131,7 +139,7 @@ function _write_apslf_start_log(performance_profile, summary)
   output_dir = get(performance_profile, :output_dir, "")
   output_dir isa AbstractString && !isempty(output_dir) || return ""
   mkpath(output_dir)
-  path = joinpath(output_dir, "apslf_start.log")
+  path = joinpath(output_dir, string(_diagnostic_artifact_prefix(performance_profile), "apslf_start.log"))
   open(path, "w") do io
     println(io, "apslf_start_enabled: ", summary.apslf_start_enabled)
     println(io, "apslf_start_attempted: ", summary.apslf_start_attempted)
@@ -316,7 +324,7 @@ function _write_merit_linesearch_log(performance_profile, merit_step_diagnostics
   output_dir = get(performance_profile, :output_dir, "")
   output_dir isa AbstractString && !isempty(output_dir) || return ""
   mkpath(output_dir)
-  path = joinpath(output_dir, "merit_linesearch.log")
+  path = joinpath(output_dir, string(_diagnostic_artifact_prefix(performance_profile), "merit_linesearch.log"))
   open(path, "w") do io
     println(io, "merit_enabled: ", summary.merit_enabled)
     println(io, "merit_used_iterations: ", summary.merit_used_iterations)
@@ -379,7 +387,7 @@ function _write_trust_region_log(performance_profile, tr_step_diagnostics, summa
   output_dir = get(performance_profile, :output_dir, "")
   output_dir isa AbstractString && !isempty(output_dir) || return ""
   mkpath(output_dir)
-  path = joinpath(output_dir, "trust_region.log")
+  path = joinpath(output_dir, string(_diagnostic_artifact_prefix(performance_profile), "trust_region.log"))
   open(path, "w") do io
     println(io, "trust_region_enabled: ", summary.trust_region_enabled)
     println(io, "tr_step_count: ", summary.tr_step_count)
