@@ -219,19 +219,27 @@ function run_apslf_tests()
         @test !summary_disabled.apslf_start_attempted
         @test V_disabled == Vraw
 
-        # case14 flat start: the raw (nr_polish=false) APSLF series result is
-        # a worse start than the flat profile for this case (verified
-        # separately: order 40 with nr_polish=true converges to ~1e-15,
-        # nr_polish=false plateaus around 0.25 mismatch here) — the guard
-        # must reject it and restore the original start. This also serves as
-        # the nr_polish=false contract check: if the generator used
-        # nr_polish=true internally, the candidate would trivially win.
-        V_flat, summary_flat = Sparlectra._run_guarded_apslf_start(model.Ybus, Vraw, model.Sspec, model.busType, model.Vset, model.slack_idx; enabled = true, order = 40, baseMVA = model.baseMVA)
-        @test summary_flat.apslf_start_enabled
-        @test summary_flat.apslf_start_attempted
-        @test summary_flat.apslf_start_accepted === false
-        @test summary_flat.apslf_start_reason === :not_improved
-        @test V_flat == Vraw
+        # Use an already-converged NR solution as the incoming start: its own
+        # mismatch sits at machine precision, so the raw (nr_polish=false)
+        # APSLF candidate — which does not reach that precision without
+        # polish — must always be rejected here, independent of any
+        # solver/case-specific magnitude details (unlike comparing against
+        # the flat start's own mismatch, which is not a stable invariant to
+        # hard-code). This doubles as the nr_polish=false contract check: if
+        # the generator used nr_polish=true internally, its candidate would
+        # reach comparable machine-precision accuracy and could spuriously
+        # "improve" on an already-converged start, defeating this test.
+        net_converged = deepcopy(net)
+        runpf!(net_converged, 30, 1e-8, 0)
+        model_converged = buildPfModel(net_converged; flatstart = false, include_limits = false)
+        Vgood = copy(model_converged.V0)
+        @test Sparlectra.mismatchInf(model, Vgood) < 1e-6
+        V_good, summary_good = Sparlectra._run_guarded_apslf_start(model.Ybus, Vgood, model.Sspec, model.busType, model.Vset, model.slack_idx; enabled = true, order = 40, baseMVA = model.baseMVA)
+        @test summary_good.apslf_start_enabled
+        @test summary_good.apslf_start_attempted
+        @test summary_good.apslf_start_accepted === false
+        @test summary_good.apslf_start_reason === :not_improved
+        @test V_good == Vgood
 
         # A deliberately perturbed, worse-than-APSLF start must be accepted.
         rng = Random.MersenneTwister(42)

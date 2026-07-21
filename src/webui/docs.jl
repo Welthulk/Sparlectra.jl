@@ -216,6 +216,29 @@ This avoids spending time on small cases where normal start values usually work 
 
 Default: disabled. Enable this if you want current iteration available for difficult large MATPOWER cases without changing behavior for small examples.
 """,
+  "power_flow.apslf_start.enabled" => """
+## Use APSLF start values
+
+`power_flow.apslf_start.enabled` uses the AnalyticLoadFlow.jl-backed APSLF solver as a guarded start-value generator ahead of the rectangular Newton-Raphson solve, the same insertion point and accept/reject guard style as the current-iteration pre-solve: the candidate is only adopted when it strictly improves the rectangular mismatch, otherwise the original start values are restored.
+
+This mode always runs with **no NR polish** and **no Q-limit enforcement**, and neither is configurable here:
+
+- NR polish is always off internally (`nr_polish=false`) because the downstream rectangular Newton-Raphson solve performs that polishing step itself.
+- Q-limits are always unconstrained during this pre-solve, independent of `power_flow.qlimits.enabled` or any other Q-limit setting. `power_flow.qlimits.*` only governs the rectangular NR solve that follows; the generator's only job is producing a better starting voltage profile, not enforcing reactive limits.
+
+Requires AnalyticLoadFlow.jl to be loaded; mutually exclusive with `power_flow.solver = apslf` (rejected at configuration time — the start-value generator only makes sense ahead of the NR solve).
+
+Default: disabled. Diagnostic artifact: `apslf_start.log`.
+""",
+  "power_flow.apslf_start.order" => """
+## APSLF start highest coefficient (order)
+
+`power_flow.apslf_start.order` sets the highest power-series coefficient used by the APSLF start-value generator (see **Use APSLF start values**). Same considerations as `power_flow.apslf.order`: higher orders can improve the series approximation but cost more before the candidate is even evaluated for acceptance.
+
+This option has no effect unless `power_flow.apslf_start.enabled = true`.
+
+Default: 40.
+""",
 )
 
 const WEBUI_DOC_PAGES = Dict(

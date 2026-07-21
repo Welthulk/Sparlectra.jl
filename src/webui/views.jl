@@ -582,7 +582,6 @@ end
 
 const _WEBUI_RESULT_FIELDS = (
   "run_id",
-  "schema_version",
   "status",
   "success",
   "converged",
