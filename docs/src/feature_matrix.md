@@ -43,6 +43,7 @@ Legend:
 | Polar full NR solver | ❌ | ⚠️ | Unsupported for PF; SE uses its own WLS iteration and Jacobian evaluation. |
 | Rectangular NR solver | ✅ | ❌ | Available for PF, not as separate SE formulation. |
 | Automatic rectangular Newton damping (`autodamp`) | ✅ | ❌ | PF rectangular solver can backtrack the Newton step from `damp` down to `autodamp_min` for difficult flat starts. |
+| Merit-function Armijo line search (`power_flow.merit`) | ✅ | ❌ | Optional alternative step-acceptance criterion inside the autodamp backtracking loop (`f(x) = 1/2‖WF(x)‖²`, Armijo sufficient decrease); disabled by default and requires `autodamp = true`. Does not replace autodamp, the Newton solver, or candidate start-value ranking. |
 | Start projection (`start_projection`) | ✅ | ⚠️ | Internal PF and external-solver `PFModel` starts can use DC-angle and blend-scan projection; SE does not consume `PFModel`. |
 | Guarded current-iteration start pre-solve | ⚠️ | ❌ | Optional PF-only start-value improver (`power_flow.start_current_iteration.enabled`) that runs after normal start modes and before the final rectangular NR solve; it accepts the prepared profile only when mismatch improves and guard checks pass. |
 | Wrong-branch plausibility check (`wrong_branch_detection`) | ✅ | ❌ | Post-convergence PF plausibility guard for suspicious low-voltage/non-finite solutions (`off|warn|fail|rescue`); this is a heuristic check and not a global-optimality proof or a replacement for start-value candidate selection. |
