@@ -103,6 +103,9 @@ function _webui_test_form(casefile, config_file, output_root)
     "power_flow_start_current_iteration_vm_max_pu" => "1.4",
     "power_flow_start_current_iteration_max_angle_step_deg" => "20.0",
     "power_flow_start_current_iteration_only_for_large_cases" => "false",
+    "power_flow_merit_enabled" => "true",
+    "power_flow_merit_armijo_c1" => "1e-4",
+    "power_flow_merit_fallback_max_mismatch" => "true",
     "matpower_import_auto_profile" => "recommend",
     "matpower_import_ratio" => "normal",
     "matpower_import_shift_sign" => "1.0",
@@ -1278,6 +1281,15 @@ settings:
       @test request["config_overrides"]["power_flow.start_current_iteration.enabled"] === true
       @test request["config_overrides"]["power_flow.start_current_iteration.max_iter"] == 7
       @test request["config_overrides"]["power_flow.start_current_iteration.tol"] == 1.0e-4
+      @test request["config_overrides"]["power_flow.merit.enabled"] === true
+      @test request["config_overrides"]["power_flow.merit.armijo_c1"] == 1.0e-4
+      @test request["config_overrides"]["power_flow.merit.fallback_max_mismatch"] === true
+      merit_disabled_form = copy(form)
+      merit_disabled_form["power_flow_merit_enabled"] = "false"
+      @test Sparlectra.powerflow_webui_request(merit_disabled_form; default_output_root = output_root)["config_overrides"]["power_flow.merit.enabled"] === false
+      merit_missing_form = copy(form)
+      delete!(merit_missing_form, "power_flow_merit_enabled")
+      @test !haskey(Sparlectra.powerflow_webui_request(merit_missing_form; default_output_root = output_root)["config_overrides"], "power_flow.merit.enabled")
       qlimits_disabled_form = copy(form)
       qlimits_disabled_form["power_flow_qlimits_enabled"] = "false"
       @test Sparlectra.powerflow_webui_request(qlimits_disabled_form; default_output_root = output_root)["config_overrides"]["power_flow.qlimits.enabled"] === false
@@ -1463,6 +1475,9 @@ settings:
         "power_flow_start_current_iteration_vm_max_pu" => "power_flow.start_current_iteration.vm_max_pu",
         "power_flow_start_current_iteration_max_angle_step_deg" => "power_flow.start_current_iteration.max_angle_step_deg",
         "power_flow_start_current_iteration_only_for_large_cases" => "power_flow.start_current_iteration.only_for_large_cases",
+        "power_flow_merit_enabled" => "power_flow.merit.enabled",
+        "power_flow_merit_armijo_c1" => "power_flow.merit.armijo_c1",
+        "power_flow_merit_fallback_max_mismatch" => "power_flow.merit.fallback_max_mismatch",
         "matpower_import_auto_profile" => "matpower_import.auto_profile",
         "matpower_import_ratio" => "matpower_import.ratio",
         "matpower_import_shift_sign" => "matpower_import.shift_sign",
@@ -1541,6 +1556,14 @@ settings:
       @test occursin("name=\"power_flow_start_current_iteration_enabled\" type=\"hidden\" value=\"false\"", form_html)
       @test occursin("name=\"power_flow_start_current_iteration_accept_only_if_improved\" type=\"hidden\" value=\"false\"", form_html)
       @test occursin("name=\"power_flow_start_current_iteration_only_for_large_cases\" type=\"hidden\" value=\"false\"", form_html)
+      @test occursin("<details class=\"span-2 merit-linesearch-options\">", form_html)
+      @test occursin("<summary>Merit-function line search</summary>", form_html)
+      for field in ("power_flow_merit_enabled", "power_flow_merit_armijo_c1", "power_flow_merit_fallback_max_mismatch")
+        @test occursin("name=\"$(field)\"", form_html)
+      end
+      @test occursin("name=\"power_flow_merit_enabled\" type=\"hidden\" value=\"false\"", form_html)
+      @test occursin("name=\"power_flow_merit_fallback_max_mismatch\" type=\"hidden\" value=\"false\"", form_html)
+      @test occursin("scale_p</code>/<code>scale_q</code>/<code>scale_v", form_html)
       @test occursin("name=\"detailed_result_csv\" type=\"checkbox\" value=\"true\" checked", form_html)
       @test occursin("class=\"span-2 detailed-csv-options\"", form_html)
       @test occursin("name=\"detailed_result_csv_format\"", form_html)

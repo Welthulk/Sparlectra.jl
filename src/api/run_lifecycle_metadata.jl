@@ -36,6 +36,51 @@ function _current_iteration_lifecycle_metadata(rect_status)::Dict{String,Any}
   )
 end
 
+function _merit_linesearch_lifecycle_metadata(rect_status)::Dict{String,Any}
+  # rect_status may come from a non-rectangular solver route with no merit
+  # fields at all; default gracefully per-field as above.
+  get_field(name, default) = rect_status !== nothing && hasproperty(rect_status, name) ? getproperty(rect_status, name) : default
+  return Dict{String,Any}(
+    "merit_enabled" => get_field(:merit_enabled, false),
+    "merit_used_iterations" => get_field(:merit_used_iterations, 0),
+    "merit_fallback_count" => get_field(:merit_fallback_count, 0),
+    "merit_active_set_skip_count" => get_field(:merit_active_set_skip_count, 0),
+    "merit_initial" => get_field(:merit_initial, NaN),
+    "merit_final" => get_field(:merit_final, NaN),
+    "merit_linesearch_artifact" => get_field(:merit_linesearch_artifact, ""),
+  )
+end
+
+function _wrong_branch_lifecycle_metadata(rect_status)::Dict{String,Any}
+  # rect_status may come from a non-rectangular solver route with no
+  # wrong-branch fields at all; default gracefully per-field as above.
+  get_field(name, default) = rect_status !== nothing && hasproperty(rect_status, name) ? getproperty(rect_status, name) : default
+  return Dict{String,Any}(
+    "wrong_branch_status" => String(get_field(:wrong_branch_status, :not_checked)),
+    "wrong_branch_reason" => String(get_field(:wrong_branch_reason, :not_checked)),
+    "wrong_branch_low_vm_count" => get_field(:wrong_branch_low_vm_count, 0),
+    "wrong_branch_high_vm_count" => get_field(:wrong_branch_high_vm_count, 0),
+    "wrong_branch_angle_spread_deg" => get_field(:wrong_branch_angle_spread_deg, NaN),
+    "wrong_branch_branch_angle_violation_count" => get_field(:wrong_branch_branch_angle_violation_count, 0),
+  )
+end
+
+function _trust_region_lifecycle_metadata(rect_status)::Dict{String,Any}
+  # rect_status may come from a non-rectangular solver route with no
+  # trust-region fields at all; default gracefully per-field as above.
+  get_field(name, default) = rect_status !== nothing && hasproperty(rect_status, name) ? getproperty(rect_status, name) : default
+  return Dict{String,Any}(
+    "trust_region_enabled" => get_field(:trust_region_enabled, false),
+    "tr_step_count" => get_field(:tr_step_count, 0),
+    "tr_rejected_steps" => get_field(:tr_rejected_steps, 0),
+    "tr_min_radius" => get_field(:tr_min_radius, NaN),
+    "tr_max_radius" => get_field(:tr_max_radius, NaN),
+    "tr_final_radius" => get_field(:tr_final_radius, NaN),
+    "tr_collapsed" => get_field(:tr_collapsed, false),
+    "trust_region_artifact" => get_field(:trust_region_artifact, ""),
+  )
+end
+
 function _island_wise_lifecycle_metadata(rect_status)::Dict{String,Any}
   return Dict{String,Any}(
     "island_wise_all_converged" => rect_status !== nothing && hasproperty(rect_status, :island_wise_all_converged) ? getproperty(rect_status, :island_wise_all_converged) : false,
@@ -48,6 +93,9 @@ end
 function _build_success_lifecycle_metadata(raw_result::SparlectraRunResult, config::SparlectraConfig; numerical_success::Bool, final_outcome::Dict{String,Any}, csv_export_status::AbstractString, csv_export_skip_reason, csv_export_error, csv_artifacts::Vector{String}, detailed_result_csv::Bool, config_overrides, config_override_source::AbstractString, casefile, config_file, performance_timing, run_diagnostics::Bool, detailed_result_csv_format, qlimit_metadata::AbstractDict, csv_timing_metadata::AbstractDict)::Dict{String,Any}
   rect_status = raw_result.net === nothing ? nothing : rectangular_pf_status(raw_result.net)
   current_iteration_metadata = _current_iteration_lifecycle_metadata(rect_status)
+  merit_linesearch_metadata = _merit_linesearch_lifecycle_metadata(rect_status)
+  wrong_branch_metadata = _wrong_branch_lifecycle_metadata(rect_status)
+  trust_region_metadata = _trust_region_lifecycle_metadata(rect_status)
   island_wise_metadata = _island_wise_lifecycle_metadata(rect_status)
   classic_outer_loop_passes = rect_status !== nothing && hasproperty(rect_status, :matpower_outer_iterations) ? rect_status.matpower_outer_iterations : 0
   pv_to_pq_events = raw_result.net === nothing ? 0 : length(raw_result.net.qLimitLog)
@@ -81,7 +129,7 @@ function _build_success_lifecycle_metadata(raw_result::SparlectraRunResult, conf
       "detailed_result_csv" => detailed_result_csv,
       "detailed_result_csv_format" => detailed_result_csv_format === nothing ? "technical" : String(detailed_result_csv_format),
     )),
-  ), qlimit_metadata, current_iteration_metadata, island_wise_metadata)
+  ), qlimit_metadata, current_iteration_metadata, merit_linesearch_metadata, wrong_branch_metadata, trust_region_metadata, island_wise_metadata)
   # Partial CSV exports are still successful API runs, but the Web UI needs the
   # partial file error in the stable lifecycle field used by Last Errors.
   haskey(csv_timing_metadata, :partial_error) && (metadata["detailed_result_csv_error"] = csv_timing_metadata[:partial_error])

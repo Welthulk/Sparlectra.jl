@@ -170,6 +170,8 @@ The start page accepts:
 - angle and voltage start modes;
 - current-iteration pre-solve fields in the collapsible **Advanced start
   values** section;
+- merit-function line-search fields in the collapsible **Merit-function line
+  search** section;
 - a visible MATPOWER import conventions section with auto-profile mode
   (`off`, `recommend`, or `apply`) plus manual transformer-ratio,
   phase-shift, bus-shunt, PV-voltage-source, and comparison-reference
@@ -197,6 +199,17 @@ add a new start-voltage/start-angle mode and do not replace the rectangular
 Newton-Raphson solver. When case-specific sidecar saving is enabled, these
 fields are saved and restored through the same profile mechanism as the other
 Web UI form options.
+
+The **Merit-function line search** controls write the same
+`power_flow.merit.enabled`/`power_flow.merit.armijo_c1`/`power_flow.merit.fallback_max_mismatch`
+overrides documented in
+[`powerflow_configuration.md`](powerflow_configuration.md#merit-function-line-search-options).
+This is an opt-in Armijo acceptance criterion inside the existing autodamp
+backtracking loop; it requires `power_flow.autodamp = true` and does not
+replace autodamp or the Newton-Raphson solver. The residual-scaling keys
+(`scale_p`/`scale_q`/`scale_v`) are YAML-only and are not exposed as form
+fields. When a diagnostic run directory is available, results include a
+`merit_linesearch.log` text artifact.
 
 The **Solver** dropdown selects `power_flow.solver` and writes the same
 `power_flow.solver`/`power_flow.apslf.*`/`power_flow.apslf_start.*` overrides

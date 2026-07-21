@@ -284,6 +284,124 @@ For the active-set path, the guarded current-iteration pre-solve is attempted be
 - May not help cases whose main issue is model/convention mismatch, wrong branch, or an invalid MATPOWER import convention.
 - Does not replace MATPOWER auto-profile, DC start, or start projection.
 
+## Merit-function line search options
+
+`power_flow.merit` enables an optional Armijo sufficient-decrease acceptance criterion inside the existing autodamp backtracking loop of the rectangular Newton-Raphson solver. It is an alternative, opt-in acceptance test — not a replacement for Newton-Raphson and not a replacement for autodamp. Disabled by default (`enabled: false`), which leaves today's max-mismatch autodamp behavior byte-for-byte unchanged. See [Merit-Function Line Search](@ref) in the solver documentation for the theoretical background.
+
+```yaml
+power_flow:
+  autodamp: true
+  merit:
+    enabled: false
+    armijo_c1: 1.0e-4
+    scale_p: 1.0
+    scale_q: 1.0
+    scale_v: 1.0
+    fallback_max_mismatch: true
+```
+
+| YAML path | Type | Default | Allowed | Meaning | Use when | Avoid when | Performance impact | Interactions |
+|---|---:|---:|---|---|---|---|---|---|
+| `power_flow.merit.enabled` | Bool | `false` | `true`, `false` | Master switch for the Armijo merit-function line search. | Diagnosing or improving step acceptance on difficult flat-start cases where the ∞-norm autodamp criterion accepts poor steps. | Strict comparison against historical autodamp-only behavior. | One extra weighted residual-norm evaluation per already-computed trial mismatch; negligible. | Requires `power_flow.autodamp = true`; validation error otherwise. |
+| `power_flow.merit.armijo_c1` | Float64 | `1.0e-4` | real in `(0, 0.5)` | Sufficient-decrease constant `c₁` in the Armijo condition. | Tuning how strict the accepted decrease must be. | N/A | Larger values reject more trials, increasing backtracking steps. | Only active when `merit.enabled = true`. |
+| `power_flow.merit.scale_p` | Float64 | `1.0` | positive real | Diagonal weight for active-power (`ΔP`) residual entries in the merit function. | P/Q/V residuals differ in magnitude and one wants a balanced merit value. | Default per-unit systems where residuals are already comparable. | None (evaluated alongside the existing mismatch check). | YAML-only; not exposed in the Web UI. |
+| `power_flow.merit.scale_q` | Float64 | `1.0` | positive real | Diagonal weight for reactive-power (`ΔQ`) residual entries (PQ buses). | Same as `scale_p`. | Same as `scale_p`. | None. | YAML-only; not exposed in the Web UI. |
+| `power_flow.merit.scale_v` | Float64 | `1.0` | positive real | Diagonal weight for voltage-setpoint (`ΔV`) residual entries (PV buses). | Same as `scale_p`. | Same as `scale_p`. | None. | YAML-only; not exposed in the Web UI. |
+| `power_flow.merit.fallback_max_mismatch` | Bool | `true` | `true`, `false` | Behavior when no backtracking trial satisfies the Armijo condition. `true` falls back to the existing max-mismatch criterion (first improving trial, else the conservative best-finite trial); `false` skips straight to the conservative best-finite-trial fallback. | Most cases (`true`, safest). Use `false` only to force the most conservative step whenever Armijo fails. | N/A | `false` can pick smaller steps than `true` would, increasing iteration count. | Only active when `merit.enabled = true`. |
+
+### Recommended usage
+
+```yaml
+power_flow:
+  autodamp: true
+  merit:
+    enabled: true
+    armijo_c1: 1.0e-4
+    fallback_max_mismatch: true
+```
+
+Enable `power_flow.merit.enabled` together with `power_flow.autodamp` on cases where the historical ∞-norm autodamp criterion is suspected to accept a step that reduces the worst-bus mismatch while increasing overall residual energy. Leave `scale_p`/`scale_q`/`scale_v` at `1.0` unless P/Q/V residuals are known to differ by orders of magnitude in a particular case.
+
+### Diagnostics and interpretation
+
+When a run has an output directory in its performance profile and `merit.enabled = true`, the solver writes `merit_linesearch.log` with one line per Newton iteration: `f_before`, `directional_derivative`, `tested_alphas`, `accepted_alpha`, and `accept_reason`. The solver status is extended with `merit_enabled`, `merit_used_iterations`, `merit_fallback_count`, `merit_active_set_skip_count`, `merit_initial`, and `merit_final`.
+
+`accept_reason` values:
+
+```text
+armijo
+  A backtracking trial satisfied the Armijo sufficient-decrease condition; it was accepted directly.
+
+fallback_max_mismatch
+  No trial satisfied Armijo; fallback_max_mismatch=true, and the classic max-mismatch criterion
+  found an improving trial, which was accepted instead.
+
+fallback_conservative
+  No trial satisfied Armijo (and, if fallback_max_mismatch=true, no trial improved the max
+  mismatch either); the most conservative finite trial from the backtracking sweep was accepted.
+
+active_set_skip
+  A PV/PQ active-set switch (Q-limit handling) happened during this Newton iteration, so the
+  residual vector's entries changed meaning; the merit comparison was skipped for this iteration
+  and the classic max-mismatch criterion was used instead.
+```
+
+### Limitations
+
+- Opt-in line-search criterion, not a general-purpose nonlinear optimizer; it does not replace Newton-Raphson.
+- The merit function `f(x) = 1/2 ‖W F(x)‖²` can have local minima with `F(x) ≠ 0`; satisfying Armijo does not by itself guarantee convergence.
+- Does not influence which of multiple numerical solution branches (e.g. high-voltage vs. low-voltage) the solver converges to.
+- PV/PQ active-set switches make `f` discontinuous in meaning across the switch; the merit comparison is skipped for that iteration (`accept_reason = active_set_skip`).
+- Does not change candidate start-value ranking (`start_mode.measure_candidates`), which remains mismatch-based.
+
+## Trust-region step control options
+
+`power_flow.trust_region` enables an optional scaled-Newton trust-region alternative to `power_flow.autodamp`: it caps the Newton step norm at an adaptive radius and accepts/rejects trials by merit-function decrease rather than by the max-mismatch criterion. Disabled by default (`enabled: false`). **Mutually exclusive with `power_flow.autodamp = true`** — both mechanisms control the Newton step length; enabling both is a configuration error. See [Trust-Region Step Control](@ref) in the solver documentation for the theoretical background.
+
+```yaml
+power_flow:
+  autodamp: false
+  trust_region:
+    enabled: false
+    initial_radius: 1.0
+    min_radius: 1.0e-4
+    max_radius: 10.0
+    eta_accept: 0.1
+    shrink_factor: 0.5
+    expand_factor: 2.0
+    expand_threshold: 0.75
+```
+
+| YAML path | Type | Default | Allowed | Meaning | Use when | Avoid when | Performance impact | Interactions |
+|---|---:|---:|---|---|---|---|---|---|
+| `power_flow.trust_region.enabled` | Bool | `false` | `true`, `false` | Master switch for scaled-Newton trust-region step control. | Difficult flat-start cases where a merit-decrease step-acceptance rule (rather than max-mismatch backtracking) is preferred. | Together with `power_flow.autodamp = true` (validation error). | One extra weighted-residual evaluation and a sparse matrix-vector product per trial, reusing the already-built Jacobian; no extra factorization. | Requires `power_flow.autodamp = false`. |
+| `power_flow.trust_region.initial_radius` | Float64 | `1.0` | positive, `> min_radius`, `<= max_radius` | Starting trust-region radius, in per-unit state-vector (2-)norm. | Tuning how large the first trial step may be. | N/A | Larger values risk more rejected/shrunk first steps on hard cases. | Bounded by `min_radius`/`max_radius`. |
+| `power_flow.trust_region.min_radius` | Float64 | `1.0e-4` | positive, `< initial_radius` | Radius floor. Falling below it declares non-convergence (`reason = :trust_region_collapsed`) instead of looping indefinitely. | Bounding worst-case retry effort. | Setting it near `initial_radius`, which makes collapse detection overly aggressive. | Smaller values allow more shrink retries before giving up. | Read every retry inside one Newton iteration. |
+| `power_flow.trust_region.max_radius` | Float64 | `10.0` | positive, `>= initial_radius` | Radius ceiling; the radius never expands past this value. | Preventing runaway expansion on well-behaved cases. | N/A | Higher ceiling allows larger accepted steps once the model is trusted. | Caps the `expand_factor` growth. |
+| `power_flow.trust_region.eta_accept` | Float64 | `0.1` | positive real | Minimum actual/predicted reduction ratio `rho` required to accept a trial step. | Tuning acceptance strictness. | N/A | Higher values reject more trials, increasing shrink/retry iterations. | Compared against `rho` computed from the merit function. |
+| `power_flow.trust_region.shrink_factor` | Float64 | `0.5` | `(0, 1)` | Radius multiplier applied on a rejected trial. | Tuning how aggressively the radius shrinks after a bad step. | N/A | Smaller values shrink faster, reaching `min_radius`/collapse sooner. | Applied repeatedly within one Newton iteration until accepted or collapsed. |
+| `power_flow.trust_region.expand_factor` | Float64 | `2.0` | `> 1` | Radius multiplier applied on a strongly successful boundary-hitting step. | Letting the radius grow once the model proves reliable. | N/A | Larger values reach `max_radius` faster. | Only applied when the step also hit the radius boundary. |
+| `power_flow.trust_region.expand_threshold` | Float64 | `0.75` | `(0, 1)` | `rho` threshold above which an accepted, boundary-hitting step triggers expansion. | Tuning how "good" a step must be before trusting a larger radius. | N/A | Higher values expand less often, growing the radius more conservatively. | Must be `>= eta_accept` in practice for a coherent expand/accept ordering (not separately validated). |
+
+### Diagnostics and interpretation
+
+When a run has an output directory in its performance profile and `trust_region.enabled = true`, the solver writes `trust_region.log` with one line per Newton iteration: `radius_before`, `rho`, `tested_radii` (the shrink sequence tried this iteration), `rejected_steps`, `accepted`, `radius_after`, and `collapsed`. The solver status is extended with `trust_region_enabled`, `tr_step_count`, `tr_rejected_steps`, `tr_min_radius`, `tr_max_radius` (the observed radius range across the run, not the configured bounds), `tr_final_radius`, and `tr_collapsed`.
+
+```text
+tr_collapsed: false
+  The trust region never dropped below min_radius; every Newton iteration eventually accepted a step.
+
+tr_collapsed: true
+  The radius fell below min_radius without an accepted step in some iteration; the run reports
+  reason = :trust_region_collapsed. Lower min_radius, raise initial_radius, or fall back to
+  autodamp for this case.
+
+tr_rejected_steps > 0
+  At least one trial was rejected (rho < eta_accept) and the radius was shrunk before an
+  eventual accept (or collapse). A high count relative to tr_step_count suggests the model
+  is a poor local predictor for this case; consider a different start profile.
+```
+
 ## Q-limit options and guard
 
 | YAML path | Type | Default | Allowed values | Meaning | Use when | Avoid when | Performance impact | Interactions |

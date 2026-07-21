@@ -2080,7 +2080,77 @@ function test_acpflow_report_object()
   has_node_keys = haskey(first_node, :bus) && haskey(first_node, :vm_pu) && haskey(first_node, :q_limit_hit)
   has_branch_keys = haskey(first_branch, :from_bus) && haskey(first_branch, :p_from_MW) && haskey(first_branch, :overloaded)
 
-  return node_count_ok && branch_count_ok && link_count_ok && ctrl_count_ok && total_losses_ok && has_node_keys && has_branch_keys
+  wrong_branch_fields_ok = haskey(report.metadata, :wrong_branch_status) && haskey(report.metadata, :wrong_branch_reason) && report.metadata.wrong_branch_status isa Symbol && report.metadata.wrong_branch_reason isa Symbol
+
+  return node_count_ok && branch_count_ok && link_count_ok && ctrl_count_ok && total_losses_ok && has_node_keys && has_branch_keys && wrong_branch_fields_ok
+end
+
+# Verifies Task-1 (#196) wrong-branch detection output visibility: ACPFlowReport
+# metadata, AC island diagnostics CSV columns, and the console summary line.
+function test_wrong_branch_output_visibility()::Bool
+  clean_net = createTest3BusNet()
+  _, erg_clean = runpf!(clean_net, 40, 1e-8, 0; method = :rectangular, wrong_branch_detection = :warn)
+  erg_clean == 0 || return false
+  clean_report = buildACPFlowReport(clean_net; converged = true, solver = :rectangular)
+  clean_report.metadata.wrong_branch_status == :ok || return false
+
+  clean_console = mktempdir() do tmpdir
+    printACPFlowResults(clean_net, 0.0, 1, 1e-8, true, tmpdir; converged = true, solver = :rectangular, result_mode = :summary)
+    read(joinpath(tmpdir, "result_$(clean_net.name).txt"), String)
+  end
+  occursin("wrong-branch check:", clean_console) && return false
+
+  off_net = createTest3BusNet()
+  _, erg_off = runpf!(off_net, 40, 1e-8, 0; method = :rectangular, wrong_branch_detection = :off)
+  erg_off == 0 || return false
+  off_report = buildACPFlowReport(off_net; converged = true, solver = :rectangular)
+  off_report.metadata.wrong_branch_status == :not_checked || return false
+
+  # Aggressive vm threshold guarantees a "suspect" finding on any solved 3-bus case.
+  suspect_net = createTest3BusNet()
+  _, erg_suspect = runpf!(suspect_net, 40, 1e-8, 0; method = :rectangular, wrong_branch_detection = :warn, wrong_branch_min_vm_pu = 1.20)
+  erg_suspect == 0 || return false
+  suspect_report = buildACPFlowReport(suspect_net; converged = true, solver = :rectangular)
+  suspect_report.metadata.wrong_branch_status == :warn || return false
+  suspect_report.metadata.wrong_branch_reason == :low_voltage_magnitude || return false
+
+  suspect_console = mktempdir() do tmpdir
+    printACPFlowResults(suspect_net, 0.0, 1, 1e-8, true, tmpdir; converged = true, solver = :rectangular, result_mode = :summary)
+    read(joinpath(tmpdir, "result_$(suspect_net.name).txt"), String)
+  end
+  occursin("wrong-branch check: SUSPECT (low_voltage_magnitude,", suspect_console) || return false
+
+  # Two-island net (mirrors the AC-island fixture used elsewhere in this file) to
+  # exercise the per-island diagnostics CSV.
+  island_net = Net(name = "wrong_branch_islands", baseMVA = 100.0)
+  for busName in ("A1", "A2", "B1", "B2")
+    addBus!(net = island_net, busName = busName, vn_kV = 110.0)
+  end
+  addPIModelACLine!(net = island_net, fromBus = "A1", toBus = "A2", r_pu = 0.01, x_pu = 0.10, b_pu = 0.0, status = 1)
+  addPIModelACLine!(net = island_net, fromBus = "B1", toBus = "B2", r_pu = 0.01, x_pu = 0.10, b_pu = 0.0, status = 1)
+  addProsumer!(net = island_net, busName = "A1", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "A1")
+  addProsumer!(net = island_net, busName = "A2", type = "ENERGYCONSUMER", p = 10.0, q = 3.0)
+  addProsumer!(net = island_net, busName = "B1", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "B1")
+  addProsumer!(net = island_net, busName = "B2", type = "ENERGYCONSUMER", p = 8.0, q = 2.0)
+  refreshBusTypesFromProsumers!(island_net)
+
+  csv_text, header_fields, row_field_counts = mktempdir() do tmpdir
+    profile = Dict{Symbol,Any}(:output_dir => tmpdir)
+    island_cfg = SparlectraConfig(powerflow = PowerFlowConfig(max_iter = 40, islands_enabled = true, wrong_branch_detection = :warn, wrong_branch_min_vm_pu = 1.20))
+    island_result = run_sparlectra(net = island_net, config = island_cfg, performance_profile = profile)
+    island_result.final_converged || return ("", String[], Int[])
+    text = read(joinpath(tmpdir, "ac_island_solver_summary.csv"), String)
+    csv_lines = split(strip(text), '\n')
+    return (text, split(csv_lines[1], ','), [length(split(line, ',')) for line in csv_lines[2:end]])
+  end
+  isempty(csv_text) && return false
+  header_fields[end-1:end] == ["wrong_branch_status", "wrong_branch_reason"] || return false
+  # Every existing column before the two appended ones keeps its original name/position.
+  header_fields[1:(end-2)] == split("island_id,n_bus,n_branch,ref_bus,chosen_ref_bus,n_pq,n_pv,n_ref,ref_promoted,initial_mismatch,first_mismatch,last_mismatch,best_mismatch,min_voltage_magnitude,max_voltage_magnitude,max_angle_step,first_nonfinite_iteration,last_finite_mismatch,worst_bus,worst_equation,iterations,final_mismatch,mismatch_status,final_status,failure_reason,stage,exception_type,exception_message,stacktrace_top,start_projection,autodamp,autodamp_min,max_iter,tol,angle_mode,voltage_mode,qlimits_enabled,qlimit_enforcement_mode,q_limit_processing_status,pv_pq_switching_events,qlimit_active_set_changes,qlimit_reenable_events,guarded_narrow_q_pv_buses,final_pv_voltage_residual,wrong_branch_detection,start_current_iteration_enabled,workspace_reuse,workspace_preallocate", ',') || return false
+  all(count -> count == length(header_fields), row_field_counts) || return false
+  occursin("wrong_branch_status: warn", csv_text) || occursin(",warn,", csv_text) || return false
+
+  return true
 end
 
 function test_report_uses_user_bus_names_and_pf_node_count()
@@ -2849,6 +2919,7 @@ function run_grid_fast_tests()
       @test test_link_ring_pf_stability() == true
       @test test_acpflow_report_object() == true
       @test test_report_uses_user_bus_names_and_pf_node_count() == true
+      @test test_wrong_branch_output_visibility() == true
       @test test_summary_result_output_closes_file_handle() == true
     end
   end

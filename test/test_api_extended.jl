@@ -887,6 +887,32 @@ power_flow:
       @test current_iteration_overrides["power_flow"]["start_current_iteration"]["enabled"] === true
       @test current_iteration_overrides["power_flow"]["start_current_iteration"]["max_iter"] == 3
       @test_throws ArgumentError validate_gui_config_overrides(Dict("power_flow.start_current_iteration.damping" => 1.5))
+
+      merit_overrides = validate_gui_config_overrides(
+        Dict("power_flow.merit.enabled" => true, "power_flow.merit.armijo_c1" => 1.0e-3, "power_flow.merit.fallback_max_mismatch" => false),
+      )
+      @test merit_overrides["power_flow"]["merit"]["enabled"] === true
+      @test merit_overrides["power_flow"]["merit"]["armijo_c1"] == 1.0e-3
+      @test merit_overrides["power_flow"]["merit"]["fallback_max_mismatch"] === false
+      @test_throws ArgumentError validate_gui_config_overrides(Dict("power_flow.merit.armijo_c1" => 0.5))
+      @test_throws ArgumentError validate_gui_config_overrides(Dict("power_flow.merit.scale_p" => 2.0))
+      @test_throws ArgumentError validate_gui_config_overrides(Dict("power_flow.merit.unknown_key" => true))
+
+      merit_output = joinpath(tmpdir, "merit_enabled")
+      merit_result = run_sparlectra_api(
+        casefile = casefile,
+        config_file = template,
+        output_dir = merit_output,
+        config_overrides = Dict("power_flow.autodamp" => true, "power_flow.merit.enabled" => true, "benchmark.enabled" => false),
+      )
+      @test merit_result.success
+      @test merit_result.metadata["merit_enabled"] === true
+      @test merit_result.metadata["merit_used_iterations"] isa Int
+      @test any(artifact -> artifact.kind === :merit_linesearch, merit_result.artifacts)
+
+      merit_bad_key = run_sparlectra_api(casefile = casefile, config_file = template, output_dir = joinpath(tmpdir, "merit_bad_key"), config_overrides = Dict("power_flow.merit.unknown_key" => true))
+      @test !merit_bad_key.success
+      @test merit_bad_key.reason == "invalid_config_override"
     end
   end
   @testset "Local PowerFlow service" begin
