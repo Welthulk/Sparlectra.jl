@@ -253,6 +253,101 @@ case.
 
 ---
 
+### Trust-Region Step Control
+
+`power_flow.trust_region` is a second, alternative Newton step-control
+mechanism to autodamp: a **scaled-Newton trust region**. It is disabled by
+default and mutually exclusive with `power_flow.autodamp` — both mechanisms
+decide the same thing (how far to step along the Newton direction) by
+different rules, and layering them is undefined, so enabling both is a
+configuration error.
+
+#### Scaled-Newton steps (no dogleg)
+
+Classical trust-region methods restrict the Newton correction to a ball of
+radius $\Delta$ around the current iterate, typically choosing the trial step
+via a *dogleg* or *Steihaug-CG* interpolation between the steepest-descent
+and full Newton directions. This implementation deliberately does **not**
+implement dogleg/Steihaug: the trial step is always the full Newton direction
+$\Delta x$, rescaled down when it exceeds the radius:
+
+```math
+\Delta x_{\text{scaled}} =
+\begin{cases}
+\Delta x & \lVert \Delta x \rVert \le \Delta \\
+\Delta \dfrac{\Delta x}{\lVert \Delta x \rVert} & \lVert \Delta x \rVert > \Delta
+\end{cases}
+```
+
+This keeps the direction always the analytic Newton direction — identical to
+the autodamp/fixed-damping paths — and only the step *length* is controlled,
+consistent with how autodamp itself only chooses a scalar step length. Full
+dogleg/Steihaug step control remains future work if the simpler scaled-Newton
+approach proves insufficient in practice.
+
+#### Acceptance by merit decrease
+
+Step acceptance reuses the same merit function as the
+[Merit-Function Line Search](@ref), $f(x) = \frac{1}{2}\lVert F(x) \rVert_2^2$
+(unweighted, $W = I$) — no second merit computation is implemented. For a
+trial step $\Delta x_{\text{scaled}}$, the **actual reduction** is
+
+```math
+\text{ared} = f(x) - f(x + \Delta x_{\text{scaled}})
+```
+
+and the **predicted reduction** comes from the local linear model of $F$
+around $x$:
+
+```math
+\text{pred} = f(x) - \frac{1}{2} \lVert F(x) + J(x)\, \Delta x_{\text{scaled}} \rVert_2^2
+```
+
+The acceptance ratio $\rho = \text{ared} / \max(\text{pred}, \varepsilon)$
+measures how well the linear model predicted the actual improvement. A trial
+is accepted when $\rho \ge \eta_{\text{accept}}$
+(`power_flow.trust_region.eta_accept`); note this uses the already-factored
+Jacobian's matrix-vector product for `pred`, not a second Jacobian build or
+linear solve.
+
+#### Radius update
+
+The radius $\Delta$ persists across Newton iterations (unlike autodamp's
+per-iteration `damp` restart) and adapts from $\rho$:
+
+* **Accepted** ($\rho \ge \eta_{\text{accept}}$): the step is taken. If the
+  step also hit the radius boundary ($\lVert \Delta x \rVert > \Delta$) and
+  $\rho \ge$ `expand_threshold`, the radius expands:
+  $\Delta \leftarrow \min(\Delta \cdot \texttt{expand\_factor}, \Delta_{\max})$.
+  Otherwise the radius is unchanged.
+* **Rejected** ($\rho < \eta_{\text{accept}}$): the radius shrinks,
+  $\Delta \leftarrow \Delta \cdot \texttt{shrink\_factor}$, and the *same*
+  Newton iteration retries with the smaller radius — no new Jacobian build or
+  linear solve, only a rescale of the already-computed $\Delta x$ and a fresh
+  mismatch evaluation, mirroring how autodamp reuses one Newton correction
+  across its backtracking trials.
+* **Collapsed**: if $\Delta$ falls below `power_flow.trust_region.min_radius`
+  without an accepted step, the solver declares non-convergence with reason
+  `:trust_region_collapsed` rather than looping indefinitely.
+
+#### Limits
+
+* Scaled-Newton only: the trial direction is always the full Newton
+  direction, never a blend with steepest descent. A case that needs true
+  dogleg/Steihaug behavior (e.g., a very ill-conditioned Jacobian where the
+  Newton direction itself is a poor descent direction near $x$) is not
+  addressed by this mechanism.
+* Like the merit-function line search, this is an acceptance/step-length
+  control, not a global-convergence guarantee or a wrong-branch selector.
+* Mutually exclusive with `autodamp`; there is currently no combined
+  trust-region-with-backtracking-fallback mode.
+
+See Nocedal & Wright, *Numerical Optimization*, the chapter on trust-region
+methods, for the general theory this section adapts (scaled-Newton instead of
+dogleg/Steihaug, referenced by name only).
+
+---
+
 ### Start Projection for Difficult Seeds
 
 #### DC-angle flat-start background

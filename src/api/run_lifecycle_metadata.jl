@@ -65,6 +65,22 @@ function _wrong_branch_lifecycle_metadata(rect_status)::Dict{String,Any}
   )
 end
 
+function _trust_region_lifecycle_metadata(rect_status)::Dict{String,Any}
+  # rect_status may come from a non-rectangular solver route with no
+  # trust-region fields at all; default gracefully per-field as above.
+  get_field(name, default) = rect_status !== nothing && hasproperty(rect_status, name) ? getproperty(rect_status, name) : default
+  return Dict{String,Any}(
+    "trust_region_enabled" => get_field(:trust_region_enabled, false),
+    "tr_step_count" => get_field(:tr_step_count, 0),
+    "tr_rejected_steps" => get_field(:tr_rejected_steps, 0),
+    "tr_min_radius" => get_field(:tr_min_radius, NaN),
+    "tr_max_radius" => get_field(:tr_max_radius, NaN),
+    "tr_final_radius" => get_field(:tr_final_radius, NaN),
+    "tr_collapsed" => get_field(:tr_collapsed, false),
+    "trust_region_artifact" => get_field(:trust_region_artifact, ""),
+  )
+end
+
 function _island_wise_lifecycle_metadata(rect_status)::Dict{String,Any}
   return Dict{String,Any}(
     "island_wise_all_converged" => rect_status !== nothing && hasproperty(rect_status, :island_wise_all_converged) ? getproperty(rect_status, :island_wise_all_converged) : false,
@@ -79,6 +95,7 @@ function _build_success_lifecycle_metadata(raw_result::SparlectraRunResult, conf
   current_iteration_metadata = _current_iteration_lifecycle_metadata(rect_status)
   merit_linesearch_metadata = _merit_linesearch_lifecycle_metadata(rect_status)
   wrong_branch_metadata = _wrong_branch_lifecycle_metadata(rect_status)
+  trust_region_metadata = _trust_region_lifecycle_metadata(rect_status)
   island_wise_metadata = _island_wise_lifecycle_metadata(rect_status)
   classic_outer_loop_passes = rect_status !== nothing && hasproperty(rect_status, :matpower_outer_iterations) ? rect_status.matpower_outer_iterations : 0
   pv_to_pq_events = raw_result.net === nothing ? 0 : length(raw_result.net.qLimitLog)
@@ -112,7 +129,7 @@ function _build_success_lifecycle_metadata(raw_result::SparlectraRunResult, conf
       "detailed_result_csv" => detailed_result_csv,
       "detailed_result_csv_format" => detailed_result_csv_format === nothing ? "technical" : String(detailed_result_csv_format),
     )),
-  ), qlimit_metadata, current_iteration_metadata, merit_linesearch_metadata, wrong_branch_metadata, island_wise_metadata)
+  ), qlimit_metadata, current_iteration_metadata, merit_linesearch_metadata, wrong_branch_metadata, trust_region_metadata, island_wise_metadata)
   # Partial CSV exports are still successful API runs, but the Web UI needs the
   # partial file error in the stable lifecycle field used by Last Errors.
   haskey(csv_timing_metadata, :partial_error) && (metadata["detailed_result_csv_error"] = csv_timing_metadata[:partial_error])

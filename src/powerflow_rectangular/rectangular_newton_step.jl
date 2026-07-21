@@ -250,6 +250,103 @@ function choose_rectangular_autodamp(
 end
 
 """
+    RectangularTrustRegionCollapsed
+
+Thrown by `choose_rectangular_trust_region_step` when the trust-region radius
+falls below `min_radius` without ever accepting a step. Caught by the outer
+Newton-Raphson loop (`rectangular_network_solver.jl`) alongside the existing
+singular-Jacobian failure handling, and reported as non-convergence with
+reason `:trust_region_collapsed`.
+"""
+struct RectangularTrustRegionCollapsed <: Exception end
+
+"""
+    choose_rectangular_trust_region_step(Ybus, V, S, δx, F0, J; slack_idx, bus_types, Vset, radius_ref, min_radius, max_radius, eta_accept, shrink_factor, expand_factor, expand_threshold)
+
+Scaled-Newton trust-region step control (dogleg/Steihaug is out of scope).
+The full Newton step `δx` is scaled down to the current radius when it
+exceeds it; the trial is accepted when the ratio `rho` of actual to
+predicted merit-function reduction is at least `eta_accept`. Rejected trials
+shrink the radius and retry within the same Newton iteration (bounded by
+`min_radius`); the radius persists across iterations via `radius_ref`, which
+is mutated in place.
+
+Reuses the exact merit function from the merit-function line search
+(`_rectangular_merit_value`, unweighted `W = I`) as `m(x)`, matching
+`m(x) = ‖F(x)‖²` up to the constant `1/2` factor common to numerator and
+denominator of `rho` — no second merit computation is implemented.
+
+Throws [`RectangularTrustRegionCollapsed`](@ref) if the radius falls below
+`min_radius` without an accepted step. Returns the accepted trial voltage
+vector.
+"""
+function choose_rectangular_trust_region_step(
+  Ybus,
+  V::Vector{ComplexF64},
+  S::Vector{ComplexF64},
+  δx::Vector{Float64},
+  F0::Vector{Float64},
+  J;
+  slack_idx::Int,
+  bus_types::Vector{Symbol},
+  Vset::Vector{Float64},
+  radius_ref::Base.RefValue{Float64},
+  min_radius::Float64,
+  max_radius::Float64,
+  eta_accept::Float64,
+  shrink_factor::Float64,
+  expand_factor::Float64,
+  expand_threshold::Float64,
+  diagnostics = nothing,
+)
+  non_slack = non_slack_indices(length(V), slack_idx)
+  # W = I: m(x) = 1/2‖F(x)‖², the same function the merit-function line search uses.
+  m_x = _rectangular_merit_value(F0, non_slack, bus_types, 1.0, 1.0, 1.0)
+  dx_norm = norm(δx)
+
+  Vtrial = similar(V)
+  tested_radii = Float64[]
+  rejected_steps = 0
+
+  while true
+    radius = radius_ref[]
+    if radius < min_radius
+      diagnostics isa AbstractVector && push!(diagnostics, (radius_before = radius, rho = NaN, tested_radii = copy(tested_radii), rejected_steps = rejected_steps, accepted = false, radius_after = radius, collapsed = true))
+      throw(RectangularTrustRegionCollapsed())
+    end
+    push!(tested_radii, radius)
+
+    # Scaled-Newton: cap the step norm at the radius, direction unchanged (no dogleg).
+    scale = dx_norm > radius ? radius / dx_norm : 1.0
+    _apply_rectangular_delta!(Vtrial, V, δx, slack_idx, non_slack, scale)
+    F_trial = mismatch_rectangular(Ybus, Vtrial, S, bus_types, Vset, slack_idx)
+    m_trial = _rectangular_merit_value(F_trial, non_slack, bus_types, 1.0, 1.0, 1.0)
+
+    if isfinite(m_trial)
+      # Predicted reduction from the linear model F(x) + J*dx_scaled, using the
+      # same merit-value convention as m_x/m_trial for a consistent ratio.
+      predicted_F = F0 .+ J * (scale .* δx)
+      predicted_reduction = m_x - _rectangular_merit_value(predicted_F, non_slack, bus_types, 1.0, 1.0, 1.0)
+      actual_reduction = m_x - m_trial
+      rho = actual_reduction / max(predicted_reduction, eps())
+
+      if rho >= eta_accept
+        hit_boundary = dx_norm > radius
+        if rho >= expand_threshold && hit_boundary
+          radius_ref[] = min(radius * expand_factor, max_radius)
+        end
+        diagnostics isa AbstractVector && push!(diagnostics, (radius_before = radius, rho = rho, tested_radii = copy(tested_radii), rejected_steps = rejected_steps, accepted = true, radius_after = radius_ref[], collapsed = false))
+        return copy(Vtrial)
+      end
+    end
+
+    # Non-finite trial merit or rho < eta_accept: reject, shrink, retry.
+    rejected_steps += 1
+    radius_ref[] = radius * shrink_factor
+  end
+end
+
+"""
     complex_newton_step_rectangular(
         Ybus,
         V,
@@ -288,6 +385,15 @@ function complex_newton_step_rectangular(
   fallback_max_mismatch::Bool = true,
   active_set_changed::Bool = false,
   merit_log = nothing,
+  trust_region_enabled::Bool = false,
+  tr_radius_ref::Union{Nothing,Base.RefValue{Float64}} = nothing,
+  tr_min_radius::Float64 = 1e-4,
+  tr_max_radius::Float64 = 10.0,
+  tr_eta_accept::Float64 = 0.1,
+  tr_shrink_factor::Float64 = 0.5,
+  tr_expand_factor::Float64 = 2.0,
+  tr_expand_threshold::Float64 = 0.75,
+  tr_log = nothing,
 )
   n = length(V)
   # Solver assumes state ordering [Vr(non-slack); Vi(non-slack)] consistently
@@ -330,6 +436,22 @@ function complex_newton_step_rectangular(
       )
     end
     return Vtrial
+  end
+
+  if trust_region_enabled
+    # Scaled-Newton trust-region path: caps ||δx|| at an adaptive radius and
+    # accepts/rejects by merit-function decrease. Mutually exclusive with
+    # autodamp at the config layer. May throw RectangularTrustRegionCollapsed,
+    # caught by the outer NR loop as a non-convergence reason.
+    return _perf_profile_time!(performance_profile, :newton_step_trust_region) do
+      choose_rectangular_trust_region_step(
+        Ybus, V, S, δx, F0, J;
+        slack_idx = slack_idx, bus_types = bus_types, Vset = Vset,
+        radius_ref = tr_radius_ref, min_radius = tr_min_radius, max_radius = tr_max_radius,
+        eta_accept = tr_eta_accept, shrink_factor = tr_shrink_factor, expand_factor = tr_expand_factor,
+        expand_threshold = tr_expand_threshold, diagnostics = tr_log,
+      )
+    end
   end
 
   # Fixed damping path: single update with validated step length.

@@ -439,6 +439,15 @@ The following canonical keys are currently present in `src/configuration.yaml.ex
 - `power_flow.merit.scale_p`
 - `power_flow.merit.scale_q`
 - `power_flow.merit.scale_v`
+- `power_flow.trust_region`
+- `power_flow.trust_region.enabled`
+- `power_flow.trust_region.initial_radius`
+- `power_flow.trust_region.min_radius`
+- `power_flow.trust_region.max_radius`
+- `power_flow.trust_region.eta_accept`
+- `power_flow.trust_region.shrink_factor`
+- `power_flow.trust_region.expand_factor`
+- `power_flow.trust_region.expand_threshold`
 - `power_flow.method`
 - `power_flow.qlimits`
 - `power_flow.qlimits.auto_q_delta_pu`
