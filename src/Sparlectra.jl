@@ -518,6 +518,7 @@ export
   applyPfSolution!,                       # Apply an external PF solution to Net.
   solvePf,                                # Solve through an external solver interface.
   runpf_external!,                        # Run PF via external solver interface.
+  apslf_solver,                           # Reachability point for the AnalyticLoadFlow.jl-backed solver (weak dep).
   ensure_casefile                         # Resolve or fetch a case file.
 
 
