@@ -44,6 +44,7 @@ function include_extended_tests()
   include("test_synthetic_grids.jl")
   include("test_configuration_docs.jl")
   include("test_repository_hygiene.jl")
+  include("test_apslf.jl")
   include("extended/test_dtf_importer.jl")
   include("extended/test_dtf_for002_validation_example.jl")
   include("extended/test_dtf_for002_outage_validation_example.jl")
@@ -98,6 +99,7 @@ function run_extended_profile_tests()
     ("synthetic_grids", () -> run_entry(:run_synthetic_grid_tests)),
     ("configuration_docs", () -> run_entry(:run_configuration_docs_tests)),
     ("repository_hygiene", () -> run_entry(:run_repository_hygiene_tests)),
+    ("apslf", () -> run_entry(:run_apslf_tests)),
     ("dtf_extended", () -> begin
       run_entry(:run_dtf_importer_tests)
       run_entry(:run_dtf_for002_validation_example_tests)
