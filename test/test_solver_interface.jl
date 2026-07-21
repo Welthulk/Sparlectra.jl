@@ -907,6 +907,116 @@ mpc.branch = [
       end
     end
 
+    @testset "Trust-region step control" begin
+      @testset "Config validation" begin
+        min_ge_initial = tempname() * ".yaml"
+        write(min_ge_initial, "power_flow:\n  trust_region:\n    initial_radius: 1.0\n    min_radius: 1.0\n")
+        @test_throws ArgumentError Sparlectra.load_sparlectra_config(min_ge_initial; reload = true)
+
+        bad_shrink = tempname() * ".yaml"
+        write(bad_shrink, "power_flow:\n  trust_region:\n    shrink_factor: 1.5\n")
+        @test_throws ArgumentError Sparlectra.load_sparlectra_config(bad_shrink; reload = true)
+
+        bad_expand = tempname() * ".yaml"
+        write(bad_expand, "power_flow:\n  trust_region:\n    expand_factor: 0.5\n")
+        @test_throws ArgumentError Sparlectra.load_sparlectra_config(bad_expand; reload = true)
+
+        mutually_exclusive = tempname() * ".yaml"
+        write(mutually_exclusive, "power_flow:\n  autodamp: true\n  trust_region:\n    enabled: true\n")
+        @test_throws ArgumentError Sparlectra.load_sparlectra_config(mutually_exclusive; reload = true)
+
+        ok_cfg = tempname() * ".yaml"
+        write(ok_cfg, "power_flow:\n  autodamp: false\n  trust_region:\n    enabled: true\n    initial_radius: 2.0\n")
+        loaded = Sparlectra.load_sparlectra_config(ok_cfg; reload = true)
+        @test loaded.powerflow.trust_region.enabled == true
+        @test loaded.powerflow.trust_region.initial_radius == 2.0
+      end
+
+      @testset "Unit: choose_rectangular_trust_region_step acceptance and collapse" begin
+        Y = ComplexF64[0.0 - 10.0im 0.0 + 10.0im; 0.0 + 10.0im 0.0 - 10.0im]
+        V = ComplexF64[1.0 + 0.0im, 1.0 + 0.0im]
+        S = ComplexF64[0.0 + 0.0im, -1.0 - 0.2im]
+        bus_types = [:Slack, :PQ]
+        Vset = [1.0, 1.0]
+        F0 = Sparlectra.mismatch_rectangular(Y, V, S, bus_types, Vset, 1)
+        J = Sparlectra.build_rectangular_jacobian_pq_pv(sparse(Y), V, bus_types, Vset, 1; dPinj_dVm = zeros(2), dQinj_dVm = zeros(2))
+        δx = Sparlectra.solve_linear(J, -F0; allow_pinv = true)
+
+        radius_ref = Ref(1.0)
+        tr_log = NamedTuple[]
+        Vout = Sparlectra.choose_rectangular_trust_region_step(
+          Y, V, S, δx, F0, J;
+          slack_idx = 1, bus_types = bus_types, Vset = Vset, radius_ref = radius_ref,
+          min_radius = 1e-4, max_radius = 10.0, eta_accept = 0.1, shrink_factor = 0.5,
+          expand_factor = 2.0, expand_threshold = 0.75, diagnostics = tr_log,
+        )
+        @test Vout isa Vector{ComplexF64}
+        @test length(tr_log) == 1
+        @test tr_log[1].accepted == true
+        @test tr_log[1].collapsed == false
+
+        collapse_radius_ref = Ref(1e-5)
+        collapse_log = NamedTuple[]
+        @test_throws Sparlectra.RectangularTrustRegionCollapsed Sparlectra.choose_rectangular_trust_region_step(
+          Y, V, S, δx, F0, J;
+          slack_idx = 1, bus_types = bus_types, Vset = Vset, radius_ref = collapse_radius_ref,
+          min_radius = 1e-4, max_radius = 10.0, eta_accept = 0.1, shrink_factor = 0.5,
+          expand_factor = 2.0, expand_threshold = 0.75, diagnostics = collapse_log,
+        )
+        @test length(collapse_log) == 1
+        @test collapse_log[1].collapsed == true
+      end
+
+      @testset "Regression: trust_region.enabled=false leaves the default solver path unchanged" begin
+        net_classic = createCIGRE()
+        it_classic, erg_classic = runpf_rectangular!(net_classic, 30, 1e-8, 0; autodamp = true)
+
+        net_off = createCIGRE()
+        it_off, erg_off = runpf_rectangular!(net_off, 30, 1e-8, 0; autodamp = true, trust_region_enabled = false, trust_region_initial_radius = 3.0)
+
+        @test it_classic == it_off
+        @test erg_classic == erg_off == 0
+        @test [n._vm_pu for n in net_classic.nodeVec] == [n._vm_pu for n in net_off.nodeVec]
+        @test [n._va_deg for n in net_classic.nodeVec] == [n._va_deg for n in net_off.nodeVec]
+      end
+
+      @testset "Functional: trust_region.enabled=true converges and logs accepted steps" begin
+        mktempdir() do tmpdir
+          perf = Dict{Symbol,Any}(:output_dir => tmpdir)
+          net = createCIGRE()
+          _, erg = runpf_rectangular!(net, 30, 1e-8, 0; autodamp = false, trust_region_enabled = true, performance_profile = perf)
+          @test erg == 0
+          st = Sparlectra.rectangular_pf_status(net)
+          @test st.trust_region_enabled == true
+          @test st.tr_step_count >= 1
+          @test st.tr_collapsed == false
+
+          logpath = joinpath(tmpdir, "trust_region.log")
+          @test isfile(logpath)
+          log_text = read(logpath, String)
+          @test occursin("accepted=true", log_text)
+          @test occursin("trust_region_enabled: true", log_text)
+        end
+      end
+
+      @testset "Radius collapse reports :trust_region_collapsed on an unsolvable case" begin
+        net = Net(name = "tr_collapse_demo", baseMVA = 100.0, flatstart = true)
+        addBus!(net = net, busName = "SLACK", vn_kV = 110.0, vm_pu = 1.0, va_deg = 0.0)
+        addBus!(net = net, busName = "LOAD", vn_kV = 110.0, vm_pu = 1.0, va_deg = 0.0)
+        addPIModelACLine!(net = net, fromBus = "SLACK", toBus = "LOAD", r_pu = 0.01, x_pu = 0.5, b_pu = 0.0, status = 1)
+        addProsumer!(net = net, busName = "SLACK", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "SLACK")
+        addProsumer!(net = net, busName = "LOAD", type = "ENERGYCONSUMER", p = 200.0, q = 60.0)
+        ok, _ = validate!(net = net)
+        @test ok
+
+        _, erg = runpf_rectangular!(net, 30, 1e-8, 0; autodamp = false, trust_region_enabled = true, trust_region_min_radius = 1e-3)
+        @test erg != 0
+        st = Sparlectra.rectangular_pf_status(net)
+        @test st.reason == :trust_region_collapsed
+        @test st.tr_collapsed == true
+      end
+    end
+
     @testset "Current-iteration rejection log reports candidate guard details" begin
       mktempdir() do tmpdir
         run_guarded_current_iteration_start = getfield(Sparlectra, :_run_guarded_current_iteration_start)

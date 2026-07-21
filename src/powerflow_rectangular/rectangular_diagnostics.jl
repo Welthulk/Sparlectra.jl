@@ -340,3 +340,67 @@ function _merge_merit_linesearch_diagnostics(status_build, performance_profile, 
   summary = merge(summary, (merit_linesearch_artifact = artifact,))
   return merge(status_build, (status = (; status_build.status..., summary...),))
 end
+
+# Aggregate summary of the trust-region step control across all Newton iterations.
+# `tr_step_diagnostics` is one entry per outer NR iteration (or `nothing`/empty when
+# `trust_region_enabled = false`), pushed by `choose_rectangular_trust_region_step`.
+# tr_min_radius/tr_max_radius report the *observed* radius trajectory (the value in
+# effect at the start of each iteration), analogous to autodamp_min_alpha/max_alpha.
+function _trust_region_summary(tr_step_diagnostics, trust_region_enabled::Bool)
+  if !trust_region_enabled || tr_step_diagnostics === nothing || isempty(tr_step_diagnostics)
+    return (
+      trust_region_enabled = trust_region_enabled,
+      tr_step_count = 0,
+      tr_rejected_steps = 0,
+      tr_min_radius = NaN,
+      tr_max_radius = NaN,
+      tr_final_radius = NaN,
+      tr_collapsed = false,
+    )
+  end
+  radii = Float64[getproperty(row, :radius_before) for row in tr_step_diagnostics]
+  rejected = sum(getproperty(row, :rejected_steps) for row in tr_step_diagnostics)
+  collapsed = any(getproperty(row, :collapsed) for row in tr_step_diagnostics)
+  final_entry = last(tr_step_diagnostics)
+  return (
+    trust_region_enabled = trust_region_enabled,
+    tr_step_count = length(tr_step_diagnostics),
+    tr_rejected_steps = rejected,
+    tr_min_radius = minimum(radii),
+    tr_max_radius = maximum(radii),
+    tr_final_radius = final_entry.radius_after,
+    tr_collapsed = collapsed,
+  )
+end
+
+function _write_trust_region_log(performance_profile, tr_step_diagnostics, summary)
+  performance_profile isa AbstractDict || return ""
+  tr_step_diagnostics === nothing && return ""
+  output_dir = get(performance_profile, :output_dir, "")
+  output_dir isa AbstractString && !isempty(output_dir) || return ""
+  mkpath(output_dir)
+  path = joinpath(output_dir, "trust_region.log")
+  open(path, "w") do io
+    println(io, "trust_region_enabled: ", summary.trust_region_enabled)
+    println(io, "tr_step_count: ", summary.tr_step_count)
+    println(io, "tr_rejected_steps: ", summary.tr_rejected_steps)
+    println(io, "tr_min_radius: ", summary.tr_min_radius)
+    println(io, "tr_max_radius: ", summary.tr_max_radius)
+    println(io, "tr_final_radius: ", summary.tr_final_radius)
+    println(io, "tr_collapsed: ", summary.tr_collapsed)
+    println(io, "")
+    println(io, "# iter radius_before rho tested_radii rejected_steps accepted radius_after collapsed")
+    for (iter, row) in enumerate(tr_step_diagnostics)
+      tested = isempty(row.tested_radii) ? "none" : join(row.tested_radii, ",")
+      println(io, "iter=", iter, " radius_before=", row.radius_before, " rho=", row.rho, " tested_radii=[", tested, "] rejected_steps=", row.rejected_steps, " accepted=", row.accepted, " radius_after=", row.radius_after, " collapsed=", row.collapsed)
+    end
+  end
+  return path
+end
+
+function _merge_trust_region_diagnostics(status_build, performance_profile, tr_step_diagnostics, trust_region_enabled::Bool)
+  summary = _trust_region_summary(tr_step_diagnostics, trust_region_enabled)
+  artifact = _write_trust_region_log(performance_profile, tr_step_diagnostics, summary)
+  summary = merge(summary, (trust_region_artifact = artifact,))
+  return merge(status_build, (status = (; status_build.status..., summary...),))
+end
