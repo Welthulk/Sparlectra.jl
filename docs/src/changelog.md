@@ -32,6 +32,36 @@
   theoretical background and
   [Merit-function line search options](@ref) in
   `docs/src/powerflow_configuration.md` for configuration details.
+* **Feature**: Scaled-Newton trust-region step control for the rectangular
+  solver (Issue #196, closing item 5 "Trust-Region Step Control"). New
+  config block `power_flow.trust_region` (`enabled`, `initial_radius`,
+  `min_radius`, `max_radius`, `eta_accept`, `shrink_factor`,
+  `expand_factor`, `expand_threshold`), disabled by default. An alternative
+  to `autodamp`: caps the Newton step norm at an adaptive radius and
+  accepts/rejects trials by merit-function decrease (reusing the merit
+  value from the merit-function line search) instead of the max-mismatch
+  criterion; mutually exclusive with `power_flow.autodamp = true`
+  (validation error). Reports `reason = :trust_region_collapsed` when the
+  radius falls below `min_radius` without an accepted step. Adds `tr_*`
+  solver-status/API-result fields and a `trust_region.log` diagnostic
+  artifact. Scaled-Newton only — dogleg/Steihaug is out of scope. See
+  [Trust-Region Step Control](@ref) in `docs/src/solver.md`.
+
+## Improvements
+* Wrong-branch detection results (not just the `wrong_branch_detection`
+  setting) are now visible in every output surface without reading console
+  warnings (Issue #196, closing item "detection visibility"):
+  `ACPFlowReport.metadata` gains `wrong_branch_status`/`wrong_branch_reason`;
+  the AC island diagnostics CSV and per-island log gain matching trailing
+  columns/fields; `printACPFlowResults` prints one summary line only for a
+  suspect/failed result; the Web UI run result page shows a status badge;
+  `run_sparlectra_api` result metadata gains the same fields plus the
+  low/high-Vm and branch-angle-violation counts. Maintainer decision: the
+  wrong-branch rescue retry loop stays out of scope — detection with full
+  output visibility plus the APSLF solver (`power_flow.solver = apslf` /
+  `apslf_start`, done separately via #264) are the supported mitigations
+  for hard flat-start cases. See `docs/src/configuration.md`, "Where the
+  result is visible".
 
 # Version 0.8.12 — 2026-07-20
 
