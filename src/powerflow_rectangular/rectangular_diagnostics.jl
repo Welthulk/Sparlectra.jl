@@ -279,3 +279,64 @@ function _merge_current_iteration_diagnostics(status_build, performance_profile)
   end
   return status_build
 end
+
+# Aggregate summary of the merit-function line search across all Newton iterations.
+# `merit_step_diagnostics` is one entry per outer NR iteration (or `nothing`/empty
+# when `merit_enabled = false`), pushed by `choose_rectangular_autodamp`.
+function _merit_linesearch_summary(merit_step_diagnostics, merit_enabled::Bool)
+  if !merit_enabled || merit_step_diagnostics === nothing || isempty(merit_step_diagnostics)
+    return (
+      merit_enabled = merit_enabled,
+      merit_used_iterations = 0,
+      merit_fallback_count = 0,
+      merit_active_set_skip_count = 0,
+      merit_initial = NaN,
+      merit_final = NaN,
+    )
+  end
+  used = count(row -> getproperty(row, :accept_reason) === :armijo, merit_step_diagnostics)
+  fallback = count(row -> getproperty(row, :accept_reason) in (:fallback_max_mismatch, :fallback_conservative), merit_step_diagnostics)
+  skipped = count(row -> getproperty(row, :accept_reason) === :active_set_skip, merit_step_diagnostics)
+  first_entry = first(merit_step_diagnostics)
+  last_entry = last(merit_step_diagnostics)
+  merit_final = isfinite(last_entry.f_after) ? last_entry.f_after : last_entry.f_before
+  return (
+    merit_enabled = merit_enabled,
+    merit_used_iterations = used,
+    merit_fallback_count = fallback,
+    merit_active_set_skip_count = skipped,
+    merit_initial = first_entry.f_before,
+    merit_final = merit_final,
+  )
+end
+
+function _write_merit_linesearch_log(performance_profile, merit_step_diagnostics, summary)
+  performance_profile isa AbstractDict || return ""
+  merit_step_diagnostics === nothing && return ""
+  output_dir = get(performance_profile, :output_dir, "")
+  output_dir isa AbstractString && !isempty(output_dir) || return ""
+  mkpath(output_dir)
+  path = joinpath(output_dir, "merit_linesearch.log")
+  open(path, "w") do io
+    println(io, "merit_enabled: ", summary.merit_enabled)
+    println(io, "merit_used_iterations: ", summary.merit_used_iterations)
+    println(io, "merit_fallback_count: ", summary.merit_fallback_count)
+    println(io, "merit_active_set_skip_count: ", summary.merit_active_set_skip_count)
+    println(io, "merit_initial: ", summary.merit_initial)
+    println(io, "merit_final: ", summary.merit_final)
+    println(io, "")
+    println(io, "# iter f_before directional_derivative f_after tested_alphas accepted_alpha accept_reason")
+    for (iter, row) in enumerate(merit_step_diagnostics)
+      tested = isempty(row.tested_alphas) ? "none" : join(row.tested_alphas, ",")
+      println(io, "iter=", iter, " f_before=", row.f_before, " directional_derivative=", row.directional_derivative, " f_after=", row.f_after, " tested_alphas=[", tested, "] accepted_alpha=", row.accepted_alpha, " accept_reason=", row.accept_reason)
+    end
+  end
+  return path
+end
+
+function _merge_merit_linesearch_diagnostics(status_build, performance_profile, merit_step_diagnostics, merit_enabled::Bool)
+  summary = _merit_linesearch_summary(merit_step_diagnostics, merit_enabled)
+  artifact = _write_merit_linesearch_log(performance_profile, merit_step_diagnostics, summary)
+  summary = merge(summary, (merit_linesearch_artifact = artifact,))
+  return merge(status_build, (status = (; status_build.status..., summary...),))
+end
