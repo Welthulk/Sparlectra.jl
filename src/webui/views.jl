@@ -364,6 +364,18 @@ $(dat_hint_html)
 <label>$(_webui_field_label("power_flow_autodamp_min", "Autodamping minimum"))<input name=\"power_flow_autodamp_min\" type=\"number\" step=\"0.01\" min=\"0\" max=\"1\" value=\"$(_webui_input_value(profile_values, "power_flow_autodamp_min", _webui_option_default("power_flow_autodamp_min")))\"></label>
 <label class=\"check\"><input name=\"power_flow_qlimits_enabled\" type=\"hidden\" value=\"false\"><input name=\"power_flow_qlimits_enabled\" type=\"checkbox\" value=\"true\"$(_webui_checked(profile_values, "power_flow_qlimits_enabled", _webui_option_default("power_flow_qlimits_enabled")))>$(_webui_field_label("power_flow_qlimits_enabled", "Q-limit handling enabled"))</label>
 <label>$(_webui_field_label("power_flow_qlimits_enforcement_mode", "Q-limit enforcement mode"))$(_webui_select("power_flow_qlimits_enforcement_mode", _webui_option_allowed_values("power_flow_qlimits_enforcement_mode"), _webui_selected(profile_values, "power_flow_qlimits_enforcement_mode", _webui_option_default("power_flow_qlimits_enforcement_mode"))))</label>
+<label>$(_webui_field_label("power_flow_solver", "Solver"))<select name="power_flow_solver" data-solver-select><option value="rectangular"$(_webui_form_string(_webui_selected(profile_values, "power_flow_solver", _webui_option_default("power_flow_solver"))) == "rectangular" ? " selected" : "")>Newton-Raphson (rectangular)</option><option value="apslf"$(_webui_form_string(_webui_selected(profile_values, "power_flow_solver", _webui_option_default("power_flow_solver"))) == "apslf" ? " selected" : "")>APSLF (AnalyticLoadFlow)</option></select></label>
+<fieldset id="apslf-solver-options" class="span-2 apslf-solver-options" data-apslf-solver-options hidden>
+<legend>APSLF solver options</legend>
+<label class=\"field-indent\">$(_webui_field_label("power_flow_apslf_order", "Highest coefficient (order)"))<input name=\"power_flow_apslf_order\" type=\"number\" min=\"1\" value=\"$(_webui_input_value(profile_values, "power_flow_apslf_order", _webui_option_default("power_flow_apslf_order")))\"></label>
+<label class=\"check field-indent\"><input name=\"power_flow_apslf_use_pade\" type=\"hidden\" value=\"false\"><input name=\"power_flow_apslf_use_pade\" type=\"checkbox\" value=\"true\"$(_webui_checked(profile_values, "power_flow_apslf_use_pade", _webui_option_default("power_flow_apslf_use_pade")))>$(_webui_field_label("power_flow_apslf_use_pade", "Padé evaluation"))</label>
+<label class=\"check field-indent\"><input name=\"power_flow_apslf_nr_polish\" type=\"hidden\" value=\"false\"><input name=\"power_flow_apslf_nr_polish\" type=\"checkbox\" value=\"true\"$(_webui_checked(profile_values, "power_flow_apslf_nr_polish", _webui_option_default("power_flow_apslf_nr_polish")))>$(_webui_field_label("power_flow_apslf_nr_polish", "NR polish"))</label>
+</fieldset>
+<fieldset id="apslf-start-options" class="span-2 apslf-start-options" data-apslf-start-options>
+<legend>Newton-Raphson start values</legend>
+<label class=\"check\"><input name=\"power_flow_apslf_start_enabled\" type=\"hidden\" value=\"false\"><input name=\"power_flow_apslf_start_enabled\" type=\"checkbox\" value=\"true\" data-apslf-start-toggle$(_webui_checked(profile_values, "power_flow_apslf_start_enabled", _webui_option_default("power_flow_apslf_start_enabled")))>$(_webui_field_label("power_flow_apslf_start_enabled", "Use APSLF start values"))</label>
+<label class=\"field-indent\">$(_webui_field_label("power_flow_apslf_start_order", "Highest coefficient (order)"))<input name=\"power_flow_apslf_start_order\" type=\"number\" min=\"1\" data-apslf-start-order value=\"$(_webui_input_value(profile_values, "power_flow_apslf_start_order", _webui_option_default("power_flow_apslf_start_order")))\"></label>
+</fieldset>
 <label>$(_webui_field_label("power_flow_wrong_branch_detection", "Wrong-branch detection"))$(_webui_select("power_flow_wrong_branch_detection", _webui_option_allowed_values("power_flow_wrong_branch_detection"), _webui_selected(profile_values, "power_flow_wrong_branch_detection", _webui_option_default("power_flow_wrong_branch_detection"))))</label>
 <label>$(_webui_field_label("power_flow_start_angle_mode", "Start angle mode"))$(_webui_select("power_flow_start_angle_mode", _webui_option_allowed_values("power_flow_start_angle_mode"), _webui_selected(profile_values, "power_flow_start_angle_mode", _webui_option_default("power_flow_start_angle_mode"))))</label>
 <label>$(_webui_field_label("power_flow_start_voltage_mode", "Start voltage mode"))$(_webui_select("power_flow_start_voltage_mode", _webui_option_allowed_values("power_flow_start_voltage_mode"), _webui_selected(profile_values, "power_flow_start_voltage_mode", _webui_option_default("power_flow_start_voltage_mode"))))</label>
@@ -452,6 +464,27 @@ document.addEventListener('DOMContentLoaded', function () {
     }
   };
   updateDatCaseAssistance();
+  const solverSelect = document.querySelector('select[data-solver-select]');
+  const apslfSolverOptions = document.querySelector('[data-apslf-solver-options]');
+  const apslfStartOptions = document.querySelector('[data-apslf-start-options]');
+  const updateSolverOptions = function () {
+    const isApslf = solverSelect !== null && solverSelect.value === 'apslf';
+    if (apslfSolverOptions !== null) apslfSolverOptions.hidden = !isApslf;
+    if (apslfStartOptions !== null) apslfStartOptions.hidden = isApslf;
+  };
+  if (solverSelect !== null) {
+    updateSolverOptions();
+    solverSelect.addEventListener('change', updateSolverOptions);
+  }
+  const apslfStartToggle = document.querySelector('input[data-apslf-start-toggle]');
+  const apslfStartOrderInput = document.querySelector('input[data-apslf-start-order]');
+  const updateApslfStartOrder = function () {
+    if (apslfStartOrderInput !== null) apslfStartOrderInput.disabled = apslfStartToggle !== null && !apslfStartToggle.checked;
+  };
+  if (apslfStartToggle !== null) {
+    updateApslfStartOrder();
+    apslfStartToggle.addEventListener('change', updateApslfStartOrder);
+  }
   if (caseManual !== null) {
     caseManual.addEventListener('input', updateDatCaseAssistance);
     caseManual.addEventListener('change', updateDatCaseAssistance);
@@ -681,10 +714,11 @@ function render_powerflow_result(result::AbstractDict)::String
   status = lowercase(string(get(result, "status", "unknown")))
   active = status in _WEBUI_ACTIVE_RUN_STATUSES
   status_badge = "<span class=\"status-badge $(webui_status_class(result))\">$(_webui_escape(status))</span>"
+  solver_name = String(get(get(result, "final_outcome", Dict{String,Any}()), "solver", "rectangular"))
   summary_rows = if active
     (("Run status", status_badge), ("Elapsed time", "<strong>$(_webui_escape(_format_elapsed_duration(_webui_elapsed_seconds(result, active))))</strong>"))
   else
-    base = [("Run status", status_badge)]
+    base = [("Run status", status_badge), ("Solver", "<code>$(_webui_escape(solver_name))</code>")]
     solver_elapsed = _webui_solver_elapsed_seconds(result)
     solver_elapsed === nothing || push!(base, ("Solver time", "<strong>$(_webui_escape(_format_elapsed_duration(solver_elapsed)))</strong>"))
     push!(base, ("Total time", "<strong>$(_webui_escape(_format_elapsed_duration(_webui_total_elapsed_seconds(result))))</strong>"))
