@@ -319,6 +319,9 @@ Builds a structured report object from solved network data.
 This provides a machine-readable alternative to `printACPFlowResults`.
 """
 function buildACPFlowReport(net::Net; ct::Float64 = 0.0, ite::Int = 0, tol::Float64 = 1e-6, converged::Bool = true, solver::Symbol = :NR)::ACPFlowReport
+  rect_status = rectangular_pf_status(net)
+  wrong_branch_status = _rect_status_get(rect_status, :wrong_branch_status, :not_checked)
+  wrong_branch_reason = _rect_status_get(rect_status, :wrong_branch_reason, :not_checked)
   busNameByIdx = _bus_name_by_idx(net)
   nodes_sorted = sort(net.nodeVec, by = x -> x.busIdx)
   power_components = _bus_power_component_cache(net)
@@ -380,7 +383,7 @@ function buildACPFlowReport(net::Net; ct::Float64 = 0.0, ite::Int = 0, tol::Floa
   end
 
   p_loss_total, q_loss_total = getTotalLosses(net = net)
-  metadata = (case = net.name, baseMVA = net.baseMVA, converged = converged, elapsed_s = ct, iterations = ite, tolerance = tol, solver = solver, timestamp = Dates.now(), total_p_loss_MW = p_loss_total, total_q_loss_MVar = q_loss_total)
+  metadata = (case = net.name, baseMVA = net.baseMVA, converged = converged, elapsed_s = ct, iterations = ite, tolerance = tol, solver = solver, timestamp = Dates.now(), total_p_loss_MW = p_loss_total, total_q_loss_MVar = q_loss_total, wrong_branch_status = wrong_branch_status, wrong_branch_reason = wrong_branch_reason)
 
   # Keep structured tap-controller data as a dedicated relation in the report
   # (preferred over widening the branch table with sparse controller columns).
@@ -471,6 +474,37 @@ function formatBranchResults(net::Net; max_rows::Union{Nothing,Int} = nothing)
     formatted_results *= @sprintf("Branch results shown: %d / %d\n", shown_rows, length(net.branchVec))
   end
   return formatted_results, total_losses
+end
+
+"""
+    _print_wrong_branch_summary_line(io, net)
+
+Prints a single console/log line summarizing the wrong-branch detection
+outcome when it is suspect or invalid (`status` is neither `:ok` nor
+`:not_checked`). Clean runs and disabled detection print nothing, keeping
+logs stable for the common case.
+"""
+function _print_wrong_branch_summary_line(io::IO, net::Net)
+  rect_status = rectangular_pf_status(net)
+  status = _rect_status_get(rect_status, :wrong_branch_status, :not_checked)
+  status === :ok && return nothing
+  status === :not_checked && return nothing
+
+  reason = _rect_status_get(rect_status, :wrong_branch_reason, :unknown)
+  detail = if reason === :low_voltage_magnitude
+    string(_rect_status_get(rect_status, :wrong_branch_low_vm_count, 0), " low-Vm bus(es)")
+  elseif reason === :high_voltage_magnitude
+    string(_rect_status_get(rect_status, :wrong_branch_high_vm_count, 0), " high-Vm bus(es)")
+  elseif reason === :angle_spread_exceeded
+    @sprintf("angle spread %.1f°", _rect_status_get(rect_status, :wrong_branch_angle_spread_deg, NaN))
+  elseif reason === :branch_angle_exceeded
+    string(_rect_status_get(rect_status, :wrong_branch_branch_angle_violation_count, 0), " branch-angle violation(s)")
+  else
+    string(reason)
+  end
+  label = status === :fail ? "FAIL" : "SUSPECT"
+  println(io, "wrong-branch check: ", label, " (", reason, ", ", detail, ")")
+  return nothing
 end
 
 function printACPFlowResults(net::Net, ct::Float64, ite::Int, tol::Float64, toFile::Bool = false, path::String = ""; converged::Bool = true, solver::Symbol = :NR, solver_time_s::Union{Nothing,Float64} = nothing, result_mode::Symbol = :classic, max_rows::Union{Nothing,Int} = nothing)
@@ -567,6 +601,8 @@ function printACPFlowResults(net::Net, ct::Float64, ite::Int, tol::Float64, toFi
   num_iterative_events = length(net.qLimitLog)
   @printf(io, "PV→PQ locks    :%10d\n", num_guarded_locks)
   @printf(io, "PV→PQ events   :%10d\n", num_iterative_events)
+
+  _print_wrong_branch_summary_line(io, net)
 
   println(io, "\n", totalLosses)
   if result_mode === :summary
