@@ -52,3 +52,12 @@ CL*.md
 TASK*.md
 task_*.md
 Task_*.md
+
+# Team-shared Claude Code guardrails (kept alongside the broad .c* ignore above,
+# which also covers .claude/settings.local.json and other machine-local state).
+!.claude/
+.claude/*
+!.claude/settings.json
+!.claude/hooks/
+.claude/hooks/*
+!.claude/hooks/block_task_md_commit.sh
