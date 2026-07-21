@@ -102,6 +102,31 @@ Base.@kwdef struct IslandPowerFlowConfig
 end
 
 """
+    ApslfConfig
+
+Typed configuration for the AnalyticLoadFlow.jl-backed analytic power-series
+solver (`ApslfSolver`), used when `power_flow.solver == :apslf`.
+"""
+Base.@kwdef struct ApslfConfig
+  order::Int = 40
+  use_pade::Bool = true
+  nr_polish::Bool = true
+end
+
+"""
+    ApslfStartConfig
+
+Typed configuration for using the analytic power-series solver as a start-value
+generator ahead of the rectangular Newton-Raphson solve. Deliberately has no
+`use_pade`/`nr_polish` fields: polishing is left to the downstream NR solve, so
+the generator always runs with `nr_polish=false` internally.
+"""
+Base.@kwdef struct ApslfStartConfig
+  enabled::Bool = false
+  order::Int = 40
+end
+
+"""
     PowerFlowConfig
 
 Typed power-flow configuration. It owns solver tolerances, sparse execution
@@ -109,6 +134,9 @@ settings, automatic damping, start-mode controls, and Q-limit behavior.
 """
 Base.@kwdef struct PowerFlowConfig
   method::Symbol = :rectangular
+  solver::Symbol = :rectangular
+  apslf::ApslfConfig = ApslfConfig()
+  apslf_start::ApslfStartConfig = ApslfStartConfig()
   tol::Float64 = 1.0e-8
   max_iter::Int = 30
   sparse::Bool = true
@@ -135,6 +163,7 @@ Base.@kwdef struct PowerFlowConfig
 end
 
 const WRONG_BRANCH_DETECTION_VALUES = [:off, :warn, :fail, :rescue]
+const POWERFLOW_SOLVER_VALUES = (:rectangular, :apslf)
 const POWERFLOW_ISLAND_MODE_VALUES = [:solve_independent]
 const POWERFLOW_ISLAND_REFERENCE_POLICY_VALUES = [:matpower_like]
 
@@ -581,6 +610,25 @@ function StartCurrentIterationConfig(raw::AbstractDict)
   )
 end
 
+function ApslfConfig(raw::AbstractDict)
+  order = _as_int_cfg(_raw_get(raw, "order", 40))
+  order >= 1 || throw(ArgumentError("power_flow.apslf.order must be >= 1; got $(order)."))
+  return ApslfConfig(
+    order = order,
+    use_pade = _as_bool_cfg(_raw_get(raw, "use_pade", true)),
+    nr_polish = _as_bool_cfg(_raw_get(raw, "nr_polish", true)),
+  )
+end
+
+function ApslfStartConfig(raw::AbstractDict)
+  order = _as_int_cfg(_raw_get(raw, "order", 40))
+  order >= 1 || throw(ArgumentError("power_flow.apslf_start.order must be >= 1; got $(order)."))
+  return ApslfStartConfig(
+    enabled = _as_bool_cfg(_raw_get(raw, "enabled", false)),
+    order = order,
+  )
+end
+
 function QLimitConfig(raw::AbstractDict)
   qlimits_enabled = _raw_get(raw, "enabled", true)
   guard_raw = _raw_get(raw, "guard", Dict{String,Any}())
@@ -640,6 +688,14 @@ function PowerFlowConfig(raw::AbstractDict)
   start_current_iteration_raw = _raw_section(merged, "start_current_iteration")
   qlimit_raw = _raw_section(merged, "qlimits")
   islands_raw = _raw_section(merged, "islands")
+  apslf_raw = _raw_section(merged, "apslf")
+  apslf_start_raw = _raw_section(merged, "apslf_start")
+  solver = _validate_allowed_symbol("power_flow.solver", _as_symbol_cfg(_raw_get(merged, "solver", :rectangular)), POWERFLOW_SOLVER_VALUES)
+  apslf_cfg = ApslfConfig(apslf_raw)
+  apslf_start_cfg = ApslfStartConfig(apslf_start_raw)
+  if apslf_start_cfg.enabled && solver === :apslf
+    throw(ArgumentError("power_flow.apslf_start.enabled=true is incompatible with power_flow.solver=apslf. The APSLF start-value generator only makes sense ahead of the rectangular Newton-Raphson solve; set power_flow.apslf_start.enabled=false or power_flow.solver=rectangular."))
+  end
   wrong_branch_min_vm_pu = _validate_nonnegative("power_flow.wrong_branch_min_vm_pu", _as_float_cfg(_raw_get(merged, "wrong_branch_min_vm_pu", 0.70)))
   wrong_branch_max_vm_pu = _validate_positive("power_flow.wrong_branch_max_vm_pu", _as_float_cfg(_raw_get(merged, "wrong_branch_max_vm_pu", 1.30)))
   wrong_branch_min_vm_pu <= wrong_branch_max_vm_pu || throw(ArgumentError("power_flow.wrong_branch_min_vm_pu must be <= power_flow.wrong_branch_max_vm_pu."))
@@ -649,6 +705,9 @@ function PowerFlowConfig(raw::AbstractDict)
   wrong_branch_rescue_max_attempts >= 0 || throw(ArgumentError("power_flow.wrong_branch_rescue_max_attempts must be >= 0."))
   return PowerFlowConfig(
     method = method,
+    solver = solver,
+    apslf = apslf_cfg,
+    apslf_start = apslf_start_cfg,
     tol = _validate_positive("powerflow.tol", _as_float_cfg(_raw_get(merged, "tol", 1.0e-8))),
     max_iter = _as_int_cfg(_raw_get(merged, "max_iter", _raw_get(merged, "max_ite", 30))),
     sparse = true,
