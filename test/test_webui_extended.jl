@@ -109,6 +109,7 @@ function _webui_test_form(casefile, config_file, output_root)
     "power_flow_trust_region_enabled" => "false",
     "power_flow_trust_region_initial_radius" => "1.0",
     "power_flow_trust_region_eta_accept" => "0.1",
+    "power_flow_trust_region_step_mode" => "scaled",
     "matpower_import_auto_profile" => "recommend",
     "matpower_import_ratio" => "normal",
     "matpower_import_shift_sign" => "1.0",
@@ -1493,6 +1494,7 @@ settings:
         "power_flow_trust_region_enabled" => "power_flow.trust_region.enabled",
         "power_flow_trust_region_initial_radius" => "power_flow.trust_region.initial_radius",
         "power_flow_trust_region_eta_accept" => "power_flow.trust_region.eta_accept",
+        "power_flow_trust_region_step_mode" => "power_flow.trust_region.step_mode",
         "matpower_import_auto_profile" => "matpower_import.auto_profile",
         "matpower_import_ratio" => "matpower_import.ratio",
         "matpower_import_shift_sign" => "matpower_import.shift_sign",
@@ -1585,10 +1587,13 @@ settings:
       @test occursin("<legend>Trust-region step control</legend>", form_html)
       @test findfirst("data-step-control-group=\"autodamp\"", form_html) < findfirst("<summary>Merit-function line search</summary>", form_html)
       @test findfirst("<summary>Merit-function line search</summary>", form_html) < findfirst("data-step-control-group=\"trust_region\"", form_html)
-      for field in ("power_flow_trust_region_enabled", "power_flow_trust_region_initial_radius", "power_flow_trust_region_eta_accept")
+      for field in ("power_flow_trust_region_enabled", "power_flow_trust_region_initial_radius", "power_flow_trust_region_eta_accept", "power_flow_trust_region_step_mode")
         @test occursin("name=\"$(field)\"", form_html)
       end
       @test occursin("name=\"power_flow_trust_region_enabled\" type=\"hidden\" value=\"false\"", form_html)
+      @test occursin("<option value=\"scaled\" selected>scaled</option>", form_html)
+      @test occursin("<option value=\"dogleg\">dogleg</option>", form_html)
+      @test occursin("data-trust-region-field><option value=\"scaled\"", form_html)
       @test occursin("min_radius</code>/<code>max_radius</code>/<code>shrink_factor</code>/<code>expand_factor</code>/<code>expand_threshold", form_html)
       @test occursin("data-autodamp-toggle", form_html)
       @test occursin("data-trust-region-toggle", form_html)

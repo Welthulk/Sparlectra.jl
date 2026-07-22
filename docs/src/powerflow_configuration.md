@@ -370,11 +370,13 @@ power_flow:
     shrink_factor: 0.5
     expand_factor: 2.0
     expand_threshold: 0.75
+    step_mode: scaled
 ```
 
 | YAML path | Type | Default | Allowed | Meaning | Use when | Avoid when | Performance impact | Interactions |
 |---|---:|---:|---|---|---|---|---|---|
 | `power_flow.trust_region.enabled` | Bool | `false` | `true`, `false` | Master switch for scaled-Newton trust-region step control. | Difficult flat-start cases where a merit-decrease step-acceptance rule (rather than max-mismatch backtracking) is preferred. | Together with `power_flow.autodamp = true` (validation error). | One extra weighted-residual evaluation and a sparse matrix-vector product per trial, reusing the already-built Jacobian; no extra factorization. | Requires `power_flow.autodamp = false`. |
+| `power_flow.trust_region.step_mode` | Symbol/String | `scaled` | `scaled`, `dogleg` | Trial-step construction: `scaled` rescales the full Newton direction to the radius (default, unchanged behavior); `dogleg` blends the Newton direction with a steepest-descent (Cauchy) step along the dogleg path when the radius shrinks below the Newton step norm. See [Trust-Region Step Control](@ref), "Dogleg step mode". | Cases where the Newton direction is suspected to degrade (become a poor descent direction) partway through the solve, and graceful degradation is preferred over repeated rescaling toward collapse. | Cases already converging cleanly under `scaled`; `dogleg` trades some speed (possible Cauchy-direction crawling) for robustness and has no benefit when `scaled` already works. | Two extra sparse matrix-vector products (`Jᵀ(WF)`, `Jg`) and a closed-form scalar root per accepted/rejected trial; no extra factorization. | Only meaningful when `enabled = true`. Does not change the `autodamp`/`merit` mutual-exclusion rules. |
 | `power_flow.trust_region.initial_radius` | Float64 | `1.0` | positive, `> min_radius`, `<= max_radius` | Starting trust-region radius, in per-unit state-vector (2-)norm. | Tuning how large the first trial step may be. | N/A | Larger values risk more rejected/shrunk first steps on hard cases. | Bounded by `min_radius`/`max_radius`. |
 | `power_flow.trust_region.min_radius` | Float64 | `1.0e-4` | positive, `< initial_radius` | Radius floor. Falling below it declares non-convergence (`reason = :trust_region_collapsed`) instead of looping indefinitely. | Bounding worst-case retry effort. | Setting it near `initial_radius`, which makes collapse detection overly aggressive. | Smaller values allow more shrink retries before giving up. | Read every retry inside one Newton iteration. |
 | `power_flow.trust_region.max_radius` | Float64 | `10.0` | positive, `>= initial_radius` | Radius ceiling; the radius never expands past this value. | Preventing runaway expansion on well-behaved cases. | N/A | Higher ceiling allows larger accepted steps once the model is trusted. | Caps the `expand_factor` growth. |
@@ -385,7 +387,9 @@ power_flow:
 
 ### Diagnostics and interpretation
 
-When a run has an output directory in its performance profile and `trust_region.enabled = true`, the solver writes `trust_region.log` with one line per Newton iteration: `radius_before`, `rho`, `tested_radii` (the shrink sequence tried this iteration), `rejected_steps`, `accepted`, `radius_after`, and `collapsed`. The solver status is extended with `trust_region_enabled`, `tr_step_count`, `tr_rejected_steps`, `tr_min_radius`, `tr_max_radius` (the observed radius range across the run, not the configured bounds), `tr_final_radius`, and `tr_collapsed`.
+When a run has an output directory in its performance profile and `trust_region.enabled = true`, the solver writes `trust_region.log` with one line per Newton iteration: `radius_before`, `rho`, `tested_radii` (the shrink sequence tried this iteration), `rejected_steps`, `accepted`, `radius_after`, `collapsed`, and `accept_reason`. The solver status is extended with `trust_region_enabled`, `tr_step_count`, `tr_rejected_steps`, `tr_min_radius`, `tr_max_radius` (the observed radius range across the run, not the configured bounds), `tr_final_radius`, `tr_collapsed`, and the dogleg-branch counters `tr_dogleg_newton_count`, `tr_dogleg_interp_count`, `tr_dogleg_cauchy_count`, `tr_active_set_skip_count` (all `0` in `scaled` mode).
+
+`accept_reason` values: `scaled` (the `scaled` step mode's only reason); `dogleg_newton`/`dogleg_interp`/`dogleg_cauchy` (which point on the dogleg path was accepted, `dogleg` mode only); `active_set_skip` (a PV/PQ switch happened this iteration, `dogleg` mode only — the comparison was skipped and a single `scaled`-style trial was accepted unconditionally); `none` (a collapse entry, no step accepted).
 
 ```text
 tr_collapsed: false
@@ -422,6 +426,8 @@ tr_rejected_steps > 0
 | `true`  | `true`  | `true`  | **Invalid** | `ArgumentError`: both merit and trust-region reject this combination of `autodamp`. |
 
 The Web UI mirrors these rules client-side: the *Autodamping & merit-function line search* box and the *Trust-region step control* box are mutually exclusive — enabling one automatically unchecks and disables the other (and its sub-fields), and the merit toggle itself is disabled/unchecked whenever autodamping is off. This is a convenience only; the authoritative check is the `PowerFlowConfig` validation shown above, which still applies to YAML files and direct API calls.
+
+`power_flow.trust_region.step_mode` (`scaled`/`dogleg`) is orthogonal to this matrix: it only takes effect on rows where `trust_region.enabled = true`, and does not change which `autodamp`/`merit`/`trust_region.enabled` combinations are valid. In the Web UI it is disabled/hidden together with the rest of the Trust-region box's sub-fields whenever the box itself is disabled or hidden (trust-region off, or the APSLF solver is selected).
 
 ## Q-limit options and guard
 

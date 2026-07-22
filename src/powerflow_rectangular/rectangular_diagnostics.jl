@@ -364,12 +364,20 @@ function _trust_region_summary(tr_step_diagnostics, trust_region_enabled::Bool)
       tr_max_radius = NaN,
       tr_final_radius = NaN,
       tr_collapsed = false,
+      tr_dogleg_newton_count = 0,
+      tr_dogleg_interp_count = 0,
+      tr_dogleg_cauchy_count = 0,
+      tr_active_set_skip_count = 0,
     )
   end
   radii = Float64[getproperty(row, :radius_before) for row in tr_step_diagnostics]
   rejected = sum(getproperty(row, :rejected_steps) for row in tr_step_diagnostics)
   collapsed = any(getproperty(row, :collapsed) for row in tr_step_diagnostics)
   final_entry = last(tr_step_diagnostics)
+  dogleg_newton_count = count(row -> getproperty(row, :accept_reason) === :dogleg_newton, tr_step_diagnostics)
+  dogleg_interp_count = count(row -> getproperty(row, :accept_reason) === :dogleg_interp, tr_step_diagnostics)
+  dogleg_cauchy_count = count(row -> getproperty(row, :accept_reason) === :dogleg_cauchy, tr_step_diagnostics)
+  active_set_skip_count = count(row -> getproperty(row, :accept_reason) === :active_set_skip, tr_step_diagnostics)
   return (
     trust_region_enabled = trust_region_enabled,
     tr_step_count = length(tr_step_diagnostics),
@@ -378,6 +386,10 @@ function _trust_region_summary(tr_step_diagnostics, trust_region_enabled::Bool)
     tr_max_radius = maximum(radii),
     tr_final_radius = final_entry.radius_after,
     tr_collapsed = collapsed,
+    tr_dogleg_newton_count = dogleg_newton_count,
+    tr_dogleg_interp_count = dogleg_interp_count,
+    tr_dogleg_cauchy_count = dogleg_cauchy_count,
+    tr_active_set_skip_count = active_set_skip_count,
   )
 end
 
@@ -396,11 +408,15 @@ function _write_trust_region_log(performance_profile, tr_step_diagnostics, summa
     println(io, "tr_max_radius: ", summary.tr_max_radius)
     println(io, "tr_final_radius: ", summary.tr_final_radius)
     println(io, "tr_collapsed: ", summary.tr_collapsed)
+    println(io, "tr_dogleg_newton_count: ", summary.tr_dogleg_newton_count)
+    println(io, "tr_dogleg_interp_count: ", summary.tr_dogleg_interp_count)
+    println(io, "tr_dogleg_cauchy_count: ", summary.tr_dogleg_cauchy_count)
+    println(io, "tr_active_set_skip_count: ", summary.tr_active_set_skip_count)
     println(io, "")
-    println(io, "# iter radius_before rho tested_radii rejected_steps accepted radius_after collapsed")
+    println(io, "# iter radius_before rho tested_radii rejected_steps accepted radius_after collapsed accept_reason")
     for (iter, row) in enumerate(tr_step_diagnostics)
       tested = isempty(row.tested_radii) ? "none" : join(row.tested_radii, ",")
-      println(io, "iter=", iter, " radius_before=", row.radius_before, " rho=", row.rho, " tested_radii=[", tested, "] rejected_steps=", row.rejected_steps, " accepted=", row.accepted, " radius_after=", row.radius_after, " collapsed=", row.collapsed)
+      println(io, "iter=", iter, " radius_before=", row.radius_before, " rho=", row.rho, " tested_radii=[", tested, "] rejected_steps=", row.rejected_steps, " accepted=", row.accepted, " radius_after=", row.radius_after, " collapsed=", row.collapsed, " accept_reason=", row.accept_reason)
     end
   end
   return path

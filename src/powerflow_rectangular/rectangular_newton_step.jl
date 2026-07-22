@@ -249,6 +249,39 @@ function choose_rectangular_autodamp(
   return best_alpha, best_V, best_mismatch
 end
 
+# Merit-function gradient g(x) = JᵀF(x) at W = I, matching the unweighted merit
+# value m(x) = 1/2‖F(x)‖² that choose_rectangular_trust_region_step uses for
+# both step modes. A single transposed sparse mat-vec; no extra factorization.
+# See docs/src/solver.md, "Trust-Region Step Control" / "Dogleg step mode".
+@inline _rectangular_merit_gradient(J, F0::AbstractVector{Float64}) = transpose(J) * F0
+
+# Cauchy point: steepest-descent minimizer of the local quadratic model
+# m(p) = f + gᵀp + 1/2 pᵀ(JᵀJ)p along −g, i.e. α* = ‖g‖² / ‖Jg‖².
+function _rectangular_cauchy_point(J, g::AbstractVector{Float64})
+  Jg = J * g
+  gnorm2 = dot(g, g)
+  alpha_star = gnorm2 / max(dot(Jg, Jg), eps())
+  return (-alpha_star) .* g
+end
+
+# Dogleg path step selection at a given trust-region radius: full Newton step
+# p_N if it already fits inside the radius, pure Cauchy step (scaled to the
+# radius) if even the Cauchy point exceeds it, otherwise the point where the
+# piecewise-linear Cauchy-to-Newton path crosses the radius (closed-form root
+# of a scalar quadratic in τ ∈ [0,1]). See docs/src/solver.md, "Trust-Region
+# Step Control" / "Dogleg step mode".
+function _rectangular_dogleg_step(p_N::Vector{Float64}, pN_norm::Float64, p_C::Vector{Float64}, pC_norm::Float64, radius::Float64)
+  pN_norm <= radius && return p_N, :dogleg_newton
+  pC_norm >= radius && return (radius / pC_norm) .* p_C, :dogleg_cauchy
+  d = p_N .- p_C
+  a = max(dot(d, d), eps())
+  b = 2.0 * dot(p_C, d)
+  c = dot(p_C, p_C) - radius^2
+  disc = max(b^2 - 4.0 * a * c, 0.0)
+  tau = clamp((-b + sqrt(disc)) / (2.0 * a), 0.0, 1.0)
+  return p_C .+ tau .* d, :dogleg_interp
+end
+
 """
     RectangularTrustRegionCollapsed
 
@@ -261,11 +294,20 @@ reason `:trust_region_collapsed`.
 struct RectangularTrustRegionCollapsed <: Exception end
 
 """
-    choose_rectangular_trust_region_step(Ybus, V, S, δx, F0, J; slack_idx, bus_types, Vset, radius_ref, min_radius, max_radius, eta_accept, shrink_factor, expand_factor, expand_threshold)
+    choose_rectangular_trust_region_step(Ybus, V, S, δx, F0, J; slack_idx, bus_types, Vset, radius_ref, min_radius, max_radius, eta_accept, shrink_factor, expand_factor, expand_threshold, step_mode, active_set_changed)
 
-Scaled-Newton trust-region step control (dogleg/Steihaug is out of scope).
-The full Newton step `δx` is scaled down to the current radius when it
-exceeds it; the trial is accepted when the ratio `rho` of actual to
+Trust-region step control with two step-construction modes selected by
+`step_mode`:
+
+- `:scaled` (default): the full Newton step `δx` is scaled down to the
+  current radius when it exceeds it; direction unchanged. Byte-for-byte the
+  original scaled-Newton-only implementation.
+- `:dogleg`: blends the Newton direction with a steepest-descent (Cauchy)
+  step along the dogleg path (see [`_rectangular_dogleg_step`](@ref)) so the
+  solver can still make progress when the Newton direction degrades. See
+  [Trust-Region Step Control](@ref), "Dogleg step mode".
+
+In both modes the trial is accepted when the ratio `rho` of actual to
 predicted merit-function reduction is at least `eta_accept`. Rejected trials
 shrink the radius and retry within the same Newton iteration (bounded by
 `min_radius`); the radius persists across iterations via `radius_ref`, which
@@ -274,11 +316,23 @@ is mutated in place.
 Reuses the exact merit function from the merit-function line search
 (`_rectangular_merit_value`, unweighted `W = I`) as `m(x)`, matching
 `m(x) = ‖F(x)‖²` up to the constant `1/2` factor common to numerator and
-denominator of `rho` — no second merit computation is implemented.
+denominator of `rho` — no second merit computation is implemented. The
+dogleg gradient `g = JᵀF` uses the same `W = I` convention for consistency
+with `m(x)`.
+
+When `step_mode = :dogleg` and `active_set_changed = true` (a PV/PQ switch
+happened this Newton iteration), the pre-switch gradient/Cauchy point would
+be invalid, so — mirroring the merit-function line search's
+`active_set_skip` policy — the dogleg comparison is skipped for this call: a
+single scaled-Newton trial is taken at the current radius and accepted
+unconditionally, and the radius is left unchanged.
 
 Throws [`RectangularTrustRegionCollapsed`](@ref) if the radius falls below
 `min_radius` without an accepted step. Returns the accepted trial voltage
-vector.
+vector. Per-iteration diagnostics (`accept_reason ∈ {:scaled, :dogleg_newton,
+:dogleg_interp, :dogleg_cauchy, :active_set_skip, :none}`, where `:none`
+marks a collapse entry) are pushed to `diagnostics` if it is an
+`AbstractVector`.
 """
 function choose_rectangular_trust_region_step(
   Ybus,
@@ -298,6 +352,8 @@ function choose_rectangular_trust_region_step(
   expand_factor::Float64,
   expand_threshold::Float64,
   diagnostics = nothing,
+  step_mode::Symbol = :scaled,
+  active_set_changed::Bool = false,
 )
   non_slack = non_slack_indices(length(V), slack_idx)
   # W = I: m(x) = 1/2‖F(x)‖², the same function the merit-function line search uses.
@@ -308,34 +364,64 @@ function choose_rectangular_trust_region_step(
   tested_radii = Float64[]
   rejected_steps = 0
 
+  dogleg = step_mode === :dogleg
+
+  if dogleg && active_set_changed
+    radius = radius_ref[]
+    if radius < min_radius
+      diagnostics isa AbstractVector && push!(diagnostics, (radius_before = radius, rho = NaN, tested_radii = Float64[], rejected_steps = 0, accepted = false, radius_after = radius, collapsed = true, accept_reason = :none))
+      throw(RectangularTrustRegionCollapsed())
+    end
+    scale = dx_norm > radius ? radius / dx_norm : 1.0
+    _apply_rectangular_delta!(Vtrial, V, δx, slack_idx, non_slack, scale)
+    diagnostics isa AbstractVector && push!(diagnostics, (radius_before = radius, rho = NaN, tested_radii = [radius], rejected_steps = 0, accepted = true, radius_after = radius, collapsed = false, accept_reason = :active_set_skip))
+    return copy(Vtrial)
+  end
+
+  p_C = Float64[]
+  pC_norm = 0.0
+  if dogleg
+    g = _rectangular_merit_gradient(J, F0)
+    p_C = _rectangular_cauchy_point(J, g)
+    pC_norm = norm(p_C)
+  end
+
   while true
     radius = radius_ref[]
     if radius < min_radius
-      diagnostics isa AbstractVector && push!(diagnostics, (radius_before = radius, rho = NaN, tested_radii = copy(tested_radii), rejected_steps = rejected_steps, accepted = false, radius_after = radius, collapsed = true))
+      diagnostics isa AbstractVector && push!(diagnostics, (radius_before = radius, rho = NaN, tested_radii = copy(tested_radii), rejected_steps = rejected_steps, accepted = false, radius_after = radius, collapsed = true, accept_reason = :none))
       throw(RectangularTrustRegionCollapsed())
     end
     push!(tested_radii, radius)
 
-    # Scaled-Newton: cap the step norm at the radius, direction unchanged (no dogleg).
-    scale = dx_norm > radius ? radius / dx_norm : 1.0
-    _apply_rectangular_delta!(Vtrial, V, δx, slack_idx, non_slack, scale)
+    if dogleg
+      step, accept_reason = _rectangular_dogleg_step(δx, dx_norm, p_C, pC_norm, radius)
+      hit_boundary = accept_reason !== :dogleg_newton
+      _apply_rectangular_delta!(Vtrial, V, step, slack_idx, non_slack, 1.0)
+    else
+      # Scaled-Newton: cap the step norm at the radius, direction unchanged (no dogleg).
+      scale = dx_norm > radius ? radius / dx_norm : 1.0
+      step = scale .* δx
+      hit_boundary = dx_norm > radius
+      accept_reason = :scaled
+      _apply_rectangular_delta!(Vtrial, V, δx, slack_idx, non_slack, scale)
+    end
     F_trial = mismatch_rectangular(Ybus, Vtrial, S, bus_types, Vset, slack_idx)
     m_trial = _rectangular_merit_value(F_trial, non_slack, bus_types, 1.0, 1.0, 1.0)
 
     if isfinite(m_trial)
-      # Predicted reduction from the linear model F(x) + J*dx_scaled, using the
+      # Predicted reduction from the linear model F(x) + J*step, using the
       # same merit-value convention as m_x/m_trial for a consistent ratio.
-      predicted_F = F0 .+ J * (scale .* δx)
+      predicted_F = F0 .+ J * step
       predicted_reduction = m_x - _rectangular_merit_value(predicted_F, non_slack, bus_types, 1.0, 1.0, 1.0)
       actual_reduction = m_x - m_trial
       rho = actual_reduction / max(predicted_reduction, eps())
 
       if rho >= eta_accept
-        hit_boundary = dx_norm > radius
         if rho >= expand_threshold && hit_boundary
           radius_ref[] = min(radius * expand_factor, max_radius)
         end
-        diagnostics isa AbstractVector && push!(diagnostics, (radius_before = radius, rho = rho, tested_radii = copy(tested_radii), rejected_steps = rejected_steps, accepted = true, radius_after = radius_ref[], collapsed = false))
+        diagnostics isa AbstractVector && push!(diagnostics, (radius_before = radius, rho = rho, tested_radii = copy(tested_radii), rejected_steps = rejected_steps, accepted = true, radius_after = radius_ref[], collapsed = false, accept_reason = accept_reason))
         return copy(Vtrial)
       end
     end
@@ -393,6 +479,7 @@ function complex_newton_step_rectangular(
   tr_shrink_factor::Float64 = 0.5,
   tr_expand_factor::Float64 = 2.0,
   tr_expand_threshold::Float64 = 0.75,
+  tr_step_mode::Symbol = :scaled,
   tr_log = nothing,
 )
   n = length(V)
@@ -450,6 +537,7 @@ function complex_newton_step_rectangular(
         radius_ref = tr_radius_ref, min_radius = tr_min_radius, max_radius = tr_max_radius,
         eta_accept = tr_eta_accept, shrink_factor = tr_shrink_factor, expand_factor = tr_expand_factor,
         expand_threshold = tr_expand_threshold, diagnostics = tr_log,
+        step_mode = tr_step_mode, active_set_changed = active_set_changed,
       )
     end
   end

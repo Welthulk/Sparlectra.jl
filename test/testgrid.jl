@@ -2501,11 +2501,17 @@ function test_q_limit_matpower_mode_dispatch_no_reenable()::Bool
   net = createTest3BusNet(cooldown = 2, hyst_pu = 0.01, qlim_min = -15.0, qlim_max = 15.0)
   _, _ = runpf!(net, 30, 1e-8, 0; method = :rectangular, qlimit_enforcement_mode = :classic_one_at_a_time, qlimit_max_outer = 5)
   st = Sparlectra.rectangular_pf_status(net)
+  # Regression: the classical outer loop's inner runpf_rectangular! calls used to
+  # call resetQLimitLog! on every outer round, silently discarding earlier rounds'
+  # logQLimitHit! entries; only a violation-free final round ever survived, so
+  # net.qLimitLog was empty even though real PV->PQ switching happened.
   return !isnothing(st) &&
          hasproperty(st, :qlimit_enforcement_mode) &&
          st.qlimit_enforcement_mode == :classic_one_at_a_time &&
          hasproperty(st, :qlimit_reenable_events) &&
-         st.qlimit_reenable_events == 0
+         st.qlimit_reenable_events == 0 &&
+         length(net.qLimitLog) == 1 &&
+         net.qLimitLog[1].side == :max
 end
 
 

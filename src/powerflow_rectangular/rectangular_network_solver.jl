@@ -299,6 +299,7 @@ function runpf_rectangular!(
   trust_region_shrink_factor::Float64 = 0.5,
   trust_region_expand_factor::Float64 = 2.0,
   trust_region_expand_threshold::Float64 = 0.75,
+  trust_region_step_mode::Symbol = :scaled,
   opt_flatstart::Bool = net.flatstart,
   pv_table_rows::Int = 30,
   lock_pv_to_pq_buses::AbstractVector{Int} = Int[],
@@ -390,6 +391,7 @@ function runpf_rectangular!(
       trust_region_shrink_factor = trust_region_shrink_factor,
       trust_region_expand_factor = trust_region_expand_factor,
       trust_region_expand_threshold = trust_region_expand_threshold,
+      trust_region_step_mode = trust_region_step_mode,
       opt_flatstart = opt_flatstart,
       pv_table_rows = pv_table_rows,
       qlimit_max_outer = qlimit_max_outer,
@@ -578,8 +580,14 @@ function runpf_rectangular!(
     getQLimits_pu(net)
   end
   # Start fresh each PF run before guard pre-processing records locked buses.
+  # Skipped for inner classical-outer-loop solves (qlimit_lock_reason ===
+  # :classical_outer_loop): the outer loop already reset the log once at its
+  # own start and accumulates qLimitLog entries across outer rounds via
+  # logQLimitHit!; resetting here on every inner solve would silently wipe
+  # out earlier rounds' switching events (only the final, violation-free
+  # round would ever survive).
   _perf_profile_time!(performance_profile, :solver_qlimit_log_reset) do
-    resetQLimitLog!(net)
+    qlimit_lock_reason === :classical_outer_loop || resetQLimitLog!(net)
     snapshotPVQLimits!(net)
   end
   if verbose > 1
@@ -760,7 +768,7 @@ function runpf_rectangular!(
           fallback_max_mismatch = merit_fallback_max_mismatch, active_set_changed = (changed || reenabled), merit_log = merit_step_diagnostics,
           trust_region_enabled = trust_region_enabled, tr_radius_ref = tr_radius_ref, tr_min_radius = trust_region_min_radius, tr_max_radius = trust_region_max_radius,
           tr_eta_accept = trust_region_eta_accept, tr_shrink_factor = trust_region_shrink_factor, tr_expand_factor = trust_region_expand_factor,
-          tr_expand_threshold = trust_region_expand_threshold, tr_log = tr_step_diagnostics,
+          tr_expand_threshold = trust_region_expand_threshold, tr_step_mode = trust_region_step_mode, tr_log = tr_step_diagnostics,
         )
       end
       check_cancel()
@@ -998,6 +1006,7 @@ function runpf_rectangular!(
   trust_region_shrink_factor::Float64 = 0.5,
   trust_region_expand_factor::Float64 = 2.0,
   trust_region_expand_threshold::Float64 = 0.75,
+  trust_region_step_mode::Symbol = :scaled,
   opt_flatstart::Bool = net.flatstart,
   pv_table_rows::Int = 30,
   validate_limits_after_pf::Bool = false,
@@ -1080,6 +1089,7 @@ function runpf_rectangular!(
     trust_region_shrink_factor = trust_region_shrink_factor,
     trust_region_expand_factor = trust_region_expand_factor,
     trust_region_expand_threshold = trust_region_expand_threshold,
+    trust_region_step_mode = trust_region_step_mode,
     verbose = verbose,
     opt_flatstart = opt_flatstart,
     pv_table_rows = pv_table_rows,
@@ -1173,6 +1183,7 @@ function _runpf_with_config!(net::Net, config::PowerFlowConfig; verbose::Int = 0
     trust_region_shrink_factor = config.trust_region.shrink_factor,
     trust_region_expand_factor = config.trust_region.expand_factor,
     trust_region_expand_threshold = config.trust_region.expand_threshold,
+    trust_region_step_mode = config.trust_region.step_mode,
     wrong_branch_detection = config.wrong_branch_detection,
     wrong_branch_rescue = config.wrong_branch_rescue,
     wrong_branch_min_vm_pu = config.wrong_branch_min_vm_pu,
@@ -1416,6 +1427,7 @@ function runpf!(
   trust_region_shrink_factor::Float64 = 0.5,
   trust_region_expand_factor::Float64 = 2.0,
   trust_region_expand_threshold::Float64 = 0.75,
+  trust_region_step_mode::Symbol = :scaled,
   opt_flatstart::Bool = net.flatstart,
   pv_table_rows::Int = 30,
   validate_limits_after_pf::Bool = false,
@@ -1547,6 +1559,7 @@ function runpf!(
         trust_region_shrink_factor = trust_region_shrink_factor,
         trust_region_expand_factor = trust_region_expand_factor,
         trust_region_expand_threshold = trust_region_expand_threshold,
+        trust_region_step_mode = trust_region_step_mode,
         wrong_branch_detection = wrong_branch_detection,
         wrong_branch_rescue = false,
         wrong_branch_min_vm_pu = wrong_branch_min_vm_pu,
@@ -1726,6 +1739,7 @@ function runpf!(
         trust_region_shrink_factor = trust_region_shrink_factor,
         trust_region_expand_factor = trust_region_expand_factor,
         trust_region_expand_threshold = trust_region_expand_threshold,
+        trust_region_step_mode = trust_region_step_mode,
         wrong_branch_detection = wrong_branch_detection,
         wrong_branch_rescue = wrong_branch_rescue,
         wrong_branch_min_vm_pu = wrong_branch_min_vm_pu,
@@ -1807,6 +1821,7 @@ function runpf!(
         trust_region_shrink_factor = trust_region_shrink_factor,
         trust_region_expand_factor = trust_region_expand_factor,
         trust_region_expand_threshold = trust_region_expand_threshold,
+        trust_region_step_mode = trust_region_step_mode,
         wrong_branch_detection = wrong_branch_detection,
         wrong_branch_rescue = wrong_branch_rescue,
         wrong_branch_min_vm_pu = wrong_branch_min_vm_pu,
