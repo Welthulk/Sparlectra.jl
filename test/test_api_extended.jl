@@ -913,6 +913,32 @@ power_flow:
       merit_bad_key = run_sparlectra_api(casefile = casefile, config_file = template, output_dir = joinpath(tmpdir, "merit_bad_key"), config_overrides = Dict("power_flow.merit.unknown_key" => true))
       @test !merit_bad_key.success
       @test merit_bad_key.reason == "invalid_config_override"
+
+      trust_region_overrides = validate_gui_config_overrides(
+        Dict("power_flow.trust_region.enabled" => true, "power_flow.trust_region.initial_radius" => 2.0, "power_flow.trust_region.eta_accept" => 0.2),
+      )
+      @test trust_region_overrides["power_flow"]["trust_region"]["enabled"] === true
+      @test trust_region_overrides["power_flow"]["trust_region"]["initial_radius"] == 2.0
+      @test trust_region_overrides["power_flow"]["trust_region"]["eta_accept"] == 0.2
+      @test_throws ArgumentError validate_gui_config_overrides(Dict("power_flow.trust_region.initial_radius" => 20.0))
+      @test_throws ArgumentError validate_gui_config_overrides(Dict("power_flow.trust_region.eta_accept" => 1.0))
+      @test_throws ArgumentError validate_gui_config_overrides(Dict("power_flow.trust_region.min_radius" => 1.0e-3))
+      @test_throws ArgumentError validate_gui_config_overrides(Dict("power_flow.trust_region.unknown_key" => true))
+
+      trust_region_output = joinpath(tmpdir, "trust_region_enabled")
+      trust_region_result = run_sparlectra_api(
+        casefile = casefile,
+        config_file = template,
+        output_dir = trust_region_output,
+        config_overrides = Dict("power_flow.autodamp" => false, "power_flow.trust_region.enabled" => true, "benchmark.enabled" => false),
+      )
+      @test trust_region_result.success
+      @test trust_region_result.metadata["trust_region_enabled"] === true
+      @test any(artifact -> artifact.kind === :trust_region, trust_region_result.artifacts)
+
+      trust_region_bad_key = run_sparlectra_api(casefile = casefile, config_file = template, output_dir = joinpath(tmpdir, "trust_region_bad_key"), config_overrides = Dict("power_flow.trust_region.unknown_key" => true))
+      @test !trust_region_bad_key.success
+      @test trust_region_bad_key.reason == "invalid_config_override"
     end
   end
   @testset "Local PowerFlow service" begin
@@ -996,7 +1022,7 @@ power_flow:
 
       @test started["success"]
       @test started["runtime_casefile"] == basename(casefile)
-      @test started["configured_default_casefile"] == "case14.m"
+      @test !haskey(started, "configured_default_casefile")
       required_result_fields = ("run_id", "schema_version", "status", "success", "converged", "solution_available", "iterations", "final_mismatch", "reason", "message", "artifacts")
       @test all(field -> haskey(started, field), required_result_fields)
       @test !isempty(started["run_id"])
@@ -1016,7 +1042,7 @@ power_flow:
       @test resolved_run["runtime_casefile"] == basename(casefile)
       metadata_text = read(joinpath(resolved_run["output_dir"], "run_metadata.yaml"), String)
       @test occursin("runtime_casefile: $(basename(casefile))", metadata_text)
-      @test occursin("configured_default_casefile: case14.m", metadata_text)
+      @test !occursin("configured_default_casefile", metadata_text)
 
       qlimit_mode_run_ids = String[]
       @testset "Q-limit mode metadata and result visibility" begin

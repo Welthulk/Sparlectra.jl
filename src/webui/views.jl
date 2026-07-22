@@ -130,12 +130,12 @@ function _webui_layout(title::AbstractString, content::AbstractString; show_back
   commit_text = commit_sha === nothing || isempty(strip(String(commit_sha))) ? "" : first(commit_sha, min(7, length(commit_sha)))
   commit_html = isempty(commit_text) ? "" : "<span class=\"runtime-commit\">commit $(_webui_escape(commit_text))</span>"
   runtime_info = "<span class=\"runtime-info\" title=\"Package path: $(_webui_escape(package_path))\"><span class=\"runtime-title\">$(_webui_escape(version_text))</span>$(commit_html)</span>"
-  refresh_meta = refresh_url === nothing ? "" : "<meta http-equiv=\"refresh\" content=\"$(refresh_seconds); url=$(_webui_escape(refresh_url))\">"
+  refresh_attrs = refresh_url === nothing ? "" : " data-refresh-url=\"$(_webui_escape(refresh_url))\" data-refresh-seconds=\"$(refresh_seconds)\""
   return """<!doctype html>
 <html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">
-$(refresh_meta)<title>$(_webui_escape(title)) · Sparlectra</title><link rel=\"stylesheet\" href=\"/static/sparlectra.css\"></head>
+<title>$(_webui_escape(title)) · Sparlectra</title><link rel=\"stylesheet\" href=\"/static/sparlectra.css\"></head>
 <body><header class=\"site-header\"><a class=\"brand\" href=\"/powerflow\"><img class=\"brand-logo\" src=\"/assets/logo.png\" alt=\"Sparlectra.jl logo\">$(runtime_info)</a><nav><a href=\"/powerflow\">New run</a><a href=\"/powerflow/history\">Run history</a><a href=\"/webui/operation-log\">Operation Log</a><a href=\"/docs\">Docs</a><a class=\"project-docs-link\" href=\"https://welthulk.github.io/Sparlectra.jl/\" target=\"_blank\" rel=\"noopener noreferrer\"><svg class=\"github-icon\" viewBox=\"0 0 16 16\" aria-hidden=\"true\"><path fill=\"currentColor\" d=\"M8 0C3.58 0 0 3.64 0 8.13c0 3.59 2.29 6.64 5.47 7.72.4.08.55-.18.55-.39 0-.19-.01-.83-.01-1.51-2.01.38-2.53-.5-2.69-.96-.09-.23-.48-.96-.82-1.15-.28-.15-.68-.53-.01-.54.63-.01 1.08.59 1.23.83.72 1.23 1.87.88 2.33.67.07-.53.28-.88.51-1.08-1.78-.21-3.64-.91-3.64-4.02 0-.89.31-1.62.82-2.19-.08-.2-.36-1.04.08-2.16 0 0 .67-.22 2.2.84A7.4 7.4 0 0 1 8 3.93c.68 0 1.36.09 2 .27 1.53-1.06 2.2-.84 2.2-.84.44 1.12.16 1.96.08 2.16.51.57.82 1.3.82 2.19 0 3.12-1.87 3.81-3.65 4.02.29.25.54.74.54 1.5 0 1.08-.01 1.95-.01 2.22 0 .22.15.47.55.39A8.15 8.15 0 0 0 16 8.13C16 3.64 12.42 0 8 0Z\"/></svg><span>Project Docs</span></a>$(header_info)<a href=\"/webui/last-errors\">Last errors</a><form method="post" action="/webui/shutdown" class="exit-form"><button type="submit" class="exit-button">Stop Web UI</button></form></nav></header>
-<main class="$(main_class)">$(back_button)<h1>$(_webui_escape(title))</h1>$(content)</main><footer>$(_webui_escape(version_text)) · Local PowerFlow Web UI · loopback access only</footer>
+<main class="$(main_class)"$(refresh_attrs)>$(back_button)<h1>$(_webui_escape(title))</h1>$(content)</main><footer>$(_webui_escape(version_text)) · Local PowerFlow Web UI · loopback access only</footer>
 <script>
 (function () {
   const sendHeartbeat = function () {
@@ -143,6 +143,26 @@ $(refresh_meta)<title>$(_webui_escape(title)) · Sparlectra</title><link rel=\"s
   };
   sendHeartbeat();
   window.setInterval(sendHeartbeat, 5000);
+  const scheduleAutoRefresh = function () {
+    const mainEl = document.querySelector('main[data-refresh-url]');
+    if (mainEl === null) return;
+    const seconds = parseFloat(mainEl.getAttribute('data-refresh-seconds')) || 2;
+    window.setTimeout(function () {
+      const target = document.querySelector('main[data-refresh-url]');
+      if (target === null) return;
+      fetch(target.getAttribute('data-refresh-url')).then(function (response) {
+        return response.text();
+      }).then(function (html) {
+        const newMain = new DOMParser().parseFromString(html, 'text/html').querySelector('main');
+        if (newMain === null) return;
+        target.replaceWith(document.importNode(newMain, true));
+        scheduleAutoRefresh();
+      }).catch(function () {
+        scheduleAutoRefresh();
+      });
+    }, seconds * 1000);
+  };
+  scheduleAutoRefresh();
 })();
 </script></body></html>"""
 end
@@ -359,11 +379,34 @@ $(dat_hint_html)
 </fieldset>
 </details>
 <label>$(_webui_field_label("power_flow_tol", "Tolerance"))<span class=\"tolerance-field\"><input name=\"power_flow_tol\" type=\"text\" autocomplete=\"off\" spellcheck=\"false\" data-tolerance-input value=\"$(_webui_input_value(profile_values, "power_flow_tol", _webui_option_default("power_flow_tol")))\"><span class=\"tolerance-spin\"><button type=\"button\" class=\"tolerance-spin-up\" data-tolerance-direction=\"up\" aria-label=\"Increase tolerance exponent\">&#9650;</button><button type=\"button\" class=\"tolerance-spin-down\" data-tolerance-direction=\"down\" aria-label=\"Decrease tolerance exponent\">&#9660;</button></span></span></label>
-<label>$(_webui_field_label("power_flow_max_iter", "Maximum iterations"))<input name=\"power_flow_max_iter\" type=\"number\" min=\"1\" value=\"$(_webui_input_value(profile_values, "power_flow_max_iter", _webui_option_default("power_flow_max_iter")))\"></label>
-<label class=\"check\"><input name=\"power_flow_autodamp\" type=\"hidden\" value=\"false\"><input name=\"power_flow_autodamp\" type=\"checkbox\" value=\"true\"$(_webui_checked(profile_values, "power_flow_autodamp", _webui_option_default("power_flow_autodamp")))>$(_webui_field_label("power_flow_autodamp", "Autodamping enabled"))</label>
-<label>$(_webui_field_label("power_flow_autodamp_min", "Autodamping minimum"))<input name=\"power_flow_autodamp_min\" type=\"number\" step=\"any\" min=\"0\" max=\"1\" value=\"$(_webui_input_value(profile_values, "power_flow_autodamp_min", _webui_option_default("power_flow_autodamp_min")))\"></label>
+<label data-nr-only-field>$(_webui_field_label("power_flow_max_iter", "Maximum iterations"))<input name=\"power_flow_max_iter\" type=\"number\" min=\"1\" value=\"$(_webui_input_value(profile_values, "power_flow_max_iter", _webui_option_default("power_flow_max_iter")))\"></label>
+<fieldset class=\"span-2 step-control-options\" data-step-control-group=\"autodamp\">
+<legend>Autodamping &amp; merit-function line search</legend>
+<label class=\"check\"><input name=\"power_flow_autodamp\" type=\"hidden\" value=\"false\"><input name=\"power_flow_autodamp\" type=\"checkbox\" value=\"true\" data-autodamp-toggle$(_webui_checked(profile_values, "power_flow_autodamp", _webui_option_default("power_flow_autodamp")))>$(_webui_field_label("power_flow_autodamp", "Autodamping enabled"))</label>
+<label>$(_webui_field_label("power_flow_autodamp_min", "Autodamping minimum"))<input name=\"power_flow_autodamp_min\" type=\"number\" step=\"any\" min=\"0\" max=\"1\" data-autodamp-field value=\"$(_webui_input_value(profile_values, "power_flow_autodamp_min", _webui_option_default("power_flow_autodamp_min")))\"></label>
+<details class=\"span-2 merit-linesearch-options\">
+<summary>Merit-function line search</summary>
+<fieldset>
+<label class=\"check span-2\"><input name=\"power_flow_merit_enabled\" type=\"hidden\" value=\"false\"><input name=\"power_flow_merit_enabled\" type=\"checkbox\" value=\"true\" data-merit-toggle$(_webui_checked(profile_values, "power_flow_merit_enabled", _webui_option_default("power_flow_merit_enabled")))>$(_webui_field_label("power_flow_merit_enabled", "Enable Armijo merit-function line search (requires Automatic damping)"))</label>
+<label>$(_webui_field_label("power_flow_merit_armijo_c1", "Armijo sufficient-decrease constant"))<input name=\"power_flow_merit_armijo_c1\" type=\"number\" step=\"any\" min=\"0\" max=\"0.5\" data-merit-field value=\"$(_webui_input_value(profile_values, "power_flow_merit_armijo_c1", _webui_option_default("power_flow_merit_armijo_c1")))\"></label>
+<label class=\"check\"><input name=\"power_flow_merit_fallback_max_mismatch\" type=\"hidden\" value=\"false\"><input name=\"power_flow_merit_fallback_max_mismatch\" type=\"checkbox\" value=\"true\" data-merit-field$(_webui_checked(profile_values, "power_flow_merit_fallback_max_mismatch", _webui_option_default("power_flow_merit_fallback_max_mismatch")))>$(_webui_field_label("power_flow_merit_fallback_max_mismatch", "Fall back to max-mismatch criterion when Armijo is not satisfied"))</label>
+<p class=\"field-help span-2\">Residual scaling (<code>scale_p</code>/<code>scale_q</code>/<code>scale_v</code>) is YAML-only and not exposed here.</p>
+</fieldset>
+</details>
+</fieldset>
+<fieldset class=\"span-2 step-control-options\" data-step-control-group=\"trust_region\">
+<legend>Trust-region step control</legend>
+<p class=\"field-help span-2\">Alternative to autodamping (scaled-Newton step control with merit-based step acceptance). Mutually exclusive with autodamping -- enabling one disables the other.</p>
+<label class=\"check span-2\"><input name=\"power_flow_trust_region_enabled\" type=\"hidden\" value=\"false\"><input name=\"power_flow_trust_region_enabled\" type=\"checkbox\" value=\"true\" data-trust-region-toggle$(_webui_checked(profile_values, "power_flow_trust_region_enabled", _webui_option_default("power_flow_trust_region_enabled")))>$(_webui_field_label("power_flow_trust_region_enabled", "Enable trust-region step control"))</label>
+<label>$(_webui_field_label("power_flow_trust_region_initial_radius", "Initial trust-region radius"))<input name=\"power_flow_trust_region_initial_radius\" type=\"number\" step=\"any\" min=\"0\" max=\"10\" data-trust-region-field value=\"$(_webui_input_value(profile_values, "power_flow_trust_region_initial_radius", _webui_option_default("power_flow_trust_region_initial_radius")))\"></label>
+<label>$(_webui_field_label("power_flow_trust_region_eta_accept", "Acceptance ratio (eta)"))<input name=\"power_flow_trust_region_eta_accept\" type=\"number\" step=\"any\" min=\"0\" max=\"1\" data-trust-region-field value=\"$(_webui_input_value(profile_values, "power_flow_trust_region_eta_accept", _webui_option_default("power_flow_trust_region_eta_accept")))\"></label>
+<p class=\"field-help span-2\">Radius bounds and shrink/expand factors (<code>min_radius</code>/<code>max_radius</code>/<code>shrink_factor</code>/<code>expand_factor</code>/<code>expand_threshold</code>) are YAML-only and not exposed here.</p>
+</fieldset>
+<fieldset class=\"span-2 step-control-options\">
+<legend>Q-limit handling</legend>
 <label class=\"check\"><input name=\"power_flow_qlimits_enabled\" type=\"hidden\" value=\"false\"><input name=\"power_flow_qlimits_enabled\" type=\"checkbox\" value=\"true\"$(_webui_checked(profile_values, "power_flow_qlimits_enabled", _webui_option_default("power_flow_qlimits_enabled")))>$(_webui_field_label("power_flow_qlimits_enabled", "Q-limit handling enabled"))</label>
-<label>$(_webui_field_label("power_flow_qlimits_enforcement_mode", "Q-limit enforcement mode"))$(_webui_select("power_flow_qlimits_enforcement_mode", _webui_option_allowed_values("power_flow_qlimits_enforcement_mode"), _webui_selected(profile_values, "power_flow_qlimits_enforcement_mode", _webui_option_default("power_flow_qlimits_enforcement_mode"))))</label>
+<label data-nr-only-field>$(_webui_field_label("power_flow_qlimits_enforcement_mode", "Q-limit enforcement mode"))$(_webui_select("power_flow_qlimits_enforcement_mode", _webui_option_allowed_values("power_flow_qlimits_enforcement_mode"), _webui_selected(profile_values, "power_flow_qlimits_enforcement_mode", _webui_option_default("power_flow_qlimits_enforcement_mode"))))</label>
+</fieldset>
 <label>$(_webui_field_label("power_flow_solver", "Solver"))<select name="power_flow_solver" data-solver-select><option value="rectangular"$(_webui_form_string(_webui_selected(profile_values, "power_flow_solver", _webui_option_default("power_flow_solver"))) == "rectangular" ? " selected" : "")>Newton-Raphson (rectangular)</option><option value="apslf"$(_webui_form_string(_webui_selected(profile_values, "power_flow_solver", _webui_option_default("power_flow_solver"))) == "apslf" ? " selected" : "")>APSLF (AnalyticLoadFlow)</option></select></label>
 <fieldset id="apslf-solver-options" class="span-2 apslf-solver-options" data-apslf-solver-options hidden>
 <legend>APSLF solver options</legend>
@@ -376,10 +419,10 @@ $(dat_hint_html)
 <label class=\"check\"><input name=\"power_flow_apslf_start_enabled\" type=\"hidden\" value=\"false\"><input name=\"power_flow_apslf_start_enabled\" type=\"checkbox\" value=\"true\" data-apslf-start-toggle$(_webui_checked(profile_values, "power_flow_apslf_start_enabled", _webui_option_default("power_flow_apslf_start_enabled")))>$(_webui_field_label("power_flow_apslf_start_enabled", "Use APSLF start values"))</label>
 <label class=\"field-indent\">$(_webui_field_label("power_flow_apslf_start_order", "Highest coefficient (order)"))<input name=\"power_flow_apslf_start_order\" type=\"number\" min=\"1\" data-apslf-start-order value=\"$(_webui_input_value(profile_values, "power_flow_apslf_start_order", _webui_option_default("power_flow_apslf_start_order")))\"></label>
 </fieldset>
-<label>$(_webui_field_label("power_flow_wrong_branch_detection", "Wrong-branch detection"))$(_webui_select("power_flow_wrong_branch_detection", _webui_option_allowed_values("power_flow_wrong_branch_detection"), _webui_selected(profile_values, "power_flow_wrong_branch_detection", _webui_option_default("power_flow_wrong_branch_detection"))))</label>
-<label>$(_webui_field_label("power_flow_start_angle_mode", "Start angle mode"))$(_webui_select("power_flow_start_angle_mode", _webui_option_allowed_values("power_flow_start_angle_mode"), _webui_selected(profile_values, "power_flow_start_angle_mode", _webui_option_default("power_flow_start_angle_mode"))))</label>
-<label>$(_webui_field_label("power_flow_start_voltage_mode", "Start voltage mode"))$(_webui_select("power_flow_start_voltage_mode", _webui_option_allowed_values("power_flow_start_voltage_mode"), _webui_selected(profile_values, "power_flow_start_voltage_mode", _webui_option_default("power_flow_start_voltage_mode"))))</label>
-<details class=\"span-2 start-current-iteration-options advanced-start-values\">
+<label data-nr-only-field>$(_webui_field_label("power_flow_wrong_branch_detection", "Wrong-branch detection"))$(_webui_select("power_flow_wrong_branch_detection", _webui_option_allowed_values("power_flow_wrong_branch_detection"), _webui_selected(profile_values, "power_flow_wrong_branch_detection", _webui_option_default("power_flow_wrong_branch_detection"))))</label>
+<label data-nr-only-field>$(_webui_field_label("power_flow_start_angle_mode", "Start angle mode"))$(_webui_select("power_flow_start_angle_mode", _webui_option_allowed_values("power_flow_start_angle_mode"), _webui_selected(profile_values, "power_flow_start_angle_mode", _webui_option_default("power_flow_start_angle_mode"))))</label>
+<label data-nr-only-field>$(_webui_field_label("power_flow_start_voltage_mode", "Start voltage mode"))$(_webui_select("power_flow_start_voltage_mode", _webui_option_allowed_values("power_flow_start_voltage_mode"), _webui_selected(profile_values, "power_flow_start_voltage_mode", _webui_option_default("power_flow_start_voltage_mode"))))</label>
+<details class=\"span-2 start-current-iteration-options advanced-start-values\" data-nr-only-field>
 <summary>Advanced start values</summary>
 <fieldset>
 <label class=\"check span-2\"><input name=\"power_flow_start_current_iteration_enabled\" type=\"hidden\" value=\"false\"><input name=\"power_flow_start_current_iteration_enabled\" type=\"checkbox\" value=\"true\"$(_webui_checked(profile_values, "power_flow_start_current_iteration_enabled", _webui_option_default("power_flow_start_current_iteration_enabled")))>$(_webui_field_label("power_flow_start_current_iteration_enabled", "Enable current-iteration pre-solve"))</label>
@@ -392,15 +435,6 @@ $(dat_hint_html)
 <label>$(_webui_field_label("power_flow_start_current_iteration_vm_max_pu", "Maximum voltage guard [pu]"))<input name=\"power_flow_start_current_iteration_vm_max_pu\" type=\"number\" step=\"any\" min=\"0\" value=\"$(_webui_input_value(profile_values, "power_flow_start_current_iteration_vm_max_pu", _webui_option_default("power_flow_start_current_iteration_vm_max_pu")))\"></label>
 <label>$(_webui_field_label("power_flow_start_current_iteration_max_angle_step_deg", "Maximum angle-step guard [deg]"))<input name=\"power_flow_start_current_iteration_max_angle_step_deg\" type=\"number\" step=\"any\" min=\"0\" value=\"$(_webui_input_value(profile_values, "power_flow_start_current_iteration_max_angle_step_deg", _webui_option_default("power_flow_start_current_iteration_max_angle_step_deg")))\"></label>
 <label class=\"check\"><input name=\"power_flow_start_current_iteration_only_for_large_cases\" type=\"hidden\" value=\"false\"><input name=\"power_flow_start_current_iteration_only_for_large_cases\" type=\"checkbox\" value=\"true\"$(_webui_checked(profile_values, "power_flow_start_current_iteration_only_for_large_cases", _webui_option_default("power_flow_start_current_iteration_only_for_large_cases")))>$(_webui_field_label("power_flow_start_current_iteration_only_for_large_cases", "Only for large cases"))</label>
-</fieldset>
-</details>
-<details class=\"span-2 merit-linesearch-options\">
-<summary>Merit-function line search</summary>
-<fieldset>
-<label class=\"check span-2\"><input name=\"power_flow_merit_enabled\" type=\"hidden\" value=\"false\"><input name=\"power_flow_merit_enabled\" type=\"checkbox\" value=\"true\"$(_webui_checked(profile_values, "power_flow_merit_enabled", _webui_option_default("power_flow_merit_enabled")))>$(_webui_field_label("power_flow_merit_enabled", "Enable Armijo merit-function line search (requires Automatic damping)"))</label>
-<label>$(_webui_field_label("power_flow_merit_armijo_c1", "Armijo sufficient-decrease constant"))<input name=\"power_flow_merit_armijo_c1\" type=\"number\" step=\"any\" min=\"0\" max=\"0.5\" value=\"$(_webui_input_value(profile_values, "power_flow_merit_armijo_c1", _webui_option_default("power_flow_merit_armijo_c1")))\"></label>
-<label class=\"check\"><input name=\"power_flow_merit_fallback_max_mismatch\" type=\"hidden\" value=\"false\"><input name=\"power_flow_merit_fallback_max_mismatch\" type=\"checkbox\" value=\"true\"$(_webui_checked(profile_values, "power_flow_merit_fallback_max_mismatch", _webui_option_default("power_flow_merit_fallback_max_mismatch")))>$(_webui_field_label("power_flow_merit_fallback_max_mismatch", "Fall back to max-mismatch criterion when Armijo is not satisfied"))</label>
-<p class=\"field-help span-2\">Residual scaling (<code>scale_p</code>/<code>scale_q</code>/<code>scale_v</code>) is YAML-only and not exposed here.</p>
 </fieldset>
 </details>
 <label>$(_webui_field_label("output_logfile_results", "Logfile output mode"))$(_webui_select("output_logfile_results", _webui_option_allowed_values("output_logfile_results"), _webui_selected(profile_values, "output_logfile_results", _webui_option_default("output_logfile_results"))))</label>
@@ -493,6 +527,64 @@ document.addEventListener('DOMContentLoaded', function () {
   if (apslfStartToggle !== null) {
     updateApslfStartOrder();
     apslfStartToggle.addEventListener('change', updateApslfStartOrder);
+  }
+  const autodampToggle = document.querySelector('input[data-autodamp-toggle]');
+  const trustRegionToggle = document.querySelector('input[data-trust-region-toggle]');
+  const meritToggle = document.querySelector('input[data-merit-toggle]');
+  const autodampFields = document.querySelectorAll('[data-autodamp-field]');
+  const meritFields = document.querySelectorAll('[data-merit-field]');
+  const trustRegionFields = document.querySelectorAll('[data-trust-region-field]');
+  const autodampGroup = document.querySelector('[data-step-control-group="autodamp"]');
+  const trustRegionGroup = document.querySelector('[data-step-control-group="trust_region"]');
+  const nrOnlyFields = document.querySelectorAll('[data-nr-only-field]');
+  let updatingStepControl = false;
+  const updateStepControlOptions = function (changedToggle) {
+    if (updatingStepControl) return;
+    updatingStepControl = true;
+    if (changedToggle === 'trust_region' && trustRegionToggle !== null && trustRegionToggle.checked && autodampToggle !== null && autodampToggle.checked) {
+      autodampToggle.checked = false;
+    } else if (changedToggle === 'autodamp' && autodampToggle !== null && autodampToggle.checked && trustRegionToggle !== null && trustRegionToggle.checked) {
+      trustRegionToggle.checked = false;
+    }
+    const isApslf = solverSelect !== null && solverSelect.value === 'apslf';
+    const autodampOn = !isApslf && autodampToggle !== null && autodampToggle.checked;
+    const trustRegionOn = !isApslf && trustRegionToggle !== null && trustRegionToggle.checked;
+    autodampFields.forEach(function (field) { field.disabled = !autodampOn; });
+    if (meritToggle !== null) {
+      meritToggle.disabled = !autodampOn;
+      if (!autodampOn && meritToggle.checked) meritToggle.checked = false;
+    }
+    const meritOn = autodampOn && meritToggle !== null && meritToggle.checked;
+    meritFields.forEach(function (field) { field.disabled = !meritOn; });
+    trustRegionFields.forEach(function (field) { field.disabled = !trustRegionOn; });
+    if (autodampGroup !== null) {
+      autodampGroup.hidden = isApslf;
+      autodampGroup.classList.toggle('disabled', !autodampOn);
+    }
+    if (trustRegionGroup !== null) {
+      trustRegionGroup.hidden = isApslf;
+      trustRegionGroup.classList.toggle('disabled', !trustRegionOn);
+    }
+    nrOnlyFields.forEach(function (container) {
+      container.hidden = isApslf;
+      const controls = container.matches('input, select') ? [container] : container.querySelectorAll('input, select');
+      controls.forEach(function (control) { control.disabled = isApslf; });
+    });
+    updatingStepControl = false;
+  };
+  if (autodampToggle !== null) {
+    updateStepControlOptions();
+    autodampToggle.addEventListener('change', function () { updateStepControlOptions('autodamp'); });
+  }
+  if (trustRegionToggle !== null) {
+    trustRegionToggle.addEventListener('change', function () { updateStepControlOptions('trust_region'); });
+  }
+  if (meritToggle !== null) {
+    meritToggle.addEventListener('change', function () { updateStepControlOptions('merit'); });
+  }
+  if (solverSelect !== null) {
+    updateStepControlOptions();
+    solverSelect.addEventListener('change', function () { updateStepControlOptions(); });
   }
   if (caseManual !== null) {
     caseManual.addEventListener('input', updateDatCaseAssistance);
@@ -618,7 +710,6 @@ const _WEBUI_RESULT_FIELDS = (
   "Q-limit active-set events",
   "Classical Q-limit outer-loop passes",
   "Runtime casefile",
-  "Configured default case",
   "casefile",
   "resolved_casefile",
   "config_file",
@@ -652,8 +743,6 @@ function _webui_result_value(result::AbstractDict, field::AbstractString)
     return get(metadata, "q_limit_classic_outer_loop_passes", "n/a")
   elseif field == "Runtime casefile"
     return get(result, "runtime_casefile", get(get(result, "metadata", Dict{String,Any}()), "runtime_casefile", "n/a"))
-  elseif field == "Configured default case"
-    return get(result, "configured_default_casefile", get(get(result, "metadata", Dict{String,Any}()), "configured_default_casefile", "n/a"))
   end
   metadata = get(result, "metadata", Dict{String,Any}())
   value = get(result, field, get(metadata, field, nothing))
