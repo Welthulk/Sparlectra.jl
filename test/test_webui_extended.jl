@@ -106,6 +106,9 @@ function _webui_test_form(casefile, config_file, output_root)
     "power_flow_merit_enabled" => "true",
     "power_flow_merit_armijo_c1" => "1e-4",
     "power_flow_merit_fallback_max_mismatch" => "true",
+    "power_flow_trust_region_enabled" => "false",
+    "power_flow_trust_region_initial_radius" => "1.0",
+    "power_flow_trust_region_eta_accept" => "0.1",
     "matpower_import_auto_profile" => "recommend",
     "matpower_import_ratio" => "normal",
     "matpower_import_shift_sign" => "1.0",
@@ -1290,6 +1293,15 @@ settings:
       merit_missing_form = copy(form)
       delete!(merit_missing_form, "power_flow_merit_enabled")
       @test !haskey(Sparlectra.powerflow_webui_request(merit_missing_form; default_output_root = output_root)["config_overrides"], "power_flow.merit.enabled")
+      @test request["config_overrides"]["power_flow.trust_region.enabled"] === false
+      @test request["config_overrides"]["power_flow.trust_region.initial_radius"] == 1.0
+      @test request["config_overrides"]["power_flow.trust_region.eta_accept"] == 0.1
+      trust_region_enabled_form = copy(form)
+      trust_region_enabled_form["power_flow_trust_region_enabled"] = "true"
+      @test Sparlectra.powerflow_webui_request(trust_region_enabled_form; default_output_root = output_root)["config_overrides"]["power_flow.trust_region.enabled"] === true
+      trust_region_missing_form = copy(form)
+      delete!(trust_region_missing_form, "power_flow_trust_region_enabled")
+      @test !haskey(Sparlectra.powerflow_webui_request(trust_region_missing_form; default_output_root = output_root)["config_overrides"], "power_flow.trust_region.enabled")
       qlimits_disabled_form = copy(form)
       qlimits_disabled_form["power_flow_qlimits_enabled"] = "false"
       @test Sparlectra.powerflow_webui_request(qlimits_disabled_form; default_output_root = output_root)["config_overrides"]["power_flow.qlimits.enabled"] === false
@@ -1478,6 +1490,9 @@ settings:
         "power_flow_merit_enabled" => "power_flow.merit.enabled",
         "power_flow_merit_armijo_c1" => "power_flow.merit.armijo_c1",
         "power_flow_merit_fallback_max_mismatch" => "power_flow.merit.fallback_max_mismatch",
+        "power_flow_trust_region_enabled" => "power_flow.trust_region.enabled",
+        "power_flow_trust_region_initial_radius" => "power_flow.trust_region.initial_radius",
+        "power_flow_trust_region_eta_accept" => "power_flow.trust_region.eta_accept",
         "matpower_import_auto_profile" => "matpower_import.auto_profile",
         "matpower_import_ratio" => "matpower_import.ratio",
         "matpower_import_shift_sign" => "matpower_import.shift_sign",
@@ -1536,7 +1551,7 @@ settings:
       @test occursin("name=\"performance_timing\"", form_html)
       @test occursin("name=\"run_diagnostics\"", form_html)
       @test occursin("Advanced start values", form_html)
-      @test occursin("<details class=\"span-2 start-current-iteration-options advanced-start-values\">", form_html)
+      @test occursin("<details class=\"span-2 start-current-iteration-options advanced-start-values\" data-nr-only-field>", form_html)
       @test occursin("<summary>Advanced start values</summary>", form_html)
       @test occursin("Enable current-iteration pre-solve", form_html)
       for field in (
@@ -1564,6 +1579,41 @@ settings:
       @test occursin("name=\"power_flow_merit_enabled\" type=\"hidden\" value=\"false\"", form_html)
       @test occursin("name=\"power_flow_merit_fallback_max_mismatch\" type=\"hidden\" value=\"false\"", form_html)
       @test occursin("scale_p</code>/<code>scale_q</code>/<code>scale_v", form_html)
+      @test occursin("<fieldset class=\"span-2 step-control-options\" data-step-control-group=\"autodamp\">", form_html)
+      @test occursin("<legend>Autodamping &amp; merit-function line search</legend>", form_html)
+      @test occursin("<fieldset class=\"span-2 step-control-options\" data-step-control-group=\"trust_region\">", form_html)
+      @test occursin("<legend>Trust-region step control</legend>", form_html)
+      @test findfirst("data-step-control-group=\"autodamp\"", form_html) < findfirst("<summary>Merit-function line search</summary>", form_html)
+      @test findfirst("<summary>Merit-function line search</summary>", form_html) < findfirst("data-step-control-group=\"trust_region\"", form_html)
+      for field in ("power_flow_trust_region_enabled", "power_flow_trust_region_initial_radius", "power_flow_trust_region_eta_accept")
+        @test occursin("name=\"$(field)\"", form_html)
+      end
+      @test occursin("name=\"power_flow_trust_region_enabled\" type=\"hidden\" value=\"false\"", form_html)
+      @test occursin("min_radius</code>/<code>max_radius</code>/<code>shrink_factor</code>/<code>expand_factor</code>/<code>expand_threshold", form_html)
+      @test occursin("data-autodamp-toggle", form_html)
+      @test occursin("data-trust-region-toggle", form_html)
+      @test occursin("data-merit-toggle", form_html)
+      @test occursin("const updateStepControlOptions = function (changedToggle)", form_html)
+      @test occursin("autodampToggle.checked = false", form_html)
+      @test occursin("trustRegionToggle.checked = false", form_html)
+      @test occursin("<fieldset class=\"span-2 step-control-options\">\n<legend>Q-limit handling</legend>", form_html)
+      @test findfirst("data-step-control-group=\"trust_region\"", form_html) < findfirst("<legend>Q-limit handling</legend>", form_html)
+      # APSLF-as-solver ignores NR-only options (autodamp/merit/trust-region, wrong-branch detection,
+      # start_mode.angle_mode/voltage_mode, start_current_iteration.*, qlimits.enforcement_mode, max_iter);
+      # these must be marked so client-side JS can disable/hide them when power_flow_solver=apslf is selected.
+      @test count("data-nr-only-field", form_html) == 7
+      @test occursin("<label data-nr-only-field><span class=\"field-label\">Maximum iterations ", form_html)
+      @test occursin("<label data-nr-only-field><span class=\"field-label\">Q-limit enforcement mode ", form_html)
+      @test occursin("<label data-nr-only-field><span class=\"field-label\">Wrong-branch detection ", form_html)
+      @test occursin("<label data-nr-only-field><span class=\"field-label\">Start angle mode ", form_html)
+      @test occursin("<label data-nr-only-field><span class=\"field-label\">Start voltage mode ", form_html)
+      @test occursin("<details class=\"span-2 start-current-iteration-options advanced-start-values\" data-nr-only-field>", form_html)
+      @test occursin("const nrOnlyFields = document.querySelectorAll('[data-nr-only-field]')", form_html)
+      @test occursin("const isApslf = solverSelect !== null && solverSelect.value === 'apslf'", form_html)
+      @test occursin("autodampGroup.hidden = isApslf", form_html)
+      @test occursin("trustRegionGroup.hidden = isApslf", form_html)
+      @test occursin("container.hidden = isApslf", form_html)
+      @test occursin("control.disabled = isApslf", form_html)
       @test occursin("name=\"detailed_result_csv\" type=\"checkbox\" value=\"true\" checked", form_html)
       @test occursin("class=\"span-2 detailed-csv-options\"", form_html)
       @test occursin("name=\"detailed_result_csv_format\"", form_html)
@@ -1712,11 +1762,13 @@ result = get_powerflow_result(run_id)
       end
       for active_status in ("queued", "running")
         active_status_html = Sparlectra.render_powerflow_result(Dict("run_id" => "$(active_status)-run", "status" => active_status))
-        @test occursin("http-equiv=\"refresh\"", active_status_html)
+        @test occursin("data-refresh-url=\"/powerflow/result/$(active_status)-run?autorefresh=1\"", active_status_html)
+        @test !occursin("http-equiv=\"refresh\"", active_status_html)
         @test occursin("action=\"/powerflow/abort/$(active_status)-run\"", active_status_html)
       end
       for terminal_status in ("success", "failed", "aborted")
         terminal_status_html = Sparlectra.render_powerflow_result(Dict("run_id" => "$(terminal_status)-run", "status" => terminal_status, "elapsed_seconds" => 83))
+        @test !occursin("data-refresh-url=\"", terminal_status_html)
         @test !occursin("http-equiv=\"refresh\"", terminal_status_html)
         @test occursin("class=\"runtime-card\"", terminal_status_html)
         @test occursin("Total time", terminal_status_html)
@@ -1867,8 +1919,9 @@ result = get_powerflow_result(run_id)
       @test occursin("class=\"runtime-card\"", active_result_html)
       @test occursin("Elapsed time", active_result_html)
       @test occursin("class=\"status-badge status-running\">running</span>", active_result_html)
-      @test occursin("http-equiv=\"refresh\"", active_result_html)
-      @test occursin("content=\"$(Sparlectra.WEBUI_STATUS_AUTO_REFRESH_SECONDS); url=/powerflow/result/$(active_id)?autorefresh=1\"", active_result_html)
+      @test !occursin("http-equiv=\"refresh\"", active_result_html)
+      @test occursin("data-refresh-url=\"/powerflow/result/$(active_id)?autorefresh=1\" data-refresh-seconds=\"$(Sparlectra.WEBUI_STATUS_AUTO_REFRESH_SECONDS)\"", active_result_html)
+      @test occursin("const scheduleAutoRefresh = function ()", active_result_html)
       @test occursin("This page refreshes automatically while the run is active.", active_result_html)
       @test occursin("<td>linear_solve</td>", active_result_html)
       @test occursin(">Refresh status</a>", active_result_html)
@@ -1881,7 +1934,7 @@ result = get_powerflow_result(run_id)
       @test started_position < status_position
       auto_refresh_count = count(==('\n'), active_log)
       auto_refresh_html = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow/result/$(active_id)?autorefresh=1"; output_root).body)
-      @test occursin("http-equiv=\"refresh\"", auto_refresh_html)
+      @test occursin("data-refresh-url=\"/powerflow/result/$(active_id)?autorefresh=1\"", auto_refresh_html)
       @test count(==('\n'), read(operation_log_path, String)) == auto_refresh_count
       @test !occursin("\"event\":\"powerflow_aborted\",\"run_id\":\"$(active_id)\"", active_log)
       aborted_response = Sparlectra.route_sparlectra_webui("POST", "/powerflow/abort/$(active_id)"; output_root)
@@ -1889,7 +1942,8 @@ result = get_powerflow_result(run_id)
       aborted_html = String(Sparlectra.handle_powerflow_result(active_id).body)
       @test occursin("aborting", aborted_html)
       @test occursin("class=\"runtime-card\"", aborted_html)
-      @test occursin("http-equiv=\"refresh\"", aborted_html)
+      @test occursin("data-refresh-url=\"/powerflow/result/$(active_id)?autorefresh=1\"", aborted_html)
+      @test !occursin("http-equiv=\"refresh\"", aborted_html)
       @test occursin("Aborting requested. Current phase:", aborted_html)
       @test occursin("This phase may need to finish before cancellation is observed.", aborted_html)
       @test !occursin(abort_action, aborted_html)
@@ -1914,6 +1968,7 @@ result = get_powerflow_result(run_id)
       @test occursin("class=\"runtime-card\"", terminal_html)
       @test occursin("Run aborted by user.", terminal_html)
       @test !occursin(abort_action, terminal_html)
+      @test !occursin("data-refresh-url=\"", terminal_html)
       @test !occursin("http-equiv=\"refresh\"", terminal_html)
       terminal_log = read(operation_log_path, String)
       @test any(line -> occursin("\"event\":\"powerflow_aborted\"", line) && occursin("\"run_id\":\"$(active_id)\"", line), eachline(IOBuffer(terminal_log)))
