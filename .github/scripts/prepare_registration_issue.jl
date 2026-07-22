@@ -17,8 +17,10 @@
 #          for the "Request Julia Registration" workflow (.github/workflows/request_registration.yml)
 
 using TOML
+using Downloads
 
 const REPO_ROOT = normpath(joinpath(@__DIR__, "..", ".."))
+const REGISTRY_VERSIONS_URL = "https://raw.githubusercontent.com/JuliaRegistries/General/master/S/Sparlectra/Versions.toml"
 const CHANGELOG_FILE = joinpath(REPO_ROOT, "docs", "src", "changelog.md")
 const PROJECT_TOML_FILE = joinpath(REPO_ROOT, "Project.toml")
 const TITLE_FILE = joinpath(REPO_ROOT, "release_issue_title.txt")
@@ -56,6 +58,38 @@ function registeredTags()::Set{String}
   return Set(readlines(Cmd(`git -C $REPO_ROOT tag`)))
 end
 
+# Latest version registered in the General registry, or nothing if the
+# lookup fails (network hiccup must not block a registration request).
+function latestRegisteredVersion()::Union{VersionNumber,Nothing}
+  try
+    buf = IOBuffer()
+    Downloads.download(REGISTRY_VERSIONS_URL, buf)
+    versions = keys(TOML.parse(String(take!(buf))))
+    return maximum(VersionNumber.(collect(versions)))
+  catch err
+    println("::warning::Could not query the General registry ($err); skipping sequential-version check.")
+    return nothing
+  end
+end
+
+# RegistryCI's sequential version number guideline: the next version must be
+# exactly latest+1 in patch, minor, or major position.
+function isSequentialSuccessor(latest::VersionNumber, next::VersionNumber)::Bool
+  return next == VersionNumber(latest.major, latest.minor, latest.patch + 1) || next == VersionNumber(latest.major, latest.minor + 1, 0) || next == VersionNumber(latest.major + 1, 0, 0)
+end
+
+function checkSequentialVersion(next::VersionNumber)
+  latest = latestRegisteredVersion()
+  isnothing(latest) && return
+  if next <= latest
+    error("Version $next is not newer than the latest registered version $latest.")
+  elseif !isSequentialSuccessor(latest, next)
+    println("::warning::Version $next skips ahead of the latest registered version $latest. " * "AutoMerge will block the registry PR - comment `[merge approved]` on the PR in JuliaRegistries/General to proceed.")
+  else
+    println("Sequential-version check OK: $latest -> $next.")
+  end
+end
+
 function main()
   entries = parseChangelog(CHANGELOG_FILE)
   tags = registeredTags()
@@ -66,11 +100,10 @@ function main()
 
   projectVersion = VersionNumber(TOML.parsefile(PROJECT_TOML_FILE)["version"])
   if entry.version != projectVersion
-    error(
-      "Unreleased changelog version ($(entry.version)) does not match Project.toml ($projectVersion). " *
-      "Align docs/src/changelog.md and Project.toml before requesting registration.",
-    )
+    error("Unreleased changelog version ($(entry.version)) does not match Project.toml ($projectVersion). " * "Align docs/src/changelog.md and Project.toml before requesting registration.")
   end
+
+  checkSequentialVersion(entry.version)
 
   title = "JuliaRegistrator register v$(entry.version)"
   body = """
