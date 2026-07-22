@@ -147,6 +147,10 @@ power_flow:
     expand_factor: 2.0
     # rho threshold (in (0, 1)) above which a boundary-hitting accepted step expands the radius.
     expand_threshold: 0.75
+    # scaled: rescale the full Newton direction to the radius (default, unchanged
+    # behavior). dogleg: blend the Newton direction with a steepest-descent
+    # (Cauchy) step when the radius shrinks below the Newton step norm.
+    step_mode: scaled
 
   # Reactive-power limit switching.
   qlimits:

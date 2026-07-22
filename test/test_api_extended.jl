@@ -915,14 +915,16 @@ power_flow:
       @test merit_bad_key.reason == "invalid_config_override"
 
       trust_region_overrides = validate_gui_config_overrides(
-        Dict("power_flow.trust_region.enabled" => true, "power_flow.trust_region.initial_radius" => 2.0, "power_flow.trust_region.eta_accept" => 0.2),
+        Dict("power_flow.trust_region.enabled" => true, "power_flow.trust_region.initial_radius" => 2.0, "power_flow.trust_region.eta_accept" => 0.2, "power_flow.trust_region.step_mode" => "dogleg"),
       )
       @test trust_region_overrides["power_flow"]["trust_region"]["enabled"] === true
       @test trust_region_overrides["power_flow"]["trust_region"]["initial_radius"] == 2.0
       @test trust_region_overrides["power_flow"]["trust_region"]["eta_accept"] == 0.2
+      @test trust_region_overrides["power_flow"]["trust_region"]["step_mode"] == "dogleg"
       @test_throws ArgumentError validate_gui_config_overrides(Dict("power_flow.trust_region.initial_radius" => 20.0))
       @test_throws ArgumentError validate_gui_config_overrides(Dict("power_flow.trust_region.eta_accept" => 1.0))
       @test_throws ArgumentError validate_gui_config_overrides(Dict("power_flow.trust_region.min_radius" => 1.0e-3))
+      @test_throws ArgumentError validate_gui_config_overrides(Dict("power_flow.trust_region.step_mode" => "bogus"))
       @test_throws ArgumentError validate_gui_config_overrides(Dict("power_flow.trust_region.unknown_key" => true))
 
       trust_region_output = joinpath(tmpdir, "trust_region_enabled")
@@ -935,6 +937,16 @@ power_flow:
       @test trust_region_result.success
       @test trust_region_result.metadata["trust_region_enabled"] === true
       @test any(artifact -> artifact.kind === :trust_region, trust_region_result.artifacts)
+
+      trust_region_dogleg_output = joinpath(tmpdir, "trust_region_dogleg")
+      trust_region_dogleg_result = run_sparlectra_api(
+        casefile = casefile,
+        config_file = template,
+        output_dir = trust_region_dogleg_output,
+        config_overrides = Dict("power_flow.autodamp" => false, "power_flow.trust_region.enabled" => true, "power_flow.trust_region.step_mode" => "dogleg", "benchmark.enabled" => false),
+      )
+      @test trust_region_dogleg_result.success
+      @test trust_region_dogleg_result.metadata["trust_region_enabled"] === true
 
       trust_region_bad_key = run_sparlectra_api(casefile = casefile, config_file = template, output_dir = joinpath(tmpdir, "trust_region_bad_key"), config_overrides = Dict("power_flow.trust_region.unknown_key" => true))
       @test !trust_region_bad_key.success
@@ -1073,7 +1085,11 @@ power_flow:
           @test haskey(mode_run["metadata"], "current_iteration_initial_mismatch")
           @test haskey(mode_run["metadata"], "current_iteration_final_mismatch")
           @test haskey(mode_run["metadata"], "current_iteration_reason")
-          current_iteration_log = read(joinpath(mode_run["output_dir"], "current_iteration_start.log"), String)
+          # Classical Q-limit outer-loop rounds get their own diagnostic-artifact
+          # prefix (qlimit_outer_<n>_...) so each round's files don't overwrite the
+          # previous round's; start_current_iteration only runs on round 0.
+          current_iteration_log_name = startswith(mode, "classic_") ? "qlimit_outer_0_current_iteration_start.log" : "current_iteration_start.log"
+          current_iteration_log = read(joinpath(mode_run["output_dir"], current_iteration_log_name), String)
           run_log = read(joinpath(mode_run["output_dir"], "run.log"), String)
           diagnose_path = joinpath(mode_run["output_dir"], "diagnose.log")
           if occursin("current_iteration_attempted: true", current_iteration_log)
