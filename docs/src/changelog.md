@@ -1,4 +1,4 @@
-# Version 0.8.14 — 2026-07-23
+# Version 0.8.13 — 2026-07-22
 
 ## Breaking News
 * AnalyticLoadFlow.jl (APSLF) is now integrated as an optional extension.
