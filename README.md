@@ -85,9 +85,19 @@ For custom network construction, batch execution, solver internals, and the loca
 
 ## Local Web UI
 
-[![Sparlectra local Web UI](docs/src/assets/sparlectra_powerflow_web_ui_mockup.png)](https://welthulk.github.io/Sparlectra.jl/webui/)
-
 Sparlectra ships with an optional browser-based local Web UI for MATPOWER power-flow studies, including run history, artifacts, and case management. See the [Web UI documentation](https://welthulk.github.io/Sparlectra.jl/webui/) for setup and configuration.
+
+**Configuration** — case selection, solver settings, control options and output configuration on a single page:
+
+<p align="center">
+  <a href="docs/src/assets/webui_configuration.png"><img src="docs/src/assets/webui_configuration.png" alt="Sparlectra Web UI – PowerFlow run configuration" width="850"></a>
+</p>
+
+**Power flow run & history** — result with convergence report (left) and the run history (right):
+
+<p align="center">
+  <a href="docs/src/assets/webui_powerflow_history.png"><img src="docs/src/assets/webui_powerflow_history.png" alt="Sparlectra Web UI – PowerFlow result and run history" width="850"></a>
+</p>
 
 ---
 
