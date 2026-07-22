@@ -448,6 +448,7 @@ The following canonical keys are currently present in `src/configuration.yaml.ex
 - `power_flow.trust_region.shrink_factor`
 - `power_flow.trust_region.expand_factor`
 - `power_flow.trust_region.expand_threshold`
+- `power_flow.trust_region.step_mode`
 - `power_flow.method`
 - `power_flow.qlimits`
 - `power_flow.qlimits.auto_q_delta_pu`

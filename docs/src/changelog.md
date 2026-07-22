@@ -1,67 +1,39 @@
-# Version 0.8.14 — unreleased
+# Version 0.8.14 — 2026-07-23
 
 ## Breaking News
-* AnalyticLoadFlow.jl (APSLF) integrated as a weak dependency via a package
-  extension. New config keys: `power_flow.solver` (`rectangular` | `apslf`),
-  `power_flow.apslf.*`, `power_flow.apslf_start.*`. Default behavior is
-  unchanged (`solver = rectangular`), but tooling with hardcoded key sets or
-  strict schema checks must account for the new keys. Combining
-  `apslf_start.enabled=true` with `solver=apslf` is rejected at validation.
-
-## New Features
-* `apslf_solver(...)` — APSLF-backed external solver. Usable standalone via
-  `runpf_external!`, as framework solver, or as start-value generator ahead of
-  the rectangular NR solve. Raises a clear error if AnalyticLoadFlow.jl is not
-  installed. Capability limits (no OLTC/PST/Q(U)/P(U), simple Q-limit
-  switching only): see `docs/src/external_solvers.md`; demo in
-  `examples/apslf_demo.jl`.
-* Web UI: solver dropdown with APSLF options; run status shows the solver
-  that produced the result.
-* **Feature**: Optional Armijo merit-function line search inside the
-  rectangular solver's autodamp backtracking loop (Issue #196, "Merit
-  Function / Optimization View"). New config block `power_flow.merit`
-  (`enabled`, `armijo_c1`, `scale_p`/`scale_q`/`scale_v`,
-  `fallback_max_mismatch`), disabled by default so existing autodamp
-  behavior is unchanged. `merit.enabled = true` requires
-  `power_flow.autodamp = true`. Adds `merit_*` solver-status/API-result
-  fields and a `merit_linesearch.log` diagnostic artifact (per-iteration
-  `f_before`, `directional_derivative`, tested/accepted λ, `accept_reason`).
-  Configurable via YAML, `run_sparlectra_api` overrides, and a new WebUI
-  "Merit-function line search" section. See
-  [Merit-Function Line Search](@ref) in `docs/src/solver.md` for the
-  theoretical background and
-  [Merit-function line search options](@ref) in
-  `docs/src/powerflow_configuration.md` for configuration details.
-* **Feature**: Scaled-Newton trust-region step control for the rectangular
-  solver (Issue #196, closing item 5 "Trust-Region Step Control"). New
-  config block `power_flow.trust_region` (`enabled`, `initial_radius`,
-  `min_radius`, `max_radius`, `eta_accept`, `shrink_factor`,
-  `expand_factor`, `expand_threshold`), disabled by default. An alternative
-  to `autodamp`: caps the Newton step norm at an adaptive radius and
-  accepts/rejects trials by merit-function decrease (reusing the merit
-  value from the merit-function line search) instead of the max-mismatch
-  criterion; mutually exclusive with `power_flow.autodamp = true`
-  (validation error). Reports `reason = :trust_region_collapsed` when the
-  radius falls below `min_radius` without an accepted step. Adds `tr_*`
-  solver-status/API-result fields and a `trust_region.log` diagnostic
-  artifact. Scaled-Newton only — dogleg/Steihaug is out of scope. See
-  [Trust-Region Step Control](@ref) in `docs/src/solver.md`.
+* AnalyticLoadFlow.jl (APSLF) is now integrated as an optional extension.
+* **APSLF solver**: can run standalone, as the framework solver, or as a
+  start-value generator ahead of the rectangular NR solve. Doesn't yet
+  cover OLTC/PST/Q(U)/P(U), only simple Q-limit switching — details in
+  `docs/src/external_solvers.md`, demo in `examples/apslf_demo.jl`.
+* **Merit-function line search** in the rectangular solver: optional
+  Armijo line search inside the autodamp backtracking loop, off by
+  default. Requires `autodamp = true`. Adds diagnostic fields and a
+  `merit_linesearch.log`. Background in `docs/src/solver.md`.
+* **Trust-region step control**: alternative to `autodamp`, caps the
+  Newton step adaptively instead of relying on the mismatch criterion.
+  Two modes (`scaled`/`dogleg`); `dogleg` helps when the Newton direction
+  weakens as the radius shrinks, but it's not a fix for bad starting
+  values. Mutually exclusive with `autodamp`.
+* Web UI: solver dropdown including APSLF, status view shows which
+  solver actually produced the result.
 
 ## Improvements
-* Wrong-branch detection results (not just the `wrong_branch_detection`
-  setting) are now visible in every output surface without reading console
-  warnings (Issue #196, closing item "detection visibility"):
-  `ACPFlowReport.metadata` gains `wrong_branch_status`/`wrong_branch_reason`;
-  the AC island diagnostics CSV and per-island log gain matching trailing
-  columns/fields; `printACPFlowResults` prints one summary line only for a
-  suspect/failed result; the Web UI run result page shows a status badge;
-  `run_sparlectra_api` result metadata gains the same fields plus the
-  low/high-Vm and branch-angle-violation counts. Maintainer decision: the
-  wrong-branch rescue retry loop stays out of scope — detection with full
-  output visibility plus the APSLF solver (`power_flow.solver = apslf` /
-  `apslf_start`, done separately via #264) are the supported mitigations
-  for hard flat-start cases. See `docs/src/configuration.md`, "Where the
-  result is visible".
+* Wrong-branch detection results are now visible everywhere (report, CSV,
+  log, Web UI, API) instead of only showing up as console warnings. An
+  automatic rescue-retry is deliberately out of scope — detection plus
+  APSLF as a fallback are considered enough for the hard cases.
+
+## Bug fixes
+* The classical Q-limit outer loop was losing data per round because the
+  inner solver treats every call as a standalone solve: the Q-limit log
+  got reset each round (undercounting PV/Slack→PQ switches, often showing
+  `0` even when switching actually happened), and diagnostic files from
+  one round overwrote the previous round's. Fixed by keeping the log
+  across rounds and giving each round its own file names.
+* Independently solved AC islands were overwriting each other's
+  diagnostic files (merit, trust-region, iteration-start logs) since they
+  all shared one output directory. Each island now gets its own prefix.
 
 # Version 0.8.12 — 2026-07-20
 

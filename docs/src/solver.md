@@ -262,14 +262,19 @@ decide the same thing (how far to step along the Newton direction) by
 different rules, and layering them is undefined, so enabling both is a
 configuration error.
 
-#### Scaled-Newton steps (no dogleg)
+#### Step-construction modes: `scaled` and `dogleg`
 
 Classical trust-region methods restrict the Newton correction to a ball of
 radius $\Delta$ around the current iterate, typically choosing the trial step
 via a *dogleg* or *Steihaug-CG* interpolation between the steepest-descent
-and full Newton directions. This implementation deliberately does **not**
-implement dogleg/Steihaug: the trial step is always the full Newton direction
-$\Delta x$, rescaled down when it exceeds the radius:
+and full Newton directions. `power_flow.trust_region.step_mode` selects
+between two trial-step constructions; both reuse the same acceptance rule
+(see "Acceptance by merit decrease" below).
+
+##### `step_mode = :scaled` (default)
+
+The trial step is always the full Newton direction $\Delta x$, rescaled down
+when it exceeds the radius:
 
 ```math
 \Delta x_{\text{scaled}} =
@@ -281,26 +286,100 @@ $\Delta x$, rescaled down when it exceeds the radius:
 
 This keeps the direction always the analytic Newton direction — identical to
 the autodamp/fixed-damping paths — and only the step *length* is controlled,
-consistent with how autodamp itself only chooses a scalar step length. Full
-dogleg/Steihaug step control remains future work if the simpler scaled-Newton
-approach proves insufficient in practice.
+consistent with how autodamp itself only chooses a scalar step length. This
+is the byte-for-byte original implementation and remains the default.
+
+##### `step_mode = :dogleg`
+
+`scaled` steps degrade poorly when the Newton direction itself stops being a
+useful descent direction (e.g. a very ill-conditioned Jacobian): every
+rescale keeps pointing the same bad way, so the solver either keeps taking
+uphill steps (with autodamp's conservative fallback) or repeatedly shrinks
+the radius toward collapse. The dogleg step mode adds a second endpoint —
+the steepest-descent (Cauchy) step on the local quadratic model of the merit
+function — and interpolates along the Cauchy-to-Newton path.
+
+**Merit-function gradient.** With $f(x) = \frac{1}{2}\lVert F(x) \rVert_2^2$
+(unweighted, $W = I$, the same convention `m(x)` already uses for both step
+modes), the gradient is
+
+```math
+g(x) = J(x)^{\mathsf{T}} F(x)
+```
+
+a single transposed sparse matrix-vector product; no additional
+factorization. This is the first use of a transposed Jacobian product in the
+solver.
+
+**Cauchy point.** The steepest-descent minimizer of the local quadratic model
+$m(p) = f + g^{\mathsf{T}}p + \frac{1}{2}p^{\mathsf{T}}(J^{\mathsf{T}}J)p$
+along $-g$ is
+
+```math
+\alpha^\ast = \frac{\lVert g \rVert_2^2}{\lVert Jg \rVert_2^2}
+\qquad p_C = -\alpha^\ast g
+```
+
+one more sparse matrix-vector product ($Jg$), clipped to $\lVert p_C \rVert
+\le \Delta$ when used as the trial step.
+
+**Dogleg path.** With the Newton step $p_N = \Delta x$ (already computed) and
+radius $\Delta$:
+
+1. $\lVert p_N \rVert \le \Delta$: take the full Newton step
+   (`accept_reason = :dogleg_newton`, identical to today's `scaled` behavior
+   in the region where the radius doesn't bind).
+2. $\lVert p_C \rVert \ge \Delta$: take $p_C$ rescaled to length $\Delta$
+   (`accept_reason = :dogleg_cauchy`, pure steepest descent).
+3. Otherwise: interpolate $p(\tau) = p_C + \tau (p_N - p_C)$, $\tau \in
+   [0,1]$, choosing $\tau$ so that $\lVert p(\tau) \rVert = \Delta$
+   (`accept_reason = :dogleg_interp`). This reduces to a scalar quadratic
+   $a\tau^2 + b\tau + c = 0$ with
+   $a = \lVert d \rVert_2^2$, $b = 2\, p_C^{\mathsf{T}} d$,
+   $c = \lVert p_C \rVert_2^2 - \Delta^2$, $d = p_N - p_C$, solved
+   in closed form (no inner solver).
+
+Along the dogleg path, $\lVert p(\tau) \rVert$ is monotonically increasing
+and the model value $m(p(\tau))$ is monotonically decreasing **provided**
+$J^{\mathsf{T}}J$ is positive definite (Nocedal & Wright, *Numerical
+Optimization*, trust-region chapter). Near a singular Jacobian —
+precisely the regime dogleg is meant to help with — $J^{\mathsf{T}}J$ may
+only be positive *semidefinite*; the interpolated path is still formally
+defined, but its Newton endpoint can be a poor local model there. Dogleg is
+therefore a partial answer: it buys graceful degradation (Cauchy-direction
+progress) for *transiently* ill-conditioned Jacobians, not a global-
+convergence guarantee. Two escalation options exist in the literature —
+Levenberg–Marquardt ($(J^{\mathsf{T}}J + \lambda I) \Delta x = -J^{\mathsf{T}}F$,
+a new factorization per $\lambda$-change) and Steihaug-CG (matrix-free,
+terminates on negative curvature or the radius boundary, most robust and
+most implementation effort) — both are **out of scope** for this mode and
+are not implemented.
+
+**Active-set switches.** A PV/PQ switch changes what the residual entries
+mean, so a gradient/Cauchy point computed pre-switch is invalid post-switch.
+Mirroring the merit-function line search's `active_set_skip` policy: when a
+switch happened this Newton iteration, the dogleg comparison is skipped —
+a single `scaled`-style trial is taken at the current radius and accepted
+unconditionally (`accept_reason = :active_set_skip`), and the radius is left
+unchanged for that iteration.
 
 #### Acceptance by merit decrease
 
 Step acceptance reuses the same merit function as the
 [Merit-Function Line Search](@ref), $f(x) = \frac{1}{2}\lVert F(x) \rVert_2^2$
 (unweighted, $W = I$) — no second merit computation is implemented. For a
-trial step $\Delta x_{\text{scaled}}$, the **actual reduction** is
+trial step $p$ (the `scaled`-rescaled Newton step, or the dogleg-selected
+step), the **actual reduction** is
 
 ```math
-\text{ared} = f(x) - f(x + \Delta x_{\text{scaled}})
+\text{ared} = f(x) - f(x + p)
 ```
 
 and the **predicted reduction** comes from the local linear model of $F$
 around $x$:
 
 ```math
-\text{pred} = f(x) - \frac{1}{2} \lVert F(x) + J(x)\, \Delta x_{\text{scaled}} \rVert_2^2
+\text{pred} = f(x) - \frac{1}{2} \lVert F(x) + J(x)\, p \rVert_2^2
 ```
 
 The acceptance ratio $\rho = \text{ared} / \max(\text{pred}, \varepsilon)$
@@ -316,35 +395,48 @@ The radius $\Delta$ persists across Newton iterations (unlike autodamp's
 per-iteration `damp` restart) and adapts from $\rho$:
 
 * **Accepted** ($\rho \ge \eta_{\text{accept}}$): the step is taken. If the
-  step also hit the radius boundary ($\lVert \Delta x \rVert > \Delta$) and
-  $\rho \ge$ `expand_threshold`, the radius expands:
+  step also hit the radius boundary — $\lVert \Delta x \rVert > \Delta$ in
+  `scaled` mode, or `accept_reason` is `:dogleg_cauchy`/`:dogleg_interp` in
+  `dogleg` mode — and $\rho \ge$ `expand_threshold`, the radius expands:
   $\Delta \leftarrow \min(\Delta \cdot \texttt{expand\_factor}, \Delta_{\max})$.
   Otherwise the radius is unchanged.
 * **Rejected** ($\rho < \eta_{\text{accept}}$): the radius shrinks,
   $\Delta \leftarrow \Delta \cdot \texttt{shrink\_factor}$, and the *same*
   Newton iteration retries with the smaller radius — no new Jacobian build or
-  linear solve, only a rescale of the already-computed $\Delta x$ and a fresh
-  mismatch evaluation, mirroring how autodamp reuses one Newton correction
-  across its backtracking trials.
+  linear solve, only a re-evaluation of the step construction (rescale, or
+  dogleg branch re-selection at the smaller radius) and a fresh mismatch
+  evaluation, mirroring how autodamp reuses one Newton correction across its
+  backtracking trials.
 * **Collapsed**: if $\Delta$ falls below `power_flow.trust_region.min_radius`
   without an accepted step, the solver declares non-convergence with reason
   `:trust_region_collapsed` rather than looping indefinitely.
 
 #### Limits
 
-* Scaled-Newton only: the trial direction is always the full Newton
-  direction, never a blend with steepest descent. A case that needs true
-  dogleg/Steihaug behavior (e.g., a very ill-conditioned Jacobian where the
-  Newton direction itself is a poor descent direction near $x$) is not
-  addressed by this mechanism.
-* Like the merit-function line search, this is an acceptance/step-length
-  control, not a global-convergence guarantee or a wrong-branch selector.
+* Neither mode is a global-convergence guarantee or a wrong-branch selector;
+  both are acceptance/step-length controls layered on the existing analytic
+  Newton direction and Jacobian, like the merit-function line search.
+* `dogleg` does not fix a bad start. The one documented real-world case that
+  motivated this mode (`case_SyntheticUSA.m`, island 1, `classic`/`classic`
+  start; see the case matrix) was fully resolved by switching start mode, not
+  by step control — dogleg would only have degraded gracefully there instead
+  of diverging, not converged. If the start is fundamentally wrong for the
+  case, fix the start mode first.
+* `dogleg`'s monotonicity guarantee assumes $J^{\mathsf{T}}J \succ 0$; near a
+  singular Jacobian this weakens (see above). Levenberg–Marquardt and
+  Steihaug-CG, which handle that regime more robustly, are not implemented.
+* `dogleg`'s Cauchy (steepest-descent) steps can be slow on badly scaled
+  problems — this is inherent to the method, not an implementation defect.
+  There is no per-equation weighting knob for the dogleg gradient (it always
+  uses $W = I$, matching `m(x)`); if a case needs weighted descent, that is
+  currently only available via `power_flow.merit.scale_p/q/v` on the
+  (mutually exclusive) merit-function line search.
 * Mutually exclusive with `autodamp`; there is currently no combined
   trust-region-with-backtracking-fallback mode.
 
-See Nocedal & Wright, *Numerical Optimization*, the chapter on trust-region
-methods, for the general theory this section adapts (scaled-Newton instead of
-dogleg/Steihaug, referenced by name only).
+See Nocedal & Wright, *Numerical Optimization*, the chapters on trust-region
+methods (dogleg, Cauchy point, Steihaug-CG) and line-search methods (Armijo),
+for the general theory this section adapts, referenced by name only.
 
 ---
 

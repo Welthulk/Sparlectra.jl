@@ -97,6 +97,7 @@ function _run_q_limits_matpower_outer_loop!(
   trust_region_shrink_factor::Float64 = 0.5,
   trust_region_expand_factor::Float64 = 2.0,
   trust_region_expand_threshold::Float64 = 0.75,
+  trust_region_step_mode::Symbol = :scaled,
   opt_flatstart::Bool,
   pv_table_rows::Int,
   qlimit_max_outer::Int,
@@ -143,121 +144,140 @@ function _run_q_limits_matpower_outer_loop!(
   base_pf_converged = false
   qlimit_enforcement_started = false
   final_outcome = :base_pf_not_converged
+  # Preserve any prefix an enclosing AC-island solve already set (composing to
+  # e.g. "ac_island_2_qlimit_outer_3_") and restore it on every exit path
+  # (including the early no-reference-bus-remaining return below), so each
+  # outer round's trust_region.log/merit_linesearch.log/mismatch-history
+  # artifacts don't silently overwrite the previous round's -- same bug class
+  # as the AC-island diagnostic-overwrite fix.
+  base_diagnostic_prefix = performance_profile isa AbstractDict ? get(performance_profile, :diagnostic_artifact_prefix, "") : ""
 
-  for outer in 0:qlimit_max_outer
-    iters, erg = runpf_rectangular!(
-      net;
-      method = method,
-      maxiter = maxiter,
-      tol = tol,
-      damp = damp,
-      verbose = verbose,
-      autodamp = autodamp,
-      autodamp_min = autodamp_min,
-      merit_enabled = merit_enabled,
-      merit_armijo_c1 = merit_armijo_c1,
-      merit_scale_p = merit_scale_p,
-      merit_scale_q = merit_scale_q,
-      merit_scale_v = merit_scale_v,
-      merit_fallback_max_mismatch = merit_fallback_max_mismatch,
-      trust_region_enabled = trust_region_enabled,
-      trust_region_initial_radius = trust_region_initial_radius,
-      trust_region_min_radius = trust_region_min_radius,
-      trust_region_max_radius = trust_region_max_radius,
-      trust_region_eta_accept = trust_region_eta_accept,
-      trust_region_shrink_factor = trust_region_shrink_factor,
-      trust_region_expand_factor = trust_region_expand_factor,
-      trust_region_expand_threshold = trust_region_expand_threshold,
-      opt_flatstart = outer == 0 ? opt_flatstart : false,
-      pv_table_rows = pv_table_rows,
-      qlimit_max_outer = qlimit_max_outer,
-      start_projection = outer == 0 ? start_projection : false,
-      start_projection_try_dc_start = start_projection_try_dc_start,
-      start_projection_try_blend_scan = start_projection_try_blend_scan,
-      start_projection_branch_guard = start_projection_branch_guard,
-      start_projection_measure_candidates = start_projection_measure_candidates,
-      start_projection_accept_unmeasured_dc_start = start_projection_accept_unmeasured_dc_start,
-      start_projection_blend_lambdas = start_projection_blend_lambdas,
-      start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg,
-      start_projection_requested_angle_mode = start_projection_requested_angle_mode,
-      start_projection_requested_voltage_mode = start_projection_requested_voltage_mode,
-      start_current_iteration_enabled = outer == 0 ? start_current_iteration_enabled : false,
-      start_current_iteration_max_iter = start_current_iteration_max_iter,
-      start_current_iteration_tol = start_current_iteration_tol,
-      start_current_iteration_damping = start_current_iteration_damping,
-      start_current_iteration_accept_only_if_improved = start_current_iteration_accept_only_if_improved,
-      start_current_iteration_min_improvement_factor = start_current_iteration_min_improvement_factor,
-      start_current_iteration_vm_min_pu = start_current_iteration_vm_min_pu,
-      start_current_iteration_vm_max_pu = start_current_iteration_vm_max_pu,
-      start_current_iteration_max_angle_step_deg = start_current_iteration_max_angle_step_deg,
-      start_current_iteration_only_for_large_cases = start_current_iteration_only_for_large_cases,
-      apslf_start_enabled = outer == 0 ? apslf_start_enabled : false,
-      apslf_start_order = apslf_start_order,
-      qlimits_enabled = false,
-      qlimit_enforcement_mode = :active_set,
-      qlimit_lock_reason = :classical_outer_loop,
-      wrong_branch_detection = wrong_branch_detection,
-      wrong_branch_rescue = wrong_branch_rescue,
-      wrong_branch_min_vm_pu = wrong_branch_min_vm_pu,
-      wrong_branch_max_vm_pu = wrong_branch_max_vm_pu,
-      wrong_branch_max_angle_spread_deg = wrong_branch_max_angle_spread_deg,
-      wrong_branch_max_branch_angle_deg = wrong_branch_max_branch_angle_deg,
-      wrong_branch_min_low_vm_count = wrong_branch_min_low_vm_count,
-      wrong_branch_rescue_max_attempts = wrong_branch_rescue_max_attempts,
-      performance_profile = performance_profile,
-      rectangular_workspace_reuse = rectangular_workspace_reuse,
-      rectangular_preallocate_workspace = rectangular_preallocate_workspace,
-      rectangular_workspace_min_buses = rectangular_workspace_min_buses,
-    )
-    total_iters += iters
-    if erg != 0
-      final_outcome = outer == 0 ? :base_pf_not_converged : :pf_not_converged_after_qlimit_update
-      break
-    end
-    outer == 0 && (base_pf_converged = true)
-
-    Yred = createYBUS(net = net, sparse = true, printYBUS = false)
-    Ybus = (size(Yred, 1) == length(net.nodeVec)) ? Yred : _expand_ybus_for_isolated_nodes(Yred, length(net.nodeVec), net.isoNodes)
-    V, slack_idx = initialVrect(net; flatstart = false)
-    qmin_pu, qmax_pu = getQLimits_pu(net)
-    bus_types = [getNodeType(node) == Slack ? :Slack : getNodeType(node) == PV ? :PV : :PQ for node in net.nodeVec]
-    qreq_pu = _rectangular_qgen_requirements_pu(net, Ybus, V)
-    violations = _matpower_q_limit_violations(net, qreq_pu, bus_types, fixed_gens; tolerance_pu = max(tol, net.q_hyst_pu))
-    if isempty(violations)
-      final_outcome = :converged
-      break
-    end
-    qlimit_enforcement_started = true
-    selected = mode == :classic_simultaneous ? violations : [violations[argmax(getfield.(violations, :violation_pu))]]
-    ref_changed = false
-    for v in selected
-      bus = v.bus
-      old_type = getNodeType(net.nodeVec[bus])
-      net.prosumpsVec[v.gen_index].qVal = v.q_limit_pu * net.baseMVA
-      fixed_gens[v.gen_index] = true
-      if (old_type == Slack || old_type == PV) && !_matpower_bus_has_regulating_generator(net, bus, fixed_gens)
-        setNodeType!(net.nodeVec[bus], "PQ")
-        logQLimitHit!(net, outer + 1, bus, v.side)
-        if old_type == Slack
-          new_ref = _select_new_reference_bus!(net, bus)
-          if isnothing(new_ref)
-            final_outcome = :no_reference_bus_remaining
-            push!(outer_rows, (outer_iter = outer + 1, mode = mode, gen_index = v.gen_index, bus_i = bus, violation_side = v.side, qg_before = v.q_before_pu * net.baseMVA, q_limit = v.q_limit_pu * net.baseMVA, violation_mvar = v.violation_pu * net.baseMVA, action = :clamp_and_convert_no_reference, bus_type_before = old_type, bus_type_after = :PQ, ref_changed = true))
-            _set_rectangular_pf_status!(net, (; rectangular_pf_status(net)..., qlimit_enforcement_mode = mode, base_pf_converged = base_pf_converged, qlimit_enforcement_started = qlimit_enforcement_started, final_outcome = final_outcome, matpower_outer_iterations = outer + 1, matpower_outer_loop = outer_rows))
-            return total_iters, 1
-          end
-          ref_changed = true
-        end
+  try
+    for outer in 0:qlimit_max_outer
+      performance_profile isa AbstractDict && (performance_profile[:diagnostic_artifact_prefix] = string(base_diagnostic_prefix, "qlimit_outer_", outer, "_"))
+      iters, erg = runpf_rectangular!(
+        net;
+        method = method,
+        maxiter = maxiter,
+        tol = tol,
+        damp = damp,
+        verbose = verbose,
+        autodamp = autodamp,
+        autodamp_min = autodamp_min,
+        merit_enabled = merit_enabled,
+        merit_armijo_c1 = merit_armijo_c1,
+        merit_scale_p = merit_scale_p,
+        merit_scale_q = merit_scale_q,
+        merit_scale_v = merit_scale_v,
+        merit_fallback_max_mismatch = merit_fallback_max_mismatch,
+        trust_region_enabled = trust_region_enabled,
+        trust_region_initial_radius = trust_region_initial_radius,
+        trust_region_min_radius = trust_region_min_radius,
+        trust_region_max_radius = trust_region_max_radius,
+        trust_region_eta_accept = trust_region_eta_accept,
+        trust_region_shrink_factor = trust_region_shrink_factor,
+        trust_region_expand_factor = trust_region_expand_factor,
+        trust_region_expand_threshold = trust_region_expand_threshold,
+        trust_region_step_mode = trust_region_step_mode,
+        opt_flatstart = outer == 0 ? opt_flatstart : false,
+        pv_table_rows = pv_table_rows,
+        qlimit_max_outer = qlimit_max_outer,
+        start_projection = outer == 0 ? start_projection : false,
+        start_projection_try_dc_start = start_projection_try_dc_start,
+        start_projection_try_blend_scan = start_projection_try_blend_scan,
+        start_projection_branch_guard = start_projection_branch_guard,
+        start_projection_measure_candidates = start_projection_measure_candidates,
+        start_projection_accept_unmeasured_dc_start = start_projection_accept_unmeasured_dc_start,
+        start_projection_blend_lambdas = start_projection_blend_lambdas,
+        start_projection_dc_angle_limit_deg = start_projection_dc_angle_limit_deg,
+        start_projection_requested_angle_mode = start_projection_requested_angle_mode,
+        start_projection_requested_voltage_mode = start_projection_requested_voltage_mode,
+        start_current_iteration_enabled = outer == 0 ? start_current_iteration_enabled : false,
+        start_current_iteration_max_iter = start_current_iteration_max_iter,
+        start_current_iteration_tol = start_current_iteration_tol,
+        start_current_iteration_damping = start_current_iteration_damping,
+        start_current_iteration_accept_only_if_improved = start_current_iteration_accept_only_if_improved,
+        start_current_iteration_min_improvement_factor = start_current_iteration_min_improvement_factor,
+        start_current_iteration_vm_min_pu = start_current_iteration_vm_min_pu,
+        start_current_iteration_vm_max_pu = start_current_iteration_vm_max_pu,
+        start_current_iteration_max_angle_step_deg = start_current_iteration_max_angle_step_deg,
+        start_current_iteration_only_for_large_cases = start_current_iteration_only_for_large_cases,
+        apslf_start_enabled = outer == 0 ? apslf_start_enabled : false,
+        apslf_start_order = apslf_start_order,
+        qlimits_enabled = false,
+        qlimit_enforcement_mode = :active_set,
+        qlimit_lock_reason = :classical_outer_loop,
+        wrong_branch_detection = wrong_branch_detection,
+        wrong_branch_rescue = wrong_branch_rescue,
+        wrong_branch_min_vm_pu = wrong_branch_min_vm_pu,
+        wrong_branch_max_vm_pu = wrong_branch_max_vm_pu,
+        wrong_branch_max_angle_spread_deg = wrong_branch_max_angle_spread_deg,
+        wrong_branch_max_branch_angle_deg = wrong_branch_max_branch_angle_deg,
+        wrong_branch_min_low_vm_count = wrong_branch_min_low_vm_count,
+        wrong_branch_rescue_max_attempts = wrong_branch_rescue_max_attempts,
+        performance_profile = performance_profile,
+        rectangular_workspace_reuse = rectangular_workspace_reuse,
+        rectangular_preallocate_workspace = rectangular_preallocate_workspace,
+        rectangular_workspace_min_buses = rectangular_workspace_min_buses,
+      )
+      total_iters += iters
+      if erg != 0
+        final_outcome = outer == 0 ? :base_pf_not_converged : :pf_not_converged_after_qlimit_update
+        break
       end
-      push!(outer_rows, (outer_iter = outer + 1, mode = mode, gen_index = v.gen_index, bus_i = bus, violation_side = v.side, qg_before = v.q_before_pu * net.baseMVA, q_limit = v.q_limit_pu * net.baseMVA, violation_mvar = v.violation_pu * net.baseMVA, action = :clamp_and_convert, bus_type_before = old_type, bus_type_after = getNodeType(net.nodeVec[bus]), ref_changed = ref_changed))
+      outer == 0 && (base_pf_converged = true)
+
+      Yred = createYBUS(net = net, sparse = true, printYBUS = false)
+      Ybus = (size(Yred, 1) == length(net.nodeVec)) ? Yred : _expand_ybus_for_isolated_nodes(Yred, length(net.nodeVec), net.isoNodes)
+      V, slack_idx = initialVrect(net; flatstart = false)
+      qmin_pu, qmax_pu = getQLimits_pu(net)
+      bus_types = [getNodeType(node) == Slack ? :Slack : getNodeType(node) == PV ? :PV : :PQ for node in net.nodeVec]
+      qreq_pu = _rectangular_qgen_requirements_pu(net, Ybus, V)
+      violations = _matpower_q_limit_violations(net, qreq_pu, bus_types, fixed_gens; tolerance_pu = max(tol, net.q_hyst_pu))
+      if isempty(violations)
+        final_outcome = :converged
+        break
+      end
+      qlimit_enforcement_started = true
+      selected = mode == :classic_simultaneous ? violations : [violations[argmax(getfield.(violations, :violation_pu))]]
+      ref_changed = false
+      for v in selected
+        bus = v.bus
+        old_type = getNodeType(net.nodeVec[bus])
+        net.prosumpsVec[v.gen_index].qVal = v.q_limit_pu * net.baseMVA
+        fixed_gens[v.gen_index] = true
+        if (old_type == Slack || old_type == PV) && !_matpower_bus_has_regulating_generator(net, bus, fixed_gens)
+          setNodeType!(net.nodeVec[bus], "PQ")
+          logQLimitHit!(net, outer + 1, bus, v.side)
+          if old_type == Slack
+            new_ref = _select_new_reference_bus!(net, bus)
+            if isnothing(new_ref)
+              final_outcome = :no_reference_bus_remaining
+              push!(outer_rows, (outer_iter = outer + 1, mode = mode, gen_index = v.gen_index, bus_i = bus, violation_side = v.side, qg_before = v.q_before_pu * net.baseMVA, q_limit = v.q_limit_pu * net.baseMVA, violation_mvar = v.violation_pu * net.baseMVA, action = :clamp_and_convert_no_reference, bus_type_before = old_type, bus_type_after = :PQ, ref_changed = true))
+              _set_rectangular_pf_status!(net, (; rectangular_pf_status(net)..., qlimit_enforcement_mode = mode, base_pf_converged = base_pf_converged, qlimit_enforcement_started = qlimit_enforcement_started, final_outcome = final_outcome, matpower_outer_iterations = outer + 1, matpower_outer_loop = outer_rows))
+              return total_iters, 1
+            end
+            ref_changed = true
+          end
+        end
+        push!(outer_rows, (outer_iter = outer + 1, mode = mode, gen_index = v.gen_index, bus_i = bus, violation_side = v.side, qg_before = v.q_before_pu * net.baseMVA, q_limit = v.q_limit_pu * net.baseMVA, violation_mvar = v.violation_pu * net.baseMVA, action = :clamp_and_convert, bus_type_before = old_type, bus_type_after = getNodeType(net.nodeVec[bus]), ref_changed = ref_changed))
+      end
+      verbose > 0 && @printf(stdout, "Classical Q-limit outer iter %d mode=%s selected=%d max_violation=%.6g MVAr ref_changed=%s\n", outer + 1, String(mode), length(selected), maximum(getfield.(violations, :violation_pu)) * net.baseMVA, string(ref_changed))
+      outer == qlimit_max_outer && (final_outcome = :max_outer_iterations)
     end
-    verbose > 0 && @printf(stdout, "Classical Q-limit outer iter %d mode=%s selected=%d max_violation=%.6g MVAr ref_changed=%s\n", outer + 1, String(mode), length(selected), maximum(getfield.(violations, :violation_pu)) * net.baseMVA, string(ref_changed))
-    outer == qlimit_max_outer && (final_outcome = :max_outer_iterations)
+    st = rectangular_pf_status(net)
+    if st !== nothing
+      _set_rectangular_pf_status!(net, (; st..., qlimit_enforcement_mode = mode, base_pf_converged = base_pf_converged, qlimit_enforcement_started = qlimit_enforcement_started, final_outcome = final_outcome, matpower_outer_iterations = maximum([0; getfield.(outer_rows, :outer_iter)]), matpower_outer_loop = outer_rows, qlimit_reenable_events = 0))
+    end
+    return total_iters, final_outcome == :converged ? 0 : 1
+  finally
+    if performance_profile isa AbstractDict
+      if isempty(base_diagnostic_prefix)
+        delete!(performance_profile, :diagnostic_artifact_prefix)
+      else
+        performance_profile[:diagnostic_artifact_prefix] = base_diagnostic_prefix
+      end
+    end
   end
-  st = rectangular_pf_status(net)
-  if st !== nothing
-    _set_rectangular_pf_status!(net, (; st..., qlimit_enforcement_mode = mode, base_pf_converged = base_pf_converged, qlimit_enforcement_started = qlimit_enforcement_started, final_outcome = final_outcome, matpower_outer_iterations = maximum([0; getfield.(outer_rows, :outer_iter)]), matpower_outer_loop = outer_rows, qlimit_reenable_events = 0))
-  end
-  return total_iters, final_outcome == :converged ? 0 : 1
 end
 
