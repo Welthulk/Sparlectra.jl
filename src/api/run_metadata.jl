@@ -24,7 +24,6 @@ function _runtime_metadata_payload(; case_path::AbstractString, lifecycle::Abstr
       "casefile_path" => String(case_path),
     ),
   )
-  haskey(lifecycle, "configured_default_casefile") && (payload["configured_default_casefile"] = lifecycle["configured_default_casefile"])
   haskey(lifecycle, "runtime_casefile") && (payload["runtime_casefile"] = lifecycle["runtime_casefile"])
   for key in ("solver_status", "artifact_status", "run_status", "last_phase", "last_heartbeat", "final_outcome")
     haskey(lifecycle, key) && (payload[key] = lifecycle[key])

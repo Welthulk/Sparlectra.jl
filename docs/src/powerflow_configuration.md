@@ -402,6 +402,27 @@ tr_rejected_steps > 0
   is a poor local predictor for this case; consider a different start profile.
 ```
 
+## Step-control mode combinations (autodamp / merit / trust-region)
+
+`power_flow.autodamp`, `power_flow.merit.enabled`, and `power_flow.trust_region.enabled` jointly select how the Newton step length is chosen. Only some combinations are valid; `PowerFlowConfig` enforces the rules below at load time (`ArgumentError`) regardless of whether the values came from YAML, an API `config_overrides` argument, or the Web UI:
+
+- `power_flow.merit.enabled = true` requires `power_flow.autodamp = true` (merit is an alternative acceptance test *inside* the autodamp backtracking loop, not a standalone step-control mode).
+- `power_flow.trust_region.enabled = true` requires `power_flow.autodamp = false` (trust-region is a separate step-control mode that replaces autodamp's backtracking, not a companion to it).
+- Because of the two rules above, `merit.enabled = true` and `trust_region.enabled = true` can never both hold at once — enabling one always implies the exact opposite value of `autodamp` required by the other.
+
+| `autodamp` | `merit.enabled` | `trust_region.enabled` | Valid? | Behavior |
+|---|---|---|---|---|
+| `false` | `false` | `false` | Valid | Fixed-damping Newton step (no autodamp backtracking, no merit, no trust-region). |
+| `false` | `false` | `true`  | Valid | Trust-region step control alone. |
+| `false` | `true`  | `false` | **Invalid** | `ArgumentError`: merit requires `autodamp = true`. |
+| `false` | `true`  | `true`  | **Invalid** | `ArgumentError`: merit requires `autodamp = true` (and trust-region already forbids `autodamp = true`). |
+| `true`  | `false` | `false` | Valid | Classic autodamp backtracking (max-mismatch acceptance), unchanged default behavior. |
+| `true`  | `false` | `true`  | **Invalid** | `ArgumentError`: trust-region requires `autodamp = false`. |
+| `true`  | `true`  | `false` | Valid | Autodamp backtracking with the Armijo merit-function acceptance test. |
+| `true`  | `true`  | `true`  | **Invalid** | `ArgumentError`: both merit and trust-region reject this combination of `autodamp`. |
+
+The Web UI mirrors these rules client-side: the *Autodamping & merit-function line search* box and the *Trust-region step control* box are mutually exclusive — enabling one automatically unchecks and disables the other (and its sub-fields), and the merit toggle itself is disabled/unchecked whenever autodamping is off. This is a convenience only; the authoritative check is the `PowerFlowConfig` validation shown above, which still applies to YAML files and direct API calls.
+
 ## Q-limit options and guard
 
 | YAML path | Type | Default | Allowed values | Meaning | Use when | Avoid when | Performance impact | Interactions |

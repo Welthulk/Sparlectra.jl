@@ -350,6 +350,23 @@ button,
   font-weight: 700;
 }
 
+.step-control-options {
+  margin-top: -.25rem;
+  padding: .85rem 1rem 1rem;
+  border: 1px solid #dbe3ef;
+  border-radius: 10px;
+}
+
+.step-control-options legend {
+  padding: 0 .35rem;
+  font-weight: 700;
+}
+
+.step-control-options[data-step-control-group="trust_region"].disabled,
+.step-control-options[data-step-control-group="autodamp"].disabled {
+  opacity: .55;
+}
+
 .field-indent {
   margin-left: 1.5rem;
 }
