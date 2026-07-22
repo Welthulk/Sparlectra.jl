@@ -87,6 +87,14 @@ in the rectangular Newton-Raphson solver: an alternative to `autodamp` that
 caps the Newton step norm at an adaptive radius and accepts/rejects steps by
 merit decrease. Disabled by default; mutually exclusive with `autodamp`. See
 [Trust-Region Step Control](@ref) for the theoretical background.
+
+`step_mode = :scaled` (default) rescales the full Newton direction to the
+radius when it exceeds it, leaving pre-existing behavior byte-for-byte
+unchanged. `step_mode = :dogleg` blends the Newton direction with a
+steepest-descent (Cauchy) step along the dogleg path when the radius shrinks
+below the Newton step norm, trading some convergence speed for graceful
+degradation when the Newton direction becomes a poor descent direction. See
+[Trust-Region Step Control](@ref), "Dogleg step mode".
 """
 Base.@kwdef struct TrustRegionConfig
   enabled::Bool = false
@@ -97,6 +105,7 @@ Base.@kwdef struct TrustRegionConfig
   shrink_factor::Float64 = 0.5
   expand_factor::Float64 = 2.0
   expand_threshold::Float64 = 0.75
+  step_mode::Symbol = :scaled
 end
 
 """
@@ -422,6 +431,7 @@ const SUPPORTED_POWERFLOW_METHOD = :rectangular
 const POWERFLOW_START_ANGLE_MODE_VALUES = (:classic, :dc, :bus_va_blend, :matpower_va)
 const POWERFLOW_START_VOLTAGE_MODE_VALUES = (:classic, :pv_gen_vg, :pv_bus_vm, :all_bus_vm, :profile_blend)
 const POWERFLOW_START_PROFILE_SOURCE_VALUES = (:flat, :dc, :bus_metadata, :historical_profile, :matpower_reference, :state_estimation, :scada_snapshot)
+const TRUST_REGION_STEP_MODE_VALUES = (:scaled, :dogleg)
 const QLIMIT_START_MODE_VALUES = (:iteration, :auto, :iteration_or_auto)
 const QLIMIT_ENFORCEMENT_MODE_VALUES = (:active_set, :classic_simultaneous, :classic_one_at_a_time)
 const QLIMIT_ENFORCEMENT_MODE_LEGACY_ALIASES = Dict(
@@ -675,6 +685,7 @@ function TrustRegionConfig(raw::AbstractDict)
   isfinite(expand_factor) && expand_factor > 1.0 || throw(ArgumentError("power_flow.trust_region.expand_factor must be finite and > 1; got $(expand_factor)."))
   expand_threshold = _as_float_cfg(_raw_get(raw, "expand_threshold", 0.75))
   isfinite(expand_threshold) && 0.0 < expand_threshold < 1.0 || throw(ArgumentError("power_flow.trust_region.expand_threshold must be finite and in (0, 1); got $(expand_threshold)."))
+  step_mode = _validate_allowed_symbol("power_flow.trust_region.step_mode", _as_symbol_cfg(_raw_get(raw, "step_mode", :scaled)), TRUST_REGION_STEP_MODE_VALUES)
   return TrustRegionConfig(
     enabled = _as_bool_cfg(_raw_get(raw, "enabled", false)),
     initial_radius = initial_radius,
@@ -684,6 +695,7 @@ function TrustRegionConfig(raw::AbstractDict)
     shrink_factor = shrink_factor,
     expand_factor = expand_factor,
     expand_threshold = expand_threshold,
+    step_mode = step_mode,
   )
 end
 

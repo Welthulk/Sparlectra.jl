@@ -43,9 +43,10 @@ function _webui_case_import_message(imported::Vector{String}, rejected)::String
   return join(lines, " ")
 end
 
-function _webui_select(name, values, selected)
+function _webui_select(name, values, selected, extra_attrs::AbstractString = "")
   options = join((_webui_option(value, replace(_webui_form_string(value), '_' => ' '), selected) for value in values), "")
-  return "<select id=\"$(name)\" name=\"$(name)\">$(options)</select>"
+  attrs = isempty(extra_attrs) ? "" : " $(extra_attrs)"
+  return "<select id=\"$(name)\" name=\"$(name)\"$(attrs)>$(options)</select>"
 end
 
 """Render a file-path dropdown while showing only each file's basename."""
@@ -400,6 +401,7 @@ $(dat_hint_html)
 <label class=\"check span-2\"><input name=\"power_flow_trust_region_enabled\" type=\"hidden\" value=\"false\"><input name=\"power_flow_trust_region_enabled\" type=\"checkbox\" value=\"true\" data-trust-region-toggle$(_webui_checked(profile_values, "power_flow_trust_region_enabled", _webui_option_default("power_flow_trust_region_enabled")))>$(_webui_field_label("power_flow_trust_region_enabled", "Enable trust-region step control"))</label>
 <label>$(_webui_field_label("power_flow_trust_region_initial_radius", "Initial trust-region radius"))<input name=\"power_flow_trust_region_initial_radius\" type=\"number\" step=\"any\" min=\"0\" max=\"10\" data-trust-region-field value=\"$(_webui_input_value(profile_values, "power_flow_trust_region_initial_radius", _webui_option_default("power_flow_trust_region_initial_radius")))\"></label>
 <label>$(_webui_field_label("power_flow_trust_region_eta_accept", "Acceptance ratio (eta)"))<input name=\"power_flow_trust_region_eta_accept\" type=\"number\" step=\"any\" min=\"0\" max=\"1\" data-trust-region-field value=\"$(_webui_input_value(profile_values, "power_flow_trust_region_eta_accept", _webui_option_default("power_flow_trust_region_eta_accept")))\"></label>
+<label>$(_webui_field_label("power_flow_trust_region_step_mode", "Step mode"))$(_webui_select("power_flow_trust_region_step_mode", _webui_option_allowed_values("power_flow_trust_region_step_mode"), _webui_selected(profile_values, "power_flow_trust_region_step_mode", _webui_option_default("power_flow_trust_region_step_mode")), "data-trust-region-field"))</label>
 <p class=\"field-help span-2\">Radius bounds and shrink/expand factors (<code>min_radius</code>/<code>max_radius</code>/<code>shrink_factor</code>/<code>expand_factor</code>/<code>expand_threshold</code>) are YAML-only and not exposed here.</p>
 </fieldset>
 <fieldset class=\"span-2 step-control-options\">

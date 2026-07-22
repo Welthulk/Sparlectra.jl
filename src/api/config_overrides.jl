@@ -46,6 +46,7 @@ const GUI_EDITABLE_CONFIG_KEYS = Set([
   "power_flow.trust_region.enabled",
   "power_flow.trust_region.initial_radius",
   "power_flow.trust_region.eta_accept",
+  "power_flow.trust_region.step_mode",
   "power_flow.islands.enabled",
   "power_flow.islands.mode",
   "power_flow.islands.reference_policy",
@@ -127,6 +128,8 @@ function _validate_gui_override_value(key::String, value)
     _validate_allowed_symbol(key, _as_symbol_cfg(value), POWERFLOW_START_ANGLE_MODE_VALUES)
   elseif key == "power_flow.start_mode.voltage_mode"
     _validate_allowed_symbol(key, _as_symbol_cfg(value), POWERFLOW_START_VOLTAGE_MODE_VALUES)
+  elseif key == "power_flow.trust_region.step_mode"
+    _validate_allowed_symbol(key, _as_symbol_cfg(value), TRUST_REGION_STEP_MODE_VALUES)
   elseif key == "power_flow.islands.mode"
     _validate_allowed_symbol(key, _as_symbol_cfg(value), POWERFLOW_ISLAND_MODE_VALUES)
   elseif key == "power_flow.islands.reference_policy"

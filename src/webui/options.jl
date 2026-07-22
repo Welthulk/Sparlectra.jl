@@ -60,6 +60,7 @@ const WEBUI_OPTION_SPECS = (
   WebUIOptionSpec("power_flow.trust_region.enabled", "power_flow_trust_region_enabled", Bool, :checkbox, false, (), :basic, true),
   WebUIOptionSpec("power_flow.trust_region.initial_radius", "power_flow_trust_region_initial_radius", Float64, :number, 1.0, (), :basic, true),
   WebUIOptionSpec("power_flow.trust_region.eta_accept", "power_flow_trust_region_eta_accept", Float64, :number, 0.1, (), :basic, true),
+  WebUIOptionSpec("power_flow.trust_region.step_mode", "power_flow_trust_region_step_mode", String, :select, "scaled", TRUST_REGION_STEP_MODE_VALUES, :basic, true),
   WebUIOptionSpec("matpower_import.auto_profile", "matpower_import_auto_profile", String, :select, "off", MATPOWER_AUTO_PROFILE_VALUES, :expert, true),
   WebUIOptionSpec("matpower_import.ratio", "matpower_import_ratio", String, :select, "normal", MATPOWER_RATIO_VALUES, :expert, true),
   WebUIOptionSpec("matpower_import.shift_sign", "matpower_import_shift_sign", Float64, :number, 1.0, (), :expert, true),

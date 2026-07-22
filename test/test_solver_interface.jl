@@ -982,6 +982,81 @@ mpc.branch = [
         loaded = Sparlectra.load_sparlectra_config(ok_cfg; reload = true)
         @test loaded.powerflow.trust_region.enabled == true
         @test loaded.powerflow.trust_region.initial_radius == 2.0
+        @test loaded.powerflow.trust_region.step_mode === :scaled
+
+        bad_step_mode = tempname() * ".yaml"
+        write(bad_step_mode, "power_flow:\n  trust_region:\n    step_mode: bogus\n")
+        @test_throws ArgumentError Sparlectra.load_sparlectra_config(bad_step_mode; reload = true)
+
+        dogleg_cfg = tempname() * ".yaml"
+        write(dogleg_cfg, "power_flow:\n  autodamp: false\n  trust_region:\n    enabled: true\n    step_mode: dogleg\n")
+        loaded_dogleg = Sparlectra.load_sparlectra_config(dogleg_cfg; reload = true)
+        @test loaded_dogleg.powerflow.trust_region.step_mode === :dogleg
+      end
+
+      @testset "Unit: dogleg gradient, Cauchy point, and path branch selection" begin
+        # Simple diagonal J so g = Jᵀ F, Jg, α*, and p_C are hand-checkable.
+        J = sparse([2.0 0.0; 0.0 4.0])
+        F0 = [1.0, 2.0]
+        g = Sparlectra._rectangular_merit_gradient(J, F0)
+        @test g == [2.0, 8.0]  # Jᵀ F with J diagonal: g_i = J_ii * F_i
+
+        p_C = Sparlectra._rectangular_cauchy_point(J, g)
+        Jg = J * g
+        expected_alpha = dot(g, g) / dot(Jg, Jg)
+        @test p_C ≈ (-expected_alpha) .* g
+        # Steepest descent: p_C must point exactly opposite to g.
+        @test p_C ≈ -norm(p_C) / norm(g) .* g
+
+        p_N = [3.0, 0.0]
+        pN_norm = norm(p_N)
+        pC_norm = norm(p_C)
+
+        # Branch 1: Newton step already inside a generous radius.
+        step1, reason1 = Sparlectra._rectangular_dogleg_step(p_N, pN_norm, p_C, pC_norm, 100.0)
+        @test reason1 === :dogleg_newton
+        @test step1 == p_N
+
+        # Branch 2: even the Cauchy point exceeds a tiny radius.
+        tiny_radius = pC_norm / 10
+        step2, reason2 = Sparlectra._rectangular_dogleg_step(p_N, pN_norm, p_C, pC_norm, tiny_radius)
+        @test reason2 === :dogleg_cauchy
+        @test norm(step2) ≈ tiny_radius
+        @test step2 ≈ (tiny_radius / pC_norm) .* p_C
+
+        # Branch 3: radius strictly between ‖p_C‖ and ‖p_N‖ forces interpolation,
+        # and the interpolated step must land exactly on the radius boundary.
+        mid_radius = (pC_norm + pN_norm) / 2
+        @test pC_norm < mid_radius < pN_norm
+        step3, reason3 = Sparlectra._rectangular_dogleg_step(p_N, pN_norm, p_C, pC_norm, mid_radius)
+        @test reason3 === :dogleg_interp
+        @test norm(step3) ≈ mid_radius atol = 1e-9
+      end
+
+      @testset "Unit: dogleg active_set_changed skips the comparison without moving the radius" begin
+        Y = ComplexF64[0.0 - 10.0im 0.0 + 10.0im; 0.0 + 10.0im 0.0 - 10.0im]
+        V = ComplexF64[1.0 + 0.0im, 1.0 + 0.0im]
+        S = ComplexF64[0.0 + 0.0im, -1.0 - 0.2im]
+        bus_types = [:Slack, :PQ]
+        Vset = [1.0, 1.0]
+        F0 = Sparlectra.mismatch_rectangular(Y, V, S, bus_types, Vset, 1)
+        J = Sparlectra.build_rectangular_jacobian_pq_pv(sparse(Y), V, bus_types, Vset, 1; dPinj_dVm = zeros(2), dQinj_dVm = zeros(2))
+        δx = Sparlectra.solve_linear(J, -F0; allow_pinv = true)
+
+        radius_ref = Ref(1.0)
+        tr_log = NamedTuple[]
+        Vout = Sparlectra.choose_rectangular_trust_region_step(
+          Y, V, S, δx, F0, J;
+          slack_idx = 1, bus_types = bus_types, Vset = Vset, radius_ref = radius_ref,
+          min_radius = 1e-4, max_radius = 10.0, eta_accept = 0.1, shrink_factor = 0.5,
+          expand_factor = 2.0, expand_threshold = 0.75, diagnostics = tr_log,
+          step_mode = :dogleg, active_set_changed = true,
+        )
+        @test Vout isa Vector{ComplexF64}
+        @test length(tr_log) == 1
+        @test tr_log[1].accept_reason === :active_set_skip
+        @test tr_log[1].accepted == true
+        @test radius_ref[] == 1.0  # radius left unchanged by the active-set-skip path
       end
 
       @testset "Unit: choose_rectangular_trust_region_step acceptance and collapse" begin
@@ -1048,6 +1123,40 @@ mpc.branch = [
           log_text = read(logpath, String)
           @test occursin("accepted=true", log_text)
           @test occursin("trust_region_enabled: true", log_text)
+          @test occursin("accept_reason=scaled", log_text)
+        end
+      end
+
+      @testset "Regression: step_mode=:scaled (explicit) is bit-identical to the implicit default" begin
+        net_default = createCIGRE()
+        it_default, erg_default = runpf_rectangular!(net_default, 30, 1e-8, 0; autodamp = false, trust_region_enabled = true)
+
+        net_explicit = createCIGRE()
+        it_explicit, erg_explicit = runpf_rectangular!(net_explicit, 30, 1e-8, 0; autodamp = false, trust_region_enabled = true, trust_region_step_mode = :scaled)
+
+        @test it_default == it_explicit
+        @test erg_default == erg_explicit == 0
+        @test [n._vm_pu for n in net_default.nodeVec] == [n._vm_pu for n in net_explicit.nodeVec]
+        @test [n._va_deg for n in net_default.nodeVec] == [n._va_deg for n in net_explicit.nodeVec]
+      end
+
+      @testset "Functional: step_mode=:dogleg converges and logs dogleg accept reasons" begin
+        mktempdir() do tmpdir
+          perf = Dict{Symbol,Any}(:output_dir => tmpdir)
+          net = createCIGRE()
+          _, erg = runpf_rectangular!(net, 30, 1e-8, 0; autodamp = false, trust_region_enabled = true, trust_region_step_mode = :dogleg, performance_profile = perf)
+          @test erg == 0
+          st = Sparlectra.rectangular_pf_status(net)
+          @test st.trust_region_enabled == true
+          @test st.tr_step_count >= 1
+          @test st.tr_collapsed == false
+
+          logpath = joinpath(tmpdir, "trust_region.log")
+          @test isfile(logpath)
+          log_text = read(logpath, String)
+          @test occursin("accepted=true", log_text)
+          @test occursin(r"accept_reason=dogleg_(newton|interp|cauchy)", log_text)
+          @test !occursin("accept_reason=scaled", log_text)
         end
       end
 
@@ -1066,6 +1175,64 @@ mpc.branch = [
         st = Sparlectra.rectangular_pf_status(net)
         @test st.reason == :trust_region_collapsed
         @test st.tr_collapsed == true
+      end
+
+      @testset "Classical Q-limit outer loop does not overwrite each round's diagnostic artifacts" begin
+        # Regression: the classical outer loop's inner runpf_rectangular! calls all
+        # shared performance_profile[:output_dir] with no per-round prefix, so
+        # trust_region.log (like merit_linesearch.log/current_iteration_start.log)
+        # from an earlier outer round was silently overwritten by the next round's
+        # solve -- same bug class as the AC-island diagnostic-overwrite fix.
+        mktempdir() do tmpdir
+          perf = Dict{Symbol,Any}(:output_dir => tmpdir)
+          net = createTest3BusNet(cooldown = 2, hyst_pu = 0.01, qlim_min = -15.0, qlim_max = 15.0)
+          _, erg = runpf!(net, 30, 1e-8, 0; method = :rectangular, autodamp = false, trust_region_enabled = true, qlimit_enforcement_mode = :classic_one_at_a_time, qlimit_max_outer = 5, performance_profile = perf)
+          @test erg == 0
+          @test length(net.qLimitLog) == 1
+          files = readdir(tmpdir)
+          @test "qlimit_outer_0_trust_region.log" in files
+          @test "qlimit_outer_1_trust_region.log" in files
+          @test !("trust_region.log" in files)
+          @test !haskey(perf, :diagnostic_artifact_prefix)
+        end
+      end
+
+      @testset "Dogleg degrades gracefully (more attempts before collapse) but does not rescue an infeasible case" begin
+        # tr_collapse_demo (200 MW / 60 Mvar over a weak line) has no nearby AC
+        # solution: this is honestly documented as a case dogleg cannot fix (see
+        # docs/src/solver.md, "Trust-Region Step Control" / Limits). What dogleg
+        # is expected to do differently from `scaled` here is take measurably
+        # more Newton iterations (Cauchy-direction progress) before eventually
+        # collapsing too -- graceful degradation, not rescue.
+        make_net = function ()
+          net = Net(name = "tr_collapse_demo", baseMVA = 100.0, flatstart = true)
+          addBus!(net = net, busName = "SLACK", vn_kV = 110.0, vm_pu = 1.0, va_deg = 0.0)
+          addBus!(net = net, busName = "LOAD", vn_kV = 110.0, vm_pu = 1.0, va_deg = 0.0)
+          addPIModelACLine!(net = net, fromBus = "SLACK", toBus = "LOAD", r_pu = 0.01, x_pu = 0.5, b_pu = 0.0, status = 1)
+          addProsumer!(net = net, busName = "SLACK", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "SLACK")
+          addProsumer!(net = net, busName = "LOAD", type = "ENERGYCONSUMER", p = 200.0, q = 60.0)
+          validate!(net = net)
+          return net
+        end
+
+        net_scaled = make_net()
+        it_scaled, erg_scaled = runpf_rectangular!(net_scaled, 30, 1e-8, 0; autodamp = false, trust_region_enabled = true, trust_region_min_radius = 1e-3)
+        st_scaled = Sparlectra.rectangular_pf_status(net_scaled)
+
+        net_dogleg = make_net()
+        it_dogleg, erg_dogleg = runpf_rectangular!(net_dogleg, 30, 1e-8, 0; autodamp = false, trust_region_enabled = true, trust_region_min_radius = 1e-3, trust_region_step_mode = :dogleg)
+        st_dogleg = Sparlectra.rectangular_pf_status(net_dogleg)
+
+        # Neither mode fixes a genuinely infeasible case.
+        @test erg_scaled != 0
+        @test erg_dogleg != 0
+        @test st_scaled.reason == :trust_region_collapsed
+        @test st_dogleg.reason == :trust_region_collapsed
+        @test st_scaled.tr_collapsed == true
+        @test st_dogleg.tr_collapsed == true
+        # Graceful degradation: dogleg keeps making Cauchy-direction attempts
+        # measurably longer than scaled's repeated same-direction rescaling.
+        @test it_dogleg > it_scaled
       end
     end
 
