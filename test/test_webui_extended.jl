@@ -179,7 +179,7 @@ function run_webui_extended_tests()
       @test occursin("Refresh configuration", page)
       @test occursin("Configuration notice:", page)
       @test occursin("#configuration-maintenance", page)
-      @test findfirst("Configuration maintenance", page) > findfirst("Advanced / expert options", page)
+      @test findfirst("Configuration maintenance", page) > findfirst("Advanced options", page)
       @test findfirst("Configuration maintenance", page) > findfirst("Existing case file", page)
       @test read(config_path, String) == before_page_text
 
@@ -1435,9 +1435,9 @@ settings:
       @test occursin("<legend>MATPOWER import conventions</legend>", form_html)
       @test !occursin("matpower_simultaneous", form_html)
       @test !occursin("matpower_one_at_a_time", form_html)
-      @test findfirst("Advanced / expert options", form_html) < findfirst("MATPOWER import conventions", form_html)
+      @test findfirst("Advanced options", form_html) < findfirst("MATPOWER import conventions", form_html)
       @test findfirst("<details class=\"span-2 expert-section\">", form_html) < findfirst("MATPOWER import conventions", form_html)
-      @test findfirst("Advanced / expert options", form_html) < findfirst("name=\"run_diagnostics\"", form_html)
+      @test findfirst("Advanced options", form_html) < findfirst("name=\"run_diagnostics\"", form_html)
       routed_powerflow_html = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow"; output_root = output_root).body)
       @test occursin("MATPOWER import conventions", routed_powerflow_html)
       @test occursin("name=\"matpower_import_auto_profile\"", routed_powerflow_html)
@@ -1553,9 +1553,11 @@ settings:
       @test occursin("name=\"performance_timing\"", form_html)
       @test occursin("name=\"run_diagnostics\"", form_html)
       @test occursin("Advanced start values", form_html)
-      @test occursin("<details class=\"span-2 start-current-iteration-options advanced-start-values\" data-nr-only-field>", form_html)
-      @test occursin("<summary>Advanced start values</summary>", form_html)
+      @test occursin("<fieldset class=\"start-current-iteration-options advanced-start-values\" data-nr-only-field>", form_html)
+      @test occursin("<legend>Advanced start values</legend>", form_html)
       @test occursin("Enable current-iteration pre-solve", form_html)
+      @test findfirst("<details class=\"span-2 expert-section\">", form_html) < findfirst("<legend>Advanced start values</legend>", form_html)
+      @test findfirst("<legend>Advanced start values</legend>", form_html) < findfirst("<legend>MATPOWER import conventions</legend>", form_html)
       for field in (
         "power_flow_start_current_iteration_enabled",
         "power_flow_start_current_iteration_max_iter",
@@ -1612,7 +1614,7 @@ settings:
       @test occursin("<label data-nr-only-field><span class=\"field-label\">Wrong-branch detection ", form_html)
       @test occursin("<label data-nr-only-field><span class=\"field-label\">Start angle mode ", form_html)
       @test occursin("<label data-nr-only-field><span class=\"field-label\">Start voltage mode ", form_html)
-      @test occursin("<details class=\"span-2 start-current-iteration-options advanced-start-values\" data-nr-only-field>", form_html)
+      @test occursin("<fieldset class=\"start-current-iteration-options advanced-start-values\" data-nr-only-field>", form_html)
       @test occursin("const nrOnlyFields = document.querySelectorAll('[data-nr-only-field]')", form_html)
       @test occursin("const isApslf = solverSelect !== null && solverSelect.value === 'apslf'", form_html)
       @test occursin("autodampGroup.hidden = isApslf", form_html)

@@ -391,7 +391,8 @@ button,
   font-weight: 700;
 }
 
-.benchmark-section {
+.benchmark-section,
+.advanced-start-values {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 1rem;
@@ -401,7 +402,8 @@ button,
   border-radius: 10px;
 }
 
-.benchmark-section legend {
+.benchmark-section legend,
+.advanced-start-values legend {
   padding: 0 .35rem;
   font-weight: 700;
 }
