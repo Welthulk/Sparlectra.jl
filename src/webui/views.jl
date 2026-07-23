@@ -384,9 +384,9 @@ $(dat_hint_html)
 <label class="check"><input name="write_outage_matpower_exports" type="hidden" value="false"><input name="write_outage_matpower_exports" type="checkbox" value="true">Write MATPOWER outage exports</label>
 </fieldset>
 </details>
-<label>$(_webui_field_label("power_flow_tol", "Tolerance"))<span class=\"tolerance-field\"><input name=\"power_flow_tol\" type=\"text\" autocomplete=\"off\" spellcheck=\"false\" data-tolerance-input value=\"$(_webui_input_value(profile_values, "power_flow_tol", _webui_option_default("power_flow_tol")))\"><span class=\"tolerance-spin\"><button type=\"button\" class=\"tolerance-spin-up\" data-tolerance-direction=\"up\" aria-label=\"Increase tolerance exponent\">&#9650;</button><button type=\"button\" class=\"tolerance-spin-down\" data-tolerance-direction=\"down\" aria-label=\"Decrease tolerance exponent\">&#9660;</button></span></span></label>
+<label data-ac-only-field>$(_webui_field_label("power_flow_tol", "Tolerance"))<span class=\"tolerance-field\"><input name=\"power_flow_tol\" type=\"text\" autocomplete=\"off\" spellcheck=\"false\" data-tolerance-input value=\"$(_webui_input_value(profile_values, "power_flow_tol", _webui_option_default("power_flow_tol")))\"><span class=\"tolerance-spin\"><button type=\"button\" class=\"tolerance-spin-up\" data-tolerance-direction=\"up\" aria-label=\"Increase tolerance exponent\">&#9650;</button><button type=\"button\" class=\"tolerance-spin-down\" data-tolerance-direction=\"down\" aria-label=\"Decrease tolerance exponent\">&#9660;</button></span></span></label>
 <label data-nr-only-field>$(_webui_field_label("power_flow_max_iter", "Maximum iterations"))<input name=\"power_flow_max_iter\" type=\"number\" min=\"1\" value=\"$(_webui_input_value(profile_values, "power_flow_max_iter", _webui_option_default("power_flow_max_iter")))\"></label>
-<fieldset class=\"span-2 step-control-options\" data-step-control-group=\"autodamp\">
+<fieldset class=\"span-2 step-control-options\" data-step-control-group=\"autodamp\" data-ac-only-field>
 <legend>Autodamping &amp; merit-function line search</legend>
 <label class=\"check\"><input name=\"power_flow_autodamp\" type=\"hidden\" value=\"false\"><input name=\"power_flow_autodamp\" type=\"checkbox\" value=\"true\" data-autodamp-toggle$(_webui_checked(profile_values, "power_flow_autodamp", _webui_option_default("power_flow_autodamp")))>$(_webui_field_label("power_flow_autodamp", "Autodamping enabled"))</label>
 <label>$(_webui_field_label("power_flow_autodamp_min", "Autodamping minimum"))<input name=\"power_flow_autodamp_min\" type=\"number\" step=\"any\" min=\"0\" max=\"1\" data-autodamp-field value=\"$(_webui_input_value(profile_values, "power_flow_autodamp_min", _webui_option_default("power_flow_autodamp_min")))\"></label>
@@ -400,7 +400,7 @@ $(dat_hint_html)
 </fieldset>
 </details>
 </fieldset>
-<fieldset class=\"span-2 step-control-options\" data-step-control-group=\"trust_region\">
+<fieldset class=\"span-2 step-control-options\" data-step-control-group=\"trust_region\" data-ac-only-field>
 <legend>Trust-region step control</legend>
 <p class=\"field-help span-2\">Alternative to autodamping (scaled-Newton step control with merit-based step acceptance). Mutually exclusive with autodamping -- enabling one disables the other.</p>
 <label class=\"check span-2\"><input name=\"power_flow_trust_region_enabled\" type=\"hidden\" value=\"false\"><input name=\"power_flow_trust_region_enabled\" type=\"checkbox\" value=\"true\" data-trust-region-toggle$(_webui_checked(profile_values, "power_flow_trust_region_enabled", _webui_option_default("power_flow_trust_region_enabled")))>$(_webui_field_label("power_flow_trust_region_enabled", "Enable trust-region step control"))</label>
@@ -409,19 +409,24 @@ $(dat_hint_html)
 <label>$(_webui_field_label("power_flow_trust_region_step_mode", "Step mode"))$(_webui_select("power_flow_trust_region_step_mode", _webui_option_allowed_values("power_flow_trust_region_step_mode"), _webui_selected(profile_values, "power_flow_trust_region_step_mode", _webui_option_default("power_flow_trust_region_step_mode")), "data-trust-region-field"))</label>
 <p class=\"field-help span-2\">Radius bounds and shrink/expand factors (<code>min_radius</code>/<code>max_radius</code>/<code>shrink_factor</code>/<code>expand_factor</code>/<code>expand_threshold</code>) are YAML-only and not exposed here.</p>
 </fieldset>
-<fieldset class=\"span-2 step-control-options\">
+<fieldset class=\"span-2 step-control-options\" data-ac-only-field>
 <legend>Q-limit handling</legend>
 <label class=\"check\"><input name=\"power_flow_qlimits_enabled\" type=\"hidden\" value=\"false\"><input name=\"power_flow_qlimits_enabled\" type=\"checkbox\" value=\"true\"$(_webui_checked(profile_values, "power_flow_qlimits_enabled", _webui_option_default("power_flow_qlimits_enabled")))>$(_webui_field_label("power_flow_qlimits_enabled", "Q-limit handling enabled"))</label>
 <label data-nr-only-field>$(_webui_field_label("power_flow_qlimits_enforcement_mode", "Q-limit enforcement mode"))$(_webui_select("power_flow_qlimits_enforcement_mode", _webui_option_allowed_values("power_flow_qlimits_enforcement_mode"), _webui_selected(profile_values, "power_flow_qlimits_enforcement_mode", _webui_option_default("power_flow_qlimits_enforcement_mode"))))</label>
 </fieldset>
-<label>$(_webui_field_label("power_flow_solver", "Solver"))<select name="power_flow_solver" data-solver-select><option value="rectangular"$(_webui_form_string(_webui_selected(profile_values, "power_flow_solver", _webui_option_default("power_flow_solver"))) == "rectangular" ? " selected" : "")>Newton-Raphson (rectangular)</option><option value="apslf"$(_webui_form_string(_webui_selected(profile_values, "power_flow_solver", _webui_option_default("power_flow_solver"))) == "apslf" ? " selected" : "")>APSLF (AnalyticLoadFlow)</option></select></label>
+<fieldset class="span-2 calc-mode-options">
+<legend>$(_webui_field_label("power_flow_calc_mode", "Berechnungsmodell"))</legend>
+<label class="check"><input type="radio" name="power_flow_calc_mode" value="ac" data-calc-mode-radio$(_webui_form_string(_webui_selected(profile_values, "power_flow_solver", _webui_option_default("power_flow_solver"))) == "dc" ? "" : " checked")>AC (Newton-Raphson, rectangular)</label>
+<label class="check"><input type="radio" name="power_flow_calc_mode" value="dc" data-calc-mode-radio$(_webui_form_string(_webui_selected(profile_values, "power_flow_solver", _webui_option_default("power_flow_solver"))) == "dc" ? " checked" : "")>DC (lineares Screening-Modell)</label>
+</fieldset>
+<label data-ac-only-field>$(_webui_field_label("power_flow_solver", "Solver"))<select name="power_flow_solver" data-solver-select><option value="rectangular"$(_webui_form_string(_webui_selected(profile_values, "power_flow_solver", _webui_option_default("power_flow_solver"))) == "rectangular" ? " selected" : "")>Newton-Raphson (rectangular)</option><option value="apslf"$(_webui_form_string(_webui_selected(profile_values, "power_flow_solver", _webui_option_default("power_flow_solver"))) == "apslf" ? " selected" : "")>APSLF (AnalyticLoadFlow)</option><option value="dc"$(_webui_form_string(_webui_selected(profile_values, "power_flow_solver", _webui_option_default("power_flow_solver"))) == "dc" ? " selected" : "")>DC (lineares Screening-Modell)</option></select></label>
 <fieldset id="apslf-solver-options" class="span-2 apslf-solver-options" data-apslf-solver-options hidden>
 <legend>APSLF solver options</legend>
 <label class=\"field-indent\">$(_webui_field_label("power_flow_apslf_order", "Highest coefficient (order)"))<input name=\"power_flow_apslf_order\" type=\"number\" min=\"1\" value=\"$(_webui_input_value(profile_values, "power_flow_apslf_order", _webui_option_default("power_flow_apslf_order")))\"></label>
 <label class=\"check field-indent\"><input name=\"power_flow_apslf_use_pade\" type=\"hidden\" value=\"false\"><input name=\"power_flow_apslf_use_pade\" type=\"checkbox\" value=\"true\"$(_webui_checked(profile_values, "power_flow_apslf_use_pade", _webui_option_default("power_flow_apslf_use_pade")))>$(_webui_field_label("power_flow_apslf_use_pade", "Padé evaluation"))</label>
 <label class=\"check field-indent\"><input name=\"power_flow_apslf_nr_polish\" type=\"hidden\" value=\"false\"><input name=\"power_flow_apslf_nr_polish\" type=\"checkbox\" value=\"true\"$(_webui_checked(profile_values, "power_flow_apslf_nr_polish", _webui_option_default("power_flow_apslf_nr_polish")))>$(_webui_field_label("power_flow_apslf_nr_polish", "NR polish"))</label>
 </fieldset>
-<fieldset id="apslf-start-options" class="span-2 apslf-start-options" data-apslf-start-options>
+<fieldset id="apslf-start-options" class="span-2 apslf-start-options" data-apslf-start-options data-ac-only-field>
 <legend>Newton-Raphson start values</legend>
 <label class=\"check\"><input name=\"power_flow_apslf_start_enabled\" type=\"hidden\" value=\"false\"><input name=\"power_flow_apslf_start_enabled\" type=\"checkbox\" value=\"true\" data-apslf-start-toggle$(_webui_checked(profile_values, "power_flow_apslf_start_enabled", _webui_option_default("power_flow_apslf_start_enabled")))>$(_webui_field_label("power_flow_apslf_start_enabled", "Use APSLF start values"))</label>
 <label class=\"field-indent\">$(_webui_field_label("power_flow_apslf_start_order", "Highest coefficient (order)"))<input name=\"power_flow_apslf_start_order\" type=\"number\" min=\"1\" data-apslf-start-order value=\"$(_webui_input_value(profile_values, "power_flow_apslf_start_order", _webui_option_default("power_flow_apslf_start_order")))\"></label>
@@ -459,7 +464,7 @@ $(config_maintenance)
 <label>$(_webui_field_label("matpower_import_bus_shunt_model", "Bus-shunt model"))$(_webui_select("matpower_import_bus_shunt_model", _webui_option_allowed_values("matpower_import_bus_shunt_model"), _webui_selected(profile_values, "matpower_import_bus_shunt_model", _webui_option_default("matpower_import_bus_shunt_model"))))</label>
 <label>$(_webui_field_label("matpower_import_pv_voltage_source", "PV voltage source"))$(_webui_select("matpower_import_pv_voltage_source", _webui_option_allowed_values("matpower_import_pv_voltage_source"), _webui_selected(profile_values, "matpower_import_pv_voltage_source", _webui_option_default("matpower_import_pv_voltage_source"))))</label>
 <label>$(_webui_field_label("matpower_import_compare_voltage_reference", "Voltage reference comparison"))$(_webui_select("matpower_import_compare_voltage_reference", _webui_option_allowed_values("matpower_import_compare_voltage_reference"), _webui_selected(profile_values, "matpower_import_compare_voltage_reference", _webui_option_default("matpower_import_compare_voltage_reference"))))</label>
-<label>$(_webui_field_label("transformer_tap_changer_model", "Tap-changer model"))$(_webui_select("transformer_tap_changer_model", _webui_option_allowed_values("transformer_tap_changer_model"), _webui_selected(profile_values, "transformer_tap_changer_model", _webui_option_default("transformer_tap_changer_model"))))</label>
+<label data-ac-only-field>$(_webui_field_label("transformer_tap_changer_model", "Tap-changer model"))$(_webui_select("transformer_tap_changer_model", _webui_option_allowed_values("transformer_tap_changer_model"), _webui_selected(profile_values, "transformer_tap_changer_model", _webui_option_default("transformer_tap_changer_model"))))</label>
 <label class=\"check\"><input name=\"matpower_export_write_solution\" type=\"hidden\" value=\"false\"><input name=\"matpower_export_write_solution\" type=\"checkbox\" value=\"true\"$(_webui_checked(profile_values, "matpower_export_write_solution", _webui_option_default("matpower_export_write_solution")))>$(_webui_field_label("matpower_export_write_solution", "Export Solution"))</label>
 </fieldset>
 <fieldset class=\"benchmark-section\">
@@ -514,10 +519,17 @@ document.addEventListener('DOMContentLoaded', function () {
   const solverSelect = document.querySelector('select[data-solver-select]');
   const apslfSolverOptions = document.querySelector('[data-apslf-solver-options]');
   const apslfStartOptions = document.querySelector('[data-apslf-start-options]');
+  const calcModeRadios = document.querySelectorAll('input[data-calc-mode-radio]');
+  const isDcMode = function () {
+    let dcChecked = false;
+    calcModeRadios.forEach(function (radio) { if (radio.checked && radio.value === 'dc') dcChecked = true; });
+    return dcChecked;
+  };
   const updateSolverOptions = function () {
-    const isApslf = solverSelect !== null && solverSelect.value === 'apslf';
-    if (apslfSolverOptions !== null) apslfSolverOptions.hidden = !isApslf;
-    if (apslfStartOptions !== null) apslfStartOptions.hidden = isApslf;
+    const dc = isDcMode();
+    const isApslf = !dc && solverSelect !== null && solverSelect.value === 'apslf';
+    if (apslfSolverOptions !== null) apslfSolverOptions.hidden = dc || !isApslf;
+    if (apslfStartOptions !== null) apslfStartOptions.hidden = dc || isApslf;
   };
   if (solverSelect !== null) {
     updateSolverOptions();
@@ -550,9 +562,11 @@ document.addEventListener('DOMContentLoaded', function () {
     } else if (changedToggle === 'autodamp' && autodampToggle !== null && autodampToggle.checked && trustRegionToggle !== null && trustRegionToggle.checked) {
       trustRegionToggle.checked = false;
     }
-    const isApslf = solverSelect !== null && solverSelect.value === 'apslf';
-    const autodampOn = !isApslf && autodampToggle !== null && autodampToggle.checked;
-    const trustRegionOn = !isApslf && trustRegionToggle !== null && trustRegionToggle.checked;
+    const dc = isDcMode();
+    const isApslf = !dc && solverSelect !== null && solverSelect.value === 'apslf';
+    const hideNrOnly = isApslf || dc;
+    const autodampOn = !hideNrOnly && autodampToggle !== null && autodampToggle.checked;
+    const trustRegionOn = !hideNrOnly && trustRegionToggle !== null && trustRegionToggle.checked;
     autodampFields.forEach(function (field) { field.disabled = !autodampOn; });
     if (meritToggle !== null) {
       meritToggle.disabled = !autodampOn;
@@ -562,17 +576,17 @@ document.addEventListener('DOMContentLoaded', function () {
     meritFields.forEach(function (field) { field.disabled = !meritOn; });
     trustRegionFields.forEach(function (field) { field.disabled = !trustRegionOn; });
     if (autodampGroup !== null) {
-      autodampGroup.hidden = isApslf;
+      autodampGroup.hidden = hideNrOnly;
       autodampGroup.classList.toggle('disabled', !autodampOn);
     }
     if (trustRegionGroup !== null) {
-      trustRegionGroup.hidden = isApslf;
+      trustRegionGroup.hidden = hideNrOnly;
       trustRegionGroup.classList.toggle('disabled', !trustRegionOn);
     }
     nrOnlyFields.forEach(function (container) {
-      container.hidden = isApslf;
+      container.hidden = hideNrOnly;
       const controls = container.matches('input, select') ? [container] : container.querySelectorAll('input, select');
-      controls.forEach(function (control) { control.disabled = isApslf; });
+      controls.forEach(function (control) { control.disabled = hideNrOnly; });
     });
     updatingStepControl = false;
   };
@@ -589,6 +603,25 @@ document.addEventListener('DOMContentLoaded', function () {
   if (solverSelect !== null) {
     updateStepControlOptions();
     solverSelect.addEventListener('change', function () { updateStepControlOptions(); });
+  }
+  const acOnlyFields = document.querySelectorAll('[data-ac-only-field]');
+  const updateCalcMode = function () {
+    const dc = isDcMode();
+    if (solverSelect !== null) {
+      if (dc && solverSelect.value !== 'dc') solverSelect.value = 'dc';
+      if (!dc && solverSelect.value === 'dc') solverSelect.value = 'rectangular';
+    }
+    acOnlyFields.forEach(function (container) {
+      container.hidden = dc;
+      const controls = container.matches('input, select') ? [container] : container.querySelectorAll('input, select');
+      controls.forEach(function (control) { control.disabled = dc; });
+    });
+    updateSolverOptions();
+    updateStepControlOptions();
+  };
+  if (calcModeRadios.length > 0) {
+    updateCalcMode();
+    calcModeRadios.forEach(function (radio) { radio.addEventListener('change', updateCalcMode); });
   }
   if (caseManual !== null) {
     caseManual.addEventListener('input', updateDatCaseAssistance);
@@ -838,6 +871,7 @@ function render_powerflow_result(result::AbstractDict)::String
     (("Run status", status_badge), ("Elapsed time", "<strong>$(_webui_escape(_format_elapsed_duration(_webui_elapsed_seconds(result, active))))</strong>"))
   else
     base = [("Run status", status_badge), ("Solver", "<code>$(_webui_escape(solver_name))</code>")]
+    solver_name == "dc" && push!(base, ("Model", "<span class=\"status-badge status-info\">DC solution</span>"))
     solver_elapsed = _webui_solver_elapsed_seconds(result)
     solver_elapsed === nothing || push!(base, ("Solver time", "<strong>$(_webui_escape(_format_elapsed_duration(solver_elapsed)))</strong>"))
     push!(base, ("Total time", "<strong>$(_webui_escape(_format_elapsed_duration(_webui_total_elapsed_seconds(result))))</strong>"))
@@ -916,11 +950,11 @@ function render_powerflow_history(runs, output_root::AbstractString; active_run 
     status_badge = "<span class=\"status-badge $(webui_status_class(run))\">$(_webui_escape(status))</span>"
     delete_form = "<form method=\"post\" action=\"/powerflow/delete/$(_webui_urlencode(run_id))\" class=\"delete-run-form\"><button type=\"submit\" class=\"danger-button\">Delete</button></form>"
     abort_form = lowercase(status) in ("queued", "running") ? "<form method=\"post\" action=\"/powerflow/abort/$(_webui_urlencode(run_id))\"><button type=\"submit\" class=\"danger-button\">Abort</button></form>" : ""
-    fields = (_webui_run_timestamp(run), link, status_badge, available, get(run, "iterations", ""), get(run, "final_mismatch", ""), get(run, "casefile", ""), get(run, "config_file", ""))
+    fields = (_webui_run_timestamp(run), link, status_badge, available, get(run, "solver", "rectangular"), get(run, "iterations", ""), get(run, "final_mismatch", ""), get(run, "casefile", ""), get(run, "config_file", ""))
     cells = "<td>$(_webui_escape(fields[1]))</td><td>$(fields[2])</td><td>$(fields[3])</td>" * join(("<td>$(_webui_escape(field))</td>" for field in fields[4:end]), "")
     "<tr>$(cells)<td>$(abort_form)$(delete_form)</td></tr>"
   end for run in ordered_runs), "")
-  content = "$(_webui_active_run_banner(active_run))<section class=\"panel history-actions\"><p><strong>Output root:</strong> <code>$(_webui_escape(output_root))</code></p><div class=\"actions\"><form method=\"post\" action=\"/powerflow/refresh\"><button type=\"submit\">Refresh registry</button></form><form method=\"post\" action=\"/powerflow/delete_all\"><button type=\"submit\" class=\"danger-button\">Delete all runs</button></form></div></section>\n<section class=\"panel\"><table><thead><tr><th>Date/Time</th><th>Run ID</th><th>Status</th><th>Available</th><th>Iterations</th><th>Final mismatch</th><th>Case file</th><th>Config file</th><th>Delete</th></tr></thead><tbody>$(rows)</tbody></table></section>"
+  content = "$(_webui_active_run_banner(active_run))<section class=\"panel history-actions\"><p><strong>Output root:</strong> <code>$(_webui_escape(output_root))</code></p><div class=\"actions\"><form method=\"post\" action=\"/powerflow/refresh\"><button type=\"submit\">Refresh registry</button></form><form method=\"post\" action=\"/powerflow/delete_all\"><button type=\"submit\" class=\"danger-button\">Delete all runs</button></form></div></section>\n<section class=\"panel\"><table><thead><tr><th>Date/Time</th><th>Run ID</th><th>Status</th><th>Available</th><th>Solver</th><th>Iterations</th><th>Final mismatch</th><th>Case file</th><th>Config file</th><th>Delete</th></tr></thead><tbody>$(rows)</tbody></table></section>"
   return _webui_layout("Run history", content; show_back = true)
 end
 

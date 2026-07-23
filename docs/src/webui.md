@@ -164,8 +164,10 @@ The start page accepts:
 - PowerFlow tolerance and maximum iterations;
 - autodamping and its minimum factor;
 - Q-limit handling;
-- solver selection (Newton-Raphson (rectangular) or APSLF (AnalyticLoadFlow)),
-  with conditional, indented sub-options for the chosen solver;
+- a **Berechnungsmodell** (calculation model) choice between AC (Newton-Raphson,
+  rectangular) and DC (linear screening model), plus, for the AC model, solver
+  selection (Newton-Raphson (rectangular) or APSLF (AnalyticLoadFlow)) with
+  conditional, indented sub-options for the chosen solver;
 - wrong-branch detection mode;
 - angle and voltage start modes;
 - current-iteration pre-solve fields in the collapsible **Advanced start
@@ -229,8 +231,35 @@ the server process; if it is not installed, the run fails immediately with a
 clear pre-solve error instead of a silent fallback to the rectangular solver.
 Result and status pages reuse the existing summary, timing-card, artifact, and
 history views unchanged; the run status header additionally shows a
-**Solver** entry (`rectangular` or `apslf`) identifying which solver actually
-produced the result.
+**Solver** entry (`rectangular`, `apslf`, or `dc`) identifying which solver
+actually produced the result.
+
+### DC power flow mode
+
+The **Berechnungsmodell** radio group above the Solver dropdown chooses
+between the AC rectangular Newton-Raphson family (default, includes the
+Solver dropdown's `rectangular`/`apslf` choice) and the standalone DC power
+flow. Selecting DC does not add a new configuration key: it drives the same
+`power_flow.solver` override as the Solver dropdown (forcing it to `dc`) and
+is documented together with `power_flow.solver` in
+[`powerflow_configuration.md`](powerflow_configuration.md#solver-selection-dc-power-flow).
+Selecting DC hides and disables the Solver dropdown itself along with every
+AC-only option that has no DC meaning: tolerance, autodamping/merit/trust-region
+step control, Q-limit handling, maximum iterations, wrong-branch detection,
+start angle/voltage mode, the current-iteration pre-solve block, and the
+transformer tap-changer model. These fields are not silently ignored — they
+are removed from the submitted form entirely by disabling their inputs before
+serialization, the same client-side mechanism already used to hide
+Newton-Raphson-only fields when APSLF is selected.
+
+A DC run reuses the existing asynchronous job, abort, status, history, and
+artifact machinery unchanged; only the request's `power_flow.solver` override
+differs. The result page marks a DC run with a **DC solution** badge next to
+the **Solver** summary entry, and the run history table's **Solver** column
+shows `dc` for these runs, so a DC run's implicit `Vm = 1.0 pu` and lossless
+branch flows are never mistaken for an AC result. `iterations` is reported
+as-is from the DC solve (always `1`, a direct linear solve, not a Newton
+iteration count).
 
 ### Case-specific settings profiles
 

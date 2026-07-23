@@ -45,6 +45,22 @@
   populates — not a crash, just an unpopulated diagnostics artifact; a
   future iteration may give DC its own per-island diagnostics writer. See
   `examples/exp_dc_powerflow.jl`.
+* **DC power flow in the Web UI**: the PowerFlow form gains a
+  **Berechnungsmodell** (calculation model) radio group — AC (Newton-Raphson,
+  rectangular), the unchanged default, versus DC (linear screening model) —
+  above the existing Solver dropdown. Choosing DC drives the same
+  `power_flow.solver` override already accepted by `run_sparlectra_api`/
+  `start_powerflow_run` (no new service-layer code was needed: the DC solver
+  path already existed end to end) and hides/disables every AC-only option
+  that has no DC meaning (tolerance, autodamping/merit/trust-region, Q-limit
+  handling, maximum iterations, wrong-branch detection, start angle/voltage
+  mode, the current-iteration pre-solve block, transformer tap-changer
+  model), mirroring the existing Newton-Raphson-vs-APSLF field-hiding
+  mechanism. DC runs use the unchanged asynchronous job/abort/history/artifact
+  machinery; the result page marks them with a **DC solution** badge, and the
+  run history table gained a **Solver** column. AC default behavior
+  (no mode submitted, or an explicit `rectangular`/`apslf` selection) is
+  unchanged.
 
 ## Improvements
 * Web UI warm-up (`warmup = true`) now waits `warmup_delay_seconds` (default

@@ -1547,6 +1547,7 @@ settings:
         "power_flow_autodamp_min" => "power_flow.autodamp_min",
         "power_flow_qlimits_enabled" => "power_flow.qlimits.enabled",
         "power_flow_qlimits_enforcement_mode" => "power_flow.qlimits.enforcement_mode",
+        "power_flow_calc_mode" => "power_flow.calc_mode",
         "power_flow_solver" => "power_flow.solver",
         "power_flow_apslf_order" => "power_flow.apslf.order",
         "power_flow_apslf_use_pade" => "power_flow.apslf.use_pade",
@@ -1663,9 +1664,9 @@ settings:
       @test occursin("name=\"power_flow_merit_enabled\" type=\"hidden\" value=\"false\"", form_html)
       @test occursin("name=\"power_flow_merit_fallback_max_mismatch\" type=\"hidden\" value=\"false\"", form_html)
       @test occursin("scale_p</code>/<code>scale_q</code>/<code>scale_v", form_html)
-      @test occursin("<fieldset class=\"span-2 step-control-options\" data-step-control-group=\"autodamp\">", form_html)
+      @test occursin("<fieldset class=\"span-2 step-control-options\" data-step-control-group=\"autodamp\" data-ac-only-field>", form_html)
       @test occursin("<legend>Autodamping &amp; merit-function line search</legend>", form_html)
-      @test occursin("<fieldset class=\"span-2 step-control-options\" data-step-control-group=\"trust_region\">", form_html)
+      @test occursin("<fieldset class=\"span-2 step-control-options\" data-step-control-group=\"trust_region\" data-ac-only-field>", form_html)
       @test occursin("<legend>Trust-region step control</legend>", form_html)
       @test findfirst("data-step-control-group=\"autodamp\"", form_html) < findfirst("<summary>Merit-function line search</summary>", form_html)
       @test findfirst("<summary>Merit-function line search</summary>", form_html) < findfirst("data-step-control-group=\"trust_region\"", form_html)
@@ -1683,11 +1684,12 @@ settings:
       @test occursin("const updateStepControlOptions = function (changedToggle)", form_html)
       @test occursin("autodampToggle.checked = false", form_html)
       @test occursin("trustRegionToggle.checked = false", form_html)
-      @test occursin("<fieldset class=\"span-2 step-control-options\">\n<legend>Q-limit handling</legend>", form_html)
+      @test occursin("<fieldset class=\"span-2 step-control-options\" data-ac-only-field>\n<legend>Q-limit handling</legend>", form_html)
       @test findfirst("data-step-control-group=\"trust_region\"", form_html) < findfirst("<legend>Q-limit handling</legend>", form_html)
-      # APSLF-as-solver ignores NR-only options (autodamp/merit/trust-region, wrong-branch detection,
-      # start_mode.angle_mode/voltage_mode, start_current_iteration.*, qlimits.enforcement_mode, max_iter);
-      # these must be marked so client-side JS can disable/hide them when power_flow_solver=apslf is selected.
+      # APSLF-as-solver and DC-as-calc-mode both ignore NR-only options (autodamp/merit/trust-region,
+      # wrong-branch detection, start_mode.angle_mode/voltage_mode, start_current_iteration.*,
+      # qlimits.enforcement_mode, max_iter); these must be marked so client-side JS can disable/hide
+      # them when power_flow_solver=apslf or the DC calculation model is selected.
       @test count("data-nr-only-field", form_html) == 7
       @test occursin("<label data-nr-only-field><span class=\"field-label\">Maximum iterations ", form_html)
       @test occursin("<label data-nr-only-field><span class=\"field-label\">Q-limit enforcement mode ", form_html)
@@ -1696,11 +1698,24 @@ settings:
       @test occursin("<label data-nr-only-field><span class=\"field-label\">Start voltage mode ", form_html)
       @test occursin("<fieldset class=\"start-current-iteration-options advanced-start-values\" data-nr-only-field>", form_html)
       @test occursin("const nrOnlyFields = document.querySelectorAll('[data-nr-only-field]')", form_html)
-      @test occursin("const isApslf = solverSelect !== null && solverSelect.value === 'apslf'", form_html)
-      @test occursin("autodampGroup.hidden = isApslf", form_html)
-      @test occursin("trustRegionGroup.hidden = isApslf", form_html)
-      @test occursin("container.hidden = isApslf", form_html)
-      @test occursin("control.disabled = isApslf", form_html)
+      @test occursin("const isApslf = !dc && solverSelect !== null && solverSelect.value === 'apslf'", form_html)
+      @test occursin("const hideNrOnly = isApslf || dc", form_html)
+      @test occursin("autodampGroup.hidden = hideNrOnly", form_html)
+      @test occursin("trustRegionGroup.hidden = hideNrOnly", form_html)
+      @test occursin("container.hidden = hideNrOnly", form_html)
+      @test occursin("control.disabled = hideNrOnly", form_html)
+      # DC additionally hides/disables AC-only fields with no DC meaning at all (tolerance,
+      # Q-limit handling, the solver dropdown itself, APSLF start values, tap-changer model).
+      @test occursin("const acOnlyFields = document.querySelectorAll('[data-ac-only-field]')", form_html)
+      @test occursin("const updateCalcMode = function ()", form_html)
+      for field in (
+        "<label data-ac-only-field><span class=\"field-label\">Tolerance ",
+        "<label data-ac-only-field><span class=\"field-label\">Solver ",
+        "<label data-ac-only-field><span class=\"field-label\">Tap-changer model ",
+      )
+        @test occursin(field, form_html)
+      end
+      @test occursin("<fieldset id=\"apslf-start-options\" class=\"span-2 apslf-start-options\" data-apslf-start-options data-ac-only-field>", form_html)
       @test occursin("name=\"detailed_result_csv\" type=\"checkbox\" value=\"true\" checked", form_html)
       @test occursin("class=\"span-2 detailed-csv-options\"", form_html)
       @test occursin("name=\"detailed_result_csv_format\"", form_html)
@@ -2362,6 +2377,109 @@ result = get_powerflow_result(run_id)
       close(heartbeat_server)
       @test timedwait(() -> istaskdone(heartbeat_server.task), 2.0) == :ok
       @test !isopen(heartbeat_server.listener)
+    end
+
+    @testset "DC power flow mode" begin
+      mktempdir() do dc_tmpdir
+        dc_casefile = _write_webui_test_case(joinpath(dc_tmpdir, "case_webui_dc.m"))
+        dc_config_file = joinpath(dc_tmpdir, "config_template.yaml")
+        cp(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, dc_config_file)
+        dc_output_root = joinpath(dc_tmpdir, "runs")
+
+        # (2a) Rendered form contains the DC selection, with AC selected by default.
+        rendered_form = String(
+          Sparlectra.route_sparlectra_webui(
+            "GET",
+            "/powerflow?casefile=$(Sparlectra._webui_urlencode(dc_casefile))&config_file=$(Sparlectra._webui_urlencode(dc_config_file))";
+            output_root = dc_output_root,
+          ).body,
+        )
+        @test occursin("<input type=\"radio\" name=\"power_flow_calc_mode\" value=\"ac\" data-calc-mode-radio checked>", rendered_form)
+        @test occursin("<input type=\"radio\" name=\"power_flow_calc_mode\" value=\"dc\" data-calc-mode-radio>", rendered_form)
+        @test !occursin("<input type=\"radio\" name=\"power_flow_calc_mode\" value=\"dc\" data-calc-mode-radio checked>", rendered_form)
+        @test occursin("DC (lineares Screening-Modell)", rendered_form)
+        @test occursin("Berechnungsmodell", rendered_form)
+        @test occursin("data-ac-only-field", rendered_form)
+        @test occursin("<option value=\"dc\">DC (lineares Screening-Modell)</option>", rendered_form)
+
+        # (2b) POST with DC mode terminates successfully; result.json carries the DC flag.
+        dc_form = _webui_test_form(dc_casefile, dc_config_file, dc_output_root)
+        dc_form["power_flow_calc_mode"] = "dc"
+        dc_form["power_flow_solver"] = "dc"
+        dc_form["detailed_result_csv_format"] = "technical"
+        dc_response = Sparlectra.route_sparlectra_webui("POST", "/powerflow/run", dc_form; output_root = dc_output_root)
+        @test dc_response.status == 303
+        dc_run_id = basename(only(header.second for header in dc_response.headers if header.first == "Location"))
+        wait(Sparlectra._POWERFLOW_WEBUI_JOBS[dc_run_id]["task"])
+        dc_result = get_powerflow_result(dc_run_id)
+        @test dc_result["success"]
+        dc_result_json = Sparlectra._parse_service_json(read(joinpath(dc_result["output_dir"], "result.json"), String))
+        @test dc_result_json["final_outcome"]["solver"] == "dc"
+
+        # (2c) Result page marks the DC run distinctly.
+        dc_result_response = Sparlectra.handle_powerflow_result(dc_run_id)
+        @test dc_result_response.status == 200
+        dc_result_html = String(dc_result_response.body)
+        @test occursin("DC solution", dc_result_html)
+        @test occursin("status-info", dc_result_html)
+        @test occursin("<code>dc</code>", dc_result_html)
+
+        # (2d) Artifact listing of the DC run is not empty; result.json downloads with status 200.
+        dc_artifacts = list_powerflow_artifacts(dc_run_id)
+        @test !isempty(dc_artifacts)
+        @test any(artifact -> artifact["name"] == "result.json", dc_artifacts)
+        @test any(artifact -> artifact["name"] == "bus_voltages_complex.csv", dc_artifacts)
+        @test Sparlectra.route_sparlectra_webui("GET", "/powerflow/artifact/$(dc_run_id)/result.json?download=1"; output_root = dc_output_root).status == 200
+
+        # (2e) Regression: no calc-mode/solver field, and an explicit AC selection, still
+        # produce the unchanged AC report (no "dc" solver in final_outcome).
+        ac_implicit_form = _webui_test_form(dc_casefile, dc_config_file, dc_output_root)
+        ac_implicit_response = Sparlectra.route_sparlectra_webui("POST", "/powerflow/run", ac_implicit_form; output_root = dc_output_root)
+        @test ac_implicit_response.status == 303
+        ac_implicit_run_id = basename(only(header.second for header in ac_implicit_response.headers if header.first == "Location"))
+        wait(Sparlectra._POWERFLOW_WEBUI_JOBS[ac_implicit_run_id]["task"])
+        ac_implicit_result = get_powerflow_result(ac_implicit_run_id)
+        @test ac_implicit_result["success"]
+        ac_implicit_json = Sparlectra._parse_service_json(read(joinpath(ac_implicit_result["output_dir"], "result.json"), String))
+        @test ac_implicit_json["final_outcome"]["solver"] == "rectangular"
+
+        ac_explicit_form = _webui_test_form(dc_casefile, dc_config_file, dc_output_root)
+        ac_explicit_form["power_flow_calc_mode"] = "ac"
+        ac_explicit_form["power_flow_solver"] = "rectangular"
+        ac_explicit_response = Sparlectra.route_sparlectra_webui("POST", "/powerflow/run", ac_explicit_form; output_root = dc_output_root)
+        @test ac_explicit_response.status == 303
+        ac_explicit_run_id = basename(only(header.second for header in ac_explicit_response.headers if header.first == "Location"))
+        wait(Sparlectra._POWERFLOW_WEBUI_JOBS[ac_explicit_run_id]["task"])
+        ac_explicit_result = get_powerflow_result(ac_explicit_run_id)
+        @test ac_explicit_result["success"]
+        ac_explicit_json = Sparlectra._parse_service_json(read(joinpath(ac_explicit_result["output_dir"], "result.json"), String))
+        @test ac_explicit_json["final_outcome"]["solver"] == "rectangular"
+        @test ac_implicit_json["final_outcome"]["converged"] == ac_explicit_json["final_outcome"]["converged"]
+        @test ac_implicit_json["final_outcome"]["iterations"] == ac_explicit_json["final_outcome"]["iterations"]
+
+        # History row shows the calculation mode for the DC run, unchanged status columns otherwise.
+        dc_runs = Sparlectra.list_powerflow_runs(dc_output_root)
+        dc_history_html = Sparlectra.render_powerflow_history(dc_runs, dc_output_root)
+        @test occursin("<th>Solver</th>", dc_history_html)
+        @test occursin("<td>dc</td>", dc_history_html)
+        @test occursin("<td>rectangular</td>", dc_history_html)
+
+        # (3) Plausibility: the WebUI DC run's bus angles match a direct rundcpf! call on the
+        # same case, proving both paths run the same solver code.
+        dc_bus_csv = read(joinpath(dc_result["output_dir"], "bus_voltages_complex.csv"), String)
+        dc_bus_rows = split(strip(dc_bus_csv), '\n')[2:end]
+        webui_va_deg = Dict{Int,Float64}()
+        for row in dc_bus_rows
+          fields = split(row, ',')
+          webui_va_deg[parse(Int, fields[1])] = parse(Float64, fields[5])
+        end
+        mpc = Sparlectra.MatpowerIO.read_case(dc_casefile)
+        direct_net = Sparlectra.createNetFromMatPowerCase(mpc = mpc, flatstart = true)
+        direct_report = rundcpf!(direct_net)
+        for row in direct_report.nodes
+          @test isapprox(webui_va_deg[row.bus], row.va_deg; atol = 1e-8)
+        end
+      end
     end
   end
   return nothing

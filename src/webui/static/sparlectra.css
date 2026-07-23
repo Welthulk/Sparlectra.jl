@@ -827,6 +827,11 @@ nav {
   color: #1557a5;
 }
 
+.status-info {
+  background: #dcecff;
+  color: #1557a5;
+}
+
 .shutdown-message {
   max-width: 40rem;
   margin: 4rem auto;
