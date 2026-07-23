@@ -69,7 +69,6 @@ const WEBUI_HELP_TOPICS = Dict(
   "benchmark.samples" => (label = "Benchmark samples (max. repeated measurements)", page = "performance_profiling", heading = "Benchmark configuration", selector = "`benchmark.samples`"),
   "benchmark.seconds" => (label = "Benchmark max. time budget [s]", page = "performance_profiling", heading = "Benchmark configuration", selector = "`benchmark.seconds`"),
   "webui.performance_timing" => (label = "Performance timing", page = "webui", heading = "Run artifacts and output modes", selector = ""),
-  "webui.run_diagnostics" => (label = "Run diagnostics", page = "webui", heading = "Run artifacts and output modes", selector = ""),
   "webui.detailed_result_csv" => (label = "Detailed result CSV export", page = "webui", heading = "Run artifacts and output modes", selector = ""),
   "webui.detailed_result_csv_format" => (label = "Detailed CSV format", page = "webui", heading = "Run artifacts and output modes", selector = ""),
 )
@@ -130,7 +129,6 @@ const WEBUI_FORM_HELP_TOPICS = Dict(
   "benchmark_samples" => "benchmark.samples",
   "benchmark_seconds" => "benchmark.seconds",
   "performance_timing" => "webui.performance_timing",
-  "run_diagnostics" => "webui.run_diagnostics",
   "detailed_result_csv" => "webui.detailed_result_csv",
   "detailed_result_csv_format" => "webui.detailed_result_csv_format",
 )
@@ -264,6 +262,7 @@ const WEBUI_DOC_PAGES = Dict(
   "matpower_format" => (title = "MATPOWER format", file = "matpower_format.md"),
   "dtf_format" => (title = "DTF legacy input format", file = "dtf_format.md"),
   "matpower_import" => (title = "MATPOWER Import", file = "matpower_import.md"),
+  "matpower_case_matrix" => (title = "MATPOWER Case Diagnostics Matrix", file = "sparlectra_matpower_case_matrix.md"),
   "webui" => (title = "Local PowerFlow Web UI", file = "webui.md"),
   "feature_matrix" => (title = "Feature Matrix", file = "feature_matrix.md"),
 )

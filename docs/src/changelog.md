@@ -1,3 +1,68 @@
+# Version 0.8.15 — 2026-07-24
+
+## Features
+* **Diagnostic report + fixed-reference self-check**: `diagnose.log`
+  (`run_diagnostics = true`) is now a diagnostic report instead of a flat
+  key/value dump — a "Diagnosis" section names the worst-mismatch bus and
+  equation, classifies the mismatch-history trend (monotonic / oscillatory /
+  stagnant / diverging to non-finite) and autodamp health, scans the branches
+  incident to the worst bus for modeling anomalies (zero impedance,
+  off-nominal tap ratio, large phase shift, unusually low X/R), and closes
+  with a "Recommendations" section. New `run_fixed_reference_self_check`
+  evaluates the mismatch at a case's own stored MATPOWER `VM`/`VA` with no
+  corrective Newton step, to tell apart an imported-network-model issue from
+  a solver start/step-control issue. The Web UI PowerFlow form has a
+  dedicated "Diagnose" action next to "Start PowerFlow run" that runs this
+  self-check and writes the same enriched `diagnose.log`.
+
+## Improvements
+* Web UI warm-up (`warmup = true`) now waits `warmup_delay_seconds` (default
+  2.0s) before starting the hidden warm-up solve, so the browser gets a
+  chance to load the initial page first. On Julia's single-threaded
+  cooperative scheduler, a CPU-bound warm-up task starting immediately could
+  delay the first HTTP response and make the Web UI look unresponsive.
+* Web UI PowerFlow form: "Advanced start values" and "Advanced / expert
+  options" are merged into one "Advanced options" section; all fields remain
+  individually saved/loaded per case.
+* Web UI: removed the "Run diagnostics" checkbox from a normal "Start
+  PowerFlow run" — it now never writes `diagnose.log`. The dedicated
+  "Diagnose" action is the one way to get a diagnostic report from the Web
+  UI; `run_diagnostics = true` remains available programmatically via
+  `run_sparlectra_api`/`start_powerflow_run`.
+* New `webui.show_case_settings_notice` config option (default `true`)
+  suppresses the "Case-specific settings loaded from ..." notice on the Web
+  UI PowerFlow form once a case's saved profile is familiar.
+* `start_sparlectra_webui`'s `EADDRINUSE` startup failure now explains the
+  likely cause (a Web UI already running in the same Julia session, a common
+  mistake when re-running a launcher script interactively) instead of only
+  showing the raw libuv stacktrace.
+
+## Bug fixes
+* `performance.log` (`full` timing mode) misattributed the rectangular
+  solver's post-loop finalization time (voltage/injection writeback, Q-limit
+  summary, wrong-branch checks, mismatch diagnostics) to whichever phase
+  happened to be active on the loop's last iteration — usually
+  `q_limit_processing`, even with `power_flow.qlimits.enabled = false`, where
+  that phase does essentially no work. A missing phase-boundary marker at the
+  end of the Newton loop caused the mislabeling; a `solver_finalization`
+  phase now correctly reports that time.
+* `performance.log`'s "Available internal performance profile" section could
+  dump a single-line, multi-thousand-character raw representation of
+  per-island diagnostics/status data already duplicated in
+  `ac_island_<id>_solver.log`, making the file difficult to open in some text
+  editors on larger multi-island cases. Large or duplicated values are now
+  replaced with a short summary line; internal callback closures are omitted
+  entirely.
+* `run_diagnostics = true` silently produced no `diagnose.log` at all for
+  runs that fail before a solved network/result is available — e.g.
+  `run_sparlectra` throwing for an AC-island failure with a non-finite
+  mismatch before the first Newton iteration (`stage=before_nr`), or an
+  unsupported MATPOWER DC-line convention. These failures return early via
+  `_api_execution_failure`, bypassing the normal `_write_powerflow_diagnostics`
+  call site entirely. A best-effort `diagnose.log` (reason, failure message,
+  and a pointer to per-island logs/`run_fixed_reference_self_check`) is now
+  written for these cases too.
+
 # Version 0.8.14 — 2026-07-22
 
 ## Comment

@@ -20,6 +20,8 @@ This page summarizes the most relevant runnable examples in `examples/`.
   Demonstrates enabling the guarded current-iteration start pre-solve through normal API configuration overrides and prints its metadata/artifact status.
 - `exp_powerflow_service.jl`
   Starts a local service run, looks up its serialized result by run ID, and lists its artifacts without an HTTP server.
+- `exp_diagnose_self_check.jl`
+  Runs `run_fixed_reference_self_check` on a case with a deliberately mis-scaled branch reactance and prints the resulting narrative `diagnose.log` report (worst-mismatch bus, mismatch trend, branch-anomaly scan, recommendations).
 
 ## Transformer and tap control
 

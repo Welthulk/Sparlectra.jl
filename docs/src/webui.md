@@ -327,12 +327,37 @@ configuration, case loading/network construction/solve, postprocessing when
 separately available, artifact writing, solver time, and total time. `full`
 also includes available internal profile entries.
 
-The **Run diagnostics** checkbox writes `diagnose.log` after the PowerFlow
-result is available. It reuses the existing Q-limit event, PV-limit, and final
-limit-validation printers. A diagnostic exception is contained and recorded in
-that file without changing a successful PowerFlow result. Older run directories
-can still contain `diagnose.txt`; the artifact viewer continues to list and
-download that legacy filename.
+A normal **Start PowerFlow run** never writes `diagnose.log` — use the
+**Diagnose** action below for that. When it is written (by Diagnose, or
+programmatically via `run_diagnostics = true`), it is a diagnostic report
+rather than a flat key/value dump on a run that did not converge: a
+"Diagnosis" section names the worst-mismatch bus/equation and classifies the
+mismatch-history trend (monotonic / oscillatory / stagnant / diverging to
+non-finite) and autodamp health, a "Branch anomalies at worst-mismatch bus"
+section scans the branches incident to that bus for zero impedance,
+off-nominal transformer tap ratios, large phase shifts, or a reactance far
+outside the range of the other branches at the same bus, and a
+"Recommendations" section closes with concrete next steps. It also reuses the
+existing Q-limit event, PV-limit, and final limit-validation printers. A
+diagnostic exception is contained and recorded in that file without changing
+a successful PowerFlow result. Older run directories can still contain
+`diagnose.txt`; the artifact viewer continues to list and download that
+legacy filename.
+
+### Diagnose action
+
+The **Diagnose** button next to **Start PowerFlow run** runs the selected
+case through a fixed-reference self-check instead of a normal solve: it
+evaluates the mismatch at the case's own stored MATPOWER `VM`/`VA` with no
+corrective Newton step (`power_flow.start_mode.angle_mode = matpower_va`,
+`voltage_mode = all_bus_vm`, `start_projection = false`, `max_iter = 1`,
+`qlimits.enabled = false`), so the reported residual reflects the imported
+network model itself rather than the solver's start guess or step control. It
+runs through the same result pipeline as a normal run (same run history,
+artifact viewer, and enriched `diagnose.log`); the merged self-check
+configuration is written alongside the other artifacts as
+`diagnose_self_check_config.yaml` for inspection. Programmatically, the same
+behavior is available as [`run_fixed_reference_self_check`](@ref).
 
 The **Export detailed result CSV files** checkbox is off by default because
 large networks can produce large files. When enabled for a successful run, it

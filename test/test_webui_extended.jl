@@ -121,7 +121,6 @@ function _webui_test_form(casefile, config_file, output_root)
     "matpower_export_write_solution" => "true",
     "output_logfile_results" => "compact",
     "performance_timing" => "compact",
-    "run_diagnostics" => "on",
     "detailed_result_csv" => "on",
     "detailed_result_csv_format" => "excel_de",
     "benchmark_enabled" => "false",
@@ -144,6 +143,29 @@ function run_webui_extended_tests()
     @test isdefined(Sparlectra, :start_sparlectra_webui)
     @test isdefined(Sparlectra, :default_webui_output_root)
     @test_throws ArgumentError start_sparlectra_webui(host = "0.0.0.0")
+    let
+      busy_listener = listen(ip"127.0.0.1", UInt16(0))
+      busy_port = Int(getsockname(busy_listener)[2])
+      try
+        eaddrinuse_io = IOBuffer()
+        err = nothing
+        try
+          redirect_stderr(devnull) do
+            start_sparlectra_webui(port = busy_port, output_root = mktempdir(), _lifecycle_io = eaddrinuse_io)
+          end
+        catch caught
+          err = caught
+        end
+        @test err isa ArgumentError
+        @test occursin("already in use", err.msg)
+        @test occursin("start_sparlectra_webui() earlier in this Julia session", err.msg)
+        @test occursin("close(server)", err.msg)
+        @test occursin("port=", err.msg)
+        @test occursin("already in use", String(take!(eaddrinuse_io)))
+      finally
+        close(busy_listener)
+      end
+    end
     default_root = default_webui_output_root()
     @test isabspath(default_root)
     @test !startswith(normpath(default_root), normpath(pkgdir(Sparlectra)))
@@ -179,7 +201,7 @@ function run_webui_extended_tests()
       @test occursin("Refresh configuration", page)
       @test occursin("Configuration notice:", page)
       @test occursin("#configuration-maintenance", page)
-      @test findfirst("Configuration maintenance", page) > findfirst("Advanced / expert options", page)
+      @test findfirst("Configuration maintenance", page) > findfirst("Advanced options", page)
       @test findfirst("Configuration maintenance", page) > findfirst("Existing case file", page)
       @test read(config_path, String) == before_page_text
 
@@ -381,6 +403,55 @@ function run_webui_extended_tests()
       _webui_assert_selected(loaded_form, "power_flow_qlimits_enforcement_mode", "active_set")
       _webui_assert_selected(loaded_form, "detailed_result_csv_format", "excel_de")
 
+      notice_off_root = mktempdir()
+      notice_off_config = joinpath(notice_off_root, "configuration.yaml")
+      write(notice_off_config, "webui:\n  show_case_settings_notice: false\n")
+      @test Sparlectra.SparlectraConfig(Sparlectra.load_yaml_dict(notice_off_config)).webui.show_case_settings_notice === false
+      @test Sparlectra.SparlectraConfig(Dict()).webui.show_case_settings_notice === true
+      @test Sparlectra._powerflow_show_case_settings_notice(notice_off_config) === false
+      @test Sparlectra._powerflow_show_case_settings_notice("") === true
+      @test Sparlectra._powerflow_show_case_settings_notice(joinpath(notice_off_root, "does_not_exist.yaml")) === true
+      notice_off_case = joinpath(notice_off_root, "case145.m")
+      write(notice_off_case, "% case fixture\n")
+      write(Sparlectra._webui_case_settings_path(notice_off_root, notice_off_case), """
+profile_kind: webui_case_settings
+schema_version: 1
+settings:
+  power_flow_tol: 1.0e-7
+""")
+      notice_off_form = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow?casefile=$(Sparlectra._webui_urlencode(notice_off_case))&config_file=$(Sparlectra._webui_urlencode(notice_off_config))"; output_root = notice_off_root).body)
+      @test !occursin("Case-specific settings loaded from", notice_off_form)
+      @test occursin("power_flow_tol", notice_off_form) # form itself still prefilled from the profile
+
+      dismiss_root = mktempdir()
+      dismiss_config = joinpath(dismiss_root, "configuration.yaml")
+      write(dismiss_config, "power_flow:\n  tol: 1.0e-6\n")
+      dismiss_case = joinpath(dismiss_root, "case14.m")
+      write(dismiss_case, "% case fixture\n")
+      write(Sparlectra._webui_case_settings_path(dismiss_root, dismiss_case), """
+profile_kind: webui_case_settings
+schema_version: 1
+settings:
+  power_flow_tol: 1.0e-7
+""")
+      before_dismiss_form = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow?casefile=$(Sparlectra._webui_urlencode(dismiss_case))&config_file=$(Sparlectra._webui_urlencode(dismiss_config))"; output_root = dismiss_root).body)
+      @test occursin("Case-specific settings loaded from", before_dismiss_form)
+      @test occursin("action=\"/powerflow/config/dismiss-case-settings-notice\"", before_dismiss_form)
+      @test occursin("name=\"config_file\" value=\"$(Sparlectra._webui_escape(dismiss_config))\"", before_dismiss_form)
+      @test occursin("class=\"link-button\"", before_dismiss_form)
+      dismiss_response = Sparlectra.route_sparlectra_webui("POST", "/powerflow/config/dismiss-case-settings-notice", Dict{String,String}("config_file" => dismiss_config, "casefile" => dismiss_case); output_root = dismiss_root)
+      @test dismiss_response.status == 303
+      @test Dict(dismiss_response.headers)["Location"] == "/powerflow?casefile=$(Sparlectra._webui_urlencode(dismiss_case))"
+      dismiss_config_text = read(dismiss_config, String)
+      @test occursin("show_case_settings_notice: false", dismiss_config_text)
+      @test occursin("tol: 1.0e-6", dismiss_config_text) # unrelated existing settings preserved
+      after_dismiss_form = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow?casefile=$(Sparlectra._webui_urlencode(dismiss_case))&config_file=$(Sparlectra._webui_urlencode(dismiss_config))"; output_root = dismiss_root).body)
+      @test !occursin("Case-specific settings loaded from", after_dismiss_form)
+      missing_config_dismiss = Sparlectra.route_sparlectra_webui("POST", "/powerflow/config/dismiss-case-settings-notice", Dict{String,String}("config_file" => joinpath(dismiss_root, "does_not_exist.yaml"), "casefile" => dismiss_case); output_root = dismiss_root)
+      @test missing_config_dismiss.status == 400
+      empty_config_dismiss = Sparlectra.route_sparlectra_webui("POST", "/powerflow/config/dismiss-case-settings-notice", Dict{String,String}("casefile" => dismiss_case); output_root = dismiss_root)
+      @test empty_config_dismiss.status == 400
+
       case118 = joinpath(root, "case118.m")
       write(case118, "% case fixture\n")
       write(Sparlectra._webui_case_settings_path(root, case118), """
@@ -410,7 +481,6 @@ settings:
   power_flow_start_voltage_mode: classic
   power_flow_tol: 1.0e-8
   power_flow_wrong_branch_detection: off
-  run_diagnostics: false
 """)
       case118_form = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow?casefile=$(Sparlectra._webui_urlencode(case118))"; output_root = root).body)
       @test occursin("Case-specific settings loaded from", case118_form)
@@ -418,7 +488,6 @@ settings:
       _webui_assert_checked(case118_form, "power_flow_autodamp", false)
       _webui_assert_checked(case118_form, "power_flow_qlimits_enabled", false)
       _webui_assert_checked(case118_form, "benchmark_enabled", false)
-      _webui_assert_checked(case118_form, "run_diagnostics", false)
       _webui_assert_checked(case118_form, "detailed_result_csv", false)
       _webui_assert_value(case118_form, "power_flow_tol", "1.0e-8")
       _webui_assert_value(case118_form, "power_flow_max_iter", "80")
@@ -458,7 +527,6 @@ settings:
       _webui_assert_checked(case14_form, "power_flow_autodamp", true)
       _webui_assert_checked(case14_form, "power_flow_qlimits_enabled", true)
       _webui_assert_checked(case14_form, "benchmark_enabled", true)
-      _webui_assert_checked(case14_form, "run_diagnostics", false)
       _webui_assert_value(case14_form, "power_flow_tol", "1.0e-5")
       _webui_assert_value(case14_form, "power_flow_max_iter", "80")
       _webui_assert_selected(case14_form, "power_flow_start_angle_mode", "dc")
@@ -1317,6 +1385,16 @@ settings:
       @test Sparlectra.powerflow_webui_request(csv_disabled_form; default_output_root = output_root)["detailed_result_csv"] === false
       delete!(csv_disabled_form, "detailed_result_csv_format")
       @test Sparlectra.powerflow_webui_request(csv_disabled_form; default_output_root = output_root)["detailed_result_csv_format"] == "excel_us"
+      @test Sparlectra.powerflow_webui_request(form; default_output_root = output_root)["diagnose_mode"] === false
+      diagnose_form = copy(form)
+      diagnose_form["diagnose_mode"] = "true"
+      @test Sparlectra.powerflow_webui_request(diagnose_form; default_output_root = output_root)["diagnose_mode"] === true
+      # A normal "Start PowerFlow run" never writes diagnose.log — there is no
+      # "Run diagnostics" checkbox; only diagnose_mode forces it server-side.
+      @test Sparlectra.powerflow_webui_request(form; default_output_root = output_root)["run_diagnostics"] === false
+      run_diagnostics_form = copy(form)
+      run_diagnostics_form["run_diagnostics"] = "on"
+      @test Sparlectra.powerflow_webui_request(run_diagnostics_form; default_output_root = output_root)["run_diagnostics"] === false
       untrusted_form = copy(form)
       untrusted_form["output_root"] = joinpath(tmpdir, "outside")
       @test Sparlectra.powerflow_webui_request(untrusted_form; default_output_root = output_root)["output_root"] == output_root
@@ -1435,9 +1513,9 @@ settings:
       @test occursin("<legend>MATPOWER import conventions</legend>", form_html)
       @test !occursin("matpower_simultaneous", form_html)
       @test !occursin("matpower_one_at_a_time", form_html)
-      @test findfirst("Advanced / expert options", form_html) < findfirst("MATPOWER import conventions", form_html)
+      @test findfirst("Advanced options", form_html) < findfirst("MATPOWER import conventions", form_html)
       @test findfirst("<details class=\"span-2 expert-section\">", form_html) < findfirst("MATPOWER import conventions", form_html)
-      @test findfirst("Advanced / expert options", form_html) < findfirst("name=\"run_diagnostics\"", form_html)
+      @test findfirst("Advanced options", form_html) < findfirst("Advanced start values", form_html)
       routed_powerflow_html = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow"; output_root = output_root).body)
       @test occursin("MATPOWER import conventions", routed_powerflow_html)
       @test occursin("name=\"matpower_import_auto_profile\"", routed_powerflow_html)
@@ -1509,7 +1587,6 @@ settings:
         "benchmark_samples" => "benchmark.samples",
         "benchmark_seconds" => "benchmark.seconds",
         "performance_timing" => "webui.performance_timing",
-        "run_diagnostics" => "webui.run_diagnostics",
         "detailed_result_csv" => "webui.detailed_result_csv",
         "detailed_result_csv_format" => "webui.detailed_result_csv_format",
       )
@@ -1537,25 +1614,30 @@ settings:
       @test occursin("id=\"powerflow-run-form\"", form_html)
       @test occursin("onsubmit=\"this.classList.add('is-submitting')", form_html)
       @test occursin("this.setAttribute('aria-busy', 'true')", form_html)
-      @test occursin("this.querySelector('button[type=submit]').disabled = true", form_html)
+      @test occursin("this.querySelectorAll('button[type=submit]').forEach(function(b){b.disabled = true;})", form_html)
       @test occursin("window.addEventListener('pageshow'", form_html)
       @test occursin("form.classList.remove('is-submitting')", form_html)
       @test occursin("form.removeAttribute('aria-busy')", form_html)
-      @test occursin("submitButton.disabled = false", form_html)
+      @test occursin("form.querySelectorAll('button[type=submit]').forEach(function (b) { b.disabled = false; })", form_html)
       @test occursin("class=\"powerflow-submit\"", form_html)
       @test occursin("class=\"submit-spinner\" aria-hidden=\"true\"", form_html)
       @test occursin("class=\"submit-progress-label\" role=\"status\" aria-live=\"polite\">Running PowerFlow…", form_html)
+      @test occursin("class=\"powerflow-submit diagnose-submit\" type=\"submit\" name=\"diagnose_mode\" value=\"true\"", form_html)
+      @test occursin("<span class=\"submit-label\">Diagnose</span>", form_html)
+      @test occursin("class=\"submit-progress-label\" role=\"status\" aria-live=\"polite\">Running diagnosis…", form_html)
 
       @test occursin("src=\"/assets/logo.png\"", form_html)
       @test occursin("alt=\"Sparlectra.jl logo\"", form_html)
       @test occursin("Sparlectra.jl v", form_html)
       @test occursin("Sparlectra.jl v$(Sparlectra.version())", form_html)
       @test occursin("name=\"performance_timing\"", form_html)
-      @test occursin("name=\"run_diagnostics\"", form_html)
+      @test !occursin("name=\"run_diagnostics\"", form_html)
       @test occursin("Advanced start values", form_html)
-      @test occursin("<details class=\"span-2 start-current-iteration-options advanced-start-values\" data-nr-only-field>", form_html)
-      @test occursin("<summary>Advanced start values</summary>", form_html)
+      @test occursin("<fieldset class=\"start-current-iteration-options advanced-start-values\" data-nr-only-field>", form_html)
+      @test occursin("<legend>Advanced start values</legend>", form_html)
       @test occursin("Enable current-iteration pre-solve", form_html)
+      @test findfirst("<details class=\"span-2 expert-section\">", form_html) < findfirst("<legend>Advanced start values</legend>", form_html)
+      @test findfirst("<legend>Advanced start values</legend>", form_html) < findfirst("<legend>MATPOWER import conventions</legend>", form_html)
       for field in (
         "power_flow_start_current_iteration_enabled",
         "power_flow_start_current_iteration_max_iter",
@@ -1612,7 +1694,7 @@ settings:
       @test occursin("<label data-nr-only-field><span class=\"field-label\">Wrong-branch detection ", form_html)
       @test occursin("<label data-nr-only-field><span class=\"field-label\">Start angle mode ", form_html)
       @test occursin("<label data-nr-only-field><span class=\"field-label\">Start voltage mode ", form_html)
-      @test occursin("<details class=\"span-2 start-current-iteration-options advanced-start-values\" data-nr-only-field>", form_html)
+      @test occursin("<fieldset class=\"start-current-iteration-options advanced-start-values\" data-nr-only-field>", form_html)
       @test occursin("const nrOnlyFields = document.querySelectorAll('[data-nr-only-field]')", form_html)
       @test occursin("const isApslf = solverSelect !== null && solverSelect.value === 'apslf'", form_html)
       @test occursin("autodampGroup.hidden = isApslf", form_html)
@@ -1675,7 +1757,6 @@ result = get_powerflow_result(run_id)
       @test occursin("\"matpower_shift_unit\":\"deg\"", operation_log_text)
       @test occursin("\"sparlectra_version\":\"$(Sparlectra.version())\"", operation_log_text)
       @test any(line -> occursin(r"\"timestamp\":\"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z\"", line), eachline(IOBuffer(operation_log_text)))
-      @test occursin("\"event\":\"diagnostics_enabled\"", operation_log_text)
       @test occursin("\"event\":\"performance_timing_enabled\"", operation_log_text)
       @test occursin("\"event\":\"detailed_result_csv_export_enabled\"", operation_log_text)
       @test occursin("\"csv_format\":\"excel_de\"", operation_log_text)
@@ -1782,10 +1863,11 @@ result = get_powerflow_result(run_id)
 
       artifacts = list_powerflow_artifacts(run_id)
       artifact_names = Set(artifact["name"] for artifact in artifacts)
-      @test Set(("result.json", "run.log", "effective_config.yaml", "run_metadata.yaml", "performance.log", "diagnose.log", "q_limit.log", "bus_voltages_complex.csv", "branch_flows.csv")) ⊆ artifact_names
+      @test Set(("result.json", "run.log", "effective_config.yaml", "run_metadata.yaml", "performance.log", "q_limit.log", "bus_voltages_complex.csv", "branch_flows.csv")) ⊆ artifact_names
+      @test !("diagnose.log" in artifact_names) # normal "Start PowerFlow run" never writes diagnose.log
       artifact_response = Sparlectra.handle_powerflow_artifacts(run_id)
       artifact_html = String(artifact_response.body)
-      for name in ("result.json", "run.log", "effective_config.yaml", "run_metadata.yaml", "performance.log", "diagnose.log", "q_limit.log", "bus_voltages_complex.csv", "branch_flows.csv")
+      for name in ("result.json", "run.log", "effective_config.yaml", "run_metadata.yaml", "performance.log", "q_limit.log", "bus_voltages_complex.csv", "branch_flows.csv")
         @test occursin(name, artifact_html)
       end
       qlimit_artifact = only(artifact for artifact in artifacts if artifact["name"] == "q_limit.log")

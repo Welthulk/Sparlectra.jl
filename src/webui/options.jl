@@ -75,7 +75,6 @@ const WEBUI_OPTION_SPECS = (
   WebUIOptionSpec("benchmark.samples", "benchmark_samples", Int, :number, 10, (), :expert, true),
   WebUIOptionSpec("benchmark.seconds", "benchmark_seconds", Float64, :number, 1.0, (), :expert, true),
   WebUIOptionSpec(nothing, "performance_timing", String, :select, "compact", _WEBUI_PERFORMANCE_TIMING_VALUES, :basic, true),
-  WebUIOptionSpec(nothing, "run_diagnostics", Bool, :checkbox, false, (), :expert, true),
   WebUIOptionSpec(nothing, "detailed_result_csv", Bool, :checkbox, true, (), :basic, true),
   WebUIOptionSpec(nothing, "detailed_result_csv_format", String, :select, "excel_us", ("technical", "excel_de", "excel_us"), :basic, true),
 )

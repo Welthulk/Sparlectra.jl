@@ -16,7 +16,7 @@ else
 end
 
 function main()
-  server = Sparlectra.start_sparlectra_webui(open_browser = true)
+  server = Sparlectra.start_sparlectra_webui(open_browser = true, warmup = true)
 
   try
     wait(server.task)

@@ -373,6 +373,13 @@ control:
   # addTapController! or addPowerTransformerControl!.
   controllers: []
 
+webui:
+  # Show the "Case-specific settings loaded from ..." notice on the Web UI
+  # PowerFlow form whenever the selected case has a saved settings profile
+  # (a .sparlectra-webui.yaml sidecar). Set to false once you know a case has
+  # saved settings and no longer want the reminder.
+  show_case_settings_notice: true
+
 extensions:
   # Reserved for future extension schemas.
   reserved: true
