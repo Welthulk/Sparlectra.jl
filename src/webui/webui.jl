@@ -389,7 +389,8 @@ end
                             open_browser=false,
                             shutdown_on_browser_close=false,
                             warmup=false, warmup_casefile=nothing,
-                            warmup_store_result=false) -> SparlectraWebUIServer
+                            warmup_store_result=false,
+                            warmup_delay_seconds=2.0) -> SparlectraWebUIServer
 
 Start the loopback-only PowerFlow interface and load its persistent run registry
 before accepting requests. The returned handle can be stopped with
@@ -401,6 +402,14 @@ solver path. By default it uses the bundled original synthetic case and a
 temporary output directory, so it does not add a run-history entry or retain
 artifacts. Set `warmup_store_result=true` to retain warm-up artifacts beneath
 the configured output root.
+
+The warm-up run is scheduled on a background task, but Julia's single-threaded
+cooperative scheduler still means a CPU-bound solve of that task can delay the
+HTTP server from responding to the *first* browser request until the solve
+reaches a yield point. `warmup_delay_seconds` (default `2.0`) waits before
+starting the warm-up solve, giving the browser time to load the initial page
+first so users see the Web UI shell rather than an unresponsive blank tab.
+Set it to `0.0` to start the warm-up immediately (the previous behavior).
 """
 function _run_sparlectra_webui_warmup(output_root::AbstractString; warmup_casefile::Union{Nothing,AbstractString} = nothing, warmup_store_result::Bool = false, runner = run_sparlectra_api)
   casefile = warmup_casefile === nothing ? joinpath(_WEBUI_PACKAGE_ROOT, "data", "webui", "warmup_case3.jl") : abspath(warmup_casefile)
@@ -447,7 +456,7 @@ function _webui_validate_startup_config(configuration::AbstractString)
   end
 end
 
-function start_sparlectra_webui(; host::AbstractString = "127.0.0.1", port::Integer = 8080, output_root::Union{Nothing,AbstractString} = nothing, config_file::Union{Nothing,AbstractString} = nothing, open_browser::Bool = false, shutdown_on_browser_close::Bool = false, auto_shutdown_on_browser_close::Union{Nothing,Bool} = nothing, browser_heartbeat_timeout_seconds::Real = 15.0, warmup::Bool = false, warmup_casefile::Union{Nothing,AbstractString} = nothing, warmup_store_result::Bool = false, _test_runner = start_powerflow_run, _lifecycle_io::IO = stdout, _browser_opener = _webui_open_browser)::SparlectraWebUIServer
+function start_sparlectra_webui(; host::AbstractString = "127.0.0.1", port::Integer = 8080, output_root::Union{Nothing,AbstractString} = nothing, config_file::Union{Nothing,AbstractString} = nothing, open_browser::Bool = false, shutdown_on_browser_close::Bool = false, auto_shutdown_on_browser_close::Union{Nothing,Bool} = nothing, browser_heartbeat_timeout_seconds::Real = 15.0, warmup::Bool = false, warmup_casefile::Union{Nothing,AbstractString} = nothing, warmup_store_result::Bool = false, warmup_delay_seconds::Real = 2.0, _test_runner = start_powerflow_run, _lifecycle_io::IO = stdout, _browser_opener = _webui_open_browser)::SparlectraWebUIServer
   host_string = String(host)
   host_string in ("127.0.0.1", "localhost", "::1") || (err = ArgumentError("Sparlectra Web UI only accepts loopback hosts: 127.0.0.1, localhost, or ::1."); _webui_startup_failure!(_lifecycle_io, err, catch_backtrace(); phase = "validate_arguments"); throw(err))
   1 <= port <= 65535 || (err = ArgumentError("Web UI port must be between 1 and 65535."); _webui_startup_failure!(_lifecycle_io, err, catch_backtrace(); phase = "validate_arguments"); throw(err))
@@ -482,6 +491,15 @@ function start_sparlectra_webui(; host::AbstractString = "127.0.0.1", port::Inte
   listener = try
     Sockets.listen(address, UInt16(port))
   catch err
+    if err isa Base.IOError && err.code == Base.UV_EADDRINUSE
+      # The raw libuv IOError ("listen: address already in use (EADDRINUSE)")
+      # gives no hint about *why* — a Sparlectra Web UI already running in
+      # this same interactive session (a common Revise-workflow mistake) is
+      # the most common cause, not a genuinely unrelated process.
+      wrapped = ArgumentError("Cannot start Sparlectra Web UI: $(host_string):$(port) is already in use. If you already called start_sparlectra_webui() earlier in this Julia session (including via start_webui.jl), reuse that server or close(server) it first instead of starting a second one on the same port. Otherwise, another process is using this port — stop it, or pass a different port=... to start_sparlectra_webui.")
+      _webui_startup_failure!(_lifecycle_io, wrapped, catch_backtrace(); operation_log = paths.operation_log, phase = "bind")
+      throw(wrapped)
+    end
     _webui_startup_failure!(_lifecycle_io, err, catch_backtrace(); operation_log = paths.operation_log, phase = "bind")
     rethrow()
   end
@@ -511,6 +529,12 @@ function start_sparlectra_webui(; host::AbstractString = "127.0.0.1", port::Inte
   browser_monitor_task = nothing
   if warmup
     @async try
+      # Let the browser load the initial page before the CPU-bound warm-up
+      # solve starts; a busy warm-up task can otherwise delay the HTTP
+      # server's response to the first request on Julia's single-threaded
+      # cooperative scheduler, making the Web UI look unresponsive/blank.
+      delay = Float64(warmup_delay_seconds)
+      isfinite(delay) && delay > 0 && sleep(delay)
       warmup_result = _run_sparlectra_webui_warmup(root; warmup_casefile, warmup_store_result)
       warmup_result.success || @warn "Sparlectra Web UI warm-up run did not converge" reason = warmup_result.reason message = warmup_result.message
     catch err

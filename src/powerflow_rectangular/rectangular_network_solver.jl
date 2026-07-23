@@ -795,6 +795,15 @@ function runpf_rectangular!(
     end
   end
 
+  # The loop above can exit (converged break, non-converged break, or normal
+  # exhaustion) while "q_limit_processing" or "newton_iteration" is still the
+  # active phase label — with no further set_phase() call afterward, all of
+  # steps 6-8 below (voltage/injection writeback, Q-limit summary
+  # finalization, wrong-branch checks, mismatch diagnostics) would otherwise
+  # be misattributed to whichever phase happened to be active on the last
+  # iteration, inflating that phase's reported time in performance.log.
+  set_phase("solver_finalization")
+
   # 6) Update voltages back to network
   check_cancel()
   # --- mirror bus_types back into Net/node types (PV->PQ switching) ---

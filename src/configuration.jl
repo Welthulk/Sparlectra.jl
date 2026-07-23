@@ -402,6 +402,15 @@ Base.@kwdef struct OutputConfig
 end
 
 """
+    WebUIConfig
+
+Web UI presentation preferences that are not part of the solver/API contract.
+"""
+Base.@kwdef struct WebUIConfig
+  show_case_settings_notice::Bool = true
+end
+
+"""
     SparlectraConfig
 
 Central typed configuration assembled once at application or example boundaries.
@@ -420,6 +429,7 @@ Base.@kwdef struct SparlectraConfig
   diagnostics::DiagnosticsConfig = DiagnosticsConfig()
   output::OutputConfig = OutputConfig()
   control::ControlConfig = ControlConfig()
+  webui::WebUIConfig = WebUIConfig()
 end
 
 const _SPARLECTRA_CONFIG_CACHE = Ref{Union{Nothing,NamedTuple}}(nothing)
@@ -1026,6 +1036,13 @@ function ControlConfig(raw::AbstractDict)
   )
 end
 
+function WebUIConfig(raw::AbstractDict)
+  merged = _merged_section(raw, "webui")
+  return WebUIConfig(
+    show_case_settings_notice = _as_bool_cfg(_raw_get(merged, "show_case_settings_notice", true)),
+  )
+end
+
 function SparlectraConfig(raw::AbstractDict)
   return SparlectraConfig(
     powerflow = PowerFlowConfig(raw),
@@ -1039,6 +1056,7 @@ function SparlectraConfig(raw::AbstractDict)
     diagnostics = DiagnosticsConfig(raw),
     output = OutputConfig(raw),
     control = ControlConfig(raw),
+    webui = WebUIConfig(raw),
   )
 end
 

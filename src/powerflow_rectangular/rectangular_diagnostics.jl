@@ -277,6 +277,98 @@ function _rectangular_mismatch_diagnostics(Ybus, V::Vector{ComplexF64}, S::Vecto
   )
 end
 
+"""
+    _branch_anomaly_diagnostics(net, bus_index; top_n=5) -> Vector{NamedTuple}
+
+Scan the in-service branches incident to `bus_index` (an internal bus index,
+matching `net.nodeVec`/`V` indexing) for modeling traits that commonly explain
+a persistently poor mismatch at that bus: zero impedance, an off-nominal
+transformer tap ratio, a large phase shift, or an unusually resistive
+(low X/R) branch. Each incident branch is scored by how many traits it
+triggers; rows are returned worst-first, capped at `top_n` (`top_n < 0`
+returns all incident branches).
+
+This is a passive read of already-imported network data — it does not modify
+`net` or influence solver behavior. It exists to turn "bus 42 has the worst
+mismatch" into "bus 42 has the worst mismatch, and its transformer branch #17
+has a suspicious 0.62 tap ratio" for `diagnose.log`.
+"""
+_median(xs::AbstractVector{<:Real})::Float64 = (s = sort(xs); n = length(s); isodd(n) ? Float64(s[(n+1)÷2]) : Float64(s[n÷2] + s[n÷2+1]) / 2)
+
+function _branch_anomaly_diagnostics(net::Net, bus_index::Integer; top_n::Int = 5)
+  rows = NamedTuple[]
+  bus_index < 1 && return rows
+  incident = filter(br -> br.status == 1 && (br.fromBus == bus_index || br.toBus == bus_index), net.branchVec)
+  isempty(incident) && return rows
+  @inbounds for br in incident
+    is_transformer = br.ratio != 0.0 || br.has_ratio_tap || br.has_phase_tap
+    flags = String[]
+    x_over_r = br.r_pu == 0.0 ? Inf : abs(br.x_pu / br.r_pu)
+    if br.r_pu == 0.0 && br.x_pu == 0.0
+      push!(flags, "zero_impedance")
+    end
+    if is_transformer && br.ratio != 0.0 && !(0.8 <= br.ratio <= 1.2)
+      push!(flags, "off_nominal_tap_ratio")
+    end
+    if abs(br.phase_shift_deg) > 30.0
+      push!(flags, "large_phase_shift")
+    end
+    if br.r_pu != 0.0 && x_over_r < 0.1
+      push!(flags, "unusually_resistive_low_xr")
+    end
+    # Absolute thresholds above catch textbook-unusual impedances, but a
+    # branch with plausible-looking R/X in isolation can still be a modeling
+    # error (e.g. a shift/scale mistake) relative to its own neighbors at the
+    # same bus. Comparing against sibling branches of the same kind (line vs
+    # transformer) catches that without hardcoding a "normal" impedance range.
+    # Real transmission lines at one bus routinely span a 3-5x reactance
+    # range from length alone (confirmed empirically on case14's own,
+    # correctly-imported data), so the outlier ratio below is set well above
+    # that natural spread — it is meant to catch import/unit-convention
+    # mistakes (typically one to two orders of magnitude), not ordinary
+    # engineering variance. Requires >=3 same-kind siblings for a meaningful
+    # comparison.
+    siblings = filter(other -> other.branchIdx != br.branchIdx && (other.ratio != 0.0 || other.has_ratio_tap || other.has_phase_tap) == is_transformer && other.x_pu > 0.0, incident)
+    if length(siblings) >= 3 && br.x_pu > 0.0
+      sibling_median_x = _median([other.x_pu for other in siblings])
+      if sibling_median_x > 0.0
+        ratio_to_siblings = br.x_pu / sibling_median_x
+        (ratio_to_siblings > 8.0 || ratio_to_siblings < 1 / 8) && push!(flags, "reactance_outlier_vs_sibling_branches")
+      end
+    end
+    branch_name = hasproperty(br.comp, :cName) ? String(br.comp.cName) : ""
+    push!(rows, (
+      branch_index = br.branchIdx,
+      branch_name = branch_name,
+      from_bus = br.fromBus,
+      to_bus = br.toBus,
+      is_transformer = is_transformer,
+      r_pu = br.r_pu,
+      x_pu = br.x_pu,
+      x_over_r = x_over_r,
+      ratio = br.ratio,
+      phase_shift_deg = br.phase_shift_deg,
+      flags = flags,
+    ))
+  end
+  sort!(rows; by = r -> -length(r.flags))
+  top_n < 0 && return rows
+  return collect(Iterators.take(rows, min(top_n, length(rows))))
+end
+
+function _format_branch_anomaly_rows(rows)::String
+  isempty(rows) && return "none"
+  lines = String[]
+  for row in rows
+    label = isempty(row.branch_name) ? "branch #$(row.branch_index)" : "$(row.branch_name) (branch #$(row.branch_index))"
+    descriptor = row.is_transformer ? "transformer" : "line"
+    detail = "$(label) [$(descriptor), $(row.from_bus)->$(row.to_bus)]: r_pu=$(row.r_pu), x_pu=$(row.x_pu), x/r=$(round(row.x_over_r; digits=3)), ratio=$(row.ratio), phase_shift_deg=$(row.phase_shift_deg)"
+    isempty(row.flags) || (detail *= " flags=[$(join(row.flags, ", "))]")
+    push!(lines, detail)
+  end
+  return join(lines, " | ")
+end
+
 function _merge_current_iteration_diagnostics(status_build, performance_profile)
   if performance_profile isa AbstractDict && haskey(performance_profile, :current_iteration_start)
     ci = performance_profile[:current_iteration_start]

@@ -63,6 +63,33 @@ function _powerflow_config_notice(config_file::AbstractString)
   end
 end
 
+# Fails open (notice stays visible) on any load error, matching
+# _powerflow_config_notice's fail-safe pattern — a broken/missing config file
+# should not silently suppress an otherwise-informative notice.
+function _powerflow_show_case_settings_notice(config_file::AbstractString)::Bool
+  isempty(strip(config_file)) && return true
+  isfile(config_file) || return true
+  try
+    return load_sparlectra_config(config_file; reload = true).webui.show_case_settings_notice
+  catch
+    return true
+  end
+end
+
+# One-click dismiss for the "Case-specific settings loaded from ..." notice:
+# persists webui.show_case_settings_notice = false into the given config file
+# (a nested-dict merge, so other keys/comments in the file are left as-is by
+# the merge itself; only the final YAML dump loses comments, same tradeoff as
+# the existing "Configuration refresh" writer). Requires a server-local,
+# already-existing config file — the same guard the config editor uses.
+function _powerflow_dismiss_case_settings_notice!(config_file::AbstractString)
+  isempty(strip(config_file)) && throw(ArgumentError("No configuration file was provided."))
+  isfile(config_file) || throw(ArgumentError("Configuration refresh writes require a server-local file. Use a server-local selected configuration file."))
+  merged = _merge_config_overrides(load_yaml_dict(config_file), Dict{String,Any}("webui" => Dict{String,Any}("show_case_settings_notice" => false)))
+  _write_yaml_file(config_file, merged)
+  return config_file
+end
+
 function route_sparlectra_webui(method::AbstractString, target::AbstractString, form::AbstractDict = Dict{String,String}(); output_root::AbstractString = "results/powerflow_service", runtime = nothing)::SparlectraWebUIResponse
   path, query = _webui_split_target(target)
   verb = uppercase(String(method))
@@ -90,14 +117,24 @@ function route_sparlectra_webui(method::AbstractString, target::AbstractString, 
       error_message = runtime === nothing ? nothing : runtime.startup_config_error,
       config_notice = _powerflow_config_notice(runtime === nothing ? "" : runtime.config_file),
       case_profile,
+      show_case_settings_notice = _powerflow_show_case_settings_notice(selected_config_file),
     ))
   elseif verb == "POST" && path == "/powerflow/run"
     try
+      # Temporary diagnostic: log exactly what the raw HTTP form body contained
+      # for the diagnose_mode field, before any parsing/defaulting touches it.
+      # Remove once the Diagnose-button submission issue is confirmed resolved.
+      _webui_log_route!(log_root, "raw_submit_debug", verb, path;
+        status = "debug",
+        diagnose_mode_key_present = haskey(form, "diagnose_mode"),
+        diagnose_mode_raw_value = get(form, "diagnose_mode", "<absent>"),
+        form_keys = join(sort(String.(collect(keys(form)))), ","),
+      )
       result = handle_powerflow_run(form; default_output_root = output_root, case_directory = runtime === nothing ? nothing : runtime.case_directory, runner = runtime === nothing ? start_powerflow_run : runtime.runner, operation_log = log_root)
       manual_case = strip(String(something(_webui_form_value(form, "casefile_manual", ""), "")))
       requested_case = isempty(manual_case) ? String(something(_webui_form_value(form, "casefile", ""), "")) : manual_case
       if haskey(result, "run_id") && !haskey(result, "reason")
-        get(form, "run_diagnostics", nothing) === nothing || _webui_log_route!(log_root, "diagnostics_enabled", verb, path; status = "enabled", run_id = result["run_id"])
+        get(form, "diagnose_mode", nothing) != "true" || _webui_log_route!(log_root, "diagnose_mode_enabled", verb, path; status = "enabled", run_id = result["run_id"])
         get(form, "performance_timing", "off") == "off" || _webui_log_route!(log_root, "performance_timing_enabled", verb, path; status = String(form["performance_timing"]), run_id = result["run_id"])
         return _webui_redirect("/powerflow/result/$(_webui_urlencode(result["run_id"]))")
       end
@@ -132,6 +169,18 @@ function route_sparlectra_webui(method::AbstractString, target::AbstractString, 
     return handle_powerflow_config_editor(config_file)
   elseif verb == "POST" && path == "/powerflow/config/edit"
     return handle_powerflow_config_editor_save(form; operation_log = log_root)
+  elseif verb == "POST" && path == "/powerflow/config/dismiss-case-settings-notice"
+    config_file = String(something(_webui_form_value(form, "config_file", ""), ""))
+    casefile = String(something(_webui_form_value(form, "casefile", ""), ""))
+    try
+      _powerflow_dismiss_case_settings_notice!(config_file)
+      _webui_log_route!(log_root, "case_settings_notice_dismissed", verb, path; status = "dismissed", config_file)
+    catch err
+      _webui_log_route!(log_root, "case_settings_notice_dismiss_failed", verb, path; status = "rejected", config_file, message = sprint(showerror, err))
+      return _webui_html(render_webui_error(400, sprint(showerror, err)); status = 400)
+    end
+    redirect_target = isempty(casefile) ? "/powerflow" : "/powerflow?casefile=$(_webui_urlencode(casefile))"
+    return _webui_redirect(redirect_target)
   elseif verb == "GET" && startswith(path, "/powerflow/result/")
     run_id = _webui_urldecode(path[(lastindex("/powerflow/result/") + 1):end])
     get(query, "autorefresh", "") == "1" || _webui_log_route!(log_root, "powerflow_status_opened", verb, path; status = "opened", run_id)

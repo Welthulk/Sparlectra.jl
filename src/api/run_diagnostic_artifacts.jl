@@ -83,6 +83,152 @@ function _write_powerflow_mismatch_diagnostics(io::IO, result::SparlectraRunResu
   return nothing
 end
 
+_diag_symbol(result::SparlectraRunResult, name::Symbol, default::Symbol = :unavailable)::Symbol = (v = _diag_value(result, name, default); v isa Symbol ? v : default)
+
+# Human-readable classification for a worst-mismatch equation symbol (:P, :Q,
+# or :voltage_setpoint), used only in narrative prose, not in the key:value
+# lines consumed by tests/tooling.
+function _mismatch_equation_label(equation::Symbol)::String
+  equation === :P && return "active-power balance"
+  equation === :Q && return "reactive-power balance"
+  equation === :voltage_setpoint && return "PV/REF voltage setpoint"
+  return string(equation)
+end
+
+"""
+    _write_diagnosis_narrative(io, result)
+
+Write the "Diagnosis" and "Recommendations" sections of `diagnose.log`: a short
+prose summary of what the worst-mismatch bus, mismatch trend, and autodamp
+behavior indicate, followed by a "Worst-mismatch bus" data section (reusing
+the same `top_mismatch_rows` already computed once per solve by
+[`_rectangular_mismatch_diagnostics`](@ref)) and a "Branch anomalies" section
+from [`_branch_anomaly_diagnostics`](@ref) for the branches incident to that
+bus. This turns a flat key/value dump into a report that names a likely cause
+and a next step, instead of only reporting numbers.
+"""
+function _write_diagnosis_narrative(io::IO, result::SparlectraRunResult)
+  println(io, "Diagnosis")
+  println(io, "---------")
+  if result.final_converged
+    println(io, "The run converged in ", result.iterations, " iteration(s); final mismatch ", result.final_mismatch, " is within tolerance. No root-cause analysis is needed.")
+    println(io)
+    return nothing
+  end
+
+  bus_id = _diag_value(result, :worst_mismatch_bus_id, "unavailable")
+  equation = _diag_symbol(result, :worst_mismatch_equation)
+  mismatch_value = _diag_value(result, :worst_mismatch_value, NaN)
+  trend = _diag_symbol(result, :mismatch_history_trend)
+  floor_hits = _diag_value(result, :autodamp_floor_hits, 0)
+  autodamp_failure = _diag_value(result, :autodamp_failure, false)
+
+  if bus_id == "unavailable"
+    println(io, "The run did not converge (reason: ", result.reason, "), and no per-bus mismatch breakdown is available for this failure mode.")
+  else
+    println(io, "The run did not converge (reason: ", result.reason, "). The largest remaining residual is at bus ", bus_id, " (", _mismatch_equation_label(equation), "), with a mismatch of ", mismatch_value, ".")
+  end
+
+  trend_text = if trend === :diverging_to_nonfinite
+    "The mismatch trend is diverging to a non-finite value — later iterations moved away from a solution rather than toward one."
+  elseif trend === :oscillatory
+    "The mismatch trend is oscillatory — successive iterations alternate between improving and worsening, which often indicates step control is fighting an unstable region rather than making steady progress."
+  elseif trend === :stagnant
+    "The mismatch trend is stagnant — recent iterations made little to no progress, which often indicates the step control is stuck rather than diverging."
+  elseif trend === :monotonic
+    "The mismatch trend is monotonically improving but did not reach tolerance within the configured iteration budget."
+  else
+    ""
+  end
+  isempty(trend_text) || println(io, trend_text)
+
+  if autodamp_failure === true
+    println(io, "Autodamp diagnostics show repeated floor hits (", floor_hits, ") together with non-improving trial steps, consistent with the step-control damping being unable to make progress from the current start point.")
+  end
+  println(io)
+
+  bus_index = _diag_value(result, :worst_mismatch_bus_index, "unavailable")
+  branch_rows = bus_index isa Integer ? _branch_anomaly_diagnostics(result.net, bus_index) : NamedTuple[]
+  flagged_rows = filter(row -> !isempty(row.flags), branch_rows)
+
+  println(io, "Recommendations")
+  println(io, "---------------")
+  recommendations = String[]
+  if !isempty(flagged_rows)
+    push!(recommendations, "Branch anomalies were found at the worst-mismatch bus (see \"Branch anomalies at worst-mismatch bus\" below) — review the flagged branch parameters and the MATPOWER import conventions (matpower_import.auto_profile/shift_sign/shift_unit/ratio) before adjusting solver settings.")
+  end
+  if trend === :diverging_to_nonfinite || autodamp_failure === true
+    push!(recommendations, "Try a different start profile (power_flow.start_mode.angle_mode/voltage_mode) before tuning step control further — a poor start is a common cause of floor-hitting autodamp behavior.")
+  end
+  if trend === :oscillatory
+    push!(recommendations, "Consider enabling power_flow.merit (line search) or power_flow.trust_region (step_mode=:dogleg) to stabilize oscillatory steps.")
+  end
+  if trend === :stagnant
+    push!(recommendations, "Check power_flow.qlimits and wrong-branch detection settings — a stagnant trend can indicate the active-set/outer loop, not the Newton step itself, is stuck.")
+  end
+  push!(recommendations, "Run run_fixed_reference_self_check on this case to check whether the residual is already present at the case's own stored VM/VA (a network-model issue) rather than introduced by the solver's start guess.")
+  for (i, rec) in enumerate(recommendations)
+    println(io, i, ". ", rec)
+  end
+  println(io)
+
+  println(io, "Worst-mismatch bus")
+  println(io, "-------------------")
+  println(io, "worst_mismatch_bus_id: ", bus_id)
+  println(io, "worst_mismatch_bus_index: ", bus_index)
+  println(io, "worst_mismatch_equation: ", equation)
+  println(io, "worst_mismatch_value: ", mismatch_value)
+  println(io, "mismatch_history_trend: ", trend)
+  println(io, "mismatch_history_first: ", _diag_value(result, :mismatch_history_first, NaN))
+  println(io, "mismatch_history_last: ", _diag_value(result, :mismatch_history_last, NaN))
+  println(io, "mismatch_history_best: ", _diag_value(result, :mismatch_history_best, NaN))
+  println(io, "autodamp_floor_hits: ", floor_hits)
+  println(io, "autodamp_failure: ", autodamp_failure)
+  println(io, "top_mismatch_rows: ", _format_top_mismatch_rows(_diag_value(result, :top_mismatch_rows, NamedTuple[])))
+  println(io)
+
+  println(io, "Branch anomalies at worst-mismatch bus")
+  println(io, "---------------------------------------")
+  println(io, isempty(branch_rows) ? "unavailable" : _format_branch_anomaly_rows(branch_rows))
+  println(io)
+  return nothing
+end
+
+"""
+    _write_execution_failure_diagnostics(path, reason, message)
+
+Write a best-effort `diagnose.log` when a run fails before a
+`SparlectraRunResult` is available — e.g. `run_sparlectra` throwing for an
+AC-island failure with a non-finite mismatch before the first Newton
+iteration (`stage=before_nr`), or an unsupported MATPOWER DC-line
+convention. Without this, `run_diagnostics = true` silently produced no
+`diagnose.log` at all for these early/exception failures, since the normal
+`_write_powerflow_diagnostics` call site is only reached after
+`run_sparlectra` returns successfully. Rich per-bus/branch diagnostics need a
+solved network, which this failure mode never reaches; per-island detail,
+when available, lives in `ac_island_<id>_solver.log`.
+"""
+function _write_execution_failure_diagnostics(path::AbstractString, reason::AbstractString, message::AbstractString)
+  open(path, "w") do io
+    println(io, "Sparlectra PowerFlow diagnostics")
+    println(io, "================================")
+    println(io, "outcome: execution_failure")
+    println(io, "reason: ", reason)
+    println(io)
+    println(io, "Diagnosis")
+    println(io, "---------")
+    println(io, "The run failed before a solved network/result was available, so no per-bus/branch mismatch breakdown can be reported here.")
+    println(io)
+    println(io, message)
+    println(io)
+    println(io, "Recommendations")
+    println(io, "---------------")
+    println(io, "1. If this names an AC island, check that island's ac_island_<id>_solver.log and ac_island_solver_summary.csv for its start-of-solve mismatch and settings.")
+    println(io, "2. Run run_fixed_reference_self_check on this case to check whether a large residual is already present at the case's own stored VM/VA (a network-model issue) rather than introduced by the solver's start guess.")
+  end
+  return path
+end
+
 function _write_powerflow_diagnostics(path::AbstractString, result::SparlectraRunResult; diagnostic_fn = nothing, mode::Symbol = :compact)
   open(path, "w") do io
     println(io, "Sparlectra PowerFlow diagnostics")
@@ -92,6 +238,7 @@ function _write_powerflow_diagnostics(path::AbstractString, result::SparlectraRu
         println(io, "outcome: ", result.outcome)
         println(io, "reason: ", result.reason_text)
         println(io)
+        _write_diagnosis_narrative(io, result)
         _write_powerflow_mismatch_diagnostics(io, result; mode = mode)
         if mode === :full
           printQLimitLog(result.net; io)

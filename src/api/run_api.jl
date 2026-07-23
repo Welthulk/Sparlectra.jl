@@ -131,6 +131,7 @@ end
 include("run_failures.jl")
 
 include("run_diagnostic_artifacts.jl")
+include("run_self_check.jl")
 include("run_finalization.jl")
 
 function _resolve_detailed_csv_format(value)::NamedTuple
@@ -736,6 +737,7 @@ function _run_sparlectra_api(;
       operation_callback("matpower_dcline_unsupported"; run_id = run_id, _metadata_kwargs(details)...)
       operation_callback("powerflow_aborted_unsupported_matpower_dcline"; run_id = run_id, _metadata_kwargs(details)...)
       _write_run_metadata_artifact(output_path; case_path = case_path, lifecycle = details)
+      run_diagnostics && _write_execution_failure_diagnostics(joinpath(output_path, "diagnose.log"), "unsupported_matpower_dcline", err.message)
       return _api_execution_failure("unsupported_matpower_dcline", err.message; run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file, phase_recorder, performance_timing, total_start_ns = total_start, metadata = details)
     end
     island_message = _islandwise_failure_message(api_performance_profile)
@@ -750,6 +752,7 @@ function _run_sparlectra_api(;
       "last_phase" => "solving_powerflow",
     )
     solver_elapsed_s === nothing || (metadata["solver_elapsed_s"] = solver_elapsed_s)
+    run_diagnostics && _write_execution_failure_diagnostics(joinpath(output_path, "diagnose.log"), reason, message)
     return _api_execution_failure(reason, message; run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file, phase_recorder, performance_timing, total_start_ns = total_start, metadata = metadata)
   end
   end
