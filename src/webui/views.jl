@@ -263,6 +263,14 @@ function _webui_last_errors_list_html(operation_log::AbstractString)::String
   return "<ul class=\"last-errors-list\">$(items)</ul>"
 end
 
+function render_powerflow_warmup()::String
+  panel = """<section class=\"panel warmup-panel\">
+<span class=\"warmup-spinner\" aria-hidden=\"true\"></span>
+<p>Sparlectra Web UI is warming up — compiling the PowerFlow solver path so your first run starts fast. This page refreshes automatically once it's ready.</p>
+</section>"""
+  return _webui_layout("Warming up…", panel; refresh_url = "/powerflow", refresh_seconds = WEBUI_STATUS_AUTO_REFRESH_SECONDS)
+end
+
 function render_webui_last_errors(operation_log::AbstractString)::String
   panel = "<section class=\"panel last-errors-panel\">$(_webui_last_errors_list_html(operation_log))</section>"
   return _webui_layout("Last errors", panel; show_back = true)

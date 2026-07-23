@@ -29,6 +29,7 @@ mutable struct _SparlectraWebUIRuntime
   shutdown_reason::Union{Symbol,Nothing}
   lifecycle_io::IO
   lock::ReentrantLock
+  warmup_state::Symbol
 end
 
 """
@@ -303,6 +304,24 @@ function _webui_open_browser(url::String)
   return nothing
 end
 
+function _webui_set_warmup_state!(runtime::_SparlectraWebUIRuntime, state::Symbol)
+  lock(runtime.lock) do
+    runtime.warmup_state = state
+  end
+  return nothing
+end
+
+function _webui_warmup_in_progress(runtime::_SparlectraWebUIRuntime)::Bool
+  return lock(runtime.lock) do
+    runtime.warmup_state === :warming
+  end
+end
+
+# Some tests pass a lightweight NamedTuple stand-in for `runtime` (only the
+# fields a particular handler needs) instead of a full _SparlectraWebUIRuntime;
+# such stand-ins never warm up.
+_webui_warmup_in_progress(::Any)::Bool = false
+
 function _webui_record_heartbeat!(runtime::_SparlectraWebUIRuntime)
   lock(runtime.lock) do
     runtime.heartbeat_received = true
@@ -505,7 +524,7 @@ function start_sparlectra_webui(; host::AbstractString = "127.0.0.1", port::Inte
   end
   _webui_startup_log(_lifecycle_io, "webui_server_bound"; operation_log = paths.operation_log, status = "bound", host = host_string, port = Int(port))
   effective_shutdown_on_browser_close = auto_shutdown_on_browser_close === nothing ? shutdown_on_browser_close : Bool(auto_shutdown_on_browser_close)
-  runtime = _SparlectraWebUIRuntime(listener, paths.case_directory, paths.config_file, paths.operation_log, config_error, _test_runner, effective_shutdown_on_browser_close, false, 0.0, 0, nothing, _lifecycle_io, ReentrantLock())
+  runtime = _SparlectraWebUIRuntime(listener, paths.case_directory, paths.config_file, paths.operation_log, config_error, _test_runner, effective_shutdown_on_browser_close, false, 0.0, 0, nothing, _lifecycle_io, ReentrantLock(), warmup ? :warming : :disabled)
   task = @async begin
     try
       while isopen(listener)
@@ -539,6 +558,8 @@ function start_sparlectra_webui(; host::AbstractString = "127.0.0.1", port::Inte
       warmup_result.success || @warn "Sparlectra Web UI warm-up run did not converge" reason = warmup_result.reason message = warmup_result.message
     catch err
       @warn "Sparlectra Web UI warm-up failed; normal runs remain available" exception = (err, catch_backtrace())
+    finally
+      _webui_set_warmup_state!(runtime, :done)
     end
   end
   if open_browser

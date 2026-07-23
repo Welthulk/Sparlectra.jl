@@ -103,6 +103,9 @@ function route_sparlectra_webui(method::AbstractString, target::AbstractString, 
   elseif verb == "GET" && startswith(path, "/docs/")
     return handle_webui_doc_page(_webui_urldecode(path[(lastindex("/docs/") + 1):end]))
   elseif verb == "GET" && path in ("/", "/powerflow")
+    if runtime !== nothing && _webui_warmup_in_progress(runtime)
+      return _webui_html(render_powerflow_warmup())
+    end
     _webui_log_route!(log_root, "powerflow_form_opened", verb, path; status = "opened")
     selected_casefile = get(query, "casefile", "")
     case_profile = isempty(selected_casefile) ? nothing : _webui_load_case_settings(output_root, selected_casefile; case_directory = runtime === nothing ? nothing : runtime.case_directory)

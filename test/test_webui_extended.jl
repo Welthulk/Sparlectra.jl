@@ -194,7 +194,7 @@ function run_webui_extended_tests()
       root = mktempdir()
       config_path = joinpath(root, "configuration.yaml")
       write(config_path, "power_flow:\n  start_mode:\n    voltage_mode: bus_vm_va_blend\n  qlimits:\n    enabled: true\n")
-      runtime = Sparlectra._SparlectraWebUIRuntime(nothing, root, config_path, Sparlectra.webui_operation_log_path(root), nothing, Sparlectra.start_powerflow_run, false, false, time(), 0, nothing, IOBuffer(), ReentrantLock())
+      runtime = Sparlectra._SparlectraWebUIRuntime(nothing, root, config_path, Sparlectra.webui_operation_log_path(root), nothing, Sparlectra.start_powerflow_run, false, false, time(), 0, nothing, IOBuffer(), ReentrantLock(), :disabled)
       before_page_text = read(config_path, String)
       page = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow"; output_root = root, runtime).body)
       @test occursin("Check configuration", page)
@@ -946,7 +946,7 @@ settings:
       mktempdir() do tmpdir
         case_directory = joinpath(tmpdir, "cases")
         output_root = joinpath(tmpdir, "runs")
-        runtime = Sparlectra._SparlectraWebUIRuntime(nothing, case_directory, "configuration.yaml", Sparlectra.webui_operation_log_path(output_root), nothing, Sparlectra.start_powerflow_run, false, false, time(), 0, nothing, IOBuffer(), ReentrantLock())
+        runtime = Sparlectra._SparlectraWebUIRuntime(nothing, case_directory, "configuration.yaml", Sparlectra.webui_operation_log_path(output_root), nothing, Sparlectra.start_powerflow_run, false, false, time(), 0, nothing, IOBuffer(), ReentrantLock(), :disabled)
         upload(name, text) = Sparlectra.WebUICaseUpload(name, Vector{UInt8}(codeunits(text)))
 
         response = Sparlectra.route_sparlectra_webui("POST", "/powerflow/import-cases", Dict("casefiles" => [upload("case_upload.m", "function mpc = case_upload\nend\n")]); output_root, runtime)
@@ -1009,7 +1009,7 @@ settings:
       mktempdir() do tmpdir
         case_directory = joinpath(tmpdir, "cases")
         output_root = joinpath(tmpdir, "runs")
-        runtime = Sparlectra._SparlectraWebUIRuntime(nothing, case_directory, "configuration.yaml", Sparlectra.webui_operation_log_path(output_root), nothing, Sparlectra.start_powerflow_run, false, false, time(), 0, nothing, IOBuffer(), ReentrantLock())
+        runtime = Sparlectra._SparlectraWebUIRuntime(nothing, case_directory, "configuration.yaml", Sparlectra.webui_operation_log_path(output_root), nothing, Sparlectra.start_powerflow_run, false, false, time(), 0, nothing, IOBuffer(), ReentrantLock(), :disabled)
 
         external_dir = joinpath(tmpdir, "external")
         mkpath(external_dir)
@@ -2566,6 +2566,30 @@ result = get_powerflow_result(run_id)
         normal_result = get_powerflow_result(normal_run_id)
         @test normal_result["success"]
         @test !isfile(joinpath(normal_result["output_dir"], "diagnose.log"))
+      end
+    end
+
+    @testset "Warm-up loading page" begin
+      mktempdir() do tmpdir
+        root = joinpath(tmpdir, "runs")
+        mkpath(root)
+        runtime = Sparlectra._SparlectraWebUIRuntime(nothing, root, "configuration.yaml", Sparlectra.webui_operation_log_path(root), nothing, Sparlectra.start_powerflow_run, false, false, time(), 0, nothing, IOBuffer(), ReentrantLock(), :warming)
+
+        warming_page = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow"; output_root = root, runtime).body)
+        @test occursin("Warming up", warming_page)
+        @test occursin("data-refresh-url=\"/powerflow\"", warming_page)
+        @test !occursin("powerflow-run-form", warming_page)
+
+        Sparlectra._webui_set_warmup_state!(runtime, :done)
+        ready_page = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow"; output_root = root, runtime).body)
+        @test !occursin("Warming up", ready_page)
+        @test occursin("powerflow-run-form", ready_page)
+
+        # A NamedTuple stand-in (as used by other tests for lightweight runtime
+        # stubs) never reports as warming up.
+        stub_runtime = (; case_directory = root, config_file = "configuration.yaml", operation_log = Sparlectra.webui_operation_log_path(root), startup_config_error = nothing, runner = Sparlectra.start_powerflow_run)
+        stub_page = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow"; output_root = root, runtime = stub_runtime).body)
+        @test !occursin("Warming up", stub_page)
       end
     end
   end

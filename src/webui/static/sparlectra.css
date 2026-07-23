@@ -514,6 +514,25 @@ button:disabled {
   }
 }
 
+.warmup-panel {
+  align-items: center;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  padding: 3rem 1.5rem;
+  text-align: center;
+}
+
+.warmup-spinner {
+  animation: submit-spin .8s linear infinite;
+  border: 3px solid #dbe3ef;
+  border-radius: 50%;
+  border-top-color: #14233d;
+  display: inline-block;
+  height: 2.5rem;
+  width: 2.5rem;
+}
+
 .inline-form {
   display: flex;
   align-items: end;
