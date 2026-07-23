@@ -102,6 +102,26 @@ function _rectangular_status_diagnostics(rect_status)::NamedTuple
     post_merge_validation_status = _rect_status_get(rect_status, :post_merge_validation_status, :not_applicable),
     post_merge_final_mismatch = _rect_status_get(rect_status, :post_merge_final_mismatch, NaN),
     post_merge_mismatch_status = _rect_status_get(rect_status, :post_merge_mismatch_status, :not_applicable),
+    # Computed once per solve by `_rectangular_mismatch_diagnostics` and spliced
+    # into the net-stored status, but previously only surfaced to per-island logs
+    # (`_write_ac_island_diagnostics!`), not to `result.diagnostics`/diagnose.log.
+    worst_mismatch_bus_id = _rect_status_get(rect_status, :worst_mismatch_bus_id, "unavailable"),
+    worst_mismatch_bus_index = _rect_status_get(rect_status, :worst_mismatch_bus_index, "unavailable"),
+    worst_mismatch_equation = _rect_status_get(rect_status, :worst_mismatch_equation, :unavailable),
+    worst_mismatch_value = _rect_status_get(rect_status, :worst_mismatch_value, NaN),
+    top_mismatch_rows = _rect_status_get(rect_status, :top_mismatch_rows, NamedTuple[]),
+    top_mismatch_rows_by_iteration = _rect_status_get(rect_status, :top_mismatch_rows_by_iteration, NamedTuple[]),
+    mismatch_history_trend = _rect_status_get(rect_status, :mismatch_history_trend, :unavailable),
+    mismatch_history_first = _rect_status_get(rect_status, :mismatch_history_first, NaN),
+    mismatch_history_last = _rect_status_get(rect_status, :mismatch_history_last, NaN),
+    mismatch_history_best = _rect_status_get(rect_status, :mismatch_history_best, NaN),
+    autodamp_step_count = _rect_status_get(rect_status, :autodamp_step_count, 0),
+    autodamp_min_alpha = _rect_status_get(rect_status, :autodamp_min_alpha, NaN),
+    autodamp_max_alpha = _rect_status_get(rect_status, :autodamp_max_alpha, NaN),
+    autodamp_mean_alpha = _rect_status_get(rect_status, :autodamp_mean_alpha, NaN),
+    autodamp_floor_hits = _rect_status_get(rect_status, :autodamp_floor_hits, 0),
+    autodamp_nonimproving_steps = _rect_status_get(rect_status, :autodamp_nonimproving_steps, 0),
+    autodamp_failure = _rect_status_get(rect_status, :autodamp_failure, false),
   )
 end
 

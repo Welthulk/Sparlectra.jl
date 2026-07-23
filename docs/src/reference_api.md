@@ -7,6 +7,7 @@ Pages = [
     "api/config_overrides.jl",
     "api/artifacts.jl",
     "api/run_api.jl",
+    "api/run_self_check.jl",
     "api/powerflow_service.jl",
     "api/run_index.jl",
     "api/artifact_registry.jl",

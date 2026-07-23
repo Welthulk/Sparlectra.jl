@@ -196,6 +196,9 @@ function start_powerflow_run(request::AbstractDict; case_directory::Union{Nothin
   matpower_export_requested isa Bool || return _service_failure("invalid_request", "matpower_export_requested must be boolean.")
   run_diagnostics = _service_request_value(request, "run_diagnostics", false)
   run_diagnostics isa Bool || return _service_failure("invalid_request", "run_diagnostics must be boolean.")
+  diagnose_mode = _service_request_value(request, "diagnose_mode", false)
+  diagnose_mode isa Bool || return _service_failure("invalid_request", "diagnose_mode must be boolean.")
+  diagnose_mode && (run_diagnostics = true)
   detailed_result_csv = _service_request_value(request, "detailed_result_csv", false)
   detailed_result_csv isa Bool || return _service_failure("invalid_request", "detailed_result_csv must be boolean.")
   detailed_result_csv_semicolon = _service_request_value(request, "detailed_result_csv_semicolon", false)
@@ -216,6 +219,22 @@ function start_powerflow_run(request::AbstractDict; case_directory::Union{Nothin
   _safe_powerflow_run_id(run_id) || return _service_failure("unsafe_run_id", "Unsafe PowerFlow run ID rejected.")
   root = abspath(output_root)
   output_dir = joinpath(root, run_id)
+  if diagnose_mode
+    # Diagnose mode forces the fixed-reference self-check settings (see
+    # `_self_check_forced_overrides`) on top of the requested config_file. Some
+    # of those settings (e.g. start_projection) are not GUI-editable, so they
+    # cannot go through `config_overrides`; the merged result is written into
+    # the run's own output directory both as the config Sparlectra actually
+    # runs with and as a visible, self-documenting run artifact.
+    mkpath(output_dir)
+    config_file = try
+      self_check_path = joinpath(output_dir, "diagnose_self_check_config.yaml")
+      _write_yaml_file(self_check_path, _merge_config_overrides(load_yaml_dict(config_file), _self_check_forced_overrides()))
+      self_check_path
+    catch err
+      return _service_failure("invalid_configuration", sprint(showerror, err, catch_backtrace()); run_id = run_id)
+    end
+  end
   # Phase timings collected before the API handoff become service metadata, not
   # operation-log events for every internal solver step.
   result = try
