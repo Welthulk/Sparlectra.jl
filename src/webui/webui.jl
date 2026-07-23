@@ -491,6 +491,15 @@ function start_sparlectra_webui(; host::AbstractString = "127.0.0.1", port::Inte
   listener = try
     Sockets.listen(address, UInt16(port))
   catch err
+    if err isa Base.IOError && err.code == Base.UV_EADDRINUSE
+      # The raw libuv IOError ("listen: address already in use (EADDRINUSE)")
+      # gives no hint about *why* — a Sparlectra Web UI already running in
+      # this same interactive session (a common Revise-workflow mistake) is
+      # the most common cause, not a genuinely unrelated process.
+      wrapped = ArgumentError("Cannot start Sparlectra Web UI: $(host_string):$(port) is already in use. If you already called start_sparlectra_webui() earlier in this Julia session (including via start_webui.jl), reuse that server or close(server) it first instead of starting a second one on the same port. Otherwise, another process is using this port — stop it, or pass a different port=... to start_sparlectra_webui.")
+      _webui_startup_failure!(_lifecycle_io, wrapped, catch_backtrace(); operation_log = paths.operation_log, phase = "bind")
+      throw(wrapped)
+    end
     _webui_startup_failure!(_lifecycle_io, err, catch_backtrace(); operation_log = paths.operation_log, phase = "bind")
     rethrow()
   end
