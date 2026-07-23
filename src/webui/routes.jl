@@ -63,6 +63,19 @@ function _powerflow_config_notice(config_file::AbstractString)
   end
 end
 
+# Fails open (notice stays visible) on any load error, matching
+# _powerflow_config_notice's fail-safe pattern — a broken/missing config file
+# should not silently suppress an otherwise-informative notice.
+function _powerflow_show_case_settings_notice(config_file::AbstractString)::Bool
+  isempty(strip(config_file)) && return true
+  isfile(config_file) || return true
+  try
+    return load_sparlectra_config(config_file; reload = true).webui.show_case_settings_notice
+  catch
+    return true
+  end
+end
+
 function route_sparlectra_webui(method::AbstractString, target::AbstractString, form::AbstractDict = Dict{String,String}(); output_root::AbstractString = "results/powerflow_service", runtime = nothing)::SparlectraWebUIResponse
   path, query = _webui_split_target(target)
   verb = uppercase(String(method))
@@ -90,6 +103,7 @@ function route_sparlectra_webui(method::AbstractString, target::AbstractString, 
       error_message = runtime === nothing ? nothing : runtime.startup_config_error,
       config_notice = _powerflow_config_notice(runtime === nothing ? "" : runtime.config_file),
       case_profile,
+      show_case_settings_notice = _powerflow_show_case_settings_notice(selected_config_file),
     ))
   elseif verb == "POST" && path == "/powerflow/run"
     try
@@ -97,7 +111,7 @@ function route_sparlectra_webui(method::AbstractString, target::AbstractString, 
       manual_case = strip(String(something(_webui_form_value(form, "casefile_manual", ""), "")))
       requested_case = isempty(manual_case) ? String(something(_webui_form_value(form, "casefile", ""), "")) : manual_case
       if haskey(result, "run_id") && !haskey(result, "reason")
-        get(form, "run_diagnostics", nothing) === nothing || _webui_log_route!(log_root, "diagnostics_enabled", verb, path; status = "enabled", run_id = result["run_id"])
+        get(form, "diagnose_mode", nothing) != "true" || _webui_log_route!(log_root, "diagnose_mode_enabled", verb, path; status = "enabled", run_id = result["run_id"])
         get(form, "performance_timing", "off") == "off" || _webui_log_route!(log_root, "performance_timing_enabled", verb, path; status = String(form["performance_timing"]), run_id = result["run_id"])
         return _webui_redirect("/powerflow/result/$(_webui_urlencode(result["run_id"]))")
       end

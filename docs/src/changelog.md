@@ -24,6 +24,18 @@
 * Web UI PowerFlow form: "Advanced start values" and "Advanced / expert
   options" are merged into one "Advanced options" section; all fields remain
   individually saved/loaded per case.
+* Web UI: removed the "Run diagnostics" checkbox from a normal "Start
+  PowerFlow run" — it now never writes `diagnose.log`. The dedicated
+  "Diagnose" action is the one way to get a diagnostic report from the Web
+  UI; `run_diagnostics = true` remains available programmatically via
+  `run_sparlectra_api`/`start_powerflow_run`.
+* New `webui.show_case_settings_notice` config option (default `true`)
+  suppresses the "Case-specific settings loaded from ..." notice on the Web
+  UI PowerFlow form once a case's saved profile is familiar.
+* `start_sparlectra_webui`'s `EADDRINUSE` startup failure now explains the
+  likely cause (a Web UI already running in the same Julia session, a common
+  mistake when re-running a launcher script interactively) instead of only
+  showing the raw libuv stacktrace.
 
 ## Bug fixes
 * `performance.log` (`full` timing mode) misattributed the rectangular

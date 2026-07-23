@@ -300,11 +300,12 @@ function render_powerflow_form(;
   case_profile = nothing,
   submitted_form = nothing,
   import_message::AbstractString = "",
+  show_case_settings_notice::Bool = true,
 )::String
   profile_values = webui_form_state(; selected_casefile, selected_config_file, sidecar_profile = case_profile, submitted_form)
   profile_path = String(get(profile_values, "_profile_path", ""))
   profile_location = isempty(profile_path) ? "the sidecar profile" : "<code>$(_webui_escape(profile_path))</code>"
-  profile_notice = isempty(profile_path) ? "" : "<div class=\"alert info case-settings-notice\" role=\"status\"><strong>Case-specific settings loaded from $(profile_location).</strong> Saved Web UI settings prefilled the form. Manual edits on this page override the profile for this run.</div>"
+  profile_notice = isempty(profile_path) || !show_case_settings_notice ? "" : "<div class=\"alert info case-settings-notice\" role=\"status\"><strong>Case-specific settings loaded from $(profile_location).</strong> Saved Web UI settings prefilled the form. Manual edits on this page override the profile for this run.</div>"
   error_html = _webui_error_alert_html(error_message)
   import_html = isempty(strip(import_message)) ? "" : "<div class=\"alert info case-import-result\" role=\"status\">$(_webui_escape(import_message))</div>"
   casefiles = case_directory === nothing ? _webui_casefile_options(application_root) : _webui_casefile_options_in_directory(case_directory)
@@ -432,7 +433,6 @@ $(dat_hint_html)
 <details class=\"span-2 expert-section\">
 <summary>Advanced options</summary>
 $(config_maintenance)
-<label class=\"check expert-diagnostics\"><input name=\"run_diagnostics\" type=\"hidden\" value=\"false\"><input name=\"run_diagnostics\" type=\"checkbox\" value=\"true\"$(_webui_checked(profile_values, "run_diagnostics", _webui_option_default("run_diagnostics")))>$(_webui_field_label("run_diagnostics", "Run diagnostics"))</label>
 <fieldset class=\"start-current-iteration-options advanced-start-values\" data-nr-only-field>
 <legend>Advanced start values</legend>
 <label class=\"check span-2\"><input name=\"power_flow_start_current_iteration_enabled\" type=\"hidden\" value=\"false\"><input name=\"power_flow_start_current_iteration_enabled\" type=\"checkbox\" value=\"true\"$(_webui_checked(profile_values, "power_flow_start_current_iteration_enabled", _webui_option_default("power_flow_start_current_iteration_enabled")))>$(_webui_field_label("power_flow_start_current_iteration_enabled", "Enable current-iteration pre-solve"))</label>
