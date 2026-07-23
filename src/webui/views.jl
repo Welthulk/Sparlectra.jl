@@ -367,7 +367,7 @@ function render_powerflow_form(;
   form = """
 $(_webui_feedback_modal_html([error_html, import_html, profile_notice]))$(_webui_active_run_banner(active_run))$(notice_html)<p class=\"lede\">Run a local MATPOWER case through the Sparlectra PowerFlow service.</p>
 $(import_form)
-<form id=\"powerflow-run-form\" data-powerflow-form method=\"post\" action=\"/powerflow/run\" class=\"panel form-grid powerflow-form-card\" onsubmit=\"this.classList.add('is-submitting'); this.setAttribute('aria-busy', 'true'); this.querySelectorAll('button[type=submit]').forEach(function(b){b.disabled = true;});\">
+<form id=\"powerflow-run-form\" data-powerflow-form method=\"post\" action=\"/powerflow/run\" class=\"panel form-grid powerflow-form-card\">
 $(config_control)
 <label>$(_webui_field_label("casefile", "Existing case file"))$(case_select)<small class="field-hint">Cases from <code>$(_webui_escape(effective_case_directory))</code></small></label>
 <label>$(_webui_field_label("casefile_manual", "Or type case file path"))$(case_manual)<button type="submit" id="resolve-case-button" formaction="/powerflow/resolve-case" formmethod="post" formnovalidate hidden>Resolve case</button></label>
@@ -478,6 +478,44 @@ $(config_maintenance)
 <div class=\"span-2 actions\"><button class=\"powerflow-submit\" type=\"submit\"><span class=\"submit-spinner\" aria-hidden=\"true\"></span><span class=\"submit-label\">Start PowerFlow run</span><span class=\"submit-progress-label\" role=\"status\" aria-live=\"polite\">Running PowerFlow…</span></button><button class=\"powerflow-submit diagnose-submit\" type=\"submit\" name=\"diagnose_mode\" value=\"true\" title=\"Run this case in diagnostic mode: evaluates the mismatch at the case's own stored VM/VA (no corrective Newton step) and writes a diagnostic report to diagnose.log.\"><span class=\"submit-spinner\" aria-hidden=\"true\"></span><span class=\"submit-label\">Diagnose</span><span class=\"submit-progress-label\" role=\"status\" aria-live=\"polite\">Running diagnosis…</span></button></div></form>
 <script>
 document.addEventListener('DOMContentLoaded', function () {
+  const powerflowForm = document.getElementById('powerflow-run-form');
+  if (powerflowForm !== null) {
+    const copySubmitterValue = function (submitter) {
+      const existing = powerflowForm.querySelector('input[type="hidden"][data-submitter-value]');
+      const name = submitter ? submitter.getAttribute('name') : null;
+      if (!name) {
+        // Plain "Start PowerFlow run" has no name/value of its own to preserve; also
+        // drop any stale submitter value left over from a bfcache-restored page so a
+        // normal run can never silently inherit a previous "Diagnose" submission.
+        if (existing !== null) existing.remove();
+        return;
+      }
+      const hidden = existing !== null ? existing : document.createElement('input');
+      if (existing === null) {
+        hidden.type = 'hidden';
+        hidden.setAttribute('data-submitter-value', 'true');
+        powerflowForm.appendChild(hidden);
+      }
+      hidden.name = name;
+      hidden.value = submitter.value;
+    };
+    // Fallback for browsers without SubmitEvent.submitter (older Safari): capture
+    // the clicked submit button before the submit event fires.
+    powerflowForm.querySelectorAll('button[type=submit][name]').forEach(function (button) {
+      button.addEventListener('click', function () { copySubmitterValue(button); });
+    });
+    powerflowForm.addEventListener('submit', function (event) {
+      // Copy the submitter's name/value into a plain hidden input FIRST: disabling
+      // the submit buttons below (needed for double-submit protection) would
+      // otherwise drop the submitter itself from the serialized form data per the
+      // HTML form-submission spec, silently turning a "Diagnose" click into a
+      // normal run.
+      copySubmitterValue(event.submitter);
+      powerflowForm.classList.add('is-submitting');
+      powerflowForm.setAttribute('aria-busy', 'true');
+      powerflowForm.querySelectorAll('button[type=submit]').forEach(function (b) { b.disabled = true; });
+    });
+  }
   const feedbackModal = document.getElementById('feedback-modal');
   if (feedbackModal !== null) {
     feedbackModal.showModal();
@@ -712,6 +750,8 @@ window.addEventListener('pageshow', function () {
   form.classList.remove('is-submitting');
   form.removeAttribute('aria-busy');
   form.querySelectorAll('button[type=submit]').forEach(function (b) { b.disabled = false; });
+  const staleSubmitterValue = form.querySelector('input[type="hidden"][data-submitter-value]');
+  if (staleSubmitterValue !== null) staleSubmitterValue.remove();
 });
 </script>"""
   return _webui_layout("PowerFlow run", form; header_info = info_menu)

@@ -121,15 +121,6 @@ function route_sparlectra_webui(method::AbstractString, target::AbstractString, 
     ))
   elseif verb == "POST" && path == "/powerflow/run"
     try
-      # Temporary diagnostic: log exactly what the raw HTTP form body contained
-      # for the diagnose_mode field, before any parsing/defaulting touches it.
-      # Remove once the Diagnose-button submission issue is confirmed resolved.
-      _webui_log_route!(log_root, "raw_submit_debug", verb, path;
-        status = "debug",
-        diagnose_mode_key_present = haskey(form, "diagnose_mode"),
-        diagnose_mode_raw_value = get(form, "diagnose_mode", "<absent>"),
-        form_keys = join(sort(String.(collect(keys(form)))), ","),
-      )
       result = handle_powerflow_run(form; default_output_root = output_root, case_directory = runtime === nothing ? nothing : runtime.case_directory, runner = runtime === nothing ? start_powerflow_run : runtime.runner, operation_log = log_root)
       manual_case = strip(String(something(_webui_form_value(form, "casefile_manual", ""), "")))
       requested_case = isempty(manual_case) ? String(something(_webui_form_value(form, "casefile", ""), "")) : manual_case

@@ -109,6 +109,19 @@
   call site entirely. A best-effort `diagnose.log` (reason, failure message,
   and a pointer to per-island logs/`run_fixed_reference_self_check`) is now
   written for these cases too.
+* Web UI **"Diagnose" button silently ran a normal power-flow instead of a
+  diagnostic one** (no `diagnose.log` was ever written from the button,
+  though the server-side path was correct). The PowerFlow form's `onsubmit`
+  handler disabled every `button[type=submit]` — including the Diagnose
+  button itself — before the browser constructed the submitted form data;
+  per the HTML form-submission spec, a disabled submitter is dropped from
+  that data, so `diagnose_mode=true` never reached the server. The submit
+  handler now copies the clicked submitter's name/value into a plain hidden
+  input first (with a `click`-listener fallback for browsers without
+  `SubmitEvent.submitter`), then disables the buttons; double-submit
+  protection and `is-submitting`/`aria-busy` behavior are unchanged. Plain
+  "Start PowerFlow run" clicks are unaffected and still never write
+  `diagnose.log`.
 
 # Version 0.8.14 — 2026-07-22
 

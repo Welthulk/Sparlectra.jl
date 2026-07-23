@@ -1613,9 +1613,17 @@ settings:
       @test !occursin("class=\"button back-button\"", form_html)
 
       @test occursin("id=\"powerflow-run-form\"", form_html)
-      @test occursin("onsubmit=\"this.classList.add('is-submitting')", form_html)
-      @test occursin("this.setAttribute('aria-busy', 'true')", form_html)
-      @test occursin("this.querySelectorAll('button[type=submit]').forEach(function(b){b.disabled = true;})", form_html)
+      # The submit-disabling/aria-busy behavior lives in an addEventListener('submit', ...)
+      # handler (not an inline onsubmit=...) so it can first copy the submitter's
+      # name/value into a hidden input; a synchronous inline onsubmit disabling the
+      # submitter itself would otherwise strip it from the serialized form data
+      # (this previously broke the "Diagnose" button, which submits as a named
+      # second submit button rather than a plain "Start PowerFlow run" click).
+      @test !occursin("onsubmit=\"this.classList.add('is-submitting')", form_html)
+      @test occursin("powerflowForm.classList.add('is-submitting')", form_html)
+      @test occursin("powerflowForm.setAttribute('aria-busy', 'true')", form_html)
+      @test occursin("powerflowForm.querySelectorAll('button[type=submit]').forEach(function (b) { b.disabled = true; })", form_html)
+      @test occursin("const copySubmitterValue = function (submitter)", form_html)
       @test occursin("window.addEventListener('pageshow'", form_html)
       @test occursin("form.classList.remove('is-submitting')", form_html)
       @test occursin("form.removeAttribute('aria-busy')", form_html)
@@ -2479,6 +2487,85 @@ result = get_powerflow_result(run_id)
         for row in direct_report.nodes
           @test isapprox(webui_va_deg[row.bus], row.va_deg; atol = 1e-8)
         end
+      end
+    end
+
+    @testset "Diagnose button submitter preservation" begin
+      mktempdir() do diag_tmpdir
+        diag_casefile = _write_webui_test_case(joinpath(diag_tmpdir, "case_webui_diag.m"))
+        diag_config_file = joinpath(diag_tmpdir, "config_template.yaml")
+        cp(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, diag_config_file)
+        diag_output_root = joinpath(diag_tmpdir, "runs")
+
+        # (2a) The rendered form no longer disables submit buttons synchronously
+        # before serialization; it preserves the submitter's name/value instead.
+        diag_form_html = String(
+          Sparlectra.route_sparlectra_webui(
+            "GET",
+            "/powerflow?casefile=$(Sparlectra._webui_urlencode(diag_casefile))&config_file=$(Sparlectra._webui_urlencode(diag_config_file))";
+            output_root = diag_output_root,
+          ).body,
+        )
+        @test !occursin("onsubmit=\"this.classList.add('is-submitting')", diag_form_html)
+        @test occursin("<form id=\"powerflow-run-form\" data-powerflow-form method=\"post\" action=\"/powerflow/run\" class=\"panel form-grid powerflow-form-card\">", diag_form_html)
+        @test occursin("const copySubmitterValue = function (submitter)", diag_form_html)
+        @test occursin("data-submitter-value", diag_form_html)
+        @test occursin("event.submitter", diag_form_html)
+        @test occursin("powerflowForm.addEventListener('submit', function (event)", diag_form_html)
+        @test occursin("button.addEventListener('click', function () { copySubmitterValue(button); })", diag_form_html)
+        @test occursin("powerflowForm.classList.add('is-submitting')", diag_form_html)
+        @test occursin("powerflowForm.setAttribute('aria-busy', 'true')", diag_form_html)
+        @test occursin("powerflowForm.querySelectorAll('button[type=submit]').forEach(function (b) { b.disabled = true; })", diag_form_html)
+        @test occursin("staleSubmitterValue", diag_form_html)
+
+        # (1) Repro (still valid post-fix, since it exercises the unchanged server
+        # path): a POST body without "diagnose_mode" never writes diagnose.log.
+        no_diagnose_form = _webui_test_form(diag_casefile, diag_config_file, diag_output_root)
+        haskey(no_diagnose_form, "diagnose_mode") && delete!(no_diagnose_form, "diagnose_mode")
+        no_diagnose_response = Sparlectra.route_sparlectra_webui("POST", "/powerflow/run", no_diagnose_form; output_root = diag_output_root)
+        @test no_diagnose_response.status == 303
+        no_diagnose_run_id = basename(only(header.second for header in no_diagnose_response.headers if header.first == "Location"))
+        wait(Sparlectra._POWERFLOW_WEBUI_JOBS[no_diagnose_run_id]["task"])
+        no_diagnose_result = get_powerflow_result(no_diagnose_run_id)
+        @test no_diagnose_result["success"]
+        @test !isfile(joinpath(no_diagnose_result["output_dir"], "diagnose.log"))
+
+        # (2b) POST with diagnose_mode=true writes a non-empty diagnose.log containing
+        # the "Diagnosis" section from run_diagnostic_artifacts.jl.
+        diagnose_form = _webui_test_form(diag_casefile, diag_config_file, diag_output_root)
+        diagnose_form["diagnose_mode"] = "true"
+        diagnose_response = Sparlectra.route_sparlectra_webui("POST", "/powerflow/run", diagnose_form; output_root = diag_output_root)
+        @test diagnose_response.status == 303
+        diagnose_run_id = basename(only(header.second for header in diagnose_response.headers if header.first == "Location"))
+        wait(Sparlectra._POWERFLOW_WEBUI_JOBS[diagnose_run_id]["task"])
+        diagnose_result = get_powerflow_result(diagnose_run_id)
+        @test diagnose_result["success"]
+        diagnose_log_path = joinpath(diagnose_result["output_dir"], "diagnose.log")
+        @test isfile(diagnose_log_path)
+        @test filesize(diagnose_log_path) > 0
+        diagnose_log_text = read(diagnose_log_path, String)
+        @test occursin("Diagnosis", diagnose_log_text)
+
+        # (2c) Artifact listing of the diagnostic run includes diagnose.log.
+        diagnose_artifacts = list_powerflow_artifacts(diagnose_run_id)
+        @test any(artifact -> artifact["name"] == "diagnose.log", diagnose_artifacts)
+
+        # (2d) diagnose.log downloads with status 200 and the same file content.
+        diagnose_download = Sparlectra.route_sparlectra_webui("GET", "/powerflow/artifact/$(diagnose_run_id)/diagnose.log?download=1"; output_root = diag_output_root)
+        @test diagnose_download.status == 200
+        @test String(diagnose_download.body) == diagnose_log_text
+
+        # Regression: a plain "Start PowerFlow run" (no diagnose_mode field at all,
+        # matching what the real submit button sends) still never writes diagnose.log.
+        normal_form = _webui_test_form(diag_casefile, diag_config_file, diag_output_root)
+        haskey(normal_form, "diagnose_mode") && delete!(normal_form, "diagnose_mode")
+        normal_response = Sparlectra.route_sparlectra_webui("POST", "/powerflow/run", normal_form; output_root = diag_output_root)
+        @test normal_response.status == 303
+        normal_run_id = basename(only(header.second for header in normal_response.headers if header.first == "Location"))
+        wait(Sparlectra._POWERFLOW_WEBUI_JOBS[normal_run_id]["task"])
+        normal_result = get_powerflow_result(normal_run_id)
+        @test normal_result["success"]
+        @test !isfile(joinpath(normal_result["output_dir"], "diagnose.log"))
       end
     end
   end
