@@ -58,3 +58,4 @@ Task_*.md
 # Claude Code state is machine-local only; nothing under .claude/ is committed.
 .claude/
 .md
+.claude/*/*
