@@ -430,6 +430,16 @@ export
   printACPFlowResults,                    # Print AC PF result report.
   printProsumerResults,
 
+  # powerflow_dc/ — standalone DC power flow (MATPOWER rundcpf/makeBdc equivalent).
+  rundcpf!,                               # Solve standalone DC power flow; optional AC-NR seeding via seed_ac_start.
+  DcPowerFlowConfig,                      # power_flow.dc.* configuration.
+  DcPowerFlowReport,                      # Structured DC PF report (angles + lossless branch flows).
+  buildDcPowerFlowReport,                 # Build structured DC PF report.
+  printDcPowerFlowResults,                # Print DC PF result report.
+  dc_pf_status,                           # Most recent DC PF status for a network.
+  solve_dc_powerflow,                     # Core linear DC PF solve (theta, Pf, Pt, slack injection).
+  assemble_dc_bbus,                       # MATPOWER makeBdc-equivalent B' + phase-shift injection assembly.
+
   # Configuration-driven framework runner.
   run_sparlectra,                         # Preferred public import/control/solve/output workflow.
   run_sparlectra_cases,                   # Run configured MATPOWER cases sequentially.
@@ -584,6 +594,14 @@ include("powerflow_rectangular/rectangular_final_status.jl")
 include("powerflow_rectangular/rectangular_diagnostics.jl")
 include("powerflow_rectangular/ac_islands.jl")
 include("powerflow_rectangular/rectangular_network_solver.jl")
+# Standalone DC power flow (rundcpf!). Reuses solver_core.jl's shared
+# slack-reduction helper and powerflow_rectangular/ac_islands.jl's island
+# detection; does not hook into the AC Newton orchestration loop above.
+include("powerflow_dc/dc_bmatrix.jl")
+include("powerflow_dc/dc_solve.jl")
+include("powerflow_dc/dc_status_workspace.jl")
+include("powerflow_dc/dc_network_solver.jl")
+include("powerflow_dc/dc_report.jl")
 include("solver_interface.jl")
 include("FetchMatpowerCase.jl")
 using .FetchMatpowerCase: ensure_casefile

@@ -66,6 +66,54 @@ configurable option — the generator's only job is producing a better starting
 voltage profile; Q-limit enforcement is entirely the downstream NR solve's
 responsibility.
 
+## Solver selection (DC power flow)
+
+`power_flow.solver: dc` selects the standalone DC power flow (MATPOWER
+`rundcpf`/`makeBdc`-equivalent) instead of the AC rectangular Newton-Raphson
+solve: a linear screening model built from branch series reactance only
+(`B'`, no `r`, no shunt, no line charging), with transformer
+`phase_shift_deg` represented as a phase-shift injection vector rather than
+inside `B'` itself. `Vm` is implicitly `1.0 pu` at every bus and there are
+no losses — both by definition of the DC model, not solver limitations. It
+can also be called directly, independent of `run_sparlectra`/`power_flow.solver`,
+via [`rundcpf!`](@ref reference_powerflow_dc).
+
+```yaml
+power_flow:
+  solver: dc   # rectangular | apslf | dc
+  dc:
+    angle_reference_deg: 0.0
+    ignore_out_of_service: true
+```
+
+| YAML path | Type | Default | Allowed values | Meaning | Use when | Avoid when | Performance impact | Interactions |
+|---|---:|---:|---|---|---|---|---|---|
+| `power_flow.solver` | Symbol/String | `rectangular` | `rectangular`, `apslf`, `dc` | Selects the executing solver. | `dc` for a fast linear screening solve or as an AC start-value source. | `dc` when Vm/Q/loss results are required (the model doesn't define them). | `dc` is a single direct linear solve — no iteration. | Rejects active outer-loop controllers (tap/PST/Q(U)/P(U)), mirrors `apslf`. |
+| `power_flow.dc.angle_reference_deg` | Float64 | `0.0` | any real | Uniform angle offset added to every bus after the slack-referenced solve; the slack bus itself is fixed at this reference. | Matching an external reference-angle convention. | N/A | None (exact post-hoc shift, not a re-solve). | None — mathematically independent of the rest of the DC solve. |
+| `power_flow.dc.ignore_out_of_service` | Bool | `true` | `true` | Documents that `status == 0` branches are always excluded from `B'`. | Always (current fixed behavior). | N/A | N/A | Not currently a live toggle. |
+
+`rundcpf!` accepts a `seed_ac_start::Bool=false` keyword (not a YAML option
+— it only makes sense as a one-off programmatic call): when `true`, after a
+successful DC solve it immediately re-seeds and runs the AC rectangular
+Newton-Raphson solve from the just-computed DC angles, restoring Slack/PV
+voltage-magnitude setpoints first (the DC write otherwise flattens every bus
+to `1.0 pu`). `net` then holds the AC-converged solution, not the DC one;
+the returned `DcPowerFlowReport` still reflects the DC step's own result,
+with the AC outcome recorded in `report.metadata.ac_converged`/
+`ac_iterations`/`ac_elapsed_s`.
+
+DC results are reported through a dedicated `DcPowerFlowReport` (angles and
+lossless branch flows only) and tracked via `dc_pf_status(net)`, a status
+registry kept separate from `rectangular_pf_status` so a DC result is never
+mistaken for an AC one by AC-only reporting code.
+
+**Known limitation**: with `power_flow.solver = :dc` and multiple AC
+islands, the per-island diagnostics CSV (`ac_island_solver_summary.csv`,
+see below) is still written but stays cosmetically empty for DC-solved
+islands — it reads AC-only `rectangular_pf_status` fields that a DC solve
+never populates. This does not affect the DC solve or its `dc_pf_status`
+result, only that one diagnostics artifact.
+
 ## AC island diagnostics
 
 `power_flow.islands` enables structural AC-island diagnostics for imported or

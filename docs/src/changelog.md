@@ -14,6 +14,37 @@
   a solver start/step-control issue. The Web UI PowerFlow form has a
   dedicated "Diagnose" action next to "Start PowerFlow run" that runs this
   self-check and writes the same enriched `diagnose.log`.
+* **Standalone DC power flow** (`rundcpf!`, `power_flow.solver = :dc`): a
+  MATPOWER `rundcpf`/`makeBdc`-equivalent linear screening model, ported
+  algorithm-only (BSD-3-Clause attribution) — `B'` from branch series
+  reactance only (no `r`, no shunt, no line charging), a phase-shift
+  injection vector so transformer `phase_shift_deg` is represented without
+  entering `B'` itself, sparse-only linear solve, `Vm` implicitly 1.0 pu
+  everywhere (lossless model, by definition). Usable standalone (`rundcpf!`)
+  or as a third `run_sparlectra` framework solver alongside `rectangular`/
+  `apslf`, including per-island handling (each AC island solved
+  independently with its own reference bus, reusing the existing island
+  detection/reference-selection machinery unchanged). New
+  `rundcpf!(net; seed_ac_start=true)` convenience: after a successful DC
+  solve, immediately re-seeds and runs the AC rectangular Newton-Raphson
+  solve from the just-computed DC angles. Results are reported through a
+  dedicated, lightweight `DcPowerFlowReport` (angles + lossless branch
+  flows only — no Vm/Q/losses/tolerance columns, since the DC model doesn't
+  define any of those) and tracked via a `dc_pf_status(net)` registry kept
+  separate from the AC `rectangular_pf_status`, so a DC result can never be
+  mistaken for an AC one by AC-only reporting code. A phase-shifting
+  transformer's current, fixed angle is correctly represented in the
+  B′/injection math; the *outer control loop* that would iteratively adjust
+  it is not supported under `power_flow.solver = :dc` (mirrors the existing
+  `apslf` restriction). New `power_flow.dc.*` YAML section
+  (`angle_reference_deg`). Known limitation: with
+  `power_flow.solver = :dc` and multiple AC islands, the framework's
+  per-island diagnostics CSV (`ac_island_solver_summary.csv`) is still
+  written but stays cosmetically empty for DC-solved islands, since it
+  reads AC-only `rectangular_pf_status` fields that a DC solve never
+  populates — not a crash, just an unpopulated diagnostics artifact; a
+  future iteration may give DC its own per-island diagnostics writer. See
+  `examples/exp_dc_powerflow.jl`.
 
 ## Improvements
 * Web UI warm-up (`warmup = true`) now waits `warmup_delay_seconds` (default

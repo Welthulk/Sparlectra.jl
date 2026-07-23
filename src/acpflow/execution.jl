@@ -36,6 +36,12 @@ function _execute_sparlectra_powerflow!(net::Net, cfg::SparlectraConfig; perform
           end
           ite, status = _run_apslf_powerflow!(net, pf_cfg; verbose = verbose, performance_profile = performance_profile)
           (ite, status, :none)
+        elseif pf_cfg.solver === :dc
+          if !isempty(controllers) || has_voltage_dependent_control(net)
+            throw(ArgumentError("power_flow.solver=dc does not support active outer-loop controllers (tap-changer, phase-shifting transformer, Q(U), or P(U) control). A phase-shifting transformer's current, fixed angle is still represented in the DC model; only the outer control loop that adjusts it is unsupported. Disable the controllers or set power_flow.solver=rectangular."))
+          end
+          ite, status = _run_dc_powerflow!(net, pf_cfg; verbose = verbose, performance_profile = performance_profile)
+          (ite, status, :none)
         elseif isempty(controllers)
           ite, status = runpf!(net, pf_cfg; verbose = verbose, pv_table_rows = qlimit_preview_rows, performance_profile = performance_profile)
           (ite, status, :none)

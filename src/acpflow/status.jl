@@ -176,7 +176,35 @@ function _compose_framework_status(base_status, control_status::Symbol)
   return merge(base_status, (outcome = outcome, final_converged = false, reason = outcome, reason_text = "control loop ended with status $(control_status)"))
 end
 
+function _dc_run_status(dc_status)
+  status = dc_status === nothing ? :solver_error : Symbol(dc_status.status)
+  numerical_converged = dc_status !== nothing && Bool(dc_status.numerical_converged)
+  return (
+    outcome = status,
+    numerical_converged = numerical_converged,
+    solution_available = numerical_converged,
+    limit_validation_status = :skip,
+    final_converged = dc_status !== nothing && Bool(dc_status.final_converged),
+    reason = dc_status === nothing ? :solver_error : Symbol(dc_status.reason),
+    reason_text = dc_status === nothing ? "solver status unavailable" : String(dc_status.reason_text),
+    final_mismatch = NaN,
+  )
+end
+
+function _dc_status_diagnostics(dc_status)::NamedTuple
+  dc_status === nothing && return NamedTuple()
+  return (solver = :dc, dc_iterations = _rect_status_get(dc_status, :iterations, 0), dc_stage = _rect_status_get(dc_status, :stage, :unknown))
+end
+
 function _build_sparlectra_result(net::Net, cfg::SparlectraConfig, execution, performance_profile)::SparlectraRunResult
+  if cfg.powerflow.solver === :dc
+    dc_status = dc_pf_status(net)
+    status = _dc_run_status(dc_status)
+    status = _compose_framework_status(status, execution.control_status)
+    status = _append_island_failure_message(status, performance_profile)
+    diagnostics = _dc_status_diagnostics(dc_status)
+    return SparlectraRunResult(net, status.outcome, status.numerical_converged, status.solution_available, status.limit_validation_status, status.final_converged, status.reason, status.reason_text, execution.iterations, execution.elapsed_s, execution.solver_elapsed_s, status.final_mismatch, :dc, execution.control_status, performance_profile, diagnostics)
+  end
   rect_status = cfg.powerflow.method === :rectangular ? rectangular_pf_status(net) : nothing
   status = if cfg.powerflow.method === :rectangular
     _rectangular_run_status(rect_status)

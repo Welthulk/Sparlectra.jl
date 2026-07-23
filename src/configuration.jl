@@ -149,6 +149,25 @@ Base.@kwdef struct IslandPowerFlowConfig
 end
 
 """
+    DcPowerFlowConfig
+
+Typed configuration for the standalone DC power flow ([`rundcpf!`](@ref)),
+used when `power_flow.solver == :dc`.
+
+`angle_reference_deg` is the uniform angle offset added to every bus after
+the slack-referenced linear solve (the slack bus itself is fixed at this
+reference) — see [`solve_dc_powerflow`](@ref) for why this post-hoc shift is
+exact. `ignore_out_of_service` documents that `status == 0` branches are
+always excluded from the B′ assembly (there is currently no supported way
+to include them; the field exists for forward compatibility with the YAML
+schema, not as a live toggle).
+"""
+Base.@kwdef struct DcPowerFlowConfig
+  angle_reference_deg::Float64 = 0.0
+  ignore_out_of_service::Bool = true
+end
+
+"""
     ApslfConfig
 
 Typed configuration for the AnalyticLoadFlow.jl-backed analytic power-series
@@ -209,10 +228,11 @@ Base.@kwdef struct PowerFlowConfig
   trust_region::TrustRegionConfig = TrustRegionConfig()
   qlimits::QLimitConfig = QLimitConfig()
   islands::IslandPowerFlowConfig = IslandPowerFlowConfig()
+  dc::DcPowerFlowConfig = DcPowerFlowConfig()
 end
 
 const WRONG_BRANCH_DETECTION_VALUES = [:off, :warn, :fail, :rescue]
-const POWERFLOW_SOLVER_VALUES = (:rectangular, :apslf)
+const POWERFLOW_SOLVER_VALUES = (:rectangular, :apslf, :dc)
 const POWERFLOW_ISLAND_MODE_VALUES = [:solve_independent]
 const POWERFLOW_ISLAND_REFERENCE_POLICY_VALUES = [:matpower_like]
 
@@ -791,6 +811,7 @@ function PowerFlowConfig(raw::AbstractDict)
   islands_raw = _raw_section(merged, "islands")
   apslf_raw = _raw_section(merged, "apslf")
   apslf_start_raw = _raw_section(merged, "apslf_start")
+  dc_raw = _raw_section(merged, "dc")
   solver = _validate_allowed_symbol("power_flow.solver", _as_symbol_cfg(_raw_get(merged, "solver", :rectangular)), POWERFLOW_SOLVER_VALUES)
   apslf_cfg = ApslfConfig(apslf_raw)
   apslf_start_cfg = ApslfStartConfig(apslf_start_raw)
@@ -843,6 +864,14 @@ function PowerFlowConfig(raw::AbstractDict)
     trust_region = trust_region_cfg,
     qlimits = QLimitConfig(merge(Dict{Any,Any}(merged), Dict{Any,Any}(qlimit_raw))),
     islands = IslandPowerFlowConfig(islands_raw),
+    dc = DcPowerFlowConfig(dc_raw),
+  )
+end
+
+function DcPowerFlowConfig(raw::AbstractDict)
+  return DcPowerFlowConfig(
+    angle_reference_deg = _as_float_cfg(_raw_get(raw, "angle_reference_deg", 0.0)),
+    ignore_out_of_service = _as_bool_cfg(_raw_get(raw, "ignore_out_of_service", true)),
   )
 end
 
