@@ -423,6 +423,35 @@ settings:
       @test !occursin("Case-specific settings loaded from", notice_off_form)
       @test occursin("power_flow_tol", notice_off_form) # form itself still prefilled from the profile
 
+      dismiss_root = mktempdir()
+      dismiss_config = joinpath(dismiss_root, "configuration.yaml")
+      write(dismiss_config, "power_flow:\n  tol: 1.0e-6\n")
+      dismiss_case = joinpath(dismiss_root, "case14.m")
+      write(dismiss_case, "% case fixture\n")
+      write(Sparlectra._webui_case_settings_path(dismiss_root, dismiss_case), """
+profile_kind: webui_case_settings
+schema_version: 1
+settings:
+  power_flow_tol: 1.0e-7
+""")
+      before_dismiss_form = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow?casefile=$(Sparlectra._webui_urlencode(dismiss_case))&config_file=$(Sparlectra._webui_urlencode(dismiss_config))"; output_root = dismiss_root).body)
+      @test occursin("Case-specific settings loaded from", before_dismiss_form)
+      @test occursin("action=\"/powerflow/config/dismiss-case-settings-notice\"", before_dismiss_form)
+      @test occursin("name=\"config_file\" value=\"$(Sparlectra._webui_escape(dismiss_config))\"", before_dismiss_form)
+      @test occursin("class=\"link-button\"", before_dismiss_form)
+      dismiss_response = Sparlectra.route_sparlectra_webui("POST", "/powerflow/config/dismiss-case-settings-notice", Dict{String,String}("config_file" => dismiss_config, "casefile" => dismiss_case); output_root = dismiss_root)
+      @test dismiss_response.status == 303
+      @test Dict(dismiss_response.headers)["Location"] == "/powerflow?casefile=$(Sparlectra._webui_urlencode(dismiss_case))"
+      dismiss_config_text = read(dismiss_config, String)
+      @test occursin("show_case_settings_notice: false", dismiss_config_text)
+      @test occursin("tol: 1.0e-6", dismiss_config_text) # unrelated existing settings preserved
+      after_dismiss_form = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow?casefile=$(Sparlectra._webui_urlencode(dismiss_case))&config_file=$(Sparlectra._webui_urlencode(dismiss_config))"; output_root = dismiss_root).body)
+      @test !occursin("Case-specific settings loaded from", after_dismiss_form)
+      missing_config_dismiss = Sparlectra.route_sparlectra_webui("POST", "/powerflow/config/dismiss-case-settings-notice", Dict{String,String}("config_file" => joinpath(dismiss_root, "does_not_exist.yaml"), "casefile" => dismiss_case); output_root = dismiss_root)
+      @test missing_config_dismiss.status == 400
+      empty_config_dismiss = Sparlectra.route_sparlectra_webui("POST", "/powerflow/config/dismiss-case-settings-notice", Dict{String,String}("casefile" => dismiss_case); output_root = dismiss_root)
+      @test empty_config_dismiss.status == 400
+
       case118 = joinpath(root, "case118.m")
       write(case118, "% case fixture\n")
       write(Sparlectra._webui_case_settings_path(root, case118), """
