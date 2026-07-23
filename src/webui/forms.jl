@@ -469,7 +469,11 @@ function powerflow_webui_request(form::AbstractDict; default_output_root::Abstra
     "config_overrides" => overrides,
     "config_override_source" => apply_runtime_overrides ? "webui_form_runtime" : "user_yaml",
     "performance_timing" => request_options["performance_timing"],
-    "run_diagnostics" => request_options["run_diagnostics"],
+    # Normal "Start PowerFlow run" submissions never write diagnose.log; only
+    # the dedicated "Diagnose" self-check does (diagnose_mode forces
+    # run_diagnostics = true server-side in start_powerflow_run regardless of
+    # this value). There is no "Run diagnostics" checkbox for a normal run.
+    "run_diagnostics" => false,
     "diagnose_mode" => _webui_parse_form_value(_webui_form_value(form, "diagnose_mode", "false"), Bool, "diagnose_mode"),
     "detailed_result_csv" => request_options["detailed_result_csv"],
     "detailed_result_csv_format" => request_options["detailed_result_csv_format"],

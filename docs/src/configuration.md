@@ -62,6 +62,7 @@ This typed model is the canonical internal representation that should be consume
 | `control` | `ControlConfig` | Generic controller outer-loop orchestration controls (`control.controllers` reserved for future YAML definitions) | Public / supported |
 | `runtime` | `RuntimeConfig` | Julia/BLAS thread control knobs for entry workflows | Public / supported |
 | `diagnostics` | `DiagnosticsConfig` | Effective-config logging and diagnostics render controls | Public / supported |
+| `webui` | `WebUIConfig` | Web UI presentation preferences (e.g. `webui.show_case_settings_notice`) | Public / supported |
 | `extensions` | reserved (not mapped to typed runtime fields) | Future extension placeholder | Reserved |
 
 ### Supported power-flow path
@@ -519,3 +520,5 @@ The following canonical keys are currently present in `src/configuration.yaml.ex
 - `state_estimation.update_net`
 - `transformer`
 - `transformer.tap_changer_model`
+- `webui`
+- `webui.show_case_settings_notice`

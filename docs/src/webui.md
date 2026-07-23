@@ -327,9 +327,10 @@ configuration, case loading/network construction/solve, postprocessing when
 separately available, artifact writing, solver time, and total time. `full`
 also includes available internal profile entries.
 
-The **Run diagnostics** checkbox writes `diagnose.log` after the PowerFlow
-result is available. On a converged run it stays short. On a run that did not
-converge, it is a diagnostic report rather than a flat key/value dump: a
+A normal **Start PowerFlow run** never writes `diagnose.log` — use the
+**Diagnose** action below for that. When it is written (by Diagnose, or
+programmatically via `run_diagnostics = true`), it is a diagnostic report
+rather than a flat key/value dump on a run that did not converge: a
 "Diagnosis" section names the worst-mismatch bus/equation and classifies the
 mismatch-history trend (monotonic / oscillatory / stagnant / diverging to
 non-finite) and autodamp health, a "Branch anomalies at worst-mismatch bus"
