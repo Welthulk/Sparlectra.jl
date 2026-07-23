@@ -194,6 +194,41 @@ function _write_diagnosis_narrative(io::IO, result::SparlectraRunResult)
   return nothing
 end
 
+"""
+    _write_execution_failure_diagnostics(path, reason, message)
+
+Write a best-effort `diagnose.log` when a run fails before a
+`SparlectraRunResult` is available — e.g. `run_sparlectra` throwing for an
+AC-island failure with a non-finite mismatch before the first Newton
+iteration (`stage=before_nr`), or an unsupported MATPOWER DC-line
+convention. Without this, `run_diagnostics = true` silently produced no
+`diagnose.log` at all for these early/exception failures, since the normal
+`_write_powerflow_diagnostics` call site is only reached after
+`run_sparlectra` returns successfully. Rich per-bus/branch diagnostics need a
+solved network, which this failure mode never reaches; per-island detail,
+when available, lives in `ac_island_<id>_solver.log`.
+"""
+function _write_execution_failure_diagnostics(path::AbstractString, reason::AbstractString, message::AbstractString)
+  open(path, "w") do io
+    println(io, "Sparlectra PowerFlow diagnostics")
+    println(io, "================================")
+    println(io, "outcome: execution_failure")
+    println(io, "reason: ", reason)
+    println(io)
+    println(io, "Diagnosis")
+    println(io, "---------")
+    println(io, "The run failed before a solved network/result was available, so no per-bus/branch mismatch breakdown can be reported here.")
+    println(io)
+    println(io, message)
+    println(io)
+    println(io, "Recommendations")
+    println(io, "---------------")
+    println(io, "1. If this names an AC island, check that island's ac_island_<id>_solver.log and ac_island_solver_summary.csv for its start-of-solve mismatch and settings.")
+    println(io, "2. Run run_fixed_reference_self_check on this case to check whether a large residual is already present at the case's own stored VM/VA (a network-model issue) rather than introduced by the solver's start guess.")
+  end
+  return path
+end
+
 function _write_powerflow_diagnostics(path::AbstractString, result::SparlectraRunResult; diagnostic_fn = nothing, mode::Symbol = :compact)
   open(path, "w") do io
     println(io, "Sparlectra PowerFlow diagnostics")

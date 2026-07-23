@@ -207,10 +207,21 @@ function run_api_extended_tests()
       active_default_mpc = Sparlectra.MatpowerIO.read_case(active_dcline_case; legacy_compat = false)
       active_default_net = Sparlectra.createNetFromMatPowerCase(mpc = active_default_mpc)
       @test !isempty(active_default_net.matpowerDclineMetadata)
-      active_result = run_sparlectra_api(casefile = active_dcline_case, config_file = template, output_dir = joinpath(tmpdir, "active-dcline"), config_overrides = Dict("matpower_import.matpower_dcline_mode" => "reject_active", "output.logfile_results" => "full", "benchmark.enabled" => false), performance_timing = :compact)
+      active_result = run_sparlectra_api(casefile = active_dcline_case, config_file = template, output_dir = joinpath(tmpdir, "active-dcline"), config_overrides = Dict("matpower_import.matpower_dcline_mode" => "reject_active", "output.logfile_results" => "full", "benchmark.enabled" => false), performance_timing = :compact, run_diagnostics = true)
       @test active_result.status === :failed
       @test !active_result.success
       @test active_result.reason == "unsupported_matpower_dcline"
+      # Regression: run_sparlectra_api used to skip diagnose.log entirely for
+      # failures raised before a SparlectraRunResult exists (run_sparlectra
+      # throwing), since _write_powerflow_diagnostics was only reached on the
+      # success path. run_diagnostics = true must still produce a diagnose.log
+      # for these early/exception failures.
+      active_diagnose_log = read(joinpath(active_result.output_dir, "diagnose.log"), String)
+      @test occursin("outcome: execution_failure", active_diagnose_log)
+      @test occursin("reason: unsupported_matpower_dcline", active_diagnose_log)
+      @test occursin("MATPOWER case contains active `mpc.dcline` entries", active_diagnose_log)
+      @test occursin("Recommendations", active_diagnose_log)
+      @test occursin("run_fixed_reference_self_check", active_diagnose_log)
       @test active_result.metadata["failure_reason"] == "unsupported_matpower_dcline"
       @test active_result.metadata["matpower_dcline_present"] === true
       @test active_result.metadata["matpower_dcline_unsupported"] === true
@@ -755,6 +766,15 @@ power_flow:
 
         bad_config_dir = joinpath(tmpdir, "self_check_missing_config")
         @test_throws ArgumentError run_fixed_reference_self_check(casefile = casefile, config_file = joinpath(tmpdir, "does_not_exist.yaml"), output_dir = bad_config_dir)
+
+        execution_failure_log = joinpath(tmpdir, "execution_failure_diagnose.log")
+        Sparlectra._write_execution_failure_diagnostics(execution_failure_log, "nr_nonfinite", "AC island 1 power-flow solve failed:\n  iterations=0\n  stage=before_nr")
+        execution_failure_text = read(execution_failure_log, String)
+        @test occursin("outcome: execution_failure", execution_failure_text)
+        @test occursin("reason: nr_nonfinite", execution_failure_text)
+        @test occursin("stage=before_nr", execution_failure_text)
+        @test occursin("ac_island_<id>_solver.log", execution_failure_text)
+        @test occursin("run_fixed_reference_self_check", execution_failure_text)
       end
 
       for i = 1:5
