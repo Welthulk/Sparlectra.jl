@@ -567,6 +567,27 @@ pre {
   margin-bottom: 1rem;
 }
 
+.case-settings-notice-dismiss {
+  display: inline;
+  margin-left: 0.5rem;
+}
+
+.link-button {
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  color: #1557a5;
+  text-decoration: underline;
+  cursor: pointer;
+  font: inherit;
+}
+
+.link-button:hover,
+.link-button:focus {
+  color: #0d3b73;
+}
+
 .error {
   background: #fff0f0;
   color: #8d1e1e;

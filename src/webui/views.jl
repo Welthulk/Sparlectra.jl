@@ -305,7 +305,11 @@ function render_powerflow_form(;
   profile_values = webui_form_state(; selected_casefile, selected_config_file, sidecar_profile = case_profile, submitted_form)
   profile_path = String(get(profile_values, "_profile_path", ""))
   profile_location = isempty(profile_path) ? "the sidecar profile" : "<code>$(_webui_escape(profile_path))</code>"
-  profile_notice = isempty(profile_path) || !show_case_settings_notice ? "" : "<div class=\"alert info case-settings-notice\" role=\"status\"><strong>Case-specific settings loaded from $(profile_location).</strong> Saved Web UI settings prefilled the form. Manual edits on this page override the profile for this run.</div>"
+  profile_notice = if isempty(profile_path) || !show_case_settings_notice
+    ""
+  else
+    "<div class=\"alert info case-settings-notice\" role=\"status\"><strong>Case-specific settings loaded from $(profile_location).</strong> Saved Web UI settings prefilled the form. Manual edits on this page override the profile for this run. <form method=\"post\" action=\"/powerflow/config/dismiss-case-settings-notice\" class=\"case-settings-notice-dismiss\"><input type=\"hidden\" name=\"config_file\" value=\"$(_webui_escape(selected_config_file))\"><input type=\"hidden\" name=\"casefile\" value=\"$(_webui_escape(selected_casefile))\"><button type=\"submit\" class=\"link-button\">Don't show this again</button></form></div>"
+  end
   error_html = _webui_error_alert_html(error_message)
   import_html = isempty(strip(import_message)) ? "" : "<div class=\"alert info case-import-result\" role=\"status\">$(_webui_escape(import_message))</div>"
   casefiles = case_directory === nothing ? _webui_casefile_options(application_root) : _webui_casefile_options_in_directory(case_directory)
