@@ -41,6 +41,15 @@
   editors on larger multi-island cases. Large or duplicated values are now
   replaced with a short summary line; internal callback closures are omitted
   entirely.
+* `run_diagnostics = true` silently produced no `diagnose.log` at all for
+  runs that fail before a solved network/result is available — e.g.
+  `run_sparlectra` throwing for an AC-island failure with a non-finite
+  mismatch before the first Newton iteration (`stage=before_nr`), or an
+  unsupported MATPOWER DC-line convention. These failures return early via
+  `_api_execution_failure`, bypassing the normal `_write_powerflow_diagnostics`
+  call site entirely. A best-effort `diagnose.log` (reason, failure message,
+  and a pointer to per-island logs/`run_fixed_reference_self_check`) is now
+  written for these cases too.
 
 # Version 0.8.14 — 2026-07-22
 
