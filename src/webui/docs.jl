@@ -264,6 +264,7 @@ const WEBUI_DOC_PAGES = Dict(
   "matpower_format" => (title = "MATPOWER format", file = "matpower_format.md"),
   "dtf_format" => (title = "DTF legacy input format", file = "dtf_format.md"),
   "matpower_import" => (title = "MATPOWER Import", file = "matpower_import.md"),
+  "matpower_case_matrix" => (title = "MATPOWER Case Diagnostics Matrix", file = "sparlectra_matpower_case_matrix.md"),
   "webui" => (title = "Local PowerFlow Web UI", file = "webui.md"),
   "feature_matrix" => (title = "Feature Matrix", file = "feature_matrix.md"),
 )
