@@ -2,8 +2,10 @@
 .v*
 test/workshop*.jl
 # Ignore downloaded MATPOWER cases
+data/mpower/*.*
 data/mpower/*.m
 data/mpower/*.jl
+
 data/mpower/result_*
 
 # Local DTF/FOR001/FOR002 validation networks
