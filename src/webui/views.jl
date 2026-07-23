@@ -362,7 +362,7 @@ function render_powerflow_form(;
   form = """
 $(_webui_feedback_modal_html([error_html, import_html, profile_notice]))$(_webui_active_run_banner(active_run))$(notice_html)<p class=\"lede\">Run a local MATPOWER case through the Sparlectra PowerFlow service.</p>
 $(import_form)
-<form id=\"powerflow-run-form\" data-powerflow-form method=\"post\" action=\"/powerflow/run\" class=\"panel form-grid powerflow-form-card\" onsubmit=\"this.classList.add('is-submitting'); this.setAttribute('aria-busy', 'true'); this.querySelector('button[type=submit]').disabled = true;\">
+<form id=\"powerflow-run-form\" data-powerflow-form method=\"post\" action=\"/powerflow/run\" class=\"panel form-grid powerflow-form-card\" onsubmit=\"this.classList.add('is-submitting'); this.setAttribute('aria-busy', 'true'); this.querySelectorAll('button[type=submit]').forEach(function(b){b.disabled = true;});\">
 $(config_control)
 <label>$(_webui_field_label("casefile", "Existing case file"))$(case_select)<small class="field-hint">Cases from <code>$(_webui_escape(effective_case_directory))</code></small></label>
 <label>$(_webui_field_label("casefile_manual", "Or type case file path"))$(case_manual)<button type="submit" id="resolve-case-button" formaction="/powerflow/resolve-case" formmethod="post" formnovalidate hidden>Resolve case</button></label>
@@ -466,7 +466,7 @@ $(config_maintenance)
 </fieldset>
 <label class=\"check span-2\"><input name=\"ignore_webui_settings\" type=\"hidden\" value=\"false\"><input name=\"ignore_webui_settings\" type=\"checkbox\" value=\"true\">$(_webui_field_label("ignore_webui_settings", "Ignore Web UI settings and use configuration defaults"))</label>
 </details>
-<div class=\"span-2 actions\"><button class=\"powerflow-submit\" type=\"submit\"><span class=\"submit-spinner\" aria-hidden=\"true\"></span><span class=\"submit-label\">Start PowerFlow run</span><span class=\"submit-progress-label\" role=\"status\" aria-live=\"polite\">Running PowerFlow…</span></button></div></form>
+<div class=\"span-2 actions\"><button class=\"powerflow-submit\" type=\"submit\"><span class=\"submit-spinner\" aria-hidden=\"true\"></span><span class=\"submit-label\">Start PowerFlow run</span><span class=\"submit-progress-label\" role=\"status\" aria-live=\"polite\">Running PowerFlow…</span></button><button class=\"powerflow-submit diagnose-submit\" type=\"submit\" name=\"diagnose_mode\" value=\"true\" title=\"Run this case in diagnostic mode: evaluates the mismatch at the case's own stored VM/VA (no corrective Newton step) and writes a diagnostic report to diagnose.log.\"><span class=\"submit-spinner\" aria-hidden=\"true\"></span><span class=\"submit-label\">Diagnose</span><span class=\"submit-progress-label\" role=\"status\" aria-live=\"polite\">Running diagnosis…</span></button></div></form>
 <script>
 document.addEventListener('DOMContentLoaded', function () {
   const feedbackModal = document.getElementById('feedback-modal');
@@ -674,8 +674,7 @@ window.addEventListener('pageshow', function () {
   if (form === null) return;
   form.classList.remove('is-submitting');
   form.removeAttribute('aria-busy');
-  const submitButton = form.querySelector('button[type=submit]');
-  if (submitButton !== null) submitButton.disabled = false;
+  form.querySelectorAll('button[type=submit]').forEach(function (b) { b.disabled = false; });
 });
 </script>"""
   return _webui_layout("PowerFlow run", form; header_info = info_menu)

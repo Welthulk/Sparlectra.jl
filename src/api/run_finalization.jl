@@ -174,6 +174,26 @@ function _write_compact_internal_timing_aggregates(io::IO, result::SparlectraRun
   return nothing
 end
 
+# Some `performance_profile` entries (per-island diagnostics/statuses) hold
+# deeply nested vectors/dicts already duplicated in dedicated per-island
+# artifacts (`ac_island_<id>_solver.log`, `ac_island_solver_summary.csv`).
+# Dumped raw, their default Julia `string(...)` representation is one
+# multi-thousand-character line — unreadable, and heavy enough that some text
+# editors struggle to open the file. Internal callback closures carry no
+# diagnostic content (their printed form is just an opaque `#N` gensym), so
+# they are omitted entirely rather than summarized.
+const _PERFORMANCE_LOG_VERBOSE_VALUE_MAX_CHARS = 500
+
+function _compact_performance_profile_value(key::Symbol, value)::Union{Nothing,String}
+  value isa Function && return nothing
+  if key === :ac_island_diagnostics || key === :ac_island_solver_statuses
+    return "$(length(value)) island entry/entries (full detail in ac_island_<id>_solver.log / ac_island_solver_summary.csv)"
+  end
+  text = string(value)
+  length(text) > _PERFORMANCE_LOG_VERBOSE_VALUE_MAX_CHARS && return "$(typeof(value)) ($(length(text)) chars, compact representation omitted; see structured result metadata)"
+  return text
+end
+
 function _write_performance_log(path::AbstractString, mode::Symbol, phases::AbstractDict, result::SparlectraRunResult, phase_timings::AbstractVector = Dict{String,Any}[])
   open(path, "w") do io
     println(io, "Sparlectra single-run phase timing")
@@ -195,7 +215,8 @@ function _write_performance_log(path::AbstractString, mode::Symbol, phases::Abst
       println(io, "Available internal performance profile")
       println(io, "--------------------------------------")
       for key in sort!(collect(keys(result.performance_profile)); by = string)
-        println(io, key, ": ", result.performance_profile[key])
+        summary = _compact_performance_profile_value(key, result.performance_profile[key])
+        summary === nothing || println(io, key, ": ", summary)
       end
     end
   end

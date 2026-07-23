@@ -1317,6 +1317,10 @@ settings:
       @test Sparlectra.powerflow_webui_request(csv_disabled_form; default_output_root = output_root)["detailed_result_csv"] === false
       delete!(csv_disabled_form, "detailed_result_csv_format")
       @test Sparlectra.powerflow_webui_request(csv_disabled_form; default_output_root = output_root)["detailed_result_csv_format"] == "excel_us"
+      @test Sparlectra.powerflow_webui_request(form; default_output_root = output_root)["diagnose_mode"] === false
+      diagnose_form = copy(form)
+      diagnose_form["diagnose_mode"] = "true"
+      @test Sparlectra.powerflow_webui_request(diagnose_form; default_output_root = output_root)["diagnose_mode"] === true
       untrusted_form = copy(form)
       untrusted_form["output_root"] = joinpath(tmpdir, "outside")
       @test Sparlectra.powerflow_webui_request(untrusted_form; default_output_root = output_root)["output_root"] == output_root
@@ -1537,14 +1541,17 @@ settings:
       @test occursin("id=\"powerflow-run-form\"", form_html)
       @test occursin("onsubmit=\"this.classList.add('is-submitting')", form_html)
       @test occursin("this.setAttribute('aria-busy', 'true')", form_html)
-      @test occursin("this.querySelector('button[type=submit]').disabled = true", form_html)
+      @test occursin("this.querySelectorAll('button[type=submit]').forEach(function(b){b.disabled = true;})", form_html)
       @test occursin("window.addEventListener('pageshow'", form_html)
       @test occursin("form.classList.remove('is-submitting')", form_html)
       @test occursin("form.removeAttribute('aria-busy')", form_html)
-      @test occursin("submitButton.disabled = false", form_html)
+      @test occursin("form.querySelectorAll('button[type=submit]').forEach(function (b) { b.disabled = false; })", form_html)
       @test occursin("class=\"powerflow-submit\"", form_html)
       @test occursin("class=\"submit-spinner\" aria-hidden=\"true\"", form_html)
       @test occursin("class=\"submit-progress-label\" role=\"status\" aria-live=\"polite\">Running PowerFlow…", form_html)
+      @test occursin("class=\"powerflow-submit diagnose-submit\" type=\"submit\" name=\"diagnose_mode\" value=\"true\"", form_html)
+      @test occursin("<span class=\"submit-label\">Diagnose</span>", form_html)
+      @test occursin("class=\"submit-progress-label\" role=\"status\" aria-live=\"polite\">Running diagnosis…", form_html)
 
       @test occursin("src=\"/assets/logo.png\"", form_html)
       @test occursin("alt=\"Sparlectra.jl logo\"", form_html)

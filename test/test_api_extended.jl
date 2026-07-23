@@ -315,6 +315,33 @@ function run_api_extended_tests()
       @test island_success_json["metadata"]["post_merge_mismatch_status"] == "not_applicable"
       @test island_success_json["iterations"] == sum(getproperty(status, :iterations) for status in values(island_success.raw_result.performance_profile[:ac_island_solver_statuses]))
 
+      qlimits_disabled_full = run_sparlectra_api(
+        casefile = island_case,
+        config_file = template,
+        output_dir = joinpath(tmpdir, "island-success-full-timing"),
+        config_overrides = Dict("power_flow.max_iter" => 40, "power_flow.qlimits.enabled" => false, "benchmark.enabled" => false),
+        performance_timing = :full,
+      )
+      @test qlimits_disabled_full.success === true
+      qlimits_disabled_perf_log = read(joinpath(qlimits_disabled_full.output_dir, "performance.log"), String)
+      @test occursin("solver_finalization:", qlimits_disabled_perf_log)
+      @test occursin("Available internal performance profile", qlimits_disabled_perf_log)
+      @test occursin(r"ac_island_diagnostics: \d+ island entry/entries \(full detail in ac_island_<id>_solver\.log", qlimits_disabled_perf_log)
+      @test occursin(r"ac_island_solver_statuses: \d+ island entry/entries \(full detail in ac_island_<id>_solver\.log", qlimits_disabled_perf_log)
+      @test !occursin("mismatch_history = [", qlimits_disabled_perf_log)
+      @test !occursin("top_mismatch_rows = NamedTuple", qlimits_disabled_perf_log)
+      @test !occursin(r"phase_callback: #\d", qlimits_disabled_perf_log)
+      @test !occursin(r"cancellation_check: #\d", qlimits_disabled_perf_log)
+      for line in split(qlimits_disabled_perf_log, '\n')
+        @test ncodeunits(line) < 2000
+      end
+      @test Sparlectra._compact_performance_profile_value(:some_scalar_key, 42) == "42"
+      @test Sparlectra._compact_performance_profile_value(:phase_callback, identity) === nothing
+      huge_value = [(a = i, b = "x"^50) for i in 1:20]
+      compacted = Sparlectra._compact_performance_profile_value(:arbitrary_large_key, huge_value)
+      @test compacted isa String
+      @test length(compacted) < length(string(huge_value))
+
       synthetic_settings = (qlimits_enabled = true, qlimit_enforcement_mode = :active_set, start_current_iteration_enabled = false)
       synthetic_profile = Dict{Symbol,Any}(
         :ac_island_artifacts => ("ac_island_solver_summary.csv", "ac_island_1_solver.log", "ac_island_2_solver.log", "ac_island_3_solver.log"),
@@ -444,6 +471,9 @@ power_flow:
       @test occursin("final_mismatch_status:", diagnostic_log)
       @test occursin("selected_start_candidate:", diagnostic_log)
       @test occursin("Q-limit validity:", diagnostic_log)
+      @test occursin("Diagnosis", diagnostic_log)
+      @test occursin("converged in ", diagnostic_log)
+      @test !occursin("Recommendations", diagnostic_log)
       @test !isfile(joinpath(output_dir, "diagnose.txt"))
       q_limit_log = read(joinpath(output_dir, "q_limit.log"), String)
       @test occursin("Resolved Q-limit options", q_limit_log)
@@ -696,6 +726,36 @@ power_flow:
       failed_diagnostic_text = read(failed_diagnostic, String)
       @test occursin("Diagnostic generation failed", failed_diagnostic_text)
       @test occursin("diagnostic test failure", failed_diagnostic_text)
+
+      @testset "Diagnose: fixed-reference self-check, narrative report, branch anomalies" begin
+        self_check_dir = joinpath(tmpdir, "self_check")
+        self_check = run_fixed_reference_self_check(casefile = casefile, config_file = template, output_dir = self_check_dir)
+        @test self_check.raw_result.iterations == 1
+        self_check_diag = self_check.raw_result.diagnostics
+        @test hasproperty(self_check_diag, :worst_mismatch_bus_id)
+        @test hasproperty(self_check_diag, :top_mismatch_rows)
+        @test hasproperty(self_check_diag, :mismatch_history_trend)
+        self_check_log = read(joinpath(self_check_dir, "diagnose.log"), String)
+        @test occursin("Diagnosis", self_check_log)
+        if !self_check.raw_result.final_converged
+          @test occursin("Recommendations", self_check_log)
+          @test occursin("Worst-mismatch bus", self_check_log)
+          @test occursin("worst_mismatch_bus_id:", self_check_log)
+          @test occursin("Branch anomalies at worst-mismatch bus", self_check_log)
+          @test occursin("Run run_fixed_reference_self_check on this case", self_check_log)
+        end
+        bus_index = self_check_diag.worst_mismatch_bus_index
+        if bus_index isa Integer
+          branch_rows = Sparlectra._branch_anomaly_diagnostics(self_check.raw_result.net, bus_index)
+          @test branch_rows isa Vector
+          @test Sparlectra._format_branch_anomaly_rows(branch_rows) isa String
+          @test Sparlectra._format_branch_anomaly_rows(NamedTuple[]) == "none"
+        end
+        @test isempty(Sparlectra._branch_anomaly_diagnostics(self_check.raw_result.net, 0))
+
+        bad_config_dir = joinpath(tmpdir, "self_check_missing_config")
+        @test_throws ArgumentError run_fixed_reference_self_check(casefile = casefile, config_file = joinpath(tmpdir, "does_not_exist.yaml"), output_dir = bad_config_dir)
+      end
 
       for i = 1:5
         Sparlectra.logQLimitHit!(control_net, i, 2 + (i % 3), i % 2 == 0 ? :max : :min)
@@ -1042,6 +1102,19 @@ power_flow:
       @test isfile(joinpath(started["output_dir"], "result.json"))
       @test isfile(joinpath(started["output_dir"], "effective_config.yaml"))
 
+      diagnose_started = start_powerflow_run(Dict("casefile" => casefile, "config_file" => config_file, "output_root" => output_root, "diagnose_mode" => true, "config_overrides" => Dict("benchmark.enabled" => false)))
+      @test haskey(diagnose_started, "output_dir")
+      @test isfile(joinpath(diagnose_started["output_dir"], "diagnose_self_check_config.yaml"))
+      @test isfile(joinpath(diagnose_started["output_dir"], "diagnose.log"))
+      self_check_yaml = Sparlectra.load_yaml_dict(joinpath(diagnose_started["output_dir"], "diagnose_self_check_config.yaml"))
+      @test self_check_yaml["power_flow"]["max_iter"] == 1
+      @test self_check_yaml["power_flow"]["start_mode"]["angle_mode"] == "matpower_va"
+      @test self_check_yaml["power_flow"]["start_mode"]["voltage_mode"] == "all_bus_vm"
+      @test self_check_yaml["power_flow"]["start_mode"]["start_projection"] === false
+      @test self_check_yaml["power_flow"]["qlimits"]["enabled"] === false
+      diagnose_bad_config = start_powerflow_run(Dict("casefile" => casefile, "config_file" => joinpath(tmpdir, "does_not_exist_diagnose.yaml"), "output_root" => output_root, "diagnose_mode" => true))
+      @test diagnose_bad_config["success"] === false
+
       resolved_by_service = Ref(false)
       service_resolver = function (requested, directory)
         resolved_by_service[] = requested == "case_service.m" && directory == joinpath(tmpdir, "trusted_cases")
@@ -1242,7 +1315,7 @@ power_flow:
       @test get_powerflow_result(started["run_id"])["reason"] == "run_not_found"
       refresh = refresh_powerflow_run_registry!(output_root)
       @test refresh["status"] == "succeeded"
-      @test Set(refresh["loaded_runs"]) == Set([started["run_id"], resolved_run["run_id"], failed["run_id"], qlimit_mode_run_ids...])
+      @test Set(refresh["loaded_runs"]) == Set([started["run_id"], diagnose_started["run_id"], resolved_run["run_id"], failed["run_id"], qlimit_mode_run_ids...])
       @test get_powerflow_result(started["run_id"])["run_id"] == started["run_id"]
       recovered_artifacts = list_powerflow_artifacts(started["run_id"])
       recovered_names = Set(artifact["name"] for artifact in recovered_artifacts)

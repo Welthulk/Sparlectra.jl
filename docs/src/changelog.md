@@ -1,3 +1,47 @@
+# Version 0.8.15 — 2026-07-24
+
+## Features
+* **Diagnostic report + fixed-reference self-check**: `diagnose.log`
+  (`run_diagnostics = true`) is now a diagnostic report instead of a flat
+  key/value dump — a "Diagnosis" section names the worst-mismatch bus and
+  equation, classifies the mismatch-history trend (monotonic / oscillatory /
+  stagnant / diverging to non-finite) and autodamp health, scans the branches
+  incident to the worst bus for modeling anomalies (zero impedance,
+  off-nominal tap ratio, large phase shift, unusually low X/R), and closes
+  with a "Recommendations" section. New `run_fixed_reference_self_check`
+  evaluates the mismatch at a case's own stored MATPOWER `VM`/`VA` with no
+  corrective Newton step, to tell apart an imported-network-model issue from
+  a solver start/step-control issue. The Web UI PowerFlow form has a
+  dedicated "Diagnose" action next to "Start PowerFlow run" that runs this
+  self-check and writes the same enriched `diagnose.log`.
+
+## Improvements
+* Web UI warm-up (`warmup = true`) now waits `warmup_delay_seconds` (default
+  2.0s) before starting the hidden warm-up solve, so the browser gets a
+  chance to load the initial page first. On Julia's single-threaded
+  cooperative scheduler, a CPU-bound warm-up task starting immediately could
+  delay the first HTTP response and make the Web UI look unresponsive.
+* Web UI PowerFlow form: "Advanced start values" and "Advanced / expert
+  options" are merged into one "Advanced options" section; all fields remain
+  individually saved/loaded per case.
+
+## Bug fixes
+* `performance.log` (`full` timing mode) misattributed the rectangular
+  solver's post-loop finalization time (voltage/injection writeback, Q-limit
+  summary, wrong-branch checks, mismatch diagnostics) to whichever phase
+  happened to be active on the loop's last iteration — usually
+  `q_limit_processing`, even with `power_flow.qlimits.enabled = false`, where
+  that phase does essentially no work. A missing phase-boundary marker at the
+  end of the Newton loop caused the mislabeling; a `solver_finalization`
+  phase now correctly reports that time.
+* `performance.log`'s "Available internal performance profile" section could
+  dump a single-line, multi-thousand-character raw representation of
+  per-island diagnostics/status data already duplicated in
+  `ac_island_<id>_solver.log`, making the file difficult to open in some text
+  editors on larger multi-island cases. Large or duplicated values are now
+  replaced with a short summary line; internal callback closures are omitted
+  entirely.
+
 # Version 0.8.14 — 2026-07-22
 
 ## Comment

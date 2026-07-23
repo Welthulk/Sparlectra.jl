@@ -131,6 +131,7 @@ end
 include("run_failures.jl")
 
 include("run_diagnostic_artifacts.jl")
+include("run_self_check.jl")
 include("run_finalization.jl")
 
 function _resolve_detailed_csv_format(value)::NamedTuple

@@ -470,6 +470,7 @@ function powerflow_webui_request(form::AbstractDict; default_output_root::Abstra
     "config_override_source" => apply_runtime_overrides ? "webui_form_runtime" : "user_yaml",
     "performance_timing" => request_options["performance_timing"],
     "run_diagnostics" => request_options["run_diagnostics"],
+    "diagnose_mode" => _webui_parse_form_value(_webui_form_value(form, "diagnose_mode", "false"), Bool, "diagnose_mode"),
     "detailed_result_csv" => request_options["detailed_result_csv"],
     "detailed_result_csv_format" => request_options["detailed_result_csv_format"],
   )

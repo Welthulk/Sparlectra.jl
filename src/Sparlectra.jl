@@ -436,6 +436,7 @@ export
   run_acpflow,                            # Thin AC power-flow alias for run_sparlectra.
   SparlectraRunResult,                    # Stable typed framework-run result.
   run_sparlectra_api,                     # Stable non-interactive backend contract for GUI/API integrations.
+  run_fixed_reference_self_check,         # Evaluate mismatch at a case's own stored VM/VA, no corrective Newton step.
   SparlectraApiResult,                    # Structured API run status, numerical metadata, and artifacts.
   SparlectraApiArtifact,                  # Explicit metadata for generated API artifacts.
   GUI_EDITABLE_CONFIG_KEYS,               # Controlled allowlist for GUI configuration overrides.
