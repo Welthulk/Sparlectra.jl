@@ -164,10 +164,10 @@ The start page accepts:
 - PowerFlow tolerance and maximum iterations;
 - autodamping and its minimum factor;
 - Q-limit handling;
-- a **Berechnungsmodell** (calculation model) choice between AC (Newton-Raphson,
-  rectangular) and DC (linear screening model), plus, for the AC model, solver
-  selection (Newton-Raphson (rectangular) or APSLF (AnalyticLoadFlow)) with
-  conditional, indented sub-options for the chosen solver;
+- a single **Solver** radio group with three mutually exclusive, peer options
+  — AC (Newton-Raphson, rectangular), APSLF (AnalyticLoadFlow), and DC (linear
+  screening model) — with conditional, indented sub-options for whichever
+  solver is selected;
 - wrong-branch detection mode;
 - angle and voltage start modes;
 - current-iteration pre-solve fields in the collapsible **Advanced start
@@ -213,57 +213,91 @@ replace autodamp or the Newton-Raphson solver. The residual-scaling keys
 fields. When a diagnostic run directory is available, results include a
 `merit_linesearch.log` text artifact.
 
-The **Solver** dropdown selects `power_flow.solver` and writes the same
-`power_flow.solver`/`power_flow.apslf.*`/`power_flow.apslf_start.*` overrides
-documented in
-[`powerflow_configuration.md`](powerflow_configuration.md#solver-selection-rectangular-vs-apslf).
+The **Solver** radio group is a single `power_flow_solver` form field with
+three peer, mutually exclusive values — `rectangular`, `apslf`, `dc` — and
+writes the same `power_flow.solver`/`power_flow.apslf.*`/
+`power_flow.apslf_start.*`/`power_flow.dc.*` overrides documented in
+[`powerflow_configuration.md`](powerflow_configuration.md#solver-selection-rectangular-vs-apslf)
+and
+[`powerflow_configuration.md`](powerflow_configuration.md#solver-selection-dc-power-flow).
+An earlier version of this page presented AC/DC and rectangular/APSLF as two
+separate, layered controls (a "Berechnungsmodell" AC/DC radio group above a
+Solver dropdown that only ever chose between `rectangular` and `apslf`, DC
+being forced onto the dropdown from outside it). That structure made APSLF
+look like a sub-choice of AC even though it is a fully independent solver, a
+`power_flow_calc_mode` field existed only to drive the same underlying
+`power_flow.solver` value the dropdown also wrote (so the two controls could
+show inconsistent state), and it caused a real bug: because the Solver
+dropdown was disabled whenever DC was chosen, and disabled `<select>`
+elements are dropped from a submitted HTML form entirely, choosing DC could
+silently submit no `power_flow.solver` override at all and the run fell back
+to the default `rectangular` solver — reported to the user as an ordinary
+AC/NR convergence failure with no mention of DC anywhere in the diagnostics.
+The current single three-way radio group removes both problems by
+construction: there is exactly one field, exactly one place to pick a
+solver, and radio buttons are never individually disabled (only the checked
+one is submitted), so there is no submission path that can drop the choice.
+
+Choosing `AC (Newton-Raphson, rectangular)` reveals the Newton-Raphson start-
+value block (**Use APSLF start values**, indented order field) together with
+every other AC/NR-only option (tolerance, autodamping/merit/trust-region step
+control, Q-limit handling, maximum iterations, wrong-branch detection, start
+angle/voltage mode, the current-iteration pre-solve block, transformer
+tap-changer model). By default (`power_flow.start_mode.angle_mode = dc`) the
+Newton-Raphson solver already seeds its own start angles from a fast internal
+DC pre-solve before iterating — it is *not* a separate configuration step;
+the **Start angle mode** dropdown further down the form (still NR-only)
+controls this and documents the other available start strategies. This DC
+pre-solve is unrelated to, and does not require, choosing the standalone
+`DC` solver option below.
+
 Choosing `APSLF (AnalyticLoadFlow)` reveals an indented **APSLF solver
-options** block (highest coefficient/order, Padé evaluation, NR polish) and
-hides the Newton-Raphson start-value block below it; choosing
-`Newton-Raphson (rectangular)` does the reverse. The **Use APSLF start
-values** checkbox in the Newton-Raphson block only enables its indented order
-field when checked; it is unrelated to and mutually exclusive with the APSLF
-solver selection (the underlying configuration rejects setting both at once).
-As with the Q-limit and current-iteration checkboxes, an unchecked APSLF
-checkbox explicitly submits `false` rather than omitting the key. The APSLF
-solver requires the optional AnalyticLoadFlow.jl dependency to be loaded in
-the server process; if it is not installed, the run fails immediately with a
-clear pre-solve error instead of a silent fallback to the rectangular solver.
+options** block (highest coefficient/order, Padé evaluation, NR polish)
+instead. The **Use APSLF start values** checkbox in the Newton-Raphson block
+is unrelated to and mutually exclusive with the APSLF solver selection (the
+underlying configuration rejects setting both at once) — it configures how
+the *rectangular* NR solver seeds itself, not APSLF. As with the Q-limit and
+current-iteration checkboxes, an unchecked APSLF checkbox explicitly submits
+`false` rather than omitting the key. The APSLF solver requires the optional
+AnalyticLoadFlow.jl dependency to be loaded in the server process; if it is
+not installed, the run fails immediately with a clear pre-solve error instead
+of a silent fallback to the rectangular solver.
+
+Choosing `DC (lineares Screening-Modell, ersetzt Newton-Raphson vollständig)`
+selects the standalone linear DC power-flow model described below, replacing
+Newton-Raphson entirely rather than merely seeding its start values.
+
 Result and status pages reuse the existing summary, timing-card, artifact, and
 history views unchanged; the run status header additionally shows a
 **Solver** entry (`rectangular`, `apslf`, or `dc`) identifying which solver
 actually produced the result.
 
+### Mutually exclusive fields are grayed out, not hidden
+
+Fields that don't apply to the currently selected solver (or, within the
+Newton-Raphson autodamp/trust-region step control, to the currently enabled
+step-control strategy) stay in their place in the form and are disabled with
+reduced opacity instead of disappearing. Earlier versions of this page hid
+inapplicable fields outright (`hidden`), which could make the form feel like
+fields randomly appeared/vanished/reordered when switching solvers. Nothing
+about which keys get submitted changes: a grayed-out field's underlying
+input is still `disabled` and therefore still omitted from the submitted
+form exactly as before — only the *visual* treatment changed.
+
 ### DC power flow mode
 
-The **Berechnungsmodell** radio group above the Solver dropdown chooses
-between the AC rectangular Newton-Raphson family (default, includes the
-Solver dropdown's `rectangular`/`apslf` choice) and the standalone DC power
-flow. Selecting DC does not add a new configuration key: it drives the same
-`power_flow.solver` override as the Solver dropdown (forcing it to `dc`) and
-is documented together with `power_flow.solver` in
+Selecting `DC` in the **Solver** radio group does not add a new configuration
+key: it is simply the `dc` value of the same `power_flow.solver` field the
+`rectangular`/`apslf` options also write, documented together with
+`power_flow.solver` in
 [`powerflow_configuration.md`](powerflow_configuration.md#solver-selection-dc-power-flow).
-Selecting DC hides every AC-only option that has no DC meaning: the Solver
-dropdown itself, tolerance, autodamping/merit/trust-region step control,
-Q-limit handling, maximum iterations, wrong-branch detection, start
-angle/voltage mode, the current-iteration pre-solve block, and the
-transformer tap-changer model. All of those *except the Solver dropdown* are
-also removed from the submitted form entirely by disabling their inputs
-before serialization, the same client-side mechanism already used to hide
-Newton-Raphson-only fields when APSLF is selected. The Solver dropdown is
-deliberately excluded from that disabling: it is the field carrying the
-`power_flow.solver=dc` value, so it stays hidden-but-enabled and its
-(JS-forced) `dc` value is still submitted. An earlier version of this page
-and its implementation disabled the Solver dropdown along with the other
-AC-only fields; because browsers omit disabled controls from a submitted
-form, that silently dropped `power_flow.solver` from the request and made
-the run fall back to the server-side default solver (`rectangular`,
-Newton-Raphson) instead of running DC — reported to the user as an ordinary
-AC/NR convergence failure with no mention of DC anywhere in the diagnostics.
-This has been fixed; the Solver dropdown's own `dc` option is additionally
-marked non-selectable in the UI (`disabled`/`hidden` on that `<option>`) so
-DC can only ever be chosen via the Berechnungsmodell radio group, removing
-the redundant, easy-to-desync second place to pick it.
+Selecting DC grays out every AC-only option that has no DC meaning: tolerance,
+autodamping/merit/trust-region step control, Q-limit handling, maximum
+iterations, wrong-branch detection, start angle/voltage mode, the
+current-iteration pre-solve block, and the transformer tap-changer model —
+their inputs are `disabled` and therefore not part of the submitted form,
+the same client-side mechanism already used for Newton-Raphson-only fields
+when APSLF is selected.
 
 A DC run reuses the existing asynchronous job, abort, status, history, and
 artifact machinery unchanged; only the request's `power_flow.solver` override

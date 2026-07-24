@@ -367,6 +367,16 @@ button,
   opacity: .55;
 }
 
+/* Fields/groups that don't apply to the currently selected solver stay in
+   place and gray out instead of disappearing, so mutually exclusive solver
+   options never make the form jump or hide where a setting went. */
+[data-ac-only-field].disabled,
+[data-nr-only-field].disabled,
+[data-apslf-solver-options].disabled,
+[data-apslf-start-options].disabled {
+  opacity: .55;
+}
+
 .field-indent {
   margin-left: 1.5rem;
 }

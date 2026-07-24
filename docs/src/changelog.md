@@ -83,6 +83,26 @@
   likely cause (a Web UI already running in the same Julia session, a common
   mistake when re-running a launcher script interactively) instead of only
   showing the raw libuv stacktrace.
+* Web UI PowerFlow form: the **Berechnungsmodell** AC/DC radio group and the
+  **Solver** dropdown (rectangular/APSLF) are unified into a single **Solver**
+  radio group with three peer, mutually exclusive options — AC
+  (Newton-Raphson, rectangular), APSLF, DC — all writing the same
+  `power_flow.solver` field. This removes the `power_flow_calc_mode` field
+  entirely (it never was a real configuration key, only a client-side proxy
+  for `power_flow.solver`, and the source of the disabled-Solver-dropdown bug
+  below) and stops APSLF from visually reading as a sub-choice of AC when it
+  is really a peer solver. An inline note under the AC option now explains
+  that Newton-Raphson already seeds its own start angles from a fast DC
+  pre-solve by default (`power_flow.start_mode.angle_mode = dc`, unrelated to
+  and not requiring the standalone DC solver option) — previously this only
+  showed up as one value of a four-value "Start angle mode" dropdown further
+  down the form with no indication that it comes from a DC computation.
+  Fields that don't apply to the selected solver (or, within Newton-Raphson,
+  to the inactive autodamp/trust-region step-control strategy) are now grayed
+  out in place (`opacity: .55`, disabled inputs) instead of disappearing via
+  `hidden`, so switching solvers no longer makes parts of the form jump or
+  vanish; which keys are actually submitted is unchanged; only the visual
+  treatment is.
 
 ## Bug fixes
 * `performance.log` (`full` timing mode) misattributed the rectangular

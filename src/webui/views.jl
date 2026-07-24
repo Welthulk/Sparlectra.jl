@@ -422,12 +422,13 @@ $(dat_hint_html)
 <label class=\"check\"><input name=\"power_flow_qlimits_enabled\" type=\"hidden\" value=\"false\"><input name=\"power_flow_qlimits_enabled\" type=\"checkbox\" value=\"true\"$(_webui_checked(profile_values, "power_flow_qlimits_enabled", _webui_option_default("power_flow_qlimits_enabled")))>$(_webui_field_label("power_flow_qlimits_enabled", "Q-limit handling enabled"))</label>
 <label data-nr-only-field>$(_webui_field_label("power_flow_qlimits_enforcement_mode", "Q-limit enforcement mode"))$(_webui_select("power_flow_qlimits_enforcement_mode", _webui_option_allowed_values("power_flow_qlimits_enforcement_mode"), _webui_selected(profile_values, "power_flow_qlimits_enforcement_mode", _webui_option_default("power_flow_qlimits_enforcement_mode"))))</label>
 </fieldset>
-<fieldset class="span-2 calc-mode-options">
-<legend>$(_webui_field_label("power_flow_calc_mode", "Berechnungsmodell"))</legend>
-<label class="check"><input type="radio" name="power_flow_calc_mode" value="ac" data-calc-mode-radio$(_webui_form_string(_webui_selected(profile_values, "power_flow_solver", _webui_option_default("power_flow_solver"))) == "dc" ? "" : " checked")>AC (Newton-Raphson, rectangular)</label>
-<label class="check"><input type="radio" name="power_flow_calc_mode" value="dc" data-calc-mode-radio$(_webui_form_string(_webui_selected(profile_values, "power_flow_solver", _webui_option_default("power_flow_solver"))) == "dc" ? " checked" : "")>DC (lineares Screening-Modell)</label>
+<fieldset class="span-2 solver-mode-options">
+<legend>$(_webui_field_label("power_flow_solver", "Solver"))</legend>
+<label class="check"><input type="radio" name="power_flow_solver" value="rectangular" data-solver-radio$(_webui_form_string(_webui_selected(profile_values, "power_flow_solver", _webui_option_default("power_flow_solver"))) == "rectangular" ? " checked" : "")>AC (Newton-Raphson, rectangular)</label>
+<p class="field-help field-indent">Startet standardmäßig mit Winkeln aus einem schnellen DC-Vorlauf (siehe <strong>Start angle mode</strong> weiter unten, Default <code>dc</code>) und löst danach mit Newton-Raphson iterativ weiter -- das ist keine eigenständige DC-Lösung.</p>
+<label class="check"><input type="radio" name="power_flow_solver" value="apslf" data-solver-radio$(_webui_form_string(_webui_selected(profile_values, "power_flow_solver", _webui_option_default("power_flow_solver"))) == "apslf" ? " checked" : "")>APSLF (AnalyticLoadFlow)</label>
+<label class="check"><input type="radio" name="power_flow_solver" value="dc" data-solver-radio$(_webui_form_string(_webui_selected(profile_values, "power_flow_solver", _webui_option_default("power_flow_solver"))) == "dc" ? " checked" : "")>DC (lineares Screening-Modell, ersetzt Newton-Raphson vollständig)</label>
 </fieldset>
-<label data-ac-only-field>$(_webui_field_label("power_flow_solver", "Solver"))<select name="power_flow_solver" data-solver-select><option value="rectangular"$(_webui_form_string(_webui_selected(profile_values, "power_flow_solver", _webui_option_default("power_flow_solver"))) == "rectangular" ? " selected" : "")>Newton-Raphson (rectangular)</option><option value="apslf"$(_webui_form_string(_webui_selected(profile_values, "power_flow_solver", _webui_option_default("power_flow_solver"))) == "apslf" ? " selected" : "")>APSLF (AnalyticLoadFlow)</option><option value="dc" disabled hidden$(_webui_form_string(_webui_selected(profile_values, "power_flow_solver", _webui_option_default("power_flow_solver"))) == "dc" ? " selected" : "")>DC (via Berechnungsmodell oben ausgewählt)</option></select><small class="field-hint">DC wird ausschließlich über das Berechnungsmodell oben gewählt, nicht hier.</small></label>
 <fieldset id="apslf-solver-options" class="span-2 apslf-solver-options" data-apslf-solver-options hidden>
 <legend>APSLF solver options</legend>
 <label class=\"field-indent\">$(_webui_field_label("power_flow_apslf_order", "Highest coefficient (order)"))<input name=\"power_flow_apslf_order\" type=\"number\" min=\"1\" value=\"$(_webui_input_value(profile_values, "power_flow_apslf_order", _webui_option_default("power_flow_apslf_order")))\"></label>
@@ -562,25 +563,31 @@ document.addEventListener('DOMContentLoaded', function () {
     }
   };
   updateDatCaseAssistance();
-  const solverSelect = document.querySelector('select[data-solver-select]');
+  const solverRadios = document.querySelectorAll('input[data-solver-radio]');
   const apslfSolverOptions = document.querySelector('[data-apslf-solver-options]');
   const apslfStartOptions = document.querySelector('[data-apslf-start-options]');
-  const calcModeRadios = document.querySelectorAll('input[data-calc-mode-radio]');
-  const isDcMode = function () {
-    let dcChecked = false;
-    calcModeRadios.forEach(function (radio) { if (radio.checked && radio.value === 'dc') dcChecked = true; });
-    return dcChecked;
+  const getSolverMode = function () {
+    let value = 'rectangular';
+    solverRadios.forEach(function (radio) { if (radio.checked) value = radio.value; });
+    return value;
+  };
+  const isDcMode = function () { return getSolverMode() === 'dc'; };
+  const isApslfMode = function () { return getSolverMode() === 'apslf'; };
+  // Gray out (disable, but keep visible/in place) a field group that does not apply
+  // to the currently selected solver, instead of hiding it: mutually exclusive
+  // solver options stay where the user last saw them rather than jumping around.
+  const setSolverGroupInactive = function (container, inactive) {
+    if (container === null) return;
+    container.classList.toggle('disabled', inactive);
+    const controls = container.matches('input, select') ? [container] : container.querySelectorAll('input, select');
+    controls.forEach(function (control) { control.disabled = inactive; });
   };
   const updateSolverOptions = function () {
     const dc = isDcMode();
-    const isApslf = !dc && solverSelect !== null && solverSelect.value === 'apslf';
-    if (apslfSolverOptions !== null) apslfSolverOptions.hidden = dc || !isApslf;
-    if (apslfStartOptions !== null) apslfStartOptions.hidden = dc || isApslf;
+    const apslf = isApslfMode();
+    setSolverGroupInactive(apslfSolverOptions, dc || !apslf);
+    setSolverGroupInactive(apslfStartOptions, dc || apslf);
   };
-  if (solverSelect !== null) {
-    updateSolverOptions();
-    solverSelect.addEventListener('change', updateSolverOptions);
-  }
   const apslfStartToggle = document.querySelector('input[data-apslf-start-toggle]');
   const apslfStartOrderInput = document.querySelector('input[data-apslf-start-order]');
   const updateApslfStartOrder = function () {
@@ -609,8 +616,8 @@ document.addEventListener('DOMContentLoaded', function () {
       trustRegionToggle.checked = false;
     }
     const dc = isDcMode();
-    const isApslf = !dc && solverSelect !== null && solverSelect.value === 'apslf';
-    const hideNrOnly = isApslf || dc;
+    const apslf = isApslfMode();
+    const hideNrOnly = apslf || dc;
     const autodampOn = !hideNrOnly && autodampToggle !== null && autodampToggle.checked;
     const trustRegionOn = !hideNrOnly && trustRegionToggle !== null && trustRegionToggle.checked;
     autodampFields.forEach(function (field) { field.disabled = !autodampOn; });
@@ -622,18 +629,12 @@ document.addEventListener('DOMContentLoaded', function () {
     meritFields.forEach(function (field) { field.disabled = !meritOn; });
     trustRegionFields.forEach(function (field) { field.disabled = !trustRegionOn; });
     if (autodampGroup !== null) {
-      autodampGroup.hidden = hideNrOnly;
       autodampGroup.classList.toggle('disabled', !autodampOn);
     }
     if (trustRegionGroup !== null) {
-      trustRegionGroup.hidden = hideNrOnly;
       trustRegionGroup.classList.toggle('disabled', !trustRegionOn);
     }
-    nrOnlyFields.forEach(function (container) {
-      container.hidden = hideNrOnly;
-      const controls = container.matches('input, select') ? [container] : container.querySelectorAll('input, select');
-      controls.forEach(function (control) { control.disabled = hideNrOnly; });
-    });
+    nrOnlyFields.forEach(function (container) { setSolverGroupInactive(container, hideNrOnly); });
     updatingStepControl = false;
   };
   if (autodampToggle !== null) {
@@ -646,35 +647,16 @@ document.addEventListener('DOMContentLoaded', function () {
   if (meritToggle !== null) {
     meritToggle.addEventListener('change', function () { updateStepControlOptions('merit'); });
   }
-  if (solverSelect !== null) {
-    updateStepControlOptions();
-    solverSelect.addEventListener('change', function () { updateStepControlOptions(); });
-  }
   const acOnlyFields = document.querySelectorAll('[data-ac-only-field]');
-  const updateCalcMode = function () {
+  const updateSolverMode = function () {
     const dc = isDcMode();
-    if (solverSelect !== null) {
-      if (dc && solverSelect.value !== 'dc') solverSelect.value = 'dc';
-      if (!dc && solverSelect.value === 'dc') solverSelect.value = 'rectangular';
-    }
-    acOnlyFields.forEach(function (container) {
-      container.hidden = dc;
-      const controls = container.matches('input, select') ? [container] : container.querySelectorAll('input, select');
-      controls.forEach(function (control) {
-        // Never disable the solver select itself: a disabled <select> is
-        // dropped from the submitted form data entirely, which would make
-        // "DC" silently fall back to the server-side default solver
-        // (rectangular NR) instead of actually running the DC solver.
-        if (control === solverSelect) return;
-        control.disabled = dc;
-      });
-    });
+    acOnlyFields.forEach(function (container) { setSolverGroupInactive(container, dc); });
     updateSolverOptions();
     updateStepControlOptions();
   };
-  if (calcModeRadios.length > 0) {
-    updateCalcMode();
-    calcModeRadios.forEach(function (radio) { radio.addEventListener('change', updateCalcMode); });
+  if (solverRadios.length > 0) {
+    updateSolverMode();
+    solverRadios.forEach(function (radio) { radio.addEventListener('change', updateSolverMode); });
   }
   if (caseManual !== null) {
     caseManual.addEventListener('input', updateDatCaseAssistance);

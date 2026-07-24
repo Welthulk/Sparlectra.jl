@@ -1547,7 +1547,6 @@ settings:
         "power_flow_autodamp_min" => "power_flow.autodamp_min",
         "power_flow_qlimits_enabled" => "power_flow.qlimits.enabled",
         "power_flow_qlimits_enforcement_mode" => "power_flow.qlimits.enforcement_mode",
-        "power_flow_calc_mode" => "power_flow.calc_mode",
         "power_flow_solver" => "power_flow.solver",
         "power_flow_apslf_order" => "power_flow.apslf.order",
         "power_flow_apslf_use_pade" => "power_flow.apslf.use_pade",
@@ -1694,10 +1693,10 @@ settings:
       @test occursin("trustRegionToggle.checked = false", form_html)
       @test occursin("<fieldset class=\"span-2 step-control-options\" data-ac-only-field>\n<legend>Q-limit handling</legend>", form_html)
       @test findfirst("data-step-control-group=\"trust_region\"", form_html) < findfirst("<legend>Q-limit handling</legend>", form_html)
-      # APSLF-as-solver and DC-as-calc-mode both ignore NR-only options (autodamp/merit/trust-region,
+      # APSLF-as-solver and DC-as-solver both ignore NR-only options (autodamp/merit/trust-region,
       # wrong-branch detection, start_mode.angle_mode/voltage_mode, start_current_iteration.*,
-      # qlimits.enforcement_mode, max_iter); these must be marked so client-side JS can disable/hide
-      # them when power_flow_solver=apslf or the DC calculation model is selected.
+      # qlimits.enforcement_mode, max_iter); these must be marked so client-side JS can gray them
+      # out when power_flow_solver=apslf or power_flow_solver=dc is selected.
       @test count("data-nr-only-field", form_html) == 7
       @test occursin("<label data-nr-only-field><span class=\"field-label\">Maximum iterations ", form_html)
       @test occursin("<label data-nr-only-field><span class=\"field-label\">Q-limit enforcement mode ", form_html)
@@ -1706,23 +1705,28 @@ settings:
       @test occursin("<label data-nr-only-field><span class=\"field-label\">Start voltage mode ", form_html)
       @test occursin("<fieldset class=\"start-current-iteration-options advanced-start-values\" data-nr-only-field>", form_html)
       @test occursin("const nrOnlyFields = document.querySelectorAll('[data-nr-only-field]')", form_html)
-      @test occursin("const isApslf = !dc && solverSelect !== null && solverSelect.value === 'apslf'", form_html)
-      @test occursin("const hideNrOnly = isApslf || dc", form_html)
-      @test occursin("autodampGroup.hidden = hideNrOnly", form_html)
-      @test occursin("trustRegionGroup.hidden = hideNrOnly", form_html)
-      @test occursin("container.hidden = hideNrOnly", form_html)
-      @test occursin("control.disabled = hideNrOnly", form_html)
-      # DC additionally hides AC-only fields with no DC meaning at all (tolerance,
-      # Q-limit handling, the solver dropdown itself, APSLF start values, tap-changer model).
-      # Only the Solver dropdown is exempted from also being *disabled*: a disabled
-      # <select> is dropped from the submitted form entirely, which would silently
-      # drop power_flow.solver=dc from the request (regression test below).
+      @test occursin("const isApslfMode = function () { return getSolverMode() === 'apslf'; }", form_html)
+      @test occursin("const hideNrOnly = apslf || dc", form_html)
+      @test occursin("autodampGroup.classList.toggle('disabled', !autodampOn)", form_html)
+      @test occursin("trustRegionGroup.classList.toggle('disabled', !trustRegionOn)", form_html)
+      @test occursin("nrOnlyFields.forEach(function (container) { setSolverGroupInactive(container, hideNrOnly); })", form_html)
+      # Mutually exclusive/inapplicable fields are grayed out in place (disabled inputs,
+      # opacity via the "disabled" CSS class) rather than hidden -- switching solvers no
+      # longer makes parts of the form vanish or jump around.
+      @test occursin("const setSolverGroupInactive = function (container, inactive)", form_html)
+      @test occursin("container.classList.toggle('disabled', inactive)", form_html)
+      @test occursin("controls.forEach(function (control) { control.disabled = inactive; })", form_html)
+      # AC/APSLF/DC are one unified, mutually exclusive radio group (no more separate
+      # "Berechnungsmodell" radios plus a Solver dropdown, and no more power_flow_calc_mode
+      # field): radio buttons are never individually disabled, so there is no submission
+      # path that can silently drop power_flow.solver like the old disabled-<select> bug.
       @test occursin("const acOnlyFields = document.querySelectorAll('[data-ac-only-field]')", form_html)
-      @test occursin("const updateCalcMode = function ()", form_html)
-      @test occursin("if (control === solverSelect) return;", form_html)
+      @test occursin("const updateSolverMode = function ()", form_html)
+      @test occursin("const solverRadios = document.querySelectorAll('input[data-solver-radio]')", form_html)
+      @test !occursin("data-solver-select", form_html)
+      @test !occursin("power_flow_calc_mode", form_html)
       for field in (
         "<label data-ac-only-field><span class=\"field-label\">Tolerance ",
-        "<label data-ac-only-field><span class=\"field-label\">Solver ",
         "<label data-ac-only-field><span class=\"field-label\">Tap-changer model ",
       )
         @test occursin(field, form_html)
@@ -2406,20 +2410,28 @@ result = get_powerflow_result(run_id)
             output_root = dc_output_root,
           ).body,
         )
-        @test occursin("<input type=\"radio\" name=\"power_flow_calc_mode\" value=\"ac\" data-calc-mode-radio checked>", rendered_form)
-        @test occursin("<input type=\"radio\" name=\"power_flow_calc_mode\" value=\"dc\" data-calc-mode-radio>", rendered_form)
-        @test !occursin("<input type=\"radio\" name=\"power_flow_calc_mode\" value=\"dc\" data-calc-mode-radio checked>", rendered_form)
-        @test occursin("DC (lineares Screening-Modell)", rendered_form)
-        @test occursin("Berechnungsmodell", rendered_form)
+        # AC/APSLF/DC are one unified radio group on the single "power_flow_solver"
+        # field -- there is no separate "Berechnungsmodell" field/control anymore,
+        # and no dropdown duplicating the "dc" choice.
+        @test occursin("<input type=\"radio\" name=\"power_flow_solver\" value=\"rectangular\" data-solver-radio checked>", rendered_form)
+        @test occursin("<input type=\"radio\" name=\"power_flow_solver\" value=\"apslf\" data-solver-radio>", rendered_form)
+        @test occursin("<input type=\"radio\" name=\"power_flow_solver\" value=\"dc\" data-solver-radio>", rendered_form)
+        @test !occursin("<input type=\"radio\" name=\"power_flow_solver\" value=\"apslf\" data-solver-radio checked>", rendered_form)
+        @test !occursin("<input type=\"radio\" name=\"power_flow_solver\" value=\"dc\" data-solver-radio checked>", rendered_form)
+        @test occursin("DC (lineares Screening-Modell, ersetzt Newton-Raphson vollständig)", rendered_form)
+        @test !occursin("Berechnungsmodell", rendered_form)
+        @test !occursin("power_flow_calc_mode", rendered_form)
+        @test !occursin("data-calc-mode-radio", rendered_form)
+        @test !occursin("data-solver-select", rendered_form)
+        @test !occursin("<select name=\"power_flow_solver\"", rendered_form)
         @test occursin("data-ac-only-field", rendered_form)
-        # The Solver dropdown's own "dc" option is non-selectable in the UI
-        # (disabled + hidden): DC can only be chosen via the Berechnungsmodell
-        # radio group above, so there is exactly one place to pick it.
-        @test occursin("<option value=\"dc\" disabled hidden>DC (via Berechnungsmodell oben ausgewählt)</option>", rendered_form)
+        # Newton-Raphson's DC-derived start angles are documented inline next to the
+        # AC radio, distinct from the standalone DC solver option below it.
+        @test occursin("Start angle mode", rendered_form)
+        @test occursin("DC-Vorlauf", rendered_form)
 
         # (2b) POST with DC mode terminates successfully; result.json carries the DC flag.
         dc_form = _webui_test_form(dc_casefile, dc_config_file, dc_output_root)
-        dc_form["power_flow_calc_mode"] = "dc"
         dc_form["power_flow_solver"] = "dc"
         dc_form["detailed_result_csv_format"] = "technical"
         dc_response = Sparlectra.route_sparlectra_webui("POST", "/powerflow/run", dc_form; output_root = dc_output_root)
@@ -2446,7 +2458,7 @@ result = get_powerflow_result(run_id)
         @test any(artifact -> artifact["name"] == "bus_voltages_complex.csv", dc_artifacts)
         @test Sparlectra.route_sparlectra_webui("GET", "/powerflow/artifact/$(dc_run_id)/result.json?download=1"; output_root = dc_output_root).status == 200
 
-        # (2e) Regression: no calc-mode/solver field, and an explicit AC selection, still
+        # (2e) Regression: no solver field, and an explicit AC selection, still
         # produce the unchanged AC report (no "dc" solver in final_outcome).
         ac_implicit_form = _webui_test_form(dc_casefile, dc_config_file, dc_output_root)
         ac_implicit_response = Sparlectra.route_sparlectra_webui("POST", "/powerflow/run", ac_implicit_form; output_root = dc_output_root)
@@ -2459,7 +2471,6 @@ result = get_powerflow_result(run_id)
         @test ac_implicit_json["final_outcome"]["solver"] == "rectangular"
 
         ac_explicit_form = _webui_test_form(dc_casefile, dc_config_file, dc_output_root)
-        ac_explicit_form["power_flow_calc_mode"] = "ac"
         ac_explicit_form["power_flow_solver"] = "rectangular"
         ac_explicit_response = Sparlectra.route_sparlectra_webui("POST", "/powerflow/run", ac_explicit_form; output_root = dc_output_root)
         @test ac_explicit_response.status == 303
