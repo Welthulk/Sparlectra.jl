@@ -90,7 +90,7 @@ Sparlectra ships with an optional browser-based local Web UI for MATPOWER power-
 **Configuration** — case selection, solver settings, control options and output configuration on a single page:
 
 <p align="center">
-  <a href="docs/src/assets/webui_configuration.png"><img src="docs/src/assets/webui_configuration.png" alt="Sparlectra Web UI – PowerFlow run configuration" width="850"></a>
+  <a href="docs/src/assets/webui_v0.8.15.png"><img src="docs/src/assets/webui_v0.8.15.png" alt="Sparlectra Web UI – PowerFlow run configuration" width="850"></a>
 </p>
 
 **Power flow run & history** — result with convergence report (left) and the run history (right):
