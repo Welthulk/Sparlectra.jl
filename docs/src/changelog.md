@@ -1,4 +1,4 @@
-# v0.8.15 — 2026-07-22
+# Version 0.8.15 — 2026-07-22
 
 DC power flow, faster linear solves, Web UI overhaul
 
