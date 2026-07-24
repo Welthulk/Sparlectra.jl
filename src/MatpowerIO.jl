@@ -396,12 +396,18 @@ end
   return split(s)
 end
 
+# MATLAB accepts both `;` and bare newlines as matrix row separators. Official
+# MATPOWER cases terminate every row with `;`, but e.g. RTS-GMLC relies on
+# newline-separated rows only — splitting on `;` alone would silently collapse
+# the whole matrix into a single row.
+const _MATPOWER_ROW_SEPARATORS = r"[;\r\n]"
+
 # best-effort: auto width; IMPORTANT: fill with 0.0 (not NaN)
 function parse_numeric_matrix(body::AbstractString, key::AbstractString)
   rows = Vector{Vector{Float64}}()
   maxcols = 0
 
-  for rr in eachsplit(body, ';')
+  for rr in eachsplit(body, _MATPOWER_ROW_SEPARATORS)
     toks = _matpower_row_tokens(rr)
     toks === nothing && continue
 
@@ -428,14 +434,14 @@ end
 # fixed width path: pad/truncate to exactly ncols with zeros
 function parse_numeric_matrix_ncols(body::AbstractString, key::AbstractString; ncols::Int)
   row_count = 0
-  for rr in eachsplit(body, ';')
+  for rr in eachsplit(body, _MATPOWER_ROW_SEPARATORS)
     _matpower_row_tokens(rr) === nothing || (row_count += 1)
   end
   row_count == 0 && error("Matrix `$key` appears empty or could not be parsed.")
 
   M = zeros(Float64, row_count, ncols)
   i = 0
-  for rr in eachsplit(body, ';')
+  for rr in eachsplit(body, _MATPOWER_ROW_SEPARATORS)
     toks = _matpower_row_tokens(rr)
     toks === nothing && continue
     i += 1

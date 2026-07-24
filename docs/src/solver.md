@@ -501,6 +501,78 @@ The same projection options are also available through `buildPfModel` and
 
 ---
 
+## Linear solver backends
+
+The linear solve of the rectangular Newton step (`J · δx = −F`) supports
+three sparse backends, selected via `power_flow.linear_solver` (default
+`umfpack`):
+
+* **`umfpack`** — the standard sparse direct solve (`J \ F` through
+  `solve_sparse_system`), with sparse-QR and small-system SVD fallbacks. Each
+  iteration pays full symbolic analysis + numeric factorization. This is the
+  historical behavior and remains the default.
+* **`umfpack_reuse`** — the same UMFPACK multifrontal factorization, but the
+  symbolic analysis of the first iteration is kept and reused via
+  `lu!(F, J)` in subsequent iterations (numeric refactorization only). The
+  Jacobian pattern is constant across NR iterations unless the Q-limit
+  active set changes, so the analysis is paid once per active set. Since the
+  factorization kernel is identical to the default, this backend is a pure
+  win whenever refactorization is cheaper than analyze + factor (measured
+  ~0.28s vs. 0.45s on the 164k `case_SyntheticUSA` Jacobian) — usually the
+  fastest choice on large cases.
+* **`klu`** — SuiteSparse KLU (via KLU.jl) with the same
+  analyze-once/refactor-per-iteration scheme through `klu`/`klu!`.
+
+A note on expectations: whether `klu` is actually faster is case- and
+platform-dependent. KLU's left-looking factorization is optimized for
+circuit-simulation matrices with near-block-triangular structure and does not
+use BLAS-3 supernodes; on large power-flow Jacobians with significant
+fill-in, UMFPACK's multifrontal factorization can beat even KLU's numeric
+refactorization (measured on the bundled `case_SyntheticUSA`: UMFPACK
+remained faster end to end, and `umfpack_reuse` faster still). Treat `klu`
+as a measurable alternative, not a guaranteed speedup — the recorded
+diagnostics counters and the `newton_step_linear_solve` phase time in the
+performance profile make the comparison cheap.
+
+Behavior details of the reuse backends (`umfpack_reuse` and `klu`):
+
+* **Active-set pattern changes**: a PV↔PQ switch changes the Jacobian
+  sparsity pattern, so the solver re-runs the full analyze + factor step in
+  that iteration (driven by the same `active_set_changed` signal the step
+  logic already uses).
+* **Structural Jacobian pattern**: with a reuse backend the rectangular
+  Jacobian is assembled with a value-independent sparsity pattern (entries whose current
+  value happens to be exactly zero are stored instead of dropped), so the
+  pattern depends only on the Ybus structure and the bus types. The default
+  `umfpack` path keeps dropping numeric zeros and stays bit-for-bit identical
+  to the historical behavior.
+* **Structural guard**: independent of the active-set signal, the stored
+  `colptr`/`rowval` fingerprint of the analyzed pattern is compared against
+  the current Jacobian before every refactorization (cheap O(nnz) compare).
+  Any drift triggers a re-analyze instead of feeding a mismatched structure
+  into the refactorization, which could silently produce wrong numbers.
+* **Fallback semantics**: any factorization error (structure mismatch, bad
+  pivots, singularity) resets the context and delegates that solve to the
+  unchanged `umfpack` chain, so the outer loop's `:singular_newton_step`
+  handling and the QR/SVD fallbacks keep working exactly as before.
+* **Scope and lifetime**: the reuse backends replace only the main Newton
+  solve; extra solves inside the dogleg/trust-region internals keep their
+  existing path. The factorization context lives for one
+  `runpf_rectangular!` invocation (one island on the island path) and is
+  never shared across islands or threads.
+* **Diagnostics**: the final solver status and the performance profile record
+  the chosen backend and the reuse counters
+  (`linear_solver_analyze_count`, `linear_solver_refactor_count`,
+  `linear_solver_fallback_count`); on the island path each island status
+  carries its own counters.
+
+`power_flow.linear_solver` is independent of `power_flow.solver`: the latter
+selects the power-flow *method* (rectangular / apslf / dc), while
+`linear_solver` only selects the sparse linear-algebra backend inside the
+rectangular Newton step.
+
+---
+
 
 ## Solver-Specific Interaction with Power Limits
 

@@ -20,6 +20,7 @@ function print_group_progress(i::Int, total::Int, name::AbstractString) end
 function include_fast_tests()
   include("testgrid.jl")
   include("test_solver_interface.jl")
+  include("test_klu_linear_solver.jl")
   include("test_state_estimation.jl")
   include("test_voltage_dependent_control.jl")
   include("test_transformer_phase_shift.jl")
@@ -32,6 +33,7 @@ function include_fast_tests()
   include("test_matpower_metadata.jl")
   include("test_api.jl")
   include("test_webui.jl")
+  include("test_dc_powerflow.jl")
 end
 
 function include_extended_tests()
@@ -61,11 +63,13 @@ function run_fast_profile_tests()
   groups = [
     ("core_model", () -> run_entry(:run_grid_fast_tests)),
     ("powerflow_rectangular", () -> run_entry(:run_solver_interface_tests)),
+    ("klu_linear_solver", () -> run_entry(:run_klu_linear_solver_tests)),
     ("configuration", () -> run_entry(:run_configuration_coverage_tests)),
     ("matpower_metadata", () -> run_entry(:run_matpower_metadata_tests)),
     ("programmatic_api", () -> run_entry(:run_api_fast_tests)),
     ("webui", () -> run_entry(:run_webui_fast_tests)),
     ("state_estimation", () -> run_entry(:run_state_estimation_tests)),
+    ("dc_powerflow", () -> run_entry(:run_dc_powerflow_tests)),
     ("controls", () -> begin
       run_entry(:run_voltage_dependent_control_tests)
       run_entry(:run_transformer_phase_shift_tests)

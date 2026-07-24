@@ -369,6 +369,29 @@ function _format_branch_anomaly_rows(rows)::String
   return join(lines, " | ")
 end
 
+# Records which sparse linear-solver backend served the main Newton solves
+# and, for the KLU backend, its analyze/refactor/fallback counters. Merged
+# into the final status (so island statuses carry per-island counters) and
+# written into the performance profile next to the workspace metadata.
+function _merge_linear_solver_diagnostics(status_build, performance_profile, linear_solver::Symbol, linear_ctx)
+  analyze_count = linear_ctx === nothing ? 0 : linear_ctx.analyze_count
+  refactor_count = linear_ctx === nothing ? 0 : linear_ctx.refactor_count
+  fallback_count = linear_ctx === nothing ? 0 : linear_ctx.fallback_count
+  if performance_profile isa AbstractDict
+    performance_profile[:linear_solver_backend] = linear_solver
+    performance_profile[:linear_solver_analyze_count] = analyze_count
+    performance_profile[:linear_solver_refactor_count] = refactor_count
+    performance_profile[:linear_solver_fallback_count] = fallback_count
+  end
+  extras = (
+    linear_solver = linear_solver,
+    linear_solver_analyze_count = analyze_count,
+    linear_solver_refactor_count = refactor_count,
+    linear_solver_fallback_count = fallback_count,
+  )
+  return merge(status_build, (status = (; status_build.status..., extras...),))
+end
+
 function _merge_current_iteration_diagnostics(status_build, performance_profile)
   if performance_profile isa AbstractDict && haskey(performance_profile, :current_iteration_start)
     ci = performance_profile[:current_iteration_start]

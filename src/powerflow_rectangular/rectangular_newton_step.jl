@@ -481,6 +481,7 @@ function complex_newton_step_rectangular(
   tr_expand_threshold::Float64 = 0.75,
   tr_step_mode::Symbol = :scaled,
   tr_log = nothing,
+  linear_ctx::Union{Nothing,AbstractNewtonSolverContext} = nothing,
 )
   n = length(V)
   # Solver assumes state ordering [Vr(non-slack); Vi(non-slack)] consistently
@@ -503,14 +504,24 @@ function complex_newton_step_rectangular(
   nvar = 2 * (n - 1)
   @assert m == nvar "complex_newton_step_rectangular: mismatch and state dimension differ"
 
-  # Analytic sparse Jacobian aligned with rectangular state ordering.
+  # Analytic sparse Jacobian aligned with rectangular state ordering. The
+  # factorization-reuse backends need a value-independent (structural)
+  # sparsity pattern so their symbolic analysis stays valid across
+  # iterations; the default path keeps dropping numeric zeros for
+  # bit-for-bit historical behavior.
   J = _perf_profile_time!(performance_profile, :newton_step_jacobian) do
-    build_rectangular_jacobian_pq_pv(Ybus, V, bus_types, Vset, slack_idx; dPinj_dVm = dPinj_dVm, dQinj_dVm = dQinj_dVm)
+    build_rectangular_jacobian_pq_pv(Ybus, V, bus_types, Vset, slack_idx; dPinj_dVm = dPinj_dVm, dQinj_dVm = dQinj_dVm, structural_pattern = linear_ctx !== nothing)
   end
 
-  # Solve J * δx = -F.
+  # Solve J * δx = -F. With a reuse context (KLU or UMFPACK lu!) the symbolic
+  # analysis is reused across iterations; without one the default direct
+  # solve path stays untouched.
   δx = _perf_profile_time!(performance_profile, :newton_step_linear_solve) do
-    solve_linear(J, -F0; allow_pinv = true)
+    if linear_ctx === nothing
+      solve_linear(J, -F0; allow_pinv = true)
+    else
+      solve_newton_factorized!(linear_ctx, J, -F0; pattern_changed = active_set_changed)
+    end
   end
   if autodamp
     # Autodamp path evaluates multiple trial voltages and returns accepted/fallback trial.

@@ -183,6 +183,75 @@ function build_pos_map(non_slack::Vector{Int}, n::Int)
 end
 
 """
+    reduce_susceptance_to_nonslack(Bsrc, non_slack, pos, slack_idx, nred; value_of=imag) -> B_reduced
+
+Eliminate the slack row/column from a full `n×n` susceptance-like source
+matrix and return the `(n-1)×(n-1)` reduced system used by any DC-angle
+linear solve (`_solve_dc_angle_system`). `value_of` extracts the real
+susceptance entry from `Bsrc[i,j]`: `imag` for a complex Ybus (the
+rectangular-solver DC-angle start-value heuristic, which reduces the full AC
+admittance matrix), `identity` for an already-real B′ (a true DC power-flow
+matrix, series reactance only). Sparse `Bsrc` in gives a sparse result;
+dense in gives dense out. Shared between [`rundcpf!`](@ref)'s B′ reduction
+and the rectangular solver's internal DC-angle start projection so the two
+call sites never diverge into two slack-elimination implementations.
+"""
+function reduce_susceptance_to_nonslack(Bsrc, non_slack::Vector{Int}, pos::Vector{Int}, slack_idx::Int, nred::Int; value_of::Function = imag)
+  if Bsrc isa SparseMatrixCSC
+    I = Int[]
+    J = Int[]
+    V = Float64[]
+    sizehint!(I, 2 * nnz(Bsrc))
+    sizehint!(J, 2 * nnz(Bsrc))
+    sizehint!(V, 2 * nnz(Bsrc))
+    rv = rowvals(Bsrc)
+    nz = nonzeros(Bsrc)
+    @inbounds for j in axes(Bsrc, 2)
+      for ptr in nzrange(Bsrc, j)
+        i = rv[ptr]
+        i == j && continue
+        ri = pos[i]
+        ri == 0 && continue
+        bij = value_of(nz[ptr])
+        bij == 0.0 && continue
+        if j != slack_idx
+          cj = pos[j]
+          if cj != 0
+            # Off-diagonal reduced B term.
+            push!(I, ri)
+            push!(J, cj)
+            push!(V, -bij)
+          end
+        end
+        # Diagonal accumulation for row i in reduced coordinates.
+        push!(I, ri)
+        push!(J, ri)
+        push!(V, bij)
+      end
+    end
+    return sparse(I, J, V, nred, nred)
+  else
+    B = zeros(Float64, nred, nred)
+    @inbounds for i in non_slack
+      ri = pos[i]
+      for j in axes(Bsrc, 2)
+        j == i && continue
+        bij = value_of(Bsrc[i, j])
+        bij == 0.0 && continue
+        if j != slack_idx
+          cj = pos[j]
+          if cj != 0
+            B[ri, cj] -= bij
+          end
+        end
+        B[ri, ri] += bij
+      end
+    end
+    return B
+  end
+end
+
+"""
     slack_elimination_indices(n, slack_idx)
 
 Return (non_slack, row_idx, col_idx) for [P;Q] and [Vr;Vi] layout of size 2n.

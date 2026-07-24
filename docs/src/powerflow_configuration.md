@@ -22,6 +22,7 @@
 | `power_flow.max_iter` | Int | `80` | positive integer | Iteration cap. | Hard cases. | Very low values. | Upper runtime bound. | `tol`, `qlimits`. |
 | `power_flow.autodamp` | Bool | `true` | `true`, `false` | Adaptive damping. | Difficult convergence. | Strict algorithm comparison. | Small overhead, often fewer failures. | `autodamp_min`. |
 | `power_flow.autodamp_min` | Float64 | `0.05` | positive real | Minimum damping factor. | Stabilizing hard cases. | Near-zero damping on easy grids. | Lower can increase iterations. | Active only with `autodamp=true`. |
+| `power_flow.linear_solver` | Symbol/String | `umfpack` | `umfpack`, `klu`, `umfpack_reuse` | Sparse linear-algebra backend for the Newton step of the rectangular solver. `umfpack_reuse` keeps UMFPACK's factorization but reuses the symbolic analysis of the first iteration via `lu!` (analyze once, refactor per iteration); `klu` does the same through SuiteSparse KLU. Both re-analyze automatically on active-set pattern changes and fall back to the `umfpack` chain on any factorization error. | `umfpack_reuse` on large cases where the linear solve dominates runtime. `klu` for measured comparisons. | `klu` as a blind "go faster" switch: on the bundled `case_SyntheticUSA` benchmark UMFPACK remained faster than KLU (KLU's left-looking factorization lacks BLAS-3 supernodes and loses on power-flow Jacobians with significant fill-in). | `umfpack_reuse` cuts the repeated symbolic-analysis cost of the default path (measured ~0.28s refactor vs. 0.45s full factor on a 164k Jacobian). `klu` is case- and platform-dependent; measure before adopting. | Distinct from `power_flow.solver`, which selects the power-flow *method* (rectangular/apslf/dc); `linear_solver` only affects the rectangular Newton step. With a reuse backend the Jacobian is assembled with a structural (value-independent) sparsity pattern so the analysis stays reusable. Diagnostic counters appear in the solver status (`linear_solver_analyze_count`, `..._refactor_count`, `..._fallback_count`). |
 
 ## Solver selection (rectangular vs. APSLF)
 
@@ -65,6 +66,54 @@ candidate itself. This is a fixed internal behavior, not a separate
 configurable option — the generator's only job is producing a better starting
 voltage profile; Q-limit enforcement is entirely the downstream NR solve's
 responsibility.
+
+## Solver selection (DC power flow)
+
+`power_flow.solver: dc` selects the standalone DC power flow (MATPOWER
+`rundcpf`/`makeBdc`-equivalent) instead of the AC rectangular Newton-Raphson
+solve: a linear screening model built from branch series reactance only
+(`B'`, no `r`, no shunt, no line charging), with transformer
+`phase_shift_deg` represented as a phase-shift injection vector rather than
+inside `B'` itself. `Vm` is implicitly `1.0 pu` at every bus and there are
+no losses — both by definition of the DC model, not solver limitations. It
+can also be called directly, independent of `run_sparlectra`/`power_flow.solver`,
+via [`rundcpf!`](@ref reference_powerflow_dc).
+
+```yaml
+power_flow:
+  solver: dc   # rectangular | apslf | dc
+  dc:
+    angle_reference_deg: 0.0
+    ignore_out_of_service: true
+```
+
+| YAML path | Type | Default | Allowed values | Meaning | Use when | Avoid when | Performance impact | Interactions |
+|---|---:|---:|---|---|---|---|---|---|
+| `power_flow.solver` | Symbol/String | `rectangular` | `rectangular`, `apslf`, `dc` | Selects the executing solver. | `dc` for a fast linear screening solve or as an AC start-value source. | `dc` when Vm/Q/loss results are required (the model doesn't define them). | `dc` is a single direct linear solve — no iteration. | Rejects active outer-loop controllers (tap/PST/Q(U)/P(U)), mirrors `apslf`. |
+| `power_flow.dc.angle_reference_deg` | Float64 | `0.0` | any real | Uniform angle offset added to every bus after the slack-referenced solve; the slack bus itself is fixed at this reference. | Matching an external reference-angle convention. | N/A | None (exact post-hoc shift, not a re-solve). | None — mathematically independent of the rest of the DC solve. |
+| `power_flow.dc.ignore_out_of_service` | Bool | `true` | `true` | Documents that `status == 0` branches are always excluded from `B'`. | Always (current fixed behavior). | N/A | N/A | Not currently a live toggle. |
+
+`rundcpf!` accepts a `seed_ac_start::Bool=false` keyword (not a YAML option
+— it only makes sense as a one-off programmatic call): when `true`, after a
+successful DC solve it immediately re-seeds and runs the AC rectangular
+Newton-Raphson solve from the just-computed DC angles, restoring Slack/PV
+voltage-magnitude setpoints first (the DC write otherwise flattens every bus
+to `1.0 pu`). `net` then holds the AC-converged solution, not the DC one;
+the returned `DcPowerFlowReport` still reflects the DC step's own result,
+with the AC outcome recorded in `report.metadata.ac_converged`/
+`ac_iterations`/`ac_elapsed_s`.
+
+DC results are reported through a dedicated `DcPowerFlowReport` (angles and
+lossless branch flows only) and tracked via `dc_pf_status(net)`, a status
+registry kept separate from `rectangular_pf_status` so a DC result is never
+mistaken for an AC one by AC-only reporting code.
+
+**Known limitation**: with `power_flow.solver = :dc` and multiple AC
+islands, the per-island diagnostics CSV (`ac_island_solver_summary.csv`,
+see below) is still written but stays cosmetically empty for DC-solved
+islands — it reads AC-only `rectangular_pf_status` fields that a DC solve
+never populates. This does not affect the DC solve or its `dc_pf_status`
+result, only that one diagnostics artifact.
 
 ## AC island diagnostics
 
@@ -170,9 +219,43 @@ available mismatch metrics.
 | `power_flow.start_mode.branch_guard` | Bool | `true` | `true`, `false` | Branch sanity guard for candidate starts. | Stability-focused runs. | Rarely disabled. | Low. | Candidate measurement options. |
 | `power_flow.start_mode.measure_candidates` | Bool | `true` | `true`, `false` | Score/select among candidates. | Multiple start candidates. | Fastest startup path only. | Low/medium startup overhead. | `try_dc_start`, `try_blend_scan`. |
 | `power_flow.start_mode.accept_unmeasured_dc_start` | Bool | `false` | `true`, `false` | Allow DC start without measurement checks. | Synthetic studies. | Measurement-driven workflows. | Can avoid fallback retries. | `try_dc_start`. |
+| `power_flow.start_mode.dc_seed_unconditional` | Bool | `false` | `true`, `false` | Unconditionally run a full standalone DC power flow first and seed Newton-Raphson's start angles from it, bypassing `angle_mode`/`try_dc_start`/`measure_candidates` entirely (no quality gate). | You explicitly want the `rundcpf!(seed_ac_start=true)` two-step behavior from the config-driven path, with normal diagnostics/artifacts/Q-limits still applying to the AC solve. | You want the existing measured/guarded candidate selection (the default) to keep the option to fall back away from a bad DC candidate. | One extra DC solve (cheap, linear) before every rectangular NR run. | `power_flow.solver` must be `rectangular` (rejected for `apslf`/`dc`); mutually exclusive with `power_flow.apslf_start.enabled`. |
 | `power_flow.start_mode.reuse_import_data` | Bool | `true` | `true`, `false` | Reuse imported MATPOWER references. | Trusted imports. | Uncertain conversion data. | Small reduction in recomputation. | `matpower_import.*` voltage reference keys. |
 | `power_flow.start_mode.blend_lambdas` | Vector{Float64} | `[0.25,0.5,0.75]` | real vector (typ. 0..1) | Lambda candidates for blend scan. | Need robust candidate search. | Very large lambda sets. | Linear startup growth with vector size. | `try_blend_scan`. |
 | `power_flow.start_mode.dc_angle_limit_deg` | Float64 | `60.0` | positive real | DC-start angle magnitude cap (deg). | Conservative angle starts. | Overly restrictive values. | Negligible. | `try_dc_start`. |
+
+### DC-seeded Newton-Raphson start (`dc_seed_unconditional`)
+
+`power_flow.start_mode.dc_seed_unconditional` is a distinct mechanism from
+`angle_mode = dc`/`try_dc_start` above. `angle_mode = dc` (the default) is
+one candidate among several inside the measured/guarded start-projection
+machinery (`project_rectangular_start`): it builds a lightweight internal
+DC-angle estimate, compares it against other candidates, and can fall back
+if it looks bad. `dc_seed_unconditional = true` instead runs the actual
+standalone DC power flow (the same solver used for `power_flow.solver = dc`,
+including per-island handling) before Newton-Raphson starts, and always uses
+its resulting bus angles as the NR start point — mirroring
+[`rundcpf!(net; seed_ac_start=true)`](@ref)'s behavior, but wired into the
+config-driven `run_sparlectra`/Web UI pipeline so Q-limit handling,
+wrong-branch detection, and diagnostics/artifacts all still apply
+afterward to the AC solve, unlike calling `rundcpf!` directly. Voltage
+magnitudes are unaffected either way: the DC model has no voltage-magnitude
+solution (`Vm = 1.0 pu` everywhere by definition), so Slack/PV regulated
+setpoints are preserved and every other bus still gets its magnitude from
+the normal `voltage_mode`/`start_projection` handling. Only applies when
+`power_flow.solver = rectangular`; rejected at configuration time for
+`apslf`/`dc` and when combined with `power_flow.apslf_start.enabled`, since
+those are separate, mutually exclusive start-value sources for the same
+rectangular solve.
+
+In the Web UI, enabling **Use DC start values** unconditionally runs the full
+standalone DC power flow before the NR solve and adopts its angles as start
+values — without the quality-measurement/fallback logic that
+**Start angle mode** = `dc` uses by default. The **Start angle mode** and
+**Start voltage mode** selects are therefore grayed out while it is active
+(both would have no effect for such a run). The DC power flow never provides
+voltage magnitudes (angles only) — Slack/PV setpoints and the rest of the
+voltage start remain unchanged.
 
 
 ## Guarded current-iteration start pre-solve
