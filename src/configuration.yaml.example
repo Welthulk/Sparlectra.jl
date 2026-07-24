@@ -90,6 +90,15 @@ power_flow:
     measure_candidates: true
     # Accept DC start even without candidate measurements.
     accept_unmeasured_dc_start: false
+    # Unconditionally run a full standalone DC power flow first and seed the
+    # rectangular Newton-Raphson solve's start angles from it (voltage
+    # magnitudes are not affected: the DC model has no voltage-magnitude
+    # solution, so Slack/PV setpoints and the usual voltage_mode still apply).
+    # Bypasses the angle_mode/try_dc_start/measure_candidates candidate
+    # selection above entirely -- no quality gate, matching rundcpf!'s
+    # seed_ac_start=true behavior. Mutually exclusive with
+    # power_flow.apslf_start.enabled and power_flow.solver in (apslf, dc).
+    dc_seed_unconditional: false
     # Reuse imported MATPOWER reference values during start generation.
     reuse_import_data: true
     # Candidate blend factors used when try_blend_scan=true.

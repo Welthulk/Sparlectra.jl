@@ -218,9 +218,34 @@ available mismatch metrics.
 | `power_flow.start_mode.branch_guard` | Bool | `true` | `true`, `false` | Branch sanity guard for candidate starts. | Stability-focused runs. | Rarely disabled. | Low. | Candidate measurement options. |
 | `power_flow.start_mode.measure_candidates` | Bool | `true` | `true`, `false` | Score/select among candidates. | Multiple start candidates. | Fastest startup path only. | Low/medium startup overhead. | `try_dc_start`, `try_blend_scan`. |
 | `power_flow.start_mode.accept_unmeasured_dc_start` | Bool | `false` | `true`, `false` | Allow DC start without measurement checks. | Synthetic studies. | Measurement-driven workflows. | Can avoid fallback retries. | `try_dc_start`. |
+| `power_flow.start_mode.dc_seed_unconditional` | Bool | `false` | `true`, `false` | Unconditionally run a full standalone DC power flow first and seed Newton-Raphson's start angles from it, bypassing `angle_mode`/`try_dc_start`/`measure_candidates` entirely (no quality gate). | You explicitly want the `rundcpf!(seed_ac_start=true)` two-step behavior from the config-driven path, with normal diagnostics/artifacts/Q-limits still applying to the AC solve. | You want the existing measured/guarded candidate selection (the default) to keep the option to fall back away from a bad DC candidate. | One extra DC solve (cheap, linear) before every rectangular NR run. | `power_flow.solver` must be `rectangular` (rejected for `apslf`/`dc`); mutually exclusive with `power_flow.apslf_start.enabled`. |
 | `power_flow.start_mode.reuse_import_data` | Bool | `true` | `true`, `false` | Reuse imported MATPOWER references. | Trusted imports. | Uncertain conversion data. | Small reduction in recomputation. | `matpower_import.*` voltage reference keys. |
 | `power_flow.start_mode.blend_lambdas` | Vector{Float64} | `[0.25,0.5,0.75]` | real vector (typ. 0..1) | Lambda candidates for blend scan. | Need robust candidate search. | Very large lambda sets. | Linear startup growth with vector size. | `try_blend_scan`. |
 | `power_flow.start_mode.dc_angle_limit_deg` | Float64 | `60.0` | positive real | DC-start angle magnitude cap (deg). | Conservative angle starts. | Overly restrictive values. | Negligible. | `try_dc_start`. |
+
+### DC-seeded Newton-Raphson start (`dc_seed_unconditional`)
+
+`power_flow.start_mode.dc_seed_unconditional` is a distinct mechanism from
+`angle_mode = dc`/`try_dc_start` above. `angle_mode = dc` (the default) is
+one candidate among several inside the measured/guarded start-projection
+machinery (`project_rectangular_start`): it builds a lightweight internal
+DC-angle estimate, compares it against other candidates, and can fall back
+if it looks bad. `dc_seed_unconditional = true` instead runs the actual
+standalone DC power flow (the same solver used for `power_flow.solver = dc`,
+including per-island handling) before Newton-Raphson starts, and always uses
+its resulting bus angles as the NR start point — mirroring
+[`rundcpf!(net; seed_ac_start=true)`](@ref)'s behavior, but wired into the
+config-driven `run_sparlectra`/Web UI pipeline so Q-limit handling,
+wrong-branch detection, and diagnostics/artifacts all still apply
+afterward to the AC solve, unlike calling `rundcpf!` directly. Voltage
+magnitudes are unaffected either way: the DC model has no voltage-magnitude
+solution (`Vm = 1.0 pu` everywhere by definition), so Slack/PV regulated
+setpoints are preserved and every other bus still gets its magnitude from
+the normal `voltage_mode`/`start_projection` handling. Only applies when
+`power_flow.solver = rectangular`; rejected at configuration time for
+`apslf`/`dc` and when combined with `power_flow.apslf_start.enabled`, since
+those are separate, mutually exclusive start-value sources for the same
+rectangular solve.
 
 
 ## Guarded current-iteration start pre-solve

@@ -119,6 +119,30 @@ function printDcPowerFlowResults(net::Net, ct::Float64; toFile::Bool = false, pa
 end
 
 """
+    _dc_seed_rectangular_angles!(net, pf_cfg; verbose=0, performance_profile=nothing)
+
+Run the standalone DC power flow and write its bus angles into `net` as a
+Newton-Raphson start seed, without disturbing Slack/PV regulated voltage
+magnitudes. The DC model has no voltage-magnitude solution — it writes
+`vm_pu=1.0` for every bus — which is correct for a standalone DC report but
+would erase Slack/PV setpoints ahead of an AC seed (`initialVrect`'s
+non-flatstart path reads `node._vm_pu` directly, with no separate setpoint
+fallback). Snapshots those setpoints before the DC solve and restores them
+immediately after, so only the angles end up DC-seeded. Shared by
+[`rundcpf!`](@ref)'s `seed_ac_start=true` path and the config-driven
+`power_flow.start_mode.dc_seed_unconditional` path in `execution.jl`.
+"""
+function _dc_seed_rectangular_angles!(net::Net, pf_cfg::PowerFlowConfig; verbose::Int = 0, performance_profile = nothing)
+  vm_regulated = [getNodeType(n) in (Slack, PV) ? n._vm_pu : nothing for n in net.nodeVec]
+  _run_dc_powerflow!(net, pf_cfg; verbose, performance_profile)
+  @inbounds for (k, n) in enumerate(net.nodeVec)
+    vm = vm_regulated[k]
+    (vm !== nothing && vm > 0.0) && (n._vm_pu = vm)
+  end
+  return net
+end
+
+"""
     rundcpf!(net::Net; angle_reference_deg=0.0, verbose=0, performance_profile=nothing,
              seed_ac_start=false, ac_kwargs=NamedTuple()) -> DcPowerFlowReport
 
@@ -169,25 +193,16 @@ B′/injection math), but no outer loop adjusts it — mirrors the existing
 """
 function rundcpf!(net::Net; angle_reference_deg::Float64 = 0.0, verbose::Int = 0, performance_profile = nothing, seed_ac_start::Bool = false, ac_kwargs::NamedTuple = NamedTuple())::DcPowerFlowReport
   t0 = time()
-  # DC writes vm_pu=1.0 for every bus (the DC model has no voltage-magnitude
-  # solution). That is correct for the standalone DC report, but for
-  # seed_ac_start it would erase Slack/PV regulated-voltage setpoints ahead
-  # of the AC seed (initialVrect's non-flatstart path reads node._vm_pu
-  # directly, with no separate setpoint fallback) — snapshot them here and
-  # restore below, before the AC solve, leaving only the angles DC-seeded.
-  vm_regulated = seed_ac_start ? [getNodeType(n) in (Slack, PV) ? n._vm_pu : nothing for n in net.nodeVec] : nothing
   pf_cfg = PowerFlowConfig(dc = DcPowerFlowConfig(angle_reference_deg = angle_reference_deg))
-  _run_dc_powerflow!(net, pf_cfg; verbose, performance_profile)
+  if seed_ac_start
+    _dc_seed_rectangular_angles!(net, pf_cfg; verbose, performance_profile)
+  else
+    _run_dc_powerflow!(net, pf_cfg; verbose, performance_profile)
+  end
   ct = time() - t0
   report = buildDcPowerFlowReport(net; ct = ct, converged = true)
 
   if seed_ac_start
-    if vm_regulated !== nothing
-      @inbounds for (k, n) in enumerate(net.nodeVec)
-        vm = vm_regulated[k]
-        (vm !== nothing && vm > 0.0) && (n._vm_pu = vm)
-      end
-    end
     t1 = time()
     # runpf_rectangular!'s own bare keyword default (damp=0.2) is deliberately
     # conservative for unmediated direct calls; the config-driven run_sparlectra

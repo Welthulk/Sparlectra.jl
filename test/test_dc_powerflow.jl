@@ -214,6 +214,45 @@ function run_dc_powerflow_tests()
       @test dc_pf_status(net).numerical_converged
     end
 
+    @testset "Config validation: power_flow.start_mode.dc_seed_unconditional" begin
+      default_cfg = Sparlectra.SparlectraConfig()
+      @test default_cfg.powerflow.start_mode.dc_seed_unconditional === false
+
+      cfg_seed = Sparlectra.SparlectraConfig(Dict("power_flow" => Dict("start_mode" => Dict("dc_seed_unconditional" => true))))
+      @test cfg_seed.powerflow.start_mode.dc_seed_unconditional === true
+      @test cfg_seed.powerflow.solver === :rectangular
+
+      # Redundant with solver=dc (the solver already is the standalone DC power flow).
+      @test_throws ArgumentError Sparlectra.SparlectraConfig(Dict("power_flow" => Dict("solver" => "dc", "start_mode" => Dict("dc_seed_unconditional" => true))))
+      # Unsupported for solver=apslf.
+      @test_throws ArgumentError Sparlectra.SparlectraConfig(Dict("power_flow" => Dict("solver" => "apslf", "start_mode" => Dict("dc_seed_unconditional" => true))))
+      # Mutually exclusive with the other rectangular-NR start-value source.
+      @test_throws ArgumentError Sparlectra.SparlectraConfig(Dict("power_flow" => Dict("apslf_start" => Dict("enabled" => true), "start_mode" => Dict("dc_seed_unconditional" => true))))
+    end
+
+    @testset "dc_seed_unconditional: config-driven DC-seeded AC Newton-Raphson solve" begin
+      cfg = Sparlectra.SparlectraConfig(powerflow = Sparlectra.PowerFlowConfig(start_mode = Sparlectra.StartModeConfig(dc_seed_unconditional = true)), output = OutputConfig(logfile_results = :off))
+      result = run_sparlectra(casefile = "case9.m", path = joinpath(dirname(ensure_casefile("case9.m"))), config = cfg)
+      @test result.method === :rectangular
+      @test result.final_converged
+      @test result.diagnostics.solver === :rectangular
+      # net holds the AC-converged solution: voltage magnitudes are not flattened
+      # to 1.0 everywhere the way a pure DC solve would leave them.
+      @test any(!isapprox(n._vm_pu, 1.0; atol = 1e-9) for n in result.net.nodeVec)
+      # The DC pre-seed step itself still ran and is recorded (mirrors
+      # rundcpf!(seed_ac_start=true)'s own dc_pf_status/rectangular_pf_status
+      # coexistence) -- it just isn't the run's final answer.
+      @test dc_pf_status(result.net) !== nothing
+      @test dc_pf_status(result.net).solver === :dc
+      @test Sparlectra.rectangular_pf_status(result.net) !== nothing
+
+      # Regression: default (dc_seed_unconditional=false) still converges the same case.
+      cfg_default = Sparlectra.SparlectraConfig(output = OutputConfig(logfile_results = :off))
+      result_default = run_sparlectra(casefile = "case9.m", path = joinpath(dirname(ensure_casefile("case9.m"))), config = cfg_default)
+      @test result_default.final_converged
+      @test result_default.diagnostics.solver === :rectangular
+    end
+
     @testset "DC power-flow status registry is separate from the AC one" begin
       net = _dc3_net()
       rundcpf!(net)

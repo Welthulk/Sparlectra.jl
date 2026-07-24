@@ -30,6 +30,7 @@ const GUI_EDITABLE_CONFIG_KEYS = Set([
   "power_flow.wrong_branch_detection",
   "power_flow.start_mode.angle_mode",
   "power_flow.start_mode.voltage_mode",
+  "power_flow.start_mode.dc_seed_unconditional",
   "power_flow.start_current_iteration.enabled",
   "power_flow.start_current_iteration.max_iter",
   "power_flow.start_current_iteration.tol",

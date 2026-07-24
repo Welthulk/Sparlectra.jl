@@ -437,12 +437,15 @@ $(dat_hint_html)
 </fieldset>
 <fieldset id="apslf-start-options" class="span-2 apslf-start-options" data-apslf-start-options data-ac-only-field>
 <legend>Newton-Raphson start values</legend>
+<p class=\"field-help span-2\">Zwei sich gegenseitig ausschließende Startwertquellen für den NR-Solve -- höchstens eine davon aktivieren.</p>
 <label class=\"check\"><input name=\"power_flow_apslf_start_enabled\" type=\"hidden\" value=\"false\"><input name=\"power_flow_apslf_start_enabled\" type=\"checkbox\" value=\"true\" data-apslf-start-toggle$(_webui_checked(profile_values, "power_flow_apslf_start_enabled", _webui_option_default("power_flow_apslf_start_enabled")))>$(_webui_field_label("power_flow_apslf_start_enabled", "Use APSLF start values"))</label>
 <label class=\"field-indent\">$(_webui_field_label("power_flow_apslf_start_order", "Highest coefficient (order)"))<input name=\"power_flow_apslf_start_order\" type=\"number\" min=\"1\" data-apslf-start-order value=\"$(_webui_input_value(profile_values, "power_flow_apslf_start_order", _webui_option_default("power_flow_apslf_start_order")))\"></label>
+<label class=\"check\"><input name=\"power_flow_dc_seed_unconditional\" type=\"hidden\" value=\"false\"><input name=\"power_flow_dc_seed_unconditional\" type=\"checkbox\" value=\"true\" data-dc-seed-toggle$(_webui_checked(profile_values, "power_flow_dc_seed_unconditional", _webui_option_default("power_flow_dc_seed_unconditional")))>$(_webui_field_label("power_flow_dc_seed_unconditional", "Use DC start values"))</label>
+<p class=\"field-help field-indent\">Läuft vor dem NR-Solve unbedingt einen vollständigen DC-Lastfluss und übernimmt dessen Winkel als Startwerte -- ohne die Gütemessung/Fallback-Logik, die <strong>Start angle mode</strong> = <code>dc</code> unten standardmäßig verwendet. Deaktiviert deshalb <strong>Start angle mode</strong> und <strong>Start voltage mode</strong> weiter unten (beide wären für diesen Lauf wirkungslos). Spannungsbeträge liefert der DC-Lastfluss grundsätzlich nicht (nur Winkel) -- Slack/PV-Sollwerte und der übrige Spannungsstart bleiben unverändert.</p>
 </fieldset>
 <label data-nr-only-field>$(_webui_field_label("power_flow_wrong_branch_detection", "Wrong-branch detection"))$(_webui_select("power_flow_wrong_branch_detection", _webui_option_allowed_values("power_flow_wrong_branch_detection"), _webui_selected(profile_values, "power_flow_wrong_branch_detection", _webui_option_default("power_flow_wrong_branch_detection"))))</label>
-<label data-nr-only-field>$(_webui_field_label("power_flow_start_angle_mode", "Start angle mode"))$(_webui_select("power_flow_start_angle_mode", _webui_option_allowed_values("power_flow_start_angle_mode"), _webui_selected(profile_values, "power_flow_start_angle_mode", _webui_option_default("power_flow_start_angle_mode"))))</label>
-<label data-nr-only-field>$(_webui_field_label("power_flow_start_voltage_mode", "Start voltage mode"))$(_webui_select("power_flow_start_voltage_mode", _webui_option_allowed_values("power_flow_start_voltage_mode"), _webui_selected(profile_values, "power_flow_start_voltage_mode", _webui_option_default("power_flow_start_voltage_mode"))))</label>
+<label data-nr-only-field data-dc-seed-inactive-field>$(_webui_field_label("power_flow_start_angle_mode", "Start angle mode"))$(_webui_select("power_flow_start_angle_mode", _webui_option_allowed_values("power_flow_start_angle_mode"), _webui_selected(profile_values, "power_flow_start_angle_mode", _webui_option_default("power_flow_start_angle_mode"))))</label>
+<label data-nr-only-field data-dc-seed-inactive-field>$(_webui_field_label("power_flow_start_voltage_mode", "Start voltage mode"))$(_webui_select("power_flow_start_voltage_mode", _webui_option_allowed_values("power_flow_start_voltage_mode"), _webui_selected(profile_values, "power_flow_start_voltage_mode", _webui_option_default("power_flow_start_voltage_mode"))))</label>
 <label>$(_webui_field_label("output_logfile_results", "Logfile output mode"))$(_webui_select("output_logfile_results", _webui_option_allowed_values("output_logfile_results"), _webui_selected(profile_values, "output_logfile_results", _webui_option_default("output_logfile_results"))))</label>
 <label>$(_webui_field_label("performance_timing", "Performance timing"))$(_webui_select("performance_timing", _webui_option_allowed_values("performance_timing"), _webui_selected(profile_values, "performance_timing", _webui_option_default("performance_timing"))))</label>
 <fieldset class=\"span-2 detailed-csv-options\"><legend><label class=\"check\"><input name=\"detailed_result_csv\" type=\"hidden\" value=\"false\"><input name=\"detailed_result_csv\" type=\"checkbox\" value=\"true\"$(_webui_checked(profile_values, "detailed_result_csv", _webui_option_default("detailed_result_csv")))>$(_webui_field_label("detailed_result_csv", "Export detailed result CSV files"))</label></legend>
@@ -590,12 +593,29 @@ document.addEventListener('DOMContentLoaded', function () {
   };
   const apslfStartToggle = document.querySelector('input[data-apslf-start-toggle]');
   const apslfStartOrderInput = document.querySelector('input[data-apslf-start-order]');
+  const dcSeedToggle = document.querySelector('input[data-dc-seed-toggle]');
   const updateApslfStartOrder = function () {
     if (apslfStartOrderInput !== null) apslfStartOrderInput.disabled = apslfStartToggle !== null && !apslfStartToggle.checked;
   };
+  // "Use APSLF start values" and "Use DC start values" are two mutually exclusive
+  // start-value sources for the same rectangular NR solve (the underlying
+  // configuration rejects setting both at once) -- checking one unchecks the other,
+  // mirroring the existing autodamp/trust-region exclusivity pattern below.
+  const updateStartValueSource = function (changedToggle) {
+    if (changedToggle === 'dc_seed' && dcSeedToggle !== null && dcSeedToggle.checked && apslfStartToggle !== null && apslfStartToggle.checked) {
+      apslfStartToggle.checked = false;
+    } else if (changedToggle === 'apslf_start' && apslfStartToggle !== null && apslfStartToggle.checked && dcSeedToggle !== null && dcSeedToggle.checked) {
+      dcSeedToggle.checked = false;
+    }
+    updateApslfStartOrder();
+    updateStepControlOptions();
+  };
   if (apslfStartToggle !== null) {
     updateApslfStartOrder();
-    apslfStartToggle.addEventListener('change', updateApslfStartOrder);
+    apslfStartToggle.addEventListener('change', function () { updateStartValueSource('apslf_start'); });
+  }
+  if (dcSeedToggle !== null) {
+    dcSeedToggle.addEventListener('change', function () { updateStartValueSource('dc_seed'); });
   }
   const autodampToggle = document.querySelector('input[data-autodamp-toggle]');
   const trustRegionToggle = document.querySelector('input[data-trust-region-toggle]');
@@ -634,7 +654,11 @@ document.addEventListener('DOMContentLoaded', function () {
     if (trustRegionGroup !== null) {
       trustRegionGroup.classList.toggle('disabled', !trustRegionOn);
     }
-    nrOnlyFields.forEach(function (container) { setSolverGroupInactive(container, hideNrOnly); });
+    const dcSeedActive = dcSeedToggle !== null && dcSeedToggle.checked;
+    nrOnlyFields.forEach(function (container) {
+      const dcSeedMakesInactive = dcSeedActive && container.hasAttribute('data-dc-seed-inactive-field');
+      setSolverGroupInactive(container, hideNrOnly || dcSeedMakesInactive);
+    });
     updatingStepControl = false;
   };
   if (autodampToggle !== null) {

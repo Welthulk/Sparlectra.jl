@@ -36,6 +36,7 @@ Base.@kwdef struct StartModeConfig
   branch_guard::Bool = true
   measure_candidates::Bool = true
   accept_unmeasured_dc_start::Bool = false
+  dc_seed_unconditional::Bool = false
   reuse_import_data::Bool = true
   blend_lambdas::Vector{Float64} = [0.25, 0.5, 0.75]
   dc_angle_limit_deg::Float64 = 60.0
@@ -660,6 +661,7 @@ function StartModeConfig(raw::AbstractDict)
     branch_guard = _as_bool_cfg(_raw_get(raw, "branch_guard", _raw_get(raw, "start_projection_branch_guard", true))),
     measure_candidates = _as_bool_cfg(_raw_get(raw, "measure_candidates", _raw_get(raw, "start_projection_measure_candidates", true))),
     accept_unmeasured_dc_start = _as_bool_cfg(_raw_get(raw, "accept_unmeasured_dc_start", _raw_get(raw, "start_projection_accept_unmeasured_dc_start", false))),
+    dc_seed_unconditional = _as_bool_cfg(_raw_get(raw, "dc_seed_unconditional", false)),
     reuse_import_data = _as_bool_cfg(_raw_get(raw, "reuse_import_data", _raw_get(raw, "start_projection_reuse_import_data", true))),
     blend_lambdas = _as_float_vector_cfg(_raw_get(raw, "blend_lambdas", _raw_get(raw, "start_projection_blend_lambdas", [0.25, 0.5, 0.75]))),
     dc_angle_limit_deg = _validate_positive("start_projection_dc_angle_limit_deg", _as_float_cfg(_raw_get(raw, "dc_angle_limit_deg", _raw_get(raw, "start_projection_dc_angle_limit_deg", 60.0)))),
@@ -834,6 +836,12 @@ function PowerFlowConfig(raw::AbstractDict)
   if trust_region_cfg.enabled && autodamp
     throw(ArgumentError("power_flow.trust_region.enabled=true is incompatible with power_flow.autodamp=true. Both are Newton step-control mechanisms; layering them is undefined. Set power_flow.autodamp=false or power_flow.trust_region.enabled=false."))
   end
+  start_mode_cfg = StartModeConfig(merge(Dict{Any,Any}(merged), Dict{Any,Any}(start_raw)))
+  if start_mode_cfg.dc_seed_unconditional
+    solver === :dc && throw(ArgumentError("power_flow.start_mode.dc_seed_unconditional=true is redundant with power_flow.solver=dc: the solver already is the standalone DC power flow. Set power_flow.start_mode.dc_seed_unconditional=false or power_flow.solver=rectangular."))
+    solver === :apslf && throw(ArgumentError("power_flow.start_mode.dc_seed_unconditional=true is incompatible with power_flow.solver=apslf. DC-seeding only makes sense ahead of the rectangular Newton-Raphson solve; set power_flow.start_mode.dc_seed_unconditional=false or power_flow.solver=rectangular."))
+    apslf_start_cfg.enabled && throw(ArgumentError("power_flow.start_mode.dc_seed_unconditional=true is incompatible with power_flow.apslf_start.enabled=true. These are two mutually exclusive start-value sources for the rectangular Newton-Raphson solve; enable at most one."))
+  end
   return PowerFlowConfig(
     method = method,
     solver = solver,
@@ -858,7 +866,7 @@ function PowerFlowConfig(raw::AbstractDict)
     islands_enabled = _as_bool_cfg(_raw_get(islands_raw, "enabled", true)),
     islands_mode = _validate_allowed_symbol("power_flow.islands.mode", _as_symbol_cfg(_raw_get(islands_raw, "mode", :solve_independent)), POWERFLOW_ISLAND_MODE_VALUES),
     islands_reference_policy = _validate_allowed_symbol("power_flow.islands.reference_policy", _as_symbol_cfg(_raw_get(islands_raw, "reference_policy", :matpower_like)), POWERFLOW_ISLAND_REFERENCE_POLICY_VALUES),
-    start_mode = StartModeConfig(merge(Dict{Any,Any}(merged), Dict{Any,Any}(start_raw))),
+    start_mode = start_mode_cfg,
     start_current_iteration = StartCurrentIterationConfig(start_current_iteration_raw),
     merit = merit_cfg,
     trust_region = trust_region_cfg,

@@ -44,6 +44,7 @@ const WEBUI_OPTION_SPECS = (
   WebUIOptionSpec("power_flow.wrong_branch_detection", "power_flow_wrong_branch_detection", String, :select, "warn", WRONG_BRANCH_DETECTION_VALUES, :basic, true),
   WebUIOptionSpec("power_flow.start_mode.angle_mode", "power_flow_start_angle_mode", String, :select, "dc", POWERFLOW_START_ANGLE_MODE_VALUES, :basic, true),
   WebUIOptionSpec("power_flow.start_mode.voltage_mode", "power_flow_start_voltage_mode", String, :select, "profile_blend", POWERFLOW_START_VOLTAGE_MODE_VALUES, :basic, true),
+  WebUIOptionSpec("power_flow.start_mode.dc_seed_unconditional", "power_flow_dc_seed_unconditional", Bool, :checkbox, false, (), :basic, true),
   WebUIOptionSpec("power_flow.start_current_iteration.enabled", "power_flow_start_current_iteration_enabled", Bool, :checkbox, false, (), :basic, true),
   WebUIOptionSpec("power_flow.start_current_iteration.max_iter", "power_flow_start_current_iteration_max_iter", Int, :number, 10, (), :basic, true),
   WebUIOptionSpec("power_flow.start_current_iteration.tol", "power_flow_start_current_iteration_tol", Float64, :number, "1e-3", (), :basic, true),

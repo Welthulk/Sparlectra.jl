@@ -90,6 +90,7 @@ function _webui_test_form(casefile, config_file, output_root)
     "power_flow_apslf_nr_polish" => "true",
     "power_flow_apslf_start_enabled" => "false",
     "power_flow_apslf_start_order" => "40",
+    "power_flow_dc_seed_unconditional" => "false",
     "power_flow_wrong_branch_detection" => "warn",
     "power_flow_start_angle_mode" => "dc",
     "power_flow_start_voltage_mode" => "profile_blend",
@@ -1556,6 +1557,7 @@ settings:
         "power_flow_wrong_branch_detection" => "power_flow.wrong_branch_detection",
         "power_flow_start_angle_mode" => "power_flow.start_mode.angle_mode",
         "power_flow_start_voltage_mode" => "power_flow.start_mode.voltage_mode",
+        "power_flow_dc_seed_unconditional" => "power_flow.start_mode.dc_seed_unconditional",
         "power_flow_start_current_iteration_enabled" => "power_flow.start_current_iteration.enabled",
         "power_flow_start_current_iteration_max_iter" => "power_flow.start_current_iteration.max_iter",
         "power_flow_start_current_iteration_tol" => "power_flow.start_current_iteration.tol",
@@ -1701,15 +1703,15 @@ settings:
       @test occursin("<label data-nr-only-field><span class=\"field-label\">Maximum iterations ", form_html)
       @test occursin("<label data-nr-only-field><span class=\"field-label\">Q-limit enforcement mode ", form_html)
       @test occursin("<label data-nr-only-field><span class=\"field-label\">Wrong-branch detection ", form_html)
-      @test occursin("<label data-nr-only-field><span class=\"field-label\">Start angle mode ", form_html)
-      @test occursin("<label data-nr-only-field><span class=\"field-label\">Start voltage mode ", form_html)
+      @test occursin("<label data-nr-only-field data-dc-seed-inactive-field><span class=\"field-label\">Start angle mode ", form_html)
+      @test occursin("<label data-nr-only-field data-dc-seed-inactive-field><span class=\"field-label\">Start voltage mode ", form_html)
       @test occursin("<fieldset class=\"start-current-iteration-options advanced-start-values\" data-nr-only-field>", form_html)
       @test occursin("const nrOnlyFields = document.querySelectorAll('[data-nr-only-field]')", form_html)
       @test occursin("const isApslfMode = function () { return getSolverMode() === 'apslf'; }", form_html)
       @test occursin("const hideNrOnly = apslf || dc", form_html)
       @test occursin("autodampGroup.classList.toggle('disabled', !autodampOn)", form_html)
       @test occursin("trustRegionGroup.classList.toggle('disabled', !trustRegionOn)", form_html)
-      @test occursin("nrOnlyFields.forEach(function (container) { setSolverGroupInactive(container, hideNrOnly); })", form_html)
+      @test occursin("setSolverGroupInactive(container, hideNrOnly || dcSeedMakesInactive)", form_html)
       # Mutually exclusive/inapplicable fields are grayed out in place (disabled inputs,
       # opacity via the "disabled" CSS class) rather than hidden -- switching solvers no
       # longer makes parts of the form vanish or jump around.
@@ -1732,6 +1734,21 @@ settings:
         @test occursin(field, form_html)
       end
       @test occursin("<fieldset id=\"apslf-start-options\" class=\"span-2 apslf-start-options\" data-apslf-start-options data-ac-only-field>", form_html)
+      # "Use APSLF start values" and "Use DC start values" are two mutually exclusive
+      # start-value sources for the rectangular NR solve, checking one unchecks the
+      # other client-side (the underlying configuration also rejects both at once).
+      @test occursin("name=\"power_flow_dc_seed_unconditional\" type=\"hidden\" value=\"false\"", form_html)
+      @test occursin("name=\"power_flow_dc_seed_unconditional\" type=\"checkbox\" value=\"true\" data-dc-seed-toggle", form_html)
+      @test occursin("const dcSeedToggle = document.querySelector('input[data-dc-seed-toggle]')", form_html)
+      @test occursin("const updateStartValueSource = function (changedToggle)", form_html)
+      @test occursin("apslfStartToggle.checked = false", form_html)
+      @test occursin("dcSeedToggle.checked = false", form_html)
+      # Checking "Use DC start values" grays out Start angle mode/Start voltage mode
+      # (both become inert during a DC-seeded run: project_rectangular_start no-ops).
+      # Count = 2 markup attributes (the two labels above) + 1 JS string literal below.
+      @test count("data-dc-seed-inactive-field", form_html) == 3
+      @test occursin("const dcSeedActive = dcSeedToggle !== null && dcSeedToggle.checked", form_html)
+      @test occursin("container.hasAttribute('data-dc-seed-inactive-field')", form_html)
       @test occursin("name=\"detailed_result_csv\" type=\"checkbox\" value=\"true\" checked", form_html)
       @test occursin("class=\"span-2 detailed-csv-options\"", form_html)
       @test occursin("name=\"detailed_result_csv_format\"", form_html)
@@ -2505,6 +2522,28 @@ result = get_powerflow_result(run_id)
         for row in direct_report.nodes
           @test isapprox(webui_va_deg[row.bus], row.va_deg; atol = 1e-8)
         end
+      end
+    end
+
+    @testset "DC-seeded Newton-Raphson start (dc_seed_unconditional)" begin
+      mktempdir() do seed_tmpdir
+        seed_casefile = _write_webui_test_case(joinpath(seed_tmpdir, "case_webui_dcseed.m"))
+        seed_config_file = joinpath(seed_tmpdir, "config_template.yaml")
+        cp(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, seed_config_file)
+        seed_output_root = joinpath(seed_tmpdir, "runs")
+
+        # Solver stays AC/rectangular; only the start-value source changes.
+        seed_form = _webui_test_form(seed_casefile, seed_config_file, seed_output_root)
+        seed_form["power_flow_dc_seed_unconditional"] = "true"
+        seed_response = Sparlectra.route_sparlectra_webui("POST", "/powerflow/run", seed_form; output_root = seed_output_root)
+        @test seed_response.status == 303
+        seed_run_id = basename(only(header.second for header in seed_response.headers if header.first == "Location"))
+        wait(Sparlectra._POWERFLOW_WEBUI_JOBS[seed_run_id]["task"])
+        seed_result = get_powerflow_result(seed_run_id)
+        @test seed_result["success"]
+        seed_result_json = Sparlectra._parse_service_json(read(joinpath(seed_result["output_dir"], "result.json"), String))
+        @test seed_result_json["final_outcome"]["solver"] == "rectangular"
+        @test seed_result_json["final_outcome"]["converged"] == true
       end
     end
 

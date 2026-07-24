@@ -30,6 +30,21 @@ function _execute_sparlectra_powerflow!(net::Net, cfg::SparlectraConfig; perform
     try
       iterations, erg, control_status = _perf_profile_time!(performance_profile, :solver_total) do
         controllers = collect_outer_controllers(net)
+        # Unconditional DC-seeded start (power_flow.start_mode.dc_seed_unconditional,
+        # only reachable with solver=rectangular -- rejected at config time otherwise):
+        # run a full standalone DC power flow first and write its angles into net as
+        # the Newton-Raphson start point, mirroring rundcpf!(seed_ac_start=true) but
+        # ahead of the dispatch below, so Q-limits/wrong-branch detection/diagnostics/
+        # outer control all still run unchanged afterward. The candidate-selection
+        # start-mode machinery (angle_mode/try_dc_start/measure_candidates) is forced
+        # off for this run only, via a local pf_cfg copy, so it cannot second-guess or
+        # blend away the DC seed net already carries (project_rectangular_start is a
+        # pure passthrough when start_projection=false).
+        solve_pf_cfg = pf_cfg
+        if pf_cfg.start_mode.dc_seed_unconditional
+          _dc_seed_rectangular_angles!(net, pf_cfg; verbose = verbose, performance_profile = performance_profile)
+          solve_pf_cfg = _copy_powerflow_with(pf_cfg; start_mode = _copy_start_mode_with(pf_cfg.start_mode; start_projection = false))
+        end
         if pf_cfg.solver === :apslf
           if !isempty(controllers) || has_voltage_dependent_control(net)
             throw(ArgumentError("power_flow.solver=apslf does not support active outer-loop controllers (tap-changer, phase-shifting transformer, Q(U), or P(U) control). Disable the controllers or set power_flow.solver=rectangular."))
@@ -43,10 +58,10 @@ function _execute_sparlectra_powerflow!(net::Net, cfg::SparlectraConfig; perform
           ite, status = _run_dc_powerflow!(net, pf_cfg; verbose = verbose, performance_profile = performance_profile)
           (ite, status, :none)
         elseif isempty(controllers)
-          ite, status = runpf!(net, pf_cfg; verbose = verbose, pv_table_rows = qlimit_preview_rows, performance_profile = performance_profile)
+          ite, status = runpf!(net, solve_pf_cfg; verbose = verbose, pv_table_rows = qlimit_preview_rows, performance_profile = performance_profile)
           (ite, status, :none)
         else
-          control_result = run_control!(net; controllers = controllers, pf_config = pf_cfg, control_config = cfg.control, verbose = verbose, performance_profile = performance_profile)
+          control_result = run_control!(net; controllers = controllers, pf_config = solve_pf_cfg, control_config = cfg.control, verbose = verbose, performance_profile = performance_profile)
           (control_result.last_pf_iterations, control_result.status == :pf_failed ? 1 : 0, control_result.status)
         end
       end
