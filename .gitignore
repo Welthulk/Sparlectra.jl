@@ -31,8 +31,6 @@ examples/*.yaml
 examples/*.png
 docs/src/ybus_diagonal_sparlectra.md
 auswertung_case25k_performance_2026-05-17.md
-
-# Ignore local Sparlectra user configuration
 examples/configuration.yaml
 examples/_out/
 examples/configuration.yaml.example
@@ -54,9 +52,6 @@ CL*.md
 TASK*.md
 task_*.md
 Task_*.md
-
-# Claude Code state is machine-local only; nothing under .claude/ is committed.
-.claude/
 .md
-.claude/*/*
-CLAUDE.md
+
+
