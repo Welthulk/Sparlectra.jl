@@ -90,6 +90,7 @@ function _webui_test_form(casefile, config_file, output_root)
     "power_flow_apslf_nr_polish" => "true",
     "power_flow_apslf_start_enabled" => "false",
     "power_flow_apslf_start_order" => "40",
+    "power_flow_dc_seed_unconditional" => "false",
     "power_flow_wrong_branch_detection" => "warn",
     "power_flow_start_angle_mode" => "dc",
     "power_flow_start_voltage_mode" => "profile_blend",
@@ -110,6 +111,7 @@ function _webui_test_form(casefile, config_file, output_root)
     "power_flow_trust_region_initial_radius" => "1.0",
     "power_flow_trust_region_eta_accept" => "0.1",
     "power_flow_trust_region_step_mode" => "scaled",
+    "power_flow_linear_solver" => "umfpack",
     "matpower_import_auto_profile" => "recommend",
     "matpower_import_ratio" => "normal",
     "matpower_import_shift_sign" => "1.0",
@@ -194,7 +196,7 @@ function run_webui_extended_tests()
       root = mktempdir()
       config_path = joinpath(root, "configuration.yaml")
       write(config_path, "power_flow:\n  start_mode:\n    voltage_mode: bus_vm_va_blend\n  qlimits:\n    enabled: true\n")
-      runtime = Sparlectra._SparlectraWebUIRuntime(nothing, root, config_path, Sparlectra.webui_operation_log_path(root), nothing, Sparlectra.start_powerflow_run, false, false, time(), 0, nothing, IOBuffer(), ReentrantLock())
+      runtime = Sparlectra._SparlectraWebUIRuntime(nothing, root, config_path, Sparlectra.webui_operation_log_path(root), nothing, Sparlectra.start_powerflow_run, false, false, time(), 0, nothing, IOBuffer(), ReentrantLock(), :disabled)
       before_page_text = read(config_path, String)
       page = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow"; output_root = root, runtime).body)
       @test occursin("Check configuration", page)
@@ -202,7 +204,7 @@ function run_webui_extended_tests()
       @test occursin("Configuration notice:", page)
       @test occursin("#configuration-maintenance", page)
       @test findfirst("Configuration maintenance", page) > findfirst("Advanced options", page)
-      @test findfirst("Configuration maintenance", page) > findfirst("Existing case file", page)
+      @test findfirst("Configuration maintenance", page) > findfirst("Case file", page)
       @test read(config_path, String) == before_page_text
 
       check = Sparlectra.route_sparlectra_webui("POST", "/powerflow/config/check", Dict("config_file" => config_path); output_root = root, runtime)
@@ -510,11 +512,11 @@ settings:
 
       dropdown_form = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow"; output_root = root, runtime = (; case_directory = root, config_file = "configuration.yaml", operation_log = Sparlectra.webui_operation_log_path(root), startup_config_error = nothing, runner = Sparlectra.start_powerflow_run)).body)
       @test occursin("case118.m ★", dropdown_form)
-      @test occursin("<option value=\"case118.m\">case118.m ★</option>", dropdown_form)
-      @test !occursin("value=\"case118.m ★\"", dropdown_form)
+      @test occursin("<li role=\"option\" data-case-option=\"case118.m\" title=\"Right-click to delete this case from the case directory\">case118.m ★</li>", dropdown_form)
+      @test !occursin("data-case-option=\"case118.m ★\"", dropdown_form)
       @test occursin("data-case-settings-reload=\"true\"", dropdown_form)
       @test occursin("Ignore Web UI settings and use configuration defaults", dropdown_form)
-      @test occursin("target.searchParams.set('casefile', caseSelect.value)", dropdown_form)
+      @test occursin("target.searchParams.set('casefile', value)", dropdown_form)
       @test occursin("target.searchParams.set('config_file', configInput.value)", dropdown_form)
       dropdown_loaded_form = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow?casefile=$(Sparlectra._webui_urlencode(case118))&config_file=$(Sparlectra._webui_urlencode("configuration.yaml"))"; output_root = root).body)
       _webui_assert_value(dropdown_loaded_form, "power_flow_max_iter", "80")
@@ -809,19 +811,19 @@ settings:
           selected_casefile = "case14.m",
           selected_config_file = secondary_config,
         )
-        @test occursin("<select id=\"casefile\" name=\"casefile\" data-case-settings-reload=\"true\">", selection_html)
-        @test occursin("<option value=\"\">-- choose existing case --</option>", selection_html)
-        @test occursin("<option value=\"case14.m\" selected>case14.m</option>", selection_html)
-        @test !occursin("<option value=\"case14.jl\">case14.jl</option>", selection_html)
+        @test occursin("<input id=\"casefile\" name=\"casefile\" autocomplete=\"off\" spellcheck=\"false\" role=\"combobox\" aria-expanded=\"false\" aria-controls=\"case-combobox-list\" data-case-settings-reload=\"true\" value=\"case14.m\"", selection_html)
+        @test occursin("<ul id=\"case-combobox-list\" class=\"case-combobox-list\" role=\"listbox\" hidden>", selection_html)
+        @test occursin("<li role=\"option\" data-case-option=\"case14.m\" title=\"Right-click to delete this case from the case directory\">case14.m</li>", selection_html)
+        @test !occursin("data-case-option=\"case14.jl\"", selection_html)
         @test !occursin("warmup_case3", selection_html)
         @test !occursin("warmup_internal", selection_html)
         @test !occursin("generated_cache", selection_html)
-        @test occursin("<option value=\"FOR001.DAT\">FOR001.DAT</option>", selection_html)
+        @test occursin("<li role=\"option\" data-case-option=\"FOR001.DAT\" title=\"Right-click to delete this case from the case directory\">FOR001.DAT</li>", selection_html)
         primary_selector_html = split(selection_html, "<datalist id=\"for002-reference-candidates\">")[1]
         @test !occursin("<option value=\"FOR002.DAT\">FOR002.DAT</option>", primary_selector_html)
         @test !occursin("<option value=\"FOR002_reference.DAT\">FOR002_reference.DAT</option>", primary_selector_html)
-        @test occursin("<option value=\"case118.m\">case118.m</option>", selection_html)
-        @test occursin("<input id=\"casefile_manual\" name=\"casefile_manual\" value=\"\" placeholder=\"case14.m or /path/to/FOR001.DAT\">", selection_html)
+        @test occursin("<li role=\"option\" data-case-option=\"case118.m\" title=\"Right-click to delete this case from the case directory\">case118.m</li>", selection_html)
+        @test !occursin("casefile_manual", selection_html)
         @test !occursin("available-casefiles", selection_html)
         @test occursin("MATPOWER citation", selection_html)
         @test occursin("Zimmerman", selection_html)
@@ -842,8 +844,8 @@ settings:
         for ignored in ("artifact.csv", "artifact.json", "artifact.yaml", "artifact.log", "artifact.md", "artifact.sparlectra-webui.yaml")
           @test !occursin(ignored, selection_html)
         end
-        @test occursin("Existing case file", selection_html)
-        @test occursin("Or type case file path", selection_html)
+        @test occursin("Case file", selection_html)
+        @test occursin("press Enter to download it into the list", selection_html)
         @test occursin("Case input format", selection_html)
         @test occursin("DTF diagnostics (experimental/internal)", selection_html)
         @test occursin("name=\"for002_reference_file\"", selection_html)
@@ -855,14 +857,19 @@ settings:
         @test occursin("new RegExp('\\\\.dat\$', 'i').test(effectiveValue)", selection_html)
         @test occursin("caseFormat.value = 'dtf_for001'", selection_html)
         @test occursin("dtfInternalSection.open = true", selection_html)
-        @test occursin("target.searchParams.set('casefile', caseSelect.value)", selection_html)
+        @test occursin("target.searchParams.set('casefile', value)", selection_html)
+        # Enter on an unknown case must reach the resolve submit through the
+        # in-scope powerflowForm const (a bare `form` here is a ReferenceError
+        # that silently breaks Enter-to-resolve).
+        @test occursin("powerflowForm.requestSubmit(resolveButton)", selection_html)
+        @test !occursin("|| form === null", selection_html)
 
         dat_html = Sparlectra.render_powerflow_form(
           application_root = application_root,
           selected_casefile = "FOR001.DAT",
         )
-        @test occursin("<option value=\"FOR001.DAT\" selected>FOR001.DAT</option>", dat_html)
-        @test occursin("<input id=\"casefile_manual\" name=\"casefile_manual\" value=\"\"", dat_html)
+        @test occursin("<input id=\"casefile\" name=\"casefile\" autocomplete=\"off\" spellcheck=\"false\" role=\"combobox\" aria-expanded=\"false\" aria-controls=\"case-combobox-list\" data-case-settings-reload=\"true\" value=\"FOR001.DAT\"", dat_html)
+        @test occursin("<li role=\"option\" data-case-option=\"FOR001.DAT\" title=\"Right-click to delete this case from the case directory\">FOR001.DAT</li>", dat_html)
         @test occursin("<option value=\"auto\">Auto</option>", dat_html)
         @test occursin("<option value=\"dtf_for001\" selected>DTF diagnostics (experimental/internal)</option>", dat_html)
         @test occursin("<details class=\"span-2 dtf-internal-section is-dat-selected\" open>", dat_html)
@@ -890,7 +897,7 @@ settings:
           application_root = application_root,
           selected_casefile = "case14.m",
         )
-        @test occursin("<option value=\"case14.m\" selected>case14.m</option>", case14_html)
+        @test occursin("<input id=\"casefile\" name=\"casefile\" autocomplete=\"off\" spellcheck=\"false\" role=\"combobox\" aria-expanded=\"false\" aria-controls=\"case-combobox-list\" data-case-settings-reload=\"true\" value=\"case14.m\"", case14_html)
         @test occursin("<option value=\"auto\" selected>Auto</option>", case14_html)
         @test occursin("<option value=\"dtf_for001\">DTF diagnostics (experimental/internal)</option>", case14_html)
 
@@ -898,8 +905,8 @@ settings:
           application_root = application_root,
           selected_casefile = "case14.jl",
         )
-        @test !occursin("<option value=\"case14.jl\" selected>case14.jl</option>", casejl_html)
-        @test occursin("<input id=\"casefile_manual\" name=\"casefile_manual\" value=\"case14.jl\"", casejl_html)
+        @test !occursin("data-case-option=\"case14.jl\"", casejl_html)
+        @test occursin("<input id=\"casefile\" name=\"casefile\" autocomplete=\"off\" spellcheck=\"false\" role=\"combobox\" aria-expanded=\"false\" aria-controls=\"case-combobox-list\" data-case-settings-reload=\"true\" value=\"case14.jl\"", casejl_html)
         @test occursin("<option value=\"auto\" selected>Auto</option>", casejl_html)
         @test occursin("<option value=\"dtf_for001\">DTF diagnostics (experimental/internal)</option>", casejl_html)
 
@@ -908,7 +915,7 @@ settings:
           application_root = application_root,
           selected_casefile = manual_dat,
         )
-        @test occursin("<input id=\"casefile_manual\" name=\"casefile_manual\" value=\"$(manual_dat)\"", manual_dat_html)
+        @test occursin("<input id=\"casefile\" name=\"casefile\" autocomplete=\"off\" spellcheck=\"false\" role=\"combobox\" aria-expanded=\"false\" aria-controls=\"case-combobox-list\" data-case-settings-reload=\"true\" value=\"$(manual_dat)\"", manual_dat_html)
         @test occursin("<option value=\"dtf_for001\" selected>DTF diagnostics (experimental/internal)</option>", manual_dat_html)
         @test occursin("<details class=\"span-2 dtf-internal-section is-dat-selected\" open>", manual_dat_html)
 
@@ -917,7 +924,7 @@ settings:
             application_root = application_root,
             selected_casefile = manual_matpower,
           )
-          @test occursin("<input id=\"casefile_manual\" name=\"casefile_manual\" value=\"$(manual_matpower)\"", manual_matpower_html)
+          @test occursin("<input id=\"casefile\" name=\"casefile\" autocomplete=\"off\" spellcheck=\"false\" role=\"combobox\" aria-expanded=\"false\" aria-controls=\"case-combobox-list\" data-case-settings-reload=\"true\" value=\"$(manual_matpower)\"", manual_matpower_html)
           @test occursin("<option value=\"auto\" selected>Auto</option>", manual_matpower_html)
           @test occursin("<option value=\"dtf_for001\">DTF diagnostics (experimental/internal)</option>", manual_matpower_html)
         end
@@ -927,7 +934,7 @@ settings:
           selected_casefile = "case14.m",
           submitted_form = Dict("casefile" => "case14.m", "casefile_manual" => manual_dat),
         )
-        @test occursin("<input id=\"casefile_manual\" name=\"casefile_manual\" value=\"$(manual_dat)\"", manual_overrides_dropdown_html)
+        @test occursin("<input id=\"casefile\" name=\"casefile\" autocomplete=\"off\" spellcheck=\"false\" role=\"combobox\" aria-expanded=\"false\" aria-controls=\"case-combobox-list\" data-case-settings-reload=\"true\" value=\"$(manual_dat)\"", manual_overrides_dropdown_html)
         @test occursin("<option value=\"dtf_for001\" selected>DTF diagnostics (experimental/internal)</option>", manual_overrides_dropdown_html)
 
         rm(case14)
@@ -937,8 +944,7 @@ settings:
           application_root = application_root,
           selected_casefile = manual_case,
         )
-        @test occursin("<select id=\"casefile\" name=\"casefile\" data-case-settings-reload=\"true\">", fallback_html)
-        @test occursin("<input id=\"casefile_manual\" name=\"casefile_manual\" value=\"$(manual_case)\"", fallback_html)
+        @test occursin("<input id=\"casefile\" name=\"casefile\" autocomplete=\"off\" spellcheck=\"false\" role=\"combobox\" aria-expanded=\"false\" aria-controls=\"case-combobox-list\" data-case-settings-reload=\"true\" value=\"$(manual_case)\"", fallback_html)
       end
     end
 
@@ -946,7 +952,7 @@ settings:
       mktempdir() do tmpdir
         case_directory = joinpath(tmpdir, "cases")
         output_root = joinpath(tmpdir, "runs")
-        runtime = Sparlectra._SparlectraWebUIRuntime(nothing, case_directory, "configuration.yaml", Sparlectra.webui_operation_log_path(output_root), nothing, Sparlectra.start_powerflow_run, false, false, time(), 0, nothing, IOBuffer(), ReentrantLock())
+        runtime = Sparlectra._SparlectraWebUIRuntime(nothing, case_directory, "configuration.yaml", Sparlectra.webui_operation_log_path(output_root), nothing, Sparlectra.start_powerflow_run, false, false, time(), 0, nothing, IOBuffer(), ReentrantLock(), :disabled)
         upload(name, text) = Sparlectra.WebUICaseUpload(name, Vector{UInt8}(codeunits(text)))
 
         response = Sparlectra.route_sparlectra_webui("POST", "/powerflow/import-cases", Dict("casefiles" => [upload("case_upload.m", "function mpc = case_upload\nend\n")]); output_root, runtime)
@@ -954,7 +960,7 @@ settings:
         @test isfile(joinpath(case_directory, "case_upload.m"))
         @test read(joinpath(case_directory, "case_upload.m"), String) == "function mpc = case_upload\nend\n"
         refreshed = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow"; output_root, runtime).body)
-        @test occursin("<option value=\"case_upload.m\"", refreshed)
+        @test occursin("data-case-option=\"case_upload.m\"", refreshed)
 
         dat_response = Sparlectra.route_sparlectra_webui("POST", "/powerflow/import-cases", Dict("casefiles" => [upload("FOR001.DAT", "P\nT\nN\nX\nY\n110\n2 1 0 0 SLACK\nL1A  PV       SLACK   1.0 2.0 0.0 0.0\n11   PV      110 0 0 0 10 2 -5 5\n21   SLACK   110 0 0 0 20 3 -10 10\n")]); output_root, runtime)
         @test dat_response.status == 303
@@ -1009,7 +1015,7 @@ settings:
       mktempdir() do tmpdir
         case_directory = joinpath(tmpdir, "cases")
         output_root = joinpath(tmpdir, "runs")
-        runtime = Sparlectra._SparlectraWebUIRuntime(nothing, case_directory, "configuration.yaml", Sparlectra.webui_operation_log_path(output_root), nothing, Sparlectra.start_powerflow_run, false, false, time(), 0, nothing, IOBuffer(), ReentrantLock())
+        runtime = Sparlectra._SparlectraWebUIRuntime(nothing, case_directory, "configuration.yaml", Sparlectra.webui_operation_log_path(output_root), nothing, Sparlectra.start_powerflow_run, false, false, time(), 0, nothing, IOBuffer(), ReentrantLock(), :disabled)
 
         external_dir = joinpath(tmpdir, "external")
         mkpath(external_dir)
@@ -1024,7 +1030,7 @@ settings:
         @test isempty(Sparlectra.list_powerflow_runs(output_root))
 
         refreshed = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow"; output_root, runtime).body)
-        @test occursin("<option value=\"FOR001_manual.DAT\"", refreshed)
+        @test occursin("data-case-option=\"FOR001_manual.DAT\"", refreshed)
 
         duplicate_response = Sparlectra.route_sparlectra_webui("POST", "/powerflow/resolve-case", Dict("casefile_manual" => external_dat); output_root, runtime)
         @test duplicate_response.status == 303
@@ -1044,6 +1050,41 @@ settings:
         log_text = read(Sparlectra.webui_operation_log_path(output_root), String)
         @test occursin("case_resolve_completed", log_text)
         @test occursin("case_resolve_failed", log_text)
+        @test !occursin("powerflow_run_started", log_text)
+      end
+    end
+
+    @testset "Case delete from the combobox (no PowerFlow run)" begin
+      mktempdir() do tmpdir
+        case_directory = joinpath(tmpdir, "cases")
+        output_root = joinpath(tmpdir, "runs")
+        mkpath(case_directory)
+        mkpath(output_root)
+        runtime = (; case_directory, config_file = "configuration.yaml", operation_log = Sparlectra.webui_operation_log_path(output_root), startup_config_error = nothing, runner = Sparlectra.start_powerflow_run)
+        victim = joinpath(case_directory, "delete_me.m")
+        write(victim, "function mpc = delete_me\nend\n")
+        sidecar = Sparlectra._webui_case_settings_path(output_root, "delete_me.m"; case_directory)
+        mkpath(dirname(sidecar))
+        write(sidecar, "profile_kind: webui_case_settings\nsettings: {}\n")
+
+        delete_response = Sparlectra.route_sparlectra_webui("POST", "/powerflow/delete-case", Dict("casefile" => "delete_me.m"); output_root, runtime)
+        @test delete_response.status == 303
+        @test occursin("Deleted case: delete_me.m", Sparlectra._webui_urldecode(Dict(delete_response.headers)["Location"]))
+        @test !isfile(victim)
+        @test !isfile(sidecar)
+
+        traversal_response = Sparlectra.route_sparlectra_webui("POST", "/powerflow/delete-case", Dict("casefile" => "../delete_me.m"); output_root, runtime)
+        @test occursin("invalid case name", Sparlectra._webui_urldecode(Dict(traversal_response.headers)["Location"]))
+
+        missing_response = Sparlectra.route_sparlectra_webui("POST", "/powerflow/delete-case", Dict("casefile" => "missing.m"); output_root, runtime)
+        @test occursin("case file not found", Sparlectra._webui_urldecode(Dict(missing_response.headers)["Location"]))
+
+        empty_response = Sparlectra.route_sparlectra_webui("POST", "/powerflow/delete-case", Dict{String,Any}(); output_root, runtime)
+        @test occursin("Select a case to delete", Sparlectra._webui_urldecode(Dict(empty_response.headers)["Location"]))
+
+        log_text = read(Sparlectra.webui_operation_log_path(output_root), String)
+        @test occursin("case_delete_completed", log_text)
+        @test occursin("case_delete_failed", log_text)
         @test !occursin("powerflow_run_started", log_text)
       end
     end
@@ -1414,7 +1455,7 @@ settings:
       invalid_response = Sparlectra.route_sparlectra_webui("POST", "/powerflow/run", invalid_form; output_root = output_root)
       invalid_html = String(invalid_response.body)
       @test invalid_response.status == 400
-      @test occursin("name=\"casefile_manual\"", invalid_html)
+      @test occursin("name=\"casefile\"", invalid_html)
       @test occursin("name=\"config_file\" value=\"$(config_file)\"", invalid_html)
       @test occursin("id=\"feedback-modal\" class=\"feedback-modal\"", invalid_html)
       @test occursin("class=\"alert alert-error error\"", invalid_html)
@@ -1534,7 +1575,6 @@ settings:
       @test Sparlectra.resolve_webui_help_topic("power_flow.qlimits.enforcement_mode") !== nothing
       expected_help_topics = Dict(
         "casefile" => "webui.casefile",
-        "casefile_manual" => "webui.casefile",
         "casefiles" => "webui.import_case_files",
         "config_maintenance" => "webui.config_maintenance",
         "ignore_webui_settings" => "webui.ignore_webui_settings",
@@ -1548,6 +1588,7 @@ settings:
         "power_flow_qlimits_enabled" => "power_flow.qlimits.enabled",
         "power_flow_qlimits_enforcement_mode" => "power_flow.qlimits.enforcement_mode",
         "power_flow_solver" => "power_flow.solver",
+        "power_flow_linear_solver" => "power_flow.linear_solver",
         "power_flow_apslf_order" => "power_flow.apslf.order",
         "power_flow_apslf_use_pade" => "power_flow.apslf.use_pade",
         "power_flow_apslf_nr_polish" => "power_flow.apslf.nr_polish",
@@ -1556,6 +1597,7 @@ settings:
         "power_flow_wrong_branch_detection" => "power_flow.wrong_branch_detection",
         "power_flow_start_angle_mode" => "power_flow.start_mode.angle_mode",
         "power_flow_start_voltage_mode" => "power_flow.start_mode.voltage_mode",
+        "power_flow_dc_seed_unconditional" => "power_flow.start_mode.dc_seed_unconditional",
         "power_flow_start_current_iteration_enabled" => "power_flow.start_current_iteration.enabled",
         "power_flow_start_current_iteration_max_iter" => "power_flow.start_current_iteration.max_iter",
         "power_flow_start_current_iteration_tol" => "power_flow.start_current_iteration.tol",
@@ -1612,9 +1654,17 @@ settings:
       @test !occursin("class=\"button back-button\"", form_html)
 
       @test occursin("id=\"powerflow-run-form\"", form_html)
-      @test occursin("onsubmit=\"this.classList.add('is-submitting')", form_html)
-      @test occursin("this.setAttribute('aria-busy', 'true')", form_html)
-      @test occursin("this.querySelectorAll('button[type=submit]').forEach(function(b){b.disabled = true;})", form_html)
+      # The submit-disabling/aria-busy behavior lives in an addEventListener('submit', ...)
+      # handler (not an inline onsubmit=...) so it can first copy the submitter's
+      # name/value into a hidden input; a synchronous inline onsubmit disabling the
+      # submitter itself would otherwise strip it from the serialized form data
+      # (this previously broke the "Diagnose" button, which submits as a named
+      # second submit button rather than a plain "Start PowerFlow run" click).
+      @test !occursin("onsubmit=\"this.classList.add('is-submitting')", form_html)
+      @test occursin("powerflowForm.classList.add('is-submitting')", form_html)
+      @test occursin("powerflowForm.setAttribute('aria-busy', 'true')", form_html)
+      @test occursin("powerflowForm.querySelectorAll('button[type=submit]').forEach(function (b) { b.disabled = true; })", form_html)
+      @test occursin("const copySubmitterValue = function (submitter)", form_html)
       @test occursin("window.addEventListener('pageshow'", form_html)
       @test occursin("form.classList.remove('is-submitting')", form_html)
       @test occursin("form.removeAttribute('aria-busy')", form_html)
@@ -1663,10 +1713,10 @@ settings:
       @test occursin("name=\"power_flow_merit_enabled\" type=\"hidden\" value=\"false\"", form_html)
       @test occursin("name=\"power_flow_merit_fallback_max_mismatch\" type=\"hidden\" value=\"false\"", form_html)
       @test occursin("scale_p</code>/<code>scale_q</code>/<code>scale_v", form_html)
-      @test occursin("<fieldset class=\"span-2 step-control-options\" data-step-control-group=\"autodamp\">", form_html)
-      @test occursin("<legend>Autodamping &amp; merit-function line search</legend>", form_html)
-      @test occursin("<fieldset class=\"span-2 step-control-options\" data-step-control-group=\"trust_region\">", form_html)
-      @test occursin("<legend>Trust-region step control</legend>", form_html)
+      @test occursin("<details class=\"span-2 step-control-options\" data-step-control-group=\"autodamp\" data-ac-only-field>", form_html)
+      @test occursin("<summary>Autodamping &amp; merit-function line search</summary>", form_html)
+      @test occursin("<details class=\"span-2 step-control-options\" data-step-control-group=\"trust_region\" data-ac-only-field>", form_html)
+      @test occursin("<summary>Trust-region step control</summary>", form_html)
       @test findfirst("data-step-control-group=\"autodamp\"", form_html) < findfirst("<summary>Merit-function line search</summary>", form_html)
       @test findfirst("<summary>Merit-function line search</summary>", form_html) < findfirst("data-step-control-group=\"trust_region\"", form_html)
       for field in ("power_flow_trust_region_enabled", "power_flow_trust_region_initial_radius", "power_flow_trust_region_eta_accept", "power_flow_trust_region_step_mode")
@@ -1683,24 +1733,62 @@ settings:
       @test occursin("const updateStepControlOptions = function (changedToggle)", form_html)
       @test occursin("autodampToggle.checked = false", form_html)
       @test occursin("trustRegionToggle.checked = false", form_html)
-      @test occursin("<fieldset class=\"span-2 step-control-options\">\n<legend>Q-limit handling</legend>", form_html)
-      @test findfirst("data-step-control-group=\"trust_region\"", form_html) < findfirst("<legend>Q-limit handling</legend>", form_html)
-      # APSLF-as-solver ignores NR-only options (autodamp/merit/trust-region, wrong-branch detection,
-      # start_mode.angle_mode/voltage_mode, start_current_iteration.*, qlimits.enforcement_mode, max_iter);
-      # these must be marked so client-side JS can disable/hide them when power_flow_solver=apslf is selected.
-      @test count("data-nr-only-field", form_html) == 7
+      @test occursin("<details class=\"span-2 step-control-options\" data-ac-only-field>\n<summary>Q-limit handling</summary>", form_html)
+      @test findfirst("data-step-control-group=\"trust_region\"", form_html) < findfirst("<summary>Q-limit handling</summary>", form_html)
+      # APSLF-as-solver and DC-as-solver both ignore NR-only options (autodamp/merit/trust-region,
+      # wrong-branch detection, start_mode.angle_mode/voltage_mode, start_current_iteration.*,
+      # qlimits.enforcement_mode, max_iter, the linear-solver backend); these must be marked so client-side JS can gray them
+      # out when power_flow_solver=apslf or power_flow_solver=dc is selected.
+      @test count("data-nr-only-field", form_html) == 8
       @test occursin("<label data-nr-only-field><span class=\"field-label\">Maximum iterations ", form_html)
       @test occursin("<label data-nr-only-field><span class=\"field-label\">Q-limit enforcement mode ", form_html)
       @test occursin("<label data-nr-only-field><span class=\"field-label\">Wrong-branch detection ", form_html)
-      @test occursin("<label data-nr-only-field><span class=\"field-label\">Start angle mode ", form_html)
-      @test occursin("<label data-nr-only-field><span class=\"field-label\">Start voltage mode ", form_html)
+      @test occursin("<label data-nr-only-field data-dc-seed-inactive-field><span class=\"field-label\">Start angle mode ", form_html)
+      @test occursin("<label data-nr-only-field data-dc-seed-inactive-field><span class=\"field-label\">Start voltage mode ", form_html)
       @test occursin("<fieldset class=\"start-current-iteration-options advanced-start-values\" data-nr-only-field>", form_html)
       @test occursin("const nrOnlyFields = document.querySelectorAll('[data-nr-only-field]')", form_html)
-      @test occursin("const isApslf = solverSelect !== null && solverSelect.value === 'apslf'", form_html)
-      @test occursin("autodampGroup.hidden = isApslf", form_html)
-      @test occursin("trustRegionGroup.hidden = isApslf", form_html)
-      @test occursin("container.hidden = isApslf", form_html)
-      @test occursin("control.disabled = isApslf", form_html)
+      @test occursin("const isApslfMode = function () { return getSolverMode() === 'apslf'; }", form_html)
+      @test occursin("const hideNrOnly = apslf || dc", form_html)
+      @test occursin("autodampGroup.classList.toggle('disabled', !autodampOn)", form_html)
+      @test occursin("trustRegionGroup.classList.toggle('disabled', !trustRegionOn)", form_html)
+      @test occursin("setSolverGroupInactive(container, hideNrOnly || dcSeedMakesInactive)", form_html)
+      # Mutually exclusive/inapplicable fields are grayed out in place (disabled inputs,
+      # opacity via the "disabled" CSS class) rather than hidden -- switching solvers no
+      # longer makes parts of the form vanish or jump around.
+      @test occursin("const setSolverGroupInactive = function (container, inactive)", form_html)
+      @test occursin("container.classList.toggle('disabled', inactive)", form_html)
+      @test occursin("controls.forEach(function (control) { control.disabled = inactive; })", form_html)
+      # AC/APSLF/DC are one unified, mutually exclusive radio group (no more separate
+      # "Berechnungsmodell" radios plus a Solver dropdown, and no more power_flow_calc_mode
+      # field): radio buttons are never individually disabled, so there is no submission
+      # path that can silently drop power_flow.solver like the old disabled-<select> bug.
+      @test occursin("const acOnlyFields = document.querySelectorAll('[data-ac-only-field]')", form_html)
+      @test occursin("const updateSolverMode = function ()", form_html)
+      @test occursin("const solverRadios = document.querySelectorAll('input[data-solver-radio]')", form_html)
+      @test !occursin("data-solver-select", form_html)
+      @test !occursin("power_flow_calc_mode", form_html)
+      for field in (
+        "<label data-ac-only-field><span class=\"field-label\">Tolerance ",
+        "<label data-ac-only-field><span class=\"field-label\">Tap-changer model ",
+      )
+        @test occursin(field, form_html)
+      end
+      @test occursin("<details id=\"apslf-start-options\" class=\"span-2 apslf-start-options\" data-apslf-start-options data-ac-only-field>", form_html)
+      # "Use APSLF start values" and "Use DC start values" are two mutually exclusive
+      # start-value sources for the rectangular NR solve, checking one unchecks the
+      # other client-side (the underlying configuration also rejects both at once).
+      @test occursin("name=\"power_flow_dc_seed_unconditional\" type=\"hidden\" value=\"false\"", form_html)
+      @test occursin("name=\"power_flow_dc_seed_unconditional\" type=\"checkbox\" value=\"true\" data-dc-seed-toggle", form_html)
+      @test occursin("const dcSeedToggle = document.querySelector('input[data-dc-seed-toggle]')", form_html)
+      @test occursin("const updateStartValueSource = function (changedToggle)", form_html)
+      @test occursin("apslfStartToggle.checked = false", form_html)
+      @test occursin("dcSeedToggle.checked = false", form_html)
+      # Checking "Use DC start values" grays out Start angle mode/Start voltage mode
+      # (both become inert during a DC-seeded run: project_rectangular_start no-ops).
+      # Count = 2 markup attributes (the two labels above) + 1 JS string literal below.
+      @test count("data-dc-seed-inactive-field", form_html) == 3
+      @test occursin("const dcSeedActive = dcSeedToggle !== null && dcSeedToggle.checked", form_html)
+      @test occursin("container.hasAttribute('data-dc-seed-inactive-field')", form_html)
       @test occursin("name=\"detailed_result_csv\" type=\"checkbox\" value=\"true\" checked", form_html)
       @test occursin("class=\"span-2 detailed-csv-options\"", form_html)
       @test occursin("name=\"detailed_result_csv_format\"", form_html)
@@ -2362,6 +2450,253 @@ result = get_powerflow_result(run_id)
       close(heartbeat_server)
       @test timedwait(() -> istaskdone(heartbeat_server.task), 2.0) == :ok
       @test !isopen(heartbeat_server.listener)
+    end
+
+    @testset "DC power flow mode" begin
+      mktempdir() do dc_tmpdir
+        dc_casefile = _write_webui_test_case(joinpath(dc_tmpdir, "case_webui_dc.m"))
+        dc_config_file = joinpath(dc_tmpdir, "config_template.yaml")
+        cp(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, dc_config_file)
+        dc_output_root = joinpath(dc_tmpdir, "runs")
+
+        # (2a) Rendered form contains the DC selection, with AC selected by default.
+        rendered_form = String(
+          Sparlectra.route_sparlectra_webui(
+            "GET",
+            "/powerflow?casefile=$(Sparlectra._webui_urlencode(dc_casefile))&config_file=$(Sparlectra._webui_urlencode(dc_config_file))";
+            output_root = dc_output_root,
+          ).body,
+        )
+        # AC/APSLF/DC are one unified radio group on the single "power_flow_solver"
+        # field -- there is no separate "Berechnungsmodell" field/control anymore,
+        # and no dropdown duplicating the "dc" choice.
+        @test occursin("<input type=\"radio\" name=\"power_flow_solver\" value=\"rectangular\" data-solver-radio checked>", rendered_form)
+        @test occursin("<input type=\"radio\" name=\"power_flow_solver\" value=\"apslf\" data-solver-radio>", rendered_form)
+        @test occursin("<input type=\"radio\" name=\"power_flow_solver\" value=\"dc\" data-solver-radio>", rendered_form)
+        @test !occursin("<input type=\"radio\" name=\"power_flow_solver\" value=\"apslf\" data-solver-radio checked>", rendered_form)
+        @test !occursin("<input type=\"radio\" name=\"power_flow_solver\" value=\"dc\" data-solver-radio checked>", rendered_form)
+        @test occursin("DC (linear screening model, replaces Newton-Raphson entirely)", rendered_form)
+        @test !occursin("Berechnungsmodell", rendered_form)
+        @test !occursin("power_flow_calc_mode", rendered_form)
+        @test !occursin("data-calc-mode-radio", rendered_form)
+        @test !occursin("data-solver-select", rendered_form)
+        @test !occursin("<select name=\"power_flow_solver\"", rendered_form)
+        @test occursin("data-ac-only-field", rendered_form)
+        # Newton-Raphson's DC-derived start angles are documented inline next to the
+        # AC radio, distinct from the standalone DC solver option below it.
+        @test occursin("Start angle mode", rendered_form)
+        @test occursin("DC pre-pass", rendered_form)
+
+        # (2b) POST with DC mode terminates successfully; result.json carries the DC flag.
+        dc_form = _webui_test_form(dc_casefile, dc_config_file, dc_output_root)
+        dc_form["power_flow_solver"] = "dc"
+        dc_form["detailed_result_csv_format"] = "technical"
+        dc_response = Sparlectra.route_sparlectra_webui("POST", "/powerflow/run", dc_form; output_root = dc_output_root)
+        @test dc_response.status == 303
+        dc_run_id = basename(only(header.second for header in dc_response.headers if header.first == "Location"))
+        wait(Sparlectra._POWERFLOW_WEBUI_JOBS[dc_run_id]["task"])
+        dc_result = get_powerflow_result(dc_run_id)
+        @test dc_result["success"]
+        dc_result_json = Sparlectra._parse_service_json(read(joinpath(dc_result["output_dir"], "result.json"), String))
+        @test dc_result_json["final_outcome"]["solver"] == "dc"
+
+        # (2c) Result page marks the DC run distinctly.
+        dc_result_response = Sparlectra.handle_powerflow_result(dc_run_id)
+        @test dc_result_response.status == 200
+        dc_result_html = String(dc_result_response.body)
+        @test occursin("DC solution", dc_result_html)
+        @test occursin("status-info", dc_result_html)
+        @test occursin("<code>dc</code>", dc_result_html)
+
+        # (2d) Artifact listing of the DC run is not empty; result.json downloads with status 200.
+        dc_artifacts = list_powerflow_artifacts(dc_run_id)
+        @test !isempty(dc_artifacts)
+        @test any(artifact -> artifact["name"] == "result.json", dc_artifacts)
+        @test any(artifact -> artifact["name"] == "bus_voltages_complex.csv", dc_artifacts)
+        @test Sparlectra.route_sparlectra_webui("GET", "/powerflow/artifact/$(dc_run_id)/result.json?download=1"; output_root = dc_output_root).status == 200
+
+        # (2e) Regression: no solver field, and an explicit AC selection, still
+        # produce the unchanged AC report (no "dc" solver in final_outcome).
+        ac_implicit_form = _webui_test_form(dc_casefile, dc_config_file, dc_output_root)
+        ac_implicit_response = Sparlectra.route_sparlectra_webui("POST", "/powerflow/run", ac_implicit_form; output_root = dc_output_root)
+        @test ac_implicit_response.status == 303
+        ac_implicit_run_id = basename(only(header.second for header in ac_implicit_response.headers if header.first == "Location"))
+        wait(Sparlectra._POWERFLOW_WEBUI_JOBS[ac_implicit_run_id]["task"])
+        ac_implicit_result = get_powerflow_result(ac_implicit_run_id)
+        @test ac_implicit_result["success"]
+        ac_implicit_json = Sparlectra._parse_service_json(read(joinpath(ac_implicit_result["output_dir"], "result.json"), String))
+        @test ac_implicit_json["final_outcome"]["solver"] == "rectangular"
+
+        ac_explicit_form = _webui_test_form(dc_casefile, dc_config_file, dc_output_root)
+        ac_explicit_form["power_flow_solver"] = "rectangular"
+        ac_explicit_response = Sparlectra.route_sparlectra_webui("POST", "/powerflow/run", ac_explicit_form; output_root = dc_output_root)
+        @test ac_explicit_response.status == 303
+        ac_explicit_run_id = basename(only(header.second for header in ac_explicit_response.headers if header.first == "Location"))
+        wait(Sparlectra._POWERFLOW_WEBUI_JOBS[ac_explicit_run_id]["task"])
+        ac_explicit_result = get_powerflow_result(ac_explicit_run_id)
+        @test ac_explicit_result["success"]
+        ac_explicit_json = Sparlectra._parse_service_json(read(joinpath(ac_explicit_result["output_dir"], "result.json"), String))
+        @test ac_explicit_json["final_outcome"]["solver"] == "rectangular"
+        @test ac_implicit_json["final_outcome"]["converged"] == ac_explicit_json["final_outcome"]["converged"]
+        @test ac_implicit_json["final_outcome"]["iterations"] == ac_explicit_json["final_outcome"]["iterations"]
+
+        # History row shows the calculation mode for the DC run, unchanged status columns otherwise.
+        dc_runs = Sparlectra.list_powerflow_runs(dc_output_root)
+        dc_history_html = Sparlectra.render_powerflow_history(dc_runs, dc_output_root)
+        @test occursin("<th>Solver</th>", dc_history_html)
+        @test occursin("<td>dc</td>", dc_history_html)
+        @test occursin("<td>rectangular</td>", dc_history_html)
+
+        # (3) Plausibility: the WebUI DC run's bus angles match a direct rundcpf! call on the
+        # same case, proving both paths run the same solver code.
+        dc_bus_csv = read(joinpath(dc_result["output_dir"], "bus_voltages_complex.csv"), String)
+        dc_bus_rows = split(strip(dc_bus_csv), '\n')[2:end]
+        webui_va_deg = Dict{Int,Float64}()
+        for row in dc_bus_rows
+          fields = split(row, ',')
+          webui_va_deg[parse(Int, fields[1])] = parse(Float64, fields[5])
+        end
+        mpc = Sparlectra.MatpowerIO.read_case(dc_casefile)
+        direct_net = Sparlectra.createNetFromMatPowerCase(mpc = mpc, flatstart = true)
+        direct_report = rundcpf!(direct_net)
+        for row in direct_report.nodes
+          @test isapprox(webui_va_deg[row.bus], row.va_deg; atol = 1e-8)
+        end
+      end
+    end
+
+    @testset "DC-seeded Newton-Raphson start (dc_seed_unconditional)" begin
+      mktempdir() do seed_tmpdir
+        seed_casefile = _write_webui_test_case(joinpath(seed_tmpdir, "case_webui_dcseed.m"))
+        seed_config_file = joinpath(seed_tmpdir, "config_template.yaml")
+        cp(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, seed_config_file)
+        seed_output_root = joinpath(seed_tmpdir, "runs")
+
+        # Solver stays AC/rectangular; only the start-value source changes.
+        seed_form = _webui_test_form(seed_casefile, seed_config_file, seed_output_root)
+        seed_form["power_flow_dc_seed_unconditional"] = "true"
+        seed_response = Sparlectra.route_sparlectra_webui("POST", "/powerflow/run", seed_form; output_root = seed_output_root)
+        @test seed_response.status == 303
+        seed_run_id = basename(only(header.second for header in seed_response.headers if header.first == "Location"))
+        wait(Sparlectra._POWERFLOW_WEBUI_JOBS[seed_run_id]["task"])
+        seed_result = get_powerflow_result(seed_run_id)
+        @test seed_result["success"]
+        seed_result_json = Sparlectra._parse_service_json(read(joinpath(seed_result["output_dir"], "result.json"), String))
+        @test seed_result_json["final_outcome"]["solver"] == "rectangular"
+        @test seed_result_json["final_outcome"]["converged"] == true
+      end
+    end
+
+    @testset "Diagnose button submitter preservation" begin
+      mktempdir() do diag_tmpdir
+        diag_casefile = _write_webui_test_case(joinpath(diag_tmpdir, "case_webui_diag.m"))
+        diag_config_file = joinpath(diag_tmpdir, "config_template.yaml")
+        cp(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, diag_config_file)
+        diag_output_root = joinpath(diag_tmpdir, "runs")
+
+        # (2a) The rendered form no longer disables submit buttons synchronously
+        # before serialization; it preserves the submitter's name/value instead.
+        diag_form_html = String(
+          Sparlectra.route_sparlectra_webui(
+            "GET",
+            "/powerflow?casefile=$(Sparlectra._webui_urlencode(diag_casefile))&config_file=$(Sparlectra._webui_urlencode(diag_config_file))";
+            output_root = diag_output_root,
+          ).body,
+        )
+        @test !occursin("onsubmit=\"this.classList.add('is-submitting')", diag_form_html)
+        @test occursin("<form id=\"powerflow-run-form\" data-powerflow-form method=\"post\" action=\"/powerflow/run\" class=\"panel form-grid powerflow-form-card\">", diag_form_html)
+        @test occursin("const copySubmitterValue = function (submitter)", diag_form_html)
+        @test occursin("data-submitter-value", diag_form_html)
+        @test occursin("event.submitter", diag_form_html)
+        @test occursin("powerflowForm.addEventListener('submit', function (event)", diag_form_html)
+        @test occursin("button.addEventListener('click', function () { copySubmitterValue(button); })", diag_form_html)
+        @test occursin("powerflowForm.classList.add('is-submitting')", diag_form_html)
+        @test occursin("powerflowForm.setAttribute('aria-busy', 'true')", diag_form_html)
+        @test occursin("powerflowForm.querySelectorAll('button[type=submit]').forEach(function (b) { b.disabled = true; })", diag_form_html)
+        @test occursin("staleSubmitterValue", diag_form_html)
+
+        # (1) Repro (still valid post-fix, since it exercises the unchanged server
+        # path): a POST body without "diagnose_mode" never writes diagnose.log.
+        no_diagnose_form = _webui_test_form(diag_casefile, diag_config_file, diag_output_root)
+        haskey(no_diagnose_form, "diagnose_mode") && delete!(no_diagnose_form, "diagnose_mode")
+        no_diagnose_response = Sparlectra.route_sparlectra_webui("POST", "/powerflow/run", no_diagnose_form; output_root = diag_output_root)
+        @test no_diagnose_response.status == 303
+        no_diagnose_run_id = basename(only(header.second for header in no_diagnose_response.headers if header.first == "Location"))
+        wait(Sparlectra._POWERFLOW_WEBUI_JOBS[no_diagnose_run_id]["task"])
+        no_diagnose_result = get_powerflow_result(no_diagnose_run_id)
+        @test no_diagnose_result["success"]
+        @test !isfile(joinpath(no_diagnose_result["output_dir"], "diagnose.log"))
+
+        # (2b) POST with diagnose_mode=true writes a non-empty diagnose.log containing
+        # the "Diagnosis" section from run_diagnostic_artifacts.jl.
+        diagnose_form = _webui_test_form(diag_casefile, diag_config_file, diag_output_root)
+        diagnose_form["diagnose_mode"] = "true"
+        diagnose_response = Sparlectra.route_sparlectra_webui("POST", "/powerflow/run", diagnose_form; output_root = diag_output_root)
+        @test diagnose_response.status == 303
+        diagnose_run_id = basename(only(header.second for header in diagnose_response.headers if header.first == "Location"))
+        wait(Sparlectra._POWERFLOW_WEBUI_JOBS[diagnose_run_id]["task"])
+        diagnose_result = get_powerflow_result(diagnose_run_id)
+        @test diagnose_result["success"]
+        diagnose_log_path = joinpath(diagnose_result["output_dir"], "diagnose.log")
+        @test isfile(diagnose_log_path)
+        @test filesize(diagnose_log_path) > 0
+        diagnose_log_text = read(diagnose_log_path, String)
+        @test occursin("Diagnosis", diagnose_log_text)
+
+        # (2c) Artifact listing of the diagnostic run includes diagnose.log.
+        diagnose_artifacts = list_powerflow_artifacts(diagnose_run_id)
+        @test any(artifact -> artifact["name"] == "diagnose.log", diagnose_artifacts)
+
+        # (2d) diagnose.log downloads with status 200 and the same file content.
+        diagnose_download = Sparlectra.route_sparlectra_webui("GET", "/powerflow/artifact/$(diagnose_run_id)/diagnose.log?download=1"; output_root = diag_output_root)
+        @test diagnose_download.status == 200
+        @test String(diagnose_download.body) == diagnose_log_text
+
+        # Regression: a plain "Start PowerFlow run" (no diagnose_mode field at all,
+        # matching what the real submit button sends) still never writes diagnose.log.
+        normal_form = _webui_test_form(diag_casefile, diag_config_file, diag_output_root)
+        haskey(normal_form, "diagnose_mode") && delete!(normal_form, "diagnose_mode")
+        normal_response = Sparlectra.route_sparlectra_webui("POST", "/powerflow/run", normal_form; output_root = diag_output_root)
+        @test normal_response.status == 303
+        normal_run_id = basename(only(header.second for header in normal_response.headers if header.first == "Location"))
+        wait(Sparlectra._POWERFLOW_WEBUI_JOBS[normal_run_id]["task"])
+        normal_result = get_powerflow_result(normal_run_id)
+        @test normal_result["success"]
+        @test !isfile(joinpath(normal_result["output_dir"], "diagnose.log"))
+      end
+    end
+
+    @testset "Warm-up loading page" begin
+      mktempdir() do tmpdir
+        root = joinpath(tmpdir, "runs")
+        mkpath(root)
+        runtime = Sparlectra._SparlectraWebUIRuntime(nothing, root, "configuration.yaml", Sparlectra.webui_operation_log_path(root), nothing, Sparlectra.start_powerflow_run, false, false, time(), 0, nothing, IOBuffer(), ReentrantLock(), :warming)
+
+        warming_page = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow"; output_root = root, runtime).body)
+        @test occursin("Warming up", warming_page)
+        @test occursin("data-refresh-url=\"/powerflow\"", warming_page)
+        @test !occursin("powerflow-run-form", warming_page)
+
+        Sparlectra._webui_set_warmup_state!(runtime, :done)
+        ready_page = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow"; output_root = root, runtime).body)
+        @test !occursin("Warming up", ready_page)
+        @test occursin("powerflow-run-form", ready_page)
+
+        # Deferred warm-up gating: the solve waits until the warm-up page has
+        # been served once (state :waiting_first_page -> :page_served).
+        gated_runtime = Sparlectra._SparlectraWebUIRuntime(nothing, root, "configuration.yaml", Sparlectra.webui_operation_log_path(root), nothing, Sparlectra.start_powerflow_run, false, false, time(), 0, nothing, IOBuffer(), ReentrantLock(), :waiting_first_page)
+        @test Sparlectra._webui_warmup_in_progress(gated_runtime)
+        @test !Sparlectra._webui_warmup_page_served(gated_runtime)
+        gated_page = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow"; output_root = root, runtime = gated_runtime).body)
+        @test occursin("Warming up", gated_page)
+        @test Sparlectra._webui_warmup_page_served(gated_runtime)
+
+        # A NamedTuple stand-in (as used by other tests for lightweight runtime
+        # stubs) never reports as warming up.
+        stub_runtime = (; case_directory = root, config_file = "configuration.yaml", operation_log = Sparlectra.webui_operation_log_path(root), startup_config_error = nothing, runner = Sparlectra.start_powerflow_run)
+        stub_page = String(Sparlectra.route_sparlectra_webui("GET", "/powerflow"; output_root = root, runtime = stub_runtime).body)
+        @test !occursin("Warming up", stub_page)
+      end
     end
   end
   return nothing

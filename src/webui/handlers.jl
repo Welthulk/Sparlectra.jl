@@ -150,7 +150,10 @@ uploaded cases.
 function handle_powerflow_case_resolve(form::AbstractDict; output_root::AbstractString = "results/powerflow_service", application_root::AbstractString = _webui_application_root(), case_directory::Union{Nothing,AbstractString} = nothing, operation_log::AbstractString = output_root, max_file_bytes::Integer = WEBUI_CASE_IMPORT_MAX_FILE_BYTES)::SparlectraWebUIResponse
   directory = _webui_case_directory(; case_directory, application_root, output_root)
   mkpath(directory)
-  manual_value = strip(String(something(_webui_form_value(form, "casefile_manual", ""), "")))
+  # The combined case control posts free-typed values under "casefile";
+  # "casefile_manual" is accepted for backward compatibility.
+  manual_value = strip(String(something(_webui_form_value(form, "casefile", ""), "")))
+  isempty(manual_value) && (manual_value = strip(String(something(_webui_form_value(form, "casefile_manual", ""), ""))))
   if isempty(manual_value)
     message = _webui_urlencode("Enter a case name or path before resolving.")
     return _webui_redirect("/powerflow?import_message=$(message)")
@@ -189,6 +192,45 @@ function handle_powerflow_case_resolve(form::AbstractDict; output_root::Abstract
   end
   record_webui_operation!(operation_log, "case_resolve_failed"; route = "/powerflow/resolve-case", method = "POST", user_action = true, requested = manual_value, message = error_text)
   message = _webui_urlencode("Could not resolve case '$(manual_value)': $(error_text)")
+  return _webui_redirect("/powerflow?import_message=$(message)")
+end
+
+"""
+Delete a cached case file (and its Web UI case-settings sidecar) from the case
+cache directory. Requested from the case combobox via right-click; only bare
+filenames inside the case directory are accepted.
+"""
+function handle_powerflow_case_delete(form::AbstractDict; output_root::AbstractString = "results/powerflow_service", application_root::AbstractString = _webui_application_root(), case_directory::Union{Nothing,AbstractString} = nothing, operation_log::AbstractString = output_root)::SparlectraWebUIResponse
+  directory = _webui_case_directory(; case_directory, application_root, output_root)
+  requested = strip(String(something(_webui_form_value(form, "casefile", ""), "")))
+  if isempty(requested)
+    message = _webui_urlencode("Select a case to delete.")
+    return _webui_redirect("/powerflow?import_message=$(message)")
+  end
+  error_text = ""
+  if basename(requested) != requested || occursin(r"[\\/]", requested)
+    error_text = "invalid case name"
+  else
+    target = normpath(joinpath(directory, requested))
+    if !isfile(target)
+      error_text = "case file not found in the case directory"
+    else
+      try
+        rm(target)
+        sidecar = _webui_case_settings_path(output_root, requested; case_directory = directory)
+        isfile(sidecar) && rm(sidecar; force = true)
+      catch err
+        error_text = sprint(showerror, err)
+      end
+    end
+  end
+  if isempty(error_text)
+    record_webui_operation!(operation_log, "case_delete_completed"; route = "/powerflow/delete-case", method = "POST", user_action = true, casefile = requested)
+    message = _webui_urlencode("Deleted case: $(requested)")
+    return _webui_redirect("/powerflow?import_message=$(message)")
+  end
+  record_webui_operation!(operation_log, "case_delete_failed"; route = "/powerflow/delete-case", method = "POST", user_action = true, casefile = requested, message = error_text)
+  message = _webui_urlencode("Could not delete case '$(requested)': $(error_text)")
   return _webui_redirect("/powerflow?import_message=$(message)")
 end
 

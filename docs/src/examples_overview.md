@@ -100,6 +100,24 @@ paths. See the tests page for the full mode/case reference.
 - `h_matrix_observability_demo.jl`  
   Matrix-level observability/redundancy exploration.
 
+## Monte-Carlo studies
+
+- `mc_probabilistic_powerflow.jl`
+  Probabilistic power flow on `case14.m`: N = 1000 Monte-Carlo samples scale
+  all loads with a truncated-normal factor (`Normal(1.0, 0.1)`, clipped to
+  `[0.5, 1.5]`, P and Q scaled together) and solve each sample with `runpf!`.
+  Reports per-bus mean/std and 5 %/95 % quantiles of `Vm`, counts of samples
+  outside the `[0.95, 1.05]` pu band, and the convergence rate. Deterministic
+  via a fixed `MersenneTwister` seed; loads are scaled in place and restored
+  after every sample (no network copies, no plotting dependencies).
+- `mc_state_estimation_study.jl`
+  WLS state-estimation error statistics on the 7-bus workshop network (see
+  [Workshop](workshop.md)): M = 500 runs each generate a fresh noisy
+  measurement set with `setMeasurementsFromPF!` (run-specific RNG) and
+  re-estimate the state with `runse!`. Reports RMSE and maximum error of
+  `Vm`/`Va` against the reference power-flow state, convergence rate, and
+  mean iteration count; checks `evaluate_global_observability` once up front.
+
 ## Utility / analysis scripts
 
 - `matpower_import.jl`

@@ -350,7 +350,8 @@ button,
   font-weight: 700;
 }
 
-.step-control-options {
+.step-control-options,
+.solver-mode-options {
   margin-top: -.25rem;
   padding: .85rem 1rem 1rem;
   border: 1px solid #dbe3ef;
@@ -362,8 +363,81 @@ button,
   font-weight: 700;
 }
 
+/* Editable case combobox: input + arrow toggle + absolutely positioned
+   option list, replacing the former separate select/manual-path pair. */
+.case-combobox {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+}
+
+.case-combobox input {
+  flex: 1 1 auto;
+  padding-right: 2.2rem;
+}
+
+.case-combobox-toggle {
+  position: absolute;
+  right: .3rem;
+  top: 50%;
+  transform: translateY(-50%);
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: .95rem;
+  color: #244269;
+  padding: .2rem .45rem;
+}
+
+.case-combobox-list {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 30;
+  margin: .15rem 0 0;
+  padding: .25rem 0;
+  list-style: none;
+  background: #fff;
+  border: 1px solid #b7c3d5;
+  border-radius: 8px;
+  max-height: 16rem;
+  overflow-y: auto;
+  box-shadow: 0 8px 24px #24426922;
+}
+
+.case-combobox-list li {
+  padding: .35rem .75rem;
+  cursor: pointer;
+}
+
+.case-combobox-list li:hover,
+.case-combobox-list li.active {
+  background: #e2e9f2;
+}
+
+/* Collapsible solver-option boxes render their title as a <summary> instead
+   of a fieldset <legend>. */
+.step-control-options summary,
+.solver-mode-options summary,
+.apslf-start-options summary,
+.detailed-csv-options summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+
 .step-control-options[data-step-control-group="trust_region"].disabled,
 .step-control-options[data-step-control-group="autodamp"].disabled {
+  opacity: .55;
+}
+
+/* Fields/groups that don't apply to the currently selected solver stay in
+   place and gray out instead of disappearing, so mutually exclusive solver
+   options never make the form jump or hide where a setting went. */
+[data-ac-only-field].disabled,
+[data-nr-only-field].disabled,
+[data-apslf-solver-options].disabled,
+[data-apslf-start-options].disabled {
   opacity: .55;
 }
 
@@ -512,6 +586,25 @@ button:disabled {
   to {
     transform: rotate(360deg);
   }
+}
+
+.warmup-panel {
+  align-items: center;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  padding: 3rem 1.5rem;
+  text-align: center;
+}
+
+.warmup-spinner {
+  animation: submit-spin .8s linear infinite;
+  border: 3px solid #dbe3ef;
+  border-radius: 50%;
+  border-top-color: #14233d;
+  display: inline-block;
+  height: 2.5rem;
+  width: 2.5rem;
 }
 
 .inline-form {
@@ -823,6 +916,11 @@ nav {
 }
 
 .status-running {
+  background: #dcecff;
+  color: #1557a5;
+}
+
+.status-info {
   background: #dcecff;
   color: #1557a5;
 }

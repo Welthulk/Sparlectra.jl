@@ -1,6 +1,34 @@
 # Version 0.8.15 — 2026-07-24
 
 ## Features
+* **Factorization-reuse linear-solver backends for the rectangular Newton
+  step** (`power_flow.linear_solver`, allowed `umfpack`/`klu`/
+  `umfpack_reuse`, default `umfpack` = unchanged behavior): both reuse
+  backends run symbolic analysis once per Jacobian sparsity pattern and only
+  a numeric refactorization per iteration, instead of paying full symbolic
+  analysis in every `J \\ F` solve — `umfpack_reuse` through UMFPACK's
+  `lu!` (same factorization kernel as the default, usually the fastest
+  choice on large cases), `klu` through SuiteSparse KLU (via KLU.jl).
+  To keep the analysis reusable,
+  the Jacobian is assembled with a structural (value-independent) sparsity
+  pattern under the reuse backends; the default path keeps dropping numeric
+  zeros bit-for-bit as before. A structural guard re-analyzes automatically
+  when the active set changes (PV↔PQ switching) or the pattern drifts; any
+  factorization error falls back to the existing UMFPACK/QR/SVD chain, so
+  singular-step semantics are unchanged. Context lifetime is one solver run
+  (per island on the island path; never shared across islands or threads).
+  Measured on `case_SyntheticUSA`: `umfpack_reuse` cuts the refactorization
+  cost versus a full factor (~0.28s vs. 0.45s on the 164k Jacobian), while
+  KLU remains slower than UMFPACK there (KLU's left-looking factorization
+  has no BLAS-3 supernodes and loses on power-flow Jacobians with heavy
+  fill-in) — treat `klu` as a measurable alternative, not a guaranteed
+  speedup.
+  Diagnostic counters (`linear_solver_analyze_count` / `..._refactor_count` /
+  `..._fallback_count`) are recorded in the solver status, per-island
+  statuses, and the performance profile. Web UI: new "Linear solver backend"
+  select under Advanced options. Not to be confused with `power_flow.solver`,
+  which selects the power-flow method. New hard dependency KLU.jl (wraps the
+  SuiteSparse binaries already shipped with Julia).
 * **Diagnostic report + fixed-reference self-check**: `diagnose.log`
   (`run_diagnostics = true`) is now a diagnostic report instead of a flat
   key/value dump — a "Diagnosis" section names the worst-mismatch bus and
@@ -14,6 +42,53 @@
   a solver start/step-control issue. The Web UI PowerFlow form has a
   dedicated "Diagnose" action next to "Start PowerFlow run" that runs this
   self-check and writes the same enriched `diagnose.log`.
+* **Standalone DC power flow** (`rundcpf!`, `power_flow.solver = :dc`): a
+  MATPOWER `rundcpf`/`makeBdc`-equivalent linear screening model, ported
+  algorithm-only (BSD-3-Clause attribution) — `B'` from branch series
+  reactance only (no `r`, no shunt, no line charging), a phase-shift
+  injection vector so transformer `phase_shift_deg` is represented without
+  entering `B'` itself, sparse-only linear solve, `Vm` implicitly 1.0 pu
+  everywhere (lossless model, by definition). Usable standalone (`rundcpf!`)
+  or as a third `run_sparlectra` framework solver alongside `rectangular`/
+  `apslf`, including per-island handling (each AC island solved
+  independently with its own reference bus, reusing the existing island
+  detection/reference-selection machinery unchanged). New
+  `rundcpf!(net; seed_ac_start=true)` convenience: after a successful DC
+  solve, immediately re-seeds and runs the AC rectangular Newton-Raphson
+  solve from the just-computed DC angles. Results are reported through a
+  dedicated, lightweight `DcPowerFlowReport` (angles + lossless branch
+  flows only — no Vm/Q/losses/tolerance columns, since the DC model doesn't
+  define any of those) and tracked via a `dc_pf_status(net)` registry kept
+  separate from the AC `rectangular_pf_status`, so a DC result can never be
+  mistaken for an AC one by AC-only reporting code. A phase-shifting
+  transformer's current, fixed angle is correctly represented in the
+  B′/injection math; the *outer control loop* that would iteratively adjust
+  it is not supported under `power_flow.solver = :dc` (mirrors the existing
+  `apslf` restriction). New `power_flow.dc.*` YAML section
+  (`angle_reference_deg`). Known limitation: with
+  `power_flow.solver = :dc` and multiple AC islands, the framework's
+  per-island diagnostics CSV (`ac_island_solver_summary.csv`) is still
+  written but stays cosmetically empty for DC-solved islands, since it
+  reads AC-only `rectangular_pf_status` fields that a DC solve never
+  populates — not a crash, just an unpopulated diagnostics artifact; a
+  future iteration may give DC its own per-island diagnostics writer. See
+  `examples/exp_dc_powerflow.jl`.
+* **DC power flow in the Web UI**: the PowerFlow form gains a
+  **Berechnungsmodell** (calculation model) radio group — AC (Newton-Raphson,
+  rectangular), the unchanged default, versus DC (linear screening model) —
+  above the existing Solver dropdown. Choosing DC drives the same
+  `power_flow.solver` override already accepted by `run_sparlectra_api`/
+  `start_powerflow_run` (no new service-layer code was needed: the DC solver
+  path already existed end to end) and hides/disables every AC-only option
+  that has no DC meaning (tolerance, autodamping/merit/trust-region, Q-limit
+  handling, maximum iterations, wrong-branch detection, start angle/voltage
+  mode, the current-iteration pre-solve block, transformer tap-changer
+  model), mirroring the existing Newton-Raphson-vs-APSLF field-hiding
+  mechanism. DC runs use the unchanged asynchronous job/abort/history/artifact
+  machinery; the result page marks them with a **DC solution** badge, and the
+  run history table gained a **Solver** column. AC default behavior
+  (no mode submitted, or an explicit `rectangular`/`apslf` selection) is
+  unchanged.
 
 ## Improvements
 * Web UI warm-up (`warmup = true`) now waits `warmup_delay_seconds` (default
@@ -36,6 +111,26 @@
   likely cause (a Web UI already running in the same Julia session, a common
   mistake when re-running a launcher script interactively) instead of only
   showing the raw libuv stacktrace.
+* Web UI PowerFlow form: the **Berechnungsmodell** AC/DC radio group and the
+  **Solver** dropdown (rectangular/APSLF) are unified into a single **Solver**
+  radio group with three peer, mutually exclusive options — AC
+  (Newton-Raphson, rectangular), APSLF, DC — all writing the same
+  `power_flow.solver` field. This removes the `power_flow_calc_mode` field
+  entirely (it never was a real configuration key, only a client-side proxy
+  for `power_flow.solver`, and the source of the disabled-Solver-dropdown bug
+  below) and stops APSLF from visually reading as a sub-choice of AC when it
+  is really a peer solver. An inline note under the AC option now explains
+  that Newton-Raphson already seeds its own start angles from a fast DC
+  pre-solve by default (`power_flow.start_mode.angle_mode = dc`, unrelated to
+  and not requiring the standalone DC solver option) — previously this only
+  showed up as one value of a four-value "Start angle mode" dropdown further
+  down the form with no indication that it comes from a DC computation.
+  Fields that don't apply to the selected solver (or, within Newton-Raphson,
+  to the inactive autodamp/trust-region step-control strategy) are now grayed
+  out in place (`opacity: .55`, disabled inputs) instead of disappearing via
+  `hidden`, so switching solvers no longer makes parts of the form jump or
+  vanish; which keys are actually submitted is unchanged; only the visual
+  treatment is.
 
 ## Bug fixes
 * `performance.log` (`full` timing mode) misattributed the rectangular
@@ -62,6 +157,34 @@
   call site entirely. A best-effort `diagnose.log` (reason, failure message,
   and a pointer to per-island logs/`run_fixed_reference_self_check`) is now
   written for these cases too.
+* Web UI **"Diagnose" button silently ran a normal power-flow instead of a
+  diagnostic one** (no `diagnose.log` was ever written from the button,
+  though the server-side path was correct). The PowerFlow form's `onsubmit`
+  handler disabled every `button[type=submit]` — including the Diagnose
+  button itself — before the browser constructed the submitted form data;
+  per the HTML form-submission spec, a disabled submitter is dropped from
+  that data, so `diagnose_mode=true` never reached the server. The submit
+  handler now copies the clicked submitter's name/value into a plain hidden
+  input first (with a `click`-listener fallback for browsers without
+  `SubmitEvent.submitter`), then disables the buttons; double-submit
+  protection and `is-submitting`/`aria-busy` behavior are unchanged. Plain
+  "Start PowerFlow run" clicks are unaffected and still never write
+  `diagnose.log`.
+* Web UI **selecting "DC" in Berechnungsmodell silently ran an AC
+  Newton-Raphson solve instead of DC** — same disabled-elements-are-dropped-
+  from-submitted-form-data root cause as the Diagnose-button bug above, this
+  time on the **Solver** dropdown. Choosing DC correctly forced the hidden
+  Solver `<select>`'s value to `dc` client-side, but then also disabled that
+  same `<select>` (it was treated like the other AC-only fields it sits
+  next to); a disabled control is excluded from the submitted form entirely,
+  so `power_flow.solver` never reached the server and the run silently used
+  the default solver (`rectangular`) instead. The failure was reported as an
+  ordinary AC-island Newton-Raphson convergence failure, with nothing in the
+  diagnostics naming DC or the mismatch. The Solver `<select>` is now
+  exempted from the AC-only disabling (still hidden, but stays enabled so
+  its value submits); its own `dc` option is additionally marked
+  non-selectable in the UI so DC can only be chosen via the Berechnungsmodell
+  radio group, removing the second, easy-to-desync place to pick it.
 
 # Version 0.8.14 — 2026-07-22
 

@@ -357,9 +357,11 @@ function runpf_rectangular!(
   rectangular_workspace_reuse::Bool = true,
   rectangular_preallocate_workspace::Symbol = :auto,
   rectangular_workspace_min_buses::Int = 1000,
+  linear_solver::Symbol = :umfpack,
 )
   merit_enabled && !autodamp && throw(ArgumentError("runpf_rectangular!: merit_enabled=true requires autodamp=true."))
   trust_region_enabled && autodamp && throw(ArgumentError("runpf_rectangular!: trust_region_enabled=true is incompatible with autodamp=true."))
+  linear_solver in (:umfpack, :klu, :umfpack_reuse) || throw(ArgumentError("runpf_rectangular!: unsupported linear_solver=$(linear_solver). Supported: :umfpack, :klu, :umfpack_reuse."))
   _validate_rectangular_powerflow_options(method = method, sparse = true)
   qlimit_enforcement_mode = _canonical_qlimit_enforcement_mode(qlimit_enforcement_mode)
   qlimit_enforcement_mode in QLIMIT_ENFORCEMENT_MODES || error("Unsupported qlimit_enforcement_mode=$(qlimit_enforcement_mode). Supported: $(QLIMIT_ENFORCEMENT_MODES).")
@@ -429,6 +431,7 @@ function runpf_rectangular!(
       rectangular_workspace_reuse = rectangular_workspace_reuse,
       rectangular_preallocate_workspace = rectangular_preallocate_workspace,
       rectangular_workspace_min_buses = rectangular_workspace_min_buses,
+      linear_solver = linear_solver,
     )
   end
   cancellation_check = performance_profile isa AbstractDict ? get(performance_profile, :cancellation_check, nothing) : nothing
@@ -678,12 +681,16 @@ function runpf_rectangular!(
   end
 
   workspace = RectangularIterationWorkspace(nb)
+  # Reuse-context lifetime is exactly this solve (per island on the island
+  # path); nothing is shared across runpf_rectangular! invocations or threads.
+  linear_ctx = newton_linear_solver_context(linear_solver)
   if performance_profile !== nothing
     performance_profile[:rectangular_workspace_reuse] = rectangular_workspace_reuse
     performance_profile[:rectangular_workspace_preallocated] = rectangular_workspace_preallocated
     performance_profile[:rectangular_workspace_reason] = rectangular_workspace_reason
     performance_profile[:rectangular_workspace_nbus] = nb
     performance_profile[:rectangular_workspace_nstate] = 2 * max(nb - 1, 0)
+    performance_profile[:linear_solver_backend] = linear_solver
   end
 
   if verbose > 1
@@ -769,6 +776,7 @@ function runpf_rectangular!(
           trust_region_enabled = trust_region_enabled, tr_radius_ref = tr_radius_ref, tr_min_radius = trust_region_min_radius, tr_max_radius = trust_region_max_radius,
           tr_eta_accept = trust_region_eta_accept, tr_shrink_factor = trust_region_shrink_factor, tr_expand_factor = trust_region_expand_factor,
           tr_expand_threshold = trust_region_expand_threshold, tr_step_mode = trust_region_step_mode, tr_log = tr_step_diagnostics,
+          linear_ctx = linear_ctx,
         )
       end
       check_cancel()
@@ -940,6 +948,7 @@ function runpf_rectangular!(
     status_build_ = _merge_current_iteration_diagnostics(status_build_, performance_profile)
     status_build_ = _merge_merit_linesearch_diagnostics(status_build_, performance_profile, merit_step_diagnostics, merit_enabled)
     status_build_ = _merge_trust_region_diagnostics(status_build_, performance_profile, tr_step_diagnostics, trust_region_enabled)
+    status_build_ = _merge_linear_solver_diagnostics(status_build_, performance_profile, linear_solver, linear_ctx)
     final_reason_ = status_build_.final_reason
     final_status_ = status_build_.final_status
     status_ = _store_and_print_rectangular_final_status!(net, status_build_.status, verbose)
@@ -979,6 +988,7 @@ Arguments:
 - `method::Symbol`: must be `:rectangular`
 - `autodamp::Bool`: enable residual-based backtracking for rectangular Newton steps
 - `autodamp_min::Float64`: minimum automatic damping factor when `autodamp = true`
+- `linear_solver::Symbol`: sparse linear-algebra backend for the Newton step, `:umfpack` (default) or `:klu` (symbolic-factorization reuse across iterations)
 - `qlimit_start_iter::Int`: first Newton iteration where PV→PQ Q-limit switching may run in `:iteration` mode
 - `qlimit_start_mode::Symbol`: `:iteration`, `:auto`, or `:iteration_or_auto` start criterion for PV→PQ switching
 - `qlimit_auto_q_delta_pu::Float64`: PV reactive-power request change threshold for automatic switching start
@@ -1074,6 +1084,7 @@ function runpf_rectangular!(
   rectangular_workspace_reuse::Bool = true,
   rectangular_preallocate_workspace::Symbol = :auto,
   rectangular_workspace_min_buses::Int = 1000,
+  linear_solver::Symbol = :umfpack,
   performance_profile = nothing,
 )
   iters, erg = runpf_rectangular!(
@@ -1156,6 +1167,7 @@ function runpf_rectangular!(
     rectangular_workspace_reuse = rectangular_workspace_reuse,
     rectangular_preallocate_workspace = rectangular_preallocate_workspace,
     rectangular_workspace_min_buses = rectangular_workspace_min_buses,
+    linear_solver = linear_solver,
     performance_profile = performance_profile,
   )
   return iters, erg
@@ -1248,6 +1260,7 @@ function _runpf_with_config!(net::Net, config::PowerFlowConfig; verbose::Int = 0
     rectangular_workspace_reuse = config.rectangular_workspace_reuse,
     rectangular_preallocate_workspace = config.rectangular_preallocate_workspace,
     rectangular_workspace_min_buses = config.rectangular_workspace_min_buses,
+    linear_solver = config.linear_solver,
     islands_enabled = config.islands_enabled,
     islands_mode = config.islands_mode,
     islands_reference_policy = config.islands_reference_policy,
@@ -1496,6 +1509,7 @@ function runpf!(
   rectangular_workspace_reuse::Bool = true,
   rectangular_preallocate_workspace::Symbol = :auto,
   rectangular_workspace_min_buses::Int = 1000,
+  linear_solver::Symbol = :umfpack,
   islands_enabled::Bool = false,
   islands_mode::Symbol = :solve_independent,
   islands_reference_policy::Symbol = :matpower_like,
@@ -1625,6 +1639,7 @@ function runpf!(
         rectangular_workspace_reuse = rectangular_workspace_reuse,
         rectangular_preallocate_workspace = rectangular_preallocate_workspace,
         rectangular_workspace_min_buses = rectangular_workspace_min_buses,
+        linear_solver = linear_solver,
         performance_profile = performance_profile,
       )
         total_iters += it
@@ -1805,6 +1820,7 @@ function runpf!(
         rectangular_workspace_reuse = rectangular_workspace_reuse,
         rectangular_preallocate_workspace = rectangular_preallocate_workspace,
         rectangular_workspace_min_buses = rectangular_workspace_min_buses,
+        linear_solver = linear_solver,
         performance_profile = performance_profile,
       )
     else
@@ -1887,6 +1903,7 @@ function runpf!(
         rectangular_workspace_reuse = rectangular_workspace_reuse,
         rectangular_preallocate_workspace = rectangular_preallocate_workspace,
         rectangular_workspace_min_buses = rectangular_workspace_min_buses,
+        linear_solver = linear_solver,
         performance_profile = performance_profile,
       )
     end

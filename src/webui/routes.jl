@@ -103,6 +103,13 @@ function route_sparlectra_webui(method::AbstractString, target::AbstractString, 
   elseif verb == "GET" && startswith(path, "/docs/")
     return handle_webui_doc_page(_webui_urldecode(path[(lastindex("/docs/") + 1):end]))
   elseif verb == "GET" && path in ("/", "/powerflow")
+    if runtime !== nothing && _webui_warmup_in_progress(runtime)
+      response = _webui_html(render_powerflow_warmup())
+      # Only after the warm-up page went out does the deferred warm-up solve
+      # start (see start_sparlectra_webui), so the user sees the message first.
+      _webui_mark_warmup_page_served!(runtime)
+      return response
+    end
     _webui_log_route!(log_root, "powerflow_form_opened", verb, path; status = "opened")
     selected_casefile = get(query, "casefile", "")
     case_profile = isempty(selected_casefile) ? nothing : _webui_load_case_settings(output_root, selected_casefile; case_directory = runtime === nothing ? nothing : runtime.case_directory)
@@ -121,15 +128,6 @@ function route_sparlectra_webui(method::AbstractString, target::AbstractString, 
     ))
   elseif verb == "POST" && path == "/powerflow/run"
     try
-      # Temporary diagnostic: log exactly what the raw HTTP form body contained
-      # for the diagnose_mode field, before any parsing/defaulting touches it.
-      # Remove once the Diagnose-button submission issue is confirmed resolved.
-      _webui_log_route!(log_root, "raw_submit_debug", verb, path;
-        status = "debug",
-        diagnose_mode_key_present = haskey(form, "diagnose_mode"),
-        diagnose_mode_raw_value = get(form, "diagnose_mode", "<absent>"),
-        form_keys = join(sort(String.(collect(keys(form)))), ","),
-      )
       result = handle_powerflow_run(form; default_output_root = output_root, case_directory = runtime === nothing ? nothing : runtime.case_directory, runner = runtime === nothing ? start_powerflow_run : runtime.runner, operation_log = log_root)
       manual_case = strip(String(something(_webui_form_value(form, "casefile_manual", ""), "")))
       requested_case = isempty(manual_case) ? String(something(_webui_form_value(form, "casefile", ""), "")) : manual_case
@@ -157,6 +155,8 @@ function route_sparlectra_webui(method::AbstractString, target::AbstractString, 
     return handle_powerflow_case_import(form; output_root, application_root = _webui_application_root(), case_directory = runtime === nothing ? nothing : runtime.case_directory, operation_log = log_root)
   elseif verb == "POST" && path == "/powerflow/resolve-case"
     return handle_powerflow_case_resolve(form; output_root, application_root = _webui_application_root(), case_directory = runtime === nothing ? nothing : runtime.case_directory, operation_log = log_root)
+  elseif verb == "POST" && path == "/powerflow/delete-case"
+    return handle_powerflow_case_delete(form; output_root, application_root = _webui_application_root(), case_directory = runtime === nothing ? nothing : runtime.case_directory, operation_log = log_root)
   elseif verb == "POST" && path == "/powerflow/config/check"
     return handle_powerflow_config_refresh(form; write = false, operation_log = log_root)
   elseif verb == "POST" && path == "/powerflow/config/refresh"

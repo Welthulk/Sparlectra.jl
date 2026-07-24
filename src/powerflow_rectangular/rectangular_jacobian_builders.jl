@@ -63,8 +63,14 @@ function build_rectangular_jacobian_pq_pv_sparse(
   dPinj_dVm::Vector{Float64} = zeros(Float64, length(V)),
   dQinj_dVm::Vector{Float64} = zeros(Float64, length(V)),
   vm_eps::Float64 = 1e-9,
+  structural_pattern::Bool = false,
 )
   # vm_eps avoids unstable derivatives when |V| is very close to zero.
+  # structural_pattern=true stores entries even when their current value is
+  # exactly zero, so the sparsity pattern depends only on the Ybus structure
+  # and the bus types — not on the iterate. Factorization-reuse backends
+  # (KLU) require this invariance; the default path keeps dropping numeric
+  # zeros to stay bit-for-bit identical to the historical behavior.
   n = length(V)
   @assert length(bus_types) == n
   @assert length(Vset) == n
@@ -164,12 +170,12 @@ function build_rectangular_jacobian_pq_pv_sparse(
       ∂Q_Vi = imag(S_dVi)
 
       # First equation: always ΔP_i for PQ and PV
-      if abs(∂P_Vr) > 0.0
+      if structural_pattern || abs(∂P_Vr) > 0.0
         push!(Iidx, rowP)
         push!(Jidx, colVr)
         push!(Vals, ∂P_Vr)
       end
-      if abs(∂P_Vi) > 0.0
+      if structural_pattern || abs(∂P_Vi) > 0.0
         push!(Iidx, rowP)
         push!(Jidx, colVi)
         push!(Vals, ∂P_Vi)
@@ -180,12 +186,12 @@ function build_rectangular_jacobian_pq_pv_sparse(
       #   - PV: ΔV_i -> no contribution from S, handled separately
       bt = bus_types[i]
       if bt == :PQ
-        if abs(∂Q_Vr) > 0.0
+        if structural_pattern || abs(∂Q_Vr) > 0.0
           push!(Iidx, rowQ)
           push!(Jidx, colVr)
           push!(Vals, ∂Q_Vr)
         end
-        if abs(∂Q_Vi) > 0.0
+        if structural_pattern || abs(∂Q_Vi) > 0.0
           push!(Iidx, rowQ)
           push!(Jidx, colVi)
           push!(Vals, ∂Q_Vi)
@@ -219,22 +225,23 @@ function build_rectangular_jacobian_pq_pv_sparse(
     end
 
     vm = abs(V[i])
-    if vm == 0.0
+    if vm == 0.0 && !structural_pattern
       continue
     end
+    vm_div = vm > 0.0 ? vm : vm_eps
 
-    dVr = real(V[i]) / vm
-    dVi = imag(V[i]) / vm
+    dVr = real(V[i]) / vm_div
+    dVi = imag(V[i]) / vm_div
 
     colVr = pos
     colVi = (n - 1) + pos
 
-    if abs(dVr) > 0.0
+    if structural_pattern || abs(dVr) > 0.0
       push!(Iidx, rowV)
       push!(Jidx, colVr)
       push!(Vals, dVr)
     end
-    if abs(dVi) > 0.0
+    if structural_pattern || abs(dVi) > 0.0
       push!(Iidx, rowV)
       push!(Jidx, colVi)
       push!(Vals, dVi)
@@ -257,8 +264,11 @@ function build_rectangular_jacobian_pq_pv_sparse(
     colVr = pos
     colVi = (n - 1) + pos
 
+    # These duplicate triplets merge additively into the diagonal-column
+    # entries already stored by the S-block, so pushing them unconditionally
+    # in structural mode never introduces iterate-dependent pattern entries.
     dP = dPinj_dVm[i]
-    if dP != 0.0
+    if structural_pattern || dP != 0.0
       push!(Iidx, rb)
       push!(Jidx, colVr)
       push!(Vals, -dP * dvm_dvr)
@@ -269,7 +279,7 @@ function build_rectangular_jacobian_pq_pv_sparse(
 
     if bus_types[i] == :PQ
       dQ = dQinj_dVm[i]
-      if dQ != 0.0
+      if structural_pattern || dQ != 0.0
         push!(Iidx, rb + 1)
         push!(Jidx, colVr)
         push!(Vals, -dQ * dvm_dvr)
@@ -423,7 +433,8 @@ function build_rectangular_jacobian_pq_pv(
   dPinj_dVm::Vector{Float64} = zeros(Float64, length(V)),
   dQinj_dVm::Vector{Float64} = zeros(Float64, length(V)),
   vm_eps::Float64 = 1e-9,
+  structural_pattern::Bool = false,
 )
   # Default rectangular solver path uses sparse Jacobians for scale and parity.
-  return build_rectangular_jacobian_pq_pv_sparse(Ybus, V, bus_types, Vset, slack_idx; dPinj_dVm = dPinj_dVm, dQinj_dVm = dQinj_dVm, vm_eps = vm_eps)
+  return build_rectangular_jacobian_pq_pv_sparse(Ybus, V, bus_types, Vset, slack_idx; dPinj_dVm = dPinj_dVm, dQinj_dVm = dQinj_dVm, vm_eps = vm_eps, structural_pattern = structural_pattern)
 end

@@ -263,6 +263,14 @@ function _webui_last_errors_list_html(operation_log::AbstractString)::String
   return "<ul class=\"last-errors-list\">$(items)</ul>"
 end
 
+function render_powerflow_warmup()::String
+  panel = """<section class=\"panel warmup-panel\">
+<span class=\"warmup-spinner\" aria-hidden=\"true\"></span>
+<p>Sparlectra Web UI is warming up — compiling the PowerFlow solver path so your first run starts fast. This page refreshes automatically once it's ready.</p>
+</section>"""
+  return _webui_layout("Warming up…", panel; refresh_url = "/powerflow", refresh_seconds = WEBUI_STATUS_AUTO_REFRESH_SECONDS)
+end
+
 function render_webui_last_errors(operation_log::AbstractString)::String
   panel = "<section class=\"panel last-errors-panel\">$(_webui_last_errors_list_html(operation_log))</section>"
   return _webui_layout("Last errors", panel; show_back = true)
@@ -323,7 +331,9 @@ function render_powerflow_form(;
     submitted_existing = strip(_webui_form_string(get(profile_values, "casefile", existing_value)))
     submitted_manual = strip(_webui_form_string(get(profile_values, "casefile_manual", manual_value)))
     existing_value = submitted_existing in casefiles ? submitted_existing : ""
-    manual_value = submitted_manual
+    # The combined case input posts free-typed values under "casefile"; keep
+    # them visible on re-render even though they are not in the cache list.
+    manual_value = isempty(submitted_manual) && !(submitted_existing in casefiles) ? submitted_existing : submitted_manual
   end
   explicit_case_format = submitted_form isa AbstractDict && _webui_form_value(submitted_form, "case_format", nothing) !== nothing
   effective_case_value = isempty(strip(manual_value)) ? existing_value : manual_value
@@ -340,10 +350,14 @@ function render_powerflow_form(;
   case_options = join((begin
     has_settings = isfile(_webui_case_settings_path(output_root, casefile; case_directory = effective_case_directory))
     label = has_settings ? "$(casefile) ★" : casefile
-    "<option value=\"$(_webui_escape(casefile))\"$(casefile == existing_value ? " selected" : "")>$(_webui_escape(label))</option>"
+    "<li role=\"option\" data-case-option=\"$(_webui_escape(casefile))\" title=\"Right-click to delete this case from the case directory\">$(_webui_escape(label))</li>"
   end for casefile in casefiles), "")
-  case_select = "<select id=\"casefile\" name=\"casefile\" data-case-settings-reload=\"true\"><option value=\"\">-- choose existing case --</option>$(case_options)</select>"
-  case_manual = "<input id=\"casefile_manual\" name=\"casefile_manual\" value=\"$(_webui_escape(manual_value))\" placeholder=\"case14.m or /path/to/FOR001.DAT\">"
+  # One combined case control (editable combobox): the arrow button opens the
+  # full list of cached cases like the former dropdown, typing filters it, and
+  # committing an unknown case name/path with Enter resolves it through
+  # /powerflow/resolve-case (download/copy into the case cache, no PowerFlow
+  # run), after which the page reloads with the case available and preselected.
+  case_input = "<span class=\"case-combobox\" data-case-combobox><input id=\"casefile\" name=\"casefile\" autocomplete=\"off\" spellcheck=\"false\" role=\"combobox\" aria-expanded=\"false\" aria-controls=\"case-combobox-list\" data-case-settings-reload=\"true\" value=\"$(_webui_escape(effective_case_value))\" placeholder=\"case14.m or /path/to/FOR001.DAT\"><button type=\"button\" id=\"case-combobox-toggle\" class=\"case-combobox-toggle\" aria-label=\"Show available cases\" tabindex=\"-1\">&#9662;</button><ul id=\"case-combobox-list\" class=\"case-combobox-list\" role=\"listbox\" hidden>$(case_options)</ul></span>"
   for002_reference_value = submitted_form isa AbstractDict ? strip(_webui_form_string(_webui_form_value(submitted_form, "for002_reference_file", ""))) : ""
   for002_list_options = join(("<option value=\"$(_webui_escape(candidate))\">$(_webui_escape(candidate))</option>" for candidate in for002_candidates), "")
   for002_list_html = isempty(for002_candidates) ? "" : "<datalist id=\"for002-reference-candidates\">$(for002_list_options)</datalist>"
@@ -367,10 +381,9 @@ function render_powerflow_form(;
   form = """
 $(_webui_feedback_modal_html([error_html, import_html, profile_notice]))$(_webui_active_run_banner(active_run))$(notice_html)<p class=\"lede\">Run a local MATPOWER case through the Sparlectra PowerFlow service.</p>
 $(import_form)
-<form id=\"powerflow-run-form\" data-powerflow-form method=\"post\" action=\"/powerflow/run\" class=\"panel form-grid powerflow-form-card\" onsubmit=\"this.classList.add('is-submitting'); this.setAttribute('aria-busy', 'true'); this.querySelectorAll('button[type=submit]').forEach(function(b){b.disabled = true;});\">
+<form id=\"powerflow-run-form\" data-powerflow-form method=\"post\" action=\"/powerflow/run\" class=\"panel form-grid powerflow-form-card\">
 $(config_control)
-<label>$(_webui_field_label("casefile", "Existing case file"))$(case_select)<small class="field-hint">Cases from <code>$(_webui_escape(effective_case_directory))</code></small></label>
-<label>$(_webui_field_label("casefile_manual", "Or type case file path"))$(case_manual)<button type="submit" id="resolve-case-button" formaction="/powerflow/resolve-case" formmethod="post" formnovalidate hidden>Resolve case</button></label>
+<label class="span-2">$(_webui_field_label("casefile", "Case file"))$(case_input)<button type="submit" id="resolve-case-button" formaction="/powerflow/resolve-case" formmethod="post" formnovalidate hidden>Resolve case</button><small class="field-hint">Cases from <code>$(_webui_escape(effective_case_directory))</code> — pick one from the list, or type a case name/path and press Enter to download it into the list.</small></label>
 $(dat_hint_html)
 <details$(dtf_details_attrs)>
 <summary>Input format</summary>
@@ -384,10 +397,10 @@ $(dat_hint_html)
 <label class="check"><input name="write_outage_matpower_exports" type="hidden" value="false"><input name="write_outage_matpower_exports" type="checkbox" value="true">Write MATPOWER outage exports</label>
 </fieldset>
 </details>
-<label>$(_webui_field_label("power_flow_tol", "Tolerance"))<span class=\"tolerance-field\"><input name=\"power_flow_tol\" type=\"text\" autocomplete=\"off\" spellcheck=\"false\" data-tolerance-input value=\"$(_webui_input_value(profile_values, "power_flow_tol", _webui_option_default("power_flow_tol")))\"><span class=\"tolerance-spin\"><button type=\"button\" class=\"tolerance-spin-up\" data-tolerance-direction=\"up\" aria-label=\"Increase tolerance exponent\">&#9650;</button><button type=\"button\" class=\"tolerance-spin-down\" data-tolerance-direction=\"down\" aria-label=\"Decrease tolerance exponent\">&#9660;</button></span></span></label>
+<label data-ac-only-field>$(_webui_field_label("power_flow_tol", "Tolerance"))<span class=\"tolerance-field\"><input name=\"power_flow_tol\" type=\"text\" autocomplete=\"off\" spellcheck=\"false\" data-tolerance-input value=\"$(_webui_input_value(profile_values, "power_flow_tol", _webui_option_default("power_flow_tol")))\"><span class=\"tolerance-spin\"><button type=\"button\" class=\"tolerance-spin-up\" data-tolerance-direction=\"up\" aria-label=\"Increase tolerance exponent\">&#9650;</button><button type=\"button\" class=\"tolerance-spin-down\" data-tolerance-direction=\"down\" aria-label=\"Decrease tolerance exponent\">&#9660;</button></span></span></label>
 <label data-nr-only-field>$(_webui_field_label("power_flow_max_iter", "Maximum iterations"))<input name=\"power_flow_max_iter\" type=\"number\" min=\"1\" value=\"$(_webui_input_value(profile_values, "power_flow_max_iter", _webui_option_default("power_flow_max_iter")))\"></label>
-<fieldset class=\"span-2 step-control-options\" data-step-control-group=\"autodamp\">
-<legend>Autodamping &amp; merit-function line search</legend>
+<details class=\"span-2 step-control-options\" data-step-control-group=\"autodamp\" data-ac-only-field>
+<summary>Autodamping &amp; merit-function line search</summary>
 <label class=\"check\"><input name=\"power_flow_autodamp\" type=\"hidden\" value=\"false\"><input name=\"power_flow_autodamp\" type=\"checkbox\" value=\"true\" data-autodamp-toggle$(_webui_checked(profile_values, "power_flow_autodamp", _webui_option_default("power_flow_autodamp")))>$(_webui_field_label("power_flow_autodamp", "Autodamping enabled"))</label>
 <label>$(_webui_field_label("power_flow_autodamp_min", "Autodamping minimum"))<input name=\"power_flow_autodamp_min\" type=\"number\" step=\"any\" min=\"0\" max=\"1\" data-autodamp-field value=\"$(_webui_input_value(profile_values, "power_flow_autodamp_min", _webui_option_default("power_flow_autodamp_min")))\"></label>
 <details class=\"span-2 merit-linesearch-options\">
@@ -399,44 +412,58 @@ $(dat_hint_html)
 <p class=\"field-help span-2\">Residual scaling (<code>scale_p</code>/<code>scale_q</code>/<code>scale_v</code>) is YAML-only and not exposed here.</p>
 </fieldset>
 </details>
-</fieldset>
-<fieldset class=\"span-2 step-control-options\" data-step-control-group=\"trust_region\">
-<legend>Trust-region step control</legend>
+</details>
+<details class=\"span-2 step-control-options\" data-step-control-group=\"trust_region\" data-ac-only-field>
+<summary>Trust-region step control</summary>
 <p class=\"field-help span-2\">Alternative to autodamping (scaled-Newton step control with merit-based step acceptance). Mutually exclusive with autodamping -- enabling one disables the other.</p>
 <label class=\"check span-2\"><input name=\"power_flow_trust_region_enabled\" type=\"hidden\" value=\"false\"><input name=\"power_flow_trust_region_enabled\" type=\"checkbox\" value=\"true\" data-trust-region-toggle$(_webui_checked(profile_values, "power_flow_trust_region_enabled", _webui_option_default("power_flow_trust_region_enabled")))>$(_webui_field_label("power_flow_trust_region_enabled", "Enable trust-region step control"))</label>
 <label>$(_webui_field_label("power_flow_trust_region_initial_radius", "Initial trust-region radius"))<input name=\"power_flow_trust_region_initial_radius\" type=\"number\" step=\"any\" min=\"0\" max=\"10\" data-trust-region-field value=\"$(_webui_input_value(profile_values, "power_flow_trust_region_initial_radius", _webui_option_default("power_flow_trust_region_initial_radius")))\"></label>
 <label>$(_webui_field_label("power_flow_trust_region_eta_accept", "Acceptance ratio (eta)"))<input name=\"power_flow_trust_region_eta_accept\" type=\"number\" step=\"any\" min=\"0\" max=\"1\" data-trust-region-field value=\"$(_webui_input_value(profile_values, "power_flow_trust_region_eta_accept", _webui_option_default("power_flow_trust_region_eta_accept")))\"></label>
 <label>$(_webui_field_label("power_flow_trust_region_step_mode", "Step mode"))$(_webui_select("power_flow_trust_region_step_mode", _webui_option_allowed_values("power_flow_trust_region_step_mode"), _webui_selected(profile_values, "power_flow_trust_region_step_mode", _webui_option_default("power_flow_trust_region_step_mode")), "data-trust-region-field"))</label>
 <p class=\"field-help span-2\">Radius bounds and shrink/expand factors (<code>min_radius</code>/<code>max_radius</code>/<code>shrink_factor</code>/<code>expand_factor</code>/<code>expand_threshold</code>) are YAML-only and not exposed here.</p>
-</fieldset>
-<fieldset class=\"span-2 step-control-options\">
-<legend>Q-limit handling</legend>
+</details>
+<details class=\"span-2 step-control-options\" data-ac-only-field>
+<summary>Q-limit handling</summary>
 <label class=\"check\"><input name=\"power_flow_qlimits_enabled\" type=\"hidden\" value=\"false\"><input name=\"power_flow_qlimits_enabled\" type=\"checkbox\" value=\"true\"$(_webui_checked(profile_values, "power_flow_qlimits_enabled", _webui_option_default("power_flow_qlimits_enabled")))>$(_webui_field_label("power_flow_qlimits_enabled", "Q-limit handling enabled"))</label>
 <label data-nr-only-field>$(_webui_field_label("power_flow_qlimits_enforcement_mode", "Q-limit enforcement mode"))$(_webui_select("power_flow_qlimits_enforcement_mode", _webui_option_allowed_values("power_flow_qlimits_enforcement_mode"), _webui_selected(profile_values, "power_flow_qlimits_enforcement_mode", _webui_option_default("power_flow_qlimits_enforcement_mode"))))</label>
-</fieldset>
-<label>$(_webui_field_label("power_flow_solver", "Solver"))<select name="power_flow_solver" data-solver-select><option value="rectangular"$(_webui_form_string(_webui_selected(profile_values, "power_flow_solver", _webui_option_default("power_flow_solver"))) == "rectangular" ? " selected" : "")>Newton-Raphson (rectangular)</option><option value="apslf"$(_webui_form_string(_webui_selected(profile_values, "power_flow_solver", _webui_option_default("power_flow_solver"))) == "apslf" ? " selected" : "")>APSLF (AnalyticLoadFlow)</option></select></label>
+</details>
+<details class="span-2 solver-mode-options" open>
+<summary>$(_webui_field_label("power_flow_solver", "Solver"))</summary>
+<label class="check"><input type="radio" name="power_flow_solver" value="rectangular" data-solver-radio$(_webui_form_string(_webui_selected(profile_values, "power_flow_solver", _webui_option_default("power_flow_solver"))) == "rectangular" ? " checked" : "")>AC (Newton-Raphson, rectangular)</label>
+<p class="field-help field-indent">Starts by default from angles produced by a fast DC pre-pass (see <strong>Start angle mode</strong> below, default <code>dc</code>) and then iterates with Newton-Raphson -- this is not a standalone DC solution.</p>
+<label class="check"><input type="radio" name="power_flow_solver" value="apslf" data-solver-radio$(_webui_form_string(_webui_selected(profile_values, "power_flow_solver", _webui_option_default("power_flow_solver"))) == "apslf" ? " checked" : "")>APSLF (AnalyticLoadFlow)</label>
+<label class="check"><input type="radio" name="power_flow_solver" value="dc" data-solver-radio$(_webui_form_string(_webui_selected(profile_values, "power_flow_solver", _webui_option_default("power_flow_solver"))) == "dc" ? " checked" : "")>DC (linear screening model, replaces Newton-Raphson entirely)</label>
+</details>
 <fieldset id="apslf-solver-options" class="span-2 apslf-solver-options" data-apslf-solver-options hidden>
 <legend>APSLF solver options</legend>
 <label class=\"field-indent\">$(_webui_field_label("power_flow_apslf_order", "Highest coefficient (order)"))<input name=\"power_flow_apslf_order\" type=\"number\" min=\"1\" value=\"$(_webui_input_value(profile_values, "power_flow_apslf_order", _webui_option_default("power_flow_apslf_order")))\"></label>
 <label class=\"check field-indent\"><input name=\"power_flow_apslf_use_pade\" type=\"hidden\" value=\"false\"><input name=\"power_flow_apslf_use_pade\" type=\"checkbox\" value=\"true\"$(_webui_checked(profile_values, "power_flow_apslf_use_pade", _webui_option_default("power_flow_apslf_use_pade")))>$(_webui_field_label("power_flow_apslf_use_pade", "Padé evaluation"))</label>
 <label class=\"check field-indent\"><input name=\"power_flow_apslf_nr_polish\" type=\"hidden\" value=\"false\"><input name=\"power_flow_apslf_nr_polish\" type=\"checkbox\" value=\"true\"$(_webui_checked(profile_values, "power_flow_apslf_nr_polish", _webui_option_default("power_flow_apslf_nr_polish")))>$(_webui_field_label("power_flow_apslf_nr_polish", "NR polish"))</label>
 </fieldset>
-<fieldset id="apslf-start-options" class="span-2 apslf-start-options" data-apslf-start-options>
-<legend>Newton-Raphson start values</legend>
+<details id="apslf-start-options" class="span-2 apslf-start-options" data-apslf-start-options data-ac-only-field>
+<summary>Newton-Raphson start values</summary>
 <label class=\"check\"><input name=\"power_flow_apslf_start_enabled\" type=\"hidden\" value=\"false\"><input name=\"power_flow_apslf_start_enabled\" type=\"checkbox\" value=\"true\" data-apslf-start-toggle$(_webui_checked(profile_values, "power_flow_apslf_start_enabled", _webui_option_default("power_flow_apslf_start_enabled")))>$(_webui_field_label("power_flow_apslf_start_enabled", "Use APSLF start values"))</label>
 <label class=\"field-indent\">$(_webui_field_label("power_flow_apslf_start_order", "Highest coefficient (order)"))<input name=\"power_flow_apslf_start_order\" type=\"number\" min=\"1\" data-apslf-start-order value=\"$(_webui_input_value(profile_values, "power_flow_apslf_start_order", _webui_option_default("power_flow_apslf_start_order")))\"></label>
-</fieldset>
+<label class=\"check\"><input name=\"power_flow_dc_seed_unconditional\" type=\"hidden\" value=\"false\"><input name=\"power_flow_dc_seed_unconditional\" type=\"checkbox\" value=\"true\" data-dc-seed-toggle$(_webui_checked(profile_values, "power_flow_dc_seed_unconditional", _webui_option_default("power_flow_dc_seed_unconditional")))>$(_webui_field_label("power_flow_dc_seed_unconditional", "Use DC start values"))</label>
+</details>
 <label data-nr-only-field>$(_webui_field_label("power_flow_wrong_branch_detection", "Wrong-branch detection"))$(_webui_select("power_flow_wrong_branch_detection", _webui_option_allowed_values("power_flow_wrong_branch_detection"), _webui_selected(profile_values, "power_flow_wrong_branch_detection", _webui_option_default("power_flow_wrong_branch_detection"))))</label>
-<label data-nr-only-field>$(_webui_field_label("power_flow_start_angle_mode", "Start angle mode"))$(_webui_select("power_flow_start_angle_mode", _webui_option_allowed_values("power_flow_start_angle_mode"), _webui_selected(profile_values, "power_flow_start_angle_mode", _webui_option_default("power_flow_start_angle_mode"))))</label>
-<label data-nr-only-field>$(_webui_field_label("power_flow_start_voltage_mode", "Start voltage mode"))$(_webui_select("power_flow_start_voltage_mode", _webui_option_allowed_values("power_flow_start_voltage_mode"), _webui_selected(profile_values, "power_flow_start_voltage_mode", _webui_option_default("power_flow_start_voltage_mode"))))</label>
+<label data-nr-only-field data-dc-seed-inactive-field>$(_webui_field_label("power_flow_start_angle_mode", "Start angle mode"))$(_webui_select("power_flow_start_angle_mode", _webui_option_allowed_values("power_flow_start_angle_mode"), _webui_selected(profile_values, "power_flow_start_angle_mode", _webui_option_default("power_flow_start_angle_mode"))))</label>
+<label data-nr-only-field data-dc-seed-inactive-field>$(_webui_field_label("power_flow_start_voltage_mode", "Start voltage mode"))$(_webui_select("power_flow_start_voltage_mode", _webui_option_allowed_values("power_flow_start_voltage_mode"), _webui_selected(profile_values, "power_flow_start_voltage_mode", _webui_option_default("power_flow_start_voltage_mode"))))</label>
 <label>$(_webui_field_label("output_logfile_results", "Logfile output mode"))$(_webui_select("output_logfile_results", _webui_option_allowed_values("output_logfile_results"), _webui_selected(profile_values, "output_logfile_results", _webui_option_default("output_logfile_results"))))</label>
 <label>$(_webui_field_label("performance_timing", "Performance timing"))$(_webui_select("performance_timing", _webui_option_allowed_values("performance_timing"), _webui_selected(profile_values, "performance_timing", _webui_option_default("performance_timing"))))</label>
-<fieldset class=\"span-2 detailed-csv-options\"><legend><label class=\"check\"><input name=\"detailed_result_csv\" type=\"hidden\" value=\"false\"><input name=\"detailed_result_csv\" type=\"checkbox\" value=\"true\"$(_webui_checked(profile_values, "detailed_result_csv", _webui_option_default("detailed_result_csv")))>$(_webui_field_label("detailed_result_csv", "Export detailed result CSV files"))</label></legend>
+<details class=\"span-2 detailed-csv-options\">
+<summary>Detailed result CSV export</summary>
+<label class=\"check\"><input name=\"detailed_result_csv\" type=\"hidden\" value=\"false\"><input name=\"detailed_result_csv\" type=\"checkbox\" value=\"true\"$(_webui_checked(profile_values, "detailed_result_csv", _webui_option_default("detailed_result_csv")))>$(_webui_field_label("detailed_result_csv", "Export detailed result CSV files"))</label>
 <label class=\"detailed-csv-format\">$(_webui_field_label("detailed_result_csv_format", "CSV format"))$(_webui_select("detailed_result_csv_format", _webui_option_allowed_values("detailed_result_csv_format"), _webui_selected(profile_values, "detailed_result_csv_format", _webui_option_default("detailed_result_csv_format"))))</label>
-</fieldset>
+</details>
 <details class=\"span-2 expert-section\">
 <summary>Advanced options</summary>
 $(config_maintenance)
+<fieldset class=\"solver-backend-options\" data-nr-only-field>
+<legend>Solver backend</legend>
+<label>$(_webui_field_label("power_flow_linear_solver", "Linear solver backend"))$(_webui_select("power_flow_linear_solver", _webui_option_allowed_values("power_flow_linear_solver"), _webui_selected(profile_values, "power_flow_linear_solver", _webui_option_default("power_flow_linear_solver"))))</label>
+<p class=\"field-help\">Sparse linear-algebra backend for the rectangular Newton step only (independent of the <strong>Solver</strong> choice above). <code>klu</code> reuses the symbolic factorization across iterations; <code>umfpack</code> is the default behavior.</p>
+</fieldset>
 <fieldset class=\"start-current-iteration-options advanced-start-values\" data-nr-only-field>
 <legend>Advanced start values</legend>
 <label class=\"check span-2\"><input name=\"power_flow_start_current_iteration_enabled\" type=\"hidden\" value=\"false\"><input name=\"power_flow_start_current_iteration_enabled\" type=\"checkbox\" value=\"true\"$(_webui_checked(profile_values, "power_flow_start_current_iteration_enabled", _webui_option_default("power_flow_start_current_iteration_enabled")))>$(_webui_field_label("power_flow_start_current_iteration_enabled", "Enable current-iteration pre-solve"))</label>
@@ -459,7 +486,7 @@ $(config_maintenance)
 <label>$(_webui_field_label("matpower_import_bus_shunt_model", "Bus-shunt model"))$(_webui_select("matpower_import_bus_shunt_model", _webui_option_allowed_values("matpower_import_bus_shunt_model"), _webui_selected(profile_values, "matpower_import_bus_shunt_model", _webui_option_default("matpower_import_bus_shunt_model"))))</label>
 <label>$(_webui_field_label("matpower_import_pv_voltage_source", "PV voltage source"))$(_webui_select("matpower_import_pv_voltage_source", _webui_option_allowed_values("matpower_import_pv_voltage_source"), _webui_selected(profile_values, "matpower_import_pv_voltage_source", _webui_option_default("matpower_import_pv_voltage_source"))))</label>
 <label>$(_webui_field_label("matpower_import_compare_voltage_reference", "Voltage reference comparison"))$(_webui_select("matpower_import_compare_voltage_reference", _webui_option_allowed_values("matpower_import_compare_voltage_reference"), _webui_selected(profile_values, "matpower_import_compare_voltage_reference", _webui_option_default("matpower_import_compare_voltage_reference"))))</label>
-<label>$(_webui_field_label("transformer_tap_changer_model", "Tap-changer model"))$(_webui_select("transformer_tap_changer_model", _webui_option_allowed_values("transformer_tap_changer_model"), _webui_selected(profile_values, "transformer_tap_changer_model", _webui_option_default("transformer_tap_changer_model"))))</label>
+<label data-ac-only-field>$(_webui_field_label("transformer_tap_changer_model", "Tap-changer model"))$(_webui_select("transformer_tap_changer_model", _webui_option_allowed_values("transformer_tap_changer_model"), _webui_selected(profile_values, "transformer_tap_changer_model", _webui_option_default("transformer_tap_changer_model"))))</label>
 <label class=\"check\"><input name=\"matpower_export_write_solution\" type=\"hidden\" value=\"false\"><input name=\"matpower_export_write_solution\" type=\"checkbox\" value=\"true\"$(_webui_checked(profile_values, "matpower_export_write_solution", _webui_option_default("matpower_export_write_solution")))>$(_webui_field_label("matpower_export_write_solution", "Export Solution"))</label>
 </fieldset>
 <fieldset class=\"benchmark-section\">
@@ -473,6 +500,44 @@ $(config_maintenance)
 <div class=\"span-2 actions\"><button class=\"powerflow-submit\" type=\"submit\"><span class=\"submit-spinner\" aria-hidden=\"true\"></span><span class=\"submit-label\">Start PowerFlow run</span><span class=\"submit-progress-label\" role=\"status\" aria-live=\"polite\">Running PowerFlow…</span></button><button class=\"powerflow-submit diagnose-submit\" type=\"submit\" name=\"diagnose_mode\" value=\"true\" title=\"Run this case in diagnostic mode: evaluates the mismatch at the case's own stored VM/VA (no corrective Newton step) and writes a diagnostic report to diagnose.log.\"><span class=\"submit-spinner\" aria-hidden=\"true\"></span><span class=\"submit-label\">Diagnose</span><span class=\"submit-progress-label\" role=\"status\" aria-live=\"polite\">Running diagnosis…</span></button></div></form>
 <script>
 document.addEventListener('DOMContentLoaded', function () {
+  const powerflowForm = document.getElementById('powerflow-run-form');
+  if (powerflowForm !== null) {
+    const copySubmitterValue = function (submitter) {
+      const existing = powerflowForm.querySelector('input[type="hidden"][data-submitter-value]');
+      const name = submitter ? submitter.getAttribute('name') : null;
+      if (!name) {
+        // Plain "Start PowerFlow run" has no name/value of its own to preserve; also
+        // drop any stale submitter value left over from a bfcache-restored page so a
+        // normal run can never silently inherit a previous "Diagnose" submission.
+        if (existing !== null) existing.remove();
+        return;
+      }
+      const hidden = existing !== null ? existing : document.createElement('input');
+      if (existing === null) {
+        hidden.type = 'hidden';
+        hidden.setAttribute('data-submitter-value', 'true');
+        powerflowForm.appendChild(hidden);
+      }
+      hidden.name = name;
+      hidden.value = submitter.value;
+    };
+    // Fallback for browsers without SubmitEvent.submitter (older Safari): capture
+    // the clicked submit button before the submit event fires.
+    powerflowForm.querySelectorAll('button[type=submit][name]').forEach(function (button) {
+      button.addEventListener('click', function () { copySubmitterValue(button); });
+    });
+    powerflowForm.addEventListener('submit', function (event) {
+      // Copy the submitter's name/value into a plain hidden input FIRST: disabling
+      // the submit buttons below (needed for double-submit protection) would
+      // otherwise drop the submitter itself from the serialized form data per the
+      // HTML form-submission spec, silently turning a "Diagnose" click into a
+      // normal run.
+      copySubmitterValue(event.submitter);
+      powerflowForm.classList.add('is-submitting');
+      powerflowForm.setAttribute('aria-busy', 'true');
+      powerflowForm.querySelectorAll('button[type=submit]').forEach(function (b) { b.disabled = true; });
+    });
+  }
   const feedbackModal = document.getElementById('feedback-modal');
   if (feedbackModal !== null) {
     feedbackModal.showModal();
@@ -490,15 +555,17 @@ document.addEventListener('DOMContentLoaded', function () {
     }) ? 'excel_de' : 'excel_us';
     csvFormat.value = defaultFormat;
   }
-  const caseSelect = document.querySelector('select[name="casefile"][data-case-settings-reload="true"]');
-  const caseManual = document.querySelector('input[name="casefile_manual"]');
+  const caseInput = document.querySelector('input[name="casefile"][data-case-settings-reload="true"]');
+  const caseInputInitial = caseInput === null ? '' : caseInput.value.trim();
+  const caseComboboxList = document.getElementById('case-combobox-list');
+  const caseComboboxToggle = document.getElementById('case-combobox-toggle');
+  const caseComboboxOptions = caseComboboxList === null ? [] : Array.prototype.slice.call(caseComboboxList.querySelectorAll('li[data-case-option]'));
+  const availableCases = caseComboboxOptions.map(function (item) { return item.getAttribute('data-case-option'); });
   const caseFormat = document.querySelector('select[name="case_format"]');
   const dtfInternalSection = document.querySelector('.dtf-internal-section');
   const datFormatHint = document.getElementById('dtf-dat-format-hint');
   const updateDatCaseAssistance = function () {
-    const manualValue = caseManual === null ? '' : caseManual.value.trim();
-    const selectedValue = caseSelect === null ? '' : caseSelect.value.trim();
-    const effectiveValue = manualValue === '' ? selectedValue : manualValue;
+    const effectiveValue = caseInput === null ? '' : caseInput.value.trim();
     const isDatCase = new RegExp('\\\\.dat\$', 'i').test(effectiveValue);
     if (isDatCase && caseFormat !== null) caseFormat.value = 'dtf_for001';
     if (dtfInternalSection !== null) {
@@ -511,26 +578,56 @@ document.addEventListener('DOMContentLoaded', function () {
     }
   };
   updateDatCaseAssistance();
-  const solverSelect = document.querySelector('select[data-solver-select]');
+  const solverRadios = document.querySelectorAll('input[data-solver-radio]');
   const apslfSolverOptions = document.querySelector('[data-apslf-solver-options]');
   const apslfStartOptions = document.querySelector('[data-apslf-start-options]');
-  const updateSolverOptions = function () {
-    const isApslf = solverSelect !== null && solverSelect.value === 'apslf';
-    if (apslfSolverOptions !== null) apslfSolverOptions.hidden = !isApslf;
-    if (apslfStartOptions !== null) apslfStartOptions.hidden = isApslf;
+  const getSolverMode = function () {
+    let value = 'rectangular';
+    solverRadios.forEach(function (radio) { if (radio.checked) value = radio.value; });
+    return value;
   };
-  if (solverSelect !== null) {
-    updateSolverOptions();
-    solverSelect.addEventListener('change', updateSolverOptions);
-  }
+  const isDcMode = function () { return getSolverMode() === 'dc'; };
+  const isApslfMode = function () { return getSolverMode() === 'apslf'; };
+  // Gray out (disable, but keep visible/in place) a field group that does not apply
+  // to the currently selected solver, instead of hiding it: mutually exclusive
+  // solver options stay where the user last saw them rather than jumping around.
+  const setSolverGroupInactive = function (container, inactive) {
+    if (container === null) return;
+    container.classList.toggle('disabled', inactive);
+    const controls = container.matches('input, select') ? [container] : container.querySelectorAll('input, select');
+    controls.forEach(function (control) { control.disabled = inactive; });
+  };
+  const updateSolverOptions = function () {
+    const dc = isDcMode();
+    const apslf = isApslfMode();
+    setSolverGroupInactive(apslfSolverOptions, dc || !apslf);
+    setSolverGroupInactive(apslfStartOptions, dc || apslf);
+  };
   const apslfStartToggle = document.querySelector('input[data-apslf-start-toggle]');
   const apslfStartOrderInput = document.querySelector('input[data-apslf-start-order]');
+  const dcSeedToggle = document.querySelector('input[data-dc-seed-toggle]');
   const updateApslfStartOrder = function () {
     if (apslfStartOrderInput !== null) apslfStartOrderInput.disabled = apslfStartToggle !== null && !apslfStartToggle.checked;
   };
+  // "Use APSLF start values" and "Use DC start values" are two mutually exclusive
+  // start-value sources for the same rectangular NR solve (the underlying
+  // configuration rejects setting both at once) -- checking one unchecks the other,
+  // mirroring the existing autodamp/trust-region exclusivity pattern below.
+  const updateStartValueSource = function (changedToggle) {
+    if (changedToggle === 'dc_seed' && dcSeedToggle !== null && dcSeedToggle.checked && apslfStartToggle !== null && apslfStartToggle.checked) {
+      apslfStartToggle.checked = false;
+    } else if (changedToggle === 'apslf_start' && apslfStartToggle !== null && apslfStartToggle.checked && dcSeedToggle !== null && dcSeedToggle.checked) {
+      dcSeedToggle.checked = false;
+    }
+    updateApslfStartOrder();
+    updateStepControlOptions();
+  };
   if (apslfStartToggle !== null) {
     updateApslfStartOrder();
-    apslfStartToggle.addEventListener('change', updateApslfStartOrder);
+    apslfStartToggle.addEventListener('change', function () { updateStartValueSource('apslf_start'); });
+  }
+  if (dcSeedToggle !== null) {
+    dcSeedToggle.addEventListener('change', function () { updateStartValueSource('dc_seed'); });
   }
   const autodampToggle = document.querySelector('input[data-autodamp-toggle]');
   const trustRegionToggle = document.querySelector('input[data-trust-region-toggle]');
@@ -550,9 +647,11 @@ document.addEventListener('DOMContentLoaded', function () {
     } else if (changedToggle === 'autodamp' && autodampToggle !== null && autodampToggle.checked && trustRegionToggle !== null && trustRegionToggle.checked) {
       trustRegionToggle.checked = false;
     }
-    const isApslf = solverSelect !== null && solverSelect.value === 'apslf';
-    const autodampOn = !isApslf && autodampToggle !== null && autodampToggle.checked;
-    const trustRegionOn = !isApslf && trustRegionToggle !== null && trustRegionToggle.checked;
+    const dc = isDcMode();
+    const apslf = isApslfMode();
+    const hideNrOnly = apslf || dc;
+    const autodampOn = !hideNrOnly && autodampToggle !== null && autodampToggle.checked;
+    const trustRegionOn = !hideNrOnly && trustRegionToggle !== null && trustRegionToggle.checked;
     autodampFields.forEach(function (field) { field.disabled = !autodampOn; });
     if (meritToggle !== null) {
       meritToggle.disabled = !autodampOn;
@@ -562,17 +661,15 @@ document.addEventListener('DOMContentLoaded', function () {
     meritFields.forEach(function (field) { field.disabled = !meritOn; });
     trustRegionFields.forEach(function (field) { field.disabled = !trustRegionOn; });
     if (autodampGroup !== null) {
-      autodampGroup.hidden = isApslf;
       autodampGroup.classList.toggle('disabled', !autodampOn);
     }
     if (trustRegionGroup !== null) {
-      trustRegionGroup.hidden = isApslf;
       trustRegionGroup.classList.toggle('disabled', !trustRegionOn);
     }
+    const dcSeedActive = dcSeedToggle !== null && dcSeedToggle.checked;
     nrOnlyFields.forEach(function (container) {
-      container.hidden = isApslf;
-      const controls = container.matches('input, select') ? [container] : container.querySelectorAll('input, select');
-      controls.forEach(function (control) { control.disabled = isApslf; });
+      const dcSeedMakesInactive = dcSeedActive && container.hasAttribute('data-dc-seed-inactive-field');
+      setSolverGroupInactive(container, hideNrOnly || dcSeedMakesInactive);
     });
     updatingStepControl = false;
   };
@@ -586,38 +683,157 @@ document.addEventListener('DOMContentLoaded', function () {
   if (meritToggle !== null) {
     meritToggle.addEventListener('change', function () { updateStepControlOptions('merit'); });
   }
-  if (solverSelect !== null) {
+  const acOnlyFields = document.querySelectorAll('[data-ac-only-field]');
+  const updateSolverMode = function () {
+    const dc = isDcMode();
+    acOnlyFields.forEach(function (container) { setSolverGroupInactive(container, dc); });
+    updateSolverOptions();
     updateStepControlOptions();
-    solverSelect.addEventListener('change', function () { updateStepControlOptions(); });
+  };
+  if (solverRadios.length > 0) {
+    updateSolverMode();
+    solverRadios.forEach(function (radio) { radio.addEventListener('change', updateSolverMode); });
   }
-  if (caseManual !== null) {
-    caseManual.addEventListener('input', updateDatCaseAssistance);
-    caseManual.addEventListener('change', updateDatCaseAssistance);
-    caseManual.addEventListener('keydown', function (event) {
+  const reloadWithCase = function (value) {
+    const target = new URL('/powerflow', window.location.origin);
+    target.searchParams.set('casefile', value);
+    const configInput = document.querySelector('input[name="config_file"]');
+    if (configInput !== null && configInput.value !== '') {
+      target.searchParams.set('config_file', configInput.value);
+    }
+    window.location.href = target.pathname + target.search;
+  };
+  if (caseInput !== null) {
+    // Editable combobox: the arrow (or ArrowDown, or clicking the field)
+    // opens the full cached-case list like the former dropdown; typing
+    // filters it. Picking a cached case reloads the page so its sidecar
+    // settings prefill the form; committing an unknown name/path with Enter
+    // resolves it (download/copy into the case cache) without starting a
+    // PowerFlow run.
+    const setCaseListOpen = function (open) {
+      if (caseComboboxList === null) return;
+      caseComboboxList.hidden = !open;
+      caseInput.setAttribute('aria-expanded', open ? 'true' : 'false');
+    };
+    const filterCaseList = function (filterText) {
+      const needle = String(filterText).trim().toLowerCase();
+      caseComboboxOptions.forEach(function (item) {
+        item.hidden = needle !== '' && item.getAttribute('data-case-option').toLowerCase().indexOf(needle) === -1;
+        item.classList.remove('active');
+      });
+    };
+    const visibleCaseOptions = function () {
+      return caseComboboxOptions.filter(function (item) { return !item.hidden; });
+    };
+    const moveCaseActive = function (step) {
+      const visible = visibleCaseOptions();
+      if (visible.length === 0) return;
+      let index = visible.findIndex(function (item) { return item.classList.contains('active'); });
+      index = index === -1 ? (step > 0 ? 0 : visible.length - 1) : (index + step + visible.length) % visible.length;
+      caseComboboxOptions.forEach(function (item) { item.classList.remove('active'); });
+      visible[index].classList.add('active');
+      visible[index].scrollIntoView({ block: 'nearest' });
+    };
+    const chooseCaseOption = function (item) {
+      const value = item.getAttribute('data-case-option');
+      caseInput.value = value;
+      setCaseListOpen(false);
+      updateDatCaseAssistance();
+      if (value !== caseInputInitial) reloadWithCase(value);
+    };
+    if (caseComboboxToggle !== null) {
+      caseComboboxToggle.addEventListener('mousedown', function (event) {
+        event.preventDefault();
+        if (caseComboboxList !== null && caseComboboxList.hidden) {
+          filterCaseList('');
+          setCaseListOpen(true);
+          caseInput.focus();
+        } else {
+          setCaseListOpen(false);
+        }
+      });
+    }
+    caseInput.addEventListener('click', function () {
+      filterCaseList('');
+      setCaseListOpen(true);
+    });
+    caseComboboxOptions.forEach(function (item) {
+      item.addEventListener('mousedown', function (event) {
+        if (event.button !== 0) return;
+        event.preventDefault();
+        chooseCaseOption(item);
+      });
+      // Right-click deletes the case file (with confirmation) from the case
+      // cache directory without starting a PowerFlow run.
+      item.addEventListener('contextmenu', function (event) {
+        event.preventDefault();
+        const value = item.getAttribute('data-case-option');
+        if (!window.confirm('Delete case file "' + value + '" from the case directory?')) return;
+        const deleteForm = document.createElement('form');
+        deleteForm.method = 'post';
+        deleteForm.action = '/powerflow/delete-case';
+        const deleteField = document.createElement('input');
+        deleteField.type = 'hidden';
+        deleteField.name = 'casefile';
+        deleteField.value = value;
+        deleteForm.appendChild(deleteField);
+        document.body.appendChild(deleteForm);
+        deleteForm.submit();
+      });
+    });
+    document.addEventListener('mousedown', function (event) {
+      const combobox = document.querySelector('[data-case-combobox]');
+      if (combobox !== null && !combobox.contains(event.target)) setCaseListOpen(false);
+    });
+    caseInput.addEventListener('input', function () {
+      filterCaseList(caseInput.value);
+      setCaseListOpen(true);
+      updateDatCaseAssistance();
+    });
+    caseInput.addEventListener('change', updateDatCaseAssistance);
+    // Prime the combobox once as if the user had typed (user-reported
+    // workaround: interaction only behaved after a first input/refresh
+    // round-trip), then close the list again so the page loads collapsed.
+    caseInput.dispatchEvent(new Event('input', { bubbles: true }));
+    filterCaseList('');
+    setCaseListOpen(false);
+    caseInput.addEventListener('keydown', function (event) {
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        event.preventDefault();
+        if (caseComboboxList !== null && caseComboboxList.hidden) {
+          // Opening the closed list always shows every cached case (like a
+          // select); filtering only applies while actively typing.
+          filterCaseList('');
+          setCaseListOpen(true);
+        }
+        moveCaseActive(event.key === 'ArrowDown' ? 1 : -1);
+        return;
+      }
+      if (event.key === 'Escape') {
+        setCaseListOpen(false);
+        return;
+      }
       if (event.key !== 'Enter') return;
       event.preventDefault();
+      const active = visibleCaseOptions().find(function (item) { return item.classList.contains('active'); });
+      if (active !== undefined && caseComboboxList !== null && !caseComboboxList.hidden) {
+        chooseCaseOption(active);
+        return;
+      }
+      const value = caseInput.value.trim();
+      if (value === '') return;
+      setCaseListOpen(false);
+      if (availableCases.indexOf(value) >= 0) {
+        if (value !== caseInputInitial) reloadWithCase(value);
+        return;
+      }
       const resolveButton = document.getElementById('resolve-case-button');
-      if (resolveButton === null || form === null) return;
-      if (typeof form.requestSubmit === 'function') {
-        form.requestSubmit(resolveButton);
+      if (resolveButton === null || powerflowForm === null) return;
+      if (typeof powerflowForm.requestSubmit === 'function') {
+        powerflowForm.requestSubmit(resolveButton);
       } else {
         resolveButton.click();
       }
-    });
-  }
-  if (caseSelect !== null) {
-    caseSelect.addEventListener('change', updateDatCaseAssistance);
-  }
-  if (caseSelect !== null) {
-    caseSelect.addEventListener('change', function () {
-      if (caseSelect.value === '') return;
-      const target = new URL('/powerflow', window.location.origin);
-      target.searchParams.set('casefile', caseSelect.value);
-      const configInput = document.querySelector('input[name="config_file"]');
-      if (configInput !== null && configInput.value !== '') {
-        target.searchParams.set('config_file', configInput.value);
-      }
-      window.location.href = target.pathname + target.search;
     });
   }
   const toleranceInput = document.querySelector('input[name="power_flow_tol"][data-tolerance-input]');
@@ -679,6 +895,8 @@ window.addEventListener('pageshow', function () {
   form.classList.remove('is-submitting');
   form.removeAttribute('aria-busy');
   form.querySelectorAll('button[type=submit]').forEach(function (b) { b.disabled = false; });
+  const staleSubmitterValue = form.querySelector('input[type="hidden"][data-submitter-value]');
+  if (staleSubmitterValue !== null) staleSubmitterValue.remove();
 });
 </script>"""
   return _webui_layout("PowerFlow run", form; header_info = info_menu)
@@ -838,6 +1056,7 @@ function render_powerflow_result(result::AbstractDict)::String
     (("Run status", status_badge), ("Elapsed time", "<strong>$(_webui_escape(_format_elapsed_duration(_webui_elapsed_seconds(result, active))))</strong>"))
   else
     base = [("Run status", status_badge), ("Solver", "<code>$(_webui_escape(solver_name))</code>")]
+    solver_name == "dc" && push!(base, ("Model", "<span class=\"status-badge status-info\">DC solution</span>"))
     solver_elapsed = _webui_solver_elapsed_seconds(result)
     solver_elapsed === nothing || push!(base, ("Solver time", "<strong>$(_webui_escape(_format_elapsed_duration(solver_elapsed)))</strong>"))
     push!(base, ("Total time", "<strong>$(_webui_escape(_format_elapsed_duration(_webui_total_elapsed_seconds(result))))</strong>"))
@@ -916,11 +1135,11 @@ function render_powerflow_history(runs, output_root::AbstractString; active_run 
     status_badge = "<span class=\"status-badge $(webui_status_class(run))\">$(_webui_escape(status))</span>"
     delete_form = "<form method=\"post\" action=\"/powerflow/delete/$(_webui_urlencode(run_id))\" class=\"delete-run-form\"><button type=\"submit\" class=\"danger-button\">Delete</button></form>"
     abort_form = lowercase(status) in ("queued", "running") ? "<form method=\"post\" action=\"/powerflow/abort/$(_webui_urlencode(run_id))\"><button type=\"submit\" class=\"danger-button\">Abort</button></form>" : ""
-    fields = (_webui_run_timestamp(run), link, status_badge, available, get(run, "iterations", ""), get(run, "final_mismatch", ""), get(run, "casefile", ""), get(run, "config_file", ""))
+    fields = (_webui_run_timestamp(run), link, status_badge, available, get(run, "solver", "rectangular"), get(run, "iterations", ""), get(run, "final_mismatch", ""), get(run, "casefile", ""), get(run, "config_file", ""))
     cells = "<td>$(_webui_escape(fields[1]))</td><td>$(fields[2])</td><td>$(fields[3])</td>" * join(("<td>$(_webui_escape(field))</td>" for field in fields[4:end]), "")
     "<tr>$(cells)<td>$(abort_form)$(delete_form)</td></tr>"
   end for run in ordered_runs), "")
-  content = "$(_webui_active_run_banner(active_run))<section class=\"panel history-actions\"><p><strong>Output root:</strong> <code>$(_webui_escape(output_root))</code></p><div class=\"actions\"><form method=\"post\" action=\"/powerflow/refresh\"><button type=\"submit\">Refresh registry</button></form><form method=\"post\" action=\"/powerflow/delete_all\"><button type=\"submit\" class=\"danger-button\">Delete all runs</button></form></div></section>\n<section class=\"panel\"><table><thead><tr><th>Date/Time</th><th>Run ID</th><th>Status</th><th>Available</th><th>Iterations</th><th>Final mismatch</th><th>Case file</th><th>Config file</th><th>Delete</th></tr></thead><tbody>$(rows)</tbody></table></section>"
+  content = "$(_webui_active_run_banner(active_run))<section class=\"panel history-actions\"><p><strong>Output root:</strong> <code>$(_webui_escape(output_root))</code></p><div class=\"actions\"><form method=\"post\" action=\"/powerflow/refresh\"><button type=\"submit\">Refresh registry</button></form><form method=\"post\" action=\"/powerflow/delete_all\"><button type=\"submit\" class=\"danger-button\">Delete all runs</button></form></div></section>\n<section class=\"panel\"><table><thead><tr><th>Date/Time</th><th>Run ID</th><th>Status</th><th>Available</th><th>Solver</th><th>Iterations</th><th>Final mismatch</th><th>Case file</th><th>Config file</th><th>Delete</th></tr></thead><tbody>$(rows)</tbody></table></section>"
   return _webui_layout("Run history", content; show_back = true)
 end
 

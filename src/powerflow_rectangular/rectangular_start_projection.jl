@@ -63,58 +63,7 @@ function _dc_angle_start_rectangular(Ybus, Vraw::Vector{ComplexF64}, S::Vector{C
   nred == 0 && return copy(Vraw)
   pos = build_pos_map(non_slack, n)
 
-  B = if Ybus isa SparseMatrixCSC
-    I = Int[]
-    J = Int[]
-    V = Float64[]
-    sizehint!(I, 2 * nnz(Ybus))
-    sizehint!(J, 2 * nnz(Ybus))
-    sizehint!(V, 2 * nnz(Ybus))
-    rv = rowvals(Ybus)
-    nz = nonzeros(Ybus)
-    @inbounds for j in axes(Ybus, 2)
-      for ptr in nzrange(Ybus, j)
-        i = rv[ptr]
-        i == j && continue
-        ri = pos[i]
-        ri == 0 && continue
-        bij = imag(nz[ptr])
-        bij == 0.0 && continue
-        if j != slack_idx
-          cj = pos[j]
-          if cj != 0
-            # Off-diagonal reduced B term.
-            push!(I, ri)
-            push!(J, cj)
-            push!(V, -bij)
-          end
-        end
-        # Diagonal accumulation for row i in reduced coordinates.
-        push!(I, ri)
-        push!(J, ri)
-        push!(V, bij)
-      end
-    end
-    sparse(I, J, V, nred, nred)
-  else
-    B = zeros(Float64, nred, nred)
-    @inbounds for i in non_slack
-      ri = pos[i]
-      for j in axes(Ybus, 2)
-        j == i && continue
-        bij = imag(Ybus[i, j])
-        bij == 0.0 && continue
-        if j != slack_idx
-          cj = pos[j]
-          if cj != 0
-            B[ri, cj] -= bij
-          end
-        end
-        B[ri, ri] += bij
-      end
-    end
-    B
-  end
+  B = reduce_susceptance_to_nonslack(Ybus, non_slack, pos, slack_idx, nred; value_of = imag)
 
   P = real.(S[non_slack])
   θred = _solve_dc_angle_system(B, P, nothing, nred)
@@ -231,56 +180,7 @@ function _dc_angle_start_rectangular_profiled(Ybus, Vraw::Vector{ComplexF64}, S:
 
   # Profiled variant keeps assembly/solve phases separated for timing analysis.
   B = _perf_profile_time!(performance_profile, :start_projection_dc_matrix_assembly) do
-    if Ybus isa SparseMatrixCSC
-      I = Int[]
-      J = Int[]
-      V = Float64[]
-      sizehint!(I, 2 * nnz(Ybus))
-      sizehint!(J, 2 * nnz(Ybus))
-      sizehint!(V, 2 * nnz(Ybus))
-      rv = rowvals(Ybus)
-      nz = nonzeros(Ybus)
-      @inbounds for j in axes(Ybus, 2)
-        for ptr in nzrange(Ybus, j)
-          i = rv[ptr]
-          i == j && continue
-          ri = pos[i]
-          ri == 0 && continue
-          bij = imag(nz[ptr])
-          bij == 0.0 && continue
-          if j != slack_idx
-            cj = pos[j]
-            if cj != 0
-              push!(I, ri)
-              push!(J, cj)
-              push!(V, -bij)
-            end
-          end
-          push!(I, ri)
-          push!(J, ri)
-          push!(V, bij)
-        end
-      end
-      sparse(I, J, V, nred, nred)
-    else
-      B = zeros(Float64, nred, nred)
-      @inbounds for i in non_slack
-        ri = pos[i]
-        for j in axes(Ybus, 2)
-          j == i && continue
-          bij = imag(Ybus[i, j])
-          bij == 0.0 && continue
-          if j != slack_idx
-            cj = pos[j]
-            if cj != 0
-              B[ri, cj] -= bij
-            end
-          end
-          B[ri, ri] += bij
-        end
-      end
-      B
-    end
+    reduce_susceptance_to_nonslack(Ybus, non_slack, pos, slack_idx, nred; value_of = imag)
   end
 
   P = real.(S[non_slack])

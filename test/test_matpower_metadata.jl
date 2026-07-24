@@ -30,6 +30,39 @@ function _metadata_case(; branch_kind = ["L"], dcline = nothing)
 end
 
 function run_matpower_metadata_tests()
+  @testset "Newline-separated matrix rows (RTS-GMLC style)" begin
+    # MATLAB accepts bare newlines as matrix row separators; official MATPOWER
+    # cases terminate rows with ';' but e.g. RTS-GMLC does not. Splitting on
+    # ';' alone silently collapsed such matrices into a single row.
+    mktempdir() do dir
+      path = joinpath(dir, "case_newline_rows.m")
+      write(path, """
+function mpc = case_newline_rows
+mpc.version = '2';
+mpc.baseMVA = 100.0;
+mpc.bus = [
+\t1\t3\t0.0\t0.0\t0.0\t0.0\t1\t1.0\t0.0\t110.0\t1\t1.05\t0.95
+\t2\t1\t10.0\t3.0\t0.0\t0.0\t1\t1.0\t0.0\t110.0\t1\t1.05\t0.95
+];
+mpc.gen = [
+\t1\t10.0\t3.0\t99\t-99\t1.0\t100.0\t1\t99\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0
+];
+mpc.branch = [
+\t1\t2\t0.01\t0.1\t0.0\t100\t100\t100\t0.0\t0.0\t1\t-360\t360
+];
+""")
+      mpc = Sparlectra.MatpowerIO.read_case_m(path; legacy_compat = false)
+      @test size(mpc.bus) == (2, 13)
+      @test size(mpc.gen) == (1, 21)
+      @test size(mpc.branch) == (1, 13)
+      @test mpc.bus[2, 1] == 2.0
+      @test mpc.bus[2, 3] == 10.0
+      # Mixed style (';' plus newlines) keeps working unchanged.
+      net = createNetFromMatPowerFile(filename = path)
+      @test length(net.nodeVec) == 2
+    end
+  end
+
   @testset "MATPOWER metadata import" begin
     mktempdir() do dir
       path = joinpath(dir, "case_meta.m")

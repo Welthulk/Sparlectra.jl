@@ -42,6 +42,8 @@ function _indexed_run_paths(entry::AbstractDict, output_root::AbstractString)
 end
 
 function _powerflow_run_index_entry(result::SparlectraApiResult)::Dict{String,Any}
+  final_outcome = get(result.metadata, "final_outcome", Dict{String,Any}())
+  solver = final_outcome isa AbstractDict ? String(get(final_outcome, "solver", "rectangular")) : "rectangular"
   return Dict{String,Any}(
     "run_id" => result.run_id,
     "schema_version" => result.schema_version,
@@ -53,6 +55,7 @@ function _powerflow_run_index_entry(result::SparlectraApiResult)::Dict{String,An
     "config_file" => result.config_file,
     "final_mismatch" => result.final_mismatch,
     "iterations" => result.iterations,
+    "solver" => solver,
     "timestamp" => Dates.format(Dates.now(), "yyyy-mm-dd HH:MM:SS"),
   )
 end

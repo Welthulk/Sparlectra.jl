@@ -22,6 +22,7 @@ const GUI_EDITABLE_CONFIG_KEYS = Set([
   "power_flow.qlimits.enabled",
   "power_flow.qlimits.enforcement_mode",
   "power_flow.solver",
+  "power_flow.linear_solver",
   "power_flow.apslf.order",
   "power_flow.apslf.use_pade",
   "power_flow.apslf.nr_polish",
@@ -30,6 +31,7 @@ const GUI_EDITABLE_CONFIG_KEYS = Set([
   "power_flow.wrong_branch_detection",
   "power_flow.start_mode.angle_mode",
   "power_flow.start_mode.voltage_mode",
+  "power_flow.start_mode.dc_seed_unconditional",
   "power_flow.start_current_iteration.enabled",
   "power_flow.start_current_iteration.max_iter",
   "power_flow.start_current_iteration.tol",
@@ -120,6 +122,8 @@ function _validate_gui_override_value(key::String, value)
     method === :rectangular || throw(ArgumentError(unsupported_powerflow_method_message(method)))
   elseif key == "power_flow.solver"
     _validate_allowed_symbol(key, _as_symbol_cfg(value), POWERFLOW_SOLVER_VALUES)
+  elseif key == "power_flow.linear_solver"
+    _validate_allowed_symbol(key, _as_symbol_cfg(value), POWERFLOW_LINEAR_SOLVER_VALUES)
   elseif key == "power_flow.qlimits.enforcement_mode"
     _canonical_qlimit_enforcement_mode(_as_symbol_cfg(value))
   elseif key == "power_flow.wrong_branch_detection"

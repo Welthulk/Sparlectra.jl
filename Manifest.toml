@@ -2,7 +2,7 @@
 
 julia_version = "1.12.6"
 manifest_format = "2.0"
-project_hash = "f24e9c29f41db9d2241a8371c60722d1e54c0b72"
+project_hash = "7f1a2fbb04175d16ca7c748372e1cc859b817da5"
 
 [[deps.ArgTools]]
 uuid = "0dad84c5-d112-42e6-8d28-ef12dabb789f"
@@ -127,6 +127,12 @@ version = "1.6.1"
 deps = ["StyledStrings"]
 uuid = "ac6e5ff7-fb65-4e79-a425-ec3bc9c03011"
 version = "1.12.0"
+
+[[deps.KLU]]
+deps = ["LinearAlgebra", "SparseArrays", "SuiteSparse_jll"]
+git-tree-sha1 = "07649c499349dad9f08dde4243a4c597064663e9"
+uuid = "ef3ab10e-7fda-4108-b977-705223b18434"
+version = "0.6.0"
 
 [[deps.LaTeXStrings]]
 git-tree-sha1 = "dda21b8cbd6a6c40d9d02a73230f9d70fed6918c"
@@ -281,10 +287,10 @@ uuid = "a2af1166-a08f-5f64-846c-94a0d3cef48c"
 version = "1.2.2"
 
 [[deps.Sparlectra]]
-deps = ["BenchmarkTools", "DataFrames", "Dates", "Downloads", "InlineStrings", "LinearAlgebra", "Logging", "Markdown", "Printf", "Random", "SHA", "Sockets", "SparseArrays", "TOML", "UUIDs"]
+deps = ["BenchmarkTools", "DataFrames", "Dates", "Downloads", "InlineStrings", "KLU", "LinearAlgebra", "Logging", "Markdown", "Printf", "Random", "SHA", "Sockets", "SparseArrays", "TOML", "UUIDs"]
 path = "."
 uuid = "31ce9bba-fd9d-44a1-b005-f5f509afda38"
-version = "0.8.14"
+version = "0.8.15"
 
     [deps.Sparlectra.extensions]
     SparlectraAnalyticLoadFlowExt = "AnalyticLoadFlow"

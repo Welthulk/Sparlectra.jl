@@ -135,6 +135,7 @@ function _run_q_limits_matpower_outer_loop!(
   rectangular_workspace_reuse::Bool,
   rectangular_preallocate_workspace::Symbol,
   rectangular_workspace_min_buses::Int,
+  linear_solver::Symbol = :umfpack,
 )
   mode in (:classic_simultaneous, :classic_one_at_a_time) || error("Unsupported classical Q-limit mode $(mode).")
   resetQLimitLog!(net)
@@ -219,6 +220,7 @@ function _run_q_limits_matpower_outer_loop!(
         rectangular_workspace_reuse = rectangular_workspace_reuse,
         rectangular_preallocate_workspace = rectangular_preallocate_workspace,
         rectangular_workspace_min_buses = rectangular_workspace_min_buses,
+        linear_solver = linear_solver,
       )
       total_iters += iters
       if erg != 0

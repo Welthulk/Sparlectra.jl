@@ -29,6 +29,7 @@ mutable struct _SparlectraWebUIRuntime
   shutdown_reason::Union{Symbol,Nothing}
   lifecycle_io::IO
   lock::ReentrantLock
+  warmup_state::Symbol
 end
 
 """
@@ -303,6 +304,45 @@ function _webui_open_browser(url::String)
   return nothing
 end
 
+function _webui_set_warmup_state!(runtime::_SparlectraWebUIRuntime, state::Symbol)
+  lock(runtime.lock) do
+    runtime.warmup_state = state
+  end
+  return nothing
+end
+
+function _webui_warmup_in_progress(runtime::_SparlectraWebUIRuntime)::Bool
+  return lock(runtime.lock) do
+    # :waiting_first_page → server up, warm-up solve deliberately deferred
+    # until the warm-up page has been served once; :page_served → page went
+    # out, solve about to start; :warming → solve running.
+    runtime.warmup_state in (:waiting_first_page, :page_served, :warming)
+  end
+end
+
+"""Flip the warm-up gate once the warm-up page has been rendered for the
+browser, so the CPU-bound warm-up solve only starts after the user can see
+the "warming up" message instead of a blank tab."""
+function _webui_mark_warmup_page_served!(runtime::_SparlectraWebUIRuntime)
+  lock(runtime.lock) do
+    runtime.warmup_state === :waiting_first_page && (runtime.warmup_state = :page_served)
+  end
+  return nothing
+end
+
+_webui_mark_warmup_page_served!(::Any) = nothing
+
+function _webui_warmup_page_served(runtime::_SparlectraWebUIRuntime)::Bool
+  return lock(runtime.lock) do
+    runtime.warmup_state !== :waiting_first_page
+  end
+end
+
+# Some tests pass a lightweight NamedTuple stand-in for `runtime` (only the
+# fields a particular handler needs) instead of a full _SparlectraWebUIRuntime;
+# such stand-ins never warm up.
+_webui_warmup_in_progress(::Any)::Bool = false
+
 function _webui_record_heartbeat!(runtime::_SparlectraWebUIRuntime)
   lock(runtime.lock) do
     runtime.heartbeat_received = true
@@ -406,10 +446,12 @@ the configured output root.
 The warm-up run is scheduled on a background task, but Julia's single-threaded
 cooperative scheduler still means a CPU-bound solve of that task can delay the
 HTTP server from responding to the *first* browser request until the solve
-reaches a yield point. `warmup_delay_seconds` (default `2.0`) waits before
-starting the warm-up solve, giving the browser time to load the initial page
-first so users see the Web UI shell rather than an unresponsive blank tab.
-Set it to `0.0` to start the warm-up immediately (the previous behavior).
+reaches a yield point. The warm-up solve therefore only starts after the
+"warming up" page has actually been served once (with a 30 s fallback when no
+browser connects), followed by a `warmup_delay_seconds` grace period (default
+`2.0`) so the browser can paint it. After the solve, the PowerFlow form render
+path is pre-compiled as well, so the automatic refresh that replaces the
+warm-up page is fast.
 """
 function _run_sparlectra_webui_warmup(output_root::AbstractString; warmup_casefile::Union{Nothing,AbstractString} = nothing, warmup_store_result::Bool = false, runner = run_sparlectra_api)
   casefile = warmup_casefile === nothing ? joinpath(_WEBUI_PACKAGE_ROOT, "data", "webui", "warmup_case3.jl") : abspath(warmup_casefile)
@@ -505,7 +547,7 @@ function start_sparlectra_webui(; host::AbstractString = "127.0.0.1", port::Inte
   end
   _webui_startup_log(_lifecycle_io, "webui_server_bound"; operation_log = paths.operation_log, status = "bound", host = host_string, port = Int(port))
   effective_shutdown_on_browser_close = auto_shutdown_on_browser_close === nothing ? shutdown_on_browser_close : Bool(auto_shutdown_on_browser_close)
-  runtime = _SparlectraWebUIRuntime(listener, paths.case_directory, paths.config_file, paths.operation_log, config_error, _test_runner, effective_shutdown_on_browser_close, false, 0.0, 0, nothing, _lifecycle_io, ReentrantLock())
+  runtime = _SparlectraWebUIRuntime(listener, paths.case_directory, paths.config_file, paths.operation_log, config_error, _test_runner, effective_shutdown_on_browser_close, false, 0.0, 0, nothing, _lifecycle_io, ReentrantLock(), warmup ? :waiting_first_page : :disabled)
   task = @async begin
     try
       while isopen(listener)
@@ -529,16 +571,30 @@ function start_sparlectra_webui(; host::AbstractString = "127.0.0.1", port::Inte
   browser_monitor_task = nothing
   if warmup
     @async try
-      # Let the browser load the initial page before the CPU-bound warm-up
-      # solve starts; a busy warm-up task can otherwise delay the HTTP
-      # server's response to the first request on Julia's single-threaded
-      # cooperative scheduler, making the Web UI look unresponsive/blank.
+      # Serve the warm-up page before the CPU-bound warm-up solve starts: on
+      # Julia's single-threaded cooperative scheduler a busy warm-up task
+      # delays the HTTP response to the first browser request, leaving the
+      # user staring at a blank tab. Wait until the warm-up page has actually
+      # been rendered once (with a fallback timeout in case no browser
+      # connects), then give the browser a short grace period to paint it.
+      waited = 0.0
+      while waited < 30.0 && !_webui_warmup_page_served(runtime)
+        sleep(0.2)
+        waited += 0.2
+      end
       delay = Float64(warmup_delay_seconds)
       isfinite(delay) && delay > 0 && sleep(delay)
+      _webui_set_warmup_state!(runtime, :warming)
       warmup_result = _run_sparlectra_webui_warmup(root; warmup_casefile, warmup_store_result)
       warmup_result.success || @warn "Sparlectra Web UI warm-up run did not converge" reason = warmup_result.reason message = warmup_result.message
+      # Pre-compile the PowerFlow form render path too, so the automatic
+      # refresh that replaces the warm-up page does not pay the first-render
+      # JIT cost while the user is waiting.
+      render_powerflow_form(output_root = root, case_directory = paths.case_directory, operation_log = paths.operation_log, selected_config_file = paths.config_file)
     catch err
       @warn "Sparlectra Web UI warm-up failed; normal runs remain available" exception = (err, catch_backtrace())
+    finally
+      _webui_set_warmup_state!(runtime, :done)
     end
   end
   if open_browser

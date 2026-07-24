@@ -21,6 +21,19 @@ function _postprocess_sparlectra_result!(result::SparlectraRunResult, cfg::Sparl
   result.solution_available || return result
   phase_callback = result.performance_profile isa AbstractDict ? get(result.performance_profile, :phase_callback, phase -> nothing) : phase -> nothing
   phase_callback("postprocessing_result")
+  if cfg.powerflow.solver === :dc
+    # DC branch flows are already final (lossless, computed directly from
+    # theta) — calcNetLosses!/calcLinkFlowsKCL! are AC-π-model-based and
+    # would silently overwrite them, and printACPFlowResults would error
+    # against DC's empty AC diagnostics.
+    out_cfg = cfg.output
+    if emit_output && out_cfg.logfile_results !== :off
+      _perf_profile_time!(result.performance_profile, :result_output) do
+        printDcPowerFlowResults(result.net, result.elapsed_s)
+      end
+    end
+    return result
+  end
   _perf_profile_time!(result.performance_profile, :postprocess_losses_and_flows) do
     calcNetLosses!(result.net)
     calcLinkFlowsKCL!(result.net)
