@@ -1712,10 +1712,14 @@ settings:
       @test occursin("trustRegionGroup.hidden = hideNrOnly", form_html)
       @test occursin("container.hidden = hideNrOnly", form_html)
       @test occursin("control.disabled = hideNrOnly", form_html)
-      # DC additionally hides/disables AC-only fields with no DC meaning at all (tolerance,
+      # DC additionally hides AC-only fields with no DC meaning at all (tolerance,
       # Q-limit handling, the solver dropdown itself, APSLF start values, tap-changer model).
+      # Only the Solver dropdown is exempted from also being *disabled*: a disabled
+      # <select> is dropped from the submitted form entirely, which would silently
+      # drop power_flow.solver=dc from the request (regression test below).
       @test occursin("const acOnlyFields = document.querySelectorAll('[data-ac-only-field]')", form_html)
       @test occursin("const updateCalcMode = function ()", form_html)
+      @test occursin("if (control === solverSelect) return;", form_html)
       for field in (
         "<label data-ac-only-field><span class=\"field-label\">Tolerance ",
         "<label data-ac-only-field><span class=\"field-label\">Solver ",
@@ -2408,7 +2412,10 @@ result = get_powerflow_result(run_id)
         @test occursin("DC (lineares Screening-Modell)", rendered_form)
         @test occursin("Berechnungsmodell", rendered_form)
         @test occursin("data-ac-only-field", rendered_form)
-        @test occursin("<option value=\"dc\">DC (lineares Screening-Modell)</option>", rendered_form)
+        # The Solver dropdown's own "dc" option is non-selectable in the UI
+        # (disabled + hidden): DC can only be chosen via the Berechnungsmodell
+        # radio group above, so there is exactly one place to pick it.
+        @test occursin("<option value=\"dc\" disabled hidden>DC (via Berechnungsmodell oben ausgewählt)</option>", rendered_form)
 
         # (2b) POST with DC mode terminates successfully; result.json carries the DC flag.
         dc_form = _webui_test_form(dc_casefile, dc_config_file, dc_output_root)

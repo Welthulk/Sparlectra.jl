@@ -243,14 +243,27 @@ flow. Selecting DC does not add a new configuration key: it drives the same
 `power_flow.solver` override as the Solver dropdown (forcing it to `dc`) and
 is documented together with `power_flow.solver` in
 [`powerflow_configuration.md`](powerflow_configuration.md#solver-selection-dc-power-flow).
-Selecting DC hides and disables the Solver dropdown itself along with every
-AC-only option that has no DC meaning: tolerance, autodamping/merit/trust-region
-step control, Q-limit handling, maximum iterations, wrong-branch detection,
-start angle/voltage mode, the current-iteration pre-solve block, and the
-transformer tap-changer model. These fields are not silently ignored — they
-are removed from the submitted form entirely by disabling their inputs before
-serialization, the same client-side mechanism already used to hide
-Newton-Raphson-only fields when APSLF is selected.
+Selecting DC hides every AC-only option that has no DC meaning: the Solver
+dropdown itself, tolerance, autodamping/merit/trust-region step control,
+Q-limit handling, maximum iterations, wrong-branch detection, start
+angle/voltage mode, the current-iteration pre-solve block, and the
+transformer tap-changer model. All of those *except the Solver dropdown* are
+also removed from the submitted form entirely by disabling their inputs
+before serialization, the same client-side mechanism already used to hide
+Newton-Raphson-only fields when APSLF is selected. The Solver dropdown is
+deliberately excluded from that disabling: it is the field carrying the
+`power_flow.solver=dc` value, so it stays hidden-but-enabled and its
+(JS-forced) `dc` value is still submitted. An earlier version of this page
+and its implementation disabled the Solver dropdown along with the other
+AC-only fields; because browsers omit disabled controls from a submitted
+form, that silently dropped `power_flow.solver` from the request and made
+the run fall back to the server-side default solver (`rectangular`,
+Newton-Raphson) instead of running DC — reported to the user as an ordinary
+AC/NR convergence failure with no mention of DC anywhere in the diagnostics.
+This has been fixed; the Solver dropdown's own `dc` option is additionally
+marked non-selectable in the UI (`disabled`/`hidden` on that `<option>`) so
+DC can only ever be chosen via the Berechnungsmodell radio group, removing
+the redundant, easy-to-desync second place to pick it.
 
 A DC run reuses the existing asynchronous job, abort, status, history, and
 artifact machinery unchanged; only the request's `power_flow.solver` override

@@ -427,7 +427,7 @@ $(dat_hint_html)
 <label class="check"><input type="radio" name="power_flow_calc_mode" value="ac" data-calc-mode-radio$(_webui_form_string(_webui_selected(profile_values, "power_flow_solver", _webui_option_default("power_flow_solver"))) == "dc" ? "" : " checked")>AC (Newton-Raphson, rectangular)</label>
 <label class="check"><input type="radio" name="power_flow_calc_mode" value="dc" data-calc-mode-radio$(_webui_form_string(_webui_selected(profile_values, "power_flow_solver", _webui_option_default("power_flow_solver"))) == "dc" ? " checked" : "")>DC (lineares Screening-Modell)</label>
 </fieldset>
-<label data-ac-only-field>$(_webui_field_label("power_flow_solver", "Solver"))<select name="power_flow_solver" data-solver-select><option value="rectangular"$(_webui_form_string(_webui_selected(profile_values, "power_flow_solver", _webui_option_default("power_flow_solver"))) == "rectangular" ? " selected" : "")>Newton-Raphson (rectangular)</option><option value="apslf"$(_webui_form_string(_webui_selected(profile_values, "power_flow_solver", _webui_option_default("power_flow_solver"))) == "apslf" ? " selected" : "")>APSLF (AnalyticLoadFlow)</option><option value="dc"$(_webui_form_string(_webui_selected(profile_values, "power_flow_solver", _webui_option_default("power_flow_solver"))) == "dc" ? " selected" : "")>DC (lineares Screening-Modell)</option></select></label>
+<label data-ac-only-field>$(_webui_field_label("power_flow_solver", "Solver"))<select name="power_flow_solver" data-solver-select><option value="rectangular"$(_webui_form_string(_webui_selected(profile_values, "power_flow_solver", _webui_option_default("power_flow_solver"))) == "rectangular" ? " selected" : "")>Newton-Raphson (rectangular)</option><option value="apslf"$(_webui_form_string(_webui_selected(profile_values, "power_flow_solver", _webui_option_default("power_flow_solver"))) == "apslf" ? " selected" : "")>APSLF (AnalyticLoadFlow)</option><option value="dc" disabled hidden$(_webui_form_string(_webui_selected(profile_values, "power_flow_solver", _webui_option_default("power_flow_solver"))) == "dc" ? " selected" : "")>DC (via Berechnungsmodell oben ausgewählt)</option></select><small class="field-hint">DC wird ausschließlich über das Berechnungsmodell oben gewählt, nicht hier.</small></label>
 <fieldset id="apslf-solver-options" class="span-2 apslf-solver-options" data-apslf-solver-options hidden>
 <legend>APSLF solver options</legend>
 <label class=\"field-indent\">$(_webui_field_label("power_flow_apslf_order", "Highest coefficient (order)"))<input name=\"power_flow_apslf_order\" type=\"number\" min=\"1\" value=\"$(_webui_input_value(profile_values, "power_flow_apslf_order", _webui_option_default("power_flow_apslf_order")))\"></label>
@@ -660,7 +660,14 @@ document.addEventListener('DOMContentLoaded', function () {
     acOnlyFields.forEach(function (container) {
       container.hidden = dc;
       const controls = container.matches('input, select') ? [container] : container.querySelectorAll('input, select');
-      controls.forEach(function (control) { control.disabled = dc; });
+      controls.forEach(function (control) {
+        // Never disable the solver select itself: a disabled <select> is
+        // dropped from the submitted form data entirely, which would make
+        // "DC" silently fall back to the server-side default solver
+        // (rectangular NR) instead of actually running the DC solver.
+        if (control === solverSelect) return;
+        control.disabled = dc;
+      });
     });
     updateSolverOptions();
     updateStepControlOptions();

@@ -122,6 +122,21 @@
   protection and `is-submitting`/`aria-busy` behavior are unchanged. Plain
   "Start PowerFlow run" clicks are unaffected and still never write
   `diagnose.log`.
+* Web UI **selecting "DC" in Berechnungsmodell silently ran an AC
+  Newton-Raphson solve instead of DC** — same disabled-elements-are-dropped-
+  from-submitted-form-data root cause as the Diagnose-button bug above, this
+  time on the **Solver** dropdown. Choosing DC correctly forced the hidden
+  Solver `<select>`'s value to `dc` client-side, but then also disabled that
+  same `<select>` (it was treated like the other AC-only fields it sits
+  next to); a disabled control is excluded from the submitted form entirely,
+  so `power_flow.solver` never reached the server and the run silently used
+  the default solver (`rectangular`) instead. The failure was reported as an
+  ordinary AC-island Newton-Raphson convergence failure, with nothing in the
+  diagnostics naming DC or the mismatch. The Solver `<select>` is now
+  exempted from the AC-only disabling (still hidden, but stays enabled so
+  its value submits); its own `dc` option is additionally marked
+  non-selectable in the UI so DC can only be chosen via the Berechnungsmodell
+  radio group, removing the second, easy-to-desync place to pick it.
 
 # Version 0.8.14 — 2026-07-22
 
