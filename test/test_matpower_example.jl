@@ -201,7 +201,7 @@ state_estimation:
   end
 
   @testset "MATPOWER example cleanup guard" begin
-    source = read(joinpath(@__DIR__, "..", "examples", "matpower_import.jl"), String)
+    source = read(joinpath(@__DIR__, "..", "examples", "powerflow", "matpower_import.jl"), String)
     @test !occursin("load_yaml_dict", source)
     @test !occursin("_normalize_matpower_example_config", source)
     @test !occursin("_copy_nested_yaml!", source)
@@ -213,7 +213,7 @@ state_estimation:
     @test occursin("Base.invokelatest(getfield(@__MODULE__, :_resolve_julia_threads_request)", source)
     @test occursin("Base.invokelatest(", source)
 
-    example_path = joinpath(@__DIR__, "..", "examples", "matpower_import.jl")
+    example_path = joinpath(@__DIR__, "..", "examples", "powerflow", "matpower_import.jl")
     old_no_main = get(ENV, "SPARLECTRA_MATPOWER_IMPORT_NO_MAIN", nothing)
     ENV["SPARLECTRA_MATPOWER_IMPORT_NO_MAIN"] = "1"
     mod = Module(:MatpowerImportExampleSmoke)

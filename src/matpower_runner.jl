@@ -365,7 +365,7 @@ function print_runtime_thread_config(io::IO, status)
   if status.julia_startup_required
     println(io, "Request not applied: Julia threads must be set at process startup.")
     println(io, "Start with:")
-    println(io, "  julia --threads=", status.requested_julia_threads_resolved, " --project=. examples/matpower_import.jl")
+    println(io, "  julia --threads=", status.requested_julia_threads_resolved, " --project=. examples/powerflow/matpower_import.jl")
   end
   return nothing
 end

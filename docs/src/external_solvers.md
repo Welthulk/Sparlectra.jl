@@ -233,7 +233,7 @@ depth. Concretely, compared to the internal rectangular path:
 See:
 
 ```
-examples/export_solution.jl
+examples/others/export_solution.jl
 ```
 
 This example:

@@ -99,19 +99,19 @@ case_jl_path = ensure_casefile("case14.jl")
 
 ### MATPOWER auto-profile pre-run
 
-The `examples/matpower_import.jl` workflow can run a compact diagnostic
+The `examples/powerflow/matpower_import.jl` workflow can run a compact diagnostic
 pre-run before the main power-flow solve:
 
 It also supports explicit Julia-thread startup control for script workflows:
 
 ```bash
-julia --threads=8 --project=. examples/matpower_import.jl
-julia --project=. examples/matpower_import.jl --julia-threads=8
+julia --threads=8 --project=. examples/powerflow/matpower_import.jl
+julia --project=. examples/powerflow/matpower_import.jl --julia-threads=8
 ```
 
 ```powershell
 $env:SPARLECTRA_JULIA_THREADS = "8"
-julia --project=. examples/matpower_import.jl
+julia --project=. examples/powerflow/matpower_import.jl
 ```
 
 `runtime.julia_threads` is resolved after CLI/env overrides; if the requested

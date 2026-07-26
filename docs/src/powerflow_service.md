@@ -183,7 +183,7 @@ Interpret the major loading phases as follows:
   `performance.log`.
 
 This layer intentionally introduces no HTTP routes, Genie.jl server, browser
-GUI, authentication, or database. See `examples/exp_powerflow_service.jl` for a
+GUI, authentication, or database. See `examples/powerflow/exp_powerflow_service.jl` for a
 runnable local example.
 
 ## Web UI runtime paths and cancellation

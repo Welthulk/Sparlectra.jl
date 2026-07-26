@@ -1,6 +1,10 @@
 # Examples Overview
 
-This page summarizes the most relevant runnable examples in `examples/`.
+This page summarizes the most relevant runnable examples in `examples/`. The
+examples covered by the suite runners live in the topic subfolders
+`examples/powerflow/`, `examples/state_estimation/`, and `examples/others/`;
+the DTF validation cluster and shared infrastructure stay in
+`examples/internal/`, experimental material in `examples/experimental/`.
 
 ## Power flow and network operation
 
@@ -43,7 +47,7 @@ This page summarizes the most relevant runnable examples in `examples/`.
   Lightweight three-controller demo (OLTC + PST + Schrägregler) using `run_sparlectra(net = ...)`,
   central Sparlectra configuration (`examples/configuration.yaml` or
   `SPARLECTRA_CONFIGURATION_YAML`) plus demo-specific
-  `examples/tap_control_demo_grid.yaml`, and `latest_control_result(net)` for
+  `examples/others/tap_control_demo_grid.yaml`, and `latest_control_result(net)` for
   controller rows and trace rows. Optional classic output:
   `SPARLECTRA_TAP_DEMO_CLASSIC=1`; optional raw control-result rows:
   `SPARLECTRA_TAP_DEMO_RAW=1`.
@@ -146,7 +150,7 @@ paths. See the tests page for the full mode/case reference.
 From repository root:
 
 ```bash
-julia --project=. examples/tap_control_demo_grid.jl
+julia --project=. examples/others/tap_control_demo_grid.jl
 ```
 
 General pattern:
@@ -154,3 +158,25 @@ General pattern:
 ```bash
 julia --project=. examples/<example_name>.jl
 ```
+
+## Example suites
+
+Three suite runners execute a whole group of examples — each in a fresh Julia
+subprocess — and write a summary (CSV + Markdown) plus per-example logs to
+`examples/_out/<suite>/`:
+
+```bash
+julia --project=. examples/run_powerflow_suite.jl
+julia --project=. examples/run_state_estimation_suite.jl
+julia --project=. examples/run_others_suite.jl
+```
+
+Examples tagged `heavy` (very large cases, performance benchmarks) or
+`optional` (optional dependency, experimental API) are skipped by default and
+reported as skipped; enable them with `--include-heavy` / `--include-optional`.
+Use `--list` to print a suite's registry, `--only=<name,...>` /
+`--skip=<name,...>` to select examples, and `--help` for all options
+(`--strict`, `--timeout=`, `--output-dir=`, ...).
+
+The DTF validation examples have their own dedicated suite,
+`examples/validate_dtf_suite.jl`, and are not part of `run_others_suite.jl`.

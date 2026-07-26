@@ -109,7 +109,7 @@ function run_synthetic_grid_tests()
   end
 
   @testset "Synthetic example is thin wrapper" begin
-    source = read(joinpath(@__DIR__, "..", "examples", "exp_synthetic_tiled_grid_pf_perf.jl"), String)
+    source = read(joinpath(@__DIR__, "..", "examples", "powerflow", "exp_synthetic_tiled_grid_pf_perf.jl"), String)
     @test !occursin("DEFAULT_CONFIG = Dict", source)
     @test !occursin("load_yaml_dict", source)
     @test !occursin("merge_yaml_dict!", source)

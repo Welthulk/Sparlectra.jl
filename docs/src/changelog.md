@@ -72,7 +72,7 @@
   reads AC-only `rectangular_pf_status` fields that a DC solve never
   populates — not a crash, just an unpopulated diagnostics artifact; a
   future iteration may give DC its own per-island diagnostics writer. See
-  `examples/exp_dc_powerflow.jl`.
+  `examples/powerflow/exp_dc_powerflow.jl`.
 * **DC power flow in the Web UI**: the PowerFlow form gains a
   **Berechnungsmodell** (calculation model) radio group — AC (Newton-Raphson,
   rectangular), the unchanged default, versus DC (linear screening model) —
@@ -198,7 +198,7 @@
 * **APSLF solver**: can run standalone, as the framework solver, or as a
   start-value generator ahead of the rectangular NR solve. Doesn't yet
   cover OLTC/PST/Q(U)/P(U), only simple Q-limit switching — details in
-  `docs/src/external_solvers.md`, demo in `examples/apslf_demo.jl`.
+  `docs/src/external_solvers.md`, demo in `examples/powerflow/apslf_demo.jl`.
 * **Merit-function line search** in the rectangular solver: optional
   Armijo line search inside the autodamp backtracking loop, off by
   default. Requires `autodamp = true`. Adds diagnostic fields and a
@@ -440,7 +440,7 @@
 * Added structured `ControlRunResult` output and `latest_control_result(net)` for inspecting controller status, outer iterations, PF solve count, controller rows, and trace rows.
 * Added machine-readable control trace rows for transformer control.
 * Added `run_acpflow(net=...)` as the preferred high-level entry point for already constructed networks, and made it the single public in-memory entry path.
-* Simplified `examples/tap_control_demo_grid.jl` into a lightweight demo of the generic control framework.
+* Simplified `examples/others/tap_control_demo_grid.jl` into a lightweight demo of the generic control framework.
 * Documented the `control` configuration section, including that `control.controllers` is reserved for future YAML-based controller instantiation.
 
 
@@ -520,7 +520,7 @@
 
 ### Output and Examples
 
-* `examples/export_solution.jl` now produces files instead of only printing to the console.
+* `examples/others/export_solution.jl` now produces files instead of only printing to the console.
   Typical output files are:
 
   ```text
@@ -531,7 +531,7 @@
   *_export.m
   ```
 
-* `examples/matpower_import.jl` uses the central configuration and writes logs under:
+* `examples/powerflow/matpower_import.jl` uses the central configuration and writes logs under:
 
   ```text
   examples/_out/

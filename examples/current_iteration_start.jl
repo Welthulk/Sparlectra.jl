@@ -16,4 +16,4 @@
 # file: examples/current_iteration_start.jl
 # purpose: legacy alias — redirects to exp_current_iteration_start.jl
 
-include(joinpath(@__DIR__, "exp_current_iteration_start.jl"))
+include(joinpath(@__DIR__, "powerflow", "exp_current_iteration_start.jl"))
