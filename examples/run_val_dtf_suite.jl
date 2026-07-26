@@ -13,7 +13,7 @@
 # limitations under the License.
 
 # Date: 2026-07-16
-# file: examples/validate_dtf_suite.jl
+# file: examples/run_val_dtf_suite.jl
 # purpose: unified CLI runner for DTF import audit, native DTF/FOR002 base/outage validation, and DTF->MATPOWER->Sparlectra roundtrip validation
 
 # Unified DTF validation suite.
@@ -79,7 +79,7 @@ function _print_help()
 Unified DTF validation suite
 
 Usage:
-  julia --project=. examples/validate_dtf_suite.jl [options]
+  julia --project=. examples/run_val_dtf_suite.jl [options]
 
 Main options:
   --mode=all|audit|base|outages|matpower
@@ -438,7 +438,7 @@ function _handle_error!(rows, item, mode, mode_output, err, opt)
 end
 
 function run_suite(args = ARGS)
-  print_example_banner("examples/validate_dtf_suite.jl", "unified CLI runner for DTF import audit, native DTF/FOR002 base/outage validation, and DTF->MATPOWER->Sparlectra roundtrip validation")
+  print_example_banner("examples/run_val_dtf_suite.jl", "unified CLI runner for DTF import audit, native DTF/FOR002 base/outage validation, and DTF->MATPOWER->Sparlectra roundtrip validation")
   opt = parse_suite_cli(args)
   opt === nothing && return nothing
 

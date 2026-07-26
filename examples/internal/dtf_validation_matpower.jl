@@ -13,7 +13,7 @@
 # limitations under the License.
 
 # Internal DTF validation module: DTF -> existing MATPOWER export/import
-# roundtrip validation. Extracted from validate_dtf_suite.jl; used by the
+# roundtrip validation. Extracted from run_val_dtf_suite.jl; used by the
 # suite runner and directly runnable as its own CLI entry point.
 
 module MatpowerRoundtripValidation

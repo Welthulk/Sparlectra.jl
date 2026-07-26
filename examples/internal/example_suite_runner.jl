@@ -190,7 +190,7 @@ function _user_config_available()
   return isfile(normpath(joinpath(@__DIR__, "..", "configuration.yaml")))
 end
 
-# Keep in sync with the identical helpers in examples/validate_dtf_suite.jl.
+# Keep in sync with the identical helpers in examples/run_val_dtf_suite.jl.
 function _csv_cell(value)
   value isa Missing && return ""
   value === nothing && return ""

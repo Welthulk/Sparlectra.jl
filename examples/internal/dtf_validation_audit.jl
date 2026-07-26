@@ -13,7 +13,7 @@
 # limitations under the License.
 
 # Internal DTF validation module: DTF import audit.
-# Extracted from validate_dtf_suite.jl; used by the suite runner.
+# Extracted from run_val_dtf_suite.jl; used by the suite runner.
 
 module ImportAudit
 using Printf

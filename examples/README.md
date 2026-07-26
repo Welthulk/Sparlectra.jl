@@ -19,4 +19,4 @@ julia --project=. examples/run_others_suite.jl
 
 Heavy or optional examples are skipped by default (`--include-heavy` /
 `--include-optional` enables them); see `--help` and `--list` for all options.
-DTF validation examples are covered by `examples/validate_dtf_suite.jl`.
+DTF validation examples are covered by `examples/run_val_dtf_suite.jl`.

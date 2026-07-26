@@ -72,7 +72,7 @@ External FOR001/FOR002 validation datasets are not shipped with Sparlectra;
 place local files under `data/DTF/` or pass explicit `--dtf-file`/`--for002-file`
 paths. See the tests page for the full mode/case reference.
 
-- `validate_dtf_suite.jl`  
+- `run_val_dtf_suite.jl`  
   Unified CLI runner for all DTF checks: import audit, native base-case
   validation against FOR002, DTF-listed outage validation, and the
   DTF -> existing MATPOWER export/import roundtrip. Select checks with
@@ -180,4 +180,4 @@ Use `--list` to print a suite's registry, `--only=<name,...>` /
 (`--strict`, `--timeout=`, `--output-dir=`, ...).
 
 The DTF validation examples have their own dedicated suite,
-`examples/validate_dtf_suite.jl`, and are not part of `run_others_suite.jl`.
+`examples/run_val_dtf_suite.jl`, and are not part of `run_others_suite.jl`.

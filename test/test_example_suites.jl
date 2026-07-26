@@ -128,7 +128,7 @@ end
 
   @testset "registry integrity" begin
     all_names = String[]
-    excluded = ("current_iteration_start.jl", "dtf_validation_report.jl", "for002_matpower_metadata_validation.jl", "validate_dtf_suite.jl")
+    excluded = ("current_iteration_start.jl", "dtf_validation_report.jl", "for002_matpower_metadata_validation.jl", "run_val_dtf_suite.jl")
     for script in _SUITE_SCRIPTS
       m = _include_with_no_main(joinpath(_EXAMPLES_DIR, script))
       specs = Base.invokelatest(getglobal, m, :SUITE_SPECS)

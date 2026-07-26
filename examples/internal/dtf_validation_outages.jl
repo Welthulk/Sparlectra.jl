@@ -13,7 +13,7 @@
 # limitations under the License.
 
 # Internal DTF validation module: native outage-case validation against FOR002.
-# Extracted from validate_dtf_suite.jl; used by the suite runner and directly
+# Extracted from run_val_dtf_suite.jl; used by the suite runner and directly
 # runnable as its own CLI entry point.
 
 module NativeOutageValidation
