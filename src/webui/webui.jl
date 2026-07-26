@@ -74,17 +74,69 @@ function _sparlectra_git_commit_sha()::Union{String,Nothing}
   package_path = _sparlectra_package_path()
   isempty(package_path) && return nothing
   root = abspath(joinpath(dirname(package_path), ".."))
-  git_head = joinpath(root, ".git", "HEAD")
-  isfile(git_head) || return nothing
-  head = strip(read(git_head, String))
-  if startswith(head, "ref:")
-    ref = strip(chop(head; head = 4, tail = 0))
-    ref_path = joinpath(root, ".git", split(ref, '/')...)
-    isfile(ref_path) || return nothing
+  return _git_head_commit_sha(root)
+end
+
+"""
+    _git_head_commit_sha(root) -> Union{String,Nothing}
+
+Resolve the HEAD commit SHA of the git checkout at `root` by reading git's
+on-disk files (no `git` executable required). Handles plain checkouts
+(`.git` directory), `git worktree` checkouts (`.git` is a `gitdir: <path>`
+pointer file whose shared refs live in the `commondir`), detached HEADs, and
+refs packed into `packed-refs`. Returns `nothing` when `root` is not a git
+checkout or the SHA cannot be determined.
+"""
+function _git_head_commit_sha(root::AbstractString)::Union{String,Nothing}
+  dotgit = joinpath(root, ".git")
+  gitdir = ""
+  if isdir(dotgit)
+    gitdir = dotgit
+  elseif isfile(dotgit)
+    pointer = strip(read(dotgit, String))
+    startswith(pointer, "gitdir:") || return nothing
+    target = strip(pointer[(sizeof("gitdir:") + 1):end])
+    isempty(target) && return nothing
+    gitdir = isabspath(target) ? target : abspath(joinpath(root, target))
+  else
+    return nothing
+  end
+
+  head_path = joinpath(gitdir, "HEAD")
+  isfile(head_path) || return nothing
+  head = strip(read(head_path, String))
+  isempty(head) && return nothing
+  startswith(head, "ref:") || return head
+
+  ref = strip(chop(head; head = 4, tail = 0))
+  isempty(ref) && return nothing
+
+  common = gitdir
+  commondir_file = joinpath(gitdir, "commondir")
+  if isfile(commondir_file)
+    target = strip(read(commondir_file, String))
+    isempty(target) || (common = isabspath(target) ? target : abspath(joinpath(gitdir, target)))
+  end
+
+  ref_path = joinpath(common, split(ref, '/')...)
+  if isfile(ref_path)
     sha = strip(read(ref_path, String))
     return isempty(sha) ? nothing : sha
   end
-  return isempty(head) ? nothing : head
+
+  packed = joinpath(common, "packed-refs")
+  isfile(packed) || return nothing
+  for line in eachline(packed)
+    entry = strip(line)
+    (isempty(entry) || startswith(entry, '#') || startswith(entry, '^')) && continue
+    parts = split(entry; limit = 2)
+    length(parts) == 2 || continue
+    if strip(parts[2]) == ref
+      sha = strip(parts[1])
+      return isempty(sha) ? nothing : sha
+    end
+  end
+  return nothing
 end
 
 include("options.jl")
