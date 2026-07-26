@@ -131,4 +131,4 @@ The transport forms omit `raw_result` by default because a solved `Net` is not a
 stable JSON/YAML representation. Pass `include_raw_result=true` only for custom
 Julia-side inspection.
 
-See `examples/exp_programmatic_api.jl` for a runnable example.
+See `examples/powerflow/exp_programmatic_api.jl` for a runnable example.

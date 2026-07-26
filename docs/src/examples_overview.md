@@ -1,6 +1,11 @@
 # Examples Overview
 
-This page summarizes the most relevant runnable examples in `examples/`.
+This page summarizes the most relevant runnable examples in `examples/`. The
+examples covered by the suite runners live in the topic subfolders
+`examples/powerflow/`, `examples/state_estimation/`, and `examples/others/`;
+standalone DTF validation examples live in `examples/dtf/`, shared
+infrastructure in `examples/internal/`, experimental material in
+`examples/experimental/`.
 
 ## Power flow and network operation
 
@@ -43,7 +48,7 @@ This page summarizes the most relevant runnable examples in `examples/`.
   Lightweight three-controller demo (OLTC + PST + Schrägregler) using `run_sparlectra(net = ...)`,
   central Sparlectra configuration (`examples/configuration.yaml` or
   `SPARLECTRA_CONFIGURATION_YAML`) plus demo-specific
-  `examples/tap_control_demo_grid.yaml`, and `latest_control_result(net)` for
+  `examples/others/tap_control_demo_grid.yaml`, and `latest_control_result(net)` for
   controller rows and trace rows. Optional classic output:
   `SPARLECTRA_TAP_DEMO_CLASSIC=1`; optional raw control-result rows:
   `SPARLECTRA_TAP_DEMO_RAW=1`.
@@ -67,7 +72,7 @@ External FOR001/FOR002 validation datasets are not shipped with Sparlectra;
 place local files under `data/DTF/` or pass explicit `--dtf-file`/`--for002-file`
 paths. See the tests page for the full mode/case reference.
 
-- `validate_dtf_suite.jl`  
+- `run_val_dtf_suite.jl`  
   Unified CLI runner for all DTF checks: import audit, native base-case
   validation against FOR002, DTF-listed outage validation, and the
   DTF -> existing MATPOWER export/import roundtrip. Select checks with
@@ -77,11 +82,11 @@ paths. See the tests page for the full mode/case reference.
   `validate_dtf_matpower_export_testnetz13.jl` were consolidated into this
   suite; the shared implementations live in `examples/internal/dtf_validation_*.jl`,
   each of which is also directly runnable as a single-purpose CLI entry point.
-- `dtf_validation_report.jl`  
+- `dtf/dtf_validation_report.jl`  
   Cross-case report over the local FOR001/FOR002 case set: transformer loss
   decomposition, voltage-transfer diagnostics, and transformer-ratio-mode
   comparisons, written as CSV/Markdown under `examples/_out/dtf_validation/`.
-- `for002_matpower_metadata_validation.jl`  
+- `dtf/for002_matpower_metadata_validation.jl`  
   Standalone diagnostic for FOR002/MATPOWER metadata fixtures (bus/branch
   name normalization and comparison artifacts).
 
@@ -146,7 +151,7 @@ paths. See the tests page for the full mode/case reference.
 From repository root:
 
 ```bash
-julia --project=. examples/tap_control_demo_grid.jl
+julia --project=. examples/others/tap_control_demo_grid.jl
 ```
 
 General pattern:
@@ -154,3 +159,25 @@ General pattern:
 ```bash
 julia --project=. examples/<example_name>.jl
 ```
+
+## Example suites
+
+Three suite runners execute a whole group of examples — each in a fresh Julia
+subprocess — and write a summary (CSV + Markdown) plus per-example logs to
+`examples/_out/<suite>/`:
+
+```bash
+julia --project=. examples/run_powerflow_suite.jl
+julia --project=. examples/run_state_estimation_suite.jl
+julia --project=. examples/run_others_suite.jl
+```
+
+Examples tagged `heavy` (very large cases, performance benchmarks) or
+`optional` (optional dependency, experimental API) are skipped by default and
+reported as skipped; enable them with `--include-heavy` / `--include-optional`.
+Use `--list` to print a suite's registry, `--only=<name,...>` /
+`--skip=<name,...>` to select examples, and `--help` for all options
+(`--strict`, `--timeout=`, `--output-dir=`, ...).
+
+The DTF validation examples have their own dedicated suite,
+`examples/run_val_dtf_suite.jl`, and are not part of `run_others_suite.jl`.

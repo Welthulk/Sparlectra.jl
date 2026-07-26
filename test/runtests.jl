@@ -18,17 +18,14 @@ end
 function print_group_progress(i::Int, total::Int, name::AbstractString) end
 
 function include_fast_tests()
-  include("testgrid.jl")
-  include("test_solver_interface.jl")
-  include("test_klu_linear_solver.jl")
+  include("testgrid.jl")  
   include("test_state_estimation.jl")
   include("test_voltage_dependent_control.jl")
   include("test_transformer_phase_shift.jl")
   include("test_tap_controller.jl")
   include("test_tap_changer_model.jl")
   include("test_phase_tap_changer_model.jl")
-  include("test_phase_tap_table.jl")
-  include("test_3wt_phase_taps.jl")
+  include("test_phase_tap_table.jl")  
   include("test_configuration_coverage.jl")
   include("test_matpower_metadata.jl")
   include("test_api.jl")
@@ -37,7 +34,13 @@ function include_fast_tests()
 end
 
 function include_extended_tests()
-  include("testgrid.jl")
+  # testgrid.jl defines run_grid_extended_tests (and shared helpers); in the
+  # :all profile it is already loaded by include_fast_tests, so only include
+  # it when the :extended profile runs standalone.
+  isdefined(@__MODULE__, :run_grid_extended_tests) || include("testgrid.jl")
+  include("test_3wt_phase_taps.jl")
+  include("test_solver_interface.jl")
+  include("test_klu_linear_solver.jl")
   include("test_api_extended.jl")
   include("test_webui_extended.jl")
   include("testremove.jl")
@@ -62,8 +65,6 @@ function run_fast_profile_tests()
   end
   groups = [
     ("core_model", () -> run_entry(:run_grid_fast_tests)),
-    ("powerflow_rectangular", () -> run_entry(:run_solver_interface_tests)),
-    ("klu_linear_solver", () -> run_entry(:run_klu_linear_solver_tests)),
     ("configuration", () -> run_entry(:run_configuration_coverage_tests)),
     ("matpower_metadata", () -> run_entry(:run_matpower_metadata_tests)),
     ("programmatic_api", () -> run_entry(:run_api_fast_tests)),
@@ -77,7 +78,6 @@ function run_fast_profile_tests()
       run_entry(:run_tap_changer_model_tests)
       run_entry(:run_phase_tap_changer_model_tests)
       run_entry(:run_phase_tap_table_tests)
-      run_entry(:run_3wt_phase_taps_tests)
     end),
   ]
   @testset "Sparlectra.jl fast profile" begin
@@ -96,6 +96,9 @@ function run_extended_profile_tests()
   groups = [
     ("legacy/remove", () -> run_entry(:run_remove_tests)),
     ("core_model_extended", () -> run_entry(:run_grid_extended_tests)),
+    ("powerflow_rectangular", () -> run_entry(:run_solver_interface_tests)),
+    ("klu_linear_solver", () -> run_entry(:run_klu_linear_solver_tests)),
+    ("3wt_phase_taps", () -> run_entry(:run_3wt_phase_taps_tests)),
     ("programmatic_api_extended", () -> run_entry(:run_api_extended_tests)),
     ("webui_extended", () -> run_entry(:run_webui_extended_tests)),
     ("pv_voltage_residuals", () -> run_entry(:run_pv_voltage_residual_tests)),

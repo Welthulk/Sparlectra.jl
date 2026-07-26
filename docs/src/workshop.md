@@ -125,7 +125,7 @@ end
 ```
 
 For a complete scenario with open and closed links, see
-`examples/using_links.jl` and the detailed notes in `links.md`.
+`examples/others/using_links.jl` and the detailed notes in `links.md`.
 
 ### Validate and solve the network
 
@@ -447,21 +447,21 @@ result = run_control!(
   Minimal setup for OLTC / PST / combined controller behavior.
 - `examples/example_transformer_phase_shift_control.jl`  
   Focused PST active-power target control example.
-- `examples/tap_control_demo_grid.jl`  
+- `examples/others/tap_control_demo_grid.jl`  
   Lightweight demo that:
   - uses central configuration from `examples/configuration.yaml` (or `SPARLECTRA_CONFIGURATION_YAML`),
-  - reads demo-specific setpoints from `examples/tap_control_demo_grid.yaml`,
+  - reads demo-specific setpoints from `examples/others/tap_control_demo_grid.yaml`,
   - runs through `run_sparlectra(net = net; config = ...)`,
   - inspects structured output from `latest_control_result(net)`.
 
 Copy and edit:
 
-- `examples/tap_control_demo_grid.yaml.example` → `examples/tap_control_demo_grid.yaml`
+- `examples/others/tap_control_demo_grid.yaml.example` → `examples/others/tap_control_demo_grid.yaml`
 
 Optional classic view:
 
 ```bash
-SPARLECTRA_TAP_DEMO_CLASSIC=1 julia --project=. examples/tap_control_demo_grid.jl
+SPARLECTRA_TAP_DEMO_CLASSIC=1 julia --project=. examples/others/tap_control_demo_grid.jl
 ```
 ---
 

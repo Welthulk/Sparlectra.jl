@@ -109,7 +109,7 @@ effective options (or enable
 
 ### Comparing multiple MATPOWER configurations
 
-`examples/matpower_import_multi_config.jl` is a developer-oriented helper for
+`examples/powerflow/matpower_import_multi_config.jl` is a developer-oriented helper for
 running the same MATPOWER case against several YAML configuration files. It is
 useful for checking whether options such as `matpower_import.auto_profile`,
 `power_flow.wrong_branch_detection`, or start-mode settings affect the final
@@ -118,7 +118,7 @@ rectangular solver status.
 Example:
 
 ```bash
-julia --project=. examples/matpower_import_multi_config.jl \
+julia --project=. examples/powerflow/matpower_import_multi_config.jl \
   data/mpower/case14.m \
   --config=path/to/config_a.yaml \
   --config=path/to/config_b.yaml \

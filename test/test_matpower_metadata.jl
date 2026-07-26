@@ -171,7 +171,7 @@ mpc.dcline = [
       @test Sparlectra.bus_shunt_totals_pu(net_loss).total_g_pu ≈ 0.0
       mktempdir() do dir
         path = joinpath(dir, "loss_extension.m")
-        Sparlectra.writeMatpowerCasefile(net_loss, path)
+        Sparlectra.writeMatpowerCasefile(net_loss, path; write_solution = false)
         txt = read(path, String)
         @test occursin("SPARLECTRA EXTENSION WARNING", txt)
         @test occursin("mpc.sparlectra.format_version = 1;", txt)
@@ -185,7 +185,7 @@ mpc.dcline = [
         @test Sparlectra.bus_shunt_totals_pu(net_roundtrip).total_g_pu ≈ 0.0
         @test only(values(net_roundtrip.matpower_branch_metadata)).transformer_loss.g_pu ≈ 0.005
         path2 = joinpath(dir, "loss_extension_roundtrip.m")
-        Sparlectra.writeMatpowerCasefile(net_roundtrip, path2)
+        Sparlectra.writeMatpowerCasefile(net_roundtrip, path2; write_solution = false)
         mpc_loss2 = Sparlectra.MatpowerIO.read_case_m(path2; legacy_compat = false)
         @test length(mpc_loss2.sparlectra.transformer_losses) == 1
         net_roundtrip2 = Sparlectra.createNetFromMatPowerCase(mpc = mpc_loss2, apply_bus_names = true, apply_branch_names = true, apply_branch_kind = true)

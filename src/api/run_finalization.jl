@@ -174,6 +174,27 @@ function _write_compact_internal_timing_aggregates(io::IO, result::SparlectraRun
   return nothing
 end
 
+# `_perf_profile_time!` accumulates fine-grained sub-timings (per phase:
+# calls / summed seconds / summed allocation bytes) under
+# `performance_profile[:timings]`. Islands share one profile dict, so these
+# sums cover all islands of the run. Without this section they were invisible
+# in performance.log (the raw-dump section suppresses the dict as too long),
+# which is how 3 s of "solver_finalization" stayed unexplained in issue #288.
+function _write_internal_subtimings(io::IO, result::SparlectraRunResult)
+  result.performance_profile isa AbstractDict || return nothing
+  timings = get(result.performance_profile, :timings, nothing)
+  timings isa AbstractDict && !isempty(timings) || return nothing
+  println(io)
+  println(io, "Internal sub-timings (all islands summed)")
+  println(io, "-----------------------------------------")
+  entries = sort!(collect(timings); by = item -> -item.second.elapsed_s)
+  for (phase, item) in entries
+    line = string("  ", rpad(String(phase) * ":", 42), lpad(string(round(item.elapsed_s; digits = 3)), 9), " s  (calls: ", item.calls)
+    println(io, line, item.bytes > 0 ? string(", alloc: ", Base.format_bytes(item.bytes), ")") : ")")
+  end
+  return nothing
+end
+
 # Some `performance_profile` entries (per-island diagnostics/statuses) hold
 # deeply nested vectors/dicts already duplicated in dedicated per-island
 # artifacts (`ac_island_<id>_solver.log`, `ac_island_solver_summary.csv`).
@@ -210,6 +231,7 @@ function _write_performance_log(path::AbstractString, mode::Symbol, phases::Abst
       _write_service_phase_summary(io, phase_timings)
     end
     _write_compact_internal_timing_aggregates(io, result)
+    _write_internal_subtimings(io, result)
     if mode === :full && result.performance_profile isa AbstractDict
       println(io)
       println(io, "Available internal performance profile")

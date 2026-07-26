@@ -49,7 +49,7 @@ DC power flow, faster linear solves, Web UI overhaul
 * **APSLF solver**: can run standalone, as the framework solver, or as a
   start-value generator ahead of the rectangular NR solve. Doesn't yet
   cover OLTC/PST/Q(U)/P(U), only simple Q-limit switching — details in
-  `docs/src/external_solvers.md`, demo in `examples/apslf_demo.jl`.
+  `docs/src/external_solvers.md`, demo in `examples/powerflow/apslf_demo.jl`.
 * **Merit-function line search** in the rectangular solver: optional
   Armijo line search inside the autodamp backtracking loop, off by
   default. Requires `autodamp = true`. Adds diagnostic fields and a

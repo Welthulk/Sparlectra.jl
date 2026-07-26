@@ -614,5 +614,6 @@ include("FetchMatpowerCase.jl")
 using .FetchMatpowerCase: ensure_casefile
 include("measurements.jl")
 include("state_estimation.jl")
+include("precompile.jl")
 #! format: on
 end # module Sparlectra

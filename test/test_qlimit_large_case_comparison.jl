@@ -129,7 +129,7 @@ function run_qlimit_large_case_comparison_tests()
     end
     previous = get(ENV, "SPARLECTRA_QLIMIT_LARGE_CASE_NO_MAIN", nothing)
     ENV["SPARLECTRA_QLIMIT_LARGE_CASE_NO_MAIN"] = "1"
-    Base.include(Main, joinpath(@__DIR__, "..", "examples", "qlimit_large_case_mode_comparison.jl"))
+    Base.include(Main, joinpath(@__DIR__, "..", "examples", "powerflow", "qlimit_large_case_mode_comparison.jl"))
     previous === nothing ? delete!(ENV, "SPARLECTRA_QLIMIT_LARGE_CASE_NO_MAIN") : (ENV["SPARLECTRA_QLIMIT_LARGE_CASE_NO_MAIN"] = previous)
     parse_args = Base.invokelatest(getfield, Main, :_parse_args)
     parsed = Base.invokelatest(parse_args, ["case13659pegase.m", "--case", "case_SyntheticUSA.m", "--profile", "autoprofile_dc_start", "--mode", "classic_simultaneous", "--compact-logs"])

@@ -8,7 +8,7 @@
 | `runtime.julia_threads` | String | `keep` | `keep`, `default`, `off`, `auto`, or integer-like string | Julia thread policy for runner setup. Requires process startup (`--threads`) or script re-exec. |
 | `runtime.blas_threads` | String | `keep` | `keep`, `default`, `off`, `auto`, or integer-like string | BLAS thread policy for runner setup and can be applied at runtime. |
 
-For `examples/matpower_import.jl`, Julia thread priority is:
+For `examples/powerflow/matpower_import.jl`, Julia thread priority is:
 
 1. CLI override: `--julia-threads=<N|auto|keep>`
 2. Environment override: `SPARLECTRA_JULIA_THREADS`
@@ -18,13 +18,13 @@ For `examples/matpower_import.jl`, Julia thread priority is:
 Example startup commands:
 
 ```bash
-julia --threads=8 --project=. examples/matpower_import.jl
-julia --project=. examples/matpower_import.jl --julia-threads=8
+julia --threads=8 --project=. examples/powerflow/matpower_import.jl
+julia --project=. examples/powerflow/matpower_import.jl --julia-threads=8
 ```
 
 ```powershell
 $env:JULIA_NUM_THREADS = "8"
-julia --project=. examples/matpower_import.jl
+julia --project=. examples/powerflow/matpower_import.jl
 ```
 
 ## Output configuration

@@ -598,7 +598,7 @@ provided. MATPOWER's raw `TAP`/`SHIFT` corresponds to the CGMES "General Case".
   the mapping table above.
 - MATPOWER case format documentation — the `TAP` / `SHIFT` branch columns and
   the ratio/shift conventions handled at import.
-- Sparlectra examples: `examples/tap_control_demo_grid.jl` (OLTC voltage, PST
+- Sparlectra examples: `examples/others/tap_control_demo_grid.jl` (OLTC voltage, PST
   active-power, and Schrägregler combined control in one network) and
   `examples/example_transformer_phase_shift_control.jl` (phase-shift direction
   probe).
