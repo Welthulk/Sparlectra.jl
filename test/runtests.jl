@@ -46,6 +46,7 @@ function include_extended_tests()
   include("testremove.jl")
   include("test_pv_voltage_residuals.jl")
   include("test_matpower_example.jl")
+  include("test_net_cache.jl")
   include("test_synthetic_grids.jl")
   include("test_configuration_docs.jl")
   include("test_repository_hygiene.jl")
@@ -103,6 +104,7 @@ function run_extended_profile_tests()
     ("webui_extended", () -> run_entry(:run_webui_extended_tests)),
     ("pv_voltage_residuals", () -> run_entry(:run_pv_voltage_residual_tests)),
     ("matpower_examples", () -> run_entry(:run_matpower_example_tests)),
+    ("net_cache", () -> run_entry(:run_net_cache_tests)),
     ("synthetic_grids", () -> run_entry(:run_synthetic_grid_tests)),
     ("configuration_docs", () -> run_entry(:run_configuration_docs_tests)),
     ("repository_hygiene", () -> run_entry(:run_repository_hygiene_tests)),

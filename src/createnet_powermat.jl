@@ -208,11 +208,15 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
   pInfo(msg::String) = (log ? (@info msg) : nothing)
 
   # --- Extract fields from NamedTuple / struct uniformly ---
+  # convert instead of the Matrix constructor: elides the full copy when the
+  # field already is a Matrix{Float64} (the parser output). The matrices are
+  # only read below, so aliasing mpc.bus/gen/branch is safe — keep it that
+  # way (the net cache also serializes the mpc alongside the built net).
   name    = hasproperty(mpc, :name)    ? getproperty(mpc, :name)    : "mpc"
   baseMVA = hasproperty(mpc, :baseMVA) ? Float64(getproperty(mpc, :baseMVA)) : error("mpc.baseMVA missing")
-  busData = hasproperty(mpc, :bus)     ? Matrix{Float64}(getproperty(mpc, :bus)) : error("mpc.bus missing")
-  genData = hasproperty(mpc, :gen)     ? Matrix{Float64}(getproperty(mpc, :gen)) : error("mpc.gen missing")
-  brData  = hasproperty(mpc, :branch)  ? Matrix{Float64}(getproperty(mpc, :branch)) : error("mpc.branch missing")
+  busData = hasproperty(mpc, :bus)     ? convert(Matrix{Float64}, getproperty(mpc, :bus)) : error("mpc.bus missing")
+  genData = hasproperty(mpc, :gen)     ? convert(Matrix{Float64}, getproperty(mpc, :gen)) : error("mpc.gen missing")
+  brData  = hasproperty(mpc, :branch)  ? convert(Matrix{Float64}, getproperty(mpc, :branch)) : error("mpc.branch missing")
 
   # --- Legacy-compatible dicts (same as your old importer) ---
   busDict, genDict, branchDict = _createDict()

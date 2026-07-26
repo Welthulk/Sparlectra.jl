@@ -509,8 +509,11 @@ function complex_newton_step_rectangular(
   # sparsity pattern so their symbolic analysis stays valid across
   # iterations; the default path keeps dropping numeric zeros for
   # bit-for-bit historical behavior.
+  # A PV↔PQ active-set switch changes the structural pattern; the recorded
+  # in-place assembly must rebuild (and the linear context re-analyzes).
+  linear_ctx !== nothing && active_set_changed && (linear_ctx.assembly.valid = false)
   J = _perf_profile_time!(performance_profile, :newton_step_jacobian) do
-    build_rectangular_jacobian_pq_pv(Ybus, V, bus_types, Vset, slack_idx; dPinj_dVm = dPinj_dVm, dQinj_dVm = dQinj_dVm, structural_pattern = linear_ctx !== nothing)
+    build_rectangular_jacobian_pq_pv(Ybus, V, bus_types, Vset, slack_idx; dPinj_dVm = dPinj_dVm, dQinj_dVm = dQinj_dVm, structural_pattern = linear_ctx !== nothing, assembly = linear_ctx === nothing ? nothing : linear_ctx.assembly)
   end
 
   # Solve J * δx = -F. With a reuse context (KLU or UMFPACK lu!) the symbolic
@@ -520,7 +523,10 @@ function complex_newton_step_rectangular(
     if linear_ctx === nothing
       solve_linear(J, -F0; allow_pinv = true)
     else
-      solve_newton_factorized!(linear_ctx, J, -F0; pattern_changed = active_set_changed)
+      rhs = linear_ctx.rhs
+      resize!(rhs, m)
+      @inbounds @. rhs = -F0
+      solve_newton_factorized!(linear_ctx, J, rhs; pattern_changed = active_set_changed)
     end
   end
   if autodamp

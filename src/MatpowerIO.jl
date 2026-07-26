@@ -170,6 +170,7 @@ This keeps results compatible with the old importer.
 """
 function legacy_sort_bus(mpc::MatpowerCase)::MatpowerCase
   bus = mpc.bus
+  issorted(@view bus[:, 1]) && return mpc
   perm = sortperm(bus[:, 1])  # sort by BUS_I
   bus_sorted = bus[perm, :]
   bus_name = (mpc.bus_name !== nothing && length(mpc.bus_name) == size(bus, 1)) ? mpc.bus_name[perm] : mpc.bus_name
@@ -266,13 +267,7 @@ function read_case_m(path::AbstractString; legacy_compat::Bool = true)
   name = splitext(basename(path))[1]
 
   # Remove MATLAB comments (%) but keep line structure
-  lines = split(txt, '\n')
-  lines_nc = String[]
-  for ln in lines
-    i = findfirst('%', ln)
-    push!(lines_nc, i === nothing ? ln : ln[1:prevind(ln, i)])
-  end
-  txt = join(lines_nc, "\n")
+  txt = _strip_matlab_comments(txt)
 
   baseMVA = parse_baseMVA(txt)
 
@@ -339,6 +334,33 @@ function apply_supported_postprocessing!(mpc::MatpowerCase, txt::AbstractString)
   return mpc
 end
 
+# Removes MATLAB `%` comments while keeping the line structure. Byte-identical
+# to truncating every line at its first `%` (including `"abc%x\r\n"` →
+# `"abc\n"`, since the skip runs up to the next `\n`). `%` and `\n` are ASCII,
+# so the byte scan is UTF-8-safe. Files without any `%` are returned unchanged.
+function _strip_matlab_comments(txt::String)::String
+  bytes = codeunits(txt)
+  any(==(UInt8('%')), bytes) || return txt
+  out = Base.StringVector(length(bytes))
+  n = 0
+  i = 1
+  nb = length(bytes)
+  @inbounds while i <= nb
+    b = bytes[i]
+    if b == UInt8('%')
+      while i <= nb && bytes[i] != UInt8('\n')
+        i += 1
+      end
+    else
+      n += 1
+      out[n] = b
+      i += 1
+    end
+  end
+  resize!(out, n)
+  return String(out)
+end
+
 function parse_baseMVA(txt::String)
   m = match(r"mpc\.baseMVA\s*=\s*([0-9]+(?:\.[0-9]+)?)\s*;", txt)
   m === nothing && error("Could not find `mpc.baseMVA = ...;` in MATPOWER file.")
@@ -390,42 +412,77 @@ function _find_matpower_matrix_body(txt::String, key::String)::SubString{String}
   return SubString(txt, body_start:prevind(txt, first(close_range)))
 end
 
-@inline function _matpower_row_tokens(row::AbstractString)
-  s = strip(row)
-  isempty(s) && return nothing
-  return split(s)
-end
-
 # MATLAB accepts both `;` and bare newlines as matrix row separators. Official
 # MATPOWER cases terminate every row with `;`, but e.g. RTS-GMLC relies on
 # newline-separated rows only — splitting on `;` alone would silently collapse
 # the whole matrix into a single row.
-const _MATPOWER_ROW_SEPARATORS = r"[;\r\n]"
+const _MATPOWER_ROW_SEPARATORS = in(";\r\n")
+
+@inline function _row_has_token(row::AbstractString)::Bool
+  for c in row
+    isspace(c) || return true
+  end
+  return false
+end
+
+@inline function _count_row_tokens(row::AbstractString)::Int
+  count = 0
+  in_token = false
+  for c in row
+    if isspace(c)
+      in_token = false
+    elseif !in_token
+      in_token = true
+      count += 1
+    end
+  end
+  return count
+end
+
+# Parses up to `maxvals` whitespace-separated numbers of `row` into `dest`
+# (tokens beyond `maxvals` are ignored — MATPOWER fixed-width truncation).
+# Returns the number of parsed values; 0 means a blank row. Allocation-free:
+# tokens are SubString views of the row.
+function _parse_matpower_row!(dest::AbstractVector{Float64}, row::AbstractString, maxvals::Int)::Int
+  i = firstindex(row)
+  last_i = lastindex(row)
+  count = 0
+  while i <= last_i && count < maxvals
+    while i <= last_i && isspace(row[i])
+      i = nextind(row, i)
+    end
+    i > last_i && break
+    start = i
+    while i <= last_i && !isspace(row[i])
+      i = nextind(row, i)
+    end
+    count += 1
+    @inbounds dest[count] = parse(Float64, SubString(row, start, prevind(row, i)))
+  end
+  return count
+end
 
 # best-effort: auto width; IMPORTANT: fill with 0.0 (not NaN)
 function parse_numeric_matrix(body::AbstractString, key::AbstractString)
-  rows = Vector{Vector{Float64}}()
+  row_count = 0
   maxcols = 0
-
   for rr in eachsplit(body, _MATPOWER_ROW_SEPARATORS)
-    toks = _matpower_row_tokens(rr)
-    toks === nothing && continue
-
-    vals = Vector{Float64}(undef, length(toks))
-    @inbounds for j in eachindex(toks)
-      vals[j] = parse(Float64, toks[j])
-    end
-
-    maxcols = max(maxcols, length(vals))
-    push!(rows, vals)
+    ntok = _count_row_tokens(rr)
+    ntok == 0 && continue
+    row_count += 1
+    maxcols = max(maxcols, ntok)
   end
+  row_count == 0 && error("Matrix `$key` appears empty or could not be parsed.")
 
-  isempty(rows) && error("Matrix `$key` appears empty or could not be parsed.")
-
-  M = zeros(Float64, length(rows), maxcols)
-  @inbounds for (i, r) in enumerate(rows)
-    for j in eachindex(r)
-      M[i, j] = r[j]
+  M = zeros(Float64, row_count, maxcols)
+  rowbuf = Vector{Float64}(undef, maxcols)
+  i = 0
+  for rr in eachsplit(body, _MATPOWER_ROW_SEPARATORS)
+    n = _parse_matpower_row!(rowbuf, rr, maxcols)
+    n == 0 && continue
+    i += 1
+    @inbounds for j = 1:n
+      M[i, j] = rowbuf[j]
     end
   end
   return M
@@ -435,19 +492,19 @@ end
 function parse_numeric_matrix_ncols(body::AbstractString, key::AbstractString; ncols::Int)
   row_count = 0
   for rr in eachsplit(body, _MATPOWER_ROW_SEPARATORS)
-    _matpower_row_tokens(rr) === nothing || (row_count += 1)
+    _row_has_token(rr) && (row_count += 1)
   end
   row_count == 0 && error("Matrix `$key` appears empty or could not be parsed.")
 
   M = zeros(Float64, row_count, ncols)
+  rowbuf = Vector{Float64}(undef, ncols)
   i = 0
   for rr in eachsplit(body, _MATPOWER_ROW_SEPARATORS)
-    toks = _matpower_row_tokens(rr)
-    toks === nothing && continue
+    n = _parse_matpower_row!(rowbuf, rr, ncols)
+    n == 0 && continue
     i += 1
-    ntok = min(length(toks), ncols)
-    @inbounds for j = 1:ntok
-      M[i, j] = parse(Float64, toks[j])
+    @inbounds for j = 1:n
+      M[i, j] = rowbuf[j]
     end
   end
   return M

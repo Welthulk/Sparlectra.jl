@@ -32,6 +32,30 @@ context must never be shared across islands or threads.
 abstract type AbstractNewtonSolverContext end
 
 """
+    RectangularJacobianAssembly
+
+Reusable buffers for the rectangular Jacobian build (issue #292): the COO
+triplet vectors, the retained `SparseMatrixCSC`, and a position map from
+emit order to `nzval` index. Under the structural (value-independent)
+sparsity pattern of the reuse backends, the emit order is identical in every
+iteration with an unchanged active set, so subsequent builds can overwrite
+`nzval` in place instead of allocating fresh triplets plus a new CSC.
+`valid` is cleared on PV↔PQ active-set changes (pattern changes) and by the
+runtime guard when a replay does not reproduce the recorded emit count.
+"""
+mutable struct RectangularJacobianAssembly
+  Iidx::Vector{Int}
+  Jidx::Vector{Int}
+  Vals::Vector{Float64}
+  J::Union{Nothing,SparseMatrixCSC{Float64,Int64}}
+  pos_map::Vector{Int}
+  Ibuf::Vector{ComplexF64}
+  valid::Bool
+end
+
+RectangularJacobianAssembly() = RectangularJacobianAssembly(Int[], Int[], Float64[], nothing, Int[], ComplexF64[], false)
+
+"""
     KLUNewtonContext
 
 Reuse context for the SuiteSparse KLU backend (`linear_solver = :klu`):
@@ -46,9 +70,12 @@ mutable struct KLUNewtonContext <: AbstractNewtonSolverContext
   analyze_count::Int
   refactor_count::Int
   fallback_count::Int
+  rhs::Vector{Float64}
+  sol::Vector{Float64}
+  assembly::RectangularJacobianAssembly
 end
 
-KLUNewtonContext() = KLUNewtonContext(nothing, 0, Int64[], Int64[], 0, 0, 0)
+KLUNewtonContext() = KLUNewtonContext(nothing, 0, Int64[], Int64[], 0, 0, 0, Float64[], Float64[], RectangularJacobianAssembly())
 
 """
     UmfpackReuseNewtonContext
@@ -66,9 +93,12 @@ mutable struct UmfpackReuseNewtonContext <: AbstractNewtonSolverContext
   analyze_count::Int
   refactor_count::Int
   fallback_count::Int
+  rhs::Vector{Float64}
+  sol::Vector{Float64}
+  assembly::RectangularJacobianAssembly
 end
 
-UmfpackReuseNewtonContext() = UmfpackReuseNewtonContext(nothing, 0, Int64[], Int64[], 0, 0, 0)
+UmfpackReuseNewtonContext() = UmfpackReuseNewtonContext(nothing, 0, Int64[], Int64[], 0, 0, 0, Float64[], Float64[], RectangularJacobianAssembly())
 
 _newton_full_factorization(::KLUNewtonContext, J::SparseMatrixCSC{Float64,Int64}) = klu(J)
 _newton_full_factorization(::UmfpackReuseNewtonContext, J::SparseMatrixCSC{Float64,Int64}) = lu(J)
@@ -109,7 +139,11 @@ function solve_newton_factorized!(ctx::AbstractNewtonSolverContext, J::SparseMat
       _newton_refactorize!(ctx, J)
       ctx.refactor_count += 1
     end
-    return ctx.fact \ rhs
+    # The context-owned solution buffer is overwritten on the next call; the
+    # Newton step consumes δx within one iteration and never retains it.
+    resize!(ctx.sol, length(rhs))
+    ldiv!(ctx.sol, ctx.fact, rhs)
+    return ctx.sol
   catch e
     e isa InterruptException && rethrow(e)
     # Bad pivots, singularity, or a structure mismatch that slipped past the

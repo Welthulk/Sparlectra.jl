@@ -291,6 +291,7 @@ Base.@kwdef struct MatpowerImportConfig
   apply_branch_kind::Bool = false
   import_for001_contingencies::Bool = true
   matpower_dcline_mode::Symbol = :pf_injections
+  net_cache_enabled::Bool = false
 end
 
 """
@@ -941,6 +942,7 @@ function MatpowerImportConfig(raw::AbstractDict)
     apply_branch_kind = _as_bool_cfg(_raw_get(merged, "apply_branch_kind", false)),
     import_for001_contingencies = _as_bool_cfg(_raw_get(merged, "import_for001_contingencies", true)),
     matpower_dcline_mode = _validate_allowed_symbol("matpower_import.matpower_dcline_mode", _as_symbol_cfg(_raw_get(merged, "matpower_dcline_mode", :pf_injections)), MATPOWER_DCLINE_MODE_VALUES),
+    net_cache_enabled = _as_bool_cfg(_raw_get(_raw_section(merged, "net_cache"), "enabled", false)),
   )
 end
 

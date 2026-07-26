@@ -129,6 +129,57 @@ function run_klu_linear_solver_tests()
       @test norm(J3 * x4 - rhs) < 1e-12
     end
 
+    @testset "In-place Jacobian assembly matches structural build" begin
+      # 4-bus synthetic system exercising PQ+PV rows and the injection chain
+      # terms (duplicate-triplet merging) — issue #292 stage 3.
+      y12 = 1.0 / (0.01 + 0.1im)
+      y23 = 1.0 / (0.02 + 0.15im)
+      y34 = 1.0 / (0.015 + 0.12im)
+      y14 = 1.0 / (0.03 + 0.2im)
+      Ybus = sparse(
+        ComplexF64[
+          y12+y14 -y12 0 -y14
+          -y12 y12+y23 -y23 0
+          0 -y23 y23+y34 -y34
+          -y14 0 -y34 y14+y34
+        ],
+      )
+      V = ComplexF64[1.0, 0.98 + 0.02im, 1.01 - 0.01im, 0.99 + 0.03im]
+      Vset = abs.(V)
+      bus_types = [:PQ, :PQ, :PV, :PQ]
+      slack_idx = 1
+      dP = [0.0, 0.4, 0.0, 0.2]
+      dQ = [0.0, 0.1, 0.0, 0.3]
+      build = (Vx, bt; kwargs...) -> Sparlectra.build_rectangular_jacobian_pq_pv(Ybus, Vx, bt, Vset, slack_idx; dPinj_dVm = dP, dQinj_dVm = dQ, structural_pattern = true, kwargs...)
+
+      asm = Sparlectra.RectangularJacobianAssembly()
+      J1 = build(V, bus_types; assembly = asm)
+      Jref = build(V, bus_types)
+      @test J1.colptr == Jref.colptr
+      @test J1.rowval == Jref.rowval
+      @test J1.nzval ≈ Jref.nzval
+      @test asm.valid
+
+      # Second call with a new iterate: in-place refresh of the SAME matrix.
+      V2 = V .* (1.0 .+ 0.01im)
+      J2 = build(V2, bus_types; assembly = asm)
+      @test J2 === J1
+      Jref2 = build(V2, bus_types)
+      @test J2.colptr == Jref2.colptr
+      @test J2.rowval == Jref2.rowval
+      @test J2.nzval ≈ Jref2.nzval
+
+      # Active-set change (PV -> PQ): invalidate, structural rebuild matches.
+      asm.valid = false
+      bus_types_pq = [:PQ, :PQ, :PQ, :PQ]
+      J3 = build(V2, bus_types_pq; assembly = asm)
+      Jref3 = build(V2, bus_types_pq)
+      @test J3.colptr == Jref3.colptr
+      @test J3.rowval == Jref3.rowval
+      @test J3.nzval ≈ Jref3.nzval
+      @test J3 !== J2
+    end
+
     @testset "Singular system falls back to the umfpack chain ($(nameof(C)))" for C in (KLUNewtonContext, UmfpackReuseNewtonContext)
       ctx = C()
       J_singular = sparse([1.0 1.0; 1.0 1.0])

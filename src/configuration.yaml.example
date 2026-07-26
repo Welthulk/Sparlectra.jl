@@ -265,6 +265,15 @@ matpower_import:
   import_for001_contingencies: true
   # Allowed values: reject_active, ignore_inactive, pf_injections
   matpower_dcline_mode: pf_injections
+  net_cache:
+    # Opt-in binary cache of the parsed case file, stored next to the case
+    # file in .sparlectra_net_cache/ and keyed by the case file hash and the
+    # Sparlectra/Julia versions. The network is always built fresh from the
+    # cached case, so import options keep taking effect. Only active when
+    # auto_profile is off; any stale or unreadable cache entry silently
+    # falls back to a fresh parse. Safe to delete the cache directory.
+    # Allowed values: true, false
+    enabled: false
 
 transformer:
   # Tap-changer model used by all network importers (MATPOWER and native DTF).

@@ -5,6 +5,7 @@
 
 # Configuration-driven AC power-flow framework runner.
 include("acpflow/start_modes.jl")
+include("acpflow/net_cache.jl")
 include("acpflow/import_context.jl")
 include("acpflow/execution.jl")
 include("acpflow/apslf_execution.jl")

@@ -146,3 +146,28 @@ When Sparlectra documentation mentions case names (for example `case300.m`,
 the original files from MATPOWER and/or the original data sources and follow the
 applicable license, citation, and redistribution terms.
 
+## Binary case cache (`matpower_import.net_cache`)
+
+`matpower_import.net_cache.enabled` (default `false`) opt-in caches the
+**parsed** MATPOWER case as a binary snapshot, so repeated runs of an
+unchanged case file skip the text-parsing phase (and its allocations); the
+network itself is always built fresh from the cached case, so all import
+options keep taking effect without being part of the cache key.
+
+Measured design note: v1 deliberately does not cache the constructed
+network — deserializing the large per-bus object graph is slower than
+rebuilding it (measured on an 82k-bus case), while the parsed matrices
+deserialize in a fraction of the parse time. The versioned format leaves
+room for a flat network representation later.
+
+- **Location**: `<case directory>/.sparlectra_net_cache/<case>.<key>.v1.jls`.
+  The directory is safe to delete at any time.
+- **Key**: SHA-256 over the case-file bytes, the cache format version, and
+  the Sparlectra and Julia versions. Any change produces a new key; stale
+  entries are simply ignored.
+- **Requires `matpower_import.auto_profile: off`**; with auto-profile active
+  the cache stays inactive and an informational log line says so.
+- **Failure behavior**: unreadable, corrupt, or mismatching cache files fall
+  back silently to a fresh parse; cache writes never fail a run (read-only
+  directories are tolerated).
+

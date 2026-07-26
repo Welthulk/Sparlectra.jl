@@ -88,10 +88,43 @@ function _import_sparlectra_context(casefile::String, path::Union{Nothing,String
   mat_cfg = cfg.matpower
   phase_callback = performance_profile isa AbstractDict ? get(performance_profile, :phase_callback, phase -> nothing) : phase -> nothing
   extension = lowercase(splitext(filename)[2])
+
+  # Opt-in binary net cache (issue #292). Only active with auto_profile off:
+  # auto-profile derives config rewrites from the parsed case, which a cache
+  # hit would skip.
+  cache_active = mat_cfg.net_cache_enabled && mat_cfg.auto_profile === :off
+  if mat_cfg.net_cache_enabled && mat_cfg.auto_profile !== :off
+    @info "matpower_import.net_cache is enabled but inactive because matpower_import.auto_profile is not 'off'." auto_profile = mat_cfg.auto_profile
+  end
+  cache_components = nothing
+  cache_path = ""
+  cached = nothing
+  if cache_active
+    cached = _perf_profile_time!(performance_profile, :net_cache_lookup) do
+      components = _net_cache_components(filename, cfg)
+      cache_components = components
+      cache_path = _net_cache_path(filename, _net_cache_key(components))
+      _net_cache_load(cache_path, components)
+    end
+    if performance_profile isa AbstractDict
+      performance_profile[:net_cache] = Dict{String,Any}("enabled" => true, "hit" => cached !== nothing, "path" => cache_path)
+    end
+  end
+
   phase_callback("reading_matpower_case")
   phase_callback(extension == ".jl" ? "loading_julia_case" : "parsing_matpower_file")
-  mpc = _perf_profile_time!(performance_profile, :matpower_case_parse) do
-    MatpowerIO.read_case(filename; legacy_compat = true)
+  mpc = if cached !== nothing
+    @info "MATPOWER net cache hit" casefile = filename cache = cache_path
+    cached
+  else
+    _perf_profile_time!(performance_profile, :matpower_case_parse) do
+      MatpowerIO.read_case(filename; legacy_compat = true)
+    end
+  end
+  if cache_active && cached === nothing && cache_components !== nothing
+    _perf_profile_time!(performance_profile, :net_cache_store) do
+      _net_cache_store(cache_path, cache_components, mpc)
+    end
   end
   if mat_cfg.matpower_dcline_mode !== :pf_injections
     try

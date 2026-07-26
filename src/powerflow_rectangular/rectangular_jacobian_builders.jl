@@ -54,6 +54,41 @@ With ΔP_i = Re(ΔS_i), ΔQ_i = Im(ΔS_i), ΔV_i = |V_i| - Vset[i].
 Returns:
     J :: SparseMatrixCSC{Float64} with size (2(n-1)) × (2(n-1)).
 """
+# Emitter receiving each Jacobian entry during triplet assembly (build path).
+struct _JacobianTripletEmitter
+  Iidx::Vector{Int}
+  Jidx::Vector{Int}
+  Vals::Vector{Float64}
+end
+
+@inline function (e::_JacobianTripletEmitter)(row::Int, col::Int, val::Float64)
+  push!(e.Iidx, row)
+  push!(e.Jidx, col)
+  push!(e.Vals, val)
+  return nothing
+end
+
+# Emitter replaying the recorded emit order into an existing CSC's nzval
+# (in-place refresh path). `overflow` flags an emit count beyond the recorded
+# position map; the caller then falls back to a structural rebuild.
+mutable struct _JacobianPosMapEmitter
+  nz::Vector{Float64}
+  pos_map::Vector{Int}
+  k::Int
+  overflow::Bool
+end
+
+@inline function (e::_JacobianPosMapEmitter)(row::Int, col::Int, val::Float64)
+  k = e.k + 1
+  e.k = k
+  if k <= length(e.pos_map)
+    @inbounds e.nz[e.pos_map[k]] += val
+  else
+    e.overflow = true
+  end
+  return nothing
+end
+
 function build_rectangular_jacobian_pq_pv_sparse(
   Ybus::SparseMatrixCSC{ComplexF64},
   V::Vector{ComplexF64},
@@ -64,6 +99,7 @@ function build_rectangular_jacobian_pq_pv_sparse(
   dQinj_dVm::Vector{Float64} = zeros(Float64, length(V)),
   vm_eps::Float64 = 1e-9,
   structural_pattern::Bool = false,
+  assembly::Union{Nothing,RectangularJacobianAssembly} = nothing,
 )
   # vm_eps avoids unstable derivatives when |V| is very close to zero.
   # structural_pattern=true stores entries even when their current value is
@@ -71,13 +107,14 @@ function build_rectangular_jacobian_pq_pv_sparse(
   # and the bus types — not on the iterate. Factorization-reuse backends
   # (KLU) require this invariance; the default path keeps dropping numeric
   # zeros to stay bit-for-bit identical to the historical behavior.
+  # `assembly` (requires structural_pattern) reuses triplet buffers and, once
+  # a pattern is recorded, refreshes the retained CSC's nzval in place.
   n = length(V)
   @assert length(bus_types) == n
   @assert length(Vset) == n
   @assert length(dPinj_dVm) == n
   @assert length(dQinj_dVm) == n
-
-  I = Ybus * V
+  @assert assembly === nothing || structural_pattern "assembly reuse requires the structural sparsity pattern"
 
   non_slack = non_slack_indices(n, slack_idx)
   pos_non_slack = build_pos_map(non_slack, n)
@@ -97,15 +134,89 @@ function build_rectangular_jacobian_pq_pv_sparse(
     row_block[i] = row - 1  # ΔP row for bus i
   end
 
-  # Triplet storage
-  Iidx = Int[]
-  Jidx = Int[]
-  Vals = Float64[]
-  # Rough capacity hint (purely heuristic)
-  sizehint!(Iidx, 16 * nnz(Ybus))
-  sizehint!(Jidx, 16 * nnz(Ybus))
-  sizehint!(Vals, 16 * nnz(Ybus))
+  if assembly !== nothing && assembly.valid && assembly.J !== nothing && size(assembly.J, 1) == m
+    # In-place refresh: same structural pattern as the recorded build, so the
+    # emit order is identical and each entry lands at its recorded nzval slot.
+    Jexist = assembly.J
+    resize!(assembly.Ibuf, n)
+    mul!(assembly.Ibuf, Ybus, V)
+    nz = nonzeros(Jexist)
+    fill!(nz, 0.0)
+    emitter = _JacobianPosMapEmitter(nz, assembly.pos_map, 0, false)
+    _assemble_rectangular_jacobian!(emitter, Ybus, V, bus_types, slack_idx, assembly.Ibuf, row_block, pos_non_slack, non_slack, dPinj_dVm, dQinj_dVm, vm_eps, true, n)
+    if !emitter.overflow && emitter.k == length(assembly.pos_map)
+      return Jexist
+    end
+    # Emit count drifted (should be unreachable): rebuild structurally.
+    assembly.valid = false
+  end
 
+  I = Ybus * V
+
+  # Triplet storage: fresh vectors, or the reused assembly buffers.
+  if assembly === nothing
+    Iidx = Int[]
+    Jidx = Int[]
+    Vals = Float64[]
+  else
+    Iidx = assembly.Iidx
+    Jidx = assembly.Jidx
+    Vals = assembly.Vals
+    empty!(Iidx)
+    empty!(Jidx)
+    empty!(Vals)
+  end
+  # Structural upper bound: 4 entries per Ybus nonzero (P/Q × Vr/Vi) plus the
+  # PV ΔV rows and injection chain terms (≤ 6 per bus).
+  cap = 4 * nnz(Ybus) + 6 * n
+  sizehint!(Iidx, cap)
+  sizehint!(Jidx, cap)
+  sizehint!(Vals, cap)
+
+  emit = _JacobianTripletEmitter(Iidx, Jidx, Vals)
+  _assemble_rectangular_jacobian!(emit, Ybus, V, bus_types, slack_idx, I, row_block, pos_non_slack, non_slack, dPinj_dVm, dQinj_dVm, vm_eps, structural_pattern, n)
+
+  J = sparse(Iidx, Jidx, Vals, m, nvar)
+
+  if assembly !== nothing
+    # Record the emit-order → nzval position map for in-place refreshes.
+    pos_map = assembly.pos_map
+    resize!(pos_map, length(Iidx))
+    colptr = J.colptr
+    rowval = J.rowval
+    @inbounds for t in eachindex(Iidx)
+      c = Jidx[t]
+      lo = colptr[c]
+      hi = colptr[c+1] - 1
+      pos_map[t] = searchsortedfirst(view(rowval, lo:hi), Iidx[t]) + lo - 1
+    end
+    assembly.J = J
+    assembly.valid = true
+  end
+
+  return J
+end
+
+# Shared emit-order-deterministic assembly of all Jacobian entries. Both the
+# triplet build and the in-place nzval refresh replay exactly this sequence;
+# any change to loop order or emit conditions must keep the two paths in sync
+# by construction (they run the same code).
+function _assemble_rectangular_jacobian!(
+  emit::E,
+  Ybus::SparseMatrixCSC{ComplexF64},
+  V::Vector{ComplexF64},
+  bus_types::Vector{Symbol},
+  slack_idx::Int,
+  I::AbstractVector{ComplexF64},
+  row_block::Vector{Int},
+  pos_non_slack::Vector{Int},
+  non_slack::Vector{Int},
+  dPinj_dVm::Vector{Float64},
+  dQinj_dVm::Vector{Float64},
+  vm_eps::Float64,
+  structural_pattern::Bool,
+  n::Int,
+) where {E}
   # Helpers for sparse access
   rv    = rowvals(Ybus)
   nzval = nonzeros(Ybus)
@@ -171,14 +282,10 @@ function build_rectangular_jacobian_pq_pv_sparse(
 
       # First equation: always ΔP_i for PQ and PV
       if structural_pattern || abs(∂P_Vr) > 0.0
-        push!(Iidx, rowP)
-        push!(Jidx, colVr)
-        push!(Vals, ∂P_Vr)
+        emit(rowP, colVr, ∂P_Vr)
       end
       if structural_pattern || abs(∂P_Vi) > 0.0
-        push!(Iidx, rowP)
-        push!(Jidx, colVi)
-        push!(Vals, ∂P_Vi)
+        emit(rowP, colVi, ∂P_Vi)
       end
 
       # Second equation:
@@ -187,14 +294,10 @@ function build_rectangular_jacobian_pq_pv_sparse(
       bt = bus_types[i]
       if bt == :PQ
         if structural_pattern || abs(∂Q_Vr) > 0.0
-          push!(Iidx, rowQ)
-          push!(Jidx, colVr)
-          push!(Vals, ∂Q_Vr)
+          emit(rowQ, colVr, ∂Q_Vr)
         end
         if structural_pattern || abs(∂Q_Vi) > 0.0
-          push!(Iidx, rowQ)
-          push!(Jidx, colVi)
-          push!(Vals, ∂Q_Vi)
+          emit(rowQ, colVi, ∂Q_Vi)
         end
       elseif bt == :PV
         # nothing here, ΔV row added below
@@ -237,14 +340,10 @@ function build_rectangular_jacobian_pq_pv_sparse(
     colVi = (n - 1) + pos
 
     if structural_pattern || abs(dVr) > 0.0
-      push!(Iidx, rowV)
-      push!(Jidx, colVr)
-      push!(Vals, dVr)
+      emit(rowV, colVr, dVr)
     end
     if structural_pattern || abs(dVi) > 0.0
-      push!(Iidx, rowV)
-      push!(Jidx, colVi)
-      push!(Vals, dVi)
+      emit(rowV, colVi, dVi)
     end
   end
 
@@ -269,28 +368,20 @@ function build_rectangular_jacobian_pq_pv_sparse(
     # in structural mode never introduces iterate-dependent pattern entries.
     dP = dPinj_dVm[i]
     if structural_pattern || dP != 0.0
-      push!(Iidx, rb)
-      push!(Jidx, colVr)
-      push!(Vals, -dP * dvm_dvr)
-      push!(Iidx, rb)
-      push!(Jidx, colVi)
-      push!(Vals, -dP * dvm_dvi)
+      emit(rb, colVr, -dP * dvm_dvr)
+      emit(rb, colVi, -dP * dvm_dvi)
     end
 
     if bus_types[i] == :PQ
       dQ = dQinj_dVm[i]
       if structural_pattern || dQ != 0.0
-        push!(Iidx, rb + 1)
-        push!(Jidx, colVr)
-        push!(Vals, -dQ * dvm_dvr)
-        push!(Iidx, rb + 1)
-        push!(Jidx, colVi)
-        push!(Vals, -dQ * dvm_dvi)
+        emit(rb + 1, colVr, -dQ * dvm_dvr)
+        emit(rb + 1, colVi, -dQ * dvm_dvi)
       end
     end
   end
 
-  return sparse(Iidx, Jidx, Vals, m, nvar)
+  return nothing
 end
 
 """
@@ -434,7 +525,8 @@ function build_rectangular_jacobian_pq_pv(
   dQinj_dVm::Vector{Float64} = zeros(Float64, length(V)),
   vm_eps::Float64 = 1e-9,
   structural_pattern::Bool = false,
+  assembly::Union{Nothing,RectangularJacobianAssembly} = nothing,
 )
   # Default rectangular solver path uses sparse Jacobians for scale and parity.
-  return build_rectangular_jacobian_pq_pv_sparse(Ybus, V, bus_types, Vset, slack_idx; dPinj_dVm = dPinj_dVm, dQinj_dVm = dQinj_dVm, vm_eps = vm_eps, structural_pattern = structural_pattern)
+  return build_rectangular_jacobian_pq_pv_sparse(Ybus, V, bus_types, Vset, slack_idx; dPinj_dVm = dPinj_dVm, dQinj_dVm = dQinj_dVm, vm_eps = vm_eps, structural_pattern = structural_pattern, assembly = assembly)
 end
