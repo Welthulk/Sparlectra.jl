@@ -3,8 +3,9 @@
 This page summarizes the most relevant runnable examples in `examples/`. The
 examples covered by the suite runners live in the topic subfolders
 `examples/powerflow/`, `examples/state_estimation/`, and `examples/others/`;
-the DTF validation cluster and shared infrastructure stay in
-`examples/internal/`, experimental material in `examples/experimental/`.
+standalone DTF validation examples live in `examples/dtf/`, shared
+infrastructure in `examples/internal/`, experimental material in
+`examples/experimental/`.
 
 ## Power flow and network operation
 
@@ -81,11 +82,11 @@ paths. See the tests page for the full mode/case reference.
   `validate_dtf_matpower_export_testnetz13.jl` were consolidated into this
   suite; the shared implementations live in `examples/internal/dtf_validation_*.jl`,
   each of which is also directly runnable as a single-purpose CLI entry point.
-- `dtf_validation_report.jl`  
+- `dtf/dtf_validation_report.jl`  
   Cross-case report over the local FOR001/FOR002 case set: transformer loss
   decomposition, voltage-transfer diagnostics, and transformer-ratio-mode
   comparisons, written as CSV/Markdown under `examples/_out/dtf_validation/`.
-- `for002_matpower_metadata_validation.jl`  
+- `dtf/for002_matpower_metadata_validation.jl`  
   Standalone diagnostic for FOR002/MATPOWER metadata fixtures (bus/branch
   name normalization and comparison artifacts).
 

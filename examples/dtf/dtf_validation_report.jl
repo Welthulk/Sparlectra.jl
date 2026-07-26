@@ -13,15 +13,15 @@
 # limitations under the License.
 
 # Date: 2026-07-13
-# file: examples/dtf_validation_report.jl
+# file: examples/dtf/dtf_validation_report.jl
 # purpose: runs native DTF/FOR002 validation across cases A-E and writes a combined loss/voltage-transfer summary report
 
 using Printf
 using Sparlectra
 
-include(joinpath(@__DIR__, "internal", "dtf_for002_validation_utils.jl"))
-include(joinpath(@__DIR__, "internal", "dtf_validation_base.jl"))
-include(joinpath(@__DIR__, "internal", "example_header.jl"))
+include(joinpath(@__DIR__, "..", "internal", "dtf_for002_validation_utils.jl"))
+include(joinpath(@__DIR__, "..", "internal", "dtf_validation_base.jl"))
+include(joinpath(@__DIR__, "..", "internal", "example_header.jl"))
 
 run_validation(args = ARGS; return_details::Bool = false) = NativeBaseValidation.run_validation(args; return_details = return_details)
 
@@ -219,10 +219,10 @@ function case_note(case_id, details, summary, loss_rows)
 end
 
 function main()
-  print_example_banner("examples/dtf_validation_report.jl", "runs native DTF/FOR002 validation across cases A-E and writes a combined loss/voltage-transfer summary report")
-  repo = normpath(joinpath(@__DIR__, ".."))
+  print_example_banner("examples/dtf/dtf_validation_report.jl", "runs native DTF/FOR002 validation across cases A-E and writes a combined loss/voltage-transfer summary report")
+  repo = normpath(joinpath(@__DIR__, "..", ".."))
   data_dir = joinpath(repo, "data", "DTF")
-  outdir = joinpath(@__DIR__, "_out", "dtf_validation")
+  outdir = joinpath(@__DIR__, "..", "_out", "dtf_validation")
   mkpath(outdir)
   missing = String[]
   for c in CASES
