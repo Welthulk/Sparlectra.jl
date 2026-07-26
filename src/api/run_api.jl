@@ -640,7 +640,17 @@ function _run_sparlectra_api(;
   qlimit_metadata["runtime_casefile_path"] = case_path
   matpower_metadata = _resolved_matpower_import_runtime_options(config)
   operation_callback("powerflow_effective_options"; run_id = run_id, case = basename(case_path), _metadata_kwargs(qlimit_metadata)..., _metadata_kwargs(matpower_metadata)...)
-  api_performance_profile = Dict{Symbol,Any}(:cancellation_check => () -> _check_powerflow_cancelled!(cancellation_token), :phase_callback => phase -> emit_phase(String(phase)), :output_dir => output_path)
+  # :enabled gates the fine-grained _perf_profile_time! sub-timings (issue
+  # #288 finding 4: without it, phases like solver_finalization stay opaque
+  # in performance.log). Tie it to the requested timing mode instead of
+  # leaving it permanently off.
+  api_performance_profile = Dict{Symbol,Any}(
+    :enabled => _api_timing_mode(performance_timing) !== :off,
+    :show_allocations => config.performance.show_allocations,
+    :cancellation_check => () -> _check_powerflow_cancelled!(cancellation_token),
+    :phase_callback => phase -> emit_phase(String(phase)),
+    :output_dir => output_path,
+  )
   execution_start = time_ns()
   dtf_metadata = Dict{String,Any}()
   if detected_case_format === :dtf_for001

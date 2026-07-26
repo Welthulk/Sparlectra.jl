@@ -896,24 +896,26 @@ function runpf_rectangular!(
     wrong_branch_rescue_reason = wrong_branch_status.wrong_branch_rescue_reason
   end
 
-  mismatch_diagnostics = _rectangular_mismatch_diagnostics(
-    Ybus,
-    V,
-    S,
-    bus_types,
-    Vset,
-    slack_idx,
-    final_pv_voltage_residual;
-    net,
-    history,
-    step_diagnostics,
-    best_finite_iteration,
-    best_finite_voltage,
-    last_finite_iteration,
-    last_finite_voltage,
-    first_nonfinite_iteration,
-    first_nonfinite_voltage,
-  )
+  mismatch_diagnostics = _perf_profile_time!(performance_profile, :solver_final_mismatch_diagnostics) do
+    _rectangular_mismatch_diagnostics(
+      Ybus,
+      V,
+      S,
+      bus_types,
+      Vset,
+      slack_idx,
+      final_pv_voltage_residual;
+      net,
+      history,
+      step_diagnostics,
+      best_finite_iteration,
+      best_finite_voltage,
+      last_finite_iteration,
+      last_finite_voltage,
+      first_nonfinite_iteration,
+      first_nonfinite_voltage,
+    )
+  end
 
   switch_counts, oscillating_buses, max_switching_exceeded, q_limit_active_set_ok, converged, rejection_reason, final_reason, final_status, status = _perf_profile_time!(performance_profile, :solver_status_bookkeeping) do
     switch_counts_ = qlimit_switch_counts(net)
