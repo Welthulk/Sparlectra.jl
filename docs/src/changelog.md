@@ -1,4 +1,23 @@
-# Version 0.8.16 - unreleased
+# Version 0.8.16 — 2026-07-27
+
+Allocation and import performance (issue #292)
+
+## Improvements
+
+* Rectangular Newton solver: Jacobian assembly can now refresh the retained
+  sparse matrix in place — triplet buffers are reused and a recorded
+  emit-order map writes each entry directly into `nzval`. A PV↔PQ switch
+  changes the pattern and automatically falls back to a structural rebuild.
+* MATPOWER parser: byte-level comment stripping and a reworked matrix
+  tokenizer cut parse-time allocations; already-sorted bus matrices skip
+  the re-sort.
+* **Opt-in binary case cache** (`matpower_import.net_cache.enabled`,
+  default `false`): stores the parsed case next to the case file
+  (`.sparlectra_net_cache/`), keyed by file hash plus Sparlectra/Julia
+  versions. The network is always rebuilt fresh, so import options keep
+  taking effect; requires `auto_profile: off`. Stale or unreadable cache
+  entries silently fall back to a fresh parse — the directory is safe to
+  delete at any time. Details in `docs/src/matpower_import.md`.
 
 
 # Version 0.8.15 — 2026-07-22
