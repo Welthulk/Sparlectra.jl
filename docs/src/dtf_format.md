@@ -44,7 +44,7 @@ export writes out.
 
 ## Transformer-control cards
 
-Transformer-control cards carry the transformer winding/nameplate voltages, longitudinal tap range, tap step, and optional Schraegregler/skew-angle fields. Sparlectra matches a control card to its transformer by terminals and parallel identifier. The resulting metadata includes the parsed winding values, selected ratio convention, neutral base ratio, relative tap fraction, skew angle, effective ratio and effective phase shift.
+Transformer-control cards carry the transformer winding/nameplate voltages, longitudinal tap range, tap step, and optional combined-regulation (Schraegregler) skew-angle fields. Sparlectra matches a control card to its transformer by terminals and parallel identifier. The resulting metadata includes the parsed winding values, selected ratio convention, neutral base ratio, relative tap fraction, skew angle, effective ratio and effective phase shift.
 
 ## Bus cards
 
@@ -62,7 +62,7 @@ The slack bus is taken from the DTF size/slack information and mapped to a Sparl
 
 In DTF compatibility mode, transformer winding values such as 400/231 kV are preserved as nameplate/control metadata. They are not automatically interpreted as a permanent off-nominal transformer tap at neutral position.
 
-At neutral tap position, Sparlectra's DTF importer uses neutral-one behaviour by default, matching the observed FOR002 legacy semantics. Tap positions and Schraegregler/skew-angle controls are applied as deviations from this neutral position.
+At neutral tap position, Sparlectra's DTF importer uses neutral-one behaviour by default, matching the observed FOR002 legacy semantics. Tap positions and combined-regulation (Schraegregler) skew-angle controls are applied as deviations from this neutral position.
 
 The executable `transformer_ratio_mode` values are:
 
@@ -71,7 +71,7 @@ The executable `transformer_ratio_mode` values are:
 
 The nameplate/winding ratio remains visible in metadata such as `nominal_unregulated_kv`, `nominal_regulated_kv`, `from_bus_vn_kV`, `to_bus_vn_kV`, `winding_over_network_base_ratio`, `transformer_ratio_mode`, `base_ratio_used`, `tap_fraction`, `skew_angle_deg`, `effective_ratio` and `effective_shift_deg`.
 
-## Schraegregler / skew-angle transformer controls
+## Combined-regulation (Schraegregler) skew-angle transformer controls
 
 The DTF 60-degree field in the Schraegregler example is a skew angle of the regulating voltage, not the final transformer phase-shift angle. Sparlectra computes the resulting complex tap from tap range, actual tap position and skew angle. The complex regulating vector is converted to the from-side off-nominal transformer convention by using its reciprocal magnitude and the negative regulating-vector angle.
 

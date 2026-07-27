@@ -161,16 +161,16 @@ In Sparlectra's branch model these are the independent branch fields
 `tap_ratio` (with `tap_min/max/step`) and `phase_shift_deg`
 (`phase_min/max/step_deg`); both enter the complex ratio of the transformer
 branch. The idealization is that a ratio step does not move the angle and a
-phase step does not move the magnitude (a real asymmetrical Schrägregler
-couples them; the CGMES-style `PhaseTapChangerModel` on the winding is
+phase step does not move the magnitude (a real asymmetrical combined
+regulator couples them; the CGMES-style `PhaseTapChangerModel` on the winding is
 staged for that but not yet wired into the branch admittance).
 
 ### Control: why V→ratio and P→phase may be split
 
 In transmission grids the sensitivities decouple well: voltage magnitudes
 respond mainly to the ratio tap (V–Q coupling) and active-power flow to the
-phase angle (P–θ coupling). Real combined-regulation units (Schrägregler)
-therefore usually run **two separate controllers** — a voltage regulator
+phase angle (P–θ coupling). Real combined-regulation units therefore
+usually run **two separate controllers** — a voltage regulator
 driving the in-phase stage and an active-power regulator driving the
 quadrature stage. Note the practical convention: the "angle controller"
 regulates a *power* setpoint; the phase angle is its actuator, not its
@@ -182,8 +182,8 @@ Sparlectra supports both realizations:
    with `control_ratio = true` and `control_phase = true` (one status, one
    report row; see `examples/others/tap_control_demo_grid.jl`).
 2. **Two independent controllers on the same transformer** (split combined
-   regulation) — one `mode = :voltage` controller owning the ratio tap
-   and one `mode = :branch_active_power` controller owning the phase tap:
+   regulation) — one `mode = :voltage` controller owning the ratio tap and
+   one `mode = :branch_active_power` controller owning the phase tap:
 
    ```julia
    addTapController!(net; trafo = "T_SCHRAEG", mode = :voltage,

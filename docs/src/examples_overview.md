@@ -39,13 +39,13 @@ infrastructure in `examples/internal/`, experimental material in
   Builds the same three-winding transformer with `create3WTWindings!` in
   three separate configurations, demonstrating the `phase_tap_side`/
   `phase_taps` keywords (Issue #261): **Case 1** OLTC only (ratio tap on the
-  HV winding); **Case 2** PST/Schrägregler only (asymmetrical
+  HV winding); **Case 2** PST/combined regulator only (asymmetrical
   `PhaseTapChangerModel` on the MV winding, no ratio tap anywhere); **Case 3**
   (bonus) both combined on the HV winding (`tap_side == phase_tap_side`).
   Data-model only — resolving a phase-tap model into the AUX-bus branch and
   outer-loop control of a single 3WT winding are not wired yet.
 - `tap_control_demo_grid.jl`  
-  Lightweight three-controller demo (OLTC + PST + Schrägregler) using `run_sparlectra(net = ...)`,
+  Lightweight three-controller demo (OLTC + PST + combined regulation) using `run_sparlectra(net = ...)`,
   central Sparlectra configuration (`examples/configuration.yaml` or
   `SPARLECTRA_CONFIGURATION_YAML`) plus demo-specific
   `examples/others/tap_control_demo_grid.yaml`, and `latest_control_result(net)` for
@@ -53,9 +53,9 @@ infrastructure in `examples/internal/`, experimental material in
   `SPARLECTRA_TAP_DEMO_CLASSIC=1`; optional raw control-result rows:
   `SPARLECTRA_TAP_DEMO_RAW=1`.
 - `tap_control_schraeg_two_controllers.jl`  
-  Split Schrägregelung: two independent controllers on one transformer —
-  voltage via the ratio tap, active power via the phase tap — with
-  per-actuator exclusivity and the discrete-step deadband sizing rule.
+  Split combined regulation (Schrägregler): two independent controllers on
+  one transformer — voltage via the ratio tap, active power via the phase
+  tap — with per-actuator exclusivity and the discrete-step deadband rule.
 
 ## Voltage-dependent and Q-limit controls
 

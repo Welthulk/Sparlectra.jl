@@ -241,8 +241,8 @@ model, where a tap changer hangs on a transformer end.
       only the ratio changes.
     - **ψ = 90°** — added voltage in quadrature → *quadrature booster*:
       produces mainly a phase shift.
-    - **0° < ψ < 90°** — *Schrägregler*: produces both ratio and phase change
-      in the proportion set by ψ.
+    - **0° < ψ < 90°** — *combined regulator* (Schrägregler): produces both
+      ratio and phase change in the proportion set by ψ.
 
     From ψ and the tap fraction `f`, `calcPhaseTapAngleRatio` derives the
     effective `ratio` and `shift_deg` that are stamped into the branch (from the
@@ -273,7 +273,7 @@ pst_sym = PhaseTapChangerModel(
 )
 ```
 
-Asymmetrical phase-shifter / Schrägregler (ψ ≠ 0):
+Asymmetrical phase-shifter / combined regulator (ψ ≠ 0):
 
 ```julia
 pst_skew = PhaseTapChangerModel(
@@ -379,7 +379,7 @@ auxiliary star-point bus: each of the three windings becomes its own
 `PowerTransformerWinding` and is stamped as a separate branch to the AUX bus
 (`create3WTWindings!`, MVA method). Because every winding is a full
 `PowerTransformerWinding`, each already carries its own `taps` and `phase_taps`
-slots — so a phase-shifting winding (e.g. a three-winding *Schrägregler*) is
+slots — so a phase-shifting winding (e.g. a three-winding combined regulator) is
 represented by placing the regulating vector on the branch from that one
 winding to the star point, leaving the other two windings unaffected. The
 positive-sequence stamping and the ψ interpretation are exactly the same as for
@@ -390,7 +390,7 @@ to regulate.
 `1..3`, `0` = none) and `phase_taps::PhaseTapChangerModel` pair to attach a
 PST model to one winding — the same 1-based convention as `tap_side`, and
 `phase_tap_side` may equal `tap_side` when a winding carries both a ratio tap
-and a phase tap (Schrägregler):
+and a phase tap (combined regulation):
 
 ```julia
 psc = PhaseTapChangerModel(kind = :asymmetrical, step = 0, lowStep = -8, highStep = 8, neutralStep = 0, winding_connection_angle_deg = 60.0)
@@ -407,7 +407,8 @@ current gaps.
 
 Sparlectra regulates transformers within the branch PI model using the complex
 tap `t = τ·e^{jφ}` and **without auxiliary nodes**: `τ` for voltage control,
-`φ` for active-power-flow (PST) control, both together for a *Schrägregler*.
+`φ` for active-power-flow (PST) control, both together for combined
+regulation.
 
 ### Numerical method
 
@@ -482,7 +483,7 @@ addPowerTransformerControl!(net;
   is_discrete = true)
 ```
 
-Combined voltage + active-power (*Schrägregler*):
+Combined voltage + active-power regulation:
 
 ```julia
 addPowerTransformerControl!(net;
@@ -497,11 +498,11 @@ addPowerTransformerControl!(net;
   is_discrete = true)
 ```
 
-Alternatively, the Schrägregler unit can run **two independent controllers
-with disjoint actuators** — a voltage controller on the ratio tap plus an
-active-power controller on the phase tap, each with its own target, deadband,
-and convergence status. Background (Längs-/Quer-/Schrägregelung, per-actuator
-exclusivity, discrete-step deadband sizing) and setup in the
+Alternatively, the combined-regulation unit can run **two independent
+controllers with disjoint actuators** — a voltage controller on the ratio tap
+plus an active-power controller on the phase tap, each with its own target,
+deadband, and convergence status. Background (OLTC/PST/combined regulation,
+per-actuator exclusivity, discrete-step deadband sizing) and setup in the
 [transformer regulation theory](@ref transformer_regulation_theory) section
 of the Control Framework page.
 
@@ -607,9 +608,9 @@ provided. MATPOWER's raw `TAP`/`SHIFT` corresponds to the CGMES "General Case".
 - MATPOWER case format documentation — the `TAP` / `SHIFT` branch columns and
   the ratio/shift conventions handled at import.
 - Sparlectra examples: `examples/others/tap_control_demo_grid.jl` (OLTC voltage, PST
-  active-power, and Schrägregler combined control in one network),
-  `examples/others/tap_control_schraeg_two_controllers.jl` (split
-  Schrägregelung: two independent controllers with disjoint actuators on one
+  active-power, and combined regulation in one network),
+  `examples/others/tap_control_schraeg_two_controllers.jl` (split combined
+  regulation: two independent controllers with disjoint actuators on one
   transformer) and
   `examples/example_transformer_phase_shift_control.jl` (phase-shift direction
   probe).
