@@ -342,9 +342,12 @@ using Sparlectra
 
 # ... build net, e.g. from a MATPOWER case ...
 
-# PMU phasor at bus "B2": accurate magnitude + GPS-referenced angle.
-addVmMeasurement!(net; busName = "B2", value = 1.012, sigma = 0.002)
-addVaMeasurement!(net; busName = "B2", value = -3.72, sigma = 0.02)  # degrees
+# PMU phasor at bus "B2": accurate magnitude + GPS-referenced angle (degrees).
+addPmuPhasorMeasurement!(net; busName = "B2", vm_pu = 1.012, va_deg = -3.72)
+
+# Equivalent, with the single-component helpers:
+#   addVmMeasurement!(net; busName = "B2", value = 1.012, sigma = 0.002)
+#   addVaMeasurement!(net; busName = "B2", value = -3.72, sigma = 0.02)
 
 se = runse!(net)                 # pmu_ref_offset = :auto (default)
 println("PMU reference offset α: ", se.vaRefOffsetDeg, " deg")

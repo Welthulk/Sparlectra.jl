@@ -498,6 +498,7 @@ export
   addMeasurement!,
   addVmMeasurement!,                      # Add voltage-magnitude measurement.
   addVaMeasurement!,                      # Add PMU voltage-angle measurement.
+  addPmuPhasorMeasurement!,               # Add PMU voltage phasor (Vm + Va pair).
   addPinjMeasurement!,                    # Add active-power injection measurement.
   addQinjMeasurement!,                    # Add reactive-power injection measurement.
   addPflowMeasurement!,                   # Add active branch-flow measurement.

@@ -8,6 +8,9 @@ Allocation and import performance (issue #292), State estimation: PMU voltage-an
   synchrophasor angles, with helper `addVaMeasurement!`, synthetic
   generation via `generateMeasurementsFromPF(includeVa = true, vaBusIdxs,
   vaRefOffsetDeg)`, and a `va` default (0.02°) in `measurementStdDevs`.
+  PMU voltage magnitudes are covered as tightly weighted `VmMeas`; the
+  combined helper `addPmuPhasorMeasurement!` appends the full phasor
+  (Vm + Va pair) in one call.
 * **New state variable in the WLS estimator**: a common reference-angle
   offset α between the PMU time base and the slack reference
   (`z_Va = θ_i + α + e`). Controlled by `state_estimation.pmu_ref_offset`

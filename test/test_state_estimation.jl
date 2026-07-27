@@ -426,6 +426,17 @@ function test_state_estimation_pmu_va_measurements()::Bool
     @test va.busIdx == geNetBusIdx(net = net, busName = "ASTADT")
     @test_throws Exception addMeasurement!(net; typ = Sparlectra.VaMeas, value = 0.0, sigma = 0.02)
 
+    # Combined PMU phasor helper: one call appends the Vm + Va pair with
+    # PMU-class default sigmas.
+    vmP, vaP = addPmuPhasorMeasurement!(net; busName = "ASTADT", vm_pu = 1.01, va_deg = -2.4)
+    @test vmP.typ == Sparlectra.VmMeas
+    @test vaP.typ == Sparlectra.VaMeas
+    @test vmP.sigma == 0.002
+    @test vaP.sigma == 0.02
+    @test vmP.busIdx == vaP.busIdx == geNetBusIdx(net = net, busName = "ASTADT")
+    @test startswith(vmP.id, "PMU_Vm_bus_")
+    @test startswith(vaP.id, "PMU_Va_bus_")
+
     # Bad-data diagnostics stay consistent with the offset state present.
     diag = validate_measurements(net, meas)
     @test diag.converged

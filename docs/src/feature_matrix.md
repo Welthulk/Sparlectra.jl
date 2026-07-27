@@ -62,8 +62,8 @@ Legend:
 | Feature | State Estimation (`runse!`) | Notes |
 |---|:---:|---|
 | SCADA-style measurements (`Vm`, `Pinj`, `Qinj`, `Pflow`, `Qflow`) | ✅ | Public measurement types and helper builders are available. |
-| PMU voltage-angle measurements (`Va`) with reference-offset state | ✅ | `VaMeas` (degrees) plus an estimated common reference-angle offset α between the PMU time base and the slack reference (`state_estimation.pmu_ref_offset`). |
-| PMU current-phasor measurement types | ❌ | No dedicated branch current phasor types yet; PMU magnitudes are modeled as tightly weighted `VmMeas`. |
+| PMU voltage-phasor measurements (`Vm` + `Va`) | ✅ | Magnitude as tightly weighted `VmMeas`, angle as `VaMeas` (degrees) with an estimated common reference-angle offset α between the PMU time base and the slack reference (`state_estimation.pmu_ref_offset`). Combined helper: `addPmuPhasorMeasurement!`. |
+| PMU current-phasor measurement types | ❌ | No dedicated branch current phasor (`I_ij`) types yet. |
 | Passive bus / zero-injection (ZIB) support | ⚠️ | Implemented via zero-injection pseudo-measurements (not separate hard-constraint block). |
 | Global/local observability analysis | ✅ | Matrix-level and network-level observability helpers are available. |
 | Structural observability checks | ✅ | Sparsity/matching-based checks are available. |

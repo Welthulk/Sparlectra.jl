@@ -156,6 +156,28 @@ function addVaMeasurement!(net::Net; busName::String, value::Real, sigma::Real, 
 end
 
 """
+    addPmuPhasorMeasurement!(measurements; net, busName, vm_pu, va_deg, sigmaVm=0.002, sigmaVa=0.02, active=true, idPrefix="PMU")
+
+Append a complete PMU voltage-phasor measurement — magnitude and angle — for
+one bus and return the pair `(vmMeas, vaMeas)`.
+
+The magnitude enters as an ordinary `VmMeas` (p.u.); PMU accuracy is
+expressed solely through the tight default `sigmaVm`. The angle enters as a
+`VaMeas` (degrees, referenced to the common PMU time base; see the
+`pmu_ref_offset` handling in `runse!`).
+"""
+function addPmuPhasorMeasurement!(measurements::Vector; net::Net, busName::String, vm_pu::Real, va_deg::Real, sigmaVm::Real = 0.002, sigmaVa::Real = 0.02, active::Bool = true, idPrefix::AbstractString = "PMU")
+  busIdx = geNetBusIdx(net = net, busName = busName)
+  vm = addMeasurement!(measurements; typ = VmMeas, value = vm_pu, sigma = sigmaVm, active = active, busIdx = busIdx, id = "$(idPrefix)_Vm_bus_$(busIdx)")
+  va = addMeasurement!(measurements; typ = VaMeas, value = va_deg, sigma = sigmaVa, active = active, busIdx = busIdx, id = "$(idPrefix)_Va_bus_$(busIdx)")
+  return (vm, va)
+end
+
+function addPmuPhasorMeasurement!(net::Net; busName::String, vm_pu::Real, va_deg::Real, sigmaVm::Real = 0.002, sigmaVa::Real = 0.02, active::Bool = true, idPrefix::AbstractString = "PMU")
+  return addPmuPhasorMeasurement!(_net_measurements(net); net = net, busName = busName, vm_pu = vm_pu, va_deg = va_deg, sigmaVm = sigmaVm, sigmaVa = sigmaVa, active = active, idPrefix = idPrefix)
+end
+
+"""
     addPinjMeasurement!(measurements; net, busName, value, sigma, active=true, id="")
 
 Append an active-power injection measurement identified by `busName`.
