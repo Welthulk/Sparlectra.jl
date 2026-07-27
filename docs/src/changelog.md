@@ -1,6 +1,6 @@
-# Version 0.8.17 - unreleased
+# Version 0.8.16 — 2026-07-27
 
-State estimation: PMU voltage-angle measurements
+Allocation and import performance (issue #292), State estimation: PMU voltage-angle measurements
 
 ## Improvements
 
@@ -18,12 +18,6 @@ State estimation: PMU voltage-angle measurements
   SCADA baseline vs. aligned PMUs vs. shifted PMU time base with and without
   the offset state, including the unmodeled-offset failure mode.
 * Theory documentation on PMU angle handling in `docs/src/state_estimation.md`.
-
-# Version 0.8.16 — 2026-07-27
-
-Allocation and import performance (issue #292)
-
-## Improvements
 
 * Rectangular Newton solver: Jacobian assembly can now refresh the retained
   sparse matrix in place — triplet buffers are reused and a recorded
