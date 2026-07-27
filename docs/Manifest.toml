@@ -191,6 +191,12 @@ deps = ["StyledStrings"]
 uuid = "ac6e5ff7-fb65-4e79-a425-ec3bc9c03011"
 version = "1.12.0"
 
+[[deps.KLU]]
+deps = ["LinearAlgebra", "SparseArrays", "SuiteSparse_jll"]
+git-tree-sha1 = "07649c499349dad9f08dde4243a4c597064663e9"
+uuid = "ef3ab10e-7fda-4108-b977-705223b18434"
+version = "0.6.0"
+
 [[deps.LaTeXStrings]]
 git-tree-sha1 = "dda21b8cbd6a6c40d9d02a73230f9d70fed6918c"
 uuid = "b964fa9f-0449-5b57-a5c2-d3ea65f4040f"
@@ -397,10 +403,16 @@ uuid = "a2af1166-a08f-5f64-846c-94a0d3cef48c"
 version = "1.2.2"
 
 [[deps.Sparlectra]]
-deps = ["BenchmarkTools", "DataFrames", "Dates", "Downloads", "InlineStrings", "LinearAlgebra", "Logging", "Markdown", "Printf", "Random", "SHA", "Sockets", "SparseArrays", "TOML", "UUIDs"]
+deps = ["BenchmarkTools", "DataFrames", "Dates", "Downloads", "InlineStrings", "KLU", "LinearAlgebra", "Logging", "Markdown", "PrecompileTools", "Printf", "Random", "SHA", "Serialization", "Sockets", "SparseArrays", "TOML", "UUIDs"]
 path = ".."
 uuid = "31ce9bba-fd9d-44a1-b005-f5f509afda38"
-version = "0.8.9"
+version = "0.8.16"
+
+    [deps.Sparlectra.extensions]
+    SparlectraAnalyticLoadFlowExt = "AnalyticLoadFlow"
+
+    [deps.Sparlectra.weakdeps]
+    AnalyticLoadFlow = "19ecf91d-4042-490c-adc1-7fb0fdb392c0"
 
 [[deps.SparseArrays]]
 deps = ["Libdl", "LinearAlgebra", "Random", "Serialization", "SuiteSparse_jll"]
