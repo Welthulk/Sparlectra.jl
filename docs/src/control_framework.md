@@ -135,3 +135,83 @@ Minimal row schema:
 - `target_p_mw`
 - `tap_ratio`
 - `phase_shift_deg`
+
+## Transformer regulation theory: Längs-, Quer-, and Schrägregelung
+
+A regulated transformer inserts an additional voltage into the winding. The
+classical German terminology distinguishes three cases by the phase of that
+added voltage relative to the winding voltage:
+
+* **Längsregelung** (in-phase regulation): the added voltage is parallel to
+  the winding voltage. Only the magnitude of the complex turns ratio changes
+  — this is the ordinary OLTC ratio tap, and its dominant network effect is
+  on voltage magnitudes and reactive-power flow.
+* **Querregelung** (quadrature regulation): the added voltage is
+  perpendicular (90°). Mostly the angle of the turns ratio changes — this is
+  the phase-shifting transformer (PST), and its dominant effect is on
+  active-power flow through meshed paths.
+* **Schrägregelung** (oblique regulation): the added voltage has an
+  intermediate angle, or — the case modeled here — the unit carries **both**
+  an in-phase and a quadrature tap. The complex turns ratio becomes
+  `n = ρ · e^{jα}` with independently switchable magnitude `ρ` (ratio tap)
+  and angle `α` (phase tap).
+
+In Sparlectra's branch model these are the independent branch fields
+`tap_ratio` (with `tap_min/max/step`) and `phase_shift_deg`
+(`phase_min/max/step_deg`); both enter the complex ratio of the transformer
+branch. The idealization is that a ratio step does not move the angle and a
+phase step does not move the magnitude (a real asymmetrical Schrägregler
+couples them; the CGMES-style `PhaseTapChangerModel` on the winding is
+staged for that but not yet wired into the branch admittance).
+
+### Control: why V→ratio and P→phase may be split
+
+In transmission grids the sensitivities decouple well: voltage magnitudes
+respond mainly to the ratio tap (V–Q coupling) and active-power flow to the
+phase angle (P–θ coupling). Real Schrägregler installations therefore
+usually run **two separate controllers on one unit** — a voltage regulator
+driving the in-phase stage and an active-power regulator driving the
+quadrature stage. Note the practical convention: the "angle controller"
+regulates a *power* setpoint; the phase angle is its actuator, not its
+control target.
+
+Sparlectra supports both realizations:
+
+1. **One combined controller** — `mode = :voltage_and_branch_active_power`
+   with `control_ratio = true` and `control_phase = true` (one status, one
+   report row; see `examples/others/tap_control_demo_grid.jl`).
+2. **Two independent controllers on the same transformer** (split
+   Schrägregelung) — one `mode = :voltage` controller owning the ratio tap
+   and one `mode = :branch_active_power` controller owning the phase tap:
+
+   ```julia
+   addTapController!(net; trafo = "T_SCHRAEG", mode = :voltage,
+       target_bus = "Load_MV", target_vm_pu = 1.02,
+       control_ratio = true, control_phase = false, deadband_vm_pu = 5e-3)
+
+   addTapController!(net; trafo = "T_SCHRAEG", mode = :branch_active_power,
+       target_branch = ("HV", "MV"), p_target_mw = 120.0,
+       control_ratio = false, control_phase = true, deadband_p_mw = 2.0)
+   ```
+
+   Each channel keeps its own target, deadband, convergence status, and
+   report/trace rows; the outer loop alternates both until each is inside
+   its deadband. This mirrors the separately parameterized device
+   controllers in the field. Demo:
+   `examples/others/tap_control_schraeg_two_controllers.jl`.
+
+### Per-actuator exclusivity
+
+`addPowerTransformerControl!` enforces that each actuator (ratio tap, phase
+tap) of a transformer is driven by **at most one** active controller. Two
+controllers on one transformer are accepted exactly when their actuator
+sets are disjoint; a second claim on an already-driven actuator raises an
+error.
+
+### Discrete-step sizing rule
+
+With discrete taps the deadband must cover at least the effect of half a
+tap step on the controlled quantity (e.g. one 0.5° phase step moving
+≈2.5 MW requires `deadband_p_mw ≥ ~1.5`). A tighter deadband makes the
+controller hunt around the target — alternating steps without ever
+converging — until `max_outer_iterations` stops the loop.

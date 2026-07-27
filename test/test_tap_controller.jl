@@ -41,6 +41,56 @@ function run_tap_controller_tests()
     @test_throws ErrorException addPowerTransformerControl!(net; trafo = tbr.comp.cID, mode = :voltage, target_bus = "Load", target_vm_pu = 0.99, control_ratio = true, control_phase = false)
   end
 
+  @testset "Split Schraegregelung: two disjoint controllers on one transformer" begin
+    # Voltage controller on the ratio tap plus active-power controller on the
+    # phase tap of the SAME transformer; a parallel line provides the loop the
+    # phase tap needs to shift flow.
+    net = Net(name = "schraeg_split", baseMVA = 100.0)
+    for bus in ("Slack", "Mid", "Load")
+      addBus!(net = net, busName = bus, vn_kV = 110.0)
+    end
+    addProsumer!(net = net, busName = "Slack", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.02, va_deg = 0.0, referencePri = "Slack")
+    addProsumer!(net = net, busName = "Load", type = "ENERGYCONSUMER", p = -70.0, q = -20.0)
+    addPIModelTrafo!(net = net, fromBus = "Slack", toBus = "Mid", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, ratio = 1.0, shift_deg = 0.0, status = 1)
+    addPIModelACLine!(net = net, fromBus = "Slack", toBus = "Mid", r_pu = 0.03, x_pu = 0.2, b_pu = 0.0, status = 1)
+    addPIModelACLine!(net = net, fromBus = "Mid", toBus = "Load", r_pu = 0.02, x_pu = 0.12, b_pu = 0.01, status = 1)
+
+    tbr = getNetBranch(net = net, fromBus = "Slack", toBus = "Mid")
+    tbr.has_ratio_tap = true
+    tbr.tap_min = 0.95
+    tbr.tap_max = 1.08
+    tbr.tap_step = 0.0125
+    tbr.has_phase_tap = true
+    tbr.phase_min_deg = -10.0
+    tbr.phase_max_deg = 10.0
+    tbr.phase_step_deg = 0.5
+
+    result0 = run_sparlectra(net = net, config = _runner_cfg())
+    @test result0.numerical_converged
+    p0 = get_branch_p_from_to_mw(net, "Slack", "Mid")
+
+    addPowerTransformerControl!(net; trafo = string(tbr.branchIdx), mode = :voltage, target_bus = "Load", target_vm_pu = 1.03, control_ratio = true, control_phase = false, deadband_vm_pu = 5e-3)
+    addPowerTransformerControl!(net; trafo = string(tbr.branchIdx), mode = :branch_active_power, target_branch = ("Slack", "Mid"), p_target_mw = round(p0) + 8.0, control_ratio = false, control_phase = true, deadband_p_mw = 2.0)
+    @test length(Sparlectra._tap_controllers(net)) == 2
+
+    # Per-actuator exclusivity: both actuators are taken now.
+    @test_throws ErrorException addPowerTransformerControl!(net; trafo = string(tbr.branchIdx), mode = :voltage, target_bus = "Load", target_vm_pu = 1.0)
+    @test_throws ErrorException addPowerTransformerControl!(net; trafo = string(tbr.branchIdx), mode = :branch_active_power, target_branch = ("Slack", "Mid"), p_target_mw = 0.0, control_ratio = false, control_phase = true)
+
+    result = run_sparlectra(net = net, config = _runner_cfg())
+    @test result.numerical_converged
+    ctrls = Sparlectra._tap_controllers(net)
+    @test all(c -> c.converged, ctrls)
+    @test abs(get_bus_vm_pu(net, "Load") - 1.03) <= 5e-3
+    @test abs(get_branch_p_from_to_mw(net, "Slack", "Mid") - (round(p0) + 8.0)) <= 2.0
+
+    # Report rows: one row per channel, no duplication across controllers.
+    cres = latest_control_result(net)
+    @test cres !== nothing
+    @test length(cres.controllers) == 2
+    @test length(unique([row.controller_name for row in cres.controllers])) == 2
+  end
+
   @testset "Voltage deadband is evaluated in pu Vm space" begin
     @test Sparlectra._voltage_within_deadband(1.2009, 1.200, 1e-3)
     @test !Sparlectra._voltage_within_deadband(1.2025, 1.200, 1e-3)

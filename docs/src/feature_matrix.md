@@ -24,7 +24,7 @@ Legend:
 | Transformer tap/phase controller as outer controller | ✅ | ❌ | First concrete `AbstractOuterController`; supports ratio and phase updates outside the Newton system. |
 | Machine-readable control trace rows | ✅ | ❌ | Available through `ControlRunResult.trace`; avoids parsing console output. |
 | YAML controller instantiation | ⚠️ | ❌ | `control.controllers` is reserved for future controller definitions; leave empty for current programmatic setup. |
-| Transformer tap control (`addTapController!`) | ✅ | ❌ | PF supports outer-loop tap control for ratio and/or phase (`:voltage`, `:branch_active_power`, `:voltage_and_branch_active_power`), including discrete step operation with tap/phase limits. |
+| Transformer tap control (`addTapController!`) | ✅ | ❌ | PF supports outer-loop tap control for ratio and/or phase (`:voltage`, `:branch_active_power`, `:voltage_and_branch_active_power`), including discrete step operation with tap/phase limits. Split Schrägregelung is supported: two independent controllers on one transformer with disjoint actuators (voltage→ratio tap, active power→phase tap). |
 | Remote target-bus voltage control (single-controller) | ⚠️ | ❌ | Supported in PF by setting `mode = :voltage` and `target_bus`; this is remote measurement with one controller channel. |
 | Coordinated master/slave transformer voltage control | ❌ | ❌ | Not yet implemented as dedicated multi-transformer coordination logic (no built-in participation-factor allocation/group dispatcher yet). |
 | π-equivalent branch modeling | ✅ | ✅ | Common branch representation across PF/SE workflows. |

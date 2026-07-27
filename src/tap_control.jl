@@ -177,7 +177,14 @@ function control_apply_update!(ctrl::PowerTransformerControl, net::Net, ::Abstra
   ctrl.status = ctrl.at_limit ? :at_limit : ctrl.status
   return moved
 end
-control_report_rows(ctrl::PowerTransformerControl, net::Net, ::AbstractControlState, context) = filter(row -> row.transformer_id == _find_trafo_branch(net, ctrl.trafo).comp.cName, buildTapControllerReportRows(net))
+# Filter by the per-controller row name, not the transformer id: with two
+# disjoint-actuator controllers on one transformer (split Schrägregelung),
+# a transformer-id filter would duplicate both rows into each controller.
+function control_report_rows(ctrl::PowerTransformerControl, net::Net, ::AbstractControlState, context)
+  br = _find_trafo_branch(net, ctrl.trafo)
+  own = string(br.comp.cName, " ", _controller_type_label(ctrl, br))
+  return filter(row -> row.controller_name == own, buildTapControllerReportRows(net))
+end
 function control_trace_rows(ctrl::PowerTransformerControl, net::Net, ::AbstractControlState, context)
   br = _find_trafo_branch(net, ctrl.trafo)
   return [(
@@ -282,7 +289,10 @@ end
 Add and validate a transformer tap controller.
 
 Validation rules:
-- One active controller per transformer.
+- Each actuator (ratio tap, phase tap) of a transformer may be driven by at
+  most one active controller. Two controllers may coexist on one transformer
+  when they drive disjoint actuators — the classic Schrägregelung split of a
+  voltage controller (ratio tap) plus an active-power controller (phase tap).
 - Required target fields must be set according to `mode`.
 - `control_ratio` / `control_phase` must match the chosen mode.
 """
@@ -306,15 +316,17 @@ function addPowerTransformerControl!(
 )
   br = _find_trafo_branch(net, trafo)
   trafo_obj = findfirst(t -> t.comp.cFrom_bus == br.comp.cFrom_bus && t.comp.cTo_bus == br.comp.cTo_bus, net.trafos)
-  max_controls = isnothing(trafo_obj) ? 1 : max(1, net.trafos[trafo_obj].nController)
-  controllers = _tap_controllers(net)
-  n_active = 0
-  for c in controllers
+  # Per-actuator exclusivity: a second active controller on the same
+  # transformer is allowed only when it drives a disjoint actuator set
+  # (e.g. voltage/ratio + active-power/phase on one Schrägregler unit).
+  for c in _tap_controllers(net)
     c.enabled || continue
     cbr = _find_trafo_branch(net, c.trafo)
-    cbr.branchIdx == br.branchIdx && (n_active += 1)
+    cbr.branchIdx == br.branchIdx || continue
+    if (control_ratio && c.control_ratio) || (control_phase && c.control_phase)
+      error("PowerTransformerControl: transformer $(trafo) already has an active controller for this actuator (ratio/phase); use disjoint actuators or disable the existing controller.")
+    end
   end
-  n_active >= max_controls && error("PowerTransformerControl: transformer $(trafo) allows at most $(max_controls) active controller(s).")
   mode in (:voltage, :branch_active_power, :voltage_and_branch_active_power) || error("PowerTransformerControl: unsupported mode=$(mode)")
 
   if mode in (:voltage, :voltage_and_branch_active_power)

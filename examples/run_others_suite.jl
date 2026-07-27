@@ -28,6 +28,7 @@ const SUITE_SPECS = ExampleSpec[
   ExampleSpec(name = "transformer_tap_changer_model", file = "others/exp_transformer_tap_changer_model.jl", purpose = "compares :ideal vs :impedance_correction tap_changer_model on an off-nominal-tap transformer"),
   ExampleSpec(name = "transformer_loss_extension", file = "others/exp_transformer_loss_extension.jl", purpose = "MATPOWER transformer-loss extension export/reimport round trip"),
   ExampleSpec(name = "tap_control_demo_grid", file = "others/tap_control_demo_grid.jl", purpose = "three-controller demo (OLTC + PST + Schraegregler) via run_sparlectra(net=...)"),
+  ExampleSpec(name = "tap_control_schraeg_two_controllers", file = "others/tap_control_schraeg_two_controllers.jl", purpose = "split Schraegregelung: independent voltage (ratio tap) and active-power (phase tap) controllers on one transformer"),
   ExampleSpec(name = "export_solution", file = "others/export_solution.jl", args = ["case9.m"], purpose = "exports a solver-agnostic PFModel/PFSolution for case9"),
   ExampleSpec(name = "network_analyzer", file = "others/network_analyzer.jl", purpose = "topology analysis of a small network before and after removing a branch"),
   ExampleSpec(name = "using_links", file = "others/using_links.jl", purpose = "busbar coupler modeled as a bus link, demonstrating open/close link behavior"),

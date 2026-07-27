@@ -52,6 +52,10 @@ infrastructure in `examples/internal/`, experimental material in
   controller rows and trace rows. Optional classic output:
   `SPARLECTRA_TAP_DEMO_CLASSIC=1`; optional raw control-result rows:
   `SPARLECTRA_TAP_DEMO_RAW=1`.
+- `tap_control_schraeg_two_controllers.jl`  
+  Split Schrägregelung: two independent controllers on one transformer —
+  voltage via the ratio tap, active power via the phase tap — with
+  per-actuator exclusivity and the discrete-step deadband sizing rule.
 
 ## Voltage-dependent and Q-limit controls
 

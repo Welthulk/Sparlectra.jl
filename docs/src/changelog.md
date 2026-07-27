@@ -21,6 +21,13 @@ Allocation and import performance (issue #292), State estimation: PMU voltage-an
   SCADA baseline vs. aligned PMUs vs. shifted PMU time base with and without
   the offset state, including the unmodeled-offset failure mode.
 * Theory documentation on PMU angle handling in `docs/src/state_estimation.md`.
+* **Split Schrägregelung**: a transformer can now carry two independent tap
+  controllers with disjoint actuators — a voltage controller on the ratio
+  tap plus an active-power controller on the phase tap
+  (`addTapController!` now enforces per-actuator instead of per-transformer
+  exclusivity; per-channel report rows are no longer duplicated). New demo
+  `tap_control_schraeg_two_controllers.jl` (others suite) and regulation
+  theory (Längs-/Quer-/Schrägregelung) in `docs/src/control_framework.md`.
 
 * Rectangular Newton solver: Jacobian assembly can now refresh the retained
   sparse matrix in place — triplet buffers are reused and a recorded
