@@ -262,6 +262,7 @@ Base.@kwdef struct StateEstimationConfig
   flatstart::Bool = true
   jac_eps::Float64 = 1.0e-6
   update_net::Bool = true
+  pmu_ref_offset::Symbol = :auto
   observability::ObservabilityConfig = ObservabilityConfig()
 end
 
@@ -479,6 +480,7 @@ const POWERFLOW_ISLAND_MODE_VALUES = (:solve_independent,)
 const POWERFLOW_ISLAND_REFERENCE_POLICY_VALUES = (:matpower_like,)
 const RECTANGULAR_PREALLOCATE_WORKSPACE_VALUES = (:off, :on, :auto)
 const STATE_ESTIMATION_METHOD_VALUES = (:wls,)
+const STATE_ESTIMATION_PMU_REF_OFFSET_VALUES = (:auto, :off)
 const MATPOWER_PV_VOLTAGE_SOURCE_VALUES = (:gen_vg, :bus_vm, :auto, :strict_check)
 const MATPOWER_COMPARE_VOLTAGE_REFERENCE_VALUES = (:bus_vm, :gen_vg, :imported_setpoint, :hybrid)
 const MATPOWER_SHIFT_UNIT_VALUES = (:deg, :rad)
@@ -916,6 +918,7 @@ function StateEstimationConfig(raw::AbstractDict)
     flatstart = _as_bool_cfg(_raw_get(merged, "flatstart", true)),
     jac_eps = _validate_positive("state_estimation.jac_eps", _as_float_cfg(_raw_get(merged, "jac_eps", 1.0e-6))),
     update_net = _as_bool_cfg(_raw_get(merged, "update_net", true)),
+    pmu_ref_offset = _validate_allowed_symbol("state_estimation.pmu_ref_offset", _as_symbol_cfg(_raw_get(merged, "pmu_ref_offset", :auto)), STATE_ESTIMATION_PMU_REF_OFFSET_VALUES),
     observability = ObservabilityConfig(merged),
   )
 end

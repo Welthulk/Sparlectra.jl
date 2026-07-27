@@ -21,6 +21,11 @@ using Printf
     SEResult
 
 Result container for the first classical WLS state-estimation run.
+
+`vaRefOffsetDeg` is the estimated common PMU reference-angle offset α in
+degrees (the slack-bus angle expressed in the PMU time base). It is `nothing`
+when no offset state was part of the estimation, i.e. when there are no
+active `VaMeas` measurements or `pmu_ref_offset = :off`.
 """
 struct SEResult
   voltages::Vector{ComplexF64}
@@ -31,6 +36,7 @@ struct SEResult
   objectiveJ::Float64
   dof::Int # degrees of freedom ν=m−n
   jWithin3Sigma::Bool
+  vaRefOffsetDeg::Union{Nothing,Float64}
 end
 
 """
@@ -57,8 +63,24 @@ end
   error("No slack bus found for state estimation")
 end
 
+## Internal helper: true when the active set contains PMU angle measurements.
+@inline function _has_active_va(measurements::Vector{Measurement})
+  return any(m -> m.active && m.typ == VaMeas, measurements)
+end
+
+## Internal helper: decide whether the PMU reference-offset state α is carried.
+## :auto adds α as soon as active VaMeas rows exist; :off treats PMU angles as
+## already slack-referenced.
+@inline function _va_offset_active(measurements::Vector{Measurement}, mode::Symbol)
+  mode == :off && return false
+  mode == :auto || error("pmu_ref_offset mode must be :auto or :off, got :$(mode)")
+  return _has_active_va(measurements)
+end
+
 ## Internal helper: map estimator state vector x -> complex bus voltages V.
 ## x = [θ(non-slack); Vm(all buses)] with θ_slack fixed to 0.
+## A trailing PMU reference-offset state α (if present) is ignored here and
+## extracted separately via _va_offset_from_state.
 function _state_to_voltage(x::Vector{Float64}, slackIdx::Int, nbus::Int)
   nθ = nbus - 1
   θ = zeros(Float64, nbus)
@@ -81,12 +103,19 @@ function _state_to_voltage(x::Vector{Float64}, slackIdx::Int, nbus::Int)
   return vm .* cis.(θ)
 end
 
+## Internal helper: extract the PMU reference-offset state α (radians) from x.
+@inline function _va_offset_from_state(x::Vector{Float64}, withVaOffset::Bool)
+  return withVaOffset ? x[end] : 0.0
+end
+
 ## Internal helper: build initial state vector for WLS iterations.
 ## flatstart=true uses θ=0, Vm=1 except slack magnitude initialized from net.
-function _initial_state_vector(net::Net, slackIdx::Int; flatstart::Bool = true)
+## withVaOffset=true appends the PMU reference-offset state α (radians),
+## initialized to 0.
+function _initial_state_vector(net::Net, slackIdx::Int; flatstart::Bool = true, withVaOffset::Bool = false)
   nbus = length(net.nodeVec)
   nθ = nbus - 1
-  x = zeros(Float64, nθ + nbus)
+  x = zeros(Float64, nθ + nbus + (withVaOffset ? 1 : 0))
 
   p = 0
   for i = 1:nbus
@@ -186,11 +215,11 @@ end
 
 ## Internal helper: evaluate nonlinear measurement model h(x).
 ## Uses nodal complex injections S = V .* conj(Ybus*V) and branch formulas in _measurement_prediction.
-function _predict_measurements(measurements::Vector{Measurement}, net::Net, V::Vector{ComplexF64}, Ybus::AbstractMatrix{ComplexF64})
+function _predict_measurements(measurements::Vector{Measurement}, net::Net, V::Vector{ComplexF64}, Ybus::AbstractMatrix{ComplexF64}; vaOffsetRad::Float64 = 0.0)
   Sbus_MVA = calc_injections(Ybus, V) .* net.baseMVA
   h = Vector{Float64}(undef, length(measurements))
   @inbounds for (i, m) in enumerate(measurements)
-    h[i] = _measurement_prediction(m, net, V, Sbus_MVA)
+    h[i] = _measurement_prediction(m, net, V, Sbus_MVA, vaOffsetRad)
   end
   return h
 end
@@ -199,7 +228,8 @@ end
 ##
 ## Inputs and meaning:
 ## - measurements: active measurement set defining h(x)
-## - x: current state vector x = [θ(non-slack); Vm(all)]
+## - x: current state vector x = [θ(non-slack); Vm(all)] plus, when
+##   withVaOffset=true, a trailing PMU reference-offset state α (radians)
 ## - slackIdx, nbus: mapping context for x -> complex voltages V
 ## - Ybus: network admittance used inside measurement predictions
 ## - eps: perturbation size ε for forward-difference sensitivities
@@ -211,8 +241,8 @@ end
 ## Returns:
 ## - H: Jacobian matrix of size (m_measurements × n_states)
 ## - h0: base prediction vector h(x), reused by caller to avoid recomputation.
-function _measurement_jacobian_fd(measurements::Vector{Measurement}, net::Net, x::Vector{Float64}, slackIdx::Int, nbus::Int, Ybus::AbstractMatrix{ComplexF64}; eps::Float64 = 1e-6)
-  h0 = _predict_measurements(measurements, net, _state_to_voltage(x, slackIdx, nbus), Ybus)
+function _measurement_jacobian_fd(measurements::Vector{Measurement}, net::Net, x::Vector{Float64}, slackIdx::Int, nbus::Int, Ybus::AbstractMatrix{ComplexF64}; eps::Float64 = 1e-6, withVaOffset::Bool = false)
+  h0 = _predict_measurements(measurements, net, _state_to_voltage(x, slackIdx, nbus), Ybus; vaOffsetRad = _va_offset_from_state(x, withVaOffset))
   m = length(measurements)
   n = length(x)
   H = zeros(Float64, m, n)
@@ -220,7 +250,7 @@ function _measurement_jacobian_fd(measurements::Vector{Measurement}, net::Net, x
   for k = 1:n
     xk = copy(x)
     xk[k] += eps
-    hk = _predict_measurements(measurements, net, _state_to_voltage(xk, slackIdx, nbus), Ybus)
+    hk = _predict_measurements(measurements, net, _state_to_voltage(xk, slackIdx, nbus), Ybus; vaOffsetRad = _va_offset_from_state(xk, withVaOffset))
     @inbounds for i = 1:m
       H[i, k] = (hk[i] - h0[i]) / eps
     end
@@ -515,21 +545,22 @@ Quality classes:
 - `:critical`: observable, but at least one single critical measurement (or ν <= 0)
 - `:not_observable`: not observable
 """
-function evaluate_global_observability(net::Net, measurements::Vector{Measurement}; flatstart::Bool = true, jacEps::Float64 = 1e-6, tol = nothing)
+function evaluate_global_observability(net::Net, measurements::Vector{Measurement}; flatstart::Bool = true, jacEps::Float64 = 1e-6, tol = nothing, pmuRefOffset::Symbol = state_estimation_config().pmu_ref_offset)
   activeMeas, activeIdx = _active_measurements_with_indices(measurements)
   isempty(activeMeas) && error("evaluate_global_observability: no active measurements")
 
   nbus = length(net.nodeVec)
   slackIdx = _find_slack_idx(net)
   Ybus = createYBUS(net = net)
-  x = _initial_state_vector(net, slackIdx; flatstart = flatstart)
-  H, _ = _measurement_jacobian_fd(activeMeas, net, x, slackIdx, nbus, Ybus; eps = jacEps)
+  withVaOffset = _va_offset_active(activeMeas, pmuRefOffset)
+  x = _initial_state_vector(net, slackIdx; flatstart = flatstart, withVaOffset = withVaOffset)
+  H, _ = _measurement_jacobian_fd(activeMeas, net, x, slackIdx, nbus, Ybus; eps = jacEps, withVaOffset = withVaOffset)
 
   return _evaluate_observability_from_jacobian(H, activeIdx; tol = tol)
 end
 
-function evaluate_global_observability(net::Net; flatstart::Bool = true, jacEps::Float64 = 1e-6, tol = nothing)
-  return evaluate_global_observability(net, Measurement[m for m in net.measurements]; flatstart = flatstart, jacEps = jacEps, tol = tol)
+function evaluate_global_observability(net::Net; flatstart::Bool = true, jacEps::Float64 = 1e-6, tol = nothing, pmuRefOffset::Symbol = state_estimation_config().pmu_ref_offset)
+  return evaluate_global_observability(net, Measurement[m for m in net.measurements]; flatstart = flatstart, jacEps = jacEps, tol = tol, pmuRefOffset = pmuRefOffset)
 end
 
 """
@@ -554,7 +585,7 @@ Interpretation:
 - `:critical` means still observable but vulnerable to a single outage (or ν <= 0).
 - `:not_observable` means local states cannot be uniquely reconstructed.
 """
-function evaluate_local_observability(net::Net, measurements::Vector{Measurement}, stateCols::Vector{Int}; flatstart::Bool = true, jacEps::Float64 = 1e-6, tol = nothing)
+function evaluate_local_observability(net::Net, measurements::Vector{Measurement}, stateCols::Vector{Int}; flatstart::Bool = true, jacEps::Float64 = 1e-6, tol = nothing, pmuRefOffset::Symbol = state_estimation_config().pmu_ref_offset)
   isempty(stateCols) && error("evaluate_local_observability: stateCols must not be empty")
 
   activeMeas, activeIdx = _active_measurements_with_indices(measurements)
@@ -563,8 +594,9 @@ function evaluate_local_observability(net::Net, measurements::Vector{Measurement
   nbus = length(net.nodeVec)
   slackIdx = _find_slack_idx(net)
   Ybus = createYBUS(net = net)
-  x = _initial_state_vector(net, slackIdx; flatstart = flatstart)
-  H, _ = _measurement_jacobian_fd(activeMeas, net, x, slackIdx, nbus, Ybus; eps = jacEps)
+  withVaOffset = _va_offset_active(activeMeas, pmuRefOffset)
+  x = _initial_state_vector(net, slackIdx; flatstart = flatstart, withVaOffset = withVaOffset)
+  H, _ = _measurement_jacobian_fd(activeMeas, net, x, slackIdx, nbus, Ybus; eps = jacEps, withVaOffset = withVaOffset)
 
   nstates = size(H, 2)
   for c in stateCols
@@ -591,8 +623,8 @@ function evaluate_local_observability(net::Net, measurements::Vector{Measurement
   return merge(base, (rows = localRows, stateCols = copy(stateCols)))
 end
 
-function evaluate_local_observability(net::Net, stateCols::Vector{Int}; flatstart::Bool = true, jacEps::Float64 = 1e-6, tol = nothing)
-  return evaluate_local_observability(net, Measurement[m for m in net.measurements], stateCols; flatstart = flatstart, jacEps = jacEps, tol = tol)
+function evaluate_local_observability(net::Net, stateCols::Vector{Int}; flatstart::Bool = true, jacEps::Float64 = 1e-6, tol = nothing, pmuRefOffset::Symbol = state_estimation_config().pmu_ref_offset)
+  return evaluate_local_observability(net, Measurement[m for m in net.measurements], stateCols; flatstart = flatstart, jacEps = jacEps, tol = tol, pmuRefOffset = pmuRefOffset)
 end
 
 """
@@ -603,6 +635,13 @@ Run a first classical nonlinear weighted least-squares state estimator.
 State representation:
 - bus voltage angles for all non-slack buses (radians)
 - bus voltage magnitudes for all buses (p.u.)
+- optional PMU reference-angle offset α (radians), appended automatically
+  when active `VaMeas` measurements exist and `pmu_ref_offset = :auto`
+
+PMU angle measurements (`VaMeas`, degrees) are modeled as
+`z = θ_i + α + e`: the network angles stay slack-referenced, α maps them
+into the common PMU time base. With `pmu_ref_offset = :off` the offset
+state is omitted and PMU angles are assumed to be slack-referenced already.
 """
 function runse!(net::Net, measurements::Vector{Measurement}, cfg::StateEstimationConfig)
   return _runse_with_config!(net, measurements, cfg)
@@ -621,7 +660,8 @@ function _runse_with_config!(net::Net, measurements::Vector{Measurement}, cfg::S
   slackIdx = _find_slack_idx(net)
   Ybus = createYBUS(net = net)
 
-  x = _initial_state_vector(net, slackIdx; flatstart = flatstart)
+  withVaOffset = _va_offset_active(activeMeas, cfg.pmu_ref_offset)
+  x = _initial_state_vector(net, slackIdx; flatstart = flatstart, withVaOffset = withVaOffset)
   z = _measurement_vector(activeMeas)
   w = _weight_vector(activeMeas)
 
@@ -630,7 +670,7 @@ function _runse_with_config!(net::Net, measurements::Vector{Measurement}, cfg::S
   iteDone = 0
 
   for ite = 1:maxIte
-    H, h = _measurement_jacobian_fd(activeMeas, net, x, slackIdx, nbus, Ybus; eps = jacEps)
+    H, h = _measurement_jacobian_fd(activeMeas, net, x, slackIdx, nbus, Ybus; eps = jacEps, withVaOffset = withVaOffset)
     r = z - h
 
     # Normal equations for WLS:
@@ -651,7 +691,8 @@ function _runse_with_config!(net::Net, measurements::Vector{Measurement}, cfg::S
   end
 
   Vest = _state_to_voltage(x, slackIdx, nbus)
-  hfinal = _predict_measurements(activeMeas, net, Vest, Ybus)
+  vaOffsetRad = _va_offset_from_state(x, withVaOffset)
+  hfinal = _predict_measurements(activeMeas, net, Vest, Ybus; vaOffsetRad = vaOffsetRad)
   r = z - hfinal
   jval = _wls_objective(r, w)
   ν = length(activeMeas) - length(x)
@@ -668,7 +709,7 @@ function _runse_with_config!(net::Net, measurements::Vector{Measurement}, cfg::S
     calcNetLosses!(net, Vest)
   end
 
-  return SEResult(Vest, converged, iteDone, norm(r), r, jval, ν, _j_within_3sigma_band(jval, ν))
+  return SEResult(Vest, converged, iteDone, norm(r), r, jval, ν, _j_within_3sigma_band(jval, ν), withVaOffset ? rad2deg(vaOffsetRad) : nothing)
 end
 
 function runse!(
@@ -679,13 +720,22 @@ function runse!(
   flatstart::Bool = state_estimation_config().flatstart,
   jacEps::Float64 = state_estimation_config().jac_eps,
   updateNet::Bool = state_estimation_config().update_net,
+  pmuRefOffset::Symbol = state_estimation_config().pmu_ref_offset,
 )
-  cfg = StateEstimationConfig(max_iter = maxIte, tol = tol, flatstart = flatstart, jac_eps = jacEps, update_net = updateNet)
+  cfg = StateEstimationConfig(max_iter = maxIte, tol = tol, flatstart = flatstart, jac_eps = jacEps, update_net = updateNet, pmu_ref_offset = pmuRefOffset)
   return _runse_with_config!(net, measurements, cfg)
 end
 
-function runse!(net::Net; maxIte::Int = state_estimation_config().max_iter, tol::Float64 = state_estimation_config().tol, flatstart::Bool = state_estimation_config().flatstart, jacEps::Float64 = state_estimation_config().jac_eps, updateNet::Bool = state_estimation_config().update_net)
-  cfg = StateEstimationConfig(max_iter = maxIte, tol = tol, flatstart = flatstart, jac_eps = jacEps, update_net = updateNet)
+function runse!(
+  net::Net;
+  maxIte::Int = state_estimation_config().max_iter,
+  tol::Float64 = state_estimation_config().tol,
+  flatstart::Bool = state_estimation_config().flatstart,
+  jacEps::Float64 = state_estimation_config().jac_eps,
+  updateNet::Bool = state_estimation_config().update_net,
+  pmuRefOffset::Symbol = state_estimation_config().pmu_ref_offset,
+)
+  cfg = StateEstimationConfig(max_iter = maxIte, tol = tol, flatstart = flatstart, jac_eps = jacEps, update_net = updateNet, pmu_ref_offset = pmuRefOffset)
   return runse!(net, Measurement[m for m in net.measurements], cfg)
 end
 
@@ -699,16 +749,17 @@ machine-readable report with:
 - largest-normalized-residual ranking
 - suspicious measurement list (threshold-based)
 """
-function validate_measurements(net::Net, measurements::Vector{Measurement}; maxIte::Int = 12, tol::Float64 = 1e-6, flatstart::Bool = true, jacEps::Float64 = 1e-6, normalizedThreshold::Float64 = 3.0)
+function validate_measurements(net::Net, measurements::Vector{Measurement}; maxIte::Int = 12, tol::Float64 = 1e-6, flatstart::Bool = true, jacEps::Float64 = 1e-6, normalizedThreshold::Float64 = 3.0, pmuRefOffset::Symbol = state_estimation_config().pmu_ref_offset)
   activeMeas, activeIdx = _active_measurements_with_indices(measurements)
   isempty(activeMeas) && error("validate_measurements: no active measurements")
 
   netLocal = deepcopy(net)
-  result = runse!(netLocal, activeMeas; maxIte = maxIte, tol = tol, flatstart = flatstart, jacEps = jacEps, updateNet = false)
+  result = runse!(netLocal, activeMeas; maxIte = maxIte, tol = tol, flatstart = flatstart, jacEps = jacEps, updateNet = false, pmuRefOffset = pmuRefOffset)
 
   nbus = length(netLocal.nodeVec)
   slackIdx = _find_slack_idx(netLocal)
-  x = _initial_state_vector(netLocal, slackIdx; flatstart = flatstart)
+  withVaOffset = result.vaRefOffsetDeg !== nothing
+  x = _initial_state_vector(netLocal, slackIdx; flatstart = flatstart, withVaOffset = withVaOffset)
   nθ = nbus - 1
   p = 0
   for i in eachindex(netLocal.nodeVec)
@@ -718,9 +769,12 @@ function validate_measurements(net::Net, measurements::Vector{Measurement}; maxI
     end
     x[nθ+i] = abs(result.voltages[i])
   end
+  if withVaOffset
+    x[end] = deg2rad(result.vaRefOffsetDeg)
+  end
 
   Ybus = createYBUS(net = netLocal)
-  H, h = _measurement_jacobian_fd(activeMeas, netLocal, x, slackIdx, nbus, Ybus; eps = jacEps)
+  H, h = _measurement_jacobian_fd(activeMeas, netLocal, x, slackIdx, nbus, Ybus; eps = jacEps, withVaOffset = withVaOffset)
   z = _measurement_vector(activeMeas)
   w = _weight_vector(activeMeas)
   r = z - h
@@ -753,8 +807,8 @@ end
 Extended diagnostics workflow around `validate_measurements` with optional
 deactivate-and-rerun logic for the currently largest suspicious measurement.
 """
-function runse_diagnostics(net::Net, measurements::Vector{Measurement}; deactivate_and_rerun::Bool = false, maxIte::Int = 12, tol::Float64 = 1e-6, flatstart::Bool = true, jacEps::Float64 = 1e-6, normalizedThreshold::Float64 = 3.0)
-  base = validate_measurements(net, measurements; maxIte = maxIte, tol = tol, flatstart = flatstart, jacEps = jacEps, normalizedThreshold = normalizedThreshold)
+function runse_diagnostics(net::Net, measurements::Vector{Measurement}; deactivate_and_rerun::Bool = false, maxIte::Int = 12, tol::Float64 = 1e-6, flatstart::Bool = true, jacEps::Float64 = 1e-6, normalizedThreshold::Float64 = 3.0, pmuRefOffset::Symbol = state_estimation_config().pmu_ref_offset)
+  base = validate_measurements(net, measurements; maxIte = maxIte, tol = tol, flatstart = flatstart, jacEps = jacEps, normalizedThreshold = normalizedThreshold, pmuRefOffset = pmuRefOffset)
   rerun = nothing
 
   if deactivate_and_rerun && !isempty(base.suspicious_measurements)
@@ -762,7 +816,7 @@ function runse_diagnostics(net::Net, measurements::Vector{Measurement}; deactiva
     meas2 = copy(measurements)
     idx = target.measurement_index
     meas2[idx] = _set_measurement_active(meas2[idx], false)
-    rerun = validate_measurements(net, meas2; maxIte = maxIte, tol = tol, flatstart = flatstart, jacEps = jacEps, normalizedThreshold = normalizedThreshold)
+    rerun = validate_measurements(net, meas2; maxIte = maxIte, tol = tol, flatstart = flatstart, jacEps = jacEps, normalizedThreshold = normalizedThreshold, pmuRefOffset = pmuRefOffset)
     rerun = (deactivated_measurement_index = idx, deactivated_measurement_id = measurements[idx].id, diagnostics = rerun)
   end
 

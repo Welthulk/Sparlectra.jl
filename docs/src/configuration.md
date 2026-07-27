@@ -517,6 +517,7 @@ The following canonical keys are currently present in `src/configuration.yaml.ex
 - `state_estimation.method`
 - `state_estimation.observability`
 - `state_estimation.observability.enabled`- `state_estimation.tol`
+- `state_estimation.pmu_ref_offset`
 - `state_estimation.update_net`
 - `transformer`
 - `transformer.tap_changer_model`

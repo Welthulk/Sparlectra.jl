@@ -497,6 +497,7 @@ export
   setMeasurementsFromPF!,                 # Replace measurements from PF results.
   addMeasurement!,
   addVmMeasurement!,                      # Add voltage-magnitude measurement.
+  addVaMeasurement!,                      # Add PMU voltage-angle measurement.
   addPinjMeasurement!,                    # Add active-power injection measurement.
   addQinjMeasurement!,                    # Add reactive-power injection measurement.
   addPflowMeasurement!,                   # Add active branch-flow measurement.

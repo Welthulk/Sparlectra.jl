@@ -26,6 +26,7 @@ const SUITE_SPECS = ExampleSpec[
   ExampleSpec(name = "manual_measurements", file = "state_estimation/state_estimation_manual_measurements.jl", purpose = "measurement set built via the manual measurement helpers (addVmMeasurement!, ...)"),
   ExampleSpec(name = "observability", file = "state_estimation/state_estimation_observability.jl", purpose = "progressively deactivates branch-flow measurements and logs observability-redundancy metrics"),
   ExampleSpec(name = "passive_bus_zib_comparison", file = "state_estimation/state_estimation_passive_bus_zib_comparison.jl", purpose = "WLS state estimation with and without zero-injection (ZIB) measurements"),
+  ExampleSpec(name = "pmu_angles", file = "state_estimation/state_estimation_pmu_angles.jl", purpose = "PMU voltage-angle measurements with the reference-angle offset state alpha (aligned vs. shifted PMU time base)"),
   ExampleSpec(name = "diagnostics", file = "state_estimation/usage_state_estimation_diagnostics.jl", purpose = "bad-data diagnostics: inject a bad measurement, validate, deactivate and rerun"),
   ExampleSpec(name = "h_matrix_observability", file = "state_estimation/h_matrix_observability_demo.jl", purpose = "small measurement Jacobians H and the public observability helpers"),
   ExampleSpec(name = "mc_study", file = "state_estimation/mc_state_estimation_study.jl", timeout_s = 1200, purpose = "Monte-Carlo WLS state-estimation error study on the 7-bus workshop net"),

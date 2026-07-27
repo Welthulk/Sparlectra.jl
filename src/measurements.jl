@@ -31,6 +31,7 @@ Supported measurement types for the first WLS state-estimation implementation.
   QinjMeas
   PflowMeas
   QflowMeas
+  VaMeas
 end
 
 """
@@ -40,7 +41,7 @@ Generic state-estimation measurement model.
 
 Fields:
 - `typ`: Measurement type.
-- `value`: Measured value (Vm in p.u., powers in MW/MVar).
+- `value`: Measured value (Vm in p.u., powers in MW/MVar, Va in degrees).
 - `sigma`: Standard deviation in measurement units.
 - `weight`: Weight used in WLS (`1/sigma^2`).
 - `active`: If `false`, measurement is ignored by estimator.
@@ -71,6 +72,8 @@ end
 @inline function _default_measurement_id(typ::MeasurementType; busIdx::Union{Nothing,Int} = nothing, branchIdx::Union{Nothing,Int} = nothing, direction::Symbol = :none)
   if typ == VmMeas
     return "Vm_bus_$(something(busIdx, 0))"
+  elseif typ == VaMeas
+    return "Va_bus_$(something(busIdx, 0))"
   elseif typ == PinjMeas
     return "Pinj_bus_$(something(busIdx, 0))"
   elseif typ == QinjMeas
@@ -105,7 +108,7 @@ end
 Append a state-estimation measurement to `measurements` and return it.
 """
 function addMeasurement!(measurements::Vector; typ::MeasurementType, value::Real, sigma::Real, active::Bool = true, busIdx::Union{Nothing,Int} = nothing, branchIdx::Union{Nothing,Int} = nothing, direction::Symbol = :none, id::AbstractString = "")
-  if typ == VmMeas || typ == PinjMeas || typ == QinjMeas
+  if typ == VmMeas || typ == VaMeas || typ == PinjMeas || typ == QinjMeas
     isnothing(busIdx) && error("Bus measurement requires busIdx")
   elseif typ == PflowMeas || typ == QflowMeas
     isnothing(branchIdx) && error("Flow measurement requires branchIdx")
@@ -134,6 +137,22 @@ end
 
 function addVmMeasurement!(net::Net; busName::String, value::Real, sigma::Real, active::Bool = true, id::AbstractString = "")
   return addVmMeasurement!(_net_measurements(net); net = net, busName = busName, value = value, sigma = sigma, active = active, id = id)
+end
+
+"""
+    addVaMeasurement!(measurements; net, busName, value, sigma, active=true, id="")
+
+Append a bus voltage-angle measurement (PMU synchrophasor) identified by
+`busName`. `value` and `sigma` are in degrees, referenced to the common PMU
+time base (see the `pmu_ref_offset` handling in `runse!`).
+"""
+function addVaMeasurement!(measurements::Vector; net::Net, busName::String, value::Real, sigma::Real, active::Bool = true, id::AbstractString = "")
+  busIdx = geNetBusIdx(net = net, busName = busName)
+  return addMeasurement!(measurements; typ = VaMeas, value = value, sigma = sigma, active = active, busIdx = busIdx, id = id)
+end
+
+function addVaMeasurement!(net::Net; busName::String, value::Real, sigma::Real, active::Bool = true, id::AbstractString = "")
+  return addVaMeasurement!(_net_measurements(net); net = net, busName = busName, value = value, sigma = sigma, active = active, id = id)
 end
 
 """
@@ -195,12 +214,14 @@ function addQflowMeasurement!(net::Net; value::Real, sigma::Real, direction::Sym
 end
 
 """
-    measurementStdDevs(; vm=0.005, pinj=1.0, qinj=1.0, pflow=1.0, qflow=1.0)
+    measurementStdDevs(; vm=0.005, pinj=1.0, qinj=1.0, pflow=1.0, qflow=1.0, va=0.02)
 
 Create default standard-deviation map for synthetic measurement generation.
+`va` is the PMU voltage-angle standard deviation in degrees; typical PMU
+accuracy is 0.01–0.05° (IEEE C37.118 TVE < 1 %).
 """
-function measurementStdDevs(; vm::Float64 = 0.005, pinj::Float64 = 1.0, qinj::Float64 = 1.0, pflow::Float64 = 1.0, qflow::Float64 = 1.0)
-  return Dict(VmMeas => vm, PinjMeas => pinj, QinjMeas => qinj, PflowMeas => pflow, QflowMeas => qflow)
+function measurementStdDevs(; vm::Float64 = 0.005, pinj::Float64 = 1.0, qinj::Float64 = 1.0, pflow::Float64 = 1.0, qflow::Float64 = 1.0, va::Float64 = 0.02)
+  return Dict(VmMeas => vm, PinjMeas => pinj, QinjMeas => qinj, PflowMeas => pflow, QflowMeas => qflow, VaMeas => va)
 end
 
 @inline _bus_power_value(x::Union{Nothing,Float64}) = isnothing(x) ? 0.0 : x
@@ -269,11 +290,17 @@ function addZeroInjectionMeasurements!(net::Net; sigma::Real = 1e-6, busNames::U
   return addZeroInjectionMeasurements!(_net_measurements(net); net = net, sigma = sigma, busNames = busNames, busIdxs = busIdxs, active = active, idPrefix = idPrefix)
 end
 
-@inline function _measurement_prediction(meas::Measurement, net::Net, V::Vector{ComplexF64}, Sbus_MVA::Vector{ComplexF64})
+@inline function _measurement_prediction(meas::Measurement, net::Net, V::Vector{ComplexF64}, Sbus_MVA::Vector{ComplexF64}, vaOffsetRad::Float64 = 0.0)
   if meas.typ == VmMeas
     i = something(meas.busIdx, 0)
     i < 1 && error("Vm measurement missing busIdx")
     return abs(V[i])
+  elseif meas.typ == VaMeas
+    i = something(meas.busIdx, 0)
+    i < 1 && error("Va measurement missing busIdx")
+    # PMU angle model: z = θ_i(slack-referenced) + α, α = slack angle in the
+    # PMU time base. α is 0 unless the estimator carries the offset state.
+    return rad2deg(angle(V[i]) + vaOffsetRad)
   elseif meas.typ == PinjMeas
     i = something(meas.busIdx, 0)
     i < 1 && error("Pinj measurement missing busIdx")
@@ -306,11 +333,28 @@ Generate synthetic measurements from the current solved network state.
 
 Keyword options:
 - `includeVm`, `includePinj`, `includeQinj`, `includePflow`, `includeQflow`
+- `includeVa`: add PMU voltage-angle measurements (degrees, default `false`)
+- `vaBusIdxs`: restrict Va measurements to these bus indices (default: all buses)
+- `vaRefOffsetDeg`: common angle offset added to all generated Va values,
+  emulating a PMU time base that differs from the slack reference
 - `noise`: add Gaussian noise if `true`
 - `stddev`: dictionary from `MeasurementType => sigma`
 - `rng`: random number generator
 """
-function generateMeasurementsFromPF(net::Net; includeVm::Bool = true, includePinj::Bool = true, includeQinj::Bool = true, includePflow::Bool = true, includeQflow::Bool = true, noise::Bool = false, stddev::Dict{MeasurementType,Float64} = measurementStdDevs(), rng::AbstractRNG = Random.default_rng())
+function generateMeasurementsFromPF(
+  net::Net;
+  includeVm::Bool = true,
+  includePinj::Bool = true,
+  includeQinj::Bool = true,
+  includePflow::Bool = true,
+  includeQflow::Bool = true,
+  includeVa::Bool = false,
+  vaBusIdxs::Union{Nothing,Vector{Int}} = nothing,
+  vaRefOffsetDeg::Float64 = 0.0,
+  noise::Bool = false,
+  stddev::Dict{MeasurementType,Float64} = measurementStdDevs(),
+  rng::AbstractRNG = Random.default_rng(),
+)
   V = buildVoltageVector(net)
   Sbus_pu = calc_injections(createYBUS(net = net), V)
   Sbus_MVA = Sbus_pu .* net.baseMVA
@@ -318,11 +362,18 @@ function generateMeasurementsFromPF(net::Net; includeVm::Bool = true, includePin
   m = Measurement[]
   nbus = length(net.nodeVec)
 
+  vaSelected = isnothing(vaBusIdxs) ? nothing : Set(vaBusIdxs)
+
   for i = 1:nbus
     if includeVm
       σ = stddev[VmMeas]
       z = abs(V[i]) + (noise ? randn(rng) * σ : 0.0)
       push!(m, Measurement(typ = VmMeas, value = z, sigma = σ, busIdx = i, id = "Vm_bus_$(i)"))
+    end
+    if includeVa && (isnothing(vaSelected) || i in vaSelected)
+      σ = stddev[VaMeas]
+      z = rad2deg(angle(V[i])) + vaRefOffsetDeg + (noise ? randn(rng) * σ : 0.0)
+      push!(m, Measurement(typ = VaMeas, value = z, sigma = σ, busIdx = i, id = "Va_bus_$(i)"))
     end
     if includePinj
       σ = stddev[PinjMeas]

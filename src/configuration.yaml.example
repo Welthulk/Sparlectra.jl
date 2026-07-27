@@ -228,6 +228,12 @@ state_estimation:
   flatstart: true
   jac_eps: 1.0e-6
   update_net: true
+  # PMU voltage-angle (VaMeas) reference handling. auto estimates a common
+  # reference-angle offset between the PMU time base and the slack reference
+  # as an additional state whenever Va measurements are present; off assumes
+  # PMU angles are already slack-referenced.
+  # Allowed values: auto, off
+  pmu_ref_offset: auto
   observability:
     enabled: true
 

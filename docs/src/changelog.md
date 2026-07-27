@@ -1,3 +1,24 @@
+# Version 0.8.17 - unreleased
+
+State estimation: PMU voltage-angle measurements
+
+## Improvements
+
+* **New measurement type `VaMeas`** (bus voltage angle in degrees) for PMU
+  synchrophasor angles, with helper `addVaMeasurement!`, synthetic
+  generation via `generateMeasurementsFromPF(includeVa = true, vaBusIdxs,
+  vaRefOffsetDeg)`, and a `va` default (0.02°) in `measurementStdDevs`.
+* **New state variable in the WLS estimator**: a common reference-angle
+  offset α between the PMU time base and the slack reference
+  (`z_Va = θ_i + α + e`). Controlled by `state_estimation.pmu_ref_offset`
+  (`auto` | `off`, keyword `pmuRefOffset`); the estimated offset is reported
+  in `SEResult.vaRefOffsetDeg`. Observability, `validate_measurements`, and
+  the bad-data diagnostics account for the extra state column.
+* New didactic example `state_estimation_pmu_angles.jl` (suite-registered):
+  SCADA baseline vs. aligned PMUs vs. shifted PMU time base with and without
+  the offset state, including the unmodeled-offset failure mode.
+* Theory documentation on PMU angle handling in `docs/src/state_estimation.md`.
+
 # Version 0.8.16 — 2026-07-27
 
 Allocation and import performance (issue #292)

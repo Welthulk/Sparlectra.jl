@@ -100,6 +100,9 @@ paths. See the tests page for the full mode/case reference.
   Observability-focused scenario and diagnostics.
 - `state_estimation_passive_bus_zib_comparison.jl`  
   Passive-bus / ZIB handling comparison.
+- `state_estimation_pmu_angles.jl`  
+  PMU voltage-angle measurements and the reference-offset state α
+  (aligned vs. shifted PMU time base, unmodeled-offset failure mode).
 - `usage_state_estimation_diagnostics.jl`  
   Practical diagnostics usage workflow.
 - `h_matrix_observability_demo.jl`  

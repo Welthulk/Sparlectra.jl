@@ -354,6 +354,87 @@ function test_state_estimation_bad_data_diagnostics()::Bool
   return true
 end
 
+function test_state_estimation_pmu_va_measurements()::Bool
+  # Verifies PMU voltage-angle (VaMeas) support: the common reference-angle
+  # offset α is carried as an additional state, estimated network angles stay
+  # slack-referenced, and pmuRefOffset=:off treats PMU angles as
+  # slack-referenced without the extra state.
+  @testset "State estimation PMU angle measurements" begin
+    net = createTest3BusNet()
+
+    ite, erg = runpf!(net, 40, 1e-10, 0; method = :rectangular)
+    @test erg == 0
+    @test ite > 0
+    Vref = buildVoltageVector(net)
+    nbus = length(net.nodeVec)
+
+    std = measurementStdDevs(vm = 1e-5, pinj = 1e-4, qinj = 1e-4, pflow = 1e-4, qflow = 1e-4, va = 0.02)
+    @test haskey(std, Sparlectra.VaMeas)
+
+    # PMU time base shifted by +5° against the slack reference.
+    meas = generateMeasurementsFromPF(net; includeVa = true, vaRefOffsetDeg = 5.0, noise = false, stddev = std)
+    vaRows = [m for m in meas if m.typ == Sparlectra.VaMeas]
+    @test length(vaRows) == nbus
+    @test all(m -> startswith(m.id, "Va_bus_"), vaRows)
+
+    result = runse!(net, meas; maxIte = 20, tol = 1e-8, flatstart = true, updateNet = false)
+    @test result.converged
+    @test result.vaRefOffsetDeg !== nothing
+    @test isapprox(result.vaRefOffsetDeg, 5.0; atol = 1e-6)
+    # dof accounts for the extra offset state: n = 2*nbus - 1 + 1
+    @test result.dof == length(meas) - 2 * nbus
+
+    # Estimated network angles stay slack-referenced despite the PMU offset.
+    for i in eachindex(Vref)
+      @test abs(abs(Vref[i]) - abs(result.voltages[i])) < 1e-8
+      @test abs(rad2deg(angle(Vref[i]) - angle(result.voltages[i]))) < 1e-6
+    end
+
+    # Observability includes the offset column.
+    gobs = evaluate_global_observability(net, meas)
+    @test gobs.n_states == 2 * nbus
+    @test gobs.quality == :good
+
+    # :off mode: no offset state, slack-referenced PMU angles estimate cleanly.
+    meas0 = generateMeasurementsFromPF(net; includeVa = true, vaRefOffsetDeg = 0.0, noise = false, stddev = std)
+    res0 = runse!(net, meas0; maxIte = 20, tol = 1e-8, updateNet = false, pmuRefOffset = :off)
+    @test res0.converged
+    @test res0.vaRefOffsetDeg === nothing
+    @test res0.dof == length(meas0) - (2 * nbus - 1)
+    for i in eachindex(Vref)
+      @test abs(rad2deg(angle(Vref[i]) - angle(res0.voltages[i]))) < 1e-6
+    end
+
+    # :off mode with a foreign PMU time base leaves the offset unmodeled and
+    # inflates the objective by orders of magnitude.
+    resBiased = runse!(net, meas; maxIte = 20, tol = 1e-8, updateNet = false, pmuRefOffset = :off)
+    @test resBiased.objectiveJ > 1e6 * max(result.objectiveJ, eps())
+
+    # Without any Va measurement, no offset state appears even in :auto mode.
+    measNoVa = generateMeasurementsFromPF(net; includeVa = false, noise = false, stddev = std)
+    resNoVa = runse!(net, measNoVa; maxIte = 20, tol = 1e-8, updateNet = false)
+    @test resNoVa.vaRefOffsetDeg === nothing
+
+    # Va measurements restricted to selected buses.
+    measSub = generateMeasurementsFromPF(net; includeVa = true, vaBusIdxs = [2], noise = false, stddev = std)
+    @test count(m -> m.typ == Sparlectra.VaMeas, measSub) == 1
+
+    # Manual helper resolves bus names and applies the default id.
+    va = addVaMeasurement!(net; busName = "ASTADT", value = -2.5, sigma = 0.02)
+    @test va.typ == Sparlectra.VaMeas
+    @test startswith(va.id, "Va_bus_")
+    @test va.busIdx == geNetBusIdx(net = net, busName = "ASTADT")
+    @test_throws Exception addMeasurement!(net; typ = Sparlectra.VaMeas, value = 0.0, sigma = 0.02)
+
+    # Bad-data diagnostics stay consistent with the offset state present.
+    diag = validate_measurements(net, meas)
+    @test diag.converged
+    @test diag.global_consistency
+  end
+
+  return true
+end
+
 function run_state_estimation_tests()
   # Aggregates all state-estimation unit tests to keep coverage explicit and ordered.
   @testset "State estimation" begin
@@ -364,6 +445,7 @@ function run_state_estimation_tests()
       ("Measurement add helpers", test_state_estimation_measurement_add_helpers),
       ("Passive bus zero injection helpers", test_state_estimation_passive_bus_zero_injection_helpers),
       ("Bad-data diagnostics", test_state_estimation_bad_data_diagnostics),
+      ("PMU angle measurements", test_state_estimation_pmu_va_measurements),
     ]
 
     for (name, testfn) in tests

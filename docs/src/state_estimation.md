@@ -26,6 +26,12 @@ Where:
 The algorithm linearizes `h(x)` and iterates Newton-style until the update norm
 or residual criteria satisfy tolerance.
 
+When PMU voltage-angle measurements are present, the state vector is
+augmented by one additional state (the PMU reference-angle offset α, see
+below):
+
+* State vector: `x = [θ(non-slack); Vm(all buses); α]`
+
 ## Why the FD measurement Jacobian works
 
 The internal helper `_measurement_jacobian_fd` approximates the Jacobian of the
@@ -65,9 +71,70 @@ Taylor approximation.
 
 The current implementation supports these measurement types:
 
-* `VmMeas` (bus voltage magnitude)
-* `PinjMeas`, `QinjMeas` (bus injections)
-* `PflowMeas`, `QflowMeas` (branch flows with direction)
+* `VmMeas` (bus voltage magnitude, p.u.)
+* `VaMeas` (bus voltage angle in degrees, PMU synchrophasor — see below)
+* `PinjMeas`, `QinjMeas` (bus injections, MW/MVar)
+* `PflowMeas`, `QflowMeas` (branch flows with direction, MW/MVar)
+
+### PMU voltage-angle measurements (`VaMeas`)
+
+Phasor measurement units (PMUs) measure the bus voltage phasor — magnitude
+**and** absolute phase angle — time-synchronized via GPS (IEEE C37.118).
+Two properties distinguish PMU angles from classical SCADA measurements:
+
+1. **They are very accurate.** Typical angle standard deviations are
+   0.01–0.05° (total vector error < 1 %), versus percent-level accuracy for
+   SCADA power measurements. In the WLS weighting `w = 1/σ²` this gives PMU
+   angle rows a very large weight; PMU measurements are therefore modeled as
+   ordinary — merely well-weighted — measurements, not as hard constraints.
+2. **They are referenced to a common time base, not to the slack bus.**
+   The classical estimator fixes `θ_slack = 0` and estimates *relative*
+   angles. A PMU reports angles relative to its GPS clock, so all PMU angles
+   share one unknown rotation against the estimator's slack reference.
+
+Sparlectra resolves the reference mismatch with an **additional state
+variable**: the reference-angle offset `α` (the slack-bus angle expressed in
+the PMU time base). Each PMU angle measurement is predicted as
+
+```math
+z_{Va,i} = \theta_i + \alpha + e_i,
+```
+
+so the measurement Jacobian gains one extra column (`∂z_{Va,i}/∂α = 1` for
+every PMU angle row, zero elsewhere). The network angles `θ_i` stay
+slack-referenced; `α` absorbs the common rotation and is reported in
+`SEResult.vaRefOffsetDeg`.
+
+Behavior is controlled by `state_estimation.pmu_ref_offset`
+(keyword `pmuRefOffset` on `runse!`, `validate_measurements`,
+`evaluate_global_observability`, ...):
+
+* `:auto` (default): the offset state is added as soon as active `VaMeas`
+  measurements exist. If the PMU time base happens to coincide with the
+  slack reference, `α` is simply estimated as ≈ 0 — the mode is safe to
+  leave on.
+* `:off`: no offset state; PMU angles are assumed to be slack-referenced
+  already. If that assumption is wrong, the common rotation cannot be
+  absorbed: the objective `J` inflates by orders of magnitude and all PMU
+  angle rows show up as suspicious in the bad-data ranking (see the
+  `state_estimation_pmu_angles.jl` example for a demonstration).
+
+Observability accounting with the offset state:
+
+* The state count becomes `n = (2·nbus − 1) + 1 = 2·nbus`.
+* The first PMU angle measurement pins `α` and is therefore *critical* on
+  its own; redundancy for `α` (and offset-robust bad-data detection on PMU
+  angles) requires at least two PMU angle measurements.
+* A `VaMeas` at the slack bus directly reads `α` (since `θ_slack = 0`).
+
+Practical notes:
+
+* `VaMeas` values and sigmas are in **degrees**, matching the network-facing
+  `_va_deg` convention; `measurementStdDevs(va = 0.02)` provides the default.
+* Angle residuals are not wrap-corrected; with realistic transmission-grid
+  angle spreads (≪ 180°) this is not a limitation.
+* PMU magnitude measurements need no special treatment — model them as
+  `VmMeas` with a small sigma (e.g. 0.002 p.u.).
 
 ### Passive / transit buses
 
@@ -268,10 +335,35 @@ obs = evaluate_global_observability(net; flatstart = true, jacEps = 1e-6)
 println("Observable quality: ", obs.quality)
 ```
 
+## PMU example
+
+```julia
+using Sparlectra
+
+# ... build net, e.g. from a MATPOWER case ...
+
+# PMU phasor at bus "B2": accurate magnitude + GPS-referenced angle.
+addVmMeasurement!(net; busName = "B2", value = 1.012, sigma = 0.002)
+addVaMeasurement!(net; busName = "B2", value = -3.72, sigma = 0.02)  # degrees
+
+se = runse!(net)                 # pmu_ref_offset = :auto (default)
+println("PMU reference offset α: ", se.vaRefOffsetDeg, " deg")
+```
+
+Literature on PMU-based state estimation:
+
+* A. Abur, A. Gómez Expósito: *Power System State Estimation — Theory and
+  Implementation* (hybrid SCADA/PMU WLS formulation).
+* A. G. Phadke, J. S. Thorp: *Synchronized Phasor Measurements and Their
+  Applications* (PMU measurement principle, IEEE C37.118 accuracy classes).
+* NASPI TR-006: *Phase Angle Calculations: Considerations and Use Cases*
+  (reference-angle handling across PMU installations).
+
 ## Further examples and workshop material
 
 * Extended tutorial and a simple 7-bus setup: [Workshop](workshop.md)
 * Detailed WLS reporting example script: `examples/state_estimation/state_estimation_wls.jl`
+* PMU angle measurements and the reference-offset state α: `examples/state_estimation/state_estimation_pmu_angles.jl`
 * Observability-focused scenario script: `examples/state_estimation/state_estimation_observability.jl`
 * Passive-bus ZIB comparison example: `examples/state_estimation/state_estimation_passive_bus_zib_comparison.jl`
 * Matrix-based observability/redundancy demo: `examples/state_estimation/h_matrix_observability_demo.jl`
