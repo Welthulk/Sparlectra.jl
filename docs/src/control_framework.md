@@ -136,25 +136,26 @@ Minimal row schema:
 - `tap_ratio`
 - `phase_shift_deg`
 
-## Transformer regulation theory: Längs-, Quer-, and Schrägregelung
+## [Transformer regulation theory: OLTC, PST, and combined regulation](@id transformer_regulation_theory)
 
-A regulated transformer inserts an additional voltage into the winding. The
-classical German terminology distinguishes three cases by the phase of that
-added voltage relative to the winding voltage:
+A regulated transformer inserts an additional voltage into the winding.
+Three cases are distinguished by the phase of that added voltage relative to
+the winding voltage:
 
-* **Längsregelung** (in-phase regulation): the added voltage is parallel to
-  the winding voltage. Only the magnitude of the complex turns ratio changes
-  — this is the ordinary OLTC ratio tap, and its dominant network effect is
-  on voltage magnitudes and reactive-power flow.
-* **Querregelung** (quadrature regulation): the added voltage is
-  perpendicular (90°). Mostly the angle of the turns ratio changes — this is
-  the phase-shifting transformer (PST), and its dominant effect is on
-  active-power flow through meshed paths.
-* **Schrägregelung** (oblique regulation): the added voltage has an
-  intermediate angle, or — the case modeled here — the unit carries **both**
-  an in-phase and a quadrature tap. The complex turns ratio becomes
-  `n = ρ · e^{jα}` with independently switchable magnitude `ρ` (ratio tap)
-  and angle `α` (phase tap).
+* **In-phase regulation — OLTC** (German *Längsregelung*): the added voltage
+  is parallel to the winding voltage. Only the magnitude of the complex
+  turns ratio changes — this is the ordinary on-load tap changer (OLTC)
+  ratio tap, and its dominant network effect is on voltage magnitudes and
+  reactive-power flow.
+* **Quadrature regulation — PST** (German *Querregelung*): the added voltage
+  is perpendicular (90°). Mostly the angle of the turns ratio changes — this
+  is the phase-shifting transformer (PST) or quadrature booster, and its
+  dominant effect is on active-power flow through meshed paths.
+* **Combined (oblique) regulation** (German *Schrägregelung*; no established
+  English term): the added voltage has an intermediate angle, or — the case
+  modeled here — the unit carries **both** an in-phase and a quadrature tap.
+  The complex turns ratio becomes `n = ρ · e^{jα}` with independently
+  switchable magnitude `ρ` (ratio tap) and angle `α` (phase tap).
 
 In Sparlectra's branch model these are the independent branch fields
 `tap_ratio` (with `tap_min/max/step`) and `phase_shift_deg`
@@ -168,8 +169,8 @@ staged for that but not yet wired into the branch admittance).
 
 In transmission grids the sensitivities decouple well: voltage magnitudes
 respond mainly to the ratio tap (V–Q coupling) and active-power flow to the
-phase angle (P–θ coupling). Real Schrägregler installations therefore
-usually run **two separate controllers on one unit** — a voltage regulator
+phase angle (P–θ coupling). Real combined-regulation units (Schrägregler)
+therefore usually run **two separate controllers** — a voltage regulator
 driving the in-phase stage and an active-power regulator driving the
 quadrature stage. Note the practical convention: the "angle controller"
 regulates a *power* setpoint; the phase angle is its actuator, not its
@@ -180,8 +181,8 @@ Sparlectra supports both realizations:
 1. **One combined controller** — `mode = :voltage_and_branch_active_power`
    with `control_ratio = true` and `control_phase = true` (one status, one
    report row; see `examples/others/tap_control_demo_grid.jl`).
-2. **Two independent controllers on the same transformer** (split
-   Schrägregelung) — one `mode = :voltage` controller owning the ratio tap
+2. **Two independent controllers on the same transformer** (split combined
+   regulation) — one `mode = :voltage` controller owning the ratio tap
    and one `mode = :branch_active_power` controller owning the phase tap:
 
    ```julia

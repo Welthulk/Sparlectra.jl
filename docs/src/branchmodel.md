@@ -497,6 +497,14 @@ addPowerTransformerControl!(net;
   is_discrete = true)
 ```
 
+Alternatively, the Schrägregler unit can run **two independent controllers
+with disjoint actuators** — a voltage controller on the ratio tap plus an
+active-power controller on the phase tap, each with its own target, deadband,
+and convergence status. Background (Längs-/Quer-/Schrägregelung, per-actuator
+exclusivity, discrete-step deadband sizing) and setup in the
+[transformer regulation theory](@ref transformer_regulation_theory) section
+of the Control Framework page.
+
 Advanced direct use and result inspection:
 
 ```julia
@@ -599,6 +607,9 @@ provided. MATPOWER's raw `TAP`/`SHIFT` corresponds to the CGMES "General Case".
 - MATPOWER case format documentation — the `TAP` / `SHIFT` branch columns and
   the ratio/shift conventions handled at import.
 - Sparlectra examples: `examples/others/tap_control_demo_grid.jl` (OLTC voltage, PST
-  active-power, and Schrägregler combined control in one network) and
+  active-power, and Schrägregler combined control in one network),
+  `examples/others/tap_control_schraeg_two_controllers.jl` (split
+  Schrägregelung: two independent controllers with disjoint actuators on one
+  transformer) and
   `examples/example_transformer_phase_shift_control.jl` (phase-shift direction
   probe).
