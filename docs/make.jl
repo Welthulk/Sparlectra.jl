@@ -1,4 +1,9 @@
+# Self-contained environment setup: activate the docs project regardless of
+# how this script is started (julia docs/make.jl, --project=., REPL include),
+# and resolve so dependency changes in the main package are picked up.
 using Pkg
+Pkg.activate(@__DIR__)
+Pkg.resolve()
 Pkg.instantiate()
 using Documenter
 using Sparlectra
