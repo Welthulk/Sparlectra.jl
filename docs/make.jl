@@ -12,7 +12,9 @@ using TOML
 project_toml = TOML.parsefile(joinpath(@__DIR__, "..", "Project.toml"))
 sparlectra_version = project_toml["version"]
 
-DocMeta.setdocmeta!(Sparlectra, :DocTestSetup, :(using Sparlectra); recursive = true)
+# warn=false: repeated include("docs/make.jl") in one REPL session re-sets an
+# identical DocTestSetup; the "already set, overwriting" warning is noise.
+DocMeta.setdocmeta!(Sparlectra, :DocTestSetup, :(using Sparlectra); recursive = true, warn = false)
 
 makedocs(
   sitename = "Sparlectra.jl v$(sparlectra_version)",
@@ -21,7 +23,18 @@ makedocs(
   clean = true,
   doctest = true,
   checkdocs = :none,
-  format = Documenter.HTML(assets = ["assets/tablestyle.css"], prettyurls = get(ENV, "CI", "false") == "true", collapselevel = 1, canonical = "https://welthulk.github.io/Sparlectra.jl", repolink = "https://github.com/Welthulk/Sparlectra.jl"),
+  format = Documenter.HTML(
+    assets = ["assets/tablestyle.css"],
+    prettyurls = get(ENV, "CI", "false") == "true",
+    collapselevel = 1,
+    canonical = "https://welthulk.github.io/Sparlectra.jl",
+    repolink = "https://github.com/Welthulk/Sparlectra.jl",
+    # Raised size limits: the single-page changelog and the autodocs network
+    # reference legitimately exceed Documenter's 100 KiB default.
+    size_threshold_warn = 150 * 1024,
+    size_threshold = 300 * 1024,
+    search_size_threshold_warn = 700 * 1024,
+  ),
   pages = [
     "Home" => "index.md",
     "Feature Matrix" => "feature_matrix.md",
