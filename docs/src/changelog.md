@@ -1,3 +1,6 @@
+# Version 0.8.16 - unreleased
+
+
 # Version 0.8.15 — 2026-07-22
 
 DC power flow, faster linear solves, Web UI overhaul
