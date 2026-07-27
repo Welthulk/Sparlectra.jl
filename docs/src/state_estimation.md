@@ -4,9 +4,9 @@ State Estimation
 This page summarizes the state-estimation (SE) functionality in Sparlectra and
 shows how it connects to regular network studies.
 
-> **Release status:** State Estimation is currently **experimental**. The
-> current implementation is intended as a first practical WLS workflow for
-> studies, examples, and early application feedback.
+> **Release status:** State Estimation is a regular Sparlectra feature. The
+> implementation provides a practical WLS workflow for studies, examples,
+> and applications.
 
 ## Theory (compact)
 

@@ -26,7 +26,7 @@ That transparency is not a research-only trade-off. Deterministic, configuration
 | Custom solver integration | Clean `PFModel` / `PFSolution` interface for external solvers |
 | Voltage- and tap-control studies | Outer-loop control framework for transformer regulation |
 | Alternative solver backend | Optional analytic power-series solver (APSLF, via AnalyticLoadFlow.jl) — standalone, as the primary solver, or as an NR start-value generator |
-| State estimation | Nonlinear weighted-least-squares workflow (experimental) |
+| State estimation | Nonlinear weighted-least-squares workflow |
 | Scalability | Sparse-matrix-oriented implementation for realistic network sizes |
 
 ---
@@ -40,7 +40,7 @@ That transparency is not a research-only trade-off. Deterministic, configuration
 - Outer-loop control framework for transformer tap and voltage control.
 - Configuration-driven batch execution for systematic case studies.
 - External-solver integration via the `PFModel` / `PFSolution` interface, including an optional analytic power-series solver (APSLF, via AnalyticLoadFlow.jl) usable standalone, as the primary solver, or as a Newton-Raphson start-value generator.
-- Nonlinear weighted-least-squares state estimation (experimental).
+- Nonlinear weighted-least-squares state estimation.
 - Machine-readable reporting (`ACPFlowReport`) and an optional local Web UI.
 
 ---

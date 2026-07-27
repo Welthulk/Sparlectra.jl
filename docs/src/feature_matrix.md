@@ -16,26 +16,44 @@ Legend:
 | Framework workflow | ✅ | — | `run_sparlectra` is the preferred configuration-driven import/control/solve/output entry point and always returns one `SparlectraRunResult`; `run_acpflow` is its thin AC power-flow alias. `run_sparlectra_cases` executes configured MATPOWER batches sequentially and preserves case order. |
 | Local browser Web UI | ⚠️ | ❌ | Local-only PowerFlow forms with automatic MATPOWER-case and example-configuration selection, optional standalone browser app-window launch, Markdown-backed contextual option help, an allowlisted documentation reader, result summaries, persistent run history, and safe artifact viewing/download. It binds to loopback only and intentionally has no State Estimation page or public deployment mode. |
 | AC power flow (NR) | ✅ | — | Main PF entry point is `runpf!` with the sparse rectangular complex Jacobian; polar/classic PF methods are not supported. |
-| AC state estimation (WLS) | — | ✅ | Main SE entry point is `runse!` (experimental status). |
+| AC state estimation (WLS) | — | ✅ | Main SE entry point is `runse!`. |
 | Topological bus links (`addLink!`) | ✅ | ⚠️ | Links are fully integrated in PF workflow/reporting; in SE they are part of network topology context and should be used with care in measurement design. |
-| 2-winding transformer | ✅ | ✅ | Supported in network model and usable in both workflows. |
-| 3-winding transformer | ✅ | ✅ | Implemented via star-equivalent with AUX bus in network construction. |
+| Transformers | ✅ | ⚠️ | 2-winding ✅, 3-winding ✅, OLTC tap control ✅ (PF), phase shifter (PST) ✅ (PF), split combined regulation ✅ (PF), tap-changer impedance model ✅ — see the [transformer support table](@ref transformer-support) below for the full per-capability breakdown. |
 | Generic outer-loop control framework | ✅ | ❌ | Reusable orchestration above `runpf!`; controller results are available through `ControlRunResult` / `latest_control_result(net)`. |
-| Transformer tap/phase controller as outer controller | ✅ | ❌ | First concrete `AbstractOuterController`; supports ratio and phase updates outside the Newton system. |
 | Machine-readable control trace rows | ✅ | ❌ | Available through `ControlRunResult.trace`; avoids parsing console output. |
 | YAML controller instantiation | ⚠️ | ❌ | `control.controllers` is reserved for future controller definitions; leave empty for current programmatic setup. |
-| Transformer tap control (`addTapController!`) | ✅ | ❌ | PF supports outer-loop tap control for ratio and/or phase (`:voltage`, `:branch_active_power`, `:voltage_and_branch_active_power`), including discrete step operation with tap/phase limits. |
-| Two independent controllers on one transformer (split combined regulation) | ✅ | ❌ | A voltage controller on the ratio tap plus an active-power controller on the phase tap of the same unit (Schrägregler), each with its own target, deadband, and convergence status; per-actuator exclusivity is enforced. Demo: `tap_control_schraeg_two_controllers.jl`; theory in `control_framework.md`. |
-| Remote target-bus voltage control (single-controller) | ⚠️ | ❌ | Supported in PF by setting `mode = :voltage` and `target_bus`; this is remote measurement with one controller channel. |
-| Coordinated master/slave transformer voltage control | ❌ | ❌ | Not yet implemented as dedicated multi-transformer coordination logic (no built-in participation-factor allocation/group dispatcher yet). |
 | π-equivalent branch modeling | ✅ | ✅ | Common branch representation across PF/SE workflows. |
 | Shunts / loads / generators in `Net` model | ✅ | ✅ | Shared physical network model and component handling. |
 | Configurable bus-shunt modeling | ⚠️ | ❌ | `bus_shunt_model = "admittance"` is the default/classic Y-bus treatment; `"voltage_dependent_injection"` is available for rectangular PF formulations that keep shunt effects in nonlinear mismatch terms. |
 | Voltage-dependent prosumer control (`Q(U)`, `P(U)`) | ✅ | ❌ | Implemented for PF with controller-aware mismatch/Jacobian terms in rectangular formulation; not part of SE model. |
 | MATPOWER import / cases | ✅ | ✅ | Typical SE studies can start from imported PF-ready networks; PF import supports configurable SHIFT unit/sign and TAP ratio (`normal` or `reciprocal`) conventions, Sparlectra transformer-loss metadata round trips for FOR/DTF exports, plus example-workflow auto-profile recommendations for robust large-case settings. |
-| Tap-changer model (`transformer.tap_changer_model`) | ✅ | ⚠️ | `ideal` (default) keeps the tap changer free of series-impedance feedback; `impedance_correction` re-refers transformer R/X through the tapped winding (`|1 + f·e^(jφ)|²`). Applies to all transformers of an imported case, read by both the MATPOWER and the native DTF importer; implemented centrally in `calcTapCorrectedRX`/`calcTapImpedanceCorrectionFactor` (`src/equicircuit.jl`). SE reads the same imported `Net`, so the model choice is inherited but not independently configurable per SE run. |
-| Typed phase-tap-changer models (CGMES PST) | ⚠️ | ❌ | `PhaseTapChangerModel` (`:symmetrical`/`:asymmetrical`, quadrature booster as ψ=90°) and `:tabular` models with `TapTablePoint` provide CGMES-oriented phase-shifter semantics; formula/lookup helpers (`calcPhaseTapAngleRatio`, `calcPhaseTapReactance`, `calcPhaseTapTable`) are centralized in `src/equicircuit.jl` (Issue #261). Currently a developer-facing modeling/equivalent-circuit layer: `PowerTransformerWinding.phase_taps` can be populated directly (2WT) or via `create3WTWindings!`'s `phase_tap_side`/`phase_taps` keywords (3WT, `examples/others/exp_3wt_phase_taps.jl`), and the DTF importer uses `calcPhaseTapAngleRatio` to derive branch `ratio`/`shift` (result unchanged) — but a persisted `phase_taps` model has no effect on the solved branch yet: `calcPhaseTapReactance` is not wired into the solver, `Branch.phase_min_deg/phase_max_deg/phase_step_deg` are still hard-coded constants regardless of `phase_taps`, and there is no config-driven per-transformer selection. Tabular data overrides formula reconstruction where present. |
 | Synthetic tiled-grid generator | ✅ | ⚠️ | `build_synthetic_tiled_grid_net` creates artificial one-voltage-level AC PF benchmark networks; SE can use the resulting `Net` as an artificial study case when measurements are supplied. |
+
+### [Transformer support](@id transformer-support)
+
+Transformer types and regulation features by winding configuration. A 3-winding
+transformer is modeled as a star equivalent with an internal AUX bus
+(`add3WTPiModelTrafo!` / `create3WTWindings!`); tap and phase changers sit on a
+chosen winding (`tap_side`, `phase_tap_side`) and are controlled per
+star-equivalent leg branch. All tap/voltage control features act in the PF
+outer loop only — SE uses the same transformer network model but has no
+controller support.
+
+| Type | 2-winding | 3-winding | Remarks |
+|---|:---:|:---:|---|
+| Fixed-tap transformer | ✅ | ✅ | Base network model, usable in PF and SE. |
+| OLTC (voltage control on ratio tap) | ✅ | ✅ | `addTapController!` with `mode = :voltage`; discrete step operation with tap limits. Remote target-bus control via `target_bus` (⚠️ one controller channel with remote measurement). |
+| PST (active-power control on phase tap) | ✅ | ✅ | `mode = :branch_active_power`; discrete step operation with phase limits. |
+| Combined regulation, single controller | ✅ | ✅ | `mode = :voltage_and_branch_active_power`: one controller drives ratio and phase taps together. |
+| Split combined regulation (Schrägregler) | ✅ | ✅ | Two independent controllers on one unit — voltage on the ratio tap plus active power on the phase tap — each with its own target, deadband, and convergence status; per-actuator exclusivity is enforced. Demo: `tap_control_schraeg_two_controllers.jl`; theory in `control_framework.md`. |
+| Symmetrical PST model (CGMES) | ⚠️ | ⚠️ | Typed `PhaseTapChangerModel` — modeling layer only, see note below. |
+| Asymmetrical PST model (CGMES) | ⚠️ | ⚠️ | Includes quadrature booster as ψ = 90° — modeling layer only, see note below. |
+| Tabular PST model (`:tabular`) | ⚠️ | ⚠️ | `TapTablePoint` lookup; tabular data overrides formula reconstruction — modeling layer only, see note below. |
+| Coordinated master/slave voltage control | ❌ | ❌ | Not yet implemented as dedicated multi-transformer coordination logic (no built-in participation-factor allocation/group dispatcher yet). |
+| Tap-changer impedance model (`tap_changer_model`) | ✅ | ✅ | `ideal` (default) keeps the tap changer free of series-impedance feedback; `impedance_correction` re-refers transformer R/X through the tapped winding (`|1 + f·e^(jφ)|²`). Applies to all transformers of an imported case, read by both the MATPOWER and the native DTF importer; implemented centrally in `calcTapCorrectedRX`/`calcTapImpedanceCorrectionFactor` (`src/equicircuit.jl`). SE reads the same imported `Net`, so the model choice is inherited but not independently configurable per SE run. |
+
+!!! note "Status of the typed CGMES phase-tap-changer models"
+    `PhaseTapChangerModel` (`:symmetrical`/`:asymmetrical`, quadrature booster as ψ=90°) and `:tabular` models with `TapTablePoint` provide CGMES-oriented phase-shifter semantics; formula/lookup helpers (`calcPhaseTapAngleRatio`, `calcPhaseTapReactance`, `calcPhaseTapTable`) are centralized in `src/equicircuit.jl` (Issue #261). Currently a developer-facing modeling/equivalent-circuit layer: `PowerTransformerWinding.phase_taps` can be populated directly (2WT) or via `create3WTWindings!`'s `phase_tap_side`/`phase_taps` keywords (3WT, `examples/others/exp_3wt_phase_taps.jl`), and the DTF importer uses `calcPhaseTapAngleRatio` to derive branch `ratio`/`shift` (result unchanged) — but a persisted `phase_taps` model has no effect on the solved branch yet: `calcPhaseTapReactance` is not wired into the solver, `Branch.phase_min_deg/phase_max_deg/phase_step_deg` are still hard-coded constants regardless of `phase_taps`, and there is no config-driven per-transformer selection.
 
 ## Solvers, operations & limits
 
