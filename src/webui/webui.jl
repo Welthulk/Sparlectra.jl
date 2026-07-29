@@ -489,11 +489,13 @@ before accepting requests. The returned handle can be stopped with
 `close(server)` or the browser's **Stop Web UI** button. Browser-process
 lifetime is not used for automatic shutdown by default because common browsers
 may return a short-lived launcher process instead of a reliably owned window.
-When `warmup=true`, a hidden asynchronous run compiles the common import/API/
-solver path. By default it uses the bundled original synthetic case and a
-temporary output directory, so it does not add a run-history entry or retain
-artifacts. Set `warmup_store_result=true` to retain warm-up artifacts beneath
-the configured output root.
+When `warmup=true`, hidden asynchronous runs compile the common import/API/
+solver path. By default the bundled synthetic 3-bus case runs first (plumbing),
+followed by the bundled synthetic 118-bus case (realistic sparse-solve and
+reporting paths), each in a temporary output directory, so no run-history
+entries are added and no artifacts retained. An explicit `warmup_casefile`
+replaces the whole sequence. Set `warmup_store_result=true` to retain warm-up
+artifacts beneath the configured output root (one subdirectory per case).
 
 The warm-up run is scheduled on a background task, but Julia's single-threaded
 cooperative scheduler still means a CPU-bound solve of that task can delay the
@@ -506,9 +508,19 @@ path is pre-compiled as well, so the automatic refresh that replaces the
 warm-up page is fast.
 """
 function _run_sparlectra_webui_warmup(output_root::AbstractString; warmup_casefile::Union{Nothing,AbstractString} = nothing, warmup_store_result::Bool = false, runner = run_sparlectra_api)
-  casefile = warmup_casefile === nothing ? joinpath(_WEBUI_PACKAGE_ROOT, "data", "webui", "warmup_case3.jl") : abspath(warmup_casefile)
-  isfile(casefile) || throw(ArgumentError("Web UI warm-up case file not found: $(casefile)"))
-  execute(output_dir) = runner(
+  # Default warm-up sequence: the 3-bus case warms the plumbing (parser, config,
+  # result pipeline), the synthetic 118-bus case afterwards warms the realistic
+  # sparse-solve and reporting paths, so the user's first real run does not pay
+  # that compilation. An explicit warmup_casefile replaces the whole sequence.
+  casefiles = if warmup_casefile === nothing
+    [joinpath(_WEBUI_PACKAGE_ROOT, "data", "webui", "warmup_case3.jl"), joinpath(_WEBUI_PACKAGE_ROOT, "data", "webui", "warmup_case118.jl")]
+  else
+    [abspath(warmup_casefile)]
+  end
+  for f in casefiles
+    isfile(f) || throw(ArgumentError("Web UI warm-up case file not found: $(f)"))
+  end
+  execute(casefile, output_dir) = runner(
     casefile = casefile,
     config_file = DEFAULT_SPARLECTRA_CONFIG_PATH,
     output_dir = output_dir,
@@ -516,14 +528,23 @@ function _run_sparlectra_webui_warmup(output_root::AbstractString; warmup_casefi
     performance_timing = :off,
     run_diagnostics = false,
   )
-  if warmup_store_result
-    output_dir = joinpath(abspath(output_root), "webui-warmup")
-    mkpath(output_dir)
-    return execute(output_dir)
+  # Each case gets its own output directory (the runner writes fixed-name
+  # artifacts). The last result is returned; a failed run aborts the sequence
+  # and returns its result so the caller sees the failure.
+  result = nothing
+  for casefile in casefiles
+    result = if warmup_store_result
+      output_dir = joinpath(abspath(output_root), "webui-warmup", first(splitext(basename(casefile))))
+      mkpath(output_dir)
+      execute(casefile, output_dir)
+    else
+      mktempdir() do output_dir
+        execute(casefile, output_dir)
+      end
+    end
+    (result !== nothing && hasproperty(result, :success) && !result.success) && return result
   end
-  return mktempdir() do output_dir
-    execute(output_dir)
-  end
+  return result
 end
 
 function _provision_webui_runtime!(root::AbstractString, config_file::Union{Nothing,AbstractString})
@@ -533,8 +554,9 @@ function _provision_webui_runtime!(root::AbstractString, config_file::Union{Noth
   mkpath.(unique((abspath(root), dirname(configuration), case_directory, dirname(operation_log))))
   config_file === nothing && !isfile(configuration) && cp(DEFAULT_SPARLECTRA_CONFIG_PATH, configuration)
   isfile(configuration) || throw(ArgumentError("Web UI configuration file not found: $(configuration)"))
-  source = joinpath(_WEBUI_PACKAGE_ROOT, "data", "webui", "warmup_case3.jl")
-  if isfile(source)
+  for warmup_name in ("warmup_case3.jl", "warmup_case118.jl")
+    source = joinpath(_WEBUI_PACKAGE_ROOT, "data", "webui", warmup_name)
+    isfile(source) || continue
     destination = joinpath(case_directory, basename(source))
     isfile(destination) || cp(source, destination)
   end

@@ -159,6 +159,11 @@ function _print_rectangular_qlimit_summary(
   )
 end
 
+# The Ybus is assembled over active buses only, so its dimension is smaller than
+# the bus count whenever de-energized buses exist. Reporting, diagnostics and the
+# state estimator index by net-wide bus number, so re-embed the reduced matrix
+# into full n x n space with zero rows/columns for the isolated buses. Zero is
+# the physically correct entry: a de-energized bus is galvanically disconnected.
 function _expand_ybus_for_isolated_nodes(Yred, n::Int, iso_nodes::Vector{Int})
   isempty(iso_nodes) && return Yred
 
@@ -169,6 +174,9 @@ function _expand_ybus_for_isolated_nodes(Yred, n::Int, iso_nodes::Vector{Int})
     end
   end
 
+  # Ascending order of active buses -- this must match the order in which the
+  # Ybus builder walked the buses, otherwise the embedding silently transposes
+  # rows onto the wrong nodes.
   active = Int[]
   for bus in eachindex(iso_mask)
     iso_mask[bus] || push!(active, bus)
@@ -702,10 +710,17 @@ function runpf_rectangular!(
 
   qlimit_active_set_changes = 0
   qlimit_reenable_events = 0
+  # Main Newton-Raphson loop in rectangular coordinates. One iteration:
+  #   injections (if voltage-dependent) -> mismatch -> Q-limit active set ->
+  #   Jacobian + linear solve -> step acceptance -> voltage update.
+  # The Q-limit handling sits INSIDE the loop because a PV->PQ switch changes
+  # the equation system and hence the Jacobian's sparsity pattern.
   for it = 1:maxiter
     set_phase("newton_iteration")
     iters = it
 
+    # Q(U)/P(U) controllers make the specified injection a function of the
+    # current voltage, so S has to be rebuilt each iteration instead of once.
     if has_vdep_control
       S, dPinj_dVm, dQinj_dVm = _perf_profile_time!(performance_profile, :iteration_controlled_injections) do
         buildControlledSVec(net, V)
@@ -719,6 +734,9 @@ function runpf_rectangular!(
     max_mis = maximum(abs.(F))
     push!(history, max_mis)
     if isfinite(max_mis)
+      # Keep the best and the most recent finite state. A diverging run can
+      # still be reported usefully ("best iterate was X at iteration k"), and
+      # the rescue paths fall back on these snapshots.
       last_finite_iteration = it
       last_finite_voltage = copy(V)
       if max_mis < best_finite_mismatch
@@ -727,6 +745,9 @@ function runpf_rectangular!(
         best_finite_voltage = copy(V)
       end
     else
+      # NaN/Inf mismatch: the iteration has blown up. Continuing would only
+      # propagate non-finite values, so stop here and keep the last good state
+      # for the diagnostics.
       first_nonfinite_iteration == 0 && (first_nonfinite_iteration = it; first_nonfinite_voltage = copy(V))
       converged = false
       rejection_reason = :nr_nonfinite
@@ -759,12 +780,19 @@ function runpf_rectangular!(
     converged_this_iter = qlimit_iter.converged_this_iter
     changed && (qlimit_active_set_changes += 1)
     reenabled && (qlimit_reenable_events += 1)
+    # Converged only counts when the active set stayed put in the same
+    # iteration: a small mismatch right after a PV<->PQ switch describes the
+    # OLD equation system, not the one now in force.
     if converged_this_iter && !(changed || reenabled)
       converged = true
       rejection_reason = :none
       break
     end
     # --- Newton step (FD or analytic) -----------------------------------
+    # Builds the Jacobian, solves the linear system and applies the step,
+    # including the optional globalization strategies (damping, Armijo merit
+    # line search, trust region). Two failure modes are not bugs but legitimate
+    # non-convergence and are caught below; anything else is rethrown.
     try
       set_phase("linear_solve")
       V = _perf_profile_time!(performance_profile, :iteration_newton_step) do
@@ -796,7 +824,10 @@ function runpf_rectangular!(
       rethrow(step_error)
     end
 
-    # Keep slack voltage fixed (safety belt)
+    # Keep slack voltage fixed (safety belt).
+    # The slack has no residual row, so the step must not move it. Rounding in
+    # the linear solve can still nudge it; resetting it explicitly costs
+    # nothing and keeps the reference exact.
     _perf_profile_time!(performance_profile, :iteration_state_update) do
       V[slack_idx] = V0[slack_idx]
       _perf_profile_push_iteration!(performance_profile, (iteration = it, max_mismatch = max_mis, qlimit_changed = changed, qlimit_reenabled = reenabled))
@@ -818,7 +849,12 @@ function runpf_rectangular!(
   _perf_profile_time!(performance_profile, :solver_final_active_set_sync) do
     _sync_rectangular_bus_types_to_net!(net, bus_types)
   end
+  # "numerical" convergence means the mismatch norm fell below tol. That is
+  # necessary but not sufficient: the checks below can still reject the result.
   numerical_converged = converged
+  # A PV bus must actually sit at its setpoint. If the active set ended up in a
+  # state where a still-PV bus misses its target voltage, the mismatch may be
+  # small while the solution is not the one that was asked for.
   final_pv_voltage_residual = _perf_profile_time!(performance_profile, :solver_final_status_checks) do
     _max_rectangular_pv_voltage_residual(V, Vset, bus_types, net.qLimitEvents)
   end
@@ -1301,6 +1337,17 @@ function runpf!(net::Net; config::Union{Nothing,PowerFlowConfig,SparlectraConfig
   return _runpf_with_config!(net, cfg0)
 end
 
+"""
+Map every bus to the representative of its closed-link cluster.
+
+Links (busbar couplers, retained CGMES switches) are impedance-less: their two
+buses are one electrical node. The solver cannot represent a zero-impedance
+branch -- it would make the Ybus singular -- so such clusters are contracted
+onto a single representative bus before the Ybus is built.
+
+Returns a vector `reps` with `reps[bus]` = representative bus. Buses without a
+closed link map to themselves, so `reps == 1:n` means "nothing to merge".
+"""
 function _active_link_representative_map(net::Net)
   n = length(net.nodeVec)
   parent = collect(1:n)
@@ -1325,20 +1372,42 @@ function _active_link_representative_map(net::Net)
     end
   end
 
+  # Only CLOSED links connect. An open switch is a real separation and must
+  # leave the two buses in different clusters.
   for l in net.linkVec
     l.status == 1 || continue
     union_set(Int(l.fromBus), Int(l.toBus))
   end
 
+  # Resolve every bus to its final root; find_root also compresses the paths a
+  # last time, so repeated lookups by callers are cheap.
   return [find_root(i) for i = 1:n]
 end
 
+"""
+Return a working net in which all closed-link clusters are contracted.
+
+Yields `(wnet, reps, has_merges)`. When nothing has to be merged the ORIGINAL
+net is returned unchanged (`has_merges == false`) -- callers must therefore not
+assume they own a private copy, and must consult `has_merges` before syncing
+results back through `reps`.
+
+The contraction moves every cluster's injections onto its representative and
+marks the remaining cluster members `Isolated`. Bus indices deliberately stay
+untouched, so the caller can map results back one-to-one via `reps`.
+"""
 function _merged_pf_net(net::Net)
   reps = _active_link_representative_map(net)
+  # Fast path: no closed link anywhere -> hand back the original net untouched
+  # and save the deepcopy on the (common) merge-free case.
   all(reps[i] == i for i in eachindex(reps)) && return net, reps, false
 
+  # From here on the net is modified, so work on a copy: the caller keeps its
+  # own net as the place where results are collected.
   wnet = deepcopy(net)
   n = length(wnet.nodeVec)
+  # Invert reps: representative -> its cluster members (including itself).
+  # Non-representative slots stay empty and are skipped below.
   cluster_members = [Int[] for _ = 1:n]
   for bus = 1:n
     push!(cluster_members[reps[bus]], bus)
@@ -1358,6 +1427,8 @@ function _merged_pf_net(net::Net)
     has_slack = false
     has_pv = false
 
+    # Sum the whole cluster. The `isnothing` guards matter: unset injections are
+    # `nothing`, not 0.0, and a bus that carries no load at all is the norm.
     for b in members
       nref = wnet.nodeVec[b]
       p_load += isnothing(nref._pƩLoad) ? 0.0 : nref._pƩLoad
@@ -1373,6 +1444,10 @@ function _merged_pf_net(net::Net)
     # Aggregate electrical injections of each merged cluster at its representative.
     # Non-representative buses are neutralized and marked Isolated to keep topology
     # and solver dimensions coherent after link contraction.
+    #
+    # Bus type of the merged node: the strongest type in the cluster wins.
+    # Slack beats PV beats PQ -- a cluster containing the reference IS the
+    # reference, and a cluster with a voltage-controlling machine holds voltage.
     ref._pƩLoad = p_load
     ref._qƩLoad = q_load
     ref._pƩGen = p_gen
@@ -1381,6 +1456,9 @@ function _merged_pf_net(net::Net)
     ref._qShunt = q_sh
     ref._nodeType = has_slack ? Slack : (has_pv ? PV : PQ)
 
+    # Zero the members instead of deleting them: bus indices stay stable, which
+    # is what lets the caller map results back through `reps`. Isolated keeps
+    # them out of the Ybus and out of island detection.
     for b in members
       b == rep && continue
       nref = wnet.nodeVec[b]
@@ -1394,6 +1472,8 @@ function _merged_pf_net(net::Net)
     end
   end
 
+  # Re-attach every branch to the representatives of its two ends, so branches
+  # that merely touched a merged bus keep working.
   for br in wnet.branchVec
     f = reps[Int(br.fromBus)]
     t = reps[Int(br.toBus)]
@@ -1401,10 +1481,15 @@ function _merged_pf_net(net::Net)
     br.toBus = t
     if f == t
       # Internal branch of a merged cluster collapses to a self-loop and is disabled.
+      # (Both ends in the same cluster: a parallel line next to a closed
+      # coupler. Its impedance is shorted out by the coupler anyway.)
       br.status = 0
     end
   end
 
+  # Shunts move to the representative as well; their admittance acts on the
+  # merged node. The component's own bus reference is kept in sync so reporting
+  # does not fall back on a stale index.
   for sh in wnet.shuntVec
     sh.busIdx = reps[Int(sh.busIdx)]
     if hasproperty(sh.comp, :cFrom_bus) && getfield(sh.comp, :cFrom_bus) !== nothing
@@ -1412,6 +1497,9 @@ function _merged_pf_net(net::Net)
     end
   end
 
+  # Prosumers (generators, loads, injections) follow their bus. This is what
+  # makes refreshBusTypesFromProsumers! type the representative correctly
+  # afterwards -- bus typing is derived from the prosumers, not from _nodeType.
   for ps in wnet.prosumpsVec
     if hasproperty(ps.comp, :cFrom_bus) && getfield(ps.comp, :cFrom_bus) !== nothing
       new_bus = reps[Int(getfield(ps.comp, :cFrom_bus))]
@@ -1423,6 +1511,35 @@ function _merged_pf_net(net::Net)
     end
   end
 
+  # slackVec still carries pre-merge bus indices at this point. A slack that was
+  # not chosen as its cluster's representative has just been neutralized and
+  # marked Isolated above, while the Slack type moved to the representative --
+  # leaving slackVec pointing at a bus the solver no longer sees. Map every entry
+  # onto its representative so the returned net is self-consistent on its own.
+  #
+  # In practice both call sites (runpf!, _run_apslf_powerflow!) run
+  # refreshBusTypesFromProsumers! right afterwards, which rebuilds slackVec from
+  # the — already remapped — prosumer bus indices and would mask a stale entry.
+  # Do not rely on that: _merged_pf_net is also called directly (tests,
+  # diagnostics), and a future caller may skip the refresh.
+  if !isempty(wnet.slackVec)
+    remapped = Int[]
+    for bus in wnet.slackVec
+      # Guard against out-of-range indices left behind by earlier edits; reps is
+      # only defined for the current bus range.
+      (1 <= bus <= n) || continue
+      # Several slacks of one cluster collapse onto the same representative.
+      _push_unique!(remapped, reps[bus])
+    end
+    # Ascending order matches how refreshBusTypesFromProsumers! builds slackVec,
+    # so both routes yield an identical vector.
+    sort!(remapped)
+    wnet.slackVec = remapped
+  end
+
+  # Recompute the isolated-bus list from scratch: the merge both created new
+  # isolated buses (the neutralized cluster members) and can leave whole
+  # branch-less pockets behind. The inherited list from the copy is stale.
   empty!(wnet.isoNodes)
   markIsolatedBuses!(net = wnet, log = false)
   return wnet, reps, true
@@ -1520,6 +1637,29 @@ function runpf!(
   _validate_rectangular_powerflow_options(method = :rectangular, sparse = true)
   wnet, reps, has_merges = _merged_pf_net(net)
   refreshBusTypesFromProsumers!(wnet)
+
+  # Keep this definition ahead of the island branch below. A nested `function`
+  # creates its local binding only when the definition statement *executes* --
+  # unlike a top-level method, it is not hoisted. Defining it further down (after
+  # the island branch, next to the non-island call site) therefore made every
+  # island-wise run with an active link merge die with an UndefVarError, after
+  # all islands had already converged.
+  function _sync_merged_results_to_original!()
+    # Only solved voltage state is back-propagated bus-wise: wnet holds the
+    # contracted topology, so every original bus reads its value from the
+    # representative of its link cluster. All buses of a cluster are electrically
+    # the same node, hence they legitimately share vm/va.
+    for i in eachindex(net.nodeVec)
+      src = wnet.nodeVec[reps[i]]
+      net.nodeVec[i]._vm_pu = src._vm_pu
+      net.nodeVec[i]._va_deg = src._va_deg
+    end
+    # Shunt powers depend on the bus voltage and were computed on the merged net,
+    # where they sit on the representative. Recompute them on the original net so
+    # reporting attributes them to the bus the user actually modelled.
+    updateShuntPowers!(net = net)
+  end
+
   has_vdep_control = has_voltage_dependent_control(wnet)
   island_report = detect_ac_islands(wnet)
   if length(island_report.rows) > 1 && any(row -> row.n_branch > 0, island_report.rows)
@@ -1727,17 +1867,6 @@ function runpf!(
       end
     end
     return total_iters, 0
-  end
-
-  function _sync_merged_results_to_original!()
-    # Only solved voltage state is back-propagated bus-wise; dependent shunt powers
-    # are recomputed on the original net to keep post-processing consistent.
-    for i in eachindex(net.nodeVec)
-      src = wnet.nodeVec[reps[i]]
-      net.nodeVec[i]._vm_pu = src._vm_pu
-      net.nodeVec[i]._va_deg = src._va_deg
-    end
-    updateShuntPowers!(net = net)
   end
 
   if method === :rectangular

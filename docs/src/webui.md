@@ -339,8 +339,12 @@ The FOR002 reference field is used only for legacy reference comparison
 diagnostics: enter an absolute path, a path copied from the same case cache
 directory, or select a FOR002.DAT candidate already present in the case cache
 when one is offered. The **Case input format** selector defaults to
-**Auto** (MATPOWER-oriented); the native DTF path is experimental/internal and
-intended for diagnostics and validation, not the primary workflow. For the
+**Auto**, which recognises MATPOWER files, CGMES deliveries (folders and ZIPs)
+and — where the FOR001 markers are unambiguous — native DTF input. Selecting
+**CGMES (ENTSO-E, folder or ZIP)** forces the CGMES importer; the option is
+preselected automatically when the chosen case is a `.zip` or a directory.
+The native DTF path is experimental/internal and intended for diagnostics and
+validation, not the primary workflow. For the
 selected-outage-records mode, the **Selected DTF outage labels/indices** field
 accepts one parsed label or outage index at a time; the result page reports
 the compact outage summary while detailed rows stay in artifacts.
@@ -621,17 +625,32 @@ Island diagnostics are run artifacts. Files such as `ac_islands.csv`, `ac_island
 
 ## Importing case files through the Web UI
 
-The PowerFlow page includes a separate **Import case files** control near the case selection area. It uses the browser's native file picker and accepts multiple files in one selection. The picker advertises MATPOWER `.m`/`.M` files and DTF `.dat`/`.DAT` files; the server validates the extension again because browser-side filters can be bypassed.
+The PowerFlow page includes a separate **Import case files** control near the case selection area. It uses the browser's native file picker and accepts multiple files in one selection. The picker advertises MATPOWER `.m`/`.M` files, DTF `.dat`/`.DAT` files and CGMES `.zip` deliveries; the server validates the extension again because browser-side filters can be bypassed. A CGMES ZIP may contain the whole delivery, including nested ZIPs — the importer opens them in memory, so no unpacking step is required.
 
 Importing is a copy-only operation. It does not submit the PowerFlow form, create a run ID, create a result directory, parse uploaded `.m` code, or invoke the solver. After the POST/Redirect/GET refresh, the normal case selector is rebuilt from disk. If at least one imported file is runnable in the normal selector, the first such file may be preselected; the user must still press **Start PowerFlow run** to calculate it.
 
-Pressing Enter in the **Or type case file path** field resolves the typed value the same copy-only way instead of starting a run: a bare MATPOWER case name (for example `case300.m`) is downloaded through [`ensure_casefile`](@ref) into the case directory, while a full local path to an existing file is copied into the case directory with the same validation as file import (unsupported extensions, oversized files, and name collisions are rejected with an inline message). Either way the resolved file then appears in the **Existing case file** selector; it does not submit the PowerFlow form or invoke the solver.
+Pressing Enter in the **Or type case file path** field resolves the typed value the same copy-only way instead of starting a run: a bare MATPOWER case name (for example `case300.m`) is downloaded through [`ensure_casefile`](@ref) into the case directory, an entry of the form `cgmes:<alias>` fetches an ENTSO-E CGMES test configuration (see below), while a full local path to an existing file is copied into the case directory with the same validation as file import (unsupported extensions, oversized files, and name collisions are rejected with an inline message). Either way the resolved file then appears in the **Existing case file** selector; it does not submit the PowerFlow form or invoke the solver.
 
 Uploaded files are stored in the same effective Web UI case directory shown in the form and used by the selector. Development checkouts use the writable `data/mpower` directory when it is available; installed or immutable package contexts fall back to the user-writable Web UI application data directory, specifically the sibling `data/mpower` directory next to the configured Web UI output root. The directory is created as needed. Manual full paths remain available for advanced users and continue to override the selector when filled in.
 
 Upload limits are centralized in the Web UI implementation: 100 MiB per file and 250 MiB per multipart request. Oversized files are rejected cleanly and reported in the import summary. Existing files are not overwritten; conflicting uploads are rejected as `already exists`, while other selected files can still be imported. Filenames are treated as untrusted: directory components, traversal attempts, empty names, control characters, and names that would resolve outside the case directory are rejected. Writes are staged through a temporary file in the destination directory and then renamed into place.
 
 The normal case selector continues to use the existing Web UI filtering rules. Imported MATPOWER `.m` files and runnable DTF `.DAT` files appear after refresh. FOR002 reference `.DAT` files may be copied for validation workflows but remain hidden from the normal runnable-case selector and belong in the optional FOR002 reference field.
+
+### Fetching ENTSO-E CGMES test configurations
+
+Typing `cgmes:<alias>` into the **Or type case file path** field downloads the
+official ENTSO-E test-configuration package once (~22 MB) into the local CGMES
+cache (`data/CGMES`, overridable with `SPARLECTRA_CGMES_CACHE`), extracts it,
+and packs the requested configuration — base case together with its boundary
+set — into a single `cgmes_<alias>.zip` in the case directory. The ZIP then
+behaves like any other imported case.
+
+Available aliases: `microgrid_be`, `microgrid_nl`, `microgrid_assembled`,
+`smallgrid`, `smallgrid_nb`, `fullgrid`, `fullgrid_nb`, `realgrid`. Repeated
+requests reuse the packed ZIP instead of downloading again. If the download
+fails, the error message names the file path where the package can be placed
+manually. The test data is never committed to the repository.
 
 ## PowerFlow tolerance spinner
 

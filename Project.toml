@@ -9,6 +9,7 @@ BenchmarkTools = "6e4b80f9-dd63-53aa-95a3-0cdb28fa8baf"
 DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
 Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
 Downloads = "f43a241f-c20a-4ad4-852c-f6b1247861c6"
+EzXML = "8f5d6c58-4d21-5cfd-889c-e3ad7ee6a615"
 InlineStrings = "842dd82b-1e85-43dc-bf29-5d0ee9dffc48"
 KLU = "ef3ab10e-7fda-4108-b977-705223b18434"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
@@ -23,6 +24,7 @@ Sockets = "6462fe0b-24de-5631-8697-dd941f90decc"
 SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
 TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
 UUIDs = "cf7118a7-6976-5b1a-9a39-7adc72f591a4"
+ZipArchives = "49080126-0e18-4c2a-b176-c102e4b3760c"
 
 [weakdeps]
 AnalyticLoadFlow = "19ecf91d-4042-490c-adc1-7fb0fdb392c0"
@@ -36,6 +38,7 @@ BenchmarkTools = "1.6"
 DataFrames = "1"
 Dates = "1"
 Downloads = "1"
+EzXML = "1.2.3"
 InlineStrings = "1.4"
 KLU = "0.6.0"
 LinearAlgebra = "1"
@@ -50,12 +53,14 @@ Sockets = "1"
 SparseArrays = "1"
 TOML = "1.0.3"
 UUIDs = "1"
+ZipArchives = "2.6.0"
 julia = "1.12"
 
 [extras]
 AnalyticLoadFlow = "19ecf91d-4042-490c-adc1-7fb0fdb392c0"
 BenchmarkTools = "6e4b80f9-dd63-53aa-95a3-0cdb28fa8baf"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+Unicode = "4ec0a83e-493e-50e2-b9ac-8f72acf5a8f5"
 
 [targets]
-test = ["Test", "BenchmarkTools", "AnalyticLoadFlow"]
+test = ["Test", "BenchmarkTools", "AnalyticLoadFlow", "Unicode"]

@@ -265,6 +265,9 @@ const WEBUI_DOC_PAGES = Dict(
   "matpower_format" => (title = "MATPOWER format", file = "matpower_format.md"),
   "dtf_format" => (title = "DTF legacy input format", file = "dtf_format.md"),
   "matpower_import" => (title = "MATPOWER Import", file = "matpower_import.md"),
+  # Reachable from the docs reader; per-option help topics follow once the
+  # cgmes_import options get their own Web UI form fields (issue #294).
+  "cgmes_import" => (title = "CGMES Import", file = "cgmes_import.md"),
   "matpower_case_matrix" => (title = "MATPOWER Case Diagnostics Matrix", file = "sparlectra_matpower_case_matrix.md"),
   "webui" => (title = "Local PowerFlow Web UI", file = "webui.md"),
   "feature_matrix" => (title = "Feature Matrix", file = "feature_matrix.md"),

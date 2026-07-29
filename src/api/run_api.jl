@@ -326,12 +326,24 @@ const DTF_FOR001_UNSUPPORTED_DCLINE_MESSAGE = "DC lines are currently not suppor
 
 function _normalize_case_format(value)::Symbol
   format = value isa Symbol ? value : Symbol(lowercase(strip(String(value))))
-  format in (:auto, :matpower, :dtf_for001) || throw(ArgumentError("case_format must be auto, matpower, or dtf_for001; got $(repr(value))."))
+  format in (:auto, :matpower, :dtf_for001, :cgmes) || throw(ArgumentError("case_format must be auto, matpower, dtf_for001, or cgmes; got $(repr(value))."))
   return format
+end
+
+"""Cheap CGMES sniff: a folder, or a ZIP holding CGMES RDF/XML payloads."""
+function _looks_like_cgmes(case_path::AbstractString)::Bool
+  isdir(case_path) && return true
+  lowercase(splitext(case_path)[2]) == ".zip" || return false
+  try
+    return !isempty(CGMESImporter.collectCGMESFiles(case_path))
+  catch
+    return false
+  end
 end
 
 function _detect_case_format(case_path::AbstractString; requested::Symbol = :auto)::Symbol
   requested !== :auto && return requested
+  _looks_like_cgmes(case_path) && return :cgmes
   ext = lowercase(splitext(case_path)[2])
   ext in (".m", ".jl") && return :matpower
   text = read(case_path, String)
@@ -621,7 +633,7 @@ function _run_sparlectra_api(;
   _write_run_metadata_artifact(output_path; case_path = case_path)
   _check_powerflow_cancelled!(cancellation_token)
   phases[:api_config_build] = _api_elapsed_seconds(config_start)
-  isfile(case_path) || return _api_failure("casefile_not_found", "MATPOWER case file not found: $(case_path)"; run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file)
+  (isfile(case_path) || isdir(case_path)) || return _api_failure("casefile_not_found", "Case input not found: $(case_path)"; run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file)
 
   requested_case_format = try
     _normalize_case_format(case_format)
@@ -653,7 +665,168 @@ function _run_sparlectra_api(;
   )
   execution_start = time_ns()
   dtf_metadata = Dict{String,Any}()
-  if detected_case_format === :dtf_for001
+  cgmes_metadata = Dict{String,Any}()
+  if detected_case_format === :cgmes
+    emit_phase("reading_cgmes_delivery")
+    cgmes_cfg = config.cgmes
+    # `path` may add further parts (typically the boundary set) to the case
+    extra = filter(!isempty, strip.(split(cgmes_cfg.path, ';')))
+    paths = String[case_path]
+    for p in extra
+      p == case_path || push!(paths, String(p))
+    end
+    # A delivery uploaded as a bare base case has no boundary set with it.
+    # Rather than failing, pick up a boundary delivery sitting next to it in
+    # the same directory (ENTSO-E names them "...Boundary..." or "..._BD_...").
+    if length(paths) == 1
+      neighbours = try
+        readdir(dirname(abspath(case_path)))
+      catch
+        String[]
+      end
+      for n in neighbours
+        occursin(r"(?i)boundary|_bd_|_bd\.", n) || continue
+        cand = joinpath(dirname(abspath(case_path)), n)
+        cand == abspath(case_path) && continue
+        (isdir(cand) || endswith(lowercase(n), ".zip")) || continue
+        push!(paths, cand)
+        emit_phase("cgmes_boundary_autodetected")
+        break
+      end
+    end
+    cgmes_result = try
+      importCGMES(
+        path = length(paths) == 1 ? paths[1] : paths,
+        baseMVA = cgmes_cfg.base_mva,
+        require_boundary = cgmes_cfg.require_boundary,
+        tap_control = cgmes_cfg.tap_control,
+        ignore_connected = cgmes_cfg.ignore_connected,
+        vset_min_pu = cgmes_cfg.vset_min_pu,
+        vset_max_pu = cgmes_cfg.vset_max_pu,
+        multi_slack = cgmes_cfg.multi_slack,
+        name = basename(case_path),
+      )
+    catch err
+      message = sprint(showerror, err)
+      # A failed import is exactly when the report matters most, so write a
+      # diagnostic cgmes.log from what can still be read (summarizeCGMES works
+      # on incomplete deliveries) before returning the failure.
+      try
+        open(joinpath(output_path, "cgmes.log"), "w") do io
+          println(io, "# CGMES import report — IMPORT FAILED")
+          println(io, "case:   ", case_path)
+          println(io, "paths:  ", join(paths, "\n        "))
+          println(io, "error:  ", message)
+          println(io)
+          summary = CGMESImporter.summarizeCGMES(path = length(paths) == 1 ? paths[1] : paths)
+          println(io, "version: ", summary.version)
+          println(io, "objects: ", summary.object_count, " in ", length(summary.class_histogram), " classes")
+          println(io, "unresolved references: ", summary.unresolved_count, summary.boundary_missing_hint ? "  (topology references — boundary set likely missing)" : "")
+          isempty(summary.unresolved_sample) || println(io, "  sample: ", join(summary.unresolved_sample, ", "))
+          println(io)
+          println(io, "## Files")
+          for f in summary.files
+            println(io, "  ", rpad(f.name, 60), " [", join(sort(String.(collect(f.profiles))), ","), "]", f.skipped ? "  SKIPPED: " * f.skip_reason : "  " * string(f.object_count) * " objects")
+          end
+          println(io)
+          println(io, "## Class histogram")
+          for (cls, n) in summary.class_histogram
+            println(io, "  ", rpad(String(cls), 40), n)
+          end
+        end
+      catch logerr
+        @warn "could not write diagnostic cgmes.log" exception = logerr
+      end
+      is_boundary = occursin("boundary set missing", message) || occursin("unresolved topology references", message)
+      reason = is_boundary ? "cgmes_boundary_missing" : "cgmes_import_error"
+      is_boundary && (message = string(message, " — upload the boundary delivery into the same case directory (its name must contain \"Boundary\" or \"_BD_\"), add it to cgmes_import.path, or type cgmes:<alias> to fetch a ready-made ENTSO-E test set."))
+      metadata = Dict("input_format" => String(requested_case_format), "input_format_detected" => "cgmes")
+      return _api_execution_failure(reason, message; run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file, phase_recorder, performance_timing, total_start_ns = total_start, metadata = metadata)
+    end
+    # Dedicated cgmes.log: everything the importer saw and decided, next to
+    # run.log and diagnose.log, so a CGMES run can be audited without
+    # digging through the general run output.
+    try
+      open(joinpath(output_path, "cgmes.log"), "w") do io
+        println(io, "# CGMES import report")
+        println(io, "case:        ", case_path)
+        println(io, "paths:       ", join(paths, "\n             "))
+        println(io, "version:     ", cgmes_result.store.version)
+        println(io, "tap control: ", cgmes_cfg.tap_control)
+        println(io, "base MVA:    ", cgmes_cfg.base_mva)
+        println(io)
+        println(io, "## Files")
+        for f in cgmes_result.store.files
+          println(io, "  ", rpad(f.name, 60), " [", join(sort(String.(collect(f.profiles))), ","), "]", f.skipped ? "  SKIPPED: " * f.skip_reason : "  " * string(f.object_count) * " objects")
+        end
+        println(io)
+        println(io, "## Class histogram")
+        for (cls, mrids) in sort(collect(cgmes_result.store.byclass); by = p -> -length(p.second))
+          println(io, "  ", rpad(String(cls), 40), length(mrids))
+        end
+        println(io)
+        println(io, "## Network built")
+        println(io, "  buses:      ", length(cgmes_result.net.nodeVec), " (", length(cgmes_result.net.isoNodes), " isolated)")
+        println(io, "  branches:   ", length(cgmes_result.net.branchVec))
+        println(io, "  links:      ", length(cgmes_result.net.linkVec))
+        println(io, "  prosumers:  ", length(cgmes_result.net.prosumpsVec))
+        println(io, "  shunts:     ", length(cgmes_result.net.shuntVec))
+        println(io, "  slack bus:  ", cgmes_result.slack_bus)
+        println(io)
+        sc = cgmes_result.shortcircuit
+        println(io, "## Short-circuit source data (read, not evaluated)")
+        println(io, "  external network injections: ", length(sc.external_network_injections))
+        println(io, "  synchronous machines:        ", length(sc.synchronous_machines))
+        println(io, "  AC line segments:            ", length(sc.ac_line_segments))
+        println(io, "  transformer ends:            ", length(sc.transformer_ends))
+        println(io, "  equivalent injections:       ", length(sc.equivalent_injections))
+        println(io)
+        println(io, "## Importer messages (", length(cgmes_result.messages), ")")
+        for m in cgmes_result.messages
+          println(io, "  ", m)
+        end
+        if !isempty(cgmes_result.skipped_equipment)
+          println(io)
+          println(io, "## Skipped equipment: ", length(cgmes_result.skipped_equipment), " mRID(s)")
+        end
+      end
+    catch err
+      @warn "could not write cgmes.log" exception = err
+    end
+    emit_phase("building_sparlectra_net")
+    raw_result = try
+      open(logfile, "a") do io
+        println(io, "CGMES input (", length(paths), " path(s), ", length(cgmes_result.net.nodeVec), " buses)")
+        for m in cgmes_result.messages
+          println(io, "  ", m)
+        end
+        _write_resolved_q_limit_options(io, qlimit_metadata)
+        with_logger(ConsoleLogger(io)) do
+          redirect_stdout(io) do
+            redirect_stderr(io) do
+              _run_sparlectra(net = cgmes_result.net, config = config, performance_profile = api_performance_profile)
+            end
+          end
+        end
+      end
+    catch err
+      err isa PowerFlowAborted && rethrow()
+      return _api_execution_failure("execution_error", sprint(showerror, err, catch_backtrace()); run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file, phase_recorder, performance_timing, total_start_ns = total_start)
+    end
+    cgmes_metadata = Dict{String,Any}(
+      "input_format" => String(requested_case_format),
+      "input_format_detected" => "cgmes",
+      "cgmes_import_used" => true,
+      "cgmes_version" => cgmes_result.store.version,
+      "cgmes_paths" => join(paths, ";"),
+      "cgmes_buses" => length(cgmes_result.net.nodeVec),
+      "cgmes_branches" => length(cgmes_result.net.branchVec),
+      "cgmes_slack_bus" => cgmes_result.slack_bus,
+      "cgmes_tap_control" => cgmes_cfg.tap_control,
+      "cgmes_messages" => length(cgmes_result.messages),
+      "cgmes_skipped_equipment" => length(cgmes_result.skipped_equipment),
+    )
+  elseif detected_case_format === :dtf_for001
     emit_phase("reading_dtf_for001_case")
     dtf_case = try
       _reject_dtf_dcline_like_content!(case_path)
@@ -956,6 +1129,7 @@ function _run_sparlectra_api(;
     csv_timing_metadata,
   )
   isempty(dtf_metadata) || merge!(final_metadata, dtf_metadata)
+  isempty(cgmes_metadata) || merge!(final_metadata, cgmes_metadata)
   _write_run_metadata_artifact(output_path; case_path = case_path, lifecycle = final_metadata)
   message = numerical_success ? "PowerFlow run completed." : raw_result.reason_text
   result = _api_result(

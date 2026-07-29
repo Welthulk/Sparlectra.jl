@@ -1177,6 +1177,70 @@ mpc.branch = [
         @test st.tr_collapsed == true
       end
 
+      @testset "Active-set Q-limits switch on the converged iterate (post-convergence round)" begin
+        # Regression: a converged iterate is always "ready" for the Q-limit
+        # check. Previously the start gating could outlast convergence (NR
+        # faster than qlimit_start_iter, or :auto never settling), the check
+        # was skipped on the converged iterate, and the run exited with its
+        # violations unevaluated — rejected as remaining_pv_q_limit_violations
+        # instead of being enforced. The gate here sits far beyond the ~5
+        # iterations this net needs, so ONLY the post-convergence round can
+        # perform the (legitimate) PV→PQ switch.
+        net = createTest3BusNet(cooldown = 2, hyst_pu = 0.01, qlim_min = -15.0, qlim_max = 15.0)
+        _, erg = runpf!(net, 40, 1e-8, 0; method = :rectangular, qlimit_start_iter = 50)
+        @test erg == 0
+        st = Sparlectra.rectangular_pf_status(net)
+        @test st.final_converged == true
+        @test st.reason == :none
+        @test length(net.qLimitLog) == 1
+        # same net, same limits, default gating — the reference behavior the
+        # post-convergence round must reproduce
+        net_ref = createTest3BusNet(cooldown = 2, hyst_pu = 0.01, qlim_min = -15.0, qlim_max = 15.0)
+        _, erg_ref = runpf!(net_ref, 40, 1e-8, 0; method = :rectangular)
+        @test erg_ref == 0
+        @test length(net_ref.qLimitLog) == 1
+      end
+
+      @testset "Classical Q-limit violation accounting excludes fixed generator-type units" begin
+        # Regression: _matpower_q_limit_violations shared the FULL bus reactive
+        # requirement equally among all non-clamped generator-type units. A
+        # fixed injection at a PV bus (never-regulating: a Stage-0 HVDC
+        # converter, a kept boundary equivalent, a PQ-degraded SVC) then
+        # "violated" its own zero-width limits, was clamped, and from the next
+        # round on its reactive power was loaded onto the remaining regulator —
+        # false violations and wrong clamps on any network with a fixed and a
+        # regulating unit on one bus (nothing CGMES-specific).
+        #
+        # Here the bus needs ≈50 MVAr: 40 come from the fixed unit, ≈10 from
+        # the regulator whose ±30 MVAr limits are comfortable. Correct
+        # accounting finds NO violation; the old equal share attributed 25/25
+        # and clamped both units in turn.
+        net = Net(name = "qlimit_fixed_unit", baseMVA = 100.0)
+        addBus!(net = net, busName = "B1", vn_kV = 110.0)
+        addBus!(net = net, busName = "B2", vn_kV = 110.0)
+        addBus!(net = net, busName = "B3", vn_kV = 110.0)
+        addPIModelACLine!(net = net, fromBus = "B1", toBus = "B2", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+        addPIModelACLine!(net = net, fromBus = "B2", toBus = "B3", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+        addPIModelACLine!(net = net, fromBus = "B1", toBus = "B3", r_pu = 0.02, x_pu = 0.12, b_pu = 0.0, status = 1)
+        addProsumer!(net = net, busName = "B1", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "B1")
+        addProsumer!(net = net, busName = "B2", type = "GENERATOR", p = 20.0, vm_pu = 1.0, qMin = -30.0, qMax = 30.0)
+        # the fixed unit: generator-class, never regulating, zero-width Q range
+        addProsumer!(net = net, busName = "B2", type = "EXTERNALNETWORKINJECTION", p = 0.0, q = 40.0, qMin = 40.0, qMax = 40.0, isRegulated = false)
+        addProsumer!(net = net, busName = "B3", type = "ENERGYCONSUMER", p = 60.0, q = 52.0)
+        ok, _ = validate!(net = net)
+        @test ok
+
+        _, erg = runpf!(net, 30, 1e-8, 0; method = :rectangular, qlimit_enforcement_mode = :classic_one_at_a_time, qlimit_max_outer = 10)
+        @test erg == 0
+        st = Sparlectra.rectangular_pf_status(net)
+        @test st.final_outcome == :converged
+        # neither the fixed unit nor the regulator may have been clamped
+        @test isempty(st.matpower_outer_loop)
+        @test isempty(net.qLimitLog)
+        # the PV bus must still hold its setpoint (nothing degraded it to PQ)
+        @test Sparlectra.getNodeType(net.nodeVec[Sparlectra.geNetBusIdx(net = net, busName = "B2")]) == Sparlectra.PV
+      end
+
       @testset "Classical Q-limit outer loop does not overwrite each round's diagnostic artifacts" begin
         # Regression: the classical outer loop's inner runpf_rectangular! calls all
         # shared performance_profile[:output_dir] with no per-round prefix, so

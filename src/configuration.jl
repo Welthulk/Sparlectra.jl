@@ -267,6 +267,45 @@ Base.@kwdef struct StateEstimationConfig
 end
 
 """
+    CGMESImportConfig
+
+Options of the `cgmes_import` configuration block — the ENTSO-E CGMES import
+(see `importCGMES`). `path` accepts a folder, a ZIP, or several of both
+(base case plus boundary set) separated by `;`.
+
+# Fields
+- `path::String`: delivery location(s); `;`-separated for multi-part deliveries.
+- `base_mva::Float64`: system base, which CGMES does not define.
+- `require_boundary::Bool`: fail when topology references stay unresolved.
+- `tap_control::Bool`: start from the SSH tap positions and attach the
+  CGMES-defined outer-loop tap controllers instead of importing the solved
+  `SvTapStep` positions as fixed taps.
+- `ignore_connected::Bool`: diagnostic override that treats every terminal as
+  connected, for snapshots whose SSH flags contradict their own SV state.
+- `vset_min_pu`, `vset_max_pu::Float64`: plausibility band for a voltage
+  `RegulatingControl.targetValue`, in p.u. of the regulated bus's nominal
+  voltage. A target outside the band is treated as a placeholder: it is ignored
+  and the unit is held PV at the bus voltage derived from the nominal data, with
+  a `warning:` message. Widen the band to accept a delivery's own values, or set
+  `vset_min_pu = 0` and a large `vset_max_pu` to disable the check entirely.
+- `multi_slack::Bool`: give every electrical island its own SV-declared angle
+  reference (at most one per island). Required for multi-island deliveries —
+  without it every island beyond the primary one has no reference and the
+  island-wise power flow refuses to run. Disable only to force the legacy
+  single-reference behavior.
+"""
+Base.@kwdef struct CGMESImportConfig
+  path::String = ""
+  base_mva::Float64 = 100.0
+  require_boundary::Bool = true
+  tap_control::Bool = false
+  ignore_connected::Bool = false
+  vset_min_pu::Float64 = 0.5
+  vset_max_pu::Float64 = 1.5
+  multi_slack::Bool = true
+end
+
+"""
     MatpowerImportConfig
 
 Typed MATPOWER import/example configuration for case selection and import
@@ -446,6 +485,7 @@ Base.@kwdef struct SparlectraConfig
   powerflow::PowerFlowConfig = PowerFlowConfig()
   state_estimation::StateEstimationConfig = StateEstimationConfig()
   matpower::MatpowerImportConfig = MatpowerImportConfig()
+  cgmes::CGMESImportConfig = CGMESImportConfig()
   matpower_export::MatpowerExportConfig = MatpowerExportConfig()
   transformer::TransformerConfig = TransformerConfig()
   performance::PerformanceConfig = PerformanceConfig()
@@ -794,8 +834,8 @@ function QLimitConfig(raw::AbstractDict)
 end
 
 function _merged_section(raw::AbstractDict, section_name::AbstractString)
-  aliases = section_name == "powerflow" ? ["power_flow"] : section_name == "matpower" ? ["matpower_import"] : String[]
-  canonical = section_name == "power_flow" ? "powerflow" : section_name == "matpower_import" ? "matpower" : section_name
+  aliases = section_name == "powerflow" ? ["power_flow"] : section_name == "matpower" ? ["matpower_import"] : section_name == "cgmes" ? ["cgmes_import"] : String[]
+  canonical = section_name == "power_flow" ? "powerflow" : section_name == "matpower_import" ? "matpower" : section_name == "cgmes_import" ? "cgmes" : section_name
   primary = Dict{Any,Any}(_raw_section(raw, canonical))
   for alias in aliases
     merge!(primary, Dict{Any,Any}(_raw_section(raw, alias)))
@@ -920,6 +960,20 @@ function StateEstimationConfig(raw::AbstractDict)
     update_net = _as_bool_cfg(_raw_get(merged, "update_net", true)),
     pmu_ref_offset = _validate_allowed_symbol("state_estimation.pmu_ref_offset", _as_symbol_cfg(_raw_get(merged, "pmu_ref_offset", :auto)), STATE_ESTIMATION_PMU_REF_OFFSET_VALUES),
     observability = ObservabilityConfig(merged),
+  )
+end
+
+function CGMESImportConfig(raw::AbstractDict)
+  merged = _merged_section(raw, "cgmes")
+  return CGMESImportConfig(
+    path = strip(_as_string_cfg(_raw_get(merged, "path", ""))),
+    base_mva = _validate_positive("cgmes_import.base_mva", _as_float_cfg(_raw_get(merged, "base_mva", 100.0))),
+    require_boundary = _as_bool_cfg(_raw_get(merged, "require_boundary", true)),
+    tap_control = _as_bool_cfg(_raw_get(merged, "tap_control", false)),
+    ignore_connected = _as_bool_cfg(_raw_get(merged, "ignore_connected", false)),
+    vset_min_pu = _validate_nonnegative("cgmes_import.vset_min_pu", _as_float_cfg(_raw_get(merged, "vset_min_pu", 0.5))),
+    vset_max_pu = _validate_positive("cgmes_import.vset_max_pu", _as_float_cfg(_raw_get(merged, "vset_max_pu", 1.5))),
+    multi_slack = _as_bool_cfg(_raw_get(merged, "multi_slack", true)),
   )
 end
 
@@ -1093,6 +1147,7 @@ function SparlectraConfig(raw::AbstractDict)
     powerflow = PowerFlowConfig(raw),
     state_estimation = StateEstimationConfig(raw),
     matpower = MatpowerImportConfig(raw),
+    cgmes = CGMESImportConfig(raw),
     matpower_export = MatpowerExportConfig(raw),
     transformer = TransformerConfig(raw),
     performance = PerformanceConfig(raw),

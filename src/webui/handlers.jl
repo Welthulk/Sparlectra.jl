@@ -119,7 +119,8 @@ function handle_powerflow_case_import(form::AbstractDict; output_root::AbstractS
     try
       _webui_write_import_file_atomic(destination, upload.data)
       push!(imported, name)
-      role = lowercase(splitext(name)[2]) == ".dat" ? _webui_dat_role_label(_webui_classify_dat_content(destination)) : "matpower_case"
+      ext = lowercase(splitext(name)[2])
+      role = ext == ".dat" ? _webui_dat_role_label(_webui_classify_dat_content(destination)) : ext == ".zip" ? _webui_cgmes_upload_role(destination, directory) : "matpower_case"
       imported_roles[name] = role
     catch
       push!(rejected, name => "write failure")
@@ -177,6 +178,12 @@ function handle_powerflow_case_resolve(form::AbstractDict; output_root::Abstract
         _webui_write_import_file_atomic(destination, read(manual_value))
       end
       resolved_name = name
+    elseif startswith(lowercase(manual_value), "cgmes:")
+      # "cgmes:<alias>": fetch an ENTSO-E CGMES test configuration and pack
+      # it (base case plus boundary) as a single ZIP into the case cache.
+      alias = strip(manual_value[7:end])
+      resolved_path = CGMESImporter.fetchCGMESTestSet(alias; outdir = directory)
+      resolved_name = basename(resolved_path)
     else
       # Bare MATPOWER case name: download into the case cache directory.
       resolved_path = ensure_casefile(manual_value; outdir = directory)

@@ -1833,6 +1833,184 @@ function test_link_bus_merge_pf_default_method()
   return test_link_bus_merge_pf()
 end
 
+# Builds a net whose slack sits on B2, which the link merge contracts onto B1, so
+# the slack is deliberately *not* the cluster representative. The link is added
+# before the slack prosumer, otherwise addLink!'s slack assertion rejects it.
+function _build_non_representative_slack_net(name::String)
+  net = Net(name = name, baseMVA = 100.0)
+  addBus!(net = net, busName = "B0", vn_kV = 110.0)
+  addBus!(net = net, busName = "B1", vn_kV = 110.0)
+  addBus!(net = net, busName = "B2", vn_kV = 110.0)
+  addBus!(net = net, busName = "B3", vn_kV = 110.0)
+
+  addACLine!(net = net, fromBus = "B0", toBus = "B1", length = 5.0, r = 0.05, x = 0.5, c_nf_per_km = 10.0, tanδ = 0.0)
+  addACLine!(net = net, fromBus = "B2", toBus = "B3", length = 20.0, r = 0.05, x = 0.5, c_nf_per_km = 10.0, tanδ = 0.0)
+  addLink!(net = net, fromBus = "B1", toBus = "B2", status = 1)
+
+  addProsumer!(net = net, busName = "B2", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "B2")
+  addProsumer!(net = net, busName = "B0", type = "ENERGYCONSUMER", p = 15.0, q = 5.0)
+  addProsumer!(net = net, busName = "B3", type = "ENERGYCONSUMER", p = 25.0, q = 10.0)
+  return net
+end
+
+# Reference for the net above with the link cluster already collapsed by hand.
+function _build_non_representative_slack_reference()
+  net = Net(name = "non_rep_slack_reference", baseMVA = 100.0)
+  addBus!(net = net, busName = "B0", vn_kV = 110.0)
+  addBus!(net = net, busName = "B12", vn_kV = 110.0)
+  addBus!(net = net, busName = "B3", vn_kV = 110.0)
+
+  addACLine!(net = net, fromBus = "B0", toBus = "B12", length = 5.0, r = 0.05, x = 0.5, c_nf_per_km = 10.0, tanδ = 0.0)
+  addACLine!(net = net, fromBus = "B12", toBus = "B3", length = 20.0, r = 0.05, x = 0.5, c_nf_per_km = 10.0, tanδ = 0.0)
+
+  addProsumer!(net = net, busName = "B12", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "B12")
+  addProsumer!(net = net, busName = "B0", type = "ENERGYCONSUMER", p = 15.0, q = 5.0)
+  addProsumer!(net = net, busName = "B3", type = "ENERGYCONSUMER", p = 25.0, q = 10.0)
+  return net
+end
+
+# Regression for the slackVec remap in _merged_pf_net. Contracting a closed link
+# picks the lower bus index as the cluster representative; a slack on the higher
+# index is therefore neutralized and marked Isolated, and the Slack type moves to
+# the representative. slackVec has to follow, otherwise it points at a bus the
+# solver no longer sees.
+function test_link_merge_remaps_non_representative_slack()::Bool
+  net = _build_non_representative_slack_net("non_rep_slack_merge")
+  # Bus typing is derived from prosumers, so slackVec is only populated here.
+  Sparlectra.refreshBusTypesFromProsumers!(net)
+  if net.slackVec != [3]
+    @warn "Precondition failed: slack is not on bus 3" slackVec = net.slackVec
+    return false
+  end
+
+  wnet, reps, has_merges = Sparlectra._merged_pf_net(net)
+  # reps[3] == 2 is the whole point of the fixture: the slack is merged away.
+  if !has_merges || reps[3] != 2
+    @warn "Precondition failed: bus 3 is not merged onto bus 2" has_merges reps
+    return false
+  end
+
+  # _merged_pf_net must return a self-consistent net on its own -- deliberately
+  # checked before refreshBusTypesFromProsumers! runs, since that call would
+  # rebuild slackVec from the prosumers and hide a stale entry.
+  if wnet.slackVec != [2]
+    @warn "Merged net keeps a stale slack index" slackVec = wnet.slackVec
+    return false
+  end
+  if Sparlectra.getNodeType(wnet.nodeVec[3]) != Sparlectra.Isolated || Sparlectra.getNodeType(wnet.nodeVec[2]) != Sparlectra.Slack
+    @warn "Merged net has inconsistent bus types" types = [n._nodeType for n in wnet.nodeVec]
+    return false
+  end
+
+  tol = 1e-8
+  ite, erg = runpf!(net, 30, tol, 0; method = :rectangular)
+  if erg != 0
+    @warn "Non-representative slack network did not converge" ite
+    return false
+  end
+
+  b1 = geNetBusIdx(net = net, busName = "B1")
+  b2 = geNetBusIdx(net = net, busName = "B2")
+  if !isapprox(net.nodeVec[b1]._vm_pu, net.nodeVec[b2]._vm_pu; atol = 1e-10) || !isapprox(net.nodeVec[b1]._va_deg, net.nodeVec[b2]._va_deg; atol = 1e-8)
+    @warn "Merged link buses do not share the solved voltage"
+    return false
+  end
+  # The slack bus itself must still hold the reference voltage after back-sync.
+  if !isapprox(net.nodeVec[b2]._vm_pu, 1.0; atol = 1e-10) || !isapprox(net.nodeVec[b2]._va_deg, 0.0; atol = 1e-8)
+    @warn "Slack bus lost its reference voltage" vm = net.nodeVec[b2]._vm_pu va = net.nodeVec[b2]._va_deg
+    return false
+  end
+
+  # Beyond the bookkeeping: the solved state must equal the network in which the
+  # link cluster was collapsed by hand. This catches a remap that keeps slackVec
+  # tidy but shifts the reference onto the wrong bus.
+  ref = _build_non_representative_slack_reference()
+  ite_ref, erg_ref = runpf!(ref, 30, tol, 0; method = :rectangular)
+  if erg_ref != 0
+    @warn "Reference network did not converge" ite_ref
+    return false
+  end
+
+  ok = true
+  # B1/B2 of the link net correspond to the single bus B12 of the reference.
+  for (name, ref_name) in (("B0", "B0"), ("B1", "B12"), ("B3", "B3"))
+    i = geNetBusIdx(net = net, busName = name)
+    j = geNetBusIdx(net = ref, busName = ref_name)
+    if !isapprox(net.nodeVec[i]._vm_pu, ref.nodeVec[j]._vm_pu; atol = 1e-8) || !isapprox(net.nodeVec[i]._va_deg, ref.nodeVec[j]._va_deg; atol = 1e-7)
+      @warn "Solved state deviates from the hand-merged reference" bus = name vm = net.nodeVec[i]._vm_pu vm_ref = ref.nodeVec[j]._vm_pu va = net.nodeVec[i]._va_deg va_ref = ref.nodeVec[j]._va_deg
+      ok = false
+    end
+  end
+  return ok
+end
+
+# Island-wise solving combined with link merges. Both features were tested
+# separately before, never together, and the combination crashed in
+# _sync_merged_results_to_original! *after* every island had converged. It is the
+# realistic shape for CGMES deliveries: retained switches become links, and a
+# partial delivery decomposes into several islands.
+#
+# The second island is a separate two-bus network with its own reference, so the
+# island decomposition has to produce exactly two islands.
+function test_island_solve_with_link_merge()::Bool
+  net = _build_non_representative_slack_net("island_link_merge")
+  addBus!(net = net, busName = "C0", vn_kV = 110.0)
+  addBus!(net = net, busName = "C1", vn_kV = 110.0)
+  addACLine!(net = net, fromBus = "C0", toBus = "C1", length = 10.0, r = 0.05, x = 0.5, c_nf_per_km = 10.0, tanδ = 0.0)
+  addProsumer!(net = net, busName = "C0", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "C0")
+  addProsumer!(net = net, busName = "C1", type = "ENERGYCONSUMER", p = 8.0, q = 2.0)
+
+  Sparlectra.refreshBusTypesFromProsumers!(net)
+  if length(Sparlectra.electricalIslandComponents(net)) != 2
+    @warn "Precondition failed: expected two electrical islands" islands = Sparlectra.electricalIslandComponents(net)
+    return false
+  end
+
+  # slackVec remapping itself is covered by the test above; here the merge only
+  # has to be active so that the island path exercises the back-sync.
+  if !Sparlectra._merged_pf_net(net)[3]
+    @warn "Precondition failed: no link merge in the island network"
+    return false
+  end
+
+  tol = 1e-8
+  ite, erg = runpf!(net, 30, tol, 0; method = :rectangular, islands_enabled = true)
+  if erg != 0
+    @warn "Island-wise solve with link merges did not converge" ite
+    return false
+  end
+
+  # B2 only receives a value through the representative map; a back-sync that
+  # silently did not run would leave it at its flat-start value.
+  b1 = geNetBusIdx(net = net, busName = "B1")
+  b2 = geNetBusIdx(net = net, busName = "B2")
+  if !isapprox(net.nodeVec[b1]._vm_pu, net.nodeVec[b2]._vm_pu; atol = 1e-10) || !isapprox(net.nodeVec[b1]._va_deg, net.nodeVec[b2]._va_deg; atol = 1e-8)
+    @warn "Merged link buses were not synced back after island-wise solving"
+    return false
+  end
+
+  # Islands are solved independently, so the second island must not shift the
+  # first island's solution by a single digit. This also pins that the island
+  # split did not accidentally move buses between islands.
+  single = _build_non_representative_slack_net("island_link_merge_single")
+  _, erg_single = runpf!(single, 30, tol, 0; method = :rectangular)
+  if erg_single != 0
+    @warn "Single-island comparison network did not converge"
+    return false
+  end
+
+  ok = true
+  for name in ("B0", "B1", "B2", "B3")
+    i = geNetBusIdx(net = net, busName = name)
+    j = geNetBusIdx(net = single, busName = name)
+    if !isapprox(net.nodeVec[i]._vm_pu, single.nodeVec[j]._vm_pu; atol = 1e-8) || !isapprox(net.nodeVec[i]._va_deg, single.nodeVec[j]._va_deg; atol = 1e-7)
+      @warn "Island-wise result deviates from the single-island solve" bus = name
+      ok = false
+    end
+  end
+  return ok
+end
+
 function test_rectangular_link_merge_runs_without_warning()::Bool
   net = Net(name = "link_merge_warning_gate", baseMVA = 100.0)
   addBus!(net = net, busName = "B0", vn_kV = 110.0)
@@ -2918,6 +3096,8 @@ function run_grid_fast_tests()
       @test test_link_rejects_mixed_bus_types() == true
       @test test_link_bus_merge_pf() == true
       @test test_link_bus_merge_pf_default_method() == true
+      @test test_link_merge_remaps_non_representative_slack() == true
+      @test test_island_solve_with_link_merge() == true
       @test test_rectangular_link_merge_runs_without_warning() == true
       @test test_link_closed_keeps_shunt_reporting_on_original_bus() == true
       @test test_link_kcl_ring_allocation() == true

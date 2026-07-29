@@ -66,9 +66,15 @@ function _resolve_powerflow_casefile(
   isempty(requested) && throw(ArgumentError("PowerFlow casefile must not be empty."))
   occursin(r"^[A-Za-z][A-Za-z0-9+.-]*://", requested) && throw(ArgumentError("MATPOWER case URLs are not accepted."))
 
+  # A CGMES delivery is a .zip or an unpacked directory; both are handed to
+  # the importer unchanged (its container layer resolves them).
+  isdir(requested) && return abspath(requested)
   extension = lowercase(splitext(requested)[2])
-  extension in (".m", ".jl", ".dat") || throw(ArgumentError("Unsupported casefile extension: $(requested) (expected .m, .jl, or .DAT)"))
+  extension in (".m", ".jl", ".dat", ".zip") || throw(ArgumentError("Unsupported casefile extension: $(requested) (expected .m, .jl, .DAT, or .zip)"))
   if isfile(requested)
+    if extension == ".zip"
+      return abspath(requested)
+    end
     if extension == ".dat"
       role = _webui_classify_dat_content(requested)
       _webui_is_runnable_dat_role(role) || throw(ArgumentError("$(basename(requested)) is a $(_webui_dat_role_label(role)) file and cannot be used as the primary PowerFlow case. Choose a runnable DTF network case."))
@@ -89,6 +95,11 @@ function _resolve_powerflow_casefile(
       return abspath(requested_m)
     end
     isfile(requested_jl) && throw(ArgumentError(GENERATED_MATPOWER_JL_CACHE_MESSAGE))
+  end
+  if extension == ".zip"
+    local_zip = joinpath(trusted_directory, requested)
+    isfile(local_zip) && return abspath(local_zip)
+    throw(ArgumentError("Case file not found: $(requested)"))
   end
   if extension == ".dat"
     local_dat = joinpath(trusted_directory, requested)

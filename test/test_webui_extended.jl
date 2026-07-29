@@ -750,6 +750,18 @@ settings:
     @test !ispath(warmup_output[])
     @test Set(keys(Sparlectra._POWERFLOW_SERVICE_RUNS)) == registry_before_warmup
 
+    # default warm-up sequence: 3-bus plumbing first, then the synthetic
+    # 118-bus case for the realistic sparse-solve paths; an explicit casefile
+    # replaces the sequence, and both bundled cases stay out of the selector
+    warmup_calls = String[]
+    sequence_runner = function (; casefile, output_dir, kwargs...)
+      push!(warmup_calls, basename(String(casefile)))
+      return (success = true, reason = nothing, message = nothing)
+    end
+    Sparlectra._run_sparlectra_webui_warmup(mktempdir(); runner = sequence_runner)
+    @test warmup_calls == ["warmup_case3.jl", "warmup_case118.jl"]
+    @test !Sparlectra._webui_is_user_selectable_case("warmup_case118.jl")
+
     @testset "Case and configuration selection" begin
       mktempdir() do start_dir
         application_root = joinpath(start_dir, "Sparlectra")
@@ -792,7 +804,8 @@ settings:
         @test Sparlectra._webui_supported_upload_case_extension("FOR001.dat")
         @test Sparlectra._webui_supported_upload_case_extension("FOR001.DAT")
         @test !Sparlectra._webui_supported_upload_case_extension("case3.jl")
-        @test !Sparlectra._webui_supported_upload_case_extension("case3.zip")
+        @test Sparlectra._webui_supported_upload_case_extension("case3.zip")   # CGMES deliveries
+        @test !Sparlectra._webui_supported_upload_case_extension("case3.txt")
         @test !Sparlectra._webui_supported_upload_case_extension("case3")
         @test Sparlectra._webui_sanitize_upload_filename("case3.m") == ("case3.m", "")
         @test last(Sparlectra._webui_sanitize_upload_filename("../case3.m")) == "invalid filename"
@@ -835,7 +848,7 @@ settings:
         @test occursin("ACTIVSg, PEGASE, and RTE", selection_html)
         @test occursin("<form id=\"powerflow-run-form\"", selection_html)
         @test occursin("<form id=\"case-import-form\" method=\"post\" action=\"/powerflow/import-cases\" enctype=\"multipart/form-data\"", selection_html)
-        @test occursin("type=\"file\" name=\"casefiles\" accept=\".m,.M,.dat,.DAT\" multiple", selection_html)
+        @test occursin("type=\"file\" name=\"casefiles\" accept=\".m,.M,.dat,.DAT,.zip,.ZIP\" multiple", selection_html)
         @test occursin("Import case files", selection_html)
         @test occursin("Start PowerFlow run", selection_html)
         @test occursin("<input type=\"hidden\" name=\"config_file\" value=\"$(secondary_config)\">", selection_html)
@@ -967,15 +980,15 @@ settings:
         @test isfile(joinpath(case_directory, "FOR001.DAT"))
         @test Sparlectra._webui_casefile_options_in_directory(case_directory) == ["case_upload.m", "FOR001.DAT"]
 
-        multi = Dict("casefiles" => [upload("case_a.M", "a"), upload("case_b.dat", "b"), upload("bad.zip", "z")])
+        multi = Dict("casefiles" => [upload("case_a.M", "a"), upload("case_b.dat", "b"), upload("bad.txt", "z")])
         multi_response = Sparlectra.route_sparlectra_webui("POST", "/powerflow/import-cases", multi; output_root, runtime)
         @test multi_response.status == 303
         @test isfile(joinpath(case_directory, "case_a.M"))
         @test isfile(joinpath(case_directory, "case_b.dat"))
-        @test !isfile(joinpath(case_directory, "bad.zip"))
+        @test !isfile(joinpath(case_directory, "bad.txt"))
         multi_page = String(Sparlectra.route_sparlectra_webui("GET", String(Dict(multi_response.headers)["Location"]); output_root, runtime).body)
-        @test occursin("Rejected 1 file", multi_page)
-        @test occursin("bad.zip: unsupported extension", multi_page)
+        @test occursin("rejected 1", multi_page)
+        @test occursin("bad.txt", multi_page) && occursin("unsupported extension", multi_page)
 
         write(joinpath(case_directory, "duplicate.m"), "old")
         duplicate_response = Sparlectra.route_sparlectra_webui("POST", "/powerflow/import-cases", Dict("casefiles" => [upload("duplicate.m", "new")]); output_root, runtime)
@@ -2097,6 +2110,13 @@ result = get_powerflow_result(run_id)
       @test !occursin("http-equiv=\"refresh\"", active_result_html)
       @test occursin("data-refresh-url=\"/powerflow/result/$(active_id)?autorefresh=1\" data-refresh-seconds=\"$(Sparlectra.WEBUI_STATUS_AUTO_REFRESH_SECONDS)\"", active_result_html)
       @test occursin("const scheduleAutoRefresh = function ()", active_result_html)
+      # Terminal pages must be reached via a REAL reload, never by swapping the
+      # fetched <main> in place: scripts inside a DOMParser-imported node are
+      # inert per the HTML spec, so a swapped-in final page renders with dead
+      # JS (reported as: case-combobox arrow only works after typing + Enter,
+      # i.e. after the first forced navigation).
+      @test occursin("newMain.hasAttribute('data-refresh-url')", active_result_html)
+      @test occursin("window.location.reload()", active_result_html)
       @test occursin("This page refreshes automatically while the run is active.", active_result_html)
       @test occursin("<td>linear_solve</td>", active_result_html)
       @test occursin(">Refresh status</a>", active_result_html)
@@ -2263,6 +2283,7 @@ result = get_powerflow_result(run_id)
       @test isdir(server.runtime.case_directory)
       @test isfile(server.runtime.config_file)
       @test isfile(joinpath(server.runtime.case_directory, "warmup_case3.jl"))
+      @test isfile(joinpath(server.runtime.case_directory, "warmup_case118.jl"))
       @test isfile(server.runtime.operation_log)
       @test !startswith(server.runtime.case_directory, normpath(pkgdir(Sparlectra)))
       @test !startswith(server.runtime.config_file, normpath(pkgdir(Sparlectra)))
@@ -2291,7 +2312,7 @@ result = get_powerflow_result(run_id)
         @test occursin(abspath(output_root), response_text)
         @test occursin("Config file", response_text)
         @test occursin(server.runtime.config_file, response_text)
-        @test occursin("MATPOWER case cache", response_text)
+        @test occursin("Case cache", response_text)
         @test occursin(server.runtime.case_directory, response_text)
         @test occursin("Operation log", response_text)
         @test occursin(server.runtime.operation_log, response_text)

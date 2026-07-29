@@ -151,7 +151,7 @@ function removeBranch!(; net::Net, branchNr::Int)::Bool
   deleteat!(net.branchVec, branchNr)
 
   # Update branch indices
-  for i = 1:length(net.branchVec)
+  for i in eachindex(net.branchVec)
     if net.branchVec[i].branchIdx > branchNr
       net.branchVec[i].branchIdx -= 1
     end

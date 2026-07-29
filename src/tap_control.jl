@@ -143,15 +143,19 @@ function control_propose_update!(ctrl::PowerTransformerControl, net::Net, ::Abst
   old_phase = br.phase_shift_deg
   new_ratio = old_ratio
   new_phase = old_phase
+  # The probe solves must follow the configured start strategy: imported
+  # networks (CGMES/MATPOWER) with off-nominal ratio branches routinely fail
+  # from a flat start while converging from their stored profile.
+  probe_flatstart = context.pf_config.start_mode.flatstart
   if !ctrl.converged && ctrl.control_ratio && ctrl.mode in (:voltage, :voltage_and_branch_active_power)
-    direction = _ratio_probe_direction(net, br, ctrl, context.pf_config.max_iter, context.pf_config.tol, 0, context.pf_config.method)
+    direction = _ratio_probe_direction(net, br, ctrl, context.pf_config.max_iter, context.pf_config.tol, 0, context.pf_config.method; opt_flatstart = probe_flatstart)
     direction == 0.0 && (direction = -1.0)
     Δ = ctrl.is_discrete ? br.tap_step : 0.25 * br.tap_step
     e_v = _voltage_control_error(ctrl.achieved_vm_pu, ctrl.target_vm_pu, ctrl.voltage_error_metric)
     new_ratio = clamp(old_ratio + ((e_v < 0.0) ? direction * Δ : -direction * Δ), br.tap_min, br.tap_max)
   end
   if !ctrl.converged && ctrl.control_phase && ctrl.mode in (:branch_active_power, :voltage_and_branch_active_power)
-    direction = _phase_probe_direction(net, br, ctrl, context.pf_config.max_iter, context.pf_config.tol, 0, context.pf_config.method)
+    direction = _phase_probe_direction(net, br, ctrl, context.pf_config.max_iter, context.pf_config.tol, 0, context.pf_config.method; opt_flatstart = probe_flatstart)
     direction == 0.0 && (direction = -1.0)
     Δ = ctrl.is_discrete ? br.phase_step_deg : 0.25 * br.phase_step_deg
     e_p = ctrl.achieved_p_mw - ctrl.p_target_mw

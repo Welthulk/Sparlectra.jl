@@ -1,49 +1,80 @@
 # Version 0.8.16 — 2026-07-27
 
-Allocation and import performance (issue #292), State estimation: PMU voltage-angle measurements
+
+CGMES Import
+
+
+## New Features
+
+**CGMES import.** Sparlectra reads ENTSO-E CGMES 2.4.15 and 3.0 deliveries —
+folders, ZIPs, nested ZIPs, boundary sets — and builds a bus-branch `Net` from
+EQ+SSH+TP+SV: lines, 2- and 3-winding transformers, tap controllers, switches,
+shunts, loads, machines and injections, with open terminals and out-of-service
+equipment treated the way a real snapshot expects. Every electrical island
+receives its SV-declared angle reference. Assembled multi-area deliveries are
+supported, including HVDC border crossings, which stay separate islands because
+an HVDC link carries no angle coupling. `summarizeCGMES` inspects a delivery
+before import; `compareWithSV` checks the solved result against the delivery's
+own SV profile. Configuration under `cgmes_import.*`, documented in
+`docs/src/cgmes_import.md`.
+
+**PMU angles in state estimation.** New `VaMeas` measurement type for
+synchrophasor angles, plus `addPmuPhasorMeasurement!` for the full Vm+Va pair.
+A PMU time base rarely lines up with the slack reference, so the estimator
+solves for the offset α as an extra state
+(`state_estimation.pmu_ref_offset`) and reports it in
+`SEResult.vaRefOffsetDeg`. See `state_estimation_pmu_angles.jl`.
+
+**Schrägregler.** One transformer can carry a voltage controller on the ratio
+tap and an active-power controller on the phase tap at the same time —
+exclusivity is enforced per actuator instead of per transformer.
 
 ## Improvements
 
-* **New measurement type `VaMeas`** (bus voltage angle in degrees) for PMU
-  synchrophasor angles, with helper `addVaMeasurement!`, synthetic
-  generation via `generateMeasurementsFromPF(includeVa = true, vaBusIdxs,
-  vaRefOffsetDeg)`, and a `va` default (0.02°) in `measurementStdDevs`.
-  PMU voltage magnitudes are covered as tightly weighted `VmMeas`; the
-  combined helper `addPmuPhasorMeasurement!` appends the full phasor
-  (Vm + Va pair) in one call.
-* **New state variable in the WLS estimator**: a common reference-angle
-  offset α between the PMU time base and the slack reference
-  (`z_Va = θ_i + α + e`). Controlled by `state_estimation.pmu_ref_offset`
-  (`auto` | `off`, keyword `pmuRefOffset`); the estimated offset is reported
-  in `SEResult.vaRefOffsetDeg`. Observability, `validate_measurements`, and
-  the bad-data diagnostics account for the extra state column.
-* New didactic example `state_estimation_pmu_angles.jl` (suite-registered):
-  SCADA baseline vs. aligned PMUs vs. shifted PMU time base with and without
-  the offset state, including the unmodeled-offset failure mode.
-* Theory documentation on PMU angle handling in `docs/src/state_estimation.md`.
-* **Split combined regulation (Schrägregler)**: a transformer can now carry
-  two independent tap controllers with disjoint actuators — a voltage
-  controller on the ratio tap plus an active-power controller on the phase
-  tap (`addTapController!` now enforces per-actuator instead of
-  per-transformer exclusivity; per-channel report rows are no longer
-  duplicated). New demo `tap_control_schraeg_two_controllers.jl` (others
-  suite) and regulation theory (OLTC/PST/combined regulation) in
-  `docs/src/control_framework.md`.
+- The rectangular Newton solver refreshes its Jacobian in place instead of
+  rebuilding it every iteration; a PV↔PQ switch triggers a structural rebuild
+  automatically.
+- Faster MATPOWER tokenizer with byte-level comment stripping, plus an optional
+  on-disk parse cache (`matpower_import.net_cache.enabled`, off by default —
+  the network is always rebuilt from the cached parse, so import options keep
+  taking effect).
+- Web UI warm-up now runs a bundled 118-bus case after the 3-bus plumbing case,
+  so the first real run no longer pays the sparse-solve and reporting
+  compilation. An explicit `warmup_casefile` replaces the whole sequence.
 
-* Rectangular Newton solver: Jacobian assembly can now refresh the retained
-  sparse matrix in place — triplet buffers are reused and a recorded
-  emit-order map writes each entry directly into `nzval`. A PV↔PQ switch
-  changes the pattern and automatically falls back to a structural rebuild.
-* MATPOWER parser: byte-level comment stripping and a reworked matrix
-  tokenizer cut parse-time allocations; already-sorted bus matrices skip
-  the re-sort.
-* **Opt-in binary case cache** (`matpower_import.net_cache.enabled`,
-  default `false`): stores the parsed case next to the case file
-  (`.sparlectra_net_cache/`), keyed by file hash plus Sparlectra/Julia
-  versions. The network is always rebuilt fresh, so import options keep
-  taking effect; requires `auto_profile: off`. Stale or unreadable cache
-  entries silently fall back to a fresh parse — the directory is safe to
-  delete at any time. Details in `docs/src/matpower_import.md`.
+## Bugfixes
+
+**Web UI controls were dead on pages reached via auto-refresh.** Polling pages
+swap the `<main>` element in place, and scripts inside a DOMParser-imported
+node are inert per the HTML spec — so the case combobox, solver toggles and
+every other script-driven control stayed dead until the user forced a real
+navigation. Terminal pages now trigger a real reload.
+
+**Active-set Q-limits now switch on the converged iterate.** The start gating
+(`qlimit_start_iter` / `start_mode = auto`) could outlast convergence — the
+Newton solve finished before the gate opened, the final check was skipped, and
+the run was rejected with `remaining PV Q-limit violations` instead of being
+enforced. A converged iterate now always counts as ready: violations found
+there are switched under the existing hysteresis/cooldown/guard machinery and
+the solve continues until the active set is stable.
+
+**Classical Q-limit enforcement mis-attributed reactive power at buses that
+carry a fixed generator-type unit next to a regulator.** The violation check
+shared the full bus requirement equally among all units, so a fixed injection
+(an HVDC converter, a boundary equivalent, a PQ-degraded SVC) "violated" its
+own zero-width limits and its reactive power was then loaded onto the
+remaining regulator — false violations and wrong clamps on any such network,
+MATPOWER cases included. Fixed units now contribute their scheduled value and
+only the remainder is attributed to the switchable regulators; a bus also
+stops counting as PV-capable once its last actual regulator is clamped.
+
+**Island-wise solving on a network with closed bus links** no longer fails with
+an internal `UndefVarError` after all islands have converged; the merged
+voltages are written back as intended. Present since 0.8.8.
+
+**Contracting a bus link** now moves a slack bus onto the cluster
+representative instead of leaving `slackVec` pointing at the bus that was
+merged away.
 
 
 # Version 0.8.15 — 2026-07-22
@@ -77,6 +108,14 @@ DC power flow, faster linear solves, Web UI overhaul
 
 ## Bugfixes
 
+* **Tap controller: probe solves now follow the configured start strategy.**
+  `control_propose_update!` ran its ratio/phase probe power flows with the
+  hard-coded default `opt_flatstart = true` instead of
+  `pf_config.start_mode.flatstart`. Imported networks with off-nominal
+  ratio branches (MATPOWER, DTF, CGMES) routinely fail from a flat start
+  while converging from their stored voltage profile, so any outer-loop tap
+  control on such a network aborted with `pf_failed` — with no hint that
+  the probe start values were the cause.
 * MATPOWER parser accepts newline-separated matrix rows (RTS-GMLC style);
   validated against the MATPOWER 8.0 RTS-GMLC reference.
 * New Monte-Carlo examples: probabilistic power flow (case14) and a WLS

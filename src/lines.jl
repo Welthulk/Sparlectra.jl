@@ -36,7 +36,7 @@ A mutable structure representing an AC line segment in a power system.
 
 # Constructors
 - `ACLineSegment(; vn_kv::Float64, from::Int, to::Int, length::Float64, r::Float64, x::Float64, b::Union{Nothing,Float64} = nothing, c_nf_per_km::Union{Nothing,Float64} = nothing, 
-                           tanδ::Union{Nothing,Float64} = nothing, ratedS::Union{Nothing,Float64} = nothing, paramsBasedOnLength=true)`: Creates a new `ACLineSegment` instance.
+                           g::Union{Nothing,Float64} = nothing, tanδ::Union{Nothing,Float64} = nothing, ratedS::Union{Nothing,Float64} = nothing, paramsBasedOnLength=true)`: Creates a new `ACLineSegment` instance. An explicit `g` overrides the `tanδ`-based derivation.
 
 # Methods
 - `Base.show(io::IO, acseg::ACLineSegment)`: Prints the `ACLineSegment` instance.
@@ -56,18 +56,23 @@ mutable struct ACLineSegment <: AbstractBranch
   _isPIModel::Bool
   #! format: off
   function ACLineSegment(; vn_kv::Float64,  from::Int,  to::Int,  length::Float64, r::Float64, x::Float64, b::Union{Nothing,Float64} = nothing,
+                           g::Union{Nothing,Float64} = nothing,
                            c_nf_per_km::Union{Nothing,Float64} = nothing, tanδ::Union{Nothing,Float64} = nothing, ratedS::Union{Nothing,Float64} = nothing,
                            paramsBasedOnLength::Bool = true, isPIModel::Bool = false)
   #! format: on
     c = getLineImpPGMComp(vn_kv, from, to)
-    g = 0.0
+    # An explicit shunt conductance (e.g. CGMES gch, given directly in Siemens)
+    # always wins over the tanδ-based derivation; it must also cover g > 0 with
+    # b == 0, which the tanδ route cannot express.
+    g_explicit = g
+    g = isnothing(g_explicit) ? 0.0 : g_explicit
 
     if isPIModel
       new(c, length, r, x, b, g, nothing, nothing, ratedS, paramsBasedOnLength, true)
     else
       if !isnothing(b)
         b = b
-      elseif !isnothing(c_nf_per_km) && !isnothing(tanδ)
+      elseif isnothing(g_explicit) && !isnothing(c_nf_per_km) && !isnothing(tanδ)
         if paramsBasedOnLength
           c_nf = c_nf_per_km * length
         else

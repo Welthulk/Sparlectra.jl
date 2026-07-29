@@ -237,6 +237,36 @@ state_estimation:
   observability:
     enabled: true
 
+# ENTSO-E CGMES import (see docs/src/cgmes_import.md)
+cgmes_import:
+  # Delivery location(s): folder or ZIP; separate multiple parts (base case
+  # and boundary set) with ";". Empty means "no CGMES input configured".
+  path: ""
+  # System base in MVA — CGMES does not define one.
+  base_mva: 100.0
+  # Fail when topology references stay unresolved (usually a missing boundary set).
+  require_boundary: true
+  # Start from the SSH tap positions and attach the CGMES-defined tap
+  # controllers instead of importing the solved SvTapStep positions as fixed taps.
+  tap_control: false
+  # Diagnostic override: treat every terminal as connected. For snapshots whose
+  # SSH connected flags contradict their own SV state.
+  ignore_connected: false
+  # Plausibility band for a voltage RegulatingControl target, in p.u. of the
+  # regulated bus's nominal voltage. Outside the band the target is treated as a
+  # placeholder: ignored, unit held PV at the bus voltage derived from the
+  # nominal data, reported as "warning:". Across all ENTSO-E/ReliCapGrid sets the
+  # real targets span 0.92..1.15 pu, so the default has ample margin. Widen it to
+  # accept a delivery's own values; vset_min_pu: 0 with a large vset_max_pu
+  # disables the check.
+  vset_min_pu: 0.5
+  vset_max_pu: 1.5
+  # Give every electrical island its own SV-declared angle reference (at most
+  # one per island). Required for multi-island deliveries — without it every
+  # island beyond the primary has no reference and the island-wise power flow
+  # refuses to run. false forces the legacy single-reference behavior.
+  multi_slack: true
+
 matpower_import:
   # MATPOWER case filename/path resolved by single-case runner paths.
   case: case14.m

@@ -595,7 +595,7 @@ Map MATPOWER BUS_I -> row index in mpc.bus
 """
 function _mp_bus_row_index(mpc)
   idx = Dict{Int,Int}()
-  @inbounds for r = 1:size(mpc.bus, 1)
+  @inbounds for r in axes(mpc.bus, 1)
     idx[Int(mpc.bus[r, 1])] = r
   end
   return idx
@@ -759,7 +759,7 @@ function compare_vm_va(net, mpc; show_diff::Bool = false, tol_vm::Float64 = 1e-6
   rows_by_bus = Dict(row.busI => row for row in pv_rows)
 
   # --- angle alignment on slack to remove global offset ---
-  slack_row = findfirst(r -> Int(mpc.bus[r, 2]) == 3, 1:size(mpc.bus, 1))
+  slack_row = findfirst(r -> Int(mpc.bus[r, 2]) == 3, axes(mpc.bus, 1))
   slack_busI = slack_row === nothing ? nothing : Int(mpc.bus[slack_row, 1])
 
   delta_va = 0.0
@@ -850,7 +850,7 @@ function compare_vm_va(net, mpc; show_diff::Bool = false, tol_vm::Float64 = 1e-6
   println("===============================================================\n")
 
   if show_diff
-    ord = sortperm(1:length(diffs); by = i -> max(abs(diffs[i].dvm), abs(diffs[i].dva)), rev = true)
+    ord = sortperm(eachindex(diffs); by = i -> max(abs(diffs[i].dvm), abs(diffs[i].dva)), rev = true)
 
     println("Top diffs (up to $maxlines lines):")
     println(" busIdx  BUS_I  type  Vm_ref_kind             Vm_ref   Vm_calc    dVm      Va_ref   Va_calc    dVa")
@@ -1043,7 +1043,7 @@ Map MATPOWER BUS_I -> row index in mpc.bus.
 """
 function bus_row_index(mpc::MatpowerCase)
   idx = Dict{Int,Int}()
-  @inbounds for r = 1:size(mpc.bus, 1)
+  @inbounds for r in axes(mpc.bus, 1)
     idx[Int(mpc.bus[r, 1])] = r
   end
   return idx
@@ -1067,7 +1067,7 @@ function apply_matpower_bus_voltage!(net, mpc::MatpowerIO.MatpowerCase; flatstar
 
   busrow = MatpowerIO.bus_row_index(mpc)
 
-  @inbounds for k = 1:length(net.nodeVec)
+  @inbounds for k in eachindex(net.nodeVec)
     node = net.nodeVec[k]
 
     # Map to MATPOWER BUS_I if available (preferred), else assume same index
@@ -1102,7 +1102,7 @@ function apply_mp_isolated_buses!(net, mpc; verbose::Int = 0)
   size(mpc.bus, 2) >= 2 || return nothing
   busrow = bus_row_index(mpc)
 
-  for k = 1:length(net.nodeVec)
+  for k in eachindex(net.nodeVec)
     busI = haskey(net.busOrigIdxDict, k) ? net.busOrigIdxDict[k] : k
     haskey(busrow, busI) || continue
     r = busrow[busI]
@@ -1125,7 +1125,7 @@ function apply_mp_bus_vmva_init!(net, mpc; flatstart::Bool, verbose::Int = 0)
   size(mpc.bus, 2) >= 9 || return nothing
 
   busrow = bus_row_index(mpc)
-  for k = 1:length(net.nodeVec)
+  for k in eachindex(net.nodeVec)
     node = net.nodeVec[k]
 
     # skip isolated (already handled)

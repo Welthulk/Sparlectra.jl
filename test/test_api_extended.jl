@@ -2,7 +2,7 @@ using Sparlectra
 using Test
 using Dates
 
-function _write_api_test_case(path::AbstractString)
+function _write_api_test_case_ext(path::AbstractString)
   write(
     path,
     """
@@ -31,8 +31,8 @@ mpc.branch_name = {
   return path
 end
 
-function _write_api_dcline_case(path::AbstractString; rows::AbstractString)
-  _write_api_test_case(path)
+function _write_api_dcline_case_ext(path::AbstractString; rows::AbstractString)
+  _write_api_test_case_ext(path)
   open(path, "a") do io
     write(io, "\nmpc.dcline = [\n")
     write(io, rows)
@@ -41,7 +41,7 @@ function _write_api_dcline_case(path::AbstractString; rows::AbstractString)
   return path
 end
 
-function _write_api_two_island_case(path::AbstractString)
+function _write_api_two_island_case_ext(path::AbstractString)
   write(
     path,
     """
@@ -160,7 +160,7 @@ function run_api_extended_tests()
       @test !occursin("_control_label(net", direct_source)
       @test !occursin("_bus_control_flags", direct_source)
 
-      casefile = _write_api_test_case(joinpath(tmpdir, "case_api.m"))
+      casefile = _write_api_test_case_ext(joinpath(tmpdir, "case_api.m"))
       template = joinpath(tmpdir, "config_template.yaml")
       cp(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, template)
       template_before = read(template, String)
@@ -195,13 +195,13 @@ function run_api_extended_tests()
       @test result.metadata["current_iteration_attempted"] === false
       no_dcline_mpc = Sparlectra.MatpowerIO.read_case(casefile; legacy_compat = false)
       @test Sparlectra.MatpowerIO.matpower_dcline_diagnostics(no_dcline_mpc)["matpower_dcline_active_count"] == 0
-      empty_dcline_case = _write_api_dcline_case(joinpath(tmpdir, "case_empty_dcline.m"); rows = "")
+      empty_dcline_case = _write_api_dcline_case_ext(joinpath(tmpdir, "case_empty_dcline.m"); rows = "")
       empty_dcline_mpc = Sparlectra.MatpowerIO.read_case(empty_dcline_case; legacy_compat = false)
       @test Sparlectra.MatpowerIO.matpower_dcline_diagnostics(empty_dcline_mpc)["matpower_dcline_active_count"] == 0
-      inactive_dcline_case = _write_api_dcline_case(joinpath(tmpdir, "case_inactive_dcline.m"); rows = "1 2 0 10 9 0 0 1 1 0 100;")
+      inactive_dcline_case = _write_api_dcline_case_ext(joinpath(tmpdir, "case_inactive_dcline.m"); rows = "1 2 0 10 9 0 0 1 1 0 100;")
       inactive_dcline_mpc = Sparlectra.MatpowerIO.read_case(inactive_dcline_case; legacy_compat = false)
       @test Sparlectra.MatpowerIO.matpower_dcline_diagnostics(inactive_dcline_mpc)["matpower_dcline_active_count"] == 0
-      active_dcline_case = _write_api_dcline_case(joinpath(tmpdir, "case_active_dcline.m"); rows = "1 2 1 10 9 0 0 1 1 0 100;\n1 2 0 3 2 0 0 1 1 0 100;")
+      active_dcline_case = _write_api_dcline_case_ext(joinpath(tmpdir, "case_active_dcline.m"); rows = "1 2 1 10 9 0 0 1 1 0 100;\n1 2 0 3 2 0 0 1 1 0 100;")
       active_default_cfg = Sparlectra.SparlectraConfig(Dict())
       @test active_default_cfg.matpower.matpower_dcline_mode === :pf_injections
       active_default_mpc = Sparlectra.MatpowerIO.read_case(active_dcline_case; legacy_compat = false)
@@ -237,7 +237,7 @@ function run_api_extended_tests()
       @test occursin("failed", active_result_html)
       @test occursin("MATPOWER case contains active", active_result_html)
       @test occursin("unsupported_matpower_dcline", active_result_html)
-      dcline_pf_case = _write_api_dcline_case(joinpath(tmpdir, "case_pf_dcline.m"); rows = "1 2 1 10 0 1 2 1.0 1.01 0 100 -20 20 -30 30 1 0.1;")
+      dcline_pf_case = _write_api_dcline_case_ext(joinpath(tmpdir, "case_pf_dcline.m"); rows = "1 2 1 10 0 1 2 1.0 1.01 0 100 -20 20 -30 30 1 0.1;")
       dcline_pf_result = run_sparlectra_api(casefile = dcline_pf_case, config_file = template, output_dir = joinpath(tmpdir, "pf-dcline"), config_overrides = Dict("matpower_import.matpower_dcline_mode" => "pf_injections", "output.logfile_results" => "full", "benchmark.enabled" => false), performance_timing = :compact)
       @test dcline_pf_result.reason != "unsupported_matpower_dcline"
       @test isfile(joinpath(dcline_pf_result.output_dir, "matpower_dcline.csv"))
@@ -248,7 +248,7 @@ function run_api_extended_tests()
       @test occursin("effective_pt_mw", dcline_pf_csv)
       @test occursin(",8,", dcline_pf_csv)
 
-      island_case = _write_api_two_island_case(joinpath(tmpdir, "case_two_islands.m"))
+      island_case = _write_api_two_island_case_ext(joinpath(tmpdir, "case_two_islands.m"))
       island_result = run_sparlectra_api(
         casefile = island_case,
         config_file = template,
@@ -1035,13 +1035,13 @@ power_flow:
   end
   @testset "Local PowerFlow service" begin
     mktempdir() do tmpdir
-      casefile = _write_api_test_case(joinpath(tmpdir, "case_service.m"))
+      casefile = _write_api_test_case_ext(joinpath(tmpdir, "case_service.m"))
       config_file = joinpath(tmpdir, "service_config.yaml")
       cp(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, config_file)
       output_root = joinpath(tmpdir, "powerflow_service")
 
       @testset "Web UI case resolution" begin
-        existing_m = _write_api_test_case(joinpath(tmpdir, "existing_case.m"))
+        existing_m = _write_api_test_case_ext(joinpath(tmpdir, "existing_case.m"))
         resolved_existing_m = Sparlectra._resolve_powerflow_casefile(existing_m, joinpath(tmpdir, "cases"))
         @test lowercase(splitext(resolved_existing_m)[2]) == ".m"
         @test isfile(resolved_existing_m)

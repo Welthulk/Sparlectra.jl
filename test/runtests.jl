@@ -18,7 +18,8 @@ end
 function print_group_progress(i::Int, total::Int, name::AbstractString) end
 
 function include_fast_tests()
-  include("testgrid.jl")  
+  include("testgrid.jl")
+  include("test_piline_g.jl")
   include("test_state_estimation.jl")
   include("test_voltage_dependent_control.jl")
   include("test_transformer_phase_shift.jl")
@@ -51,6 +52,7 @@ function include_extended_tests()
   include("test_configuration_docs.jl")
   include("test_repository_hygiene.jl")
   include("test_apslf.jl")
+  include("test_cgmes_importer.jl")
   include("extended/test_dtf_importer.jl")
   include("extended/test_dtf_for002_validation_example.jl")
   include("extended/test_dtf_for002_outage_validation_example.jl")
@@ -65,7 +67,10 @@ function run_fast_profile_tests()
     return Base.invokelatest(runner)
   end
   groups = [
-    ("core_model", () -> run_entry(:run_grid_fast_tests)),
+    ("core_model", () -> begin
+      run_entry(:run_grid_fast_tests)
+      run_entry(:run_piline_g_tests)
+    end),
     ("configuration", () -> run_entry(:run_configuration_coverage_tests)),
     ("matpower_metadata", () -> run_entry(:run_matpower_metadata_tests)),
     ("programmatic_api", () -> run_entry(:run_api_fast_tests)),
@@ -109,6 +114,7 @@ function run_extended_profile_tests()
     ("configuration_docs", () -> run_entry(:run_configuration_docs_tests)),
     ("repository_hygiene", () -> run_entry(:run_repository_hygiene_tests)),
     ("apslf", () -> run_entry(:run_apslf_tests)),
+    ("cgmes_importer", () -> run_entry(:run_cgmes_importer_tests)),
     ("dtf_extended", () -> begin
       run_entry(:run_dtf_importer_tests)
       run_entry(:run_dtf_for002_validation_example_tests)

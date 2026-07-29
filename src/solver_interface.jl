@@ -95,7 +95,7 @@ function showPfModel(model::PFModel; io::IO=stdout, verbose::Bool=false)
   println(io, "Active buses:   ", n)
   println(io, "Slack (pf idx): ", model.slack_idx, "   (net bus idx: ", model.busIdx_net[model.slack_idx], ")")
   println(io, "Bus types:      PQ=", n_pq, "  PV=", n_pv, "  Slack=", n_slack)
-  println(io, "Ybus:           ", size(model.Ybus,1), "×", size(model.Ybus,2),
+  println(io, "Ybus:           ", size(model.Ybus, 1), "×", size(model.Ybus, 2),
               "   sparse=", isa(model.Ybus, SparseMatrixCSC))
   println(io, "Has Q-limits:   ", (!isempty(model.qmin_pu) && !isempty(model.qmax_pu)))
 

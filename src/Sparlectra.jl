@@ -369,6 +369,11 @@ export
   createNetFromMatPowerFile,              # Import a MATPOWER case file as Net.
   DTFImporter,                            # Native DTF parser and Net builder.
   createNetFromDTFFile,                   # Import a legacy DTF file as Net.
+  CGMESImporter,                          # Lean CGMES reader and diagnostics (Stage 0).
+  summarizeCGMES,                         # Diagnose a CGMES delivery without building a Net.
+  createNetFromCGMES,                     # Import a CGMES delivery as Net (Stage 1).
+  importCGMES,                            # CGMES import with full result (Net + SC data + report).
+  compareWithSV,                          # Compare a solved CGMES import against its SV profile.
   _createDict,
   apply_matpower_bus_voltage!,            # Apply MATPOWER bus voltage data.
   apply_mp_bus_vmva_init!,                # Initialize Vm/Va from MATPOWER data.
@@ -388,6 +393,8 @@ export
   calcPhaseTapReactance,                  # CGMES phase-tap-changer series-reactance dependence on tap angle.
   calcPhaseTapTable,                      # Tabular phase-tap-changer exact lookup (overrides formulas).
   calcNeutralU,
+  electricalIslandComponents,             # Island decomposition counting closed links as connections.
+  electricalIslandOfBus,                  # Bus -> electrical island number.
   createYBUS,                             # Build the network admittance matrix.
   adjacentBranches,
   toPU_RXBG,
@@ -559,6 +566,8 @@ include("MatpowerIO.jl")
 include("createnet_powermat.jl")
 include("equicircuit.jl")
 include("DTFImporter.jl")
+include("cgmes/CGMESImporter.jl")
+import .CGMESImporter: summarizeCGMES, createNetFromCGMES, importCGMES, compareWithSV
 include("limits.jl")
 include("losses.jl")
 include("exportMatPower.jl")

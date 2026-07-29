@@ -541,7 +541,7 @@ function isRegulating(o::ProSumer)::Bool
 end
 
 function toProSumptionType(o::ComponentTyp)::ProSumptionType
-  if o == Generator || o == ExternalNetworkInjection || o == SynchronousMachine
+  if o == Generator || o == ExternalNetworkInjection || o == SynchronousMachine || o == StaticVarCompensator
     return Injection
   elseif o == AsynchronousMachine || o == Load || o == EnergyConsumer
     return Consumption
@@ -552,7 +552,7 @@ end
 
 function toProSumptionType(o::String)::ProSumptionType
   val = uppercase(o)
-  if val == "GENERATOR" || val == "EXTERNALNETWORKINJECTION" || val == "SYNCHRONOUSMACHINE"
+  if val == "GENERATOR" || val == "EXTERNALNETWORKINJECTION" || val == "SYNCHRONOUSMACHINE" || val == "STATICVARCOMPENSATOR"
     return Injection
   elseif val == "ASYNCHRONOUSMACHINE" || val == "LOAD" || val == "ENERGYCONSUMER"
     return Consumption

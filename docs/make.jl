@@ -48,6 +48,7 @@ makedocs(
     "MATPOWER Format" => "matpower_format.md",
     "DTF Format" => "dtf_format.md",
     "MATPOWER Import Configuration" => "matpower_import.md",
+    "CGMES Import" => "cgmes_import.md",
     "MATPOWER Case Diagnostics Matrix" => "sparlectra_matpower_case_matrix.md",
     "State-Estimation Configuration" => "state_estimation_configuration.md",
     "Performance and Profiling" => "performance_profiling.md",

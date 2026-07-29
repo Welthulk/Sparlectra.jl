@@ -72,7 +72,7 @@ end
 function evaluateCubicSpline(x, a, b, c, d, x_new)
   n = length(x)
   y_new = similar(x_new)
-  range = 1:length(x_new)
+  range = eachindex(x_new)
   for i in range
     if x_new[i] < x[1] || x_new[i] > x[n]
       error("x_new value is out of range")
@@ -463,6 +463,23 @@ function toPU_RXBG(; r::T, x::T, g::Union{Nothing,T} = nothing, b::Union{Nothing
 end
 
 """
+    calc2WTEndsReferredRXGB(; r1, x1, g1, b1, r2, x2, g2, b2, U1, U2) -> (r, x, g, b)
+
+Refer the impedance/admittance contributions of both `PowerTransformerEnd`s
+of a CGMES two-winding transformer to the **end-2** voltage base and sum
+them. Each end's `r`,`x` [Ω] and `g`,`b` [S] are given on that end's own
+`ratedU` base (`U1`, `U2` [kV]); real exports often put everything on one
+end, but this referral must not rely on it. Impedances scale with
+`(U2/U1)²`, admittances with the inverse. The end-2 (to-side) base matches
+the branch-model convention of `calcAdmittance` (series/shunt admittance on
+the to side, complex ratio at the from side).
+"""
+function calc2WTEndsReferredRXGB(; r1::Float64, x1::Float64, g1::Float64, b1::Float64, r2::Float64, x2::Float64, g2::Float64, b2::Float64, U1::Float64, U2::Float64)
+  k = (U2 / U1)^2
+  return (r = r2 + r1 * k, x = x2 + x1 * k, g = g2 + g1 / k, b = b2 + b1 / k)
+end
+
+"""
     fromPU_RXBG(r_pu::Float64, x_pu::Float64, g_pu::Union{Nothing,Float64} = nothing, b_pu::Union{Nothing,Float64} = nothing, v_kv::Float64, baseMVA::Float64)::Tuple{Float64,Float64,Float64,Float64}
 
 Converts the resistance, reactance, conductance, and susceptance from per unit to physical units.
@@ -663,13 +680,12 @@ Returns:
 
 """
 function adjacentBranches(Y::AbstractMatrix{ComplexF64}, log::Bool = false)::Vector{Vector{Int}}
-  n = size(Y, 1)
-  adjList = Vector{Vector{Int}}(undef, n)
+  adjList = Vector{Vector{Int}}(undef, size(Y, 1))
 
-  for i = 1:n
+  for i in axes(Y, 1)
     adjList[i] = Vector{Int}()
 
-    for j = 1:n
+    for j in axes(Y, 2)
       if Y[i, j] != 0.0
         push!(adjList[i], j)
       end

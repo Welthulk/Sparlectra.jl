@@ -92,10 +92,20 @@ function _handle_rectangular_qlimit_iteration!(
       end
       qlimit_auto_ready_ = compared && (max_q_delta <= qlimit_auto_q_delta_pu)
     end
-    qlimit_ready_ = qlimit_start_mode == :iteration ? qlimit_iter_ready_ : qlimit_start_mode == :auto ? qlimit_auto_ready_ : (qlimit_iter_ready_ || qlimit_auto_ready_)
     converged_this_iter_ = history[end] <= tol
-    violation_guard_active = qlimit_guard_violation_mode == :lock_pq
-    qlimit_check_active_ = qlimit_ready_ && (!converged_this_iter_ || violation_guard_active)
+    # A converged iterate is always "ready": the start gating exists to keep
+    # switching off unsettled early iterates, and a converged state is the most
+    # settled state there is. Without this, a solve that converges FASTER than
+    # the gate allows (measured: the ReliCapGrid CGM island converges in 7
+    # iterations, :auto never fires) exits with its violations unevaluated and
+    # is then rejected as `remaining_pv_q_limit_violations` — the active-set
+    # path had no post-convergence switching round. Switching on the converged
+    # iterate is safe: the solver accepts convergence only when the active set
+    # did NOT change in that iteration, so the loop simply continues under the
+    # existing hysteresis/cooldown/guard machinery until it converges with a
+    # stable active set.
+    qlimit_ready_ = (qlimit_start_mode == :iteration ? qlimit_iter_ready_ : qlimit_start_mode == :auto ? qlimit_auto_ready_ : (qlimit_iter_ready_ || qlimit_auto_ready_)) || converged_this_iter_
+    qlimit_check_active_ = qlimit_ready_
     (qlimit_iter_ready_, qlimit_auto_ready_, qlimit_ready_, converged_this_iter_, qlimit_check_active_)
   end
 

@@ -16,6 +16,21 @@
 # Date: 07.09.2023
 # file: src/results.jl
 # Purpose: functions for formatting and printing results of power flow calculations
+"""
+    _fitColumn(text, width) -> String
+
+Trim `text` to `width` characters, marking the cut with `…`. Fixed-width
+`@sprintf` fields pad but never truncate, so long names — CGMES bus and
+branch identifiers routinely exceed 25 characters — would otherwise push
+every following column out of alignment.
+"""
+function _fitColumn(text, width::Int)::String
+  str = string(text)
+  length(str) <= width && return str
+  width <= 1 && return first(str, width)
+  return first(str, width - 1) * "…"
+end
+
 function format_version(version::VersionNumber)
   major = lpad(version.major, 1, '0')
   minor = lpad(version.minor, 1, '0')
@@ -462,7 +477,7 @@ function formatBranchResults(net::Net; max_rows::Union{Nothing,Int} = nothing)
     status = isnothing(ctrl) ? "-" : ctrl_status(ctrl)
 
     #! format: off
-    formatted_results *= @sprintf("| %-25s | %-6s | %-25s | %-10.3f | %-10.3f | %-10.3f | %-10.3f | %-10.3f | %-10.3f | %-10s | %-10s | %-9s | %-22s |\n", bName, branchKind, connection, pfromVal, qfromVal, ptoVal, qtoVal, pLossval, qLossval, ctrl_type, p_target, tap_pos, status)
+    formatted_results *= @sprintf("| %-25s | %-6s | %-25s | %-10.3f | %-10.3f | %-10.3f | %-10.3f | %-10.3f | %-10.3f | %-10s | %-10s | %-9s | %-22s |\n", _fitColumn(bName, 25), branchKind, _fitColumn(connection, 25), pfromVal, qfromVal, ptoVal, qtoVal, pLossval, qLossval, ctrl_type, p_target, tap_pos, status)
     #! format: on
     shown_rows += 1
   end
@@ -700,7 +715,7 @@ function printACPFlowResults(net::Net, ct::Float64, ite::Int, tol::Float64, toFi
     end
 
     tap_target_str = haskey(tap_target_vm, n.busIdx) ? @sprintf("%.4f", tap_target_vm[n.busIdx]) : ""
-    @printf(io, "| %-5d | %-20s | %-10.1f | %-10.3f | %-10.3f | %-10.3f | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-12s | %-12s |\n", n.busIdx, nodeName, n.comp.cVN, v, n._vm_pu, n._va_deg, pGS, qGS, pLS, qLS, pShunt_str, qShunt_str, typeStr, controlStr, tap_target_str)
+    @printf(io, "| %-5d | %-20s | %-10.1f | %-10.3f | %-10.3f | %-10.3f | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-10s | %-12s | %-12s |\n", n.busIdx, _fitColumn(nodeName, 20), n.comp.cVN, v, n._vm_pu, n._va_deg, pGS, qGS, pLS, qLS, pShunt_str, qShunt_str, typeStr, controlStr, tap_target_str)
     shown_bus_rows += 1
   end
   if !isnothing(max_rows) && length(nodes) > shown_bus_rows
@@ -721,7 +736,7 @@ function printACPFlowResults(net::Net, ct::Float64, ite::Int, tol::Float64, toFi
       ito = isnothing(l.iTo_kA) ? NaN : l.iTo_kA
       fromName = get(busNameByIdx, Int(l.fromBus), string(l.fromBus))
       toName = get(busNameByIdx, Int(l.toBus), string(l.toBus))
-      @printf(io, "| %-5d | %-8s | %-8s | %-6d | %-12.3f | %-12.3f | %-12.4f | %-12.4f |\n", l.linkIdx, fromName, toName, l.status, p, q, ifrom, ito)
+      @printf(io, "| %-5d | %-8s | %-8s | %-6d | %-12.3f | %-12.3f | %-12.4f | %-12.4f |\n", l.linkIdx, _fitColumn(fromName, 8), _fitColumn(toName, 8), l.status, p, q, ifrom, ito)
     end
   end
   println(io, "\nControl")

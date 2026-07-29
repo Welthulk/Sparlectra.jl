@@ -65,7 +65,9 @@ function _webui_case_directory(; case_directory::Union{Nothing,AbstractString} =
   end
 end
 
-_webui_supported_upload_case_extension(name::AbstractString)::Bool = lowercase(splitext(basename(String(name)))[2]) in (".m", ".dat")
+# .zip covers CGMES deliveries (single ZIP, base case plus boundary, or
+# ZIP-in-ZIP) — the importer's container layer opens them in memory.
+_webui_supported_upload_case_extension(name::AbstractString)::Bool = lowercase(splitext(basename(String(name)))[2]) in (".m", ".dat", ".zip")
 
 function _webui_classify_dat_content(path::AbstractString)::Symbol
   lowercase(splitext(path)[2]) == ".dat" || return :not_dat
@@ -92,6 +94,122 @@ end
 
 _webui_dat_role_label(role::Symbol)::String = replace(String(role), '_' => ' ')
 
+"""True when a CGMES delivery contains boundary profiles only (no equipment)."""
+function _webui_is_cgmes_boundary_only(path::AbstractString)::Bool
+  try
+    profiles = union((f.profiles for f in CGMESImporter.summarizeCGMES(path = path).files)...)
+    return isempty(intersect(profiles, (:EQ, :EQ_OP, :EQ_SC, :TP, :SSH))) && !isempty(intersect(profiles, (:EQ_BD, :EQ_BD_OP, :TP_BD)))
+  catch
+    return false
+  end
+end
+
+"""
+Pre-analysis of an uploaded CGMES ZIP, shown in the import summary so the
+user sees immediately what the delivery contains and whether it is ready to
+compute: version, profiles, element counts, and the boundary situation.
+"""
+function _webui_cgmes_upload_role(path::AbstractString, directory::AbstractString)::String
+  summary = try
+    CGMESImporter.summarizeCGMES(path = path)
+  catch err
+    return "⚠️ unreadable CGMES delivery (" * first(sprint(showerror, err), 80) * ")"
+  end
+  profiles = union((f.profiles for f in summary.files)...)
+  counts = Dict(summary.class_histogram)
+  cnt(cls) = get(counts, cls, 0)
+  version = isempty(summary.version) ? "CGMES" : "CGMES " * summary.version
+  proflist = join(sort(String.(collect(profiles))), ",")
+
+  # a boundary-only delivery has no equipment of its own
+  if isempty(intersect(profiles, (:EQ, :EQ_OP, :EQ_SC, :TP, :SSH))) && !isempty(intersect(profiles, (:EQ_BD, :EQ_BD_OP, :TP_BD)))
+    return "🔗 $(version) boundary set · $(proflist) · $(cnt(:TopologicalNode)) boundary nodes — pair it with a base case"
+  end
+
+  parts = String[]
+  push!(parts, "$(cnt(:TopologicalNode)) nodes")
+  cnt(:ACLineSegment) > 0 && push!(parts, "$(cnt(:ACLineSegment)) lines")
+  cnt(:PowerTransformer) > 0 && push!(parts, "$(cnt(:PowerTransformer)) transformers")
+  total_loads = cnt(:EnergyConsumer) + cnt(:ConformLoad) + cnt(:NonConformLoad)
+  total_loads > 0 && push!(parts, "$(total_loads) loads")
+  cnt(:SynchronousMachine) > 0 && push!(parts, "$(cnt(:SynchronousMachine)) machines")
+  cnt(:LinearShuntCompensator) > 0 && push!(parts, "$(cnt(:LinearShuntCompensator)) shunts")
+  cnt(:SvVoltage) > 0 && push!(parts, "SV reference present")
+  content = join(parts, ", ")
+
+  missing_profiles = [p for p in (:EQ, :SSH, :TP) if !(p in profiles)]
+  isempty(missing_profiles) || return "❌ $(version) · $(proflist) · $(content) — incomplete: missing profile(s) $(join(String.(missing_profiles), ", "))"
+
+  if !summary.boundary_missing_hint
+    return "✅ $(version) · $(proflist) · $(content) · self-contained, ready to compute"
+  end
+  # a boundary delivery next to it completes this one
+  neighbours = try
+    filter(n -> occursin(r"(?i)boundary|_bd_|_bd\.", n) && joinpath(directory, n) != path, readdir(directory))
+  catch
+    String[]
+  end
+  for n in neighbours
+    try
+      s2 = CGMESImporter.summarizeCGMES(path = [path, joinpath(directory, n)])
+      s2.boundary_missing_hint || return "✅ $(version) · $(proflist) · $(content) · boundary found in $(n), ready to compute"
+    catch
+    end
+  end
+  # Last resort before bothering the user: the ENTSO-E test configurations are
+  # published as base case plus a separate boundary package. If the extracted
+  # local test-set cache holds a boundary that completes this delivery, copy
+  # it next to the case instead of asking for a second upload.
+  fetched = _webui_try_supply_cgmes_boundary(path, directory)
+  isempty(fetched) || return "✅ $(version) · $(proflist) · $(content) · boundary supplied automatically ($(fetched)), ready to compute"
+  return "⚠️ $(version) · $(proflist) · $(content) · $(summary.unresolved_count) unresolved references — boundary set missing: upload it as well, or type cgmes:&lt;alias&gt;"
+end
+
+"""
+Look for a boundary delivery in the local ENTSO-E test-set cache that resolves
+`path`, copy it next to the case, and return its filename (empty when none
+fits). Only uses what is already extracted locally — no download is triggered
+from an upload.
+"""
+function _webui_try_supply_cgmes_boundary(path::AbstractString, directory::AbstractString)::String
+  extracted = joinpath(CGMESImporter.cgmesTestSetCacheDir(), "extracted")
+  isdir(extracted) || return ""
+  candidates = String[]
+  for (root, dirs, files) in walkdir(extracted)
+    for d in dirs
+      occursin(r"(?i)boundary|_bd_v|_bd$", d) && push!(candidates, joinpath(root, d))
+    end
+  end
+  for cand in candidates
+    ok = try
+      !CGMESImporter.summarizeCGMES(path = [path, cand]).boundary_missing_hint
+    catch
+      false
+    end
+    ok || continue
+    name = basename(cand) * ".zip"
+    dest = joinpath(directory, name)
+    ispath(dest) && return name
+    try
+      open(dest, "w") do io
+        CGMESImporter.ZipArchives.ZipWriter(io) do w
+          for f in sort(readdir(cand))
+            endswith(lowercase(f), ".xml") || continue
+            CGMESImporter.ZipArchives.zip_newfile(w, f)
+            write(w, read(joinpath(cand, f)))
+          end
+        end
+      end
+      return name
+    catch
+      isfile(dest) && rm(dest; force = true)
+      return ""
+    end
+  end
+  return ""
+end
+
+
 _webui_is_runnable_dat_role(role::Symbol)::Bool = role in (:dtf_network_case, :dtf_network_case_with_outages)
 
 """
@@ -109,7 +227,13 @@ function _webui_is_user_selectable_case(name::AbstractString)::Bool
   endswith(lowered_name, ".sparlectra-webui.yaml") && return false
   startswith(lowered_name, "warmup_") && extension in (".m", ".jl") && return false
   extension == ".jl" && return false
-  extension in (".m", ".dat") || return false
+  extension in (".m", ".dat", ".zip") || return false
+  if extension == ".zip"
+    # A boundary set is a companion delivery, not a runnable case — hide it
+    # the same way FOR002 reference files are hidden.
+    isfile(name) || return true
+    return !_webui_is_cgmes_boundary_only(name)
+  end
   if extension == ".dat"
     isfile(name) || return !_is_for002_reference_dat(name)
     return _webui_is_runnable_dat_role(_webui_classify_dat_content(name))
@@ -391,6 +515,16 @@ function _webui_form_value(form::AbstractDict, key::String, default = nothing)
 end
 
 _webui_is_dat_casefile(casefile::AbstractString)::Bool = lowercase(splitext(strip(String(casefile)))[2]) == ".dat"
+
+# CGMES deliveries arrive either as a ZIP (typical upload) or as an unpacked
+# folder; both are recognised by the API's auto-detection, this only
+# pre-selects the matching form option.
+function _webui_is_cgmes_casefile(casefile::AbstractString)::Bool
+  value = strip(String(casefile))
+  isempty(value) && return false
+  lowercase(splitext(value)[2]) == ".zip" && return true
+  return isempty(splitext(value)[2]) && isdir(value)
+end
 
 function _webui_parse_bool(value)::Bool
   return _webui_form_bool(value)

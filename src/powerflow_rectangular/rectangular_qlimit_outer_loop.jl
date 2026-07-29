@@ -33,14 +33,33 @@ function _matpower_q_limit_violations(net::Net, qreq_pu::AbstractVector, bus_typ
   for bus in eachindex(bus_types)
     bus_types[bus] in (:PV, :Slack) || continue
     gen_indices = _generators_at_bus(net, bus)
-    active_gen_indices = [idx for idx in gen_indices if !fixed_gens[idx]]
-    isempty(active_gen_indices) && continue
-    # distribute_bus_generation! stores solved per-generator Q when possible.
-    # If a network has not populated qRes for a generator, fall back to an equal
-    # share of the bus-level regulating Q request so mode dispatch remains
-    # deterministic for small synthetic tests.
-    fallback_q_pu = qreq_pu[bus] / length(active_gen_indices)
-    for gen_idx in active_gen_indices
+    # Only regulating, not-yet-clamped units are switchable candidates. Every
+    # other generator-type unit at the bus runs at a FIXED reactive operating
+    # point: loop-clamped units (qVal was set to their limit), and units that
+    # never regulate at all — Stage-0 HVDC converter injections, kept boundary
+    # equivalents, PQ-degraded SVCs. Their Q is part of the bus requirement but
+    # not of the switchable pool. The previous code shared the FULL bus
+    # requirement equally among all non-clamped units: fixed units became
+    # "violators" of their own zero-width limits, and after clamping them the
+    # remaining regulators inherited the fixed units' Q on top of their own —
+    # false violations, wrong clamps, and on the ReliCapGrid CGM a case driven
+    # infeasible (vm → 1e157 in the re-solve). Not CGMES-specific: any network
+    # with a fixed and a regulating unit on one bus hits this.
+    switchable = [idx for idx in gen_indices if !fixed_gens[idx] && isRegulating(net.prosumpsVec[idx])]
+    isempty(switchable) && continue
+    fixed_q_pu = 0.0
+    for idx in gen_indices
+      (fixed_gens[idx] || !isRegulating(net.prosumpsVec[idx])) || continue
+      qv = net.prosumpsVec[idx].qVal
+      fixed_q_pu += (isnothing(qv) ? 0.0 : qv) / net.baseMVA
+    end
+    # distribute_bus_generation! stores solved per-generator Q when possible —
+    # note that nothing on the solver path calls it, so qRes is normally
+    # `nothing` and the fallback below decides. It shares only the REMAINDER
+    # (bus requirement minus the fixed units' scheduled Q) among the switchable
+    # units, so mode dispatch stays deterministic for small synthetic tests.
+    fallback_q_pu = (qreq_pu[bus] - fixed_q_pu) / length(switchable)
+    for gen_idx in switchable
       ps = net.prosumpsVec[gen_idx]
       qreq = isnothing(ps.qRes) ? fallback_q_pu : ps.qRes / net.baseMVA
       qmax = isnothing(ps.maxQ) ? Inf : ps.maxQ / net.baseMVA
@@ -55,9 +74,14 @@ function _matpower_q_limit_violations(net::Net, qreq_pu::AbstractVector, bus_typ
   return rows
 end
 
+# A bus keeps its PV/REF character only while a unit remains that actually
+# REGULATES: fixed generator-type injections (converters, boundary equivalents)
+# do not hold a voltage, so they must not keep a bus PV after its last
+# regulating machine was clamped.
 function _matpower_bus_has_regulating_generator(net::Net, bus::Int, fixed_gens::BitVector)
   for gen_idx in _generators_at_bus(net, bus)
     fixed_gens[gen_idx] && continue
+    isRegulating(net.prosumpsVec[gen_idx]) || continue
     return true
   end
   return false

@@ -36,11 +36,23 @@ function _webui_option(value, label, selected)
 end
 
 function _webui_case_import_message(imported::Vector{String}, rejected)::String
+  # One line per file with a leading status marker, so a CGMES pre-analysis
+  # ("ready to compute" vs "boundary set missing") is readable at a glance
+  # instead of hidden inside one long comma-separated sentence.
   lines = String[]
-  isempty(imported) || push!(lines, "Imported $(length(imported)) file$(length(imported) == 1 ? "" : "s"): $(join(imported, ", ")).")
-  isempty(rejected) || push!(lines, "Rejected $(length(rejected)) file$(length(rejected) == 1 ? "" : "s"): " * join(("$(first(item)): $(last(item))" for item in rejected), "; ") * ".")
+  for entry in imported
+    marker = occursin("✅", entry) || occursin("⚠️", entry) || occursin("❌", entry) || occursin("🔗", entry) ? "" : "✔ "
+    push!(lines, marker * entry)
+  end
+  for item in rejected
+    push!(lines, "❌ $(first(item)) — $(last(item))")
+  end
   isempty(lines) && push!(lines, "No files were selected for import.")
-  return join(lines, " ")
+  header = isempty(imported) ? "" : "Imported $(length(imported)) file$(length(imported) == 1 ? "" : "s")"
+  if !isempty(rejected)
+    header = isempty(header) ? "Rejected $(length(rejected)) file$(length(rejected) == 1 ? "" : "s")" : header * ", rejected $(length(rejected))"
+  end
+  return isempty(header) ? join(lines, " · ") : header * ": " * join(lines, " · ")
 end
 
 function _webui_select(name, values, selected, extra_attrs::AbstractString = "")
@@ -156,8 +168,20 @@ function _webui_layout(title::AbstractString, content::AbstractString; show_back
       }).then(function (html) {
         const newMain = new DOMParser().parseFromString(html, 'text/html').querySelector('main');
         if (newMain === null) return;
-        target.replaceWith(document.importNode(newMain, true));
-        scheduleAutoRefresh();
+        if (newMain.hasAttribute('data-refresh-url')) {
+          // Still an interim page (warming up / run active): swap in place to
+          // keep polling without stacking history entries.
+          target.replaceWith(document.importNode(newMain, true));
+          scheduleAutoRefresh();
+        } else {
+          // Terminal page reached. Do a REAL reload: scripts inside a
+          // DOMParser-imported <main> are inert per the HTML spec (never
+          // executed), so swapping the final page in place would render it
+          // with dead JS — the case-combobox arrow, solver toggles and every
+          // other in-page handler would not react until the user forced a
+          // navigation (the reported "works only after typing + Enter").
+          window.location.reload();
+        }
       }).catch(function () {
         scheduleAutoRefresh();
       });
@@ -184,7 +208,7 @@ function _webui_powerflow_info_menu(; output_root::AbstractString, config_file::
 <dt>Configuration file</dt><dd><code>$(_webui_escape(config_file))</code></dd>
 <dt>Output root</dt><dd><code>$(_webui_escape(output_root))</code></dd>
 <dt>Config file</dt><dd><code>$(_webui_escape(config_file))</code></dd>
-<dt>MATPOWER case cache</dt><dd><code>$(_webui_escape(case_directory))</code></dd>
+<dt>Case cache</dt><dd><code>$(_webui_escape(case_directory))</code></dd>
 <dt>Operation log</dt><dd><code>$(_webui_escape(operation_log))</code></dd>
 </dl>
 </div>
@@ -341,6 +365,8 @@ function render_powerflow_form(;
     strip(_webui_form_string(_webui_form_value(submitted_form, "case_format", "auto")))
   elseif _webui_is_dat_casefile(effective_case_value)
     "dtf_for001"
+  elseif _webui_is_cgmes_casefile(effective_case_value)
+    "cgmes"
   else
     "auto"
   end
@@ -374,21 +400,21 @@ function render_powerflow_form(;
 """
   import_form = """
 <form id=\"case-import-form\" method=\"post\" action=\"/powerflow/import-cases\" enctype=\"multipart/form-data\" class=\"panel form-grid case-import-form\">
-<label class=\"span-2\">$(_webui_field_label("casefiles", "Import case files"))<input type=\"file\" name=\"casefiles\" accept=\".m,.M,.dat,.DAT\" multiple></label>
+<label class=\"span-2\">$(_webui_field_label("casefiles", "Import case files"))<input type=\"file\" name=\"casefiles\" accept=\".m,.M,.dat,.DAT,.zip,.ZIP\" multiple></label>
 <div class=\"actions span-2\"><button class=\"secondary-button\" type=\"submit\">Import case files</button></div>
 </form>
 """
   form = """
-$(_webui_feedback_modal_html([error_html, import_html, profile_notice]))$(_webui_active_run_banner(active_run))$(notice_html)<p class=\"lede\">Run a local MATPOWER case through the Sparlectra PowerFlow service.</p>
+$(_webui_feedback_modal_html([error_html, import_html, profile_notice]))$(_webui_active_run_banner(active_run))$(notice_html)<p class=\"lede\">Run a local grid case — MATPOWER, ENTSO-E CGMES or native DTF — through the Sparlectra PowerFlow service.</p>
 $(import_form)
 <form id=\"powerflow-run-form\" data-powerflow-form method=\"post\" action=\"/powerflow/run\" class=\"panel form-grid powerflow-form-card\">
 $(config_control)
-<label class="span-2">$(_webui_field_label("casefile", "Case file"))$(case_input)<button type="submit" id="resolve-case-button" formaction="/powerflow/resolve-case" formmethod="post" formnovalidate hidden>Resolve case</button><small class="field-hint">Cases from <code>$(_webui_escape(effective_case_directory))</code> — pick one from the list, or type a case name/path and press Enter to download it into the list.</small></label>
+<label class="span-2">$(_webui_field_label("casefile", "Case file"))$(case_input)<button type="submit" id="resolve-case-button" formaction="/powerflow/resolve-case" formmethod="post" formnovalidate hidden>Resolve case</button><small class="field-hint">Cases from <code>$(_webui_escape(effective_case_directory))</code> — pick one from the list, or type a case name/path and press Enter to download it into the list.<br>MATPOWER: a case name such as <code>case118.m</code>. CGMES: <code>cgmes:</code> plus one of $(join(("<code>" * a * "</code>" for a in sort(collect(keys(CGMESImporter.CGMES_TESTSET_ALIASES)))), ", ")) — fetches the ENTSO-E test configuration including its boundary set.</small></label>
 $(dat_hint_html)
 <details$(dtf_details_attrs)>
 <summary>Input format</summary>
 <fieldset>
-<label>$(_webui_field_label("case_format", "Case input format"))<select name="case_format"><option value="auto"$(_webui_form_string(case_format_value) == "auto" ? " selected" : "")>Auto</option><option value="matpower"$(_webui_form_string(case_format_value) == "matpower" ? " selected" : "")>MATPOWER</option><option value="dtf_for001"$(_webui_form_string(case_format_value) == "dtf_for001" ? " selected" : "")>DTF diagnostics (experimental/internal)</option></select></label>
+<label>$(_webui_field_label("case_format", "Case input format"))<select name="case_format"><option value="auto"$(_webui_form_string(case_format_value) == "auto" ? " selected" : "")>Auto</option><option value="matpower"$(_webui_form_string(case_format_value) == "matpower" ? " selected" : "")>MATPOWER</option><option value="dtf_for001"$(_webui_form_string(case_format_value) == "dtf_for001" ? " selected" : "")>DTF diagnostics (experimental/internal)</option><option value="cgmes"$(_webui_form_string(case_format_value) == "cgmes" ? " selected" : "")>CGMES (ENTSO-E, folder or ZIP)</option></select></label>
 <label>$(_webui_field_label("for002_reference_file", "Optional FOR002 reference file"))<input name="for002_reference_file" value=\"$(_webui_escape(for002_reference_value))\" placeholder="examples/FOR002.DAT"$for002_list_attr>$(for002_list_html)</label>
 <label><span class="field-label">DTF outage run mode</span><select name="dtf_outage_selection_mode"><option value="none">Run base case only</option><option value="all">Run all DTF outage records</option><option value="selected">Run selected DTF outage records</option></select></label>
 <label>$(_webui_field_label("dtf_outage_selection", "Selected DTF outage labels/indices"))<input name="dtf_outage_selection" placeholder="1 or L1 ALPHA S1 -> BETA1 S1"></label>
@@ -994,7 +1020,7 @@ function _webui_case_settings_save_section(result::AbstractDict)::String
   casefile = get(result, "runtime_casefile", get(metadata, "runtime_casefile", get(result, "casefile", "")))
   isempty(String(casefile)) && return ""
   successful = _webui_result_successful(result)
-  message = successful ? "This run converged. You can save the current Web UI settings as the default profile for this MATPOWER case." : "This run did not converge. Saving these settings is possible, but they may not be a good default for this case."
+  message = successful ? "This run converged. You can save the current Web UI settings as the default profile for this case." : "This run did not converge. Saving these settings is possible, but they may not be a good default for this case."
   button = successful ? "Save settings for this case" : "Save these settings anyway"
   override = successful ? "" : "<input type=\"hidden\" name=\"override_non_success\" value=\"true\">"
   warning_class = successful ? "info" : "warning"
