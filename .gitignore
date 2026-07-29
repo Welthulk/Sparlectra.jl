@@ -21,6 +21,7 @@ docs/build
 TODO.md
 Roadmap.md
 AGENTS.md
+CLAUDE.md
 network_dump.txt
 test/test_experments.jl
 test/test_experment.jl
