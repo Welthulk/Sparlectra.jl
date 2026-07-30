@@ -359,9 +359,14 @@ function _detect_case_format(case_path::AbstractString; requested::Symbol = :aut
 end
 
 function _reject_dtf_dcline_like_content!(case_path::AbstractString)
-  for (line_no, line) in enumerate(eachline(case_path))
-    if occursin(r"(?i)\b(HVDC|DCLINE|DC\s*LINE)\b", line)
-      throw(ArgumentError("unsupported_dtf_dc_line at line $(line_no): $(DTF_FOR001_UNSUPPORTED_DCLINE_MESSAGE)"))
+  # open(...) do closes the handle even when the ArgumentError below aborts
+  # the scan mid-file; eachline(path) would keep the descriptor open until GC
+  # (blocks file deletion on Windows, EBUSY).
+  open(case_path) do io
+    for (line_no, line) in enumerate(eachline(io))
+      if occursin(r"(?i)\b(HVDC|DCLINE|DC\s*LINE)\b", line)
+        throw(ArgumentError("unsupported_dtf_dc_line at line $(line_no): $(DTF_FOR001_UNSUPPORTED_DCLINE_MESSAGE)"))
+      end
     end
   end
   return nothing

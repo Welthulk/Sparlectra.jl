@@ -45,6 +45,13 @@ function run_webui_fast_tests()
         write(joinpath(gitdir, "HEAD"), "ref: refs/heads/packed\n")
         write(joinpath(gitdir, "packed-refs"), "# pack-refs with: peeled fully-peeled sorted\n$(sha_b) refs/heads/packed\n^$(sha_a)\n")
         @test Sparlectra._git_head_commit_sha(root) == sha_b
+
+        # Regression: the packed-refs handle must be closed on the early-return
+        # path above. With a leaked handle this rm fails on Windows (EBUSY,
+        # seen as a mktempdir-cleanup error); on Linux it always succeeds, so
+        # the guard is deliberately GC- and OS-timing independent.
+        rm(joinpath(gitdir, "packed-refs"))
+        @test !isfile(joinpath(gitdir, "packed-refs"))
       end
 
       # Worktree checkout: .git is a "gitdir: <path>" pointer file and shared

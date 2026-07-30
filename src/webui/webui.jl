@@ -126,17 +126,23 @@ function _git_head_commit_sha(root::AbstractString)::Union{String,Nothing}
 
   packed = joinpath(common, "packed-refs")
   isfile(packed) || return nothing
-  for line in eachline(packed)
-    entry = strip(line)
-    (isempty(entry) || startswith(entry, '#') || startswith(entry, '^')) && continue
-    parts = split(entry; limit = 2)
-    length(parts) == 2 || continue
-    if strip(parts[2]) == ref
-      sha = strip(parts[1])
-      return isempty(sha) ? nothing : sha
+  # open(...) do closes the handle on every exit path. eachline(path) would
+  # keep the file open until GC after the early return below — on Windows the
+  # still-open packed-refs then blocks directory removal (EBUSY, issue #290
+  # test cleanup) and every banner-SHA resolution leaks one descriptor.
+  return open(packed) do io
+    for line in eachline(io)
+      entry = strip(line)
+      (isempty(entry) || startswith(entry, '#') || startswith(entry, '^')) && continue
+      parts = split(entry; limit = 2)
+      length(parts) == 2 || continue
+      if strip(parts[2]) == ref
+        sha = strip(parts[1])
+        return isempty(sha) ? nothing : sha
+      end
     end
+    return nothing
   end
-  return nothing
 end
 
 include("options.jl")
