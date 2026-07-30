@@ -55,6 +55,7 @@ const GUI_EDITABLE_CONFIG_KEYS = Set([
   "power_flow.islands.mode",
   "power_flow.islands.reference_policy",
   "power_flow.islands.diagnostic_continue_after_failure",
+  "cgmes_import.start_values",
   "matpower_import.auto_profile",
   "matpower_import.ratio",
   "matpower_import.shift_sign",

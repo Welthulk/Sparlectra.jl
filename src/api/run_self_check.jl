@@ -51,6 +51,10 @@ function _self_check_forced_overrides()::Dict{String,Any}
       "apslf_start" => Dict{String,Any}("enabled" => false),
       "qlimits" => Dict{String,Any}("enabled" => false),
     ),
+    # CGMES runs additionally honor cgmes_import.start_values (default flat,
+    # which would re-flatten the start): the self-check's whole point is to
+    # evaluate at the imported state, so force sv. Inert for MATPOWER/DTF.
+    "cgmes_import" => Dict{String,Any}("start_values" => "sv"),
   )
 end
 

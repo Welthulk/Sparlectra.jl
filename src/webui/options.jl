@@ -65,6 +65,7 @@ const WEBUI_OPTION_SPECS = (
   WebUIOptionSpec("power_flow.distributed_slack.enabled", "power_flow_distributed_slack_enabled", Bool, :checkbox, false, (), :expert, true),
   WebUIOptionSpec("power_flow.distributed_slack.p_mode", "power_flow_distributed_slack_p_mode", String, :select, "pg_weighted", DISTRIBUTED_SLACK_P_MODE_VALUES, :expert, true),
   WebUIOptionSpec("power_flow.linear_solver", "power_flow_linear_solver", String, :select, "umfpack", POWERFLOW_LINEAR_SOLVER_VALUES, :expert, true),
+  WebUIOptionSpec("cgmes_import.start_values", "cgmes_start_values", String, :select, "flat", CGMES_START_VALUES_VALUES, :basic, true),
   WebUIOptionSpec("matpower_import.auto_profile", "matpower_import_auto_profile", String, :select, "off", MATPOWER_AUTO_PROFILE_VALUES, :expert, true),
   WebUIOptionSpec("matpower_import.ratio", "matpower_import_ratio", String, :select, "normal", MATPOWER_RATIO_VALUES, :expert, true),
   WebUIOptionSpec("matpower_import.shift_sign", "matpower_import_shift_sign", Float64, :number, 1.0, (), :expert, true),

@@ -157,6 +157,26 @@ function run_solver_interface_tests()
       @test wide_spread.status == :warn
       @test wide_spread.reason == :angle_spread_exceeded
       @test isapprox(wide_spread.angle_spread_deg, 240.0; atol = 1e-8)
+
+      # Highest-voltage-level scope: a voltage dip below the top level is
+      # normal operating spread and must not trigger (regression: healthy
+      # 45 kV feeders of a real CGMES snapshot were flagged SUSPECT while the
+      # 380 kV level was clean); the same dip on the top level still triggers.
+      mixed_net = Net(name = "wrong_branch_levels", baseMVA = 100.0)
+      addBus!(net = mixed_net, busName = "HV1", vn_kV = 380.0)
+      addBus!(net = mixed_net, busName = "HV2", vn_kV = 380.0)
+      addBus!(net = mixed_net, busName = "MV1", vn_kV = 45.0)
+      mixed_types = [:Slack, :PQ, :PQ]
+      mixed_vset = [1.0, 1.0, 1.0]
+      lower_dip = Sparlectra._check_wrong_branch_solution(mixed_net, ComplexF64[1.0, 1.01, 0.90], mixed_types, mixed_vset, 1; min_vm_pu = 0.95, max_vm_pu = 1.30, max_angle_spread_deg = 180.0, max_branch_angle_deg = Inf, min_low_vm_count = 1)
+      @test lower_dip.status == :ok
+      @test lower_dip.low_vm_count == 0
+      # reported band refers to the checked (top) level only
+      @test isapprox(lower_dip.min_vm_pu, 1.0; atol = 1e-12)
+      top_dip = Sparlectra._check_wrong_branch_solution(mixed_net, ComplexF64[1.0, 0.90, 1.0], mixed_types, mixed_vset, 1; min_vm_pu = 0.95, max_vm_pu = 1.30, max_angle_spread_deg = 180.0, max_branch_angle_deg = Inf, min_low_vm_count = 1)
+      @test top_dip.status == :warn
+      @test top_dip.reason == :low_voltage_magnitude
+      @test top_dip.low_vm_count == 1
     end
     @testset "Flat-start voltage setpoints" begin
       net = createTest3BusNet()

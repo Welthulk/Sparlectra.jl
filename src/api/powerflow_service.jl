@@ -245,6 +245,13 @@ function start_powerflow_run(request::AbstractDict; case_directory::Union{Nothin
     catch err
       return _service_failure("invalid_configuration", sprint(showerror, err, catch_backtrace()); run_id = run_id)
     end
+    # The Web UI form submits cgmes_start_values as a GUI-editable override;
+    # applied on top of the merged self-check config it would re-flatten the
+    # start (default "flat") and break the fixed-reference contract. The
+    # self-check's forced start_values=sv must win, so drop the form value.
+    if config_overrides isa AbstractDict && haskey(config_overrides, "cgmes_import.start_values")
+      config_overrides = Dict{String,Any}(k => v for (k, v) in config_overrides if k != "cgmes_import.start_values")
+    end
   end
   # Phase timings collected before the API handoff become service metadata, not
   # operation-log events for every internal solver step.

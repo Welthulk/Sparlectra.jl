@@ -62,7 +62,48 @@ function _copy_powerflow_with(pf::PowerFlowConfig; kwargs...)::PowerFlowConfig
 end
 
 function _copy_sparlectra_with_powerflow(cfg::SparlectraConfig, powerflow::PowerFlowConfig)::SparlectraConfig
-  return SparlectraConfig(; powerflow = powerflow, state_estimation = cfg.state_estimation, matpower = cfg.matpower, matpower_export = cfg.matpower_export, transformer = cfg.transformer, performance = cfg.performance, benchmark = cfg.benchmark, runtime = cfg.runtime, diagnostics = cfg.diagnostics, output = cfg.output, control = cfg.control)
+  # Field splat instead of an explicit keyword list: the old hand-written list
+  # silently dropped `cgmes` and `webui`, resetting them to defaults on every
+  # copy (latent — the previous callers never read those fields afterwards).
+  fields = NamedTuple{fieldnames(SparlectraConfig)}(getfield.(Ref(cfg), fieldnames(SparlectraConfig)))
+  return SparlectraConfig(; fields..., powerflow = powerflow)
+end
+
+function _copy_start_current_iteration_with(cfg::StartCurrentIterationConfig; kwargs...)::StartCurrentIterationConfig
+  fields = NamedTuple{fieldnames(StartCurrentIterationConfig)}(getfield.(Ref(cfg), fieldnames(StartCurrentIterationConfig)))
+  return StartCurrentIterationConfig(; fields..., kwargs...)
+end
+
+"""
+    _cgmes_start_values_powerflow(pf_cfg, start_values) -> (PowerFlowConfig, overridden::Vector{String})
+
+Apply `cgmes_import.start_values` to the power-flow configuration of one CGMES
+run. `:flat` forces a synthetic flat start; `:sv` keeps the imported SvVoltage
+state and force-disables every competing start-value machine — the same set the
+fixed-reference self-check forces off in `_self_check_forced_overrides`
+(run_self_check.jl); keep the two lists aligned. Returns the adjusted config
+plus the effective config keys that were overridden (for the decision line in
+run.log/cgmes.log). MATPOWER/DTF runs never call this.
+"""
+function _cgmes_start_values_powerflow(pf_cfg::PowerFlowConfig, start_values::Symbol)
+  overridden = String[]
+  if start_values === :flat
+    pf_cfg.start_mode.flatstart || push!(overridden, "power_flow.flatstart=false")
+    return _copy_powerflow_with(pf_cfg; start_mode = _copy_start_mode_with(pf_cfg.start_mode; flatstart = true)), overridden
+  end
+  start_values === :sv || throw(ArgumentError("cgmes_import.start_values must be one of $(CGMES_START_VALUES_VALUES); got $(start_values)."))
+  pf_cfg.start_mode.flatstart && push!(overridden, "power_flow.flatstart=true")
+  pf_cfg.start_mode.start_projection && push!(overridden, "power_flow.start_mode.start_projection=true")
+  pf_cfg.start_mode.dc_seed_unconditional && push!(overridden, "power_flow.start_mode.dc_seed_unconditional=true")
+  pf_cfg.start_current_iteration.enabled && push!(overridden, "power_flow.start_current_iteration.enabled=true")
+  pf_cfg.apslf_start.enabled && push!(overridden, "power_flow.apslf_start.enabled=true")
+  start_mode = _copy_start_mode_with(pf_cfg.start_mode; flatstart = false, start_projection = false, dc_seed_unconditional = false)
+  return _copy_powerflow_with(
+    pf_cfg;
+    start_mode = start_mode,
+    start_current_iteration = _copy_start_current_iteration_with(pf_cfg.start_current_iteration; enabled = false),
+    apslf_start = ApslfStartConfig(enabled = false, order = pf_cfg.apslf_start.order),
+  ), overridden
 end
 
 function _resolve_matpower_powerflow_ids_after_import(net::Net, cfg::SparlectraConfig; verbose::Int = 0)::SparlectraConfig

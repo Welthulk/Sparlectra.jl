@@ -415,6 +415,8 @@ $(dat_hint_html)
 <summary>Input format</summary>
 <fieldset>
 <label>$(_webui_field_label("case_format", "Case input format"))<select name="case_format"><option value="auto"$(_webui_form_string(case_format_value) == "auto" ? " selected" : "")>Auto</option><option value="matpower"$(_webui_form_string(case_format_value) == "matpower" ? " selected" : "")>MATPOWER</option><option value="dtf_for001"$(_webui_form_string(case_format_value) == "dtf_for001" ? " selected" : "")>DTF diagnostics (experimental/internal)</option><option value="cgmes"$(_webui_form_string(case_format_value) == "cgmes" ? " selected" : "")>CGMES (ENTSO-E, folder or ZIP)</option></select></label>
+<label data-cgmes-start-values-field>$(_webui_field_label("cgmes_start_values", "CGMES start values"))<select name="cgmes_start_values"><option value="flat"$(_webui_selected(profile_values, "cgmes_start_values", _webui_option_default("cgmes_start_values")) == "flat" ? " selected" : "")>Flat start (default)</option><option value="sv"$(_webui_selected(profile_values, "cgmes_start_values", _webui_option_default("cgmes_start_values")) == "sv" ? " selected" : "")>Imported SV state</option></select></label>
+<p class="field-help" data-cgmes-start-values-field>CGMES only: <em>Flat start</em> lets the solver earn the solution itself; <em>Imported SV state</em> starts Newton-Raphson from the delivery's own SvVoltage solution (competing start-value machines are forced off). The SV comparison check (<code>sv_compare.csv</code>) runs either way.</p>
 <label>$(_webui_field_label("for002_reference_file", "Optional FOR002 reference file"))<input name="for002_reference_file" value=\"$(_webui_escape(for002_reference_value))\" placeholder="examples/FOR002.DAT"$for002_list_attr>$(for002_list_html)</label>
 <label><span class="field-label">DTF outage run mode</span><select name="dtf_outage_selection_mode"><option value="none">Run base case only</option><option value="all">Run all DTF outage records</option><option value="selected">Run selected DTF outage records</option></select></label>
 <label>$(_webui_field_label("dtf_outage_selection", "Selected DTF outage labels/indices"))<input name="dtf_outage_selection" placeholder="1 or L1 ALPHA S1 -> BETA1 S1"></label>
@@ -609,6 +611,14 @@ document.addEventListener('DOMContentLoaded', function () {
     });
     const importHint = document.querySelector('[data-import-conventions-hint]');
     if (importHint !== null) importHint.hidden = !isCgmes;
+    // Inverse gating for the CGMES start-values select: it only steers CGMES
+    // runs, so it is enabled exactly when the selected case is CGMES and
+    // grayed out (kept in place) otherwise. A disabled select drops out of
+    // the submitted form; non-CGMES runs then simply use the config default.
+    document.querySelectorAll('[data-cgmes-start-values-field]').forEach(function (el) {
+      el.classList.toggle('disabled', !isCgmes);
+      el.querySelectorAll('select').forEach(function (control) { control.disabled = !isCgmes; });
+    });
   };
   const updateDatCaseAssistance = function () {
     const effectiveValue = caseInput === null ? '' : caseInput.value.trim();
@@ -1097,6 +1107,27 @@ function _webui_wrong_branch_badge(result::AbstractDict)::Union{Nothing,String}
   return "<span class=\"status-badge $(css_class)\">$(_webui_escape(label))</span>"
 end
 
+# CGMES runs: compact SV-comparison summary from the run metadata (written by
+# the mandatory compareWithSV check). Returns nothing for non-CGMES runs —
+# the metadata keys only exist on the CGMES path.
+function _webui_sv_compare_summary(result::AbstractDict)::Union{Nothing,String}
+  metadata = get(result, "metadata", Dict{String,Any}())
+  metadata isa AbstractDict || return nothing
+  haskey(metadata, "cgmes_sv_compare_status") || return nothing
+  status = string(get(metadata, "cgmes_sv_compare_status", "unavailable"))
+  fmt = x -> x isa Real && isfinite(x) ? string(round(Float64(x); sigdigits = 3)) : "n/a"
+  status == "unavailable" && return "<code>unavailable</code>"
+  start_values = string(get(metadata, "cgmes_start_values", "?"))
+  text = string(
+    "max|dvm| ", fmt(get(metadata, "cgmes_sv_compare_max_dvm", nothing)), " pu · rms ", fmt(get(metadata, "cgmes_sv_compare_rms_dvm", nothing)),
+    " · max|dva| ", fmt(get(metadata, "cgmes_sv_compare_max_dva", nothing)), "° · rms ", fmt(get(metadata, "cgmes_sv_compare_rms_dva", nothing)), "°",
+    " (n=", get(metadata, "cgmes_sv_compare_n", 0), ", ", start_values, " start",
+    status == "converged" ? "" : ", " * status,
+    ")",
+  )
+  return "<code>" * _webui_escape(text) * "</code>"
+end
+
 function render_powerflow_result(result::AbstractDict)::String
   run_id = get(result, "run_id", "")
   rows = join(("<tr><th>$(_webui_escape(field))</th><td>$(_webui_escape(_webui_result_value(result, field)))</td></tr>" for field in _WEBUI_RESULT_FIELDS), "")
@@ -1115,6 +1146,8 @@ function render_powerflow_result(result::AbstractDict)::String
     push!(base, ("Total time", "<strong>$(_webui_escape(_format_elapsed_duration(_webui_total_elapsed_seconds(result))))</strong>"))
     wrong_branch_badge = _webui_wrong_branch_badge(result)
     wrong_branch_badge === nothing || push!(base, ("Wrong-branch check", wrong_branch_badge))
+    sv_summary = _webui_sv_compare_summary(result)
+    sv_summary === nothing || push!(base, ("SV comparison", sv_summary))
     Tuple(base)
   end
   result_summary = "<div class=\"result-summary\">" * join(("<div$(label in ("Elapsed time", "Solver time", "Total time") ? " class=\"runtime-card\"" : "")><span class=\"summary-label\">$(label)</span>$(value)</div>" for (label, value) in summary_rows), "") * "</div>"

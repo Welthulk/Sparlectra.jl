@@ -282,6 +282,14 @@ For complete key references and allowed-value tables, see the module-specific pa
 
 The thresholds include voltage magnitude range, global angle spread, and active-branch angle-difference checks via `power_flow.wrong_branch_max_branch_angle_deg`.
 
+All heuristics are evaluated **only on the network's highest nominal voltage
+level** (branch-angle checks: both ends on that level). Sub-transmission
+levels routinely run at 0.94–0.97 pu in healthy snapshots; judging them
+against the transmission-level band produced false `SUSPECT` verdicts (seen
+on a real 6209-bus CGMES delivery whose 45 kV feeders were flagged while the
+380 kV level was clean). The reported `min_vm_pu`/`max_vm_pu` and the
+lowest-bus list refer to the checked level.
+
 ### Where the result is visible
 
 The check result — not just the setting — is surfaced in every output surface, so a suspicious solution is visible without reading console warnings:

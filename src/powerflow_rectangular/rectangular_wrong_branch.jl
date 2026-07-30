@@ -103,6 +103,12 @@ The check is intentionally conservative:
 - suspicious but finite states are returned as `:warn`,
 - final policy (`:warn`, `:fail`, potential rescue path) is decided by caller logic.
 
+When `net` is available, all heuristics (voltage band, angle spread,
+branch-angle) are evaluated only on the network's highest nominal voltage
+level; lower levels carry normal operating spread that would produce false
+SUSPECT verdicts. The reported `min_vm_pu`/`max_vm_pu`/`lowest_buses` refer
+to that level. Without a `net` every bus is in scope.
+
 # Returns
 A normalized diagnostic NamedTuple created by `_wrong_branch_result`.
 """
@@ -119,14 +125,40 @@ function _check_wrong_branch_solution(V::Vector{ComplexF64}, bus_types::Vector{S
     return _wrong_branch_result(status = :fail, reason = :nonfinite_voltage)
   end
 
+  # Wrong-branch heuristics judge only the network's HIGHEST voltage level
+  # (maintainer decision 2026-07-30): sub-transmission dips are normal
+  # operating spread, not a wrong-branch indicator — a real 6209-bus CGMES
+  # snapshot flagged healthy 45 kV feeders at 0.94 pu as SUSPECT while its
+  # 380 kV level was clean. Without a net (pure vector call) or without
+  # nominal-voltage data every bus stays in scope, preserving the previous
+  # behavior for the unit-level callers.
+  level_mask = trues(n)
+  if !isnothing(net) && length(net.nodeVec) == n
+    iso = Set(net.isoNodes)
+    vn_max = 0.0
+    for i in eachindex(net.nodeVec)
+      i in iso && continue
+      vn = getNodeVn(net.nodeVec[i])
+      vn > vn_max && (vn_max = vn)
+    end
+    if vn_max > 0.0
+      for i in eachindex(net.nodeVec)
+        level_mask[i] = !(i in iso) && isapprox(getNodeVn(net.nodeVec[i]), vn_max; rtol = 1e-6)
+      end
+    end
+  end
+  level_indices = findall(level_mask)
+  isempty(level_indices) && (level_mask = trues(n); level_indices = collect(1:n))
+
   vm = abs.(V)
-  low_idx = findall(vm .< min_vm_pu)
-  high_idx = findall(vm .> max_vm_pu)
+  low_idx = [i for i in level_indices if vm[i] < min_vm_pu]
+  high_idx = [i for i in level_indices if vm[i] > max_vm_pu]
   va_deg = rad2deg.(angle.(V))
   slack_ang = va_deg[slack_idx]
-  # Relative-angle diagnostics are measured against slack as reference.
+  # Relative-angle diagnostics are measured against slack as reference; the
+  # spread is reference-invariant, so a slack below the top level is fine.
   rel = _wrap_to_180_deg.(va_deg .- slack_ang)
-  angle_spread_deg = _circular_angle_spread_deg(rel)
+  angle_spread_deg = _circular_angle_spread_deg(rel[level_indices])
 
   branch_angle_violation_count = 0
   max_branch_angle_seen_deg = NaN
@@ -142,6 +174,9 @@ function _check_wrong_branch_solution(V::Vector{ComplexF64}, bus_types::Vector{S
       from = br.fromBus
       to = br.toBus
       (1 <= from <= n && 1 <= to <= n) || continue
+      # Highest-level scope (see level_mask above): only branches with both
+      # ends on the top voltage level count for the branch-angle heuristic.
+      (level_mask[from] && level_mask[to]) || continue
 
       theta_from_deg = rad2deg(angle(V[from]))
       theta_to_deg = rad2deg(angle(V[to]))
@@ -163,8 +198,9 @@ function _check_wrong_branch_solution(V::Vector{ComplexF64}, bus_types::Vector{S
     end
   end
 
-  # Keep the three lowest-voltage buses for compact diagnostics in logs/tables.
-  lowest_order = sortperm(vm)
+  # Keep the three lowest-voltage buses (within the checked level) for
+  # compact diagnostics in logs/tables.
+  lowest_order = sort(level_indices; by = i -> vm[i])
   lowest_buses = [Int(i) for i in lowest_order[1:min(3, length(lowest_order))]]
 
   # :warn => suspicious but usable; :fail => invalid (e.g., non-finite voltages);
@@ -188,8 +224,8 @@ function _check_wrong_branch_solution(V::Vector{ComplexF64}, bus_types::Vector{S
   return _wrong_branch_result(
     status = status,
     reason = reason,
-    min_vm_pu = minimum(vm),
-    max_vm_pu = maximum(vm),
+    min_vm_pu = minimum(vm[level_indices]),
+    max_vm_pu = maximum(vm[level_indices]),
     low_vm_count = length(low_idx),
     high_vm_count = length(high_idx),
     angle_spread_deg = angle_spread_deg,

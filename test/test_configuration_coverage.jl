@@ -66,7 +66,7 @@ function run_configuration_coverage_tests()
       "power_flow.qlimits.guard.enabled", "power_flow.qlimits.guard.min_q_range_pu", "power_flow.qlimits.guard.narrow_range_mode", "power_flow.qlimits.guard.zero_range_mode", "power_flow.qlimits.guard.violation_mode", "power_flow.qlimits.guard.violation_threshold_pu", "power_flow.qlimits.guard.max_switches", "power_flow.qlimits.guard.max_remaining_violations", "power_flow.qlimits.guard.accept_bounded_violations", "power_flow.qlimits.guard.freeze_after_repeated_switching", "power_flow.qlimits.guard.log",
       "state_estimation.enabled", "state_estimation.method", "state_estimation.tol", "state_estimation.max_iter", "state_estimation.flatstart", "state_estimation.jac_eps", "state_estimation.update_net", "state_estimation.pmu_ref_offset", "state_estimation.observability.enabled",
       "matpower_import.case", "matpower_import.cases", "matpower_import.auto_profile", "matpower_import.auto_profile_log", "matpower_import.pv_voltage_source", "matpower_import.pv_voltage_mismatch_tol_pu", "matpower_import.compare_voltage_reference", "matpower_import.bus_shunt_model", "matpower_import.shift_unit", "matpower_import.shift_sign", "matpower_import.ratio", "matpower_import.enable_pq_gen_controllers", "matpower_import.preallocate_network", "matpower_import.preallocate_min_buses", "matpower_import.apply_bus_names", "matpower_import.apply_branch_names", "matpower_import.apply_branch_kind", "matpower_import.import_for001_contingencies", "matpower_import.matpower_dcline_mode", "matpower_import.net_cache.enabled",
-      "cgmes_import.path", "cgmes_import.base_mva", "cgmes_import.require_boundary", "cgmes_import.tap_control", "cgmes_import.machine_control", "cgmes_import.ignore_connected", "cgmes_import.vset_min_pu", "cgmes_import.vset_max_pu", "cgmes_import.multi_slack",
+      "cgmes_import.path", "cgmes_import.base_mva", "cgmes_import.require_boundary", "cgmes_import.tap_control", "cgmes_import.machine_control", "cgmes_import.ignore_connected", "cgmes_import.vset_min_pu", "cgmes_import.vset_max_pu", "cgmes_import.multi_slack", "cgmes_import.start_values",
       "transformer.tap_changer_model",
       "matpower_export.write_solution",
       "performance.enabled", "performance.level", "performance.print_to_console", "performance.write_to_logfile", "performance.show_allocations", "performance.show_iteration_table", "performance.compact_logging", "performance.representative_warmup_runs", "performance.compare_cold_warm", "performance.skip_reference_comparison", "performance.skip_expensive_diagnostics", "performance.skip_branch_neighborhood_report", "performance.max_diagnostic_rows",
@@ -378,6 +378,23 @@ power_flow:
     wrong_branch_bad = tempname() * ".yaml"
     write(wrong_branch_bad, "power_flow:\n  wrong_branch_detection: maybe\n")
     @test_throws ArgumentError Sparlectra.load_sparlectra_config(wrong_branch_bad; reload = true)
+
+    # cgmes_import.start_values: default flat, sv accepted, invalid rejected
+    # with the key name in the message.
+    @test Sparlectra.CGMESImportConfig().start_values === :flat
+    sv_ok = tempname() * ".yaml"
+    write(sv_ok, "cgmes_import:\n  start_values: sv\n")
+    @test Sparlectra.load_sparlectra_config(sv_ok; reload = true).cgmes.start_values === :sv
+    sv_bad = tempname() * ".yaml"
+    write(sv_bad, "cgmes_import:\n  start_values: warm\n")
+    err = try
+      Sparlectra.load_sparlectra_config(sv_bad; reload = true)
+      nothing
+    catch e
+      e
+    end
+    @test err isa ArgumentError
+    @test occursin("cgmes_import.start_values", sprint(showerror, err))
   end
 
   @testset "Removed diagnostics keys are rejected" begin

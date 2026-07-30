@@ -753,6 +753,16 @@ function _run_sparlectra_api(;
       metadata = Dict("input_format" => String(requested_case_format), "input_format_detected" => "cgmes")
       return _api_execution_failure(reason, message; run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file, phase_recorder, performance_timing, total_start_ns = total_start, metadata = metadata)
     end
+    # cgmes_import.start_values wins over power_flow(.start_mode).flatstart on
+    # CGMES runs: :flat = synthetic flat start (default), :sv = the imported
+    # SvVoltage state with every competing start-value machine forced off.
+    cgmes_run_powerflow, start_overridden = _cgmes_start_values_powerflow(config.powerflow, cgmes_cfg.start_values)
+    cgmes_run_config = _copy_sparlectra_with_powerflow(config, cgmes_run_powerflow)
+    start_decision = string(
+      "CGMES start values: ", cgmes_cfg.start_values,
+      cgmes_cfg.start_values === :sv ? " (imported SvVoltage state; start-value machines forced off: start_projection, dc_seed_unconditional, start_current_iteration, apslf_start)" : " (synthetic flat start)",
+      isempty(start_overridden) ? "" : string(" — overrides: ", join(start_overridden, ", ")),
+    )
     # Dedicated cgmes.log: everything the importer saw and decided, next to
     # run.log and diagnose.log, so a CGMES run can be audited without
     # digging through the general run output.
@@ -765,6 +775,7 @@ function _run_sparlectra_api(;
         println(io, "tap control: ", cgmes_cfg.tap_control)
         println(io, "machine control: ", cgmes_cfg.machine_control)
         println(io, "base MVA:    ", cgmes_cfg.base_mva)
+        println(io, start_decision)
         println(io)
         println(io, "## Files")
         for f in cgmes_result.store.files
@@ -815,6 +826,7 @@ function _run_sparlectra_api(;
         # home per fact. Warnings still surface here because they mark
         # substituted values a reader of the narrative must not miss.
         println(io, "CGMES input (", length(paths), " path(s), ", length(cgmes_result.net.nodeVec), " buses)")
+        println(io, start_decision)
         cgmes_warnings = [m for m in cgmes_result.messages if startswith(m, "warning:")]
         println(io, "  importer messages: ", length(cgmes_result.messages), " (", length(cgmes_warnings), " warning(s)) — full report in cgmes.log")
         for m in cgmes_warnings
@@ -822,17 +834,74 @@ function _run_sparlectra_api(;
         end
         _write_resolved_q_limit_options(io, qlimit_metadata)
         _capture_run_output(io; live = config.output.console_live) do
-          _run_sparlectra(net = cgmes_result.net, config = config, performance_profile = api_performance_profile)
+          _run_sparlectra(net = cgmes_result.net, config = cgmes_run_config, performance_profile = api_performance_profile)
         end
       end
     catch err
       err isa PowerFlowAborted && rethrow()
       return _api_execution_failure("execution_error", sprint(showerror, err, catch_backtrace()); run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file, phase_recorder, performance_timing, total_start_ns = total_start)
     end
+    # Mandatory SV comparison (report, not a gate): every CGMES run checks the
+    # solved state against the delivery's own SV solution. The solver mutated
+    # cgmes_result.net in place (passed by reference to _run_sparlectra), so
+    # compareWithSV reads the state this run actually produced. On a
+    # non-converged run the numbers describe the diverged state — the status
+    # tag keeps them from being read as model error.
+    sv_compare = nothing
+    sv_compare_error = nothing
+    try
+      sv_compare = CGMESImporter.compareWithSV(cgmes_result)
+    catch err
+      sv_compare_error = sprint(showerror, err)
+    end
+    sv_compare_status = sv_compare === nothing ? "unavailable" : (raw_result.final_converged ? "converged" : String(Symbol(raw_result.outcome)))
+    if sv_compare !== nothing
+      try
+        open(joinpath(output_path, "sv_compare.csv"), "w") do io
+          println(io, "bus,vm_pu,sv_vm_pu,dvm,va_deg,sv_va_deg,dva")
+          for r in sv_compare.rows
+            println(io, join((_csv_field(String(r.bus), ','), r.vm_pu, r.sv_vm_pu, r.dvm, r.va_deg, r.sv_va_deg, r.dva), ','))
+          end
+        end
+        # The flow rows come for free with compareWithSV (computed in the same
+        # call), so ship them as a second artifact.
+        open(joinpath(output_path, "sv_compare_flows.csv"), "w") do io
+          println(io, "kind,name,bus,sv_p_mw,sv_q_mvar,p_mw,q_mvar,dp_mw,dq_mvar")
+          for r in sv_compare.flows.rows
+            println(io, join((r.kind, _csv_field(String(r.name), ','), _csv_field(String(r.bus), ','), r.sv_p, r.sv_q, r.p, r.q, r.dp, r.dq), ','))
+          end
+        end
+      catch err
+        @warn "could not write SV comparison artifacts" exception = err
+      end
+    end
+    try
+      open(joinpath(output_path, "cgmes.log"), "a") do io
+        println(io)
+        println(io, "## SV comparison (run status: ", sv_compare_status, ", start values: ", cgmes_cfg.start_values, ")")
+        if sv_compare === nothing
+          println(io, "  unavailable", sv_compare_error === nothing ? "" : ": " * sv_compare_error)
+        else
+          println(io, "  voltages: n=", sv_compare.n, "  max|dvm|=", sv_compare.max_dvm, " pu  rms=", sv_compare.rms_dvm, "  max|dva|=", sv_compare.max_dva, "°  rms=", sv_compare.rms_dva, "°")
+          println(io, "  flows:    n=", sv_compare.flows.n, "  max|dp|=", sv_compare.flows.max_dp, " MW  max|dq|=", sv_compare.flows.max_dq, " MVAr")
+          println(io, "  artifacts: sv_compare.csv, sv_compare_flows.csv")
+          raw_result.final_converged || println(io, "  note: run did not converge — deltas describe the non-converged state, not the imported model")
+        end
+      end
+    catch err
+      @warn "could not append SV comparison to cgmes.log" exception = err
+    end
     cgmes_metadata = Dict{String,Any}(
       "input_format" => String(requested_case_format),
       "input_format_detected" => "cgmes",
       "cgmes_no_sv_buses" => length(cgmes_result.no_sv_buses),
+      "cgmes_start_values" => String(cgmes_cfg.start_values),
+      "cgmes_sv_compare_status" => sv_compare_status,
+      "cgmes_sv_compare_n" => sv_compare === nothing ? 0 : sv_compare.n,
+      "cgmes_sv_compare_max_dvm" => sv_compare === nothing ? NaN : sv_compare.max_dvm,
+      "cgmes_sv_compare_rms_dvm" => sv_compare === nothing ? NaN : sv_compare.rms_dvm,
+      "cgmes_sv_compare_max_dva" => sv_compare === nothing ? NaN : sv_compare.max_dva,
+      "cgmes_sv_compare_rms_dva" => sv_compare === nothing ? NaN : sv_compare.rms_dva,
       "cgmes_import_used" => true,
       "cgmes_version" => cgmes_result.store.version,
       "cgmes_paths" => join(paths, ";"),

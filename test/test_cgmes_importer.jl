@@ -687,6 +687,55 @@ function run_cgmes_importer_tests()
         @test occursin("# CGMES import report", read(joinpath(out2, "cgmes.log"), String))
       end
 
+      # cgmes_import.start_values (WebUI-selectable start state) + the
+      # mandatory SV comparison artifact. Effectiveness is asserted via the
+      # logged decision line (the contract), not by re-deriving solver
+      # internals; precedence over a hostile power_flow.flatstart is part of
+      # the same assertions.
+      @testset "start_values selection + mandatory SV comparison" begin
+        for (mode, hostile_flatstart) in (("flat", "false"), ("sv", "true"))
+          out = mktempdir()
+          cfg = joinpath(out, "c.yaml")
+          # hostile flatstart value opposes what the mode needs — start_values must win
+          write(cfg, "power_flow:\n  flatstart: " * hostile_flatstart * "\ncgmes_import:\n  start_values: " * mode * "\n  path: \"" * bd * "\"\n")
+          r = run_sparlectra_api(casefile = be, config_file = cfg, output_dir = out, case_format = :cgmes)
+          @test r.status == :succeeded
+          run_log = read(joinpath(out, "run.log"), String)
+          cgmes_log = read(joinpath(out, "cgmes.log"), String)
+          @test occursin("CGMES start values: " * mode, run_log)
+          @test occursin("CGMES start values: " * mode, cgmes_log)
+          @test occursin("overrides: power_flow.flatstart=" * hostile_flatstart, run_log)
+          mode == "sv" && @test occursin("start-value machines forced off", run_log)
+          # SV comparison runs for both modes: artifacts, log block, metadata
+          @test isfile(joinpath(out, "sv_compare.csv"))
+          @test isfile(joinpath(out, "sv_compare_flows.csv"))
+          @test occursin("## SV comparison (run status: converged, start values: " * mode * ")", cgmes_log)
+          sv_rows = readlines(joinpath(out, "sv_compare.csv"))
+          @test sv_rows[1] == "bus,vm_pu,sv_vm_pu,dvm,va_deg,sv_va_deg,dva"
+          @test length(sv_rows) - 1 == 11
+          @test r.metadata["cgmes_start_values"] == mode
+          @test r.metadata["cgmes_sv_compare_status"] == "converged"
+          @test r.metadata["cgmes_sv_compare_n"] == 11
+          for key in ("cgmes_sv_compare_max_dvm", "cgmes_sv_compare_rms_dvm", "cgmes_sv_compare_max_dva", "cgmes_sv_compare_rms_dva")
+            @test isfinite(r.metadata[key])
+          end
+          # solved-from-SV and solved-from-flat both land on the SV solution
+          @test r.metadata["cgmes_sv_compare_max_dvm"] < 2e-4
+        end
+
+        # Negative: a MATPOWER run ignores the key completely — no decision
+        # line, no artifacts, no metadata keys.
+        mp_out = mktempdir()
+        mp_cfg = joinpath(mp_out, "c.yaml")
+        write(mp_cfg, "cgmes_import:\n  start_values: sv\n")
+        mp = run_sparlectra_api(casefile = ensure_casefile("case14.m"), config_file = mp_cfg, output_dir = mp_out)
+        @test mp.status == :succeeded
+        @test !isfile(joinpath(mp_out, "sv_compare.csv"))
+        @test !haskey(mp.metadata, "cgmes_start_values")
+        @test !haskey(mp.metadata, "cgmes_sv_compare_status")
+        @test !occursin("CGMES start values", read(joinpath(mp_out, "run.log"), String))
+      end
+
       # Fixed-reference self-check on a CGMES delivery: the SV voltages must
       # reach the solver verbatim (a base config with flatstart: true —
       # observed in a real WebUI configuration — must not wipe them), and the

@@ -96,6 +96,7 @@ instead of aborting the power flow with "island without reference".
 | `cgmes_import.vset_min_pu` | `0.5` | Lower bound of the plausibility band for a voltage `RegulatingControl.targetValue`, in p.u. of the regulated bus's nominal voltage. |
 | `cgmes_import.vset_max_pu` | `1.5` | Upper bound of that band. A target outside `[vset_min_pu, vset_max_pu]` is treated as a placeholder: it is ignored, the unit is held PV at the bus voltage derived from the nominal data, and the substitution is reported as a `warning:`. |
 | `cgmes_import.multi_slack` | `true` | Give every electrical island its own SV-declared angle reference (at most one per island). Required for multi-island deliveries; `false` forces the legacy single-reference behavior. Allowed values: `true`, `false`. |
+| `cgmes_import.start_values` | `flat` | Newton-Raphson start state for CGMES runs. `flat`: synthetic flat start — the solver earns the solution itself. `sv`: start from the delivery's imported `SvVoltage` state; the competing start-value machines (`start_projection`, `dc_seed_unconditional`, `start_current_iteration`, `apslf_start`) are forced off for the run. On CGMES runs this key wins over `power_flow.flatstart` / `power_flow.start_mode.flatstart`; MATPOWER and DTF runs ignore it. The decision (including any overridden keys) is logged to `run.log` and `cgmes.log`, and the SV comparison (`sv_compare.csv`) runs in both modes. Allowed values: `flat`, `sv`. |
 
 ### Implausible voltage setpoints
 

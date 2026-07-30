@@ -17,7 +17,7 @@
 |---|---:|---:|---|---|---|---|---|---|
 | `power_flow.method` | Symbol/String | `rectangular` | `rectangular` | AC solver formulation. | Always (current core). | N/A | Fixed single implementation. | Must match `benchmark.methods`. |
 | `power_flow.sparse` | Bool | `true` | `true` | Sparse linear algebra mode. | Always (required). | N/A | Scales better for large systems. | Validated together with `method`. |
-| `power_flow.flatstart` | Bool | `false` | `true`, `false` | Legacy flatstart toggle; `false` keeps imported start voltages (MATPOWER `VM`/`VA`, CGMES `SvVoltage`). | Synthetic starts. | When start projection and imported starts are used — `true` silently discards a CGMES SV start. | Low. | Combined into `start_mode`. |
+| `power_flow.flatstart` | Bool | `false` | `true`, `false` | Legacy flatstart toggle; `false` keeps imported start voltages (MATPOWER `VM`/`VA`, CGMES `SvVoltage`). On CGMES runs `cgmes_import.start_values` (`flat` default / `sv`) wins over this key — see [CGMES Import](cgmes_import.md). | Synthetic starts. | When start projection and imported starts are used — `true` silently discards a CGMES SV start. | Low. | Combined into `start_mode`. |
 | `power_flow.tol` | Float64 | `1.0e-5` | positive real | PF tolerance. | Accuracy-sensitive studies. | Overly tight on big batches. | Tighter means more iterations. | `max_iter`. |
 | `power_flow.max_iter` | Int | `80` | positive integer | Iteration cap. | Hard cases. | Very low values. | Upper runtime bound. | `tol`, `qlimits`. |
 | `power_flow.autodamp` | Bool | `true` | `true`, `false` | Adaptive damping. | Difficult convergence. | Strict algorithm comparison. | Small overhead, often fewer failures. | `autodamp_min`. |

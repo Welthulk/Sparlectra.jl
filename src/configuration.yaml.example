@@ -291,6 +291,13 @@ cgmes_import:
   # island beyond the primary has no reference and the island-wise power flow
   # refuses to run. false forces the legacy single-reference behavior.
   multi_slack: true
+  # Newton-Raphson start state for CGMES runs. flat = synthetic flat start
+  # (default: the solver earns the solution itself); sv = start from the
+  # delivery's imported SvVoltage state (force-disables the other start-value
+  # machines for the run). On CGMES runs this wins over power_flow.flatstart;
+  # MATPOWER/DTF runs ignore it. The SV comparison (sv_compare.csv) runs
+  # either way. Allowed values: flat, sv
+  start_values: flat
 
 matpower_import:
   # MATPOWER case filename/path resolved by single-case runner paths.

@@ -15,6 +15,23 @@ transformer/shunt adjacency) support attribution; `cgmes.log` now reports
 buses without a usable `SvVoltage`. See the
 [Web UI Diagnose action](webui.md).
 
+**CGMES runs: selectable start values and a mandatory SV check.** The WebUI
+(and `cgmes_import.start_values`) now offers the CGMES start state as an
+explicit choice — `flat` (default: the solver earns the solution itself) or
+`sv` (start from the delivery's imported SvVoltage state, with competing
+start-value machines forced off). Every CGMES run additionally checks the
+solved state against the delivered SV solution and writes `sv_compare.csv` /
+`sv_compare_flows.csv`, a summary block in `cgmes.log`, result metadata, and
+an "SV comparison" row on the WebUI result page. See
+[CGMES Import](cgmes_import.md).
+
+**Wrong-branch detection judges only the highest voltage level.** The
+voltage-band, angle-spread, and branch-angle heuristics now ignore
+sub-transmission levels, whose normal operating spread produced false
+`SUSPECT` verdicts (a real CGMES snapshot's healthy 45 kV feeders were
+flagged while its 380 kV level was clean). See
+[Configuration](configuration.md).
+
 **Default start uses imported voltages.** The shipped configuration now sets
 the legacy `power_flow.flatstart` to `false`, so imported start voltages —
 MATPOWER `VM`/`VA` and especially the CGMES `SvVoltage` state — reach the

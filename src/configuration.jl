@@ -331,6 +331,13 @@ Options of the `cgmes_import` configuration block — the ENTSO-E CGMES import
   without it every island beyond the primary one has no reference and the
   island-wise power flow refuses to run. Disable only to force the legacy
   single-reference behavior.
+- `start_values::Symbol`: Newton-Raphson start state for CGMES runs. `:flat`
+  (default) uses a synthetic flat start — the solver earns the solution
+  itself; `:sv` starts from the delivery's imported `SvVoltage` state and
+  force-disables the competing start-value machines for the run. On CGMES
+  runs this key wins over `power_flow.flatstart` /
+  `power_flow.start_mode.flatstart`; MATPOWER and DTF runs ignore it. The
+  SV comparison artifact (`sv_compare.csv`) is written either way.
 """
 Base.@kwdef struct CGMESImportConfig
   path::String = ""
@@ -342,6 +349,7 @@ Base.@kwdef struct CGMESImportConfig
   vset_min_pu::Float64 = 0.5
   vset_max_pu::Float64 = 1.5
   multi_slack::Bool = true
+  start_values::Symbol = :flat
 end
 
 """
@@ -548,6 +556,10 @@ const SUPPORTED_POWERFLOW_METHOD = :rectangular
 const POWERFLOW_START_ANGLE_MODE_VALUES = (:classic, :dc, :bus_va_blend, :matpower_va)
 const POWERFLOW_START_VOLTAGE_MODE_VALUES = (:classic, :pv_gen_vg, :pv_bus_vm, :all_bus_vm, :profile_blend)
 const POWERFLOW_START_PROFILE_SOURCE_VALUES = (:flat, :dc, :bus_metadata, :historical_profile, :matpower_reference, :state_estimation, :scada_snapshot)
+# CGMES-only start-value selection: :flat = synthetic flat start (the solver
+# earns the solution itself), :sv = start from the delivery's imported
+# SvVoltage state. Wins over power_flow(.start_mode).flatstart on CGMES runs.
+const CGMES_START_VALUES_VALUES = (:flat, :sv)
 const TRUST_REGION_STEP_MODE_VALUES = (:scaled, :dogleg)
 const QLIMIT_START_MODE_VALUES = (:iteration, :auto, :iteration_or_auto)
 const QLIMIT_ENFORCEMENT_MODE_VALUES = (:active_set, :classic_simultaneous, :classic_one_at_a_time)
@@ -1043,6 +1055,7 @@ function CGMESImportConfig(raw::AbstractDict)
     vset_min_pu = _validate_nonnegative("cgmes_import.vset_min_pu", _as_float_cfg(_raw_get(merged, "vset_min_pu", 0.5))),
     vset_max_pu = _validate_positive("cgmes_import.vset_max_pu", _as_float_cfg(_raw_get(merged, "vset_max_pu", 1.5))),
     multi_slack = _as_bool_cfg(_raw_get(merged, "multi_slack", true)),
+    start_values = _validate_allowed_symbol("cgmes_import.start_values", _as_symbol_cfg(_raw_get(merged, "start_values", :flat)), CGMES_START_VALUES_VALUES),
   )
 end
 
