@@ -263,7 +263,4 @@ Reading the table:
     network itself solves.
   - warn counts "warning:" importer messages (substituted values).""")
 
-println("\nDone. Next steps to explore:")
-println("  - summarizeCGMES(path = <your delivery>) on any CGMES 2.4.15 folder/ZIP")
-println("  - res.shortcircuit — typed source data for future IEC 60909 work (issue #277)")
-println("  - task_plan_cgmes_import.md — staging plan (node-breaker, controllers, 3.0 …)")
+println("\nDone")
