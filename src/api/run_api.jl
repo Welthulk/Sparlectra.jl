@@ -331,6 +331,35 @@ function _normalize_case_format(value)::Symbol
 end
 
 """Cheap CGMES sniff: a folder, or a ZIP holding CGMES RDF/XML payloads."""
+# Resolve the delivery parts of one CGMES run: the case itself, any extra
+# parts from cgmes_import.path (typically the boundary set), and — for a bare
+# base case — a boundary delivery sitting next to it in the same directory
+# (ENTSO-E names them "...Boundary..." or "..._BD_..."). Returns the path list
+# plus whether the boundary was autodetected. Shared by the power-flow CGMES
+# branch and the short-circuit service run.
+function _cgmes_delivery_paths(case_path::AbstractString, cgmes_cfg)::Tuple{Vector{String},Bool}
+  extra = filter(!isempty, strip.(split(cgmes_cfg.path, ';')))
+  paths = String[String(case_path)]
+  for p in extra
+    p == case_path || push!(paths, String(p))
+  end
+  length(paths) > 1 && return paths, false
+  neighbours = try
+    readdir(dirname(abspath(case_path)))
+  catch
+    String[]
+  end
+  for n in neighbours
+    occursin(r"(?i)boundary|_bd_|_bd\.", n) || continue
+    cand = joinpath(dirname(abspath(case_path)), n)
+    cand == abspath(case_path) && continue
+    (isdir(cand) || endswith(lowercase(n), ".zip")) || continue
+    push!(paths, cand)
+    return paths, true
+  end
+  return paths, false
+end
+
 function _looks_like_cgmes(case_path::AbstractString)::Bool
   isdir(case_path) && return true
   lowercase(splitext(case_path)[2]) == ".zip" || return false
@@ -678,31 +707,8 @@ function _run_sparlectra_api(;
   if detected_case_format === :cgmes
     emit_phase("reading_cgmes_delivery")
     cgmes_cfg = config.cgmes
-    # `path` may add further parts (typically the boundary set) to the case
-    extra = filter(!isempty, strip.(split(cgmes_cfg.path, ';')))
-    paths = String[case_path]
-    for p in extra
-      p == case_path || push!(paths, String(p))
-    end
-    # A delivery uploaded as a bare base case has no boundary set with it.
-    # Rather than failing, pick up a boundary delivery sitting next to it in
-    # the same directory (ENTSO-E names them "...Boundary..." or "..._BD_...").
-    if length(paths) == 1
-      neighbours = try
-        readdir(dirname(abspath(case_path)))
-      catch
-        String[]
-      end
-      for n in neighbours
-        occursin(r"(?i)boundary|_bd_|_bd\.", n) || continue
-        cand = joinpath(dirname(abspath(case_path)), n)
-        cand == abspath(case_path) && continue
-        (isdir(cand) || endswith(lowercase(n), ".zip")) || continue
-        push!(paths, cand)
-        emit_phase("cgmes_boundary_autodetected")
-        break
-      end
-    end
+    paths, boundary_autodetected = _cgmes_delivery_paths(case_path, cgmes_cfg)
+    boundary_autodetected && emit_phase("cgmes_boundary_autodetected")
     cgmes_result = try
       importCGMES(
         path = length(paths) == 1 ? paths[1] : paths,

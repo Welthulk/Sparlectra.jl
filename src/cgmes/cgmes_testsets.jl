@@ -40,6 +40,9 @@ entry): alias → subdirectories of the extracted package that form the
 delivery (base case plus boundary set where one exists).
 """
 const CGMES_TESTSET_ALIASES = Dict{String,Vector{String}}(
+  # convenience shorthand: "microgrid" is the BE base configuration — the
+  # reference demonstrator used throughout the docs and tests
+  "microgrid" => [joinpath(_MG, "CGMES_v2.4.15_MicroGridTestConfiguration_BC_BE_v2"), joinpath(_MG, "CGMES_v2.4.15_MicroGridTestConfiguration_BD_v2")],
   "microgrid_be" => [joinpath(_MG, "CGMES_v2.4.15_MicroGridTestConfiguration_BC_BE_v2"), joinpath(_MG, "CGMES_v2.4.15_MicroGridTestConfiguration_BD_v2")],
   "microgrid_nl" => [joinpath(_MG, "CGMES_v2.4.15_MicroGridTestConfiguration_BC_NL_v2"), joinpath(_MG, "CGMES_v2.4.15_MicroGridTestConfiguration_BD_v2")],
   "microgrid_assembled" => [joinpath(_MG, "CGMES_v2.4.15_MicroGridTestConfiguration_BC_Assembled_v2"), joinpath(_MG, "CGMES_v2.4.15_MicroGridTestConfiguration_BD_v2")],
@@ -48,6 +51,10 @@ const CGMES_TESTSET_ALIASES = Dict{String,Vector{String}}(
   "fullgrid" => [joinpath("FullGrid", "CGMES_v2.4.15_FullGridTestConfiguration_BB_BE_v2"), joinpath("FullGrid", "CGMES_v2.4.15_FullGridTestConfiguration_BD_v1")],
   "fullgrid_nb" => [joinpath("FullGrid", "CGMES_v2.4.15_FullGridTestConfiguration_NB_BE_v4"), joinpath("FullGrid", "CGMES_v2.4.15_FullGridTestConfiguration_BD_v1")],
   "realgrid" => [joinpath("RealGrid", "CGMES_v2.4.15_RealGridTestConfiguration_v2")],
+  # same directories the CGMES example suite validates (bus-branch base case
+  # vs. node-breaker complete case, each with the MiniGrid boundary set)
+  "minigrid" => [joinpath("MiniGrid", "BusBranch", "CGMES_v2.4.15_MiniGridTestConfiguration_BaseCase_v3"), joinpath("MiniGrid", "BusBranch", "CGMES_v2.4.15_MiniGridTestConfiguration_Boundary_v3")],
+  "minigrid_nb" => [joinpath("MiniGrid", "NodeBreaker", "CGMES_v2.4.15_MiniGridTestConfiguration_BaseCase_Complete_v3"), joinpath("MiniGrid", "NodeBreaker", "CGMES_v2.4.15_MiniGridTestConfiguration_Boundary_v3")],
 )
 
 # --- second source: ENTSO-E ReliCapGrid (GitHub, CGMES 3.0) ----------------

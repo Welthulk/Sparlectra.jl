@@ -12,7 +12,7 @@ julia --project=. examples/<folder>/<example>.jl
 or run a whole topic through its suite runner (fresh subprocess per example,
 summary at the end): `run_powerflow_suite.jl`, `run_others_suite.jl`,
 `run_state_estimation_suite.jl`, `run_val_dtf_suite.jl`,
-`run_cgmes_suite.jl`.
+`run_cgmes_suite.jl`, `run_short_circuit_suite.jl`.
 
 ## Power flow and network operation
 
@@ -27,6 +27,9 @@ summary at the end): `run_powerflow_suite.jl`, `run_others_suite.jl`,
 | `exp_dc_powerflow.jl` | Standalone DC power flow (`rundcpf!`), DC-seeded AC start | powerflow |
 | `exp_current_iteration_start.jl` | Guarded current-iteration start pre-solve via config overrides | powerflow |
 | `exp_diagnose_self_check.jl` | `run_fixed_reference_self_check` and the narrative `diagnose.log` report | others |
+| `exp_short_circuit.jl` | `runShortCircuit!` (IEC 60909-0) on a hand-built feeder+machine net — Ik'' max/min and the safety flag on defaulted data | short_circuit |
+| `exp_short_circuit_reference.jl` | PASS/FAIL check against the documented reference table (`docs/dev/short_circuit_reference_table.md`) | short_circuit |
+| `exp_short_circuit_cgmes.jl` | `runShortCircuit!` on the ENTSO-E MicroGrid BE delivery from the local test-set cache | short_circuit |
 | `exp_synthetic_tiled_grid_pf_perf.jl` | Synthetic tiled-grid PF performance study | powerflow |
 | `qlimit_large_case_mode_comparison.jl` | Q-limit enforcement modes on large cases | powerflow |
 | `apslf_demo.jl` | APSLF analytic solver as standalone/primary/start-value backend | powerflow |

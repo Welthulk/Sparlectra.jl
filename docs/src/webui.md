@@ -449,6 +449,25 @@ other artifacts as `diagnose_self_check_config.yaml` for inspection.
 Programmatically, the same behavior is available as
 [`run_fixed_reference_self_check`](@ref).
 
+### Short circuit action
+
+The **Short circuit** button next to Diagnose evaluates the balanced
+three-phase short-circuit currents (IEC 60909-0, [`runShortCircuit!`](@ref))
+for every bus of a CGMES delivery — maximum and minimum case in one run,
+**without any power-flow solve**. The button is only selectable when the
+selected case is a CGMES delivery that actually carries short-circuit source
+data (synchronous machines, feeder short-circuit currents, or equivalent
+impedances); the form checks the delivery contents server-side and disables
+the button with an explanatory tooltip otherwise. The run writes
+`short_circuit_max.csv` and `short_circuit_min.csv` (per-bus `Ik''`, `Sk''`,
+`κ`, `i_p`, plus the safety flag and its reasons), a `run.log` narrative
+including the harvested-data coverage report, and a result-page summary row —
+rows with defaulted/skipped data render as a warning badge because a flagged
+`Ik''max` is a lower bound. A delivery without usable sources fails with
+`short_circuit_data_missing` (coverage report in `run.log`) instead of
+producing empty tables; non-CGMES cases fail with
+`short_circuit_requires_cgmes`.
+
 The **Export detailed result CSV files** checkbox is off by default because
 large networks can produce large files. When enabled for a successful run, it
 writes Excel-friendly UTF-8 artifacts:

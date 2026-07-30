@@ -31,6 +31,7 @@ struct CGMESShortCircuitData
   ac_line_segments::Vector{NamedTuple}
   transformer_ends::Vector{NamedTuple}
   equivalent_injections::Vector{NamedTuple}
+  asynchronous_machines::Vector{NamedTuple}
 end
 
 """
@@ -1486,6 +1487,11 @@ function _mapInjections!(net, store, topo, created, svmap, ctx::_MapCtx; multi_s
     p = num(am, :p, 0.0)
     q = num(am, :q, 0.0)
     Sparlectra.addProsumer!(net = net, busName = bus, type = "ASYNCHRONOUSMACHINE", p = p, q = q, defer_bus_type_refresh = true)
+    # The prosumer constructor collapses the type string to a generic Load
+    # component; keep the true component type on the comp so the
+    # short-circuit evaluation can recognize motors (skip + lower-bound
+    # flag).
+    net.prosumpsVec[end].comp.cTyp = Sparlectra.AsynchronousMachine
     # No internal staging vocabulary in user-facing importer messages.
     push!(ctx.messages, "notice: AsynchronousMachine $(name) — fixed PQ operating point from SSH (p=$(round(p; digits = 2)) MW, q=$(round(q; digits = 2)) MVAr, load convention) at $(bus)")
   end
@@ -1854,7 +1860,30 @@ function collectShortCircuitData(store::CGMESStore, topo::CGMESTopology)::CGMESS
       )
     end
   end
-  return CGMESShortCircuitData(enis, machines, lines, ptes, eis)
+  # Asynchronous machines: everything the IEC 60909-0 §6.7 motor
+  # impedance needs — locked-rotor current ratio, R/X of the locked rotor,
+  # and the rated data to form S_rM (directly, or via mechanical power with
+  # efficiency and power factor).
+  asms = NamedTuple[]
+  for o in objectsOf(store, :AsynchronousMachine)
+    push!(
+      asms,
+      (
+        mrid = o.mrid,
+        name = str(o, :name),
+        bus = _busOrNothing(topo, o),
+        iaIrRatio = num(o, :iaIrRatio),
+        rxLockedRotorRatio = num(o, :rxLockedRotorRatio),
+        efficiency_percent = num(o, :efficiency),
+        ratedMechanicalPower_MW = num(o, :ratedMechanicalPower),
+        polePairNumber = num(o, :polePairNumber),
+        ratedS_MVA = num(o, :ratedS),
+        ratedU_kV = num(o, :ratedU),
+        ratedPowerFactor = num(o, :ratedPowerFactor),
+      ),
+    )
+  end
+  return CGMESShortCircuitData(enis, machines, lines, ptes, eis, asms)
 end
 
 # --- public API -------------------------------------------------------------

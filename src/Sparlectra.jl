@@ -381,6 +381,9 @@ export
   compareWithSV,                          # Compare a solved CGMES import against its SV profile.
   shortCircuitCoverage,                   # Completeness of harvested short-circuit data (#277 input).
   printShortCircuitCoverage,              # Readable rendering of the coverage rows.
+  runShortCircuit!,                       # IEC 60909 balanced Ik'' max/min per fault bus (#277).
+  ShortCircuitResult,                     # Result type of runShortCircuit! (safety-flagged rows).
+  printShortCircuitResult,                # Pretty-printer for ShortCircuitResult (CSV via the service run).
   _createDict,
   apply_matpower_bus_voltage!,            # Apply MATPOWER bus voltage data.
   apply_mp_bus_vmva_init!,                # Initialize Vm/Va from MATPOWER data.
@@ -634,6 +637,13 @@ include("FetchMatpowerCase.jl")
 using .FetchMatpowerCase: ensure_casefile
 include("measurements.jl")
 include("state_estimation.jl")
+# IEC 60909 balanced short-circuit evaluation (issue #277). Consumes
+# Net + the CGMES short-circuit harvest; reuses the equicircuit branch
+# helpers and the AC-island decomposition — the PF solver stays untouched.
+include("shortcircuit/short_circuit.jl")
+# Web UI/service short-circuit run: needs the ShortCircuitResult
+# type above and the API result helpers included earlier.
+include("api/run_short_circuit_service.jl")
 include("precompile.jl")
 #! format: on
 end # module Sparlectra

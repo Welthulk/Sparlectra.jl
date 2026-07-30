@@ -516,6 +516,39 @@ end
 
 _webui_is_dat_casefile(casefile::AbstractString)::Bool = lowercase(splitext(strip(String(casefile)))[2]) == ".dat"
 
+# "Short circuit" button gating (the button is only
+# selectable when the data is actually there): cheap byte scan over the
+# delivery's XML contents for short-circuit source markers — synchronous
+# machines, feeder short-circuit currents, or equivalent-injection
+# impedances. In-memory via collectCGMESFiles (nested ZIPs included), cached
+# per path+mtime so a 6209-bus delivery is scanned once, not on every form
+# render. A scan error must NOT lock the button: the service run reports
+# missing data with an explicit failure reason either way.
+const _WEBUI_SC_DATA_CACHE = Dict{String,Tuple{Float64,Bool}}()
+const _WEBUI_SC_DATA_CACHE_LOCK = ReentrantLock()
+
+function _webui_case_has_short_circuit_data(casefile::AbstractString)::Bool
+  path = strip(String(casefile))
+  (isfile(path) || isdir(path)) || return true
+  stamp = try
+    mtime(path)
+  catch
+    0.0
+  end
+  return lock(_WEBUI_SC_DATA_CACHE_LOCK) do
+    hit = get(_WEBUI_SC_DATA_CACHE, path, nothing)
+    hit !== nothing && hit[1] == stamp && return hit[2]
+    result = try
+      files = CGMESImporter.collectCGMESFiles(path)
+      any(occursin("SynchronousMachine", f.content) || occursin("maxInitialSymShCCurrent", f.content) || occursin("EquivalentInjection.x", f.content) for f in files)
+    catch
+      true
+    end
+    _WEBUI_SC_DATA_CACHE[path] = (stamp, result)
+    result
+  end
+end
+
 # CGMES deliveries arrive either as a ZIP (typical upload) or as an unpacked
 # folder; both are recognised by the API's auto-detection, this only
 # pre-selects the matching form option.
@@ -609,6 +642,7 @@ function powerflow_webui_request(form::AbstractDict; default_output_root::Abstra
     # this value). There is no "Run diagnostics" checkbox for a normal run.
     "run_diagnostics" => false,
     "diagnose_mode" => _webui_parse_form_value(_webui_form_value(form, "diagnose_mode", "false"), Bool, "diagnose_mode"),
+    "short_circuit_mode" => _webui_parse_form_value(_webui_form_value(form, "short_circuit_mode", "false"), Bool, "short_circuit_mode"),
     "detailed_result_csv" => request_options["detailed_result_csv"],
     "detailed_result_csv_format" => request_options["detailed_result_csv_format"],
   )

@@ -219,6 +219,7 @@ function shortCircuitCoverage(sc::CGMESShortCircuitData)::Vector{NamedTuple}
     ("ACLineSegment", sc.ac_line_segments),
     ("PowerTransformerEnd", sc.transformer_ends),
     ("EquivalentInjection", sc.equivalent_injections),
+    ("AsynchronousMachine", sc.asynchronous_machines),
   )
     n = length(records)
     attrs = NamedTuple[]

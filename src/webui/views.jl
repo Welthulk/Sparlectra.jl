@@ -371,6 +371,27 @@ function render_powerflow_form(;
     "auto"
   end
   dat_case_assistance = _webui_is_dat_casefile(effective_case_value)
+  # "Short circuit" button gating (selectable only when
+  # the data is there): CGMES case + a delivery that actually carries
+  # short-circuit source data. An unresolvable path (e.g. a cgmes: alias not
+  # fetched yet) stays enabled — the service run reports missing data with an
+  # explicit reason either way.
+  sc_is_cgmes = case_format_value == "cgmes" || _webui_is_cgmes_casefile(effective_case_value) || startswith(lowercase(strip(effective_case_value)), "cgmes:")
+  sc_has_data = if !sc_is_cgmes
+    false
+  else
+    sc_resolved = try
+      _resolve_powerflow_casefile(effective_case_value, effective_case_directory)
+    catch
+      nothing
+    end
+    sc_resolved === nothing ? true : _webui_case_has_short_circuit_data(sc_resolved)
+  end
+  sc_state = !sc_is_cgmes ? "not-cgmes" : (sc_has_data ? "ready" : "missing-data")
+  sc_disabled_attr = sc_state == "ready" ? "" : " disabled"
+  sc_title = sc_state == "ready" ? "Balanced short-circuit currents (IEC 60909-0): Ik'' max/min per bus from the delivery's harvested short-circuit data — no power-flow solve involved." :
+    sc_state == "missing-data" ? "This delivery carries no usable short-circuit source data (no machines, feeder short-circuit currents, or equivalent impedances)." :
+    "Short-circuit evaluation needs a CGMES delivery with harvested short-circuit data."
   dtf_details_attrs = dat_case_assistance ? " class=\"span-2 dtf-internal-section is-dat-selected\" open" : " class=\"span-2 dtf-internal-section\""
   dat_hint_html = dat_case_assistance ? "<p id=\"dtf-dat-format-hint\" class=\"field-hint dat-format-hint span-2\" role=\"status\"><strong>.DAT selected:</strong> using internal DTF diagnostics.</p>" : "<p id=\"dtf-dat-format-hint\" class=\"field-hint dat-format-hint span-2\" role=\"status\" hidden></p>"
   case_options = join((begin
@@ -532,7 +553,7 @@ $(config_maintenance)
 </fieldset>
 <label class=\"check span-2\"><input name=\"ignore_webui_settings\" type=\"hidden\" value=\"false\"><input name=\"ignore_webui_settings\" type=\"checkbox\" value=\"true\">$(_webui_field_label("ignore_webui_settings", "Ignore Web UI settings and use configuration defaults"))</label>
 </details>
-<div class=\"span-2 actions\"><button class=\"powerflow-submit\" type=\"submit\"><span class=\"submit-spinner\" aria-hidden=\"true\"></span><span class=\"submit-label\">Start PowerFlow run</span><span class=\"submit-progress-label\" role=\"status\" aria-live=\"polite\">Running PowerFlow…</span></button><button class=\"powerflow-submit diagnose-submit\" type=\"submit\" name=\"diagnose_mode\" value=\"true\" title=\"Run this case in diagnostic mode: evaluates the mismatch at the case's own stored VM/VA (no corrective Newton step) and writes a diagnostic report to diagnose.log.\"><span class=\"submit-spinner\" aria-hidden=\"true\"></span><span class=\"submit-label\">Diagnose</span><span class=\"submit-progress-label\" role=\"status\" aria-live=\"polite\">Running diagnosis…</span></button></div></form>
+<div class=\"span-2 actions\"><button class=\"powerflow-submit\" type=\"submit\"><span class=\"submit-spinner\" aria-hidden=\"true\"></span><span class=\"submit-label\">Start PowerFlow run</span><span class=\"submit-progress-label\" role=\"status\" aria-live=\"polite\">Running PowerFlow…</span></button><button class=\"powerflow-submit diagnose-submit\" type=\"submit\" name=\"diagnose_mode\" value=\"true\" title=\"Run this case in diagnostic mode: evaluates the mismatch at the case's own stored VM/VA (no corrective Newton step) and writes a diagnostic report to diagnose.log.\"><span class=\"submit-spinner\" aria-hidden=\"true\"></span><span class=\"submit-label\">Diagnose</span><span class=\"submit-progress-label\" role=\"status\" aria-live=\"polite\">Running diagnosis…</span></button><button class=\"powerflow-submit short-circuit-submit\" type=\"submit\" name=\"short_circuit_mode\" value=\"true\" data-short-circuit-button data-sc-state=\"$(sc_state)\"$(sc_disabled_attr) title=\"$(_webui_escape(sc_title))\"><span class=\"submit-spinner\" aria-hidden=\"true\"></span><span class=\"submit-label\">Short circuit</span><span class=\"submit-progress-label\" role=\"status\" aria-live=\"polite\">Computing short circuit…</span></button></div></form>
 <script>
 document.addEventListener('DOMContentLoaded', function () {
   const powerflowForm = document.getElementById('powerflow-run-form');
@@ -619,16 +640,41 @@ document.addEventListener('DOMContentLoaded', function () {
       el.classList.toggle('disabled', !isCgmes);
       el.querySelectorAll('select').forEach(function (control) { control.disabled = !isCgmes; });
     });
+    // "Short circuit" button: selectable only for CGMES cases; the
+    // server-side render additionally locks it when the delivery carries no
+    // short-circuit source data (data-sc-state="missing-data") — typing a
+    // new case name client-side cannot re-enable past that check until the
+    // page reloads with the case resolved.
+    const scButton = document.querySelector('[data-short-circuit-button]');
+    if (scButton !== null) {
+      const scDataMissing = scButton.getAttribute('data-sc-state') === 'missing-data';
+      scButton.disabled = !isCgmes || scDataMissing;
+    }
   };
   const updateDatCaseAssistance = function () {
     const effectiveValue = caseInput === null ? '' : caseInput.value.trim();
     const isDatCase = new RegExp('\\\\.dat\$', 'i').test(effectiveValue);
-    if (isDatCase && caseFormat !== null) caseFormat.value = 'dtf_for001';
     // client-side CGMES markers mirror the server heuristic where the browser
     // can: explicit cgmes: alias input or a .zip delivery (directory paths
     // resolve server-side only)
     const isCgmesCase = new RegExp('^cgmes:', 'i').test(effectiveValue) || new RegExp('\\\\.zip\$', 'i').test(effectiveValue);
-    if (isCgmesCase && caseFormat !== null) caseFormat.value = 'cgmes';
+    if (caseFormat !== null) {
+      // Auto-set formats must fall BACK to auto when the typed case stops
+      // matching — otherwise a CGMES selection sticks after switching to a
+      // MATPOWER case, leaving the Short-circuit button selectable and the
+      // MATPOWER import conventions grayed out. Only formats this automation
+      // set itself are reverted; a manual choice stays untouched.
+      if (isDatCase) {
+        caseFormat.value = 'dtf_for001';
+        caseFormat.dataset.autoFormat = 'dtf_for001';
+      } else if (isCgmesCase) {
+        caseFormat.value = 'cgmes';
+        caseFormat.dataset.autoFormat = 'cgmes';
+      } else if (caseFormat.dataset.autoFormat && caseFormat.value === caseFormat.dataset.autoFormat) {
+        caseFormat.value = 'auto';
+        delete caseFormat.dataset.autoFormat;
+      }
+    }
     if (dtfInternalSection !== null) {
       dtfInternalSection.classList.toggle('is-dat-selected', isDatCase);
       if (isDatCase) dtfInternalSection.open = true;
@@ -639,8 +685,17 @@ document.addEventListener('DOMContentLoaded', function () {
     }
     updateImportConventionApplicability();
   };
-  if (caseFormat !== null) caseFormat.addEventListener('change', updateImportConventionApplicability);
+  if (caseFormat !== null) {
+    caseFormat.addEventListener('change', function () {
+      // a manual format choice overrides and clears the automation marker
+      delete caseFormat.dataset.autoFormat;
+      updateImportConventionApplicability();
+    });
+  }
   updateDatCaseAssistance();
+  // bfcache restores (back-navigation from a result page) skip
+  // DOMContentLoaded — re-evaluate the case-dependent gating there too.
+  window.addEventListener('pageshow', updateDatCaseAssistance);
   const solverRadios = document.querySelectorAll('input[data-solver-radio]');
   const apslfSolverOptions = document.querySelector('[data-apslf-solver-options]');
   const apslfStartOptions = document.querySelector('[data-apslf-start-options]');
@@ -1107,6 +1162,23 @@ function _webui_wrong_branch_badge(result::AbstractDict)::Union{Nothing,String}
   return "<span class=\"status-badge $(css_class)\">$(_webui_escape(label))</span>"
 end
 
+# Short-circuit runs: compact summary from the run metadata. A flagged
+# Ik''max is a lower bound (skipped/defaulted contributions), so flags render
+# as a warning badge rather than plain text. Returns nothing for other runs.
+function _webui_short_circuit_summary(result::AbstractDict)::Union{Nothing,String}
+  metadata = get(result, "metadata", Dict{String,Any}())
+  metadata isa AbstractDict || return nothing
+  get(metadata, "run_mode", "") == "short_circuit" || return nothing
+  worst_bus = string(get(metadata, "sc_worst_bus", ""))
+  ik = get(metadata, "sc_max_ik_kA", nothing)
+  fmt = x -> x isa Real && isfinite(x) ? string(round(Float64(x); sigdigits = 5)) : "n/a"
+  flagged = get(metadata, "sc_flagged_rows", 0)
+  rows = get(metadata, "sc_case_rows", 0)
+  text = string("worst Ik''max ", fmt(ik), " kA @ ", worst_bus, " (", rows, " buses)")
+  badge = flagged isa Real && flagged > 0 ? " <span class=\"status-badge status-warning\">$(flagged) flagged — lower bound</span>" : ""
+  return "<code>" * _webui_escape(text) * "</code>" * badge
+end
+
 # CGMES runs: compact SV-comparison summary from the run metadata (written by
 # the mandatory compareWithSV check). Returns nothing for non-CGMES runs —
 # the metadata keys only exist on the CGMES path.
@@ -1148,6 +1220,8 @@ function render_powerflow_result(result::AbstractDict)::String
     wrong_branch_badge === nothing || push!(base, ("Wrong-branch check", wrong_branch_badge))
     sv_summary = _webui_sv_compare_summary(result)
     sv_summary === nothing || push!(base, ("SV comparison", sv_summary))
+    sc_summary = _webui_short_circuit_summary(result)
+    sc_summary === nothing || push!(base, ("Short circuit", sc_summary))
     Tuple(base)
   end
   result_summary = "<div class=\"result-summary\">" * join(("<div$(label in ("Elapsed time", "Solver time", "Total time") ? " class=\"runtime-card\"" : "")><span class=\"summary-label\">$(label)</span>$(value)</div>" for (label, value) in summary_rows), "") * "</div>"

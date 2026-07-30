@@ -37,7 +37,10 @@ const SUITE_SPECS = ExampleSpec[
   ExampleSpec(name = "cgmes_export_demo", file = joinpath("experimental", "cgmes_export_demo.jl"), optional = true, purpose = "experimental Stage-1 CGMES 2.4.15 export on a small net"),
 ]
 
-const SUITE_NOTES = ["DTF validation examples are covered by `examples/run_val_dtf_suite.jl` and are not part of this suite."]
+const SUITE_NOTES = [
+  "DTF validation examples are covered by `examples/run_val_dtf_suite.jl` and are not part of this suite.",
+  "Short-circuit examples are covered by `examples/run_short_circuit_suite.jl` and are not part of this suite.",
+]
 
 # SPARLECTRA_EXAMPLE_SUITE_NO_MAIN=1 is a test-only escape hatch: it lets the
 # test suite include this file to inspect the registry without running it.

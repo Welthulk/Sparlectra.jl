@@ -299,6 +299,14 @@ cgmes_import:
   # either way. Allowed values: flat, sv
   start_values: flat
 
+# IEC 60909 balanced short-circuit evaluation (runShortCircuit!, SC-1).
+short_circuit:
+  # Scalar override for the IEC 60909-0 voltage factor c. 0 = automatic
+  # Table-1 defaults by voltage level and case (c_max/c_min); a positive
+  # value (0.5..1.2) replaces the table for every bus — for expert or
+  # verification runs where a worked example prescribes the factor.
+  c_factor: 0.0
+
 matpower_import:
   # MATPOWER case filename/path resolved by single-case runner paths.
   case: case14.m

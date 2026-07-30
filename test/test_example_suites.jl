@@ -27,7 +27,7 @@
 #   julia --project=. -e 'using Test; include("test/test_example_suites.jl")'
 
 const _EXAMPLES_DIR = normpath(joinpath(@__DIR__, "..", "examples"))
-const _SUITE_SCRIPTS = ["run_powerflow_suite.jl", "run_state_estimation_suite.jl", "run_others_suite.jl"]
+const _SUITE_SCRIPTS = ["run_powerflow_suite.jl", "run_state_estimation_suite.jl", "run_others_suite.jl", "run_short_circuit_suite.jl"]
 
 function _sandbox_module()
   m = Module()

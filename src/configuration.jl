@@ -353,6 +353,24 @@ Base.@kwdef struct CGMESImportConfig
 end
 
 """
+    ShortCircuitConfig
+
+Options of the `short_circuit` configuration block — the IEC 60909 balanced
+short-circuit evaluation (`runShortCircuit!`).
+
+# Fields
+- `c_factor::Float64`: scalar override for the IEC 60909-0 voltage factor
+  `c`. `0.0` (default) selects the hardcoded Table-1 values by nominal
+  voltage level and case (`c_max`/`c_min`); a positive value replaces the
+  table for every bus — intended for expert/verification runs where a worked
+  example prescribes the factor. A configurable per-voltage-level table is
+  not configurable.
+"""
+Base.@kwdef struct ShortCircuitConfig
+  c_factor::Float64 = 0.0
+end
+
+"""
     MatpowerImportConfig
 
 Typed MATPOWER import/example configuration for case selection and import
@@ -536,6 +554,7 @@ Base.@kwdef struct SparlectraConfig
   state_estimation::StateEstimationConfig = StateEstimationConfig()
   matpower::MatpowerImportConfig = MatpowerImportConfig()
   cgmes::CGMESImportConfig = CGMESImportConfig()
+  shortcircuit::ShortCircuitConfig = ShortCircuitConfig()
   matpower_export::MatpowerExportConfig = MatpowerExportConfig()
   transformer::TransformerConfig = TransformerConfig()
   performance::PerformanceConfig = PerformanceConfig()
@@ -1059,6 +1078,15 @@ function CGMESImportConfig(raw::AbstractDict)
   )
 end
 
+function ShortCircuitConfig(raw::AbstractDict)
+  merged = _merged_section(raw, "short_circuit")
+  c = _as_float_cfg(_raw_get(merged, "c_factor", 0.0))
+  # 0.0 is the "use the IEC 60909-0 Table 1 defaults" sentinel; a real
+  # override must stay within the physically sensible band around 1.0.
+  (c == 0.0 || (isfinite(c) && 0.5 <= c <= 1.2)) || throw(ArgumentError("short_circuit.c_factor must be 0 (automatic IEC 60909-0 Table 1) or within [0.5, 1.2]; got $(c)."))
+  return ShortCircuitConfig(c_factor = c)
+end
+
 function MatpowerImportConfig(raw::AbstractDict)
   merged = _merged_section(raw, "matpower")
   return MatpowerImportConfig(
@@ -1226,6 +1254,7 @@ function SparlectraConfig(raw::AbstractDict)
     state_estimation = StateEstimationConfig(raw),
     matpower = MatpowerImportConfig(raw),
     cgmes = CGMESImportConfig(raw),
+    shortcircuit = ShortCircuitConfig(raw),
     matpower_export = MatpowerExportConfig(raw),
     transformer = TransformerConfig(raw),
     performance = PerformanceConfig(raw),

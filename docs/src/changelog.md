@@ -1,6 +1,41 @@
-# Version 0.8.17 — 2026-07-30
+# Version 0.9.0 — 2026-07-30
 
-Hardening CGMES import
+Hardening CGMES import; first IEC 60909 short-circuit stage ([#277](https://github.com/Welthulk/Sparlectra.jl/issues/277))
+
+## Breaking Changes
+
+**Default start uses imported voltages.** The shipped configuration now sets
+the legacy `power_flow.flatstart` to `false`, so imported start voltages —
+MATPOWER `VM`/`VA` and especially the CGMES `SvVoltage` state — reach the
+solver by default. This changes the effective start point of any run that did
+not set the key explicitly: MATPOWER runs now start from the case's own
+`VM`/`VA` instead of the projected flat start (same converged results,
+different iteration path), and CGMES runs no longer lose their SV state
+silently — which is what made the RealGrid case diverge in the Web UI while
+it solves in a handful of iterations from its SV state. Set
+`flatstart: true` to restore the previous behavior; CGMES runs are steered by
+`cgmes_import.start_values` regardless.
+
+## New Features
+
+**Balanced short-circuit currents (IEC 60909-0, SC-1).** `runShortCircuit!`
+computes the initial symmetrical short-circuit current `Ik''` (max and min),
+`Sk''`, and the peak current `i_p` per fault bus from the CGMES
+short-circuit harvest — Z-bus column solve per island, voltage factors per
+IEC Table 1 (`short_circuit.c_factor` as scalar expert override, default
+automatic). Because the result is safety-relevant, substituted defaults and
+skipped contributions (e.g. motors without harvested attributes) are flagged
+on the affected result rows themselves; a flagged `Ik''max` is a lower
+bound. Design decisions of record: per-bus API with the all-bus sweep as a
+loop, hardcoded c-table plus scalar override, data-driven motor inclusion
+with the lower-bound flag, separate `ShortCircuitResult` type. The Web UI
+gets a dedicated **Short circuit** button next to Diagnose — selectable only
+for CGMES cases whose delivery actually carries short-circuit source data —
+that runs both cases without a power-flow solve and writes
+`short_circuit_max.csv` / `short_circuit_min.csv` plus a result-page summary
+(flagged rows render as a lower-bound warning badge). See
+[Short-Circuit Analysis](short_circuit.md)
+([#277](https://github.com/Welthulk/Sparlectra.jl/issues/277)).
 
 ## Improvements
 
@@ -31,18 +66,6 @@ sub-transmission levels, whose normal operating spread produced false
 `SUSPECT` verdicts (a real CGMES snapshot's healthy 45 kV feeders were
 flagged while its 380 kV level was clean). See
 [Configuration](configuration.md).
-
-**Default start uses imported voltages** *(behavior change)*. The shipped
-configuration now sets the legacy `power_flow.flatstart` to `false`, so
-imported start voltages — MATPOWER `VM`/`VA` and especially the CGMES
-`SvVoltage` state — reach the solver by default. This changes the effective
-start point of any run that did not set the key explicitly: MATPOWER runs now
-start from the case's own `VM`/`VA` instead of the projected flat start (same
-converged results, different iteration path), and CGMES runs no longer lose
-their SV state silently — which is what made the RealGrid case diverge in the
-Web UI while it solves in a handful of iterations from its SV state. Set
-`flatstart: true` to restore the previous behavior; CGMES runs are steered by
-`cgmes_import.start_values` regardless.
 
 ## Bugfixes
 

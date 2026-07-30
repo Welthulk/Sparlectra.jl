@@ -210,6 +210,9 @@ function start_powerflow_run(request::AbstractDict; case_directory::Union{Nothin
   diagnose_mode = _service_request_value(request, "diagnose_mode", false)
   diagnose_mode isa Bool || return _service_failure("invalid_request", "diagnose_mode must be boolean.")
   diagnose_mode && (run_diagnostics = true)
+  short_circuit_mode = _service_request_value(request, "short_circuit_mode", false)
+  short_circuit_mode isa Bool || return _service_failure("invalid_request", "short_circuit_mode must be boolean.")
+  (short_circuit_mode && diagnose_mode) && return _service_failure("invalid_request", "short_circuit_mode and diagnose_mode are mutually exclusive.")
   detailed_result_csv = _service_request_value(request, "detailed_result_csv", false)
   detailed_result_csv isa Bool || return _service_failure("invalid_request", "detailed_result_csv must be boolean.")
   detailed_result_csv_semicolon = _service_request_value(request, "detailed_result_csv_semicolon", false)
@@ -252,6 +255,29 @@ function start_powerflow_run(request::AbstractDict; case_directory::Union{Nothin
     if config_overrides isa AbstractDict && haskey(config_overrides, "cgmes_import.start_values")
       config_overrides = Dict{String,Any}(k => v for (k, v) in config_overrides if k != "cgmes_import.start_values")
     end
+  end
+  # Short-circuit runs bypass the power-flow pipeline entirely: CGMES import
+  # + runShortCircuit! max/min + CSV artifacts, same result/registry
+  # conventions (see _run_short_circuit_service). No PF solve is involved.
+  if short_circuit_mode
+    sc_result = try
+      _run_short_circuit_service(casefile, config_file, output_dir, run_id)
+    catch err
+      err isa PowerFlowAborted && rethrow()
+      return _service_failure("execution_error", sprint(showerror, err, catch_backtrace()); run_id = run_id)
+    end
+    try
+      lock(_POWERFLOW_SERVICE_LOCK) do
+        _POWERFLOW_SERVICE_RUNS[sc_result.run_id] = sc_result
+        _write_powerflow_run_index!(root, sc_result)
+      end
+    catch err
+      lock(_POWERFLOW_SERVICE_LOCK) do
+        delete!(_POWERFLOW_SERVICE_RUNS, sc_result.run_id)
+      end
+      return _service_failure("run_index_error", sprint(showerror, err, catch_backtrace()); run_id = run_id)
+    end
+    return to_dict(sc_result)
   end
   # Phase timings collected before the API handoff become service metadata, not
   # operation-log events for every internal solver step.

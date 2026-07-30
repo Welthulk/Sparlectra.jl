@@ -505,6 +505,12 @@ function run_cgmes_importer_tests()
       @test "relicapgrid_cgm" in all_aliases
       @test "svedala_neighbours" in all_aliases
       @test "portheim" in all_aliases
+      # convenience shorthand + the MiniGrid pair (regression: cgmes:minigrid
+      # was not resolvable although the set ships with the conformity package)
+      @test "microgrid" in all_aliases
+      @test "minigrid" in all_aliases
+      @test "minigrid_nb" in all_aliases
+      @test Sparlectra.CGMESImporter.CGMES_TESTSET_ALIASES["microgrid"] == Sparlectra.CGMESImporter.CGMES_TESTSET_ALIASES["microgrid_be"]
     end
 
     # --- real fixtures (optional, offline-safe) -----------------------------
@@ -685,6 +691,86 @@ function run_cgmes_importer_tests()
         rf = run_sparlectra_api(casefile = be, config_file = cfg2, output_dir = out2)
         @test isfile(joinpath(out2, "cgmes.log"))
         @test occursin("# CGMES import report", read(joinpath(out2, "cgmes.log"), String))
+      end
+
+      # Short-circuit plausibility on the complete MicroGrid records (machines and
+      # feeders fully attributed per the compendium): finite positive Ik'' on
+      # every energized bus, max >= min per bus, and no motor-skip flag —
+      # consistent with shortCircuitCoverage (BE carries no
+      # AsynchronousMachine). The analytic reference and safety-flag tests
+      # live in test/test_short_circuit.jl (fast profile).
+      @testset "runShortCircuit! MicroGrid plausibility" begin
+        res = importCGMES(path = [be, bd], name = "MicroGrid_SC")
+        smax = runShortCircuit!(res; case = :max)
+        smin = runShortCircuit!(res; case = :min)
+        @test length(smax.rows) == 12
+        @test all(row.status === :ok for row in smax.rows)
+        @test all(isfinite(row.ik_kA) && row.ik_kA > 0.0 for row in smax.rows)
+        @test all(isfinite(row.ip_kA) && row.ip_kA >= sqrt(2.0) * row.ik_kA for row in smax.rows)
+        mins = Dict(row.bus_idx => row.ik_kA for row in smin.rows)
+        @test all(row.ik_kA >= mins[row.bus_idx] for row in smax.rows)
+        # no AsynchronousMachine in the delivery -> no motor skip, no flags
+        @test !any(ps.comp.cTyp == Sparlectra.AsynchronousMachine for ps in res.net.prosumpsVec)
+        @test all(!row.contains_defaulted_data for row in smax.rows)
+        @test isempty(smax.messages)
+      end
+
+      # MiniGrid carries the full motor attribute set (iaIrRatio,
+      # rxLockedRotorRatio, rated data on all six machines) — the motors are
+      # therefore computed per IEC 60909-0 §6.7 and the maximum case carries
+      # NO lower-bound flags (regression: before the motor formula every
+      # MiniGrid island was flagged).
+      @testset "runShortCircuit! MiniGrid: motors computed, no flags" begin
+        mini = Sparlectra.CGMESImporter.fetchCGMESTestSet("minigrid"; outdir = mktempdir())
+        res = importCGMES(path = mini, name = "MiniGrid_SC")
+        @test !isempty(res.shortcircuit.asynchronous_machines)
+        @test all(m.iaIrRatio !== nothing && m.rxLockedRotorRatio !== nothing for m in res.shortcircuit.asynchronous_machines)
+        smax = runShortCircuit!(res; case = :max)
+        ok = [row for row in smax.rows if row.status === :ok]
+        @test !isempty(ok)
+        @test all(isfinite(row.ik_kA) && row.ik_kA > 0.0 for row in ok)
+        @test all(!row.contains_defaulted_data for row in ok)
+        @test !any(occursin("lower bound", m) for m in smax.messages)
+      end
+
+      # The Web UI "Short circuit" button's service path — CGMES
+      # import + runShortCircuit! max/min without any power-flow solve,
+      # CSV artifacts, registry-compatible result. Negative cases must fail
+      # with explicit reasons, never with empty tables.
+      @testset "short_circuit_mode service run" begin
+        root = mktempdir()
+        cfgsc = joinpath(root, "c.yaml")
+        write(cfgsc, "power_flow:\n  max_iter: 40\n")
+        # the service path accepts case FILES; use the combined alias ZIP
+        # (base + boundary in one delivery, packed from the local cache)
+        zipcase = Sparlectra.CGMESImporter.fetchCGMESTestSet("microgrid_be"; outdir = mktempdir())
+        resp = start_powerflow_run(Dict("casefile" => zipcase, "config_file" => cfgsc, "output_root" => root, "short_circuit_mode" => true))
+        @test resp["success"] === true
+        @test resp["metadata"]["run_mode"] == "short_circuit"
+        rid = resp["run_id"]
+        @test isfile(joinpath(root, rid, "short_circuit_max.csv"))
+        @test isfile(joinpath(root, rid, "short_circuit_min.csv"))
+        max_rows = readlines(joinpath(root, rid, "short_circuit_max.csv"))
+        @test max_rows[1] == "bus,vn_kV,island,status,c,zk_ohm,rx_ratio,ik_kA,sk_MVA,kappa,ip_kA,flagged,reasons"
+        @test length(max_rows) - 1 == 12
+        @test resp["metadata"]["sc_flagged_rows"] == 0
+        @test resp["metadata"]["sc_max_ik_kA"] > 0.0
+        @test occursin("Short-circuit run", read(joinpath(root, rid, "run.log"), String))
+        # run.log carries the coverage report so a flagged run can be audited
+        @test occursin("SynchronousMachine", read(joinpath(root, rid, "run.log"), String))
+
+        # MATPOWER case: explicit rejection, no artifacts
+        mp = start_powerflow_run(Dict("casefile" => ensure_casefile("case14.m"), "config_file" => cfgsc, "output_root" => root, "short_circuit_mode" => true))
+        @test mp["success"] === false
+        @test mp["reason"] == "short_circuit_requires_cgmes"
+
+        # diagnose_mode and short_circuit_mode are mutually exclusive
+        both = start_powerflow_run(Dict("casefile" => zipcase, "config_file" => cfgsc, "output_root" => root, "short_circuit_mode" => true, "diagnose_mode" => true))
+        @test both["success"] === false
+        @test occursin("mutually exclusive", both["message"])
+
+        # data-check gating helper recognizes the real delivery
+        @test Sparlectra._webui_case_has_short_circuit_data(be) == true
       end
 
       # cgmes_import.start_values (WebUI-selectable start state) + the
@@ -1048,7 +1134,10 @@ function run_cgmes_importer_tests()
         # completeness view of the harvested data (#277 input): per class the
         # record count and per attribute the fill rate
         cov = shortCircuitCoverage(rbb.shortcircuit)
-        @test length(cov) == 5
+        # six classes since the AsynchronousMachine motor attributes joined
+        # the harvest (locked-rotor data for the short-circuit evaluation)
+        @test length(cov) == 6
+        @test any(r -> r.class == "AsynchronousMachine", cov)
         eni_cov = only(filter(r -> r.class == "ExternalNetworkInjection", cov))
         @test eni_cov.records == 1
         @test any(a -> a.attribute == :maxInitialSymShCCurrent_A && a.filled == a.total == 1, eni_cov.attributes)

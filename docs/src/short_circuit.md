@@ -1,10 +1,13 @@
 # Short-Circuit Analysis
 
 !!! note "Status"
-    Sparlectra currently **reads and reports** short-circuit source data from
-    CGMES deliveries; the calculation itself is not yet available. This page
-    explains what short-circuit analysis is, how it is commonly done, and how
-    Sparlectra approaches it.
+    Sparlectra computes **balanced three-phase short-circuit currents**
+    (`Ik''` maximum and minimum, peak current `i_p`) for CGMES deliveries —
+    programmatically via [`runShortCircuit!`](@ref) and through the Web UI's
+    **Short circuit** button. Unbalanced faults (single line-to-earth,
+    line-to-line) are not supported yet. This page explains what
+    short-circuit analysis is, how it is commonly done, and how Sparlectra
+    does it.
 
 ## What short-circuit analysis is
 
@@ -116,22 +119,80 @@ CGMES units:
 | `ACLineSegment` | `r0`, `x0`, `b0ch`, `g0ch`, `shortCircuitEndTemperature` | zero-sequence line model; conductor temperature for minimum-current cases |
 | `PowerTransformerEnd` | `r0`, `x0`, `grounded`, `rground`, `xground` | zero-sequence transformer model and star-point treatment |
 | `EquivalentInjection` | `r`, `x`, `r0`, `x0`, `r2`, `x2` | boundary equivalents in all three sequence networks |
+| `AsynchronousMachine` | `iaIrRatio`, `rxLockedRotorRatio`, `efficiency`, `ratedMechanicalPower`, `polePairNumber`, `ratedS`, `ratedU`, `ratedPowerFactor` | motor contribution to the maximum current (locked-rotor impedance) |
 
 Whether a given delivery could support a calculation is measurable:
 `shortCircuitCoverage(result.shortcircuit)` reports, per class, the record
 count and per attribute the fill rate; `printShortCircuitCoverage` renders
 it, and every CGMES run writes the same view into `cgmes.log`.
 
-**The calculation, as designed.** The first stage is the balanced
-three-phase fault: maximum and minimum initial symmetrical current per
-selected bus (an all-bus sweep is a loop over the same path), IEC voltage
-factors by level, peak current from the R/X ratio at the fault. Machine
-data that is incomplete is substituted with documented defaults or skipped
-with a warning — and because a short-circuit result is safety-relevant, any
-such substitution is **flagged on the affected result rows themselves**,
-not only logged. Unbalanced faults and the derived breaking/thermal
-quantities follow once the zero-sequence model (transformer vector groups
-and earthing, harvested above) is assembled.
+**The calculation.** [`runShortCircuit!`](@ref) computes the balanced
+three-phase initial symmetrical current:
+
+```julia
+result = importCGMES(path = ["grid.zip", "boundary.zip"])
+sc = runShortCircuit!(result; case = :max)          # or :min; buses = :all default
+sc = runShortCircuit!(result.net, result.shortcircuit; buses = ["Bus_1_220"], case = :min)
+printShortCircuitResult(sc)
+```
+
+Per fault bus you get `Ik''` (kA), `Sk''` (MVA), and `κ`/`i_p` from the R/X
+ratio at the fault location (IEC 60909-0 method b, capped at 1.8 below 1 kV
+/ 2.0 above). The positive-sequence short-circuit matrix uses series branch
+impedances only — loads, line charging and shunt compensators are dropped
+per the standard. Four source types feed the fault:
+
+- **synchronous machines**: `x''_d` on machine base, converted to network
+  base, with the §6.6.3 fictitious resistance so the R/X ratio at the fault
+  stays meaningful;
+- **network feeders** (`ExternalNetworkInjection`): equivalent impedance
+  from the declared initial short-circuit current and R/X ratio — at the
+  connection point the declared current is reproduced exactly;
+- **boundary equivalents** with a declared positive-sequence impedance;
+- **asynchronous motors**: locked-rotor impedance
+  `Z_M = (1/(I_LR/I_rM)) · U_rM²/S_rM` per §6.7, with `S_rM` taken from the
+  rated apparent power or formed from mechanical power, efficiency and
+  power factor. Motors raise only the **maximum** current; they never enter
+  the minimum case.
+
+Voltage factors follow IEC 60909-0 Table 1 by voltage level (`c_max`
+1.05/1.10, `c_min` 0.95/1.00); `short_circuit.c_factor` (or the `c_factor`
+keyword) is a scalar expert override for verification runs. The per-bus
+path is a Z-bus column solve — one sparse LU factorization per island and
+case, one triangular solve per fault bus; the Takahashi sparse inverse
+remains the designated optimization for all-bus sweeps on large networks.
+
+**Safety flags — read them.** A short-circuit result is safety-relevant, so
+every substituted default and every skipped contribution is **flagged on
+the affected result rows themselves** (`contains_defaulted_data` plus a
+reason list), not only logged. The documented substitutions: a machine
+without `x''_d` gets 0.2 pu on machine base; a feeder without an R/X ratio
+gets R = 0.1·X; a motor without a locked-rotor R/X ratio gets the §6.7.2
+guidance value (0.10/0.15 for MV motors, 0.42 for LV). A motor or feeder
+whose impedance cannot be formed at all is skipped and its whole island is
+flagged: the maximum current is then a **lower bound** — the
+non-conservative direction for equipment rating. Buses in islands without
+any source report `status = :no_source` with `NaN` currents instead of
+fabricated numbers.
+
+**Current limitations.** The transformer impedance correction `K_T`
+(IEC 60909-0 §6.3.3) and the generator correction `K_G` (§6.6.3) are not
+applied — the harvested data does not carry the needed rated power factors;
+their absence biases `Ik''` slightly high on transformer-/generator-near
+buses. The LV `c_max` variant 1.10 (for +10 % voltage-tolerance bands) and
+a configurable per-voltage-level `c` table are not available. Unbalanced
+faults (single line-to-earth, line-to-line) and the derived
+breaking/thermal quantities are not supported yet; they require the
+zero-sequence model whose source data (transformer vector groups and
+earthing) is already harvested. The reference tests derive their expected
+values analytically from the IEC formulas (full derivations in
+`test/test_short_circuit.jl`).
+
+**Web UI.** The PowerFlow form's **Short circuit** button runs both cases
+(no power-flow solve involved) and writes `short_circuit_max.csv` /
+`short_circuit_min.csv` plus a result-page summary; it is only selectable
+for CGMES deliveries that carry short-circuit source data — see
+[Web UI](webui.md).
 
 ## References
 

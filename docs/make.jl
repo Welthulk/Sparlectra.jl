@@ -74,6 +74,7 @@ makedocs(
       "Network Model" => "reference_network.md",
       "Rectangular Power Flow" => "reference_powerflow_rectangular.md",
       "DC Power Flow" => "reference_powerflow_dc.md",
+      "Short Circuit" => "reference_short_circuit.md",
       "Import and Export" => "reference_import_export.md",
       "State Estimation and Measurements" => "reference_state_estimation.md",
     ],
