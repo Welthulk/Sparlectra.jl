@@ -772,6 +772,24 @@ power_flow:
         end
         @test isempty(Sparlectra._branch_anomaly_diagnostics(self_check.raw_result.net, 0))
 
+        # Self-check artifacts: forced-bypass summary plus full per-bus
+        # start-state residual export (fixed-reference contract).
+        self_check_summary = read(joinpath(self_check_dir, "self_check.log"), String)
+        @test occursin("start values taken verbatim from import", self_check_summary)
+        @test occursin("start_state_residual_inf: ", self_check_summary)
+        residuals_csv = readlines(joinpath(self_check_dir, "self_check_residuals.csv"))
+        @test residuals_csv[1] == "bus_id,bus_name,vn_kV,bus_type,vm_pu_start,va_deg_start,p_residual,q_residual,has_sv,n_transformer_terminals,n_shunts"
+        @test length(residuals_csv) - 1 == length(self_check.raw_result.net.nodeVec)
+
+        # MATPOWER regression guard: the case14 self-check residual is a fixed
+        # property of the case data; the forced flatstart=false path must
+        # reproduce the pre-CGMES-support value (recorded 2026-07-30).
+        case14 = ensure_casefile("case14.m")
+        case14_check = run_fixed_reference_self_check(casefile = case14, output_dir = joinpath(tmpdir, "self_check_case14"))
+        @test case14_check.raw_result !== nothing
+        @test isapprox(case14_check.raw_result.final_mismatch, 0.04218283919133408; rtol = 1e-8)
+        @test case14_check.raw_result.iterations == 1
+
         bad_config_dir = joinpath(tmpdir, "self_check_missing_config")
         @test_throws ArgumentError run_fixed_reference_self_check(casefile = casefile, config_file = joinpath(tmpdir, "does_not_exist.yaml"), output_dir = bad_config_dir)
 

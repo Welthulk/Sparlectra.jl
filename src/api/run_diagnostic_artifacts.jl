@@ -16,6 +16,44 @@
 # log markers, and CSV schemas stable unless the artifact views and tests are
 # updated together.
 
+"""
+    _write_start_residuals_artifact(output_dir, profile) -> Union{Nothing,String}
+
+Write `self_check_residuals.csv` from the per-bus start-state mismatch rows the
+rectangular solver captured into `profile[:initial_residual_rows]` (see
+`_capture_initial_residual_rows!`; captured only on diagnostics/self-check
+runs). One row per bus with the start voltages, the P residual, the Q residual
+(PQ buses only — PV/slack second equations are voltage setpoints), the
+per-bus SV coverage on CGMES imports (`has_sv`, `true` for other formats), and
+transformer-terminal/shunt counts for attribution grouping. When the same bus
+was captured more than once (e.g. a rescue re-solve), the last capture wins.
+Returns the artifact path, or `nothing` when no rows were captured.
+"""
+function _write_start_residuals_artifact(output_dir::AbstractString, profile)::Union{Nothing,String}
+  profile isa AbstractDict || return nothing
+  rows = get(profile, :initial_residual_rows, nothing)
+  rows isa AbstractVector && !isempty(rows) || return nothing
+  no_sv = get(profile, :cgmes_no_sv_buses, nothing)
+  # keep insertion order, last capture per bus wins
+  by_bus = Dict{Int,Int}()
+  order = Int[]
+  for (i, row) in pairs(rows)
+    id = Int(row.bus_id)
+    haskey(by_bus, id) || push!(order, id)
+    by_bus[id] = i
+  end
+  path = joinpath(output_dir, "self_check_residuals.csv")
+  open(path, "w") do io
+    println(io, "bus_id,bus_name,vn_kV,bus_type,vm_pu_start,va_deg_start,p_residual,q_residual,has_sv,n_transformer_terminals,n_shunts")
+    for id in sort!(order)
+      row = rows[by_bus[id]]
+      has_sv = no_sv === nothing ? true : !(row.bus_name in no_sv)
+      println(io, join((row.bus_id, _csv_field(String(row.bus_name), ','), row.vn_kV, row.bus_type, row.vm_pu_start, row.va_deg_start, row.p_residual, row.q_residual, has_sv, row.n_transformer_terminals, row.n_shunts), ','))
+    end
+  end
+  return path
+end
+
 function _write_api_timing_summary(io::IO, result::SparlectraRunResult, config::SparlectraConfig, phases::AbstractDict = Dict{Symbol,Float64}())
   benchmark_median = result.performance_profile isa AbstractDict ? get(result.performance_profile, :benchmark_median_s, nothing) : nothing
   println(io, "Timing")

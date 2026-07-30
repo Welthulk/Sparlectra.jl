@@ -17,7 +17,7 @@
 |---|---:|---:|---|---|---|---|---|---|
 | `power_flow.method` | Symbol/String | `rectangular` | `rectangular` | AC solver formulation. | Always (current core). | N/A | Fixed single implementation. | Must match `benchmark.methods`. |
 | `power_flow.sparse` | Bool | `true` | `true` | Sparse linear algebra mode. | Always (required). | N/A | Scales better for large systems. | Validated together with `method`. |
-| `power_flow.flatstart` | Bool | `true` | `true`, `false` | Legacy flatstart toggle. | Synthetic starts. | When start projection and imported starts are used. | Low. | Combined into `start_mode`. |
+| `power_flow.flatstart` | Bool | `false` | `true`, `false` | Legacy flatstart toggle; `false` keeps imported start voltages (MATPOWER `VM`/`VA`, CGMES `SvVoltage`). | Synthetic starts. | When start projection and imported starts are used — `true` silently discards a CGMES SV start. | Low. | Combined into `start_mode`. |
 | `power_flow.tol` | Float64 | `1.0e-5` | positive real | PF tolerance. | Accuracy-sensitive studies. | Overly tight on big batches. | Tighter means more iterations. | `max_iter`. |
 | `power_flow.max_iter` | Int | `80` | positive integer | Iteration cap. | Hard cases. | Very low values. | Upper runtime bound. | `tol`, `qlimits`. |
 | `power_flow.autodamp` | Bool | `true` | `true`, `false` | Adaptive damping. | Difficult convergence. | Strict algorithm comparison. | Small overhead, often fewer failures. | `autodamp_min`. |
@@ -143,17 +143,39 @@ power_flow:
 When an island-aware run fails, the API/result message identifies the first
 failing island with its island id, bus and branch counts, selected reference
 bus, PV/PQ/REF counts, iteration count, final mismatch, mismatch status
-(`finite`, `nonfinite`, `NaN`, or `Inf`), failure reason, stage
-(`before_nr`, `during_nr`, or `after_nr_validation`), start-projection setting,
-and the diagnostic artifact path.
+(`finite`, `nonfinite`, `NaN`, or `Inf`), failure reason, stage,
+start-projection setting, and the diagnostic artifact path. The iteration
+count, final mismatch, reason, and stage are taken from the failing island's
+own solver record (e.g. `stage=newton_iteration` with the actual NR iteration
+count); the generic `before_nr`/`during_nr` stage heuristic is used only when
+no per-island record exists.
 
 Each run output directory receives:
 
 - `ac_island_solver_summary.csv`: one row per detected AC island, including the
   selected reference bus, PV/PQ/REF counts, propagated solver settings, final
   status, final mismatch, and failure reason.
-- `ac_island_<id>_solver.log`: compact per-island details with the same
-  topology, setting, and solve-status fields.
+- `ac_island_<id>_solver.log` and `ac_island_<id>_mismatch_history.csv`:
+  compact per-island details with the same topology, setting, and solve-status
+  fields, written only for islands the solver actually attempted.
+
+Islands the solver never attempted individually — for example de-energized
+single-bus islands that are excluded from the island-wise solve, or islands
+skipped after an earlier failure — appear in the summary CSV with
+`final_status=not_attempted`, `failure_reason=not_attempted`,
+`stage=not_attempted`, `iterations=0`, zeroed switching statistics, and
+`unavailable` mismatch fields. They never repeat another island's solve
+statistics, and they get no per-island `solver.log`/`mismatch_history.csv`
+files (summary-CSV-only representation, keeping runs with many isolated buses
+free of boilerplate artifacts).
+
+The `q_limit_processing_status` column reports a Q-limit-specific processing
+outcome only: `disabled` when Q-limits are off, `not_attempted` for islands
+that were never solved, and otherwise the solver-recorded Q-limit outcome —
+currently `unavailable`, since the solver does not yet store a dedicated
+Q-limit processing status. It never mirrors the generic `failure_reason`
+column; Q-limit activity is visible in the dedicated switching-statistics
+columns (`pv_pq_switching_events`, `qlimit_active_set_changes`, ...).
 
 Island-wise solving is structural support, not a convergence guarantee. A large
 island can fail independently while smaller islands are structurally valid. If

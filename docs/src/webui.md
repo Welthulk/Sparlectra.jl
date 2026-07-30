@@ -428,16 +428,26 @@ legacy filename.
 
 The **Diagnose** button next to **Start PowerFlow run** runs the selected
 case through a fixed-reference self-check instead of a normal solve: it
-evaluates the mismatch at the case's own stored MATPOWER `VM`/`VA` with no
-corrective Newton step (`power_flow.start_mode.angle_mode = matpower_va`,
-`voltage_mode = all_bus_vm`, `start_projection = false`, `max_iter = 1`,
-`qlimits.enabled = false`), so the reported residual reflects the imported
-network model itself rather than the solver's start guess or step control. It
-runs through the same result pipeline as a normal run (same run history,
-artifact viewer, and enriched `diagnose.log`); the merged self-check
-configuration is written alongside the other artifacts as
-`diagnose_self_check_config.yaml` for inspection. Programmatically, the same
-behavior is available as [`run_fixed_reference_self_check`](@ref).
+evaluates the mismatch at the case's own stored operating point — MATPOWER
+`VM`/`VA` columns, or the `SvVoltage` state of a CGMES delivery — with no
+corrective Newton step. Every start-value machine is forced off
+(`flatstart = false`, `start_projection = false`,
+`dc_seed_unconditional = false`, `start_current_iteration.enabled = false`,
+`apslf_start.enabled = false`, plus `max_iter = 1` and
+`qlimits.enabled = false`), so the imported voltages reach the solver verbatim
+and the reported residual reflects the imported network model itself rather
+than the solver's start guess or step control. It runs through the same
+result pipeline as a normal run (same run history, artifact viewer, and
+enriched `diagnose.log`) and writes two additional artifacts:
+`self_check.log` (forced settings, the start-state residual, and for CGMES
+the count of buses without a usable `SvVoltage`, which start at the flat
+`1.0 pu / 0°` fallback and weaken the SV comparison) and
+`self_check_residuals.csv` (full per-bus P/Q residuals at the start state,
+with per-bus SV coverage plus transformer-terminal and shunt counts for
+attribution). The merged self-check configuration is written alongside the
+other artifacts as `diagnose_self_check_config.yaml` for inspection.
+Programmatically, the same behavior is available as
+[`run_fixed_reference_self_check`](@ref).
 
 The **Export detailed result CSV files** checkbox is off by default because
 large networks can produce large files. When enabled for a successful run, it

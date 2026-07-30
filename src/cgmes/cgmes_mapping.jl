@@ -39,7 +39,10 @@ topology, the harvested short-circuit data, the selected slack bus and the
 importer's skip/notice messages. `branch_side_of_terminal` (CGMES Terminal
 mRID → `(branchIdx, :from|:to)`) and `skipped_equipment` (mRIDs that were not
 mapped) provide the provenance `compareWithSV` needs for its `SvPowerFlow`
-comparison.
+comparison. `no_sv_buses` lists the created buses whose TopologicalNode has no
+usable `SvVoltage` — they carry the importer's `1.0 pu / 0°` fallback, which
+weakens any comparison against the delivery's SV state (fixed-reference
+self-check, `compareWithSV`).
 """
 struct CGMESImportResult
   net::Sparlectra.Net
@@ -50,6 +53,7 @@ struct CGMESImportResult
   messages::Vector{String}
   branch_side_of_terminal::Dict{String,Tuple{Int,Symbol}}
   skipped_equipment::Set{String}
+  no_sv_buses::Vector{String}
 end
 
 # mutable importer bookkeeping threaded through the mapping helpers.
@@ -1954,13 +1958,28 @@ function importCGMES(;
   isempty(sc.synchronous_machines) || push!(ctx.messages, "short-circuit data: $(length(sc.synchronous_machines)) machines (read, not evaluated)")
   isempty(sc.external_network_injections) || push!(ctx.messages, "short-circuit data: $(length(sc.external_network_injections)) external injections (read, not evaluated)")
 
+  # SV coverage: buses whose TN carries no usable SvVoltage keep the 1.0 pu /
+  # 0° fallback from _ensureBus!. Their share decides how meaningful a
+  # comparison against the delivery's SV state is (fixed-reference self-check,
+  # compareWithSV), so record the list and say so in the messages. Per-side
+  # split buses share their TN's SV classification and are covered through the
+  # primary bus name; vn <= 0 counts as "no usable SV" because _ensureBus!
+  # cannot form a per-unit magnitude there either.
+  no_sv_buses = String[]
+  for (tn, bus) in topo.bus_name
+    bus in created || continue
+    (haskey(svmap, tn) && topo.vn_kV[tn] > 0.0) || push!(no_sv_buses, bus)
+  end
+  sort!(unique!(no_sv_buses))
+  isempty(no_sv_buses) || push!(ctx.messages, "notice: $(length(no_sv_buses)) of $(length(created)) buses have no usable SvVoltage — flat 1.0 pu / 0° start (list in result.no_sv_buses)")
+
   # Everything else is collected silently and inspected via result.messages.
   # "warning:" is reserved for data defects where the importer had to substitute
   # a value to keep the model usable — those must not stay hidden in a vector
   # nobody reads, so they also go to the log.
   _logCGMESWarnings(ctx.messages)
 
-  return CGMESImportResult(net, store, topo, sc, slack_bus, ctx.messages, ctx.branch_side, ctx.skipped)
+  return CGMESImportResult(net, store, topo, sc, slack_bus, ctx.messages, ctx.branch_side, ctx.skipped, no_sv_buses)
 end
 
 """

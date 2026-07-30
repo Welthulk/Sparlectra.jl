@@ -1,3 +1,40 @@
+# Version 0.8.17 — 2026-07-30
+
+Hardening CGMES import
+
+## Improvements
+
+**Fixed-reference self-check for CGMES deliveries.** `run_fixed_reference_self_check`
+(and the Web UI Diagnose action) now evaluates CGMES cases at their own
+`SvVoltage` state: every start-value machine is forced off — including a
+`flatstart: true` in the base configuration, which previously wiped the SV
+start silently — so the residual really measures the imported model. New
+artifacts `self_check.log` (forced settings, start-state residual, SV
+coverage) and `self_check_residuals.csv` (full per-bus P/Q residuals with
+transformer/shunt adjacency) support attribution; `cgmes.log` now reports
+buses without a usable `SvVoltage`. See the
+[Web UI Diagnose action](webui.md).
+
+**Default start uses imported voltages.** The shipped configuration now sets
+the legacy `power_flow.flatstart` to `false`, so imported start voltages —
+MATPOWER `VM`/`VA` and especially the CGMES `SvVoltage` state — reach the
+solver by default. The former `true` silently flat-started CGMES deliveries,
+which is what made the RealGrid case diverge in the Web UI while it solves in
+a handful of iterations from its SV state.
+
+## Bugfixes
+
+**Truthful AC island failure diagnostics.** On a failed multi-island run the
+user-facing message reported `iterations=0 / stage=before_nr` even when the
+failing island had run a full Newton solve, and every island the solver never
+attempted (e.g. de-energized single-bus islands of a CGMES delivery) repeated
+the failed island's complete statistics in `ac_island_solver_summary.csv`.
+The failure message now reports the failing island's own iteration count and
+stage, never-attempted islands appear as `not_attempted` without per-island
+artifact files, and the `q_limit_processing_status` column no longer mirrors
+the generic failure reason. See
+[Power-Flow Configuration](powerflow_configuration.md).
+
 # Version 0.8.16 — 2026-07-30
 
 CGMES Import

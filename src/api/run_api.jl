@@ -667,6 +667,10 @@ function _run_sparlectra_api(;
     :cancellation_check => () -> _check_powerflow_cancelled!(cancellation_token),
     :phase_callback => phase -> emit_phase(String(phase)),
     :output_dir => output_path,
+    # Diagnostics-gated (fixed-reference self-check and Diagnose runs): the
+    # rectangular solver records the full per-bus start-state mismatch, which
+    # _write_start_residuals_artifact turns into self_check_residuals.csv.
+    :capture_initial_residual_rows => run_diagnostics,
   )
   execution_start = time_ns()
   dtf_metadata = Dict{String,Any}()
@@ -779,6 +783,7 @@ function _run_sparlectra_api(;
         println(io, "  prosumers:  ", length(cgmes_result.net.prosumpsVec))
         println(io, "  shunts:     ", length(cgmes_result.net.shuntVec))
         println(io, "  slack bus:  ", cgmes_result.slack_bus)
+        println(io, "  no-SV buses: ", length(cgmes_result.no_sv_buses), " (flat 1.0 pu / 0° start)")
         println(io)
         sc = cgmes_result.shortcircuit
         println(io, "## Short-circuit source data (read, not evaluated — issue #277)")
@@ -799,6 +804,10 @@ function _run_sparlectra_api(;
       @warn "could not write cgmes.log" exception = err
     end
     emit_phase("building_sparlectra_net")
+    # Per-bus SV coverage for the residual export (`has_sv` column): bus names
+    # whose TopologicalNode carried no usable SvVoltage and therefore start at
+    # the flat 1.0 pu / 0° fallback instead of the delivery's SV state.
+    api_performance_profile[:cgmes_no_sv_buses] = Set(cgmes_result.no_sv_buses)
     raw_result = try
       open(logfile, "a") do io
         # run.log carries the narrative; the full importer report (files,
@@ -823,6 +832,7 @@ function _run_sparlectra_api(;
     cgmes_metadata = Dict{String,Any}(
       "input_format" => String(requested_case_format),
       "input_format_detected" => "cgmes",
+      "cgmes_no_sv_buses" => length(cgmes_result.no_sv_buses),
       "cgmes_import_used" => true,
       "cgmes_version" => cgmes_result.store.version,
       "cgmes_paths" => join(paths, ";"),
@@ -961,6 +971,7 @@ function _run_sparlectra_api(;
   emit_phase("writing_artifacts")
   operation_callback("powerflow_lifecycle_status"; run_id = run_id, solver_status = "completed", artifact_status = "running", run_status = "finalizing", last_phase = "writing_artifacts")
   run_diagnostics && _write_powerflow_diagnostics(joinpath(output_path, "diagnose.log"), raw_result; mode = config.output.logfile_diagnostics)
+  run_diagnostics && _write_start_residuals_artifact(output_path, api_performance_profile)
   q_limit_artifacts = raw_result.net !== nothing ? [_write_q_limit_log_artifact(output_path, raw_result, qlimit_metadata)] : String[]
   if (run_diagnostics || detailed_result_csv) && raw_result.net !== nothing
     append!(q_limit_artifacts, _write_q_limit_detail_artifacts(output_path, raw_result.net; format = "technical"))

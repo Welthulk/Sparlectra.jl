@@ -614,6 +614,15 @@ function runpf_rectangular!(
   end
   check_cancel()
 
+  # Fixed-reference self-check support: record the full per-bus mismatch at
+  # the exact start state Newton will see, after every start-value machine ran
+  # or was bypassed. Opt-in via the profile flag — normal runs pay nothing.
+  if performance_profile isa AbstractDict && get(performance_profile, :capture_initial_residual_rows, false) === true
+    _perf_profile_time!(performance_profile, :initial_residual_capture) do
+      _capture_initial_residual_rows!(performance_profile, Ybus, V0, S, bus_types, Vset, slack_idx, net)
+    end
+  end
+
   # 4) Q-limit data
   qmin_pu, qmax_pu = _perf_profile_time!(performance_profile, :solver_qlimit_extraction) do
     getQLimits_pu(net)

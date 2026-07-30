@@ -98,6 +98,35 @@ package documentation refer to off-nominal target *values*), so
 `machine_control = true` is a no-op here. Measurement script:
 `examples/experimental/val_realgrid_remeasure.jl`.
 
+*Fixed-reference self-check attribution (2026-07-30, `run_fixed_reference_self_check`
++ `self_check_residuals.csv`).* At the delivery's own SV state (full coverage:
+0 of 6209 buses without `SvVoltage`) the residual is `inf`-norm **5.06 pu**,
+totals sum|P| 48.4 / sum|Q| 21.6 pu. Attribution: 90 % of the Q residual
+(19.5 pu) and 97 % of the P residual sit at the 1535 transformer-adjacent
+buses (≈29× the per-bus level elsewhere); shunt buses are secondary (5.1 pu at
+457 buses). The worst residual is one equal-and-opposite pair — buses
+`Bus_2335_63`/`Bus_4799_63`, P ±5.06, Q ±1.65 pu across branch
+`B_2WT_63_4799_2335` — which is exactly the tabular-PST winding of phase tap
+`892946845` (step 12, shift 4.305°) whose **per-step r/x/g/b corrections are
+read but not applied** (importer notice, 9 tables total). Interpretation: the
+imported model is consistent at SV except for the known tabular-PST
+correction gap; the divergence seen in WebUI runs is a start-state topic, not
+a Q-side conversion error.
+
+*Why WebUI runs diverge while the remeasure script solves (2026-07-30).* The
+WebUI base `configuration.yaml` (and `src/configuration.yaml.example`) carries
+the legacy top-level `power_flow.flatstart: true`; `PowerFlowConfig` merges
+the power_flow section into the start_mode raw dict, so this silently forces a
+**flat start** on CGMES runs — the imported SV voltages never reach the
+solver, NR runs into the 435-PV Q-limit active-set cascade and diverges
+(mismatch 2220 → 240 324, run `6412ae39`). From SV start
+(`flatstart: false`) with the YAML default `autodamp: true` the solve stalls
+at mismatch 4.5e-3; with `autodamp: false` it **converges** (58 iterations
+with Q-limits ON, final mismatch 1.9e-7; the remeasure script's programmatic
+config — plain Newton — needs 4). The fixed-reference self-check now forces
+`flatstart=false` itself, so Diagnose runs measure the SV state regardless of
+the base configuration.
+
 **ReliCapGrid family (CGMES 3.0, second source).** Svedala solves with
 multi-island references (14 isolated buses are parked out-of-service units and
 stubs; the five implausible 0.001 kV regulation targets belong to units that

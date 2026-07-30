@@ -279,6 +279,16 @@ function start_powerflow_run(request::AbstractDict; case_directory::Union{Nothin
     err isa PowerFlowAborted && rethrow()
     return _service_failure("execution_error", sprint(showerror, err, catch_backtrace()); run_id = run_id)
   end
+  if diagnose_mode
+    # Same self-check summary the programmatic run_fixed_reference_self_check
+    # writes: which start machinery was forced off, the start-state residual,
+    # and the CGMES SV-coverage caveat — next to diagnose.log.
+    try
+      _write_self_check_summary(result, result.output_dir)
+    catch err
+      @warn "could not write self_check.log" exception = err
+    end
+  end
 
   try
     lock(_POWERFLOW_SERVICE_LOCK) do

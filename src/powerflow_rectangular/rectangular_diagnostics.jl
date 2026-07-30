@@ -170,6 +170,68 @@ function _rectangular_mismatch_rows(Ybus, V::Vector{ComplexF64}, S::Vector{Compl
   return (rows = rows, top = top, worst = worst)
 end
 
+"""
+    _capture_initial_residual_rows!(profile, Ybus, V0, S, bus_types, Vset, slack_idx, net)
+
+Capture the full per-bus Newton mismatch at the start state `V0` into
+`profile[:initial_residual_rows]`, appending across island solves (each island
+subnet reports its buses under their original net-wide ids via
+`busOrigIdxDict`). Runs only when the caller set
+`profile[:capture_initial_residual_rows] = true` — the fixed-reference
+self-check / diagnostics path — so normal runs pay nothing. One entry per bus:
+original bus id and name, nominal voltage, start vm/va, the P residual, and
+the Q residual for PQ buses (`NaN` for PV and slack buses, whose second
+mismatch equation is a voltage setpoint, not reactive power), plus
+transformer-terminal and shunt counts for attribution grouping
+(transformer-conversion vs. shunt-conversion suspects).
+"""
+# Branch component objects are generic ("BranchC" with cTyp Branch); the
+# element kind survives only in the component-name marker (B_2WT_/B_3WT_ are
+# transformer windings, B_ACL_ lines). MATPOWER imports carry no marker —
+# there an off-nominal ratio or a tap flag is the transformer signature.
+_is_transformer_branch(br)::Bool = occursin("_2WT_", br.comp.cName) || occursin("_3WT_", br.comp.cName) || br.has_ratio_tap || br.has_phase_tap || !(br.ratio == 0.0 || br.ratio == 1.0)
+
+function _capture_initial_residual_rows!(profile::AbstractDict, Ybus, V0::Vector{ComplexF64}, S::Vector{ComplexF64}, bus_types::Vector{Symbol}, Vset::Vector{Float64}, slack_idx::Int, net)
+  F = mismatch_rectangular(Ybus, V0, S, bus_types, Vset, slack_idx)
+  n = length(V0)
+  n_trafo = zeros(Int, n)
+  for br in net.branchVec
+    br.status == 0 && continue
+    _is_transformer_branch(br) || continue
+    Int(br.fromBus) in eachindex(n_trafo) && (n_trafo[Int(br.fromBus)] += 1)
+    Int(br.toBus) in eachindex(n_trafo) && (n_trafo[Int(br.toBus)] += 1)
+  end
+  n_shunt = zeros(Int, n)
+  for sh in net.shuntVec
+    Int(sh.busIdx) in eachindex(n_shunt) && (n_shunt[Int(sh.busIdx)] += 1)
+  end
+  rows = get!(Vector{NamedTuple}, profile, :initial_residual_rows)
+  row = 1
+  for bus in eachindex(V0)
+    p_res = NaN
+    q_res = NaN
+    if bus != slack_idx
+      p_res = Float64(F[row])
+      q_res = bus_types[bus] == :PQ ? Float64(F[row + 1]) : NaN
+      row += 2
+    end
+    node = net.nodeVec[bus]
+    push!(rows, (
+      bus_id = _qlimit_original_bus_id(net, bus),
+      bus_name = getCompName(node.comp),
+      vn_kV = getNodeVn(node),
+      bus_type = bus_types[bus],
+      vm_pu_start = abs(V0[bus]),
+      va_deg_start = rad2deg(angle(V0[bus])),
+      p_residual = p_res,
+      q_residual = q_res,
+      n_transformer_terminals = n_trafo[bus],
+      n_shunts = n_shunt[bus],
+    ))
+  end
+  return nothing
+end
+
 function _rectangular_mismatch_trend(history::AbstractVector{<:Real}; window::Int = 10)
   isempty(history) && return :unavailable
   finite_history = filter(isfinite, history)

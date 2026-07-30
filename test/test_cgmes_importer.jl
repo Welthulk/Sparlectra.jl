@@ -687,6 +687,35 @@ function run_cgmes_importer_tests()
         @test occursin("# CGMES import report", read(joinpath(out2, "cgmes.log"), String))
       end
 
+      # Fixed-reference self-check on a CGMES delivery: the SV voltages must
+      # reach the solver verbatim (a base config with flatstart: true —
+      # observed in a real WebUI configuration — must not wipe them), and the
+      # residual/attribution artifacts must be written. MicroGrid's SV state
+      # carries a known residual of ~2.6 pu, i.e. clearly not the flat-start
+      # value, which pins the start point actually used.
+      @testset "CGMES fixed-reference self-check (SV start, artifacts)" begin
+        out3 = mktempdir()
+        cfg3 = joinpath(out3, "c.yaml")
+        write(cfg3, "power_flow:\n  flatstart: true\ncgmes_import:\n  path: \"" * bd * "\"\n")
+        rsc = run_fixed_reference_self_check(casefile = be, config_file = cfg3, output_dir = out3, case_format = :cgmes)
+        @test rsc.raw_result !== nothing
+        @test rsc.raw_result.iterations == 1
+        @test rsc.metadata["cgmes_no_sv_buses"] == 0
+        summary = read(joinpath(out3, "self_check.log"), String)
+        @test occursin("start values taken verbatim from import", summary)
+        m = match(r"start_state_residual_inf: ([0-9.eE+-]+)", summary)
+        @test m !== nothing
+        # SV-state residual of this fixture; a flat start would report ~4.3.
+        @test isapprox(parse(Float64, m.captures[1]), 2.6205572054022745; rtol = 1e-6)
+        residuals = readlines(joinpath(out3, "self_check_residuals.csv"))
+        @test residuals[1] == "bus_id,bus_name,vn_kV,bus_type,vm_pu_start,va_deg_start,p_residual,q_residual,has_sv,n_transformer_terminals,n_shunts"
+        @test length(residuals) - 1 == 12
+        @test all(split(l, ',')[9] == "true" for l in residuals[2:end])
+        # transformer adjacency must be populated (B_2WT_ markers)
+        @test any(parse(Int, split(l, ',')[10]) > 0 for l in residuals[2:end])
+        @test occursin("no-SV buses: 0", read(joinpath(out3, "cgmes.log"), String))
+      end
+
       # Stage 2 (Phase E): start from the SSH tap positions and let the
       # outer-loop controllers find the operating point. Note that the
       # reference SvTapStep positions are NOT reproduced exactly — the CGMES

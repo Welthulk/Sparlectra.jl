@@ -201,7 +201,11 @@ function _build_sparlectra_result(net::Net, cfg::SparlectraConfig, execution, pe
     dc_status = dc_pf_status(net)
     status = _dc_run_status(dc_status)
     status = _compose_framework_status(status, execution.control_status)
-    status = _append_island_failure_message(status, performance_profile)
+    # The run-status NamedTuple deliberately strips solver internals such as
+    # :iterations; hand the run's iteration count along so the island failure
+    # message never falls back to "iterations=0 / stage=before_nr" for a solve
+    # that actually ran (single-island runs have no per-island status record).
+    status = _append_island_failure_message(merge(status, (iterations = execution.iterations,)), performance_profile)
     diagnostics = _dc_status_diagnostics(dc_status)
     return SparlectraRunResult(net, status.outcome, status.numerical_converged, status.solution_available, status.limit_validation_status, status.final_converged, status.reason, status.reason_text, execution.iterations, execution.elapsed_s, execution.solver_elapsed_s, status.final_mismatch, :dc, execution.control_status, performance_profile, diagnostics)
   end
@@ -213,7 +217,9 @@ function _build_sparlectra_result(net::Net, cfg::SparlectraConfig, execution, pe
     (outcome = converged ? :converged : :not_converged, numerical_converged = converged, solution_available = converged, limit_validation_status = :skip, final_converged = converged, reason = converged ? :none : :nr_mismatch_not_converged, reason_text = converged ? "none" : "NR mismatch did not converge", final_mismatch = NaN)
   end
   status = _compose_framework_status(status, execution.control_status)
-  status = _append_island_failure_message(status, performance_profile)
+  # See the DC branch above: carry the run's iteration count for the
+  # single-island fallback of the island failure message.
+  status = _append_island_failure_message(merge(status, (iterations = execution.iterations,)), performance_profile)
   diagnostics = cfg.powerflow.method === :rectangular ? merge(_rectangular_status_diagnostics(rect_status), _profile_start_projection_diagnostics(performance_profile)) : NamedTuple()
   return SparlectraRunResult(net, status.outcome, status.numerical_converged, status.solution_available, status.limit_validation_status, status.final_converged, status.reason, status.reason_text, execution.iterations, execution.elapsed_s, execution.solver_elapsed_s, status.final_mismatch, cfg.powerflow.method, execution.control_status, performance_profile, diagnostics)
 end
