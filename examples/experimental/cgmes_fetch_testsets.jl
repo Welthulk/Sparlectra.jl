@@ -13,7 +13,7 @@
 # limitations under the License.
 
 # file: examples/experimental/cgmes_fetch_testsets.jl
-# purpose: Phase A / A1 of the CGMES import plan (task_plan_cgmes_import.md).
+# purpose: fetch the ENTSO-E/ReliCapGrid CGMES test sets into the local cache (see docs/src/cgmes_import.md).
 # Fetch the ENTSO-E CGMES conformity test configurations on demand, unpack the
 # ZIP-in-ZIP layout recursively, and print an inventory of grids, profiles and
 # CGMES versions found. Analysis tooling only — not part of the package API and

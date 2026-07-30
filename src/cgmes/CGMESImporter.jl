@@ -15,7 +15,7 @@
 # file: src/cgmes/CGMESImporter.jl
 # purpose: lean CGMES (ENTSO-E CIM) import for Sparlectra — module root.
 # Stage 0: container, generic RDF/XML reader, merged store, summarizeCGMES.
-# Concept: task_concept_cgmes_import.md; plan: task_plan_cgmes_import.md.
+# User documentation: docs/src/cgmes_import.md; test-set analysis: docs/dev/cgmes_testset_overview.md.
 
 """
     CGMESImporter

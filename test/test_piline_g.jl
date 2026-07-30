@@ -1,6 +1,6 @@
 # file: test/test_piline_g.jl
 # Tests for the optional shunt conductance (g / g_pu) on PI-model AC lines
-# (CGMES import precondition B1, task_plan_cgmes_import.md §7.6).
+# (CGMES import precondition; see docs/src/cgmes_import.md).
 
 function run_piline_g_tests()
   @testset "PI-model line shunt conductance" begin

@@ -1,5 +1,5 @@
 # file: test/test_cgmes_importer.jl
-# Tests for the CGMES importer (task_plan_cgmes_import.md, phases C–E):
+# Tests for the CGMES importer (see docs/src/cgmes_import.md):
 # generic reader semantics on a synthetic in-memory fixture, plus
 # summarizeCGMES assertions on the ENTSO-E MicroGrid when the local test-set
 # cache exists (fetched by examples/experimental/cgmes_fetch_testsets.jl;
