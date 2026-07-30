@@ -15,13 +15,81 @@
 # Run finalization helpers own run.log/performance.log details so the API
 # orchestrator records phase boundaries without embedding every artifact format.
 
+"""
+    _capture_run_output(f, io; live=false)
+
+Run `f()` with stdout/stderr/logging captured into `io` (the archived
+`run.log` stream). With `live = true` (config `output.console_live`) the same
+bytes are additionally mirrored to the process's real stdout while the run
+executes — console and archive become two views of one stream instead of the
+console being silenced. The archive content is identical in both modes.
+
+Implementation note: `redirect_stdout` needs an OS-level stream, so the live
+mode tees through a `Pipe` pumped by an async task; the pump is drained
+before returning so `io` is complete when the caller closes the logfile.
+"""
+function _capture_run_output(f::Function, io::IO; live::Bool = false)
+  if !live
+    return with_logger(ConsoleLogger(io)) do
+      redirect_stdout(io) do
+        redirect_stderr(io) do
+          f()
+        end
+      end
+    end
+  end
+  real_out = stdout
+  pipe = Pipe()
+  Base.link_pipe!(pipe; reader_supports_async = true, writer_supports_async = true)
+  pump = @async begin
+    while !eof(pipe)
+      data = readavailable(pipe)
+      isempty(data) && continue
+      write(io, data)
+      write(real_out, data)
+      flush(real_out)
+    end
+  end
+  try
+    return with_logger(ConsoleLogger(pipe)) do
+      redirect_stdout(pipe) do
+        redirect_stderr(pipe) do
+          f()
+        end
+      end
+    end
+  finally
+    close(pipe.in)
+    wait(pump)
+  end
+end
+
 function _write_service_phase_summary(io::IO, phase_timings::AbstractVector)
   println(io, "Phase timings")
   println(io, "-------------")
+  # Repeated phases (newton_iteration / q_limit_processing / linear_solve fire
+  # once per NR iteration) are aggregated into one line with a count — the
+  # readable narrative stays a handful of lines per run. The raw per-entry
+  # sequence remains available in result.json (`service_phase_timings`).
+  order = String[]
+  agg = Dict{String,NamedTuple{(:count, :total, :running, :status),Tuple{Int,Float64,Bool,String}}}()
   for timing in phase_timings
+    phase = String(get(timing, "phase", "unknown"))
     elapsed = get(timing, "elapsed_seconds", nothing)
-    elapsed_text = elapsed === nothing ? "running" : string(round(Float64(elapsed); digits = 6), " s")
-    println(io, "  ", rpad(String(get(timing, "phase", "unknown")) * ":", 31), elapsed_text, " (", get(timing, "status", "unknown"), ")")
+    prev = get(agg, phase, nothing)
+    prev === nothing && push!(order, phase)
+    agg[phase] = (
+      count = (prev === nothing ? 0 : prev.count) + 1,
+      total = (prev === nothing ? 0.0 : prev.total) + (elapsed === nothing ? 0.0 : Float64(elapsed)),
+      running = (prev === nothing ? false : prev.running) || elapsed === nothing,
+      status = String(get(timing, "status", "unknown")),
+    )
+  end
+  for phase in order
+    item = agg[phase]
+    elapsed_text = item.running && item.count == 1 ? "running" : string(round(item.total; digits = 6), " s")
+    suffix = item.count > 1 ? string(" (", item.status, ", ×", item.count, ")") : string(" (", item.status, ")")
+    println(io, "  ", rpad(phase * ":", 31), elapsed_text, suffix)
   end
   println(io)
   return nothing

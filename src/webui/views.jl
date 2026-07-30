@@ -490,6 +490,12 @@ $(config_maintenance)
 <label>$(_webui_field_label("power_flow_linear_solver", "Linear solver backend"))$(_webui_select("power_flow_linear_solver", _webui_option_allowed_values("power_flow_linear_solver"), _webui_selected(profile_values, "power_flow_linear_solver", _webui_option_default("power_flow_linear_solver"))))</label>
 <p class=\"field-help\">Sparse linear-algebra backend for the rectangular Newton step only (independent of the <strong>Solver</strong> choice above). <code>klu</code> reuses the symbolic factorization across iterations; <code>umfpack</code> is the default behavior.</p>
 </fieldset>
+<fieldset class=\"distributed-slack-options\" data-nr-only-field>
+<legend>Distributed slack</legend>
+<label class=\"check span-2\"><input name=\"power_flow_distributed_slack_enabled\" type=\"hidden\" value=\"false\"><input name=\"power_flow_distributed_slack_enabled\" type=\"checkbox\" value=\"true\"$(_webui_checked(profile_values, "power_flow_distributed_slack_enabled", _webui_option_default("power_flow_distributed_slack_enabled")))>$(_webui_field_label("power_flow_distributed_slack_enabled", "Distribute active-power slack over participating generators"))</label>
+<label>$(_webui_field_label("power_flow_distributed_slack_p_mode", "Participation mode"))$(_webui_select("power_flow_distributed_slack_p_mode", _webui_option_allowed_values("power_flow_distributed_slack_p_mode"), _webui_selected(profile_values, "power_flow_distributed_slack_p_mode", _webui_option_default("power_flow_distributed_slack_p_mode"))))</label>
+<p class=\"field-help\">The REF bus keeps the angle reference; the island's P imbalance is absorbed by participating generators via one λ<sub>P</sub> per island. <code>imported</code> reads participation factors from the case data (MATPOWER <code>APF</code>, CGMES <code>normalPF</code>). Explicit weights are YAML-only (<code>power_flow.distributed_slack.weights</code>).</p>
+</fieldset>
 <fieldset class=\"start-current-iteration-options advanced-start-values\" data-nr-only-field>
 <legend>Advanced start values</legend>
 <label class=\"check span-2\"><input name=\"power_flow_start_current_iteration_enabled\" type=\"hidden\" value=\"false\"><input name=\"power_flow_start_current_iteration_enabled\" type=\"checkbox\" value=\"true\"$(_webui_checked(profile_values, "power_flow_start_current_iteration_enabled", _webui_option_default("power_flow_start_current_iteration_enabled")))>$(_webui_field_label("power_flow_start_current_iteration_enabled", "Enable current-iteration pre-solve"))</label>
@@ -503,16 +509,17 @@ $(config_maintenance)
 <label>$(_webui_field_label("power_flow_start_current_iteration_max_angle_step_deg", "Maximum angle-step guard [deg]"))<input name=\"power_flow_start_current_iteration_max_angle_step_deg\" type=\"number\" step=\"any\" min=\"0\" value=\"$(_webui_input_value(profile_values, "power_flow_start_current_iteration_max_angle_step_deg", _webui_option_default("power_flow_start_current_iteration_max_angle_step_deg")))\"></label>
 <label class=\"check\"><input name=\"power_flow_start_current_iteration_only_for_large_cases\" type=\"hidden\" value=\"false\"><input name=\"power_flow_start_current_iteration_only_for_large_cases\" type=\"checkbox\" value=\"true\"$(_webui_checked(profile_values, "power_flow_start_current_iteration_only_for_large_cases", _webui_option_default("power_flow_start_current_iteration_only_for_large_cases")))>$(_webui_field_label("power_flow_start_current_iteration_only_for_large_cases", "Only for large cases"))</label>
 </fieldset>
-<fieldset class=\"import-section\">
+<fieldset class=\"import-section\" data-import-conventions-section>
 <legend>MATPOWER import conventions</legend>
-<label>$(_webui_field_label("matpower_import_auto_profile", "MATPOWER auto-profile"))$(_webui_select("matpower_import_auto_profile", _webui_option_allowed_values("matpower_import_auto_profile"), _webui_selected(profile_values, "matpower_import_auto_profile", _webui_option_default("matpower_import_auto_profile"))))</label>
-<label>$(_webui_field_label("matpower_import_ratio", "Transformer ratio convention"))$(_webui_select("matpower_import_ratio", _webui_option_allowed_values("matpower_import_ratio"), _webui_selected(profile_values, "matpower_import_ratio", _webui_option_default("matpower_import_ratio"))))</label>
-<label>$(_webui_field_label("matpower_import_shift_sign", "Phase-shift sign"))<input name=\"matpower_import_shift_sign\" type=\"number\" step=\"2\" min=\"-1\" max=\"1\" value=\"$(_webui_input_value(profile_values, "matpower_import_shift_sign", _webui_option_default("matpower_import_shift_sign")))\"></label>
-<label>$(_webui_field_label("matpower_import_shift_unit", "Phase-shift unit"))$(_webui_select("matpower_import_shift_unit", _webui_option_allowed_values("matpower_import_shift_unit"), _webui_selected(profile_values, "matpower_import_shift_unit", _webui_option_default("matpower_import_shift_unit"))))</label>
-<label>$(_webui_field_label("matpower_import_bus_shunt_model", "Bus-shunt model"))$(_webui_select("matpower_import_bus_shunt_model", _webui_option_allowed_values("matpower_import_bus_shunt_model"), _webui_selected(profile_values, "matpower_import_bus_shunt_model", _webui_option_default("matpower_import_bus_shunt_model"))))</label>
-<label>$(_webui_field_label("matpower_import_pv_voltage_source", "PV voltage source"))$(_webui_select("matpower_import_pv_voltage_source", _webui_option_allowed_values("matpower_import_pv_voltage_source"), _webui_selected(profile_values, "matpower_import_pv_voltage_source", _webui_option_default("matpower_import_pv_voltage_source"))))</label>
-<label>$(_webui_field_label("matpower_import_compare_voltage_reference", "Voltage reference comparison"))$(_webui_select("matpower_import_compare_voltage_reference", _webui_option_allowed_values("matpower_import_compare_voltage_reference"), _webui_selected(profile_values, "matpower_import_compare_voltage_reference", _webui_option_default("matpower_import_compare_voltage_reference"))))</label>
-<label data-ac-only-field>$(_webui_field_label("transformer_tap_changer_model", "Tap-changer model"))$(_webui_select("transformer_tap_changer_model", _webui_option_allowed_values("transformer_tap_changer_model"), _webui_selected(profile_values, "transformer_tap_changer_model", _webui_option_default("transformer_tap_changer_model"))))</label>
+<p class=\"field-hint span-2\" data-import-conventions-hint hidden>Not applicable to the selected CGMES case: these options steer MATPOWER (and DTF) parsing only. The CGMES importer reads the delivery's own conventions; Export Solution stays available.</p>
+<label data-matpower-import-field>$(_webui_field_label("matpower_import_auto_profile", "MATPOWER auto-profile"))$(_webui_select("matpower_import_auto_profile", _webui_option_allowed_values("matpower_import_auto_profile"), _webui_selected(profile_values, "matpower_import_auto_profile", _webui_option_default("matpower_import_auto_profile"))))</label>
+<label data-matpower-import-field>$(_webui_field_label("matpower_import_ratio", "Transformer ratio convention"))$(_webui_select("matpower_import_ratio", _webui_option_allowed_values("matpower_import_ratio"), _webui_selected(profile_values, "matpower_import_ratio", _webui_option_default("matpower_import_ratio"))))</label>
+<label data-matpower-import-field>$(_webui_field_label("matpower_import_shift_sign", "Phase-shift sign"))<input name=\"matpower_import_shift_sign\" type=\"number\" step=\"2\" min=\"-1\" max=\"1\" value=\"$(_webui_input_value(profile_values, "matpower_import_shift_sign", _webui_option_default("matpower_import_shift_sign")))\"></label>
+<label data-matpower-import-field>$(_webui_field_label("matpower_import_shift_unit", "Phase-shift unit"))$(_webui_select("matpower_import_shift_unit", _webui_option_allowed_values("matpower_import_shift_unit"), _webui_selected(profile_values, "matpower_import_shift_unit", _webui_option_default("matpower_import_shift_unit"))))</label>
+<label data-matpower-import-field>$(_webui_field_label("matpower_import_bus_shunt_model", "Bus-shunt model"))$(_webui_select("matpower_import_bus_shunt_model", _webui_option_allowed_values("matpower_import_bus_shunt_model"), _webui_selected(profile_values, "matpower_import_bus_shunt_model", _webui_option_default("matpower_import_bus_shunt_model"))))</label>
+<label data-matpower-import-field>$(_webui_field_label("matpower_import_pv_voltage_source", "PV voltage source"))$(_webui_select("matpower_import_pv_voltage_source", _webui_option_allowed_values("matpower_import_pv_voltage_source"), _webui_selected(profile_values, "matpower_import_pv_voltage_source", _webui_option_default("matpower_import_pv_voltage_source"))))</label>
+<label data-matpower-import-field>$(_webui_field_label("matpower_import_compare_voltage_reference", "Voltage reference comparison"))$(_webui_select("matpower_import_compare_voltage_reference", _webui_option_allowed_values("matpower_import_compare_voltage_reference"), _webui_selected(profile_values, "matpower_import_compare_voltage_reference", _webui_option_default("matpower_import_compare_voltage_reference"))))</label>
+<label data-ac-only-field data-matpower-import-field>$(_webui_field_label("transformer_tap_changer_model", "Tap-changer model"))$(_webui_select("transformer_tap_changer_model", _webui_option_allowed_values("transformer_tap_changer_model"), _webui_selected(profile_values, "transformer_tap_changer_model", _webui_option_default("transformer_tap_changer_model"))))</label>
 <label class=\"check\"><input name=\"matpower_export_write_solution\" type=\"hidden\" value=\"false\"><input name=\"matpower_export_write_solution\" type=\"checkbox\" value=\"true\"$(_webui_checked(profile_values, "matpower_export_write_solution", _webui_option_default("matpower_export_write_solution")))>$(_webui_field_label("matpower_export_write_solution", "Export Solution"))</label>
 </fieldset>
 <fieldset class=\"benchmark-section\">
@@ -590,10 +597,28 @@ document.addEventListener('DOMContentLoaded', function () {
   const caseFormat = document.querySelector('select[name="case_format"]');
   const dtfInternalSection = document.querySelector('.dtf-internal-section');
   const datFormatHint = document.getElementById('dtf-dat-format-hint');
+  // MATPOWER import conventions do not steer the CGMES importer: gray them
+  // out (disable, keep in place) while a CGMES case is selected. Disabled
+  // controls drop out of the submitted form, so the run simply uses the
+  // configuration defaults instead of stale Web UI values.
+  const updateImportConventionApplicability = function () {
+    const isCgmes = caseFormat !== null && caseFormat.value === 'cgmes';
+    document.querySelectorAll('[data-matpower-import-field]').forEach(function (el) {
+      el.classList.toggle('disabled', isCgmes);
+      el.querySelectorAll('input, select').forEach(function (control) { control.disabled = isCgmes; });
+    });
+    const importHint = document.querySelector('[data-import-conventions-hint]');
+    if (importHint !== null) importHint.hidden = !isCgmes;
+  };
   const updateDatCaseAssistance = function () {
     const effectiveValue = caseInput === null ? '' : caseInput.value.trim();
     const isDatCase = new RegExp('\\\\.dat\$', 'i').test(effectiveValue);
     if (isDatCase && caseFormat !== null) caseFormat.value = 'dtf_for001';
+    // client-side CGMES markers mirror the server heuristic where the browser
+    // can: explicit cgmes: alias input or a .zip delivery (directory paths
+    // resolve server-side only)
+    const isCgmesCase = new RegExp('^cgmes:', 'i').test(effectiveValue) || new RegExp('\\\\.zip\$', 'i').test(effectiveValue);
+    if (isCgmesCase && caseFormat !== null) caseFormat.value = 'cgmes';
     if (dtfInternalSection !== null) {
       dtfInternalSection.classList.toggle('is-dat-selected', isDatCase);
       if (isDatCase) dtfInternalSection.open = true;
@@ -602,7 +627,9 @@ document.addEventListener('DOMContentLoaded', function () {
       datFormatHint.hidden = !isDatCase;
       datFormatHint.textContent = isDatCase ? '.DAT selected: using internal DTF diagnostics.' : '';
     }
+    updateImportConventionApplicability();
   };
+  if (caseFormat !== null) caseFormat.addEventListener('change', updateImportConventionApplicability);
   updateDatCaseAssistance();
   const solverRadios = document.querySelectorAll('input[data-solver-radio]');
   const apslfSolverOptions = document.querySelector('[data-apslf-solver-options]');

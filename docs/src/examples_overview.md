@@ -1,190 +1,92 @@
 # Examples Overview
 
-This page summarizes the most relevant runnable examples in `examples/`. The
-examples covered by the suite runners live in the topic subfolders
-`examples/powerflow/`, `examples/state_estimation/`, and `examples/others/`;
-standalone DTF validation examples live in `examples/dtf/`, shared
-infrastructure in `examples/internal/`, experimental material in
-`examples/experimental/`.
+All runnable examples live under `examples/`, grouped by topic:
+`examples/powerflow/`, `examples/others/`, `examples/state_estimation/`,
+`examples/dtf/`, shared infrastructure in `examples/internal/`, experimental
+material in `examples/experimental/`. Run any example directly:
+
+```bash
+julia --project=. examples/<folder>/<example>.jl
+```
+
+or run a whole topic through its suite runner (fresh subprocess per example,
+summary at the end): `run_powerflow_suite.jl`, `run_others_suite.jl`,
+`run_state_estimation_suite.jl`, `run_val_dtf_suite.jl`,
+`run_cgmes_suite.jl`.
 
 ## Power flow and network operation
 
-- `using_links.jl`  
-  Minimal link workflow (open/close links) and resulting PF behavior.
-- `exp_synthetic_tiled_grid_pf_perf.jl`
-  Synthetic tiled-grid PF performance example.
-- `exp_configured_matpower_cases.jl`
-  Runs ordered `matpower_import.cases` entries sequentially through `run_sparlectra_cases`.
-- `exp_transformer_loss_extension.jl`
-  Demonstrates Sparlectra's MATPOWER transformer-loss extension by exporting a
-  small transformer case with active no-load conductance metadata and reimporting
-  it without double-counting the equivalent bus shunts.
-- `exp_programmatic_api.jl`
-  Runs one MATPOWER case through the GUI-ready `run_sparlectra_api` contract and lists explicit artifacts.
-- `exp_current_iteration_start.jl`
-  Demonstrates enabling the guarded current-iteration start pre-solve through normal API configuration overrides and prints its metadata/artifact status.
-- `exp_powerflow_service.jl`
-  Starts a local service run, looks up its serialized result by run ID, and lists its artifacts without an HTTP server.
-- `exp_diagnose_self_check.jl`
-  Runs `run_fixed_reference_self_check` on a case with a deliberately mis-scaled branch reactance and prints the resulting narrative `diagnose.log` report (worst-mismatch bus, mismatch trend, branch-anomaly scan, recommendations).
+| Example (`examples/powerflow/`) | Demonstrates | Suite |
+|---|---|---|
+| `matpower_import.jl` | Minimal MATPOWER import and solve | powerflow |
+| `matpower_import_multi_config.jl` | One case under several configurations | powerflow |
+| `exp_configured_matpower_cases.jl` | Ordered `matpower_import.cases` batches via `run_sparlectra_cases` | powerflow |
+| `exp_programmatic_api.jl` | GUI-ready `run_sparlectra_api` contract, explicit artifacts | powerflow |
+| `exp_powerflow_service.jl` | Local service run, result lookup by run ID, artifact listing — no HTTP server | powerflow |
+| `exp_distributed_slack_modes.jl` | Classical single slack vs distributed slack (`pg_weighted` vs imported `APF` shares, `lambda_P` metadata) | standalone |
+| `exp_dc_powerflow.jl` | Standalone DC power flow (`rundcpf!`), DC-seeded AC start | powerflow |
+| `exp_current_iteration_start.jl` | Guarded current-iteration start pre-solve via config overrides | powerflow |
+| `exp_diagnose_self_check.jl` | `run_fixed_reference_self_check` and the narrative `diagnose.log` report | others |
+| `exp_synthetic_tiled_grid_pf_perf.jl` | Synthetic tiled-grid PF performance study | powerflow |
+| `qlimit_large_case_mode_comparison.jl` | Q-limit enforcement modes on large cases | powerflow |
+| `apslf_demo.jl` | APSLF analytic solver as standalone/primary/start-value backend | powerflow |
+| `mc_probabilistic_powerflow.jl` | Monte-Carlo load scaling on `case14.m` (N = 1000): per-bus Vm statistics, band violations, convergence rate | powerflow |
 
-## Transformer and tap control
+## Transformers and controllers
 
-- `exp_transformer_tap_changer_model.jl`
-  Imports the same off-nominal-tap MATPOWER transformer once with
-  `transformer.tap_changer_model = :ideal` and once with
-  `:impedance_correction`, and compares the resulting series impedance and
-  power-flow solution.
-- `exp_3wt_phase_taps.jl`
-  Builds the same three-winding transformer with `create3WTWindings!` in
-  three separate configurations, demonstrating the `phase_tap_side`/
-  `phase_taps` keywords (Issue #261): **Case 1** OLTC only (ratio tap on the
-  HV winding); **Case 2** PST/combined regulator only (asymmetrical
-  `PhaseTapChangerModel` on the MV winding, no ratio tap anywhere); **Case 3**
-  (bonus) both combined on the HV winding (`tap_side == phase_tap_side`).
-  Data-model only — resolving a phase-tap model into the AUX-bus branch and
-  outer-loop control of a single 3WT winding are not wired yet.
-- `tap_control_demo_grid.jl`  
-  Lightweight three-controller demo (OLTC + PST + combined regulation) using `run_sparlectra(net = ...)`,
-  central Sparlectra configuration (`examples/configuration.yaml` or
-  `SPARLECTRA_CONFIGURATION_YAML`) plus demo-specific
-  `examples/others/tap_control_demo_grid.yaml`, and `latest_control_result(net)` for
-  controller rows and trace rows. Optional classic output:
-  `SPARLECTRA_TAP_DEMO_CLASSIC=1`; optional raw control-result rows:
-  `SPARLECTRA_TAP_DEMO_RAW=1`.
-- `tap_control_schraeg_two_controllers.jl`  
-  Split combined regulation (Schrägregler): two independent controllers on
-  one transformer — voltage via the ratio tap, active power via the phase
-  tap — with per-actuator exclusivity and the discrete-step deadband rule.
+| Example (`examples/others/`) | Demonstrates | Suite |
+|---|---|---|
+| `exp_transformer_tap_changer_model.jl` | `tap_changer_model = :ideal` vs `:impedance_correction` on an off-nominal tap | others |
+| `exp_transformer_loss_extension.jl` | MATPOWER transformer-loss extension export/reimport round trip | others |
+| `exp_3wt_phase_taps.jl` | 3WT with `phase_tap_side`/`phase_taps`: OLTC-only, PST-only, combined (data model only) | others |
+| `tap_control_demo_grid.jl` | Three controllers at once (OLTC + PST + combined) via `run_sparlectra(net = …)` and `latest_control_result` | others |
+| `tap_control_schraeg_two_controllers.jl` | Split combined regulation: independent voltage/ratio and power/phase controllers on one unit | others |
+| `machine_remote_voltage_control.jl` | Remote voltage control via machine reactive power ([theory](remote_voltage_control.md)), incl. the honest `at_limit` outcome | others |
+| `using_links.jl` | Busbar coupler as bus link, open/close behavior | others |
+| `network_analyzer.jl` | Topology analysis before/after removing a branch | others |
+| `export_solution.jl` | Solver-agnostic `PFModel`/`PFSolution` export | others |
 
-## Voltage-dependent and Q-limit controls
+## Voltage-dependent and Q-limit control
 
-- `example_voltage_dependent_control_rectangular.jl`  
-  Demonstrates P(U)/Q(U) behavior with the rectangular solver workflow.
-- `example_q_limit_voltage_adjustment.jl`  
-  Shows `qlimit_mode = :adjust_vset` and related run variants.
+| Example (`examples/powerflow/`) | Demonstrates | Suite |
+|---|---|---|
+| `example_voltage_dependent_control_rectangular.jl` | P(U)/Q(U) droop behavior in the rectangular solver | powerflow |
+| `example_q_limit_voltage_adjustment.jl` | `qlimit_mode = :adjust_vset` run variants | powerflow |
 
-## Reporting and exports
+## CGMES
 
-- `export_solution.jl`  
-  Exports solved network data for downstream usage and writes outputs under
-  `examples/_out/export_solution/...`.
+| Example | Demonstrates | Suite |
+|---|---|---|
+| `run_cgmes_suite.jl` | Guided walkthrough (diagnose → import → solve → SV validation) plus the full sweep over every ENTSO-E/ReliCapGrid test set with a result table | cgmes |
+| `experimental/cgmes_fetch_testsets.jl` | One-time fetch of the ENTSO-E test-set package into the local cache | standalone |
+| `experimental/cgmes_export_demo.jl` | Experimental Stage-1 CGMES export on a small net | others (optional) |
+| `experimental/val_realgrid_remeasure.jl` | RealGrid measurement ladder: baseline, Q-limits, distributed slack, machine control | standalone |
 
 ## DTF validation (Testnetz13 / FOR001-FOR002)
 
-External FOR001/FOR002 validation datasets are not shipped with Sparlectra;
-place local files under `data/DTF/` or pass explicit `--dtf-file`/`--for002-file`
-paths. See the tests page for the full mode/case reference.
+External FOR001/FOR002 datasets are not shipped; place files under
+`data/DTF/` or pass `--dtf-file`/`--for002-file`.
 
-- `run_val_dtf_suite.jl`  
-  Unified CLI runner for all DTF checks: import audit, native base-case
-  validation against FOR002, DTF-listed outage validation, and the
-  DTF -> existing MATPOWER export/import roundtrip. Select checks with
-  `--mode=all|audit|base|outages|matpower` and datasets with `--case=A,B,...`.
-  The former single-purpose scripts `validate_dtf_for002_testnetz13.jl`,
-  `validate_dtf_for002_outages_testnetz13.jl`, and
-  `validate_dtf_matpower_export_testnetz13.jl` were consolidated into this
-  suite; the shared implementations live in `examples/internal/dtf_validation_*.jl`,
-  each of which is also directly runnable as a single-purpose CLI entry point.
-- `dtf/dtf_validation_report.jl`  
-  Cross-case report over the local FOR001/FOR002 case set: transformer loss
-  decomposition, voltage-transfer diagnostics, and transformer-ratio-mode
-  comparisons, written as CSV/Markdown under `examples/_out/dtf_validation/`.
-- `dtf/for002_matpower_metadata_validation.jl`  
-  Standalone diagnostic for FOR002/MATPOWER metadata fixtures (bus/branch
-  name normalization and comparison artifacts).
+| Example | Demonstrates | Suite |
+|---|---|---|
+| `run_val_dtf_suite.jl` | Unified CLI: import audit, base-case validation, outage validation, MATPOWER round trip (`--mode`, `--case`) | val_dtf |
+| `dtf/dtf_validation_report.jl` | Cross-case CSV/Markdown report: loss decomposition, voltage-transfer diagnostics, ratio-mode comparisons | standalone |
+| `dtf/for002_matpower_metadata_validation.jl` | FOR002/MATPOWER metadata fixtures (name normalization, comparison artifacts) | standalone |
 
 ## State estimation
 
-- `state_estimation_wls.jl`  
-  Baseline weighted least squares state estimation run.
-- `state_estimation_manual_measurements.jl`  
-  Manual measurement setup and estimation workflow.
-- `state_estimation_observability.jl`  
-  Observability-focused scenario and diagnostics.
-- `state_estimation_passive_bus_zib_comparison.jl`  
-  Passive-bus / ZIB handling comparison.
-- `state_estimation_pmu_angles.jl`  
-  PMU voltage-angle measurements and the reference-offset state α
-  (aligned vs. shifted PMU time base, unmodeled-offset failure mode).
-- `usage_state_estimation_diagnostics.jl`  
-  Practical diagnostics usage workflow.
-- `h_matrix_observability_demo.jl`  
-  Matrix-level observability/redundancy exploration.
+| Example (`examples/state_estimation/`) | Demonstrates | Suite |
+|---|---|---|
+| `state_estimation_wls.jl` | Baseline WLS run | state_estimation |
+| `state_estimation_manual_measurements.jl` | Manual measurement setup | state_estimation |
+| `state_estimation_observability.jl` | Observability scenario and diagnostics | state_estimation |
+| `state_estimation_passive_bus_zib_comparison.jl` | Passive-bus / ZIB handling comparison | state_estimation |
+| `state_estimation_pmu_angles.jl` | PMU angle measurements and the reference-offset state α | state_estimation |
+| `usage_state_estimation_diagnostics.jl` | Practical diagnostics workflow | state_estimation |
+| `h_matrix_observability_demo.jl` | Matrix-level observability/redundancy exploration | state_estimation |
+| `mc_state_estimation_study.jl` | Monte-Carlo WLS error statistics on the 7-bus [workshop network](workshop.md) (M = 500) | state_estimation |
 
-## Monte-Carlo studies
-
-- `mc_probabilistic_powerflow.jl`
-  Probabilistic power flow on `case14.m`: N = 1000 Monte-Carlo samples scale
-  all loads with a truncated-normal factor (`Normal(1.0, 0.1)`, clipped to
-  `[0.5, 1.5]`, P and Q scaled together) and solve each sample with `runpf!`.
-  Reports per-bus mean/std and 5 %/95 % quantiles of `Vm`, counts of samples
-  outside the `[0.95, 1.05]` pu band, and the convergence rate. Deterministic
-  via a fixed `MersenneTwister` seed; loads are scaled in place and restored
-  after every sample (no network copies, no plotting dependencies).
-- `mc_state_estimation_study.jl`
-  WLS state-estimation error statistics on the 7-bus workshop network (see
-  [Workshop](workshop.md)): M = 500 runs each generate a fresh noisy
-  measurement set with `setMeasurementsFromPF!` (run-specific RNG) and
-  re-estimate the state with `runse!`. Reports RMSE and maximum error of
-  `Vm`/`Va` against the reference power-flow state, convergence rate, and
-  mean iteration count; checks `evaluate_global_observability` once up front.
-
-## Utility / analysis scripts
-
-- `matpower_import.jl`
-  Configurable MATPOWER import utility script using the central
-  `src/configuration.yaml.example` defaults plus optional
-  `examples/configuration.yaml` local overrides.
-  Supports logfile-only MATPOWER reference diagnostics, effective configuration logging, and
-  configurable branch `SHIFT` sign/unit handling for phase-shifter convention checks.
-  The YAML options can also diagnose and choose PV/REF voltage references when
-  MATPOWER `BUS.VM` values differ from generator `GEN.VG` setpoints; use
-  `compare_voltage_reference: imported_setpoint` to validate against the actual
-  imported PV/REF setpoints, or `compare_voltage_reference: bus_vm` to reproduce
-  stored bus-matrix voltages strictly.
-- `matpower_import_multi_config.jl`  
-  Developer diagnostic that runs one MATPOWER case through several
-  configuration YAML files and compares the final rectangular PF status
-  (auto-profile mode, wrong-branch detection, solver start settings).
-- `qlimit_large_case_mode_comparison.jl`  
-  Manual Q-limit comparison workflow over optional large MATPOWER cases
-  (`case × start_profile × qlimit_mode`); excluded from normal test profiles.
-- `network_analyzer.jl`  
-  Developer/exploration script for network diagnostics and inspection helpers.
-
-## How to run
-
-From repository root:
-
-```bash
-julia --project=. examples/others/tap_control_demo_grid.jl
-```
-
-General pattern:
-
-```bash
-julia --project=. examples/<example_name>.jl
-```
-
-## Example suites
-
-Three suite runners execute a whole group of examples — each in a fresh Julia
-subprocess — and write a summary (CSV + Markdown) plus per-example logs to
-`examples/_out/<suite>/`:
-
-```bash
-julia --project=. examples/run_powerflow_suite.jl
-julia --project=. examples/run_state_estimation_suite.jl
-julia --project=. examples/run_others_suite.jl
-```
-
-Examples tagged `heavy` (very large cases, performance benchmarks) or
-`optional` (optional dependency, experimental API) are skipped by default and
-reported as skipped; enable them with `--include-heavy` / `--include-optional`.
-Use `--list` to print a suite's registry, `--only=<name,...>` /
-`--skip=<name,...>` to select examples, and `--help` for all options
-(`--strict`, `--timeout=`, `--output-dir=`, ...).
-
-The DTF validation examples have their own dedicated suite,
-`examples/run_val_dtf_suite.jl`, and are not part of `run_others_suite.jl`.
+The **suite** column names the runner that executes the example
+(`standalone` = run directly, not part of a suite; `optional` = skipped when
+its inputs are unavailable). The suite runners print a per-example pass/fail
+summary and are themselves exercised by the extended test profile.

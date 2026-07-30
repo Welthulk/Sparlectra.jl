@@ -61,7 +61,7 @@ This typed model is the canonical internal representation that should be consume
 | `benchmark` | `BenchmarkConfig` | Repeated benchmark-run controls | Public / supported |
 | `control` | `ControlConfig` | Generic controller outer-loop orchestration controls (`control.controllers` reserved for future YAML definitions) | Public / supported |
 | `runtime` | `RuntimeConfig` | Julia/BLAS thread control knobs for entry workflows | Public / supported |
-| `diagnostics` | `DiagnosticsConfig` | Effective-config logging and diagnostics render controls | Public / supported |
+| `diagnostics` | `DiagnosticsConfig` | Effective-config logging (`log_effective_config` only — the former `diagnostics.console_*`/`logfile_diagnostics` duplicates of `output.*` are deprecated and ignored with a warning) | Public / supported |
 | `webui` | `WebUIConfig` | Web UI presentation preferences (e.g. `webui.show_case_settings_notice`) | Public / supported |
 | `extensions` | reserved (not mapped to typed runtime fields) | Future extension placeholder | Reserved |
 
@@ -294,7 +294,7 @@ The check result — not just the setting — is surfaced in every output surfac
 
 `status` values: `ok` (checked, no finding), `warn` (suspicious but the numerical result was still accepted per `wrong_branch_detection = warn`), `fail` (suspicious and treated as non-convergence per `wrong_branch_detection = fail`), `wrong_branch_rescue_not_implemented` (the reserved `rescue` mode was requested; no retry loop runs — see below), or `not_checked` (`wrong_branch_detection = off`, or the check never ran, e.g. a non-finite solution short-circuits earlier reporting). `reason` values mirror the case listed above (`none`, `low_voltage_magnitude`, `high_voltage_magnitude`, `angle_spread_exceeded`, `branch_angle_exceeded`, `nonfinite_voltage`, `disabled`, `rescue_requested_but_not_available`).
 
-**Maintainer decision:** the wrong-branch **rescue retry loop is intentionally out of scope** and will not be implemented as part of this detection work; `wrong_branch_detection = rescue` stays a reserved mode that reports `wrong_branch_rescue_not_implemented` rather than retrying. Detection with full output visibility (this section) plus the APSLF solver as an alternative start/solve path (see `docs/src/external_solvers.md`) are the supported mitigations for hard flat-start cases.
+The rescue retry loop is intentionally not implemented. `wrong_branch_detection = rescue` is a reserved mode that reports `wrong_branch_rescue_not_implemented` rather than retrying. Supported mitigations for hard flat-start cases are detection with full output visibility (this section) and the APSLF solver as an alternative start/solve path (see [External Solvers](external_solvers.md)).
 
 ## Control configuration (generic outer loop)
 
@@ -367,13 +367,7 @@ The following canonical keys are currently present in `src/configuration.yaml.ex
 - `control.stop_on_pf_failure`
 - `control.trace`
 - `diagnostics`
-- `diagnostics.console_auto_profile`
-- `diagnostics.console_diagnostics`
-- `diagnostics.console_max_rows`
-- `diagnostics.console_q_limit_events`
-- `diagnostics.console_summary`
 - `diagnostics.log_effective_config`
-- `diagnostics.logfile_diagnostics`
 - `extensions`
 - `extensions.reserved`
 - `matpower_export`
@@ -398,6 +392,7 @@ The following canonical keys are currently present in `src/configuration.yaml.ex
 - `output.console_diagnostics`
 - `output.console_max_rows`
 - `output.console_q_limit_events`
+- `output.console_live`
 - `output.console_summary`
 - `output.logfile_diagnostics`
 - `output.logfile_performance`

@@ -117,6 +117,7 @@ export
   AbstractControlState,
   AbstractControlUpdate,
   PowerTransformerControl,
+  MachineVoltageControl,                  # Remote voltage control via machine Q.
 
   # Branch
   AbstractBranch,
@@ -354,6 +355,10 @@ export
   get_branch_q_from_to_mvar,
   buildTapControllerReportRows,
   printTapControllerSummary,
+  addMachineVoltageControl!,              # Add a machine remote voltage controller.
+  clearMachineControllers!,
+  buildMachineControllerReportRows,
+  printMachineControllerSummary,
 
   # remove_functions.jl
   removeBus!,                             # Remove a bus and dependent data.
@@ -374,6 +379,8 @@ export
   createNetFromCGMES,                     # Import a CGMES delivery as Net (Stage 1).
   importCGMES,                            # CGMES import with full result (Net + SC data + report).
   compareWithSV,                          # Compare a solved CGMES import against its SV profile.
+  shortCircuitCoverage,                   # Completeness of harvested short-circuit data (#277 input).
+  printShortCircuitCoverage,              # Readable rendering of the coverage rows.
   _createDict,
   apply_matpower_bus_voltage!,            # Apply MATPOWER bus voltage data.
   apply_mp_bus_vmva_init!,                # Initialize Vm/Va from MATPOWER data.
@@ -561,13 +568,14 @@ include("shunt.jl")
 include("network.jl")
 include("synthetic_grids.jl")
 include("tap_control.jl")
+include("machine_control.jl")
 include("busdata.jl")
 include("MatpowerIO.jl")
 include("createnet_powermat.jl")
 include("equicircuit.jl")
 include("DTFImporter.jl")
 include("cgmes/CGMESImporter.jl")
-import .CGMESImporter: summarizeCGMES, createNetFromCGMES, importCGMES, compareWithSV
+import .CGMESImporter: summarizeCGMES, createNetFromCGMES, importCGMES, compareWithSV, shortCircuitCoverage, printShortCircuitCoverage
 include("limits.jl")
 include("losses.jl")
 include("exportMatPower.jl")
@@ -590,6 +598,7 @@ include("solver_core.jl")
 # The KLU backend comes first: it only depends on solve_sparse_system from
 # solver_core.jl (its fallback chain) and is referenced by the Newton step.
 include("powerflow_rectangular/rectangular_klu_solver.jl")
+include("powerflow_rectangular/rectangular_distributed_slack.jl")
 include("powerflow_rectangular/rectangular_core_equations.jl")
 include("powerflow_rectangular/rectangular_voltage_helpers.jl")
 include("powerflow_rectangular/rectangular_jacobian_builders.jl")

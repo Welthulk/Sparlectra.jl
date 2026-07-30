@@ -12,7 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-const DTF_FIXTURE = joinpath(@__DIR__, "..", "fixtures", "dtf", "FOR001.DAT")
+# The reference network is untracked; both documented drop-in locations are
+# accepted (test/fixtures/dtf/ takes precedence, data/DTF/ is where the
+# validation examples already read it from).
+const _DTF_FIXTURE_CANDIDATES = (joinpath(@__DIR__, "..", "fixtures", "dtf", "FOR001.DAT"), joinpath(@__DIR__, "..", "..", "data", "DTF", "FOR001.DAT"))
+const DTF_FIXTURE = let i = findfirst(isfile, _DTF_FIXTURE_CANDIDATES)
+  _DTF_FIXTURE_CANDIDATES[i === nothing ? 1 : i]
+end
 
 function _synthetic_dtf_case(; kind::Char = 'T', g_s::Float64 = 4.0e-5, b_s::Float64 = -1.0e-5, path::String = "synthetic")
   return Sparlectra.DTFImporter.DTFCase(

@@ -81,6 +81,24 @@ power_flow:
     reference_policy: matpower_like
     diagnostic_continue_after_failure: true
 
+  # Distributed active-power slack (issue #192): the REF bus keeps the angle
+  # reference, the island imbalance is absorbed by participating generators
+  # via one lambda_P per island. Disabled reproduces the classical behavior.
+  distributed_slack:
+    enabled: false
+    # Allowed values: pg_weighted, pmax_weighted, headroom_weighted, imported, explicit
+    # imported reads ProSumer.participationFactor (MATPOWER APF / CGMES normalPF).
+    p_mode: pg_weighted
+    # Diagnostic only: WARN when a corrected P leaves [minP, maxP]; no re-dispatch.
+    respect_p_limits: true
+    # Allowed values: error, ref_only (per-island fallback when no valid participant)
+    fallback: error
+    # explicit mode only: bus name (or index) => weight, block style:
+    #   weights:
+    #     B1: 2.0
+    #     B2: 1.0
+    weights: {}
+
   # Start projection and warmstart controls.
   start_mode:
     # Allowed values: classic, dc, bus_va_blend, matpower_va
@@ -249,6 +267,10 @@ cgmes_import:
   # Start from the SSH tap positions and attach the CGMES-defined tap
   # controllers instead of importing the solved SvTapStep positions as fixed taps.
   tap_control: false
+  # Attach outer-loop remote voltage controllers for machines whose voltage
+  # RegulatingControl points at a different bus (instead of holding them PV at
+  # their own bus). See docs/src/remote_voltage_control.md.
+  machine_control: false
   # Diagnostic override: treat every terminal as connected. For snapshots whose
   # SSH connected flags contradict their own SV state.
   ignore_connected: false
@@ -361,21 +383,19 @@ runtime:
   case_source: ""
   configured_default_casefile: ""
 
+# Console/logfile output options live under `output:` — the former
+# diagnostics.console_*/logfile_diagnostics duplicates are deprecated and
+# ignored (the parser warns when one is set).
 diagnostics:
+  # Append the resolved effective configuration to the interactive MATPOWER
+  # runner logfile (the API always writes it as effective_config.yaml).
   log_effective_config: false
-  console_summary: true
-  # Allowed values: off, compact, full
-  console_auto_profile: compact
-  # Allowed values: off, compact, summary, full
-  console_diagnostics: compact
-  # Allowed values: off, summary, full
-  console_q_limit_events: summary
-  console_max_rows: 100
-  # Allowed values: off, compact, full
-  logfile_diagnostics: compact
 
 output:
   console_summary: true
+  # Mirror the captured run output live to the real console during API/service
+  # runs (the archived run.log stays identical). Default off: API runs quiet.
+  console_live: false
   # Allowed values: off, compact, full
   console_auto_profile: compact
   # Allowed values: off, compact, summary, full

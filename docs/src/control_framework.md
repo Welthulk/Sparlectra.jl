@@ -6,6 +6,11 @@ The inner numerical solver remains `runpf!`. The generic orchestration layer is 
 
 `run_sparlectra` automatically dispatches through `run_control!` when `collect_outer_controllers(net)` returns at least one controller.
 
+Built-in controllers: `PowerTransformerControl` (tap changers — voltage,
+active power, combined; theory below) and `MachineVoltageControl`
+(remote voltage regulation via machine reactive power — theory in
+[Remote Voltage Control](remote_voltage_control.md)).
+
 ## Architecture
 
 ```text

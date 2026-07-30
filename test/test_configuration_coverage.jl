@@ -57,6 +57,7 @@ function run_configuration_coverage_tests()
     mapped_keys = Set([
       "power_flow.method", "power_flow.solver", "power_flow.linear_solver", "power_flow.apslf.order", "power_flow.apslf.use_pade", "power_flow.apslf.nr_polish", "power_flow.apslf_start.enabled", "power_flow.apslf_start.order", "power_flow.flatstart", "power_flow.tol", "power_flow.max_iter", "power_flow.autodamp", "power_flow.autodamp_min", "power_flow.wrong_branch_detection", "power_flow.wrong_branch_rescue", "power_flow.wrong_branch_min_vm_pu", "power_flow.wrong_branch_max_vm_pu", "power_flow.wrong_branch_max_angle_spread_deg", "power_flow.wrong_branch_max_branch_angle_deg", "power_flow.wrong_branch_min_low_vm_count", "power_flow.wrong_branch_rescue_max_attempts", "power_flow.rectangular_workspace_reuse", "power_flow.rectangular_preallocate_workspace", "power_flow.rectangular_workspace_min_buses",
       "power_flow.islands.enabled", "power_flow.islands.mode", "power_flow.islands.reference_policy", "power_flow.islands.diagnostic_continue_after_failure",
+      "power_flow.distributed_slack.enabled", "power_flow.distributed_slack.p_mode", "power_flow.distributed_slack.respect_p_limits", "power_flow.distributed_slack.fallback", "power_flow.distributed_slack.weights",
       "power_flow.start_mode.angle_mode", "power_flow.start_mode.voltage_mode", "power_flow.start_mode.profile_source", "power_flow.start_mode.start_projection", "power_flow.start_mode.try_dc_start", "power_flow.start_mode.try_blend_scan", "power_flow.start_mode.branch_guard", "power_flow.start_mode.measure_candidates", "power_flow.start_mode.accept_unmeasured_dc_start", "power_flow.start_mode.dc_seed_unconditional", "power_flow.start_mode.reuse_import_data", "power_flow.start_mode.blend_lambdas", "power_flow.start_mode.dc_angle_limit_deg",
       "power_flow.start_current_iteration.enabled", "power_flow.start_current_iteration.max_iter", "power_flow.start_current_iteration.tol", "power_flow.start_current_iteration.damping", "power_flow.start_current_iteration.accept_only_if_improved", "power_flow.start_current_iteration.min_improvement_factor", "power_flow.start_current_iteration.vm_min_pu", "power_flow.start_current_iteration.vm_max_pu", "power_flow.start_current_iteration.max_angle_step_deg", "power_flow.start_current_iteration.only_for_large_cases",
       "power_flow.merit.enabled", "power_flow.merit.armijo_c1", "power_flow.merit.scale_p", "power_flow.merit.scale_q", "power_flow.merit.scale_v", "power_flow.merit.fallback_max_mismatch",
@@ -65,13 +66,13 @@ function run_configuration_coverage_tests()
       "power_flow.qlimits.guard.enabled", "power_flow.qlimits.guard.min_q_range_pu", "power_flow.qlimits.guard.narrow_range_mode", "power_flow.qlimits.guard.zero_range_mode", "power_flow.qlimits.guard.violation_mode", "power_flow.qlimits.guard.violation_threshold_pu", "power_flow.qlimits.guard.max_switches", "power_flow.qlimits.guard.max_remaining_violations", "power_flow.qlimits.guard.accept_bounded_violations", "power_flow.qlimits.guard.freeze_after_repeated_switching", "power_flow.qlimits.guard.log",
       "state_estimation.enabled", "state_estimation.method", "state_estimation.tol", "state_estimation.max_iter", "state_estimation.flatstart", "state_estimation.jac_eps", "state_estimation.update_net", "state_estimation.pmu_ref_offset", "state_estimation.observability.enabled",
       "matpower_import.case", "matpower_import.cases", "matpower_import.auto_profile", "matpower_import.auto_profile_log", "matpower_import.pv_voltage_source", "matpower_import.pv_voltage_mismatch_tol_pu", "matpower_import.compare_voltage_reference", "matpower_import.bus_shunt_model", "matpower_import.shift_unit", "matpower_import.shift_sign", "matpower_import.ratio", "matpower_import.enable_pq_gen_controllers", "matpower_import.preallocate_network", "matpower_import.preallocate_min_buses", "matpower_import.apply_bus_names", "matpower_import.apply_branch_names", "matpower_import.apply_branch_kind", "matpower_import.import_for001_contingencies", "matpower_import.matpower_dcline_mode", "matpower_import.net_cache.enabled",
-      "cgmes_import.path", "cgmes_import.base_mva", "cgmes_import.require_boundary", "cgmes_import.tap_control", "cgmes_import.ignore_connected", "cgmes_import.vset_min_pu", "cgmes_import.vset_max_pu", "cgmes_import.multi_slack",
+      "cgmes_import.path", "cgmes_import.base_mva", "cgmes_import.require_boundary", "cgmes_import.tap_control", "cgmes_import.machine_control", "cgmes_import.ignore_connected", "cgmes_import.vset_min_pu", "cgmes_import.vset_max_pu", "cgmes_import.multi_slack",
       "transformer.tap_changer_model",
       "matpower_export.write_solution",
       "performance.enabled", "performance.level", "performance.print_to_console", "performance.write_to_logfile", "performance.show_allocations", "performance.show_iteration_table", "performance.compact_logging", "performance.representative_warmup_runs", "performance.compare_cold_warm", "performance.skip_reference_comparison", "performance.skip_expensive_diagnostics", "performance.skip_branch_neighborhood_report", "performance.max_diagnostic_rows",
       "runtime.print_thread_config", "runtime.julia_threads", "runtime.blas_threads", "runtime.casefile", "runtime.case_name", "runtime.case_source", "runtime.configured_default_casefile",
-      "diagnostics.log_effective_config", "diagnostics.console_summary", "diagnostics.console_auto_profile", "diagnostics.console_diagnostics", "diagnostics.console_q_limit_events", "diagnostics.console_max_rows", "diagnostics.logfile_diagnostics",
-      "output.console_summary", "output.console_auto_profile", "output.console_diagnostics", "output.console_q_limit_events", "output.console_max_rows", "output.logfile_results", "output.result_table_max_rows", "output.result_table_large_case_threshold_buses", "output.result_table_large_case_mode", "output.detailed_result_csv_write_mode", "output.detailed_result_csv_exporter", "output.detailed_result_csv_direct_threshold_buses", "output.detailed_result_csv_buffer_initial_bytes", "output.detailed_result_csv_buffer_max_bytes", "output.detailed_result_csv_streaming_threshold_rows", "output.logfile_diagnostics", "output.logfile_performance", "output.logfile_warnings",
+      "diagnostics.log_effective_config",
+      "output.console_summary", "output.console_live", "output.console_auto_profile", "output.console_diagnostics", "output.console_q_limit_events", "output.console_max_rows", "output.logfile_results", "output.result_table_max_rows", "output.result_table_large_case_threshold_buses", "output.result_table_large_case_mode", "output.detailed_result_csv_write_mode", "output.detailed_result_csv_exporter", "output.detailed_result_csv_direct_threshold_buses", "output.detailed_result_csv_buffer_initial_bytes", "output.detailed_result_csv_buffer_max_bytes", "output.detailed_result_csv_streaming_threshold_rows", "output.logfile_diagnostics", "output.logfile_performance", "output.logfile_warnings",
       "benchmark.enabled", "benchmark.methods", "benchmark.seconds", "benchmark.samples", "benchmark.show_once", "benchmark.show_once_output", "benchmark.show_once_max_nodes",
       "control.enabled", "control.max_outer_iterations", "control.trace", "control.log_iterations", "control.stop_on_pf_failure", "control.controllers",
       "webui.show_case_settings_notice",
@@ -108,8 +109,7 @@ function run_configuration_coverage_tests()
       "benchmark.enabled" => :BenchmarkConfig,
       "state_estimation.method" => :StateEstimationConfig,
       "runtime.julia_threads" => :RuntimeConfig,
-      "diagnostics.console_diagnostics" => :DiagnosticsConfig,
-      "diagnostics.logfile_diagnostics" => :DiagnosticsConfig,
+      "diagnostics.log_effective_config" => :DiagnosticsConfig,
       "extensions.reserved" => :Reserved,
       "webui.show_case_settings_notice" => :WebUIConfig,
     )
@@ -446,5 +446,87 @@ power_flow:
     @test !dup_result.written
     @test "output.detailed_result_csv_exporter" in dup_result.duplicate_keys
     @test occursin("direct", read(dup, String))
+  end
+
+  @testset "console_live capture tees to console and archive identically" begin
+    # live=false: output only in the archive stream. The archive must be a
+    # real OS stream here (redirect_stdout rejects IOBuffer) — exactly what
+    # production passes (the open run.log IOStream).
+    quiet_path, quiet_io = mktemp()
+    result = redirect_stdout(devnull) do
+      Sparlectra._capture_run_output(quiet_io) do
+        println("captured line")
+        42
+      end
+    end
+    close(quiet_io)
+    @test result == 42
+    @test occursin("captured line", read(quiet_path, String))
+
+    # live=true: the same bytes land in the archive AND on the (outer) console.
+    # The read must happen AFTER the redirect block: redirect_stdout dups the
+    # pipe's write end onto fd 1, so closing outer.in inside the block leaves
+    # the dup open and read() would never see EOF (deadlock).
+    archive = IOBuffer()
+    outer = Pipe()
+    Base.link_pipe!(outer; reader_supports_async = true, writer_supports_async = true)
+    redirect_stdout(outer) do
+      Sparlectra._capture_run_output(archive; live = true) do
+        println("teed line")
+      end
+    end
+    close(outer.in)
+    console_text = read(outer, String)
+    @test occursin("teed line", String(take!(archive)))
+    @test occursin("teed line", console_text)
+
+    # error path: output written BEFORE a mid-run throw must be flushed into
+    # the archive (pump drained in the finally block), and the exception
+    # must propagate — exactly what a crash post-mortem needs from run.log
+    archive2 = IOBuffer()
+    thrown = redirect_stdout(devnull) do
+      try
+        Sparlectra._capture_run_output(archive2; live = true) do
+          println("before crash")
+          error("boom")
+        end
+        false
+      catch err
+        occursin("boom", sprint(showerror, err))
+      end
+    end
+    @test thrown
+    @test occursin("before crash", String(take!(archive2)))
+
+    # config surface: default off, parseable on
+    @test !Sparlectra.OutputConfig().console_live
+    @test Sparlectra.OutputConfig(Dict("output" => Dict("console_live" => true))).console_live
+  end
+
+  @testset "Deprecated diagnostics.* keys load with a warning, not an error" begin
+    # Regression (2026-07-30): stored user/webui configs still carry the old
+    # diagnostics.console_* duplicates of output.*; after their removal from
+    # the default file the unknown-key validation rejected every such config
+    # ("Unknown Sparlectra configuration key: diagnostics.console_diagnostics")
+    # and bricked the Web UI start. Deprecated keys must warn and be ignored.
+    p = tempname() * ".yaml"
+    write(p, "diagnostics:\n  console_diagnostics: full\n  console_max_rows: 50\n  log_effective_config: true\n")
+    cfg = @test_logs (:warn, r"diagnostics\.console_diagnostics is deprecated") (:warn, r"diagnostics\.console_max_rows is deprecated") match_mode = :any Sparlectra.load_sparlectra_config(p; reload = true)
+    @test cfg isa Sparlectra.SparlectraConfig
+    @test cfg.diagnostics.log_effective_config
+    # genuinely unknown keys still fail loudly
+    bad = tempname() * ".yaml"
+    write(bad, "diagnostics:\n  no_such_key: 1\n")
+    @test_throws ArgumentError Sparlectra.load_sparlectra_config(bad; reload = true)
+    # the config-refresh path migrates stored files by dropping the dead keys
+    # (scoped to the diagnostics block — output.console_diagnostics is the
+    # legitimate owner and stays in the refreshed text)
+    refreshed = Sparlectra.refresh_sparlectra_config_file(p)
+    @test "diagnostics.console_diagnostics" in refreshed.normalized_keys
+    @test "diagnostics.console_max_rows" in refreshed.normalized_keys
+    diag_block = match(r"(?m)^diagnostics:\n((?:^  .*\n?)*)", refreshed.refreshed_text)
+    @test diag_block !== nothing
+    @test !occursin("console_diagnostics", diag_block.captures[1])
+    @test occursin("log_effective_config", diag_block.captures[1])
   end
 end

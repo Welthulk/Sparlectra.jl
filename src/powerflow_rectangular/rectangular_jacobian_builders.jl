@@ -100,6 +100,7 @@ function build_rectangular_jacobian_pq_pv_sparse(
   vm_eps::Float64 = 1e-9,
   structural_pattern::Bool = false,
   assembly::Union{Nothing,RectangularJacobianAssembly} = nothing,
+  dslack::Union{Nothing,DistributedSlackState} = nothing,
 )
   # vm_eps avoids unstable derivatives when |V| is very close to zero.
   # structural_pattern=true stores entries even when their current value is
@@ -118,8 +119,12 @@ function build_rectangular_jacobian_pq_pv_sparse(
 
   non_slack = non_slack_indices(n, slack_idx)
   pos_non_slack = build_pos_map(non_slack, n)
-  nvar = 2 * (n - 1)   # [Vr(non-slack); Vi(non-slack)]
-  m = nvar          # F has 2 equations per non-slack bus
+  # Distributed slack appends one state (lambda_P) and one equation (the REF
+  # bus's P residual) — see mismatch_rectangular. The participant set is fixed
+  # per solve, so the extended pattern is as iteration-stable as the base one.
+  dsl = dslack !== nothing
+  nvar = 2 * (n - 1) + (dsl ? 1 : 0)   # [Vr(non-slack); Vi(non-slack); lambda?]
+  m = nvar          # F has 2 equations per non-slack bus (+ the REF-P row)
 
   # Row blocks follow mismatch_rectangular layout for non-slack buses.
   #   row_block[i]   = index of ΔP row for bus i
@@ -143,7 +148,7 @@ function build_rectangular_jacobian_pq_pv_sparse(
     nz = nonzeros(Jexist)
     fill!(nz, 0.0)
     emitter = _JacobianPosMapEmitter(nz, assembly.pos_map, 0, false)
-    _assemble_rectangular_jacobian!(emitter, Ybus, V, bus_types, slack_idx, assembly.Ibuf, row_block, pos_non_slack, non_slack, dPinj_dVm, dQinj_dVm, vm_eps, true, n)
+    _assemble_rectangular_jacobian!(emitter, Ybus, V, bus_types, slack_idx, assembly.Ibuf, row_block, pos_non_slack, non_slack, dPinj_dVm, dQinj_dVm, vm_eps, true, n, dslack)
     if !emitter.overflow && emitter.k == length(assembly.pos_map)
       return Jexist
     end
@@ -174,7 +179,7 @@ function build_rectangular_jacobian_pq_pv_sparse(
   sizehint!(Vals, cap)
 
   emit = _JacobianTripletEmitter(Iidx, Jidx, Vals)
-  _assemble_rectangular_jacobian!(emit, Ybus, V, bus_types, slack_idx, I, row_block, pos_non_slack, non_slack, dPinj_dVm, dQinj_dVm, vm_eps, structural_pattern, n)
+  _assemble_rectangular_jacobian!(emit, Ybus, V, bus_types, slack_idx, I, row_block, pos_non_slack, non_slack, dPinj_dVm, dQinj_dVm, vm_eps, structural_pattern, n, dslack)
 
   J = sparse(Iidx, Jidx, Vals, m, nvar)
 
@@ -216,7 +221,17 @@ function _assemble_rectangular_jacobian!(
   vm_eps::Float64,
   structural_pattern::Bool,
   n::Int,
+  dslack::Union{Nothing,DistributedSlackState} = nothing,
 ) where {E}
+  # Distributed slack: the appended REF-P row and the lambda column live at
+  # index 2(n-1)+1. Their emits are woven into the SAME deterministic sequence
+  # as everything else (REF-row network entries inside the main column loop,
+  # constant alpha entries in a fixed block at the end), so the in-place
+  # pos_map replay stays valid — dslack is constant for one solve, and any
+  # toggle rebuilds the assembly like an active-set switch does.
+  dsl = dslack !== nothing
+  row_ref = 2 * (n - 1) + 1
+  col_lambda = 2 * (n - 1) + 1
   # Helpers for sparse access
   rv    = rowvals(Ybus)
   nzval = nonzeros(Ybus)
@@ -248,8 +263,18 @@ function _assemble_rectangular_jacobian!(
     for ptr in nzrange(Ybus, j)
       i = rv[ptr]
 
-      # Slack bus has no equations
+      # Slack bus has no equations — except with distributed slack, where its
+      # P residual is the appended last row.
       if i == slack_idx
+        if dsl
+          Yij = nzval[ptr]
+          S_dVr = V[i] * conj(Yij)
+          S_dVi = im * (-V[i] * conj(Yij))
+          # j == slack cannot occur here: the slack column carries no state
+          # variable and was skipped above (col_pos == 0).
+          emit(row_ref, colVr, real(S_dVr))
+          emit(row_ref, colVi, real(S_dVi))
+        end
         continue
       end
 
@@ -381,6 +406,22 @@ function _assemble_rectangular_jacobian!(
     end
   end
 
+  # --- 4) Distributed slack: lambda column (constant -alpha at participant P
+  # rows and the REF row). The participant set is fixed per solve, so these
+  # entries are pattern-stable regardless of structural_pattern.
+  if dsl
+    alpha = dslack.alpha
+    for i = 1:n
+      i == slack_idx && continue
+      a = alpha[i]
+      a == 0.0 && continue
+      rb = row_block[i]
+      rb == 0 && continue
+      emit(rb, col_lambda, -a)
+    end
+    emit(row_ref, col_lambda, -alpha[slack_idx])
+  end
+
   return nothing
 end
 
@@ -399,7 +440,8 @@ defined in `mismatch_rectangular`.
 
 `bus_types` and `Vset` must be consistent with `mismatch_rectangular`.
 """
-function build_rectangular_jacobian_pq_pv_dense(Ybus, V::Vector{ComplexF64}, bus_types::Vector{Symbol}, Vset::Vector{Float64}, slack_idx::Int; dPinj_dVm::Vector{Float64} = zeros(Float64, length(V)), dQinj_dVm::Vector{Float64} = zeros(Float64, length(V)), vm_eps::Float64 = 1e-9)
+function build_rectangular_jacobian_pq_pv_dense(Ybus, V::Vector{ComplexF64}, bus_types::Vector{Symbol}, Vset::Vector{Float64}, slack_idx::Int; dPinj_dVm::Vector{Float64} = zeros(Float64, length(V)), dQinj_dVm::Vector{Float64} = zeros(Float64, length(V)), vm_eps::Float64 = 1e-9, dslack::Union{Nothing,DistributedSlackState} = nothing)
+  dslack === nothing || error("build_rectangular_jacobian_pq_pv_dense: distributed slack requires the sparse Jacobian path (power_flow.sparse = true).")
   # Dense variant is primarily for diagnostics/parity checks; sparse is default path.
   n = length(V)
   @assert length(bus_types) == n
@@ -526,7 +568,8 @@ function build_rectangular_jacobian_pq_pv(
   vm_eps::Float64 = 1e-9,
   structural_pattern::Bool = false,
   assembly::Union{Nothing,RectangularJacobianAssembly} = nothing,
+  dslack::Union{Nothing,DistributedSlackState} = nothing,
 )
   # Default rectangular solver path uses sparse Jacobians for scale and parity.
-  return build_rectangular_jacobian_pq_pv_sparse(Ybus, V, bus_types, Vset, slack_idx; dPinj_dVm = dPinj_dVm, dQinj_dVm = dQinj_dVm, vm_eps = vm_eps, structural_pattern = structural_pattern, assembly = assembly)
+  return build_rectangular_jacobian_pq_pv_sparse(Ybus, V, bus_types, Vset, slack_idx; dPinj_dVm = dPinj_dVm, dQinj_dVm = dQinj_dVm, vm_eps = vm_eps, structural_pattern = structural_pattern, assembly = assembly, dslack = dslack)
 end

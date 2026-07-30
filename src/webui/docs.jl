@@ -50,6 +50,8 @@ const WEBUI_HELP_TOPICS = Dict(
   "power_flow.start_current_iteration.vm_max_pu" => (label = "Maximum voltage guard [pu]", page = "configuration", heading = "Complete default-key index", selector = ""),
   "power_flow.start_current_iteration.max_angle_step_deg" => (label = "Maximum angle-step guard [deg]", page = "configuration", heading = "Complete default-key index", selector = ""),
   "power_flow.start_current_iteration.only_for_large_cases" => (label = "Only for large cases", page = "configuration", heading = "Complete default-key index", selector = ""),
+  "power_flow.distributed_slack.enabled" => (label = "Distributed active-power slack enabled", page = "powerflow_configuration", heading = "Distributed active-power slack", selector = "`power_flow.distributed_slack.enabled`"),
+  "power_flow.distributed_slack.p_mode" => (label = "Distributed-slack weight mode", page = "powerflow_configuration", heading = "Distributed active-power slack", selector = "`power_flow.distributed_slack.p_mode`"),
   "power_flow.merit.enabled" => (label = "Enable Armijo merit-function line search", page = "powerflow_configuration", heading = "Merit-function line search options", selector = "`power_flow.merit.enabled`"),
   "power_flow.merit.armijo_c1" => (label = "Armijo sufficient-decrease constant", page = "powerflow_configuration", heading = "Merit-function line search options", selector = "`power_flow.merit.armijo_c1`"),
   "power_flow.merit.fallback_max_mismatch" => (label = "Merit fallback behavior", page = "powerflow_configuration", heading = "Merit-function line search options", selector = "`power_flow.merit.fallback_max_mismatch`"),
@@ -111,6 +113,8 @@ const WEBUI_FORM_HELP_TOPICS = Dict(
   "power_flow_start_current_iteration_vm_max_pu" => "power_flow.start_current_iteration.vm_max_pu",
   "power_flow_start_current_iteration_max_angle_step_deg" => "power_flow.start_current_iteration.max_angle_step_deg",
   "power_flow_start_current_iteration_only_for_large_cases" => "power_flow.start_current_iteration.only_for_large_cases",
+  "power_flow_distributed_slack_enabled" => "power_flow.distributed_slack.enabled",
+  "power_flow_distributed_slack_p_mode" => "power_flow.distributed_slack.p_mode",
   "power_flow_merit_enabled" => "power_flow.merit.enabled",
   "power_flow_merit_armijo_c1" => "power_flow.merit.armijo_c1",
   "power_flow_merit_fallback_max_mismatch" => "power_flow.merit.fallback_max_mismatch",
@@ -268,7 +272,6 @@ const WEBUI_DOC_PAGES = Dict(
   # Reachable from the docs reader; per-option help topics follow once the
   # cgmes_import options get their own Web UI form fields (issue #294).
   "cgmes_import" => (title = "CGMES Import", file = "cgmes_import.md"),
-  "matpower_case_matrix" => (title = "MATPOWER Case Diagnostics Matrix", file = "sparlectra_matpower_case_matrix.md"),
   "webui" => (title = "Local PowerFlow Web UI", file = "webui.md"),
   "feature_matrix" => (title = "Feature Matrix", file = "feature_matrix.md"),
 )

@@ -501,6 +501,101 @@ The same projection options are also available through `buildPfModel` and
 
 ---
 
+## Distributed Active-Power Slack
+
+### Why a single slack bus is a modeling artifact
+
+The classical formulation removes the reference bus's power residuals from
+the Newton system: its voltage (magnitude and angle) is fixed, and whatever
+active power the solved network needs beyond the scheduled injections —
+the load/generation imbalance plus all network losses — appears as the
+reference bus's computed injection. Physically no single machine does this.
+In an interconnected power system the frequency-containment reserve
+(primary control) raises many generators together, each by its droop share.
+The single-slack model concentrates that distributed response onto one bus,
+which distorts the flows around the reference bus — visibly so in large
+imported cases where the reference machine ends up absorbing tens of MW
+that real dispatch would spread over a whole area.
+
+The distributed slack replaces this artifact with the primary-control
+picture: a set of **participants** shares the imbalance according to
+normalized **participation factors** $\alpha_i$ with $\sum_i \alpha_i = 1$.
+
+### Formulation
+
+One scalar unknown $\lambda_P$ (the island's total imbalance in p.u.) is
+added to the state. Every participant bus $i$ (including the reference bus
+if it participates) gets the modified active-power residual
+
+```math
+r_{P,i} = P_{\text{calc},i}(V) - P_{\text{spec},i} - \alpha_i\,\lambda_P
+```
+
+so its solved injection is its schedule plus its share of the imbalance.
+Non-participants keep their residual unchanged ($\alpha_i = 0$).
+
+The system stays square through a **role separation at the reference bus**:
+its voltage magnitude *and angle* remain fixed — the angle reference is
+untouched — but its active power is no longer free. The reference bus's P
+residual becomes an ordinary equation, **appended as the last row** of the
+residual vector (the interleaved `[ΔP_i, ΔQ/ΔV_i]` layout of the `2(n-1)`
+voltage rows stays untouched). One new unknown ($\lambda_P$), one new
+equation (REF-P): the Jacobian gains one column (−$\alpha_i$ at the
+participant P rows) and one row (the network derivatives
+$\partial P_\text{ref}/\partial V_{r,j}, \partial P_\text{ref}/\partial V_{i,j}$,
+plus $-\alpha_\text{ref}$ in the $\lambda_P$ column).
+
+With all weight on the reference bus ($\alpha_\text{ref} = 1$) the appended
+equation reads $P_{\text{calc,ref}} - P_{\text{spec,ref}} - \lambda_P = 0$ and
+decouples from the voltage solution — the classical single-slack result is
+reproduced exactly, with $\lambda_P$ reporting the classically REF-absorbed
+power. This equivalence is a regression test.
+
+### When and how it applies
+
+* **Only when explicitly enabled** (`power_flow.distributed_slack.enabled`,
+  default `false`). Imported participation factors (MATPOWER `APF`, CGMES
+  `GeneratingUnit.normalPF`) are carried on the `ProSumer` but never
+  activate the feature by themselves; the disabled path is bit-identical to
+  the classical solver.
+* **Participants** are the generator-type prosumers at the island's REF and
+  PV buses at solve start. Fixed injections at PQ buses (Stage-0 HVDC
+  converter injections, kept boundary equivalents) never participate.
+* **Participation is frozen per solve.** A participant that hits its Q
+  limit and switches PV→PQ keeps its $\alpha_i$ — reactive saturation does
+  not remove a machine from primary control. The active-set machinery is
+  unaffected because the appended row leaves all row-indexed bookkeeping
+  intact.
+* **Per island.** In island-wise runs every island builds its own
+  participant set and solves for its own $\lambda_P$; the per-island values
+  are reported in the per-island solver statuses.
+* **Step control.** Autodamp, merit line search, and trust region evaluate
+  trial states $V + a\,\delta V$; the matching trial multiplier
+  $\lambda_P + a\,\delta\lambda_P$ is staged alongside, so damped and
+  dogleg steps stay consistent in all state components. In the weighted
+  merit norm the appended REF-P row is scaled with `merit.scale_p` like
+  every other active-power residual.
+* **Weight modes** (`p_mode`): `pg_weighted` (scheduled `Pg`, the default),
+  `pmax_weighted`, `headroom_weighted` (`max(maxP − Pg, 0)`), `imported`
+  (the `APF`/`normalPF` factor), `explicit` (a config table). Islands
+  without a valid participant either abort (`fallback: error`) or solve
+  classically with a warning (`fallback: ref_only`).
+* **P limits are advisory in stage 1**: with `respect_p_limits = true` each
+  participant whose corrected output leaves `[minP, maxP]` produces a
+  warning and is counted in the metadata — there is no clamp-and-resolve
+  round yet.
+* The λ-augmented system requires the sparse Jacobian path (the default);
+  the dense builder rejects it.
+* **Comparing against a reference state solved with a single slack** (e.g. a
+  CGMES SV profile): expect the branch flows to deviate by the distributed
+  correction while the voltages stay put — the comparison then measures the
+  slack-distribution difference, not solver error.
+
+Configuration keys and result metadata are documented in
+[Power-Flow Configuration](powerflow_configuration.md).
+
+---
+
 ## Linear solver backends
 
 The linear solve of the rectangular Newton step (`J · δx = −F`) supports

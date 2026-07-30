@@ -313,8 +313,14 @@ function fetchCGMESTestSet(alias::AbstractString; outdir::AbstractString)::Strin
   tmp = dest * ".tmp"
   open(tmp, "w") do io
     ZipArchives.ZipWriter(io) do w
+      # Multi-directory aliases (e.g. microgrid_assembled = BE + NL + BD) ship
+      # the identical boundary files in every side directory; ZipWriter rejects
+      # duplicate entry names, so each file name is packed exactly once.
+      seen = Set{String}()
       for d in dirs, f in sort(readdir(d))
         endswith(lowercase(f), ".xml") || continue
+        f in seen && continue
+        push!(seen, f)
         ZipArchives.zip_newfile(w, f)
         write(w, read(joinpath(d, f)))
       end

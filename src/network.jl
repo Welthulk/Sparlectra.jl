@@ -108,6 +108,10 @@ mutable struct Net
   matpower_branch_metadata::Dict{Int,NamedTuple}
   for001Contingencies::Vector{String}
   matpowerDclineMetadata::Vector{NamedTuple}
+  # Outer-loop machine voltage controllers (remote Q-regulation). Typed with
+  # the abstract controller type because the concrete MachineVoltageControl is
+  # defined after this file; filled via addMachineVoltageControl!.
+  machineControls::Vector{AbstractOuterController}
 
   #! format: off
   function Net(; name::String, baseMVA::Float64, vmin_pu::Float64 = 0.9, vmax_pu::Float64 = 1.1, cooldown_iters::Int = 0, q_hyst_pu::Float64 = 0.0, flatstart::Bool = false, bus_shunt_model = :admittance)    
@@ -146,7 +150,8 @@ mutable struct Net
         nothing,
         Dict{Int,NamedTuple}(),
         String[],
-        NamedTuple[])
+        NamedTuple[],
+        AbstractOuterController[])                 # machineControls
   end
   #! format: on
   function Base.show(io::IO, net::Net)
@@ -158,6 +163,7 @@ mutable struct Net
     println(io, "cooldown_iters: ", net.cooldown_iters, ", q_hyst_pu: ", net.q_hyst_pu)
     println(io, "Measurements: ", length(net.measurements))
     println(io, "Tap controllers: ", sum(length, (t.side1.controls for t in net.trafos); init = 0) + sum(length, (t.side2.controls for t in net.trafos); init = 0) + sum((isnothing(t.side3) ? 0 : length(t.side3.controls) for t in net.trafos); init = 0))
+    isempty(net.machineControls) || println(io, "Machine controllers: ", length(net.machineControls))
   end
 end
 
@@ -1133,6 +1139,7 @@ function addProsumer!(;
   qu_controller::Union{Nothing,QUController} = nothing,
   pu_controller::Union{Nothing,PUController} = nothing,
   isRegulated::Bool = false,
+  participationFactor::Union{Nothing,Float64} = nothing,
   defer_bus_type_refresh::Bool = false,
 )
   busIdx = geNetBusIdx(net = net, busName = busName)
@@ -1181,6 +1188,7 @@ function addProsumer!(;
     isAPUNode = isAPUNode,
     quController = qu_controller,
     puController = pu_controller,
+    participationFactor = participationFactor,
   )
   push!(net.prosumpsVec, ps)
   node = net.nodeVec[busIdx]

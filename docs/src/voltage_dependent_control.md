@@ -8,6 +8,15 @@ This page documents voltage-dependent active/reactive power control for prosumer
 These are **soft controls** (state-dependent injections), not hard PV equality constraints.
 The structural bus type (`Slack`, `PV`, `PQ`) remains unchanged.
 
+What this mechanism is **not** for: capability *limits*. A CGMES
+`ReactiveCapabilityCurve` describes Q bounds as a function of active power
+Q(P), not a voltage droop — it is evaluated at import time into ordinary
+`minQ`/`maxQ` limits and enforced by the
+[Q-limit switching machinery](q_limit_switching_strategy.md), never through
+a `QUController`. Modelling a bound as a voltage-dependent setpoint would
+make the limit wander with |V| and turn a constraint into a control target.
+Both mechanisms are orthogonal and can coexist on one machine.
+
 ## Physical interpretation
 
 A controlled prosumer changes its setpoint according to local voltage magnitude.

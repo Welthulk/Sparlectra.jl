@@ -160,6 +160,11 @@ function _run_q_limits_matpower_outer_loop!(
   rectangular_preallocate_workspace::Symbol,
   rectangular_workspace_min_buses::Int,
   linear_solver::Symbol = :umfpack,
+  distributed_slack_enabled::Bool = false,
+  distributed_slack_p_mode::Symbol = :pg_weighted,
+  distributed_slack_respect_p_limits::Bool = true,
+  distributed_slack_fallback::Symbol = :error,
+  distributed_slack_weights::AbstractDict{String,Float64} = Dict{String,Float64}(),
 )
   mode in (:classic_simultaneous, :classic_one_at_a_time) || error("Unsupported classical Q-limit mode $(mode).")
   resetQLimitLog!(net)
@@ -245,6 +250,11 @@ function _run_q_limits_matpower_outer_loop!(
         rectangular_preallocate_workspace = rectangular_preallocate_workspace,
         rectangular_workspace_min_buses = rectangular_workspace_min_buses,
         linear_solver = linear_solver,
+        distributed_slack_enabled = distributed_slack_enabled,
+        distributed_slack_p_mode = distributed_slack_p_mode,
+        distributed_slack_respect_p_limits = distributed_slack_respect_p_limits,
+        distributed_slack_fallback = distributed_slack_fallback,
+        distributed_slack_weights = distributed_slack_weights,
       )
       total_iters += iters
       if erg != 0

@@ -752,6 +752,9 @@ function printACPFlowResults(net::Net, ct::Float64, ite::Int, tol::Float64, toFi
     # Detailed engineering-style control section (OLTC/PST/combined).
     printTapControllerSummary(io, net)
   end
+  # Machine remote voltage controllers print only when present — the "none"
+  # marker above stays the deterministic anchor for parsers.
+  printMachineControllerSummary(io, net)
   if toFile
     close(io)
     #println("Results have been written to $(joinpath(path, filename))")

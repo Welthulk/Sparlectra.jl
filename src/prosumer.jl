@@ -333,6 +333,12 @@ mutable struct ProSumer
   isAPUNode::Bool
   quController::Union{Nothing,QUController}
   puController::Union{Nothing,PUController}
+  # Distributed-slack participation weight (issue #192): raw, un-normalized.
+  # Filled by the importers (MATPOWER gen `APF`, CGMES `GeneratingUnit.normalPF`)
+  # or set explicitly; `nothing` means "no factor known". Carrying the value has
+  # NO effect on the power flow unless power_flow.distributed_slack selects the
+  # `imported` mode — importing must never change results by itself.
+  participationFactor::Union{Nothing,Float64}
   qGenRepl::Union{Nothing,Float64}
   pRes::Union{Nothing,Float64}
   qRes::Union{Nothing,Float64}
@@ -363,7 +369,11 @@ mutable struct ProSumer
     isAPUNode::Bool = false,
     quController::Union{Nothing,QUController} = nothing,
     puController::Union{Nothing,PUController} = nothing,
+    participationFactor::Union{Nothing,Float64} = nothing,
   )
+    if participationFactor !== nothing
+      (isfinite(participationFactor) && participationFactor >= 0.0) || throw(ArgumentError("ProSumer: participationFactor must be finite and >= 0, got $(participationFactor)"))
+    end
     comp = getProSumPGMComp(vn_kv, busIdx, isGenerator(type), oID)
 
     if isnothing(vm_pu)
@@ -374,7 +384,7 @@ mutable struct ProSumer
       va_deg = 0.0
     end
 
-    new(comp, ratedS, ratedU, qPercent, p, q, maxP, minP, maxQ, minQ, ratedPowerFactor, referencePri, vm_pu, va_deg, vstep_pu, tap_steps_down, tap_steps_up, vset_adjust, isRegulated, type, isAPUNode, quController, puController, nothing, nothing, nothing)
+    new(comp, ratedS, ratedU, qPercent, p, q, maxP, minP, maxQ, minQ, ratedPowerFactor, referencePri, vm_pu, va_deg, vstep_pu, tap_steps_down, tap_steps_up, vset_adjust, isRegulated, type, isAPUNode, quController, puController, participationFactor, nothing, nothing, nothing)
   end
 
   function Base.show(io::IO, prosumption::ProSumer)

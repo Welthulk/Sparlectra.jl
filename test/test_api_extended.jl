@@ -586,9 +586,17 @@ power_flow:
       full_log = read(joinpath(full_dir, "run.log"), String)
       @test !occursin("Full run details", classic_log)
       @test occursin("Full run details", full_log)
-      @test occursin("Effective Sparlectra Configuration", full_log)
+      # run.log is the narrative: the resolved configuration is not dumped
+      # into it anymore — its one home is the effective_config.yaml artifact,
+      # referenced by a pointer line (logging cleanup, 2026-07-30)
+      @test !occursin("Effective Sparlectra Configuration", full_log)
+      @test occursin("effective configuration: effective_config.yaml", full_log)
+      @test isfile(joinpath(full_dir, "effective_config.yaml"))
       @test occursin("diagnostics_artifact: diagnose.log", full_log)
-      @test occursin("detailed_result_csv_delimiter: disabled", full_log)
+      # a disabled CSV export collapses to its status line instead of
+      # fifteen per-setting lines all reading "disabled"
+      @test occursin("detailed_result_csv_status: ", full_log)
+      @test !occursin("detailed_result_csv_delimiter:", full_log)
       @test ncodeunits(full_log) > ncodeunits(classic_log)
       full_diagnostic_path = joinpath(full_dir, "diagnose_full.log")
       Sparlectra._write_powerflow_diagnostics(full_diagnostic_path, full.raw_result; mode = :full)

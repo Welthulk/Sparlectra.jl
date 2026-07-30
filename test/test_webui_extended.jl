@@ -111,6 +111,8 @@ function _webui_test_form(casefile, config_file, output_root)
     "power_flow_trust_region_initial_radius" => "1.0",
     "power_flow_trust_region_eta_accept" => "0.1",
     "power_flow_trust_region_step_mode" => "scaled",
+    "power_flow_distributed_slack_enabled" => "false",
+    "power_flow_distributed_slack_p_mode" => "pg_weighted",
     "power_flow_linear_solver" => "umfpack",
     "matpower_import_auto_profile" => "recommend",
     "matpower_import_ratio" => "normal",
@@ -1628,6 +1630,8 @@ settings:
         "power_flow_trust_region_initial_radius" => "power_flow.trust_region.initial_radius",
         "power_flow_trust_region_eta_accept" => "power_flow.trust_region.eta_accept",
         "power_flow_trust_region_step_mode" => "power_flow.trust_region.step_mode",
+        "power_flow_distributed_slack_enabled" => "power_flow.distributed_slack.enabled",
+        "power_flow_distributed_slack_p_mode" => "power_flow.distributed_slack.p_mode",
         "matpower_import_auto_profile" => "matpower_import.auto_profile",
         "matpower_import_ratio" => "matpower_import.ratio",
         "matpower_import_shift_sign" => "matpower_import.shift_sign",
@@ -1750,9 +1754,11 @@ settings:
       @test findfirst("data-step-control-group=\"trust_region\"", form_html) < findfirst("<summary>Q-limit handling</summary>", form_html)
       # APSLF-as-solver and DC-as-solver both ignore NR-only options (autodamp/merit/trust-region,
       # wrong-branch detection, start_mode.angle_mode/voltage_mode, start_current_iteration.*,
-      # qlimits.enforcement_mode, max_iter, the linear-solver backend); these must be marked so client-side JS can gray them
+      # qlimits.enforcement_mode, max_iter, the linear-solver backend, and the
+      # distributed-slack options); these must be marked so client-side JS can gray them
       # out when power_flow_solver=apslf or power_flow_solver=dc is selected.
-      @test count("data-nr-only-field", form_html) == 8
+      @test count("data-nr-only-field", form_html) == 9
+      @test occursin("<fieldset class=\"distributed-slack-options\" data-nr-only-field>", form_html)
       @test occursin("<label data-nr-only-field><span class=\"field-label\">Maximum iterations ", form_html)
       @test occursin("<label data-nr-only-field><span class=\"field-label\">Q-limit enforcement mode ", form_html)
       @test occursin("<label data-nr-only-field><span class=\"field-label\">Wrong-branch detection ", form_html)
@@ -1782,10 +1788,18 @@ settings:
       @test !occursin("power_flow_calc_mode", form_html)
       for field in (
         "<label data-ac-only-field><span class=\"field-label\">Tolerance ",
-        "<label data-ac-only-field><span class=\"field-label\">Tap-changer model ",
+        "<label data-ac-only-field data-matpower-import-field><span class=\"field-label\">Tap-changer model ",
       )
         @test occursin(field, form_html)
       end
+      # MATPOWER import conventions gray out for CGMES cases: 8 marked labels
+      # (all matpower_import_* plus the tap-changer model; Export Solution
+      # stays active) + the one JS querySelector occurrence = 9, plus the
+      # explanatory hint and the client-side toggle logic.
+      @test count("data-matpower-import-field", form_html) == 9
+      @test occursin("data-import-conventions-hint", form_html)
+      @test occursin("const updateImportConventionApplicability = function ()", form_html)
+      @test occursin("caseFormat.addEventListener('change', updateImportConventionApplicability)", form_html)
       @test occursin("<details id=\"apslf-start-options\" class=\"span-2 apslf-start-options\" data-apslf-start-options data-ac-only-field>", form_html)
       # "Use APSLF start values" and "Use DC start values" are two mutually exclusive
       # start-value sources for the rectangular NR solve, checking one unchecks the

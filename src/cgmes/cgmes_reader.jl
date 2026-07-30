@@ -55,11 +55,22 @@ end
 
 _strip_mrid(v::AbstractString) = startswith(v, "#") ? String(v[2:end]) : String(v)
 
-function _property_key!(attrs_or_refs::Dict{Symbol,String}, pname::AbstractString, value::String)
+"""Store-level overflow for multi-valued references (#294 point 9): RDF/XML
+may repeat the same property on one object (`TopologicalIsland.
+TopologicalNodes` lists thousands of members). `CIMObject.refs` keeps its
+one-value-per-key shape — the 1:1 fast path stays allocation-free — and
+every additional value lands here under `(mrid, key)`, in document order,
+excluding the first value (which stays in `refs`). Query via `refsAll`."""
+const CGMESMultiRefs = Dict{Tuple{String,Symbol},Vector{String}}
+
+function _property_key!(attrs_or_refs::Dict{Symbol,String}, pname::AbstractString, value::String; multi::Union{Nothing,CGMESMultiRefs} = nothing, mrid::AbstractString = "")
   key = Symbol(last(split(pname, '.')))
   if haskey(attrs_or_refs, key) && attrs_or_refs[key] != value
-    # suffix collision inside one object → keep the full dotted name too
+    # legacy behavior kept bit-identical: the full dotted name carries the
+    # latest extra value (suffix collisions inside one object rely on it)
     attrs_or_refs[Symbol(pname)] = value
+    # multi-valued reference: record EVERY additional value
+    multi === nothing || push!(get!(Vector{String}, multi, (String(mrid), key)), value)
   else
     attrs_or_refs[key] = value
   end
@@ -73,7 +84,7 @@ Parse one CGMES XML payload into the shared object store. DifferenceModel
 files and files outside `profile_filter` are classified but not parsed
 (`skipped = true`). Returns the file metadata.
 """
-function readCGMESFile!(objects::Dict{String,CIMObject}, byclass::Dict{Symbol,Vector{String}}, file::CGMESFile; profile_filter::Set{Symbol} = IMPORT_PROFILE_TAGS)::CGMESFileInfo
+function readCGMESFile!(objects::Dict{String,CIMObject}, byclass::Dict{Symbol,Vector{String}}, file::CGMESFile; profile_filter::Set{Symbol} = IMPORT_PROFILE_TAGS, multirefs::Union{Nothing,CGMESMultiRefs} = nothing)::CGMESFileInfo
   doc = EzXML.parsexml(file.content)
   r = EzXML.root(doc)
   cim_uri = ""
@@ -159,14 +170,14 @@ function readCGMESFile!(objects::Dict{String,CIMObject}, byclass::Dict{Symbol,Ve
       if res === nothing
         _property_key!(obj.attrs, pname, EzXML.nodecontent(p))
       elseif startswith(res, "#")
-        _property_key!(obj.refs, pname, _strip_mrid(res))
+        _property_key!(obj.refs, pname, _strip_mrid(res); multi = multirefs, mrid = mrid)
       elseif occursin('#', res)
         # enum value: keep the fragment tail (e.g. WindingConnection.D → "D"
         # stays qualified as "WindingConnection.D" for unambiguous matching)
         _property_key!(obj.attrs, pname, String(last(split(res, '#'))))
       else
         # absolute URI reference (e.g. boundary mRIDs in urn:uuid form)
-        _property_key!(obj.refs, pname, _strip_mrid(res))
+        _property_key!(obj.refs, pname, _strip_mrid(res); multi = multirefs, mrid = mrid)
       end
     end
   end

@@ -58,3 +58,8 @@ Task_*.md
 
 .sparlectra_net_cache/
 data/CGMES/
+
+# Julia environments
+Manifest.toml
+Manifest-v*.toml
+**/Manifest.toml

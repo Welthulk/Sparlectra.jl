@@ -1,80 +1,64 @@
-# Version 0.8.16 — 2026-07-27
-
+# Version 0.8.16 — 2026-07-30
 
 CGMES Import
-
 
 ## New Features
 
 **CGMES import.** Sparlectra reads ENTSO-E CGMES 2.4.15 and 3.0 deliveries —
-folders, ZIPs, nested ZIPs, boundary sets — and builds a bus-branch `Net` from
-EQ+SSH+TP+SV: lines, 2- and 3-winding transformers, tap controllers, switches,
-shunts, loads, machines and injections, with open terminals and out-of-service
-equipment treated the way a real snapshot expects. Every electrical island
-receives its SV-declared angle reference. Assembled multi-area deliveries are
-supported, including HVDC border crossings, which stay separate islands because
-an HVDC link carries no angle coupling. `summarizeCGMES` inspects a delivery
-before import; `compareWithSV` checks the solved result against the delivery's
-own SV profile. Configuration under `cgmes_import.*`, documented in
-`docs/src/cgmes_import.md`.
+folders, ZIPs, nested ZIPs, boundary sets — and builds a bus-branch `Net`
+from EQ+SSH+TP+SV: lines, 2- and 3-winding transformers, tap controllers,
+switches, shunts, loads, machines and injections, with snapshot-faithful
+handling of open terminals and out-of-service equipment. Each electrical
+island gets its SV-declared angle reference; assembled multi-area deliveries
+are supported, with HVDC border crossings kept as separate islands.
+`summarizeCGMES` inspects a delivery, `compareWithSV` validates the solved
+result against its SV profile. Configuration under `cgmes_import.*`; details
+in [CGMES Import](cgmes_import.md).
 
-**PMU angles in state estimation.** New `VaMeas` measurement type for
-synchrophasor angles, plus `addPmuPhasorMeasurement!` for the full Vm+Va pair.
-A PMU time base rarely lines up with the slack reference, so the estimator
-solves for the offset α as an extra state
-(`state_estimation.pmu_ref_offset`) and reports it in
-`SEResult.vaRefOffsetDeg`. See `state_estimation_pmu_angles.jl`.
+**Distributed active-power slack.** An island's power imbalance can be shared
+over the generators by participation factors (one `lambda_P` per island in
+the Newton state) instead of landing entirely on the reference bus. Enable
+with `power_flow.distributed_slack.enabled` (default `false`; disabled runs
+stay bit-identical). Weight modes include the imported MATPOWER `APF` /
+CGMES `normalPF` factors. See the [Solver Guide](solver.md).
 
-**Schrägregler.** One transformer can carry a voltage controller on the ratio
-tap and an active-power controller on the phase tap at the same time —
-exclusivity is enforced per actuator instead of per transformer.
+**PMU angles in state estimation.** New `VaMeas` measurement type and
+`addPmuPhasorMeasurement!` for the Vm+Va pair; the estimator solves the PMU
+time-base offset as an extra state (`state_estimation.pmu_ref_offset`) and
+reports it in `SEResult.vaRefOffsetDeg`.
+
+**Tabular phase shifters land in the solved branch.** CGMES
+`PhaseTapChangerTabular` was read but never applied. The table row at the
+tap position now folds into the imported branch (ratio and angle; an end-2
+angle enters negated per end-referral). On RealGrid this reduces the
+deviation from the delivered SV state by roughly 40×.
+
+
+**Remote voltage control by machines.** A machine can regulate the voltage
+at a *different* bus via its reactive output — the counterpart of a CGMES
+voltage `RegulatingControl` at a foreign terminal, previously held PV at the
+machine's own bus. `addMachineVoltageControl!` programmatically, or
+`cgmes_import.machine_control` (default `false`) from a delivery; parks
+honestly `at_limit`. Theory in
+[Remote Voltage Control](remote_voltage_control.md).
+
+**Nonlinear shunt compensators are mapped.** Per-section points are summed
+up to the active section count (an interpretation choice, documented — the
+place to look if a delivery disagrees). Previously their reactive
+contribution was missing from the solve.
+
 
 ## Improvements
 
-- The rectangular Newton solver refreshes its Jacobian in place instead of
-  rebuilding it every iteration; a PV↔PQ switch triggers a structural rebuild
-  automatically.
-- Faster MATPOWER tokenizer with byte-level comment stripping, plus an optional
-  on-disk parse cache (`matpower_import.net_cache.enabled`, off by default —
-  the network is always rebuilt from the cached parse, so import options keep
-  taking effect).
-- Web UI warm-up now runs a bundled 118-bus case after the 3-bus plumbing case,
-  so the first real run no longer pays the sparse-solve and reporting
-  compilation. An explicit `warmup_casefile` replaces the whole sequence.
+- The rectangular Newton solver refreshes its Jacobian in place; a PV↔PQ
+  switch triggers a structural rebuild automatically.
 
 ## Bugfixes
 
-**Web UI controls were dead on pages reached via auto-refresh.** Polling pages
-swap the `<main>` element in place, and scripts inside a DOMParser-imported
-node are inert per the HTML spec — so the case combobox, solver toggles and
-every other script-driven control stayed dead until the user forced a real
-navigation. Terminal pages now trigger a real reload.
-
-**Active-set Q-limits now switch on the converged iterate.** The start gating
-(`qlimit_start_iter` / `start_mode = auto`) could outlast convergence — the
-Newton solve finished before the gate opened, the final check was skipped, and
-the run was rejected with `remaining PV Q-limit violations` instead of being
-enforced. A converged iterate now always counts as ready: violations found
-there are switched under the existing hysteresis/cooldown/guard machinery and
-the solve continues until the active set is stable.
-
-**Classical Q-limit enforcement mis-attributed reactive power at buses that
-carry a fixed generator-type unit next to a regulator.** The violation check
-shared the full bus requirement equally among all units, so a fixed injection
-(an HVDC converter, a boundary equivalent, a PQ-degraded SVC) "violated" its
-own zero-width limits and its reactive power was then loaded onto the
-remaining regulator — false violations and wrong clamps on any such network,
-MATPOWER cases included. Fixed units now contribute their scheduled value and
-only the remainder is attributed to the switchable regulators; a bus also
-stops counting as PV-capable once its last actual regulator is clamped.
-
-**Island-wise solving on a network with closed bus links** no longer fails with
-an internal `UndefVarError` after all islands have converged; the merged
-voltages are written back as intended. Present since 0.8.8.
-
-**Contracting a bus link** now moves a slack bus onto the cluster
-representative instead of leaving `slackVec` pointing at the bus that was
-merged away.
+- **Active-set Q-limits now switch on the converged iterate.** The start
+  gating could outlast convergence, rejecting runs with `remaining PV
+  Q-limit violations` instead of enforcing them; a converged iterate now
+  always counts as ready.
 
 
 # Version 0.8.15 — 2026-07-22

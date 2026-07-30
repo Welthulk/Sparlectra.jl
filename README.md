@@ -9,7 +9,7 @@
 
 <a href="https://github.com/Welthulk/Sparlectra.jl/tree/main/"><img align="left" width="100" src="docs/src/assets/logo.png" style="margin-right: 20px" /></a>
 
-Sparlectra covers the complete workflow from network import through solving to configurable reporting. Grid data can be read from ENTSO-E CGMES, MATPOWER and native DTF sources, or built programmatically. Two solver backends are available: the built-in rectangular Newton-Raphson solver, and an optional analytic power-series solver (APSLF, via the AnalyticLoadFlow.jl package extension) usable standalone, as the primary solver, or as a guarded start-value generator ahead of Newton-Raphson.
+Sparlectra covers the complete workflow from network import through solving to configurable reporting. Grid data can be read from ENTSO-E CGMES (2.4.15 and 3.0), MATPOWER and native DTF sources, or built programmatically. Three solver backends are available: the built-in rectangular Newton-Raphson solver, a linear DC power flow, and an optional analytic power-series solver (APSLF, via the AnalyticLoadFlow.jl package extension) usable standalone, as the primary solver, or as a guarded start-value generator ahead of Newton-Raphson.
 
 Every stage of the numerical pipeline is documented and accessible at runtime — model construction, Jacobian assembly, PV/PQ active-set handling and convergence behaviour can be inspected and instrumented. Together with deterministic, configuration-driven runs, explicit Q-limit and AC-island handling and machine-readable reporting, this suits production grid studies and planning work as well as algorithm development and solver benchmarking.
 
@@ -22,9 +22,10 @@ Every stage of the numerical pipeline is documented and accessible at runtime �
 | Reproducible AC power-flow studies | Deterministic, configuration-driven framework runs |
 | Insight into Newton-Raphson internals | Rectangular complex-state formulation, open at every stage |
 | Robust PV/PQ handling | Explicit Q-limit enforcement with active-set diagnostics |
-| Grid data exchange | ENTSO-E CGMES, MATPOWER and native DTF import with validation against the delivered solution |
+| Grid data exchange | ENTSO-E CGMES (2.4.15 and 3.0), MATPOWER and native DTF import with validation against the delivered solution |
 | Custom solver integration | Clean `PFModel` / `PFSolution` interface for external solvers |
-| Voltage- and tap-control studies | Outer-loop control framework for transformer regulation |
+| Voltage- and tap-control studies | Outer-loop control framework: transformer regulation (OLTC/PST/combined) and remote voltage control via machine reactive power |
+| Realistic slack modeling | Distributed active-power slack with configurable participation factors (incl. imported MATPOWER `APF` / CGMES `normalPF`) |
 | Alternative solver backend | Optional analytic power-series solver (APSLF, via AnalyticLoadFlow.jl) — standalone, as the primary solver, or as an NR start-value generator |
 | State estimation | Nonlinear weighted-least-squares workflow |
 | Scalability | Sparse-matrix-oriented implementation for realistic network sizes |
@@ -33,12 +34,13 @@ Every stage of the numerical pipeline is documented and accessible at runtime �
 
 ## Main features
 
-- Rectangular complex-state Newton-Raphson AC power flow.
+- Rectangular complex-state Newton-Raphson AC power flow, plus a linear DC power flow.
 - Sparse-matrix-oriented implementation for realistic network studies.
-- PV/PQ bus handling with Q-limit enforcement and active-set diagnostics.
-- Grid import from ENTSO-E CGMES 2.4.15 (EQ/SSH/TP/SV, boundary sets, tap controllers, validation against the delivered SV profile), MATPOWER cases and native DTF files.
+- PV/PQ bus handling with Q-limit enforcement (machine capability curves where the data provides them) and active-set diagnostics.
+- Distributed active-power slack over configurable participation factors — the primary-control picture instead of a single slack machine.
+- Grid import from ENTSO-E CGMES 2.4.15 and 3.0 (EQ/SSH/TP/SV, boundary sets, multi-area assemblies, tap controllers, validation against the delivered SV profile — measured across the full ENTSO-E conformity collection including the 6209-bus RealGrid; per-case results incl. the documented non-converging completeness sets in [docs/dev/cgmes_testset_overview.md](docs/dev/cgmes_testset_overview.md)), MATPOWER cases and native DTF files.
 - Comprehensive network modeling: buses, lines, transformers, generators, loads, shunts, links, and π-equivalent branch models.
-- Outer-loop control framework for transformer tap and voltage control.
+- Outer-loop control framework: transformer tap/voltage control (OLTC, PST, combined regulation) and remote voltage control via machine reactive power.
 - Configuration-driven batch execution for systematic case studies.
 - External-solver integration via the `PFModel` / `PFSolution` interface, including an optional analytic power-series solver (APSLF, via AnalyticLoadFlow.jl) usable standalone, as the primary solver, or as a Newton-Raphson start-value generator.
 - Nonlinear weighted-least-squares state estimation.
@@ -138,7 +140,7 @@ Key entry points:
 - [Local Web UI](https://welthulk.github.io/Sparlectra.jl/webui/) — browser-based local power-flow workflow
 - [Networks](docs/src/networks.md) — building and manipulating network models
 - [Import/Export](docs/src/import.md) · [CGMES Import](docs/src/cgmes_import.md) — reading and writing grid data
-- [Branch Model](docs/src/branchmodel.md) — line and transformer modeling, tap and voltage control
+- [Branch Model](docs/src/branchmodel.md) · [Remote Voltage Control](docs/src/remote_voltage_control.md) — line/transformer modeling, tap and voltage control
 - [Solver Guide](docs/src/solver.md) · [External Solvers](docs/src/external_solvers.md) — numerical formulations and the `PFModel`/`PFSolution` interface
 - [State Estimation](docs/src/state_estimation.md) — WLS state-estimation workflow
 - [Feature Matrix](docs/src/feature_matrix.md) — capability overview

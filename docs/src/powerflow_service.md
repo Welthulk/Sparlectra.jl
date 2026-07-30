@@ -166,10 +166,21 @@ Public service failures are dictionaries containing `status`, `success`,
 
 Every completed API `run.log` includes solver time where available,
 representative time, iterations, final mismatch, final outcome, case file
-extension and size, service phase timings, and a compact large-case timing
-summary. Benchmark median and configured samples are included when benchmarking is enabled.
-`output.logfile_results=full` adds effective configuration, artifact choices,
-and available status diagnostics beyond the `classic` report.
+extension and size, service phase timings (repeated per-iteration phases
+aggregated into one line with a count; the raw sequence stays in
+`result.json`), and a compact large-case timing summary. Benchmark median and
+configured samples are included when benchmarking is enabled.
+`output.logfile_results=full` adds run parameters, artifact choices, and the
+available status diagnostics beyond the `classic` report. `run.log` is the
+run's narrative — content that has a dedicated artifact is referenced, not
+repeated: the full CGMES import report lives in `cgmes.log` (only its
+`warning:` lines are mirrored into `run.log`), the resolved configuration in
+`effective_config.yaml`, performance detail in `performance.log`.
+
+By default an API/service run is silent on the console (its output is
+captured into `run.log`). With `output.console_live: true` the captured
+stream is additionally mirrored live to the real console while the run
+executes; the archived `run.log` is identical in both modes.
 
 Interpret the major loading phases as follows:
 

@@ -223,7 +223,7 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
   BUS_I = busDict["bus"]; BUS_TYPE = busDict["type"]; PD = busDict["Pd"]; QD = busDict["Qd"]; GS = busDict["Gs"]; BS = busDict["Bs"]
   BUS_AREA = busDict["area"]; VM = busDict["Vm"]; VA = busDict["Va"]; BASE_KV = busDict["baseKV"]; BUS_ZONE = busDict["zone"]; VMAX = busDict["Vmax"]; VMIN = busDict["Vmin"]
   GEN_BUS = genDict["bus"]; PG = genDict["Pg"]; QG = genDict["Qg"]; QMAX = genDict["Qmax"]; QMIN = genDict["Qmin"]; VG = genDict["Vg"]
-  MBASE = genDict["mBase"]; GEN_STATUS = genDict["status"]; PMAX = genDict["Pmax"]; PMIN = genDict["Pmin"]
+  MBASE = genDict["mBase"]; GEN_STATUS = genDict["status"]; PMAX = genDict["Pmax"]; PMIN = genDict["Pmin"]; APF = genDict["apf"]
   F_BUS = branchDict["fbus"]; T_BUS = branchDict["tbus"]; BR_R = branchDict["r"]; BR_X = branchDict["x"]; BR_B = branchDict["b"]
   RATE_A = branchDict["rateA"]; TAP = branchDict["ratio"]; SHIFT = branchDict["angle"]; BR_STATUS = branchDict["status"]
 
@@ -522,6 +522,14 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
     referencePri = (slackIdx == Int(row[GEN_BUS])) ? bus : nothing
     (mBase != baseMVA) && @debug "generator $(bus) has different mBase than network baseMVA (allowed in MATPOWER)" bus mBase baseMVA
 
+    # MATPOWER APF (area participation factor, column 21) → distributed-slack
+    # participation weight (issue #192). The column is optional — many cases
+    # ship 10-column gen matrices — and 0.0 means "no factor", stored as
+    # `nothing`. Carrying the value must not change results while
+    # power_flow.distributed_slack is disabled.
+    apf_raw = length(row) >= APF ? Float64(row[APF]) : 0.0
+    participation = (isfinite(apf_raw) && apf_raw > 0.0) ? apf_raw : nothing
+
     pu_controller = nothing
     qu_controller = nothing
     if enable_pq_gen_controllers && btype == 1
@@ -553,6 +561,7 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
       qMin = qMin,
       qu_controller = qu_controller,
       pu_controller = pu_controller,
+      participationFactor = participation,
       isRegulated = (btype == 2),
       defer_bus_type_refresh = true,
     )

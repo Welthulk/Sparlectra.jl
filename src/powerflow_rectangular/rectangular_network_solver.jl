@@ -366,6 +366,11 @@ function runpf_rectangular!(
   rectangular_preallocate_workspace::Symbol = :auto,
   rectangular_workspace_min_buses::Int = 1000,
   linear_solver::Symbol = :umfpack,
+  distributed_slack_enabled::Bool = false,
+  distributed_slack_p_mode::Symbol = :pg_weighted,
+  distributed_slack_respect_p_limits::Bool = true,
+  distributed_slack_fallback::Symbol = :error,
+  distributed_slack_weights::AbstractDict{String,Float64} = Dict{String,Float64}(),
 )
   merit_enabled && !autodamp && throw(ArgumentError("runpf_rectangular!: merit_enabled=true requires autodamp=true."))
   trust_region_enabled && autodamp && throw(ArgumentError("runpf_rectangular!: trust_region_enabled=true is incompatible with autodamp=true."))
@@ -440,6 +445,11 @@ function runpf_rectangular!(
       rectangular_preallocate_workspace = rectangular_preallocate_workspace,
       rectangular_workspace_min_buses = rectangular_workspace_min_buses,
       linear_solver = linear_solver,
+      distributed_slack_enabled = distributed_slack_enabled,
+      distributed_slack_p_mode = distributed_slack_p_mode,
+      distributed_slack_respect_p_limits = distributed_slack_respect_p_limits,
+      distributed_slack_fallback = distributed_slack_fallback,
+      distributed_slack_weights = distributed_slack_weights,
     )
   end
   cancellation_check = performance_profile isa AbstractDict ? get(performance_profile, :cancellation_check, nothing) : nothing
@@ -509,6 +519,24 @@ function runpf_rectangular!(
   # flat-start mode temporarily changed node._vm_pu as an initial guess.
   _perf_profile_time!(performance_profile, :solver_slack_voltage_fix) do
     V0[slack_idx] = _apply_voltage_magnitude_preserving_angle(V0[slack_idx], Vset[slack_idx])
+  end
+
+  # Distributed slack (issue #192): discover participants on the FINAL bus
+  # types and freeze the alpha vector for the whole solve — later PV→PQ
+  # switching does not change participation. `nothing` (disabled, or ref_only
+  # fallback with no valid participant) leaves the classical path untouched.
+  dslack = if distributed_slack_enabled
+    build_distributed_slack_state(
+      net,
+      bus_types;
+      p_mode = distributed_slack_p_mode,
+      fallback = distributed_slack_fallback,
+      weights = distributed_slack_weights,
+      respect_p_limits = distributed_slack_respect_p_limits,
+      island_label = net.name,
+    )
+  else
+    nothing
   end
 
   set_phase("start_projection")
@@ -728,8 +756,10 @@ function runpf_rectangular!(
     end
 
     # Mismatch with current bus_types and (possibly) voltage-dependent S.
+    # With distributed slack: at the accepted lambda (trial scale 0).
+    _dslack_set_trial!(dslack, 0.0)
     F = _perf_profile_time!(performance_profile, :iteration_mismatch) do
-      mismatch_rectangular(Ybus, V, S, bus_types, Vset, slack_idx)
+      mismatch_rectangular(Ybus, V, S, bus_types, Vset, slack_idx; dslack = dslack)
     end
     max_mis = maximum(abs.(F))
     push!(history, max_mis)
@@ -770,7 +800,7 @@ function runpf_rectangular!(
       qlimit_lock_reason, qlimit_max_outer, controllers, base_vset, adjust_counter,
       qlimit_guard_max_switches, qlimit_guard_freeze_after_repeated_switching,
       qlimit_guard_violation_mode, qlimit_guard_violation_threshold_pu, tol,
-      verbose, pv_table_rows, performance_profile,
+      verbose, pv_table_rows, performance_profile, dslack,
     ) : (F = F, max_mis = max_mis, changed = false, reenabled = false, converged_this_iter = max_mis <= tol)
     check_cancel()
     F = qlimit_iter.F
@@ -804,7 +834,7 @@ function runpf_rectangular!(
           trust_region_enabled = trust_region_enabled, tr_radius_ref = tr_radius_ref, tr_min_radius = trust_region_min_radius, tr_max_radius = trust_region_max_radius,
           tr_eta_accept = trust_region_eta_accept, tr_shrink_factor = trust_region_shrink_factor, tr_expand_factor = trust_region_expand_factor,
           tr_expand_threshold = trust_region_expand_threshold, tr_step_mode = trust_region_step_mode, tr_log = tr_step_diagnostics,
-          linear_ctx = linear_ctx,
+          linear_ctx = linear_ctx, dslack = dslack,
         )
       end
       check_cancel()
@@ -987,6 +1017,7 @@ function runpf_rectangular!(
     status_build_ = _merge_merit_linesearch_diagnostics(status_build_, performance_profile, merit_step_diagnostics, merit_enabled)
     status_build_ = _merge_trust_region_diagnostics(status_build_, performance_profile, tr_step_diagnostics, trust_region_enabled)
     status_build_ = _merge_linear_solver_diagnostics(status_build_, performance_profile, linear_solver, linear_ctx)
+    status_build_ = _merge_distributed_slack_diagnostics(status_build_, performance_profile, net, dslack, Sbase, verbose)
     final_reason_ = status_build_.final_reason
     final_status_ = status_build_.final_status
     status_ = _store_and_print_rectangular_final_status!(net, status_build_.status, verbose)
@@ -1124,6 +1155,11 @@ function runpf_rectangular!(
   rectangular_workspace_min_buses::Int = 1000,
   linear_solver::Symbol = :umfpack,
   performance_profile = nothing,
+  distributed_slack_enabled::Bool = false,
+  distributed_slack_p_mode::Symbol = :pg_weighted,
+  distributed_slack_respect_p_limits::Bool = true,
+  distributed_slack_fallback::Symbol = :error,
+  distributed_slack_weights::AbstractDict{String,Float64} = Dict{String,Float64}(),
 )
   iters, erg = runpf_rectangular!(
     net;
@@ -1207,6 +1243,11 @@ function runpf_rectangular!(
     rectangular_workspace_min_buses = rectangular_workspace_min_buses,
     linear_solver = linear_solver,
     performance_profile = performance_profile,
+    distributed_slack_enabled = distributed_slack_enabled,
+    distributed_slack_p_mode = distributed_slack_p_mode,
+    distributed_slack_respect_p_limits = distributed_slack_respect_p_limits,
+    distributed_slack_fallback = distributed_slack_fallback,
+    distributed_slack_weights = distributed_slack_weights,
   )
   return iters, erg
 end
@@ -1303,6 +1344,11 @@ function _runpf_with_config!(net::Net, config::PowerFlowConfig; verbose::Int = 0
     islands_mode = config.islands_mode,
     islands_reference_policy = config.islands_reference_policy,
     islands_diagnostic_continue_after_failure = config.islands.diagnostic_continue_after_failure,
+    distributed_slack_enabled = config.distributed_slack.enabled,
+    distributed_slack_p_mode = config.distributed_slack.p_mode,
+    distributed_slack_respect_p_limits = config.distributed_slack.respect_p_limits,
+    distributed_slack_fallback = config.distributed_slack.fallback,
+    distributed_slack_weights = config.distributed_slack.weights,
     performance_profile = performance_profile,
   )
 end
@@ -1633,6 +1679,11 @@ function runpf!(
   islands_mode::Symbol = :solve_independent,
   islands_reference_policy::Symbol = :matpower_like,
   islands_diagnostic_continue_after_failure::Bool = false,
+  distributed_slack_enabled::Bool = false,
+  distributed_slack_p_mode::Symbol = :pg_weighted,
+  distributed_slack_respect_p_limits::Bool = true,
+  distributed_slack_fallback::Symbol = :error,
+  distributed_slack_weights::AbstractDict{String,Float64} = Dict{String,Float64}(),
 )
   _validate_rectangular_powerflow_options(method = :rectangular, sparse = true)
   wnet, reps, has_merges = _merged_pf_net(net)
@@ -1782,6 +1833,11 @@ function runpf!(
         rectangular_preallocate_workspace = rectangular_preallocate_workspace,
         rectangular_workspace_min_buses = rectangular_workspace_min_buses,
         linear_solver = linear_solver,
+        distributed_slack_enabled = distributed_slack_enabled,
+        distributed_slack_p_mode = distributed_slack_p_mode,
+        distributed_slack_respect_p_limits = distributed_slack_respect_p_limits,
+        distributed_slack_fallback = distributed_slack_fallback,
+        distributed_slack_weights = distributed_slack_weights,
         performance_profile = performance_profile,
       )
         total_iters += it
@@ -1851,6 +1907,26 @@ function runpf!(
         stacktrace_top = "",
       ),
     )
+    # Distributed slack (#192): the aggregate base status is an arbitrary
+    # island's status, so its distributed_slack_* fields describe only that
+    # island (measured: the top level reported the 2-bus mini island's
+    # lambda_P = 0 while the 266-bus island carried the actual correction).
+    # Aggregate over all islands: lambda_p sums to the total redistributed
+    # power; per-island values remain in the per-island statuses.
+    ds_islands = [st for st in values(island_statuses) if hasproperty(st, :distributed_slack_active) && st.distributed_slack_active]
+    if any(st -> hasproperty(st, :distributed_slack_active), values(island_statuses))
+      aggregate_status = merge(
+        aggregate_status,
+        (;
+          distributed_slack_active = !isempty(ds_islands),
+          distributed_slack_lambda_p_pu = isempty(ds_islands) ? 0.0 : sum(st.distributed_slack_lambda_p_pu for st in ds_islands),
+          distributed_slack_lambda_p_mw = isempty(ds_islands) ? 0.0 : sum(st.distributed_slack_lambda_p_mw for st in ds_islands),
+          distributed_slack_participants = isempty(ds_islands) ? 0 : sum(st.distributed_slack_participants for st in ds_islands),
+          distributed_slack_dropped = isempty(ds_islands) ? 0 : sum(st.distributed_slack_dropped for st in ds_islands),
+          distributed_slack_p_limit_violations = isempty(ds_islands) ? 0 : sum(st.distributed_slack_p_limit_violations for st in ds_islands),
+        ),
+      )
+    end
     _set_rectangular_pf_status!(net, aggregate_status)
     if performance_profile isa AbstractDict
       performance_profile[:island_wise_all_converged] = true
@@ -1952,6 +2028,11 @@ function runpf!(
         rectangular_preallocate_workspace = rectangular_preallocate_workspace,
         rectangular_workspace_min_buses = rectangular_workspace_min_buses,
         linear_solver = linear_solver,
+        distributed_slack_enabled = distributed_slack_enabled,
+        distributed_slack_p_mode = distributed_slack_p_mode,
+        distributed_slack_respect_p_limits = distributed_slack_respect_p_limits,
+        distributed_slack_fallback = distributed_slack_fallback,
+        distributed_slack_weights = distributed_slack_weights,
         performance_profile = performance_profile,
       )
     else
@@ -2035,6 +2116,11 @@ function runpf!(
         rectangular_preallocate_workspace = rectangular_preallocate_workspace,
         rectangular_workspace_min_buses = rectangular_workspace_min_buses,
         linear_solver = linear_solver,
+        distributed_slack_enabled = distributed_slack_enabled,
+        distributed_slack_p_mode = distributed_slack_p_mode,
+        distributed_slack_respect_p_limits = distributed_slack_respect_p_limits,
+        distributed_slack_fallback = distributed_slack_fallback,
+        distributed_slack_weights = distributed_slack_weights,
         performance_profile = performance_profile,
       )
     end

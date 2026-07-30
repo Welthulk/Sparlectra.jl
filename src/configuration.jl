@@ -169,6 +169,39 @@ Base.@kwdef struct DcPowerFlowConfig
 end
 
 """
+    DistributedSlackConfig
+
+Distributed active-power slack (issue #192): the REF bus keeps the angle
+reference while the island's active-power imbalance is absorbed by a set of
+participating generators via one scalar `lambda_P` per island.
+
+# Fields
+- `enabled::Bool`: off by default — disabled reproduces the classical
+  single-slack behavior bit-for-bit.
+- `p_mode::Symbol`: how raw participation weights are derived —
+  `:pg_weighted` (scheduled Pg), `:pmax_weighted` (maxP),
+  `:headroom_weighted` (`max(maxP − Pg, 0)`), `:imported`
+  (`ProSumer.participationFactor`, filled from MATPOWER `APF` /
+  CGMES `GeneratingUnit.normalPF`), `:explicit` (the `weights` table).
+- `respect_p_limits::Bool`: diagnostic only — WARN when a participant's
+  corrected P leaves `[minP, maxP]`; no re-dispatch.
+- `fallback::Symbol`: `:error` throws when an island has no valid participant;
+  `:ref_only` falls back to the classical slack for that island with a warning.
+- `weights::Dict{String,Float64}`: `:explicit` mode only — bus name (or bus
+  index as string) → weight.
+"""
+Base.@kwdef struct DistributedSlackConfig
+  enabled::Bool = false
+  p_mode::Symbol = :pg_weighted
+  respect_p_limits::Bool = true
+  fallback::Symbol = :error
+  weights::Dict{String,Float64} = Dict{String,Float64}()
+end
+
+const DISTRIBUTED_SLACK_P_MODE_VALUES = (:pg_weighted, :pmax_weighted, :headroom_weighted, :imported, :explicit)
+const DISTRIBUTED_SLACK_FALLBACK_VALUES = (:error, :ref_only)
+
+"""
     ApslfConfig
 
 Typed configuration for the AnalyticLoadFlow.jl-backed analytic power-series
@@ -231,6 +264,7 @@ Base.@kwdef struct PowerFlowConfig
   qlimits::QLimitConfig = QLimitConfig()
   islands::IslandPowerFlowConfig = IslandPowerFlowConfig()
   dc::DcPowerFlowConfig = DcPowerFlowConfig()
+  distributed_slack::DistributedSlackConfig = DistributedSlackConfig()
 end
 
 const WRONG_BRANCH_DETECTION_VALUES = [:off, :warn, :fail, :rescue]
@@ -280,6 +314,10 @@ Options of the `cgmes_import` configuration block — the ENTSO-E CGMES import
 - `tap_control::Bool`: start from the SSH tap positions and attach the
   CGMES-defined outer-loop tap controllers instead of importing the solved
   `SvTapStep` positions as fixed taps.
+- `machine_control::Bool`: attach outer-loop remote voltage controllers
+  (`MachineVoltageControl`) for machines whose voltage `RegulatingControl`
+  points at a different bus, instead of holding those machines PV at their
+  own bus.
 - `ignore_connected::Bool`: diagnostic override that treats every terminal as
   connected, for snapshots whose SSH flags contradict their own SV state.
 - `vset_min_pu`, `vset_max_pu::Float64`: plausibility band for a voltage
@@ -299,6 +337,7 @@ Base.@kwdef struct CGMESImportConfig
   base_mva::Float64 = 100.0
   require_boundary::Bool = true
   tap_control::Bool = false
+  machine_control::Bool = false
   ignore_connected::Bool = false
   vset_min_pu::Float64 = 0.5
   vset_max_pu::Float64 = 1.5
@@ -427,14 +466,13 @@ end
 
 Typed diagnostic-output configuration shared by examples and future modules.
 """
+# Console/logfile output options are owned by `output.*` alone. The
+# `diagnostics` block used to carry duplicates of six of them; none of those
+# was ever read (every consumer resolves `config.output.*`), so setting them
+# silently did nothing. They are deprecated: the parser warns and ignores
+# them (see `DiagnosticsConfig(raw)`).
 Base.@kwdef struct DiagnosticsConfig
   log_effective_config::Bool = false
-  console_summary::Bool = true
-  console_auto_profile::Symbol = :compact
-  console_diagnostics::Symbol = :compact
-  console_q_limit_events::Symbol = :summary
-  console_max_rows::Int = 100
-  logfile_diagnostics::Symbol = :compact
 end
 
 """
@@ -446,6 +484,10 @@ logfile tables without suppressing compact console progress.
 """
 Base.@kwdef struct OutputConfig
   console_summary::Bool = true
+  # Mirror the captured run output (everything that goes into run.log) live
+  # to the real console while an API/service run executes. The archive stays
+  # identical; default off keeps API runs quiet like before.
+  console_live::Bool = false
   console_auto_profile::Symbol = :compact
   console_diagnostics::Symbol = :compact
   console_q_limit_events::Symbol = :summary
@@ -859,6 +901,7 @@ function PowerFlowConfig(raw::AbstractDict)
   apslf_raw = _raw_section(merged, "apslf")
   apslf_start_raw = _raw_section(merged, "apslf_start")
   dc_raw = _raw_section(merged, "dc")
+  distributed_slack_raw = _raw_section(merged, "distributed_slack")
   solver = _validate_allowed_symbol("power_flow.solver", _as_symbol_cfg(_raw_get(merged, "solver", :rectangular)), POWERFLOW_SOLVER_VALUES)
   apslf_cfg = ApslfConfig(apslf_raw)
   apslf_start_cfg = ApslfStartConfig(apslf_start_raw)
@@ -919,6 +962,7 @@ function PowerFlowConfig(raw::AbstractDict)
     qlimits = QLimitConfig(merge(Dict{Any,Any}(merged), Dict{Any,Any}(qlimit_raw))),
     islands = IslandPowerFlowConfig(islands_raw),
     dc = DcPowerFlowConfig(dc_raw),
+    distributed_slack = DistributedSlackConfig(distributed_slack_raw),
   )
 end
 
@@ -927,6 +971,30 @@ function DcPowerFlowConfig(raw::AbstractDict)
     angle_reference_deg = _as_float_cfg(_raw_get(raw, "angle_reference_deg", 0.0)),
     ignore_out_of_service = _as_bool_cfg(_raw_get(raw, "ignore_out_of_service", true)),
   )
+end
+
+function DistributedSlackConfig(raw::AbstractDict)
+  enabled = _as_bool_cfg(_raw_get(raw, "enabled", false))
+  p_mode = _validate_allowed_symbol("power_flow.distributed_slack.p_mode", _as_symbol_cfg(_raw_get(raw, "p_mode", :pg_weighted)), DISTRIBUTED_SLACK_P_MODE_VALUES)
+  fallback = _validate_allowed_symbol("power_flow.distributed_slack.fallback", _as_symbol_cfg(_raw_get(raw, "fallback", :error)), DISTRIBUTED_SLACK_FALLBACK_VALUES)
+  weights_raw = _raw_get(raw, "weights", Dict{Any,Any}())
+  # The minimal in-repo YAML reader has no flow-mapping support: an empty
+  # `weights: {}` arrives as the literal string "{}", a bare `weights:` as
+  # nothing/"". All of these mean "no weights"; real tables use block style.
+  if weights_raw === nothing || (weights_raw isa AbstractString && strip(weights_raw) in ("", "{}"))
+    weights_raw = Dict{Any,Any}()
+  end
+  weights_raw isa AbstractDict || throw(ArgumentError("power_flow.distributed_slack.weights must be a mapping of bus name/index to weight (block style, one `bus: weight` line per entry)."))
+  weights = Dict{String,Float64}()
+  for (k, v) in weights_raw
+    w = _as_float_cfg(v)
+    (isfinite(w) && w >= 0.0) || throw(ArgumentError("power_flow.distributed_slack.weights[$(k)] must be finite and >= 0, got $(v)."))
+    weights[string(k)] = w
+  end
+  if enabled && p_mode === :explicit
+    (!isempty(weights) && any(>(0.0), values(weights))) || throw(ArgumentError("power_flow.distributed_slack.p_mode=explicit requires non-empty weights with at least one weight > 0."))
+  end
+  return DistributedSlackConfig(enabled = enabled, p_mode = p_mode, respect_p_limits = _as_bool_cfg(_raw_get(raw, "respect_p_limits", true)), fallback = fallback, weights = weights)
 end
 
 function IslandPowerFlowConfig(raw::AbstractDict)
@@ -970,6 +1038,7 @@ function CGMESImportConfig(raw::AbstractDict)
     base_mva = _validate_positive("cgmes_import.base_mva", _as_float_cfg(_raw_get(merged, "base_mva", 100.0))),
     require_boundary = _as_bool_cfg(_raw_get(merged, "require_boundary", true)),
     tap_control = _as_bool_cfg(_raw_get(merged, "tap_control", false)),
+    machine_control = _as_bool_cfg(_raw_get(merged, "machine_control", false)),
     ignore_connected = _as_bool_cfg(_raw_get(merged, "ignore_connected", false)),
     vset_min_pu = _validate_nonnegative("cgmes_import.vset_min_pu", _as_float_cfg(_raw_get(merged, "vset_min_pu", 0.5))),
     vset_max_pu = _validate_positive("cgmes_import.vset_max_pu", _as_float_cfg(_raw_get(merged, "vset_max_pu", 1.5))),
@@ -1081,17 +1150,12 @@ function BenchmarkConfig(raw::AbstractDict)
   )
 end
 
+# The deprecated diagnostics.* duplicates of output.* are warned about (and
+# ignored) once, in `_validate_known_config_keys` — see
+# `_DEPRECATED_CONFIG_KEYS`. This constructor only reads the surviving key.
 function DiagnosticsConfig(raw::AbstractDict)
   merged = _merged_section(raw, "diagnostics")
-  return DiagnosticsConfig(
-    log_effective_config = _as_bool_cfg(_raw_get(merged, "log_effective_config", false)),
-    console_summary = _as_bool_cfg(_raw_get(merged, "console_summary", true)),
-    console_auto_profile = _validate_allowed_symbol("diagnostics.console_auto_profile", _as_symbol_cfg(_raw_get(merged, "console_auto_profile", :compact)), OUTPUT_CONSOLE_AUTO_PROFILE_VALUES),
-    console_diagnostics = _validate_allowed_symbol("diagnostics.console_diagnostics", _as_symbol_cfg(_raw_get(merged, "console_diagnostics", :compact)), OUTPUT_CONSOLE_DIAGNOSTICS_VALUES),
-    console_q_limit_events = _validate_allowed_symbol("diagnostics.console_q_limit_events", _as_symbol_cfg(_raw_get(merged, "console_q_limit_events", :summary)), OUTPUT_CONSOLE_Q_LIMIT_EVENTS_VALUES),
-    console_max_rows = _as_int_cfg(_raw_get(merged, "console_max_rows", 100)),
-    logfile_diagnostics = _validate_allowed_symbol("diagnostics.logfile_diagnostics", _as_symbol_cfg(_raw_get(merged, "logfile_diagnostics", :compact)), OUTPUT_LOGFILE_DIAGNOSTICS_VALUES),
-  )
+  return DiagnosticsConfig(log_effective_config = _as_bool_cfg(_raw_get(merged, "log_effective_config", false)))
 end
 
 _output_nonnegative_or_default(value::Integer, default::Integer) = value < 0 ? default : value
@@ -1101,6 +1165,7 @@ function OutputConfig(raw::AbstractDict)
   merged = _merged_section(raw, "output")
   return OutputConfig(
     console_summary = _as_bool_cfg(_raw_get(merged, "console_summary", true)),
+    console_live = _as_bool_cfg(_raw_get(merged, "console_live", false)),
     console_auto_profile = _validate_allowed_symbol("output.console_auto_profile", _as_symbol_cfg(_raw_get(merged, "console_auto_profile", :compact)), OUTPUT_CONSOLE_AUTO_PROFILE_VALUES),
     console_diagnostics = _validate_allowed_symbol("output.console_diagnostics", _as_symbol_cfg(_raw_get(merged, "console_diagnostics", :compact)), OUTPUT_CONSOLE_DIAGNOSTICS_VALUES),
     console_q_limit_events = _validate_allowed_symbol("output.console_q_limit_events", _as_symbol_cfg(_raw_get(merged, "console_q_limit_events", :summary)), OUTPUT_CONSOLE_Q_LIMIT_EVENTS_VALUES),
@@ -1177,6 +1242,26 @@ function _merge_config_overrides(raw::Dict{String,Any}, overrides::AbstractDict)
   return merged
 end
 
+# Free-form mapping keys: the child keys are user data (e.g. bus names), not
+# configuration keys, so they are exempt from unknown-key validation. The
+# default file keeps a scalar "{}" placeholder because the minimal YAML
+# reader has no flow-mapping support.
+const _FREEFORM_MAPPING_CONFIG_KEYS = ("power_flow.distributed_slack.weights",)
+
+# Deprecated keys stay ACCEPTED so existing user/webui configuration files
+# keep loading (a hard "unknown key" error here would brick every stored
+# config that still carries them). They are ignored with a warning naming the
+# replacement. The diagnostics.* entries were never-read duplicates of
+# output.* (logging cleanup, 2026-07-30).
+const _DEPRECATED_CONFIG_KEYS = Dict(
+  "diagnostics.console_summary" => "output.console_summary",
+  "diagnostics.console_auto_profile" => "output.console_auto_profile",
+  "diagnostics.console_diagnostics" => "output.console_diagnostics",
+  "diagnostics.console_q_limit_events" => "output.console_q_limit_events",
+  "diagnostics.console_max_rows" => "output.console_max_rows",
+  "diagnostics.logfile_diagnostics" => "output.logfile_diagnostics",
+)
+
 function _validate_known_config_keys(user::AbstractDict, defaults::AbstractDict; path::String = "")
   for (key, value) in user
     skey = _canonical_config_key(_config_key(key))
@@ -1192,8 +1277,13 @@ function _validate_known_config_keys(user::AbstractDict, defaults::AbstractDict;
       end
       continue
     end
+    if haskey(_DEPRECATED_CONFIG_KEYS, current_path)
+      @warn "Configuration key $(current_path) is deprecated and ignored — use $(_DEPRECATED_CONFIG_KEYS[current_path])."
+      continue
+    end
     haskey(defaults, skey) || throw(ArgumentError("Unknown Sparlectra configuration key: $(current_path)"))
     if value isa AbstractDict
+      current_path in _FREEFORM_MAPPING_CONFIG_KEYS && continue
       defaults[skey] isa AbstractDict || throw(ArgumentError("Configuration key $(current_path) must be a scalar value."))
       _validate_known_config_keys(value, defaults[skey]; path = current_path)
     end
@@ -1356,23 +1446,38 @@ end
 function _normalize_deprecated_config_aliases!(root::Dict{String,Any})::Vector{String}
   normalized = String[]
   pf = haskey(root, "power_flow") ? root["power_flow"] : get(root, "powerflow", nothing)
-  pf isa Dict{String,Any} || return normalized
-  start_mode = get(pf, "start_mode", nothing)
-  if start_mode isa Dict{String,Any} && get(start_mode, "voltage_mode", nothing) in ("bus_vm_va_blend", :bus_vm_va_blend)
-    start_mode["voltage_mode"] = "profile_blend"
-    start_mode["profile_source"] = "matpower_reference"
-    push!(normalized, "power_flow.start_mode.voltage_mode")
-    push!(normalized, "power_flow.start_mode.profile_source")
+  if pf isa Dict{String,Any}
+    start_mode = get(pf, "start_mode", nothing)
+    if start_mode isa Dict{String,Any} && get(start_mode, "voltage_mode", nothing) in ("bus_vm_va_blend", :bus_vm_va_blend)
+      start_mode["voltage_mode"] = "profile_blend"
+      start_mode["profile_source"] = "matpower_reference"
+      push!(normalized, "power_flow.start_mode.voltage_mode")
+      push!(normalized, "power_flow.start_mode.profile_source")
+    end
+    qlimits = get(pf, "qlimits", nothing)
+    if qlimits isa Dict{String,Any}
+      mode = get(qlimits, "enforcement_mode", nothing)
+      if mode in ("matpower_simultaneous", :matpower_simultaneous)
+        qlimits["enforcement_mode"] = "classic_simultaneous"
+        push!(normalized, "power_flow.qlimits.enforcement_mode")
+      elseif mode in ("matpower_one_at_a_time", :matpower_one_at_a_time)
+        qlimits["enforcement_mode"] = "classic_one_at_a_time"
+        push!(normalized, "power_flow.qlimits.enforcement_mode")
+      end
+    end
   end
-  qlimits = get(pf, "qlimits", nothing)
-  if qlimits isa Dict{String,Any}
-    mode = get(qlimits, "enforcement_mode", nothing)
-    if mode in ("matpower_simultaneous", :matpower_simultaneous)
-      qlimits["enforcement_mode"] = "classic_simultaneous"
-      push!(normalized, "power_flow.qlimits.enforcement_mode")
-    elseif mode in ("matpower_one_at_a_time", :matpower_one_at_a_time)
-      qlimits["enforcement_mode"] = "classic_one_at_a_time"
-      push!(normalized, "power_flow.qlimits.enforcement_mode")
+  # The deprecated diagnostics.* duplicates of output.* are DROPPED, not
+  # migrated: they were never read, so copying their values into output.*
+  # would silently change behavior a stored config never had.
+  diag = get(root, "diagnostics", nothing)
+  if diag isa Dict{String,Any}
+    for path in sort!(collect(keys(_DEPRECATED_CONFIG_KEYS)))
+      startswith(path, "diagnostics.") || continue
+      key = split(path, '.'; limit = 2)[2]
+      if haskey(diag, key)
+        delete!(diag, key)
+        push!(normalized, path)
+      end
     end
   end
   return unique(normalized)

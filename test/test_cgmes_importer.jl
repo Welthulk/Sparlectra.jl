@@ -33,6 +33,12 @@ const _CGMES_SYNTH_EQ = """<?xml version="1.0" encoding="UTF-8"?>
 <cim:SynchronousMachine.earthing>false</cim:SynchronousMachine.earthing>
 <cim:Equipment.EquipmentContainer rdf:resource="#_missing_container"/>
 </cim:SynchronousMachine>
+<cim:TopologicalIsland rdf:ID="_island1">
+<cim:IdentifiedObject.name>ISL1</cim:IdentifiedObject.name>
+<cim:TopologicalIsland.TopologicalNodes rdf:resource="#_tn_a"/>
+<cim:TopologicalIsland.TopologicalNodes rdf:resource="#_tn_b"/>
+<cim:TopologicalIsland.TopologicalNodes rdf:resource="#_tn_c"/>
+</cim:TopologicalIsland>
 </rdf:RDF>
 """
 
@@ -58,6 +64,272 @@ const _CGMES_SYNTH_DIFF = """<?xml version="1.0" encoding="UTF-8"?>
 </cim:ACLineSegment>
 </rdf:RDF>
 """
+
+# Synthetic 3-bus star delivery (EQ+SSH+TP+SV): slack ENI at HV, loads at
+# MV/LV, one 3W transformer whose end-2 RatioTapChanger carries an enabled
+# TapChangerControl regulating the MV bus. Purpose-built for #294 point 4 —
+# controllers on star-equivalent 3W legs — because no cached ENTSO-E set
+# ships a controlled 3W changer. The target 114.4 kV (1.04 pu) is chosen so
+# the controller MUST move the tap from the SSH neutral position (the
+# uncontrolled solve lands near 1.0135 pu), and the 2.6 kV deadband spans a
+# bit more than one 1.25 % step so discrete stepping can settle.
+const _CGMES_SYNTH3W_EQ = """<?xml version="1.0" encoding="UTF-8"?>
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:cim="http://iec.ch/TC57/2013/CIM-schema-cim16#" xmlns:md="http://iec.ch/TC57/61970-552/ModelDescription/1#">
+<md:FullModel rdf:about="urn:uuid:eq3w"><md:Model.profile>http://entsoe.eu/CIM/EquipmentCore/3/1</md:Model.profile></md:FullModel>
+<cim:BaseVoltage rdf:ID="_bv220"><cim:BaseVoltage.nominalVoltage>220</cim:BaseVoltage.nominalVoltage></cim:BaseVoltage>
+<cim:BaseVoltage rdf:ID="_bv110"><cim:BaseVoltage.nominalVoltage>110</cim:BaseVoltage.nominalVoltage></cim:BaseVoltage>
+<cim:BaseVoltage rdf:ID="_bv20"><cim:BaseVoltage.nominalVoltage>20</cim:BaseVoltage.nominalVoltage></cim:BaseVoltage>
+<cim:ExternalNetworkInjection rdf:ID="_eni">
+<cim:IdentifiedObject.name>GRID</cim:IdentifiedObject.name>
+</cim:ExternalNetworkInjection>
+<cim:Terminal rdf:ID="_t_eni"><cim:Terminal.ConductingEquipment rdf:resource="#_eni"/><cim:ACDCTerminal.sequenceNumber>1</cim:ACDCTerminal.sequenceNumber></cim:Terminal>
+<cim:EnergyConsumer rdf:ID="_load_mv"><cim:IdentifiedObject.name>LOAD_MV</cim:IdentifiedObject.name></cim:EnergyConsumer>
+<cim:Terminal rdf:ID="_t_load_mv"><cim:Terminal.ConductingEquipment rdf:resource="#_load_mv"/><cim:ACDCTerminal.sequenceNumber>1</cim:ACDCTerminal.sequenceNumber></cim:Terminal>
+<cim:EnergyConsumer rdf:ID="_load_lv"><cim:IdentifiedObject.name>LOAD_LV</cim:IdentifiedObject.name></cim:EnergyConsumer>
+<cim:Terminal rdf:ID="_t_load_lv"><cim:Terminal.ConductingEquipment rdf:resource="#_load_lv"/><cim:ACDCTerminal.sequenceNumber>1</cim:ACDCTerminal.sequenceNumber></cim:Terminal>
+<cim:PowerTransformer rdf:ID="_t3w"><cim:IdentifiedObject.name>T3W</cim:IdentifiedObject.name></cim:PowerTransformer>
+<cim:PowerTransformerEnd rdf:ID="_t3w_e1">
+<cim:PowerTransformerEnd.PowerTransformer rdf:resource="#_t3w"/>
+<cim:TransformerEnd.endNumber>1</cim:TransformerEnd.endNumber>
+<cim:PowerTransformerEnd.ratedU>220</cim:PowerTransformerEnd.ratedU>
+<cim:PowerTransformerEnd.ratedS>200</cim:PowerTransformerEnd.ratedS>
+<cim:PowerTransformerEnd.r>0.4</cim:PowerTransformerEnd.r>
+<cim:PowerTransformerEnd.x>24.0</cim:PowerTransformerEnd.x>
+<cim:TransformerEnd.Terminal rdf:resource="#_t_t3w_1"/>
+</cim:PowerTransformerEnd>
+<cim:PowerTransformerEnd rdf:ID="_t3w_e2">
+<cim:PowerTransformerEnd.PowerTransformer rdf:resource="#_t3w"/>
+<cim:TransformerEnd.endNumber>2</cim:TransformerEnd.endNumber>
+<cim:PowerTransformerEnd.ratedU>110</cim:PowerTransformerEnd.ratedU>
+<cim:PowerTransformerEnd.ratedS>200</cim:PowerTransformerEnd.ratedS>
+<cim:PowerTransformerEnd.r>0.1</cim:PowerTransformerEnd.r>
+<cim:PowerTransformerEnd.x>6.0</cim:PowerTransformerEnd.x>
+<cim:TransformerEnd.Terminal rdf:resource="#_t_t3w_2"/>
+</cim:PowerTransformerEnd>
+<cim:PowerTransformerEnd rdf:ID="_t3w_e3">
+<cim:PowerTransformerEnd.PowerTransformer rdf:resource="#_t3w"/>
+<cim:TransformerEnd.endNumber>3</cim:TransformerEnd.endNumber>
+<cim:PowerTransformerEnd.ratedU>20</cim:PowerTransformerEnd.ratedU>
+<cim:PowerTransformerEnd.ratedS>50</cim:PowerTransformerEnd.ratedS>
+<cim:PowerTransformerEnd.r>0.02</cim:PowerTransformerEnd.r>
+<cim:PowerTransformerEnd.x>0.8</cim:PowerTransformerEnd.x>
+<cim:TransformerEnd.Terminal rdf:resource="#_t_t3w_3"/>
+</cim:PowerTransformerEnd>
+<cim:Terminal rdf:ID="_t_t3w_1"><cim:Terminal.ConductingEquipment rdf:resource="#_t3w"/><cim:ACDCTerminal.sequenceNumber>1</cim:ACDCTerminal.sequenceNumber></cim:Terminal>
+<cim:Terminal rdf:ID="_t_t3w_2"><cim:Terminal.ConductingEquipment rdf:resource="#_t3w"/><cim:ACDCTerminal.sequenceNumber>2</cim:ACDCTerminal.sequenceNumber></cim:Terminal>
+<cim:Terminal rdf:ID="_t_t3w_3"><cim:Terminal.ConductingEquipment rdf:resource="#_t3w"/><cim:ACDCTerminal.sequenceNumber>3</cim:ACDCTerminal.sequenceNumber></cim:Terminal>
+<cim:RatioTapChanger rdf:ID="_rtc2">
+<cim:IdentifiedObject.name>T3W_OLTC</cim:IdentifiedObject.name>
+<cim:RatioTapChanger.TransformerEnd rdf:resource="#_t3w_e2"/>
+<cim:RatioTapChanger.stepVoltageIncrement>1.25</cim:RatioTapChanger.stepVoltageIncrement>
+<cim:TapChanger.lowStep>1</cim:TapChanger.lowStep>
+<cim:TapChanger.highStep>21</cim:TapChanger.highStep>
+<cim:TapChanger.neutralStep>11</cim:TapChanger.neutralStep>
+<cim:TapChanger.TapChangerControl rdf:resource="#_tcc2"/>
+</cim:RatioTapChanger>
+<cim:TapChangerControl rdf:ID="_tcc2">
+<cim:IdentifiedObject.name>T3W_OLTC_CTRL</cim:IdentifiedObject.name>
+<cim:RegulatingControl.mode rdf:resource="http://iec.ch/TC57/2013/CIM-schema-cim16#RegulatingControlModeKind.voltage"/>
+<cim:RegulatingControl.Terminal rdf:resource="#_t_load_mv"/>
+</cim:TapChangerControl>
+<cim:NonlinearShuntCompensator rdf:ID="_nlsh">
+<cim:IdentifiedObject.name>NLSH</cim:IdentifiedObject.name>
+</cim:NonlinearShuntCompensator>
+<cim:Terminal rdf:ID="_t_nlsh"><cim:Terminal.ConductingEquipment rdf:resource="#_nlsh"/><cim:ACDCTerminal.sequenceNumber>1</cim:ACDCTerminal.sequenceNumber></cim:Terminal>
+<cim:NonlinearShuntCompensatorPoint rdf:ID="_nlsh_p1">
+<cim:NonlinearShuntCompensatorPoint.NonlinearShuntCompensator rdf:resource="#_nlsh"/>
+<cim:NonlinearShuntCompensatorPoint.sectionNumber>1</cim:NonlinearShuntCompensatorPoint.sectionNumber>
+<cim:NonlinearShuntCompensatorPoint.b>1.0e-4</cim:NonlinearShuntCompensatorPoint.b>
+<cim:NonlinearShuntCompensatorPoint.g>0</cim:NonlinearShuntCompensatorPoint.g>
+</cim:NonlinearShuntCompensatorPoint>
+<cim:NonlinearShuntCompensatorPoint rdf:ID="_nlsh_p2">
+<cim:NonlinearShuntCompensatorPoint.NonlinearShuntCompensator rdf:resource="#_nlsh"/>
+<cim:NonlinearShuntCompensatorPoint.sectionNumber>2</cim:NonlinearShuntCompensatorPoint.sectionNumber>
+<cim:NonlinearShuntCompensatorPoint.b>0.8e-4</cim:NonlinearShuntCompensatorPoint.b>
+<cim:NonlinearShuntCompensatorPoint.g>0</cim:NonlinearShuntCompensatorPoint.g>
+</cim:NonlinearShuntCompensatorPoint>
+<cim:NonlinearShuntCompensatorPoint rdf:ID="_nlsh_p3">
+<cim:NonlinearShuntCompensatorPoint.NonlinearShuntCompensator rdf:resource="#_nlsh"/>
+<cim:NonlinearShuntCompensatorPoint.sectionNumber>3</cim:NonlinearShuntCompensatorPoint.sectionNumber>
+<cim:NonlinearShuntCompensatorPoint.b>0.6e-4</cim:NonlinearShuntCompensatorPoint.b>
+<cim:NonlinearShuntCompensatorPoint.g>0</cim:NonlinearShuntCompensatorPoint.g>
+</cim:NonlinearShuntCompensatorPoint>
+</rdf:RDF>
+"""
+
+const _CGMES_SYNTH3W_SSH = """<?xml version="1.0" encoding="UTF-8"?>
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:cim="http://iec.ch/TC57/2013/CIM-schema-cim16#" xmlns:md="http://iec.ch/TC57/61970-552/ModelDescription/1#">
+<md:FullModel rdf:about="urn:uuid:ssh3w"><md:Model.profile>http://entsoe.eu/CIM/SteadyStateHypothesis/1/1</md:Model.profile></md:FullModel>
+<cim:ExternalNetworkInjection rdf:about="#_eni"><cim:ExternalNetworkInjection.p>-45</cim:ExternalNetworkInjection.p><cim:ExternalNetworkInjection.q>-12</cim:ExternalNetworkInjection.q></cim:ExternalNetworkInjection>
+<cim:EnergyConsumer rdf:about="#_load_mv"><cim:EnergyConsumer.p>40</cim:EnergyConsumer.p><cim:EnergyConsumer.q>10</cim:EnergyConsumer.q></cim:EnergyConsumer>
+<cim:EnergyConsumer rdf:about="#_load_lv"><cim:EnergyConsumer.p>5</cim:EnergyConsumer.p><cim:EnergyConsumer.q>1</cim:EnergyConsumer.q></cim:EnergyConsumer>
+<cim:RatioTapChanger rdf:about="#_rtc2"><cim:TapChanger.step>11</cim:TapChanger.step><cim:TapChanger.controlEnabled>true</cim:TapChanger.controlEnabled></cim:RatioTapChanger>
+<cim:TapChangerControl rdf:about="#_tcc2"><cim:RegulatingControl.enabled>true</cim:RegulatingControl.enabled><cim:RegulatingControl.targetValue>114.4</cim:RegulatingControl.targetValue><cim:RegulatingControl.targetDeadband>2.6</cim:RegulatingControl.targetDeadband></cim:TapChangerControl>
+<cim:Terminal rdf:about="#_t_eni"><cim:ACDCTerminal.connected>true</cim:ACDCTerminal.connected></cim:Terminal>
+<cim:Terminal rdf:about="#_t_load_mv"><cim:ACDCTerminal.connected>true</cim:ACDCTerminal.connected></cim:Terminal>
+<cim:Terminal rdf:about="#_t_load_lv"><cim:ACDCTerminal.connected>true</cim:ACDCTerminal.connected></cim:Terminal>
+<cim:Terminal rdf:about="#_t_t3w_1"><cim:ACDCTerminal.connected>true</cim:ACDCTerminal.connected></cim:Terminal>
+<cim:Terminal rdf:about="#_t_t3w_2"><cim:ACDCTerminal.connected>true</cim:ACDCTerminal.connected></cim:Terminal>
+<cim:Terminal rdf:about="#_t_t3w_3"><cim:ACDCTerminal.connected>true</cim:ACDCTerminal.connected></cim:Terminal>
+<cim:NonlinearShuntCompensator rdf:about="#_nlsh"><cim:ShuntCompensator.sections>2</cim:ShuntCompensator.sections></cim:NonlinearShuntCompensator>
+<cim:Terminal rdf:about="#_t_nlsh"><cim:ACDCTerminal.connected>true</cim:ACDCTerminal.connected></cim:Terminal>
+</rdf:RDF>
+"""
+
+const _CGMES_SYNTH3W_TP = """<?xml version="1.0" encoding="UTF-8"?>
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:cim="http://iec.ch/TC57/2013/CIM-schema-cim16#" xmlns:md="http://iec.ch/TC57/61970-552/ModelDescription/1#">
+<md:FullModel rdf:about="urn:uuid:tp3w"><md:Model.profile>http://entsoe.eu/CIM/Topology/4/1</md:Model.profile></md:FullModel>
+<cim:TopologicalNode rdf:ID="_tn_hv"><cim:IdentifiedObject.name>HV_BUS</cim:IdentifiedObject.name><cim:TopologicalNode.BaseVoltage rdf:resource="#_bv220"/></cim:TopologicalNode>
+<cim:TopologicalNode rdf:ID="_tn_mv"><cim:IdentifiedObject.name>MV_BUS</cim:IdentifiedObject.name><cim:TopologicalNode.BaseVoltage rdf:resource="#_bv110"/></cim:TopologicalNode>
+<cim:TopologicalNode rdf:ID="_tn_lv"><cim:IdentifiedObject.name>LV_BUS</cim:IdentifiedObject.name><cim:TopologicalNode.BaseVoltage rdf:resource="#_bv20"/></cim:TopologicalNode>
+<cim:Terminal rdf:about="#_t_eni"><cim:Terminal.TopologicalNode rdf:resource="#_tn_hv"/></cim:Terminal>
+<cim:Terminal rdf:about="#_t_load_mv"><cim:Terminal.TopologicalNode rdf:resource="#_tn_mv"/></cim:Terminal>
+<cim:Terminal rdf:about="#_t_load_lv"><cim:Terminal.TopologicalNode rdf:resource="#_tn_lv"/></cim:Terminal>
+<cim:Terminal rdf:about="#_t_t3w_1"><cim:Terminal.TopologicalNode rdf:resource="#_tn_hv"/></cim:Terminal>
+<cim:Terminal rdf:about="#_t_t3w_2"><cim:Terminal.TopologicalNode rdf:resource="#_tn_mv"/></cim:Terminal>
+<cim:Terminal rdf:about="#_t_t3w_3"><cim:Terminal.TopologicalNode rdf:resource="#_tn_lv"/></cim:Terminal>
+<cim:Terminal rdf:about="#_t_nlsh"><cim:Terminal.TopologicalNode rdf:resource="#_tn_mv"/></cim:Terminal>
+</rdf:RDF>
+"""
+
+const _CGMES_SYNTH3W_SV = """<?xml version="1.0" encoding="UTF-8"?>
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:cim="http://iec.ch/TC57/2013/CIM-schema-cim16#" xmlns:md="http://iec.ch/TC57/61970-552/ModelDescription/1#">
+<md:FullModel rdf:about="urn:uuid:sv3w"><md:Model.profile>http://entsoe.eu/CIM/StateVariables/4/1</md:Model.profile></md:FullModel>
+<cim:SvVoltage rdf:ID="_sv_hv"><cim:SvVoltage.TopologicalNode rdf:resource="#_tn_hv"/><cim:SvVoltage.v>220</cim:SvVoltage.v><cim:SvVoltage.angle>0</cim:SvVoltage.angle></cim:SvVoltage>
+<cim:SvVoltage rdf:ID="_sv_mv"><cim:SvVoltage.TopologicalNode rdf:resource="#_tn_mv"/><cim:SvVoltage.v>111.5</cim:SvVoltage.v><cim:SvVoltage.angle>-1.5</cim:SvVoltage.angle></cim:SvVoltage>
+<cim:SvVoltage rdf:ID="_sv_lv"><cim:SvVoltage.TopologicalNode rdf:resource="#_tn_lv"/><cim:SvVoltage.v>19.9</cim:SvVoltage.v><cim:SvVoltage.angle>-2.0</cim:SvVoltage.angle></cim:SvVoltage>
+<cim:TopologicalIsland rdf:ID="_sv_isl"><cim:IdentifiedObject.name>ISL</cim:IdentifiedObject.name><cim:TopologicalIsland.TopologicalNodes rdf:resource="#_tn_hv"/><cim:TopologicalIsland.TopologicalNodes rdf:resource="#_tn_mv"/><cim:TopologicalIsland.TopologicalNodes rdf:resource="#_tn_lv"/></cim:TopologicalIsland>
+</rdf:RDF>
+"""
+
+function _cgmes_synth3w_dir()::String
+  dir = mktempdir()
+  write(joinpath(dir, "synth3w_EQ.xml"), _CGMES_SYNTH3W_EQ)
+  write(joinpath(dir, "synth3w_SSH.xml"), _CGMES_SYNTH3W_SSH)
+  write(joinpath(dir, "synth3w_TP.xml"), _CGMES_SYNTH3W_TP)
+  write(joinpath(dir, "synth3w_SV.xml"), _CGMES_SYNTH3W_SV)
+  return dir
+end
+
+# Synthetic 3-bus chain (EQ+SSH+TP+SV) for #294 point 3 — remote-regulating
+# machines: slack ENI at bus A, machine G_B at bus B whose voltage
+# RegulatingControl terminal sits at the LOAD bus C (112.2 kV = 1.02 pu),
+# load at C. A second machine G_C at bus C regulates locally but is parked
+# behind a disconnected terminal; the `sm2` toggle reconnects it so the same
+# delivery also exercises the "target bus already voltage-held" fallback.
+const _CGMES_SYNTH_RVC_EQ = """<?xml version="1.0" encoding="UTF-8"?>
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:cim="http://iec.ch/TC57/2013/CIM-schema-cim16#" xmlns:md="http://iec.ch/TC57/61970-552/ModelDescription/1#">
+<md:FullModel rdf:about="urn:uuid:eqrvc"><md:Model.profile>http://entsoe.eu/CIM/EquipmentCore/3/1</md:Model.profile></md:FullModel>
+<cim:BaseVoltage rdf:ID="_bv110"><cim:BaseVoltage.nominalVoltage>110</cim:BaseVoltage.nominalVoltage></cim:BaseVoltage>
+<cim:ExternalNetworkInjection rdf:ID="_eni">
+<cim:IdentifiedObject.name>GRID</cim:IdentifiedObject.name>
+<cim:ExternalNetworkInjection.referencePriority>1</cim:ExternalNetworkInjection.referencePriority>
+<cim:ExternalNetworkInjection.maxP>200</cim:ExternalNetworkInjection.maxP>
+</cim:ExternalNetworkInjection>
+<cim:Terminal rdf:ID="_t_eni"><cim:Terminal.ConductingEquipment rdf:resource="#_eni"/><cim:ACDCTerminal.sequenceNumber>1</cim:ACDCTerminal.sequenceNumber></cim:Terminal>
+<cim:SynchronousMachine rdf:ID="_smb">
+<cim:IdentifiedObject.name>G_B</cim:IdentifiedObject.name>
+<cim:RotatingMachine.ratedS>100</cim:RotatingMachine.ratedS>
+<cim:SynchronousMachine.minQ>-50</cim:SynchronousMachine.minQ>
+<cim:SynchronousMachine.maxQ>50</cim:SynchronousMachine.maxQ>
+<cim:RegulatingCondEq.RegulatingControl rdf:resource="#_rc_smb"/>
+</cim:SynchronousMachine>
+<cim:Terminal rdf:ID="_t_smb"><cim:Terminal.ConductingEquipment rdf:resource="#_smb"/><cim:ACDCTerminal.sequenceNumber>1</cim:ACDCTerminal.sequenceNumber></cim:Terminal>
+<cim:RegulatingControl rdf:ID="_rc_smb">
+<cim:IdentifiedObject.name>G_B_RC</cim:IdentifiedObject.name>
+<cim:RegulatingControl.mode rdf:resource="http://iec.ch/TC57/2013/CIM-schema-cim16#RegulatingControlModeKind.voltage"/>
+<cim:RegulatingControl.Terminal rdf:resource="#_t_load"/>
+</cim:RegulatingControl>
+<cim:SynchronousMachine rdf:ID="_smc">
+<cim:IdentifiedObject.name>G_C</cim:IdentifiedObject.name>
+<cim:RotatingMachine.ratedS>60</cim:RotatingMachine.ratedS>
+<cim:SynchronousMachine.minQ>-30</cim:SynchronousMachine.minQ>
+<cim:SynchronousMachine.maxQ>30</cim:SynchronousMachine.maxQ>
+<cim:RegulatingCondEq.RegulatingControl rdf:resource="#_rc_smc"/>
+</cim:SynchronousMachine>
+<cim:Terminal rdf:ID="_t_smc"><cim:Terminal.ConductingEquipment rdf:resource="#_smc"/><cim:ACDCTerminal.sequenceNumber>1</cim:ACDCTerminal.sequenceNumber></cim:Terminal>
+<cim:RegulatingControl rdf:ID="_rc_smc">
+<cim:IdentifiedObject.name>G_C_RC</cim:IdentifiedObject.name>
+<cim:RegulatingControl.mode rdf:resource="http://iec.ch/TC57/2013/CIM-schema-cim16#RegulatingControlModeKind.voltage"/>
+<cim:RegulatingControl.Terminal rdf:resource="#_t_smc"/>
+</cim:RegulatingControl>
+<cim:EnergyConsumer rdf:ID="_load"><cim:IdentifiedObject.name>LOAD_C</cim:IdentifiedObject.name></cim:EnergyConsumer>
+<cim:Terminal rdf:ID="_t_load"><cim:Terminal.ConductingEquipment rdf:resource="#_load"/><cim:ACDCTerminal.sequenceNumber>1</cim:ACDCTerminal.sequenceNumber></cim:Terminal>
+<cim:ACLineSegment rdf:ID="_l_ab">
+<cim:IdentifiedObject.name>L_AB</cim:IdentifiedObject.name>
+<cim:ACLineSegment.r>2.42</cim:ACLineSegment.r>
+<cim:ACLineSegment.x>12.1</cim:ACLineSegment.x>
+<cim:ACLineSegment.bch>0</cim:ACLineSegment.bch>
+<cim:ConductingEquipment.BaseVoltage rdf:resource="#_bv110"/>
+</cim:ACLineSegment>
+<cim:Terminal rdf:ID="_t_lab_1"><cim:Terminal.ConductingEquipment rdf:resource="#_l_ab"/><cim:ACDCTerminal.sequenceNumber>1</cim:ACDCTerminal.sequenceNumber></cim:Terminal>
+<cim:Terminal rdf:ID="_t_lab_2"><cim:Terminal.ConductingEquipment rdf:resource="#_l_ab"/><cim:ACDCTerminal.sequenceNumber>2</cim:ACDCTerminal.sequenceNumber></cim:Terminal>
+<cim:ACLineSegment rdf:ID="_l_bc">
+<cim:IdentifiedObject.name>L_BC</cim:IdentifiedObject.name>
+<cim:ACLineSegment.r>2.42</cim:ACLineSegment.r>
+<cim:ACLineSegment.x>12.1</cim:ACLineSegment.x>
+<cim:ACLineSegment.bch>0</cim:ACLineSegment.bch>
+<cim:ConductingEquipment.BaseVoltage rdf:resource="#_bv110"/>
+</cim:ACLineSegment>
+<cim:Terminal rdf:ID="_t_lbc_1"><cim:Terminal.ConductingEquipment rdf:resource="#_l_bc"/><cim:ACDCTerminal.sequenceNumber>1</cim:ACDCTerminal.sequenceNumber></cim:Terminal>
+<cim:Terminal rdf:ID="_t_lbc_2"><cim:Terminal.ConductingEquipment rdf:resource="#_l_bc"/><cim:ACDCTerminal.sequenceNumber>2</cim:ACDCTerminal.sequenceNumber></cim:Terminal>
+</rdf:RDF>
+"""
+
+const _CGMES_SYNTH_RVC_SSH_TEMPLATE = """<?xml version="1.0" encoding="UTF-8"?>
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:cim="http://iec.ch/TC57/2013/CIM-schema-cim16#" xmlns:md="http://iec.ch/TC57/61970-552/ModelDescription/1#">
+<md:FullModel rdf:about="urn:uuid:sshrvc"><md:Model.profile>http://entsoe.eu/CIM/SteadyStateHypothesis/1/1</md:Model.profile></md:FullModel>
+<cim:ExternalNetworkInjection rdf:about="#_eni"><cim:ExternalNetworkInjection.p>-42</cim:ExternalNetworkInjection.p><cim:ExternalNetworkInjection.q>-10</cim:ExternalNetworkInjection.q></cim:ExternalNetworkInjection>
+<cim:SynchronousMachine rdf:about="#_smb"><cim:RotatingMachine.p>-20</cim:RotatingMachine.p><cim:RotatingMachine.q>0</cim:RotatingMachine.q></cim:SynchronousMachine>
+<cim:SynchronousMachine rdf:about="#_smc"><cim:RotatingMachine.p>-5</cim:RotatingMachine.p><cim:RotatingMachine.q>0</cim:RotatingMachine.q></cim:SynchronousMachine>
+<cim:RegulatingControl rdf:about="#_rc_smb"><cim:RegulatingControl.enabled>true</cim:RegulatingControl.enabled><cim:RegulatingControl.targetValue>112.2</cim:RegulatingControl.targetValue></cim:RegulatingControl>
+<cim:RegulatingControl rdf:about="#_rc_smc"><cim:RegulatingControl.enabled>true</cim:RegulatingControl.enabled><cim:RegulatingControl.targetValue>112.2</cim:RegulatingControl.targetValue></cim:RegulatingControl>
+<cim:EnergyConsumer rdf:about="#_load"><cim:EnergyConsumer.p>60</cim:EnergyConsumer.p><cim:EnergyConsumer.q>15</cim:EnergyConsumer.q></cim:EnergyConsumer>
+<cim:Terminal rdf:about="#_t_eni"><cim:ACDCTerminal.connected>true</cim:ACDCTerminal.connected></cim:Terminal>
+<cim:Terminal rdf:about="#_t_smb"><cim:ACDCTerminal.connected>true</cim:ACDCTerminal.connected></cim:Terminal>
+<cim:Terminal rdf:about="#_t_smc"><cim:ACDCTerminal.connected>__SM2CONN__</cim:ACDCTerminal.connected></cim:Terminal>
+<cim:Terminal rdf:about="#_t_load"><cim:ACDCTerminal.connected>true</cim:ACDCTerminal.connected></cim:Terminal>
+<cim:Terminal rdf:about="#_t_lab_1"><cim:ACDCTerminal.connected>true</cim:ACDCTerminal.connected></cim:Terminal>
+<cim:Terminal rdf:about="#_t_lab_2"><cim:ACDCTerminal.connected>true</cim:ACDCTerminal.connected></cim:Terminal>
+<cim:Terminal rdf:about="#_t_lbc_1"><cim:ACDCTerminal.connected>true</cim:ACDCTerminal.connected></cim:Terminal>
+<cim:Terminal rdf:about="#_t_lbc_2"><cim:ACDCTerminal.connected>true</cim:ACDCTerminal.connected></cim:Terminal>
+</rdf:RDF>
+"""
+
+const _CGMES_SYNTH_RVC_TP = """<?xml version="1.0" encoding="UTF-8"?>
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:cim="http://iec.ch/TC57/2013/CIM-schema-cim16#" xmlns:md="http://iec.ch/TC57/61970-552/ModelDescription/1#">
+<md:FullModel rdf:about="urn:uuid:tprvc"><md:Model.profile>http://entsoe.eu/CIM/Topology/4/1</md:Model.profile></md:FullModel>
+<cim:TopologicalNode rdf:ID="_tn_a"><cim:IdentifiedObject.name>BUS_A</cim:IdentifiedObject.name><cim:TopologicalNode.BaseVoltage rdf:resource="#_bv110"/></cim:TopologicalNode>
+<cim:TopologicalNode rdf:ID="_tn_b"><cim:IdentifiedObject.name>BUS_B</cim:IdentifiedObject.name><cim:TopologicalNode.BaseVoltage rdf:resource="#_bv110"/></cim:TopologicalNode>
+<cim:TopologicalNode rdf:ID="_tn_c"><cim:IdentifiedObject.name>BUS_C</cim:IdentifiedObject.name><cim:TopologicalNode.BaseVoltage rdf:resource="#_bv110"/></cim:TopologicalNode>
+<cim:Terminal rdf:about="#_t_eni"><cim:Terminal.TopologicalNode rdf:resource="#_tn_a"/></cim:Terminal>
+<cim:Terminal rdf:about="#_t_smb"><cim:Terminal.TopologicalNode rdf:resource="#_tn_b"/></cim:Terminal>
+<cim:Terminal rdf:about="#_t_smc"><cim:Terminal.TopologicalNode rdf:resource="#_tn_c"/></cim:Terminal>
+<cim:Terminal rdf:about="#_t_load"><cim:Terminal.TopologicalNode rdf:resource="#_tn_c"/></cim:Terminal>
+<cim:Terminal rdf:about="#_t_lab_1"><cim:Terminal.TopologicalNode rdf:resource="#_tn_a"/></cim:Terminal>
+<cim:Terminal rdf:about="#_t_lab_2"><cim:Terminal.TopologicalNode rdf:resource="#_tn_b"/></cim:Terminal>
+<cim:Terminal rdf:about="#_t_lbc_1"><cim:Terminal.TopologicalNode rdf:resource="#_tn_b"/></cim:Terminal>
+<cim:Terminal rdf:about="#_t_lbc_2"><cim:Terminal.TopologicalNode rdf:resource="#_tn_c"/></cim:Terminal>
+</rdf:RDF>
+"""
+
+const _CGMES_SYNTH_RVC_SV = """<?xml version="1.0" encoding="UTF-8"?>
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:cim="http://iec.ch/TC57/2013/CIM-schema-cim16#" xmlns:md="http://iec.ch/TC57/61970-552/ModelDescription/1#">
+<md:FullModel rdf:about="urn:uuid:svrvc"><md:Model.profile>http://entsoe.eu/CIM/StateVariables/4/1</md:Model.profile></md:FullModel>
+<cim:SvVoltage rdf:ID="_sv_a"><cim:SvVoltage.TopologicalNode rdf:resource="#_tn_a"/><cim:SvVoltage.v>113.3</cim:SvVoltage.v><cim:SvVoltage.angle>0</cim:SvVoltage.angle></cim:SvVoltage>
+<cim:SvVoltage rdf:ID="_sv_b"><cim:SvVoltage.TopologicalNode rdf:resource="#_tn_b"/><cim:SvVoltage.v>112.5</cim:SvVoltage.v><cim:SvVoltage.angle>-0.8</cim:SvVoltage.angle></cim:SvVoltage>
+<cim:SvVoltage rdf:ID="_sv_c"><cim:SvVoltage.TopologicalNode rdf:resource="#_tn_c"/><cim:SvVoltage.v>111.8</cim:SvVoltage.v><cim:SvVoltage.angle>-1.4</cim:SvVoltage.angle></cim:SvVoltage>
+</rdf:RDF>
+"""
+
+function _cgmes_synth_rvc_dir(; sm2_connected::Bool = false)::String
+  dir = mktempdir()
+  write(joinpath(dir, "synthrvc_EQ.xml"), _CGMES_SYNTH_RVC_EQ)
+  write(joinpath(dir, "synthrvc_SSH.xml"), replace(_CGMES_SYNTH_RVC_SSH_TEMPLATE, "__SM2CONN__" => sm2_connected ? "true" : "false"))
+  write(joinpath(dir, "synthrvc_TP.xml"), _CGMES_SYNTH_RVC_TP)
+  write(joinpath(dir, "synthrvc_SV.xml"), _CGMES_SYNTH_RVC_SV)
+  return dir
+end
 
 function _cgmes_synth_store()::CGMESStore
   dir = mktempdir()
@@ -108,6 +380,18 @@ function run_cgmes_importer_tests()
       @test boolval(sm, :earthing) == false
     end
 
+    @testset "multi-valued references overflow into refsAll (#294 point 9)" begin
+      island = only(objectsOf(store, :TopologicalIsland))
+      # legacy shape untouched: refs carries the FIRST value under the short
+      # key (plus the dotted-name fallback), never a silent last-wins
+      @test island.refs[:TopologicalNodes] == "_tn_a"
+      @test Sparlectra.CGMESImporter.refsAll(store, island, :TopologicalNodes) == ["_tn_a", "_tn_b", "_tn_c"]
+      # single-valued references stay single, absent ones come back empty
+      line = only(objectsOf(store, :ACLineSegment))
+      @test Sparlectra.CGMESImporter.refsAll(store, line, :BaseVoltage) == ["_bv110"]
+      @test Sparlectra.CGMESImporter.refsAll(store, line, :NoSuchRef) == String[]
+    end
+
     @testset "rdf:about overlays EQ object (SSH)" begin
       sm = only(objectsOf(store, :SynchronousMachine))
       @test num(sm, :p) == -120.0                    # from SSH overlay
@@ -124,10 +408,31 @@ function run_cgmes_importer_tests()
       dir = mktempdir()
       write(joinpath(dir, "synth_EQ.xml"), _CGMES_SYNTH_EQ)
       s = summarizeCGMES(path = dir)
-      @test s.object_count == 3
+      @test s.object_count == 4
       @test s.unresolved_count >= 1
       @test !s.boundary_missing_hint                 # dangling ref is not a topology class
       @test (:ACLineSegment => 1) in s.class_histogram
+    end
+
+    @testset "ReactiveCapabilityCurve interpolation (#294 point 1)" begin
+      # MicroGrid BE-G1 shape: P −100 → ±200, P 0 → ±300, P 100 → ±200 MVAr.
+      pts = [(-100.0, -200.0, 200.0), (0.0, -300.0, 300.0), (100.0, -200.0, 200.0)]
+      # interior interpolation (the machine's actual operating point)
+      @test Sparlectra.CGMESImporter._curveQHull(pts, -90.0) == (-210.0, 210.0)
+      @test Sparlectra.CGMESImporter._curveQHull(pts, 0.0) == (-300.0, 300.0)
+      @test Sparlectra.CGMESImporter._curveQHull(pts, 50.0) == (-250.0, 250.0)
+      # clamping outside the curve's P domain
+      @test Sparlectra.CGMESImporter._curveQHull(pts, -500.0) == (-200.0, 200.0)
+      @test Sparlectra.CGMESImporter._curveQHull(pts, 500.0) == (-200.0, 200.0)
+      # the sign-convention hull: a curve written in the load convention
+      # (y1/y2 swapped in sign) yields the same band
+      swapped = [(-100.0, 200.0, -200.0), (0.0, 300.0, -300.0), (100.0, 200.0, -200.0)]
+      @test Sparlectra.CGMESImporter._curveQHull(swapped, -90.0) == (-210.0, 210.0)
+      # degenerate inputs are refused, the caller falls back to scalars
+      @test Sparlectra.CGMESImporter._curveQHull(NTuple{3,Float64}[], 0.0) === nothing
+      @test Sparlectra.CGMESImporter._curveQHull([(0.0, 0.0, 0.0)], 0.0) === nothing
+      # single-point curve with a real range works
+      @test Sparlectra.CGMESImporter._curveQHull([(0.0, -50.0, 50.0)], 25.0) == (-50.0, 50.0)
     end
 
     @testset "Result tables stay aligned with long names" begin
@@ -231,6 +536,17 @@ function run_cgmes_importer_tests()
         res = importCGMES(path = [be, bd], name = "MicroGrid_BE")
         @test length(res.net.nodeVec) == 12
         @test res.slack_bus != ""
+        # ReactiveCapabilityCurve (#294 point 1): BE-G1 writes the degenerate
+        # 0/0 scalar pair precisely because its real limits live in the curve.
+        # Evaluated at its scheduled P = −90 MW the curve gives ±210 MVAr
+        # (linear between the −100 → ±200 and 0 → ±300 points), replacing the
+        # former ±wide fallback.
+        @test any(m -> occursin("BE-G1", m) && occursin("ReactiveCapabilityCurve", m) && occursin("[-210.0, 210.0]", m), res.messages)
+        @test any(ps -> Sparlectra.isGenerator(ps) && something(ps.minQ, 0.0) == -210.0 && something(ps.maxQ, 0.0) == 210.0, res.net.prosumpsVec)
+        # Distributed slack (#192): MicroGrid SSH carries normalPF only with
+        # value 0, which maps to "unknown" — only positive factors count as
+        # imported participation.
+        @test all(ps.participationFactor === nothing for ps in res.net.prosumpsVec if Sparlectra.isGenerator(ps))
         # short-circuit harvest (§7.7): read, not evaluated
         @test length(res.shortcircuit.ac_line_segments) == 7
         @test length(res.shortcircuit.synchronous_machines) == 2
@@ -416,7 +732,7 @@ function run_cgmes_importer_tests()
         low = Int(round(num(ptc, :lowStep, 0.0)))
         high = Int(round(num(ptc, :highStep, 0.0)))
         nearest_step(angle) = argmin(
-          [abs(Sparlectra.CGMESImporter._phaseTapRatioShift_atstep(ptc, s)[2] - angle) for s = low:high],
+          [abs(Sparlectra.CGMESImporter._phaseTapRatioShift_atstep(res.store, ptc, s)[2] - angle) for s = low:high],
         ) + low - 1
         step_controlled = nearest_step(pstbr.phase_shift_deg)
         step_sv = 16         # SvTapStep position of BE-TR2_1
@@ -424,6 +740,179 @@ function run_cgmes_importer_tests()
       end
     else
       @info "CGMES MicroGrid fixture not cached — skipping ENTSO-E fixture tests (run examples/experimental/cgmes_fetch_testsets.jl to enable)"
+    end
+
+    @testset "3W-leg tap controller from TapChangerControl (#294 point 4)" begin
+      dir = _cgmes_synth3w_dir()
+      # without tap_control: no controllers, taps stay at their SSH position
+      plain = importCGMES(path = dir, name = "synth3w_plain")
+      @test isempty(collect(Sparlectra._tap_controllers(plain.net)))
+      # with tap_control: the star-equivalent leg gets the controller
+      res = importCGMES(path = dir, name = "synth3w", tap_control = true)
+      @test !any(m -> occursin("not wired in Stage 2", m), res.messages)
+      @test any(m -> occursin("tap control: T3W (leg 2)", m), res.messages)
+      ctrls = collect(Sparlectra._tap_controllers(res.net))
+      @test length(ctrls) == 1
+      oltc = only(ctrls)
+      @test oltc.mode == :voltage && oltc.control_ratio && oltc.enabled
+      cfg = SparlectraConfig(powerflow = PowerFlowConfig(max_iter = 30, tol = 1e-8), output = OutputConfig(logfile_results = :off), control = ControlConfig())
+      runres = run_sparlectra(net = res.net, config = cfg)
+      @test runres.numerical_converged
+      @test latest_control_result(res.net).status == :converged
+      @test oltc.converged
+      mv = res.net.nodeVec[res.net.busDict["MV_BUS"]]
+      # target 1.04 pu ± 0.0118 pu — and the tap really moved: the
+      # uncontrolled operating point sits at ≈1.0135 pu, outside the band
+      @test abs(mv._vm_pu - 1.04) <= 2.6 / 110.0 / 2.0 + 1e-9
+      @test mv._vm_pu > 1.025
+    end
+
+    @testset "Remote-regulating machine (#294 point 3)" begin
+      # default: the remote control stays the Stage-1 held-PV fallback
+      plain = importCGMES(path = _cgmes_synth_rvc_dir(), name = "synthrvc_plain")
+      @test any(m -> occursin("G_B has a remote voltage RegulatingControl", m) && occursin("held PV at its own bus", m), plain.messages)
+      @test isempty(Sparlectra._machine_controllers(plain.net))
+      b_plain = plain.net.nodeVec[plain.net.busDict["BUS_B"]]
+      @test b_plain._nodeType == Sparlectra.PV
+
+      # machine_control = true: G_B becomes a PQ injection with an outer-loop
+      # controller regulating BUS_C to 112.2 kV = 1.02 pu
+      res = importCGMES(path = _cgmes_synth_rvc_dir(), name = "synthrvc", machine_control = true)
+      @test any(m -> occursin("machine control: G_B", m) && occursin("1.02 pu at BUS_C", m), res.messages)
+      ctrls = Sparlectra._machine_controllers(res.net)
+      @test length(ctrls) == 1
+      ctrl = only(ctrls)
+      @test ctrl.target_bus == "BUS_C"
+      @test isapprox(ctrl.target_vm_pu, 112.2 / 110.0; atol = 1e-9)
+      @test ctrl.qmin_mvar == -50.0 && ctrl.qmax_mvar == 50.0
+      @test res.net.nodeVec[res.net.busDict["BUS_B"]]._nodeType == Sparlectra.PQ
+      # the control loop drives the remote bus onto the target
+      cfg = SparlectraConfig(powerflow = PowerFlowConfig(max_iter = 30, tol = 1e-8), output = OutputConfig(logfile_results = :off), control = ControlConfig())
+      runres = run_sparlectra(net = res.net, config = cfg)
+      @test runres.numerical_converged
+      @test latest_control_result(res.net).status == :converged
+      @test ctrl.converged
+      @test abs(res.net.nodeVec[res.net.busDict["BUS_C"]]._vm_pu - 112.2 / 110.0) <= ctrl.deadband_vm_pu + 1e-9
+
+      # fallback: with G_C reconnected the target bus is already voltage-held
+      # locally — the plan reverts to held-PV with a notice
+      held = importCGMES(path = _cgmes_synth_rvc_dir(sm2_connected = true), name = "synthrvc_held", machine_control = true)
+      @test any(m -> occursin("G_B", m) && occursin("remote voltage control not attachable", m) && occursin("already voltage-held", m), held.messages)
+      @test isempty(Sparlectra._machine_controllers(held.net))
+      @test held.net.nodeVec[held.net.busDict["BUS_B"]]._nodeType == Sparlectra.PV
+    end
+
+    @testset "NonlinearShuntCompensator mapping (#294 point 7)" begin
+      dir = _cgmes_synth3w_dir()
+      res = importCGMES(path = dir, name = "synth3w_nlsh")
+      # sections = 2 of 3 points: B = (1.0 + 0.8)e-4 S * 110² = 2.178 MVAr
+      @test any(m -> occursin("nonlinear shunt NLSH", m) && occursin("sections 2/3", m) && occursin("2.178 MVAr", m), res.messages)
+      @test !any(m -> occursin("skip: NonlinearShuntCompensator", m), res.messages)
+      # multi-valued reference guard (#294 point 9): the SV TopologicalIsland
+      # membership list triggers exactly one class/property notice
+      @test count(m -> occursin("multi-valued reference TopologicalIsland.TopologicalNodes on 1 object(s)", m), res.messages) == 1
+      @test length(res.net.shuntVec) == 1
+      _, erg = runpf!(res.net, 30, 1e-8, 0)
+      @test erg == 0
+    end
+
+    # PST tabular wiring + angle-sign convention (#294 point 2). Sparlectra
+    # folds an end-2 (to-side) tap angle NEGATED into the branch shift
+    # (θ_eff = θ1 − θ2, standard end-referral; deciding fixture: RealGrid,
+    # asserted below). KNOWN AMBIGUITY: the ENTSO-E PSEI PTE2 sets encode the
+    # same parameters on end 2 but their SV expects the UNflipped angle —
+    # those two sets therefore deviate by dva ≈ 0.29° / dp ≈ 0.79 MW by
+    # design of the chosen convention. PTE1 (end 1) is convention-independent
+    # and must match SV exactly.
+    pst_sets = ("PST_PTChLin_PTE1_PSEI", "PST_PTChLin_PTE2_PSEI", "PST_PTChTab_PTE2_PSEI")
+    if all(isdir(joinpath(cache, "extracted", s)) for s in pst_sets)
+      @testset "PST tabular wiring and tap-side sign (PSEI sets)" begin
+        res1 = importCGMES(path = joinpath(cache, "extracted", "PST_PTChLin_PTE1_PSEI"), name = "pte1")
+        _, erg1 = runpf!(res1.net, 30, 1e-10, 0)
+        @test erg1 == 0
+        @test [b.phase_shift_deg for b in res1.net.branchVec if b.phase_shift_deg != 0.0] == [-5.0]
+        cmp1 = compareWithSV(res1)
+        @test cmp1.max_dva < 1e-4
+        @test cmp1.flows.max_dp < 1e-3
+        for set in ("PST_PTChLin_PTE2_PSEI", "PST_PTChTab_PTE2_PSEI")
+          res2 = importCGMES(path = joinpath(cache, "extracted", set), name = set)
+          _, erg2 = runpf!(res2.net, 30, 1e-10, 0)
+          @test erg2 == 0
+          # end-2 flip: table/formula angle −5 arrives as +5 on the branch
+          @test [b.phase_shift_deg for b in res2.net.branchVec if b.phase_shift_deg != 0.0] == [5.0]
+          # documented deviation bound of the convention choice — NOT noise;
+          # shrinking this bound means the convention handling changed
+          cmp2 = compareWithSV(res2)
+          @test 0.2 < cmp2.max_dva < 0.4
+        end
+        # tabular-specific: the mapping message reports the resolved table row
+        res_tab = importCGMES(path = joinpath(cache, "extracted", "PST_PTChTab_PTE2_PSEI"), name = "ptchtab")
+        @test any(m -> occursin("tabular phase tap", m) && occursin("step 2", m) && occursin("-5.0", m), res_tab.messages)
+        @test !any(m -> occursin("skip: PhaseTapChangerTabular", m), res_tab.messages)
+      end
+    else
+      @info "CGMES PSEI PST fixtures not cached — PST sign/tabular tests skipped (fetch via examples/experimental/cgmes_fetch_testsets.jl)"
+    end
+
+    # RealGrid is the deciding data-faithfulness fixture for both the tabular
+    # wiring and the end-2 angle flip: its nine PhaseTapChangerTabular
+    # changers (four with real flow) reproduce the delivered SV state only
+    # with table+flip applied — SV-start max|F| drops from ≈197 pu (taps
+    # skipped) / ≈395 pu (taps unflipped) to ≈5 pu. The bound 10 pu holds
+    # that ordering with margin.
+    rgdir = joinpath(cache, "extracted", "RealGrid", "CGMES_v2.4.15_RealGridTestConfiguration_v2")
+    if isdir(rgdir)
+      @testset "RealGrid tabular PSTs reproduce SV (tap-side sign)" begin
+        res = importCGMES(path = rgdir, name = "RealGrid")
+        @test count(m -> occursin("tabular phase tap", m), res.messages) == 9
+        net = res.net
+        n = length(net.nodeVec)
+        Yred = Sparlectra.createYBUS(net = net, sparse = true, printYBUS = false)
+        Yb = size(Yred, 1) == n ? Yred : Sparlectra._expand_ybus_for_isolated_nodes(Yred, n, net.isoNodes)
+        V0, slack = Sparlectra.initialVrect(net; flatstart = false)
+        S = Sparlectra.buildComplexSVec(net)
+        bt = [Sparlectra.getNodeType(nd) == Sparlectra.Slack ? :Slack : Sparlectra.getNodeType(nd) == Sparlectra.PV ? :PV : :PQ for nd in net.nodeVec]
+        Vset = [something(nd._vm_pu, 1.0) for nd in net.nodeVec]
+        F = Sparlectra.mismatch_rectangular(Yb, V0, S, bt, Vset, slack)
+        @test maximum(abs.(F)) < 10.0
+
+        # #294 point 10: the SvPowerFlow comparison must stay available in the
+        # presence of isolated buses (RealGrid ships 158 de-energized ones) —
+        # the reduced Ybus is re-embedded and iso rows are filtered instead of
+        # switching the whole flow comparison off. Bounds are generous
+        # envelopes over the measured values (n=6861, rms dp 0.026 MW,
+        # max dp 2.1 MW, max dvm 0.031, max dva 0.96°).
+        @test !isempty(net.isoNodes)
+        _, erg = runpf!(net, 60, 1e-8, 0)
+        @test erg == 0
+        cmp = compareWithSV(res)
+        @test cmp.n > 5000
+        @test cmp.max_dvm < 0.05
+        @test cmp.max_dva < 2.0
+        @test cmp.flows.n > 5000
+        @test cmp.flows.rms_dp < 1.0
+        @test cmp.flows.max_dp < 20.0
+      end
+    else
+      @info "CGMES RealGrid fixture not cached — tabular-PST SV regression skipped (fetch via examples/experimental/cgmes_fetch_testsets.jl)"
+    end
+
+    # Distributed slack (#192): positive GeneratingUnit.normalPF must arrive
+    # as ProSumer.participationFactor through the full import path. MiniGrid
+    # BusBranch is the smallest cached set with a positive factor (one unit
+    # carries normalPF = 1; the zero-valued rest maps to unknown).
+    mini = joinpath(cache, "extracted", "MiniGrid", "BusBranch")
+    mini_bc = joinpath(mini, "CGMES_v2.4.15_MiniGridTestConfiguration_BaseCase_v3")
+    mini_bd = joinpath(mini, "CGMES_v2.4.15_MiniGridTestConfiguration_Boundary_v3")
+    if isdir(mini_bc) && isdir(mini_bd)
+      @testset "normalPF arrives as participationFactor (MiniGrid)" begin
+        res = importCGMES(path = [mini_bc, mini_bd], name = "MiniGrid_BC")
+        pfs = [ps.participationFactor for ps in res.net.prosumpsVec if Sparlectra.isGenerator(ps) && ps.participationFactor !== nothing]
+        @test !isempty(pfs)
+        @test all(==(1.0), pfs)
+      end
+    else
+      @info "CGMES MiniGrid fixture not cached — normalPF arrival test skipped (fetch via examples/experimental/cgmes_fetch_testsets.jl)"
     end
 
     # FullGrid is ENTSO-E's import/export completeness set: it extends
@@ -477,7 +966,55 @@ function run_cgmes_importer_tests()
         @test eni.maxR1ToX1Ratio !== nothing
         @test eni.maxZ0ToZ1Ratio !== nothing
         @test eni.bus !== nothing
+
+        # completeness view of the harvested data (#277 input): per class the
+        # record count and per attribute the fill rate
+        cov = shortCircuitCoverage(rbb.shortcircuit)
+        @test length(cov) == 5
+        eni_cov = only(filter(r -> r.class == "ExternalNetworkInjection", cov))
+        @test eni_cov.records == 1
+        @test any(a -> a.attribute == :maxInitialSymShCCurrent_A && a.filled == a.total == 1, eni_cov.attributes)
+        buf = IOBuffer()
+        printShortCircuitCoverage(buf, rbb.shortcircuit)
+        rendered = String(take!(buf))
+        @test occursin("SynchronousMachine", rendered)
+        @test occursin("✓", rendered)
+
+        # Placeholder guards (2026-07-30): FullGrid's systematic X.99 family —
+        # the tabular PST table row ratio 9.99 and a nonlinear shunt point
+        # with b = g = 0.99 S (a 50-GW shunt at 225 kV) — is detected, warned
+        # about, and kept out of the model; the AsynchronousMachine maps as a
+        # Stage-0 PQ operating point (#294 point 6). With that the network
+        # itself SOLVES from a flat start. The shipped SV stays internally
+        # inconsistent (14.5° across a 0.3 Ω line), so the SV-based start and
+        # the SV comparison remain meaningless for this set — deliberately
+        # not asserted here.
+        @test any(m -> startswith(m, "warning:") && occursin("implausible tap correction", m), rbb.messages)
+        @test any(m -> startswith(m, "warning:") && occursin("implausible admittance", m) && occursin("shunt skipped", m), rbb.messages)
+        @test any(m -> occursin("AsynchronousMachine ASM_1", m) && occursin("Stage-0", m), rbb.messages)
+        _, ergflat = runpf!(rbb.net, 60, 1e-8, 0; opt_flatstart = true)
+        @test ergflat == 0
       end
+    end
+
+    mgbase = joinpath(cache, "extracted", "MiniGrid", "BusBranch")
+    mgbc2 = joinpath(mgbase, "CGMES_v2.4.15_MiniGridTestConfiguration_BaseCase_v3")
+    mgbd2 = joinpath(mgbase, "CGMES_v2.4.15_MiniGridTestConfiguration_Boundary_v3")
+    if isdir(mgbc2) && isdir(mgbd2)
+      @testset "MiniGrid: AsynchronousMachine mapping closes the SV gap (#294 point 6)" begin
+        res = importCGMES(path = [mgbc2, mgbd2], name = "MiniGrid_BB")
+        asm = filter(m -> occursin("AsynchronousMachine", m) && occursin("Stage-0", m), res.messages)
+        @test length(asm) == 3          # M3, M2a, M2b — 9 MW / 5 MVAr of motor load at bus 7
+        _, erg = runpf!(res.net, 30, 1e-8, 0)
+        @test erg == 0
+        cmp = compareWithSV(res)
+        # without the motors the solve missed SV by max dvm 0.031 / flow rms
+        # 5.24 MW; with them MiniGrid is SV-tight
+        @test cmp.max_dvm < 1e-3
+        @test cmp.flows.rms_dp < 0.05
+      end
+    else
+      @info "CGMES MiniGrid fixture not cached — AsynchronousMachine SV test skipped (fetch via examples/experimental/cgmes_fetch_testsets.jl)"
     end
 
     sgbase = joinpath(cache, "extracted", "SmallGrid", "BusBranch")

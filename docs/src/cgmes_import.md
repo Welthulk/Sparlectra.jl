@@ -38,16 +38,22 @@ from filenames.
 | `TopologicalNode` (TP) | buses, nominal voltage from `BaseVoltage` |
 | `ACLineSegment`, `SeriesCompensator` | π-model branches; lines spanning two nominal voltages become ratio branches (boundary lines) |
 | `PowerTransformer` (2 and 3 windings) | π-model transformers; 3-winding as star equivalent with an AUX bus |
-| `RatioTapChanger`, phase tap changers | fixed tap positions, or outer-loop controllers with `tap_control = true` |
+| `RatioTapChanger`, phase tap changers | fixed tap positions, or outer-loop controllers with `tap_control = true`; `PhaseTapChangerTabular` resolves its `PhaseTapChangerTable` row (ratio and angle) at the tap position. Tap angles fold with end-referral semantics: an end-2 (to-side) angle enters negated (`θ_eff = θ1 − θ2`), pinned by RealGrid's SV state — the ENTSO-E PSEI `PTE2` conformity toys expect the unflipped angle and deviate by ≈0.3° by design of this choice |
 | retained `Switch`/`Breaker`/… | zero-impedance bus links |
-| `LinearShuntCompensator` | shunts |
+| `LinearShuntCompensator`, `NonlinearShuntCompensator` | shunts; the nonlinear characteristic sums its per-section points up to the active `sections` count (each point read as one switched group — an interpretation choice, CIM would also permit reading a point as the absolute value at that section count) |
 | `EnergyConsumer`, `ConformLoad`, `NonConformLoad`, `StationSupply` | loads (SSH values) |
-| `SynchronousMachine`, `ExternalNetworkInjection`, `EquivalentInjection` | injections, PV where a local voltage control is active |
+| `SynchronousMachine`, `ExternalNetworkInjection`, `EquivalentInjection` | injections, PV where a local voltage control is active; a machine whose voltage `RegulatingControl` points at a *different* bus is held PV at its own bus by default, or becomes an outer-loop remote voltage controller with `machine_control = true` (see [Remote Voltage Control](remote_voltage_control.md)); machine Q limits from the `ReactiveCapabilityCurve` (evaluated at the scheduled P) where one exists, else the scalar `minQ`/`maxQ` hull; a positive `GeneratingUnit.normalPF` arrives as `ProSumer.participationFactor` for the [distributed slack](powerflow_configuration.md) (`p_mode: imported`), zero/absent maps to unknown |
 | `StaticVarCompensator` | P = 0 reactive injection, Q limits from the Ω ratings |
+| `AsynchronousMachine` | Stage-0: fixed PQ operating point from the SSH `RotatingMachine.p`/`q` (load convention — a motor consumes with `p > 0`); no voltage regulation, no slack candidacy. The induction machine's voltage/slip dependence is a dynamics topic, not a steady-state one |
 | `SvVoltage`, `SvPowerFlow`, `SvTapStep` | start values and validation reference |
 
 Everything else is counted in the coverage report rather than silently
 dropped. `summarizeCGMES` shows the full class histogram.
+
+Short-circuit source data is harvested on every import (read, not evaluated);
+`shortCircuitCoverage` reports its per-attribute completeness, and `cgmes.log`
+prints that view. Theory, data table and the staged evaluation concept:
+[Short-Circuit Compendium](short_circuit.md).
 
 ## Conventions worth knowing
 
@@ -85,6 +91,7 @@ instead of aborting the power flow with "island without reference".
 | `cgmes_import.base_mva` | `100.0` | System base in MVA — CGMES does not define one. |
 | `cgmes_import.require_boundary` | `true` | Fail when topology references stay unresolved. Allowed values: `true`, `false`. |
 | `cgmes_import.tap_control` | `false` | Start from the SSH tap positions and attach the CGMES-defined outer-loop tap controllers, instead of importing the solved `SvTapStep` positions as fixed taps. Allowed values: `true`, `false`. |
+| `cgmes_import.machine_control` | `false` | Attach outer-loop remote voltage controllers (`MachineVoltageControl`) for machines whose voltage `RegulatingControl` points at a different bus, instead of holding those machines PV at their own bus. Allowed values: `true`, `false`. |
 | `cgmes_import.ignore_connected` | `false` | Diagnostic override treating every terminal as connected — for snapshots whose SSH flags contradict their own SV state. Allowed values: `true`, `false`. |
 | `cgmes_import.vset_min_pu` | `0.5` | Lower bound of the plausibility band for a voltage `RegulatingControl.targetValue`, in p.u. of the regulated bus's nominal voltage. |
 | `cgmes_import.vset_max_pu` | `1.5` | Upper bound of that band. A target outside `[vset_min_pu, vset_max_pu]` is treated as a placeholder: it is ignored, the unit is held PV at the bus voltage derived from the nominal data, and the substitution is reported as a `warning:`. |
@@ -110,6 +117,63 @@ Note that the ReliCapGrid units in question also carry SSH
 `Equipment.inService = false`, which the importer honors (see below) — they are
 skipped before their setpoint is ever read. The band remains as a guard for
 deliveries that park units without setting `inService`.
+
+### Placeholder guards: shunt admittances and tap corrections
+
+The same philosophy covers two more fields where placeholders otherwise
+destroy the solve. FullGrid — the completeness configuration — systematically
+fills attributes with the `X.99` scheme (tabular PST table row
+`ratio 9.99 / angle 0.99°`, a `NonlinearShuntCompensatorPoint` with
+`b = g = 0.99 S`, which at 225 kV is a 50-GW shunt, switch
+`ratedCurrent 999.99`, …). Two guards catch these:
+
+- a shunt whose admittance exceeds **10 × baseMVA** at nominal voltage is
+  skipped with a `warning:` (skipped, not clamped — a placeholder carries no
+  information to clamp to);
+- a single tap correction factor outside **0.5 … 2.0** is ignored with a
+  `warning:`; the transformer keeps its nominal ratio. Real tap ranges stay
+  within a few ten percent of neutral (RealGrid tabular rows: 0.9 … 1.1).
+
+With the guards in place FullGrid's network solves from a flat start (its
+shipped SV profile remains internally inconsistent — a 14.5° angle jump
+across a 0.3 Ω line — so the SV-based start and the SV comparison stay
+meaningless for this set).
+
+### Machine Q limits: the `ReactiveCapabilityCurve` is Q(P), not Q(U)
+
+A `ReactiveCapabilityCurve` is the machine's operating chart: **reactive
+limits as a function of active power** — the `CurveData` x axis is the
+machine's own P in the CGMES machine convention (it may legitimately span
+both signs; MicroGrid BE-G1: −100 … +100 MW), `y1`/`y2` are the Q limits at
+that operating point. It is *not* a voltage dependence.
+
+The importer therefore evaluates the curve **once, at the machine's
+scheduled SSH P** (linear interpolation, clamped to the curve's P domain),
+passes the pair through the same sign-convention hull as the scalar
+`minQ`/`maxQ`, and stores the result as the machine's ordinary Q limits.
+From there the limits feed the rectangular solver's **native Q-limit
+machinery** — the PV→PQ active-set switching with hysteresis, cooldown and
+guard — exactly like scalar limits do. Priority chain: curve where one
+exists → scalar hull → wide symmetric fallback (so a machine like BE-G1,
+whose scalars are the degenerate `0/0` pair precisely because its real
+limits live in the curve, gets its ±210 MVAr at P = −90 MW).
+
+Deliberately **not** used for this: the `QUController`/`PUController`
+voltage-dependent control path. Those model droop *injections* — a setpoint
+as a function of the local bus voltage magnitude, re-evaluated every
+iteration with dQ/d|V| terms in the Jacobian (see
+[Voltage Dependent Control](voltage_dependent_control.md)). Folding a Q(P)
+capability *bound* into that machinery would make the limits wander with
+voltage and turn bounds into setpoints — both data-unfaithful. The two
+mechanisms stay orthogonal: a machine may carry a Q(U) characteristic *and*
+curve-derived limits.
+
+Since P is fixed for a PV/PQ machine in the power flow, the one-time
+evaluation is exact, with one documented simplification: under
+[distributed slack](powerflow_configuration.md) the λ_P correction shifts
+machine P, which strictly moves the curve limits; they currently stay at
+the SSH operating point (negligible at measured corrections — RealGrid:
+λ_P ≈ 5 MW over 368 participants, and zero curves in that delivery).
 
 ### Out-of-service equipment (`Equipment.inService`)
 
@@ -160,7 +224,10 @@ delivery patterns are handled:
 With `tap_control = true` the importer starts from the SSH tap positions and
 attaches Sparlectra's outer-loop controllers for every tap changer whose
 `controlEnabled` and `TapChangerControl.enabled` flags are set — voltage
-control on ratio tap changers, active-power control on phase shifters. The
+control on ratio tap changers, active-power control on phase shifters. This
+includes tap changers on three-winding transformers: each star-equivalent leg
+is an ordinary PI-model branch (AUX bus → side bus), so the leg carries the
+controller like a two-winding transformer would. The
 run then goes through `run_sparlectra` (control framework) instead of a plain
 `runpf!`.
 
@@ -168,6 +235,24 @@ Two guards apply: a voltage controller whose target bus is held by a generator
 (slack or PV) cannot regulate anything and is disabled with a notice; and the
 CGMES target deadbands are often wide, so a controller may legitimately settle
 one step away from the position the exporting tool recorded.
+
+## Machine remote voltage control (Stage 2)
+
+With `machine_control = true` a machine whose voltage `RegulatingControl`
+terminal sits at a *foreign* bus is imported as a PQ injection with the SSH
+operating point and gets a [`MachineVoltageControl`](remote_voltage_control.md)
+attached: the outer control loop moves the machine's reactive output within
+its imported Q limits until the remote bus reaches the control target. Without
+the option (the default) such machines keep the Stage-1 behavior — held PV at
+their own bus, with a notice.
+
+A plan falls back to held-PV, each time with a notice in `result.messages`,
+when the target bus is already voltage-held (PV/slack), isolated, not part of
+the built network, or already claimed by another machine controller (one
+controller per target bus; further machines keep their SSH reactive output).
+The target value passes through the same `vset_min_pu`/`vset_max_pu`
+plausibility band as local setpoints, evaluated against the *remote* bus's
+nominal voltage.
 
 ## Validation against the SV profile
 
@@ -184,13 +269,25 @@ State Variables profile:
 De-energized and isolated buses are excluded so the metrics describe the
 solved grid.
 
+A full sweep over every cached/fetchable test set — import, solve, SV
+deviation, one table row per case incl. RealGrid and the ReliCapGrid/Svedala
+3.0 family — is part of `examples/run_cgmes_suite.jl`; the measured state is
+recorded in `docs/dev/cgmes_testset_overview.md`.
+
 ## Limitations
 
-- CGMES 3.0 is prepared in the schema layer but not yet validated against a
-  3.0 delivery.
+- CGMES 3.0 deliveries are read (`dcat:Dataset` headers, per-border boundary
+  files, SSH `Equipment.inService`), validated against the ReliCapGrid/Svedala
+  3.0 sets; conformity coverage beyond those deliveries is still limited.
 - Node-breaker modelling is not implemented; it is not needed in practice
   because CGMES deliveries ship the TP profile alongside, which the importer
   reads as bus-branch.
-- Tabular phase tap changers are read but not applied to the solved branch.
-- HVDC, `AsynchronousMachine` and nonlinear shunts are counted, not mapped.
+- Per-step `r`/`x`/`g`/`b` corrections of tabular phase-tap tables are not
+  folded into the branch impedance (the table's ratio and angle are); rows
+  with such corrections are flagged in the import messages.
+- Multi-valued references: `ref()` reads the first occurrence of a repeated
+  property; the full document-order list is available via `refsAll`, and the
+  import emits one notice per affected class/property
+  (`TopologicalIsland.TopologicalNodes` is the typical case). No mapped path
+  consumes a list-valued reference yet.
 - Difference models (`dm:DifferenceModel`) are skipped with a report line.

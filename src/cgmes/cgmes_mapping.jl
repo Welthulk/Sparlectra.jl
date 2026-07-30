@@ -62,13 +62,17 @@ struct _MapCtx
   branch_side::Dict{String,Tuple{Int,Symbol}}
   skipped::Set{String}
   tap_control::Bool
+  machine_control::Bool
   ignore_connected::Bool
   vset_min_pu::Float64
   vset_max_pu::Float64
   split_sides::Dict{String,Dict{String,String}}
+  # machine remote-voltage controllers planned by _mapInjections! and attached
+  # by importCGMES only after bus types and isolation are final
+  machine_ctrl_plans::Vector{NamedTuple}
 end
-_MapCtx(tap_control::Bool = false, ignore_connected::Bool = false; vset_min_pu::Float64 = CGMES_VSET_MIN_PU, vset_max_pu::Float64 = CGMES_VSET_MAX_PU) =
-  _MapCtx(String[], Dict{String,Tuple{Int,Symbol}}(), Set{String}(), tap_control, ignore_connected, vset_min_pu, vset_max_pu, Dict{String,Dict{String,String}}())
+_MapCtx(tap_control::Bool = false, ignore_connected::Bool = false; machine_control::Bool = false, vset_min_pu::Float64 = CGMES_VSET_MIN_PU, vset_max_pu::Float64 = CGMES_VSET_MAX_PU) =
+  _MapCtx(String[], Dict{String,Tuple{Int,Symbol}}(), Set{String}(), tap_control, machine_control, ignore_connected, vset_min_pu, vset_max_pu, Dict{String,Dict{String,String}}(), NamedTuple[])
 
 # SSH `Terminal.connected` through the ctx switch: `ignore_connected = true`
 # treats everything as connected (diagnostic mode for snapshots whose SSH
@@ -116,7 +120,42 @@ function _ratioTapCorrection(rtc::CIMObject, svsteps::Dict{String,Float64})::Flo
   return 1.0 + (step - neutral) * incr / 100.0
 end
 
-function _phaseTapRatioShift(ptc::CIMObject, svsteps::Dict{String,Float64})::Tuple{Float64,Float64}
+"""
+Tabular phase-tap model of `ptc` (#294 point 2): build a `:tabular`
+`PhaseTapChangerModel` from the referenced `PhaseTapChangerTable` rows.
+Returns `(model, impedance_note)` or `nothing` when the table is
+unresolvable or empty. `impedance_note` flags rows with non-zero r/x/g/b
+percent corrections — those per-step impedance deviations are NOT folded
+into the branch in this stage (ratio and angle are).
+"""
+function _phaseTapTableModel(store::CGMESStore, ptc::CIMObject, step::Int)
+  tmrid = get(ptc.refs, :PhaseTapChangerTable, nothing)
+  tmrid === nothing && return nothing
+  rows = Sparlectra.TapTablePoint[]
+  impedance_note = false
+  for pt in objectsOf(store, :PhaseTapChangerTablePoint)
+    get(pt.refs, :PhaseTapChangerTable, "") == tmrid || continue
+    s = num(pt, :step)
+    s === nothing && continue
+    push!(rows, Sparlectra.TapTablePoint(step = Int(round(s)), ratio = num(pt, :ratio, 1.0), angle_deg = num(pt, :angle, 0.0)))
+    if any(!iszero(something(num(pt, attr), 0.0)) for attr in (:r, :x, :g, :b))
+      impedance_note = true
+    end
+  end
+  isempty(rows) && return nothing
+  sort!(rows; by = r -> r.step)
+  # a step outside the table (defensive: inconsistent SSH/SV data) is clamped
+  # to the nearest table row rather than erroring the whole import
+  step_clamped = clamp(step, rows[1].step, rows[end].step)
+  haskey_step = any(r -> r.step == step_clamped, rows)
+  haskey_step || (step_clamped = rows[argmin([abs(r.step - step_clamped) for r in rows])].step)
+  neutral = Int(round(num(ptc, :neutralStep, Float64(rows[1].step))))
+  any(r -> r.step == neutral, rows) || (neutral = rows[1].step)
+  model = Sparlectra.PhaseTapChangerModel(kind = :tabular, step = step_clamped, neutralStep = neutral, convention = :direct_regulating_vector, table = rows)
+  return (model = model, impedance_note = impedance_note)
+end
+
+function _phaseTapRatioShift(store::CGMESStore, ptc::CIMObject, svsteps::Dict{String,Float64})::Tuple{Float64,Float64}
   step = Int(round(_tapStep(ptc, svsteps)))
   neutral = Int(round(num(ptc, :neutralStep, 0.0)))
   low = Int(round(num(ptc, :lowStep, Float64(min(step, neutral)))))
@@ -124,6 +163,12 @@ function _phaseTapRatioShift(ptc::CIMObject, svsteps::Dict{String,Float64})::Tup
   if ptc.class == :PhaseTapChangerLinear
     shift = (step - neutral) * num(ptc, :stepPhaseShiftIncrement, 0.0)
     return (1.0, shift)
+  end
+  if ptc.class == :PhaseTapChangerTabular
+    built = _phaseTapTableModel(store, ptc, step)
+    built === nothing && return (1.0, 0.0)
+    res = Sparlectra.calcPhaseTapAngleRatio(built.model)
+    return (res.effective_ratio, res.effective_shift_deg)
   end
   kind = ptc.class == :PhaseTapChangerSymmetrical ? :symmetrical : :asymmetrical
   vincr = num(ptc, :voltageStepIncrement)
@@ -200,10 +245,10 @@ function _attachTapControl!(net, store::CGMESStore, topo::CGMESTopology, ctx::_M
     elseif tc.class != :RatioTapChanger && endswith(mode, ".activePower")
       # phase tap: translate step range into branch phase limits around the
       # branch's base shift (initial phase-tap contribution removed)
-      pr0, ps0 = _phaseTapRatioShift(tc, svsteps)
+      pr0, ps0 = _phaseTapRatioShift(store, tc, svsteps)
       base_shift = on_from_side ? br.phase_shift_deg - ps0 : br.phase_shift_deg + ps0
-      _, ps_low = _phaseTapRatioShift_atstep(tc, low)
-      _, ps_high = _phaseTapRatioShift_atstep(tc, high)
+      _, ps_low = _phaseTapRatioShift_atstep(store, tc, low)
+      _, ps_high = _phaseTapRatioShift_atstep(store, tc, high)
       s1 = on_from_side ? base_shift + ps_low : base_shift - ps_low
       s2 = on_from_side ? base_shift + ps_high : base_shift - ps_high
       br.has_phase_tap = true
@@ -242,9 +287,9 @@ function _attachTapControl!(net, store::CGMESStore, topo::CGMESTopology, ctx::_M
 end
 
 """Phase-tap (ratio, shift) of `ptc` evaluated at an explicit step."""
-function _phaseTapRatioShift_atstep(ptc::CIMObject, step::Int)::Tuple{Float64,Float64}
+function _phaseTapRatioShift_atstep(store::CGMESStore, ptc::CIMObject, step::Int)::Tuple{Float64,Float64}
   fake = Dict{String,Float64}(ptc.mrid => Float64(step))
-  return _phaseTapRatioShift(ptc, fake)
+  return _phaseTapRatioShift(store, ptc, fake)
 end
 
 # Real deliveries contain connected component(s) without any source: every
@@ -392,17 +437,51 @@ end
 
 # fold the fixed tap corrections of transformer end `e` into (ratio, shift).
 # `on_from_side`: the end sits on the branch's from bus → ratio multiplies;
+# Plausibility band for a single tap correction factor, same philosophy as the
+# vset band: real tap ranges stay within a few ten percent of neutral (RealGrid
+# tabular rows: 0.9 .. 1.1), while FullGrid's tabular table carries the literal
+# placeholder row ratio 9.99 / angle 0.99° (the set's 0.99/99.99 family) — a
+# 10:1 off-nominal that alone produces a ~400 pu mismatch. Outside the band the
+# tap is ignored with a warning; the transformer keeps its nominal ratio.
+const CGMES_TAP_CORR_MIN = 0.5
+const CGMES_TAP_CORR_MAX = 2.0
+
+function _tapCorrPlausible(kind::String, tc::CIMObject, corr::Float64, messages::Vector{String})::Bool
+  CGMES_TAP_CORR_MIN <= corr <= CGMES_TAP_CORR_MAX && return true
+  push!(messages, "warning: $(kind) $(something(str(tc, :name), tc.mrid)) declares an implausible tap correction ($(round(corr; digits = 3)), band $(CGMES_TAP_CORR_MIN)..$(CGMES_TAP_CORR_MAX)) — placeholder suspected, tap ignored")
+  return false
+end
+
 # otherwise it divides (referred through the winding).
 function _applyEndTaps(store::CGMESStore, svsteps::Dict{String,Float64}, e::CIMObject, ratio::Float64, shift::Float64, on_from_side::Bool, messages::Vector{String})::Tuple{Float64,Float64}
   for tc in _tapChangersOfEnd(store, e.mrid)
     if tc.class == :RatioTapChanger
       corr = _ratioTapCorrection(tc, svsteps)
+      _tapCorrPlausible("RatioTapChanger", tc, corr, messages) || continue
       ratio = on_from_side ? ratio * corr : ratio / corr
-    elseif tc.class == :PhaseTapChangerTabular
-      push!(messages, "skip: PhaseTapChangerTabular $(something(str(tc, :name), tc.mrid)) (Stage 4)")
     else
-      pratio, pshift = _phaseTapRatioShift(tc, svsteps)
+      if tc.class == :PhaseTapChangerTabular
+        built = _phaseTapTableModel(store, tc, Int(round(_tapStep(tc, svsteps))))
+        if built === nothing
+          push!(messages, "notice: PhaseTapChangerTabular $(something(str(tc, :name), tc.mrid)) — table unresolved, tap ignored")
+          continue
+        end
+        row = Sparlectra.calcPhaseTapTable(built.model)
+        push!(messages, "tabular phase tap $(something(str(tc, :name), tc.mrid)): step $(built.model.step) → ratio $(round(row.effective_ratio; digits = 5)), shift $(round(row.effective_shift_deg; digits = 3))°$(built.impedance_note ? " (per-step r/x/g/b corrections present, not applied)" : "")")
+      end
+      pratio, pshift = _phaseTapRatioShift(store, tc, svsteps)
+      _tapCorrPlausible(String(tc.class), tc, pratio, messages) || continue
       ratio = on_from_side ? ratio * pratio : ratio / pratio
+      # Angle sign: an end-2 (to-side) tap angle enters NEGATED — the branch
+      # ratio is t1/t2, so θ_eff = θ1 − θ2 (standard end-referral semantics;
+      # PowSyBl does the same when moving an end-2 changer to end 1). The
+      # deciding fixture is RealGrid: its four flowing end-2 tabular PSTs
+      # reproduce the SV state only with the flip (SV-start max|F| 5 pu vs
+      # 395 pu without). KNOWN AMBIGUITY: the ENTSO-E PSEI pair
+      # PST_PTChLin_PTE1/PTE2 encodes identical parameters on end 1/end 2 and
+      # its PTE2 SV expects the UNflipped angle — under this (standard-side)
+      # convention the PTE2 sets deviate by dva 0.29° / dp 0.79 MW. Real
+      # deliveries win over the 2-bus conformity toys.
       shift += on_from_side ? pshift : -pshift
     end
   end
@@ -725,9 +804,10 @@ function _map3WTrafo!(net, store, topo, created, svmap, svsteps, baseMVA, pt, en
     tm = get(e.refs, :Terminal, nothing)
     tm === nothing || (ctx.branch_side[tm] = (net.branchVec[end].branchIdx, :to))
     if ctx.tap_control
-      for tc in _tapChangersOfEnd(store, e.mrid)
-        something(boolval(tc, :controlEnabled), false) && push!(ctx.messages, "notice: controlled tap changer on 3W transformer $(name) — controllers on star-equivalent legs are not wired in Stage 2")
-      end
+      # #294 point 4: the star-equivalent leg is an ordinary PI-model trafo
+      # branch (AUX → side bus, physical end on the to side), so the same
+      # controller attachment as for 2W transformers applies per leg.
+      _attachTapControl!(net, store, topo, ctx, svsteps, e, net.branchVec[end].branchIdx, false, string(name, " (leg ", k, ")"))
     end
   end
 end
@@ -746,30 +826,79 @@ function _mapTransformers!(net, store, topo, created, svmap, svsteps, baseMVA, c
 end
 
 function _mapShunts!(net, store, topo, created, svmap, ctx::_MapCtx)
-  for sh in objectsOf(store, :LinearShuntCompensator)
+  # shared service/connection gate for both shunt classes; returns the
+  # terminal info or `nothing` after pushing the skip message
+  function _shunt_terminal(sh, clsname, name)
     t = busOfEquipment(topo, sh, 1)
-    name = something(str(sh, :name), sh.mrid)
     if t === nothing
-      push!(ctx.messages, "skip: LinearShuntCompensator $(name) — no TopologicalNode")
+      push!(ctx.messages, "skip: $(clsname) $(name) — no TopologicalNode")
       push!(ctx.skipped, sh.mrid)
-      continue
+      return nothing
     end
     if !_inService(ctx, sh)
-      push!(ctx.messages, "skip: LinearShuntCompensator $(name) — out of service (SSH inService=false)")
+      push!(ctx.messages, "skip: $(clsname) $(name) — out of service (SSH inService=false)")
       push!(ctx.skipped, sh.mrid)
-      continue
+      return nothing
     end
     if !_conn(ctx, t.connected)
-      push!(ctx.messages, "skip: LinearShuntCompensator $(name) — terminal disconnected")
+      push!(ctx.messages, "skip: $(clsname) $(name) — terminal disconnected")
       push!(ctx.skipped, sh.mrid)
-      continue
+      return nothing
     end
+    return t
+  end
+
+  # Placeholder guard for shunt admittances, same philosophy as the vset
+  # plausibility band: FullGrid ships a NonlinearShuntCompensatorPoint with
+  # b = g = 0.99 S (the set's 0.99/99.99 placeholder family) — at 225 kV that
+  # is a 50-GW shunt and no power flow can converge on it. The cap of
+  # 10 × baseMVA is the scale the SVC rating clamp already uses; every real
+  # compensator in the cached deliveries sits orders of magnitude below it.
+  # A shunt above the cap is skipped with a warning, not clamped — clamping
+  # would invent a specific size for a value that carries no information.
+  shunt_cap_mva = 10.0 * net.baseMVA
+  function _shunt_plausible(clsname, name, mrid, B_mvar, G_mw)::Bool
+    max(abs(B_mvar), abs(G_mw)) <= shunt_cap_mva && return true
+    push!(ctx.messages, "warning: $(clsname) $(name) declares an implausible admittance (B $(round(B_mvar; digits = 1)) MVAr / G $(round(G_mw; digits = 1)) MW at nominal voltage, cap ±$(round(Int, shunt_cap_mva))) — placeholder suspected, shunt skipped")
+    push!(ctx.skipped, mrid)
+    return false
+  end
+
+  for sh in objectsOf(store, :LinearShuntCompensator)
+    name = something(str(sh, :name), sh.mrid)
+    t = _shunt_terminal(sh, "LinearShuntCompensator", name)
+    t === nothing && continue
     sections = something(num(sh, :sections), num(sh, :normalSections, 0.0))
     b = num(sh, :bPerSection, 0.0) * sections
     g = num(sh, :gPerSection, 0.0) * sections
+    _shunt_plausible("LinearShuntCompensator", name, sh.mrid, b * t.vn_kV^2, g * t.vn_kV^2) || continue
     bus = _ensureBus!(net, created, topo, svmap, t.tn)
     # MATPOWER-style shunt: MW/MVAr injected at 1.0 pu of the bus vn
     Sparlectra.addShuntMatpower!(net = net, busName = bus, Gs = g * t.vn_kV^2, Bs = b * t.vn_kV^2)
+  end
+
+  # NonlinearShuntCompensator (#294 point 7): the characteristic is a set of
+  # per-section points; the effective admittance at `sections = s` is the SUM
+  # of the point b/g values with sectionNumber <= s (each point is one
+  # switched group — same reading as PowSyBl's conversion).
+  for sh in objectsOf(store, :NonlinearShuntCompensator)
+    name = something(str(sh, :name), sh.mrid)
+    t = _shunt_terminal(sh, "NonlinearShuntCompensator", name)
+    t === nothing && continue
+    sections = something(num(sh, :sections), num(sh, :normalSections, 0.0))
+    pts = [pt for pt in objectsOf(store, :NonlinearShuntCompensatorPoint) if get(pt.refs, :NonlinearShuntCompensator, "") == sh.mrid]
+    if isempty(pts)
+      push!(ctx.messages, "skip: NonlinearShuntCompensator $(name) — no characteristic points")
+      push!(ctx.skipped, sh.mrid)
+      continue
+    end
+    active = [pt for pt in pts if something(num(pt, :sectionNumber), 1.0) <= sections]
+    b = sum((num(pt, :b, 0.0) for pt in active); init = 0.0)
+    g = sum((num(pt, :g, 0.0) for pt in active); init = 0.0)
+    _shunt_plausible("NonlinearShuntCompensator", name, sh.mrid, b * t.vn_kV^2, g * t.vn_kV^2) || continue
+    bus = _ensureBus!(net, created, topo, svmap, t.tn)
+    Sparlectra.addShuntMatpower!(net = net, busName = bus, Gs = g * t.vn_kV^2, Bs = b * t.vn_kV^2)
+    push!(ctx.messages, "nonlinear shunt $(name): sections $(Int(round(sections)))/$(length(pts)) → B $(round(b * t.vn_kV^2; digits = 3)) MVAr, G $(round(g * t.vn_kV^2; digits = 3)) MW at $(bus)")
   end
 end
 
@@ -802,12 +931,14 @@ function _mapLoads!(net, store, topo, created, svmap, ctx::_MapCtx)
 end
 
 # regulating-control voltage setpoint for a machine/injection.
-# Returns `(vm_pu, voltage_controlled)`:
-# - local target → (target/vn, true)
-# - remote target (Stage 1 has no remote target-bus control) → (nothing, true);
+# Returns `(vm_pu, voltage_controlled, remote_bus)`:
+# - local target → (target/vn, true, nothing)
+# - remote target with allow_remote (machine_control) → (target/vn_remote,
+#   true, remote bus name) — the caller wires an outer-loop controller
+# - remote target without allow_remote → (nothing, true, nothing);
 #   the caller keeps the unit voltage-controlled at its own bus, holding the
 #   bus's SV/start voltage instead of a stale fixed SSH q
-# - no active voltage control → (nothing, false)
+# - no active voltage control → (nothing, false, nothing)
 # Default plausibility band for a voltage RegulatingControl target, in p.u. of
 # the regulated bus's nominal voltage. Deliberately far wider than any real
 # setpoint: across every cached ENTSO-E/ReliCapGrid delivery (1187 targets) the
@@ -828,12 +959,18 @@ const CGMES_VSET_MIN_PU = 0.5
 const CGMES_VSET_MAX_PU = 1.5
 
 """
-Voltage setpoint of a regulating unit, as (vset_pu, is_voltage_regulating).
+Voltage setpoint of a regulating unit, as
+`(vset_pu, is_voltage_regulating, remote_bus)`.
 
 `vset_pu === nothing` together with `true` means "regulates voltage, but no
 usable local setpoint" — the caller then holds the unit PV at its own bus
-voltage (see `_pvVoltage`). That is the fallback for remote controls and for
-implausible target values.
+voltage (see `_pvVoltage`). That is the fallback for remote controls (unless
+`allow_remote` is set) and for implausible target values.
+
+With `allow_remote = true` (machine control, #294 point 3) a resolvable remote
+voltage control returns the target bus name in `remote_bus` and `vset_pu` in
+p.u. of the *remote* bus's nominal voltage; the same plausibility band applies
+there. `remote_bus === nothing` always means "regulate locally or not at all".
 """
 function _voltageSetpoint(
   store::CGMESStore,
@@ -843,42 +980,102 @@ function _voltageSetpoint(
   messages::Vector{String};
   vset_min_pu::Float64 = CGMES_VSET_MIN_PU,
   vset_max_pu::Float64 = CGMES_VSET_MAX_PU,
-)::Tuple{Union{Nothing,Float64},Bool}
+  allow_remote::Bool = false,
+)::Tuple{Union{Nothing,Float64},Bool,Union{Nothing,String}}
   rc = ref(store, obj, :RegulatingControl)
-  rc === nothing && return (nothing, false)
+  rc === nothing && return (nothing, false, nothing)
   mode = something(enumval(rc, :mode), "")
-  endswith(mode, ".voltage") || return (nothing, false)
-  something(boolval(rc, :enabled), true) || return (nothing, false)
+  endswith(mode, ".voltage") || return (nothing, false, nothing)
+  something(boolval(rc, :enabled), true) || return (nothing, false, nothing)
   target = num(rc, :targetValue)
-  (target === nothing || target <= 0.0) && return (nothing, false)
+  (target === nothing || target <= 0.0) && return (nothing, false, nothing)
   tmrid = get(rc.refs, :Terminal, nothing)
-  tmrid === nothing && return (nothing, false)
+  tmrid === nothing && return (nothing, false, nothing)
   t = get(store.objects, tmrid, nothing)
-  t === nothing && return (nothing, false)
+  t === nothing && return (nothing, false, nothing)
   tn = tnOfTerminal(t)
-  (tn === nothing || !haskey(topo.vn_kV, tn)) && return (nothing, false)
-  if tn != own_tn
-    push!(messages, "notice: $(something(str(obj, :name), obj.mrid)) has a remote voltage RegulatingControl (target bus $(get(topo.bus_name, tn, tn))) — held PV at its own bus in Stage 1")
-    return (nothing, true)
+  (tn === nothing || !haskey(topo.vn_kV, tn)) && return (nothing, false, nothing)
+  is_remote = tn != own_tn
+  if is_remote && !allow_remote
+    push!(messages, "notice: $(something(str(obj, :name), obj.mrid)) has a remote voltage RegulatingControl (target bus $(get(topo.bus_name, tn, tn))) — held PV at its own bus (enable machine_control for remote regulation)")
+    return (nothing, true, nothing)
   end
   vn = topo.vn_kV[tn]
   # A zero/absent nominal voltage makes the p.u. conversion meaningless.
-  vn > 0.0 || return (nothing, true)
+  vn > 0.0 || return (nothing, true, nothing)
   vset = target / vn
   if vset < vset_min_pu || vset > vset_max_pu
     push!(
       messages,
       "warning: $(something(str(obj, :name), obj.mrid)) declares an implausible voltage target ($(target) kV = $(round(vset; sigdigits = 3)) pu at $(get(topo.bus_name, tn, tn)), nominal $(vn) kV) — ignored, unit held PV at the bus voltage derived from the nominal data",
     )
-    return (nothing, true)
+    return (nothing, true, nothing)
   end
-  return (vset, true)
+  return (vset, true, is_remote ? get(topo.bus_name, tn, tn) : nothing)
 end
 
 # limit hull over both sign-convention readings (see the machine qMin/qMax
 # comment in _mapInjections!): [min(a,-b), max(b,-a)]
 _limitHullMin(a::Union{Nothing,Float64}, b::Union{Nothing,Float64}) = (a === nothing || b === nothing) ? nothing : min(a, -b)
 _limitHullMax(a::Union{Nothing,Float64}, b::Union{Nothing,Float64}) = (a === nothing || b === nothing) ? nothing : max(b, -a)
+
+"""
+Collect `ReactiveCapabilityCurve` points: curve mRID → `CurveData` tuples
+`(x = P, y1 = minQ, y2 = maxQ)`, sorted by P. The x axis is the machine's own
+active power in the CGMES machine convention (negative = injecting), so it can
+legitimately span both signs (MicroGrid BE-G1: −100 … +100 MW).
+"""
+function _reactiveCapabilityCurvePoints(store::CGMESStore)::Dict{String,Vector{NTuple{3,Float64}}}
+  out = Dict{String,Vector{NTuple{3,Float64}}}()
+  countOf(store, :ReactiveCapabilityCurve) == 0 && return out
+  curves = Set(c.mrid for c in objectsOf(store, :ReactiveCapabilityCurve))
+  for cd in objectsOf(store, :CurveData)
+    c = get(cd.refs, :Curve, nothing)
+    (c === nothing || !(c in curves)) && continue
+    x = num(cd, :xvalue)
+    y1 = num(cd, :y1value)
+    y2 = num(cd, :y2value)
+    (x === nothing || y1 === nothing || y2 === nothing) && continue
+    push!(get!(Vector{NTuple{3,Float64}}, out, c), (x, y1, y2))
+  end
+  for pts in values(out)
+    sort!(pts; by = first)
+  end
+  return out
+end
+
+"""
+Q limits from a capability curve, evaluated at the machine's scheduled active
+power `p_machine` (CGMES machine convention, i.e. the raw SSH value): linear
+interpolation between curve points, clamped to the curve's P domain outside it.
+
+The interpolated `(y1, y2)` pair then goes through the SAME sign-convention
+hull as the scalar `minQ`/`maxQ` path — the ENTSO-E sets are inconsistent
+about machine Q signs, and a capability curve is no more trustworthy in that
+respect than the scalars next to it. For the symmetric curves the test sets
+ship this is the identity; for asymmetric data it is deliberately safe rather
+than strictly faithful (the same Stage-2 note as for the scalars applies).
+"""
+function _curveQHull(pts::Vector{NTuple{3,Float64}}, p_machine::Float64)::Union{Nothing,Tuple{Float64,Float64}}
+  isempty(pts) && return nothing
+  p = clamp(p_machine, pts[1][1], pts[end][1])
+  i = something(findlast(t -> t[1] <= p, pts), 1)
+  y1, y2 = if i >= length(pts)
+    (pts[end][2], pts[end][3])
+  else
+    t0, t1 = pts[i], pts[i+1]
+    f = t1[1] == t0[1] ? 0.0 : (p - t0[1]) / (t1[1] - t0[1])
+    (t0[2] + f * (t1[2] - t0[2]), t0[3] + f * (t1[3] - t0[3]))
+  end
+  # order the pair first: the hull formula assumes (min, max) roles, and a
+  # delivery that swaps y1/y2 wholesale would otherwise produce an inverted,
+  # rejected band instead of the intended one
+  ylo, yhi = minmax(y1, y2)
+  qlo = _limitHullMin(ylo, yhi)
+  qhi = _limitHullMax(ylo, yhi)
+  (qlo === nothing || qhi === nothing || (qhi - qlo) < 1e-6) && return nothing
+  return (qlo, qhi)
+end
 
 # PV voltage for a unit: local target if given, else the SV/start voltage of
 # its own bus (remote-controlled units, slack fallback)
@@ -1056,8 +1253,106 @@ function _eiBoundaryNode(store::CGMESStore, topo::CGMESTopology, ei::CIMObject):
   return nothing
 end
 
+"""
+Decide which remote machine-control plans survive (#294 point 3).
+
+A plan falls back to the Stage-1 behavior (machine held PV at its own bus)
+when its target bus is not part of the built network, is already voltage-held
+(PV/slack), or the machine's own bus is voltage-held. Fallbacks themselves
+create new PV buses, so the scan runs to a fixpoint before the surviving
+plans claim their targets (one controller per target bus, document order).
+"""
+function _resolveMachineControlPlans!(pending::Vector{NamedTuple}, net, slack_buses::Set{String}, messages::Vector{String})
+  vheld = Set{String}(slack_buses)
+  for inj in pending
+    inj.vm_pu === nothing || push!(vheld, inj.bus)
+  end
+  fallback = function (i, inj, reason)
+    push!(messages, "notice: $(something(get(inj, :name, nothing), inj.bus)) — remote voltage control not attachable ($(reason)); held PV at its own bus")
+    pending[i] = merge(inj, (vm_pu = _pvVoltage(net, inj.bus, nothing), isRegulated = true, remote_target = nothing))
+    push!(vheld, inj.bus)
+  end
+  changed = true
+  while changed
+    changed = false
+    for (i, inj) in enumerate(pending)
+      rt = get(inj, :remote_target, nothing)
+      rt === nothing && continue
+      if !haskey(net.busDict, rt.bus)
+        fallback(i, inj, "target bus $(rt.bus) is not part of the built network")
+        changed = true
+      elseif rt.bus in vheld
+        fallback(i, inj, "target bus $(rt.bus) is already voltage-held (PV/slack)")
+        changed = true
+      elseif inj.bus in vheld
+        fallback(i, inj, "its own bus is voltage-held (PV/slack)")
+        changed = true
+      end
+    end
+  end
+  claimed = Set{String}()
+  for (i, inj) in enumerate(pending)
+    rt = get(inj, :remote_target, nothing)
+    rt === nothing && continue
+    if rt.bus in claimed
+      fallback(i, inj, "target bus $(rt.bus) is already claimed by another machine controller")
+    else
+      push!(claimed, rt.bus)
+    end
+  end
+  return nothing
+end
+
+"""
+Attach the surviving machine-control plans as `MachineVoltageControl`
+instances. Runs only after `refreshBusTypesFromProsumers!` and isolation
+marking, so the final node types and `isoNodes` are authoritative — a plan
+whose buses did not end up solvable PQ is dropped with a notice, mirroring
+`_disableIneffectiveTapControllers!`.
+"""
+function _attachMachineControls!(net, ctx::_MapCtx)
+  for plan in ctx.machine_ctrl_plans
+    tidx = get(net.busDict, plan.target_bus, nothing)
+    oidx = get(net.busDict, plan.bus, nothing)
+    reason = if tidx === nothing
+      "target bus $(plan.target_bus) not found"
+    elseif tidx in net.isoNodes
+      "target bus $(plan.target_bus) is isolated"
+    elseif net.nodeVec[tidx]._nodeType != Sparlectra.PQ
+      "target bus $(plan.target_bus) is $(net.nodeVec[tidx]._nodeType)"
+    elseif oidx !== nothing && oidx in net.isoNodes
+      "machine bus $(plan.bus) is isolated"
+    else
+      nothing
+    end
+    if reason !== nothing
+      push!(ctx.messages, "notice: machine control $(plan.name) — skipped ($(reason))")
+      continue
+    end
+    try
+      Sparlectra.addMachineVoltageControl!(
+        net;
+        bus = plan.bus,
+        target_bus = plan.target_bus,
+        target_vm_pu = plan.target_vm_pu,
+        qmin_mvar = plan.qmin,
+        qmax_mvar = plan.qmax,
+        prosumer_index = plan.prosumer_idx,
+        name = plan.name,
+      )
+      push!(ctx.messages, "machine control: $(plan.name) → voltage $(round(plan.target_vm_pu; digits = 4)) pu at $(plan.target_bus)")
+    catch err
+      # the importer degrades gracefully: an unattachable controller becomes a
+      # visible notice (the machine stays a plain PQ injection with its SSH q)
+      push!(ctx.messages, "notice: machine control $(plan.name) — not attached ($(sprint(showerror, err)))")
+    end
+  end
+  return nothing
+end
+
 function _mapInjections!(net, store, topo, created, svmap, ctx::_MapCtx; multi_slack::Bool = true)
   scan = _SlackScan()
+  curve_pts = _reactiveCapabilityCurvePoints(store)
   angle_refs = _svAngleRefNodes(store)
   angle_ref_buses = Set{String}(topo.bus_name[tn] for tn in angle_refs if haskey(topo.bus_name, tn))
   isempty(angle_ref_buses) || push!(ctx.messages, "notice: SV declares $(length(angle_ref_buses)) angle-reference node(s) — used as slack candidate(s): $(join(sort(collect(angle_ref_buses)), ", "))")
@@ -1087,18 +1382,39 @@ function _mapInjections!(net, store, topo, created, svmap, ctx::_MapCtx; multi_s
     bus = _ensureBus!(net, created, topo, svmap, t.tn)
     gu = ref(store, sm, :GeneratingUnit)
     ratedS = num(sm, :ratedS, 0.0)
-    # machines without usable scalar minQ/maxQ get wide symmetric limits so
-    # voltage regulation is not spuriously Q-pinned. This covers both absent
-    # values and the degenerate 0/0 pair that data sets write when the real
-    # limits live in an InitialReactiveCapabilityCurve (not evaluated in
-    # Stage 1) — MicroGrid BE-G1 is such a case.
+    # GeneratingUnit.normalPF → distributed-slack participation weight
+    # (issue #192). Same storage rule as the MATPOWER APF path: only positive
+    # finite values count, and carrying the value never changes results while
+    # power_flow.distributed_slack is disabled.
+    npf = gu === nothing ? nothing : num(gu, :normalPF)
+    participation = (npf !== nothing && isfinite(npf) && npf > 0.0) ? npf : nothing
+    # Q-limit source, most faithful first:
+    #  1. InitialReactiveCapabilityCurve evaluated at the machine's scheduled P
+    #     (issue #294 point 1 — the first data-faithful limits; MicroGrid
+    #     BE-G1 writes the degenerate 0/0 scalar pair precisely because its
+    #     real limits live in the curve),
+    #  2. the scalar minQ/maxQ hull,
+    #  3. wide symmetric limits so voltage regulation is not spuriously
+    #     Q-pinned when neither source is usable.
     qwide = max(ratedS, net.baseMVA)
-    qlo = _limitHullMin(num(sm, :minQ), num(sm, :maxQ))
-    qhi = _limitHullMax(num(sm, :minQ), num(sm, :maxQ))
+    qlo = nothing
+    qhi = nothing
+    curve = get(sm.refs, :InitialReactiveCapabilityCurve, nothing)
+    if curve !== nothing && haskey(curve_pts, curve)
+      cq = _curveQHull(curve_pts[curve], num(sm, :p, 0.0))
+      if cq !== nothing
+        qlo, qhi = cq
+        push!(ctx.messages, "notice: SynchronousMachine $(name) — Q limits [$(round(qlo; digits = 1)), $(round(qhi; digits = 1))] MVAr from its ReactiveCapabilityCurve at P = $(num(sm, :p, 0.0)) MW")
+      end
+    end
+    if qlo === nothing
+      qlo = _limitHullMin(num(sm, :minQ), num(sm, :maxQ))
+      qhi = _limitHullMax(num(sm, :minQ), num(sm, :maxQ))
+    end
     if qlo === nothing || qhi === nothing || (qhi - qlo) < 1e-6
       qlo = -qwide
       qhi = qwide
-      push!(ctx.messages, "notice: SynchronousMachine $(name) has no usable scalar minQ/maxQ — using ±$(qwide) MVAr (capability curves are not evaluated in Stage 1)")
+      push!(ctx.messages, "notice: SynchronousMachine $(name) has no usable scalar minQ/maxQ — using ±$(qwide) MVAr")
     end
     prio = num(sm, :referencePriority, 0.0)
     # an SV angle reference outranks referencePriority: it is what the
@@ -1106,12 +1422,19 @@ function _mapInjections!(net, store, topo, created, svmap, ctx::_MapCtx; multi_s
     bus in angle_ref_buses && push!(scan.by_priority, (0.0, -ratedS, bus))
     prio >= 1.0 && push!(scan.by_priority, (prio, -ratedS, bus))
     push!(scan.machines, (ratedS, bus))
-    vset, vctrl = _voltageSetpoint(store, topo, sm, t.tn, ctx.messages; vset_min_pu = ctx.vset_min_pu, vset_max_pu = ctx.vset_max_pu)
+    vset, vctrl, remote_bus = _voltageSetpoint(store, topo, sm, t.tn, ctx.messages; vset_min_pu = ctx.vset_min_pu, vset_max_pu = ctx.vset_max_pu, allow_remote = ctx.machine_control)
+    # A resolvable remote control (machine_control = true) keeps the machine
+    # a PQ injection with the SSH operating point; the outer-loop controller
+    # planned here moves its Q until the remote bus hits the target. Whether
+    # the plan survives is decided in _resolveMachineControlPlans! once all
+    # regulating units and the slack selection are known.
+    is_remote = remote_bus !== nothing
     push!(
       pending,
       (
         bus = bus,
         type = "SYNCHRONOUSMACHINE",
+        participationFactor = participation,
         p = -num(sm, :p, 0.0),                       # CGMES machine sign: p < 0 = injection
         q = -num(sm, :q, 0.0),
         pMin = gu === nothing ? nothing : num(gu, :minOperatingP),
@@ -1123,10 +1446,43 @@ function _mapInjections!(net, store, topo, created, svmap, ctx::_MapCtx; multi_s
         # strict limit fidelity is a Stage-2 topic.
         qMin = qlo,
         qMax = qhi,
-        vm_pu = vctrl ? _pvVoltage(net, bus, vset) : nothing,
-        isRegulated = vctrl,
+        vm_pu = (vctrl && !is_remote) ? _pvVoltage(net, bus, vset) : nothing,
+        isRegulated = vctrl && !is_remote,
+        name = name,
+        remote_target = is_remote ? (bus = remote_bus, vset_pu = vset) : nothing,
       ),
     )
+  end
+
+  # AsynchronousMachine (#294 point 6) — Stage-0 model: a fixed PQ operating
+  # point from SSH (`RotatingMachine.p`/`q`, load convention — a motor
+  # consumes with p > 0, a generator-kind machine carries p < 0). No voltage
+  # regulation and no slack candidacy: the induction machine's voltage/slip
+  # dependence is a dynamics topic, not a steady-state power-flow one.
+  # Fixture: FullGrid (ASM_1, ≈1 MW motor).
+  for am in objectsOf(store, :AsynchronousMachine)
+    t = busOfEquipment(topo, am, 1)
+    name = something(str(am, :name), am.mrid)
+    if t === nothing
+      push!(ctx.messages, "skip: AsynchronousMachine $(name) — no TopologicalNode")
+      push!(ctx.skipped, am.mrid)
+      continue
+    end
+    if !_conn(ctx, t.connected)
+      push!(ctx.messages, "skip: AsynchronousMachine $(name) — terminal disconnected")
+      push!(ctx.skipped, am.mrid)
+      continue
+    end
+    if !_inService(ctx, am)
+      push!(ctx.messages, "skip: AsynchronousMachine $(name) — out of service (SSH inService=false)")
+      push!(ctx.skipped, am.mrid)
+      continue
+    end
+    bus = _ensureBus!(net, created, topo, svmap, t.tn)
+    p = num(am, :p, 0.0)
+    q = num(am, :q, 0.0)
+    Sparlectra.addProsumer!(net = net, busName = bus, type = "ASYNCHRONOUSMACHINE", p = p, q = q, defer_bus_type_refresh = true)
+    push!(ctx.messages, "notice: AsynchronousMachine $(name) — Stage-0 fixed PQ operating point from SSH (p=$(round(p; digits = 2)) MW, q=$(round(q; digits = 2)) MVAr, load convention) at $(bus)")
   end
 
   for eni in objectsOf(store, :ExternalNetworkInjection)
@@ -1150,7 +1506,7 @@ function _mapInjections!(net, store, topo, created, svmap, ctx::_MapCtx; multi_s
     bus in angle_ref_buses && push!(scan.by_priority, (0.0, -maxP, bus))
     prio >= 1.0 && push!(scan.by_priority, (prio, -maxP, bus))
     push!(scan.enis, (maxP, bus))
-    vset, vctrl = _voltageSetpoint(store, topo, eni, t.tn, ctx.messages; vset_min_pu = ctx.vset_min_pu, vset_max_pu = ctx.vset_max_pu)
+    vset, vctrl, _ = _voltageSetpoint(store, topo, eni, t.tn, ctx.messages; vset_min_pu = ctx.vset_min_pu, vset_max_pu = ctx.vset_max_pu)
     push!(
       pending,
       (
@@ -1226,7 +1582,7 @@ function _mapInjections!(net, store, topo, created, svmap, ctx::_MapCtx; multi_s
     end
     slope = num(svc, :slope, 0.0)
     slope != 0.0 && push!(ctx.messages, "notice: StaticVarCompensator $(name) — droop slope $(slope) ignored (constant-voltage model)")
-    vset, vctrl = _voltageSetpoint(store, topo, svc, t.tn, ctx.messages; vset_min_pu = ctx.vset_min_pu, vset_max_pu = ctx.vset_max_pu)
+    vset, vctrl, _ = _voltageSetpoint(store, topo, svc, t.tn, ctx.messages; vset_min_pu = ctx.vset_min_pu, vset_max_pu = ctx.vset_max_pu)
     if !vctrl && endswith(something(enumval(svc, :sVCControlMode), ""), ".voltage") && something(boolval(svc, :controlEnabled), true)
       vsp = num(svc, :voltageSetPoint)
       (vsp !== nothing && vsp > 0.0) && ((vset, vctrl) = (vsp / t.vn_kV, true))
@@ -1374,6 +1730,7 @@ function _mapInjections!(net, store, topo, created, svmap, ctx::_MapCtx; multi_s
   # (ReliCapGrid/Svedala: two islands) is otherwise unsolvable — each island
   # needs its own angle reference.
   slack_buses = _selectSlackBuses(net, ctx, slack_bus, angle_ref_buses, pending, multi_slack)
+  ctx.machine_control && _resolveMachineControlPlans!(pending, net, slack_buses, ctx.messages)
   marked = Set{String}()
   for inj in pending
     is_slack = inj.bus in slack_buses && !(inj.bus in marked)
@@ -1397,9 +1754,21 @@ function _mapInjections!(net, store, topo, created, svmap, ctx::_MapCtx; multi_s
       vm_pu = vm,
       referencePri = is_slack ? inj.bus : nothing,
       isRegulated = inj.isRegulated || is_slack,
+      # only machine tuples carry a participation factor; every other pending
+      # injection type reads out as `nothing` here
+      participationFactor = get(inj, :participationFactor, nothing),
       defer_bus_type_refresh = true,
     )
+    # surviving remote-control plans pick up their prosumer index here (the
+    # prosumer just pushed is the machine); the controller itself is attached
+    # by _attachMachineControls! after bus types and isolation are final
+    rt = get(inj, :remote_target, nothing)
+    if rt !== nothing
+      push!(ctx.machine_ctrl_plans, (bus = inj.bus, prosumer_idx = length(net.prosumpsVec), name = something(get(inj, :name, nothing), inj.bus), target_bus = rt.bus, target_vm_pu = rt.vset_pu, qmin = inj.qMin, qmax = inj.qMax))
+    end
   end
+  n_pf = count(inj -> get(inj, :participationFactor, nothing) !== nothing, pending)
+  n_pf > 0 && push!(ctx.messages, "participation factors: $(n_pf) machines with normalPF")
   return slack_bus
 end
 
@@ -1493,12 +1862,22 @@ Import a CGMES delivery (EQ+SSH+TP, plus boundary set) into a Sparlectra
 positions). Short-circuit source data is harvested into the result's
 `shortcircuit` container (read, not evaluated). Start voltages are taken
 from the SV profile where present.
+
+With `tap_control = true` the SSH tap positions are the start point and the
+CGMES-defined tap changers become outer-loop controllers. With
+`machine_control = true` a machine whose voltage `RegulatingControl` points
+at a *different* bus becomes a PQ injection with an outer-loop
+`MachineVoltageControl` regulating that remote bus (instead of being held PV
+at its own bus); plans whose target bus is already voltage-held, isolated,
+or claimed by another machine fall back to the held-PV behavior with a
+notice in `result.messages`.
 """
 function importCGMES(;
   path,
   baseMVA::Float64 = 100.0,
   require_boundary::Bool = true,
   tap_control::Bool = false,
+  machine_control::Bool = false,
   ignore_connected::Bool = false,
   multi_slack::Bool = true,
   vset_min_pu::Float64 = CGMES_VSET_MIN_PU,
@@ -1507,7 +1886,7 @@ function importCGMES(;
 )::CGMESImportResult
   vset_min_pu <= vset_max_pu || throw(ArgumentError("importCGMES: vset_min_pu ($(vset_min_pu)) must not exceed vset_max_pu ($(vset_max_pu))"))
   store = loadCGMES(path)
-  ctx = _MapCtx(tap_control, ignore_connected; vset_min_pu = vset_min_pu, vset_max_pu = vset_max_pu)
+  ctx = _MapCtx(tap_control, ignore_connected; machine_control = machine_control, vset_min_pu = vset_min_pu, vset_max_pu = vset_max_pu)
   ignore_connected && push!(ctx.messages, "notice: ignore_connected = true — SSH Terminal.connected flags are overridden, everything is treated as in service")
   messages = ctx.messages
   unresolved = unresolvedReferences(store)
@@ -1520,6 +1899,23 @@ function importCGMES(;
   end
   for f in store.files
     f.skipped && push!(ctx.messages, "file skipped: $(f.name) — $(f.skip_reason)")
+  end
+
+  # Multi-valued references (#294 point 9): protect against silently reading
+  # the wrong value — `ref()` returns only the FIRST occurrence of a repeated
+  # property; the full list is available via `refsAll`. One notice per
+  # (class, property) so a future mapping that touches such a property cannot
+  # fall into the last-wins trap unwarned.
+  if !isempty(store.multirefs)
+    counts = Dict{Tuple{Symbol,Symbol},Int}()
+    for ((mrid, key), _) in store.multirefs
+      o = get(store.objects, mrid, nothing)
+      o === nothing && continue
+      counts[(o.class, key)] = get(counts, (o.class, key), 0) + 1
+    end
+    for ((cls, key), n) in sort!(collect(counts))
+      push!(ctx.messages, "notice: multi-valued reference $(cls).$(key) on $(n) object(s) — ref() reads the first value, the full list is in refsAll")
+    end
   end
 
   topo = buildTopology(store)
@@ -1551,6 +1947,7 @@ function importCGMES(;
   n_iso = length(Sparlectra.markIsolatedBuses!(net = net))
   n_iso > 0 && push!(ctx.messages, "notice: $(n_iso) isolated bus(es) without any in-service branch — marked isolated, excluded from the power flow")
   tap_control && _disableIneffectiveTapControllers!(net, ctx)
+  machine_control && _attachMachineControls!(net, ctx)
 
   sc = collectShortCircuitData(store, topo)
   isempty(sc.ac_line_segments) || push!(ctx.messages, "short-circuit data: $(length(sc.ac_line_segments)) lines (read, not evaluated)")

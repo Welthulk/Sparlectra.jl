@@ -524,4 +524,67 @@ function run_tap_controller_tests()
     @test length(net.trafos[1].side1.controls) == 1
     @test net.trafos[1].tapSideNumber == 1
   end
+
+  # --- machine remote voltage control (#294 point 3) ------------------------
+  # Shares this file with the tap controllers because both exercise the same
+  # AbstractOuterController framework and run_control! loop.
+
+  function _build_rvc_net(; qmin::Float64 = -50.0, qmax::Float64 = 50.0)
+    net = Net(name = "machine_rvc", baseMVA = 100.0)
+    addBus!(net = net, busName = "Slack", vn_kV = 110.0)
+    addBus!(net = net, busName = "GenBus", vn_kV = 110.0)
+    addBus!(net = net, busName = "Load", vn_kV = 110.0)
+    addProsumer!(net = net, busName = "Slack", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.02, va_deg = 0.0, referencePri = "Slack")
+    addProsumer!(net = net, busName = "GenBus", type = "SYNCHRONOUSMACHINE", p = 30.0, q = 0.0, qMin = qmin, qMax = qmax)
+    addProsumer!(net = net, busName = "Load", type = "ENERGYCONSUMER", p = -70.0, q = -20.0)
+    addPIModelACLine!(net = net, fromBus = "Slack", toBus = "GenBus", r_pu = 0.02, x_pu = 0.12, b_pu = 0.01, status = 1)
+    addPIModelACLine!(net = net, fromBus = "GenBus", toBus = "Load", r_pu = 0.02, x_pu = 0.12, b_pu = 0.01, status = 1)
+    return net
+  end
+
+  @testset "Machine RVC: API validation" begin
+    net = _build_rvc_net()
+    @test_throws ErrorException addMachineVoltageControl!(net; bus = "Load", target_bus = "GenBus", target_vm_pu = 1.0)              # no generator at bus
+    @test_throws ErrorException addMachineVoltageControl!(net; bus = "GenBus", target_bus = "GenBus", target_vm_pu = 1.0)            # local target
+    @test_throws ErrorException addMachineVoltageControl!(net; bus = "GenBus", target_bus = "Slack", target_vm_pu = 1.0)             # voltage-held target
+    addMachineVoltageControl!(net; bus = "GenBus", target_bus = "Load", target_vm_pu = 1.05)
+    @test_throws ErrorException addMachineVoltageControl!(net; bus = "GenBus", target_bus = "Load", target_vm_pu = 1.04)             # duplicate machine + target
+    @test length(collect_outer_controllers(net)) == 1
+    clearMachineControllers!(net)
+    @test isempty(collect_outer_controllers(net))
+  end
+
+  @testset "Machine RVC: secant loop reaches a remote target" begin
+    net = _build_rvc_net()
+    addMachineVoltageControl!(net; bus = "GenBus", target_bus = "Load", target_vm_pu = 1.05, deadband_vm_pu = 5e-4)
+    pf = PowerFlowConfig(max_iter = 30, tol = 1e-9)
+    result = run_control!(net; controllers = collect_outer_controllers(net), pf_config = pf, control_config = ControlConfig(max_outer_iterations = 15), verbose = 0)
+    @test result.status == :converged
+    @test abs(get_bus_vm_pu(net, "Load") - 1.05) <= 5e-4
+    ctrl = Sparlectra._machine_controllers(net)[1]
+    @test ctrl.converged
+    @test !ctrl.at_limit
+    @test ctrl.qmin_mvar <= ctrl.q_mvar <= ctrl.qmax_mvar
+    # prosumer and bus-level Q stayed coherent with the controller state
+    @test isapprox(net.prosumpsVec[2].qVal, ctrl.q_mvar; atol = 1e-9)
+    rows = buildMachineControllerReportRows(net)
+    @test length(rows) == 1
+    @test rows[1].status == "converged"
+    @test rows[1].target_bus == "Load"
+  end
+
+  @testset "Machine RVC: honest at_limit when the target is unreachable" begin
+    net = _build_rvc_net(qmin = -2.0, qmax = 2.0)
+    addMachineVoltageControl!(net; bus = "GenBus", target_bus = "Load", target_vm_pu = 1.0, deadband_vm_pu = 5e-4)
+    pf = PowerFlowConfig(max_iter = 30, tol = 1e-9)
+    result = run_control!(net; controllers = collect_outer_controllers(net), pf_config = pf, control_config = ControlConfig(max_outer_iterations = 15), verbose = 0)
+    # the loop settles (converged-or-blocked), but the controller itself is
+    # parked at its reactive bound with the target still out of reach
+    @test result.status in (:converged, :blocked)
+    ctrl = Sparlectra._machine_controllers(net)[1]
+    @test ctrl.at_limit
+    @test !ctrl.converged
+    @test isapprox(ctrl.q_mvar, -2.0; atol = 1e-6)
+    @test abs(get_bus_vm_pu(net, "Load") - 1.0) > 5e-4
+  end
 end

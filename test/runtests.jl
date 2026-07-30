@@ -32,6 +32,7 @@ function include_fast_tests()
   include("test_api.jl")
   include("test_webui.jl")
   include("test_dc_powerflow.jl")
+  include("test_distributed_slack.jl")
 end
 
 function include_extended_tests()
@@ -77,6 +78,7 @@ function run_fast_profile_tests()
     ("webui", () -> run_entry(:run_webui_fast_tests)),
     ("state_estimation", () -> run_entry(:run_state_estimation_tests)),
     ("dc_powerflow", () -> run_entry(:run_dc_powerflow_tests)),
+    ("distributed_slack", () -> run_entry(:run_distributed_slack_tests)),
     ("controls", () -> begin
       run_entry(:run_voltage_dependent_control_tests)
       run_entry(:run_transformer_phase_shift_tests)

@@ -700,6 +700,7 @@ function _run_sparlectra_api(;
         baseMVA = cgmes_cfg.base_mva,
         require_boundary = cgmes_cfg.require_boundary,
         tap_control = cgmes_cfg.tap_control,
+        machine_control = cgmes_cfg.machine_control,
         ignore_connected = cgmes_cfg.ignore_connected,
         vset_min_pu = cgmes_cfg.vset_min_pu,
         vset_max_pu = cgmes_cfg.vset_max_pu,
@@ -753,6 +754,7 @@ function _run_sparlectra_api(;
         println(io, "paths:       ", join(paths, "\n             "))
         println(io, "version:     ", cgmes_result.store.version)
         println(io, "tap control: ", cgmes_cfg.tap_control)
+        println(io, "machine control: ", cgmes_cfg.machine_control)
         println(io, "base MVA:    ", cgmes_cfg.base_mva)
         println(io)
         println(io, "## Files")
@@ -774,12 +776,10 @@ function _run_sparlectra_api(;
         println(io, "  slack bus:  ", cgmes_result.slack_bus)
         println(io)
         sc = cgmes_result.shortcircuit
-        println(io, "## Short-circuit source data (read, not evaluated)")
-        println(io, "  external network injections: ", length(sc.external_network_injections))
-        println(io, "  synchronous machines:        ", length(sc.synchronous_machines))
-        println(io, "  AC line segments:            ", length(sc.ac_line_segments))
-        println(io, "  transformer ends:            ", length(sc.transformer_ends))
-        println(io, "  equivalent injections:       ", length(sc.equivalent_injections))
+        println(io, "## Short-circuit source data (read, not evaluated — issue #277)")
+        # Per-attribute completeness: a future IEC 60909 evaluation needs to
+        # know which inputs a delivery actually provides, not just the counts.
+        printShortCircuitCoverage(io, sc)
         println(io)
         println(io, "## Importer messages (", length(cgmes_result.messages), ")")
         for m in cgmes_result.messages
@@ -796,17 +796,19 @@ function _run_sparlectra_api(;
     emit_phase("building_sparlectra_net")
     raw_result = try
       open(logfile, "a") do io
+        # run.log carries the narrative; the full importer report (files,
+        # class histogram, every notice/warning) lives in cgmes.log — one
+        # home per fact. Warnings still surface here because they mark
+        # substituted values a reader of the narrative must not miss.
         println(io, "CGMES input (", length(paths), " path(s), ", length(cgmes_result.net.nodeVec), " buses)")
-        for m in cgmes_result.messages
+        cgmes_warnings = [m for m in cgmes_result.messages if startswith(m, "warning:")]
+        println(io, "  importer messages: ", length(cgmes_result.messages), " (", length(cgmes_warnings), " warning(s)) — full report in cgmes.log")
+        for m in cgmes_warnings
           println(io, "  ", m)
         end
         _write_resolved_q_limit_options(io, qlimit_metadata)
-        with_logger(ConsoleLogger(io)) do
-          redirect_stdout(io) do
-            redirect_stderr(io) do
-              _run_sparlectra(net = cgmes_result.net, config = config, performance_profile = api_performance_profile)
-            end
-          end
+        _capture_run_output(io; live = config.output.console_live) do
+          _run_sparlectra(net = cgmes_result.net, config = config, performance_profile = api_performance_profile)
         end
       end
     catch err
@@ -823,6 +825,7 @@ function _run_sparlectra_api(;
       "cgmes_branches" => length(cgmes_result.net.branchVec),
       "cgmes_slack_bus" => cgmes_result.slack_bus,
       "cgmes_tap_control" => cgmes_cfg.tap_control,
+      "cgmes_machine_control" => cgmes_cfg.machine_control,
       "cgmes_messages" => length(cgmes_result.messages),
       "cgmes_skipped_equipment" => length(cgmes_result.skipped_equipment),
     )
@@ -847,12 +850,8 @@ function _run_sparlectra_api(;
       open(logfile, "a") do io
         println(io, "Native DTF input (experimental/internal)")
         _write_resolved_q_limit_options(io, qlimit_metadata)
-        with_logger(ConsoleLogger(io)) do
-          redirect_stdout(io) do
-            redirect_stderr(io) do
-              _run_sparlectra(net = dtf_net, config = config, performance_profile = api_performance_profile)
-            end
-          end
+        _capture_run_output(io; live = config.output.console_live) do
+          _run_sparlectra(net = dtf_net, config = config, performance_profile = api_performance_profile)
         end
       end
     catch err
@@ -898,13 +897,9 @@ function _run_sparlectra_api(;
   try
     open(logfile, "a") do io
       _write_resolved_q_limit_options(io, qlimit_metadata)
-      with_logger(ConsoleLogger(io)) do
-        redirect_stdout(io) do
-          redirect_stderr(io) do
-            cd(output_path) do
-              raw_result = run_sparlectra(casefile = basename(case_path), path = dirname(case_path), config = config, performance_profile = api_performance_profile)
-            end
-          end
+      _capture_run_output(io; live = config.output.console_live) do
+        cd(output_path) do
+          raw_result = run_sparlectra(casefile = basename(case_path), path = dirname(case_path), config = config, performance_profile = api_performance_profile)
         end
       end
     end
@@ -1053,26 +1048,31 @@ function _run_sparlectra_api(;
       println(io, "output_dir: ", output_path)
       println(io, "diagnostics_artifact: ", run_diagnostics ? "diagnose.log" : "disabled")
       println(io, "performance_artifact: ", timing_mode === :off ? "disabled" : "performance.log")
-      println(io, "Q-limit handling enabled : ", !config.powerflow.qlimits.ignore_q_limits)
-      println(io, "Q-limit enforcement mode : ", String(config.powerflow.qlimits.enforcement_mode))
+      # Q-limit settings are NOT repeated here — the "Resolved Q-limit
+      # options" block near the top of this file is their one home.
       println(io, "q_limit_detail_artifacts: ", isempty(q_limit_artifacts) ? "none" : join(q_limit_artifacts, ", "))
       println(io, "matpower_dcline_artifact: ", matpower_dcline_artifact === nothing ? "none" : matpower_dcline_artifact)
       println(io, "detailed_result_csv_status: ", csv_export_status)
       csv_export_skip_reason === nothing || println(io, "detailed_result_csv_skip_reason: ", csv_export_skip_reason)
-      if detailed_result_csv && csv_export_skip_reason === nothing
-        println(io, "detailed_result_csv_solution_quality: ", _csv_solution_quality(raw_result))
-        raw_result.final_converged && raw_result.solution_available || println(io, "detailed_result_csv_warning: values are from the last Newton iterate and are not a converged power-flow solution")
+      # The per-setting CSV lines only carry information when the export runs;
+      # a disabled export collapses to the two status lines above instead of
+      # fifteen lines reading "disabled".
+      if detailed_result_csv
+        if csv_export_skip_reason === nothing
+          println(io, "detailed_result_csv_solution_quality: ", _csv_solution_quality(raw_result))
+          raw_result.final_converged && raw_result.solution_available || println(io, "detailed_result_csv_warning: values are from the last Newton iterate and are not a converged power-flow solution")
+        end
+        println(io, "detailed_result_csv_artifacts: ", isempty(csv_artifacts) ? csv_export_status : join(csv_artifacts, ", "))
+        println(io, "detailed_result_csv_format: ", csv_format.name)
+        println(io, "detailed_result_csv_exporter: ", raw_result.net !== nothing ? _select_detailed_csv_exporter(raw_result.net; config) : "unknown")
+        println(io, "detailed_result_csv_write_mode: ", config.output.detailed_result_csv_write_mode)
+        println(io, "detailed_result_csv_actual_write_mode: ", raw_result.net !== nothing && _select_detailed_csv_exporter(raw_result.net; config) === :direct ? "streaming" : config.output.detailed_result_csv_write_mode)
+        raw_result.net === nothing || println(io, "detailed_result_csv_bus_rows: ", length(raw_result.net.nodeVec))
+        raw_result.net === nothing || println(io, "detailed_result_csv_branch_rows: ", length(raw_result.net.branchVec))
+        println(io, "detailed_result_csv_delimiter: ", csv_format.delimiter == ';' ? "semicolon" : "comma")
+        println(io, "detailed_result_csv_decimal_separator: ", csv_format.decimal_separator == ',' ? "comma" : "dot")
+        println(io, "detailed_result_csv_thousands_separator: ", csv_format.thousands_separator == "," ? "comma" : csv_format.thousands_separator == "." ? "dot" : "none")
       end
-      println(io, "detailed_result_csv_artifacts: ", detailed_result_csv ? (isempty(csv_artifacts) ? csv_export_status : join(csv_artifacts, ", ")) : "disabled")
-      println(io, "detailed_result_csv_format: ", detailed_result_csv ? csv_format.name : "disabled")
-      println(io, "detailed_result_csv_exporter: ", detailed_result_csv && raw_result.net !== nothing ? _select_detailed_csv_exporter(raw_result.net; config) : "disabled")
-      println(io, "detailed_result_csv_write_mode: ", detailed_result_csv ? config.output.detailed_result_csv_write_mode : "disabled")
-      println(io, "detailed_result_csv_actual_write_mode: ", detailed_result_csv && raw_result.net !== nothing && _select_detailed_csv_exporter(raw_result.net; config) === :direct ? "streaming" : (detailed_result_csv ? config.output.detailed_result_csv_write_mode : "disabled"))
-      println(io, "detailed_result_csv_bus_rows: ", detailed_result_csv && raw_result.net !== nothing ? length(raw_result.net.nodeVec) : "disabled")
-      println(io, "detailed_result_csv_branch_rows: ", detailed_result_csv && raw_result.net !== nothing ? length(raw_result.net.branchVec) : "disabled")
-      println(io, "detailed_result_csv_delimiter: ", detailed_result_csv ? (csv_format.delimiter == ';' ? "semicolon" : "comma") : "disabled")
-      println(io, "detailed_result_csv_decimal_separator: ", detailed_result_csv ? (csv_format.decimal_separator == ',' ? "comma" : "dot") : "disabled")
-      println(io, "detailed_result_csv_thousands_separator: ", detailed_result_csv ? (csv_format.thousands_separator == "," ? "comma" : csv_format.thousands_separator == "." ? "dot" : "none") : "disabled")
       if haskey(csv_timing_metadata, :exporter)
         println(io, "Detailed CSV exporter       : ", csv_timing_metadata[:exporter])
         println(io, "CSV write mode              : ", csv_timing_metadata[:write_mode])
@@ -1088,7 +1088,9 @@ function _run_sparlectra_api(;
       csv_export_error === nothing || println(io, "detailed_result_csv_error: ", csv_export_error)
       haskey(csv_timing_metadata, :partial_error) && println(io, "detailed_result_csv_error: ", csv_timing_metadata[:partial_error])
       println(io)
-      print_effective_config(io, config)
+      # The full configuration dump used to be repeated here (~150 lines); its
+      # one home is the effective_config.yaml artifact written before the run.
+      println(io, "effective configuration: effective_config.yaml")
       println(io)
       println(io, "Available status diagnostics")
       println(io, "----------------------------")

@@ -57,6 +57,7 @@ function _handle_rectangular_qlimit_iteration!(
   verbose,
   max_console_rows,
   performance_profile,
+  dslack::Union{Nothing,DistributedSlackState} = nothing,
 )
   changed = false
   reenabled = false
@@ -189,8 +190,11 @@ function _handle_rectangular_qlimit_iteration!(
     end
 
     if changed || reenabled
+      # Recompute at the ACCEPTED lambda: switching changed bus_types/S, not
+      # the distributed-slack state (participation is frozen per solve).
+      _dslack_set_trial!(dslack, 0.0)
       F = _perf_profile_time!(performance_profile, :iteration_mismatch_after_qlimit) do
-        mismatch_rectangular(Ybus, V, S, bus_types, Vset, slack_idx)
+        mismatch_rectangular(Ybus, V, S, bus_types, Vset, slack_idx; dslack = dslack)
       end
       max_mis = maximum(abs.(F))
       history[end] = max_mis

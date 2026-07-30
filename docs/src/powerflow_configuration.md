@@ -206,6 +206,50 @@ diagnose active-set behavior. Per-island logs then include Q-limit state such as
 reenable events, guarded narrow-range PV buses, final PV voltage residual, and
 available mismatch metrics.
 
+## Distributed active-power slack
+
+`power_flow.distributed_slack` distributes the active-power imbalance of an
+island (load + losses − scheduled generation) over the participating
+generators instead of loading it entirely onto the reference bus. The theory,
+the augmented Newton system, and the rules for when the option applies are
+documented in the [Solver Guide](solver.md); this section covers the
+configuration surface.
+
+```yaml
+power_flow:
+  distributed_slack:
+    enabled: false
+    p_mode: pg_weighted
+    respect_p_limits: true
+    fallback: error
+    weights: {}
+```
+
+| YAML path | Type | Default | Allowed values | Meaning |
+|---|---:|---:|---|---|
+| `power_flow.distributed_slack.enabled` | Bool | `false` | `true`, `false` | Master switch. Disabled runs are bit-identical to the classical single-slack solver; imported participation factors alone never activate the feature. |
+| `power_flow.distributed_slack.p_mode` | Symbol/String | `pg_weighted` | `pg_weighted`, `pmax_weighted`, `headroom_weighted`, `imported`, `explicit` | Weight source for the participation factors: scheduled `Pg`, `maxP`, remaining headroom `max(maxP − Pg, 0)`, the imported factor (MATPOWER gen column 21 `APF`, CGMES `GeneratingUnit.normalPF`), or the explicit `weights` table. |
+| `power_flow.distributed_slack.respect_p_limits` | Bool | `true` | `true`, `false` | Warn per participant whose corrected output `Pg + alpha·lambda_P` leaves `[minP, maxP]` by more than a relative tolerance (0.01 % of the limit, floor 1e-3 MW — epsilon overshoots of participants scheduled exactly at a limit are numerical noise). Stage 1 warns only — it does not clamp and re-solve. |
+| `power_flow.distributed_slack.fallback` | Symbol/String | `error` | `error`, `ref_only` | Behavior when an island has no valid participant for the chosen mode: abort with an error, or warn and solve that island classically (reference bus absorbs everything). |
+| `power_flow.distributed_slack.weights` | Mapping | `{}` | bus name/index → weight ≥ 0 | Only read with `p_mode: explicit`; must then be non-empty with at least one positive weight. Keys resolve against bus names first, then against bus indices written as strings. |
+
+Candidates are the generator-type prosumers at the island's REF and PV buses.
+Fixed injections at PQ buses — Stage-0 HVDC converter injections, kept
+boundary equivalent injections — are never participants. Invalid candidates
+(missing data, non-finite or non-positive weight) are dropped with a debug log
+and counted in the result metadata; the surviving weights are normalized to
+`sum(alpha) = 1` per island.
+
+The solved run reports its distributed-slack outcome in the structured status
+next to the wrong-branch metadata (`distributed_slack_active`,
+`distributed_slack_mode`, `distributed_slack_lambda_p_pu`,
+`distributed_slack_lambda_p_mw`, `distributed_slack_participants`,
+`distributed_slack_alpha_sum`, `distributed_slack_dropped`,
+`distributed_slack_p_limit_violations`) and, at `verbose > 0`, prints a
+compact summary with the top participants. In island-wise runs each island
+solves with its own independent `lambda_P`; the per-island values appear in
+the per-island solver statuses.
+
 ## Start mode options
 
 | YAML path | Type | Default | Allowed values | Meaning | Use when | Avoid when | Performance impact | Interactions |
@@ -542,3 +586,26 @@ The Web UI mirrors these rules client-side: the *Autodamping & merit-function li
 Use `refresh_sparlectra_config_file(path; write=false)` to check an existing user YAML against the current template without modifying it. The refresh helper preserves existing user-provided values, adds missing keys from `src/configuration.yaml.example`, reports duplicate keys, and can normalize known deprecated aliases when `normalize_deprecated=true`.
 
 Writing is explicit: pass `write=true` to update the file. By default a timestamped `.bak-YYYYmmdd-HHMMSS` backup is created before writing, and duplicate keys prevent automatic writes. This refresh mechanism is a maintenance tool only; normal configuration loading still accepts supported Q-limit enforcement legacy aliases, and Sparlectra never silently rewrites user YAML during startup.
+
+## Validated large cases
+
+Start-profile recommendations measured on well-known public MATPOWER cases.
+"Standard" means the default import conventions and start mode work as-is;
+the named profiles refer to the start-mode/import options documented above.
+
+| Case | Size | Converges | Recommended settings |
+|---|---:|:---:|---|
+| `case145.m` | 145 buses | ✅ (6 it) | standard |
+| `case300.m` | 300 buses | ✅ (≈5 it) | DC-seeded `profile_blend` start; note: the case's own stored reference angles are not perfectly power-balanced, so treat reference comparisons as a data diagnostic |
+| `case1354pegase.m` | 1 354 buses | ✅ (3 it) | PEGASE shift convention: `matpower_import.shift_sign = -1.0`, `shift_unit = rad` |
+| `case1951rte.m` | 1 951 buses | ✅ (6 it) | standard import + DC-seeded blend start; expect legitimate PV→PQ switches |
+| `case2869pegase.m` | 2 869 buses | ✅ (3 it) | PEGASE shift convention (as above) |
+| `case9241pegase.m` | 9 241 buses | ✅ (4 it) | PEGASE shift convention + DC-seeded `profile_blend` start |
+| `case_ACTIVSg10k.m` | 10 000 buses | ✅ | DC-seeded `profile_blend` start (`matpower_import.auto_profile = recommend` selects it) |
+| `case13659pegase.m` | 13 659 buses | ✅ (6 it) | start from the case's own reference (`angle_mode = matpower_va`, `voltage_mode = all_bus_vm`) — the usually-robust DC blend start does **not** converge on this case |
+| `case_ACTIVSg25k.m` | 25 000 buses | ✅ (8 it) | DC-seeded blend start + Q-limit guard (many zero/narrow-Q generators) |
+| `case_SyntheticUSA.m` | 82 000 buses, 3 islands | ✅ | DC-seeded `profile_blend` start with autodamping; islands solve independently, `mpc.dcline` rows import as fixed injections. A plain flat start does not converge |
+
+The rule of thumb: `matpower_import.auto_profile = recommend` picks the
+right convention and start profile for all of the above except
+`case13659pegase.m`, which needs the stored-reference start.

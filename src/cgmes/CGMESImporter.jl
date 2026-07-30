@@ -33,11 +33,11 @@ import ..Sparlectra
 
 export CGMESFile, CIMObject, CGMESFileInfo, CGMESStore, CGMESSummary
 export collectCGMESFiles, loadCGMES, summarizeCGMES
-export objectsOf, countOf, num, str, boolval, enumval, ref, unresolvedReferences
+export objectsOf, countOf, num, str, boolval, enumval, ref, refsAll, unresolvedReferences
 export CGMESTopology, buildTopology
 export fetchCGMESTestSet, ensureCGMESTestConfigurations, CGMES_TESTSET_ALIASES
 export fetchReliCapGridSet, RELICAPGRID_ALIASES, RELICAPGRID_COMBINED, allCGMESTestSetAliases
-export CGMESImportResult, CGMESShortCircuitData, importCGMES, createNetFromCGMES, compareWithSV
+export CGMESImportResult, CGMESShortCircuitData, importCGMES, createNetFromCGMES, compareWithSV, shortCircuitCoverage, printShortCircuitCoverage
 
 include("cgmes_schema.jl")
 include("cgmes_container.jl")

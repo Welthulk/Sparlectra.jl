@@ -202,6 +202,64 @@ function _compareFlowsWithSV(result::CGMESImportResult)
   return (n = length(rows), max_dp = maximum(dp), max_dq = maximum(dq), rms_dp = sqrt(sum(abs2, dp) / length(dp)), rms_dq = sqrt(sum(abs2, dq) / length(dq)), rows = rows)
 end
 
+"""
+    shortCircuitCoverage(sc::CGMESShortCircuitData) -> Vector{NamedTuple}
+
+Per-class completeness of the harvested short-circuit source data: one row
+per element class with the record count and, per attribute, how many records
+actually carry a value (`attribute => filled/total`). Identification fields
+(`mrid`, `name`, `bus`) are excluded — coverage describes the electrical
+attributes a future IEC 60909 evaluation (issue #277) would consume.
+"""
+function shortCircuitCoverage(sc::CGMESShortCircuitData)::Vector{NamedTuple}
+  rows = NamedTuple[]
+  for (label, records) in (
+    ("ExternalNetworkInjection", sc.external_network_injections),
+    ("SynchronousMachine", sc.synchronous_machines),
+    ("ACLineSegment", sc.ac_line_segments),
+    ("PowerTransformerEnd", sc.transformer_ends),
+    ("EquivalentInjection", sc.equivalent_injections),
+  )
+    n = length(records)
+    attrs = NamedTuple[]
+    if n > 0
+      for key in keys(records[1])
+        key in (:mrid, :name, :bus) && continue
+        filled = count(r -> r[key] !== nothing, records)
+        push!(attrs, (attribute = key, filled = filled, total = n))
+      end
+    end
+    push!(rows, (class = label, records = n, attributes = attrs))
+  end
+  return rows
+end
+
+"""
+    printShortCircuitCoverage(io, sc)
+
+Readable rendering of [`shortCircuitCoverage`](@ref): per class the record
+count and each attribute's fill rate, `✓` when complete. This is what
+`cgmes.log` prints under "Short-circuit source data".
+"""
+function printShortCircuitCoverage(io::IO, sc::CGMESShortCircuitData)
+  for row in shortCircuitCoverage(sc)
+    if row.records == 0
+      # NOTE: the harvest stores line/transformer/EI records only when at
+      # least one short-circuit attribute is present, so for those classes
+      # "none" means "no records WITH short-circuit data", not necessarily
+      # "class absent from the delivery" (machines/ENIs are always recorded).
+      println(io, "  ", rpad(row.class, 28), "none (no records with short-circuit attributes)")
+      continue
+    end
+    println(io, "  ", rpad(row.class, 28), row.records, " record(s)")
+    for a in row.attributes
+      marker = a.filled == a.total ? "✓" : (a.filled == 0 ? "—" : string(a.filled, "/", a.total))
+      println(io, "    ", rpad(String(a.attribute), 34), marker)
+    end
+  end
+  return nothing
+end
+
 function Base.show(io::IO, ::MIME"text/plain", s::CGMESSummary)
   println(io, "CGMES summary")
   println(io, "  version: ", isempty(s.version) ? "unknown/mixed" : s.version)

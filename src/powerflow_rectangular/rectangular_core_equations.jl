@@ -73,11 +73,18 @@ For each non-slack bus i:
 
 F is stacked as [ΔP_2, ΔQ/ΔV_2, ..., ΔP_n, ΔQ/ΔV_n] over all non-slack buses.
 """
-function mismatch_rectangular(Ybus, V::Vector{ComplexF64}, S::Vector{ComplexF64}, bus_types::Vector{Symbol}, Vset::Vector{Float64}, slack_idx::Int)
+function mismatch_rectangular(Ybus, V::Vector{ComplexF64}, S::Vector{ComplexF64}, bus_types::Vector{Symbol}, Vset::Vector{Float64}, slack_idx::Int; dslack::Union{Nothing,DistributedSlackState} = nothing)
   # Residual/update convention for the rectangular solver:
   # F = calc - spec, including the PV row ΔV = |V| - Vset, and Newton solves
   # J * δx = -F before applying rectangular absolute updates ΔVr, ΔVi.
   # The row order is fixed as [ΔP_i, second-equation_i] for each non-slack bus i.
+  #
+  # Distributed slack (issue #192): with an active `dslack`, every participant's
+  # P residual gains the term -alpha_i * lambda, and the REF bus's P residual is
+  # APPENDED as the last row — the interleaved layout of the 2(n-1) voltage rows
+  # stays untouched, so all row-indexed consumers keep working. lambda is read
+  # from `dslack.lambda_trial` (see _dslack_set_trial!): step-search helpers
+  # evaluate trial states V + a*δV whose matching lambda is lambda + a*δlambda.
   n = length(V)
   @assert length(S) == n
   @assert length(bus_types) == n
@@ -85,10 +92,14 @@ function mismatch_rectangular(Ybus, V::Vector{ComplexF64}, S::Vector{ComplexF64}
   # Network-based injections for the current state
   S_calc = calc_injections(Ybus, V)
 
-  # F has 2*(n-1) entries: for each non-slack bus two residuals
+  active = dslack !== nothing
+  lambda = active ? dslack.lambda_trial : 0.0
+
+  # F has 2*(n-1) entries (plus the appended REF-P row when distributed slack
+  # is active): for each non-slack bus two residuals
   # PQ:  ΔP_i, ΔQ_i
   # PV:  ΔP_i, ΔV_i
-  F = zeros(Float64, 2 * (n - 1))
+  F = zeros(Float64, 2 * (n - 1) + (active ? 1 : 0))
 
   row = 1
   @inbounds for i = 1:n
@@ -117,7 +128,17 @@ function mismatch_rectangular(Ybus, V::Vector{ComplexF64}, S::Vector{ComplexF64}
       error("mismatch_rectangular: unsupported bus type $(bus_types[i]) at bus $i")
     end
 
+    if active
+      a = dslack.alpha[i]
+      a != 0.0 && (F[row] -= a * lambda)
+    end
+
     row += 2
+  end
+
+  if active
+    # The REF bus's P is no longer free: it participates like everyone else.
+    F[end] = real(S_calc[slack_idx]) - real(S[slack_idx]) - dslack.alpha[slack_idx] * lambda
   end
 
   return F

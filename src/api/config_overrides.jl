@@ -42,6 +42,8 @@ const GUI_EDITABLE_CONFIG_KEYS = Set([
   "power_flow.start_current_iteration.vm_max_pu",
   "power_flow.start_current_iteration.max_angle_step_deg",
   "power_flow.start_current_iteration.only_for_large_cases",
+  "power_flow.distributed_slack.enabled",
+  "power_flow.distributed_slack.p_mode",
   "power_flow.merit.enabled",
   "power_flow.merit.armijo_c1",
   "power_flow.merit.fallback_max_mismatch",
@@ -69,6 +71,7 @@ const GUI_EDITABLE_CONFIG_KEYS = Set([
   "matpower_export.write_solution",
   "transformer.tap_changer_model",
   "output.logfile_results",
+  "output.console_live",
   "output.detailed_result_csv_write_mode",
   "output.detailed_result_csv_exporter",
   "output.detailed_result_csv_direct_threshold_buses",
@@ -95,7 +98,7 @@ function _validate_override_type(key::String, value, expected::Type)
 end
 
 function _validate_gui_override_value(key::String, value)
-  if key in ("power_flow.autodamp", "power_flow.qlimits.enabled", "power_flow.start_current_iteration.enabled", "power_flow.start_current_iteration.accept_only_if_improved", "power_flow.start_current_iteration.only_for_large_cases", "power_flow.merit.enabled", "power_flow.merit.fallback_max_mismatch", "power_flow.trust_region.enabled", "power_flow.apslf.use_pade", "power_flow.apslf.nr_polish", "power_flow.apslf_start.enabled", "power_flow.islands.enabled", "power_flow.islands.diagnostic_continue_after_failure", "benchmark.enabled", "matpower_import.apply_bus_names", "matpower_import.apply_branch_names", "matpower_import.apply_branch_kind", "matpower_import.import_for001_contingencies", "matpower_import.net_cache.enabled", "matpower_export.write_solution")
+  if key in ("power_flow.autodamp", "power_flow.qlimits.enabled", "power_flow.start_current_iteration.enabled", "power_flow.start_current_iteration.accept_only_if_improved", "power_flow.start_current_iteration.only_for_large_cases", "power_flow.merit.enabled", "power_flow.merit.fallback_max_mismatch", "power_flow.trust_region.enabled", "power_flow.apslf.use_pade", "power_flow.apslf.nr_polish", "power_flow.apslf_start.enabled", "power_flow.islands.enabled", "power_flow.islands.diagnostic_continue_after_failure", "benchmark.enabled", "matpower_import.apply_bus_names", "matpower_import.apply_branch_names", "matpower_import.apply_branch_kind", "matpower_import.import_for001_contingencies", "matpower_import.net_cache.enabled", "matpower_export.write_solution", "output.console_live")
     _validate_override_type(key, value, Bool)
   elseif key in ("power_flow.max_iter", "power_flow.start_current_iteration.max_iter", "power_flow.apslf.order", "power_flow.apslf_start.order", "benchmark.samples", "output.detailed_result_csv_direct_threshold_buses", "output.detailed_result_csv_buffer_initial_bytes", "output.detailed_result_csv_buffer_max_bytes", "output.detailed_result_csv_streaming_threshold_rows")
     _validate_override_type(key, value, Int)

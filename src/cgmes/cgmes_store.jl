@@ -28,6 +28,7 @@ struct CGMESStore
   files::Vector{CGMESFileInfo}
   version::String                # "2.4.15" | "3.0" | "" (mixed/unknown)
   boundary::Set{String}
+  multirefs::CGMESMultiRefs      # overflow of repeated reference properties, see refsAll
 end
 
 """
@@ -42,6 +43,7 @@ function loadCGMES(path; profile_filter::Set{Symbol} = IMPORT_PROFILE_TAGS)::CGM
   files = collectCGMESFiles(path)
   objects = Dict{String,CIMObject}()
   byclass = Dict{Symbol,Vector{String}}()
+  multirefs = CGMESMultiRefs()
   infos = Vector{CGMESFileInfo}(undef, length(files))
 
   # Order: EQ-family first, then TP, then SSH/SV overlays. Classification
@@ -54,7 +56,7 @@ function loadCGMES(path; profile_filter::Set{Symbol} = IMPORT_PROFILE_TAGS)::CGM
   boundary = Set{String}()
   for i in order
     known = Set(keys(objects))
-    infos[i] = readCGMESFile!(objects, byclass, files[i]; profile_filter = profile_filter)
+    infos[i] = readCGMESFile!(objects, byclass, files[i]; profile_filter = profile_filter, multirefs = multirefs)
     if !isempty(intersect(infos[i].profiles, (:EQ_BD, :EQ_BD_OP, :TP_BD)))
       for m in keys(objects)
         m in known || push!(boundary, m)
@@ -64,7 +66,7 @@ function loadCGMES(path; profile_filter::Set{Symbol} = IMPORT_PROFILE_TAGS)::CGM
 
   versions = unique(filter(!isempty, [fi.version for fi in infos]))
   version = length(versions) == 1 ? versions[1] : ""
-  return CGMESStore(objects, byclass, infos, version, boundary)
+  return CGMESStore(objects, byclass, infos, version, boundary, multirefs)
 end
 
 """Cheap header-only pass (no object parsing) used for read ordering."""
@@ -75,6 +77,22 @@ function readCGMESHeader(file::CGMESFile)::CGMESFileInfo
 end
 
 # --- accessors (kept deliberately dumb) -------------------------------------
+
+"""
+    refsAll(store, obj, name) -> Vector{String}
+
+Every target mRID of the (possibly multi-valued) reference `name` on `obj`,
+in document order. `obj.refs[name]` keeps only the first value — repeated
+properties (`TopologicalIsland.TopologicalNodes`, `md:Model.DependentOn`)
+overflow into `store.multirefs`. Returns an empty vector when the reference
+is absent.
+"""
+function refsAll(store::CGMESStore, obj::CIMObject, name::Symbol)::Vector{String}
+  first_val = get(obj.refs, name, nothing)
+  extra = get(store.multirefs, (obj.mrid, name), nothing)
+  first_val === nothing && return extra === nothing ? String[] : copy(extra)
+  return extra === nothing ? [first_val] : vcat([first_val], extra)
+end
 
 """All objects of `class`, in file order."""
 objectsOf(store::CGMESStore, class::Symbol) = (store.objects[m] for m in get(store.byclass, class, String[]))

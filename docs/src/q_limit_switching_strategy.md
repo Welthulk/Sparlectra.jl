@@ -2,6 +2,13 @@
 
 In power-flow analysis, reactive-power limits of generators may look like a minor modelling detail at first. In practice, however, they can decide whether a network case converges robustly or enters a switching cascade.
 
+Where the limits *come from* is a separate question from how they are
+enforced: a CGMES `ReactiveCapabilityCurve` — Q limits as a function of
+active power — is evaluated once at the machine's scheduled P during import
+and then enforced through exactly the machinery described here; see
+[CGMES Import](cgmes_import.md) for the evaluation and why the
+voltage-dependent Q(U) path is deliberately not involved.
+
 A PV bus keeps its voltage magnitude fixed in the classical power-flow formulation. The reactive power required to maintain that voltage is determined by the solution. If the required reactive power exceeds the generator's admissible range, the bus can no longer be treated as an unconstrained voltage-controlled PV bus. It must be converted into a PQ bus with reactive power fixed at the violated limit.
 
 This PV-to-PQ conversion is numerically delicate. Two basic strategies are useful to distinguish.
