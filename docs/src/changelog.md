@@ -32,12 +32,17 @@ sub-transmission levels, whose normal operating spread produced false
 flagged while its 380 kV level was clean). See
 [Configuration](configuration.md).
 
-**Default start uses imported voltages.** The shipped configuration now sets
-the legacy `power_flow.flatstart` to `false`, so imported start voltages —
-MATPOWER `VM`/`VA` and especially the CGMES `SvVoltage` state — reach the
-solver by default. The former `true` silently flat-started CGMES deliveries,
-which is what made the RealGrid case diverge in the Web UI while it solves in
-a handful of iterations from its SV state.
+**Default start uses imported voltages** *(behavior change)*. The shipped
+configuration now sets the legacy `power_flow.flatstart` to `false`, so
+imported start voltages — MATPOWER `VM`/`VA` and especially the CGMES
+`SvVoltage` state — reach the solver by default. This changes the effective
+start point of any run that did not set the key explicitly: MATPOWER runs now
+start from the case's own `VM`/`VA` instead of the projected flat start (same
+converged results, different iteration path), and CGMES runs no longer lose
+their SV state silently — which is what made the RealGrid case diverge in the
+Web UI while it solves in a handful of iterations from its SV state. Set
+`flatstart: true` to restore the previous behavior; CGMES runs are steered by
+`cgmes_import.start_values` regardless.
 
 ## Bugfixes
 

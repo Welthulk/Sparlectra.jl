@@ -1069,7 +1069,7 @@ function run_cgmes_importer_tests()
         # not asserted here.
         @test any(m -> startswith(m, "warning:") && occursin("implausible tap correction", m), rbb.messages)
         @test any(m -> startswith(m, "warning:") && occursin("implausible admittance", m) && occursin("shunt skipped", m), rbb.messages)
-        @test any(m -> occursin("AsynchronousMachine ASM_1", m) && occursin("Stage-0", m), rbb.messages)
+        @test any(m -> occursin("AsynchronousMachine ASM_1", m) && occursin("fixed PQ operating point", m), rbb.messages)
         _, ergflat = runpf!(rbb.net, 60, 1e-8, 0; opt_flatstart = true)
         @test ergflat == 0
       end
@@ -1081,7 +1081,7 @@ function run_cgmes_importer_tests()
     if isdir(mgbc2) && isdir(mgbd2)
       @testset "MiniGrid: AsynchronousMachine mapping closes the SV gap (#294 point 6)" begin
         res = importCGMES(path = [mgbc2, mgbd2], name = "MiniGrid_BB")
-        asm = filter(m -> occursin("AsynchronousMachine", m) && occursin("Stage-0", m), res.messages)
+        asm = filter(m -> occursin("AsynchronousMachine", m) && occursin("fixed PQ operating point", m), res.messages)
         @test length(asm) == 3          # M3, M2a, M2b — 9 MW / 5 MVAr of motor load at bus 7
         _, erg = runpf!(res.net, 30, 1e-8, 0)
         @test erg == 0
@@ -1263,7 +1263,7 @@ function run_cgmes_importer_tests()
           @test any(m -> occursin("BP_SD-EH_DC1", m) && occursin("node split per side", m), msgs)
           @test haskey(res.net.busDict, "BP_SD-EH_DC1") && haskey(res.net.busDict, "BP_SD-EH_DC1@2")
           # inline VSC stations become fixed PCC injections
-          @test count(m -> occursin("Stage-0 HVDC", m), msgs) == 2
+          @test count(m -> occursin("HVDC converter: fixed PCC injection", m), msgs) == 2
 
           # the assembled model must solve and reproduce the delivery's SV
           # state. Q-limits stay off here: the active-set path currently cannot

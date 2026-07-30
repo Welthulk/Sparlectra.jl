@@ -379,6 +379,15 @@ power_flow:
     write(wrong_branch_bad, "power_flow:\n  wrong_branch_detection: maybe\n")
     @test_throws ArgumentError Sparlectra.load_sparlectra_config(wrong_branch_bad; reload = true)
 
+    # _copy_sparlectra_with_powerflow must carry EVERY field (regression: the
+    # former hand-written keyword list silently reset cgmes and webui to
+    # defaults on every copy).
+    cgmes_cfg = Sparlectra.SparlectraConfig(cgmes = Sparlectra.CGMESImportConfig(start_values = :sv, base_mva = 50.0))
+    cgmes_copied = Sparlectra._copy_sparlectra_with_powerflow(cgmes_cfg, cgmes_cfg.powerflow)
+    @test cgmes_copied.cgmes.start_values === :sv
+    @test cgmes_copied.cgmes.base_mva == 50.0
+    @test all(getfield(cgmes_copied, f) == getfield(cgmes_cfg, f) for f in fieldnames(Sparlectra.SparlectraConfig))
+
     # cgmes_import.start_values: default flat, sv accepted, invalid rejected
     # with the key name in the message.
     @test Sparlectra.CGMESImportConfig().start_values === :flat

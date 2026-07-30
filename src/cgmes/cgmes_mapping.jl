@@ -1486,7 +1486,8 @@ function _mapInjections!(net, store, topo, created, svmap, ctx::_MapCtx; multi_s
     p = num(am, :p, 0.0)
     q = num(am, :q, 0.0)
     Sparlectra.addProsumer!(net = net, busName = bus, type = "ASYNCHRONOUSMACHINE", p = p, q = q, defer_bus_type_refresh = true)
-    push!(ctx.messages, "notice: AsynchronousMachine $(name) — Stage-0 fixed PQ operating point from SSH (p=$(round(p; digits = 2)) MW, q=$(round(q; digits = 2)) MVAr, load convention) at $(bus)")
+    # No internal staging vocabulary in user-facing importer messages.
+    push!(ctx.messages, "notice: AsynchronousMachine $(name) — fixed PQ operating point from SSH (p=$(round(p; digits = 2)) MW, q=$(round(q; digits = 2)) MVAr, load convention) at $(bus)")
   end
 
   for eni in objectsOf(store, :ExternalNetworkInjection)
@@ -1665,7 +1666,7 @@ function _mapInjections!(net, store, topo, created, svmap, ctx::_MapCtx; multi_s
           isRegulated = false,
         ),
       )
-      push!(ctx.messages, "notice: $(cls) $(name) — Stage-0 HVDC: fixed PCC injection at $(bus) (p=$(round(-p_ssh; digits = 1)) MW, q=$(round(-q_ssh; digits = 1)) MVAr from SSH; DC side not mapped, no angle coupling)")
+      push!(ctx.messages, "notice: $(cls) $(name) — HVDC converter: fixed PCC injection at $(bus) (p=$(round(-p_ssh; digits = 1)) MW, q=$(round(-q_ssh; digits = 1)) MVAr from SSH; DC side not mapped, no angle coupling)")
     end
   end
 

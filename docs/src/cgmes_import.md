@@ -44,7 +44,7 @@ from filenames.
 | `EnergyConsumer`, `ConformLoad`, `NonConformLoad`, `StationSupply` | loads (SSH values) |
 | `SynchronousMachine`, `ExternalNetworkInjection`, `EquivalentInjection` | injections, PV where a local voltage control is active; a machine whose voltage `RegulatingControl` points at a *different* bus is held PV at its own bus by default, or becomes an outer-loop remote voltage controller with `machine_control = true` (see [Remote Voltage Control](remote_voltage_control.md)); machine Q limits from the `ReactiveCapabilityCurve` (evaluated at the scheduled P) where one exists, else the scalar `minQ`/`maxQ` hull; a positive `GeneratingUnit.normalPF` arrives as `ProSumer.participationFactor` for the [distributed slack](powerflow_configuration.md) (`p_mode: imported`), zero/absent maps to unknown |
 | `StaticVarCompensator` | P = 0 reactive injection, Q limits from the Ω ratings |
-| `AsynchronousMachine` | Stage-0: fixed PQ operating point from the SSH `RotatingMachine.p`/`q` (load convention — a motor consumes with `p > 0`); no voltage regulation, no slack candidacy. The induction machine's voltage/slip dependence is a dynamics topic, not a steady-state one |
+| `AsynchronousMachine` | Fixed PQ operating point from the SSH `RotatingMachine.p`/`q` (load convention — a motor consumes with `p > 0`); no voltage regulation, no slack candidacy. The induction machine's voltage/slip dependence is a dynamics topic, not a steady-state one |
 | `SvVoltage`, `SvPowerFlow`, `SvTapStep` | start values and validation reference |
 
 Everything else is counted in the coverage report rather than silently
@@ -189,7 +189,7 @@ separate islands. Each skip is reported. The `ignore_connected` diagnostic
 override also revives out-of-service equipment, consistent with its "treat
 everything as live" meaning.
 
-### HVDC (Stage-0 model)
+### HVDC
 
 The one property of HVDC that matters for a load flow is that it has **no
 angle coupling**: the transfer is a control setpoint, not the result of an
@@ -220,7 +220,7 @@ delivery patterns are handled:
     galvanically joined and the convergence/SV symptoms described above
     return. This is a known limitation, not a bug.
 
-## Tap control (Stage 2)
+## Tap control
 
 With `tap_control = true` the importer starts from the SSH tap positions and
 attaches Sparlectra's outer-loop controllers for every tap changer whose
@@ -237,7 +237,7 @@ Two guards apply: a voltage controller whose target bus is held by a generator
 CGMES target deadbands are often wide, so a controller may legitimately settle
 one step away from the position the exporting tool recorded.
 
-## Machine remote voltage control (Stage 2)
+## Machine remote voltage control
 
 With `machine_control = true` a machine whose voltage `RegulatingControl`
 terminal sits at a *foreign* bus is imported as a PQ injection with the SSH
