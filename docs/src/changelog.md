@@ -3,7 +3,7 @@
 IEC 60909 short-circuit stage (#277), CGMES export.
 
 ## Breaking Changes
-
+ 
 - **Short-circuit calculation (IEC 60909-0).** `runShortCircuit!` computes Ik''max/min, Sk'' and i_p per fault bus from the CGMES short-circuit data. Where attributes were missing and defaults substituted (e.g. motors), the affected rows are flagged — a flagged Ik''max is a lower bound. Web UI gets a Short circuit button for CGMES cases that carry the data; writes `short_circuit_max.csv` / `short_circuit_min.csv`. (#277)
 - **CGMES export.** `writeCGMESFiles` writes a complete 2.4.15 delivery (EQ/TP/SSH/SV, optionally zipped). Export → re-import solves to the same power flow and keeps the original mRIDs; new objects get deterministic uuid5 ids, renaming never changes an mRID. Export checkbox in the Web UI run form.
 - **Auto slack** (`power_flow.auto_slack`, off by default): promotes the strongest injection to slack when the case registers none, logged.
