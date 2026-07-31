@@ -127,6 +127,64 @@ function run_webui_fast_tests()
       legacy_html = Sparlectra.render_powerflow_result(Dict("run_id" => "old", "status" => "completed", "elapsed_seconds" => 3.0))
       @test occursin("Total time", legacy_html)
     end
+
+    @testset "CGMES export checkbox and result row" begin
+      form_html = Sparlectra.render_powerflow_form(output_root = mktempdir())
+      @test occursin("name=\"export_cgmes\"", form_html)
+      @test Sparlectra.resolve_webui_help_topic("webui.export_cgmes") !== nothing
+      # excerpt loading needs the cgmes_export page in WEBUI_DOC_PAGES and the
+      # "Export from the Web UI" heading in docs/src/cgmes_export.md
+      @test Sparlectra.load_webui_help_excerpt("webui.export_cgmes") !== nothing
+
+      req = Sparlectra.powerflow_webui_request(Dict("casefile" => "case.m", "export_cgmes" => "true"))
+      @test req["export_cgmes"] === true
+      # unchecked checkbox: browsers submit only the hidden false field
+      req = Sparlectra.powerflow_webui_request(Dict("casefile" => "case.m", "export_cgmes" => "false"))
+      @test req["export_cgmes"] === false
+      # absent field falls back to the spec default (false)
+      req = Sparlectra.powerflow_webui_request(Dict("casefile" => "case.m"))
+      @test req["export_cgmes"] === false
+
+      completed_html = Sparlectra.render_powerflow_result(
+        Dict(
+          "run_id" => "x",
+          "status" => "completed",
+          "metadata" => Dict("cgmes_export_status" => "completed", "cgmes_export_files" => "n_EQ.xml, n_TP.xml, n_SSH.xml", "cgmes_export_notices" => "transformer T1: phase shift 2.0° not exported (fixed ratio only)", "cgmes_export_sc_lines" => 3),
+        ),
+      )
+      @test occursin("CGMES export", completed_html)
+      @test occursin("n_SSH.xml", completed_html)
+      @test occursin("phase shift 2.0° not exported", completed_html)
+      @test occursin("zero-sequence data on 3 line(s)", completed_html)
+
+      failed_html = Sparlectra.render_powerflow_result(Dict("run_id" => "y", "status" => "completed", "metadata" => Dict("cgmes_export_status" => "failed", "cgmes_export_error" => "boom")))
+      @test occursin("failed — boom", failed_html)
+
+      plain_html = Sparlectra.render_powerflow_result(Dict("run_id" => "z", "status" => "completed"))
+      @test !occursin("CGMES export", plain_html)
+    end
+
+    @testset "config edits win over older case settings" begin
+      dir = mktempdir()
+      cfg = joinpath(dir, "conf.yaml")
+      prof = joinpath(dir, "profile.yaml")
+      write(prof, "placeholder")
+      sleep(1.1)
+      write(cfg, "power_flow:\n  max_iter: 99\n")
+      sidecar = Dict{String,Any}("power_flow_max_iter" => 55, "power_flow_autodamp_min" => 0.07, "_profile_path" => prof)
+      v = Sparlectra.webui_form_state(selected_config_file = cfg, sidecar_profile = sidecar)
+      # config file is newer: its keys win; fields the YAML does not set
+      # keep their saved case value
+      @test v["power_flow_max_iter"] == 99
+      @test v["power_flow_autodamp_min"] == 0.07
+      @test v["_config_newer_than_profile"] === true
+      # sidecar newer again: saved case settings win as before
+      sleep(1.1)
+      write(prof, "placeholder2")
+      v2 = Sparlectra.webui_form_state(selected_config_file = cfg, sidecar_profile = sidecar)
+      @test v2["power_flow_max_iter"] == 55
+      @test !haskey(v2, "_config_newer_than_profile")
+    end
   end
 end
 

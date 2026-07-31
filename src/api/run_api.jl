@@ -612,6 +612,7 @@ function _run_sparlectra_api(;
   detailed_result_csv::Bool = false,
   detailed_result_csv_format = nothing,
   detailed_result_csv_semicolon::Bool = false,
+  export_cgmes::Bool = false,
   phase_timings::AbstractDict = Dict{Symbol,Float64}(),
   run_id::String,
   cancellation_token = nothing,
@@ -704,6 +705,11 @@ function _run_sparlectra_api(;
   execution_start = time_ns()
   dtf_metadata = Dict{String,Any}()
   cgmes_metadata = Dict{String,Any}()
+  # Harvested short-circuit source data for the optional CGMES export
+  # artifact; only a CGMES import can supply it (MATPOWER/DTF nets export
+  # without it).
+  cgmes_export_sc_line_data = nothing
+  cgmes_export_sc_source = nothing
   if detected_case_format === :cgmes
     emit_phase("reading_cgmes_delivery")
     cgmes_cfg = config.cgmes
@@ -720,10 +726,17 @@ function _run_sparlectra_api(;
         vset_min_pu = cgmes_cfg.vset_min_pu,
         vset_max_pu = cgmes_cfg.vset_max_pu,
         multi_slack = cgmes_cfg.multi_slack,
+        strict_placeholder_guards = cgmes_cfg.placeholder_guards === :strict,
+        infer_base_voltages = cgmes_cfg.infer_base_voltages,
         name = basename(case_path),
       )
     catch err
       message = sprint(showerror, err)
+      # The typed import error carries the full importFailureAnalysis report
+      # (supplied models, missing declared dependencies, unresolved-reference
+      # histogram, verdict). Write it into cgmes.log — the place the error
+      # message points the Web UI user at.
+      import_analysis = err isa CGMESImporter.CGMESImportError ? err.analysis : ""
       # A failed import is exactly when the report matters most, so write a
       # diagnostic cgmes.log from what can still be read (summarizeCGMES works
       # on incomplete deliveries) before returning the failure.
@@ -734,6 +747,11 @@ function _run_sparlectra_api(;
           println(io, "paths:  ", join(paths, "\n        "))
           println(io, "error:  ", message)
           println(io)
+          if !isempty(import_analysis)
+            println(io, "## Import analysis")
+            print(io, import_analysis)
+            println(io)
+          end
           summary = CGMESImporter.summarizeCGMES(path = length(paths) == 1 ? paths[1] : paths)
           println(io, "version: ", summary.version)
           println(io, "objects: ", summary.object_count, " in ", length(summary.class_histogram), " classes")
@@ -753,7 +771,7 @@ function _run_sparlectra_api(;
       catch logerr
         @warn "could not write diagnostic cgmes.log" exception = logerr
       end
-      is_boundary = occursin("boundary set missing", message) || occursin("unresolved topology references", message)
+      is_boundary = occursin("boundary set missing", message) || occursin("unresolved topology references", message) || occursin("no resolvable BaseVoltage", message)
       reason = is_boundary ? "cgmes_boundary_missing" : "cgmes_import_error"
       is_boundary && (message = string(message, " — upload the boundary delivery into the same case directory (its name must contain \"Boundary\" or \"_BD_\"), add it to cgmes_import.path, or type cgmes:<alias> to fetch a ready-made ENTSO-E test set."))
       metadata = Dict("input_format" => String(requested_case_format), "input_format_detected" => "cgmes")
@@ -825,6 +843,10 @@ function _run_sparlectra_api(;
     # whose TopologicalNode carried no usable SvVoltage and therefore start at
     # the flat 1.0 pu / 0° fallback instead of the delivery's SV state.
     api_performance_profile[:cgmes_no_sv_buses] = Set(cgmes_result.no_sv_buses)
+    if export_cgmes
+      cgmes_export_sc_line_data = CGMESImporter.cgmesLineShortCircuitData(cgmes_result)
+      cgmes_export_sc_source = cgmes_result.shortcircuit
+    end
     raw_result = try
       open(logfile, "a") do io
         # run.log carries the narrative; the full importer report (files,
@@ -864,9 +886,9 @@ function _run_sparlectra_api(;
     if sv_compare !== nothing
       try
         open(joinpath(output_path, "sv_compare.csv"), "w") do io
-          println(io, "bus,vm_pu,sv_vm_pu,dvm,va_deg,sv_va_deg,dva")
+          println(io, "bus,vm_pu,sv_vm_pu,dvm,va_deg,sv_va_deg,dva,dva_aligned")
           for r in sv_compare.rows
-            println(io, join((_csv_field(String(r.bus), ','), r.vm_pu, r.sv_vm_pu, r.dvm, r.va_deg, r.sv_va_deg, r.dva), ','))
+            println(io, join((_csv_field(String(r.bus), ','), r.vm_pu, r.sv_vm_pu, r.dvm, r.va_deg, r.sv_va_deg, r.dva, r.dva_aligned), ','))
           end
         end
         # The flow rows come for free with compareWithSV (computed in the same
@@ -889,6 +911,10 @@ function _run_sparlectra_api(;
           println(io, "  unavailable", sv_compare_error === nothing ? "" : ": " * sv_compare_error)
         else
           println(io, "  voltages: n=", sv_compare.n, "  max|dvm|=", sv_compare.max_dvm, " pu  rms=", sv_compare.rms_dvm, "  max|dva|=", sv_compare.max_dva, "°  rms=", sv_compare.rms_dva, "°")
+          # A cut-out IGM keeps the CGM's global angle reference while the
+          # local solve pins its own slack — the uniform offset is removed
+          # from the dva judgement and reported here instead.
+          isfinite(sv_compare.va_ref_offset_deg) && abs(sv_compare.va_ref_offset_deg) > 0.01 && println(io, "  angle reference offset removed: ", round(sv_compare.va_ref_offset_deg; digits = 2), "° (median; raw dva column stays in sv_compare.csv)")
           println(io, "  flows:    n=", sv_compare.flows.n, "  max|dp|=", sv_compare.flows.max_dp, " MW  max|dq|=", sv_compare.flows.max_dq, " MVAr")
           println(io, "  artifacts: sv_compare.csv, sv_compare_flows.csv")
           raw_result.final_converged || println(io, "  note: run did not converge — deltas describe the non-converged state, not the imported model")
@@ -908,6 +934,7 @@ function _run_sparlectra_api(;
       "cgmes_sv_compare_rms_dvm" => sv_compare === nothing ? NaN : sv_compare.rms_dvm,
       "cgmes_sv_compare_max_dva" => sv_compare === nothing ? NaN : sv_compare.max_dva,
       "cgmes_sv_compare_rms_dva" => sv_compare === nothing ? NaN : sv_compare.rms_dva,
+      "cgmes_sv_compare_va_ref_offset_deg" => sv_compare === nothing ? NaN : sv_compare.va_ref_offset_deg,
       "cgmes_import_used" => true,
       "cgmes_version" => cgmes_result.store.version,
       "cgmes_paths" => join(paths, ";"),
@@ -1106,6 +1133,50 @@ function _run_sparlectra_api(;
       println(io, "  csv_format: ", csv_format.name)
     end
   end
+  # Optional CGMES export artifact (Web UI checkbox / API flag): EQ+TP files
+  # next to the other run artifacts. Reads only the static network model, so
+  # it works for non-converged runs too; a failure is recorded as metadata and
+  # a run.log line, never as a run failure — the power-flow result stays the
+  # primary purpose of the run.
+  cgmes_export_metadata = Dict{String,Any}()
+  if export_cgmes
+    if raw_result.net === nothing
+      cgmes_export_metadata["cgmes_export_status"] = "skipped"
+      cgmes_export_metadata["cgmes_export_skip_reason"] = "no_network_available"
+      open(logfile, "a") do io
+        println(io, "CGMES export skipped: no network available")
+      end
+    else
+      emit_phase("writing_cgmes_export")
+      try
+        sc_data = cgmes_export_sc_line_data === nothing ? Dict{Int,CGMESLineShortCircuit}() : cgmes_export_sc_line_data
+        export_notices = String[]
+        # the profile files are intermediate: only the combined delivery zip
+        # becomes a run artifact
+        export_files = writeCGMESFiles(raw_result.net; path = mktempdir(), sc_line_data = sc_data, sc_source = cgmes_export_sc_source, notices = export_notices, zip = true)
+        zip_artifact = joinpath(output_path, basename(export_files[end]))
+        mv(export_files[end], zip_artifact; force = true)
+        cgmes_export_metadata["cgmes_export_status"] = "completed"
+        cgmes_export_metadata["cgmes_export_files"] = basename(zip_artifact)
+        cgmes_export_metadata["cgmes_export_notices"] = join(export_notices, "; ")
+        cgmes_export_metadata["cgmes_export_sc_lines"] = length(sc_data)
+        open(logfile, "a") do io
+          println(io, "CGMES export: ", basename(zip_artifact), " (EQ, TP, SSH, SV)")
+          for n in export_notices
+            println(io, "  notice: ", n)
+          end
+          isempty(sc_data) || println(io, "  zero-sequence line data: ", length(sc_data), " line(s)")
+        end
+      catch err
+        cgmes_export_error = sprint(showerror, err)
+        cgmes_export_metadata["cgmes_export_status"] = "failed"
+        cgmes_export_metadata["cgmes_export_error"] = cgmes_export_error
+        open(logfile, "a") do io
+          println(io, "CGMES export failed: ", cgmes_export_error)
+        end
+      end
+    end
+  end
   _check_powerflow_cancelled!(cancellation_token)
   emit_phase("finalizing_success")
   _finalize_service_timings!(phase_recorder, total_start; status = "completed")
@@ -1223,6 +1294,7 @@ function _run_sparlectra_api(;
   )
   isempty(dtf_metadata) || merge!(final_metadata, dtf_metadata)
   isempty(cgmes_metadata) || merge!(final_metadata, cgmes_metadata)
+  isempty(cgmes_export_metadata) || merge!(final_metadata, cgmes_export_metadata)
   _write_run_metadata_artifact(output_path; case_path = case_path, lifecycle = final_metadata)
   message = numerical_success ? "PowerFlow run completed." : raw_result.reason_text
   result = _api_result(

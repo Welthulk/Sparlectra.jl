@@ -54,7 +54,9 @@ function _resolve_julia_threads_request(config_file::AbstractString, cli_overrid
   !isempty(strip(cli_override)) && return Sparlectra.parse_runtime_threads_request(cli_override)
   env_override = get(ENV, "SPARLECTRA_JULIA_THREADS", "")
   !isempty(strip(env_override)) && return Sparlectra.parse_runtime_threads_request(env_override)
-  cfg = Sparlectra.load_sparlectra_config(config_file; reload = true)
+  # An empty config_file means "no user configuration" — load the resolved
+  # default chain instead of passing "" (which would be rejected as a path).
+  cfg = isempty(strip(config_file)) ? Sparlectra.load_sparlectra_config() : Sparlectra.load_sparlectra_config(config_file; reload = true)
   return Sparlectra.parse_runtime_threads_request(cfg.runtime.julia_threads)
 end
 

@@ -188,6 +188,98 @@ function run_island_diagnostics_tests()
       end
     end
 
+    @testset "no-slack failure names the isolation cause" begin
+      # A branch-less delivery (e.g. one side of a DC border crossing) leaves
+      # every bus isolated; the old error was a bare "no slack bus found".
+      # The message must now name the actual cause: nothing is energized.
+      onebus = Net(name = "island_diag_onebus", baseMVA = 100.0)
+      addBus!(net = onebus, busName = "B1", vn_kV = 110.0)
+      addProsumer!(net = onebus, busName = "B1", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "B1")
+      # CGMES import marks isolation before solving; mirror that state here.
+      markIsolatedBuses!(net = onebus)
+      err = try
+        runpf!(onebus, 30, 1e-8, 0)
+        nothing
+      catch e
+        e
+      end
+      @test err isa ErrorException
+      @test occursin("all 1 bus(es) of this network are isolated", sprint(showerror, err))
+
+      # A net without any registered voltage reference keeps the plain
+      # "no slack" wording, now with a hint on how to register one.
+      noslack = Net(name = "island_diag_noslack", baseMVA = 100.0)
+      addBus!(net = noslack, busName = "C1", vn_kV = 110.0)
+      addBus!(net = noslack, busName = "C2", vn_kV = 110.0)
+      addPIModelACLine!(net = noslack, fromBus = "C1", toBus = "C2", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+      addProsumer!(net = noslack, busName = "C2", type = "ENERGYCONSUMER", p = 10.0, q = 2.0)
+      err2 = try
+        runpf!(noslack, 30, 1e-8, 0)
+        nothing
+      catch e
+        e
+      end
+      @test err2 isa ErrorException
+      @test occursin("no slack bus registered", sprint(showerror, err2))
+
+      # Partially isolated net with the slack still registered on the dead
+      # side: the message-building helper names the slack and the ratio.
+      # (The solve path itself demotes the isolated slack before the message
+      # helper runs, so this branch is exercised directly.)
+      partial = _island_diag_testnet()
+      addBus!(net = partial, busName = "B2", vn_kV = 110.0)
+      markIsolatedBuses!(net = partial)
+      push!(partial.slackVec, 3)  # slack registration on isolated bus B1
+      msg = Sparlectra._no_slack_message("unit_test", partial)
+      @test occursin("lies on an isolated bus", msg)
+      @test occursin("2 of 4 buses isolated", msg)
+    end
+
+    @testset "auto slack promotes the strongest candidate" begin
+      # Build a solvable two-bus net whose generator is not marked as slack.
+      # NOTE: private inner name — an anonymous fixture assigning to a name
+      # that also exists in the enclosing testset would rebind that local.
+      mkautonet = function ()
+        anet = Net(name = "island_diag_autoslack", baseMVA = 100.0)
+        addBus!(net = anet, busName = "G1", vn_kV = 110.0)
+        addBus!(net = anet, busName = "L1", vn_kV = 110.0)
+        addPIModelACLine!(net = anet, fromBus = "G1", toBus = "L1", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+        addProsumer!(net = anet, busName = "G1", type = "GENERATOR", p = 20.0, q = 5.0, pMax = 150.0)
+        addProsumer!(net = anet, busName = "L1", type = "ENERGYCONSUMER", p = 10.0, q = 2.0)
+        return anet
+      end
+
+      # Keyword path: promotion happens, run converges, slack is registered.
+      auto1 = mkautonet()
+      erg = last(runpf!(auto1, 30, 1e-8, 0; auto_slack = true))
+      @test erg == 0
+      @test auto1.slackVec == [1]
+      @test getNodeType(auto1.nodeVec[1]) == Sparlectra.Slack
+
+      # Config path: power_flow.auto_slack reaches the solver.
+      auto2 = mkautonet()
+      cfg = Sparlectra.PowerFlowConfig(auto_slack = true)
+      erg2 = last(runpf!(auto2, cfg))
+      @test erg2 == 0
+      @test auto2.slackVec == [1]
+
+      # An external network injection outranks a larger generator.
+      # addProsumer! collapses the type string to Injection/Consumption, so the
+      # precise CGMES class marker is set directly, as the importer does.
+      auto3 = mkautonet()
+      addBus!(net = auto3, busName = "X1", vn_kV = 110.0)
+      addPIModelACLine!(net = auto3, fromBus = "L1", toBus = "X1", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+      addProsumer!(net = auto3, busName = "X1", type = "EXTERNALNETWORKINJECTION", p = 0.0, q = 0.0, pMax = 50.0)
+      auto3.prosumpsVec[end].comp.cTyp = Sparlectra.ExternalNetworkInjection
+      picked = ensureSlack!(auto3; log = false)
+      @test picked == 3
+
+      # A registered slack is left alone: ensureSlack! is a no-op.
+      auto4 = mkautonet()
+      addProsumer!(net = auto4, busName = "G1", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "G1")
+      @test ensureSlack!(auto4; log = false) === nothing
+    end
+
     @testset "single-island run keeps the combined-status fallback" begin
       # A connected net solved outside the island-wise path stores no
       # per-island statuses; its one diagnostics row must still be filled

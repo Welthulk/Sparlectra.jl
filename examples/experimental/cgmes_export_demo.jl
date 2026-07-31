@@ -13,19 +13,15 @@
 # limitations under the License.
 
 # file: examples/experimental/cgmes_export_demo.jl
-# purpose: demonstrates the experimental Stage-1 CGMES export on a small
+# purpose: demonstrates the CGMES export (writeCGMESFiles) on a small
 #          programmatically built network.
-#
-# Experimental example tooling. Not part of the stable Sparlectra API, not
-# wired into the Web UI, and may change without notice.
 
 using Sparlectra
 
 include(joinpath(@__DIR__, "..", "internal", "example_header.jl"))
-include(joinpath(@__DIR__, "cgmes_export.jl"))
 
 function main(; output_dir::AbstractString = joinpath(@__DIR__, "..", "_out", "cgmes_export"))
-  print_example_banner("examples/experimental/cgmes_export_demo.jl", "demonstrates the experimental Stage-1 CGMES export on a small programmatically built network")
+  print_example_banner("examples/experimental/cgmes_export_demo.jl", "demonstrates the CGMES export (writeCGMESFiles) on a small programmatically built network")
 
   net = Net(name = "cgmes_demo", baseMVA = 100.0)
 
@@ -52,7 +48,9 @@ function main(; output_dir::AbstractString = joinpath(@__DIR__, "..", "_out", "c
   )
 
   mkpath(output_dir)
-  files = writeCGMESFiles(net; path = output_dir, sc_line_data = sc)
+  # zip = true additionally packs the profiles into one re-importable
+  # delivery file (the same artifact the Web UI export checkbox produces)
+  files = writeCGMESFiles(net; path = output_dir, sc_line_data = sc, zip = true)
   return files
 end
 

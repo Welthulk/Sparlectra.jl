@@ -38,6 +38,8 @@ Base.@kwdef struct ControlRunResult
   last_pf_status::Symbol = :not_run
   controllers::Vector{NamedTuple} = NamedTuple[]
   trace::Vector{NamedTuple} = NamedTuple[]
+  # generic controllable-element records (controllableElements) at run end
+  elements::Vector{NamedTuple} = NamedTuple[]
 end
 
 struct NoControlState <: AbstractControlState end
@@ -54,10 +56,36 @@ control_is_blocked(::AbstractOuterController, ::AbstractControlState)::Bool = fa
 control_status(::AbstractOuterController, ::AbstractControlState)::Symbol = :active
 control_report_rows(::AbstractOuterController, ::Any, ::AbstractControlState, context)::Vector{NamedTuple} = NamedTuple[]
 control_trace_rows(::AbstractOuterController, ::Any, ::AbstractControlState, context)::Vector{NamedTuple} = NamedTuple[]
-collect_outer_controllers(net::Any)::Vector{AbstractOuterController} = AbstractOuterController[_tap_controllers(net)..., _machine_controllers(net)...]
+collect_outer_controllers(net::Any)::Vector{AbstractOuterController} = AbstractOuterController[_tap_controllers(net)..., _machine_controllers(net)..., _shunt_controllers(net)...]
 function control_max_outer_iterations(ctrl::AbstractOuterController)::Int
   hasproperty(ctrl, :max_outer_iters) || return typemax(Int)
   return Int(getproperty(ctrl, :max_outer_iters))
+end
+
+# Generic controllable-element record of one controller: what the device is,
+# which actuator it moves, which quantity it steers onto which target, and
+# within which limits — the shared vocabulary over all controller types.
+# Types without a descriptor stay invisible in the element view (nothing).
+control_element_descriptor(::AbstractOuterController, ::Any)::Union{Nothing,NamedTuple} = nothing
+
+"""
+    controllableElements(net) -> Vector{NamedTuple}
+
+One record per registered controller describing the controllable element in
+a uniform vocabulary: `element` (the physical device), `device` (its role
+label), `actuator` and its `[actuator_min, actuator_max]` range, the
+controlled `quantity` with `target`/`target_value`, `discrete`, `enabled`,
+and the live `status`/`converged`/`at_limit` flags. Derived on demand from
+the registered controllers — purely a reporting view, no control behavior
+attached.
+"""
+function controllableElements(net::Any)::Vector{NamedTuple}
+  rows = NamedTuple[]
+  for ctrl in collect_outer_controllers(net)
+    row = control_element_descriptor(ctrl, net)
+    row === nothing || push!(rows, row)
+  end
+  return rows
 end
 function latest_control_result(net::Any)
   hasproperty(net, :control_result) || return nothing
@@ -182,7 +210,7 @@ function run_control!(net::Any; controllers::Vector{<:AbstractOuterController} =
   for (i, ctrl) in enumerate(controllers)
     append!(rows, control_report_rows(ctrl, net, states[i], context))
   end
-  result = ControlRunResult(status = status, converged = status == :converged, outer_iterations = outer_iterations, powerflow_solves = solves, last_pf_iterations = ite, last_pf_status = :ok, controllers = rows, trace = trace)
+  result = ControlRunResult(status = status, converged = status == :converged, outer_iterations = outer_iterations, powerflow_solves = solves, last_pf_iterations = ite, last_pf_status = :ok, controllers = rows, trace = trace, elements = controllableElements(net))
   net.control_result = result
   return result
 end

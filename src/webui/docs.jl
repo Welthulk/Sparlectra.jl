@@ -60,6 +60,10 @@ const WEBUI_HELP_TOPICS = Dict(
   "power_flow.trust_region.eta_accept" => (label = "Trust-region acceptance ratio (eta)", page = "powerflow_configuration", heading = "Trust-region step control options", selector = "`power_flow.trust_region.eta_accept`"),
   "power_flow.trust_region.step_mode" => (label = "Trust-region step mode", page = "powerflow_configuration", heading = "Trust-region step control options", selector = "`power_flow.trust_region.step_mode`"),
   "cgmes_import.start_values" => (label = "CGMES start values", page = "cgmes_import", heading = "Configuration (`cgmes_import`)", selector = "`cgmes_import.start_values`"),
+  "cgmes_import.require_boundary" => (label = "Require boundary set", page = "cgmes_import", heading = "Configuration (`cgmes_import`)", selector = "`cgmes_import.require_boundary`"),
+  "cgmes_import.infer_base_voltages" => (label = "Infer missing base voltages", page = "cgmes_import", heading = "Configuration (`cgmes_import`)", selector = "`cgmes_import.infer_base_voltages`"),
+  "power_flow.rescue" => (label = "Rescue ladder for failed AC solves", page = "powerflow_configuration", heading = "Solver core options", selector = "`power_flow.rescue`"),
+  "power_flow.dc.fallback" => (label = "Standalone-DC fallback", page = "powerflow_configuration", heading = "Solver core options", selector = "`power_flow.dc.fallback`"),
   "matpower_import.auto_profile" => (label = "MATPOWER auto-profile", page = "matpower_import", heading = "Option reference", selector = "`matpower_import.auto_profile`"),
   "matpower_import.ratio" => (label = "Transformer ratio convention", page = "matpower_import", heading = "Option reference", selector = "`matpower_import.ratio`"),
   "matpower_import.shift_sign" => (label = "Phase-shift sign", page = "matpower_import", heading = "Option reference", selector = "`matpower_import.shift_sign`"),
@@ -76,6 +80,7 @@ const WEBUI_HELP_TOPICS = Dict(
   "webui.performance_timing" => (label = "Performance timing", page = "webui", heading = "Run artifacts and output modes", selector = ""),
   "webui.detailed_result_csv" => (label = "Detailed result CSV export", page = "webui", heading = "Run artifacts and output modes", selector = ""),
   "webui.detailed_result_csv_format" => (label = "Detailed CSV format", page = "webui", heading = "Run artifacts and output modes", selector = ""),
+  "webui.export_cgmes" => (label = "CGMES export artifact", page = "cgmes_export", heading = "Export from the Web UI", selector = ""),
 )
 
 const WEBUI_FORM_HELP_TOPICS = Dict(
@@ -124,6 +129,10 @@ const WEBUI_FORM_HELP_TOPICS = Dict(
   "power_flow_trust_region_eta_accept" => "power_flow.trust_region.eta_accept",
   "power_flow_trust_region_step_mode" => "power_flow.trust_region.step_mode",
   "cgmes_start_values" => "cgmes_import.start_values",
+  "cgmes_require_boundary" => "cgmes_import.require_boundary",
+  "cgmes_infer_base_voltages" => "cgmes_import.infer_base_voltages",
+  "power_flow_rescue" => "power_flow.rescue",
+  "power_flow_dc_fallback" => "power_flow.dc.fallback",
   "matpower_import_auto_profile" => "matpower_import.auto_profile",
   "matpower_import_ratio" => "matpower_import.ratio",
   "matpower_import_shift_sign" => "matpower_import.shift_sign",
@@ -140,6 +149,7 @@ const WEBUI_FORM_HELP_TOPICS = Dict(
   "performance_timing" => "webui.performance_timing",
   "detailed_result_csv" => "webui.detailed_result_csv",
   "detailed_result_csv_format" => "webui.detailed_result_csv_format",
+  "export_cgmes" => "webui.export_cgmes",
 )
 
 const WEBUI_HELP_EXCERPT_OVERRIDES = Dict(
@@ -274,6 +284,7 @@ const WEBUI_DOC_PAGES = Dict(
   # Reachable from the docs reader; per-option help topics follow once the
   # cgmes_import options get their own Web UI form fields (issue #294).
   "cgmes_import" => (title = "CGMES Import", file = "cgmes_import.md"),
+  "cgmes_export" => (title = "CGMES Export", file = "cgmes_export.md"),
   "webui" => (title = "Local PowerFlow Web UI", file = "webui.md"),
   "feature_matrix" => (title = "Feature Matrix", file = "feature_matrix.md"),
 )

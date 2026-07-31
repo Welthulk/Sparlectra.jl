@@ -426,6 +426,29 @@ untouched, allows simpler solver backends, centralizes control logic
 (deadbands, limits, discrete steps), and gives deterministic post-processing
 between iterations.
 
+### Tap-dependent reactance X(α)
+
+For a PST whose winding carries a typed `PhaseTapChangerModel` with reactance
+data, the outer loop couples the series reactance to the tap angle: every
+accepted phase-tap move also updates the branch `x_pu`, and the next
+outer-loop solve re-stamps the Y-bus from it. The mapping from the
+controller's continuous angle to a reactance is:
+
+- **formula models** (`:symmetrical`/`:asymmetrical` with `x_min`/`x_max`):
+  `calcPhaseTapReactance` is evaluated directly at the continuous angle;
+- **tabular models**: the nearest table row by angle supplies its per-step
+  `x_pu` (no interpolation between rows).
+
+The coupling is strictly opt-in per device: a winding without a typed model,
+a formula model without `x_min`/`x_max`, or a tabular model without `x_pu`
+values keeps today's static reactance (MATPOWER general-case PSTs,
+CGMES-flattened PSTs). The probe that estimates the tap direction perturbs
+the reactance consistently with the apply step and restores both — and it
+refreshes the branch flows around each probe solve, so the estimated
+direction reflects the actual flow response. The native DTF importer
+persists its transiently built phase-tap model onto the winding, so DTF
+skew/longitudinal regulators participate in the coupling.
+
 ### Discrete tap behaviour
 
 ```text

@@ -352,7 +352,7 @@ function _dtf_effective_transformer_tap(case::DTFCase, branch::DTFBranch, contro
     skew_angle_deg = 0.0, effective_complex = 1.0 + 0.0im, convention = :dtf_regulating_vector_reciprocal,
     nominal_unregulated_kv = nothing, nominal_regulated_kv = nothing, from_bus_vn_kV = nominal_voltages_kv[from_bus.voltage_level_index],
     to_bus_vn_kV = nominal_voltages_kv[to_bus.voltage_level_index], winding_over_network_base_ratio = 1.0,
-    transformer_ratio_mode = ratio_mode, base_ratio_used = 1.0, effective_ratio = 1.0)
+    transformer_ratio_mode = ratio_mode, base_ratio_used = 1.0, effective_ratio = 1.0, phase_model = nothing)
   control === nothing && return no_control
   control.nominal_unregulated_kv === nothing && return nothing
   control.nominal_regulated_kv === nothing && return nothing
@@ -369,6 +369,10 @@ function _dtf_effective_transformer_tap(case::DTFCase, branch::DTFBranch, contro
   effective_complex = 1.0 + 0.0im
   relative_ratio = 1.0
   shift_deg = 0.0
+  # persisted onto the winding by build_net so the outer control loop can
+  # reach the typed model later (X(α) coupling, issue reference in
+  # transformer_pst_architecture.md)
+  phase_model = nothing
   if control.longitudinal_range_percent !== nothing && control.max_tap_step !== nothing &&
       control.actual_tap_step !== nothing && control.max_tap_step != 0
     phase_model = PhaseTapChangerModel(
@@ -404,7 +408,8 @@ function _dtf_effective_transformer_tap(case::DTFCase, branch::DTFBranch, contro
     winding_over_network_base_ratio = winding_over_network_base_ratio,
     transformer_ratio_mode = ratio_mode,
     base_ratio_used = base_ratio,
-    effective_ratio = relative_ratio)
+    effective_ratio = relative_ratio,
+    phase_model = phase_model)
 end
 
 function _dtf_transformer_ratio(case::DTFCase, branch::DTFBranch, control::Union{Nothing,DTFTransformerControl}, from_bus::DTFBus, to_bus::DTFBus)
@@ -475,6 +480,9 @@ function build_net(case::DTFCase; bus_shunt_model = :admittance, legacy_voltage_
       # tapped winding using the parsed regulating vector 1 + f·e^(jφ).
       tap_rx = calcTapCorrectedRX(r_pu = pu.r, x_pu = pu.x, tap_changer_model = tap_model, tap_fraction = tap.tap_fraction, skew_angle_deg = tap.skew_angle_deg)
       _addPIModelTrafo_by_idx!(net = net, from = from, to = to, r_pu = tap_rx.r_pu, x_pu = tap_rx.x_pu, b_pu = pu.b, g_pu = pu.g, status = 1, ratedU = pu.u_ref_kv, ratedS = ratedS, ratio = ratio, shift_deg = shift_deg)
+      # keep the typed phase-tap model reachable from the winding — pure
+      # attachment of already-computed data, no numeric branch change
+      tap.phase_model === nothing || (net.trafos[end].side1.phase_taps = tap.phase_model)
     else
       _addPIModelACLine_by_idx!(net = net, from = from, to = to, r_pu = pu.r, x_pu = pu.x, b_pu = pu.b, status = 1, ratedS = ratedS)
     end

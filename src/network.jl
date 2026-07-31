@@ -42,6 +42,7 @@ Represents an electrical network.
 - `matpower_branch_metadata::Dict{Int,NamedTuple}`: Optional MATPOWER branch metadata keyed by imported branch index.
 - `for001Contingencies::Vector{String}`: Optional FOR001 contingency branch names imported from MATPOWER metadata.
 - `matpowerDclineMetadata::Vector{NamedTuple}`: Optional imported MATPOWER DC-line terminal-injection metadata.
+- `cgmes_ids::Dict{String,String}`: CGMES mRIDs keyed by structural identity (e.g. `"TN|<bus>"`, `"ACL|<busA>|<busB>|<k>"`); filled by the CGMES importer and reused by the CGMES exporter so exported ids stay stable.
 
 # Constructors
 - `Net(name::String, baseMVA::Float64, vmin_pu::Float64 = 0.9, vmax_pu::Float64 = 1.1)`: Creates a new `Net` object with the given name, base MVA, and optional voltage limits.
@@ -112,6 +113,10 @@ mutable struct Net
   # the abstract controller type because the concrete MachineVoltageControl is
   # defined after this file; filled via addMachineVoltageControl!.
   machineControls::Vector{AbstractOuterController}
+  # CGMES mRIDs keyed by structural identity ("TN|<bus>", "ACL|<busA>|<busB>|<k>", ...).
+  # Filled by the CGMES importer, read by the CGMES exporter; empty for nets
+  # from other sources (the exporter then mints deterministic uuid5 ids).
+  cgmes_ids::Dict{String,String}
 
   #! format: off
   function Net(; name::String, baseMVA::Float64, vmin_pu::Float64 = 0.9, vmax_pu::Float64 = 1.1, cooldown_iters::Int = 0, q_hyst_pu::Float64 = 0.0, flatstart::Bool = false, bus_shunt_model = :admittance)    
@@ -151,7 +156,8 @@ mutable struct Net
         Dict{Int,NamedTuple}(),
         String[],
         NamedTuple[],
-        AbstractOuterController[])                 # machineControls
+        AbstractOuterController[],                 # machineControls
+        Dict{String,String}())                     # cgmes_ids
   end
   #! format: on
   function Base.show(io::IO, net::Net)
@@ -1928,6 +1934,91 @@ function buildVoltageVector(net::Net)
   return V
 end
 
+# Case-specific diagnosis for "no solvable slack": the generic message hid
+# the two real situations — a selected slack sitting on an isolated bus
+# (single-bus/branch-less deliveries such as one side of a DC border), and a
+# net where no slack was ever registered.
+function _no_slack_message(where_::String, net::Net)::String
+  n = length(net.nodeVec)
+  iso = length(net.isoNodes)
+  if n > 0 && iso == n
+    return "$(where_): all $(n) bus(es) of this network are isolated (no in-service branch) — there is no energized AC system to solve. A branch-less delivery (e.g. a single-bus area or one side of a DC border crossing) is only solvable in its assembled model."
+  end
+  if !isempty(net.slackVec)
+    slack_names = join((getCompName(net.nodeVec[i].comp) for i in net.slackVec if 1 <= i <= n), ", ")
+    return "$(where_): the selected slack ($(slack_names)) lies on an isolated bus ($(iso) of $(n) buses isolated) — no energized bus carries the reference. Check the isolation report (ac_islands.csv) or choose a slack in the energized part."
+  end
+  return "$(where_): no slack bus registered — the network needs one voltage reference (referencePriority, an ExternalNetworkInjection, or a generator marked as slack). Enable power_flow.auto_slack to let the solver pick the strongest candidate itself."
+end
+
+# Rank a slack candidate by its dispatchable size. Rated apparent power is the
+# most honest capacity figure; active-power capability and the current dispatch
+# are the fallbacks when a data source does not carry a rating.
+function _slack_candidate_strength(ps::ProSumer)::Float64
+  ps.ratedS !== nothing && ps.ratedS > 0.0 && return Float64(ps.ratedS)
+  ps.maxP !== nothing && ps.maxP > 0.0 && return Float64(ps.maxP)
+  ps.pVal !== nothing && return abs(Float64(ps.pVal))
+  return 0.0
+end
+
+"""
+    ensureSlack!(net::Net; log::Bool = true) -> Union{Nothing,Int}
+
+Make sure the network has a usable voltage reference. When at least one slack
+is already registered on a non-isolated bus, nothing changes and `nothing` is
+returned. Otherwise the strongest injection candidate on a non-isolated bus is
+promoted to slack (`referencePri = 1`) and its bus index is returned.
+
+Candidate ranking: `ExternalNetworkInjection` units win over generators and
+synchronous machines (an external grid equivalent is the natural reference);
+within each group the largest unit wins, sized by `ratedS`, then `maxP`, then
+the current dispatch `|p|`. Static var compensators are never promoted — they
+carry no active power. When no candidate exists the network is left untouched
+and the regular no-slack error will name the situation.
+
+The promotion mutates the network: the chosen prosumer becomes the reference
+and the bus voltage gets a `1.0 pu / 0.0°` setpoint if it has none. Enabled at
+solve time via the `power_flow.auto_slack` configuration key (default `false`)
+or the `auto_slack` keyword of [`runpf!`](@ref).
+"""
+function ensureSlack!(net::Net; log::Bool = true)::Union{Nothing,Int}
+  nbus = length(net.nodeVec)
+  usable(bus) = (1 <= bus <= nbus) && !(bus in net.isoNodes)
+  for ps in net.prosumpsVec
+    isSlack(ps) && usable(getPosumerBusIndex(ps)) && return nothing
+  end
+  best = nothing
+  best_key = (-1, -Inf)
+  for ps in net.prosumpsVec
+    isGenerator(ps) || continue
+    # SVCs are injections in the prosumption typing but cannot carry the
+    # island's active-power balance.
+    ps.comp.cTyp == StaticVarCompensator && continue
+    bus = getPosumerBusIndex(ps)
+    usable(bus) || continue
+    key = (ps.comp.cTyp == ExternalNetworkInjection ? 1 : 0, _slack_candidate_strength(ps))
+    if key > best_key
+      best_key = key
+      best = ps
+    end
+  end
+  best === nothing && return nothing
+  best.referencePri = 1
+  bus = getPosumerBusIndex(best)
+  node = net.nodeVec[bus]
+  if node._vm_pu === nothing || node._vm_pu <= 0.0
+    vm = (best.vm_pu !== nothing && best.vm_pu > 0.0) ? Float64(best.vm_pu) : 1.0
+    setVmVa!(node = node, vm_pu = vm, va_deg = 0.0)
+  end
+  refreshBusTypesFromProsumers!(net)
+  if log
+    kind = best.comp.cTyp == ExternalNetworkInjection ? "external network injection" : "generator"
+    strength = _slack_candidate_strength(best)
+    println("auto_slack: no usable slack registered — promoted $(kind) '$(getCompName(best.comp))' at bus '$(getCompName(node.comp))' ($(round(strength; digits = 1)) MVA/MW) to slack.")
+  end
+  return bus
+end
+
 """
     initial_Vrect_from_net(net) -> (V0, slack_idx)
 
@@ -1943,7 +2034,7 @@ function initialVrect(net::Net; flatstart::Bool = net.flatstart)
   n = length(nodes)
 
   slack_idx = findfirst(n -> getNodeType(n) == Slack, nodes)
-  slack_idx === nothing && error("initialVrect: no slack bus found")
+  slack_idx === nothing && error(_no_slack_message("initialVrect", net))
 
   V0 = Vector{ComplexF64}(undef, n)
 

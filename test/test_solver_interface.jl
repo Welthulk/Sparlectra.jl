@@ -1499,5 +1499,60 @@ mpc.branch = [
       printFinalLimitValidation(net; q_headroom = 0.20, io = io, converged = false)
       @test occursin("Last-iteration Q-limit diagnostic (NR did not converge; values are not a valid final solution)", String(take!(io)))
     end
+
+    @testset "AC rescue ladder and DC fallback" begin
+      # NOTE: private inner name — an anonymous fixture assigning to a name
+      # that also exists in the enclosing testset would rebind that local.
+      mkrescuenet = function (; p_mw::Float64 = 300.0)
+        rnet = Net(name = "rescue_fixture", baseMVA = 100.0)
+        addBus!(net = rnet, busName = "S", vn_kV = 110.0)
+        addBus!(net = rnet, busName = "L", vn_kV = 110.0)
+        addPIModelACLine!(net = rnet, fromBus = "S", toBus = "L", r_pu = 0.01, x_pu = 0.10, b_pu = 0.0, status = 1)
+        addProsumer!(net = rnet, busName = "S", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "S")
+        addProsumer!(net = rnet, busName = "L", type = "ENERGYCONSUMER", p = p_mw, q = 50.0)
+        return rnet
+      end
+      # A poisoned start state the plain solve cannot recover from within the
+      # iteration budget; the ladder restarts from this exact state.
+      poison! = rnet -> Sparlectra.setVmVa!(node = rnet.nodeVec[2], vm_pu = 0.01, va_deg = 179.0)
+
+      # Without rescue the poisoned run fails.
+      plain = mkrescuenet()
+      poison!(plain)
+      cfg_plain = Sparlectra.PowerFlowConfig(max_iter = 5, tol = 1e-8, start_mode = Sparlectra.StartModeConfig(flatstart = false))
+      @test last(runpf!(plain, cfg_plain)) == 1
+
+      # With rescue a ladder strategy converges and is recorded.
+      rescued = mkrescuenet()
+      poison!(rescued)
+      cfg_rescue = Sparlectra.PowerFlowConfig(max_iter = 5, tol = 1e-8, rescue = true, start_mode = Sparlectra.StartModeConfig(flatstart = false))
+      profile = Dict{Symbol,Any}()
+      rite, rerg = runpf!(rescued, cfg_rescue; performance_profile = profile)
+      @test rerg == 0
+      @test rite > 0
+      @test get(profile, :ac_rescue_strategy, :missing) in (:alternate_start, :autodamp, :dc_seed)
+
+      # A genuinely infeasible case (load far beyond the transfer limit):
+      # rescue exhausts the ladder, the DC fallback leaves a usable DC state,
+      # and the AC status honestly stays non-converged.
+      infeasible = mkrescuenet(p_mw = 5000.0)
+      cfg_fb = Sparlectra.PowerFlowConfig(max_iter = 10, tol = 1e-8, rescue = true, dc = Sparlectra.DcPowerFlowConfig(fallback = true))
+      profile_fb = Dict{Symbol,Any}()
+      ferg = last(runpf!(infeasible, cfg_fb; performance_profile = profile_fb))
+      @test ferg == 1
+      @test get(profile_fb, :ac_rescue_strategy, :missing) == :none
+      @test get(profile_fb, :dc_fallback_applied, false) === true
+      @test infeasible.nodeVec[2]._vm_pu == 1.0
+      @test infeasible.nodeVec[2]._va_deg < 0.0
+
+      # Defaults leave both mechanisms off: same failure as the plain run.
+      off = mkrescuenet()
+      poison!(off)
+      cfg_off = Sparlectra.PowerFlowConfig(max_iter = 5, tol = 1e-8, start_mode = Sparlectra.StartModeConfig(flatstart = false))
+      profile_off = Dict{Symbol,Any}()
+      @test last(runpf!(off, cfg_off; performance_profile = profile_off)) == 1
+      @test !haskey(profile_off, :ac_rescue_strategy)
+      @test !haskey(profile_off, :dc_fallback_applied)
+    end
   end
 end

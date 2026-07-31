@@ -91,6 +91,7 @@ last usable solution but do not count as final framework convergence.
 - `last_pf_status`
 - `controllers`
 - `trace`
+- `elements` — the generic controllable-element records at run end (see below)
 
 Terminal statuses:
 
@@ -121,6 +122,46 @@ net.control_result
 ```
 
 These expose the latest control run associated with the `Net` instance.
+
+## Controllable elements (generic view)
+
+Every registered controller describes itself in one shared vocabulary —
+what the element is, which actuator it moves within which limits, and which
+quantity it steers onto which target:
+
+```julia
+controllableElements(net)   # -> Vector{NamedTuple}
+```
+
+Each record carries `name`, `element`, `device`, `actuator`,
+`actuator_min`/`actuator_max`, `quantity`, `target`, `target_value`,
+`discrete`, `enabled`, and the live `status`/`converged`/`at_limit` flags.
+The same records are stored on `ControlRunResult.elements` at the end of a
+control run. The view is derived on demand from the registered controllers —
+purely reporting, no control behavior attached. Current devices:
+
+| Device | Actuator | Quantity |
+|---|---|---|
+| OLTC transformer | `:tap_ratio` | `:bus_voltage` |
+| Phase-shifting transformer | `:phase_shift_deg` | `:branch_active_power` |
+| Combined regulation | `:tap_ratio_and_phase_shift` | both |
+| Machine remote voltage control | `:machine_q_mvar` | `:bus_voltage` |
+| SVC (variable shunt) | `:shunt_bs_mvar` | `:bus_voltage` |
+
+## SVC: variable-shunt voltage control
+
+`addShuntVoltageControl!(net; bus, target_vm_pu, bs_min_mvar, bs_max_mvar,
+…)` adds an SVC-style controller: its own shunt element whose susceptance
+(MVAr at 1.0 p.u., capacitive positive) the outer loop moves via secant
+iteration to hold the bus voltage. At a limit the susceptance stays clamped
+and the reactive output follows the bus voltage squared through the Y-bus —
+the constant-B region of a real SVC, reported honestly as `at_limit` (a
+Q-limited machine would hold constant Q instead; that difference is the
+point of the device model). The bus must be PQ; a second shunt controller
+on the same bus is rejected, and a transformer tap controller regulating
+the same bus voltage triggers the cross-type warning. `runShortCircuit!`
+and the power flow see the SVC only through its shunt stamp — disabled or
+absent controllers leave results untouched.
 
 ## Trace rows (transformer control)
 

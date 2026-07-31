@@ -55,7 +55,7 @@ function run_configuration_coverage_tests()
     leaves = _canonical_yaml_leaf_keys()
 
     mapped_keys = Set([
-      "power_flow.method", "power_flow.solver", "power_flow.linear_solver", "power_flow.apslf.order", "power_flow.apslf.use_pade", "power_flow.apslf.nr_polish", "power_flow.apslf_start.enabled", "power_flow.apslf_start.order", "power_flow.flatstart", "power_flow.tol", "power_flow.max_iter", "power_flow.autodamp", "power_flow.autodamp_min", "power_flow.wrong_branch_detection", "power_flow.wrong_branch_rescue", "power_flow.wrong_branch_min_vm_pu", "power_flow.wrong_branch_max_vm_pu", "power_flow.wrong_branch_max_angle_spread_deg", "power_flow.wrong_branch_max_branch_angle_deg", "power_flow.wrong_branch_min_low_vm_count", "power_flow.wrong_branch_rescue_max_attempts", "power_flow.rectangular_workspace_reuse", "power_flow.rectangular_preallocate_workspace", "power_flow.rectangular_workspace_min_buses",
+      "power_flow.method", "power_flow.solver", "power_flow.linear_solver", "power_flow.apslf.order", "power_flow.apslf.use_pade", "power_flow.apslf.nr_polish", "power_flow.apslf_start.enabled", "power_flow.apslf_start.order", "power_flow.flatstart", "power_flow.tol", "power_flow.max_iter", "power_flow.autodamp", "power_flow.autodamp_min", "power_flow.auto_slack", "power_flow.rescue", "power_flow.dc.fallback", "power_flow.wrong_branch_detection", "power_flow.wrong_branch_rescue", "power_flow.wrong_branch_min_vm_pu", "power_flow.wrong_branch_max_vm_pu", "power_flow.wrong_branch_max_angle_spread_deg", "power_flow.wrong_branch_max_branch_angle_deg", "power_flow.wrong_branch_min_low_vm_count", "power_flow.wrong_branch_rescue_max_attempts", "power_flow.rectangular_workspace_reuse", "power_flow.rectangular_preallocate_workspace", "power_flow.rectangular_workspace_min_buses",
       "power_flow.islands.enabled", "power_flow.islands.mode", "power_flow.islands.reference_policy", "power_flow.islands.diagnostic_continue_after_failure",
       "power_flow.distributed_slack.enabled", "power_flow.distributed_slack.p_mode", "power_flow.distributed_slack.respect_p_limits", "power_flow.distributed_slack.fallback", "power_flow.distributed_slack.weights",
       "power_flow.start_mode.angle_mode", "power_flow.start_mode.voltage_mode", "power_flow.start_mode.profile_source", "power_flow.start_mode.start_projection", "power_flow.start_mode.try_dc_start", "power_flow.start_mode.try_blend_scan", "power_flow.start_mode.branch_guard", "power_flow.start_mode.measure_candidates", "power_flow.start_mode.accept_unmeasured_dc_start", "power_flow.start_mode.dc_seed_unconditional", "power_flow.start_mode.reuse_import_data", "power_flow.start_mode.blend_lambdas", "power_flow.start_mode.dc_angle_limit_deg",
@@ -66,7 +66,7 @@ function run_configuration_coverage_tests()
       "power_flow.qlimits.guard.enabled", "power_flow.qlimits.guard.min_q_range_pu", "power_flow.qlimits.guard.narrow_range_mode", "power_flow.qlimits.guard.zero_range_mode", "power_flow.qlimits.guard.violation_mode", "power_flow.qlimits.guard.violation_threshold_pu", "power_flow.qlimits.guard.max_switches", "power_flow.qlimits.guard.max_remaining_violations", "power_flow.qlimits.guard.accept_bounded_violations", "power_flow.qlimits.guard.freeze_after_repeated_switching", "power_flow.qlimits.guard.log",
       "state_estimation.enabled", "state_estimation.method", "state_estimation.tol", "state_estimation.max_iter", "state_estimation.flatstart", "state_estimation.jac_eps", "state_estimation.update_net", "state_estimation.pmu_ref_offset", "state_estimation.observability.enabled",
       "matpower_import.case", "matpower_import.cases", "matpower_import.auto_profile", "matpower_import.auto_profile_log", "matpower_import.pv_voltage_source", "matpower_import.pv_voltage_mismatch_tol_pu", "matpower_import.compare_voltage_reference", "matpower_import.bus_shunt_model", "matpower_import.shift_unit", "matpower_import.shift_sign", "matpower_import.ratio", "matpower_import.enable_pq_gen_controllers", "matpower_import.preallocate_network", "matpower_import.preallocate_min_buses", "matpower_import.apply_bus_names", "matpower_import.apply_branch_names", "matpower_import.apply_branch_kind", "matpower_import.import_for001_contingencies", "matpower_import.matpower_dcline_mode", "matpower_import.net_cache.enabled",
-      "cgmes_import.path", "cgmes_import.base_mva", "cgmes_import.require_boundary", "cgmes_import.tap_control", "cgmes_import.machine_control", "cgmes_import.ignore_connected", "cgmes_import.vset_min_pu", "cgmes_import.vset_max_pu", "cgmes_import.multi_slack", "cgmes_import.start_values",
+      "cgmes_import.path", "cgmes_import.base_mva", "cgmes_import.require_boundary", "cgmes_import.tap_control", "cgmes_import.machine_control", "cgmes_import.ignore_connected", "cgmes_import.vset_min_pu", "cgmes_import.vset_max_pu", "cgmes_import.multi_slack", "cgmes_import.start_values", "cgmes_import.placeholder_guards", "cgmes_import.infer_base_voltages",
       "short_circuit.c_factor",
       "transformer.tap_changer_model",
       "matpower_export.write_solution",
@@ -405,6 +405,23 @@ power_flow:
     end
     @test err isa ArgumentError
     @test occursin("cgmes_import.start_values", sprint(showerror, err))
+
+    # cgmes_import.placeholder_guards: default warn_skip, strict accepted,
+    # invalid rejected with the key name in the message.
+    @test Sparlectra.CGMESImportConfig().placeholder_guards === :warn_skip
+    pg_ok = tempname() * ".yaml"
+    write(pg_ok, "cgmes_import:\n  placeholder_guards: strict\n")
+    @test Sparlectra.load_sparlectra_config(pg_ok; reload = true).cgmes.placeholder_guards === :strict
+    pg_bad = tempname() * ".yaml"
+    write(pg_bad, "cgmes_import:\n  placeholder_guards: ignore\n")
+    pg_err = try
+      Sparlectra.load_sparlectra_config(pg_bad; reload = true)
+      nothing
+    catch e
+      e
+    end
+    @test pg_err isa ArgumentError
+    @test occursin("cgmes_import.placeholder_guards", sprint(showerror, pg_err))
   end
 
   @testset "Removed diagnostics keys are rejected" begin

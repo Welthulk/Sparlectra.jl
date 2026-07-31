@@ -67,6 +67,13 @@ julia --project=. start_webui.jl
 `start_webui.jl` is the single maintained developer launcher and delegates
 startup and default-path behavior to `start_sparlectra_webui`.
 
+For end users the repository root additionally ships platform scripts:
+`start_webui.sh` / `start_webui.bat` (start; point at the install script
+when Julia is missing) and `install_webui.sh` / `install_webui.bat`
+(install Julia via juliaup when missing, obtain Sparlectra at its latest
+tagged release, start the Web UI) — see the
+[README installation section](https://github.com/Welthulk/Sparlectra.jl#installation).
+
 The call returns a `SparlectraWebUIServer` handle immediately. Stop it with
 `close(server)`, `Ctrl+C`, or the **Stop Web UI** button in the shared page
 header. The button sends `POST /webui/shutdown`, closes the listening socket,
@@ -329,6 +336,12 @@ conservative: built-in defaults are loaded first, global configuration remains
 unchanged, the case-specific Web UI profile only prefills editable form fields,
 and any manual browser edit wins for the submitted run.
 
+Between the configuration file and a saved case profile, the **last edit
+wins**: when the YAML file is newer than the saved profile, the keys the YAML
+sets take precedence on the next page load (the notice says so), while fields
+the YAML does not set keep their saved case values. Editing the configuration
+therefore shows up on a simple page refresh — no Web UI restart needed.
+
 The existing-case selector is MATPOWER-oriented by default and lists
 user-selectable `.m` files plus runnable DTF `.DAT` candidates when they
 are supported by the current Web UI case-resolution logic. Generated `.jl`
@@ -389,6 +402,12 @@ choices, and available status diagnostics. The summary records
 `solver_time`, `representative_time`, iterations, final mismatch, and final
 outcome where available. Benchmark median and sample count appear when
 benchmark mode is enabled.
+
+The **Export case as CGMES delivery (EQ+TP+SSH+SV, ZIP)** checkbox writes
+the case as one re-importable CGMES delivery zip into the run's artifact
+directory — for every case format, and also on non-converged runs. See
+[CGMES Export](cgmes_export.md) for what the export covers and how object
+identity is handled.
 
 MATPOWER `.m` imports additionally print "Original/Final effective MATPOWER
 import options" and a "MATPOWER auto-profile recommendations" table, because
@@ -467,6 +486,33 @@ rows with defaulted/skipped data render as a warning badge because a flagged
 `short_circuit_data_missing` (coverage report in `run.log`) instead of
 producing empty tables; non-CGMES cases fail with
 `short_circuit_requires_cgmes`.
+
+### Import analysis on case upload
+
+**Import case files** checks every uploaded CGMES delivery immediately.
+When the delivery is complete (or a matching boundary is found or supplied
+automatically), the import message says "ready to compute". When it stays
+incomplete, the upload runs the full import analysis: the message names the
+**missing declared `md:Model.DependentOn` dependencies by model id** (the
+boundary set, typically), and the complete report — supplied models,
+dependency matching, unresolved-reference histogram, verdict — is written
+next to the case as `<case>.import_analysis.txt`. The same analysis is
+appended to `cgmes.log` automatically whenever a regular run's CGMES import
+aborts. For API/scripted use the check is also available as a run mode
+(`import_analysis_mode` on `start_powerflow_run`; a non-importable delivery
+finishes as a failed run with reason `import_analysis_not_importable`) and
+programmatically via `analyzeCGMES`.
+
+The **Require boundary set** checkbox (CGMES section, saved in the per-case
+settings) submits `cgmes_import.require_boundary` as a run override:
+unchecked, an incomplete delivery imports anyway where possible — buses
+without a resolvable `BaseVoltage` still abort, with the analysis
+explaining why.
+
+The **Non-convergence handling** block under Advanced options exposes
+`power_flow.rescue` (retry ladder for failed AC solves) and
+`power_flow.dc.fallback` (standalone DC result when AC has no solution) —
+see [Power-Flow Configuration](powerflow_configuration.md).
 
 The **Export detailed result CSV files** checkbox is off by default because
 large networks can produce large files. When enabled for a successful run, it

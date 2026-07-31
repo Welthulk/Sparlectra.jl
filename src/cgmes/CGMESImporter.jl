@@ -34,18 +34,24 @@ import ..Sparlectra
 export CGMESFile, CIMObject, CGMESFileInfo, CGMESStore, CGMESSummary
 export collectCGMESFiles, loadCGMES, summarizeCGMES
 export objectsOf, countOf, num, str, boolval, enumval, ref, refsAll, unresolvedReferences
+export analyzeCGMES, importFailureAnalysis
 export CGMESTopology, buildTopology
 export fetchCGMESTestSet, ensureCGMESTestConfigurations, CGMES_TESTSET_ALIASES
 export fetchReliCapGridSet, RELICAPGRID_ALIASES, RELICAPGRID_COMBINED, allCGMESTestSetAliases
 export CGMESImportResult, CGMESShortCircuitData, importCGMES, createNetFromCGMES, compareWithSV, shortCircuitCoverage, printShortCircuitCoverage
+export writeCGMESFiles, CGMESLineShortCircuit, cgmesLineShortCircuitData
 
 include("cgmes_schema.jl")
 include("cgmes_container.jl")
 include("cgmes_reader.jl")
 include("cgmes_store.jl")
+include("cgmes_import_analysis.jl")
+include("cgmes_voltage_inference.jl")
 include("cgmes_topology.jl")
+include("cgmes_keys.jl")
 include("cgmes_mapping.jl")
 include("cgmes_report.jl")
+include("cgmes_export.jl")
 include("cgmes_testsets.jl")
 
 end # module CGMESImporter

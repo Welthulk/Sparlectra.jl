@@ -50,9 +50,13 @@ end
 Derive the bus set and the equipment→bus lookup from the TP profile.
 Deterministic bus naming per decision D-3.
 """
-function buildTopology(store::CGMESStore)::CGMESTopology
+function buildTopology(store::CGMESStore; infer_base_voltages::Bool = false, messages::Union{Nothing,Vector{String}} = nothing)::CGMESTopology
   bus_name = Dict{String,String}()
   vn_kV = Dict{String,Float64}()
+
+  inferred_map, sv_seeded, trafo_seeded, propagated = infer_base_voltages ? _inferNominalVoltages(store) : (Dict{String,Float64}(), 0, 0, 0)
+  used_inferred = 0
+  inferred_levels = Dict{Float64,Int}()
 
   # name collisions: count names first, suffix only where needed
   namecount = Dict{String,Int}()
@@ -67,8 +71,29 @@ function buildTopology(store::CGMESStore)::CGMESTopology
     end
     bus_name[tn.mrid] = n
     vn = _nominalVoltageOfTN(store, tn)
-    vn === nothing && error("CGMES topology: TopologicalNode $(n) ($(tn.mrid)) has no resolvable BaseVoltage — boundary set missing?")
+    if vn === nothing && infer_base_voltages
+      vn = get(inferred_map, tn.mrid, nothing)
+      if vn !== nothing
+        used_inferred += 1
+        inferred_levels[vn] = get(inferred_levels, vn, 0) + 1
+      end
+    end
+    if vn === nothing
+      # Same analysis as the mapping-level abort: a missing BaseVoltage
+      # catalog is almost always a missing boundary file, and the analysis
+      # names the declared dependency instead of leaving a bare node error.
+      analysis = importFailureAnalysis(store)
+      print(analysis)
+      throw(CGMESImportError("CGMES topology: TopologicalNode $(n) ($(tn.mrid)) has no resolvable BaseVoltage — see the import analysis (CLI: printed above; Web UI runs: cgmes.log).", analysis))
+    end
     vn_kV[tn.mrid] = vn
+  end
+  if used_inferred > 0 && messages !== nothing
+    # One aggregated warning instead of one line per node: reconstructed
+    # nominal voltages are substituted data the user must see, but a
+    # thousand-line flood would hide everything else.
+    levels_text = join(("$(k) kV×$(v)" for (k, v) in sort!(collect(inferred_levels); by = first, rev = true)), ", ")
+    push!(messages, "warning: inferred base voltages for $(used_inferred) topological node(s) (SV-seeded $(sv_seeded), transformer-rated $(trafo_seeded), propagated $(propagated); levels: $(levels_text)) — the BaseVoltage catalog is missing (boundary set); nominal voltages are reconstructed, not delivered")
   end
 
   terminals = Dict{String,Vector{CIMObject}}()

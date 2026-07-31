@@ -91,6 +91,194 @@ function run_tap_controller_tests()
     @test length(unique([row.controller_name for row in cres.controllers])) == 2
   end
 
+  @testset "PST reactance coupling X(alpha) (#274)" begin
+    # PST loop net: trafo Slack→Mid with a parallel line so the phase tap can
+    # shift flow; the typed model is attached to the controlled winding
+    # closure-local net deliberately NOT named `net`: assigning a name that
+    # is also a testset local would write the captured outer variable and
+    # alias every built fixture
+    build_xalpha = function (; model = nothing)
+      pnet = Net(name = "pst_xalpha", baseMVA = 100.0)
+      for bus in ("Slack", "Mid", "Load")
+        addBus!(net = pnet, busName = bus, vn_kV = 110.0)
+      end
+      addProsumer!(net = pnet, busName = "Slack", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.02, va_deg = 0.0, referencePri = "Slack")
+      addProsumer!(net = pnet, busName = "Load", type = "ENERGYCONSUMER", p = -70.0, q = -20.0)
+      addPIModelTrafo!(net = pnet, fromBus = "Slack", toBus = "Mid", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, ratio = 1.0, shift_deg = 0.0, status = 1)
+      addPIModelACLine!(net = pnet, fromBus = "Slack", toBus = "Mid", r_pu = 0.03, x_pu = 0.2, b_pu = 0.0, status = 1)
+      addPIModelACLine!(net = pnet, fromBus = "Mid", toBus = "Load", r_pu = 0.02, x_pu = 0.12, b_pu = 0.01, status = 1)
+      ptbr = getNetBranch(net = pnet, fromBus = "Slack", toBus = "Mid")
+      ptbr.has_phase_tap = true
+      ptbr.phase_min_deg = -10.0
+      ptbr.phase_max_deg = 10.0
+      ptbr.phase_step_deg = 0.5
+      model === nothing || (pnet.trafos[1].side1.phase_taps = model)
+      return pnet, ptbr
+    end
+    formula_model = () -> Sparlectra.PhaseTapChangerModel(kind = :symmetrical, step = 0, lowStep = -10, highStep = 10, neutralStep = 0, voltage_step_increment = 0.01, x_min = 0.08, x_max = 0.16)
+
+    # mapping unit checks through the controller-resolution path
+    net, tbr = build_xalpha(model = formula_model())
+    addPowerTransformerControl!(net; trafo = string(tbr.branchIdx), mode = :branch_active_power, target_branch = ("Slack", "Mid"), p_target_mw = 0.0, control_ratio = false, control_phase = true, deadband_p_mw = 2.0)
+    ctrl = only(Sparlectra._tap_controllers(net))
+    @test Sparlectra._phase_tap_model_of(net, ctrl) === net.trafos[1].side1.phase_taps
+    @test Sparlectra._phase_tap_reactance_at(net, ctrl, 0.0) ≈ 0.08 atol = 1e-12
+    x5 = Sparlectra._phase_tap_reactance_at(net, ctrl, 5.0)
+    @test x5 !== nothing && 0.08 < x5 <= 0.16
+    @test Sparlectra._phase_tap_reactance_at(net, ctrl, 5.0) ≈ Sparlectra.calcPhaseTapReactance(formula_model(), 5.0) atol = 1e-12
+
+    # tabular: nearest row by angle, missing x_pu row → nothing
+    tab = Sparlectra.PhaseTapChangerModel(
+      kind = :tabular,
+      step = 1,
+      lowStep = 0,
+      highStep = 2,
+      neutralStep = 1,
+      table = [Sparlectra.TapTablePoint(step = 0, ratio = 1.0, angle_deg = -3.0, x_pu = 0.07), Sparlectra.TapTablePoint(step = 1, ratio = 1.0, angle_deg = 0.0, x_pu = 0.08), Sparlectra.TapTablePoint(step = 2, ratio = 1.0, angle_deg = 3.0, x_pu = 0.11)],
+    )
+    net.trafos[1].side1.phase_taps = tab
+    @test Sparlectra._phase_tap_reactance_at(net, ctrl, 2.4) ≈ 0.11 atol = 1e-12   # nearest row: +3°
+    @test Sparlectra._phase_tap_reactance_at(net, ctrl, -1.6) ≈ 0.07 atol = 1e-12  # nearest row: -3°
+    net.trafos[1].side1.phase_taps = nothing
+    @test Sparlectra._phase_tap_reactance_at(net, ctrl, 5.0) === nothing
+
+    # functional: an accepted tap move updates x_pu to the model value at the
+    # final angle, and the next solve reflects it
+    net1, tbr1 = build_xalpha(model = formula_model())
+    r0 = run_sparlectra(net = net1, config = _runner_cfg())
+    @test r0.numerical_converged
+    p0 = get_branch_p_from_to_mw(net1, "Slack", "Mid")
+    addPowerTransformerControl!(net1; trafo = string(tbr1.branchIdx), mode = :branch_active_power, target_branch = ("Slack", "Mid"), p_target_mw = round(p0) + 8.0, control_ratio = false, control_phase = true, deadband_p_mw = 2.0)
+    r1 = run_sparlectra(net = net1, config = _runner_cfg())
+    @test r1.numerical_converged
+    @test abs(tbr1.phase_shift_deg) > 0.0
+    mctrl1 = only(Sparlectra._tap_controllers(net1))
+    xexp = Sparlectra._phase_tap_reactance_at(net1, mctrl1, tbr1.phase_shift_deg)
+    @test xexp !== nothing
+    @test tbr1.x_pu ≈ xexp atol = 1e-12
+    @test tbr1.x_pu > 0.08
+
+    # without a typed model the run is unchanged: static reactance
+    net2, tbr2 = build_xalpha()
+    addPowerTransformerControl!(net2; trafo = string(tbr2.branchIdx), mode = :branch_active_power, target_branch = ("Slack", "Mid"), p_target_mw = round(p0) + 8.0, control_ratio = false, control_phase = true, deadband_p_mw = 2.0)
+    r2 = run_sparlectra(net = net2, config = _runner_cfg())
+    @test r2.numerical_converged
+    @test tbr2.x_pu == 0.08
+
+    # probe consistency: tracking active vs. static picks the same direction,
+    # and the probe restores angle and reactance
+    net3, tbr3 = build_xalpha(model = formula_model())
+    run_sparlectra(net = net3, config = _runner_cfg())
+    addPowerTransformerControl!(net3; trafo = string(tbr3.branchIdx), mode = :branch_active_power, target_branch = ("Slack", "Mid"), p_target_mw = 0.0, control_ratio = false, control_phase = true)
+    ctrl3 = only(Sparlectra._tap_controllers(net3))
+    x_before = tbr3.x_pu
+    phi_before = tbr3.phase_shift_deg
+    dir_model = Sparlectra._phase_probe_direction(net3, tbr3, ctrl3, 30, 1e-8, 0, :rectangular)
+    @test tbr3.x_pu == x_before
+    @test tbr3.phase_shift_deg == phi_before
+    net4, tbr4 = build_xalpha()
+    run_sparlectra(net = net4, config = _runner_cfg())
+    addPowerTransformerControl!(net4; trafo = string(tbr4.branchIdx), mode = :branch_active_power, target_branch = ("Slack", "Mid"), p_target_mw = 0.0, control_ratio = false, control_phase = true)
+    ctrl4 = only(Sparlectra._tap_controllers(net4))
+    dir_static = Sparlectra._phase_probe_direction(net4, tbr4, ctrl4, 30, 1e-8, 0, :rectangular)
+    @test dir_model == dir_static
+    @test abs(dir_model) == 1.0
+  end
+
+  @testset "SVC shunt voltage controller + controllable elements (#227)" begin
+    # NOTE: the closure-local net must NOT be named `net` — an assignment to
+    # a name that is also a testset local would write the captured outer
+    # variable (Julia closure capture), aliasing every built fixture.
+    build_svc_net = function ()
+      svcnet = Net(name = "svc_ctrl", baseMVA = 100.0)
+      for bus in ("Slack", "Mid", "Load")
+        addBus!(net = svcnet, busName = bus, vn_kV = 110.0)
+      end
+      addProsumer!(net = svcnet, busName = "Slack", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.02, va_deg = 0.0, referencePri = "Slack")
+      addProsumer!(net = svcnet, busName = "Load", type = "ENERGYCONSUMER", p = -80.0, q = -30.0)
+      addPIModelACLine!(net = svcnet, fromBus = "Slack", toBus = "Mid", r_pu = 0.02, x_pu = 0.12, b_pu = 0.01, status = 1)
+      addPIModelACLine!(net = svcnet, fromBus = "Mid", toBus = "Load", r_pu = 0.02, x_pu = 0.12, b_pu = 0.01, status = 1)
+      return svcnet
+    end
+
+    # API validation
+    vnet = build_svc_net()
+    @test_throws ErrorException addShuntVoltageControl!(vnet; bus = "Slack", target_vm_pu = 1.0, bs_min_mvar = -60.0, bs_max_mvar = 60.0)  # voltage-held bus
+    @test_throws ErrorException addShuntVoltageControl!(vnet; bus = "Load", target_vm_pu = 1.0, bs_min_mvar = 60.0, bs_max_mvar = -60.0)   # inverted range
+    addShuntVoltageControl!(vnet; bus = "Load", target_vm_pu = 1.0, bs_min_mvar = -60.0, bs_max_mvar = 60.0)
+    @test_throws ErrorException addShuntVoltageControl!(vnet; bus = "Load", target_vm_pu = 1.01, bs_min_mvar = -60.0, bs_max_mvar = 60.0)  # duplicate bus
+    @test length(Sparlectra._shunt_controllers(vnet)) == 1
+    clearShuntControllers!(vnet)
+    @test isempty(Sparlectra._shunt_controllers(vnet))
+
+    # in-range regulation: the secant loop pulls the overvoltage down to the
+    # setpoint by moving into the inductive range
+    net = build_svc_net()
+    baseline = run_sparlectra(net = net)
+    @test baseline.numerical_converged
+    vm0 = get_bus_vm_pu(net, "Load")
+    @test vm0 > 1.05
+    addShuntVoltageControl!(net; bus = "Load", target_vm_pu = 1.0, bs_min_mvar = -60.0, bs_max_mvar = 60.0, deadband_vm_pu = 1e-3)
+    result = run_sparlectra(net = net)
+    @test result.numerical_converged
+    ctrl = only(Sparlectra._shunt_controllers(net))
+    @test ctrl.converged
+    @test !ctrl.at_limit
+    @test abs(get_bus_vm_pu(net, "Load") - 1.0) <= 1e-3
+    @test -60.0 < ctrl.bs_mvar < 0.0
+    # the actuated shunt carries the same susceptance (MATPOWER stamping)
+    sh = net.shuntVec[ctrl.shunt_idx]
+    @test imag(sh.y_pu_shunt) * net.baseMVA ≈ ctrl.bs_mvar atol = 1e-9
+
+    # honest limit region: an unreachable target clamps the susceptance and
+    # reports at_limit — constant-B, the reactive output then follows V²
+    lnet = build_svc_net()
+    run_sparlectra(net = lnet)
+    addShuntVoltageControl!(lnet; bus = "Load", target_vm_pu = 1.0, bs_min_mvar = -10.0, bs_max_mvar = 10.0, deadband_vm_pu = 1e-3)
+    run_sparlectra(net = lnet)
+    lctrl = only(Sparlectra._shunt_controllers(lnet))
+    @test !lctrl.converged
+    @test lctrl.at_limit
+    @test lctrl.status == :at_limit
+    @test lctrl.bs_mvar == -10.0
+    @test get_bus_vm_pu(lnet, "Load") > 1.0 + 1e-3
+
+    # generic controllable-element view: uniform records for all three
+    # controller families
+    els = controllableElements(net)
+    @test length(els) == 1
+    @test els[1].device == "SVC (variable shunt)"
+    @test els[1].actuator == :shunt_bs_mvar
+    @test (els[1].actuator_min, els[1].actuator_max) == (-60.0, 60.0)
+    @test els[1].quantity == :bus_voltage
+    @test els[1].converged === true
+    cres = latest_control_result(net)
+    @test cres !== nothing
+    @test length(cres.elements) == 1
+
+    mixed = Net(name = "mixed_els", baseMVA = 100.0)
+    for bus in ("Slack", "GenBus", "Load")
+      addBus!(net = mixed, busName = bus, vn_kV = 110.0)
+    end
+    addProsumer!(net = mixed, busName = "Slack", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.02, va_deg = 0.0, referencePri = "Slack")
+    addProsumer!(net = mixed, busName = "GenBus", type = "SYNCHRONOUSMACHINE", p = 30.0, q = 0.0, qMin = -50.0, qMax = 50.0)
+    addProsumer!(net = mixed, busName = "Load", type = "ENERGYCONSUMER", p = -70.0, q = -20.0)
+    addPIModelACLine!(net = mixed, fromBus = "Slack", toBus = "GenBus", r_pu = 0.02, x_pu = 0.12, b_pu = 0.01, status = 1)
+    addPIModelACLine!(net = mixed, fromBus = "GenBus", toBus = "Load", r_pu = 0.02, x_pu = 0.12, b_pu = 0.01, status = 1)
+    addMachineVoltageControl!(mixed; bus = "GenBus", target_bus = "Load", target_vm_pu = 1.03)
+    tnet, ttbr = _build_net()
+    addPowerTransformerControl!(tnet; trafo = string(ttbr.branchIdx), mode = :voltage, target_bus = "Load", target_vm_pu = 0.99, control_ratio = true, control_phase = false)
+    mrows = controllableElements(mixed)
+    trows = controllableElements(tnet)
+    @test length(mrows) == 1
+    @test mrows[1].actuator == :machine_q_mvar
+    @test mrows[1].target == "Load"
+    @test length(trows) == 1
+    @test trows[1].actuator == :tap_ratio
+    @test trows[1].quantity == :bus_voltage
+    @test trows[1].discrete === true
+  end
+
   @testset "Voltage deadband is evaluated in pu Vm space" begin
     @test Sparlectra._voltage_within_deadband(1.2009, 1.200, 1e-3)
     @test !Sparlectra._voltage_within_deadband(1.2025, 1.200, 1e-3)
@@ -133,28 +321,39 @@ function run_tap_controller_tests()
   end
 
   @testset "Branch active power controller (phase)" begin
+    # A radial path gives a phase shifter no lever on P (the load dictates
+    # the flow); the parallel line provides the loop the controller needs —
+    # the honest probe direction (post-#274 flow refresh) exposes that.
     net, tbr = _build_net()
+    addPIModelACLine!(net = net, fromBus = "Slack", toBus = "Mid", r_pu = 0.03, x_pu = 0.2, b_pu = 0.0, status = 1)
     result0 = run_sparlectra(net = net, config = _runner_cfg())
     erg0 = result0.numerical_converged ? 0 : 1
     @test erg0 == 0
     p0 = get_branch_p_from_to_mw(net, "Slack", "Mid")
 
+    # one discrete step of 1.25° moves ≈ 8 MW on this loop — the target must
+    # sit on the discrete grid within the deadband, otherwise a discrete
+    # controller can only oscillate around it
+    p_target = p0 - 8.0
     addPowerTransformerControl!(net;
       trafo = string(tbr.branchIdx),
       mode = :branch_active_power,
       target_branch = ("Slack", "Mid"),
-      p_target_mw = p0 - 5.0,
+      p_target_mw = p_target,
       control_ratio = false,
       control_phase = true,
       is_discrete = true,
-      deadband_p_mw = 0.8,
-      max_outer_iters = 6,
+      deadband_p_mw = 4.0,
+      max_outer_iters = 12,
     )
 
     result = run_sparlectra(net = net, config = _runner_cfg())
     erg = result.numerical_converged ? 0 : 1
     @test erg == 0
     @test tbr.phase_shift_deg != 0.0
+    ctrl = only(Sparlectra._tap_controllers(net))
+    @test ctrl.converged
+    @test abs(get_branch_p_from_to_mw(net, "Slack", "Mid") - p_target) <= 4.0
   end
 
   @testset "Disabled tap controllers are skipped" begin
@@ -552,6 +751,14 @@ function run_tap_controller_tests()
     @test length(collect_outer_controllers(net)) == 1
     clearMachineControllers!(net)
     @test isempty(collect_outer_controllers(net))
+
+    # cross-type check: a tap controller on the same target bus stays PQ, so
+    # only the construction-time warning can flag the double regulation
+    xnet = _build_rvc_net()
+    addBus!(net = xnet, busName = "TapSide", vn_kV = 20.0)
+    ctrl = Sparlectra.PowerTransformerControl(trafo = "", mode = :voltage, target_bus = "Load", target_vm_pu = 1.03)
+    add2WTrafo!(net = xnet, fromBus = "Load", toBus = "TapSide", sn_mva = 40.0, vk_percent = 12.0, vkr_percent = 0.4, pfe_kw = 20.0, i0_percent = 0.2, controls = [ctrl])
+    @test_logs (:warn, r"tap controller already regulates") addMachineVoltageControl!(xnet; bus = "GenBus", target_bus = "Load", target_vm_pu = 1.05)
   end
 
   @testset "Machine RVC: secant loop reaches a remote target" begin

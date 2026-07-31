@@ -146,6 +146,19 @@ function addMachineVoltageControl!(
   # another voltage-controlling unit and the two controllers would fight.
   tnode = net.nodeVec[targetIdx]
   tnode._nodeType == PQ || error("MachineVoltageControl: target bus $(target_bus) is $(tnode._nodeType) — its voltage is already held; a remote controller needs a PQ target.")
+  # Cross-type check: a tap-regulated bus stays PQ, so the node-type check
+  # above cannot see a transformer controller on the same target — but two
+  # controllers steering one voltage fight each other in the outer loop.
+  for tf in net.trafos
+    for w in (tf.side1, tf.side2, tf.side3)
+      w === nothing && continue
+      for ctrl in w.controls
+        if ctrl.target_bus == target_bus && ctrl.target_vm_pu !== nothing
+          @warn "MachineVoltageControl: a transformer tap controller already regulates the voltage of target bus $(target_bus) — two controllers on one voltage fight each other; expect oscillating outer iterations or reconfigure one of them."
+        end
+      end
+    end
+  end
 
   # resolve the machine
   ps_idx = if prosumer_index !== nothing
@@ -274,6 +287,25 @@ function control_apply_update!(ctrl::MachineVoltageControl, net::Net, ::Abstract
   ctrl.at_limit = !ctrl.converged && (isapprox(ctrl.q_mvar, ctrl.qmin_mvar; atol = 1e-9) || isapprox(ctrl.q_mvar, ctrl.qmax_mvar; atol = 1e-9))
   ctrl.at_limit && (ctrl.status = :at_limit)
   return moved
+end
+
+function control_element_descriptor(ctrl::MachineVoltageControl, net::Net)::Union{Nothing,NamedTuple}
+  return (
+    name = control_name(ctrl),
+    element = string("machine@", ctrl.bus),
+    device = "machine remote voltage control",
+    actuator = :machine_q_mvar,
+    actuator_min = ctrl.qmin_mvar,
+    actuator_max = ctrl.qmax_mvar,
+    quantity = :bus_voltage,
+    target = ctrl.target_bus,
+    target_value = ctrl.target_vm_pu,
+    discrete = false,
+    enabled = ctrl.enabled,
+    status = ctrl.status,
+    converged = ctrl.converged,
+    at_limit = ctrl.at_limit,
+  )
 end
 
 function control_report_rows(ctrl::MachineVoltageControl, net::Net, ::AbstractControlState, context)

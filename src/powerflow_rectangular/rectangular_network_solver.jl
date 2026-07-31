@@ -1261,7 +1261,7 @@ function runpf_rectangular!(
   return iters, erg
 end
 
-function _runpf_with_config!(net::Net, config::PowerFlowConfig; verbose::Int = 0, damp = 1.0, pv_table_rows::Int = 30, validate_limits_after_pf::Bool = false, q_limit_violation_headroom::Float64 = 0.0, qlimit_lock_reason::Symbol = :manual, performance_profile = nothing)
+function _runpf_config_once!(net::Net, config::PowerFlowConfig; verbose::Int = 0, damp = 1.0, pv_table_rows::Int = 30, validate_limits_after_pf::Bool = false, q_limit_violation_headroom::Float64 = 0.0, qlimit_lock_reason::Symbol = :manual, performance_profile = nothing)
   start = config.start_mode
   start_ci = config.start_current_iteration
   start_apslf = config.apslf_start
@@ -1358,8 +1358,114 @@ function _runpf_with_config!(net::Net, config::PowerFlowConfig; verbose::Int = 0
     distributed_slack_respect_p_limits = config.distributed_slack.respect_p_limits,
     distributed_slack_fallback = config.distributed_slack.fallback,
     distributed_slack_weights = config.distributed_slack.weights,
+    auto_slack = config.auto_slack,
     performance_profile = performance_profile,
   )
+end
+
+# --- AC rescue ladder and DC fallback (power_flow.rescue / power_flow.dc.fallback) ---
+
+# The retries must restart from the state the caller handed in, not from the
+# garbage a failed Newton run leaves behind — so the start voltages are
+# snapshotted before the first attempt and restored before every retry.
+_snapshot_start_voltages(net::Net) = (Union{Nothing,Float64}[n._vm_pu for n in net.nodeVec], Union{Nothing,Float64}[n._va_deg for n in net.nodeVec])
+
+function _restore_start_voltages!(net::Net, snap)
+  vm, va = snap
+  @inbounds for i in eachindex(net.nodeVec)
+    net.nodeVec[i]._vm_pu = vm[i]
+    net.nodeVec[i]._va_deg = va[i]
+  end
+  return nothing
+end
+
+"""
+Ordered rescue strategies for a non-converged AC solve. Each entry is a
+`(name, config)` pair derived from the failed run's configuration:
+
+1. `:alternate_start` — toggle the flat-start flag: a stalled imported start
+   often solves from flat, and a failed flat start may solve from the
+   imported voltages.
+2. `:autodamp` — adaptive damping with the default floor (skipped when the
+   failed run already used autodamp; the competing trust-region step control
+   is disabled for this attempt).
+3. `:dc_seed` — flat voltage magnitudes with DC-projected start angles via
+   the existing start-projection machinery.
+"""
+function _rescue_config_variants(config::PowerFlowConfig)
+  variants = Tuple{Symbol,PowerFlowConfig}[]
+  alt_start = _copy_start_mode_with(config.start_mode; flatstart = !config.start_mode.flatstart)
+  push!(variants, (:alternate_start, _copy_powerflow_with(config; start_mode = alt_start)))
+  if !config.autodamp
+    push!(variants, (:autodamp, _copy_powerflow_with(config; autodamp = true, trust_region = TrustRegionConfig())))
+  end
+  seeded = _copy_start_mode_with(config.start_mode; flatstart = true, start_projection = true, try_dc_start = true, accept_unmeasured_dc_start = true, angle_mode = :dc)
+  push!(variants, (:dc_seed, _copy_powerflow_with(config; start_mode = seeded)))
+  return variants
+end
+
+function _runpf_with_config!(net::Net, config::PowerFlowConfig; verbose::Int = 0, damp = 1.0, pv_table_rows::Int = 30, validate_limits_after_pf::Bool = false, q_limit_violation_headroom::Float64 = 0.0, qlimit_lock_reason::Symbol = :manual, performance_profile = nothing)
+  runtime = (; verbose, damp, pv_table_rows, validate_limits_after_pf, q_limit_violation_headroom, qlimit_lock_reason, performance_profile)
+  wants_recovery = config.rescue || config.dc.fallback
+  wants_recovery || return _runpf_config_once!(net, config; runtime...)
+
+  snap = _snapshot_start_voltages(net)
+  # Solver failures surface as ErrorException (island failures throw instead
+  # of returning a status); anything else is a caller/programming error and
+  # must not be swallowed by the ladder.
+  first_error = nothing
+  ite, erg = try
+    _runpf_config_once!(net, config; runtime...)
+  catch err
+    err isa ErrorException || rethrow()
+    first_error = err
+    (0, 1)
+  end
+  erg == 0 && return (ite, erg)
+
+  if config.rescue
+    for (name, variant) in _rescue_config_variants(config)
+      _restore_start_voltages!(net, snap)
+      println("rescue: AC solve did not converge — retrying with strategy '", name, "'.")
+      rite, rerg = try
+        _runpf_config_once!(net, variant; runtime...)
+      catch err
+        err isa ErrorException || rethrow()
+        (0, 1)
+      end
+      if rerg == 0
+        println("rescue: strategy '", name, "' converged after ", rite, " iteration(s).")
+        performance_profile isa AbstractDict && (performance_profile[:ac_rescue_strategy] = name)
+        return (rite, 0)
+      end
+    end
+    println("rescue: no strategy converged.")
+    performance_profile isa AbstractDict && (performance_profile[:ac_rescue_strategy] = :none)
+  end
+
+  if config.dc.fallback
+    _restore_start_voltages!(net, snap)
+    dc_ok = true
+    try
+      _run_dc_powerflow!(net, config; verbose = verbose, performance_profile = performance_profile)
+    catch err
+      err isa ErrorException || rethrow()
+      dc_ok = false
+      println("dc fallback: the DC power flow failed as well: ", sprint(showerror, err))
+    end
+    if dc_ok
+      println("dc fallback: AC did not converge — the net now carries the standalone DC solution (angles and branch P only, vm = 1 pu, no reactive results). The AC status stays non-converged.")
+      performance_profile isa AbstractDict && (performance_profile[:dc_fallback_applied] = true)
+      status = rectangular_pf_status(net)
+      status !== nothing && _set_rectangular_pf_status!(net, merge(status, (; dc_fallback_applied = true)))
+    end
+    # Honest return: erg = 1 keeps every `erg == 0` reader truthful about the
+    # AC solve; the DC state and the profile flag carry the fallback result.
+    return (ite, 1)
+  end
+
+  first_error === nothing || throw(first_error)
+  return (ite, erg)
 end
 
 runpf!(net::Net, config::PowerFlowConfig; kwargs...) = _runpf_with_config!(net, config; kwargs...)
@@ -1693,8 +1799,12 @@ function runpf!(
   distributed_slack_respect_p_limits::Bool = true,
   distributed_slack_fallback::Symbol = :error,
   distributed_slack_weights::AbstractDict{String,Float64} = Dict{String,Float64}(),
+  auto_slack::Bool = false,
 )
   _validate_rectangular_powerflow_options(method = :rectangular, sparse = true)
+  # Promote a reference before the merged working copy is built, so the
+  # original net and the solve see the same slack.
+  auto_slack && ensureSlack!(net; log = true)
   wnet, reps, has_merges = _merged_pf_net(net)
   refreshBusTypesFromProsumers!(wnet)
 

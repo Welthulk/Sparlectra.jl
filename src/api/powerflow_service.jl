@@ -213,8 +213,13 @@ function start_powerflow_run(request::AbstractDict; case_directory::Union{Nothin
   short_circuit_mode = _service_request_value(request, "short_circuit_mode", false)
   short_circuit_mode isa Bool || return _service_failure("invalid_request", "short_circuit_mode must be boolean.")
   (short_circuit_mode && diagnose_mode) && return _service_failure("invalid_request", "short_circuit_mode and diagnose_mode are mutually exclusive.")
+  import_analysis_mode = _service_request_value(request, "import_analysis_mode", false)
+  import_analysis_mode isa Bool || return _service_failure("invalid_request", "import_analysis_mode must be boolean.")
+  (import_analysis_mode && (diagnose_mode || short_circuit_mode)) && return _service_failure("invalid_request", "import_analysis_mode excludes diagnose_mode and short_circuit_mode.")
   detailed_result_csv = _service_request_value(request, "detailed_result_csv", false)
   detailed_result_csv isa Bool || return _service_failure("invalid_request", "detailed_result_csv must be boolean.")
+  export_cgmes = _service_request_value(request, "export_cgmes", false)
+  export_cgmes isa Bool || return _service_failure("invalid_request", "export_cgmes must be boolean.")
   detailed_result_csv_semicolon = _service_request_value(request, "detailed_result_csv_semicolon", false)
   detailed_result_csv_semicolon isa Bool || return _service_failure("invalid_request", "detailed_result_csv_semicolon must be boolean.")
   detailed_result_csv_format = _service_request_value(request, "detailed_result_csv_format", nothing)
@@ -255,6 +260,30 @@ function start_powerflow_run(request::AbstractDict; case_directory::Union{Nothin
     if config_overrides isa AbstractDict && haskey(config_overrides, "cgmes_import.start_values")
       config_overrides = Dict{String,Any}(k => v for (k, v) in config_overrides if k != "cgmes_import.start_values")
     end
+  end
+  # Import-analysis runs stop even earlier than short-circuit runs: only the
+  # CGMES delivery files are parsed (no mapping, no solve) and the
+  # importFailureAnalysis report becomes the run's product — a fast pre-check
+  # before a slow full import (see _run_import_analysis_service).
+  if import_analysis_mode
+    ia_result = try
+      _run_import_analysis_service(casefile, config_file, output_dir, run_id)
+    catch err
+      err isa PowerFlowAborted && rethrow()
+      return _service_failure("execution_error", sprint(showerror, err, catch_backtrace()); run_id = run_id)
+    end
+    try
+      lock(_POWERFLOW_SERVICE_LOCK) do
+        _POWERFLOW_SERVICE_RUNS[ia_result.run_id] = ia_result
+        _write_powerflow_run_index!(root, ia_result)
+      end
+    catch err
+      lock(_POWERFLOW_SERVICE_LOCK) do
+        delete!(_POWERFLOW_SERVICE_RUNS, ia_result.run_id)
+      end
+      return _service_failure("run_index_error", sprint(showerror, err, catch_backtrace()); run_id = run_id)
+    end
+    return to_dict(ia_result)
   end
   # Short-circuit runs bypass the power-flow pipeline entirely: CGMES import
   # + runShortCircuit! max/min + CSV artifacts, same result/registry
@@ -302,6 +331,7 @@ function start_powerflow_run(request::AbstractDict; case_directory::Union{Nothin
       detailed_result_csv = detailed_result_csv,
       detailed_result_csv_format = detailed_result_csv_format,
       detailed_result_csv_semicolon = detailed_result_csv_semicolon,
+      export_cgmes = export_cgmes,
       phase_timings = phases,
       run_id = run_id,
       cancellation_token = cancellation_token,

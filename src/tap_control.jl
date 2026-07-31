@@ -163,6 +163,45 @@ function control_propose_update!(ctrl::PowerTransformerControl, net::Net, ::Abst
   end
   return (old_ratio = old_ratio, new_ratio = new_ratio, old_phase = old_phase, new_phase = new_phase)
 end
+# Typed phase-tap model of the winding that carries this controller —
+# `nothing` for controllers on windings without one (MATPOWER general-case
+# PSTs, CGMES-flattened PSTs), which keep static reactance.
+function _phase_tap_model_of(net::Net, ctrl::PowerTransformerControl)::Union{Nothing,PhaseTapChangerModel}
+  for tf in net.trafos
+    for w in (tf.side1, tf.side2, tf.side3)
+      w === nothing && continue
+      any(c -> c === ctrl, w.controls) && return w.phase_taps
+    end
+  end
+  return nothing
+end
+
+# X(α) of the controlled PST at a continuous controller angle, in pu.
+# Formula models (symmetrical/asymmetrical with x_min/x_max) evaluate
+# calcPhaseTapReactance directly at the continuous angle; tabular models snap
+# to the nearest table row by angle (no interpolation — the #261 Stage-4
+# decision) and use its per-step x_pu. Returns `nothing` when the model
+# carries no reactance data, which keeps the coupling strictly opt-in.
+function _phase_tap_reactance_at(net::Net, ctrl::PowerTransformerControl, angle_deg::Float64)::Union{Nothing,Float64}
+  model = _phase_tap_model_of(net, ctrl)
+  model === nothing && return nothing
+  if model.kind === :tabular
+    model.table === nothing && return nothing
+    best = nothing
+    bestd = Inf
+    for p in model.table
+      d = abs(p.angle_deg - angle_deg)
+      if d < bestd
+        best = p
+        bestd = d
+      end
+    end
+    return best === nothing ? nothing : best.x_pu
+  end
+  (model.x_min === nothing || model.x_max === nothing) && return nothing
+  return calcPhaseTapReactance(model, angle_deg)
+end
+
 function control_apply_update!(ctrl::PowerTransformerControl, net::Net, ::AbstractControlState, update::NamedTuple, context)::Bool
   br = _find_trafo_branch(net, ctrl.trafo)
   moved = false
@@ -174,6 +213,10 @@ function control_apply_update!(ctrl::PowerTransformerControl, net::Net, ::Abstra
   if update.new_phase != update.old_phase
     br.phase_shift_deg = update.new_phase
     br.angle = update.new_phase
+    # tap-dependent reactance X(α): the next outer-loop solve re-stamps the
+    # Y-bus from br.x_pu, so assigning here is all the coupling needed
+    x_new = _phase_tap_reactance_at(net, ctrl, update.new_phase)
+    x_new === nothing || (br.x_pu = x_new)
     moved = true
   end
   ctrl.at_limit = isapprox(br.tap_ratio, br.tap_min; atol = 1e-12) || isapprox(br.tap_ratio, br.tap_max; atol = 1e-12)
@@ -207,6 +250,33 @@ function control_trace_rows(ctrl::PowerTransformerControl, net::Net, ::AbstractC
     tap_ratio = br.tap_ratio,
     phase_shift_deg = br.phase_shift_deg,
   )]
+end
+
+function control_element_descriptor(ctrl::PowerTransformerControl, net::Net)::Union{Nothing,NamedTuple}
+  br = _find_trafo_branch(net, ctrl.trafo)
+  ratio = ctrl.control_ratio && br.has_ratio_tap
+  phase = ctrl.control_phase && br.has_phase_tap
+  actuator = ratio && phase ? :tap_ratio_and_phase_shift : ratio ? :tap_ratio : phase ? :phase_shift_deg : :none
+  quantity = ctrl.mode === :voltage ? :bus_voltage : ctrl.mode === :branch_active_power ? :branch_active_power : :bus_voltage_and_branch_active_power
+  target = ctrl.target_bus !== nothing ? ctrl.target_bus : ctrl.target_branch === nothing ? "" : string(ctrl.target_branch[1], "->", ctrl.target_branch[2])
+  target_value = ctrl.target_vm_pu !== nothing ? ctrl.target_vm_pu : ctrl.p_target_mw
+  amin, amax = phase && !ratio ? (br.phase_min_deg, br.phase_max_deg) : (br.tap_min, br.tap_max)
+  return (
+    name = control_name(ctrl),
+    element = br.comp.cName,
+    device = _controller_type_label(ctrl, br),
+    actuator = actuator,
+    actuator_min = amin,
+    actuator_max = amax,
+    quantity = quantity,
+    target = target,
+    target_value = target_value === nothing ? missing : target_value,
+    discrete = ctrl.is_discrete,
+    enabled = ctrl.enabled,
+    status = ctrl.status,
+    converged = ctrl.converged,
+    at_limit = ctrl.at_limit,
+  )
 end
 
 function _controller_type_label(ctrl::PowerTransformerControl, br::Branch)::String
@@ -432,9 +502,18 @@ function _phase_probe_direction(
     qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu,
   )
   erg != 0 && return -1.0
+  # branch flows live in fBranchFlow/tBranchFlow, which only calcNetLosses!
+  # rewrites — without the refresh both probe reads return the same stale
+  # values and the estimated direction is always 0
+  calcNetLosses!(net)
   p0 = get_branch_p_from_to_mw(net, ctrl.target_branch[1], ctrl.target_branch[2])
+  oldx = br.x_pu
   br.phase_shift_deg = clamp(oldphi + step, br.phase_min_deg, br.phase_max_deg)
   br.angle = br.phase_shift_deg
+  # perturb the reactance consistently with the apply step (X(α) coupling);
+  # without a typed model the probe keeps today's static-x behaviour
+  x_probe = _phase_tap_reactance_at(net, ctrl, br.phase_shift_deg)
+  x_probe === nothing || (br.x_pu = x_probe)
   _, erg2 = runpf!(
     net,
     max_ite,
@@ -460,9 +539,11 @@ function _phase_probe_direction(
     qlimit_guard_violation_mode = qlimit_guard_violation_mode,
     qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu,
   )
+  erg2 == 0 && calcNetLosses!(net)
   p1 = erg2 == 0 ? get_branch_p_from_to_mw(net, ctrl.target_branch[1], ctrl.target_branch[2]) : p0
   br.phase_shift_deg = oldphi
   br.angle = oldphi
+  br.x_pu = oldx
   return sign(p1 - p0)
 end
 

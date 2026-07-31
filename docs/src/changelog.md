@@ -1,84 +1,33 @@
-# Version 0.9.0 — 2026-07-30
+# Version 0.9.0 — 2026-07-31
 
-Hardening CGMES import; first IEC 60909 short-circuit stage ([#277](https://github.com/Welthulk/Sparlectra.jl/issues/277))
+IEC 60909 short-circuit stage (#277), CGMES export.
 
 ## Breaking Changes
 
-**Default start uses imported voltages.** The shipped configuration now sets
-the legacy `power_flow.flatstart` to `false`, so imported start voltages —
-MATPOWER `VM`/`VA` and especially the CGMES `SvVoltage` state — reach the
-solver by default. This changes the effective start point of any run that did
-not set the key explicitly: MATPOWER runs now start from the case's own
-`VM`/`VA` instead of the projected flat start (same converged results,
-different iteration path), and CGMES runs no longer lose their SV state
-silently — which is what made the RealGrid case diverge in the Web UI while
-it solves in a handful of iterations from its SV state. Set
-`flatstart: true` to restore the previous behavior; CGMES runs are steered by
-`cgmes_import.start_values` regardless.
+- **Short-circuit calculation (IEC 60909-0).** `runShortCircuit!` computes Ik''max/min, Sk'' and i_p per fault bus from the CGMES short-circuit data. Where attributes were missing and defaults substituted (e.g. motors), the affected rows are flagged — a flagged Ik''max is a lower bound. Web UI gets a Short circuit button for CGMES cases that carry the data; writes `short_circuit_max.csv` / `short_circuit_min.csv`. (#277)
+- **CGMES export.** `writeCGMESFiles` writes a complete 2.4.15 delivery (EQ/TP/SSH/SV, optionally zipped). Export → re-import solves to the same power flow and keeps the original mRIDs; new objects get deterministic uuid5 ids, renaming never changes an mRID. Export checkbox in the Web UI run form.
+- **Auto slack** (`power_flow.auto_slack`, off by default): promotes the strongest injection to slack when the case registers none, logged.
+- **Rescue ladder + DC fallback** (`power_flow.rescue`, `power_flow.dc.fallback`, both off by default): failed AC solves are retried with alternate start / autodamp / DC-seeded start; if all fails, the DC fallback at least leaves angles and branch P in the net. AC status stays non-converged, honestly.
+- **Import analysis.** Deliveries that can't be imported now explain themselves: missing boundary sets are named by model id, unresolved references get a histogram, verdict in plain language. Runs automatically on Web UI upload (`<case>.import_analysis.txt`), also via `analyzeCGMES`.
+- **BaseVoltage reconstruction** (`cgmes_import.infer_base_voltages`, off by default): deliveries missing their BaseVoltage catalog get levels seeded from SV voltages and transformer rated voltages, then propagated. One summary warning.
 
-## New Features
+## Improved
 
-**Balanced short-circuit currents (IEC 60909-0, SC-1).** `runShortCircuit!`
-computes the initial symmetrical short-circuit current `Ik''` (max and min),
-`Sk''`, and the peak current `i_p` per fault bus from the CGMES
-short-circuit harvest — Z-bus column solve per island, voltage factors per
-IEC Table 1 (`short_circuit.c_factor` as scalar expert override, default
-automatic). Because the result is safety-relevant, substituted defaults and
-skipped contributions (e.g. motors without harvested attributes) are flagged
-on the affected result rows themselves; a flagged `Ik''max` is a lower
-bound. Design decisions of record: per-bus API with the all-bus sweep as a
-loop, hardcoded c-table plus scalar override, data-driven motor inclusion
-with the lower-bound flag, separate `ShortCircuitResult` type. The Web UI
-gets a dedicated **Short circuit** button next to Diagnose — selectable only
-for CGMES cases whose delivery actually carries short-circuit source data —
-that runs both cases without a power-flow solve and writes
-`short_circuit_max.csv` / `short_circuit_min.csv` plus a result-page summary
-(flagged rows render as a lower-bound warning badge). See
-[Short-Circuit Analysis](short_circuit.md)
-([#277](https://github.com/Welthulk/Sparlectra.jl/issues/277)).
+- `compareWithSV` removes the median angle offset before judging deltas — an IGM cut from a CGM keeps the global angle reference (a real 50Hertz delivery: ~27° on every bus, meaning nothing). Offset is reported separately.
+- Start scripts `start_webui.sh/.bat` and `install_webui.sh/.bat` in the repo root.
+- SVC-style voltage control via `addShuntVoltageControl!`; at the MVAr limit the device clamps to constant B (Q then follows V²). `controllableElements(net)` lists all controllers in one vocabulary.
+- PSTs update X(α) on tap moves when the winding carries reactance data. Fixed along the way: DTF importer dropped the phase-tap model, and the phase-probe compared stale flows against themselves.
+- Config edits show up on form refresh; newest edit wins between YAML and saved case settings.
+- `cgmes_import.placeholder_guards: strict` aborts on filler values instead of skipping them.
+- Diagnose / self-check evaluates CGMES cases at their own SV state — all start-value machinery forced off, including a `flatstart: true` that previously wiped the SV start silently. New artifacts `self_check.log`, `self_check_residuals.csv`.
+- CGMES runs: start values selectable (`flat`/`sv`), SV comparison now mandatory on every run (`sv_compare.csv`, `sv_compare_flows.csv`).
+- Wrong-branch detection only judges the highest voltage level — healthy 45 kV feeders no longer flag SUSPECT while the 380 kV level is clean.
 
-## Improvements
+## Fixed
 
-**Fixed-reference self-check for CGMES deliveries.** `run_fixed_reference_self_check`
-(and the Web UI Diagnose action) now evaluates CGMES cases at their own
-`SvVoltage` state: every start-value machine is forced off — including a
-`flatstart: true` in the base configuration, which previously wiped the SV
-start silently — so the residual really measures the imported model. New
-artifacts `self_check.log` (forced settings, start-state residual, SV
-coverage) and `self_check_residuals.csv` (full per-bus P/Q residuals with
-transformer/shunt adjacency) support attribution; `cgmes.log` now reports
-buses without a usable `SvVoltage`. See the
-[Web UI Diagnose action](webui.md).
+- `no slack bus found` now says what's actually wrong: all buses isolated (branch-less delivery), slack on an isolated bus, or genuinely no slack — and how to fix each.
+- Failed multi-island runs no longer report `iterations=0 / before_nr` when the island did a full Newton solve, and never-attempted islands no longer copy the failed island's statistics into `ac_island_solver_summary.csv`.
 
-**CGMES runs: selectable start values and a mandatory SV check.** The WebUI
-(and `cgmes_import.start_values`) now offers the CGMES start state as an
-explicit choice — `flat` (default: the solver earns the solution itself) or
-`sv` (start from the delivery's imported SvVoltage state, with competing
-start-value machines forced off). Every CGMES run additionally checks the
-solved state against the delivered SV solution and writes `sv_compare.csv` /
-`sv_compare_flows.csv`, a summary block in `cgmes.log`, result metadata, and
-an "SV comparison" row on the WebUI result page. See
-[CGMES Import](cgmes_import.md).
-
-**Wrong-branch detection judges only the highest voltage level.** The
-voltage-band, angle-spread, and branch-angle heuristics now ignore
-sub-transmission levels, whose normal operating spread produced false
-`SUSPECT` verdicts (a real CGMES snapshot's healthy 45 kV feeders were
-flagged while its 380 kV level was clean). See
-[Configuration](configuration.md).
-
-## Bugfixes
-
-**Truthful AC island failure diagnostics.** On a failed multi-island run the
-user-facing message reported `iterations=0 / stage=before_nr` even when the
-failing island had run a full Newton solve, and every island the solver never
-attempted (e.g. de-energized single-bus islands of a CGMES delivery) repeated
-the failed island's complete statistics in `ac_island_solver_summary.csv`.
-The failure message now reports the failing island's own iteration count and
-stage, never-attempted islands appear as `not_attempted` without per-island
-artifact files, and the `q_limit_processing_status` column no longer mirrors
-the generic failure reason. See
-[Power-Flow Configuration](powerflow_configuration.md).
 
 # Version 0.8.16 — 2026-07-30
 

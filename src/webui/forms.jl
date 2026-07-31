@@ -138,7 +138,7 @@ function _webui_cgmes_upload_role(path::AbstractString, directory::AbstractStrin
   content = join(parts, ", ")
 
   missing_profiles = [p for p in (:EQ, :SSH, :TP) if !(p in profiles)]
-  isempty(missing_profiles) || return "❌ $(version) · $(proflist) · $(content) — incomplete: missing profile(s) $(join(String.(missing_profiles), ", "))"
+  isempty(missing_profiles) || return "❌ $(version) · $(proflist) · $(content) — incomplete: missing profile(s) $(join(String.(missing_profiles), ", "))$(_webui_upload_analysis_note(path))"
 
   if !summary.boundary_missing_hint
     return "✅ $(version) · $(proflist) · $(content) · self-contained, ready to compute"
@@ -162,7 +162,35 @@ function _webui_cgmes_upload_role(path::AbstractString, directory::AbstractStrin
   # it next to the case instead of asking for a second upload.
   fetched = _webui_try_supply_cgmes_boundary(path, directory)
   isempty(fetched) || return "✅ $(version) · $(proflist) · $(content) · boundary supplied automatically ($(fetched)), ready to compute"
-  return "⚠️ $(version) · $(proflist) · $(content) · $(summary.unresolved_count) unresolved references — boundary set missing: upload it as well, or type cgmes:&lt;alias&gt;"
+  return "⚠️ $(version) · $(proflist) · $(content) · $(summary.unresolved_count) unresolved references — boundary set missing: upload it as well, or type cgmes:&lt;alias&gt;$(_webui_upload_analysis_note(path))"
+end
+
+"""
+Upload-time import analysis for a CGMES delivery that stayed incomplete
+(missing profiles or missing boundary): writes the full
+[`importFailureAnalysis`](@ref Sparlectra.CGMESImporter.importFailureAnalysis)
+report next to the case as `<case>.import_analysis.txt` and returns a short
+message suffix naming the missing declared dependencies. Best-effort — an
+unreadable delivery yields an empty suffix and no file.
+"""
+function _webui_upload_analysis_note(path::AbstractString)::String
+  try
+    store = CGMESImporter.loadCGMES(path)
+    stats = CGMESImporter.importabilityStats(store)
+    report_file = string(splitext(path)[1], ".import_analysis.txt")
+    open(report_file, "w") do io
+      print(io, CGMESImporter.importFailureAnalysis(store))
+    end
+    if !isempty(stats.missing_dependencies)
+      shown = join(Iterators.take(stats.missing_dependencies, 3), ", ")
+      length(stats.missing_dependencies) > 3 && (shown *= ", …")
+      return " · missing declared dependencies: $(shown) — full analysis in $(basename(report_file))"
+    end
+    return " — full analysis in $(basename(report_file))"
+  catch
+    # keep the role summary useful even when the analysis cannot be built
+    return ""
+  end
 end
 
 """
@@ -412,17 +440,33 @@ end
 function webui_form_state(; selected_casefile::AbstractString = "", selected_config_file::AbstractString = "", sidecar_profile = nothing, submitted_form = nothing)
   config_path = isempty(selected_config_file) ? DEFAULT_SPARLECTRA_CONFIG_PATH : selected_config_file
   values = Dict{String,Any}(spec.field => spec.default for spec in WEBUI_OPTION_SPECS)
-  merge!(values, _webui_config_field_values(config_path))
+  config_values = _webui_config_field_values(config_path)
+  merge!(values, config_values)
   values["casefile"] = selected_casefile
   values["casefile_manual"] = ""
   values["config_file"] = config_path
   if sidecar_profile isa AbstractDict
+    # Last edit wins: when the configuration file is NEWER than the saved
+    # case settings, the config's own keys take precedence — editing the
+    # YAML must show up on the next page load without deleting the sidecar
+    # (fields the YAML does not set keep their saved case value).
+    config_beats_sidecar = false
+    if haskey(sidecar_profile, "_profile_path")
+      ppath = String(sidecar_profile["_profile_path"])
+      config_beats_sidecar = isfile(config_path) && isfile(ppath) && mtime(config_path) > mtime(ppath)
+    end
+    applied_config_over_sidecar = false
     for (field, value) in sidecar_profile
       field == "_profile_path" && continue
       haskey(_WEBUI_OPTION_BY_FIELD, String(field)) || continue
+      if config_beats_sidecar && haskey(config_values, String(field))
+        applied_config_over_sidecar = true
+        continue
+      end
       values[String(field)] = _webui_normalize_case_profile_form_value(String(field), value)
     end
     haskey(sidecar_profile, "_profile_path") && (values["_profile_path"] = sidecar_profile["_profile_path"])
+    applied_config_over_sidecar && (values["_config_newer_than_profile"] = true)
   end
   if submitted_form isa AbstractDict
     for spec in WEBUI_OPTION_SPECS
@@ -643,7 +687,9 @@ function powerflow_webui_request(form::AbstractDict; default_output_root::Abstra
     "run_diagnostics" => false,
     "diagnose_mode" => _webui_parse_form_value(_webui_form_value(form, "diagnose_mode", "false"), Bool, "diagnose_mode"),
     "short_circuit_mode" => _webui_parse_form_value(_webui_form_value(form, "short_circuit_mode", "false"), Bool, "short_circuit_mode"),
+    "import_analysis_mode" => _webui_parse_form_value(_webui_form_value(form, "import_analysis_mode", "false"), Bool, "import_analysis_mode"),
     "detailed_result_csv" => request_options["detailed_result_csv"],
     "detailed_result_csv_format" => request_options["detailed_result_csv_format"],
+    "export_cgmes" => request_options["export_cgmes"],
   )
 end

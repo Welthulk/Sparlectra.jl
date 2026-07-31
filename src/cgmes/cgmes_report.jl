@@ -58,7 +58,15 @@ Compare the solved state of `result.net` (after `runpf!`) with the SV
 profile of the imported data set — the numeric acceptance oracle of the
 importer (concept §8).
 
-Voltages: per-bus Δvm/Δva vs `SvVoltage` (max/RMS + rows).
+Voltages: per-bus Δvm/Δva vs `SvVoltage` (max/RMS + rows). Angles are only
+defined up to one constant per island — an IGM cut out of the continental
+CGM keeps the CGM's global angle reference while the local solve pins its
+own slack, which shows up as a uniform offset of tens of degrees that says
+nothing about the state. The comparison therefore removes the median angle
+offset (`va_ref_offset_deg`, reported separately) and judges the aligned
+deltas (`dva_aligned`, feeding `max_dva`/`rms_dva`); the raw `dva` stays in
+the rows. Secondary islands with their own reference may keep a residual
+offset.
 
 Flows (`.flows`): per-terminal comparison vs `SvPowerFlow` in the CGMES
 sign convention (power flowing *into* the equipment):
@@ -75,7 +83,7 @@ function compareWithSV(result::CGMESImportResult)
   net = result.net
   store = result.store
   topo = result.topo
-  rows = NamedTuple{(:bus, :vm_pu, :sv_vm_pu, :dvm, :va_deg, :sv_va_deg, :dva),Tuple{String,Float64,Float64,Float64,Float64,Float64,Float64}}[]
+  raw_rows = NamedTuple{(:bus, :vm_pu, :sv_vm_pu, :dvm, :va_deg, :sv_va_deg, :dva),Tuple{String,Float64,Float64,Float64,Float64,Float64,Float64}}[]
   for sv in objectsOf(store, :SvVoltage)
     tn = get(sv.refs, :TopologicalNode, nothing)
     tn === nothing && continue
@@ -93,13 +101,22 @@ function compareWithSV(result::CGMESImportResult)
     va = something(node._va_deg, NaN)
     sv_vm = v / vn
     sv_va = num(sv, :angle, 0.0)
-    push!(rows, (bus = bus, vm_pu = vm, sv_vm_pu = sv_vm, dvm = vm - sv_vm, va_deg = va, sv_va_deg = sv_va, dva = va - sv_va))
+    push!(raw_rows, (bus = bus, vm_pu = vm, sv_vm_pu = sv_vm, dvm = vm - sv_vm, va_deg = va, sv_va_deg = sv_va, dva = va - sv_va))
   end
   flows = _compareFlowsWithSV(result)
-  isempty(rows) && return (n = 0, max_dvm = NaN, rms_dvm = NaN, max_dva = NaN, rms_dva = NaN, rows = rows, flows = flows)
-  dvm = [abs(r.dvm) for r in rows]
-  dva = [abs(r.dva) for r in rows]
-  return (n = length(rows), max_dvm = maximum(dvm), rms_dvm = sqrt(sum(abs2, dvm) / length(dvm)), max_dva = maximum(dva), rms_dva = sqrt(sum(abs2, dva) / length(dva)), rows = rows, flows = flows)
+  aligned_rows = NamedTuple{(:bus, :vm_pu, :sv_vm_pu, :dvm, :va_deg, :sv_va_deg, :dva, :dva_aligned),Tuple{String,Float64,Float64,Float64,Float64,Float64,Float64,Float64}}[]
+  isempty(raw_rows) && return (n = 0, max_dvm = NaN, rms_dvm = NaN, max_dva = NaN, rms_dva = NaN, va_ref_offset_deg = NaN, rows = aligned_rows, flows = flows)
+  # Median instead of mean: robust against the few buses of secondary
+  # islands whose own reference differs from the main island's.
+  sorted_dva = sort([r.dva for r in raw_rows if isfinite(r.dva)])
+  m = length(sorted_dva)
+  va_ref_offset_deg = m == 0 ? 0.0 : (isodd(m) ? sorted_dva[(m + 1) ÷ 2] : (sorted_dva[m ÷ 2] + sorted_dva[m ÷ 2 + 1]) / 2.0)
+  for r in raw_rows
+    push!(aligned_rows, (bus = r.bus, vm_pu = r.vm_pu, sv_vm_pu = r.sv_vm_pu, dvm = r.dvm, va_deg = r.va_deg, sv_va_deg = r.sv_va_deg, dva = r.dva, dva_aligned = r.dva - va_ref_offset_deg))
+  end
+  dvm = [abs(r.dvm) for r in aligned_rows]
+  dva = [abs(r.dva_aligned) for r in aligned_rows]
+  return (n = length(aligned_rows), max_dvm = maximum(dvm), rms_dvm = sqrt(sum(abs2, dvm) / length(dvm)), max_dva = maximum(dva), rms_dva = sqrt(sum(abs2, dva) / length(dva)), va_ref_offset_deg = va_ref_offset_deg, rows = aligned_rows, flows = flows)
 end
 
 const _UNIT_CLASSES = (:SynchronousMachine, :ExternalNetworkInjection, :EquivalentInjection)

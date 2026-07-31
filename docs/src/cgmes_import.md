@@ -75,6 +75,21 @@ live in the boundary files. The importer detects this through actually
 unresolved references, not through filenames, and fails with an explicit
 message unless `require_boundary = false`.
 
+**Import analysis.** When such an import aborts, the importer first prints a
+full analysis: the supplied model files (profile, version, model id), every
+`md:Model.DependentOn` prerequisite the file headers declare — matched
+against the supplied models, so a missing boundary set is named by its exact
+model id — an unresolved-reference histogram by class and property, and a
+plain-language verdict. In Web UI runs the report lands in `cgmes.log`, and
+the **Analyze import** button runs the same check before a full import (see
+[Web UI](webui.md)). The report is also available on demand without
+importing: `analyzeCGMES(path = ...)` accepts the same path forms as
+`importCGMES`. Note that a delivery whose `TopologicalNode.BaseVoltage`
+references stay unresolved cannot be repaired with `require_boundary =
+false`: real ENTSO-E deliveries keep their base-voltage catalog in the
+boundary EQ file, so without the matching boundary there is no voltage level
+to build buses from.
+
 **Slack selection.** In order: `referencePriority ≥ 1` (a notice is emitted
 when several units tie), a single `ExternalNetworkInjection`, the largest
 external injection, the largest synchronous machine.
@@ -96,6 +111,8 @@ instead of aborting the power flow with "island without reference".
 | `cgmes_import.vset_min_pu` | `0.5` | Lower bound of the plausibility band for a voltage `RegulatingControl.targetValue`, in p.u. of the regulated bus's nominal voltage. |
 | `cgmes_import.vset_max_pu` | `1.5` | Upper bound of that band. A target outside `[vset_min_pu, vset_max_pu]` is treated as a placeholder: it is ignored, the unit is held PV at the bus voltage derived from the nominal data, and the substitution is reported as a `warning:`. |
 | `cgmes_import.multi_slack` | `true` | Give every electrical island its own SV-declared angle reference (at most one per island). Required for multi-island deliveries; `false` forces the legacy single-reference behavior. Allowed values: `true`, `false`. |
+| `cgmes_import.placeholder_guards` | `warn_skip` | Behavior of the placeholder guards (implausible shunt admittances, tap corrections outside 0.5 … 2.0). `warn_skip`: keep the filler value out of the solve with a warning. `strict`: abort the import with an error naming the object — for deliveries where dropped data must never go unnoticed. Allowed values: `warn_skip`, `strict`. |
+| `cgmes_import.infer_base_voltages` | `false` | Reconstruct missing nominal voltages when the delivery ships without its `BaseVoltage` catalog (in real ENTSO-E deliveries the catalog lives in the boundary EQ): nodes are seeded from the SV voltages (kV, snapped to the standard level series) and transformer rated voltages, then the levels propagate across level-preserving equipment (anything but a transformer). All substitutions are summarized as one `warning:` message with per-source and per-level counts. Pair with `require_boundary: false`; nodes that stay unresolved still abort with the import analysis. Allowed values: `true`, `false`. |
 | `cgmes_import.start_values` | `flat` | Newton-Raphson start state for CGMES runs. `flat`: synthetic flat start — the solver earns the solution itself. `sv`: start from the delivery's imported `SvVoltage` state; the competing start-value machines (`start_projection`, `dc_seed_unconditional`, `start_current_iteration`, `apslf_start`) are forced off for the run. On CGMES runs this key wins over `power_flow.flatstart` / `power_flow.start_mode.flatstart`; MATPOWER and DTF runs ignore it. The decision (including any overridden keys) is logged to `run.log` and `cgmes.log`, and the SV comparison (`sv_compare.csv`) runs in both modes. Allowed values: `flat`, `sv`. |
 
 ### Implausible voltage setpoints
@@ -139,6 +156,12 @@ With the guards in place FullGrid's network solves from a flat start (its
 shipped SV profile remains internally inconsistent — a 14.5° angle jump
 across a 0.3 Ω line — so the SV-based start and the SV comparison stay
 meaningless for this set).
+
+Both guards act globally with warn-and-skip semantics by default. When
+silently dropping data is not acceptable — a productive delivery rather
+than a conformity set — set `cgmes_import.placeholder_guards: strict`: a
+suspected placeholder then aborts the import with an error naming the
+offending object instead of skipping it.
 
 ### Machine Q limits: the `ReactiveCapabilityCurve` is Q(P), not Q(U)
 
@@ -261,6 +284,14 @@ nominal voltage.
 State Variables profile:
 
 - **Voltages** — per-bus Δvm/Δva against `SvVoltage`, with max and RMS.
+  Angles are only defined up to one constant per island: an IGM cut out of
+  the continental CGM keeps the CGM's global angle reference, while the
+  local solve pins its own slack — a uniform offset of tens of degrees that
+  says nothing about the state. The comparison removes the median offset
+  before judging the angles (`dva_aligned` drives `max_dva`/`rms_dva`) and
+  reports it separately as `va_ref_offset_deg` (cgmes.log, run metadata,
+  Web UI summary row); the raw `dva` column stays in `sv_compare.csv`.
+  Secondary islands with their own reference may keep a residual offset.
 - **Flows** (`.flows`) — per-terminal comparison against `SvPowerFlow` in the
   CGMES sign convention: branch terminals, shunts at the solved voltage, loads
   as an SSH↔SV consistency check, and units aggregated per bus. Note that the

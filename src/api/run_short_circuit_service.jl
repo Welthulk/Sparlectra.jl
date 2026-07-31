@@ -82,11 +82,28 @@ function _run_short_circuit_service(case_path::AbstractString, config_file::Abst
       vset_min_pu = cgmes_cfg.vset_min_pu,
       vset_max_pu = cgmes_cfg.vset_max_pu,
       multi_slack = cgmes_cfg.multi_slack,
+      strict_placeholder_guards = cgmes_cfg.placeholder_guards === :strict,
+      infer_base_voltages = cgmes_cfg.infer_base_voltages,
       name = basename(case_path),
     )
   catch err
     message = sprint(showerror, err)
-    reason = occursin("boundary set missing", message) || occursin("unresolved topology references", message) ? "cgmes_boundary_missing" : "cgmes_import_error"
+    # Same convention as the power-flow path: the typed import error carries
+    # the full analysis — persist it where the run's artifacts live.
+    if err isa CGMESImporter.CGMESImportError
+      try
+        open(joinpath(output_dir, "cgmes.log"), "w") do io
+          println(io, "# CGMES import report — IMPORT FAILED")
+          println(io, "error:  ", message)
+          println(io)
+          println(io, "## Import analysis")
+          print(io, err.analysis)
+        end
+      catch logerr
+        @warn "could not write diagnostic cgmes.log" exception = logerr
+      end
+    end
+    reason = occursin("boundary set missing", message) || occursin("unresolved topology references", message) || occursin("no resolvable BaseVoltage", message) ? "cgmes_boundary_missing" : "cgmes_import_error"
     return _api_failure(reason, message; run_id = run_id, casefile = case_path, config_file = config_file, output_dir = String(output_dir), logfile = logfile, result_file = result_file, metadata = base_metadata)
   end
 

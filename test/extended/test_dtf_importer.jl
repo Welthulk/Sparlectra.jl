@@ -141,4 +141,24 @@ function run_dtf_importer_tests()
     @test length(net.branchVec) == 27
     @test Sparlectra.bus_shunt_totals_pu(net).total_g_pu ≈ 0.0
   end
+
+  @testset "DTF persists the typed phase-tap model on the winding" begin
+    # X(α)-coupling precondition: the transiently built PhaseTapChangerModel
+    # must survive onto winding.phase_taps for controlled transformers
+    # (FOR001E carries skew/longitudinal tap controls). Pure attachment —
+    # the numeric branch results are guarded by the DTF validation suites.
+    fixture = joinpath(dirname(@__DIR__), "..", "data", "DTF", "FOR001E.DAT")
+    if !isfile(fixture)
+      @info "FOR001E.DAT not available — skipping phase-tap persistence check"
+      @test_skip "FOR001E fixture not available"
+      return
+    end
+    net = Sparlectra.createNetFromDTFFile(fixture)
+    models = [tf.side1.phase_taps for tf in net.trafos if tf.side1.phase_taps !== nothing]
+    @test !isempty(models)
+    @test all(m -> m.kind === :asymmetrical, models)
+    @test all(m -> m.winding_connection_angle_deg !== nothing, models)
+    # the skew transformer carries its regulating-vector connection angle
+    @test any(m -> m.winding_connection_angle_deg != 0.0, models)
+  end
 end

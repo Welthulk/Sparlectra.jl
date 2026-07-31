@@ -6,7 +6,8 @@
 # skipped otherwise — no network access from tests).
 
 using Sparlectra.CGMESImporter:
-  CGMESFile, CGMESStore, collectCGMESFiles, loadCGMES, summarizeCGMES, objectsOf, countOf, num, str, boolval, enumval, ref, unresolvedReferences, readCGMESFile!, CIMObject
+  CGMESFile, CGMESStore, collectCGMESFiles, loadCGMES, summarizeCGMES, objectsOf, countOf, num, str, boolval, enumval, ref, unresolvedReferences, readCGMESFile!, CIMObject, importFailureAnalysis
+import ZipArchives
 
 const _CGMES_SYNTH_EQ = """<?xml version="1.0" encoding="UTF-8"?>
 <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:cim="http://iec.ch/TC57/2013/CIM-schema-cim16#" xmlns:md="http://iec.ch/TC57/61970-552/ModelDescription/1#">
@@ -359,6 +360,89 @@ function run_cgmes_importer_tests()
       @test !haskey(store.objects, "_should_not_appear")
     end
 
+    @testset "import failure analysis names supplied models and gaps" begin
+      # The synthetic store carries a model id per file and known unresolved
+      # references (_missing_container, the island's _tn_* members).
+      report = importFailureAnalysis(store)
+      @test occursin("Supplied models:", report)
+      @test occursin("eq-model", report)
+      @test occursin("Unresolved references:", report)
+      @test occursin("Verdict:", report)
+
+      # A file declaring a prerequisite that is not part of the input must be
+      # called out with the exact missing model id — the boundary-set case.
+      depdir = mktempdir()
+      dep_eq = replace(
+        _CGMES_SYNTH_EQ,
+        "<md:Model.profile>http://entsoe.eu/CIM/EquipmentCore/3/1</md:Model.profile>" =>
+          "<md:Model.profile>http://entsoe.eu/CIM/EquipmentCore/3/1</md:Model.profile>\n<md:Model.DependentOn rdf:resource=\"urn:uuid:boundary-model-123\"/>",
+      )
+      write(joinpath(depdir, "dep_EQ.xml"), dep_eq)
+      dep_report = importFailureAnalysis(loadCGMES(depdir))
+      @test occursin("MISSING", dep_report)
+      @test occursin("boundary-model-123", dep_report)
+      @test occursin("prerequisite model(s)", dep_report)
+
+      # A dependency satisfied by a supplied file is not reported as missing.
+      satdir = mktempdir()
+      sat_eq = replace(
+        _CGMES_SYNTH_EQ,
+        "<md:Model.profile>http://entsoe.eu/CIM/EquipmentCore/3/1</md:Model.profile>" =>
+          "<md:Model.profile>http://entsoe.eu/CIM/EquipmentCore/3/1</md:Model.profile>\n<md:Model.DependentOn rdf:resource=\"urn:uuid:ssh-model\"/>",
+      )
+      write(joinpath(satdir, "sat_EQ.xml"), sat_eq)
+      write(joinpath(satdir, "sat_SSH.xml"), _CGMES_SYNTH_SSH)
+      sat_report = importFailureAnalysis(loadCGMES(satdir))
+      @test occursin("Declared dependencies: all satisfied", sat_report)
+    end
+
+    @testset "infer_base_voltages reconstructs missing nominal voltages" begin
+      # The RVC delivery with its BaseVoltage catalog stripped — the exact
+      # shape of a real delivery whose catalog lives in a missing boundary EQ.
+      nobv_dir = mktempdir()
+      write(joinpath(nobv_dir, "nobv_EQ.xml"), replace(_CGMES_SYNTH_RVC_EQ, "<cim:BaseVoltage rdf:ID=\"_bv110\"><cim:BaseVoltage.nominalVoltage>110</cim:BaseVoltage.nominalVoltage></cim:BaseVoltage>" => ""))
+      write(joinpath(nobv_dir, "nobv_TP.xml"), replace(_CGMES_SYNTH_RVC_TP, "<cim:TopologicalNode.BaseVoltage rdf:resource=\"#_bv110\"/>" => ""))
+      write(joinpath(nobv_dir, "nobv_SSH.xml"), replace(_CGMES_SYNTH_RVC_SSH_TEMPLATE, "__SM2CONN__" => "false"))
+      write(joinpath(nobv_dir, "nobv_SV.xml"), _CGMES_SYNTH_RVC_SV)
+
+      # Without the option the import aborts with the typed analysis error.
+      @test_throws Sparlectra.CGMESImporter.CGMESImportError importCGMES(path = nobv_dir, name = "nobv_off")
+
+      # With the option every bus level is reconstructed from the SV state
+      # (111.8–115.5 kV snap to 110), the substitution is summarized as one
+      # warning, and the network still solves.
+      res = importCGMES(path = nobv_dir, name = "nobv_on", infer_base_voltages = true)
+      @test length(res.net.nodeVec) == 3
+      @test all(Sparlectra.getNodeVn(b) == 110.0 for b in res.net.nodeVec)
+      @test count(m -> occursin("inferred base voltages", m), res.messages) == 1
+      @test last(runpf!(res.net, 30, 1e-8, 0)) == 0
+    end
+
+    @testset "self-loop line maps to a shunt notice, not a branch" begin
+      # Both terminals of a line on ONE topological node (busbar link modeled
+      # as a line) used to trip the branch constructor's from!=to assertion.
+      loop_dir = mktempdir()
+      loop_eq = replace(
+        _CGMES_SYNTH_RVC_EQ,
+        "<cim:ACLineSegment rdf:ID=\"_l_ab\">" =>
+          "<cim:ACLineSegment rdf:ID=\"_l_loop\"><cim:IdentifiedObject.name>L_LOOP</cim:IdentifiedObject.name><cim:ACLineSegment.r>0.01</cim:ACLineSegment.r><cim:ACLineSegment.x>0.05</cim:ACLineSegment.x></cim:ACLineSegment>\n<cim:Terminal rdf:ID=\"_t_loop_1\"><cim:Terminal.ConductingEquipment rdf:resource=\"#_l_loop\"/><cim:ACDCTerminal.sequenceNumber>1</cim:ACDCTerminal.sequenceNumber></cim:Terminal>\n<cim:Terminal rdf:ID=\"_t_loop_2\"><cim:Terminal.ConductingEquipment rdf:resource=\"#_l_loop\"/><cim:ACDCTerminal.sequenceNumber>2</cim:ACDCTerminal.sequenceNumber></cim:Terminal>\n<cim:ACLineSegment rdf:ID=\"_l_ab\">",
+      )
+      loop_tp = replace(
+        _CGMES_SYNTH_RVC_TP,
+        "<cim:Terminal rdf:about=\"#_t_lab_1\">" =>
+          "<cim:Terminal rdf:about=\"#_t_loop_1\"><cim:Terminal.TopologicalNode rdf:resource=\"#_tn_a\"/></cim:Terminal>\n<cim:Terminal rdf:about=\"#_t_loop_2\"><cim:Terminal.TopologicalNode rdf:resource=\"#_tn_a\"/></cim:Terminal>\n<cim:Terminal rdf:about=\"#_t_lab_1\">",
+      )
+      write(joinpath(loop_dir, "loop_EQ.xml"), loop_eq)
+      write(joinpath(loop_dir, "loop_TP.xml"), loop_tp)
+      write(joinpath(loop_dir, "loop_SSH.xml"), replace(_CGMES_SYNTH_RVC_SSH_TEMPLATE, "__SM2CONN__" => "false"))
+      write(joinpath(loop_dir, "loop_SV.xml"), _CGMES_SYNTH_RVC_SV)
+      loop_res = importCGMES(path = loop_dir, name = "self_loop")
+      @test count(m -> occursin("connects bus", m) && occursin("to itself", m), loop_res.messages) == 1
+      # only the two real lines become branches
+      @test length(loop_res.net.linesAC) == 2
+      @test last(runpf!(loop_res.net, 30, 1e-8, 0)) == 0
+    end
+
     @testset "rdf:ID creates, literals and inherited attributes" begin
       @test countOf(store, :ACLineSegment) == 1
       line = only(objectsOf(store, :ACLineSegment))
@@ -571,8 +655,8 @@ function run_cgmes_importer_tests()
         @test any(r -> r.kind == :shunt, cmp.flows.rows)
         @test any(r -> r.kind == :units, cmp.flows.rows)
 
-        # boundary error path
-        @test_throws ErrorException importCGMES(path = be)
+        # boundary error path — the typed abort carries the import analysis
+        @test_throws Sparlectra.CGMESImporter.CGMESImportError importCGMES(path = be)
       end
 
       if isdir(asm)
@@ -773,6 +857,53 @@ function run_cgmes_importer_tests()
         @test Sparlectra._webui_case_has_short_circuit_data(be) == true
       end
 
+      # The Web UI "Analyze import" button's service path — parse-only
+      # pre-check, import_analysis.txt artifact, Failed when the delivery
+      # would not import (missing declared dependency).
+      @testset "import_analysis_mode service run" begin
+        root = mktempdir()
+        cfgia = joinpath(root, "c.yaml")
+        write(cfgia, "power_flow:\n  max_iter: 40\n")
+
+        # Healthy delivery: succeeded, importable, artifact written.
+        okcase = Sparlectra.CGMESImporter.fetchCGMESTestSet("microgrid_be"; outdir = mktempdir())
+        okresp = start_powerflow_run(Dict("casefile" => okcase, "config_file" => cfgia, "output_root" => root, "import_analysis_mode" => true))
+        @test okresp["success"] === true
+        @test okresp["metadata"]["run_mode"] == "import_analysis"
+        @test okresp["metadata"]["import_analysis_missing_dependencies"] == 0
+        okreport = read(joinpath(root, okresp["run_id"], "import_analysis.txt"), String)
+        @test occursin("Supplied models:", okreport)
+        @test occursin("Verdict:", okreport)
+
+        # A delivery declaring an absent prerequisite: FAILED with the
+        # explicit reason, analysis artifact still written. The service
+        # accepts case FILES, so the synthetic delivery is packed as a zip.
+        badzip = joinpath(mktempdir(), "bad_delivery.zip")
+        ZipArchives.ZipWriter(badzip) do w
+          ZipArchives.zip_newfile(w, "bad_EQ.xml")
+          write(w, replace(
+            _CGMES_SYNTH_EQ,
+            "<md:Model.profile>http://entsoe.eu/CIM/EquipmentCore/3/1</md:Model.profile>" =>
+              "<md:Model.profile>http://entsoe.eu/CIM/EquipmentCore/3/1</md:Model.profile>\n<md:Model.DependentOn rdf:resource=\"urn:uuid:absent-boundary\"/>",
+          ))
+        end
+        badresp = start_powerflow_run(Dict("casefile" => badzip, "config_file" => cfgia, "output_root" => root, "import_analysis_mode" => true))
+        @test badresp["success"] === false
+        @test badresp["reason"] == "import_analysis_not_importable"
+        @test badresp["metadata"]["import_analysis_missing_dependencies"] == 1
+        @test occursin("absent-boundary", read(joinpath(root, badresp["run_id"], "import_analysis.txt"), String))
+
+        # Non-CGMES case: explicit rejection.
+        mpia = start_powerflow_run(Dict("casefile" => ensure_casefile("case14.m"), "config_file" => cfgia, "output_root" => root, "import_analysis_mode" => true))
+        @test mpia["success"] === false
+        @test mpia["reason"] == "import_analysis_requires_cgmes"
+
+        # Mode exclusivity.
+        exia = start_powerflow_run(Dict("casefile" => okcase, "config_file" => cfgia, "output_root" => root, "import_analysis_mode" => true, "short_circuit_mode" => true))
+        @test exia["success"] === false
+        @test occursin("excludes", exia["message"])
+      end
+
       # cgmes_import.start_values (WebUI-selectable start state) + the
       # mandatory SV comparison artifact. Effectiveness is asserted via the
       # logged decision line (the contract), not by re-deriving solver
@@ -797,12 +928,12 @@ function run_cgmes_importer_tests()
           @test isfile(joinpath(out, "sv_compare_flows.csv"))
           @test occursin("## SV comparison (run status: converged, start values: " * mode * ")", cgmes_log)
           sv_rows = readlines(joinpath(out, "sv_compare.csv"))
-          @test sv_rows[1] == "bus,vm_pu,sv_vm_pu,dvm,va_deg,sv_va_deg,dva"
+          @test sv_rows[1] == "bus,vm_pu,sv_vm_pu,dvm,va_deg,sv_va_deg,dva,dva_aligned"
           @test length(sv_rows) - 1 == 11
           @test r.metadata["cgmes_start_values"] == mode
           @test r.metadata["cgmes_sv_compare_status"] == "converged"
           @test r.metadata["cgmes_sv_compare_n"] == 11
-          for key in ("cgmes_sv_compare_max_dvm", "cgmes_sv_compare_rms_dvm", "cgmes_sv_compare_max_dva", "cgmes_sv_compare_rms_dva")
+          for key in ("cgmes_sv_compare_max_dvm", "cgmes_sv_compare_rms_dvm", "cgmes_sv_compare_max_dva", "cgmes_sv_compare_rms_dva", "cgmes_sv_compare_va_ref_offset_deg")
             @test isfinite(r.metadata[key])
           end
           # solved-from-SV and solved-from-flat both land on the SV solution
@@ -1005,9 +1136,11 @@ function run_cgmes_importer_tests()
           # end-2 flip: table/formula angle −5 arrives as +5 on the branch
           @test [b.phase_shift_deg for b in res2.net.branchVec if b.phase_shift_deg != 0.0] == [5.0]
           # documented deviation bound of the convention choice — NOT noise;
-          # shrinking this bound means the convention handling changed
+          # shrinking this bound means the convention handling changed.
+          # Measured on the RAW deltas: the reference alignment (median
+          # offset removal) would absorb part of this systematic deviation.
           cmp2 = compareWithSV(res2)
-          @test 0.2 < cmp2.max_dva < 0.4
+          @test 0.2 < maximum(abs(r.dva) for r in cmp2.rows) < 0.4
         end
         # tabular-specific: the mapping message reports the resolved table row
         res_tab = importCGMES(path = joinpath(cache, "extracted", "PST_PTChTab_PTE2_PSEI"), name = "ptchtab")
@@ -1161,6 +1294,17 @@ function run_cgmes_importer_tests()
         @test any(m -> occursin("AsynchronousMachine ASM_1", m) && occursin("fixed PQ operating point", m), rbb.messages)
         _, ergflat = runpf!(rbb.net, 60, 1e-8, 0; opt_flatstart = true)
         @test ergflat == 0
+
+        # cgmes_import.placeholder_guards = strict: the same filler values
+        # abort the import instead of being skipped
+        strict_err = try
+          importCGMES(path = [fgbb, fgbd], name = "FullGrid_strict", strict_placeholder_guards = true)
+          nothing
+        catch e
+          e
+        end
+        @test strict_err isa ErrorException
+        @test occursin("placeholder_guards = strict", sprint(showerror, strict_err))
       end
     end
 

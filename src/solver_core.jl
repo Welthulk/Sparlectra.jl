@@ -288,7 +288,7 @@ function extract_bus_types_and_vset(net::Net)
     end
     Vset[k] = isnothing(node._vm_pu) ? 1.0 : node._vm_pu
   end
-  slack_idx == 0 && error("extract_bus_types_and_vset: no slack bus found")
+  slack_idx == 0 && error(_no_slack_message("extract_bus_types_and_vset", net))
   return bus_types, Vset, slack_idx
 end
 

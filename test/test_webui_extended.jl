@@ -2,6 +2,7 @@ using Sparlectra
 using Dates
 using Sockets
 using Test
+import ZipArchives
 
 const WEBUI_TRANSCRIPT_MARKERS = (
   "git apply",
@@ -114,6 +115,11 @@ function _webui_test_form(casefile, config_file, output_root)
     "power_flow_distributed_slack_enabled" => "false",
     "power_flow_distributed_slack_p_mode" => "pg_weighted",
     "power_flow_linear_solver" => "umfpack",
+    "power_flow_rescue" => "false",
+    "power_flow_dc_fallback" => "false",
+    "cgmes_start_values" => "flat",
+    "cgmes_require_boundary" => "true",
+    "cgmes_infer_base_voltages" => "false",
     "matpower_import_auto_profile" => "recommend",
     "matpower_import_ratio" => "normal",
     "matpower_import_shift_sign" => "1.0",
@@ -992,6 +998,35 @@ settings:
         @test occursin("rejected 1", multi_page)
         @test occursin("bad.txt", multi_page) && occursin("unsupported extension", multi_page)
 
+        # An incomplete CGMES delivery triggers the upload-time import
+        # analysis: the message names the missing declared dependency and the
+        # full report lands next to the case.
+        incomplete_eq = """<?xml version="1.0" encoding="UTF-8"?>
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:cim="http://iec.ch/TC57/2013/CIM-schema-cim16#" xmlns:md="http://iec.ch/TC57/61970-552/ModelDescription/1#">
+<md:FullModel rdf:about="urn:uuid:upload-eq-model">
+<md:Model.profile>http://entsoe.eu/CIM/EquipmentCore/3/1</md:Model.profile>
+<md:Model.DependentOn rdf:resource="urn:uuid:absent-boundary"/>
+</md:FullModel>
+<cim:TopologicalNode rdf:ID="_upl_tn"><cim:IdentifiedObject.name>UplTN</cim:IdentifiedObject.name><cim:TopologicalNode.BaseVoltage rdf:resource="#_bv_in_boundary"/></cim:TopologicalNode>
+</rdf:RDF>
+"""
+        zipbuf = IOBuffer()
+        ZipArchives.ZipWriter(zipbuf) do w
+          ZipArchives.zip_newfile(w, "incomplete_EQ.xml")
+          write(w, incomplete_eq)
+        end
+        cgmes_response = Sparlectra.route_sparlectra_webui("POST", "/powerflow/import-cases", Dict("casefiles" => [Sparlectra.WebUICaseUpload("incomplete_delivery.zip", take!(zipbuf))]); output_root, runtime)
+        @test cgmes_response.status == 303
+        @test isfile(joinpath(case_directory, "incomplete_delivery.zip"))
+        analysis_file = joinpath(case_directory, "incomplete_delivery.import_analysis.txt")
+        @test isfile(analysis_file)
+        analysis_text = read(analysis_file, String)
+        @test occursin("absent-boundary", analysis_text)
+        @test occursin("Verdict:", analysis_text)
+        cgmes_page = String(Sparlectra.route_sparlectra_webui("GET", String(Dict(cgmes_response.headers)["Location"]); output_root, runtime).body)
+        @test occursin("missing declared dependencies", cgmes_page)
+        @test occursin("absent-boundary", cgmes_page)
+
         write(joinpath(case_directory, "duplicate.m"), "old")
         duplicate_response = Sparlectra.route_sparlectra_webui("POST", "/powerflow/import-cases", Dict("casefiles" => [upload("duplicate.m", "new")]); output_root, runtime)
         @test duplicate_response.status == 303
@@ -1648,6 +1683,12 @@ settings:
         "performance_timing" => "webui.performance_timing",
         "detailed_result_csv" => "webui.detailed_result_csv",
         "detailed_result_csv_format" => "webui.detailed_result_csv_format",
+        "cgmes_start_values" => "cgmes_import.start_values",
+        "cgmes_require_boundary" => "cgmes_import.require_boundary",
+        "cgmes_infer_base_voltages" => "cgmes_import.infer_base_voltages",
+        "power_flow_rescue" => "power_flow.rescue",
+        "power_flow_dc_fallback" => "power_flow.dc.fallback",
+        "export_cgmes" => "webui.export_cgmes",
       )
       @test all(Sparlectra.WEBUI_FORM_HELP_TOPICS[field] == help_topic for (field, help_topic) in expected_help_topics)
       for (field, help_topic) in expected_help_topics
@@ -1754,10 +1795,11 @@ settings:
       @test findfirst("data-step-control-group=\"trust_region\"", form_html) < findfirst("<summary>Q-limit handling</summary>", form_html)
       # APSLF-as-solver and DC-as-solver both ignore NR-only options (autodamp/merit/trust-region,
       # wrong-branch detection, start_mode.angle_mode/voltage_mode, start_current_iteration.*,
-      # qlimits.enforcement_mode, max_iter, the linear-solver backend, and the
-      # distributed-slack options); these must be marked so client-side JS can gray them
-      # out when power_flow_solver=apslf or power_flow_solver=dc is selected.
-      @test count("data-nr-only-field", form_html) == 9
+      # qlimits.enforcement_mode, max_iter, the linear-solver backend, the
+      # distributed-slack options, and the non-convergence handling block); these must be
+      # marked so client-side JS can gray them out when power_flow_solver=apslf or
+      # power_flow_solver=dc is selected.
+      @test count("data-nr-only-field", form_html) == 10
       @test occursin("<fieldset class=\"distributed-slack-options\" data-nr-only-field>", form_html)
       @test occursin("<label data-nr-only-field><span class=\"field-label\">Maximum iterations ", form_html)
       @test occursin("<label data-nr-only-field><span class=\"field-label\">Q-limit enforcement mode ", form_html)
@@ -1799,7 +1841,10 @@ settings:
       @test count("data-matpower-import-field", form_html) == 9
       @test occursin("data-import-conventions-hint", form_html)
       @test occursin("const updateImportConventionApplicability = function ()", form_html)
-      @test occursin("caseFormat.addEventListener('change', updateImportConventionApplicability)", form_html)
+      # the change listener wraps updateImportConventionApplicability together
+      # with the auto-format bookkeeping (manual change clears the marker)
+      @test occursin("caseFormat.addEventListener('change', function () {", form_html)
+      @test occursin("updateImportConventionApplicability();", form_html)
       @test occursin("<details id=\"apslf-start-options\" class=\"span-2 apslf-start-options\" data-apslf-start-options data-ac-only-field>", form_html)
       # "Use APSLF start values" and "Use DC start values" are two mutually exclusive
       # start-value sources for the rectangular NR solve, checking one unchecks the

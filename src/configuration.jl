@@ -166,6 +166,10 @@ schema, not as a live toggle).
 Base.@kwdef struct DcPowerFlowConfig
   angle_reference_deg::Float64 = 0.0
   ignore_out_of_service::Bool = true
+  # Run the standalone DC power flow when the AC solve (and the rescue
+  # ladder, if enabled) did not converge. The AC status stays "not
+  # converged" — the fallback only leaves a usable DC state in the net.
+  fallback::Bool = false
 end
 
 """
@@ -243,6 +247,12 @@ Base.@kwdef struct PowerFlowConfig
   sparse::Bool = true
   autodamp::Bool = false
   autodamp_min::Float64 = 0.05
+  # Promote the strongest injection to slack when none is registered
+  # (ensureSlack!); off by default so data errors stay visible.
+  auto_slack::Bool = false
+  # Retry a non-converged AC solve from the original start state with a fixed
+  # strategy ladder (alternate start, autodamp, DC-seeded projection).
+  rescue::Bool = false
   wrong_branch_detection::Symbol = :warn
   wrong_branch_rescue::Bool = false
   wrong_branch_min_vm_pu::Float64 = 0.70
@@ -350,6 +360,11 @@ Base.@kwdef struct CGMESImportConfig
   vset_max_pu::Float64 = 1.5
   multi_slack::Bool = true
   start_values::Symbol = :flat
+  placeholder_guards::Symbol = :warn_skip
+  # Reconstruct missing nominal voltages (SV snap + transformer ratedU +
+  # propagation) when the BaseVoltage catalog is absent — see
+  # _inferNominalVoltages. Pair with require_boundary = false.
+  infer_base_voltages::Bool = false
 end
 
 """
@@ -579,6 +594,10 @@ const POWERFLOW_START_PROFILE_SOURCE_VALUES = (:flat, :dc, :bus_metadata, :histo
 # earns the solution itself), :sv = start from the delivery's imported
 # SvVoltage state. Wins over power_flow(.start_mode).flatstart on CGMES runs.
 const CGMES_START_VALUES_VALUES = (:flat, :sv)
+# placeholder-guard behavior: warn_skip keeps completeness-set filler values
+# out of the solve with a warning; strict aborts the import instead — for
+# deliveries where silently dropping data is not acceptable
+const CGMES_PLACEHOLDER_GUARDS_VALUES = (:warn_skip, :strict)
 const TRUST_REGION_STEP_MODE_VALUES = (:scaled, :dogleg)
 const QLIMIT_START_MODE_VALUES = (:iteration, :auto, :iteration_or_auto)
 const QLIMIT_ENFORCEMENT_MODE_VALUES = (:active_set, :classic_simultaneous, :classic_one_at_a_time)
@@ -972,6 +991,8 @@ function PowerFlowConfig(raw::AbstractDict)
     sparse = true,
     autodamp = autodamp,
     autodamp_min = _validate_positive("powerflow.autodamp_min", _as_float_cfg(_raw_get(merged, "autodamp_min", 0.05))),
+    auto_slack = _as_bool_cfg(_raw_get(merged, "auto_slack", false)),
+    rescue = _as_bool_cfg(_raw_get(merged, "rescue", false)),
     wrong_branch_detection = _validate_allowed_symbol("power_flow.wrong_branch_detection", _as_symbol_cfg(_raw_get(merged, "wrong_branch_detection", :warn)), WRONG_BRANCH_DETECTION_VALUES),
     wrong_branch_rescue = _as_bool_cfg(_raw_get(merged, "wrong_branch_rescue", false)),
     wrong_branch_min_vm_pu = wrong_branch_min_vm_pu,
@@ -1001,6 +1022,7 @@ function DcPowerFlowConfig(raw::AbstractDict)
   return DcPowerFlowConfig(
     angle_reference_deg = _as_float_cfg(_raw_get(raw, "angle_reference_deg", 0.0)),
     ignore_out_of_service = _as_bool_cfg(_raw_get(raw, "ignore_out_of_service", true)),
+    fallback = _as_bool_cfg(_raw_get(raw, "fallback", false)),
   )
 end
 
@@ -1075,6 +1097,8 @@ function CGMESImportConfig(raw::AbstractDict)
     vset_max_pu = _validate_positive("cgmes_import.vset_max_pu", _as_float_cfg(_raw_get(merged, "vset_max_pu", 1.5))),
     multi_slack = _as_bool_cfg(_raw_get(merged, "multi_slack", true)),
     start_values = _validate_allowed_symbol("cgmes_import.start_values", _as_symbol_cfg(_raw_get(merged, "start_values", :flat)), CGMES_START_VALUES_VALUES),
+    placeholder_guards = _validate_allowed_symbol("cgmes_import.placeholder_guards", _as_symbol_cfg(_raw_get(merged, "placeholder_guards", :warn_skip)), CGMES_PLACEHOLDER_GUARDS_VALUES),
+    infer_base_voltages = _as_bool_cfg(_raw_get(merged, "infer_base_voltages", false)),
   )
 end
 

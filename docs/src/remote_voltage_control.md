@@ -119,11 +119,13 @@ honestly instead of iterating further: the report row carries
   re-solves). One machine controller per target bus is enforced; several
   machines at one bus targeting *different* buses are possible but their
   measured sensitivities pollute each other — expect more outer iterations.
-  One cross-type case is **neither guarded nor resolved automatically**: a
+  One cross-type case is **warned about but not resolved automatically**: a
   tap controller and a machine controller regulating the *same* target bus
-  (the construction-time PQ check does not catch it, because a tap-regulated
-  bus stays PQ) — the two would fight over one voltage, so avoid configuring
-  it; no cached ENTSO-E delivery exercises the pattern.
+  (the PQ check alone cannot catch it, because a tap-regulated bus stays
+  PQ). `addMachineVoltageControl!` emits a warning when a transformer
+  controller already regulates the target — the two would fight over one
+  voltage, so reconfigure one of them; no cached ENTSO-E delivery exercises
+  the pattern.
 - **Coordinated Q-sharing** among several machines on one target (a power
   plant with n units, participation factors) is not implemented; the first
   machine claims the target, the others keep their scheduled reactive output.

@@ -51,7 +51,18 @@ struct CGMESFileInfo
   object_count::Int
   skipped::Bool
   skip_reason::String
+  # md:FullModel identity and declared prerequisites (urn:uuid stripped).
+  # Empty for headerless/dcat files; drives the import-failure analysis that
+  # names which declared dependency (typically the boundary set) is missing.
+  model_id::String
+  dependent_on::Vector{String}
 end
+
+# Keep the legacy 8-argument construction working for all existing call sites.
+CGMESFileInfo(name, header, profile_uris, profiles, version, object_count, skipped, skip_reason) =
+  CGMESFileInfo(name, header, profile_uris, profiles, version, object_count, skipped, skip_reason, "", String[])
+
+_strip_urn(v::AbstractString) = String(replace(v, "urn:uuid:" => ""))
 
 _strip_mrid(v::AbstractString) = startswith(v, "#") ? String(v[2:end]) : String(v)
 
@@ -96,12 +107,23 @@ function readCGMESFile!(objects::Dict{String,CIMObject}, byclass::Dict{Symbol,Ve
   header = :none
   profile_uris = String[]
   keywords = String[]
+  model_id = ""
+  dependent_on = String[]
   for el in EzXML.eachelement(r)
     n = EzXML.nodename(el)
     if n == "FullModel" || n == "DifferenceModel"
       header = Symbol(n)
+      for a in EzXML.eachattribute(el)
+        EzXML.nodename(a) == "about" && (model_id = _strip_urn(_strip_mrid(EzXML.nodecontent(a))))
+      end
       for p in EzXML.eachelement(el)
-        EzXML.nodename(p) == "Model.profile" && push!(profile_uris, EzXML.nodecontent(p))
+        pn = EzXML.nodename(p)
+        pn == "Model.profile" && push!(profile_uris, EzXML.nodecontent(p))
+        if pn == "Model.DependentOn"
+          for a in EzXML.eachattribute(p)
+            EzXML.nodename(a) == "resource" && push!(dependent_on, _strip_urn(_strip_mrid(EzXML.nodecontent(a))))
+          end
+        end
       end
       break
     elseif n == "Dataset"
@@ -113,6 +135,12 @@ function readCGMESFile!(objects::Dict{String,CIMObject}, byclass::Dict{Symbol,Ve
       # store.boundary and the assembled-border equivalent-injection rule in
       # the mapping cannot fire.
       header = :Dataset
+      # The dataset id (rdf:about) is the model identity — other files'
+      # md:Model.DependentOn declarations point at it, so it must be captured
+      # for the dependency matching of the import analysis.
+      for a in EzXML.eachattribute(el)
+        EzXML.nodename(a) == "about" && (model_id = _strip_urn(_strip_mrid(EzXML.nodecontent(a))))
+      end
       for p in EzXML.eachelement(el)
         EzXML.nodename(p) == "keyword" && push!(keywords, EzXML.nodecontent(p))
       end
@@ -125,11 +153,14 @@ function readCGMESFile!(objects::Dict{String,CIMObject}, byclass::Dict{Symbol,Ve
     tag == :UNKNOWN || push!(profiles, tag)
   end
 
+  # Skipped files keep their model identity: a supplied-but-skipped profile
+  # (GL/DL, a difference model) still satisfies a md:Model.DependentOn
+  # declaration and must not show up as "missing" in the import analysis.
   if header == :DifferenceModel
-    return CGMESFileInfo(file.name, header, profile_uris, profiles, version, 0, true, "difference models are not supported")
+    return CGMESFileInfo(file.name, header, profile_uris, profiles, version, 0, true, "difference models are not supported", model_id, dependent_on)
   end
   if !isempty(profiles) && isempty(intersect(profiles, profile_filter))
-    return CGMESFileInfo(file.name, header, profile_uris, profiles, version, 0, true, "profile not in import set")
+    return CGMESFileInfo(file.name, header, profile_uris, profiles, version, 0, true, "profile not in import set", model_id, dependent_on)
   end
 
   count = 0
@@ -181,5 +212,5 @@ function readCGMESFile!(objects::Dict{String,CIMObject}, byclass::Dict{Symbol,Ve
       end
     end
   end
-  return CGMESFileInfo(file.name, header, profile_uris, profiles, version, count, false, "")
+  return CGMESFileInfo(file.name, header, profile_uris, profiles, version, count, false, "", model_id, dependent_on)
 end

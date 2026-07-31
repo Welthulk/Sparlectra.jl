@@ -51,6 +51,17 @@ power_flow:
   # Automatic damping for difficult cases.
   autodamp: true
   autodamp_min: 0.05
+  # Promote the strongest injection (external network injection preferred,
+  # then largest generator) to slack when the case registers none.
+  auto_slack: false
+  # Retry a non-converged AC solve from the original start state with a fixed
+  # strategy ladder: alternate start, autodamp, DC-seeded projection.
+  rescue: false
+  dc:
+    # After a failed AC solve (and failed rescue ladder), run the standalone
+    # DC power flow so the net carries usable angles and branch P flows.
+    # The AC status honestly stays "not converged".
+    fallback: false
   # Wrong-branch plausibility checks after numerical convergence.
   # Allowed values: off, warn, fail, rescue
   wrong_branch_detection: warn
@@ -298,6 +309,18 @@ cgmes_import:
   # MATPOWER/DTF runs ignore it. The SV comparison (sv_compare.csv) runs
   # either way. Allowed values: flat, sv
   start_values: flat
+  # Behavior of the placeholder guards (implausible shunt admittances, tap
+  # corrections outside 0.5..2.0): warn_skip keeps the filler value out of
+  # the solve with a warning; strict aborts the import instead. Allowed
+  # values: warn_skip, strict
+  placeholder_guards: warn_skip
+  # Reconstruct missing nominal voltages when the delivery ships without its
+  # BaseVoltage catalog (it lives in the boundary EQ of real ENTSO-E
+  # deliveries): seed from the SV voltages (kV, snapped to standard levels)
+  # and transformer rated voltages, then propagate across level-preserving
+  # equipment. Substitutions are summarized as a warning. Pair with
+  # require_boundary: false.
+  infer_base_voltages: false
 
 # IEC 60909 balanced short-circuit evaluation (runShortCircuit!, SC-1).
 short_circuit:

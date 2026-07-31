@@ -75,9 +75,16 @@ struct _MapCtx
   # machine remote-voltage controllers planned by _mapInjections! and attached
   # by importCGMES only after bus types and isolation are final
   machine_ctrl_plans::Vector{NamedTuple}
+  # first-seen counters for structural identity keys, keyed by (kind, bus) —
+  # shared across all mapping passes so capture and a later export assign the
+  # same <k> even when equipment of one class arrives from different loops
+  eqp_counters::Dict{Tuple{String,String},Int}
+  # cgmes_import.placeholder_guards = strict: a suspected placeholder value
+  # aborts the import instead of being skipped with a warning
+  strict_guards::Bool
 end
-_MapCtx(tap_control::Bool = false, ignore_connected::Bool = false; machine_control::Bool = false, vset_min_pu::Float64 = CGMES_VSET_MIN_PU, vset_max_pu::Float64 = CGMES_VSET_MAX_PU) =
-  _MapCtx(String[], Dict{String,Tuple{Int,Symbol}}(), Set{String}(), tap_control, machine_control, ignore_connected, vset_min_pu, vset_max_pu, Dict{String,Dict{String,String}}(), NamedTuple[])
+_MapCtx(tap_control::Bool = false, ignore_connected::Bool = false; machine_control::Bool = false, vset_min_pu::Float64 = CGMES_VSET_MIN_PU, vset_max_pu::Float64 = CGMES_VSET_MAX_PU, strict_guards::Bool = false) =
+  _MapCtx(String[], Dict{String,Tuple{Int,Symbol}}(), Set{String}(), tap_control, machine_control, ignore_connected, vset_min_pu, vset_max_pu, Dict{String,Dict{String,String}}(), NamedTuple[], Dict{Tuple{String,String},Int}(), strict_guards)
 
 # SSH `Terminal.connected` through the ctx switch: `ignore_connected = true`
 # treats everything as connected (diagnostic mode for snapshots whose SSH
@@ -451,18 +458,20 @@ end
 const CGMES_TAP_CORR_MIN = 0.5
 const CGMES_TAP_CORR_MAX = 2.0
 
-function _tapCorrPlausible(kind::String, tc::CIMObject, corr::Float64, messages::Vector{String})::Bool
+function _tapCorrPlausible(kind::String, tc::CIMObject, corr::Float64, messages::Vector{String}; strict::Bool = false)::Bool
   CGMES_TAP_CORR_MIN <= corr <= CGMES_TAP_CORR_MAX && return true
-  push!(messages, "warning: $(kind) $(something(str(tc, :name), tc.mrid)) declares an implausible tap correction ($(round(corr; digits = 3)), band $(CGMES_TAP_CORR_MIN)..$(CGMES_TAP_CORR_MAX)) — placeholder suspected, tap ignored")
+  msg = "$(kind) $(something(str(tc, :name), tc.mrid)) declares an implausible tap correction ($(round(corr; digits = 3)), band $(CGMES_TAP_CORR_MIN)..$(CGMES_TAP_CORR_MAX)) — placeholder suspected"
+  strict && error("cgmes_import.placeholder_guards = strict: " * msg)
+  push!(messages, "warning: " * msg * ", tap ignored")
   return false
 end
 
 # otherwise it divides (referred through the winding).
-function _applyEndTaps(store::CGMESStore, svsteps::Dict{String,Float64}, e::CIMObject, ratio::Float64, shift::Float64, on_from_side::Bool, messages::Vector{String})::Tuple{Float64,Float64}
+function _applyEndTaps(store::CGMESStore, svsteps::Dict{String,Float64}, e::CIMObject, ratio::Float64, shift::Float64, on_from_side::Bool, messages::Vector{String}; strict::Bool = false)::Tuple{Float64,Float64}
   for tc in _tapChangersOfEnd(store, e.mrid)
     if tc.class == :RatioTapChanger
       corr = _ratioTapCorrection(tc, svsteps)
-      _tapCorrPlausible("RatioTapChanger", tc, corr, messages) || continue
+      _tapCorrPlausible("RatioTapChanger", tc, corr, messages; strict = strict) || continue
       ratio = on_from_side ? ratio * corr : ratio / corr
     else
       if tc.class == :PhaseTapChangerTabular
@@ -475,7 +484,7 @@ function _applyEndTaps(store::CGMESStore, svsteps::Dict{String,Float64}, e::CIMO
         push!(messages, "tabular phase tap $(something(str(tc, :name), tc.mrid)): step $(built.model.step) → ratio $(round(row.effective_ratio; digits = 5)), shift $(round(row.effective_shift_deg; digits = 3))°$(built.impedance_note ? " (per-step r/x/g/b corrections present, not applied)" : "")")
       end
       pratio, pshift = _phaseTapRatioShift(store, tc, svsteps)
-      _tapCorrPlausible(String(tc.class), tc, pratio, messages) || continue
+      _tapCorrPlausible(String(tc.class), tc, pratio, messages; strict = strict) || continue
       ratio = on_from_side ? ratio * pratio : ratio / pratio
       # Angle sign: an end-2 (to-side) tap angle enters NEGATED — the branch
       # ratio is t1/t2, so θ_eff = θ1 − θ2 (standard end-referral semantics;
@@ -522,6 +531,13 @@ function _ensureBus!(net::Sparlectra.Net, created::Set{String}, topo::CGMESTopol
   end
   Sparlectra.addBus!(net = net, busName = bus, vn_kV = vn, vm_pu = vm_pu, va_deg = va_deg, isAux = isAux)
   push!(created, bus)
+  # Identity capture for a later CGMES export: remember the original TN mRID
+  # under the structural bus key. Aux buses and per-side split buses are
+  # synthetic identities without a 1:1 source TN — the exporter mints fresh
+  # deterministic ids for them instead.
+  if !isAux && busname === nothing
+    net.cgmes_ids[cgmesKeyTopologicalNode(bus)] = cgmesCanonicalMrid(tn)
+  end
   return bus
 end
 
@@ -630,9 +646,52 @@ function _mapSwitches!(net, store, topo, created, svmap, ctx::_MapCtx)
       b1 = _ensureBus!(net, created, topo, svmap, t1.tn)
       b2 = _ensureBus!(net, created, topo, svmap, t2.tn)
       Sparlectra.addLink!(net = net, fromBus = b1, toBus = b2, status = 1)
+      # identity capture: the link re-exports as a closed Breaker with the
+      # original switch mRID
+      k = cgmesNextBusEquipmentIndex!(ctx.eqp_counters, "LNK", _cgmesTrafoPairKey(b1, b2))
+      lnkKey = cgmesKeyBusEquipment("LNK", _cgmesTrafoPairKey(b1, b2), k)
+      net.cgmes_ids[lnkKey] = cgmesCanonicalMrid(sw.mrid)
+      ts = get(topo.terminals, sw.mrid, nothing)
+      if ts !== nothing
+        length(ts) >= 1 && (net.cgmes_ids[cgmesKeyTerminal(lnkKey, 1)] = cgmesCanonicalMrid(ts[1].mrid))
+        length(ts) >= 2 && (net.cgmes_ids[cgmesKeyTerminal(lnkKey, 2)] = cgmesCanonicalMrid(ts[2].mrid))
+      end
       push!(ctx.messages, "notice: closed $(cls) $(name) — bus link $(b1) = $(b2)")
     end
   end
+end
+
+# mRID of the first phase tap changer on a transformer end, if any
+function _firstPhaseTapChangerMrid(store::CGMESStore, endmrid::String)::Union{Nothing,String}
+  for tc in _tapChangersOfEnd(store, endmrid)
+    tc.class == :RatioTapChanger && continue
+    return tc.mrid
+  end
+  return nothing
+end
+
+# mRID of the equipment's sequence-1 terminal, if the topology knows one
+function _firstTerminalMrid(topo::CGMESTopology, obj::CIMObject)::Union{Nothing,String}
+  ts = get(topo.terminals, obj.mrid, nothing)
+  (ts === nothing || isempty(ts)) && return nothing
+  return ts[1].mrid
+end
+
+# Structural-identity capture for single-terminal equipment. The (kind, bus)
+# counter is consumed for EVERY created unit of the class — also when there is
+# no mRID to record (mrid = nothing) — so the export, which walks the created
+# vectors in the same order, assigns identical <k> values. `children` records
+# dependent mRIDs under `<key>|<suffix>` (T1 terminal, GU, RC).
+function _captureBusEquipment!(net, ctx::_MapCtx, kind::AbstractString, bus::AbstractString, mrid::Union{Nothing,String}; children::NamedTuple = NamedTuple())
+  k = cgmesNextBusEquipmentIndex!(ctx.eqp_counters, kind, bus)
+  mrid === nothing && return nothing
+  key = cgmesKeyBusEquipment(kind, bus, k)
+  net.cgmes_ids[key] = cgmesCanonicalMrid(mrid)
+  for (suffix, cmrid) in pairs(children)
+    cmrid === nothing && continue
+    net.cgmes_ids[string(key, "|", suffix)] = cgmesCanonicalMrid(cmrid)
+  end
+  return nothing
 end
 
 # record the (branchIdx, side) provenance of the just-added branch for the
@@ -647,6 +706,10 @@ function _recordBranchTerminals!(ctx::_MapCtx, net, topo::CGMESTopology, eq::CIM
 end
 
 function _mapLines!(net, store, topo, created, svmap, baseMVA, ctx::_MapCtx)
+  # First-seen parallel index per bus pair — must count exactly the lines
+  # that reach net.linesAC so the exporter (walking net.linesAC in the same
+  # order) reproduces identical structural keys.
+  acl_parallel = Dict{Tuple{String,String},Int}()
   for cls in (:ACLineSegment, :SeriesCompensator)
     for line in objectsOf(store, cls)
       t1 = busOfEquipment(topo, line, 1)
@@ -683,6 +746,22 @@ function _mapLines!(net, store, topo, created, svmap, baseMVA, ctx::_MapCtx)
       status = nopen == 0 ? 1 : 0
       b1 = _busForTerminal!(net, created, topo, svmap, ctx, line, 1, t1.tn)
       b2 = _busForTerminal!(net, created, topo, svmap, ctx, line, 2, t2.tn)
+      if b1 == b2
+        # Self-loop within one topological node (e.g. a busbar link modeled
+        # as a line): there is no longitudinal element to build, but the
+        # charging still acts at the bus — keep it as a shunt instead of
+        # tripping the branch constructor's from!=to assertion.
+        if cls == :ACLineSegment && status == 1
+          g_full = num(line, :gch, 0.0)
+          b_full = num(line, :bch, 0.0)
+          if g_full != 0.0 || b_full != 0.0
+            Sparlectra.addShuntMatpower!(net = net, busName = b1, Gs = g_full * t2.vn_kV^2, Bs = b_full * t2.vn_kV^2)
+          end
+        end
+        push!(ctx.messages, "notice: $(cls) $(name) connects bus $(b1) to itself (both terminals on one topological node) — no branch created, charging kept as shunt")
+        push!(ctx.skipped, line.mrid)
+        continue
+      end
       # branch model convention (calcAdmittance): series/shunt admittance on
       # the TO-side voltage base, complex ratio t at the from side
       r_pu, x_pu, b_pu, g_pu = Sparlectra.toPU_RXBG(
@@ -696,6 +775,17 @@ function _mapLines!(net, store, topo, created, svmap, baseMVA, ctx::_MapCtx)
       if t1.vn_kV == t2.vn_kV
         Sparlectra.addPIModelACLine!(net = net, fromBus = b1, toBus = b2, r_pu = r_pu, x_pu = x_pu, b_pu = b_pu, g_pu = g_pu, status = status)
         _recordBranchTerminals!(ctx, net, topo, line)
+        # Identity capture (line + its two terminals) for a later CGMES
+        # export. Terminal keys use the equipment sequence (T1 = from side),
+        # independent of the lexicographic pair order inside the key.
+        k = cgmesNextParallelIndex!(acl_parallel, b1, b2)
+        aclKey = cgmesKeyACLineSegment(b1, b2, k)
+        net.cgmes_ids[aclKey] = cgmesCanonicalMrid(line.mrid)
+        ts = get(topo.terminals, line.mrid, nothing)
+        if ts !== nothing
+          length(ts) >= 1 && (net.cgmes_ids[cgmesKeyTerminal(aclKey, 1)] = cgmesCanonicalMrid(ts[1].mrid))
+          length(ts) >= 2 && (net.cgmes_ids[cgmesKeyTerminal(aclKey, 2)] = cgmesCanonicalMrid(ts[2].mrid))
+        end
       else
         # boundary line across different nominal voltages (e.g. 380 kV area
         # bus vs 400 kV boundary node): identical physical conductor, so the
@@ -706,6 +796,10 @@ function _mapLines!(net, store, topo, created, svmap, baseMVA, ctx::_MapCtx)
         to = Sparlectra.geNetBusIdx(net = net, busName = b2)
         Sparlectra._addPIModelTrafo_by_idx!(net = net, from = from, to = to, r_pu = r_pu, x_pu = x_pu, b_pu = b_pu, g_pu = g_pu, status = status, ratio = ratio, shift_deg = 0.0)
         _recordBranchTerminals!(ctx, net, topo, line)
+        # the ratio branch counts as a transformer branch on this bus pair —
+        # consume the PT counter (no capture: the source object is a line)
+        # so real transformers on the same pair keep consistent <k> values
+        cgmesNextBusEquipmentIndex!(ctx.eqp_counters, "PT", _cgmesTrafoPairKey(b1, b2))
         push!(ctx.messages, "notice: $(cls) $(name) spans $(t1.vn_kV)/$(t2.vn_kV) kV — mapped as boundary-line ratio branch ($(round(ratio; digits=4)))")
       end
     end
@@ -750,8 +844,8 @@ function _map2WTrafo!(net, store, topo, created, svmap, svsteps, baseMVA, pt, en
   r_pu, x_pu, b_pu, g_pu = Sparlectra.toPU_RXBG(r = z.r, x = z.x, g = z.g, b = z.b, v_kv = i2.vn_kV, baseMVA = baseMVA)
   ratio = (U1 / U2) / (i1.vn_kV / i2.vn_kV)
   shift = 0.0
-  ratio, shift = _applyEndTaps(store, svsteps, e1, ratio, shift, true, ctx.messages)
-  ratio, shift = _applyEndTaps(store, svsteps, e2, ratio, shift, false, ctx.messages)
+  ratio, shift = _applyEndTaps(store, svsteps, e1, ratio, shift, true, ctx.messages; strict = ctx.strict_guards)
+  ratio, shift = _applyEndTaps(store, svsteps, e2, ratio, shift, false, ctx.messages; strict = ctx.strict_guards)
   b1 = _ensureBus!(net, created, topo, svmap, i1.tn)
   b2 = _ensureBus!(net, created, topo, svmap, i2.tn)
   status = (_conn(ctx, i1.connected) && _conn(ctx, i2.connected) && _inService(ctx, pt)) ? 1 : 0
@@ -764,6 +858,19 @@ function _map2WTrafo!(net, store, topo, created, svmap, svsteps, baseMVA, pt, en
   tm2 = get(e2.refs, :Terminal, nothing)
   tm1 === nothing || (ctx.branch_side[tm1] = (idx, :from))
   tm2 === nothing || (ctx.branch_side[tm2] = (idx, :to))
+  # identity capture (transformer + ends + terminals): the PT counter runs
+  # over every transformer-typed branch on the bus pair, in creation order
+  k = cgmesNextBusEquipmentIndex!(ctx.eqp_counters, "PT", _cgmesTrafoPairKey(b1, b2))
+  ptKey = cgmesKeyPowerTransformer(b1, b2, k)
+  net.cgmes_ids[ptKey] = cgmesCanonicalMrid(pt.mrid)
+  net.cgmes_ids[cgmesKeyTransformerEnd(ptKey, 1)] = cgmesCanonicalMrid(e1.mrid)
+  net.cgmes_ids[cgmesKeyTransformerEnd(ptKey, 2)] = cgmesCanonicalMrid(e2.mrid)
+  tm1 === nothing || (net.cgmes_ids[cgmesKeyTerminal(ptKey, 1)] = cgmesCanonicalMrid(tm1))
+  tm2 === nothing || (net.cgmes_ids[cgmesKeyTerminal(ptKey, 2)] = cgmesCanonicalMrid(tm2))
+  # a phase tap changer keeps its mRID on the synthetic single-step changer
+  # the export writes for the flattened shift
+  ptc = something(_firstPhaseTapChangerMrid(store, e1.mrid), _firstPhaseTapChangerMrid(store, e2.mrid), Some(nothing))
+  ptc === nothing || (net.cgmes_ids[string(ptKey, "|PTC")] = cgmesCanonicalMrid(ptc))
   if ctx.tap_control
     _attachTapControl!(net, store, topo, ctx, svsteps, e1, idx, true, name)
     _attachTapControl!(net, store, topo, ctx, svsteps, e2, idx, false, name)
@@ -792,6 +899,7 @@ function _map3WTrafo!(net, store, topo, created, svmap, svsteps, baseMVA, pt, en
   end
   aux = Sparlectra.geNetBusIdx(net = net, busName = auxname)
 
+  side_buses = String[]
   for (k, e) in enumerate(ends)
     ik = infos[k]
     Uk = something(num(e, :ratedU), ik.vn_kV)
@@ -801,18 +909,37 @@ function _map3WTrafo!(net, store, topo, created, svmap, svsteps, baseMVA, pt, en
     ratio = (U1 / Uk) / (vn_aux / ik.vn_kV)
     shift = 0.0
     # the physical end sits on the branch's "to" side (AUX → side bus)
-    ratio, shift = _applyEndTaps(store, svsteps, e, ratio, shift, false, ctx.messages)
+    ratio, shift = _applyEndTaps(store, svsteps, e, ratio, shift, false, ctx.messages; strict = ctx.strict_guards)
     bk = _ensureBus!(net, created, topo, svmap, ik.tn)
     to = Sparlectra.geNetBusIdx(net = net, busName = bk)
     status = (_conn(ctx, ik.connected) && _inService(ctx, pt)) ? 1 : 0
     Sparlectra._addPIModelTrafo_by_idx!(net = net, from = aux, to = to, r_pu = r_pu, x_pu = x_pu, b_pu = b_pu, g_pu = g_pu, status = status, ratedU = Uk, ratedS = num(e, :ratedS), ratio = ratio, shift_deg = shift)
     tm = get(e.refs, :Terminal, nothing)
     tm === nothing || (ctx.branch_side[tm] = (net.branchVec[end].branchIdx, :to))
+    # legs also consume the pair counter so a hypothetical 2W transformer on
+    # the same pair keeps a consistent <k>
+    cgmesNextBusEquipmentIndex!(ctx.eqp_counters, "PT", _cgmesTrafoPairKey(auxname, bk))
+    push!(side_buses, bk)
     if ctx.tap_control
       # #294 point 4: the star-equivalent leg is an ordinary PI-model trafo
       # branch (AUX → side bus, physical end on the to side), so the same
       # controller attachment as for 2W transformers applies per leg.
       _attachTapControl!(net, store, topo, ctx, svsteps, e, net.branchVec[end].branchIdx, false, string(name, " (leg ", k, ")"))
+    end
+  end
+  # identity capture under the three-winding key (sorted side buses): the
+  # exporter reassembles the star as one PowerTransformer with three ends
+  # when the reconstruction is exact, and reuses these mRIDs
+  if length(side_buses) == 3
+    k3 = cgmesNextBusEquipmentIndex!(ctx.eqp_counters, "PT3", join(sort(side_buses), "|"))
+    pt3Key = cgmesKeyPowerTransformer3W(side_buses[1], side_buses[2], side_buses[3], k3)
+    net.cgmes_ids[pt3Key] = cgmesCanonicalMrid(pt.mrid)
+    for (k, e) in enumerate(ends)
+      net.cgmes_ids[cgmesKeyTransformerEnd(pt3Key, k)] = cgmesCanonicalMrid(e.mrid)
+      tm = get(e.refs, :Terminal, nothing)
+      tm === nothing || (net.cgmes_ids[cgmesKeyTerminal(pt3Key, k)] = cgmesCanonicalMrid(tm))
+      ptc = _firstPhaseTapChangerMrid(store, e.mrid)
+      ptc === nothing || (net.cgmes_ids[string(pt3Key, "|PTC", k)] = cgmesCanonicalMrid(ptc))
     end
   end
 end
@@ -864,7 +991,9 @@ function _mapShunts!(net, store, topo, created, svmap, ctx::_MapCtx)
   shunt_cap_mva = 10.0 * net.baseMVA
   function _shunt_plausible(clsname, name, mrid, B_mvar, G_mw)::Bool
     max(abs(B_mvar), abs(G_mw)) <= shunt_cap_mva && return true
-    push!(ctx.messages, "warning: $(clsname) $(name) declares an implausible admittance (B $(round(B_mvar; digits = 1)) MVAr / G $(round(G_mw; digits = 1)) MW at nominal voltage, cap ±$(round(Int, shunt_cap_mva))) — placeholder suspected, shunt skipped")
+    msg = "$(clsname) $(name) declares an implausible admittance (B $(round(B_mvar; digits = 1)) MVAr / G $(round(G_mw; digits = 1)) MW at nominal voltage, cap ±$(round(Int, shunt_cap_mva))) — placeholder suspected"
+    ctx.strict_guards && error("cgmes_import.placeholder_guards = strict: " * msg)
+    push!(ctx.messages, "warning: " * msg * ", shunt skipped")
     push!(ctx.skipped, mrid)
     return false
   end
@@ -880,6 +1009,7 @@ function _mapShunts!(net, store, topo, created, svmap, ctx::_MapCtx)
     bus = _ensureBus!(net, created, topo, svmap, t.tn)
     # MATPOWER-style shunt: MW/MVAr injected at 1.0 pu of the bus vn
     Sparlectra.addShuntMatpower!(net = net, busName = bus, Gs = g * t.vn_kV^2, Bs = b * t.vn_kV^2)
+    _captureBusEquipment!(net, ctx, "SH", bus, sh.mrid; children = (T1 = _firstTerminalMrid(topo, sh),))
   end
 
   # NonlinearShuntCompensator (#294 point 7): the characteristic is a set of
@@ -903,6 +1033,9 @@ function _mapShunts!(net, store, topo, created, svmap, ctx::_MapCtx)
     _shunt_plausible("NonlinearShuntCompensator", name, sh.mrid, b * t.vn_kV^2, g * t.vn_kV^2) || continue
     bus = _ensureBus!(net, created, topo, svmap, t.tn)
     Sparlectra.addShuntMatpower!(net = net, busName = bus, Gs = g * t.vn_kV^2, Bs = b * t.vn_kV^2)
+    # the aggregated characteristic re-exports as a LinearShuntCompensator,
+    # keeping the original mRID
+    _captureBusEquipment!(net, ctx, "SH", bus, sh.mrid; children = (T1 = _firstTerminalMrid(topo, sh),))
     push!(ctx.messages, "nonlinear shunt $(name): sections $(Int(round(sections)))/$(length(pts)) → B $(round(b * t.vn_kV^2; digits = 3)) MVAr, G $(round(g * t.vn_kV^2; digits = 3)) MW at $(bus)")
   end
 end
@@ -931,6 +1064,9 @@ function _mapLoads!(net, store, topo, created, svmap, ctx::_MapCtx)
       q = num(load, :q, 0.0)
       bus = _ensureBus!(net, created, topo, svmap, t.tn)
       Sparlectra.addProsumer!(net = net, busName = bus, type = "ENERGYCONSUMER", p = p, q = q, defer_bus_type_refresh = true)
+      # identity capture: all load classes re-export as EnergyConsumer, the
+      # original mRID is what survives the roundtrip
+      _captureBusEquipment!(net, ctx, "EC", bus, load.mrid; children = (T1 = _firstTerminalMrid(topo, load),))
     end
   end
 end
@@ -1428,6 +1564,7 @@ function _mapInjections!(net, store, topo, created, svmap, ctx::_MapCtx; multi_s
     prio >= 1.0 && push!(scan.by_priority, (prio, -ratedS, bus))
     push!(scan.machines, (ratedS, bus))
     vset, vctrl, remote_bus = _voltageSetpoint(store, topo, sm, t.tn, ctx.messages; vset_min_pu = ctx.vset_min_pu, vset_max_pu = ctx.vset_max_pu, allow_remote = ctx.machine_control)
+    sm_rc = ref(store, sm, :RegulatingControl)
     # A resolvable remote control (machine_control = true) keeps the machine
     # a PQ injection with the SSH operating point; the outer-loop controller
     # planned here moves its Q until the remote bus hits the target. Whether
@@ -1455,6 +1592,10 @@ function _mapInjections!(net, store, topo, created, svmap, ctx::_MapCtx; multi_s
         isRegulated = vctrl && !is_remote,
         name = name,
         remote_target = is_remote ? (bus = remote_bus, vset_pu = vset) : nothing,
+        mrid = sm.mrid,
+        terminal_mrid = _firstTerminalMrid(topo, sm),
+        gu_mrid = gu === nothing ? nothing : gu.mrid,
+        rc_mrid = sm_rc === nothing ? nothing : sm_rc.mrid,
       ),
     )
   end
@@ -1492,6 +1633,7 @@ function _mapInjections!(net, store, topo, created, svmap, ctx::_MapCtx; multi_s
     # short-circuit evaluation can recognize motors (skip + lower-bound
     # flag).
     net.prosumpsVec[end].comp.cTyp = Sparlectra.AsynchronousMachine
+    _captureBusEquipment!(net, ctx, "ASM", bus, am.mrid; children = (T1 = _firstTerminalMrid(topo, am),))
     # No internal staging vocabulary in user-facing importer messages.
     push!(ctx.messages, "notice: AsynchronousMachine $(name) — fixed PQ operating point from SSH (p=$(round(p; digits = 2)) MW, q=$(round(q; digits = 2)) MVAr, load convention) at $(bus)")
   end
@@ -1518,6 +1660,7 @@ function _mapInjections!(net, store, topo, created, svmap, ctx::_MapCtx; multi_s
     prio >= 1.0 && push!(scan.by_priority, (prio, -maxP, bus))
     push!(scan.enis, (maxP, bus))
     vset, vctrl, _ = _voltageSetpoint(store, topo, eni, t.tn, ctx.messages; vset_min_pu = ctx.vset_min_pu, vset_max_pu = ctx.vset_max_pu)
+    eni_rc = ref(store, eni, :RegulatingControl)
     push!(
       pending,
       (
@@ -1531,6 +1674,9 @@ function _mapInjections!(net, store, topo, created, svmap, ctx::_MapCtx; multi_s
         qMax = _limitHullMax(num(eni, :minQ), num(eni, :maxQ)),
         vm_pu = vctrl ? _pvVoltage(net, bus, vset) : nothing,
         isRegulated = vctrl,
+        mrid = eni.mrid,
+        terminal_mrid = _firstTerminalMrid(topo, eni),
+        rc_mrid = eni_rc === nothing ? nothing : eni_rc.mrid,
       ),
     )
   end
@@ -1613,6 +1759,7 @@ function _mapInjections!(net, store, topo, created, svmap, ctx::_MapCtx; multi_s
         vctrl = false
       end
     end
+    svc_rc = ref(store, svc, :RegulatingControl)
     push!(
       pending,
       (
@@ -1626,6 +1773,9 @@ function _mapInjections!(net, store, topo, created, svmap, ctx::_MapCtx; multi_s
         qMax = qhi,
         vm_pu = vctrl ? _pvVoltage(net, bus, vset) : nothing,
         isRegulated = vctrl,
+        mrid = svc.mrid,
+        terminal_mrid = _firstTerminalMrid(topo, svc),
+        rc_mrid = svc_rc === nothing ? nothing : svc_rc.mrid,
       ),
     )
   end
@@ -1770,6 +1920,22 @@ function _mapInjections!(net, store, topo, created, svmap, ctx::_MapCtx; multi_s
       participationFactor = get(inj, :participationFactor, nothing),
       defer_bus_type_refresh = true,
     )
+    # The prosumer constructor collapses the type string to a generic
+    # Generator/Load component; keep the concrete class on the comp (same
+    # pattern as the AsynchronousMachine marker) so a later CGMES export can
+    # write each unit back as what it was.
+    if inj.type == "SYNCHRONOUSMACHINE"
+      net.prosumpsVec[end].comp.cTyp = Sparlectra.SynchronousMachine
+      _captureBusEquipment!(net, ctx, "SM", inj.bus, get(inj, :mrid, nothing); children = (T1 = get(inj, :terminal_mrid, nothing), GU = get(inj, :gu_mrid, nothing), RC = get(inj, :rc_mrid, nothing)))
+    elseif inj.type == "EXTERNALNETWORKINJECTION"
+      net.prosumpsVec[end].comp.cTyp = Sparlectra.ExternalNetworkInjection
+      # EquivalentInjections arrive under the same type string without an
+      # mRID — they consume the counter but keep a minted export identity
+      _captureBusEquipment!(net, ctx, "ENI", inj.bus, get(inj, :mrid, nothing); children = (T1 = get(inj, :terminal_mrid, nothing), RC = get(inj, :rc_mrid, nothing)))
+    elseif inj.type == "STATICVARCOMPENSATOR"
+      net.prosumpsVec[end].comp.cTyp = Sparlectra.StaticVarCompensator
+      _captureBusEquipment!(net, ctx, "SVC", inj.bus, get(inj, :mrid, nothing); children = (T1 = get(inj, :terminal_mrid, nothing), RC = get(inj, :rc_mrid, nothing)))
+    end
     # surviving remote-control plans pick up their prosumer index here (the
     # prosumer just pushed is the machine); the controller itself is attached
     # by _attachMachineControls! after bus types and isolation are final
@@ -1916,18 +2082,27 @@ function importCGMES(;
   multi_slack::Bool = true,
   vset_min_pu::Float64 = CGMES_VSET_MIN_PU,
   vset_max_pu::Float64 = CGMES_VSET_MAX_PU,
+  strict_placeholder_guards::Bool = false,
+  infer_base_voltages::Bool = false,
   name::Union{Nothing,String} = nothing,
 )::CGMESImportResult
   vset_min_pu <= vset_max_pu || throw(ArgumentError("importCGMES: vset_min_pu ($(vset_min_pu)) must not exceed vset_max_pu ($(vset_max_pu))"))
   store = loadCGMES(path)
-  ctx = _MapCtx(tap_control, ignore_connected; machine_control = machine_control, vset_min_pu = vset_min_pu, vset_max_pu = vset_max_pu)
+  ctx = _MapCtx(tap_control, ignore_connected; machine_control = machine_control, vset_min_pu = vset_min_pu, vset_max_pu = vset_max_pu, strict_guards = strict_placeholder_guards)
   ignore_connected && push!(ctx.messages, "notice: ignore_connected = true — SSH Terminal.connected flags are overridden, everything is treated as in service")
   messages = ctx.messages
   unresolved = unresolvedReferences(store)
   if !isempty(unresolved)
     topo_refs = count(u -> u.key in (:TopologicalNode, :ConnectivityNode), unresolved)
     if topo_refs > 0 && require_boundary
-      error("CGMES import: $(topo_refs) unresolved topology references — boundary set missing? (pass the boundary ZIP/folder as additional path, or require_boundary=false)")
+      # Print the full why-analysis (supplied models, missing declared
+      # dependencies, unresolved-reference histogram) for CLI users and carry
+      # it in the typed error so service runs can write it into cgmes.log —
+      # a failed customer delivery must name its own gap, wherever it fails.
+      analysis = importFailureAnalysis(store)
+      print(analysis)
+      hint = infer_base_voltages ? " infer_base_voltages is set — additionally set require_boundary=false to import without the boundary." : ""
+      throw(CGMESImportError("CGMES import: $(topo_refs) unresolved topology references — see the import analysis (CLI: printed above; Web UI runs: cgmes.log). Pass the missing boundary/dependency as additional path, or set require_boundary=false.$(hint)", analysis))
     end
     push!(ctx.messages, "notice: $(length(unresolved)) unresolved references (non-fatal)")
   end
@@ -1952,7 +2127,7 @@ function importCGMES(;
     end
   end
 
-  topo = buildTopology(store)
+  topo = buildTopology(store; infer_base_voltages = infer_base_voltages, messages = ctx.messages)
   svmap = _svVoltageByTN(store)
   netname = something(name, "cgmes_import")
   net = Sparlectra.Net(name = netname, baseMVA = baseMVA)

@@ -45,6 +45,8 @@ The merged YAML is converted into:
   - `diagnostics::DiagnosticsConfig`
   - `output::OutputConfig`
   - `control::ControlConfig`
+  - `cgmes::CGMESImportConfig`
+  - `shortcircuit::ShortCircuitConfig`
 
 This typed model is the canonical internal representation that should be consumed by power-flow, MATPOWER import, state estimation, output/reporting, performance profiling, benchmark runners, and future modules.
 
@@ -54,6 +56,8 @@ This typed model is the canonical internal representation that should be consume
 |---|---|---|---|
 | `power_flow` | `PowerFlowConfig` | Rectangular power-flow solver controls, start mode, Q-limits | Public / supported |
 | `matpower_import` | `MatpowerImportConfig` | MATPOWER case path + import interpretation options | Public / supported |
+| `cgmes_import` | `CGMESImportConfig` | CGMES delivery path + import options (see [CGMES Import](cgmes_import.md)) | Public / supported |
+| `short_circuit` | `ShortCircuitConfig` | IEC 60909 short-circuit evaluation; `short_circuit.c_factor` overrides the Table-1 voltage factor (see [Short-Circuit Analysis](short_circuit.md)) | Public / supported |
 | `transformer` | `TransformerConfig` | Transformer-modeling options shared by all importers (tap-changer model) | Public / supported |
 | `state_estimation` | `StateEstimationConfig` | State-estimation runtime controls | Public / supported |
 | `output` | `OutputConfig` | Console/logfile behavior and result table sizing | Public / supported |
@@ -426,6 +430,9 @@ The following canonical keys are currently present in `src/configuration.yaml.ex
 - `power_flow`
 - `power_flow.autodamp`
 - `power_flow.autodamp_min`
+- `power_flow.auto_slack`
+- `power_flow.rescue`
+- `power_flow.dc.fallback`
 - `power_flow.wrong_branch_detection`
 - `power_flow.wrong_branch_rescue`
 - `power_flow.wrong_branch_min_vm_pu`

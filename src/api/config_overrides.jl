@@ -44,6 +44,8 @@ const GUI_EDITABLE_CONFIG_KEYS = Set([
   "power_flow.start_current_iteration.only_for_large_cases",
   "power_flow.distributed_slack.enabled",
   "power_flow.distributed_slack.p_mode",
+  "power_flow.rescue",
+  "power_flow.dc.fallback",
   "power_flow.merit.enabled",
   "power_flow.merit.armijo_c1",
   "power_flow.merit.fallback_max_mismatch",
@@ -56,6 +58,8 @@ const GUI_EDITABLE_CONFIG_KEYS = Set([
   "power_flow.islands.reference_policy",
   "power_flow.islands.diagnostic_continue_after_failure",
   "cgmes_import.start_values",
+  "cgmes_import.require_boundary",
+  "cgmes_import.infer_base_voltages",
   "matpower_import.auto_profile",
   "matpower_import.ratio",
   "matpower_import.shift_sign",
@@ -99,7 +103,7 @@ function _validate_override_type(key::String, value, expected::Type)
 end
 
 function _validate_gui_override_value(key::String, value)
-  if key in ("power_flow.autodamp", "power_flow.qlimits.enabled", "power_flow.start_current_iteration.enabled", "power_flow.start_current_iteration.accept_only_if_improved", "power_flow.start_current_iteration.only_for_large_cases", "power_flow.merit.enabled", "power_flow.merit.fallback_max_mismatch", "power_flow.trust_region.enabled", "power_flow.apslf.use_pade", "power_flow.apslf.nr_polish", "power_flow.apslf_start.enabled", "power_flow.islands.enabled", "power_flow.islands.diagnostic_continue_after_failure", "benchmark.enabled", "matpower_import.apply_bus_names", "matpower_import.apply_branch_names", "matpower_import.apply_branch_kind", "matpower_import.import_for001_contingencies", "matpower_import.net_cache.enabled", "matpower_export.write_solution", "output.console_live")
+  if key in ("power_flow.autodamp", "power_flow.qlimits.enabled", "power_flow.start_current_iteration.enabled", "power_flow.start_current_iteration.accept_only_if_improved", "power_flow.start_current_iteration.only_for_large_cases", "power_flow.merit.enabled", "power_flow.merit.fallback_max_mismatch", "power_flow.trust_region.enabled", "power_flow.apslf.use_pade", "power_flow.apslf.nr_polish", "power_flow.apslf_start.enabled", "power_flow.islands.enabled", "power_flow.islands.diagnostic_continue_after_failure", "power_flow.rescue", "power_flow.dc.fallback", "cgmes_import.require_boundary", "cgmes_import.infer_base_voltages", "benchmark.enabled", "matpower_import.apply_bus_names", "matpower_import.apply_branch_names", "matpower_import.apply_branch_kind", "matpower_import.import_for001_contingencies", "matpower_import.net_cache.enabled", "matpower_export.write_solution", "output.console_live")
     _validate_override_type(key, value, Bool)
   elseif key in ("power_flow.max_iter", "power_flow.start_current_iteration.max_iter", "power_flow.apslf.order", "power_flow.apslf_start.order", "benchmark.samples", "output.detailed_result_csv_direct_threshold_buses", "output.detailed_result_csv_buffer_initial_bytes", "output.detailed_result_csv_buffer_max_bytes", "output.detailed_result_csv_streaming_threshold_rows")
     _validate_override_type(key, value, Int)
@@ -227,6 +231,10 @@ const CONFIG_OVERRIDE_REPORT_KEYS = (
   "power_flow.islands.mode",
   "power_flow.islands.reference_policy",
   "power_flow.islands.diagnostic_continue_after_failure",
+  "power_flow.rescue",
+  "power_flow.dc.fallback",
+  "cgmes_import.require_boundary",
+  "cgmes_import.infer_base_voltages",
 )
 
 function _dotted_config_value(raw::AbstractDict, key::AbstractString)

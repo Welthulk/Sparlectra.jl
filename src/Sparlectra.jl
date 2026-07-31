@@ -118,6 +118,7 @@ export
   AbstractControlUpdate,
   PowerTransformerControl,
   MachineVoltageControl,                  # Remote voltage control via machine Q.
+  ShuntVoltageControl,                    # SVC-style variable-shunt voltage control.
 
   # Branch
   AbstractBranch,
@@ -318,6 +319,7 @@ export
   hasShunt!,
   getShunt!,
   markIsolatedBuses!,
+  ensureSlack!,                           # Auto-promote a reference when no slack is registered.
   setTotalBusPower!,
   setPVBusVset!,                          # Set PV voltage target.
   setQLimits!,                            # Set generator reactive-power limits.
@@ -357,6 +359,9 @@ export
   printTapControllerSummary,
   addMachineVoltageControl!,              # Add a machine remote voltage controller.
   clearMachineControllers!,
+  addShuntVoltageControl!,                # Add an SVC-style shunt voltage controller.
+  clearShuntControllers!,
+  controllableElements,                   # Generic controllable-element records of all registered controllers.
   buildMachineControllerReportRows,
   printMachineControllerSummary,
 
@@ -380,6 +385,9 @@ export
   importCGMES,                            # CGMES import with full result (Net + SC data + report).
   compareWithSV,                          # Compare a solved CGMES import against its SV profile.
   shortCircuitCoverage,                   # Completeness of harvested short-circuit data (#277 input).
+  writeCGMESFiles,                        # Export a Net as CGMES EQ+TP+SSH profile files.
+  CGMESLineShortCircuit,                  # Optional per-line zero-sequence data for the CGMES export.
+  cgmesLineShortCircuitData,              # Harvested zero-sequence line data as writeCGMESFiles input.
   printShortCircuitCoverage,              # Readable rendering of the coverage rows.
   runShortCircuit!,                       # IEC 60909 balanced Ik'' max/min per fault bus (#277).
   ShortCircuitResult,                     # Result type of runShortCircuit! (safety-flagged rows).
@@ -572,13 +580,14 @@ include("network.jl")
 include("synthetic_grids.jl")
 include("tap_control.jl")
 include("machine_control.jl")
+include("shunt_control.jl")
 include("busdata.jl")
 include("MatpowerIO.jl")
 include("createnet_powermat.jl")
 include("equicircuit.jl")
 include("DTFImporter.jl")
 include("cgmes/CGMESImporter.jl")
-import .CGMESImporter: summarizeCGMES, createNetFromCGMES, importCGMES, compareWithSV, shortCircuitCoverage, printShortCircuitCoverage
+import .CGMESImporter: summarizeCGMES, createNetFromCGMES, importCGMES, compareWithSV, shortCircuitCoverage, printShortCircuitCoverage, writeCGMESFiles, CGMESLineShortCircuit, cgmesLineShortCircuitData
 include("limits.jl")
 include("losses.jl")
 include("exportMatPower.jl")
@@ -644,6 +653,7 @@ include("shortcircuit/short_circuit.jl")
 # Web UI/service short-circuit run: needs the ShortCircuitResult
 # type above and the API result helpers included earlier.
 include("api/run_short_circuit_service.jl")
+include("api/run_import_analysis_service.jl")
 include("precompile.jl")
 #! format: on
 end # module Sparlectra

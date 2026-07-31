@@ -337,10 +337,11 @@ function render_powerflow_form(;
   profile_values = webui_form_state(; selected_casefile, selected_config_file, sidecar_profile = case_profile, submitted_form)
   profile_path = String(get(profile_values, "_profile_path", ""))
   profile_location = isempty(profile_path) ? "the sidecar profile" : "<code>$(_webui_escape(profile_path))</code>"
+  config_newer_hint = get(profile_values, "_config_newer_than_profile", false) === true ? " The configuration file is newer than the saved settings — its values took precedence on this page load." : ""
   profile_notice = if isempty(profile_path) || !show_case_settings_notice
     ""
   else
-    "<div class=\"alert info case-settings-notice\" role=\"status\"><strong>Case-specific settings loaded from $(profile_location).</strong> Saved Web UI settings prefilled the form. Manual edits on this page override the profile for this run. <form method=\"post\" action=\"/powerflow/config/dismiss-case-settings-notice\" class=\"case-settings-notice-dismiss\"><input type=\"hidden\" name=\"config_file\" value=\"$(_webui_escape(selected_config_file))\"><input type=\"hidden\" name=\"casefile\" value=\"$(_webui_escape(selected_casefile))\"><button type=\"submit\" class=\"link-button\">Don't show this again</button></form></div>"
+    "<div class=\"alert info case-settings-notice\" role=\"status\"><strong>Case-specific settings loaded from $(profile_location).</strong> Saved Web UI settings prefilled the form.$(config_newer_hint) Manual edits on this page override the profile for this run. <form method=\"post\" action=\"/powerflow/config/dismiss-case-settings-notice\" class=\"case-settings-notice-dismiss\"><input type=\"hidden\" name=\"config_file\" value=\"$(_webui_escape(selected_config_file))\"><input type=\"hidden\" name=\"casefile\" value=\"$(_webui_escape(selected_casefile))\"><button type=\"submit\" class=\"link-button\">Don't show this again</button></form></div>"
   end
   error_html = _webui_error_alert_html(error_message)
   import_html = isempty(strip(import_message)) ? "" : "<div class=\"alert info case-import-result\" role=\"status\">$(_webui_escape(import_message))</div>"
@@ -437,6 +438,8 @@ $(dat_hint_html)
 <fieldset>
 <label>$(_webui_field_label("case_format", "Case input format"))<select name="case_format"><option value="auto"$(_webui_form_string(case_format_value) == "auto" ? " selected" : "")>Auto</option><option value="matpower"$(_webui_form_string(case_format_value) == "matpower" ? " selected" : "")>MATPOWER</option><option value="dtf_for001"$(_webui_form_string(case_format_value) == "dtf_for001" ? " selected" : "")>DTF diagnostics (experimental/internal)</option><option value="cgmes"$(_webui_form_string(case_format_value) == "cgmes" ? " selected" : "")>CGMES (ENTSO-E, folder or ZIP)</option></select></label>
 <label data-cgmes-start-values-field>$(_webui_field_label("cgmes_start_values", "CGMES start values"))<select name="cgmes_start_values"><option value="flat"$(_webui_selected(profile_values, "cgmes_start_values", _webui_option_default("cgmes_start_values")) == "flat" ? " selected" : "")>Flat start (default)</option><option value="sv"$(_webui_selected(profile_values, "cgmes_start_values", _webui_option_default("cgmes_start_values")) == "sv" ? " selected" : "")>Imported SV state</option></select></label>
+<label class="check" data-cgmes-start-values-field title="Fail the CGMES import when topology references stay unresolved (boundary set missing). Uncheck to import an incomplete delivery anyway — buses without a resolvable BaseVoltage still abort."><input name="cgmes_require_boundary" type="hidden" value="false"><input name="cgmes_require_boundary" type="checkbox" value="true"$(_webui_checked(profile_values, "cgmes_require_boundary", _webui_option_default("cgmes_require_boundary")))>$(_webui_field_label("cgmes_require_boundary", "Require boundary set"))</label>
+<label class="check" data-cgmes-start-values-field title="Reconstruct missing nominal voltages when the delivery ships without its BaseVoltage catalog: seeded from the SV voltages and transformer rated voltages, propagated across level-preserving equipment. Substitutions are summarized as a warning. Pair with an unchecked Require boundary set."><input name="cgmes_infer_base_voltages" type="hidden" value="false"><input name="cgmes_infer_base_voltages" type="checkbox" value="true"$(_webui_checked(profile_values, "cgmes_infer_base_voltages", _webui_option_default("cgmes_infer_base_voltages")))>$(_webui_field_label("cgmes_infer_base_voltages", "Infer missing base voltages"))</label>
 <p class="field-help" data-cgmes-start-values-field>CGMES only: <em>Flat start</em> lets the solver earn the solution itself; <em>Imported SV state</em> starts Newton-Raphson from the delivery's own SvVoltage solution (competing start-value machines are forced off). The SV comparison check (<code>sv_compare.csv</code>) runs either way.</p>
 <label>$(_webui_field_label("for002_reference_file", "Optional FOR002 reference file"))<input name="for002_reference_file" value=\"$(_webui_escape(for002_reference_value))\" placeholder="examples/FOR002.DAT"$for002_list_attr>$(for002_list_html)</label>
 <label><span class="field-label">DTF outage run mode</span><select name="dtf_outage_selection_mode"><option value="none">Run base case only</option><option value="all">Run all DTF outage records</option><option value="selected">Run selected DTF outage records</option></select></label>
@@ -505,6 +508,7 @@ $(dat_hint_html)
 <label class=\"check\"><input name=\"detailed_result_csv\" type=\"hidden\" value=\"false\"><input name=\"detailed_result_csv\" type=\"checkbox\" value=\"true\"$(_webui_checked(profile_values, "detailed_result_csv", _webui_option_default("detailed_result_csv")))>$(_webui_field_label("detailed_result_csv", "Export detailed result CSV files"))</label>
 <label class=\"detailed-csv-format\">$(_webui_field_label("detailed_result_csv_format", "CSV format"))$(_webui_select("detailed_result_csv_format", _webui_option_allowed_values("detailed_result_csv_format"), _webui_selected(profile_values, "detailed_result_csv_format", _webui_option_default("detailed_result_csv_format"))))</label>
 </details>
+<label class=\"check span-2\"><input name=\"export_cgmes\" type=\"hidden\" value=\"false\"><input name=\"export_cgmes\" type=\"checkbox\" value=\"true\"$(_webui_checked(profile_values, "export_cgmes", _webui_option_default("export_cgmes")))>$(_webui_field_label("export_cgmes", "Export case as CGMES delivery (EQ+TP+SSH+SV, ZIP)"))</label>
 <details class=\"span-2 expert-section\">
 <summary>Advanced options</summary>
 $(config_maintenance)
@@ -518,6 +522,12 @@ $(config_maintenance)
 <label class=\"check span-2\"><input name=\"power_flow_distributed_slack_enabled\" type=\"hidden\" value=\"false\"><input name=\"power_flow_distributed_slack_enabled\" type=\"checkbox\" value=\"true\"$(_webui_checked(profile_values, "power_flow_distributed_slack_enabled", _webui_option_default("power_flow_distributed_slack_enabled")))>$(_webui_field_label("power_flow_distributed_slack_enabled", "Distribute active-power slack over participating generators"))</label>
 <label>$(_webui_field_label("power_flow_distributed_slack_p_mode", "Participation mode"))$(_webui_select("power_flow_distributed_slack_p_mode", _webui_option_allowed_values("power_flow_distributed_slack_p_mode"), _webui_selected(profile_values, "power_flow_distributed_slack_p_mode", _webui_option_default("power_flow_distributed_slack_p_mode"))))</label>
 <p class=\"field-help\">The REF bus keeps the angle reference; the island's P imbalance is absorbed by participating generators via one λ<sub>P</sub> per island. <code>imported</code> reads participation factors from the case data (MATPOWER <code>APF</code>, CGMES <code>normalPF</code>). Explicit weights are YAML-only (<code>power_flow.distributed_slack.weights</code>).</p>
+</fieldset>
+<fieldset class=\"non-convergence-options\" data-nr-only-field>
+<legend>Non-convergence handling</legend>
+<label class=\"check span-2\"><input name=\"power_flow_rescue\" type=\"hidden\" value=\"false\"><input name=\"power_flow_rescue\" type=\"checkbox\" value=\"true\"$(_webui_checked(profile_values, "power_flow_rescue", _webui_option_default("power_flow_rescue")))>$(_webui_field_label("power_flow_rescue", "Rescue: retry a failed AC solve (alternate start, autodamp, DC-seeded start)"))</label>
+<label class=\"check span-2\"><input name=\"power_flow_dc_fallback\" type=\"hidden\" value=\"false\"><input name=\"power_flow_dc_fallback\" type=\"checkbox\" value=\"true\"$(_webui_checked(profile_values, "power_flow_dc_fallback", _webui_option_default("power_flow_dc_fallback")))>$(_webui_field_label("power_flow_dc_fallback", "DC fallback: keep a standalone DC result when AC (and rescue) fail"))</label>
+<p class=\"field-help\">The rescue ladder restarts from the original start state and logs the winning strategy. The DC fallback leaves angles and branch P flows (vm = 1 pu); the AC status honestly stays non-converged.</p>
 </fieldset>
 <fieldset class=\"start-current-iteration-options advanced-start-values\" data-nr-only-field>
 <legend>Advanced start values</legend>
@@ -638,7 +648,10 @@ document.addEventListener('DOMContentLoaded', function () {
     // the submitted form; non-CGMES runs then simply use the config default.
     document.querySelectorAll('[data-cgmes-start-values-field]').forEach(function (el) {
       el.classList.toggle('disabled', !isCgmes);
-      el.querySelectorAll('select').forEach(function (control) { control.disabled = !isCgmes; });
+      // Checkboxes in this group (require_boundary) gate like the select;
+      // their hidden false-fallback inputs must stay enabled so the form
+      // still submits an explicit value.
+      el.querySelectorAll('select, input[type="checkbox"]').forEach(function (control) { control.disabled = !isCgmes; });
     });
     // "Short circuit" button: selectable only for CGMES cases; the
     // server-side render additionally locks it when the delivery carries no
@@ -909,12 +922,6 @@ document.addEventListener('DOMContentLoaded', function () {
       updateDatCaseAssistance();
     });
     caseInput.addEventListener('change', updateDatCaseAssistance);
-    // Prime the combobox once as if the user had typed (user-reported
-    // workaround: interaction only behaved after a first input/refresh
-    // round-trip), then close the list again so the page loads collapsed.
-    caseInput.dispatchEvent(new Event('input', { bubbles: true }));
-    filterCaseList('');
-    setCaseListOpen(false);
     caseInput.addEventListener('keydown', function (event) {
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
         event.preventDefault();
@@ -1179,6 +1186,52 @@ function _webui_short_circuit_summary(result::AbstractDict)::Union{Nothing,Strin
   return "<code>" * _webui_escape(text) * "</code>" * badge
 end
 
+# Import-analysis runs: one summary row with the verdict and the gap counts.
+# Returns nothing for other runs.
+function _webui_import_analysis_summary(result::AbstractDict)::Union{Nothing,String}
+  metadata = get(result, "metadata", Dict{String,Any}())
+  metadata isa AbstractDict || return nothing
+  get(metadata, "run_mode", "") == "import_analysis" || return nothing
+  missing_deps = get(metadata, "import_analysis_missing_dependencies", 0)
+  unresolved = get(metadata, "import_analysis_unresolved_refs", 0)
+  verdict = string(get(metadata, "import_analysis_verdict", ""))
+  not_importable = string(get(result, "reason", "")) == "import_analysis_not_importable"
+  badge = if not_importable
+    "<span class=\"status-badge status-error\">not importable — $(missing_deps) missing dependency(ies) · $(unresolved) unresolved reference(s)</span>"
+  elseif unresolved isa Real && unresolved > 0
+    "<span class=\"status-badge status-warning\">importable · $(unresolved) non-fatal unresolved reference(s)</span>"
+  else
+    "<span class=\"status-badge status-success\">importable</span>"
+  end
+  text = isempty(verdict) ? "" : " <code>" * _webui_escape(verdict) * "</code>"
+  return badge * text
+end
+
+# Optional CGMES export artifact: one summary row from the run metadata.
+# Export notices (per-unit content the profiles cannot carry, e.g. a dropped
+# transformer phase shift) render as a warning badge so a partial export is
+# never mistaken for a full one.
+# Returns nothing when the run did not request the export.
+function _webui_cgmes_export_summary(result::AbstractDict)::Union{Nothing,String}
+  metadata = get(result, "metadata", Dict{String,Any}())
+  metadata isa AbstractDict || return nothing
+  status = get(metadata, "cgmes_export_status", nothing)
+  status === nothing && return nothing
+  status = string(status)
+  if status == "completed"
+    text = string(get(metadata, "cgmes_export_files", ""))
+    sc_lines = get(metadata, "cgmes_export_sc_lines", 0)
+    sc_lines isa Real && sc_lines > 0 && (text = string(text, " · zero-sequence data on ", Int(sc_lines), " line(s)"))
+    notices = string(get(metadata, "cgmes_export_notices", ""))
+    badge = isempty(notices) ? "" : " <span class=\"status-badge status-warning\">$(_webui_escape(notices))</span>"
+    return "<code>" * _webui_escape(text) * "</code>" * badge
+  elseif status == "skipped"
+    return "<span class=\"status-badge status-warning\">skipped — $(_webui_escape(string(get(metadata, "cgmes_export_skip_reason", ""))))</span>"
+  else
+    return "<span class=\"status-badge status-error\">failed — $(_webui_escape(string(get(metadata, "cgmes_export_error", ""))))</span>"
+  end
+end
+
 # CGMES runs: compact SV-comparison summary from the run metadata (written by
 # the mandatory compareWithSV check). Returns nothing for non-CGMES runs —
 # the metadata keys only exist on the CGMES path.
@@ -1190,9 +1243,12 @@ function _webui_sv_compare_summary(result::AbstractDict)::Union{Nothing,String}
   fmt = x -> x isa Real && isfinite(x) ? string(round(Float64(x); sigdigits = 3)) : "n/a"
   status == "unavailable" && return "<code>unavailable</code>"
   start_values = string(get(metadata, "cgmes_start_values", "?"))
+  ref_offset = get(metadata, "cgmes_sv_compare_va_ref_offset_deg", nothing)
+  offset_note = ref_offset isa Real && isfinite(ref_offset) && abs(ref_offset) > 0.01 ? string(" · ref offset ", fmt(ref_offset), "° removed") : ""
   text = string(
     "max|dvm| ", fmt(get(metadata, "cgmes_sv_compare_max_dvm", nothing)), " pu · rms ", fmt(get(metadata, "cgmes_sv_compare_rms_dvm", nothing)),
     " · max|dva| ", fmt(get(metadata, "cgmes_sv_compare_max_dva", nothing)), "° · rms ", fmt(get(metadata, "cgmes_sv_compare_rms_dva", nothing)), "°",
+    offset_note,
     " (n=", get(metadata, "cgmes_sv_compare_n", 0), ", ", start_values, " start",
     status == "converged" ? "" : ", " * status,
     ")",
@@ -1222,6 +1278,10 @@ function render_powerflow_result(result::AbstractDict)::String
     sv_summary === nothing || push!(base, ("SV comparison", sv_summary))
     sc_summary = _webui_short_circuit_summary(result)
     sc_summary === nothing || push!(base, ("Short circuit", sc_summary))
+    ia_summary = _webui_import_analysis_summary(result)
+    ia_summary === nothing || push!(base, ("Import analysis", ia_summary))
+    cgmes_export_summary = _webui_cgmes_export_summary(result)
+    cgmes_export_summary === nothing || push!(base, ("CGMES export", cgmes_export_summary))
     Tuple(base)
   end
   result_summary = "<div class=\"result-summary\">" * join(("<div$(label in ("Elapsed time", "Solver time", "Total time") ? " class=\"runtime-card\"" : "")><span class=\"summary-label\">$(label)</span>$(value)</div>" for (label, value) in summary_rows), "") * "</div>"

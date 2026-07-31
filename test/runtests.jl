@@ -56,6 +56,7 @@ function include_extended_tests()
   include("test_repository_hygiene.jl")
   include("test_apslf.jl")
   include("test_cgmes_importer.jl")
+  include("test_cgmes_export.jl")
   include("extended/test_dtf_importer.jl")
   include("extended/test_dtf_for002_validation_example.jl")
   include("extended/test_dtf_for002_outage_validation_example.jl")
@@ -121,6 +122,7 @@ function run_extended_profile_tests()
     ("repository_hygiene", () -> run_entry(:run_repository_hygiene_tests)),
     ("apslf", () -> run_entry(:run_apslf_tests)),
     ("cgmes_importer", () -> run_entry(:run_cgmes_importer_tests)),
+    ("cgmes_export", () -> run_entry(:run_cgmes_export_tests)),
     ("dtf_extended", () -> begin
       run_entry(:run_dtf_importer_tests)
       run_entry(:run_dtf_for002_validation_example_tests)

@@ -27,7 +27,10 @@ const SUITE_SPECS = ExampleSpec[
   ExampleSpec(name = "current_iteration_start", file = "powerflow/exp_current_iteration_start.jl", purpose = "guarded current-iteration start pre-solve via API configuration overrides"),
   ExampleSpec(name = "q_limit_voltage_adjustment", file = "powerflow/example_q_limit_voltage_adjustment.jl", purpose = "compares Q-limit :adjust_vset outcomes across three PV->PQ scenarios"),
   ExampleSpec(name = "voltage_dependent_control", file = "powerflow/example_voltage_dependent_control_rectangular.jl", args = ["--no-plot"], purpose = "voltage-dependent control (Q(U)/P(U)) demo without plotting"),
-  ExampleSpec(name = "matpower_import", file = "powerflow/matpower_import.jl", requires_config = true, purpose = "CLI MATPOWER import via run_matpower_case using the resolved configuration"),
+  # No requires_config gate: the example runs on the resolved configuration
+  # chain, whose shipped default (src/configuration.yaml.example, case14.m)
+  # always exists — a user configuration.yaml is optional, not required.
+  ExampleSpec(name = "matpower_import", file = "powerflow/matpower_import.jl", purpose = "CLI MATPOWER import via run_matpower_case using the resolved configuration"),
   ExampleSpec(name = "matpower_import_multi_config", file = "powerflow/matpower_import_multi_config.jl", purpose = "compares one MATPOWER case across configuration files"),
   ExampleSpec(name = "configured_matpower_cases", file = "powerflow/exp_configured_matpower_cases.jl", purpose = "runs ordered matpower_import.cases config entries via run_sparlectra_cases"),
   ExampleSpec(name = "mc_probabilistic_powerflow", file = "powerflow/mc_probabilistic_powerflow.jl", purpose = "Monte-Carlo probabilistic power flow on case14"),
