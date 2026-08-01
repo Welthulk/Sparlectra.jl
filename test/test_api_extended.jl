@@ -207,7 +207,10 @@ function run_api_extended_tests()
       active_default_mpc = Sparlectra.MatpowerIO.read_case(active_dcline_case; legacy_compat = false)
       active_default_net = Sparlectra.createNetFromMatPowerCase(mpc = active_default_mpc)
       @test !isempty(active_default_net.matpowerDclineMetadata)
-      active_result = run_sparlectra_api(casefile = active_dcline_case, config_file = template, output_dir = joinpath(tmpdir, "active-dcline"), config_overrides = Dict("matpower_import.matpower_dcline_mode" => "reject_active", "output.logfile_results" => "full", "benchmark.enabled" => false), performance_timing = :compact, run_diagnostics = true)
+      # ignore_inactive keeps the config-reachable strict rejection of ACTIVE
+      # dcline rows (reject_active is deprecated on the configuration surface
+      # and normalizes to pf_injections — stale early-template default).
+      active_result = run_sparlectra_api(casefile = active_dcline_case, config_file = template, output_dir = joinpath(tmpdir, "active-dcline"), config_overrides = Dict("matpower_import.matpower_dcline_mode" => "ignore_inactive", "output.logfile_results" => "full", "benchmark.enabled" => false), performance_timing = :compact, run_diagnostics = true)
       @test active_result.status === :failed
       @test !active_result.success
       @test active_result.reason == "unsupported_matpower_dcline"

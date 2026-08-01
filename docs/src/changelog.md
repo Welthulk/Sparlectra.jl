@@ -1,3 +1,29 @@
+# Version 0.9.1 — 2026-08-01
+
+Fixes and refinements after the 0.9.0 release.
+
+## Improvements
+
+- Starting the Web UI while another Sparlectra Web UI already listens on the
+  same port no longer aborts with `EADDRINUSE`: the launcher detects the
+  running instance, opens the browser on it, and says so. A foreign process
+  on the port still produces the explicit error.
+- Saved case settings survive an unrelated configuration write. The
+  last-edit-wins precedence introduced in 0.9.0 let *every* key of a newer
+  configuration file outrank the stored case setup — including keys that
+  merely repeat the shipped template, as a startup or migration rewrite
+  produces them. A case then silently lost its solver setup and could
+  diverge (`case_SyntheticUSA`). Only values that actually differ from the
+  template now count as a deliberate edit and take precedence.
+- DC-line cases (`case_SyntheticUSA`) run again for old installations:
+  `matpower_import.matpower_dcline_mode: reject_active` — the shipped
+  default of early templates that stored configuration files still carry —
+  is deprecated on the configuration surface and loads as `pf_injections`
+  (DC lines as per-terminal injection pairs) with a warning instead of
+  aborting the run. The strict fail-fast check remains available
+  programmatically, and the rejection message names key, value, and cure.
+
+
 # Version 0.9.0 — 2026-07-31
 
 IEC 60909 short-circuit stage (#277), CGMES export.

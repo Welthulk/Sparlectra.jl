@@ -184,6 +184,21 @@ function run_webui_fast_tests()
       v2 = Sparlectra.webui_form_state(selected_config_file = cfg, sidecar_profile = sidecar)
       @test v2["power_flow_max_iter"] == 55
       @test !haskey(v2, "_config_newer_than_profile")
+
+      # Regression: a NEWER config that only repeats the shipped template
+      # defaults carries no user intent (startup/migration rewrites touch the
+      # file) and must NOT discard the saved case setup — case_SyntheticUSA
+      # lost its solver settings this way and diverged.
+      template_only = joinpath(dir, "template_only.yaml")
+      template_defaults = Sparlectra._webui_config_field_values(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH)
+      write(template_only, "power_flow:\n  qlimits:\n    enabled: $(get(template_defaults, "power_flow_qlimits_enabled", true))\n")
+      sleep(1.1)
+      touch(template_only)
+      case_setup = Dict{String,Any}("power_flow_qlimits_enabled" => false, "power_flow_merit_enabled" => true, "_profile_path" => prof)
+      v3 = Sparlectra.webui_form_state(selected_config_file = template_only, sidecar_profile = case_setup)
+      @test v3["power_flow_qlimits_enabled"] === false
+      @test v3["power_flow_merit_enabled"] === true
+      @test !haskey(v3, "_config_newer_than_profile")
     end
   end
 end

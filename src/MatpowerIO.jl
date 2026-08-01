@@ -138,7 +138,7 @@ function unsupported_dcline_message(details::AbstractDict)::String
   casefile = get(details, "casefile", "unknown")
   active_count = get(details, "matpower_dcline_active_count", 0)
   parts = String[
-    "MATPOWER case contains active `mpc.dcline` entries. DC lines are currently not supported by Sparlectra MATPOWER import. The run was aborted before power-flow solution.",
+    "MATPOWER case contains active `mpc.dcline` entries and matpower_import.matpower_dcline_mode is not `pf_injections`. The run was aborted before power-flow solution. Set `matpower_import.matpower_dcline_mode: pf_injections` (the shipped default) to model each DC line as a per-terminal injection pair instead.",
     "casefile = $(casefile)",
     "active_dcline_count = $(active_count)",
   ]

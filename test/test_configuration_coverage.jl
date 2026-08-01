@@ -406,6 +406,18 @@ power_flow:
     @test err isa ArgumentError
     @test occursin("cgmes_import.start_values", sprint(showerror, err))
 
+    # matpower_import.matpower_dcline_mode: the stale early-template value
+    # reject_active must not brick old user configs — it loads as
+    # pf_injections with a deprecation warning; ignore_inactive stays a
+    # deliberate choice and loads verbatim.
+    dcline_stale = tempname() * ".yaml"
+    write(dcline_stale, "matpower_import:\n  matpower_dcline_mode: reject_active\n")
+    stale_cfg = @test_logs (:warn, r"reject_active is deprecated in configuration files") Sparlectra.load_sparlectra_config(dcline_stale; reload = true)
+    @test stale_cfg.matpower.matpower_dcline_mode === :pf_injections
+    dcline_deliberate = tempname() * ".yaml"
+    write(dcline_deliberate, "matpower_import:\n  matpower_dcline_mode: ignore_inactive\n")
+    @test Sparlectra.load_sparlectra_config(dcline_deliberate; reload = true).matpower.matpower_dcline_mode === :ignore_inactive
+
     # cgmes_import.placeholder_guards: default warn_skip, strict accepted,
     # invalid rejected with the key name in the message.
     @test Sparlectra.CGMESImportConfig().placeholder_guards === :warn_skip

@@ -168,12 +168,38 @@ function run_webui_extended_tests()
         end
         @test err isa ArgumentError
         @test occursin("already in use", err.msg)
-        @test occursin("start_sparlectra_webui() earlier in this Julia session", err.msg)
-        @test occursin("close(server)", err.msg)
+        @test occursin("non-Sparlectra", err.msg)
         @test occursin("port=", err.msg)
         @test occursin("already in use", String(take!(eaddrinuse_io)))
       finally
         close(busy_listener)
+      end
+    end
+    let
+      # A RUNNING Sparlectra Web UI on the requested port is not an error:
+      # the second start detects it via the /powerflow probe, opens the
+      # browser on the existing instance, and returns nothing.
+      port_probe = listen(ip"127.0.0.1", UInt16(0))
+      running_port = Int(getsockname(port_probe)[2])
+      close(port_probe)
+      running_io = IOBuffer()
+      running = start_sparlectra_webui(port = running_port, output_root = mktempdir(), _lifecycle_io = running_io)
+      try
+        opened_url = Ref("")
+        second = start_sparlectra_webui(
+          port = running_port,
+          output_root = mktempdir(),
+          open_browser = true,
+          _lifecycle_io = IOBuffer(),
+          _browser_opener = url -> (opened_url[] = url; nothing),
+        )
+        @test second === nothing
+        @test opened_url[] == "http://127.0.0.1:$(running_port)/powerflow"
+        # the first instance keeps serving untouched
+        @test isopen(running.listener)
+        @test occursin("HTTP/1.1 200 OK", _webui_http_request(running_port, "GET", "/powerflow"))
+      finally
+        close(running)
       end
     end
     default_root = default_webui_output_root()
@@ -263,7 +289,10 @@ function run_webui_extended_tests()
           operation_log,
         )
         @test response.status == 200
-        @test load_sparlectra_config(config_path; reload = true).matpower.matpower_dcline_mode == Symbol(mode)
+        # reject_active saves fine (old files keep loading) but is deprecated
+        # on the configuration surface and normalizes to pf_injections.
+        expected_mode = mode == "reject_active" ? :pf_injections : Symbol(mode)
+        @test load_sparlectra_config(config_path; reload = true).matpower.matpower_dcline_mode == expected_mode
         @test isempty(temp_leftovers())
       end
 

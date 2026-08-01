@@ -620,6 +620,19 @@ const MATPOWER_RATIO_VALUES = (:normal, :reciprocal)
 const MATPOWER_BUS_SHUNT_MODEL_VALUES = (:admittance, :voltage_dependent_injection)
 const MATPOWER_AUTO_PROFILE_VALUES = (:off, :recommend, :apply)
 const MATPOWER_DCLINE_MODE_VALUES = (:reject_active, :ignore_inactive, :pf_injections)
+
+# `reject_active` was the shipped template default of early releases, so
+# stored user/Web UI configuration files still carry it without it ever
+# having been a deliberate choice. Loading it verbatim would abort every
+# DC-line case (e.g. case_SyntheticUSA) for exactly those users — the
+# configuration surface therefore normalizes it to the current default with
+# a warning. The strict fail-fast behavior stays available programmatically:
+# createNetFromMatPowerCase(matpower_dcline_mode = :reject_active).
+function _normalize_dcline_mode(requested::Symbol)::Symbol
+  requested === :reject_active || return requested
+  @warn "matpower_import.matpower_dcline_mode: reject_active is deprecated in configuration files and loads as pf_injections (active mpc.dcline rows import as per-terminal injection pairs). Remove the key or set pf_injections to silence this warning."
+  return :pf_injections
+end
 const TRANSFORMER_TAP_CHANGER_MODEL_VALUES = (:ideal, :impedance_correction)
 const PERFORMANCE_LEVEL_VALUES = (:off, :summary, :iteration, :full)
 const OUTPUT_CONSOLE_AUTO_PROFILE_VALUES = (:off, :compact, :full)
@@ -1132,7 +1145,7 @@ function MatpowerImportConfig(raw::AbstractDict)
     apply_branch_names = _as_bool_cfg(_raw_get(merged, "apply_branch_names", false)),
     apply_branch_kind = _as_bool_cfg(_raw_get(merged, "apply_branch_kind", false)),
     import_for001_contingencies = _as_bool_cfg(_raw_get(merged, "import_for001_contingencies", true)),
-    matpower_dcline_mode = _validate_allowed_symbol("matpower_import.matpower_dcline_mode", _as_symbol_cfg(_raw_get(merged, "matpower_dcline_mode", :pf_injections)), MATPOWER_DCLINE_MODE_VALUES),
+    matpower_dcline_mode = _normalize_dcline_mode(_validate_allowed_symbol("matpower_import.matpower_dcline_mode", _as_symbol_cfg(_raw_get(merged, "matpower_dcline_mode", :pf_injections)), MATPOWER_DCLINE_MODE_VALUES)),
     net_cache_enabled = _as_bool_cfg(_raw_get(_raw_section(merged, "net_cache"), "enabled", false)),
   )
 end
