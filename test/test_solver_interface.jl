@@ -521,16 +521,17 @@ end
         return guarded_net
       end
 
-      # A PV bus with qmin == qmax has no reactive headroom and cannot hold a
-      # voltage, so it starts as PQ unconditionally (modelling, not a
-      # heuristic) and that reclassification is recorded. The THRESHOLD-based
-      # narrow-range guard below still requires opting in.
+      # Regression: lower-level solver callers must opt in before the guard
+      # locks PV buses to PQ during rectangular pre-processing — including
+      # zero-headroom buses (qmin == qmax). Doing that unconditionally is
+      # physically defensible but was MEASURED to cost convergence on a real
+      # 82000-bus case (rescue converges in 66 iterations without it, fails
+      # with it), and those limits are not binding at the solution anyway.
       default_net = zero_range_pv_net()
       redirect_stdout(devnull) do
         runpf!(default_net; config = PowerFlowConfig(max_iter = 0))
       end
-      @test length(default_net.qLimitLog) == 1
-      @test first(default_net.qLimitLog).iter == 0
+      @test isempty(default_net.qLimitLog)
 
       opt_in_net = zero_range_pv_net()
       redirect_stdout(devnull) do

@@ -21,13 +21,6 @@ Fixes and refinements after the 0.9.0 release.
   and it is reachable independently of the dismissible notice. Selecting a
   case now dims the form and shows a spinner while the server reloads it,
   instead of letting the fields change under the user's hands.
-- **PV buses without reactive headroom start as PQ.** A machine whose
-  `qmin == qmax` cannot hold a voltage, so it is no longer treated as a
-  voltage-controlled bus — previously this only happened with the optional
-  narrow-range guard, and such buses were a major source of PV/PQ churn
-  (measured: 533 of them driving 8445 switching events on a large case).
-  This is modelling, not a heuristic; the threshold-based narrow-range guard
-  stays opt-in.
 - **The rescue ladder is on by default** (`power_flow.rescue: true`). Only
   failed runs pay for the retries, and getting a result beats getting a
   divergence message; set `false` for solver studies that need the raw
