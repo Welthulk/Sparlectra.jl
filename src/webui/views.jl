@@ -526,7 +526,7 @@ $(config_maintenance)
 $(isempty(profile_path) ? "" : "<fieldset class=\"saved-case-settings\">
 <legend>Saved settings for this case</legend>
 <p class=\"field-help\">This case has stored Web UI settings (<code>$(_webui_escape(basename(profile_path)))</code>). They prefill the form and outrank the configuration file for the keys they contain — including ones you may not expect, such as a stored solver choice. Resetting deletes the stored settings only; the case file itself is kept.</p>
-<form method=\"post\" action=\"/powerflow/case-settings/reset\" class=\"actions\"><input type=\"hidden\" name=\"casefile\" value=\"$(_webui_escape(selected_casefile))\"><button type=\"submit\" class=\"secondary-button\">Reset saved settings for this case</button></form>
+<div class=\"actions\"><button type=\"submit\" class=\"secondary-button\" formaction=\"/powerflow/case-settings/reset\" formmethod=\"post\" formnovalidate>Reset saved settings for this case</button></div>
 </fieldset>")
 <fieldset class=\"startup-options\">
 <legend>Startup</legend>
@@ -835,6 +835,17 @@ document.addEventListener('DOMContentLoaded', function () {
     updateSolverMode();
     solverRadios.forEach(function (radio) { radio.addEventListener('change', updateSolverMode); });
   }
+  const hideCaseLoadingBanner = function () {
+    const banner = document.getElementById('case-loading-banner');
+    if (banner !== null) banner.hidden = true;
+  };
+  // A page restored from the back/forward cache keeps the DOM as it was when
+  // the user navigated away — including the loading state. Clear it, or the
+  // form looks (and on a stricter style would be) stuck after Back.
+  window.addEventListener('pageshow', function () {
+    document.querySelectorAll('.case-loading').forEach(function (el) { el.classList.remove('case-loading'); });
+    hideCaseLoadingBanner();
+  });
   const reloadWithCase = function (value) {
     // Selecting a case reloads the whole form from the server (its saved
     // settings have to be applied). On a large case directory that takes a
@@ -844,6 +855,10 @@ document.addEventListener('DOMContentLoaded', function () {
     const form = document.querySelector('[data-powerflow-form]') || document.querySelector('main');
     if (form !== null) {
       form.classList.add('case-loading');
+      // Safety net: if the navigation never happens (blocked, cancelled, or
+      // the same page is restored from the bfcache), drop the dimming again
+      // so the form never looks stuck.
+      window.setTimeout(function () { form.classList.remove('case-loading'); hideCaseLoadingBanner(); }, 15000);
       let banner = document.getElementById('case-loading-banner');
       if (banner === null) {
         banner = document.createElement('div');

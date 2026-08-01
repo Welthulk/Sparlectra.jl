@@ -164,6 +164,34 @@ function run_webui_fast_tests()
       @test !occursin("CGMES export", plain_html)
     end
 
+    @testset "no nested forms anywhere on the run page" begin
+      # HTML forbids nested <form>. A browser closes the outer form where the
+      # inner one starts, so every control AFTER it — including "Start
+      # PowerFlow run" — silently falls out of the form and does nothing when
+      # clicked. This bit exactly once; the depth check keeps it from
+      # returning through any future in-form button.
+      dir = mktempdir()
+      prof = joinpath(dir, "c.sparlectra-webui.yaml")
+      write(prof, "placeholder")
+      for html in (
+        Sparlectra.render_powerflow_form(output_root = mktempdir()),
+        Sparlectra.render_powerflow_form(output_root = mktempdir(), selected_casefile = "c.m", case_profile = Dict{String,Any}("power_flow_solver" => "dc", "_profile_path" => prof)),
+      )
+        depth = 0
+        maxdepth = 0
+        for m in eachmatch(r"</?form\b"i, html)
+          depth += startswith(lowercase(m.match), "</") ? -1 : 1
+          maxdepth = max(maxdepth, depth)
+        end
+        @test maxdepth == 1
+        @test depth == 0
+        # and the submit button must still sit inside the run form
+        run_form_start = first(findfirst("<form id=\"powerflow-run-form\"", html))
+        run_form_end = first(findnext("</form>", html, run_form_start))
+        @test occursin("Start PowerFlow run", html[run_form_start:run_form_end])
+      end
+    end
+
     @testset "saved case settings can be reset from the form" begin
       # Saved settings outrank the configuration for their keys, so a stale
       # sidecar can pin a case to a setting the user cannot override in the

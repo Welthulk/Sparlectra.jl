@@ -579,9 +579,11 @@ button:disabled {
   width: .9rem;
 }
 
+/* Visual signal only. NEVER disable input here: if the class survives a
+   navigation (back button, bfcache, cancelled navigation) a pointer-events
+   lock would leave the whole form — including Start — permanently dead. */
 .case-loading {
   opacity: .55;
-  pointer-events: none;
 }
 
 .form-grid.is-submitting .submit-spinner {
