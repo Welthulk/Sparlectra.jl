@@ -1391,6 +1391,13 @@ Ordered rescue strategies for a non-converged AC solve. Each entry is a
    is disabled for this attempt).
 3. `:dc_seed` — flat voltage magnitudes with DC-projected start angles via
    the existing start-projection machinery.
+4. `:settled_qlimits` — the globalization package for large, Q-limit-noisy
+   systems: Armijo merit line search, a low damping floor, and Q-limit
+   switching held back until the reactive requests have settled
+   (`qlimits.start_mode = :auto`). Measured on an 82000-bus case whose
+   Q limits are not even binding at the solution: the shipped early
+   switching produced 8445 PV/PQ flips and diverged, this combination
+   converges in ~60 iterations with the limits fully enforced.
 """
 function _rescue_config_variants(config::PowerFlowConfig)
   variants = Tuple{Symbol,PowerFlowConfig}[]
@@ -1399,6 +1406,9 @@ function _rescue_config_variants(config::PowerFlowConfig)
   if !config.autodamp
     push!(variants, (:autodamp, _copy_powerflow_with(config; autodamp = true, trust_region = TrustRegionConfig())))
   end
+  settled_start = _copy_start_mode_with(config.start_mode; angle_mode = :bus_va_blend, voltage_mode = :all_bus_vm, start_projection = true, try_dc_start = true, try_blend_scan = true)
+  settled_qlim = _copy_qlimits_with(config.qlimits; start_mode = :auto)
+  push!(variants, (:settled_qlimits, _copy_powerflow_with(config; autodamp = true, autodamp_min = 0.001, trust_region = TrustRegionConfig(), merit = MeritLineSearchConfig(enabled = true), qlimits = settled_qlim, start_mode = settled_start)))
   seeded = _copy_start_mode_with(config.start_mode; flatstart = true, start_projection = true, try_dc_start = true, accept_unmeasured_dc_start = true, angle_mode = :dc)
   push!(variants, (:dc_seed, _copy_powerflow_with(config; start_mode = seeded)))
   return variants

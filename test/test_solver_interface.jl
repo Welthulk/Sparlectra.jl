@@ -1530,7 +1530,20 @@ mpc.branch = [
       rite, rerg = runpf!(rescued, cfg_rescue; performance_profile = profile)
       @test rerg == 0
       @test rite > 0
-      @test get(profile, :ac_rescue_strategy, :missing) in (:alternate_start, :autodamp, :dc_seed)
+      @test get(profile, :ac_rescue_strategy, :missing) in (:alternate_start, :autodamp, :dc_seed, :settled_qlimits)
+
+      # The ladder must offer the globalization package for Q-limit-noisy
+      # systems: merit line search, a low damping floor, and Q-limit
+      # switching held back until the reactive requests settle. Asserted on
+      # the variant list so a large-case regression cannot silently drop it.
+      variants = Sparlectra._rescue_config_variants(Sparlectra.PowerFlowConfig())
+      settled = only(cfg for (name, cfg) in variants if name === :settled_qlimits)
+      @test settled.merit.enabled === true
+      @test settled.autodamp === true
+      @test settled.autodamp_min == 0.001
+      @test settled.qlimits.start_mode === :auto
+      # honest: the limits themselves stay enforced, only the timing changes
+      @test settled.qlimits.ignore_q_limits === false
 
       # A genuinely infeasible case (load far beyond the transfer limit):
       # rescue exhausts the ladder, the DC fallback leaves a usable DC state,

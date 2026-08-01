@@ -12,6 +12,15 @@ Fixes and refinements after the 0.9.0 release.
   **Short circuit** click is fast, and it can be switched off: new
   `webui.warmup` (default `true`), editable as **Warm up on start** under
   the form's Advanced options.
+- **Rescue ladder handles Q-limit-driven divergence.** New strategy
+  `settled_qlimits` (merit line search, low damping floor, Q-limit switching
+  held back until the reactive requests settle). A large synthetic system
+  whose Q limits are *not even binding at the solution* diverged because the
+  shipped early switching produced 8445 PV/PQ flips; with the strategy it
+  converges in ~60 iterations — with the limits fully enforced, no relaxation
+  involved. Note for large systems: `qlimits.start_mode: iteration_or_auto`
+  is an **or**, so a small `start_iter` always wins and the `auto` criterion
+  never fires; prefer `auto` there.
 - **CGMES deliveries start from their own state by default.**
   `cgmes_import.start_values` gained the mode `auto` and it is the new
   default: a delivery that carries an `SvVoltage` state is solved from it,
