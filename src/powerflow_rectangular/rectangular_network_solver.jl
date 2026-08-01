@@ -650,12 +650,27 @@ function runpf_rectangular!(
     println("Q-limit diagnostics: skipped")
   end
 
+  # A machine with qmin == qmax has NO reactive headroom, so it cannot hold a
+  # voltage — it is a PQ bus by definition, not a modelling preference. Doing
+  # this unconditionally (the narrow-range guard below is a heuristic and
+  # stays opt-in) removes the busiest source of active-set churn: such buses
+  # violate their limit the moment they are treated as PV, switch to PQ, and
+  # flip back as soon as the voltage moves. Measured on an 82000-bus case:
+  # 533 such buses drove 8445 PV/PQ flips and prevented convergence.
+  zero_range_pq_buses = Int[]
+  if qlimits_enabled
+    zero_range_pq_buses = _perf_profile_time!(performance_profile, :qlimit_zero_range_preprocess) do
+      _lock_zero_range_pv_buses!(net, bus_types, S, build_qload_pu(net), qmin_pu, qmax_pu; log = qlimit_guard_log, verbose = verbose)
+    end
+  end
+
   guarded_qlimit_buses = Int[]
   if qlimits_enabled && qlimit_guard
     guarded_qlimit_buses = _perf_profile_time!(performance_profile, :qlimit_guard_preprocess) do
       _apply_qlimit_guard_to_rectangular_active_set!(net, bus_types, S, build_qload_pu(net), qmin_pu, qmax_pu; min_q_range_pu = qlimit_guard_min_q_range_pu, zero_range_mode = qlimit_guard_zero_range_mode, narrow_range_mode = qlimit_guard_narrow_range_mode, log = qlimit_guard_log, verbose = verbose)
     end
   end
+  isempty(zero_range_pq_buses) || append!(guarded_qlimit_buses, zero_range_pq_buses)
 
   # --- Active-set bookkeeping (rectangular solver) ------------------------
   nb = n  # number of buses

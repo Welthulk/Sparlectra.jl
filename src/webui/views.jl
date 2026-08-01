@@ -341,7 +341,7 @@ function render_powerflow_form(;
   profile_notice = if isempty(profile_path) || !show_case_settings_notice
     ""
   else
-    "<div class=\"alert info case-settings-notice\" role=\"status\"><strong>Case-specific settings loaded from $(profile_location).</strong> Saved Web UI settings prefilled the form.$(config_newer_hint) Manual edits on this page override the profile for this run. <form method=\"post\" action=\"/powerflow/config/dismiss-case-settings-notice\" class=\"case-settings-notice-dismiss\"><input type=\"hidden\" name=\"config_file\" value=\"$(_webui_escape(selected_config_file))\"><input type=\"hidden\" name=\"casefile\" value=\"$(_webui_escape(selected_casefile))\"><button type=\"submit\" class=\"link-button\">Don't show this again</button></form></div>"
+    "<div class=\"alert info case-settings-notice\" role=\"status\"><strong>Case-specific settings loaded from $(profile_location).</strong> Saved Web UI settings prefilled the form.$(config_newer_hint) Manual edits on this page override the profile for this run. <form method=\"post\" action=\"/powerflow/case-settings/reset\" class=\"case-settings-notice-dismiss\"><input type=\"hidden\" name=\"casefile\" value=\"$(_webui_escape(selected_casefile))\"><button type=\"submit\" class=\"link-button\" title=\"Delete the saved settings for this case so the form falls back to the configuration defaults. The case file itself is kept.\">Reset saved settings</button></form> <form method=\"post\" action=\"/powerflow/config/dismiss-case-settings-notice\" class=\"case-settings-notice-dismiss\"><input type=\"hidden\" name=\"config_file\" value=\"$(_webui_escape(selected_config_file))\"><input type=\"hidden\" name=\"casefile\" value=\"$(_webui_escape(selected_casefile))\"><button type=\"submit\" class=\"link-button\">Don't show this again</button></form></div>"
   end
   error_html = _webui_error_alert_html(error_message)
   import_html = isempty(strip(import_message)) ? "" : "<div class=\"alert info case-import-result\" role=\"status\">$(_webui_escape(import_message))</div>"
@@ -523,6 +523,11 @@ $(config_maintenance)
 <label>$(_webui_field_label("power_flow_distributed_slack_p_mode", "Participation mode"))$(_webui_select("power_flow_distributed_slack_p_mode", _webui_option_allowed_values("power_flow_distributed_slack_p_mode"), _webui_selected(profile_values, "power_flow_distributed_slack_p_mode", _webui_option_default("power_flow_distributed_slack_p_mode"))))</label>
 <p class=\"field-help\">The REF bus keeps the angle reference; the island's P imbalance is absorbed by participating generators via one λ<sub>P</sub> per island. <code>imported</code> reads participation factors from the case data (MATPOWER <code>APF</code>, CGMES <code>normalPF</code>). Explicit weights are YAML-only (<code>power_flow.distributed_slack.weights</code>).</p>
 </fieldset>
+$(isempty(profile_path) ? "" : "<fieldset class=\"saved-case-settings\">
+<legend>Saved settings for this case</legend>
+<p class=\"field-help\">This case has stored Web UI settings (<code>$(_webui_escape(basename(profile_path)))</code>). They prefill the form and outrank the configuration file for the keys they contain — including ones you may not expect, such as a stored solver choice. Resetting deletes the stored settings only; the case file itself is kept.</p>
+<form method=\"post\" action=\"/powerflow/case-settings/reset\" class=\"actions\"><input type=\"hidden\" name=\"casefile\" value=\"$(_webui_escape(selected_casefile))\"><button type=\"submit\" class=\"secondary-button\">Reset saved settings for this case</button></form>
+</fieldset>")
 <fieldset class=\"startup-options\">
 <legend>Startup</legend>
 <label class=\"check span-2\"><input name=\"webui_warmup\" type=\"hidden\" value=\"false\"><input name=\"webui_warmup\" type=\"checkbox\" value=\"true\"$(_webui_checked(profile_values, "webui_warmup", _webui_option_default("webui_warmup")))>$(_webui_field_label("webui_warmup", "Warm up on start (power flow and short circuit)"))</label>
@@ -831,6 +836,25 @@ document.addEventListener('DOMContentLoaded', function () {
     solverRadios.forEach(function (radio) { radio.addEventListener('change', updateSolverMode); });
   }
   const reloadWithCase = function (value) {
+    // Selecting a case reloads the whole form from the server (its saved
+    // settings have to be applied). On a large case directory that takes a
+    // moment during which the visible fields still show the OLD case's
+    // values and then jump — so say plainly that a reload is running instead
+    // of letting the user watch settings change under their hands.
+    const form = document.querySelector('[data-powerflow-form]') || document.querySelector('main');
+    if (form !== null) {
+      form.classList.add('case-loading');
+      let banner = document.getElementById('case-loading-banner');
+      if (banner === null) {
+        banner = document.createElement('div');
+        banner.id = 'case-loading-banner';
+        banner.className = 'alert info case-loading-banner';
+        banner.setAttribute('role', 'status');
+        banner.innerHTML = '<span class="submit-spinner" aria-hidden="true"></span> Loading case settings — please wait…';
+        form.parentNode.insertBefore(banner, form);
+      }
+      banner.hidden = false;
+    }
     const target = new URL('/powerflow', window.location.origin);
     target.searchParams.set('casefile', value);
     const configInput = document.querySelector('input[name="config_file"]');

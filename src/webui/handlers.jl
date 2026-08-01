@@ -241,6 +241,38 @@ function handle_powerflow_case_delete(form::AbstractDict; output_root::AbstractS
   return _webui_redirect("/powerflow?import_message=$(message)")
 end
 
+"""
+Delete a case's saved settings sidecar without touching the case file. Saved
+settings outrank the configuration for their keys, so a stale sidecar can pin
+a case to settings the user cannot see or override in the form (measured: a
+delivery stuck on `power_flow_solver: dc` from an old run). This is the way
+back to the plain configuration defaults.
+"""
+function handle_powerflow_case_settings_reset(form::AbstractDict; output_root::AbstractString = "results/powerflow_service", application_root::AbstractString = _webui_application_root(), case_directory::Union{Nothing,AbstractString} = nothing, operation_log::AbstractString = output_root)::SparlectraWebUIResponse
+  directory = _webui_case_directory(; case_directory, application_root, output_root)
+  requested = strip(String(something(_webui_form_value(form, "casefile", ""), "")))
+  if isempty(requested)
+    return _webui_redirect("/powerflow?import_message=$(_webui_urlencode("Select a case before resetting its saved settings."))")
+  end
+  if basename(requested) != requested || occursin(r"[\\/]", requested)
+    record_webui_operation!(operation_log, "case_settings_reset_failed"; route = "/powerflow/case-settings/reset", method = "POST", user_action = true, casefile = requested, message = "invalid case name")
+    return _webui_redirect("/powerflow?import_message=$(_webui_urlencode("Could not reset settings for '$(requested)': invalid case name"))")
+  end
+  sidecar = _webui_case_settings_path(output_root, requested; case_directory = directory)
+  if !isfile(sidecar)
+    record_webui_operation!(operation_log, "case_settings_reset_noop"; route = "/powerflow/case-settings/reset", method = "POST", user_action = true, casefile = requested, status = "no_sidecar")
+    return _webui_redirect("/powerflow?casefile=$(_webui_urlencode(requested))&import_message=$(_webui_urlencode("No saved settings for '$(requested)' — the form already uses the configuration defaults."))")
+  end
+  try
+    rm(sidecar; force = true)
+  catch err
+    record_webui_operation!(operation_log, "case_settings_reset_failed"; route = "/powerflow/case-settings/reset", method = "POST", user_action = true, casefile = requested, message = sprint(showerror, err))
+    return _webui_redirect("/powerflow?casefile=$(_webui_urlencode(requested))&import_message=$(_webui_urlencode("Could not reset settings for '$(requested)': $(sprint(showerror, err))"))")
+  end
+  record_webui_operation!(operation_log, "case_settings_reset_completed"; route = "/powerflow/case-settings/reset", method = "POST", user_action = true, casefile = requested)
+  return _webui_redirect("/powerflow?casefile=$(_webui_urlencode(requested))&import_message=$(_webui_urlencode("Saved settings for '$(requested)' deleted — the form now uses the configuration defaults."))")
+end
+
 """Run a PowerFlow request through the Web UI form-to-service boundary."""
 function handle_powerflow_run(form::AbstractDict; default_output_root::AbstractString = "results/powerflow_service", application_root::AbstractString = _webui_application_root(), case_directory::Union{Nothing,AbstractString} = nothing, runner = start_powerflow_run, operation_log::AbstractString = default_output_root)::Dict{String,Any}
   request = powerflow_webui_request(form; default_output_root = default_output_root)

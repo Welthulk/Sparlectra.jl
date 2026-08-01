@@ -55,8 +55,12 @@ power_flow:
   # then largest generator) to slack when the case registers none.
   auto_slack: false
   # Retry a non-converged AC solve from the original start state with a fixed
-  # strategy ladder: alternate start, autodamp, DC-seeded projection.
-  rescue: false
+  # strategy ladder: alternate start, autodamp, DC-seeded projection, and
+  # settled Q-limits (merit line search + low damping floor + Q-limit
+  # switching held back until the reactive requests settle). Only failed
+  # runs pay for the retries. Set false for solver studies that must see the
+  # raw failure instead of a rescued result.
+  rescue: true
   dc:
     # After a failed AC solve (and failed rescue ladder), run the standalone
     # DC power flow so the net carries usable angles and branch P flows.

@@ -251,8 +251,11 @@ Base.@kwdef struct PowerFlowConfig
   # (ensureSlack!); off by default so data errors stay visible.
   auto_slack::Bool = false
   # Retry a non-converged AC solve from the original start state with a fixed
-  # strategy ladder (alternate start, autodamp, DC-seeded projection).
-  rescue::Bool = false
+  # strategy ladder (alternate start, autodamp, DC-seeded projection,
+  # settled Q-limits). ON by default: only failed runs pay for the retries,
+  # and a user who gets a result instead of a divergence message is the
+  # whole point. Turn off for solver studies that must see the raw failure.
+  rescue::Bool = true
   wrong_branch_detection::Symbol = :warn
   wrong_branch_rescue::Bool = false
   wrong_branch_min_vm_pu::Float64 = 0.70

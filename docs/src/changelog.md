@@ -12,6 +12,26 @@ Fixes and refinements after the 0.9.0 release.
   **Short circuit** click is fast, and it can be switched off: new
   `webui.warmup` (default `true`), editable as **Warm up on start** under
   the form's Advanced options.
+- **Saved case settings can be reset, and switching cases says it is busy.**
+  Stored Web UI settings outrank the configuration for their keys, so an old
+  sidecar could pin a case to a setting invisible in the form (measured: a
+  delivery stuck on `power_flow_solver: dc` from an earlier run, with the
+  selection jumping back on every reload). A **Reset saved settings for this
+  case** button under Advanced deletes the sidecar — the case file is kept —
+  and it is reachable independently of the dismissible notice. Selecting a
+  case now dims the form and shows a spinner while the server reloads it,
+  instead of letting the fields change under the user's hands.
+- **PV buses without reactive headroom start as PQ.** A machine whose
+  `qmin == qmax` cannot hold a voltage, so it is no longer treated as a
+  voltage-controlled bus — previously this only happened with the optional
+  narrow-range guard, and such buses were a major source of PV/PQ churn
+  (measured: 533 of them driving 8445 switching events on a large case).
+  This is modelling, not a heuristic; the threshold-based narrow-range guard
+  stays opt-in.
+- **The rescue ladder is on by default** (`power_flow.rescue: true`). Only
+  failed runs pay for the retries, and getting a result beats getting a
+  divergence message; set `false` for solver studies that need the raw
+  failure. The DC fallback stays opt-in because it swaps the model.
 - **Rescue ladder handles Q-limit-driven divergence.** New strategy
   `settled_qlimits` (merit line search, low damping floor, Q-limit switching
   held back until the reactive requests settle). A large synthetic system

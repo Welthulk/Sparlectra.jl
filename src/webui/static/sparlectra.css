@@ -564,6 +564,26 @@ button:disabled {
   display: none;
 }
 
+/* Case switch reloads the form from the server; until it lands the visible
+   fields still hold the previous case's values, so dim them and show a
+   spinner rather than letting the settings jump silently. */
+.case-loading-banner .submit-spinner {
+  animation: submit-spin .8s linear infinite;
+  border: 2px solid rgb(23 104 212 / 35%);
+  border-radius: 50%;
+  border-top-color: #1768d4;
+  display: inline-block;
+  height: .9rem;
+  margin-right: .4rem;
+  vertical-align: -.1rem;
+  width: .9rem;
+}
+
+.case-loading {
+  opacity: .55;
+  pointer-events: none;
+}
+
 .form-grid.is-submitting .submit-spinner {
   animation: submit-spin .8s linear infinite;
   border: 2px solid rgb(255 255 255 / 45%);

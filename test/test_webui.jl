@@ -164,6 +164,41 @@ function run_webui_fast_tests()
       @test !occursin("CGMES export", plain_html)
     end
 
+    @testset "saved case settings can be reset from the form" begin
+      # Saved settings outrank the configuration for their keys, so a stale
+      # sidecar can pin a case to a setting the user cannot override in the
+      # form (measured: a delivery stuck on power_flow_solver: dc). The reset
+      # path must be reachable independently of the dismissible notice.
+      dir = mktempdir()
+      prof = joinpath(dir, "c.sparlectra-webui.yaml")
+      write(prof, "placeholder")
+      with_sidecar = Sparlectra.render_powerflow_form(output_root = mktempdir(), selected_casefile = "c.m", case_profile = Dict{String,Any}("power_flow_solver" => "dc", "_profile_path" => prof))
+      @test occursin("Reset saved settings for this case", with_sidecar)
+      @test occursin("/powerflow/case-settings/reset", with_sidecar)
+      without = Sparlectra.render_powerflow_form(output_root = mktempdir())
+      @test !occursin("Reset saved settings for this case", without)
+      # switching the case reloads the form server-side; the wait must be visible
+      @test occursin("case-loading-banner", without)
+
+      # The handler deletes the sidecar and keeps the case file.
+      root = joinpath(dir, "runs")
+      cases = joinpath(dir, "cases")
+      mkpath(root)
+      mkpath(cases)
+      write(joinpath(cases, "c.m"), "function mpc = c\nend\n")
+      sc = Sparlectra._webui_case_settings_path(root, "c.m"; case_directory = cases)
+      mkpath(dirname(sc))
+      write(sc, "values:\n  power_flow_solver: dc\n")
+      response = Sparlectra.handle_powerflow_case_settings_reset(Dict("casefile" => "c.m"); output_root = root, case_directory = cases, operation_log = root)
+      @test response.status == 303
+      @test !isfile(sc)
+      @test isfile(joinpath(cases, "c.m"))
+      # idempotent: a second reset is a no-op, not an error
+      @test Sparlectra.handle_powerflow_case_settings_reset(Dict("casefile" => "c.m"); output_root = root, case_directory = cases, operation_log = root).status == 303
+      # path traversal is rejected
+      @test Sparlectra.handle_powerflow_case_settings_reset(Dict("casefile" => "../evil.m"); output_root = root, case_directory = cases, operation_log = root).status == 303
+    end
+
     @testset "config edits win over older case settings" begin
       dir = mktempdir()
       cfg = joinpath(dir, "conf.yaml")

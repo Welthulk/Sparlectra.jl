@@ -115,7 +115,7 @@ function _webui_test_form(casefile, config_file, output_root)
     "power_flow_distributed_slack_enabled" => "false",
     "power_flow_distributed_slack_p_mode" => "pg_weighted",
     "power_flow_linear_solver" => "umfpack",
-    "power_flow_rescue" => "false",
+    "power_flow_rescue" => "true",
     "power_flow_dc_fallback" => "false",
     "cgmes_start_values" => "auto",
     "cgmes_require_boundary" => "true",

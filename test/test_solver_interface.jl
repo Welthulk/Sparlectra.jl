@@ -521,13 +521,16 @@ end
         return guarded_net
       end
 
-      # Regression: lower-level solver callers must opt in before the narrow-Q guard
-      # locks PV buses to PQ during rectangular pre-processing.
+      # A PV bus with qmin == qmax has no reactive headroom and cannot hold a
+      # voltage, so it starts as PQ unconditionally (modelling, not a
+      # heuristic) and that reclassification is recorded. The THRESHOLD-based
+      # narrow-range guard below still requires opting in.
       default_net = zero_range_pv_net()
       redirect_stdout(devnull) do
         runpf!(default_net; config = PowerFlowConfig(max_iter = 0))
       end
-      @test isempty(default_net.qLimitLog)
+      @test length(default_net.qLimitLog) == 1
+      @test first(default_net.qLimitLog).iter == 0
 
       opt_in_net = zero_range_pv_net()
       redirect_stdout(devnull) do
@@ -1519,7 +1522,7 @@ mpc.branch = [
       # Without rescue the poisoned run fails.
       plain = mkrescuenet()
       poison!(plain)
-      cfg_plain = Sparlectra.PowerFlowConfig(max_iter = 5, tol = 1e-8, start_mode = Sparlectra.StartModeConfig(flatstart = false))
+      cfg_plain = Sparlectra.PowerFlowConfig(max_iter = 5, tol = 1e-8, rescue = false, start_mode = Sparlectra.StartModeConfig(flatstart = false))
       @test last(runpf!(plain, cfg_plain)) == 1
 
       # With rescue a ladder strategy converges and is recorded.
@@ -1558,10 +1561,14 @@ mpc.branch = [
       @test infeasible.nodeVec[2]._vm_pu == 1.0
       @test infeasible.nodeVec[2]._va_deg < 0.0
 
-      # Defaults leave both mechanisms off: same failure as the plain run.
+      # The rescue ladder is ON by default (a user should get a result, not a
+      # divergence message); the DC fallback stays opt-in because it swaps the
+      # model. Explicitly disabling rescue reproduces the raw failure.
+      @test Sparlectra.PowerFlowConfig().rescue === true
+      @test Sparlectra.PowerFlowConfig().dc.fallback === false
       off = mkrescuenet()
       poison!(off)
-      cfg_off = Sparlectra.PowerFlowConfig(max_iter = 5, tol = 1e-8, start_mode = Sparlectra.StartModeConfig(flatstart = false))
+      cfg_off = Sparlectra.PowerFlowConfig(max_iter = 5, tol = 1e-8, rescue = false, start_mode = Sparlectra.StartModeConfig(flatstart = false))
       profile_off = Dict{Symbol,Any}()
       @test last(runpf!(off, cfg_off; performance_profile = profile_off)) == 1
       @test !haskey(profile_off, :ac_rescue_strategy)
