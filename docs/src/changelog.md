@@ -8,6 +8,19 @@ Fixes and refinements after the 0.9.0 release.
   same port no longer aborts with `EADDRINUSE`: the launcher detects the
   running instance, opens the browser on it, and says so. A foreign process
   on the port still produces the explicit error.
+- Startup warm-up now also compiles the short-circuit path, so the first
+  **Short circuit** click is fast, and it can be switched off: new
+  `webui.warmup` (default `true`), editable as **Warm up on start** under
+  the form's Advanced options.
+- **CGMES deliveries start from their own state by default.**
+  `cgmes_import.start_values` gained the mode `auto` and it is the new
+  default: a delivery that carries an `SvVoltage` state is solved from it,
+  one without falls back to the flat start. A real delivery is built around
+  its operating point — starting elsewhere made it diverge for no good
+  reason (measured on a 6209-bus delivery: flat start 80 iterations without
+  convergence, SV start 4 iterations). `flat` remains selectable for method
+  studies, and the resolved choice is logged. A run that still fails from a
+  flat start additionally points at the SV option in `cgmes.log`.
 - Saved case settings survive an unrelated configuration write. The
   last-edit-wins precedence introduced in 0.9.0 let *every* key of a newer
   configuration file outrank the stored case setup — including keys that

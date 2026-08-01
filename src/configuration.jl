@@ -359,7 +359,7 @@ Base.@kwdef struct CGMESImportConfig
   vset_min_pu::Float64 = 0.5
   vset_max_pu::Float64 = 1.5
   multi_slack::Bool = true
-  start_values::Symbol = :flat
+  start_values::Symbol = :auto
   placeholder_guards::Symbol = :warn_skip
   # Reconstruct missing nominal voltages (SV snap + transformer ratedU +
   # propagation) when the BaseVoltage catalog is absent — see
@@ -555,6 +555,10 @@ Web UI presentation preferences that are not part of the solver/API contract.
 """
 Base.@kwdef struct WebUIConfig
   show_case_settings_notice::Bool = true
+  # Startup warm-up (hidden compile runs for the power-flow and short-circuit
+  # paths). On by default: it costs a few seconds once and saves them on the
+  # first real run. Turn off for a minimal-footprint start.
+  warmup::Bool = true
 end
 
 """
@@ -593,7 +597,7 @@ const POWERFLOW_START_PROFILE_SOURCE_VALUES = (:flat, :dc, :bus_metadata, :histo
 # CGMES-only start-value selection: :flat = synthetic flat start (the solver
 # earns the solution itself), :sv = start from the delivery's imported
 # SvVoltage state. Wins over power_flow(.start_mode).flatstart on CGMES runs.
-const CGMES_START_VALUES_VALUES = (:flat, :sv)
+const CGMES_START_VALUES_VALUES = (:auto, :flat, :sv)
 # placeholder-guard behavior: warn_skip keeps completeness-set filler values
 # out of the solve with a warning; strict aborts the import instead — for
 # deliveries where silently dropping data is not acceptable
@@ -1109,7 +1113,7 @@ function CGMESImportConfig(raw::AbstractDict)
     vset_min_pu = _validate_nonnegative("cgmes_import.vset_min_pu", _as_float_cfg(_raw_get(merged, "vset_min_pu", 0.5))),
     vset_max_pu = _validate_positive("cgmes_import.vset_max_pu", _as_float_cfg(_raw_get(merged, "vset_max_pu", 1.5))),
     multi_slack = _as_bool_cfg(_raw_get(merged, "multi_slack", true)),
-    start_values = _validate_allowed_symbol("cgmes_import.start_values", _as_symbol_cfg(_raw_get(merged, "start_values", :flat)), CGMES_START_VALUES_VALUES),
+    start_values = _validate_allowed_symbol("cgmes_import.start_values", _as_symbol_cfg(_raw_get(merged, "start_values", :auto)), CGMES_START_VALUES_VALUES),
     placeholder_guards = _validate_allowed_symbol("cgmes_import.placeholder_guards", _as_symbol_cfg(_raw_get(merged, "placeholder_guards", :warn_skip)), CGMES_PLACEHOLDER_GUARDS_VALUES),
     infer_base_voltages = _as_bool_cfg(_raw_get(merged, "infer_base_voltages", false)),
   )
@@ -1282,6 +1286,7 @@ function WebUIConfig(raw::AbstractDict)
   merged = _merged_section(raw, "webui")
   return WebUIConfig(
     show_case_settings_notice = _as_bool_cfg(_raw_get(merged, "show_case_settings_notice", true)),
+    warmup = _as_bool_cfg(_raw_get(merged, "warmup", true)),
   )
 end
 

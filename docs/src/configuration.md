@@ -533,3 +533,4 @@ The following canonical keys are currently present in `src/configuration.yaml.ex
 - `transformer.tap_changer_model`
 - `webui`
 - `webui.show_case_settings_notice`
+- `webui.warmup`

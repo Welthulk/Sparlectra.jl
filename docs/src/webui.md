@@ -101,9 +101,15 @@ The shared header and footer display the running package version from
 ### Startup warm-up
 
 `start_sparlectra_webui` accepts `warmup`, `warmup_casefile`, and
-`warmup_store_result`. The library default is `warmup=false`, while
-`start_webui.jl` enables it for the repository developer workflow.
-Warm-up runs asynchronously and fails softly. With
+`warmup_store_result`. `warmup` defaults to `nothing`, which means the
+configuration decides: **`webui.warmup`** (default `true`) is editable as
+**Warm up on start** under the form's Advanced options and takes effect at
+the next Web UI start; an explicit `warmup = true/false` in the call always
+wins. Besides the power-flow path, the warm-up also compiles the
+short-circuit path (Z-bus solve, IEC c-factor table, result and coverage
+types) on a throwaway two-bus network, so the first **Short circuit** click
+no longer pays that compilation. Warm-up runs asynchronously and fails
+softly. With
 `warmup_store_result=false`, it uses a temporary directory and creates no
 normal run-history entry. The bundled `data/webui/warmup_case3.jl` file is an
 original Sparlectra-owned synthetic three-bus MATPOWER-compatible Julia case,

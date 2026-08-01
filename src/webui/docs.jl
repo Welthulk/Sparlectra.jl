@@ -81,6 +81,7 @@ const WEBUI_HELP_TOPICS = Dict(
   "webui.detailed_result_csv" => (label = "Detailed result CSV export", page = "webui", heading = "Run artifacts and output modes", selector = ""),
   "webui.detailed_result_csv_format" => (label = "Detailed CSV format", page = "webui", heading = "Run artifacts and output modes", selector = ""),
   "webui.export_cgmes" => (label = "CGMES export artifact", page = "cgmes_export", heading = "Export from the Web UI", selector = ""),
+  "webui.warmup" => (label = "Warm up on start", page = "webui", heading = "Startup warm-up", selector = ""),
 )
 
 const WEBUI_FORM_HELP_TOPICS = Dict(
@@ -131,6 +132,7 @@ const WEBUI_FORM_HELP_TOPICS = Dict(
   "cgmes_start_values" => "cgmes_import.start_values",
   "cgmes_require_boundary" => "cgmes_import.require_boundary",
   "cgmes_infer_base_voltages" => "cgmes_import.infer_base_voltages",
+  "webui_warmup" => "webui.warmup",
   "power_flow_rescue" => "power_flow.rescue",
   "power_flow_dc_fallback" => "power_flow.dc.fallback",
   "matpower_import_auto_profile" => "matpower_import.auto_profile",

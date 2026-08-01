@@ -76,7 +76,7 @@ function run_configuration_coverage_tests()
       "output.console_summary", "output.console_live", "output.console_auto_profile", "output.console_diagnostics", "output.console_q_limit_events", "output.console_max_rows", "output.logfile_results", "output.result_table_max_rows", "output.result_table_large_case_threshold_buses", "output.result_table_large_case_mode", "output.detailed_result_csv_write_mode", "output.detailed_result_csv_exporter", "output.detailed_result_csv_direct_threshold_buses", "output.detailed_result_csv_buffer_initial_bytes", "output.detailed_result_csv_buffer_max_bytes", "output.detailed_result_csv_streaming_threshold_rows", "output.logfile_diagnostics", "output.logfile_performance", "output.logfile_warnings",
       "benchmark.enabled", "benchmark.methods", "benchmark.seconds", "benchmark.samples", "benchmark.show_once", "benchmark.show_once_output", "benchmark.show_once_max_nodes",
       "control.enabled", "control.max_outer_iterations", "control.trace", "control.log_iterations", "control.stop_on_pf_failure", "control.controllers",
-      "webui.show_case_settings_notice",
+      "webui.show_case_settings_notice", "webui.warmup",
     ])
     reserved_keys = Set(["extensions.reserved"])
     mapped_or_reserved = union(mapped_keys, reserved_keys)
@@ -391,7 +391,12 @@ power_flow:
 
     # cgmes_import.start_values: default flat, sv accepted, invalid rejected
     # with the key name in the message.
-    @test Sparlectra.CGMESImportConfig().start_values === :flat
+    # auto is the shipped default: deliveries with an SvVoltage state are
+    # solved from it, others fall back to the flat start (resolved per run).
+    @test Sparlectra.CGMESImportConfig().start_values === :auto
+    flat_forced = tempname() * ".yaml"
+    write(flat_forced, "cgmes_import:\n  start_values: flat\n")
+    @test Sparlectra.load_sparlectra_config(flat_forced; reload = true).cgmes.start_values === :flat
     sv_ok = tempname() * ".yaml"
     write(sv_ok, "cgmes_import:\n  start_values: sv\n")
     @test Sparlectra.load_sparlectra_config(sv_ok; reload = true).cgmes.start_values === :sv

@@ -531,6 +531,10 @@ that instance first to actually restart. A foreign process on the port
 still raises the explicit `ArgumentError`. Browser-process
 lifetime is not used for automatic shutdown by default because common browsers
 may return a short-lived launcher process instead of a reliably owned window.
+`warmup` defaults to `nothing`: the configuration decides (`webui.warmup`,
+default `true`, editable under the form's Advanced options); an explicit
+`true`/`false` always wins. When warm-up is active, hidden asynchronous runs
+compile the common import/API/solver path plus the short-circuit path.
 When `warmup=true`, hidden asynchronous runs compile the common import/API/
 solver path. By default the bundled synthetic 3-bus case runs first (plumbing),
 followed by the bundled synthetic 118-bus case (realistic sparse-solve and
@@ -586,7 +590,35 @@ function _run_sparlectra_webui_warmup(output_root::AbstractString; warmup_casefi
     end
     (result !== nothing && hasproperty(result, :success) && !result.success) && return result
   end
+  _warm_up_short_circuit_path()
   return result
+end
+
+# The Short-circuit button hits a code path the power-flow warm-up never
+# touches (Z-bus column solve, IEC c-factor table, result/coverage types),
+# so its first click paid the full compilation. Warm it on a throwaway
+# two-bus net with one feeder — no CGMES delivery needed, `runShortCircuit!`
+# accepts any `Net` plus harvested data. Failures stay silent: warm-up must
+# never affect startup.
+function _warm_up_short_circuit_path()
+  try
+    net = Net(name = "webui_warmup_sc", baseMVA = 100.0)
+    addBus!(net = net, busName = "WU1", vn_kV = 110.0)
+    addBus!(net = net, busName = "WU2", vn_kV = 110.0)
+    addPIModelACLine!(net = net, fromBus = "WU1", toBus = "WU2", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+    addProsumer!(net = net, busName = "WU1", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "WU1")
+    addProsumer!(net = net, busName = "WU2", type = "ENERGYCONSUMER", p = 10.0, q = 2.0)
+    feeder = (; mrid = "warmup_feeder", name = "WU_FEEDER", bus = "WU1",
+      maxInitialSymShCCurrent_A = 20000.0, minInitialSymShCCurrent_A = 15000.0,
+      maxR1ToX1Ratio = 0.1, minR1ToX1Ratio = 0.1)
+    sc_data = CGMESImporter.CGMESShortCircuitData([feeder], NamedTuple[], NamedTuple[], NamedTuple[], NamedTuple[], NamedTuple[])
+    for case in (:max, :min)
+      runShortCircuit!(net, sc_data; case = case)
+    end
+  catch err
+    @debug "Web UI short-circuit warm-up skipped" exception = (err, catch_backtrace())
+  end
+  return nothing
 end
 
 function _provision_webui_runtime!(root::AbstractString, config_file::Union{Nothing,AbstractString})
@@ -614,7 +646,7 @@ function _webui_validate_startup_config(configuration::AbstractString)
   end
 end
 
-function start_sparlectra_webui(; host::AbstractString = "127.0.0.1", port::Integer = 8080, output_root::Union{Nothing,AbstractString} = nothing, config_file::Union{Nothing,AbstractString} = nothing, open_browser::Bool = false, shutdown_on_browser_close::Bool = false, auto_shutdown_on_browser_close::Union{Nothing,Bool} = nothing, browser_heartbeat_timeout_seconds::Real = 15.0, warmup::Bool = false, warmup_casefile::Union{Nothing,AbstractString} = nothing, warmup_store_result::Bool = false, warmup_delay_seconds::Real = 2.0, _test_runner = start_powerflow_run, _lifecycle_io::IO = stdout, _browser_opener = _webui_open_browser)::Union{Nothing,SparlectraWebUIServer}
+function start_sparlectra_webui(; host::AbstractString = "127.0.0.1", port::Integer = 8080, output_root::Union{Nothing,AbstractString} = nothing, config_file::Union{Nothing,AbstractString} = nothing, open_browser::Bool = false, shutdown_on_browser_close::Bool = false, auto_shutdown_on_browser_close::Union{Nothing,Bool} = nothing, browser_heartbeat_timeout_seconds::Real = 15.0, warmup::Union{Nothing,Bool} = nothing, warmup_casefile::Union{Nothing,AbstractString} = nothing, warmup_store_result::Bool = false, warmup_delay_seconds::Real = 2.0, _test_runner = start_powerflow_run, _lifecycle_io::IO = stdout, _browser_opener = _webui_open_browser)::Union{Nothing,SparlectraWebUIServer}
   host_string = String(host)
   host_string in ("127.0.0.1", "localhost", "::1") || (err = ArgumentError("Sparlectra Web UI only accepts loopback hosts: 127.0.0.1, localhost, or ::1."); _webui_startup_failure!(_lifecycle_io, err, catch_backtrace(); phase = "validate_arguments"); throw(err))
   1 <= port <= 65535 || (err = ArgumentError("Web UI port must be between 1 and 65535."); _webui_startup_failure!(_lifecycle_io, err, catch_backtrace(); phase = "validate_arguments"); throw(err))
@@ -671,7 +703,11 @@ function start_sparlectra_webui(; host::AbstractString = "127.0.0.1", port::Inte
   end
   _webui_startup_log(_lifecycle_io, "webui_server_bound"; operation_log = paths.operation_log, status = "bound", host = host_string, port = Int(port))
   effective_shutdown_on_browser_close = auto_shutdown_on_browser_close === nothing ? shutdown_on_browser_close : Bool(auto_shutdown_on_browser_close)
-  runtime = _SparlectraWebUIRuntime(listener, paths.case_directory, paths.config_file, paths.operation_log, config_error, _test_runner, effective_shutdown_on_browser_close, false, 0.0, 0, nothing, _lifecycle_io, ReentrantLock(), warmup ? :waiting_first_page : :disabled)
+  # The library default stays "no warm-up" (a programmatic caller should not
+  # silently pay compile runs); `webui.warmup` governs the user-facing
+  # launchers, which read it and pass the value explicitly.
+  effective_warmup = warmup === nothing ? false : Bool(warmup)
+  runtime = _SparlectraWebUIRuntime(listener, paths.case_directory, paths.config_file, paths.operation_log, config_error, _test_runner, effective_shutdown_on_browser_close, false, 0.0, 0, nothing, _lifecycle_io, ReentrantLock(), effective_warmup ? :waiting_first_page : :disabled)
   task = @async begin
     try
       while isopen(listener)
@@ -693,7 +729,7 @@ function start_sparlectra_webui(; host::AbstractString = "127.0.0.1", port::Inte
   url_host = host_string == "::1" ? "[::1]" : host_string
   url = "http://$(url_host):$(port)/powerflow"
   browser_monitor_task = nothing
-  if warmup
+  if effective_warmup
     @async try
       # Serve the warm-up page before the CPU-bound warm-up solve starts: on
       # Julia's single-threaded cooperative scheduler a busy warm-up task

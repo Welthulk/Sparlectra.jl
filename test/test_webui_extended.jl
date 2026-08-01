@@ -117,7 +117,7 @@ function _webui_test_form(casefile, config_file, output_root)
     "power_flow_linear_solver" => "umfpack",
     "power_flow_rescue" => "false",
     "power_flow_dc_fallback" => "false",
-    "cgmes_start_values" => "flat",
+    "cgmes_start_values" => "auto",
     "cgmes_require_boundary" => "true",
     "cgmes_infer_base_voltages" => "false",
     "matpower_import_auto_profile" => "recommend",
@@ -133,6 +133,7 @@ function _webui_test_form(casefile, config_file, output_root)
     "performance_timing" => "compact",
     "detailed_result_csv" => "on",
     "detailed_result_csv_format" => "excel_de",
+    "webui_warmup" => "true",
     "benchmark_enabled" => "false",
     "benchmark_samples" => "10",
     "benchmark_seconds" => "1.0",
@@ -1718,6 +1719,7 @@ settings:
         "power_flow_rescue" => "power_flow.rescue",
         "power_flow_dc_fallback" => "power_flow.dc.fallback",
         "export_cgmes" => "webui.export_cgmes",
+        "webui_warmup" => "webui.warmup",
       )
       @test all(Sparlectra.WEBUI_FORM_HELP_TOPICS[field] == help_topic for (field, help_topic) in expected_help_topics)
       for (field, help_topic) in expected_help_topics
