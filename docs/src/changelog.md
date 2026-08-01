@@ -4,59 +4,13 @@ Fixes and refinements after the 0.9.0 release.
 
 ## Improvements
 
-- Starting the Web UI while another Sparlectra Web UI already listens on the
-  same port no longer aborts with `EADDRINUSE`: the launcher detects the
-  running instance, opens the browser on it, and says so. A foreign process
-  on the port still produces the explicit error.
-- Startup warm-up now also compiles the short-circuit path, so the first
-  **Short circuit** click is fast, and it can be switched off: new
-  `webui.warmup` (default `true`), editable as **Warm up on start** under
-  the form's Advanced options.
-- **Saved case settings can be reset, and switching cases says it is busy.**
-  Stored Web UI settings outrank the configuration for their keys, so an old
-  sidecar could pin a case to a setting invisible in the form (measured: a
-  delivery stuck on `power_flow_solver: dc` from an earlier run, with the
-  selection jumping back on every reload). A **Reset saved settings for this
-  case** button under Advanced deletes the sidecar — the case file is kept —
-  and it is reachable independently of the dismissible notice. Selecting a
-  case now dims the form and shows a spinner while the server reloads it,
-  instead of letting the fields change under the user's hands.
-- **The rescue ladder is on by default** (`power_flow.rescue: true`). Only
-  failed runs pay for the retries, and getting a result beats getting a
-  divergence message; set `false` for solver studies that need the raw
-  failure. The DC fallback stays opt-in because it swaps the model.
-- **Rescue ladder handles Q-limit-driven divergence.** New strategy
-  `settled_qlimits` (merit line search, low damping floor, Q-limit switching
-  held back until the reactive requests settle). A large synthetic system
-  whose Q limits are *not even binding at the solution* diverged because the
-  shipped early switching produced 8445 PV/PQ flips; with the strategy it
-  converges in ~60 iterations — with the limits fully enforced, no relaxation
-  involved. Note for large systems: `qlimits.start_mode: iteration_or_auto`
-  is an **or**, so a small `start_iter` always wins and the `auto` criterion
-  never fires; prefer `auto` there.
-- **CGMES deliveries start from their own state by default.**
-  `cgmes_import.start_values` gained the mode `auto` and it is the new
-  default: a delivery that carries an `SvVoltage` state is solved from it,
-  one without falls back to the flat start. A real delivery is built around
-  its operating point — starting elsewhere made it diverge for no good
-  reason (measured on a 6209-bus delivery: flat start 80 iterations without
-  convergence, SV start 4 iterations). `flat` remains selectable for method
-  studies, and the resolved choice is logged. A run that still fails from a
-  flat start additionally points at the SV option in `cgmes.log`.
-- Saved case settings survive an unrelated configuration write. The
-  last-edit-wins precedence introduced in 0.9.0 let *every* key of a newer
-  configuration file outrank the stored case setup — including keys that
-  merely repeat the shipped template, as a startup or migration rewrite
-  produces them. A case then silently lost its solver setup and could
-  diverge (`case_SyntheticUSA`). Only values that actually differ from the
-  template now count as a deliberate edit and take precedence.
-- DC-line cases (`case_SyntheticUSA`) run again for old installations:
-  `matpower_import.matpower_dcline_mode: reject_active` — the shipped
-  default of early templates that stored configuration files still carry —
-  is deprecated on the configuration surface and loads as `pf_injections`
-  (DC lines as per-terminal injection pairs) with a warning instead of
-  aborting the run. The strict fail-fast check remains available
-  programmatically, and the rejection message names key, value, and cure.
+- Saved case settings can be reset.
+
+- Rescue loader handles Q-limit-driven divergence.
+
+- CGMES deliveries start from their own state by default.
+
+- DC-line cases run again on old installations.
 
 
 # Version 0.9.0 — 2026-07-31
