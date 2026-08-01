@@ -16,7 +16,18 @@ else
 end
 
 function main()
-  server = Sparlectra.start_sparlectra_webui(open_browser = true, warmup = true)
+  # webui.warmup (Advanced option in the form, default true) governs the
+  # launcher; the library entry point itself keeps warm-up off by default.
+  config_path = Sparlectra.default_webui_config_path()
+  warmup = try
+    isfile(config_path) ? Sparlectra.load_sparlectra_config(config_path; reload = true).webui.warmup : true
+  catch
+    true
+  end
+  server = Sparlectra.start_sparlectra_webui(open_browser = true, warmup = warmup)
+  # nothing = a Sparlectra Web UI already runs on the port; it was opened in
+  # the browser instead — there is no new server task to wait on.
+  server === nothing && return nothing
 
   try
     wait(server.task)
@@ -30,4 +41,7 @@ function main()
   end
 end
 
-Base.invokelatest(main)
+# getfield defers the binding lookup to call time: VS Code's inline eval runs
+# the whole file as one world age, where a direct `main` access would trigger
+# the Julia 1.12 "binding accessed before its definition world" warning.
+Base.invokelatest(getfield(@__MODULE__, :main))

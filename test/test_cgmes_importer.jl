@@ -940,6 +940,18 @@ function run_cgmes_importer_tests()
           @test r.metadata["cgmes_sv_compare_max_dvm"] < 2e-4
         end
 
+        # auto (the shipped default) resolves per delivery: this one carries an
+        # SvVoltage state, so it must solve from it and say so.
+        auto_out = mktempdir()
+        auto_cfg = joinpath(auto_out, "c.yaml")
+        write(auto_cfg, "cgmes_import:\n  start_values: auto\n  path: \"" * bd * "\"\n")
+        auto_r = run_sparlectra_api(casefile = be, config_file = auto_cfg, output_dir = auto_out, case_format = :cgmes)
+        @test auto_r.status == :succeeded
+        auto_log = read(joinpath(auto_out, "run.log"), String)
+        @test occursin("CGMES start values: sv (auto: delivery carries SvVoltage for", auto_log)
+        @test occursin("start-value machines forced off", auto_log)
+        @test auto_r.metadata["cgmes_start_values"] == "sv"
+
         # Negative: a MATPOWER run ignores the key completely — no decision
         # line, no artifacts, no metadata keys.
         mp_out = mktempdir()

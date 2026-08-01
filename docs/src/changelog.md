@@ -1,3 +1,18 @@
+# Version 0.9.1 — 2026-08-01
+
+Fixes and refinements after the 0.9.0 release.
+
+## Improvements
+
+- Saved case settings can be reset.
+
+- Rescue loader handles Q-limit-driven divergence.
+
+- CGMES deliveries start from their own state by default.
+
+- DC-line cases run again on old installations.
+
+
 # Version 0.9.0 — 2026-07-31
 
 IEC 60909 short-circuit stage (#277), CGMES export.

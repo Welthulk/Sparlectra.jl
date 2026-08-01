@@ -164,6 +164,69 @@ function run_webui_fast_tests()
       @test !occursin("CGMES export", plain_html)
     end
 
+    @testset "no nested forms anywhere on the run page" begin
+      # HTML forbids nested <form>. A browser closes the outer form where the
+      # inner one starts, so every control AFTER it — including "Start
+      # PowerFlow run" — silently falls out of the form and does nothing when
+      # clicked. This bit exactly once; the depth check keeps it from
+      # returning through any future in-form button.
+      dir = mktempdir()
+      prof = joinpath(dir, "c.sparlectra-webui.yaml")
+      write(prof, "placeholder")
+      for html in (
+        Sparlectra.render_powerflow_form(output_root = mktempdir()),
+        Sparlectra.render_powerflow_form(output_root = mktempdir(), selected_casefile = "c.m", case_profile = Dict{String,Any}("power_flow_solver" => "dc", "_profile_path" => prof)),
+      )
+        depth = 0
+        maxdepth = 0
+        for m in eachmatch(r"</?form\b"i, html)
+          depth += startswith(lowercase(m.match), "</") ? -1 : 1
+          maxdepth = max(maxdepth, depth)
+        end
+        @test maxdepth == 1
+        @test depth == 0
+        # and the submit button must still sit inside the run form
+        run_form_start = first(findfirst("<form id=\"powerflow-run-form\"", html))
+        run_form_end = first(findnext("</form>", html, run_form_start))
+        @test occursin("Start PowerFlow run", html[run_form_start:run_form_end])
+      end
+    end
+
+    @testset "saved case settings can be reset from the form" begin
+      # Saved settings outrank the configuration for their keys, so a stale
+      # sidecar can pin a case to a setting the user cannot override in the
+      # form (measured: a delivery stuck on power_flow_solver: dc). The reset
+      # path must be reachable independently of the dismissible notice.
+      dir = mktempdir()
+      prof = joinpath(dir, "c.sparlectra-webui.yaml")
+      write(prof, "placeholder")
+      with_sidecar = Sparlectra.render_powerflow_form(output_root = mktempdir(), selected_casefile = "c.m", case_profile = Dict{String,Any}("power_flow_solver" => "dc", "_profile_path" => prof))
+      @test occursin("Reset saved settings for this case", with_sidecar)
+      @test occursin("/powerflow/case-settings/reset", with_sidecar)
+      without = Sparlectra.render_powerflow_form(output_root = mktempdir())
+      @test !occursin("Reset saved settings for this case", without)
+      # switching the case reloads the form server-side; the wait must be visible
+      @test occursin("case-loading-banner", without)
+
+      # The handler deletes the sidecar and keeps the case file.
+      root = joinpath(dir, "runs")
+      cases = joinpath(dir, "cases")
+      mkpath(root)
+      mkpath(cases)
+      write(joinpath(cases, "c.m"), "function mpc = c\nend\n")
+      sc = Sparlectra._webui_case_settings_path(root, "c.m"; case_directory = cases)
+      mkpath(dirname(sc))
+      write(sc, "values:\n  power_flow_solver: dc\n")
+      response = Sparlectra.handle_powerflow_case_settings_reset(Dict("casefile" => "c.m"); output_root = root, case_directory = cases, operation_log = root)
+      @test response.status == 303
+      @test !isfile(sc)
+      @test isfile(joinpath(cases, "c.m"))
+      # idempotent: a second reset is a no-op, not an error
+      @test Sparlectra.handle_powerflow_case_settings_reset(Dict("casefile" => "c.m"); output_root = root, case_directory = cases, operation_log = root).status == 303
+      # path traversal is rejected
+      @test Sparlectra.handle_powerflow_case_settings_reset(Dict("casefile" => "../evil.m"); output_root = root, case_directory = cases, operation_log = root).status == 303
+    end
+
     @testset "config edits win over older case settings" begin
       dir = mktempdir()
       cfg = joinpath(dir, "conf.yaml")
@@ -184,6 +247,21 @@ function run_webui_fast_tests()
       v2 = Sparlectra.webui_form_state(selected_config_file = cfg, sidecar_profile = sidecar)
       @test v2["power_flow_max_iter"] == 55
       @test !haskey(v2, "_config_newer_than_profile")
+
+      # Regression: a NEWER config that only repeats the shipped template
+      # defaults carries no user intent (startup/migration rewrites touch the
+      # file) and must NOT discard the saved case setup — case_SyntheticUSA
+      # lost its solver settings this way and diverged.
+      template_only = joinpath(dir, "template_only.yaml")
+      template_defaults = Sparlectra._webui_config_field_values(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH)
+      write(template_only, "power_flow:\n  qlimits:\n    enabled: $(get(template_defaults, "power_flow_qlimits_enabled", true))\n")
+      sleep(1.1)
+      touch(template_only)
+      case_setup = Dict{String,Any}("power_flow_qlimits_enabled" => false, "power_flow_merit_enabled" => true, "_profile_path" => prof)
+      v3 = Sparlectra.webui_form_state(selected_config_file = template_only, sidecar_profile = case_setup)
+      @test v3["power_flow_qlimits_enabled"] === false
+      @test v3["power_flow_merit_enabled"] === true
+      @test !haskey(v3, "_config_newer_than_profile")
     end
   end
 end

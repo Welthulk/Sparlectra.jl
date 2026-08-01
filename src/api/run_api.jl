@@ -780,11 +780,22 @@ function _run_sparlectra_api(;
     # cgmes_import.start_values wins over power_flow(.start_mode).flatstart on
     # CGMES runs: :flat = synthetic flat start (default), :sv = the imported
     # SvVoltage state with every competing start-value machine forced off.
-    cgmes_run_powerflow, start_overridden = _cgmes_start_values_powerflow(config.powerflow, cgmes_cfg.start_values)
+    # `auto` resolves only now: whether the delivery actually carries a usable
+    # SvVoltage state is an import result, not a configuration property. A
+    # delivery is built around its own operating point, so starting there is
+    # the honest default; a delivery without SV keeps the flat start.
+    sv_bus_count = length(cgmes_result.net.nodeVec) - length(cgmes_result.no_sv_buses)
+    effective_start_values = if cgmes_cfg.start_values === :auto
+      sv_bus_count > 0 ? :sv : :flat
+    else
+      cgmes_cfg.start_values
+    end
+    cgmes_run_powerflow, start_overridden = _cgmes_start_values_powerflow(config.powerflow, effective_start_values)
     cgmes_run_config = _copy_sparlectra_with_powerflow(config, cgmes_run_powerflow)
     start_decision = string(
-      "CGMES start values: ", cgmes_cfg.start_values,
-      cgmes_cfg.start_values === :sv ? " (imported SvVoltage state; start-value machines forced off: start_projection, dc_seed_unconditional, start_current_iteration, apslf_start)" : " (synthetic flat start)",
+      "CGMES start values: ", effective_start_values,
+      cgmes_cfg.start_values === :auto ? string(" (auto: ", sv_bus_count > 0 ? "delivery carries SvVoltage for $(sv_bus_count) bus(es)" : "no SvVoltage in this delivery", ")") : "",
+      effective_start_values === :sv ? " (imported SvVoltage state; start-value machines forced off: start_projection, dc_seed_unconditional, start_current_iteration, apslf_start)" : " (synthetic flat start)",
       isempty(start_overridden) ? "" : string(" — overrides: ", join(start_overridden, ", ")),
     )
     # Dedicated cgmes.log: everything the importer saw and decided, next to
@@ -906,7 +917,7 @@ function _run_sparlectra_api(;
     try
       open(joinpath(output_path, "cgmes.log"), "a") do io
         println(io)
-        println(io, "## SV comparison (run status: ", sv_compare_status, ", start values: ", cgmes_cfg.start_values, ")")
+        println(io, "## SV comparison (run status: ", sv_compare_status, ", start values: ", effective_start_values, ")")
         if sv_compare === nothing
           println(io, "  unavailable", sv_compare_error === nothing ? "" : ": " * sv_compare_error)
         else
@@ -918,6 +929,14 @@ function _run_sparlectra_api(;
           println(io, "  flows:    n=", sv_compare.flows.n, "  max|dp|=", sv_compare.flows.max_dp, " MW  max|dq|=", sv_compare.flows.max_dq, " MVAr")
           println(io, "  artifacts: sv_compare.csv, sv_compare_flows.csv")
           raw_result.final_converged || println(io, "  note: run did not converge — deltas describe the non-converged state, not the imported model")
+          # A real delivery ships its own solved state. When a flat-start run
+          # fails on a delivery that HAS usable SvVoltage data, the single most
+          # effective remedy is starting from that state — say so instead of
+          # leaving the user to find it (measured on a 6209-bus delivery: flat
+          # start diverges after 80 iterations, SV start converges in 4).
+          if !raw_result.final_converged && effective_start_values !== :sv && sv_bus_count > 0
+            println(io, "  hint: this delivery carries an SvVoltage state — set cgmes_import.start_values: sv (Web UI: \"CGMES start values\" = \"Imported SV state\") to start the solve from it.")
+          end
         end
       end
     catch err
@@ -927,7 +946,7 @@ function _run_sparlectra_api(;
       "input_format" => String(requested_case_format),
       "input_format_detected" => "cgmes",
       "cgmes_no_sv_buses" => length(cgmes_result.no_sv_buses),
-      "cgmes_start_values" => String(cgmes_cfg.start_values),
+      "cgmes_start_values" => String(effective_start_values),
       "cgmes_sv_compare_status" => sv_compare_status,
       "cgmes_sv_compare_n" => sv_compare === nothing ? 0 : sv_compare.n,
       "cgmes_sv_compare_max_dvm" => sv_compare === nothing ? NaN : sv_compare.max_dvm,

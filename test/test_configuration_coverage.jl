@@ -76,7 +76,7 @@ function run_configuration_coverage_tests()
       "output.console_summary", "output.console_live", "output.console_auto_profile", "output.console_diagnostics", "output.console_q_limit_events", "output.console_max_rows", "output.logfile_results", "output.result_table_max_rows", "output.result_table_large_case_threshold_buses", "output.result_table_large_case_mode", "output.detailed_result_csv_write_mode", "output.detailed_result_csv_exporter", "output.detailed_result_csv_direct_threshold_buses", "output.detailed_result_csv_buffer_initial_bytes", "output.detailed_result_csv_buffer_max_bytes", "output.detailed_result_csv_streaming_threshold_rows", "output.logfile_diagnostics", "output.logfile_performance", "output.logfile_warnings",
       "benchmark.enabled", "benchmark.methods", "benchmark.seconds", "benchmark.samples", "benchmark.show_once", "benchmark.show_once_output", "benchmark.show_once_max_nodes",
       "control.enabled", "control.max_outer_iterations", "control.trace", "control.log_iterations", "control.stop_on_pf_failure", "control.controllers",
-      "webui.show_case_settings_notice",
+      "webui.show_case_settings_notice", "webui.warmup",
     ])
     reserved_keys = Set(["extensions.reserved"])
     mapped_or_reserved = union(mapped_keys, reserved_keys)
@@ -391,7 +391,12 @@ power_flow:
 
     # cgmes_import.start_values: default flat, sv accepted, invalid rejected
     # with the key name in the message.
-    @test Sparlectra.CGMESImportConfig().start_values === :flat
+    # auto is the shipped default: deliveries with an SvVoltage state are
+    # solved from it, others fall back to the flat start (resolved per run).
+    @test Sparlectra.CGMESImportConfig().start_values === :auto
+    flat_forced = tempname() * ".yaml"
+    write(flat_forced, "cgmes_import:\n  start_values: flat\n")
+    @test Sparlectra.load_sparlectra_config(flat_forced; reload = true).cgmes.start_values === :flat
     sv_ok = tempname() * ".yaml"
     write(sv_ok, "cgmes_import:\n  start_values: sv\n")
     @test Sparlectra.load_sparlectra_config(sv_ok; reload = true).cgmes.start_values === :sv
@@ -405,6 +410,18 @@ power_flow:
     end
     @test err isa ArgumentError
     @test occursin("cgmes_import.start_values", sprint(showerror, err))
+
+    # matpower_import.matpower_dcline_mode: the stale early-template value
+    # reject_active must not brick old user configs — it loads as
+    # pf_injections with a deprecation warning; ignore_inactive stays a
+    # deliberate choice and loads verbatim.
+    dcline_stale = tempname() * ".yaml"
+    write(dcline_stale, "matpower_import:\n  matpower_dcline_mode: reject_active\n")
+    stale_cfg = @test_logs (:warn, r"reject_active is deprecated in configuration files") Sparlectra.load_sparlectra_config(dcline_stale; reload = true)
+    @test stale_cfg.matpower.matpower_dcline_mode === :pf_injections
+    dcline_deliberate = tempname() * ".yaml"
+    write(dcline_deliberate, "matpower_import:\n  matpower_dcline_mode: ignore_inactive\n")
+    @test Sparlectra.load_sparlectra_config(dcline_deliberate; reload = true).matpower.matpower_dcline_mode === :ignore_inactive
 
     # cgmes_import.placeholder_guards: default warn_skip, strict accepted,
     # invalid rejected with the key name in the message.

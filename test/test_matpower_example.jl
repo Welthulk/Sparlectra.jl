@@ -16,10 +16,13 @@ function run_matpower_example_tests()
     @test missing_safe_defaults.matpower.matpower_dcline_mode === :pf_injections
     @test missing_safe_defaults.powerflow.islands.enabled === true
 
+    # reject_active in a configuration FILE is deprecated (stale early-template
+    # default) and normalizes to pf_injections with a warning; the strict mode
+    # stays a programmatic-only choice.
     explicit_strict_cfg = tempname() * ".yaml"
     write(explicit_strict_cfg, "power_flow:\n  islands:\n    enabled: false\nmatpower_import:\n  matpower_dcline_mode: reject_active\n")
-    explicit_strict = Sparlectra.load_sparlectra_config(explicit_strict_cfg; reload = true)
-    @test explicit_strict.matpower.matpower_dcline_mode === :reject_active
+    explicit_strict = @test_logs (:warn, r"reject_active is deprecated in configuration files") Sparlectra.load_sparlectra_config(explicit_strict_cfg; reload = true)
+    @test explicit_strict.matpower.matpower_dcline_mode === :pf_injections
     @test explicit_strict.powerflow.islands.enabled === false
 
     bad_method_cfg = tempname() * ".yaml"

@@ -55,8 +55,12 @@ power_flow:
   # then largest generator) to slack when the case registers none.
   auto_slack: false
   # Retry a non-converged AC solve from the original start state with a fixed
-  # strategy ladder: alternate start, autodamp, DC-seeded projection.
-  rescue: false
+  # strategy ladder: alternate start, autodamp, DC-seeded projection, and
+  # settled Q-limits (merit line search + low damping floor + Q-limit
+  # switching held back until the reactive requests settle). Only failed
+  # runs pay for the retries. Set false for solver studies that must see the
+  # raw failure instead of a rescued result.
+  rescue: true
   dc:
     # After a failed AC solve (and failed rescue ladder), run the standalone
     # DC power flow so the net carries usable angles and branch P flows.
@@ -302,13 +306,20 @@ cgmes_import:
   # island beyond the primary has no reference and the island-wise power flow
   # refuses to run. false forces the legacy single-reference behavior.
   multi_slack: true
-  # Newton-Raphson start state for CGMES runs. flat = synthetic flat start
-  # (default: the solver earns the solution itself); sv = start from the
-  # delivery's imported SvVoltage state (force-disables the other start-value
-  # machines for the run). On CGMES runs this wins over power_flow.flatstart;
-  # MATPOWER/DTF runs ignore it. The SV comparison (sv_compare.csv) runs
-  # either way. Allowed values: flat, sv
-  start_values: flat
+  # Newton-Raphson start state for CGMES runs.
+  # - auto (default): use the delivery's own SvVoltage state when it carries
+  #   one, else the synthetic flat start. Real deliveries are built around
+  #   their operating point; starting elsewhere makes them diverge for no
+  #   good reason (measured on a 6209-bus delivery: flat 80 iterations
+  #   without convergence, SV 4 iterations).
+  # - sv: always start from the imported SvVoltage state.
+  # - flat: always use the synthetic flat start (the solver earns the
+  #   solution itself — for method studies).
+  # sv/auto-with-SV force-disable the competing start-value machines for the
+  # run. On CGMES runs this wins over power_flow.flatstart; MATPOWER/DTF runs
+  # ignore it. The SV comparison (sv_compare.csv) runs either way.
+  # Allowed values: auto, flat, sv
+  start_values: auto
   # Behavior of the placeholder guards (implausible shunt admittances, tap
   # corrections outside 0.5..2.0): warn_skip keeps the filler value out of
   # the solve with a warning; strict aborts the import instead. Allowed
@@ -506,6 +517,11 @@ webui:
   # (a .sparlectra-webui.yaml sidecar). Set to false once you know a case has
   # saved settings and no longer want the reminder.
   show_case_settings_notice: true
+  # Startup warm-up: hidden compile runs for the power-flow and short-circuit
+  # paths so the first real run (and the first Short-circuit click) does not
+  # pay the compilation. Costs a few seconds once at start; set false for a
+  # minimal-footprint start. Takes effect at the next Web UI start.
+  warmup: true
 
 extensions:
   # Reserved for future extension schemas.

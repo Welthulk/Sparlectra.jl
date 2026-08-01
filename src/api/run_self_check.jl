@@ -50,6 +50,13 @@ function _self_check_forced_overrides()::Dict{String,Any}
       "start_current_iteration" => Dict{String,Any}("enabled" => false),
       "apslf_start" => Dict{String,Any}("enabled" => false),
       "qlimits" => Dict{String,Any}("enabled" => false),
+      # The self-check measures the residual at the imported reference state
+      # by design — it is SUPPOSED to look non-converged. The rescue ladder
+      # (on by default) would retry from other start states and leave a
+      # different net behind, so the measured residual would no longer be the
+      # imported model's. Same reasoning as the start-value machines above.
+      "rescue" => false,
+      "dc" => Dict{String,Any}("fallback" => false),
     ),
     # CGMES runs additionally honor cgmes_import.start_values (default flat,
     # which would re-flatten the start): the self-check's whole point is to

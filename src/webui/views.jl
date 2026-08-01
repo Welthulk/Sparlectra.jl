@@ -341,7 +341,7 @@ function render_powerflow_form(;
   profile_notice = if isempty(profile_path) || !show_case_settings_notice
     ""
   else
-    "<div class=\"alert info case-settings-notice\" role=\"status\"><strong>Case-specific settings loaded from $(profile_location).</strong> Saved Web UI settings prefilled the form.$(config_newer_hint) Manual edits on this page override the profile for this run. <form method=\"post\" action=\"/powerflow/config/dismiss-case-settings-notice\" class=\"case-settings-notice-dismiss\"><input type=\"hidden\" name=\"config_file\" value=\"$(_webui_escape(selected_config_file))\"><input type=\"hidden\" name=\"casefile\" value=\"$(_webui_escape(selected_casefile))\"><button type=\"submit\" class=\"link-button\">Don't show this again</button></form></div>"
+    "<div class=\"alert info case-settings-notice\" role=\"status\"><strong>Case-specific settings loaded from $(profile_location).</strong> Saved Web UI settings prefilled the form.$(config_newer_hint) Manual edits on this page override the profile for this run. <form method=\"post\" action=\"/powerflow/case-settings/reset\" class=\"case-settings-notice-dismiss\"><input type=\"hidden\" name=\"casefile\" value=\"$(_webui_escape(selected_casefile))\"><button type=\"submit\" class=\"link-button\" title=\"Delete the saved settings for this case so the form falls back to the configuration defaults. The case file itself is kept.\">Reset saved settings</button></form> <form method=\"post\" action=\"/powerflow/config/dismiss-case-settings-notice\" class=\"case-settings-notice-dismiss\"><input type=\"hidden\" name=\"config_file\" value=\"$(_webui_escape(selected_config_file))\"><input type=\"hidden\" name=\"casefile\" value=\"$(_webui_escape(selected_casefile))\"><button type=\"submit\" class=\"link-button\">Don't show this again</button></form></div>"
   end
   error_html = _webui_error_alert_html(error_message)
   import_html = isempty(strip(import_message)) ? "" : "<div class=\"alert info case-import-result\" role=\"status\">$(_webui_escape(import_message))</div>"
@@ -437,7 +437,7 @@ $(dat_hint_html)
 <summary>Input format</summary>
 <fieldset>
 <label>$(_webui_field_label("case_format", "Case input format"))<select name="case_format"><option value="auto"$(_webui_form_string(case_format_value) == "auto" ? " selected" : "")>Auto</option><option value="matpower"$(_webui_form_string(case_format_value) == "matpower" ? " selected" : "")>MATPOWER</option><option value="dtf_for001"$(_webui_form_string(case_format_value) == "dtf_for001" ? " selected" : "")>DTF diagnostics (experimental/internal)</option><option value="cgmes"$(_webui_form_string(case_format_value) == "cgmes" ? " selected" : "")>CGMES (ENTSO-E, folder or ZIP)</option></select></label>
-<label data-cgmes-start-values-field>$(_webui_field_label("cgmes_start_values", "CGMES start values"))<select name="cgmes_start_values"><option value="flat"$(_webui_selected(profile_values, "cgmes_start_values", _webui_option_default("cgmes_start_values")) == "flat" ? " selected" : "")>Flat start (default)</option><option value="sv"$(_webui_selected(profile_values, "cgmes_start_values", _webui_option_default("cgmes_start_values")) == "sv" ? " selected" : "")>Imported SV state</option></select></label>
+<label data-cgmes-start-values-field title="auto uses the delivery's own SvVoltage state when it carries one (real deliveries are built around their operating point) and falls back to the flat start otherwise.">$(_webui_field_label("cgmes_start_values", "CGMES start values"))<select name="cgmes_start_values"><option value="auto"$(_webui_selected(profile_values, "cgmes_start_values", _webui_option_default("cgmes_start_values")) == "auto" ? " selected" : "")>Automatic (SV state when available, default)</option><option value="sv"$(_webui_selected(profile_values, "cgmes_start_values", _webui_option_default("cgmes_start_values")) == "sv" ? " selected" : "")>Imported SV state</option><option value="flat"$(_webui_selected(profile_values, "cgmes_start_values", _webui_option_default("cgmes_start_values")) == "flat" ? " selected" : "")>Flat start</option></select></label>
 <label class="check" data-cgmes-start-values-field title="Fail the CGMES import when topology references stay unresolved (boundary set missing). Uncheck to import an incomplete delivery anyway — buses without a resolvable BaseVoltage still abort."><input name="cgmes_require_boundary" type="hidden" value="false"><input name="cgmes_require_boundary" type="checkbox" value="true"$(_webui_checked(profile_values, "cgmes_require_boundary", _webui_option_default("cgmes_require_boundary")))>$(_webui_field_label("cgmes_require_boundary", "Require boundary set"))</label>
 <label class="check" data-cgmes-start-values-field title="Reconstruct missing nominal voltages when the delivery ships without its BaseVoltage catalog: seeded from the SV voltages and transformer rated voltages, propagated across level-preserving equipment. Substitutions are summarized as a warning. Pair with an unchecked Require boundary set."><input name="cgmes_infer_base_voltages" type="hidden" value="false"><input name="cgmes_infer_base_voltages" type="checkbox" value="true"$(_webui_checked(profile_values, "cgmes_infer_base_voltages", _webui_option_default("cgmes_infer_base_voltages")))>$(_webui_field_label("cgmes_infer_base_voltages", "Infer missing base voltages"))</label>
 <p class="field-help" data-cgmes-start-values-field>CGMES only: <em>Flat start</em> lets the solver earn the solution itself; <em>Imported SV state</em> starts Newton-Raphson from the delivery's own SvVoltage solution (competing start-value machines are forced off). The SV comparison check (<code>sv_compare.csv</code>) runs either way.</p>
@@ -522,6 +522,16 @@ $(config_maintenance)
 <label class=\"check span-2\"><input name=\"power_flow_distributed_slack_enabled\" type=\"hidden\" value=\"false\"><input name=\"power_flow_distributed_slack_enabled\" type=\"checkbox\" value=\"true\"$(_webui_checked(profile_values, "power_flow_distributed_slack_enabled", _webui_option_default("power_flow_distributed_slack_enabled")))>$(_webui_field_label("power_flow_distributed_slack_enabled", "Distribute active-power slack over participating generators"))</label>
 <label>$(_webui_field_label("power_flow_distributed_slack_p_mode", "Participation mode"))$(_webui_select("power_flow_distributed_slack_p_mode", _webui_option_allowed_values("power_flow_distributed_slack_p_mode"), _webui_selected(profile_values, "power_flow_distributed_slack_p_mode", _webui_option_default("power_flow_distributed_slack_p_mode"))))</label>
 <p class=\"field-help\">The REF bus keeps the angle reference; the island's P imbalance is absorbed by participating generators via one λ<sub>P</sub> per island. <code>imported</code> reads participation factors from the case data (MATPOWER <code>APF</code>, CGMES <code>normalPF</code>). Explicit weights are YAML-only (<code>power_flow.distributed_slack.weights</code>).</p>
+</fieldset>
+$(isempty(profile_path) ? "" : "<fieldset class=\"saved-case-settings\">
+<legend>Saved settings for this case</legend>
+<p class=\"field-help\">This case has stored Web UI settings (<code>$(_webui_escape(basename(profile_path)))</code>). They prefill the form and outrank the configuration file for the keys they contain — including ones you may not expect, such as a stored solver choice. Resetting deletes the stored settings only; the case file itself is kept.</p>
+<div class=\"actions\"><button type=\"submit\" class=\"secondary-button\" formaction=\"/powerflow/case-settings/reset\" formmethod=\"post\" formnovalidate>Reset saved settings for this case</button></div>
+</fieldset>")
+<fieldset class=\"startup-options\">
+<legend>Startup</legend>
+<label class=\"check span-2\"><input name=\"webui_warmup\" type=\"hidden\" value=\"false\"><input name=\"webui_warmup\" type=\"checkbox\" value=\"true\"$(_webui_checked(profile_values, "webui_warmup", _webui_option_default("webui_warmup")))>$(_webui_field_label("webui_warmup", "Warm up on start (power flow and short circuit)"))</label>
+<p class=\"field-help\">Hidden compile runs at startup so the first real run — and the first <strong>Short circuit</strong> click — do not pay the compilation. Costs a few seconds once. Saved in the configuration file; takes effect at the <em>next</em> Web UI start.</p>
 </fieldset>
 <fieldset class=\"non-convergence-options\" data-nr-only-field>
 <legend>Non-convergence handling</legend>
@@ -825,7 +835,41 @@ document.addEventListener('DOMContentLoaded', function () {
     updateSolverMode();
     solverRadios.forEach(function (radio) { radio.addEventListener('change', updateSolverMode); });
   }
+  const hideCaseLoadingBanner = function () {
+    const banner = document.getElementById('case-loading-banner');
+    if (banner !== null) banner.hidden = true;
+  };
+  // A page restored from the back/forward cache keeps the DOM as it was when
+  // the user navigated away — including the loading state. Clear it, or the
+  // form looks (and on a stricter style would be) stuck after Back.
+  window.addEventListener('pageshow', function () {
+    document.querySelectorAll('.case-loading').forEach(function (el) { el.classList.remove('case-loading'); });
+    hideCaseLoadingBanner();
+  });
   const reloadWithCase = function (value) {
+    // Selecting a case reloads the whole form from the server (its saved
+    // settings have to be applied). On a large case directory that takes a
+    // moment during which the visible fields still show the OLD case's
+    // values and then jump — so say plainly that a reload is running instead
+    // of letting the user watch settings change under their hands.
+    const form = document.querySelector('[data-powerflow-form]') || document.querySelector('main');
+    if (form !== null) {
+      form.classList.add('case-loading');
+      // Safety net: if the navigation never happens (blocked, cancelled, or
+      // the same page is restored from the bfcache), drop the dimming again
+      // so the form never looks stuck.
+      window.setTimeout(function () { form.classList.remove('case-loading'); hideCaseLoadingBanner(); }, 15000);
+      let banner = document.getElementById('case-loading-banner');
+      if (banner === null) {
+        banner = document.createElement('div');
+        banner.id = 'case-loading-banner';
+        banner.className = 'alert info case-loading-banner';
+        banner.setAttribute('role', 'status');
+        banner.innerHTML = '<span class="submit-spinner" aria-hidden="true"></span> Loading case settings — please wait…';
+        form.parentNode.insertBefore(banner, form);
+      }
+      banner.hidden = false;
+    }
     const target = new URL('/powerflow', window.location.origin);
     target.searchParams.set('casefile', value);
     const configInput = document.querySelector('input[name="config_file"]');

@@ -451,15 +451,29 @@ function webui_form_state(; selected_casefile::AbstractString = "", selected_con
     # YAML must show up on the next page load without deleting the sidecar
     # (fields the YAML does not set keep their saved case value).
     config_beats_sidecar = false
+    deliberate_config_values = Dict{String,Any}()
     if haskey(sidecar_profile, "_profile_path")
       ppath = String(sidecar_profile["_profile_path"])
       config_beats_sidecar = isfile(config_path) && isfile(ppath) && mtime(config_path) > mtime(ppath)
+      if config_beats_sidecar
+        # Only DELIBERATE config values may outrank a saved case setup. A
+        # value equal to the shipped template carries no user intent — the
+        # configuration file is rewritten on startup/migration, and letting
+        # its untouched defaults win would silently discard every stored
+        # case setting (measured: case_SyntheticUSA lost its solver setup
+        # and diverged after an unrelated config write).
+        template_values = _webui_config_field_values(DEFAULT_SPARLECTRA_CONFIG_PATH)
+        for (field, value) in config_values
+          get(template_values, field, nothing) == value && continue
+          deliberate_config_values[field] = value
+        end
+      end
     end
     applied_config_over_sidecar = false
     for (field, value) in sidecar_profile
       field == "_profile_path" && continue
       haskey(_WEBUI_OPTION_BY_FIELD, String(field)) || continue
-      if config_beats_sidecar && haskey(config_values, String(field))
+      if config_beats_sidecar && haskey(deliberate_config_values, String(field))
         applied_config_over_sidecar = true
         continue
       end

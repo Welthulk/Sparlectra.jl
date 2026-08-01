@@ -62,12 +62,15 @@ const WEBUI_OPTION_SPECS = (
   WebUIOptionSpec("power_flow.trust_region.initial_radius", "power_flow_trust_region_initial_radius", Float64, :number, 1.0, (), :basic, true),
   WebUIOptionSpec("power_flow.trust_region.eta_accept", "power_flow_trust_region_eta_accept", Float64, :number, 0.1, (), :basic, true),
   WebUIOptionSpec("power_flow.trust_region.step_mode", "power_flow_trust_region_step_mode", String, :select, "scaled", TRUST_REGION_STEP_MODE_VALUES, :basic, true),
-  WebUIOptionSpec("power_flow.rescue", "power_flow_rescue", Bool, :checkbox, false, (), :expert, true),
+  # Startup option: unlike the run options around it, this one takes effect at
+  # the NEXT Web UI start, so it is not stored per case.
+  WebUIOptionSpec("webui.warmup", "webui_warmup", Bool, :checkbox, true, (), :expert, false),
+  WebUIOptionSpec("power_flow.rescue", "power_flow_rescue", Bool, :checkbox, true, (), :expert, true),
   WebUIOptionSpec("power_flow.dc.fallback", "power_flow_dc_fallback", Bool, :checkbox, false, (), :expert, true),
   WebUIOptionSpec("power_flow.distributed_slack.enabled", "power_flow_distributed_slack_enabled", Bool, :checkbox, false, (), :expert, true),
   WebUIOptionSpec("power_flow.distributed_slack.p_mode", "power_flow_distributed_slack_p_mode", String, :select, "pg_weighted", DISTRIBUTED_SLACK_P_MODE_VALUES, :expert, true),
   WebUIOptionSpec("power_flow.linear_solver", "power_flow_linear_solver", String, :select, "umfpack", POWERFLOW_LINEAR_SOLVER_VALUES, :expert, true),
-  WebUIOptionSpec("cgmes_import.start_values", "cgmes_start_values", String, :select, "flat", CGMES_START_VALUES_VALUES, :basic, true),
+  WebUIOptionSpec("cgmes_import.start_values", "cgmes_start_values", String, :select, "auto", CGMES_START_VALUES_VALUES, :basic, true),
   WebUIOptionSpec("cgmes_import.require_boundary", "cgmes_require_boundary", Bool, :checkbox, true, (), :basic, true),
   WebUIOptionSpec("cgmes_import.infer_base_voltages", "cgmes_infer_base_voltages", Bool, :checkbox, false, (), :basic, true),
   WebUIOptionSpec("matpower_import.auto_profile", "matpower_import_auto_profile", String, :select, "off", MATPOWER_AUTO_PROFILE_VALUES, :expert, true),

@@ -251,8 +251,11 @@ Base.@kwdef struct PowerFlowConfig
   # (ensureSlack!); off by default so data errors stay visible.
   auto_slack::Bool = false
   # Retry a non-converged AC solve from the original start state with a fixed
-  # strategy ladder (alternate start, autodamp, DC-seeded projection).
-  rescue::Bool = false
+  # strategy ladder (alternate start, autodamp, DC-seeded projection,
+  # settled Q-limits). ON by default: only failed runs pay for the retries,
+  # and a user who gets a result instead of a divergence message is the
+  # whole point. Turn off for solver studies that must see the raw failure.
+  rescue::Bool = true
   wrong_branch_detection::Symbol = :warn
   wrong_branch_rescue::Bool = false
   wrong_branch_min_vm_pu::Float64 = 0.70
@@ -359,7 +362,7 @@ Base.@kwdef struct CGMESImportConfig
   vset_min_pu::Float64 = 0.5
   vset_max_pu::Float64 = 1.5
   multi_slack::Bool = true
-  start_values::Symbol = :flat
+  start_values::Symbol = :auto
   placeholder_guards::Symbol = :warn_skip
   # Reconstruct missing nominal voltages (SV snap + transformer ratedU +
   # propagation) when the BaseVoltage catalog is absent — see
@@ -555,6 +558,10 @@ Web UI presentation preferences that are not part of the solver/API contract.
 """
 Base.@kwdef struct WebUIConfig
   show_case_settings_notice::Bool = true
+  # Startup warm-up (hidden compile runs for the power-flow and short-circuit
+  # paths). On by default: it costs a few seconds once and saves them on the
+  # first real run. Turn off for a minimal-footprint start.
+  warmup::Bool = true
 end
 
 """
@@ -593,7 +600,7 @@ const POWERFLOW_START_PROFILE_SOURCE_VALUES = (:flat, :dc, :bus_metadata, :histo
 # CGMES-only start-value selection: :flat = synthetic flat start (the solver
 # earns the solution itself), :sv = start from the delivery's imported
 # SvVoltage state. Wins over power_flow(.start_mode).flatstart on CGMES runs.
-const CGMES_START_VALUES_VALUES = (:flat, :sv)
+const CGMES_START_VALUES_VALUES = (:auto, :flat, :sv)
 # placeholder-guard behavior: warn_skip keeps completeness-set filler values
 # out of the solve with a warning; strict aborts the import instead — for
 # deliveries where silently dropping data is not acceptable
@@ -620,6 +627,19 @@ const MATPOWER_RATIO_VALUES = (:normal, :reciprocal)
 const MATPOWER_BUS_SHUNT_MODEL_VALUES = (:admittance, :voltage_dependent_injection)
 const MATPOWER_AUTO_PROFILE_VALUES = (:off, :recommend, :apply)
 const MATPOWER_DCLINE_MODE_VALUES = (:reject_active, :ignore_inactive, :pf_injections)
+
+# `reject_active` was the shipped template default of early releases, so
+# stored user/Web UI configuration files still carry it without it ever
+# having been a deliberate choice. Loading it verbatim would abort every
+# DC-line case (e.g. case_SyntheticUSA) for exactly those users — the
+# configuration surface therefore normalizes it to the current default with
+# a warning. The strict fail-fast behavior stays available programmatically:
+# createNetFromMatPowerCase(matpower_dcline_mode = :reject_active).
+function _normalize_dcline_mode(requested::Symbol)::Symbol
+  requested === :reject_active || return requested
+  @warn "matpower_import.matpower_dcline_mode: reject_active is deprecated in configuration files and loads as pf_injections (active mpc.dcline rows import as per-terminal injection pairs). Remove the key or set pf_injections to silence this warning."
+  return :pf_injections
+end
 const TRANSFORMER_TAP_CHANGER_MODEL_VALUES = (:ideal, :impedance_correction)
 const PERFORMANCE_LEVEL_VALUES = (:off, :summary, :iteration, :full)
 const OUTPUT_CONSOLE_AUTO_PROFILE_VALUES = (:off, :compact, :full)
@@ -1096,7 +1116,7 @@ function CGMESImportConfig(raw::AbstractDict)
     vset_min_pu = _validate_nonnegative("cgmes_import.vset_min_pu", _as_float_cfg(_raw_get(merged, "vset_min_pu", 0.5))),
     vset_max_pu = _validate_positive("cgmes_import.vset_max_pu", _as_float_cfg(_raw_get(merged, "vset_max_pu", 1.5))),
     multi_slack = _as_bool_cfg(_raw_get(merged, "multi_slack", true)),
-    start_values = _validate_allowed_symbol("cgmes_import.start_values", _as_symbol_cfg(_raw_get(merged, "start_values", :flat)), CGMES_START_VALUES_VALUES),
+    start_values = _validate_allowed_symbol("cgmes_import.start_values", _as_symbol_cfg(_raw_get(merged, "start_values", :auto)), CGMES_START_VALUES_VALUES),
     placeholder_guards = _validate_allowed_symbol("cgmes_import.placeholder_guards", _as_symbol_cfg(_raw_get(merged, "placeholder_guards", :warn_skip)), CGMES_PLACEHOLDER_GUARDS_VALUES),
     infer_base_voltages = _as_bool_cfg(_raw_get(merged, "infer_base_voltages", false)),
   )
@@ -1132,7 +1152,7 @@ function MatpowerImportConfig(raw::AbstractDict)
     apply_branch_names = _as_bool_cfg(_raw_get(merged, "apply_branch_names", false)),
     apply_branch_kind = _as_bool_cfg(_raw_get(merged, "apply_branch_kind", false)),
     import_for001_contingencies = _as_bool_cfg(_raw_get(merged, "import_for001_contingencies", true)),
-    matpower_dcline_mode = _validate_allowed_symbol("matpower_import.matpower_dcline_mode", _as_symbol_cfg(_raw_get(merged, "matpower_dcline_mode", :pf_injections)), MATPOWER_DCLINE_MODE_VALUES),
+    matpower_dcline_mode = _normalize_dcline_mode(_validate_allowed_symbol("matpower_import.matpower_dcline_mode", _as_symbol_cfg(_raw_get(merged, "matpower_dcline_mode", :pf_injections)), MATPOWER_DCLINE_MODE_VALUES)),
     net_cache_enabled = _as_bool_cfg(_raw_get(_raw_section(merged, "net_cache"), "enabled", false)),
   )
 end
@@ -1269,6 +1289,7 @@ function WebUIConfig(raw::AbstractDict)
   merged = _merged_section(raw, "webui")
   return WebUIConfig(
     show_case_settings_notice = _as_bool_cfg(_raw_get(merged, "show_case_settings_notice", true)),
+    warmup = _as_bool_cfg(_raw_get(merged, "warmup", true)),
   )
 end
 

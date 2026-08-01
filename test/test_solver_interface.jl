@@ -521,8 +521,12 @@ end
         return guarded_net
       end
 
-      # Regression: lower-level solver callers must opt in before the narrow-Q guard
-      # locks PV buses to PQ during rectangular pre-processing.
+      # Regression: lower-level solver callers must opt in before the guard
+      # locks PV buses to PQ during rectangular pre-processing — including
+      # zero-headroom buses (qmin == qmax). Doing that unconditionally is
+      # physically defensible but was MEASURED to cost convergence on a real
+      # 82000-bus case (rescue converges in 66 iterations without it, fails
+      # with it), and those limits are not binding at the solution anyway.
       default_net = zero_range_pv_net()
       redirect_stdout(devnull) do
         runpf!(default_net; config = PowerFlowConfig(max_iter = 0))
@@ -1519,7 +1523,7 @@ mpc.branch = [
       # Without rescue the poisoned run fails.
       plain = mkrescuenet()
       poison!(plain)
-      cfg_plain = Sparlectra.PowerFlowConfig(max_iter = 5, tol = 1e-8, start_mode = Sparlectra.StartModeConfig(flatstart = false))
+      cfg_plain = Sparlectra.PowerFlowConfig(max_iter = 5, tol = 1e-8, rescue = false, start_mode = Sparlectra.StartModeConfig(flatstart = false))
       @test last(runpf!(plain, cfg_plain)) == 1
 
       # With rescue a ladder strategy converges and is recorded.
@@ -1530,7 +1534,20 @@ mpc.branch = [
       rite, rerg = runpf!(rescued, cfg_rescue; performance_profile = profile)
       @test rerg == 0
       @test rite > 0
-      @test get(profile, :ac_rescue_strategy, :missing) in (:alternate_start, :autodamp, :dc_seed)
+      @test get(profile, :ac_rescue_strategy, :missing) in (:alternate_start, :autodamp, :dc_seed, :settled_qlimits)
+
+      # The ladder must offer the globalization package for Q-limit-noisy
+      # systems: merit line search, a low damping floor, and Q-limit
+      # switching held back until the reactive requests settle. Asserted on
+      # the variant list so a large-case regression cannot silently drop it.
+      variants = Sparlectra._rescue_config_variants(Sparlectra.PowerFlowConfig())
+      settled = only(cfg for (name, cfg) in variants if name === :settled_qlimits)
+      @test settled.merit.enabled === true
+      @test settled.autodamp === true
+      @test settled.autodamp_min == 0.001
+      @test settled.qlimits.start_mode === :auto
+      # honest: the limits themselves stay enforced, only the timing changes
+      @test settled.qlimits.ignore_q_limits === false
 
       # A genuinely infeasible case (load far beyond the transfer limit):
       # rescue exhausts the ladder, the DC fallback leaves a usable DC state,
@@ -1545,10 +1562,14 @@ mpc.branch = [
       @test infeasible.nodeVec[2]._vm_pu == 1.0
       @test infeasible.nodeVec[2]._va_deg < 0.0
 
-      # Defaults leave both mechanisms off: same failure as the plain run.
+      # The rescue ladder is ON by default (a user should get a result, not a
+      # divergence message); the DC fallback stays opt-in because it swaps the
+      # model. Explicitly disabling rescue reproduces the raw failure.
+      @test Sparlectra.PowerFlowConfig().rescue === true
+      @test Sparlectra.PowerFlowConfig().dc.fallback === false
       off = mkrescuenet()
       poison!(off)
-      cfg_off = Sparlectra.PowerFlowConfig(max_iter = 5, tol = 1e-8, start_mode = Sparlectra.StartModeConfig(flatstart = false))
+      cfg_off = Sparlectra.PowerFlowConfig(max_iter = 5, tol = 1e-8, rescue = false, start_mode = Sparlectra.StartModeConfig(flatstart = false))
       profile_off = Dict{Symbol,Any}()
       @test last(runpf!(off, cfg_off; performance_profile = profile_off)) == 1
       @test !haskey(profile_off, :ac_rescue_strategy)
